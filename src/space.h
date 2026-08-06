@@ -63,7 +63,10 @@ void disc_lookup(DiscNode *root, Atom *query, CettaIndex **out,
 #define EQ_INDEX_BUCKETS 256
 
 typedef struct {
-    CettaIndex *atom_indices; /* indices into the logical atom sequence */
+    /* Captured logical-order keys.  Backend-primary spaces may discard the
+     * tuple projection; atom_ids remain the authority for later resolution. */
+    CettaIndex *atom_indices;
+    AtomId *atom_ids; /* stable equation ids for backend-primary views */
     CettaIndex len, cap;
     DiscNode *trie; /* discrimination trie over LHS patterns */
     SubstBucket subst; /* epoch-tagged substitution tree over LHS patterns */
@@ -80,7 +83,9 @@ typedef struct {
 /* ── Type Annotation Index (: atom type) → fast lookup ─────────────────── */
 
 typedef struct {
-    CettaIndex *atom_indices;  /* indices into the logical atom sequence */
+    /* Captured logical-order keys; atom_ids survive projection disposal. */
+    CettaIndex *atom_indices;
+    AtomId *atom_ids; /* stable annotation ids for backend-primary views */
     CettaIndex len, cap;
 } TypeAnnBucket;
 
@@ -191,6 +196,10 @@ TermUniverseError space_term_universe_last_error_code(const Space *s);
 void space_linearize(Space *s);
 void space_mark_derived_state_dirty(Space *s);
 void space_discard_native_logical_view(Space *s);
+/* Drop the full logical tuple projection while retaining revision-independent
+ * equation/type descriptors. The backend mutation caller remains responsible
+ * for invalidating either descriptor when its corresponding row class changes. */
+void space_discard_native_logical_view_preserving_dispatch(Space *s);
 void space_note_external_backend_mutation(Space *s);
 Space *space_heap_clone_shallow(Space *src);
 void space_replace_contents(Space *dst, Space *src);
@@ -237,7 +246,9 @@ typedef struct {
 
 typedef struct {
     SpaceReadToken read;
-    CettaIndex logical_index;
+    CettaIndex logical_index; /* captured ordering/occurrence key */
+    AtomId equation_id;
+    bool has_equation_id;
 } SpaceEquationOccurrenceId;
 
 typedef struct {
@@ -249,6 +260,11 @@ typedef struct {
 
 SpaceReadToken space_read_token(const Space *s);
 bool space_read_token_is_current(SpaceReadToken token);
+/* Validate a token against a Space whose lifetime is independently known to
+ * be active.  Unlike the one-argument form, this never dereferences the raw
+ * pointer retained by a stale token. */
+bool space_read_token_matches_live_space(SpaceReadToken token,
+                                         const Space *live_space);
 bool space_equation_occurrence_resolve(SpaceEquationOccurrenceId id,
                                        SpaceEquationOccurrence *out);
 

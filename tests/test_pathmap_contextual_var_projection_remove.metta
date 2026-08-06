@@ -57,3 +57,12 @@
 !(match &p3 (, (edge $x $y) (edge $x $z))
   (remove-atom &p3 (edge $x $y)))
 !(assertEqualToResult (count-atoms &p3) (0))
+
+; The explicit comma surface materializes its bindings before evaluating the
+; body.  Opening provenance must survive that observation boundary so removal
+; still names the stored occurrence, rather than an alpha-equivalent pattern.
+!(bind! &p4 (new-space pathmap))
+!(add-atom &p4 (schema $x (wrap $x)))
+!(match &p4 (, (schema $q $body))
+  (remove-atom &p4 (schema $q $body)))
+!(assertEqualToResult (count-atoms &p4) (0))

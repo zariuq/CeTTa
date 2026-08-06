@@ -11,7 +11,22 @@
 typedef struct {
     Atom *equation;
     const PettaPlanNode *plan;
+    SymbolId head;
 } PettaProgramClause;
+
+typedef struct {
+    SymbolId head;
+    size_t *record_indices;
+    size_t len;
+    size_t cap;
+} PettaProgramHeadBucket;
+
+typedef struct {
+    SymbolId head;
+    uint64_t revision;
+    PettaClauseCandidate *candidates;
+    size_t len;
+} PettaProgramClauseSnapshot;
 
 typedef struct {
     const Space *space;
@@ -19,6 +34,13 @@ typedef struct {
     PettaProgramClause *clauses;
     size_t clause_len;
     size_t clause_cap;
+    PettaProgramHeadBucket *head_buckets;
+    size_t head_bucket_len;
+    size_t head_bucket_cap;
+    bool head_index_dirty;
+    PettaProgramClauseSnapshot *snapshots;
+    size_t snapshot_len;
+    size_t snapshot_cap;
 } PettaProgramSpace;
 
 typedef struct {
@@ -75,6 +97,215 @@ static bool petta_program_reserve(
         : cetta_malloc(width * next);
     *capacity = next;
     return true;
+}
+
+static size_t petta_program_head_bucket_lower_bound(
+    const PettaProgramSpace *space, SymbolId head) {
+    size_t low = 0u;
+    size_t high = space ? space->head_bucket_len : 0u;
+    while (low < high) {
+        size_t middle = low + (high - low) / 2u;
+        if (space->head_buckets[middle].head < head)
+            low = middle + 1u;
+        else
+            high = middle;
+    }
+    return low;
+}
+
+static void petta_program_space_clear_head_index(
+    PettaProgramSpace *space) {
+    if (!space)
+        return;
+    for (size_t index = 0u;
+         index < space->head_bucket_len; index++) {
+        free(space->head_buckets[index].record_indices);
+    }
+    free(space->head_buckets);
+    space->head_buckets = NULL;
+    space->head_bucket_len = 0u;
+    space->head_bucket_cap = 0u;
+}
+
+static void petta_program_space_clear_clause_snapshots(
+    PettaProgramSpace *space) {
+    if (!space)
+        return;
+    for (size_t index = 0u;
+         index < space->snapshot_len; index++) {
+        free(space->snapshots[index].candidates);
+    }
+    free(space->snapshots);
+    space->snapshots = NULL;
+    space->snapshot_len = 0u;
+    space->snapshot_cap = 0u;
+}
+
+static size_t petta_program_snapshot_lower_bound(
+    const PettaProgramSpace *space, SymbolId head) {
+    size_t low = 0u;
+    size_t high = space ? space->snapshot_len : 0u;
+    while (low < high) {
+        size_t middle = low + (high - low) / 2u;
+        if (space->snapshots[middle].head < head)
+            low = middle + 1u;
+        else
+            high = middle;
+    }
+    return low;
+}
+
+static const PettaProgramClauseSnapshot *
+petta_program_space_find_clause_snapshot(
+    const PettaProgramSpace *space, SymbolId head,
+    uint64_t revision) {
+    if (!space)
+        return NULL;
+    size_t index = petta_program_snapshot_lower_bound(
+        space, head);
+    if (index >= space->snapshot_len ||
+        space->snapshots[index].head != head ||
+        space->snapshots[index].revision != revision) {
+        return NULL;
+    }
+    return &space->snapshots[index];
+}
+
+static bool petta_program_copy_clause_snapshot(
+    const PettaProgramClauseSnapshot *snapshot,
+    PettaClauseCandidate **candidates,
+    size_t *candidate_count) {
+    if (!snapshot || !candidates || !candidate_count ||
+        snapshot->len >
+            SIZE_MAX / sizeof(*snapshot->candidates)) {
+        return false;
+    }
+    PettaClauseCandidate *copy = snapshot->len
+        ? cetta_malloc(
+              sizeof(*snapshot->candidates) * snapshot->len)
+        : NULL;
+    if (snapshot->len) {
+        memcpy(
+            copy, snapshot->candidates,
+            sizeof(*snapshot->candidates) * snapshot->len);
+    }
+    *candidates = copy;
+    *candidate_count = snapshot->len;
+    return true;
+}
+
+static void petta_program_space_store_clause_snapshot(
+    PettaProgramSpace *space, SymbolId head, uint64_t revision,
+    const PettaClauseCandidate *candidates, size_t candidate_count) {
+    if (!space || head == SYMBOL_ID_NONE ||
+        candidate_count > SIZE_MAX / sizeof(*candidates)) {
+        return;
+    }
+    PettaClauseCandidate *copy = candidate_count
+        ? cetta_malloc(sizeof(*candidates) * candidate_count)
+        : NULL;
+    if (candidate_count) {
+        memcpy(
+            copy, candidates,
+            sizeof(*candidates) * candidate_count);
+    }
+
+    size_t index = petta_program_snapshot_lower_bound(
+        space, head);
+    if (index < space->snapshot_len &&
+        space->snapshots[index].head == head) {
+        free(space->snapshots[index].candidates);
+    } else {
+        if (!petta_program_reserve(
+                (void **)&space->snapshots,
+                &space->snapshot_cap,
+                space->snapshot_len + 1u,
+                sizeof(*space->snapshots))) {
+            free(copy);
+            return;
+        }
+        memmove(
+            space->snapshots + index + 1u,
+            space->snapshots + index,
+            sizeof(*space->snapshots) *
+                (space->snapshot_len - index));
+        space->snapshot_len++;
+    }
+    space->snapshots[index] = (PettaProgramClauseSnapshot){
+        .head = head,
+        .revision = revision,
+        .candidates = copy,
+        .len = candidate_count,
+    };
+}
+
+static bool petta_program_space_head_index_append(
+    PettaProgramSpace *space, SymbolId head,
+    size_t record_index) {
+    if (!space)
+        return false;
+    size_t bucket_index = petta_program_head_bucket_lower_bound(
+        space, head);
+    if (bucket_index == space->head_bucket_len ||
+        space->head_buckets[bucket_index].head != head) {
+        if (!petta_program_reserve(
+                (void **)&space->head_buckets,
+                &space->head_bucket_cap,
+                space->head_bucket_len + 1u,
+                sizeof(*space->head_buckets))) {
+            return false;
+        }
+        memmove(
+            space->head_buckets + bucket_index + 1u,
+            space->head_buckets + bucket_index,
+            sizeof(*space->head_buckets) *
+                (space->head_bucket_len - bucket_index));
+        space->head_buckets[bucket_index] =
+            (PettaProgramHeadBucket){
+                .head = head,
+            };
+        space->head_bucket_len++;
+    }
+    PettaProgramHeadBucket *bucket =
+        &space->head_buckets[bucket_index];
+    if (!petta_program_reserve(
+            (void **)&bucket->record_indices, &bucket->cap,
+            bucket->len + 1u,
+            sizeof(*bucket->record_indices))) {
+        return false;
+    }
+    bucket->record_indices[bucket->len++] = record_index;
+    return true;
+}
+
+static bool petta_program_space_rebuild_head_index(
+    PettaProgramSpace *space) {
+    if (!space)
+        return false;
+    petta_program_space_clear_head_index(space);
+    for (size_t index = 0u; index < space->clause_len; index++) {
+        if (!petta_program_space_head_index_append(
+                space, space->clauses[index].head, index)) {
+            petta_program_space_clear_head_index(space);
+            space->head_index_dirty = true;
+            return false;
+        }
+    }
+    space->head_index_dirty = false;
+    return true;
+}
+
+static const PettaProgramHeadBucket *
+petta_program_space_find_head_bucket(
+    const PettaProgramSpace *space, SymbolId head) {
+    if (!space || space->head_index_dirty)
+        return NULL;
+    size_t index = petta_program_head_bucket_lower_bound(
+        space, head);
+    return index < space->head_bucket_len &&
+           space->head_buckets[index].head == head
+        ? &space->head_buckets[index]
+        : NULL;
 }
 
 static size_t petta_head_lower_bound(
@@ -451,6 +682,10 @@ void petta_program_free(PettaProgram *program) {
         return;
     for (size_t index = 0u;
          index < program->space_len; index++) {
+        petta_program_space_clear_head_index(
+            &program->spaces[index]);
+        petta_program_space_clear_clause_snapshots(
+            &program->spaces[index]);
         free(program->spaces[index].clauses);
     }
     free(program->predeclared_heads.items);
@@ -557,7 +792,8 @@ bool petta_program_note_add(
     const PettaPlanNode *plan) {
     if (!program || !space || !atom)
         return false;
-    if (!petta_equation_view(atom, NULL, NULL, NULL))
+    SymbolId head = SYMBOL_ID_NONE;
+    if (!petta_equation_view(atom, NULL, NULL, &head))
         return true;
     PettaProgramSpace *entry =
         petta_program_ensure_space(program, space);
@@ -568,11 +804,19 @@ bool petta_program_note_add(
             sizeof(*entry->clauses))) {
         return false;
     }
-    entry->clauses[entry->clause_len++] =
+    size_t record_index = entry->clause_len++;
+    entry->clauses[record_index] =
         (PettaProgramClause){
             .equation = atom,
             .plan = plan,
+            .head = head,
         };
+    if (!entry->head_index_dirty &&
+        !petta_program_space_head_index_append(
+            entry, head, record_index)) {
+        entry->head_index_dirty = true;
+    }
+    petta_program_space_clear_clause_snapshots(entry);
     return true;
 }
 
@@ -590,6 +834,10 @@ void petta_program_note_remove_all(
         if (write != read)
             entry->clauses[write] = entry->clauses[read];
         write++;
+    }
+    if (write != entry->clause_len) {
+        entry->head_index_dirty = true;
+        petta_program_space_clear_clause_snapshots(entry);
     }
     entry->clause_len = write;
 }
@@ -627,6 +875,8 @@ void petta_program_note_remove_one(
         sizeof(*entry->clauses) *
             (entry->clause_len - remove - 1u));
     entry->clause_len--;
+    entry->head_index_dirty = true;
+    petta_program_space_clear_clause_snapshots(entry);
 }
 
 void petta_program_forget_space(
@@ -638,6 +888,8 @@ void petta_program_forget_space(
         PettaProgramSpace *entry = &program->spaces[index];
         if (entry->space != space)
             continue;
+        petta_program_space_clear_head_index(entry);
+        petta_program_space_clear_clause_snapshots(entry);
         free(entry->clauses);
         memmove(
             entry, entry + 1u,
@@ -678,10 +930,13 @@ static bool petta_program_copy_records(
         free(copy);
         return false;
     }
+    petta_program_space_clear_head_index(destination_entry);
+    petta_program_space_clear_clause_snapshots(destination_entry);
     free(destination_entry->clauses);
     destination_entry->clauses = copy;
     destination_entry->clause_len = count;
     destination_entry->clause_cap = count;
+    destination_entry->head_index_dirty = true;
     return true;
 }
 
@@ -728,6 +983,21 @@ bool petta_program_clause_snapshot_profiled(
 
     PettaProgramSpace *entry =
         petta_program_find_space(program, space);
+    uint64_t revision = space_revision(space);
+    const PettaProgramClauseSnapshot *cached =
+        petta_program_space_find_clause_snapshot(
+            entry, head, revision);
+    if (cached) {
+        if (!petta_program_copy_clause_snapshot(
+                cached, candidates, candidate_count)) {
+            return false;
+        }
+        if (stats) {
+            stats->cache_hits = 1u;
+            stats->candidates_emitted = cached->len;
+        }
+        return true;
+    }
     size_t actual_len = 0u;
     size_t actual_cap = 0u;
     Atom **actual = NULL;
@@ -770,15 +1040,58 @@ bool petta_program_clause_snapshot_profiled(
     PettaClauseCandidate *items = NULL;
 
     /*
-     * The private record stream preserves PeTTa declaration order.  Space is
-     * still semantic authority: a record contributes only when an equal live
-     * occurrence exists, and every unmatched live occurrence is appended as
-     * an unplanned oracle fallback.  This remains coherent when an unordered
-     * native Space swaps storage slots after removing an unrelated fact.
+     * The private record stream preserves PeTTa declaration order.  Its
+     * derived head buckets select only records that can join the live
+     * occurrence stream; exact and variable-head buckets are merged by source
+     * position.  Space remains semantic authority: a selected record
+     * contributes only when an equal live occurrence exists, and every
+     * unmatched live occurrence is appended as an unplanned oracle fallback.
+     * This remains coherent when an unordered native Space swaps storage
+     * slots after removing an unrelated fact.  If the derived index cannot be
+     * rebuilt, the complete record stream is the correctness fallback.
      */
     if (entry) {
-        for (size_t record_index = 0u;
-             record_index < entry->clause_len; record_index++) {
+        bool indexed = !entry->head_index_dirty ||
+            petta_program_space_rebuild_head_index(entry);
+        const PettaProgramHeadBucket *exact = indexed
+            ? petta_program_space_find_head_bucket(entry, head)
+            : NULL;
+        const PettaProgramHeadBucket *wildcard = indexed
+            ? petta_program_space_find_head_bucket(
+                  entry, SYMBOL_ID_NONE)
+            : NULL;
+        size_t exact_position = 0u;
+        size_t wildcard_position = 0u;
+        size_t fallback_position = 0u;
+        for (;;) {
+            size_t record_index = SIZE_MAX;
+            if (indexed) {
+                size_t exact_index =
+                    exact && exact_position < exact->len
+                        ? exact->record_indices[exact_position]
+                        : SIZE_MAX;
+                size_t wildcard_index =
+                    wildcard && wildcard_position < wildcard->len
+                        ? wildcard->record_indices[wildcard_position]
+                        : SIZE_MAX;
+                if (exact_index == SIZE_MAX &&
+                    wildcard_index == SIZE_MAX) {
+                    break;
+                }
+                if (exact_index <= wildcard_index) {
+                    record_index = exact_index;
+                    exact_position++;
+                } else {
+                    record_index = wildcard_index;
+                    wildcard_position++;
+                }
+            } else {
+                if (fallback_position >= entry->clause_len)
+                    break;
+                record_index = fallback_position++;
+            }
+            if (record_index >= entry->clause_len)
+                continue;
             PettaProgramClause *record =
                 &entry->clauses[record_index];
             if (stats)
@@ -852,6 +1165,10 @@ bool petta_program_clause_snapshot_profiled(
     *candidate_count = length;
     if (stats)
         stats->candidates_emitted = length;
+    if (entry && space_revision(space) == revision) {
+        petta_program_space_store_clause_snapshot(
+            entry, head, revision, items, length);
+    }
     return true;
 }
 

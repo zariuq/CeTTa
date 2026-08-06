@@ -44,11 +44,101 @@ typedef struct {
     bool keep_going;
 } RowVisitProbe;
 
+typedef struct {
+    VarId query_var;
+    SymbolId spelling;
+    SymbolId payload_sym;
+    SymbolId lam_sym;
+    SymbolId pair_sym;
+    uint32_t visits;
+} OpeningCaptureProbe;
+
 static bool count_decoded_row(const Bindings *row, void *raw_probe) {
     RowVisitProbe *probe = raw_probe;
     assert(row != NULL);
     probe->visits++;
     return probe->keep_going;
+}
+
+static bool inspect_opened_binder_shaped_payload(
+    const Bindings *row, void *raw_probe) {
+    OpeningCaptureProbe *probe = raw_probe;
+    Atom *payload = bindings_lookup_id((Bindings *)row, probe->query_var);
+    assert(payload != NULL);
+    assert(payload->kind == ATOM_EXPR && payload->expr.len == 3u);
+    assert(atom_is_symbol_id(payload->expr.elems[0], probe->payload_sym));
+
+    Atom *lam = payload->expr.elems[1];
+    Atom *pair = payload->expr.elems[2];
+    assert(lam->kind == ATOM_EXPR && lam->expr.len == 2u);
+    assert(pair->kind == ATOM_EXPR && pair->expr.len == 3u);
+    assert(atom_is_symbol_id(lam->expr.elems[0], probe->lam_sym));
+    assert(atom_is_symbol_id(pair->expr.elems[0], probe->pair_sym));
+
+    Atom *binder_shaped = lam->expr.elems[1];
+    Atom *free0 = pair->expr.elems[1];
+    Atom *free1 = pair->expr.elems[2];
+    assert(binder_shaped->kind == ATOM_VAR);
+    assert(free0->kind == ATOM_VAR && free1->kind == ATOM_VAR);
+    assert(binder_shaped->sym_id == probe->spelling);
+    assert(free0->sym_id == probe->spelling);
+    assert(free1->sym_id == probe->spelling);
+    assert(binder_shaped->var_id != free0->var_id);
+    assert(free0->var_id == free1->var_id);
+    probe->visits++;
+    return true;
+}
+
+static void test_indexed_opening_spelling_capture_fence(
+    Arena *arena, TermUniverse *universe) {
+    Space space;
+    SymbolId capture_sym = symbol_intern_cstr(g_symbols, "capture");
+    SymbolId payload_sym = symbol_intern_cstr(g_symbols, "payload");
+    SymbolId lam_sym = symbol_intern_cstr(g_symbols, "Lam");
+    SymbolId pair_sym = symbol_intern_cstr(g_symbols, "Pair");
+    SymbolId spelling = symbol_intern_cstr(g_symbols, "x");
+    SymbolId query_spelling = symbol_intern_cstr(g_symbols, "payload-query");
+    VarId query_var_id = UINT64_C(83001);
+
+    Atom *binder_shaped = atom_var_with_spelling(
+        arena, spelling, UINT64_C(81001));
+    Atom *free = atom_var_with_spelling(
+        arena, spelling, UINT64_C(82002));
+    Atom *lam = atom_expr2(
+        arena, atom_symbol_id(arena, lam_sym), binder_shaped);
+    Atom *pair = atom_expr3(
+        arena, atom_symbol_id(arena, pair_sym), free, free);
+    Atom *payload = atom_expr3(
+        arena, atom_symbol_id(arena, payload_sym), lam, pair);
+    Atom *stored = atom_expr2(
+        arena, atom_symbol_id(arena, capture_sym), payload);
+    AtomId stored_id = term_universe_store_atom_id(universe, NULL, stored);
+    assert(stored_id != CETTA_ATOM_ID_NONE);
+
+    Atom *query_var = atom_var_with_spelling(
+        arena, query_spelling, query_var_id);
+    Atom *query = atom_expr2(
+        arena, atom_symbol_id(arena, capture_sym), query_var);
+    Atom *patterns[] = {query};
+    OpeningCaptureProbe probe = {
+        .query_var = query_var_id,
+        .spelling = spelling,
+        .payload_sym = payload_sym,
+        .lam_sym = lam_sym,
+        .pair_sym = pair_sym,
+        .visits = 0u,
+    };
+
+    space_init_with_universe(&space, universe);
+    space.kind = SPACE_KIND_HASH;
+    assert(space_match_backend_try_set(&space, SPACE_ENGINE_PATHMAP));
+    space_add_atom_id(&space, stored_id);
+    assert(space_match_backend_try_visit_conjunction_indexed(
+               &space, arena, patterns, 1u, NULL,
+               inspect_opened_binder_shaped_payload, &probe) ==
+           SPACE_MATCH_PULL_VISIT_COMPLETE);
+    assert(probe.visits == 1u);
+    space_free(&space);
 }
 
 static void test_streamed_row_disposition(Arena *arena) {
@@ -270,6 +360,7 @@ int main(void) {
 
     test_batch_mutation_transaction(
         &arena, &universe, edge_sym, a_sym, b_sym, c_sym, d_sym, e_sym);
+    test_indexed_opening_spelling_capture_fence(&arena, &universe);
 
     space_add_atom_id(&space, id_ab);
     space_add_atom_id(&space, id_bc);

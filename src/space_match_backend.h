@@ -385,6 +385,13 @@ space_match_backend_try_visit_conjunction_indexed(
     const Bindings *seed,
     CettaMorkBindingsVisitor visitor,
     void *ctx);
+/* At an admitted cursor callback, recover the stored-side variable identities
+   associated with the current opening activation.  Outside such a callback
+   this is the identity operation.  This is used only when an occurrence-
+   addressed effect must be snapshotted beyond the cursor lifetime. */
+Atom *space_match_backend_restore_opening_provenance(
+    Arena *a,
+    Atom *atom);
 bool space_match_backend_mork_visit_conjunction_direct(
     CettaMorkSpaceHandle *bridge,
     Arena *a,

@@ -18,8 +18,10 @@
     (= (join-effect $effect relational-query) relational-query))
   (rule atom-effect
     (= (effect $atom) pure))
-  (rule expression-effect
-    (= (effect (Expr $head $children))
+  (rule inert-expression-effect
+    (= (effect (InertExpr $head $children)) pure))
+  (rule active-expression-effect
+    (= (effect (ActiveExpr $head $children))
        (join-effect
          (head-effect $head)
          (fold join-effect pure (map effect $children)))))
@@ -179,6 +181,8 @@
   (instruction integer-greater)
   (instruction integer-less-equal)
   (instruction integer-greater-equal)
+  (instruction integer-remainder)
+  (instruction integer-floor-modulo)
   (instruction-discipline integer-add exact-integer-operands)
   (instruction-discipline integer-subtract exact-integer-operands)
   (instruction-discipline integer-multiply exact-integer-operands)
@@ -188,6 +192,8 @@
   (instruction-discipline integer-greater exact-integer-operands)
   (instruction-discipline integer-less-equal exact-integer-operands)
   (instruction-discipline integer-greater-equal exact-integer-operands)
+  (instruction-discipline integer-remainder exact-integer-operands)
+  (instruction-discipline integer-floor-modulo exact-integer-operands)
   (rule register-expression
     (implies
       (= (register-head-program $head) ($instruction $result-kind))
@@ -439,6 +445,7 @@
   (user-head-analysis revision-keyed least-fixed-point)
   (user-head-uncertain relational-query)
   (user-head-inert pure)
+  (inert-expression-children opaque)
   (pull-admission pure)
   (row malformed transport-fault)
   (row cyclic additive-zero)

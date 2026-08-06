@@ -45,6 +45,7 @@ MAKEFILE_LISTS = (
     "CORE_PROBE_TESTS",
     "CORE_XFAIL_TESTS",
     "RUNTIME_STATS_METTA_TESTS",
+    "PATHMAP_RUNTIME_STATS_METTA_TESTS",
     "GC_ADVERSARIAL_TESTS",
     "BACKEND_DEDICATED_TESTS",
     "BACKEND_HEAVY_TESTS",
@@ -75,6 +76,7 @@ VALID_LANES = {
     "test-python",
     "test-rhometta-payload-map-capacity-c",
     "test-runtime-stats-lane",
+    "test-pathmap-runtime-stats-lane",
     "test-eval-gc-adversarial",
     "probe-core-lane",
     "probe-pathmap-lane",
@@ -96,6 +98,7 @@ LANE_ORDER = {
     "test-profiles": 20,
     "test-python": 30,
     "test-runtime-stats-lane": 40,
+    "test-pathmap-runtime-stats-lane": 42,
     "test-eval-gc-adversarial": 45,
     "test-heavy": 50,
     "test-backend-dedicated": 60,
@@ -416,6 +419,16 @@ def generated_row(repo: Path, test_path: str, sets: dict[str, set[str]]) -> Mani
             test_path, "he", "metta", "he-extended", "runtime-stats", "native",
             "test-runtime-stats-lane", expect, note,
         )
+    if test_path in sets["PATHMAP_RUNTIME_STATS_METTA_TESTS"]:
+        expect, note = generated_expect_and_note(
+            repo,
+            test_path,
+            "PathMap conjunction bridge initialization and indexed-hit regression",
+        )
+        return ManifestRow(
+            test_path, "he", "metta", "he-extended", "runtime-stats", "pathmap",
+            "test-pathmap-runtime-stats-lane", expect, note,
+        )
     if test_path in sets["GC_ADVERSARIAL_TESTS"]:
         expect, note = generated_expect_and_note(
             repo,
@@ -641,6 +654,13 @@ def validate_manifest(repo: Path, rows: list[ManifestRow]) -> list[str]:
         sets["RUNTIME_STATS_METTA_TESTS"],
         "test-runtime-stats-lane",
         "RUNTIME_STATS_METTA_TESTS",
+        errors,
+    )
+    check_exact_lane(
+        rows,
+        sets["PATHMAP_RUNTIME_STATS_METTA_TESTS"],
+        "test-pathmap-runtime-stats-lane",
+        "PATHMAP_RUNTIME_STATS_METTA_TESTS",
         errors,
     )
     check_exact_lane(

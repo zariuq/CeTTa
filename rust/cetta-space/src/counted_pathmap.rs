@@ -61,8 +61,12 @@ pub struct CountedGeneralQueryCursor {
     pattern_expr_bytes: Vec<u8>,
     factor_envs: Vec<CountedGeneralFactorEnv>,
     candidate_lists: Vec<Vec<CountedEntry>>,
+    candidate_residual: Vec<Vec<bool>>,
     indices: Vec<usize>,
+    require_residual: bool,
     exhausted: bool,
+    rows_emitted: u64,
+    rows_aggregated: u64,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -1046,18 +1050,96 @@ impl CountedGeneralQueryCursor {
                 byte_offset: factor.offset,
             });
         }
+        Self::new_with_candidates(&pattern_expr_bytes, factor_envs, candidate_lists, false)
+    }
+
+    pub(crate) fn new_residual_partition(
+        pattern_expr_bytes: &[u8],
+        candidate_lists: Vec<Vec<CountedEntry>>,
+    ) -> Result<Self, String> {
+        validate_expr_bytes(pattern_expr_bytes)?;
+        let owned_pattern = pattern_expr_bytes.to_vec();
+        let pattern_expr = Expr {
+            ptr: owned_pattern.as_ptr().cast_mut(),
+        };
+        let factor_count = pattern_expr
+            .arity()
+            .ok_or_else(|| "counted residual cursor expected a wrapped query".to_string())?
+            .checked_sub(1)
+            .ok_or_else(|| "counted residual cursor expected a wrapped query".to_string())?;
+        if factor_count == 0 || factor_count as usize != candidate_lists.len() {
+            return Err("counted residual cursor factor-source count mismatch".to_string());
+        }
+        let mut pat_args = Vec::with_capacity((factor_count as usize) + 1);
+        ExprEnv::new(0, pattern_expr).args(&mut pat_args);
+        let factor_envs = pat_args[1..]
+            .iter()
+            .map(|factor| CountedGeneralFactorEnv {
+                namespace: factor.n,
+                variable_offset: factor.v,
+                byte_offset: factor.offset,
+            })
+            .collect::<Vec<_>>();
+        Self::new_with_candidates(&owned_pattern, factor_envs, candidate_lists, true)
+    }
+
+    fn new_with_candidates(
+        pattern_expr_bytes: &[u8],
+        factor_envs: Vec<CountedGeneralFactorEnv>,
+        candidate_lists: Vec<Vec<CountedEntry>>,
+        require_residual: bool,
+    ) -> Result<Self, String> {
+        if factor_envs.len() != candidate_lists.len() {
+            return Err("counted cursor factor-source count mismatch".to_string());
+        }
+        let candidate_residual = candidate_lists
+            .iter()
+            .map(|candidates| {
+                candidates
+                    .iter()
+                    .map(|entry| {
+                        !Expr {
+                            ptr: entry.atom_expr_bytes.as_ptr().cast_mut(),
+                        }
+                        .is_ground()
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .collect::<Vec<_>>();
         let exhausted = candidate_lists.iter().any(Vec::is_empty);
         Ok(Self {
             indices: vec![0; factor_envs.len()],
-            pattern_expr_bytes,
+            pattern_expr_bytes: pattern_expr_bytes.to_vec(),
             factor_envs,
             candidate_lists,
+            candidate_residual,
+            require_residual,
             exhausted,
+            rows_emitted: 0,
+            rows_aggregated: 0,
         })
     }
 
     pub fn factor_count(&self) -> u32 {
         self.factor_envs.len() as u32
+    }
+
+    pub fn rows_emitted(&self) -> u64 {
+        self.rows_emitted
+    }
+
+    pub fn rows_aggregated(&self) -> u64 {
+        self.rows_aggregated
+    }
+
+    fn chosen_contains_residual(&self) -> bool {
+        self.indices.iter().enumerate().any(|(factor_idx, index)| {
+            self.candidate_residual
+                .get(factor_idx)
+                .and_then(|flags| flags.get(*index))
+                .copied()
+                .unwrap_or(false)
+        })
     }
 
     fn advance(&mut self) {
@@ -1073,6 +1155,10 @@ impl CountedGeneralQueryCursor {
 
     pub fn next_packet_row(&mut self, space: &Space) -> Result<Option<Vec<u8>>, String> {
         while !self.exhausted {
+            if self.require_residual && !self.chosen_contains_residual() {
+                self.advance();
+                continue;
+            }
             let pattern_expr = Expr {
                 ptr: self.pattern_expr_bytes.as_ptr().cast_mut(),
             };
@@ -1109,10 +1195,60 @@ impl CountedGeneralQueryCursor {
             };
             self.advance();
             if row.is_some() {
+                self.rows_emitted = self.rows_emitted.saturating_add(1);
                 return Ok(row);
             }
         }
         Ok(None)
+    }
+
+    /// Consumes the remaining matching combinations and sums their exact bag
+    /// multiplicities without encoding binding rows.
+    pub fn count_remaining(&mut self) -> Result<u64, String> {
+        let mut total = 0u64;
+        while !self.exhausted {
+            if self.require_residual && !self.chosen_contains_residual() {
+                self.advance();
+                continue;
+            }
+            let pattern_expr = Expr {
+                ptr: self.pattern_expr_bytes.as_ptr().cast_mut(),
+            };
+            let mut stack = Vec::with_capacity(self.factor_envs.len());
+            let mut multiplicity = 1u64;
+            for factor_idx in 0..self.factor_envs.len() {
+                let factor = self.factor_envs[factor_idx];
+                let factor_expr_env = ExprEnv {
+                    n: factor.namespace,
+                    v: factor.variable_offset,
+                    offset: factor.byte_offset,
+                    base: pattern_expr,
+                };
+                let chosen_entry = &self.candidate_lists[factor_idx][self.indices[factor_idx]];
+                let atom_expr = Expr {
+                    ptr: chosen_entry.atom_expr_bytes.as_ptr().cast_mut(),
+                };
+                stack.push((
+                    factor_expr_env,
+                    ExprEnv::new((factor_idx + 1) as u8, atom_expr),
+                ));
+                multiplicity = multiplicity
+                    .checked_mul(u64::from(chosen_entry.count))
+                    .ok_or_else(|| {
+                        "counted residual query multiplicity exceeds u64 aggregate capacity"
+                            .to_string()
+                    })?;
+            }
+            let matched = unify(stack).is_ok();
+            self.advance();
+            if matched {
+                total = total.checked_add(multiplicity).ok_or_else(|| {
+                    "counted residual query count exceeds u64 aggregate capacity".to_string()
+                })?;
+                self.rows_aggregated = self.rows_aggregated.saturating_add(1);
+            }
+        }
+        Ok(total)
     }
 }
 

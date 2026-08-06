@@ -77,6 +77,14 @@ REGISTER_INSTRUCTION_C: dict[str, tuple[str, str]] = {
         "boolean", "*boolean_out = mpz_cmp(left, right) <= 0;"),
     "integer-greater-equal": (
         "boolean", "*boolean_out = mpz_cmp(left, right) >= 0;"),
+    "integer-remainder": (
+        "exact-integer",
+        "if (mpz_sgn(right) == 0) { return false; } "
+        "mpz_tdiv_r(integer_out, left, right);"),
+    "integer-floor-modulo": (
+        "exact-integer",
+        "if (mpz_sgn(right) == 0) { return false; } "
+        "mpz_fdiv_r(integer_out, left, right);"),
 }
 
 # Tagged-small-integer interpretation of the same semantic instructions.
@@ -94,6 +102,19 @@ REGISTER_INSTRUCTION_SMALL_C: dict[str, str] = {
     "integer-greater": "*boolean_out = left > right;",
     "integer-less-equal": "*boolean_out = left <= right;",
     "integer-greater-equal": "*boolean_out = left >= right;",
+    "integer-remainder": (
+        "if (right == 0) { return false; } "
+        "*integer_out = (left == INT64_MIN && right == -1) "
+        "? 0 : left % right;"),
+    "integer-floor-modulo": (
+        "if (right == 0) { return false; } "
+        "if (left == INT64_MIN && right == -1) { "
+        "*integer_out = 0; "
+        "} else { "
+        "*integer_out = left % right; "
+        "if (*integer_out != 0 && "
+        "((*integer_out < 0) != (right < 0))) *integer_out += right; "
+        "}"),
 }
 
 REGISTER_INSTRUCTION_ATOM_C: dict[str, tuple[str, str]] = {
@@ -566,6 +587,10 @@ class Spec:
         user_head_inert = entries(native, "user-head-inert")
         if user_head_inert != [["user-head-inert", "pure"]]:
             raise SpecError("inert user-head symbols must map to pure")
+        inert_children = entries(native, "inert-expression-children")
+        if inert_children != [["inert-expression-children", "opaque"]]:
+            raise SpecError(
+                "native execution must keep inert-expression children opaque")
 
         self.row_map: dict[str, str] = {}
         for entry in entries(native, "row"):
@@ -1102,6 +1127,7 @@ static inline CettaGsltQueryEffect cetta_gslt_query_effect_join(
     CETTA_GSLT_QUERY_EFFECT_{c_enum(spec.user_head_uncertain)}
 #define CETTA_GSLT_QUERY_EFFECT_INERT_SYMBOL \
     CETTA_GSLT_QUERY_EFFECT_PURE
+#define CETTA_GSLT_INERT_EXPRESSION_CHILDREN_OPAQUE 1
 
 #define CETTA_GSLT_TOTAL_INTEGER_HEAD_ROWS(X) \
 {total_integer_rows}

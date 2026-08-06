@@ -1464,6 +1464,133 @@ static bool petta_rewrite_head(
     return specialized_equation != NULL;
 }
 
+static bool petta_specialization_selectors_match(
+    PettaSpecializerContext *context, Atom *call,
+    const PettaSpecializationBindings *selectors) {
+    if (!context || !call || !selectors || selectors->len == 0u)
+        return false;
+    for (size_t index = 0u; index < selectors->len; index++) {
+        const PettaSpecializationBinding *selector =
+            &selectors->items[index];
+        Atom *actual = petta_atom_at_path(
+            call, selector->path, selector->path_len);
+        Atom *value = actual
+            ? petta_specializable_value(
+                  context, &context->scratch, actual)
+            : NULL;
+        if (!value || !atom_eq(value, selector->value))
+            return false;
+    }
+    return true;
+}
+
+/* Specialization fixes higher-order selectors for the lifetime of a derived
+ * relation.  Route recursive calls carrying those same selector values back
+ * to that relation once, when the artifact is built, instead of rediscovering
+ * the route at every recursive step.  Opaque callable and quotation payloads
+ * remain source data.  Applying a canonical partial is expanded exactly as
+ * the PeTTa machine expands it before dispatch, exposing ordinary register
+ * instructions to later generated-machine compilation. */
+static Atom *petta_rewrite_specialized_body(
+    PettaSpecializerContext *context, Atom *atom,
+    SymbolId source, SymbolId specialized,
+    const PettaSpecializationBindings *selectors,
+    uint32_t depth) {
+    if (!context || !atom || depth > 2048u) {
+        if (context)
+            context->capacity = true;
+        return NULL;
+    }
+    if (atom->kind != ATOM_EXPR || atom->expr.len == 0u)
+        return atom;
+
+    Atom *ignored = NULL;
+    SymbolId head = atom_head_symbol_id(atom);
+    PeTTaForm form = head == SYMBOL_ID_NONE
+        ? PETTA_FORM_NONE : petta_semantics_form(head);
+    if (head == g_builtin_syms.quote ||
+        head == g_builtin_syms.return_text ||
+        form == PETTA_FORM_PREDICATE ||
+        form == PETTA_FORM_LAMBDA ||
+        petta_semantics_lambda_body(atom, &ignored) ||
+        petta_semantics_nullary_lambda_body(atom, &ignored) ||
+        petta_semantics_partial_view(atom, NULL, NULL)) {
+        return atom;
+    }
+
+    Atom *partial_base = NULL;
+    Atom *bound = NULL;
+    if (petta_semantics_partial_view(
+            atom->expr.elems[0], &partial_base, &bound)) {
+        CettaExprLen supplied = atom->expr.len - 1u;
+        if (!partial_base || !bound || bound->kind != ATOM_EXPR ||
+            bound->expr.len > UINT64_MAX - supplied - 1u) {
+            context->capacity = true;
+            return NULL;
+        }
+        CettaExprLen combined = bound->expr.len + supplied + 1u;
+        if (!cetta_expr_len_mul_fits_size(
+                combined, sizeof(Atom *))) {
+            context->capacity = true;
+            return NULL;
+        }
+        Atom **elements = arena_alloc(
+            &context->scratch,
+            sizeof(*elements) * (size_t)combined);
+        elements[0] = partial_base;
+        if (bound->expr.len > 0u) {
+            memcpy(
+                elements + 1u, bound->expr.elems,
+                sizeof(*elements) * (size_t)bound->expr.len);
+        }
+        for (CettaExprIndex index = 0u; index < supplied; index++) {
+            elements[bound->expr.len + index + 1u] =
+                petta_rewrite_specialized_body(
+                    context, atom->expr.elems[index + 1u],
+                    source, specialized, selectors, depth + 1u);
+            if (!elements[bound->expr.len + index + 1u])
+                return NULL;
+        }
+        Atom *expanded = atom_expr(
+            &context->scratch, elements, combined);
+        if (!expanded)
+            return NULL;
+        return petta_rewrite_specialized_body(
+            context, expanded, source, specialized,
+            selectors, depth + 1u);
+    }
+
+    if (!cetta_expr_len_mul_fits_size(
+            atom->expr.len, sizeof(Atom *))) {
+        context->capacity = true;
+        return NULL;
+    }
+    Atom **elements = arena_alloc(
+        &context->scratch,
+        sizeof(*elements) * (size_t)atom->expr.len);
+    elements[0] = atom->expr.elems[0];
+    for (CettaExprIndex index = 1u; index < atom->expr.len; index++) {
+        elements[index] = petta_rewrite_specialized_body(
+            context, atom->expr.elems[index],
+            source, specialized, selectors, depth + 1u);
+        if (!elements[index])
+            return NULL;
+    }
+    Atom *rewritten = atom_expr(
+        &context->scratch, elements, atom->expr.len);
+    if (!rewritten)
+        return NULL;
+    if (head == source &&
+        petta_specialization_selectors_match(
+            context, rewritten, selectors)) {
+        elements[0] = atom_symbol_id(
+            &context->scratch, specialized);
+        rewritten = atom_expr(
+            &context->scratch, elements, atom->expr.len);
+    }
+    return rewritten;
+}
+
 static bool petta_materialize_specialization(
     PettaSpecializerContext *context, SymbolId source,
     SymbolId specialized, const PettaAtomVector *equations,
@@ -1513,9 +1640,14 @@ static bool petta_materialize_specialization(
         Atom *substituted = bindings_apply_if_vars(
             &selected, &context->scratch,
             source_equation);
-        Atom *promoted = substituted
+        Atom *rewritten = substituted
+            ? petta_rewrite_specialized_body(
+                  context, substituted, source, specialized,
+                  candidates, 0u)
+            : NULL;
+        Atom *promoted = rewritten
             ? atom_deep_copy(
-                  context->persistent, substituted)
+                  context->persistent, rewritten)
             : NULL;
         Atom *derived = NULL;
         bool built = promoted &&

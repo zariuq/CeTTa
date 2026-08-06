@@ -15,14 +15,57 @@
   (collapse (match &pull (row $key $value) $value))
   ((1 1 2)))
 
-; A non-ground row in the queried relation invalidates the index admission.
-; The pull consumer must decline before observing a row and replay through
-; the ordinary matcher, retaining both occurrences exactly.
+; Ground-exact and stored-variable rows in the queried relation form disjoint
+; indexed and residual partitions.  One cursor presents their exact bag to
+; every consumer without materializing the whole space.
 !(add-atom &pull (fallback red any))
 !(add-atom &pull (fallback $value any))
 !(assertEqualToResult
   (collapse (match &pull (fallback red any) hit))
   ((hit hit)))
+
+; Multiplicity is retained across the partition boundary: two exact
+; occurrences plus three residual occurrences make five results.
+!(add-atom &pull (mixed red exact))
+!(add-atom &pull (mixed red exact))
+!(add-atom &pull (mixed $key residual))
+!(add-atom &pull (mixed $key residual))
+!(add-atom &pull (mixed $key residual))
+!(assertEqualToResult
+  (size (collapse (match &pull (mixed red $kind) $kind)))
+  (5))
+!(assertEqualToResult
+  (size (collapse (once (match &pull (mixed red $kind) $kind))))
+  (1))
+!(assertEqualToResult
+  (select 2 (match &pull (mixed red $kind) 1))
+  ((1 1)))
+!(assertEqualToResult
+  (select 3 (match &pull (mixed red $kind) 1))
+  ((1 1 1)))
+!(assertEqualToResult
+  (fold (match &pull (mixed red $kind) 1) 0 $acc $one
+    (+ $acc $one))
+  (5))
+
+; Shared-variable conjunctions multiply counted occurrences separately in
+; the exact and residual partitions: (2 + 3) left rows times 5 right rows.
+!(bind! &mixed-join (new-space pathmap))
+!(add-atom &mixed-join (left a k))
+!(add-atom &mixed-join (left a k))
+!(add-atom &mixed-join (left $who k))
+!(add-atom &mixed-join (left $who k))
+!(add-atom &mixed-join (left $who k))
+!(add-atom &mixed-join (right k z))
+!(add-atom &mixed-join (right k z))
+!(add-atom &mixed-join (right k z))
+!(add-atom &mixed-join (right k z))
+!(add-atom &mixed-join (right k z))
+!(assertEqualToResult
+  (size
+    (collapse
+      (match &mixed-join (, (left a $mid) (right $mid z)) hit)))
+  (25))
 
 ; Atom consumers share the same bounded cursor.  `once` and `select` stop the
 ; producer after the demanded prefix; collapse and fold consume the exact
