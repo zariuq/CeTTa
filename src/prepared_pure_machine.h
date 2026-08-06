@@ -108,9 +108,11 @@ bool cetta_prepared_pure_program_execute_controlled(
     CettaPreparedPureInterruptPollFn interrupt_poll,
     void *interrupt_context, Atom **result_out);
 
-/* Execute in a caller-owned scratch arena.  A nonzero nursery budget enables
- * copying collection at the machine's generated-root loop boundary; zero
- * preserves the same execution without collection. */
+/* Execute using a caller-owned scratch arena.  A nonzero nursery budget
+ * enables copying collection at the machine's generated-root loop boundary;
+ * zero preserves the same execution without collection.  A collected result
+ * can reside in the program's invocation survivor arena, so publish it only
+ * after copying or materializing it; see release_closed_execution below. */
 bool cetta_prepared_pure_program_execute_closed(
     CettaPreparedPureProgram *program, Arena *arena,
     size_t nursery_budget_bytes,
@@ -121,6 +123,33 @@ bool cetta_prepared_pure_program_execute_closed_controlled(
     size_t nursery_budget_bytes,
     CettaPreparedPureInterruptPollFn interrupt_poll,
     void *interrupt_context, Atom **result_out);
+
+/* Resume a closed expression through the revision-pinned code and semantic
+ * views of an existing Need program.  This is the producer-side dual of the
+ * prepared fold API: callers may retain a small continuation expression and
+ * request only its next weak-head value, without rebuilding the original
+ * entry result.  The expression remains caller-owned.  The result is borrowed
+ * from either the scratch or invocation survivor arena and must be consumed
+ * before the next execution, explicit release, or program destruction. */
+bool cetta_prepared_pure_program_execute_closed_expression_controlled(
+    CettaPreparedPureProgram *program, Arena *arena,
+    Atom *expression, size_t nursery_budget_bytes,
+    CettaPreparedPureInterruptPollFn interrupt_poll,
+    void *interrupt_context, Atom **result_out);
+
+/* True when the program's dialect-aware callable classifier finds no
+ * suspended computation anywhere in value.  Producer consumers use this to
+ * preserve eager element evaluation while allowing the collection tail to
+ * remain suspended. */
+bool cetta_prepared_pure_program_value_is_fully_evaluated(
+    CettaPreparedPureProgram *program, Atom *value);
+
+/* A collected closed execution can return a result owned by the program's
+ * invocation survivor arena.  The result remains valid until the next
+ * execution, program destruction, or this explicit release.  A caller which
+ * publishes the result into another arena must copy or materialize it first. */
+void cetta_prepared_pure_program_release_closed_execution(
+    CettaPreparedPureProgram *program);
 
 void cetta_prepared_pure_program_free(
     CettaPreparedPureProgram *program);

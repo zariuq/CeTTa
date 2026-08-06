@@ -241,6 +241,7 @@ enum {
     PREPARED_PURE_MAX_HEADS = 4096u,
     PREPARED_PURE_MAX_CLAUSES = 65536u,
     PREPARED_PURE_MAX_SLOTS = 65536u,
+    PREPARED_PURE_GC_INITIAL_NURSERY_INTERVALS = 3u,
 };
 
 static bool prepared_pure_reject(
@@ -486,11 +487,27 @@ static size_t prepared_pure_saturating_add(size_t left, size_t right) {
     return left > SIZE_MAX - right ? SIZE_MAX : left + right;
 }
 
+static size_t prepared_pure_saturating_mul(size_t value, size_t multiplier) {
+    return multiplier != 0u && value > SIZE_MAX / multiplier
+        ? SIZE_MAX : value * multiplier;
+}
+
 static size_t prepared_pure_arena_bytes_above(
     const Arena *arena, ArenaMark anchor) {
     size_t live = arena_accounted_live_bytes(arena);
     size_t base = arena_mark_accounted_live_bytes(anchor);
     return live >= base ? live - base : 0u;
+}
+
+static bool prepared_pure_plan_builds_structural_values(
+    const CettaPreparedPureProgram *program) {
+    if (!program)
+        return false;
+    for (size_t index = 0u; index < program->node_len; index++) {
+        if (program->nodes[index].kind == PREPARED_PURE_BUILD)
+            return true;
+    }
+    return false;
 }
 
 static size_t prepared_pure_gc_trigger_bytes(
@@ -502,6 +519,20 @@ static size_t prepared_pure_gc_trigger_bytes(
         nursery_budget_bytes, program->gc_survivor_bytes);
     fresh_threshold = prepared_pure_saturating_add(
         fresh_threshold, program->gc_low_reclaim_growth_bytes);
+    /* The first collection is also the first survival sample.  A generated
+     * plan which explicitly builds structural values gets three bounded
+     * nursery intervals before paying for that sample; scalar/register-only
+     * plans retain the ordinary early collection needed for arithmetic
+     * churn.  Every later interval is determined by measured survival and
+     * reclamation below. */
+    if (!program->gc_survivor_ready &&
+        prepared_pure_plan_builds_structural_values(program)) {
+        fresh_threshold = prepared_pure_saturating_add(
+            fresh_threshold,
+            prepared_pure_saturating_mul(
+                nursery_budget_bytes,
+                PREPARED_PURE_GC_INITIAL_NURSERY_INTERVALS - 1u));
+    }
     return prepared_pure_saturating_add(
         arena_mark_accounted_live_bytes(anchor), fresh_threshold);
 }
@@ -3108,7 +3139,8 @@ void cetta_prepared_pure_program_clear_closed_entry_call(
 
 static bool prepared_pure_program_execute_internal(
     CettaPreparedPureProgram *program, Arena *arena,
-    Atom *accumulator, Atom *item, bool closed,
+    Atom *accumulator, Atom *item, Atom *runtime_expression,
+    bool closed,
     size_t nursery_budget_bytes,
     CettaPreparedPureInterruptPollFn interrupt_poll,
     void *interrupt_context,
@@ -3118,6 +3150,8 @@ static bool prepared_pure_program_execute_internal(
     if (!program || !arena || !result_out ||
         program->closed_program != closed ||
         (!closed && (!accumulator || !item)) ||
+        (!closed && runtime_expression) ||
+        (runtime_expression && atom_has_vars(runtime_expression)) ||
         !cetta_prepared_pure_program_is_current(program) ||
         !prepared_pure_reserve(
             (void **)&program->slots, sizeof(*program->slots),
@@ -3136,7 +3170,10 @@ static bool prepared_pure_program_execute_internal(
         program->slots[program->accumulator_slot] = accumulator;
         program->slots[program->item_slot] = item;
     }
-    if (!prepared_pure_push_frame(program, program->root, 0u))
+    bool pushed_root = runtime_expression
+        ? prepared_pure_push_runtime_frame(program, runtime_expression)
+        : prepared_pure_push_frame(program, program->root, 0u);
+    if (!pushed_root)
         return prepared_pure_runtime_decline(
             program, "cannot push root frame", NULL);
 
@@ -3600,14 +3637,12 @@ static bool prepared_pure_program_execute_internal(
     if (!prepared_pure_memo_complete_deferred(program, result))
         return prepared_pure_runtime_decline(
             program, "cannot complete deferred tail updates", NULL);
-    if (program->gc_survivor_ready) {
-        result = atom_deep_copy(arena, result);
-        if (!result)
-            return prepared_pure_runtime_decline(
-                program, "cannot return evacuated result", NULL);
-        prepared_pure_gc_discard_survivor(program);
-    }
-    if (prepared_pure_result_has_escaping_suspension(program, result))
+    /* A runtime-expression execution is an internal weak-head step: its
+     * caller consumes the value synchronously and owns any continuation
+     * identity proof.  The ordinary closed-entry ABI publishes its result,
+     * so it retains the stricter duplicate-suspension boundary. */
+    if (!runtime_expression &&
+        prepared_pure_result_has_escaping_suspension(program, result))
         return prepared_pure_runtime_decline(
             program,
             "call-by-need result requires a virtual suspension",
@@ -3621,7 +3656,7 @@ bool cetta_prepared_pure_program_execute(
     CettaPreparedPureProgram *program, Arena *arena,
     Atom *accumulator, Atom *item, Atom **result_out) {
     return prepared_pure_program_execute_internal(
-        program, arena, accumulator, item, false, 0u,
+        program, arena, accumulator, item, NULL, false, 0u,
         NULL, NULL, result_out);
 }
 
@@ -3631,7 +3666,7 @@ bool cetta_prepared_pure_program_execute_controlled(
     CettaPreparedPureInterruptPollFn interrupt_poll,
     void *interrupt_context, Atom **result_out) {
     return prepared_pure_program_execute_internal(
-        program, arena, accumulator, item, false, 0u,
+        program, arena, accumulator, item, NULL, false, 0u,
         interrupt_poll, interrupt_context, result_out);
 }
 
@@ -3640,7 +3675,7 @@ bool cetta_prepared_pure_program_execute_closed(
     size_t nursery_budget_bytes,
     Atom **result_out) {
     return prepared_pure_program_execute_internal(
-        program, arena, NULL, NULL, true,
+        program, arena, NULL, NULL, NULL, true,
         nursery_budget_bytes, NULL, NULL, result_out);
 }
 
@@ -3650,9 +3685,44 @@ bool cetta_prepared_pure_program_execute_closed_controlled(
     CettaPreparedPureInterruptPollFn interrupt_poll,
     void *interrupt_context, Atom **result_out) {
     return prepared_pure_program_execute_internal(
-        program, arena, NULL, NULL, true,
+        program, arena, NULL, NULL, NULL, true,
         nursery_budget_bytes, interrupt_poll, interrupt_context,
         result_out);
+}
+
+bool cetta_prepared_pure_program_execute_closed_expression_controlled(
+    CettaPreparedPureProgram *program, Arena *arena,
+    Atom *expression, size_t nursery_budget_bytes,
+    CettaPreparedPureInterruptPollFn interrupt_poll,
+    void *interrupt_context, Atom **result_out) {
+    return prepared_pure_program_execute_internal(
+        program, arena, NULL, NULL, expression, true,
+        nursery_budget_bytes, interrupt_poll, interrupt_context,
+        result_out);
+}
+
+static bool prepared_pure_value_has_callable_node(
+    const Atom *atom, void *context) {
+    return prepared_pure_expression_is_callable(
+        context, (Atom *)atom);
+}
+
+bool cetta_prepared_pure_program_value_is_fully_evaluated(
+    CettaPreparedPureProgram *program, Atom *value) {
+    return program && value &&
+           !atom_tree_any(
+               value, prepared_pure_value_has_callable_node, program);
+}
+
+void cetta_prepared_pure_program_release_closed_execution(
+    CettaPreparedPureProgram *program) {
+    if (!program)
+        return;
+    prepared_pure_gc_discard_survivor(program);
+    prepared_pure_memo_clear(program);
+    program->frame_len = 0u;
+    program->value_len = 0u;
+    program->slot_len = 0u;
 }
 
 void cetta_prepared_pure_program_free(

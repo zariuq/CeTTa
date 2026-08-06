@@ -7406,6 +7406,38 @@ static bool petta_let_binding_count_only(
                variable);
 }
 
+static bool petta_direct_let_binding_count_only(
+    PettaMachineImpl *machine, Atom *binder, Atom *producer,
+    Atom *body, const PettaPlanNode *body_plan) {
+    if (!petta_let_count_fusion_enabled() || !machine || !binder ||
+        !producer || !body || binder->kind != ATOM_VAR ||
+        binder->var_id == VAR_ID_NONE ||
+        (body_plan && !body_plan->contains_length_call) ||
+        petta_atom_contains_var_id(producer, binder->var_id)) {
+        return false;
+    }
+    uint64_t uses = 0u;
+    return petta_count_use_scan(body, binder->var_id, &uses) &&
+           uses > 0u &&
+           petta_environment_var_is_private(
+               search_context_bindings(&machine->search),
+               binder->var_id);
+}
+
+typedef struct {
+    uint64_t count;
+} PettaCollectionCardinality;
+
+static bool petta_collection_count_item(
+    void *context, Atom *item) {
+    PettaCollectionCardinality *cardinality = context;
+    (void)item;
+    if (!cardinality || cardinality->count >= (uint64_t)INT64_MAX)
+        return false;
+    cardinality->count++;
+    return true;
+}
+
 static bool petta_push_collection_count_fallback(
     PettaMachineImpl *machine, Atom *expression, Atom *expected,
     uint32_t barrier, const PettaPlanNode *plan) {
@@ -7456,6 +7488,25 @@ static bool petta_machine_dispatch_counted_collection(
                 .first = expression,
                 .second = expected,
             });
+    }
+
+    if (machine->host.pull_collection_single_result) {
+        PettaCollectionCardinality cardinality = {0};
+        PettaMachineFoldResult pulled =
+            machine->host.pull_collection_single_result(
+                machine->host.context, machine->space,
+                expression,
+                search_context_bindings(&machine->search),
+                petta_collection_count_item, &cardinality);
+        if (pulled == PETTA_MACHINE_FOLD_VALUE) {
+            Atom *collection = atom_petta_counted_collection(
+                &machine->heap, (int64_t)cardinality.count);
+            return collection &&
+                   petta_machine_unify_resolved(
+                       machine, collection, expected);
+        }
+        if (pulled == PETTA_MACHINE_FOLD_INTERRUPTED)
+            return true;
     }
 
     SymbolId head = atom_head_symbol_id(expression);
@@ -8480,6 +8531,26 @@ static bool petta_machine_dispatch_solve(
             machine, expression->expr.elems[1],
             condition, goal->barrier,
             petta_plan_child(plan, 1u));
+    }
+
+    if (form == PETTA_FORM_LET && nargs == 3u &&
+        petta_direct_let_binding_count_only(
+            machine, expression->expr.elems[1],
+            expression->expr.elems[2],
+            expression->expr.elems[3],
+            petta_plan_child(plan, 3u))) {
+        if (!petta_push_solve_planned(
+                machine, expression->expr.elems[3], expected,
+                goal->barrier, petta_plan_child(plan, 3u)) ||
+            !petta_push_counted_collection_planned(
+                machine, expression->expr.elems[2],
+                expression->expr.elems[1], goal->barrier,
+                petta_plan_child(plan, 2u))) {
+            *failure = PETTA_MACHINE_STEP_CAPACITY;
+            return false;
+        }
+        machine->stats.count_aggregate_let_fusions++;
+        return true;
     }
 
     if ((form == PETTA_FORM_LET || form == PETTA_FORM_CHAIN) &&
