@@ -5323,6 +5323,31 @@ static bool prepared_register_compile_guarded_step(
  * arguments whose declared parameter types keep them syntax. */
 bool space_head_has_arrow_signature(Space *s, SymbolId head,
                                     CettaExprLen arity) {
+    /* The consult runs on hot accelerator admissions (eager closed-call
+     * compiles ask once per call), so the linear annotation scan is memoized
+     * per (space instance, revision, head, arity).  Any space mutation
+     * advances the revision and naturally invalidates the entry. */
+    typedef struct {
+        const Space *space;
+        uint64_t instance_id;
+        uint64_t revision;
+        SymbolId head;
+        CettaExprLen arity;
+        bool shadowed;
+        bool valid;
+    } ArrowSignatureMemo;
+    static _Thread_local ArrowSignatureMemo memo[64];
+    SpaceReadToken read = space_read_token(s);
+    size_t slot = ((size_t)head * 31u + (size_t)arity +
+                   (size_t)read.revision) & 63u;
+    ArrowSignatureMemo *entry = &memo[slot];
+    if (entry->valid && entry->space == (const Space *)s &&
+        entry->instance_id == read.instance_id &&
+        entry->revision == read.revision &&
+        entry->head == head && entry->arity == arity) {
+        return entry->shadowed;
+    }
+    bool shadowed = false;
     CettaCount logical_len = space_length64(s);
     for (CettaIndex i = 0; i < logical_len; i++) {
         Atom *annotation = space_get_at64(s, i);
@@ -5338,10 +5363,21 @@ bool space_head_has_arrow_signature(Space *s, SymbolId head,
         Atom *type = annotation->expr.elems[2];
         if (type && type->kind == ATOM_EXPR &&
             type->expr.len == (CettaExprLen)(arity + 2u) &&
-            atom_is_symbol_id(type->expr.elems[0], g_builtin_syms.arrow))
-            return true;
+            atom_is_symbol_id(type->expr.elems[0], g_builtin_syms.arrow)) {
+            shadowed = true;
+            break;
+        }
     }
-    return false;
+    *entry = (ArrowSignatureMemo){
+        .space = (const Space *)s,
+        .instance_id = read.instance_id,
+        .revision = read.revision,
+        .head = head,
+        .arity = arity,
+        .shadowed = shadowed,
+        .valid = true,
+    };
+    return shadowed;
 }
 
 bool space_prepare_single_equation(Space *s, SymbolId head,
