@@ -1761,10 +1761,13 @@ static bool petta_specializer_analyze_call(
             analysis->specialized = specialized;
         }
     } else if (ok && candidates.len > 0u && materialize) {
-        printf(
-            "Not specialized %s/%" PRIu64 "\n",
-            symbol_bytes(g_symbols, specialized),
-            (uint64_t)call->expr.len);
+        if (petta_specializer_trace_enabled()) {
+            fprintf(
+                stderr,
+                "[petta-specializer] not specialized %s/%" PRIu64 "\n",
+                symbol_bytes(g_symbols, specialized),
+                (uint64_t)call->expr.len);
+        }
         /*
          * The SWI translator makes this decision once for the compiled
          * call path.  The native machine revisits the source occurrence on

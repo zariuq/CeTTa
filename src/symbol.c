@@ -291,3 +291,26 @@ void symbol_table_init_builtins(SymbolTable *st, BuiltinSyms *builtins) {
     CETTA_BUILTIN_SYMBOLS(CETTA_MARK_LIBRARY_GROUNDED)
 #undef CETTA_MARK_LIBRARY_GROUNDED
 }
+
+CettaPettaArrowMode cetta_petta_arrow_mode(SymbolId id) {
+    const char *name;
+    size_t len;
+    size_t mode_len;
+
+    if (id == SYMBOL_ID_NONE || !g_symbols)
+        return CETTA_PETTA_ARROW_MODE_NONE;
+    name = symbol_bytes(g_symbols, id);
+    if (!name)
+        return CETTA_PETTA_ARROW_MODE_NONE;
+    len = strlen(name);
+    if (len < 6u || name[0] != '-' || name[1] != '[')
+        return CETTA_PETTA_ARROW_MODE_NONE;
+    if (strcmp(name + len - 3u, "]->") != 0)
+        return CETTA_PETTA_ARROW_MODE_NONE;
+    mode_len = len - 5u;
+    if (mode_len == 3u && strncmp(name + 2, "det", 3) == 0)
+        return CETTA_PETTA_ARROW_MODE_DET;
+    if (mode_len == 6u && strncmp(name + 2, "nondet", 6) == 0)
+        return CETTA_PETTA_ARROW_MODE_NONDET;
+    return CETTA_PETTA_ARROW_MODE_OTHER;
+}

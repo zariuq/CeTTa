@@ -520,6 +520,147 @@ bool petta_semantics_is_open_cons_value(const Atom *atom) {
            atom->expr.elems[0]->sym_id == ids->open_cons;
 }
 
+void petta_semantics_logical_list_cursor_init(
+    PeTTaLogicalListCursor *cursor, Atom *list) {
+    if (!cursor)
+        return;
+    *cursor = (PeTTaLogicalListCursor){
+        .rest = list,
+    };
+}
+
+PeTTaLogicalListStep petta_semantics_logical_list_cursor_next(
+    PeTTaLogicalListCursor *cursor, Atom **item) {
+    if (item)
+        *item = NULL;
+    if (!cursor || !item || cursor->invalid)
+        return PETTA_LOGICAL_LIST_INVALID;
+
+    if (cursor->in_flat_tail) {
+        if (!cursor->rest || cursor->rest->kind != ATOM_EXPR) {
+            cursor->invalid = true;
+            return PETTA_LOGICAL_LIST_INVALID;
+        }
+        if (cursor->flat_index < cursor->rest->expr.len) {
+            *item = cursor->rest->expr.elems[cursor->flat_index++];
+            return PETTA_LOGICAL_LIST_ITEM;
+        }
+        cursor->rest = NULL;
+        return PETTA_LOGICAL_LIST_END;
+    }
+
+    if (!cursor->rest) {
+        cursor->invalid = true;
+        return PETTA_LOGICAL_LIST_INVALID;
+    }
+    if (petta_semantics_is_open_cons_value(cursor->rest)) {
+        *item = cursor->rest->expr.elems[1];
+        cursor->rest = cursor->rest->expr.elems[2];
+        return PETTA_LOGICAL_LIST_ITEM;
+    }
+    if (cursor->rest->kind != ATOM_EXPR) {
+        cursor->invalid = true;
+        return PETTA_LOGICAL_LIST_INVALID;
+    }
+
+    cursor->in_flat_tail = true;
+    cursor->flat_index = 0u;
+    return petta_semantics_logical_list_cursor_next(cursor, item);
+}
+
+bool petta_semantics_logical_list_length(
+    Atom *list, CettaExprLen *length) {
+    if (length)
+        *length = 0u;
+    if (!list || !length)
+        return false;
+
+    PeTTaLogicalListCursor cursor;
+    petta_semantics_logical_list_cursor_init(&cursor, list);
+    for (;;) {
+        Atom *item = NULL;
+        PeTTaLogicalListStep step =
+            petta_semantics_logical_list_cursor_next(
+                &cursor, &item);
+        if (step == PETTA_LOGICAL_LIST_END)
+            return true;
+        if (step == PETTA_LOGICAL_LIST_INVALID ||
+            *length == UINT64_MAX) {
+            *length = 0u;
+            return false;
+        }
+        (*length)++;
+    }
+}
+
+Atom *petta_semantics_materialize_closed_logical_list(
+    Arena *arena, Atom *list) {
+    if (!arena || !list)
+        return NULL;
+    if (!petta_semantics_is_open_cons_value(list))
+        return list->kind == ATOM_EXPR ? list : NULL;
+
+    CettaExprLen length = 0u;
+    if (!petta_semantics_logical_list_length(list, &length) ||
+        !cetta_expr_len_fits_size(length) ||
+        !cetta_expr_len_mul_fits_size(length, sizeof(Atom *))) {
+        return NULL;
+    }
+    Atom **items = length
+        ? cetta_malloc((size_t)length * sizeof(*items))
+        : NULL;
+    PeTTaLogicalListCursor cursor;
+    petta_semantics_logical_list_cursor_init(&cursor, list);
+    for (CettaExprIndex index = 0u; index < length; index++) {
+        Atom *item = NULL;
+        if (petta_semantics_logical_list_cursor_next(
+                &cursor, &item) != PETTA_LOGICAL_LIST_ITEM) {
+            free(items);
+            return NULL;
+        }
+        items[index] = item;
+    }
+    Atom *extra = NULL;
+    if (petta_semantics_logical_list_cursor_next(
+            &cursor, &extra) != PETTA_LOGICAL_LIST_END) {
+        free(items);
+        return NULL;
+    }
+    Atom *result = atom_expr(arena, items, length);
+    free(items);
+    return result;
+}
+
+Atom *petta_semantics_flatten_closed_open_cons(Arena *arena, Atom *atom) {
+    if (!arena || !atom || atom->kind != ATOM_EXPR)
+        return atom;
+    if (petta_semantics_is_open_cons_value(atom)) {
+        Atom *flat =
+            petta_semantics_materialize_closed_logical_list(
+                arena, atom);
+        if (!flat)
+            return atom;
+        atom = flat;
+    }
+    Atom **rebuilt = NULL;
+    for (CettaExprIndex index = 0u; index < atom->expr.len; index++) {
+        Atom *child = petta_semantics_flatten_closed_open_cons(
+            arena, atom->expr.elems[index]);
+        if (!rebuilt && child != atom->expr.elems[index]) {
+            rebuilt = arena_alloc(
+                arena, sizeof(Atom *) * atom->expr.len);
+            if (!rebuilt)
+                return atom;
+            for (CettaExprIndex prior = 0u; prior < index; prior++)
+                rebuilt[prior] = atom->expr.elems[prior];
+        }
+        if (rebuilt)
+            rebuilt[index] = child;
+    }
+    return rebuilt
+        ? atom_expr(arena, rebuilt, atom->expr.len) : atom;
+}
+
 Atom *petta_semantics_open_cons_value(
     Arena *arena, Atom *head, Atom *tail) {
     const PeTTaSymbolIds *ids = petta_symbol_ids();

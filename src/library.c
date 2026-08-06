@@ -343,7 +343,15 @@ void cetta_library_context_init_for_language_profile(CettaLibraryContext *ctx,
         symbol_table_instance_id(g_symbols);
     ctx->petta_program = language_id == CETTA_LANGUAGE_PETTA
         ? petta_program_new() : NULL;
+    ctx->petta_token_space_clause_registry =
+        language_id == CETTA_LANGUAGE_PETTA
+            ? cetta_petta_token_space_clause_registry_new()
+            : NULL;
     ctx->lib_prolog = cetta_lib_prolog_runtime_new();
+    if (ctx->lib_prolog && ctx->working_dir[0] != '\0') {
+        (void)cetta_lib_prolog_runtime_set_working_dir(
+            ctx->lib_prolog, ctx->working_dir);
+    }
     ctx->foreign_runtime = cetta_foreign_runtime_new();
 }
 
@@ -374,6 +382,9 @@ void cetta_library_context_free(CettaLibraryContext *ctx) {
     ctx->petta_tabled_symbol_table_instance = 0u;
     petta_program_free(ctx->petta_program);
     ctx->petta_program = NULL;
+    cetta_petta_token_space_clause_registry_free(
+        ctx->petta_token_space_clause_registry);
+    ctx->petta_token_space_clause_registry = NULL;
     cetta_lib_prolog_runtime_free(ctx->lib_prolog);
     ctx->lib_prolog = NULL;
     if (ctx->foreign_runtime) {
@@ -630,6 +641,10 @@ void cetta_library_context_set_script_path(CettaLibraryContext *ctx, const char 
     if (!filename) return;
     if (!realpath(filename, resolved)) return;
     copy_parent_dir(ctx->script_dir, sizeof(ctx->script_dir), resolved);
+    if (ctx->lib_prolog && ctx->script_dir[0] != '\0') {
+        (void)cetta_lib_prolog_runtime_set_working_dir(
+            ctx->lib_prolog, ctx->script_dir);
+    }
 }
 
 void cetta_library_context_set_cli_args(CettaLibraryContext *ctx, int argc,
@@ -6257,6 +6272,9 @@ static bool cetta_library_petta_execute_document_ids(
             *failure_out = CETTA_PETTA_DOCUMENT_COPY_FAILED;
         return false;
     }
+
+    cetta_petta_erase_typecheck_marks_document(
+        work_space->native.universe, atom_ids, atom_count);
 
     if (ctx->petta_program) {
         for (int declaration_index = 0;

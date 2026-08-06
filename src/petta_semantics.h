@@ -105,6 +105,38 @@ Atom *petta_semantics_open_cons_value(
     Arena *arena, Atom *head, Atom *tail);
 Atom *petta_semantics_flat_list_spine(
     Arena *arena, Atom *flat_list);
+
+/*
+ * Iterate the logical elements of either a flat expression or a closed
+ * internal open-cons chain.  The cursor never exposes the open-cons carrier
+ * fields themselves.  An unbound or non-expression tail is INVALID rather
+ * than a truncated list.
+ *
+ * Positive: `(open-cons a (open-cons b (c)))` yields a, b, c, END.
+ * Negative: `(open-cons a $tail)` yields a, INVALID.
+ */
+typedef enum {
+    PETTA_LOGICAL_LIST_ITEM = 0,
+    PETTA_LOGICAL_LIST_END,
+    PETTA_LOGICAL_LIST_INVALID,
+} PeTTaLogicalListStep;
+
+typedef struct {
+    Atom *rest;
+    CettaExprIndex flat_index;
+    bool in_flat_tail;
+    bool invalid;
+} PeTTaLogicalListCursor;
+
+void petta_semantics_logical_list_cursor_init(
+    PeTTaLogicalListCursor *cursor, Atom *list);
+PeTTaLogicalListStep petta_semantics_logical_list_cursor_next(
+    PeTTaLogicalListCursor *cursor, Atom **item);
+bool petta_semantics_logical_list_length(
+    Atom *list, CettaExprLen *length);
+Atom *petta_semantics_materialize_closed_logical_list(
+    Arena *arena, Atom *list);
+
 bool petta_semantics_contains_cons_constraint(const Atom *atom);
 /*
  * Conservative clause-index discriminator for PeTTa list patterns.
@@ -186,5 +218,13 @@ Atom *petta_semantics_partial_value(
     Arena *arena, Atom *base, Atom *const *arguments, CettaExprLen nargs);
 bool petta_semantics_partial_view(
     const Atom *atom, Atom **base, Atom **arguments);
+
+/*
+ * A CLOSED open-cons chain denotes exactly the flat list it spells — the
+ * reference cannot distinguish the two.  Rewrite every closed chain in the
+ * atom to its flat image (recursively); a chain whose tail is unbound keeps
+ * its carrier.  Returns the input atom unchanged when nothing rewrites.
+ */
+Atom *petta_semantics_flatten_closed_open_cons(Arena *arena, Atom *atom);
 
 #endif /* CETTA_PETTA_SEMANTICS_H */
