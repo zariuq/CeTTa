@@ -1,4 +1,4 @@
-(prolog:query (quote true) (quote absent))
+(prolog:query true absent)
 true
 false
 (prolog:extension absent)
