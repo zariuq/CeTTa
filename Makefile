@@ -6862,7 +6862,8 @@ test-petta-prepared-register-loop: $(BIN)
 
 .PHONY: test-petta-search-machine
 test-lib-prolog: $(BIN)
-	@he_actual=$$(mktemp runtime/lib-prolog-he.XXXXXX); \
+	@set -e; \
+	he_actual=$$(mktemp runtime/lib-prolog-he.XXXXXX); \
 	prime_actual=$$(mktemp runtime/lib-prolog-prime.XXXXXX); \
 	petta_actual=$$(mktemp runtime/lib-prolog-petta.XXXXXX); \
 	trap 'rm -f "$$he_actual" "$$prime_actual" "$$petta_actual"' \
