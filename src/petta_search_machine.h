@@ -39,6 +39,13 @@ typedef enum {
     PETTA_MACHINE_FOLD_INTERRUPTED,
 } PettaMachineFoldResult;
 
+/* A collection producer lends each fully evaluated item to a synchronous,
+ * side-effect-free consumer.  The consumer must not retain item beyond the
+ * callback.  A declined producer invalidates all consumer state accumulated
+ * by that attempt, so callers use a private transactional accumulator. */
+typedef bool (*PettaMachineBorrowedItemConsumer)(
+    void *context, Atom *item);
+
 typedef struct {
     void *context;
     /* Wall-clock sampling is opt-in so normal evaluation pays no clock cost. */
@@ -65,6 +72,14 @@ typedef struct {
         Atom *accumulator_binder, Atom *item_binder,
         Atom *step_expression, const Bindings *environment,
         Atom **result_out);
+    /* Pull a determinate, effect-free collection without materializing its
+     * spine.  The callback is the consumer algebra; length is only its first
+     * use.  NOT_APPLICABLE leaves canonical evaluation authoritative. */
+    PettaMachineFoldResult (*pull_collection_single_result)(
+        void *context, Space *space, Atom *producer,
+        const Bindings *environment,
+        PettaMachineBorrowedItemConsumer consume_item,
+        void *consumer_context);
     /*
      * Named-state arguments have already been evaluated by the PeTTa
      * machine.  The host owns only registry lookup/mutation; it must not
