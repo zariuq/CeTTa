@@ -1,5 +1,6 @@
 #include "parser.h"
 #include "petta_search_machine.h"
+#include "petta_semantics.h"
 #include "symbol.h"
 #include "variant_shape.h"
 
@@ -13,6 +14,61 @@ static Atom *parse_one(Arena *arena, const char *source) {
     Atom *result = count == 1 && forms ? forms[0] : NULL;
     free(forms);
     return result;
+}
+
+static void test_logical_list_cursor_boundaries(Arena *arena) {
+    enum { ITEM_COUNT = 129 };
+    Atom *items[ITEM_COUNT];
+    Atom *tail = atom_unit(arena);
+    assert(tail);
+    for (size_t index = ITEM_COUNT; index > 0u; index--) {
+        items[index - 1u] = atom_int(arena, (int64_t)(index - 1u));
+        assert(items[index - 1u]);
+        tail = petta_semantics_open_cons_value(
+            arena, items[index - 1u], tail);
+        assert(tail);
+    }
+
+    CettaExprLen length = 0u;
+    assert(petta_semantics_logical_list_length(tail, &length));
+    assert(length == ITEM_COUNT);
+
+    PeTTaLogicalListCursor cursor;
+    petta_semantics_logical_list_cursor_init(&cursor, tail);
+    for (size_t index = 0u; index < ITEM_COUNT; index++) {
+        Atom *item = NULL;
+        assert(petta_semantics_logical_list_cursor_next(
+                   &cursor, &item) == PETTA_LOGICAL_LIST_ITEM);
+        assert(item == items[index]);
+    }
+    Atom *extra = NULL;
+    assert(petta_semantics_logical_list_cursor_next(
+               &cursor, &extra) == PETTA_LOGICAL_LIST_END);
+
+    Atom *flat = petta_semantics_materialize_closed_logical_list(
+        arena, tail);
+    assert(flat && flat->kind == ATOM_EXPR);
+    assert(flat->expr.len == ITEM_COUNT);
+    for (size_t index = 0u; index < ITEM_COUNT; index++)
+        assert(flat->expr.elems[index] == items[index]);
+
+    Atom *open_tail = atom_var_with_id(
+        arena, "open-tail", fresh_var_id());
+    Atom *partial = petta_semantics_open_cons_value(
+        arena, items[0], open_tail);
+    assert(open_tail && partial);
+    petta_semantics_logical_list_cursor_init(&cursor, partial);
+    Atom *head = NULL;
+    assert(petta_semantics_logical_list_cursor_next(
+               &cursor, &head) == PETTA_LOGICAL_LIST_ITEM);
+    assert(head == items[0]);
+    assert(petta_semantics_logical_list_cursor_next(
+               &cursor, &extra) == PETTA_LOGICAL_LIST_INVALID);
+    length = ITEM_COUNT;
+    assert(!petta_semantics_logical_list_length(partial, &length));
+    assert(length == 0u);
+    assert(!petta_semantics_materialize_closed_logical_list(
+        arena, partial));
 }
 
 static void test_private_variant_summary(Arena *arena) {
@@ -1173,6 +1229,7 @@ int main(void) {
     g_var_intern = &variables;
     space_init_with_universe(&space, &universe);
 
+    test_logical_list_cursor_boundaries(&answers);
     test_private_variant_summary(&answers);
     test_reachable_binding_projection(&answers);
     test_host_environment_projection(&space, &answers);

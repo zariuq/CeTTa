@@ -1,0 +1,44 @@
+{
+  "schema": "cetta.petta-chainer-compat.v1",
+  "chainer": {
+    "revision": "2f45e50dbcd55efe5e2817650eb8f2ea70eb15b3",
+    "subtree": "pettachainer/metta"
+  },
+  "petta": {
+    "revision": "e038e4dbb587e48fdb9d14990966108d38fde0b3",
+    "overlay_prefix": "lib"
+  },
+  "forbidden_stdout": [
+    "Not specialized ",
+    "❌"
+  ],
+  "examples": [
+    {
+      "name": "deductionrevision",
+      "path": "examples/deductionrevision.metta",
+      "source_sha256": "9dc014bb16f96d58dbe686634fa585deb857b12910c2f4e5ab5d69013b10bf37",
+      "normalized_sha256": "7c4b04f131b0f92686e9b5c52d36aee6a4fc12fb7b725c255e27fd1ef3a21d5e",
+      "checks": 2,
+      "truths": 3,
+      "timeout_seconds": 300
+    },
+    {
+      "name": "flyingraven",
+      "path": "examples/flyingraven.metta",
+      "source_sha256": "9ff994d2f28658add2575bd5eeddbbb07fdf06a5ae2dbd93b007dfb8e3d9d129",
+      "normalized_sha256": "b9c478b159130d90c88d2c17df094a3cb4fcfbcb9337c73f7e1ad49f8eca7090",
+      "checks": 3,
+      "truths": 4,
+      "timeout_seconds": 300
+    },
+    {
+      "name": "raveninduction",
+      "path": "examples/raveninduction.metta",
+      "source_sha256": "50afae5338ed46694d93124318c7b779b747cec97c04681e5087ed473d124e6e",
+      "normalized_sha256": "9180773ff7d1759ae8beb458c7d070b243f31780723ea3e7470c2223631fef4d",
+      "checks": 1,
+      "truths": 2,
+      "timeout_seconds": 300
+    }
+  ]
+}

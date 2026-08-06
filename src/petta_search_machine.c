@@ -1,6 +1,7 @@
 #include "petta_search_machine.h"
 
 #include "grounded.h"
+#include "match.h"
 #include "petta_semantics.h"
 #include "petta_specializer.h"
 #include "symbol.h"
@@ -104,6 +105,8 @@ typedef enum {
     PETTA_GOAL_TRANSACTION_COMMIT,
     PETTA_GOAL_MUTEX_RELEASE,
     PETTA_GOAL_SET_ANSWER_WEIGHT,
+    PETTA_GOAL_EQUAL_COMMIT,
+    PETTA_GOAL_REDUCE_READY,
 } PettaGoalKind;
 
 typedef struct {
@@ -171,6 +174,8 @@ static void petta_machine_record_goal_class(
     case PETTA_GOAL_TRANSACTION_COMMIT:
     case PETTA_GOAL_MUTEX_RELEASE:
     case PETTA_GOAL_SET_ANSWER_WEIGHT:
+    case PETTA_GOAL_EQUAL_COMMIT:
+    case PETTA_GOAL_REDUCE_READY:
         stats->control_goal_transitions++;
         return;
     case PETTA_GOAL_HOST_STRICT_READY:
@@ -200,6 +205,7 @@ typedef enum {
     PETTA_CHOICE_MATCH,
     PETTA_CHOICE_TYPED_CALL,
     PETTA_CHOICE_CASE_DEFAULT,
+    PETTA_CHOICE_EQUAL_DEFAULT,
     PETTA_CHOICE_RELATIONAL_EXTENSION,
     PETTA_CHOICE_COLLAPSE,
     PETTA_CHOICE_COUNT_COLLAPSE,
@@ -304,6 +310,10 @@ typedef struct {
             Atom *expected;
             const PettaPlanNode *plan;
         } case_default;
+        struct {
+            bool saw_answer;
+            Atom *expected;
+        } equal_default;
         struct {
             bool fallback_started;
             Atom *expression;
@@ -1116,6 +1126,8 @@ static bool petta_choice_exhausted_after_success(
                choice->as.typed_call.count;
     case PETTA_CHOICE_CASE_DEFAULT:
         return choice->as.case_default.saw_answer;
+    case PETTA_CHOICE_EQUAL_DEFAULT:
+        return choice->as.equal_default.saw_answer;
     case PETTA_CHOICE_RELATIONAL_EXTENSION:
         return choice->as.relational_extension.fallback_started;
     case PETTA_CHOICE_COLLAPSE:
@@ -1522,6 +1534,9 @@ static bool petta_binding_roots_add_choice(
                    roots, choice->as.case_default.expression) &&
                petta_binding_roots_add(
                    roots, choice->as.case_default.expected);
+    case PETTA_CHOICE_EQUAL_DEFAULT:
+        return petta_binding_roots_add(
+            roots, choice->as.equal_default.expected);
     case PETTA_CHOICE_RELATIONAL_EXTENSION:
         return petta_binding_roots_add(
                    roots,
@@ -2784,7 +2799,10 @@ static bool petta_machine_foreign_callable(
             machine->host.context,
             atom->expr.elems[0]->sym_id,
             atom->expr.len - 1u);
-    return arity.known;
+    /* A name the boundary knows only at OTHER arities is data at this
+     * occurrence; the reference calls engine predicates at their exact
+     * arity alone. */
+    return arity.exact;
 }
 
 typedef struct {
@@ -3368,6 +3386,15 @@ static bool petta_machine_start_mutex(
     return true;
 }
 
+/* Determinism-annotated arrows (`-[mode]->`, extended PeTTa) are
+   deliberately absent here: the reference performs no runtime type
+   acceptance — its determinism/type checks run statically at load — and a
+   mode-arrow-typed head with clauses dispatches like any untyped relation,
+   while a clauseless one declares a constructor's field types (the chainer
+   types `:`, `STV`, and its record heads this way, including
+   mode-POLYMORPHIC arrows such as `-[$e]->` that no symbol-level
+   recognizer could match).  Load-time mode discipline consumes the arrow
+   names separately. */
 static bool petta_machine_type_signature_applies(
     const Atom *type, CettaExprLen nargs) {
     return type && type->kind == ATOM_EXPR &&
@@ -3593,9 +3620,18 @@ static bool petta_machine_push_native_predicate(
                    predicate->expr.elems[1], barrier);
     }
 
+    /*
+     * The result-last view exposes a NATIVE function relation through the
+     * predicate boundary.  Foreign named-arity knowledge must not leak in
+     * here: a head that names a live Prolog predicate (assertz/2 is the
+     * motivating case) is a direct goal for the foreign path below, and
+     * viewing it result-last would strip its final argument and evaluate a
+     * reified body.
+     */
     CettaExprLen function_arity = predicate->expr.len - 2u;
-    PeTTaNamedArity arity = petta_machine_named_arity(
-        machine, predicate->expr.elems[0], function_arity);
+    PeTTaNamedArity arity = petta_semantics_named_arity(
+        machine->space, &machine->heap,
+        predicate->expr.elems[0], function_arity);
     if (!arity.known || !arity.exact)
         return true;
 
@@ -3730,7 +3766,16 @@ static PettaPartialDecision petta_machine_named_partial_decision(
         machine, expression->expr.elems[0], nargs);
     if (!arity.known || arity.exact)
         return PETTA_PARTIAL_NO;
-    if (arity.larger)
+    /*
+     * Currying is a property of the native function registry.  A bare
+     * engine predicate visible only at larger arities is ordinary data at
+     * this occurrence (the reference calls such names solely at their
+     * exact arity), so only native arity knowledge may open a partial.
+     */
+    PeTTaNamedArity native = petta_semantics_named_arity(
+        machine->space, &machine->heap,
+        expression->expr.elems[0], nargs);
+    if (native.larger)
         return PETTA_PARTIAL_YES;
 
     PettaExtensionState extension =
@@ -4962,6 +5007,15 @@ static bool petta_machine_advance_choice(
             return true;
         }
         return false;
+    }
+
+    if (choice->kind == PETTA_CHOICE_EQUAL_DEFAULT) {
+        if (choice->as.equal_default.saw_answer)
+            return false;
+        choice->as.equal_default.saw_answer = true;
+        return petta_machine_boolean(
+            machine, false,
+            choice->as.equal_default.expected);
     }
 
     if (choice->kind == PETTA_CHOICE_CASE_DEFAULT) {
@@ -7432,6 +7486,134 @@ static bool petta_machine_dispatch_solve(
             machine, expression->expr.elems[1], expected);
 
     /*
+     * `sealed` is the reference translator's variable-privacy form, not a
+     * strict operator: copy_term(Vars, Goal+Result, _, Copy), then the COPY
+     * runs.  Only the variables of the first argument are freshened; every
+     * other variable keeps caller identity, and because the copy is taken
+     * before execution, bindings the goal makes to sealed variables stay
+     * private to the copy.  An empty seal list is the identity.  Strict
+     * grounded dispatch would instead evaluate the goal first and apply
+     * HE's complementary standardize-apart contract — severing the variable
+     * linkage rule compilers thread through this form.
+     */
+    if (head_id == g_builtin_syms.sealed_text && nargs == 2u) {
+        Atom *vars_term = petta_machine_apply_bindings(
+            machine, environment, &machine->heap,
+            expression->expr.elems[1]);
+        Atom *goal_term = petta_machine_apply_bindings(
+            machine, environment, &machine->heap,
+            expression->expr.elems[2]);
+        Atom *copy = vars_term && goal_term
+            ? rename_vars_only(
+                  &machine->heap, goal_term, vars_term)
+            : NULL;
+        if (!copy) {
+            *failure = PETTA_MACHINE_STEP_CAPACITY;
+            return false;
+        }
+        return petta_push_solve(
+            machine, copy, expected, goal->barrier);
+    }
+
+    /*
+     * `data` is typecheck-v2's explicitly non-callable tuple: fields
+     * evaluate, the head is erased, and no field value can turn the result
+     * into a call.  Only the extended profile interprets it — base PeTTa
+     * has no such head, so elsewhere it remains inert syntax.  Its erased
+     * siblings brand/the never reach this machine: document ingestion
+     * rewrites them away exactly as the reference translator does.
+     */
+    if (cetta_petta_typecheck_op_applies(head_id, nargs)) {
+        if (!cetta_expr_len_mul_fits_size(
+                nargs, sizeof(Atom *))) {
+            *failure = PETTA_MACHINE_STEP_CAPACITY;
+            return false;
+        }
+        Atom **slots = nargs == 0u
+            ? NULL
+            : arena_alloc(
+                  &machine->heap,
+                  sizeof(*slots) * (size_t)nargs);
+        if (nargs > 0u && !slots) {
+            *failure = PETTA_MACHINE_STEP_CAPACITY;
+            return false;
+        }
+        for (CettaExprIndex index = 0u; index < nargs; index++) {
+            slots[index] = petta_fresh_variable(machine);
+            if (!slots[index]) {
+                *failure = PETTA_MACHINE_STEP_CAPACITY;
+                return false;
+            }
+        }
+        Atom *tuple = atom_expr(&machine->heap, slots, nargs);
+        if (!tuple) {
+            *failure = PETTA_MACHINE_STEP_CAPACITY;
+            return false;
+        }
+        for (CettaExprIndex index = nargs; index > 0u; index--) {
+            if (!petta_push_solve_planned(
+                    machine, expression->expr.elems[index],
+                    slots[index - 1u], goal->barrier,
+                    petta_plan_child(plan, index))) {
+                *failure = PETTA_MACHINE_STEP_CAPACITY;
+                return false;
+            }
+        }
+        return petta_push_unify(
+            machine, tuple, expected, goal->barrier);
+    }
+
+    /*
+     * A runtime `:` expression is PeTTa DATA whose nested computations
+     * evaluate in place: the reference registers no function under the
+     * head, so its translator builds the structure with each child
+     * translated as an ordinary expression (calls become calls, data stays
+     * data) and the head surviving.  The chainer's externalizer depends on
+     * this — (: KB (externalize-query-proof P) T TV) must evaluate the
+     * proof walk while remaining a `:` tuple.  Handing the expression to
+     * the host would instead apply the HE typing operator's data-owned
+     * argument contract.
+     */
+    if (head_id == g_builtin_syms.colon && nargs >= 1u) {
+        if (!cetta_expr_len_mul_fits_size(
+                nargs, sizeof(Atom *))) {
+            *failure = PETTA_MACHINE_STEP_CAPACITY;
+            return false;
+        }
+        Atom **slots = arena_alloc(
+            &machine->heap, sizeof(*slots) * ((size_t)nargs + 1u));
+        if (!slots) {
+            *failure = PETTA_MACHINE_STEP_CAPACITY;
+            return false;
+        }
+        slots[0] = expression->expr.elems[0];
+        for (CettaExprIndex index = 0u; index < nargs; index++) {
+            slots[index + 1u] = petta_fresh_variable(machine);
+            if (!slots[index + 1u]) {
+                *failure = PETTA_MACHINE_STEP_CAPACITY;
+                return false;
+            }
+        }
+        Atom *tuple = atom_expr(
+            &machine->heap, slots, (CettaExprLen)(nargs + 1u));
+        if (!tuple) {
+            *failure = PETTA_MACHINE_STEP_CAPACITY;
+            return false;
+        }
+        for (CettaExprIndex index = nargs; index > 0u; index--) {
+            if (!petta_push_solve_planned(
+                    machine, expression->expr.elems[index],
+                    slots[index], goal->barrier,
+                    petta_plan_child(plan, index))) {
+                *failure = PETTA_MACHINE_STEP_CAPACITY;
+                return false;
+            }
+        }
+        return petta_push_unify(
+            machine, tuple, expected, goal->barrier);
+    }
+
+    /*
      * `Predicate` crosses from MeTTa list syntax to the optional
      * Prolog-callable representation.  Apply current bindings to its body,
      * but do not execute the visible functor or arguments.
@@ -7480,6 +7662,14 @@ static bool petta_machine_dispatch_solve(
         nargs == 1u) {
         Atom *items = petta_machine_apply_bindings(machine,
             environment, &machine->heap, expression->expr.elems[1]);
+        /*
+         * The alternative list is a LOGICAL list: a bound closed open-cons
+         * chain (a chainer result set, for example) denotes the same
+         * alternatives as its flat spelling and must distribute the same
+         * way, not iterate the carrier's implementation fields.
+         */
+        items = petta_semantics_flatten_closed_open_cons(
+            &machine->heap, items);
         return petta_machine_start_superpose(
             machine, items, expected, goal->barrier,
             petta_plan_child(plan, 1u));
@@ -7752,6 +7942,80 @@ static bool petta_machine_dispatch_solve(
             petta_symbol_name_is(reference->sym_id, "&self")) {
             target = machine->space;
         }
+        /*
+         * A plain-symbol space that no registry binding resolves is the
+         * reference's Prolog-clause representation: match builds
+         * Term =.. [Space | PatternElems] and enumerates the predicate's
+         * clauses, one template evaluation per solution.  Lower to the
+         * boundary's callPredicate over the same cons cell — the pattern's
+         * variables come back as ordinary solution bindings — guarded by
+         * engine-side existence so a space with no clauses stays an empty
+         * match exactly like the reference's fail-guard.
+         */
+        if (!target && reference->kind == ATOM_SYMBOL &&
+            expression->expr.elems[2] &&
+            expression->expr.elems[2]->kind == ATOM_EXPR &&
+            expression->expr.elems[2]->expr.len > 0u) {
+            /*
+             * The reference's match on a plain-symbol space calls the
+             * space-name predicate under catch(_, _, fail): every clause is
+             * one solution, and a space with no clauses (or no predicate at
+             * all) is an empty match, never an error.
+             */
+            CettaExprLen row_len =
+                expression->expr.elems[2]->expr.len;
+            PeTTaNamedArity space_arity =
+                machine->host.foreign_named_arity_resolving
+                    ? machine->host.foreign_named_arity_resolving(
+                          machine->host.context,
+                          reference->sym_id,
+                          row_len > 0u ? row_len - 1u : 0u)
+                    : (PeTTaNamedArity){0};
+            if (!space_arity.known)
+                return false;
+            Atom *cons_symbol = atom_symbol(
+                &machine->heap, "cons");
+            Atom *predicate_symbol = atom_symbol(
+                &machine->heap, "Predicate");
+            Atom *call_symbol = atom_symbol(
+                &machine->heap, "callPredicate");
+            Atom *ignored = petta_fresh_variable(machine);
+            if (!cons_symbol || !predicate_symbol ||
+                !call_symbol || !ignored) {
+                *failure = PETTA_MACHINE_STEP_CAPACITY;
+                return false;
+            }
+            Atom *cons_cell = atom_expr3(
+                &machine->heap, cons_symbol, reference,
+                expression->expr.elems[2]);
+            Atom *predicate_value = cons_cell
+                ? atom_expr2(
+                      &machine->heap, predicate_symbol,
+                      cons_cell)
+                : NULL;
+            Atom *call = predicate_value
+                ? atom_expr2(
+                      &machine->heap, call_symbol,
+                      predicate_value)
+                : NULL;
+            Atom *let_symbol = atom_symbol_id(
+                &machine->heap, g_builtin_syms.let);
+            Atom *lowered = call && let_symbol
+                ? atom_expr(
+                      &machine->heap,
+                      (Atom *[]){
+                          let_symbol, ignored, call,
+                          expression->expr.elems[3],
+                      },
+                      4u)
+                : NULL;
+            if (!lowered) {
+                *failure = PETTA_MACHINE_STEP_CAPACITY;
+                return false;
+            }
+            return petta_push_solve(
+                machine, lowered, expected, goal->barrier);
+        }
         if (!target)
             return false;
         return petta_machine_start_match_choice(
@@ -7785,27 +8049,15 @@ static bool petta_machine_dispatch_solve(
                 machine, equal, expected);
         }
         /*
-         * `cons` is PeTTa's relational view of the native flat expression
-         * carrier.  It may denote an open list, which cannot first be
-         * materialized as an ordinary Atom expression.  Prolog's =/3 tests
-         * unifiability and retains bindings on success, so discharge a cons
-         * constraint directly through the same matcher used by equation
-         * heads.  A failed comparison is the boolean false answer, not
-         * relational branch failure.
+         * Operands evaluate before the comparison — a cons cell built in
+         * source becomes its list value and a quote yields its payload, as
+         * the reference's translate-then-'='/3 sequence does — so cons
+         * handling lives in the EQUAL_READY continuation, where the judge
+         * is representation-aware.  Short-circuiting here on the raw
+         * operands would compare unevaluated pattern syntax (the chainer's
+         * `(quote (...))`-carrying premise patterns are the motivating
+         * case).
          */
-        bool left_cons =
-            petta_semantics_contains_cons_constraint(left);
-        bool right_cons =
-            petta_semantics_contains_cons_constraint(right);
-        if (left_cons || right_cons) {
-            bool equal = petta_semantics_match_cons_constraint(
-                &machine->heap,
-                left_cons ? left : right,
-                left_cons ? right : left,
-                search_context_builder(&machine->search));
-            return petta_machine_boolean(
-                machine, equal, expected);
-        }
         bool left_open = left && atom_has_vars(left);
         bool right_open = right && atom_has_vars(right);
         Atom *open = NULL;
@@ -7819,12 +8071,44 @@ static bool petta_machine_dispatch_solve(
             open = right;
             rigid = left;
         }
+        /*
+         * An open operand against rigid data keeps the demand-driven solve:
+         * expected-side demand is what lets a function occurrence in the
+         * open operand run inverted (functionhead.metta) instead of
+         * enumerating forward.  PeTTa's =/3 is nevertheless a total boolean:
+         * a comparison with no solution is the false answer, never
+         * relational branch failure — otherwise the else branch of every
+         * `(if (= ...) ...)` is silently erased.  The fallback choice below
+         * emits exactly one false once the solve exhausts with no success;
+         * each success marks it consumed through PETTA_GOAL_EQUAL_COMMIT.
+         */
         if (open) {
+            PettaChoice fallback = {
+                .kind = PETTA_CHOICE_EQUAL_DEFAULT,
+                .trail = search_context_save(&machine->search),
+                .goal_height = machine->goal_len,
+                .barrier = goal->barrier,
+                .as.equal_default = {
+                    .saw_answer = false,
+                    .expected = expected,
+                },
+            };
+            if (!petta_choice_push(machine, fallback)) {
+                *failure = PETTA_MACHINE_STEP_CAPACITY;
+                return false;
+            }
             Atom *truth = petta_semantics_boolean_value(
                 &machine->heap, true);
             if (!truth ||
-                !petta_push_unify(
-                    machine, truth, expected, goal->barrier) ||
+                !petta_goal_push(
+                    machine,
+                    (PettaGoal){
+                        .kind = PETTA_GOAL_EQUAL_COMMIT,
+                        .barrier = goal->barrier,
+                        .first = truth,
+                        .second = expected,
+                        .choice_index = machine->choice_len - 1u,
+                    }) ||
                 !petta_push_solve(
                     machine, open, rigid, goal->barrier)) {
                 *failure = PETTA_MACHINE_STEP_CAPACITY;
@@ -8200,9 +8484,22 @@ static bool petta_machine_dispatch_solve(
     if ((form == PETTA_FORM_EVAL ||
          form == PETTA_FORM_REDUCE) &&
         nargs == 1u) {
-        return petta_push_force(
-            machine, expression->expr.elems[1],
-            expected, goal->barrier);
+        /*
+         * Dynamic evaluation is two-staged: the argument computes a TERM,
+         * and that term then runs as an expression.  A cons-built term
+         * arrives as an open-cons carrier, so the spine is normalized to a
+         * flat expression before the second evaluation — this is how
+         * (reduce (cons Formula Args)) applies the formula, exactly as the
+         * reference's homoiconic reduce/2 does over Prolog lists.
+         */
+        if (!petta_push_evaluated_expression(
+                machine, expression, expected,
+                PETTA_GOAL_REDUCE_READY, 1u,
+                goal->barrier)) {
+            *failure = PETTA_MACHINE_STEP_CAPACITY;
+            return false;
+        }
+        return true;
     }
 
     /*
@@ -8258,14 +8555,21 @@ static bool petta_machine_dispatch_solve(
      */
     if (form == PETTA_FORM_IMPORT_PROLOG_FUNCTION &&
         nargs == 1u) {
-        bool recognized = false;
-        bool dispatched = petta_machine_try_foreign_call(
-            machine, expression, expected, goal->barrier,
-            &recognized, failure);
-        if (recognized || !dispatched)
-            return dispatched;
-        return petta_machine_unify_resolved(
-            machine, expression, expected);
+        /*
+         * The imported-name argument is an ordinary computation — the
+         * reference distributes (import_prolog_function (superpose (a b)))
+         * into one registration per branch — so it must evaluate before
+         * the boundary sees it; the raw superpose expression would
+         * otherwise reach the registry as a single unrecognizable name.
+         */
+        if (!petta_push_evaluated_expression_planned(
+                machine, expression, expected,
+                PETTA_GOAL_FOREIGN_READY, 1u,
+                goal->barrier, plan)) {
+            *failure = PETTA_MACHINE_STEP_CAPACITY;
+            return false;
+        }
+        return true;
     }
 
     if (form == PETTA_FORM_CALL_PREDICATE &&
@@ -8465,9 +8769,20 @@ static bool petta_machine_dispatch_solve(
     if (head_id != SYMBOL_ID_NONE &&
         form == PETTA_FORM_NONE &&
         machine->host.foreign_named_arity) {
+        /*
+         * Auto-resolved engine names carry call authority only where the
+         * compiled plan says this occurrence is a call; a value that merely
+         * spells the same name stays data.
+         */
+        bool call_position =
+            plan && plan->role == PETTA_PLAN_STATIC_CALL;
         PeTTaNamedArity foreign_arity =
-            machine->host.foreign_named_arity(
-                machine->host.context, head_id, nargs);
+            call_position &&
+            machine->host.foreign_named_arity_resolved
+                ? machine->host.foreign_named_arity_resolved(
+                      machine->host.context, head_id, nargs)
+                : machine->host.foreign_named_arity(
+                      machine->host.context, head_id, nargs);
         if (foreign_arity.known && foreign_arity.exact) {
             if (!petta_push_evaluated_expression_planned(
                     machine, expression, expected,
@@ -9009,8 +9324,26 @@ static bool petta_machine_dispatch_goal(
             first->expr.len != 3u) {
             return false;
         }
-        bool equal = petta_machine_unify(
-            machine, first->expr.elems[1], first->expr.elems[2]);
+        /*
+         * A logical list may arrive as an open-cons carrier on one side
+         * and a flat expression on the other; the cons matcher normalizes
+         * both, exactly like equation-head matching.  Value pairs without
+         * a carrier use the ordinary unifier.
+         */
+        Atom *left_value = first->expr.elems[1];
+        Atom *right_value = first->expr.elems[2];
+        bool left_cons =
+            petta_semantics_contains_cons_constraint(left_value);
+        bool right_cons =
+            petta_semantics_contains_cons_constraint(right_value);
+        bool equal = left_cons || right_cons
+            ? petta_semantics_match_cons_constraint(
+                  &machine->heap,
+                  left_cons ? left_value : right_value,
+                  left_cons ? right_value : left_value,
+                  search_context_builder(&machine->search))
+            : petta_machine_unify(
+                  machine, left_value, right_value);
         return petta_machine_boolean(machine, equal, second);
     }
 
@@ -9171,6 +9504,35 @@ static bool petta_machine_dispatch_goal(
             return false;
         }
         return true;
+    }
+
+    if (goal.kind == PETTA_GOAL_REDUCE_READY) {
+        if (!first || first->kind != ATOM_EXPR ||
+            first->expr.len != 2u) {
+            return false;
+        }
+        Atom *value = first->expr.elems[1];
+        if (petta_semantics_is_open_cons_value(value)) {
+            Atom *flattened =
+                petta_machine_materialize_list(machine, value);
+            if (!flattened) {
+                *failure = PETTA_MACHINE_STEP_CAPACITY;
+                return false;
+            }
+            value = flattened;
+        }
+        return petta_push_solve(
+            machine, value, second, goal.barrier);
+    }
+
+    if (goal.kind == PETTA_GOAL_EQUAL_COMMIT) {
+        if (goal.choice_index < machine->choice_len &&
+            machine->choices[goal.choice_index].kind ==
+                PETTA_CHOICE_EQUAL_DEFAULT) {
+            machine->choices[goal.choice_index]
+                .as.equal_default.saw_answer = true;
+        }
+        return petta_machine_unify(machine, first, second);
     }
 
     if (goal.kind == PETTA_GOAL_CASE_SELECT) {

@@ -79,6 +79,14 @@ typedef struct {
         Atom *call, Atom **prepared_call);
     PeTTaNamedArity (*foreign_named_arity)(
         void *context, SymbolId head, CettaExprLen supplied);
+    /* Same classification including plan-time auto-resolved engine names;
+     * consulted only for occurrences whose compiled plan is a call. */
+    PeTTaNamedArity (*foreign_named_arity_resolved)(
+        void *context, SymbolId head, CettaExprLen supplied);
+    /* Engine-probing variant for call-by-construction sites (symbol-space
+     * match): may register the name as auto-resolved on first proof. */
+    PeTTaNamedArity (*foreign_named_arity_resolving)(
+        void *context, SymbolId head, CettaExprLen supplied);
     bool (*foreign_call)(
         void *context, Arena *arena,
         Atom *expression, Atom *expected,

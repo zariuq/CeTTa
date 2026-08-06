@@ -3610,9 +3610,10 @@ static bool rename_vars_task_stack_push(RenameVarsTaskStack *stack,
     return true;
 }
 
-static Atom *rename_vars_except_iterative(Arena *a, Atom *root,
-                                          const VarIdSet *ignore,
-                                          RenameVarMap *map) {
+static Atom *rename_vars_listed_iterative(Arena *a, Atom *root,
+                                          const VarIdSet *listed,
+                                          RenameVarMap *map,
+                                          bool rename_listed) {
     Atom *result = NULL;
     RenameVarsTaskStack stack;
     FreshenEpochMemo memo;
@@ -3656,7 +3657,8 @@ static Atom *rename_vars_except_iterative(Arena *a, Atom *root,
         }
         if (atom->kind == ATOM_VAR) {
             Atom *renamed = NULL;
-            if (var_id_set_contains(ignore, atom->var_id)) {
+            if (var_id_set_contains(listed, atom->var_id) !=
+                rename_listed) {
                 renamed = atom;
             } else {
                 renamed = rename_var_map_lookup(map, atom->var_id);
@@ -3740,10 +3742,28 @@ Atom *rename_vars_except(Arena *a, Atom *atom, Atom *ignore_spec) {
     var_id_set_init(&ignore);
     rename_var_map_init(&map);
     Atom *result = collect_var_ids(ignore_spec, &ignore)
-        ? rename_vars_except_iterative(a, atom, &ignore, &map)
+        ? rename_vars_listed_iterative(a, atom, &ignore, &map, false)
         : NULL;
     rename_var_map_free(&map);
     var_id_set_free(&ignore);
+    return result;
+}
+
+/* Complement of rename_vars_except: freshen ONLY the variables occurring in
+ * listed_spec, preserving the identity of every other variable (SWI's
+ * copy_term/4 sharing contract).  An empty listed_spec is the identity. */
+Atom *rename_vars_only(Arena *a, Atom *atom, Atom *listed_spec) {
+    if (!a || !atom || !listed_spec)
+        return NULL;
+    VarIdSet listed;
+    RenameVarMap map;
+    var_id_set_init(&listed);
+    rename_var_map_init(&map);
+    Atom *result = collect_var_ids(listed_spec, &listed)
+        ? rename_vars_listed_iterative(a, atom, &listed, &map, true)
+        : NULL;
+    rename_var_map_free(&map);
+    var_id_set_free(&listed);
     return result;
 }
 

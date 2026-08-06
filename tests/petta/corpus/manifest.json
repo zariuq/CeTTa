@@ -2,12 +2,15 @@
   "schema": "cetta-petta-corpus-v1",
   "petta_revision": "3bf4636aa37b3d8d925c6bbc06ddc7062b118f56",
   "run_sh_sha256": "175291accc8004f3721c9286d14323fc8d3d8045a621b841e6041268595ba096",
-  "generator_sha256": "4396c2d342d6a6c06d058251d75f432dd2123283a1f1b2c8f8b88671289b1373",
+  "generator_sha256": "71dccb50afb8d9f443aa84bf6e9c59dd03197b6043bdd1f51caaac6a1a9c6a44",
   "normalization": {
     "line_endings": "LF",
     "strip_ansi_csi": true,
     "replace_petta_root": "<PETTA_ROOT>",
     "alpha_canonicalize_printed_variables": true,
+    "comparison_stdout_quotients": [
+      "Not specialized <generated-head>/<arity>"
+    ],
     "drop_exact_leading_oracle_stdout": [
       "MORK init: done\n"
     ],

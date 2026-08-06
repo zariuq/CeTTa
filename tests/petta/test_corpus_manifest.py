@@ -203,6 +203,24 @@ class CorpusManifestTests(unittest.TestCase):
             "($V0 $V1)\n",
         )
 
+    def test_specializer_diagnostic_is_not_semantic_stdout(self) -> None:
+        oracle = (
+            "is finish, should finish. ✅ \n"
+            "Not specialized f_Spec_[+]/3\n"
+            "true\n"
+        )
+        cetta = "is finish, should finish. ✅ \ntrue\n"
+        self.assertEqual(
+            MANIFEST.semantic_stdout(oracle),
+            MANIFEST.semantic_stdout(cetta),
+        )
+        self.assertEqual(
+            MANIFEST.semantic_stdout(
+                "Not specialized user message\n"
+            ),
+            "Not specialized user message\n",
+        )
+
     def test_source_mutation_is_detected(self) -> None:
         source = self.examples / self.manifest["entries"][0]["name"]
         source.write_text("; changed\n", encoding="utf-8")

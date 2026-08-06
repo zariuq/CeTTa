@@ -15,6 +15,8 @@ typedef enum {
 
 CettaLibPrologRuntime *cetta_lib_prolog_runtime_new(void);
 void cetta_lib_prolog_runtime_free(CettaLibPrologRuntime *runtime);
+bool cetta_lib_prolog_runtime_set_working_dir(
+    CettaLibPrologRuntime *runtime, const char *path);
 
 /*
  * Final process-level shutdown for an adapter-owned Prolog engine.  Runtime

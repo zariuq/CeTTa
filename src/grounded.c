@@ -1401,9 +1401,19 @@ Atom *grounded_dispatch(Arena *a, Atom *head, Atom **args, uint32_t nargs) {
     if (head_id == g_builtin_syms.sealed_text) {
         if (nargs != 2)
             return grounded_incorrect_arity(a, head, args, nargs);
-        /* `sealed` standardizes free metavariables apart.  Object-binder ABT
-           indices are ordinary canonical expressions and remain untouched. */
-        Atom *renamed = rename_vars_except(a, args[1], args[0]);
+        /* Two dialect contracts share this name.  HE's operator standardizes
+           free metavariables apart: every variable NOT protected by the
+           binder list is renamed.  PeTTa's translator form is the exact
+           complement (SWI copy_term/4): ONLY the listed variables are
+           freshened and every other variable keeps caller identity — rule
+           compilers depend on the retained sharing, and an empty seal list
+           is the identity.  Object-binder ABT indices are ordinary canonical
+           expressions and remain untouched either way. */
+        const CettaLanguageId sealed_language = eval_current_language_id
+            ? eval_current_language_id() : CETTA_LANGUAGE_HE;
+        Atom *renamed = sealed_language == CETTA_LANGUAGE_PETTA
+            ? rename_vars_only(a, args[1], args[0])
+            : rename_vars_except(a, args[1], args[0]);
         return renamed ? renamed
                        : atom_error(a, grounded_call_expr(a, head, args, nargs),
                                     atom_symbol(a, "SealedInvalidTerm"));

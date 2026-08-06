@@ -35,6 +35,8 @@ typedef struct {
     CettaExprLen arity;
 } CettaPettaRelationKey;
 
+struct CettaPettaTokenSpaceClauseRegistry;
+
 typedef struct CettaLibraryContext {
     CettaEvalSession session;
     TermUniverse term_universe;
@@ -73,6 +75,8 @@ typedef struct CettaLibraryContext {
     uint32_t petta_tabled_relation_cap;
     uint64_t petta_tabled_symbol_table_instance;
     PettaProgram *petta_program;
+    struct CettaPettaTokenSpaceClauseRegistry *
+        petta_token_space_clause_registry;
     CettaLibPrologRuntime *lib_prolog;
     CettaForeignRuntime *foreign_runtime;
 } CettaLibraryContext;

@@ -529,4 +529,17 @@ uint64_t symbol_hash_value(const SymbolTable *st, SymbolId id);
 uint32_t symbol_flags(const SymbolTable *st, SymbolId id);
 bool symbol_eq_cstr(const SymbolTable *st, SymbolId id, const char *text);
 
+
+/* PeTTa's determinism-annotated arrows are written `-[mode]->`.  The mode is
+   a syntactic property of the arrow symbol; whether it carries authority is a
+   language/profile decision made by the caller. */
+typedef enum {
+    CETTA_PETTA_ARROW_MODE_NONE = 0,
+    CETTA_PETTA_ARROW_MODE_DET,
+    CETTA_PETTA_ARROW_MODE_NONDET,
+    CETTA_PETTA_ARROW_MODE_OTHER,
+} CettaPettaArrowMode;
+
+CettaPettaArrowMode cetta_petta_arrow_mode(SymbolId id);
+
 #endif /* CETTA_SYMBOL_H */
