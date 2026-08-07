@@ -1,0 +1,5 @@
+(: helper (-[det]-> String))
+(= (helper) "value")
+(: f (-[det]-> Number))
+(= (f) (helper))
+!(f)

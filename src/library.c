@@ -6,6 +6,7 @@
 #include "mork_space_bridge_runtime.h"
 #include "native/native_modules.h"
 #include "parser.h"
+#include "petta_typecheck.h"
 #include "rhocalc_core.h"
 #include "rhocalc_syntax.h"
 #include "rule_machine.h"
@@ -6249,6 +6250,54 @@ typedef enum {
     CETTA_PETTA_DOCUMENT_CAPACITY,
 } CettaPettaDocumentFailure;
 
+static bool cetta_library_petta_check_segment(
+    CettaLibraryContext *ctx, Space *space, Registry *registry,
+    Arena *eval_arena, AtomId *atom_ids, int atom_count,
+    CettaPettaDocumentFailure *failure_out, Atom **detail_out) {
+    if (!ctx || !ctx->session.profile ||
+        ctx->session.profile->id != CETTA_PROFILE_PETTA_TYPECHECK_V2 ||
+        ctx->petta_trusted_library_import_depth > 0u)
+        return true;
+    if (!space || !space->native.universe || !eval_arena ||
+        !atom_ids || atom_count <= 0)
+        return false;
+    Atom **forms = cetta_malloc(
+        sizeof(*forms) * (size_t)atom_count);
+    if (!forms) {
+        if (failure_out)
+            *failure_out = CETTA_PETTA_DOCUMENT_EVAL_FAILED;
+        return false;
+    }
+    for (int index = 0; index < atom_count; index++)
+        forms[index] = term_universe_get_atom(
+            space->native.universe, atom_ids[index]);
+    PettaTypecheckBlockResult checked;
+    bool judged = petta_typecheck_declaration_block(
+        ctx->petta_program, space, registry,
+        forms, (size_t)atom_count,
+        /* Strictness is a policy of the authored requesting unit.  Imported
+         * units receive baseline typecheck-v2 validation and do not inherit
+         * a caller's --strict/--strict-det lint policy retroactively. */
+        PETTA_TYPECHECK_POLICY_DEFAULT, &checked);
+    Atom *source = forms[0];
+    free(forms);
+    if (judged && checked.verdict != PETTA_TYPECHECK_REFUTED)
+        return true;
+    if (failure_out)
+        *failure_out = CETTA_PETTA_DOCUMENT_EVAL_FAILED;
+    if (detail_out) {
+        *detail_out = petta_typecheck_error_atom(
+            eval_arena, source,
+            judged ? 2 : 1,
+            checked.diagnostic[0]
+                ? checked.diagnostic
+                : judged
+                    ? "imported declaration block rejected"
+                    : "imported declaration analysis failed");
+    }
+    return false;
+}
+
 /*
  * Execute an already parsed PeTTa document.  The first pass makes equation
  * arities visible to every source plan; the second pass preserves source
@@ -6273,9 +6322,6 @@ static bool cetta_library_petta_execute_document_ids(
             *failure_out = CETTA_PETTA_DOCUMENT_COPY_FAILED;
         return false;
     }
-
-    cetta_petta_erase_typecheck_marks_document(
-        work_space->native.universe, atom_ids, atom_count);
 
     if (ctx->petta_program) {
         for (int declaration_index = 0;
@@ -6311,6 +6357,12 @@ static bool cetta_library_petta_execute_document_ids(
             tu_sym(work_space->native.universe, atom_id) ==
                 g_builtin_syms.bang &&
             index + 1 < atom_count) {
+            if (!cetta_library_petta_check_segment(
+                    ctx, work_space, registry, eval_arena,
+                    atom_ids + index, 2, failure_out, detail_out))
+                return false;
+            cetta_petta_erase_typecheck_marks_document(
+                work_space->native.universe, atom_ids + index, 2);
             ResultSet results;
             result_set_init(&results);
             const PettaPlanNode *source_plan = NULL;
@@ -6406,6 +6458,14 @@ static bool cetta_library_petta_execute_document_ids(
             }
             block_end++;
         }
+        if (!cetta_library_petta_check_segment(
+                ctx, work_space, registry, eval_arena,
+                atom_ids + index, block_end - index,
+                failure_out, detail_out))
+            return false;
+        cetta_petta_erase_typecheck_marks_document(
+            work_space->native.universe, atom_ids + index,
+            block_end - index);
         PettaDeclarationBlock *block = NULL;
         if (ctx->petta_program) {
             block = petta_program_declaration_block_new(
@@ -6451,6 +6511,13 @@ static bool cetta_library_petta_execute_document_ids(
                         CETTA_PETTA_DOCUMENT_PLAN_FAILED;
                 return false;
             }
+        }
+        if (ctx->petta_program && ctx->session.profile &&
+            ctx->session.profile->id ==
+                CETTA_PROFILE_PETTA_TYPECHECK_V2 &&
+            ctx->petta_trusted_library_import_depth == 0u) {
+            petta_program_inferred_signatures_rebase(
+                ctx->petta_program, work_space);
         }
         petta_program_declaration_block_free(block);
         index = block_end;
@@ -8000,10 +8067,108 @@ bool cetta_library_petta_resolve_library_member(
     };
     if (canonical_path && canonical_path_size > 0u)
         canonical_path[0] = '\0';
-    return canonical_path && canonical_path_size > 0u &&
-           resolve_library_member_candidate(
-               ctx, member, canonical_path,
-               canonical_path_size, &format);
+    if (!ctx || !canonical_path || canonical_path_size == 0u ||
+        !library_member_name_is_safe(member) ||
+        !cetta_module_policy_allows(
+            &ctx->session.module_policy,
+            CETTA_MODULE_PROVIDER_RELATIVE_FILES)) {
+        return false;
+    }
+    if (resolve_library_member_candidate(
+            ctx, member, canonical_path,
+            canonical_path_size, &format)) {
+        return true;
+    }
+
+    /*
+     * `(library name)` is also PeTTa's capability-safe path descriptor for
+     * resources consumed by another operation, notably Prolog source files.
+     * Such a resource is not itself a CeTTa import module, so the module
+     * format resolver above correctly declines it.  Search the same trusted
+     * roots for an exact readable regular file; the safe single-component
+     * member rule still prevents path traversal.
+     */
+    char candidate[PATH_MAX];
+    char resolved[PATH_MAX];
+    struct stat st;
+    for (uint32_t index = ctx->module_mount_len;
+         index > 0u; index--) {
+        const CettaModuleMount *mount =
+            &ctx->module_mounts[index - 1u];
+        if (!module_mount_visible(ctx, mount))
+            continue;
+        const char *prefixes[] = {"", "lib"};
+        for (size_t prefix = 0u; prefix < 2u; prefix++) {
+            char directory[PATH_MAX];
+            const char *base = mount->root_path;
+            if (prefixes[prefix][0] != '\0') {
+                if (!path_join2(
+                        directory, sizeof(directory),
+                        mount->root_path, prefixes[prefix])) {
+                    continue;
+                }
+                base = directory;
+            }
+            if (path_join2(
+                    candidate, sizeof(candidate), base, member) &&
+                stat(candidate, &st) == 0 && S_ISREG(st.st_mode) &&
+                access(candidate, R_OK) == 0 &&
+                realpath(candidate, resolved) &&
+                strlen(resolved) < canonical_path_size) {
+                memcpy(
+                    canonical_path, resolved,
+                    strlen(resolved) + 1u);
+                return true;
+            }
+        }
+    }
+
+    char directory[PATH_MAX];
+    if (snprintf(
+            directory, sizeof(directory), "%s",
+            cetta_library_relative_base_dir(ctx)) >=
+        (int)sizeof(directory)) {
+        return false;
+    }
+    for (uint32_t depth = 0u;
+         depth < CETTA_MAX_IMPORT_DIR_DEPTH; depth++) {
+        const char *prefixes[] = {"", "lib"};
+        for (size_t prefix = 0u; prefix < 2u; prefix++) {
+            char base[PATH_MAX];
+            const char *root = directory;
+            if (prefixes[prefix][0] != '\0') {
+                if (!path_join2(
+                        base, sizeof(base), directory,
+                        prefixes[prefix])) {
+                    continue;
+                }
+                root = base;
+            }
+            if (path_join2(
+                    candidate, sizeof(candidate), root, member) &&
+                stat(candidate, &st) == 0 && S_ISREG(st.st_mode) &&
+                access(candidate, R_OK) == 0 &&
+                realpath(candidate, resolved) &&
+                strlen(resolved) < canonical_path_size) {
+                memcpy(
+                    canonical_path, resolved,
+                    strlen(resolved) + 1u);
+                return true;
+            }
+        }
+        char parent[PATH_MAX];
+        if (!cetta_text_path_parent_dir(
+                parent, sizeof(parent), directory) ||
+            strcmp(parent, directory) == 0) {
+            break;
+        }
+        if (snprintf(
+                directory, sizeof(directory), "%s", parent) >=
+            (int)sizeof(directory)) {
+            return false;
+        }
+    }
+    return false;
 }
 
 bool cetta_library_petta_resolve_library_file(
@@ -8078,22 +8243,27 @@ bool cetta_library_import_library_member(
         !target_is_fresh;
     plan.provider_kind = CETTA_MODULE_PROVIDER_RELATIVE_FILE;
 
+    ctx->petta_trusted_library_import_depth++;
+    bool imported = false;
     if (resolve_library_member_candidate(
             ctx, member, plan.canonical_path,
             sizeof(plan.canonical_path), &plan.format)) {
-        return execute_import_plan(
+        imported = execute_import_plan(
             ctx, &plan, eval_arena, persistent_arena,
             registry, fuel, error_out);
+    } else {
+        /*
+         * Builtin and CeTTa-local libraries retain the ordinary module
+         * resolver as a fallback.  The PeTTa descriptor search above only
+         * adds the source-tree library roots; it does not replace registered
+         * providers.
+         */
+        imported = cetta_library_import_module(
+            ctx, member, space, target_is_fresh,
+            eval_arena, persistent_arena, registry, fuel, error_out);
     }
-
-    /*
-     * Builtin and CeTTa-local libraries retain the ordinary module resolver
-     * as a fallback.  The PeTTa descriptor search above only adds the
-     * source-tree library roots; it does not replace registered providers.
-     */
-    return cetta_library_import_module(
-        ctx, member, space, target_is_fresh,
-        eval_arena, persistent_arena, registry, fuel, error_out);
+    ctx->petta_trusted_library_import_depth--;
+    return imported;
 }
 
 Atom *cetta_library_dispatch_native(CettaLibraryContext *ctx, Space *space,

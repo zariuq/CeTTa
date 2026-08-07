@@ -1,0 +1,5188 @@
+{
+  "cases": [
+    {
+      "arguments": [
+        "--strict"
+      ],
+      "classification": {
+        "class": "contextual-cons-list",
+        "phase": "static"
+      },
+      "cohort": "semantic-regression",
+      "expected": {
+        "exit": 0,
+        "verdict": "accept"
+      },
+      "file": "tests/petta/typecheck_v2_repros/31_contextual_cons_list.metta",
+      "id": "31_contextual_cons_list|strict",
+      "profile": "typecheck-v2",
+      "source_root": "candidate",
+      "source_sha256": "87830b7214f88b53b5e846dbf5a739ddcd6cd38a8bb12aec47480a896c4447d2"
+    },
+    {
+      "arguments": [
+        "--strict"
+      ],
+      "classification": {
+        "class": "contextual-cons-list",
+        "phase": "static"
+      },
+      "cohort": "semantic-regression",
+      "expected": {
+        "exit": 2,
+        "verdict": "reject"
+      },
+      "file": "tests/petta/typecheck_v2_repros/32_contextual_cons_tail_mismatch.metta",
+      "id": "32_contextual_cons_tail_mismatch|strict",
+      "profile": "typecheck-v2",
+      "source_root": "candidate",
+      "source_sha256": "07ef313d7a396e6dddd7cecdf303544505e5889a32d2a9159982b9c2b74baba9"
+    },
+    {
+      "arguments": [],
+      "classification": {
+        "class": "uninferable-equation",
+        "phase": "static"
+      },
+      "cohort": "semantic-regression",
+      "expected": {
+        "exit": 0,
+        "verdict": "accept"
+      },
+      "file": "tests/petta/typecheck_v2_repros/30_untyped_unsupported_equation.metta",
+      "id": "30_untyped_unsupported_equation|default",
+      "profile": "typecheck-v2",
+      "source_root": "candidate",
+      "source_sha256": "802f9f2d5197bc31ae3072ee863ef15a580a7660e6b261148d407097fedadadd"
+    },
+    {
+      "arguments": [
+        "--strict"
+      ],
+      "classification": {
+        "class": "uninferable-equation",
+        "phase": "static"
+      },
+      "cohort": "semantic-regression",
+      "expected": {
+        "exit": 2,
+        "verdict": "reject"
+      },
+      "file": "tests/petta/typecheck_v2_repros/30_untyped_unsupported_equation.metta",
+      "id": "30_untyped_unsupported_equation|strict",
+      "profile": "typecheck-v2",
+      "source_root": "candidate",
+      "source_sha256": "802f9f2d5197bc31ae3072ee863ef15a580a7660e6b261148d407097fedadadd"
+    },
+    {
+      "arguments": [],
+      "classification": {
+        "class": "unsupported-callable-residual",
+        "phase": "static"
+      },
+      "cohort": "semantic-regression",
+      "expected": {
+        "exit": 0,
+        "verdict": "accept"
+      },
+      "file": "tests/petta/typecheck_v2_repros/22_unsupported_callable_residual.metta",
+      "id": "22_unsupported_callable_residual|default",
+      "profile": "typecheck-v2",
+      "source_root": "candidate",
+      "source_sha256": "9eabfa11d5de4eda1c2d51e68acdf7d7c35c7d711a8e81928a15adacfbcd25e4"
+    },
+    {
+      "arguments": [
+        "--strict"
+      ],
+      "classification": {
+        "class": "unsupported-callable-residual",
+        "phase": "static"
+      },
+      "cohort": "semantic-regression",
+      "expected": {
+        "exit": 2,
+        "verdict": "reject"
+      },
+      "file": "tests/petta/typecheck_v2_repros/22_unsupported_callable_residual.metta",
+      "id": "22_unsupported_callable_residual|strict",
+      "profile": "typecheck-v2",
+      "source_root": "candidate",
+      "source_sha256": "9eabfa11d5de4eda1c2d51e68acdf7d7c35c7d711a8e81928a15adacfbcd25e4"
+    },
+    {
+      "arguments": [],
+      "classification": {
+        "class": "source-ordered-declaration-kind",
+        "phase": "static"
+      },
+      "cohort": "semantic-regression",
+      "expected": {
+        "exit": 0,
+        "verdict": "accept"
+      },
+      "file": "tests/petta/typecheck_v2_repros/23_first_declared_kind_wins.metta",
+      "id": "23_first_declared_kind_wins|default",
+      "profile": "typecheck-v2",
+      "source_root": "candidate",
+      "source_sha256": "45fbbcdb9750971ff271ac2921086a4f9b0d709a9d0aaa237e61107135bf9374"
+    },
+    {
+      "arguments": [],
+      "classification": {
+        "class": "source-ordered-declaration-kind",
+        "phase": "static"
+      },
+      "cohort": "semantic-regression",
+      "expected": {
+        "exit": 2,
+        "verdict": "reject"
+      },
+      "file": "tests/petta/typecheck_v2_repros/24_first_declared_kind_mismatch.metta",
+      "id": "24_first_declared_kind_mismatch|default",
+      "profile": "typecheck-v2",
+      "source_root": "candidate",
+      "source_sha256": "83810b840543545610206c96085cfa0e90a276e7c69985329ec0a2b728f82afe"
+    },
+    {
+      "arguments": [],
+      "classification": {
+        "class": "runtime-get-type-classifier",
+        "phase": "runtime-residual"
+      },
+      "cohort": "semantic-regression",
+      "expected": {
+        "exit": 0,
+        "verdict": "accept"
+      },
+      "file": "tests/petta/typecheck_v2_repros/25_runtime_get_type_classifier.metta",
+      "id": "25_runtime_get_type_classifier|default",
+      "profile": "typecheck-v2",
+      "source_root": "candidate",
+      "source_sha256": "1f36723888b56f56339cade919ce2d3b8a2beb8d5572540ffca760eb1e6db785"
+    },
+    {
+      "arguments": [],
+      "classification": {
+        "class": "runtime-get-type-classifier",
+        "phase": "runtime-residual"
+      },
+      "cohort": "semantic-regression",
+      "expected": {
+        "exit": 2,
+        "verdict": "reject"
+      },
+      "file": "tests/petta/typecheck_v2_repros/26_runtime_get_type_mismatch.metta",
+      "id": "26_runtime_get_type_mismatch|default",
+      "profile": "typecheck-v2",
+      "source_root": "candidate",
+      "source_sha256": "8d27e7ff206ebc42d442a9091252ca6ec2e784197f76b545b09d11966cc7259f"
+    },
+    {
+      "arguments": [],
+      "classification": {
+        "class": "overload-branch-correlation",
+        "phase": "runtime-residual"
+      },
+      "cohort": "semantic-regression",
+      "expected": {
+        "exit": 0,
+        "verdict": "accept"
+      },
+      "file": "tests/petta/typecheck_v2_repros/27_overload_mismatch_prunes_branch.metta",
+      "id": "27_overload_mismatch_prunes_branch|default",
+      "profile": "typecheck-v2",
+      "source_root": "candidate",
+      "source_sha256": "840e0f2fdca418b63a6db69d08668674cdd9f20c82c5bc2c8bc964491167bae0"
+    },
+    {
+      "arguments": [],
+      "classification": {
+        "class": "symbol-headed-list-data",
+        "phase": "static"
+      },
+      "cohort": "semantic-regression",
+      "expected": {
+        "exit": 0,
+        "verdict": "accept"
+      },
+      "file": "tests/petta/typecheck_v2_repros/28_symbol_headed_list_data.metta",
+      "id": "28_symbol_headed_list_data|default",
+      "profile": "typecheck-v2",
+      "source_root": "candidate",
+      "source_sha256": "4da2c16d8c79ccc3a49dbaf96752917ab20f5d5ff55f2e1c0efd7461d0026476"
+    },
+    {
+      "arguments": [],
+      "classification": {
+        "class": "symbol-headed-list-data",
+        "phase": "static"
+      },
+      "cohort": "semantic-regression",
+      "expected": {
+        "exit": 2,
+        "verdict": "reject"
+      },
+      "file": "tests/petta/typecheck_v2_repros/29_symbol_headed_list_mismatch.metta",
+      "id": "29_symbol_headed_list_mismatch|default",
+      "profile": "typecheck-v2",
+      "source_root": "candidate",
+      "source_sha256": "d782c5e1f6df8471d1f4242a29cc26c59dffb3e14ea74667efe94fbc9e95d7a5"
+    },
+    {
+      "arguments": [],
+      "classification": {
+        "class": "head-selected-parametricity",
+        "phase": "static"
+      },
+      "cohort": "semantic-regression",
+      "expected": {
+        "exit": 0,
+        "verdict": "accept"
+      },
+      "file": "examples/types.metta",
+      "id": "examples/types.metta|semantic-regression",
+      "profile": "typecheck-v2",
+      "source_root": "reference",
+      "source_sha256": "0fc3eae720905d401d642a4c0c06e13bd0f8515f919dc5b593fc765dea6ad227"
+    },
+    {
+      "arguments": [],
+      "classification": {
+        "class": "stale-authority",
+        "phase": "runtime-residual"
+      },
+      "cohort": "semantic-regression",
+      "expected": {
+        "exit": 2,
+        "verdict": "reject"
+      },
+      "file": "tests/petta/typecheck_v2_repros/02_stale_obligation_conflicting_type_addition.metta",
+      "id": "02-stale-obligation-conflicting-type-addition",
+      "profile": "typecheck-v2",
+      "source_root": "candidate",
+      "source_sha256": "ed1e6173ec53c49b4b6ed6d2dceb9061765cebc76d3807bd364b189e016cb9c1"
+    },
+    {
+      "arguments": [],
+      "classification": {
+        "class": "unsupported-rhs-output",
+        "phase": "static"
+      },
+      "cohort": "semantic-regression",
+      "expected": {
+        "exit": 2,
+        "verdict": "reject"
+      },
+      "file": "tests/petta/typecheck_v2_repros/03_unsupported_equation_rhs_number.metta",
+      "id": "03-unsupported-equation-rhs-number",
+      "profile": "typecheck-v2",
+      "source_root": "candidate",
+      "source_sha256": "56de22275421652cbefbd2afa73bf7f5161cca8d99f9a8a2d9b320659f99c76a"
+    },
+    {
+      "arguments": [],
+      "classification": {
+        "class": "inert-structural-output",
+        "phase": "static"
+      },
+      "cohort": "semantic-regression",
+      "expected": {
+        "exit": 0,
+        "verdict": "accept"
+      },
+      "file": "tests/petta/typecheck_v2_repros/04_unsupported_equation_rhs_expression.metta",
+      "id": "04-unsupported-equation-rhs-expression",
+      "profile": "typecheck-v2",
+      "source_root": "candidate",
+      "source_sha256": "e457b9160bbdac0a2fbab23de6ef30d24a2a285b8c5e21a476f819a767477e2b"
+    },
+    {
+      "arguments": [],
+      "classification": {
+        "class": "inert-structural-output",
+        "phase": "static"
+      },
+      "cohort": "semantic-regression",
+      "expected": {
+        "exit": 2,
+        "verdict": "reject"
+      },
+      "file": "tests/petta/typecheck_v2_repros/05_inert_nullary_number.metta",
+      "id": "05_inert_nullary_number|default",
+      "profile": "typecheck-v2",
+      "source_root": "candidate",
+      "source_sha256": "fc272770baeb19f2d67764e3143171faf27ede29db4a926a0758ea43c3767eda"
+    },
+    {
+      "arguments": [
+        "--strict"
+      ],
+      "classification": {
+        "class": "inert-structural-output",
+        "phase": "static"
+      },
+      "cohort": "semantic-regression",
+      "expected": {
+        "exit": 2,
+        "verdict": "reject"
+      },
+      "file": "tests/petta/typecheck_v2_repros/05_inert_nullary_number.metta",
+      "id": "05_inert_nullary_number|strict",
+      "profile": "typecheck-v2",
+      "source_root": "candidate",
+      "source_sha256": "fc272770baeb19f2d67764e3143171faf27ede29db4a926a0758ea43c3767eda"
+    },
+    {
+      "arguments": [
+        "--strict-det"
+      ],
+      "classification": {
+        "class": "inert-structural-output",
+        "phase": "static"
+      },
+      "cohort": "semantic-regression",
+      "expected": {
+        "exit": 2,
+        "verdict": "reject"
+      },
+      "file": "tests/petta/typecheck_v2_repros/05_inert_nullary_number.metta",
+      "id": "05_inert_nullary_number|strict-det",
+      "profile": "typecheck-v2",
+      "source_root": "candidate",
+      "source_sha256": "fc272770baeb19f2d67764e3143171faf27ede29db4a926a0758ea43c3767eda"
+    },
+    {
+      "arguments": [],
+      "classification": {
+        "class": "inert-structural-output",
+        "phase": "static"
+      },
+      "cohort": "semantic-regression",
+      "expected": {
+        "exit": 0,
+        "verdict": "accept"
+      },
+      "file": "tests/petta/typecheck_v2_repros/06_inert_nullary_expression.metta",
+      "id": "06_inert_nullary_expression|default",
+      "profile": "typecheck-v2",
+      "source_root": "candidate",
+      "source_sha256": "cae3ba31ae5c9275590a7028ffc61ef8534591bbd3b2a5f8bc08f4f2382bd8e7"
+    },
+    {
+      "arguments": [
+        "--strict"
+      ],
+      "classification": {
+        "class": "inert-structural-output",
+        "phase": "static"
+      },
+      "cohort": "semantic-regression",
+      "expected": {
+        "exit": 0,
+        "verdict": "accept"
+      },
+      "file": "tests/petta/typecheck_v2_repros/06_inert_nullary_expression.metta",
+      "id": "06_inert_nullary_expression|strict",
+      "profile": "typecheck-v2",
+      "source_root": "candidate",
+      "source_sha256": "cae3ba31ae5c9275590a7028ffc61ef8534591bbd3b2a5f8bc08f4f2382bd8e7"
+    },
+    {
+      "arguments": [
+        "--strict-det"
+      ],
+      "classification": {
+        "class": "inert-structural-output",
+        "phase": "static"
+      },
+      "cohort": "semantic-regression",
+      "expected": {
+        "exit": 0,
+        "verdict": "accept"
+      },
+      "file": "tests/petta/typecheck_v2_repros/06_inert_nullary_expression.metta",
+      "id": "06_inert_nullary_expression|strict-det",
+      "profile": "typecheck-v2",
+      "source_root": "candidate",
+      "source_sha256": "cae3ba31ae5c9275590a7028ffc61ef8534591bbd3b2a5f8bc08f4f2382bd8e7"
+    },
+    {
+      "arguments": [],
+      "classification": {
+        "class": "inert-structural-output",
+        "phase": "static"
+      },
+      "cohort": "semantic-regression",
+      "expected": {
+        "exit": 2,
+        "verdict": "reject"
+      },
+      "file": "tests/petta/typecheck_v2_repros/07_inert_nested_number.metta",
+      "id": "07_inert_nested_number|default",
+      "profile": "typecheck-v2",
+      "source_root": "candidate",
+      "source_sha256": "0a2643f544588301f93ea784bee83d5a9ec31f3d8368d6a09b376728d1523c05"
+    },
+    {
+      "arguments": [
+        "--strict"
+      ],
+      "classification": {
+        "class": "inert-structural-output",
+        "phase": "static"
+      },
+      "cohort": "semantic-regression",
+      "expected": {
+        "exit": 2,
+        "verdict": "reject"
+      },
+      "file": "tests/petta/typecheck_v2_repros/07_inert_nested_number.metta",
+      "id": "07_inert_nested_number|strict",
+      "profile": "typecheck-v2",
+      "source_root": "candidate",
+      "source_sha256": "0a2643f544588301f93ea784bee83d5a9ec31f3d8368d6a09b376728d1523c05"
+    },
+    {
+      "arguments": [
+        "--strict-det"
+      ],
+      "classification": {
+        "class": "inert-structural-output",
+        "phase": "static"
+      },
+      "cohort": "semantic-regression",
+      "expected": {
+        "exit": 2,
+        "verdict": "reject"
+      },
+      "file": "tests/petta/typecheck_v2_repros/07_inert_nested_number.metta",
+      "id": "07_inert_nested_number|strict-det",
+      "profile": "typecheck-v2",
+      "source_root": "candidate",
+      "source_sha256": "0a2643f544588301f93ea784bee83d5a9ec31f3d8368d6a09b376728d1523c05"
+    },
+    {
+      "arguments": [],
+      "classification": {
+        "class": "inert-structural-output",
+        "phase": "static"
+      },
+      "cohort": "semantic-regression",
+      "expected": {
+        "exit": 0,
+        "verdict": "accept"
+      },
+      "file": "tests/petta/typecheck_v2_repros/08_inert_nested_expression.metta",
+      "id": "08_inert_nested_expression|default",
+      "profile": "typecheck-v2",
+      "source_root": "candidate",
+      "source_sha256": "411d1cb7aaa23b7f66eed5bd33c7e97286856d0e968b87eff8444d10d0cc8693"
+    },
+    {
+      "arguments": [
+        "--strict"
+      ],
+      "classification": {
+        "class": "inert-structural-output",
+        "phase": "static"
+      },
+      "cohort": "semantic-regression",
+      "expected": {
+        "exit": 0,
+        "verdict": "accept"
+      },
+      "file": "tests/petta/typecheck_v2_repros/08_inert_nested_expression.metta",
+      "id": "08_inert_nested_expression|strict",
+      "profile": "typecheck-v2",
+      "source_root": "candidate",
+      "source_sha256": "411d1cb7aaa23b7f66eed5bd33c7e97286856d0e968b87eff8444d10d0cc8693"
+    },
+    {
+      "arguments": [
+        "--strict-det"
+      ],
+      "classification": {
+        "class": "inert-structural-output",
+        "phase": "static"
+      },
+      "cohort": "semantic-regression",
+      "expected": {
+        "exit": 0,
+        "verdict": "accept"
+      },
+      "file": "tests/petta/typecheck_v2_repros/08_inert_nested_expression.metta",
+      "id": "08_inert_nested_expression|strict-det",
+      "profile": "typecheck-v2",
+      "source_root": "candidate",
+      "source_sha256": "411d1cb7aaa23b7f66eed5bd33c7e97286856d0e968b87eff8444d10d0cc8693"
+    },
+    {
+      "arguments": [],
+      "classification": {
+        "class": "declared-callable-output",
+        "phase": "static"
+      },
+      "cohort": "semantic-regression",
+      "expected": {
+        "exit": 0,
+        "verdict": "accept"
+      },
+      "file": "tests/petta/typecheck_v2_repros/09_declared_callable_number.metta",
+      "id": "09_declared_callable_number|default",
+      "profile": "typecheck-v2",
+      "source_root": "candidate",
+      "source_sha256": "69ec4f7bd6ed51f171b722fe9088dfa020a7046759f9a63f83b6be02a8e8ce5e"
+    },
+    {
+      "arguments": [
+        "--strict"
+      ],
+      "classification": {
+        "class": "declared-callable-output",
+        "phase": "static"
+      },
+      "cohort": "semantic-regression",
+      "expected": {
+        "exit": 0,
+        "verdict": "accept"
+      },
+      "file": "tests/petta/typecheck_v2_repros/09_declared_callable_number.metta",
+      "id": "09_declared_callable_number|strict",
+      "profile": "typecheck-v2",
+      "source_root": "candidate",
+      "source_sha256": "69ec4f7bd6ed51f171b722fe9088dfa020a7046759f9a63f83b6be02a8e8ce5e"
+    },
+    {
+      "arguments": [
+        "--strict-det"
+      ],
+      "classification": {
+        "class": "declared-callable-output",
+        "phase": "static"
+      },
+      "cohort": "semantic-regression",
+      "expected": {
+        "exit": 0,
+        "verdict": "accept"
+      },
+      "file": "tests/petta/typecheck_v2_repros/09_declared_callable_number.metta",
+      "id": "09_declared_callable_number|strict-det",
+      "profile": "typecheck-v2",
+      "source_root": "candidate",
+      "source_sha256": "69ec4f7bd6ed51f171b722fe9088dfa020a7046759f9a63f83b6be02a8e8ce5e"
+    },
+    {
+      "arguments": [],
+      "classification": {
+        "class": "declared-callable-output",
+        "phase": "static"
+      },
+      "cohort": "semantic-regression",
+      "expected": {
+        "exit": 2,
+        "verdict": "reject"
+      },
+      "file": "tests/petta/typecheck_v2_repros/10_declared_callable_mismatch.metta",
+      "id": "10_declared_callable_mismatch|default",
+      "profile": "typecheck-v2",
+      "source_root": "candidate",
+      "source_sha256": "0f0def6e1f5a1d8e3c670cca94417af899818b81fb3d5de075193f6ab7bab596"
+    },
+    {
+      "arguments": [
+        "--strict"
+      ],
+      "classification": {
+        "class": "declared-callable-output",
+        "phase": "static"
+      },
+      "cohort": "semantic-regression",
+      "expected": {
+        "exit": 2,
+        "verdict": "reject"
+      },
+      "file": "tests/petta/typecheck_v2_repros/10_declared_callable_mismatch.metta",
+      "id": "10_declared_callable_mismatch|strict",
+      "profile": "typecheck-v2",
+      "source_root": "candidate",
+      "source_sha256": "0f0def6e1f5a1d8e3c670cca94417af899818b81fb3d5de075193f6ab7bab596"
+    },
+    {
+      "arguments": [
+        "--strict-det"
+      ],
+      "classification": {
+        "class": "declared-callable-output",
+        "phase": "static"
+      },
+      "cohort": "semantic-regression",
+      "expected": {
+        "exit": 2,
+        "verdict": "reject"
+      },
+      "file": "tests/petta/typecheck_v2_repros/10_declared_callable_mismatch.metta",
+      "id": "10_declared_callable_mismatch|strict-det",
+      "profile": "typecheck-v2",
+      "source_root": "candidate",
+      "source_sha256": "0f0def6e1f5a1d8e3c670cca94417af899818b81fb3d5de075193f6ab7bab596"
+    },
+    {
+      "arguments": [],
+      "classification": {
+        "class": "bound-bool-provenance",
+        "phase": "static"
+      },
+      "cohort": "semantic-regression",
+      "expected": {
+        "exit": 2,
+        "verdict": "reject"
+      },
+      "file": "tests/petta/typecheck_v2_repros/14_bound_bool_through_let.metta",
+      "id": "14_bound_bool_through_let|default",
+      "profile": "typecheck-v2",
+      "source_root": "candidate",
+      "source_sha256": "f15cafc5796dfa2a3b99982fb7a489059b6bb926374904dc25278bb186551988"
+    },
+    {
+      "arguments": [
+        "--strict"
+      ],
+      "classification": {
+        "class": "bound-bool-provenance",
+        "phase": "static"
+      },
+      "cohort": "semantic-regression",
+      "expected": {
+        "exit": 2,
+        "verdict": "reject"
+      },
+      "file": "tests/petta/typecheck_v2_repros/14_bound_bool_through_let.metta",
+      "id": "14_bound_bool_through_let|strict",
+      "profile": "typecheck-v2",
+      "source_root": "candidate",
+      "source_sha256": "f15cafc5796dfa2a3b99982fb7a489059b6bb926374904dc25278bb186551988"
+    },
+    {
+      "arguments": [
+        "--strict-det"
+      ],
+      "classification": {
+        "class": "bound-bool-provenance",
+        "phase": "static"
+      },
+      "cohort": "semantic-regression",
+      "expected": {
+        "exit": 2,
+        "verdict": "reject"
+      },
+      "file": "tests/petta/typecheck_v2_repros/14_bound_bool_through_let.metta",
+      "id": "14_bound_bool_through_let|strict-det",
+      "profile": "typecheck-v2",
+      "source_root": "candidate",
+      "source_sha256": "f15cafc5796dfa2a3b99982fb7a489059b6bb926374904dc25278bb186551988"
+    },
+    {
+      "arguments": [],
+      "classification": {
+        "class": "bound-bool-provenance",
+        "phase": "static"
+      },
+      "cohort": "semantic-regression",
+      "expected": {
+        "exit": 2,
+        "verdict": "reject"
+      },
+      "file": "tests/petta/typecheck_v2_repros/15_bound_bool_through_let_star.metta",
+      "id": "15_bound_bool_through_let_star|default",
+      "profile": "typecheck-v2",
+      "source_root": "candidate",
+      "source_sha256": "9ca6eee2931a141e792b788a9a07f63a9284dfcd0bef44e69a3ef59f430b7311"
+    },
+    {
+      "arguments": [
+        "--strict"
+      ],
+      "classification": {
+        "class": "bound-bool-provenance",
+        "phase": "static"
+      },
+      "cohort": "semantic-regression",
+      "expected": {
+        "exit": 2,
+        "verdict": "reject"
+      },
+      "file": "tests/petta/typecheck_v2_repros/15_bound_bool_through_let_star.metta",
+      "id": "15_bound_bool_through_let_star|strict",
+      "profile": "typecheck-v2",
+      "source_root": "candidate",
+      "source_sha256": "9ca6eee2931a141e792b788a9a07f63a9284dfcd0bef44e69a3ef59f430b7311"
+    },
+    {
+      "arguments": [
+        "--strict-det"
+      ],
+      "classification": {
+        "class": "bound-bool-provenance",
+        "phase": "static"
+      },
+      "cohort": "semantic-regression",
+      "expected": {
+        "exit": 2,
+        "verdict": "reject"
+      },
+      "file": "tests/petta/typecheck_v2_repros/15_bound_bool_through_let_star.metta",
+      "id": "15_bound_bool_through_let_star|strict-det",
+      "profile": "typecheck-v2",
+      "source_root": "candidate",
+      "source_sha256": "9ca6eee2931a141e792b788a9a07f63a9284dfcd0bef44e69a3ef59f430b7311"
+    },
+    {
+      "arguments": [],
+      "classification": {
+        "class": "bound-bool-provenance",
+        "phase": "static"
+      },
+      "cohort": "semantic-regression",
+      "expected": {
+        "exit": 2,
+        "verdict": "reject"
+      },
+      "file": "tests/petta/typecheck_v2_repros/16_bound_bool_through_let_mismatch.metta",
+      "id": "16_bound_bool_through_let_mismatch|default",
+      "profile": "typecheck-v2",
+      "source_root": "candidate",
+      "source_sha256": "79c39348dc290eedcb7a1383e0d3a24c9b05bcde19cf1c7799b09880ef6ef261"
+    },
+    {
+      "arguments": [
+        "--strict"
+      ],
+      "classification": {
+        "class": "bound-bool-provenance",
+        "phase": "static"
+      },
+      "cohort": "semantic-regression",
+      "expected": {
+        "exit": 2,
+        "verdict": "reject"
+      },
+      "file": "tests/petta/typecheck_v2_repros/16_bound_bool_through_let_mismatch.metta",
+      "id": "16_bound_bool_through_let_mismatch|strict",
+      "profile": "typecheck-v2",
+      "source_root": "candidate",
+      "source_sha256": "79c39348dc290eedcb7a1383e0d3a24c9b05bcde19cf1c7799b09880ef6ef261"
+    },
+    {
+      "arguments": [
+        "--strict-det"
+      ],
+      "classification": {
+        "class": "bound-bool-provenance",
+        "phase": "static"
+      },
+      "cohort": "semantic-regression",
+      "expected": {
+        "exit": 2,
+        "verdict": "reject"
+      },
+      "file": "tests/petta/typecheck_v2_repros/16_bound_bool_through_let_mismatch.metta",
+      "id": "16_bound_bool_through_let_mismatch|strict-det",
+      "profile": "typecheck-v2",
+      "source_root": "candidate",
+      "source_sha256": "79c39348dc290eedcb7a1383e0d3a24c9b05bcde19cf1c7799b09880ef6ef261"
+    },
+    {
+      "arguments": [],
+      "classification": {
+        "class": "bound-bool-provenance",
+        "phase": "static"
+      },
+      "cohort": "semantic-regression",
+      "expected": {
+        "exit": 2,
+        "verdict": "reject"
+      },
+      "file": "tests/petta/typecheck_v2_repros/17_constructed_bool_through_let.metta",
+      "id": "17_constructed_bool_through_let|default",
+      "profile": "typecheck-v2",
+      "source_root": "candidate",
+      "source_sha256": "3b7d1c50760aa84d5c29d8d835a3fe0cdab73871c614375ec10d834d561f0334"
+    },
+    {
+      "arguments": [],
+      "classification": {
+        "class": "inferred-overload-set",
+        "phase": "cross-block"
+      },
+      "cohort": "semantic-regression",
+      "expected": {
+        "exit": 0,
+        "verdict": "accept"
+      },
+      "file": "tests/petta/typecheck_v2_repros/20_inferred_overloads_across_blocks.metta",
+      "id": "20_inferred_overloads_across_blocks|default",
+      "profile": "typecheck-v2",
+      "source_root": "candidate",
+      "source_sha256": "8713442f4b676e92d0b85d0c823ad2ef0b79b9e7ee0c603f32570ec091c83a7f"
+    },
+    {
+      "arguments": [],
+      "classification": {
+        "class": "inferred-overload-correlation",
+        "phase": "cross-block"
+      },
+      "cohort": "semantic-regression",
+      "expected": {
+        "exit": 2,
+        "verdict": "reject"
+      },
+      "file": "tests/petta/typecheck_v2_repros/21_inferred_overload_consumer_mismatch.metta",
+      "id": "21_inferred_overload_consumer_mismatch|default",
+      "profile": "typecheck-v2",
+      "source_root": "candidate",
+      "source_sha256": "9db086c4fc18058d9d4820430539e70caa5b57422effb2339e63f1c3ec801998"
+    },
+    {
+      "arguments": [],
+      "classification": {
+        "class": "builtin-predicate-newtype-guard",
+        "phase": "static"
+      },
+      "cohort": "semantic-regression",
+      "expected": {
+        "exit": 0,
+        "verdict": "accept"
+      },
+      "file": "tests/petta/typecheck_v2_repros/19_builtin_predicate_guarded_newtype.metta",
+      "id": "19_builtin_predicate_guarded_newtype|default",
+      "profile": "typecheck-v2",
+      "source_root": "candidate",
+      "source_sha256": "834e4cded1e84b656ce3d4aba6cab32d4240d30a88b021c3546a3a84785392df"
+    },
+    {
+      "arguments": [
+        "--strict"
+      ],
+      "classification": {
+        "class": "builtin-predicate-newtype-guard",
+        "phase": "static"
+      },
+      "cohort": "semantic-regression",
+      "expected": {
+        "exit": 0,
+        "verdict": "accept"
+      },
+      "file": "tests/petta/typecheck_v2_repros/19_builtin_predicate_guarded_newtype.metta",
+      "id": "19_builtin_predicate_guarded_newtype|strict",
+      "profile": "typecheck-v2",
+      "source_root": "candidate",
+      "source_sha256": "834e4cded1e84b656ce3d4aba6cab32d4240d30a88b021c3546a3a84785392df"
+    },
+    {
+      "arguments": [
+        "--strict-det"
+      ],
+      "classification": {
+        "class": "builtin-predicate-newtype-guard",
+        "phase": "static"
+      },
+      "cohort": "semantic-regression",
+      "expected": {
+        "exit": 0,
+        "verdict": "accept"
+      },
+      "file": "tests/petta/typecheck_v2_repros/19_builtin_predicate_guarded_newtype.metta",
+      "id": "19_builtin_predicate_guarded_newtype|strict-det",
+      "profile": "typecheck-v2",
+      "source_root": "candidate",
+      "source_sha256": "834e4cded1e84b656ce3d4aba6cab32d4240d30a88b021c3546a3a84785392df"
+    },
+    {
+      "arguments": [
+        "--strict"
+      ],
+      "classification": {
+        "class": "bound-bool-provenance",
+        "phase": "static"
+      },
+      "cohort": "semantic-regression",
+      "expected": {
+        "exit": 2,
+        "verdict": "reject"
+      },
+      "file": "tests/petta/typecheck_v2_repros/17_constructed_bool_through_let.metta",
+      "id": "17_constructed_bool_through_let|strict",
+      "profile": "typecheck-v2",
+      "source_root": "candidate",
+      "source_sha256": "3b7d1c50760aa84d5c29d8d835a3fe0cdab73871c614375ec10d834d561f0334"
+    },
+    {
+      "arguments": [
+        "--strict-det"
+      ],
+      "classification": {
+        "class": "bound-bool-provenance",
+        "phase": "static"
+      },
+      "cohort": "semantic-regression",
+      "expected": {
+        "exit": 2,
+        "verdict": "reject"
+      },
+      "file": "tests/petta/typecheck_v2_repros/17_constructed_bool_through_let.metta",
+      "id": "17_constructed_bool_through_let|strict-det",
+      "profile": "typecheck-v2",
+      "source_root": "candidate",
+      "source_sha256": "3b7d1c50760aa84d5c29d8d835a3fe0cdab73871c614375ec10d834d561f0334"
+    },
+    {
+      "arguments": [],
+      "classification": {
+        "class": "literal-type-mismatch",
+        "mutates": false,
+        "phase": "static"
+      },
+      "cohort": "roman-244",
+      "expected": {
+        "exit": 2,
+        "verdict": "reject"
+      },
+      "file": "examples/fail_andthen_nonbool.metta",
+      "id": "examples/fail_andthen_nonbool.metta|default",
+      "profile": "typecheck-v2",
+      "source_root": "reference",
+      "source_sha256": "f7b3f601da571602f5e99887c205733f8b80bf0c98d861abb732fe07f0b0a3da"
+    },
+    {
+      "arguments": [],
+      "classification": {
+        "class": "type-conflict",
+        "mutates": false,
+        "phase": "static"
+      },
+      "cohort": "roman-244",
+      "expected": {
+        "exit": 2,
+        "verdict": "reject"
+      },
+      "file": "examples/fail_brand_control_flow_mismatch.metta",
+      "id": "examples/fail_brand_control_flow_mismatch.metta|default",
+      "profile": "typecheck-v2",
+      "source_root": "reference",
+      "source_sha256": "aa56cdd9a48b72cd1a8cbcc4b39fcd17cece951fb738eed79ad735c79a5fd6ae"
+    },
+    {
+      "arguments": [],
+      "classification": {
+        "class": "type-conflict",
+        "mutates": false,
+        "phase": "static"
+      },
+      "cohort": "roman-244",
+      "expected": {
+        "exit": 2,
+        "verdict": "reject"
+      },
+      "file": "examples/fail_call_output_mismatch.metta",
+      "id": "examples/fail_call_output_mismatch.metta|default",
+      "profile": "typecheck-v2",
+      "source_root": "reference",
+      "source_sha256": "4432ef878f67a91ba67666902f193cf021aa674587ba134d4d229520e63190fc"
+    },
+    {
+      "arguments": [],
+      "classification": {
+        "class": "type-conflict",
+        "mutates": false,
+        "phase": "static"
+      },
+      "cohort": "roman-244",
+      "expected": {
+        "exit": 2,
+        "verdict": "reject"
+      },
+      "file": "examples/fail_case_output_mismatch.metta",
+      "id": "examples/fail_case_output_mismatch.metta|default",
+      "profile": "typecheck-v2",
+      "source_root": "reference",
+      "source_sha256": "ab3f970908687232e6bdfd0c271a2cef7f9f3907d9424f54750feacd49a567a1"
+    },
+    {
+      "arguments": [],
+      "classification": {
+        "class": "type-conflict",
+        "mutates": false,
+        "phase": "static"
+      },
+      "cohort": "roman-244",
+      "expected": {
+        "exit": 2,
+        "verdict": "reject"
+      },
+      "file": "examples/fail_catch_output_mismatch.metta",
+      "id": "examples/fail_catch_output_mismatch.metta|default",
+      "profile": "typecheck-v2",
+      "source_root": "reference",
+      "source_sha256": "8c1cd20d71a8430ee953ffd0f7b91bd6d74957d429c7853d50e0dd88fa7f157b"
+    },
+    {
+      "arguments": [],
+      "classification": {
+        "class": "type-conflict",
+        "mutates": false,
+        "phase": "static"
+      },
+      "cohort": "roman-244",
+      "expected": {
+        "exit": 2,
+        "verdict": "reject"
+      },
+      "file": "examples/fail_collapse_mixed_list.metta",
+      "id": "examples/fail_collapse_mixed_list.metta|default",
+      "profile": "typecheck-v2",
+      "source_root": "reference",
+      "source_sha256": "2364b648cde90e5a35f088066b8b0d169526ae2749c54b1e5b38721717eec6d4"
+    },
+    {
+      "arguments": [],
+      "classification": {
+        "class": "type-conflict",
+        "mutates": false,
+        "phase": "static"
+      },
+      "cohort": "roman-244",
+      "expected": {
+        "exit": 2,
+        "verdict": "reject"
+      },
+      "file": "examples/fail_collapse_output_mismatch.metta",
+      "id": "examples/fail_collapse_output_mismatch.metta|default",
+      "profile": "typecheck-v2",
+      "source_root": "reference",
+      "source_sha256": "1f622bcec798b8aa06db415bb8ca7b9122ad055e15787fc4114eda80ace81267"
+    },
+    {
+      "arguments": [],
+      "classification": {
+        "class": "determinism-conflict",
+        "mutates": false,
+        "phase": "static"
+      },
+      "cohort": "roman-244",
+      "expected": {
+        "exit": 2,
+        "verdict": "reject"
+      },
+      "file": "examples/fail_conditional_cut_overlap.metta",
+      "id": "examples/fail_conditional_cut_overlap.metta|default",
+      "profile": "typecheck-v2",
+      "source_root": "reference",
+      "source_sha256": "f264406335d0494ee50344aea06715341f452758776e383c126ae1bca6405aed"
+    },
+    {
+      "arguments": [],
+      "classification": {
+        "class": "literal-type-mismatch",
+        "mutates": false,
+        "phase": "runtime"
+      },
+      "cohort": "roman-244",
+      "expected": {
+        "exit": 2,
+        "verdict": "reject"
+      },
+      "file": "examples/fail_declared_sentinel_param.metta",
+      "id": "examples/fail_declared_sentinel_param.metta|default",
+      "profile": "typecheck-v2",
+      "source_root": "reference",
+      "source_sha256": "481cfbebef52f96a89fcd0d62e5a49234d1740a70a5453d2bdac8e4adf15f679"
+    },
+    {
+      "arguments": [],
+      "classification": {
+        "class": "literal-type-mismatch",
+        "mutates": false,
+        "phase": "runtime"
+      },
+      "cohort": "roman-244",
+      "expected": {
+        "exit": 2,
+        "verdict": "reject"
+      },
+      "file": "examples/fail_destructured_param_mismatch.metta",
+      "id": "examples/fail_destructured_param_mismatch.metta|default",
+      "profile": "typecheck-v2",
+      "source_root": "reference",
+      "source_sha256": "f9412446c7406ec147624fbaa5ae2d020065c19f1bf119a10174eb74f8cc6c92"
+    },
+    {
+      "arguments": [],
+      "classification": {
+        "class": "determinism-conflict",
+        "mutates": true,
+        "phase": "static"
+      },
+      "cohort": "roman-244",
+      "expected": {
+        "exit": 2,
+        "verdict": "reject"
+      },
+      "file": "examples/fail_det_add_atom.metta",
+      "id": "examples/fail_det_add_atom.metta|default",
+      "profile": "typecheck-v2",
+      "source_root": "reference",
+      "source_sha256": "32033de2f8dc73bf3bdf200114a28d2cd431a1ed30920ef7ca3e8d3be57527c9"
+    },
+    {
+      "arguments": [],
+      "classification": {
+        "class": "determinism-conflict",
+        "mutates": false,
+        "phase": "static"
+      },
+      "cohort": "roman-244",
+      "expected": {
+        "exit": 2,
+        "verdict": "reject"
+      },
+      "file": "examples/fail_det_bind.metta",
+      "id": "examples/fail_det_bind.metta|default",
+      "profile": "typecheck-v2",
+      "source_root": "reference",
+      "source_sha256": "93fe5dd2113019d14d2f663ba518727180e8f8ca00153b5ffbfab126f1fa1d51"
+    },
+    {
+      "arguments": [],
+      "classification": {
+        "class": "determinism-conflict",
+        "mutates": false,
+        "phase": "static"
+      },
+      "cohort": "roman-244",
+      "expected": {
+        "exit": 2,
+        "verdict": "reject"
+      },
+      "file": "examples/fail_det_bool_generator.metta",
+      "id": "examples/fail_det_bool_generator.metta|default",
+      "profile": "typecheck-v2",
+      "source_root": "reference",
+      "source_sha256": "a64e99ace0d3b274ca238c547ce2305aec98e695da30589b69c08d82ae004a28"
+    },
+    {
+      "arguments": [],
+      "classification": {
+        "class": "determinism-conflict",
+        "mutates": false,
+        "phase": "static"
+      },
+      "cohort": "roman-244",
+      "expected": {
+        "exit": 2,
+        "verdict": "reject"
+      },
+      "file": "examples/fail_det_case_no_catchall.metta",
+      "id": "examples/fail_det_case_no_catchall.metta|default",
+      "profile": "typecheck-v2",
+      "source_root": "reference",
+      "source_sha256": "c701076684e41a718489ee9cb4ab5a9acc491fd326e859dbe6c6015db836cb61"
+    },
+    {
+      "arguments": [],
+      "classification": {
+        "class": "literal-type-mismatch",
+        "mutates": false,
+        "phase": "runtime"
+      },
+      "cohort": "roman-244",
+      "expected": {
+        "exit": 2,
+        "verdict": "reject"
+      },
+      "file": "examples/fail_det_closure_param.metta",
+      "id": "examples/fail_det_closure_param.metta|default",
+      "profile": "typecheck-v2",
+      "source_root": "reference",
+      "source_sha256": "ad5baed499b17c927c8ad63ca1d7e543db8ce807dc3afdddb8b814d82905147a"
+    },
+    {
+      "arguments": [],
+      "classification": {
+        "class": "determinism-conflict",
+        "mutates": false,
+        "phase": "static"
+      },
+      "cohort": "roman-244",
+      "expected": {
+        "exit": 2,
+        "verdict": "reject"
+      },
+      "file": "examples/fail_det_closure_unproven_builtin.metta",
+      "id": "examples/fail_det_closure_unproven_builtin.metta|default",
+      "profile": "typecheck-v2",
+      "source_root": "reference",
+      "source_sha256": "b6a9398a7442c46a305caab9349ed2df6a41a5e3989766e5759d791945504b09"
+    },
+    {
+      "arguments": [],
+      "classification": {
+        "class": "determinism-conflict",
+        "mutates": false,
+        "phase": "static"
+      },
+      "cohort": "roman-244",
+      "expected": {
+        "exit": 2,
+        "verdict": "reject"
+      },
+      "file": "examples/fail_det_compound_head_apply.metta",
+      "id": "examples/fail_det_compound_head_apply.metta|default",
+      "profile": "typecheck-v2",
+      "source_root": "reference",
+      "source_sha256": "99001ec146617e33c607a3bda9b44d98241d862f15cc6b344a2caeb7a39b4dad"
+    },
+    {
+      "arguments": [],
+      "classification": {
+        "class": "determinism-conflict",
+        "mutates": false,
+        "phase": "static"
+      },
+      "cohort": "roman-244",
+      "expected": {
+        "exit": 2,
+        "verdict": "reject"
+      },
+      "file": "examples/fail_det_field_in_and.metta",
+      "id": "examples/fail_det_field_in_and.metta|default",
+      "profile": "typecheck-v2",
+      "source_root": "reference",
+      "source_sha256": "48d46acfc6e15c61d2515cad3afec0bd35a21593d03fe99cd22d81b8b627ae02"
+    },
+    {
+      "arguments": [],
+      "classification": {
+        "class": "determinism-conflict",
+        "mutates": false,
+        "phase": "static"
+      },
+      "cohort": "roman-244",
+      "expected": {
+        "exit": 2,
+        "verdict": "reject"
+      },
+      "file": "examples/fail_det_get_metatype.metta",
+      "id": "examples/fail_det_get_metatype.metta|default",
+      "profile": "typecheck-v2",
+      "source_root": "reference",
+      "source_sha256": "2ac77a0340a537f52307b863139961aa87dff3af37bfd8dda5a94e09faa5eb9d"
+    },
+    {
+      "arguments": [],
+      "classification": {
+        "class": "determinism-conflict",
+        "mutates": false,
+        "phase": "static"
+      },
+      "cohort": "roman-244",
+      "expected": {
+        "exit": 2,
+        "verdict": "reject"
+      },
+      "file": "examples/fail_det_isvar_unenforced_bool.metta",
+      "id": "examples/fail_det_isvar_unenforced_bool.metta|default",
+      "profile": "typecheck-v2",
+      "source_root": "reference",
+      "source_sha256": "a59a4b2d8277b6385b8d263b6dbc4433e572bf8407e4d66b312d318eb1b06111"
+    },
+    {
+      "arguments": [],
+      "classification": {
+        "class": "determinism-conflict",
+        "mutates": false,
+        "phase": "static"
+      },
+      "cohort": "roman-244",
+      "expected": {
+        "exit": 2,
+        "verdict": "reject"
+      },
+      "file": "examples/fail_det_nondet_builtin.metta",
+      "id": "examples/fail_det_nondet_builtin.metta|default",
+      "profile": "typecheck-v2",
+      "source_root": "reference",
+      "source_sha256": "9946e1c2769778202921c3a05be2d2b9483d39d207ff86484c713c9de9f83fdc"
+    },
+    {
+      "arguments": [],
+      "classification": {
+        "class": "determinism-conflict",
+        "mutates": false,
+        "phase": "static"
+      },
+      "cohort": "roman-244",
+      "expected": {
+        "exit": 2,
+        "verdict": "reject"
+      },
+      "file": "examples/fail_det_nondet_through_fold.metta",
+      "id": "examples/fail_det_nondet_through_fold.metta|default",
+      "profile": "typecheck-v2",
+      "source_root": "reference",
+      "source_sha256": "ef3ddf793362559ec4ec6bc6da81bb19707cc339a1254a6129e7b08b2c7cccdf"
+    },
+    {
+      "arguments": [],
+      "classification": {
+        "class": "determinism-conflict",
+        "mutates": false,
+        "phase": "static"
+      },
+      "cohort": "roman-244",
+      "expected": {
+        "exit": 2,
+        "verdict": "reject"
+      },
+      "file": "examples/fail_det_once_semidet.metta",
+      "id": "examples/fail_det_once_semidet.metta|default",
+      "profile": "typecheck-v2",
+      "source_root": "reference",
+      "source_sha256": "cde17f369f09f3c78f4946180c5699d64e4e8da000d0f98a6352b4265576d69b"
+    },
+    {
+      "arguments": [],
+      "classification": {
+        "class": "determinism-conflict",
+        "mutates": false,
+        "phase": "static"
+      },
+      "cohort": "roman-244",
+      "expected": {
+        "exit": 2,
+        "verdict": "reject"
+      },
+      "file": "examples/fail_det_random_int.metta",
+      "id": "examples/fail_det_random_int.metta|default",
+      "profile": "typecheck-v2",
+      "source_root": "reference",
+      "source_sha256": "556c0eab74e8c739fe6b8680a66707f600f64af57e18504301394d10934d4505"
+    },
+    {
+      "arguments": [],
+      "classification": {
+        "class": "determinism-conflict",
+        "mutates": false,
+        "phase": "static"
+      },
+      "cohort": "roman-244",
+      "expected": {
+        "exit": 2,
+        "verdict": "reject"
+      },
+      "file": "examples/fail_det_recursion_arity.metta",
+      "id": "examples/fail_det_recursion_arity.metta|default",
+      "profile": "typecheck-v2",
+      "source_root": "reference",
+      "source_sha256": "ff85d1f3097c95b726a27ced29a9be504a2ee529c139dcfcce19522ae1dfba64"
+    },
+    {
+      "arguments": [],
+      "classification": {
+        "class": "determinism-conflict",
+        "mutates": false,
+        "phase": "static"
+      },
+      "cohort": "roman-244",
+      "expected": {
+        "exit": 2,
+        "verdict": "reject"
+      },
+      "file": "examples/fail_det_size_atom_open_list.metta",
+      "id": "examples/fail_det_size_atom_open_list.metta|default",
+      "profile": "typecheck-v2",
+      "source_root": "reference",
+      "source_sha256": "cb0d6682a59b7b67c736c4db208ed387bb73ae79484a81ae8507e49f8073dafb"
+    },
+    {
+      "arguments": [],
+      "classification": {
+        "class": "determinism-conflict",
+        "mutates": false,
+        "phase": "static"
+      },
+      "cohort": "roman-244",
+      "expected": {
+        "exit": 2,
+        "verdict": "reject"
+      },
+      "file": "examples/fail_det_two_arg_if.metta",
+      "id": "examples/fail_det_two_arg_if.metta|default",
+      "profile": "typecheck-v2",
+      "source_root": "reference",
+      "source_sha256": "9517ecfdde20d402eed12389daae3042341b4757a7b37fa6dc6e19b80866a8f5"
+    },
+    {
+      "arguments": [],
+      "classification": {
+        "class": "determinism-conflict",
+        "mutates": false,
+        "phase": "static"
+      },
+      "cohort": "roman-244",
+      "expected": {
+        "exit": 2,
+        "verdict": "reject"
+      },
+      "file": "examples/fail_det_undeclared_callee.metta",
+      "id": "examples/fail_det_undeclared_callee.metta|default",
+      "profile": "typecheck-v2",
+      "source_root": "reference",
+      "source_sha256": "dfddf2d84c953b00ebcab43ec91c55c205561167838081e5277d5903164ec300"
+    },
+    {
+      "arguments": [],
+      "classification": {
+        "class": "determinism-conflict",
+        "mutates": false,
+        "phase": "static"
+      },
+      "cohort": "roman-244",
+      "expected": {
+        "exit": 2,
+        "verdict": "reject"
+      },
+      "file": "examples/fail_det_unify_nondet_operand.metta",
+      "id": "examples/fail_det_unify_nondet_operand.metta|default",
+      "profile": "typecheck-v2",
+      "source_root": "reference",
+      "source_sha256": "cc2d0bdcba29a782308ba2f0e77d66db270afef31bb1e3829da9795c67fd348a"
+    },
+    {
+      "arguments": [],
+      "classification": {
+        "class": "not-proper-list",
+        "mutates": false,
+        "phase": "runtime"
+      },
+      "cohort": "roman-244",
+      "expected": {
+        "exit": 2,
+        "verdict": "reject"
+      },
+      "file": "examples/fail_det_unwrappable_list_builtin.metta",
+      "id": "examples/fail_det_unwrappable_list_builtin.metta|default",
+      "profile": "typecheck-v2",
+      "source_root": "reference",
+      "source_sha256": "258d60ad6d55c672c8e0a9b0cd51495ca09c3b45b4379aae3f83fa34d7d05ca9"
+    },
+    {
+      "arguments": [],
+      "classification": {
+        "class": "determinism-conflict",
+        "mutates": false,
+        "phase": "static"
+      },
+      "cohort": "roman-244",
+      "expected": {
+        "exit": 2,
+        "verdict": "reject"
+      },
+      "file": "examples/fail_determinism_body.metta",
+      "id": "examples/fail_determinism_body.metta|default",
+      "profile": "typecheck-v2",
+      "source_root": "reference",
+      "source_sha256": "6ec10b4efb12f5f7d2ce38808350c736e7a21f42d9c86991ce1f5ccff03e69ee"
+    },
+    {
+      "arguments": [],
+      "classification": {
+        "class": "overlapping-clauses",
+        "mutates": false,
+        "phase": "static"
+      },
+      "cohort": "roman-244",
+      "expected": {
+        "exit": 2,
+        "verdict": "reject"
+      },
+      "file": "examples/fail_determinism_overlap.metta",
+      "id": "examples/fail_determinism_overlap.metta|default",
+      "profile": "typecheck-v2",
+      "source_root": "reference",
+      "source_sha256": "9a997355e4a0bb23f34334f890d9a3118f1ea44fd62896f01d539dbd96640b20"
+    },
+    {
+      "arguments": [],
+      "classification": {
+        "class": "type-conflict",
+        "mutates": false,
+        "phase": "static"
+      },
+      "cohort": "roman-244",
+      "expected": {
+        "exit": 2,
+        "verdict": "reject"
+      },
+      "file": "examples/fail_eval_quote_output_mismatch.metta",
+      "id": "examples/fail_eval_quote_output_mismatch.metta|default",
+      "profile": "typecheck-v2",
+      "source_root": "reference",
+      "source_sha256": "e5c4b1b5f244094e823542a88af9bd61118f25ae3dd89cdece47b6c96271c511"
+    },
+    {
+      "arguments": [],
+      "classification": {
+        "class": "type-conflict",
+        "mutates": false,
+        "phase": "static"
+      },
+      "cohort": "roman-244",
+      "expected": {
+        "exit": 2,
+        "verdict": "reject"
+      },
+      "file": "examples/fail_foldall_output_mismatch.metta",
+      "id": "examples/fail_foldall_output_mismatch.metta|default",
+      "profile": "typecheck-v2",
+      "source_root": "reference",
+      "source_sha256": "1a5cca2c08eb35ece41ec85541a1049e8827a59053b1a92a2793bce8296ba593"
+    },
+    {
+      "arguments": [],
+      "classification": {
+        "class": "type-conflict",
+        "mutates": false,
+        "phase": "static"
+      },
+      "cohort": "roman-244",
+      "expected": {
+        "exit": 2,
+        "verdict": "reject"
+      },
+      "file": "examples/fail_forall_output_mismatch.metta",
+      "id": "examples/fail_forall_output_mismatch.metta|default",
+      "profile": "typecheck-v2",
+      "source_root": "reference",
+      "source_sha256": "08fc46513cc7dac4fd2638601eb3da3534bc41ba04c827ed9dbd21f6a0bb499a"
+    },
+    {
+      "arguments": [],
+      "classification": {
+        "class": "literal-type-mismatch",
+        "mutates": false,
+        "phase": "static"
+      },
+      "cohort": "roman-244",
+      "expected": {
+        "exit": 2,
+        "verdict": "reject"
+      },
+      "file": "examples/fail_ground_clause_output_conflict.metta",
+      "id": "examples/fail_ground_clause_output_conflict.metta|default",
+      "profile": "typecheck-v2",
+      "source_root": "reference",
+      "source_sha256": "0e14f831eda342e73de28ecbfb4d10a4c835a8165cf37a7c44813f635054ab9f"
+    },
+    {
+      "arguments": [],
+      "classification": {
+        "class": "type-conflict",
+        "mutates": false,
+        "phase": "static"
+      },
+      "cohort": "roman-244",
+      "expected": {
+        "exit": 2,
+        "verdict": "reject"
+      },
+      "file": "examples/fail_hyperpose_output_mismatch.metta",
+      "id": "examples/fail_hyperpose_output_mismatch.metta|default",
+      "profile": "typecheck-v2",
+      "source_root": "reference",
+      "source_sha256": "82ea8a7e2c3f483a9edfbd5ea29480044c01c4f7cded032e341ab0747969d076"
+    },
+    {
+      "arguments": [],
+      "classification": {
+        "class": "type-conflict",
+        "mutates": false,
+        "phase": "static"
+      },
+      "cohort": "roman-244",
+      "expected": {
+        "exit": 2,
+        "verdict": "reject"
+      },
+      "file": "examples/fail_if_output_mismatch.metta",
+      "id": "examples/fail_if_output_mismatch.metta|default",
+      "profile": "typecheck-v2",
+      "source_root": "reference",
+      "source_sha256": "2f74ff30898256597d41d579c0b057a371c53ebcf57862ac399a39933ac2dbae"
+    },
+    {
+      "arguments": [],
+      "classification": {
+        "class": "parse",
+        "mutates": false,
+        "phase": "parse"
+      },
+      "cohort": "roman-244",
+      "expected": {
+        "exit": 2,
+        "verdict": "reject"
+      },
+      "file": "examples/fail_import_syntax_error.metta",
+      "id": "examples/fail_import_syntax_error.metta|default",
+      "profile": "typecheck-v2",
+      "source_root": "reference",
+      "source_sha256": "cbf62dafedce4971fe9a8a045f529757349f6c5437a07cbec202b419df6fbf24"
+    },
+    {
+      "arguments": [],
+      "classification": {
+        "class": "literal-type-mismatch",
+        "mutates": false,
+        "phase": "runtime"
+      },
+      "cohort": "roman-244",
+      "expected": {
+        "exit": 2,
+        "verdict": "reject"
+      },
+      "file": "examples/fail_import_type_error.metta",
+      "id": "examples/fail_import_type_error.metta|default",
+      "profile": "typecheck-v2",
+      "source_root": "reference",
+      "source_sha256": "924c1b402ef222d6749a30cd25ce713121f0be8db071b8fd24a42b919474d45c"
+    },
+    {
+      "arguments": [],
+      "classification": {
+        "class": "literal-type-mismatch",
+        "mutates": false,
+        "phase": "static"
+      },
+      "cohort": "roman-244",
+      "expected": {
+        "exit": 2,
+        "verdict": "reject"
+      },
+      "file": "examples/fail_import_type_error_module.metta",
+      "id": "examples/fail_import_type_error_module.metta|default",
+      "profile": "typecheck-v2",
+      "source_root": "reference",
+      "source_sha256": "f5301ef59efb6e8c6715f4ec0e88caa7315c9d40e08c3403d196bf807a0dd80e"
+    },
+    {
+      "arguments": [],
+      "classification": {
+        "class": "literal-type-mismatch",
+        "mutates": false,
+        "phase": "runtime"
+      },
+      "cohort": "roman-244",
+      "expected": {
+        "exit": 2,
+        "verdict": "reject"
+      },
+      "file": "examples/fail_inferred_literal_mismatch.metta",
+      "id": "examples/fail_inferred_literal_mismatch.metta|default",
+      "profile": "typecheck-v2",
+      "source_root": "reference",
+      "source_sha256": "a413b8cf16128f6fda3652dfdd9f6687c22d7f8a7227a6414a5f35496f8ef76d"
+    },
+    {
+      "arguments": [],
+      "classification": {
+        "class": "type-conflict",
+        "mutates": false,
+        "phase": "static"
+      },
+      "cohort": "roman-244",
+      "expected": {
+        "exit": 2,
+        "verdict": "reject"
+      },
+      "file": "examples/fail_inferred_output_conflict.metta",
+      "id": "examples/fail_inferred_output_conflict.metta|default",
+      "profile": "typecheck-v2",
+      "source_root": "reference",
+      "source_sha256": "35a5ddcaf18ff9a64170fe2d2de083588d6d06abb524b69de8c57621cb761907"
+    },
+    {
+      "arguments": [],
+      "classification": {
+        "class": "arrows-prefix",
+        "mutates": false,
+        "phase": "static"
+      },
+      "cohort": "roman-244",
+      "expected": {
+        "exit": 2,
+        "verdict": "reject"
+      },
+      "file": "examples/fail_infix_arrow.metta",
+      "id": "examples/fail_infix_arrow.metta|default",
+      "profile": "typecheck-v2",
+      "source_root": "reference",
+      "source_sha256": "71841a91c8316e42715f6f224b03640116ed6a6512d6a68a43540b27fecbc42e"
+    },
+    {
+      "arguments": [],
+      "classification": {
+        "class": "determinism-conflict",
+        "mutates": true,
+        "phase": "mutation-static"
+      },
+      "cohort": "roman-244",
+      "expected": {
+        "exit": 2,
+        "verdict": "reject"
+      },
+      "file": "examples/fail_late_effect_conditional.metta",
+      "id": "examples/fail_late_effect_conditional.metta|default",
+      "profile": "typecheck-v2",
+      "source_root": "reference",
+      "source_sha256": "ec612bec218b71c1097f77a6dc34e7720308aad3586f485f2895b625f0455e56"
+    },
+    {
+      "arguments": [],
+      "classification": {
+        "class": "determinism-conflict",
+        "mutates": true,
+        "phase": "mutation-static"
+      },
+      "cohort": "roman-244",
+      "expected": {
+        "exit": 2,
+        "verdict": "reject"
+      },
+      "file": "examples/fail_late_output_cert_consumer.metta",
+      "id": "examples/fail_late_output_cert_consumer.metta|default",
+      "profile": "typecheck-v2",
+      "source_root": "reference",
+      "source_sha256": "c7634cc82161fc54d2d642f4aaa463b899361316f8c12b805ebdf0f9bb4fe17c"
+    },
+    {
+      "arguments": [],
+      "classification": {
+        "class": "determinism-conflict",
+        "mutates": false,
+        "phase": "static"
+      },
+      "cohort": "roman-244",
+      "expected": {
+        "exit": 2,
+        "verdict": "reject"
+      },
+      "file": "examples/fail_lib_trust_unverified_effect.metta",
+      "id": "examples/fail_lib_trust_unverified_effect.metta|default",
+      "profile": "typecheck-v2",
+      "source_root": "reference",
+      "source_sha256": "89152b8e89347dfb3f394c922ecfba70dc91bf28e2c269c8af87a28880f5c503"
+    },
+    {
+      "arguments": [],
+      "classification": {
+        "class": "literal-type-mismatch",
+        "mutates": false,
+        "phase": "runtime"
+      },
+      "cohort": "roman-244",
+      "expected": {
+        "exit": 2,
+        "verdict": "reject"
+      },
+      "file": "examples/fail_library_unverified_result.metta",
+      "id": "examples/fail_library_unverified_result.metta|default",
+      "profile": "typecheck-v2",
+      "source_root": "reference",
+      "source_sha256": "2ce5a19ad32a31d052b7ead5c5fe10e935805e18a02ce3455129e8e7a06f7266"
+    },
+    {
+      "arguments": [],
+      "classification": {
+        "class": "literal-type-mismatch",
+        "mutates": false,
+        "phase": "runtime"
+      },
+      "cohort": "roman-244",
+      "expected": {
+        "exit": 2,
+        "verdict": "reject"
+      },
+      "file": "examples/fail_list_type_mismatch.metta",
+      "id": "examples/fail_list_type_mismatch.metta|default",
+      "profile": "typecheck-v2",
+      "source_root": "reference",
+      "source_sha256": "1a690988a8a40f623dcf4abe64dd33e732846e489fadab868a4acfce8ce9e4c9"
+    },
+    {
+      "arguments": [],
+      "classification": {
+        "class": "literal-type-mismatch",
+        "mutates": false,
+        "phase": "static"
+      },
+      "cohort": "roman-244",
+      "expected": {
+        "exit": 2,
+        "verdict": "reject"
+      },
+      "file": "examples/fail_manual_call_type_error.metta",
+      "id": "examples/fail_manual_call_type_error.metta|default",
+      "profile": "typecheck-v2",
+      "source_root": "reference",
+      "source_sha256": "03173f2d6d763dd78ff543bdcfb726244c5c92da71e2fda4c331f4e5a6af9173"
+    },
+    {
+      "arguments": [],
+      "classification": {
+        "class": "type-conflict",
+        "mutates": false,
+        "phase": "static"
+      },
+      "cohort": "roman-244",
+      "expected": {
+        "exit": 2,
+        "verdict": "reject"
+      },
+      "file": "examples/fail_map_output_mismatch.metta",
+      "id": "examples/fail_map_output_mismatch.metta|default",
+      "profile": "typecheck-v2",
+      "source_root": "reference",
+      "source_sha256": "a9bea0bb80dd461cb5023a3ad92cc580363b88306c7b305704f5e383f364d577"
+    },
+    {
+      "arguments": [],
+      "classification": {
+        "class": "type-conflict",
+        "mutates": false,
+        "phase": "static"
+      },
+      "cohort": "roman-244",
+      "expected": {
+        "exit": 2,
+        "verdict": "reject"
+      },
+      "file": "examples/fail_match_output_mismatch.metta",
+      "id": "examples/fail_match_output_mismatch.metta|default",
+      "profile": "typecheck-v2",
+      "source_root": "reference",
+      "source_sha256": "a476343b6041ee7e6555dd6cd0aa4d58d1329696c3f0536f4d482da08e8bfad3"
+    },
+    {
+      "arguments": [],
+      "classification": {
+        "class": "type-conflict",
+        "mutates": false,
+        "phase": "static"
+      },
+      "cohort": "roman-244",
+      "expected": {
+        "exit": 2,
+        "verdict": "reject"
+      },
+      "file": "examples/fail_mutex_output_mismatch.metta",
+      "id": "examples/fail_mutex_output_mismatch.metta|default",
+      "profile": "typecheck-v2",
+      "source_root": "reference",
+      "source_sha256": "7827bb12e3a34b413953275893a2e4d5387c18f7c4adaa3c9dab9b6d8a7a651f"
+    },
+    {
+      "arguments": [],
+      "classification": {
+        "class": "parametric-parameter",
+        "mutates": false,
+        "phase": "static"
+      },
+      "cohort": "roman-244",
+      "expected": {
+        "exit": 2,
+        "verdict": "reject"
+      },
+      "file": "examples/fail_nested_parametric_param.metta",
+      "id": "examples/fail_nested_parametric_param.metta|default",
+      "profile": "typecheck-v2",
+      "source_root": "reference",
+      "source_sha256": "63e05a4db5368b0299038125e1f5aae4f23292887d2d8d70149e0876c44cf675"
+    },
+    {
+      "arguments": [],
+      "classification": {
+        "class": "literal-type-mismatch",
+        "mutates": false,
+        "phase": "static"
+      },
+      "cohort": "roman-244",
+      "expected": {
+        "exit": 2,
+        "verdict": "reject"
+      },
+      "file": "examples/fail_newtype_role_mismatch.metta",
+      "id": "examples/fail_newtype_role_mismatch.metta|default",
+      "profile": "typecheck-v2",
+      "source_root": "reference",
+      "source_sha256": "a84084f670078aa7bce5f6f807c1e00eb244e1f8a93d5af08f2f273b71840688"
+    },
+    {
+      "arguments": [],
+      "classification": {
+        "class": "literal-type-mismatch",
+        "mutates": false,
+        "phase": "runtime"
+      },
+      "cohort": "roman-244",
+      "expected": {
+        "exit": 2,
+        "verdict": "reject"
+      },
+      "file": "examples/fail_newtype_wildcard_leak.metta",
+      "id": "examples/fail_newtype_wildcard_leak.metta|default",
+      "profile": "typecheck-v2",
+      "source_root": "reference",
+      "source_sha256": "4e89e148436fae7f430fce3ed80f45eba89bd60edcf1cd06d368c623c1cc6963"
+    },
+    {
+      "arguments": [],
+      "classification": {
+        "class": "declared-output-var",
+        "mutates": false,
+        "phase": "static"
+      },
+      "cohort": "roman-244",
+      "expected": {
+        "exit": 2,
+        "verdict": "reject"
+      },
+      "file": "examples/fail_non_parametric_output.metta",
+      "id": "examples/fail_non_parametric_output.metta|default",
+      "profile": "typecheck-v2",
+      "source_root": "reference",
+      "source_sha256": "7717ad5332588bd9b7fadb1e2b6f0e67ed94173ccd5bc9efb7278fdb9068df7c"
+    },
+    {
+      "arguments": [],
+      "classification": {
+        "class": "non-exhaustive",
+        "mutates": false,
+        "phase": "static"
+      },
+      "cohort": "roman-244",
+      "expected": {
+        "exit": 2,
+        "verdict": "reject"
+      },
+      "file": "examples/fail_nonexhaustive_ctor.metta",
+      "id": "examples/fail_nonexhaustive_ctor.metta|default",
+      "profile": "typecheck-v2",
+      "source_root": "reference",
+      "source_sha256": "e087e3420aa83575ce4b2bea07f07f24b50d93bf79b84509f767c248b430673d"
+    },
+    {
+      "arguments": [],
+      "classification": {
+        "class": "non-exhaustive",
+        "mutates": false,
+        "phase": "static"
+      },
+      "cohort": "roman-244",
+      "expected": {
+        "exit": 2,
+        "verdict": "reject"
+      },
+      "file": "examples/fail_nonexhaustive_det.metta",
+      "id": "examples/fail_nonexhaustive_det.metta|default",
+      "profile": "typecheck-v2",
+      "source_root": "reference",
+      "source_sha256": "10242a01210dd1549b04f2b2c1c403795c39e47ebbf5806e87cfaeff4e8c39fd"
+    },
+    {
+      "arguments": [],
+      "classification": {
+        "class": "parametric-parameter",
+        "mutates": false,
+        "phase": "static"
+      },
+      "cohort": "roman-244",
+      "expected": {
+        "exit": 2,
+        "verdict": "reject"
+      },
+      "file": "examples/fail_nonparametric_param.metta",
+      "id": "examples/fail_nonparametric_param.metta|default",
+      "profile": "typecheck-v2",
+      "source_root": "reference",
+      "source_sha256": "bae1094fb03ce7517c90aa30934c78c5e2c86dae6c9431f850c435c70dce337b"
+    },
+    {
+      "arguments": [],
+      "classification": {
+        "class": "type-conflict",
+        "mutates": false,
+        "phase": "static"
+      },
+      "cohort": "roman-244",
+      "expected": {
+        "exit": 2,
+        "verdict": "reject"
+      },
+      "file": "examples/fail_once_output_mismatch.metta",
+      "id": "examples/fail_once_output_mismatch.metta|default",
+      "profile": "typecheck-v2",
+      "source_root": "reference",
+      "source_sha256": "43b7ea502e2ba88e254410a0701538dbb45be089b67b4cc2aa780d2b2490bab3"
+    },
+    {
+      "arguments": [],
+      "classification": {
+        "class": "literal-type-mismatch",
+        "mutates": false,
+        "phase": "static"
+      },
+      "cohort": "roman-244",
+      "expected": {
+        "exit": 2,
+        "verdict": "reject"
+      },
+      "file": "examples/fail_overload_clause_mismatch.metta",
+      "id": "examples/fail_overload_clause_mismatch.metta|default",
+      "profile": "typecheck-v2",
+      "source_root": "reference",
+      "source_sha256": "59edf8f396481da1d93c9e4d7ce54faa17a4a60157a73af89a478bafd68b888b"
+    },
+    {
+      "arguments": [],
+      "classification": {
+        "class": "parametric-parameter",
+        "mutates": false,
+        "phase": "static"
+      },
+      "cohort": "roman-244",
+      "expected": {
+        "exit": 2,
+        "verdict": "reject"
+      },
+      "file": "examples/fail_parametric_closure_arg.metta",
+      "id": "examples/fail_parametric_closure_arg.metta|default",
+      "profile": "typecheck-v2",
+      "source_root": "reference",
+      "source_sha256": "dd6c08cebfc88e49797d959f1fd70b3477a20cf06d0f820f2c7b14be094f85f7"
+    },
+    {
+      "arguments": [],
+      "classification": {
+        "class": "type-conflict",
+        "mutates": false,
+        "phase": "static"
+      },
+      "cohort": "roman-244",
+      "expected": {
+        "exit": 2,
+        "verdict": "reject"
+      },
+      "file": "examples/fail_progn_output_mismatch.metta",
+      "id": "examples/fail_progn_output_mismatch.metta|default",
+      "profile": "typecheck-v2",
+      "source_root": "reference",
+      "source_sha256": "9e23f1e54a366381628e186c256974870e0b67a728b9d2679b52c2bdfa052bdf"
+    },
+    {
+      "arguments": [],
+      "classification": {
+        "class": "type-conflict",
+        "mutates": false,
+        "phase": "static"
+      },
+      "cohort": "roman-244",
+      "expected": {
+        "exit": 2,
+        "verdict": "reject"
+      },
+      "file": "examples/fail_quoted_compound_output.metta",
+      "id": "examples/fail_quoted_compound_output.metta|default",
+      "profile": "typecheck-v2",
+      "source_root": "reference",
+      "source_sha256": "25674f0d4f7c48c5f3dd635151eecd77d0e17152224c9ba9e48ed6242d6a406c"
+    },
+    {
+      "arguments": [],
+      "classification": {
+        "class": "literal-type-mismatch",
+        "mutates": false,
+        "phase": "static"
+      },
+      "cohort": "roman-244",
+      "expected": {
+        "exit": 2,
+        "verdict": "reject"
+      },
+      "file": "examples/fail_quoted_literal_output.metta",
+      "id": "examples/fail_quoted_literal_output.metta|default",
+      "profile": "typecheck-v2",
+      "source_root": "reference",
+      "source_sha256": "5dc0bfcf3db7fe39576d34320d05bb8972e89afe9eb48b8a426f4c946dfb2b12"
+    },
+    {
+      "arguments": [],
+      "classification": {
+        "class": "type-conflict",
+        "mutates": false,
+        "phase": "static"
+      },
+      "cohort": "roman-244",
+      "expected": {
+        "exit": 2,
+        "verdict": "reject"
+      },
+      "file": "examples/fail_reduce_output_mismatch.metta",
+      "id": "examples/fail_reduce_output_mismatch.metta|default",
+      "profile": "typecheck-v2",
+      "source_root": "reference",
+      "source_sha256": "6a1f71a3084f2aab18ef8c001f28972b67f4e69f08fabd02de5cfc3fa8330aff"
+    },
+    {
+      "arguments": [],
+      "classification": {
+        "class": "literal-type-mismatch",
+        "mutates": false,
+        "phase": "runtime"
+      },
+      "cohort": "roman-244",
+      "expected": {
+        "exit": 2,
+        "verdict": "reject"
+      },
+      "file": "examples/fail_runnable_callsite_literal_mismatch.metta",
+      "id": "examples/fail_runnable_callsite_literal_mismatch.metta|default",
+      "profile": "typecheck-v2",
+      "source_root": "reference",
+      "source_sha256": "deaf7dbd3f646267e3c974c7b3bb3f407346301f234d911c6a5b8d5f6614ff6b"
+    },
+    {
+      "arguments": [],
+      "classification": {
+        "class": "literal-type-mismatch",
+        "mutates": false,
+        "phase": "runtime"
+      },
+      "cohort": "roman-244",
+      "expected": {
+        "exit": 2,
+        "verdict": "reject"
+      },
+      "file": "examples/fail_runtime_noncallable_arrow.metta",
+      "id": "examples/fail_runtime_noncallable_arrow.metta|default",
+      "profile": "typecheck-v2",
+      "source_root": "reference",
+      "source_sha256": "102cd11739ed6413f9c73b6e8470739d86aba510ace0eda681efa9714f58728a"
+    },
+    {
+      "arguments": [],
+      "classification": {
+        "class": "type-conflict",
+        "mutates": false,
+        "phase": "static"
+      },
+      "cohort": "roman-244",
+      "expected": {
+        "exit": 2,
+        "verdict": "reject"
+      },
+      "file": "examples/fail_sealed_output_mismatch.metta",
+      "id": "examples/fail_sealed_output_mismatch.metta|default",
+      "profile": "typecheck-v2",
+      "source_root": "reference",
+      "source_sha256": "8290c287391b9967ab123ea3b47746865274e11626cb65c635aafb493b086f77"
+    },
+    {
+      "arguments": [],
+      "classification": {
+        "class": "determinism-conflict",
+        "mutates": false,
+        "phase": "static"
+      },
+      "cohort": "roman-244",
+      "expected": {
+        "exit": 2,
+        "verdict": "reject"
+      },
+      "file": "examples/fail_selection_local_type_shape.metta",
+      "id": "examples/fail_selection_local_type_shape.metta|default",
+      "profile": "typecheck-v2",
+      "source_root": "reference",
+      "source_sha256": "d7db1697eba9730361bf4530b18b407b868d119aa104482b766fc51fc5140132"
+    },
+    {
+      "arguments": [],
+      "classification": {
+        "class": "determinism-conflict",
+        "mutates": false,
+        "phase": "static"
+      },
+      "cohort": "roman-244",
+      "expected": {
+        "exit": 2,
+        "verdict": "reject"
+      },
+      "file": "examples/fail_semidet_index_atom.metta",
+      "id": "examples/fail_semidet_index_atom.metta|default",
+      "profile": "typecheck-v2",
+      "source_root": "reference",
+      "source_sha256": "239483e17df60462e560d33094a322bb5d8a7313fb8cbd7febb2227f7d6101e0"
+    },
+    {
+      "arguments": [],
+      "classification": {
+        "class": "determinism-conflict",
+        "mutates": false,
+        "phase": "static"
+      },
+      "cohort": "roman-244",
+      "expected": {
+        "exit": 2,
+        "verdict": "reject"
+      },
+      "file": "examples/fail_semidet_nondet_builtin.metta",
+      "id": "examples/fail_semidet_nondet_builtin.metta|default",
+      "profile": "typecheck-v2",
+      "source_root": "reference",
+      "source_sha256": "f3378f760f2adf4b01d07195365e7172c5c8db40fea7538ff55f79ff7cfd7216"
+    },
+    {
+      "arguments": [],
+      "classification": {
+        "class": "literal-type-mismatch",
+        "mutates": false,
+        "phase": "runtime"
+      },
+      "cohort": "roman-244",
+      "expected": {
+        "exit": 2,
+        "verdict": "reject"
+      },
+      "file": "examples/fail_single_poly_compile_mismatch.metta",
+      "id": "examples/fail_single_poly_compile_mismatch.metta|default",
+      "profile": "typecheck-v2",
+      "source_root": "reference",
+      "source_sha256": "9713da8f0bfe516d5db89cb213e112e24782106484cee64ef6dc114526af3cd7"
+    },
+    {
+      "arguments": [],
+      "classification": {
+        "class": "spaceof-row",
+        "mutates": true,
+        "phase": "mutation-static"
+      },
+      "cohort": "roman-244",
+      "expected": {
+        "exit": 2,
+        "verdict": "reject"
+      },
+      "file": "examples/fail_spaceof_existing_row.metta",
+      "id": "examples/fail_spaceof_existing_row.metta|default",
+      "profile": "typecheck-v2",
+      "source_root": "reference",
+      "source_sha256": "3bbfa1d2a43a5bf8b2606d1a8114c8f2afdc0c702e906b454ac356beccfc7e25"
+    },
+    {
+      "arguments": [],
+      "classification": {
+        "class": "literal-type-mismatch",
+        "mutates": false,
+        "phase": "runtime"
+      },
+      "cohort": "roman-244",
+      "expected": {
+        "exit": 2,
+        "verdict": "reject"
+      },
+      "file": "examples/fail_specialized_output_guard.metta",
+      "id": "examples/fail_specialized_output_guard.metta|default",
+      "profile": "typecheck-v2",
+      "source_root": "reference",
+      "source_sha256": "b4338cfdc14c543f6a04eb09f51034d7e73adcbd21407f892e58fe92b44afd5c"
+    },
+    {
+      "arguments": [],
+      "classification": {
+        "class": "determinism-conflict",
+        "mutates": true,
+        "phase": "mutation-static"
+      },
+      "cohort": "roman-244",
+      "expected": {
+        "exit": 2,
+        "verdict": "reject"
+      },
+      "file": "examples/fail_stale_transitive_det_recompile.metta",
+      "id": "examples/fail_stale_transitive_det_recompile.metta|default",
+      "profile": "typecheck-v2",
+      "source_root": "reference",
+      "source_sha256": "ad2904e20f628ca2d3cf72f1c1e7f2cddb33ac7bb51994a61f5f4cb9334c71f3"
+    },
+    {
+      "arguments": [
+        "--strict"
+      ],
+      "classification": {
+        "class": "literal-type-mismatch",
+        "mutates": false,
+        "phase": "static"
+      },
+      "cohort": "roman-244",
+      "expected": {
+        "exit": 2,
+        "verdict": "reject"
+      },
+      "file": "examples/fail_strict_alias_late.metta",
+      "id": "examples/fail_strict_alias_late.metta|--strict",
+      "profile": "typecheck-v2",
+      "source_root": "reference",
+      "source_sha256": "f1f12f12ef8559da14ee5381a291eeabd0ff097d665c7af672c2f012751a45d0"
+    },
+    {
+      "arguments": [
+        "--strict"
+      ],
+      "classification": {
+        "class": "literal-type-mismatch",
+        "mutates": false,
+        "phase": "static"
+      },
+      "cohort": "roman-244",
+      "expected": {
+        "exit": 2,
+        "verdict": "reject"
+      },
+      "file": "examples/fail_strict_alias_product.metta",
+      "id": "examples/fail_strict_alias_product.metta|--strict",
+      "profile": "typecheck-v2",
+      "source_root": "reference",
+      "source_sha256": "91491c90a0d7342d68bec01e772460b80ac0b7d7f360f2b4e877110f93ab6d5f"
+    },
+    {
+      "arguments": [
+        "--strict"
+      ],
+      "classification": {
+        "class": "type-conflict",
+        "mutates": true,
+        "phase": "mutation-static"
+      },
+      "cohort": "roman-244",
+      "expected": {
+        "exit": 2,
+        "verdict": "reject"
+      },
+      "file": "examples/fail_strict_alias_removal_space_dependency.metta",
+      "id": "examples/fail_strict_alias_removal_space_dependency.metta|--strict",
+      "profile": "typecheck-v2",
+      "source_root": "reference",
+      "source_sha256": "153953842aaecf775c6b26813f44904b9d3caef0a04f1c7f3005e9e09df42237"
+    },
+    {
+      "arguments": [
+        "--strict"
+      ],
+      "classification": {
+        "class": "strict-residual",
+        "mutates": false,
+        "phase": "static"
+      },
+      "cohort": "roman-244",
+      "expected": {
+        "exit": 2,
+        "verdict": "reject"
+      },
+      "file": "examples/fail_strict_branch_unknown_arg.metta",
+      "id": "examples/fail_strict_branch_unknown_arg.metta|--strict",
+      "profile": "typecheck-v2",
+      "source_root": "reference",
+      "source_sha256": "2e1ddc319fbb790dd22048706956821dfd227ce627ad6029df8496ec367bed22"
+    },
+    {
+      "arguments": [
+        "--strict"
+      ],
+      "classification": {
+        "class": "strict-residual",
+        "mutates": false,
+        "phase": "static"
+      },
+      "cohort": "roman-244",
+      "expected": {
+        "exit": 2,
+        "verdict": "reject"
+      },
+      "file": "examples/fail_strict_branch_unknown_output.metta",
+      "id": "examples/fail_strict_branch_unknown_output.metta|--strict",
+      "profile": "typecheck-v2",
+      "source_root": "reference",
+      "source_sha256": "844e3e42f9d028e3055380304d0ab9ee3374e55242c130beef6ba40ebca57856"
+    },
+    {
+      "arguments": [
+        "--strict"
+      ],
+      "classification": {
+        "class": "literal-type-mismatch",
+        "mutates": false,
+        "phase": "static"
+      },
+      "cohort": "roman-244",
+      "expected": {
+        "exit": 2,
+        "verdict": "reject"
+      },
+      "file": "examples/fail_strict_brand_expectation_field.metta",
+      "id": "examples/fail_strict_brand_expectation_field.metta|--strict",
+      "profile": "typecheck-v2",
+      "source_root": "reference",
+      "source_sha256": "f1b44ef278156ab17fc122e3ec7831445eb285f1304815e310b13c869feec133"
+    },
+    {
+      "arguments": [
+        "--strict"
+      ],
+      "classification": {
+        "class": "car-atom-empty",
+        "mutates": false,
+        "phase": "runtime"
+      },
+      "cohort": "roman-244",
+      "expected": {
+        "exit": 2,
+        "verdict": "reject"
+      },
+      "file": "examples/fail_strict_car_atom_empty.metta",
+      "id": "examples/fail_strict_car_atom_empty.metta|--strict",
+      "profile": "typecheck-v2",
+      "source_root": "reference",
+      "source_sha256": "e4db9ee1afdd6791dc33e9add67fc8731c189ddae036722899d8a3ede08c1a17"
+    },
+    {
+      "arguments": [
+        "--strict"
+      ],
+      "classification": {
+        "class": "strict-residual",
+        "mutates": false,
+        "phase": "static"
+      },
+      "cohort": "roman-244",
+      "expected": {
+        "exit": 2,
+        "verdict": "reject"
+      },
+      "file": "examples/fail_strict_closure_output_promise.metta",
+      "id": "examples/fail_strict_closure_output_promise.metta|--strict",
+      "profile": "typecheck-v2",
+      "source_root": "reference",
+      "source_sha256": "ac1d818de1ea1b48c48e2abe6860447c1a9ca6564c377b66e039e4be1889fa8e"
+    },
+    {
+      "arguments": [
+        "--strict"
+      ],
+      "classification": {
+        "class": "strict-residual",
+        "mutates": false,
+        "phase": "static"
+      },
+      "cohort": "roman-244",
+      "expected": {
+        "exit": 2,
+        "verdict": "reject"
+      },
+      "file": "examples/fail_strict_collapse_unknown_elem.metta",
+      "id": "examples/fail_strict_collapse_unknown_elem.metta|--strict",
+      "profile": "typecheck-v2",
+      "source_root": "reference",
+      "source_sha256": "3022f7a2a9f3302c2fd3f8d9b1606dceb56f6ff5080187344e4af8fbaad09483"
+    },
+    {
+      "arguments": [
+        "--strict"
+      ],
+      "classification": {
+        "class": "literal-type-mismatch",
+        "mutates": false,
+        "phase": "static"
+      },
+      "cohort": "roman-244",
+      "expected": {
+        "exit": 2,
+        "verdict": "reject"
+      },
+      "file": "examples/fail_strict_contextual_data_tuple.metta",
+      "id": "examples/fail_strict_contextual_data_tuple.metta|--strict",
+      "profile": "typecheck-v2",
+      "source_root": "reference",
+      "source_sha256": "e916e447f8837009ae60e953fd1d87762b63557f97aaca478108e60c02d21548"
+    },
+    {
+      "arguments": [
+        "--strict"
+      ],
+      "classification": {
+        "class": "literal-type-mismatch",
+        "mutates": false,
+        "phase": "static"
+      },
+      "cohort": "roman-244",
+      "expected": {
+        "exit": 2,
+        "verdict": "reject"
+      },
+      "file": "examples/fail_strict_contextual_list.metta",
+      "id": "examples/fail_strict_contextual_list.metta|--strict",
+      "profile": "typecheck-v2",
+      "source_root": "reference",
+      "source_sha256": "b354e0fe835f33a388e0273252e367ce5597590a35f558673ad866fe633d5e89"
+    },
+    {
+      "arguments": [
+        "--strict"
+      ],
+      "classification": {
+        "class": "strict-residual",
+        "mutates": false,
+        "phase": "static"
+      },
+      "cohort": "roman-244",
+      "expected": {
+        "exit": 2,
+        "verdict": "reject"
+      },
+      "file": "examples/fail_strict_deferred_guard_bad_binding.metta",
+      "id": "examples/fail_strict_deferred_guard_bad_binding.metta|--strict",
+      "profile": "typecheck-v2",
+      "source_root": "reference",
+      "source_sha256": "63492b056fbb49e722e5ecbf909b18126c6f04977f39d270177f27446042ba08"
+    },
+    {
+      "arguments": [
+        "--strict"
+      ],
+      "classification": {
+        "class": "strict-residual",
+        "mutates": false,
+        "phase": "static"
+      },
+      "cohort": "roman-244",
+      "expected": {
+        "exit": 2,
+        "verdict": "reject"
+      },
+      "file": "examples/fail_strict_foldall_unknown_initializer.metta",
+      "id": "examples/fail_strict_foldall_unknown_initializer.metta|--strict",
+      "profile": "typecheck-v2",
+      "source_root": "reference",
+      "source_sha256": "dded7b99459bd46db853874af8f0b0d51ed70dcb2eee8fbba7424a8c561d5489"
+    },
+    {
+      "arguments": [
+        "--strict"
+      ],
+      "classification": {
+        "class": "strict-residual",
+        "mutates": false,
+        "phase": "static"
+      },
+      "cohort": "roman-244",
+      "expected": {
+        "exit": 2,
+        "verdict": "reject"
+      },
+      "file": "examples/fail_strict_foreign_mismatch.metta",
+      "id": "examples/fail_strict_foreign_mismatch.metta|--strict",
+      "profile": "typecheck-v2",
+      "source_root": "reference",
+      "source_sha256": "289998318bbe235235cfd286883e52353d63eb5fe77dda15bbd923194df508eb"
+    },
+    {
+      "arguments": [
+        "--strict"
+      ],
+      "classification": {
+        "class": "literal-type-mismatch",
+        "mutates": true,
+        "phase": "runtime"
+      },
+      "cohort": "roman-244",
+      "expected": {
+        "exit": 2,
+        "verdict": "reject"
+      },
+      "file": "examples/fail_strict_late_space_schema.metta",
+      "id": "examples/fail_strict_late_space_schema.metta|--strict",
+      "profile": "typecheck-v2",
+      "source_root": "reference",
+      "source_sha256": "8d2d341e5ccefc3f4f1528f726d44138eb603baa3a9b91038ae1422f68943e9d"
+    },
+    {
+      "arguments": [
+        "--strict"
+      ],
+      "classification": {
+        "class": "strict-residual",
+        "mutates": false,
+        "phase": "static"
+      },
+      "cohort": "roman-244",
+      "expected": {
+        "exit": 2,
+        "verdict": "reject"
+      },
+      "file": "examples/fail_strict_library_trusted_residual.metta",
+      "id": "examples/fail_strict_library_trusted_residual.metta|--strict",
+      "profile": "typecheck-v2",
+      "source_root": "reference",
+      "source_sha256": "f003f0268e65e8fe87b501f68065663d6068e29f3cad86c88bb6fd717572ccd5"
+    },
+    {
+      "arguments": [
+        "--strict"
+      ],
+      "classification": {
+        "class": "literal-type-mismatch",
+        "mutates": true,
+        "phase": "static"
+      },
+      "cohort": "roman-244",
+      "expected": {
+        "exit": 2,
+        "verdict": "reject"
+      },
+      "file": "examples/fail_strict_match_contextual_result.metta",
+      "id": "examples/fail_strict_match_contextual_result.metta|--strict",
+      "profile": "typecheck-v2",
+      "source_root": "reference",
+      "source_sha256": "d22461a21bbccd1f0c58012fef628369b49590e8010bf480785c09dcdf6c78f9"
+    },
+    {
+      "arguments": [
+        "--strict"
+      ],
+      "classification": {
+        "class": "strict-undeclared",
+        "mutates": false,
+        "phase": "static"
+      },
+      "cohort": "roman-244",
+      "expected": {
+        "exit": 2,
+        "verdict": "reject"
+      },
+      "file": "examples/fail_strict_missing_type.metta",
+      "id": "examples/fail_strict_missing_type.metta|--strict",
+      "profile": "typecheck-v2",
+      "source_root": "reference",
+      "source_sha256": "960a95dd08b172853e79e3a451e21044075ff52b06822dd8c52bd98956f7ecf6"
+    },
+    {
+      "arguments": [
+        "--strict"
+      ],
+      "classification": {
+        "class": "literal-type-mismatch",
+        "mutates": false,
+        "phase": "static"
+      },
+      "cohort": "roman-244",
+      "expected": {
+        "exit": 2,
+        "verdict": "reject"
+      },
+      "file": "examples/fail_strict_mixed_list_not_numbers.metta",
+      "id": "examples/fail_strict_mixed_list_not_numbers.metta|--strict",
+      "profile": "typecheck-v2",
+      "source_root": "reference",
+      "source_sha256": "75edbaa70237f5f10c57c1c9be67983d8f2ac579b7f94a64a9ff367b28893024"
+    },
+    {
+      "arguments": [
+        "--strict"
+      ],
+      "classification": {
+        "class": "literal-type-mismatch",
+        "mutates": true,
+        "phase": "static"
+      },
+      "cohort": "roman-244",
+      "expected": {
+        "exit": 2,
+        "verdict": "reject"
+      },
+      "file": "examples/fail_strict_newtype_pattern_literal.metta",
+      "id": "examples/fail_strict_newtype_pattern_literal.metta|--strict",
+      "profile": "typecheck-v2",
+      "source_root": "reference",
+      "source_sha256": "0afe32696d34dcf7b82e82a5c85875ba4841292ae857ca9c1b52b45767341d8e"
+    },
+    {
+      "arguments": [
+        "--strict"
+      ],
+      "classification": {
+        "class": "determinism-conflict",
+        "mutates": false,
+        "phase": "static"
+      },
+      "cohort": "roman-244",
+      "expected": {
+        "exit": 2,
+        "verdict": "reject"
+      },
+      "file": "examples/fail_strict_nondet_closure_inferred.metta",
+      "id": "examples/fail_strict_nondet_closure_inferred.metta|--strict",
+      "profile": "typecheck-v2",
+      "source_root": "reference",
+      "source_sha256": "969f86dd361c4a72c63eb76ecdf81e8da744ef7717a0545f38dc05fb3f740c61"
+    },
+    {
+      "arguments": [
+        "--strict"
+      ],
+      "classification": {
+        "class": "strict-residual",
+        "mutates": false,
+        "phase": "static"
+      },
+      "cohort": "roman-244",
+      "expected": {
+        "exit": 2,
+        "verdict": "reject"
+      },
+      "file": "examples/fail_strict_quoted_structural_unknown.metta",
+      "id": "examples/fail_strict_quoted_structural_unknown.metta|--strict",
+      "profile": "typecheck-v2",
+      "source_root": "reference",
+      "source_sha256": "f9895ef04692f3e58a89b7dd9dc8c6a8a4716dda22c9a49bd01ac8f36026ddd4"
+    },
+    {
+      "arguments": [
+        "--strict"
+      ],
+      "classification": {
+        "class": "strict-nominal-intersection",
+        "mutates": false,
+        "phase": "static"
+      },
+      "cohort": "roman-244",
+      "expected": {
+        "exit": 2,
+        "verdict": "reject"
+      },
+      "file": "examples/fail_strict_repeated_var_nominal_intersection.metta",
+      "id": "examples/fail_strict_repeated_var_nominal_intersection.metta|--strict",
+      "profile": "typecheck-v2",
+      "source_root": "reference",
+      "source_sha256": "ee336e96226275d1f51a70cfe39d67df15bb54b53eb930f6ec8dc25184a167da"
+    },
+    {
+      "arguments": [
+        "--strict"
+      ],
+      "classification": {
+        "class": "strict-residual",
+        "mutates": false,
+        "phase": "static"
+      },
+      "cohort": "roman-244",
+      "expected": {
+        "exit": 2,
+        "verdict": "reject"
+      },
+      "file": "examples/fail_strict_runtime_guard.metta",
+      "id": "examples/fail_strict_runtime_guard.metta|--strict",
+      "profile": "typecheck-v2",
+      "source_root": "reference",
+      "source_sha256": "56eee6d07471c02641f0c8ee11a26dfd94b380cd2ba1b3d526b1e179efebe8fe"
+    },
+    {
+      "arguments": [
+        "--strict"
+      ],
+      "classification": {
+        "class": "strict-residual",
+        "mutates": true,
+        "phase": "mutation-static"
+      },
+      "cohort": "roman-244",
+      "expected": {
+        "exit": 2,
+        "verdict": "reject"
+      },
+      "file": "examples/fail_strict_space_schema_removal.metta",
+      "id": "examples/fail_strict_space_schema_removal.metta|--strict",
+      "profile": "typecheck-v2",
+      "source_root": "reference",
+      "source_sha256": "e753f0603097775898b6e8a6265d873054404cbd8f8ad896451014c7475eb0ad"
+    },
+    {
+      "arguments": [
+        "--strict"
+      ],
+      "classification": {
+        "class": "literal-type-mismatch",
+        "mutates": true,
+        "phase": "runtime"
+      },
+      "cohort": "roman-244",
+      "expected": {
+        "exit": 2,
+        "verdict": "reject"
+      },
+      "file": "examples/fail_strict_typed_space.metta",
+      "id": "examples/fail_strict_typed_space.metta|--strict",
+      "profile": "typecheck-v2",
+      "source_root": "reference",
+      "source_sha256": "005bc43accbc368e3702af137d083f898243797e01ee8eaae3d48d7a1eb753f3"
+    },
+    {
+      "arguments": [
+        "--strict"
+      ],
+      "classification": {
+        "class": "literal-type-mismatch",
+        "mutates": true,
+        "phase": "static"
+      },
+      "cohort": "roman-244",
+      "expected": {
+        "exit": 2,
+        "verdict": "reject"
+      },
+      "file": "examples/fail_strict_typed_space_at_pattern.metta",
+      "id": "examples/fail_strict_typed_space_at_pattern.metta|--strict",
+      "profile": "typecheck-v2",
+      "source_root": "reference",
+      "source_sha256": "2374fd011fe3e6bb56c11eb07d682abfbcc28a77906b7b5907852ae4720ea923"
+    },
+    {
+      "arguments": [
+        "--strict"
+      ],
+      "classification": {
+        "class": "strict-residual",
+        "mutates": false,
+        "phase": "static"
+      },
+      "cohort": "roman-244",
+      "expected": {
+        "exit": 2,
+        "verdict": "reject"
+      },
+      "file": "examples/fail_strict_union_undefined_second_ctor.metta",
+      "id": "examples/fail_strict_union_undefined_second_ctor.metta|--strict",
+      "profile": "typecheck-v2",
+      "source_root": "reference",
+      "source_sha256": "9dfc9ad9b2b7415b3aacf6febeec4a88deb6bbbccb225570d630f9b448e9abb8"
+    },
+    {
+      "arguments": [
+        "--strict"
+      ],
+      "classification": {
+        "class": "strict-residual",
+        "mutates": false,
+        "phase": "static"
+      },
+      "cohort": "roman-244",
+      "expected": {
+        "exit": 2,
+        "verdict": "reject"
+      },
+      "file": "examples/fail_strict_union_var_branch_first.metta",
+      "id": "examples/fail_strict_union_var_branch_first.metta|--strict",
+      "profile": "typecheck-v2",
+      "source_root": "reference",
+      "source_sha256": "6645d3dfea5689c29398e289cd6fb3c23147f6b548f17d0ee53440a9d6d39692"
+    },
+    {
+      "arguments": [
+        "--strict-det"
+      ],
+      "classification": {
+        "class": "determinism-conflict",
+        "mutates": true,
+        "phase": "mutation-static"
+      },
+      "cohort": "roman-244",
+      "expected": {
+        "exit": 2,
+        "verdict": "reject"
+      },
+      "file": "examples/fail_strictdet_addatom.metta",
+      "id": "examples/fail_strictdet_addatom.metta|--strict-det",
+      "profile": "typecheck-v2",
+      "source_root": "reference",
+      "source_sha256": "a307ddb0bbbb5099480152e665e5ba73b0c88864497c946779749ca45cfd7fe0"
+    },
+    {
+      "arguments": [
+        "--strict-det"
+      ],
+      "classification": {
+        "class": "determinism-conflict",
+        "mutates": false,
+        "phase": "static"
+      },
+      "cohort": "roman-244",
+      "expected": {
+        "exit": 2,
+        "verdict": "reject"
+      },
+      "file": "examples/fail_strictdet_bool_passthrough_operand.metta",
+      "id": "examples/fail_strictdet_bool_passthrough_operand.metta|--strict-det",
+      "profile": "typecheck-v2",
+      "source_root": "reference",
+      "source_sha256": "65915b8e61a5005045723cb7d1916f62084b593adf27448572913aa515fed309"
+    },
+    {
+      "arguments": [
+        "--strict-det"
+      ],
+      "classification": {
+        "class": "determinism-conflict",
+        "mutates": false,
+        "phase": "static"
+      },
+      "cohort": "roman-244",
+      "expected": {
+        "exit": 2,
+        "verdict": "reject"
+      },
+      "file": "examples/fail_strictdet_callpredicate_undeclared.metta",
+      "id": "examples/fail_strictdet_callpredicate_undeclared.metta|--strict-det",
+      "profile": "typecheck-v2",
+      "source_root": "reference",
+      "source_sha256": "816a92ce11456f648baa3a0fcbdaaaf4b136d1eed0b2ac756547769ce5206304"
+    },
+    {
+      "arguments": [
+        "--strict-det"
+      ],
+      "classification": {
+        "class": "strict-residual",
+        "mutates": false,
+        "phase": "static"
+      },
+      "cohort": "roman-244",
+      "expected": {
+        "exit": 2,
+        "verdict": "reject"
+      },
+      "file": "examples/fail_strictdet_case_fallthrough_incomplete.metta",
+      "id": "examples/fail_strictdet_case_fallthrough_incomplete.metta|--strict-det",
+      "profile": "typecheck-v2",
+      "source_root": "reference",
+      "source_sha256": "4dc834abc506ac8caf9ff1d3449d46e3e3a50bfa50a9aa44f7d11bcc861d67e8"
+    },
+    {
+      "arguments": [
+        "--strict-det"
+      ],
+      "classification": {
+        "class": "determinism-conflict",
+        "mutates": false,
+        "phase": "static"
+      },
+      "cohort": "roman-244",
+      "expected": {
+        "exit": 2,
+        "verdict": "reject"
+      },
+      "file": "examples/fail_strictdet_case_literal_nonexhaustive.metta",
+      "id": "examples/fail_strictdet_case_literal_nonexhaustive.metta|--strict-det",
+      "profile": "typecheck-v2",
+      "source_root": "reference",
+      "source_sha256": "0e53a92e751b84219fdb8a3203cad44e250cb008690d03d94fc87800c6c10450"
+    },
+    {
+      "arguments": [
+        "--strict-det"
+      ],
+      "classification": {
+        "class": "determinism-conflict",
+        "mutates": false,
+        "phase": "static"
+      },
+      "cohort": "roman-244",
+      "expected": {
+        "exit": 2,
+        "verdict": "reject"
+      },
+      "file": "examples/fail_strictdet_chain_pattern_failure.metta",
+      "id": "examples/fail_strictdet_chain_pattern_failure.metta|--strict-det",
+      "profile": "typecheck-v2",
+      "source_root": "reference",
+      "source_sha256": "db41eb34e505f87bffc82d8a88747429477e5b723abbe8ef829f043c3b00126f"
+    },
+    {
+      "arguments": [
+        "--strict-det"
+      ],
+      "classification": {
+        "class": "determinism-conflict",
+        "mutates": false,
+        "phase": "static"
+      },
+      "cohort": "roman-244",
+      "expected": {
+        "exit": 2,
+        "verdict": "reject"
+      },
+      "file": "examples/fail_strictdet_collapse_proper_list.metta",
+      "id": "examples/fail_strictdet_collapse_proper_list.metta|--strict-det",
+      "profile": "typecheck-v2",
+      "source_root": "reference",
+      "source_sha256": "ae69cbab7b8a56538f72ae69a99cee3fd522f8f63dc0dd4c52f1ce76e10d1837"
+    },
+    {
+      "arguments": [
+        "--strict-det"
+      ],
+      "classification": {
+        "class": "determinism-conflict",
+        "mutates": false,
+        "phase": "static"
+      },
+      "cohort": "roman-244",
+      "expected": {
+        "exit": 2,
+        "verdict": "reject"
+      },
+      "file": "examples/fail_strictdet_compiler_form_selection.metta",
+      "id": "examples/fail_strictdet_compiler_form_selection.metta|--strict-det",
+      "profile": "typecheck-v2",
+      "source_root": "reference",
+      "source_sha256": "81d045e2d86b96247ae06a12b89f78dfbaa35c4a5d454e296c2928e600239e9d"
+    },
+    {
+      "arguments": [
+        "--strict-det"
+      ],
+      "classification": {
+        "class": "effect-variable",
+        "mutates": false,
+        "phase": "static"
+      },
+      "cohort": "roman-244",
+      "expected": {
+        "exit": 2,
+        "verdict": "reject"
+      },
+      "file": "examples/fail_strictdet_effect_poly_bad_position.metta",
+      "id": "examples/fail_strictdet_effect_poly_bad_position.metta|--strict-det",
+      "profile": "typecheck-v2",
+      "source_root": "reference",
+      "source_sha256": "e533abbfe2ed4925d75e328b9963c4b22c32193708d79440d0700a90095305c3"
+    },
+    {
+      "arguments": [
+        "--strict-det"
+      ],
+      "classification": {
+        "class": "determinism-conflict",
+        "mutates": false,
+        "phase": "static"
+      },
+      "cohort": "roman-244",
+      "expected": {
+        "exit": 2,
+        "verdict": "reject"
+      },
+      "file": "examples/fail_strictdet_effect_poly_nondet_in_det.metta",
+      "id": "examples/fail_strictdet_effect_poly_nondet_in_det.metta|--strict-det",
+      "profile": "typecheck-v2",
+      "source_root": "reference",
+      "source_sha256": "d575d4e752752d487781d0ebdfffcbd314a87126598e9c3e299e444f23e0744c"
+    },
+    {
+      "arguments": [
+        "--strict-det"
+      ],
+      "classification": {
+        "class": "non-exhaustive",
+        "mutates": false,
+        "phase": "static"
+      },
+      "cohort": "roman-244",
+      "expected": {
+        "exit": 2,
+        "verdict": "reject"
+      },
+      "file": "examples/fail_strictdet_effect_poly_nonexhaustive.metta",
+      "id": "examples/fail_strictdet_effect_poly_nonexhaustive.metta|--strict-det",
+      "profile": "typecheck-v2",
+      "source_root": "reference",
+      "source_sha256": "b678e085c382a08771b99cc4402c67dbf39003e364d8ba513e9dd6b76f93f01c"
+    },
+    {
+      "arguments": [
+        "--strict-det"
+      ],
+      "classification": {
+        "class": "determinism-conflict",
+        "mutates": false,
+        "phase": "static"
+      },
+      "cohort": "roman-244",
+      "expected": {
+        "exit": 2,
+        "verdict": "reject"
+      },
+      "file": "examples/fail_strictdet_effect_poly_open_list.metta",
+      "id": "examples/fail_strictdet_effect_poly_open_list.metta|--strict-det",
+      "profile": "typecheck-v2",
+      "source_root": "reference",
+      "source_sha256": "3b92f4371b4c45a17489851de5d32d4f2c6b89085c46a453bc6ff4be9595301c"
+    },
+    {
+      "arguments": [
+        "--strict-det"
+      ],
+      "classification": {
+        "class": "determinism-conflict",
+        "mutates": false,
+        "phase": "static"
+      },
+      "cohort": "roman-244",
+      "expected": {
+        "exit": 2,
+        "verdict": "reject"
+      },
+      "file": "examples/fail_strictdet_effect_poly_selector.metta",
+      "id": "examples/fail_strictdet_effect_poly_selector.metta|--strict-det",
+      "profile": "typecheck-v2",
+      "source_root": "reference",
+      "source_sha256": "519a9ed290f0b5d6b3eda6c9cca0f60801ddbc3dbfa06835140f5b0c7628d0cc"
+    },
+    {
+      "arguments": [
+        "--strict-det"
+      ],
+      "classification": {
+        "class": "effect-poly-decl",
+        "mutates": false,
+        "phase": "static"
+      },
+      "cohort": "roman-244",
+      "expected": {
+        "exit": 2,
+        "verdict": "reject"
+      },
+      "file": "examples/fail_strictdet_effect_poly_two_vars.metta",
+      "id": "examples/fail_strictdet_effect_poly_two_vars.metta|--strict-det",
+      "profile": "typecheck-v2",
+      "source_root": "reference",
+      "source_sha256": "6e58974e492a572392880a57737a74ba9fbdfcd5aefd6fedbbdc1a43d166208e"
+    },
+    {
+      "arguments": [
+        "--strict-det"
+      ],
+      "classification": {
+        "class": "effect-variable",
+        "mutates": false,
+        "phase": "static"
+      },
+      "cohort": "roman-244",
+      "expected": {
+        "exit": 2,
+        "verdict": "reject"
+      },
+      "file": "examples/fail_strictdet_effect_poly_uninstantiable.metta",
+      "id": "examples/fail_strictdet_effect_poly_uninstantiable.metta|--strict-det",
+      "profile": "typecheck-v2",
+      "source_root": "reference",
+      "source_sha256": "313369b7e0ac352c1139a05af5a86194becc40a0ed4f923a642ffbf5ba447dfa"
+    },
+    {
+      "arguments": [
+        "--strict-det"
+      ],
+      "classification": {
+        "class": "det-functional-head-commitment",
+        "mutates": false,
+        "phase": "static"
+      },
+      "cohort": "roman-244",
+      "expected": {
+        "exit": 2,
+        "verdict": "reject"
+      },
+      "file": "examples/fail_strictdet_functional_head_commit.metta",
+      "id": "examples/fail_strictdet_functional_head_commit.metta|--strict-det",
+      "profile": "typecheck-v2",
+      "source_root": "reference",
+      "source_sha256": "55278ea7cd1a69d370f352fc622a3e9dad650f4cae6a28ff92477451cbc5b0ad"
+    },
+    {
+      "arguments": [
+        "--strict-det"
+      ],
+      "classification": {
+        "class": "determinism-conflict",
+        "mutates": false,
+        "phase": "static"
+      },
+      "cohort": "roman-244",
+      "expected": {
+        "exit": 2,
+        "verdict": "reject"
+      },
+      "file": "examples/fail_strictdet_head_goal_selection.metta",
+      "id": "examples/fail_strictdet_head_goal_selection.metta|--strict-det",
+      "profile": "typecheck-v2",
+      "source_root": "reference",
+      "source_sha256": "7085da472de3dd0dc4088052154ada1108c5384fa1581fd1254615a37801d64b"
+    },
+    {
+      "arguments": [
+        "--strict-det"
+      ],
+      "classification": {
+        "class": "strict-residual",
+        "mutates": false,
+        "phase": "static"
+      },
+      "cohort": "roman-244",
+      "expected": {
+        "exit": 2,
+        "verdict": "reject"
+      },
+      "file": "examples/fail_strictdet_if_equal_incomplete_narrowing.metta",
+      "id": "examples/fail_strictdet_if_equal_incomplete_narrowing.metta|--strict-det",
+      "profile": "typecheck-v2",
+      "source_root": "reference",
+      "source_sha256": "4a51b407b0c8092de52ba00b93505a5a2237b4910f0570013fb7558caddee632"
+    },
+    {
+      "arguments": [
+        "--strict-det"
+      ],
+      "classification": {
+        "class": "determinism-conflict",
+        "mutates": false,
+        "phase": "static"
+      },
+      "cohort": "roman-244",
+      "expected": {
+        "exit": 2,
+        "verdict": "reject"
+      },
+      "file": "examples/fail_strictdet_inferred_call_many.metta",
+      "id": "examples/fail_strictdet_inferred_call_many.metta|--strict-det",
+      "profile": "typecheck-v2",
+      "source_root": "reference",
+      "source_sha256": "371a955b1fc344db74536975d9bc40a90efdc1b9abcdce9ea983b3a73154a45a"
+    },
+    {
+      "arguments": [
+        "--strict-det"
+      ],
+      "classification": {
+        "class": "determinism-conflict",
+        "mutates": false,
+        "phase": "static"
+      },
+      "cohort": "roman-244",
+      "expected": {
+        "exit": 2,
+        "verdict": "reject"
+      },
+      "file": "examples/fail_strictdet_inferred_call_zero.metta",
+      "id": "examples/fail_strictdet_inferred_call_zero.metta|--strict-det",
+      "profile": "typecheck-v2",
+      "source_root": "reference",
+      "source_sha256": "8ee5bcd919d7e7363923d896405e325084f0a6479361252ec0dea182a251eda1"
+    },
+    {
+      "arguments": [
+        "--strict-det"
+      ],
+      "classification": {
+        "class": "determinism-conflict",
+        "mutates": false,
+        "phase": "static"
+      },
+      "cohort": "roman-244",
+      "expected": {
+        "exit": 2,
+        "verdict": "reject"
+      },
+      "file": "examples/fail_strictdet_inferred_closure_partial.metta",
+      "id": "examples/fail_strictdet_inferred_closure_partial.metta|--strict-det",
+      "profile": "typecheck-v2",
+      "source_root": "reference",
+      "source_sha256": "8ab5ad234db00341f677a2bc845c4d7e6873640a580f98f9938e3787f0548442"
+    },
+    {
+      "arguments": [
+        "--strict-det"
+      ],
+      "classification": {
+        "class": "determinism-conflict",
+        "mutates": false,
+        "phase": "static"
+      },
+      "cohort": "roman-244",
+      "expected": {
+        "exit": 2,
+        "verdict": "reject"
+      },
+      "file": "examples/fail_strictdet_inferred_fresh_fallback.metta",
+      "id": "examples/fail_strictdet_inferred_fresh_fallback.metta|--strict-det",
+      "profile": "typecheck-v2",
+      "source_root": "reference",
+      "source_sha256": "b0b18ad7e9ef66a05d3aa9d241ec52dc9ec94d15362afc877b33875fbfa59074"
+    },
+    {
+      "arguments": [
+        "--strict-det"
+      ],
+      "classification": {
+        "class": "strict-residual",
+        "mutates": true,
+        "phase": "mutation-static"
+      },
+      "cohort": "roman-244",
+      "expected": {
+        "exit": 2,
+        "verdict": "reject"
+      },
+      "file": "examples/fail_strictdet_late_case_fallthrough_constructor.metta",
+      "id": "examples/fail_strictdet_late_case_fallthrough_constructor.metta|--strict-det",
+      "profile": "typecheck-v2",
+      "source_root": "reference",
+      "source_sha256": "7b43476bf6278df40ddf1c84043d6320c71c4076d2ccbcffc663892c7db38e78"
+    },
+    {
+      "arguments": [
+        "--strict-det"
+      ],
+      "classification": {
+        "class": "determinism-conflict",
+        "mutates": false,
+        "phase": "static"
+      },
+      "cohort": "roman-244",
+      "expected": {
+        "exit": 2,
+        "verdict": "reject"
+      },
+      "file": "examples/fail_strictdet_let_pattern_failure.metta",
+      "id": "examples/fail_strictdet_let_pattern_failure.metta|--strict-det",
+      "profile": "typecheck-v2",
+      "source_root": "reference",
+      "source_sha256": "9ca537da09e32eff894d740557d955e4ffeef46d18e677b33a47cae346095368"
+    },
+    {
+      "arguments": [
+        "--strict-det"
+      ],
+      "classification": {
+        "class": "not-proper-list",
+        "mutates": false,
+        "phase": "runtime"
+      },
+      "cohort": "roman-244",
+      "expected": {
+        "exit": 2,
+        "verdict": "reject"
+      },
+      "file": "examples/fail_strictdet_map_open_list.metta",
+      "id": "examples/fail_strictdet_map_open_list.metta|--strict-det",
+      "profile": "typecheck-v2",
+      "source_root": "reference",
+      "source_sha256": "433ec56342f9e2b0268ed0968308421e57990bddb07dbf90138e679f91f94a8e"
+    },
+    {
+      "arguments": [
+        "--strict-det"
+      ],
+      "classification": {
+        "class": "determinism-conflict",
+        "mutates": false,
+        "phase": "static"
+      },
+      "cohort": "roman-244",
+      "expected": {
+        "exit": 2,
+        "verdict": "reject"
+      },
+      "file": "examples/fail_strictdet_min_atom_unknown_shape.metta",
+      "id": "examples/fail_strictdet_min_atom_unknown_shape.metta|--strict-det",
+      "profile": "typecheck-v2",
+      "source_root": "reference",
+      "source_sha256": "59e373b7ff07161ff300dc8bc77c744151edea3a086d0a75e28a22cf2d8d9743"
+    },
+    {
+      "arguments": [
+        "--strict-det"
+      ],
+      "classification": {
+        "class": "determinism-conflict",
+        "mutates": false,
+        "phase": "static"
+      },
+      "cohort": "roman-244",
+      "expected": {
+        "exit": 2,
+        "verdict": "reject"
+      },
+      "file": "examples/fail_strictdet_nondet_body.metta",
+      "id": "examples/fail_strictdet_nondet_body.metta|--strict-det",
+      "profile": "typecheck-v2",
+      "source_root": "reference",
+      "source_sha256": "04376b81c771331cf387c8a1ce23d4450d49370d26c8fa425d284c00066c4fa6"
+    },
+    {
+      "arguments": [
+        "--strict-det"
+      ],
+      "classification": {
+        "class": "determinism-conflict",
+        "mutates": false,
+        "phase": "static"
+      },
+      "cohort": "roman-244",
+      "expected": {
+        "exit": 2,
+        "verdict": "reject"
+      },
+      "file": "examples/fail_strictdet_nondet_builtin_closure.metta",
+      "id": "examples/fail_strictdet_nondet_builtin_closure.metta|--strict-det",
+      "profile": "typecheck-v2",
+      "source_root": "reference",
+      "source_sha256": "cdca6c2611a38f3419fa17fb35f333b33fbc9f3b869dc71e92f1776d384b36cc"
+    },
+    {
+      "arguments": [
+        "--strict-det"
+      ],
+      "classification": {
+        "class": "determinism-conflict",
+        "mutates": false,
+        "phase": "static"
+      },
+      "cohort": "roman-244",
+      "expected": {
+        "exit": 2,
+        "verdict": "reject"
+      },
+      "file": "examples/fail_strictdet_nondet_lambda.metta",
+      "id": "examples/fail_strictdet_nondet_lambda.metta|--strict-det",
+      "profile": "typecheck-v2",
+      "source_root": "reference",
+      "source_sha256": "638bc7bc42ef6501a07517c65e41772905b2ce93d71888c06be3d8e609533301"
+    },
+    {
+      "arguments": [
+        "--strict-det"
+      ],
+      "classification": {
+        "class": "determinism-conflict",
+        "mutates": false,
+        "phase": "static"
+      },
+      "cohort": "roman-244",
+      "expected": {
+        "exit": 2,
+        "verdict": "reject"
+      },
+      "file": "examples/fail_strictdet_nonempty_branch_failing_body.metta",
+      "id": "examples/fail_strictdet_nonempty_branch_failing_body.metta|--strict-det",
+      "profile": "typecheck-v2",
+      "source_root": "reference",
+      "source_sha256": "950d5dbb829ed95207270cae3b479f2ee33818e3eae05802b195cbb990a694ac"
+    },
+    {
+      "arguments": [
+        "--strict-det"
+      ],
+      "classification": {
+        "class": "overlapping-clauses",
+        "mutates": false,
+        "phase": "static"
+      },
+      "cohort": "roman-244",
+      "expected": {
+        "exit": 2,
+        "verdict": "reject"
+      },
+      "file": "examples/fail_strictdet_overlap.metta",
+      "id": "examples/fail_strictdet_overlap.metta|--strict-det",
+      "profile": "typecheck-v2",
+      "source_root": "reference",
+      "source_sha256": "5eff43a2910f774e0b57b7ef791f326b673095cb2a9645e39c71f8736ab58c56"
+    },
+    {
+      "arguments": [
+        "--strict-det"
+      ],
+      "classification": {
+        "class": "strict-det-required",
+        "mutates": false,
+        "phase": "static"
+      },
+      "cohort": "roman-244",
+      "expected": {
+        "exit": 2,
+        "verdict": "reject"
+      },
+      "file": "examples/fail_strictdet_plain_arrow.metta",
+      "id": "examples/fail_strictdet_plain_arrow.metta|--strict-det",
+      "profile": "typecheck-v2",
+      "source_root": "reference",
+      "source_sha256": "8feb11f1c7a48b17f9707370fc470515989c66e615391add8976f88c7054cee9"
+    },
+    {
+      "arguments": [
+        "--strict-det"
+      ],
+      "classification": {
+        "class": "strict-det-required",
+        "mutates": false,
+        "phase": "static"
+      },
+      "cohort": "roman-244",
+      "expected": {
+        "exit": 2,
+        "verdict": "reject"
+      },
+      "file": "examples/fail_strictdet_plain_arrow_param.metta",
+      "id": "examples/fail_strictdet_plain_arrow_param.metta|--strict-det",
+      "profile": "typecheck-v2",
+      "source_root": "reference",
+      "source_sha256": "4702eac23c49f3008139b364652f982f6181af15099247e2014e64e8addec568"
+    },
+    {
+      "arguments": [
+        "--strict-det"
+      ],
+      "classification": {
+        "class": "determinism-conflict",
+        "mutates": false,
+        "phase": "static"
+      },
+      "cohort": "roman-244",
+      "expected": {
+        "exit": 2,
+        "verdict": "reject"
+      },
+      "file": "examples/fail_strictdet_selection_pinned_cons.metta",
+      "id": "examples/fail_strictdet_selection_pinned_cons.metta|--strict-det",
+      "profile": "typecheck-v2",
+      "source_root": "reference",
+      "source_sha256": "01006ce5a84a7f5ea3fa4be6f907a7eda26b02d11dc50d52255767119bded6c0"
+    },
+    {
+      "arguments": [
+        "--strict-det"
+      ],
+      "classification": {
+        "class": "determinism-conflict",
+        "mutates": false,
+        "phase": "static"
+      },
+      "cohort": "roman-244",
+      "expected": {
+        "exit": 2,
+        "verdict": "reject"
+      },
+      "file": "examples/fail_strictdet_selection_pinned_fields.metta",
+      "id": "examples/fail_strictdet_selection_pinned_fields.metta|--strict-det",
+      "profile": "typecheck-v2",
+      "source_root": "reference",
+      "source_sha256": "0dcc53a5eaf174afa8c583f9209a678b871106d489d2c8e016ae074fd44f65ea"
+    },
+    {
+      "arguments": [
+        "--strict-det"
+      ],
+      "classification": {
+        "class": "determinism-conflict",
+        "mutates": false,
+        "phase": "static"
+      },
+      "cohort": "roman-244",
+      "expected": {
+        "exit": 2,
+        "verdict": "reject"
+      },
+      "file": "examples/fail_strictdet_selection_single_possible.metta",
+      "id": "examples/fail_strictdet_selection_single_possible.metta|--strict-det",
+      "profile": "typecheck-v2",
+      "source_root": "reference",
+      "source_sha256": "93ba33cb4cb8532e923fed691bdcd952f91267cf910e926cd28048939a6c0b02"
+    },
+    {
+      "arguments": [
+        "--strict-det"
+      ],
+      "classification": {
+        "class": "determinism-conflict",
+        "mutates": false,
+        "phase": "static"
+      },
+      "cohort": "roman-244",
+      "expected": {
+        "exit": 2,
+        "verdict": "reject"
+      },
+      "file": "examples/fail_strictdet_semidet_in_det_slot.metta",
+      "id": "examples/fail_strictdet_semidet_in_det_slot.metta|--strict-det",
+      "profile": "typecheck-v2",
+      "source_root": "reference",
+      "source_sha256": "c5ae84e79aa02a9fc0d62f8055073f4a7c82c68f2d92e44b7708a4954832e04e"
+    },
+    {
+      "arguments": [],
+      "classification": {
+        "class": "type-conflict",
+        "mutates": false,
+        "phase": "static"
+      },
+      "cohort": "roman-244",
+      "expected": {
+        "exit": 2,
+        "verdict": "reject"
+      },
+      "file": "examples/fail_superpose_output_mismatch.metta",
+      "id": "examples/fail_superpose_output_mismatch.metta|default",
+      "profile": "typecheck-v2",
+      "source_root": "reference",
+      "source_sha256": "ff914d748e82f7f1e64c805816593200611584094598c4f838b9c66f099def1a"
+    },
+    {
+      "arguments": [],
+      "classification": {
+        "class": "type-conflict",
+        "mutates": false,
+        "phase": "static"
+      },
+      "cohort": "roman-244",
+      "expected": {
+        "exit": 2,
+        "verdict": "reject"
+      },
+      "file": "examples/fail_transaction_output_mismatch.metta",
+      "id": "examples/fail_transaction_output_mismatch.metta|default",
+      "profile": "typecheck-v2",
+      "source_root": "reference",
+      "source_sha256": "274564efe66196b275e2823c28b3f1931ab3f4417971cd63fd13ae07c1f27599"
+    },
+    {
+      "arguments": [],
+      "classification": {
+        "class": "unbound-det-argument",
+        "mutates": false,
+        "phase": "runtime"
+      },
+      "cohort": "roman-244",
+      "expected": {
+        "exit": 2,
+        "verdict": "reject"
+      },
+      "file": "examples/fail_unbound_det_argument.metta",
+      "id": "examples/fail_unbound_det_argument.metta|default",
+      "profile": "typecheck-v2",
+      "source_root": "reference",
+      "source_sha256": "d38e117c5f8e5df6ef8d96d88ac4899ead28983f95fc50c856b5d90642fb981f"
+    },
+    {
+      "arguments": [],
+      "classification": {
+        "class": "literal-type-mismatch",
+        "mutates": false,
+        "phase": "runtime"
+      },
+      "cohort": "roman-244",
+      "expected": {
+        "exit": 2,
+        "verdict": "reject"
+      },
+      "file": "examples/fail_union_type_mismatch.metta",
+      "id": "examples/fail_union_type_mismatch.metta|default",
+      "profile": "typecheck-v2",
+      "source_root": "reference",
+      "source_sha256": "c1c531d673f91d5e50b92cf663af449a4337029619baabacade6fbb1a8f45110"
+    },
+    {
+      "arguments": [
+        "--strict"
+      ],
+      "cohort": "roman-244",
+      "expected": {
+        "exit": 0,
+        "verdict": "accept"
+      },
+      "file": "examples/strict_alias_late.metta",
+      "id": "examples/strict_alias_late.metta|--strict",
+      "profile": "typecheck-v2",
+      "source_root": "reference",
+      "source_sha256": "c3793f47f87dd27fcf597c17bbec92a93978ba7b98dfbe7f7fdaf7e57c7dc254"
+    },
+    {
+      "arguments": [
+        "--strict"
+      ],
+      "cohort": "roman-244",
+      "expected": {
+        "exit": 0,
+        "verdict": "accept"
+      },
+      "file": "examples/strict_alias_product.metta",
+      "id": "examples/strict_alias_product.metta|--strict",
+      "profile": "typecheck-v2",
+      "source_root": "reference",
+      "source_sha256": "12796f2184c6e7e9b65b79c827f77f61eccb5ef28c6db9831e1cda60a8b156de"
+    },
+    {
+      "arguments": [
+        "--strict"
+      ],
+      "cohort": "roman-244",
+      "expected": {
+        "exit": 0,
+        "verdict": "accept"
+      },
+      "file": "examples/strict_brand_control_flow.metta",
+      "id": "examples/strict_brand_control_flow.metta|--strict",
+      "profile": "typecheck-v2",
+      "source_root": "reference",
+      "source_sha256": "98f40bf4bfa5fc6703678d10dfdd14027452ae73821e7b232b6b69c7c9e9398b"
+    },
+    {
+      "arguments": [
+        "--strict"
+      ],
+      "cohort": "roman-244",
+      "expected": {
+        "exit": 0,
+        "verdict": "accept"
+      },
+      "file": "examples/strict_brand_expectation.metta",
+      "id": "examples/strict_brand_expectation.metta|--strict",
+      "profile": "typecheck-v2",
+      "source_root": "reference",
+      "source_sha256": "882def183eccfd59388c5756d7a23ab153a17b561b0adb4ab5a777d294ebe283"
+    },
+    {
+      "arguments": [
+        "--strict"
+      ],
+      "cohort": "roman-244",
+      "expected": {
+        "exit": 0,
+        "verdict": "accept"
+      },
+      "file": "examples/strict_contextual_data_tuple.metta",
+      "id": "examples/strict_contextual_data_tuple.metta|--strict",
+      "profile": "typecheck-v2",
+      "source_root": "reference",
+      "source_sha256": "ebe83670ff7dbfa4a92edca63bcb569025cb7eef2eba2e7e39aaf79ba393b829"
+    },
+    {
+      "arguments": [
+        "--strict"
+      ],
+      "cohort": "roman-244",
+      "expected": {
+        "exit": 0,
+        "verdict": "accept"
+      },
+      "file": "examples/strict_contextual_list.metta",
+      "id": "examples/strict_contextual_list.metta|--strict",
+      "profile": "typecheck-v2",
+      "source_root": "reference",
+      "source_sha256": "d10d8de77a300ffa7f3e009d33f7fef56b1de493200b16a5136d15d4a7a58c5c"
+    },
+    {
+      "arguments": [
+        "--strict"
+      ],
+      "cohort": "roman-244",
+      "expected": {
+        "exit": 0,
+        "verdict": "accept"
+      },
+      "file": "examples/strict_deferred_guard_alpha.metta",
+      "id": "examples/strict_deferred_guard_alpha.metta|--strict",
+      "profile": "typecheck-v2",
+      "source_root": "reference",
+      "source_sha256": "85ab5df2769f8c32c2431177cad3e0c7d2e3bb4466aee67a61b8842f4650b272"
+    },
+    {
+      "arguments": [
+        "--strict"
+      ],
+      "cohort": "roman-244",
+      "expected": {
+        "exit": 0,
+        "verdict": "accept"
+      },
+      "file": "examples/strict_destructured_param.metta",
+      "id": "examples/strict_destructured_param.metta|--strict",
+      "profile": "typecheck-v2",
+      "source_root": "reference",
+      "source_sha256": "10646999d8df8e454c4b8b6e246d37b91df258b14367d696e8c38e121ed835d8"
+    },
+    {
+      "arguments": [
+        "--strict"
+      ],
+      "cohort": "roman-244",
+      "expected": {
+        "exit": 0,
+        "verdict": "accept"
+      },
+      "file": "examples/strict_det_closure_inferred.metta",
+      "id": "examples/strict_det_closure_inferred.metta|--strict",
+      "profile": "typecheck-v2",
+      "source_root": "reference",
+      "source_sha256": "ee092820c48f8051e98c608716f0f16970784516930b0036789e48f4cd947395"
+    },
+    {
+      "arguments": [
+        "--strict"
+      ],
+      "cohort": "roman-244",
+      "expected": {
+        "exit": 0,
+        "verdict": "accept"
+      },
+      "file": "examples/strict_dynamic_list_recursion.metta",
+      "id": "examples/strict_dynamic_list_recursion.metta|--strict",
+      "profile": "typecheck-v2",
+      "source_root": "reference",
+      "source_sha256": "60e1b0514056b2548f7a2f9e5d01aedae31258d3e54fd38403a26bfe73cb0b77"
+    },
+    {
+      "arguments": [
+        "--strict"
+      ],
+      "cohort": "roman-244",
+      "expected": {
+        "exit": 0,
+        "verdict": "accept"
+      },
+      "file": "examples/strict_foreign_heap.metta",
+      "id": "examples/strict_foreign_heap.metta|--strict",
+      "profile": "typecheck-v2",
+      "source_root": "reference",
+      "source_sha256": "290a7d17de2909e1ad41449c5832387fc3bd9b34f1392fe0ebcc6b1fb3e30b88"
+    },
+    {
+      "arguments": [
+        "--strict"
+      ],
+      "cohort": "roman-244",
+      "expected": {
+        "exit": 0,
+        "verdict": "accept"
+      },
+      "file": "examples/strict_foreign_product_instantiation.metta",
+      "id": "examples/strict_foreign_product_instantiation.metta|--strict",
+      "profile": "typecheck-v2",
+      "source_root": "reference",
+      "source_sha256": "2cc5290043657f78972717ce4283788996bd3ad9350dd44ee9bd0822e8c8259c"
+    },
+    {
+      "arguments": [
+        "--strict"
+      ],
+      "cohort": "roman-244",
+      "expected": {
+        "exit": 0,
+        "verdict": "accept"
+      },
+      "file": "examples/strict_forward_decl.metta",
+      "id": "examples/strict_forward_decl.metta|--strict",
+      "profile": "typecheck-v2",
+      "source_root": "reference",
+      "source_sha256": "bc11a5648e997961ca134a5d0287f622d6aa5a5d11f6532cc0c1a054d76f6c4f"
+    },
+    {
+      "arguments": [
+        "--strict"
+      ],
+      "cohort": "roman-244",
+      "expected": {
+        "exit": 0,
+        "verdict": "accept"
+      },
+      "file": "examples/strict_lib_he.metta",
+      "id": "examples/strict_lib_he.metta|--strict",
+      "profile": "typecheck-v2",
+      "source_root": "reference",
+      "source_sha256": "0faf5295235897618138ad21113a5e57ee35268d73dd4e0da8cf51abf973e9b5"
+    },
+    {
+      "arguments": [
+        "--strict"
+      ],
+      "cohort": "roman-244",
+      "expected": {
+        "exit": 0,
+        "verdict": "accept"
+      },
+      "file": "examples/strict_lib_import.metta",
+      "id": "examples/strict_lib_import.metta|--strict",
+      "profile": "typecheck-v2",
+      "source_root": "reference",
+      "source_sha256": "da1a0f3cb0cb7129725e0cafadc54142b2f94950135806eb4f1ac9d3c1c427dc"
+    },
+    {
+      "arguments": [
+        "--strict"
+      ],
+      "cohort": "roman-244",
+      "expected": {
+        "exit": 0,
+        "verdict": "accept"
+      },
+      "file": "examples/strict_list_accessor_types.metta",
+      "id": "examples/strict_list_accessor_types.metta|--strict",
+      "profile": "typecheck-v2",
+      "source_root": "reference",
+      "source_sha256": "5f7dbc668f8d2467b141bebeff92a6380e9aa9c0e89bd6f5842cb6ef9f35c012"
+    },
+    {
+      "arguments": [
+        "--strict"
+      ],
+      "cohort": "roman-244",
+      "expected": {
+        "exit": 0,
+        "verdict": "accept"
+      },
+      "file": "examples/strict_map_flat_data_tuple.metta",
+      "id": "examples/strict_map_flat_data_tuple.metta|--strict",
+      "profile": "typecheck-v2",
+      "source_root": "reference",
+      "source_sha256": "eb63b7be659d01d95367bfaaf267aded91d7b21ad099175c6b8a50241621bc9d"
+    },
+    {
+      "arguments": [
+        "--strict"
+      ],
+      "cohort": "roman-244",
+      "expected": {
+        "exit": 0,
+        "verdict": "accept"
+      },
+      "file": "examples/strict_match_contextual_result.metta",
+      "id": "examples/strict_match_contextual_result.metta|--strict",
+      "profile": "typecheck-v2",
+      "source_root": "reference",
+      "source_sha256": "0900daad972ad5788f7321f5c656c686e727c8f27d880689f7a5b2e294853834"
+    },
+    {
+      "arguments": [
+        "--strict"
+      ],
+      "cohort": "roman-244",
+      "expected": {
+        "exit": 0,
+        "verdict": "accept"
+      },
+      "file": "examples/strict_match_schema.metta",
+      "id": "examples/strict_match_schema.metta|--strict",
+      "profile": "typecheck-v2",
+      "source_root": "reference",
+      "source_sha256": "3cb9fa02c91aeb5aa2cfc217fa5a732a6988e6c93784bb607f0b69a494b93abf"
+    },
+    {
+      "arguments": [
+        "--strict"
+      ],
+      "cohort": "roman-244",
+      "expected": {
+        "exit": 0,
+        "verdict": "accept"
+      },
+      "file": "examples/strict_mixed_list_widening.metta",
+      "id": "examples/strict_mixed_list_widening.metta|--strict",
+      "profile": "typecheck-v2",
+      "source_root": "reference",
+      "source_sha256": "f449681d385609a02b6d5d7db12912fdcf34de374c15d80bf169b15268fcaa43"
+    },
+    {
+      "arguments": [
+        "--strict"
+      ],
+      "cohort": "roman-244",
+      "expected": {
+        "exit": 0,
+        "verdict": "accept"
+      },
+      "file": "examples/strict_nested_product_parameter.metta",
+      "id": "examples/strict_nested_product_parameter.metta|--strict",
+      "profile": "typecheck-v2",
+      "source_root": "reference",
+      "source_sha256": "c1bc87465e12c91a447e250683fa47e5918e7952f8d348202aff2906f27dfe3f"
+    },
+    {
+      "arguments": [
+        "--strict"
+      ],
+      "cohort": "roman-244",
+      "expected": {
+        "exit": 0,
+        "verdict": "accept"
+      },
+      "file": "examples/strict_newtype_pattern_binding.metta",
+      "id": "examples/strict_newtype_pattern_binding.metta|--strict",
+      "profile": "typecheck-v2",
+      "source_root": "reference",
+      "source_sha256": "1c2c0357c6a793090eb3090a7dddc1ef0b51da812f4a5be38e80b507a0640eb4"
+    },
+    {
+      "arguments": [
+        "--strict"
+      ],
+      "cohort": "roman-244",
+      "expected": {
+        "exit": 0,
+        "verdict": "accept"
+      },
+      "file": "examples/strict_newtypes.metta",
+      "id": "examples/strict_newtypes.metta|--strict",
+      "profile": "typecheck-v2",
+      "source_root": "reference",
+      "source_sha256": "065fe792c878b9c67de7c189f0d17cb999ad923945a5046536c5d4eb8bde301c"
+    },
+    {
+      "arguments": [
+        "--strict"
+      ],
+      "cohort": "roman-244",
+      "expected": {
+        "exit": 0,
+        "verdict": "accept"
+      },
+      "file": "examples/strict_pass_declared.metta",
+      "id": "examples/strict_pass_declared.metta|--strict",
+      "profile": "typecheck-v2",
+      "source_root": "reference",
+      "source_sha256": "69725d26bccc3a659ecb895c22150f795e2a29760ed548c4560fdf9a277c0502"
+    },
+    {
+      "arguments": [
+        "--strict"
+      ],
+      "cohort": "roman-244",
+      "expected": {
+        "exit": 0,
+        "verdict": "accept"
+      },
+      "file": "examples/strict_positional_tuple_types.metta",
+      "id": "examples/strict_positional_tuple_types.metta|--strict",
+      "profile": "typecheck-v2",
+      "source_root": "reference",
+      "source_sha256": "464d6be753fb198e34cd37c5ecc027fb2102634b610def34e831c793a80c3fef"
+    },
+    {
+      "arguments": [
+        "--strict"
+      ],
+      "cohort": "roman-244",
+      "expected": {
+        "exit": 0,
+        "verdict": "accept"
+      },
+      "file": "examples/strict_quoted_compound_output.metta",
+      "id": "examples/strict_quoted_compound_output.metta|--strict",
+      "profile": "typecheck-v2",
+      "source_root": "reference",
+      "source_sha256": "e6c8966752dc2bea97a2ebf5b4152aac6967ab2f2c7d7432ee96e31ff7f3029f"
+    },
+    {
+      "arguments": [
+        "--strict"
+      ],
+      "cohort": "roman-244",
+      "expected": {
+        "exit": 0,
+        "verdict": "accept"
+      },
+      "file": "examples/strict_quoted_structural_product.metta",
+      "id": "examples/strict_quoted_structural_product.metta|--strict",
+      "profile": "typecheck-v2",
+      "source_root": "reference",
+      "source_sha256": "11803d1522b79998daad17ac165a937542865b3656686bc966f2db15069b52a6"
+    },
+    {
+      "arguments": [
+        "--strict"
+      ],
+      "cohort": "roman-244",
+      "expected": {
+        "exit": 0,
+        "verdict": "accept"
+      },
+      "file": "examples/strict_roman_if_error.metta",
+      "id": "examples/strict_roman_if_error.metta|--strict",
+      "profile": "typecheck-v2",
+      "source_root": "reference",
+      "source_sha256": "1e38447da5d35e6e6e4643442014466d56f8e338810dfbd4c7c79251ddd965bd"
+    },
+    {
+      "arguments": [
+        "--strict"
+      ],
+      "cohort": "roman-244",
+      "expected": {
+        "exit": 0,
+        "verdict": "accept"
+      },
+      "file": "examples/strict_semidet_closure_inferred.metta",
+      "id": "examples/strict_semidet_closure_inferred.metta|--strict",
+      "profile": "typecheck-v2",
+      "source_root": "reference",
+      "source_sha256": "3c74449f6ab549aadc8b68c4b9b0a061ce3c37c6f13565268ceb31bc907fa38f"
+    },
+    {
+      "arguments": [
+        "--strict"
+      ],
+      "cohort": "roman-244",
+      "expected": {
+        "exit": 0,
+        "verdict": "accept"
+      },
+      "file": "examples/strict_spaceof_failed_decl_cleanup.metta",
+      "id": "examples/strict_spaceof_failed_decl_cleanup.metta|--strict",
+      "profile": "typecheck-v2",
+      "source_root": "reference",
+      "source_sha256": "228e62f54c526ceb6576be6d65c37ae4c76daf54d9bcee1a945582604fa65f21"
+    },
+    {
+      "arguments": [
+        "--strict"
+      ],
+      "cohort": "roman-244",
+      "expected": {
+        "exit": 0,
+        "verdict": "accept"
+      },
+      "file": "examples/strict_symmetric_var_conflict.metta",
+      "id": "examples/strict_symmetric_var_conflict.metta|--strict",
+      "profile": "typecheck-v2",
+      "source_root": "reference",
+      "source_sha256": "06d85a78245235e5bb19c9a55dacde22893cbea4d5e70dd1b7f60657b468182f"
+    },
+    {
+      "arguments": [
+        "--strict"
+      ],
+      "cohort": "roman-244",
+      "expected": {
+        "exit": 0,
+        "verdict": "accept"
+      },
+      "file": "examples/strict_the_ascription.metta",
+      "id": "examples/strict_the_ascription.metta|--strict",
+      "profile": "typecheck-v2",
+      "source_root": "reference",
+      "source_sha256": "81d62f368ed96d5e86e817a30b6607bf5870bf805929ab475c5728a9c158c207"
+    },
+    {
+      "arguments": [
+        "--strict"
+      ],
+      "cohort": "roman-244",
+      "expected": {
+        "exit": 0,
+        "verdict": "accept"
+      },
+      "file": "examples/strict_tuple_types.metta",
+      "id": "examples/strict_tuple_types.metta|--strict",
+      "profile": "typecheck-v2",
+      "source_root": "reference",
+      "source_sha256": "c6171c41352204361dc618c5bd5cad31d74f32d9f6923cf636452d3dd6427a0f"
+    },
+    {
+      "arguments": [
+        "--strict"
+      ],
+      "cohort": "roman-244",
+      "expected": {
+        "exit": 0,
+        "verdict": "accept"
+      },
+      "file": "examples/strict_type_flow.metta",
+      "id": "examples/strict_type_flow.metta|--strict",
+      "profile": "typecheck-v2",
+      "source_root": "reference",
+      "source_sha256": "32674e6f1486dda9ff0091ef8d80c3bfe8610bcd2bb64947233eb87510651824"
+    },
+    {
+      "arguments": [
+        "--strict"
+      ],
+      "cohort": "roman-244",
+      "expected": {
+        "exit": 0,
+        "verdict": "accept"
+      },
+      "file": "examples/strict_typed_space.metta",
+      "id": "examples/strict_typed_space.metta|--strict",
+      "profile": "typecheck-v2",
+      "source_root": "reference",
+      "source_sha256": "dbd7a038149ed808142e94f954f78bcf9edd3d4e26d87d7fd49f4f8be08e85d8"
+    },
+    {
+      "arguments": [
+        "--strict"
+      ],
+      "cohort": "roman-244",
+      "expected": {
+        "exit": 0,
+        "verdict": "accept"
+      },
+      "file": "examples/strict_typed_space_at_pattern.metta",
+      "id": "examples/strict_typed_space_at_pattern.metta|--strict",
+      "profile": "typecheck-v2",
+      "source_root": "reference",
+      "source_sha256": "6cec63cd5dccb2a868c59efc5ec1058e69467096a4208fac5e2de06e5ad02569"
+    },
+    {
+      "arguments": [
+        "--strict"
+      ],
+      "cohort": "roman-244",
+      "expected": {
+        "exit": 0,
+        "verdict": "accept"
+      },
+      "file": "examples/strict_union_atom_lists.metta",
+      "id": "examples/strict_union_atom_lists.metta|--strict",
+      "profile": "typecheck-v2",
+      "source_root": "reference",
+      "source_sha256": "94b8d01c8f113f9e6c7150b0f8771e123003e317f11d9f03d9143a9282154759"
+    },
+    {
+      "arguments": [
+        "--strict"
+      ],
+      "cohort": "roman-244",
+      "expected": {
+        "exit": 0,
+        "verdict": "accept"
+      },
+      "file": "examples/strict_union_case_narrowing.metta",
+      "id": "examples/strict_union_case_narrowing.metta|--strict",
+      "profile": "typecheck-v2",
+      "source_root": "reference",
+      "source_sha256": "d784c50f1d49d57030bd58cf87369af119ff840e9b44f036a8233e6bc7927ee2"
+    },
+    {
+      "arguments": [
+        "--strict"
+      ],
+      "cohort": "roman-244",
+      "expected": {
+        "exit": 0,
+        "verdict": "accept"
+      },
+      "file": "examples/strict_union_catch.metta",
+      "id": "examples/strict_union_catch.metta|--strict",
+      "profile": "typecheck-v2",
+      "source_root": "reference",
+      "source_sha256": "4aa96a710edb79d1da8930fd50ea64fec3f6caf9d566e746c21e7b4bcbeffde5"
+    },
+    {
+      "arguments": [
+        "--strict"
+      ],
+      "cohort": "roman-244",
+      "expected": {
+        "exit": 0,
+        "verdict": "accept"
+      },
+      "file": "examples/strict_union_constructor_narrowing.metta",
+      "id": "examples/strict_union_constructor_narrowing.metta|--strict",
+      "profile": "typecheck-v2",
+      "source_root": "reference",
+      "source_sha256": "d78cf1cdf1b052da157e242fc23b9a937769ef51c795d18f0834fe3e14b1d4c0"
+    },
+    {
+      "arguments": [
+        "--strict"
+      ],
+      "cohort": "roman-244",
+      "expected": {
+        "exit": 0,
+        "verdict": "accept"
+      },
+      "file": "examples/strict_union_prior_branch_narrowing.metta",
+      "id": "examples/strict_union_prior_branch_narrowing.metta|--strict",
+      "profile": "typecheck-v2",
+      "source_root": "reference",
+      "source_sha256": "c946e497817daee90fe078ba607c7a0eab03d3eb5854948987e3bab3d6780606"
+    },
+    {
+      "arguments": [
+        "--strict"
+      ],
+      "cohort": "roman-244",
+      "expected": {
+        "exit": 0,
+        "verdict": "accept"
+      },
+      "file": "examples/strict_union_reducible_helper_not_ctor.metta",
+      "id": "examples/strict_union_reducible_helper_not_ctor.metta|--strict",
+      "profile": "typecheck-v2",
+      "source_root": "reference",
+      "source_sha256": "8d55cdfa23cf6525f51733b3e62a1fb7d740ac8571f168f75f1daa44d37abc18"
+    },
+    {
+      "arguments": [
+        "--strict"
+      ],
+      "cohort": "roman-244",
+      "expected": {
+        "exit": 0,
+        "verdict": "accept"
+      },
+      "file": "examples/strict_union_structural_branch.metta",
+      "id": "examples/strict_union_structural_branch.metta|--strict",
+      "profile": "typecheck-v2",
+      "source_root": "reference",
+      "source_sha256": "6919b30457756029229848e0602696feb12ae7a9258ddbab8b7d7363b83b9e93"
+    },
+    {
+      "arguments": [
+        "--strict"
+      ],
+      "cohort": "roman-244",
+      "expected": {
+        "exit": 0,
+        "verdict": "accept"
+      },
+      "file": "examples/strict_union_types.metta",
+      "id": "examples/strict_union_types.metta|--strict",
+      "profile": "typecheck-v2",
+      "source_root": "reference",
+      "source_sha256": "0d3340baa362e88b5dfaa913d3196b04436ea8d57f98512a516e2d0a22ffa106"
+    },
+    {
+      "arguments": [
+        "--strict-det"
+      ],
+      "cohort": "roman-244",
+      "expected": {
+        "exit": 0,
+        "verdict": "accept"
+      },
+      "file": "examples/strictdet_basics.metta",
+      "id": "examples/strictdet_basics.metta|--strict-det",
+      "profile": "typecheck-v2",
+      "source_root": "reference",
+      "source_sha256": "736f07e2822c330fb9b8b9f3846988b2b0474280d0f8e40502c338af38de567e"
+    },
+    {
+      "arguments": [
+        "--strict-det"
+      ],
+      "cohort": "roman-244",
+      "expected": {
+        "exit": 0,
+        "verdict": "accept"
+      },
+      "file": "examples/strictdet_bool_call_operand.metta",
+      "id": "examples/strictdet_bool_call_operand.metta|--strict-det",
+      "profile": "typecheck-v2",
+      "source_root": "reference",
+      "source_sha256": "aff19af87dd774c508952d3b8eba5eb004ed927aa3da860b6f6b25602eb5bd1c"
+    },
+    {
+      "arguments": [
+        "--strict-det"
+      ],
+      "cohort": "roman-244",
+      "expected": {
+        "exit": 0,
+        "verdict": "accept"
+      },
+      "file": "examples/strictdet_builtin_arg_shapes.metta",
+      "id": "examples/strictdet_builtin_arg_shapes.metta|--strict-det",
+      "profile": "typecheck-v2",
+      "source_root": "reference",
+      "source_sha256": "52e2527ef6bbe9488811b6173ec62fe98be3ea0db285cf8bb61e9162f32080de"
+    },
+    {
+      "arguments": [
+        "--strict-det"
+      ],
+      "cohort": "roman-244",
+      "expected": {
+        "exit": 0,
+        "verdict": "accept"
+      },
+      "file": "examples/strictdet_callpredicate_declared.metta",
+      "id": "examples/strictdet_callpredicate_declared.metta|--strict-det",
+      "profile": "typecheck-v2",
+      "source_root": "reference",
+      "source_sha256": "a823b349dd1eaf3dde97afbe38926cc0fe9901563c8169c33144eb820a5cc429"
+    },
+    {
+      "arguments": [
+        "--strict-det"
+      ],
+      "cohort": "roman-244",
+      "expected": {
+        "exit": 0,
+        "verdict": "accept"
+      },
+      "file": "examples/strictdet_case_fallthrough_narrowing.metta",
+      "id": "examples/strictdet_case_fallthrough_narrowing.metta|--strict-det",
+      "profile": "typecheck-v2",
+      "source_root": "reference",
+      "source_sha256": "423457ff12c18a3200e92bc7ef0db083465b953d7299ae5f464fbebe75dab000"
+    },
+    {
+      "arguments": [
+        "--strict-det"
+      ],
+      "cohort": "roman-244",
+      "expected": {
+        "exit": 0,
+        "verdict": "accept"
+      },
+      "file": "examples/strictdet_closures.metta",
+      "id": "examples/strictdet_closures.metta|--strict-det",
+      "profile": "typecheck-v2",
+      "source_root": "reference",
+      "source_sha256": "3d5f4288b25c15aea241fe4eb6c59cee056632b77d9842d96a2918ae39d75d56"
+    },
+    {
+      "arguments": [
+        "--strict-det"
+      ],
+      "cohort": "roman-244",
+      "expected": {
+        "exit": 0,
+        "verdict": "accept"
+      },
+      "file": "examples/strictdet_collapse_let_nonempty.metta",
+      "id": "examples/strictdet_collapse_let_nonempty.metta|--strict-det",
+      "profile": "typecheck-v2",
+      "source_root": "reference",
+      "source_sha256": "88931e549238fc75bc0d4baa038ef05fab564981dfc6701f65d9bae3a840a832"
+    },
+    {
+      "arguments": [
+        "--strict-det"
+      ],
+      "cohort": "roman-244",
+      "expected": {
+        "exit": 0,
+        "verdict": "accept"
+      },
+      "file": "examples/strictdet_collapse_letstar_nonempty.metta",
+      "id": "examples/strictdet_collapse_letstar_nonempty.metta|--strict-det",
+      "profile": "typecheck-v2",
+      "source_root": "reference",
+      "source_sha256": "ffcc26265b09e805f1949af99612677095da3e311147fee65f35486966269b15"
+    },
+    {
+      "arguments": [
+        "--strict-det"
+      ],
+      "cohort": "roman-244",
+      "expected": {
+        "exit": 0,
+        "verdict": "accept"
+      },
+      "file": "examples/strictdet_collapse_proper_list.metta",
+      "id": "examples/strictdet_collapse_proper_list.metta|--strict-det",
+      "profile": "typecheck-v2",
+      "source_root": "reference",
+      "source_sha256": "b918fba81891b164d44ffb17680aabab607de5e901055f91c9b4103bcaafe9af"
+    },
+    {
+      "arguments": [
+        "--strict-det"
+      ],
+      "cohort": "roman-244",
+      "expected": {
+        "exit": 0,
+        "verdict": "accept"
+      },
+      "file": "examples/strictdet_destructured_tuple_recon.metta",
+      "id": "examples/strictdet_destructured_tuple_recon.metta|--strict-det",
+      "profile": "typecheck-v2",
+      "source_root": "reference",
+      "source_sha256": "5511dac4085e056c55587f9e2f72393fe47963ec60c17df1367ea805fffc703a"
+    },
+    {
+      "arguments": [
+        "--strict-det"
+      ],
+      "cohort": "roman-244",
+      "expected": {
+        "exit": 0,
+        "verdict": "accept"
+      },
+      "file": "examples/strictdet_det_bool_ops.metta",
+      "id": "examples/strictdet_det_bool_ops.metta|--strict-det",
+      "profile": "typecheck-v2",
+      "source_root": "reference",
+      "source_sha256": "bd153b81f8ac68808f4bc2348576b426b2fdfd922282909ec4287b90b785d0b2"
+    },
+    {
+      "arguments": [
+        "--strict-det"
+      ],
+      "cohort": "roman-244",
+      "expected": {
+        "exit": 0,
+        "verdict": "accept"
+      },
+      "file": "examples/strictdet_det_exhaustive_limits.metta",
+      "id": "examples/strictdet_det_exhaustive_limits.metta|--strict-det",
+      "profile": "typecheck-v2",
+      "source_root": "reference",
+      "source_sha256": "c9c8ac76819dad6e98208339d9c7b0f90f1eb6cd0528a360a9575cc78dbd0803"
+    },
+    {
+      "arguments": [
+        "--strict-det"
+      ],
+      "cohort": "roman-244",
+      "expected": {
+        "exit": 0,
+        "verdict": "accept"
+      },
+      "file": "examples/strictdet_effect_polymorphism.metta",
+      "id": "examples/strictdet_effect_polymorphism.metta|--strict-det",
+      "profile": "typecheck-v2",
+      "source_root": "reference",
+      "source_sha256": "cdb510574a5d3df847f704da691a9923ce2f7cb74953cfe2f17611bec286f58f"
+    },
+    {
+      "arguments": [
+        "--strict-det"
+      ],
+      "cohort": "roman-244",
+      "expected": {
+        "exit": 0,
+        "verdict": "accept"
+      },
+      "file": "examples/strictdet_explicit_arrow_positions.metta",
+      "id": "examples/strictdet_explicit_arrow_positions.metta|--strict-det",
+      "profile": "typecheck-v2",
+      "source_root": "reference",
+      "source_sha256": "948ced84114c86479c952b9875730177d6f7c1d8ea8cae6cde166337e39c63bd"
+    },
+    {
+      "arguments": [
+        "--strict-det"
+      ],
+      "cohort": "roman-244",
+      "expected": {
+        "exit": 0,
+        "verdict": "accept"
+      },
+      "file": "examples/strictdet_forward_mutual_bool.metta",
+      "id": "examples/strictdet_forward_mutual_bool.metta|--strict-det",
+      "profile": "typecheck-v2",
+      "source_root": "reference",
+      "source_sha256": "69b8ce2a2d237444ebf129ec7bb803999a4908f62c2b0b3fe23f998c8c0486d2"
+    },
+    {
+      "arguments": [
+        "--strict-det"
+      ],
+      "cohort": "roman-244",
+      "expected": {
+        "exit": 0,
+        "verdict": "accept"
+      },
+      "file": "examples/strictdet_higher_order_builtins.metta",
+      "id": "examples/strictdet_higher_order_builtins.metta|--strict-det",
+      "profile": "typecheck-v2",
+      "source_root": "reference",
+      "source_sha256": "6ab669697b05bcef1be92ed7f4958d91fea308f246731272e384d6583a3afc12"
+    },
+    {
+      "arguments": [
+        "--strict-det"
+      ],
+      "cohort": "roman-244",
+      "expected": {
+        "exit": 0,
+        "verdict": "accept"
+      },
+      "file": "examples/strictdet_if_equal_narrowing.metta",
+      "id": "examples/strictdet_if_equal_narrowing.metta|--strict-det",
+      "profile": "typecheck-v2",
+      "source_root": "reference",
+      "source_sha256": "da7a0d20173b4d9078517fa313962f628f618a275ffc1ba7486688838ec7a50e"
+    },
+    {
+      "arguments": [
+        "--strict-det"
+      ],
+      "cohort": "roman-244",
+      "expected": {
+        "exit": 0,
+        "verdict": "accept"
+      },
+      "file": "examples/strictdet_if_union_subtraction_variable_head.metta",
+      "id": "examples/strictdet_if_union_subtraction_variable_head.metta|--strict-det",
+      "profile": "typecheck-v2",
+      "source_root": "reference",
+      "source_sha256": "a1f8e36df03c18e360af3d0ab92de2d22e99cdd4b1091fd629ca9557df00f209"
+    },
+    {
+      "arguments": [
+        "--strict-det"
+      ],
+      "cohort": "roman-244",
+      "expected": {
+        "exit": 0,
+        "verdict": "accept"
+      },
+      "file": "examples/strictdet_inferred_call_selection.metta",
+      "id": "examples/strictdet_inferred_call_selection.metta|--strict-det",
+      "profile": "typecheck-v2",
+      "source_root": "reference",
+      "source_sha256": "be62bd777ac1271cbb9d81d301009be98ea84a454843ca9984593ef7cd867959"
+    },
+    {
+      "arguments": [
+        "--strict-det"
+      ],
+      "cohort": "roman-244",
+      "expected": {
+        "exit": 0,
+        "verdict": "accept"
+      },
+      "file": "examples/strictdet_is_member_literal.metta",
+      "id": "examples/strictdet_is_member_literal.metta|--strict-det",
+      "profile": "typecheck-v2",
+      "source_root": "reference",
+      "source_sha256": "6df92c3835527610f4e136f3f06ad018ff2dc1bad94fc5f0e055d180dd780a8d"
+    },
+    {
+      "arguments": [
+        "--strict-det"
+      ],
+      "cohort": "roman-244",
+      "expected": {
+        "exit": 0,
+        "verdict": "accept"
+      },
+      "file": "examples/strictdet_let_nominal_destructure.metta",
+      "id": "examples/strictdet_let_nominal_destructure.metta|--strict-det",
+      "profile": "typecheck-v2",
+      "source_root": "reference",
+      "source_sha256": "0b81fec81fba5053cd096744a0ed5e6e8cb31293ecb5024b920120433dbd36ec"
+    },
+    {
+      "arguments": [
+        "--strict-det"
+      ],
+      "cohort": "roman-244",
+      "expected": {
+        "exit": 0,
+        "verdict": "accept"
+      },
+      "file": "examples/strictdet_let_resolved_fold_product.metta",
+      "id": "examples/strictdet_let_resolved_fold_product.metta|--strict-det",
+      "profile": "typecheck-v2",
+      "source_root": "reference",
+      "source_sha256": "d9c0bde7f3c2bccd7b53fa6580b715cf3f46944369d0854a1f48503ab120bdaa"
+    },
+    {
+      "arguments": [
+        "--strict-det"
+      ],
+      "cohort": "roman-244",
+      "expected": {
+        "exit": 0,
+        "verdict": "accept"
+      },
+      "file": "examples/strictdet_let_typed_list_selection.metta",
+      "id": "examples/strictdet_let_typed_list_selection.metta|--strict-det",
+      "profile": "typecheck-v2",
+      "source_root": "reference",
+      "source_sha256": "72afc6571340abbca8fbb7748ec57bcccc61770b560460a3462ff96baa1cd0d2"
+    },
+    {
+      "arguments": [
+        "--strict-det"
+      ],
+      "cohort": "roman-244",
+      "expected": {
+        "exit": 0,
+        "verdict": "accept"
+      },
+      "file": "examples/strictdet_let_value_cut.metta",
+      "id": "examples/strictdet_let_value_cut.metta|--strict-det",
+      "profile": "typecheck-v2",
+      "source_root": "reference",
+      "source_sha256": "144a3b74efb31e5345a2db1ee223b914ee2112044166c9d4e4a9e25c7a9a5b3b"
+    },
+    {
+      "arguments": [
+        "--strict-det"
+      ],
+      "cohort": "roman-244",
+      "expected": {
+        "exit": 0,
+        "verdict": "accept"
+      },
+      "file": "examples/strictdet_lib_combinatorics.metta",
+      "id": "examples/strictdet_lib_combinatorics.metta|--strict-det",
+      "profile": "typecheck-v2",
+      "source_root": "reference",
+      "source_sha256": "fd73b6261944b31159b4d4452ab895b20317af4a94c426dd2b67dab1a721f36f"
+    },
+    {
+      "arguments": [
+        "--strict-det"
+      ],
+      "cohort": "roman-244",
+      "expected": {
+        "exit": 0,
+        "verdict": "accept"
+      },
+      "file": "examples/strictdet_lib_datastructures.metta",
+      "id": "examples/strictdet_lib_datastructures.metta|--strict-det",
+      "profile": "typecheck-v2",
+      "source_root": "reference",
+      "source_sha256": "a748a002c0e8f10e9912354ef4051b3f5d0191b069bbe796cd2d078237e22b0a"
+    },
+    {
+      "arguments": [
+        "--strict-det"
+      ],
+      "cohort": "roman-244",
+      "expected": {
+        "exit": 0,
+        "verdict": "accept"
+      },
+      "file": "examples/strictdet_lib_datetime.metta",
+      "id": "examples/strictdet_lib_datetime.metta|--strict-det",
+      "profile": "typecheck-v2",
+      "source_root": "reference",
+      "source_sha256": "d1a415e5600c869cb0790b3ed541b37e4691fd0db0ea17cbc5de79c703ac7712"
+    },
+    {
+      "arguments": [
+        "--strict-det"
+      ],
+      "cohort": "roman-244",
+      "expected": {
+        "exit": 0,
+        "verdict": "accept"
+      },
+      "file": "examples/strictdet_lib_he.metta",
+      "id": "examples/strictdet_lib_he.metta|--strict-det",
+      "profile": "typecheck-v2",
+      "source_root": "reference",
+      "source_sha256": "fdb7c04a486415cbd784853d97b532eb0d55c4a4319d2e380f6629d37f2f700e"
+    },
+    {
+      "arguments": [
+        "--strict-det"
+      ],
+      "cohort": "roman-244",
+      "expected": {
+        "exit": 0,
+        "verdict": "accept"
+      },
+      "file": "examples/strictdet_lib_mm2.metta",
+      "id": "examples/strictdet_lib_mm2.metta|--strict-det",
+      "profile": "typecheck-v2",
+      "source_root": "reference",
+      "source_sha256": "b9d1d42d46b957b4ed6b0ed93561bbd7be4eb39e207a8d836986f3085bcee6ae"
+    },
+    {
+      "arguments": [
+        "--strict-det"
+      ],
+      "cohort": "roman-244",
+      "expected": {
+        "exit": 0,
+        "verdict": "accept"
+      },
+      "file": "examples/strictdet_lib_patrick.metta",
+      "id": "examples/strictdet_lib_patrick.metta|--strict-det",
+      "profile": "typecheck-v2",
+      "source_root": "reference",
+      "source_sha256": "956b53053838b5eae2344da704c040a001bcc5b45222d27ce380e8bfe40619f3"
+    },
+    {
+      "arguments": [
+        "--strict-det"
+      ],
+      "cohort": "roman-244",
+      "expected": {
+        "exit": 0,
+        "verdict": "accept"
+      },
+      "file": "examples/strictdet_lib_roman.metta",
+      "id": "examples/strictdet_lib_roman.metta|--strict-det",
+      "profile": "typecheck-v2",
+      "source_root": "reference",
+      "source_sha256": "dc99f25c370aed3714a7a4955051a2a4f4f54070b50202130faca75b0b7b76d3"
+    },
+    {
+      "arguments": [
+        "--strict-det"
+      ],
+      "cohort": "roman-244",
+      "expected": {
+        "exit": 0,
+        "verdict": "accept"
+      },
+      "file": "examples/strictdet_lib_spaces.metta",
+      "id": "examples/strictdet_lib_spaces.metta|--strict-det",
+      "profile": "typecheck-v2",
+      "source_root": "reference",
+      "source_sha256": "4b08865f218c8f7d1f40fb1a44e709021798856422a416d549356a74059f7c5b"
+    },
+    {
+      "arguments": [
+        "--strict-det"
+      ],
+      "cohort": "roman-244",
+      "expected": {
+        "exit": 0,
+        "verdict": "accept"
+      },
+      "file": "examples/strictdet_lib_tabling.metta",
+      "id": "examples/strictdet_lib_tabling.metta|--strict-det",
+      "profile": "typecheck-v2",
+      "source_root": "reference",
+      "source_sha256": "eeeae9a325f16aff461ba2d7e3773e9f13a6535fc2efe7f7980c63c0b780c47e"
+    },
+    {
+      "arguments": [
+        "--strict-det"
+      ],
+      "cohort": "roman-244",
+      "expected": {
+        "exit": 0,
+        "verdict": "accept"
+      },
+      "file": "examples/strictdet_lib_trust_fixture.metta",
+      "id": "examples/strictdet_lib_trust_fixture.metta|--strict-det",
+      "profile": "typecheck-v2",
+      "source_root": "reference",
+      "source_sha256": "9c2639032fe9bfd4bee978facdcfbe4b0f47705c8e18ebf5e39cda4d54c2d232"
+    },
+    {
+      "arguments": [
+        "--strict-det"
+      ],
+      "cohort": "roman-244",
+      "expected": {
+        "exit": 0,
+        "verdict": "accept"
+      },
+      "file": "examples/strictdet_lib_vector.metta",
+      "id": "examples/strictdet_lib_vector.metta|--strict-det",
+      "profile": "typecheck-v2",
+      "source_root": "reference",
+      "source_sha256": "71c9a0ad924ccd7d30b6ba9ad0ab934fe3c18fbe1307ec32ef669fd9adde1e53"
+    },
+    {
+      "arguments": [
+        "--strict-det"
+      ],
+      "cohort": "roman-244",
+      "expected": {
+        "exit": 0,
+        "verdict": "accept"
+      },
+      "file": "examples/strictdet_lib_zar.metta",
+      "id": "examples/strictdet_lib_zar.metta|--strict-det",
+      "profile": "typecheck-v2",
+      "source_root": "reference",
+      "source_sha256": "ab689f35b32ee204eef58e9dcf9d6725c9ed62a946e7782d885da85fd2c358ec"
+    },
+    {
+      "arguments": [
+        "--strict-det"
+      ],
+      "cohort": "roman-244",
+      "expected": {
+        "exit": 0,
+        "verdict": "accept"
+      },
+      "file": "examples/strictdet_min_atom_tuple.metta",
+      "id": "examples/strictdet_min_atom_tuple.metta|--strict-det",
+      "profile": "typecheck-v2",
+      "source_root": "reference",
+      "source_sha256": "8d0d844e807efb102c3073353f3563c061216442f44cf8942102d00d22a6a5d3"
+    },
+    {
+      "arguments": [
+        "--strict-det"
+      ],
+      "cohort": "roman-244",
+      "expected": {
+        "exit": 0,
+        "verdict": "accept"
+      },
+      "file": "examples/strictdet_min_computed_elements.metta",
+      "id": "examples/strictdet_min_computed_elements.metta|--strict-det",
+      "profile": "typecheck-v2",
+      "source_root": "reference",
+      "source_sha256": "2bedf38dbe9cf3c40fa08792a5c7b0f91a496703f1ac1780c1259de06db916c8"
+    },
+    {
+      "arguments": [
+        "--strict-det"
+      ],
+      "cohort": "roman-244",
+      "expected": {
+        "exit": 0,
+        "verdict": "accept"
+      },
+      "file": "examples/strictdet_mutual_bool_output.metta",
+      "id": "examples/strictdet_mutual_bool_output.metta|--strict-det",
+      "profile": "typecheck-v2",
+      "source_root": "reference",
+      "source_sha256": "564a93f17b144bd99d1ef362895c774e37b4e04346ea9e460c32ed0bc75239ff"
+    },
+    {
+      "arguments": [
+        "--strict-det"
+      ],
+      "cohort": "roman-244",
+      "expected": {
+        "exit": 0,
+        "verdict": "accept"
+      },
+      "file": "examples/strictdet_nested_bool_operand.metta",
+      "id": "examples/strictdet_nested_bool_operand.metta|--strict-det",
+      "profile": "typecheck-v2",
+      "source_root": "reference",
+      "source_sha256": "e454477407f7abe7749df716bd738dcfc1d89d40e2d6e49a723396d2ff97e67b"
+    },
+    {
+      "arguments": [
+        "--strict-det"
+      ],
+      "cohort": "roman-244",
+      "expected": {
+        "exit": 0,
+        "verdict": "accept"
+      },
+      "file": "examples/strictdet_nested_constructed_tuple_case_newtype_field.metta",
+      "id": "examples/strictdet_nested_constructed_tuple_case_newtype_field.metta|--strict-det",
+      "profile": "typecheck-v2",
+      "source_root": "reference",
+      "source_sha256": "f171c5571020ea34369baa1b764cd520ec32f64fd0f33b64dfb60007490527b3"
+    },
+    {
+      "arguments": [
+        "--strict-det"
+      ],
+      "cohort": "roman-244",
+      "expected": {
+        "exit": 0,
+        "verdict": "accept"
+      },
+      "file": "examples/strictdet_nested_nominal_arg.metta",
+      "id": "examples/strictdet_nested_nominal_arg.metta|--strict-det",
+      "profile": "typecheck-v2",
+      "source_root": "reference",
+      "source_sha256": "becbd321182600b0c89128a6a89322d5adc94f0be9e448df5787bf005dc1ca4d"
+    },
+    {
+      "arguments": [
+        "--strict-det"
+      ],
+      "cohort": "roman-244",
+      "expected": {
+        "exit": 0,
+        "verdict": "accept"
+      },
+      "file": "examples/strictdet_newtype_head_param.metta",
+      "id": "examples/strictdet_newtype_head_param.metta|--strict-det",
+      "profile": "typecheck-v2",
+      "source_root": "reference",
+      "source_sha256": "a6ef289cd605c574bedb826e0637a2ffe4912fb536dc400e48364ace8901d3b8"
+    },
+    {
+      "arguments": [
+        "--strict-det"
+      ],
+      "cohort": "roman-244",
+      "expected": {
+        "exit": 0,
+        "verdict": "accept"
+      },
+      "file": "examples/strictdet_nonempty_branch.metta",
+      "id": "examples/strictdet_nonempty_branch.metta|--strict-det",
+      "profile": "typecheck-v2",
+      "source_root": "reference",
+      "source_sha256": "a3cadafc5dbefdbee591fc865fc42091f8cc536c9f2cc84d07fe5fb3b5d9ff61"
+    },
+    {
+      "arguments": [
+        "--strict-det"
+      ],
+      "cohort": "roman-244",
+      "expected": {
+        "exit": 0,
+        "verdict": "accept"
+      },
+      "file": "examples/strictdet_outer_brand_case_open_fallthrough.metta",
+      "id": "examples/strictdet_outer_brand_case_open_fallthrough.metta|--strict-det",
+      "profile": "typecheck-v2",
+      "source_root": "reference",
+      "source_sha256": "3996f38c0b732d8c94f6b350a023d63d64aaf922c36c7fe407ca1b19dfe7d81c"
+    },
+    {
+      "arguments": [
+        "--strict-det"
+      ],
+      "cohort": "roman-244",
+      "expected": {
+        "exit": 0,
+        "verdict": "accept"
+      },
+      "file": "examples/strictdet_outer_brand_let_binding.metta",
+      "id": "examples/strictdet_outer_brand_let_binding.metta|--strict-det",
+      "profile": "typecheck-v2",
+      "source_root": "reference",
+      "source_sha256": "51bf31486df2d2031f66ba2fcfdbe6b96c36d404272c0ad42160e87b412c2b7d"
+    },
+    {
+      "arguments": [
+        "--strict-det"
+      ],
+      "cohort": "roman-244",
+      "expected": {
+        "exit": 0,
+        "verdict": "accept"
+      },
+      "file": "examples/strictdet_remove_atom_nominal.metta",
+      "id": "examples/strictdet_remove_atom_nominal.metta|--strict-det",
+      "profile": "typecheck-v2",
+      "source_root": "reference",
+      "source_sha256": "914eeb09b52396127ba6e6d6f7ee85652054667e020db60d16e66b6f74101bde"
+    },
+    {
+      "arguments": [
+        "--strict-det"
+      ],
+      "cohort": "roman-244",
+      "expected": {
+        "exit": 0,
+        "verdict": "accept"
+      },
+      "file": "examples/strictdet_repeated_var_overlapping_unions.metta",
+      "id": "examples/strictdet_repeated_var_overlapping_unions.metta|--strict-det",
+      "profile": "typecheck-v2",
+      "source_root": "reference",
+      "source_sha256": "c8c8f7a59288f8f7f1b64c9d8eafb6acdb0b4d336c3d4698f2b661b9fd84bb55"
+    },
+    {
+      "arguments": [
+        "--strict-det"
+      ],
+      "cohort": "roman-244",
+      "expected": {
+        "exit": 0,
+        "verdict": "accept"
+      },
+      "file": "examples/strictdet_runtime_add_cleanup.metta",
+      "id": "examples/strictdet_runtime_add_cleanup.metta|--strict-det",
+      "profile": "typecheck-v2",
+      "source_root": "reference",
+      "source_sha256": "ef5fb333e9d754f9686460b8ecda209f4b3741bcbd3ada99e54b7aa8a85b638c"
+    },
+    {
+      "arguments": [
+        "--strict-det"
+      ],
+      "cohort": "roman-244",
+      "expected": {
+        "exit": 0,
+        "verdict": "accept"
+      },
+      "file": "examples/strictdet_semidet_arrow.metta",
+      "id": "examples/strictdet_semidet_arrow.metta|--strict-det",
+      "profile": "typecheck-v2",
+      "source_root": "reference",
+      "source_sha256": "b629f8d3aaf75dee5524e23cb0500a22ad5967545545d391b6f80a59087de740"
+    },
+    {
+      "arguments": [
+        "--strict-det"
+      ],
+      "cohort": "roman-244",
+      "expected": {
+        "exit": 0,
+        "verdict": "accept"
+      },
+      "file": "examples/strictdet_semidet_lco.metta",
+      "id": "examples/strictdet_semidet_lco.metta|--strict-det",
+      "profile": "typecheck-v2",
+      "source_root": "reference",
+      "source_sha256": "9c81c52f6810728d6a008c7fbf4510162a0f2633b0a265238df5fd1c08ea6202"
+    },
+    {
+      "arguments": [
+        "--strict-det"
+      ],
+      "cohort": "roman-244",
+      "expected": {
+        "exit": 0,
+        "verdict": "accept"
+      },
+      "file": "examples/strictdet_space_ops_manifest.metta",
+      "id": "examples/strictdet_space_ops_manifest.metta|--strict-det",
+      "profile": "typecheck-v2",
+      "source_root": "reference",
+      "source_sha256": "a97c281509767e7b5f242ded5226e7394459266db7312e84137fb1e98830290f"
+    },
+    {
+      "arguments": [
+        "--strict-det"
+      ],
+      "cohort": "roman-244",
+      "expected": {
+        "exit": 0,
+        "verdict": "accept"
+      },
+      "file": "examples/strictdet_unify_pattern_det.metta",
+      "id": "examples/strictdet_unify_pattern_det.metta|--strict-det",
+      "profile": "typecheck-v2",
+      "source_root": "reference",
+      "source_sha256": "6b4f7d765c5478cbe9ee176d954878d40e8f5c9e18d8e57d03938dad519fe227"
+    }
+  ],
+  "counts": {
+    "accept": 119,
+    "reject": 177,
+    "roman_244": 244,
+    "semantic_regressions": 52,
+    "total": 296
+  },
+  "oracle": {
+    "implementation": "Roman SWI-PeTTa typecheck-v2",
+    "revision": "e038e4dbb587e48fdb9d14990966108d38fde0b3",
+    "runner": "run.sh",
+    "runner_sha256": "d7ff781e88cc997fc3afb761c7b00e449155b237b59d1b599ab77a17e50cd31c",
+    "verdict_protocol": "exit 0 accepts; exit 2 rejects"
+  },
+  "schema": "cetta-petta-typecheck-v2-acceptance-v1"
+}

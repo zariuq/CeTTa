@@ -6,6 +6,7 @@
 #include "symbol.h"
 
 #include <stdlib.h>
+#include <stdio.h>
 #include <string.h>
 
 typedef struct {
@@ -29,6 +30,19 @@ typedef struct {
 } PettaProgramClauseSnapshot;
 
 typedef struct {
+    SymbolId head;
+    CettaExprLen arity;
+    AtomId signature_id;
+} PettaProgramInferredSignature;
+
+typedef struct {
+    SymbolId subject;
+    Atom **types;
+    size_t len;
+    size_t cap;
+} PettaProgramTypeBucket;
+
+typedef struct {
     const Space *space;
     uint64_t instance_id;
     PettaProgramClause *clauses;
@@ -41,6 +55,18 @@ typedef struct {
     PettaProgramClauseSnapshot *snapshots;
     size_t snapshot_len;
     size_t snapshot_cap;
+    PettaProgramInferredSignature *inferred_signatures;
+    size_t inferred_signature_len;
+    size_t inferred_signature_cap;
+    uint64_t inferred_signature_revision;
+    bool inferred_signatures_valid;
+    Atom **type_annotations;
+    size_t type_annotation_len;
+    size_t type_annotation_cap;
+    PettaProgramTypeBucket *type_buckets;
+    size_t type_bucket_len;
+    size_t type_bucket_cap;
+    bool type_index_dirty;
 } PettaProgramSpace;
 
 typedef struct {
@@ -96,6 +122,105 @@ static bool petta_program_reserve(
         ? cetta_realloc(*items, width * next)
         : cetta_malloc(width * next);
     *capacity = next;
+    return true;
+}
+
+static bool petta_program_type_is_exclusive_kind(const Atom *type) {
+    if (!type || type->kind != ATOM_EXPR || type->expr.len == 0u ||
+        type->expr.elems[0]->kind != ATOM_SYMBOL || !g_symbols) {
+        return false;
+    }
+    const char *head = symbol_bytes(
+        g_symbols, type->expr.elems[0]->sym_id);
+    if (!head)
+        return false;
+    return strcmp(head, "Alias") == 0 ||
+           strcmp(head, "Newtype") == 0 ||
+           strcmp(head, "SpaceOf") == 0 ||
+           strcmp(head, "Foreign") == 0;
+}
+
+static void petta_program_space_clear_type_index(
+    PettaProgramSpace *space) {
+    if (!space)
+        return;
+    for (size_t index = 0u; index < space->type_bucket_len; index++)
+        free(space->type_buckets[index].types);
+    free(space->type_buckets);
+    space->type_buckets = NULL;
+    space->type_bucket_len = 0u;
+    space->type_bucket_cap = 0u;
+    space->type_index_dirty = true;
+}
+
+static size_t petta_program_type_bucket_lower_bound(
+    const PettaProgramSpace *space, SymbolId subject) {
+    size_t low = 0u;
+    size_t high = space ? space->type_bucket_len : 0u;
+    while (low < high) {
+        size_t middle = low + (high - low) / 2u;
+        if (space->type_buckets[middle].subject < subject)
+            low = middle + 1u;
+        else
+            high = middle;
+    }
+    return low;
+}
+
+static PettaProgramTypeBucket *petta_program_type_bucket(
+    PettaProgramSpace *space, SymbolId subject, bool create) {
+    if (!space || subject == SYMBOL_ID_NONE)
+        return NULL;
+    size_t index =
+        petta_program_type_bucket_lower_bound(space, subject);
+    if (index < space->type_bucket_len &&
+        space->type_buckets[index].subject == subject) {
+        return &space->type_buckets[index];
+    }
+    if (!create || !petta_program_reserve(
+            (void **)&space->type_buckets,
+            &space->type_bucket_cap,
+            space->type_bucket_len + 1u,
+            sizeof(*space->type_buckets))) {
+        return NULL;
+    }
+    memmove(
+        space->type_buckets + index + 1u,
+        space->type_buckets + index,
+        sizeof(*space->type_buckets) *
+            (space->type_bucket_len - index));
+    space->type_buckets[index] = (PettaProgramTypeBucket){
+        .subject = subject,
+    };
+    space->type_bucket_len++;
+    return &space->type_buckets[index];
+}
+
+static bool petta_program_space_rebuild_type_index(
+    PettaProgramSpace *space) {
+    if (!space)
+        return false;
+    petta_program_space_clear_type_index(space);
+    for (size_t index = 0u;
+         index < space->type_annotation_len; index++) {
+        Atom *annotation = space->type_annotations[index];
+        if (!annotation || annotation->kind != ATOM_EXPR ||
+            annotation->expr.len != 3u ||
+            annotation->expr.elems[1]->kind != ATOM_SYMBOL) {
+            continue;
+        }
+        PettaProgramTypeBucket *bucket =
+            petta_program_type_bucket(
+                space, annotation->expr.elems[1]->sym_id, true);
+        if (!bucket || !petta_program_reserve(
+                (void **)&bucket->types, &bucket->cap,
+                bucket->len + 1u, sizeof(*bucket->types))) {
+            petta_program_space_clear_type_index(space);
+            return false;
+        }
+        bucket->types[bucket->len++] = annotation->expr.elems[2];
+    }
+    space->type_index_dirty = false;
     return true;
 }
 
@@ -413,14 +538,15 @@ bool petta_program_head_is_intrinsic(SymbolId head) {
          strcmp(name, "max") == 0 ||
          strcmp(name, "transaction") == 0 ||
          strcmp(name, "with_mutex") == 0);
-    /*
-     * The typecheck-v2 `data` tuple is machine-owned only under the
-     * extended profile (its erased siblings brand/the are rewritten away at
-     * document ingestion and never reach a plan).
-     */
+    /* `data` is shared with historical extended PeTTa.  Live `make-list`
+     * and `the` forms are owned only by typecheck-v2; extended erases `the`
+     * during document ingestion. */
     bool typecheck_named =
         name && cetta_petta_profile_admits_typecheck_ops() &&
-        strcmp(name, "data") == 0;
+        (strcmp(name, "data") == 0 ||
+         (cetta_petta_profile_admits_native_typecheck_v2() &&
+          (strcmp(name, "make-list") == 0 ||
+           strcmp(name, "the") == 0)));
     return head != SYMBOL_ID_NONE &&
            (petta_semantics_form(head) != PETTA_FORM_NONE ||
             head <= g_builtin_syms.native_handle ||
@@ -686,7 +812,11 @@ void petta_program_free(PettaProgram *program) {
             &program->spaces[index]);
         petta_program_space_clear_clause_snapshots(
             &program->spaces[index]);
+        petta_program_space_clear_type_index(
+            &program->spaces[index]);
         free(program->spaces[index].clauses);
+        free(program->spaces[index].inferred_signatures);
+        free(program->spaces[index].type_annotations);
     }
     free(program->predeclared_heads.items);
     free(program->spaces);
@@ -792,6 +922,47 @@ bool petta_program_note_add(
     const PettaPlanNode *plan) {
     if (!program || !space || !atom)
         return false;
+    if (atom->kind == ATOM_EXPR && atom->expr.len == 3u &&
+        atom_is_symbol_id(atom->expr.elems[0], g_builtin_syms.colon) &&
+        atom->expr.elems[1]->kind == ATOM_SYMBOL) {
+        PettaProgramSpace *entry =
+            petta_program_ensure_space(program, space);
+        if (!entry)
+            return false;
+        Atom *subject = atom->expr.elems[1];
+        Atom *type = atom->expr.elems[2];
+        if (petta_program_type_is_exclusive_kind(type)) {
+            for (size_t index = 0u;
+                 index < entry->type_annotation_len; index++) {
+                Atom *prior = entry->type_annotations[index];
+                if (!prior || prior->kind != ATOM_EXPR ||
+                    prior->expr.len != 3u ||
+                    !atom_eq(prior->expr.elems[1], subject) ||
+                    !petta_program_type_is_exclusive_kind(
+                        prior->expr.elems[2])) {
+                    continue;
+                }
+                /* Type kinds are source ordered and mutually exclusive.
+                 * The first accepted declaration owns the name; identical
+                 * repeats are idempotent and conflicting repeats never
+                 * become candidates after a later removal. */
+                return true;
+            }
+        }
+        if (!petta_program_reserve(
+                (void **)&entry->type_annotations,
+                &entry->type_annotation_cap,
+                entry->type_annotation_len + 1u,
+                sizeof(*entry->type_annotations))) {
+            return false;
+        }
+        Atom *copy = atom_deep_copy(&program->plans, atom);
+        if (!copy)
+            return false;
+        entry->type_annotations[entry->type_annotation_len++] = copy;
+        entry->type_index_dirty = true;
+        return true;
+    }
     SymbolId head = SYMBOL_ID_NONE;
     if (!petta_equation_view(atom, NULL, NULL, &head))
         return true;
@@ -826,6 +997,16 @@ void petta_program_note_remove_all(
         petta_program_find_space(program, space);
     if (!entry || !atom)
         return;
+    size_t annotation_write = 0u;
+    for (size_t read = 0u;
+         read < entry->type_annotation_len; read++) {
+        if (atom_eq(entry->type_annotations[read], atom))
+            continue;
+        entry->type_annotations[annotation_write++] =
+            entry->type_annotations[read];
+    }
+    entry->type_annotation_len = annotation_write;
+    entry->type_index_dirty = true;
     size_t write = 0u;
     for (size_t read = 0u;
          read < entry->clause_len; read++) {
@@ -848,6 +1029,19 @@ void petta_program_note_remove_one(
         petta_program_find_space(program, space);
     if (!entry || !atom)
         return;
+    for (size_t index = 0u;
+         index < entry->type_annotation_len; index++) {
+        if (!atom_eq(entry->type_annotations[index], atom))
+            continue;
+        memmove(
+            entry->type_annotations + index,
+            entry->type_annotations + index + 1u,
+            sizeof(*entry->type_annotations) *
+                (entry->type_annotation_len - index - 1u));
+        entry->type_annotation_len--;
+        entry->type_index_dirty = true;
+        break;
+    }
     size_t exact = SIZE_MAX;
     size_t alpha = SIZE_MAX;
     size_t alpha_count = 0u;
@@ -890,7 +1084,10 @@ void petta_program_forget_space(
             continue;
         petta_program_space_clear_head_index(entry);
         petta_program_space_clear_clause_snapshots(entry);
+        petta_program_space_clear_type_index(entry);
         free(entry->clauses);
+        free(entry->inferred_signatures);
+        free(entry->type_annotations);
         memmove(
             entry, entry + 1u,
             sizeof(*entry) *
@@ -907,11 +1104,13 @@ static bool petta_program_copy_records(
         return false;
     if (source == destination)
         return true;
-    PettaProgramSpace *source_entry =
-        petta_program_find_space(program, source);
     if (replace)
         petta_program_forget_space(program, destination);
-    if (!source_entry || source_entry->clause_len == 0u)
+    PettaProgramSpace *source_entry =
+        petta_program_find_space(program, source);
+    if (!source_entry ||
+        (source_entry->clause_len == 0u &&
+         source_entry->type_annotation_len == 0u))
         return true;
 
     /*
@@ -919,24 +1118,45 @@ static bool petta_program_copy_records(
      * entry pointer.  Copy the records first, then install them.
      */
     size_t count = source_entry->clause_len;
-    PettaProgramClause *copy = cetta_malloc(
-        sizeof(*copy) * count);
-    memcpy(
-        copy, source_entry->clauses,
-        sizeof(*copy) * count);
+    PettaProgramClause *copy = count
+        ? cetta_malloc(sizeof(*copy) * count) : NULL;
+    if (count)
+        memcpy(copy, source_entry->clauses, sizeof(*copy) * count);
+    size_t annotation_count = source_entry->type_annotation_len;
+    Atom **annotation_copy = annotation_count
+        ? cetta_malloc(sizeof(*annotation_copy) * annotation_count)
+        : NULL;
+    if (annotation_count) {
+        memcpy(
+            annotation_copy, source_entry->type_annotations,
+            sizeof(*annotation_copy) * annotation_count);
+    }
     PettaProgramSpace *destination_entry =
         petta_program_ensure_space(program, destination);
     if (!destination_entry) {
         free(copy);
+        free(annotation_copy);
         return false;
     }
     petta_program_space_clear_head_index(destination_entry);
     petta_program_space_clear_clause_snapshots(destination_entry);
+    petta_program_space_clear_type_index(destination_entry);
     free(destination_entry->clauses);
+    free(destination_entry->inferred_signatures);
+    free(destination_entry->type_annotations);
+    destination_entry->inferred_signatures = NULL;
+    destination_entry->inferred_signature_len = 0u;
+    destination_entry->inferred_signature_cap = 0u;
+    destination_entry->inferred_signatures_valid = false;
+    destination_entry->inferred_signature_revision = 0u;
     destination_entry->clauses = copy;
     destination_entry->clause_len = count;
     destination_entry->clause_cap = count;
     destination_entry->head_index_dirty = true;
+    destination_entry->type_annotations = annotation_copy;
+    destination_entry->type_annotation_len = annotation_count;
+    destination_entry->type_annotation_cap = annotation_count;
+    destination_entry->type_index_dirty = true;
     return true;
 }
 
@@ -1177,6 +1397,312 @@ bool petta_program_clause_snapshot(
     PettaClauseCandidate **candidates, size_t *candidate_count) {
     return petta_program_clause_snapshot_profiled(
         program, space, head, candidates, candidate_count, NULL);
+}
+
+bool petta_program_equation_snapshot(
+    PettaProgram *program, Space *space,
+    Atom ***equations, size_t *equation_count) {
+    if (!program || !space || !equations || !equation_count)
+        return false;
+    *equations = NULL;
+    *equation_count = 0u;
+    PettaProgramSpace *entry =
+        petta_program_find_space(program, space);
+    if (!entry || entry->clause_len == 0u)
+        return true;
+    if (entry->clause_len > SIZE_MAX / sizeof(**equations))
+        return false;
+    Atom **copy = cetta_malloc(
+        sizeof(*copy) * entry->clause_len);
+    for (size_t index = 0u; index < entry->clause_len; index++)
+        copy[index] = entry->clauses[index].equation;
+    *equations = copy;
+    *equation_count = entry->clause_len;
+    return true;
+}
+
+static size_t petta_program_inferred_signature_lower_bound(
+    const PettaProgramSpace *space, SymbolId head,
+    CettaExprLen arity) {
+    size_t low = 0u;
+    size_t high = space ? space->inferred_signature_len : 0u;
+    while (low < high) {
+        size_t middle = low + (high - low) / 2u;
+        const PettaProgramInferredSignature *entry =
+            &space->inferred_signatures[middle];
+        if (entry->head < head ||
+            (entry->head == head && entry->arity < arity)) {
+            low = middle + 1u;
+        } else {
+            high = middle;
+        }
+    }
+    return low;
+}
+
+bool petta_program_inferred_signatures_current(
+    PettaProgram *program, Space *space) {
+    PettaProgramSpace *entry =
+        petta_program_find_space(program, space);
+    return entry && entry->inferred_signatures_valid &&
+           entry->inferred_signature_revision ==
+               space_revision(space);
+}
+
+bool petta_program_inferred_signature_lookup(
+    PettaProgram *program, Space *space,
+    SymbolId head, CettaExprLen arity,
+    Arena *arena, Atom **signature_out) {
+    if (signature_out)
+        *signature_out = NULL;
+    if (!signature_out || !arena || head == SYMBOL_ID_NONE ||
+        !petta_program_inferred_signatures_current(program, space) ||
+        !space->native.universe) {
+        return false;
+    }
+    PettaProgramSpace *entry =
+        petta_program_find_space(program, space);
+    size_t index = petta_program_inferred_signature_lower_bound(
+        entry, head, arity);
+    if (index >= entry->inferred_signature_len ||
+        entry->inferred_signatures[index].head != head ||
+        entry->inferred_signatures[index].arity != arity) {
+        return false;
+    }
+    *signature_out = term_universe_copy_atom_epoch(
+        space->native.universe, arena,
+        entry->inferred_signatures[index].signature_id,
+        fresh_var_suffix());
+    return *signature_out != NULL;
+}
+
+bool petta_program_inferred_signatures_lookup(
+    PettaProgram *program, Space *space,
+    SymbolId head, CettaExprLen arity,
+    Arena *arena, Atom ***signatures_out, size_t *count_out) {
+    if (signatures_out)
+        *signatures_out = NULL;
+    if (count_out)
+        *count_out = 0u;
+    if (!signatures_out || !count_out || !arena ||
+        head == SYMBOL_ID_NONE) {
+        return false;
+    }
+    if (!petta_program_inferred_signatures_current(program, space) ||
+        !space->native.universe) {
+        return true;
+    }
+    PettaProgramSpace *entry =
+        petta_program_find_space(program, space);
+    size_t first = petta_program_inferred_signature_lower_bound(
+        entry, head, arity);
+    size_t last = first;
+    while (last < entry->inferred_signature_len &&
+           entry->inferred_signatures[last].head == head &&
+           entry->inferred_signatures[last].arity == arity) {
+        last++;
+    }
+    size_t count = last - first;
+    if (count == 0u)
+        return true;
+    if (count > SIZE_MAX / sizeof(**signatures_out))
+        return false;
+    Atom **copies = cetta_malloc(sizeof(*copies) * count);
+    for (size_t index = 0u; index < count; index++) {
+        copies[index] = term_universe_copy_atom_epoch(
+            space->native.universe, arena,
+            entry->inferred_signatures[first + index].signature_id,
+            fresh_var_suffix());
+        if (!copies[index]) {
+            free(copies);
+            return false;
+        }
+    }
+    *signatures_out = copies;
+    *count_out = count;
+    return true;
+}
+
+void petta_program_inferred_signatures_reset(
+    PettaProgram *program, Space *space) {
+    PettaProgramSpace *entry =
+        petta_program_ensure_space(program, space);
+    if (!entry)
+        return;
+    entry->inferred_signature_len = 0u;
+    entry->inferred_signature_revision = space_revision(space);
+    entry->inferred_signatures_valid = true;
+}
+
+bool petta_program_inferred_signature_put(
+    PettaProgram *program, Space *space,
+    SymbolId head, CettaExprLen arity, Atom *signature) {
+    if (!program || !space || !space->native.universe ||
+        head == SYMBOL_ID_NONE || !signature) {
+        return false;
+    }
+    PettaProgramSpace *entry =
+        petta_program_ensure_space(program, space);
+    if (!entry)
+        return false;
+    AtomId signature_id = term_universe_store_atom_id(
+        space->native.universe,
+        space->native.universe->persistent_arena,
+        signature);
+    if (signature_id == CETTA_ATOM_ID_NONE)
+        return false;
+    size_t index = petta_program_inferred_signature_lower_bound(
+        entry, head, arity);
+    while (index < entry->inferred_signature_len &&
+           entry->inferred_signatures[index].head == head &&
+           entry->inferred_signatures[index].arity == arity) {
+        index++;
+    }
+    if (!petta_program_reserve(
+            (void **)&entry->inferred_signatures,
+            &entry->inferred_signature_cap,
+            entry->inferred_signature_len + 1u,
+            sizeof(*entry->inferred_signatures))) {
+        return false;
+    }
+    memmove(
+        entry->inferred_signatures + index + 1u,
+        entry->inferred_signatures + index,
+        sizeof(*entry->inferred_signatures) *
+            (entry->inferred_signature_len - index));
+    entry->inferred_signatures[index] =
+        (PettaProgramInferredSignature){
+            .head = head,
+            .arity = arity,
+            .signature_id = signature_id,
+        };
+    entry->inferred_signature_len++;
+    entry->inferred_signature_revision = space_revision(space);
+    entry->inferred_signatures_valid = true;
+    return true;
+}
+
+void petta_program_inferred_signature_remove_head(
+    PettaProgram *program, Space *space, SymbolId head) {
+    PettaProgramSpace *entry =
+        petta_program_find_space(program, space);
+    if (!entry || head == SYMBOL_ID_NONE)
+        return;
+    size_t write = 0u;
+    for (size_t read = 0u;
+         read < entry->inferred_signature_len; read++) {
+        if (entry->inferred_signatures[read].head == head)
+            continue;
+        if (write != read) {
+            entry->inferred_signatures[write] =
+                entry->inferred_signatures[read];
+        }
+        write++;
+    }
+    entry->inferred_signature_len = write;
+}
+
+void petta_program_inferred_signatures_rebase(
+    PettaProgram *program, Space *space) {
+    PettaProgramSpace *entry =
+        petta_program_find_space(program, space);
+    if (!entry || !entry->inferred_signatures_valid)
+        return;
+    entry->inferred_signature_revision = space_revision(space);
+}
+
+bool petta_program_type_annotation_snapshot(
+    PettaProgram *program, Atom ***annotations_out, size_t *count_out) {
+    if (annotations_out)
+        *annotations_out = NULL;
+    if (count_out)
+        *count_out = 0u;
+    if (!annotations_out || !count_out)
+        return false;
+    if (!program)
+        return true;
+    Atom **annotations = NULL;
+    size_t count = 0u;
+    size_t capacity = 0u;
+    for (size_t space_index = 0u;
+         space_index < program->space_len; space_index++) {
+        PettaProgramSpace *entry = &program->spaces[space_index];
+        for (size_t annotation_index = 0u;
+             annotation_index < entry->type_annotation_len;
+             annotation_index++) {
+            Atom *annotation = entry->type_annotations[annotation_index];
+            if (!annotation || annotation->kind != ATOM_EXPR ||
+                annotation->expr.len != 3u)
+                continue;
+            if (!petta_program_reserve(
+                    (void **)&annotations, &capacity, count + 1u,
+                    sizeof(*annotations))) {
+                free(annotations);
+                return false;
+            }
+            annotations[count++] = annotation;
+        }
+    }
+    *annotations_out = annotations;
+    *count_out = count;
+    return true;
+}
+
+uint32_t petta_program_declared_types(
+    PettaProgram *program, Atom *subject,
+    Arena *arena, Atom ***types_out) {
+    if (types_out)
+        *types_out = NULL;
+    if (!program || !subject || subject->kind != ATOM_SYMBOL ||
+        !arena || !types_out)
+        return 0u;
+    Atom **types = NULL;
+    size_t count = 0u;
+    size_t capacity = 0u;
+    for (size_t space_index = 0u;
+         space_index < program->space_len; space_index++) {
+        PettaProgramSpace *entry = &program->spaces[space_index];
+        if (entry->type_index_dirty &&
+            !petta_program_space_rebuild_type_index(entry)) {
+            free(types);
+            return 0u;
+        }
+        PettaProgramTypeBucket *bucket =
+            petta_program_type_bucket(
+                entry, subject->sym_id, false);
+        for (size_t type_index = 0u;
+             bucket && type_index < bucket->len; type_index++) {
+            Atom *type = bucket->types[type_index];
+            bool duplicate = false;
+            for (size_t prior = 0u; prior < count; prior++) {
+                if (atom_alpha_eq(types[prior], type)) {
+                    duplicate = true;
+                    break;
+                }
+            }
+            if (duplicate)
+                continue;
+            if (!petta_program_reserve(
+                    (void **)&types, &capacity, count + 1u,
+                    sizeof(*types))) {
+                free(types);
+                return 0u;
+            }
+            Atom *fresh = atom_freshen_epoch(
+                arena, type, fresh_var_suffix());
+            if (!fresh) {
+                free(types);
+                return 0u;
+            }
+            types[count++] = fresh;
+        }
+    }
+    if (count > UINT32_MAX) {
+        free(types);
+        return 0u;
+    }
+    *types_out = types;
+    return (uint32_t)count;
 }
 
 typedef struct {

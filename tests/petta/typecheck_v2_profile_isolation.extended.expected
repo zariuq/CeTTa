@@ -1,0 +1,4 @@
+(: p s t)
+(make-list a b)
+(a b)
+(evidence kb proof)

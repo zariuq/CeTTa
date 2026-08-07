@@ -1,0 +1,5 @@
+(: constructed-bool-through-let (-[det]-> Number Bool))
+(= (constructed-bool-through-let $input)
+   (let $bound (== $input 0)
+     (and $bound True)))
+!(constructed-bool-through-let 0)
