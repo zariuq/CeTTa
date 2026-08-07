@@ -8,6 +8,7 @@
 #include "parser.h"
 #include "rhocalc_core.h"
 #include "rhocalc_syntax.h"
+#include "rule_machine.h"
 #include "stats.h"
 #include "text_source.h"
 #include "langdef_pack.h"
@@ -8099,6 +8100,10 @@ Atom *cetta_library_dispatch_native(CettaLibraryContext *ctx, Space *space,
                                     Arena *a,
                                     Atom *head, Atom **args, uint32_t nargs) {
     if (!ctx || !head || head->kind != ATOM_SYMBOL) return NULL;
+    {
+        Atom *result = cetta_rule_machine_dispatch(a, head, args, nargs);
+        if (result) return result;
+    }
     if (ctx->active_mask & CETTA_LIBRARY_MORK) {
         Atom *result = cetta_library_dispatch_mork(ctx, a, head, args, nargs);
         if (result) return result;

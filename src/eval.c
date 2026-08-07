@@ -2194,6 +2194,18 @@ static bool grounded_dispatch_accepts_data_arg(Atom *head, uint32_t arg_index) {
     if (head->sym_id == g_builtin_syms.lib_prolog_query &&
         arg_index < 2u)
         return true;
+    if (head->sym_id == g_builtin_syms.compile_rule_package)
+        return arg_index < 2u;
+    if (head->sym_id == g_builtin_syms.compile_link_rule)
+        return arg_index == 1u;
+    if (head->sym_id == g_builtin_syms.compile_rule_program_link)
+        return arg_index == 1u;
+    if (head->sym_id == g_builtin_syms.compile_run)
+        return arg_index == 4u;
+    if (head->sym_id == g_builtin_syms.compile_rule_program_run)
+        return arg_index == 4u;
+    if (head->sym_id == g_builtin_syms.compile_rule_program_run_native)
+        return arg_index == 4u;
     SymbolId head_id = head->sym_id;
     if (arg_index == 1 &&
         (head_id == g_builtin_syms.add_atom ||
