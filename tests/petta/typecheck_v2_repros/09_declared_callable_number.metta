@@ -1,0 +1,5 @@
+(: helper (-[det]-> Number Number))
+(= (helper $value) $value)
+(: f (-[det]-> Number))
+(= (f) (helper 1))
+!(f)

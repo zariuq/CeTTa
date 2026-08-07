@@ -39,6 +39,12 @@ typedef enum {
     PETTA_MACHINE_FOLD_INTERRUPTED,
 } PettaMachineFoldResult;
 
+typedef enum {
+    PETTA_MACHINE_BOUNDARY_ACCEPTED = 0,
+    PETTA_MACHINE_BOUNDARY_REFUTED,
+    PETTA_MACHINE_BOUNDARY_FAULT,
+} PettaMachineBoundaryResult;
+
 /* A collection producer lends each fully evaluated item to a synchronous,
  * side-effect-free consumer.  The consumer must not retain item beyond the
  * callback.  A declined producer invalidates all consumer state accumulated
@@ -64,6 +70,12 @@ typedef struct {
     bool (*evaluate)(
         void *context, Space *space, Arena *arena, Atom *expression,
         const Bindings *environment, OutcomeSet *outcomes);
+    /* Arguments have reached their translated values.  A selected semantic
+     * profile may now enforce only those boundary facts consumed by its
+     * committed cardinality proof. */
+    PettaMachineBoundaryResult (*validate_ready_call)(
+        void *context, Space *space, Atom *call,
+        char *diagnostic, size_t diagnostic_size);
     /* A generated determinate-fold program may own a lexical fold without
      * constructing one goal and accumulator variable per input item. */
     PettaMachineFoldResult (*foldl_single_result)(
@@ -185,6 +197,13 @@ bool petta_machine_init_with_plan(
 
 PettaMachineStep petta_machine_next(
     PettaMachine *machine, Atom **answer, Bindings *environment);
+
+/* A native typecheck-v2 refutation is semantic, not ordinary search
+ * exhaustion.  The evaluator reads this diagnostic only after the machine
+ * terminates and turns it into the profile's process-level rejection. */
+const char *petta_machine_typecheck_diagnostic(
+    const PettaMachine *machine);
+int petta_machine_typecheck_exit_code(const PettaMachine *machine);
 
 void petta_machine_destroy(PettaMachine *machine);
 

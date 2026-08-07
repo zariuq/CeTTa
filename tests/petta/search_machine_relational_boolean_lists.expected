@@ -3,8 +3,11 @@
 (a b)
 (cons a ())
 5
+()
+(2)
 (2 3 4)
 kept
+()
 True
 False
 3

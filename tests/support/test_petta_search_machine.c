@@ -2,6 +2,7 @@
 #include "petta_program.h"
 #include "petta_search_machine.h"
 #include "petta_semantics.h"
+#include "petta_typecheck.h"
 #include "symbol.h"
 #include "variant_shape.h"
 
@@ -189,6 +190,165 @@ static void add_clause(Space *space, Arena *arena, const char *source) {
     Atom *clause = parse_one(arena, source);
     assert(clause);
     space_add(space, clause);
+}
+
+static void expect_value_type(
+    Space *space, Arena *arena, const char *value_source,
+    const char *type_source, PettaTypecheckVerdict verdict) {
+    Atom *value = parse_one(arena, value_source);
+    Atom *required = parse_one(arena, type_source);
+    PettaTypecheckResult result;
+    assert(value && required);
+    assert(petta_typecheck_value(
+        space, arena, value, required, NULL, &result));
+    assert(result.fault == PETTA_TYPECHECK_FAULT_NONE);
+    if (result.verdict != verdict) {
+        fprintf(stderr,
+                "value-type mismatch in test: %s : %s expected=%s actual=%s reason=%s\n",
+                value_source, type_source,
+                petta_typecheck_verdict_name(verdict),
+                petta_typecheck_verdict_name(result.verdict),
+                petta_typecheck_reason_name(result.reason));
+    }
+    assert(result.verdict == verdict);
+}
+
+static void expect_type_compatibility(
+    Space *space, Arena *arena, const char *actual_source,
+    const char *required_source, PettaTypecheckVerdict verdict) {
+    Atom *actual = parse_one(arena, actual_source);
+    Atom *required = parse_one(arena, required_source);
+    PettaTypecheckResult result;
+    assert(actual && required);
+    assert(petta_typecheck_types(
+        space, arena, actual, required, &result));
+    assert(result.fault == PETTA_TYPECHECK_FAULT_NONE);
+    if (result.verdict != verdict) {
+        fprintf(stderr,
+                "type-compat mismatch in test: %s <= %s expected=%s actual=%s reason=%s\n",
+                actual_source, required_source,
+                petta_typecheck_verdict_name(verdict),
+                petta_typecheck_verdict_name(result.verdict),
+                petta_typecheck_reason_name(result.reason));
+    }
+    assert(result.verdict == verdict);
+}
+
+static PettaTypecheckCallable test_typecheck_callable(
+    void *context, Atom *value, CettaExprLen arity) {
+    (void)value;
+    bool callable = context && *(const bool *)context;
+    return callable && arity == 1u
+        ? PETTA_TYPECHECK_CALLABLE_YES
+        : PETTA_TYPECHECK_CALLABLE_NO;
+}
+
+static void test_native_residual_typecheck(
+    Space *space, Arena *persistent, Arena *scratch) {
+    add_clause(space, persistent, "(: ScoreAlias (Alias Number))");
+    add_clause(space, persistent,
+               "(: NominalA (Newtype %Undefined%))");
+    add_clause(space, persistent,
+               "(: NominalB (Newtype %Undefined%))");
+    add_clause(space, persistent,
+               "(: ScoreBrand (Newtype Number))");
+    add_clause(space, persistent,
+               "(: NominalCycle (Newtype NominalCycle))");
+    add_clause(space, persistent, "(: AliasCycleA (Alias AliasCycleB))");
+    add_clause(space, persistent, "(: AliasCycleB (Alias AliasCycleA))");
+    add_clause(space, persistent, "(: mixed-value (| Number String))");
+    add_clause(space, persistent, "(: numeric-value (| Number Number))");
+    add_clause(space, persistent,
+               "(: callable-value (-> Number Number))");
+
+    expect_value_type(space, scratch, "1", "Number",
+                      PETTA_TYPECHECK_ESTABLISHED);
+    expect_value_type(space, scratch, "1", "String",
+                      PETTA_TYPECHECK_REFUTED);
+    expect_value_type(space, scratch, "$open", "Number",
+                      PETTA_TYPECHECK_UNDETERMINED);
+    expect_value_type(space, scratch, "(1 2 3)", "(List Number)",
+                      PETTA_TYPECHECK_ESTABLISHED);
+    expect_value_type(space, scratch, "(1 \"bad\" 3)", "(List Number)",
+                      PETTA_TYPECHECK_REFUTED);
+    expect_value_type(space, scratch, "(Pair 1 \"ok\")",
+                      "(Pair Number String)",
+                      PETTA_TYPECHECK_ESTABLISHED);
+    expect_value_type(space, scratch, "(Pair 1 False)",
+                      "(Pair Number String)",
+                      PETTA_TYPECHECK_REFUTED);
+    expect_value_type(space, scratch, "(2 \"first\")",
+                      "(Number String)",
+                      PETTA_TYPECHECK_ESTABLISHED);
+    expect_value_type(space, scratch, "((8 9) \"nested\")",
+                      "((Number Number) String)",
+                      PETTA_TYPECHECK_ESTABLISHED);
+    expect_value_type(space, scratch, "1", "(| String Number)",
+                      PETTA_TYPECHECK_ESTABLISHED);
+    expect_value_type(space, scratch, "1", "(| String Bool)",
+                      PETTA_TYPECHECK_REFUTED);
+    expect_value_type(space, scratch, "mixed-value", "Number",
+                      PETTA_TYPECHECK_REFUTED);
+    expect_value_type(space, scratch, "numeric-value", "Number",
+                      PETTA_TYPECHECK_ESTABLISHED);
+    expect_value_type(space, scratch, "1", "ScoreAlias",
+                      PETTA_TYPECHECK_ESTABLISHED);
+    expect_value_type(space, scratch, "\"bad\"", "ScoreAlias",
+                      PETTA_TYPECHECK_REFUTED);
+    expect_value_type(space, scratch, "1", "ScoreBrand",
+                      PETTA_TYPECHECK_ESTABLISHED);
+    expect_value_type(space, scratch, "\"bad\"", "ScoreBrand",
+                      PETTA_TYPECHECK_REFUTED);
+    expect_value_type(space, scratch, "1", "NominalCycle",
+                      PETTA_TYPECHECK_UNDETERMINED);
+
+    bool callable = true;
+    PettaTypecheckHooks callable_hooks = {
+        .context = &callable,
+        .callable = test_typecheck_callable,
+    };
+    PettaTypecheckResult arrow_result;
+    assert(petta_typecheck_value(
+        space, scratch, parse_one(scratch, "callable-value"),
+        parse_one(scratch, "(-> Number Number)"),
+        &callable_hooks, &arrow_result));
+    assert(arrow_result.verdict == PETTA_TYPECHECK_ESTABLISHED);
+    callable = false;
+    assert(petta_typecheck_value(
+        space, scratch, parse_one(scratch, "callable-value"),
+        parse_one(scratch, "(-> Number Number)"),
+        &callable_hooks, &arrow_result));
+    assert(arrow_result.verdict == PETTA_TYPECHECK_REFUTED);
+    assert(arrow_result.reason == PETTA_TYPECHECK_REASON_NONCALLABLE);
+
+    Atom *indexed_value = parse_one(scratch, "1");
+    Atom *indexed_type = parse_one(scratch, "ScoreAlias");
+    PettaTypecheckResult indexed_result;
+    assert(petta_typecheck_value(
+        space, scratch, indexed_value, indexed_type,
+        NULL, &indexed_result));
+    assert(indexed_result.verdict == PETTA_TYPECHECK_ESTABLISHED);
+    assert(indexed_result.declaration_lookup_cost.indexed_lookups > 0u);
+    assert(indexed_result.declaration_lookup_cost.full_space_rows_examined ==
+           0u);
+    assert(indexed_result.declaration_lookup_cost.indexed_rows_examined <
+           space_length64(space));
+
+    expect_type_compatibility(space, scratch, "NominalA", "NominalA",
+                              PETTA_TYPECHECK_ESTABLISHED);
+    expect_type_compatibility(space, scratch, "NominalA", "NominalB",
+                              PETTA_TYPECHECK_REFUTED);
+    expect_type_compatibility(space, scratch, "%Undefined%", "NominalA",
+                              PETTA_TYPECHECK_REFUTED);
+    expect_type_compatibility(space, scratch, "AliasCycleA", "Number",
+                              PETTA_TYPECHECK_UNDETERMINED);
+
+    PettaTypecheckResult malformed;
+    assert(!petta_typecheck_value(
+        space, scratch, parse_one(scratch, "1"),
+        parse_one(scratch, "()"), NULL, &malformed));
+    assert(malformed.fault == PETTA_TYPECHECK_FAULT_MALFORMED_TYPE);
+    assert(malformed.verdict == PETTA_TYPECHECK_UNDETERMINED);
 }
 
 static Atom *add_indexed_program_clause(
@@ -1748,6 +1908,9 @@ int main(void) {
     g_symbols = &symbols;
     g_var_intern = &variables;
     space_init_with_universe(&space, &universe);
+
+    test_native_residual_typecheck(
+        &space, &persistent, &answers);
 
     test_program_head_occurrence_index(
         &universe, &persistent);

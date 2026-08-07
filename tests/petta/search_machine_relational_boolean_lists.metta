@@ -21,9 +21,20 @@
 ; callable itself is evaluated as an argument.
 (= (apply-once $f $x) ($f $x))
 !(apply-once (|-> ($x) (+ $x 1)) 4)
+!(collapse
+   (apply-once
+      (|-> ($x) (if (== $x 0) (empty) (/ 10 $x)))
+      0))
+!(collapse
+   (apply-once
+      (|-> ($x) (if (== $x 0) (empty) (/ 10 $x)))
+      5))
 !(maplist (|-> ($x) (+ $x 1)) (1 2 3))
 (= (ignore-callable $f) kept)
 !(ignore-callable (|-> ($x) (empty)))
+
+; A false two-branch if contributes no result: Empty is the answer-bag zero.
+!(collapse (if False 1))
 
 ; Fixed-arity intrinsics curry before the exact-arity host boundary.  Both
 ; the positive and negative alpha-equivalence cases exercise a partial

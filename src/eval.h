@@ -9,6 +9,16 @@
 typedef struct CettaLibraryContext CettaLibraryContext;
 struct CettaPettaTokenSpaceClauseRegistry;
 
+/*
+ * Instantiate a canonical PeTTa callable after its arguments have reached
+ * values.  The returned atom is the next unevaluated computation; relational
+ * control remains with the caller.  NULL means the callable representation
+ * or its ABT substitution could not be constructed.
+ */
+Atom *cetta_petta_apply_ready_callable(
+    Arena *arena, Atom *callable, Atom **arguments,
+    CettaExprLen argument_count);
+
 struct CettaPettaTokenSpaceClauseRegistry *
 cetta_petta_token_space_clause_registry_new(void);
 void cetta_petta_token_space_clause_registry_free(
@@ -207,9 +217,13 @@ static inline void rb_set_free(ResultBindSet *rbs) { outcome_set_free(rbs); }
 
 bool cetta_petta_profile_admits_arrow_modes(void);
 bool cetta_petta_profile_admits_typecheck_ops(void);
+bool cetta_petta_profile_admits_native_typecheck_v2(void);
+uint32_t cetta_petta_active_typecheck_policy_id(void);
 bool cetta_petta_typecheck_op_applies(SymbolId head, CettaExprLen nargs);
 void cetta_petta_erase_typecheck_marks_document(
     TermUniverse *universe, AtomId *atom_ids, int atom_count);
 bool cetta_petta_source_head_resolves_in_engine(SymbolId head, CettaExprLen nargs);
+bool cetta_petta_source_head_has_runtime_meaning(
+    Space *space, SymbolId head, CettaExprLen nargs);
 
 #endif /* CETTA_EVAL_H */
