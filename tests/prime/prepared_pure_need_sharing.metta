@@ -18,10 +18,9 @@
 (= (sharing:duplicate $x) (sharing:use-twice $x $x))
 !(sharing:duplicate (sharing:inc 10))
 
-; A total integer expression arriving through the dynamic entry boundary is
-; normalized before clause selection.  Arithmetic written directly in a
-; compiled clause body is already handled by normalize-before-delay, so it is
-; not a witness for this runtime path.
+; A wildcard identity does not authorize pre-demand normalization.  The
+; returned arithmetic expression is evaluated only by the surrounding top-level
+; observation, after the shared Need cell has crossed the call boundary.
 (= (sharing:identity $x) $x)
 !(sharing:identity (+ (+ 20 1) 1))
 

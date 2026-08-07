@@ -22687,111 +22687,6 @@ static void prime_need_eval_equation_seed(
         seed, fuel, preserve_bindings, outcomes);
 }
 
-static bool prime_need_is_exact_integer_value(Atom *atom) {
-    return atom && atom->kind == ATOM_GROUNDED &&
-           (atom->ground.gkind == GV_INT ||
-            atom->ground.gkind == GV_BIGINT);
-}
-
-static bool prime_need_total_integer_head(SymbolId head,
-                                          CettaExprLen arity) {
-#define PRIME_TOTAL_INTEGER_HEAD(field, expected_arity) \
-    if (head == g_builtin_syms.field && arity == (expected_arity)) return true;
-    CETTA_GSLT_TOTAL_INTEGER_HEAD_ROWS(PRIME_TOTAL_INTEGER_HEAD)
-#undef PRIME_TOTAL_INTEGER_HEAD
-    return false;
-}
-
-/* Eagerly reducing a closed expression is sound even in a Need language only
- * when the reduction is proved total and effect-free.  This deliberately tiny
- * generated fragment covers exact-integer +, -, and *; division, conversion,
- * state, foreign calls, variables, and private thunks all refuse admission.
- * The bound protects the optimizer itself; refusal leaves the lazy oracle
- * untouched. */
-static Atom *prime_need_normalize_total_integer(
-    Space *s, Arena *a, Atom *atom, int fuel,
-    uint32_t depth, bool *out_admitted) {
-    if (out_admitted)
-        *out_admitted = false;
-    if (!atom || !out_admitted || depth > 64u)
-        return atom;
-    if (prime_need_is_exact_integer_value(atom)) {
-        *out_admitted = true;
-        return atom;
-    }
-    if (atom->kind != ATOM_EXPR || atom->expr.len == 0u)
-        return atom;
-    Atom *head = atom->expr.elems[0];
-    CettaExprLen nargs = atom->expr.len - 1u;
-    if (!head || head->kind != ATOM_SYMBOL ||
-        !prime_need_total_integer_head(head->sym_id, nargs)) {
-        return atom;
-    }
-    Atom **elems = arena_alloc(
-        a, sizeof(*elems) * (size_t)atom->expr.len);
-    if (!elems)
-        return atom;
-    elems[0] = head;
-    for (CettaExprIndex i = 1u; i < atom->expr.len; i++) {
-        bool child_admitted = false;
-        elems[i] = prime_need_normalize_total_integer(
-            s, a, atom->expr.elems[i], fuel,
-            depth + 1u, &child_admitted);
-        if (!child_admitted)
-            return atom;
-    }
-    Bindings empty;
-    bindings_init(&empty);
-    Atom *value = eval_direct_grounded_application(
-        s, a, atom_expr(a, elems, atom->expr.len), &empty, fuel);
-    if (!prime_need_is_exact_integer_value(value))
-        return atom;
-    *out_admitted = true;
-    return value;
-}
-
-/* Normalize every provably total exact-integer argument in one call-frame
- * rewrite.  This is not a strictness guess: an unused/diverging/effectful
- * argument is never admitted.  It prevents pure accumulator arithmetic from
- * becoming a million-deep thunk chain while retaining Prime's lazy default
- * for every unproved expression. */
-static Atom *prime_need_normalize_total_call_arguments(
-    Space *s, Arena *a, Atom *call, const Bindings *env,
-    int fuel, bool *out_changed) {
-    if (out_changed)
-        *out_changed = false;
-    if (!call || !out_changed || call->kind != ATOM_EXPR ||
-        call->expr.len <= 1u) {
-        return call;
-    }
-    /* Total normalization may run only when it preserves the call policy. */
-    if (call->expr.elems[0] &&
-        call->expr.elems[0]->kind == ATOM_SYMBOL &&
-        !CETTA_GSLT_ACCELERATOR_CALL_POLICY_SUPPORTED(
-            s, call->expr.elems[0]->sym_id,
-            (CettaExprLen)(call->expr.len - 1u))) {
-        return call;
-    }
-    Atom **elems = arena_alloc(
-        a, sizeof(*elems) * (size_t)call->expr.len);
-    if (!elems)
-        return call;
-    elems[0] = call->expr.elems[0];
-    for (CettaExprIndex i = 1u; i < call->expr.len; i++) {
-        Atom *argument = env
-            ? bindings_apply_if_vars(env, a, call->expr.elems[i])
-            : call->expr.elems[i];
-        bool admitted = false;
-        Atom *normalized = prime_need_normalize_total_integer(
-            s, a, argument, fuel, 0u, &admitted);
-        elems[i] = admitted ? normalized : call->expr.elems[i];
-        if (admitted && normalized != call->expr.elems[i])
-            *out_changed = true;
-    }
-    return *out_changed
-        ? atom_expr(a, elems, call->expr.len) : call;
-}
-
 /* A prepared equation may move an already-shared Need reference or an
  * immutable value directly into its RHS.  It must not move a raw computation:
  * if the RHS mentions that register twice, substituting the computation would
@@ -22962,17 +22857,12 @@ static bool prime_need_try_equation_call(
         !space_equations_may_match_known_head(s, head->sym_id))
         return false;
 
-    bool total_arguments_changed = false;
-    Atom *total_call = prime_need_normalize_total_call_arguments(
-        s, a, atom, equation_env, fuel, &total_arguments_changed);
-    if (total_arguments_changed && tail_next && tail_env &&
-        bindings_project_control_continuation(
-            a, total_call, equation_env, preserve_bindings, tail_env)) {
-        *tail_next = total_call;
-        if (tail_type)
-            *tail_type = declared_type;
-        return true;
-    }
+    /* Prime's canonical equation path must not normalize arguments before
+     * the selected equation establishes a value demand.  Even pure and total
+     * normalization is observable beneath quote/syntax positions and erases
+     * the source view of an identity-bearing suspension.  Any equivalent fast
+     * path belongs behind a generated per-position observation plan proving
+     * value demand and excluding syntax, identity, and escape observation. */
 
     /* Prime is checking-first but non-strict: declared function contracts are
        checked against the raw application, without evaluating arguments.

@@ -805,6 +805,9 @@ PRIME_CONFORMANCE_TESTS = \
 	tests/prime/first_class_contexts.metta \
 	tests/prime/need_gc_lifetime.metta \
 	tests/prime/need_storage_boundary.metta \
+	tests/prime/need_quote_preservation.metta \
+	tests/prime/prepared_match_decision.metta \
+	tests/prime/prepared_pure_shared_decision.metta \
 	tests/prime/conformance/abt_chain_scope.metta \
 	tests/prime/conformance/abt_let_scope.metta \
 	tests/prime/conformance/abt_sealed_boundary.metta \
@@ -1334,6 +1337,19 @@ test-prime-need-algebra: $(PRIME_NEED_TEST_BIN)
 		exit 1; \
 	fi
 
+.PHONY: test-prime-need-quote-preservation
+test-prime-need-quote-preservation: $(BIN)
+	@actual=$$($(CETTA_BIN_INVOKE) --lang prime \
+		tests/prime/need_quote_preservation.metta 2>&1); \
+	expected=$$(cat tests/prime/need_quote_preservation.expected); \
+	if [ "$$actual" != "$$expected" ]; then \
+		echo "FAIL: Prime Need forced syntax below quote"; \
+		diff <(printf '%s\n' "$$expected") \
+		     <(printf '%s\n' "$$actual") | head -40; \
+		exit 1; \
+	fi; \
+	echo "PASS: Prime Need preserves syntax below quote and evaluates demanded values"
+
 test-prime-need-closure-capture: $(BIN)
 	@if [ "$(ENABLE_PRIME_NEED_CLOSURE_CAPTURE)" != 1 ]; then \
 		echo "FAIL: enable ENABLE_PRIME_NEED_CLOSURE_CAPTURE=1 for this experimental gate"; \
@@ -1746,6 +1762,7 @@ test-prime-need-equation-choice-sharing-mutation-body: $(BIN)
 test-prime-need-mutations: $(BIN) test-prime-need-algebra \
 		test-prime-need-correspondence test-prime-need-gc-lifetime \
 		test-prime-need-boundaries \
+		test-prime-need-quote-preservation \
 		test-prime-need-effect-isolation \
 		test-prime-need-equation-choice-sharing \
 		test-prime-need-equation-choice-sharing-mutation
@@ -5205,6 +5222,7 @@ test-runtime-stats-lane-body:
 	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 test-prime-need-heap-index-stats
 	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 test-prime-need-planner-stats
 	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 test-prepared-pure-call-machine-stats
+	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 test-prime-prepared-match-decision-stats
 	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 test-petta-specialized-pure-call-stats
 	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 test-petta-prepared-program-cache-stats
 	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 test-petta-prepared-collection-pull-stats
@@ -6931,6 +6949,39 @@ ifeq ($(ENABLE_RUNTIME_STATS),1)
 		exit 1; \
 	fi; \
 	echo "PASS: PeTTa prepared recursion crosses one specialization and observes enclosing cancellation (transitions=$$transitions snapshots=$$snapshots matches=$$matches cancel_observed=$$cancel_observed)"
+else
+	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 $@
+endif
+
+.PHONY: test-prime-prepared-match-decision-stats
+test-prime-prepared-match-decision-stats: $(BIN)
+ifeq ($(ENABLE_RUNTIME_STATS),1)
+	@set -e; \
+	actual=$$(mktemp runtime/prime-prepared-match-decision.XXXXXX); \
+	trap 'rm -f "$$actual"' EXIT INT TERM; \
+	stats=$$(./$(BIN) --emit-runtime-stats --lang prime \
+		tests/prime/prepared_match_decision.metta \
+		2>&1 >"$$actual"); \
+	diff -u tests/prime/prepared_match_decision.expected "$$actual"; \
+	inputs=$$(printf '%s\n' "$$stats" | awk \
+		'$$1 == "runtime-counter" && $$2 == "prepared-pure-decision-clause-input" { print $$3 }'); \
+	survivors=$$(printf '%s\n' "$$stats" | awk \
+		'$$1 == "runtime-counter" && $$2 == "prepared-pure-decision-clause-survivor" { print $$3 }'); \
+	full=$$(printf '%s\n' "$$stats" | awk \
+		'$$1 == "runtime-counter" && $$2 == "prepared-pure-decision-full-match" { print $$3 }'); \
+	demands=$$(printf '%s\n' "$$stats" | awk \
+		'$$1 == "runtime-counter" && $$2 == "prepared-pure-decision-direct-demand" { print $$3 }'); \
+	fallbacks=$$(printf '%s\n' "$$stats" | awk \
+		'$$1 == "runtime-counter" && $$2 == "prepared-pure-decision-fallback-unready" { print $$3 }'); \
+	if [ "$${inputs:-0}" -lt 25 ] || \
+	   [ "$${survivors:-999999}" -gt 7 ] || \
+	   [ "$${full:-999999}" -gt 15 ] || \
+	   [ "$${demands:-0}" -ne 2 ] || \
+	   [ "$${fallbacks:-0}" -lt 1 ]; then \
+		echo "FAIL: shared match decision input=$$inputs survivors=$$survivors full=$$full demands=$$demands fallbacks=$$fallbacks"; \
+		exit 1; \
+	fi; \
+	echo "PASS: sparse shared match decision prunes candidates, requests common Need demand, and preserves wildcard non-demand (input=$$inputs survivors=$$survivors full=$$full demands=$$demands fallbacks=$$fallbacks)"
 else
 	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 $@
 endif
@@ -8754,8 +8805,6 @@ ifeq ($(ENABLE_RUNTIME_STATS),1)
 		'$$1 == "runtime-counter" && $$2 == "prepared-pure-call-ephemeron-reclaimed" { print $$3 }'); \
 	path_compressions=$$(printf '%s\n' "$$need_result" | awk \
 		'$$1 == "runtime-counter" && $$2 == "prepared-pure-call-thunk-path-compression" { print $$3 }'); \
-	total_normalizations=$$(printf '%s\n' "$$need_result" | awk \
-		'$$1 == "runtime-counter" && $$2 == "prepared-pure-call-total-normalization" { print $$3 }'); \
 	tail_reentries=$$(printf '%s\n' "$$need_result" | awk \
 		'$$1 == "runtime-counter" && $$2 == "prepared-pure-call-tail-reentry" { print $$3 }'); \
 	if [ "$$need_actual" != "$$need_expected" ] || \
@@ -8764,12 +8813,11 @@ ifeq ($(ENABLE_RUNTIME_STATS),1)
 	   [ "$${need_collections:-0}" -lt 1 ] || \
 	   [ "$${ephemeron_reclaimed:-0}" -lt 1 ] || \
 	   [ "$${path_compressions:-0}" -lt 1 ] || \
-	   [ "$${total_normalizations:-0}" -lt 1 ] || \
 	   [ "$${tail_reentries:-0}" -lt 1 ]; then \
-		echo "FAIL: Need update-cell witness stores=$$memo_stores hits=$$memo_hits blackholes=$$blackholes collections=$$need_collections ephemeron-reclaimed=$$ephemeron_reclaimed path-compressions=$$path_compressions total-normalizations=$$total_normalizations tail-reentries=$$tail_reentries"; \
+		echo "FAIL: Need update-cell witness stores=$$memo_stores hits=$$memo_hits blackholes=$$blackholes collections=$$need_collections ephemeron-reclaimed=$$ephemeron_reclaimed path-compressions=$$path_compressions tail-reentries=$$tail_reentries"; \
 		exit 1; \
 	fi; \
-	echo "PASS: pure-call mechanism witnesses commit, conservative decline, bounded collection sampling, generated-root reclamation, shared Need updates, total normalization, and tail reentry"
+	echo "PASS: pure-call mechanism witnesses commit, conservative decline, bounded collection sampling, generated-root reclamation, shared Need updates, and tail reentry"
 else
 	@echo "INFO: pure-call mechanism witness requires compile-time runtime stats; re-running with ENABLE_RUNTIME_STATS=1"
 	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 test-prepared-pure-call-machine-stats
