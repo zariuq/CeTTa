@@ -1,0 +1,5 @@
+(: bool-through-let-star (-[det]-> Bool Bool))
+(= (bool-through-let-star $input)
+   (let* (($bound $input))
+     (and $bound True)))
+!(bool-through-let-star True)

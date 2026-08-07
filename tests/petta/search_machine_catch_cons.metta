@@ -33,3 +33,26 @@
 !(test (let $value (catch (+ 40 not-a-number))
              (if-error $value Error $value))
        Error)
+
+; Error bypasses a typed result check and is caught before it can collapse
+; into ordinary search failure.  The second test forces backtracking after a
+; normal first answer, so the catch delimiter must be restored with the saved
+; continuation.  The third pins both halves of delimitation: an error cuts
+; choices created inside catch but preserves an enclosing function choice.
+(: typed-choice (-> Number))
+(= (typed-choice) 7)
+(= (typed-choice) (+ 1 not-a-number))
+
+(: typed-error-first (-> Number))
+(= (typed-error-first) (+ 1 not-a-number))
+(= (typed-error-first) 8)
+
+(= (mark-caught $value)
+   (if-error $value caught $value))
+(= (outer-choice)
+   (mark-caught (catch (typed-error-first))))
+(= (outer-choice) 9)
+
+!(test (mark-caught (catch (typed-error-first))) caught)
+!(test (collapse (mark-caught (catch (typed-choice)))) (7 caught))
+!(test (collapse (outer-choice)) (caught 9))

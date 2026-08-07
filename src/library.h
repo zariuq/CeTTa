@@ -54,6 +54,7 @@ typedef struct CettaLibraryContext {
         char path[PATH_MAX];
     } imported_files[CETTA_MAX_IMPORTED_FILES];
     uint32_t imported_file_len;
+    uint32_t petta_trusted_library_import_depth;
     struct {
         Space *work_space;
         Space *logical_space;

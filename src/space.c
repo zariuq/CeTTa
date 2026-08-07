@@ -4334,15 +4334,20 @@ static bool type_inference_can_add(CettaTypeInferenceBudget *budget,
     return false;
 }
 
-/* Scan space for (: atom type) annotations. */
+/* Resolve (: atom type) annotations through the native index.  Overlay
+ * spaces retain their existing logical-view fallback, made observable to
+ * focused callers through the optional cost record. */
 static uint32_t get_annotated_types(Space *s, Arena *a, Atom *atom,
                                     Atom ***out_types,
-                                    CettaTypeInferenceBudget *budget) {
+                                    CettaTypeInferenceBudget *budget,
+                                    SpaceDeclaredTypeLookupCost *cost) {
     if (space_has_overlay_base(s)) {
         Atom **types = NULL;
         uint32_t count = 0, cap = 0;
         CettaCount logical_len = space_length64(s);
         for (CettaIndex i = 0; i < logical_len; i++) {
+            if (cost)
+                cost->full_space_rows_examined++;
             if (!type_inference_step(budget, 1)) break;
             Atom *annotation = space_get_at64(s, i);
             if (!annotation || annotation->kind != ATOM_EXPR ||
@@ -4365,11 +4370,15 @@ static uint32_t get_annotated_types(Space *s, Arena *a, Atom *atom,
     }
     /* Use type annotation index for O(bucket_size) instead of O(N) */
     ensure_ty_ann_index(s);
+    if (cost)
+        cost->indexed_lookups++;
     uint32_t h = atom_hash_for_index(atom);
     TypeAnnBucket *bucket = &s->native.ty_idx.buckets[h];
     Atom **types = NULL;
     uint32_t count = 0, cap = 0;
     for (CettaIndex i = 0; i < bucket->len; i++) {
+        if (cost)
+            cost->indexed_rows_examined++;
         if (!type_inference_step(budget, 1)) break;
         AtomId annotation_id = space_indexed_occurrence_atom_id(
             s, bucket->atom_indices, bucket->atom_ids, i);
@@ -4413,12 +4422,19 @@ static uint32_t get_annotated_types(Space *s, Arena *a, Atom *atom,
 
 uint32_t space_get_declared_types(
     Space *s, Arena *a, Atom *subject, Atom ***out_types) {
+    return space_get_declared_types_costed(
+        s, a, subject, out_types, NULL);
+}
+
+uint32_t space_get_declared_types_costed(
+    Space *s, Arena *a, Atom *subject, Atom ***out_types,
+    SpaceDeclaredTypeLookupCost *cost) {
     if (!out_types)
         return 0u;
     *out_types = NULL;
     if (!s || !a || !subject)
         return 0u;
-    return get_annotated_types(s, a, subject, out_types, NULL);
+    return get_annotated_types(s, a, subject, out_types, NULL, cost);
 }
 
 static bool tuple_type_part_keep(Atom *type, bool is_head) {
@@ -4466,7 +4482,7 @@ static uint32_t get_tuple_value_part_types(Space *s, Arena *a, Atom *atom,
         return 0;
     }
     case ATOM_SYMBOL:
-        raw_count = get_annotated_types(s, a, atom, &raw, budget);
+        raw_count = get_annotated_types(s, a, atom, &raw, budget, NULL);
         break;
     case ATOM_EXPR:
         raw_count = get_atom_types_mode(s, a, atom, &raw, true, budget);
@@ -4592,19 +4608,20 @@ static uint32_t get_atom_types_mode(Space *s, Arena *a, Atom *atom,
     }
     case ATOM_SYMBOL:
         count = include_direct_annotations
-                    ? get_annotated_types(s, a, atom, &types, budget)
+                    ? get_annotated_types(s, a, atom, &types, budget, NULL)
                     : 0;
         break;
     case ATOM_EXPR:
         count = include_direct_annotations
-                    ? get_annotated_types(s, a, atom, &types, budget)
+                    ? get_annotated_types(s, a, atom, &types, budget, NULL)
                     : 0;
         /* Also try to infer type from operator's function type */
         bool tried_func_type = false;
         if (count == 0 && atom->expr.len >= 2) {
             Atom *op = atom->expr.elems[0];
             Atom **op_types = NULL;
-            uint32_t nop = get_annotated_types(s, a, op, &op_types, budget);
+            uint32_t nop = get_annotated_types(
+                s, a, op, &op_types, budget, NULL);
             Arena scratch;
             arena_init(&scratch);
             arena_set_runtime_kind(&scratch, CETTA_ARENA_RUNTIME_KIND_SCRATCH);

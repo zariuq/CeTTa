@@ -6,6 +6,12 @@ is (x y a b), should (x y a b). ✅
 is 3, should 3. ✅ 
 is 42, should 42. ✅ 
 is Error, should Error. ✅ 
+is caught, should caught. ✅ 
+is (7 caught), should (7 caught). ✅ 
+is (caught 9), should (caught 9). ✅ 
+true
+true
+true
 true
 true
 true

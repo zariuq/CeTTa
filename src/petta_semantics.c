@@ -1403,7 +1403,8 @@ bool petta_semantics_intrinsic_partial_arity(
             *arity = 2u;
         return true;
     }
-    if (head == ids->id ||
+    if (head == g_builtin_syms.op_not ||
+        head == ids->id ||
         head == ids->length ||
         head == ids->list_to_set ||
         head == ids->repra ||

@@ -527,6 +527,18 @@ uint32_t get_atom_types(Space *s, Arena *a, Atom *atom,
 uint32_t space_get_declared_types(
     Space *s, Arena *a, Atom *subject, Atom ***out_types);
 
+typedef struct {
+    uint64_t indexed_lookups;
+    uint64_t indexed_rows_examined;
+    uint64_t full_space_rows_examined;
+} SpaceDeclaredTypeLookupCost;
+
+/* The costed form is observationally identical and lets focused clients
+ * prove which lookup path they used.  Counts accumulate into `cost`. */
+uint32_t space_get_declared_types_costed(
+    Space *s, Arena *a, Atom *subject, Atom ***out_types,
+    SpaceDeclaredTypeLookupCost *cost);
+
 /* Optional logical-step budget for callers that must distinguish a complete
    type set from a prefix.  Ordinary HE inference keeps using the unbudgeted
    API above; Prime threads one instance through the complete inference tree. */

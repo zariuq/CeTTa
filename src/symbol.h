@@ -134,6 +134,7 @@ static inline uint64_t symbol_table_instance_id(const SymbolTable *st) {
     X(register_module_bang, "register-module!") \
     X(import_bang, "import!") \
     X(include, "include") \
+    X(module_parse_failed, "ModuleParseFailed") \
     X(mod_space_bang, "mod-space!") \
     X(print_mods_bang, "print-mods!") \
     X(module_inventory_bang, "module-inventory!") \

@@ -385,6 +385,10 @@ static const char *const CETTA_RUNTIME_COUNTER_NAMES[CETTA_RUNTIME_COUNTER_COUNT
     "prepared-pure-callable-hit",
     "prepared-pure-callable-miss",
     "prepared-pure-decision-direct-demand",
+    "petta-typecheck-boundary-entry",
+    "petta-type-obligation-cache-hit",
+    "petta-type-obligation-cache-miss",
+    "petta-type-obligation-authority-retry",
 };
 
 static int64_t clamp_counter(uint64_t value) {

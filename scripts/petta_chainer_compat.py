@@ -270,6 +270,9 @@ def main() -> int:
         "--manifest", default="tests/petta/chainer_compat/manifest.json"
     )
     parser.add_argument("--out", default="runtime/petta-chainer-compat")
+    parser.add_argument(
+        "--profile", choices=("extended", "typecheck-v2"), default="extended"
+    )
     parser.add_argument("--reference", action="store_true")
     arguments = parser.parse_args()
 
@@ -325,7 +328,7 @@ def main() -> int:
                     "--lang",
                     "petta",
                     "--profile",
-                    "extended",
+                    arguments.profile,
                     str(source),
                 ],
                 image,
@@ -388,6 +391,7 @@ def main() -> int:
         "schema": SCHEMA,
         "chainer_revision": manifest["chainer"]["revision"],
         "petta_revision": manifest["petta"]["revision"],
+        "profile": arguments.profile,
         "results": results,
     }
     (output_root / "summary.json").write_text(
