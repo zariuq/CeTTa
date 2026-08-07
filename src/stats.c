@@ -372,6 +372,19 @@ static const char *const CETTA_RUNTIME_COUNTER_NAMES[CETTA_RUNTIME_COUNTER_COUNT
     "prepared-collection-pull-item",
     "prepared-collection-pull-commit",
     "prepared-collection-pull-decline",
+    "prepared-pure-head-lookup",
+    "prepared-pure-head-probe",
+    "prepared-pure-decision-run",
+    "prepared-pure-decision-fallback-unready",
+    "prepared-pure-decision-clause-input",
+    "prepared-pure-decision-clause-survivor",
+    "prepared-pure-decision-full-match",
+    "prepared-pure-intrinsic-type-hit",
+    "prepared-pure-type-service-fallback",
+    "prepared-pure-callable-lookup",
+    "prepared-pure-callable-hit",
+    "prepared-pure-callable-miss",
+    "prepared-pure-decision-direct-demand",
 };
 
 static int64_t clamp_counter(uint64_t value) {
