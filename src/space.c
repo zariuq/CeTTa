@@ -5002,8 +5002,10 @@ static bool query_equation_emit_decoded_epoch(Atom *lhs, Atom *rhs,
 }
 
 /* Try matching equations from a bucket against a query.
-   Large buckets reuse the substitution-tree epoch path to avoid per-candidate
-   rename_vars on both sides of each equation. */
+   Large buckets use the substitution tree only to select candidates.  A leaf's
+   epoch belongs to the persistent index build; it must never enter a later
+   query environment.  Each candidate is therefore standardized apart with a
+   fresh query-time epoch and rechecked by the authoritative matcher. */
 static void query_bucket(Space *s, EqBucket *bucket, Atom *query,
                          const QueryVisibleVarSet *visible, Arena *a,
                          QueryResultSink *sink) {
@@ -5041,7 +5043,7 @@ static void query_bucket(Space *s, EqBucket *bucket, Atom *query,
             }
             considered++;
             if (query_equation_emit_stored(s, lhs_id, rhs_id, query, visible, a,
-                                           sm->epoch, &sm->bindings, sink)) {
+                                           fresh_var_suffix(), NULL, sink)) {
                 cetta_runtime_stats_inc(
                     CETTA_RUNTIME_COUNTER_QUERY_EQUATION_SUBST_EMITTED);
             }
@@ -5059,7 +5061,7 @@ static void query_bucket(Space *s, EqBucket *bucket, Atom *query,
         }
         considered++;
         bool emitted = query_equation_emit_decoded_epoch(
-            lhs, rhs, query, visible, a, sm->epoch, &sm->bindings, sink);
+            lhs, rhs, query, visible, a, fresh_var_suffix(), NULL, sink);
         if (emitted) {
             cetta_runtime_stats_inc(
                 CETTA_RUNTIME_COUNTER_QUERY_EQUATION_SUBST_EMITTED);

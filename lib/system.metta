@@ -44,3 +44,15 @@
    (function
      (case (__cetta_lib_system_monotonic_ns ())
        (($result (return $result))))))
+
+; Time one explicitly delayed Prime computation.  Each `case` is a demand
+; boundary: the start clock is read before the suspension is forced, and the
+; end clock is read only after its selected answer is available.
+(= (system:timed $suspension)
+   (case (system:monotonic-ns)
+     (($start
+       (case (force $suspension)
+         (($value
+           (case (system:monotonic-ns)
+             (($end
+               (system:timed-result (- $end $start) $value)))))))))))
