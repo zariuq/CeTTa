@@ -384,7 +384,7 @@ COMPILED_READER_RUNTIME_SRC = \
 	$(HE_COMPILED_READER_RUNTIME_SRC) \
 	$(PETTA_COMPILED_READER_RUNTIME_SRC) \
 	$(PRIME_COMPILED_READER_RUNTIME_SRC)
-SRC = src/symbol.c src/atom.c src/name_key.c src/atom_blob.c src/abt.c src/parser.c $(COMPILED_READER_RUNTIME_SRC) src/mm2_lower.c src/subst_tree.c src/space.c src/registry_resolver.c src/space_match_backend.c src/match.c src/term_canon.c src/variant_shape.c src/variant_instance.c src/answer_bank.c src/table_store.c src/search_machine.c src/petta_program.c src/petta_search_machine.c src/petta_specializer.c $(LIB_PROLOG_SRC) src/term_universe.c src/stats.c src/parallel_executor.c src/prime_need.c src/petta_semantics.c src/prepared_pure_machine.c src/eval.c src/grounded.c src/he_typing.c src/prime_semantics.c src/text_source.c src/native_handle.c src/native_sha256.c src/mork_space_bridge_runtime.c src/library.c src/langdef_pack.c src/he_small_step_pack.c src/lib_parse_native_grammar.c src/lib_parse_inference_native.c experiments/gslt2parse_foundation/native/finite_horn_ground_term_v1.c experiments/gslt2parse_foundation/native/parser_term_projection_v1.c experiments/gslt2parse_foundation/native/parser_pack_abi_v1.c experiments/gslt2parse_foundation/native/parser_action_bytecode_v1.c experiments/gslt2parse_foundation/native/parser_pack_native_v1.c experiments/gslt2parse_foundation/native/parser_pack_lexical_v1.c experiments/gslt2parse_foundation/native/parser_pack_gll_v1.c experiments/gslt2parse_foundation/native/regular_span_dfa_v1.c experiments/gslt2parse_foundation/native/regular_span_nfa_v1.c $(PYTHON_SRC) src/session.c src/lang.c src/rhocalc_core.c src/rhocalc_syntax.c src/compile.c src/runtime.c src/cetta_stdlib.c native/native_modules.c src/main.c
+SRC = src/symbol.c src/atom.c src/name_key.c src/atom_blob.c src/abt.c src/parser.c $(COMPILED_READER_RUNTIME_SRC) src/mm2_lower.c src/subst_tree.c src/space.c src/registry_resolver.c src/space_match_backend.c src/match.c src/term_canon.c src/variant_shape.c src/variant_instance.c src/answer_bank.c src/table_store.c src/search_machine.c src/petta_program.c src/petta_search_machine.c src/petta_specializer.c src/rule_machine.c $(LIB_PROLOG_SRC) src/term_universe.c src/stats.c src/parallel_executor.c src/prime_need.c src/petta_semantics.c src/prepared_pure_machine.c src/eval.c src/grounded.c src/he_typing.c src/prime_semantics.c src/text_source.c src/native_handle.c src/native_sha256.c src/mork_space_bridge_runtime.c src/library.c src/langdef_pack.c src/he_small_step_pack.c src/lib_parse_native_grammar.c src/lib_parse_inference_native.c experiments/gslt2parse_foundation/native/finite_horn_ground_term_v1.c experiments/gslt2parse_foundation/native/parser_term_projection_v1.c experiments/gslt2parse_foundation/native/parser_pack_abi_v1.c experiments/gslt2parse_foundation/native/parser_action_bytecode_v1.c experiments/gslt2parse_foundation/native/parser_pack_native_v1.c experiments/gslt2parse_foundation/native/parser_pack_lexical_v1.c experiments/gslt2parse_foundation/native/parser_pack_gll_v1.c experiments/gslt2parse_foundation/native/regular_span_dfa_v1.c experiments/gslt2parse_foundation/native/regular_span_nfa_v1.c $(PYTHON_SRC) src/session.c src/lang.c src/rhocalc_core.c src/rhocalc_syntax.c src/compile.c src/runtime.c src/cetta_stdlib.c native/native_modules.c src/main.c
 ifeq ($(ENABLE_RUNTIME_STATS),1)
 OBJ = $(SRC:.c=.$(BUILD_OBJ_TAG).runtime-stats.o)
 BIN = runtime/cetta-$(BUILD_CANON)-runtime-stats
@@ -706,6 +706,10 @@ LIB_PARSE_INFERENCE_BENCH_BIN = runtime/bench_lib_parse_inference_native-$(BUILD
 GSLT2PARSE_SCHEMA_V1_NATIVE_DIR = experiments/gslt2parse_foundation/native
 GSLT2PARSE_SCHEMA_V1_NATIVE_BIN = runtime/test_finite_horn_gslt_v1-$(BUILD_OBJ_TAG)
 GSLT2PARSE_CHART_V1_NATIVE_BIN = runtime/finite_horn_chart_v1-$(BUILD_OBJ_TAG)
+RULE_MACHINE_CORE_GSLT_V1 = experiments/gslt2parse_foundation/presentations/core/rule_machine_core_v1.metta
+RULE_MACHINE_PROGRAM_GSLT_V1 = experiments/gslt2parse_foundation/presentations/specializations/rule_machine_hilbert_bfc_program_v1.metta
+RULE_MACHINE_PROGRAM_GENERATOR_V1 = tools/generate_rule_machine_program_v1.py
+RULE_MACHINE_PROGRAM_GENERATED_V1 = src/generated/rule_machine_program_v1.generated.h
 GSLT2PARSE_PARSER_PACK_ABI_V1_NATIVE_BIN = runtime/test_parser_pack_abi_v1-$(BUILD_OBJ_TAG)
 GSLT2PARSE_PARSER_PACK_ABI_V1_STREAM_BIN = runtime/test_parser_pack_abi_v1_stream-$(BUILD_OBJ_TAG)
 GSLT2PARSE_TERM_PROJECTION_V1_NATIVE_BIN = runtime/test_parser_term_projection_v1-$(BUILD_OBJ_TAG)
@@ -806,8 +810,15 @@ PRIME_CONFORMANCE_TESTS = \
 	tests/prime/need_gc_lifetime.metta \
 	tests/prime/need_storage_boundary.metta \
 	tests/prime/need_quote_preservation.metta \
+	tests/prime/nil_rule_machine_guests.generated.metta \
+	tests/prime/rule_machine_malformed_artifact_delta.metta \
+	tests/prime/rule_machine_malformed_program.metta \
 	tests/prime/prepared_match_decision.metta \
 	tests/prime/prepared_pure_shared_decision.metta \
+	tests/prime/rule_machine_compile.metta \
+	tests/prime/rule_machine_duplicate_id.metta \
+	tests/prime/rule_machine_revision_identity.metta \
+	tests/prime/rule_machine_stale_program.metta \
 	tests/prime/conformance/abt_chain_scope.metta \
 	tests/prime/conformance/abt_let_scope.metta \
 	tests/prime/conformance/abt_sealed_boundary.metta \
@@ -859,6 +870,7 @@ PATHMAP_REQUIRED_TESTS = \
 	tests/test_pathmap_fc_depth3_count_regression.metta \
 	tests/test_pathmap_match_copy_var_identity_regression.metta \
 	tests/test_pathmap_program_shadow_sync_work.metta \
+	tests/test_pathmap_pull_consumers_work.metta \
 	tests/test_pathmap_stored_variable_exact_query_regression.metta \
 	tests/test_pathmap_typed_query_surface.metta \
 	tests/test_match_chain_cross_space_pathmap_regression.metta \
@@ -3219,6 +3231,20 @@ src/abt.$(BUILD_OBJ_TAG).o: src/abt.c src/abt.h src/atom_blob.h $(ABT_DEFAULT_SI
 
 src/abt.$(BUILD_OBJ_TAG).runtime-stats.o: src/abt.c src/abt.h src/atom_blob.h $(ABT_DEFAULT_SIGNATURES_BLOB) $(ABT_DEFAULT_SIGNATURES_BLOB_STAMP) $(BUILD_CONFIG_HEADER)
 	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+
+$(RULE_MACHINE_PROGRAM_GENERATED_V1): \
+		$(RULE_MACHINE_CORE_GSLT_V1) \
+		$(RULE_MACHINE_PROGRAM_GSLT_V1) \
+		$(RULE_MACHINE_PROGRAM_GENERATOR_V1) \
+		tools/gslt2parse_schema_v1.py
+	python3 $(RULE_MACHINE_PROGRAM_GENERATOR_V1) \
+		--core $(RULE_MACHINE_CORE_GSLT_V1) \
+		--program-gslt $(RULE_MACHINE_PROGRAM_GSLT_V1) \
+		--out $@
+
+src/rule_machine.$(BUILD_OBJ_TAG).stage0.o: $(RULE_MACHINE_PROGRAM_GENERATED_V1)
+src/rule_machine.$(BUILD_OBJ_TAG).o: $(RULE_MACHINE_PROGRAM_GENERATED_V1)
+src/rule_machine.$(BUILD_OBJ_TAG).runtime-stats.o: $(RULE_MACHINE_PROGRAM_GENERATED_V1)
 
 %.$(BUILD_OBJ_TAG).o: %.c $(BUILD_CONFIG_HEADER)
 	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
@@ -8873,6 +8899,7 @@ else
 	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 test-gslt-execution-contracts
 endif
 
+ifeq ($(ENABLE_RUNTIME_STATS),1)
 test-pathmap-pull-consumers-work: $(BIN)
 	@result=$$(CETTA_PATHMAP_QUERY_INDEX=1 CETTA_PATHMAP_PULL_CONSUMERS=1 \
 		$(CETTA_BIN_INVOKE) --emit-runtime-stats --profile he-extended \
@@ -8915,6 +8942,11 @@ test-pathmap-pull-consumers-work: $(BIN)
 	assert_eq pathmap-indexed-row-aggregate 4; \
 	assert_eq pathmap-indexed-count-pushdown 1; \
 	echo "PASS: counted PathMap exact-plus-residual queries feed count/prefix/fold consumers without whole-space materialization"
+else
+test-pathmap-pull-consumers-work:
+	@echo "INFO: PathMap pull-consumer witnesses require the main bridge and compile-time runtime stats; re-running with BUILD=main ENABLE_RUNTIME_STATS=1"
+	@$(MAKE) -s BUILD=main ENABLE_RUNTIME_STATS=1 test-pathmap-pull-consumers-work
+endif
 
 test-pathmap-program-shadow-sync-work: $(BIN)
 	@result=$$(CETTA_PATHMAP_QUERY_INDEX=1 $(CETTA_BIN_INVOKE) \
@@ -10052,6 +10084,11 @@ test-gslt2parse-schema-v1-native: $(GSLT2PARSE_SCHEMA_V1_NATIVE_BIN)
 
 test-gslt2parse-schema-v1: test-gslt2parse-schema-v1-native
 	@python3 tools/test_gslt2parse_schema_v1.py
+
+test-rule-machine-gslt-v1: $(GSLT2PARSE_CHART_V1_NATIVE_BIN)
+	@python3 tools/test_rule_machine_gslt_v1.py \
+		--chart "$(GSLT2PARSE_CHART_V1_NATIVE_BIN)" \
+		--nil-root "$(CURDIR)/../../repos/ngeiswei-chaining-run"
 
 $(GSLT2PARSE_CHART_V1_NATIVE_BIN): \
 		$(GSLT2PARSE_SCHEMA_V1_NATIVE_DIR)/finite_horn_chart_v1.c \

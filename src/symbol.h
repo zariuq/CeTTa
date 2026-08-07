@@ -413,6 +413,16 @@ static inline uint64_t symbol_table_instance_id(const SymbolTable *st) {
     X(lib_mm2_context_step, "__cetta_lib_mm2_context_step") \
     X(lib_mm2_context_size, "__cetta_lib_mm2_context_size") \
     X(lib_mm2_context_atoms, "__cetta_lib_mm2_context_atoms") \
+    /* ── Bounded RuleMachineCoreV1 compilation surface ── */ \
+    X(compile_rule_package, "compile:rule-package") \
+    X(compile_link_rule, "compile:link-rule") \
+    X(compile_run, "compile:run") \
+    X(compile_artifact_info, "compile:artifact-info") \
+    X(compile_rule_program, "compile:rule-program") \
+    X(compile_rule_program_info, "compile:rule-program-info") \
+    X(compile_rule_program_link, "compile:rule-program-link") \
+    X(compile_rule_program_run, "compile:rule-program-run") \
+    X(compile_rule_program_run_native, "compile:rule-program-run-native") \
     /* ── Native handle; final member of the builtin-surface ID interval ── */ \
     X(native_handle, "NativeHandle") \
     /* Shared control syntax has an interned identity but is not a value. */ \
@@ -437,6 +447,15 @@ static inline uint64_t symbol_table_instance_id(const SymbolTable *st) {
     X(mork_add_atoms) \
     X(mork_add_atom) \
     X(mork_remove_atom) \
+    X(compile_rule_package) \
+    X(compile_link_rule) \
+    X(compile_run) \
+    X(compile_artifact_info) \
+    X(compile_rule_program) \
+    X(compile_rule_program_info) \
+    X(compile_rule_program_link) \
+    X(compile_rule_program_run) \
+    X(compile_rule_program_run_native) \
     X(add_atom) \
     X(remove_atom) \
     X(op_plus) \
