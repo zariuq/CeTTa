@@ -1,0 +1,7 @@
+[(compiled-artifact-info r0 proof-occurrence-bag (compile-delta 5 5 0) 5)]
+[(compiled-artifact-info r1 proof-occurrence-bag (compile-delta 1 1 5) 6)]
+[(compile-result proof-occurrence-bag (occurrences) (run-metrics 1 5 0 0 2) r0)]
+[(compile-result proof-occurrence-bag (occurrences (occurrence (rm-proof-app blackbird (rm-cons (rm-proof-atom h) (rm-cons (rm-proof-atom i) rm-nil))))) (run-metrics 10 60 16 1 2) r1)]
+[(compile-result proof-occurrence-bag (occurrences) (run-metrics 1 5 0 0 2) r0)]
+[(compile-result proof-occurrence-bag (occurrences (occurrence (rm-proof-app compose (rm-cons (rm-proof-atom g) (rm-cons (rm-proof-atom f) rm-nil))))) (run-metrics 10 50 16 1 2) r0)]
+[(Error (compile:rule-package broken (rm-package (not-a-block x))) MalformedRuleMachineBlock)]

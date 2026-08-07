@@ -1,0 +1,1 @@
+[(Error (compile:link-rule (compiled-artifact RuleMachineCoreV1 r0 proof-occurrence-bag (compile-delta 1 1 0) (bc-artifact-link (bc-artifact-empty RuleMachineCoreV1) (bc-block a source:a (bc-match a) (bc-goals rm-nil) (bc-build (rm-proof-atom a)) bc-emit))) r0 (rm-block b source:b (rm-proof-atom b) rm-nil b)) RevisionIdentityMustAdvance)]

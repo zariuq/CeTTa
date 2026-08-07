@@ -1,0 +1,1 @@
+[(Error (compile:rule-program-run (rule-program-v1 HilbertBFCProgramV1 bad-r0 proof-occurrence-bag (compile-delta 0 0 0) (rule-program-empty HilbertBFCProgramV1)) 1 10 10 target) MalformedRuleProgram)]

@@ -1,0 +1,10 @@
+; The compiler validates the source artifact's incremental-build accounting.
+
+!(compile:rule-program
+  (compiled-artifact
+    RuleMachineCoreV1 forged-r0 proof-occurrence-bag
+    (compile-delta 0 0 0)
+    (bc-artifact-link
+      (bc-artifact-empty RuleMachineCoreV1)
+      (bc-block ax source:ax (bc-match a) (bc-goals rm-nil)
+        (bc-build (rm-proof-atom ax)) bc-emit))))
