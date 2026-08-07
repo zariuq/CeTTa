@@ -155,6 +155,9 @@ NO_EXPECT_CLASSIFICATION = {
 }
 
 PRIME_TEST_NOTES = {
+    "tests/prime/system_timed_force.metta": (
+        "Prime explicit suspension timing and multiplicity regression"
+    ),
     "tests/prime/conformance/abt_let_scope.metta": (
         "Prime provisional ABT let-scope evidence regression"
     ),

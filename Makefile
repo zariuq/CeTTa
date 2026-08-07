@@ -819,6 +819,7 @@ PRIME_CONFORMANCE_TESTS = \
 	tests/prime/rule_machine_duplicate_id.metta \
 	tests/prime/rule_machine_revision_identity.metta \
 	tests/prime/rule_machine_stale_program.metta \
+	tests/prime/system_timed_force.metta \
 	tests/prime/conformance/abt_chain_scope.metta \
 	tests/prime/conformance/abt_let_scope.metta \
 	tests/prime/conformance/abt_sealed_boundary.metta \
