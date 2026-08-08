@@ -20,7 +20,7 @@
 
 (= (text-cursor:peek (TextCursor $text $pos))
    (if (>= $pos (str:length $text))
-       Empty
+       AtEof
        (str:slice $text $pos (+ $pos 1))))
 
 (= (text-cursor:peek-n (TextCursor $text $pos) $count)
@@ -44,12 +44,12 @@
                (== $char "\r")))))
 
 (= (text-cursor:skip-whitespace $cursor)
-   (let $ch (text-cursor:peek $cursor)
-     (if (== $ch Empty)
-         $cursor
-         (if (text-char:is-whitespace $ch)
-             (text-cursor:skip-whitespace (text-cursor:advance $cursor 1))
-             $cursor))))
+   (case (text-cursor:peek $cursor)
+     ((AtEof $cursor)
+      ($ch
+       (if (text-char:is-whitespace $ch)
+           (text-cursor:skip-whitespace (text-cursor:advance $cursor 1))
+           $cursor)))))
 
 (= (text-cursor:has-prefix $cursor $prefix)
    (str:starts-with (text-cursor:rest $cursor) $prefix))
@@ -57,14 +57,13 @@
 (= (text-cursor:consume-prefix $cursor $prefix)
    (if (text-cursor:has-prefix $cursor $prefix)
        (text-cursor:advance $cursor (str:length $prefix))
-       Empty))
+       (TextPrefixMismatch $prefix)))
 
 (= (text-cursor:find-from $text $start $needle)
    (let $tail (str:slice $text $start (str:length $text))
-     (let $found (str:find $tail $needle)
-       (if (== $found Empty)
-           Empty
-           (+ $start $found)))))
+     (case (str:find $tail $needle)
+       (((TextNotFound $missing) (TextNotFound $missing))
+        ($found (+ $start $found))))))
 
 (= (text-cursor:find (TextCursor $text $pos) $needle)
    (text-cursor:find-from $text $pos $needle))

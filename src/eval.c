@@ -2578,6 +2578,17 @@ static Atom *eval_direct_grounded_application(Space *s, Arena *a, Atom *atom,
     if (head->kind != ATOM_SYMBOL || !is_grounded_op(head->sym_id))
         return NULL;
 
+    /* Prime's Python convenience heads are occurrence-valued: a call can
+     * produce zero, one, or many answers.  The scalar direct shortcut cannot
+     * represent that contract, so route these heads through
+     * dispatch_foreign_outcomes instead. */
+    if (eval_current_language_id() == CETTA_LANGUAGE_PRIME &&
+        (head->sym_id == g_builtin_syms.py_atom ||
+         head->sym_id == g_builtin_syms.py_dot ||
+         head->sym_id == g_builtin_syms.py_call)) {
+        return NULL;
+    }
+
     uint32_t nargs = 0;
     if (!expr_nargs_u32(atom, &nargs))
         return expr_arity_too_large_error(a, atom);
@@ -3543,12 +3554,10 @@ static void outcome_set_filter_errors_if_success(Arena *a, OutcomeSet *os) {
 }
 
 static void outcome_set_normalize_visible_frontier(Arena *a, OutcomeSet *os) {
-    /* Prime's computation zero is absence of occurrences, so `Empty` must
-     * never pass through HE's sentinel filter.  Keep the existing located
-     * success-display policy until Prime's exact fault/report carrier lands;
-     * changing that independent boundary here breaks established programs. */
+    /* Prime's exact carrier retains every value and fault occurrence in its
+     * original order.  Empty is ordinary Prime data, and success-only is a
+     * derived observation rather than an evaluator normalization. */
     if (eval_current_language_id() == CETTA_LANGUAGE_PRIME) {
-        outcome_set_filter_errors_if_success(a, os);
         return;
     }
     outcome_set_filter_empty_if_nonempty(a, os);
@@ -10414,7 +10423,8 @@ static bool hyperpose_threaded_stream(Space *s, Arena *a, Atom *stream_expr,
         for (CettaCount i = 0; i < branch_count; i++) {
             for (CettaCount j = 0; j < branches[i].results.len; j++) {
                 Atom *item = branches[i].results.items[j];
-                if (has_success && atom_is_error(item))
+                if (has_success && atom_is_error(item) &&
+                    eval_current_language_id() != CETTA_LANGUAGE_PRIME)
                     continue;
                 items[len++] = atom_deep_copy(a, item);
             }
@@ -10505,8 +10515,6 @@ typedef struct {
     const Bindings *outer_env;
     bool preserve_bindings;
     OutcomeSet *os;
-    ResultSet source_errors;
-    bool has_non_error_source;
 } PrimeLetVisitCtx;
 
 static bool prime_let_branch_visit(Arena *a, Atom *atom,
@@ -10514,10 +10522,12 @@ static bool prime_let_branch_visit(Arena *a, Atom *atom,
     (void)a;
     PrimeLetVisitCtx *let_ctx = ctx;
     if (atom_is_error(atom)) {
-        result_set_add(&let_ctx->source_errors, atom);
+        /* Faults are causal occurrences: propagate them unchanged and do not
+         * feed them to the value continuation or delete them when a sibling
+         * branch succeeds. */
+        outcome_set_add(let_ctx->os, atom, env);
         return true;
     }
-    let_ctx->has_non_error_source = true;
 
     Atom *body = NULL;
     PrimeLetMatchStatus status = prime_let_match_body(
@@ -10832,7 +10842,8 @@ static bool collapse_direct_stream(Space *s, Arena *a, Atom *stream_expr, int fu
                                   (collect.buffer.len > 0 ? collect.buffer.len : 1));
     uint32_t len = 0;
     for (CettaCount i = 0; i < collect.buffer.len; i++) {
-        if (has_success && atom_is_error(collect.buffer.items[i]))
+        if (has_success && atom_is_error(collect.buffer.items[i]) &&
+            eval_current_language_id() != CETTA_LANGUAGE_PRIME)
             continue;
         items[len++] = collect.buffer.items[i];
     }
@@ -13369,6 +13380,8 @@ static bool collapse_let_stream_visit(Arena *a, Atom *atom,
     (void)env;
     CollapseLetStreamCtx *ctx = user_ctx;
     if (atom_is_error(atom)) {
+        if (eval_current_language_id() == CETTA_LANGUAGE_PRIME)
+            return stream_item_buffer_push(ctx->items, atom);
         result_set_add(&ctx->stream_errors, atom);
         return true;
     }
@@ -13536,7 +13549,9 @@ static bool try_effect_batch_append_collapse(Space *s, Arena *a,
 
     Bindings empty;
     bindings_init(&empty);
-    CettaCount error_count = unit_count == 0 ? errors.len : 0;
+    CettaCount error_count =
+        eval_current_language_id() == CETTA_LANGUAGE_PRIME || unit_count == 0
+            ? errors.len : 0;
     CettaCount len = unit_count + error_count;
     Atom **items = arena_alloc(a, sizeof(Atom *) * (len ? len : 1));
     Atom *unit = atom_unit(a);
@@ -19458,7 +19473,8 @@ static void dispatch_capture_outcomes(Space *s, Arena *a, Atom *head, Atom **arg
     if (!is_capture_closure(head))
         return;
     if (eval_mark_hyperpose_thread_unsafe()) {
-        outcome_set_add(os, atom_empty(a), prefix);
+        if (eval_current_language_id() != CETTA_LANGUAGE_PRIME)
+            outcome_set_add(os, atom_empty(a), prefix);
         return;
     }
 
@@ -19586,20 +19602,33 @@ static bool dispatch_foreign_outcomes(Space *s, Arena *a, Atom *head,
                                       Atom **tail_next, Atom **tail_type,
                                       Bindings *tail_env,
                                       OutcomeSet *os) {
-    if (!g_library_context || !g_library_context->foreign_runtime ||
-        !cetta_foreign_is_callable_atom(head)) {
+    if (!g_library_context || !g_library_context->foreign_runtime) {
         return false;
     }
+    bool callable = cetta_foreign_is_callable_atom(head);
+    bool exact_native =
+        eval_current_language_id() == CETTA_LANGUAGE_PRIME &&
+        head && head->kind == ATOM_SYMBOL &&
+        (head->sym_id == g_builtin_syms.py_atom ||
+         head->sym_id == g_builtin_syms.py_dot ||
+         head->sym_id == g_builtin_syms.py_call);
+    if (!callable && !exact_native)
+        return false;
     if (eval_mark_hyperpose_thread_unsafe()) {
-        outcome_set_add(os, atom_empty(a), prefix);
+        if (eval_current_language_id() != CETTA_LANGUAGE_PRIME)
+            outcome_set_add(os, atom_empty(a), prefix);
         return true;
     }
 
     ResultSet rs;
     result_set_init(&rs);
     Atom *error = NULL;
-    bool ok = cetta_foreign_call(g_library_context->foreign_runtime, s, a, head,
-                                 args, nargs, &rs, &error);
+    bool ok = exact_native
+        ? cetta_foreign_dispatch_native_results(
+              g_library_context->foreign_runtime, s, a, head,
+              args, nargs, &rs)
+        : cetta_foreign_call(g_library_context->foreign_runtime, s, a, head,
+                             args, nargs, &rs, &error);
     if (!ok) {
         if (error) {
             eval_for_caller(s, a, result_type, error, fuel, prefix,
@@ -30181,7 +30210,8 @@ prime_need_strict_argument_ready:
     if (g_hyperpose_thread_unsafe_requested &&
         hyperpose_thread_barrier_head(head_id, head)) {
         eval_mark_hyperpose_thread_unsafe();
-        outcome_set_add(os, atom_empty(a), &_empty);
+        if (language_id != CETTA_LANGUAGE_PRIME)
+            outcome_set_add(os, atom_empty(a), &_empty);
         return;
     }
 
@@ -30819,6 +30849,13 @@ petta_lowered_to_shared_form:
             Atom *hd = e->expr.elems[0];
             Atom *tl = atom_expr(a, e->expr.elems + 1, e->expr.len - 1);
             outcome_set_add(os, atom_expr2(a, hd, tl), &_empty);
+        } else if (language_id == CETTA_LANGUAGE_PRIME &&
+                   e->kind == ATOM_EXPR) {
+            /* The empty expression is a valid sequence with no head/tail
+             * decomposition.  Prime reports that known no-solution as
+             * computation zero; malformed non-expression inputs remain
+             * faults below. */
+            return;
         } else {
             outcome_set_add(os,
                 call_signature_error(a, atom,
@@ -30968,6 +31005,11 @@ petta_lowered_to_shared_form:
             }
             if (scrut.len == 1u && branches->kind == ATOM_EXPR) {
                 Atom *sv = outcome_atom_materialize(a, &scrut.items[0]);
+                if (atom_is_error(sv)) {
+                    outcome_set_add_existing(os, &scrut.items[0]);
+                    outcome_set_free(&scrut);
+                    return;
+                }
                 for (CettaExprIndex i = 0u; i < branches->expr.len; i++) {
                     Atom *branch = branches->expr.elems[i];
                     if (branch->kind != ATOM_EXPR || branch->expr.len != 2u)
@@ -31008,6 +31050,10 @@ petta_lowered_to_shared_form:
             }
             for (CettaCount si = 0u; si < scrut.len; si++) {
                 Atom *sv = outcome_atom_materialize(a, &scrut.items[si]);
+                if (atom_is_error(sv)) {
+                    outcome_set_add_existing(os, &scrut.items[si]);
+                    continue;
+                }
                 if (branches->kind != ATOM_EXPR)
                     continue;
                 for (CettaExprIndex i = 0u; i < branches->expr.len; i++) {
@@ -31298,19 +31344,11 @@ petta_lowered_to_shared_form:
                 .outer_env = CURRENT_ENV,
                 .preserve_bindings = preserve_bindings,
                 .os = os,
-                .source_errors = {0},
-                .has_non_error_source = false,
             };
-            result_set_init(&visit.source_errors);
             CettaCount visited = 0u;
             (void)direct_outcome_walk(
                 s, a, source, fuel, &source_preflight,
                 prime_let_branch_visit, &visit, &visited);
-            if (!visit.has_non_error_source)
-                for (CettaCount i = 0u; i < visit.source_errors.len; i++)
-                    outcome_set_add(
-                        os, visit.source_errors.items[i], &_empty);
-            result_set_free(&visit.source_errors);
             prime_let_prepared_free(&prepared);
             return;
         }
@@ -31369,10 +31407,7 @@ petta_lowered_to_shared_form:
             .outer_env = CURRENT_ENV,
             .preserve_bindings = preserve_bindings,
             .os = os,
-            .source_errors = {0},
-            .has_non_error_source = false,
         };
-        result_set_init(&visit.source_errors);
         for (CettaCount i = 0u; i < values.len; i++) {
             Atom *value = outcome_atom_materialize_traced(
                 a, &values.items[i],
@@ -31380,10 +31415,6 @@ petta_lowered_to_shared_form:
             (void)prime_let_branch_visit(
                 a, value, &values.items[i].env, &visit);
         }
-        if (!visit.has_non_error_source)
-            for (CettaCount i = 0u; i < visit.source_errors.len; i++)
-                outcome_set_add(os, visit.source_errors.items[i], &_empty);
-        result_set_free(&visit.source_errors);
         outcome_set_free(&values);
         prime_let_prepared_free(&prepared);
         return;
@@ -31881,7 +31912,8 @@ petta_lowered_to_shared_form:
         outcome_set_init(&inner);
         metta_eval_bind(s, a, to_eval, fuel, &inner);
         if (inner.len == 0) {
-            outcome_set_add(os, atom_empty(a), &_empty);
+            if (language_id != CETTA_LANGUAGE_PRIME)
+                outcome_set_add(os, atom_empty(a), &_empty);
             outcome_set_free(&inner);
             return;
         }
@@ -31974,7 +32006,7 @@ petta_lowered_to_shared_form:
                 bindings_builder_free(&b);
             }
         }
-        if (inner.len == 0)
+        if (inner.len == 0 && language_id != CETTA_LANGUAGE_PRIME)
             outcome_set_add(os, atom_empty(a), &_empty);
         outcome_set_free(&inner);
         return;
@@ -35294,6 +35326,59 @@ void eval_outcome_free(EvalOutcome *outcome) {
     outcome->budget_initial = 0;
     outcome->budget_remaining = 0;
     outcome->steps_spent = 0;
+}
+
+CettaCount eval_outcome_value_count(const EvalOutcome *outcome) {
+    CettaCount count = 0u;
+    if (!outcome)
+        return 0u;
+    for (CettaCount i = 0u; i < outcome->results.len; i++)
+        if (!atom_is_error(outcome->results.items[i]))
+            count++;
+    return count;
+}
+
+CettaCount eval_outcome_fault_count(const EvalOutcome *outcome) {
+    CettaCount count = 0u;
+    if (!outcome)
+        return 0u;
+    for (CettaCount i = 0u; i < outcome->results.len; i++)
+        if (atom_is_error(outcome->results.items[i]))
+            count++;
+    return count;
+}
+
+void eval_outcome_project_values(const EvalOutcome *outcome,
+                                 ResultSet *values) {
+    if (!values)
+        return;
+    result_set_init(values);
+    if (!outcome)
+        return;
+    for (CettaCount i = 0u; i < outcome->results.len; i++)
+        if (!atom_is_error(outcome->results.items[i]))
+            result_set_add(values, outcome->results.items[i]);
+}
+
+void eval_outcome_project_faults(const EvalOutcome *outcome,
+                                 ResultSet *faults) {
+    if (!faults)
+        return;
+    result_set_init(faults);
+    if (!outcome)
+        return;
+    for (CettaCount i = 0u; i < outcome->results.len; i++)
+        if (atom_is_error(outcome->results.items[i]))
+            result_set_add(faults, outcome->results.items[i]);
+}
+
+CettaEvalZeroStatus eval_outcome_zero_status(const EvalOutcome *outcome) {
+    if (!outcome)
+        return CETTA_EVAL_ZERO_PENDING;
+    if (outcome->results.len != 0u)
+        return CETTA_EVAL_NONZERO;
+    return outcome->completion == CETTA_EVAL_COMPLETE
+        ? CETTA_EVAL_ZERO_COMPLETE : CETTA_EVAL_ZERO_PENDING;
 }
 
 const char *eval_completion_reason(CettaEvalCompletion completion) {
