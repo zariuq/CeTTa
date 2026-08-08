@@ -424,10 +424,11 @@ static inline uint64_t symbol_table_instance_id(const SymbolTable *st) {
     X(compile_rule_program_link, "compile:rule-program-link") \
     X(compile_rule_program_run, "compile:rule-program-run") \
     X(compile_rule_program_run_native, "compile:rule-program-run-native") \
-    /* ── Native handle; final member of the builtin-surface ID interval ── */ \
+    /* ── Native handle; final member of the legacy contiguous ID interval ── */ \
     X(native_handle, "NativeHandle") \
-    /* Shared control syntax has an interned identity but is not a value. */ \
-    X(if_text, "if")
+    /* Append-only builtin extension: preserve every established SymbolId. */ \
+    X(if_text, "if") \
+    X(empty_form, "empty")
 
 /* Builtins whose grounded-operation capability is independent of language
    and profile.  symbol_table_init_builtins compiles this declaration into

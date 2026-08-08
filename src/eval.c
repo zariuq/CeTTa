@@ -73,6 +73,19 @@ static __thread CettaLibraryContext *g_library_context = NULL;
  * the pair together, including worker-thread branch evaluation. */
 static __thread CettaLanguageId g_active_language_id = CETTA_LANGUAGE_HE;
 
+/* `Empty` is a compatibility-lane no-result sentinel.  Prime's choice zero
+ * has no occurrence at all, and its `Empty` symbol is ordinary inert data.
+ * Route every evaluator-level sentinel test through this predicate so a
+ * value cannot acquire control authority by spelling itself `Empty`. */
+static bool atom_is_legacy_empty_sentinel(Atom *atom) {
+    return eval_current_language_id() != CETTA_LANGUAGE_PRIME &&
+           atom_is_empty(atom);
+}
+
+static bool atom_is_legacy_empty_or_error(Atom *atom) {
+    return atom_is_error(atom) || atom_is_legacy_empty_sentinel(atom);
+}
+
 static CettaLibraryContext *eval_swap_library_context(
     CettaLibraryContext *next) {
     CettaLibraryContext *previous = g_library_context;
@@ -328,6 +341,48 @@ static bool eval_completion_step(void) {
             tracker->steps_spent++;
     }
     return true;
+}
+
+/* Observe one nested computation independently while borrowing the active
+ * episode's remaining step budget.  The child reports whether its own
+ * frontier completed; on exit its resource use and any incompleteness are
+ * still propagated to the enclosing episode. */
+static void eval_completion_child_begin(EvalCompletionTracker *child) {
+    EvalCompletionTracker *parent = g_eval_completion_tracker;
+    uint64_t granted = parent && parent->budget_limited
+        ? parent->budget_remaining : 0u;
+    *child = (EvalCompletionTracker){
+        .completion = CETTA_EVAL_COMPLETE,
+        .budget_limited = parent && parent->budget_limited,
+        .budget_initial = granted,
+        .budget_remaining = granted,
+        .steps_spent = 0u,
+        .parent = parent,
+    };
+    g_eval_completion_tracker = child;
+}
+
+static CettaEvalCompletion eval_completion_child_end(
+    EvalCompletionTracker *child) {
+    assert(child && g_eval_completion_tracker == child);
+    EvalCompletionTracker *parent = child->parent;
+    g_eval_completion_tracker = parent;
+    if (parent && child->completion != CETTA_EVAL_COMPLETE &&
+        parent->completion == CETTA_EVAL_COMPLETE) {
+        parent->completion = child->completion;
+    }
+    if (parent && parent->budget_limited) {
+        uint64_t spent = child->steps_spent;
+        if (parent->steps_spent > UINT64_MAX - spent)
+            parent->steps_spent = UINT64_MAX;
+        else
+            parent->steps_spent += spent;
+        if (spent >= parent->budget_remaining)
+            parent->budget_remaining = 0u;
+        else
+            parent->budget_remaining -= spent;
+    }
+    return child->completion;
 }
 /* When set, the current evaluation is a Rhometta deferred payload running as
  * a sibling-isolated transaction over a frozen shared base. Space and state
@@ -1410,7 +1465,7 @@ static Atom *eval_minimal_foldl_llist(Arena *a, Atom *head, Atom **args,
 
         for (CettaCount i = 0; i < results.len; i++) {
             Atom *candidate = results.items[i];
-            if (atom_is_empty(candidate))
+            if (atom_is_legacy_empty_sentinel(candidate))
                 continue;
             if (atom_is_error(candidate)) {
                 step_error = candidate;
@@ -1721,8 +1776,10 @@ static void result_set_filter_empty(ResultSet *rs) {
     CettaCount out = 0;
     if (!rs)
         return;
+    if (eval_current_language_id() == CETTA_LANGUAGE_PRIME)
+        return;
     for (CettaCount i = 0; i < rs->len; i++) {
-        if (atom_is_empty(rs->items[i]))
+        if (atom_is_legacy_empty_sentinel(rs->items[i]))
             continue;
         rs->items[out++] = rs->items[i];
     }
@@ -2405,7 +2462,7 @@ static bool atom_is_constructor_normal_form(Space *s, Arena *a, Atom *atom,
     PUSH_ATOM(atom);
     while (len > 0) {
         Atom *cur = stack[--len];
-        if (!cur || atom_is_empty(cur) || atom_is_error(cur) ||
+        if (!cur || atom_is_legacy_empty_sentinel(cur) || atom_is_error(cur) ||
             atom_eval_is_immediate_value(cur, fuel)) {
             continue;
         }
@@ -2544,7 +2601,8 @@ static Atom *eval_direct_grounded_application(Space *s, Arena *a, Atom *atom,
         arg = bindings_apply_if_vars(prefix, a, arg);
         Atom *resolved = registry_lookup_atom(arg);
         args[i] = materialize_runtime_token(s, a, resolved ? resolved : arg);
-        if (atom_is_empty(args[i]) || atom_is_error(args[i]) ||
+        if ((eval_current_language_id() != CETTA_LANGUAGE_PRIME &&
+             atom_is_legacy_empty_sentinel(args[i])) || atom_is_error(args[i]) ||
             (!atom_eval_is_immediate_value(args[i], fuel) &&
              !grounded_dispatch_accepts_data_arg(head, i) &&
              !((head->sym_id == g_builtin_syms.op_eq ||
@@ -2651,7 +2709,7 @@ static Atom *petta_reify_outcome_bag(Arena *a, OutcomeSet *outcomes) {
     Atom *single = NULL;
     for (CettaCount index = 0u; index < outcomes->len; index++) {
         Atom *item = outcome_atom_materialize(a, &outcomes->items[index]);
-        if (!item || atom_is_empty(item))
+        if (!item || atom_is_legacy_empty_sentinel(item))
             continue;
         visible++;
         single = item;
@@ -2665,7 +2723,7 @@ static Atom *petta_reify_outcome_bag(Arena *a, OutcomeSet *outcomes) {
     CettaCount output = 0u;
     for (CettaCount index = 0u; index < outcomes->len; index++) {
         Atom *item = outcome_atom_materialize(a, &outcomes->items[index]);
-        if (item && !atom_is_empty(item))
+        if (item && !atom_is_legacy_empty_sentinel(item))
             items[output++] = item;
     }
     return atom_expr(a, items, visible);
@@ -2892,12 +2950,12 @@ static CettaOutcomeErrorPreview outcome_error_preview_from_atom(
     return CETTA_OUTCOME_ERROR_PREVIEW_UNKNOWN;
 }
 
-static __attribute__((unused)) bool outcome_atom_is_empty_or_error(Arena *a, Outcome *out) {
-    return atom_is_empty_or_error(outcome_atom_materialize(a, out));
+static __attribute__((unused)) bool outcome_atom_is_legacy_empty_or_error(Arena *a, Outcome *out) {
+    return atom_is_legacy_empty_or_error(outcome_atom_materialize(a, out));
 }
 
 static bool outcome_atom_is_empty_result(Arena *a, Outcome *out) {
-    return atom_is_empty(outcome_atom_materialize(a, out));
+    return atom_is_legacy_empty_sentinel(outcome_atom_materialize(a, out));
 }
 
 static void bindings_array_release(Bindings *items, uint32_t len,
@@ -3485,6 +3543,14 @@ static void outcome_set_filter_errors_if_success(Arena *a, OutcomeSet *os) {
 }
 
 static void outcome_set_normalize_visible_frontier(Arena *a, OutcomeSet *os) {
+    /* Prime's computation zero is absence of occurrences, so `Empty` must
+     * never pass through HE's sentinel filter.  Keep the existing located
+     * success-display policy until Prime's exact fault/report carrier lands;
+     * changing that independent boundary here breaks established programs. */
+    if (eval_current_language_id() == CETTA_LANGUAGE_PRIME) {
+        outcome_set_filter_errors_if_success(a, os);
+        return;
+    }
     outcome_set_filter_empty_if_nonempty(a, os);
     outcome_set_filter_errors_if_success(a, os);
 }
@@ -4317,7 +4383,7 @@ static void emit_policy_stream_call_inert(Space *s, Arena *a, Atom *atom,
         Atom *result = outcome_atom_materialize(a, &stream.items[i]);
         if (!result)
             continue;
-        if (atom_is_empty_or_error(result)) {
+        if (atom_is_legacy_empty_or_error(result)) {
             outcome_set_add(os, result, &empty);
             continue;
         }
@@ -6019,7 +6085,7 @@ static void emit_singleton_visible_witness(Space *s, Arena *a, Atom *atom,
 
     for (CettaCount i = 0; i < inner.len; i++) {
         Atom *witness = outcome_atom_materialize(a, &inner.items[i]);
-        if (atom_is_empty(witness))
+        if (atom_is_legacy_empty_sentinel(witness))
             continue;
 
         Bindings visible;
@@ -6046,7 +6112,8 @@ static void emit_singleton_visible_witness(Space *s, Arena *a, Atom *atom,
     }
 
     if (!found) {
-        outcome_set_add(os, atom_empty(a), &_empty);
+        if (eval_current_language_id() != CETTA_LANGUAGE_PRIME)
+            outcome_set_add(os, atom_empty(a), &_empty);
     } else if (!unique) {
         outcome_set_add(os,
                         atom_error(a, atom,
@@ -7086,7 +7153,7 @@ static bool he_inert_result_cast(Space *s, Arena *a, Atom *declared_type,
         atom_is_symbol_id(declared_type, g_builtin_syms.atom))
         return false;
     Atom *result = outcome_atom_materialize(a, seed);
-    if (!result || atom_is_empty(result) || atom_is_error(result))
+    if (!result || atom_is_legacy_empty_sentinel(result) || atom_is_error(result))
         return false;
     Atom **actual_types = NULL;
     uint32_t actual_count = eval_get_atom_types_profiled(
@@ -7134,7 +7201,7 @@ static void eval_delayed_outcome_for_caller(Space *s, Arena *a,
     if (!seed || !preview)
         return;
 
-    if (atom_is_empty(preview) || outcome_atom_is_error(a, seed)) {
+    if (atom_is_legacy_empty_sentinel(preview) || outcome_atom_is_error(a, seed)) {
         outcome_set_add_prefixed_outcome(a, outcomes, seed, NULL, preserve_bindings);
         return;
     }
@@ -8518,7 +8585,7 @@ static void eval_stream_call_non_ground_arg(Space *s, Arena *a, Atom *atom,
         bool progressed;
         if (!value)
             continue;
-        if (atom_is_empty_or_error(value)) {
+        if (atom_is_legacy_empty_or_error(value)) {
             outcome_set_add(os, value, &empty);
             continue;
         }
@@ -8880,7 +8947,8 @@ static bool direct_outcome_walk_visit_inner(DirectWalkVisitorCtx *walk,
                                             OutcomeSet *inner) {
     for (CettaCount i = 0; i < inner->len; i++) {
         Atom *r = outcome_atom_materialize(a, &inner->items[i]);
-        if (atom_is_empty(r))
+        if (eval_current_language_id() != CETTA_LANGUAGE_PRIME &&
+            atom_is_legacy_empty_sentinel(r))
             continue;
         (*walk->visited)++;
         if (!walk->visitor(a, r, &inner->items[i].env, walk->ctx)) {
@@ -9044,10 +9112,10 @@ static bool direct_outcome_walk_space_atoms_row(Atom *atom, void *ctx) {
         return false;
 
     cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_PATHMAP_PULL_ATOMS_ROW);
-    /* OutcomeSet traversal treats Empty as an internal no-result sentinel.
-       Count the physical cursor row, but do not let it consume a bounded
-       demand or become an element of a collected observation. */
-    if (atom_is_empty(item))
+    /* Compatibility lanes treat Empty as an internal no-result sentinel.
+       Prime stores and streams it as ordinary data. */
+    if (eval_current_language_id() != CETTA_LANGUAGE_PRIME &&
+        atom_is_legacy_empty_sentinel(item))
         return true;
     bindings_init(&empty);
     (*atoms->walk->visited)++;
@@ -9268,7 +9336,7 @@ static bool direct_outcome_walk_prepare(
         if (bound)
             current = bound;
         current = materialize_runtime_token(s, a, current);
-        if (atom_is_empty(current) || atom_is_error(current) ||
+        if (atom_is_legacy_empty_sentinel(current) || atom_is_error(current) ||
             atom_eval_is_immediate_value(current, fuel)) {
             continue;
         }
@@ -9365,7 +9433,8 @@ static bool direct_outcome_walk(Space *s, Arena *a, Atom *atom, int fuel,
         if (bound)
             current = bound;
         current = materialize_runtime_token(s, a, current);
-        if (atom_is_empty(current))
+        if (eval_current_language_id() != CETTA_LANGUAGE_PRIME &&
+            atom_is_legacy_empty_sentinel(current))
             continue;
         if (atom_is_error(current) || atom_eval_is_immediate_value(current, fuel)) {
             (*visited)++;
@@ -9459,7 +9528,8 @@ static CettaCount outcome_set_visit_ordered(Arena *a, OutcomeSet *inner,
         CettaCount candidate_len = 0;
         for (CettaCount i = 0; i < inner->len; i++) {
             Atom *r = outcome_atom_materialize(a, &inner->items[i]);
-            if (atom_is_empty(r))
+            if (eval_current_language_id() != CETTA_LANGUAGE_PRIME &&
+                atom_is_legacy_empty_sentinel(r))
                 continue;
             candidates[candidate_len].raw_atom = r;
             candidates[candidate_len].render_atom = r;
@@ -9483,7 +9553,8 @@ static CettaCount outcome_set_visit_ordered(Arena *a, OutcomeSet *inner,
     if (order == CETTA_SEARCH_POLICY_ORDER_REVERSE) {
         for (CettaCount i = inner->len; i > 0; i--) {
             Atom *r = outcome_atom_materialize(a, &inner->items[i - 1]);
-            if (atom_is_empty(r))
+            if (eval_current_language_id() != CETTA_LANGUAGE_PRIME &&
+                atom_is_legacy_empty_sentinel(r))
                 continue;
             visited++;
             if (!visitor(a, r, &inner->items[i - 1].env, ctx))
@@ -9494,7 +9565,8 @@ static CettaCount outcome_set_visit_ordered(Arena *a, OutcomeSet *inner,
 
     for (CettaCount i = 0; i < inner->len; i++) {
         Atom *r = outcome_atom_materialize(a, &inner->items[i]);
-        if (atom_is_empty(r))
+        if (eval_current_language_id() != CETTA_LANGUAGE_PRIME &&
+            atom_is_legacy_empty_sentinel(r))
             continue;
         visited++;
         if (!visitor(a, r, &inner->items[i].env, ctx))
@@ -10093,7 +10165,7 @@ static void hyperpose_eval_branch_in_thread(HyperposeThreadRun *run,
     for (CettaCount i = 0; i < outcomes.len; i++) {
         Atom *candidate =
             outcome_atom_materialize(&branch->eval_arena, &outcomes.items[i]);
-        if (atom_is_empty(candidate))
+        if (atom_is_legacy_empty_sentinel(candidate))
             continue;
         if (!hyperpose_atom_parent_portable(candidate)) {
             atomic_store_explicit(&run->unsafe_result, true, memory_order_release);
@@ -10322,10 +10394,12 @@ static bool hyperpose_threaded_stream(Space *s, Arena *a, Atom *stream_expr,
                     selected_atom = branches[i].results.items[0];
             }
         }
-        outcome_set_add(os,
-                        selected_atom ? atom_deep_copy(a, selected_atom)
-                                      : atom_empty(a),
-                        &empty);
+        if (selected_atom) {
+            outcome_set_add(
+                os, atom_deep_copy(a, selected_atom), &empty);
+        } else if (eval_current_language_id() != CETTA_LANGUAGE_PRIME) {
+            outcome_set_add(os, atom_empty(a), &empty);
+        }
     } else {
         bool has_success = false;
         CettaCount result_count = 0;
@@ -10690,7 +10764,8 @@ static void stream_emit(Space *s, Arena *a, Atom *stream_expr, int fuel,
         bool emitted = prime_need_stream_emit_first_static_choice(
             s, a, stream_expr, fuel, os, &recognized);
         if (recognized) {
-            if (!emitted)
+            if (!emitted &&
+                eval_current_language_id() != CETTA_LANGUAGE_PRIME)
                 outcome_set_add(os, atom_empty(a), &_empty);
             return;
         }
@@ -10705,7 +10780,8 @@ static void stream_emit(Space *s, Arena *a, Atom *stream_expr, int fuel,
     if (bounded && limit == 1) {
         StreamFirstResultCtx first = { .os = os };
         if (metta_eval_bind_visit(s, a, stream_expr, fuel, order,
-                                  stream_visit_emit_first, &first) == 0) {
+                                  stream_visit_emit_first, &first) == 0 &&
+            eval_current_language_id() != CETTA_LANGUAGE_PRIME) {
             outcome_set_add(os, atom_empty(a), &_empty);
         }
         return;
@@ -11190,7 +11266,7 @@ static PreparedFoldResult prepared_foldl_single_result(
             for (CettaCount ri = 0u; ri < results.len; ri++) {
                 Atom *current = outcome_atom_materialize(
                     &nursery, &results.items[ri]);
-                if (!current || atom_is_empty(current))
+                if (!current || atom_is_legacy_empty_sentinel(current))
                     continue;
                 if (candidate || atom_is_error(current)) {
                     candidate = NULL;
@@ -11543,7 +11619,7 @@ static bool eval_bound_single_with_scratch(Space *s, Arena *a, Arena *scratch,
     for (CettaCount i = 0; i < results.len; i++) {
         Atom *candidate = outcome_atom_materialize(scratch,
                                                    &results.items[i]);
-        if (atom_is_empty(candidate))
+        if (atom_is_legacy_empty_sentinel(candidate))
             continue;
         if (resolved) {
             *error_out = atom_error(a, call, atom_symbol(a, multi_result_error));
@@ -13250,7 +13326,7 @@ static bool effect_safe_single_feeder_value(Space *s, Arena *a,
     metta_eval(s, a, NULL, expr, fuel, &vals);
     Atom *single = NULL;
     for (CettaCount i = 0; i < vals.len; i++) {
-        if (atom_is_empty(vals.items[i]))
+        if (atom_is_legacy_empty_sentinel(vals.items[i]))
             continue;
         if (atom_is_error(vals.items[i]) || single) {
             result_set_free(&vals);
@@ -13279,7 +13355,7 @@ enum {
 
 static bool collapse_push_result_set(StreamItemBuffer *items, ResultSet *rs) {
     for (CettaCount i = 0; i < rs->len; i++) {
-        if (atom_is_empty(rs->items[i]))
+        if (atom_is_legacy_empty_sentinel(rs->items[i]))
             continue;
         if (!stream_item_buffer_push(items, rs->items[i]))
             return false;
@@ -15473,7 +15549,7 @@ static void prime_need_force_active(Space *s, Arena *a, Atom *ref,
 
     for (CettaCount i = 0; i < forced.len; i++) {
         Atom *value = outcome_atom_materialize(a, &forced.items[i]);
-        if (!value || atom_is_empty(value))
+        if (!value || atom_is_legacy_empty_sentinel(value))
             continue;
         PrimeNeedSnapshot branch = *bindings_need_view(&forced.items[i].env);
         if (!prime_need_snapshot_present(&branch))
@@ -16345,7 +16421,7 @@ static void prime_need_normalize_observation_children(
         Atom *child = outcome_atom_materialize(a, &child_outcomes.items[i]);
         if (!child)
             continue;
-        if (atom_is_empty_or_error(child)) {
+        if (atom_is_legacy_empty_or_error(child)) {
             outcome_set_add(out, child, &child_outcomes.items[i].env);
             continue;
         }
@@ -16395,7 +16471,7 @@ static void prime_need_normalize_observation_atom(
     /* Empty and Error are terminal observations.  In particular, an Error
        receipt may contain the call that produced it; recursively evaluating
        that diagnostic payload would reproduce the same Error forever. */
-    if (atom_is_empty_or_error(applied)) {
+    if (atom_is_legacy_empty_or_error(applied)) {
         outcome_set_add(out, applied, env);
         return;
     }
@@ -16836,7 +16912,7 @@ static void prime_need_eval_observe_origin(
                     outer_env, true, &producers);
     for (CettaCount i = 0u; i < producers.len; i++) {
         Atom *producer = outcome_atom_materialize(a, &producers.items[i]);
-        if (!producer || atom_is_empty(producer))
+        if (!producer || atom_is_legacy_empty_sentinel(producer))
             continue;
         if (atom_is_error(producer)) {
             outcome_set_add_prefixed_outcome(
@@ -16919,7 +16995,7 @@ static void prime_need_eval_restrict(
                     outer_env, true, &producers);
     for (CettaCount pi = 0u; pi < producers.len; pi++) {
         Atom *producer = outcome_atom_materialize(a, &producers.items[pi]);
-        if (!producer || atom_is_empty(producer))
+        if (!producer || atom_is_legacy_empty_sentinel(producer))
             continue;
         if (atom_is_error(producer)) {
             outcome_set_add_prefixed_outcome(
@@ -17026,7 +17102,7 @@ static void prime_need_eval_relation(
                     outer_env, true, &lefts);
     for (CettaCount li = 0u; li < lefts.len; li++) {
         Atom *left = outcome_atom_materialize(a, &lefts.items[li]);
-        if (!left || atom_is_empty(left))
+        if (!left || atom_is_legacy_empty_sentinel(left))
             continue;
         OutcomeSet rights;
         outcome_set_init(&rights);
@@ -17034,7 +17110,7 @@ static void prime_need_eval_relation(
                         &lefts.items[li].env, true, &rights);
         for (CettaCount ri = 0u; ri < rights.len; ri++) {
             Atom *right = outcome_atom_materialize(a, &rights.items[ri]);
-            if (!right || atom_is_empty(right))
+            if (!right || atom_is_legacy_empty_sentinel(right))
                 continue;
             __attribute__((cleanup(bindings_free))) Bindings branch;
             bindings_init(&branch);
@@ -17179,7 +17255,7 @@ static void prime_context_eval_bind(
     for (CettaCount i = 0u; i < contexts.len; i++) {
         Atom *context_atom = outcome_atom_materialize(
             a, &contexts.items[i]);
-        if (!context_atom || atom_is_empty(context_atom))
+        if (!context_atom || atom_is_legacy_empty_sentinel(context_atom))
             continue;
         if (atom_is_error(context_atom)) {
             outcome_set_add_prefixed_outcome(
@@ -17234,7 +17310,7 @@ static void prime_context_eval_get(
     for (CettaCount i = 0u; i < contexts.len; i++) {
         Atom *context_atom = outcome_atom_materialize(
             a, &contexts.items[i]);
-        if (!context_atom || atom_is_empty(context_atom))
+        if (!context_atom || atom_is_legacy_empty_sentinel(context_atom))
             continue;
         if (atom_is_error(context_atom)) {
             outcome_set_add_prefixed_outcome(
@@ -17358,7 +17434,7 @@ static void prime_context_eval_view(
     for (CettaCount ci = 0u; ci < contexts.len; ci++) {
         Atom *context_atom = outcome_atom_materialize(
             a, &contexts.items[ci]);
-        if (!context_atom || atom_is_empty(context_atom))
+        if (!context_atom || atom_is_legacy_empty_sentinel(context_atom))
             continue;
         if (atom_is_error(context_atom)) {
             outcome_set_add_prefixed_outcome(
@@ -17383,7 +17459,7 @@ static void prime_context_eval_view(
         for (CettaCount li = 0u; li < limits.len; li++) {
             Atom *limit_atom = outcome_atom_materialize(
                 a, &limits.items[li]);
-            if (!limit_atom || atom_is_empty(limit_atom))
+            if (!limit_atom || atom_is_legacy_empty_sentinel(limit_atom))
                 continue;
             if (atom_is_error(limit_atom)) {
                 outcome_set_add_prefixed_outcome(
@@ -17469,7 +17545,7 @@ static void prime_need_eval_force(Space *s, Arena *a, Atom *form, int fuel,
                     &producers);
     for (CettaCount i = 0u; i < producers.len; i++) {
         Atom *producer = outcome_atom_materialize(a, &producers.items[i]);
-        if (!producer || atom_is_empty(producer))
+        if (!producer || atom_is_legacy_empty_sentinel(producer))
             continue;
         if (atom_is_error(producer)) {
             outcome_set_add_prefixed_outcome(a, os, &producers.items[i],
@@ -17550,7 +17626,7 @@ static void prime_need_eval_canonical_app(Space *s, Arena *a, Atom *app,
                     &functions);
     for (CettaCount i = 0; i < functions.len; i++) {
         Atom *value = outcome_atom_materialize(a, &functions.items[i]);
-        if (!value || atom_is_empty(value))
+        if (!value || atom_is_legacy_empty_sentinel(value))
             continue;
         if (atom_is_error(value)) {
             outcome_set_add_prefixed_outcome(a, os, &functions.items[i],
@@ -17589,7 +17665,7 @@ static void prime_need_eval_canonical_app(Space *s, Arena *a, Atom *app,
         for (CettaCount ai = 0u; ai < arguments.len; ai++) {
             Atom *argument_value = outcome_atom_materialize(
                 a, &arguments.items[ai]);
-            if (!argument_value || atom_is_empty(argument_value))
+            if (!argument_value || atom_is_legacy_empty_sentinel(argument_value))
                 continue;
             if (atom_is_error(argument_value)) {
                 outcome_set_add_prefixed_outcome(
@@ -17689,8 +17765,9 @@ void metta_eval(Space *s, Arena *a, Atom *type, Atom *atom, int fuel, ResultSet 
         return;
     }
 
-    /* Empty/Error: return as-is (control forms filter Empty where needed). */
-    if (atom_is_empty(atom) || atom_is_error(atom)) {
+    /* Compatibility lanes may later consume Empty as their no-result
+       sentinel.  Prime returns the same spelling as ordinary inert data. */
+    if (atom_is_legacy_empty_sentinel(atom) || atom_is_error(atom)) {
         result_set_add(rs, atom);
         prime_need_observe_top_answer(atom, NULL);
         return;
@@ -17935,7 +18012,7 @@ static void metta_eval_bind_typed(Space *s, Arena *a, Atom *type, Atom *atom, in
         return;
     }
 
-    if (atom_is_empty(atom) || atom_is_error(atom)) {
+    if (atom_is_legacy_empty_sentinel(atom) || atom_is_error(atom)) {
         outcome_set_add(os, atom, &empty);
         return;
     }
@@ -19227,7 +19304,7 @@ static InterpretFunctionArgsAction interpret_function_args_frame_step(
 
         bool error_is_data =
             prime_need_argument_treats_error_as_data(*op_io, frame->idx);
-        if (atom_is_empty_or_error(arg_atom) && !error_is_data &&
+        if (atom_is_legacy_empty_or_error(arg_atom) && !error_is_data &&
             !atom_eq(arg_atom, frame->orig_arg)) {
             outcome_set_add(os, arg_atom, frame->active_attempt.env);
             interpret_function_args_frame_finish_child(frame);
@@ -19446,7 +19523,7 @@ static bool dispatch_petta_callable_outcomes(
              index < arguments.len; index++) {
             Atom *argument = outcome_atom_materialize(
                 a, &arguments.items[index]);
-            if (!argument || atom_is_empty(argument))
+            if (!argument || atom_is_legacy_empty_sentinel(argument))
                 continue;
             if (atom_is_error(argument)) {
                 outcome_set_add_existing_move(
@@ -19563,7 +19640,7 @@ static bool try_dynamic_callable_dispatch(
     bool saw_callable = false;
     bool saw_other = false;
     for (CettaCount hi = 0; hi < heads.len; hi++) {
-        if (outcome_atom_is_empty_or_error(a, &heads.items[hi]))
+        if (outcome_atom_is_legacy_empty_or_error(a, &heads.items[hi]))
             continue;
         Atom *head_atom =
             outcome_atom_materialize_traced(
@@ -19589,7 +19666,7 @@ static bool try_dynamic_callable_dispatch(
                 CETTA_RUNTIME_COUNTER_OUTCOME_VARIANT_MATERIALIZE_DISPATCH_HEAD);
         Bindings *head_env = &heads.items[hi].env;
 
-        if (atom_is_empty_or_error(head_atom)) {
+        if (atom_is_legacy_empty_or_error(head_atom)) {
             outcome_set_add_move(os, head_atom, head_env);
             continue;
         }
@@ -19838,7 +19915,8 @@ static void interpret_tuple(Space *s, Arena *a,
         bool owns_next_variant = false;
         variant_instance_init(&next_variant);
 
-        if (atom_is_empty(sub_atom) ||
+        if ((eval_current_language_id() != CETTA_LANGUAGE_PRIME &&
+             atom_is_legacy_empty_sentinel(sub_atom)) ||
             outcome_atom_is_error_at_site(
                 a, sub_item,
                 CETTA_RUNTIME_COUNTER_OUTCOME_VARIANT_MATERIALIZE_INTERPRET_TUPLE)) {
@@ -19863,7 +19941,9 @@ static void interpret_tuple(Space *s, Arena *a,
             next_variant_ref = &next_variant;
             owns_next_variant = true;
         }
-        if (atom_is_empty(effective_atom) || atom_is_error(effective_atom)) {
+        if ((eval_current_language_id() != CETTA_LANGUAGE_PRIME &&
+             atom_is_legacy_empty_sentinel(effective_atom)) ||
+            atom_is_error(effective_atom)) {
             if (owns_next_variant)
                 variant_instance_free(&next_variant);
             rb_set_add(rbs, effective_atom, &empty);
@@ -19969,7 +20049,7 @@ static bool petta_try_named_partial(
     for (CettaCount index = 0u; index < tuples.len; index++) {
         Atom *tuple = outcome_atom_materialize(
             a, &tuples.items[index]);
-        if (!tuple || atom_is_empty(tuple))
+        if (!tuple || atom_is_legacy_empty_sentinel(tuple))
             continue;
         if (atom_is_error(tuple)) {
             outcome_set_add_existing_move(
@@ -20058,7 +20138,7 @@ static bool petta_try_boolean_relation(
          tuple_index < tuples.len; tuple_index++) {
         Atom *tuple = outcome_atom_materialize(
             a, &tuples.items[tuple_index]);
-        if (!tuple || atom_is_empty(tuple)) {
+        if (!tuple || atom_is_legacy_empty_sentinel(tuple)) {
             continue;
         }
         if (atom_is_error(tuple)) {
@@ -20618,7 +20698,7 @@ static bool petta_try_relational_let(
 
     for (CettaCount index = 0u; index < pairs.len; index++) {
         Atom *pair = outcome_atom_materialize(a, &pairs.items[index]);
-        if (!pair || atom_is_empty(pair))
+        if (!pair || atom_is_legacy_empty_sentinel(pair))
             continue;
         if (atom_is_error(pair)) {
             outcome_set_add_existing(outcomes, &pairs.items[index]);
@@ -21905,7 +21985,7 @@ typedef struct {
 static bool atom_is_single_result_data(Space *s, Atom *atom, int fuel) {
     if (!atom || atom_is_error(atom))
         return false;
-    if (atom_is_empty(atom))
+    if (atom_is_legacy_empty_sentinel(atom))
         return true;
     if (atom_eval_is_immediate_value(atom, fuel))
         return true;
@@ -21930,7 +22010,7 @@ static bool count_template_units(Space *s, Arena *a, Atom *templ,
         return false;
     *out_units = 0;
     result = bindings_apply_if_vars(bindings, a, templ);
-    if (atom_is_empty(result))
+    if (atom_is_legacy_empty_sentinel(result))
         return true;
     if (!atom_is_single_result_data(s, result, fuel))
         return false;
@@ -22805,7 +22885,7 @@ static void prime_need_refine_pattern_value_from(
     metta_eval_bind(space, arena, source_child, fuel, &child_values);
     for (CettaCount i = 0u; i < child_values.len; i++) {
         Atom *child = outcome_atom_materialize(arena, &child_values.items[i]);
-        if (!child || atom_is_empty(child))
+        if (!child || atom_is_legacy_empty_sentinel(child))
             continue;
         if (atom_is_error(child) && !atom_eq(child, source_child)) {
             outcome_set_add_existing(out, &child_values.items[i]);
@@ -22819,7 +22899,7 @@ static void prime_need_refine_pattern_value_from(
         for (CettaCount ri = 0u; ri < refined_children.len; ri++) {
             Atom *refined = outcome_atom_materialize(
                 arena, &refined_children.items[ri]);
-            if (!refined || atom_is_empty(refined))
+            if (!refined || atom_is_legacy_empty_sentinel(refined))
                 continue;
             if (atom_is_error(refined) && !atom_eq(refined, source_child)) {
                 outcome_set_add_existing(out, &refined_children.items[ri]);
@@ -22979,7 +23059,7 @@ static void prime_need_search_equations_monolithic(
     for (CettaCount i = 0u; i < values.len; i++) {
         Atom *value = outcome_atom_materialize(search->arena,
                                                &values.items[i]);
-        if (!value || atom_is_empty(value))
+        if (!value || atom_is_legacy_empty_sentinel(value))
             continue;
         if (search->forced_worlds &&
             !prime_need_forced_world_push(
@@ -23029,7 +23109,7 @@ static void prime_need_search_equations_monolithic(
         for (CettaCount ni = 0u; ni < normalized.len; ni++) {
             Atom *normal = outcome_atom_materialize(
                 search->arena, &normalized.items[ni]);
-            if (!normal || atom_is_empty(normal))
+            if (!normal || atom_is_legacy_empty_sentinel(normal))
                 continue;
             if (atom_is_error(normal)) {
                 outcome_set_add_prefixed_outcome(
@@ -23138,7 +23218,7 @@ static void prime_need_eval_delayed_against_contracts(
         Atom *result = outcome_atom_materialize(a, candidate);
         if (!result)
             continue;
-        if (atom_is_empty(result) || atom_is_error(result) ||
+        if (atom_is_legacy_empty_sentinel(result) || atom_is_error(result) ||
             (result->kind == ATOM_EXPR && result->expr.len >= 1u &&
              atom_is_symbol_id(result->expr.elems[0],
                                g_builtin_syms.function))) {
@@ -24271,7 +24351,7 @@ handle_dispatch(Space *s, Arena *a, Atom *atom, Atom *etype, int fuel,
                     for (CettaCount hi = 0; hi < heads.len; hi++) {
                         Atom *head_atom = outcome_atom_materialize(a, &heads.items[hi]);
                         Bindings *head_env = &heads.items[hi].env;
-                        if (atom_is_empty_or_error(head_atom) && !atom_eq(head_atom, op)) {
+                        if (atom_is_legacy_empty_or_error(head_atom) && !atom_eq(head_atom, op)) {
                             outcome_set_add_existing_move(&func_results, &heads.items[hi]);
                             continue;
                         }
@@ -24538,7 +24618,7 @@ query_done:
                 outcome_atom_materialize_traced(
                     a, &tuples.items[0],
                     CETTA_RUNTIME_COUNTER_OUTCOME_VARIANT_MATERIALIZE_DISPATCH_CALL_TERM);
-            if (atom_is_empty(call_atom) || atom_is_error(call_atom)) {
+            if (atom_is_legacy_empty_sentinel(call_atom) || atom_is_error(call_atom)) {
                 outcome_set_add(os, call_atom, &_empty);
                 outcome_set_free(&tuples);
                 return true;
@@ -24668,7 +24748,7 @@ query_done:
                     CETTA_RUNTIME_COUNTER_OUTCOME_VARIANT_MATERIALIZE_DISPATCH_CALL_TERM);
             Bindings *tuple_bindings = &tuples.items[ti].env;
 
-            if (atom_is_empty(call_atom) || atom_is_error(call_atom)) {
+            if (atom_is_legacy_empty_sentinel(call_atom) || atom_is_error(call_atom)) {
                 outcome_set_add(os, call_atom, &_empty);
                 continue;
             }
@@ -25748,7 +25828,7 @@ static void prime_eval_stack_resume_strict(
         frame->child.len == 1u) {
         Outcome *only = &frame->child.items[0];
         Atom *value = outcome_atom_materialize(frame->arena, only);
-        if (value && !atom_is_empty(value) &&
+        if (value && !atom_is_legacy_empty_sentinel(value) &&
             (!atom_is_error(value) || frame->strict_error_is_data)) {
             if (atom_eq(value, frame->strict_source)) {
                 frame->state = PRIME_EVAL_STACK_FRAME_WAIT_CALL;
@@ -25784,7 +25864,7 @@ static void prime_eval_stack_resume_strict(
     while (frame->index < frame->child.len) {
         Outcome *item = &frame->child.items[frame->index++];
         Atom *value = outcome_atom_materialize(frame->arena, item);
-        if (!value || atom_is_empty(value))
+        if (!value || atom_is_legacy_empty_sentinel(value))
             continue;
         if (atom_is_error(value) && !frame->strict_error_is_data) {
             prime_eval_stack_add_prefixed(frame, value, &item->env);
@@ -25881,7 +25961,7 @@ static void prime_eval_stack_resume_if(
             frame->arena, item,
             CETTA_RUNTIME_COUNTER_OUTCOME_VARIANT_MATERIALIZE_LET_CHAIN);
         const Bindings *condition_env = &item->env;
-        if (atom_is_empty(condition)) {
+        if (atom_is_legacy_empty_sentinel(condition)) {
             frame->variable_branches_active = false;
             frame->branch_index = 0u;
             continue;
@@ -25986,7 +26066,7 @@ static void prime_eval_stack_resume_force(
     for (CettaCount i = 0u; i < frame->child.len; i++) {
         Atom *value = outcome_atom_materialize(
             frame->arena, &frame->child.items[i]);
-        if (!value || atom_is_empty(value)) {
+        if (!value || atom_is_legacy_empty_sentinel(value)) {
             PRIME_NEED_TRACE("[force %llu] drop: empty value\n",
                              (unsigned long long)frame->thunk_id);
             continue;
@@ -26095,7 +26175,7 @@ static void prime_eval_stack_resume_normalize_atom(
         }
         frame->atom = applied;
 
-        if (atom_is_empty_or_error(applied)) {
+        if (atom_is_legacy_empty_or_error(applied)) {
             outcome_set_add(frame->target, applied, &frame->env);
             prime_eval_stack_pop();
             return;
@@ -26236,7 +26316,7 @@ static void prime_eval_stack_resume_normalize_children(
         Atom *value = outcome_atom_materialize(frame->arena, item);
         if (!value)
             continue;
-        if (atom_is_empty_or_error(value)) {
+        if (atom_is_legacy_empty_or_error(value)) {
             outcome_set_add(frame->target, value, &item->env);
             continue;
         }
@@ -29743,7 +29823,7 @@ tail_call: ;
         outcome_set_add(os, atom, &_empty);
         return;
     }
-    if (atom_is_error(atom) || atom_is_empty(atom)) {
+    if (atom_is_error(atom) || atom_is_legacy_empty_sentinel(atom)) {
         outcome_set_add(os, atom, &_empty);
         return;
     }
@@ -29800,6 +29880,15 @@ tail_call: ;
     CettaExprLen nargs = expr_nargs(atom);
     const SymbolId head_id = atom_head_symbol_id(atom);
     Atom *head = atom->expr.elems[0];
+
+    /* Prime represents choice zero by producing no occurrences.  The
+     * explicit `(empty)` form is syntax for that computation; the unrelated
+     * symbol `Empty` remains an ordinary inert datum. */
+    if (language_id == CETTA_LANGUAGE_PRIME &&
+        head_id == g_builtin_syms.empty_form && nargs == 0u) {
+        return;
+    }
+
     PeTTaForm petta_form =
         language_id == CETTA_LANGUAGE_PETTA
             ? petta_semantics_form(head_id)
@@ -30036,7 +30125,7 @@ tail_call: ;
         }
         if (values.len == 1u) {
             Atom *value = outcome_atom_materialize(a, &values.items[0]);
-            if (value && !atom_is_empty(value) &&
+            if (value && !atom_is_legacy_empty_sentinel(value) &&
                 (!atom_is_error(value) || strict_error_is_data)) {
                 if (atom_eq(value, strict_source)) {
                     /* The argument evaluator reached a stable residual.
@@ -30068,7 +30157,7 @@ tail_call: ;
         }
         for (CettaCount i = 0u; i < values.len; i++) {
             Atom *value = outcome_atom_materialize(a, &values.items[i]);
-            if (!value || atom_is_empty(value))
+            if (!value || atom_is_legacy_empty_sentinel(value))
                 continue;
             if (atom_is_error(value) && !strict_error_is_data) {
                 outcome_set_add(os, value, &values.items[i].env);
@@ -30194,7 +30283,7 @@ prime_need_strict_argument_ready:
                  index < expected_outcomes.len; index++) {
                 Atom *expected = outcome_atom_materialize(
                     a, &expected_outcomes.items[index]);
-                if (!expected || atom_is_empty(expected))
+                if (!expected || atom_is_legacy_empty_sentinel(expected))
                     continue;
                 bool equal = atom_alpha_eq(actual, expected);
                 if (!petta_emit_test_diagnostic(actual, expected, equal)) {
@@ -30237,7 +30326,7 @@ prime_need_strict_argument_ready:
                  index < generated.len && all_true; index++) {
                 Atom *value = outcome_atom_materialize(
                     a, &generated.items[index]);
-                if (!value || atom_is_empty(value))
+                if (!value || atom_is_legacy_empty_sentinel(value))
                     continue;
                 Atom *test_call = petta_semantics_apply(
                     a, expr_arg(atom, 1u), value);
@@ -30365,7 +30454,15 @@ petta_lowered_to_shared_form:
 
         Atom *cond_expr = bindings_apply_if_vars(CURRENT_ENV, a, expr_arg(atom, 0));
         Atom *then_br = expr_arg(atom, 1);
-        Atom *else_br = (nargs == 3) ? expr_arg(atom, 2) : atom_empty(a);
+        Atom *else_br = NULL;
+        if (nargs == 3) {
+            else_br = expr_arg(atom, 2);
+        } else if (language_id == CETTA_LANGUAGE_PRIME) {
+            Atom *empty_head = atom_symbol_id(a, g_builtin_syms.empty_form);
+            else_br = atom_expr(a, &empty_head, 1u);
+        } else {
+            else_br = atom_empty(a);
+        }
 #if CETTA_PRIME_EVAL_STACK
         if (prime_eval_stack_schedule_if(
                 s, a, atom, etype, fuel, preserve_bindings,
@@ -30386,7 +30483,7 @@ petta_lowered_to_shared_form:
             bool false_branch =
                 is_false_atom(cond) ||
                 (language_id == CETTA_LANGUAGE_PETTA &&
-                 cond && !atom_is_empty(cond) && !atom_is_error(cond));
+                 cond && !atom_is_legacy_empty_sentinel(cond) && !atom_is_error(cond));
             if (true_branch || false_branch) {
                 Atom *branch = true_branch ? then_br : else_br;
                 Atom *next_atom;
@@ -30429,7 +30526,7 @@ petta_lowered_to_shared_form:
                     CETTA_RUNTIME_COUNTER_OUTCOME_VARIANT_MATERIALIZE_LET_CHAIN);
             const Bindings *cond_env = &conds.items[i].env;
 
-            if (atom_is_empty(cond))
+            if (atom_is_legacy_empty_sentinel(cond))
                 continue;
             if (atom_is_error(cond)) {
                 outcome_set_add(os, cond, cond_env);
@@ -30553,7 +30650,8 @@ petta_lowered_to_shared_form:
                     CURRENT_ENV, preserve_bindings, &branch);
                 for (CettaCount j = 0; j < branch.len; j++) {
                     Atom *branch_atom = outcome_atom_materialize(a, &branch.items[j]);
-                    if (atom_is_empty(branch_atom))
+                    if (language_id != CETTA_LANGUAGE_PRIME &&
+                        atom_is_legacy_empty_sentinel(branch_atom))
                         continue;
                     outcome_set_add_existing(os, &branch.items[j]);
                 }
@@ -30585,7 +30683,8 @@ petta_lowered_to_shared_form:
                     CURRENT_ENV, preserve_bindings, &branch);
                 for (CettaCount j = 0; j < branch.len; j++) {
                     Atom *branch_atom = outcome_atom_materialize(a, &branch.items[j]);
-                    if (atom_is_empty(branch_atom))
+                    if (language_id != CETTA_LANGUAGE_PRIME &&
+                        atom_is_legacy_empty_sentinel(branch_atom))
                         continue;
                     outcome_set_add_existing(os, &branch.items[j]);
                 }
@@ -30643,8 +30742,7 @@ petta_lowered_to_shared_form:
                        (collect.buffer.len > 0u ? collect.buffer.len : 1u));
             CettaExprLen len = 0u;
             for (CettaCount i = 0u; i < collect.buffer.len; i++) {
-                if (!atom_is_empty(collect.buffer.items[i]))
-                    items[len++] = collect.buffer.items[i];
+                items[len++] = collect.buffer.items[i];
             }
             outcome_set_add(os, atom_expr(a, items, len), &_empty);
             stream_item_buffer_free(&collect.buffer);
@@ -30660,7 +30758,7 @@ petta_lowered_to_shared_form:
         if (inner.len > 0) {
             collected_items = arena_alloc(a, sizeof(Atom *) * inner.len);
             for (CettaCount i = 0; i < inner.len; i++) {
-                if (atom_is_empty(inner.items[i]))
+                if (atom_is_legacy_empty_sentinel(inner.items[i]))
                     continue;
                 collected_items[collected_len++] = inner.items[i];
             }
@@ -30819,22 +30917,55 @@ petta_lowered_to_shared_form:
 
     /* ── case ──────────────────────────────────────────────────────────── */
     if (head_id == g_builtin_syms.case_text) {
-        if (nargs != 2) {
+        bool prime_case = language_id == CETTA_LANGUAGE_PRIME;
+        if ((!prime_case && nargs != 2u) ||
+            (prime_case && nargs != 2u && nargs != 3u)) {
             outcome_set_add(os,
                 atom_error(a, atom, atom_symbol(a, "IncorrectNumberOfArguments")),
                 &_empty);
             return;
         }
-        /* Prime's scrutinee is an internal computation, not an observation
-         * boundary.  Keep its logical substitutions and branch-local Need
-         * snapshot paired while selecting a clause.  HE retains the legacy
-         * ResultSet path below, including its existing eager semantics. */
-        if (language_id == CETTA_LANGUAGE_PRIME) {
+        /* Prime dispatches source occurrences without materializing them.
+         * The optional positional fallback is a located observation of this
+         * source frontier only.  Keep logical substitutions and branch-local
+         * Need snapshots paired while selecting a clause.  HE retains the
+         * legacy ResultSet path below, including its eager semantics. */
+        if (prime_case) {
             OutcomeSet scrut;
             outcome_set_init(&scrut);
+            EvalCompletionTracker source_tracker;
+            eval_completion_child_begin(&source_tracker);
             eval_for_caller(s, a, NULL, expr_arg(atom, 0), fuel,
                             CURRENT_ENV, true, &scrut);
+            CettaEvalCompletion source_completion =
+                eval_completion_child_end(&source_tracker);
             Atom *branches = expr_arg(atom, 1);
+            if (scrut.len == 0u) {
+                if (nargs == 2u ||
+                    source_completion != CETTA_EVAL_COMPLETE) {
+                    outcome_set_free(&scrut);
+                    return;
+                }
+                Atom *zero_body = expr_arg(atom, 2);
+                Atom *next_atom = bindings_apply_if_vars(
+                    CURRENT_ENV, a, zero_body);
+                Bindings continuation;
+                if (!bindings_project_control_continuation(
+                        a, next_atom, CURRENT_ENV, preserve_bindings,
+                        &continuation)) {
+                    outcome_set_free(&scrut);
+                    return;
+                }
+                if (!bindings_builder_merge_commit(
+                        &current_env_builder, &continuation)) {
+                    bindings_free(&continuation);
+                    outcome_set_free(&scrut);
+                    return;
+                }
+                bindings_free(&continuation);
+                outcome_set_free(&scrut);
+                TAIL_REENTER(next_atom);
+            }
             if (scrut.len == 1u && branches->kind == ATOM_EXPR) {
                 Atom *sv = outcome_atom_materialize(a, &scrut.items[0]);
                 for (CettaExprIndex i = 0u; i < branches->expr.len; i++) {
@@ -31197,11 +31328,6 @@ petta_lowered_to_shared_form:
                 prime_let_prepared_free(&prepared);
                 return;
             }
-            if (atom_is_empty(value)) {
-                outcome_set_free(&values);
-                prime_let_prepared_free(&prepared);
-                return;
-            }
             Atom *body = NULL;
             PrimeLetMatchStatus status = prime_let_match_body(
                 signature, a, &prepared, value, &values.items[0].env,
@@ -31251,7 +31377,6 @@ petta_lowered_to_shared_form:
             Atom *value = outcome_atom_materialize_traced(
                 a, &values.items[i],
                 CETTA_RUNTIME_COUNTER_OUTCOME_VARIANT_MATERIALIZE_LET_CHAIN);
-            if (atom_is_empty(value)) continue;
             (void)prime_let_branch_visit(
                 a, value, &values.items[i].env, &visit);
         }
@@ -31472,7 +31597,7 @@ petta_lowered_to_shared_form:
                 outcome_atom_materialize_traced(
                     a, &vals.items[i],
                     CETTA_RUNTIME_COUNTER_OUTCOME_VARIANT_MATERIALIZE_LET_CHAIN);
-            if (atom_is_empty(val_atom))
+            if (atom_is_legacy_empty_sentinel(val_atom))
                 continue;
             const Bindings *val_env = &vals.items[i].env;
             if (pat->kind == ATOM_VAR) {
@@ -31608,7 +31733,6 @@ petta_lowered_to_shared_form:
         outcome_set_init(&inner);
         metta_eval_bind(s, a, to_eval, fuel, &inner);
         if (inner.len == 0) {
-            outcome_set_add(os, atom_empty(a), &_empty);
             outcome_set_free(&inner);
             return;
         }
@@ -31631,11 +31755,7 @@ petta_lowered_to_shared_form:
             return;
         }
 
-        if (inner.len == 1 &&
-            !atom_is_empty(
-                outcome_atom_materialize_traced(
-                    a, &inner.items[0],
-                    CETTA_RUNTIME_COUNTER_OUTCOME_VARIANT_MATERIALIZE_LET_CHAIN))) {
+        if (inner.len == 1) {
             Atom *inner_atom = outcome_atom_materialize_traced(
                 a, &inner.items[0],
                 CETTA_RUNTIME_COUNTER_OUTCOME_VARIANT_MATERIALIZE_LET_CHAIN);
@@ -31691,8 +31811,6 @@ petta_lowered_to_shared_form:
             Atom *inner_atom = outcome_atom_materialize_traced(
                 a, &inner.items[i],
                 CETTA_RUNTIME_COUNTER_OUTCOME_VARIANT_MATERIALIZE_LET_CHAIN);
-            if (atom_is_empty(inner_atom)) continue;
-
             const Bindings *inner_env = &inner.items[i].env;
             BindingsBuilder b;
             if (!bindings_builder_init(&b, inner_env)) continue;
@@ -31768,7 +31886,7 @@ petta_lowered_to_shared_form:
             return;
         }
         if (inner.len == 1 &&
-            !atom_is_empty(
+            !atom_is_legacy_empty_sentinel(
                 outcome_atom_materialize_traced(
                     a, &inner.items[0],
                     CETTA_RUNTIME_COUNTER_OUTCOME_VARIANT_MATERIALIZE_LET_CHAIN))) {
@@ -31822,7 +31940,7 @@ petta_lowered_to_shared_form:
                 outcome_atom_materialize_traced(
                     a, &inner.items[i],
                     CETTA_RUNTIME_COUNTER_OUTCOME_VARIANT_MATERIALIZE_LET_CHAIN);
-            if (atom_is_empty(r)) continue;
+            if (atom_is_legacy_empty_sentinel(r)) continue;
             {
                 const Bindings *inner_env = &inner.items[i].env;
                 BindingsBuilder b;
@@ -32363,7 +32481,7 @@ petta_lowered_to_shared_form:
                     witnessed_true = true;
                     break;
                 }
-                if (!atom_is_empty(inner.items[i]))
+                if (!atom_is_legacy_empty_sentinel(inner.items[i]))
                     failed_goal = inner.items[i];
             }
             if (witnessed_true) {
@@ -33921,7 +34039,7 @@ petta_lowered_to_shared_form:
             pairs = arena_alloc(a, sizeof(Atom *) * inner.len);
         for (CettaCount i = 0; i < inner.len; i++) {
             Atom *result_atom = outcome_atom_materialize(a, &inner.items[i]);
-            if (atom_is_empty(result_atom))
+            if (atom_is_legacy_empty_sentinel(result_atom))
                 continue;
             pairs[pair_len++] =
                 atom_expr2(a, result_atom, bindings_to_atom(a, &inner.items[i].env));
@@ -35108,7 +35226,7 @@ static void prime_ground_memo_commit(Space *s, Arena *a, GroundMemoState *state,
     uint32_t answer_len = 0u;
     for (CettaCount i = 0u; i < os->len; i++) {
         Atom *v = outcome_atom_materialize(a, &os->items[i]);
-        bool admissible_value = v && !atom_is_empty(v) && !atom_has_vars(v) &&
+        bool admissible_value = v && !atom_is_legacy_empty_sentinel(v) && !atom_has_vars(v) &&
             (!atom_is_error(v) || prime_need_fault_is_completed(v));
         if (!admissible_value ||
             !prime_need_receipt_delta_is_pure(
@@ -35270,7 +35388,7 @@ static void metta_eval_one_step_chain(Space *s, Arena *a, Atom *atom,
 
     for (uint32_t i = 0; i < inner.len; i++) {
         Atom *next = inner.items[i];
-        if (atom_is_empty(next)) {
+        if (atom_is_legacy_empty_sentinel(next)) {
             emitted = true;
             continue;
         }
@@ -35293,7 +35411,7 @@ static void metta_eval_one_step_chain(Space *s, Arena *a, Atom *atom,
     if (emitted)
         return;
 
-    if (atom_is_empty(to_eval)) {
+    if (atom_is_legacy_empty_sentinel(to_eval)) {
         result_set_add(rs, atom_empty(a));
         return;
     }
@@ -35334,7 +35452,7 @@ static void metta_eval_one_step_let(Space *s, Arena *a, Atom *val_expr,
 
     for (uint32_t i = 0; i < inner.len; i++) {
         Atom *next = inner.items[i];
-        if (atom_is_empty(next)) {
+        if (atom_is_legacy_empty_sentinel(next)) {
             emitted = true;
             continue;
         }
@@ -35357,7 +35475,7 @@ static void metta_eval_one_step_let(Space *s, Arena *a, Atom *val_expr,
     if (emitted)
         return;
 
-    if (atom_is_empty(val_expr)) {
+    if (atom_is_legacy_empty_sentinel(val_expr)) {
         result_set_add(rs, atom_empty(a));
         return;
     }
@@ -35427,7 +35545,7 @@ static void metta_eval_one_step_case(Space *s, Arena *a, Atom *atom,
 
     for (uint32_t i = 0; i < inner.len; i++) {
         Atom *next = inner.items[i];
-        if (atom_is_empty(next)) {
+        if (atom_is_legacy_empty_sentinel(next)) {
             emitted = true;
             continue;
         }
@@ -35449,7 +35567,7 @@ static void metta_eval_one_step_case(Space *s, Arena *a, Atom *atom,
     if (emitted)
         return;
 
-    if (atom_is_empty(scrutinee)) {
+    if (atom_is_legacy_empty_sentinel(scrutinee)) {
         result_set_add(rs, atom_empty(a));
         return;
     }
@@ -35525,7 +35643,7 @@ static bool metta_eval_one_step_expr_congruence(Space *s, Arena *a, Atom *atom,
             Atom *next = inner.items[i];
             if (atom_eq(next, elem))
                 continue;
-            if (atom_is_empty(next) || atom_is_error(next)) {
+            if (atom_is_legacy_empty_sentinel(next) || atom_is_error(next)) {
                 result_set_add(rs, next);
             } else {
                 Atom **elems = arena_alloc(a, sizeof(Atom *) * atom->expr.len);
@@ -35565,7 +35683,7 @@ static void metta_eval_one_step(Space *s, Arena *a, Atom *type, Atom *atom,
     }
     atom = materialize_runtime_token(s, a, atom);
 
-    if (atom_is_empty(atom) || atom_is_error(atom)) {
+    if (atom_is_legacy_empty_sentinel(atom) || atom_is_error(atom)) {
         result_set_add(rs, atom);
         return;
     }

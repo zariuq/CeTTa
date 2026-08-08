@@ -99,11 +99,12 @@ static bool result_set_petta_typecheck_error(
 #endif
 }
 
-static bool result_set_all_empty(ResultSet *rs) {
+static bool result_set_all_empty(ResultSet *rs,
+                                 CettaLanguageId language_id) {
     if (rs->len == 0) return false;
     for (uint32_t i = 0; i < rs->len; i++) {
         Atom *item = rs->items[i];
-        if (!atom_is_empty(item) &&
+        if (!(language_id != CETTA_LANGUAGE_PRIME && atom_is_empty(item)) &&
             !(item->kind == ATOM_EXPR && item->expr.len == 0)) {
             return false;
         }
@@ -876,8 +877,9 @@ static void write_results(FILE *out, ResultSet *rs,
         return;
     }
 
+    bool hide_legacy_empty = language_id != CETTA_LANGUAGE_PRIME;
     for (uint32_t i = 0; i < rs->len; i++) {
-        if (!atom_is_empty(rs->items[i]))
+        if (!hide_legacy_empty || !atom_is_empty(rs->items[i]))
             visible_len++;
     }
     if (visible_len == 0) {
@@ -889,7 +891,7 @@ static void write_results(FILE *out, ResultSet *rs,
         if (!visible_items) return;
         uint32_t out_i = 0;
         for (uint32_t i = 0; i < rs->len; i++) {
-            if (!atom_is_empty(rs->items[i]))
+            if (!hide_legacy_empty || !atom_is_empty(rs->items[i]))
                 visible_items[out_i++] = rs->items[i];
         }
         visible.items = visible_items;
@@ -921,7 +923,8 @@ static void write_results(FILE *out, ResultSet *rs,
         fprintf(out, "%" PRIu64 "\n", rs->len);
         goto done;
     }
-    if (g_quiet_results && !result_set_has_error(rs) && result_set_all_empty(rs)) {
+    if (g_quiet_results && !result_set_has_error(rs) &&
+        result_set_all_empty(rs, language_id)) {
         goto done;
     }
     if (result_set_all_rhocalc_domain(rs)) {

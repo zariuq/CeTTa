@@ -1457,7 +1457,7 @@ static bool prepare_answer_bag(Space *space, Arena *a, Atom *source,
 static bool parse_answer_branch(const PrimeAnswerBag *bag, Atom *branch,
                                 bool *is_value, Atom **payload) {
     if (!bag->branches_wrapped) {
-        *is_value = !atom_is_error(branch) && !atom_is_empty(branch);
+        *is_value = !atom_is_error(branch);
         *payload = branch;
         return true;
     }
