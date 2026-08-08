@@ -12,7 +12,7 @@
 
 ; Pick one item and return the remaining list.  This is the only source of
 ; literal-level nondeterminism in one binary-resolution expansion.
-(= (atp:resolution-search:pick ()) Empty)
+(= (atp:resolution-search:pick ()) (empty))
 
 (= (atp:resolution-search:pick $items)
    (let ($head $tail) (decons-atom $items)
@@ -137,7 +137,7 @@
        (ATP.ResolutionProof
          $left-proof $right-proof
          $left-pivot $right-pivot $child))
-     Empty))
+     (empty)))
 
 (= (atp:resolution-search:resolve-fresh
      $left-proof $right-proof)
@@ -164,7 +164,7 @@
                   $left-pivot $right-pivot
                   $left-rest $right-rest
                   $left-atom $right-atom))
-              ($_ Empty))))))))
+              ($_ (empty)))))))))
 
 (= (atp:resolution-search:resolve $left-proof $right-proof)
    ; sealed creates independent variable epochs for the two parent uses.  This
@@ -347,7 +347,7 @@
             (ATP.ResolutionProof
               $given-proof $active-proof
               $given-pivot $active-pivot $child)))
-        ($_ Empty)))))
+        ($_ (empty))))))
 
 (= (atp:resolution-search:resolve-indexed-fresh $index $given-proof)
    (let $given-clause
@@ -367,7 +367,7 @@
               (atp:resolution-search:resolve-indexed-hit
                 $given-proof $given-pivot $given-rest
                 $active-proof $active-pivot)))
-          ($_ Empty))))))
+          ($_ (empty)))))))
 
 (= (atp:resolution-search:resolve-indexed $index $given-proof)
    ; match freshens every indexed parent.  sealed independently freshens the

@@ -651,6 +651,56 @@ int main(void) {
     }
     eval_outcome_free(&bounded_outcome);
 
+    /* Prime case's positional fallback observes only a completed-zero
+       source.  An empty open prefix must remain incomplete and must never
+       manufacture the fallback occurrence. */
+    Atom *source_zero_case = parse_one(
+        &scratch,
+        "(case (empty) (($value UnexpectedValue)) SourceZeroFallback)");
+    Atom *source_zero_fallback = atom_symbol(
+        &scratch, "SourceZeroFallback");
+    if (!source_zero_case) {
+        fprintf(stderr, "source-zero case fixture did not parse\n");
+        goto cleanup;
+    }
+    EvalOutcome source_zero_outcome;
+    eval_outcome_init(&source_zero_outcome);
+    metta_eval_outcome(&space, &scratch, NULL, source_zero_case, -1,
+                       &source_zero_outcome);
+    if (source_zero_outcome.completion != CETTA_EVAL_COMPLETE ||
+        source_zero_outcome.results.len != 1u ||
+        !atom_eq(source_zero_outcome.results.items[0],
+                 source_zero_fallback)) {
+        fprintf(stderr, "completed source zero did not select case fallback\n");
+        eval_outcome_free(&source_zero_outcome);
+        goto cleanup;
+    }
+    eval_outcome_free(&source_zero_outcome);
+
+    Atom *open_source_equation = parse_one(
+        &scratch, "(= (prime-open-source) (prime-open-source))");
+    Atom *open_source_case = parse_one(
+        &scratch,
+        "(case (prime-open-source) (($value UnexpectedValue)) "
+        "  UnexpectedFallback)");
+    if (!open_source_equation || !open_source_case) {
+        fprintf(stderr, "open-source case fixture did not parse\n");
+        goto cleanup;
+    }
+    space_add(&space, open_source_equation);
+    EvalOutcome open_source_outcome;
+    eval_outcome_init(&open_source_outcome);
+    metta_eval_outcome(&space, &scratch, NULL, open_source_case, 64,
+                       &open_source_outcome);
+    if (open_source_outcome.completion != CETTA_EVAL_INCOMPLETE_FUEL ||
+        open_source_outcome.results.len != 0u) {
+        fprintf(stderr,
+                "open empty source was laundered into case fallback\n");
+        eval_outcome_free(&open_source_outcome);
+        goto cleanup;
+    }
+    eval_outcome_free(&open_source_outcome);
+
     Atom *chain_accounting = parse_one(
         &scratch,
         "(chain (prime-accounting-probe) $chain-value "

@@ -292,7 +292,7 @@
    (let ((ATP.Obligation $hole $goal $depth $ancestors) $rest)
         (decons-atom $obligations)
      (if (<= $depth 0)
-         Empty
+         (empty)
          (let (ATP.Candidate
                 $source-age $generality $misses $support
                 $rule $premises $goal)
@@ -330,11 +330,11 @@
           $guidance-cost $unsupported)
         $state
      (if (== $obligations ())
-         Empty
+         (empty)
          (let ((ATP.Obligation $hole $goal $depth $ancestors) $rest)
               (decons-atom $obligations)
            (if (atp:indexed:seen-goal $goal $ancestors)
-               Empty
+               (empty)
                (superpose
                   ((atp:agenda:expand-hypothesis
                      $knowledge $index $state)

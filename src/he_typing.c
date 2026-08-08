@@ -573,7 +573,8 @@ static Atom *normalize_type_checked(Arena *a, Space *space, Atom *ty,
         for (CettaCount i = 0; i < outcome.results.len; i++) {
             Atom *candidate = outcome.results.items[i];
             if (!candidate || atom_is_error(candidate) ||
-                atom_is_empty(candidate))
+                (eval_current_language_id() != CETTA_LANGUAGE_PRIME &&
+                 atom_is_empty(candidate)))
                 continue;
             if (!unique) unique = candidate;
             else if (!atom_eq(unique, candidate)) {

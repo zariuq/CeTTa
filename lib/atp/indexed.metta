@@ -387,7 +387,7 @@
 (= (atp:indexed:prove-judgment-with-ancestors
      $knowledge $index $goal $depth $policy $ancestors)
    (if (atp:indexed:seen-goal $goal $ancestors)
-       Empty
+       (empty)
        (if (<= $depth 0)
            (atp:indexed:fact $knowledge $index $goal)
            (superpose

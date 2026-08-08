@@ -1229,7 +1229,7 @@ static bool prepared_pure_register_program(
 }
 
 static bool prepared_pure_builtin_surface(SymbolId head) {
-    return head != SYMBOL_ID_NONE && head <= g_builtin_syms.native_handle;
+    return symbol_id_is_builtin_surface(head);
 }
 
 static bool prepared_pure_context_lookup(
@@ -3563,7 +3563,9 @@ static bool prepared_pure_resume_call(
                 (size_t)frame->value_base + arity + 1u)
             return false;
         Atom *value = program->values[--program->value_len];
-        if (atom_is_empty(value) || atom_is_error(value))
+        if (((!eval_current_language_id ||
+              eval_current_language_id() != CETTA_LANGUAGE_PRIME) &&
+             atom_is_empty(value)) || atom_is_error(value))
             return false;
         program->values[
             frame->value_base + frame->demanded_argument] = value;
