@@ -31,6 +31,12 @@ bool cetta_lib_prolog_runtime_available(
     return runtime && !runtime->unavailable;
 }
 
+CettaLibPrologReadToken cetta_lib_prolog_read_token(
+    CettaLibPrologRuntime *runtime) {
+    (void)runtime;
+    return (CettaLibPrologReadToken){0};
+}
+
 CettaLibPrologQueryStatus cetta_lib_prolog_query(
     CettaLibPrologRuntime *runtime, Arena *arena,
     Atom *goal, Atom *projection, Atom **answers) {

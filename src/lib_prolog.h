@@ -4,8 +4,14 @@
 #include "atom.h"
 
 #include <stdbool.h>
+#include <stdint.h>
 
 typedef struct CettaLibPrologRuntime CettaLibPrologRuntime;
+
+typedef struct {
+    uint64_t instance_id;
+    uint64_t revision;
+} CettaLibPrologReadToken;
 
 typedef enum {
     CETTA_LIB_PROLOG_QUERY_UNAVAILABLE = 0,
@@ -30,6 +36,12 @@ void cetta_lib_prolog_global_shutdown(void);
  * Merely constructing a CeTTa language context never initializes Prolog.
  */
 bool cetta_lib_prolog_runtime_available(
+    CettaLibPrologRuntime *runtime);
+
+/* Snapshot the callable/import authority without preparing or probing the
+ * optional engine.  Instance identity prevents ABA across runtime reuse;
+ * revision advances whenever the callable registry can change. */
+CettaLibPrologReadToken cetta_lib_prolog_read_token(
     CettaLibPrologRuntime *runtime);
 
 /*

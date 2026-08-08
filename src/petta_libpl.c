@@ -2558,6 +2558,19 @@ void cetta_lib_prolog_runtime_free(
     free(runtime);
 }
 
+CettaLibPrologReadToken cetta_lib_prolog_read_token(
+    CettaLibPrologRuntime *runtime) {
+    CettaLibPrologReadToken token = {0};
+    if (!runtime)
+        return token;
+    if (pthread_mutex_lock(&g_petta_libpl_lock) != 0)
+        return token;
+    token.instance_id = runtime->instance_id;
+    token.revision = runtime->revision;
+    (void)pthread_mutex_unlock(&g_petta_libpl_lock);
+    return token;
+}
+
 bool cetta_lib_prolog_runtime_available(
     CettaLibPrologRuntime *runtime) {
     if (!runtime)
