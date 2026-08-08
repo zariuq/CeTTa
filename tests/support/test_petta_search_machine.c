@@ -206,6 +206,24 @@ static Atom *add_indexed_program_clause(
     return stored;
 }
 
+static Atom *add_compiled_program_clause(
+    PettaProgram *program, Space *space,
+    Arena *arena, const char *source) {
+    Atom *clause = parse_one(arena, source);
+    assert(clause);
+    const PettaPlanNode *plan =
+        petta_program_plan_dynamic_add(program, clause);
+    assert(plan);
+    CettaCount before = space_length64(space);
+    space_add(space, clause);
+    assert(space_length64(space) == before + 1u);
+    Atom *stored = space_get_at64(space, before);
+    assert(stored);
+    assert(petta_program_note_add(
+        program, space, stored, plan));
+    return stored;
+}
+
 static void test_program_head_occurrence_index(
     TermUniverse *universe, Arena *persistent) {
     Space indexed_space;
@@ -379,6 +397,39 @@ static void test_program_head_occurrence_index(
 
     petta_program_free(program);
     space_free(&indexed_space);
+}
+
+static void test_typed_data_purity_boundary(
+    TermUniverse *universe, Arena *persistent) {
+    Space typed_space;
+    space_init_with_universe(&typed_space, universe);
+    PettaProgram *program = petta_program_new();
+    assert(program);
+
+    add_compiled_program_clause(
+        program, &typed_space, persistent,
+        "(= (safe-typed-data $x) (: payload (id $x)))");
+    add_compiled_program_clause(
+        program, &typed_space, persistent,
+        "(= (effectful-typed-data $state $x)"
+        "   (: payload (change-state! $state $x)))");
+    add_compiled_program_clause(
+        program, &typed_space, persistent,
+        "(= (inert-arrow-data $state $x)"
+        "   (-> (change-state! $state $x) result))");
+
+    assert(petta_program_relation_table_safe(
+        program, &typed_space,
+        symbol_intern_cstr(g_symbols, "safe-typed-data"), 1u));
+    assert(!petta_program_relation_table_safe(
+        program, &typed_space,
+        symbol_intern_cstr(g_symbols, "effectful-typed-data"), 2u));
+    assert(petta_program_relation_table_safe(
+        program, &typed_space,
+        symbol_intern_cstr(g_symbols, "inert-arrow-data"), 2u));
+
+    petta_program_free(program);
+    space_free(&typed_space);
 }
 
 static void expect_answers(
@@ -1106,6 +1157,39 @@ static void test_deterministic_clause_elision(
     petta_machine_destroy(&machine);
 }
 
+static void test_ground_boolean_choice_elision(
+    Space *space, Arena *answers) {
+    Atom *query = parse_one(
+        answers,
+        "(if (or false true)"
+        "  (if (or false true)"
+        "    (if (or false true) done unreachable)"
+        "    unreachable)"
+        "  unreachable)");
+    assert(query);
+
+    PettaMachine machine;
+    assert(petta_machine_init(
+        &machine, space, answers, query, NULL, NULL));
+    Atom *answer = NULL;
+    Bindings environment;
+    assert(petta_machine_next(
+               &machine, &answer, &environment) ==
+           PETTA_MACHINE_STEP_ANSWER);
+    assert(atom_alpha_eq(
+        answer, atom_symbol(answers, "done")));
+    bindings_free(&environment);
+
+    PettaMachineStats stats;
+    assert(petta_machine_stats(&machine, &stats));
+    assert(stats.maximum_choice_depth == 1u);
+    assert(petta_machine_next(
+               &machine, &answer, &environment) ==
+           PETTA_MACHINE_STEP_EXHAUSTED);
+    bindings_free(&environment);
+    petta_machine_destroy(&machine);
+}
+
 static void test_cons_shape_clause_index(
     Space *space, Arena *persistent, Arena *answers) {
     add_clause(
@@ -1751,6 +1835,8 @@ int main(void) {
 
     test_program_head_occurrence_index(
         &universe, &persistent);
+    test_typed_data_purity_boundary(
+        &universe, &persistent);
     test_logical_list_cursor_boundaries(&answers);
     test_private_variant_summary(&answers);
     test_binding_prefix_factoring(&answers);
@@ -1759,6 +1845,8 @@ int main(void) {
     test_host_environment_projection(&space, &answers);
     test_deterministic_clause_elision(
         &space, &persistent, &answers);
+    test_ground_boolean_choice_elision(
+        &space, &answers);
     test_cons_shape_clause_index(
         &space, &persistent, &answers);
     test_nested_clause_shape_index(

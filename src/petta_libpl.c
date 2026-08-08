@@ -35,6 +35,13 @@ typedef struct {
      * constructor vocabulary.
      */
     bool auto_resolved;
+    /*
+     * Reference-stdlib names are admitted only at arities the private module
+     * can prove it implements.  In particular, an absent prelude predicate
+     * must remain an unavailable MeTTa head instead of becoming an attempted
+     * call that raises an SWI existence error.
+     */
+    bool reference_stdlib;
 } PettaLibplImport;
 
 typedef struct {
@@ -61,6 +68,7 @@ struct CettaLibPrologRuntime {
     size_t import_cap;
     uint64_t symbol_table_instance;
     uint64_t revision;
+    _Atomic uint64_t capability_revision;
     /*
      * Names proven to have neither a live predicate at any arity nor an
      * arity/2 declaration.  The reference resolves every application head
@@ -85,6 +93,12 @@ static void petta_libpl_advance_revision(
     CettaLibPrologRuntime *runtime) {
     if (!runtime)
         return;
+    uint64_t capability = atomic_load_explicit(
+        &runtime->capability_revision, memory_order_relaxed);
+    atomic_store_explicit(
+        &runtime->capability_revision,
+        capability == UINT64_MAX ? 1u : capability + 1u,
+        memory_order_release);
     if (runtime->revision != UINT64_MAX) {
         runtime->revision++;
         return;
@@ -143,6 +157,55 @@ static _Thread_local CettaLibPrologRuntime *g_petta_libpl_active_runtime;
 
 static void petta_libpl_register_reference_stdlib(
     CettaLibPrologRuntime *runtime);
+
+static foreign_t petta_libpl_standard_not_identical(
+    term_t arguments, int supplied_arity,
+    control_t control) {
+    (void)control;
+    if (!arguments || supplied_arity != 3)
+        return false;
+    bool identical = PL_compare(arguments, arguments + 1u) == 0;
+    return PL_unify_atom_chars(
+        arguments + 2u, identical ? "false" : "true");
+}
+
+typedef struct {
+    const char *name;
+    size_t function_arity;
+    pl_function_t implementation;
+} PettaLibplStandardBridge;
+
+/*
+ * The embedded engine does not load PeTTa's metta.pl.  Standard predicates
+ * that are neither CeTTa-native nor supplied by SWI therefore live in this
+ * explicit bridge table.  The table is also the installation invariant: a
+ * row cannot advertise an arity without registering its implementation.
+ */
+static bool petta_libpl_install_standard_bridges(
+    CettaLibPrologRuntime *runtime) {
+    static const PettaLibplStandardBridge bridges[] = {
+        {
+            .name = "!=",
+            .function_arity = 2u,
+            .implementation =
+                (pl_function_t)petta_libpl_standard_not_identical,
+        },
+    };
+    if (!runtime || !runtime->module_name)
+        return false;
+    for (size_t index = 0u;
+         index < sizeof(bridges) / sizeof(bridges[0]); index++) {
+        const PettaLibplStandardBridge *bridge = &bridges[index];
+        if (bridge->function_arity >= (size_t)INT_MAX ||
+            !PL_register_foreign_in_module(
+                runtime->module_name, bridge->name,
+                (int)(bridge->function_arity + 1u),
+                bridge->implementation, PL_FA_VARARGS)) {
+            return false;
+        }
+    }
+    return true;
+}
 
 static bool petta_libpl_plref_register(
     CettaLibPrologRuntime *runtime, term_t term,
@@ -710,7 +773,8 @@ static bool petta_libpl_prepare_locked(
 
     runtime->symbol_table_instance =
         symbol_table_instance_id(g_symbols);
-    runtime->revision = 1u;
+    if (!petta_libpl_install_standard_bridges(runtime))
+        return false;
     petta_libpl_register_reference_stdlib(runtime);
     runtime->prepared = true;
     cetta_runtime_stats_inc(
@@ -1137,7 +1201,10 @@ static void petta_libpl_register_reference_stdlib(
             is_grounded_op(symbol) ||
             symbol_id_is_builtin_surface(symbol))
             continue;
-        (void)petta_libpl_register_import(runtime, symbol);
+        PettaLibplImport *entry =
+            petta_libpl_register_import(runtime, symbol);
+        if (entry)
+            entry->reference_stdlib = true;
     }
 }
 
@@ -2495,12 +2562,31 @@ CettaLibPrologRuntime *cetta_lib_prolog_runtime_new(void) {
         return NULL;
     }
     runtime->instance_id = instance_id;
+    runtime->revision = 1u;
+    atomic_init(&runtime->capability_revision, 1u);
     runtime->plref_free_head = SIZE_MAX;
     runtime->plref_next_generation = 1u;
     for (size_t index = 0u; index < 1024u; index++)
         atomic_init(&runtime->import_admission[index], 0u);
     atomic_init(&runtime->import_admission_saturated, false);
+    /*
+     * Capability discovery is source-planning metadata, not execution.
+     * Publish the reference PeTTa surface while the language context is
+     * built, without starting an SWI engine.  This lets the first authored
+     * equation receive the same call/data classification as every later
+     * equation.  Engine preparation remains lazy and merely fills the
+     * concrete arities of these already-admitted names.
+     */
+    petta_libpl_register_reference_stdlib(runtime);
     return runtime;
+}
+
+uint64_t petta_libpl_capability_revision(
+    const CettaLibPrologRuntime *runtime) {
+    return runtime
+        ? atomic_load_explicit(
+              &runtime->capability_revision, memory_order_acquire)
+        : 0u;
 }
 
 bool cetta_lib_prolog_runtime_set_working_dir(
@@ -2948,8 +3034,10 @@ bool petta_libpl_call(
                 : NULL;
         /* An explicit import grants full authority even when plan-time
          * resolution registered the name first. */
-        if (entry)
+        if (entry) {
             entry->auto_resolved = false;
+            entry->reference_stdlib = false;
+        }
         if (native_form || entry) {
             Bindings empty;
             bindings_init(&empty);
@@ -3028,7 +3116,8 @@ bool petta_libpl_call(
                 }
             }
             if (!arity_matched &&
-                entry->arity_len == 0u) {
+                entry->arity_len == 0u &&
+                !entry->reference_stdlib) {
                 *recognized = true;
                 ok = petta_libpl_registered_call(
                     runtime, arena, expression,

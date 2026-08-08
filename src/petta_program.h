@@ -29,6 +29,10 @@ typedef struct PettaPlanNode {
 typedef struct {
     Atom *equation;
     const PettaPlanNode *rhs_plan;
+    /* Stable only within the captured Space revision.  The executor treats
+     * this as evidence provenance, never as a replacement for the equation
+     * or its authoritative matcher. */
+    SpaceEquationOccurrenceId occurrence;
 } PettaClauseCandidate;
 
 /*

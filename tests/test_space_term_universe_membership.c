@@ -954,6 +954,12 @@ int main(void) {
                 symbol_intern_cstr(g_symbols, "effect-lfp-mutable-leaf");
             SymbolId mutable_root =
                 symbol_intern_cstr(g_symbols, "effect-lfp-mutable-root");
+            SymbolId opaque_quote =
+                symbol_intern_cstr(g_symbols, "effect-lfp-opaque-quote");
+            SymbolId opaque_colon =
+                symbol_intern_cstr(g_symbols, "effect-lfp-opaque-colon");
+            SymbolId opaque_arrow =
+                symbol_intern_cstr(g_symbols, "effect-lfp-opaque-arrow");
             SymbolId inert =
                 symbol_intern_cstr(g_symbols, "effect-lfp-inert-value");
             Atom *x = atom_var_with_id(
@@ -994,6 +1000,35 @@ int main(void) {
             assert(space_query_effect_for_head(
                        &effect_space, root, NULL) ==
                    CETTA_GSLT_QUERY_EFFECT_RELATIONAL_QUERY);
+
+            /* These heads construct syntax/data.  Expression-shaped children
+             * are not evaluation positions, even when they would be
+             * effectful if evaluated directly. */
+            space_add(&effect_space,
+                      EFFECT_EQUATION1(
+                          opaque_quote, x,
+                          EFFECT_CALL1(g_builtin_syms.quote, match_body)));
+            Atom *colon_body = atom_expr3(
+                &equation_scratch,
+                atom_symbol_id(&equation_scratch, g_builtin_syms.colon),
+                x, match_body);
+            space_add(&effect_space,
+                      EFFECT_EQUATION1(opaque_colon, x, colon_body));
+            Atom *arrow_body = atom_expr3(
+                &equation_scratch,
+                atom_symbol_id(&equation_scratch, g_builtin_syms.arrow),
+                x, match_body);
+            space_add(&effect_space,
+                      EFFECT_EQUATION1(opaque_arrow, x, arrow_body));
+            assert(space_query_effect_for_head(
+                       &effect_space, opaque_quote, NULL) ==
+                   CETTA_GSLT_QUERY_EFFECT_PURE);
+            assert(space_query_effect_for_head(
+                       &effect_space, opaque_colon, NULL) ==
+                   CETTA_GSLT_QUERY_EFFECT_PURE);
+            assert(space_query_effect_for_head(
+                       &effect_space, opaque_arrow, NULL) ==
+                   CETTA_GSLT_QUERY_EFFECT_PURE);
 
             /* A recursive component with no relational seed remains the
              * least element rather than becoming effectful merely for being

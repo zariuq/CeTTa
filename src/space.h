@@ -323,6 +323,11 @@ typedef struct {
 
 typedef bool (*QueryResultVisitor)(Atom *result, const Bindings *bindings,
                                    void *ctx);
+/* Conservative pre-materialization filter.  Returning false may only exclude
+ * an equation occurrence already proved unable to match.  The equation store
+ * retains authority for candidate order, multiplicity, freshening, and exact
+ * matching. */
+typedef bool (*QueryEquationCandidateFilter)(Atom *equation, void *ctx);
 
 void query_results_init(QueryResults *qr);
 bool query_results_push(QueryResults *qr, Atom *result, Bindings *b);
@@ -330,6 +335,10 @@ bool query_results_push_move(QueryResults *qr, Atom *result, Bindings *b);
 void query_results_diag_set_capacity_limit_override(CettaCount limit);
 CettaCount query_equations_visit(Space *s, Atom *query, Arena *a,
                                  QueryResultVisitor visitor, void *ctx);
+CettaCount query_equations_visit_filtered(
+    Space *s, Atom *query, Arena *a,
+    QueryEquationCandidateFilter filter, void *filter_ctx,
+    QueryResultVisitor visitor, void *visitor_ctx);
 /* Match exactly one admitted (= lhs rhs) atom against query.  This is the
    single-candidate form of query_equations_visit: it applies the same
    freshening, bidirectional matching, visible-variable projection, and RHS
