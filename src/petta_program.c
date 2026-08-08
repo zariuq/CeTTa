@@ -1218,9 +1218,13 @@ bool petta_program_clause_snapshot_profiled(
         }
         return true;
     }
+    typedef struct {
+        Atom *equation;
+        SpaceEquationOccurrenceId occurrence;
+    } PettaLiveClause;
     size_t actual_len = 0u;
     size_t actual_cap = 0u;
-    Atom **actual = NULL;
+    PettaLiveClause *actual = NULL;
     SpaceEquationCursor cursor;
     if (!space_equation_cursor_init(space, head, &cursor))
         return false;
@@ -1247,7 +1251,10 @@ bool petta_program_clause_snapshot_profiled(
             free(actual);
             return false;
         }
-        actual[actual_len++] = occurrence.equation;
+        actual[actual_len++] = (PettaLiveClause){
+            .equation = occurrence.equation,
+            .occurrence = occurrence.id,
+        };
     }
 
     bool *used = actual_len
@@ -1326,8 +1333,9 @@ bool petta_program_clause_snapshot_profiled(
                     continue;
                 if (stats)
                     stats->structural_equality_checks++;
-                if (record->equation == actual[index] ||
-                    atom_eq(record->equation, actual[index])) {
+                if (record->equation == actual[index].equation ||
+                    atom_eq(record->equation,
+                            actual[index].equation)) {
                     matched = index;
                     break;
                 }
@@ -1340,7 +1348,8 @@ bool petta_program_clause_snapshot_profiled(
                     if (stats)
                         stats->alpha_equality_checks++;
                     if (atom_alpha_eq(
-                            record->equation, actual[index])) {
+                            record->equation,
+                            actual[index].equation)) {
                         matched = index;
                         break;
                     }
@@ -1358,9 +1367,10 @@ bool petta_program_clause_snapshot_profiled(
             }
             used[matched] = true;
             items[length++] = (PettaClauseCandidate){
-                .equation = actual[matched],
+                .equation = actual[matched].equation,
                 .rhs_plan =
                     petta_plan_child(record->plan, 2u),
+                .occurrence = actual[matched].occurrence,
             };
         }
     }
@@ -1376,7 +1386,8 @@ bool petta_program_clause_snapshot_profiled(
             return false;
         }
         items[length++] = (PettaClauseCandidate){
-            .equation = actual[index],
+            .equation = actual[index].equation,
+            .occurrence = actual[index].occurrence,
         };
     }
     free(used);
@@ -1856,7 +1867,12 @@ static bool petta_table_safety_primitive(
         return petta_table_safety_form_is_pure(
             form, opaque);
 
+    /* `:` constructs data but evaluates each field through its authored
+     * plan, so purity depends on those children. */
+    if (head == g_builtin_syms.colon)
+        return true;
     if (head == g_builtin_syms.quote ||
+        head == g_builtin_syms.arrow ||
         head == g_builtin_syms.return_text) {
         if (opaque)
             *opaque = true;
@@ -1901,6 +1917,7 @@ static bool petta_table_safety_scan_relation(
     size_t node_cap = 0u;
     bool saw_matching_clause = false;
     bool safe = true;
+    bool trace = getenv("CETTA_PETTA_TABLE_SAFETY_TRACE") != NULL;
     for (size_t index = 0u;
          safe && index < candidate_count; index++) {
         Atom *lhs = NULL;
@@ -1921,6 +1938,14 @@ static bool petta_table_safety_scan_relation(
         safe = petta_table_safety_push_node(
             &nodes, &node_len, &node_cap,
             rhs, candidates[index].rhs_plan);
+        if (!safe && trace) {
+            fprintf(
+                stderr,
+                "[petta-table-safety] head=%s arity=%u "
+                "missing-or-invalid-rhs-plan clause=%zu\n",
+                symbol_bytes(g_symbols, relation.head),
+                (unsigned)relation.arity, index);
+        }
     }
     free(candidates);
 
@@ -1937,6 +1962,14 @@ static bool petta_table_safety_scan_relation(
             atom->expr.len == 0u ||
             atom->expr.elems[0]->kind != ATOM_SYMBOL) {
             safe = false;
+            if (trace) {
+                fprintf(
+                    stderr,
+                    "[petta-table-safety] head=%s arity=%u "
+                    "dynamic-or-malformed-call\n",
+                    symbol_bytes(g_symbols, relation.head),
+                    (unsigned)relation.arity);
+            }
             break;
         }
 
@@ -1949,6 +1982,14 @@ static bool petta_table_safety_scan_relation(
                 continue;
             if (plan->child_count != atom->expr.len) {
                 safe = false;
+                if (trace) {
+                    fprintf(
+                        stderr,
+                        "[petta-table-safety] head=%s arity=%u "
+                        "plan-child-mismatch\n",
+                        symbol_bytes(g_symbols, relation.head),
+                        (unsigned)relation.arity);
+                }
                 break;
             }
             for (CettaExprIndex child = 1u;
@@ -1966,9 +2007,25 @@ static bool petta_table_safety_scan_relation(
                 relations, relation_len, relation_cap,
                 call_head, atom->expr.len - 1u)) {
             safe = false;
+            if (trace) {
+                fprintf(
+                    stderr,
+                    "[petta-table-safety] head=%s arity=%u "
+                    "unsupported-call=%s\n",
+                    symbol_bytes(g_symbols, relation.head),
+                    (unsigned)relation.arity,
+                    symbol_bytes(g_symbols, call_head));
+            }
         }
     }
     free(nodes);
+    if (trace && !saw_matching_clause) {
+        fprintf(
+            stderr,
+            "[petta-table-safety] head=%s arity=%u no-clause\n",
+            symbol_bytes(g_symbols, relation.head),
+            (unsigned)relation.arity);
+    }
     return safe && saw_matching_clause;
 }
 

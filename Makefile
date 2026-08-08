@@ -384,7 +384,7 @@ COMPILED_READER_RUNTIME_SRC = \
 	$(HE_COMPILED_READER_RUNTIME_SRC) \
 	$(PETTA_COMPILED_READER_RUNTIME_SRC) \
 	$(PRIME_COMPILED_READER_RUNTIME_SRC)
-SRC = src/symbol.c src/atom.c src/name_key.c src/atom_blob.c src/abt.c src/parser.c $(COMPILED_READER_RUNTIME_SRC) src/mm2_lower.c src/subst_tree.c src/space.c src/registry_resolver.c src/space_match_backend.c src/match.c src/term_canon.c src/variant_shape.c src/variant_instance.c src/answer_bank.c src/table_store.c src/search_machine.c src/petta_program.c src/petta_search_machine.c src/petta_typecheck.c src/petta_specializer.c src/rule_machine.c $(LIB_PROLOG_SRC) src/term_universe.c src/stats.c src/parallel_executor.c src/prime_need.c src/petta_semantics.c src/prepared_pure_machine.c src/eval.c src/grounded.c src/he_typing.c src/prime_semantics.c src/text_source.c src/native_handle.c src/native_sha256.c src/mork_space_bridge_runtime.c src/library.c src/langdef_pack.c src/he_small_step_pack.c src/lib_parse_native_grammar.c src/lib_parse_inference_native.c experiments/gslt2parse_foundation/native/finite_horn_ground_term_v1.c experiments/gslt2parse_foundation/native/parser_term_projection_v1.c experiments/gslt2parse_foundation/native/parser_pack_abi_v1.c experiments/gslt2parse_foundation/native/parser_action_bytecode_v1.c experiments/gslt2parse_foundation/native/parser_pack_native_v1.c experiments/gslt2parse_foundation/native/parser_pack_lexical_v1.c experiments/gslt2parse_foundation/native/parser_pack_gll_v1.c experiments/gslt2parse_foundation/native/regular_span_dfa_v1.c experiments/gslt2parse_foundation/native/regular_span_nfa_v1.c $(PYTHON_SRC) src/session.c src/lang.c src/rhocalc_core.c src/rhocalc_syntax.c src/compile.c src/runtime.c src/cetta_stdlib.c native/native_modules.c src/main.c
+SRC = src/symbol.c src/atom.c src/name_key.c src/atom_blob.c src/abt.c src/parser.c $(COMPILED_READER_RUNTIME_SRC) src/mm2_lower.c src/subst_tree.c src/space.c src/registry_resolver.c src/space_match_backend.c src/match.c src/match_decision.c src/term_canon.c src/variant_shape.c src/variant_instance.c src/answer_bank.c src/table_store.c src/search_machine.c src/petta_program.c src/petta_search_machine.c src/petta_typecheck.c src/petta_specializer.c src/rule_machine.c $(LIB_PROLOG_SRC) src/term_universe.c src/stats.c src/parallel_executor.c src/prime_need.c src/petta_semantics.c src/prepared_pure_machine.c src/eval.c src/grounded.c src/he_typing.c src/prime_semantics.c src/text_source.c src/native_handle.c src/native_sha256.c src/mork_space_bridge_runtime.c src/library.c src/langdef_pack.c src/he_small_step_pack.c src/lib_parse_native_grammar.c src/lib_parse_inference_native.c experiments/gslt2parse_foundation/native/finite_horn_ground_term_v1.c experiments/gslt2parse_foundation/native/parser_term_projection_v1.c experiments/gslt2parse_foundation/native/parser_pack_abi_v1.c experiments/gslt2parse_foundation/native/parser_action_bytecode_v1.c experiments/gslt2parse_foundation/native/parser_pack_native_v1.c experiments/gslt2parse_foundation/native/parser_pack_lexical_v1.c experiments/gslt2parse_foundation/native/parser_pack_gll_v1.c experiments/gslt2parse_foundation/native/regular_span_dfa_v1.c experiments/gslt2parse_foundation/native/regular_span_nfa_v1.c $(PYTHON_SRC) src/session.c src/lang.c src/rhocalc_core.c src/rhocalc_syntax.c src/compile.c src/runtime.c src/cetta_stdlib.c native/native_modules.c src/main.c
 ifeq ($(ENABLE_RUNTIME_STATS),1)
 OBJ = $(SRC:.c=.$(BUILD_OBJ_TAG).runtime-stats.o)
 BIN = runtime/cetta-$(BUILD_CANON)-runtime-stats
@@ -413,6 +413,10 @@ PETTA_SEARCH_MACHINE_TEST_SRC = tests/support/test_petta_search_machine.c
 PETTA_SEARCH_MACHINE_TEST_OBJ = runtime/bootstrap/test_petta_search_machine.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o
 PETTA_SEARCH_MACHINE_TEST_BIN = runtime/test_petta_search_machine-$(BUILD_CANON)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),-runtime-stats,)
 PETTA_SEARCH_MACHINE_TEST_LINK_OBJ = $(FALLBACK_EVAL_TEST_LINK_OBJ)
+MATCH_DECISION_TEST_SRC = tests/support/test_match_decision.c
+MATCH_DECISION_TEST_OBJ = runtime/bootstrap/test_match_decision.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o
+MATCH_DECISION_TEST_BIN = runtime/test_match_decision-$(BUILD_CANON)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),-runtime-stats,)
+MATCH_DECISION_TEST_LINK_OBJ = $(FALLBACK_EVAL_TEST_LINK_OBJ)
 PETTA_SPECIALIZER_PREPARE_TEST_SRC = tests/test_petta_specializer_prepare.c
 PETTA_SPECIALIZER_PREPARE_TEST_OBJ = runtime/bootstrap/test_petta_specializer_prepare.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o
 PETTA_SPECIALIZER_PREPARE_TEST_BIN = runtime/test_petta_specializer_prepare-$(BUILD_CANON)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),-runtime-stats,)
@@ -710,6 +714,9 @@ RULE_MACHINE_CORE_GSLT_V1 = experiments/gslt2parse_foundation/presentations/core
 RULE_MACHINE_PROGRAM_GSLT_V1 = experiments/gslt2parse_foundation/presentations/specializations/rule_machine_hilbert_bfc_program_v1.metta
 RULE_MACHINE_PROGRAM_GENERATOR_V1 = tools/generate_rule_machine_program_v1.py
 RULE_MACHINE_PROGRAM_GENERATED_V1 = src/generated/rule_machine_program_v1.generated.h
+MATCH_DECISION_POLICY_GSLT_V1 = experiments/gslt2parse_foundation/presentations/core/match_decision_policy_v1.metta
+MATCH_DECISION_POLICY_GENERATOR_V1 = tools/generate_match_decision_policy_v1.py
+MATCH_DECISION_POLICY_GENERATED_V1 = src/generated/match_decision_policy_v1.generated.h
 GSLT2PARSE_PARSER_PACK_ABI_V1_NATIVE_BIN = runtime/test_parser_pack_abi_v1-$(BUILD_OBJ_TAG)
 GSLT2PARSE_PARSER_PACK_ABI_V1_STREAM_BIN = runtime/test_parser_pack_abi_v1_stream-$(BUILD_OBJ_TAG)
 GSLT2PARSE_TERM_PROJECTION_V1_NATIVE_BIN = runtime/test_parser_term_projection_v1-$(BUILD_OBJ_TAG)
@@ -724,6 +731,7 @@ PETTA_CORPUS_TIMEOUT ?= 30
 PETTA_CHAINER_ROOT ?=
 PETTA_CHAINER_COMPAT_MANIFEST = tests/petta/chainer_compat/manifest.json
 PETTA_CHAINER_COMPAT_RESULTS ?= runtime/petta-chainer-compat
+MATCH_DECISION_LANE_TIMEOUT ?= 60
 GSLT2PARSE_HE_ROOT ?=
 GSLT2PARSE_HE_GENERATED_C_OUTPUT ?=
 GSLT2PARSE_HE_CURSOR_GENERATED_C = src/generated/he_reader_cursor_v1.generated.c
@@ -811,6 +819,7 @@ PRIME_CONFORMANCE_TESTS = \
 	tests/prime/need_gc_lifetime.metta \
 	tests/prime/need_storage_boundary.metta \
 	tests/prime/need_quote_preservation.metta \
+	tests/prime/need_sequential_unification_refinement.metta \
 	tests/prime/nil_rule_machine_guests.generated.metta \
 	tests/prime/rule_machine_malformed_artifact_delta.metta \
 	tests/prime/rule_machine_malformed_program.metta \
@@ -1524,12 +1533,12 @@ test-prime-equation-call-sharing-tournament: $(BIN)
 		python3 tests/prime/run_need_equation_call_tournament.py 2>&1); \
 	printf '%s\n' "$$result"; \
 	if [ "$$(printf '%s\n' "$$result" | \
-		grep -Fxc '(PrimeNeedEquationCallTournamentSummary 42 42 0 frontiers 3 order-invariance monolithic-red candidate-local-green demand-cohort-green)')" -ne 1 ]; then \
+		grep -Fxc '(PrimeNeedEquationCallTournamentSummary 48 48 0 frontiers 3 order-invariance monolithic-red candidate-local-green demand-cohort-green)')" -ne 1 ]; then \
 		echo "FAIL: Prime equation-call tournament exact summary absent or duplicated"; \
 		exit 1; \
 	fi; \
 	if [ "$$(printf '%s\n' "$$result" | \
-		grep -Fxc '(PrimeNativeReceiptMutationSummary 6 6 0)')" -ne 1 ]; then \
+		grep -Fxc '(PrimeNativeReceiptMutationSummary 8 8 0)')" -ne 1 ]; then \
 		echo "FAIL: Prime native receipt mutation summary absent or duplicated"; \
 		exit 1; \
 	fi
@@ -2694,6 +2703,17 @@ $(PETTA_SEARCH_MACHINE_TEST_OBJ): $(PETTA_SEARCH_MACHINE_TEST_SRC) $(BUILD_CONFI
 	@mkdir -p $(dir $@)
 	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
 
+$(MATCH_DECISION_TEST_BIN): $(MATCH_DECISION_TEST_OBJ) $(MATCH_DECISION_TEST_LINK_OBJ) $(BRIDGE_DEPS)
+	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
+	@tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/test-match-decision.XXXXXX"); \
+	trap 'rm -f "$$tmp_out"' EXIT INT TERM; \
+	$(CC) $(CFLAGS) -o "$$tmp_out" $^ $(LDFLAGS); \
+	mv "$$tmp_out" $@
+
+$(MATCH_DECISION_TEST_OBJ): $(MATCH_DECISION_TEST_SRC) $(BUILD_CONFIG_HEADER)
+	@mkdir -p $(dir $@)
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+
 $(PETTA_SPECIALIZER_PREPARE_TEST_BIN): $(PETTA_SPECIALIZER_PREPARE_TEST_OBJ) $(PETTA_SPECIALIZER_PREPARE_TEST_LINK_OBJ) $(BRIDGE_DEPS)
 	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
 	@tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/test-petta-specializer-prepare.XXXXXX"); \
@@ -3248,6 +3268,18 @@ src/rule_machine.$(BUILD_OBJ_TAG).stage0.o: $(RULE_MACHINE_PROGRAM_GENERATED_V1)
 src/rule_machine.$(BUILD_OBJ_TAG).o: $(RULE_MACHINE_PROGRAM_GENERATED_V1)
 src/rule_machine.$(BUILD_OBJ_TAG).runtime-stats.o: $(RULE_MACHINE_PROGRAM_GENERATED_V1)
 
+$(MATCH_DECISION_POLICY_GENERATED_V1): \
+		$(MATCH_DECISION_POLICY_GSLT_V1) \
+		$(MATCH_DECISION_POLICY_GENERATOR_V1) \
+		tools/gslt2parse_schema_v1.py
+	python3 $(MATCH_DECISION_POLICY_GENERATOR_V1) \
+		--policy $(MATCH_DECISION_POLICY_GSLT_V1) \
+		--out $@
+
+src/match_decision.$(BUILD_OBJ_TAG).stage0.o: $(MATCH_DECISION_POLICY_GENERATED_V1)
+src/match_decision.$(BUILD_OBJ_TAG).o: $(MATCH_DECISION_POLICY_GENERATED_V1)
+src/match_decision.$(BUILD_OBJ_TAG).runtime-stats.o: $(MATCH_DECISION_POLICY_GENERATED_V1)
+
 %.$(BUILD_OBJ_TAG).o: %.c $(BUILD_CONFIG_HEADER)
 	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
 
@@ -3504,7 +3536,7 @@ test-list-lanes: $(BIN)
 bench-list: $(BIN) test-list-lanes
 	@./scripts/bench_list_lanes.py --cetta ./$(BIN)
 
-test: $(BIN) test-manifest-strict test-git-module test-symbolid-guard test-variant-shape-roundtrip test-bindings-lookup-index test-atom-deep-copy-iterative test-abt test-rhometta-payload-map-capacity-c test-space-term-universe-membership test-help-flags test-rhocalc test-he-contract-suite test-he-return-contract-correlation test-closed-stream-fastpath test-parse-depth-guard test-stdlib-growth-memory-regression test-rhometta-macro-audit test-eval-gc-adversarial test-list-lanes test-syn-lanes test-ground-call test-lib-prolog test-petta-libpl test-petta-process-text test-petta-search-machine test-petta-semantics test-petta-corpus-manifest-unit test-petta-chainer-manifest-unit
+test: $(BIN) test-manifest-strict test-git-module test-symbolid-guard test-variant-shape-roundtrip test-bindings-lookup-index test-atom-deep-copy-iterative test-abt test-rhometta-payload-map-capacity-c test-space-term-universe-membership test-help-flags test-rhocalc test-he-contract-suite test-he-return-contract-correlation test-closed-stream-fastpath test-parse-depth-guard test-stdlib-growth-memory-regression test-rhometta-macro-audit test-eval-gc-adversarial test-list-lanes test-syn-lanes test-ground-call test-lib-prolog test-petta-libpl test-petta-process-text test-match-decision test-petta-search-machine test-petta-semantics test-petta-corpus-manifest-unit test-petta-chainer-manifest-unit
 	@pass=0; fail=0; skip=0; no_exp=0; \
 	cache_dir="$(GIT_TEST_CACHE_DIR)"; mkdir -p "$$cache_dir"; export CETTA_GIT_MODULE_CACHE_DIR="$$cache_dir"; \
 	for f in tests/test_*.metta tests/spec_*.metta tests/he_*.metta; do \
@@ -5747,12 +5779,12 @@ test-prime-abt-chain-mutation: $(BIN)
 	mutant=$$("$$mutation_dir/cetta-chain-capture" --lang prime \
 		tests/prime/conformance/abt_chain_scope.metta 2>&1); \
 	if [ "$$mutant" = "$$baseline" ] || \
-	   ! printf '%s\n' "$$mutant" | grep -Fq 'Expected: [(pair b)]' || \
-	   ! printf '%s\n' "$$mutant" | grep -Fq '(chain b a (pair a))'; then \
+	   ! printf '%s\n' "$$mutant" | grep -Fq 'Expected: []' || \
+	   ! printf '%s\n' "$$mutant" | grep -Fq 'Got: [(pair a)]'; then \
 		printf '%s\n' "$$mutant" | tail -20; \
-		echo "FAIL: Prime ABT chain shadowing mutation survived"; exit 1; \
+		echo "FAIL: Prime ABT chain refinement mutation survived"; exit 1; \
 	fi; \
-	echo "PASS: Prime ABT chain mutation is killed by lexical shadowing"
+	echo "PASS: Prime ABT chain mutation is killed by repeated-name refinement"
 
 test-prime-abt-let-mutation: $(BIN)
 	@mutation_dir=runtime/prime-abt-let-mutation; \
@@ -7006,17 +7038,17 @@ ifeq ($(ENABLE_RUNTIME_STATS),1)
 		'$$1 == "runtime-counter" && $$2 == "prepared-pure-decision-full-match" { print $$3 }'); \
 	demands=$$(printf '%s\n' "$$stats" | awk \
 		'$$1 == "runtime-counter" && $$2 == "prepared-pure-decision-direct-demand" { print $$3 }'); \
-	fallbacks=$$(printf '%s\n' "$$stats" | awk \
-		'$$1 == "runtime-counter" && $$2 == "prepared-pure-decision-fallback-unready" { print $$3 }'); \
+	unavailable=$$(printf '%s\n' "$$stats" | awk \
+		'$$1 == "runtime-counter" && $$2 == "match-decision-unavailable-path" { print $$3 }'); \
 	if [ "$${inputs:-0}" -lt 25 ] || \
 	   [ "$${survivors:-999999}" -gt 7 ] || \
 	   [ "$${full:-999999}" -gt 15 ] || \
 	   [ "$${demands:-0}" -ne 2 ] || \
-	   [ "$${fallbacks:-0}" -lt 1 ]; then \
-		echo "FAIL: shared match decision input=$$inputs survivors=$$survivors full=$$full demands=$$demands fallbacks=$$fallbacks"; \
+	   [ "$${unavailable:-0}" -lt 1 ]; then \
+		echo "FAIL: shared match decision input=$$inputs survivors=$$survivors full=$$full demands=$$demands unavailable=$$unavailable"; \
 		exit 1; \
 	fi; \
-	echo "PASS: sparse shared match decision prunes candidates, requests common Need demand, and preserves wildcard non-demand (input=$$inputs survivors=$$survivors full=$$full demands=$$demands fallbacks=$$fallbacks)"
+	echo "PASS: shared MatchDecision prunes prepared candidates, requests common Need demand, and preserves wildcard non-demand (input=$$inputs survivors=$$survivors full=$$full demands=$$demands unavailable=$$unavailable)"
 else
 	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 $@
 endif
@@ -7138,6 +7170,22 @@ test-petta-libpl: $(BIN)
 		exit 1; \
 	fi; \
 	if [ "$(LIB_PROLOG_ENABLED)" = 1 ]; then \
+		CETTA_PETTA_SEARCH_MACHINE=1 ./$(BIN) --lang petta \
+			tests/petta/standard_comparison_bridge.metta \
+			> "$$actual"; \
+		if ! diff -u tests/petta/standard_comparison_bridge.expected \
+				"$$actual"; then \
+			echo "FAIL: PeTTa standard comparison libpl bridge"; \
+			exit 1; \
+		fi; \
+		CETTA_PETTA_SEARCH_MACHINE=1 ./$(BIN) --lang petta \
+			tests/petta/libpl_call_plan.metta \
+			> "$$actual"; \
+		if ! diff -u tests/petta/libpl_call_plan.expected \
+				"$$actual"; then \
+			echo "FAIL: PeTTa/libpl source-plan and accelerator contract"; \
+			exit 1; \
+		fi; \
 		CETTA_PETTA_SEARCH_MACHINE=1 ./$(BIN) --lang petta \
 			--num-threads 2 \
 			tests/petta/foreign_predicate_hyperpose.metta \
@@ -7282,6 +7330,35 @@ else
 	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 $@
 endif
 .PHONY: test-petta-source-memo-reset-mutation
+
+.PHONY: test-match-decision test-match-decision-gslt-v1 \
+	test-match-decision-lanes \
+	test-match-decision-stats test-match-decision-stats-body
+test-match-decision: test-match-decision-gslt-v1 $(MATCH_DECISION_TEST_BIN)
+	@./$(MATCH_DECISION_TEST_BIN)
+
+test-match-decision-gslt-v1: $(MATCH_DECISION_POLICY_GENERATED_V1)
+	@python3 tools/test_match_decision_policy_v1.py --root "$(CURDIR)" \
+		--cc "$(CC)"
+
+test-match-decision-lanes: $(BIN) test-prime-equation-call-sharing-tournament
+	@$(CETTA_SCRIPT_RUN_ENV) python3 tools/test_match_decision_lanes.py \
+		--cetta $(CETTA_SCRIPT_BIN) \
+		--timeout $(MATCH_DECISION_LANE_TIMEOUT)
+
+test-match-decision-stats:
+ifeq ($(ENABLE_RUNTIME_STATS),0)
+	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 \
+		test-match-decision-stats-body
+else
+	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 \
+		test-match-decision-stats-body
+endif
+
+test-match-decision-stats-body: $(BIN)
+	@$(CETTA_SCRIPT_RUN_ENV) python3 tools/test_match_decision_stats.py \
+		--cetta $(CETTA_SCRIPT_BIN) \
+		--timeout $(MATCH_DECISION_LANE_TIMEOUT)
 
 test-petta-search-machine: $(PETTA_SEARCH_MACHINE_TEST_BIN) $(BIN) test-petta-capability-ledger test-petta-specializer-relevance-filter test-petta-mam-contender-mutations test-petta-extended-query-algebra test-petta-prepared-register-loop test-petta-specialized-pure-call
 	@./$(PETTA_SEARCH_MACHINE_TEST_BIN)
@@ -7519,6 +7596,15 @@ test-petta-search-machine: $(PETTA_SEARCH_MACHINE_TEST_BIN) $(BIN) test-petta-ca
 	expected=$$(cat tests/petta/search_machine_relational_boolean_lists.expected); \
 	if [ "$$result" != "$$expected" ]; then \
 		echo "FAIL: native PeTTa Boolean relations and open-list search"; \
+		diff <(printf '%s\n' "$$expected") \
+			<(printf '%s\n' "$$result") | head -40; \
+		exit 1; \
+	fi; \
+	result=$$(CETTA_PETTA_SEARCH_MACHINE=1 ./$(BIN) --lang petta \
+		tests/petta/typecheck_v2_profile_isolation.metta 2>&1); \
+	expected=$$(cat tests/petta/typecheck_v2_profile_isolation.default.expected); \
+	if [ "$$result" != "$$expected" ]; then \
+		echo "FAIL: typecheck-v2 operations leaked into default PeTTa"; \
 		diff <(printf '%s\n' "$$expected") \
 			<(printf '%s\n' "$$result") | head -40; \
 		exit 1; \
@@ -8141,12 +8227,15 @@ test-petta-typecheck-v2: $(BIN) $(PETTA_SEARCH_MACHINE_TEST_BIN) test-petta-type
 			--manifest "$(PETTA_TYPECHECK_V2_MANIFEST)" \
 			--reference-root "$(PETTA_TYPECHECK_REFERENCE_ROOT)" \
 			--output-dir "$$receipt"; \
-		echo "typecheck-v2 acceptance receipt: $$receipt"
+		status=$$?; \
+		echo "typecheck-v2 acceptance receipt: $$receipt"; \
+		exit $$status
 
 test-petta-typecheck-v2-isolation-stats:
 ifeq ($(ENABLE_RUNTIME_STATS),1)
 	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 $(BIN)
-	@ordinary_out=runtime/typecheck-v2-isolation-ordinary.out; \
+	@set -e; \
+	ordinary_out=runtime/typecheck-v2-isolation-ordinary.out; \
 	ordinary_err=runtime/typecheck-v2-isolation-ordinary.err; \
 	typed_out=runtime/typecheck-v2-isolation-typed.out; \
 	typed_err=runtime/typecheck-v2-isolation-typed.err; \
@@ -8154,6 +8243,12 @@ ifeq ($(ENABLE_RUNTIME_STATS),1)
 	authority_err=runtime/typecheck-v2-authority-reuse.err; \
 	relocation_out=runtime/typecheck-v2-obligation-relocation.out; \
 	relocation_err=runtime/typecheck-v2-obligation-relocation.err; \
+	classifier_out=runtime/typecheck-v2-classifier-reestablish.out; \
+	classifier_err=runtime/typecheck-v2-classifier-reestablish.err; \
+	classifier_invalidation_out=runtime/typecheck-v2-classifier-invalidation.out; \
+	classifier_invalidation_err=runtime/typecheck-v2-classifier-invalidation.err; \
+	boundary_plan_out=runtime/typecheck-v2-boundary-plan.out; \
+	boundary_plan_err=runtime/typecheck-v2-boundary-plan.err; \
 	$(CETTA_BIN_INVOKE) --emit-runtime-stats --lang petta \
 		tests/petta/search_machine_catch_cons.metta \
 		>"$$ordinary_out" 2>"$$ordinary_err"; \
@@ -8188,7 +8283,40 @@ ifeq ($(ENABLE_RUNTIME_STATS),1)
 		"$$relocation_err"; \
 	grep -Eq '^runtime-counter petta-type-obligation-cache-hit [1-9][0-9]*$$' \
 		"$$relocation_err"; \
-	echo 'PASS: typecheck-v2 runtime boundary is counter-proven profile-local'
+	$(CETTA_BIN_INVOKE) --emit-runtime-stats --lang petta \
+		--profile typecheck-v2 \
+		tests/petta/typecheck_v2_repros/38_deferred_runtime_classifier_reestablish.metta \
+		>"$$classifier_out" 2>"$$classifier_err"; \
+	cmp -s \
+		tests/petta/typecheck_v2_repros/38_deferred_runtime_classifier_reestablish.expected \
+		"$$classifier_out"; \
+	grep -Eq '^runtime-counter petta-type-obligation-guard-scheduled ([2-9]|[1-9][0-9]+)$$' \
+		"$$classifier_err"; \
+	grep -Eq '^runtime-counter petta-type-obligation-guard-established ([2-9]|[1-9][0-9]+)$$' \
+		"$$classifier_err"; \
+	status=0; \
+	$(CETTA_BIN_INVOKE) --emit-runtime-stats --lang petta \
+		--profile typecheck-v2 \
+		tests/petta/typecheck_v2_repros/37_deferred_runtime_classifier_space_mutation.metta \
+		>"$$classifier_invalidation_out" 2>"$$classifier_invalidation_err" \
+		|| status=$$?; \
+	test "$$status" -eq 2; \
+	test ! -s "$$classifier_invalidation_out"; \
+	grep -Fq -f \
+		tests/petta/typecheck_v2_repros/37_deferred_runtime_classifier_space_mutation.expected \
+		"$$classifier_invalidation_err"; \
+	$(CETTA_BIN_INVOKE) --emit-runtime-stats --lang petta \
+		--profile typecheck-v2 \
+		-e '(: f (-> Number Number)) (= (f $$x) $$x) (: twice (-> Number Number)) (= (twice $$x) (+ (f $$x) (f $$x))) !(twice 1)' \
+		>"$$boundary_plan_out" 2>"$$boundary_plan_err"; \
+	grep -Fqx '2' "$$boundary_plan_out"; \
+	grep -Eq '^runtime-counter petta-typecheck-boundary-plan-cache-hit [1-9][0-9]*$$' \
+		"$$boundary_plan_err"; \
+	grep -Eq '^runtime-counter petta-typecheck-boundary-plan-cache-miss [1-9][0-9]*$$' \
+		"$$boundary_plan_err"; \
+	grep -Eq '^runtime-counter petta-typecheck-boundary-plan-all-none [1-9][0-9]*$$' \
+		"$$boundary_plan_err"; \
+	echo 'PASS: typecheck-v2 boundary isolation and relational authority reuse are counter-proven'
 else
 	@echo 'INFO: typecheck-v2 isolation counter requires runtime stats; re-running with ENABLE_RUNTIME_STATS=1'
 	@$(MAKE) BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 $@

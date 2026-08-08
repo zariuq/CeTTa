@@ -10,6 +10,14 @@ PeTTaNamedArity petta_libpl_named_arity(
     CettaExprLen supplied);
 
 /*
+ * Monotone identity for the currently published foreign-call capability
+ * surface.  Consumers may cache classifications only while this value is
+ * unchanged; reading it does not initialize an SWI engine.
+ */
+uint64_t petta_libpl_capability_revision(
+    const CettaLibPrologRuntime *runtime);
+
+/*
  * Plan-time resolution of a source application head against the live
  * engine, mirroring the reference translator: a name current_predicate/1
  * enumerates (or an arity/2 row declares) is registered as an import on

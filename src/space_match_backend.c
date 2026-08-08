@@ -64,23 +64,29 @@ static void pathmap_record_elapsed(CettaRuntimeCounter counter,
 }
 
 static bool pathmap_indexed_query_enabled(void) {
-    const char *value = getenv("CETTA_PATHMAP_QUERY_INDEX");
-    if (!value || !*value)
-        return true;
-    return strcmp(value, "0") != 0 &&
-           strcmp(value, "false") != 0 &&
-           strcmp(value, "off") != 0 &&
-           strcmp(value, "no") != 0;
+    static _Thread_local int enabled = -1;
+    if (enabled < 0) {
+        const char *value = getenv("CETTA_PATHMAP_QUERY_INDEX");
+        enabled = !value || !*value ||
+                  (strcmp(value, "0") != 0 &&
+                   strcmp(value, "false") != 0 &&
+                   strcmp(value, "off") != 0 &&
+                   strcmp(value, "no") != 0);
+    }
+    return enabled != 0;
 }
 
 static bool pathmap_batch_mutation_enabled(void) {
-    const char *value = getenv("CETTA_PATHMAP_BATCH_MUTATION");
-    if (!value || !*value)
-        return true;
-    return strcmp(value, "0") != 0 &&
-           strcmp(value, "false") != 0 &&
-           strcmp(value, "off") != 0 &&
-           strcmp(value, "no") != 0;
+    static _Thread_local int enabled = -1;
+    if (enabled < 0) {
+        const char *value = getenv("CETTA_PATHMAP_BATCH_MUTATION");
+        enabled = !value || !*value ||
+                  (strcmp(value, "0") != 0 &&
+                   strcmp(value, "false") != 0 &&
+                   strcmp(value, "off") != 0 &&
+                   strcmp(value, "no") != 0);
+    }
+    return enabled != 0;
 }
 
 static bool pathmap_local_visit_bindings_indexed(

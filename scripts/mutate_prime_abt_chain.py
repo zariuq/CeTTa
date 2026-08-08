@@ -1,16 +1,14 @@
 #!/usr/bin/env python3
-"""Create a Prime chain mutant that closes an outer binder through shadowing."""
+"""Create a Prime chain mutant that drops repeated-name refinement."""
 
 from pathlib import Path
 import sys
 
 
-MARKER = "Atom *nested = prime_runtime_elaborate_binders(signature, a, body);"
+MARKER = "TAIL_REENTER(refinement);"
 MUTATION = (
-    "Atom *discarded_nested = "
-    "prime_runtime_elaborate_binders(signature, a, body);\n"
-    "            (void)discarded_nested;\n"
-    "            Atom *nested = body;"
+    "(void)refinement;\n"
+    "            TAIL_REENTER(body);"
 )
 
 

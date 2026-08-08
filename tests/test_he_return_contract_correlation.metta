@@ -87,6 +87,21 @@
 (= (undefined-result 1) "dynamic")
 !(assertEqual (undefined-result 1) "dynamic")
 
+; When multiple contracts accept the same argument, the first applicable
+; declaration owns the result contract.  A later overload cannot be used to
+; reinterpret either success or failure.
+(: overlap-order-accept (-> $t Number))
+(: overlap-order-accept (-> Number String))
+(= (overlap-order-accept $x) 1)
+!(assertEqual (overlap-order-accept 1) 1)
+
+(: overlap-order-reject (-> Number String))
+(: overlap-order-reject (-> $t Number))
+(= (overlap-order-reject $x) 1)
+!(assertEqualToResult
+  (overlap-order-reject 1)
+  ((Error 1 (BadType String Number))))
+
 (: expression-result (-> Number Expression))
 (: expression-result (-> String String))
 (= (expression-result 1) "dynamic")

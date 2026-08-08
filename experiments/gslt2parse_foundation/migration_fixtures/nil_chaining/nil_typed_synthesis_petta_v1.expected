@@ -1,0 +1,10 @@
+is ((: (blackbird h i) (-> String Number Number))), should ((: (blackbird h i) (-> String Number Number))). ✅ 
+()
+true
+true
+true
+true
+()
+true
+true
+true

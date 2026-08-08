@@ -1,6 +1,7 @@
 #ifndef CETTA_PREPARED_PURE_MACHINE_H
 #define CETTA_PREPARED_PURE_MACHINE_H
 
+#include "match_decision.h"
 #include "space.h"
 
 /*
@@ -68,7 +69,8 @@ CettaPreparedPureProgram *cetta_prepared_pure_program_compile(
     CettaPreparedPureRegisterViewFn register_view,
     CettaPreparedPureExpressionViewFn expression_view,
     CettaPreparedPurePatternViewFn pattern_view,
-    bool total_structural_equality);
+    bool total_structural_equality,
+    CettaMatchDecisionSemanticIdentity match_decision_semantics);
 
 /* Compile a closed, deterministic, effect-free expression into the same
  * explicit-stack machine used by prepared folds.  Callable arguments are
@@ -83,7 +85,8 @@ CettaPreparedPureProgram *cetta_prepared_pure_program_compile_closed(
     CettaPreparedPureExpressionViewFn expression_view,
     CettaPreparedPurePatternViewFn pattern_view,
     bool entry_arguments_are_values,
-    bool total_structural_equality);
+    bool total_structural_equality,
+    CettaMatchDecisionSemanticIdentity match_decision_semantics);
 
 bool cetta_prepared_pure_program_is_current(
     const CettaPreparedPureProgram *program);

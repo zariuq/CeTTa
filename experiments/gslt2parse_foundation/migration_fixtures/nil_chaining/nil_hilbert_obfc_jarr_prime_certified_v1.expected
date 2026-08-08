@@ -1,0 +1,1 @@
+[((Certified (imp (imp (imp p q) r) (imp q r))) (Certified (imp (imp (imp p q) r) (imp q r))))]
