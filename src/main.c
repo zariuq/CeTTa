@@ -1228,7 +1228,7 @@ static void print_usage(FILE *out) {
     fputs("       cetta --count-only <file.metta>        # print result counts only\n", out);
     fputs("       cetta --quiet <file.metta>              # hide pure [()] success clutter\n", out);
     fputs("       cetta --emit-runtime-stats <file.metta> # dump runtime counters to stderr after execution\n", out);
-    fputs("       cetta --emit-prime-need-trace <file.metta> # emit per-answer Prime receipts to stderr\n", out);
+    fputs("       cetta --emit-prime-need-trace <file.metta> # emit exact Prime occurrences, receipts, and completion to stderr\n", out);
     fputs("       cetta --lang prime --prime-rewrite-frontier <monolithic|candidate-local|demand-cohort> <file.metta>\n", out);
     fputs("       cetta --eval-hashcons <file.metta>      # experimental: hash-cons eval-arena atoms\n", out);
     fputs("       cetta --pretty-vars <file.metta>       # pretty-print result vars for humans\n", out);
@@ -2963,9 +2963,13 @@ int main(int argc, char **argv) {
                     &detailed, prime_need_trace_answer, &trace);
                 fprintf(stderr,
                         "(prime-need:completion %" PRIu64 " %s"
+                        " (occurrences %zu) (values %zu) (faults %zu)"
                         " (steps %" PRIu64 "))\n",
                         trace.form,
                         eval_completion_reason(detailed.completion),
+                        (size_t)detailed.results.len,
+                        (size_t)eval_outcome_value_count(&detailed),
+                        (size_t)eval_outcome_fault_count(&detailed),
                         detailed.steps_spent);
             } else {
                 result_set_init(&rs);

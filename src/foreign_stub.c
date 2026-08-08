@@ -149,6 +149,27 @@ bool cetta_foreign_call(CettaForeignRuntime *rt,
     return false;
 }
 
+bool cetta_foreign_dispatch_native_results(CettaForeignRuntime *rt,
+                                           Space *space,
+                                           Arena *a,
+                                           Atom *head,
+                                           Atom **args,
+                                           uint32_t nargs,
+                                           ResultSet *results) {
+    (void)rt;
+    (void)space;
+    if (!head || !results)
+        return false;
+    if (atom_is_symbol_id(head, g_builtin_syms.py_atom) ||
+        atom_is_symbol_id(head, g_builtin_syms.py_call) ||
+        atom_is_symbol_id(head, g_builtin_syms.py_dot)) {
+        result_set_add(results,
+                       foreign_unavailable_error(a, head, args, nargs));
+        return true;
+    }
+    return false;
+}
+
 Atom *cetta_foreign_dispatch_native(CettaForeignRuntime *rt,
                                     Space *space,
                                     Arena *a,

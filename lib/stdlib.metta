@@ -169,14 +169,26 @@
     (@param "collapse-bind result to extract atom from, should be a pair of atom and bindings")))
   (@return "List with new atom as a head"))
 
+(@doc superpose
+  (@desc "Branches over the elements of one expression datum without first-class collection semantics. (superpose ()) produces computation zero; (superpose (())) produces one occurrence whose value is unit. Prime preserves ordinary Empty and fault occurrences rather than treating them as sentinels.")
+  (@params (
+    (@param "Expression whose elements become answer occurrences")))
+  (@return "Nondeterministic answer occurrences"))
+
+(@doc collapse
+  (@desc "Batch-materializes a finite answer traversal as one expression datum in the active traversal order. In Prime, zero answers produce (), one unit-valued answer produces (()), and Empty and fault occurrences are retained. The returned expression contains occurrences only: it does not encode completion, receipts, or other exact-run information. Use let, case, or fold when answers should remain streaming computations rather than collection data.")
+  (@params (
+    (@param "Computation whose visible occurrences are materialized")))
+  (@return "One expression datum containing the visible occurrence sequence"))
+
 (@doc select
-  (@desc "HE-extended committed choice over nondeterministic results. The primary form (select results) returns the first non-empty result encountered under the active traversal policy. The extended forms (select k results), (select (search-policy lane) results), and (select k (search-policy lane) results) expose bounded selection and explicit search-lane choice.")
+  (@desc "HE-extended committed choice over nondeterministic results. The primary form (select results) returns the first occurrence encountered under the active traversal policy. HE compatibility profiles omit their Empty sentinel; Prime treats Empty and faults as ordinary retained occurrences. The extended forms (select k results), (select (search-policy lane) results), and (select k (search-policy lane) results) expose bounded selection and explicit search-lane choice.")
   (@params (
     (@param "Result expression to evaluate")))
   (@return "Selected result, or a bounded packet in the two-argument extended form"))
 
 (@doc collect
-  (@desc "Compatibility collector over nondeterministic results. Evaluates the result fan-out, packages all non-empty results into one expression, and preserves the current traversal order. Prefer collapse in new code when you do not need explicit search-policy or result-order control. The policy form (collect (search-policy lane) results) keeps the lane/order choice explicit.")
+  (@desc "Compatibility collector over nondeterministic results. Evaluates the result fan-out, packages the visible occurrence sequence into one expression, and preserves the current traversal order. HE compatibility profiles omit their Empty sentinel; Prime retains Empty and fault occurrences. Prefer collapse in new code when you do not need explicit search-policy or result-order control. The policy form (collect (search-policy lane) results) keeps the lane/order choice explicit.")
   (@params (
     (@param "Result expression to evaluate")))
   (@return "Collected expression of surviving results in current traversal order"))
@@ -188,7 +200,7 @@
   (@return "Nondeterministic branch results"))
 
 (@doc fold
-  (@desc "HE-extended fold over nondeterministic results. Evaluates a result fan-out, skips Empty results, and folds the surviving items into one accumulator without first packaging them into an expression. The primary form is (fold results init $acc $item step). The policy form (fold (search-policy lane) results init $acc $item step) keeps the same lane and ordering controls as select and collect. Each fold step must produce exactly one non-empty result. If the step is order-sensitive, the final value follows engine/policy traversal order rather than a semantic ordering guarantee.")
+  (@desc "HE-extended fold over nondeterministic results. Evaluates a result fan-out and folds its visible occurrences into one accumulator without first packaging them into an expression. HE compatibility profiles omit their Empty sentinel; Prime folds an inert Empty datum normally and does not silently discard fault occurrences. The primary form is (fold results init $acc $item step). The policy form (fold (search-policy lane) results init $acc $item step) keeps the same lane and ordering controls as select and collect. Each fold step must produce exactly one result under the active profile. If the step is order-sensitive, the final value follows engine/policy traversal order rather than a semantic ordering guarantee.")
   (@params (
     (@param "Result expression to evaluate")
     (@param "Initial accumulator value")
@@ -198,7 +210,7 @@
   (@return "Final accumulator value after folding the surviving results"))
 
 (@doc fold-by-key
-  (@desc "HE-extended grouped fold over nondeterministic results. Evaluates a result fan-out, skips Empty results, computes one grouping key per surviving item, and folds each group into its own accumulator without first packaging the full result set by key in user code. The primary form is (fold-by-key results init $acc $item key step). The policy form (fold-by-key (search-policy lane) results init $acc $item key step) keeps the same lane and ordering controls as select, collect, and fold. The key expression must produce exactly one non-empty key per item. The step expression must produce exactly one non-empty next accumulator. Results are emitted as two-element expressions (key accumulator) in first-encounter order under the active traversal policy.")
+  (@desc "HE-extended grouped fold over nondeterministic results. Evaluates a result fan-out, computes one grouping key per visible occurrence, and folds each group into its own accumulator without first packaging the full result set by key in user code. HE compatibility profiles omit their Empty sentinel; Prime treats inert Empty as ordinary data and does not silently discard fault occurrences. The primary form is (fold-by-key results init $acc $item key step). The policy form (fold-by-key (search-policy lane) results init $acc $item key step) keeps the same lane and ordering controls as select, collect, and fold. The key and step expressions must each produce exactly one result under the active profile. Results are emitted as two-element expressions (key accumulator) in first-encounter order under the active traversal policy.")
   (@params (
     (@param "Result expression to evaluate")
     (@param "Initial accumulator value for each key")
@@ -222,7 +234,7 @@
   (@desc "Compatibility alias for select. Prefer select in new code. The policy form (once (search-policy lane) results) is supported for legacy call sites that still want explicit search-lane choice.")
   (@params (
     (@param "Result expression to evaluate")))
-  (@return "First non-empty result encountered under the active traversal policy"))
+  (@return "First visible occurrence encountered under the active traversal policy"))
 
 (@doc search-policy
   (@desc "Search-policy literal constructor for explicit controlled-search calls. The current native CeTTa lane is recursive-dependent-proof, and it supports result-order control through (search-policy recursive-dependent-proof), (search-policy recursive-dependent-proof (order reverse)), (search-policy recursive-dependent-proof (order lex)), and (search-policy recursive-dependent-proof (order shortlex)). The lex mode orders results by canonical rendered-atom bytes. The shortlex mode orders results by canonical rendered-atom length first, then bytewise lexical order. ATP and solver lanes are named here for future explicit oracle work, but are not executed by the native evaluator yet.")
@@ -519,6 +531,8 @@
 
 ; Small public stdlib wrappers that HE exposes over existing tuple/nondeterministic
 ; primitives. These are lightweight compatibility surfaces rather than new engines.
+; Prime intercepts the nullary (empty) form as computation zero before this
+; HE-compatible sentinel equation is considered.
 (= (empty) Empty)
 
 (= (unique $arg)
@@ -680,12 +694,12 @@
     (collapse
       (match $space (@doc $name (@desc $desc) $params $ret)
         (let () (println! (format-args "{}\n\t{}" (noeval ($name $desc))))
-          Empty)))
+          (empty))))
     (let $_
       (collapse
         (match $space (@doc $name (@desc $desc))
           (let () (println! (format-args "{}\n\t{}" (noeval ($name $desc))))
-            Empty)))
+            (empty))))
       ())))
 
 (= (help-param! $param)

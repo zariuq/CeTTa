@@ -77,9 +77,9 @@ void result_set_init(ResultSet *rs);
 void result_set_add(ResultSet *rs, Atom *atom);
 void result_set_free(ResultSet *rs);
 
-/* Evaluation completion is separate from the result frontier.  Existing
+/* Evaluation coverage is separate from the occurrence frontier.  Existing
    callers that only need HE-compatible answers continue to use metta_eval;
-   callers making universal or no-more-results claims use EvalOutcome. */
+   callers making universal or no-more-occurrences claims use EvalOutcome. */
 typedef enum {
     CETTA_EVAL_COMPLETE = 0,
     CETTA_EVAL_INCOMPLETE_FUEL,
@@ -89,6 +89,9 @@ typedef enum {
 } CettaEvalCompletion;
 
 typedef struct EvalOutcome {
+    /* Ordered occurrence bag.  Prime retains both ordinary values and
+       Error-headed fault occurrences here; compatibility projections may be
+       applied only after this exact carrier has been produced. */
     ResultSet results;
     CettaEvalCompletion completion;
     bool budget_limited;
@@ -97,12 +100,26 @@ typedef struct EvalOutcome {
     uint64_t steps_spent;
 } EvalOutcome;
 
+typedef enum {
+    CETTA_EVAL_ZERO_COMPLETE = 0,
+    CETTA_EVAL_NONZERO,
+    CETTA_EVAL_ZERO_PENDING,
+} CettaEvalZeroStatus;
+
 typedef void (*CettaPrimeNeedAnswerObserver)(
     Atom *answer, const PrimeNeedReceipt *receipt, void *context);
 struct PettaPlanNode;
 
 void eval_outcome_init(EvalOutcome *outcome);
 void eval_outcome_free(EvalOutcome *outcome);
+/* Derived, deliberately lossy projections of the exact occurrence bag.  The
+   projected ResultSets borrow their Atom payloads from `outcome`; callers own
+   only the ResultSet arrays and release them with result_set_free. */
+void eval_outcome_project_values(const EvalOutcome *outcome, ResultSet *values);
+void eval_outcome_project_faults(const EvalOutcome *outcome, ResultSet *faults);
+CettaCount eval_outcome_value_count(const EvalOutcome *outcome);
+CettaCount eval_outcome_fault_count(const EvalOutcome *outcome);
+CettaEvalZeroStatus eval_outcome_zero_status(const EvalOutcome *outcome);
 const char *eval_completion_reason(CettaEvalCompletion completion);
 uint64_t eval_current_c_stack_budget_bytes(void);
 

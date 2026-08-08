@@ -3,6 +3,8 @@
 ;   (empty) is the computation that produces no occurrences;
 ;   case's positional third argument observes only a completed-zero source.
 
+!(import! &self system)
+
 (= (prime-empty:nested-zero)
    (empty))
 
@@ -15,6 +17,18 @@
 ; The explicit zero form has no occurrence, including across an equation.
 !(assertEqualToResult
    (collapse (empty))
+   (()))
+
+!(assertEqualToResult
+   (collapse ())
+   ((())))
+
+!(assertEqualToResult
+   (superpose ())
+   ())
+
+!(assertEqualToResult
+   (superpose (()))
    (()))
 
 !(assertEqualToResult
@@ -108,6 +122,25 @@
      unexpected-zero)
    (A B))
 
+; Prime's exact occurrence carrier retains sibling faults.  Collection and
+; streaming operators may derive success-only views explicitly, but the
+; evaluator itself never deletes a fault merely because another branch won.
+!(assertEqualToResult
+   (collapse (superpose ((Error prime-report boom) ok)))
+   (((Error prime-report boom) ok)))
+
+!(assertEqualToResult
+   (collapse
+     (let $value (superpose ((Error prime-report boom) ok))
+       (seen $value)))
+   (((Error prime-report boom) (seen ok))))
+
+!(assertEqualToResult
+   (collapse
+     (case (superpose ((Error prime-report boom) ok))
+       (($value (seen $value)))))
+   (((Error prime-report boom) (seen ok))))
+
 ; The same datum survives optimized streaming, selection, equation matching,
 ; parallel fan-out, and physical-space paths.  These fixtures guard the less
 ; obvious evaluator fast paths, not merely the top-level renderer.
@@ -123,6 +156,11 @@
    (chain Empty $value
      (seen $value))
    ((seen Empty)))
+
+!(assertEqualToResult
+   (chain (empty) $value
+     (unexpected $value))
+   ())
 
 !(assertEqualToResult
    (let* (($value Empty))
@@ -154,4 +192,10 @@
      (seen Empty))
    ((seen Empty)))
 
-!(println! (PrimeEmptyObservationSummary 26 26 0))
+; Domain absence is ordinary, explanatory data rather than the historical
+; cross-cutting Empty sentinel.
+!(assertEqualToResult
+   (system:arg 0)
+   ((CliArgumentNotFound 0)))
+
+!(println! (PrimeEmptyObservationSummary 34 34 0))

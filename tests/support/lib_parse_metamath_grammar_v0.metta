@@ -424,9 +424,9 @@
 (= (mm-raw-token $stream)
    (let $res (text-stream:read-token $stream)
      (case $res
-       ((Empty Empty)
+       ((AtEof AtEof)
         ((TokenResult $tok $next) (mm-raw-token2 $tok $next))
-        ($o Empty)))))
+        ($o $o)))))
 
 (= (mm-raw-token2 $tok $next)
    (if (== $tok "$(")
@@ -435,9 +435,9 @@
 
 (= (mm-skip-comment $stream)
    (case (text-stream:read-until $stream "$)")
-     ((Empty Empty)
+     (((TextNotFound $needle) (TextNotFound $needle))
       ((ReadUntilResult $body $next) (mm-raw-token (text-stream:advance $next 2)))
-      ($o Empty))))
+      ($o $o))))
 
 (= (mm-word-label $raw) (Lex mm-label $raw))
 (= (mm-word-sym $raw) (Lex mm-sym $raw))
@@ -555,7 +555,7 @@
 (= (mm-lex-go $stream $state $rev)
    (let $res (mm-raw-token $stream)
      (case $res
-       ((Empty (mm-lex-finish $state $rev))
+       ((AtEof (mm-lex-finish $state $rev))
         ((TokenResult $tok $next)
          (case (mm-lex-step $state $tok $next)
            (((MMEmit $out $next2 $state2)

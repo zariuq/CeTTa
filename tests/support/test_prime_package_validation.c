@@ -651,6 +651,160 @@ int main(void) {
     }
     eval_outcome_free(&bounded_outcome);
 
+    /* Prime's exact report retains sibling fault occurrences upstream of
+       every success-only projection.  Faults remain nonzero occurrences, and
+       the derived value/fault views preserve their relative source order. */
+    Atom *mixed_report_expr = parse_one(
+        &scratch,
+        "(superpose ((Error PrimeReportSource PrimeReportFault) "
+        "  PrimeReportValue))");
+    if (!mixed_report_expr) {
+        fprintf(stderr, "mixed Prime report fixture did not parse\n");
+        goto cleanup;
+    }
+    EvalOutcome mixed_report;
+    eval_outcome_init(&mixed_report);
+    metta_eval_outcome(&space, &scratch, NULL, mixed_report_expr, -1,
+                       &mixed_report);
+    ResultSet mixed_values;
+    ResultSet mixed_faults;
+    eval_outcome_project_values(&mixed_report, &mixed_values);
+    eval_outcome_project_faults(&mixed_report, &mixed_faults);
+    if (mixed_report.completion != CETTA_EVAL_COMPLETE ||
+        mixed_report.results.len != 2u ||
+        eval_outcome_value_count(&mixed_report) != 1u ||
+        eval_outcome_fault_count(&mixed_report) != 1u ||
+        eval_outcome_zero_status(&mixed_report) != CETTA_EVAL_NONZERO ||
+        mixed_values.len != 1u || mixed_faults.len != 1u ||
+        !atom_is_symbol(mixed_values.items[0], "PrimeReportValue") ||
+        !atom_is_error(mixed_faults.items[0])) {
+        fprintf(stderr, "Prime exact report lost or misclassified an occurrence\n");
+        result_set_free(&mixed_values);
+        result_set_free(&mixed_faults);
+        eval_outcome_free(&mixed_report);
+        goto cleanup;
+    }
+    result_set_free(&mixed_values);
+    result_set_free(&mixed_faults);
+    eval_outcome_free(&mixed_report);
+
+    Atom *report_zero_expr = parse_one(&scratch, "(empty)");
+    EvalOutcome report_zero;
+    eval_outcome_init(&report_zero);
+    metta_eval_outcome(&space, &scratch, NULL, report_zero_expr, -1,
+                       &report_zero);
+    if (eval_outcome_zero_status(&report_zero) != CETTA_EVAL_ZERO_COMPLETE ||
+        eval_outcome_value_count(&report_zero) != 0u ||
+        eval_outcome_fault_count(&report_zero) != 0u) {
+        fprintf(stderr, "completed Prime zero was not reported exactly\n");
+        eval_outcome_free(&report_zero);
+        goto cleanup;
+    }
+    eval_outcome_free(&report_zero);
+
+    /* A valid empty sequence has no head/tail decomposition, while a
+       non-sequence argument is malformed.  This keeps known no-solution
+       separate from an operational fault after success-bias is removed. */
+    Atom *decons_zero_expr = parse_one(&scratch, "(decons-atom ())");
+    EvalOutcome decons_zero;
+    eval_outcome_init(&decons_zero);
+    metta_eval_outcome(&space, &scratch, NULL, decons_zero_expr, -1,
+                       &decons_zero);
+    if (eval_outcome_zero_status(&decons_zero) !=
+            CETTA_EVAL_ZERO_COMPLETE ||
+        decons_zero.results.len != 0u) {
+        fprintf(stderr, "empty Prime sequence did not decompose to zero\n");
+        eval_outcome_free(&decons_zero);
+        goto cleanup;
+    }
+    eval_outcome_free(&decons_zero);
+
+    Atom *decons_fault_expr =
+        parse_one(&scratch, "(decons-atom PrimeNotASequence)");
+    EvalOutcome decons_fault;
+    eval_outcome_init(&decons_fault);
+    metta_eval_outcome(&space, &scratch, NULL, decons_fault_expr, -1,
+                       &decons_fault);
+    if (decons_fault.results.len != 1u ||
+        eval_outcome_fault_count(&decons_fault) != 1u ||
+        eval_outcome_zero_status(&decons_fault) != CETTA_EVAL_NONZERO) {
+        fprintf(stderr, "malformed Prime decons did not remain a fault\n");
+        eval_outcome_free(&decons_fault);
+        goto cleanup;
+    }
+    eval_outcome_free(&decons_fault);
+
+#if CETTA_BUILD_WITH_PYTHON
+    /* The symbolic Python convenience surface must preserve its occurrence
+       bag in Prime.  In particular, zero and many results cannot be encoded
+       as the Empty datum and one tuple-shaped datum. */
+    Atom *foreign_zero_expr = parse_one(
+        &scratch, "(py-call (builtins.list))");
+    EvalOutcome foreign_zero;
+    eval_outcome_init(&foreign_zero);
+    metta_eval_outcome(&space, &scratch, NULL, foreign_zero_expr, -1,
+                       &foreign_zero);
+    if (foreign_zero.completion != CETTA_EVAL_COMPLETE ||
+        foreign_zero.results.len != 0u ||
+        eval_outcome_zero_status(&foreign_zero) !=
+            CETTA_EVAL_ZERO_COMPLETE) {
+        fprintf(stderr, "Prime foreign zero was encoded as a datum\n");
+        eval_outcome_free(&foreign_zero);
+        goto cleanup;
+    }
+    eval_outcome_free(&foreign_zero);
+
+    Atom *foreign_many_expr = parse_one(
+        &scratch, "(py-call (builtins.divmod 8 3))");
+    EvalOutcome foreign_many;
+    eval_outcome_init(&foreign_many);
+    metta_eval_outcome(&space, &scratch, NULL, foreign_many_expr, -1,
+                       &foreign_many);
+    if (foreign_many.results.len != 2u ||
+        foreign_many.results.items[0]->kind != ATOM_GROUNDED ||
+        foreign_many.results.items[0]->ground.gkind != GV_INT ||
+        foreign_many.results.items[0]->ground.ival != 2 ||
+        foreign_many.results.items[1]->kind != ATOM_GROUNDED ||
+        foreign_many.results.items[1]->ground.gkind != GV_INT ||
+        foreign_many.results.items[1]->ground.ival != 2) {
+        fprintf(stderr, "Prime foreign result bag was tuple-encoded\n");
+        eval_outcome_free(&foreign_many);
+        goto cleanup;
+    }
+    eval_outcome_free(&foreign_many);
+
+    Atom *foreign_empty_datum_expr = parse_one(
+        &scratch, "(py-call (cetta_bridge.CettaAtom Empty))");
+    EvalOutcome foreign_empty_datum;
+    eval_outcome_init(&foreign_empty_datum);
+    metta_eval_outcome(&space, &scratch, NULL, foreign_empty_datum_expr, -1,
+                       &foreign_empty_datum);
+    if (foreign_empty_datum.results.len != 1u ||
+        !atom_is_empty(foreign_empty_datum.results.items[0])) {
+        fprintf(stderr, "Prime foreign Empty datum acquired zero authority\n");
+        eval_outcome_free(&foreign_empty_datum);
+        goto cleanup;
+    }
+    eval_outcome_free(&foreign_empty_datum);
+
+    Atom *foreign_nested_expr = parse_one(
+        &scratch,
+        "(let $item (py-call (builtins.divmod 8 3)) (seen $item))");
+    Atom *foreign_nested_expected = parse_one(&scratch, "(seen 2)");
+    EvalOutcome foreign_nested;
+    eval_outcome_init(&foreign_nested);
+    metta_eval_outcome(&space, &scratch, NULL, foreign_nested_expr, -1,
+                       &foreign_nested);
+    if (foreign_nested.results.len != 2u ||
+        !atom_eq(foreign_nested.results.items[0], foreign_nested_expected) ||
+        !atom_eq(foreign_nested.results.items[1], foreign_nested_expected)) {
+        fprintf(stderr, "Prime foreign occurrences did not stream through let\n");
+        eval_outcome_free(&foreign_nested);
+        goto cleanup;
+    }
+    eval_outcome_free(&foreign_nested);
+#endif
+
     /* Prime case's positional fallback observes only a completed-zero
        source.  An empty open prefix must remain incomplete and must never
        manufacture the fallback occurrence. */
@@ -693,7 +847,9 @@ int main(void) {
     metta_eval_outcome(&space, &scratch, NULL, open_source_case, 64,
                        &open_source_outcome);
     if (open_source_outcome.completion != CETTA_EVAL_INCOMPLETE_FUEL ||
-        open_source_outcome.results.len != 0u) {
+        open_source_outcome.results.len != 0u ||
+        eval_outcome_zero_status(&open_source_outcome) !=
+            CETTA_EVAL_ZERO_PENDING) {
         fprintf(stderr,
                 "open empty source was laundered into case fallback\n");
         eval_outcome_free(&open_source_outcome);
