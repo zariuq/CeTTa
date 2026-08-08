@@ -2,6 +2,8 @@
 #include "atom.h"
 #include "parser.h"
 #include "he_compiled_reader.h"
+#include "gslt_language_runtime.h"
+#include "generated/zero_language_v1.generated.h"
 #include "petta_compiled_reader.h"
 #include "petta_typecheck.h"
 #include "lib_prolog.h"
@@ -1653,6 +1655,7 @@ typedef struct {
     bool parser_universal_names_old;
     void *document_reader_context;
     void (*document_reader_free)(void *context);
+    CettaGsltLanguage *gslt_language;
 } CettaMainCleanup;
 
 static void cetta_main_cleanup_registry_spaces(
@@ -1713,6 +1716,8 @@ static void cetta_main_cleanup(CettaMainCleanup *cleanup) {
         cleanup->document_reader_free(cleanup->document_reader_context);
     cleanup->document_reader_context = NULL;
     cleanup->document_reader_free = NULL;
+    cetta_gslt_language_free(cleanup->gslt_language);
+    cleanup->gslt_language = NULL;
 
     if (cleanup->registry_initialized) {
         if (cleanup->space_initialized) {
@@ -2428,6 +2433,7 @@ int main(int argc, char **argv) {
     HECompiledReaderV1 *he_compiled_reader = NULL;
     PeTTaCompiledReaderV1 *petta_compiled_reader = NULL;
     PrimeCompiledReaderV1 *prime_compiled_reader = NULL;
+    CettaGsltLanguage *gslt_language = NULL;
     CettaMainCleanup cleanup = {0};
     bool lang_is_mm2 = strcmp(lang->canonical, "mm2") == 0;
     char document_reader_error[512] = {0};
@@ -2444,6 +2450,7 @@ int main(int argc, char **argv) {
     cleanup.hashcons_table = &hashcons_table;
     cleanup.document_reader_context = NULL;
     cleanup.document_reader_free = NULL;
+    cleanup.gslt_language = NULL;
     cleanup.libraries = &libraries;
     cleanup.space = &space;
     cleanup.registry = &registry;
@@ -2555,7 +2562,34 @@ int main(int argc, char **argv) {
             lang->id == CETTA_LANGUAGE_PRIME);
     cleanup.parser_universal_names_set = true;
 
-    if (lang->id == CETTA_LANGUAGE_HE) {
+    const char *document_reader_capability = NULL;
+    if (lang->id == CETTA_LANGUAGE_HE)
+        document_reader_capability = "he-reader-direct-v1";
+    else if (lang->id == CETTA_LANGUAGE_PETTA)
+        document_reader_capability = "petta-reader-direct-v1";
+    else if (lang->id == CETTA_LANGUAGE_PRIME)
+        document_reader_capability = "prime-reader-direct-v1";
+    else if (lang->id == CETTA_LANGUAGE_ZERO) {
+        char language_error[512] = {0};
+        if (!cetta_gslt_language_load_embedded(
+                &cetta_zero_language_v1, &gslt_language,
+                language_error, sizeof(language_error)) ||
+            strcmp(cetta_gslt_language_name(gslt_language),
+                   lang->canonical) != 0) {
+            fprintf(stderr,
+                    "error: could not load generated language pack: %s\n",
+                    language_error[0] ? language_error
+                                      : "language identity mismatch");
+            rc = 1;
+            goto cleanup;
+        }
+        cleanup.gslt_language = gslt_language;
+        document_reader_capability =
+            cetta_gslt_language_syntax_backend(gslt_language);
+    }
+
+    if (document_reader_capability &&
+        strcmp(document_reader_capability, "he-reader-direct-v1") == 0) {
         char reader_error[512] = {0};
         ParserDocumentIdsBackend reader_backend;
         he_compiled_reader = he_compiled_reader_v1_new();
@@ -2580,7 +2614,9 @@ int main(int argc, char **argv) {
             rc = 1;
             goto cleanup;
         }
-    } else if (lang->id == CETTA_LANGUAGE_PETTA) {
+    } else if (document_reader_capability &&
+               strcmp(document_reader_capability,
+                      "petta-reader-direct-v1") == 0) {
         char reader_error[512] = {0};
         ParserDocumentIdsBackend reader_backend;
         petta_compiled_reader = petta_compiled_reader_v1_new();
@@ -2607,7 +2643,9 @@ int main(int argc, char **argv) {
             rc = 1;
             goto cleanup;
         }
-    } else if (lang->id == CETTA_LANGUAGE_PRIME) {
+    } else if (document_reader_capability &&
+               strcmp(document_reader_capability,
+                      "prime-reader-direct-v1") == 0) {
         char reader_error[512] = {0};
         ParserDocumentIdsBackend reader_backend;
         prime_compiled_reader = prime_compiled_reader_v1_new();
@@ -2634,6 +2672,12 @@ int main(int argc, char **argv) {
             rc = 1;
             goto cleanup;
         }
+    } else if (document_reader_capability) {
+        fprintf(stderr, "error: generated language selected an unknown "
+                        "reader capability '%s'\n",
+                document_reader_capability);
+        rc = 1;
+        goto cleanup;
     }
 
     space_init_with_universe(&space, &libraries.term_universe);
@@ -2683,6 +2727,65 @@ int main(int argc, char **argv) {
             rc = 1;
             goto cleanup;
         }
+    }
+
+    if (lang->id == CETTA_LANGUAGE_ZERO) {
+        if (compile_mode) {
+            fprintf(stderr,
+                    "error: --compile is not a declared MeTTa Zero observation\n");
+            rc = 2;
+            goto cleanup;
+        }
+        Atom **forms = n > 0
+            ? cetta_malloc(sizeof(*forms) * (size_t)n) : NULL;
+        for (int index = 0; index < n; index++)
+            forms[index] = term_universe_get_atom(
+                &libraries.term_universe, atom_ids[index]);
+        CettaGsltLanguageResult observed;
+        CettaGsltHornLimits limits = {
+            .max_rule_attempts = 10000000u,
+            .max_answers = 1000000u,
+            .max_depth = 10000u,
+        };
+        char language_error[512] = {0};
+        bool executed = cetta_gslt_language_execute_atoms(
+            gslt_language, forms, (size_t)n, &eval_arena, limits,
+            &observed, language_error, sizeof(language_error));
+        free(forms);
+        if (!executed) {
+            fprintf(stderr, "error: generated language execution failed: %s\n",
+                    language_error[0] ? language_error : "unknown failure");
+            rc = 1;
+            goto cleanup;
+        }
+        if (observed.outcome != CETTA_GSLT_HORN_COMPLETED) {
+            fprintf(stderr,
+                    "error: generated language execution is incomplete "
+                    "(outcome=%u, attempts=%" PRIu64 ")\n",
+                    (unsigned)observed.outcome, observed.rule_attempts);
+            cetta_gslt_language_result_free(&observed);
+            rc = 1;
+            goto cleanup;
+        }
+        ResultSet visible;
+        result_set_init(&visible);
+        for (size_t index = 0u; index < observed.answer_count; index++)
+            result_set_add(&visible, observed.answers[index]);
+        if (visible.len == 0u &&
+            strcmp(cetta_gslt_language_observation(gslt_language),
+                   "bag") == 0)
+            fputs("[]\n", stdout);
+        else
+            write_results(stdout, &visible, lang->id, profile);
+        result_set_free(&visible);
+        cetta_gslt_language_result_free(&observed);
+        if (emit_runtime_stats) {
+            CettaRuntimeStats stats;
+            cetta_runtime_stats_snapshot(&stats);
+            cetta_runtime_stats_print(stderr, &stats);
+        }
+        rc = 0;
+        goto cleanup;
     }
 
     /*
