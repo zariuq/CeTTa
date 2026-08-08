@@ -224,6 +224,7 @@ static uint32_t cetta_language_base_surface_mask(CettaLanguageId language_id) {
     case CETTA_LANGUAGE_MM0LITE:
     case CETTA_LANGUAGE_PYASHCORE:
     case CETTA_LANGUAGE_RHOCALC:
+    case CETTA_LANGUAGE_ZERO:
         return CETTA_PROFILE_MASK_ALL;
     }
     return CETTA_PROFILE_MASK_ALL;
