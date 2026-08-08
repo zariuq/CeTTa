@@ -2,7 +2,7 @@
 #define CETTA_EXECUTION_CONTRACTS_GENERATED_H
 
 /* Generated from lib/gslt_execution_contracts.metta.
- * Source SHA-256: c7e0e132e4e8838aa56020e4479476055e9451d3a8a2794bbe2329a724f4753e
+ * Source SHA-256: 74ede1be383a633b23322f418beaacb053addb9a10030add66c089a49598c574
  */
 
 #include <stdbool.h>
@@ -33,6 +33,18 @@ static inline CettaGsltQueryEffect cetta_gslt_query_effect_join(
 #define CETTA_GSLT_QUERY_EFFECT_UNCERTAIN_HEAD     CETTA_GSLT_QUERY_EFFECT_RELATIONAL_QUERY
 #define CETTA_GSLT_QUERY_EFFECT_INERT_SYMBOL     CETTA_GSLT_QUERY_EFFECT_PURE
 #define CETTA_GSLT_INERT_EXPRESSION_CHILDREN_OPAQUE 1
+
+#define CETTA_GSLT_OPAQUE_EXPRESSION_HEAD_ROWS(X)     X(quote) \
+    X(colon) \
+    X(arrow)
+
+static inline bool cetta_gslt_query_effect_children_opaque(
+    SymbolId head, const BuiltinSyms *builtins) {
+    return builtins &&
+           (head == builtins->quote ||
+           head == builtins->colon ||
+           head == builtins->arrow);
+}
 
 #define CETTA_GSLT_TOTAL_INTEGER_HEAD_ROWS(X)     X(op_plus, 2u) \
     X(op_minus, 2u) \

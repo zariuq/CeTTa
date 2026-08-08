@@ -1714,6 +1714,7 @@ static void cetta_main_cleanup(CettaMainCleanup *cleanup) {
     }
     cetta_lib_prolog_global_shutdown();
     cetta_foreign_global_shutdown();
+    eval_match_decision_cache_free_for_current_thread();
     eval_profiled_type_cache_free_for_current_thread();
 
     if (cleanup->space_initialized) {

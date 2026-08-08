@@ -2,6 +2,7 @@
 #define CETTA_PETTA_SEARCH_MACHINE_H
 
 #include "eval.h"
+#include "match_decision.h"
 #include "petta_program.h"
 #include "petta_semantics.h"
 #include "petta_specializer.h"
@@ -48,6 +49,9 @@ typedef bool (*PettaMachineBorrowedItemConsumer)(
 
 typedef struct {
     void *context;
+    /* Candidate programs are meaningful only within this exact semantic
+     * world.  Storage revision is tracked independently by SpaceReadToken. */
+    CettaMatchDecisionSemanticIdentity match_decision_semantics;
     /* Wall-clock sampling is opt-in so normal evaluation pays no clock cost. */
     bool measure_stats;
     /*
@@ -120,6 +124,17 @@ typedef struct {
         PettaClauseCandidate **candidates,
         size_t *candidate_count,
         PettaClauseSnapshotStats *stats);
+    /* Optional evidence interpretation for a relational call.  The first
+     * callback creates one branch-independent call occurrence; the second
+     * appends evidence for a successfully matched clause to a branch-local
+     * delta.  That delta joins the same rollback trail as substitutions.
+     * A NULL pair means that clause execution has no evidence side channel. */
+    uint64_t (*begin_relation_call)(
+        void *context, SpaceReadToken read, Atom *query);
+    bool (*record_clause_use)(
+        void *context, Arena *owner, uint64_t call_occurrence,
+        const PettaClauseCandidate *candidate, Atom *result,
+        const Bindings *environment, Bindings *evidence_delta);
     bool (*translator_rule_contains)(
         void *context, SymbolId head);
     bool (*translator_rule_set)(
@@ -210,6 +225,14 @@ typedef struct {
     uint64_t clause_snapshot_candidates;
     uint64_t clause_candidates;
     uint64_t clause_candidates_shape_pruned;
+    uint64_t match_decision_compilations;
+    uint64_t match_decision_cache_hits;
+    uint64_t match_decision_runs;
+    uint64_t match_decision_clause_inputs;
+    uint64_t match_decision_clause_survivors;
+    uint64_t match_decision_linear_fallbacks;
+    uint64_t match_decision_unavailable_path_fallbacks;
+    uint64_t match_decision_invalidations;
     uint64_t clause_match_attempts;
     uint64_t clause_match_allocated_bytes;
     uint64_t match_candidates;
