@@ -110,11 +110,11 @@
           $guidance-cost $unsupported)
         $state
      (if (== $obligations ())
-         Empty
+         (empty)
          (let ((ATP.Obligation $hole $goal $depth $ancestors) $rest)
               (decons-atom $obligations)
            (if (atp:indexed:seen-goal $goal $ancestors)
-               Empty
+               (empty)
                (superpose
                  ((atp:agenda:expand-hypothesis
                     $knowledge $index $state)

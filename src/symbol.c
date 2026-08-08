@@ -241,7 +241,9 @@ uint32_t symbol_len(const SymbolTable *st, SymbolId id) {
 }
 
 bool symbol_id_is_builtin_surface(SymbolId id) {
-    return id != SYMBOL_ID_NONE && id <= g_builtin_syms.native_handle;
+    return id != SYMBOL_ID_NONE &&
+           (id <= g_builtin_syms.native_handle ||
+            id == g_builtin_syms.empty_form);
 }
 
 uint64_t symbol_hash_value(const SymbolTable *st, SymbolId id) {

@@ -847,6 +847,7 @@ PRIME_CONFORMANCE_TESTS = \
 	tests/prime/conformance/abt_sealed_boundary.metta \
 	tests/prime/conformance/cell_lexical_refinement.metta \
 	tests/prime/conformance/canonical_binders.metta \
+	tests/prime/conformance/empty_observation.metta \
 	tests/prime/conformance/resource_policy.metta \
 	tests/prime/conformance/occurs_check.metta \
 	tests/prime/conformance/syntax_algebra.metta \
