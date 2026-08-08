@@ -116,3 +116,15 @@
    (c14-roundtrip
      (ctx:get $saved choice)
      (ctx:get $saved choice)))
+
+; 15. A known first argument must not cancel candidates whose second support
+; is still suspended.
+(= (tournament:c15 A $y) c15-left)
+(= (tournament:c15 $x B) c15-right)
+(= (tournament:c15 A B) c15-both)
+!(tournament:c15 A (superpose (B Y)))
+
+; 16. A repeated variable is a cross-path equality constraint.  Neither
+; argument alone can refute it while the other argument remains suspended.
+(= (tournament:c16 $x $x) (c16-equal $x))
+!(tournament:c16 (superpose (A B)) (superpose (A B)))

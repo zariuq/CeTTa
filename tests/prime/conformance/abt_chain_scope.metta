@@ -1,6 +1,6 @@
 ; Prime's named chain surface lowers to the same canonical unary-binder form
 ; used by the neutral ABT waist.  The body is instantiated once per producer
-; result; multiplicity and lexical shadowing are both observable.
+; result; multiplicity and sequential refinement are both observable.
 
 (= (prime-chain-duplicate) a)
 (= (prime-chain-duplicate) a)
@@ -12,15 +12,15 @@
    (chain (prime-chain-duplicate) $x (got $x))
    ((got a) (got a)))
 
-; The inner binder shadows the outer binder in its body.
-!(assertEqual
+; Reusing the same relational name refines its established value.
+!(assertEqualToResult
    (chain a $x (chain b $x (pair $x)))
-   (pair b))
-; Its source remains outside the inner scope and can see the outer binder.
+   ())
+; A distinct name can observe the established binding in its source.
 !(assertEqual
    (chain a $x (chain $x $y (pair $x $y)))
    (pair a a))
-; Source visibility and body shadowing remain distinct even with one spelling.
+; Reusing one spelling with a compatible source succeeds once.
 !(assertEqual
    (chain a $x (chain $x $x (pair $x)))
    (pair a))
@@ -47,7 +47,13 @@
    (ABTChainV1 a (pair (idx -1)))
    ((Error (ABTChainV1 a (pair (idx -1))) ABTChainOpenFailed)))
 
-; A surface chain still binds exactly one variable.  Refactoring the scope
-; representation does not silently generalize it into pattern binding.
-!(println! (PrimeABTChainSummary 10 10 0))
-!(chain a (pair $x $y) (got $x $y))
+; Prime chain admits relational patterns.  A matching pattern contributes its
+; bindings; a non-matching pattern contributes no branch.
+!(assertEqual
+   (chain (pair a b) (pair $x $y) (got $x $y))
+   (got a b))
+!(assertEqualToResult
+   (chain a (pair $x $y) (got $x $y))
+   ())
+
+!(println! (PrimeABTChainSummary 12 12 0))

@@ -591,6 +591,29 @@ class Spec:
         if inert_children != [["inert-expression-children", "opaque"]]:
             raise SpecError(
                 "native execution must keep inert-expression children opaque")
+        self.opaque_expression_heads: list[tuple[str, str]] = []
+        for entry in entries(native, "opaque-expression-head"):
+            if len(entry) != 2:
+                raise SpecError(
+                    f"malformed opaque-expression-head: {sexpr(entry)}")
+            name = atom_text(entry[1], "opaque expression head")
+            if name not in symbol_fields:
+                raise SpecError(
+                    f"opaque expression head {name} has no symbol-table entry")
+            self.opaque_expression_heads.append(
+                (name, symbol_fields[name]))
+        if not self.opaque_expression_heads:
+            raise SpecError("at least one opaque expression head is required")
+        if len({field for _, field in self.opaque_expression_heads}) != \
+                len(self.opaque_expression_heads):
+            raise SpecError("opaque expression heads must be unique")
+        relational_fields = {field for _, field, _ in self.heads}
+        overlap = relational_fields & {
+            field for _, field in self.opaque_expression_heads}
+        if overlap:
+            raise SpecError(
+                "an opaque expression head cannot also be relational: "
+                f"{sorted(overlap)}")
 
         self.row_map: dict[str, str] = {}
         for entry in entries(native, "row"):
@@ -882,6 +905,14 @@ def render_header(spec: Spec) -> str:
         f"    X({field}, CETTA_GSLT_QUERY_EFFECT_{c_enum(effect)})"
         for _, field, effect in spec.heads
     )
+    opaque_expression_head_rows = " \\\n".join(
+        f"    X({field})"
+        for _, field in spec.opaque_expression_heads
+    )
+    opaque_expression_head_disjuncts = " ||\n           ".join(
+        f"head == builtins->{field}"
+        for _, field in spec.opaque_expression_heads
+    )
     total_integer_rows = " \\\n".join(
         f"    X({field}, {arity}u)"
         for _, field, arity in spec.total_integer_heads
@@ -1128,6 +1159,15 @@ static inline CettaGsltQueryEffect cetta_gslt_query_effect_join(
 #define CETTA_GSLT_QUERY_EFFECT_INERT_SYMBOL \
     CETTA_GSLT_QUERY_EFFECT_PURE
 #define CETTA_GSLT_INERT_EXPRESSION_CHILDREN_OPAQUE 1
+
+#define CETTA_GSLT_OPAQUE_EXPRESSION_HEAD_ROWS(X) \
+{opaque_expression_head_rows}
+
+static inline bool cetta_gslt_query_effect_children_opaque(
+    SymbolId head, const BuiltinSyms *builtins) {{
+    return builtins &&
+           ({opaque_expression_head_disjuncts});
+}}
 
 #define CETTA_GSLT_TOTAL_INTEGER_HEAD_ROWS(X) \
 {total_integer_rows}

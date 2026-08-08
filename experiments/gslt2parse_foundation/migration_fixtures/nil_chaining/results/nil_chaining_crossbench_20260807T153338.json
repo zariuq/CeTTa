@@ -1,0 +1,230 @@
+{
+ "schema": "cetta.nil-chaining-crossbench.v1",
+ "identities": {
+  "/home/aimama/aihub/repos/ngeiswei-chaining-run/experimental/backward-via-forward/bfc-xp.mm2": "b53b6079a03241f39fe7d8750b77247ce959a73c95dc55cc2b419d83df3ce5b1",
+  "/home/aimama/aihub/repos/ngeiswei-chaining-run/experimental/synthesis/SynthesizeTest.metta": "ba3279cfbdd737c67b4118cd734c0f69e0dfcb87c0b4035a082c0d658d78ac3e",
+  "/home/aimama/aihub/repos/ngeiswei-chaining-run/experimental/sumo/john-carry-flower/john-carry-flower.kif.metta": "a8df9448de199882f944e1010de42d5641a5ccf8829d1c6963fcd262f85007db",
+  "/home/aimama/aihub/repos/ngeiswei-chaining-run/experimental/sumo/rule-base.metta": "9e6f4df984188e023400af78227132178996cfd0f38c4a8f3398fc085719ab55",
+  "/home/aimama/aihub/hyperon/cetta-shared-opt-audit-20260807/experiments/gslt2parse_foundation/migration_fixtures/nil_chaining/nil_hilbert_obfc_jarr_petta_v1.metta": "3fd35be03f2169d98db49a474bb64f439b06e8e71938289300f5f0a8456fd1ac",
+  "/home/aimama/aihub/hyperon/cetta-shared-opt-audit-20260807/experiments/gslt2parse_foundation/migration_fixtures/nil_chaining/nil_typed_synthesis_petta_v1.metta": "f67ef6e0062f11ca758a29d5f8668985ef30c4e6bf1287ee92a0549638a3fdcd",
+  "/home/aimama/aihub/hyperon/cetta-shared-opt-audit-20260807/experiments/gslt2parse_foundation/migration_fixtures/nil_chaining/nil_sumo_john_carry_flower_petta_v1.metta": "f81b6acaec9281e836263507bf081e0df1c8895a62924c46ea81c9973a61b92a"
+ },
+ "cetta_binary_sha256": "1f5044fc1d7b10a65f6a206abddf23435696058558323b4363bbeedf4debdf80",
+ "samples_per_cell": 9,
+ "batches": [
+  1,
+  11,
+  101,
+  501
+ ],
+ "lanes": {
+  "swi_petta/hilbert_jarr13": {
+   "batches": {
+    "1": {
+     "median_s": 0.16689714905805886,
+     "min_s": 0.16536799306049943,
+     "max_s": 0.17157322284765542,
+     "checks_per_run": 1
+    },
+    "3": {
+     "median_s": 0.18921367218717933,
+     "min_s": 0.18820044212043285,
+     "max_s": 0.1942377898376435,
+     "checks_per_run": 3
+    },
+    "9": {
+     "median_s": 0.25612579309381545,
+     "min_s": 0.2547663589939475,
+     "max_s": 0.26019835215993226,
+     "checks_per_run": 9
+    }
+   },
+   "per_query_ms_slope": 11.153580504469573,
+   "startup_load_intercept_s": 0.15574356855358928
+  },
+  "cetta_petta/hilbert_jarr13": {
+   "batches": {
+    "1": {
+     "median_s": 0.48455928917974234,
+     "min_s": 0.47890633600763977,
+     "max_s": 0.4912761941086501,
+     "checks_per_run": 1
+    },
+    "3": {
+     "median_s": 1.4349668310023844,
+     "min_s": 1.4232615281362087,
+     "max_s": 1.449111785972491,
+     "checks_per_run": 3
+    },
+    "9": {
+     "median_s": 4.2835658171679825,
+     "min_s": 4.25835619494319,
+     "max_s": 4.301443218020722,
+     "checks_per_run": 9
+    }
+   },
+   "per_query_ms_slope": 474.87581599853,
+   "startup_load_intercept_s": 0.009683473181212321
+  },
+  "swi_petta/typed_synthesis": {
+   "batches": {
+    "1": {
+     "median_s": 0.1562767659779638,
+     "min_s": 0.15451642009429634,
+     "max_s": 0.15800405316986144,
+     "checks_per_run": 1
+    },
+    "11": {
+     "median_s": 0.1582500149961561,
+     "min_s": 0.1575435579288751,
+     "max_s": 0.16051581711508334,
+     "checks_per_run": 11
+    },
+    "101": {
+     "median_s": 0.18345470703206956,
+     "min_s": 0.18232559598982334,
+     "max_s": 0.18684891914017498,
+     "checks_per_run": 101
+    },
+    "501": {
+     "median_s": 0.292949654860422,
+     "min_s": 0.29197969613596797,
+     "max_s": 0.2970764839556068,
+     "checks_per_run": 501
+    }
+   },
+   "per_query_ms_slope": 0.2733457777649164,
+   "startup_load_intercept_s": 0.1560034202001989
+  },
+  "cetta_petta/typed_synthesis": {
+   "batches": {
+    "1": {
+     "median_s": 0.009099436923861504,
+     "min_s": 0.00860435189679265,
+     "max_s": 0.00971493311226368,
+     "checks_per_run": 1
+    },
+    "11": {
+     "median_s": 0.009786073816940188,
+     "min_s": 0.00924254790879786,
+     "max_s": 0.010336869163438678,
+     "checks_per_run": 11
+    },
+    "101": {
+     "median_s": 0.01576290000230074,
+     "min_s": 0.015160524984821677,
+     "max_s": 0.016689700074493885,
+     "checks_per_run": 101
+    },
+    "501": {
+     "median_s": 0.045682316878810525,
+     "min_s": 0.044552696868777275,
+     "max_s": 0.04782864800654352,
+     "checks_per_run": 501
+    }
+   },
+   "per_query_ms_slope": 0.07316575990989804,
+   "startup_load_intercept_s": 0.009026271163951606
+  },
+  "swi_petta/sumo_depth4": {
+   "batches": {
+    "1": {
+     "median_s": 0.16022073407657444,
+     "min_s": 0.15907425293698907,
+     "max_s": 0.1632969039492309,
+     "checks_per_run": 1
+    },
+    "11": {
+     "median_s": 0.17729183798655868,
+     "min_s": 0.1767113117966801,
+     "max_s": 0.1825209769885987,
+     "checks_per_run": 11
+    },
+    "101": {
+     "median_s": 0.3331357999704778,
+     "min_s": 0.3296212558634579,
+     "max_s": 0.3370870379731059,
+     "checks_per_run": 101
+    },
+    "501": {
+     "median_s": 1.0162422899156809,
+     "min_s": 1.0147128659300506,
+     "max_s": 1.034888369962573,
+     "checks_per_run": 501
+    }
+   },
+   "per_query_ms_slope": 1.7120431116782129,
+   "startup_load_intercept_s": 0.15850869096489623
+  },
+  "cetta_petta/sumo_depth4": {
+   "batches": {
+    "1": {
+     "median_s": 0.010793162975460291,
+     "min_s": 0.010287648998200893,
+     "max_s": 0.012068496085703373,
+     "checks_per_run": 1
+    },
+    "11": {
+     "median_s": 0.023583516012877226,
+     "min_s": 0.023052141070365906,
+     "max_s": 0.0239888490177691,
+     "checks_per_run": 11
+    },
+    "101": {
+     "median_s": 0.1421941020525992,
+     "min_s": 0.13798338104970753,
+     "max_s": 0.14691526698879898,
+     "checks_per_run": 101
+    },
+    "501": {
+     "median_s": 0.6326331968884915,
+     "min_s": 0.6277056408580393,
+     "max_s": 0.6488408620934933,
+     "checks_per_run": 501
+    }
+   },
+   "per_query_ms_slope": 1.2436800678260624,
+   "startup_load_intercept_s": 0.009549482907634228
+  },
+  "rulemachine/hilbert_jarr13_bytecode": {
+   "median_ms": 16.403167,
+   "min_ms": 16.091115,
+   "max_ms": 16.845421,
+   "process_wall_median_s": 0.020880209980532527,
+   "answer_hash16": "6c9dcf3cc0c7339b",
+   "fresh_process_per_sample": true
+  },
+  "rulemachine/hilbert_jarr13_native": {
+   "median_ms": 13.136106,
+   "min_ms": 12.57142,
+   "max_ms": 13.57895,
+   "process_wall_median_s": 0.017507057869806886,
+   "answer_hash16": "6c9dcf3cc0c7339b",
+   "fresh_process_per_sample": true
+  },
+  "rulemachine/typed_synthesis_artifact": {
+   "median_ms": 0.152451,
+   "min_ms": 0.145832,
+   "max_ms": 0.162631,
+   "process_wall_median_s": 0.004178570117801428,
+   "answer_hash16": "43efac256522330f",
+   "fresh_process_per_sample": true
+  },
+  "rulemachine/sumo_depth4_artifact": {
+   "median_ms": 0.578095,
+   "min_ms": 0.557295,
+   "max_ms": 0.632636,
+   "process_wall_median_s": 0.004486902849748731,
+   "answer_hash16": "cb8f3615760c228b",
+   "fresh_process_per_sample": true
+  },
+  "mork_mm2/hilbert_jarr13": {
+   "internal_search_median_ms": 57,
+   "internal_min_ms": 57,
+   "internal_max_ms": 58,
+   "process_wall_median_s": 0.05991603387519717,
+   "proofs": 2,
+   "answer_hash16": "3df1985c5b85751b"
+  }
+ }
+}

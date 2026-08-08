@@ -612,6 +612,8 @@ bool prime_need_snapshot_is_ancestor(const PrimeNeedSnapshot *ancestor,
         return false;
     if (!ancestor->top)
         return true;
+    if (ancestor->top == descendant->top)
+        return true;
     if (!descendant->top ||
         ancestor->top->depth > descendant->top->depth)
         return false;
@@ -641,6 +643,13 @@ bool prime_need_snapshot_merge(PrimeNeedSnapshot *dst,
                                const PrimeNeedSnapshot *src) {
     if (!dst || !src || !prime_need_snapshot_present(src))
         return dst != NULL;
+    if (prime_need_snapshot_present(dst) &&
+        dst->session_id == src->session_id && dst->top == src->top) {
+        cetta_runtime_stats_inc(
+            CETTA_RUNTIME_COUNTER_PRIME_NEED_SNAPSHOT_MERGE_IDENTICAL);
+        *dst = *src;
+        return true;
+    }
     if (!prime_need_snapshot_present(dst) ||
         prime_need_snapshot_is_ancestor(dst, src)) {
         *dst = *src;
@@ -1602,6 +1611,12 @@ bool prime_need_receipt_merge(PrimeNeedReceipt *dst,
     if (!dst || !src || !prime_need_receipt_present(src))
         return dst != NULL;
     if (!prime_need_receipt_present(dst)) {
+        *dst = *src;
+        return true;
+    }
+    if (dst->session_id == src->session_id && dst->top == src->top) {
+        cetta_runtime_stats_inc(
+            CETTA_RUNTIME_COUNTER_PRIME_NEED_RECEIPT_MERGE_IDENTICAL);
         *dst = *src;
         return true;
     }

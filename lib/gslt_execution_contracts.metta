@@ -20,6 +20,9 @@
     (= (effect $atom) pure))
   (rule inert-expression-effect
     (= (effect (InertExpr $head $children)) pure))
+  (rule opaque-head-expression-effect
+    (= (effect (OpaqueHeadExpr $head $children))
+       (head-effect $head)))
   (rule active-expression-effect
     (= (effect (ActiveExpr $head $children))
        (join-effect
@@ -446,6 +449,9 @@
   (user-head-uncertain relational-query)
   (user-head-inert pure)
   (inert-expression-children opaque)
+  (opaque-expression-head quote)
+  (opaque-expression-head :)
+  (opaque-expression-head ->)
   (pull-admission pure)
   (row malformed transport-fault)
   (row cyclic additive-zero)
