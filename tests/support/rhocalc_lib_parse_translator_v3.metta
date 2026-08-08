@@ -126,7 +126,7 @@
 
 (= (rho-skip-line-comment $cursor)
    (let $ch (text-stream:peek $cursor)
-     (if (== $ch Empty)
+     (if (== $ch AtEof)
          $cursor
          (if (== $ch "\n")
              (text-stream:advance $cursor 1)
@@ -145,7 +145,7 @@
    (rho-read-ident-acc $cursor ""))
 (= (rho-read-ident-acc $cursor $acc)
    (let $ch (text-stream:peek $cursor)
-     (if (== $ch Empty)
+     (if (== $ch AtEof)
          (LexText $acc $cursor)
          (if (rho-ident-stop $ch)
              (LexText $acc $cursor)
@@ -166,7 +166,7 @@
 (= (rho-keyword-boundary $cursor $kw)
    (let $after-kw (text-stream:advance $cursor (str:length $kw))
      (let $next (text-stream:peek $after-kw)
-       (if (== $next Empty) True (rho-keyword-delim $next)))))
+       (if (== $next AtEof) True (rho-keyword-delim $next)))))
 
 (= (rho-strip-spans Nil) Nil)
 (= (rho-strip-spans (Cons (STok $tok $start $end) $rest))

@@ -25,7 +25,7 @@
      (str:find
        "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_."
        $char)
-     ((Empty False)
+     (((TextNotFound $_missing) False)
       ($index True))))
 
 (= (lib_parse:mm-label-valid-from $label $index $length)
@@ -66,7 +66,7 @@
 
 (= (lib_parse:mm-read-token $stream)
    (case (text-stream:read-token $stream)
-     ((Empty Empty)
+     ((AtEof AtEof)
       ((TokenResult $token $next)
        (lib_parse:mm-read-token-classify $token $next))
       ($error $error))))
@@ -80,7 +80,7 @@
    (case (text-stream:read-until $stream "$)")
      (((ReadUntilResult $body $next)
        (lib_parse:mm-read-token (text-stream:advance $next 2)))
-      (Empty (Rejected (mm-lex unclosed-comment)))
+      ((TextNotFound $_needle) (Rejected (mm-lex unclosed-comment)))
       ($error $error))))
 
 (= (lib_parse:mm-emit $token $next $state)
@@ -217,7 +217,7 @@
 
 (= (lib_parse:mm-lex-go $stream $state $reverse)
    (case (lib_parse:mm-read-token $stream)
-     ((Empty (lib_parse:mm-lex-finish $state $reverse))
+     ((AtEof (lib_parse:mm-lex-finish $state $reverse))
       ((TokenResult $token $next)
        (case (lib_parse:mm-lex-step $state $token $next)
          (((MMEmit $output $next2 $state2)

@@ -7,7 +7,7 @@
 !(assertEqual (str:join "/" ("a" "b" "c")) "a/b/c")
 !(assertEqual (str:slice "abcdef" 1 4) "bcd")
 !(assertEqual (str:find "abcdef" "cd") 2)
-!(assertEqual (str:find "abcdef" "zz") Empty)
+!(assertEqual (str:find "abcdef" "zz") (TextNotFound "zz"))
 !(assertEqual (str:starts-with "alphabet" "alpha") True)
 !(assertEqual (str:ends-with "alphabet" "bet") True)
 !(assertEqual (str:trim "  hi  ") "hi")

@@ -2354,6 +2354,10 @@ static Atom *system_cli_arg(const CettaLibraryContext *ctx, Arena *a, Atom *head
                                        "expected non-negative integer index");
     }
     if (!ctx || (uint32_t)index >= ctx->cmdline_arg_len) {
+        if (ctx && ctx->session.language_id == CETTA_LANGUAGE_PRIME) {
+            return atom_expr2(a, atom_symbol(a, "CliArgumentNotFound"),
+                              atom_int(a, index));
+        }
         return atom_empty(a);
     }
     return atom_symbol(a, ctx->cmdline_args[index]);
@@ -3166,7 +3170,8 @@ static Atom *str_find(Arena *a, Atom *head, Atom **args, uint32_t nargs) {
                                        "expected text and search text");
     }
     found = strstr(haystack, needle);
-    if (!found) return atom_empty(a);
+    if (!found)
+        return atom_expr2(a, atom_symbol(a, "TextNotFound"), args[1]);
     return atom_int(a, (int64_t)(found - haystack));
 }
 
