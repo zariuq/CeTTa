@@ -8090,6 +8090,8 @@ bool petta_typecheck_declaration_block(
     PettaProgram *program, Space *space, Registry *registry,
     Atom *const *forms, size_t form_count,
     PettaTypecheckPolicy policy, PettaTypecheckBlockResult *result) {
+    if (program && !petta_program_enable_analysis(program))
+        return false;
     return petta_typecheck_declaration_block_internal(
         program, space, registry, forms, form_count,
         policy, false, result);
@@ -8552,6 +8554,10 @@ bool petta_typecheck_program_mutation(
         snprintf(
             result->diagnostic, sizeof(result->diagnostic),
             "invalid PeTTa mutation judgment");
+        return false;
+    }
+    if (!petta_program_enable_analysis(program)) {
+        result->fault = PETTA_TYPECHECK_FAULT_ALLOCATION;
         return false;
     }
     if (mutation == PETTA_TYPECHECK_MUTATION_REMOVE) {

@@ -55,6 +55,10 @@ typedef struct PettaDeclarationBlock PettaDeclarationBlock;
 
 PettaProgram *petta_program_new(void);
 void petta_program_free(PettaProgram *program);
+/* Optional language-owned catalog for analyses.  Ordinary PeTTa leaves this
+ * disabled and therefore allocates no annotation or inferred-fact state. */
+bool petta_program_enable_analysis(PettaProgram *program);
+bool petta_program_analysis_enabled(const PettaProgram *program);
 bool petta_program_is_equation(Atom *atom);
 
 /* True when PeTTa's relational machine, rather than an ordinary user

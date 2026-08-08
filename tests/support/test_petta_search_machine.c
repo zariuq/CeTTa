@@ -559,6 +559,54 @@ static void test_program_head_occurrence_index(
     space_free(&indexed_space);
 }
 
+static void test_program_analysis_sidecar_interop(
+    TermUniverse *universe, Arena *persistent, Arena *scratch) {
+    Space shared_space;
+    space_init_with_universe(&shared_space, universe);
+    PettaProgram *program = petta_program_new();
+    assert(program);
+    assert(!petta_program_analysis_enabled(program));
+
+    Atom *ordinary_annotation = add_indexed_program_clause(
+        program, &shared_space, persistent,
+        "(: ordinary-shared-value OrdinarySharedType)");
+    assert(space_length64(&shared_space) == 1u);
+    assert(space_get_at64(&shared_space, 0u) == ordinary_annotation);
+
+    Atom **types = NULL;
+    assert(petta_program_declared_types(
+               program, ordinary_annotation->expr.elems[1],
+               scratch, &types) == 0u);
+    free(types);
+
+    assert(petta_program_enable_analysis(program));
+    assert(petta_program_analysis_enabled(program));
+    types = NULL;
+    assert(petta_program_declared_types(
+               program, ordinary_annotation->expr.elems[1],
+               scratch, &types) == 1u);
+    assert(atom_alpha_eq(
+        types[0], parse_one(scratch, "OrdinarySharedType")));
+    free(types);
+
+    Atom *typed_annotation = add_indexed_program_clause(
+        program, &shared_space, persistent,
+        "(: typed-shared-value TypedSharedType)");
+    assert(space_length64(&shared_space) == 2u);
+    assert(space_get_at64(&shared_space, 0u) == ordinary_annotation);
+    assert(space_get_at64(&shared_space, 1u) == typed_annotation);
+    types = NULL;
+    assert(petta_program_declared_types(
+               program, typed_annotation->expr.elems[1],
+               scratch, &types) == 1u);
+    assert(atom_alpha_eq(
+        types[0], parse_one(scratch, "TypedSharedType")));
+    free(types);
+
+    petta_program_free(program);
+    space_free(&shared_space);
+}
+
 static void test_typed_data_purity_boundary(
     TermUniverse *universe, Arena *persistent) {
     Space typed_space;
@@ -2002,6 +2050,60 @@ static bool test_analysis_authority_token(
     return true;
 }
 
+static uint32_t test_analysis_policy_identity(void *opaque) {
+    (void)opaque;
+    return 0u;
+}
+
+static bool test_analysis_judge_value(
+    void *opaque, Space *space, Arena *scratch,
+    Atom *value, Atom *requirement,
+    PettaAnalysisCallableFn callable, void *callable_context,
+    PettaAnalysisResult *result) {
+    (void)opaque;
+    PettaTypecheckHooks hooks = {
+        .context = callable_context,
+        .callable = callable,
+    };
+    return petta_typecheck_value(
+        space, scratch, value, requirement, &hooks, result);
+}
+
+static bool test_analysis_has_runtime_classifier(
+    void *opaque, Space *space, Atom *requirement) {
+    (void)opaque;
+    return petta_typecheck_type_has_runtime_classifier(
+        space, requirement);
+}
+
+static Atom *test_analysis_error_atom(
+    void *opaque, Arena *arena, Atom *source,
+    int exit_code, const char *diagnostic) {
+    (void)opaque;
+    return petta_typecheck_error_atom(
+        arena, source, exit_code, diagnostic);
+}
+
+static const char *test_analysis_reason_name(
+    void *opaque, PettaAnalysisReason reason) {
+    (void)opaque;
+    return petta_typecheck_reason_name(reason);
+}
+
+static const PettaAnalysisService test_analysis_service = {
+    .provider_identity = UINT64_C(0x74657374616e6c79),
+    .provider_abi = 1u,
+    .capabilities = PETTA_MACHINE_ANALYSIS_TYPE_OBLIGATIONS,
+    .policy_identity = test_analysis_policy_identity,
+    .mutable_authority_token = test_analysis_authority_token,
+    .judge_value = test_analysis_judge_value,
+    .type_has_runtime_classifier =
+        test_analysis_has_runtime_classifier,
+    .error_atom = test_analysis_error_atom,
+    .reason_name = test_analysis_reason_name,
+    .validate_ready_call = test_analysis_boundary_accept,
+};
+
 static void test_analysis_capability_contract(
     Space *space, Arena *answers) {
     Atom *query = parse_one(answers, "1");
@@ -2011,8 +2113,14 @@ static void test_analysis_capability_contract(
 
     PettaMachineHost callback_without_capability = {
         .context = &authority,
-        .validate_ready_call = test_analysis_boundary_accept,
-        .semantic_authority_token = test_analysis_authority_token,
+        .analysis = &(const PettaAnalysisService){
+            .provider_identity = UINT64_C(1),
+            .provider_abi = 1u,
+            .capabilities = PETTA_MACHINE_ANALYSIS_NONE,
+            .policy_identity = test_analysis_policy_identity,
+            .mutable_authority_token = test_analysis_authority_token,
+            .validate_ready_call = test_analysis_boundary_accept,
+        },
     };
     assert(!petta_machine_init(
         &machine, space, answers, query, NULL,
@@ -2020,18 +2128,36 @@ static void test_analysis_capability_contract(
 
     PettaMachineHost capability_without_boundary = {
         .context = &authority,
-        .analysis_capabilities =
-            PETTA_MACHINE_ANALYSIS_TYPE_OBLIGATIONS,
-        .semantic_authority_token = test_analysis_authority_token,
+        .analysis = &(const PettaAnalysisService){
+            .provider_identity = UINT64_C(1),
+            .provider_abi = 1u,
+            .capabilities = PETTA_MACHINE_ANALYSIS_TYPE_OBLIGATIONS,
+            .policy_identity = test_analysis_policy_identity,
+            .mutable_authority_token = test_analysis_authority_token,
+            .judge_value = test_analysis_judge_value,
+            .type_has_runtime_classifier =
+                test_analysis_has_runtime_classifier,
+            .error_atom = test_analysis_error_atom,
+            .reason_name = test_analysis_reason_name,
+        },
     };
     assert(!petta_machine_init(
         &machine, space, answers, query, NULL,
         &capability_without_boundary));
 
     PettaMachineHost capability_without_authority = {
-        .analysis_capabilities =
-            PETTA_MACHINE_ANALYSIS_TYPE_OBLIGATIONS,
-        .validate_ready_call = test_analysis_boundary_accept,
+        .analysis = &(const PettaAnalysisService){
+            .provider_identity = UINT64_C(1),
+            .provider_abi = 1u,
+            .capabilities = PETTA_MACHINE_ANALYSIS_TYPE_OBLIGATIONS,
+            .policy_identity = test_analysis_policy_identity,
+            .judge_value = test_analysis_judge_value,
+            .type_has_runtime_classifier =
+                test_analysis_has_runtime_classifier,
+            .error_atom = test_analysis_error_atom,
+            .reason_name = test_analysis_reason_name,
+            .validate_ready_call = test_analysis_boundary_accept,
+        },
     };
     assert(!petta_machine_init(
         &machine, space, answers, query, NULL,
@@ -2039,10 +2165,7 @@ static void test_analysis_capability_contract(
 
     PettaMachineHost complete = {
         .context = &authority,
-        .analysis_capabilities =
-            PETTA_MACHINE_ANALYSIS_TYPE_OBLIGATIONS,
-        .validate_ready_call = test_analysis_boundary_accept,
-        .semantic_authority_token = test_analysis_authority_token,
+        .analysis = &test_analysis_service,
     };
     assert(petta_machine_init(
         &machine, space, answers, query, NULL, &complete));
@@ -2061,10 +2184,7 @@ static void test_analysis_authority_retry(
     };
     PettaMachineHost host = {
         .context = &authority,
-        .analysis_capabilities =
-            PETTA_MACHINE_ANALYSIS_TYPE_OBLIGATIONS,
-        .validate_ready_call = test_analysis_boundary_accept,
-        .semantic_authority_token = test_analysis_authority_token,
+        .analysis = &test_analysis_service,
     };
     PettaMachine machine;
     assert(petta_machine_init(
@@ -2136,10 +2256,7 @@ static void test_relational_obligation_guard_gc(
     TestAnalysisAuthority authority = {0};
     PettaMachineHost host = {
         .context = &authority,
-        .analysis_capabilities =
-            PETTA_MACHINE_ANALYSIS_TYPE_OBLIGATIONS,
-        .validate_ready_call = test_analysis_boundary_accept,
-        .semantic_authority_token = test_analysis_authority_token,
+        .analysis = &test_analysis_service,
     };
     PettaMachine machine;
     assert(petta_machine_init(
@@ -2196,6 +2313,8 @@ int main(void) {
 
     test_program_head_occurrence_index(
         &universe, &persistent);
+    test_program_analysis_sidecar_interop(
+        &universe, &persistent, &answers);
     test_typed_data_purity_boundary(
         &universe, &persistent);
     test_logical_list_cursor_boundaries(&answers);
