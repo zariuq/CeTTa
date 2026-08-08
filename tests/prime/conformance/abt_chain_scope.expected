@@ -1,4 +1,4 @@
-(PrimeABTChainSummary 10 10 0)
+(PrimeABTChainSummary 12 12 0)
 [()]
 [()]
 [()]
@@ -10,4 +10,5 @@
 [()]
 [()]
 [()]
-[(Error (chain a (pair $x $y) (got $x $y)) expected: (chain <nested> (: <var> Variable) <templ>), found: (chain a (pair $x $y) (got $x $y)))]
+[()]
+[()]

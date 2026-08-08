@@ -302,8 +302,8 @@ def main() -> int:
             "the explicit monolithic switch changed completion")
     require(
         [[answer.value for answer in explicit_monolithic[i]]
-         for i in range(1, 28)] ==
-        [[answer.value for answer in forms[i]] for i in range(1, 28)],
+         for i in range(1, 30)] ==
+        [[answer.value for answer in forms[i]] for i in range(1, 30)],
         "the explicit monolithic switch changed traced answers",
     )
 
@@ -519,7 +519,41 @@ def main() -> int:
 
     case("14-persistence-roundtrip", case14)
 
-    require(set(completion) == set(range(1, 28)),
+    def case15():
+        require(admitted_bag(forms, 28) == Counter({
+            "c15-left": 1, "c15-right": 1, "c15-both": 1,
+        }), "pre-forced overlap changed admitted occurrences")
+        support = {
+            answer.value: field_set(answer, "observe-cell", "argument")
+            for answer in admitted(forms, 28)
+        }
+        require(support == {
+            "c15-left": set(),
+            "c15-right": {"2"},
+            "c15-both": {"2"},
+        }, "pre-forced overlap acquired excess support")
+        require(producer_count(forms, 28) == 1,
+                "baseline pre-forced overlap duplicated its pending producer")
+
+    case("15-pre-forced-overlap", case15)
+
+    def case16():
+        require(admitted_bag(forms, 29) == Counter({
+            "(c16-equal A)": 1, "(c16-equal B)": 1,
+        }), "nonlinear equality admitted a mixed or missing occurrence")
+        require(all(field_set(answer, "observe-cell", "argument") ==
+                    {"1", "2"} for answer in admitted(forms, 29)),
+                "nonlinear equality was refuted without both paths")
+        require(value_bag(forms, 29) == Counter({
+            "(c16-equal A)": 1,
+            "(c16-equal B)": 1,
+            "(tournament:c16 A B)": 1,
+            "(tournament:c16 B A)": 1,
+        }), "nonlinear equality residual family changed")
+
+    case("16-nonlinear-equality-support", case16)
+
+    require(set(completion) == set(range(1, 30)),
             "not every executed form reported completion")
     require(all(value == "complete" for value in completion.values()),
             "a tournament form was incomplete")
@@ -720,12 +754,46 @@ def main() -> int:
                 require(all(len(field_set(a, "observe-cell", "cell")) == 1
                             for a in admitted(observed, 27)),
                         "persistence round-trip duplicated a cell"),
-                require(set(observed_completion) == set(range(1, 28)) and
+                require(set(observed_completion) == set(range(1, 30)) and
                         all(v == "complete"
                             for v in observed_completion.values()),
                         "experimental frontier changed completion"),
             ),
         )
+
+        def experimental15():
+            require(admitted_bag(observed, 28) == Counter({
+                "c15-left": 1, "c15-right": 1, "c15-both": 1,
+            }), "pre-forced overlap changed admitted occurrences")
+            support = {
+                answer.value: field_set(answer, "observe-cell", "argument")
+                for answer in admitted(observed, 28)
+            }
+            require(support == {
+                "c15-left": set(),
+                "c15-right": {"2"},
+                "c15-both": {"2"},
+            }, "pre-forced overlap acquired excess support")
+            require(producer_count(observed, 28) == 2,
+                    "pre-forced overlap red producer characterization changed")
+
+        add_case("15-pre-forced-overlap", experimental15)
+
+        def experimental16():
+            require(admitted_bag(observed, 29) == Counter({
+                "(c16-equal A)": 1, "(c16-equal B)": 1,
+            }), "nonlinear equality admitted a mixed or missing occurrence")
+            require(all(field_set(answer, "observe-cell", "argument") ==
+                        {"1", "2"} for answer in admitted(observed, 29)),
+                    "nonlinear equality was refuted without both paths")
+            require(value_bag(observed, 29) == Counter({
+                "(c16-equal A)": 1,
+                "(c16-equal B)": 1,
+                "(tournament:c16 A B)": 1,
+                "(tournament:c16 B A)": 1,
+            }), "nonlinear equality residual family changed")
+
+        add_case("16-nonlinear-equality-support", experimental16)
 
     check_experimental_frontier("candidate-local", 2)
     check_experimental_frontier("demand-cohort", 1)
@@ -838,6 +906,44 @@ def main() -> int:
         "order-sensitive-answer-bag",
         order_sensitive_setup,
         order_invariance_discriminator,
+    )
+
+    def preforced_excess_support_setup(mutated):
+        left = next(answer for answer in admitted(mutated, 28)
+                    if answer.value == "c15-left")
+        right = next(answer for answer in admitted(mutated, 28)
+                     if answer.value == "c15-right")
+        event = deepcopy(right.events_named("observe-cell")[0])
+        event[1] = "900007"
+        left.events.append(event)
+
+    mutation(
+        "pre-forced-excess-support",
+        preforced_excess_support_setup,
+        lambda mutated: require(
+            not next(answer for answer in admitted(mutated, 28)
+                     if answer.value == "c15-left")
+                .events_named("observe-cell"),
+            "known argument answer acquired a suspended dependency",
+        ),
+    )
+
+    def nonlinear_missing_support_setup(mutated):
+        answer = admitted(mutated, 29)[0]
+        answer.events = [
+            event for event in answer.events
+            if not (event[2] == "observe-cell" and
+                    event_field(event, "argument") == "2")
+        ]
+
+    mutation(
+        "nonlinear-missing-support",
+        nonlinear_missing_support_setup,
+        lambda mutated: require(
+            all(field_set(answer, "observe-cell", "argument") ==
+                {"1", "2"} for answer in admitted(mutated, 29)),
+            "nonlinear equality was accepted without both observations",
+        ),
     )
 
     for name, passed, detail in checks:

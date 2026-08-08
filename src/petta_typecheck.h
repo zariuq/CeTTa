@@ -132,6 +132,15 @@ bool petta_typecheck_call_boundary_requirement(
     SymbolId head, CettaExprLen arity, CettaExprIndex position,
     PettaTypecheckBoundaryRequirement *requirement);
 
+/* Derive every direct-argument proviso from one declared-type lookup and one
+ * source-ordered clause snapshot.  This is the machine-facing form: callers
+ * must supply exactly `arity` result slots (or NULL for arity zero). */
+bool petta_typecheck_call_boundary_plan(
+    PettaProgram *program, Space *space,
+    SymbolId head, CettaExprLen arity,
+    PettaTypecheckBoundaryRequirement *requirements,
+    size_t requirement_count);
+
 /* Runtime type failures remain ordinary catchable PeTTa Error values until
  * they reach the top-level observation boundary. */
 Atom *petta_typecheck_error_atom(

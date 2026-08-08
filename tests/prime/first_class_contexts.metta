@@ -52,7 +52,7 @@
 ; A suspension closes over the context value present at allocation time.
 !(let $base (ctx:bind ctx:empty x old)
    (let $suspended (delay (ctx:get $base x))
-     (let $base (ctx:bind $base x new)
+     (let $extended (ctx:bind $base x new)
        (force $suspended))))
 
 ; Persistence keeps graph identity: two reads after storage remain correlated.

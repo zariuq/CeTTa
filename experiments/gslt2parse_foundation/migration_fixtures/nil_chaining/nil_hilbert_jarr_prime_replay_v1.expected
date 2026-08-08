@@ -1,0 +1,3 @@
+[(he-accept (exact (imp (imp (imp p q) r) (imp q r))))]
+[(he-accept (exact (imp (imp (imp p q) r) (imp q r))))]
+[(he-reject (no-consistent-type))]

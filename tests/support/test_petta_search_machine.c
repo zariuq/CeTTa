@@ -366,6 +366,24 @@ static Atom *add_indexed_program_clause(
     return stored;
 }
 
+static Atom *add_compiled_program_clause(
+    PettaProgram *program, Space *space,
+    Arena *arena, const char *source) {
+    Atom *clause = parse_one(arena, source);
+    assert(clause);
+    const PettaPlanNode *plan =
+        petta_program_plan_dynamic_add(program, clause);
+    assert(plan);
+    CettaCount before = space_length64(space);
+    space_add(space, clause);
+    assert(space_length64(space) == before + 1u);
+    Atom *stored = space_get_at64(space, before);
+    assert(stored);
+    assert(petta_program_note_add(
+        program, space, stored, plan));
+    return stored;
+}
+
 static void test_program_head_occurrence_index(
     TermUniverse *universe, Arena *persistent) {
     Space indexed_space;
@@ -539,6 +557,39 @@ static void test_program_head_occurrence_index(
 
     petta_program_free(program);
     space_free(&indexed_space);
+}
+
+static void test_typed_data_purity_boundary(
+    TermUniverse *universe, Arena *persistent) {
+    Space typed_space;
+    space_init_with_universe(&typed_space, universe);
+    PettaProgram *program = petta_program_new();
+    assert(program);
+
+    add_compiled_program_clause(
+        program, &typed_space, persistent,
+        "(= (safe-typed-data $x) (: payload (id $x)))");
+    add_compiled_program_clause(
+        program, &typed_space, persistent,
+        "(= (effectful-typed-data $state $x)"
+        "   (: payload (change-state! $state $x)))");
+    add_compiled_program_clause(
+        program, &typed_space, persistent,
+        "(= (inert-arrow-data $state $x)"
+        "   (-> (change-state! $state $x) result))");
+
+    assert(petta_program_relation_table_safe(
+        program, &typed_space,
+        symbol_intern_cstr(g_symbols, "safe-typed-data"), 1u));
+    assert(!petta_program_relation_table_safe(
+        program, &typed_space,
+        symbol_intern_cstr(g_symbols, "effectful-typed-data"), 2u));
+    assert(petta_program_relation_table_safe(
+        program, &typed_space,
+        symbol_intern_cstr(g_symbols, "inert-arrow-data"), 2u));
+
+    petta_program_free(program);
+    space_free(&typed_space);
 }
 
 static void expect_answers(
@@ -1259,6 +1310,39 @@ static void test_deterministic_clause_elision(
     assert(stats.deterministic_clause_choices_elided == 1u);
     assert(stats.choice_continuation_snapshots == 0u);
     assert(stats.choice_continuation_items_copied == 0u);
+    assert(petta_machine_next(
+               &machine, &answer, &environment) ==
+           PETTA_MACHINE_STEP_EXHAUSTED);
+    bindings_free(&environment);
+    petta_machine_destroy(&machine);
+}
+
+static void test_ground_boolean_choice_elision(
+    Space *space, Arena *answers) {
+    Atom *query = parse_one(
+        answers,
+        "(if (or false true)"
+        "  (if (or false true)"
+        "    (if (or false true) done unreachable)"
+        "    unreachable)"
+        "  unreachable)");
+    assert(query);
+
+    PettaMachine machine;
+    assert(petta_machine_init(
+        &machine, space, answers, query, NULL, NULL));
+    Atom *answer = NULL;
+    Bindings environment;
+    assert(petta_machine_next(
+               &machine, &answer, &environment) ==
+           PETTA_MACHINE_STEP_ANSWER);
+    assert(atom_alpha_eq(
+        answer, atom_symbol(answers, "done")));
+    bindings_free(&environment);
+
+    PettaMachineStats stats;
+    assert(petta_machine_stats(&machine, &stats));
+    assert(stats.maximum_choice_depth == 1u);
     assert(petta_machine_next(
                &machine, &answer, &environment) ==
            PETTA_MACHINE_STEP_EXHAUSTED);
@@ -1999,6 +2083,86 @@ static void test_analysis_authority_retry(
     petta_machine_destroy(&machine);
 }
 
+static void test_relational_obligation_guard_gc(
+    Space *space, Arena *persistent, Arena *answers) {
+    add_clause(
+        space, persistent,
+        "(= (get-type foo) RuntimeOnly)");
+    add_clause(
+        space, persistent,
+        "(= (guard-drain ()) done)");
+    add_clause(
+        space, persistent,
+        "(= (guard-drain (cons $head $tail))"
+        "   (guard-drain $tail))");
+
+    enum { ITEM_COUNT = 8192 };
+    Atom **items = cetta_malloc(
+        ITEM_COUNT * sizeof(*items));
+    Atom *item = atom_symbol(answers, "guard-item");
+    assert(item);
+    for (size_t index = 0u; index < ITEM_COUNT; index++)
+        items[index] = item;
+    Atom *list = atom_expr(answers, items, ITEM_COUNT);
+    free(items);
+    assert(list);
+
+    Atom *let_head = atom_symbol(answers, "let");
+    Atom *the_head = atom_symbol(answers, "the");
+    Atom *drain_head = atom_symbol(answers, "guard-drain");
+    Atom *runtime_only = atom_symbol(answers, "RuntimeOnly");
+    Atom *foo = atom_symbol(answers, "foo");
+    Atom *value = atom_var_with_id(
+        answers, "guard-value", fresh_var_id());
+    Atom *typed = atom_var_with_id(
+        answers, "guard-typed", fresh_var_id());
+    Atom *ignored = atom_var_with_id(
+        answers, "guard-ignored", fresh_var_id());
+    assert(let_head && the_head && drain_head && runtime_only && foo &&
+           value && typed && ignored);
+
+    Atom *ascription_items[] = {the_head, runtime_only, value};
+    Atom *ascription = atom_expr(answers, ascription_items, 3u);
+    Atom *drain_items[] = {drain_head, list};
+    Atom *drain = atom_expr(answers, drain_items, 2u);
+    Atom *after_drain_items[] = {let_head, ignored, drain, typed};
+    Atom *after_drain = atom_expr(answers, after_drain_items, 4u);
+    Atom *bind_items[] = {let_head, foo, value, after_drain};
+    Atom *bind = atom_expr(answers, bind_items, 4u);
+    Atom *query_items[] = {let_head, typed, ascription, bind};
+    Atom *query = atom_expr(answers, query_items, 4u);
+    assert(ascription && drain && after_drain && bind && query);
+
+    TestAnalysisAuthority authority = {0};
+    PettaMachineHost host = {
+        .context = &authority,
+        .analysis_capabilities =
+            PETTA_MACHINE_ANALYSIS_TYPE_OBLIGATIONS,
+        .validate_ready_call = test_analysis_boundary_accept,
+        .semantic_authority_token = test_analysis_authority_token,
+    };
+    PettaMachine machine;
+    assert(petta_machine_init(
+        &machine, space, answers, query, NULL, &host));
+    Atom *answer = NULL;
+    Bindings environment;
+    bindings_init(&environment);
+    assert(petta_machine_next(
+               &machine, &answer, &environment) ==
+           PETTA_MACHINE_STEP_ANSWER);
+    assert(atom_alpha_eq(answer, foo));
+    bindings_free(&environment);
+    PettaMachineStats stats;
+    assert(petta_machine_stats(&machine, &stats));
+    assert(stats.deterministic_heap_collections > 0u);
+    assert(stats.deterministic_heap_bytes_promoted > 0u);
+    assert(petta_machine_next(
+               &machine, &answer, &environment) ==
+           PETTA_MACHINE_STEP_EXHAUSTED);
+    bindings_free(&environment);
+    petta_machine_destroy(&machine);
+}
+
 int main(void) {
     Arena persistent;
     Arena answers;
@@ -2024,11 +2188,15 @@ int main(void) {
 
     test_analysis_capability_contract(&space, &answers);
     test_analysis_authority_retry(&space, &answers);
+    test_relational_obligation_guard_gc(
+        &space, &persistent, &answers);
 
     test_native_residual_typecheck(
         &space, &persistent, &answers);
 
     test_program_head_occurrence_index(
+        &universe, &persistent);
+    test_typed_data_purity_boundary(
         &universe, &persistent);
     test_logical_list_cursor_boundaries(&answers);
     test_private_variant_summary(&answers);
@@ -2038,6 +2206,8 @@ int main(void) {
     test_host_environment_projection(&space, &answers);
     test_deterministic_clause_elision(
         &space, &persistent, &answers);
+    test_ground_boolean_choice_elision(
+        &space, &answers);
     test_cons_shape_clause_index(
         &space, &persistent, &answers);
     test_nested_clause_shape_index(
