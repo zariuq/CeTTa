@@ -37,6 +37,12 @@ CettaLibPrologReadToken cetta_lib_prolog_read_token(
     return (CettaLibPrologReadToken){0};
 }
 
+uint64_t petta_libpl_capability_revision(
+    const CettaLibPrologRuntime *runtime) {
+    (void)runtime;
+    return 0u;
+}
+
 CettaLibPrologQueryStatus cetta_lib_prolog_query(
     CettaLibPrologRuntime *runtime, Arena *arena,
     Atom *goal, Atom *projection, Atom **answers) {

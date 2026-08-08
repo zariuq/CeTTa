@@ -81,6 +81,7 @@ static bool result_set_has_error(ResultSet *rs) {
 
 static bool result_set_petta_typecheck_error(
     ResultSet *results, int *exit_code, const char **diagnostic) {
+#if CETTA_BUILD_WITH_PETTA_TYPECHECK_V2
     if (!results)
         return false;
     for (uint32_t index = 0u; index < results->len; index++) {
@@ -90,6 +91,12 @@ static bool result_set_petta_typecheck_error(
         }
     }
     return false;
+#else
+    (void)results;
+    (void)exit_code;
+    (void)diagnostic;
+    return false;
+#endif
 }
 
 static bool result_set_all_empty(ResultSet *rs) {
@@ -1205,7 +1212,9 @@ static void print_usage(FILE *out) {
     fputs("       cetta --translate --lang A [--syntax S] --lang B [--syntax T] <file>\n", out);
     fputs("       cetta [--lang he --profile <he|he-compat|he-extended|he-prime>] <file.metta>\n", out);
     fputs("       cetta --lang prime <file.metta>\n", out);
+#if CETTA_BUILD_WITH_PETTA_TYPECHECK_V2
     fputs("       cetta --lang petta --profile typecheck-v2 [--strict|--strict-det] <file.metta>\n", out);
+#endif
     fputs("       cetta [--lang rhocalc --profile <strict-core|cost>] [--syntax <mrho|rho>] <file>\n", out);
     fputs("       cetta [--lang <name>] [--import-mode <upstream|relative|ancestor-walk>] <file.metta>\n", out);
     fputs("       note: repeated --lang under --translate means source then target endpoint\n", out);
@@ -1811,6 +1820,7 @@ static MainPettaBlockLoadResult main_petta_check_forms(
     PettaProgram *program, Space *space, Registry *registry,
     TermUniverse *universe, AtomId *atom_ids, int atom_count,
     PettaTypecheckPolicy typecheck_policy) {
+#if CETTA_BUILD_WITH_PETTA_TYPECHECK_V2
     if (atom_count <= 0)
         return MAIN_PETTA_BLOCK_LOAD_OK;
     Atom **forms = cetta_malloc(
@@ -1839,6 +1849,16 @@ static MainPettaBlockLoadResult main_petta_check_forms(
         return MAIN_PETTA_BLOCK_LOAD_TYPE_REJECTED;
     }
     return MAIN_PETTA_BLOCK_LOAD_OK;
+#else
+    (void)program;
+    (void)space;
+    (void)registry;
+    (void)universe;
+    (void)atom_ids;
+    (void)atom_count;
+    (void)typecheck_policy;
+    return MAIN_PETTA_BLOCK_LOAD_OK;
+#endif
 }
 
 static MainPettaBlockLoadResult main_petta_load_declaration_block(
@@ -2232,7 +2252,11 @@ int main(int argc, char **argv) {
          profile->id != CETTA_PROFILE_PETTA_TYPECHECK_V2)) {
         fprintf(
             stderr,
+#if CETTA_BUILD_WITH_PETTA_TYPECHECK_V2
             "error: --strict and --strict-det require --lang petta --profile typecheck-v2\n");
+#else
+            "error: --strict and --strict-det are not valid for the selected language profile\n");
+#endif
         free(inline_buf);
         return 2;
     }
@@ -2976,7 +3000,7 @@ int main(int argc, char **argv) {
                         : "PeTTa typechecker fault",
                     typecheck_diagnostic
                         ? typecheck_diagnostic
-                        : "runtime typecheck-v2 judgment failed");
+                        : "runtime analysis judgment failed");
                 rc = typecheck_exit_code;
                 if (emit_prime_need_trace)
                     eval_outcome_free(&detailed);

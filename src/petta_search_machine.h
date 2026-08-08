@@ -3,6 +3,7 @@
 
 #include "eval.h"
 #include "match_decision.h"
+#include "petta_analysis.h"
 #include "petta_program.h"
 #include "petta_semantics.h"
 #include "petta_specializer.h"
@@ -63,6 +64,34 @@ typedef struct {
     uint8_t length;
 } PettaMachineAuthorityToken;
 
+/* Optional language-owned analysis provider.  Provider identity, ABI, and
+ * policy are part of every proof receipt before mutable authority words are
+ * appended, so two implementations can never reuse one another's evidence.
+ */
+typedef struct {
+    uint64_t provider_identity;
+    uint32_t provider_abi;
+    uint32_t capabilities;
+    uint32_t (*policy_identity)(void *host_context);
+    bool (*mutable_authority_token)(
+        void *host_context, PettaMachineAuthorityToken *token);
+    bool (*judge_value)(
+        void *host_context, Space *space, Arena *scratch,
+        Atom *value, Atom *requirement,
+        PettaAnalysisCallableFn callable, void *callable_context,
+        PettaAnalysisResult *result);
+    bool (*type_has_runtime_classifier)(
+        void *host_context, Space *space, Atom *requirement);
+    Atom *(*error_atom)(
+        void *host_context, Arena *arena, Atom *source,
+        int exit_code, const char *diagnostic);
+    const char *(*reason_name)(
+        void *host_context, PettaAnalysisReason reason);
+    PettaMachineBoundaryResult (*validate_ready_call)(
+        void *host_context, Space *space, Atom *call,
+        char *diagnostic, size_t diagnostic_size);
+} PettaAnalysisService;
+
 /* A collection producer lends each fully evaluated item to a synchronous,
  * side-effect-free consumer.  The consumer must not retain item beyond the
  * callback.  A declined producer invalidates all consumer state accumulated
@@ -72,7 +101,7 @@ typedef bool (*PettaMachineBorrowedItemConsumer)(
 
 typedef struct {
     void *context;
-    uint32_t analysis_capabilities;
+    const PettaAnalysisService *analysis;
     /* Candidate programs are meaningful only within this exact semantic
      * world.  Storage revision is tracked independently by SpaceReadToken. */
     CettaMatchDecisionSemanticIdentity match_decision_semantics;
@@ -92,16 +121,10 @@ typedef struct {
     bool (*evaluate)(
         void *context, Space *space, Arena *arena, Atom *expression,
         const Bindings *environment, OutcomeSet *outcomes);
-    /* Arguments have reached their translated values.  A selected semantic
-     * profile may now enforce only those boundary facts consumed by its
-     * committed cardinality proof. */
-    PettaMachineBoundaryResult (*validate_ready_call)(
-        void *context, Space *space, Atom *call,
-        char *diagnostic, size_t diagnostic_size);
-    /* Snapshot every non-Space mutable authority consulted by an installed
-     * analysis.  The returned vector is an exact dependency receipt. */
-    bool (*semantic_authority_token)(
-        void *context, PettaMachineAuthorityToken *token);
+    /* Profile-owned data constructors are fixed when the machine is built;
+     * the machine never consults ambient session state while executing. */
+    bool (*is_data_constructor)(
+        void *context, SymbolId head, CettaExprLen arity);
     /* A generated determinate-fold program may own a lexical fold without
      * constructing one goal and accumulator variable per input item. */
     PettaMachineFoldResult (*foldl_single_result)(

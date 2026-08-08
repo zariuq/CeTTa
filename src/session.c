@@ -69,6 +69,7 @@ static const CettaProfile CETTA_PROFILE_PETTA_EXTENDED_VALUE = {
     .rust_he_compat_semantics = false,
 };
 
+#if CETTA_BUILD_WITH_PETTA_TYPECHECK_V2
 static const CettaProfile CETTA_PROFILE_PETTA_TYPECHECK_V2_VALUE = {
     .id = CETTA_PROFILE_PETTA_TYPECHECK_V2,
     .language_id = CETTA_LANGUAGE_PETTA,
@@ -79,6 +80,7 @@ static const CettaProfile CETTA_PROFILE_PETTA_TYPECHECK_V2_VALUE = {
     .enable_dependent_telescope = false,
     .rust_he_compat_semantics = false,
 };
+#endif
 
 static const CettaProfile CETTA_PROFILE_RHOCALC_STRICT_CORE_VALUE = {
     .id = CETTA_PROFILE_RHOCALC_STRICT_CORE,
@@ -257,9 +259,11 @@ const CettaProfile *cetta_profile_petta_extended(void) {
     return &CETTA_PROFILE_PETTA_EXTENDED_VALUE;
 }
 
+#if CETTA_BUILD_WITH_PETTA_TYPECHECK_V2
 const CettaProfile *cetta_profile_petta_typecheck_v2(void) {
     return &CETTA_PROFILE_PETTA_TYPECHECK_V2_VALUE;
 }
+#endif
 
 bool cetta_language_has_named_profiles(CettaLanguageId language_id) {
     return language_id == CETTA_LANGUAGE_HE ||
@@ -302,10 +306,12 @@ const CettaProfile *cetta_profile_from_name_for_language(CettaLanguageId languag
         }
     }
     if (language_id == CETTA_LANGUAGE_PETTA) {
+#if CETTA_BUILD_WITH_PETTA_TYPECHECK_V2
         if (cetta_profile_name_matches(
                 name, &CETTA_PROFILE_PETTA_TYPECHECK_V2_VALUE)) {
             return &CETTA_PROFILE_PETTA_TYPECHECK_V2_VALUE;
         }
+#endif
         if (cetta_profile_name_matches(
                 name, &CETTA_PROFILE_PETTA_EXTENDED_VALUE) ||
             strcmp(name, "petta-extended") == 0) {
@@ -331,8 +337,13 @@ uint32_t cetta_profile_mask(const CettaProfile *profile) {
     case CETTA_PROFILE_RHOCALC_STRICT_CORE:
     case CETTA_PROFILE_RHOCALC_COST:
     case CETTA_PROFILE_PETTA_EXTENDED:
-    case CETTA_PROFILE_PETTA_TYPECHECK_V2:
         return CETTA_PROFILE_MASK_ALL;
+    case CETTA_PROFILE_PETTA_TYPECHECK_V2:
+#if CETTA_BUILD_WITH_PETTA_TYPECHECK_V2
+        return CETTA_PROFILE_MASK_ALL;
+#else
+        return 0u;
+#endif
     }
     return 0;
 }
@@ -383,9 +394,11 @@ void cetta_profile_print_inventory_for_language(FILE *out,
         fprintf(out, "%s\t%s\n",
                 CETTA_PROFILE_PETTA_EXTENDED_VALUE.name,
                 CETTA_PROFILE_PETTA_EXTENDED_VALUE.note);
+#if CETTA_BUILD_WITH_PETTA_TYPECHECK_V2
         fprintf(out, "%s\t%s\n",
                 CETTA_PROFILE_PETTA_TYPECHECK_V2_VALUE.name,
                 CETTA_PROFILE_PETTA_TYPECHECK_V2_VALUE.note);
+#endif
     }
 }
 

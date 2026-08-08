@@ -345,6 +345,10 @@ void cetta_library_context_init_for_language_profile(CettaLibraryContext *ctx,
         symbol_table_instance_id(g_symbols);
     ctx->petta_program = language_id == CETTA_LANGUAGE_PETTA
         ? petta_program_new() : NULL;
+    if (ctx->petta_program && profile &&
+        profile->id == CETTA_PROFILE_PETTA_TYPECHECK_V2) {
+        (void)petta_program_enable_analysis(ctx->petta_program);
+    }
     ctx->petta_token_space_clause_registry =
         language_id == CETTA_LANGUAGE_PETTA
             ? cetta_petta_token_space_clause_registry_new()
@@ -6254,6 +6258,7 @@ static bool cetta_library_petta_check_segment(
     CettaLibraryContext *ctx, Space *space, Registry *registry,
     Arena *eval_arena, AtomId *atom_ids, int atom_count,
     CettaPettaDocumentFailure *failure_out, Atom **detail_out) {
+#if CETTA_BUILD_WITH_PETTA_TYPECHECK_V2
     if (!ctx || !ctx->session.profile ||
         ctx->session.profile->id != CETTA_PROFILE_PETTA_TYPECHECK_V2 ||
         ctx->petta_trusted_library_import_depth > 0u)
@@ -6296,6 +6301,17 @@ static bool cetta_library_petta_check_segment(
                     : "imported declaration analysis failed");
     }
     return false;
+#else
+    (void)ctx;
+    (void)space;
+    (void)registry;
+    (void)eval_arena;
+    (void)atom_ids;
+    (void)atom_count;
+    (void)failure_out;
+    (void)detail_out;
+    return true;
+#endif
 }
 
 /*
