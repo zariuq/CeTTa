@@ -221,7 +221,9 @@ const CettaProfile *cetta_profile_he_extended(void);
 const CettaProfile *cetta_profile_he_prime(void);
 const CettaProfile *cetta_profile_prime_default(void);
 const CettaProfile *cetta_profile_petta_extended(void);
+#if CETTA_BUILD_WITH_PETTA_TYPECHECK_V2
 const CettaProfile *cetta_profile_petta_typecheck_v2(void);
+#endif
 bool cetta_language_has_named_profiles(CettaLanguageId language_id);
 bool cetta_profile_is_valid_for_language(CettaLanguageId language_id,
                                          const CettaProfile *profile);

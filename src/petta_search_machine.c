@@ -4,7 +4,6 @@
 #include "match.h"
 #include "petta_semantics.h"
 #include "petta_specializer.h"
-#include "petta_typecheck.h"
 #include "stats.h"
 #include "symbol.h"
 #include "variant_shape.h"
@@ -525,8 +524,26 @@ struct PettaMachineImpl {
 static bool petta_machine_type_obligations_enabled(
     const PettaMachineImpl *machine) {
     return machine &&
-        (machine->host.analysis_capabilities &
+        machine->host.analysis &&
+        (machine->host.analysis->capabilities &
          PETTA_MACHINE_ANALYSIS_TYPE_OBLIGATIONS) != 0u;
+}
+
+static uint32_t petta_machine_analysis_policy(
+    const PettaMachineImpl *machine) {
+    return machine && machine->host.analysis &&
+           machine->host.analysis->policy_identity
+        ? machine->host.analysis->policy_identity(
+              machine->host.context)
+        : 0u;
+}
+
+static bool petta_machine_analysis_has_runtime_classifier(
+    const PettaMachineImpl *machine, Atom *requirement) {
+    return machine && machine->host.analysis &&
+        machine->host.analysis->type_has_runtime_classifier &&
+        machine->host.analysis->type_has_runtime_classifier(
+            machine->host.context, machine->space, requirement);
 }
 
 static bool petta_machine_authority_token(
@@ -534,13 +551,29 @@ static bool petta_machine_authority_token(
     if (!machine || !token)
         return false;
     *token = (PettaMachineAuthorityToken){0};
-    if (!machine->host.semantic_authority_token)
+    const PettaAnalysisService *analysis = machine->host.analysis;
+    if (!analysis)
         return true;
-    if (!machine->host.semantic_authority_token(
-            machine->host.context, token)) {
+    if (analysis->provider_identity == 0u ||
+        analysis->provider_abi == 0u) {
         return false;
     }
-    return token->length <= PETTA_MACHINE_AUTHORITY_WORD_CAPACITY;
+    PettaMachineAuthorityToken mutable = {0};
+    if (analysis->mutable_authority_token &&
+        !analysis->mutable_authority_token(
+            machine->host.context, &mutable)) {
+        return false;
+    }
+    if (mutable.length > PETTA_MACHINE_AUTHORITY_WORD_CAPACITY - 3u)
+        return false;
+    token->words[0] = analysis->provider_identity;
+    token->words[1] = (uint64_t)analysis->provider_abi;
+    token->words[2] = (uint64_t)petta_machine_analysis_policy(machine);
+    memcpy(
+        &token->words[3], mutable.words,
+        (size_t)mutable.length * sizeof(mutable.words[0]));
+    token->length = (uint8_t)(mutable.length + 3u);
+    return true;
 }
 
 static bool petta_machine_authority_token_eq(
@@ -7580,15 +7613,15 @@ static bool petta_machine_start_typed_call_choice(
     return false;
 }
 
-static PettaTypecheckCallable petta_machine_typecheck_callable(
+static PettaAnalysisCallable petta_machine_analysis_callable(
     void *context, Atom *value, CettaExprLen arity) {
     PettaMachineImpl *machine = context;
     if (!machine || !value)
-        return PETTA_TYPECHECK_CALLABLE_UNKNOWN;
+        return PETTA_ANALYSIS_CALLABLE_UNKNOWN;
     if (value->kind == ATOM_VAR)
-        return PETTA_TYPECHECK_CALLABLE_UNKNOWN;
+        return PETTA_ANALYSIS_CALLABLE_UNKNOWN;
     if (value->kind != ATOM_SYMBOL)
-        return PETTA_TYPECHECK_CALLABLE_NO;
+        return PETTA_ANALYSIS_CALLABLE_NO;
 
     CettaExprLen minimum = 0u;
     CettaExprLen maximum = 0u;
@@ -7611,7 +7644,7 @@ static PettaTypecheckCallable petta_machine_typecheck_callable(
     (void)maximum;
     if (!(found_equation && equation_exact) &&
         !intrinsic_exact && !foreign_exact) {
-        return PETTA_TYPECHECK_CALLABLE_NO;
+        return PETTA_ANALYSIS_CALLABLE_NO;
     }
 
     /* The revision-keyed memo is the declaration authority for typed
@@ -7619,13 +7652,13 @@ static PettaTypecheckCallable petta_machine_typecheck_callable(
      * unknown; it is never rejected merely for lacking an annotation. */
     return space_head_has_arrow_signature(
                machine->space, value->sym_id, arity)
-        ? PETTA_TYPECHECK_CALLABLE_YES
-        : PETTA_TYPECHECK_CALLABLE_UNKNOWN;
+        ? PETTA_ANALYSIS_CALLABLE_YES
+        : PETTA_ANALYSIS_CALLABLE_UNKNOWN;
 }
 
 static void petta_machine_record_typecheck_failure(
     PettaMachineImpl *machine, Atom *value, Atom *formal,
-    const PettaTypecheckResult *result, int exit_code) {
+    const PettaAnalysisResult *result, int exit_code) {
     if (!machine || machine->typecheck_exit_code != 0)
         return;
     ArenaMark mark = arena_mark(&machine->heap);
@@ -7633,9 +7666,14 @@ static void petta_machine_record_typecheck_failure(
     char *formal_text = atom_to_string(&machine->heap, formal);
     const char *kind = exit_code == 2
         ? "PeTTa type error" : "PeTTa typechecker fault";
-    const char *reason = result
-        ? petta_typecheck_reason_name(result->reason)
-        : "invalid";
+    const char *reason = "invalid";
+    if (result && machine->host.analysis &&
+        machine->host.analysis->reason_name) {
+        const char *provided = machine->host.analysis->reason_name(
+            machine->host.context, result->reason);
+        if (provided)
+            reason = provided;
+    }
     snprintf(
         machine->typecheck_diagnostic,
         sizeof(machine->typecheck_diagnostic),
@@ -7648,20 +7686,19 @@ static void petta_machine_record_typecheck_failure(
 
 static bool petta_machine_judge_native_type(
     PettaMachineImpl *machine, Atom *value, Atom *formal,
-    PettaTypecheckResult *result) {
-    if (!machine || !value || !formal || !result)
+    PettaAnalysisResult *result) {
+    if (!machine || !value || !formal || !result ||
+        !machine->host.analysis ||
+        !machine->host.analysis->judge_value)
         return false;
     Arena scratch;
     arena_init(&scratch);
     arena_set_runtime_kind(
         &scratch, CETTA_ARENA_RUNTIME_KIND_SCRATCH);
-    PettaTypecheckHooks hooks = {
-        .context = machine,
-        .callable = petta_machine_typecheck_callable,
-    };
-    bool judged = petta_typecheck_value(
-        machine->space, &scratch, value, formal,
-        &hooks, result);
+    bool judged = machine->host.analysis->judge_value(
+        machine->host.context, machine->space, &scratch,
+        value, formal, petta_machine_analysis_callable,
+        machine, result);
     arena_free(&scratch);
     return judged;
 }
@@ -7727,22 +7764,32 @@ static Atom *petta_machine_type_obligation_for_value(
 
 static bool petta_machine_raise_typecheck_error(
     PettaMachineImpl *machine, Atom *value, Atom *formal,
-    const PettaTypecheckResult *result) {
-    if (!machine || !value || !formal || !result)
+    const PettaAnalysisResult *result) {
+    if (!machine || !value || !formal || !result ||
+        !machine->host.analysis ||
+        !machine->host.analysis->error_atom)
         return false;
     ArenaMark mark = arena_mark(&machine->heap);
     char *value_text = atom_to_string(&machine->heap, value);
     char *formal_text = atom_to_string(&machine->heap, formal);
     char diagnostic[512];
+    const char *reason = "invalid";
+    if (machine->host.analysis->reason_name) {
+        const char *provided = machine->host.analysis->reason_name(
+            machine->host.context, result->reason);
+        if (provided)
+            reason = provided;
+    }
     snprintf(
         diagnostic, sizeof(diagnostic),
         "value %s does not satisfy %s (%s)",
         value_text ? value_text : "<unprintable>",
         formal_text ? formal_text : "<unprintable>",
-        petta_typecheck_reason_name(result->reason));
+        reason);
     arena_reset(&machine->heap, mark);
-    Atom *error = petta_typecheck_error_atom(
-        &machine->heap, value, 2, diagnostic);
+    Atom *error = machine->host.analysis->error_atom(
+        machine->host.context, &machine->heap,
+        value, 2, diagnostic);
     return error && petta_machine_raise_error(machine, error);
 }
 
@@ -7865,7 +7912,7 @@ static bool petta_machine_check_type_obligations(
         search_context_builder(&machine->search);
     uint64_t current_epoch = space_global_mutation_epoch();
     uint32_t current_policy =
-        cetta_petta_active_typecheck_policy_id();
+        petta_machine_analysis_policy(machine);
     PettaMachineAuthorityToken current_authority;
     if (!petta_machine_authority_token(
             machine, &current_authority)) {
@@ -7888,7 +7935,7 @@ static bool petta_machine_check_type_obligations(
     for (uint32_t attempt = 0u; attempt < 2u; attempt++) {
         uint64_t authority_epoch = space_global_mutation_epoch();
         uint32_t authority_policy =
-            cetta_petta_active_typecheck_policy_id();
+            petta_machine_analysis_policy(machine);
         SpaceReadToken authority_read =
             space_read_token(machine->space);
         PettaMachineAuthorityToken authority_token;
@@ -7945,9 +7992,9 @@ static bool petta_machine_check_type_obligations(
                 petta_machine_typecheck_value_ready(machine, value);
             bool relational_required = value_ready &&
                 (live->relational_required ||
-                 petta_typecheck_type_has_runtime_classifier(
-                     machine->space, formal));
-            PettaTypecheckResult result = {0};
+                 petta_machine_analysis_has_runtime_classifier(
+                     machine, formal));
+            PettaAnalysisResult result = {0};
             bool judged = true;
             if (value_ready && !relational_required) {
                 judged = petta_machine_judge_native_type(
@@ -7960,7 +8007,7 @@ static bool petta_machine_check_type_obligations(
                 return false;
             }
             if (space_global_mutation_epoch() != authority_epoch ||
-                cetta_petta_active_typecheck_policy_id() !=
+                petta_machine_analysis_policy(machine) !=
                     authority_policy ||
                 !petta_machine_authority_token_eq(
                     &authority_token, &confirmed_authority) ||
@@ -7976,7 +8023,7 @@ static bool petta_machine_check_type_obligations(
                 return false;
             }
             if (value_ready &&
-                result.verdict == PETTA_TYPECHECK_REFUTED) {
+                result.verdict == PETTA_ANALYSIS_REFUTED) {
                 if (!petta_machine_raise_typecheck_error(
                         machine, value, formal, &result)) {
                     *failure = PETTA_MACHINE_STEP_CAPACITY;
@@ -7985,7 +8032,7 @@ static bool petta_machine_check_type_obligations(
                 return true;
             }
             if (value_ready &&
-                result.verdict == PETTA_TYPECHECK_INCOMPLETE) {
+                result.verdict == PETTA_ANALYSIS_INCOMPLETE) {
                 petta_machine_record_typecheck_failure(
                     machine, value, formal, &result, 1);
                 *failure = PETTA_MACHINE_STEP_HOST_ERROR;
@@ -8017,7 +8064,7 @@ static bool petta_machine_check_type_obligations(
              * optimizer facts. */
             live->state = !value_ready
                 ? PETTA_TYPE_OBLIGATION_OPEN_VALUE
-                : result.verdict == PETTA_TYPECHECK_ESTABLISHED
+                : result.verdict == PETTA_ANALYSIS_ESTABLISHED
                     ? PETTA_TYPE_OBLIGATION_NATIVE_ESTABLISHED
                     : PETTA_TYPE_OBLIGATION_DYNAMIC_COMPATIBLE;
             live->checked_value = value;
@@ -8100,7 +8147,7 @@ static bool petta_machine_type_accept(
          * ordinary error path.
          */
         if (petta_machine_type_obligations_enabled(machine)) {
-            PettaTypecheckResult result = {0};
+            PettaAnalysisResult result = {0};
             if (!petta_machine_judge_native_type(
                     machine, value, formal, &result)) {
                 petta_machine_record_typecheck_failure(
@@ -8109,7 +8156,7 @@ static bool petta_machine_type_accept(
                     *failure = PETTA_MACHINE_STEP_HOST_ERROR;
                 return false;
             }
-            if (result.verdict == PETTA_TYPECHECK_ESTABLISHED)
+            if (result.verdict == PETTA_ANALYSIS_ESTABLISHED)
                 return true;
         }
         if (match_only)
@@ -8129,11 +8176,11 @@ static bool petta_machine_type_accept(
         petta_machine_typecheck_value_ready(machine, value);
     bool runtime_classified_formal =
         petta_machine_type_obligations_enabled(machine) &&
-        petta_typecheck_type_has_runtime_classifier(
-            machine->space, formal);
+        petta_machine_analysis_has_runtime_classifier(
+            machine, formal);
     if (petta_machine_type_obligations_enabled(machine) &&
         native_value_ready && !runtime_classified_formal) {
-        PettaTypecheckResult result = {0};
+        PettaAnalysisResult result = {0};
         bool judged = petta_machine_judge_native_type(
             machine, value, formal, &result);
         if (!judged) {
@@ -8143,7 +8190,7 @@ static bool petta_machine_type_accept(
                 *failure = PETTA_MACHINE_STEP_HOST_ERROR;
             return false;
         }
-        if (result.verdict == PETTA_TYPECHECK_REFUTED) {
+        if (result.verdict == PETTA_ANALYSIS_REFUTED) {
             if (match_only)
                 return false;
             petta_machine_record_typecheck_failure(
@@ -8155,7 +8202,7 @@ static bool petta_machine_type_accept(
         /* A closed native proof is authoritative.  Open or otherwise
          * undetermined judgments continue through relational get-type below,
          * preserving overload bindings and logical choicepoints. */
-        if (result.verdict == PETTA_TYPECHECK_ESTABLISHED)
+        if (result.verdict == PETTA_ANALYSIS_ESTABLISHED)
             return true;
     }
     if (petta_machine_type_obligations_enabled(machine) &&
@@ -8211,7 +8258,7 @@ static bool petta_machine_type_ascribe_ready(
     uint32_t barrier, PettaMachineStep *failure) {
     if (!machine || !value || !formal || !failure)
         return false;
-    PettaTypecheckResult result = {0};
+    PettaAnalysisResult result = {0};
     if (!petta_machine_judge_native_type(
             machine, value, formal, &result)) {
         petta_machine_record_typecheck_failure(
@@ -8219,9 +8266,9 @@ static bool petta_machine_type_ascribe_ready(
         *failure = PETTA_MACHINE_STEP_HOST_ERROR;
         return false;
     }
-    if (result.verdict == PETTA_TYPECHECK_ESTABLISHED)
+    if (result.verdict == PETTA_ANALYSIS_ESTABLISHED)
         return true;
-    if (result.verdict == PETTA_TYPECHECK_REFUTED) {
+    if (result.verdict == PETTA_ANALYSIS_REFUTED) {
         if (!petta_machine_raise_typecheck_error(
                 machine, value, formal, &result)) {
             *failure = PETTA_MACHINE_STEP_CAPACITY;
@@ -8229,7 +8276,7 @@ static bool petta_machine_type_ascribe_ready(
         }
         return true;
     }
-    if (result.verdict == PETTA_TYPECHECK_INCOMPLETE) {
+    if (result.verdict == PETTA_ANALYSIS_INCOMPLETE) {
         petta_machine_record_typecheck_failure(
             machine, value, formal, &result, 1);
         *failure = PETTA_MACHINE_STEP_HOST_ERROR;
@@ -9293,7 +9340,7 @@ static bool petta_machine_dispatch_solve(
             petta_machine_type_obligation_for_value(
                 machine, expected);
         if (contextual_type) {
-            PettaTypecheckResult result = {0};
+            PettaAnalysisResult result = {0};
             if (!petta_machine_judge_native_type(
                     machine, expression, contextual_type,
                     &result)) {
@@ -9303,7 +9350,7 @@ static bool petta_machine_dispatch_solve(
                 *failure = PETTA_MACHINE_STEP_HOST_ERROR;
                 return false;
             }
-            if (result.verdict == PETTA_TYPECHECK_ESTABLISHED) {
+            if (result.verdict == PETTA_ANALYSIS_ESTABLISHED) {
                 return petta_machine_unify_resolved(
                     machine, expression, expected);
             }
@@ -9524,7 +9571,9 @@ static bool petta_machine_dispatch_solve(
     /* `data` is extended PeTTa's non-callable tuple.  Typecheck-v2 adds
      * `make-list`; its live `the` ascription is handled above.  In extended,
      * brand/the annotations have already erased during ingestion. */
-    if (cetta_petta_typecheck_op_applies(head_id, nargs)) {
+    if (machine->host.is_data_constructor &&
+        machine->host.is_data_constructor(
+            machine->host.context, head_id, nargs)) {
         if (!cetta_expr_len_mul_fits_size(
                 nargs, sizeof(Atom *))) {
             *failure = PETTA_MACHINE_STEP_CAPACITY;
@@ -11158,7 +11207,7 @@ static bool petta_machine_dispatch_goal(
                     if (!obligation || !resolved_formal || !same_value ||
                         space_global_mutation_epoch() !=
                             guard_choice->as.equal_default.authority_epoch ||
-                        cetta_petta_active_typecheck_policy_id() !=
+                        petta_machine_analysis_policy(machine) !=
                             guard_choice->as.equal_default.authority_policy ||
                         !space_read_token_matches_live_space(
                             guard_choice->as.equal_default.authority_read,
@@ -11206,10 +11255,10 @@ static bool petta_machine_dispatch_goal(
             }
             return true;
         }
-        PettaTypecheckResult result = {
-            .verdict = PETTA_TYPECHECK_REFUTED,
-            .reason = PETTA_TYPECHECK_REASON_MISMATCH,
-            .fault = PETTA_TYPECHECK_FAULT_NONE,
+        PettaAnalysisResult result = {
+            .verdict = PETTA_ANALYSIS_REFUTED,
+            .reason = PETTA_ANALYSIS_REASON_MISMATCH,
+            .fault = PETTA_ANALYSIS_FAULT_NONE,
         };
         if (!petta_machine_raise_typecheck_error(
                 machine, second, goal.third, &result)) {
@@ -11827,10 +11876,11 @@ static bool petta_machine_dispatch_goal(
         goal.kind == PETTA_GOAL_CALL_READY_DATA ||
         goal.kind ==
             PETTA_GOAL_CALL_READY_COUNTED_COLLECTION) {
-        if (machine->host.validate_ready_call) {
+        if (machine->host.analysis &&
+            machine->host.analysis->validate_ready_call) {
             char diagnostic[512] = {0};
             PettaMachineBoundaryResult boundary =
-                machine->host.validate_ready_call(
+                machine->host.analysis->validate_ready_call(
                     machine->host.context, machine->space, first,
                     diagnostic, sizeof(diagnostic));
             if (boundary != PETTA_MACHINE_BOUNDARY_ACCEPTED) {
@@ -12309,16 +12359,25 @@ static bool petta_machine_init_internal(
     if (host) {
         uint32_t known_analyses =
             PETTA_MACHINE_ANALYSIS_TYPE_OBLIGATIONS;
-        bool type_obligations =
-            (host->analysis_capabilities &
-             PETTA_MACHINE_ANALYSIS_TYPE_OBLIGATIONS) != 0u;
-        bool has_any_analysis = host->analysis_capabilities != 0u;
-        if ((host->analysis_capabilities & ~known_analyses) != 0u ||
-            type_obligations !=
-                (host->validate_ready_call != NULL) ||
-            has_any_analysis !=
-                (host->semantic_authority_token != NULL)) {
-            return false;
+        const PettaAnalysisService *analysis = host->analysis;
+        if (analysis) {
+            bool type_obligations =
+                (analysis->capabilities &
+                 PETTA_MACHINE_ANALYSIS_TYPE_OBLIGATIONS) != 0u;
+            if ((analysis->capabilities & ~known_analyses) != 0u ||
+                analysis->capabilities == 0u ||
+                analysis->provider_identity == 0u ||
+                analysis->provider_abi == 0u ||
+                !analysis->policy_identity ||
+                !analysis->mutable_authority_token ||
+                (type_obligations &&
+                 (!analysis->judge_value ||
+                  !analysis->type_has_runtime_classifier ||
+                  !analysis->error_atom ||
+                  !analysis->reason_name ||
+                  !analysis->validate_ready_call))) {
+                return false;
+            }
         }
     }
 
