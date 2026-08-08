@@ -1,0 +1,2 @@
+is ((: ((((mpi (((mpi (mpi ((mpi ((mpi (mpi I)) ax2)) ax1))) ax2) ax2)) ax1) ax1) ax1) (imp (imp (imp p q) r) (imp q r))) (: (((mpi ((((mpi ((mpi (mpi ((mpi (mpi I)) ax2))) ax2)) ax1) ax2) ax1)) ax1) ax1) (imp (imp (imp p q) r) (imp q r)))), should ((: ((((mpi (((mpi (mpi ((mpi ((mpi (mpi I)) ax2)) ax1))) ax2) ax2)) ax1) ax1) ax1) (imp (imp (imp p q) r) (imp q r))) (: (((mpi ((((mpi ((mpi (mpi ((mpi (mpi I)) ax2))) ax2)) ax1) ax2) ax1)) ax1) ax1) (imp (imp (imp p q) r) (imp q r)))). ✅ 
+true

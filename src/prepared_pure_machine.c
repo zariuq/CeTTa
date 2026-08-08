@@ -93,39 +93,11 @@ typedef struct {
     uint32_t pattern_var_count;
 } PreparedPureClause;
 
-typedef enum {
-    PREPARED_PURE_DECISION_LITERAL = 1,
-    PREPARED_PURE_DECISION_EXPR_ARITY = 2,
-    PREPARED_PURE_DECISION_EXPR_HEAD = 3,
-} PreparedPureDecisionKeyKind;
-
-/* A decision key names only information available at weak-head normal form.
- * It is deliberately less expressive than full matching: the shared program
- * eliminates impossible clauses, then the existing proof-producing matcher
- * validates and binds the surviving clause. */
-typedef struct {
-    PreparedPureDecisionKeyKind kind;
-    uint32_t expression_length;
-    Atom *atom;
-    uint32_t first_clause_ref;
-    uint32_t clause_count;
-} PreparedPureDecisionKey;
-
-typedef struct {
-    uint32_t first_key;
-    uint32_t key_count;
-    uint32_t first_wildcard_ref;
-    uint32_t wildcard_count;
-    uint32_t first_bucket;
-    uint32_t bucket_count;
-} PreparedPureDecisionArgument;
-
 typedef struct {
     uint32_t arity;
-    uint32_t first_clause_ref;
     uint32_t clause_count;
-    uint32_t first_argument;
-    uint64_t discriminating_arguments;
+    uint64_t universally_constrained_arguments;
+    CettaMatchDecision *selector;
 } PreparedPureDecisionProgram;
 
 typedef struct {
@@ -196,6 +168,7 @@ struct CettaPreparedPureProgram {
     CettaPreparedPurePatternViewFn pattern_view;
     CettaGsltPureCallMode call_mode;
     bool total_structural_equality;
+    CettaMatchDecisionSemanticIdentity match_decision_semantics;
     bool closed_program;
     bool allow_callable_templates;
     uint32_t root;
@@ -229,20 +202,6 @@ struct CettaPreparedPureProgram {
     PreparedPureDecisionProgram *decisions;
     size_t decision_len;
     size_t decision_cap;
-    PreparedPureDecisionArgument *decision_arguments;
-    size_t decision_argument_len;
-    size_t decision_argument_cap;
-    PreparedPureDecisionKey *decision_keys;
-    size_t decision_key_len;
-    size_t decision_key_cap;
-    uint32_t *decision_clause_refs;
-    size_t decision_clause_ref_len;
-    size_t decision_clause_ref_cap;
-    uint32_t *decision_key_buckets;
-    size_t decision_key_bucket_len;
-    size_t decision_key_bucket_cap;
-    uint32_t *decision_candidate_refs;
-    size_t decision_candidate_ref_cap;
     PreparedPureVarSlot *pattern_vars;
     size_t pattern_var_len;
     size_t pattern_var_cap;
@@ -313,11 +272,19 @@ enum {
     PREPARED_PURE_GC_INITIAL_NURSERY_INTERVALS = 3u,
 };
 
+static bool prepared_pure_debug_enabled(void) {
+    static _Thread_local int enabled = -1;
+    if (enabled < 0) {
+        const char *debug = getenv("CETTA_PREPARED_PURE_DEBUG");
+        enabled = debug && debug[0] != '\0' && debug[0] != '0';
+    }
+    return enabled != 0;
+}
+
 static bool prepared_pure_reject(
     CettaPreparedPureProgram *program, const char *reason, Atom *atom) {
     (void)program;
-    const char *debug = getenv("CETTA_PREPARED_PURE_DEBUG");
-    if (debug && debug[0] != '\0' && debug[0] != '0') {
+    if (prepared_pure_debug_enabled()) {
         fprintf(stderr, "prepared-pure compile decline: %s", reason);
         if (atom) {
             fputs(" atom=", stderr);
@@ -333,8 +300,7 @@ static bool prepared_pure_runtime_decline(
     const PreparedPureNode *node) {
     (void)program;
     (void)node;
-    const char *debug = getenv("CETTA_PREPARED_PURE_DEBUG");
-    if (debug && debug[0] != '\0' && debug[0] != '0')
+    if (prepared_pure_debug_enabled())
         fprintf(stderr, "prepared-pure runtime decline: %s\n", reason);
     return false;
 }
@@ -1588,30 +1554,65 @@ static bool prepared_pure_compile_children(
     return true;
 }
 
-/* A template is data, not a suspended evaluator call.  When requested by the
- * caller, reject a callable outer head so the machine never changes an
- * argument-evaluation contract by treating active syntax as inert data.
- * Descendants remain quoted constructor payload. */
-static bool prepared_pure_template_head_is_inert(
+typedef enum {
+    PREPARED_PURE_HEAD_INERT = 0,
+    PREPARED_PURE_HEAD_CALLABLE = 1,
+    PREPARED_PURE_HEAD_UNKNOWN = 2,
+} PreparedPureHeadRole;
+
+/*
+ * One conservative capability judgment serves compilation, inert-template
+ * validation, and run-time suspension handling.  UNKNOWN means that a
+ * dialect owns the occurrence but this accelerator cannot implement it;
+ * UNKNOWN therefore never licenses an inert-data optimization.
+ */
+static PreparedPureHeadRole prepared_pure_head_role(
     CettaPreparedPureProgram *program, Atom *source) {
-    if (!program || !source || source->kind != ATOM_EXPR ||
-        source->expr.len == 0u)
-        return true;
+    if (!program || !source)
+        return PREPARED_PURE_HEAD_UNKNOWN;
+    if (source->kind != ATOM_EXPR || source->expr.len == 0u)
+        return PREPARED_PURE_HEAD_INERT;
     Atom *head = source->expr.elems[0];
     if (!head || head->kind != ATOM_SYMBOL)
-        return false;
+        return PREPARED_PURE_HEAD_UNKNOWN;
+
+    if (program->expression_view) {
+        CettaPreparedPureExpressionView view = {0};
+        CettaPreparedPureExpressionViewState state =
+            program->expression_view(source, &view);
+        if (state == CETTA_PREPARED_PURE_EXPRESSION_DECLINE)
+            return PREPARED_PURE_HEAD_UNKNOWN;
+        if (state == CETTA_PREPARED_PURE_EXPRESSION_PROJECT ||
+            state == CETTA_PREPARED_PURE_EXPRESSION_OBSERVE)
+            return PREPARED_PURE_HEAD_CALLABLE;
+        if (state != CETTA_PREPARED_PURE_EXPRESSION_DEFAULT)
+            return PREPARED_PURE_HEAD_UNKNOWN;
+    }
+
     CettaExprLen arity = source->expr.len - 1u;
     if (prepared_pure_control_program(head->sym_id, arity, NULL) ||
         prepared_pure_register_program(program,
             head->sym_id, arity, NULL, NULL) ||
         is_grounded_op(head->sym_id) ||
-        prepared_pure_builtin_surface(head->sym_id))
-        return false;
+        prepared_pure_builtin_surface(head->sym_id)) {
+        return PREPARED_PURE_HEAD_CALLABLE;
+    }
     bool defined = false;
-    (void)space_query_effect_for_head(program->space, head->sym_id, &defined);
-    return !defined &&
-           !space_equations_may_match_known_head(
-               program->space, head->sym_id);
+    (void)space_query_effect_for_head(
+        program->space, head->sym_id, &defined);
+    return defined || space_equations_may_match_known_head(
+                          program->space, head->sym_id)
+        ? PREPARED_PURE_HEAD_CALLABLE
+        : PREPARED_PURE_HEAD_INERT;
+}
+
+/* A template is data, not a suspended evaluator call.  Reject every outer
+ * head not proved inert so the machine never changes an argument-evaluation
+ * contract by treating active or unknown syntax as data. */
+static bool prepared_pure_template_head_is_inert(
+    CettaPreparedPureProgram *program, Atom *source) {
+    return prepared_pure_head_role(program, source) ==
+           PREPARED_PURE_HEAD_INERT;
 }
 
 static bool prepared_pure_compile_template(
@@ -1877,12 +1878,14 @@ static bool prepared_pure_compile_eval(
         free(children);
         return ok;
     }
-    if (space_equations_may_match_known_head(program->space, head) ||
-        is_grounded_op(head) || prepared_pure_builtin_surface(head))
+    PreparedPureHeadRole head_role =
+        prepared_pure_head_role(program, source);
+    if (head_role == PREPARED_PURE_HEAD_CALLABLE)
         return prepared_pure_reject(
             program, "unsupported evaluator surface", source);
-    if (expression_view_state ==
-        CETTA_PREPARED_PURE_EXPRESSION_DECLINE)
+    if (head_role == PREPARED_PURE_HEAD_UNKNOWN ||
+        expression_view_state ==
+            CETTA_PREPARED_PURE_EXPRESSION_DECLINE)
         return prepared_pure_reject(
             program, "dialect-owned form requires canonical evaluation",
             source);
@@ -2200,182 +2203,6 @@ static bool prepared_pure_head_is_whnf_determinate(
     return true;
 }
 
-static size_t prepared_pure_decision_hash(
-    PreparedPureDecisionKeyKind kind,
-    uint32_t expression_length, Atom *atom) {
-    uint64_t bits = (uint64_t)(uint32_t)kind *
-        UINT64_C(0x9e3779b185ebca87);
-    bits ^= (uint64_t)expression_length *
-        UINT64_C(0xc2b2ae3d27d4eb4f);
-    if (atom)
-        bits ^= (uint64_t)atom_hash(atom) *
-            UINT64_C(0x165667b19e3779f9);
-    bits ^= bits >> 33u;
-    bits *= UINT64_C(0xff51afd7ed558ccd);
-    bits ^= bits >> 33u;
-    bits *= UINT64_C(0xc4ceb9fe1a85ec53);
-    bits ^= bits >> 33u;
-    return (size_t)bits;
-}
-
-static bool prepared_pure_decision_key_equal(
-    const PreparedPureDecisionKey *key,
-    PreparedPureDecisionKeyKind kind,
-    uint32_t expression_length, Atom *atom) {
-    if (!key || key->kind != kind ||
-        key->expression_length != expression_length)
-        return false;
-    if (!key->atom || !atom)
-        return key->atom == atom;
-    return key->atom == atom || atom_eq(key->atom, atom);
-}
-
-typedef struct {
-    PreparedPureDecisionKeyKind kind;
-    uint32_t expression_length;
-    Atom *atom;
-    uint32_t clause_count;
-    uint32_t fill_count;
-    uint32_t global_key_index;
-} PreparedPureDecisionTempKey;
-
-static bool prepared_pure_decision_pattern_key(
-    Atom *pattern, bool *wildcard,
-    PreparedPureDecisionKeyKind *kind,
-    uint32_t *expression_length, Atom **key_atom) {
-    if (!pattern || !wildcard || !kind ||
-        !expression_length || !key_atom)
-        return false;
-    *wildcard = pattern->kind == ATOM_VAR;
-    *kind = PREPARED_PURE_DECISION_LITERAL;
-    *expression_length = 0u;
-    *key_atom = pattern;
-    if (*wildcard)
-        return true;
-    if (pattern->kind != ATOM_EXPR)
-        return true;
-    *expression_length = pattern->expr.len;
-    Atom *head = pattern->expr.len > 0u
-        ? pattern->expr.elems[0] : NULL;
-    if (head && head->kind != ATOM_VAR && head->kind != ATOM_EXPR) {
-        *kind = PREPARED_PURE_DECISION_EXPR_HEAD;
-        *key_atom = head;
-    } else {
-        *kind = PREPARED_PURE_DECISION_EXPR_ARITY;
-        *key_atom = NULL;
-    }
-    return true;
-}
-
-static bool prepared_pure_decision_temp_key_equal(
-    const PreparedPureDecisionTempKey *key,
-    PreparedPureDecisionKeyKind kind,
-    uint32_t expression_length, Atom *atom) {
-    if (!key || key->kind != kind ||
-        key->expression_length != expression_length)
-        return false;
-    if (!key->atom || !atom)
-        return key->atom == atom;
-    return key->atom == atom || atom_eq(key->atom, atom);
-}
-
-static bool prepared_pure_decision_temp_lookup_or_insert(
-    PreparedPureDecisionTempKey *keys, uint32_t *key_count,
-    uint32_t key_capacity, uint32_t *buckets, uint32_t bucket_count,
-    PreparedPureDecisionKeyKind kind,
-    uint32_t expression_length, Atom *atom,
-    uint32_t *key_index) {
-    if (!keys || !key_count || !buckets || bucket_count == 0u ||
-        (bucket_count & (bucket_count - 1u)) != 0u || !key_index)
-        return false;
-    uint32_t mask = bucket_count - 1u;
-    uint32_t bucket = (uint32_t)(prepared_pure_decision_hash(
-        kind, expression_length, atom) & mask);
-    for (uint32_t probe = 0u; probe < bucket_count; probe++) {
-        uint32_t encoded = buckets[bucket];
-        if (encoded == 0u) {
-            if (*key_count >= key_capacity)
-                return false;
-            uint32_t index = (*key_count)++;
-            keys[index] = (PreparedPureDecisionTempKey){
-                .kind = kind,
-                .expression_length = expression_length,
-                .atom = atom,
-            };
-            buckets[bucket] = index + 1u;
-            *key_index = index;
-            return true;
-        }
-        uint32_t index = encoded - 1u;
-        if (index >= *key_count)
-            return false;
-        if (prepared_pure_decision_temp_key_equal(
-                &keys[index], kind, expression_length, atom)) {
-            *key_index = index;
-            return true;
-        }
-        bucket = (bucket + 1u) & mask;
-    }
-    return false;
-}
-
-static bool prepared_pure_decision_temp_lookup(
-    const PreparedPureDecisionTempKey *keys, uint32_t key_count,
-    const uint32_t *buckets, uint32_t bucket_count,
-    PreparedPureDecisionKeyKind kind,
-    uint32_t expression_length, Atom *atom,
-    uint32_t *key_index) {
-    if (!keys || !buckets || bucket_count == 0u ||
-        (bucket_count & (bucket_count - 1u)) != 0u || !key_index)
-        return false;
-    uint32_t mask = bucket_count - 1u;
-    uint32_t bucket = (uint32_t)(prepared_pure_decision_hash(
-        kind, expression_length, atom) & mask);
-    for (uint32_t probe = 0u; probe < bucket_count; probe++) {
-        uint32_t encoded = buckets[bucket];
-        if (encoded == 0u)
-            return false;
-        uint32_t index = encoded - 1u;
-        if (index >= key_count)
-            return false;
-        if (prepared_pure_decision_temp_key_equal(
-                &keys[index], kind, expression_length, atom)) {
-            *key_index = index;
-            return true;
-        }
-        bucket = (bucket + 1u) & mask;
-    }
-    return false;
-}
-
-static bool prepared_pure_decision_install_key_bucket(
-    CettaPreparedPureProgram *program,
-    const PreparedPureDecisionArgument *descriptor,
-    uint32_t global_key_index) {
-    if (!program || !descriptor || global_key_index >= program->decision_key_len ||
-        descriptor->bucket_count == 0u ||
-        (descriptor->bucket_count & (descriptor->bucket_count - 1u)) != 0u ||
-        descriptor->first_bucket > program->decision_key_bucket_len ||
-        descriptor->bucket_count >
-            program->decision_key_bucket_len - descriptor->first_bucket)
-        return false;
-    const PreparedPureDecisionKey *key =
-        &program->decision_keys[global_key_index];
-    uint32_t mask = descriptor->bucket_count - 1u;
-    uint32_t bucket = (uint32_t)(prepared_pure_decision_hash(
-        key->kind, key->expression_length, key->atom) & mask);
-    for (uint32_t probe = 0u; probe < descriptor->bucket_count; probe++) {
-        uint32_t *slot = &program->decision_key_buckets[
-            descriptor->first_bucket + bucket];
-        if (*slot == 0u) {
-            *slot = global_key_index + 1u;
-            return true;
-        }
-        bucket = (bucket + 1u) & mask;
-    }
-    return false;
-}
-
 static bool prepared_pure_compile_decision_group(
     CettaPreparedPureProgram *program, PreparedPureHead *head,
     uint32_t arity) {
@@ -2383,264 +2210,73 @@ static bool prepared_pure_compile_decision_group(
         head->first_clause > program->clause_len ||
         head->clause_count > program->clause_len - head->first_clause)
         return false;
+
     uint32_t clause_count = 0u;
     for (uint32_t i = 0u; i < head->clause_count; i++) {
         if (program->clauses[head->first_clause + i].arity == arity)
             clause_count++;
     }
-    /* Runtime dispatch deliberately uses the direct authoritative matcher for
-     * tiny families.  Do not build a decision program that can never be
-     * consumed: this keeps compile time and cached-program size proportional
-     * to genuinely indexed groups. */
     if (clause_count < PREPARED_PURE_DECISION_MIN_CLAUSES || arity == 0u)
         return true;
     if (program->decision_len >= UINT32_MAX ||
-        program->decision_clause_ref_len > UINT32_MAX - clause_count ||
-        program->decision_argument_len > UINT32_MAX - arity ||
         !prepared_pure_reserve(
             (void **)&program->decisions,
             sizeof(*program->decisions), &program->decision_cap,
-            program->decision_len + 1u) ||
-        !prepared_pure_reserve(
-            (void **)&program->decision_clause_refs,
-            sizeof(*program->decision_clause_refs),
-            &program->decision_clause_ref_cap,
-            program->decision_clause_ref_len + clause_count) ||
-        !prepared_pure_reserve(
-            (void **)&program->decision_arguments,
-            sizeof(*program->decision_arguments),
-            &program->decision_argument_cap,
-            program->decision_argument_len + arity))
+            program->decision_len + 1u))
+        return false;
+
+    CettaMatchDecisionClause *clauses =
+        malloc(sizeof(*clauses) * clause_count);
+    if (!clauses)
+        return false;
+    uint64_t universally_constrained =
+        arity == 64u
+            ? UINT64_MAX
+            : (UINT64_C(1) << arity) - 1u;
+    uint32_t write = 0u;
+    for (uint32_t i = 0u; i < head->clause_count; i++) {
+        uint32_t clause_index = head->first_clause + i;
+        PreparedPureClause *clause = &program->clauses[clause_index];
+        if (clause->arity != arity)
+            continue;
+        if (!clause->lhs || clause->lhs->kind != ATOM_EXPR ||
+            clause->lhs->expr.len != arity + 1u) {
+            free(clauses);
+            return false;
+        }
+        clauses[write++] = (CettaMatchDecisionClause){
+            .pattern = clause->lhs,
+            .source_ref = clause_index,
+        };
+        for (uint32_t argument = 0u; argument < arity; argument++) {
+            Atom *pattern = clause->lhs->expr.elems[argument + 1u];
+            if (!pattern || pattern->kind == ATOM_VAR) {
+                universally_constrained &=
+                    ~(UINT64_C(1) << argument);
+            }
+        }
+    }
+    if (write != clause_count) {
+        free(clauses);
+        return false;
+    }
+
+    CettaMatchDecision *selector = cetta_match_decision_compile(
+        program->read, program->match_decision_semantics,
+        clauses, clause_count, CETTA_MATCH_DECISION_DEEP,
+        0u, NULL, NULL);
+    free(clauses);
+    if (!selector)
         return false;
 
     uint32_t decision_index = (uint32_t)program->decision_len;
-    uint32_t first_clause_ref =
-        (uint32_t)program->decision_clause_ref_len;
-    uint32_t first_argument =
-        (uint32_t)program->decision_argument_len;
-    for (uint32_t i = 0u; i < head->clause_count; i++) {
-        uint32_t clause_index = head->first_clause + i;
-        if (program->clauses[clause_index].arity == arity)
-            program->decision_clause_refs[
-                program->decision_clause_ref_len++] = clause_index;
-    }
-
-    uint64_t discriminating_arguments = 0u;
-    for (uint32_t argument = 0u; argument < arity; argument++) {
-        uint32_t bucket_count = 4u;
-        while (bucket_count < clause_count * 2u) {
-            if (bucket_count > UINT32_MAX / 2u)
-                return false;
-            bucket_count *= 2u;
-        }
-        PreparedPureDecisionTempKey *temp_keys = calloc(
-            clause_count, sizeof(*temp_keys));
-        uint32_t *temp_buckets = calloc(
-            bucket_count, sizeof(*temp_buckets));
-        if (!temp_keys || !temp_buckets) {
-            free(temp_keys);
-            free(temp_buckets);
-            return false;
-        }
-        uint32_t temp_key_count = 0u;
-        uint32_t wildcard_count = 0u;
-        bool ok = true;
-        for (uint32_t local = 0u; local < clause_count; local++) {
-            uint32_t clause_index =
-                program->decision_clause_refs[first_clause_ref + local];
-            Atom *pattern = program->clauses[clause_index]
-                                .lhs->expr.elems[argument + 1u];
-            bool wildcard = false;
-            PreparedPureDecisionKeyKind kind;
-            uint32_t expression_length = 0u;
-            Atom *key_atom = NULL;
-            if (!prepared_pure_decision_pattern_key(
-                    pattern, &wildcard, &kind,
-                    &expression_length, &key_atom)) {
-                ok = false;
-                break;
-            }
-            if (wildcard) {
-                wildcard_count++;
-                continue;
-            }
-            uint32_t key_index = 0u;
-            if (!prepared_pure_decision_temp_lookup_or_insert(
-                    temp_keys, &temp_key_count, clause_count,
-                    temp_buckets, bucket_count, kind,
-                    expression_length, key_atom, &key_index)) {
-                ok = false;
-                break;
-            }
-            temp_keys[key_index].clause_count++;
-        }
-        if (!ok) {
-            free(temp_keys);
-            free(temp_buckets);
-            return false;
-        }
-
-        uint32_t runtime_bucket_count = 0u;
-        if (temp_key_count > 0u) {
-            runtime_bucket_count = 4u;
-            while (runtime_bucket_count < temp_key_count * 2u) {
-                if (runtime_bucket_count > UINT32_MAX / 2u) {
-                    free(temp_keys);
-                    free(temp_buckets);
-                    return false;
-                }
-                runtime_bucket_count *= 2u;
-            }
-        }
-        uint64_t extra_refs64 = wildcard_count;
-        for (uint32_t i = 0u; i < temp_key_count; i++)
-            extra_refs64 += temp_keys[i].clause_count;
-        if (extra_refs64 > UINT32_MAX ||
-            program->decision_key_len > UINT32_MAX - temp_key_count ||
-            program->decision_clause_ref_len >
-                UINT32_MAX - (uint32_t)extra_refs64 ||
-            program->decision_key_bucket_len >
-                UINT32_MAX - runtime_bucket_count ||
-            !prepared_pure_reserve(
-                (void **)&program->decision_keys,
-                sizeof(*program->decision_keys),
-                &program->decision_key_cap,
-                program->decision_key_len + temp_key_count) ||
-            !prepared_pure_reserve(
-                (void **)&program->decision_clause_refs,
-                sizeof(*program->decision_clause_refs),
-                &program->decision_clause_ref_cap,
-                program->decision_clause_ref_len + (size_t)extra_refs64) ||
-            (runtime_bucket_count > 0u && !prepared_pure_reserve(
-                (void **)&program->decision_key_buckets,
-                sizeof(*program->decision_key_buckets),
-                &program->decision_key_bucket_cap,
-                program->decision_key_bucket_len + runtime_bucket_count))) {
-            free(temp_keys);
-            free(temp_buckets);
-            return false;
-        }
-
-        uint32_t argument_index =
-            (uint32_t)program->decision_argument_len;
-        uint32_t first_key = (uint32_t)program->decision_key_len;
-        uint32_t first_wildcard_ref =
-            (uint32_t)program->decision_clause_ref_len;
-        uint32_t first_bucket =
-            (uint32_t)program->decision_key_bucket_len;
-        program->decision_arguments[program->decision_argument_len++] =
-            (PreparedPureDecisionArgument){
-                .first_key = first_key,
-                .key_count = temp_key_count,
-                .first_wildcard_ref = first_wildcard_ref,
-                .wildcard_count = wildcard_count,
-                .first_bucket = first_bucket,
-                .bucket_count = runtime_bucket_count,
-            };
-        if (runtime_bucket_count > 0u) {
-            memset(&program->decision_key_buckets[
-                       program->decision_key_bucket_len],
-                   0,
-                   sizeof(*program->decision_key_buckets) *
-                       runtime_bucket_count);
-            program->decision_key_bucket_len += runtime_bucket_count;
-        }
-        for (uint32_t i = 0u; i < (uint32_t)extra_refs64; i++)
-            program->decision_clause_refs[
-                program->decision_clause_ref_len++] = UINT32_MAX;
-
-        uint32_t next_key_ref = first_wildcard_ref + wildcard_count;
-        for (uint32_t i = 0u; i < temp_key_count; i++) {
-            uint32_t global_key_index =
-                (uint32_t)program->decision_key_len;
-            temp_keys[i].global_key_index = global_key_index;
-            program->decision_keys[program->decision_key_len++] =
-                (PreparedPureDecisionKey){
-                    .kind = temp_keys[i].kind,
-                    .expression_length = temp_keys[i].expression_length,
-                    .atom = temp_keys[i].atom,
-                    .first_clause_ref = next_key_ref,
-                    .clause_count = temp_keys[i].clause_count,
-                };
-            next_key_ref += temp_keys[i].clause_count;
-        }
-
-        uint32_t wildcard_fill = 0u;
-        for (uint32_t local = 0u; local < clause_count; local++) {
-            uint32_t clause_index =
-                program->decision_clause_refs[first_clause_ref + local];
-            Atom *pattern = program->clauses[clause_index]
-                                .lhs->expr.elems[argument + 1u];
-            bool wildcard = false;
-            PreparedPureDecisionKeyKind kind;
-            uint32_t expression_length = 0u;
-            Atom *key_atom = NULL;
-            if (!prepared_pure_decision_pattern_key(
-                    pattern, &wildcard, &kind,
-                    &expression_length, &key_atom)) {
-                ok = false;
-                break;
-            }
-            if (wildcard) {
-                if (wildcard_fill >= wildcard_count) {
-                    ok = false;
-                    break;
-                }
-                program->decision_clause_refs[
-                    first_wildcard_ref + wildcard_fill++] = clause_index;
-                continue;
-            }
-            uint32_t temp_key_index = 0u;
-            if (!prepared_pure_decision_temp_lookup(
-                    temp_keys, temp_key_count, temp_buckets,
-                    bucket_count, kind, expression_length,
-                    key_atom, &temp_key_index) ||
-                temp_key_index >= temp_key_count) {
-                ok = false;
-                break;
-            }
-            PreparedPureDecisionTempKey *temp =
-                &temp_keys[temp_key_index];
-            if (temp->global_key_index >= program->decision_key_len ||
-                temp->fill_count >= temp->clause_count) {
-                ok = false;
-                break;
-            }
-            PreparedPureDecisionKey *key =
-                &program->decision_keys[temp->global_key_index];
-            program->decision_clause_refs[
-                key->first_clause_ref + temp->fill_count++] =
-                    clause_index;
-        }
-        if (ok) {
-            const PreparedPureDecisionArgument *descriptor =
-                &program->decision_arguments[argument_index];
-            for (uint32_t i = 0u; i < temp_key_count; i++) {
-                if (temp_keys[i].fill_count !=
-                        temp_keys[i].clause_count ||
-                    !prepared_pure_decision_install_key_bucket(
-                        program, descriptor,
-                        temp_keys[i].global_key_index)) {
-                    ok = false;
-                    break;
-                }
-            }
-        }
-        free(temp_keys);
-        free(temp_buckets);
-        if (!ok)
-            return false;
-        if (temp_key_count > 0u)
-            discriminating_arguments |= UINT64_C(1) << argument;
-    }
-
     program->decisions[program->decision_len++] =
         (PreparedPureDecisionProgram){
             .arity = arity,
-            .first_clause_ref = first_clause_ref,
             .clause_count = clause_count,
-            .first_argument = first_argument,
-            .discriminating_arguments = discriminating_arguments,
+            .universally_constrained_arguments =
+                universally_constrained,
+            .selector = selector,
         };
     head = &program->heads[(uint32_t)(head - program->heads)];
     if (head->decision_count == 0u)
@@ -2936,19 +2572,8 @@ static bool prepared_pure_expression_is_callable(
 
     cetta_runtime_stats_inc(
         CETTA_RUNTIME_COUNTER_PREPARED_PURE_CALLABLE_MISS);
-    callable =
-        prepared_pure_control_program(head->sym_id, arity, NULL) ||
-        prepared_pure_register_program(program,
-            head->sym_id, arity, NULL, NULL) ||
-        is_grounded_op(head->sym_id) ||
-        prepared_pure_builtin_surface(head->sym_id);
-    if (!callable) {
-        bool defined = false;
-        (void)space_query_effect_for_head(
-            program->space, head->sym_id, &defined);
-        callable = defined || space_equations_may_match_known_head(
-                                  program->space, head->sym_id);
-    }
+    callable = prepared_pure_head_role(program, value) !=
+               PREPARED_PURE_HEAD_INERT;
     /* The program is pinned to one space revision and dialect.  This cache is
      * therefore semantic data for that program, not a process-global policy
      * table.  Allocation failure only loses the optimization. */
@@ -3280,251 +2905,56 @@ prepared_pure_decision_for_arity(
     return NULL;
 }
 
-static bool prepared_pure_decision_key_matches_value(
-    const PreparedPureDecisionKey *key, Atom *value) {
-    if (!key || !value)
-        return false;
-    if (key->kind == PREPARED_PURE_DECISION_LITERAL) {
-        return value->kind != ATOM_EXPR && key->atom &&
-               (key->atom == value || atom_eq(key->atom, value));
-    }
-    if (value->kind != ATOM_EXPR ||
-        value->expr.len != key->expression_length)
-        return false;
-    if (key->kind == PREPARED_PURE_DECISION_EXPR_ARITY)
-        return true;
-    if (key->kind != PREPARED_PURE_DECISION_EXPR_HEAD ||
-        !key->atom || value->expr.len == 0u ||
-        !value->expr.elems[0])
-        return false;
-    Atom *head = value->expr.elems[0];
-    return key->atom == head || atom_eq(key->atom, head);
-}
-
-static bool prepared_pure_decision_lookup_key(
-    const CettaPreparedPureProgram *program,
-    const PreparedPureDecisionArgument *descriptor,
-    PreparedPureDecisionKeyKind kind,
-    uint32_t expression_length, Atom *atom,
-    uint32_t *key_index) {
-    if (!program || !descriptor || !key_index ||
-        descriptor->bucket_count == 0u ||
-        (descriptor->bucket_count & (descriptor->bucket_count - 1u)) != 0u ||
-        descriptor->first_bucket > program->decision_key_bucket_len ||
-        descriptor->bucket_count >
-            program->decision_key_bucket_len - descriptor->first_bucket)
-        return false;
-    uint32_t mask = descriptor->bucket_count - 1u;
-    uint32_t bucket = (uint32_t)(prepared_pure_decision_hash(
-        kind, expression_length, atom) & mask);
-    for (uint32_t probe = 0u; probe < descriptor->bucket_count; probe++) {
-        uint32_t encoded = program->decision_key_buckets[
-            descriptor->first_bucket + bucket];
-        if (encoded == 0u)
-            return false;
-        uint32_t index = encoded - 1u;
-        if (index >= program->decision_key_len)
-            return false;
-        if (prepared_pure_decision_key_equal(
-                &program->decision_keys[index], kind,
-                expression_length, atom)) {
-            *key_index = index;
-            return true;
-        }
-        bucket = (bucket + 1u) & mask;
-    }
-    return false;
-}
-
-typedef struct {
-    const uint32_t *refs;
-    uint32_t count;
-    uint32_t cursor;
-} PreparedPureDecisionRefList;
-
-static bool prepared_pure_decision_list(
-    const CettaPreparedPureProgram *program,
-    uint32_t first_ref, uint32_t count,
-    PreparedPureDecisionRefList *list) {
-    if (!program || !list ||
-        first_ref > program->decision_clause_ref_len ||
-        count > program->decision_clause_ref_len - first_ref)
-        return false;
-    *list = (PreparedPureDecisionRefList){
-        .refs = &program->decision_clause_refs[first_ref],
-        .count = count,
-    };
-    return true;
-}
-
-static bool prepared_pure_decision_matching_lists(
-    const CettaPreparedPureProgram *program,
-    const PreparedPureDecisionArgument *descriptor,
-    Atom *value, PreparedPureDecisionRefList lists[3],
-    uint32_t *list_count, uint32_t *accepted_count) {
-    if (!program || !descriptor || !value || !lists ||
-        !list_count || !accepted_count ||
-        descriptor->first_key > program->decision_key_len ||
-        descriptor->key_count >
-            program->decision_key_len - descriptor->first_key)
-        return false;
-    *list_count = 0u;
-    *accepted_count = 0u;
-    if (descriptor->wildcard_count > 0u) {
-        if (!prepared_pure_decision_list(
-                program, descriptor->first_wildcard_ref,
-                descriptor->wildcard_count,
-                &lists[(*list_count)++]))
-            return false;
-        *accepted_count += descriptor->wildcard_count;
-    }
-
-    uint32_t keys[2] = {0u, 0u};
-    uint32_t key_count = 0u;
-    if (value->kind == ATOM_EXPR) {
-        uint32_t key_index = 0u;
-        if (prepared_pure_decision_lookup_key(
-                program, descriptor,
-                PREPARED_PURE_DECISION_EXPR_ARITY,
-                value->expr.len, NULL, &key_index))
-            keys[key_count++] = key_index;
-        Atom *head = value->expr.len > 0u
-            ? value->expr.elems[0] : NULL;
-        if (head && head->kind != ATOM_VAR && head->kind != ATOM_EXPR &&
-            prepared_pure_decision_lookup_key(
-                program, descriptor,
-                PREPARED_PURE_DECISION_EXPR_HEAD,
-                value->expr.len, head, &key_index))
-            keys[key_count++] = key_index;
-    } else {
-        uint32_t key_index = 0u;
-        if (prepared_pure_decision_lookup_key(
-                program, descriptor,
-                PREPARED_PURE_DECISION_LITERAL,
-                0u, value, &key_index))
-            keys[key_count++] = key_index;
-    }
-    for (uint32_t i = 0u; i < key_count; i++) {
-        if (keys[i] >= program->decision_key_len)
-            return false;
-        const PreparedPureDecisionKey *key =
-            &program->decision_keys[keys[i]];
-        if (!prepared_pure_decision_key_matches_value(key, value) ||
-            *list_count >= 3u ||
-            !prepared_pure_decision_list(
-                program, key->first_clause_ref, key->clause_count,
-                &lists[(*list_count)++]))
-            return false;
-        if (*accepted_count > UINT32_MAX - key->clause_count)
-            return false;
-        *accepted_count += key->clause_count;
-    }
-    return true;
-}
-
-static bool prepared_pure_decision_merge_lists(
-    CettaPreparedPureProgram *program,
-    PreparedPureDecisionRefList lists[3], uint32_t list_count,
-    uint32_t expected_count, uint32_t *result_count) {
-    if (!program || !lists || list_count > 3u || !result_count ||
-        !prepared_pure_reserve(
-            (void **)&program->decision_candidate_refs,
-            sizeof(*program->decision_candidate_refs),
-            &program->decision_candidate_ref_cap,
-            expected_count))
-        return false;
-    uint32_t out = 0u;
-    for (;;) {
-        uint32_t best = UINT32_MAX;
-        int best_list = -1;
-        for (uint32_t i = 0u; i < list_count; i++) {
-            if (lists[i].cursor >= lists[i].count)
-                continue;
-            uint32_t value = lists[i].refs[lists[i].cursor];
-            if (best_list < 0 || value < best) {
-                best = value;
-                best_list = (int)i;
-            }
-        }
-        if (best_list < 0)
-            break;
-        if (out >= expected_count)
-            return false;
-        program->decision_candidate_refs[out++] = best;
-        lists[best_list].cursor++;
-    }
-    if (out != expected_count)
-        return false;
-    *result_count = out;
-    return true;
-}
-
-static bool prepared_pure_decision_pattern_accepts_value(
-    Atom *pattern, Atom *value) {
-    if (!pattern || !value)
-        return false;
-    if (pattern->kind == ATOM_VAR)
-        return true;
-    if (pattern->kind != ATOM_EXPR)
-        return value->kind != ATOM_EXPR &&
-               (pattern == value || atom_eq(pattern, value));
-    if (value->kind != ATOM_EXPR ||
-        pattern->expr.len != value->expr.len)
-        return false;
-    if (pattern->expr.len == 0u)
-        return true;
-    Atom *pattern_head = pattern->expr.elems[0];
-    if (!pattern_head || pattern_head->kind == ATOM_VAR ||
-        pattern_head->kind == ATOM_EXPR)
-        return true;
-    Atom *value_head = value->expr.elems[0];
-    return value_head &&
-           (pattern_head == value_head || atom_eq(pattern_head, value_head));
-}
-
-/* The generated decision program is consulted only after every discriminating
- * callable argument has already been demanded by the exact matcher.  It then
- * selects one sparse top-level bucket and filters its ordered clause refs with
- * the remaining weak-head tests.  This preserves source clause order and Need
- * demand/effect order while changing full rematching from O(C * pattern) to
- * expected O(1) bucket lookup plus O(S * A) weak-head checks for S survivors. */
+/* Shared MatchDecision performs refutation only.  Already available
+ * non-callable arguments may be observed without changing Need behaviour;
+ * callable arguments remain unavailable until the evaluator has forced them.
+ * Direct demand is permitted only when every clause constrains the same
+ * argument, preserving the exact matcher's source-order demand policy. */
 static PreparedPureDecisionState prepared_pure_decision_candidates(
     CettaPreparedPureProgram *program,
     const PreparedPureHead *head,
     Atom *const *arguments, uint32_t arity,
     uint64_t ready_arguments,
-    const PreparedPureDecisionProgram **decision_out,
-    uint32_t *candidate_count_out,
+    const uint32_t **candidate_refs_out,
+    size_t *candidate_count_out,
     uint32_t *demanded_argument_out) {
-    if (decision_out)
-        *decision_out = NULL;
+    if (candidate_refs_out)
+        *candidate_refs_out = NULL;
     if (candidate_count_out)
         *candidate_count_out = 0u;
     if (demanded_argument_out)
         *demanded_argument_out = 0u;
-    if (!program || !head || !arguments || !decision_out ||
+    if (!program || !head || !arguments || !candidate_refs_out ||
         !candidate_count_out || !demanded_argument_out)
         return PREPARED_PURE_DECISION_ERROR;
+
     const PreparedPureDecisionProgram *decision =
         prepared_pure_decision_for_arity(program, head, arity);
     if (!decision ||
         decision->clause_count < PREPARED_PURE_DECISION_MIN_CLAUSES)
         return PREPARED_PURE_DECISION_NOT_APPLICABLE;
+    if (!decision->selector)
+        return PREPARED_PURE_DECISION_ERROR;
+
     cetta_runtime_stats_inc(
         CETTA_RUNTIME_COUNTER_PREPARED_PURE_DECISION_RUN);
     cetta_runtime_stats_add(
         CETTA_RUNTIME_COUNTER_PREPARED_PURE_DECISION_CLAUSE_INPUT,
         decision->clause_count);
-    if (decision->first_argument > program->decision_argument_len ||
-        decision->arity >
-            program->decision_argument_len - decision->first_argument ||
-        decision->first_clause_ref > program->decision_clause_ref_len ||
-        decision->clause_count >
-            program->decision_clause_ref_len - decision->first_clause_ref)
-        return PREPARED_PURE_DECISION_ERROR;
 
-    uint64_t unresolved = decision->discriminating_arguments &
-        ~ready_arguments;
+    uint64_t observable_arguments = ready_arguments;
+    for (uint32_t argument = 0u; argument < arity; argument++) {
+        uint64_t bit = UINT64_C(1) << argument;
+        if ((observable_arguments & bit) == 0u &&
+            !prepared_pure_expression_is_callable(
+                program, arguments[argument])) {
+            observable_arguments |= bit;
+        }
+    }
+
+    uint64_t unresolved =
+        decision->universally_constrained_arguments &
+        ~observable_arguments;
     while (unresolved != 0u) {
         uint32_t argument = (uint32_t)__builtin_ctzll(unresolved);
         unresolved &= unresolved - 1u;
@@ -3532,104 +2962,33 @@ static PreparedPureDecisionState prepared_pure_decision_candidates(
             return PREPARED_PURE_DECISION_ERROR;
         if (prepared_pure_expression_is_callable(
                 program, arguments[argument])) {
-            const PreparedPureDecisionArgument *descriptor =
-                &program->decision_arguments[
-                    decision->first_argument + argument];
-            /* With no wildcard survivor, every clause in this arity family
-             * must inspect the same argument to weak head form.  Request that
-             * single demand directly instead of scanning all clauses merely
-             * to rediscover it.  If any clause can ignore the position, fall
-             * back to the authoritative matcher to preserve demand order. */
-            if (descriptor->wildcard_count == 0u &&
-                descriptor->key_count > 0u) {
-                *demanded_argument_out = argument;
-                cetta_runtime_stats_inc(
-                    CETTA_RUNTIME_COUNTER_PREPARED_PURE_DECISION_DIRECT_DEMAND);
-                return PREPARED_PURE_DECISION_NEEDS_ARGUMENT;
-            }
+            *demanded_argument_out = argument;
             cetta_runtime_stats_inc(
-                CETTA_RUNTIME_COUNTER_PREPARED_PURE_DECISION_FALLBACK_UNREADY);
-            return PREPARED_PURE_DECISION_NOT_APPLICABLE;
+                CETTA_RUNTIME_COUNTER_PREPARED_PURE_DECISION_DIRECT_DEMAND);
+            return PREPARED_PURE_DECISION_NEEDS_ARGUMENT;
         }
     }
 
-    uint32_t pivot_argument = UINT32_MAX;
-    uint32_t pivot_count = decision->clause_count;
-    PreparedPureDecisionRefList pivot_lists[3] = {{0}};
-    uint32_t pivot_list_count = 0u;
-    for (uint32_t argument = 0u; argument < arity; argument++) {
-        if ((decision->discriminating_arguments &
-             (UINT64_C(1) << argument)) == 0u)
-            continue;
-        const PreparedPureDecisionArgument *descriptor =
-            &program->decision_arguments[
-                decision->first_argument + argument];
-        PreparedPureDecisionRefList lists[3] = {{0}};
-        uint32_t list_count = 0u;
-        uint32_t accepted_count = 0u;
-        if (!prepared_pure_decision_matching_lists(
-                program, descriptor, arguments[argument],
-                lists, &list_count, &accepted_count))
-            return PREPARED_PURE_DECISION_ERROR;
-        if (accepted_count < pivot_count) {
-            pivot_argument = argument;
-            pivot_count = accepted_count;
-            pivot_list_count = list_count;
-            memcpy(pivot_lists, lists, sizeof(pivot_lists));
-        }
-        if (accepted_count == 0u)
-            break;
-    }
-
-    *decision_out = decision;
-    if (pivot_argument == UINT32_MAX) {
-        if (!prepared_pure_reserve(
-                (void **)&program->decision_candidate_refs,
-                sizeof(*program->decision_candidate_refs),
-                &program->decision_candidate_ref_cap,
-                decision->clause_count))
-            return PREPARED_PURE_DECISION_ERROR;
-        if (decision->clause_count > 0u)
-            memcpy(program->decision_candidate_refs,
-                   &program->decision_clause_refs[
-                       decision->first_clause_ref],
-                   sizeof(*program->decision_candidate_refs) *
-                       decision->clause_count);
-        *candidate_count_out = decision->clause_count;
-    } else if (pivot_count == 0u) {
-        *candidate_count_out = 0u;
-    } else if (!prepared_pure_decision_merge_lists(
-                   program, pivot_lists, pivot_list_count,
-                   pivot_count, candidate_count_out)) {
+    if (head->first_clause >= program->clause_len)
         return PREPARED_PURE_DECISION_ERROR;
-    }
+    Atom *lhs = program->clauses[head->first_clause].lhs;
+    if (!lhs || lhs->kind != ATOM_EXPR || lhs->expr.len == 0u)
+        return PREPARED_PURE_DECISION_ERROR;
+    CettaMatchDecisionSelectState selected =
+        cetta_match_decision_select_parts(
+            decision->selector, program->space,
+            program->match_decision_semantics,
+            lhs->expr.elems[0], arguments, arity,
+            observable_arguments,
+            candidate_refs_out, candidate_count_out);
+    if (selected == CETTA_MATCH_DECISION_SELECT_INVALIDATED)
+        return PREPARED_PURE_DECISION_ERROR;
+    if (selected != CETTA_MATCH_DECISION_SELECT_READY)
+        return PREPARED_PURE_DECISION_ERROR;
 
-    uint32_t write = 0u;
-    for (uint32_t i = 0u; i < *candidate_count_out; i++) {
-        uint32_t clause_index = program->decision_candidate_refs[i];
-        if (clause_index >= program->clause_len)
-            return PREPARED_PURE_DECISION_ERROR;
-        const PreparedPureClause *clause =
-            &program->clauses[clause_index];
-        bool accepts = clause->arity == arity && clause->lhs &&
-                       clause->lhs->kind == ATOM_EXPR &&
-                       clause->lhs->expr.len == arity + 1u;
-        for (uint32_t argument = 0u; accepts && argument < arity;
-             argument++) {
-            if ((decision->discriminating_arguments &
-                 (UINT64_C(1) << argument)) == 0u)
-                continue;
-            accepts = prepared_pure_decision_pattern_accepts_value(
-                clause->lhs->expr.elems[argument + 1u],
-                arguments[argument]);
-        }
-        if (accepts)
-            program->decision_candidate_refs[write++] = clause_index;
-    }
-    *candidate_count_out = write;
     cetta_runtime_stats_add(
         CETTA_RUNTIME_COUNTER_PREPARED_PURE_DECISION_CLAUSE_SURVIVOR,
-        write);
+        *candidate_count_out);
     return PREPARED_PURE_DECISION_READY;
 }
 
@@ -3704,13 +3063,13 @@ static PreparedPureSelection prepared_pure_select_clause(
     const PreparedPureClause *selected = NULL;
     bool needs_argument = false;
     uint32_t first_demanded_argument = 0u;
-    const PreparedPureDecisionProgram *decision = NULL;
-    uint32_t decision_candidate_count = 0u;
+    const uint32_t *decision_candidate_refs = NULL;
+    size_t decision_candidate_count = 0u;
     uint32_t decision_demanded_argument = 0u;
     PreparedPureDecisionState decision_state =
         prepared_pure_decision_candidates(
             program, head, arguments, arity, ready_arguments,
-            &decision, &decision_candidate_count,
+            &decision_candidate_refs, &decision_candidate_count,
             &decision_demanded_argument);
     if (decision_state == PREPARED_PURE_DECISION_NEEDS_ARGUMENT)
         return (PreparedPureSelection){
@@ -3721,9 +3080,9 @@ static PreparedPureSelection prepared_pure_select_clause(
         return (PreparedPureSelection){
             .state = PREPARED_PURE_SELECT_ERROR,
         };
-    if (decision_state == PREPARED_PURE_DECISION_READY && decision) {
-        for (uint32_t i = 0u; i < decision_candidate_count; i++) {
-            uint32_t clause_index = program->decision_candidate_refs[i];
+    if (decision_state == PREPARED_PURE_DECISION_READY) {
+        for (size_t i = 0u; i < decision_candidate_count; i++) {
+            uint32_t clause_index = decision_candidate_refs[i];
             if (clause_index >= program->clause_len)
                 return (PreparedPureSelection){
                     .state = PREPARED_PURE_SELECT_ERROR,
@@ -4280,7 +3639,8 @@ CettaPreparedPureProgram *cetta_prepared_pure_program_compile(
     CettaPreparedPureRegisterViewFn register_view,
     CettaPreparedPureExpressionViewFn expression_view,
     CettaPreparedPurePatternViewFn pattern_view,
-    bool total_structural_equality) {
+    bool total_structural_equality,
+    CettaMatchDecisionSemanticIdentity match_decision_semantics) {
     if (!space || !expression || accumulator_var == VAR_ID_NONE ||
         item_var == VAR_ID_NONE || accumulator_var == item_var ||
         !boolean_value || !construct_value)
@@ -4298,6 +3658,7 @@ CettaPreparedPureProgram *cetta_prepared_pure_program_compile(
     program->pattern_view = pattern_view;
     program->call_mode = CETTA_GSLT_PURE_CALL_CALL_BY_NEED;
     program->total_structural_equality = total_structural_equality;
+    program->match_decision_semantics = match_decision_semantics;
     PreparedPureCompileContext context = {0};
     if (!prepared_pure_context_bind(
             &context, accumulator_var, false,
@@ -4403,7 +3764,8 @@ CettaPreparedPureProgram *cetta_prepared_pure_program_compile_closed(
     CettaPreparedPureExpressionViewFn expression_view,
     CettaPreparedPurePatternViewFn pattern_view,
     bool entry_arguments_are_values,
-    bool total_structural_equality) {
+    bool total_structural_equality,
+    CettaMatchDecisionSemanticIdentity match_decision_semantics) {
     if (!space || !expression || atom_has_vars(expression) ||
         !boolean_value || !construct_value ||
         (call_mode != CETTA_GSLT_PURE_CALL_EAGER &&
@@ -4430,6 +3792,7 @@ CettaPreparedPureProgram *cetta_prepared_pure_program_compile_closed(
     program->pattern_view = pattern_view;
     program->call_mode = call_mode;
     program->total_structural_equality = total_structural_equality;
+    program->match_decision_semantics = match_decision_semantics;
     program->closed_program = true;
     program->allow_callable_templates = true;
     PreparedPureCompileContext context = {0};
@@ -5097,12 +4460,9 @@ void cetta_prepared_pure_program_free(
     free(program->head_buckets);
     free(program->callable_buckets);
     free(program->clauses);
+    for (size_t index = 0u; index < program->decision_len; index++)
+        cetta_match_decision_free(program->decisions[index].selector);
     free(program->decisions);
-    free(program->decision_arguments);
-    free(program->decision_keys);
-    free(program->decision_clause_refs);
-    free(program->decision_key_buckets);
-    free(program->decision_candidate_refs);
     free(program->pattern_vars);
     free(program->bind_patterns);
     free(program->bind_vars);

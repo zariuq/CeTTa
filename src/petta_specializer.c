@@ -160,12 +160,16 @@ static bool petta_specializer_trace_enabled(void) {
 }
 
 static bool petta_specializer_route_cache_enabled(void) {
-    const char *value =
-        getenv("CETTA_PETTA_SPECIALIZER_ROUTE_CACHE");
-    return !value ||
-           (strcmp(value, "0") != 0 &&
-            strcmp(value, "false") != 0 &&
-            strcmp(value, "off") != 0);
+    static _Thread_local int enabled = -1;
+    if (enabled < 0) {
+        const char *value =
+            getenv("CETTA_PETTA_SPECIALIZER_ROUTE_CACHE");
+        enabled = !value ||
+                  (strcmp(value, "0") != 0 &&
+                   strcmp(value, "false") != 0 &&
+                   strcmp(value, "off") != 0);
+    }
+    return enabled != 0;
 }
 
 static bool petta_specializer_relevance_filter_enabled(void) {

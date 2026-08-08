@@ -1,6 +1,6 @@
-; Prime lowers let patterns to stable positional slots and the body to repeated
-; unary ABT scopes.  Matching remains a metavariable operation; lexical scope
-; does not depend on a surface variable's globally interned VarId.
+; Prime lowers each let pattern to stable positional slots and its body to
+; unary ABT scopes.  Across sequential relational forms, reusing one surface
+; variable refines the established binding instead of introducing a shadow.
 
 (= (prime-let-duplicate) (pair a b))
 (= (prime-let-duplicate) (pair a b))
@@ -12,11 +12,11 @@
    (let (pair $x $y) (prime-let-duplicate) (got $x $y))
    ((got a b) (got a b)))
 
-; The inner pattern shadows the outer one, while its source still sees the
-; outer binding.
-!(assertEqual
+; Sequential reuse is single-assignment refinement: disagreement removes the
+; branch, while agreement preserves the established value.
+!(assertEqualToResult
    (let $x a (let $x b (pair $x)))
-   (pair b))
+   ())
 !(assertEqual
    (let $x a (let $x $x (pair $x)))
    (pair a))
@@ -38,21 +38,22 @@
    (let (pair $x $x) (pair a b) (same $x))
    ())
 
-; Shadowing one component does not capture an unshadowed outer component.
-!(assertEqual
+; A later structured pattern refines its reused component and may introduce a
+; genuinely new component.
+!(assertEqualToResult
    (let (pair $x $y) (pair a b)
      (let (pair $x $z) (pair c d) (triple $x $y $z)))
-   (triple c b d))
+   ())
 
 ; let* is sequential sugar over the same canonical let representation.
 !(assertEqual
-   (let* (($x a) ($x b)) (pair $x))
-   (pair b))
-!(assertEqual
+   (let* (($x a) ($x a)) (pair $x))
+   (pair a))
+!(assertEqualToResult
    (let* (((pair $x $y) (pair a b))
           ((pair $x $z) (pair c d)))
      (triple $x $y $z))
-   (triple c b d))
+   ())
 
 ; The canonical constructor is ordinary Prime data.  Two slots require two
 ; explicit unary scopes, opened in left-to-right pattern order.

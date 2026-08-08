@@ -1,6 +1,108 @@
 {
   "cases": [
     {
+      "arguments": [],
+      "classification": {
+        "class": "deferred-runtime-classifier",
+        "phase": "runtime"
+      },
+      "cohort": "semantic-regression",
+      "expected": {
+        "exit": 0,
+        "verdict": "accept"
+      },
+      "file": "tests/petta/typecheck_v2_repros/33_deferred_runtime_classifier.metta",
+      "id": "33_deferred_runtime_classifier|default",
+      "profile": "typecheck-v2",
+      "source_root": "candidate",
+      "source_sha256": "12201712b75c9fc990f9db47d1981af422ed5e4979ef61ef15e1084491de6050"
+    },
+    {
+      "arguments": [],
+      "classification": {
+        "class": "deferred-runtime-classifier",
+        "phase": "runtime"
+      },
+      "cohort": "semantic-regression",
+      "expected": {
+        "exit": 2,
+        "verdict": "reject"
+      },
+      "file": "tests/petta/typecheck_v2_repros/34_deferred_runtime_classifier_mismatch.metta",
+      "id": "34_deferred_runtime_classifier_mismatch|default",
+      "profile": "typecheck-v2",
+      "source_root": "candidate",
+      "source_sha256": "9c2104227925a13f11c578431859dea76621799d093de1d97673ff855b9a0f9b"
+    },
+    {
+      "arguments": [],
+      "classification": {
+        "class": "deferred-runtime-classifier-alternatives",
+        "phase": "runtime"
+      },
+      "cohort": "semantic-regression",
+      "expected": {
+        "exit": 0,
+        "verdict": "accept"
+      },
+      "file": "tests/petta/typecheck_v2_repros/35_deferred_runtime_classifier_alternatives.metta",
+      "id": "35_deferred_runtime_classifier_alternatives|default",
+      "profile": "typecheck-v2",
+      "source_root": "candidate",
+      "source_sha256": "0fddc16d37428589ae619aeb46632526533fb7c7c2b455996178aab59e383e4a"
+    },
+    {
+      "arguments": [],
+      "classification": {
+        "class": "deferred-runtime-classifier-rollback",
+        "phase": "runtime"
+      },
+      "cohort": "semantic-regression",
+      "expected": {
+        "exit": 0,
+        "verdict": "accept"
+      },
+      "file": "tests/petta/typecheck_v2_repros/36_deferred_runtime_classifier_sibling_retry.metta",
+      "id": "36_deferred_runtime_classifier_sibling_retry|default",
+      "profile": "typecheck-v2",
+      "source_root": "candidate",
+      "source_sha256": "ba75c7c210f3943310a38b7977a59456e7b6e7bc9ad7f381b95c25088e49cb3c"
+    },
+    {
+      "arguments": [],
+      "classification": {
+        "class": "deferred-runtime-classifier-authority",
+        "phase": "runtime"
+      },
+      "cohort": "semantic-regression",
+      "expected": {
+        "exit": 2,
+        "verdict": "reject"
+      },
+      "file": "tests/petta/typecheck_v2_repros/37_deferred_runtime_classifier_space_mutation.metta",
+      "id": "37_deferred_runtime_classifier_space_mutation|default",
+      "profile": "typecheck-v2",
+      "source_root": "candidate",
+      "source_sha256": "dd0b7865cf542e4e1bf80a2353527502a6139f92a038702454fad304c6983c95"
+    },
+    {
+      "arguments": [],
+      "classification": {
+        "class": "deferred-runtime-classifier-authority",
+        "phase": "runtime"
+      },
+      "cohort": "semantic-regression",
+      "expected": {
+        "exit": 0,
+        "verdict": "accept"
+      },
+      "file": "tests/petta/typecheck_v2_repros/38_deferred_runtime_classifier_reestablish.metta",
+      "id": "38_deferred_runtime_classifier_reestablish|default",
+      "profile": "typecheck-v2",
+      "source_root": "candidate",
+      "source_sha256": "867a92eba139452b0855d64a0b185fedb638158187521753b409189ee3b12bc3"
+    },
+    {
       "arguments": [
         "--strict"
       ],
@@ -5171,11 +5273,11 @@
     }
   ],
   "counts": {
-    "accept": 119,
-    "reject": 177,
+    "accept": 123,
+    "reject": 179,
     "roman_244": 244,
-    "semantic_regressions": 52,
-    "total": 296
+    "semantic_regressions": 58,
+    "total": 302
   },
   "oracle": {
     "implementation": "Roman SWI-PeTTa typecheck-v2",

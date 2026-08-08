@@ -8385,15 +8385,19 @@ petta_typecheck_expression_boundary_requirement(
         expression, variable, PETTA_TYPECHECK_BOUNDARY_FACT_NONE, depth);
 }
 
-bool petta_typecheck_call_boundary_requirement(
+bool petta_typecheck_call_boundary_plan(
     PettaProgram *program, Space *space,
-    SymbolId head, CettaExprLen arity, CettaExprIndex position,
-    PettaTypecheckBoundaryRequirement *requirement) {
-    if (requirement)
-        *requirement = PETTA_TYPECHECK_BOUNDARY_NONE;
+    SymbolId head, CettaExprLen arity,
+    PettaTypecheckBoundaryRequirement *requirements,
+    size_t requirement_count) {
     if (!program || !space || head == SYMBOL_ID_NONE ||
-        position >= arity || !requirement)
+        !cetta_expr_len_fits_size(arity) ||
+        requirement_count != (size_t)arity ||
+        (arity > 0u && !requirements)) {
         return false;
+    }
+    for (size_t index = 0u; index < requirement_count; index++)
+        requirements[index] = PETTA_TYPECHECK_BOUNDARY_NONE;
 
     Arena scratch;
     arena_init(&scratch);
@@ -8422,31 +8426,60 @@ bool petta_typecheck_call_boundary_requirement(
         arena_free(&scratch);
         return false;
     }
-    PettaTypecheckBoundaryRequirement strongest =
-        PETTA_TYPECHECK_BOUNDARY_NONE;
-    for (size_t index = 0u; index < clause_count; index++) {
-        Atom *equation = clauses[index].equation;
+    for (size_t clause_index = 0u;
+         clause_index < clause_count; clause_index++) {
+        Atom *equation = clauses[clause_index].equation;
         Atom *lhs = petta_block_head_is(equation, "=") &&
                     equation->expr.len == 3u
             ? equation->expr.elems[1] : NULL;
         if (!lhs || lhs->kind != ATOM_EXPR ||
             lhs->expr.len != arity + 1u)
             continue;
-        Atom *parameter = lhs->expr.elems[position + 1u];
-        if (!parameter || parameter->kind != ATOM_VAR)
-            continue;
-        strongest = petta_typecheck_boundary_requirement_join(
-            strongest,
-            petta_typecheck_expression_boundary_requirement(
-                equation->expr.elems[2], parameter->var_id, 0u));
+        Atom *rhs = equation->expr.elems[2];
+        for (CettaExprIndex position = 0u;
+             position < arity; position++) {
+            Atom *parameter = lhs->expr.elems[position + 1u];
+            if (!parameter || parameter->kind != ATOM_VAR)
+                continue;
+            requirements[position] =
+                petta_typecheck_boundary_requirement_join(
+                    requirements[position],
+                    petta_typecheck_expression_boundary_requirement(
+                        rhs, parameter->var_id, 0u));
+        }
     }
     free(clauses);
     arena_free(&scratch);
-    if (!committed &&
-        strongest != PETTA_TYPECHECK_BOUNDARY_NONEMPTY_EXPRESSION)
-        strongest = PETTA_TYPECHECK_BOUNDARY_NONE;
-    *requirement = strongest;
+
+    if (!committed) {
+        for (size_t index = 0u; index < requirement_count; index++) {
+            if (requirements[index] !=
+                PETTA_TYPECHECK_BOUNDARY_NONEMPTY_EXPRESSION) {
+                requirements[index] = PETTA_TYPECHECK_BOUNDARY_NONE;
+            }
+        }
+    }
     return true;
+}
+
+bool petta_typecheck_call_boundary_requirement(
+    PettaProgram *program, Space *space,
+    SymbolId head, CettaExprLen arity, CettaExprIndex position,
+    PettaTypecheckBoundaryRequirement *requirement) {
+    if (requirement)
+        *requirement = PETTA_TYPECHECK_BOUNDARY_NONE;
+    if (!requirement || position >= arity ||
+        !cetta_expr_len_fits_size(arity))
+        return false;
+    size_t count = (size_t)arity;
+    PettaTypecheckBoundaryRequirement *plan =
+        count == 0u ? NULL : cetta_malloc(sizeof(*plan) * count);
+    bool ok = petta_typecheck_call_boundary_plan(
+        program, space, head, arity, plan, count);
+    if (ok)
+        *requirement = plan[position];
+    free(plan);
+    return ok;
 }
 
 static bool petta_typecheck_validate_target_row(
