@@ -45,6 +45,23 @@ typedef enum {
     PETTA_MACHINE_BOUNDARY_FAULT,
 } PettaMachineBoundaryResult;
 
+/* Language-owned analyses are installed explicitly on a machine instance.
+ * The machine must not consult ambient profile state to decide whether a
+ * semantic analysis participates in evaluation. */
+typedef enum {
+    PETTA_MACHINE_ANALYSIS_NONE = 0u,
+    PETTA_MACHINE_ANALYSIS_TYPE_OBLIGATIONS = 1u << 0,
+} PettaMachineAnalysisCapability;
+
+/* Exact, provider-defined mutable authority consulted by semantic analyses
+ * in addition to the root Space.  The machine compares this vector but does
+ * not interpret its components. */
+#define PETTA_MACHINE_AUTHORITY_WORD_CAPACITY 8u
+typedef struct {
+    uint64_t words[PETTA_MACHINE_AUTHORITY_WORD_CAPACITY];
+    uint8_t length;
+} PettaMachineAuthorityToken;
+
 /* A collection producer lends each fully evaluated item to a synchronous,
  * side-effect-free consumer.  The consumer must not retain item beyond the
  * callback.  A declined producer invalidates all consumer state accumulated
@@ -54,6 +71,7 @@ typedef bool (*PettaMachineBorrowedItemConsumer)(
 
 typedef struct {
     void *context;
+    uint32_t analysis_capabilities;
     /* Wall-clock sampling is opt-in so normal evaluation pays no clock cost. */
     bool measure_stats;
     /*
@@ -76,6 +94,10 @@ typedef struct {
     PettaMachineBoundaryResult (*validate_ready_call)(
         void *context, Space *space, Atom *call,
         char *diagnostic, size_t diagnostic_size);
+    /* Snapshot every non-Space mutable authority consulted by an installed
+     * analysis.  The returned vector is an exact dependency receipt. */
+    bool (*semantic_authority_token)(
+        void *context, PettaMachineAuthorityToken *token);
     /* A generated determinate-fold program may own a lexical fold without
      * constructing one goal and accumulator variable per input item. */
     PettaMachineFoldResult (*foldl_single_result)(

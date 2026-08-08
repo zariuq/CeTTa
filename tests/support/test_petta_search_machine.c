@@ -1886,6 +1886,119 @@ static void test_terminal_match_count_fold(
     petta_machine_destroy(&machine);
 }
 
+static PettaMachineBoundaryResult test_analysis_boundary_accept(
+    void *context, Space *space, Atom *call,
+    char *diagnostic, size_t diagnostic_size) {
+    (void)context;
+    (void)space;
+    (void)call;
+    if (diagnostic && diagnostic_size > 0u)
+        diagnostic[0] = '\0';
+    return PETTA_MACHINE_BOUNDARY_ACCEPTED;
+}
+
+typedef struct {
+    uint64_t calls;
+    bool mutate_during_first_judgment;
+} TestAnalysisAuthority;
+
+static bool test_analysis_authority_token(
+    void *opaque, PettaMachineAuthorityToken *token) {
+    TestAnalysisAuthority *authority = opaque;
+    if (!authority || !token)
+        return false;
+    authority->calls++;
+    uint64_t revision =
+        authority->mutate_during_first_judgment &&
+        authority->calls >= 3u ? 2u : 1u;
+    *token = (PettaMachineAuthorityToken){
+        .words = {UINT64_C(7), revision},
+        .length = 2u,
+    };
+    return true;
+}
+
+static void test_analysis_capability_contract(
+    Space *space, Arena *answers) {
+    Atom *query = parse_one(answers, "1");
+    assert(query);
+    PettaMachine machine;
+    TestAnalysisAuthority authority = {0};
+
+    PettaMachineHost callback_without_capability = {
+        .context = &authority,
+        .validate_ready_call = test_analysis_boundary_accept,
+        .semantic_authority_token = test_analysis_authority_token,
+    };
+    assert(!petta_machine_init(
+        &machine, space, answers, query, NULL,
+        &callback_without_capability));
+
+    PettaMachineHost capability_without_boundary = {
+        .context = &authority,
+        .analysis_capabilities =
+            PETTA_MACHINE_ANALYSIS_TYPE_OBLIGATIONS,
+        .semantic_authority_token = test_analysis_authority_token,
+    };
+    assert(!petta_machine_init(
+        &machine, space, answers, query, NULL,
+        &capability_without_boundary));
+
+    PettaMachineHost capability_without_authority = {
+        .analysis_capabilities =
+            PETTA_MACHINE_ANALYSIS_TYPE_OBLIGATIONS,
+        .validate_ready_call = test_analysis_boundary_accept,
+    };
+    assert(!petta_machine_init(
+        &machine, space, answers, query, NULL,
+        &capability_without_authority));
+
+    PettaMachineHost complete = {
+        .context = &authority,
+        .analysis_capabilities =
+            PETTA_MACHINE_ANALYSIS_TYPE_OBLIGATIONS,
+        .validate_ready_call = test_analysis_boundary_accept,
+        .semantic_authority_token = test_analysis_authority_token,
+    };
+    assert(petta_machine_init(
+        &machine, space, answers, query, NULL, &complete));
+    petta_machine_destroy(&machine);
+}
+
+static void test_analysis_authority_retry(
+    Space *space, Arena *answers) {
+    Atom *query = parse_one(
+        answers,
+        "(let $typed (the Number $x)"
+        "     (let 1 $x $typed))");
+    assert(query);
+    TestAnalysisAuthority authority = {
+        .mutate_during_first_judgment = true,
+    };
+    PettaMachineHost host = {
+        .context = &authority,
+        .analysis_capabilities =
+            PETTA_MACHINE_ANALYSIS_TYPE_OBLIGATIONS,
+        .validate_ready_call = test_analysis_boundary_accept,
+        .semantic_authority_token = test_analysis_authority_token,
+    };
+    PettaMachine machine;
+    assert(petta_machine_init(
+        &machine, space, answers, query, NULL, &host));
+    Atom *answer = NULL;
+    Bindings environment;
+    bindings_init(&environment);
+    assert(petta_machine_next(
+               &machine, &answer, &environment) ==
+           PETTA_MACHINE_STEP_ANSWER);
+    assert(answer && answer->kind == ATOM_GROUNDED &&
+           answer->ground.gkind == GV_INT &&
+           answer->ground.ival == 1);
+    assert(authority.calls >= 5u);
+    bindings_free(&environment);
+    petta_machine_destroy(&machine);
+}
+
 int main(void) {
     Arena persistent;
     Arena answers;
@@ -1908,6 +2021,9 @@ int main(void) {
     g_symbols = &symbols;
     g_var_intern = &variables;
     space_init_with_universe(&space, &universe);
+
+    test_analysis_capability_contract(&space, &answers);
+    test_analysis_authority_retry(&space, &answers);
 
     test_native_residual_typecheck(
         &space, &persistent, &answers);
