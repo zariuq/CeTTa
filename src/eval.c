@@ -7235,7 +7235,10 @@ static void outcome_set_add_prefixed(Arena *a, OutcomeSet *os, Atom *atom,
    a BadType error outcome was published in place of the raw result. */
 static bool he_inert_result_cast(Space *s, Arena *a, Atom *declared_type,
                                  Outcome *seed, bool preserve_bindings,
-                                 OutcomeSet *outcomes) {
+                                 OutcomeSet *outcomes,
+                                 bool *defer_to_canonical) {
+    if (defer_to_canonical)
+        *defer_to_canonical = false;
     if (!declared_type ||
         eval_current_language_id() != CETTA_LANGUAGE_HE)
         return false;
@@ -7248,6 +7251,12 @@ static bool he_inert_result_cast(Space *s, Arena *a, Atom *declared_type,
     Atom **actual_types = NULL;
     uint32_t actual_count = eval_get_atom_types_profiled(
         s, a, result, &actual_types);
+    if (actual_count == 0u) {
+        free(actual_types);
+        if (defer_to_canonical)
+            *defer_to_canonical = true;
+        return false;
+    }
     bool accepted = false;
     for (uint32_t ai = 0u; ai < actual_count && !accepted; ai++) {
         Bindings match_env;
@@ -7290,11 +7299,16 @@ static void eval_delayed_outcome_for_caller(Space *s, Arena *a,
         return;
     }
     if (preview->kind != ATOM_EXPR || preview->expr.len == 0) {
+        bool defer_to_canonical = false;
         if (he_inert_result_cast(s, a, declared_type, seed,
-                                 preserve_bindings, outcomes))
+                                 preserve_bindings, outcomes,
+                                 &defer_to_canonical))
             return;
-        outcome_set_add_prefixed_outcome(a, outcomes, seed, NULL, preserve_bindings);
-        return;
+        if (!defer_to_canonical) {
+            outcome_set_add_prefixed_outcome(
+                a, outcomes, seed, NULL, preserve_bindings);
+            return;
+        }
     }
 
     Atom *normal_candidate = preview;
@@ -7306,11 +7320,16 @@ static void eval_delayed_outcome_for_caller(Space *s, Arena *a,
     }
     if (!prime_need_atom_has_observable_ref(normal_candidate) &&
         atom_is_constructor_normal_form(s, a, normal_candidate, fuel)) {
+        bool defer_to_canonical = false;
         if (he_inert_result_cast(s, a, declared_type, seed,
-                                 preserve_bindings, outcomes))
+                                 preserve_bindings, outcomes,
+                                 &defer_to_canonical))
             return;
-        outcome_set_add_prefixed_outcome(a, outcomes, seed, NULL, preserve_bindings);
-        return;
+        if (!defer_to_canonical) {
+            outcome_set_add_prefixed_outcome(
+                a, outcomes, seed, NULL, preserve_bindings);
+            return;
+        }
     }
 
     Atom *variant_applied = outcome_atom_materialize_variant_only(a, seed);
@@ -26068,6 +26087,7 @@ typedef struct PettaEvalTransaction {
 typedef struct {
     int fuel;
     PettaEvalTransaction *transaction;
+    uint64_t semantic_authority_epoch;
     CettaLibraryContext *library_context;
     PreparedPureProgramCache prepared_pure_cache;
     struct {
@@ -26571,6 +26591,39 @@ static bool petta_eval_symbol_name_is(
     return actual && name && strcmp(actual, name) == 0;
 }
 
+static void petta_eval_machine_advance_semantic_authority(
+    PettaEvalMachineContext *context) {
+    if (!context)
+        return;
+    context->semantic_authority_epoch =
+        context->semantic_authority_epoch == UINT64_MAX
+            ? 1u : context->semantic_authority_epoch + 1u;
+}
+
+static bool petta_eval_machine_semantic_authority_token(
+    void *opaque, PettaMachineAuthorityToken *token) {
+    PettaEvalMachineContext *context = opaque;
+    if (!context || !token)
+        return false;
+    CettaLibPrologReadToken foreign = {0};
+    if (context->library_context &&
+        context->library_context->lib_prolog) {
+        foreign = cetta_lib_prolog_read_token(
+            context->library_context->lib_prolog);
+    }
+    *token = (PettaMachineAuthorityToken){
+        .words = {
+            UINT64_C(1),
+            foreign.instance_id,
+            foreign.revision,
+            context->semantic_authority_epoch,
+            context->transaction ? UINT64_C(1) : UINT64_C(0),
+        },
+        .length = 5u,
+    };
+    return true;
+}
+
 static bool petta_eval_machine_transaction_begin(
     void *context, Space *space, Arena *arena,
     void **handle, Space **transaction_space) {
@@ -26635,6 +26688,7 @@ static bool petta_eval_machine_transaction_begin(
     }
 
     eval_context->transaction = transaction;
+    petta_eval_machine_advance_semantic_authority(eval_context);
     *handle = transaction;
     *transaction_space = working_root;
     return true;
@@ -26826,6 +26880,7 @@ static bool petta_eval_machine_transaction_commit(
     free(state_values);
     free(state_types);
     eval_context->transaction = transaction->parent;
+    petta_eval_machine_advance_semantic_authority(eval_context);
     petta_eval_transaction_destroy(transaction);
     return true;
 }
@@ -26838,6 +26893,7 @@ static void petta_eval_machine_transaction_rollback(
         return;
     if (eval_context->transaction == transaction)
         eval_context->transaction = transaction->parent;
+    petta_eval_machine_advance_semantic_authority(eval_context);
     petta_eval_transaction_destroy(transaction);
 }
 
@@ -28164,21 +28220,28 @@ static bool petta_eval_machine_try(
 
     PettaEvalMachineContext context = {
         .fuel = fuel,
+        .semantic_authority_epoch = 1u,
         .library_context = g_library_context,
         .prepared_pure_cache = {
             .root_space = space,
         },
     };
+    bool type_obligations =
+        cetta_petta_profile_admits_native_typecheck_v2();
     PettaMachineHost host = {
         .context = &context,
+        .analysis_capabilities = type_obligations
+            ? PETTA_MACHINE_ANALYSIS_TYPE_OBLIGATIONS
+            : PETTA_MACHINE_ANALYSIS_NONE,
         .measure_stats = petta_eval_machine_stats_enabled(),
         .permit_transition = petta_eval_machine_permit_transition,
         .classify = petta_eval_machine_classify_host,
         .resolve_space = petta_eval_machine_resolve_space,
         .evaluate = petta_eval_machine_evaluate_host,
-        .validate_ready_call =
-            cetta_petta_profile_admits_native_typecheck_v2()
-                ? petta_eval_machine_validate_ready_call : NULL,
+        .validate_ready_call = type_obligations
+            ? petta_eval_machine_validate_ready_call : NULL,
+        .semantic_authority_token = type_obligations
+            ? petta_eval_machine_semantic_authority_token : NULL,
         .foldl_single_result =
             petta_eval_machine_foldl_single_result,
         .pull_collection_single_result =
