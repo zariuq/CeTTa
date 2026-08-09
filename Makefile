@@ -395,7 +395,7 @@ PETTA_TYPECHECK_V2_SRC =
 ifeq ($(ENABLE_PETTA_TYPECHECK_V2),1)
 PETTA_TYPECHECK_V2_SRC = src/petta_typecheck.c
 endif
-SRC = src/symbol.c src/atom.c src/name_key.c src/atom_blob.c src/abt.c src/parser.c $(COMPILED_READER_RUNTIME_SRC) src/mm2_lower.c src/subst_tree.c src/space.c src/registry_resolver.c src/space_match_backend.c src/match.c src/match_decision.c src/term_canon.c src/variant_shape.c src/variant_instance.c src/answer_bank.c src/table_store.c src/search_machine.c src/petta_program.c src/petta_search_machine.c $(PETTA_TYPECHECK_V2_SRC) src/petta_specializer.c src/rule_machine.c $(LIB_PROLOG_SRC) src/term_universe.c src/stats.c src/parallel_executor.c src/prime_need.c src/petta_semantics.c src/prepared_pure_machine.c src/eval.c src/grounded.c src/he_typing.c src/prime_semantics.c src/text_source.c src/native_handle.c src/native_sha256.c src/mork_space_bridge_runtime.c src/library.c src/langdef_pack.c src/gslt_horn_runtime.c src/gslt_language_runtime.c src/generated/zero_language_v1.generated.c src/he_small_step_pack.c src/lib_parse_native_grammar.c src/lib_parse_inference_native.c experiments/gslt2parse_foundation/native/finite_horn_gslt_v1.c experiments/gslt2parse_foundation/native/finite_horn_ground_term_v1.c experiments/gslt2parse_foundation/native/parser_term_projection_v1.c experiments/gslt2parse_foundation/native/parser_pack_abi_v1.c experiments/gslt2parse_foundation/native/parser_action_bytecode_v1.c experiments/gslt2parse_foundation/native/parser_pack_native_v1.c experiments/gslt2parse_foundation/native/parser_pack_lexical_v1.c experiments/gslt2parse_foundation/native/parser_pack_gll_v1.c experiments/gslt2parse_foundation/native/parser_pack_glr_v1.c experiments/gslt2parse_foundation/native/regular_span_dfa_v1.c experiments/gslt2parse_foundation/native/regular_span_nfa_v1.c $(PYTHON_SRC) src/session.c src/lang.c src/rhocalc_core.c src/rhocalc_syntax.c src/compile.c src/runtime.c src/cetta_stdlib.c native/native_modules.c src/main.c
+SRC = src/symbol.c src/atom.c src/name_key.c src/atom_blob.c src/abt.c src/parser.c $(COMPILED_READER_RUNTIME_SRC) src/mm2_lower.c src/subst_tree.c src/space.c src/registry_resolver.c src/space_match_backend.c src/match.c src/match_decision.c src/term_canon.c src/variant_shape.c src/variant_instance.c src/answer_bank.c src/table_store.c src/search_machine.c src/petta_program.c src/petta_search_machine.c $(PETTA_TYPECHECK_V2_SRC) src/petta_specializer.c src/rule_machine.c $(LIB_PROLOG_SRC) src/term_universe.c src/stats.c src/parallel_executor.c src/prime_need.c src/petta_semantics.c src/prepared_pure_machine.c src/eval.c src/grounded.c src/he_typing.c src/prime_semantics.c src/text_source.c src/native_handle.c src/native_sha256.c src/mork_space_bridge_runtime.c src/library.c src/langdef_pack.c src/gslt_horn_runtime.c src/gslt_compiled_runtime.c src/gslt_language_runtime.c src/generated/subzero_language_v1.generated.c src/generated/zero_language_v1.generated.c src/he_small_step_pack.c src/lib_parse_native_grammar.c src/lib_parse_inference_native.c experiments/gslt2parse_foundation/native/finite_horn_gslt_v1.c experiments/gslt2parse_foundation/native/finite_horn_ground_term_v1.c experiments/gslt2parse_foundation/native/parser_term_projection_v1.c experiments/gslt2parse_foundation/native/parser_pack_abi_v1.c experiments/gslt2parse_foundation/native/parser_action_bytecode_v1.c experiments/gslt2parse_foundation/native/parser_pack_native_v1.c experiments/gslt2parse_foundation/native/parser_pack_lexical_v1.c experiments/gslt2parse_foundation/native/parser_pack_gll_v1.c experiments/gslt2parse_foundation/native/parser_pack_glr_v1.c experiments/gslt2parse_foundation/native/regular_span_dfa_v1.c experiments/gslt2parse_foundation/native/regular_span_nfa_v1.c $(PYTHON_SRC) src/session.c src/lang.c src/rhocalc_core.c src/rhocalc_syntax.c src/compile.c src/runtime.c src/cetta_stdlib.c native/native_modules.c src/main.c
 ifeq ($(ENABLE_RUNTIME_STATS),1)
 OBJ = $(SRC:.c=.$(BUILD_OBJ_TAG).runtime-stats.o)
 BIN = runtime/cetta-$(BUILD_CANON)-runtime-stats
@@ -724,18 +724,32 @@ GSLT2PARSE_CHART_V1_NATIVE_BIN = runtime/finite_horn_chart_v1-$(BUILD_OBJ_TAG)
 GSLT_HORN_RUNTIME_TEST_BIN = runtime/test_gslt_horn_runtime-$(BUILD_OBJ_TAG)
 GSLT_HORN_RUNTIME_CANARY_V1 = tests/fixtures/gslt_horn_runtime_canary_v1.metta
 GSLT_LANGUAGE_RUNTIME_TEST_BIN = runtime/test_gslt_language_runtime-$(BUILD_OBJ_TAG)
-METTAZERO_LANGDEF_V1 = langdef/zero/langdef.metta
+SUBZERO_LANGDEF_V1 = langdef/subzero/langdef.metta
 GSLT_LANGUAGE_GENERATOR_V1 = tools/generate_gslt_language_v1.py
+SUBZERO_GENERATED_LANGUAGE_V1_H = src/generated/subzero_language_v1.generated.h
+SUBZERO_GENERATED_LANGUAGE_V1_C = src/generated/subzero_language_v1.generated.c
+METTAZERO_LANGDEF_V1 = langdef/zero/langdef.metta
+METTAZERO_QUOTE_MATCH_V1 = langdef/shared/finite_horn_quote_match_v1.metta
+METTAZERO_QUERY_KERNEL_V1 = langdef/zero/semantics/query_kernel_v1.metta
+METTAZERO_CLOSED_BAG_OBSERVATION_V1 = langdef/zero/semantics/closed_bag_observation_v1.metta
 METTAZERO_GENERATED_LANGUAGE_V1_H = src/generated/zero_language_v1.generated.h
 METTAZERO_GENERATED_LANGUAGE_V1_C = src/generated/zero_language_v1.generated.c
+GSLT_COMPILED_CANARY_V1_MANIFEST = tests/fixtures/gslt_compiled_canary_v1/langdef.metta
+GSLT_COMPILED_CANARY_V1_SOURCE = tests/fixtures/gslt_compiled_canary_v1/semantics/renamed_answer_v1.metta
+GSLT_COMPILED_CANARY_V1_GENERATED_H = tests/generated/gslt_compiled_canary_v1.generated.h
+GSLT_COMPILED_CANARY_V1_GENERATED_C = tests/generated/gslt_compiled_canary_v1.generated.c
+GSLT_PIPELINE_CANARY_V1_MANIFEST = tests/fixtures/gslt_pipeline_canary_v1/langdef.metta
+GSLT_PIPELINE_CANARY_V1_SOURCE = tests/fixtures/gslt_pipeline_canary_v1/semantics/renamed_pipeline_v1.metta
+GSLT_PIPELINE_CANARY_V1_GENERATED_H = tests/generated/gslt_pipeline_canary_v1.generated.h
+GSLT_PIPELINE_CANARY_V1_GENERATED_C = tests/generated/gslt_pipeline_canary_v1.generated.c
 RULE_MACHINE_CORE_GSLT_V1 = experiments/gslt2parse_foundation/presentations/core/rule_machine_core_v1.metta
 RULE_MACHINE_PROGRAM_GSLT_V1 = experiments/gslt2parse_foundation/presentations/specializations/rule_machine_hilbert_bfc_program_v1.metta
 RULE_MACHINE_PROGRAM_GENERATOR_V1 = tools/generate_rule_machine_program_v1.py
 RULE_MACHINE_PROGRAM_GENERATED_V1 = src/generated/rule_machine_program_v1.generated.h
-METTAZERO_FREE_BAG_CORE_V1 = langdef/zero/semantics/free_bag_rewrite_core_v1.metta
-METTAZERO_ONE_STEP_OBSERVATION_V1 = langdef/zero/semantics/one_step_observation_v1.metta
-METTAZERO_PUBLIC_RESULT_BAG_V1 = langdef/zero/semantics/public_result_bag_v1.metta
-METTAZERO_FREE_BAG_TEST_V1 = tools/test_mettazero_free_bag_v1.py
+SUBZERO_FREE_BAG_CORE_V1 = langdef/subzero/semantics/free_bag_rewrite_core_v1.metta
+SUBZERO_ONE_STEP_OBSERVATION_V1 = langdef/subzero/semantics/one_step_observation_v1.metta
+SUBZERO_PUBLIC_RESULT_BAG_V1 = langdef/subzero/semantics/public_result_bag_v1.metta
+SUBZERO_FREE_BAG_TEST_V1 = tools/test_subzero_free_bag_v1.py
 MATCH_DECISION_POLICY_GSLT_V1 = experiments/gslt2parse_foundation/presentations/core/match_decision_policy_v1.metta
 MATCH_DECISION_POLICY_GENERATOR_V1 = tools/generate_match_decision_policy_v1.py
 MATCH_DECISION_POLICY_GENERATED_V1 = src/generated/match_decision_policy_v1.generated.h
@@ -3563,7 +3577,7 @@ test-list-lanes: $(BIN)
 bench-list: $(BIN) test-list-lanes
 	@./scripts/bench_list_lanes.py --cetta ./$(BIN)
 
-test: $(BIN) test-manifest-strict test-git-module test-symbolid-guard test-variant-shape-roundtrip test-bindings-lookup-index test-atom-deep-copy-iterative test-abt test-rhometta-payload-map-capacity-c test-space-term-universe-membership test-help-flags test-rhocalc test-he-contract-suite test-he-return-contract-correlation test-closed-stream-fastpath test-parse-depth-guard test-stdlib-growth-memory-regression test-rhometta-macro-audit test-eval-gc-adversarial test-list-lanes test-syn-lanes test-ground-call test-lib-prolog test-petta-libpl test-petta-process-text test-match-decision test-petta-search-machine test-petta-semantics test-petta-corpus-manifest-unit test-petta-chainer-manifest-unit test-mettazero
+test: $(BIN) test-manifest-strict test-git-module test-symbolid-guard test-variant-shape-roundtrip test-bindings-lookup-index test-atom-deep-copy-iterative test-abt test-rhometta-payload-map-capacity-c test-space-term-universe-membership test-help-flags test-rhocalc test-he-contract-suite test-he-return-contract-correlation test-closed-stream-fastpath test-parse-depth-guard test-stdlib-growth-memory-regression test-rhometta-macro-audit test-eval-gc-adversarial test-list-lanes test-syn-lanes test-ground-call test-lib-prolog test-petta-libpl test-petta-process-text test-match-decision test-petta-search-machine test-petta-semantics test-petta-corpus-manifest-unit test-petta-chainer-manifest-unit test-subzero test-mettazero
 	@pass=0; fail=0; skip=0; no_exp=0; \
 	cache_dir="$(GIT_TEST_CACHE_DIR)"; mkdir -p "$$cache_dir"; export CETTA_GIT_MODULE_CACHE_DIR="$$cache_dir"; \
 	for f in tests/test_*.metta tests/spec_*.metta tests/he_*.metta; do \
@@ -10500,23 +10514,23 @@ test-rule-machine-gslt-v1: $(GSLT2PARSE_CHART_V1_NATIVE_BIN)
 		--chart "$(GSLT2PARSE_CHART_V1_NATIVE_BIN)" \
 		--nil-root "$(CURDIR)/../../repos/ngeiswei-chaining-run"
 
-test-mettazero-free-bag-v1: \
+test-subzero-free-bag-v1: \
 		$(GSLT2PARSE_CHART_V1_NATIVE_BIN) \
-		$(METTAZERO_FREE_BAG_CORE_V1) \
-		$(METTAZERO_ONE_STEP_OBSERVATION_V1) \
-		$(METTAZERO_PUBLIC_RESULT_BAG_V1) \
-		$(METTAZERO_FREE_BAG_TEST_V1)
-	@python3 $(METTAZERO_FREE_BAG_TEST_V1) \
+		$(SUBZERO_FREE_BAG_CORE_V1) \
+		$(SUBZERO_ONE_STEP_OBSERVATION_V1) \
+		$(SUBZERO_PUBLIC_RESULT_BAG_V1) \
+		$(SUBZERO_FREE_BAG_TEST_V1)
+	@python3 $(SUBZERO_FREE_BAG_TEST_V1) \
 		--chart "$(GSLT2PARSE_CHART_V1_NATIVE_BIN)" \
-		--core "$(METTAZERO_FREE_BAG_CORE_V1)" \
-		--observation "$(METTAZERO_ONE_STEP_OBSERVATION_V1)" \
-		--public-observation "$(METTAZERO_PUBLIC_RESULT_BAG_V1)"
+		--core "$(SUBZERO_FREE_BAG_CORE_V1)" \
+		--observation "$(SUBZERO_ONE_STEP_OBSERVATION_V1)" \
+		--public-observation "$(SUBZERO_PUBLIC_RESULT_BAG_V1)"
 
 $(GSLT_HORN_RUNTIME_TEST_BIN): \
 		tests/support/test_gslt_horn_runtime.c \
 		src/gslt_horn_runtime.h \
 		$(GSLT_HORN_RUNTIME_CANARY_V1) \
-		$(METTAZERO_FREE_BAG_CORE_V1) \
+		$(SUBZERO_FREE_BAG_CORE_V1) \
 		$(FALLBACK_EVAL_TEST_LINK_OBJ) \
 		$(BRIDGE_DEPS)
 	@mkdir -p runtime
@@ -10527,94 +10541,232 @@ $(GSLT_HORN_RUNTIME_TEST_BIN): \
 test-gslt-horn-runtime: $(GSLT_HORN_RUNTIME_TEST_BIN)
 	@$(GSLT_HORN_RUNTIME_TEST_BIN) \
 		$(GSLT_HORN_RUNTIME_CANARY_V1) \
-		$(METTAZERO_FREE_BAG_CORE_V1)
+		$(SUBZERO_FREE_BAG_CORE_V1)
 
 $(GSLT_LANGUAGE_RUNTIME_TEST_BIN): \
 		tests/support/test_gslt_language_runtime.c \
 		src/gslt_language_runtime.h \
+		$(SUBZERO_GENERATED_LANGUAGE_V1_H) \
+		$(SUBZERO_GENERATED_LANGUAGE_V1_C) \
 		$(METTAZERO_GENERATED_LANGUAGE_V1_H) \
 		$(METTAZERO_GENERATED_LANGUAGE_V1_C) \
-		$(METTAZERO_LANGDEF_V1) \
-		$(METTAZERO_FREE_BAG_CORE_V1) \
-		$(METTAZERO_PUBLIC_RESULT_BAG_V1) \
+		$(GSLT_COMPILED_CANARY_V1_GENERATED_H) \
+		$(GSLT_COMPILED_CANARY_V1_GENERATED_C) \
+		$(GSLT_PIPELINE_CANARY_V1_GENERATED_H) \
+		$(GSLT_PIPELINE_CANARY_V1_GENERATED_C) \
+		$(SUBZERO_LANGDEF_V1) \
+		$(SUBZERO_FREE_BAG_CORE_V1) \
+		$(SUBZERO_PUBLIC_RESULT_BAG_V1) \
 		$(FALLBACK_EVAL_TEST_LINK_OBJ) \
 		$(COMPILED_READER_RUNTIME_OBJ) \
 		$(BRIDGE_DEPS)
 	@mkdir -p runtime
 	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ \
 		tests/support/test_gslt_language_runtime.c \
+		$(GSLT_COMPILED_CANARY_V1_GENERATED_C) \
+		$(GSLT_PIPELINE_CANARY_V1_GENERATED_C) \
 		$(FALLBACK_EVAL_TEST_LINK_OBJ) \
 		$(COMPILED_READER_RUNTIME_OBJ) $(LDFLAGS)
 
 test-gslt-language-runtime: $(GSLT_LANGUAGE_RUNTIME_TEST_BIN)
-	@$(GSLT_LANGUAGE_RUNTIME_TEST_BIN) $(METTAZERO_LANGDEF_V1)
+	@$(GSLT_LANGUAGE_RUNTIME_TEST_BIN) $(SUBZERO_LANGDEF_V1)
 
-test-mettazero-cli-v1: $(BIN) test-gslt-language-runtime
+test-subzero-cli-v1: $(BIN) test-gslt-language-runtime
 	@set -e; \
-	for source in tests/zero/*.metta; do \
-		expected="$${source%.metta}.expected"; \
-		actual=$$(mktemp "$(BOOTSTRAP_TMPDIR)/mettazero-cli.XXXXXX"); \
-		trap 'rm -f "$$actual"' EXIT; \
-		./$(BIN) --lang zero "$$source" >"$$actual"; \
-		diff -u "$$expected" "$$actual"; \
-		rm -f "$$actual"; \
-		trap - EXIT; \
+	for realization in horn-reference compiled-worklist; do \
+		for source in tests/subzero/*.metta; do \
+			expected="$${source%.metta}.expected"; \
+			actual=$$(mktemp "$(BOOTSTRAP_TMPDIR)/subzero-cli.XXXXXX"); \
+			trap 'rm -f "$$actual"' EXIT; \
+			./$(BIN) --lang subzero --gslt-realization "$$realization" \
+				"$$source" >"$$actual"; \
+			diff -u "$$expected" "$$actual"; \
+			rm -f "$$actual"; \
+			trap - EXIT; \
+		done; \
 	done; \
+	if ./$(BIN) --lang he --gslt-realization compiled-worklist \
+		-e '!(+ 1 2)' >/dev/null 2>&1; then \
+		echo 'FAIL: GSLT realization leaked outside generated language'; \
+		exit 1; \
+	fi; \
 	he_result=$$(./$(BIN) --lang he -e '!(+ 1 2)'); \
 	test "$$he_result" = '[3]'; \
-	echo '(MettaZeroCliV1Summary fixtures=9 bag=1 contextual=2 inert=3 scope=1 scalars=1 empty=1 he-isolation=1)'
+	echo '(SubzeroCliV1Summary realizations=2 fixtures=8 bag=1 contextual=2 inert=2 scope=1 scalars=1 empty=1 he-isolation=1)'
 
-test-gslt-language-generation-v1: \
+test-mettazero-cli-v1: $(BIN)
+	@set -e; \
+	for realization in horn-reference compiled-worklist; do \
+		for source in tests/zero/*.metta; do \
+			expected="$${source%.metta}.expected"; \
+			actual=$$(mktemp "$(BOOTSTRAP_TMPDIR)/mettazero-cli.XXXXXX"); \
+			trap 'rm -f "$$actual"' EXIT; \
+			./$(BIN) --lang zero --gslt-realization "$$realization" \
+				"$$source" >"$$actual"; \
+			diff -u "$$expected" "$$actual"; \
+			rm -f "$$actual"; \
+			trap - EXIT; \
+		done; \
+	done; \
+	echo '(MettaZeroCliV1Summary realizations=2 fixtures=9 query=4 reflection=1 evaluation=1 inert=2 hygiene=1)'
+
+test-mettazero-generation-v1: \
 		$(GSLT_LANGUAGE_GENERATOR_V1) \
 		$(METTAZERO_GENERATED_LANGUAGE_V1_H) \
 		$(METTAZERO_GENERATED_LANGUAGE_V1_C)
 	@python3 tools/test_gslt_language_generation_v1.py \
 		--generator $(GSLT_LANGUAGE_GENERATOR_V1) \
 		--manifest $(METTAZERO_LANGDEF_V1) \
+		--source-root langdef \
 		--header $(METTAZERO_GENERATED_LANGUAGE_V1_H) \
 		--source $(METTAZERO_GENERATED_LANGUAGE_V1_C) \
 		--symbol cetta_zero_language_v1 \
 		--header-include generated/zero_language_v1.generated.h
 
-test-mettazero-rule-mutations-v1: \
+test-mettazero-realization-triangle-v1: \
+		$(BIN) \
 		$(GSLT2PARSE_CHART_V1_NATIVE_BIN) \
-		$(METTAZERO_FREE_BAG_TEST_V1) \
-		$(METTAZERO_FREE_BAG_CORE_V1) \
-		$(METTAZERO_ONE_STEP_OBSERVATION_V1) \
-		$(METTAZERO_PUBLIC_RESULT_BAG_V1)
-	@python3 tools/test_gslt_language_rule_mutations_v1.py \
-		--harness $(METTAZERO_FREE_BAG_TEST_V1) \
+		$(METTAZERO_QUOTE_MATCH_V1) \
+		$(METTAZERO_QUERY_KERNEL_V1) \
+		$(METTAZERO_CLOSED_BAG_OBSERVATION_V1) \
+		tests/fixtures/metta_zero_ground_capability_v1.metta \
+		tools/test_mettazero_realization_triangle_v1.py
+	@python3 tools/test_mettazero_realization_triangle_v1.py \
+		--cetta ./$(BIN) \
 		--chart $(GSLT2PARSE_CHART_V1_NATIVE_BIN) \
-		--core $(METTAZERO_FREE_BAG_CORE_V1) \
-		--observation $(METTAZERO_ONE_STEP_OBSERVATION_V1) \
-		--public-observation $(METTAZERO_PUBLIC_RESULT_BAG_V1)
+		--quote-match $(METTAZERO_QUOTE_MATCH_V1) \
+		--query-kernel $(METTAZERO_QUERY_KERNEL_V1) \
+		--observation $(METTAZERO_CLOSED_BAG_OBSERVATION_V1) \
+		--ground-capability tests/fixtures/metta_zero_ground_capability_v1.metta
+
+test-mettazero-rule-mutations-v1: \
+		test-mettazero-realization-triangle-v1 \
+		tools/test_mettazero_rule_mutations_v1.py \
+		tools/test_gslt_language_rule_mutations_v1.py
+	@python3 tools/test_mettazero_rule_mutations_v1.py \
+		--harness tools/test_mettazero_realization_triangle_v1.py \
+		--cetta ./$(BIN) \
+		--chart $(GSLT2PARSE_CHART_V1_NATIVE_BIN) \
+		--quote-match $(METTAZERO_QUOTE_MATCH_V1) \
+		--query-kernel $(METTAZERO_QUERY_KERNEL_V1) \
+		--observation $(METTAZERO_CLOSED_BAG_OBSERVATION_V1) \
+		--ground-capability tests/fixtures/metta_zero_ground_capability_v1.metta
 
 test-mettazero: \
+		test-mettazero-generation-v1 \
+		test-mettazero-cli-v1 \
+		test-mettazero-realization-triangle-v1 \
+		test-mettazero-rule-mutations-v1
+	@echo 'PASS: staged query-first MeTTa Zero candidate'
+
+test-gslt-language-generation-v1: \
+		$(GSLT_LANGUAGE_GENERATOR_V1) \
+		$(SUBZERO_GENERATED_LANGUAGE_V1_H) \
+		$(SUBZERO_GENERATED_LANGUAGE_V1_C)
+	@python3 tools/test_gslt_language_generation_v1.py \
+		--generator $(GSLT_LANGUAGE_GENERATOR_V1) \
+		--manifest $(SUBZERO_LANGDEF_V1) \
+		--header $(SUBZERO_GENERATED_LANGUAGE_V1_H) \
+		--source $(SUBZERO_GENERATED_LANGUAGE_V1_C) \
+		--symbol cetta_subzero_language_v1 \
+		--header-include generated/subzero_language_v1.generated.h
+
+test-subzero-rule-mutations-v1: \
+		$(GSLT2PARSE_CHART_V1_NATIVE_BIN) \
+		$(SUBZERO_FREE_BAG_TEST_V1) \
+		$(SUBZERO_FREE_BAG_CORE_V1) \
+		$(SUBZERO_ONE_STEP_OBSERVATION_V1) \
+		$(SUBZERO_PUBLIC_RESULT_BAG_V1)
+	@python3 tools/test_gslt_language_rule_mutations_v1.py \
+		--harness $(SUBZERO_FREE_BAG_TEST_V1) \
+		--chart $(GSLT2PARSE_CHART_V1_NATIVE_BIN) \
+		--core $(SUBZERO_FREE_BAG_CORE_V1) \
+		--observation $(SUBZERO_ONE_STEP_OBSERVATION_V1) \
+		--public-observation $(SUBZERO_PUBLIC_RESULT_BAG_V1)
+
+test-subzero-realization-triangle-v1: \
+		$(BIN) \
+		$(GSLT2PARSE_CHART_V1_NATIVE_BIN) \
+		$(SUBZERO_FREE_BAG_CORE_V1) \
+		$(SUBZERO_PUBLIC_RESULT_BAG_V1) \
+		tools/test_subzero_realization_triangle_v1.py \
+		src/gslt_compiled_runtime.c
+	@python3 tools/test_subzero_realization_triangle_v1.py \
+		--cetta ./$(BIN) \
+		--chart $(GSLT2PARSE_CHART_V1_NATIVE_BIN) \
+		--core $(SUBZERO_FREE_BAG_CORE_V1) \
+		--public-observation $(SUBZERO_PUBLIC_RESULT_BAG_V1) \
+		--compiled-runtime src/gslt_compiled_runtime.c
+
+test-subzero: \
 		test-gslt-language-generation-v1 \
-		test-mettazero-free-bag-v1 \
-		test-mettazero-rule-mutations-v1 \
+		test-subzero-free-bag-v1 \
+		test-subzero-rule-mutations-v1 \
+		test-subzero-realization-triangle-v1 \
 		test-gslt-horn-runtime \
 		test-gslt-language-runtime \
-		test-mettazero-cli-v1
-	@echo 'PASS: staged MeTTa Zero candidate'
+		test-subzero-cli-v1
+	@echo 'PASS: staged Subzero candidate'
+
+$(SUBZERO_GENERATED_LANGUAGE_V1_H) $(SUBZERO_GENERATED_LANGUAGE_V1_C) &: \
+		$(GSLT_LANGUAGE_GENERATOR_V1) \
+		tools/gslt2parse_schema_v1.py \
+		$(SUBZERO_LANGDEF_V1) \
+		$(SUBZERO_FREE_BAG_CORE_V1) \
+		$(SUBZERO_PUBLIC_RESULT_BAG_V1)
+	@python3 $(GSLT_LANGUAGE_GENERATOR_V1) \
+		--manifest $(SUBZERO_LANGDEF_V1) \
+		--header $(SUBZERO_GENERATED_LANGUAGE_V1_H) \
+		--source $(SUBZERO_GENERATED_LANGUAGE_V1_C) \
+		--symbol cetta_subzero_language_v1 \
+		--header-include generated/subzero_language_v1.generated.h
 
 $(METTAZERO_GENERATED_LANGUAGE_V1_H) $(METTAZERO_GENERATED_LANGUAGE_V1_C) &: \
 		$(GSLT_LANGUAGE_GENERATOR_V1) \
 		tools/gslt2parse_schema_v1.py \
 		$(METTAZERO_LANGDEF_V1) \
-		$(METTAZERO_FREE_BAG_CORE_V1) \
-		$(METTAZERO_PUBLIC_RESULT_BAG_V1)
+		$(METTAZERO_QUOTE_MATCH_V1) \
+		$(METTAZERO_QUERY_KERNEL_V1) \
+		$(METTAZERO_CLOSED_BAG_OBSERVATION_V1)
 	@python3 $(GSLT_LANGUAGE_GENERATOR_V1) \
 		--manifest $(METTAZERO_LANGDEF_V1) \
+		--source-root langdef \
 		--header $(METTAZERO_GENERATED_LANGUAGE_V1_H) \
 		--source $(METTAZERO_GENERATED_LANGUAGE_V1_C) \
 		--symbol cetta_zero_language_v1 \
 		--header-include generated/zero_language_v1.generated.h
 
-.PHONY: test-mettazero-free-bag-v1 test-gslt-horn-runtime \
-	test-gslt-language-runtime test-mettazero-cli-v1 \
-	test-gslt-language-generation-v1 test-mettazero-rule-mutations-v1 \
-	test-mettazero
+$(GSLT_COMPILED_CANARY_V1_GENERATED_H) $(GSLT_COMPILED_CANARY_V1_GENERATED_C) &: \
+		$(GSLT_LANGUAGE_GENERATOR_V1) \
+		tools/gslt2parse_schema_v1.py \
+		$(GSLT_COMPILED_CANARY_V1_MANIFEST) \
+		$(GSLT_COMPILED_CANARY_V1_SOURCE)
+	@python3 $(GSLT_LANGUAGE_GENERATOR_V1) \
+		--manifest $(GSLT_COMPILED_CANARY_V1_MANIFEST) \
+		--header $(GSLT_COMPILED_CANARY_V1_GENERATED_H) \
+		--source $(GSLT_COMPILED_CANARY_V1_GENERATED_C) \
+		--symbol cetta_gslt_compiled_canary_v1 \
+		--header-include tests/generated/gslt_compiled_canary_v1.generated.h
+
+$(GSLT_PIPELINE_CANARY_V1_GENERATED_H) $(GSLT_PIPELINE_CANARY_V1_GENERATED_C) &: \
+		$(GSLT_LANGUAGE_GENERATOR_V1) \
+		tools/gslt2parse_schema_v1.py \
+		$(GSLT_PIPELINE_CANARY_V1_MANIFEST) \
+		$(GSLT_PIPELINE_CANARY_V1_SOURCE)
+	@python3 $(GSLT_LANGUAGE_GENERATOR_V1) \
+		--manifest $(GSLT_PIPELINE_CANARY_V1_MANIFEST) \
+		--header $(GSLT_PIPELINE_CANARY_V1_GENERATED_H) \
+		--source $(GSLT_PIPELINE_CANARY_V1_GENERATED_C) \
+		--symbol cetta_gslt_pipeline_canary_v1 \
+		--header-include tests/generated/gslt_pipeline_canary_v1.generated.h
+
+.PHONY: test-subzero-free-bag-v1 test-gslt-horn-runtime \
+	test-gslt-language-runtime test-subzero-cli-v1 \
+	test-gslt-language-generation-v1 test-subzero-rule-mutations-v1 \
+	test-subzero-realization-triangle-v1 test-subzero \
+	test-mettazero-cli-v1 test-mettazero-generation-v1 \
+	test-mettazero-realization-triangle-v1 \
+	test-mettazero-rule-mutations-v1 test-mettazero
 
 $(GSLT2PARSE_CHART_V1_NATIVE_BIN): \
 		$(GSLT2PARSE_SCHEMA_V1_NATIVE_DIR)/finite_horn_chart_v1.c \
