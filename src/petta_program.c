@@ -6,6 +6,7 @@
 #include "symbol.h"
 
 #include <stdlib.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -94,7 +95,7 @@ typedef struct {
     uint64_t revision;
     SymbolId head;
     CettaExprLen arity;
-    bool safe;
+    PettaRelationSafety safety;
     bool occupied;
 } PettaTableSafetyCacheEntry;
 
@@ -308,43 +309,12 @@ petta_program_space_find_clause_snapshot(
     return &space->snapshots[index];
 }
 
-static bool petta_program_copy_clause_snapshot(
-    const PettaProgramClauseSnapshot *snapshot,
-    PettaClauseCandidate **candidates,
-    size_t *candidate_count) {
-    if (!snapshot || !candidates || !candidate_count ||
-        snapshot->len >
-            SIZE_MAX / sizeof(*snapshot->candidates)) {
-        return false;
-    }
-    PettaClauseCandidate *copy = snapshot->len
-        ? cetta_malloc(
-              sizeof(*snapshot->candidates) * snapshot->len)
-        : NULL;
-    if (snapshot->len) {
-        memcpy(
-            copy, snapshot->candidates,
-            sizeof(*snapshot->candidates) * snapshot->len);
-    }
-    *candidates = copy;
-    *candidate_count = snapshot->len;
-    return true;
-}
-
-static void petta_program_space_store_clause_snapshot(
+static bool petta_program_space_store_clause_snapshot_take(
     PettaProgramSpace *space, SymbolId head, uint64_t revision,
-    const PettaClauseCandidate *candidates, size_t candidate_count) {
+    PettaClauseCandidate *candidates, size_t candidate_count) {
     if (!space || head == SYMBOL_ID_NONE ||
         candidate_count > SIZE_MAX / sizeof(*candidates)) {
-        return;
-    }
-    PettaClauseCandidate *copy = candidate_count
-        ? cetta_malloc(sizeof(*candidates) * candidate_count)
-        : NULL;
-    if (candidate_count) {
-        memcpy(
-            copy, candidates,
-            sizeof(*candidates) * candidate_count);
+        return false;
     }
 
     size_t index = petta_program_snapshot_lower_bound(
@@ -358,8 +328,7 @@ static void petta_program_space_store_clause_snapshot(
                 &space->snapshot_cap,
                 space->snapshot_len + 1u,
                 sizeof(*space->snapshots))) {
-            free(copy);
-            return;
+            return false;
         }
         memmove(
             space->snapshots + index + 1u,
@@ -371,9 +340,10 @@ static void petta_program_space_store_clause_snapshot(
     space->snapshots[index] = (PettaProgramClauseSnapshot){
         .head = head,
         .revision = revision,
-        .candidates = copy,
+        .candidates = candidates,
         .len = candidate_count,
     };
+    return true;
 }
 
 static bool petta_program_space_head_index_append(
@@ -602,13 +572,25 @@ static bool petta_plan_finish_features(
             break;
         }
         if (item.expanded) {
+            bool descendant_contains_call = false;
+            node->contains_call =
+                node->role == PETTA_PLAN_STATIC_CALL ||
+                node->role == PETTA_PLAN_DYNAMIC_CALL;
             for (CettaExprIndex index = 0u;
                  index < node->child_count; index++) {
                 if (node->children[index]
                         .contains_length_call) {
                     node->contains_length_call = true;
-                    break;
                 }
+                if (node->children[index].contains_call) {
+                    descendant_contains_call = true;
+                    node->contains_call = true;
+                }
+            }
+            if (node->execution ==
+                    PETTA_PLAN_EXEC_RELATION_SLOTS &&
+                descendant_contains_call) {
+                node->execution = PETTA_PLAN_EXEC_GENERIC;
             }
             continue;
         }
@@ -685,13 +667,27 @@ static const PettaPlanNode *petta_plan_build(
             node->contains_length_call =
                 petta_semantics_form(head) ==
                     PETTA_FORM_LENGTH;
-            node->role =
-                petta_program_head_is_intrinsic(head) ||
-                petta_head_contains(heads, head) ||
-                cetta_petta_source_head_resolves_in_engine(
-                    head, atom->expr.len - 1u)
-                    ? PETTA_PLAN_STATIC_CALL
-                    : PETTA_PLAN_DATA;
+            bool constructor_slot_frame =
+                atom->expr.len > 1u &&
+                (head == g_builtin_syms.colon ||
+                 head == g_builtin_syms.arrow);
+            node->role = constructor_slot_frame
+                ? PETTA_PLAN_DATA
+                : petta_program_head_is_intrinsic(head) ||
+                  petta_head_contains(heads, head) ||
+                  cetta_petta_source_head_resolves_in_engine(
+                      head, atom->expr.len - 1u)
+                      ? PETTA_PLAN_STATIC_CALL
+                      : PETTA_PLAN_DATA;
+            node->execution = constructor_slot_frame
+                ? PETTA_PLAN_EXEC_CONSTRUCTOR_SLOTS
+                : grounded_op_is_type_pure(head)
+                    ? PETTA_PLAN_EXEC_PURE_GROUNDED_SLOTS
+                    : node->role == PETTA_PLAN_STATIC_CALL &&
+                              petta_semantics_form(head) ==
+                                  PETTA_FORM_NONE
+                        ? PETTA_PLAN_EXEC_RELATION_SLOTS
+                        : PETTA_PLAN_EXEC_GENERIC;
         } else {
             node->role = PETTA_PLAN_DYNAMIC_CALL;
         }
@@ -1332,18 +1328,24 @@ static bool petta_clause_head_matches(
            lhs_head->sym_id == head;
 }
 
-bool petta_program_clause_snapshot_profiled(
+void petta_program_clause_snapshot_lease_release(
+    PettaClauseSnapshotLease *lease) {
+    if (!lease)
+        return;
+    free(lease->owned_items);
+    memset(lease, 0, sizeof(*lease));
+}
+
+bool petta_program_clause_snapshot_lease_profiled(
     PettaProgram *program, Space *space, SymbolId head,
-    PettaClauseCandidate **candidates, size_t *candidate_count,
+    PettaClauseSnapshotLease *lease,
     PettaClauseSnapshotStats *stats) {
     if (stats)
         memset(stats, 0, sizeof(*stats));
-    if (candidates)
-        *candidates = NULL;
-    if (candidate_count)
-        *candidate_count = 0u;
+    if (lease)
+        memset(lease, 0, sizeof(*lease));
     if (!program || !space || head == SYMBOL_ID_NONE ||
-        !candidates || !candidate_count) {
+        !lease) {
         return false;
     }
     if (stats)
@@ -1356,10 +1358,8 @@ bool petta_program_clause_snapshot_profiled(
         petta_program_space_find_clause_snapshot(
             entry, head, revision);
     if (cached) {
-        if (!petta_program_copy_clause_snapshot(
-                cached, candidates, candidate_count)) {
-            return false;
-        }
+        lease->items = cached->candidates;
+        lease->len = cached->len;
         if (stats) {
             stats->cache_hits = 1u;
             stats->candidates_emitted = cached->len;
@@ -1370,6 +1370,11 @@ bool petta_program_clause_snapshot_profiled(
         Atom *equation;
         SpaceEquationOccurrenceId occurrence;
     } PettaLiveClause;
+    typedef struct {
+        Atom *equation;
+        size_t first;
+        size_t last;
+    } PettaLivePointerBucket;
     size_t actual_len = 0u;
     size_t actual_cap = 0u;
     PettaLiveClause *actual = NULL;
@@ -1410,6 +1415,59 @@ bool petta_program_clause_snapshot_profiled(
         : NULL;
     if (used)
         memset(used, 0, sizeof(*used) * actual_len);
+    size_t pointer_bucket_cap = 0u;
+    PettaLivePointerBucket *pointer_buckets = NULL;
+    size_t *pointer_next = NULL;
+    if (actual_len > 0u) {
+        if (actual_len > SIZE_MAX / 2u) {
+            free(used);
+            free(actual);
+            return false;
+        }
+        size_t needed = actual_len * 2u;
+        pointer_bucket_cap = 16u;
+        while (pointer_bucket_cap < needed) {
+            if (pointer_bucket_cap > SIZE_MAX / 2u) {
+                free(used);
+                free(actual);
+                return false;
+            }
+            pointer_bucket_cap *= 2u;
+        }
+        pointer_buckets = calloc(
+            pointer_bucket_cap, sizeof(*pointer_buckets));
+        pointer_next = malloc(sizeof(*pointer_next) * actual_len);
+        if (!pointer_buckets || !pointer_next) {
+            free(pointer_buckets);
+            free(pointer_next);
+            free(used);
+            free(actual);
+            return false;
+        }
+        for (size_t index = 0u; index < actual_len; index++) {
+            pointer_next[index] = SIZE_MAX;
+            uintptr_t key = (uintptr_t)actual[index].equation;
+            key >>= 3u;
+            key ^= key >> 17u;
+            key *= (uintptr_t)0xed5ad4bbu;
+            key ^= key >> 11u;
+            size_t slot = (size_t)key & (pointer_bucket_cap - 1u);
+            while (pointer_buckets[slot].equation &&
+                   pointer_buckets[slot].equation !=
+                       actual[index].equation) {
+                slot = (slot + 1u) & (pointer_bucket_cap - 1u);
+            }
+            PettaLivePointerBucket *bucket = &pointer_buckets[slot];
+            if (!bucket->equation) {
+                bucket->equation = actual[index].equation;
+                bucket->first = index;
+                bucket->last = index;
+            } else {
+                pointer_next[bucket->last] = index;
+                bucket->last = index;
+            }
+        }
+    }
     size_t length = 0u;
     size_t capacity = 0u;
     PettaClauseCandidate *items = NULL;
@@ -1476,7 +1534,37 @@ bool petta_program_clause_snapshot_profiled(
                 continue;
             }
             size_t matched = SIZE_MAX;
+            if (pointer_buckets) {
+                uintptr_t key = (uintptr_t)record->equation;
+                key >>= 3u;
+                key ^= key >> 17u;
+                key *= (uintptr_t)0xed5ad4bbu;
+                key ^= key >> 11u;
+                size_t slot =
+                    (size_t)key & (pointer_bucket_cap - 1u);
+                while (pointer_buckets[slot].equation &&
+                       pointer_buckets[slot].equation !=
+                           record->equation) {
+                    slot = (slot + 1u) &
+                        (pointer_bucket_cap - 1u);
+                }
+                PettaLivePointerBucket *bucket =
+                    &pointer_buckets[slot];
+                while (bucket->equation &&
+                       bucket->first != SIZE_MAX &&
+                       used[bucket->first]) {
+                    bucket->first = pointer_next[bucket->first];
+                }
+                if (bucket->equation && bucket->first != SIZE_MAX) {
+                    matched = bucket->first;
+                    bucket->first = pointer_next[matched];
+                    if (stats)
+                        stats->pointer_identity_hits++;
+                }
+            }
             for (size_t index = 0u; index < actual_len; index++) {
+                if (matched != SIZE_MAX)
+                    break;
                 if (used[index])
                     continue;
                 if (stats)
@@ -1510,6 +1598,8 @@ bool petta_program_clause_snapshot_profiled(
                     sizeof(*items))) {
                 free(used);
                 free(actual);
+                free(pointer_buckets);
+                free(pointer_next);
                 free(items);
                 return false;
             }
@@ -1530,6 +1620,8 @@ bool petta_program_clause_snapshot_profiled(
                 sizeof(*items))) {
             free(used);
             free(actual);
+            free(pointer_buckets);
+            free(pointer_next);
             free(items);
             return false;
         }
@@ -1540,14 +1632,56 @@ bool petta_program_clause_snapshot_profiled(
     }
     free(used);
     free(actual);
-    *candidates = items;
-    *candidate_count = length;
+    free(pointer_buckets);
+    free(pointer_next);
     if (stats)
         stats->candidates_emitted = length;
-    if (entry && space_revision(space) == revision) {
-        petta_program_space_store_clause_snapshot(
-            entry, head, revision, items, length);
+    if (entry && space_revision(space) == revision &&
+        petta_program_space_store_clause_snapshot_take(
+            entry, head, revision, items, length)) {
+        const PettaProgramClauseSnapshot *stored =
+            petta_program_space_find_clause_snapshot(
+                entry, head, revision);
+        if (!stored)
+            return false;
+        lease->items = stored->candidates;
+        lease->len = stored->len;
+    } else {
+        lease->items = items;
+        lease->len = length;
+        lease->owned_items = items;
     }
+    return true;
+}
+
+bool petta_program_clause_snapshot_profiled(
+    PettaProgram *program, Space *space, SymbolId head,
+    PettaClauseCandidate **candidates, size_t *candidate_count,
+    PettaClauseSnapshotStats *stats) {
+    if (candidates)
+        *candidates = NULL;
+    if (candidate_count)
+        *candidate_count = 0u;
+    if (!candidates || !candidate_count)
+        return false;
+    PettaClauseSnapshotLease lease = {0};
+    if (!petta_program_clause_snapshot_lease_profiled(
+            program, space, head, &lease, stats)) {
+        return false;
+    }
+    if (lease.len > SIZE_MAX / sizeof(**candidates)) {
+        petta_program_clause_snapshot_lease_release(&lease);
+        return false;
+    }
+    PettaClauseCandidate *copy = lease.len
+        ? cetta_malloc(sizeof(*copy) * lease.len)
+        : NULL;
+    if (lease.len) {
+        memcpy(copy, lease.items, sizeof(*copy) * lease.len);
+    }
+    *candidates = copy;
+    *candidate_count = lease.len;
+    petta_program_clause_snapshot_lease_release(&lease);
     return true;
 }
 
@@ -1928,6 +2062,51 @@ static bool petta_table_safety_push_node(
     return true;
 }
 
+/* `let*` binding patterns are match data, not calls.  Only each binding's
+ * producer and the final body execute.  Following the generic plan tree
+ * through the binding-list spine would grant pattern-shaped data ambient
+ * effect authority and falsely classify ordinary destructuring as a
+ * dynamic call. */
+static bool petta_table_safety_push_let_star(
+    PettaTableSafetyNode **nodes,
+    size_t *length, size_t *capacity,
+    Atom *atom, const PettaPlanNode *plan) {
+    if (!nodes || !length || !capacity || !atom || !plan ||
+        atom->kind != ATOM_EXPR || atom->expr.len != 3u ||
+        plan->child_count != atom->expr.len) {
+        return false;
+    }
+
+    Atom *bindings = atom->expr.elems[1];
+    const PettaPlanNode *bindings_plan =
+        petta_plan_child(plan, 1u);
+    if (!bindings || bindings->kind != ATOM_EXPR ||
+        !bindings_plan ||
+        bindings_plan->child_count != bindings->expr.len ||
+        !petta_table_safety_push_node(
+            nodes, length, capacity,
+            atom->expr.elems[2], petta_plan_child(plan, 2u))) {
+        return false;
+    }
+
+    for (CettaExprIndex index = 0u;
+         index < bindings->expr.len; index++) {
+        Atom *binding = bindings->expr.elems[index];
+        const PettaPlanNode *binding_plan =
+            petta_plan_child(bindings_plan, index);
+        if (!binding || binding->kind != ATOM_EXPR ||
+            binding->expr.len != 2u || !binding_plan ||
+            binding_plan->child_count != binding->expr.len ||
+            !petta_table_safety_push_node(
+                nodes, length, capacity,
+                binding->expr.elems[1],
+                petta_plan_child(binding_plan, 1u))) {
+            return false;
+        }
+    }
+    return true;
+}
+
 /*
  * These forms are pure provided every executable child is pure.  Forms
  * which invoke an argument as a callable (map/fold/forall), perform I/O or
@@ -2018,12 +2197,12 @@ static bool petta_table_safety_primitive(
         return petta_table_safety_form_is_pure(
             form, opaque);
 
-    /* `:` constructs data but evaluates each field through its authored
-     * plan, so purity depends on those children. */
-    if (head == g_builtin_syms.colon)
+    /* Typed-data constructors evaluate each field through its authored plan,
+     * so purity depends on those children. */
+    if (head == g_builtin_syms.colon ||
+        head == g_builtin_syms.arrow)
         return true;
     if (head == g_builtin_syms.quote ||
-        head == g_builtin_syms.arrow ||
         head == g_builtin_syms.return_text) {
         if (opaque)
             *opaque = true;
@@ -2050,7 +2229,7 @@ static bool petta_table_safety_primitive(
             strcmp(name, "max") == 0);
 }
 
-static bool petta_table_safety_scan_relation(
+static PettaRelationSafety petta_table_safety_scan_relation(
     PettaProgram *program, Space *space,
     PettaTableSafetyRelation relation,
     PettaTableSafetyRelation **relations,
@@ -2060,7 +2239,7 @@ static bool petta_table_safety_scan_relation(
     if (!petta_program_clause_snapshot(
             program, space, relation.head,
             &candidates, &candidate_count)) {
-        return false;
+        return PETTA_RELATION_SAFETY_UNSAFE;
     }
 
     PettaTableSafetyNode *nodes = NULL;
@@ -2068,6 +2247,7 @@ static bool petta_table_safety_scan_relation(
     size_t node_cap = 0u;
     bool saw_matching_clause = false;
     bool safe = true;
+    bool guarded_dynamic = false;
     bool trace = getenv("CETTA_PETTA_TABLE_SAFETY_TRACE") != NULL;
     for (size_t index = 0u;
          safe && index < candidate_count; index++) {
@@ -2104,12 +2284,50 @@ static bool petta_table_safety_scan_relation(
         PettaTableSafetyNode item = nodes[--node_len];
         Atom *atom = item.atom;
         const PettaPlanNode *plan = item.plan;
-        if (plan->role == PETTA_PLAN_VALUE ||
-            plan->role == PETTA_PLAN_DATA) {
+        if (plan->role == PETTA_PLAN_VALUE) {
             continue;
         }
-        if (plan->role == PETTA_PLAN_DYNAMIC_CALL ||
-            atom->kind != ATOM_EXPR ||
+        if (plan->role == PETTA_PLAN_DATA) {
+            if (atom->kind != ATOM_EXPR ||
+                plan->child_count != atom->expr.len) {
+                safe = false;
+                break;
+            }
+            for (CettaExprIndex child = 1u;
+                 safe && child < atom->expr.len; child++) {
+                safe = petta_table_safety_push_node(
+                    &nodes, &node_len, &node_cap,
+                    atom->expr.elems[child],
+                    &plan->children[child]);
+            }
+            continue;
+        }
+        if (plan->role == PETTA_PLAN_DYNAMIC_CALL) {
+            if (atom->kind != ATOM_EXPR ||
+                atom->expr.len == 0u ||
+                plan->child_count != atom->expr.len) {
+                safe = false;
+                if (trace) {
+                    fprintf(
+                        stderr,
+                        "[petta-table-safety] head=%s arity=%u "
+                        "malformed-dynamic-call\n",
+                        symbol_bytes(g_symbols, relation.head),
+                        (unsigned)relation.arity);
+                }
+                break;
+            }
+            guarded_dynamic = true;
+            for (CettaExprIndex child = 1u;
+                 safe && child < atom->expr.len; child++) {
+                safe = petta_table_safety_push_node(
+                    &nodes, &node_len, &node_cap,
+                    atom->expr.elems[child],
+                    &plan->children[child]);
+            }
+            continue;
+        }
+        if (atom->kind != ATOM_EXPR ||
             atom->expr.len == 0u ||
             atom->expr.elems[0]->kind != ATOM_SYMBOL) {
             safe = false;
@@ -2117,15 +2335,32 @@ static bool petta_table_safety_scan_relation(
                 fprintf(
                     stderr,
                     "[petta-table-safety] head=%s arity=%u "
-                    "dynamic-or-malformed-call\n",
+                    "malformed-static-call role=%u atom=",
                     symbol_bytes(g_symbols, relation.head),
-                    (unsigned)relation.arity);
+                    (unsigned)relation.arity,
+                    (unsigned)plan->role);
+                atom_print(atom, stderr);
+                fputc('\n', stderr);
             }
             break;
         }
 
         SymbolId call_head =
             atom->expr.elems[0]->sym_id;
+        if (call_head == g_builtin_syms.let_star) {
+            safe = petta_table_safety_push_let_star(
+                &nodes, &node_len, &node_cap,
+                atom, plan);
+            if (!safe && trace) {
+                fprintf(
+                    stderr,
+                    "[petta-table-safety] head=%s arity=%u "
+                    "malformed-let-star\n",
+                    symbol_bytes(g_symbols, relation.head),
+                    (unsigned)relation.arity);
+            }
+            continue;
+        }
         bool opaque = false;
         if (petta_table_safety_primitive(
                 call_head, &opaque)) {
@@ -2177,7 +2412,11 @@ static bool petta_table_safety_scan_relation(
             symbol_bytes(g_symbols, relation.head),
             (unsigned)relation.arity);
     }
-    return safe && saw_matching_clause;
+    if (!safe || !saw_matching_clause)
+        return PETTA_RELATION_SAFETY_UNSAFE;
+    return guarded_dynamic
+        ? PETTA_RELATION_SAFETY_GUARDED_DYNAMIC
+        : PETTA_RELATION_SAFETY_STATIC;
 }
 
 static size_t petta_table_safety_cache_slot(
@@ -2191,11 +2430,11 @@ static size_t petta_table_safety_cache_slot(
            (PETTA_TABLE_SAFETY_CACHE_CAP - 1u);
 }
 
-bool petta_program_relation_table_safe(
+PettaRelationSafety petta_program_relation_safety(
     PettaProgram *program, Space *space,
     SymbolId head, CettaExprLen arity) {
     if (!program || !space || head == SYMBOL_ID_NONE)
-        return false;
+        return PETTA_RELATION_SAFETY_UNSAFE;
 
     size_t cache_slot =
         petta_table_safety_cache_slot(space, head, arity);
@@ -2209,7 +2448,7 @@ bool petta_program_relation_table_safe(
         cached->revision == revision &&
         cached->head == head &&
         cached->arity == arity) {
-        return cached->safe;
+        return cached->safety;
     }
 
     PettaTableSafetyRelation *relations = NULL;
@@ -2218,13 +2457,25 @@ bool petta_program_relation_table_safe(
     bool safe = petta_table_safety_add_relation(
         &relations, &relation_len, &relation_cap,
         head, arity);
+    PettaRelationSafety safety = safe
+        ? PETTA_RELATION_SAFETY_STATIC
+        : PETTA_RELATION_SAFETY_UNSAFE;
     for (size_t index = 0u;
          safe && index < relation_len; index++) {
-        safe = petta_table_safety_scan_relation(
+        PettaRelationSafety relation_safety =
+            petta_table_safety_scan_relation(
             program, space, relations[index],
             &relations, &relation_len, &relation_cap);
+        safe = relation_safety != PETTA_RELATION_SAFETY_UNSAFE;
+        if (safe &&
+            relation_safety ==
+                PETTA_RELATION_SAFETY_GUARDED_DYNAMIC) {
+            safety = PETTA_RELATION_SAFETY_GUARDED_DYNAMIC;
+        }
     }
     free(relations);
+    if (!safe)
+        safety = PETTA_RELATION_SAFETY_UNSAFE;
 
     *cached = (PettaTableSafetyCacheEntry){
         .space = space,
@@ -2232,8 +2483,38 @@ bool petta_program_relation_table_safe(
         .revision = revision,
         .head = head,
         .arity = arity,
-        .safe = safe,
+        .safety = safety,
         .occupied = true,
     };
-    return safe;
+    return safety;
+}
+
+bool petta_program_relation_table_safe(
+    PettaProgram *program, Space *space,
+    SymbolId head, CettaExprLen arity) {
+    return petta_program_relation_safety(
+               program, space, head, arity) ==
+           PETTA_RELATION_SAFETY_STATIC;
+}
+
+PettaResolvedCallClass petta_program_classify_resolved_call(
+    PettaProgram *program, Space *space, Atom *call) {
+    if (!program || !space || !call ||
+        call->kind != ATOM_EXPR || call->expr.len == 0u ||
+        call->expr.elems[0]->kind != ATOM_SYMBOL) {
+        return PETTA_RESOLVED_CALL_UNSAFE;
+    }
+    SymbolId head = call->expr.elems[0]->sym_id;
+    bool opaque = false;
+    if (petta_table_safety_primitive(head, &opaque))
+        return PETTA_RESOLVED_CALL_MACHINE_LOCAL;
+    if (petta_program_head_is_intrinsic(head))
+        return PETTA_RESOLVED_CALL_UNSAFE;
+    if (!space_equations_may_match_known_head(space, head))
+        return PETTA_RESOLVED_CALL_MACHINE_LOCAL;
+    return petta_program_relation_safety(
+               program, space, head, call->expr.len - 1u) ==
+                   PETTA_RELATION_SAFETY_UNSAFE
+        ? PETTA_RESOLVED_CALL_UNSAFE
+        : PETTA_RESOLVED_CALL_RELATION;
 }

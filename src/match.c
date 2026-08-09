@@ -1854,8 +1854,22 @@ Atom *bindings_apply(Bindings *b, Arena *a, Atom *atom) {
     return bindings_apply_rewrite_vars(b, a, atom, NULL, NULL);
 }
 
-static Atom *bindings_apply_seen_epoch(Bindings *b, Arena *a, Atom *atom, uint32_t epoch,
-                                       bool original_side,
+static Atom *bindings_lookup_id_since(Bindings *b, VarId id,
+                                      uint32_t first_entry) {
+    if (first_entry == 0u)
+        return bindings_lookup_id(b, id);
+    cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_BINDINGS_LOOKUP);
+    for (uint32_t i = b->len; i > first_entry; i--) {
+        const Binding *entry = &b->entries[i - 1u];
+        if (binding_var_eq(entry->var_id, id))
+            return entry->val;
+    }
+    return NULL;
+}
+
+static Atom *bindings_apply_seen_epoch(Bindings *b, Arena *a, Atom *atom,
+                                       uint32_t epoch, bool original_side,
+                                       uint32_t first_entry,
                                        BindingApplySeen *seen,
                                        uint32_t seen_len,
                                        BindingApplyMemo *memo) {
@@ -1873,7 +1887,7 @@ static Atom *bindings_apply_seen_epoch(Bindings *b, Arena *a, Atom *atom, uint32
             bindings_apply_memo_store(memo, lookup_id, result);
             return result;
         }
-        Atom *val = bindings_lookup_id(b, lookup_id);
+        Atom *val = bindings_lookup_id_since(b, lookup_id, first_entry);
         if (!val) {
             Atom *result = original_side ? epoch_var_atom(a, atom, epoch) : atom;
             bindings_apply_memo_store(memo, lookup_id, result);
@@ -1884,7 +1898,8 @@ static Atom *bindings_apply_seen_epoch(Bindings *b, Arena *a, Atom *atom, uint32
             return NULL;
         seen->ids[seen_len] = lookup_id;
         Atom *result = bindings_apply_seen_epoch(
-            b, a, val, epoch, false, seen, seen_len + 1, memo);
+            b, a, val, epoch, false, first_entry,
+            seen, seen_len + 1, memo);
         bindings_apply_memo_store(memo, lookup_id, result);
         return result;
     }
@@ -1894,7 +1909,7 @@ static Atom *bindings_apply_seen_epoch(Bindings *b, Arena *a, Atom *atom, uint32
             Atom *child = atom->expr.elems[i];
             Atom *next = atom_has_vars(child)
                 ? bindings_apply_seen_epoch(b, a, child, epoch, original_side,
-                                            seen, seen_len, memo)
+                                            first_entry, seen, seen_len, memo)
                 : child;
             if (!new_elems && next != atom->expr.elems[i]) {
                 new_elems = arena_alloc(a, sizeof(Atom *) * atom->expr.len);
@@ -1912,7 +1927,10 @@ static Atom *bindings_apply_seen_epoch(Bindings *b, Arena *a, Atom *atom, uint32
     }
 }
 
-Atom *bindings_apply_epoch(Bindings *b, Arena *a, Atom *atom, uint32_t epoch) {
+Atom *bindings_apply_epoch_since(Bindings *b, Arena *a, Atom *atom,
+                                 uint32_t epoch, uint32_t first_entry) {
+    if (!b || !a || !atom || first_entry > b->len)
+        return NULL;
     VarId seen_stack[BINDINGS_SEEN_STACK_CAP];
     VarId memo_id_stack[BINDINGS_MEMO_STACK_CAP];
     Atom *memo_val_stack[BINDINGS_MEMO_STACK_CAP];
@@ -1923,10 +1941,16 @@ Atom *bindings_apply_epoch(Bindings *b, Arena *a, Atom *atom, uint32_t epoch) {
     bindings_apply_memo_init(&memo, memo_id_stack, memo_val_stack,
                              BINDINGS_MEMO_STACK_CAP);
     Atom *result = bindings_apply_seen_epoch(
-        b, a, atom, epoch, true, &seen, 0, &memo);
+        b, a, atom, epoch, true, first_entry,
+        &seen, 0, &memo);
     bindings_apply_memo_release(&memo);
     bindings_apply_seen_release(&seen);
     return result;
+}
+
+Atom *bindings_apply_epoch(Bindings *b, Arena *a, Atom *atom,
+                           uint32_t epoch) {
+    return bindings_apply_epoch_since(b, a, atom, epoch, 0u);
 }
 
 static void freshen_epoch_memo_clear(FreshenEpochMemoSlot *slots, size_t cap) {

@@ -2,6 +2,8 @@
 #include "atom.h"
 #include "parser.h"
 #include "he_compiled_reader.h"
+#include "gslt_language_runtime.h"
+#include "generated/zero_language_v1.generated.h"
 #include "petta_compiled_reader.h"
 #include "petta_typecheck.h"
 #include "lib_prolog.h"
@@ -104,7 +106,8 @@ static bool result_set_all_empty(ResultSet *rs,
     if (rs->len == 0) return false;
     for (uint32_t i = 0; i < rs->len; i++) {
         Atom *item = rs->items[i];
-        if (!(language_id != CETTA_LANGUAGE_PRIME && atom_is_empty(item)) &&
+        if (!(language_id != CETTA_LANGUAGE_PRIME &&
+              language_id != CETTA_LANGUAGE_ZERO && atom_is_empty(item)) &&
             !(item->kind == ATOM_EXPR && item->expr.len == 0)) {
             return false;
         }
@@ -877,7 +880,8 @@ static void write_results(FILE *out, ResultSet *rs,
         return;
     }
 
-    bool hide_legacy_empty = language_id != CETTA_LANGUAGE_PRIME;
+    bool hide_legacy_empty = language_id != CETTA_LANGUAGE_PRIME &&
+                             language_id != CETTA_LANGUAGE_ZERO;
     for (uint32_t i = 0; i < rs->len; i++) {
         if (!hide_legacy_empty || !atom_is_empty(rs->items[i]))
             visible_len++;
@@ -1656,6 +1660,7 @@ typedef struct {
     bool parser_universal_names_old;
     void *document_reader_context;
     void (*document_reader_free)(void *context);
+    CettaGsltLanguage *gslt_language;
 } CettaMainCleanup;
 
 static void cetta_main_cleanup_registry_spaces(
@@ -1716,6 +1721,8 @@ static void cetta_main_cleanup(CettaMainCleanup *cleanup) {
         cleanup->document_reader_free(cleanup->document_reader_context);
     cleanup->document_reader_context = NULL;
     cleanup->document_reader_free = NULL;
+    cetta_gslt_language_free(cleanup->gslt_language);
+    cleanup->gslt_language = NULL;
 
     if (cleanup->registry_initialized) {
         if (cleanup->space_initialized) {
@@ -1903,6 +1910,31 @@ static MainPettaBlockLoadResult main_petta_load_declaration_block(
     petta_program_declaration_block_free(block);
     return ok ? MAIN_PETTA_BLOCK_LOAD_OK
               : MAIN_PETTA_BLOCK_LOAD_FAILED;
+}
+
+static bool main_load_planned_declaration_block(
+    PettaProgram *program, Space *space,
+    TermUniverse *universe, AtomId *atom_ids, int atom_count) {
+    if (!program || !space || !universe || atom_count < 0 ||
+        (atom_count > 0 && !atom_ids)) {
+        return false;
+    }
+    PettaDeclarationBlock *block =
+        petta_program_declaration_block_new(
+            program, universe, atom_ids, atom_count);
+    if (!block) return false;
+    bool ok = space_add_atom_ids_batch(
+        space, atom_ids, (CettaCount)atom_count);
+    for (int index = 0; ok && index < atom_count; index++) {
+        Atom *source = term_universe_get_atom(
+            universe, atom_ids[index]);
+        const PettaPlanNode *plan =
+            petta_program_declaration_block_plan_at(block, index);
+        ok = source && plan &&
+             petta_program_note_add(program, space, source, plan);
+    }
+    petta_program_declaration_block_free(block);
+    return ok;
 }
 
 int main(int argc, char **argv) {
@@ -2431,6 +2463,7 @@ int main(int argc, char **argv) {
     HECompiledReaderV1 *he_compiled_reader = NULL;
     PeTTaCompiledReaderV1 *petta_compiled_reader = NULL;
     PrimeCompiledReaderV1 *prime_compiled_reader = NULL;
+    CettaGsltLanguage *gslt_language = NULL;
     CettaMainCleanup cleanup = {0};
     bool lang_is_mm2 = strcmp(lang->canonical, "mm2") == 0;
     char document_reader_error[512] = {0};
@@ -2447,6 +2480,7 @@ int main(int argc, char **argv) {
     cleanup.hashcons_table = &hashcons_table;
     cleanup.document_reader_context = NULL;
     cleanup.document_reader_free = NULL;
+    cleanup.gslt_language = NULL;
     cleanup.libraries = &libraries;
     cleanup.space = &space;
     cleanup.registry = &registry;
@@ -2558,7 +2592,34 @@ int main(int argc, char **argv) {
             lang->id == CETTA_LANGUAGE_PRIME);
     cleanup.parser_universal_names_set = true;
 
-    if (lang->id == CETTA_LANGUAGE_HE) {
+    const char *document_reader_capability = NULL;
+    if (lang->id == CETTA_LANGUAGE_HE)
+        document_reader_capability = "he-reader-direct-v1";
+    else if (lang->id == CETTA_LANGUAGE_PETTA)
+        document_reader_capability = "petta-reader-direct-v1";
+    else if (lang->id == CETTA_LANGUAGE_PRIME)
+        document_reader_capability = "prime-reader-direct-v1";
+    else if (lang->id == CETTA_LANGUAGE_ZERO) {
+        char language_error[512] = {0};
+        if (!cetta_gslt_language_load_embedded(
+                &cetta_zero_language_v1, &gslt_language,
+                language_error, sizeof(language_error)) ||
+            strcmp(cetta_gslt_language_name(gslt_language),
+                   lang->canonical) != 0) {
+            fprintf(stderr,
+                    "error: could not load generated language pack: %s\n",
+                    language_error[0] ? language_error
+                                      : "language identity mismatch");
+            rc = 1;
+            goto cleanup;
+        }
+        cleanup.gslt_language = gslt_language;
+        document_reader_capability =
+            cetta_gslt_language_syntax_backend(gslt_language);
+    }
+
+    if (document_reader_capability &&
+        strcmp(document_reader_capability, "he-reader-direct-v1") == 0) {
         char reader_error[512] = {0};
         ParserDocumentIdsBackend reader_backend;
         he_compiled_reader = he_compiled_reader_v1_new();
@@ -2583,7 +2644,9 @@ int main(int argc, char **argv) {
             rc = 1;
             goto cleanup;
         }
-    } else if (lang->id == CETTA_LANGUAGE_PETTA) {
+    } else if (document_reader_capability &&
+               strcmp(document_reader_capability,
+                      "petta-reader-direct-v1") == 0) {
         char reader_error[512] = {0};
         ParserDocumentIdsBackend reader_backend;
         petta_compiled_reader = petta_compiled_reader_v1_new();
@@ -2610,7 +2673,9 @@ int main(int argc, char **argv) {
             rc = 1;
             goto cleanup;
         }
-    } else if (lang->id == CETTA_LANGUAGE_PRIME) {
+    } else if (document_reader_capability &&
+               strcmp(document_reader_capability,
+                      "prime-reader-direct-v1") == 0) {
         char reader_error[512] = {0};
         ParserDocumentIdsBackend reader_backend;
         prime_compiled_reader = prime_compiled_reader_v1_new();
@@ -2637,6 +2702,12 @@ int main(int argc, char **argv) {
             rc = 1;
             goto cleanup;
         }
+    } else if (document_reader_capability) {
+        fprintf(stderr, "error: generated language selected an unknown "
+                        "reader capability '%s'\n",
+                document_reader_capability);
+        rc = 1;
+        goto cleanup;
     }
 
     space_init_with_universe(&space, &libraries.term_universe);
@@ -2686,6 +2757,65 @@ int main(int argc, char **argv) {
             rc = 1;
             goto cleanup;
         }
+    }
+
+    if (lang->id == CETTA_LANGUAGE_ZERO) {
+        if (compile_mode) {
+            fprintf(stderr,
+                    "error: --compile is not a declared MeTTa Zero observation\n");
+            rc = 2;
+            goto cleanup;
+        }
+        Atom **forms = n > 0
+            ? cetta_malloc(sizeof(*forms) * (size_t)n) : NULL;
+        for (int index = 0; index < n; index++)
+            forms[index] = term_universe_get_atom(
+                &libraries.term_universe, atom_ids[index]);
+        CettaGsltLanguageResult observed;
+        CettaGsltHornLimits limits = {
+            .max_rule_attempts = 10000000u,
+            .max_answers = 1000000u,
+            .max_depth = 10000u,
+        };
+        char language_error[512] = {0};
+        bool executed = cetta_gslt_language_execute_atoms(
+            gslt_language, forms, (size_t)n, &eval_arena, limits,
+            &observed, language_error, sizeof(language_error));
+        free(forms);
+        if (!executed) {
+            fprintf(stderr, "error: generated language execution failed: %s\n",
+                    language_error[0] ? language_error : "unknown failure");
+            rc = 1;
+            goto cleanup;
+        }
+        if (observed.outcome != CETTA_GSLT_HORN_COMPLETED) {
+            fprintf(stderr,
+                    "error: generated language execution is incomplete "
+                    "(outcome=%u, attempts=%" PRIu64 ")\n",
+                    (unsigned)observed.outcome, observed.rule_attempts);
+            cetta_gslt_language_result_free(&observed);
+            rc = 1;
+            goto cleanup;
+        }
+        ResultSet visible;
+        result_set_init(&visible);
+        for (size_t index = 0u; index < observed.answer_count; index++)
+            result_set_add(&visible, observed.answers[index]);
+        if (visible.len == 0u &&
+            strcmp(cetta_gslt_language_observation(gslt_language),
+                   "bag") == 0)
+            fputs("[]\n", stdout);
+        else
+            write_results(stdout, &visible, lang->id, profile);
+        result_set_free(&visible);
+        cetta_gslt_language_result_free(&observed);
+        if (emit_runtime_stats) {
+            CettaRuntimeStats stats;
+            cetta_runtime_stats_snapshot(&stats);
+            cetta_runtime_stats_print(stderr, &stats);
+        }
+        rc = 0;
+        goto cleanup;
     }
 
     /*
@@ -2881,7 +3011,8 @@ int main(int argc, char **argv) {
                 arena_free(&eval_arena);
                 arena_init(&eval_arena);
                 arena_set_runtime_kind(&eval_arena, CETTA_ARENA_RUNTIME_KIND_EVAL);
-                arena_set_hashcons(&eval_arena, eval_hashcons ? &hashcons_table : NULL);
+                arena_set_hashcons(
+                    &eval_arena, eval_hashcons ? &hashcons_table : NULL);
                 if (stop_after_error) break;
                 i += 2;
                 continue;
@@ -3044,7 +3175,8 @@ int main(int argc, char **argv) {
             arena_free(&eval_arena);
             arena_init(&eval_arena);
             arena_set_runtime_kind(&eval_arena, CETTA_ARENA_RUNTIME_KIND_EVAL);
-            arena_set_hashcons(&eval_arena, eval_hashcons ? &hashcons_table : NULL);
+            arena_set_hashcons(
+                &eval_arena, eval_hashcons ? &hashcons_table : NULL);
             if (stop_after_error) break;
             i += exec_width;
             continue;
@@ -3088,9 +3220,17 @@ int main(int argc, char **argv) {
                    n, block_end, NULL, NULL)) {
             block_end++;
         }
-        if (!space_add_atom_ids_batch(
-                &space, atom_ids + i,
-                (CettaCount)(block_end - i))) {
+        bool prime_relational_plan =
+            libraries.prime_relational_plan_enabled;
+        bool loaded = prime_relational_plan
+            ? main_load_planned_declaration_block(
+                  libraries.petta_program, &space,
+                  &libraries.term_universe, atom_ids + i,
+                  block_end - i)
+            : space_add_atom_ids_batch(
+                  &space, atom_ids + i,
+                  (CettaCount)(block_end - i));
+        if (!loaded) {
             fprintf(stderr, "error: could not load declaration block\n");
             rc = 1;
             goto cleanup;

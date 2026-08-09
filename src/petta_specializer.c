@@ -68,6 +68,29 @@ typedef struct {
 } PettaSymbolVector;
 
 typedef struct {
+    VarId *items;
+    size_t len;
+    size_t cap;
+} PettaVarVector;
+
+typedef struct {
+    Atom *atom;
+    bool under_callable_argument;
+} PettaRelationRelevanceItem;
+
+typedef struct {
+    PettaRelationRelevanceItem *items;
+    size_t len;
+    size_t cap;
+} PettaRelationRelevanceStack;
+
+typedef enum {
+    PETTA_RELATION_RELEVANCE_UNKNOWN = 0,
+    PETTA_RELATION_RELEVANCE_IRRELEVANT,
+    PETTA_RELATION_RELEVANCE_POSSIBLE,
+} PettaRelationRelevance;
+
+typedef struct {
     Atom *source;
     Atom *derived;
     PettaSpecializerPatternNode *pattern;
@@ -122,6 +145,7 @@ typedef struct {
     bool eligible;
     bool productive;
     bool filtered;
+    bool relation_filtered;
     bool relevance_bounded;
     SymbolId specialized;
 } PettaSpecializationAnalysis;
@@ -129,18 +153,20 @@ typedef struct {
 static _Thread_local PettaSpecializationRecords
     g_petta_specializations = {0};
 
-enum { PETTA_RELEVANCE_BOUNDED_CACHE_SLOTS = 64 };
+enum { PETTA_RELATION_RELEVANCE_CACHE_SLOTS = 256 };
 
 typedef struct {
     Space *space;
     uint64_t space_instance;
+    uint64_t revision;
     SymbolId source;
+    PettaRelationRelevance relevance;
     bool used;
-} PettaRelevanceBoundedCacheSlot;
+} PettaRelationRelevanceCacheSlot;
 
-static _Thread_local PettaRelevanceBoundedCacheSlot
-    g_petta_relevance_bounded_cache[
-        PETTA_RELEVANCE_BOUNDED_CACHE_SLOTS];
+static _Thread_local PettaRelationRelevanceCacheSlot
+    g_petta_relation_relevance_cache[
+        PETTA_RELATION_RELEVANCE_CACHE_SLOTS];
 
 static bool petta_atom_vector_push(
     PettaAtomVector *vector, Atom *atom);
@@ -177,58 +203,12 @@ static bool petta_specializer_relevance_filter_enabled(void) {
     if (enabled < 0) {
         const char *value = getenv(
             "CETTA_PETTA_SPECIALIZER_RELEVANCE_FILTER");
-        enabled = value && value[0] == '1' ? 1 : 0;
+        enabled = !value ||
+                  (strcmp(value, "0") != 0 &&
+                   strcmp(value, "false") != 0 &&
+                   strcmp(value, "off") != 0);
     }
     return enabled == 1;
-}
-
-static size_t petta_relevance_bounded_cache_index(
-    Space *space, uint64_t instance, SymbolId source) {
-    uint64_t mixed =
-        ((uint64_t)(uintptr_t)space >> 4u) ^
-        (instance * UINT64_C(0x9e3779b97f4a7c15)) ^
-        ((uint64_t)source * UINT64_C(0xbf58476d1ce4e5b9));
-    mixed ^= mixed >> 30u;
-    mixed *= UINT64_C(0xbf58476d1ce4e5b9);
-    mixed ^= mixed >> 27u;
-    return (size_t)mixed &
-           (PETTA_RELEVANCE_BOUNDED_CACHE_SLOTS - 1u);
-}
-
-static bool petta_relevance_filter_is_bounded_out(
-    Space *space, SymbolId source) {
-    if (!space || source == SYMBOL_ID_NONE)
-        return false;
-    uint64_t instance = space_instance_id(space);
-    PettaRelevanceBoundedCacheSlot *slot =
-        &g_petta_relevance_bounded_cache[
-            petta_relevance_bounded_cache_index(
-                space, instance, source)];
-    return slot->used && slot->space == space &&
-           slot->space_instance == instance &&
-           slot->source == source;
-}
-
-static void petta_relevance_filter_mark_bounded_out(
-    Space *space, SymbolId source) {
-    if (!space || source == SYMBOL_ID_NONE)
-        return;
-    uint64_t instance = space_instance_id(space);
-    PettaRelevanceBoundedCacheSlot *slot =
-        &g_petta_relevance_bounded_cache[
-            petta_relevance_bounded_cache_index(
-                space, instance, source)];
-    *slot = (PettaRelevanceBoundedCacheSlot){
-        .space = space,
-        .space_instance = instance,
-        .source = source,
-        .used = true,
-    };
-}
-
-static void petta_relevance_filter_clear_bounded_cache(void) {
-    memset(g_petta_relevance_bounded_cache, 0,
-           sizeof(g_petta_relevance_bounded_cache));
 }
 
 static void petta_specializer_trace_atom(
@@ -328,6 +308,32 @@ static bool petta_symbol_vector_push_unique(
         return false;
     }
     vector->items[vector->len++] = symbol;
+    return true;
+}
+
+static bool petta_var_vector_contains(
+    const PettaVarVector *vector, VarId variable) {
+    if (!vector || variable == VAR_ID_NONE)
+        return false;
+    for (size_t index = 0u; index < vector->len; index++) {
+        if (vector->items[index] == variable)
+            return true;
+    }
+    return false;
+}
+
+static bool petta_var_vector_push_unique(
+    PettaVarVector *vector, VarId variable) {
+    if (!vector || variable == VAR_ID_NONE)
+        return false;
+    if (petta_var_vector_contains(vector, variable))
+        return true;
+    if (!petta_reserve(
+            (void **)&vector->items, &vector->cap,
+            vector->len + 1u, sizeof(*vector->items))) {
+        return false;
+    }
+    vector->items[vector->len++] = variable;
     return true;
 }
 
@@ -819,6 +825,251 @@ static bool petta_symbol_is_callable(
     return callable;
 }
 
+static size_t petta_relation_relevance_cache_index(
+    Space *space, uint64_t instance, uint64_t revision,
+    SymbolId source) {
+    uint64_t mixed =
+        ((uint64_t)(uintptr_t)space >> 4u) ^
+        (instance * UINT64_C(0x9e3779b97f4a7c15)) ^
+        (revision * UINT64_C(0xbf58476d1ce4e5b9)) ^
+        ((uint64_t)source * UINT64_C(0x94d049bb133111eb));
+    mixed ^= mixed >> 30u;
+    mixed *= UINT64_C(0xbf58476d1ce4e5b9);
+    mixed ^= mixed >> 27u;
+    return (size_t)mixed &
+           (PETTA_RELATION_RELEVANCE_CACHE_SLOTS - 1u);
+}
+
+static bool petta_relation_relevance_cache_lookup(
+    Space *space, uint64_t instance, uint64_t revision,
+    SymbolId source, PettaRelationRelevance *relevance) {
+    if (relevance)
+        *relevance = PETTA_RELATION_RELEVANCE_UNKNOWN;
+    if (!space || source == SYMBOL_ID_NONE || !relevance)
+        return false;
+    PettaRelationRelevanceCacheSlot *slot =
+        &g_petta_relation_relevance_cache[
+            petta_relation_relevance_cache_index(
+                space, instance, revision, source)];
+    if (!slot->used || slot->space != space ||
+        slot->space_instance != instance ||
+        slot->revision != revision ||
+        slot->source != source) {
+        return false;
+    }
+    *relevance = slot->relevance;
+    return true;
+}
+
+static void petta_relation_relevance_cache_store(
+    Space *space, uint64_t instance, uint64_t revision,
+    SymbolId source, PettaRelationRelevance relevance) {
+    if (!space || source == SYMBOL_ID_NONE ||
+        (relevance != PETTA_RELATION_RELEVANCE_IRRELEVANT &&
+         relevance != PETTA_RELATION_RELEVANCE_POSSIBLE)) {
+        return;
+    }
+    PettaRelationRelevanceCacheSlot *slot =
+        &g_petta_relation_relevance_cache[
+            petta_relation_relevance_cache_index(
+                space, instance, revision, source)];
+    *slot = (PettaRelationRelevanceCacheSlot){
+        .space = space,
+        .space_instance = instance,
+        .revision = revision,
+        .source = source,
+        .relevance = relevance,
+        .used = true,
+    };
+}
+
+static void petta_relation_relevance_cache_clear(void) {
+    memset(g_petta_relation_relevance_cache, 0,
+           sizeof(g_petta_relation_relevance_cache));
+}
+
+static bool petta_collect_pattern_variables(
+    Atom *root, PettaVarVector *variables) {
+    PettaAtomVector stack = {0};
+    if (!root || !variables ||
+        !petta_atom_vector_push(&stack, root)) {
+        return false;
+    }
+    bool ok = true;
+    while (stack.len > 0u && ok) {
+        Atom *atom = stack.items[--stack.len];
+        if (atom->kind == ATOM_VAR) {
+            ok = petta_var_vector_push_unique(
+                variables, atom->var_id);
+            continue;
+        }
+        if (atom->kind != ATOM_EXPR)
+            continue;
+        for (CettaExprIndex index = 0u;
+             ok && index < atom->expr.len; index++) {
+            ok = petta_atom_vector_push(
+                &stack, atom->expr.elems[index]);
+        }
+    }
+    free(stack.items);
+    return ok;
+}
+
+static PettaRelationRelevance
+petta_relation_body_relevance(
+    PettaSpecializerContext *context, Atom *root,
+    const PettaVarVector *pattern_variables) {
+    if (!context || !root || !pattern_variables)
+        return PETTA_RELATION_RELEVANCE_UNKNOWN;
+    PettaRelationRelevanceStack stack = {0};
+    if (!petta_reserve(
+            (void **)&stack.items, &stack.cap, 1u,
+            sizeof(*stack.items))) {
+        return PETTA_RELATION_RELEVANCE_UNKNOWN;
+    }
+    stack.items[stack.len++] = (PettaRelationRelevanceItem){
+        .atom = root,
+    };
+    while (stack.len > 0u) {
+        PettaRelationRelevanceItem item =
+            stack.items[--stack.len];
+        Atom *atom = item.atom;
+        if (!atom) {
+            free(stack.items);
+            return PETTA_RELATION_RELEVANCE_UNKNOWN;
+        }
+        if (atom->kind == ATOM_VAR) {
+            if (item.under_callable_argument &&
+                petta_var_vector_contains(
+                    pattern_variables, atom->var_id)) {
+                free(stack.items);
+                return PETTA_RELATION_RELEVANCE_POSSIBLE;
+            }
+            continue;
+        }
+        if (atom->kind != ATOM_EXPR || atom->expr.len == 0u)
+            continue;
+
+        Atom *head = atom->expr.elems[0];
+        if (head && head->kind == ATOM_VAR &&
+            petta_var_vector_contains(
+                pattern_variables, head->var_id)) {
+            free(stack.items);
+            return PETTA_RELATION_RELEVANCE_POSSIBLE;
+        }
+        bool callable =
+            atom->expr.len > 1u && head &&
+            head->kind == ATOM_SYMBOL &&
+            petta_symbol_is_callable(
+                context->space, &context->scratch,
+                head->sym_id);
+        if ((size_t)atom->expr.len >
+                SIZE_MAX - stack.len ||
+            !petta_reserve(
+                (void **)&stack.items, &stack.cap,
+                stack.len + (size_t)atom->expr.len,
+                sizeof(*stack.items))) {
+            free(stack.items);
+            return PETTA_RELATION_RELEVANCE_UNKNOWN;
+        }
+        for (CettaExprIndex index = atom->expr.len;
+             index > 0u; index--) {
+            CettaExprIndex child = index - 1u;
+            stack.items[stack.len++] =
+                (PettaRelationRelevanceItem){
+                    .atom = atom->expr.elems[child],
+                    .under_callable_argument =
+                        item.under_callable_argument ||
+                        (callable && child > 0u),
+                };
+        }
+    }
+    free(stack.items);
+    return PETTA_RELATION_RELEVANCE_IRRELEVANT;
+}
+
+/*
+ * A relation whose source-pattern variables never occur as a dynamic head
+ * and never flow into an argument of any callable form cannot select a
+ * higher-order specialization for any concrete call.  This is a one-way
+ * proof: uncertainty and every positive occurrence retain the ordinary
+ * per-call analysis.  The exact Space revision is part of the cache key so a
+ * new equation or callable type declaration invalidates the conclusion.
+ */
+static PettaRelationRelevance
+petta_relation_specialization_relevance(
+    PettaSpecializerContext *context, SymbolId source) {
+    if (!context || !context->space ||
+        source == SYMBOL_ID_NONE) {
+        return PETTA_RELATION_RELEVANCE_UNKNOWN;
+    }
+    uint64_t instance = space_instance_id(context->space);
+    uint64_t revision = space_revision(context->space);
+    PettaRelationRelevance cached =
+        PETTA_RELATION_RELEVANCE_UNKNOWN;
+    if (petta_relation_relevance_cache_lookup(
+            context->space, instance, revision, source,
+            &cached))
+        return cached;
+
+    SpaceEquationCursor cursor;
+    if (!space_equation_cursor_init(
+            context->space, source, &cursor)) {
+        return PETTA_RELATION_RELEVANCE_UNKNOWN;
+    }
+    bool saw_equation = false;
+    for (;;) {
+        SpaceEquationOccurrenceId id;
+        SpaceEquationCursorStep step =
+            space_equation_cursor_next(&cursor, &id);
+        if (step == SPACE_EQUATION_CURSOR_END)
+            break;
+        if (step == SPACE_EQUATION_CURSOR_INVALIDATED) {
+            context->invalidated = true;
+            return PETTA_RELATION_RELEVANCE_UNKNOWN;
+        }
+        SpaceEquationOccurrence occurrence;
+        if (!space_equation_occurrence_resolve(
+                id, &occurrence)) {
+            context->invalidated = true;
+            return PETTA_RELATION_RELEVANCE_UNKNOWN;
+        }
+        if (!occurrence.lhs || !occurrence.rhs ||
+            occurrence.lhs->kind != ATOM_EXPR ||
+            occurrence.lhs->expr.len == 0u ||
+            !atom_is_symbol_id(
+                occurrence.lhs->expr.elems[0], source)) {
+            continue;
+        }
+        saw_equation = true;
+        PettaVarVector variables = {0};
+        bool collected = petta_collect_pattern_variables(
+            occurrence.lhs, &variables);
+        PettaRelationRelevance relevance = collected
+            ? petta_relation_body_relevance(
+                  context, occurrence.rhs, &variables)
+            : PETTA_RELATION_RELEVANCE_UNKNOWN;
+        free(variables.items);
+        if (relevance != PETTA_RELATION_RELEVANCE_IRRELEVANT) {
+            if (relevance == PETTA_RELATION_RELEVANCE_POSSIBLE &&
+                space_revision(context->space) == revision) {
+                petta_relation_relevance_cache_store(
+                    context->space, instance, revision,
+                    source, relevance);
+            }
+            return relevance;
+        }
+    }
+    if (!saw_equation ||
+        space_revision(context->space) != revision) {
+        return PETTA_RELATION_RELEVANCE_UNKNOWN;
+    }
+    petta_relation_relevance_cache_store(
+        context->space, instance, revision, source,
+        PETTA_RELATION_RELEVANCE_IRRELEVANT);
+    return PETTA_RELATION_RELEVANCE_IRRELEVANT;
+}
+
 static Atom *petta_specializable_value(
     PettaSpecializerContext *context, Arena *arena,
     Atom *atom) {
@@ -861,9 +1112,9 @@ static Atom *petta_specializable_value(
  *
  * This is a bounded accelerator, never an authority: an oversized frontier
  * or any shape we cannot classify takes the original analysis.  A deep unary
- * forest is bounded separately by a node budget; after that budget is reached
- * the relation uses the source matcher directly until a semantic
- * equation/type mutation clears the derived decision.
+ * forest is bounded separately by a per-call node budget.  Reaching it says
+ * nothing about later calls of the same relation, which receive their own
+ * bounded relevance check.
  * The outer call head is deliberately excluded because source equations pin
  * it to the selected relation head; nested expression heads remain visible
  * because a nested source variable may bind them.
@@ -879,7 +1130,7 @@ petta_call_may_supply_specializable_value(
     PettaSpecializerContext *context, Atom *call) {
     enum {
         PETTA_RELEVANCE_STACK_CAPACITY = 128,
-        PETTA_RELEVANCE_NODE_LIMIT = 16,
+        PETTA_RELEVANCE_NODE_LIMIT = 64,
     };
     Atom *stack[PETTA_RELEVANCE_STACK_CAPACITY];
     size_t length = 0u;
@@ -1767,22 +2018,26 @@ static bool petta_specializer_analyze_call(
         return true;
     }
     if (petta_specializer_relevance_filter_enabled()) {
-        if (petta_relevance_filter_is_bounded_out(
-                context->space, source)) {
+        PettaRelevanceResult relevance =
+            petta_call_may_supply_specializable_value(
+                context, call);
+        if (relevance == PETTA_RELEVANCE_NO) {
+            analysis->filtered = true;
+            return true;
+        }
+        PettaRelationRelevance relation_relevance =
+            petta_relation_specialization_relevance(
+                context, source);
+        if (relation_relevance ==
+                PETTA_RELATION_RELEVANCE_IRRELEVANT) {
+            analysis->relation_filtered = true;
+            return true;
+        }
+        if (relevance == PETTA_RELEVANCE_NODE_BUDGET) {
+            /* A node budget is uncertainty about this call, not a stable
+             * property of the relation.  Fall back here, but let later calls
+             * earn their own bounded negative proof. */
             analysis->relevance_bounded = true;
-        } else {
-            PettaRelevanceResult relevance =
-                petta_call_may_supply_specializable_value(
-                    context, call);
-            if (relevance == PETTA_RELEVANCE_NO) {
-                analysis->filtered = true;
-                return true;
-            }
-            if (relevance == PETTA_RELEVANCE_NODE_BUDGET) {
-                petta_relevance_filter_mark_bounded_out(
-                    context->space, source);
-                analysis->relevance_bounded = true;
-            }
         }
     }
     if (petta_visiting_contains(context, source))
@@ -2005,6 +2260,8 @@ PettaSpecializeResult petta_specializer_prepare_call(
         return PETTA_SPECIALIZE_INVALIDATED;
     if (analysis.productive)
         return PETTA_SPECIALIZE_REWRITTEN;
+    if (analysis.relation_filtered)
+        return PETTA_SPECIALIZE_UNCHANGED_RELATION_FILTERED;
     if (analysis.filtered)
         return PETTA_SPECIALIZE_UNCHANGED_FILTERED;
     return analysis.relevance_bounded
@@ -2071,13 +2328,11 @@ void petta_specializer_note_mutation(
     SymbolId source = petta_mutated_source_head(atom);
     if (!space || source == SYMBOL_ID_NONE)
         return;
-    /*
-     * The bounded-out cache depends on which nested symbols are callable.
-     * Any equation or type mutation can change that fact for calls of an
-     * unrelated outer head, so clear the small derived cache wholesale.
-     * Ordinary data additions never reach this point.
-     */
-    petta_relevance_filter_clear_bounded_cache();
+    /* Any equation or type mutation can make a nested symbol callable, so a
+     * relation-level negative certificate is discarded wholesale.  Ordinary
+     * data additions never reach this path, and the revision key independently
+     * prevents stale reuse. */
+    petta_relation_relevance_cache_clear();
     uint64_t instance = space_instance_id(space);
     PettaSymbolVector invalid_heads = {0};
     bool invalidate_all =
@@ -2262,5 +2517,5 @@ void petta_specializer_reset_thread(void) {
     memset(
         &g_petta_specializations, 0,
         sizeof(g_petta_specializations));
-    petta_relevance_filter_clear_bounded_cache();
+    petta_relation_relevance_cache_clear();
 }

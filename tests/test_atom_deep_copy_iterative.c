@@ -76,6 +76,31 @@ int main(void) {
     g_var_intern = NULL;
     arena_init(&source);
     arena_init(&destination);
+    arena_set_runtime_kind(&source, CETTA_ARENA_RUNTIME_KIND_EVAL);
+    arena_set_runtime_kind(&destination, CETTA_ARENA_RUNTIME_KIND_EVAL);
+
+    /* Immutable symbols are canonical only within their owning arena. */
+    Atom *source_symbol_first = atom_symbol(&source, "arena-symbol-cache");
+    Atom *source_symbol_second = atom_symbol(&source, "arena-symbol-cache");
+    Atom *destination_symbol =
+        atom_symbol(&destination, "arena-symbol-cache");
+    assert(source_symbol_first == source_symbol_second);
+    assert(source_symbol_first != destination_symbol);
+    assert(atom_eq(source_symbol_first, destination_symbol));
+
+    /* A reset invalidates cached atoms from the prior allocation epoch. */
+    Arena reset_probe;
+    arena_init(&reset_probe);
+    arena_set_runtime_kind(&reset_probe, CETTA_ARENA_RUNTIME_KIND_EVAL);
+    ArenaMark reset_origin = arena_mark(&reset_probe);
+    Atom *before_reset = atom_symbol(&reset_probe, "reset-symbol-cache");
+    arena_reset(&reset_probe, reset_origin);
+    (void)arena_alloc(&reset_probe, sizeof(Atom));
+    Atom *after_reset = atom_symbol(&reset_probe, "reset-symbol-cache");
+    assert(after_reset != before_reset);
+    assert(arena_owns_atom(&reset_probe, after_reset));
+    assert(atom_is_symbol(after_reset, "reset-symbol-cache"));
+    arena_free(&reset_probe);
 
     payload = atom_expr2(&source, atom_symbol(&source, "payload"),
                          atom_int(&source, 7));

@@ -2,13 +2,14 @@ id	author	style	file	contract	expected	leatta	notes
 01_nilbc	Geisweiller	BC dep-types (Metamath th1)	01_nilbc/nilbc_th1.metta	count	1	yes	depth-5 nested-mp proof; CeTTa=PeTTa=LeaTTa identical
 02_dtl_bc_curried	Geisweiller	BC curried (syn)	02_dtl_bc_curried/curried_bc.metta	count	4	yes	prove C @ depth 4
 03_dtl_bc_no_curry	Geisweiller	BC n-ary (synthesize)	03_dtl_bc_no_curry/no_curry_bc.metta	count	5	yes	depth-3 composition; fan-out contrast vs 02
-04_iterative	Geisweiller	iterative BC (isyn)	04_iterative/isyn_iter.metta	cetta_only	1	yes	LeaTTa MATCHES CeTTa (B-then-C re-use); PeTTa isyn diverges (documented)
+04_iterative	Geisweiller	iterative BC (isyn)	04_iterative/isyn_iter.metta	he_prime	1	yes	Prime and HE agree on B-then-C reuse; PeTTa isyn divergence remains documented
 05_deep_jarr	Geisweiller	deep theorem obc (jarr)	05_deep_theorems/obc_obfc.metta	witness	MkSized13	no(OOM)	self-contained obc/obfc; jarr/pm2.27/imim1 identical on CeTTa+PeTTa; LeaTTa out-of-memory on depth 13/15
 08_chain_bwd	Treutlein	chain+noise backward	08_roman_chain_noise/gen_kb.sh	count	1	yes	gen DEPTH BRANCH; backward linear (noise ignored); LeaTTa matches at small depth
 08b_chain_branchy	derived	chain high-multiplicity probe	08_roman_chain_noise/gen_kb_branchy.sh	count	(1+B)^D	yes	gen DEPTH BRANCH; DERIVED probe (not original benchmark); LeaTTa matches at small depth; see results_branchy.tsv caveats
 08c_chain_fwd	Treutlein	chain+noise forward	08_roman_chain_noise/gen_kb_forward.sh	count	(D+1)+D*B	yes	gen DEPTH BRANCH; forward fan-out; LeaTTa matches at small depth
 09_pln_selector	(PLN core)	PLN premise selection (MP+Revision)	09_pln_selector/pln_selector_portable.metta	witness	(Result thmA/thmB stv)	yes	same stv on CeTTa+PeTTa+LeaTTa (LeaTTa prints 6 sig-figs); PLN inference core inlined (stock HE arith)
 10_closure	Treutlein	transitive closure (edge->path)	10_roman_transitive_closure/closure_bc.metta	witness	(Path A C)	small	HE port of the PeTTaChainer forward-chainer PROBLEM (not its compiled engine)
+11_zero_frontier	Geisweiller-derived	one-step typed BC/FC frontier	11_zero_frontier/zero_bc_fc_frontier.metta	zero_witness	2	no	one-step proof frontier; paired Zero observation wrapper; no recursive-closure claim
 # Upstream sources (cite, with links):
 #   Geisweiller chainers: github.com/ngeiswei/chaining (DTL backward/forward, Metamath demo0, obc/obfc).
 #   Treutlein chainer:    github.com/rTreutlein/PeTTaChainer (chain+noise generator, transitive closure).

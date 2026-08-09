@@ -75,6 +75,7 @@ typedef struct CettaLibraryContext {
     uint32_t petta_tabled_relation_len;
     uint32_t petta_tabled_relation_cap;
     uint64_t petta_tabled_symbol_table_instance;
+    bool prime_relational_plan_enabled;
     PettaProgram *petta_program;
     struct CettaPettaTokenSpaceClauseRegistry *
         petta_token_space_clause_registry;

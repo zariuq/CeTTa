@@ -87,6 +87,7 @@ struct CettaLibPrologRuntime {
     size_t plref_cap;
     size_t plref_free_head;
     uint64_t plref_next_generation;
+    size_t plref_live;
 };
 
 static void petta_libpl_advance_revision(
@@ -266,6 +267,12 @@ static bool petta_libpl_plref_register(
         .slot = slot_index,
         .generation = generation,
     };
+    runtime->plref_live++;
+    cetta_runtime_stats_inc(
+        CETTA_RUNTIME_COUNTER_PETTA_LIBPL_PLREF_REGISTER);
+    cetta_runtime_stats_update_max(
+        CETTA_RUNTIME_COUNTER_PETTA_LIBPL_PLREF_LIVE_PER_RUNTIME_PEAK,
+        runtime->plref_live);
     return true;
 }
 
@@ -286,9 +293,13 @@ static bool petta_libpl_plref_matches(
 static bool petta_libpl_plref_fetch(
     CettaLibPrologRuntime *runtime,
     const PettaLibplPlrefHandle *handle, term_t output) {
-    return output && petta_libpl_plref_matches(runtime, handle) &&
-           PL_recorded(
-               runtime->plrefs[handle->slot].record, output) != 0;
+    if (!output || !petta_libpl_plref_matches(runtime, handle) ||
+        PL_recorded(runtime->plrefs[handle->slot].record, output) == 0) {
+        return false;
+    }
+    cetta_runtime_stats_inc(
+        CETTA_RUNTIME_COUNTER_PETTA_LIBPL_PLREF_FETCH);
+    return true;
 }
 
 static bool petta_libpl_plref_release(
@@ -303,6 +314,10 @@ static bool petta_libpl_plref_release(
     slot->live = false;
     slot->next_free = runtime->plref_free_head;
     runtime->plref_free_head = handle->slot;
+    if (runtime->plref_live > 0u)
+        runtime->plref_live--;
+    cetta_runtime_stats_inc(
+        CETTA_RUNTIME_COUNTER_PETTA_LIBPL_PLREF_RELEASE);
     return true;
 }
 
@@ -312,13 +327,17 @@ static void petta_libpl_plref_release_all(
         return;
     for (size_t index = 0u; index < runtime->plref_len; index++) {
         PettaLibplPlrefSlot *slot = &runtime->plrefs[index];
-        if (slot->live && slot->record)
+        if (slot->live && slot->record) {
             PL_erase(slot->record);
+            cetta_runtime_stats_inc(
+                CETTA_RUNTIME_COUNTER_PETTA_LIBPL_PLREF_RELEASE);
+        }
         slot->record = 0;
         slot->live = false;
     }
     runtime->plref_len = 0u;
     runtime->plref_free_head = SIZE_MAX;
+    runtime->plref_live = 0u;
 }
 
 static bool petta_libpl_debug_enabled(void) {
@@ -1523,6 +1542,8 @@ static bool petta_libpl_to_list(
             !PL_cons_list(output, item, tail)) {
             return false;
         }
+        cetta_runtime_stats_inc(
+            CETTA_RUNTIME_COUNTER_PETTA_LIBPL_STRUCTURAL_LIST_CELL_TO_PROLOG);
     }
     return true;
 }
@@ -1607,6 +1628,10 @@ static bool petta_libpl_to_term(
                          items[index - 1u], item,
                          variables, depth + 1u) &&
                      PL_cons_list(list, item, list);
+                if (ok) {
+                    cetta_runtime_stats_inc(
+                        CETTA_RUNTIME_COUNTER_PETTA_LIBPL_STRUCTURAL_LIST_CELL_TO_PROLOG);
+                }
             }
             free(items);
             return ok && PL_put_term(output, list);
@@ -1766,6 +1791,8 @@ static Atom *petta_libpl_from_list(
             free(items);
             return NULL;
         }
+        cetta_runtime_stats_inc(
+            CETTA_RUNTIME_COUNTER_PETTA_LIBPL_STRUCTURAL_LIST_CELL_FROM_PROLOG);
         if (length == capacity) {
             size_t next = capacity ? capacity * 2u : 8u;
             if (next <= capacity ||
@@ -1894,6 +1921,8 @@ static Atom *petta_libpl_from_term_mode(
         if (!head || !tail ||
             !PL_get_list(term, head, tail))
             return NULL;
+        cetta_runtime_stats_inc(
+            CETTA_RUNTIME_COUNTER_PETTA_LIBPL_STRUCTURAL_LIST_CELL_FROM_PROLOG);
         Atom *head_atom = petta_libpl_from_term_mode(
             arena, head, variables, unknown,
             visible_compounds, depth + 1u);

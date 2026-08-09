@@ -413,6 +413,21 @@ static const char *const CETTA_RUNTIME_COUNTER_NAMES[CETTA_RUNTIME_COUNTER_COUNT
     "petta-typecheck-boundary-plan-cache-miss",
     "petta-typecheck-boundary-plan-all-none",
     "petta-typecheck-boundary-position-tested",
+    "petta-libpl-plref-register",
+    "petta-libpl-plref-fetch",
+    "petta-libpl-plref-release",
+    "petta-libpl-plref-live-per-runtime-peak",
+    "petta-libpl-structural-list-cell-to-prolog",
+    "petta-libpl-structural-list-cell-from-prolog",
+    "prime-relational-plan-attempt",
+    "prime-relational-plan-admission",
+    "prime-relational-plan-static",
+    "prime-relational-plan-guarded",
+    "prime-relational-plan-value-decline",
+    "prime-relational-plan-resolved-call-decline",
+    "prime-relational-plan-suspend-decline",
+    "prime-relational-plan-commit",
+    "prime-relational-plan-replay-safe-argument",
 };
 
 static int64_t clamp_counter(uint64_t value) {

@@ -32,6 +32,7 @@ typedef uint64_t CettaExprLen;
 typedef uint64_t CettaExprIndex;
 typedef struct HashConsTable HashConsTable;
 typedef struct ArenaFinalizer ArenaFinalizer;
+typedef struct ArenaSymbolCache ArenaSymbolCache;
 typedef struct AtomDeepCopySession AtomDeepCopySession;
 
 #define VAR_ID_NONE ((VarId)0)
@@ -64,6 +65,7 @@ typedef enum {
 typedef enum {
     CETTA_INTERNAL_TAG_PETTA_PROLOG_COMPOUND = 1,
     CETTA_INTERNAL_TAG_PETTA_COUNTED_COLLECTION = 2,
+    CETTA_INTERNAL_TAG_PRIME_LEXICAL_SLOT = 3,
 } CettaInternalTag;
 
 #define ATOM_FLAG_HAS_VARS 0x01u
@@ -161,6 +163,8 @@ typedef struct {
     ArenaBlock *head;
     ArenaBlock *spare;
     HashConsTable *hashcons;
+    ArenaSymbolCache *symbol_cache;
+    size_t symbol_cache_bytes;
     size_t live_bytes;
     /* Heap storage owned by arena finalizers (for example GMP limbs).  This
      * is kept separate from block occupancy so mark/reset can account for
@@ -186,6 +190,7 @@ typedef struct {
     size_t used;
     size_t live_bytes;
     size_t external_bytes;
+    size_t symbol_cache_bytes;
     size_t reserved_bytes;
     uint32_t block_count;
     ArenaFinalizer *finalizers;
@@ -221,6 +226,10 @@ int   cetta_format_float(char *buf, size_t size, double value);
 struct HashConsTable {
     Atom **table;
     uint32_t size, used;
+    Atom **symbol_cache;
+    uint32_t symbol_cache_size;
+    Atom **small_int_cache;
+    Atom *bool_cache[2];
     uint64_t lookup_count;
     uint64_t lookup_probes;
     uint64_t maximum_lookup_probe;
