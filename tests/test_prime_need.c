@@ -459,6 +459,20 @@ int main(void) {
               atom_eq(receipt_event.before, equation) &&
               atom_eq(receipt_event.after, left_value),
           "equation use retains dynamic call and admitted rule occurrence");
+    PrimeNeedReceipt used_equation_ids;
+    CHECK(prime_need_receipt_use_equation_ids(
+              &arena, &receipt_root, source_occurrence, 18u,
+              &used_equation_ids) &&
+              prime_need_receipt_event_at(
+                  &used_equation_ids, 1u, &receipt_event) &&
+              receipt_event.kind == PRIME_NEED_RECEIPT_USE_EQUATION &&
+              receipt_event.source_occurrence_id == source_occurrence &&
+              receipt_event.rule_occurrence_id == 18u &&
+              receipt_event.before == NULL &&
+              receipt_event.after == NULL &&
+              !prime_need_receipt_equal(
+                  &used_equation_ids, &used_equation),
+          "compact equation use keeps causal identity without display payload");
     PrimeNeedReceipt resampled;
     CHECK(prime_need_receipt_resample(
               &arena, &receipt_root, term, &resampled) &&
@@ -628,11 +642,20 @@ int main(void) {
               &promoted_arena, &promoted_receipt) &&
               prime_need_receipt_equal(
                   &promoted_receipt, &independent_join) &&
+              prime_need_receipt_is_ancestor(
+                  &independent_join, &promoted_receipt) &&
+              prime_need_receipt_is_ancestor(
+                  &promoted_receipt, &independent_join) &&
               prime_need_receipt_excludes_arena(
                   &promoted_receipt, &arena) &&
               !prime_need_receipt_excludes_arena(
                   &promoted_receipt, &promoted_arena),
-          "receipt promotion preserves event identity and causal support");
+          "receipt promotion preserves arena-independent causal identity");
+    const PrimeNeedReceiptFrame *same_owner_top = promoted_receipt.top;
+    CHECK(prime_need_receipt_promote(
+              &promoted_arena, &promoted_receipt) &&
+              promoted_receipt.top == same_owner_top,
+          "same-owner promotion preserves the persistent receipt DAG");
 
     Atom *context_x = atom_symbol(&arena, "x");
     Atom *context_y = atom_symbol(&arena, "y");

@@ -24,7 +24,8 @@ def run_generator(generator: Path, policy: Path,
     )
 
 
-def probe_cell(cc: str, header: Path, directory: Path) -> int:
+def probe_header(cc: str, header: Path,
+                 directory: Path) -> tuple[int, int]:
     source = directory / f"probe-{header.stem}.c"
     binary = directory / f"probe-{header.stem}"
     source.write_text(
@@ -32,7 +33,9 @@ def probe_cell(cc: str, header: Path, directory: Path) -> int:
         "#include <stdio.h>\n"
         f'#include "{header}"\n'
         "int main(void) {\n"
-        "    printf(\"%u\\n\", (unsigned)cetta_md_policy_v1[3][3][1][1]);\n"
+        "    printf(\"%u %u\\n\",\n"
+        "           (unsigned)cetta_md_policy_v1[3][3][1][1],\n"
+        "           (unsigned)CETTA_MATCH_DECISION_POLICY_EXACT_KEY_PLAN_V1);\n"
         "    return 0;\n"
         "}\n",
         encoding="utf-8",
@@ -51,7 +54,8 @@ def probe_cell(cc: str, header: Path, directory: Path) -> int:
     )
     if executed.returncode != 0:
         raise GateFailure(f"policy probe failed:\n{executed.stderr}")
-    return int(executed.stdout.strip())
+    cell, exact_key_plan = executed.stdout.split()
+    return int(cell), int(exact_key_plan)
 
 
 def main() -> int:
@@ -80,9 +84,9 @@ def main() -> int:
                 )
             if candidate.read_bytes() != generated.read_bytes():
                 raise GateFailure("runtime-consumed policy table is stale")
-            if probe_cell(arguments.cc, candidate, directory) != 1:
+            if probe_header(arguments.cc, candidate, directory) != (1, 1):
                 raise GateFailure(
-                    "authored equal-head policy does not keep the candidate"
+                    "authored policy lost its equal-head behavior or exact-key certificate"
                 )
 
             source = policy.read_text(encoding="utf-8")
@@ -105,9 +109,9 @@ def main() -> int:
                 )
             if mutated.read_bytes() == generated.read_bytes():
                 raise GateFailure("semantic mutation left the table unchanged")
-            if probe_cell(arguments.cc, mutated, directory) != 2:
+            if probe_header(arguments.cc, mutated, directory) != (2, 0):
                 raise GateFailure(
-                    "semantic mutation did not change executable behavior"
+                    "semantic mutation did not change behavior and revoke the exact-key certificate"
                 )
 
             missing_policy = directory / "missing-policy.metta"

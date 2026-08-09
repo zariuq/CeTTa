@@ -15,6 +15,13 @@ typedef enum {
      */
     PETTA_SPECIALIZE_UNCHANGED_FILTERED,
     /*
+     * A revision-pinned analysis of the source relation proved that none of
+     * its pattern variables can reach a higher-order call site.  Concrete
+     * argument scanning is therefore unnecessary for every call in that
+     * revision.
+     */
+    PETTA_SPECIALIZE_UNCHANGED_RELATION_FILTERED,
+    /*
      * The bounded relevance precheck reached its node budget (or a prior
      * call of the same relation did), so the authoritative source matcher
      * handled the call.  The answer is still the ordinary unchanged case;

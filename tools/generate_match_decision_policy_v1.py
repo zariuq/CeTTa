@@ -70,8 +70,56 @@ def matches(pattern: sx.SExpr, value: str) -> bool:
     return isinstance(pattern, sx.Symbol) and pattern.text == value
 
 
+def exact_key_plan_outcome(observation: str, key: str,
+                           arity: str, identity: str) -> str:
+    """The finite policy shape executable by direct key lookup.
+
+    This is an optimization certificate, not a second semantic source: the
+    authored rules are first elaborated into ``table`` and receive the
+    certificate only when every cell has this exact conservative shape.
+    Changed policies keep compiling, but the runtime then uses its generic
+    table interpreter.
+    """
+    if observation == "unknown":
+        return "fallback"
+    if key == "wildcard":
+        return "keep"
+    if observation == "absent":
+        return "refute"
+    if observation == "literal":
+        return (
+            "keep"
+            if key == "literal" and identity == "equal"
+            else "refute"
+        )
+    if observation == "expression":
+        if key == "expression-arity" and arity == "equal":
+            return "keep"
+        if (
+            key == "expression-head"
+            and arity == "equal"
+            and identity == "equal"
+        ):
+            return "keep"
+        return "refute"
+    raise AssertionError(f"unknown observation {observation}")
+
+
+def supports_exact_key_plan(
+        table: list[list[list[list[str]]]]) -> bool:
+    return all(
+        table[observation_index][key_index][arity_index][identity_index]
+        == exact_key_plan_outcome(observation, key, arity, identity)
+        for observation_index, observation in enumerate(OBSERVATIONS)
+        for key_index, key in enumerate(KEYS)
+        for arity_index, arity in enumerate(RELATIONS)
+        for identity_index, identity in enumerate(RELATIONS)
+    )
+
+
 def render_header(digest: str, table: list[list[list[list[str]]]]) -> str:
     outcome_values = {"fallback": 0, "keep": 1, "refute": 2}
+    exact_key_plan = 1 if supports_exact_key_plan(table) else 0
     lines = [
         "/* Generated from MatchDecisionPolicyV1; do not edit. */",
         "#ifndef CETTA_MATCH_DECISION_POLICY_V1_GENERATED_H",
@@ -80,6 +128,7 @@ def render_header(digest: str, table: list[list[list[list[str]]]]) -> str:
         f'#define CETTA_MATCH_DECISION_POLICY_GSLT_DIGEST "{digest}"',
         f'#define CETTA_MATCH_DECISION_POLICY_GSLT_IDENTITY "MatchDecisionPolicyV1-{digest}"',
         f"#define CETTA_MATCH_DECISION_POLICY_ID UINT64_C(0x{digest[:16]})",
+        f"#define CETTA_MATCH_DECISION_POLICY_EXACT_KEY_PLAN_V1 {exact_key_plan}",
         "",
         "enum {",
         "    CETTA_MD_POLICY_FALLBACK = 0,",

@@ -1,0 +1,70 @@
+#ifndef CETTA_GSLT_LANGUAGE_RUNTIME_H
+#define CETTA_GSLT_LANGUAGE_RUNTIME_H
+
+#include "atom.h"
+#include "gslt_horn_runtime.h"
+
+#include <stdbool.h>
+#include <stddef.h>
+
+typedef struct CettaGsltLanguage CettaGsltLanguage;
+
+typedef struct {
+    CettaGsltHornInput input;
+    const char *sha256;
+} CettaGsltEmbeddedSemanticSourceV1;
+
+typedef struct {
+    const char *name;
+    const char *syntax_backend;
+    const char *term_abi;
+    const CettaGsltEmbeddedSemanticSourceV1 *semantic_sources;
+    size_t semantic_source_count;
+    const char *program_nil;
+    const char *program_cons;
+    const char *entry_relation;
+    uint32_t entry_arity;
+    uint32_t program_position;
+    uint32_t result_position;
+    const char *observation;
+    const char *manifest_sha256;
+    const char *compiler_sha256;
+} CettaGsltEmbeddedLanguageV1;
+
+typedef struct {
+    CettaGsltHornOutcome outcome;
+    Atom **answers;
+    size_t answer_count;
+    uint64_t rule_attempts;
+    uint64_t rule_matches;
+    uint32_t max_depth_observed;
+} CettaGsltLanguageResult;
+
+bool cetta_gslt_language_load_manifest(
+    const char *manifest_path, CettaGsltLanguage **out,
+    char *error, size_t error_size);
+
+bool cetta_gslt_language_load_embedded(
+    const CettaGsltEmbeddedLanguageV1 *descriptor,
+    CettaGsltLanguage **out, char *error, size_t error_size);
+
+void cetta_gslt_language_free(CettaGsltLanguage *language);
+
+const char *cetta_gslt_language_name(const CettaGsltLanguage *language);
+const char *cetta_gslt_language_syntax_backend(
+    const CettaGsltLanguage *language);
+const char *cetta_gslt_language_observation(
+    const CettaGsltLanguage *language);
+size_t cetta_gslt_language_semantic_rule_count(
+    const CettaGsltLanguage *language);
+
+bool cetta_gslt_language_execute_atoms(
+    const CettaGsltLanguage *language,
+    Atom *const *forms, size_t form_count,
+    Arena *output_arena, CettaGsltHornLimits limits,
+    CettaGsltLanguageResult *result,
+    char *error, size_t error_size);
+
+void cetta_gslt_language_result_free(CettaGsltLanguageResult *result);
+
+#endif /* CETTA_GSLT_LANGUAGE_RUNTIME_H */

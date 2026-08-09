@@ -112,6 +112,10 @@ where
     fn val(&self) -> Option<&OutV> {
         (self.mapping)(self.a.val(), self.b.val())
     }
+    fn val_at<K: AsRef<[u8]>>(&self, path: K) -> Option<&OutV> {
+        let path = path.as_ref();
+        (self.mapping)(self.a.val_at(path), self.b.val_at(path))
+    }
 }
 
 impl<AV, BV, OutV, AZipper, BZipper, Mapping> Zipper

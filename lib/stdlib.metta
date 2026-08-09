@@ -709,26 +709,35 @@
 ; Higher-order list combinators from HE stdlib. These depend on `sealed` so
 ; recursive calls do not accidentally capture the user variable.
 (= (filter-atom $list $var $filter)
-  (function (chain (decons-atom $list) $ht
-    (unify ($head $tail) $ht
-        (chain (eval (sealed ($var) $filter)) $sealedfilter
-          (chain (eval (filter-atom $tail $var $sealedfilter)) $tail-filtered
-            (chain (eval (atom-subst $head $var $sealedfilter)) $filter-expr
-              (chain $filter-expr $is-filtered
-                (eval (if $is-filtered
-                  (chain (cons-atom $head $tail-filtered) $res (return $res))
-                  (return $tail-filtered) ))))))
-      (return ()) ))))
+  (function
+    (eval
+      (if-equal $list ()
+        (return ())
+        (chain (decons-atom $list) $ht
+          (unify ($head $tail) $ht
+            (chain (eval (sealed ($var) $filter)) $sealedfilter
+              (chain (eval (filter-atom $tail $var $sealedfilter)) $tail-filtered
+                (chain (eval (atom-subst $head $var $sealedfilter)) $filter-expr
+                  (chain $filter-expr $is-filtered
+                    (eval (if $is-filtered
+                      (chain (cons-atom $head $tail-filtered) $res (return $res))
+                      (return $tail-filtered)))))))
+            (empty)))))))
 
 (= (filter-atom $list $filter)
   (filter-atom $list $__filter_atom_item (eval ($filter $__filter_atom_item))))
 
 (= (map-atom $list $var $map)
-  (function (chain (decons-atom $list) $ht
-    (unify ($head $tail) $ht
-      (chain (eval (sealed ($var) $map)) $sealedmap
-        (chain (eval (map-atom $tail $var $sealedmap)) $tail-mapped
-          (chain (eval (atom-subst $head $var $sealedmap)) $map-expr
-            (chain $map-expr $head-mapped
-              (chain (cons-atom $head-mapped $tail-mapped) $res (return $res)) ))))
-      (return ()) ))))
+  (function
+    (eval
+      (if-equal $list ()
+        (return ())
+        (chain (decons-atom $list) $ht
+          (unify ($head $tail) $ht
+            (chain (eval (sealed ($var) $map)) $sealedmap
+              (chain (eval (map-atom $tail $var $sealedmap)) $tail-mapped
+                (chain (eval (atom-subst $head $var $sealedmap)) $map-expr
+                  (chain $map-expr $head-mapped
+                    (chain (cons-atom $head-mapped $tail-mapped) $res
+                      (return $res))))))
+            (empty)))))))

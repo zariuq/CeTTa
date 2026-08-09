@@ -280,6 +280,72 @@ int main(void) {
     free(bottom);
     cetta_match_decision_free(ladder);
 
+    /* Wide literal families must compile and select through the physical key
+     * index rather than scanning one key per authored occurrence.  Wildcard
+     * and duplicate exact occurrences remain an ordered bag. */
+    const size_t wide_count = 10000u;
+    CettaMatchDecisionClause *wide_clauses =
+        calloc(wide_count, sizeof(*wide_clauses));
+    assert(wide_clauses);
+    char wide_source[96];
+    for (size_t index = 0u; index < wide_count; index++) {
+        if (index == 101u || index == 9001u) {
+            snprintf(wide_source, sizeof(wide_source),
+                     "(wide $key $value)");
+        } else if (index == 5000u || index == 7000u) {
+            snprintf(wide_source, sizeof(wide_source),
+                     "(wide target $value)");
+        } else {
+            snprintf(wide_source, sizeof(wide_source),
+                     "(wide key%zu $value)", index);
+        }
+        wide_clauses[index] = (CettaMatchDecisionClause){
+            .pattern = parse_one(&persistent, wide_source),
+            .source_ref = (uint32_t)(100000u + index),
+        };
+        assert(wide_clauses[index].pattern);
+    }
+    CettaMatchDecision *wide = cetta_match_decision_compile(
+        space_read_token(&space), semantic_identity,
+        wide_clauses, wide_count,
+        CETTA_MATCH_DECISION_DEEP, 0u, NULL, NULL);
+    Atom *wide_hit = parse_one(&persistent, "(wide target observed)");
+    Atom *wide_miss = parse_one(&persistent, "(wide missing observed)");
+    Atom *wide_absent = parse_one(&persistent, "(wide)");
+    assert(wide && wide_hit && wide_miss && wide_absent);
+    const uint32_t wide_hit_refs[] = {
+        100101u, 105000u, 107000u, 109001u,
+    };
+    const uint32_t wide_wildcard_refs[] = {100101u, 109001u};
+    expect_refs(wide, &space, wide_hit, semantic_identity,
+                UINT64_MAX, wide_hit_refs, 4u);
+    expect_refs(wide, &space, wide_miss, semantic_identity,
+                UINT64_MAX, wide_wildcard_refs, 2u);
+    expect_refs(wide, &space, wide_absent, semantic_identity,
+                UINT64_MAX, wide_wildcard_refs, 2u);
+    const uint64_t wide_repeat_count = 1000u;
+    for (uint64_t repeat = 0u; repeat < wide_repeat_count; repeat++) {
+        expect_refs(wide, &space, wide_hit, semantic_identity,
+                    UINT64_MAX, wide_hit_refs, 4u);
+    }
+    CettaMatchDecisionStats wide_stats = {0};
+    cetta_match_decision_stats(wide, &wide_stats);
+    const uint64_t wide_runs = 3u + wide_repeat_count;
+    assert(wide_stats.runs == wide_runs);
+    assert(wide_stats.clause_inputs == wide_count * wide_runs);
+    assert(wide_stats.clause_survivors == 8u + 4u * wide_repeat_count);
+#ifdef CETTA_MATCH_DECISION_DISABLE_EXACT_KEY_INDEX
+    assert(wide_stats.generic_key_policy_scans >= wide_count * wide_runs);
+    assert(wide_stats.key_index_select_probes == 0u);
+#else
+    assert(wide_stats.generic_key_policy_scans == 0u);
+    assert(wide_stats.key_index_select_probes <
+           128u + wide_repeat_count * 16u);
+#endif
+    assert(wide_stats.key_index_build_probes < wide_count * 20u);
+    cetta_match_decision_free(wide);
+    free(wide_clauses);
+
     /* Textually identical clauses under another matcher policy are another
      * semantic world, not a cache hit. */
     CettaMatchDecisionSemanticIdentity changed_semantics =

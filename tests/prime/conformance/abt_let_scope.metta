@@ -55,6 +55,24 @@
      (triple $x $y $z))
    ())
 
+; Destructuring an unconstrained caller variable introduces lexical
+; components whose later refinements must remain connected to that caller.
+!(assertEqual
+   (let (pair $x $y) $source
+     (let $x a
+       (let $y b
+         (got $source))))
+   (got (pair a b)))
+
+; A caller-owned variable reused in a later pattern is a refinement, not a
+; fresh shadow binder.  An incompatible reconstruction removes the branch.
+!(assertEqualToResult
+   (let (pair $x $y) $source
+     (let $x a
+       (let $source (pair b c)
+         impossible)))
+   ())
+
 ; The canonical constructor is ordinary Prime data.  Two slots require two
 ; explicit unary scopes, opened in left-to-right pattern order.
 !(assertEqual
@@ -89,4 +107,4 @@
         (ABTLetScopeV1 (ABTLetScopeV1 (idx 0))))
       ABTLetScopeError)))
 
-!(println! (PrimeABTLetSummary 14 14 0))
+!(println! (PrimeABTLetSummary 16 16 0))

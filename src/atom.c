@@ -595,10 +595,55 @@ static void provenance_register_arena(const Arena *arena) {
 }
 #endif
 
+enum {
+    HASHCONS_SMALL_INT_MIN = -128,
+    HASHCONS_SMALL_INT_MAX = 4095,
+    HASHCONS_SMALL_INT_COUNT =
+        HASHCONS_SMALL_INT_MAX - HASHCONS_SMALL_INT_MIN + 1,
+};
+
+struct ArenaSymbolCache {
+    Atom **atoms;
+    uint64_t *epochs;
+    uint32_t capacity;
+    uint64_t symbol_table_instance;
+};
+
+enum {
+    ARENA_SYMBOL_CACHE_INITIAL_CAPACITY = 64u,
+    ARENA_SYMBOL_CACHE_MAX_CAPACITY = 1u << 20,
+};
+
+static size_t size_add_saturating(size_t lhs, size_t rhs) {
+    return lhs > SIZE_MAX - rhs ? SIZE_MAX : lhs + rhs;
+}
+
+static size_t arena_symbol_cache_storage_bytes(
+    const ArenaSymbolCache *cache) {
+    if (!cache)
+        return 0u;
+    size_t atoms = (size_t)cache->capacity * sizeof(*cache->atoms);
+    size_t epochs = (size_t)cache->capacity * sizeof(*cache->epochs);
+    return size_add_saturating(
+        size_add_saturating(sizeof(*cache), atoms), epochs);
+}
+
+static void arena_symbol_cache_free(Arena *a) {
+    if (!a || !a->symbol_cache)
+        return;
+    free(a->symbol_cache->atoms);
+    free(a->symbol_cache->epochs);
+    free(a->symbol_cache);
+    a->symbol_cache = NULL;
+    a->symbol_cache_bytes = 0u;
+}
+
 void arena_init(Arena *a) {
     a->head = NULL;
     a->spare = NULL;
     a->hashcons = g_hashcons;
+    a->symbol_cache = NULL;
+    a->symbol_cache_bytes = 0u;
     a->live_bytes = 0;
     a->external_bytes = 0;
     a->reserved_bytes = 0;
@@ -661,6 +706,7 @@ void arena_free(Arena *a) {
     arena_run_finalizers_until(a, NULL);
     arena_free_block_list(a->head);
     arena_free_block_list(a->spare);
+    arena_symbol_cache_free(a);
     a->head = NULL;
     a->spare = NULL;
     a->live_bytes = 0;
@@ -704,13 +750,15 @@ void arena_set_runtime_kind(Arena *a, CettaArenaRuntimeKind kind) {
 size_t arena_accounted_live_bytes(const Arena *a) {
     if (!a)
         return 0u;
-    return a->live_bytes > SIZE_MAX - a->external_bytes
-        ? SIZE_MAX : a->live_bytes + a->external_bytes;
+    return size_add_saturating(
+        size_add_saturating(a->live_bytes, a->external_bytes),
+        a->symbol_cache_bytes);
 }
 
 size_t arena_mark_accounted_live_bytes(ArenaMark mark) {
-    return mark.live_bytes > SIZE_MAX - mark.external_bytes
-        ? SIZE_MAX : mark.live_bytes + mark.external_bytes;
+    return size_add_saturating(
+        size_add_saturating(mark.live_bytes, mark.external_bytes),
+        mark.symbol_cache_bytes);
 }
 
 void arena_account_external_bytes(Arena *a, size_t size) {
@@ -732,6 +780,7 @@ ArenaMark arena_mark(const Arena *a) {
     mark.used = a->head ? a->head->used : 0;
     mark.live_bytes = a->live_bytes;
     mark.external_bytes = a->external_bytes;
+    mark.symbol_cache_bytes = a->symbol_cache_bytes;
     mark.reserved_bytes = a->reserved_bytes;
     mark.block_count = a->block_count;
     mark.finalizers = a->finalizers;
@@ -844,6 +893,11 @@ bool atom_eq_fast(Atom *a, Atom *b) {
 void hashcons_init(HashConsTable *hc) {
     hc->size = HASHCONS_TABLE_SIZE;
     hc->used = 0;
+    hc->symbol_cache = NULL;
+    hc->symbol_cache_size = 0u;
+    hc->small_int_cache = NULL;
+    hc->bool_cache[0] = NULL;
+    hc->bool_cache[1] = NULL;
     hc->lookup_count = 0;
     hc->lookup_probes = 0;
     hc->maximum_lookup_probe = 0;
@@ -870,8 +924,15 @@ void hashcons_free(HashConsTable *hc) {
         free(atom);
     }
     free(hc->table);
+    free(hc->symbol_cache);
+    free(hc->small_int_cache);
     hc->table = NULL;
     hc->size = hc->used = 0;
+    hc->symbol_cache = NULL;
+    hc->symbol_cache_size = 0u;
+    hc->small_int_cache = NULL;
+    hc->bool_cache[0] = NULL;
+    hc->bool_cache[1] = NULL;
     hc->lookup_count = 0;
     hc->lookup_probes = 0;
     hc->maximum_lookup_probe = 0;
@@ -1021,6 +1082,69 @@ static uint32_t hashcons_find_slot(HashConsTable *hc, Atom *atom, bool *found) {
     return hc->size;
 }
 
+static Atom *hashcons_leaf_cache_get(HashConsTable *hc, const Atom *atom) {
+    Atom *cached = NULL;
+    if (!hc || !atom)
+        return NULL;
+    if (atom->kind == ATOM_SYMBOL) {
+        if (atom->sym_id < hc->symbol_cache_size)
+            cached = hc->symbol_cache[atom->sym_id];
+    } else if (atom->kind == ATOM_GROUNDED) {
+        if (atom->ground.gkind == GV_INT &&
+            atom->ground.ival >= HASHCONS_SMALL_INT_MIN &&
+            atom->ground.ival <= HASHCONS_SMALL_INT_MAX &&
+            hc->small_int_cache) {
+            cached = hc->small_int_cache[
+                (size_t)(atom->ground.ival - HASHCONS_SMALL_INT_MIN)];
+        } else if (atom->ground.gkind == GV_BOOL) {
+            cached = hc->bool_cache[atom->ground.bval ? 1u : 0u];
+        }
+    }
+    if (cached)
+        hc->lookup_count++;
+    return cached;
+}
+
+static void hashcons_leaf_cache_store(HashConsTable *hc, Atom *atom) {
+    if (!hc || !atom)
+        return;
+    if (atom->kind == ATOM_SYMBOL) {
+        if (atom->sym_id >= hc->symbol_cache_size) {
+            uint32_t next = hc->symbol_cache_size
+                ? hc->symbol_cache_size : 64u;
+            while (next <= atom->sym_id) {
+                if (next > UINT32_MAX / 2u)
+                    return;
+                next *= 2u;
+            }
+            Atom **grown = cetta_realloc(
+                hc->symbol_cache, (size_t)next * sizeof(*grown));
+            memset(grown + hc->symbol_cache_size, 0,
+                   (size_t)(next - hc->symbol_cache_size) * sizeof(*grown));
+            hc->symbol_cache = grown;
+            hc->symbol_cache_size = next;
+        }
+        hc->symbol_cache[atom->sym_id] = atom;
+    } else if (atom->kind == ATOM_GROUNDED) {
+        if (atom->ground.gkind == GV_INT &&
+            atom->ground.ival >= HASHCONS_SMALL_INT_MIN &&
+            atom->ground.ival <= HASHCONS_SMALL_INT_MAX) {
+            if (!hc->small_int_cache) {
+                hc->small_int_cache = cetta_malloc(
+                    HASHCONS_SMALL_INT_COUNT *
+                    sizeof(*hc->small_int_cache));
+                memset(hc->small_int_cache, 0,
+                       HASHCONS_SMALL_INT_COUNT *
+                       sizeof(*hc->small_int_cache));
+            }
+            hc->small_int_cache[
+                (size_t)(atom->ground.ival - HASHCONS_SMALL_INT_MIN)] = atom;
+        } else if (atom->ground.gkind == GV_BOOL) {
+            hc->bool_cache[atom->ground.bval ? 1u : 0u] = atom;
+        }
+    }
+}
+
 static void hashcons_grow(HashConsTable *hc) {
     Atom **old_table = hc->table;
     uint32_t old_size = hc->size;
@@ -1078,6 +1202,11 @@ static Atom *hashcons_intern(HashConsTable *hc, Atom *atom) {
     if (!atom_can_hashcons(atom))
         return atom;
     cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_HASHCONS_ATTEMPT);
+    Atom *cached = hashcons_leaf_cache_get(hc, atom);
+    if (cached) {
+        cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_HASHCONS_HIT);
+        return cached;
+    }
     bool found = false;
     uint32_t slot = hashcons_find_slot(hc, atom, &found);
     if (found) {
@@ -1089,6 +1218,7 @@ static Atom *hashcons_intern(HashConsTable *hc, Atom *atom) {
     Atom *owned = hashcons_alloc_owned(atom);
     hc->table[slot] = owned;
     hc->used++;
+    hashcons_leaf_cache_store(hc, owned);
     cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_HASHCONS_INSERT);
     if (hc->used * 10 > hc->size * 7)
         hashcons_grow(hc);
@@ -1671,6 +1801,95 @@ static bool atom_grounded_default_arena_owned(GroundedKind kind) {
     }
 }
 
+static void arena_symbol_cache_refresh_table(
+    ArenaSymbolCache *cache) {
+    if (!cache)
+        return;
+    uint64_t instance = symbol_table_instance_id(g_symbols);
+    if (cache->symbol_table_instance == instance)
+        return;
+    if (cache->capacity > 0u)
+        memset(cache->epochs, 0,
+               (size_t)cache->capacity * sizeof(*cache->epochs));
+    cache->symbol_table_instance = instance;
+}
+
+static ArenaSymbolCache *arena_symbol_cache_ensure(Arena *a) {
+    if (!a)
+        return NULL;
+    if (!a->symbol_cache) {
+        ArenaSymbolCache *cache = cetta_malloc(sizeof(*cache));
+        cache->atoms = NULL;
+        cache->epochs = NULL;
+        cache->capacity = 0u;
+        cache->symbol_table_instance =
+            symbol_table_instance_id(g_symbols);
+        a->symbol_cache = cache;
+        a->symbol_cache_bytes = arena_symbol_cache_storage_bytes(cache);
+        arena_runtime_note_usage(a);
+    }
+    arena_symbol_cache_refresh_table(a->symbol_cache);
+    return a->symbol_cache;
+}
+
+static bool arena_symbol_cache_reserve(Arena *a, SymbolId sym_id) {
+    ArenaSymbolCache *cache = a ? a->symbol_cache : NULL;
+    if (!cache || sym_id >= ARENA_SYMBOL_CACHE_MAX_CAPACITY)
+        return false;
+    if (sym_id < cache->capacity)
+        return true;
+    uint32_t next = cache->capacity
+        ? cache->capacity : ARENA_SYMBOL_CACHE_INITIAL_CAPACITY;
+    while (next <= sym_id)
+        next *= 2u;
+    uint32_t old_capacity = cache->capacity;
+    cache->atoms = cetta_realloc(
+        cache->atoms, (size_t)next * sizeof(*cache->atoms));
+    cache->epochs = cetta_realloc(
+        cache->epochs, (size_t)next * sizeof(*cache->epochs));
+    memset(cache->atoms + old_capacity, 0,
+           (size_t)(next - old_capacity) * sizeof(*cache->atoms));
+    memset(cache->epochs + old_capacity, 0,
+           (size_t)(next - old_capacity) * sizeof(*cache->epochs));
+    cache->capacity = next;
+    a->symbol_cache_bytes = arena_symbol_cache_storage_bytes(cache);
+    arena_runtime_note_usage(a);
+    return true;
+}
+
+static Atom *arena_symbol_cache_get(Arena *a, SymbolId sym_id) {
+    if (!a || !a->symbol_cache)
+        return NULL;
+    ArenaSymbolCache *cache = a->symbol_cache;
+    arena_symbol_cache_refresh_table(cache);
+    if (sym_id >= cache->capacity ||
+        cache->epochs[sym_id] != a->reset_epoch)
+        return NULL;
+    return cache->atoms[sym_id];
+}
+
+static bool arena_symbol_cache_is_active(const Arena *a) {
+    static __thread bool initialized = false;
+    static __thread bool enabled = true;
+    if (!initialized) {
+        const char *setting = getenv("CETTA_ARENA_SYMBOL_CACHE");
+        enabled = !(setting && setting[0] == '0' && setting[1] == '\0');
+        initialized = true;
+    }
+    return enabled && a && !a->hashcons &&
+        (a->runtime_kind == CETTA_ARENA_RUNTIME_KIND_EVAL ||
+         a->runtime_kind == CETTA_ARENA_RUNTIME_KIND_SURVIVOR);
+}
+
+static void arena_symbol_cache_store(
+    Arena *a, SymbolId sym_id, Atom *atom) {
+    ArenaSymbolCache *cache = arena_symbol_cache_ensure(a);
+    if (!cache || !atom || !arena_symbol_cache_reserve(a, sym_id))
+        return;
+    cache->epochs[sym_id] = a->reset_epoch;
+    cache->atoms[sym_id] = atom;
+}
+
 static Atom *atom_maybe_hashcons(Arena *a, const Atom *temp) {
     if (!a || !a->hashcons || !atom_can_hashcons(temp))
         return NULL;
@@ -1791,6 +2010,11 @@ static uint32_t atom_flags_from_children(uint32_t arena_id, Atom **elems,
 }
 
 Atom *atom_symbol_id(Arena *a, SymbolId sym_id) {
+    if (arena_symbol_cache_is_active(a)) {
+        Atom *cached = arena_symbol_cache_get(a, sym_id);
+        if (cached)
+            return cached;
+    }
     Atom temp = {0};
     temp.kind = ATOM_SYMBOL;
     temp.flags = atom_flags_for_symbol_id(sym_id);
@@ -1802,6 +2026,8 @@ Atom *atom_symbol_id(Arena *a, SymbolId sym_id) {
     if (shared) return shared;
     Atom *at = arena_alloc(a, sizeof(Atom));
     *at = temp;
+    if (arena_symbol_cache_is_active(a))
+        arena_symbol_cache_store(a, sym_id, at);
     return at;
 }
 
@@ -1828,7 +2054,8 @@ Atom *atom_var_with_spelling(Arena *a, SymbolId spelling, VarId id) {
     return at;
 }
 
-Atom *atom_var_with_name_key(Arena *a, Atom *name_key, VarId id) {
+static Atom *atom_var_with_spelling_and_name_key(
+    Arena *a, SymbolId spelling, Atom *name_key, VarId id) {
     if (!a || !name_key) return NULL;
     Atom temp = {0};
     temp.kind = ATOM_VAR;
@@ -1839,7 +2066,7 @@ Atom *atom_var_with_name_key(Arena *a, Atom *name_key, VarId id) {
                       : 0u);
     if (!atom_graph_is_closed_for_arena(a, name_key))
         temp.flags &= ~ATOM_FLAG_ARENA_CLOSED;
-    temp.sym_id = SYMBOL_ID_NONE;
+    temp.sym_id = spelling;
     temp.arena_id = a->identity;
     temp.name_key = name_key;
     temp.hash_cache = 0;
@@ -1850,6 +2077,11 @@ Atom *atom_var_with_name_key(Arena *a, Atom *name_key, VarId id) {
     return at;
 }
 
+Atom *atom_var_with_name_key(Arena *a, Atom *name_key, VarId id) {
+    return atom_var_with_spelling_and_name_key(
+        a, SYMBOL_ID_NONE, name_key, id);
+}
+
 Atom *atom_var_with_presentation(Arena *a, SymbolId spelling,
                                  Atom *name_key, VarId id) {
     if (!name_key)
@@ -1857,7 +2089,9 @@ Atom *atom_var_with_presentation(Arena *a, SymbolId spelling,
     if (CETTA_STRUCTURAL_NAME_TRANSPORT_MUTATION == 1)
         return atom_var_with_spelling(a, SYMBOL_ID_NONE, id);
     Atom *key = atom_deep_copy(a, name_key);
-    return key ? atom_var_with_name_key(a, key, id) : NULL;
+    return key
+        ? atom_var_with_spelling_and_name_key(a, spelling, key, id)
+        : NULL;
 }
 
 Atom *atom_var_like(Arena *a, Atom *source, VarId id) {
@@ -3447,6 +3681,13 @@ static void atom_print_mode(
                 out, "$V%zu",
                 petta_print_variable_ordinal(
                     variables, a->var_id));
+        } else if (a->name_key &&
+                   a->name_key->kind == ATOM_GROUNDED &&
+                   a->name_key->ground.gkind == GV_INTERNAL_TAG &&
+                   a->name_key->ground.ival ==
+                       (int64_t)CETTA_INTERNAL_TAG_PRIME_LEXICAL_SLOT) {
+            fprintf(out, "$%s", a->sym_id == SYMBOL_ID_NONE
+                ? "__prime_let" : symbol_bytes(g_symbols, a->sym_id));
         } else if (a->name_key) {
             fputs("$@", out);
             atom_print_stack_push_atom(&stack, a->name_key);

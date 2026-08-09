@@ -75,6 +75,9 @@ typedef struct {
     uint64_t clause_survivors;
     uint64_t linear_fallbacks;
     uint64_t unavailable_path_fallbacks;
+    uint64_t key_index_build_probes;
+    uint64_t key_index_select_probes;
+    uint64_t generic_key_policy_scans;
 } CettaMatchDecisionStats;
 
 /* Compile an ordered clause family.  `max_depth` counts expression edges;

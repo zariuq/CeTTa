@@ -19,9 +19,18 @@ typedef enum {
     PETTA_PLAN_DYNAMIC_CALL,
 } PettaPlanRole;
 
+typedef enum {
+    PETTA_PLAN_EXEC_GENERIC = 0,
+    PETTA_PLAN_EXEC_CONSTRUCTOR_SLOTS,
+    PETTA_PLAN_EXEC_PURE_GROUNDED_SLOTS,
+    PETTA_PLAN_EXEC_RELATION_SLOTS,
+} PettaPlanExecution;
+
 typedef struct PettaPlanNode {
     PettaPlanRole role;
+    PettaPlanExecution execution;
     bool contains_length_call;
+    bool contains_call;
     CettaExprLen child_count;
     const struct PettaPlanNode *children;
 } PettaPlanNode;
@@ -36,6 +45,20 @@ typedef struct {
 } PettaClauseCandidate;
 
 /*
+ * A revision-pinned view of one head's declaration-ordered candidates.
+ * `items` may borrow a PettaProgram cache; `owned_items` is non-NULL exactly
+ * when the lease owns the same array.  A borrowed view is valid only until
+ * the program or its Space catalog is mutated.  Executors must materialize
+ * every candidate they retain before running a clause, because the clause may
+ * itself change the Space and invalidate the cache.
+ */
+typedef struct {
+    const PettaClauseCandidate *items;
+    size_t len;
+    PettaClauseCandidate *owned_items;
+} PettaClauseSnapshotLease;
+
+/*
  * Physical work performed while reconciling the declaration-ordered PeTTa
  * catalog with the live Space occurrence stream.  These are diagnostic
  * counters only: the live Space remains semantic authority.
@@ -45,6 +68,7 @@ typedef struct {
     uint64_t cache_hits;
     uint64_t live_occurrences_scanned;
     uint64_t declaration_records_examined;
+    uint64_t pointer_identity_hits;
     uint64_t structural_equality_checks;
     uint64_t alpha_equality_checks;
     uint64_t candidates_emitted;
@@ -52,6 +76,18 @@ typedef struct {
 
 typedef struct PettaProgram PettaProgram;
 typedef struct PettaDeclarationBlock PettaDeclarationBlock;
+
+typedef enum {
+    PETTA_RELATION_SAFETY_UNSAFE = 0,
+    PETTA_RELATION_SAFETY_STATIC,
+    PETTA_RELATION_SAFETY_GUARDED_DYNAMIC,
+} PettaRelationSafety;
+
+typedef enum {
+    PETTA_RESOLVED_CALL_UNSAFE = 0,
+    PETTA_RESOLVED_CALL_MACHINE_LOCAL,
+    PETTA_RESOLVED_CALL_RELATION,
+} PettaResolvedCallClass;
 
 PettaProgram *petta_program_new(void);
 void petta_program_free(PettaProgram *program);
@@ -134,6 +170,18 @@ bool petta_program_clause_snapshot(
     PettaProgram *program, Space *space, SymbolId head,
     PettaClauseCandidate **candidates, size_t *candidate_count);
 
+/* Borrow a revision-pinned candidate view when the private catalog can own
+ * it, otherwise return an owned lease.  This is the zero-copy selection
+ * boundary used by the relational machine; ordinary callers should continue
+ * to use `petta_program_clause_snapshot` when they need an independent array.
+ */
+bool petta_program_clause_snapshot_lease_profiled(
+    PettaProgram *program, Space *space, SymbolId head,
+    PettaClauseSnapshotLease *lease,
+    PettaClauseSnapshotStats *stats);
+void petta_program_clause_snapshot_lease_release(
+    PettaClauseSnapshotLease *lease);
+
 /* Return the declaration-ordered live equation catalog for one Space.  The
  * caller owns only the pointer array; equation atoms remain Space-owned. */
 bool petta_program_equation_snapshot(
@@ -201,6 +249,19 @@ bool petta_program_clause_snapshot_profiled(
 bool petta_program_relation_table_safe(
     PettaProgram *program, Space *space,
     SymbolId head, CettaExprLen arity);
+
+/* A guarded relation has no statically known unsafe operation, but contains
+ * at least one dynamically headed application.  Such a relation may run
+ * only behind a transactional caller which checks every resolved executable
+ * call before executing it and can discard the whole attempt on refusal.
+ * Checking every call is intentional: specialization may turn a dynamic
+ * source head into a static-looking residual call without granting it new
+ * authority. */
+PettaRelationSafety petta_program_relation_safety(
+    PettaProgram *program, Space *space,
+    SymbolId head, CettaExprLen arity);
+PettaResolvedCallClass petta_program_classify_resolved_call(
+    PettaProgram *program, Space *space, Atom *call);
 
 static inline const PettaPlanNode *petta_plan_child(
     const PettaPlanNode *plan, CettaExprIndex index) {
