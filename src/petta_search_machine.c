@@ -529,6 +529,26 @@ struct PettaMachineImpl {
     PettaMachineStats stats;
 };
 
+static SymbolId petta_machine_reify_head(const PettaMachineImpl *machine) {
+    return machine && machine->host.reify_head != SYMBOL_ID_NONE
+        ? machine->host.reify_head
+        : g_builtin_syms.collapse;
+}
+
+static bool petta_machine_is_reify_head(
+    const PettaMachineImpl *machine, SymbolId head) {
+    SymbolId primary = petta_machine_reify_head(machine);
+    return head == primary ||
+        head == g_builtin_syms.reify ||
+        head == g_builtin_syms.collapse;
+}
+
+static bool petta_machine_atom_is_reify_head(
+    const PettaMachineImpl *machine, const Atom *atom) {
+    return atom && atom->kind == ATOM_SYMBOL &&
+        petta_machine_is_reify_head(machine, atom->sym_id);
+}
+
 static bool petta_machine_type_obligations_enabled(
     const PettaMachineImpl *machine) {
     return machine &&
@@ -9602,7 +9622,7 @@ static bool petta_machine_dispatch_counted_collection(
     PeTTaForm form = head == SYMBOL_ID_NONE
         ? PETTA_FORM_NONE : petta_semantics_form(head);
     CettaExprLen nargs = expression->expr.len - 1u;
-    if (head == g_builtin_syms.collapse && nargs == 1u) {
+    if (petta_machine_is_reify_head(machine, head) && nargs == 1u) {
         return petta_machine_start_count_collapse(
             machine, expression->expr.elems[1], expected,
             goal->barrier, petta_plan_child(plan, 1u),
@@ -9990,13 +10010,13 @@ static bool petta_machine_dispatch_solve(
     /*
      * The shared runtime owns OS-thread scheduling for hyperpose.  Delegate
      * only the two delimited wrappers for which that scheduler has a complete
-     * contract: collect every branch into collapse, or race to the first
+     * contract: reify every branch, or race to the first
      * answer under once.  Ordinary hyperpose remains the relational choice
      * below, so all other control and backtracking stay in this machine.
      */
     bool host_hyperpose_wrapper =
         (head_id == g_builtin_syms.once ||
-         head_id == g_builtin_syms.collapse) &&
+         petta_machine_is_reify_head(machine, head_id)) &&
         nargs == 1u &&
         expression->expr.elems[1] &&
         expression->expr.elems[1]->kind == ATOM_EXPR &&
@@ -10337,9 +10357,8 @@ static bool petta_machine_dispatch_solve(
         Atom *argument = expression->expr.elems[1];
         if (argument && argument->kind == ATOM_EXPR &&
             argument->expr.len == 2u &&
-            atom_is_symbol_id(
-                argument->expr.elems[0],
-                g_builtin_syms.collapse)) {
+            petta_machine_atom_is_reify_head(
+                machine, argument->expr.elems[0])) {
             return petta_machine_start_count_collapse(
                 machine, argument->expr.elems[1],
                 expected, goal->barrier,
@@ -10423,7 +10442,7 @@ static bool petta_machine_dispatch_solve(
             failure);
     }
 
-    if (head_id == g_builtin_syms.collapse && nargs == 1u) {
+    if (petta_machine_is_reify_head(machine, head_id) && nargs == 1u) {
         return petta_machine_start_collapse(
             machine, expression->expr.elems[1],
             expected, goal->barrier,

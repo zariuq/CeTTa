@@ -4,5 +4,5 @@
     (() (pragma! search-table-mode ground-call))
     (() (add-atom &self (= (gc:one $n) (+ $n 1))))
     (() (assertEqual (gc:one 5) 6))
-    (() (assertEqual (collapse (gc:one 5)) (6)))
+    (() (assertEqual (reify (gc:one 5)) (6)))
   ) ())

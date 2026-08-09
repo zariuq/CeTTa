@@ -7,14 +7,14 @@
 !(install-doc-schema! &@doc)
 !(recognize-doc-source! &@doc @(source package-alpha))
 !(assertEqual
-    (collapse (match &@doc (MetaKeyV1 @doc $fields) $fields))
+    (reify (match &@doc (MetaKeyV1 @doc $fields) $fields))
     ((FieldsV1
        (FieldV1 subject Name)
        (FieldV1 text String)
        (FieldV1 source Name)
        (FieldV1 span Span))))
 !(assertEqual
-    (collapse
+    (reify
       (match &@doc (RecognizedSourceV1 $source) $source))
     (@(source package-alpha)))
 
@@ -37,12 +37,12 @@
 ; are unchanged, while an explicit query of the doc capability sees the record.
 !(assertEqual (ordinary-result payload) (Ordinary payload))
 !(assertEqual
-    (collapse
+    (reify
       (match &self
         (MetaRecordV1 @doc $values) found))
     ())
 !(assertEqual
-    (collapse
+    (reify
       (match &@doc
         (MetaRecordV1 @doc
           (ValuesV1
@@ -79,7 +79,7 @@
 
 ; Failed admissions leave only the one accepted document record.
 !(assertEqual
-    (collapse
+    (reify
       (match &@doc (MetaRecordV1 @doc $values) $values))
     ((ValuesV1
        (ValueV1 subject @(theorem alpha))

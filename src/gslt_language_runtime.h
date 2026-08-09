@@ -13,7 +13,7 @@ typedef struct CettaGsltLanguage CettaGsltLanguage;
 typedef struct {
     CettaGsltHornInput input;
     const char *sha256;
-} CettaGsltEmbeddedSemanticSourceV1;
+} CettaGsltEmbeddedSourceV1;
 
 /* A staged document runner.  Each relation has a fixed generic ABI:
  *
@@ -34,9 +34,13 @@ typedef struct {
 
 typedef struct {
     const char *name;
+    /* NULL selects the authored base.  A non-NULL name selects one manifest
+     * profile whose semantic sources extend the base in declaration order. */
+    const char *profile_name;
     const char *syntax_backend;
     const char *term_abi;
-    const CettaGsltEmbeddedSemanticSourceV1 *semantic_sources;
+    CettaGsltEmbeddedSourceV1 manifest;
+    const CettaGsltEmbeddedSourceV1 *semantic_sources;
     size_t semantic_source_count;
     CettaGsltCompiledInputV1 compiled_plan;
     const char *program_nil;
@@ -59,6 +63,9 @@ typedef enum {
 typedef struct {
     CettaGsltHornOutcome outcome;
     Atom **answers;
+    /* Observation evidence is aligned with answers when the authored
+     * request pipeline supplies it.  Entry-only languages leave this NULL. */
+    Atom **evidence;
     size_t answer_count;
     uint64_t rule_attempts;
     uint64_t rule_matches;

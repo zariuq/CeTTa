@@ -1,9 +1,9 @@
 ;; Row 04 — Nil Geisweiller: iterative backward chaining (isyn around curried syn).
 ;; Source: repos/ngeiswei-chaining-run/dtl/backward/curried.metta + utils.metta (inlined).
-;; Iterative chainer: each round collapses, adds proofs back to the space, recurses
+;; Iterative chainer: each round reifies, adds proofs back to the space, recurses
 ;; — so later rounds re-use inferred (macro) proofs. Mutates &kb (side-effecting).
 ;; Contract: (isyn &kb d2 iter1 (: $prf C)) = (: ((ModusPonens bc) ((ModusPonens ab) a)) C).
-;; Runs on CeTTa (--lang he) and PeTTa.
+;; Runs on CeTTa's HE and Prime dialects.
 
 ;; ---- Nat ----
 (: Nat Type)
@@ -39,7 +39,7 @@
 (: isyn (-> $a Nat Nat $b $b))
 (= (isyn $kb $depth Z $query) $query)
 (= (isyn $kb $depth (S $k) $query)
-   (let* (($cres (collapse (syn $kb $depth $query)))
+   (let* (($cres (reify (syn $kb $depth $query)))
           ($dummy (add-atoms-nodup $kb $cres)))
      (isyn $kb $depth $k (superpose $cres))))
 

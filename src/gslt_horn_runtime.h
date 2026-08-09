@@ -9,6 +9,16 @@
 
 typedef struct CettaGsltHornProgram CettaGsltHornProgram;
 
+/* Read-only normalized view of one admitted source-rule occurrence.  Rule
+ * names are globally unique inside a composed finite-Horn package and serve
+ * as its stable occurrence identities. */
+typedef struct {
+    const char *name;
+    const Atom *head;
+    const Atom *const *body;
+    size_t body_count;
+} CettaGsltHornRuleViewV1;
+
 typedef struct {
     const uint8_t *bytes;
     size_t length;
@@ -50,6 +60,10 @@ void cetta_gslt_horn_program_free(CettaGsltHornProgram *program);
 
 size_t cetta_gslt_horn_program_rule_count(
     const CettaGsltHornProgram *program);
+
+bool cetta_gslt_horn_program_rule_view_v1(
+    const CettaGsltHornProgram *program, size_t index,
+    CettaGsltHornRuleViewV1 *view);
 
 bool cetta_gslt_horn_query(
     const CettaGsltHornProgram *program, Arena *output_arena,

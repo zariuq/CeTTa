@@ -556,7 +556,7 @@
       (eval (== $item same)))
     False)
   (fold-case nondeterministic-step fallback 0
-    (collapse
+    (reify
       (foldl-atom (1 2) 0 $accumulator $item
         (superpose
           ((+ $accumulator $item)
@@ -569,7 +569,7 @@
         (eval (+ $accumulator $item))))
     6)
   (observation-case effect-occurs-once
-    (collapse
+    (reify
       (match &self (generated-fold-seen $item) $item))
     (1 2 3))
   (prime-fold-case unused-faulting-item admitted 1
@@ -578,6 +578,6 @@
       (eval (generated-fold-count $accumulator $item)))
     9)
   (petta-fold-case failed-step fallback 0
-    (collapse
+    (reify
       (foldl-atom (a b) () $accumulator $item (empty)))
     ()))

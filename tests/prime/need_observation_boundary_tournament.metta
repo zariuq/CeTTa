@@ -53,11 +53,11 @@
 !(bind! &prime-need:observation-space (new-space))
 !(let $p (delay (superpose (A B)))
    (add-atom &prime-need:observation-space (Stored $p)))
-!(collapse
+!(reify
    (match &prime-need:observation-space
           (Stored (delay $origin))
           (direct-stored-view $origin)))
-!(collapse
+!(reify
    (match &prime-need:observation-space
           (Stored $saved)
           (unify $saved (delay $origin)

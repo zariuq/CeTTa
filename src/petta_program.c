@@ -2212,6 +2212,7 @@ static bool petta_table_safety_primitive(
         head == g_builtin_syms.superpose ||
         head == g_builtin_syms.hyperpose ||
         head == g_builtin_syms.collapse ||
+        head == g_builtin_syms.reify ||
         head == g_builtin_syms.once ||
         head == g_builtin_syms.match ||
         head == g_builtin_syms.let_star ||

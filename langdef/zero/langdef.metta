@@ -9,4 +9,6 @@
   (request-pipeline
     zero-classify zero-produce zero-observe
     zero-produced-nil zero-produced-cons)
+  (profile exp
+    (semantic-source "semantics/semantic_runner_v1.metta"))
   (observation bag))

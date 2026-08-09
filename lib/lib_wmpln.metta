@@ -7,7 +7,7 @@
 
 ;;Concat tuples
 (= (TupleConcat $Ev1 $Ev2)
-   (collapse (superpose ((superpose $Ev1) (superpose $Ev2)))))
+   (reify (superpose ((superpose $Ev1) (superpose $Ev2)))))
 
 ;;Count size of tuple
 (= (TupleCount $tuple)
@@ -60,14 +60,14 @@
 
 ;;Exclude item from tuple
 (= (Without $Tuple $a)
-   (collapse (let $x (superpose $Tuple)
+   (reify (let $x (superpose $Tuple)
                   (if (== $x $a)
                       (empty)
                       $x))))
 
 ;;Whether a is an element of the tuple
 (= (ElementOf $a $Tuple)
-   (not (== (collapse (let $x (superpose $Tuple)
+   (not (== (reify (let $x (superpose $Tuple)
                           (if (== $x $a)
                               True
                               (empty)))) ())))
@@ -387,7 +387,7 @@
 
 ;;Whether evidence was just counted once
 (= (StampDisjoint $Ev1 $Ev2)
-   (== () (collapse (let* (($x (superpose $Ev1))
+   (== () (reify (let* (($x (superpose $Ev1))
                            ($y (superpose $Ev2)))
                           (case (== $x $y) ((True True)))))))
 
@@ -441,7 +441,7 @@
        ($Tasks $Beliefs)
        (let (Sentence $x $Ev1) (BestCandidate PriorityRank () $Tasks)
             (let $derivations
-                 (collapse (superpose ((let* (((Sentence $y $Ev2) (superpose $Beliefs))
+                 (reify (superpose ((let* (((Sentence $y $Ev2) (superpose $Beliefs))
                                               ($stamp (InsertionSort (TupleConcat $Ev1 $Ev2) ())))
                                              (if (StampDisjoint $Ev1 $Ev2)
                                                  (superpose ((PLN.TryBinarySentence $x $y $stamp)
@@ -471,7 +471,7 @@
 
 ;;Pose a question of a certain term to the system on some knowledge base
 (= (PLN.Query $Tasks $Beliefs $term $maxsteps $taskqueuesize $beliefqueuesize)
-   (BestCandidate ConfidenceRank () (collapse (let ($TasksRet $BeliefsRet) (PLN.Derive $Tasks $Beliefs $maxsteps $taskqueuesize $beliefqueuesize)
+   (BestCandidate ConfidenceRank () (reify (let ($TasksRet $BeliefsRet) (PLN.Derive $Tasks $Beliefs $maxsteps $taskqueuesize $beliefqueuesize)
                                                    (case (superpose $BeliefsRet)
                                                          (((Sentence ($Term $TV) $Ev) (case (== $Term $term)
                                                                                             ((True ($TV $Ev)))))))))))

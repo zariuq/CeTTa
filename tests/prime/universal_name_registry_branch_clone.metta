@@ -16,13 +16,13 @@
 !(reset-runtime-stats!)
 !(pragma! num-threads 2)
 !(assertEqual
-  (collapse (hyperpose ((branch-touch left) (branch-touch right))))
+  (reify (hyperpose ((branch-touch left) (branch-touch right))))
   (2 3))
 
 ; Both effects remain visible in deterministic source order.
 !(assertEqual (size &@(branch-registry clone-witness)) 3)
 !(assertEqual
-  (collapse
+  (reify
     (match &@(branch-registry clone-witness)
            (branch $which) $which))
   (left right))

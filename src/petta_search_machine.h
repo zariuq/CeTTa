@@ -110,6 +110,10 @@ typedef struct {
     /* Quotation is presentation-owned.  PeTTa evaluates `(quote x)` to `x`,
      * while Prime keeps the quoted expression as inert first-class data. */
     bool quote_is_inert_data;
+    /* Language-owned canonical answer-traversal materializer.  Runtime
+     * dialects supply `reify`; a zero field retains the historical PeTTa
+     * spelling for standalone machine clients that omit this field. */
+    SymbolId reify_head;
     /*
      * Called immediately before a machine transition.  Returning false
      * suspends without consuming the pending goal, so the same machine can

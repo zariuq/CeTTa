@@ -15,6 +15,7 @@ enum {
 
 typedef struct {
     Atom *clause;
+    char *name;
     SymbolId head;
     CettaExprLen arity;
 } GsltHornRule;
@@ -396,6 +397,12 @@ static bool horn_program_add_quoted_rule(
     char *error, size_t error_size) {
     if (!horn_expr(quoted, "q-rule", 4u))
         return horn_error(error, error_size, "malformed q-rule artifact");
+    if (!horn_expr(quoted->expr.elems[1], "q-sym", 2u))
+        return horn_error(error, error_size, "malformed q-rule name");
+    const char *rule_name = horn_quote_text(
+        quoted->expr.elems[1]->expr.elems[1]);
+    if (!rule_name || rule_name[0] == '\0')
+        return horn_error(error, error_size, "malformed q-rule name");
     const Atom **quoted_body = NULL;
     uint32_t body_count = 0u;
     GsltHornQuoteVariables variables = {0};
@@ -431,19 +438,25 @@ static bool horn_program_add_quoted_rule(
     }
     Atom *head = clause_items[1];
     GsltHornRule *rule = &program->rules[program->rule_count];
+    char *name_copy = cetta_malloc(strlen(rule_name) + 1u);
+    memcpy(name_copy, rule_name, strlen(rule_name) + 1u);
     *rule = (GsltHornRule){
         .clause = atom_expr(
             &program->arena, clause_items,
             (CettaExprLen)(body_count + 2u)),
+        .name = name_copy,
         .head = head->expr.elems[0]->sym_id,
         .arity = (CettaExprLen)(head->expr.len - 1u),
     };
     GsltHornBucket *bucket = horn_bucket(
         program, rule->head, rule->arity, true);
     if (!rule->clause || !bucket ||
-        !horn_bucket_add(bucket, program->rule_count))
+        !horn_bucket_add(bucket, program->rule_count)) {
+        free(rule->name);
+        memset(rule, 0, sizeof(*rule));
         return horn_error(error, error_size,
                           "cannot index GSLT rule");
+    }
     program->rule_count++;
     return true;
 }
@@ -552,6 +565,8 @@ bool cetta_gslt_horn_program_load_inputs(
 void cetta_gslt_horn_program_free(CettaGsltHornProgram *program) {
     if (!program)
         return;
+    for (uint32_t index = 0u; index < program->rule_count; index++)
+        free(program->rules[index].name);
     for (uint32_t index = 0u; index < program->bucket_count; index++)
         free(program->buckets[index].rules);
     free(program->buckets);
@@ -563,6 +578,24 @@ void cetta_gslt_horn_program_free(CettaGsltHornProgram *program) {
 size_t cetta_gslt_horn_program_rule_count(
     const CettaGsltHornProgram *program) {
     return program ? program->rule_count : 0u;
+}
+
+bool cetta_gslt_horn_program_rule_view_v1(
+    const CettaGsltHornProgram *program, size_t index,
+    CettaGsltHornRuleViewV1 *view) {
+    if (!program || !view || index >= program->rule_count)
+        return false;
+    const GsltHornRule *rule = &program->rules[index];
+    if (!rule->clause || rule->clause->kind != ATOM_EXPR ||
+        rule->clause->expr.len < 2u || !rule->name)
+        return false;
+    *view = (CettaGsltHornRuleViewV1){
+        .name = rule->name,
+        .head = rule->clause->expr.elems[1],
+        .body = (const Atom *const *)(rule->clause->expr.elems + 2u),
+        .body_count = (size_t)(rule->clause->expr.len - 2u),
+    };
+    return true;
 }
 
 static const GsltHornBucket *horn_find_bucket(

@@ -104,6 +104,17 @@ static const CettaProfile CETTA_PROFILE_RHOCALC_COST_VALUE = {
     .rust_he_compat_semantics = false,
 };
 
+static const CettaProfile CETTA_PROFILE_ZERO_EXP_VALUE = {
+    .id = CETTA_PROFILE_ZERO_EXP,
+    .language_id = CETTA_LANGUAGE_ZERO,
+    .name = "exp",
+    .note = "Experimental authored semantic work and continuation layer.",
+    .he_compatible_surface = false,
+    .enable_cetta_extensions = false,
+    .enable_dependent_telescope = false,
+    .rust_he_compat_semantics = false,
+};
+
 static const CettaSurfacePolicy CETTA_SURFACE_POLICIES[] = {
     {"_minimal-foldl-atom", CETTA_PROFILE_MASK_ALL, "compat_alias"},
     {"foldl-atom-in-space", CETTA_PROFILE_MASK_HE_EXTENDED_PLUS, "clean_primary_extension"},
@@ -270,7 +281,8 @@ const CettaProfile *cetta_profile_petta_typecheck_v2(void) {
 bool cetta_language_has_named_profiles(CettaLanguageId language_id) {
     return language_id == CETTA_LANGUAGE_HE ||
            language_id == CETTA_LANGUAGE_PETTA ||
-           language_id == CETTA_LANGUAGE_RHOCALC;
+           language_id == CETTA_LANGUAGE_RHOCALC ||
+           language_id == CETTA_LANGUAGE_ZERO;
 }
 
 bool cetta_profile_is_valid_for_language(CettaLanguageId language_id,
@@ -320,6 +332,10 @@ const CettaProfile *cetta_profile_from_name_for_language(CettaLanguageId languag
             return &CETTA_PROFILE_PETTA_EXTENDED_VALUE;
         }
     }
+    if (language_id == CETTA_LANGUAGE_ZERO &&
+        cetta_profile_name_matches(name, &CETTA_PROFILE_ZERO_EXP_VALUE)) {
+        return &CETTA_PROFILE_ZERO_EXP_VALUE;
+    }
     return NULL;
 }
 
@@ -339,6 +355,7 @@ uint32_t cetta_profile_mask(const CettaProfile *profile) {
     case CETTA_PROFILE_RHOCALC_STRICT_CORE:
     case CETTA_PROFILE_RHOCALC_COST:
     case CETTA_PROFILE_PETTA_EXTENDED:
+    case CETTA_PROFILE_ZERO_EXP:
         return CETTA_PROFILE_MASK_ALL;
     case CETTA_PROFILE_PETTA_TYPECHECK_V2:
 #if CETTA_BUILD_WITH_PETTA_TYPECHECK_V2
@@ -401,6 +418,12 @@ void cetta_profile_print_inventory_for_language(FILE *out,
                 CETTA_PROFILE_PETTA_TYPECHECK_V2_VALUE.name,
                 CETTA_PROFILE_PETTA_TYPECHECK_V2_VALUE.note);
 #endif
+        return;
+    }
+    if (language_id == CETTA_LANGUAGE_ZERO) {
+        fprintf(out, "%s\t%s\n",
+                CETTA_PROFILE_ZERO_EXP_VALUE.name,
+                CETTA_PROFILE_ZERO_EXP_VALUE.note);
     }
 }
 

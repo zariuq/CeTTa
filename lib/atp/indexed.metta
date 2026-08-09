@@ -97,7 +97,7 @@
 
 (= (atp:indexed:premise-misses $knowledge $index $premises)
    (let ($premise $rest) (decons-atom $premises)
-     (+ (if (== (collapse
+     (+ (if (== (reify
                    (select
                      (search-policy
                        recursive-dependent-proof (order reverse))

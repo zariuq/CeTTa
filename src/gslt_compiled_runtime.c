@@ -448,6 +448,120 @@ size_t cetta_gslt_compiled_program_rule_count(
     return program ? program->rule_count : 0u;
 }
 
+static bool compiled_node_matches_source(
+    const CettaGsltCompiledProgram *program, uint32_t node_index,
+    const Atom *source, VarId *variables, bool *assigned,
+    uint32_t variable_count, uint32_t depth) {
+    if (!program || node_index >= program->node_count || !source ||
+        depth > GSLT_PLAN_DEPTH_LIMIT)
+        return false;
+    const GsltCompiledNode *node = &program->nodes[node_index];
+    switch (node->kind) {
+    case GSLT_PLAN_SYMBOL:
+        return source->kind == ATOM_SYMBOL &&
+            strcmp(node->text, atom_name_cstr((Atom *)source)) == 0;
+    case GSLT_PLAN_STRING:
+        return source->kind == ATOM_GROUNDED &&
+            source->ground.gkind == GV_STRING &&
+            strcmp(node->text, source->ground.sval) == 0;
+    case GSLT_PLAN_INTEGER:
+        return source->kind == ATOM_GROUNDED &&
+            source->ground.gkind == GV_INT &&
+            node->integer == source->ground.ival;
+    case GSLT_PLAN_VARIABLE:
+        if (source->kind != ATOM_VAR || node->variable >= variable_count)
+            return false;
+        if (assigned[node->variable])
+            return variables[node->variable] == source->var_id;
+        for (uint32_t index = 0u; index < variable_count; index++)
+            if (assigned[index] && variables[index] == source->var_id)
+                return false;
+        variables[node->variable] = source->var_id;
+        assigned[node->variable] = true;
+        return true;
+    case GSLT_PLAN_APPLICATION:
+        if (source->kind != ATOM_EXPR ||
+            source->expr.len != (CettaExprLen)(node->child_count + 1u) ||
+            source->expr.elems[0]->kind != ATOM_SYMBOL ||
+            strcmp(node->text,
+                   atom_name_cstr(source->expr.elems[0])) != 0)
+            return false;
+        for (uint32_t index = 0u; index < node->child_count; index++)
+            if (!compiled_node_matches_source(
+                    program, program->children[node->child_offset + index],
+                    source->expr.elems[index + 1u], variables, assigned,
+                    variable_count, depth + 1u))
+                return false;
+        return true;
+    default:
+        return false;
+    }
+}
+
+static const GsltCompiledRule *compiled_rule_named(
+    const CettaGsltCompiledProgram *program, const char *name) {
+    for (uint32_t index = 0u; index < program->rule_count; index++)
+        if (strcmp(program->rules[index].name, name) == 0)
+            return &program->rules[index];
+    return NULL;
+}
+
+bool cetta_gslt_compiled_program_matches_source_v1(
+    const CettaGsltCompiledProgram *program,
+    const CettaGsltHornProgram *source,
+    char *error, size_t error_size) {
+    if (!program || !source)
+        return compiled_error(error, error_size,
+                              "invalid GSLT source-plan comparison");
+    size_t source_count = cetta_gslt_horn_program_rule_count(source);
+    if (source_count != program->rule_count)
+        return compiled_error(error, error_size,
+                              "compiled GSLT rule inventory differs from admitted source");
+    for (size_t source_index = 0u;
+         source_index < source_count; source_index++) {
+        CettaGsltHornRuleViewV1 view;
+        if (!cetta_gslt_horn_program_rule_view_v1(
+                source, source_index, &view))
+            return compiled_error(error, error_size,
+                                  "cannot inspect admitted GSLT source rule");
+        const GsltCompiledRule *rule = compiled_rule_named(
+            program, view.name);
+        if (!rule || rule->body_count != view.body_count)
+            return compiled_error(
+                error, error_size,
+                "compiled GSLT rule '%s' differs from admitted source",
+                view.name);
+        VarId *variables = rule->variable_count
+            ? cetta_malloc(sizeof(*variables) * rule->variable_count)
+            : NULL;
+        bool *assigned = rule->variable_count
+            ? cetta_malloc(sizeof(*assigned) * rule->variable_count)
+            : NULL;
+        if (assigned)
+            memset(assigned, 0, sizeof(*assigned) * rule->variable_count);
+        bool matches = compiled_node_matches_source(
+            program, rule->head, view.head, variables, assigned,
+            rule->variable_count, 0u);
+        for (uint32_t body = 0u;
+             matches && body < rule->body_count; body++)
+            matches = compiled_node_matches_source(
+                program, program->bodies[rule->body_offset + body],
+                view.body[body], variables, assigned,
+                rule->variable_count, 0u);
+        for (uint32_t variable = 0u;
+             matches && variable < rule->variable_count; variable++)
+            matches = assigned[variable];
+        free(assigned);
+        free(variables);
+        if (!matches)
+            return compiled_error(
+                error, error_size,
+                "compiled GSLT rule '%s' differs from admitted source",
+                view.name);
+    }
+    return true;
+}
+
 static Atom *compiled_materialize(
     const CettaGsltCompiledProgram *program, uint32_t node_index,
     Atom **variables, uint32_t variable_count,

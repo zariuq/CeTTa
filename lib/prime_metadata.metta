@@ -82,7 +82,7 @@
    ; otherwise call-by-need would correctly leave a once-used key suspended.
    (case $key
      (((quote $payload)
-       (collapse
+       (reify
          (match $space
            (MetaKeyV1 (quote $payload) $fields)
            $fields)))
@@ -122,7 +122,7 @@
 (= (prime-meta:source-recognized $space $source)
    (case $source
      (((quote $payload)
-       (if (== (collapse
+       (if (== (reify
                  (match $space
                    (RecognizedSourceV1 (quote $payload)) recognized))
                ())

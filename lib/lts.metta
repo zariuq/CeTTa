@@ -71,7 +71,7 @@
        ($mid $end))))
 
 (= (lts:is-normal-form $step $state)
-   (case (collapse ($step $state))
+   (case (reify ($step $state))
      ((((Error $ctx $msg)) (Error $ctx $msg))
       (() True)
       ($_ False))))
@@ -83,7 +83,7 @@
       (False True))))
 
 (= (lts:box $step $phi $state)
-   (case (collapse ($step $state))
+   (case (reify ($step $state))
      ((((Error $ctx $msg)) (Error $ctx $msg))
       (() True)
       ($frontier
@@ -91,7 +91,7 @@
          (if $acc ($phi $q) False))))))
 
 (= (lts:diamond $step $phi $state)
-   (case (collapse ($step $state))
+   (case (reify ($step $state))
      ((((Error $ctx $msg)) (Error $ctx $msg))
       (() False)
       ($frontier

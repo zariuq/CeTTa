@@ -18,6 +18,7 @@ enum {
 
 struct CettaGsltLanguage {
     char *name;
+    char *profile_name;
     char *syntax_backend;
     char *program_nil;
     char *program_cons;
@@ -37,6 +38,9 @@ struct CettaGsltLanguage {
 
 typedef struct {
     const char *name;
+    const char *profile_name;
+    const char *profile_names[GSLT_LANGUAGE_MAX_SEMANTIC_SOURCES];
+    uint32_t profile_count;
     const char *syntax_backend;
     const char *term_abi;
     const char *semantic_sources[GSLT_LANGUAGE_MAX_SEMANTIC_SOURCES];
@@ -71,6 +75,12 @@ static bool language_error(char *buffer, size_t size,
 static bool language_expr(const Atom *atom, const char *head,
                           CettaExprLen length) {
     return atom && atom->kind == ATOM_EXPR && atom->expr.len == length &&
+           atom->expr.elems[0]->kind == ATOM_SYMBOL &&
+           strcmp(atom_name_cstr(atom->expr.elems[0]), head) == 0;
+}
+
+static bool language_has_head(const Atom *atom, const char *head) {
+    return atom && atom->kind == ATOM_EXPR && atom->expr.len > 0u &&
            atom->expr.elems[0]->kind == ATOM_SYMBOL &&
            strcmp(atom_name_cstr(atom->expr.elems[0]), head) == 0;
 }
@@ -143,6 +153,7 @@ done:
 }
 
 static bool language_manifest_parse(Atom *root,
+                                    const char *selected_profile,
                                     GsltLanguageManifest *manifest,
                                     char *error, size_t error_size) {
     memset(manifest, 0, sizeof(*manifest));
@@ -230,6 +241,49 @@ static bool language_manifest_parse(Atom *root,
                 return language_error(error, error_size,
                                       "manifest has an invalid observation");
             manifest->observation = text;
+        } else if (language_has_head(field, "profile")) {
+            if (field->expr.len < 3u)
+                return language_error(error, error_size,
+                                      "manifest has a malformed profile");
+            const char *profile = language_text(field->expr.elems[1]);
+            if (!profile || manifest->profile_count >=
+                                GSLT_LANGUAGE_MAX_SEMANTIC_SOURCES)
+                return language_error(error, error_size,
+                                      "manifest has an invalid profile");
+            for (uint32_t prior = 0u; prior < manifest->profile_count;
+                 prior++) {
+                if (strcmp(manifest->profile_names[prior], profile) == 0)
+                    return language_error(error, error_size,
+                                          "manifest has a duplicate profile");
+            }
+            manifest->profile_names[manifest->profile_count++] = profile;
+            bool selected = selected_profile &&
+                strcmp(selected_profile, profile) == 0;
+            if (selected)
+                manifest->profile_name = profile;
+            uint32_t profile_source_count = 0u;
+            for (CettaExprIndex profile_index = 2u;
+                 profile_index < field->expr.len; profile_index++) {
+                Atom *extension = field->expr.elems[profile_index];
+                if (!language_expr(extension, "semantic-source", 2u))
+                    return language_error(
+                        error, error_size,
+                        "manifest profiles support only semantic sources");
+                const char *source = language_text(extension->expr.elems[1]);
+                if (!source || profile_source_count == UINT32_MAX)
+                    return language_error(error, error_size,
+                                          "manifest profile has an invalid source");
+                profile_source_count++;
+                if (selected) {
+                    if (manifest->semantic_source_count >=
+                        GSLT_LANGUAGE_MAX_SEMANTIC_SOURCES)
+                        return language_error(
+                            error, error_size,
+                            "manifest has too many composed semantic sources");
+                    manifest->semantic_sources[
+                        manifest->semantic_source_count++] = source;
+                }
+            }
         } else {
             return language_error(error, error_size,
                                   "manifest contains an unknown field");
@@ -242,6 +296,9 @@ static bool language_manifest_parse(Atom *root,
         !manifest->observation)
         return language_error(error, error_size,
                               "manifest omits a required stage");
+    if (selected_profile && !manifest->profile_name)
+        return language_error(error, error_size,
+                              "manifest does not declare the selected profile");
     if (strcmp(manifest->term_abi, "finite-horn-quote-v1") != 0)
         return language_error(error, error_size,
                               "manifest requests an unsupported term ABI");
@@ -249,6 +306,105 @@ static bool language_manifest_parse(Atom *root,
         return language_error(error, error_size,
                               "manifest requests an unsupported observation");
     return true;
+}
+
+static bool language_optional_text_equal(const char *left,
+                                         const char *right) {
+    return (!left && !right) ||
+        (left && right && strcmp(left, right) == 0);
+}
+
+static bool language_manifest_matches_descriptor(
+    const GsltLanguageManifest *manifest,
+    const CettaGsltEmbeddedLanguageV1 *descriptor,
+    char *error, size_t error_size) {
+    const CettaGsltRequestPipelineV1 *pipeline =
+        descriptor->request_pipeline;
+    if (strcmp(manifest->name, descriptor->name) != 0 ||
+        !language_optional_text_equal(
+            manifest->profile_name, descriptor->profile_name) ||
+        strcmp(manifest->syntax_backend, descriptor->syntax_backend) != 0 ||
+        strcmp(manifest->term_abi, descriptor->term_abi) != 0 ||
+        strcmp(manifest->program_nil, descriptor->program_nil) != 0 ||
+        strcmp(manifest->program_cons, descriptor->program_cons) != 0 ||
+        strcmp(manifest->observation, descriptor->observation) != 0 ||
+        manifest->semantic_source_count !=
+            descriptor->semantic_source_count ||
+        manifest->has_entry != (descriptor->entry_relation != NULL) ||
+        manifest->has_request_pipeline != (pipeline != NULL) ||
+        !language_optional_text_equal(
+            manifest->entry_relation, descriptor->entry_relation) ||
+        manifest->entry_arity != descriptor->entry_arity ||
+        manifest->program_position != descriptor->program_position ||
+        manifest->result_position != descriptor->result_position ||
+        !language_optional_text_equal(
+            manifest->classify_relation,
+            pipeline ? pipeline->classify_relation : NULL) ||
+        !language_optional_text_equal(
+            manifest->produce_relation,
+            pipeline ? pipeline->produce_relation : NULL) ||
+        !language_optional_text_equal(
+            manifest->observe_relation,
+            pipeline ? pipeline->observe_relation : NULL) ||
+        !language_optional_text_equal(
+            manifest->produced_nil,
+            pipeline ? pipeline->produced_nil : NULL) ||
+        !language_optional_text_equal(
+            manifest->produced_cons,
+            pipeline ? pipeline->produced_cons : NULL))
+        return language_error(
+            error, error_size,
+            "embedded GSLT descriptor differs from its authored manifest");
+    for (uint32_t index = 0u;
+         index < manifest->semantic_source_count; index++) {
+        const char *source =
+            descriptor->semantic_sources[index].input.source;
+        if (!source || strcmp(
+                manifest->semantic_sources[index], source) != 0)
+            return language_error(
+                error, error_size,
+                "embedded GSLT source order differs from its authored manifest");
+    }
+    return true;
+}
+
+static bool language_validate_embedded_manifest(
+    const CettaGsltEmbeddedLanguageV1 *descriptor,
+    char *error, size_t error_size) {
+    const CettaGsltEmbeddedSourceV1 *embedded = &descriptor->manifest;
+    if (!embedded->input.bytes || embedded->input.length == 0u ||
+        !embedded->input.source || !embedded->sha256 ||
+        memchr(embedded->input.bytes, 0, embedded->input.length))
+        return language_error(error, error_size,
+                              "embedded GSLT manifest is incomplete");
+    char digest[65];
+    cetta_native_sha256_hex(
+        embedded->input.bytes, embedded->input.length, digest);
+    if (strcmp(digest, embedded->sha256) != 0 ||
+        strcmp(digest, descriptor->manifest_sha256) != 0)
+        return language_error(error, error_size,
+                              "embedded GSLT manifest digest changed");
+    char *text = cetta_malloc(embedded->input.length + 1u);
+    memcpy(text, embedded->input.bytes, embedded->input.length);
+    text[embedded->input.length] = '\0';
+    Arena arena;
+    arena_init(&arena);
+    Atom **forms = NULL;
+    int form_count = parse_metta_text(text, &arena, &forms);
+    GsltLanguageManifest manifest;
+    bool valid = form_count == 1 && forms &&
+        language_manifest_parse(
+            forms[0], descriptor->profile_name,
+            &manifest, error, error_size) &&
+        language_manifest_matches_descriptor(
+            &manifest, descriptor, error, error_size);
+    if (!valid && (!error || error_size == 0u || error[0] == '\0'))
+        language_error(error, error_size,
+                       "cannot parse embedded GSLT manifest");
+    free(forms);
+    arena_free(&arena);
+    free(text);
+    return valid;
 }
 
 static bool language_resolve_relative(
@@ -311,7 +467,8 @@ bool cetta_gslt_language_load_manifest(
     arena_ready = true;
     int form_count = parse_metta_text(manifest_text, &arena, &forms);
     if (form_count != 1 || !forms ||
-        !language_manifest_parse(forms[0], &manifest, error, error_size))
+        !language_manifest_parse(
+            forms[0], NULL, &manifest, error, error_size))
         goto done;
     for (uint32_t index = 0u; index < manifest.semantic_source_count;
          index++) {
@@ -326,6 +483,7 @@ bool cetta_gslt_language_load_manifest(
     language = cetta_malloc(sizeof(*language));
     memset(language, 0, sizeof(*language));
     language->name = language_strdup(manifest.name);
+    language->profile_name = language_strdup(manifest.profile_name);
     language->syntax_backend = language_strdup(manifest.syntax_backend);
     language->program_nil = language_strdup(manifest.program_nil);
     language->program_cons = language_strdup(manifest.program_cons);
@@ -385,6 +543,10 @@ bool cetta_gslt_language_load_embedded_for_realization(
          realization != CETTA_GSLT_REALIZATION_COMPILED_WORKLIST) ||
         !descriptor->name ||
         !descriptor->syntax_backend || !descriptor->term_abi ||
+        !descriptor->manifest.input.bytes ||
+        descriptor->manifest.input.length == 0u ||
+        !descriptor->manifest.input.source ||
+        !descriptor->manifest.sha256 ||
         !descriptor->semantic_sources ||
         descriptor->semantic_source_count == 0u ||
         !descriptor->compiled_plan.bytes ||
@@ -402,6 +564,9 @@ bool cetta_gslt_language_load_embedded_for_realization(
         return language_error(error, error_size,
                               "invalid embedded GSLT language descriptor");
     *out = NULL;
+    if (!language_validate_embedded_manifest(
+            descriptor, error, error_size))
+        return false;
     if (strcmp(descriptor->term_abi, "finite-horn-quote-v1") != 0 ||
         strcmp(descriptor->observation, "bag") != 0)
         return language_error(error, error_size,
@@ -410,7 +575,7 @@ bool cetta_gslt_language_load_embedded_for_realization(
         sizeof(*inputs) * descriptor->semantic_source_count);
     for (size_t index = 0u; index < descriptor->semantic_source_count;
          index++) {
-        const CettaGsltEmbeddedSemanticSourceV1 *source =
+        const CettaGsltEmbeddedSourceV1 *source =
             &descriptor->semantic_sources[index];
         char digest[65];
         if (!source->input.bytes || source->input.length == 0u ||
@@ -431,6 +596,7 @@ bool cetta_gslt_language_load_embedded_for_realization(
     CettaGsltLanguage *language = cetta_malloc(sizeof(*language));
     memset(language, 0, sizeof(*language));
     language->name = language_strdup(descriptor->name);
+    language->profile_name = language_strdup(descriptor->profile_name);
     language->syntax_backend = language_strdup(descriptor->syntax_backend);
     language->program_nil = language_strdup(descriptor->program_nil);
     language->program_cons = language_strdup(descriptor->program_cons);
@@ -451,27 +617,28 @@ bool cetta_gslt_language_load_embedded_for_realization(
     language->entry_arity = descriptor->entry_arity;
     language->program_position = descriptor->program_position;
     language->result_position = descriptor->result_position;
-    bool loaded = realization == CETTA_GSLT_REALIZATION_HORN_REFERENCE
-        ? cetta_gslt_horn_program_load_inputs(
-            inputs, descriptor->semantic_source_count,
-            &language->semantics, error, error_size)
-        : realization == CETTA_GSLT_REALIZATION_COMPILED_WORKLIST;
+    CettaGsltHornProgram *admitted_source = NULL;
+    bool loaded = cetta_gslt_horn_program_load_inputs(
+        inputs, descriptor->semantic_source_count,
+        &admitted_source, error, error_size);
     free(inputs);
     if (loaded)
         loaded = cetta_gslt_compiled_program_load_v1(
             &descriptor->compiled_plan, &language->compiled_semantics,
             error, error_size);
-    if (!loaded ||
-        (language->semantics &&
-         cetta_gslt_horn_program_rule_count(language->semantics) !=
-            cetta_gslt_compiled_program_rule_count(
-                language->compiled_semantics))) {
-        if (loaded)
-            language_error(error, error_size,
-                           "compiled and reference rule inventories differ");
+    if (loaded)
+        loaded = cetta_gslt_compiled_program_matches_source_v1(
+            language->compiled_semantics, admitted_source,
+            error, error_size);
+    if (!loaded) {
+        cetta_gslt_horn_program_free(admitted_source);
         cetta_gslt_language_free(language);
         return false;
     }
+    if (realization == CETTA_GSLT_REALIZATION_HORN_REFERENCE)
+        language->semantics = admitted_source;
+    else
+        cetta_gslt_horn_program_free(admitted_source);
     *out = language;
     return true;
 }
@@ -482,6 +649,7 @@ void cetta_gslt_language_free(CettaGsltLanguage *language) {
     cetta_gslt_compiled_program_free(language->compiled_semantics);
     cetta_gslt_horn_program_free(language->semantics);
     free(language->name);
+    free(language->profile_name);
     free(language->syntax_backend);
     free(language->program_nil);
     free(language->program_cons);
@@ -612,12 +780,14 @@ static bool language_relation_answer(
 
 static void language_clear_answers(CettaGsltLanguageResult *result) {
     free(result->answers);
+    free(result->evidence);
     result->answers = NULL;
+    result->evidence = NULL;
     result->answer_count = 0u;
 }
 
 static bool language_append_answer(
-    CettaGsltLanguageResult *result, Atom *answer,
+    CettaGsltLanguageResult *result, Atom *answer, Atom *evidence,
     CettaGsltHornLimits limits, char *error, size_t error_size) {
     if (result->answer_count >= limits.max_answers) {
         language_clear_answers(result);
@@ -630,7 +800,12 @@ static bool language_append_answer(
     result->answers = cetta_realloc(
         result->answers,
         sizeof(*result->answers) * (result->answer_count + 1u));
-    result->answers[result->answer_count++] = answer;
+    result->evidence = cetta_realloc(
+        result->evidence,
+        sizeof(*result->evidence) * (result->answer_count + 1u));
+    result->answers[result->answer_count] = answer;
+    result->evidence[result->answer_count] = evidence;
+    result->answer_count++;
     return true;
 }
 
@@ -828,7 +1003,8 @@ static bool language_execute_request_pipeline(
                     goto done;
                 }
                 if (!language_append_answer(
-                        result, value, limits, error, error_size)) {
+                        result, value, answer->expr.elems[3],
+                        limits, error, error_size)) {
                     cetta_gslt_horn_result_free(&observed);
                     goto done;
                 }
@@ -976,5 +1152,6 @@ void cetta_gslt_language_result_free(CettaGsltLanguageResult *result) {
     if (!result)
         return;
     free(result->answers);
+    free(result->evidence);
     memset(result, 0, sizeof(*result));
 }

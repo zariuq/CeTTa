@@ -19,7 +19,7 @@ def run_harness(
     harness: Path,
     cetta: Path,
     chart: Path,
-    sources: tuple[Path, Path, Path],
+    sources: tuple[Path, Path, Path, Path],
     ground_capability: Path,
 ) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
@@ -36,6 +36,8 @@ def run_harness(
             str(sources[1]),
             "--observation",
             str(sources[2]),
+            "--runner",
+            str(sources[3]),
             "--ground-capability",
             str(ground_capability),
         ],
@@ -53,6 +55,7 @@ def main() -> int:
     parser.add_argument("--quote-match", type=Path, required=True)
     parser.add_argument("--query-kernel", type=Path, required=True)
     parser.add_argument("--observation", type=Path, required=True)
+    parser.add_argument("--runner", type=Path, required=True)
     parser.add_argument("--ground-capability", type=Path, required=True)
     arguments = parser.parse_args()
 
@@ -63,6 +66,7 @@ def main() -> int:
         arguments.quote_match.resolve(),
         arguments.query_kernel.resolve(),
         arguments.observation.resolve(),
+        arguments.runner.resolve(),
     )
     ground_capability = arguments.ground_capability.resolve()
     baseline = run_harness(
@@ -78,20 +82,25 @@ def main() -> int:
     survivors: list[str] = []
     with tempfile.TemporaryDirectory(prefix="mettazero-rule-mutations-") as raw:
         temporary = Path(raw)
-        for source_index, source in enumerate(sources):
+        all_sources = (*sources, ground_capability)
+        for source_index, source in enumerate(all_sources):
             for rule_name in rule_names(source):
                 mutation = temporary / f"{source_index}-{rule_name}.metta"
                 mutation.write_text(
                     without_rule(source, rule_name), encoding="utf-8"
                 )
                 selected = list(sources)
-                selected[source_index] = mutation
+                selected_ground = ground_capability
+                if source_index < len(selected):
+                    selected[source_index] = mutation
+                else:
+                    selected_ground = mutation
                 result = run_harness(
                     harness,
                     cetta,
                     chart,
                     tuple(selected),
-                    ground_capability,
+                    selected_ground,
                 )
                 if result.returncode == 0:
                     survivors.append(rule_name)

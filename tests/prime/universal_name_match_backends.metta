@@ -6,13 +6,13 @@
 !(space-set-match-backend! &universal-native native)
 !(add-atom &universal-native (edge A B))
 !(assertEqual
-    (collapse
+    (reify
       (match &universal-native
              (edge $@(native-left) $@(native-right))
              (Pair $@(native-left) $@(native-right))))
     ((Pair A B)))
 !(assertEqual
-    (collapse
+    (reify
       (match &universal-native
              (edge $@(native-same) $@(native-same))
              matched))
@@ -35,13 +35,13 @@
 !(space-set-match-backend! &universal-candidate native-candidate-exact)
 !(add-atom &universal-candidate (edge A B))
 !(assertEqual
-    (collapse
+    (reify
       (match &universal-candidate
              (edge $@(candidate-left) $@(candidate-right))
              (Pair $@(candidate-left) $@(candidate-right))))
     ((Pair A B)))
 !(assertEqual
-    (collapse
+    (reify
       (match &universal-candidate
              (edge $@(candidate-same) $@(candidate-same))
              matched))
