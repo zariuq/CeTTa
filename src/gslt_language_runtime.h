@@ -2,6 +2,7 @@
 #define CETTA_GSLT_LANGUAGE_RUNTIME_H
 
 #include "atom.h"
+#include "gslt_compiled_runtime.h"
 #include "gslt_horn_runtime.h"
 
 #include <stdbool.h>
@@ -14,22 +15,46 @@ typedef struct {
     const char *sha256;
 } CettaGsltEmbeddedSemanticSourceV1;
 
+/* A staged document runner.  Each relation has a fixed generic ABI:
+ *
+ *   classify(source-occurrence, quoted-form, request)
+ *   produce(program, request, evidence, quoted-result)
+ *   observe(request, produced-bag, evidence, quoted-result)
+ *
+ * The producer must close before its bag is passed to the observer.  This
+ * makes empty-bag observations depend on completion evidence rather than on
+ * the transient absence of rows. */
+typedef struct {
+    const char *classify_relation;
+    const char *produce_relation;
+    const char *observe_relation;
+    const char *produced_nil;
+    const char *produced_cons;
+} CettaGsltRequestPipelineV1;
+
 typedef struct {
     const char *name;
     const char *syntax_backend;
     const char *term_abi;
     const CettaGsltEmbeddedSemanticSourceV1 *semantic_sources;
     size_t semantic_source_count;
+    CettaGsltCompiledInputV1 compiled_plan;
     const char *program_nil;
     const char *program_cons;
     const char *entry_relation;
     uint32_t entry_arity;
     uint32_t program_position;
     uint32_t result_position;
+    const CettaGsltRequestPipelineV1 *request_pipeline;
     const char *observation;
     const char *manifest_sha256;
     const char *compiler_sha256;
 } CettaGsltEmbeddedLanguageV1;
+
+typedef enum {
+    CETTA_GSLT_REALIZATION_HORN_REFERENCE = 0,
+    CETTA_GSLT_REALIZATION_COMPILED_WORKLIST = 1,
+} CettaGsltRealization;
 
 typedef struct {
     CettaGsltHornOutcome outcome;
@@ -48,6 +73,11 @@ bool cetta_gslt_language_load_embedded(
     const CettaGsltEmbeddedLanguageV1 *descriptor,
     CettaGsltLanguage **out, char *error, size_t error_size);
 
+bool cetta_gslt_language_load_embedded_for_realization(
+    const CettaGsltEmbeddedLanguageV1 *descriptor,
+    CettaGsltRealization realization,
+    CettaGsltLanguage **out, char *error, size_t error_size);
+
 void cetta_gslt_language_free(CettaGsltLanguage *language);
 
 const char *cetta_gslt_language_name(const CettaGsltLanguage *language);
@@ -64,6 +94,18 @@ bool cetta_gslt_language_execute_atoms(
     Arena *output_arena, CettaGsltHornLimits limits,
     CettaGsltLanguageResult *result,
     char *error, size_t error_size);
+
+bool cetta_gslt_language_execute_atoms_with_realization(
+    const CettaGsltLanguage *language,
+    CettaGsltRealization realization,
+    Atom *const *forms, size_t form_count,
+    Arena *output_arena, CettaGsltHornLimits limits,
+    CettaGsltLanguageResult *result,
+    char *error, size_t error_size);
+
+const char *cetta_gslt_realization_name(CettaGsltRealization realization);
+bool cetta_gslt_realization_parse(
+    const char *name, CettaGsltRealization *realization);
 
 void cetta_gslt_language_result_free(CettaGsltLanguageResult *result);
 

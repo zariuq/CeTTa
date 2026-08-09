@@ -117,20 +117,20 @@ static void test_renamed_canary(Arena *queries, Arena *answers,
     cetta_gslt_horn_program_free(program);
 }
 
-static void test_mettazero_core(Arena *queries, Arena *answers,
+static void test_subzero_core(Arena *queries, Arena *answers,
                                 const char *core_path) {
     const char *paths[] = {core_path};
     char error[ERROR_CAP] = {0};
     CettaGsltHornProgram *program = NULL;
     CHECK(cetta_gslt_horn_program_load_paths(
               paths, 1u, &program, error, sizeof(error)),
-          "authored MeTTa Zero semantic core loads");
+          "authored Subzero semantic core loads");
     if (!program) {
-        fprintf(stderr, "MeTTa Zero load diagnostic: %s\n", error);
+        fprintf(stderr, "Subzero load diagnostic: %s\n", error);
         return;
     }
     CHECK(cetta_gslt_horn_program_rule_count(program) == 35u,
-          "every authored MeTTa Zero core rule is executable");
+          "every authored Subzero core rule is executable");
 
     Atom *empty = parse_one(queries, "()");
     Atom *quoted_empty = cetta_gslt_quote_atom_v1(answers, empty);
@@ -148,21 +148,21 @@ static void test_mettazero_core(Arena *queries, Arena *answers,
           "opaque ground round-trips without guest interpretation");
 
     const char *program_text =
-        "(zero-program-cons rule-one "
+        "(subzero-program-cons rule-one "
         "  (q-app (q-sym (q-str \"=\")) "
         "    (q-cons (q-sym (q-str \"a\")) "
         "      (q-cons (q-sym (q-str \"b\")) q-nil))) "
-        "  zero-program-nil)";
+        "  subzero-program-nil)";
     char query_text[4096];
     char expected_text[4096];
     (void)snprintf(
         query_text, sizeof(query_text),
-        "(zero-step %s (q-sym (q-str \"a\")) $occurrence $result)",
+        "(subzero-step %s (q-sym (q-str \"a\")) $occurrence $result)",
         program_text);
     (void)snprintf(
         expected_text, sizeof(expected_text),
-        "(zero-step %s (q-sym (q-str \"a\")) "
-        "  (zero-at-root rule-one zero-env-nil) "
+        "(subzero-step %s (q-sym (q-str \"a\")) "
+        "  (subzero-at-root rule-one subzero-env-nil) "
         "  (q-sym (q-str \"b\")))",
         program_text);
     Atom *query = parse_one(queries, query_text);
@@ -172,12 +172,12 @@ static void test_mettazero_core(Arena *queries, Arena *answers,
     CHECK(query && expected && cetta_gslt_horn_query(
               program, answers, query, generous_limits(),
               &result, error, sizeof(error)),
-          "authored MeTTa Zero root-step query executes");
+          "authored Subzero root-step query executes");
     CHECK(result.outcome == CETTA_GSLT_HORN_COMPLETED &&
               result.answer_count == 1u,
-          "MeTTa Zero root step has one occurrence proof");
+          "Subzero root step has one occurrence proof");
     CHECK(answers_equal(&result, expected),
-          "MeTTa Zero result and occurrence are authored-rule derived");
+          "Subzero result and occurrence are authored-rule derived");
     cetta_gslt_horn_result_free(&result);
     cetta_gslt_horn_program_free(program);
 }
@@ -201,7 +201,7 @@ int main(int argc, char **argv) {
     arena_init(&answers);
 
     test_renamed_canary(&queries, &answers, argv[1]);
-    test_mettazero_core(&queries, &answers, argv[2]);
+    test_subzero_core(&queries, &answers, argv[2]);
 
     arena_free(&answers);
     arena_free(&queries);
