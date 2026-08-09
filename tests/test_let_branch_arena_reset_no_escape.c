@@ -52,6 +52,12 @@ void space_match_backend_note_add(Space *s, AtomId atom_id, Atom *atom,
     (void)atom;
     (void)atom_idx;
 }
+void space_match_backend_note_native_shadow_add(Space *s, AtomId atom_id,
+                                                CettaIndex atom_idx) {
+    (void)s;
+    (void)atom_id;
+    (void)atom_idx;
+}
 void space_match_backend_note_remove(Space *s) { (void)s; }
 CettaIndex space_match_backend_candidates64(Space *s, Atom *pattern,
                                             CettaIndex **out) {
@@ -134,6 +140,11 @@ bool space_match_backend_materialize_native_storage(Space *s,
     (void)s;
     (void)persistent_arena;
     return true;
+}
+bool space_match_backend_require_logical_order(Space *s,
+                                               Arena *persistent_arena) {
+    (void)persistent_arena;
+    return s != NULL;
 }
 bool space_match_backend_store_atom_id_direct(Space *s, AtomId atom_id,
                                               Atom *atom) {

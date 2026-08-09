@@ -196,6 +196,12 @@ Atom     *bindings_apply_epoch(Bindings *b, Arena *a, Atom *atom, uint32_t epoch
  * references for later demand. */
 Atom     *bindings_apply_epoch_since(Bindings *b, Arena *a, Atom *atom,
                                      uint32_t epoch, uint32_t first_entry);
+/* Compose activation-local substitution with the full outer environment in
+ * one traversal.  Source variables consult only the activation suffix;
+ * variables reached through their values consult the complete environment. */
+Atom     *bindings_apply_epoch_then_all(Bindings *b, Arena *a, Atom *atom,
+                                        uint32_t epoch,
+                                        uint32_t first_entry);
 Atom     *atom_freshen_epoch(Arena *a, Atom *atom, uint32_t epoch);
 Atom     *bindings_to_atom(Arena *a, const Bindings *b);
 bool      bindings_from_atom(Atom *atom, Bindings *out);
