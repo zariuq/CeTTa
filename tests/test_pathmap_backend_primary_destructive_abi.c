@@ -1,5 +1,6 @@
 #include <assert.h>
 #include <stdio.h>
+#include <stdlib.h>
 
 #include "space.h"
 #include "space_match_backend.h"
@@ -190,6 +191,90 @@ static CettaIndex exact_match_count(Space *space, Arena *scratch,
     return count;
 }
 
+static void test_candidate_shadow_append_is_incremental(
+    Arena *arena, TermUniverse *universe, AtomId atom_id) {
+    Space space;
+    CettaIndex *candidates = NULL;
+    DiscNode *built_trie;
+
+    space_init_with_universe(&space, universe);
+    space.kind = SPACE_KIND_HASH;
+    assert(space_match_backend_try_set(&space, SPACE_ENGINE_PATHMAP));
+
+    for (CettaIndex i = 0; i <= MATCH_TRIE_THRESHOLD; i++)
+        space_add_atom_id(&space, atom_id);
+    assert(space_length64(&space) == MATCH_TRIE_THRESHOLD + 1u);
+
+    Atom *pattern = term_universe_get_atom(universe, atom_id);
+    assert(pattern != NULL);
+    assert(space_match_candidates64(&space, pattern, &candidates) ==
+           MATCH_TRIE_THRESHOLD + 1u);
+    free(candidates);
+    candidates = NULL;
+    built_trie = space.match_backend.native.match_trie;
+    assert(built_trie != NULL);
+    assert(!space.match_backend.native.match_trie_dirty);
+
+    space_add_atom_id(&space, atom_id);
+    assert(space_length64(&space) == MATCH_TRIE_THRESHOLD + 2u);
+    assert(space.match_backend.native.match_trie == built_trie);
+    assert(!space.match_backend.native.match_trie_dirty);
+    assert(space_match_candidates64(&space, pattern, &candidates) ==
+           MATCH_TRIE_THRESHOLD + 2u);
+    free(candidates);
+    assert(space.match_backend.native.match_trie == built_trie);
+    assert(!space.match_backend.native.match_trie_dirty);
+
+    space_free(&space);
+    (void)arena;
+}
+
+static void test_native_fallback_index_append(Arena *arena,
+                                              TermUniverse *universe) {
+    Space space;
+    CettaIndex *candidates = NULL;
+    SubstMatchSet matches;
+    DiscNode *built_trie;
+    SubstTree *built_stree;
+    SymbolId box_sym = symbol_intern_cstr(g_symbols, "fallback-box");
+    Atom *boxed = atom_expr2(
+        arena, atom_symbol_id(arena, box_sym), atom_space(arena, universe));
+    AtomId boxed_id = term_universe_store_atom_id(universe, NULL, boxed);
+
+    assert(boxed_id != CETTA_ATOM_ID_NONE);
+    assert(tu_hdr(universe, boxed_id) == NULL);
+    space_init_with_universe(&space, universe);
+    for (CettaIndex i = 0; i <= MATCH_TRIE_THRESHOLD; i++)
+        space_add_atom_id(&space, boxed_id);
+
+    assert(space_match_candidates64(&space, boxed, &candidates) ==
+           MATCH_TRIE_THRESHOLD + 1u);
+    free(candidates);
+    built_trie = space.match_backend.native.match_trie;
+    assert(built_trie != NULL);
+
+    space_subst_query(&space, arena, boxed, &matches);
+    assert(matches.len == MATCH_TRIE_THRESHOLD + 1u);
+    smset_free(&matches);
+    built_stree = space.match_backend.native.stree;
+    assert(built_stree != NULL);
+
+    assert(space_admit_atom(&space, g_persistent_arena, boxed));
+    assert(space.match_backend.native.match_trie == built_trie);
+    assert(!space.match_backend.native.match_trie_dirty);
+    assert(space.match_backend.native.stree == built_stree);
+    assert(!space.match_backend.native.stree_dirty);
+
+    candidates = NULL;
+    assert(space_match_candidates64(&space, boxed, &candidates) ==
+           MATCH_TRIE_THRESHOLD + 2u);
+    free(candidates);
+    space_subst_query(&space, arena, boxed, &matches);
+    assert(matches.len == MATCH_TRIE_THRESHOLD + 2u);
+    smset_free(&matches);
+    space_free(&space);
+}
+
 static void test_batch_mutation_transaction(Arena *arena,
                                             TermUniverse *universe,
                                             SymbolId edge_sym,
@@ -361,6 +446,8 @@ int main(void) {
     test_batch_mutation_transaction(
         &arena, &universe, edge_sym, a_sym, b_sym, c_sym, d_sym, e_sym);
     test_indexed_opening_spelling_capture_fence(&arena, &universe);
+    test_candidate_shadow_append_is_incremental(&arena, &universe, id_ab);
+    test_native_fallback_index_append(&arena, &universe);
 
     space_add_atom_id(&space, id_ab);
     space_add_atom_id(&space, id_bc);

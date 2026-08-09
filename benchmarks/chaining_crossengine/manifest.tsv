@@ -10,6 +10,7 @@ id	author	style	file	contract	expected	leatta	notes
 09_pln_selector	(PLN core)	PLN premise selection (MP+Revision)	09_pln_selector/pln_selector_portable.metta	witness	(Result thmA/thmB stv)	yes	same stv on CeTTa+PeTTa+LeaTTa (LeaTTa prints 6 sig-figs); PLN inference core inlined (stock HE arith)
 10_closure	Treutlein	transitive closure (edge->path)	10_roman_transitive_closure/closure_bc.metta	witness	(Path A C)	small	HE port of the PeTTaChainer forward-chainer PROBLEM (not its compiled engine)
 11_zero_frontier	Geisweiller-derived	one-step typed BC/FC frontier	11_zero_frontier/zero_bc_fc_frontier.metta	zero_witness	2	no	one-step proof frontier; paired Zero observation wrapper; no recursive-closure claim
+12_hexlife_join	Vandervorst-derived	HexLife adjacent-live join	12_hexlife/hexlife_neighbor_join.metta	witness	(adjacent-live ...)	no	portable relational kernel only; full B2/S2 update is separately exercised by declarative Prime and MM2 programs
 # Upstream sources (cite, with links):
 #   Geisweiller chainers: github.com/ngeiswei/chaining (DTL backward/forward, Metamath demo0, obc/obfc).
 #   Treutlein chainer:    github.com/rTreutlein/PeTTaChainer (chain+noise generator, transitive closure).

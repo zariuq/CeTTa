@@ -1566,6 +1566,15 @@ static bool space_atom_id_form_is(const Space *s, AtomId atom_id,
     return space_atom_form_is(atom, head, arity);
 }
 
+bool space_atom_id_requires_authored_order(const Space *s,
+                                           AtomId atom_id,
+                                           Atom *atom) {
+    return space_atom_id_form_is(
+               s, atom_id, atom, g_builtin_syms.equals, 3u) ||
+           space_atom_id_form_is(
+               s, atom_id, atom, g_builtin_syms.colon, 3u);
+}
+
 /* The counted PathMap remains the occurrence authority. Its full tuple view
  * is disposable, while these two dispatch descriptors are stable across a
  * mutation that cannot add or remove their row class. */
@@ -1582,12 +1591,47 @@ static void space_mark_backend_primary_atom_mutation(
     s->native.id_present_dirty = true;
 }
 
-static bool space_store_via_backend_primary(Space *s, AtomId atom_id, Atom *atom) {
+/* A backend-primary PathMap can retain the exact source AtomId occurrence
+ * sequence when the bridge mutation was expressed in those same ids.  This
+ * is only an observation shadow: the counted bridge remains authoritative.
+ * Opaque bridge/text mutations invalidate the shadow in the backend instead. */
+static void space_append_backend_primary_shadow_id(Space *s,
+                                                   AtomId atom_id) {
+    ImportedBridgeState *st;
+    CettaIndex atom_idx;
+    if (!s || atom_id == CETTA_ATOM_ID_NONE ||
+        s->match_backend.kind != SPACE_ENGINE_PATHMAP)
+        return;
+    st = &s->match_backend.pathmap.bridge;
+    if (!st->native_shadow_synced)
+        return;
+    atom_idx = s->native.len;
+    space_reserve_linear(s, s->native.len + 1u);
+    (void)space_atom_id_storage_store_at(
+        s->native.atom_ids, s->native.atom_id_width_bits,
+        atom_idx, atom_id);
+    s->native.len++;
+    space_match_backend_note_native_shadow_add(s, atom_id, atom_idx);
+    space_note_atom_id_storage_peak(s);
+}
+
+static bool space_store_via_backend_primary(Space *s, AtomId atom_id,
+                                            Atom *atom,
+                                            bool *out_transition_failed) {
     bool keep_pathmap_exact_metadata;
     bool had_non_exact_atom;
     bool atom_exact_indexable;
+    if (out_transition_failed)
+        *out_transition_failed = false;
     if (!s || atom_id == CETTA_ATOM_ID_NONE)
         return false;
+    if (s->match_backend.kind == SPACE_ENGINE_PATHMAP &&
+        space_atom_id_requires_authored_order(s, atom_id, atom)) {
+        if (!space_match_backend_require_logical_order(s, NULL) &&
+            out_transition_failed)
+            *out_transition_failed = true;
+        return false;
+    }
     keep_pathmap_exact_metadata =
         s->match_backend.kind == SPACE_ENGINE_PATHMAP &&
         !s->native.has_non_exact_atoms_dirty;
@@ -1596,6 +1640,7 @@ static bool space_store_via_backend_primary(Space *s, AtomId atom_id, Atom *atom
     atom_exact_indexable = atom_id_is_exact_indexable(s, atom_id);
     if (!space_match_backend_store_atom_id_direct(s, atom_id, atom))
         return false;
+    space_append_backend_primary_shadow_id(s, atom_id);
     space_mark_backend_primary_atom_mutation(s, atom_id, atom);
     if (keep_pathmap_exact_metadata) {
         s->native.has_non_exact_atoms =
@@ -1606,12 +1651,28 @@ static bool space_store_via_backend_primary(Space *s, AtomId atom_id, Atom *atom
     return true;
 }
 
-static bool space_store_atom_via_backend_primary(Space *s, Atom *atom) {
+static bool space_store_atom_via_backend_primary(
+    Space *s, Atom *atom, bool *out_transition_failed) {
     bool keep_pathmap_exact_metadata;
     bool had_non_exact_atom;
     bool atom_exact_indexable;
+    if (out_transition_failed)
+        *out_transition_failed = false;
     if (!s || !atom)
         return false;
+    /* Stable atoms can be interned by the caller and then stored through the
+       AtomId route, preserving a zero-copy logical shadow for later observers. */
+    if (s->match_backend.kind == SPACE_ENGINE_PATHMAP &&
+        space_tracks_atom_ids(s) && term_universe_atom_is_stable(atom))
+        return false;
+    if (s->match_backend.kind == SPACE_ENGINE_PATHMAP &&
+        (space_atom_form_is(atom, g_builtin_syms.equals, 3u) ||
+         space_atom_form_is(atom, g_builtin_syms.colon, 3u))) {
+        if (!space_match_backend_require_logical_order(s, NULL) &&
+            out_transition_failed)
+            *out_transition_failed = true;
+        return false;
+    }
     keep_pathmap_exact_metadata =
         s->match_backend.kind == SPACE_ENGINE_PATHMAP &&
         !s->native.has_non_exact_atoms_dirty;
@@ -2662,7 +2723,8 @@ void space_note_external_backend_mutation(Space *s) {
 
 static bool space_defer_incremental_secondary_indices(const Space *s) {
     return s &&
-           (s->match_backend.kind == SPACE_ENGINE_PATHMAP ||
+           ((s->match_backend.kind == SPACE_ENGINE_PATHMAP &&
+             !s->match_backend.pathmap.bridge.preserve_logical_order) ||
             s->native.secondary_index_deferral_depth > 0);
 }
 
@@ -2756,9 +2818,13 @@ static void space_add_stored_id(Space *s, AtomId atom_id, Atom *backend_atom) {
 }
 
 void space_add_atom_id(Space *s, AtomId atom_id) {
+    bool transition_failed = false;
     if (!s || !space_tracks_atom_ids(s) || atom_id == CETTA_ATOM_ID_NONE)
         return;
-    if (space_store_via_backend_primary(s, atom_id, NULL))
+    if (space_store_via_backend_primary(
+            s, atom_id, NULL, &transition_failed))
+        return;
+    if (transition_failed)
         return;
     space_add_stored_id(s, atom_id, NULL);
 }
@@ -2775,6 +2841,26 @@ bool space_add_atom_ids_batch(Space *s, const AtomId *atom_ids,
         return false;
     if (atom_count == 0)
         return true;
+
+    if (!space_has_overlay_base(s) &&
+        s->match_backend.kind == SPACE_ENGINE_PATHMAP) {
+        bool requires_authored_order = false;
+        for (CettaCount i = 0; i < atom_count; i++) {
+            if (space_atom_id_requires_authored_order(
+                    s, atom_ids[i], NULL)) {
+                requires_authored_order = true;
+                break;
+            }
+        }
+        if (requires_authored_order) {
+            if (!space_match_backend_require_logical_order(s, NULL))
+                return false;
+            for (CettaCount i = 0; i < atom_count; i++)
+                space_add_stored_id(s, atom_ids[i], NULL);
+            return space_term_universe_last_error_code(s) ==
+                   TERM_UNIVERSE_ERROR_NONE;
+        }
+    }
 
     keep_pathmap_exact_metadata =
         !space_has_overlay_base(s) &&
@@ -2800,9 +2886,11 @@ bool space_add_atom_ids_batch(Space *s, const AtomId *atom_ids,
     if (batch_result == SPACE_BACKEND_BATCH_APPLIED) {
         if (added != (uint64_t)atom_count)
             return false;
-        for (CettaCount i = 0; i < atom_count; i++)
+        for (CettaCount i = 0; i < atom_count; i++) {
+            space_append_backend_primary_shadow_id(s, atom_ids[i]);
             space_mark_backend_primary_atom_mutation(
                 s, atom_ids[i], NULL);
+        }
         if (keep_pathmap_exact_metadata) {
             s->native.has_non_exact_atoms =
                 had_non_exact_atom || batch_has_non_exact_atom;
@@ -2821,13 +2909,20 @@ bool space_add_atom_ids_batch(Space *s, const AtomId *atom_ids,
 
 void space_add(Space *s, Atom *atom) {
     AtomId atom_id = CETTA_ATOM_ID_NONE;
-    if (space_store_atom_via_backend_primary(s, atom))
+    bool transition_failed = false;
+    if (space_store_atom_via_backend_primary(
+            s, atom, &transition_failed))
+        return;
+    if (transition_failed)
         return;
     if (space_tracks_atom_ids(s) && atom) {
         atom_id = term_universe_store_atom_id(s->native.universe, NULL, atom);
         if (atom_id == CETTA_ATOM_ID_NONE)
             return;
-        if (space_store_via_backend_primary(s, atom_id, atom))
+        if (space_store_via_backend_primary(
+                s, atom_id, atom, &transition_failed))
+            return;
+        if (transition_failed)
             return;
     }
     space_add_stored_id(s, atom_id, atom);
@@ -2846,11 +2941,15 @@ TermUniverseError space_term_universe_last_error_code(const Space *s) {
 
 static bool space_admit_atom_impl(Space *s, Arena *fallback,
                                   const Arena *source_arena, Atom *atom) {
+    bool transition_failed = false;
     if (!s || !atom)
         return false;
 
-    if (space_store_atom_via_backend_primary(s, atom))
+    if (space_store_atom_via_backend_primary(
+            s, atom, &transition_failed))
         return true;
+    if (transition_failed)
+        return false;
 
     if (space_tracks_atom_ids(s)) {
         AtomId atom_id = source_arena
@@ -2859,8 +2958,11 @@ static bool space_admit_atom_impl(Space *s, Arena *fallback,
             : term_universe_store_atom_id(
                   s->native.universe, fallback, atom);
         if (atom_id != CETTA_ATOM_ID_NONE) {
-            if (space_store_via_backend_primary(s, atom_id, atom))
+            if (space_store_via_backend_primary(
+                    s, atom_id, atom, &transition_failed))
                 return true;
+            if (transition_failed)
+                return false;
             space_add_stored_id(s, atom_id, atom);
             return true;
         }
@@ -3615,11 +3717,13 @@ bool space_remove(Space *s, Atom *atom) {
     if (!atom)
         return false;
     /* A live PathMap bridge is the primary store and must not be bypassed by
-       mutating its native projection.  When the bridge has explicitly fallen
-       back as unavailable, however, the native shadow is the authoritative
-       store; preserve native exact-then-unique-alpha removal semantics there. */
+       mutating its native projection.  Once authored order pins the logical
+       sequence, or when the bridge has explicitly fallen back as unavailable,
+       the native shadow is authoritative; preserve native
+       exact-then-unique-alpha removal semantics there. */
     if (s->match_backend.kind == SPACE_ENGINE_PATHMAP &&
-        !s->match_backend.pathmap.bridge.bridge_unavailable)
+        !s->match_backend.pathmap.bridge.bridge_unavailable &&
+        !s->match_backend.pathmap.bridge.preserve_logical_order)
         return false;
     if (!space_match_backend_materialize_native_storage(s, NULL))
         return false;
@@ -4087,15 +4191,20 @@ uint32_t space_exact_match_indices(Space *s, Atom *atom, uint32_t **out) {
 }
 
 bool space_contains_exact(Space *s, Atom *atom) {
-    /* Doctrine-1 fast path: for a native space an exact-indexable
+    bool native_membership_authoritative =
+        s && (!space_engine_uses_pathmap(s->match_backend.kind) ||
+              (s->match_backend.kind == SPACE_ENGINE_PATHMAP &&
+               s->match_backend.pathmap.bridge.preserve_logical_order));
+    /* Doctrine-1 fast path: when native storage is authoritative, an exact-indexable
        atom's membership is an interned-id predicate over the dense presence
        bitset -- O(1), unclusterable -- so add-atom-nodup dedup no longer walks a
        fixed-bucket structural index for the FC-hot ground-theorem case.  Native
-       overlays use the same logical-view projection.  Non-native backends and
+       overlays and order-pinned PathMap spaces use the same logical-view
+       projection.  Backend-primary spaces and
        var/non-indexable atoms fall through to
        the exact-match path (id_present mirrors exact_idx, so this is equivalent
        to n>0, only cheaper). */
-    if (s && atom && !space_engine_uses_pathmap(s->match_backend.kind) &&
+    if (native_membership_authoritative && atom &&
         atom_is_exact_indexable(atom)) {
         /* Membership only needs the presence bitset, not the exact-index buckets,
            so bring id_present up to date lazily (append-only suffix sync; full
@@ -4116,15 +4225,20 @@ bool space_contains_exact(Space *s, Atom *atom) {
 }
 
 bool space_contains_canonical(Space *s, Atom *atom, bool *out_applicable) {
-    /* Alpha-aware membership for a native space -- O(1) amortized via the
+    bool native_membership_authoritative =
+        s && (!space_engine_uses_pathmap(s->match_backend.kind) ||
+              (s->match_backend.kind == SPACE_ENGINE_PATHMAP &&
+               s->match_backend.pathmap.bridge.preserve_logical_order));
+    /* Alpha-aware membership when native storage is authoritative -- O(1) amortized via the
        canonical presence bitset (keyed on first-occurrence-ordinal canonical
-       ids). Native overlays project their logical view through the same index.
+       ids). Native overlays and order-pinned PathMap spaces project their
+       logical view through the same index.
        add-atom-nodup uses this so non-ground theorem dedup no longer scans
-       every atom. *out_applicable is false for non-native backends, where the
-       caller keeps the exact + alpha-scan path. */
+       every atom. *out_applicable is false for backend-primary spaces, where
+       the caller keeps the exact + alpha-scan path. */
     if (out_applicable)
         *out_applicable = false;
-    if (!s || !atom || space_engine_uses_pathmap(s->match_backend.kind) ||
+    if (!native_membership_authoritative || !atom ||
         !term_universe_atom_is_stable(atom))
         return false;
     /* Alpha-aware membership needs only the presence bitset.  Sync it lazily here
@@ -4894,9 +5008,11 @@ static void query_bucket_legacy(Space *s, EqBucket *bucket, Atom *query,
         for (CettaIndex ci = 0; ci < ncand; ci++) {
             CettaIndex i = candidates[ci];
             if (i >= bucket->len) continue;
-            Atom *equation = query_bucket_equation_at(s, bucket, i);
-            if (!query_result_sink_candidate_allowed(sink, equation))
-                continue;
+            if (sink->candidate_filter) {
+                Atom *equation = query_bucket_equation_at(s, bucket, i);
+                if (!query_result_sink_candidate_allowed(sink, equation))
+                    continue;
+            }
             AtomId equation_id = space_indexed_occurrence_atom_id(
                 s, bucket->atom_indices, bucket->atom_ids, i);
             AtomId lhs_id = CETTA_ATOM_ID_NONE;
@@ -4943,9 +5059,11 @@ static void query_bucket_legacy(Space *s, EqBucket *bucket, Atom *query,
 
     uint32_t considered = 0;
     for (CettaIndex i = 0; i < bucket->len; i++) {
-        Atom *equation = query_bucket_equation_at(s, bucket, i);
-        if (!query_result_sink_candidate_allowed(sink, equation))
-            continue;
+        if (sink->candidate_filter) {
+            Atom *equation = query_bucket_equation_at(s, bucket, i);
+            if (!query_result_sink_candidate_allowed(sink, equation))
+                continue;
+        }
         AtomId equation_id = space_indexed_occurrence_atom_id(
             s, bucket->atom_indices, bucket->atom_ids, i);
         AtomId lhs_id = CETTA_ATOM_ID_NONE;
@@ -5102,10 +5220,12 @@ static void query_bucket(Space *s, EqBucket *bucket, Atom *query,
         const SubstMatch *sm = &matches.items[mi];
         if (sm->atom_idx >= bucket->len)
             continue;
-        Atom *equation = query_bucket_equation_at(
-            s, bucket, sm->atom_idx);
-        if (!query_result_sink_candidate_allowed(sink, equation))
-            continue;
+        if (sink->candidate_filter) {
+            Atom *equation = query_bucket_equation_at(
+                s, bucket, sm->atom_idx);
+            if (!query_result_sink_candidate_allowed(sink, equation))
+                continue;
+        }
         AtomId equation_id = space_indexed_occurrence_atom_id(
             s, bucket->atom_indices, bucket->atom_ids, sm->atom_idx);
         AtomId lhs_id = CETTA_ATOM_ID_NONE;

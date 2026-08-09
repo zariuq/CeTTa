@@ -7757,6 +7757,14 @@ static void equation_match_decision_cache_slot_clear(
     memset(slot, 0, sizeof(*slot));
 }
 
+static void equation_match_decision_lease_release(
+    CettaMatchDecision **decision) {
+    if (!decision)
+        return;
+    cetta_match_decision_free(*decision);
+    *decision = NULL;
+}
+
 void eval_match_decision_cache_free_for_current_thread(void) {
     for (size_t index = 0u;
          index < EQUATION_MATCH_DECISION_CACHE_SLOTS; index++) {
@@ -13731,20 +13739,6 @@ static bool space_snapshot_copy_logical_view(Space *dst, const Space *src) {
 static Space *space_snapshot_clone(Space *src, Arena *a) {
     SpaceEngine snapshot_backend = SPACE_ENGINE_NATIVE_CANDIDATE_EXACT;
     Space *clone = NULL;
-
-    if (src && src->match_backend.kind == SPACE_ENGINE_PATHMAP) {
-        clone = cetta_malloc(sizeof(Space));
-        space_init_with_universe(clone, src->native.universe);
-        clone->kind = src->kind;
-        if (space_match_backend_snapshot_clone(clone, src)) {
-            temp_space_register(clone);
-            return clone;
-        }
-        space_free(clone);
-        free(clone);
-        clone = NULL;
-        space_match_backend_clear_error();
-    }
 
     if (!space_match_backend_materialize_attached(
             src, eval_storage_arena(a)))
@@ -23797,6 +23791,15 @@ static bool prime_need_try_equation_call(
     }
     if (match_slot && match_source_ref != match_slot->equation_count)
         match_slot = NULL;
+    /* Need forcing below can recursively consult a colliding direct-mapped
+     * cache slot.  Hold an explicit owner while this search is suspended so
+     * cache eviction cannot reclaim its decision underneath the outer frame. */
+    __attribute__((cleanup(equation_match_decision_lease_release)))
+    CettaMatchDecision *match_decision_lease = match_slot
+        ? cetta_match_decision_retain(match_slot->decision)
+        : NULL;
+    if (match_slot && !match_decision_lease)
+        match_slot = NULL;
     size_t plan_count = candidates.len;
     if (plan_count == 0u) {
         prime_need_equation_candidate_buffer_free(&candidates);
@@ -23960,8 +23963,7 @@ static bool prime_need_try_equation_call(
         .outcomes = os,
         .forced_worlds = &forced_worlds,
         .frontier = prime_need_rewrite_frontier(),
-        .match_decision = match_slot
-            ? match_slot->decision : NULL,
+        .match_decision = match_decision_lease,
         .match_decision_semantics = match_semantics,
     };
     prime_need_search_equations(
@@ -27061,6 +27063,14 @@ static bool petta_eval_machine_prime_record_clause_use(
     return true;
 }
 
+static bool petta_eval_machine_prime_clause_result_payload_observed(
+    void *context) {
+    (void)context;
+    return cetta_gslt_observation_visible(
+        CETTA_GSLT_OBSERVATION_DETERMINATE_RULE_USE,
+        g_prime_need_answer_observer != NULL);
+}
+
 static bool petta_eval_machine_prime_atom_is_episode_value(
     Space *space, Atom *atom, uint32_t depth);
 
@@ -29562,6 +29572,10 @@ static bool petta_eval_machine_try(
         .record_clause_use =
             eval_current_language_id() == CETTA_LANGUAGE_PRIME
                 ? petta_eval_machine_prime_record_clause_use : NULL,
+        .clause_result_payload_observed =
+            eval_current_language_id() == CETTA_LANGUAGE_PRIME
+                ? petta_eval_machine_prime_clause_result_payload_observed
+                : NULL,
         .translator_rule_contains =
             petta_eval_machine_translator_rule_contains,
         .translator_rule_set =

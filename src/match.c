@@ -1870,6 +1870,7 @@ static Atom *bindings_lookup_id_since(Bindings *b, VarId id,
 static Atom *bindings_apply_seen_epoch(Bindings *b, Arena *a, Atom *atom,
                                        uint32_t epoch, bool original_side,
                                        uint32_t first_entry,
+                                       bool resolve_outer,
                                        BindingApplySeen *seen,
                                        uint32_t seen_len,
                                        BindingApplyMemo *memo) {
@@ -1887,7 +1888,11 @@ static Atom *bindings_apply_seen_epoch(Bindings *b, Arena *a, Atom *atom,
             bindings_apply_memo_store(memo, lookup_id, result);
             return result;
         }
-        Atom *val = bindings_lookup_id_since(b, lookup_id, first_entry);
+        uint32_t lookup_first = original_side || !resolve_outer
+            ? first_entry : 0u;
+        Atom *val = bindings_lookup_id_since(b, lookup_id, lookup_first);
+        if (!val && resolve_outer && !original_side)
+            val = bindings_lookup_spelling(b, atom->sym_id);
         if (!val) {
             Atom *result = original_side ? epoch_var_atom(a, atom, epoch) : atom;
             bindings_apply_memo_store(memo, lookup_id, result);
@@ -1898,7 +1903,7 @@ static Atom *bindings_apply_seen_epoch(Bindings *b, Arena *a, Atom *atom,
             return NULL;
         seen->ids[seen_len] = lookup_id;
         Atom *result = bindings_apply_seen_epoch(
-            b, a, val, epoch, false, first_entry,
+            b, a, val, epoch, false, first_entry, resolve_outer,
             seen, seen_len + 1, memo);
         bindings_apply_memo_store(memo, lookup_id, result);
         return result;
@@ -1909,7 +1914,8 @@ static Atom *bindings_apply_seen_epoch(Bindings *b, Arena *a, Atom *atom,
             Atom *child = atom->expr.elems[i];
             Atom *next = atom_has_vars(child)
                 ? bindings_apply_seen_epoch(b, a, child, epoch, original_side,
-                                            first_entry, seen, seen_len, memo)
+                                            first_entry, resolve_outer,
+                                            seen, seen_len, memo)
                 : child;
             if (!new_elems && next != atom->expr.elems[i]) {
                 new_elems = arena_alloc(a, sizeof(Atom *) * atom->expr.len);
@@ -1941,7 +1947,29 @@ Atom *bindings_apply_epoch_since(Bindings *b, Arena *a, Atom *atom,
     bindings_apply_memo_init(&memo, memo_id_stack, memo_val_stack,
                              BINDINGS_MEMO_STACK_CAP);
     Atom *result = bindings_apply_seen_epoch(
-        b, a, atom, epoch, true, first_entry,
+        b, a, atom, epoch, true, first_entry, false,
+        &seen, 0, &memo);
+    bindings_apply_memo_release(&memo);
+    bindings_apply_seen_release(&seen);
+    return result;
+}
+
+Atom *bindings_apply_epoch_then_all(Bindings *b, Arena *a, Atom *atom,
+                                    uint32_t epoch,
+                                    uint32_t first_entry) {
+    if (!b || !a || !atom || first_entry > b->len)
+        return NULL;
+    VarId seen_stack[BINDINGS_SEEN_STACK_CAP];
+    VarId memo_id_stack[BINDINGS_MEMO_STACK_CAP];
+    Atom *memo_val_stack[BINDINGS_MEMO_STACK_CAP];
+    BindingApplySeen seen;
+    bindings_apply_seen_init(
+        &seen, seen_stack, BINDINGS_SEEN_STACK_CAP);
+    BindingApplyMemo memo;
+    bindings_apply_memo_init(&memo, memo_id_stack, memo_val_stack,
+                             BINDINGS_MEMO_STACK_CAP);
+    Atom *result = bindings_apply_seen_epoch(
+        b, a, atom, epoch, true, first_entry, true,
         &seen, 0, &memo);
     bindings_apply_memo_release(&memo);
     bindings_apply_seen_release(&seen);

@@ -14,6 +14,8 @@
 #include "space.h"
 #include "stats.h"
 #include "symbol.h"
+/* The matching Make target enables CETTA_RUNTIME_STATS_IMPL for every linked
+ * translation unit; this header supplies the standalone counter definitions. */
 #include "tests/test_runtime_stats_stubs.h"
 
 static void init_test_symbols(SymbolTable *symbols);
@@ -30,6 +32,22 @@ static uint64_t test_counter(CettaRuntimeCounter counter) {
 
 static size_t test_term_entry_align_up(size_t n) {
     return (n + 7u) & ~(size_t)7u;
+}
+
+static uint64_t test_intern_probe_tail_limit(uint64_t lookups) {
+    /* Intern insertion resizes before exceeding 70% occupancy.  Under
+     * uniform double hashing, a union bound for observing a probe run of
+     * this length in any lookup is lookups * 0.7^length.  Keep that risk
+     * below 2^-20 while allowing the contract to grow logarithmically with
+     * the workload instead of imposing a fixed probe ceiling. */
+    long double tail_bound = (long double)lookups;
+    const long double risk_budget = 1.0L / 1048576.0L;
+    uint64_t limit = 0u;
+    while (tail_bound > risk_budget) {
+        tail_bound *= 0.7L;
+        limit++;
+    }
+    return limit;
 }
 
 static void assert_bigint_fact_atom(Atom *atom) {
@@ -595,6 +613,13 @@ void space_match_backend_note_add(Space *s, AtomId atom_id, Atom *atom,
     (void)atom_idx;
 }
 
+void space_match_backend_note_native_shadow_add(Space *s, AtomId atom_id,
+                                                CettaIndex atom_idx) {
+    (void)s;
+    (void)atom_id;
+    (void)atom_idx;
+}
+
 void space_match_backend_note_remove(Space *s) {
     (void)s;
 }
@@ -689,6 +714,12 @@ bool space_match_backend_materialize_native_storage(Space *s,
     (void)s;
     (void)persistent_arena;
     return true;
+}
+
+bool space_match_backend_require_logical_order(Space *s,
+                                               Arena *persistent_arena) {
+    (void)persistent_arena;
+    return s != NULL;
 }
 
 bool space_match_backend_store_atom_id_direct(Space *s, AtomId atom_id,
@@ -1036,7 +1067,8 @@ static void test_structural_slot_hash_collision_family(void) {
         diag.direct_lookup_hits + diag.direct_lookup_misses;
     assert(lookups > 6000u);
     assert(diag.direct_lookup_probes <= lookups * 8u);
-    assert(diag.direct_lookup_max_probe <= 64u);
+    assert(diag.direct_lookup_max_probe <=
+           test_intern_probe_tail_limit(lookups));
 
     free(frontier);
     term_universe_free(&universe);

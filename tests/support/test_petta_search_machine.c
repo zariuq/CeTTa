@@ -190,15 +190,18 @@ static void test_binding_prefix_factoring(Arena *arena) {
 static void test_activation_epoch_suffix_application(Arena *arena) {
     Atom *outer = atom_var_with_id(
         arena, "outer-slot", fresh_var_id());
+    Atom *outer_link = atom_var_with_id(
+        arena, "outer-link", fresh_var_id());
     Atom *rule = atom_var_with_id(
         arena, "rule-slot", fresh_var_id());
     Atom *outer_value = atom_symbol(
         arena, "outer-value");
-    assert(outer && rule && outer_value);
+    assert(outer && outer_link && rule && outer_value);
 
     Bindings bindings;
     bindings_init(&bindings);
-    assert(bindings_add_var(&bindings, outer, outer_value));
+    assert(bindings_add_var(&bindings, outer_link, outer_value));
+    assert(bindings_add_var(&bindings, outer, outer_link));
     uint32_t activation_first = bindings.len;
     uint32_t epoch = fresh_var_suffix();
     Atom *rule_slot = atom_var_like(
@@ -218,6 +221,41 @@ static void test_activation_epoch_suffix_application(Arena *arena) {
     Atom *materialized = bindings_apply_epoch(
         &bindings, arena, rule, epoch);
     assert(materialized == outer_value);
+    Atom *sequential = bindings_apply(
+        &bindings, arena, local);
+    assert(sequential == materialized);
+    Atom *fused = bindings_apply_epoch_then_all(
+        &bindings, arena, rule, epoch, activation_first);
+    assert(fused == sequential);
+
+    /* An unbound activation slot remains fresh rather than aliasing either the
+     * source variable or an outer variable with the same spelling. */
+    Atom *unbound = atom_var_with_id(
+        arena, "rule-unbound", fresh_var_id());
+    Atom *fresh_unbound = bindings_apply_epoch(
+        &bindings, arena, unbound, epoch);
+    assert(fresh_unbound && fresh_unbound->kind == ATOM_VAR);
+    assert(fresh_unbound->var_id ==
+           var_epoch_id(unbound->var_id, epoch));
+    assert(fresh_unbound->var_id != unbound->var_id);
+
+    Atom *pair = atom_symbol(arena, "activation-pair");
+    Atom *source_children[] = {pair, rule, unbound};
+    Atom *source = atom_expr(arena, source_children, 3u);
+    Atom *local_pair = bindings_apply_epoch_since(
+        &bindings, arena, source, epoch, activation_first);
+    Atom *sequential_pair = bindings_apply(
+        &bindings, arena, local_pair);
+    Atom *fused_pair = bindings_apply_epoch_then_all(
+        &bindings, arena, source, epoch, activation_first);
+    assert(source && local_pair && sequential_pair && fused_pair);
+    assert(atom_eq(fused_pair, sequential_pair));
+    assert(fused_pair->kind == ATOM_EXPR &&
+           fused_pair->expr.len == 3u);
+    assert(fused_pair->expr.elems[1] == outer_value);
+    assert(fused_pair->expr.elems[2]->kind == ATOM_VAR);
+    assert(fused_pair->expr.elems[2]->var_id ==
+           var_epoch_id(unbound->var_id, epoch));
 
     /* A malformed suffix boundary must fail closed. */
     assert(!bindings_apply_epoch_since(
