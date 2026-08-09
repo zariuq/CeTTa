@@ -100,6 +100,11 @@ typedef struct {
        the decoded projection packet may be discarded after the native view
        has been refreshed. */
     bool native_shadow_synced;
+    /* Some language constructs observe declaration/occurrence order.  Once
+       such a construct is admitted, the native AtomId sequence remains the
+       authoritative order sidecar while PathMap continues to mirror/index
+       the same logical bag. */
+    bool preserve_logical_order;
 } ImportedBridgeState;
 
 typedef struct {
@@ -259,10 +264,16 @@ bool space_match_backend_try_set(Space *s, SpaceEngine kind);
 bool space_match_backend_needs_atom_on_add(const Space *s, AtomId atom_id);
 void space_match_backend_note_add(Space *s, AtomId atom_id, Atom *atom,
                                   CettaIndex atom_idx);
+/* Extend already-realized native candidate indexes after a backend-primary
+ * append has extended their synchronized AtomId coordinate shadow.  Opaque
+ * mutations and removals still invalidate through their ordinary paths. */
+void space_match_backend_note_native_shadow_add(Space *s, AtomId atom_id,
+                                                CettaIndex atom_idx);
 void space_match_backend_note_remove(Space *s);
 CettaIndex space_match_backend_candidates64(Space *s, Atom *pattern,
                                             CettaIndex **out);
 uint32_t space_match_backend_candidates(Space *s, Atom *pattern, uint32_t **out);
+Atom *space_match_backend_candidate_at64(const Space *s, CettaIndex idx);
 void space_match_backend_query(Space *s, Arena *a, Atom *query, SubstMatchSet *out);
 const char *space_match_backend_name(const Space *s);
 bool space_match_backend_supports_direct_bindings(const Space *s);
@@ -290,6 +301,8 @@ bool space_match_backend_bridge_space(Space *s,
  * the native atom-id sequence. Returns false when the backend has no exact
  * persistent snapshot operation, so callers may use the generic clone path. */
 bool space_match_backend_snapshot_clone(Space *dst, Space *src);
+bool space_match_backend_require_logical_order(Space *s,
+                                               Arena *persistent_arena);
 bool space_match_backend_store_atom_id_direct(Space *s, AtomId atom_id,
                                               Atom *atom);
 bool space_match_backend_store_atom_direct(Space *s, Atom *atom);

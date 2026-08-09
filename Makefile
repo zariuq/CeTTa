@@ -319,6 +319,18 @@ ifeq ($(ENABLE_PETTA_TYPECHECK_V2),0)
 BUILD_OBJ_TAG := $(BUILD_OBJ_TAG).no-petta-typecheck-v2
 endif
 SANITIZER_WORDS := $(subst $(comma), ,$(SANITIZERS))
+
+# Test and probe invocations must not share the public ./cetta output.  A
+# recursive bridge/configuration test may select a different BUILD, and other
+# developers may build another mode concurrently.  Keep those executables
+# configuration-addressed so the gate always runs the mode it requested and
+# Make can reuse an unchanged link product.
+CETTA_TEST_ISOLATED ?= 0
+ifneq ($(strip $(filter test% probe%,$(MAKECMDGOALS))),)
+CETTA_TEST_ISOLATED := 1
+endif
+export CETTA_TEST_ISOLATED
+
 GSLT2PARSE_SHARED_ASAN_ENV =
 GSLT2PARSE_SHARED_ASAN_ARGS =
 ifeq ($(ENABLE_SANITIZERS),1)
@@ -398,16 +410,26 @@ endif
 SRC = src/symbol.c src/atom.c src/name_key.c src/atom_blob.c src/abt.c src/parser.c $(COMPILED_READER_RUNTIME_SRC) src/mm2_lower.c src/subst_tree.c src/space.c src/registry_resolver.c src/space_match_backend.c src/match.c src/match_decision.c src/term_canon.c src/variant_shape.c src/variant_instance.c src/answer_bank.c src/table_store.c src/search_machine.c src/petta_program.c src/petta_search_machine.c $(PETTA_TYPECHECK_V2_SRC) src/petta_specializer.c src/rule_machine.c $(LIB_PROLOG_SRC) src/term_universe.c src/stats.c src/parallel_executor.c src/prime_need.c src/petta_semantics.c src/prepared_pure_machine.c src/eval.c src/grounded.c src/he_typing.c src/prime_semantics.c src/text_source.c src/native_handle.c src/native_sha256.c src/mork_space_bridge_runtime.c src/library.c src/langdef_pack.c src/gslt_horn_runtime.c src/gslt_compiled_runtime.c src/gslt_language_runtime.c src/generated/subzero_language_v1.generated.c src/generated/zero_language_v1.generated.c src/generated/zero_exp_language_v1.generated.c src/he_small_step_pack.c src/lib_parse_native_grammar.c src/lib_parse_inference_native.c experiments/gslt2parse_foundation/native/finite_horn_gslt_v1.c experiments/gslt2parse_foundation/native/finite_horn_ground_term_v1.c experiments/gslt2parse_foundation/native/parser_term_projection_v1.c experiments/gslt2parse_foundation/native/parser_pack_abi_v1.c experiments/gslt2parse_foundation/native/parser_action_bytecode_v1.c experiments/gslt2parse_foundation/native/parser_pack_native_v1.c experiments/gslt2parse_foundation/native/parser_pack_lexical_v1.c experiments/gslt2parse_foundation/native/parser_pack_gll_v1.c experiments/gslt2parse_foundation/native/parser_pack_glr_v1.c experiments/gslt2parse_foundation/native/regular_span_dfa_v1.c experiments/gslt2parse_foundation/native/regular_span_nfa_v1.c $(PYTHON_SRC) src/session.c src/lang.c src/rhocalc_core.c src/rhocalc_syntax.c src/compile.c src/runtime.c src/cetta_stdlib.c native/native_modules.c src/main.c
 ifeq ($(ENABLE_RUNTIME_STATS),1)
 OBJ = $(SRC:.c=.$(BUILD_OBJ_TAG).runtime-stats.o)
+ifeq ($(CETTA_TEST_ISOLATED),1)
+BIN = runtime/cetta-$(BUILD_OBJ_TAG)-runtime-stats
+FALLBACK_EVAL_TEST_BIN = runtime/test_fallback_eval_session-$(BUILD_OBJ_TAG)-runtime-stats
+else
 BIN = runtime/cetta-$(BUILD_CANON)-runtime-stats
-FALLBACK_EVAL_TEST_OBJ = runtime/bootstrap/test_fallback_eval_session.$(BUILD_OBJ_TAG).runtime-stats.o
 FALLBACK_EVAL_TEST_BIN = runtime/test_fallback_eval_session-$(BUILD_CANON)-runtime-stats
+endif
+FALLBACK_EVAL_TEST_OBJ = runtime/bootstrap/test_fallback_eval_session.$(BUILD_OBJ_TAG).runtime-stats.o
 BIN_FORCE =
 else
 OBJ = $(SRC:.c=.$(BUILD_OBJ_TAG).o)
-BIN = cetta
 FALLBACK_EVAL_TEST_OBJ = runtime/bootstrap/test_fallback_eval_session.$(BUILD_OBJ_TAG).o
 FALLBACK_EVAL_TEST_BIN = runtime/test_fallback_eval_session-$(BUILD_CANON)
+ifeq ($(CETTA_TEST_ISOLATED),1)
+BIN = runtime/cetta-$(BUILD_OBJ_TAG)
+BIN_FORCE =
+else
+BIN = cetta
 BIN_FORCE = FORCE
+endif
 endif
 COMPILED_READER_RUNTIME_OBJ = $(patsubst %.c,%.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o,$(COMPILED_READER_RUNTIME_SRC))
 FALLBACK_EVAL_TEST_SRC = tests/support/test_fallback_eval_session.c
@@ -962,11 +984,9 @@ RUNTIME_STATS_METTA_TESTS = \
 	tests/test_hyperpose_prime_runtime_stats.metta \
 	tests/test_hyperpose_threaded_stats.metta \
 	tests/test_lts_rho_cost_parallel_runtime_stats.metta \
-	tests/test_imported_match_chain_conjunction_lowering.metta \
 	tests/test_native_count_collapse_match_regression.metta \
 	tests/test_outcome_variant_composition_regression.metta \
 	tests/test_outcome_variant_observation_seam_regression.metta \
-	tests/test_pathmap_direct_transfer_runtime_stats.metta \
 	tests/test_pathmap_imported_bridge_v2.metta \
 	tests/test_rhometta_payload_new_space_affine_runtime_stats.metta \
 	tests/test_rhometta_payload_scratch_discard_runtime_stats.metta \
@@ -981,7 +1001,9 @@ RUNTIME_STATS_METTA_TESTS = \
 	tests/test_table_reuse_after_stale.metta
 
 PATHMAP_RUNTIME_STATS_METTA_TESTS = \
-	tests/test_imported_conjunction_bridge_init_regression.metta
+	tests/test_imported_conjunction_bridge_init_regression.metta \
+	tests/test_imported_match_chain_conjunction_lowering.metta \
+	tests/test_pathmap_direct_transfer_runtime_stats.metta
 
 GC_ADVERSARIAL_TESTS = \
 	tests/gc/test_eval_gc_adversarial.metta \
@@ -2412,33 +2434,21 @@ $(SPACE_TERM_UNIVERSE_MEMBERSHIP_TEST_BIN): tests/test_space_term_universe_membe
 test-space-term-universe-membership: $(SPACE_TERM_UNIVERSE_MEMBERSHIP_TEST_BIN)
 	@$(call cetta_exec,./$(SPACE_TERM_UNIVERSE_MEMBERSHIP_TEST_BIN))
 
-$(TERM_UNIVERSE_STORE_ABI_TEST_BIN): CPPFLAGS += -DCETTA_BUILD_WITH_TERM_UNIVERSE_DIAGNOSTICS=1
+$(TERM_UNIVERSE_STORE_ABI_TEST_BIN): CPPFLAGS += -DCETTA_BUILD_WITH_TERM_UNIVERSE_DIAGNOSTICS=1 -DCETTA_RUNTIME_STATS_IMPL=1
 $(TERM_UNIVERSE_STORE_ABI_TEST_BIN): tests/test_term_universe_store_abi.c src/symbol.c src/atom.c $(MATCH_STANDALONE_SRC) src/subst_tree.c src/term_canon.c src/variant_shape.c src/variant_instance.c src/term_universe.c $(GROUNDED_STANDALONE_DEPS) src/native_sha256.c src/search_machine.c src/space.c $(PARSER_STANDALONE_SRC) src/cetta_stdlib.c $(BUILD_CONFIG_HEADER)
 	@mkdir -p runtime
 	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ tests/test_term_universe_store_abi.c src/symbol.c src/atom.c $(MATCH_STANDALONE_SRC) src/subst_tree.c src/term_canon.c src/variant_shape.c src/variant_instance.c src/term_universe.c $(GROUNDED_STANDALONE_SRC) src/native_sha256.c src/search_machine.c src/space.c $(PARSER_STANDALONE_SRC) src/cetta_stdlib.c $(LDFLAGS)
 
-test-term-universe-store-abi:
-ifeq ($(ENABLE_RUNTIME_STATS),1)
-	@$(MAKE) -B -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 $(TERM_UNIVERSE_STORE_ABI_TEST_BIN)
+test-term-universe-store-abi: $(TERM_UNIVERSE_STORE_ABI_TEST_BIN)
 	@$(call cetta_exec,./$(TERM_UNIVERSE_STORE_ABI_TEST_BIN))
-else
-	@echo "INFO: term universe store ABI requires compile-time runtime stats; re-running with ENABLE_RUNTIME_STATS=1"
-	@$(MAKE) BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 $@
-endif
 
-$(TERM_UNIVERSE_BACKEND_ADD_ABI_TEST_BIN): CPPFLAGS += -DCETTA_BUILD_WITH_TERM_UNIVERSE_DIAGNOSTICS=1
+$(TERM_UNIVERSE_BACKEND_ADD_ABI_TEST_BIN): CPPFLAGS += -DCETTA_BUILD_WITH_TERM_UNIVERSE_DIAGNOSTICS=1 -DCETTA_RUNTIME_STATS_IMPL=1
 $(TERM_UNIVERSE_BACKEND_ADD_ABI_TEST_BIN): tests/test_term_universe_backend_add_abi.c src/symbol.c src/atom.c $(MATCH_STANDALONE_SRC) src/subst_tree.c src/term_canon.c src/variant_shape.c src/variant_instance.c src/term_universe.c $(GROUNDED_STANDALONE_DEPS) src/native_sha256.c src/search_machine.c src/space.c src/space_match_backend.c $(PARSER_STANDALONE_SRC) $(BUILD_CONFIG_HEADER)
 	@mkdir -p runtime
 	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ tests/test_term_universe_backend_add_abi.c src/symbol.c src/atom.c $(MATCH_STANDALONE_SRC) src/subst_tree.c src/term_canon.c src/variant_shape.c src/variant_instance.c src/term_universe.c $(GROUNDED_STANDALONE_SRC) src/native_sha256.c src/search_machine.c src/space.c src/space_match_backend.c $(PARSER_STANDALONE_SRC) $(LDFLAGS)
 
-test-term-universe-backend-add-abi:
-ifeq ($(ENABLE_RUNTIME_STATS),1)
-	@$(MAKE) -B -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 $(TERM_UNIVERSE_BACKEND_ADD_ABI_TEST_BIN)
+test-term-universe-backend-add-abi: $(TERM_UNIVERSE_BACKEND_ADD_ABI_TEST_BIN)
 	@$(call cetta_exec,./$(TERM_UNIVERSE_BACKEND_ADD_ABI_TEST_BIN))
-else
-	@echo "INFO: term universe backend-add ABI requires compile-time runtime stats; re-running with ENABLE_RUNTIME_STATS=1"
-	@$(MAKE) BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 $@
-endif
 
 $(LET_BRANCH_ARENA_RESET_NO_ESCAPE_TEST_BIN): CPPFLAGS += -DCETTA_BUILD_WITH_TERM_UNIVERSE_DIAGNOSTICS=1
 $(LET_BRANCH_ARENA_RESET_NO_ESCAPE_TEST_BIN): tests/test_let_branch_arena_reset_no_escape.c src/symbol.c src/atom.c $(MATCH_STANDALONE_SRC) src/subst_tree.c src/term_canon.c src/variant_shape.c src/variant_instance.c src/term_universe.c $(GROUNDED_STANDALONE_DEPS) src/native_sha256.c src/search_machine.c src/space.c $(PARSER_STANDALONE_SRC) $(BUILD_CONFIG_HEADER)
@@ -2452,11 +2462,11 @@ $(PATHMAP_BACKEND_PRIMARY_DESTRUCTIVE_ABI_TEST_BIN): tests/test_pathmap_backend_
 	@mkdir -p runtime
 	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ tests/test_pathmap_backend_primary_destructive_abi.c src/symbol.c src/atom.c $(MATCH_STANDALONE_SRC) src/subst_tree.c src/term_canon.c src/variant_shape.c src/variant_instance.c src/term_universe.c $(GROUNDED_STANDALONE_SRC) src/native_sha256.c src/search_machine.c src/space.c src/space_match_backend.c $(PARSER_STANDALONE_SRC) src/mm2_lower.c src/mork_space_bridge_runtime.c $(LDFLAGS)
 
-test-pathmap-backend-primary-destructive-abi:
 ifeq ($(ENABLE_PATHMAP_SPACE),1)
-	@$(MAKE) -s BUILD=$(BUILD_CANON) $(PATHMAP_BACKEND_PRIMARY_DESTRUCTIVE_ABI_TEST_BIN)
+test-pathmap-backend-primary-destructive-abi: $(PATHMAP_BACKEND_PRIMARY_DESTRUCTIVE_ABI_TEST_BIN)
 	@$(call cetta_exec,./$(PATHMAP_BACKEND_PRIMARY_DESTRUCTIVE_ABI_TEST_BIN))
 else
+test-pathmap-backend-primary-destructive-abi:
 	$(call reexec_pathmap_bridge_or_skip,pathmap backend-primary destructive ABI,$@)
 endif
 
@@ -2528,11 +2538,11 @@ $(PATHMAP_BACKEND_PRIMARY_REPLACE_ABI_TEST_BIN): tests/test_pathmap_backend_prim
 	@mkdir -p runtime
 	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ tests/test_pathmap_backend_primary_replace_abi.c src/symbol.c src/atom.c $(MATCH_STANDALONE_SRC) src/subst_tree.c src/term_canon.c src/variant_shape.c src/variant_instance.c src/term_universe.c $(GROUNDED_STANDALONE_SRC) src/native_sha256.c src/search_machine.c src/space.c src/space_match_backend.c $(PARSER_STANDALONE_SRC) src/mm2_lower.c src/mork_space_bridge_runtime.c $(LDFLAGS)
 
-test-pathmap-backend-primary-replace-abi:
 ifeq ($(ENABLE_PATHMAP_SPACE),1)
-	@$(MAKE) -s BUILD=$(BUILD_CANON) $(PATHMAP_BACKEND_PRIMARY_REPLACE_ABI_TEST_BIN)
+test-pathmap-backend-primary-replace-abi: $(PATHMAP_BACKEND_PRIMARY_REPLACE_ABI_TEST_BIN)
 	@$(call cetta_exec,./$(PATHMAP_BACKEND_PRIMARY_REPLACE_ABI_TEST_BIN))
 else
+test-pathmap-backend-primary-replace-abi:
 	$(call reexec_pathmap_bridge_or_skip,pathmap backend-primary replace ABI,$@)
 endif
 
@@ -2540,11 +2550,11 @@ $(PATHMAP_TYPED_QUERY_ABI_TEST_BIN): tests/test_pathmap_typed_query_abi.c src/sy
 	@mkdir -p runtime
 	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ tests/test_pathmap_typed_query_abi.c src/symbol.c src/atom.c $(MATCH_STANDALONE_SRC) src/subst_tree.c src/term_canon.c src/variant_shape.c src/variant_instance.c src/term_universe.c $(GROUNDED_STANDALONE_SRC) src/native_sha256.c src/search_machine.c src/space.c src/space_match_backend.c $(PARSER_STANDALONE_SRC) src/mm2_lower.c src/mork_space_bridge_runtime.c $(LDFLAGS)
 
-test-pathmap-typed-query-abi:
 ifeq ($(ENABLE_PATHMAP_SPACE),1)
-	@$(MAKE) -s BUILD=$(BUILD_CANON) $(PATHMAP_TYPED_QUERY_ABI_TEST_BIN)
+test-pathmap-typed-query-abi: $(PATHMAP_TYPED_QUERY_ABI_TEST_BIN)
 	@$(call cetta_exec,./$(PATHMAP_TYPED_QUERY_ABI_TEST_BIN))
 else
+test-pathmap-typed-query-abi:
 	$(call reexec_pathmap_bridge_or_skip,pathmap typed query ABI,$@)
 endif
 
@@ -2554,11 +2564,11 @@ $(PATHMAP_SEMI_NAIVE_ABI_TEST_BIN): tests/test_pathmap_semi_naive_abi.c src/symb
 	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ tests/test_pathmap_semi_naive_abi.c src/symbol.c src/atom.c $(MATCH_STANDALONE_SRC) src/subst_tree.c src/term_canon.c src/variant_shape.c src/variant_instance.c src/term_universe.c $(GROUNDED_STANDALONE_SRC) src/native_sha256.c src/search_machine.c src/space.c src/space_match_backend.c $(PARSER_STANDALONE_SRC) src/mm2_lower.c src/mork_space_bridge_runtime.c $(LDFLAGS)
 
 .PHONY: test-pathmap-semi-naive-abi
-test-pathmap-semi-naive-abi:
 ifeq ($(ENABLE_PATHMAP_SPACE),1)
-	@$(MAKE) -s BUILD=$(BUILD_CANON) $(PATHMAP_SEMI_NAIVE_ABI_TEST_BIN)
+test-pathmap-semi-naive-abi: $(PATHMAP_SEMI_NAIVE_ABI_TEST_BIN)
 	@$(call cetta_exec,./$(PATHMAP_SEMI_NAIVE_ABI_TEST_BIN))
 else
+test-pathmap-semi-naive-abi:
 	$(call reexec_pathmap_bridge_or_skip,pathmap semi-naive ABI,$@)
 endif
 
@@ -3432,7 +3442,9 @@ else
 endif
 
 test-bigint-no-gmp-fallback:
-	@$(MAKE) -s BUILD=core ENABLE_GMP=0 $(BIN)
+	@$(MAKE) -s BUILD=core ENABLE_GMP=0 test-bigint-no-gmp-fallback-body
+
+test-bigint-no-gmp-fallback-body: $(BIN)
 	@set -e; \
 	tmp="$(BOOTSTRAP_TMPDIR)/test-bigint-no-gmp-fallback.out"; \
 	$(CETTA_BIN_INVOKE) --profile he-extended --lang he tests/support/test_bigint_no_gmp_fallback.metta > "$$tmp"; \
@@ -3441,13 +3453,17 @@ test-bigint-no-gmp-fallback:
 	echo "PASS: bigint no-GMP fallback is loud and parseable"
 
 test-rational-no-gmp-fallback:
-	@$(MAKE) -s BUILD=core ENABLE_GMP=0 $(BIN)
+	@$(MAKE) -s BUILD=core ENABLE_GMP=0 test-rational-no-gmp-fallback-body
+
+test-rational-no-gmp-fallback-body: $(BIN)
 	@set -e; \
 	tmp="$(BOOTSTRAP_TMPDIR)/test-rational-no-gmp-fallback.out"; \
 	$(CETTA_BIN_INVOKE) --profile he-extended --lang he tests/support/test_rational_no_gmp_fallback.metta > "$$tmp"; \
 	diff -u tests/support/test_rational_no_gmp_fallback.expected "$$tmp"; \
 	rm -f "$$tmp"; \
 	echo "PASS: rational no-GMP fallback is loud and default-compatible"
+
+.PHONY: test-bigint-no-gmp-fallback-body test-rational-no-gmp-fallback-body
 
 # Fast test: compare CeTTa output against pre-computed .expected files.
 # No oracle invocation — safe and instant.
@@ -3729,10 +3745,10 @@ test-stdlib-growth-memory-regression: $(BIN)
 # each program macro-on vs CETTA_RHO_NO_MACRO=1 (the exact reference oracle),
 # and assert the may-sets coincide.  Any divergence = the macro optimization is
 # unsound on that program.  This is the permanent backstop behind the C3 gate.
-test-rhometta-macro-audit:
-	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 runtime/cetta-$(BUILD_CANON)-runtime-stats
+test-rhometta-macro-audit: $(BIN)
+ifeq ($(ENABLE_RUNTIME_STATS),1)
 	@pass=0; fail=0; \
-	if python3 scripts/rhometta_macro_differential_audit.py --cetta "runtime/cetta-$(BUILD_CANON)-runtime-stats" --n 120 --seed 1 --timeout "$${CETTA_RHOMETTA_AUDIT_TIMEOUT:-240}"; then \
+	if python3 scripts/rhometta_macro_differential_audit.py --cetta "$(BIN)" --n 120 --seed 1 --timeout "$${CETTA_RHOMETTA_AUDIT_TIMEOUT:-240}"; then \
 		echo "PASS: rhometta macro differential audit"; pass=$$((pass + 1)); \
 	else \
 		echo "FAIL: rhometta macro differential audit"; fail=$$((fail + 1)); \
@@ -3740,6 +3756,9 @@ test-rhometta-macro-audit:
 	echo "---"; \
 	echo "$$pass passed, $$fail failed"; \
 	[ $$fail -eq 0 ]
+else
+	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 $@
+endif
 
 test-eval-gc-adversarial: $(BIN)
 	@CETTA_BIN="$(abspath $(BIN))" scripts/gc_adversarial_audit.sh
@@ -9388,6 +9407,9 @@ test-pathmap-program-shadow-sync-work: $(BIN)
 	@result=$$(CETTA_PATHMAP_QUERY_INDEX=1 $(CETTA_BIN_INVOKE) \
 		--emit-runtime-stats --profile he-extended --space-engine pathmap \
 		--lang he tests/test_pathmap_program_shadow_sync_work.metta 2>&1); \
+	petta_result=$$(CETTA_PATHMAP_QUERY_INDEX=1 $(CETTA_BIN_INVOKE) \
+		--emit-runtime-stats --profile extended --space-engine pathmap \
+		--lang petta tests/test_pathmap_program_shadow_sync_work.metta 2>&1); \
 	expected=$$(cat tests/test_pathmap_program_shadow_sync_work.expected); \
 	actual=$$(printf '%s\n' "$$result" | grep '^\[' || true); \
 	if [ "$$actual" != "$$expected" ]; then \
@@ -9395,17 +9417,32 @@ test-pathmap-program-shadow-sync-work: $(BIN)
 		diff <(printf '%s\n' "$$expected") <(printf '%s\n' "$$actual") | head -20; \
 		exit 1; \
 	fi; \
-	stat() { \
-		printf '%s\n' "$$result" | awk -v key="$$1" \
+	stat_from() { \
+		printf '%s\n' "$$1" | awk -v key="$$2" \
 			'$$1 == "runtime-counter" && $$2 == key { print $$3; found=1 } END { if (!found) exit 1 }'; \
 	}; \
-	refreshes=$$(stat pathmap-shadow-refresh) || exit 1; \
-	materializations=$$(stat pathmap-materialize-native) || exit 1; \
+	petta_true=$$(printf '%s\n' "$$petta_result" | grep -c '^true$$' || true); \
+	if [ "$$petta_true" -ne 4 ] || \
+	   printf '%s\n' "$$petta_result" | grep -Eq '(^|\()Error([ :)]|$$)'; then \
+		echo "FAIL: PathMap PeTTa logical-update shadow answers"; \
+		printf '%s\n' "$$petta_result" | tail -30; \
+		exit 1; \
+	fi; \
+	refreshes=$$(stat_from "$$result" pathmap-shadow-refresh) || exit 1; \
+	materializations=$$(stat_from "$$result" pathmap-materialize-native) || exit 1; \
 	if [ "$$refreshes" -gt 5 ] || [ "$$materializations" -gt 5 ]; then \
 		echo "FAIL: PathMap program shadow rebuilt per answer (refreshes=$$refreshes, materializations=$$materializations)"; \
 		exit 1; \
 	fi; \
-	echo "PASS: PathMap backend-primary native shadow is refreshed at most once per revision"
+	petta_projection=$$(stat_from "$$petta_result" pathmap-projection-capture) || exit 1; \
+	petta_lookups=$$(stat_from "$$petta_result" match-native-trie-lookup) || exit 1; \
+	petta_candidates=$$(stat_from "$$petta_result" match-native-candidates) || exit 1; \
+	if [ "$$petta_projection" -ne 0 ] || [ "$$petta_lookups" -le 0 ] || \
+	   [ "$$petta_candidates" -le 0 ] || [ "$$petta_candidates" -gt 64 ]; then \
+		echo "FAIL: PathMap PeTTa shadow/index work expected projection/lookups/candidates 0/>0/1..64, got $$petta_projection/$$petta_lookups/$$petta_candidates"; \
+		exit 1; \
+	fi; \
+	echo "PASS: PathMap native shadow remains bounded for HE observers and gives PeTTa indexed logical-update candidates"
 
 .PHONY: test-pathmap-interleaved-dispatch-view
 test-pathmap-interleaved-dispatch-view: $(BIN)
@@ -9749,16 +9786,16 @@ endif
 test-pathmap-conjunction-init: $(BIN)
 ifeq ($(ENABLE_PATHMAP_SPACE),1)
 ifeq ($(ENABLE_RUNTIME_STATS),1)
-	@ \
-	source=$(PATHMAP_RUNTIME_STATS_METTA_TESTS); \
-	result=$$($(CETTA_BIN_INVOKE) --profile he-extended --space-engine pathmap --lang he "$$source" 2>&1); \
-	if [ "$$result" = "$$(cat "$${source%.metta}.expected")" ]; then \
-		echo "PASS: pathmap conjunction init regression"; \
-	else \
-		echo "FAIL: pathmap conjunction init regression"; \
-		diff <(cat "$${source%.metta}.expected") <(echo "$$result") | head -20; \
-		exit 1; \
-	fi
+	@for source in $(PATHMAP_RUNTIME_STATS_METTA_TESTS); do \
+		result=$$($(CETTA_BIN_INVOKE) --profile he-extended --space-engine pathmap --lang he "$$source" 2>&1); \
+		if [ "$$result" = "$$(cat "$${source%.metta}.expected")" ]; then \
+			echo "PASS: pathmap runtime-stats $$(basename "$$source")"; \
+		else \
+			echo "FAIL: pathmap runtime-stats $$(basename "$$source")"; \
+			diff <(cat "$${source%.metta}.expected") <(echo "$$result") | head -20; \
+			exit 1; \
+		fi; \
+	done
 else
 	@echo "INFO: pathmap conjunction init regression requires compile-time runtime stats; re-running with ENABLE_RUNTIME_STATS=1"
 	@$(MAKE) BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 $@

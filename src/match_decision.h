@@ -93,6 +93,12 @@ CettaMatchDecision *cetta_match_decision_compile(
     CettaMatchDecisionClassifyPatternFn classify,
     void *classify_context);
 
+/* Acquire an additional lifetime owner.  Selection scratch remains mutable,
+ * so this is a lifetime lease rather than permission for concurrent selects. */
+CettaMatchDecision *cetta_match_decision_retain(
+    CettaMatchDecision *decision);
+
+/* Release one lifetime owner. */
 void cetta_match_decision_free(CettaMatchDecision *decision);
 
 bool cetta_match_decision_is_current(

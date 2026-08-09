@@ -671,7 +671,6 @@ static void arena_run_finalizers_until(Arena *a, ArenaFinalizer *stop) {
     }
 }
 
-#if CETTA_BUILD_WITH_GMP
 static void arena_register_finalizer(Arena *a, void (*fn)(void *), void *ptr) {
     ArenaFinalizer *node = cetta_malloc(sizeof(ArenaFinalizer));
     node->fn = fn;
@@ -680,7 +679,6 @@ static void arena_register_finalizer(Arena *a, void (*fn)(void *), void *ptr) {
     a->finalizers = node;
     arena_account_external_bytes(a, sizeof(*node));
 }
-#endif
 
 static void arena_invalidate_allocations(
     Arena *a, CettaGsltLifetimeTransition transition) {
