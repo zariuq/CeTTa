@@ -2,8 +2,11 @@
   (name zero)
   (syntax-backend he-reader-direct-v1)
   (term-abi finite-horn-quote-v1)
-  (semantic-source "semantics/free_bag_rewrite_core_v1.metta")
-  (semantic-source "semantics/public_result_bag_v1.metta")
+  (semantic-source "../shared/finite_horn_quote_match_v1.metta")
+  (semantic-source "semantics/query_kernel_v1.metta")
+  (semantic-source "semantics/closed_bag_observation_v1.metta")
   (program-carrier zero-program-nil zero-program-cons)
-  (entry zero-evaluate 3 0 2)
+  (request-pipeline
+    zero-classify zero-produce zero-observe
+    zero-produced-nil zero-produced-cons)
   (observation bag))
