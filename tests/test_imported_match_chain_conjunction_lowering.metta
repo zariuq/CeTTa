@@ -1,13 +1,11 @@
+!(bind! &data (new-space pathmap))
+!(add-atoms &data ((edge a b) (edge b c) (edge c d)))
 !(reset-runtime-stats!)
 
-(edge a b)
-(edge b c)
-(edge c d)
-
 !(assertEqualToResult
-  (match &self (edge $x $y)
-    (match &self (edge $y $z)
-      (match &self (edge $z $w)
+  (match &data (edge $x $y)
+    (match &data (edge $y $z)
+      (match &data (edge $z $w)
         (path $x $y $z $w))))
   ((path a b c d)))
 !(bind! &stats (runtime-stats!))
@@ -23,3 +21,6 @@
 !(assertEqualToResult
   (match &stats (runtime-counter imported-bridge-v3-fallback $n) $n)
   (0))
+!(assertEqualToResult
+  (match &stats (runtime-counter pathmap-indexed-query $n) $n)
+  (1))

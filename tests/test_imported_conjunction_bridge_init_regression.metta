@@ -1,9 +1,8 @@
+!(bind! &data (new-space pathmap))
+!(add-atoms &data ((pair a b) (pair b c)))
 !(reset-runtime-stats!)
 
-(pair a b)
-(pair b c)
-
-!(match &self
+!(match &data
   (, (pair $x $y)
      (pair $y $z))
   (path $x $y $z))
