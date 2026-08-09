@@ -180,6 +180,12 @@ int main(void) {
         CETTA_MATCH_DECISION_DEEP, 0u,
         opaque_argument, NULL);
     assert(linear && deep && opaque);
+    assert(cetta_match_decision_retain(NULL) == NULL);
+    CettaMatchDecision *deep_lease =
+        cetta_match_decision_retain(deep);
+    assert(deep_lease == deep);
+    cetta_match_decision_free(deep);
+    deep = deep_lease;
 
     const uint32_t all[] = {11u, 22u, 33u, 44u, 45u};
     const uint32_t ax1[] = {11u, 44u, 45u};
