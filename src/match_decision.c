@@ -2,6 +2,7 @@
 #include "stats.h"
 #include "generated/match_decision_policy_v1.generated.h"
 
+#include <stdatomic.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -59,6 +60,7 @@ typedef struct {
 } CettaMatchDecisionRefList;
 
 struct CettaMatchDecision {
+    _Atomic size_t owner_count;
     SpaceReadToken read;
     CettaMatchDecisionSemanticIdentity semantic_identity;
     CettaMatchDecisionMode mode;
@@ -557,6 +559,7 @@ CettaMatchDecision *cetta_match_decision_compile(
     CettaMatchDecision *decision = calloc(1u, sizeof(*decision));
     if (!decision)
         return NULL;
+    atomic_init(&decision->owner_count, 1u);
     decision->read = read;
     decision->semantic_identity = semantic_identity;
     decision->mode = mode;
@@ -592,8 +595,37 @@ CettaMatchDecision *cetta_match_decision_compile(
     return decision;
 }
 
+CettaMatchDecision *cetta_match_decision_retain(
+    CettaMatchDecision *decision) {
+    if (!decision)
+        return NULL;
+    size_t owners = atomic_load_explicit(
+        &decision->owner_count, memory_order_relaxed);
+    while (owners != 0u && owners != SIZE_MAX) {
+        if (atomic_compare_exchange_weak_explicit(
+                &decision->owner_count, &owners, owners + 1u,
+                memory_order_relaxed, memory_order_relaxed)) {
+            return decision;
+        }
+    }
+    return NULL;
+}
+
 void cetta_match_decision_free(CettaMatchDecision *decision) {
     if (!decision)
+        return;
+    size_t owners = atomic_load_explicit(
+        &decision->owner_count, memory_order_relaxed);
+    for (;;) {
+        if (owners == 0u)
+            abort();
+        if (atomic_compare_exchange_weak_explicit(
+                &decision->owner_count, &owners, owners - 1u,
+                memory_order_acq_rel, memory_order_relaxed)) {
+            break;
+        }
+    }
+    if (owners != 1u)
         return;
     for (size_t path = 0u; path < decision->path_count; path++)
         match_decision_path_free(&decision->paths[path]);

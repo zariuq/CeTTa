@@ -1474,6 +1474,16 @@ static inline uint64_t term_universe_index_finalize(uint64_t h) {
     return h;
 }
 
+/* Intern tables have power-of-two capacities.  An odd stride therefore
+ * visits every slot while avoiding the primary clustering of linear
+ * probing.  Derive the stride from bits independent of the initial slot so
+ * structurally related terms do not all walk the same occupied run. */
+static inline size_t term_universe_intern_probe_index(
+    uint64_t hash, size_t probe, size_t mask) {
+    size_t stride = (size_t)((hash >> 32u) | UINT64_C(1));
+    return ((size_t)hash + probe * stride) & mask;
+}
+
 static uint64_t term_universe_index_mix_span(
     uint64_t h, const uint8_t *bytes, size_t len) {
     uint64_t span = UINT64_C(14695981039346656037);
@@ -1850,7 +1860,8 @@ static AtomId term_universe_lookup_record_id(const TermUniverse *universe,
     uint64_t hslot = term_universe_record_slot_hash(
         universe, hdr, payload, payload_len);
     for (size_t probe = 0; probe <= universe->intern_mask; probe++) {
-        size_t idx = ((size_t)hslot + probe) & universe->intern_mask;
+        size_t idx = term_universe_intern_probe_index(
+            hslot, probe, universe->intern_mask);
         uint64_t slot = term_universe_load_slot_value(
             universe, universe->intern_slots, idx);
         if (slot == 0) {
@@ -3288,7 +3299,8 @@ static bool term_universe_intern_reserve(TermUniverse *universe,
             AtomId id = slot - 1;
             uint64_t h = term_universe_entry_slot_hash(universe, id);
             for (size_t probe = 0; probe < size; probe++) {
-                size_t idx = ((size_t)h + probe) & next_mask;
+                size_t idx = term_universe_intern_probe_index(
+                    h, probe, next_mask);
                 if (term_universe_load_slot_value(universe, next, idx) == 0) {
                     (void)term_universe_store_slot_value(
                         term_universe_store_format(universe), next, idx, slot);
@@ -3512,7 +3524,8 @@ static AtomId term_universe_lookup_stable_id(const TermUniverse *universe,
     uint32_t h = atom_hash(src);
     uint64_t hslot = term_universe_atom_slot_hash(src);
     for (size_t probe = 0; probe <= universe->intern_mask; probe++) {
-        size_t idx = ((size_t)hslot + probe) & universe->intern_mask;
+        size_t idx = term_universe_intern_probe_index(
+            hslot, probe, universe->intern_mask);
         uint64_t slot = term_universe_load_slot_value(
             universe, universe->intern_slots, idx);
         if (slot == 0)
@@ -3560,7 +3573,8 @@ static bool term_universe_insert_stable_id(TermUniverse *universe, AtomId id) {
         return false;
     uint64_t h = term_universe_entry_slot_hash(universe, id);
     for (size_t probe = 0; probe <= universe->intern_mask; probe++) {
-        size_t idx = ((size_t)h + probe) & universe->intern_mask;
+        size_t idx = term_universe_intern_probe_index(
+            h, probe, universe->intern_mask);
         uint64_t slot = term_universe_load_slot_value(
             universe, universe->intern_slots, idx);
         if (slot == 0) {

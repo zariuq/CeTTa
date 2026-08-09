@@ -134,6 +134,10 @@ typedef struct {
     size_t catch_type_obligation_mark;
     uint64_t binding_growth_mark;
     uint64_t answer_weight;
+    /* The first operand was fully substituted immediately before this
+     * top-of-stack continuation was pushed.  Only the clause-result helpers
+     * set this bit; no intervening goal can extend the logical environment. */
+    bool first_operand_resolved;
 } PettaGoal;
 
 static void petta_machine_record_goal_class(
@@ -706,6 +710,27 @@ static Atom *petta_machine_apply_bindings_epoch_since(
     return result;
 }
 
+static Atom *petta_machine_apply_bindings_epoch_then_all(
+    PettaMachineImpl *machine, Bindings *bindings,
+    Arena *arena, Atom *atom, uint32_t epoch,
+    uint32_t first_entry) {
+    if (!machine)
+        return bindings_apply_epoch_then_all(
+            bindings, arena, atom, epoch, first_entry);
+    machine->stats.binding_apply_calls++;
+    bool rewrites = bindings && bindings->len > first_entry &&
+        atom && atom_has_vars(atom);
+    if (rewrites)
+        machine->stats.binding_apply_rewrites++;
+    size_t before = arena_accounted_live_bytes(arena);
+    Atom *result = bindings_apply_epoch_then_all(
+        bindings, arena, atom, epoch, first_entry);
+    petta_machine_add_u64(
+        &machine->stats.binding_apply_allocated_bytes,
+        petta_machine_arena_growth(arena, before));
+    return result;
+}
+
 /*
  * A structural observer needs a value together with its environment, not a
  * recursively substituted copy of the value.  Follow only a root variable
@@ -765,6 +790,7 @@ typedef struct {
     Bindings environment;
     bool present;
     bool capacity;
+    bool result_fully_resolved;
 } PettaClauseMatch;
 
 typedef enum {
@@ -2490,10 +2516,13 @@ static bool petta_machine_match_epoch_candidate(
  */
 static PettaClauseSlotMatch petta_machine_clause_slot_match(
     PettaMachineImpl *machine, Atom *equation, Atom *query,
-    Atom **result_out) {
+    Atom **result_out, bool *result_fully_resolved_out) {
     if (result_out)
         *result_out = NULL;
+    if (result_fully_resolved_out)
+        *result_fully_resolved_out = false;
     if (!machine || !equation || !query || !result_out ||
+        !result_fully_resolved_out ||
         equation->kind != ATOM_EXPR ||
         equation->expr.len != 3u ||
         !atom_is_symbol_id(
@@ -2531,18 +2560,28 @@ static PettaClauseSlotMatch petta_machine_clause_slot_match(
     (void)petta_machine_finish_unification(
         machine, builder, growth_before,
         heap_before, true);
-    /* The query was instantiated through the older environment before this
-     * activation.  Apply the rule body through only the bindings appended by
-     * this match: that substitutes the rule's epoch-local slots without
-     * reconstructing outer substitutions already represented on the trail. */
-    Atom *result = petta_machine_apply_bindings_epoch_since(
-        machine, bindings, &machine->heap, rhs, epoch,
-        activation_first_entry);
+    /* A payload-visible receipt observes the historical activation-local
+     * result, so retain the exact suffix-only boundary.  Otherwise compose
+     * activation substitution with the already-live outer environment in one
+     * traversal.  The resulting body is immediately scheduled at the top of
+     * the goal stack and need not be reconstructed on the next transition. */
+    bool payload_observed = machine->host.record_clause_use &&
+        (!machine->host.clause_result_payload_observed ||
+         machine->host.clause_result_payload_observed(
+             machine->host.context));
+    Atom *result = payload_observed
+        ? petta_machine_apply_bindings_epoch_since(
+              machine, bindings, &machine->heap, rhs, epoch,
+              activation_first_entry)
+        : petta_machine_apply_bindings_epoch_then_all(
+              machine, bindings, &machine->heap, rhs, epoch,
+              activation_first_entry);
     if (!result) {
         bindings_builder_rollback(builder, mark);
         return PETTA_CLAUSE_SLOT_CAPACITY;
     }
     *result_out = result;
+    *result_fully_resolved_out = !payload_observed;
     return PETTA_CLAUSE_SLOT_MATCH;
 }
 
@@ -2644,6 +2683,21 @@ static bool petta_push_solve_planned(
         });
 }
 
+static bool petta_push_solve_planned_resolved(
+    PettaMachineImpl *machine, Atom *expression, Atom *expected,
+    uint32_t barrier, const PettaPlanNode *plan) {
+    return petta_goal_push(
+        machine,
+        (PettaGoal){
+            .kind = PETTA_GOAL_SOLVE,
+            .barrier = barrier,
+            .first = expression,
+            .second = expected,
+            .plan = plan,
+            .first_operand_resolved = true,
+        });
+}
+
 /*
  * Evaluate a value as code at an explicit PeTTa forcing boundary.  Ordinary
  * SOLVE retains the authored role of a variable: substitution may supply an
@@ -2691,17 +2745,35 @@ static bool petta_push_counted_collection_planned(
         });
 }
 
+static bool petta_push_counted_collection_planned_resolved(
+    PettaMachineImpl *machine, Atom *expression, Atom *expected,
+    uint32_t barrier, const PettaPlanNode *plan) {
+    return petta_goal_push(
+        machine,
+        (PettaGoal){
+            .kind = PETTA_GOAL_SOLVE_COUNTED_COLLECTION,
+            .barrier = barrier,
+            .first = expression,
+            .second = expected,
+            .plan = plan,
+            .first_operand_resolved = true,
+        });
+}
+
 static bool petta_push_clause_result(
     PettaMachineImpl *machine, Atom *result, Atom *expected,
     uint32_t barrier, bool evaluate_result,
     bool translate_result, bool count_collection_result,
-    const PettaPlanNode *plan) {
+    const PettaPlanNode *plan, bool result_fully_resolved) {
     if (!evaluate_result)
         return petta_push_unify(
             machine, result, expected, barrier);
     if (count_collection_result && !translate_result) {
-        return petta_push_counted_collection_planned(
-            machine, result, expected, barrier, plan);
+        return result_fully_resolved
+            ? petta_push_counted_collection_planned_resolved(
+                  machine, result, expected, barrier, plan)
+            : petta_push_counted_collection_planned(
+                  machine, result, expected, barrier, plan);
     }
     /*
      * A Predicate value returned by an ordinary equation is reified data.
@@ -2719,8 +2791,11 @@ static bool petta_push_clause_result(
             machine, result, expected, barrier);
     }
     if (!translate_result)
-        return petta_push_solve_planned(
-            machine, result, expected, barrier, plan);
+        return result_fully_resolved
+            ? petta_push_solve_planned_resolved(
+                  machine, result, expected, barrier, plan)
+            : petta_push_solve_planned(
+                  machine, result, expected, barrier, plan);
 
     /*
      * A registered translator relation computes a program fragment and then
@@ -2739,10 +2814,15 @@ static bool petta_push_clause_result(
             machine, translated, expected, barrier, NULL)) {
         return false;
     }
-    return petta_push_force(
-               machine, generated, translated, barrier) &&
-           petta_push_solve_planned(
-               machine, result, generated, barrier, plan);
+    if (!petta_push_force(
+            machine, generated, translated, barrier)) {
+        return false;
+    }
+    return result_fully_resolved
+        ? petta_push_solve_planned_resolved(
+              machine, result, generated, barrier, plan)
+        : petta_push_solve_planned(
+              machine, result, generated, barrier, plan);
 }
 
 /*
@@ -5989,10 +6069,12 @@ static bool petta_machine_advance_choice(
                 !relational_head &&
                 !petta_semantics_contains_cons_constraint(lhs_shape)) {
                 Atom *slot_result = NULL;
+                bool slot_result_fully_resolved = false;
                 PettaClauseSlotMatch slot_status =
                     petta_machine_clause_slot_match(
                         machine, equation, match_query,
-                        &slot_result);
+                        &slot_result,
+                        &slot_result_fully_resolved);
                 if (slot_status == PETTA_CLAUSE_SLOT_CAPACITY) {
                     *failure = PETTA_MACHINE_STEP_CAPACITY;
                     return false;
@@ -6001,6 +6083,8 @@ static bool petta_machine_advance_choice(
                     match.result = slot_result;
                     match.present = true;
                     slot_matched = true;
+                    match.result_fully_resolved =
+                        slot_result_fully_resolved;
                 }
             }
             if (!slot_matched && !relational_head) {
@@ -6080,7 +6164,8 @@ static bool petta_machine_advance_choice(
                     choice->as.clause.evaluate_result,
                     choice->as.clause.translate_result,
                     choice->as.clause.count_collection_result,
-                    result_plan);
+                    result_plan,
+                    match.result_fully_resolved);
                 if (!scheduled) {
                     *failure = PETTA_MACHINE_STEP_CAPACITY;
                     return false;
@@ -6153,7 +6238,7 @@ static bool petta_machine_advance_choice(
                 choice->as.clause.evaluate_result,
                 choice->as.clause.translate_result,
                 choice->as.clause.count_collection_result,
-                result_plan);
+                result_plan, false);
             if (!body_scheduled) {
                 *failure = PETTA_MACHINE_STEP_CAPACITY;
                 return false;
@@ -7915,7 +8000,7 @@ static bool petta_machine_start_match_choice(
         snapshot = cetta_malloc(
             sizeof(*snapshot) * (size_t)candidate_len);
         for (CettaIndex index = 0u; index < candidate_len; index++) {
-            Atom *candidate = space_get_at64(
+            Atom *candidate = space_match_candidate_at64(
                 space, candidate_indices[index]);
             if (candidate)
                 snapshot[snapshot_len++] = candidate;
@@ -9774,8 +9859,10 @@ static bool petta_machine_dispatch_solve(
         }
     }
 
-    Atom *expression = petta_machine_apply_bindings(machine,
-        environment, &machine->heap, goal->first);
+    Atom *expression = goal->first_operand_resolved
+        ? goal->first
+        : petta_machine_apply_bindings(machine,
+              environment, &machine->heap, goal->first);
     Atom *expected = petta_machine_apply_bindings(machine,
         environment, &machine->heap, goal->second);
     if (!expression || !expected) {

@@ -185,6 +185,9 @@ void space_free(Space *s);
 Atom *space_store_atom(Space *s, Arena *fallback, Atom *atom);
 void space_add(Space *s, Atom *atom);
 void space_add_atom_id(Space *s, AtomId atom_id);
+bool space_atom_id_requires_authored_order(const Space *s,
+                                           AtomId atom_id,
+                                           Atom *atom);
 /* Replay one ordered declaration block.  Backends may apply it transactionally
    as one publication; unsupported fragments retain singular semantics. */
 bool space_add_atom_ids_batch(Space *s, const AtomId *atom_ids,
@@ -484,11 +487,14 @@ bool space_remove_atom_ids_batch(Space *s, const AtomId *atom_ids,
 
 /* ── Match Indexing ─────────────────────────────────────────────────────── */
 
-/* Return candidate atom indices for a match pattern via discrimination trie.
+/* Return backend-private candidate coordinates for a match pattern via its
+   discrimination index. Dereference them with space_match_candidate_at64;
+   they need not share the public logical get-atoms order.
    For small spaces (< MATCH_TRIE_THRESHOLD), returns all indices.
    Caller must free(*out). Returns count. */
 CettaIndex space_match_candidates64(Space *s, Atom *pattern, CettaIndex **out);
 uint32_t space_match_candidates(Space *s, Atom *pattern, uint32_t **out);
+Atom *space_match_candidate_at64(const Space *s, CettaIndex idx);
 /*
  * Try an exact multiplicity-preserving COUNT without constructing bindings
  * or result atoms.  The admitted fragment is backend-defined but must be a

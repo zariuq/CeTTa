@@ -227,6 +227,12 @@ typedef struct {
         void *context, Arena *owner, uint64_t call_occurrence,
         const PettaClauseCandidate *candidate, Atom *result,
         const Bindings *environment, Bindings *evidence_delta);
+    /* True only when record_clause_use observes the structural result payload.
+     * A host that supplies record_clause_use but omits this callback is treated
+     * conservatively as payload-observing.  When false, the machine may fuse
+     * activation and outer-environment substitution before recording the
+     * occurrence IDs; the callback must then ignore the result payload. */
+    bool (*clause_result_payload_observed)(void *context);
     bool (*translator_rule_contains)(
         void *context, SymbolId head);
     bool (*translator_rule_set)(
