@@ -14,7 +14,7 @@
 !(corr:ignore-empty (empty))
 !(corr:ignore-fault (== 1 "bad"))
 !(corr:ignore-divergence (corr:omega))
-!(collapse (corr:id (== 1 "bad")))
+!(reify (corr:id (== 1 "bad")))
 
 ; Equation-to-canonical closure transfer: the RHS closure captures the
 ; equation argument's thunk and a canonical App later demands it.

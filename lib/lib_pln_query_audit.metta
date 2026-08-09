@@ -13,14 +13,14 @@
    $c)
 
 (= (PLN.TupleContains $tuple $item)
-   (not (== (collapse (let $x (superpose $tuple)
+   (not (== (reify (let $x (superpose $tuple)
                           (if (== $x $item)
                               True
                               (empty))))
             ())))
 
 (= (PLN.QueryAuditFromBeliefs $BeliefsRet $term)
-   (collapse
+   (reify
      (case (superpose $BeliefsRet)
        (((Sentence ($Term $TV) $Ev)
          (case (== $Term $term)
@@ -41,7 +41,7 @@
    (PLN.QueryAudit $kb $term (PLN.Config.MaxSteps)))
 
 (= (PLN.HasStrongerConfidence $audit $cand)
-   (not (== (collapse
+   (not (== (reify
               (let $other (superpose $audit)
                    (if (> (PLN.CandidateConfidence $other)
                           (PLN.CandidateConfidence $cand))
@@ -52,7 +52,7 @@
 (= (PLN.QueryTopTiesFromAudit $audit)
    (if (== $audit ())
        ()
-       (collapse
+       (reify
          (let $cand (superpose $audit)
               (if (PLN.HasStrongerConfidence $audit $cand)
                   (empty)
@@ -78,7 +78,7 @@
            (PLN.CandidateConfidence $cand))))
 
 (= (PLN.HasStrongerSameValue $audit $cand)
-   (not (== (collapse
+   (not (== (reify
               (let $other (superpose $audit)
                    (if (PLN.WeakerSameValue $other $cand)
                        True
@@ -88,7 +88,7 @@
 (= (PLN.QueryPrunedAuditFromAudit $audit)
    (if (== $audit ())
        ()
-       (collapse
+       (reify
          (let $cand (superpose $audit)
               (if (PLN.HasStrongerSameValue $audit $cand)
                   (empty)

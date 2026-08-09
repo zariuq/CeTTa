@@ -5,3 +5,5 @@
 (-> (+ 1 2) Result)
 (: Tag 3)
 (: Tag (+ 1 2))
+(a a b)
+(a a b)

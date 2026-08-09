@@ -25,6 +25,14 @@ void cetta_gslt_compiled_program_free(CettaGsltCompiledProgram *program);
 size_t cetta_gslt_compiled_program_rule_count(
     const CettaGsltCompiledProgram *program);
 
+/* Admission bridge between authored source and its generated residual plan.
+ * Equality is alpha-invariant and rule-order invariant, but preserves every
+ * named rule occurrence, literal, head, body goal, and repeated binder. */
+bool cetta_gslt_compiled_program_matches_source_v1(
+    const CettaGsltCompiledProgram *program,
+    const CettaGsltHornProgram *source,
+    char *error, size_t error_size);
+
 /*
  * Fair worklist execution of the generated finite-Horn residual program.
  * The static rule plan is already parsed, arity-checked, and variable-slotted;

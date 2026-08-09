@@ -2740,6 +2740,15 @@ static Atom *petta_reify_outcome_bag(Arena *a, OutcomeSet *outcomes) {
     return atom_expr(a, items, visible);
 }
 
+static SymbolId eval_reify_head(void) {
+    return g_builtin_syms.reify;
+}
+
+static bool eval_is_reify_head(SymbolId head) {
+    return head == g_builtin_syms.reify ||
+        head == g_builtin_syms.collapse;
+}
+
 static bool petta_emit_test_diagnostic(Atom *actual, Atom *expected,
                                        bool equal) {
     if (fputs("is ", stdout) == EOF)
@@ -28956,9 +28965,9 @@ static bool petta_eval_machine_evaluate_host(
         (atom_is_symbol_id(
              host_expression->expr.elems[0],
              g_builtin_syms.once) ||
-         atom_is_symbol_id(
-             host_expression->expr.elems[0],
-             g_builtin_syms.collapse)) &&
+         (host_expression->expr.elems[0]->kind == ATOM_SYMBOL &&
+          eval_is_reify_head(
+              host_expression->expr.elems[0]->sym_id))) &&
         host_expression->expr.elems[1] &&
         host_expression->expr.elems[1]->kind == ATOM_EXPR &&
         host_expression->expr.elems[1]->expr.len == 2u &&
@@ -29361,7 +29370,7 @@ static bool petta_eval_machine_admits_root(
         head == g_builtin_syms.case_text ||
         head == g_builtin_syms.superpose ||
         head == g_builtin_syms.hyperpose ||
-        head == g_builtin_syms.collapse ||
+        eval_is_reify_head(head) ||
         head == g_builtin_syms.foldl_atom ||
         head == g_builtin_syms.filter_atom ||
         head == g_builtin_syms.size_atom ||
@@ -29524,6 +29533,7 @@ static bool petta_eval_machine_try(
         },
         .measure_stats = petta_eval_machine_stats_enabled(),
         .quote_is_inert_data = prime_machine,
+        .reify_head = g_builtin_syms.reify,
         .permit_transition = petta_eval_machine_permit_transition,
         .classify = petta_eval_machine_classify_host,
         .resolve_space = petta_eval_machine_resolve_space,
@@ -31005,8 +31015,9 @@ prime_need_strict_argument_ready:
             petta_form == PETTA_FORM_CALL ||
             petta_form == PETTA_FORM_EVAL ||
             petta_form == PETTA_FORM_REDUCE) {
-            Atom *lowered =
-                petta_semantics_lower(a, atom, petta_form);
+            Atom *lowered = petta_semantics_lower(
+                a, atom, petta_form,
+                eval_reify_head());
             if (lowered)
                 TAIL_REENTER(lowered);
             if (petta_form == PETTA_FORM_MAP_ATOM)
@@ -31292,37 +31303,37 @@ petta_lowered_to_shared_form:
         return;
     }
 
-    /* ── collapse ──────────────────────────────────────────────────────── */
-    if (head_id == g_builtin_syms.collapse && nargs == 1) {
-        bool prime_need_collapse =
+    /* ── answer traversal reification ─────────────────────────────────── */
+    if (eval_is_reify_head(head_id) && nargs == 1) {
+        bool prime_need_reify =
             language_id == CETTA_LANGUAGE_PRIME;
-        if (!prime_need_collapse && !preserve_bindings &&
+        if (!prime_need_reify && !preserve_bindings &&
             try_effect_batch_append_collapse(s, a, expr_arg(atom, 0),
                                              fuel, CURRENT_ENV, os)) {
             return;
         }
-        if (!prime_need_collapse && !preserve_bindings &&
+        if (!prime_need_reify && !preserve_bindings &&
             collapse_let_stream(s, a, expr_arg(atom, 0), fuel, CURRENT_ENV, os)) {
             return;
         }
-        if (!prime_need_collapse &&
+        if (!prime_need_reify &&
             hyperpose_threaded_stream(s, a, expr_arg(atom, 0), fuel, false, 0,
                                       preserve_bindings, os)) {
             return;
         }
-        /* Collapse delimits the stream's bindings: both the materializing
-           oracle below and collapse_direct_stream publish one tuple with an
-           empty environment.  The caller's preserve-bindings request must
-           therefore not disable the equivalent direct consumer. */
-        if (!prime_need_collapse &&
+        /* Reification delimits the stream's bindings: both the materializing
+           oracle below and the direct-stream realization publish one tuple
+           with an empty environment.  The caller's preserve-bindings request
+           must therefore not disable the equivalent direct consumer. */
+        if (!prime_need_reify &&
             collapse_direct_stream(s, a, expr_arg(atom, 0), fuel, os)) {
             return;
         }
-        if (prime_need_collapse) {
+        if (prime_need_reify) {
             StreamCollectCtx collect = {
                 .reify_need = true,
             };
-            /* Collapse is an observation boundary, not a fresh evaluation
+            /* Reification is an observation boundary, not a fresh evaluation
              * episode.  Evaluate its stream in the current Prime branch so
              * open thunks see the branch's matcher refinements and heap.
              * The generic direct walker has no prefix parameter and would

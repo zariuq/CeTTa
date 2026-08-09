@@ -124,7 +124,7 @@
 (= (atp:weighted-agenda:bounded-successors
      $knowledge $index $state $candidate-policy $limit)
    (let $all
-        (collapse
+        (reify
           (atp:weighted-agenda:expand
             $knowledge $index $state $candidate-policy))
      (atp:weighted-agenda:successor-batch

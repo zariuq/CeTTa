@@ -5,6 +5,7 @@
 #include "gslt_language_runtime.h"
 #include "generated/subzero_language_v1.generated.h"
 #include "generated/zero_language_v1.generated.h"
+#include "generated/zero_exp_language_v1.generated.h"
 #include "petta_compiled_reader.h"
 #include "petta_typecheck.h"
 #include "lib_prolog.h"
@@ -2629,9 +2630,12 @@ int main(int argc, char **argv) {
              lang->id == CETTA_LANGUAGE_ZERO) {
         char language_error[512] = {0};
         const CettaGsltEmbeddedLanguageV1 *descriptor =
-            lang->id == CETTA_LANGUAGE_ZERO
-                ? &cetta_zero_language_v1
-                : &cetta_subzero_language_v1;
+            &cetta_subzero_language_v1;
+        if (lang->id == CETTA_LANGUAGE_ZERO) {
+            descriptor = profile && profile->id == CETTA_PROFILE_ZERO_EXP
+                ? &cetta_zero_exp_language_v1
+                : &cetta_zero_language_v1;
+        }
         if (!cetta_gslt_language_load_embedded_for_realization(
                 descriptor, gslt_realization,
                 &gslt_language,

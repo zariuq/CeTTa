@@ -16,11 +16,11 @@
 
 ; The explicit zero form has no occurrence, including across an equation.
 !(assertEqualToResult
-   (collapse (empty))
+   (reify (empty))
    (()))
 
 !(assertEqualToResult
-   (collapse ())
+   (reify ())
    ((())))
 
 !(assertEqualToResult
@@ -78,7 +78,7 @@
    ((Cons Empty ())))
 
 !(assertEqualToResult
-   (collapse (superpose (Empty a)))
+   (reify (superpose (Empty a)))
    ((Empty a)))
 
 !(assertEqualToResult
@@ -126,17 +126,17 @@
 ; streaming operators may derive success-only views explicitly, but the
 ; evaluator itself never deletes a fault merely because another branch won.
 !(assertEqualToResult
-   (collapse (superpose ((Error prime-report boom) ok)))
+   (reify (superpose ((Error prime-report boom) ok)))
    (((Error prime-report boom) ok)))
 
 !(assertEqualToResult
-   (collapse
+   (reify
      (let $value (superpose ((Error prime-report boom) ok))
        (seen $value)))
    (((Error prime-report boom) (seen ok))))
 
 !(assertEqualToResult
-   (collapse
+   (reify
      (case (superpose ((Error prime-report boom) ok))
        (($value (seen $value)))))
    (((Error prime-report boom) (seen ok))))
@@ -172,8 +172,14 @@
    (matched-empty))
 
 !(assertEqualToResult
-   (collapse (hyperpose (Empty a)))
+   (reify (hyperpose (Empty a)))
    ((Empty a)))
+
+; Prime retains `collapse` as a compatibility alias while reify remains the
+; canonical occurrence materializer for new code and specifications.
+!(assertEqualToResult
+   (collapse (superpose (a b)))
+   ((a b)))
 
 !(assertEqualToResult
    (bind! &prime-empty-space (new-space))
@@ -184,7 +190,7 @@
    (()))
 
 !(assertEqualToResult
-   (collapse (get-atoms &prime-empty-space))
+   (reify (get-atoms &prime-empty-space))
    ((Empty)))
 
 !(assertEqualToResult
@@ -198,4 +204,4 @@
    (system:arg 0)
    ((CliArgumentNotFound 0)))
 
-!(println! (PrimeEmptyObservationSummary 34 34 0))
+!(println! (PrimeEmptyObservationSummary 35 35 0))

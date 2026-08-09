@@ -31,7 +31,7 @@
 
 ;; Stamp intersection: elements appearing in both tuples.
 (= (StampIntersection $S1 $S2)
-   (collapse (let* (($x (superpose $S1))
+   (reify (let* (($x (superpose $S1))
                     ($y (superpose $S2)))
                    (case (== $x $y) ((True $x))))))
 

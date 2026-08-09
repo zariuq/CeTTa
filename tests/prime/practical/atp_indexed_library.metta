@@ -39,7 +39,7 @@
 
 ; The score is an inspectable dot product over the declared feature basis.
 !(assertEqual
-   (collapse
+   (reify
      (let $candidate
           (atp:indexed:support-candidate
             &indexed-kb &rule-index 4 ATP.RightToLeft
@@ -79,7 +79,7 @@
 !(add-atom &stale-index (ATP.Index.Fact ch 999 forged-fact))
 !(add-atom &stale-index (ATP.Index.Hypothesis ch 999 forged-hypothesis))
 !(assertEqual
-   (collapse
+   (reify
      (atp:indexed:prove-checked
        &indexed-kb &stale-index ch 2 100000 &policy))
    ())
@@ -98,7 +98,7 @@
     (ATP.CoarseToFine 1 1 1 &loop-ranker &loop-ranker)
     ATP.RightToLeft))
 !(assertEqual
-   (collapse
+   (reify
      (atp:indexed:prove-checked
        &loop-kb &loop-index Loop 8 100000 &loop-policy))
    ())
