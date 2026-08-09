@@ -4,7 +4,7 @@
     (() (pragma! search-table-mode ground-call))
     (() (bind! &kb (new-space)))
     (() (add-atom &kb (n 1)))
-    (() (assertEqual (collapse (match &kb (n $x) $x)) (1)))
+    (() (assertEqual (reify (match &kb (n $x) $x)) (1)))
     (() (add-atom &self (= (gc:read $k) (match &kb (n $x) $x))))
     (() (assertEqual (gc:read 0) 1))
     (() (remove-atom &kb (n 1)))

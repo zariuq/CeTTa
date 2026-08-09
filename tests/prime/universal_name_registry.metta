@@ -8,12 +8,12 @@
 !(add-atom &@(doc (package beta)) (entry beta-text))
 
 !(assertEqual
-    (collapse
+    (reify
       (match &@(doc (package alpha))
              (entry $@(text)) $@(text)))
     (alpha-text))
 !(assertEqual
-    (collapse
+    (reify
       (match &@(doc (package beta))
              (entry $@(text)) $@(text)))
     (beta-text))
@@ -24,12 +24,12 @@
 
 ; Distinct structural descriptors do not alias.
 !(assertEqual
-    (collapse
+    (reify
       (match &@(doc (package alpha))
              (entry beta-text) found))
     ())
 !(assertEqual
-    (collapse
+    (reify
       (match &@(doc (package beta))
              (entry alpha-text) found))
     ())

@@ -69,7 +69,7 @@
      $knowledge $index $obligations)
    (let ((ATP.Obligation $hole $goal $depth $ancestors) $rest)
         (decons-atom $obligations)
-     (+ (if (== (collapse
+     (+ (if (== (reify
                    (atp:indexed:hypothesis $knowledge $index $goal))
                 ())
             1

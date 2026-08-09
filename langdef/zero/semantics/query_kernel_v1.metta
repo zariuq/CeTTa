@@ -22,7 +22,9 @@
     (operator zero-program-cons 3)
     (operator zero-public-query 8)
     (operator zero-query-evidence 3)
-    (operator zero-query-request 3))
+    (operator zero-query-request 3)
+    (operator zero-reify-evaluate-request 2)
+    (operator zero-reify-query-request 3))
   (equations)
   (rewrites
     ; Request classification is authored and exhaustive.  Forms not
@@ -45,6 +47,39 @@
             (q-sym (q-str "!"))
             (q-cons ?subject q-nil))
           (zero-evaluate-request ?request-occurrence ?subject)))
+      (body))
+
+    ; Reification eliminates one already-declared computation request.  Its
+    ; result is one expression containing every visible occurrence.  The
+    ; element order is a realization-chosen traversal witness; the language
+    ; promises multiplicity and membership, not an ordering law.
+    (rule zero-classify-reify-query
+      (head
+        (zero-classify
+          ?request-occurrence
+          (q-app
+            (q-sym (q-str "reify"))
+            (q-cons
+              (q-app
+                (q-sym (q-str "zero-query"))
+                (q-cons ?pattern (q-cons ?template q-nil)))
+              q-nil))
+          (zero-reify-query-request
+            ?request-occurrence ?pattern ?template)))
+      (body))
+    (rule zero-classify-reify-evaluate
+      (head
+        (zero-classify
+          ?request-occurrence
+          (q-app
+            (q-sym (q-str "reify"))
+            (q-cons
+              (q-app
+                (q-sym (q-str "!"))
+                (q-cons ?subject q-nil))
+              q-nil))
+          (zero-reify-evaluate-request
+            ?request-occurrence ?subject)))
       (body))
 
     ; The list represents an occurrence bag only.  No rule exposes its
@@ -97,6 +132,35 @@
         (zero-public-query
           ?program ?request-occurrence ?pattern ?template
           ?candidate-occurrence ?environment ?result ?evidence)))
+
+    ; Reification changes only the observation of a request.  Production is
+    ; delegated to the same public query/evaluation relations, so it cannot
+    ; become a second evaluator.
+    (rule zero-produce-reify-query
+      (head
+        (zero-produce
+          ?program
+          (zero-reify-query-request
+            ?request-occurrence ?pattern ?template)
+          ?evidence ?result))
+      (body
+        (zero-produce
+          ?program
+          (zero-query-request
+            ?request-occurrence ?pattern ?template)
+          ?evidence ?result)))
+    (rule zero-produce-reify-evaluate
+      (head
+        (zero-produce
+          ?program
+          (zero-reify-evaluate-request
+            ?request-occurrence ?subject)
+          ?evidence ?result))
+      (body
+        (zero-produce
+          ?program
+          (zero-evaluate-request ?request-occurrence ?subject)
+          ?evidence ?result)))
 
     ; Evaluation obtains every candidate equation through public query using
     ; a reserved quoted wildcard, then invokes the same structural matcher on

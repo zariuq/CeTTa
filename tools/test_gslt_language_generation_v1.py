@@ -27,6 +27,7 @@ def generate(
     symbol: str,
     header_include: str,
     source_root: Path | None = None,
+    profile: str | None = None,
 ) -> None:
     command = [
         "python3",
@@ -44,6 +45,8 @@ def generate(
     ]
     if source_root:
         command.extend(("--source-root", str(source_root)))
+    if profile:
+        command.extend(("--profile", profile))
     completed = subprocess.run(
         command,
         text=True,
@@ -89,6 +92,7 @@ def main() -> int:
     parser.add_argument("--generator", type=Path, required=True)
     parser.add_argument("--manifest", type=Path, required=True)
     parser.add_argument("--source-root", type=Path)
+    parser.add_argument("--profile")
     parser.add_argument("--header", type=Path, required=True)
     parser.add_argument("--source", type=Path, required=True)
     parser.add_argument("--symbol", required=True)
@@ -118,6 +122,7 @@ def main() -> int:
             arguments.symbol,
             arguments.header_include,
             source_root,
+            arguments.profile,
         )
         generate(
             generator,
@@ -127,6 +132,7 @@ def main() -> int:
             arguments.symbol,
             arguments.header_include,
             source_root,
+            arguments.profile,
         )
         same_bytes(first_header, second_header, "header generation is unstable")
         same_bytes(first_source, second_source, "source generation is unstable")
@@ -142,7 +148,9 @@ def main() -> int:
         copied_language = temporary / "language"
         shutil.copytree(source_root, copied_language)
         copied_manifest = copied_language / manifest.relative_to(source_root)
-        copied_definition = language_generator.parse_manifest(copied_manifest)
+        copied_definition = language_generator.parse_manifest(
+            copied_manifest, arguments.profile
+        )
         if not copied_definition.semantic_sources:
             raise GateFailure("language manifest has no semantic source")
         semantic_source = (
@@ -163,6 +171,7 @@ def main() -> int:
             arguments.symbol,
             arguments.header_include,
             copied_language,
+            arguments.profile,
         )
         if mutated_source.read_bytes() == first_source.read_bytes():
             raise GateFailure("semantic-source mutation did not change the pack")
@@ -200,6 +209,7 @@ def main() -> int:
             arguments.symbol,
             arguments.header_include,
             copied_language,
+            arguments.profile,
         )
         if compiled_plan_digest(plan_mutated_source) == compiled_plan_digest(
             first_source
@@ -229,6 +239,7 @@ def main() -> int:
             arguments.symbol,
             arguments.header_include,
             source_root,
+            arguments.profile,
         )
         if compiler_digest(compiler_mutated_source) == compiler_digest(
             first_source

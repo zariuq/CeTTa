@@ -7,7 +7,7 @@
 (= (prime-grad:choose) 2)
 
 !(prime-grad:twice 21)
-!(collapse (prime-grad:choose))
+!(reify (prime-grad:choose))
 !(prime-judge &self
    (Must (PrimeEvaluate (prime-grad:choose)) Number))
 !(prime-judge &self
@@ -24,6 +24,6 @@
 !(bind! &prime-grad:state (new-space))
 !(add-atom &prime-grad:state (seen alpha))
 !(add-atom &prime-grad:state (seen beta))
-!(collapse (match &prime-grad:state (seen $x) $x))
+!(reify (match &prime-grad:state (seen $x) $x))
 !(remove-atom &prime-grad:state (seen beta))
-!(collapse (match &prime-grad:state (seen $x) $x))
+!(reify (match &prime-grad:state (seen $x) $x))

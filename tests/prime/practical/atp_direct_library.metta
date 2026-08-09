@@ -39,7 +39,7 @@
 
 ; Negative: absence of a derivation remains absence, never a refutation or a
 ; fabricated proof.
-!(assertEqual (collapse (atp:direct:prove &direct-kb Unprovable 0)) ())
+!(assertEqual (reify (atp:direct:prove &direct-kb Unprovable 0)) ())
 !(println! (ATPDirectLibrary checkpoint absence-checked))
 
 ; Negative: the cyclic substitution that once fabricated an arbitrary target
@@ -60,7 +60,7 @@
               CyclicBindingRejected)
 !(println! (ATPDirectLibrary checkpoint occurs-surface-checked))
 !(assertEqual
-   (collapse
+   (reify
      (atp:direct:certify
        (pm2.24ii (pm2.18i notnot) (pm2.18i notnotr))
        Target

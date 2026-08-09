@@ -37,6 +37,7 @@
 (: import! (-> Atom Atom (->)))
 (: select (-> Atom %Undefined%))
 (: hyperpose (-> Expression %Undefined%))
+(: reify (-> Atom Expression))
 (: collect (-> Atom Expression))
 (: fold (-> Atom Atom Variable Variable Atom %Undefined%))
 (: fold-by-key (-> Atom Atom Variable Variable Atom Atom %Undefined%))
@@ -176,9 +177,15 @@
   (@return "Nondeterministic answer occurrences"))
 
 (@doc collapse
-  (@desc "Batch-materializes a finite answer traversal as one expression datum in the active traversal order. In Prime, zero answers produce (), one unit-valued answer produces (()), and Empty and fault occurrences are retained. The returned expression contains occurrences only: it does not encode completion, receipts, or other exact-run information. Use let, case, or fold when answers should remain streaming computations rather than collection data.")
+  (@desc "Compatibility spelling for reify in HE, PeTTa, and Prime. It batch-materializes a finite answer traversal as one expression datum. New portable code should use reify; use let, case, or fold when answers should remain streaming computations rather than collection data.")
   (@params (
     (@param "Computation whose visible occurrences are materialized")))
+  (@return "One expression datum containing the visible occurrence sequence"))
+
+(@doc reify
+  (@desc "Canonical answer-observation boundary. Batch-materializes a finite answer traversal as one expression datum. The datum preserves visible occurrence multiplicity but promises no traversal order, completion receipt, or implementation-control representation. Dialect observation rules determine whether compatibility sentinels such as HE's Empty are visible.")
+  (@params (
+    (@param "Computation whose visible occurrences are reified")))
   (@return "One expression datum containing the visible occurrence sequence"))
 
 (@doc select
@@ -188,13 +195,13 @@
   (@return "Selected result, or a bounded packet in the two-argument extended form"))
 
 (@doc collect
-  (@desc "Compatibility collector over nondeterministic results. Evaluates the result fan-out, packages the visible occurrence sequence into one expression, and preserves the current traversal order. HE compatibility profiles omit their Empty sentinel; Prime retains Empty and fault occurrences. Prefer collapse in new code when you do not need explicit search-policy or result-order control. The policy form (collect (search-policy lane) results) keeps the lane/order choice explicit.")
+  (@desc "Compatibility collector over nondeterministic results. Evaluates the result fan-out and packages the visible occurrence sequence into one expression. HE compatibility profiles omit their Empty sentinel; Prime retains Empty and fault occurrences. Prefer reify in new code when no explicit search policy is needed. The policy form (collect (search-policy lane) results) keeps the lane choice explicit; neither form promises a semantic result order.")
   (@params (
     (@param "Result expression to evaluate")))
-  (@return "Collected expression of surviving results in current traversal order"))
+  (@return "Collected expression of surviving result occurrences"))
 
 (@doc hyperpose
-  (@desc "HE-extended nondeterministic branch surface with the same pure result frontier as superpose. Ordinary evaluation and collapse preserve deterministic source-order collection. For syntactically eligible static branch lists, (pragma! num-threads N) or --num-threads N with N greater than 1 enables OS-threaded branch execution for once/select 1 and collapse. Branches that depend on named registry handles, nonportable grounded values, or external/global runtime surfaces stay on the sequential fallback. Ordinary visible effects such as println! remain user responsibility.")
+  (@desc "HE-extended nondeterministic branch surface with the same pure result frontier as superpose. Reify and the HE compatibility spelling collapse expose the active traversal without promising a semantic result order. For syntactically eligible static branch lists, (pragma! num-threads N) or --num-threads N with N greater than 1 enables OS-threaded branch execution for once/select 1 and collection. Branches that depend on named registry handles, nonportable grounded values, or external/global runtime surfaces stay on the sequential fallback. Ordinary visible effects such as println! remain user responsibility.")
   (@params (
     (@param "Expression containing branch expressions")))
   (@return "Nondeterministic branch results"))
@@ -536,33 +543,33 @@
 (= (empty) Empty)
 
 (= (unique $arg)
-  (let $c (collapse $arg)
+  (let $c (reify $arg)
     (let $u (unique-atom $c)
       (superpose $u))))
 
 (= (union $arg1 $arg2)
-  (let $c1 (collapse $arg1)
-    (let $c2 (collapse $arg2)
+  (let $c1 (reify $arg1)
+    (let $c2 (reify $arg2)
       (let $u (union-atom $c1 $c2)
         (superpose $u)))))
 
 (= (intersection $arg1 $arg2)
-  (let $c1 (collapse $arg1)
-    (let $c2 (collapse $arg2)
+  (let $c1 (reify $arg1)
+    (let $c2 (reify $arg2)
       (let $u (intersection-atom $c1 $c2)
         (superpose $u)))))
 
 (= (subtraction $arg1 $arg2)
-  (let $c1 (collapse $arg1)
-    (let $c2 (collapse $arg2)
+  (let $c1 (reify $arg1)
+    (let $c2 (reify $arg2)
       (let $u (subtraction-atom $c1 $c2)
         (superpose $u)))))
 
 (= (assertAlphaEqual $actual $expected)
-  (assertAlphaEqualToResult $actual (collapse $expected)))
+  (assertAlphaEqualToResult $actual (reify $expected)))
 
 (= (assertAlphaEqualMsg $actual $expected $msg)
-  (assertAlphaEqualToResultMsg $actual (collapse $expected) $msg))
+  (assertAlphaEqualToResultMsg $actual (reify $expected) $msg))
 
 (= (type-cast $atom $type $space)
   (function
@@ -644,7 +651,7 @@
 
 (= (get-doc-function $space $name $type)
   (let $docs
-    (collapse
+    (reify
       (match $space (@doc $name $desc (@params $params) $ret)
         (let $type' (if (== $type %Undefined%) (undefined-doc-function-type $params) (cdr-atom $type))
           (let ($params' $ret') (get-doc-params $params $ret $type')
@@ -656,7 +663,7 @@
 (= (get-doc-atom $space $atom)
   (let $type (get-type-space $space $atom)
     (let $docs
-      (collapse
+      (reify
         (match $space (@doc $atom $desc)
           (@doc-formal (@item $atom) (@kind atom) (@type $type) $desc)))
       (if (== $docs ())
@@ -691,12 +698,12 @@
 
 (= (help-space! $space)
   (let $_
-    (collapse
+    (reify
       (match $space (@doc $name (@desc $desc) $params $ret)
         (let () (println! (format-args "{}\n\t{}" (noeval ($name $desc))))
           (empty))))
     (let $_
-      (collapse
+      (reify
         (match $space (@doc $name (@desc $desc))
           (let () (println! (format-args "{}\n\t{}" (noeval ($name $desc))))
             (empty))))

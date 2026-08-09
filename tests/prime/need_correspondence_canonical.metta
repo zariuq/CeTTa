@@ -9,7 +9,7 @@
 !(App (Lam T kept-empty) (empty))
 !(App (Lam T kept-fault) (== 1 "bad"))
 !(App (Lam T kept-divergence) (corr:omega))
-!(collapse (App (Lam T (idx 0)) (== 1 "bad")))
+!(reify (App (Lam T (idx 0)) (== 1 "bad")))
 
 ; Canonical closure carries the delayed outer argument through a second App.
 !(App (App (Lam T (Lam U (idx 1))) (superpose (A B))) ignored)

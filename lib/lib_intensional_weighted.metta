@@ -18,7 +18,7 @@
 !(bind! &intensional_meta (new-space))
 
 (= (Intensional.ClearSpace $space)
-   (collapse
+   (reify
      (match $space $atom
             (remove-atom $space $atom))))
 
@@ -26,10 +26,10 @@
    (Unique (StampConcat $S1 $S2) ()))
 
 (= (Intensional.SourceConceptProps $kb $concept)
-   (collapse (match $kb (ConceptProp $concept $P $w) ($P $w))))
+   (reify (match $kb (ConceptProp $concept $P $w) ($P $w))))
 
 (= (PropertyBeliefAudit $kb $entity $prop $maxsteps)
-   (collapse
+   (reify
      (match $kb
             (Sentence ((Inheritance $entity (IntSet $prop)) $tv) $stamp)
             ($tv $stamp))))
@@ -58,7 +58,7 @@
 
 (= (Intensional.PacketSnapshotFrom $packetSpace)
    (Unique
-     (collapse
+     (reify
        (match $packetSpace
               (packet $prop $tv $stamp)
               ($prop $tv $stamp)))
@@ -69,7 +69,7 @@
 
 (= (Intensional.CoveredSnapshotFrom $metaSpace)
    (Unique
-     (collapse
+     (reify
        (match $metaSpace (covered $prop) $prop))
      ()))
 
@@ -78,7 +78,7 @@
 
 (= (Intensional.MissingSnapshotFrom $metaSpace)
    (Unique
-     (collapse
+     (reify
        (match $metaSpace (missing $prop) $prop))
      ()))
 
@@ -94,7 +94,7 @@
             (let* (($_covered
                      (add-atom $metaSpace (covered $P)))
                     ($_packets
-                     (collapse
+                     (reify
                        (let $belief (superpose $audit)
                             (case $belief
                                   ((($tv $stamp)

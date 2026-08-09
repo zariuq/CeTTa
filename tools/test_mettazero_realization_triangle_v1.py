@@ -168,23 +168,23 @@ def observe(
     return sorted(sx.render(answer[4]) for answer in answers)
 
 
-def cli(cetta: Path, realization: str, program: str) -> str:
-    return run(
-        [
-            str(cetta),
-            "--lang",
-            "zero",
-            "--gslt-realization",
-            realization,
-            "-e",
-            program,
-        ]
-    )
+def cli(
+    cetta: Path, realization: str, program: str,
+    profile: str | None = None,
+) -> str:
+    command = [str(cetta), "--lang", "zero"]
+    if profile:
+        command.extend(("--profile", profile))
+    command.extend(("--gslt-realization", realization, "-e", program))
+    return run(command)
 
 
-def require_cli_pair(cetta: Path, program: str, expected: str) -> None:
-    horn = cli(cetta, "horn-reference", program)
-    compiled = cli(cetta, "compiled-worklist", program)
+def require_cli_pair(
+    cetta: Path, program: str, expected: str,
+    profile: str | None = None,
+) -> None:
+    horn = cli(cetta, "horn-reference", program, profile)
+    compiled = cli(cetta, "compiled-worklist", program, profile)
     if horn != expected or compiled != horn:
         raise GateFailure(
             f"public realizations diverged: horn={horn!r} "
@@ -199,6 +199,7 @@ def main() -> int:
     parser.add_argument("--quote-match", type=Path, required=True)
     parser.add_argument("--query-kernel", type=Path, required=True)
     parser.add_argument("--observation", type=Path, required=True)
+    parser.add_argument("--runner", type=Path, required=True)
     parser.add_argument("--ground-capability", type=Path, required=True)
     arguments = parser.parse_args()
     cetta = arguments.cetta.resolve()
@@ -208,6 +209,7 @@ def main() -> int:
         arguments.query_kernel.resolve(),
         arguments.observation.resolve(),
     )
+    runner_sources = (*sources, arguments.runner.resolve())
 
     ground_sources = (*sources, arguments.ground_capability.resolve())
 
@@ -375,6 +377,63 @@ def main() -> int:
         raise GateFailure(f"chart changed query-derived evaluation: {evaluated}")
     require_cli_pair(cetta, "(= (f $x) (g $x)) (! (f a))", "[(g a)]")
 
+    reify_evaluate_surface = qapp(qsym("reify"), evaluate_surface)
+    classified_reify_evaluate = relation_answers(
+        chart,
+        sources,
+        "zero-classify",
+        3,
+        f"(zero-classify request-reify-evaluate "
+        f"{reify_evaluate_surface} ?request)",
+    )
+    if len(classified_reify_evaluate) != 1:
+        raise GateFailure("evaluation reification classification changed")
+    reify_evaluate_request = sx.render(classified_reify_evaluate[0][3])
+    reified_evaluation = observe(
+        chart,
+        sources,
+        reify_evaluate_request,
+        produce(chart, sources, program, reify_evaluate_request),
+    )
+    if reified_evaluation != [qapp(qapp(qsym("g"), qsym("a")))]:
+        raise GateFailure(
+            f"chart changed evaluation reification: {reified_evaluation}"
+        )
+    require_cli_pair(
+        cetta,
+        "(= (f $x) (g $x)) (reify (! (f a)))",
+        "[((g a))]",
+    )
+
+    reify_query_surface = qapp(qsym("reify"), query_surface)
+    classified_reify_query = relation_answers(
+        chart,
+        sources,
+        "zero-classify",
+        3,
+        f"(zero-classify request-reify-query "
+        f"{reify_query_surface} ?request)",
+    )
+    if len(classified_reify_query) != 1:
+        raise GateFailure("query reification classification changed")
+    reify_query_request = sx.render(classified_reify_query[0][3])
+    reified_query = observe(
+        chart,
+        sources,
+        reify_query_request,
+        produce(chart, sources, program, reify_query_request),
+    )
+    if reified_query != [qapp(qsym("hit"), qsym("hit"))]:
+        raise GateFailure(
+            f"chart changed reified query multiplicity: {reified_query}"
+        )
+    require_cli_pair(
+        cetta,
+        "(fact hit) (fact hit) "
+        "(reify (zero-query (fact $x) $x))",
+        "[(hit hit)]",
+    )
+
     inert_request = f"(zero-evaluate-request request-two {qsym('unknown')})"
     inert_produced = produce(chart, sources, program, inert_request)
     if inert_produced:
@@ -385,6 +444,21 @@ def main() -> int:
         raise GateFailure("closed empty production did not retain inertness")
     require_cli_pair(cetta, "(! unknown)", "[unknown]")
 
+    reify_inert_request = (
+        f"(zero-reify-evaluate-request request-reify-inert "
+        f"{qsym('unknown')})"
+    )
+    reify_inert_produced = produce(
+        chart, sources, program, reify_inert_request
+    )
+    if reify_inert_produced:
+        raise GateFailure("reified unknown unexpectedly produced an answer")
+    if observe(
+        chart, sources, reify_inert_request, reify_inert_produced
+    ) != [qapp(qsym("unknown"))]:
+        raise GateFailure("reified inert evaluation lost its singleton")
+    require_cli_pair(cetta, "(reify (! unknown))", "[(unknown)]")
+
     empty_request = (
         f"(zero-query-request request-three {qsym('absent')} {qsym('hit')})"
     )
@@ -392,6 +466,24 @@ def main() -> int:
     if empty_produced or observe(chart, sources, empty_request, empty_produced):
         raise GateFailure("empty query was confused with inert evaluation")
     require_cli_pair(cetta, "fact (zero-query absent hit)", "[]")
+
+    reify_empty_request = (
+        f"(zero-reify-query-request request-reify-empty "
+        f"{qsym('absent')} {qsym('hit')})"
+    )
+    reify_empty_produced = produce(
+        chart, sources, program, reify_empty_request
+    )
+    if reify_empty_produced or observe(
+        chart, sources, reify_empty_request, reify_empty_produced
+    ) != ["q-empty"]:
+        raise GateFailure("empty query did not reify as the empty datum")
+    require_cli_pair(
+        cetta, "(reify (zero-query absent hit))", "[()]"
+    )
+    require_cli_pair(
+        cetta, "(= a hit) (collapse (! a))", "[]"
+    )
 
     ground_request = (
         f"(zero-evaluate-request request-four {qsym('native')})"
@@ -403,12 +495,104 @@ def main() -> int:
         raise GateFailure("declared ground capability did not cross the portal")
     require_cli_pair(cetta, "(! native)", "[native]")
 
+    runner_subject = qsym("a")
+    runner_continuation = qsym("zero-halt")
+    runner_surface = qapp(
+        qsym("zero-step"),
+        qapp(qsym("zero-pending"), runner_subject, runner_continuation),
+    )
+    classified_runner = relation_answers(
+        chart,
+        runner_sources,
+        "zero-classify",
+        3,
+        f"(zero-classify request-runner {runner_surface} ?request)",
+    )
+    if len(classified_runner) != 1:
+        raise GateFailure("semantic runner classification changed")
+    runner_request = sx.render(classified_runner[0][3])
+    runner_program = source_program(
+        equality(qsym("a"), qsym("b")),
+        equality(qsym("a"), qsym("b")),
+    )
+    runner_produced = produce(
+        chart, runner_sources, runner_program, runner_request
+    )
+    if observe(
+        chart, runner_sources, runner_request, runner_produced
+    ) != [
+        qapp(qsym("zero-pending"), qsym("b"), runner_continuation),
+        qapp(qsym("zero-pending"), qsym("b"), runner_continuation),
+    ]:
+        raise GateFailure("semantic runner changed pending multiplicity")
+    require_cli_pair(
+        cetta,
+        "(= a b) (= a b) (zero-step (zero-pending a zero-halt))",
+        "[(zero-pending b zero-halt), (zero-pending b zero-halt)]",
+        "exp",
+    )
+
+    quiescent_request = (
+        f"(zero-step-request request-quiescent {qsym('unknown')} "
+        f"{runner_continuation})"
+    )
+    quiescent_produced = produce(
+        chart, runner_sources, runner_program, quiescent_request
+    )
+    if quiescent_produced or observe(
+        chart, runner_sources, quiescent_request, quiescent_produced
+    ) != [qapp(qsym("zero-completed"), qsym("unknown"))]:
+        raise GateFailure("semantic runner changed completed quiescence")
+    require_cli_pair(
+        cetta,
+        "(zero-step (zero-pending unknown zero-halt))",
+        "[(zero-completed unknown)]",
+        "exp",
+    )
+
+    template = qapp(qsym("wrap"), "(q-var q-zero)")
+    next_continuation = qsym("zero-halt")
+    then_continuation = qapp(
+        qsym("zero-then"), template, next_continuation
+    )
+    then_request = (
+        f"(zero-step-request request-then {qsym('unknown')} "
+        f"{then_continuation})"
+    )
+    then_produced = produce(
+        chart, runner_sources, runner_program, then_request
+    )
+    if then_produced or observe(
+        chart, runner_sources, then_request, then_produced
+    ) != [
+        qapp(
+            qsym("zero-pending"),
+            qapp(qsym("wrap"), qsym("unknown")),
+            next_continuation,
+        )
+    ]:
+        raise GateFailure("semantic runner changed continuation substitution")
+    require_cli_pair(
+        cetta,
+        "(zero-step (zero-pending unknown "
+        "(zero-then (wrap $x) zero-halt)))",
+        "[(zero-pending (wrap unknown) zero-halt)]",
+        "exp",
+    )
+
+    require_cli_pair(
+        cetta,
+        "(= a b) (zero-step (zero-pending a zero-halt))",
+        "[]",
+    )
+
     print(
         "(MettaZeroRealizationTriangleV1Summary "
         "native-chart=1 horn-reference=1 compiled-worklist=1 "
-        "classification=2 query-multiplicity=2 reflection=3 "
+        "classification=4 query-multiplicity=2 reflection=3 "
         "query-derived-evaluation=1 inert-completion=1 empty-query=1 "
-        "ground-capability=1 structural-cases=20)"
+        "reify=4 collapse-not-zero=1 ground-capability=1 "
+        "semantic-runner=4 profile-isolation=1 structural-cases=20)"
     )
     return 0
 

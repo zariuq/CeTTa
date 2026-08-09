@@ -87,6 +87,7 @@ static inline uint64_t symbol_table_instance_id(const SymbolTable *st) {
     X(superpose, "superpose") \
     X(hyperpose, "hyperpose") \
     X(collapse, "collapse") \
+    X(reify, "reify") \
     X(cons_atom, "cons-atom") \
     X(union_atom, "union-atom") \
     X(decons_atom, "decons-atom") \

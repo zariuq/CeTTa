@@ -178,7 +178,8 @@ bool petta_semantics_is_value_chain(SymbolId head);
  * vocabulary.  A NULL result means that the form is not a syntax-local
  * lowering (or has the wrong arity), not that evaluation failed.
  */
-Atom *petta_semantics_lower(Arena *arena, Atom *form, PeTTaForm kind);
+Atom *petta_semantics_lower(
+    Arena *arena, Atom *form, PeTTaForm kind, SymbolId reify_head);
 
 /*
  * PeTTa's msort follows SWI-Prolog's standard term order and preserves

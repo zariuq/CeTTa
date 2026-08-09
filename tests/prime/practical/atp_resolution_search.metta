@@ -52,7 +52,7 @@
 ; with the same display spelling.
 !(assertEqual
   (let $proofs
-       (collapse
+       (reify
          (atp:resolution-search:resolve
            (ATP.InputClause positive ((ATP.Pos (p $x))))
            (ATP.InputClause negative ((ATP.Neg (p (f $x)))))))

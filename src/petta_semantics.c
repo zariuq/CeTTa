@@ -1762,15 +1762,15 @@ static Atom *petta_stream_emit_value(
 }
 
 static Atom *petta_stream_unique_lower(
-    Arena *arena, Atom *form) {
+    Arena *arena, Atom *form, SymbolId reify_head) {
     if (form->expr.len != 2u)
         return NULL;
-    Atom *collapse = atom_expr2(
-        arena, atom_symbol_id(arena, g_builtin_syms.collapse),
+    Atom *reified = atom_expr2(
+        arena, atom_symbol_id(arena, reify_head),
         form->expr.elems[1]);
     Atom *unique = atom_expr2(
         arena, atom_symbol_id(arena, g_builtin_syms.unique_atom),
-        collapse);
+        reified);
     return petta_stream_emit_value(arena, unique);
 }
 
@@ -1782,17 +1782,18 @@ static bool petta_is_superpose_form(const Atom *atom) {
 }
 
 static Atom *petta_stream_binary_lower(
-    Arena *arena, Atom *form, SymbolId aggregate) {
+    Arena *arena, Atom *form, SymbolId aggregate,
+    SymbolId reify_head) {
     if (form->expr.len != 3u ||
         !petta_is_superpose_form(form->expr.elems[1]) ||
         !petta_is_superpose_form(form->expr.elems[2])) {
         return NULL;
     }
     Atom *left_computation = atom_expr2(
-        arena, atom_symbol_id(arena, g_builtin_syms.collapse),
+        arena, atom_symbol_id(arena, reify_head),
         form->expr.elems[1]);
     Atom *right_computation = atom_expr2(
-        arena, atom_symbol_id(arena, g_builtin_syms.collapse),
+        arena, atom_symbol_id(arena, reify_head),
         form->expr.elems[2]);
     Atom *left = atom_var_with_id(
         arena, "__petta_stream_left", fresh_var_id());
@@ -1836,7 +1837,8 @@ static Atom *petta_second_from_pair_lower(
     return atom_expr(arena, let_elems, 4u);
 }
 
-Atom *petta_semantics_lower(Arena *arena, Atom *form, PeTTaForm kind) {
+Atom *petta_semantics_lower(
+    Arena *arena, Atom *form, PeTTaForm kind, SymbolId reify_head) {
     if (!arena || !form || form->kind != ATOM_EXPR ||
         form->expr.len == 0u) {
         return NULL;
@@ -1863,16 +1865,16 @@ Atom *petta_semantics_lower(Arena *arena, Atom *form, PeTTaForm kind) {
         return petta_eager_binary_lower(
             arena, form, g_builtin_syms.cons_atom);
     case PETTA_FORM_STREAM_UNIQUE:
-        return petta_stream_unique_lower(arena, form);
+        return petta_stream_unique_lower(arena, form, reify_head);
     case PETTA_FORM_STREAM_UNION:
         return petta_stream_binary_lower(
-            arena, form, g_builtin_syms.union_atom);
+            arena, form, g_builtin_syms.union_atom, reify_head);
     case PETTA_FORM_STREAM_INTERSECTION:
         return petta_stream_binary_lower(
-            arena, form, g_builtin_syms.intersection_atom);
+            arena, form, g_builtin_syms.intersection_atom, reify_head);
     case PETTA_FORM_STREAM_SUBTRACTION:
         return petta_stream_binary_lower(
-            arena, form, g_builtin_syms.subtraction_atom);
+            arena, form, g_builtin_syms.subtraction_atom, reify_head);
     case PETTA_FORM_LENGTH:
         return petta_eager_unary_lower(
             arena, form, g_builtin_syms.size_atom);

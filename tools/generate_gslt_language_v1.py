@@ -21,6 +21,7 @@ class CompileError(RuntimeError):
 @dataclass(frozen=True)
 class Manifest:
     name: str
+    profile_name: str | None
     syntax_backend: str
     term_abi: str
     semantic_sources: tuple[str, ...]
@@ -188,7 +189,7 @@ def field(value: sx.SExpr, context: str) -> tuple[sx.SExpr, ...]:
     return value
 
 
-def parse_manifest(path: Path) -> Manifest:
+def parse_manifest(path: Path, selected_profile: str | None = None) -> Manifest:
     forms = sx.parse_sexprs(path.read_text(encoding="utf-8"), source=str(path))
     if len(forms) != 1 or not isinstance(forms[0], tuple):
         raise CompileError(f"{path}: expected one manifest form")
@@ -197,6 +198,7 @@ def parse_manifest(path: Path) -> Manifest:
         raise CompileError(f"{path}: expected gslt-language-v1")
     singleton: dict[str, tuple[sx.SExpr, ...]] = {}
     sources: list[str] = []
+    profiles: dict[str, tuple[str, ...]] = {}
     known = {
         "name",
         "syntax-backend",
@@ -206,6 +208,7 @@ def parse_manifest(path: Path) -> Manifest:
         "entry",
         "request-pipeline",
         "observation",
+        "profile",
     }
     for offset, raw in enumerate(root[1:], start=1):
         item = field(raw, f"{path}: field {offset}")
@@ -217,10 +220,44 @@ def parse_manifest(path: Path) -> Manifest:
                 raise CompileError(f"{path}: malformed semantic-source")
             sources.append(text(item[1], f"{path}: semantic-source"))
             continue
+        if tag == "profile":
+            if len(item) < 3:
+                raise CompileError(f"{path}: malformed profile")
+            profile_name = symbol(item[1], f"{path}: profile name")
+            if profile_name in profiles:
+                raise CompileError(
+                    f"{path}: duplicate profile {profile_name}"
+                )
+            profile_sources: list[str] = []
+            for layer_offset, raw_layer in enumerate(item[2:], start=1):
+                layer = field(
+                    raw_layer,
+                    f"{path}: profile {profile_name} field {layer_offset}",
+                )
+                layer_tag = symbol(
+                    layer[0],
+                    f"{path}: profile {profile_name} field "
+                    f"{layer_offset} tag",
+                )
+                if layer_tag != "semantic-source" or len(layer) != 2:
+                    raise CompileError(
+                        f"{path}: profile {profile_name} supports only "
+                        "semantic-source extensions"
+                    )
+                profile_sources.append(
+                    text(
+                        layer[1],
+                        f"{path}: profile {profile_name} semantic-source",
+                    )
+                )
+            profiles[profile_name] = tuple(profile_sources)
+            continue
         if tag in singleton:
             raise CompileError(f"{path}: duplicate field {tag}")
         singleton[tag] = item
-    required = known - {"semantic-source", "entry", "request-pipeline"}
+    required = known - {
+        "semantic-source", "entry", "request-pipeline", "profile"
+    }
     missing = sorted(required - singleton.keys())
     if missing or not sources:
         raise CompileError(
@@ -277,8 +314,16 @@ def parse_manifest(path: Path) -> Manifest:
         observe_relation = text(pipeline[3], f"{path}: observe relation")
         produced_nil = text(pipeline[4], f"{path}: produced nil")
         produced_cons = text(pipeline[5], f"{path}: produced cons")
+    if selected_profile is not None:
+        extension_sources = profiles.get(selected_profile)
+        if extension_sources is None:
+            raise CompileError(
+                f"{path}: unknown profile {selected_profile}"
+            )
+        sources.extend(extension_sources)
     manifest = Manifest(
         name=text(singleton["name"][1], f"{path}: name"),
+        profile_name=selected_profile,
         syntax_backend=text(
             singleton["syntax-backend"][1], f"{path}: syntax-backend"
         ),
@@ -332,6 +377,7 @@ def main() -> int:
     parser.add_argument("--header", type=Path, required=True)
     parser.add_argument("--source", type=Path, required=True)
     parser.add_argument("--source-root", type=Path)
+    parser.add_argument("--profile")
     parser.add_argument("--symbol", required=True)
     parser.add_argument("--header-include", required=True)
     arguments = parser.parse_args()
@@ -339,7 +385,7 @@ def main() -> int:
         raise CompileError("descriptor symbol is not a C identifier")
 
     manifest_path = arguments.manifest.resolve()
-    manifest = parse_manifest(manifest_path)
+    manifest = parse_manifest(manifest_path, arguments.profile)
     source_root = (
         arguments.source_root.resolve()
         if arguments.source_root
@@ -373,7 +419,9 @@ def main() -> int:
         compiler_hash.update(len(payload).to_bytes(8, "big"))
         compiler_hash.update(payload)
     compiler_digest = compiler_hash.hexdigest()
-    manifest_digest = sha256(manifest_path.read_bytes()).hexdigest()
+    manifest_payload = manifest_path.read_bytes()
+    manifest_digest = sha256(manifest_payload).hexdigest()
+    manifest_relative = str(manifest_path.relative_to(source_root))
     guard = f"CETTA_GENERATED_{arguments.symbol.upper()}_H"
     header = (
         f"#ifndef {guard}\n#define {guard}\n\n"
@@ -398,20 +446,32 @@ def main() -> int:
             "    },"
         )
     plan_array = f"{arguments.symbol}_compiled_plan_v1"
+    manifest_array = f"{arguments.symbol}_manifest_v1"
     source = (
         f'#include "{arguments.header_include}"\n\n'
+        + c_bytes(manifest_array, manifest_payload)
+        + "\n"
         + "\n".join(arrays)
         + "\n"
         + c_bytes(plan_array, compiled_plan)
         + "\n"
-        + f"static const CettaGsltEmbeddedSemanticSourceV1 "
+        + f"static const CettaGsltEmbeddedSourceV1 "
           f"{arguments.symbol}_sources[] = {{\n"
         + "\n".join(source_rows)
         + "\n};\n\n"
         + f"const CettaGsltEmbeddedLanguageV1 {arguments.symbol} = {{\n"
         + f"    .name = {c_string(manifest.name)},\n"
+        + f"    .profile_name = {c_string(manifest.profile_name) if manifest.profile_name else 'NULL'},\n"
         + f"    .syntax_backend = {c_string(manifest.syntax_backend)},\n"
         + f"    .term_abi = {c_string(manifest.term_abi)},\n"
+        + "    .manifest = {\n"
+        + "        .input = {\n"
+        + f"            .bytes = {manifest_array},\n"
+        + f"            .length = sizeof({manifest_array}),\n"
+        + f"            .source = {c_string(manifest_relative)},\n"
+        + "        },\n"
+        + f"        .sha256 = {c_string(manifest_digest)},\n"
+        + "    },\n"
         + f"    .semantic_sources = {arguments.symbol}_sources,\n"
         + f"    .semantic_source_count = {len(semantic_payloads)}u,\n"
         + "    .compiled_plan = {\n"
