@@ -22,11 +22,17 @@ struct CettaGsltLanguage {
     char *program_nil;
     char *program_cons;
     char *entry_relation;
+    char *classify_relation;
+    char *produce_relation;
+    char *observe_relation;
+    char *produced_nil;
+    char *produced_cons;
     char *observation;
     uint32_t entry_arity;
     uint32_t program_position;
     uint32_t result_position;
     CettaGsltHornProgram *semantics;
+    CettaGsltCompiledProgram *compiled_semantics;
 };
 
 typedef struct {
@@ -42,6 +48,12 @@ typedef struct {
     uint32_t program_position;
     uint32_t result_position;
     bool has_entry;
+    const char *classify_relation;
+    const char *produce_relation;
+    const char *observe_relation;
+    const char *produced_nil;
+    const char *produced_cons;
+    bool has_request_pipeline;
     const char *observation;
 } GsltLanguageManifest;
 
@@ -195,6 +207,23 @@ static bool language_manifest_parse(Atom *root,
             manifest->program_position = program_position;
             manifest->result_position = result_position;
             manifest->has_entry = true;
+        } else if (language_expr(field, "request-pipeline", 6u)) {
+            const char *classify = language_text(field->expr.elems[1]);
+            const char *produce = language_text(field->expr.elems[2]);
+            const char *observe = language_text(field->expr.elems[3]);
+            const char *nil = language_text(field->expr.elems[4]);
+            const char *cons = language_text(field->expr.elems[5]);
+            if (manifest->has_request_pipeline || !classify || !produce ||
+                !observe || !nil || !cons)
+                return language_error(
+                    error, error_size,
+                    "manifest has an invalid request pipeline");
+            manifest->classify_relation = classify;
+            manifest->produce_relation = produce;
+            manifest->observe_relation = observe;
+            manifest->produced_nil = nil;
+            manifest->produced_cons = cons;
+            manifest->has_request_pipeline = true;
         } else if (language_expr(field, "observation", 2u)) {
             text = language_text(field->expr.elems[1]);
             if (manifest->observation || !text)
@@ -209,7 +238,8 @@ static bool language_manifest_parse(Atom *root,
     if (!manifest->name || !manifest->syntax_backend ||
         !manifest->term_abi || manifest->semantic_source_count == 0u ||
         !manifest->program_nil || !manifest->program_cons ||
-        !manifest->has_entry || !manifest->observation)
+        manifest->has_entry == manifest->has_request_pipeline ||
+        !manifest->observation)
         return language_error(error, error_size,
                               "manifest omits a required stage");
     if (strcmp(manifest->term_abi, "finite-horn-quote-v1") != 0)
@@ -300,6 +330,11 @@ bool cetta_gslt_language_load_manifest(
     language->program_nil = language_strdup(manifest.program_nil);
     language->program_cons = language_strdup(manifest.program_cons);
     language->entry_relation = language_strdup(manifest.entry_relation);
+    language->classify_relation = language_strdup(manifest.classify_relation);
+    language->produce_relation = language_strdup(manifest.produce_relation);
+    language->observe_relation = language_strdup(manifest.observe_relation);
+    language->produced_nil = language_strdup(manifest.produced_nil);
+    language->produced_cons = language_strdup(manifest.produced_cons);
     language->observation = language_strdup(manifest.observation);
     language->entry_arity = manifest.entry_arity;
     language->program_position = manifest.program_position;
@@ -328,16 +363,40 @@ done:
 bool cetta_gslt_language_load_embedded(
     const CettaGsltEmbeddedLanguageV1 *descriptor,
     CettaGsltLanguage **out, char *error, size_t error_size) {
-    if (!descriptor || !out || !descriptor->name ||
+    return cetta_gslt_language_load_embedded_for_realization(
+        descriptor, CETTA_GSLT_REALIZATION_HORN_REFERENCE,
+        out, error, error_size);
+}
+
+bool cetta_gslt_language_load_embedded_for_realization(
+    const CettaGsltEmbeddedLanguageV1 *descriptor,
+    CettaGsltRealization realization,
+    CettaGsltLanguage **out, char *error, size_t error_size) {
+    bool has_entry = descriptor && descriptor->entry_relation &&
+        descriptor->entry_arity > 0u;
+    bool has_pipeline = descriptor && descriptor->request_pipeline &&
+        descriptor->request_pipeline->classify_relation &&
+        descriptor->request_pipeline->produce_relation &&
+        descriptor->request_pipeline->observe_relation &&
+        descriptor->request_pipeline->produced_nil &&
+        descriptor->request_pipeline->produced_cons;
+    if (!descriptor || !out ||
+        (realization != CETTA_GSLT_REALIZATION_HORN_REFERENCE &&
+         realization != CETTA_GSLT_REALIZATION_COMPILED_WORKLIST) ||
+        !descriptor->name ||
         !descriptor->syntax_backend || !descriptor->term_abi ||
         !descriptor->semantic_sources ||
         descriptor->semantic_source_count == 0u ||
+        !descriptor->compiled_plan.bytes ||
+        descriptor->compiled_plan.length == 0u ||
+        !descriptor->compiled_plan.sha256 ||
         !descriptor->program_nil || !descriptor->program_cons ||
-        !descriptor->entry_relation || descriptor->entry_arity == 0u ||
-        descriptor->entry_arity == UINT32_MAX ||
-        descriptor->program_position >= descriptor->entry_arity ||
-        descriptor->result_position >= descriptor->entry_arity ||
-        descriptor->program_position == descriptor->result_position ||
+        has_entry == has_pipeline ||
+        (has_entry &&
+         (descriptor->entry_arity == UINT32_MAX ||
+          descriptor->program_position >= descriptor->entry_arity ||
+          descriptor->result_position >= descriptor->entry_arity ||
+          descriptor->program_position == descriptor->result_position)) ||
         !descriptor->observation || !descriptor->manifest_sha256 ||
         !descriptor->compiler_sha256)
         return language_error(error, error_size,
@@ -376,15 +435,40 @@ bool cetta_gslt_language_load_embedded(
     language->program_nil = language_strdup(descriptor->program_nil);
     language->program_cons = language_strdup(descriptor->program_cons);
     language->entry_relation = language_strdup(descriptor->entry_relation);
+    if (has_pipeline) {
+        language->classify_relation = language_strdup(
+            descriptor->request_pipeline->classify_relation);
+        language->produce_relation = language_strdup(
+            descriptor->request_pipeline->produce_relation);
+        language->observe_relation = language_strdup(
+            descriptor->request_pipeline->observe_relation);
+        language->produced_nil = language_strdup(
+            descriptor->request_pipeline->produced_nil);
+        language->produced_cons = language_strdup(
+            descriptor->request_pipeline->produced_cons);
+    }
     language->observation = language_strdup(descriptor->observation);
     language->entry_arity = descriptor->entry_arity;
     language->program_position = descriptor->program_position;
     language->result_position = descriptor->result_position;
-    bool loaded = cetta_gslt_horn_program_load_inputs(
-        inputs, descriptor->semantic_source_count,
-        &language->semantics, error, error_size);
+    bool loaded = realization == CETTA_GSLT_REALIZATION_HORN_REFERENCE
+        ? cetta_gslt_horn_program_load_inputs(
+            inputs, descriptor->semantic_source_count,
+            &language->semantics, error, error_size)
+        : realization == CETTA_GSLT_REALIZATION_COMPILED_WORKLIST;
     free(inputs);
-    if (!loaded) {
+    if (loaded)
+        loaded = cetta_gslt_compiled_program_load_v1(
+            &descriptor->compiled_plan, &language->compiled_semantics,
+            error, error_size);
+    if (!loaded ||
+        (language->semantics &&
+         cetta_gslt_horn_program_rule_count(language->semantics) !=
+            cetta_gslt_compiled_program_rule_count(
+                language->compiled_semantics))) {
+        if (loaded)
+            language_error(error, error_size,
+                           "compiled and reference rule inventories differ");
         cetta_gslt_language_free(language);
         return false;
     }
@@ -395,12 +479,18 @@ bool cetta_gslt_language_load_embedded(
 void cetta_gslt_language_free(CettaGsltLanguage *language) {
     if (!language)
         return;
+    cetta_gslt_compiled_program_free(language->compiled_semantics);
     cetta_gslt_horn_program_free(language->semantics);
     free(language->name);
     free(language->syntax_backend);
     free(language->program_nil);
     free(language->program_cons);
     free(language->entry_relation);
+    free(language->classify_relation);
+    free(language->produce_relation);
+    free(language->observe_relation);
+    free(language->produced_nil);
+    free(language->produced_cons);
     free(language->observation);
     free(language);
 }
@@ -421,21 +511,29 @@ const char *cetta_gslt_language_observation(
 
 size_t cetta_gslt_language_semantic_rule_count(
     const CettaGsltLanguage *language) {
-    return language
-        ? cetta_gslt_horn_program_rule_count(language->semantics) : 0u;
+    if (!language)
+        return 0u;
+    return language->compiled_semantics
+        ? cetta_gslt_compiled_program_rule_count(language->compiled_semantics)
+        : cetta_gslt_horn_program_rule_count(language->semantics);
 }
 
-static Atom *language_program(
+static Atom *language_program_selected(
     const CettaGsltLanguage *language,
-    Atom *const *forms, size_t form_count, Arena *arena) {
+    Atom *const *forms, const size_t *occurrences,
+    size_t form_count, Arena *arena) {
     if (form_count > (size_t)INT64_MAX)
         return NULL;
     Atom *program = atom_symbol(arena, language->program_nil);
     for (size_t index = form_count; index > 0u; index--) {
+        size_t occurrence_index = occurrences
+            ? occurrences[index - 1u] : index - 1u;
+        if (occurrence_index > (size_t)INT64_MAX)
+            return NULL;
         Atom *quoted = cetta_gslt_quote_atom_v1(arena, forms[index - 1u]);
         Atom *occurrence = atom_expr2(
             arena, atom_symbol(arena, "gslt-source-occurrence"),
-            atom_int(arena, (int64_t)(index - 1u)));
+            atom_int(arena, (int64_t)occurrence_index));
         if (!quoted || !occurrence)
             return NULL;
         Atom *elements[] = {
@@ -449,8 +547,353 @@ static Atom *language_program(
     return program;
 }
 
+static Atom *language_program(
+    const CettaGsltLanguage *language,
+    Atom *const *forms, size_t form_count, Arena *arena) {
+    return language_program_selected(
+        language, forms, NULL, form_count, arena);
+}
+
+static bool language_run_query(
+    const CettaGsltLanguage *language,
+    CettaGsltRealization realization,
+    Arena *output_arena, Atom *query,
+    CettaGsltHornLimits limits, CettaGsltHornResult *result,
+    char *error, size_t error_size) {
+    if (realization == CETTA_GSLT_REALIZATION_HORN_REFERENCE)
+        return language->semantics
+            ? cetta_gslt_horn_query(
+                language->semantics, output_arena, query, limits,
+                result, error, error_size)
+            : language_error(error, error_size,
+                             "reference realization was not loaded");
+    if (realization == CETTA_GSLT_REALIZATION_COMPILED_WORKLIST)
+        return language->compiled_semantics
+            ? cetta_gslt_compiled_query_v1(
+                language->compiled_semantics, output_arena, query, limits,
+                result, error, error_size)
+            : language_error(error, error_size,
+                             "compiled realization was not loaded");
+    return language_error(error, error_size, "unknown GSLT realization");
+}
+
+static uint64_t language_u64_add_sat(uint64_t left, uint64_t right) {
+    return UINT64_MAX - left < right ? UINT64_MAX : left + right;
+}
+
+static void language_accumulate_stage(
+    CettaGsltLanguageResult *result, const CettaGsltHornResult *stage) {
+    result->rule_attempts = language_u64_add_sat(
+        result->rule_attempts, stage->rule_attempts);
+    result->rule_matches = language_u64_add_sat(
+        result->rule_matches, stage->rule_matches);
+    if (stage->max_depth_observed > result->max_depth_observed)
+        result->max_depth_observed = stage->max_depth_observed;
+    result->outcome = stage->outcome;
+}
+
+static bool language_stage_limits(
+    const CettaGsltLanguageResult *result,
+    CettaGsltHornLimits requested, CettaGsltHornLimits *stage) {
+    if (result->rule_attempts >= requested.max_rule_attempts)
+        return false;
+    *stage = requested;
+    stage->max_rule_attempts -= result->rule_attempts;
+    return true;
+}
+
+static bool language_relation_answer(
+    const Atom *answer, const char *relation, CettaExprLen arity) {
+    return answer && answer->kind == ATOM_EXPR &&
+        answer->expr.len == arity + 1u &&
+        answer->expr.elems[0]->kind == ATOM_SYMBOL &&
+        strcmp(atom_name_cstr(answer->expr.elems[0]), relation) == 0;
+}
+
+static void language_clear_answers(CettaGsltLanguageResult *result) {
+    free(result->answers);
+    result->answers = NULL;
+    result->answer_count = 0u;
+}
+
+static bool language_append_answer(
+    CettaGsltLanguageResult *result, Atom *answer,
+    CettaGsltHornLimits limits, char *error, size_t error_size) {
+    if (result->answer_count >= limits.max_answers) {
+        language_clear_answers(result);
+        result->outcome = CETTA_GSLT_HORN_ANSWER_LIMIT;
+        return true;
+    }
+    if (result->answer_count == SIZE_MAX / sizeof(*result->answers))
+        return language_error(error, error_size,
+                              "GSLT language answer bag is too large");
+    result->answers = cetta_realloc(
+        result->answers,
+        sizeof(*result->answers) * (result->answer_count + 1u));
+    result->answers[result->answer_count++] = answer;
+    return true;
+}
+
+static Atom *language_pipeline_query(
+    Arena *arena, const char *relation,
+    Atom *first, Atom *second, Atom *third, Atom *fourth) {
+    Atom *elements[] = {
+        atom_symbol(arena, relation), first, second, third, fourth,
+    };
+    return atom_expr(arena, elements, 5u);
+}
+
+static bool language_execute_request_pipeline(
+    const CettaGsltLanguage *language,
+    CettaGsltRealization realization,
+    Atom *const *forms, size_t form_count,
+    Arena *output_arena, CettaGsltHornLimits limits,
+    CettaGsltLanguageResult *result,
+    char *error, size_t error_size) {
+    Atom **requests = NULL;
+    size_t request_count = 0u;
+    Atom **contents = NULL;
+    size_t *content_occurrences = NULL;
+    size_t content_count = 0u;
+    bool ok = false;
+    if (form_count > (size_t)INT64_MAX)
+        return language_error(error, error_size,
+                              "source document has too many forms");
+
+    for (size_t index = 0u; index < form_count; index++) {
+        Atom *occurrence = atom_expr2(
+            output_arena,
+            atom_symbol(output_arena, "gslt-source-occurrence"),
+            atom_int(output_arena, (int64_t)index));
+        Atom *quoted = cetta_gslt_quote_atom_v1(output_arena, forms[index]);
+        Atom *request = atom_var_with_id(
+            output_arena, "gslt-request", fresh_var_id());
+        Atom *query_elements[] = {
+            atom_symbol(output_arena, language->classify_relation),
+            occurrence, quoted, request,
+        };
+        Atom *query = atom_expr(output_arena, query_elements, 4u);
+        CettaGsltHornLimits stage_limits;
+        if (!occurrence || !quoted || !query ||
+            !language_stage_limits(result, limits, &stage_limits)) {
+            result->outcome = CETTA_GSLT_HORN_RULE_LIMIT;
+            goto completed;
+        }
+        CettaGsltHornResult stage = {0};
+        if (!language_run_query(
+                language, realization, output_arena, query, stage_limits,
+                &stage, error, error_size)) {
+            cetta_gslt_horn_result_free(&stage);
+            goto done;
+        }
+        language_accumulate_stage(result, &stage);
+        if (stage.outcome != CETTA_GSLT_HORN_COMPLETED) {
+            cetta_gslt_horn_result_free(&stage);
+            goto completed;
+        }
+        if (stage.answer_count == 0u) {
+            contents = cetta_realloc(
+                contents, sizeof(*contents) * (content_count + 1u));
+            content_occurrences = cetta_realloc(
+                content_occurrences,
+                sizeof(*content_occurrences) * (content_count + 1u));
+            contents[content_count] = forms[index];
+            content_occurrences[content_count++] = index;
+        } else {
+            for (size_t answer_index = 0u;
+                 answer_index < stage.answer_count; answer_index++) {
+                Atom *answer = stage.answers[answer_index];
+                if (!language_relation_answer(
+                        answer, language->classify_relation, 3u)) {
+                    cetta_gslt_horn_result_free(&stage);
+                    language_error(
+                        error, error_size,
+                        "request classifier returned a malformed answer");
+                    goto done;
+                }
+                requests = cetta_realloc(
+                    requests, sizeof(*requests) * (request_count + 1u));
+                requests[request_count++] = answer->expr.elems[3];
+            }
+        }
+        cetta_gslt_horn_result_free(&stage);
+    }
+
+    {
+        Atom *program = language_program_selected(
+            language, contents, content_occurrences,
+            content_count, output_arena);
+        if (!program) {
+            language_error(error, error_size,
+                           "cannot quote the reflective source space");
+            goto done;
+        }
+        for (size_t request_index = 0u;
+             request_index < request_count; request_index++) {
+            Atom *evidence = atom_var_with_id(
+                output_arena, "gslt-evidence", fresh_var_id());
+            Atom *quoted_result = atom_var_with_id(
+                output_arena, "gslt-result", fresh_var_id());
+            Atom *produce_query = language_pipeline_query(
+                output_arena, language->produce_relation,
+                program, requests[request_index], evidence, quoted_result);
+            CettaGsltHornLimits stage_limits;
+            if (!produce_query ||
+                !language_stage_limits(result, limits, &stage_limits)) {
+                result->outcome = CETTA_GSLT_HORN_RULE_LIMIT;
+                goto completed;
+            }
+            CettaGsltHornResult produced = {0};
+            if (!language_run_query(
+                    language, realization, output_arena,
+                    produce_query, stage_limits, &produced,
+                    error, error_size)) {
+                cetta_gslt_horn_result_free(&produced);
+                goto done;
+            }
+            language_accumulate_stage(result, &produced);
+            if (produced.outcome != CETTA_GSLT_HORN_COMPLETED) {
+                cetta_gslt_horn_result_free(&produced);
+                goto completed;
+            }
+
+            Atom *bag = atom_symbol(output_arena, language->produced_nil);
+            for (size_t answer_index = produced.answer_count;
+                 answer_index > 0u; answer_index--) {
+                Atom *answer = produced.answers[answer_index - 1u];
+                if (!language_relation_answer(
+                        answer, language->produce_relation, 4u)) {
+                    cetta_gslt_horn_result_free(&produced);
+                    language_error(
+                        error, error_size,
+                        "request producer returned a malformed answer");
+                    goto done;
+                }
+                Atom *item_elements[] = {
+                    atom_symbol(output_arena, "gslt-produced"),
+                    answer->expr.elems[3], answer->expr.elems[4],
+                };
+                Atom *item = atom_expr(output_arena, item_elements, 3u);
+                Atom *cons_elements[] = {
+                    atom_symbol(output_arena, language->produced_cons),
+                    item, bag,
+                };
+                bag = atom_expr(output_arena, cons_elements, 3u);
+            }
+            cetta_gslt_horn_result_free(&produced);
+
+            evidence = atom_var_with_id(
+                output_arena, "gslt-observation-evidence", fresh_var_id());
+            quoted_result = atom_var_with_id(
+                output_arena, "gslt-observed-result", fresh_var_id());
+            Atom *observe_query = language_pipeline_query(
+                output_arena, language->observe_relation,
+                requests[request_index], bag, evidence, quoted_result);
+            if (!observe_query ||
+                !language_stage_limits(result, limits, &stage_limits)) {
+                result->outcome = CETTA_GSLT_HORN_RULE_LIMIT;
+                goto completed;
+            }
+            CettaGsltHornResult observed = {0};
+            if (!language_run_query(
+                    language, realization, output_arena,
+                    observe_query, stage_limits, &observed,
+                    error, error_size)) {
+                cetta_gslt_horn_result_free(&observed);
+                goto done;
+            }
+            language_accumulate_stage(result, &observed);
+            if (observed.outcome != CETTA_GSLT_HORN_COMPLETED) {
+                cetta_gslt_horn_result_free(&observed);
+                goto completed;
+            }
+            for (size_t answer_index = 0u;
+                 answer_index < observed.answer_count; answer_index++) {
+                Atom *answer = observed.answers[answer_index];
+                if (!language_relation_answer(
+                        answer, language->observe_relation, 4u)) {
+                    cetta_gslt_horn_result_free(&observed);
+                    language_error(
+                        error, error_size,
+                        "request observer returned a malformed answer");
+                    goto done;
+                }
+                Atom *value = cetta_gslt_unquote_atom_v1(
+                    output_arena, answer->expr.elems[4]);
+                if (!value) {
+                    cetta_gslt_horn_result_free(&observed);
+                    language_error(
+                        error, error_size,
+                        "request observer returned an invalid quoted result");
+                    goto done;
+                }
+                if (!language_append_answer(
+                        result, value, limits, error, error_size)) {
+                    cetta_gslt_horn_result_free(&observed);
+                    goto done;
+                }
+                if (result->outcome == CETTA_GSLT_HORN_ANSWER_LIMIT) {
+                    cetta_gslt_horn_result_free(&observed);
+                    goto completed;
+                }
+            }
+            cetta_gslt_horn_result_free(&observed);
+        }
+    }
+    result->outcome = CETTA_GSLT_HORN_COMPLETED;
+
+completed:
+    if (result->outcome != CETTA_GSLT_HORN_COMPLETED)
+        language_clear_answers(result);
+    ok = true;
+done:
+    free(content_occurrences);
+    free(contents);
+    free(requests);
+    return ok;
+}
+
 bool cetta_gslt_language_execute_atoms(
     const CettaGsltLanguage *language,
+    Atom *const *forms, size_t form_count,
+    Arena *output_arena, CettaGsltHornLimits limits,
+    CettaGsltLanguageResult *result,
+    char *error, size_t error_size) {
+    return cetta_gslt_language_execute_atoms_with_realization(
+        language, CETTA_GSLT_REALIZATION_HORN_REFERENCE,
+        forms, form_count, output_arena, limits,
+        result, error, error_size);
+}
+
+const char *cetta_gslt_realization_name(CettaGsltRealization realization) {
+    switch (realization) {
+    case CETTA_GSLT_REALIZATION_HORN_REFERENCE:
+        return "horn-reference";
+    case CETTA_GSLT_REALIZATION_COMPILED_WORKLIST:
+        return "compiled-worklist";
+    }
+    return NULL;
+}
+
+bool cetta_gslt_realization_parse(
+    const char *name, CettaGsltRealization *realization) {
+    if (!name || !realization)
+        return false;
+    for (uint32_t value = CETTA_GSLT_REALIZATION_HORN_REFERENCE;
+         value <= CETTA_GSLT_REALIZATION_COMPILED_WORKLIST; value++) {
+        const char *candidate = cetta_gslt_realization_name(
+            (CettaGsltRealization)value);
+        if (candidate && strcmp(name, candidate) == 0) {
+            *realization = (CettaGsltRealization)value;
+            return true;
+        }
+    }
+    return false;
+}
+
+bool cetta_gslt_language_execute_atoms_with_realization(
+    const CettaGsltLanguage *language,
+    CettaGsltRealization realization,
     Atom *const *forms, size_t form_count,
     Arena *output_arena, CettaGsltHornLimits limits,
     CettaGsltLanguageResult *result,
@@ -458,7 +901,15 @@ bool cetta_gslt_language_execute_atoms(
     if (!language || (!forms && form_count > 0u) || !output_arena || !result)
         return language_error(error, error_size,
                               "invalid GSLT language execution request");
+    if (limits.max_rule_attempts == 0u || limits.max_answers == 0u ||
+        limits.max_depth == 0u)
+        return language_error(error, error_size,
+                              "GSLT language limits must be nonzero");
     memset(result, 0, sizeof(*result));
+    if (language->classify_relation)
+        return language_execute_request_pipeline(
+            language, realization, forms, form_count,
+            output_arena, limits, result, error, error_size);
     Atom *program = language_program(
         language, forms, form_count, output_arena);
     if (!program)
@@ -476,11 +927,14 @@ bool cetta_gslt_language_execute_atoms(
     Atom *query = atom_expr(
         output_arena, query_elements,
         (CettaExprLen)(language->entry_arity + 1u));
-    CettaGsltHornResult horn;
-    if (!cetta_gslt_horn_query(
-            language->semantics, output_arena, query, limits,
-            &horn, error, error_size))
+    CettaGsltHornResult horn = {0};
+    bool queried = language_run_query(
+        language, realization, output_arena, query, limits,
+        &horn, error, error_size);
+    if (!queried) {
+        cetta_gslt_horn_result_free(&horn);
         return false;
+    }
     result->outcome = horn.outcome;
     result->rule_attempts = horn.rule_attempts;
     result->rule_matches = horn.rule_matches;

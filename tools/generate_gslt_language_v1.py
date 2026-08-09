@@ -9,6 +9,7 @@ from hashlib import sha256
 import json
 from pathlib import Path
 import re
+import struct
 
 import gslt2parse_schema_v1 as sx
 
@@ -25,11 +26,148 @@ class Manifest:
     semantic_sources: tuple[str, ...]
     program_nil: str
     program_cons: str
-    entry_relation: str
+    entry_relation: str | None
     entry_arity: int
     program_position: int
     result_position: int
+    classify_relation: str | None
+    produce_relation: str | None
+    observe_relation: str | None
+    produced_nil: str | None
+    produced_cons: str | None
     observation: str
+
+
+PLAN_SYMBOL = 1
+PLAN_VARIABLE = 2
+PLAN_STRING = 3
+PLAN_INTEGER = 4
+PLAN_APPLICATION = 5
+
+
+@dataclass(frozen=True)
+class PlanNode:
+    kind: int
+    child_offset: int = 0
+    child_count: int = 0
+    integer: int = 0
+    variable: int = 0
+    text: str = ""
+
+
+@dataclass(frozen=True)
+class PlanRule:
+    name: str
+    head: int
+    body_offset: int
+    body_count: int
+    variable_count: int
+
+
+class PlanBuilder:
+    def __init__(self) -> None:
+        self.nodes: list[PlanNode] = []
+        self.children: list[int] = []
+        self.rules: list[PlanRule] = []
+        self.bodies: list[int] = []
+
+    def term(self, value: sx.SExpr, variables: dict[str, int]) -> int:
+        if isinstance(value, sx.Symbol):
+            node = PlanNode(PLAN_SYMBOL, text=value.text)
+        elif isinstance(value, sx.Variable):
+            slot = variables.setdefault(value.name, len(variables))
+            node = PlanNode(PLAN_VARIABLE, variable=slot)
+        elif isinstance(value, sx.StringLiteral):
+            node = PlanNode(PLAN_STRING, text=value.text)
+        elif isinstance(value, int):
+            if value < -(2**63) or value >= 2**63:
+                raise CompileError(
+                    "compiled GSLT plan supports signed 64-bit integers"
+                )
+            node = PlanNode(PLAN_INTEGER, integer=value)
+        elif isinstance(value, tuple) and value:
+            head = symbol(value[0], "compiled GSLT application head")
+            child_ids = [self.term(child, variables) for child in value[1:]]
+            child_offset = len(self.children)
+            self.children.extend(child_ids)
+            node = PlanNode(
+                PLAN_APPLICATION,
+                child_offset=child_offset,
+                child_count=len(child_ids),
+                text=head,
+            )
+        else:
+            raise CompileError("compiled GSLT plan cannot encode an empty term")
+        index = len(self.nodes)
+        self.nodes.append(node)
+        return index
+
+    def presentation(self, presentation: sx.Presentation) -> None:
+        for rule in presentation.rules:
+            variables: dict[str, int] = {}
+            head = self.term(rule.head, variables)
+            body_offset = len(self.bodies)
+            self.bodies.extend(
+                self.term(goal, variables) for goal in rule.body
+            )
+            self.rules.append(
+                PlanRule(
+                    name=rule.name,
+                    head=head,
+                    body_offset=body_offset,
+                    body_count=len(rule.body),
+                    variable_count=len(variables),
+                )
+            )
+
+
+def _plan_text(value: str) -> bytes:
+    payload = value.encode("utf-8")
+    return struct.pack("<I", len(payload)) + payload
+
+
+def compile_plan(presentations: tuple[sx.Presentation, ...]) -> bytes:
+    builder = PlanBuilder()
+    for presentation in presentations:
+        builder.presentation(presentation)
+    payload = bytearray(b"CGP1")
+    payload.extend(
+        struct.pack(
+            "<IIII",
+            len(builder.nodes),
+            len(builder.children),
+            len(builder.rules),
+            len(builder.bodies),
+        )
+    )
+    for node in builder.nodes:
+        payload.extend(
+            struct.pack(
+                "<BIIqI",
+                node.kind,
+                node.child_offset,
+                node.child_count,
+                node.integer,
+                node.variable,
+            )
+        )
+        payload.extend(_plan_text(node.text))
+    for child in builder.children:
+        payload.extend(struct.pack("<I", child))
+    for rule in builder.rules:
+        payload.extend(
+            struct.pack(
+                "<IIII",
+                rule.head,
+                rule.body_offset,
+                rule.body_count,
+                rule.variable_count,
+            )
+        )
+        payload.extend(_plan_text(rule.name))
+    for body in builder.bodies:
+        payload.extend(struct.pack("<I", body))
+    return bytes(payload)
 
 
 def symbol(value: sx.SExpr, context: str) -> str:
@@ -66,6 +204,7 @@ def parse_manifest(path: Path) -> Manifest:
         "semantic-source",
         "program-carrier",
         "entry",
+        "request-pipeline",
         "observation",
     }
     for offset, raw in enumerate(root[1:], start=1):
@@ -81,7 +220,7 @@ def parse_manifest(path: Path) -> Manifest:
         if tag in singleton:
             raise CompileError(f"{path}: duplicate field {tag}")
         singleton[tag] = item
-    required = known - {"semantic-source"}
+    required = known - {"semantic-source", "entry", "request-pipeline"}
     missing = sorted(required - singleton.keys())
     if missing or not sources:
         raise CompileError(
@@ -92,24 +231,52 @@ def parse_manifest(path: Path) -> Manifest:
     )):
         raise CompileError(f"{path}: malformed scalar field")
     carrier = singleton["program-carrier"]
-    entry = singleton["entry"]
-    if len(carrier) != 3 or len(entry) != 5:
-        raise CompileError(f"{path}: malformed carrier or entry")
-    if not all(isinstance(entry[index], int) for index in (2, 3, 4)):
-        raise CompileError(f"{path}: entry indices must be integers")
-    arity = entry[2]
-    program_position = entry[3]
-    result_position = entry[4]
-    if (
-        arity <= 0
-        or arity >= 2**32 - 1
-        or program_position < 0
-        or result_position < 0
-        or program_position >= arity
-        or result_position >= arity
-        or program_position == result_position
-    ):
-        raise CompileError(f"{path}: invalid entry positions")
+    if len(carrier) != 3:
+        raise CompileError(f"{path}: malformed program carrier")
+    has_entry = "entry" in singleton
+    has_pipeline = "request-pipeline" in singleton
+    if has_entry == has_pipeline:
+        raise CompileError(
+            f"{path}: expected exactly one entry or request-pipeline"
+        )
+    entry_relation: str | None = None
+    arity = 0
+    program_position = 0
+    result_position = 0
+    classify_relation: str | None = None
+    produce_relation: str | None = None
+    observe_relation: str | None = None
+    produced_nil: str | None = None
+    produced_cons: str | None = None
+    if has_entry:
+        entry = singleton["entry"]
+        if len(entry) != 5:
+            raise CompileError(f"{path}: malformed entry")
+        if not all(isinstance(entry[index], int) for index in (2, 3, 4)):
+            raise CompileError(f"{path}: entry indices must be integers")
+        arity = entry[2]
+        program_position = entry[3]
+        result_position = entry[4]
+        if (
+            arity <= 0
+            or arity >= 2**32 - 1
+            or program_position < 0
+            or result_position < 0
+            or program_position >= arity
+            or result_position >= arity
+            or program_position == result_position
+        ):
+            raise CompileError(f"{path}: invalid entry positions")
+        entry_relation = text(entry[1], f"{path}: entry relation")
+    else:
+        pipeline = singleton["request-pipeline"]
+        if len(pipeline) != 6:
+            raise CompileError(f"{path}: malformed request-pipeline")
+        classify_relation = text(pipeline[1], f"{path}: classify relation")
+        produce_relation = text(pipeline[2], f"{path}: produce relation")
+        observe_relation = text(pipeline[3], f"{path}: observe relation")
+        produced_nil = text(pipeline[4], f"{path}: produced nil")
+        produced_cons = text(pipeline[5], f"{path}: produced cons")
     manifest = Manifest(
         name=text(singleton["name"][1], f"{path}: name"),
         syntax_backend=text(
@@ -119,10 +286,15 @@ def parse_manifest(path: Path) -> Manifest:
         semantic_sources=tuple(sources),
         program_nil=text(carrier[1], f"{path}: program nil"),
         program_cons=text(carrier[2], f"{path}: program cons"),
-        entry_relation=text(entry[1], f"{path}: entry relation"),
+        entry_relation=entry_relation,
         entry_arity=arity,
         program_position=program_position,
         result_position=result_position,
+        classify_relation=classify_relation,
+        produce_relation=produce_relation,
+        observe_relation=observe_relation,
+        produced_nil=produced_nil,
+        produced_cons=produced_cons,
         observation=text(
             singleton["observation"][1], f"{path}: observation"
         ),
@@ -159,6 +331,7 @@ def main() -> int:
     parser.add_argument("--manifest", type=Path, required=True)
     parser.add_argument("--header", type=Path, required=True)
     parser.add_argument("--source", type=Path, required=True)
+    parser.add_argument("--source-root", type=Path)
     parser.add_argument("--symbol", required=True)
     parser.add_argument("--header-include", required=True)
     arguments = parser.parse_args()
@@ -167,19 +340,39 @@ def main() -> int:
 
     manifest_path = arguments.manifest.resolve()
     manifest = parse_manifest(manifest_path)
+    source_root = (
+        arguments.source_root.resolve()
+        if arguments.source_root
+        else manifest_path.parent.resolve()
+    )
+    try:
+        manifest_path.relative_to(source_root)
+    except ValueError as error:
+        raise CompileError("manifest escapes the declared source root") from error
     semantic_payloads: list[tuple[str, bytes]] = []
+    semantic_paths: list[Path] = []
     for relative in manifest.semantic_sources:
         source = (manifest_path.parent / relative).resolve()
         try:
-            source.relative_to(manifest_path.parent.resolve())
+            source.relative_to(source_root)
         except ValueError as error:
             raise CompileError(
-                f"semantic source escapes the language directory: {relative}"
+                f"semantic source escapes the declared source root: {relative}"
             ) from error
         sx.parse_presentation(source)
+        semantic_paths.append(source)
         semantic_payloads.append((relative, source.read_bytes()))
 
-    compiler_digest = sha256(Path(__file__).read_bytes()).hexdigest()
+    admitted = sx.admit(tuple(semantic_paths))
+    compiled_plan = compile_plan(admitted)
+
+    compiler_hash = sha256()
+    compiler_hash.update(b"CettaGsltLanguageCompilerV1\0")
+    for compiler_source in (Path(__file__).resolve(), Path(sx.__file__).resolve()):
+        payload = compiler_source.read_bytes()
+        compiler_hash.update(len(payload).to_bytes(8, "big"))
+        compiler_hash.update(payload)
+    compiler_digest = compiler_hash.hexdigest()
     manifest_digest = sha256(manifest_path.read_bytes()).hexdigest()
     guard = f"CETTA_GENERATED_{arguments.symbol.upper()}_H"
     header = (
@@ -204,9 +397,12 @@ def main() -> int:
             f"        .sha256 = {c_string(sha256(payload).hexdigest())},\n"
             "    },"
         )
+    plan_array = f"{arguments.symbol}_compiled_plan_v1"
     source = (
         f'#include "{arguments.header_include}"\n\n'
         + "\n".join(arrays)
+        + "\n"
+        + c_bytes(plan_array, compiled_plan)
         + "\n"
         + f"static const CettaGsltEmbeddedSemanticSourceV1 "
           f"{arguments.symbol}_sources[] = {{\n"
@@ -218,12 +414,28 @@ def main() -> int:
         + f"    .term_abi = {c_string(manifest.term_abi)},\n"
         + f"    .semantic_sources = {arguments.symbol}_sources,\n"
         + f"    .semantic_source_count = {len(semantic_payloads)}u,\n"
+        + "    .compiled_plan = {\n"
+        + f"        .bytes = {plan_array},\n"
+        + f"        .length = sizeof({plan_array}),\n"
+        + f"        .sha256 = {c_string(sha256(compiled_plan).hexdigest())},\n"
+        + "    },\n"
         + f"    .program_nil = {c_string(manifest.program_nil)},\n"
         + f"    .program_cons = {c_string(manifest.program_cons)},\n"
-        + f"    .entry_relation = {c_string(manifest.entry_relation)},\n"
+        + f"    .entry_relation = {c_string(manifest.entry_relation) if manifest.entry_relation else 'NULL'},\n"
         + f"    .entry_arity = {manifest.entry_arity}u,\n"
         + f"    .program_position = {manifest.program_position}u,\n"
         + f"    .result_position = {manifest.result_position}u,\n"
+        + (
+            "    .request_pipeline = &(const CettaGsltRequestPipelineV1){\n"
+            f"        .classify_relation = {c_string(manifest.classify_relation)},\n"
+            f"        .produce_relation = {c_string(manifest.produce_relation)},\n"
+            f"        .observe_relation = {c_string(manifest.observe_relation)},\n"
+            f"        .produced_nil = {c_string(manifest.produced_nil)},\n"
+            f"        .produced_cons = {c_string(manifest.produced_cons)},\n"
+            "    },\n"
+            if manifest.classify_relation else
+            "    .request_pipeline = NULL,\n"
+        )
         + f"    .observation = {c_string(manifest.observation)},\n"
         + f"    .manifest_sha256 = {c_string(manifest_digest)},\n"
         + f"    .compiler_sha256 = {c_string(compiler_digest)},\n"

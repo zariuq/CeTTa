@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Adversarial checks for the first executable MeTTa Zero candidate."""
+"""Adversarial checks for the first executable Subzero candidate."""
 
 from __future__ import annotations
 
@@ -69,7 +69,7 @@ def rendered_answers(result: dict[str, object]) -> list[tuple[sx.SExpr, ...]]:
     for text in raw:
         if not isinstance(text, str):
             raise GateFailure(f"non-text answer: {text!r}")
-        parsed = sx.parse_sexprs(text, source="MeTTa Zero answer")
+        parsed = sx.parse_sexprs(text, source="Subzero answer")
         if len(parsed) != 1 or not isinstance(parsed[0], tuple):
             raise GateFailure(f"malformed answer term: {text}")
         answers.append(parsed[0])
@@ -82,7 +82,7 @@ def observation_pairs(result: dict[str, object]) -> set[tuple[str, str]]:
         if (
             len(answer) != 5
             or not isinstance(answer[0], sx.Symbol)
-            or answer[0].text != "zero-step"
+            or answer[0].text != "subzero-step"
         ):
             raise GateFailure(f"unexpected answer shape: {sx.render(answer)}")
         pairs.add((sx.render(answer[3]), sx.render(answer[4])))
@@ -109,14 +109,14 @@ def equality(pattern: str, template: str) -> str:
 
 
 def program(*occurrences: tuple[str, str]) -> str:
-    result = "zero-program-nil"
+    result = "subzero-program-nil"
     for occurrence, atom in reversed(occurrences):
-        result = f"(zero-program-cons {occurrence} {atom} {result})"
+        result = f"(subzero-program-cons {occurrence} {atom} {result})"
     return result
 
 
 def step(program_value: str, subject: str) -> str:
-    return f"(zero-step {program_value} {subject} ?occurrence ?result)"
+    return f"(subzero-step {program_value} {subject} ?occurrence ?result)"
 
 
 def main() -> int:
@@ -127,7 +127,7 @@ def main() -> int:
         type=Path,
         default=(
             Path(__file__).resolve().parents[1]
-            / "langdef/zero/semantics/free_bag_rewrite_core_v1.metta"
+            / "langdef/subzero/semantics/free_bag_rewrite_core_v1.metta"
         ),
     )
     parser.add_argument(
@@ -135,7 +135,7 @@ def main() -> int:
         type=Path,
         default=(
             Path(__file__).resolve().parents[1]
-            / "langdef/zero/semantics/one_step_observation_v1.metta"
+            / "langdef/subzero/semantics/one_step_observation_v1.metta"
         ),
     )
     parser.add_argument(
@@ -143,7 +143,7 @@ def main() -> int:
         type=Path,
         default=(
             Path(__file__).resolve().parents[1]
-            / "langdef/zero/semantics/public_result_bag_v1.metta"
+            / "langdef/subzero/semantics/public_result_bag_v1.metta"
         ),
     )
     arguments = parser.parse_args()
@@ -182,37 +182,37 @@ def main() -> int:
     index_base = run_query(
         arguments.chart,
         arguments.core,
-        "(zero-index-lt q-zero (q-succ q-zero))",
+        "(subzero-index-lt q-zero (q-succ q-zero))",
     )
     expect(index_base, "Unique", 1)
     index_step = run_query(
         arguments.chart,
         arguments.core,
-        "(zero-index-lt (q-succ q-zero) "
+        "(subzero-index-lt (q-succ q-zero) "
         "(q-succ (q-succ q-zero)))",
     )
     expect(index_step, "Unique", 1)
     bind_before = run_query(
         arguments.chart,
         arguments.core,
-        "(zero-bind q-zero value-zero "
-        "(zero-env-cons (q-succ q-zero) value-one zero-env-nil) "
+        "(subzero-bind q-zero value-zero "
+        "(subzero-env-cons (q-succ q-zero) value-one subzero-env-nil) "
         "?result)",
     )
     expect(bind_before, "Unique", 1)
     bind_after = run_query(
         arguments.chart,
         arguments.core,
-        "(zero-bind (q-succ q-zero) value-one "
-        "(zero-env-cons q-zero value-zero zero-env-nil) ?result)",
+        "(subzero-bind (q-succ q-zero) value-one "
+        "(subzero-env-cons q-zero value-zero subzero-env-nil) ?result)",
     )
     expect(bind_after, "Unique", 1)
     lookup_after = run_query(
         arguments.chart,
         arguments.core,
-        "(zero-lookup (q-succ q-zero) "
-        "(zero-env-cons q-zero value-zero "
-        "(zero-env-cons (q-succ q-zero) value-one zero-env-nil)) "
+        "(subzero-lookup (q-succ q-zero) "
+        "(subzero-env-cons q-zero value-zero "
+        "(subzero-env-cons (q-succ q-zero) value-one subzero-env-nil)) "
         "value-one)",
     )
     expect(lookup_after, "Unique", 1)
@@ -261,7 +261,7 @@ def main() -> int:
     )
     expect(contextual, "Ambiguous", 2)
     context_paths = {path for path, _ in observation_pairs(contextual)}
-    if not any("(zero-in-argument q-zero" in path for path in context_paths):
+    if not any("(subzero-in-argument q-zero" in path for path in context_paths):
         raise GateFailure(f"first argument occurrence is absent: {context_paths}")
     if not any("(q-succ q-zero)" in path for path in context_paths):
         raise GateFailure(f"nested argument occurrence is absent: {context_paths}")
@@ -386,7 +386,7 @@ def main() -> int:
     observed = run_query(
         arguments.chart,
         arguments.core,
-        f"(zero-observe {request_program} ?request ?step ?result)",
+        f"(subzero-observe {request_program} ?request ?step ?result)",
         arguments.observation,
     )
     expect(observed, "Unique", 1)
@@ -402,7 +402,7 @@ def main() -> int:
     public_result = run_query(
         arguments.chart,
         arguments.core,
-        f"(zero-evaluate {duplicate_request_program} ?occurrence ?result)",
+        f"(subzero-evaluate {duplicate_request_program} ?occurrence ?result)",
         arguments.public_observation,
     )
     expect(public_result, "Ambiguous", 2)
@@ -422,7 +422,7 @@ def main() -> int:
         )
 
     print(
-        "(MettaZeroFreeBagV1Summary "
+        "(SubzeroFreeBagV1Summary "
         "substitution=1 repeated-positive=1 repeated-negative=1 "
         "ordered-environment=5 integer=1 string=1 "
         "contextual-occurrences=2 duplicate-rule-occurrences=2 "

@@ -1,10 +1,14 @@
 #include "atom.h"
 #include "gslt_language_runtime.h"
 #include "he_compiled_reader.h"
+#include "native_sha256.h"
 #include "parser.h"
 #include "symbol.h"
 #include "term_universe.h"
+#include "generated/subzero_language_v1.generated.h"
 #include "generated/zero_language_v1.generated.h"
+#include "tests/generated/gslt_compiled_canary_v1.generated.h"
+#include "tests/generated/gslt_pipeline_canary_v1.generated.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -44,10 +48,11 @@ static bool all_answers_equal(const CettaGsltLanguageResult *result,
     return true;
 }
 
-static void run_document(const CettaGsltLanguage *language,
-                         Arena *source, Arena *answers,
-                         const char *text, const char *expected_text,
-                         size_t expected_count, const char *label) {
+static void run_document_realization(
+    const CettaGsltLanguage *language, CettaGsltRealization realization,
+    Arena *source, Arena *answers,
+    const char *text, const char *expected_text,
+    size_t expected_count, const char *label) {
     Atom **forms = NULL;
     Atom **expected_forms = NULL;
     int form_count = parse_document(source, text, &forms);
@@ -56,9 +61,9 @@ static void run_document(const CettaGsltLanguage *language,
     CettaGsltLanguageResult result;
     char error[ERROR_CAP] = {0};
     bool executed = form_count >= 0 && expected_form_count == 1 &&
-        cetta_gslt_language_execute_atoms(
-            language, forms, (size_t)form_count, answers, limits(),
-            &result, error, sizeof(error));
+        cetta_gslt_language_execute_atoms_with_realization(
+            language, realization, forms, (size_t)form_count,
+            answers, limits(), &result, error, sizeof(error));
     CHECK(executed, label);
     if (executed) {
         CHECK(result.outcome == CETTA_GSLT_HORN_COMPLETED,
@@ -72,6 +77,81 @@ static void run_document(const CettaGsltLanguage *language,
         fprintf(stderr, "%s diagnostic: %s\n", label, error);
     }
     free(expected_forms);
+    free(forms);
+}
+
+static void run_document(const CettaGsltLanguage *language,
+                         Arena *source, Arena *answers,
+                         const char *text, const char *expected_text,
+                         size_t expected_count, const char *label) {
+    run_document_realization(
+        language, CETTA_GSLT_REALIZATION_HORN_REFERENCE,
+        source, answers, text, expected_text, expected_count, label);
+}
+
+static void run_resource_limit(
+    const CettaGsltLanguage *language, CettaGsltRealization realization,
+    Arena *source, Arena *answers, const char *text,
+    CettaGsltHornLimits bounded,
+    CettaGsltHornOutcome expected, const char *label) {
+    Atom **forms = NULL;
+    int form_count = parse_document(source, text, &forms);
+    CettaGsltLanguageResult result;
+    char error[ERROR_CAP] = {0};
+    bool executed = form_count >= 0 &&
+        cetta_gslt_language_execute_atoms_with_realization(
+            language, realization, forms, (size_t)form_count,
+            answers, bounded, &result, error, sizeof(error));
+    CHECK(executed, label);
+    if (executed) {
+        CHECK(result.outcome == expected,
+              "generated realization reports the exact resource boundary");
+        CHECK(result.answer_count == 0u,
+              "incomplete generated execution publishes no partial answers");
+        cetta_gslt_language_result_free(&result);
+    }
+    free(forms);
+}
+
+static void run_completion_boundary(
+    const CettaGsltLanguage *language, CettaGsltRealization realization,
+    Arena *source, Arena *answers, const char *text, const char *label) {
+    Atom **forms = NULL;
+    int form_count = parse_document(source, text, &forms);
+    CettaGsltLanguageResult complete;
+    char error[ERROR_CAP] = {0};
+    bool executed = form_count >= 0 &&
+        cetta_gslt_language_execute_atoms_with_realization(
+            language, realization, forms, (size_t)form_count,
+            answers, limits(), &complete, error, sizeof(error));
+    CHECK(executed && complete.outcome == CETTA_GSLT_HORN_COMPLETED &&
+              complete.answer_count == 1u && complete.rule_attempts > 1u,
+          label);
+    if (executed && complete.outcome == CETTA_GSLT_HORN_COMPLETED &&
+        complete.rule_attempts > 1u) {
+        uint64_t exact_attempts = complete.rule_attempts;
+        cetta_gslt_language_result_free(&complete);
+        CettaGsltLanguageResult incomplete;
+        memset(error, 0, sizeof(error));
+        executed = cetta_gslt_language_execute_atoms_with_realization(
+            language, realization, forms, (size_t)form_count,
+            answers,
+            (CettaGsltHornLimits){
+                .max_rule_attempts = exact_attempts - 1u,
+                .max_answers = 1000u,
+                .max_depth = 10000u,
+            },
+            &incomplete, error, sizeof(error));
+        CHECK(executed && incomplete.outcome == CETTA_GSLT_HORN_RULE_LIMIT,
+              "pipeline reports an open frontier immediately before completion");
+        if (executed) {
+            CHECK(incomplete.answer_count == 0u,
+                  "open pipeline frontier cannot trigger inert observation");
+            cetta_gslt_language_result_free(&incomplete);
+        }
+    } else if (executed) {
+        cetta_gslt_language_result_free(&complete);
+    }
     free(forms);
 }
 
@@ -155,7 +235,7 @@ int main(int argc, char **argv) {
     if (!language) {
         fprintf(stderr, "manifest diagnostic: %s\n", error);
     } else {
-        CHECK(strcmp(cetta_gslt_language_name(language), "zero") == 0,
+        CHECK(strcmp(cetta_gslt_language_name(language), "subzero") == 0,
               "language name comes from the manifest");
         CHECK(strcmp(cetta_gslt_language_syntax_backend(language),
                      "he-reader-direct-v1") == 0,
@@ -185,24 +265,116 @@ int main(int argc, char **argv) {
               &language, error, sizeof(error)) && error[0] != '\0',
           "missing language manifest fails with a diagnostic");
     CettaGsltEmbeddedLanguageV1 invalid_descriptor =
-        cetta_zero_language_v1;
+        cetta_subzero_language_v1;
     invalid_descriptor.entry_arity = UINT32_MAX;
     memset(error, 0, sizeof(error));
     CHECK(!cetta_gslt_language_load_embedded(
               &invalid_descriptor, &language, error, sizeof(error)),
           "overflowing embedded entry arity is rejected");
 
+    invalid_descriptor = cetta_subzero_language_v1;
+    invalid_descriptor.compiled_plan.sha256 =
+        "0000000000000000000000000000000000000000000000000000000000000000";
+    memset(error, 0, sizeof(error));
+    CHECK(!cetta_gslt_language_load_embedded(
+              &invalid_descriptor, &language, error, sizeof(error)) &&
+              strstr(error, "digest") != NULL,
+          "tampered compiled-plan authority is rejected");
+
+    size_t malformed_length = cetta_subzero_language_v1.compiled_plan.length;
+    uint8_t *malformed_plan = malloc(malformed_length);
+    char malformed_digest[65];
+    memcpy(malformed_plan, cetta_subzero_language_v1.compiled_plan.bytes,
+           malformed_length);
+    malformed_plan[20] = 0xffu;
+    cetta_native_sha256_hex(
+        malformed_plan, malformed_length, malformed_digest);
+    invalid_descriptor = cetta_subzero_language_v1;
+    invalid_descriptor.compiled_plan.bytes = malformed_plan;
+    invalid_descriptor.compiled_plan.sha256 = malformed_digest;
+    memset(error, 0, sizeof(error));
+    CHECK(!cetta_gslt_language_load_embedded_for_realization(
+              &invalid_descriptor,
+              CETTA_GSLT_REALIZATION_COMPILED_WORKLIST,
+              &language, error, sizeof(error)) &&
+              strstr(error, "node table") != NULL,
+          "digest-valid malformed compiled plan fails structural admission");
+    free(malformed_plan);
+
+    invalid_descriptor = cetta_subzero_language_v1;
+    memset(error, 0, sizeof(error));
+    CHECK(!cetta_gslt_language_load_embedded_for_realization(
+              &invalid_descriptor, (CettaGsltRealization)99,
+              &language, error, sizeof(error)) && error[0] != '\0',
+          "unknown generated realization fails at admission");
+
+    invalid_descriptor = cetta_zero_language_v1;
+    invalid_descriptor.entry_relation = "conflicting-entry";
+    invalid_descriptor.entry_arity = 1u;
+    memset(error, 0, sizeof(error));
+    CHECK(!cetta_gslt_language_load_embedded(
+              &invalid_descriptor, &language, error, sizeof(error)),
+          "descriptor cannot mix a single entry with a request pipeline");
+
+    CettaGsltRequestPipelineV1 incomplete_pipeline =
+        *cetta_zero_language_v1.request_pipeline;
+    incomplete_pipeline.observe_relation = NULL;
+    invalid_descriptor = cetta_zero_language_v1;
+    invalid_descriptor.request_pipeline = &incomplete_pipeline;
+    memset(error, 0, sizeof(error));
+    CHECK(!cetta_gslt_language_load_embedded(
+              &invalid_descriptor, &language, error, sizeof(error)),
+          "incomplete request-pipeline ABI fails at admission");
+
     memset(error, 0, sizeof(error));
     CHECK(cetta_gslt_language_load_embedded(
-              &cetta_zero_language_v1, &language, error, sizeof(error)),
+              &cetta_subzero_language_v1, &language, error, sizeof(error)),
           "digest-checked embedded GSLT language loads");
     if (!language) {
         fprintf(stderr, "embedded descriptor diagnostic: %s\n", error);
     } else {
-        run_document(
-            language, &source, &answers,
-            "(= a b)\n(= a b)\n(! a)\n", "b", 2u,
-            "embedded descriptor preserves the authored result bag");
+        for (uint32_t raw = CETTA_GSLT_REALIZATION_HORN_REFERENCE;
+             raw <= CETTA_GSLT_REALIZATION_COMPILED_WORKLIST; raw++) {
+            CettaGsltRealization realization = (CettaGsltRealization)raw;
+            CHECK(cetta_gslt_realization_name(realization) != NULL,
+                  "generated realization has a stable public name");
+            run_document_realization(
+                language, realization, &source, &answers,
+                "(= a b)\n(= a b)\n(! a)\n", "b", 2u,
+                "generated realization preserves duplicate rule occurrences");
+            run_document_realization(
+                language, realization, &source, &answers,
+                "(= a b)\n(! (wrap a))\n", "(wrap b)", 1u,
+                "generated realization preserves contextual rewriting");
+            run_document_realization(
+                language, realization, &source, &answers,
+                "(= ($x $x) same)\n(! (a a))\n", "same", 1u,
+                "generated realization preserves repeated-variable matching");
+            run_document_realization(
+                language, realization, &source, &answers,
+                "(= ($x $x) same)\n(! (a b))\n", "unused", 0u,
+                "generated realization rejects inconsistent repeated variables");
+            run_resource_limit(
+                language, realization, &source, &answers,
+                "(= a b)\n(= a b)\n(! a)\n",
+                (CettaGsltHornLimits){
+                    .max_rule_attempts = 1000000u,
+                    .max_answers = 1u,
+                    .max_depth = 10000u,
+                },
+                CETTA_GSLT_HORN_ANSWER_LIMIT,
+                "generated realization fails closed at the answer limit");
+            run_resource_limit(
+                language, realization, &source, &answers,
+                "(= a b)\n(! a)\n",
+                (CettaGsltHornLimits){
+                    .max_rule_attempts = 1u,
+                    .max_answers = 1000u,
+                    .max_depth = 10000u,
+                },
+                CETTA_GSLT_HORN_RULE_LIMIT,
+                "generated realization fails closed at the rule limit");
+        }
         if (reader) {
             run_compiled_document(
                 language, reader, &universe, &answers,
@@ -211,6 +383,95 @@ int main(int argc, char **argv) {
         }
     }
     cetta_gslt_language_free(language);
+    language = NULL;
+    memset(error, 0, sizeof(error));
+    CHECK(cetta_gslt_language_load_embedded(
+              &cetta_zero_language_v1, &language, error, sizeof(error)),
+          "query-first generated MeTTa Zero language loads");
+    if (!language) {
+        fprintf(stderr, "MeTTa Zero descriptor diagnostic: %s\n", error);
+    } else {
+        CHECK(strcmp(cetta_gslt_language_name(language), "zero") == 0,
+              "request pipeline language identity comes from its descriptor");
+        CHECK(cetta_gslt_language_semantic_rule_count(language) == 40u,
+              "request pipeline composes matching, query, and observation");
+        for (uint32_t raw = CETTA_GSLT_REALIZATION_HORN_REFERENCE;
+             raw <= CETTA_GSLT_REALIZATION_COMPILED_WORKLIST; raw++) {
+            CettaGsltRealization realization = (CettaGsltRealization)raw;
+            run_document_realization(
+                language, realization, &source, &answers,
+                "fact\n(zero-query fact hit)\n", "hit", 1u,
+                "request pipeline publishes arbitrary reflective query");
+            run_document_realization(
+                language, realization, &source, &answers,
+                "(= (f $x) (g $x))\n(! (f a))\n", "(g a)", 1u,
+                "request pipeline derives evaluation through public query");
+            run_document_realization(
+                language, realization, &source, &answers,
+                "(! unknown)\n", "unknown", 1u,
+                "closed empty producer retains an inert subject");
+            run_document_realization(
+                language, realization, &source, &answers,
+                "fact\n(zero-query absent hit)\n", "unused", 0u,
+                "closed empty query remains an empty answer bag");
+            run_resource_limit(
+                language, realization, &source, &answers,
+                "fact\nfact\n(zero-query fact hit)\n",
+                (CettaGsltHornLimits){
+                    .max_rule_attempts = 1000000u,
+                    .max_answers = 1u,
+                    .max_depth = 10000u,
+                },
+                CETTA_GSLT_HORN_ANSWER_LIMIT,
+                "incomplete producer cannot publish its first occurrence");
+            run_completion_boundary(
+                language, realization, &source, &answers,
+                "(! unknown)\n",
+                "completed empty producer reaches inert observation");
+        }
+    }
+    cetta_gslt_language_free(language);
+    language = NULL;
+    memset(error, 0, sizeof(error));
+    CHECK(cetta_gslt_language_load_embedded_for_realization(
+              &cetta_gslt_compiled_canary_v1,
+              CETTA_GSLT_REALIZATION_COMPILED_WORKLIST,
+              &language, error, sizeof(error)),
+          "renamed non-Zero compiled canary loads generically");
+    if (language) {
+        run_document_realization(
+            language, CETTA_GSLT_REALIZATION_COMPILED_WORKLIST,
+            &source, &answers, "", "renamed-answer", 1u,
+            "compiled executor runs a renamed independent language");
+        Atom **no_forms = NULL;
+        CettaGsltLanguageResult unavailable;
+        memset(error, 0, sizeof(error));
+        CHECK(!cetta_gslt_language_execute_atoms_with_realization(
+                  language, CETTA_GSLT_REALIZATION_HORN_REFERENCE,
+                  no_forms, 0u, &answers, limits(), &unavailable,
+                  error, sizeof(error)) &&
+                  strstr(error, "not loaded") != NULL,
+              "compiled-only load does not parse or retain the reference program");
+    }
+    cetta_gslt_language_free(language);
+    language = NULL;
+    for (uint32_t raw = CETTA_GSLT_REALIZATION_HORN_REFERENCE;
+         raw <= CETTA_GSLT_REALIZATION_COMPILED_WORKLIST; raw++) {
+        CettaGsltRealization realization = (CettaGsltRealization)raw;
+        memset(error, 0, sizeof(error));
+        CHECK(cetta_gslt_language_load_embedded_for_realization(
+                  &cetta_gslt_pipeline_canary_v1, realization,
+                  &language, error, sizeof(error)),
+              "renamed non-Zero request pipeline loads generically");
+        if (language) {
+            run_document_realization(
+                language, realization, &source, &answers,
+                "(canary-run)\n", "renamed-pipeline-answer", 1u,
+                "request pipeline executes without language vocabulary dispatch");
+        }
+        cetta_gslt_language_free(language);
+        language = NULL;
+    }
     he_compiled_reader_v1_free(reader);
     term_universe_free(&universe);
     arena_free(&answers);
