@@ -3,6 +3,7 @@
 #include "parser.h"
 #include "he_compiled_reader.h"
 #include "gslt_language_runtime.h"
+#include "generated/subzero_language_v1.generated.h"
 #include "generated/zero_language_v1.generated.h"
 #include "petta_compiled_reader.h"
 #include "petta_typecheck.h"
@@ -1242,6 +1243,7 @@ static void print_usage(FILE *out) {
     fputs("       cetta --lang mm2 --steps <n> <file.mm2> # run at most n MM2 steps\n", out);
     fputs("       cetta --space-engine <name> <file.metta>\n", out);
     fputs("       cetta --space-match-backend <name> <file.metta>   # alias for --space-engine\n", out);
+    fputs("       cetta --lang <zero|subzero> --gslt-realization <horn-reference|compiled-worklist> <file.metta>\n", out);
     fputs("       cetta [--lang <name>] --list-profiles\n", out);
     fputs("       cetta --list-space-engines\n", out);
     fputs("       cetta --list-space-match-backends                 # alias for --list-space-engines\n", out);
@@ -1959,6 +1961,9 @@ int main(int argc, char **argv) {
     bool rho_scheduler_requested = false;
     uint64_t mm2_step_limit = CETTA_MM2_DEFAULT_RUN_STEPS;
     SpaceEngine space_engine = SPACE_ENGINE_NATIVE;
+    CettaGsltRealization gslt_realization =
+        CETTA_GSLT_REALIZATION_HORN_REFERENCE;
+    bool gslt_realization_requested = false;
 
     endpoint_init(&source_endpoint, "he");
     endpoint_init(&target_endpoint, NULL);
@@ -2152,6 +2157,20 @@ int main(int argc, char **argv) {
             }
             continue;
         }
+        if (strcmp(argv[i], "--gslt-realization") == 0) {
+            if (i + 1 >= argc) {
+                print_usage(stderr);
+                return 1;
+            }
+            if (!cetta_gslt_realization_parse(
+                    argv[++i], &gslt_realization)) {
+                fprintf(stderr, "error: unknown GSLT realization '%s'\n",
+                        argv[i]);
+                return 2;
+            }
+            gslt_realization_requested = true;
+            continue;
+        }
         if (strcmp(argv[i], "--lang") == 0) {
             if (i + 1 >= argc) {
                 print_usage(stderr);
@@ -2251,6 +2270,13 @@ int main(int argc, char **argv) {
 
     const CettaLanguageSpec *lang = source_endpoint.lang;
     profile = source_endpoint.profile;
+    if (gslt_realization_requested &&
+        source_endpoint.lang->id != CETTA_LANGUAGE_SUBZERO &&
+        source_endpoint.lang->id != CETTA_LANGUAGE_ZERO) {
+        fprintf(stderr,
+                "error: --gslt-realization requires --lang zero or subzero\n");
+        return 2;
+    }
 
     if ((petta_strict || petta_strict_det) &&
         (lang->id != CETTA_LANGUAGE_PETTA || !profile ||
@@ -2569,10 +2595,16 @@ int main(int argc, char **argv) {
         document_reader_capability = "petta-reader-direct-v1";
     else if (lang->id == CETTA_LANGUAGE_PRIME)
         document_reader_capability = "prime-reader-direct-v1";
-    else if (lang->id == CETTA_LANGUAGE_ZERO) {
+    else if (lang->id == CETTA_LANGUAGE_SUBZERO ||
+             lang->id == CETTA_LANGUAGE_ZERO) {
         char language_error[512] = {0};
-        if (!cetta_gslt_language_load_embedded(
-                &cetta_zero_language_v1, &gslt_language,
+        const CettaGsltEmbeddedLanguageV1 *descriptor =
+            lang->id == CETTA_LANGUAGE_ZERO
+                ? &cetta_zero_language_v1
+                : &cetta_subzero_language_v1;
+        if (!cetta_gslt_language_load_embedded_for_realization(
+                descriptor, gslt_realization,
+                &gslt_language,
                 language_error, sizeof(language_error)) ||
             strcmp(cetta_gslt_language_name(gslt_language),
                    lang->canonical) != 0) {
@@ -2729,10 +2761,12 @@ int main(int argc, char **argv) {
         }
     }
 
-    if (lang->id == CETTA_LANGUAGE_ZERO) {
+    if (lang->id == CETTA_LANGUAGE_SUBZERO ||
+        lang->id == CETTA_LANGUAGE_ZERO) {
         if (compile_mode) {
             fprintf(stderr,
-                    "error: --compile is not a declared MeTTa Zero observation\n");
+                    "error: --compile is not a declared %s observation\n",
+                    lang->canonical);
             rc = 2;
             goto cleanup;
         }
@@ -2748,8 +2782,9 @@ int main(int argc, char **argv) {
             .max_depth = 10000u,
         };
         char language_error[512] = {0};
-        bool executed = cetta_gslt_language_execute_atoms(
-            gslt_language, forms, (size_t)n, &eval_arena, limits,
+        bool executed = cetta_gslt_language_execute_atoms_with_realization(
+            gslt_language, gslt_realization,
+            forms, (size_t)n, &eval_arena, limits,
             &observed, language_error, sizeof(language_error));
         free(forms);
         if (!executed) {
