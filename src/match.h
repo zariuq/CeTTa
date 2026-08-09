@@ -189,6 +189,13 @@ Atom     *bindings_apply_rewrite_vars(Bindings *b, Arena *a, Atom *atom,
                                       BindingsRewriteVarFn rewrite_var,
                                       void *rewrite_ctx);
 Atom     *bindings_apply_epoch(Bindings *b, Arena *a, Atom *atom, uint32_t epoch);
+/* Apply an epoch-standardized term through only the binding suffix beginning
+ * at `first_entry`.  This is the activation-frame view used when a caller has
+ * already instantiated the query through the older prefix: rule-local slots
+ * are substituted now, while unresolved outer variables remain live trail
+ * references for later demand. */
+Atom     *bindings_apply_epoch_since(Bindings *b, Arena *a, Atom *atom,
+                                     uint32_t epoch, uint32_t first_entry);
 Atom     *atom_freshen_epoch(Arena *a, Atom *atom, uint32_t epoch);
 Atom     *bindings_to_atom(Arena *a, const Bindings *b);
 bool      bindings_from_atom(Atom *atom, Bindings *out);

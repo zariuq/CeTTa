@@ -29,4 +29,21 @@
      impossible-refinement)
    ())
 
-!(println! (PrimeSequentialUnificationSummary 2 2 0))
+; A generic equation argument remains lazy until `match` consumes its pattern
+; structure.  Crossing that equation boundary must neither hide the pattern
+; behind a private suspension nor lose refinements produced by the match.
+(: need-match-g (-> String Bool))
+
+(= (need-match-through-equation $query)
+   (match &self $query $query))
+
+!(assertEqualToResult
+   (need-match-through-equation (: need-match-g (-> $input Bool)))
+   ((: need-match-g (-> String Bool))))
+
+; Demanding the pattern does not manufacture a match for absent data.
+!(assertEqualToResult
+   (need-match-through-equation (: need-match-missing (-> $input Bool)))
+   ())
+
+!(println! (PrimeSequentialUnificationSummary 4 4 0))

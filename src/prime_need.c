@@ -52,7 +52,7 @@ static bool prime_need_heap_index_enabled(void) {
         return cached != 0;
     const char *setting = getenv("CETTA_PRIME_NEED_HEAP_INDEX");
     int selected =
-        !(setting && setting[0] == '0' && setting[1] == '\0');
+        setting && setting[0] == '1' && setting[1] == '\0';
     int expected = -1;
     if (!atomic_compare_exchange_strong_explicit(
             &enabled, &expected, selected,
@@ -187,7 +187,7 @@ static _Atomic uint64_t g_prime_need_next_thunk = 1u;
 static _Atomic uint64_t g_prime_need_next_authority = 1u;
 static _Atomic uint64_t g_prime_need_next_storage_key = 1u;
 static _Atomic uint64_t g_prime_need_next_receipt_session = 1u;
-static _Atomic uint64_t g_prime_need_next_receipt_event = 1u;
+static _Atomic uint64_t g_prime_need_next_receipt_node = 1u;
 static _Atomic uint64_t g_prime_need_next_source_occurrence = 1u;
 
 static void prime_need_reserve_storage_keys_through(uint64_t key) {
@@ -206,7 +206,12 @@ static void prime_need_reserve_storage_keys_through(uint64_t key) {
 struct PrimeNeedReceiptFrame {
     const PrimeNeedReceiptFrame *left;
     const PrimeNeedReceiptFrame *right;
+    /* O(1) ownership certificate for the complete reachable sub-DAG.
+     * NULL denotes a cross-arena join. */
+    Arena *closure_owner;
     uint64_t session_id;
+    /* Stable across arena promotion; pointer identity is storage only. */
+    uint64_t identity_id;
     uint64_t event_id;
     uint64_t depth;
     bool has_event;
@@ -490,7 +495,7 @@ static bool prime_need_receipt_primary_reaches(
     steps++;
     if (steps_out)
         *steps_out = steps;
-    return cursor == target;
+    return cursor && cursor->identity_id == target->identity_id;
 
 not_found:
     if (steps_out)
@@ -1074,6 +1079,11 @@ bool prime_need_snapshot_promote(Arena *dst,
                                  PrimeNeedSnapshot *snapshot) {
     if (!dst || !snapshot || !snapshot->top)
         return dst && snapshot;
+    /* Snapshot paths are single-owner by construction.  Publishing back to
+     * that same arena is already lifetime-safe and must preserve the O(1)
+     * persistent handle rather than copying the complete history. */
+    if (snapshot->owner == dst)
+        return true;
     uint64_t depth = snapshot->top->depth;
     if (depth > SIZE_MAX / sizeof(const PrimeNeedFrame *))
         return false;
@@ -1410,7 +1420,7 @@ static bool prime_need_receipt_reaches_exact(
     for (size_t i = 0u; i < work.len; i++) {
         const PrimeNeedReceiptFrame *frame = work.items[i];
         visited++;
-        if (frame == target) {
+        if (frame->identity_id == target->identity_id) {
             found = true;
             break;
         }
@@ -1445,7 +1455,7 @@ static bool prime_need_receipt_reachable(
             CETTA_RUNTIME_COUNTER_PRIME_NEED_RECEIPT_REACH_BOUNDARY_REJECT);
         return false;
     }
-    if (top == target) {
+    if (top->identity_id == target->identity_id) {
         cetta_runtime_stats_inc(
             CETTA_RUNTIME_COUNTER_PRIME_NEED_RECEIPT_REACH_SELF_ACCEPT);
         return true;
@@ -1459,7 +1469,10 @@ static bool prime_need_receipt_reachable(
             CETTA_RUNTIME_COUNTER_PRIME_NEED_RECEIPT_REACH_DEPTH_REJECT);
         return false;
     }
-    if (top->left == target || top->right == target) {
+    if ((top->left &&
+         top->left->identity_id == target->identity_id) ||
+        (top->right &&
+         top->right->identity_id == target->identity_id)) {
         cetta_runtime_stats_inc(
             CETTA_RUNTIME_COUNTER_PRIME_NEED_RECEIPT_REACH_PARENT_ACCEPT);
         return true;
@@ -1629,13 +1642,22 @@ bool prime_need_receipt_merge(PrimeNeedReceipt *dst,
     if (!prime_need_receipt_compatible(dst, src))
         return false;
     Arena *owner = dst->owner ? dst->owner : src->owner;
+    uint64_t identity_id = prime_need_fresh_nonzero(
+        &g_prime_need_next_receipt_node);
+    if (identity_id == 0u)
+        return false;
     PrimeNeedReceiptFrame *join = prime_need_receipt_alloc_frame(owner);
     if (!join)
         return false;
     *join = (PrimeNeedReceiptFrame){
         .left = dst->top,
         .right = src->top,
+        .closure_owner =
+            (!dst->top || dst->top->closure_owner == owner) &&
+            (!src->top || src->top->closure_owner == owner)
+                ? owner : NULL,
         .session_id = dst->session_id,
+        .identity_id = identity_id,
         .event_id = 0u,
         .depth = (dst->top->depth > src->top->depth
                       ? dst->top->depth : src->top->depth) + 1u,
@@ -1661,7 +1683,7 @@ static bool prime_need_receipt_append(
         ? base->session_id
         : prime_need_fresh_nonzero(&g_prime_need_next_receipt_session);
     uint64_t event_id = prime_need_fresh_nonzero(
-        &g_prime_need_next_receipt_event);
+        &g_prime_need_next_receipt_node);
     if (session_id == 0u || event_id == 0u)
         return false;
     Atom *before = event.before
@@ -1679,7 +1701,12 @@ static bool prime_need_receipt_append(
     *frame = (PrimeNeedReceiptFrame){
         .left = base ? base->top : NULL,
         .right = NULL,
+        .closure_owner =
+            !base || !base->top ||
+            base->top->closure_owner == actual_owner
+                ? actual_owner : NULL,
         .session_id = session_id,
+        .identity_id = event_id,
         .event_id = event_id,
         .depth = base && base->top ? base->top->depth + 1u : 1u,
         .has_event = true,
@@ -1792,12 +1819,12 @@ bool prime_need_receipt_write_state(
         out);
 }
 
-bool prime_need_receipt_use_equation(
+static bool prime_need_receipt_use_equation_event(
     Arena *owner, const PrimeNeedReceipt *base,
     uint64_t source_occurrence_id, uint64_t rule_occurrence_id,
     Atom *equation, Atom *result, PrimeNeedReceipt *out) {
     if (source_occurrence_id == 0u || rule_occurrence_id == 0u ||
-        !equation || !result)
+        (equation == NULL) != (result == NULL))
         return false;
     return prime_need_receipt_append(
         owner, base,
@@ -1809,6 +1836,26 @@ bool prime_need_receipt_use_equation(
             .after = result,
         },
         out);
+}
+
+bool prime_need_receipt_use_equation(
+    Arena *owner, const PrimeNeedReceipt *base,
+    uint64_t source_occurrence_id, uint64_t rule_occurrence_id,
+    Atom *equation, Atom *result, PrimeNeedReceipt *out) {
+    if (!equation || !result)
+        return false;
+    return prime_need_receipt_use_equation_event(
+        owner, base, source_occurrence_id, rule_occurrence_id,
+        equation, result, out);
+}
+
+bool prime_need_receipt_use_equation_ids(
+    Arena *owner, const PrimeNeedReceipt *base,
+    uint64_t source_occurrence_id, uint64_t rule_occurrence_id,
+    PrimeNeedReceipt *out) {
+    return prime_need_receipt_use_equation_event(
+        owner, base, source_occurrence_id, rule_occurrence_id,
+        NULL, NULL, out);
 }
 
 bool prime_need_receipt_resample(
@@ -1994,10 +2041,102 @@ bool prime_need_receipt_equal(const PrimeNeedReceipt *left,
     return equal;
 }
 
+typedef struct {
+    const PrimeNeedReceiptFrame **keys;
+    PrimeNeedReceiptFrame **values;
+    size_t cap;
+} PrimeNeedReceiptCopyMap;
+
+static bool prime_need_receipt_copy_map_init(
+    PrimeNeedReceiptCopyMap *map, size_t count) {
+    if (!map)
+        return false;
+    *map = (PrimeNeedReceiptCopyMap){0};
+    size_t cap = 16u;
+    while (cap / 2u < count) {
+        if (cap > SIZE_MAX / 2u)
+            return false;
+        cap *= 2u;
+    }
+    if (cap > SIZE_MAX / sizeof(*map->keys) ||
+        cap > SIZE_MAX / sizeof(*map->values))
+        return false;
+    map->keys = calloc(cap, sizeof(*map->keys));
+    map->values = calloc(cap, sizeof(*map->values));
+    if (!map->keys || !map->values) {
+        free(map->keys);
+        free(map->values);
+        *map = (PrimeNeedReceiptCopyMap){0};
+        return false;
+    }
+    map->cap = cap;
+    return true;
+}
+
+static void prime_need_receipt_copy_map_free(
+    PrimeNeedReceiptCopyMap *map) {
+    if (!map)
+        return;
+    free(map->keys);
+    free(map->values);
+    *map = (PrimeNeedReceiptCopyMap){0};
+}
+
+static bool prime_need_receipt_copy_map_put(
+    PrimeNeedReceiptCopyMap *map,
+    const PrimeNeedReceiptFrame *source,
+    PrimeNeedReceiptFrame *copy) {
+    if (!map || !map->keys || map->cap == 0u || !source || !copy)
+        return false;
+    size_t mask = map->cap - 1u;
+    size_t slot = prime_need_receipt_frame_hash(source) & mask;
+    while (map->keys[slot] && map->keys[slot] != source)
+        slot = (slot + 1u) & mask;
+    map->keys[slot] = source;
+    map->values[slot] = copy;
+    return true;
+}
+
+static PrimeNeedReceiptFrame *prime_need_receipt_copy_map_get(
+    const PrimeNeedReceiptCopyMap *map,
+    const PrimeNeedReceiptFrame *source) {
+    if (!source)
+        return NULL;
+    if (!map || !map->keys || map->cap == 0u)
+        return NULL;
+    size_t mask = map->cap - 1u;
+    size_t slot = prime_need_receipt_frame_hash(source) & mask;
+    while (map->keys[slot]) {
+        if (map->keys[slot] == source)
+            return map->values[slot];
+        slot = (slot + 1u) & mask;
+    }
+    return NULL;
+}
+
+static int prime_need_receipt_frame_depth_compare(
+    const void *left_item, const void *right_item) {
+    const PrimeNeedReceiptFrame *left =
+        *(const PrimeNeedReceiptFrame *const *)left_item;
+    const PrimeNeedReceiptFrame *right =
+        *(const PrimeNeedReceiptFrame *const *)right_item;
+    if (left->depth < right->depth)
+        return -1;
+    if (left->depth > right->depth)
+        return 1;
+    uintptr_t left_address = (uintptr_t)left;
+    uintptr_t right_address = (uintptr_t)right;
+    return left_address < right_address
+        ? -1 : left_address > right_address ? 1 : 0;
+}
+
 bool prime_need_receipt_promote(Arena *dst, PrimeNeedReceipt *receipt) {
     if (!dst || !receipt)
         return false;
     if (!prime_need_receipt_present(receipt))
+        return true;
+    if (receipt->owner == dst &&
+        (!receipt->top || receipt->top->closure_owner == dst))
         return true;
     if (!receipt->top) {
         receipt->owner = dst;
@@ -2006,79 +2145,56 @@ bool prime_need_receipt_promote(Arena *dst, PrimeNeedReceipt *receipt) {
     PrimeNeedReceiptFrames originals = {0};
     if (!prime_need_receipt_collect_all(receipt->top, &originals))
         return false;
-    PrimeNeedReceiptFrame **copies = calloc(
-        originals.len, sizeof(*copies));
-    bool *done = calloc(originals.len, sizeof(*done));
-    if (!copies || !done) {
-        free(copies);
-        free(done);
+    qsort(originals.items, originals.len, sizeof(*originals.items),
+          prime_need_receipt_frame_depth_compare);
+    PrimeNeedReceiptCopyMap copies;
+    if (!prime_need_receipt_copy_map_init(&copies, originals.len)) {
         prime_need_receipt_frames_free(&originals);
         return false;
     }
-    size_t completed = 0u;
-    while (completed < originals.len) {
-        bool progressed = false;
-        for (size_t i = 0u; i < originals.len; i++) {
-            if (done[i])
-                continue;
-            const PrimeNeedReceiptFrame *source = originals.items[i];
-            PrimeNeedReceiptFrame *left = NULL;
-            PrimeNeedReceiptFrame *right = NULL;
-            bool parents_ready = true;
-            for (size_t j = 0u; j < originals.len; j++) {
-                if (originals.items[j] == source->left) {
-                    if (!done[j])
-                        parents_ready = false;
-                    left = copies[j];
-                }
-                if (originals.items[j] == source->right) {
-                    if (!done[j])
-                        parents_ready = false;
-                    right = copies[j];
-                }
-            }
-            if (!parents_ready)
-                continue;
-            PrimeNeedReceiptFrame *copy = prime_need_receipt_alloc_frame(dst);
-            if (!copy)
-                goto fail;
-            *copy = *source;
-            copy->left = left;
-            copy->right = right;
-            if (source->has_event) {
-                copy->event.before = source->event.before
-                    ? atom_deep_copy(dst, source->event.before) : NULL;
-                copy->event.after = source->event.after
-                    ? atom_deep_copy(dst, source->event.after) : NULL;
-                if ((source->event.before && !copy->event.before) ||
-                    (source->event.after && !copy->event.after))
-                    goto fail;
-            }
-#if CETTA_PRIME_RECEIPT_PRIMARY_INDEX
-            prime_need_receipt_build_primary_index(dst, copy);
-#endif
-            copies[i] = copy;
-            done[i] = true;
-            completed++;
-            progressed = true;
-        }
-        if (!progressed)
-            goto fail;
-    }
+    PrimeNeedReceiptFrame *promoted_top = NULL;
     for (size_t i = 0u; i < originals.len; i++) {
-        if (originals.items[i] == receipt->top) {
-            receipt->top = copies[i];
-            receipt->owner = dst;
-            free(copies);
-            free(done);
-            prime_need_receipt_frames_free(&originals);
-            return true;
+        const PrimeNeedReceiptFrame *source = originals.items[i];
+        PrimeNeedReceiptFrame *left =
+            prime_need_receipt_copy_map_get(&copies, source->left);
+        PrimeNeedReceiptFrame *right =
+            prime_need_receipt_copy_map_get(&copies, source->right);
+        if ((source->left && !left) || (source->right && !right))
+            goto fail;
+        PrimeNeedReceiptFrame *copy = prime_need_receipt_alloc_frame(dst);
+        if (!copy)
+            goto fail;
+        *copy = *source;
+        copy->left = left;
+        copy->right = right;
+        copy->closure_owner = dst;
+        if (source->has_event) {
+            copy->event.before = source->event.before
+                ? atom_deep_copy(dst, source->event.before) : NULL;
+            copy->event.after = source->event.after
+                ? atom_deep_copy(dst, source->event.after) : NULL;
+            if ((source->event.before && !copy->event.before) ||
+                (source->event.after && !copy->event.after))
+                goto fail;
         }
+#if CETTA_PRIME_RECEIPT_PRIMARY_INDEX
+        prime_need_receipt_build_primary_index(dst, copy);
+#endif
+        if (!prime_need_receipt_copy_map_put(&copies, source, copy))
+            goto fail;
+        if (source == receipt->top)
+            promoted_top = copy;
     }
+    if (!promoted_top)
+        goto fail;
+    receipt->top = promoted_top;
+    receipt->owner = dst;
+    prime_need_receipt_copy_map_free(&copies);
+    prime_need_receipt_frames_free(&originals);
+    return true;
 
 fail:
-    free(copies);
-    free(done);
+    prime_need_receipt_copy_map_free(&copies);
     prime_need_receipt_frames_free(&originals);
     return false;
 }

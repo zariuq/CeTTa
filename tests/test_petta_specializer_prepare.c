@@ -79,15 +79,38 @@ int main(void) {
     out = NULL;
     PettaSpecializeResult deep = petta_specializer_prepare_call(
         &space, NULL, &persistent, &result, deep_call, &out);
-    CHECK(deep == PETTA_SPECIALIZE_UNCHANGED_RELEVANCE_BOUNDED,
-          "wide first-order value takes the bounded fallback");
-    CHECK(out == deep_call, "bounded call stays authoritative");
+    CHECK(deep == PETTA_SPECIALIZE_UNCHANGED_RELATION_FILTERED,
+          "relation with no higher-order variable route is filtered once");
+    CHECK(out == deep_call, "relation-filtered call stays authoritative");
 
     out = NULL;
     PettaSpecializeResult again = petta_specializer_prepare_call(
         &space, NULL, &persistent, &result, deep_call, &out);
-    CHECK(again == PETTA_SPECIALIZE_UNCHANGED_RELEVANCE_BOUNDED,
-          "repeated relation stays on the learned bounded route");
+    CHECK(again == PETTA_SPECIALIZE_UNCHANGED_RELATION_FILTERED,
+          "repeated relation reuses its revision-pinned negative proof");
+
+    /* A later equation creates a genuine higher-order route.  Revision
+     * invalidation must prevent the prior negative proof from suppressing
+     * specialization. */
+    Atom *var_f = atom_var(&persistent, "f");
+    Atom *higher_equation = atom_expr3(
+        &persistent,
+        atom_symbol_id(&persistent, g_builtin_syms.equals),
+        atom_expr2(&persistent,
+                   atom_symbol(&persistent, "relevance-deep"), var_f),
+        atom_expr2(&persistent, var_f, atom_int(&persistent, 0)));
+    space_add(&space, higher_equation);
+    petta_specializer_note_mutation(&space, higher_equation);
+    Atom *higher_call = atom_expr2(
+        &result, atom_symbol(&result, "relevance-deep"),
+        atom_symbol(&result, "+"));
+    out = NULL;
+    PettaSpecializeResult higher = petta_specializer_prepare_call(
+        &space, NULL, &persistent, &result, higher_call, &out);
+    CHECK(higher == PETTA_SPECIALIZE_REWRITTEN,
+          "new higher-order route invalidates the negative relation proof");
+    CHECK(out && out != higher_call,
+          "higher-order call receives its specialized relation head");
 
     if (failures == 0u)
         printf("PASS: specializer prepare boundary (%u checks)\n", checks);

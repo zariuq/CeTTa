@@ -343,7 +343,16 @@ void cetta_library_context_init_for_language_profile(CettaLibraryContext *ctx,
     ctx->petta_tabled_relation_cap = 0u;
     ctx->petta_tabled_symbol_table_instance =
         symbol_table_instance_id(g_symbols);
-    ctx->petta_program = language_id == CETTA_LANGUAGE_PETTA
+    /* Prime's guarded relational plan is the default execution strategy.
+       The environment switch exists only so the differential gate can retain
+       the canonical evaluator as an executable reference implementation. */
+    ctx->prime_relational_plan_enabled =
+        language_id == CETTA_LANGUAGE_PRIME &&
+        getenv("CETTA_PRIME_RELATIONAL_PLAN_REFERENCE") == NULL;
+    bool needs_occurrence_program =
+        language_id == CETTA_LANGUAGE_PETTA ||
+        ctx->prime_relational_plan_enabled;
+    ctx->petta_program = needs_occurrence_program
         ? petta_program_new() : NULL;
     if (ctx->petta_program && profile &&
         profile->id == CETTA_PROFILE_PETTA_TYPECHECK_V2) {
@@ -388,6 +397,7 @@ void cetta_library_context_free(CettaLibraryContext *ctx) {
     ctx->petta_tabled_symbol_table_instance = 0u;
     petta_program_free(ctx->petta_program);
     ctx->petta_program = NULL;
+    ctx->prime_relational_plan_enabled = false;
     cetta_petta_token_space_clause_registry_free(
         ctx->petta_token_space_clause_registry);
     ctx->petta_token_space_clause_registry = NULL;

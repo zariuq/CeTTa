@@ -9,6 +9,8 @@ enum {
     CETTA_MATCH_DECISION_DEFAULT_MAX_DEPTH = 7u,
     CETTA_MATCH_DECISION_HARD_MAX_DEPTH = 32u,
     CETTA_MATCH_DECISION_MAX_PATHS = 4096u,
+    CETTA_MATCH_DECISION_KEY_INDEX_MIN_KEYS = 8u,
+    CETTA_MATCH_DECISION_KEY_INDEX_MIN_CAPACITY = 16u,
 };
 
 typedef enum {
@@ -43,6 +45,8 @@ typedef struct {
     CettaMatchDecisionKey *keys;
     uint32_t key_count;
     uint32_t key_capacity;
+    uint32_t *key_slots;
+    size_t key_slot_capacity;
     uint32_t *wildcard_refs;
     uint32_t wildcard_count;
     uint32_t wildcard_capacity;
@@ -273,18 +277,163 @@ static bool match_decision_key_equal(
     return key->atom == atom || atom_eq(key->atom, atom);
 }
 
-static CettaMatchDecisionKey *match_decision_path_key(
-    CettaMatchDecisionPath *descriptor,
+static uint64_t match_decision_key_hash(
     CettaMatchDecisionKeyKind kind,
     CettaExprLen expression_length, Atom *atom) {
+    uint64_t hash = UINT64_C(0x9e3779b97f4a7c15);
+    hash ^= (uint64_t)(unsigned int)kind + UINT64_C(0x9e3779b97f4a7c15) +
+        (hash << 6u) + (hash >> 2u);
+    hash ^= (uint64_t)expression_length + UINT64_C(0x9e3779b97f4a7c15) +
+        (hash << 6u) + (hash >> 2u);
+    hash ^= (uint64_t)atom_hash(atom) + UINT64_C(0x9e3779b97f4a7c15) +
+        (hash << 6u) + (hash >> 2u);
+    hash ^= hash >> 30u;
+    hash *= UINT64_C(0xbf58476d1ce4e5b9);
+    hash ^= hash >> 27u;
+    hash *= UINT64_C(0x94d049bb133111eb);
+    hash ^= hash >> 31u;
+    return hash;
+}
+
+static const CettaMatchDecisionKey *match_decision_path_find_key(
+    const CettaMatchDecisionPath *descriptor,
+    CettaMatchDecisionKeyKind kind,
+    CettaExprLen expression_length, Atom *atom,
+    uint64_t *probe_count) {
     if (!descriptor)
         return NULL;
-    for (uint32_t index = 0u; index < descriptor->key_count; index++) {
-        if (match_decision_key_equal(
+    if (!descriptor->key_slots || descriptor->key_slot_capacity == 0u) {
+        for (uint32_t index = 0u; index < descriptor->key_count; index++) {
+            if (probe_count)
+                (*probe_count)++;
+            if (match_decision_key_equal(
+                    &descriptor->keys[index], kind,
+                    expression_length, atom)) {
+                return &descriptor->keys[index];
+            }
+        }
+        return NULL;
+    }
+
+    size_t mask = descriptor->key_slot_capacity - 1u;
+    size_t slot = (size_t)match_decision_key_hash(
+        kind, expression_length, atom) & mask;
+    for (size_t probe = 0u;
+         probe < descriptor->key_slot_capacity; probe++) {
+        if (probe_count)
+            (*probe_count)++;
+        uint32_t encoded = descriptor->key_slots[slot];
+        if (encoded == 0u)
+            return NULL;
+        uint32_t index = encoded - 1u;
+        if (index < descriptor->key_count &&
+            match_decision_key_equal(
                 &descriptor->keys[index], kind,
                 expression_length, atom)) {
             return &descriptor->keys[index];
         }
+        slot = (slot + 1u) & mask;
+    }
+    return NULL;
+}
+
+static bool match_decision_path_rebuild_key_index(
+    CettaMatchDecisionPath *descriptor, size_t capacity,
+    uint64_t *probe_count) {
+    if (!descriptor || capacity < CETTA_MATCH_DECISION_KEY_INDEX_MIN_CAPACITY ||
+        (capacity & (capacity - 1u)) != 0u ||
+        capacity > SIZE_MAX / sizeof(*descriptor->key_slots)) {
+        return false;
+    }
+    uint32_t *slots = calloc(capacity, sizeof(*slots));
+    if (!slots)
+        return false;
+    size_t mask = capacity - 1u;
+    for (uint32_t index = 0u; index < descriptor->key_count; index++) {
+        const CettaMatchDecisionKey *key = &descriptor->keys[index];
+        size_t slot = (size_t)match_decision_key_hash(
+            key->kind, key->expression_length, key->atom) & mask;
+        while (slots[slot] != 0u) {
+            if (probe_count)
+                (*probe_count)++;
+            slot = (slot + 1u) & mask;
+        }
+        if (probe_count)
+            (*probe_count)++;
+        slots[slot] = index + 1u;
+    }
+    free(descriptor->key_slots);
+    descriptor->key_slots = slots;
+    descriptor->key_slot_capacity = capacity;
+    return true;
+}
+
+static bool match_decision_path_reserve_key_index(
+    CettaMatchDecisionPath *descriptor, uint32_t needed,
+    uint64_t *probe_count) {
+    if (!descriptor)
+        return false;
+    if (needed <= CETTA_MATCH_DECISION_KEY_INDEX_MIN_KEYS &&
+        !descriptor->key_slots) {
+        return true;
+    }
+    size_t capacity = descriptor->key_slot_capacity
+        ? descriptor->key_slot_capacity
+        : CETTA_MATCH_DECISION_KEY_INDEX_MIN_CAPACITY;
+    while ((uint64_t)needed * UINT64_C(10) >
+           (uint64_t)capacity * UINT64_C(7)) {
+        if (capacity > SIZE_MAX / 2u)
+            return false;
+        capacity *= 2u;
+    }
+    if (capacity == descriptor->key_slot_capacity)
+        return true;
+    return match_decision_path_rebuild_key_index(
+        descriptor, capacity, probe_count);
+}
+
+static bool match_decision_path_insert_key_index(
+    CettaMatchDecisionPath *descriptor, uint32_t key_index,
+    uint64_t *probe_count) {
+    if (!descriptor || !descriptor->key_slots ||
+        descriptor->key_slot_capacity == 0u ||
+        key_index >= descriptor->key_count) {
+        return false;
+    }
+    const CettaMatchDecisionKey *key = &descriptor->keys[key_index];
+    size_t mask = descriptor->key_slot_capacity - 1u;
+    size_t slot = (size_t)match_decision_key_hash(
+        key->kind, key->expression_length, key->atom) & mask;
+    for (size_t probe = 0u;
+         probe < descriptor->key_slot_capacity; probe++) {
+        if (probe_count)
+            (*probe_count)++;
+        if (descriptor->key_slots[slot] == 0u) {
+            descriptor->key_slots[slot] = key_index + 1u;
+            return true;
+        }
+        slot = (slot + 1u) & mask;
+    }
+    return false;
+}
+
+static CettaMatchDecisionKey *match_decision_path_key(
+    CettaMatchDecision *decision,
+    CettaMatchDecisionPath *descriptor,
+    CettaMatchDecisionKeyKind kind,
+    CettaExprLen expression_length, Atom *atom) {
+    if (!decision || !descriptor)
+        return NULL;
+    const CettaMatchDecisionKey *existing = match_decision_path_find_key(
+        descriptor, kind, expression_length, atom,
+        &decision->stats.key_index_build_probes);
+    if (existing)
+        return (CettaMatchDecisionKey *)existing;
+    if (descriptor->key_count == UINT32_MAX ||
+        !match_decision_path_reserve_key_index(
+            descriptor, descriptor->key_count + 1u,
+            &decision->stats.key_index_build_probes)) {
+        return NULL;
     }
     size_t capacity = descriptor->key_capacity;
     if (!match_decision_reserve(
@@ -301,6 +450,12 @@ static CettaMatchDecisionKey *match_decision_path_key(
         .expression_length = expression_length,
         .atom = atom,
     };
+    if (descriptor->key_slots &&
+        !match_decision_path_insert_key_index(
+            descriptor, descriptor->key_count - 1u,
+            &decision->stats.key_index_build_probes)) {
+        return NULL;
+    }
     return key;
 }
 
@@ -336,7 +491,7 @@ static bool match_decision_compile_path(
             continue;
         }
         CettaMatchDecisionKey *key = match_decision_path_key(
-            descriptor, kind, expression_length, key_atom);
+            decision, descriptor, kind, expression_length, key_atom);
         if (!key || !match_decision_u32_push(
                 &key->clause_refs, &key->clause_count,
                 &key->clause_capacity, (uint32_t)clause)) {
@@ -351,6 +506,7 @@ static void match_decision_path_free(CettaMatchDecisionPath *path) {
         return;
     for (uint32_t key = 0u; key < path->key_count; key++)
         free(path->keys[key].clause_refs);
+    free(path->key_slots);
     free(path->keys);
     free(path->wildcard_refs);
     free(path->path);
@@ -567,14 +723,85 @@ static CettaMatchDecisionQueryState match_decision_query_at_path(
     return CETTA_MATCH_DECISION_QUERY_VALUE;
 }
 
-static uint32_t match_decision_path_lists(
+static bool match_decision_exact_key_plan_enabled(void) {
+#ifdef CETTA_MATCH_DECISION_DISABLE_EXACT_KEY_INDEX
+    return false;
+#else
+    return CETTA_MATCH_DECISION_POLICY_EXACT_KEY_PLAN_V1 == 1;
+#endif
+}
+
+static uint32_t match_decision_path_exact_keys(
+    CettaMatchDecision *decision,
+    const CettaMatchDecisionPath *path, Atom *value,
+    bool value_absent,
+    const CettaMatchDecisionKey *keys[2]) {
+    if (!decision || !path || !keys || value_absent || !value)
+        return 0u;
+    uint32_t count = 0u;
+    if (value->kind != ATOM_EXPR) {
+        const CettaMatchDecisionKey *literal =
+            match_decision_path_find_key(
+                path, CETTA_MATCH_DECISION_KEY_LITERAL,
+                0u, value,
+                &decision->stats.key_index_select_probes);
+        if (literal)
+            keys[count++] = literal;
+        return count;
+    }
+
+    const CettaMatchDecisionKey *arity =
+        match_decision_path_find_key(
+            path, CETTA_MATCH_DECISION_KEY_EXPR_ARITY,
+            value->expr.len, NULL,
+            &decision->stats.key_index_select_probes);
+    if (arity)
+        keys[count++] = arity;
+    Atom *head = value->expr.len > 0u
+        ? value->expr.elems[0] : NULL;
+    if (head && head->kind != ATOM_VAR && head->kind != ATOM_EXPR) {
+        const CettaMatchDecisionKey *headed =
+            match_decision_path_find_key(
+                path, CETTA_MATCH_DECISION_KEY_EXPR_HEAD,
+                value->expr.len, head,
+                &decision->stats.key_index_select_probes);
+        if (headed)
+            keys[count++] = headed;
+    }
+    return count;
+}
+
+static bool match_decision_add_ref_list(
+    CettaMatchDecisionRefList *lists, uint32_t list_capacity,
+    uint32_t *list_count, uint32_t *accepted_count,
+    const uint32_t *refs, uint32_t count) {
+    if (!list_count || !accepted_count)
+        return false;
+    if (count == 0u)
+        return true;
+    if (!lists || *list_count >= list_capacity ||
+        *accepted_count > UINT32_MAX - count) {
+        return false;
+    }
+    lists[(*list_count)++] = (CettaMatchDecisionRefList){
+        .refs = refs,
+        .count = count,
+    };
+    *accepted_count += count;
+    return true;
+}
+
+static bool match_decision_path_exact_lists(
+    CettaMatchDecision *decision,
     const CettaMatchDecisionPath *path, Atom *value,
     bool value_absent,
     CettaMatchDecisionRefList *lists, uint32_t list_capacity,
-    uint32_t *accepted_count) {
-    if (!path || !lists || list_capacity == 0u || !accepted_count)
-        return 0u;
-    uint32_t list_count = 0u;
+    uint32_t *list_count, uint32_t *accepted_count) {
+    if (!decision || !path || !lists || list_capacity == 0u ||
+        !list_count || !accepted_count) {
+        return false;
+    }
+    *list_count = 0u;
     *accepted_count = 0u;
     CettaMatchDecisionQueryState query_state = value_absent
         ? CETTA_MATCH_DECISION_QUERY_ABSENT
@@ -582,36 +809,111 @@ static uint32_t match_decision_path_lists(
     if (path->wildcard_count > 0u &&
         match_decision_policy(query_state, NULL, value) !=
             CETTA_MD_POLICY_REFUTE) {
-        lists[list_count++] = (CettaMatchDecisionRefList){
-            .refs = path->wildcard_refs,
-            .count = path->wildcard_count,
-        };
-        *accepted_count = path->wildcard_count;
+        if (!match_decision_add_ref_list(
+                lists, list_capacity, list_count, accepted_count,
+                path->wildcard_refs, path->wildcard_count)) {
+            return false;
+        }
+    }
+
+    const CettaMatchDecisionKey *keys[2] = {NULL, NULL};
+    uint32_t key_count = match_decision_path_exact_keys(
+        decision, path, value, value_absent, keys);
+    for (uint32_t index = 0u; index < key_count; index++) {
+        if (!match_decision_add_ref_list(
+                lists, list_capacity, list_count, accepted_count,
+                keys[index]->clause_refs, keys[index]->clause_count)) {
+            return false;
+        }
+    }
+    return true;
+}
+
+static bool match_decision_path_generic_lists(
+    CettaMatchDecision *decision,
+    const CettaMatchDecisionPath *path, Atom *value,
+    bool value_absent,
+    CettaMatchDecisionRefList *lists, uint32_t list_capacity,
+    uint32_t *list_count, uint32_t *accepted_count) {
+    if (!decision || !path || !lists || list_capacity == 0u ||
+        !list_count || !accepted_count) {
+        return false;
+    }
+    *list_count = 0u;
+    *accepted_count = 0u;
+    CettaMatchDecisionQueryState query_state = value_absent
+        ? CETTA_MATCH_DECISION_QUERY_ABSENT
+        : CETTA_MATCH_DECISION_QUERY_VALUE;
+    if (path->wildcard_count > 0u &&
+        match_decision_policy(query_state, NULL, value) !=
+            CETTA_MD_POLICY_REFUTE &&
+        !match_decision_add_ref_list(
+            lists, list_capacity, list_count, accepted_count,
+            path->wildcard_refs, path->wildcard_count)) {
+        return false;
     }
     for (uint32_t key = 0u; key < path->key_count; key++) {
+        decision->stats.generic_key_policy_scans++;
         if (match_decision_policy(
                 query_state, &path->keys[key], value) ==
             CETTA_MD_POLICY_REFUTE)
             continue;
-        if (list_count >= list_capacity ||
-            *accepted_count > UINT32_MAX -
-                path->keys[key].clause_count) {
-            return 0u;
+        if (!match_decision_add_ref_list(
+                lists, list_capacity, list_count, accepted_count,
+                path->keys[key].clause_refs,
+                path->keys[key].clause_count)) {
+            return false;
         }
-        lists[list_count++] = (CettaMatchDecisionRefList){
-            .refs = path->keys[key].clause_refs,
-            .count = path->keys[key].clause_count,
-        };
-        *accepted_count += path->keys[key].clause_count;
     }
-    return list_count;
+    return true;
 }
 
-static uint32_t match_decision_path_candidate_count(
+static bool match_decision_path_lists(
+    CettaMatchDecision *decision,
     const CettaMatchDecisionPath *path, Atom *value,
-    bool value_absent) {
-    if (!path)
-        return 0u;
+    bool value_absent,
+    CettaMatchDecisionRefList *lists, uint32_t list_capacity,
+    uint32_t *list_count, uint32_t *accepted_count) {
+    return match_decision_exact_key_plan_enabled()
+        ? match_decision_path_exact_lists(
+              decision, path, value, value_absent,
+              lists, list_capacity, list_count, accepted_count)
+        : match_decision_path_generic_lists(
+              decision, path, value, value_absent,
+              lists, list_capacity, list_count, accepted_count);
+}
+
+static bool match_decision_path_exact_candidate_count(
+    CettaMatchDecision *decision,
+    const CettaMatchDecisionPath *path, Atom *value,
+    bool value_absent, uint32_t *accepted_count) {
+    if (!decision || !path || !accepted_count)
+        return false;
+    CettaMatchDecisionQueryState query_state = value_absent
+        ? CETTA_MATCH_DECISION_QUERY_ABSENT
+        : CETTA_MATCH_DECISION_QUERY_VALUE;
+    uint64_t accepted =
+        match_decision_policy(query_state, NULL, value) !=
+            CETTA_MD_POLICY_REFUTE
+        ? path->wildcard_count : 0u;
+
+    const CettaMatchDecisionKey *keys[2] = {NULL, NULL};
+    uint32_t key_count = match_decision_path_exact_keys(
+        decision, path, value, value_absent, keys);
+    for (uint32_t index = 0u; index < key_count; index++)
+        accepted += keys[index]->clause_count;
+    if (accepted > UINT32_MAX)
+        return false;
+    *accepted_count = (uint32_t)accepted;
+    return true;
+}
+
+static bool match_decision_path_generic_candidate_count(
+    CettaMatchDecision *decision,
+    const CettaMatchDecisionPath *path, Atom *value,
+    bool value_absent, uint32_t *accepted_count) {
+    if (!decision || !path || !accepted_count)
+        return false;
     CettaMatchDecisionQueryState query_state = value_absent
         ? CETTA_MATCH_DECISION_QUERY_ABSENT
         : CETTA_MATCH_DECISION_QUERY_VALUE;
@@ -620,15 +922,28 @@ static uint32_t match_decision_path_candidate_count(
             CETTA_MD_POLICY_REFUTE
         ? path->wildcard_count : 0u;
     for (uint32_t key = 0u; key < path->key_count; key++) {
+        decision->stats.generic_key_policy_scans++;
         if (match_decision_policy(
                 query_state, &path->keys[key], value) ==
             CETTA_MD_POLICY_REFUTE)
             continue;
         if (accepted > UINT32_MAX - path->keys[key].clause_count)
-            return UINT32_MAX;
+            return false;
         accepted += path->keys[key].clause_count;
     }
-    return accepted;
+    *accepted_count = accepted;
+    return true;
+}
+
+static bool match_decision_path_candidate_count(
+    CettaMatchDecision *decision,
+    const CettaMatchDecisionPath *path, Atom *value,
+    bool value_absent, uint32_t *accepted_count) {
+    return match_decision_exact_key_plan_enabled()
+        ? match_decision_path_exact_candidate_count(
+              decision, path, value, value_absent, accepted_count)
+        : match_decision_path_generic_candidate_count(
+              decision, path, value, value_absent, accepted_count);
 }
 
 static bool match_decision_merge_lists(
@@ -739,10 +1054,13 @@ static CettaMatchDecisionSelectState match_decision_select_query(
                     CETTA_RUNTIME_COUNTER_MATCH_DECISION_UNAVAILABLE_PATH);
                 continue;
             }
-            uint32_t accepted =
-                match_decision_path_candidate_count(
-                    path, value,
-                    query_state == CETTA_MATCH_DECISION_QUERY_ABSENT);
+            uint32_t accepted = 0u;
+            if (!match_decision_path_candidate_count(
+                    decision, path, value,
+                    query_state == CETTA_MATCH_DECISION_QUERY_ABSENT,
+                    &accepted)) {
+                return CETTA_MATCH_DECISION_SELECT_ERROR;
+            }
             if (!selected_pivot || accepted < best_count) {
                 best_count = accepted;
                 best_path = path_index;
@@ -765,7 +1083,8 @@ static CettaMatchDecisionSelectState match_decision_select_query(
         if (best_path >= decision->path_count)
             return CETTA_MATCH_DECISION_SELECT_ERROR;
         CettaMatchDecisionPath *path = &decision->paths[best_path];
-        uint32_t list_capacity = path->key_count + 1u;
+        uint32_t list_capacity = match_decision_exact_key_plan_enabled()
+            ? 3u : path->key_count + 1u;
         if (!match_decision_reserve(
                 (void **)&decision->working_lists,
                 &decision->working_list_capacity,
@@ -782,12 +1101,13 @@ static CettaMatchDecisionSelectState match_decision_select_query(
         if (query_state == CETTA_MATCH_DECISION_QUERY_UNKNOWN)
             return CETTA_MATCH_DECISION_SELECT_ERROR;
         uint32_t accepted = 0u;
-        uint32_t list_count = match_decision_path_lists(
-            path, value,
+        uint32_t list_count = 0u;
+        bool listed = match_decision_path_lists(
+            decision, path, value,
             query_state == CETTA_MATCH_DECISION_QUERY_ABSENT,
-            decision->working_lists, list_capacity, &accepted);
-        ok = accepted == best_count &&
-             !(list_count == 0u && accepted != 0u) &&
+            decision->working_lists, list_capacity,
+            &list_count, &accepted);
+        ok = listed && accepted == best_count &&
              match_decision_merge_lists(
                  decision, decision->working_lists, list_count,
                  best_count, &local_count);

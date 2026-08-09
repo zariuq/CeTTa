@@ -107,6 +107,9 @@ typedef struct {
     CettaMatchDecisionSemanticIdentity match_decision_semantics;
     /* Wall-clock sampling is opt-in so normal evaluation pays no clock cost. */
     bool measure_stats;
+    /* Quotation is presentation-owned.  PeTTa evaluates `(quote x)` to `x`,
+     * while Prime keeps the quoted expression as inert first-class data. */
+    bool quote_is_inert_data;
     /*
      * Called immediately before a machine transition.  Returning false
      * suspends without consuming the pending goal, so the same machine can
@@ -118,13 +121,42 @@ typedef struct {
     Space *(*resolve_space)(
         void *context, Space *root_space, Arena *arena,
         Atom *reference);
+    /* Resolve a language-owned value reference only after its authored
+     * occurrence reaches a SOLVE boundary.  A successful lookup returns a
+     * machine-owned value in `resolved`; an unbound reference succeeds with
+     * NULL so the original atom remains ordinary data.  Planning and
+     * classification never invoke this service and therefore cannot add
+     * demand merely to discover an optimization. */
+    bool (*resolve_value_reference)(
+        void *context, Arena *arena, Atom *reference,
+        Atom **resolved);
     bool (*evaluate)(
         void *context, Space *space, Arena *arena, Atom *expression,
         const Bindings *environment, OutcomeSet *outcomes);
+    /* Enumerate the intrinsic answers of the language's `get-type`
+     * relation after its subject has reached the ready-value boundary.
+     * The returned pointer array is caller-owned; every Atom is owned by
+     * `arena`.  Explicit user equations remain ordinary later relation
+     * clauses and are not included by this service. */
+    bool (*get_type)(
+        void *context, Space *space, Arena *arena, Atom *value,
+        Atom ***types, uint32_t *count);
+    /* Construct the active language's public Boolean datum.  Search owns the
+     * truth relation; spelling and representation remain language-owned. */
+    Atom *(*boolean_value)(
+        void *context, Arena *arena, bool value);
     /* Profile-owned data constructors are fixed when the machine is built;
      * the machine never consults ambient session state while executing. */
     bool (*is_data_constructor)(
         void *context, SymbolId head, CettaExprLen arity);
+    /* An executable source or residual occurrence has been resolved under
+     * the current branch environment but has not executed.  A transactional
+     * host may refuse it and restart through its canonical evaluator.
+     * Residual static calls are included because specialization must not
+     * erase the authority boundary of a dynamic source head. */
+    bool (*prepare_resolved_call)(
+        void *context, Space *space, Arena *arena,
+        Atom *resolved_call, Atom **prepared_call);
     /* A generated determinate-fold program may own a lexical fold without
      * constructing one goal and accumulator variable per input item. */
     PettaMachineFoldResult (*foldl_single_result)(
@@ -176,10 +208,9 @@ typedef struct {
         Atom *expression, Atom *expected,
         const Bindings *environment, OutcomeSet *outcomes,
         bool *recognized);
-    bool (*clause_snapshot)(
+    bool (*clause_snapshot_lease)(
         void *context, Space *space, SymbolId head,
-        PettaClauseCandidate **candidates,
-        size_t *candidate_count,
+        PettaClauseSnapshotLease *lease,
         PettaClauseSnapshotStats *stats);
     /* Optional evidence interpretation for a relational call.  The first
      * callback creates one branch-independent call occurrence; the second
@@ -232,6 +263,7 @@ typedef struct {
 typedef enum {
     PETTA_MACHINE_STEP_ANSWER = 0,
     PETTA_MACHINE_STEP_EXHAUSTED,
+    PETTA_MACHINE_STEP_DECLINED,
     PETTA_MACHINE_STEP_INVALIDATED,
     PETTA_MACHINE_STEP_CAPACITY,
     PETTA_MACHINE_STEP_HOST_ERROR,
@@ -284,9 +316,11 @@ typedef struct {
     uint64_t clause_snapshot_cache_hits;
     uint64_t clause_snapshot_live_occurrences;
     uint64_t clause_snapshot_records_examined;
+    uint64_t clause_snapshot_pointer_identity_hits;
     uint64_t clause_snapshot_equality_checks;
     uint64_t clause_snapshot_alpha_checks;
     uint64_t clause_snapshot_candidates;
+    uint64_t clause_snapshot_candidates_copied;
     uint64_t clause_candidates;
     uint64_t clause_candidates_shape_pruned;
     uint64_t match_decision_compilations;
@@ -294,12 +328,16 @@ typedef struct {
     uint64_t match_decision_runs;
     uint64_t match_decision_clause_inputs;
     uint64_t match_decision_clause_survivors;
+    uint64_t match_decision_key_index_build_probes;
+    uint64_t match_decision_key_index_select_probes;
+    uint64_t match_decision_generic_key_policy_scans;
     uint64_t match_decision_linear_fallbacks;
     uint64_t match_decision_unavailable_path_fallbacks;
     uint64_t match_decision_invalidations;
     uint64_t clause_match_attempts;
     uint64_t clause_match_allocated_bytes;
     uint64_t match_candidates;
+    uint64_t match_candidate_epoch_views;
     uint64_t unification_calls;
     uint64_t unification_failures;
     uint64_t unification_binding_writes;
@@ -319,12 +357,19 @@ typedef struct {
     uint64_t binding_apply_calls;
     uint64_t binding_apply_rewrites;
     uint64_t binding_apply_allocated_bytes;
+    uint64_t constructor_slot_frame_entries;
+    uint64_t constructor_slot_frame_direct_unifications;
+    uint64_t pure_grounded_slot_frame_entries;
+    uint64_t pure_grounded_slot_frame_direct_dispatches;
+    uint64_t relation_slot_frame_entries;
+    uint64_t relation_slot_operands_reused;
     uint64_t atom_copy_calls;
     uint64_t atom_copy_allocated_bytes;
     uint64_t atom_freshen_calls;
     uint64_t atom_freshen_allocated_bytes;
     uint64_t specializer_prepare_calls;
     uint64_t specializer_prepare_filtered;
+    uint64_t specializer_prepare_relation_filtered;
     uint64_t specializer_prepare_relevance_bounded;
     uint64_t specializer_prepare_rewritten;
     uint64_t specializer_prepare_unchanged;

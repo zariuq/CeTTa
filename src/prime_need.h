@@ -263,6 +263,10 @@ bool prime_need_receipt_use_equation(
     Arena *owner, const PrimeNeedReceipt *base,
     uint64_t source_occurrence_id, uint64_t rule_occurrence_id,
     Atom *equation, Atom *result, PrimeNeedReceipt *out);
+bool prime_need_receipt_use_equation_ids(
+    Arena *owner, const PrimeNeedReceipt *base,
+    uint64_t source_occurrence_id, uint64_t rule_occurrence_id,
+    PrimeNeedReceipt *out);
 bool prime_need_receipt_resample(
     Arena *owner, const PrimeNeedReceipt *base, Atom *origin,
     PrimeNeedReceipt *out);
