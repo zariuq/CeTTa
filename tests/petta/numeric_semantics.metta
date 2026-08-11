@@ -13,3 +13,5 @@
 !(max-atom (2 6 7 4 9 3))
 !(min-atom (1 1.0))
 !(max-atom (1.0 1))
+!(isinf-math inf)
+!(isnan-math nan)

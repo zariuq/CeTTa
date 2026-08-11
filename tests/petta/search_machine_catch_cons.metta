@@ -1,6 +1,13 @@
 ; Open cons constraints are relational list views.  Failed unification is the
 ; false result of PeTTa's =/3 predicate, while successful unification retains
 ; the tail binding.
+;
+; A declaration may authorize the pure-grounded slot optimizer, but that
+; optimizer must not expose the private three-field carrier to size-atom.
+(: size-atom (-> $value Number))
+(= (declared-size-cons-tail (cons $head $tail))
+   (size-atom $tail))
+
 (= (eq-cons-false) (= 42 (cons Error $_)))
 (= (eq-cons-open) (= (Error 5 BadType) (cons Error $tail)))
 (= (eq-cons-exact)
@@ -21,6 +28,10 @@
 
 !(test (append-cons-view (a b)) (x y a b))
 !(test (fold-cons-view (1 2)) 3)
+
+; Ordinary authored three-item data remains an ordinary three-item value.
+!(test (declared-size-cons-tail (a b c)) 2)
+!(test (size-atom (and implies iff)) 3)
 
 (= (if-error $value $yes $no)
    (if (= $value (cons Error $_)) $yes $no))

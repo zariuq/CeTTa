@@ -63,17 +63,47 @@ static void pathmap_record_elapsed(CettaRuntimeCounter counter,
         cetta_runtime_stats_add(counter, finished_ns - started_ns);
 }
 
-static bool pathmap_indexed_query_enabled(void) {
-    static _Thread_local int enabled = -1;
-    if (enabled < 0) {
+typedef enum {
+    PATHMAP_QUERY_INDEX_MODE_UNKNOWN = -1,
+    PATHMAP_QUERY_INDEX_MODE_OFF = 0,
+    PATHMAP_QUERY_INDEX_MODE_AUTO = 1,
+    PATHMAP_QUERY_INDEX_MODE_FORCED = 2,
+} PathmapQueryIndexMode;
+
+static PathmapQueryIndexMode pathmap_indexed_query_mode(void) {
+    static _Thread_local PathmapQueryIndexMode mode =
+        PATHMAP_QUERY_INDEX_MODE_UNKNOWN;
+    if (mode == PATHMAP_QUERY_INDEX_MODE_UNKNOWN) {
         const char *value = getenv("CETTA_PATHMAP_QUERY_INDEX");
-        enabled = !value || !*value ||
-                  (strcmp(value, "0") != 0 &&
-                   strcmp(value, "false") != 0 &&
-                   strcmp(value, "off") != 0 &&
-                   strcmp(value, "no") != 0);
+        if (!value || !*value) {
+            mode = PATHMAP_QUERY_INDEX_MODE_AUTO;
+        } else if (strcmp(value, "0") == 0 ||
+                   strcmp(value, "false") == 0 ||
+                   strcmp(value, "off") == 0 ||
+                   strcmp(value, "no") == 0) {
+            mode = PATHMAP_QUERY_INDEX_MODE_OFF;
+        } else {
+            mode = PATHMAP_QUERY_INDEX_MODE_FORCED;
+        }
     }
-    return enabled != 0;
+    return mode;
+}
+
+static bool pathmap_indexed_query_enabled(void) {
+    return pathmap_indexed_query_mode() != PATHMAP_QUERY_INDEX_MODE_OFF;
+}
+
+/* The flat catalog duplicates relation rows and access paths.  In automatic
+ * mode reserve that cost for conjunction planning; a one-factor query can
+ * descend the counted PathMap directly.  Explicit enablement remains useful
+ * for mechanism tests and workload-specific experiments. */
+static bool pathmap_indexed_single_factor_enabled(void) {
+    return pathmap_indexed_query_mode() == PATHMAP_QUERY_INDEX_MODE_FORCED;
+}
+
+static bool pathmap_indexed_factor_count_enabled(CettaExprLen factor_count) {
+    return factor_count > 1u ? pathmap_indexed_query_enabled()
+                             : pathmap_indexed_single_factor_enabled();
 }
 
 static bool pathmap_batch_mutation_enabled(void) {
@@ -4994,7 +5024,7 @@ bool space_match_backend_can_try_visit_bindings_indexed(
     return s && query && !space_is_ordered(s) &&
            s->match_backend.kind == SPACE_ENGINE_PATHMAP &&
            !s->match_backend.pathmap.bridge.preserve_logical_order &&
-           pathmap_indexed_query_enabled() &&
+           pathmap_indexed_single_factor_enabled() &&
            !imported_atom_has_epoch_vars((Atom *)query) &&
            !imported_atom_has_bridge_vars((Atom *)query);
 }
@@ -5230,7 +5260,7 @@ bool space_match_backend_mork_visit_conjunction_direct(
         binding_set_free(&collected);
         return ok;
     }
-    if (pathmap_indexed_query_enabled() &&
+    if (pathmap_indexed_factor_count_enabled(npatterns) &&
         cetta_mork_bridge_query_cursor_new_indexed_multi_ref_v4(
             bridge, (const uint8_t *)query_text, strlen(query_text),
             &query_cursor)) {
@@ -7537,6 +7567,8 @@ static CettaIndex pathmap_local_candidates(Space *s, Atom *pattern,
        update semantics.  When a synchronized AtomId occurrence shadow is
        available, its native discrimination index supplies that same ordered
        superset without scanning every PathMap row for every choice point. */
+    if (!s->match_backend.pathmap.bridge.native_shadow_synced)
+        (void)pathmap_materialize_native_storage(s, NULL);
     if (s->match_backend.pathmap.bridge.native_shadow_synced)
         return native_candidates(s, pattern, out);
     n = imported_logical_len(s);
@@ -7564,7 +7596,7 @@ static void pathmap_local_query(Space *s, Arena *a, Atom *query,
          * authored-order native view; no bridge row is published first. */
         uint64_t indexed_count = 0u;
         Atom *factor = query;
-        if (pathmap_indexed_query_enabled() && !epoch_query &&
+        if (pathmap_indexed_single_factor_enabled() && !epoch_query &&
             !bridge_query &&
             pathmap_order_pinned_index_pattern_safe(query) &&
             pathmap_local_count_conjunction(
@@ -7603,7 +7635,8 @@ static void pathmap_local_query(Space *s, Arena *a, Atom *query,
         smset_init(out);
         return;
     }
-    if (pathmap_indexed_query_enabled() && !epoch_query && !bridge_query &&
+    if (pathmap_indexed_single_factor_enabled() && !epoch_query &&
+        !bridge_query &&
         pathmap_local_ensure_bridge_live(s) && st->bridge_space) {
         Atom *factor = query;
         if (imported_bridge_query_conjunction_fast(
@@ -7696,7 +7729,7 @@ static void pathmap_local_query_conjunction(Space *s, Arena *a,
         space_query_conjunction_default(s, a, patterns, npatterns, seed, out);
         return;
     }
-    if (pathmap_indexed_query_enabled() &&
+    if (pathmap_indexed_factor_count_enabled(npatterns) &&
         pathmap_local_ensure_bridge_live(s) && st->bridge_space &&
         imported_bridge_query_conjunction_fast(
             s, a, patterns, npatterns, seed, out, true)) {
@@ -8992,7 +9025,7 @@ static bool pathmap_local_visit_bindings_indexed(
     if (!s || !a || !query || !visitor || space_is_ordered(s) ||
         s->match_backend.kind != SPACE_ENGINE_PATHMAP ||
         s->match_backend.pathmap.bridge.preserve_logical_order ||
-        !pathmap_indexed_query_enabled()) {
+        !pathmap_indexed_single_factor_enabled()) {
         return false;
     }
     st = &s->match_backend.pathmap.bridge;
@@ -9287,7 +9320,7 @@ imported_bridge_query_conjunction_fast(Space *s, Arena *a,
         goto cleanup;
     }
 
-    if (pathmap_indexed_query_enabled() &&
+    if (pathmap_indexed_factor_count_enabled(npatterns) &&
         cetta_mork_bridge_query_cursor_new_indexed_multi_ref_v4(
             (CettaMorkSpaceHandle *)backend_bridge_state(s)->bridge_space,
             (const uint8_t *)prepared.query_text,
@@ -9432,7 +9465,8 @@ static bool pathmap_local_count_conjunction(
     if (!s || !a || !patterns || !out_count ||
         space_is_ordered(s) ||
         s->match_backend.kind != SPACE_ENGINE_PATHMAP ||
-        !pathmap_indexed_query_enabled() || npatterns == 0u ||
+        npatterns == 0u ||
+        !pathmap_indexed_factor_count_enabled(npatterns) ||
         npatterns > IMPORTED_CONJUNCTION_PATTERN_LIMIT) {
         return false;
     }

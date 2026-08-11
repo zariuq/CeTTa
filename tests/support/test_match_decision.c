@@ -286,6 +286,36 @@ int main(void) {
     free(bottom);
     cetta_match_decision_free(ladder);
 
+    /* Distributed discrimination needs conjunction: every single board
+     * position leaves a different impossible clause alive, while intersecting
+     * all observable positions keeps exactly the structurally possible
+     * occurrences.  The duplicate remains distinct and source ordered. */
+    CettaMatchDecisionClause grid_clauses[] = {
+        {parse_one(&persistent, "(grid (blank $a $b))"), 201u},
+        {parse_one(&persistent, "(grid ($a blank $b))"), 202u},
+        {parse_one(&persistent, "(grid ($a $b blank))"), 203u},
+        {parse_one(&persistent, "(grid ($a $b $c))"), 204u},
+        {parse_one(&persistent, "(grid (blank $x $y))"), 205u},
+    };
+    Atom *grid_query = parse_one(
+        &persistent, "(grid (blank left right))");
+    Atom *grid_open = parse_one(&persistent, "(grid $state)");
+    CettaMatchDecision *conjunctive = cetta_match_decision_compile(
+        space_read_token(&space), semantic_identity,
+        grid_clauses,
+        sizeof(grid_clauses) / sizeof(grid_clauses[0]),
+        CETTA_MATCH_DECISION_CONJUNCTIVE, 0u, NULL, NULL);
+    assert(conjunctive && grid_query && grid_open);
+    const uint32_t grid_exact[] = {201u, 204u, 205u};
+    const uint32_t grid_all[] = {201u, 202u, 203u, 204u, 205u};
+    expect_refs(conjunctive, &space, grid_query, semantic_identity,
+                UINT64_MAX, grid_exact, 3u);
+    expect_refs(conjunctive, &space, grid_query, semantic_identity,
+                0u, grid_all, 5u);
+    expect_refs(conjunctive, &space, grid_open, semantic_identity,
+                UINT64_MAX, grid_all, 5u);
+    cetta_match_decision_free(conjunctive);
+
     /* Wide literal families must compile and select through the physical key
      * index rather than scanning one key per authored occurrence.  Wildcard
      * and duplicate exact occurrences remain an ordered bag. */

@@ -87,6 +87,32 @@ def compiler_digest(source: Path) -> str:
     return match.group(1)
 
 
+def copy_language_inputs(
+    manifest: Path,
+    source_root: Path,
+    destination: Path,
+    profile: str | None,
+) -> Path:
+    """Copy only the declared language inputs, preserving source-root paths."""
+    definition = language_generator.parse_manifest(manifest, profile)
+    inputs = [manifest]
+    inputs.extend(
+        (manifest.parent / relative).resolve()
+        for relative in definition.semantic_sources
+    )
+    for source in inputs:
+        try:
+            relative = source.relative_to(source_root)
+        except ValueError as error:
+            raise GateFailure(
+                f"declared language input escapes source root: {source}"
+            ) from error
+        target = destination / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(source, target)
+    return destination / manifest.relative_to(source_root)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--generator", type=Path, required=True)
@@ -145,35 +171,18 @@ def main() -> int:
             "checked-in language source is stale",
         )
 
-        definition = language_generator.parse_manifest(
-            manifest, arguments.profile
-        )
-        if not definition.semantic_sources:
-            raise GateFailure("language manifest has no semantic source")
-
         copied_language = temporary / "language"
-        copied_language.mkdir()
-
-        def copy_dependency(dependency: Path) -> Path:
-            resolved = dependency.resolve()
-            try:
-                relative = resolved.relative_to(source_root)
-            except ValueError as error:
-                raise GateFailure(
-                    f"language dependency escapes source root: {resolved}"
-                ) from error
-            copied = copied_language / relative
-            copied.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(resolved, copied)
-            return copied
-
-        copied_manifest = copy_dependency(manifest)
-        for semantic_source_name in definition.semantic_sources:
-            copy_dependency(manifest.parent / semantic_source_name)
-
+        copied_manifest = copy_language_inputs(
+            manifest,
+            source_root,
+            copied_language,
+            arguments.profile,
+        )
         copied_definition = language_generator.parse_manifest(
             copied_manifest, arguments.profile
         )
+        if not copied_definition.semantic_sources:
+            raise GateFailure("language manifest has no semantic source")
         semantic_source = (
             copied_manifest.parent / copied_definition.semantic_sources[0]
         ).resolve()

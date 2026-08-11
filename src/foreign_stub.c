@@ -40,16 +40,6 @@ static bool directory_has_python_entry(const char *path) {
     return access(init_path, R_OK) == 0;
 }
 
-static Atom *foreign_unavailable_error(Arena *a, Atom *head, Atom **args,
-                                       uint32_t nargs) {
-    Atom **elems = arena_alloc(a, sizeof(Atom *) * (nargs + 1));
-    elems[0] = head;
-    for (uint32_t i = 0; i < nargs; i++)
-        elems[i + 1] = args[i];
-    return atom_error(a, atom_expr(a, elems, nargs + 1),
-                      atom_symbol(a, CETTA_FOREIGN_DISABLED_MSG));
-}
-
 const char *cetta_module_format_name(CettaModuleFormatKind kind) {
     switch (kind) {
     case CETTA_MODULE_FORMAT_METTA:
@@ -158,15 +148,14 @@ bool cetta_foreign_dispatch_native_results(CettaForeignRuntime *rt,
                                            ResultSet *results) {
     (void)rt;
     (void)space;
-    if (!head || !results)
-        return false;
-    if (atom_is_symbol_id(head, g_builtin_syms.py_atom) ||
-        atom_is_symbol_id(head, g_builtin_syms.py_call) ||
-        atom_is_symbol_id(head, g_builtin_syms.py_dot)) {
-        result_set_add(results,
-                       foreign_unavailable_error(a, head, args, nargs));
-        return true;
-    }
+    (void)a;
+    (void)head;
+    (void)args;
+    (void)nargs;
+    (void)results;
+    /* An optional adapter may interpret these forms, but its absence does not
+       change the language into an eager error semantics.  Decline dispatch so
+       the ordinary evaluator preserves unknown foreign syntax as authored. */
     return false;
 }
 
@@ -178,12 +167,9 @@ Atom *cetta_foreign_dispatch_native(CettaForeignRuntime *rt,
                                     uint32_t nargs) {
     (void)rt;
     (void)space;
-    if (!head)
-        return NULL;
-    if (atom_is_symbol_id(head, g_builtin_syms.py_atom) ||
-        atom_is_symbol_id(head, g_builtin_syms.py_call) ||
-        atom_is_symbol_id(head, g_builtin_syms.py_dot)) {
-        return foreign_unavailable_error(a, head, args, nargs);
-    }
+    (void)a;
+    (void)head;
+    (void)args;
+    (void)nargs;
     return NULL;
 }

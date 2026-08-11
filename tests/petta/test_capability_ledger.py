@@ -104,6 +104,7 @@ def main() -> None:
         "--ledger",
         default="tests/petta/unsupported/capabilities.tsv",
     )
+    parser.add_argument("--without-python", action="store_true")
     arguments = parser.parse_args()
 
     root = Path(__file__).resolve().parents[2]
@@ -169,13 +170,21 @@ def main() -> None:
             f"{capability} negative expected output",
         )
 
+        positive_contract = positive_expected
+        if arguments.without_python and capability == "foreign-language modules":
+            positive_contract = repository_path(
+                root,
+                "tests/petta/unsupported/python_bridge.inert.expected",
+                f"{capability} no-adapter expected output",
+            )
+
         run_contract(
             binary,
             root,
             witness,
-            positive_expected,
+            positive_contract,
             capability,
-            "positive",
+            "no-adapter" if positive_contract != positive_expected else "positive",
         )
         run_contract(
             binary,
@@ -186,10 +195,17 @@ def main() -> None:
             "negative",
         )
 
-    print(
-        "PASS: all 14 PeTTa capability clusters have "
-        "positive and negative executable contracts"
-    )
+    if arguments.without_python:
+        print(
+            "PASS: 13 PeTTa capability clusters have positive contracts; "
+            "foreign syntax is inert without an adapter; all 14 have "
+            "negative contracts"
+        )
+    else:
+        print(
+            "PASS: all 14 PeTTa capability clusters have "
+            "positive and negative executable contracts"
+        )
 
 
 if __name__ == "__main__":

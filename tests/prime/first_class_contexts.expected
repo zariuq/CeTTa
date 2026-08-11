@@ -22,3 +22,6 @@
 [()]
 [(Pair A A), (Pair B B)]
 [(ctx:window 1 1 (ctx:entry choice (quote (superpose (A B)))))]
+[()]
+[(ResolvedReference resolved)]
+[(UnresolvedReference &ctx:unbound-reference)]

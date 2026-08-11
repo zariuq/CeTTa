@@ -30,18 +30,38 @@ class CorpusManifestTests(unittest.TestCase):
         self.examples = self.root / "examples"
         self.examples.mkdir()
         (self.root / "run.sh").write_text("#!/bin/sh\n", encoding="utf-8")
+        for required_paths in MANIFEST.HERMETIC_REQUIRED_FILES.values():
+            for relative in required_paths:
+                required = self.root / relative
+                required.parent.mkdir(parents=True, exist_ok=True)
+                if not required.exists():
+                    required.write_text(
+                        f"; controlled support {relative}\n",
+                        encoding="utf-8",
+                    )
 
         controlled_names = sorted(MANIFEST.CONTROLLED_CASES)
         corrected_names = sorted(MANIFEST.CORRECTED_CASES)
+        capability_only_names = sorted(
+            set(MANIFEST.CASE_CAPABILITY_REQUIREMENTS)
+            - set(controlled_names)
+            - set(corrected_names)
+        )
         hermetic_names = [
             f"case{index:03d}.metta"
             for index in range(
                 MANIFEST.EXPECTED_TOTAL
                 - len(controlled_names)
                 - len(corrected_names)
+                - len(capability_only_names)
             )
         ]
-        names = sorted(hermetic_names + controlled_names + corrected_names)
+        names = sorted(
+            hermetic_names
+            + controlled_names
+            + corrected_names
+            + capability_only_names
+        )
         entries = []
         for name in names:
             source = self.examples / name
@@ -82,6 +102,18 @@ class CorpusManifestTests(unittest.TestCase):
                 entry["fixture"] = MANIFEST.fixture_record(
                     REPO_ROOT, fixture
                 )
+            required_files = MANIFEST.hermetic_required_file_records(
+                self.root, name
+            )
+            if required_files:
+                entry["required_files"] = required_files
+            required_capabilities = (
+                MANIFEST.CASE_CAPABILITY_REQUIREMENTS.get(name, ())
+            )
+            if required_capabilities:
+                entry["required_capabilities"] = list(
+                    required_capabilities
+                )
             entries.append(entry)
 
         self.manifest = {
@@ -92,8 +124,14 @@ class CorpusManifestTests(unittest.TestCase):
             "normalization": MANIFEST.normalization_contract(),
             "counts": {
                 "total": len(entries),
-                "hermetic": len(hermetic_names) + len(corrected_names),
-                "controlled": len(controlled_names),
+                "hermetic": sum(
+                    entry["class"].startswith("hermetic")
+                    for entry in entries
+                ),
+                "controlled": sum(
+                    entry["class"] in {"external", "interactive"}
+                    for entry in entries
+                ),
             },
             "entries": entries,
         }
@@ -157,6 +195,40 @@ class CorpusManifestTests(unittest.TestCase):
                 self.root,
             ),
             "real error\n" + MANIFEST.PYTHON_RUNTIME_WARNING,
+        )
+
+    def test_exact_leading_optional_mork_failure_is_transport_noise(
+        self,
+    ) -> None:
+        diagnostic = (
+            "ERROR: <PETTA_ROOT>/mork_ffi/morkspaces.pl:35:\n"
+            "ERROR:    library/3: Unknown procedure: library_path/1\n"
+            "Warning: <PETTA_ROOT>/mork_ffi/morkspaces.pl:35:\n"
+            "Warning:    Goal (directive) failed: user:"
+            "(library(mork_ffi,'morklib.so',_114560),"
+            "use_foreign_library(_114560),"
+            "current_predicate(mork/3)->writeln(\"MORK init: done\");"
+            "writeln(\"MORK init: failed\"))\n"
+        )
+        self.assertEqual(
+            MANIFEST.normalize_oracle_stderr(
+                diagnostic + MANIFEST.PYTHON_RUNTIME_WARNING + "real\n",
+                self.root,
+            ),
+            "real\n",
+        )
+        self.assertEqual(
+            MANIFEST.normalize_oracle_stderr(
+                "real\n" + diagnostic, self.root
+            ),
+            "real\n" + diagnostic,
+        )
+        self.assertEqual(
+            MANIFEST.normalize_oracle_stderr(
+                diagnostic.replace("library_path/1", "other/1"),
+                self.root,
+            ),
+            diagnostic.replace("library_path/1", "other/1"),
         )
 
     def test_valid_manifest_verifies(self) -> None:
@@ -234,7 +306,7 @@ class CorpusManifestTests(unittest.TestCase):
         name = entry["name"]
         relative = "lib/required-support.metta"
         support = self.root / relative
-        support.parent.mkdir()
+        support.parent.mkdir(exist_ok=True)
         support.write_text("(support original)\n", encoding="utf-8")
         with mock.patch.dict(
             MANIFEST.HERMETIC_REQUIRED_FILES,
@@ -326,6 +398,49 @@ class CorpusManifestTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "command changed"):
             self.verify()
 
+    def test_required_capability_mutation_is_detected(self) -> None:
+        entry = next(
+            item
+            for item in self.manifest["entries"]
+            if item["name"] in MANIFEST.CASE_CAPABILITY_REQUIREMENTS
+        )
+        entry["required_capabilities"] = ["different-capability"]
+        self.write_manifest()
+        with self.assertRaisesRegex(RuntimeError, "required capabilities"):
+            self.verify()
+
+    def test_unexpected_required_capability_is_detected(self) -> None:
+        entry = next(
+            item
+            for item in self.manifest["entries"]
+            if item["name"] not in MANIFEST.CASE_CAPABILITY_REQUIREMENTS
+        )
+        entry["required_capabilities"] = ["lib-prolog"]
+        self.write_manifest()
+        with self.assertRaisesRegex(
+            RuntimeError, "unexpected required capabilities"
+        ):
+            self.verify()
+
+    def test_capability_exclusion_is_exact_and_fail_closed(self) -> None:
+        selected, excluded = MANIFEST.select_entries(
+            self.manifest["entries"], set(), {"lib-prolog"}, None
+        )
+        self.assertEqual(
+            excluded, sorted(MANIFEST.CASE_CAPABILITY_REQUIREMENTS)
+        )
+        self.assertEqual(
+            len(selected),
+            MANIFEST.EXPECTED_TOTAL
+            - len(MANIFEST.CASE_CAPABILITY_REQUIREMENTS),
+        )
+        with self.assertRaisesRegex(
+            RuntimeError, "unknown optional capabilities"
+        ):
+            MANIFEST.select_entries(
+                self.manifest["entries"], set(), {"typo"}, None
+            )
+
     def test_count_mutation_is_detected(self) -> None:
         self.manifest["counts"]["hermetic"] -= 1
         self.write_manifest()
@@ -333,10 +448,11 @@ class CorpusManifestTests(unittest.TestCase):
             self.verify()
 
     def test_exact_match_gate_rejects_every_non_match_status(self) -> None:
-        MANIFEST.verify_exact_match_counts({"MATCH": 176}, 176)
+        total = MANIFEST.EXPECTED_TOTAL
+        MANIFEST.verify_exact_match_counts({"MATCH": total}, total)
         with self.assertRaisesRegex(RuntimeError, "not exact"):
             MANIFEST.verify_exact_match_counts(
-                {"MATCH": 175, "OUTPUT_MISMATCH": 1}, 176
+                {"MATCH": total - 1, "OUTPUT_MISMATCH": 1}, total
             )
 
     def test_prefix_fixture_observes_output_then_stops_live_process(
@@ -393,7 +509,8 @@ class CorpusManifestTests(unittest.TestCase):
         source = self.examples / "git-fixture-input.metta"
         source.write_text(
             '!(git-import! "https://github.com/patham9/faiss_ffi" '
-            '"build.sh")\n',
+            '"build.sh")\n'
+            '!(import! &self (library lib_faiss))\n',
             encoding="utf-8",
         )
         fixture = MANIFEST.CONTROLLED_CASES["git_import2.metta"]
@@ -404,10 +521,68 @@ class CorpusManifestTests(unittest.TestCase):
             self.assertTrue(text.startswith(fixture["source_prefix"]))
             self.assertIn('"./faiss_ffi"', text)
             self.assertIn('"../../fixture/build.sh"', text)
+            self.assertIn("(library faiss_ffi lib_faiss)", text)
+            self.assertNotIn("(library lib_faiss)", text)
             self.assertTrue((workspace / "faiss_ffi").is_symlink())
             self.assertTrue(
                 (workspace / "fixture" / "faiss.pl").is_file()
             )
+
+    def test_patched_library_fixture_is_exact_and_ephemeral(
+        self,
+    ) -> None:
+        source = self.examples / "llm_cities.metta"
+        source.write_text(
+            "!(import! &self ../lib/lib_llm)\n",
+            encoding="utf-8",
+        )
+        library_dir = self.root / "lib"
+        library_dir.mkdir(exist_ok=True)
+        upstream = library_dir / "lib_llm.metta"
+        upstream.write_text(
+            MANIFEST.LLM_PY_STR_HELPER_OVERLAP,
+            encoding="utf-8",
+        )
+        sibling = library_dir / "lib_llm.py"
+        sibling.write_text("# fixture\n", encoding="utf-8")
+        fixture = MANIFEST.CONTROLLED_CASES["llm_cities.metta"]
+
+        with MANIFEST.patched_library_fixture_workspace(
+            self.root, source, fixture
+        ) as (workspace, transformed_source):
+            transformed_library = workspace / "lib" / "lib_llm.metta"
+            self.assertEqual(
+                transformed_library.read_text(encoding="utf-8"),
+                MANIFEST.LLM_PY_STR_HELPER_GUARDED,
+            )
+            self.assertEqual(
+                transformed_source.read_text(encoding="utf-8"),
+                source.read_text(encoding="utf-8"),
+            )
+            self.assertTrue(
+                (workspace / "lib" / "lib_llm.py").is_symlink()
+            )
+        self.assertEqual(
+            upstream.read_text(encoding="utf-8"),
+            MANIFEST.LLM_PY_STR_HELPER_OVERLAP,
+        )
+
+    def test_patched_library_fixture_rejects_source_drift(self) -> None:
+        source = self.examples / "llm_cities.metta"
+        library_dir = self.root / "lib"
+        library_dir.mkdir(exist_ok=True)
+        (library_dir / "lib_llm.metta").write_text(
+            "; changed upstream helper\n",
+            encoding="utf-8",
+        )
+        fixture = MANIFEST.CONTROLLED_CASES["llm_cities.metta"]
+        with self.assertRaisesRegex(
+            RuntimeError, "expected one library occurrence"
+        ):
+            with MANIFEST.patched_library_fixture_workspace(
+                self.root, source, fixture
+            ):
+                pass
 
 
 if __name__ == "__main__":

@@ -121,6 +121,15 @@ REGISTER_INSTRUCTION_ATOM_C: dict[str, tuple[str, str]] = {
     "atom-equal": ("boolean", "*boolean_out = atom_eq(left, right);"),
 }
 
+# Native instruction schemes for the prepared-pure intrinsic leaf.  The
+# authored presentation selects concrete heads and operand disciplines; this
+# set states only which abstract instructions the C backend can execute.
+PREPARED_PURE_INTRINSIC_INSTRUCTIONS = {
+    "grounded-dispatch",
+    "deconstruct-nonempty-expression",
+}
+PREPARED_PURE_INTRINSIC_OPERAND_DISCIPLINES = {"strict-all"}
+
 # Representation interpretation for value-allocation.  The presentation uses
 # semantic leaf classes; this backend maps them to CeTTa's GroundedKind tags.
 GROUNDED_LEAF_KIND_C: dict[str, str] = {
@@ -219,6 +228,8 @@ class Spec:
         total = find_form(forms, "gslt", "total-expression-normalization")
         allocation = find_form(forms, "gslt", "value-allocation")
         register = find_form(forms, "gslt", "register-expression-execution")
+        intrinsic = find_form(
+            forms, "gslt", "prepared-pure-intrinsic-execution")
         fold = find_form(forms, "gslt", "determinate-fold-continuation")
         pure_call = find_form(
             forms, "gslt", "determinate-pure-call-continuation")
@@ -357,6 +368,82 @@ class Spec:
                 "register operand disciplines must be nonempty and unique")
         self.fold_control_kinds = declared_values(
             fold, "determinate-fold control kind")
+        self.fold_operand_roles = [
+            atom_text(item[1], "determinate-fold operand role")
+            for item in entries(fold, "operand-role")
+            if len(item) == 2
+        ]
+        if (not self.fold_operand_roles or
+                len(set(self.fold_operand_roles)) !=
+                len(self.fold_operand_roles)):
+            raise SpecError(
+                "determinate-fold operand roles must be nonempty and unique")
+        self.fold_control_operands: dict[str, list[str]] = {}
+        for entry in entries(fold, "control-operands"):
+            if len(entry) < 3:
+                raise SpecError(
+                    f"malformed control-operands: {sexpr(entry)}")
+            control = atom_text(entry[1], "control-operands control")
+            roles = [
+                atom_text(role, "control-operands role")
+                for role in entry[2:]
+            ]
+            if control not in self.fold_control_kinds:
+                raise SpecError(
+                    f"control-operands names undeclared control {control}")
+            unknown_roles = set(roles) - set(self.fold_operand_roles)
+            if unknown_roles:
+                raise SpecError(
+                    "control-operands names undeclared roles: "
+                    f"{sorted(unknown_roles)}")
+            if control in self.fold_control_operands:
+                raise SpecError(
+                    f"duplicate control-operands for {control}")
+            self.fold_control_operands[control] = roles
+        if set(self.fold_control_operands) != set(self.fold_control_kinds):
+            missing = (
+                set(self.fold_control_kinds) -
+                set(self.fold_control_operands))
+            raise SpecError(
+                "control-operands must cover every determinate-fold "
+                f"control; missing {sorted(missing)}")
+        self.prepared_intrinsic_instructions = [
+            atom_text(item[1], "prepared-pure intrinsic instruction")
+            for item in entries(intrinsic, "instruction")
+            if len(item) == 2
+        ]
+        if (not self.prepared_intrinsic_instructions or
+                len(set(self.prepared_intrinsic_instructions)) !=
+                len(self.prepared_intrinsic_instructions)):
+            raise SpecError(
+                "prepared-pure intrinsic instructions must be nonempty "
+                "and unique")
+        unknown_intrinsic_instructions = (
+            set(self.prepared_intrinsic_instructions) -
+            PREPARED_PURE_INTRINSIC_INSTRUCTIONS)
+        if unknown_intrinsic_instructions:
+            raise SpecError(
+                "no native compilation scheme for prepared-pure intrinsic "
+                f"instructions: {sorted(unknown_intrinsic_instructions)}")
+        self.prepared_intrinsic_operand_disciplines = [
+            atom_text(item[1], "prepared-pure intrinsic operand discipline")
+            for item in entries(intrinsic, "operand-discipline")
+            if len(item) == 2
+        ]
+        if (not self.prepared_intrinsic_operand_disciplines or
+                len(set(self.prepared_intrinsic_operand_disciplines)) !=
+                len(self.prepared_intrinsic_operand_disciplines)):
+            raise SpecError(
+                "prepared-pure intrinsic operand disciplines must be "
+                "nonempty and unique")
+        unknown_intrinsic_disciplines = (
+            set(self.prepared_intrinsic_operand_disciplines) -
+            PREPARED_PURE_INTRINSIC_OPERAND_DISCIPLINES)
+        if unknown_intrinsic_disciplines:
+            raise SpecError(
+                "no native compilation scheme for prepared-pure intrinsic "
+                "operand disciplines: "
+                f"{sorted(unknown_intrinsic_disciplines)}")
         self.pure_call_modes = declared_values(
             pure_call, "determinate-pure-call mode")
         if self.pure_call_modes != ["eager", "call-by-need"]:
@@ -545,6 +632,59 @@ class Spec:
                 len(self.register_heads):
             raise SpecError("register heads must be unique by symbol and arity")
 
+        self.prepared_intrinsic_heads: list[
+            tuple[str, str, int, str, str]
+        ] = []
+        for entry in entries(native, "prepared-pure-intrinsic-head"):
+            if len(entry) != 5:
+                raise SpecError(
+                    f"malformed prepared-pure-intrinsic-head: "
+                    f"{sexpr(entry)}")
+            name = atom_text(entry[1], "prepared-pure intrinsic head")
+            arity_text = atom_text(
+                entry[2], "prepared-pure intrinsic arity")
+            discipline = atom_text(
+                entry[3], "prepared-pure intrinsic operand discipline")
+            instruction = atom_text(
+                entry[4], "prepared-pure intrinsic instruction")
+            if name not in symbol_fields:
+                raise SpecError(
+                    f"prepared-pure intrinsic head {name} has no "
+                    "symbol-table entry")
+            if not arity_text.isdigit() or not 1 <= int(arity_text) <= 16:
+                raise SpecError(
+                    "prepared-pure intrinsic arity must be in [1, 16]")
+            if discipline not in self.prepared_intrinsic_operand_disciplines:
+                raise SpecError(
+                    f"prepared-pure intrinsic head {name} names undeclared "
+                    f"operand discipline {discipline}")
+            if instruction not in self.prepared_intrinsic_instructions:
+                raise SpecError(
+                    f"prepared-pure intrinsic head {name} names undeclared "
+                    f"instruction {instruction}")
+            if (instruction == "deconstruct-nonempty-expression" and
+                    int(arity_text) != 1):
+                raise SpecError(
+                    "deconstruct-nonempty-expression requires arity one")
+            self.prepared_intrinsic_heads.append((
+                name, symbol_fields[name], int(arity_text), discipline,
+                instruction))
+        if not self.prepared_intrinsic_heads:
+            raise SpecError(
+                "at least one prepared-pure intrinsic head is required")
+        if len({(field, arity) for _, field, arity, _, _
+                in self.prepared_intrinsic_heads}) != \
+                len(self.prepared_intrinsic_heads):
+            raise SpecError(
+                "prepared-pure intrinsic heads must be unique by symbol "
+                "and arity")
+        if {instruction for _, _, _, _, instruction
+                in self.prepared_intrinsic_heads} != \
+                set(self.prepared_intrinsic_instructions):
+            raise SpecError(
+                "native prepared-pure intrinsic heads must cover every "
+                "declared intrinsic instruction")
+
         self.fold_control_heads: list[tuple[str, str, int, str]] = []
         for entry in entries(native, "fold-control-head"):
             if len(entry) != 4:
@@ -562,6 +702,10 @@ class Spec:
                 raise SpecError(
                     f"fold control head {name} names undeclared control "
                     f"{control}")
+            if int(arity_text) != len(self.fold_control_operands[control]):
+                raise SpecError(
+                    f"fold control head {name} arity does not match the "
+                    f"declared operands of {control}")
             self.fold_control_heads.append(
                 (name, symbol_fields[name], int(arity_text), control))
         if not self.fold_control_heads:
@@ -960,10 +1104,51 @@ def render_header(spec: Spec) -> str:
         f"CETTA_GSLT_REGISTER_INSTRUCTION_{c_enum(instruction)})"
         for _, field, arity, result_kind, instruction in spec.register_heads
     )
+    prepared_intrinsic_instruction_constants = "\n".join(
+        f"    CETTA_GSLT_PREPARED_PURE_INTRINSIC_{c_enum(value)} = "
+        f"{index},"
+        for index, value in enumerate(spec.prepared_intrinsic_instructions)
+    )
+    prepared_intrinsic_operand_constants = "\n".join(
+        f"    CETTA_GSLT_PREPARED_PURE_INTRINSIC_OPERANDS_"
+        f"{c_enum(value)} = {index},"
+        for index, value in enumerate(
+            spec.prepared_intrinsic_operand_disciplines)
+    )
+    prepared_intrinsic_head_rows = " \\\n".join(
+        f"    X({field}, {arity}u, "
+        f"CETTA_GSLT_PREPARED_PURE_INTRINSIC_OPERANDS_"
+        f"{c_enum(discipline)}, "
+        f"CETTA_GSLT_PREPARED_PURE_INTRINSIC_{c_enum(instruction)})"
+        for _, field, arity, discipline, instruction
+        in spec.prepared_intrinsic_heads
+    )
     fold_control_constants = "\n".join(
         f"    CETTA_GSLT_FOLD_CONTROL_{c_enum(value)} = {index},"
         for index, value in enumerate(spec.fold_control_kinds)
     )
+    fold_operand_role_constants = "\n".join(
+        f"    CETTA_GSLT_CONTROL_OPERAND_{c_enum(value)} = {index},"
+        for index, value in enumerate(spec.fold_operand_roles)
+    )
+    fold_operand_role_cases = []
+    for control in spec.fold_control_kinds:
+        index_cases = "\n".join(
+            f"        case {index}u:\n"
+            f"            *role_out = CETTA_GSLT_CONTROL_OPERAND_"
+            f"{c_enum(role)};\n"
+            f"            return true;"
+            for index, role in enumerate(
+                spec.fold_control_operands[control])
+        )
+        fold_operand_role_cases.append(
+            f"    case CETTA_GSLT_FOLD_CONTROL_{c_enum(control)}:\n"
+            f"        switch (operand_index) {{\n"
+            f"{index_cases}\n"
+            f"        default:\n"
+            f"            return false;\n"
+            f"        }}")
+    fold_operand_role_case_body = "\n".join(fold_operand_role_cases)
     pure_call_mode_constants = "\n".join(
         f"    CETTA_GSLT_PURE_CALL_{c_enum(value)} = {index},"
         for index, value in enumerate(spec.pure_call_modes)
@@ -1229,8 +1414,35 @@ static inline bool cetta_gslt_register_operand_discipline(
 {register_head_rows}
 
 typedef enum {{
+{prepared_intrinsic_instruction_constants}
+}} CettaGsltPreparedPureIntrinsicInstruction;
+
+typedef enum {{
+{prepared_intrinsic_operand_constants}
+}} CettaGsltPreparedPureIntrinsicOperandDiscipline;
+
+#define CETTA_GSLT_PREPARED_PURE_INTRINSIC_HEAD_ROWS(X) \
+{prepared_intrinsic_head_rows}
+
+typedef enum {{
 {fold_control_constants}
 }} CettaGsltFoldControl;
+
+typedef enum {{
+{fold_operand_role_constants}
+}} CettaGsltControlOperandRole;
+
+static inline bool cetta_gslt_fold_control_operand_role(
+    CettaGsltFoldControl control, uint32_t operand_index,
+    CettaGsltControlOperandRole *role_out) {{
+    if (!role_out)
+        return false;
+    switch (control) {{
+{fold_operand_role_case_body}
+    default:
+        return false;
+    }}
+}}
 
 typedef enum {{
 {pure_call_mode_constants}

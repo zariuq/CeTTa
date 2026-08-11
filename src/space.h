@@ -299,6 +299,13 @@ SpaceEquationCursorStep space_equation_cursor_next(
     SpaceEquationCursor *cursor, SpaceEquationOccurrenceId *out);
 
 bool space_contains_exact(Space *s, Atom *atom);
+/* Exact fragment of match existence.  The result is applicable only when a
+   ground, structurally indexable pattern is queried against a relation whose
+   stored rows are all exact.  Backend-primary PathMap answers through its
+   direct structural membership operation; if that operation is unavailable,
+   the fragment declines instead of materializing a native shadow. */
+bool space_match_exists_ground_exact(Space *s, Atom *pattern,
+                                     bool *out_applicable);
 /* O(1)-amortized alpha-aware membership over native spaces, including native
    overlays; *out_applicable is false for non-native backends. */
 bool space_contains_canonical(Space *s, Atom *atom, bool *out_applicable);

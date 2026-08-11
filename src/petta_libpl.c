@@ -208,6 +208,31 @@ static bool petta_libpl_install_standard_bridges(
     return true;
 }
 
+/* Symbol-named PeTTa spaces are dynamic predicates in the embedded module.
+ * The adapter deliberately does not load the reference's metta.pl/spaces.pl,
+ * so install the one relational rule needed to enumerate rows of any arity.
+ * Native/token spaces remain owned by CeTTa and never enter this clause. */
+static bool petta_libpl_install_symbol_space_rules(
+    CettaLibPrologRuntime *runtime) {
+    static const char get_atoms_rule[] =
+        "('get-atoms'(Space, Pattern) :- "
+        "current_predicate(Space/Arity), "
+        "functor(Head, Space, Arity), "
+        "clause(Head, true), "
+        "Head =.. [Space|Pattern])";
+    if (!runtime || !runtime->module)
+        return false;
+    fid_t frame = PL_open_foreign_frame();
+    if (!frame)
+        return false;
+    term_t rule = PL_new_term_ref();
+    bool ok = rule &&
+              PL_chars_to_term(get_atoms_rule, rule) &&
+              PL_assert(rule, runtime->module, PL_ASSERTZ);
+    PL_discard_foreign_frame(frame);
+    return ok;
+}
+
 static bool petta_libpl_plref_register(
     CettaLibPrologRuntime *runtime, term_t term,
     PettaLibplPlrefHandle *handle) {
@@ -355,11 +380,11 @@ static void petta_libpl_debug_named_arity(
     const char *name =
         g_symbols ? symbol_bytes(g_symbols, head) : NULL;
     fprintf(stderr,
-            "[petta-libpl] %s %s/%llu known=%d exact=%d larger=%d\n",
+            "[petta-libpl] %s %s/%llu known=%d exact=%d larger=%d smaller=%d\n",
             which, name ? name : "?",
             (unsigned long long)supplied,
             result.known ? 1 : 0, result.exact ? 1 : 0,
-            result.larger ? 1 : 0);
+            result.larger ? 1 : 0, result.smaller ? 1 : 0);
 }
 
 static bool petta_libpl_plref_view(
@@ -792,7 +817,8 @@ static bool petta_libpl_prepare_locked(
 
     runtime->symbol_table_instance =
         symbol_table_instance_id(g_symbols);
-    if (!petta_libpl_install_standard_bridges(runtime))
+    if (!petta_libpl_install_standard_bridges(runtime) ||
+        !petta_libpl_install_symbol_space_rules(runtime))
         return false;
     petta_libpl_register_reference_stdlib(runtime);
     runtime->prepared = true;
@@ -2867,6 +2893,10 @@ static PeTTaNamedArity petta_libpl_named_arity_impl(
                 result.larger ||
                 standard_arities[index] >
                     (size_t)supplied;
+            result.smaller =
+                result.smaller ||
+                standard_arities[index] <
+                    (size_t)supplied;
         }
         return result;
     }
@@ -2906,6 +2936,10 @@ static PeTTaNamedArity petta_libpl_named_arity_impl(
                 result.larger ||
                 standard_arities[index] >
                     (size_t)supplied;
+            result.smaller =
+                result.smaller ||
+                standard_arities[index] <
+                    (size_t)supplied;
         }
     }
     if (entry &&
@@ -2932,6 +2966,9 @@ static PeTTaNamedArity petta_libpl_named_arity_impl(
             result.larger =
                 result.larger ||
                 arity > (size_t)supplied;
+            result.smaller =
+                result.smaller ||
+                arity < (size_t)supplied;
         }
     }
     petta_libpl_leave(claimed);
@@ -2979,6 +3016,9 @@ PeTTaNamedArity petta_libpl_named_arity_including_resolved(
             result.larger =
                 result.larger ||
                 arity > (size_t)supplied;
+            result.smaller =
+                result.smaller ||
+                arity < (size_t)supplied;
         }
     }
     petta_libpl_leave(claimed);
@@ -3015,6 +3055,9 @@ PeTTaNamedArity petta_libpl_named_arity_resolving(
             result.larger =
                 result.larger ||
                 arity > (size_t)supplied;
+            result.smaller =
+                result.smaller ||
+                arity < (size_t)supplied;
         }
     }
     petta_libpl_leave(claimed);

@@ -1,0 +1,21 @@
+true
+true
+true
+true
+true
+7
+(Pair 7 7)
+7
+(Pair 7 7)
+((cache_hit 1) (cache_miss 1))
+true
+true
+pair
+pair
+((cache_hit 1) (cache_miss 1))
+true
+true
+true
+18
+18
+((cache_hit 1) (cache_miss 1))

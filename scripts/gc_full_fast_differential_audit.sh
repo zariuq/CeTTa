@@ -73,7 +73,6 @@ run_case() {
 }
 
 pass=0
-skip=0
 fail=0
 seen=0
 
@@ -111,8 +110,8 @@ while IFS=$'\t' read -r path lang syntax profile build space_engine lane expect 
     set -e
 
     if [ "$gc_off_status" -eq 124 ]; then
-        echo "SKIP: $path (GC-off exceeded ${GC_OFF_TIMEOUT}s)"
-        skip=$((skip + 1))
+        echo "FAIL: $path (GC-off timeout after ${GC_OFF_TIMEOUT}s)" >&2
+        fail=$((fail + 1))
         continue
     fi
     if [ "$gc_off_status" -ne 0 ]; then
@@ -127,6 +126,11 @@ while IFS=$'\t' read -r path lang syntax profile build space_engine lane expect 
     gc_on_status=$?
     set -e
 
+    if [ "$gc_on_status" -eq 124 ]; then
+        echo "FAIL: $path (GC-on timeout after ${GC_ON_TIMEOUT}s)" >&2
+        fail=$((fail + 1))
+        continue
+    fi
     if [ "$gc_on_status" -ne 0 ]; then
         echo "FAIL: $path (GC-on exit $gc_on_status)" >&2
         printf '%s\n' "$gc_on" | head -80 >&2
@@ -145,5 +149,9 @@ while IFS=$'\t' read -r path lang syntax profile build space_engine lane expect 
 done < "$MANIFEST"
 
 echo "---"
-echo "$pass passed, $fail failed, $skip skipped, $seen considered"
-[ "$fail" -eq 0 ]
+echo "$pass passed, $fail failed, $seen considered"
+if [ "$seen" -eq 0 ]; then
+    echo "FAIL: GC differential selected no semantic cases" >&2
+    exit 1
+fi
+[ "$fail" -eq 0 ] && [ "$pass" -eq "$seen" ]
