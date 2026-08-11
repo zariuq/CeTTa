@@ -136,6 +136,13 @@ MorkStatus mork_space_remove_sexpr(MorkSpace *space, const uint8_t *text, size_t
 MorkStatus mork_space_unique_size(const MorkSpace *space);
 MorkStatus mork_space_size(const MorkSpace *space);
 MorkStatus mork_space_step(MorkSpace *space, uint64_t steps);
+MorkStatus mork_support_transform_profile_supported_v1(
+    const uint8_t *packet, size_t packet_len);
+MorkStatus mork_space_step_support_transform_v1(
+    MorkSpace *space, const uint8_t *packet, size_t packet_len,
+    uint64_t steps);
+MorkStatus mork_space_has_support_transform_work_v1(
+    MorkSpace *space, const uint8_t *packet, size_t packet_len);
 MorkStatus mork_space_dump_act_file(MorkSpace *space, const uint8_t *path, size_t len);
 MorkStatus mork_space_load_act_file(MorkSpace *space, const uint8_t *path, size_t len);
 MorkBuffer mork_space_dump(MorkSpace *space);

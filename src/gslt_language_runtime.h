@@ -110,6 +110,19 @@ bool cetta_gslt_language_execute_atoms_with_realization(
     CettaGsltLanguageResult *result,
     char *error, size_t error_size);
 
+/* Execute through a provider catalog compiled for this exact language
+ * manifest/profile.  The physical registry may contain implementations for
+ * other catalogs; only matching authored declarations become visible. */
+bool cetta_gslt_language_execute_atoms_with_realization_and_providers_v1(
+    const CettaGsltLanguage *language,
+    CettaGsltRealization realization,
+    const CettaGsltProviderCatalogV1 *catalog,
+    const CettaGsltProviderRegistryV1 *physical_providers,
+    Atom *const *forms, size_t form_count,
+    Arena *output_arena, CettaGsltHornLimits limits,
+    CettaGsltLanguageResult *result,
+    char *error, size_t error_size);
+
 const char *cetta_gslt_realization_name(CettaGsltRealization realization);
 bool cetta_gslt_realization_parse(
     const char *name, CettaGsltRealization *realization);

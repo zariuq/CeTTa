@@ -1,6 +1,6 @@
 ; Query-first MeTTa Zero executable candidate over one reflective occurrence
 ; space.  The surface `(zero-query pattern template)` publishes arbitrary
-; matching.  Evaluation requests `(! subject)` enumerate that same space,
+; matching.  Evaluation requests `(eval subject)` enumerate that same space,
 ; select ordinary equation atoms, and apply their right sides.
 (gslt-presentation-v1 MettaZeroQueryKernelV1
   (signature
@@ -44,7 +44,7 @@
         (zero-classify
           ?request-occurrence
           (q-app
-            (q-sym (q-str "!"))
+            (q-sym (q-str "eval"))
             (q-cons ?subject q-nil))
           (zero-evaluate-request ?request-occurrence ?subject)))
       (body))
@@ -75,7 +75,7 @@
             (q-sym (q-str "reify"))
             (q-cons
               (q-app
-                (q-sym (q-str "!"))
+                (q-sym (q-str "eval"))
                 (q-cons ?subject q-nil))
               q-nil))
           (zero-reify-evaluate-request

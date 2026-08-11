@@ -1,2 +1,2 @@
 (= source Empty)
-(! source)
+(eval source)

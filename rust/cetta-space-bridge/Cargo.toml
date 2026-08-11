@@ -8,7 +8,7 @@ crate-type = ["staticlib", "cdylib"]
 
 [features]
 default = ["pathmap-space"]
-pathmap-space = []
+pathmap-space = ["dep:cetta-mork-adapter"]
 
 [dependencies]
 mork = { workspace = true }

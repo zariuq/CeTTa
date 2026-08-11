@@ -1,0 +1,5 @@
+(= a left)
+(= a right)
+(= left done)
+(= right done)
+(! (reach (s (s z)) a))

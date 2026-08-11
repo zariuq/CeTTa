@@ -1,2 +1,2 @@
 (= (f $value) (g $value))
-(! (f a))
+(eval (f a))

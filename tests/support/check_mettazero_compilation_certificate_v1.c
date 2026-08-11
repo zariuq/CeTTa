@@ -1,4 +1,6 @@
 #include "generated/zero_exp_language_v1.generated.h"
+#include "generated/zero_emit_language_v1.generated.h"
+#include "generated/zero_interact_language_v1.generated.h"
 #include "generated/zero_language_v1.generated.h"
 #include "gslt_language_runtime.h"
 #include "native_sha256.h"
@@ -595,6 +597,12 @@ int main(int argc, char **argv) {
     } else if (strcmp(argv[1], "exp") == 0) {
         descriptor = &cetta_zero_exp_language_v1;
         descriptor_symbol = "cetta_zero_exp_language_v1";
+    } else if (strcmp(argv[1], "emit") == 0) {
+        descriptor = &cetta_zero_emit_language_v1;
+        descriptor_symbol = "cetta_zero_emit_language_v1";
+    } else if (strcmp(argv[1], "interact") == 0) {
+        descriptor = &cetta_zero_interact_language_v1;
+        descriptor_symbol = "cetta_zero_interact_language_v1";
     } else {
         fprintf(stderr, "error: unknown Zero certificate profile %s\n", argv[1]);
         return 2;

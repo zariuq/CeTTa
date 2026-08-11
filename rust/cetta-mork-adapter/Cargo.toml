@@ -7,3 +7,4 @@ edition.workspace = true
 mork = { workspace = true }
 mork-expr = { workspace = true }
 pathmap = { workspace = true }
+cetta-space = { workspace = true }

@@ -658,6 +658,18 @@ bool cetta_gslt_compiled_query_v1(
     CettaGsltHornLimits limits,
     CettaGsltHornResult *result,
     char *error, size_t error_size) {
+    return cetta_gslt_compiled_query_with_providers_v1(
+        program, NULL, output_arena, query, limits,
+        result, error, error_size);
+}
+
+bool cetta_gslt_compiled_query_with_providers_v1(
+    const CettaGsltCompiledProgram *program,
+    const CettaGsltProviderRegistryV1 *providers,
+    Arena *output_arena, Atom *query,
+    CettaGsltHornLimits limits,
+    CettaGsltHornResult *result,
+    char *error, size_t error_size) {
     if (!program || !output_arena || !query || !result)
         return compiled_error(error, error_size,
                               "invalid compiled GSLT query request");
@@ -666,6 +678,9 @@ bool cetta_gslt_compiled_query_v1(
         limits.max_depth == 0u)
         return compiled_error(error, error_size,
                               "compiled GSLT limits must be positive");
+    if (!cetta_gslt_provider_registry_validate_v1(
+            providers, error, error_size))
+        return false;
     Arena states;
     Arena scratch;
     arena_init(&states);
@@ -701,8 +716,99 @@ bool cetta_gslt_compiled_query_v1(
         }
         const GsltCompiledBucket *bucket = compiled_find_bucket(
             program, state.goals[0]);
-        if (!bucket)
+        if (!bucket) {
+            const CettaGsltProviderV1 *provider =
+                cetta_gslt_provider_find_v1(providers, state.goals[0]);
+            if (!provider)
+                continue;
+            ArenaMark provider_mark = arena_mark(&scratch);
+            CettaGsltProviderAnswersV1 answers = {0};
+            CettaGsltProviderOutcomeV1 provider_outcome = provider->query(
+                provider->context, &scratch, state.goals[0],
+                limits.max_answers, &answers,
+                error, error_size);
+            if (provider_outcome == CETTA_GSLT_PROVIDER_COMPLETED &&
+                answers.answer_count > limits.max_answers)
+                provider_outcome = CETTA_GSLT_PROVIDER_ANSWER_LIMIT;
+            if (provider_outcome == CETTA_GSLT_PROVIDER_ANSWER_LIMIT) {
+                result->outcome = CETTA_GSLT_HORN_ANSWER_LIMIT;
+                stopped = true;
+            } else if (provider_outcome != CETTA_GSLT_PROVIDER_COMPLETED) {
+                healthy = false;
+            }
+            for (size_t index = 0u;
+                 healthy && !stopped && index < answers.answer_count;
+                 index++) {
+                Atom *answer = answers.answers[index];
+                Atom *goal = state.goals[0];
+                if (!answer || answer->kind != ATOM_EXPR ||
+                    answer->expr.len != goal->expr.len ||
+                    answer->expr.elems[0]->kind != ATOM_SYMBOL ||
+                    goal->expr.elems[0]->kind != ATOM_SYMBOL ||
+                    answer->expr.elems[0]->sym_id !=
+                        goal->expr.elems[0]->sym_id) {
+                    healthy = false;
+                    compiled_error(
+                        error, error_size,
+                        "semantic provider %s returned a malformed %s/%u answer",
+                        provider->semantic_id, provider->relation,
+                        provider->arity);
+                    break;
+                }
+                Bindings bindings;
+                bindings_init(&bindings);
+                bool matched = match_atoms(goal, answer, &bindings);
+                if (matched && bindings.eq_len != 0u) {
+                    healthy = false;
+                    compiled_error(
+                        error, error_size,
+                        "semantic provider produced unsupported residual constraints");
+                    matched = false;
+                }
+                if (matched) {
+                    if (state.depth == UINT32_MAX) {
+                        healthy = false;
+                        compiled_error(
+                            error, error_size,
+                            "compiled provider continuation exceeds its ABI");
+                    } else {
+                        uint32_t next_count = state.goal_count - 1u;
+                        Atom **next_goals = next_count
+                            ? arena_alloc(
+                                &states,
+                                sizeof(*next_goals) * next_count)
+                            : NULL;
+                        Atom *next_query_scratch = bindings_apply_if_vars(
+                            &bindings, &scratch, state.query);
+                        Atom *next_query = atom_deep_copy(
+                            &states, next_query_scratch);
+                        healthy = next_query != NULL;
+                        for (uint32_t goal_index = 1u;
+                             healthy && goal_index < state.goal_count;
+                             goal_index++) {
+                            Atom *resolved = bindings_apply_if_vars(
+                                &bindings, &scratch,
+                                state.goals[goal_index]);
+                            next_goals[goal_index - 1u] =
+                                atom_deep_copy(&states, resolved);
+                            healthy = next_goals[goal_index - 1u] != NULL;
+                        }
+                        if (healthy)
+                            healthy = compiled_queue_push(
+                                &queue, (GsltCompiledState){
+                                    .query = next_query,
+                                    .goals = next_goals,
+                                    .goal_count = next_count,
+                                    .depth = state.depth + 1u,
+                                });
+                    }
+                }
+                bindings_free(&bindings);
+            }
+            cetta_gslt_provider_answers_free_v1(&answers);
+            arena_reset(&scratch, provider_mark);
             continue;
+        }
         for (uint32_t candidate = 0u;
              healthy && !stopped && candidate < bucket->rule_count;
              candidate++) {

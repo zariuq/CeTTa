@@ -22,6 +22,7 @@ from __future__ import annotations
 import argparse
 from dataclasses import dataclass
 from pathlib import Path
+import re
 import sys
 from typing import Iterator, Sequence, TypeAlias
 
@@ -176,6 +177,145 @@ def mork_encoded_key(term: SExpr) -> bytes:
 
     emit(term)
     return bytes(output)
+
+
+_MORK_VARIABLE_REFERENCE = re.compile(r"_([1-9][0-9]*)\Z")
+
+
+def alpha_normalize_mork_surface(term: SExpr) -> SExpr:
+    """Canonicalize variables in one MM2 surface expression.
+
+    Authored MM2 commonly spells a variable introduction ``$name`` and later
+    occurrences with the same name.  MORK's printer instead emits ``$`` for
+    each introduction and ``_N`` for a one-based reference to the Nth prior
+    introduction.  Both presentations denote the same scoped expression.
+
+    An ``_N`` with no corresponding prior introduction remains an ordinary
+    symbol.  MM2 variable scope is per top-level expression, so callers must
+    invoke this function separately for each expression.
+    """
+    named: dict[str, str] = {}
+    introductions: list[str] = []
+
+    def introduce(name: str | None = None) -> str:
+        canonical = f"$V{len(introductions)}"
+        introductions.append(canonical)
+        if name is not None:
+            named[name] = canonical
+        return canonical
+
+    def visit(item: SExpr) -> SExpr:
+        if isinstance(item, list):
+            return [visit(child) for child in item]
+        if item == "$":
+            return introduce()
+        if item.startswith("$"):
+            known = named.get(item)
+            return known if known is not None else introduce(item)
+        reference = _MORK_VARIABLE_REFERENCE.fullmatch(item)
+        if reference is not None:
+            index = int(reference.group(1)) - 1
+            if index < len(introductions):
+                return introductions[index]
+        return item
+
+    return visit(term)
+
+
+def canonical_mm2_support(forms: Sequence[SExpr]) -> tuple[bytes, ...]:
+    """Return the order-free, alpha-invariant support observation of forms."""
+    return tuple(sorted({
+        unparse(alpha_normalize_mork_surface(form)).encode("utf-8")
+        for form in forms
+    }))
+
+
+def gslt_pure_f64_type_v1(term: SExpr) -> str | None:
+    """Infer the declared result kind of the finite MM2 pure-f64 slice."""
+    if not isinstance(term, list):
+        return "atom"
+    if not term or not isinstance(term[0], str):
+        return None
+    argument_types = [gslt_pure_f64_type_v1(item) for item in term[1:]]
+    if any(kind is None for kind in argument_types):
+        return None
+    head = term[0]
+    if head == "f64_from_string" and argument_types == ["atom"]:
+        return "f64"
+    if head == "f64_to_string" and argument_types == ["f64"]:
+        return "atom"
+    if head == "signum_f64" and argument_types == ["f64"]:
+        return "f64"
+    if head in ("sub_f64", "div_f64") and argument_types == ["f64", "f64"]:
+        return "f64"
+    if head in ("sum_f64", "product_f64") and all(
+        kind == "f64" for kind in argument_types
+    ):
+        return "f64"
+    return None
+
+
+def gslt_support_transform_v1_accepts_exec(form: SExpr) -> bool:
+    """Recognize a top-level directive admitted by the authored V1 profile."""
+    if not is_call(form, "exec", 3):
+        return True
+    assert isinstance(form, list)
+    _, location, input_form, output_form = form
+    if has_variable(location) or not isinstance(input_form, list) or (
+        len(input_form) < 2
+    ):
+        return False
+    if input_form[0] == ",":
+        pass
+    elif input_form[0] == "I":
+        source_shapes = {"BTM": 1, "==": 2, "!=": 2}
+        for factor in input_form[1:]:
+            if not isinstance(factor, list) or not factor:
+                return False
+            arity = source_shapes.get(str(factor[0]))
+            if arity is None or len(factor) != arity + 1:
+                return False
+    else:
+        return False
+
+    if not isinstance(output_form, list) or not output_form:
+        return False
+    if output_form[0] == ",":
+        return True
+    if output_form[0] != "O":
+        return False
+    sink_shapes = {
+        "+": 1,
+        "-": 1,
+        "head": 2,
+        "tail": 2,
+        "count": 3,
+        "pure": 3,
+    }
+    for sink in output_form[1:]:
+        if not isinstance(sink, list) or not sink:
+            return False
+        arity = sink_shapes.get(str(sink[0]))
+        if arity is None or len(sink) != arity + 1:
+            return False
+        if sink[0] in ("head", "tail"):
+            limit = sink[1]
+            if not isinstance(limit, str) or not limit.isdigit() or int(limit) == 0:
+                return False
+        if sink[0] == "count":
+            guard = sink[2]
+            if not isinstance(guard, str) or not (
+                guard.startswith("$") or guard.isdigit()
+            ):
+                return False
+        if sink[0] == "pure" and gslt_pure_f64_type_v1(sink[3]) != "atom":
+            return False
+    return True
+
+
+def gslt_support_transform_v1_accepts_program(forms: Sequence[SExpr]) -> bool:
+    """Recognize programs whose initial work is wholly in the V1 fragment."""
+    return all(gslt_support_transform_v1_accepts_exec(form) for form in forms)
 
 
 def is_call(term: SExpr, head: str, arity: int | None = None) -> bool:

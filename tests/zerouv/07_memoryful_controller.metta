@@ -1,0 +1,5 @@
+(= a b)
+(= b c)
+(= (walk cold a) (choose warm b))
+(= (walk warm b) (choose cold c))
+(! (follow walk cold (s (s z)) a))

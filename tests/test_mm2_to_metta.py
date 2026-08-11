@@ -42,6 +42,46 @@ EXPECTED_ACCEPTED = {
 }
 
 
+EXPECTED_GSLT_SUPPORT_TRANSFORM_V1 = {
+    "ancestor.mm2",
+    "bc_roman_4node.mm2",
+    "bc_socrates_pln.mm2",
+    "bc_impl_equiv.mm2",
+    "bc_mammal_lassie.mm2",
+    "bench_pure_mm2_3hop_scored.mm2",
+    "counter_machine_5.mm2",
+    "counterfactual_orchard_pure.mm2",
+    "hexlife.mm2",
+    "hexlife_structural.mm2",
+    "mm2_exec_basic.mm2",
+    "mm2_kiss_add_remove.mm2",
+    "mm2_kiss_count_groupby.mm2",
+    "mm2_kiss_fractal_priority.mm2",
+    "mm2_kiss_priority.mm2",
+    "odd_even_sort.mm2",
+    "revise_proofs_symbolic.mm2",
+    "std.mm2",
+    "string_convert.mm2",
+    "test10_conjunctive_wq.mm2",
+    "test3_var_binding.mm2",
+    "test4_conjunctive.mm2",
+    "test5_equal_pair.mm2",
+    "test6_no_match.mm2",
+    "test7_nested.mm2",
+    "test8_multi_step.mm2",
+    "test9_priority_ordering.mm2",
+    "test_add_constant.mm2",
+    "test_add_simple.mm2",
+    "test_bulk_remove.mm2",
+    "test_count_simple.mm2",
+    "test_head_limit.mm2",
+    "test_remove_simple.mm2",
+    "test_var_scope_across_exprs.mm2",
+    "transitive.mm2",
+    "zip_add.mm2",
+}
+
+
 def parse_he_result_line(line: str) -> list[translator.SExpr]:
     body = line[1:-1]
     converted: list[str] = []
@@ -109,8 +149,9 @@ class TranslatorGate(unittest.TestCase):
         version = subprocess.run(
             [str(cls.cetta), "--version"], text=True,
             capture_output=True, check=True).stdout
-        if "(mork)" not in version:
-            raise RuntimeError("translator differential gate requires BUILD=mork")
+        if "(mork)" not in version and "(main)" not in version:
+            raise RuntimeError(
+                "translator differential gate requires a MORK-capable build")
 
     def corpus_rows(self):
         aihub = ROOT.parent.parent
@@ -119,6 +160,57 @@ class TranslatorGate(unittest.TestCase):
             for row in csv.DictReader(handle, delimiter="\t"):
                 path = Path(row["path"].replace("$AIHUB", str(aihub)))
                 yield row["name"], path
+
+    def test_mm2_surface_alpha_normalization(self) -> None:
+        authored = translator.parse(
+            "(u $r $s $r $s) (u $r (v $s $r) $s)")
+        printed = translator.parse(
+            "(u $ $ _1 _2) (u $ (v $ _1) _2)")
+        self.assertEqual(
+            translator.canonical_mm2_support(authored),
+            translator.canonical_mm2_support(printed))
+
+    def test_mm2_surface_alpha_normalization_preserves_coreference(self) -> None:
+        repeated = translator.parse("(u $r $s $r $s)")
+        crossed = translator.parse("(u $r $s $s $r)")
+        self.assertNotEqual(
+            translator.canonical_mm2_support(repeated),
+            translator.canonical_mm2_support(crossed))
+
+    def test_mm2_surface_reference_without_binder_is_a_symbol(self) -> None:
+        literal = translator.parse("(u _1)")[0]
+        self.assertEqual(
+            translator.alpha_normalize_mork_surface(literal), literal)
+
+    def test_mm2_support_observation_is_order_and_duplicate_insensitive(self) -> None:
+        left = translator.parse("(p $x $x) (q a) (q a)")
+        right = translator.parse("(q a) (p $ _1)")
+        self.assertEqual(
+            translator.canonical_mm2_support(left),
+            translator.canonical_mm2_support(right))
+
+    def test_gslt_support_transform_v1_matches_native_corpus(self) -> None:
+        admitted: dict[str, Path] = {}
+        for name, path in self.corpus_rows():
+            forms = translator.parse(path.read_text(encoding="utf-8"))
+            if translator.gslt_support_transform_v1_accepts_program(forms):
+                admitted[name] = path
+        self.assertEqual(set(admitted), EXPECTED_GSLT_SUPPORT_TRANSFORM_V1)
+
+        for name, path in admitted.items():
+            with self.subTest(program=name):
+                native = subprocess.run(
+                    [str(self.cetta), "--lang", "mm2", str(path)],
+                    text=True, capture_output=True, timeout=90, check=True)
+                profiled = subprocess.run(
+                    [str(self.cetta), "--lang", "mm2", "--profile", "gslt",
+                     str(path)],
+                    text=True, capture_output=True, timeout=90, check=True)
+                self.assertEqual(
+                    translator.canonical_mm2_support(
+                        translator.parse(profiled.stdout)),
+                    translator.canonical_mm2_support(
+                        translator.parse(native.stdout)))
 
     def test_supported_corpus_matches_native_in_all_lanes(self) -> None:
         accepted: dict[str, tuple[Path, translator.CompiledProgram]] = {}

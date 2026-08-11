@@ -1,2 +1,2 @@
 (= (f $x) (g $x))
-(reify (! (f a)))
+(reify (eval (f a)))

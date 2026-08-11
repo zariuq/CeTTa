@@ -2,6 +2,7 @@
 
 #include "symbol.h"
 
+#include <errno.h>
 #include <inttypes.h>
 #include <math.h>
 #include <stdio.h>
@@ -324,9 +325,121 @@ Atom *cetta_mm2_raise_atom(Arena *a, Atom *atom) {
     return mm2_raise_atom_impl(a, atom, &syms);
 }
 
+static bool mm2_float_same_bits(double left, double right) {
+    uint64_t left_bits = 0u;
+    uint64_t right_bits = 0u;
+    memcpy(&left_bits, &left, sizeof(left_bits));
+    memcpy(&right_bits, &right, sizeof(right_bits));
+    return left_bits == right_bits;
+}
+
+static int mm2_normalize_scientific_token(char *out, size_t out_size,
+                                          const char *candidate) {
+    const char *exponent = strchr(candidate, 'e');
+    if (!out || out_size == 0u || !exponent)
+        return -1;
+
+    const char *digits = exponent + 1;
+    bool negative = false;
+    if (*digits == '+' || *digits == '-') {
+        negative = *digits == '-';
+        digits++;
+    }
+    while (digits[0] == '0' && digits[1] != '\0')
+        digits++;
+    return snprintf(out, out_size, "%.*se%s%s",
+                    (int)(exponent - candidate), candidate,
+                    negative ? "-" : "", digits);
+}
+
+/* MORK's f64_to_string is Rust `format!("{:?}", value)`: shortest exact
+   decimal, at least one fractional digit in fixed notation, and scientific
+   notation outside [1e-4, 1e16). Keep this local to the MM2 boundary. */
+static int mm2_format_float_surface_v1(char *out, size_t out_size,
+                                       double value) {
+    if (!out || out_size == 0u)
+        return -1;
+    if (isnan(value))
+        return snprintf(out, out_size, "NaN");
+    if (isinf(value))
+        return snprintf(out, out_size, "%s", signbit(value) ? "-inf" : "inf");
+
+    double magnitude = fabs(value);
+    bool scientific =
+        (magnitude != 0.0 && magnitude < 1e-4) || magnitude >= 1e16;
+    char candidate[128];
+    int chosen = -1;
+
+    if (scientific) {
+        for (int fractional = 0; fractional <= 16; fractional++) {
+            int length = snprintf(candidate, sizeof(candidate), "%.*e",
+                                  fractional, value);
+            if (length <= 0 || (size_t)length >= sizeof(candidate))
+                continue;
+            char *end = NULL;
+            double parsed = strtod(candidate, &end);
+            if (end && *end == '\0' && mm2_float_same_bits(parsed, value)) {
+                chosen = length;
+                break;
+            }
+        }
+        if (chosen < 0)
+            return -1;
+        return mm2_normalize_scientific_token(out, out_size, candidate);
+    }
+
+    for (int fractional = 0; fractional <= 21; fractional++) {
+        int length = snprintf(candidate, sizeof(candidate), "%.*f",
+                              fractional, value);
+        if (length <= 0 || (size_t)length >= sizeof(candidate))
+            continue;
+        char *end = NULL;
+        double parsed = strtod(candidate, &end);
+        if (end && *end == '\0' && mm2_float_same_bits(parsed, value)) {
+            chosen = length;
+            break;
+        }
+    }
+    if (chosen < 0)
+        return -1;
+    if (strchr(candidate, '.'))
+        return snprintf(out, out_size, "%s", candidate);
+    return snprintf(out, out_size, "%s.0", candidate);
+}
+
+static Atom *mm2_surface_float_tokens(Arena *a, Atom *atom,
+                                      const char **out_error) {
+    if (!a || !atom)
+        return atom;
+    if (atom->kind == ATOM_GROUNDED && atom->ground.gkind == GV_FLOAT) {
+        char token[128];
+        int length = mm2_format_float_surface_v1(
+            token, sizeof(token), atom->ground.fval);
+        if (length <= 0 || (size_t)length >= sizeof(token)) {
+            if (out_error)
+                *out_error = "failed to format exact MM2 f64 surface token";
+            return NULL;
+        }
+        return atom_symbol(a, token);
+    }
+    if (atom->kind != ATOM_EXPR)
+        return atom;
+
+    Atom **children = arena_alloc(a, sizeof(Atom *) * atom->expr.len);
+    for (CettaExprIndex index = 0u; index < atom->expr.len; index++) {
+        children[index] = mm2_surface_float_tokens(
+            a, atom->expr.elems[index], out_error);
+        if (!children[index])
+            return NULL;
+    }
+    return atom_expr(a, children, atom->expr.len);
+}
+
 char *cetta_mm2_atom_to_surface_string(Arena *a, Atom *atom) {
     Atom *raised = cetta_mm2_raise_atom(a, atom);
-    return atom_to_string(a, raised);
+    const char *ignored_error = NULL;
+    Atom *surface = mm2_surface_float_tokens(a, raised, &ignored_error);
+    return surface ? atom_to_string(a, surface) : arena_strdup(a, "");
 }
 
 typedef struct {
@@ -581,16 +694,7 @@ static bool bridge_emit_float_token(BridgeExprBuf *buf,
                                     BridgeExprWire wire,
                                     const char **out_error) {
     char tmp[128];
-    int len = 0;
-    if (isnan(value)) {
-        len = snprintf(tmp, sizeof(tmp), "NaN");
-    } else if (isinf(value)) {
-        len = snprintf(tmp, sizeof(tmp), "%s", signbit(value) ? "-inf" : "inf");
-    } else if (isfinite(value) && floor(value) == value) {
-        len = snprintf(tmp, sizeof(tmp), "%.1f", value);
-    } else {
-        len = snprintf(tmp, sizeof(tmp), "%.16g", value);
-    }
+    int len = mm2_format_float_surface_v1(tmp, sizeof(tmp), value);
     if (len <= 0 || (size_t)len >= sizeof(tmp)) {
         if (out_error)
             *out_error = "failed to format MORK bridge float token";
@@ -1136,4 +1240,246 @@ bool cetta_mm2_atom_id_to_contextual_bridge_expr_packet(
         a, universe, atom_id, BRIDGE_EXPR_WIRE_PACKET,
         out_packet, out_packet_len, out_context_bytes, out_context_len,
         out_error);
+}
+
+typedef struct {
+    VarId ids[64];
+    SymbolId spellings[64];
+    uint8_t introduced;
+} BridgePacketVarMap;
+
+static bool bridge_packet_read_u32(const uint8_t *packet, size_t packet_len,
+                                   size_t *offset, uint32_t *out_value) {
+    if (!packet || !offset || !out_value ||
+        *offset > packet_len || packet_len - *offset < 4u) {
+        return false;
+    }
+    *out_value = ((uint32_t)packet[*offset] << 24) |
+                 ((uint32_t)packet[*offset + 1u] << 16) |
+                 ((uint32_t)packet[*offset + 2u] << 8) |
+                 (uint32_t)packet[*offset + 3u];
+    *offset += 4u;
+    return true;
+}
+
+static Atom *bridge_packet_parse_token(Arena *a, const uint8_t *bytes,
+                                       uint32_t len) {
+    if (!a || !bytes || len == 0u)
+        return NULL;
+    char *token = arena_alloc(a, (size_t)len + 1u);
+    memcpy(token, bytes, len);
+    token[len] = '\0';
+
+    if (token[0] == '"') {
+        if (len < 2u || token[len - 1u] != '"')
+            return NULL;
+        char *decoded = arena_alloc(a, (size_t)len);
+        size_t output = 0u;
+        for (uint32_t index = 1u; index + 1u < len; index++) {
+            char next = token[index];
+            if (next == '"')
+                return NULL;
+            if (next == '\\') {
+                if (++index + 1u >= len)
+                    return NULL;
+                switch (token[index]) {
+                case 'n': next = '\n'; break;
+                case 'r': next = '\r'; break;
+                case 't': next = '\t'; break;
+                case '"': next = '"'; break;
+                case '\\': next = '\\'; break;
+                default: next = token[index]; break;
+                }
+            }
+            decoded[output++] = next;
+        }
+        decoded[output] = '\0';
+        return atom_string(a, decoded);
+    }
+
+    if (strcmp(token, "True") == 0)
+        return atom_bool(a, true);
+    if (strcmp(token, "False") == 0)
+        return atom_bool(a, false);
+
+    char *end = NULL;
+    errno = 0;
+    long long integer = strtoll(token, &end, 10);
+    if (end && *end == '\0' && errno == 0)
+        return atom_int(a, (int64_t)integer);
+
+    if (!strchr(token, '.')) {
+        if (strchr(token, '/')) {
+            Atom *rational = atom_rational(a, token);
+            if (rational)
+                return rational;
+        }
+        char *canonical = cetta_bigint_canonicalize_owned(token);
+        if (canonical) {
+            free(canonical);
+            return atom_bigint(a, token);
+        }
+    }
+
+    if (strchr(token, '.') || strcmp(token, "NaN") == 0 ||
+        strcmp(token, "inf") == 0 || strcmp(token, "-inf") == 0) {
+        errno = 0;
+        end = NULL;
+        double floating = strtod(token, &end);
+        if (end && *end == '\0' && errno == 0)
+            return atom_float(a, floating);
+    }
+
+    return atom_symbol_id(a, symbol_intern_cstr(g_symbols, token));
+}
+
+static Atom *bridge_packet_decode_atom_rec(Arena *a,
+                                           const uint8_t *packet,
+                                           size_t packet_len,
+                                           size_t *offset,
+                                           BridgePacketVarMap *vars,
+                                           const char **out_error) {
+    if (!a || !packet || !offset || !vars || *offset >= packet_len) {
+        if (out_error)
+            *out_error = "truncated MORK bridge expression packet";
+        return NULL;
+    }
+
+    uint8_t tag = packet[(*offset)++];
+    switch (tag) {
+    case BRIDGE_EXPR_PACKET_NEWVAR: {
+        if (vars->introduced >= 64u) {
+            if (out_error)
+                *out_error = "MORK bridge expression exceeds 64 variable slots";
+            return NULL;
+        }
+        uint8_t index = vars->introduced++;
+        char spelling[16];
+        int written = snprintf(spelling, sizeof(spelling), "v%u",
+                               (unsigned)index);
+        if (written <= 0 || (size_t)written >= sizeof(spelling)) {
+            if (out_error)
+                *out_error = "could not construct canonical bridge variable name";
+            return NULL;
+        }
+        vars->ids[index] = fresh_var_id();
+        vars->spellings[index] = symbol_intern_cstr(g_symbols, spelling);
+        return atom_var_with_spelling(a, vars->spellings[index],
+                                      vars->ids[index]);
+    }
+    case BRIDGE_EXPR_PACKET_VARREF: {
+        if (*offset >= packet_len) {
+            if (out_error)
+                *out_error = "truncated MORK bridge variable reference";
+            return NULL;
+        }
+        uint8_t index = packet[(*offset)++];
+        if (index >= vars->introduced) {
+            if (out_error)
+                *out_error = "MORK bridge variable reference precedes its binder";
+            return NULL;
+        }
+        return atom_var_with_spelling(a, vars->spellings[index],
+                                      vars->ids[index]);
+    }
+    case BRIDGE_EXPR_PACKET_SYMBOL: {
+        uint32_t symbol_len = 0u;
+        if (!bridge_packet_read_u32(packet, packet_len, offset, &symbol_len) ||
+            symbol_len == 0u || *offset > packet_len ||
+            (size_t)symbol_len > packet_len - *offset) {
+            if (out_error)
+                *out_error = "malformed MORK bridge symbol packet";
+            return NULL;
+        }
+        Atom *atom = bridge_packet_parse_token(
+            a, packet + *offset, symbol_len);
+        if (!atom) {
+            if (out_error)
+                *out_error = "MORK bridge symbol is not one atomic CeTTa token";
+            return NULL;
+        }
+        *offset += symbol_len;
+        return atom;
+    }
+    case BRIDGE_EXPR_PACKET_ARITY: {
+        uint32_t arity = 0u;
+        if (!bridge_packet_read_u32(packet, packet_len, offset, &arity) ||
+            arity >= 64u ||
+            (size_t)arity > SIZE_MAX / sizeof(Atom *)) {
+            if (out_error)
+                *out_error = "malformed MORK bridge expression arity";
+            return NULL;
+        }
+        Atom **children = arity
+            ? arena_alloc(a, sizeof(Atom *) * (size_t)arity)
+            : NULL;
+        for (uint32_t index = 0u; index < arity; index++) {
+            children[index] = bridge_packet_decode_atom_rec(
+                a, packet, packet_len, offset, vars, out_error);
+            if (!children[index])
+                return NULL;
+        }
+        return atom_expr(a, children, (CettaExprLen)arity);
+    }
+    default:
+        if (out_error)
+            *out_error = "unknown MORK bridge expression packet tag";
+        return NULL;
+    }
+}
+
+bool cetta_mm2_bridge_expr_packet_to_atom(Arena *a,
+                                          const uint8_t *packet,
+                                          size_t packet_len,
+                                          Atom **out_atom,
+                                          const char **out_error) {
+    if (out_atom)
+        *out_atom = NULL;
+    if (out_error)
+        *out_error = NULL;
+    if (!a || !packet || packet_len == 0u || !out_atom) {
+        if (out_error)
+            *out_error = "invalid MORK bridge expression packet arguments";
+        return false;
+    }
+
+    size_t offset = 0u;
+    BridgePacketVarMap vars = {0};
+    Atom *atom = bridge_packet_decode_atom_rec(
+        a, packet, packet_len, &offset, &vars, out_error);
+    if (!atom)
+        return false;
+    if (offset != packet_len) {
+        if (out_error)
+            *out_error = "trailing bytes in MORK bridge expression packet";
+        return false;
+    }
+    *out_atom = atom;
+    return true;
+}
+
+Atom *cetta_mm2_alpha_canonicalize_atom(Arena *a, Atom *atom,
+                                        const char **out_error) {
+    uint8_t *packet = NULL;
+    size_t packet_len = 0u;
+    Atom *canonical = NULL;
+    if (out_error)
+        *out_error = NULL;
+    if (!cetta_mm2_atom_to_bridge_expr_packet(
+            a, atom, &packet, &packet_len, out_error)) {
+        return NULL;
+    }
+    bool ok = cetta_mm2_bridge_expr_packet_to_atom(
+        a, packet, packet_len, &canonical, out_error);
+    free(packet);
+    return ok ? canonical : NULL;
+}
+
+Atom *cetta_mm2_canonical_surface_atom(Arena *a, Atom *atom,
+                                       const char **out_error) {
+    Atom *canonical = cetta_mm2_alpha_canonicalize_atom(
+        a, atom, out_error);
+    return canonical
+        ? mm2_surface_float_tokens(a, canonical, out_error)
+        : NULL;
 }

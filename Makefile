@@ -407,7 +407,7 @@ PETTA_TYPECHECK_V2_SRC =
 ifeq ($(ENABLE_PETTA_TYPECHECK_V2),1)
 PETTA_TYPECHECK_V2_SRC = src/petta_typecheck.c
 endif
-SRC = src/symbol.c src/atom.c src/name_key.c src/atom_blob.c src/abt.c src/parser.c $(COMPILED_READER_RUNTIME_SRC) src/mm2_lower.c src/subst_tree.c src/space.c src/registry_resolver.c src/space_match_backend.c src/match.c src/match_decision.c src/term_canon.c src/variant_shape.c src/variant_instance.c src/answer_bank.c src/table_store.c src/search_machine.c src/petta_program.c src/petta_search_machine.c $(PETTA_TYPECHECK_V2_SRC) src/petta_specializer.c src/rule_machine.c $(LIB_PROLOG_SRC) src/term_universe.c src/stats.c src/parallel_executor.c src/prime_need.c src/petta_semantics.c src/prepared_pure_machine.c src/eval.c src/grounded.c src/he_typing.c src/prime_semantics.c src/text_source.c src/native_handle.c src/native_sha256.c src/mork_space_bridge_runtime.c src/library.c src/langdef_pack.c src/gslt_horn_runtime.c src/gslt_compiled_runtime.c src/gslt_language_runtime.c src/generated/subzero_language_v1.generated.c src/generated/zero_language_v1.generated.c src/generated/zero_exp_language_v1.generated.c src/he_small_step_pack.c src/lib_parse_native_grammar.c src/lib_parse_inference_native.c experiments/gslt2parse_foundation/native/finite_horn_gslt_v1.c experiments/gslt2parse_foundation/native/finite_horn_ground_term_v1.c experiments/gslt2parse_foundation/native/parser_term_projection_v1.c experiments/gslt2parse_foundation/native/parser_pack_abi_v1.c experiments/gslt2parse_foundation/native/parser_action_bytecode_v1.c experiments/gslt2parse_foundation/native/parser_pack_native_v1.c experiments/gslt2parse_foundation/native/parser_pack_lexical_v1.c experiments/gslt2parse_foundation/native/parser_pack_gll_v1.c experiments/gslt2parse_foundation/native/parser_pack_glr_v1.c experiments/gslt2parse_foundation/native/regular_span_dfa_v1.c experiments/gslt2parse_foundation/native/regular_span_nfa_v1.c $(PYTHON_SRC) src/session.c src/lang.c src/rhocalc_core.c src/rhocalc_syntax.c src/compile.c src/runtime.c src/cetta_stdlib.c native/native_modules.c src/main.c
+SRC = src/symbol.c src/atom.c src/name_key.c src/atom_blob.c src/abt.c src/parser.c $(COMPILED_READER_RUNTIME_SRC) src/mm2_lower.c src/subst_tree.c src/space.c src/registry_resolver.c src/space_match_backend.c src/match.c src/match_decision.c src/term_canon.c src/variant_shape.c src/variant_instance.c src/answer_bank.c src/table_store.c src/search_machine.c src/petta_program.c src/petta_search_machine.c $(PETTA_TYPECHECK_V2_SRC) src/petta_specializer.c src/rule_machine.c $(LIB_PROLOG_SRC) src/term_universe.c src/stats.c src/parallel_executor.c src/prime_need.c src/petta_semantics.c src/prepared_pure_machine.c src/eval.c src/grounded.c src/he_typing.c src/prime_semantics.c src/text_source.c src/native_handle.c src/native_sha256.c src/mork_space_bridge_runtime.c src/library.c src/langdef_pack.c src/gslt_provider_runtime.c src/gslt_space_fact_provider_v1.c src/gslt_revisioned_space_provider_v1.c src/gslt_abt_provider_v1.c src/gslt_horn_runtime.c src/gslt_compiled_runtime.c src/gslt_language_runtime.c src/gslt_pure_provider_v1.c src/gslt_support_transform_runtime.c src/generated/gslt_il_language_v1.generated.c src/generated/metta_interact_language_v1.generated.c src/generated/mm2_gslt_profile_v1.generated.c src/generated/subzero_language_v1.generated.c src/generated/zero_language_v1.generated.c src/generated/zero_exp_language_v1.generated.c src/generated/zero_emit_language_v1.generated.c src/generated/zero_interact_language_v1.generated.c src/generated/zero_interact_provider_catalog_v1.generated.c src/generated/zerouv_language_v1.generated.c src/he_small_step_pack.c src/lib_parse_native_grammar.c src/lib_parse_inference_native.c experiments/gslt2parse_foundation/native/finite_horn_gslt_v1.c experiments/gslt2parse_foundation/native/finite_horn_ground_term_v1.c experiments/gslt2parse_foundation/native/parser_term_projection_v1.c experiments/gslt2parse_foundation/native/parser_pack_abi_v1.c experiments/gslt2parse_foundation/native/parser_action_bytecode_v1.c experiments/gslt2parse_foundation/native/parser_pack_native_v1.c experiments/gslt2parse_foundation/native/parser_pack_lexical_v1.c experiments/gslt2parse_foundation/native/parser_pack_gll_v1.c experiments/gslt2parse_foundation/native/parser_pack_glr_v1.c experiments/gslt2parse_foundation/native/regular_span_dfa_v1.c experiments/gslt2parse_foundation/native/regular_span_nfa_v1.c $(PYTHON_SRC) src/session.c src/lang.c src/rhocalc_core.c src/rhocalc_syntax.c src/compile.c src/runtime.c src/cetta_stdlib.c native/native_modules.c src/main.c
 ifeq ($(ENABLE_RUNTIME_STATS),1)
 OBJ = $(SRC:.c=.$(BUILD_OBJ_TAG).runtime-stats.o)
 ifeq ($(CETTA_TEST_ISOLATED),1)
@@ -715,7 +715,7 @@ REGISTRY_LOOKUP_BENCH_SRC = benchmarks/prime/bench_registry_lookup.c
 REGISTRY_LOOKUP_BENCH_OBJ = runtime/bootstrap/bench_registry_lookup.$(BUILD_OBJ_TAG).o
 REGISTRY_LOOKUP_BENCH_BIN = runtime/bench_registry_lookup-$(BUILD_OBJ_TAG)
 REGISTRY_LOOKUP_BENCH_LINK_OBJ = $(FALLBACK_EVAL_TEST_LINK_OBJ)
-ABT_MUTATION_IDS = 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23
+ABT_MUTATION_IDS = 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24
 ABT_MUTATION_TEST_BINS = $(foreach id,$(ABT_MUTATION_IDS),runtime/test_abt_mutation-$(BUILD_OBJ_TAG)-$(id))
 GROUNDED_STANDALONE_SRC = src/grounded.c src/petta_semantics.c src/abt.c src/atom_blob.c
 GROUNDED_STANDALONE_DEPS = $(GROUNDED_STANDALONE_SRC) $(ABT_DEFAULT_SIGNATURES_BLOB)
@@ -746,9 +746,40 @@ GSLT2PARSE_CHART_V1_NATIVE_BIN = runtime/finite_horn_chart_v1-$(BUILD_OBJ_TAG)
 GSLT_HORN_RUNTIME_TEST_BIN = runtime/test_gslt_horn_runtime-$(BUILD_OBJ_TAG)
 GSLT_HORN_RUNTIME_CANARY_V1 = tests/fixtures/gslt_horn_runtime_canary_v1.metta
 GSLT_LANGUAGE_RUNTIME_TEST_BIN = runtime/test_gslt_language_runtime-$(BUILD_OBJ_TAG)
+GSLT_PROVIDER_RUNTIME_TEST_BIN = runtime/test_gslt_provider_runtime-$(BUILD_OBJ_TAG)
+GSLT_ABT_PROVIDER_V1_TEST_BIN = runtime/test_gslt_abt_provider_v1-$(BUILD_OBJ_TAG)
+ZERO_INTERACT_SPACE_PROVIDER_TEST_BIN = runtime/test_zero_interact_space_provider_v1-$(BUILD_OBJ_TAG)
+GSLT_SUPPORT_TRANSFORM_RUNTIME_TEST_BIN = runtime/test_gslt_support_transform_runtime-$(BUILD_OBJ_TAG)
 METTAZERO_COMPILATION_CERTIFICATE_CHECKER_V1_BIN = runtime/check_mettazero_compilation_certificate_v1-$(BUILD_OBJ_TAG)
 SUBZERO_LANGDEF_V1 = langdef/subzero/langdef.metta
 GSLT_LANGUAGE_GENERATOR_V1 = tools/generate_gslt_language_v1.py
+GSLT_IL_LANGDEF_V1 = langdef/gslt-il/langdef.metta
+GSLT_IL_FINITE_COMMAND_V1 = langdef/gslt-il/semantics/finite_indexed_command_v1.metta
+GSLT_IL_GENERATED_LANGUAGE_V1_H = src/generated/gslt_il_language_v1.generated.h
+GSLT_IL_GENERATED_LANGUAGE_V1_C = src/generated/gslt_il_language_v1.generated.c
+GSLT_IL_SEMANTICS_TEST_V1 = tools/test_gslt_il_semantics_v1.py
+GSLT_IL_RULE_MUTATIONS_TEST_V1 = tools/test_gslt_il_rule_mutations_v1.py
+GSLT_IL_CLI_TEST_V1 = tools/test_gslt_il_cli_v1.py
+ZEROUV_LANGDEF_V1 = langdef/zerouv/langdef.metta
+ZEROUV_CONTROL_V1 = langdef/zerouv/semantics/control_v1.metta
+ZEROUV_GENERATED_LANGUAGE_V1_H = src/generated/zerouv_language_v1.generated.h
+ZEROUV_GENERATED_LANGUAGE_V1_C = src/generated/zerouv_language_v1.generated.c
+ZEROUV_SEMANTICS_TEST_V1 = tools/test_zerouv_semantics_v1.py
+ZEROUV_RULE_MUTATIONS_TEST_V1 = tools/test_zerouv_rule_mutations_v1.py
+ZEROUV_CLI_TEST_V1 = tools/test_zerouv_cli_v1.py
+METTA_INTERACT_LANGDEF_V1 = langdef/metta-interact/langdef.metta
+METTA_INTERACT_CORE_V1 = langdef/metta-interact/semantics/interaction_core_v1.metta
+METTA_INTERACT_SEQUENCE_V1 = langdef/metta-interact/semantics/sequence_handler_v1.metta
+METTA_INTERACT_GENERATED_LANGUAGE_V1_H = src/generated/metta_interact_language_v1.generated.h
+METTA_INTERACT_GENERATED_LANGUAGE_V1_C = src/generated/metta_interact_language_v1.generated.c
+METTA_INTERACT_CLI_TEST_V1 = tools/test_metta_interact_cli_v1.py
+METTA_INTERACT_SEMANTICS_TEST_V1 = tools/test_metta_interact_semantics_v1.py
+METTA_INTERACT_RULE_MUTATIONS_TEST_V1 = tools/test_metta_interact_rule_mutations_v1.py
+GSLT_SUPPORT_TRANSFORM_GENERATOR_V1 = tools/generate_gslt_support_transform_v1.py
+GSLT_SUPPORT_TRANSFORM_GENERATION_TEST_V1 = tools/test_gslt_support_transform_generation_v1.py
+MM2_GSLT_PROFILE_V1 = langdef/mm2/gslt_profile_v1.metta
+MM2_GSLT_PROFILE_GENERATED_H = src/generated/mm2_gslt_profile_v1.generated.h
+MM2_GSLT_PROFILE_GENERATED_C = src/generated/mm2_gslt_profile_v1.generated.c
 GSLT_COMPILATION_CERTIFICATE_GENERATOR_V1 = tools/generate_gslt_compilation_certificate_v1.py
 GSLT_COMPILATION_CERTIFICATE_TEST_V1 = tools/test_gslt_compilation_certificate_v1.py
 SUBZERO_GENERATED_LANGUAGE_V1_H = src/generated/subzero_language_v1.generated.h
@@ -764,6 +795,24 @@ METTAZERO_SEMANTIC_RUNNER_V1 = langdef/zero/semantics/semantic_runner_v1.metta
 METTAZERO_EXP_GENERATED_LANGUAGE_V1_H = src/generated/zero_exp_language_v1.generated.h
 METTAZERO_EXP_GENERATED_LANGUAGE_V1_C = src/generated/zero_exp_language_v1.generated.c
 METTAZERO_EXP_COMPILATION_CERTIFICATE_V1 = src/generated/zero_exp_language_v1.compilation-certificate.metta
+METTAZERO_REVISIONED_EMIT_V1 = langdef/zero/semantics/revisioned_emit_v1.metta
+METTAZERO_EMIT_GENERATED_LANGUAGE_V1_H = src/generated/zero_emit_language_v1.generated.h
+METTAZERO_EMIT_GENERATED_LANGUAGE_V1_C = src/generated/zero_emit_language_v1.generated.c
+METTAZERO_EMIT_COMPILATION_CERTIFICATE_V1 = src/generated/zero_emit_language_v1.compilation-certificate.metta
+METTAZERO_EMIT_SEMANTICS_TEST_V1 = tools/test_mettazero_emit_semantics_v1.py
+METTAZERO_EMIT_RULE_MUTATIONS_TEST_V1 = tools/test_mettazero_emit_rule_mutations_v1.py
+METTAZERO_OPEN_SUBSTITUTION_V1 = langdef/zero/semantics/open_substitution_v1.metta
+METTAZERO_SUPPORT_INDEXED_ABT_MATCH_V1 = langdef/zero/semantics/support_indexed_abt_match_v1.metta
+METTAZERO_REVISIONED_INTERACT_V1 = langdef/zero/semantics/revisioned_interact_v1.metta
+METTAZERO_INTERACT_PROVIDER_CATALOG_V1 = langdef/zero/interact_provider_catalog_v1.metta
+METTAZERO_INTERACT_GENERATED_LANGUAGE_V1_H = src/generated/zero_interact_language_v1.generated.h
+METTAZERO_INTERACT_GENERATED_LANGUAGE_V1_C = src/generated/zero_interact_language_v1.generated.c
+METTAZERO_INTERACT_COMPILATION_CERTIFICATE_V1 = src/generated/zero_interact_language_v1.compilation-certificate.metta
+METTAZERO_INTERACT_PROVIDER_CATALOG_GENERATED_H = src/generated/zero_interact_provider_catalog_v1.generated.h
+METTAZERO_INTERACT_PROVIDER_CATALOG_GENERATED_C = src/generated/zero_interact_provider_catalog_v1.generated.c
+METTAZERO_INTERACT_PROVIDER_REFERENCE_V1 = tests/fixtures/metta_zero_interact_provider_reference_v1.metta
+METTAZERO_INTERACT_SEMANTICS_TEST_V1 = tools/test_mettazero_interact_semantics_v1.py
+METTAZERO_INTERACT_RULE_MUTATIONS_TEST_V1 = tools/test_mettazero_interact_rule_mutations_v1.py
 METTAZERO_GROUND_LIBRARY_CANARY_V1_MANIFEST = tests/fixtures/metta_zero_ground_library_v1/langdef.metta
 METTAZERO_GROUND_LIBRARY_CANARY_V1_SOURCE = tests/fixtures/metta_zero_ground_capability_v1.metta
 METTAZERO_GROUND_LIBRARY_CANARY_V1_GENERATED_H = tests/generated/metta_zero_ground_library_v1.generated.h
@@ -776,6 +825,15 @@ GSLT_PIPELINE_CANARY_V1_MANIFEST = tests/fixtures/gslt_pipeline_canary_v1/langde
 GSLT_PIPELINE_CANARY_V1_SOURCE = tests/fixtures/gslt_pipeline_canary_v1/semantics/renamed_pipeline_v1.metta
 GSLT_PIPELINE_CANARY_V1_GENERATED_H = tests/generated/gslt_pipeline_canary_v1.generated.h
 GSLT_PIPELINE_CANARY_V1_GENERATED_C = tests/generated/gslt_pipeline_canary_v1.generated.c
+GSLT_PROVIDER_CANARY_V1_MANIFEST = tests/fixtures/gslt_provider_canary_v1/langdef.metta
+GSLT_PROVIDER_CANARY_V1_SOURCE = tests/fixtures/gslt_provider_canary_v1/semantics/provider_call_v1.metta
+GSLT_PROVIDER_CANARY_V1_GENERATED_H = tests/generated/gslt_provider_canary_v1.generated.h
+GSLT_PROVIDER_CANARY_V1_GENERATED_C = tests/generated/gslt_provider_canary_v1.generated.c
+GSLT_PROVIDER_CATALOG_GENERATOR_V1 = tools/generate_gslt_provider_catalog_v1.py
+GSLT_PROVIDER_CATALOG_GENERATION_TEST_V1 = tools/test_gslt_provider_catalog_generation_v1.py
+GSLT_PROVIDER_CANARY_CATALOG_V1 = tests/fixtures/gslt_provider_canary_v1/provider_catalog_v1.metta
+GSLT_PROVIDER_CANARY_CATALOG_GENERATED_H = tests/generated/gslt_provider_canary_catalog_v1.generated.h
+GSLT_PROVIDER_CANARY_CATALOG_GENERATED_C = tests/generated/gslt_provider_canary_catalog_v1.generated.c
 RULE_MACHINE_CORE_GSLT_V1 = experiments/gslt2parse_foundation/presentations/core/rule_machine_core_v1.metta
 RULE_MACHINE_PROGRAM_GSLT_V1 = experiments/gslt2parse_foundation/presentations/specializations/rule_machine_hilbert_bfc_program_v1.metta
 RULE_MACHINE_PROGRAM_GENERATOR_V1 = tools/generate_rule_machine_program_v1.py
@@ -1706,6 +1764,17 @@ test-prime-contexts: $(BIN) $(PRIME_CONTEXT_MUTATION_TEST_BIN)
 			exit 1; \
 		fi; \
 	done; \
+	for source in \
+		tests/support/mork_mm2/test_count_simple.mm2 \
+		tests/support/mork_mm2/test_head_limit.mm2; do \
+		inert=$$($(CETTA_BIN_INVOKE) --lang mm2 --profile gslt \
+			"$$source" 2>&1); \
+		if ! printf '%s\n' "$$inert" | grep -Fq '(exec '; then \
+			echo "FAIL: unsupported MM2 factory directive was consumed: $$source"; \
+			printf '%s\n' "$$inert"; \
+			exit 1; \
+		fi; \
+	done; \
 	mutant_output=$$(./$(PRIME_CONTEXT_MUTATION_TEST_BIN) 2>&1 || true); \
 	if ! printf '%s\n' "$$mutant_output" | \
 		grep -Fq 'FAIL: newest context binding shadows without mutating its parent'; then \
@@ -2336,7 +2405,7 @@ test-abt-scope-construction-candidates: $(BIN)
 test-abt: $(ABT_TEST_BIN) test-abt-mm2-boundary test-rhocalc-abt-substitution test-abt-mutations test-abt-default-signatures test-abt-differential test-lib-parse-abt-bridge test-abt-integration-ledger
 	@result=$$(./$(ABT_TEST_BIN) 2>&1); \
 	printf '%s\n' "$$result"; \
-	if [ "$$(printf '%s\n' "$$result" | grep -Fxc '(ABTCoreSummary 110 110 0)')" -ne 1 ] || \
+	if [ "$$(printf '%s\n' "$$result" | grep -Fxc '(ABTCoreSummary 114 114 0)')" -ne 1 ] || \
 	   [ "$$(printf '%s\n' "$$result" | grep -Fxc 'PASS: iterative capture-avoiding ABT core')" -ne 1 ]; then \
 		echo "FAIL: ABT core exact summary absent or duplicated"; \
 		exit 1; \
@@ -3605,7 +3674,7 @@ test-list-lanes: $(BIN)
 bench-list: $(BIN) test-list-lanes
 	@./scripts/bench_list_lanes.py --cetta ./$(BIN)
 
-test: $(BIN) test-manifest-strict test-git-module test-symbolid-guard test-variant-shape-roundtrip test-bindings-lookup-index test-atom-deep-copy-iterative test-abt test-rhometta-payload-map-capacity-c test-space-term-universe-membership test-help-flags test-rhocalc test-he-contract-suite test-he-return-contract-correlation test-closed-stream-fastpath test-parse-depth-guard test-stdlib-growth-memory-regression test-rhometta-macro-audit test-eval-gc-adversarial test-list-lanes test-syn-lanes test-ground-call test-lib-prolog test-petta-libpl test-petta-process-text test-match-decision test-petta-search-machine test-petta-semantics test-petta-corpus-manifest-unit test-petta-chainer-manifest-unit test-subzero test-mettazero
+test: $(BIN) test-manifest-strict test-git-module test-symbolid-guard test-variant-shape-roundtrip test-bindings-lookup-index test-atom-deep-copy-iterative test-abt test-rhometta-payload-map-capacity-c test-space-term-universe-membership test-help-flags test-rhocalc test-he-contract-suite test-he-return-contract-correlation test-closed-stream-fastpath test-parse-depth-guard test-stdlib-growth-memory-regression test-rhometta-macro-audit test-eval-gc-adversarial test-list-lanes test-syn-lanes test-ground-call test-lib-prolog test-petta-libpl test-petta-process-text test-match-decision test-petta-search-machine test-petta-semantics test-petta-corpus-manifest-unit test-petta-chainer-manifest-unit test-gslt-provider-generation-v1 test-gslt-provider-runtime test-subzero test-mettazero test-gslt-il test-zerouv test-metta-interact test-mm2-gslt-profile-v1
 	@pass=0; fail=0; skip=0; no_exp=0; \
 	cache_dir="$(GIT_TEST_CACHE_DIR)"; mkdir -p "$$cache_dir"; export CETTA_GIT_MODULE_CACHE_DIR="$$cache_dir"; \
 	for f in tests/test_*.metta tests/spec_*.metta tests/he_*.metta; do \
@@ -6138,15 +6207,16 @@ test-profiles: $(BIN) test-manifest test-forbidden-availability-errors test-git-
 		fail=$$((fail + 1)); \
 	fi; \
 	mm2_profiles=$$($(CETTA_BIN_INVOKE) --lang mm2 --list-profiles 2>&1); \
-	if printf '%s\n' "$$mm2_profiles" | grep -Fq "language 'mm2' has no named profiles"; then \
-		echo "PASS: mm2 has no named profiles"; pass=$$((pass + 1)); \
+	if [ "$$(printf '%s\n' "$$mm2_profiles" | wc -l)" -eq 1 ] && \
+	   printf '%s\n' "$$mm2_profiles" | grep -Eq '^gslt[[:space:]]'; then \
+		echo "PASS: mm2 GSLT profile inventory"; pass=$$((pass + 1)); \
 	else \
-		echo "FAIL: mm2 has no named profiles"; \
+		echo "FAIL: mm2 GSLT profile inventory"; \
 		printf '%s\n' "$$mm2_profiles"; \
 		fail=$$((fail + 1)); \
 	fi; \
 	mm2_profile_err=$$($(CETTA_BIN_INVOKE) --lang mm2 --profile he-compat -e '()' 2>&1 || true); \
-	if printf '%s\n' "$$mm2_profile_err" | grep -Fq "error: source language 'mm2' has no named profiles"; then \
+	if printf '%s\n' "$$mm2_profile_err" | grep -Fq "error: unknown source profile 'he-compat' for language 'mm2'"; then \
 		echo "PASS: mm2 rejects foreign profiles"; pass=$$((pass + 1)); \
 	else \
 		echo "FAIL: mm2 rejects foreign profiles"; \
@@ -9525,6 +9595,145 @@ else
 	$(call reexec_mork_bridge_or_skip,mm2 direct execution seam,$@)
 endif
 
+.PHONY: test-mm2-gslt-cli-v1 test-mm2-gslt-abi-differential-v1 \
+	test-mm2-gslt-profile-v1
+
+test-mm2-gslt-cli-v1: $(BIN)
+	@set -e; \
+	profiles=$$($(CETTA_BIN_INVOKE) --lang mm2 --list-profiles 2>&1); \
+	if [ "$$(printf '%s\n' "$$profiles" | wc -l)" -ne 1 ] || \
+	   ! printf '%s\n' "$$profiles" | grep -Eq '^gslt[[:space:]]'; then \
+		echo 'FAIL: MM2 GSLT profile inventory'; \
+		printf '%s\n' "$$profiles"; \
+		exit 1; \
+	fi; \
+	for stem in \
+		mm2_exec_basic \
+		mm2_gslt_generated_exec \
+		mm2_gslt_explicit_sources \
+		mm2_kiss_count_groupby \
+		mm2_gslt_scheduler_tie \
+		mm2_gslt_unsupported_inert; do \
+		actual=$$($(CETTA_BIN_INVOKE) --lang mm2 --profile gslt \
+			"tests/$$stem.mm2" 2>&1); \
+		expected=$$(cat "tests/$$stem.expected"); \
+		if [ "$$actual" != "$$expected" ]; then \
+			echo "FAIL: MM2 GSLT $$stem"; \
+			diff <(printf '%s\n' "$$expected") \
+				<(printf '%s\n' "$$actual") | head -20; \
+			exit 1; \
+		fi; \
+	done; \
+	native=$$($(CETTA_BIN_INVOKE) --lang mm2 --profile gslt \
+		--space-engine native tests/mm2_gslt_generated_exec.mm2 2>&1); \
+	automatic=$$($(CETTA_BIN_INVOKE) --lang mm2 --profile gslt \
+		tests/mm2_gslt_generated_exec.mm2 2>&1); \
+	if [ "$$native" != "$$automatic" ]; then \
+		echo 'FAIL: explicit native-C MM2 GSLT realization'; \
+		diff <(printf '%s\n' "$$automatic") \
+			<(printf '%s\n' "$$native") | head -20; \
+		exit 1; \
+	fi; \
+	if [ "$(MORK_BRIDGE_ACTIVE)" = 1 ]; then \
+		pathmap=$$($(CETTA_BIN_INVOKE) --lang mm2 --profile gslt \
+			--space-engine pathmap tests/mm2_gslt_generated_exec.mm2 2>&1); \
+		if [ "$$pathmap" != "$$native" ]; then \
+			echo 'FAIL: explicit Rust/PathMap via C ABI MM2 GSLT realization'; \
+			diff <(printf '%s\n' "$$native") \
+				<(printf '%s\n' "$$pathmap") | head -20; \
+			exit 1; \
+		fi; \
+	fi; \
+	step0_rc=0; \
+	step0=$$($(CETTA_BIN_INVOKE) --lang mm2 --profile gslt --steps 0 \
+		tests/mm2_gslt_generated_exec.mm2 2>&1) || step0_rc=$$?; \
+	step0_expected=$$(printf '%s\n%s' \
+		'(Mm2GsltStatus expired steps=0 residual-atoms=2)' \
+		"$$(cat tests/mm2_gslt_generated_exec.step0.expected)"); \
+	if [ "$$step0_rc" -ne 3 ] || [ "$$step0" != "$$step0_expected" ]; then \
+		echo 'FAIL: MM2 GSLT exact zero-fuel expiration'; \
+		printf '%s\n' "rc=$$step0_rc" "$$step0"; \
+		exit 1; \
+	fi; \
+	step1_rc=0; \
+	step1=$$($(CETTA_BIN_INVOKE) --lang mm2 --profile gslt --steps 1 \
+		tests/mm2_gslt_generated_exec.mm2 2>&1) || step1_rc=$$?; \
+	step1_expected=$$(printf '%s\n%s' \
+		'(Mm2GsltStatus expired steps=1 residual-atoms=3)' \
+		"$$(cat tests/mm2_gslt_generated_exec.step1.expected)"); \
+	if [ "$$step1_rc" -ne 3 ] || [ "$$step1" != "$$step1_expected" ]; then \
+		echo 'FAIL: MM2 GSLT exact one-step expiration'; \
+		printf '%s\n' "rc=$$step1_rc" "$$step1"; \
+		exit 1; \
+	fi; \
+	count=$$($(CETTA_BIN_INVOKE) --count-only --lang mm2 --profile gslt \
+		tests/mm2_gslt_generated_exec.mm2 2>&1); \
+	if [ "$$count" != 3 ]; then \
+		echo "FAIL: MM2 GSLT support observation count (got $$count)"; \
+		exit 1; \
+	fi; \
+	compile_rc=0; \
+	compile_result=$$($(CETTA_BIN_INVOKE) --compile --lang mm2 \
+		--profile gslt -e '(seed a)' 2>&1) || compile_rc=$$?; \
+	if [ "$$compile_rc" -ne 2 ] || \
+	   ! printf '%s\n' "$$compile_result" | \
+		grep -Fq 'compile modes are not declared observations of --lang mm2 --profile gslt'; then \
+		echo 'FAIL: MM2 GSLT rejects undeclared compile observation'; \
+		printf '%s\n' "rc=$$compile_rc" "$$compile_result"; \
+		exit 1; \
+	fi; \
+	echo 'PASS: MM2 GSLT CLI, internal continuation, inertness, exact fuel, and observation'
+
+test-mm2-gslt-abi-differential-v1: $(BIN)
+ifeq ($(MORK_BRIDGE_ACTIVE),1)
+	@set -e; \
+	for source in \
+		tests/mm2_exec_basic.mm2 \
+		tests/mm2_kiss_add_remove.mm2 \
+		tests/mm2_kiss_priority.mm2 \
+		tests/mm2_kiss_fractal_priority.mm2 \
+		tests/mm2_kiss_count_groupby.mm2 \
+		tests/mm2_gslt_explicit_sources.mm2 \
+		tests/mm2_gslt_scheduler_tie.mm2 \
+		tests/support/mork_mm2/test3_var_binding.mm2 \
+		tests/support/mork_mm2/test4_conjunctive.mm2 \
+		tests/support/mork_mm2/test5_equal_pair.mm2 \
+		tests/support/mork_mm2/test6_no_match.mm2 \
+		tests/support/mork_mm2/test7_nested.mm2 \
+		tests/support/mork_mm2/test8_multi_step.mm2 \
+		tests/support/mork_mm2/test9_priority_ordering.mm2 \
+		tests/support/mork_mm2/test10_conjunctive_wq.mm2 \
+		tests/support/mork_mm2/test_add_constant.mm2 \
+		tests/support/mork_mm2/test_add_simple.mm2 \
+		tests/support/mork_mm2/test_bulk_remove.mm2 \
+		tests/support/mork_mm2/test_remove_simple.mm2 \
+		examples/bc_socrates_pln.mm2 \
+		examples/bc_roman_4node.mm2 \
+		examples/bench_pure_mm2_3hop_scored.mm2; do \
+		abi=$$($(CETTA_BIN_INVOKE) --lang mm2 "$$source" 2>&1); \
+		gslt=$$($(CETTA_BIN_INVOKE) --lang mm2 --profile gslt \
+			"$$source" 2>&1); \
+		if [ "$$abi" != "$$gslt" ]; then \
+			echo "FAIL: upstream MM2 / authored GSLT differential $$source"; \
+			diff <(printf '%s\n' "$$abi") \
+				<(printf '%s\n' "$$gslt") | head -20; \
+			exit 1; \
+		fi; \
+	done; \
+	echo 'PASS: upstream MM2 (Rust/MORK via C ABI) and authored GSLT agree exactly on 22 admitted programs'; \
+	CETTA_BIN=./$(BIN) python3 -m unittest \
+		tests.test_mm2_to_metta.TranslatorGate.test_gslt_support_transform_v1_matches_native_corpus
+else
+	@echo 'SKIP: MM2 ABI/GSLT differential (MORK bridge is not active)'
+endif
+
+test-mm2-gslt-profile-v1: \
+		test-gslt-support-transform-generation-v1 \
+		test-gslt-support-transform-runtime \
+		test-mm2-gslt-cli-v1 \
+		test-mm2-gslt-abi-differential-v1
+	@echo 'PASS: authored MM2 GSLT C profile'
+
 test-import-mm2-mork-session-lowering: $(BIN)
 ifeq ($(MORK_BRIDGE_ACTIVE),1)
 	@ \
@@ -9562,6 +9771,15 @@ ifeq ($(MORK_BRIDGE_ACTIVE),1)
 			fail=$$((fail + 1)); \
 		fi; \
 	done; \
+	step_result=$$($(CETTA_BIN_INVOKE) --lang mm2 --steps 0 tests/mm2_kiss_fractal_priority.mm2 2>&1); \
+	if [ "$$step_result" = "$$(cat tests/mm2_kiss_fractal_priority.step0.expected)" ]; then \
+		echo "PASS: mm2_kiss_fractal_priority --steps 0"; \
+		pass=$$((pass + 1)); \
+	else \
+		echo "FAIL: mm2_kiss_fractal_priority --steps 0"; \
+		diff <(cat tests/mm2_kiss_fractal_priority.step0.expected) <(echo "$$step_result") | head -20; \
+		fail=$$((fail + 1)); \
+	fi; \
 	step_result=$$($(CETTA_BIN_INVOKE) --lang mm2 --steps 1 tests/mm2_kiss_fractal_priority.mm2 2>&1); \
 	if [ "$$step_result" = "$$(cat tests/mm2_kiss_fractal_priority.step1.expected)" ]; then \
 		echo "PASS: mm2_kiss_fractal_priority --steps 1"; \
@@ -10073,7 +10291,21 @@ test-help-flags: $(BIN)
 	   printf '%s\n' "$$help_long" | grep -Fq 'cetta --num-threads <n> <file>' && \
 	   HELP_TEXT="$$help_long" python3 -c "from pathlib import Path; import os, re, sys; text = Path('src/main.c').read_text(); accepted = sorted(set(re.findall(r'strcmp\\(argv\\[i\\],\\s*\\\"(--[^\\\"= ]+)\\\"\\)\\s*==\\s*0', text))); documented = sorted(set(re.findall(r'--[A-Za-z0-9-]+', os.environ['HELP_TEXT']))); sys.exit(0 if accepted == documented else 1)" >/dev/null && \
 	   printf '%s\n' "$$lang_list" | grep -Fq 'Strict-core rho-calculus reducer to quiescence' && \
-	   printf '%s\n' "$$help_long" | grep -Fq 'cetta --lang mm2 --steps <n> <file.mm2>' && \
+	   printf '%s\n' "$$lang_list" | grep -Fq 'Experimental productive and recurrent MeTTa candidate' && \
+	   printf '%s\n' "$$lang_list" | grep -Fq 'Experimental proof-relevant interaction and cost language' && \
+	   printf '%s\n' "$$help_long" | grep -Fq 'cetta --lang zero <file.metta> # direct (eval subject) and (zero-query pattern template) requests; ! is not Zero syntax' && \
+	   printf '%s\n' "$$help_long" | grep -Fq 'cetta --lang zerouv <file.metta> # productive step, finite paths, authored control, and recurrence articles' && \
+	   printf '%s\n' "$$help_long" | grep -Fq 'cetta --lang metta-interact <file.metta> # revisioned events, continuations, and inspectable cost' && \
+	   printf '%s\n' "$$help_long" | grep -Fq 'cetta --lang mm2 [--steps <n>] <file.mm2>' && \
+	   printf '%s\n' "$$help_long" | grep -Fq 'cetta --lang mm2 --profile gslt [--space-engine <native|pathmap>] [--steps <n>] <file.mm2>' && \
+	   printf '%s\n' "$$help_long" | grep -Fq 'upstream support-valued MORK ABI; least serialized exec atom first' && \
+	   printf '%s\n' "$$help_long" | grep -Fq 'native selects native C; pathmap selects Rust/PathMap via the C ABI' && \
+	   printf '%s\n' "$$help_long" | grep -Fq 'plain mm2 retains upstream MORK through its C ABI; gslt selects authored semantics' && \
+	   printf '%s\n' "$$help_long" | grep -Fq 'unsupported exec directives remain inert in the final support' && \
+	   printf '%s\n' "$$help_long" | grep -Fq 'least full directive by MORK compact-expression byte order' && \
+	   printf '%s\n' "$$help_long" | grep -Fq 'cached by alpha-normalized structure' && \
+	   printf '%s\n' "$$help_long" | grep -Fq 'exact external upper bound (default 1000000000000000); zero executes nothing' && \
+	   printf '%s\n' "$$help_long" | grep -Fq 'GSLT expiration is explicit and exits with status 3' && \
 	   printf '%s\n' "$$help_long" | grep -Fq 'cetta --prefer-rationals <file.metta>' && \
 	   [ "$$help_long" = "$$help_short" ]; then \
 		echo "PASS: cli help flags"; \
@@ -10625,12 +10857,101 @@ $(GSLT_LANGUAGE_RUNTIME_TEST_BIN): \
 test-gslt-language-runtime: $(GSLT_LANGUAGE_RUNTIME_TEST_BIN)
 	@$(GSLT_LANGUAGE_RUNTIME_TEST_BIN) $(SUBZERO_LANGDEF_V1)
 
+$(GSLT_PROVIDER_RUNTIME_TEST_BIN): \
+		tests/support/test_gslt_provider_runtime.c \
+		src/gslt_provider_runtime.h \
+		src/gslt_space_fact_provider_v1.h \
+		src/gslt_horn_runtime.h \
+		src/gslt_compiled_runtime.h \
+		$(GSLT_PROVIDER_CANARY_V1_GENERATED_H) \
+		$(GSLT_PROVIDER_CANARY_V1_GENERATED_C) \
+		$(GSLT_PROVIDER_CANARY_CATALOG_GENERATED_H) \
+		$(GSLT_PROVIDER_CANARY_CATALOG_GENERATED_C) \
+		$(FALLBACK_EVAL_TEST_LINK_OBJ) \
+		$(BRIDGE_DEPS)
+	@mkdir -p runtime
+	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ \
+		tests/support/test_gslt_provider_runtime.c \
+		$(GSLT_PROVIDER_CANARY_V1_GENERATED_C) \
+		$(GSLT_PROVIDER_CANARY_CATALOG_GENERATED_C) \
+		$(FALLBACK_EVAL_TEST_LINK_OBJ) $(LDFLAGS)
+
+.PHONY: test-gslt-provider-runtime
+test-gslt-provider-runtime: $(GSLT_PROVIDER_RUNTIME_TEST_BIN)
+	@$(GSLT_PROVIDER_RUNTIME_TEST_BIN)
+
+$(GSLT_ABT_PROVIDER_V1_TEST_BIN): \
+		tests/support/test_gslt_abt_provider_v1.c \
+		src/gslt_abt_provider_v1.h \
+		src/gslt_provider_runtime.h \
+		$(FALLBACK_EVAL_TEST_LINK_OBJ) \
+		$(BRIDGE_DEPS)
+	@mkdir -p runtime
+	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ \
+		tests/support/test_gslt_abt_provider_v1.c \
+		$(FALLBACK_EVAL_TEST_LINK_OBJ) $(LDFLAGS)
+
+.PHONY: test-gslt-abt-provider-v1
+test-gslt-abt-provider-v1: $(GSLT_ABT_PROVIDER_V1_TEST_BIN)
+	@$(GSLT_ABT_PROVIDER_V1_TEST_BIN)
+
+$(ZERO_INTERACT_SPACE_PROVIDER_TEST_BIN): \
+		tests/support/test_zero_interact_space_provider_v1.c \
+		src/gslt_revisioned_space_provider_v1.h \
+		$(METTAZERO_INTERACT_GENERATED_LANGUAGE_V1_H) \
+		$(METTAZERO_INTERACT_GENERATED_LANGUAGE_V1_C) \
+		$(METTAZERO_INTERACT_PROVIDER_CATALOG_GENERATED_H) \
+		$(METTAZERO_INTERACT_PROVIDER_CATALOG_GENERATED_C) \
+		$(FALLBACK_EVAL_TEST_LINK_OBJ) \
+		$(BRIDGE_DEPS)
+	@mkdir -p runtime
+	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ \
+		tests/support/test_zero_interact_space_provider_v1.c \
+		$(FALLBACK_EVAL_TEST_LINK_OBJ) $(LDFLAGS)
+
+.PHONY: test-zero-interact-space-provider-v1
+test-zero-interact-space-provider-v1: $(ZERO_INTERACT_SPACE_PROVIDER_TEST_BIN)
+	@$(ZERO_INTERACT_SPACE_PROVIDER_TEST_BIN)
+
+$(GSLT_SUPPORT_TRANSFORM_RUNTIME_TEST_BIN): \
+		tests/support/test_gslt_support_transform_runtime.c \
+		src/gslt_support_transform_runtime.h \
+		$(MM2_GSLT_PROFILE_GENERATED_H) \
+		$(MM2_GSLT_PROFILE_GENERATED_C) \
+		$(FALLBACK_EVAL_TEST_LINK_OBJ) \
+		$(BRIDGE_DEPS)
+	@mkdir -p runtime
+	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ \
+		tests/support/test_gslt_support_transform_runtime.c \
+		$(FALLBACK_EVAL_TEST_LINK_OBJ) $(LDFLAGS)
+
+.PHONY: test-gslt-support-transform-runtime
+test-gslt-support-transform-runtime: $(GSLT_SUPPORT_TRANSFORM_RUNTIME_TEST_BIN)
+	@$(GSLT_SUPPORT_TRANSFORM_RUNTIME_TEST_BIN)
+
+.PHONY: test-gslt-support-transform-generation-v1
+test-gslt-support-transform-generation-v1: \
+		$(GSLT_SUPPORT_TRANSFORM_GENERATION_TEST_V1) \
+		$(MM2_GSLT_PROFILE_GENERATED_H) \
+		$(MM2_GSLT_PROFILE_GENERATED_C)
+	@python3 $(GSLT_SUPPORT_TRANSFORM_GENERATION_TEST_V1) \
+		--generator $(GSLT_SUPPORT_TRANSFORM_GENERATOR_V1) \
+		--manifest $(MM2_GSLT_PROFILE_V1) \
+		--header $(MM2_GSLT_PROFILE_GENERATED_H) \
+		--source $(MM2_GSLT_PROFILE_GENERATED_C) \
+		--symbol cetta_mm2_gslt_profile_v1 \
+		--header-include generated/mm2_gslt_profile_v1.generated.h
+
 $(METTAZERO_COMPILATION_CERTIFICATE_CHECKER_V1_BIN): \
 		tests/support/check_mettazero_compilation_certificate_v1.c \
 		$(METTAZERO_GENERATED_LANGUAGE_V1_H) \
 		$(METTAZERO_GENERATED_LANGUAGE_V1_C) \
 		$(METTAZERO_EXP_GENERATED_LANGUAGE_V1_H) \
 		$(METTAZERO_EXP_GENERATED_LANGUAGE_V1_C) \
+		$(METTAZERO_EMIT_GENERATED_LANGUAGE_V1_H) \
+		$(METTAZERO_EMIT_GENERATED_LANGUAGE_V1_C) \
+		$(METTAZERO_INTERACT_GENERATED_LANGUAGE_V1_H) \
+		$(METTAZERO_INTERACT_GENERATED_LANGUAGE_V1_C) \
 		$(FALLBACK_EVAL_TEST_LINK_OBJ) \
 		$(BRIDGE_DEPS)
 	@mkdir -p runtime
@@ -10675,7 +10996,113 @@ test-mettazero-cli-v1: $(BIN)
 			trap - EXIT; \
 		done; \
 	done; \
-	echo '(MettaZeroCliV1Summary realizations=2 fixtures=13 query=4 reflection=1 evaluation=1 inert=2 hygiene=1 reify=4)'
+	echo '(MettaZeroCliV1Summary realizations=2 fixtures=14 query=4 reflection=1 evaluation=1 inert=2 hygiene=2 reify=4)'
+
+test-mettazero-emit-cli-v1: $(BIN)
+	@set -e; \
+	for realization in horn-reference compiled-worklist; do \
+		for source in tests/zero_emit/*.metta; do \
+			expected="$${source%.metta}.expected"; \
+			actual=$$(mktemp "$(BOOTSTRAP_TMPDIR)/mettazero-emit-cli.XXXXXX"); \
+			trap 'rm -f "$$actual"' EXIT; \
+			./$(BIN) --lang zero --profile emit \
+				--gslt-realization "$$realization" "$$source" >"$$actual"; \
+			diff -u "$$expected" "$$actual"; \
+			rm -f "$$actual"; \
+			trap - EXIT; \
+		done; \
+	done; \
+	echo '(MettaZeroEmitCliV1Summary realizations=2 fixtures=10 emit=3 add-alias=1 match=5 let=8 eval=1 duplicates=1 branch-local=1 inert=1)'
+
+.PHONY: test-mettazero-interact-cli-v1
+test-mettazero-interact-cli-v1: $(BIN)
+	@set -e; \
+	engines='native'; \
+	engine_count=1; \
+	if test "$(ENABLE_PATHMAP_SPACE)" = 1; then \
+		engines='native pathmap'; \
+		engine_count=2; \
+	fi; \
+	for engine in $$engines; do \
+		for realization in horn-reference compiled-worklist; do \
+			for source in tests/zero_emit/*.metta tests/zero_interact/*.metta; do \
+				expected="$${source%.metta}.expected"; \
+				actual=$$(mktemp "$(BOOTSTRAP_TMPDIR)/mettazero-interact-cli.XXXXXX"); \
+				trap 'rm -f "$$actual"' EXIT; \
+				./$(BIN) --lang zero --profile interact \
+					--space-engine "$$engine" \
+					--gslt-realization "$$realization" \
+					"$$source" >"$$actual"; \
+				diff -u "$$expected" "$$actual"; \
+				rm -f "$$actual"; \
+				trap - EXIT; \
+			done; \
+		done; \
+	done; \
+	echo "(MettaZeroInteractCliV1Summary engines=$$engine_count realizations=2 fixtures=15 occurrence-bag=1 branch-local=1 immutable-worlds=1 indexed-candidate=1 support-indexed-abt=2)"
+
+test-mettazero-emit-semantics-v1: \
+		$(GSLT2PARSE_CHART_V1_NATIVE_BIN) \
+		$(METTAZERO_QUOTE_MATCH_V1) \
+		$(METTAZERO_QUERY_KERNEL_V1) \
+		$(METTAZERO_CLOSED_BAG_OBSERVATION_V1) \
+		$(METTAZERO_REVISIONED_EMIT_V1) \
+		$(METTAZERO_EMIT_SEMANTICS_TEST_V1)
+	@python3 $(METTAZERO_EMIT_SEMANTICS_TEST_V1) \
+		--chart $(GSLT2PARSE_CHART_V1_NATIVE_BIN) \
+		--quote-match $(METTAZERO_QUOTE_MATCH_V1) \
+		--query-kernel $(METTAZERO_QUERY_KERNEL_V1) \
+		--observation $(METTAZERO_CLOSED_BAG_OBSERVATION_V1) \
+		--emit $(METTAZERO_REVISIONED_EMIT_V1)
+
+test-mettazero-emit-rule-mutations-v1: \
+		test-mettazero-emit-semantics-v1 \
+		$(METTAZERO_EMIT_RULE_MUTATIONS_TEST_V1) \
+		tools/test_gslt_language_rule_mutations_v1.py
+	@python3 $(METTAZERO_EMIT_RULE_MUTATIONS_TEST_V1) \
+		--harness $(METTAZERO_EMIT_SEMANTICS_TEST_V1) \
+		--chart $(GSLT2PARSE_CHART_V1_NATIVE_BIN) \
+		--quote-match $(METTAZERO_QUOTE_MATCH_V1) \
+		--query-kernel $(METTAZERO_QUERY_KERNEL_V1) \
+		--observation $(METTAZERO_CLOSED_BAG_OBSERVATION_V1) \
+		--emit $(METTAZERO_REVISIONED_EMIT_V1)
+
+.PHONY: test-mettazero-interact-semantics-v1
+test-mettazero-interact-semantics-v1: \
+		$(GSLT2PARSE_CHART_V1_NATIVE_BIN) \
+		$(METTAZERO_QUOTE_MATCH_V1) \
+		$(METTAZERO_QUERY_KERNEL_V1) \
+		$(METTAZERO_CLOSED_BAG_OBSERVATION_V1) \
+		$(METTAZERO_OPEN_SUBSTITUTION_V1) \
+		$(METTAZERO_SUPPORT_INDEXED_ABT_MATCH_V1) \
+		$(METTAZERO_REVISIONED_INTERACT_V1) \
+		$(METTAZERO_INTERACT_PROVIDER_REFERENCE_V1) \
+		$(METTAZERO_INTERACT_SEMANTICS_TEST_V1)
+	@python3 $(METTAZERO_INTERACT_SEMANTICS_TEST_V1) \
+		--chart $(GSLT2PARSE_CHART_V1_NATIVE_BIN) \
+		--quote-match $(METTAZERO_QUOTE_MATCH_V1) \
+		--query-kernel $(METTAZERO_QUERY_KERNEL_V1) \
+		--observation $(METTAZERO_CLOSED_BAG_OBSERVATION_V1) \
+		--open-substitution $(METTAZERO_OPEN_SUBSTITUTION_V1) \
+		--support-indexed-abt $(METTAZERO_SUPPORT_INDEXED_ABT_MATCH_V1) \
+		--interact $(METTAZERO_REVISIONED_INTERACT_V1) \
+		--provider $(METTAZERO_INTERACT_PROVIDER_REFERENCE_V1)
+
+.PHONY: test-mettazero-interact-rule-mutations-v1
+test-mettazero-interact-rule-mutations-v1: \
+		test-mettazero-interact-semantics-v1 \
+		$(METTAZERO_INTERACT_RULE_MUTATIONS_TEST_V1) \
+		tools/test_gslt_language_rule_mutations_v1.py
+	@python3 $(METTAZERO_INTERACT_RULE_MUTATIONS_TEST_V1) \
+		--harness $(METTAZERO_INTERACT_SEMANTICS_TEST_V1) \
+		--chart $(GSLT2PARSE_CHART_V1_NATIVE_BIN) \
+		--quote-match $(METTAZERO_QUOTE_MATCH_V1) \
+		--query-kernel $(METTAZERO_QUERY_KERNEL_V1) \
+		--observation $(METTAZERO_CLOSED_BAG_OBSERVATION_V1) \
+		--open-substitution $(METTAZERO_OPEN_SUBSTITUTION_V1) \
+		--support-indexed-abt $(METTAZERO_SUPPORT_INDEXED_ABT_MATCH_V1) \
+		--interact $(METTAZERO_REVISIONED_INTERACT_V1) \
+		--provider $(METTAZERO_INTERACT_PROVIDER_REFERENCE_V1)
 
 test-mettazero-generation-v1: \
 		$(GSLT_LANGUAGE_GENERATOR_V1) \
@@ -10683,6 +11110,8 @@ test-mettazero-generation-v1: \
 		$(METTAZERO_GENERATED_LANGUAGE_V1_C) \
 		$(METTAZERO_EXP_GENERATED_LANGUAGE_V1_H) \
 		$(METTAZERO_EXP_GENERATED_LANGUAGE_V1_C) \
+		$(METTAZERO_EMIT_GENERATED_LANGUAGE_V1_H) \
+		$(METTAZERO_EMIT_GENERATED_LANGUAGE_V1_C) \
 		$(METTAZERO_GROUND_LIBRARY_CANARY_V1_GENERATED_H) \
 		$(METTAZERO_GROUND_LIBRARY_CANARY_V1_GENERATED_C)
 	@python3 tools/test_gslt_language_generation_v1.py \
@@ -10704,6 +11133,15 @@ test-mettazero-generation-v1: \
 		--header-include generated/zero_exp_language_v1.generated.h
 	@python3 tools/test_gslt_language_generation_v1.py \
 		--generator $(GSLT_LANGUAGE_GENERATOR_V1) \
+		--manifest $(METTAZERO_LANGDEF_V1) \
+		--source-root langdef \
+		--profile emit \
+		--header $(METTAZERO_EMIT_GENERATED_LANGUAGE_V1_H) \
+		--source $(METTAZERO_EMIT_GENERATED_LANGUAGE_V1_C) \
+		--symbol cetta_zero_emit_language_v1 \
+		--header-include generated/zero_emit_language_v1.generated.h
+	@python3 tools/test_gslt_language_generation_v1.py \
+		--generator $(GSLT_LANGUAGE_GENERATOR_V1) \
 		--manifest $(METTAZERO_GROUND_LIBRARY_CANARY_V1_MANIFEST) \
 		--source-root . \
 		--header $(METTAZERO_GROUND_LIBRARY_CANARY_V1_GENERATED_H) \
@@ -10711,11 +11149,38 @@ test-mettazero-generation-v1: \
 		--symbol cetta_zero_ground_library_v1 \
 		--header-include tests/generated/metta_zero_ground_library_v1.generated.h
 
+.PHONY: test-mettazero-interact-generation-v1
+test-mettazero-interact-generation-v1: \
+		$(METTAZERO_INTERACT_GENERATED_LANGUAGE_V1_H) \
+		$(METTAZERO_INTERACT_GENERATED_LANGUAGE_V1_C) \
+		$(METTAZERO_INTERACT_PROVIDER_CATALOG_GENERATED_H) \
+		$(METTAZERO_INTERACT_PROVIDER_CATALOG_GENERATED_C)
+	@python3 tools/test_gslt_language_generation_v1.py \
+		--generator $(GSLT_LANGUAGE_GENERATOR_V1) \
+		--manifest $(METTAZERO_LANGDEF_V1) \
+		--source-root langdef \
+		--profile interact \
+		--header $(METTAZERO_INTERACT_GENERATED_LANGUAGE_V1_H) \
+		--source $(METTAZERO_INTERACT_GENERATED_LANGUAGE_V1_C) \
+		--symbol cetta_zero_interact_language_v1 \
+		--header-include generated/zero_interact_language_v1.generated.h
+	@python3 $(GSLT_PROVIDER_CATALOG_GENERATION_TEST_V1) \
+		--generator $(GSLT_PROVIDER_CATALOG_GENERATOR_V1) \
+		--catalog $(METTAZERO_INTERACT_PROVIDER_CATALOG_V1) \
+		--language-manifest $(METTAZERO_LANGDEF_V1) \
+		--source-root langdef \
+		--header $(METTAZERO_INTERACT_PROVIDER_CATALOG_GENERATED_H) \
+		--source $(METTAZERO_INTERACT_PROVIDER_CATALOG_GENERATED_C) \
+		--symbol cetta_zero_interact_provider_catalog_v1 \
+		--header-include generated/zero_interact_provider_catalog_v1.generated.h
+
 test-mettazero-compilation-certificate-v1: \
 		$(BIN) \
 		$(METTAZERO_COMPILATION_CERTIFICATE_CHECKER_V1_BIN) \
 		$(METTAZERO_COMPILATION_CERTIFICATE_V1) \
 		$(METTAZERO_EXP_COMPILATION_CERTIFICATE_V1) \
+		$(METTAZERO_EMIT_COMPILATION_CERTIFICATE_V1) \
+		$(METTAZERO_INTERACT_COMPILATION_CERTIFICATE_V1) \
 		$(GSLT_COMPILATION_CERTIFICATE_TEST_V1)
 	@python3 $(GSLT_COMPILATION_CERTIFICATE_TEST_V1) \
 		--checker $(METTAZERO_COMPILATION_CERTIFICATE_CHECKER_V1_BIN) \
@@ -10741,12 +11206,36 @@ test-mettazero-compilation-certificate-v1: \
 		--source $(METTAZERO_EXP_GENERATED_LANGUAGE_V1_C) \
 		--symbol cetta_zero_exp_language_v1 \
 		--certificate $(METTAZERO_EXP_COMPILATION_CERTIFICATE_V1)
+	@python3 $(GSLT_COMPILATION_CERTIFICATE_TEST_V1) \
+		--checker $(METTAZERO_COMPILATION_CERTIFICATE_CHECKER_V1_BIN) \
+		--producer $(GSLT_COMPILATION_CERTIFICATE_GENERATOR_V1) \
+		--generator $(GSLT_LANGUAGE_GENERATOR_V1) \
+		--schema tools/gslt2parse_schema_v1.py \
+		--manifest $(METTAZERO_LANGDEF_V1) \
+		--source-root langdef \
+		--profile emit \
+		--header $(METTAZERO_EMIT_GENERATED_LANGUAGE_V1_H) \
+		--source $(METTAZERO_EMIT_GENERATED_LANGUAGE_V1_C) \
+		--symbol cetta_zero_emit_language_v1 \
+		--certificate $(METTAZERO_EMIT_COMPILATION_CERTIFICATE_V1)
+	@python3 $(GSLT_COMPILATION_CERTIFICATE_TEST_V1) \
+		--checker $(METTAZERO_COMPILATION_CERTIFICATE_CHECKER_V1_BIN) \
+		--producer $(GSLT_COMPILATION_CERTIFICATE_GENERATOR_V1) \
+		--generator $(GSLT_LANGUAGE_GENERATOR_V1) \
+		--schema tools/gslt2parse_schema_v1.py \
+		--manifest $(METTAZERO_LANGDEF_V1) \
+		--source-root langdef \
+		--profile interact \
+		--header $(METTAZERO_INTERACT_GENERATED_LANGUAGE_V1_H) \
+		--source $(METTAZERO_INTERACT_GENERATED_LANGUAGE_V1_C) \
+		--symbol cetta_zero_interact_language_v1 \
+		--certificate $(METTAZERO_INTERACT_COMPILATION_CERTIFICATE_V1)
 	@if strings ./$(BIN) | grep -Fq \
 			'GsltCompilationCertificateV1Accepted'; then \
 		echo 'FAIL: compilation checker leaked into the normal runtime'; \
 		exit 1; \
 	fi
-	@echo '(MettaZeroCompilationCertificateV1Summary profiles=2 stages=4 tamper-rejections=10 runtime-linked=0)'
+	@echo '(MettaZeroCompilationCertificateV1Summary profiles=4 stages=4 tamper-rejections=20 runtime-linked=0)'
 
 test-mettazero-realization-triangle-v1: \
 		$(BIN) \
@@ -10780,13 +11269,167 @@ test-mettazero-rule-mutations-v1: \
 		--runner $(METTAZERO_SEMANTIC_RUNNER_V1) \
 		--ground-capability tests/fixtures/metta_zero_ground_capability_v1.metta
 
+.PHONY: test-mettazero-interact-v1
+test-mettazero-interact-v1: \
+		test-mettazero-interact-generation-v1 \
+		test-mettazero-compilation-certificate-v1 \
+		test-mettazero-interact-rule-mutations-v1 \
+		test-mettazero-interact-cli-v1 \
+		test-gslt-abt-provider-v1 \
+		test-zero-interact-space-provider-v1
+	@echo '(MettaZeroInteractV1Summary generated=1 provider-catalog=1 authored-rules=55 mutation-kills=55 physical-providers=2 abt-support-indexed=1 differential=1 fail-closed=1)'
+
 test-mettazero: \
 		test-mettazero-generation-v1 \
 		test-mettazero-compilation-certificate-v1 \
 		test-mettazero-cli-v1 \
+		test-mettazero-emit-cli-v1 \
+		test-mettazero-emit-semantics-v1 \
+		test-mettazero-emit-rule-mutations-v1 \
+		test-mettazero-interact-v1 \
 		test-mettazero-realization-triangle-v1 \
 		test-mettazero-rule-mutations-v1
 	@echo 'PASS: staged query-first MeTTa Zero candidate'
+
+test-gslt-il-generation-v1: \
+		$(GSLT_LANGUAGE_GENERATOR_V1) \
+		$(GSLT_IL_GENERATED_LANGUAGE_V1_H) \
+		$(GSLT_IL_GENERATED_LANGUAGE_V1_C)
+	@python3 tools/test_gslt_language_generation_v1.py \
+		--generator $(GSLT_LANGUAGE_GENERATOR_V1) \
+		--manifest $(GSLT_IL_LANGDEF_V1) \
+		--source-root langdef \
+		--header $(GSLT_IL_GENERATED_LANGUAGE_V1_H) \
+		--source $(GSLT_IL_GENERATED_LANGUAGE_V1_C) \
+		--symbol cetta_gslt_il_language_v1 \
+		--header-include generated/gslt_il_language_v1.generated.h
+
+test-gslt-il-cli-v1: $(BIN) $(GSLT_IL_CLI_TEST_V1)
+	@python3 $(GSLT_IL_CLI_TEST_V1) \
+		--cetta ./$(BIN) \
+		--fixtures tests/gslt_il
+
+test-gslt-il-semantics-v1: \
+		$(GSLT2PARSE_CHART_V1_NATIVE_BIN) \
+		$(GSLT_IL_FINITE_COMMAND_V1) \
+		$(GSLT_IL_SEMANTICS_TEST_V1)
+	@python3 $(GSLT_IL_SEMANTICS_TEST_V1) \
+		--chart $(GSLT2PARSE_CHART_V1_NATIVE_BIN) \
+		--semantics $(GSLT_IL_FINITE_COMMAND_V1)
+
+test-gslt-il-rule-mutations-v1: \
+		$(GSLT2PARSE_CHART_V1_NATIVE_BIN) \
+		$(GSLT_IL_FINITE_COMMAND_V1) \
+		$(GSLT_IL_SEMANTICS_TEST_V1) \
+		$(GSLT_IL_RULE_MUTATIONS_TEST_V1) \
+		tools/test_gslt_language_rule_mutations_v1.py
+	@python3 $(GSLT_IL_RULE_MUTATIONS_TEST_V1) \
+		--harness $(GSLT_IL_SEMANTICS_TEST_V1) \
+		--chart $(GSLT2PARSE_CHART_V1_NATIVE_BIN) \
+		--semantics $(GSLT_IL_FINITE_COMMAND_V1)
+
+test-gslt-il: \
+		test-gslt-il-generation-v1 \
+		test-gslt-il-cli-v1 \
+		test-gslt-il-semantics-v1 \
+		test-gslt-il-rule-mutations-v1
+	@echo 'PASS: experimental generated MeTTa-facing indexed GSLT metalanguage'
+
+test-zerouv-generation-v1: \
+		$(GSLT_LANGUAGE_GENERATOR_V1) \
+		$(ZEROUV_GENERATED_LANGUAGE_V1_H) \
+		$(ZEROUV_GENERATED_LANGUAGE_V1_C)
+	@python3 tools/test_gslt_language_generation_v1.py \
+		--generator $(GSLT_LANGUAGE_GENERATOR_V1) \
+		--manifest $(ZEROUV_LANGDEF_V1) \
+		--source-root langdef \
+		--header $(ZEROUV_GENERATED_LANGUAGE_V1_H) \
+		--source $(ZEROUV_GENERATED_LANGUAGE_V1_C) \
+		--symbol cetta_zerouv_language_v1 \
+		--header-include generated/zerouv_language_v1.generated.h
+
+test-zerouv-cli-v1: $(BIN) $(ZEROUV_CLI_TEST_V1)
+	@python3 $(ZEROUV_CLI_TEST_V1) \
+		--cetta ./$(BIN) \
+		--fixtures tests/zerouv
+
+test-zerouv-semantics-v1: \
+		$(GSLT2PARSE_CHART_V1_NATIVE_BIN) \
+		$(METTAZERO_QUOTE_MATCH_V1) \
+		$(METTAZERO_QUERY_KERNEL_V1) \
+		$(ZEROUV_CONTROL_V1) \
+		$(ZEROUV_SEMANTICS_TEST_V1)
+	@python3 $(ZEROUV_SEMANTICS_TEST_V1) \
+		--chart $(GSLT2PARSE_CHART_V1_NATIVE_BIN) \
+		--quote-match $(METTAZERO_QUOTE_MATCH_V1) \
+		--query-kernel $(METTAZERO_QUERY_KERNEL_V1) \
+		--control $(ZEROUV_CONTROL_V1)
+
+test-zerouv-rule-mutations-v1: \
+		test-zerouv-semantics-v1 \
+		$(ZEROUV_RULE_MUTATIONS_TEST_V1) \
+		tools/test_gslt_language_rule_mutations_v1.py
+	@python3 $(ZEROUV_RULE_MUTATIONS_TEST_V1) \
+		--harness $(ZEROUV_SEMANTICS_TEST_V1) \
+		--chart $(GSLT2PARSE_CHART_V1_NATIVE_BIN) \
+		--quote-match $(METTAZERO_QUOTE_MATCH_V1) \
+		--query-kernel $(METTAZERO_QUERY_KERNEL_V1) \
+		--control $(ZEROUV_CONTROL_V1)
+
+test-zerouv: \
+		test-zerouv-generation-v1 \
+		test-zerouv-cli-v1 \
+		test-zerouv-semantics-v1 \
+		test-zerouv-rule-mutations-v1
+	@echo 'PASS: experimental productive and recurrent MeTTa candidate'
+
+test-metta-interact-generation-v1: \
+		$(GSLT_LANGUAGE_GENERATOR_V1) \
+		$(METTA_INTERACT_GENERATED_LANGUAGE_V1_H) \
+		$(METTA_INTERACT_GENERATED_LANGUAGE_V1_C)
+	@python3 tools/test_gslt_language_generation_v1.py \
+		--generator $(GSLT_LANGUAGE_GENERATOR_V1) \
+		--manifest $(METTA_INTERACT_LANGDEF_V1) \
+		--source-root langdef \
+		--header $(METTA_INTERACT_GENERATED_LANGUAGE_V1_H) \
+		--source $(METTA_INTERACT_GENERATED_LANGUAGE_V1_C) \
+		--symbol cetta_metta_interact_language_v1 \
+		--header-include generated/metta_interact_language_v1.generated.h
+
+test-metta-interact-cli-v1: $(BIN) $(METTA_INTERACT_CLI_TEST_V1)
+	@python3 $(METTA_INTERACT_CLI_TEST_V1) \
+		--cetta ./$(BIN) \
+		--fixtures tests/metta_interact
+
+test-metta-interact-semantics-v1: \
+		$(GSLT2PARSE_CHART_V1_NATIVE_BIN) \
+		$(METTAZERO_QUOTE_MATCH_V1) \
+		$(METTA_INTERACT_CORE_V1) \
+		$(METTA_INTERACT_SEQUENCE_V1) \
+		$(METTA_INTERACT_SEMANTICS_TEST_V1)
+	@python3 $(METTA_INTERACT_SEMANTICS_TEST_V1) \
+		--chart $(GSLT2PARSE_CHART_V1_NATIVE_BIN) \
+		--quote-match $(METTAZERO_QUOTE_MATCH_V1) \
+		--core $(METTA_INTERACT_CORE_V1) \
+		--sequence $(METTA_INTERACT_SEQUENCE_V1)
+
+test-metta-interact-rule-mutations-v1: \
+		test-metta-interact-semantics-v1 \
+		$(METTA_INTERACT_RULE_MUTATIONS_TEST_V1) \
+		tools/test_gslt_language_rule_mutations_v1.py
+	@python3 $(METTA_INTERACT_RULE_MUTATIONS_TEST_V1) \
+		--harness $(METTA_INTERACT_SEMANTICS_TEST_V1) \
+		--chart $(GSLT2PARSE_CHART_V1_NATIVE_BIN) \
+		--quote-match $(METTAZERO_QUOTE_MATCH_V1) \
+		--core $(METTA_INTERACT_CORE_V1) \
+		--sequence $(METTA_INTERACT_SEQUENCE_V1)
+
+test-metta-interact: \
+		test-metta-interact-generation-v1 \
+		test-metta-interact-cli-v1 \
+		test-metta-interact-semantics-v1 \
+		test-metta-interact-rule-mutations-v1
+	@echo 'PASS: experimental proof-relevant MeTTa interaction language'
 
 test-gslt-language-generation-v1: \
 		$(GSLT_LANGUAGE_GENERATOR_V1) \
@@ -10837,6 +11480,60 @@ test-subzero: \
 		test-subzero-cli-v1
 	@echo 'PASS: staged Subzero candidate'
 
+$(MM2_GSLT_PROFILE_GENERATED_H) $(MM2_GSLT_PROFILE_GENERATED_C) &: \
+		$(GSLT_SUPPORT_TRANSFORM_GENERATOR_V1) \
+		tools/gslt2parse_schema_v1.py \
+		$(MM2_GSLT_PROFILE_V1)
+	@python3 $(GSLT_SUPPORT_TRANSFORM_GENERATOR_V1) \
+		--manifest $(MM2_GSLT_PROFILE_V1) \
+		--header $(MM2_GSLT_PROFILE_GENERATED_H) \
+		--source $(MM2_GSLT_PROFILE_GENERATED_C) \
+		--symbol cetta_mm2_gslt_profile_v1 \
+		--header-include generated/mm2_gslt_profile_v1.generated.h
+
+$(GSLT_IL_GENERATED_LANGUAGE_V1_H) $(GSLT_IL_GENERATED_LANGUAGE_V1_C) &: \
+		$(GSLT_LANGUAGE_GENERATOR_V1) \
+		tools/gslt2parse_schema_v1.py \
+		$(GSLT_IL_LANGDEF_V1) \
+		$(GSLT_IL_FINITE_COMMAND_V1)
+	@python3 $(GSLT_LANGUAGE_GENERATOR_V1) \
+		--manifest $(GSLT_IL_LANGDEF_V1) \
+		--source-root langdef \
+		--header $(GSLT_IL_GENERATED_LANGUAGE_V1_H) \
+		--source $(GSLT_IL_GENERATED_LANGUAGE_V1_C) \
+		--symbol cetta_gslt_il_language_v1 \
+		--header-include generated/gslt_il_language_v1.generated.h
+
+$(ZEROUV_GENERATED_LANGUAGE_V1_H) $(ZEROUV_GENERATED_LANGUAGE_V1_C) &: \
+		$(GSLT_LANGUAGE_GENERATOR_V1) \
+		tools/gslt2parse_schema_v1.py \
+		$(ZEROUV_LANGDEF_V1) \
+		$(METTAZERO_QUOTE_MATCH_V1) \
+		$(METTAZERO_QUERY_KERNEL_V1) \
+		$(ZEROUV_CONTROL_V1)
+	@python3 $(GSLT_LANGUAGE_GENERATOR_V1) \
+		--manifest $(ZEROUV_LANGDEF_V1) \
+		--source-root langdef \
+		--header $(ZEROUV_GENERATED_LANGUAGE_V1_H) \
+		--source $(ZEROUV_GENERATED_LANGUAGE_V1_C) \
+		--symbol cetta_zerouv_language_v1 \
+		--header-include generated/zerouv_language_v1.generated.h
+
+$(METTA_INTERACT_GENERATED_LANGUAGE_V1_H) $(METTA_INTERACT_GENERATED_LANGUAGE_V1_C) &: \
+		$(GSLT_LANGUAGE_GENERATOR_V1) \
+		tools/gslt2parse_schema_v1.py \
+		$(METTA_INTERACT_LANGDEF_V1) \
+		$(METTAZERO_QUOTE_MATCH_V1) \
+		$(METTA_INTERACT_CORE_V1) \
+		$(METTA_INTERACT_SEQUENCE_V1)
+	@python3 $(GSLT_LANGUAGE_GENERATOR_V1) \
+		--manifest $(METTA_INTERACT_LANGDEF_V1) \
+		--source-root langdef \
+		--header $(METTA_INTERACT_GENERATED_LANGUAGE_V1_H) \
+		--source $(METTA_INTERACT_GENERATED_LANGUAGE_V1_C) \
+		--symbol cetta_metta_interact_language_v1 \
+		--header-include generated/metta_interact_language_v1.generated.h
+
 $(SUBZERO_GENERATED_LANGUAGE_V1_H) $(SUBZERO_GENERATED_LANGUAGE_V1_C) &: \
 		$(GSLT_LANGUAGE_GENERATOR_V1) \
 		tools/gslt2parse_schema_v1.py \
@@ -10882,6 +11579,57 @@ $(METTAZERO_EXP_GENERATED_LANGUAGE_V1_H) $(METTAZERO_EXP_GENERATED_LANGUAGE_V1_C
 		--symbol cetta_zero_exp_language_v1 \
 		--header-include generated/zero_exp_language_v1.generated.h
 
+$(METTAZERO_EMIT_GENERATED_LANGUAGE_V1_H) $(METTAZERO_EMIT_GENERATED_LANGUAGE_V1_C) &: \
+		$(GSLT_LANGUAGE_GENERATOR_V1) \
+		tools/gslt2parse_schema_v1.py \
+		$(METTAZERO_LANGDEF_V1) \
+		$(METTAZERO_QUOTE_MATCH_V1) \
+		$(METTAZERO_QUERY_KERNEL_V1) \
+		$(METTAZERO_CLOSED_BAG_OBSERVATION_V1) \
+		$(METTAZERO_REVISIONED_EMIT_V1)
+	@python3 $(GSLT_LANGUAGE_GENERATOR_V1) \
+		--manifest $(METTAZERO_LANGDEF_V1) \
+		--source-root langdef \
+		--profile emit \
+		--header $(METTAZERO_EMIT_GENERATED_LANGUAGE_V1_H) \
+		--source $(METTAZERO_EMIT_GENERATED_LANGUAGE_V1_C) \
+		--symbol cetta_zero_emit_language_v1 \
+		--header-include generated/zero_emit_language_v1.generated.h
+
+$(METTAZERO_INTERACT_GENERATED_LANGUAGE_V1_H) $(METTAZERO_INTERACT_GENERATED_LANGUAGE_V1_C) &: \
+		$(GSLT_LANGUAGE_GENERATOR_V1) \
+		tools/gslt2parse_schema_v1.py \
+		$(METTAZERO_LANGDEF_V1) \
+		$(METTAZERO_QUOTE_MATCH_V1) \
+		$(METTAZERO_QUERY_KERNEL_V1) \
+		$(METTAZERO_CLOSED_BAG_OBSERVATION_V1) \
+		$(METTAZERO_OPEN_SUBSTITUTION_V1) \
+		$(METTAZERO_REVISIONED_INTERACT_V1)
+	@python3 $(GSLT_LANGUAGE_GENERATOR_V1) \
+		--manifest $(METTAZERO_LANGDEF_V1) \
+		--source-root langdef \
+		--profile interact \
+		--header $(METTAZERO_INTERACT_GENERATED_LANGUAGE_V1_H) \
+		--source $(METTAZERO_INTERACT_GENERATED_LANGUAGE_V1_C) \
+		--symbol cetta_zero_interact_language_v1 \
+		--header-include generated/zero_interact_language_v1.generated.h
+
+$(METTAZERO_INTERACT_PROVIDER_CATALOG_GENERATED_H) $(METTAZERO_INTERACT_PROVIDER_CATALOG_GENERATED_C) &: \
+		$(GSLT_PROVIDER_CATALOG_GENERATOR_V1) \
+		tools/gslt2parse_schema_v1.py \
+		$(METTAZERO_INTERACT_PROVIDER_CATALOG_V1) \
+		$(METTAZERO_LANGDEF_V1) \
+		$(METTAZERO_INTERACT_GENERATED_LANGUAGE_V1_H) \
+		$(METTAZERO_INTERACT_GENERATED_LANGUAGE_V1_C)
+	@python3 $(GSLT_PROVIDER_CATALOG_GENERATOR_V1) \
+		--catalog $(METTAZERO_INTERACT_PROVIDER_CATALOG_V1) \
+		--language-manifest $(METTAZERO_LANGDEF_V1) \
+		--source-root langdef \
+		--header $(METTAZERO_INTERACT_PROVIDER_CATALOG_GENERATED_H) \
+		--source $(METTAZERO_INTERACT_PROVIDER_CATALOG_GENERATED_C) \
+		--symbol cetta_zero_interact_provider_catalog_v1 \
+		--header-include generated/zero_interact_provider_catalog_v1.generated.h
+
 $(METTAZERO_COMPILATION_CERTIFICATE_V1): \
 		$(GSLT_COMPILATION_CERTIFICATE_GENERATOR_V1) \
 		$(GSLT_LANGUAGE_GENERATOR_V1) \
@@ -10920,6 +11668,51 @@ $(METTAZERO_EXP_COMPILATION_CERTIFICATE_V1): \
 		--header $(METTAZERO_EXP_GENERATED_LANGUAGE_V1_H) \
 		--source $(METTAZERO_EXP_GENERATED_LANGUAGE_V1_C) \
 		--symbol cetta_zero_exp_language_v1 \
+		--generator $(GSLT_LANGUAGE_GENERATOR_V1) \
+		--schema tools/gslt2parse_schema_v1.py \
+		--certificate $@
+
+$(METTAZERO_EMIT_COMPILATION_CERTIFICATE_V1): \
+		$(GSLT_COMPILATION_CERTIFICATE_GENERATOR_V1) \
+		$(GSLT_LANGUAGE_GENERATOR_V1) \
+		tools/gslt2parse_schema_v1.py \
+		$(METTAZERO_LANGDEF_V1) \
+		$(METTAZERO_QUOTE_MATCH_V1) \
+		$(METTAZERO_QUERY_KERNEL_V1) \
+		$(METTAZERO_CLOSED_BAG_OBSERVATION_V1) \
+		$(METTAZERO_REVISIONED_EMIT_V1) \
+		$(METTAZERO_EMIT_GENERATED_LANGUAGE_V1_H) \
+		$(METTAZERO_EMIT_GENERATED_LANGUAGE_V1_C)
+	@python3 $(GSLT_COMPILATION_CERTIFICATE_GENERATOR_V1) \
+		--manifest $(METTAZERO_LANGDEF_V1) \
+		--source-root langdef \
+		--profile emit \
+		--header $(METTAZERO_EMIT_GENERATED_LANGUAGE_V1_H) \
+		--source $(METTAZERO_EMIT_GENERATED_LANGUAGE_V1_C) \
+		--symbol cetta_zero_emit_language_v1 \
+		--generator $(GSLT_LANGUAGE_GENERATOR_V1) \
+		--schema tools/gslt2parse_schema_v1.py \
+		--certificate $@
+
+$(METTAZERO_INTERACT_COMPILATION_CERTIFICATE_V1): \
+		$(GSLT_COMPILATION_CERTIFICATE_GENERATOR_V1) \
+		$(GSLT_LANGUAGE_GENERATOR_V1) \
+		tools/gslt2parse_schema_v1.py \
+		$(METTAZERO_LANGDEF_V1) \
+		$(METTAZERO_QUOTE_MATCH_V1) \
+		$(METTAZERO_QUERY_KERNEL_V1) \
+		$(METTAZERO_CLOSED_BAG_OBSERVATION_V1) \
+		$(METTAZERO_OPEN_SUBSTITUTION_V1) \
+		$(METTAZERO_REVISIONED_INTERACT_V1) \
+		$(METTAZERO_INTERACT_GENERATED_LANGUAGE_V1_H) \
+		$(METTAZERO_INTERACT_GENERATED_LANGUAGE_V1_C)
+	@python3 $(GSLT_COMPILATION_CERTIFICATE_GENERATOR_V1) \
+		--manifest $(METTAZERO_LANGDEF_V1) \
+		--source-root langdef \
+		--profile interact \
+		--header $(METTAZERO_INTERACT_GENERATED_LANGUAGE_V1_H) \
+		--source $(METTAZERO_INTERACT_GENERATED_LANGUAGE_V1_C) \
+		--symbol cetta_zero_interact_language_v1 \
 		--generator $(GSLT_LANGUAGE_GENERATOR_V1) \
 		--schema tools/gslt2parse_schema_v1.py \
 		--certificate $@
@@ -10964,14 +11757,76 @@ $(GSLT_PIPELINE_CANARY_V1_GENERATED_H) $(GSLT_PIPELINE_CANARY_V1_GENERATED_C) &:
 		--symbol cetta_gslt_pipeline_canary_v1 \
 		--header-include tests/generated/gslt_pipeline_canary_v1.generated.h
 
+$(GSLT_PROVIDER_CANARY_V1_GENERATED_H) $(GSLT_PROVIDER_CANARY_V1_GENERATED_C) &: \
+		$(GSLT_LANGUAGE_GENERATOR_V1) \
+		tools/gslt2parse_schema_v1.py \
+		$(GSLT_PROVIDER_CANARY_V1_MANIFEST) \
+		$(GSLT_PROVIDER_CANARY_V1_SOURCE)
+	@python3 $(GSLT_LANGUAGE_GENERATOR_V1) \
+		--manifest $(GSLT_PROVIDER_CANARY_V1_MANIFEST) \
+		--header $(GSLT_PROVIDER_CANARY_V1_GENERATED_H) \
+		--source $(GSLT_PROVIDER_CANARY_V1_GENERATED_C) \
+		--symbol cetta_gslt_provider_canary_v1 \
+		--header-include tests/generated/gslt_provider_canary_v1.generated.h
+
+$(GSLT_PROVIDER_CANARY_CATALOG_GENERATED_H) $(GSLT_PROVIDER_CANARY_CATALOG_GENERATED_C) &: \
+		$(GSLT_PROVIDER_CATALOG_GENERATOR_V1) \
+		tools/gslt2parse_schema_v1.py \
+		$(GSLT_PROVIDER_CANARY_CATALOG_V1) \
+		$(GSLT_PROVIDER_CANARY_V1_MANIFEST) \
+		$(GSLT_PROVIDER_CANARY_V1_SOURCE)
+	@python3 $(GSLT_PROVIDER_CATALOG_GENERATOR_V1) \
+		--catalog $(GSLT_PROVIDER_CANARY_CATALOG_V1) \
+		--language-manifest $(GSLT_PROVIDER_CANARY_V1_MANIFEST) \
+		--header $(GSLT_PROVIDER_CANARY_CATALOG_GENERATED_H) \
+		--source $(GSLT_PROVIDER_CANARY_CATALOG_GENERATED_C) \
+		--symbol cetta_gslt_provider_canary_catalog_v1 \
+		--header-include tests/generated/gslt_provider_canary_catalog_v1.generated.h
+
+.PHONY: test-gslt-provider-generation-v1
+test-gslt-provider-generation-v1: \
+		$(GSLT_PROVIDER_CANARY_V1_GENERATED_H) \
+		$(GSLT_PROVIDER_CANARY_V1_GENERATED_C) \
+		$(GSLT_PROVIDER_CANARY_CATALOG_GENERATED_H) \
+		$(GSLT_PROVIDER_CANARY_CATALOG_GENERATED_C)
+	@python3 tools/test_gslt_language_generation_v1.py \
+		--generator $(GSLT_LANGUAGE_GENERATOR_V1) \
+		--manifest $(GSLT_PROVIDER_CANARY_V1_MANIFEST) \
+		--header $(GSLT_PROVIDER_CANARY_V1_GENERATED_H) \
+		--source $(GSLT_PROVIDER_CANARY_V1_GENERATED_C) \
+		--symbol cetta_gslt_provider_canary_v1 \
+		--header-include tests/generated/gslt_provider_canary_v1.generated.h
+	@python3 $(GSLT_PROVIDER_CATALOG_GENERATION_TEST_V1) \
+		--generator $(GSLT_PROVIDER_CATALOG_GENERATOR_V1) \
+		--catalog $(GSLT_PROVIDER_CANARY_CATALOG_V1) \
+		--language-manifest $(GSLT_PROVIDER_CANARY_V1_MANIFEST) \
+		--header $(GSLT_PROVIDER_CANARY_CATALOG_GENERATED_H) \
+		--source $(GSLT_PROVIDER_CANARY_CATALOG_GENERATED_C) \
+		--symbol cetta_gslt_provider_canary_catalog_v1 \
+		--header-include tests/generated/gslt_provider_canary_catalog_v1.generated.h
+
 .PHONY: test-subzero-free-bag-v1 test-gslt-horn-runtime \
-	test-gslt-language-runtime test-subzero-cli-v1 \
+	test-gslt-language-runtime test-gslt-provider-runtime \
+	test-gslt-abt-provider-v1 \
+	test-gslt-provider-generation-v1 test-subzero-cli-v1 \
 	test-gslt-language-generation-v1 test-subzero-rule-mutations-v1 \
 	test-subzero-realization-triangle-v1 test-subzero \
 	test-mettazero-cli-v1 test-mettazero-generation-v1 \
+	test-mettazero-emit-cli-v1 \
+	test-mettazero-emit-semantics-v1 \
+	test-mettazero-emit-rule-mutations-v1 \
+	test-mettazero-interact-semantics-v1 \
+	test-mettazero-interact-rule-mutations-v1 \
 	test-mettazero-compilation-certificate-v1 \
 	test-mettazero-realization-triangle-v1 \
-	test-mettazero-rule-mutations-v1 test-mettazero
+	test-mettazero-rule-mutations-v1 test-mettazero \
+	test-gslt-il-generation-v1 test-gslt-il-cli-v1 \
+	test-gslt-il-semantics-v1 test-gslt-il-rule-mutations-v1 test-gslt-il \
+	test-zerouv-generation-v1 test-zerouv-cli-v1 \
+	test-zerouv-semantics-v1 test-zerouv-rule-mutations-v1 test-zerouv \
+	test-metta-interact-generation-v1 test-metta-interact-cli-v1 \
+	test-metta-interact-semantics-v1 \
+	test-metta-interact-rule-mutations-v1 test-metta-interact
 
 $(GSLT2PARSE_CHART_V1_NATIVE_BIN): \
 		$(GSLT2PARSE_SCHEMA_V1_NATIVE_DIR)/finite_horn_chart_v1.c \

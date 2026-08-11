@@ -1,0 +1,1 @@
+[(event r1 cheap 0 (task alpha) (done alpha) (s z)), (event r1 dear 1 (task alpha) (done alpha) (s (s z))), (continue (done alpha) z (event r1 cheap 0 (task alpha) (done alpha) (s z)))]
