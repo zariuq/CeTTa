@@ -136,6 +136,10 @@ typedef struct {
     Atom *atom;
     uint32_t epoch;
 } BindingsEpochRoot;
+bool      bindings_project_reachable_with_epoch_roots(
+              const Bindings *src, Atom *const *roots,
+              size_t root_count, const BindingsEpochRoot *epoch_roots,
+              size_t epoch_root_count, Bindings *dst);
 bool      bindings_project_reachable_with_epoch_roots_and_entry_marks(
               const Bindings *src, Atom *const *roots,
               size_t root_count, const BindingsEpochRoot *epoch_roots,
@@ -249,6 +253,13 @@ bool      bindings_builder_compact_reachable(
               uint32_t *checkpoint_marks, size_t checkpoint_count,
               uint64_t *discarded_logical_items,
               uint64_t *discarded_trail_entries);
+bool      bindings_builder_compact_reachable_with_epoch_roots(
+              BindingsBuilder *bb, Atom *const *roots, size_t root_count,
+              const BindingsEpochRoot *epoch_roots,
+              size_t epoch_root_count,
+              uint32_t *checkpoint_marks, size_t checkpoint_count,
+              uint64_t *discarded_logical_items,
+              uint64_t *discarded_trail_entries);
 /* Preserve both rollback checkpoints and logical entry-prefix boundaries.
  * The latter are used by activation views whose source variables may consult
  * only bindings created at or after a particular frame boundary. */
@@ -284,8 +295,19 @@ bool simple_match_builder(Atom *pattern, Atom *target, BindingsBuilder *bb);
 
 /* ── Variable renaming (standardization apart, à la Vampire) ───────────── */
 
-/* Get a fresh suffix for variable renaming. Monotonically increasing. */
+/* Try to obtain a fresh nonzero suffix for variable renaming.  The finite
+ * suffix space is never recycled: exhaustion fails closed. */
+bool fresh_var_suffix_try(uint32_t *suffix_out);
+
+/* Get a fresh suffix for variable renaming.  Legacy convenience wrapper;
+ * aborts rather than reusing an identity if the finite suffix space is
+ * exhausted. */
 uint32_t fresh_var_suffix(void);
+
+#ifdef CETTA_TEST_HOOKS
+/* Single-threaded boundary-test hook.  Not present in production builds. */
+void fresh_var_suffix_test_reset(uint64_t next_suffix);
+#endif
 
 /* Rename all variables in atom: $name → $name#suffix.
    Returns new arena-allocated atom. Non-variable atoms returned as-is. */
@@ -324,6 +346,12 @@ bool match_leaf_patch_view_enabled(void);
  * back with no partial binding). Result == match_atoms_epoch on that shape. */
 bool match_atoms_epoch_positional_linear(Atom *query, Atom *lhs, Bindings *b,
                                          Arena *a, uint32_t epoch);
+/* Builder form of the same admitted view.  It does not clone the environment:
+ * callers that want a general-matcher fallback must save both the builder and
+ * arena marks, then roll back on false before invoking that fallback. */
+bool match_atoms_epoch_positional_linear_builder(
+         Atom *query, Atom *lhs, BindingsBuilder *bb,
+         Arena *a, uint32_t epoch);
 bool match_atoms_atom_id_epoch(Atom *left, const TermUniverse *candidate_universe,
                                AtomId right_id, Bindings *b, Arena *a,
                                uint32_t epoch);

@@ -1,0 +1,10 @@
+(ProofRelationalProjectionFrameEntryV1
+  RelationalProjectionCanaryProofV1
+  (ProofRelationalLabelV1
+    RelationalProjectionCanaryProofV1 projection-canary-identity-v1)
+  projection-canary-position-1-v1
+  (ProofTraceFrameVariableV1
+    (ProofRelationalTokenV1
+      RelationalProjectionCanaryProofV1 projection-canary-y-v1)
+    (ProofRelationalTokenV1
+      RelationalProjectionCanaryProofV1 projection-canary-wff-v1)))

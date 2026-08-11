@@ -1757,16 +1757,36 @@ bool fhgslt_package_reflected_presentation(const FHGSLTPackage *package,
               buffer_literal(&buffer, digest) &&
               buffer_literal(&buffer,
                              " (signature) (equations) (rewrites");
+    size_t reflected_operator_index = 0u;
     size_t reflected_index = 0u;
     for (size_t presentation_index = 0u;
          ok && presentation_index < package->presentation_count;
          presentation_index++) {
         Presentation *presentation = presentations[presentation_index];
+        OperatorDecl **operators = NULL;
         RuleDecl **rules = NULL;
+        if (presentation->operator_count > 0u) {
+            operators = (OperatorDecl **)malloc(
+                presentation->operator_count * sizeof(*operators));
+            if (operators == NULL) {
+                ok = false;
+                break;
+            }
+            for (size_t operator_index = 0u;
+                 operator_index < presentation->operator_count;
+                 operator_index++)
+                operators[operator_index] =
+                    &presentation->operators[operator_index];
+            qsort(operators,
+                  presentation->operator_count,
+                  sizeof(*operators),
+                  compare_operator_pointer);
+        }
         if (presentation->rule_count > 0u) {
             rules = (RuleDecl **)malloc(
                 presentation->rule_count * sizeof(*rules));
             if (rules == NULL) {
+                free(operators);
                 ok = false;
                 break;
             }
@@ -1778,6 +1798,32 @@ bool fhgslt_package_reflected_presentation(const FHGSLTPackage *package,
                   presentation->rule_count,
                   sizeof(*rules),
                   compare_rule_pointer);
+        }
+        for (size_t operator_index = 0u;
+             ok && operator_index < presentation->operator_count;
+             operator_index++) {
+            char index_text[32];
+            int written = snprintf(index_text,
+                                   sizeof(index_text),
+                                   "%zu",
+                                   reflected_operator_index);
+            ok = written > 0 && (size_t)written < sizeof(index_text) &&
+                 buffer_literal(&buffer, " (rule reflected-operator-") &&
+                 buffer_literal(&buffer, digest) &&
+                 buffer_byte(&buffer, (uint8_t)'-') &&
+                 buffer_append(&buffer,
+                               (const uint8_t *)index_text,
+                               (size_t)written) &&
+                 buffer_literal(&buffer,
+                                " (head (source-operator (q-sym ") &&
+                 append_text(&buffer, presentation->name) &&
+                 buffer_literal(&buffer, ") (q-sym ") &&
+                 append_text(&buffer, operators[operator_index]->name) &&
+                 buffer_literal(&buffer, ") ") &&
+                 render_quoted_index(
+                     &buffer, operators[operator_index]->arity) &&
+                 buffer_literal(&buffer, ")) (body))");
+            reflected_operator_index++;
         }
         for (size_t rule_index = 0u;
              ok && rule_index < presentation->rule_count;
@@ -1802,6 +1848,7 @@ bool fhgslt_package_reflected_presentation(const FHGSLTPackage *package,
                  buffer_literal(&buffer, ")) (body))");
             reflected_index++;
         }
+        free(operators);
         free(rules);
     }
     free(presentations);

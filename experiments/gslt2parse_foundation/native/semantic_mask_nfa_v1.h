@@ -142,6 +142,24 @@ bool ppsemantic_mask_dfa_v1_program_build(
     size_t error_buf_size);
 
 /*
+ * Determinize after applying a caller-supplied quotient to semantic actions.
+ * action_quotient is parallel to mask.actions and every entry must be below
+ * quotient_action_len.  This is useful when a consumer observes less than
+ * the complete semantic value (for example, retained versus discarded source
+ * scalars) and therefore can soundly merge otherwise conflicting wrappers.
+ */
+bool ppsemantic_mask_dfa_v1_program_build_quotient(
+    const PPSemanticMaskNfaV1Plan *mask,
+    const uint32_t *action_quotient,
+    uint32_t quotient_action_len,
+    uint32_t state_limit,
+    uint32_t transition_limit,
+    PPSemanticMaskDfaV1Program *out,
+    RSDFAV1BuildOutcome *outcome,
+    char *error_buf,
+    size_t error_buf_size);
+
+/*
  * Execute one exact scalar interval after its enclosing scalar view and this
  * program have been validated.  On acceptance, out_actions receives exactly
  * one semantic action per consumed scalar.

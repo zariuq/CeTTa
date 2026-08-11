@@ -1,0 +1,6 @@
+(ProofTraceCompileCompressedAcceptedV1
+  (ProofTraceContextConsV1 codec-formula-m-v1 ProofTraceContextNilV1)
+  (ProofTraceLabelConsV1 codec-label-m-v1 ProofTraceLabelNilV1)
+  ProofTraceLabelNilV1
+  (ProofTraceCodeConsV1 65 ProofTraceCodeNilV1)
+  codec-formula-m-v1)

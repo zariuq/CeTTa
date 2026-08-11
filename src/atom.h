@@ -261,10 +261,16 @@ typedef struct {
 void    var_intern_init(VarInternTable *t);
 void    var_intern_free(VarInternTable *t);
 VarId   var_intern(VarInternTable *t, SymbolId spelling);
+bool    fresh_var_id_try(VarId *id_out);
 VarId   fresh_var_id(void);
 VarId   var_epoch_id(VarId id, uint32_t epoch);
 uint32_t var_base_id(VarId id);
 uint32_t var_epoch_suffix(VarId id);
+
+#ifdef CETTA_TEST_HOOKS
+/* Single-threaded boundary hook; production builds cannot reset identity. */
+void fresh_var_id_test_reset(uint64_t next_base);
+#endif
 
 extern VarInternTable *g_var_intern;
 

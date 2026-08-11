@@ -272,9 +272,11 @@ static bool ppguarded_lex_v1_plan_matches(
     uint32_t index;
 
     if (!pack || !lexical_plan || !guard_plan || !plan ||
-        plan->entry_len == 0u ||
         plan->entry_len != plan->prefix_nfa.nfa.tag_len ||
-        !plan->entries || !plan->terminals || !plan->tag_terminal_ids ||
+        plan->entry_len != guard_plan->entry_len ||
+        (plan->entry_len > 0u &&
+         (!plan->entries || !plan->terminals ||
+          !plan->tag_terminal_ids)) ||
         !ppguarded_lex_v1_digest_valid(plan->base_pack_digest) ||
         !ppguarded_lex_v1_digest_valid(plan->lexical_plan_digest) ||
         !ppguarded_lex_v1_digest_valid(plan->guard_plan_digest) ||
@@ -286,7 +288,7 @@ static bool ppguarded_lex_v1_plan_matches(
                plan->lexical_plan_digest) != 0 ||
         strcmp(guard_plan->plan_digest, plan->guard_plan_digest) != 0 ||
         guard_plan->terminal_len > UINT32_MAX - pack->terminal_len ||
-        plan->entry_len - 1u > UINT32_MAX - pack->terminal_len -
+        plan->entry_len > UINT32_MAX - pack->terminal_len -
             guard_plan->terminal_len) {
         return false;
     }
@@ -379,7 +381,7 @@ bool ppguarded_lex_v1_plan_build(
     if (error_buf && error_buf_size > 0u)
         error_buf[0] = '\0';
     if (!pack || !lexical_plan || !guard_plan || !out ||
-        !guarded_nfa_answers || guarded_nfa_answer_len == 0u ||
+        (guarded_nfa_answer_len > 0u && !guarded_nfa_answers) ||
         guarded_nfa_answer_len > UINT32_MAX ||
         !ppguarded_lex_v1_digest_valid(guarded_compiler_digest) ||
         !ppguarded_lex_v1_digest_valid(guarded_nfa_answer_digest) ||
@@ -393,10 +395,12 @@ bool ppguarded_lex_v1_plan_build(
         }
         goto done;
     }
-    normal_answers = calloc(
-        guarded_nfa_answer_len, sizeof(*normal_answers));
-    if (!normal_answers)
-        goto done;
+    if (guarded_nfa_answer_len > 0u) {
+        normal_answers = calloc(
+            guarded_nfa_answer_len, sizeof(*normal_answers));
+        if (!normal_answers)
+            goto done;
+    }
     for (answer_index = 0u;
          answer_index < guarded_nfa_answer_len; answer_index++) {
         Atom *answer = guarded_nfa_answers[answer_index];
@@ -418,20 +422,30 @@ bool ppguarded_lex_v1_plan_build(
             goto done;
         }
     }
-    if (!rsnfa_v1_plan_load(
-            pack, normal_answers, guarded_nfa_answer_len,
-            &result.prefix_nfa, error_buf, error_buf_size)) {
+    if (guarded_nfa_answer_len > 0u) {
+        if (!rsnfa_v1_plan_load(
+                pack, normal_answers, guarded_nfa_answer_len,
+                &result.prefix_nfa, error_buf, error_buf_size)) {
+            goto done;
+        }
+    }
+    if (result.prefix_nfa.nfa.tag_len != guard_plan->entry_len) {
+        ppguarded_lex_v1_set_error(
+            error_buf, error_buf_size,
+            "guarded lexical projection does not cover every guard");
         goto done;
     }
     result.entry_len = result.prefix_nfa.nfa.tag_len;
-    result.entries = calloc(result.entry_len, sizeof(*result.entries));
-    result.terminals = calloc(
-        result.entry_len, sizeof(*result.terminals));
-    result.tag_terminal_ids = malloc(
-        sizeof(*result.tag_terminal_ids) * (size_t)result.entry_len);
-    if (!result.entries || !result.terminals ||
-        !result.tag_terminal_ids) {
-        goto done;
+    if (result.entry_len > 0u) {
+        result.entries = calloc(result.entry_len, sizeof(*result.entries));
+        result.terminals = calloc(
+            result.entry_len, sizeof(*result.terminals));
+        result.tag_terminal_ids = malloc(
+            sizeof(*result.tag_terminal_ids) * (size_t)result.entry_len);
+        if (!result.entries || !result.terminals ||
+            !result.tag_terminal_ids) {
+            goto done;
+        }
     }
     extension = (PPNativeV1ForestExtension){
         .states = guard_plan->states,
