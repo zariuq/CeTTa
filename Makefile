@@ -5136,7 +5136,7 @@ test-metamath-cogslt-regeneration-v1:
 	trap 'rm -rf "$$regen_dir"' EXIT INT TERM; \
 	mkdir -p "$$regen_dir/generated"; \
 	$(MAKE) --no-print-directory -B \
-		BUILD=$(BUILD) ENABLE_LIB_PROLOG=0 \
+		BUILD=$(BUILD) ENABLE_RUNTIME_STATS=0 ENABLE_LIB_PROLOG=0 \
 		GSLT2PARSE_COMPILER_ROOT="$(GSLT2PARSE_COMPILER_ROOT)" \
 		METAMATH_SOURCE_PACK_V1="$$regen_dir/generated/syntax_parser_pack_v1.abi" \
 		METAMATH_SYNTAX_LOCK_V1="$$regen_dir/generated/syntax_lock_v1.metta" \
