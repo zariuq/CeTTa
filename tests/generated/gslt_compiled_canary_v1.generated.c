@@ -99,8 +99,10 @@ const CettaGsltEmbeddedLanguageV1 cetta_gslt_compiled_canary_v1 = {
     .entry_arity = 2u,
     .program_position = 0u,
     .result_position = 1u,
+    .query_relation = NULL,
+    .query_arity = 0u,
     .request_pipeline = NULL,
     .observation = "bag",
     .manifest_sha256 = "c3fa2430765b58496cb61454b337746b10b13e0d51f67d7fd789e1dab0342b76",
-    .compiler_sha256 = "f815d807be39d0b1ce08c09c70c1deded227df9ee2ff50acf6bebce92fbcbb48",
+    .compiler_sha256 = "31326d3976c522fefefe1d1cacec29660fb95f993ee23e55622cad431eb4d68a",
 };

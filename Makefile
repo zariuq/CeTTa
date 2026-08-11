@@ -417,7 +417,7 @@ PETTA_TYPECHECK_V2_SRC =
 ifeq ($(ENABLE_PETTA_TYPECHECK_V2),1)
 PETTA_TYPECHECK_V2_SRC = src/petta_typecheck.c
 endif
-SRC = src/symbol.c src/atom.c src/name_key.c src/atom_blob.c src/abt.c src/parser.c $(COMPILED_READER_RUNTIME_SRC) src/mm2_lower.c src/subst_tree.c src/space.c src/registry_resolver.c src/space_match_backend.c src/match.c src/match_decision.c src/term_canon.c src/variant_shape.c src/variant_instance.c src/answer_bank.c src/table_store.c src/search_machine.c src/petta_program.c src/petta_search_machine.c $(PETTA_TYPECHECK_V2_SRC) src/petta_specializer.c src/rule_machine.c $(LIB_PROLOG_SRC) src/term_universe.c src/stats.c src/parallel_executor.c src/prime_need.c src/petta_semantics.c src/prepared_pure_machine.c src/eval.c src/grounded.c src/he_typing.c src/prime_semantics.c src/text_source.c src/native_handle.c src/native_sha256.c src/mork_space_bridge_runtime.c src/library.c src/langdef_pack.c src/gslt_provider_runtime.c src/gslt_space_fact_provider_v1.c src/gslt_revisioned_space_provider_v1.c src/gslt_abt_provider_v1.c src/gslt_horn_runtime.c src/gslt_compiled_runtime.c src/gslt_language_runtime.c src/gslt_pure_provider_v1.c src/gslt_support_transform_runtime.c src/generated/gslt_il_language_v1.generated.c src/generated/metta_interact_language_v1.generated.c src/generated/mm2_gslt_profile_v1.generated.c src/generated/subzero_language_v1.generated.c src/generated/zero_language_v1.generated.c src/generated/zero_exp_language_v1.generated.c src/generated/zero_emit_language_v1.generated.c src/generated/zero_interact_language_v1.generated.c src/generated/zero_interact_provider_catalog_v1.generated.c src/generated/zerouv_language_v1.generated.c src/he_small_step_pack.c src/lib_parse_native_grammar.c src/lib_parse_inference_native.c experiments/gslt2parse_foundation/native/finite_horn_gslt_v1.c experiments/gslt2parse_foundation/native/finite_horn_ground_term_v1.c experiments/gslt2parse_foundation/native/parser_term_projection_v1.c experiments/gslt2parse_foundation/native/parser_pack_abi_v1.c experiments/gslt2parse_foundation/native/parser_action_bytecode_v1.c experiments/gslt2parse_foundation/native/parser_pack_native_v1.c experiments/gslt2parse_foundation/native/parser_pack_lexical_v1.c experiments/gslt2parse_foundation/native/parser_pack_gll_v1.c experiments/gslt2parse_foundation/native/parser_pack_glr_v1.c experiments/gslt2parse_foundation/native/regular_span_dfa_v1.c experiments/gslt2parse_foundation/native/regular_span_nfa_v1.c $(PYTHON_SRC) src/session.c src/lang.c src/rhocalc_core.c src/rhocalc_syntax.c src/compile.c src/runtime.c src/cetta_stdlib.c native/native_modules.c src/main.c
+SRC = src/symbol.c src/atom.c src/name_key.c src/atom_blob.c src/abt.c src/parser.c $(COMPILED_READER_RUNTIME_SRC) src/mm2_lower.c src/subst_tree.c src/space.c src/registry_resolver.c src/space_match_backend.c src/match.c src/match_decision.c src/term_canon.c src/variant_shape.c src/variant_instance.c src/answer_bank.c src/table_store.c src/search_machine.c src/petta_program.c src/petta_search_machine.c $(PETTA_TYPECHECK_V2_SRC) src/petta_specializer.c src/rule_machine.c $(LIB_PROLOG_SRC) src/term_universe.c src/stats.c src/parallel_executor.c src/prime_need.c src/petta_semantics.c src/prepared_pure_machine.c src/eval.c src/grounded.c src/he_typing.c src/inference_checker.c src/nik_runtime.c src/prime_semantics.c src/text_source.c src/native_handle.c src/native_sha256.c src/mork_space_bridge_runtime.c src/library.c src/langdef_pack.c src/gslt_provider_runtime.c src/gslt_space_fact_provider_v1.c src/gslt_revisioned_space_provider_v1.c src/gslt_abt_provider_v1.c src/gslt_horn_runtime.c src/gslt_compiled_runtime.c src/gslt_language_runtime.c src/gslt_pure_provider_v1.c src/gslt_support_transform_runtime.c src/generated/prime_nik_authorities_v1.generated.c src/generated/prime_nik_runtime_v1.generated.c src/generated/gslt_il_language_v1.generated.c src/generated/metta_interact_language_v1.generated.c src/generated/mm2_gslt_profile_v1.generated.c src/generated/subzero_language_v1.generated.c src/generated/zero_language_v1.generated.c src/generated/zero_exp_language_v1.generated.c src/generated/zero_emit_language_v1.generated.c src/generated/zero_interact_language_v1.generated.c src/generated/zero_interact_provider_catalog_v1.generated.c src/generated/zerouv_language_v1.generated.c src/he_small_step_pack.c src/lib_parse_native_grammar.c src/lib_parse_inference_native.c experiments/gslt2parse_foundation/native/finite_horn_gslt_v1.c experiments/gslt2parse_foundation/native/finite_horn_ground_term_v1.c experiments/gslt2parse_foundation/native/parser_term_projection_v1.c experiments/gslt2parse_foundation/native/parser_pack_abi_v1.c experiments/gslt2parse_foundation/native/parser_action_bytecode_v1.c experiments/gslt2parse_foundation/native/parser_pack_native_v1.c experiments/gslt2parse_foundation/native/parser_pack_lexical_v1.c experiments/gslt2parse_foundation/native/parser_pack_gll_v1.c experiments/gslt2parse_foundation/native/parser_pack_glr_v1.c experiments/gslt2parse_foundation/native/regular_span_dfa_v1.c experiments/gslt2parse_foundation/native/regular_span_nfa_v1.c $(PYTHON_SRC) src/session.c src/lang.c src/rhocalc_core.c src/rhocalc_syntax.c src/compile.c src/runtime.c src/cetta_stdlib.c native/native_modules.c src/main.c
 ifeq ($(ENABLE_RUNTIME_STATS),1)
 OBJ = $(SRC:.c=.$(BUILD_OBJ_TAG).runtime-stats.o)
 ifeq ($(CETTA_TEST_ISOLATED),1)
@@ -756,6 +756,7 @@ GSLT2PARSE_CHART_V1_NATIVE_BIN = runtime/finite_horn_chart_v1-$(BUILD_OBJ_TAG)
 GSLT_HORN_RUNTIME_TEST_BIN = runtime/test_gslt_horn_runtime-$(BUILD_OBJ_TAG)
 GSLT_HORN_RUNTIME_CANARY_V1 = tests/fixtures/gslt_horn_runtime_canary_v1.metta
 GSLT_LANGUAGE_RUNTIME_TEST_BIN = runtime/test_gslt_language_runtime-$(BUILD_OBJ_TAG)
+NIK_RUNTIME_TEST_BIN = runtime/test_nik_runtime_v1-$(BUILD_OBJ_TAG)
 GSLT_PROVIDER_RUNTIME_TEST_BIN = runtime/test_gslt_provider_runtime-$(BUILD_OBJ_TAG)
 GSLT_ABT_PROVIDER_V1_TEST_BIN = runtime/test_gslt_abt_provider_v1-$(BUILD_OBJ_TAG)
 ZERO_INTERACT_SPACE_PROVIDER_TEST_BIN = runtime/test_zero_interact_space_provider_v1-$(BUILD_OBJ_TAG)
@@ -763,6 +764,17 @@ GSLT_SUPPORT_TRANSFORM_RUNTIME_TEST_BIN = runtime/test_gslt_support_transform_ru
 METTAZERO_COMPILATION_CERTIFICATE_CHECKER_V1_BIN = runtime/check_mettazero_compilation_certificate_v1-$(BUILD_OBJ_TAG)
 SUBZERO_LANGDEF_V1 = langdef/subzero/langdef.metta
 GSLT_LANGUAGE_GENERATOR_V1 = tools/generate_gslt_language_v1.py
+PRIME_NIK_AUTHORITY_EXPORTER_V1 = tests/support/export_prime_nik_authority_catalog_v1.lean
+PRIME_NIK_AUTHORITY_GENERATOR_V1 = tools/generate_nik_authority_runtime_v1.py
+PRIME_NIK_AUTHORITY_GENERATION_TEST_V1 = tools/test_nik_authority_generation_v1.py
+PRIME_NIK_AUTHORITY_CATALOG_V1 = langdef/prime/nik_authority_catalog_v1.metta
+PRIME_NIK_AUTHORITY_SEMANTICS_V1 = langdef/prime/nik_authority_runtime_v1.metta
+PRIME_NIK_RUNTIME_MANIFEST_V1 = langdef/prime/nik_runtime_v1.metta
+PRIME_NIK_AUTHORITIES_GENERATED_H = src/generated/prime_nik_authorities_v1.generated.h
+PRIME_NIK_AUTHORITIES_GENERATED_C = src/generated/prime_nik_authorities_v1.generated.c
+PRIME_NIK_RUNTIME_GENERATED_H = src/generated/prime_nik_runtime_v1.generated.h
+PRIME_NIK_RUNTIME_GENERATED_C = src/generated/prime_nik_runtime_v1.generated.c
+METTAPEDIA_LEAN_ROOT ?=
 GSLT_IL_LANGDEF_V1 = langdef/gslt-il/langdef.metta
 GSLT_IL_FINITE_COMMAND_V1 = langdef/gslt-il/semantics/finite_indexed_command_v1.metta
 GSLT_IL_GENERATED_LANGUAGE_V1_H = src/generated/gslt_il_language_v1.generated.h
@@ -960,6 +972,7 @@ PRIME_CONFORMANCE_TESTS = \
 	tests/prime/need_storage_boundary.metta \
 	tests/prime/need_quote_preservation.metta \
 	tests/prime/need_sequential_unification_refinement.metta \
+	tests/prime/nik_plural_checking.metta \
 	tests/prime/nil_rule_machine_guests.generated.metta \
 	tests/prime/rule_machine_malformed_artifact_delta.metta \
 	tests/prime/rule_machine_malformed_program.metta \
@@ -1777,13 +1790,11 @@ test-prime-contexts: $(BIN) $(PRIME_CONTEXT_MUTATION_TEST_BIN)
 			exit 1; \
 		fi; \
 	done; \
-	for source in \
-		tests/support/mork_mm2/test_count_simple.mm2 \
-		tests/support/mork_mm2/test_head_limit.mm2; do \
-		inert=$$($(CETTA_BIN_INVOKE) --lang mm2 --profile gslt \
-			"$$source" 2>&1); \
-		if ! printf '%s\n' "$$inert" | grep -Fq '(exec '; then \
-			echo "FAIL: unsupported MM2 factory directive was consumed: $$source"; \
+	inert=$$($(CETTA_BIN_INVOKE) --lang mm2 --profile gslt \
+		tests/support/mork_mm2/test_unsupported_factory.mm2 2>&1); \
+	for marker in '(0 unknown-source)' '(0 unknown-sink)'; do \
+		if ! printf '%s\n' "$$inert" | grep -Fq "$$marker"; then \
+			echo "FAIL: unsupported MM2 factory directive was consumed: $$marker"; \
 			printf '%s\n' "$$inert"; \
 			exit 1; \
 		fi; \
@@ -11059,6 +11070,27 @@ $(GSLT_LANGUAGE_RUNTIME_TEST_BIN): \
 test-gslt-language-runtime: $(GSLT_LANGUAGE_RUNTIME_TEST_BIN)
 	@$(GSLT_LANGUAGE_RUNTIME_TEST_BIN) $(SUBZERO_LANGDEF_V1)
 
+$(NIK_RUNTIME_TEST_BIN): \
+		tests/support/test_nik_runtime_v1.c \
+		src/nik_runtime.h \
+		src/inference_checker.h \
+		$(PRIME_NIK_AUTHORITIES_GENERATED_H) \
+		$(PRIME_NIK_AUTHORITIES_GENERATED_C) \
+		$(PRIME_NIK_RUNTIME_GENERATED_H) \
+		$(PRIME_NIK_RUNTIME_GENERATED_C) \
+		$(FALLBACK_EVAL_TEST_LINK_OBJ) \
+		$(COMPILED_READER_RUNTIME_OBJ) \
+		$(BRIDGE_DEPS)
+	@mkdir -p runtime
+	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ \
+		tests/support/test_nik_runtime_v1.c \
+		$(FALLBACK_EVAL_TEST_LINK_OBJ) \
+		$(COMPILED_READER_RUNTIME_OBJ) $(LDFLAGS)
+
+.PHONY: test-nik-runtime-v1
+test-nik-runtime-v1: $(NIK_RUNTIME_TEST_BIN)
+	@$(NIK_RUNTIME_TEST_BIN)
+
 $(GSLT_PROVIDER_RUNTIME_TEST_BIN): \
 		tests/support/test_gslt_provider_runtime.c \
 		src/gslt_provider_runtime.h \
@@ -11681,6 +11713,77 @@ test-subzero: \
 		test-gslt-language-runtime \
 		test-subzero-cli-v1
 	@echo 'PASS: staged Subzero candidate'
+
+$(PRIME_NIK_AUTHORITY_SEMANTICS_V1) \
+$(PRIME_NIK_AUTHORITIES_GENERATED_H) \
+$(PRIME_NIK_AUTHORITIES_GENERATED_C) &: \
+		$(PRIME_NIK_AUTHORITY_GENERATOR_V1) \
+		tools/gslt2parse_schema_v1.py \
+		$(PRIME_NIK_AUTHORITY_CATALOG_V1)
+	@python3 $(PRIME_NIK_AUTHORITY_GENERATOR_V1) \
+		--catalog $(PRIME_NIK_AUTHORITY_CATALOG_V1) \
+		--semantic $(PRIME_NIK_AUTHORITY_SEMANTICS_V1) \
+		--header $(PRIME_NIK_AUTHORITIES_GENERATED_H) \
+		--source $(PRIME_NIK_AUTHORITIES_GENERATED_C) \
+		--symbol cetta_prime_nik_authorities_v1 \
+		--header-include generated/prime_nik_authorities_v1.generated.h
+
+$(PRIME_NIK_RUNTIME_GENERATED_H) $(PRIME_NIK_RUNTIME_GENERATED_C) &: \
+		$(GSLT_LANGUAGE_GENERATOR_V1) \
+		tools/gslt2parse_schema_v1.py \
+		$(PRIME_NIK_RUNTIME_MANIFEST_V1) \
+		$(PRIME_NIK_AUTHORITY_SEMANTICS_V1)
+	@python3 $(GSLT_LANGUAGE_GENERATOR_V1) \
+		--manifest $(PRIME_NIK_RUNTIME_MANIFEST_V1) \
+		--source-root langdef \
+		--header $(PRIME_NIK_RUNTIME_GENERATED_H) \
+		--source $(PRIME_NIK_RUNTIME_GENERATED_C) \
+		--symbol cetta_prime_nik_runtime_v1 \
+		--header-include generated/prime_nik_runtime_v1.generated.h
+
+.PHONY: test-prime-nik-generation-v1
+test-prime-nik-generation-v1: \
+		$(PRIME_NIK_AUTHORITY_GENERATION_TEST_V1) \
+		$(PRIME_NIK_AUTHORITY_SEMANTICS_V1) \
+		$(PRIME_NIK_AUTHORITIES_GENERATED_H) \
+		$(PRIME_NIK_AUTHORITIES_GENERATED_C) \
+		$(PRIME_NIK_RUNTIME_GENERATED_H) \
+		$(PRIME_NIK_RUNTIME_GENERATED_C)
+	@python3 $(PRIME_NIK_AUTHORITY_GENERATION_TEST_V1) \
+		--generator $(PRIME_NIK_AUTHORITY_GENERATOR_V1) \
+		--catalog $(PRIME_NIK_AUTHORITY_CATALOG_V1) \
+		--semantic $(PRIME_NIK_AUTHORITY_SEMANTICS_V1) \
+		--header $(PRIME_NIK_AUTHORITIES_GENERATED_H) \
+		--source $(PRIME_NIK_AUTHORITIES_GENERATED_C) \
+		--symbol cetta_prime_nik_authorities_v1 \
+		--header-include generated/prime_nik_authorities_v1.generated.h
+	@python3 tools/test_gslt_language_generation_v1.py \
+		--generator $(GSLT_LANGUAGE_GENERATOR_V1) \
+		--manifest $(PRIME_NIK_RUNTIME_MANIFEST_V1) \
+		--source-root langdef \
+		--header $(PRIME_NIK_RUNTIME_GENERATED_H) \
+		--source $(PRIME_NIK_RUNTIME_GENERATED_C) \
+		--symbol cetta_prime_nik_runtime_v1 \
+		--header-include generated/prime_nik_runtime_v1.generated.h
+
+.PHONY: test-prime-nik-lean-export-v1
+test-prime-nik-lean-export-v1: $(PRIME_NIK_AUTHORITY_EXPORTER_V1)
+	@test -n "$(METTAPEDIA_LEAN_ROOT)" || { \
+		echo "METTAPEDIA_LEAN_ROOT must name the Mettapedia Lean project"; \
+		exit 2; \
+	}
+	@set -eu; \
+	mkdir -p $(BOOTSTRAP_TMPDIR); \
+	tmp_catalog=$$(mktemp "$(BOOTSTRAP_TMPDIR)/prime-nik-catalog.XXXXXX"); \
+	tmp_catalog_abs=$$(realpath "$$tmp_catalog"); \
+	checked_catalog_abs=$$(realpath "$(PRIME_NIK_AUTHORITY_CATALOG_V1)"); \
+	trap 'rm -f "$$tmp_catalog_abs"' EXIT INT TERM; \
+	cd "$(METTAPEDIA_LEAN_ROOT)" && \
+		lake env lean --run \
+			"$(abspath $(PRIME_NIK_AUTHORITY_EXPORTER_V1))" \
+			"$$tmp_catalog_abs"; \
+	cmp -s "$$tmp_catalog_abs" "$$checked_catalog_abs"; \
+	echo "(PrimeNikLeanExportV1Summary exact=1 authorities=2)"
 
 $(MM2_GSLT_PROFILE_GENERATED_H) $(MM2_GSLT_PROFILE_GENERATED_C) &: \
 		$(GSLT_SUPPORT_TRANSFORM_GENERATOR_V1) \

@@ -23,6 +23,7 @@ struct CettaGsltLanguage {
     char *program_nil;
     char *program_cons;
     char *entry_relation;
+    char *query_relation;
     char *classify_relation;
     char *produce_relation;
     char *observe_relation;
@@ -33,6 +34,7 @@ struct CettaGsltLanguage {
     uint32_t entry_arity;
     uint32_t program_position;
     uint32_t result_position;
+    uint32_t query_arity;
     CettaGsltHornProgram *semantics;
     CettaGsltCompiledProgram *compiled_semantics;
 };
@@ -53,6 +55,9 @@ typedef struct {
     uint32_t program_position;
     uint32_t result_position;
     bool has_entry;
+    const char *query_relation;
+    uint32_t query_arity;
+    bool has_query_entry;
     const char *classify_relation;
     const char *produce_relation;
     const char *observe_relation;
@@ -219,6 +224,18 @@ static bool language_manifest_parse(Atom *root,
             manifest->program_position = program_position;
             manifest->result_position = result_position;
             manifest->has_entry = true;
+        } else if (language_expr(field, "query-entry", 3u)) {
+            const char *relation = language_text(field->expr.elems[1]);
+            uint32_t arity;
+            if (manifest->has_query_entry || !relation ||
+                !language_u32(field->expr.elems[2], &arity) ||
+                arity == 0u || arity == UINT32_MAX)
+                return language_error(
+                    error, error_size,
+                    "manifest has an invalid query entry");
+            manifest->query_relation = relation;
+            manifest->query_arity = arity;
+            manifest->has_query_entry = true;
         } else if (language_expr(field, "request-pipeline", 6u)) {
             const char *classify = language_text(field->expr.elems[1]);
             const char *produce = language_text(field->expr.elems[2]);
@@ -290,10 +307,17 @@ static bool language_manifest_parse(Atom *root,
                                   "manifest contains an unknown field");
         }
     }
+    unsigned entry_modes = (manifest->has_entry ? 1u : 0u) +
+        (manifest->has_query_entry ? 1u : 0u) +
+        (manifest->has_request_pipeline ? 1u : 0u);
+    bool carrier_is_complete =
+        manifest->program_nil && manifest->program_cons;
     if (!manifest->name || !manifest->syntax_backend ||
         !manifest->term_abi || manifest->semantic_source_count == 0u ||
-        !manifest->program_nil || !manifest->program_cons ||
-        manifest->has_entry == manifest->has_request_pipeline ||
+        entry_modes != 1u ||
+        (manifest->has_query_entry
+             ? carrier_is_complete
+             : !carrier_is_complete) ||
         !manifest->observation)
         return language_error(error, error_size,
                               "manifest omits a required stage");
@@ -326,18 +350,25 @@ static bool language_manifest_matches_descriptor(
             manifest->profile_name, descriptor->profile_name) ||
         strcmp(manifest->syntax_backend, descriptor->syntax_backend) != 0 ||
         strcmp(manifest->term_abi, descriptor->term_abi) != 0 ||
-        strcmp(manifest->program_nil, descriptor->program_nil) != 0 ||
-        strcmp(manifest->program_cons, descriptor->program_cons) != 0 ||
+        !language_optional_text_equal(
+            manifest->program_nil, descriptor->program_nil) ||
+        !language_optional_text_equal(
+            manifest->program_cons, descriptor->program_cons) ||
         strcmp(manifest->observation, descriptor->observation) != 0 ||
         manifest->semantic_source_count !=
             descriptor->semantic_source_count ||
         manifest->has_entry != (descriptor->entry_relation != NULL) ||
+        manifest->has_query_entry !=
+            (descriptor->query_relation != NULL) ||
         manifest->has_request_pipeline != (pipeline != NULL) ||
         !language_optional_text_equal(
             manifest->entry_relation, descriptor->entry_relation) ||
         manifest->entry_arity != descriptor->entry_arity ||
         manifest->program_position != descriptor->program_position ||
         manifest->result_position != descriptor->result_position ||
+        !language_optional_text_equal(
+            manifest->query_relation, descriptor->query_relation) ||
+        manifest->query_arity != descriptor->query_arity ||
         !language_optional_text_equal(
             manifest->classify_relation,
             pipeline ? pipeline->classify_relation : NULL) ||
@@ -493,6 +524,7 @@ bool cetta_gslt_language_load_manifest(
     language->program_nil = language_strdup(manifest.program_nil);
     language->program_cons = language_strdup(manifest.program_cons);
     language->entry_relation = language_strdup(manifest.entry_relation);
+    language->query_relation = language_strdup(manifest.query_relation);
     language->classify_relation = language_strdup(manifest.classify_relation);
     language->produce_relation = language_strdup(manifest.produce_relation);
     language->observe_relation = language_strdup(manifest.observe_relation);
@@ -503,6 +535,7 @@ bool cetta_gslt_language_load_manifest(
     language->entry_arity = manifest.entry_arity;
     language->program_position = manifest.program_position;
     language->result_position = manifest.result_position;
+    language->query_arity = manifest.query_arity;
     if (!cetta_gslt_horn_program_load_paths(
             semantic_path_views, manifest.semantic_source_count,
             &language->semantics, error, error_size))
@@ -538,6 +571,8 @@ bool cetta_gslt_language_load_embedded_for_realization(
     CettaGsltLanguage **out, char *error, size_t error_size) {
     bool has_entry = descriptor && descriptor->entry_relation &&
         descriptor->entry_arity > 0u;
+    bool has_query = descriptor && descriptor->query_relation &&
+        descriptor->query_arity > 0u;
     bool has_pipeline = descriptor && descriptor->request_pipeline &&
         descriptor->request_pipeline->classify_relation &&
         descriptor->request_pipeline->produce_relation &&
@@ -558,8 +593,11 @@ bool cetta_gslt_language_load_embedded_for_realization(
         !descriptor->compiled_plan.bytes ||
         descriptor->compiled_plan.length == 0u ||
         !descriptor->compiled_plan.sha256 ||
-        !descriptor->program_nil || !descriptor->program_cons ||
-        has_entry == has_pipeline ||
+        ((has_query && (descriptor->program_nil || descriptor->program_cons)) ||
+         (!has_query && (!descriptor->program_nil ||
+                        !descriptor->program_cons))) ||
+        (unsigned)has_entry + (unsigned)has_query +
+                (unsigned)has_pipeline != 1u ||
         (has_entry &&
          (descriptor->entry_arity == UINT32_MAX ||
           descriptor->program_position >= descriptor->entry_arity ||
@@ -607,6 +645,7 @@ bool cetta_gslt_language_load_embedded_for_realization(
     language->program_nil = language_strdup(descriptor->program_nil);
     language->program_cons = language_strdup(descriptor->program_cons);
     language->entry_relation = language_strdup(descriptor->entry_relation);
+    language->query_relation = language_strdup(descriptor->query_relation);
     if (has_pipeline) {
         language->classify_relation = language_strdup(
             descriptor->request_pipeline->classify_relation);
@@ -625,6 +664,7 @@ bool cetta_gslt_language_load_embedded_for_realization(
     language->entry_arity = descriptor->entry_arity;
     language->program_position = descriptor->program_position;
     language->result_position = descriptor->result_position;
+    language->query_arity = descriptor->query_arity;
     CettaGsltHornProgram *admitted_source = NULL;
     bool loaded = cetta_gslt_horn_program_load_inputs(
         inputs, descriptor->semantic_source_count,
@@ -662,6 +702,7 @@ void cetta_gslt_language_free(CettaGsltLanguage *language) {
     free(language->program_nil);
     free(language->program_cons);
     free(language->entry_relation);
+    free(language->query_relation);
     free(language->classify_relation);
     free(language->produce_relation);
     free(language->observe_relation);
@@ -755,6 +796,36 @@ static bool language_run_query(
             : language_error(error, error_size,
                              "compiled realization was not loaded");
     return language_error(error, error_size, "unknown GSLT realization");
+}
+
+bool cetta_gslt_language_query_v1(
+    const CettaGsltLanguage *language,
+    CettaGsltRealization realization,
+    Arena *output_arena, Atom *query,
+    CettaGsltHornLimits limits,
+    CettaGsltHornResult *result,
+    char *error, size_t error_size) {
+    if (!language || !output_arena || !query || !result)
+        return language_error(error, error_size,
+                              "invalid GSLT query-entry request");
+    if (!language->query_relation || language->query_arity == 0u)
+        return language_error(error, error_size,
+                              "GSLT manifest does not expose a query entry");
+    if (limits.max_rule_attempts == 0u || limits.max_answers == 0u ||
+        limits.max_depth == 0u)
+        return language_error(error, error_size,
+                              "GSLT query limits must be nonzero");
+    if (query->kind != ATOM_EXPR ||
+        query->expr.len != language->query_arity + 1u ||
+        query->expr.elems[0]->kind != ATOM_SYMBOL ||
+        strcmp(atom_name_cstr(query->expr.elems[0]),
+               language->query_relation) != 0)
+        return language_error(error, error_size,
+                              "query does not match the admitted entry");
+    memset(result, 0, sizeof(*result));
+    return language_run_query(
+        language, realization, NULL, output_arena, query, limits,
+        result, error, error_size);
 }
 
 static uint64_t language_u64_add_sat(uint64_t left, uint64_t right) {
@@ -1097,6 +1168,10 @@ static bool language_execute_atoms_authorized(
         return language_error(error, error_size,
                               "GSLT language limits must be nonzero");
     memset(result, 0, sizeof(*result));
+    if (language->query_relation)
+        return language_error(
+            error, error_size,
+            "query-entry GSLT requires relation execution");
     if (language->classify_relation)
         return language_execute_request_pipeline(
             language, realization, providers, forms, form_count,
