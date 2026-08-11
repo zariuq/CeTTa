@@ -42,8 +42,10 @@ typedef struct {
     const CettaLpNativeUnicodeRange *ranges;
     uint32_t range_len;
     CettaLpNativeUnicodeRange singleton;
+    uint32_t slr_terminal_index;
+    uint32_t dfa_tag_index;
     bool eof;
-} PPGuardedLexExecV1FirstDomain;
+} PPGuardedLexExecV1TokenDomain;
 
 static int32_t ppguarded_lex_exec_v1_forest_root_find(
     const CettaLpNativeUtf8Forest *forest,
@@ -97,6 +99,274 @@ static bool ppguarded_lex_exec_v1_source_receipt_valid(
     uint32_t input_byte_len) {
     return (source_pass_count == 0u && decoded_byte_len == 0u) ||
         (source_pass_count == 1u && decoded_byte_len == input_byte_len);
+}
+
+void ppguarded_lex_cursor_v1_dispatch_index_init(
+    PPGuardedLexCursorV1DispatchIndex *index) {
+    if (index)
+        memset(index, 0, sizeof(*index));
+}
+
+void ppguarded_lex_cursor_v1_dispatch_index_free(
+    PPGuardedLexCursorV1DispatchIndex *index) {
+    if (!index)
+        return;
+    free(index->span_source_indices);
+    free(index->span_offsets);
+    free(index->scalar_source_indices);
+    free(index->scalar_offsets);
+    memset(index, 0, sizeof(*index));
+}
+
+static bool ppguarded_lex_cursor_v1_dispatch_program_shape_valid(
+    const PPGuardedLexCursorV1Program *program) {
+    size_t action_len;
+    uint32_t source_index;
+    uint32_t columns;
+
+    if (!program || program->final_slr.summary.state_len == 0u ||
+        program->final_slr.summary.state_len == UINT32_MAX ||
+        program->final_slr.terminal_len == UINT32_MAX ||
+        program->terminal_len > program->final_slr.terminal_len ||
+        !program->final_slr.actions ||
+        (program->terminal_len > 0u && !program->terminals)) {
+        return false;
+    }
+    columns = program->final_slr.terminal_len + 1u;
+    if ((size_t)program->final_slr.summary.state_len >
+            SIZE_MAX / (size_t)columns) {
+        return false;
+    }
+    action_len =
+        (size_t)program->final_slr.summary.state_len * (size_t)columns;
+    if (action_len > SIZE_MAX / sizeof(*program->final_slr.actions))
+        return false;
+    for (source_index = 0u; source_index < program->terminal_len;
+         source_index++) {
+        const PPGuardedLexCursorV1Terminal *terminal =
+            &program->terminals[source_index];
+
+        if (terminal->slr_terminal_index >=
+                program->final_slr.terminal_len ||
+            terminal->kind >
+                PPGUARDED_LEX_CURSOR_TERMINAL_GUARDED_SPAN) {
+            return false;
+        }
+    }
+    return true;
+}
+
+bool ppguarded_lex_cursor_v1_dispatch_index_validate(
+    const PPGuardedLexCursorV1Program *program,
+    const PPGuardedLexCursorV1DispatchIndex *index,
+    char *error_buf,
+    size_t error_buf_size) {
+    uint32_t columns;
+    uint32_t state;
+
+    if (error_buf && error_buf_size > 0u)
+        error_buf[0] = '\0';
+    if (!ppguarded_lex_cursor_v1_dispatch_program_shape_valid(program) ||
+        !index ||
+        index->state_len != program->final_slr.summary.state_len ||
+        !index->scalar_offsets || !index->span_offsets ||
+        (index->scalar_candidate_len > 0u &&
+         !index->scalar_source_indices) ||
+        (index->span_candidate_len > 0u &&
+         !index->span_source_indices) ||
+        index->scalar_offsets[0] != 0u || index->span_offsets[0] != 0u ||
+        index->scalar_offsets[index->state_len] !=
+            index->scalar_candidate_len ||
+        index->span_offsets[index->state_len] !=
+            index->span_candidate_len) {
+        ppguarded_lex_exec_v1_set_error(
+            error_buf, error_buf_size,
+            "bad guarded lexical cursor dispatch index");
+        return false;
+    }
+    columns = program->final_slr.terminal_len + 1u;
+    for (state = 0u; state < index->state_len; state++) {
+        uint32_t scalar = index->scalar_offsets[state];
+        uint32_t scalar_end = index->scalar_offsets[state + 1u];
+        uint32_t span = index->span_offsets[state];
+        uint32_t span_end = index->span_offsets[state + 1u];
+        uint32_t source_index;
+
+        if (scalar > scalar_end ||
+            scalar_end > index->scalar_candidate_len ||
+            span > span_end || span_end > index->span_candidate_len) {
+            ppguarded_lex_exec_v1_set_error(
+                error_buf, error_buf_size,
+                "guarded lexical cursor dispatch offsets are malformed");
+            return false;
+        }
+        for (source_index = 0u; source_index < program->terminal_len;
+             source_index++) {
+            const PPGuardedLexCursorV1Terminal *terminal =
+                &program->terminals[source_index];
+            const CettaLpNativeSlrProgramAction *action =
+                &program->final_slr.actions[
+                    (size_t)state * columns +
+                    terminal->slr_terminal_index];
+            uint32_t *candidate;
+            uint32_t candidate_end;
+            const uint32_t *source_indices;
+
+            if (action->kind == CETTA_LP_NATIVE_SLR_PROGRAM_ERROR)
+                continue;
+            if (terminal->kind ==
+                    PPGUARDED_LEX_CURSOR_TERMINAL_SCALAR) {
+                candidate = &scalar;
+                candidate_end = scalar_end;
+                source_indices = index->scalar_source_indices;
+            } else {
+                candidate = &span;
+                candidate_end = span_end;
+                source_indices = index->span_source_indices;
+            }
+            if (*candidate >= candidate_end ||
+                source_indices[*candidate] != source_index) {
+                ppguarded_lex_exec_v1_set_error(
+                    error_buf, error_buf_size,
+                    "guarded lexical cursor dispatch index disagrees "
+                    "with its SLR table");
+                return false;
+            }
+            (*candidate)++;
+        }
+        if (scalar != scalar_end || span != span_end) {
+            ppguarded_lex_exec_v1_set_error(
+                error_buf, error_buf_size,
+                "guarded lexical cursor dispatch index has trailing "
+                "candidates");
+            return false;
+        }
+    }
+    return true;
+}
+
+bool ppguarded_lex_cursor_v1_dispatch_index_build(
+    const PPGuardedLexCursorV1Program *program,
+    PPGuardedLexCursorV1DispatchIndex *out,
+    char *error_buf,
+    size_t error_buf_size) {
+    PPGuardedLexCursorV1DispatchIndex result;
+    uint64_t scalar_candidate_len = 0u;
+    uint64_t span_candidate_len = 0u;
+    uint32_t scalar_write = 0u;
+    uint32_t span_write = 0u;
+    uint32_t columns;
+    uint32_t state;
+
+    ppguarded_lex_cursor_v1_dispatch_index_init(&result);
+    if (error_buf && error_buf_size > 0u)
+        error_buf[0] = '\0';
+    if (!out ||
+        !ppguarded_lex_cursor_v1_dispatch_program_shape_valid(program)) {
+        ppguarded_lex_exec_v1_set_error(
+            error_buf, error_buf_size,
+            "bad guarded lexical cursor dispatch-index build input");
+        return false;
+    }
+    columns = program->final_slr.terminal_len + 1u;
+    for (state = 0u; state < program->final_slr.summary.state_len;
+         state++) {
+        uint32_t source_index;
+
+        for (source_index = 0u; source_index < program->terminal_len;
+             source_index++) {
+            const PPGuardedLexCursorV1Terminal *terminal =
+                &program->terminals[source_index];
+            const CettaLpNativeSlrProgramAction *action =
+                &program->final_slr.actions[
+                    (size_t)state * columns +
+                    terminal->slr_terminal_index];
+
+            if (action->kind == CETTA_LP_NATIVE_SLR_PROGRAM_ERROR)
+                continue;
+            if (terminal->kind ==
+                    PPGUARDED_LEX_CURSOR_TERMINAL_SCALAR) {
+                scalar_candidate_len++;
+            } else {
+                span_candidate_len++;
+            }
+        }
+    }
+    if (scalar_candidate_len > UINT32_MAX ||
+        span_candidate_len > UINT32_MAX ||
+        (size_t)program->final_slr.summary.state_len + 1u >
+            SIZE_MAX / sizeof(*result.scalar_offsets) ||
+        (size_t)scalar_candidate_len >
+            SIZE_MAX / sizeof(*result.scalar_source_indices) ||
+        (size_t)span_candidate_len >
+            SIZE_MAX / sizeof(*result.span_source_indices)) {
+        ppguarded_lex_exec_v1_set_error(
+            error_buf, error_buf_size,
+            "guarded lexical cursor dispatch-index size overflow");
+        return false;
+    }
+    result.state_len = program->final_slr.summary.state_len;
+    result.scalar_offsets = calloc(
+        (size_t)result.state_len + 1u,
+        sizeof(*result.scalar_offsets));
+    result.span_offsets = calloc(
+        (size_t)result.state_len + 1u,
+        sizeof(*result.span_offsets));
+    result.scalar_source_indices = calloc(
+        scalar_candidate_len ? (size_t)scalar_candidate_len : 1u,
+        sizeof(*result.scalar_source_indices));
+    result.span_source_indices = calloc(
+        span_candidate_len ? (size_t)span_candidate_len : 1u,
+        sizeof(*result.span_source_indices));
+    if (!result.scalar_offsets || !result.span_offsets ||
+        !result.scalar_source_indices || !result.span_source_indices) {
+        ppguarded_lex_exec_v1_set_error(
+            error_buf, error_buf_size,
+            "failed to allocate guarded lexical cursor dispatch index");
+        goto fail;
+    }
+    for (state = 0u; state < result.state_len; state++) {
+        uint32_t source_index;
+
+        result.scalar_offsets[state] = scalar_write;
+        result.span_offsets[state] = span_write;
+        for (source_index = 0u; source_index < program->terminal_len;
+             source_index++) {
+            const PPGuardedLexCursorV1Terminal *terminal =
+                &program->terminals[source_index];
+            const CettaLpNativeSlrProgramAction *action =
+                &program->final_slr.actions[
+                    (size_t)state * columns +
+                    terminal->slr_terminal_index];
+
+            if (action->kind == CETTA_LP_NATIVE_SLR_PROGRAM_ERROR)
+                continue;
+            if (terminal->kind ==
+                    PPGUARDED_LEX_CURSOR_TERMINAL_SCALAR) {
+                result.scalar_source_indices[scalar_write++] =
+                    source_index;
+            } else {
+                result.span_source_indices[span_write++] = source_index;
+            }
+        }
+    }
+    result.scalar_offsets[result.state_len] = scalar_write;
+    result.span_offsets[result.state_len] = span_write;
+    result.scalar_candidate_len = scalar_write;
+    result.span_candidate_len = span_write;
+    if (scalar_write != (uint32_t)scalar_candidate_len ||
+        span_write != (uint32_t)span_candidate_len ||
+        !ppguarded_lex_cursor_v1_dispatch_index_validate(
+            program, &result, error_buf, error_buf_size)) {
+        goto fail;
+    }
+    ppguarded_lex_cursor_v1_dispatch_index_free(out);
+    *out = result;
+    return true;
+
+fail:
+    ppguarded_lex_cursor_v1_dispatch_index_free(&result);
+    return false;
 }
 
 static void ppguarded_lex_exec_v1_sha_text(
@@ -197,7 +467,7 @@ static void ppguarded_lex_exec_v1_cursor_certificate_digest(
     ppguarded_lex_exec_v1_sha_u32(
         &sha, certificate->boundary_crossing_len);
     ppguarded_lex_exec_v1_sha_u32(
-        &sha, certificate->first_domain_overlap_len);
+        &sha, certificate->token_prefix_overlap_len);
     ppguarded_lex_exec_v1_sha_u32(&sha, certificate->failure_mask);
     ppguarded_lex_exec_v1_sha_u32(
         &sha, certificate->eligible ? 1u : 0u);
@@ -466,14 +736,32 @@ done:
     return ok;
 }
 
-static bool ppguarded_lex_exec_v1_first_domain_overlap(
-    const PPGuardedLexExecV1FirstDomain *left,
-    const PPGuardedLexExecV1FirstDomain *right) {
+static bool ppguarded_lex_exec_v1_token_domains_overlap(
+    const PPGuardedLexExecV1Plan *plan,
+    const PPGuardedLexExecV1TokenDomain *left,
+    const PPGuardedLexExecV1TokenDomain *right,
+    bool *out,
+    char *error_buf,
+    size_t error_buf_size) {
     uint32_t left_index;
     uint32_t right_index;
 
-    if (left->eof && right->eof)
+    if (!plan || !left || !right || !out) {
+        ppguarded_lex_exec_v1_set_error(
+            error_buf, error_buf_size,
+            "bad cursor token-domain overlap arguments");
+        return false;
+    }
+    if (left->dfa_tag_index != UINT32_MAX &&
+        right->dfa_tag_index != UINT32_MAX) {
+        return rsdfa_v1_plan_tags_prefix_overlap(
+            &plan->dfa, left->dfa_tag_index, right->dfa_tag_index,
+            out, error_buf, error_buf_size);
+    }
+    if (left->eof && right->eof) {
+        *out = true;
         return true;
+    }
     for (left_index = 0u; left_index < left->range_len; left_index++) {
         for (right_index = 0u;
              right_index < right->range_len; right_index++) {
@@ -481,11 +769,13 @@ static bool ppguarded_lex_exec_v1_first_domain_overlap(
                     right->ranges[right_index].high &&
                 right->ranges[right_index].low <=
                     left->ranges[left_index].high) {
+                *out = true;
                 return true;
             }
         }
     }
-    return false;
+    *out = false;
+    return true;
 }
 
 static bool ppguarded_lex_exec_v1_cursor_certificate_build(
@@ -497,14 +787,16 @@ static bool ppguarded_lex_exec_v1_cursor_certificate_build(
     PPGuardedLexCursorV1Certificate result = {0};
     PPGuardedLexExecV1U32Vec nonterminals = {0};
     PPGuardedLexExecV1U32Vec terminals = {0};
+    CettaLpNativeSlrProgram slr_program;
     bool *reachable_productions = NULL;
     RSDFAV1TagLanguage *tag_languages = NULL;
     bool *tag_analyzed = NULL;
-    PPGuardedLexExecV1FirstDomain *domains = NULL;
+    PPGuardedLexExecV1TokenDomain *domains = NULL;
     uint32_t domain_len = 0u;
     uint32_t index;
     bool ok = false;
 
+    cetta_lp_native_slr_program_init(&slr_program);
     if (!grammar || !plan || !out || !plan->dfa.impl ||
         !plan->final_slr.implementation ||
         plan->combined_tag_len != plan->dfa.tag_len ||
@@ -516,6 +808,9 @@ static bool ppguarded_lex_exec_v1_cursor_certificate_build(
     }
     if (!cetta_lp_native_slr_prepared_summary(
             &plan->final_slr, &result.slr,
+            error_buf, error_buf_size) ||
+        !cetta_lp_native_slr_prepared_export_program(
+            &plan->final_slr, &slr_program,
             error_buf, error_buf_size) ||
         !ppguarded_lex_exec_v1_reachability(
             grammar, plan->start_state_id, &nonterminals, &terminals,
@@ -549,9 +844,31 @@ static bool ppguarded_lex_exec_v1_cursor_certificate_build(
         uint32_t source_len = 0u;
         int32_t scalar_index = -1;
         int32_t tag_index = -1;
+        int32_t slr_terminal_index = -1;
         uint32_t source_index;
-        PPGuardedLexExecV1FirstDomain *domain = &domains[domain_len];
+        PPGuardedLexExecV1TokenDomain *domain = &domains[domain_len];
 
+        domain->dfa_tag_index = UINT32_MAX;
+
+        for (source_index = 0u;
+             source_index < slr_program.terminal_len; source_index++) {
+            if (slr_program.terminals[source_index] != terminal_id)
+                continue;
+            if (slr_terminal_index >= 0) {
+                ppguarded_lex_exec_v1_set_error(
+                    error_buf, error_buf_size,
+                    "cursor certificate found a repeated SLR terminal");
+                goto done;
+            }
+            slr_terminal_index = (int32_t)source_index;
+        }
+        if (slr_terminal_index < 0) {
+            ppguarded_lex_exec_v1_set_error(
+                error_buf, error_buf_size,
+                "cursor certificate lost an active SLR terminal");
+            goto done;
+        }
+        domain->slr_terminal_index = (uint32_t)slr_terminal_index;
         for (source_index = 0u;
              source_index < plan->scalar_terminals.len; source_index++) {
             if (plan->scalar_terminals.terminals[
@@ -631,6 +948,7 @@ static bool ppguarded_lex_exec_v1_cursor_certificate_build(
         }
         domain->ranges = tag_languages[tag_index].first_ranges;
         domain->range_len = tag_languages[tag_index].first_range_len;
+        domain->dfa_tag_index = (uint32_t)tag_index;
         if ((uint32_t)tag_index < plan->lexical_tag_len) {
             const RSDFAV1TagLanguage *language =
                 &tag_languages[tag_index];
@@ -704,10 +1022,39 @@ static bool ppguarded_lex_exec_v1_cursor_certificate_build(
     for (index = 0u; index < domain_len; index++) {
         uint32_t other;
         for (other = index + 1u; other < domain_len; other++) {
-            if (ppguarded_lex_exec_v1_first_domain_overlap(
-                    &domains[index], &domains[other])) {
-                result.first_domain_overlap_len++;
+            uint32_t state;
+            bool domains_overlap = false;
+            bool coactive = false;
+            if (!ppguarded_lex_exec_v1_token_domains_overlap(
+                    plan, &domains[index], &domains[other],
+                    &domains_overlap, error_buf, error_buf_size)) {
+                goto done;
             }
+            if (!domains_overlap) {
+                continue;
+            }
+            for (state = 0u;
+                 state < slr_program.summary.state_len; state++) {
+                uint32_t columns = slr_program.terminal_len + 1u;
+                const CettaLpNativeSlrProgramAction *left =
+                    &slr_program.actions[
+                        state * columns +
+                        domains[index].slr_terminal_index];
+                const CettaLpNativeSlrProgramAction *right =
+                    &slr_program.actions[
+                        state * columns +
+                        domains[other].slr_terminal_index];
+                if (left->kind != CETTA_LP_NATIVE_SLR_PROGRAM_ERROR &&
+                    right->kind != CETTA_LP_NATIVE_SLR_PROGRAM_ERROR &&
+                    (left->kind != CETTA_LP_NATIVE_SLR_PROGRAM_REDUCE ||
+                     right->kind != CETTA_LP_NATIVE_SLR_PROGRAM_REDUCE ||
+                     left->value != right->value)) {
+                    coactive = true;
+                    break;
+                }
+            }
+            if (coactive)
+                result.token_prefix_overlap_len++;
         }
     }
     if (result.slr.conflict_len > 0u)
@@ -734,9 +1081,9 @@ static bool ppguarded_lex_exec_v1_cursor_certificate_build(
         result.failure_mask |= PPGUARDED_LEX_CURSOR_V1_UNSUPPORTED_GUARD;
     if (result.boundary_crossing_len > 0u)
         result.failure_mask |= PPGUARDED_LEX_CURSOR_V1_BOUNDARY_CROSSING;
-    if (result.first_domain_overlap_len > 0u) {
+    if (result.token_prefix_overlap_len > 0u) {
         result.failure_mask |=
-            PPGUARDED_LEX_CURSOR_V1_FIRST_DOMAIN_OVERLAP;
+            PPGUARDED_LEX_CURSOR_V1_TOKEN_PREFIX_OVERLAP;
     }
     result.eligible = result.failure_mask == 0u;
     ppguarded_lex_exec_v1_cursor_certificate_digest(
@@ -753,6 +1100,7 @@ done:
     free(tag_analyzed);
     free(tag_languages);
     free(reachable_productions);
+    cetta_lp_native_slr_program_free(&slr_program);
     free(terminals.data);
     free(nonterminals.data);
     return ok;
@@ -1004,7 +1352,8 @@ static bool ppguarded_lex_exec_v1_plan_matches(
     uint32_t index;
 
     if (!pack || !start_state || !lexical_plan || !guard_plan || !guarded_plan ||
-        !exec_plan || !exec_plan->dfa.impl || !exec_plan->terminals ||
+        !exec_plan || !exec_plan->dfa.impl ||
+        (exec_plan->terminal_len > 0u && !exec_plan->terminals) ||
         !exec_plan->final_slr.implementation ||
         !exec_plan->final_gll.implementation ||
         !exec_plan->final_glr.implementation ||
@@ -1015,31 +1364,41 @@ static bool ppguarded_lex_exec_v1_plan_matches(
         exec_plan->ordinary_witness_prepared_start_len == 0u ||
         exec_plan->ordinary_witness_prepared_start_len >
             lexical_plan->entry_len ||
-        exec_plan->guard_witness_parser_family_build_count != 1u ||
-        exec_plan->guard_witness_prepared_start_len == 0u ||
-        exec_plan->guard_witness_prepared_start_len >
-            guard_plan->entry_len ||
-        exec_plan->guarded_witness_parser_family_build_count != 1u ||
-        exec_plan->guarded_witness_prepared_start_len == 0u ||
-        exec_plan->guarded_witness_prepared_start_len >
-            guarded_plan->entry_len ||
+        (guard_plan->entry_len > 0u
+         ? (exec_plan->guard_witness_parser_family_build_count != 1u ||
+            exec_plan->guard_witness_prepared_start_len == 0u ||
+            exec_plan->guard_witness_prepared_start_len >
+                guard_plan->entry_len)
+         : (exec_plan->guard_witness_parser_family_build_count != 0u ||
+            exec_plan->guard_witness_prepared_start_len != 0u)) ||
+        (guarded_plan->entry_len > 0u
+         ? (exec_plan->guarded_witness_parser_family_build_count != 1u ||
+            exec_plan->guarded_witness_prepared_start_len == 0u ||
+            exec_plan->guarded_witness_prepared_start_len >
+                guarded_plan->entry_len)
+         : (exec_plan->guarded_witness_parser_family_build_count != 0u ||
+            exec_plan->guarded_witness_prepared_start_len != 0u)) ||
         ppnative_v1_prepared_start_family_build_count(
             &exec_plan->ordinary_witness_parsers) != 1u ||
         ppnative_v1_prepared_start_family_len(
             &exec_plan->ordinary_witness_parsers) !=
             exec_plan->ordinary_witness_prepared_start_len ||
         ppnative_v1_prepared_start_family_build_count(
-            &exec_plan->guard_witness_parsers) != 1u ||
+            &exec_plan->guard_witness_parsers) !=
+            exec_plan->guard_witness_parser_family_build_count ||
         ppnative_v1_prepared_start_family_len(
             &exec_plan->guard_witness_parsers) !=
             exec_plan->guard_witness_prepared_start_len ||
         ppnative_v1_prepared_start_family_build_count(
-            &exec_plan->guarded_witness_parsers) != 1u ||
+            &exec_plan->guarded_witness_parsers) !=
+            exec_plan->guarded_witness_parser_family_build_count ||
         ppnative_v1_prepared_start_family_len(
             &exec_plan->guarded_witness_parsers) !=
             exec_plan->guarded_witness_prepared_start_len ||
         !exec_plan->projected_tag_terminal_ids ||
-        !exec_plan->guard_local_for_guarded || !exec_plan->guard_tags ||
+        (exec_plan->guarded_tag_len > 0u &&
+         !exec_plan->guard_local_for_guarded) ||
+        (exec_plan->guard_tag_len > 0u && !exec_plan->guard_tags) ||
         exec_plan->lexical_tag_len != lexical_plan->entry_len ||
         exec_plan->guarded_tag_len != guarded_plan->entry_len ||
         exec_plan->guard_tag_len != guard_plan->entry_len ||
@@ -1302,6 +1661,8 @@ static void ppguarded_lex_cursor_v1_program_digest(
         ppguarded_lex_exec_v1_sha_u32(&sha, terminal->guard_range_len);
         ppguarded_lex_exec_v1_sha_u32(
             &sha, terminal->guard_accepts_eof ? 1u : 0u);
+        ppguarded_lex_exec_v1_sha_u32(
+            &sha, terminal->semantic_value_required ? 1u : 0u);
         ppguarded_lex_exec_v1_sha_u32(
             &sha, terminal->semantic_start_state_id);
         ppguarded_lex_exec_v1_sha_u32(
@@ -1764,6 +2125,254 @@ static bool ppguarded_lex_cursor_v1_value_program_validate(
     return strcmp(digest, program->program_digest) == 0;
 }
 
+static int32_t ppguarded_lex_cursor_v1_terminal_source_index(
+    const PPGuardedLexCursorV1Program *program,
+    uint32_t terminal) {
+    uint32_t index;
+
+    if (!program)
+        return -1;
+    for (index = 0u; index < program->terminal_len; index++) {
+        if (program->terminals[index].terminal_id == terminal)
+            return (int32_t)index;
+    }
+    return -1;
+}
+
+/*
+ * Compute the least semantic dependency closure from the final start value.
+ * Action bytecode is a pure term algebra: PUSH_SLOT is its only operation
+ * that observes a child value.  Consequently a terminal outside this closure
+ * may be replaced by any well-formed neutral value without changing the
+ * accepted start value.  Recognition and every reduction occurrence remain
+ * untouched.
+ */
+static bool ppguarded_lex_cursor_v1_semantic_requirements(
+    const PPGuardedLexCursorV1Program *program,
+    bool *terminal_required,
+    char *error_buf,
+    size_t error_buf_size) {
+    const CettaLpNativeSlrProgram *slr;
+    bool *nonterminal_required = NULL;
+    int32_t start_index;
+    bool changed = true;
+    uint32_t production_index;
+    bool ok = false;
+
+    if (!program || !program->actions_bound ||
+        (program->terminal_len > 0u && !terminal_required)) {
+        ppguarded_lex_exec_v1_set_error(
+            error_buf, error_buf_size,
+            "bad cursor semantic-dependency inputs");
+        return false;
+    }
+    slr = &program->final_slr;
+    if (slr->nonterminal_len == 0u ||
+        (size_t)slr->nonterminal_len >
+            SIZE_MAX / sizeof(*nonterminal_required)) {
+        ppguarded_lex_exec_v1_set_error(
+            error_buf, error_buf_size,
+            "cursor semantic dependency has no nonterminal domain");
+        return false;
+    }
+    memset(
+        terminal_required, 0,
+        sizeof(*terminal_required) * (size_t)program->terminal_len);
+    nonterminal_required = calloc(
+        slr->nonterminal_len, sizeof(*nonterminal_required));
+    if (!nonterminal_required)
+        return false;
+    start_index = ppguarded_lex_cursor_v1_nonterminal_find(
+        slr, slr->start_nonterminal);
+    if (start_index < 0) {
+        ppguarded_lex_exec_v1_set_error(
+            error_buf, error_buf_size,
+            "cursor semantic dependency cannot find the start nonterminal");
+        goto done;
+    }
+    nonterminal_required[start_index] = true;
+    while (changed) {
+        changed = false;
+        for (production_index = 0u;
+             production_index < slr->production_len;
+             production_index++) {
+            const CettaLpNativeSlrProgramProduction *production =
+                &slr->productions[production_index];
+            const PPActionBytecodeV1Production *action;
+            uint32_t instruction_index;
+            uint32_t lhs_index;
+
+            if (!production->authored)
+                continue;
+            if (!program->final_production_lhs_indices ||
+                production->label >= program->actions.production_len) {
+                goto malformed;
+            }
+            lhs_index =
+                program->final_production_lhs_indices[production_index];
+            if (lhs_index >= slr->nonterminal_len ||
+                !nonterminal_required[lhs_index]) {
+                continue;
+            }
+            action = &program->actions.productions[production->label];
+            if (action->arity != production->rhs_len ||
+                action->instruction_begin >
+                    program->actions.instruction_len ||
+                action->instruction_len >
+                    program->actions.instruction_len -
+                        action->instruction_begin ||
+                production->rhs_begin > slr->rhs_len ||
+                production->rhs_len >
+                    slr->rhs_len - production->rhs_begin) {
+                goto malformed;
+            }
+            for (instruction_index = 0u;
+                 instruction_index < action->instruction_len;
+                 instruction_index++) {
+                const PPActionBytecodeV1Instruction *instruction =
+                    &program->actions.instructions[
+                        action->instruction_begin + instruction_index];
+                const CettaLpNativeSymbol *symbol;
+
+                if (instruction->kind !=
+                        PP_ACTION_BYTECODE_V1_PUSH_SLOT) {
+                    continue;
+                }
+                if (instruction->operand >= production->rhs_len)
+                    goto malformed;
+                symbol = &slr->rhs[
+                    production->rhs_begin + instruction->operand];
+                if (symbol->kind == CETTA_LP_NATIVE_SYMBOL_TM) {
+                    int32_t source_index =
+                        ppguarded_lex_cursor_v1_terminal_source_index(
+                            program, symbol->name);
+                    if (source_index < 0)
+                        goto malformed;
+                    terminal_required[source_index] = true;
+                } else {
+                    int32_t nonterminal_index =
+                        ppguarded_lex_cursor_v1_nonterminal_find(
+                            slr, symbol->name);
+                    if (nonterminal_index < 0)
+                        goto malformed;
+                    if (!nonterminal_required[nonterminal_index]) {
+                        nonterminal_required[nonterminal_index] = true;
+                        changed = true;
+                    }
+                }
+            }
+        }
+    }
+    ok = true;
+    goto done;
+
+malformed:
+    ppguarded_lex_exec_v1_set_error(
+        error_buf, error_buf_size,
+        "cursor semantic dependency escaped its bound grammar/actions");
+
+done:
+    free(nonterminal_required);
+    return ok;
+}
+
+static bool ppguarded_lex_cursor_v1_semantic_programs_complete(
+    const PPGuardedLexCursorV1Program *program) {
+    uint32_t index;
+
+    if (!program)
+        return false;
+    for (index = 0u; index < program->terminal_len; index++) {
+        const PPGuardedLexCursorV1Terminal *terminal =
+            &program->terminals[index];
+        if (terminal->semantic_value_required &&
+            terminal->kind != PPGUARDED_LEX_CURSOR_TERMINAL_SCALAR &&
+            terminal->semantic_program_index == UINT32_MAX) {
+            return false;
+        }
+    }
+    return true;
+}
+
+static bool ppguarded_lex_cursor_v1_semantic_requirements_apply(
+    PPGuardedLexCursorV1Program *program,
+    char *error_buf,
+    size_t error_buf_size) {
+    bool *required = NULL;
+    uint32_t index;
+
+    if (!program ||
+        (size_t)program->terminal_len > SIZE_MAX / sizeof(*required)) {
+        return false;
+    }
+    required = calloc(
+        program->terminal_len ? program->terminal_len : 1u,
+        sizeof(*required));
+    if (!required ||
+        !ppguarded_lex_cursor_v1_semantic_requirements(
+            program, required, error_buf, error_buf_size)) {
+        free(required);
+        return false;
+    }
+    for (index = 0u; index < program->terminal_len; index++)
+        program->terminals[index].semantic_value_required = required[index];
+    program->value_programs_complete =
+        ppguarded_lex_cursor_v1_semantic_programs_complete(program);
+    free(required);
+    return true;
+}
+
+static bool ppguarded_lex_cursor_v1_semantic_requirements_validate(
+    const PPGuardedLexCursorV1Program *program,
+    char *error_buf,
+    size_t error_buf_size) {
+    bool *required = NULL;
+    uint32_t index;
+    bool ok = false;
+
+    if (!program ||
+        (size_t)program->terminal_len > SIZE_MAX / sizeof(*required)) {
+        return false;
+    }
+    if (!program->actions_bound) {
+        for (index = 0u; index < program->terminal_len; index++) {
+            if (!program->terminals[index].semantic_value_required)
+                return false;
+        }
+        return program->value_programs_complete ==
+            ppguarded_lex_cursor_v1_semantic_programs_complete(program);
+    }
+    required = calloc(
+        program->terminal_len ? program->terminal_len : 1u,
+        sizeof(*required));
+    if (!required ||
+        !ppguarded_lex_cursor_v1_semantic_requirements(
+            program, required, error_buf, error_buf_size)) {
+        goto done;
+    }
+    for (index = 0u; index < program->terminal_len; index++) {
+        if (program->terminals[index].semantic_value_required !=
+                required[index]) {
+            ppguarded_lex_exec_v1_set_error(
+                error_buf, error_buf_size,
+                "cursor semantic dependency flags do not reproduce");
+            goto done;
+        }
+    }
+    if (program->value_programs_complete !=
+            ppguarded_lex_cursor_v1_semantic_programs_complete(program)) {
+        ppguarded_lex_exec_v1_set_error(
+            error_buf, error_buf_size,
+            "cursor semantic dependency coverage does not reproduce");
+        goto done;
+    }
+    ok = true;
+
+done:
+    free(required);
+    return ok;
+}
+
 bool ppguarded_lex_cursor_v1_program_validate(
     const PPGuardedLexCursorV1Program *program,
     char *error_buf,
@@ -1799,9 +2408,6 @@ bool ppguarded_lex_cursor_v1_program_validate(
         program->terminal_len > program->final_slr.terminal_len ||
         (program->terminal_len > 0u && !program->terminals) ||
         (program->value_program_len > 0u && !program->value_programs) ||
-        (program->value_programs_complete
-             ? program->value_program_conflict_len != 0u
-             : program->value_program_conflict_len == 0u) ||
         (program->range_len > 0u && !program->ranges)) {
         if (error_buf && error_buf_size > 0u && error_buf[0] == '\0') {
             ppguarded_lex_exec_v1_set_error(
@@ -1842,6 +2448,15 @@ bool ppguarded_lex_cursor_v1_program_validate(
         ppguarded_lex_exec_v1_set_error(
             error_buf, error_buf_size,
             "bound cursor action inventory is malformed");
+        return false;
+    }
+    if (!ppguarded_lex_cursor_v1_semantic_requirements_validate(
+            program, error_buf, error_buf_size)) {
+        if (error_buf && error_buf_size > 0u && error_buf[0] == '\0') {
+            ppguarded_lex_exec_v1_set_error(
+                error_buf, error_buf_size,
+                "cursor semantic dependencies are malformed");
+        }
         return false;
     }
     for (index = 0u; index < program->terminal_len; index++) {
@@ -1917,6 +2532,7 @@ bool ppguarded_lex_cursor_v1_program_validate(
                       terminal->semantic_program_index].start_state_id !=
                       terminal->semantic_start_state_id)) ||
                 (program->value_programs_complete &&
+                 terminal->semantic_value_required &&
                  terminal->semantic_program_index == UINT32_MAX)) {
                 goto malformed_terminal;
             }
@@ -1941,6 +2557,7 @@ bool ppguarded_lex_cursor_v1_program_validate(
                       terminal->semantic_program_index].start_state_id !=
                       terminal->semantic_start_state_id)) ||
                 (program->value_programs_complete &&
+                 terminal->semantic_value_required &&
                  terminal->semantic_program_index == UINT32_MAX) ||
                 (!terminal->guard_accepts_eof &&
                  terminal->guard_range_len == 0u) ||
@@ -2004,7 +2621,21 @@ bool ppguarded_lex_cursor_v1_program_validate(
 malformed_terminal:
     ppguarded_lex_exec_v1_set_error(
         error_buf, error_buf_size,
-        "cursor program terminal source is malformed");
+        "cursor program terminal source %u is malformed "
+        "(kind=%u required=%u semantic-start=%u semantic-program=%u)",
+        index,
+        index < program->terminal_len
+            ? (uint32_t)program->terminals[index].kind
+            : UINT32_MAX,
+        index < program->terminal_len &&
+            program->terminals[index].semantic_value_required
+            ? 1u : 0u,
+        index < program->terminal_len
+            ? program->terminals[index].semantic_start_state_id
+            : UINT32_MAX,
+        index < program->terminal_len
+            ? program->terminals[index].semantic_program_index
+            : UINT32_MAX);
     return false;
 }
 
@@ -2143,6 +2774,58 @@ done:
     return ok;
 }
 
+static bool ppguarded_lex_cursor_v1_action_program_validate_source(
+    const PPActionBytecodeV1Program *actions,
+    const PPABIV1Pack *pack,
+    const PPLexV1Plan *lexical_plan,
+    const PPGuardPlanV1 *guard_plan,
+    char *error_buf,
+    size_t error_buf_size) {
+    if (!guard_plan) {
+        ppguarded_lex_exec_v1_set_error(
+            error_buf, error_buf_size,
+            "cursor action program has no guard-plan source");
+        return false;
+    }
+    if (guard_plan->production_len == 0u) {
+        return pp_action_bytecode_v1_program_validate(
+            actions, pack, error_buf, error_buf_size);
+    }
+    return pp_action_bytecode_v1_program_validate_guard_extended(
+        actions, pack, lexical_plan, guard_plan,
+        error_buf, error_buf_size);
+}
+
+static bool ppguarded_lex_cursor_v1_action_program_build_source(
+    const PPABIV1Pack *pack,
+    const PPLexV1Plan *lexical_plan,
+    const PPGuardPlanV1 *guard_plan,
+    Atom *const *compiler_answers,
+    size_t compiler_answer_len,
+    const char *compiler_digest,
+    const char *answer_set_digest,
+    PPActionBytecodeV1Program *out,
+    char *error_buf,
+    size_t error_buf_size) {
+    if (!guard_plan ||
+        !ppguard_plan_v1_validate(
+            pack, lexical_plan, guard_plan,
+            error_buf, error_buf_size)) {
+        return false;
+    }
+    if (guard_plan->production_len == 0u) {
+        return pp_action_bytecode_v1_program_build(
+            pack, compiler_answers, compiler_answer_len,
+            compiler_digest, answer_set_digest,
+            out, error_buf, error_buf_size);
+    }
+    return pp_action_bytecode_v1_program_build_guard_extended(
+        pack, lexical_plan, guard_plan,
+        compiler_answers, compiler_answer_len,
+        compiler_digest, answer_set_digest,
+        out, error_buf, error_buf_size);
+}
+
 bool ppguarded_lex_cursor_v1_program_validate_bound(
     const PPGuardedLexCursorV1Program *program,
     const PPABIV1Pack *pack,
@@ -2173,7 +2856,7 @@ bool ppguarded_lex_cursor_v1_program_validate_bound(
     return ppguard_plan_v1_validate(
                pack, lexical_plan, guard_plan,
                error_buf, error_buf_size) &&
-        pp_action_bytecode_v1_program_validate_guard_extended(
+        ppguarded_lex_cursor_v1_action_program_validate_source(
             &program->actions, pack, lexical_plan, guard_plan,
             error_buf, error_buf_size) &&
         ppguarded_lex_cursor_v1_actions_match_slr(
@@ -2196,13 +2879,16 @@ bool ppguarded_lex_cursor_v1_program_bind_actions(
     char *error_buf,
     size_t error_buf_size) {
     PPActionBytecodeV1Program actions;
+    bool *unbound_required = NULL;
+    bool unbound_complete;
     char unbound_digest[65];
+    uint32_t index;
 
     pp_action_bytecode_v1_program_init(&actions);
     if (!program || program->actions_bound ||
         !ppguarded_lex_cursor_v1_program_validate(
             program, error_buf, error_buf_size) ||
-        !pp_action_bytecode_v1_program_build_guard_extended(
+        !ppguarded_lex_cursor_v1_action_program_build_source(
             pack, lexical_plan, guard_plan,
             compiler_answers, compiler_answer_len,
             compiler_digest, answer_set_digest,
@@ -2215,24 +2901,55 @@ bool ppguarded_lex_cursor_v1_program_bind_actions(
         pp_action_bytecode_v1_program_free(&actions);
         return false;
     }
+    if ((size_t)program->terminal_len >
+            SIZE_MAX / sizeof(*unbound_required)) {
+        pp_action_bytecode_v1_program_free(&actions);
+        return false;
+    }
+    unbound_required = malloc(
+        sizeof(*unbound_required) *
+        (size_t)(program->terminal_len ? program->terminal_len : 1u));
+    if (!unbound_required) {
+        pp_action_bytecode_v1_program_free(&actions);
+        return false;
+    }
+    for (index = 0u; index < program->terminal_len; index++) {
+        unbound_required[index] =
+            program->terminals[index].semantic_value_required;
+    }
+    unbound_complete = program->value_programs_complete;
     memcpy(unbound_digest, program->program_digest, sizeof(unbound_digest));
     pp_action_bytecode_v1_program_free(&program->actions);
     program->actions = actions;
     memset(&actions, 0, sizeof(actions));
     program->actions_bound = true;
+    if (!ppguarded_lex_cursor_v1_semantic_requirements_apply(
+            program, error_buf, error_buf_size)) {
+        goto rollback;
+    }
     ppguarded_lex_cursor_v1_program_digest(
         program, program->program_digest);
     if (!ppguarded_lex_cursor_v1_program_validate_bound(
             program, pack, lexical_plan, guard_plan, guarded_plan,
             error_buf, error_buf_size)) {
-        pp_action_bytecode_v1_program_free(&program->actions);
-        pp_action_bytecode_v1_program_init(&program->actions);
-        program->actions_bound = false;
-        memcpy(program->program_digest,
-               unbound_digest, sizeof(unbound_digest));
-        return false;
+        goto rollback;
     }
+    free(unbound_required);
     return true;
+
+rollback:
+    pp_action_bytecode_v1_program_free(&program->actions);
+    pp_action_bytecode_v1_program_init(&program->actions);
+    program->actions_bound = false;
+    for (index = 0u; index < program->terminal_len; index++) {
+        program->terminals[index].semantic_value_required =
+            unbound_required[index];
+    }
+    program->value_programs_complete = unbound_complete;
+    memcpy(program->program_digest,
+           unbound_digest, sizeof(unbound_digest));
+    free(unbound_required);
+    return false;
 }
 
 static bool ppguarded_lex_cursor_v1_append_ranges(
@@ -3213,6 +3930,7 @@ bool ppguarded_lex_cursor_v1_program_build(
             .slr_terminal_index = index,
             .dfa_tag = UINT32_MAX,
             .guard_dfa_tag = UINT32_MAX,
+            .semantic_value_required = true,
             .semantic_start_state_id = UINT32_MAX,
             .semantic_program_index = UINT32_MAX,
         };
@@ -3371,11 +4089,18 @@ done:
 typedef struct {
     bool present;
     bool work_limit;
+    bool reselect_after_reduction;
     uint32_t source_index;
     uint32_t end_scalar;
     uint32_t end_byte;
     uint64_t dfa_work_item_len;
 } PPGuardedLexCursorV1Lookahead;
+
+typedef struct {
+    bool valid;
+    uint32_t cursor;
+    RSDFAV1CursorScanResult scan;
+} PPGuardedLexCursorV1DfaScanCache;
 
 static bool ppguarded_lex_cursor_v1_range_contains(
     const CettaLpNativeUnicodeRange *ranges,
@@ -3411,12 +4136,14 @@ static bool ppguarded_lex_cursor_v1_scalar_matches(
         return cursor == view->scalar_len;
     case CETTA_LP_NATIVE_UTF8_TERMINAL_SCALAR:
         return cursor < view->scalar_len &&
-            view->codepoints[cursor] == terminal->scalar;
+            cetta_lp_native_utf8_scalar_view_scalar_at(view, cursor) ==
+                terminal->scalar;
     case CETTA_LP_NATIVE_UTF8_TERMINAL_RANGES:
         return cursor < view->scalar_len &&
             ppguarded_lex_cursor_v1_range_contains(
                 &program->ranges[terminal->scalar_range_begin],
-                terminal->scalar_range_len, view->codepoints[cursor]);
+                terminal->scalar_range_len,
+                cetta_lp_native_utf8_scalar_view_scalar_at(view, cursor));
     }
     return false;
 }
@@ -3430,54 +4157,115 @@ static bool ppguarded_lex_cursor_v1_guard_matches(
         return terminal->guard_accepts_eof;
     return ppguarded_lex_cursor_v1_range_contains(
         &program->ranges[terminal->guard_range_begin],
-        terminal->guard_range_len, view->codepoints[cursor]);
+        terminal->guard_range_len,
+        cetta_lp_native_utf8_scalar_view_scalar_at(view, cursor));
 }
 
 static bool ppguarded_lex_cursor_v1_select(
     const PPGuardedLexCursorV1Program *program,
+    const PPGuardedLexCursorV1DispatchIndex *dispatch_index,
+    const RSDFAV1AsciiTransitionIndex *ascii_index,
     const CettaLpNativeUtf8ScalarView *view,
+    uint32_t state,
     uint32_t cursor,
     uint64_t work_limit,
     RSDFAV1Token *dfa_tokens,
+    PPGuardedLexCursorV1DfaScanCache *dfa_scan_cache,
     PPGuardedLexCursorV1Lookahead *out,
     char *error_buf,
     size_t error_buf_size) {
     PPGuardedLexCursorV1Lookahead result = {0};
+    CettaLpNativeSlrProgramAction selected_action = {
+        .kind = CETTA_LP_NATIVE_SLR_PROGRAM_ERROR,
+        .value = 0,
+    };
     uint32_t match_len = 0u;
-    uint32_t index;
+    uint32_t candidate;
+    uint32_t candidate_end;
 
-    for (index = 0u; index < program->terminal_len; index++) {
+    if (!program || !dispatch_index ||
+        state >= program->final_slr.summary.state_len ||
+        state >= dispatch_index->state_len) {
+        ppguarded_lex_exec_v1_set_error(
+            error_buf, error_buf_size,
+            "cursor selection escaped its parser states");
+        return false;
+    }
+    candidate = dispatch_index->scalar_offsets[state];
+    candidate_end = dispatch_index->scalar_offsets[state + 1u];
+    for (; candidate < candidate_end; candidate++) {
+        uint32_t source_index =
+            dispatch_index->scalar_source_indices[candidate];
         const PPGuardedLexCursorV1Terminal *terminal =
-            &program->terminals[index];
+            &program->terminals[source_index];
+        uint32_t columns = program->final_slr.terminal_len + 1u;
+        const CettaLpNativeSlrProgramAction *action =
+            &program->final_slr.actions[
+                state * columns + terminal->slr_terminal_index];
+        if (action->kind == CETTA_LP_NATIVE_SLR_PROGRAM_ERROR) {
+            continue;
+        }
         if (!ppguarded_lex_cursor_v1_scalar_matches(
                 program, terminal, view, cursor)) {
             continue;
         }
-        result.present = true;
-        result.source_index = index;
-        result.end_scalar = terminal->scalar_kind ==
-                CETTA_LP_NATIVE_UTF8_TERMINAL_EOF
-            ? cursor : cursor + 1u;
-        result.end_byte = view->byte_offsets[result.end_scalar];
+        if (match_len > 0u &&
+            (selected_action.kind != CETTA_LP_NATIVE_SLR_PROGRAM_REDUCE ||
+             action->kind != CETTA_LP_NATIVE_SLR_PROGRAM_REDUCE ||
+             selected_action.value != action->value)) {
+            ppguarded_lex_exec_v1_set_error(
+                error_buf, error_buf_size,
+                "cursor scalar lookahead is not functionally determined");
+            return false;
+        }
+        if (match_len == 0u) {
+            result.present = true;
+            result.source_index = source_index;
+            result.end_scalar = terminal->scalar_kind ==
+                    CETTA_LP_NATIVE_UTF8_TERMINAL_EOF
+                ? cursor : cursor + 1u;
+            result.end_byte =
+                cetta_lp_native_utf8_scalar_view_byte_offset(
+                    view, result.end_scalar);
+            selected_action = *action;
+        }
         match_len++;
     }
-    if (match_len > 1u) {
-        ppguarded_lex_exec_v1_set_error(
-            error_buf, error_buf_size,
-            "cursor program selected multiple scalar terminals");
-        return false;
-    }
-    if (match_len == 1u) {
+    if (match_len > 0u) {
+        result.reselect_after_reduction = match_len > 1u;
         *out = result;
         return true;
     }
     {
         RSDFAV1CursorScanResult scan;
-        if (!rsdfa_v1_program_scan_cursor_longest_prevalidated(
-                &program->dfa, view, cursor, work_limit,
-                dfa_tokens, program->dfa.tag_len, &scan,
-                error_buf, error_buf_size)) {
-            return false;
+        if (dfa_scan_cache && dfa_scan_cache->valid &&
+            dfa_scan_cache->cursor == cursor) {
+            scan = dfa_scan_cache->scan;
+            if (scan.outcome != RSDFA_V1_CURSOR_SCAN_COMPLETED) {
+                ppguarded_lex_exec_v1_set_error(
+                    error_buf, error_buf_size,
+                    "cursor DFA scan cache retained an incomplete result");
+                return false;
+            }
+            if (scan.work_item_len > work_limit) {
+                result.dfa_work_item_len = work_limit;
+                result.work_limit = true;
+                *out = result;
+                return true;
+            }
+        } else {
+            if (!rsdfa_v1_program_scan_cursor_longest_indexed_prevalidated(
+                    &program->dfa, ascii_index, view, cursor, work_limit,
+                    dfa_tokens, program->dfa.tag_len, &scan,
+                    error_buf, error_buf_size)) {
+                return false;
+            }
+            if (dfa_scan_cache &&
+                scan.outcome == RSDFA_V1_CURSOR_SCAN_COMPLETED) {
+                dfa_scan_cache->valid = true;
+                dfa_scan_cache->cursor = cursor;
+                dfa_scan_cache->scan = scan;
+            }
         }
         result.dfa_work_item_len = scan.work_item_len;
         if (scan.outcome == RSDFA_V1_CURSOR_SCAN_WORK_LIMIT) {
@@ -3485,12 +4273,19 @@ static bool ppguarded_lex_cursor_v1_select(
             *out = result;
             return true;
         }
-        for (index = 0u; index < program->terminal_len; index++) {
+        candidate = dispatch_index->span_offsets[state];
+        candidate_end = dispatch_index->span_offsets[state + 1u];
+        for (; candidate < candidate_end; candidate++) {
+            uint32_t source_index =
+                dispatch_index->span_source_indices[candidate];
             const PPGuardedLexCursorV1Terminal *terminal =
-                &program->terminals[index];
+                &program->terminals[source_index];
+            uint32_t columns = program->final_slr.terminal_len + 1u;
+            const CettaLpNativeSlrProgramAction *action =
+                &program->final_slr.actions[
+                    state * columns + terminal->slr_terminal_index];
             uint32_t token_index;
-            if (terminal->kind ==
-                PPGUARDED_LEX_CURSOR_TERMINAL_SCALAR) {
+            if (action->kind == CETTA_LP_NATIVE_SLR_PROGRAM_ERROR) {
                 continue;
             }
             for (token_index = 0u; token_index < scan.accept_len;
@@ -3505,21 +4300,29 @@ static bool ppguarded_lex_cursor_v1_select(
                          program, terminal, view, token->end_scalar))) {
                     break;
                 }
-                result.present = true;
-                result.source_index = index;
-                result.end_scalar = token->end_scalar;
-                result.end_byte = token->end_byte;
+                if (match_len > 0u &&
+                    (selected_action.kind !=
+                         CETTA_LP_NATIVE_SLR_PROGRAM_REDUCE ||
+                     action->kind != CETTA_LP_NATIVE_SLR_PROGRAM_REDUCE ||
+                     selected_action.value != action->value)) {
+                    ppguarded_lex_exec_v1_set_error(
+                        error_buf, error_buf_size,
+                        "cursor span lookahead is not functionally determined");
+                    return false;
+                }
+                if (match_len == 0u) {
+                    result.present = true;
+                    result.source_index = source_index;
+                    result.end_scalar = token->end_scalar;
+                    result.end_byte = token->end_byte;
+                    selected_action = *action;
+                }
                 match_len++;
                 break;
             }
         }
     }
-    if (match_len > 1u) {
-        ppguarded_lex_exec_v1_set_error(
-            error_buf, error_buf_size,
-            "cursor program selected multiple span terminals");
-        return false;
-    }
+    result.reselect_after_reduction = match_len > 1u;
     *out = result;
     return true;
 }
@@ -3529,6 +4332,31 @@ static void ppguarded_lex_cursor_v1_trace_u64(
     uint64_t value) {
     ppguarded_lex_exec_v1_sha_u32(sha, (uint32_t)(value >> 32u));
     ppguarded_lex_exec_v1_sha_u32(sha, (uint32_t)value);
+}
+
+typedef struct {
+    uint32_t left;
+    uint32_t right;
+    bool present;
+} PPGuardedLexCursorV1SourceSpan;
+
+static bool ppguarded_lex_cursor_v1_emit_event(
+    const PPGuardedLexCursorV1EventSink *sink,
+    const PPGuardedLexCursorV1Event *event,
+    char *error_buf,
+    size_t error_buf_size) {
+    if (!sink)
+        return true;
+    if (!sink->emit ||
+        !sink->emit(sink->context, event, error_buf, error_buf_size)) {
+        if (error_buf && error_buf_size > 0u && error_buf[0] == '\0') {
+            ppguarded_lex_exec_v1_set_error(
+                error_buf, error_buf_size,
+                "cursor occurrence consumer rejected an event");
+        }
+        return false;
+    }
+    return true;
 }
 
 void ppguarded_lex_cursor_v1_semantic_result_init(
@@ -3562,19 +4390,22 @@ static bool ppguarded_lex_cursor_v1_semantic_lattice_matches_view(
         lattice->scalar_len != view->scalar_len ||
         lattice->input_byte_len != view->input_byte_len ||
         lattice->start_offset_len != view->scalar_len + 2u ||
-        (view->scalar_len > 0u &&
-         (!lattice->codepoints || !view->codepoints)) ||
-        !lattice->byte_offsets || !view->byte_offsets) {
+        (view->scalar_len > 0u && !lattice->codepoints) ||
+        !lattice->byte_offsets ||
+        !cetta_lp_native_utf8_scalar_view_has_storage(view)) {
         return false;
     }
     for (index = 0u; index < view->scalar_len; index++) {
-        if (lattice->codepoints[index] != view->codepoints[index] ||
-            lattice->byte_offsets[index] != view->byte_offsets[index]) {
+        if (lattice->codepoints[index] !=
+                cetta_lp_native_utf8_scalar_view_scalar_at(view, index) ||
+            lattice->byte_offsets[index] !=
+                cetta_lp_native_utf8_scalar_view_byte_offset(view, index)) {
             return false;
         }
     }
     return lattice->byte_offsets[view->scalar_len] ==
-        view->byte_offsets[view->scalar_len];
+        cetta_lp_native_utf8_scalar_view_byte_offset(
+            view, view->scalar_len);
 }
 
 static Atom *ppguarded_lex_cursor_v1_scalar_value_kind(
@@ -3596,7 +4427,9 @@ static Atom *ppguarded_lex_cursor_v1_scalar_value_kind(
     if (!items)
         return NULL;
     items[0] = atom_symbol(arena, "cp");
-    items[1] = atom_int(arena, (int64_t)view->codepoints[left]);
+    items[1] = atom_int(
+        arena,
+        (int64_t)cetta_lp_native_utf8_scalar_view_scalar_at(view, left));
     if (!items[0] || !items[1])
         return NULL;
     return atom_expr(arena, items, 2u);
@@ -3693,9 +4526,40 @@ static uint64_t ppguarded_lex_cursor_v1_work_total(
     return total + semantic_mask_work_item_len;
 }
 
+static uint64_t ppguarded_lex_cursor_v1_run_work_total(
+    const PPGuardedLexCursorV1Receipt *receipt,
+    bool semantic_mode,
+    uint32_t terminal_value_len,
+    uint64_t instruction_len,
+    uint32_t value_program_run_len,
+    uint32_t value_terminal_value_len,
+    uint64_t value_instruction_len,
+    uint64_t value_parser_work_item_len,
+    uint64_t semantic_mask_work_item_len,
+    uint64_t semantic_occurrence_work_item_len) {
+    uint64_t total;
+
+    if (!semantic_mode) {
+        total = receipt->dfa_work_item_len;
+        if (UINT64_MAX - total < receipt->parser_work_item_len)
+            return UINT64_MAX;
+        total += receipt->parser_work_item_len;
+    } else {
+        total = ppguarded_lex_cursor_v1_work_total(
+            receipt, terminal_value_len, instruction_len,
+            value_program_run_len, value_terminal_value_len,
+            value_instruction_len, value_parser_work_item_len,
+            semantic_mask_work_item_len);
+    }
+    if (UINT64_MAX - total < semantic_occurrence_work_item_len)
+        return UINT64_MAX;
+    return total + semantic_occurrence_work_item_len;
+}
+
 typedef union {
     Atom *atom;
     PPAtomProjectionActionV1Value projection;
+    PPGuardedLexCursorV1SourceSpan source_span;
 } PPGuardedLexCursorV1SemanticValue;
 
 typedef enum {
@@ -3710,6 +4574,12 @@ typedef bool (*PPGuardedLexCursorV1ScalarValueFn)(
     const CettaLpNativeUtf8ScalarView *view,
     uint32_t left,
     uint32_t right,
+    PPGuardedLexCursorV1SemanticValue *out,
+    char *error_buf,
+    size_t error_buf_size);
+
+typedef bool (*PPGuardedLexCursorV1NeutralValueFn)(
+    void *context,
     PPGuardedLexCursorV1SemanticValue *out,
     char *error_buf,
     size_t error_buf_size);
@@ -3740,6 +4610,7 @@ typedef struct {
     void *context;
     Arena *atom_arena;
     PPGuardedLexCursorV1ScalarValueFn scalar;
+    PPGuardedLexCursorV1NeutralValueFn neutral;
     PPGuardedLexCursorV1ActionValueFn action;
     PPGuardedLexCursorV1SpanValueFn span;
 } PPGuardedLexCursorV1SemanticBackend;
@@ -3781,6 +4652,23 @@ static bool ppguarded_lex_cursor_v1_atom_scalar(
         ppguarded_lex_exec_v1_set_error(
             error_buf, error_buf_size,
             "cursor scalar has no neutral semantic value");
+        return false;
+    }
+    return true;
+}
+
+static bool ppguarded_lex_cursor_v1_atom_neutral(
+    void *raw,
+    PPGuardedLexCursorV1SemanticValue *out,
+    char *error_buf,
+    size_t error_buf_size) {
+    PPGuardedLexCursorV1AtomBackend *context = raw;
+
+    out->atom = atom_symbol(context->arena, "unused");
+    if (!out->atom) {
+        ppguarded_lex_exec_v1_set_error(
+            error_buf, error_buf_size,
+            "cannot allocate an unobserved cursor value");
         return false;
     }
     return true;
@@ -3850,8 +4738,20 @@ static bool ppguarded_lex_cursor_v1_projection_scalar(
         return false;
     }
     return ppatom_projection_action_v1_scalar(
-        view->codepoints[left], &out->projection,
+        cetta_lp_native_utf8_scalar_view_scalar_at(view, left),
+        &out->projection,
         error_buf, error_buf_size);
+}
+
+static bool ppguarded_lex_cursor_v1_projection_neutral(
+    void *raw,
+    PPGuardedLexCursorV1SemanticValue *out,
+    char *error_buf,
+    size_t error_buf_size) {
+    (void)raw;
+
+    return ppatom_projection_action_v1_eof(
+        &out->projection, error_buf, error_buf_size);
 }
 
 static bool ppguarded_lex_cursor_v1_projection_action(
@@ -4055,7 +4955,8 @@ static bool ppguarded_lex_cursor_v1_projection_span(
         action = &binding->mask.actions[action_index];
         if (action->kind == PPSEMANTIC_MASK_V1_COPY) {
             context->retained_scalars[retained_len++] =
-                view->codepoints[left + index];
+                cetta_lp_native_utf8_scalar_view_scalar_at(
+                    view, left + index);
             index++;
         } else if (action->kind == PPSEMANTIC_MASK_V1_DROP) {
             index++;
@@ -4074,7 +4975,8 @@ static bool ppguarded_lex_cursor_v1_projection_span(
             }
             do {
                 context->retained_scalars[payload_begin + payload_len] =
-                    view->codepoints[left + index];
+                    cetta_lp_native_utf8_scalar_view_scalar_at(
+                        view, left + index);
                 payload_len++;
                 index++;
                 if (index >= span_len)
@@ -4200,12 +5102,14 @@ static bool ppguarded_lex_cursor_v1_value_scalar_matches(
             cursor == view->scalar_len;
     case CETTA_LP_NATIVE_UTF8_TERMINAL_SCALAR:
         return cursor < right &&
-            view->codepoints[cursor] == terminal->scalar;
+            cetta_lp_native_utf8_scalar_view_scalar_at(view, cursor) ==
+                terminal->scalar;
     case CETTA_LP_NATIVE_UTF8_TERMINAL_RANGES:
         return cursor < right &&
             ppguarded_lex_cursor_v1_range_contains(
                 &program->ranges[terminal->range_begin],
-                terminal->range_len, view->codepoints[cursor]);
+                terminal->range_len,
+                cetta_lp_native_utf8_scalar_view_scalar_at(view, cursor));
     }
     return false;
 }
@@ -4390,7 +5294,9 @@ static bool ppguarded_lex_cursor_v1_value_program_run(
             if (scalar_dispatch_index == UINT32_MAX) {
                 int32_t found =
                     ppguarded_lex_cursor_v1_value_scalar_dispatch_find(
-                        program, context->view->codepoints[cursor]);
+                        program,
+                        cetta_lp_native_utf8_scalar_view_scalar_at(
+                            context->view, cursor));
                 if (found < 0) {
                     ppguarded_lex_exec_v1_set_error(
                         error_buf, error_buf_size,
@@ -4677,6 +5583,289 @@ done:
     return ok;
 }
 
+typedef struct {
+    const PPGuardedLexCursorV1EventSink *sink;
+    const PPActionBytecodeV1Program *actions;
+    const CettaLpNativeUtf8ScalarView *view;
+    uint32_t owner_source_index;
+    uint32_t current_scalar;
+} PPGuardedLexCursorV1SpanOccurrenceBackend;
+
+static bool ppguarded_lex_cursor_v1_span_occurrence_scalar(
+    void *raw,
+    CettaLpNativeUtf8TerminalKind scalar_kind,
+    const CettaLpNativeUtf8ScalarView *view,
+    uint32_t left,
+    uint32_t right,
+    PPGuardedLexCursorV1SemanticValue *out,
+    char *error_buf,
+    size_t error_buf_size) {
+    PPGuardedLexCursorV1SpanOccurrenceBackend *context = raw;
+
+    (void)scalar_kind;
+    if (!context || !view || context->view != view || !out ||
+        left > right || right > view->scalar_len) {
+        ppguarded_lex_exec_v1_set_error(
+            error_buf, error_buf_size,
+            "bad source-span terminal value");
+        return false;
+    }
+    out->source_span =
+        (PPGuardedLexCursorV1SourceSpan){
+            .left = left, .right = right, .present = true,
+        };
+    context->current_scalar = right;
+    return true;
+}
+
+static bool ppguarded_lex_cursor_v1_span_occurrence_action(
+    void *raw,
+    uint32_t production_id,
+    const PPGuardedLexCursorV1SemanticValue *slots,
+    uint32_t slot_len,
+    PPGuardedLexCursorV1SemanticValue *out,
+    char *error_buf,
+    size_t error_buf_size) {
+    PPGuardedLexCursorV1SpanOccurrenceBackend *context = raw;
+    const PPActionBytecodeV1Production *production;
+    PPGuardedLexCursorV1SourceSpan local_stack[16] = {0};
+    PPGuardedLexCursorV1SourceSpan *stack = local_stack;
+    PPGuardedLexCursorV1SourceSpan span = {0};
+    PPGuardedLexCursorV1Event event;
+    uint32_t index;
+    uint32_t stack_len = 0u;
+    bool stack_owned = false;
+    bool ok = false;
+
+    if (!context || !context->sink || !context->sink->emit ||
+        !context->actions || !context->view || !out ||
+        production_id >= context->actions->production_len ||
+        (slot_len > 0u && !slots)) {
+        ppguarded_lex_exec_v1_set_error(
+            error_buf, error_buf_size,
+            "bad source-span production value");
+        return false;
+    }
+    production = &context->actions->productions[production_id];
+    if (production->arity != slot_len ||
+        production->max_stack_len == 0u ||
+        production->instruction_begin >
+            context->actions->instruction_len ||
+        production->instruction_len >
+            context->actions->instruction_len -
+                production->instruction_begin) {
+        ppguarded_lex_exec_v1_set_error(
+            error_buf, error_buf_size,
+            "source-span action program changed shape");
+        return false;
+    }
+    for (index = 0u; index < slot_len; index++) {
+        const PPGuardedLexCursorV1SourceSpan current =
+            slots[index].source_span;
+        if (!current.present || current.left > current.right ||
+            current.right > context->view->scalar_len ||
+            (index > 0u &&
+             slots[index - 1u].source_span.right > current.left)) {
+            ppguarded_lex_exec_v1_set_error(
+                error_buf, error_buf_size,
+                "source-span action received non-monotone slots");
+            return false;
+        }
+    }
+    if (production->max_stack_len >
+            sizeof(local_stack) / sizeof(local_stack[0])) {
+        if ((size_t)production->max_stack_len >
+            SIZE_MAX / sizeof(*stack)) {
+            goto malformed;
+        }
+        stack = calloc(production->max_stack_len, sizeof(*stack));
+        if (!stack)
+            goto done;
+        stack_owned = true;
+    }
+    for (index = 0u; index < production->instruction_len; index++) {
+        const PPActionBytecodeV1Instruction *instruction =
+            &context->actions->instructions[
+                production->instruction_begin + index];
+        if (instruction->kind == PP_ACTION_BYTECODE_V1_PUSH_SLOT) {
+            if (instruction->operand >= slot_len ||
+                stack_len >= production->max_stack_len)
+                goto malformed;
+            stack[stack_len++] =
+                slots[instruction->operand].source_span;
+            continue;
+        }
+        if (instruction->kind == PP_ACTION_BYTECODE_V1_PUSH_CONST) {
+            if (stack_len >= production->max_stack_len)
+                goto malformed;
+            stack[stack_len++] = (PPGuardedLexCursorV1SourceSpan){
+                .left = context->current_scalar,
+                .right = context->current_scalar,
+                .present = false,
+            };
+            continue;
+        }
+        if (instruction->kind == PP_ACTION_BYTECODE_V1_APPLY) {
+            uint32_t argument_begin;
+            uint32_t argument_index;
+            PPGuardedLexCursorV1SourceSpan applied = {
+                .left = context->current_scalar,
+                .right = context->current_scalar,
+                .present = false,
+            };
+
+            if (stack_len < instruction->operand)
+                goto malformed;
+            argument_begin = stack_len - instruction->operand;
+            for (argument_index = argument_begin;
+                 argument_index < stack_len; argument_index++) {
+                PPGuardedLexCursorV1SourceSpan argument =
+                    stack[argument_index];
+                if (!argument.present)
+                    continue;
+                if (!applied.present) {
+                    applied = argument;
+                } else {
+                    if (argument.left < applied.left)
+                        applied.left = argument.left;
+                    if (argument.right > applied.right)
+                        applied.right = argument.right;
+                }
+            }
+            stack_len = argument_begin;
+            if (stack_len >= production->max_stack_len)
+                goto malformed;
+            stack[stack_len++] = applied;
+            continue;
+        }
+        goto malformed;
+    }
+    if (stack_len != 1u)
+        goto malformed;
+    span = stack[0];
+    if (!span.present)
+        span = (PPGuardedLexCursorV1SourceSpan){
+            .left = context->current_scalar,
+            .right = context->current_scalar,
+            .present = false,
+        };
+    out->source_span = span;
+    event = (PPGuardedLexCursorV1Event){
+        .kind = PPGUARDED_LEX_CURSOR_V1_EVENT_SEMANTIC_REDUCE,
+        .symbol_id = UINT32_MAX,
+        .source_index = context->owner_source_index,
+        .production_index = UINT32_MAX,
+        .production_label = production_id,
+        .rhs_len = slot_len,
+        .authored = true,
+        .left_scalar = span.left,
+        .right_scalar = span.right,
+        .left_byte = cetta_lp_native_utf8_scalar_view_byte_offset(
+            context->view, span.left),
+        .right_byte = cetta_lp_native_utf8_scalar_view_byte_offset(
+            context->view, span.right),
+    };
+    ok = ppguarded_lex_cursor_v1_emit_event(
+        context->sink, &event, error_buf, error_buf_size);
+    goto done;
+
+malformed:
+    ppguarded_lex_exec_v1_set_error(
+        error_buf, error_buf_size,
+        "source-span action bytecode became malformed");
+
+done:
+    if (stack_owned)
+        free(stack);
+    return ok;
+}
+
+static bool ppguarded_lex_cursor_v1_emit_semantic_occurrences(
+    const PPGuardedLexCursorV1Program *program,
+    const CettaLpNativeUtf8ScalarView *view,
+    uint32_t source_index,
+    uint32_t left,
+    uint32_t right,
+    const PPGuardedLexCursorV1EventSink *sink,
+    uint64_t work_limit,
+    uint64_t *work_item_len,
+    char *error_buf,
+    size_t error_buf_size) {
+    const PPGuardedLexCursorV1Terminal *terminal;
+    PPGuardedLexCursorV1SpanOccurrenceBackend span_context;
+    PPGuardedLexCursorV1SemanticBackend backend;
+    PPGuardedLexCursorV1ValueContext value_context;
+    PPGuardedLexCursorV1SemanticValue root = {0};
+    PPGuardedLexCursorV1ValueOutcome outcome;
+    uint64_t used;
+
+    if (work_item_len)
+        *work_item_len = 0u;
+    if (!program || !view || source_index >= program->terminal_len ||
+        !sink || !sink->emit || !sink->semantic_occurrences ||
+        !work_item_len || work_limit == 0u || left > right ||
+        right > view->scalar_len) {
+        ppguarded_lex_exec_v1_set_error(
+            error_buf, error_buf_size,
+            "bad semantic-occurrence expansion inputs");
+        return false;
+    }
+    terminal = &program->terminals[source_index];
+    if (terminal->semantic_program_index >= program->value_program_len) {
+        ppguarded_lex_exec_v1_set_error(
+            error_buf, error_buf_size,
+            "semantic occurrence has no deterministic value program");
+        return false;
+    }
+    span_context = (PPGuardedLexCursorV1SpanOccurrenceBackend){
+        .sink = sink,
+        .actions = &program->actions,
+        .view = view,
+        .owner_source_index = source_index,
+        .current_scalar = left,
+    };
+    backend = (PPGuardedLexCursorV1SemanticBackend){
+        .context = &span_context,
+        .atom_arena = NULL,
+        .scalar = ppguarded_lex_cursor_v1_span_occurrence_scalar,
+        .neutral = NULL,
+        .action = ppguarded_lex_cursor_v1_span_occurrence_action,
+        .span = NULL,
+    };
+    value_context = (PPGuardedLexCursorV1ValueContext){
+        .owner = program,
+        .backend = &backend,
+        .view = view,
+        .prepared_fallback = NULL,
+        .arena = NULL,
+        .work_limit = work_limit,
+    };
+    if (!ppguarded_lex_cursor_v1_value_program_run(
+            &value_context, terminal->semantic_program_index,
+            left, right, &root, &outcome,
+            error_buf, error_buf_size)) {
+        return false;
+    }
+    used = ppguarded_lex_cursor_v1_value_work_total(&value_context);
+    *work_item_len = used;
+    if (outcome == PPGUARDED_LEX_CURSOR_VALUE_WORK_LIMIT) {
+        ppguarded_lex_exec_v1_set_error(
+            error_buf, error_buf_size,
+            "semantic-occurrence expansion exhausted its work limit");
+        return false;
+    }
+    if (outcome != PPGUARDED_LEX_CURSOR_VALUE_ACCEPTED ||
+        !root.source_span.present ||
+        root.source_span.left < left ||
+        root.source_span.right > right) {
+        ppguarded_lex_exec_v1_set_error(
+            error_buf, error_buf_size,
+            "semantic-occurrence expansion escaped its terminal span");
+        return false;
+    }
+    return true;
+}
+
 static bool ppguarded_lex_cursor_v1_prepared_fallback_value(
     PPGuardedLexCursorV1ValueContext *context,
     const PPGuardedLexCursorV1Terminal *terminal,
@@ -4740,36 +5929,52 @@ static bool ppguarded_lex_cursor_v1_prepared_fallback_value(
         goto done;
     }
     scalar_len = right - left;
-    if ((size_t)scalar_len + 1u >
-            SIZE_MAX / sizeof(*byte_offsets)) {
-        ppguarded_lex_exec_v1_set_error(
-            error_buf, error_buf_size,
-            "prepared cursor semantic fallback span is too large");
-        goto done;
-    }
-    byte_offsets = malloc(
-        sizeof(*byte_offsets) * ((size_t)scalar_len + 1u));
-    if (!byte_offsets)
-        goto done;
-    byte_base = context->view->byte_offsets[left];
-    for (index = 0u; index <= scalar_len; index++) {
-        uint32_t absolute = context->view->byte_offsets[left + index];
-        if (absolute < byte_base) {
+    if (context->view->ascii_bytes) {
+        token_view = (CettaLpNativeUtf8ScalarView){
+            .codepoints = NULL,
+            .byte_offsets = NULL,
+            .scalar_len = scalar_len,
+            .input_byte_len = scalar_len,
+            .decoded_byte_len = 0u,
+            .source_pass_count = 0u,
+            .ascii_bytes = &context->view->ascii_bytes[left],
+        };
+    } else {
+        if ((size_t)scalar_len + 1u >
+                SIZE_MAX / sizeof(*byte_offsets)) {
             ppguarded_lex_exec_v1_set_error(
                 error_buf, error_buf_size,
-                "prepared cursor semantic fallback offsets regress");
+                "prepared cursor semantic fallback span is too large");
             goto done;
         }
-        byte_offsets[index] = absolute - byte_base;
+        byte_offsets = malloc(
+            sizeof(*byte_offsets) * ((size_t)scalar_len + 1u));
+        if (!byte_offsets)
+            goto done;
+        byte_base = cetta_lp_native_utf8_scalar_view_byte_offset(
+            context->view, left);
+        for (index = 0u; index <= scalar_len; index++) {
+            uint32_t absolute =
+                cetta_lp_native_utf8_scalar_view_byte_offset(
+                    context->view, left + index);
+            if (absolute < byte_base) {
+                ppguarded_lex_exec_v1_set_error(
+                    error_buf, error_buf_size,
+                    "prepared cursor semantic fallback offsets regress");
+                goto done;
+            }
+            byte_offsets[index] = absolute - byte_base;
+        }
+        token_view = (CettaLpNativeUtf8ScalarView){
+            .codepoints = &context->view->codepoints[left],
+            .byte_offsets = byte_offsets,
+            .scalar_len = scalar_len,
+            .input_byte_len = byte_offsets[scalar_len],
+            .decoded_byte_len = 0u,
+            .source_pass_count = 0u,
+            .ascii_bytes = NULL,
+        };
     }
-    token_view = (CettaLpNativeUtf8ScalarView){
-        .codepoints = &context->view->codepoints[left],
-        .byte_offsets = byte_offsets,
-        .scalar_len = scalar_len,
-        .input_byte_len = byte_offsets[scalar_len],
-        .decoded_byte_len = 0u,
-        .source_pass_count = 0u,
-    };
     if (!ppnative_v1_prepared_start_family_lookup(
             &fallback->exec_plan->ordinary_witness_parsers,
             fallback->lexical_plan->plan_digest,
@@ -4873,6 +6078,7 @@ static bool ppguarded_lex_cursor_v1_program_run_impl(
     uint64_t *value_parser_work_item_len,
     uint32_t *prepared_fallback_run_len,
     uint64_t *prepared_fallback_work_item_len,
+    const PPGuardedLexCursorV1EventSink *event_sink,
     bool exact_trace,
     uint64_t work_limit,
     PPGuardedLexCursorV1Receipt *out,
@@ -4881,21 +6087,29 @@ static bool ppguarded_lex_cursor_v1_program_run_impl(
     const CettaLpNativeSlrProgram *slr;
     PPGuardedLexCursorV1Receipt result;
     PPGuardedLexCursorV1Lookahead lookahead = {0};
+    PPGuardedLexCursorV1DfaScanCache dfa_scan_cache = {0};
     RSDFAV1Token *dfa_tokens = NULL;
     uint32_t *states = NULL;
     PPGuardedLexCursorV1SemanticValue *values = NULL;
+    uint32_t *source_lefts = NULL;
+    PPGuardedLexCursorV1DispatchIndex dispatch_index = {0};
+    RSDFAV1AsciiTransitionIndex ascii_index = {0};
+    const RSDFAV1AsciiTransitionIndex *ascii_index_ptr = NULL;
     uint32_t state_len = 1u;
     uint32_t value_len = 0u;
+    uint32_t source_span_len = 0u;
     uint32_t state_cap = 64u;
     uint32_t cursor = 0u;
     uint32_t columns;
     bool have_lookahead = false;
     bool semantic_mode = semantic_backend != NULL;
+    bool event_mode = event_sink != NULL;
     bool direct_semantic_mode = semantic_mode && !semantic_lattice;
     uint32_t semantic_terminal_values = 0u;
     uint32_t semantic_actions = 0u;
     uint64_t semantic_instructions = 0u;
     uint64_t semantic_mask_work_item_len = 0u;
+    uint64_t semantic_occurrence_work_item_len = 0u;
     PPGuardedLexCursorV1ValueContext value_context = {0};
     CettaNativeSha256 trace;
     bool ok = false;
@@ -4926,9 +6140,19 @@ static bool ppguarded_lex_cursor_v1_program_run_impl(
     if (error_buf && error_buf_size > 0u)
         error_buf[0] = '\0';
     if (!program || !view || !out || work_limit == 0u ||
+        (event_mode &&
+         (!event_sink->emit ||
+          (event_sink->shift_event_live
+               ? event_sink->shift_event_live_len != program->terminal_len
+               : event_sink->shift_event_live_len != 0u) ||
+          (event_sink->reduction_event_live
+               ? event_sink->reduction_event_live_len !=
+                     program->final_slr.production_len
+               : event_sink->reduction_event_live_len != 0u))) ||
         !program->final_slr.actions || !program->final_slr.gotos ||
         (semantic_mode &&
          (!semantic_value || !semantic_backend->scalar ||
+          !semantic_backend->neutral ||
           !semantic_backend->action ||
           !terminal_value_len || !action_execution_len ||
           !action_instruction_len || !value_program_run_len ||
@@ -4975,15 +6199,33 @@ static bool ppguarded_lex_cursor_v1_program_run_impl(
         value_context.arena = semantic_backend->atom_arena;
         value_context.work_limit = work_limit;
     }
+    if (!ppguarded_lex_cursor_v1_dispatch_index_build(
+            program, &dispatch_index,
+            error_buf, error_buf_size)) {
+        goto done;
+    }
+    if (view->ascii_bytes) {
+        if (!rsdfa_v1_ascii_transition_index_build(
+                &program->dfa, &ascii_index,
+                error_buf, error_buf_size)) {
+            goto done;
+        }
+        ascii_index_ptr = &ascii_index;
+    }
     slr = &program->final_slr;
     columns = slr->terminal_len + 1u;
     states = malloc(sizeof(*states) * state_cap);
     if (semantic_mode)
         values = malloc(sizeof(*values) * (state_cap - 1u));
+    if (event_mode) {
+        source_lefts = malloc(
+            sizeof(*source_lefts) * (state_cap - 1u));
+    }
     dfa_tokens = malloc(
         sizeof(*dfa_tokens) *
         (size_t)(program->dfa.tag_len ? program->dfa.tag_len : 1u));
-    if (!states || !dfa_tokens || (semantic_mode && !values))
+    if (!states || !dfa_tokens || (semantic_mode && !values) ||
+        (event_mode && !source_lefts))
         goto done;
     states[0] = 0u;
     result.outcome = PPGUARDED_LEX_CURSOR_V1_REJECTED;
@@ -5005,13 +6247,17 @@ static bool ppguarded_lex_cursor_v1_program_run_impl(
         const CettaLpNativeSlrProgramAction *action;
         uint32_t state;
         uint32_t lookahead_column;
-        uint64_t total_work = ppguarded_lex_cursor_v1_work_total(
-            &result, semantic_terminal_values, semantic_instructions,
-            value_context.program_run_len,
-            value_context.terminal_value_len,
-            value_context.action_instruction_len,
-            value_context.parser_work_item_len,
-            semantic_mask_work_item_len);
+        bool stop_after_unit_chain = false;
+        uint64_t total_work =
+            ppguarded_lex_cursor_v1_run_work_total(
+                &result, semantic_mode,
+                semantic_terminal_values, semantic_instructions,
+                value_context.program_run_len,
+                value_context.terminal_value_len,
+                value_context.action_instruction_len,
+                value_context.parser_work_item_len,
+                semantic_mask_work_item_len,
+                semantic_occurrence_work_item_len);
 
         if (semantic_mode && value_len + 1u != state_len) {
             ppguarded_lex_exec_v1_set_error(
@@ -5019,15 +6265,30 @@ static bool ppguarded_lex_cursor_v1_program_run_impl(
                 "cursor semantic and state stacks diverged");
             goto done;
         }
+        if (event_mode && source_span_len + 1u != state_len) {
+            ppguarded_lex_exec_v1_set_error(
+                error_buf, error_buf_size,
+                "cursor occurrence and state stacks diverged");
+            goto done;
+        }
 
         if (total_work >= work_limit) {
             result.outcome = PPGUARDED_LEX_CURSOR_V1_WORK_LIMIT;
             break;
         }
+        state = states[state_len - 1u];
+        if (state >= slr->summary.state_len) {
+            ppguarded_lex_exec_v1_set_error(
+                error_buf, error_buf_size,
+                "cursor program stack escaped its SLR states");
+            goto done;
+        }
         if (!have_lookahead) {
             if (!ppguarded_lex_cursor_v1_select(
-                    program, view, cursor, work_limit - total_work,
-                    dfa_tokens, &lookahead,
+                    program, &dispatch_index, ascii_index_ptr,
+                    view, state, cursor,
+                    work_limit - total_work,
+                    dfa_tokens, &dfa_scan_cache, &lookahead,
                     error_buf, error_buf_size)) {
                 goto done;
             }
@@ -5038,13 +6299,6 @@ static bool ppguarded_lex_cursor_v1_program_run_impl(
                 break;
             }
             have_lookahead = true;
-        }
-        state = states[state_len - 1u];
-        if (state >= slr->summary.state_len) {
-            ppguarded_lex_exec_v1_set_error(
-                error_buf, error_buf_size,
-                "cursor program stack escaped its SLR states");
-            goto done;
         }
         if (lookahead.present) {
             terminal = &program->terminals[lookahead.source_index];
@@ -5067,6 +6321,114 @@ static bool ppguarded_lex_cursor_v1_program_run_impl(
             result.outcome = PPGUARDED_LEX_CURSOR_V1_REJECTED;
             break;
         }
+
+        /*
+         * A silent unit reduction A -> X preserves the value and occurrence
+         * stacks and replaces only the top parser state.  When lookahead is
+         * already functionally determined, execute a maximal such chain in
+         * place.  Logical work, counters, trace entries, and work-limit cuts
+         * remain exactly those of the unfused transition sequence.
+         */
+        for (;;) {
+            const CettaLpNativeSlrProgramProduction *production;
+            uint32_t lhs_index;
+            uint32_t target;
+
+            if (semantic_mode || lookahead.reselect_after_reduction ||
+                action->kind != CETTA_LP_NATIVE_SLR_PROGRAM_REDUCE ||
+                action->value < 0 ||
+                (uint32_t)action->value >= slr->production_len) {
+                break;
+            }
+            production = &slr->productions[action->value];
+            if (production->rhs_len != 1u ||
+                production->rhs_len >= state_len ||
+                (event_mode &&
+                 (!event_sink->reduction_event_live ||
+                  event_sink->reduction_event_live[
+                      (uint32_t)action->value] != 0u))) {
+                break;
+            }
+
+            result.parser_work_item_len++;
+            if (exact_trace) {
+                ppguarded_lex_exec_v1_sha_u32(&trace, state);
+                ppguarded_lex_exec_v1_sha_u32(
+                    &trace, lookahead_column);
+                ppguarded_lex_exec_v1_sha_u32(
+                    &trace, (uint32_t)action->kind);
+                ppguarded_lex_exec_v1_sha_u32(
+                    &trace, (uint32_t)action->value);
+            }
+            if (event_mode && source_span_len == 0u)
+                goto malformed_action;
+            lhs_index = program->final_production_lhs_indices[
+                (uint32_t)action->value];
+            if (lhs_index >= slr->nonterminal_len ||
+                slr->nonterminals[lhs_index] != production->lhs) {
+                goto malformed_action;
+            }
+            target = slr->gotos[
+                states[state_len - 2u] * slr->nonterminal_len +
+                lhs_index];
+            if (target == UINT32_MAX ||
+                target >= slr->summary.state_len) {
+                goto malformed_action;
+            }
+            states[state_len - 1u] = target;
+            result.reduce_len++;
+            result.unit_reduce_len++;
+
+            total_work =
+                ppguarded_lex_cursor_v1_run_work_total(
+                    &result, semantic_mode,
+                    semantic_terminal_values,
+                    semantic_instructions,
+                    value_context.program_run_len,
+                    value_context.terminal_value_len,
+                    value_context.action_instruction_len,
+                    value_context.parser_work_item_len,
+                    semantic_mask_work_item_len,
+                    semantic_occurrence_work_item_len);
+            if (total_work >= work_limit) {
+                result.outcome =
+                    PPGUARDED_LEX_CURSOR_V1_WORK_LIMIT;
+                stop_after_unit_chain = true;
+                break;
+            }
+
+            state = target;
+            if (lookahead.present) {
+                terminal = &program->terminals[
+                    lookahead.source_index];
+                lookahead_column = terminal->slr_terminal_index;
+                action = &slr->actions[
+                    state * columns + lookahead_column];
+                if (terminal->kind ==
+                        PPGUARDED_LEX_CURSOR_TERMINAL_SCALAR &&
+                    terminal->scalar_kind ==
+                        CETTA_LP_NATIVE_UTF8_TERMINAL_EOF &&
+                    action->kind ==
+                        CETTA_LP_NATIVE_SLR_PROGRAM_ERROR) {
+                    lookahead_column = slr->terminal_len;
+                    action = &slr->actions[
+                        state * columns + lookahead_column];
+                    terminal = NULL;
+                }
+            } else if (cursor == view->scalar_len) {
+                terminal = NULL;
+                lookahead_column = slr->terminal_len;
+                action = &slr->actions[
+                    state * columns + lookahead_column];
+            } else {
+                result.outcome =
+                    PPGUARDED_LEX_CURSOR_V1_REJECTED;
+                stop_after_unit_chain = true;
+                break;
+            }
+        }
+        if (stop_after_unit_chain)
+            break;
         result.parser_work_item_len++;
         if (exact_trace) {
             ppguarded_lex_exec_v1_sha_u32(&trace, state);
@@ -5081,10 +6443,20 @@ static bool ppguarded_lex_cursor_v1_program_run_impl(
             break;
         }
         if (action->kind == CETTA_LP_NATIVE_SLR_PROGRAM_ACCEPT) {
+            PPGuardedLexCursorV1Event event;
+
             if (terminal || cursor != view->scalar_len) {
                 ppguarded_lex_exec_v1_set_error(
                     error_buf, error_buf_size,
                     "cursor program accepted before parser EOF");
+                goto done;
+            }
+            if (event_mode &&
+                (source_span_len != 1u ||
+                 source_lefts[0] != 0u)) {
+                ppguarded_lex_exec_v1_set_error(
+                    error_buf, error_buf_size,
+                    "accepted cursor occurrence has the wrong root span");
                 goto done;
             }
             if (semantic_mode) {
@@ -5096,12 +6468,34 @@ static bool ppguarded_lex_cursor_v1_program_run_impl(
                 }
                 *semantic_value = values[0];
             }
+            if (event_mode) {
+                event = (PPGuardedLexCursorV1Event){
+                    .kind = PPGUARDED_LEX_CURSOR_V1_EVENT_ACCEPT,
+                    .symbol_id = slr->start_nonterminal,
+                    .source_index = UINT32_MAX,
+                    .production_index = UINT32_MAX,
+                    .production_label = UINT32_MAX,
+                    .rhs_len = 1u,
+                    .authored = false,
+                    .left_scalar = 0u,
+                    .right_scalar = cursor,
+                    .left_byte = 0u,
+                    .right_byte =
+                        cetta_lp_native_utf8_scalar_view_byte_offset(
+                            view, cursor),
+                };
+                if (!ppguarded_lex_cursor_v1_emit_event(
+                        event_sink, &event, error_buf, error_buf_size)) {
+                    goto done;
+                }
+            }
             result.outcome = PPGUARDED_LEX_CURSOR_V1_ACCEPTED;
             break;
         }
         if (action->kind == CETTA_LP_NATIVE_SLR_PROGRAM_REDUCE) {
             const CettaLpNativeSlrProgramProduction *production;
             PPGuardedLexCursorV1SemanticValue reduced_value = {0};
+            PPGuardedLexCursorV1SourceSpan reduced_span = {0};
             uint32_t lhs_index;
             uint32_t target;
             if (action->value < 0 ||
@@ -5111,6 +6505,20 @@ static bool ppguarded_lex_cursor_v1_program_run_impl(
             production = &slr->productions[action->value];
             if (production->rhs_len >= state_len)
                 goto malformed_action;
+            if (event_mode) {
+                if (production->rhs_len > source_span_len)
+                    goto malformed_action;
+                if (production->rhs_len == 0u) {
+                    reduced_span.left = cursor;
+                    reduced_span.right = cursor;
+                } else {
+                    reduced_span.left =
+                        source_lefts[
+                            source_span_len - production->rhs_len];
+                    reduced_span.right = cursor;
+                }
+                source_span_len -= production->rhs_len;
+            }
             if (semantic_mode) {
                 const PPActionBytecodeV1Production *semantic_action;
                 uint64_t current_work;
@@ -5166,11 +6574,15 @@ static bool ppguarded_lex_cursor_v1_program_run_impl(
                 uint32_t next_cap = state_cap * 2u;
                 uint32_t *next;
                 PPGuardedLexCursorV1SemanticValue *next_values = NULL;
+                uint32_t *next_source_lefts = NULL;
                 if (next_cap < state_cap ||
                     (size_t)next_cap > SIZE_MAX / sizeof(*states) ||
                     (semantic_mode &&
                      (size_t)(next_cap - 1u) >
-                         SIZE_MAX / sizeof(*values))) {
+                         SIZE_MAX / sizeof(*values)) ||
+                    (event_mode &&
+                     (size_t)(next_cap - 1u) >
+                         SIZE_MAX / sizeof(*source_lefts))) {
                     ppguarded_lex_exec_v1_set_error(
                         error_buf, error_buf_size,
                         "cursor program state stack overflow");
@@ -5187,6 +6599,14 @@ static bool ppguarded_lex_cursor_v1_program_run_impl(
                         goto done;
                     values = next_values;
                 }
+                if (event_mode) {
+                    next_source_lefts = realloc(
+                        source_lefts,
+                        sizeof(*source_lefts) * (next_cap - 1u));
+                    if (!next_source_lefts)
+                        goto done;
+                    source_lefts = next_source_lefts;
+                }
                 state_cap = next_cap;
             }
             if (semantic_mode) {
@@ -5196,10 +6616,51 @@ static bool ppguarded_lex_cursor_v1_program_run_impl(
                 semantic_actions++;
                 semantic_instructions += semantic_action->instruction_len;
             }
+            if (event_mode)
+                source_lefts[source_span_len++] = reduced_span.left;
             states[state_len++] = target;
             if (state_len > result.max_stack_len)
                 result.max_stack_len = state_len;
             result.reduce_len++;
+            if (production->rhs_len == 0u)
+                result.epsilon_reduce_len++;
+            if (production->rhs_len == 1u)
+                result.unit_reduce_len++;
+            if (lookahead.reselect_after_reduction) {
+                result.reselect_reduce_len++;
+                if (production->rhs_len == 1u)
+                    result.unit_reselect_reduce_len++;
+            }
+            if (event_mode &&
+                (!event_sink->reduction_event_live ||
+                 event_sink->reduction_event_live[
+                     (uint32_t)action->value] != 0u)) {
+                PPGuardedLexCursorV1Event event = {
+                    .kind = PPGUARDED_LEX_CURSOR_V1_EVENT_REDUCE,
+                    .symbol_id = production->lhs,
+                    .source_index = UINT32_MAX,
+                    .production_index = (uint32_t)action->value,
+                    .production_label = production->label,
+                    .rhs_len = production->rhs_len,
+                    .authored = production->authored,
+                    .left_scalar = reduced_span.left,
+                    .right_scalar = reduced_span.right,
+                    .left_byte =
+                        cetta_lp_native_utf8_scalar_view_byte_offset(
+                            view, reduced_span.left),
+                    .right_byte =
+                        cetta_lp_native_utf8_scalar_view_byte_offset(
+                            view, reduced_span.right),
+                };
+                if (!ppguarded_lex_cursor_v1_emit_event(
+                        event_sink, &event, error_buf, error_buf_size)) {
+                    goto done;
+                }
+            }
+            if (lookahead.reselect_after_reduction) {
+                have_lookahead = false;
+                memset(&lookahead, 0, sizeof(lookahead));
+            }
             continue;
         }
         if (action->kind != CETTA_LP_NATIVE_SLR_PROGRAM_SHIFT || !terminal ||
@@ -5211,10 +6672,14 @@ static bool ppguarded_lex_cursor_v1_program_run_impl(
             uint32_t next_cap = state_cap * 2u;
             uint32_t *next;
             PPGuardedLexCursorV1SemanticValue *next_values = NULL;
+            uint32_t *next_source_lefts = NULL;
             if (next_cap < state_cap ||
                 (size_t)next_cap > SIZE_MAX / sizeof(*states) ||
                 (semantic_mode &&
-                 (size_t)(next_cap - 1u) > SIZE_MAX / sizeof(*values))) {
+                 (size_t)(next_cap - 1u) > SIZE_MAX / sizeof(*values)) ||
+                (event_mode &&
+                 (size_t)(next_cap - 1u) >
+                     SIZE_MAX / sizeof(*source_lefts))) {
                 ppguarded_lex_exec_v1_set_error(
                     error_buf, error_buf_size,
                     "cursor program state stack overflow");
@@ -5231,10 +6696,19 @@ static bool ppguarded_lex_cursor_v1_program_run_impl(
                     goto done;
                 values = next_values;
             }
+            if (event_mode) {
+                next_source_lefts = realloc(
+                    source_lefts,
+                    sizeof(*source_lefts) * (next_cap - 1u));
+                if (!next_source_lefts)
+                    goto done;
+                source_lefts = next_source_lefts;
+            }
             state_cap = next_cap;
         }
         if (semantic_mode) {
             PPGuardedLexCursorV1SemanticValue terminal_value = {0};
+            bool neutral_value_ready = false;
             bool span_value_ready = false;
             uint64_t current_work = ppguarded_lex_cursor_v1_work_total(
                 &result, semantic_terminal_values,
@@ -5250,6 +6724,16 @@ static bool ppguarded_lex_cursor_v1_program_run_impl(
                 break;
             }
             if (direct_semantic_mode &&
+                !terminal->semantic_value_required) {
+                if (!semantic_backend->neutral(
+                        semantic_backend->context, &terminal_value,
+                        error_buf, error_buf_size)) {
+                    goto done;
+                }
+                neutral_value_ready = true;
+            }
+            if (direct_semantic_mode &&
+                terminal->semantic_value_required &&
                 terminal->kind != PPGUARDED_LEX_CURSOR_TERMINAL_SCALAR &&
                 semantic_backend->span) {
                 PPGuardedLexCursorV1SpanOutcome span_outcome;
@@ -5289,7 +6773,9 @@ static bool ppguarded_lex_cursor_v1_program_run_impl(
                     goto done;
                 }
             }
-            if (terminal->kind ==
+            if (neutral_value_ready) {
+                /* Its value is outside the start-result dependency closure. */
+            } else if (terminal->kind ==
                     PPGUARDED_LEX_CURSOR_TERMINAL_SCALAR) {
                 if (!semantic_backend->scalar(
                         semantic_backend->context, terminal->scalar_kind,
@@ -5381,6 +6867,9 @@ static bool ppguarded_lex_cursor_v1_program_run_impl(
             values[value_len++] = terminal_value;
             semantic_terminal_values++;
         }
+        if (event_mode) {
+            source_lefts[source_span_len++] = cursor;
+        }
         states[state_len++] = (uint32_t)action->value;
         if (state_len > result.max_stack_len)
             result.max_stack_len = state_len;
@@ -5399,7 +6888,174 @@ static bool ppguarded_lex_cursor_v1_program_run_impl(
             ppguarded_lex_exec_v1_sha_u32(&trace, cursor);
             ppguarded_lex_exec_v1_sha_u32(&trace, lookahead.end_scalar);
         }
+        if (event_mode) {
+            uint64_t occurrence_work = 0u;
+
+            if (event_sink->semantic_occurrences &&
+                (event_sink->semantic_occurrence_required
+                    ? event_sink->semantic_occurrence_required(
+                          event_sink->context, lookahead.source_index)
+                    : terminal->semantic_value_required)) {
+                bool projected = false;
+                uint64_t current_work =
+                    ppguarded_lex_cursor_v1_run_work_total(
+                        &result, semantic_mode,
+                        semantic_terminal_values,
+                        semantic_instructions,
+                        value_context.program_run_len,
+                        value_context.terminal_value_len,
+                        value_context.action_instruction_len,
+                        value_context.parser_work_item_len,
+                        semantic_mask_work_item_len,
+                        semantic_occurrence_work_item_len);
+                if (current_work >= work_limit) {
+                    result.outcome =
+                        PPGUARDED_LEX_CURSOR_V1_WORK_LIMIT;
+                    break;
+                }
+                if (event_sink->semantic_occurrence_project) {
+                    PPGuardedLexCursorV1SemanticOccurrenceProjection
+                        projection = {0};
+                    PPGuardedLexCursorV1Event projection_event;
+
+                    if (!event_sink->semantic_occurrence_project(
+                            event_sink->context, view,
+                            lookahead.source_index, cursor,
+                            lookahead.end_scalar,
+                            work_limit - current_work, &projection,
+                            error_buf, error_buf_size) ||
+                        UINT64_MAX - semantic_occurrence_work_item_len <
+                            projection.work_item_len) {
+                        if (error_buf && error_buf_size > 0u &&
+                            error_buf[0] == '\0') {
+                            ppguarded_lex_exec_v1_set_error(
+                                error_buf, error_buf_size,
+                                "semantic-occurrence projection work "
+                                "receipt overflow");
+                        }
+                        goto done;
+                    }
+                    semantic_occurrence_work_item_len +=
+                        projection.work_item_len;
+                    if (projection.outcome ==
+                            PPGUARDED_LEX_CURSOR_V1_OCCURRENCE_PROJECTION_WORK_LIMIT) {
+                        result.outcome =
+                            PPGUARDED_LEX_CURSOR_V1_WORK_LIMIT;
+                        break;
+                    }
+                    if (projection.outcome ==
+                            PPGUARDED_LEX_CURSOR_V1_OCCURRENCE_PROJECTION_ACCEPTED) {
+                        if (projection.production_label >=
+                                program->actions.production_len ||
+                            projection.left_scalar < cursor ||
+                            projection.left_scalar >
+                                projection.right_scalar ||
+                            projection.right_scalar >
+                                lookahead.end_scalar) {
+                            ppguarded_lex_exec_v1_set_error(
+                                error_buf, error_buf_size,
+                                "semantic-occurrence projection escaped "
+                                "its selected terminal");
+                            goto done;
+                        }
+                        projection_event =
+                            (PPGuardedLexCursorV1Event){
+                                .kind =
+                                    PPGUARDED_LEX_CURSOR_V1_EVENT_SEMANTIC_REDUCE,
+                                .symbol_id = UINT32_MAX,
+                                .source_index = lookahead.source_index,
+                                .production_index = UINT32_MAX,
+                                .production_label =
+                                    projection.production_label,
+                                .rhs_len = program->actions.productions[
+                                    projection.production_label].arity,
+                                .authored = true,
+                                .left_scalar =
+                                    projection.left_scalar,
+                                .right_scalar =
+                                    projection.right_scalar,
+                                .left_byte =
+                                    cetta_lp_native_utf8_scalar_view_byte_offset(
+                                        view, projection.left_scalar),
+                                .right_byte =
+                                    cetta_lp_native_utf8_scalar_view_byte_offset(
+                                        view, projection.right_scalar),
+                            };
+                        if (!ppguarded_lex_cursor_v1_emit_event(
+                                event_sink, &projection_event,
+                                error_buf, error_buf_size)) {
+                            goto done;
+                        }
+                        projected = true;
+                    } else if (projection.outcome !=
+                            PPGUARDED_LEX_CURSOR_V1_OCCURRENCE_PROJECTION_UNHANDLED) {
+                        ppguarded_lex_exec_v1_set_error(
+                            error_buf, error_buf_size,
+                            "semantic-occurrence projection returned an "
+                            "unknown outcome");
+                        goto done;
+                    }
+                }
+                current_work =
+                    ppguarded_lex_cursor_v1_run_work_total(
+                        &result, semantic_mode,
+                        semantic_terminal_values,
+                        semantic_instructions,
+                        value_context.program_run_len,
+                        value_context.terminal_value_len,
+                        value_context.action_instruction_len,
+                        value_context.parser_work_item_len,
+                        semantic_mask_work_item_len,
+                        semantic_occurrence_work_item_len);
+                if (!projected &&
+                    (current_work >= work_limit ||
+                     !ppguarded_lex_cursor_v1_emit_semantic_occurrences(
+                         program, view, lookahead.source_index,
+                         cursor, lookahead.end_scalar, event_sink,
+                         work_limit - current_work, &occurrence_work,
+                         error_buf, error_buf_size) ||
+                     UINT64_MAX - semantic_occurrence_work_item_len <
+                         occurrence_work)) {
+                    if (error_buf && error_buf_size > 0u &&
+                        error_buf[0] == '\0') {
+                        ppguarded_lex_exec_v1_set_error(
+                            error_buf, error_buf_size,
+                            "semantic-occurrence work receipt overflow");
+                    }
+                    goto done;
+                }
+                if (!projected)
+                    semantic_occurrence_work_item_len += occurrence_work;
+            }
+            if (!event_sink->shift_event_live ||
+                event_sink->shift_event_live[
+                    lookahead.source_index] != 0u) {
+                PPGuardedLexCursorV1Event event = {
+                    .kind = PPGUARDED_LEX_CURSOR_V1_EVENT_SHIFT,
+                    .symbol_id = terminal->terminal_id,
+                    .source_index = lookahead.source_index,
+                    .production_index = UINT32_MAX,
+                    .production_label = UINT32_MAX,
+                    .rhs_len = 0u,
+                    .authored = false,
+                    .left_scalar = cursor,
+                    .right_scalar = lookahead.end_scalar,
+                    .left_byte =
+                        cetta_lp_native_utf8_scalar_view_byte_offset(
+                            view, cursor),
+                    .right_byte =
+                        cetta_lp_native_utf8_scalar_view_byte_offset(
+                            view, lookahead.end_scalar),
+                };
+                if (!ppguarded_lex_cursor_v1_emit_event(
+                        event_sink, &event,
+                        error_buf, error_buf_size)) {
+                    goto done;
+                }
+            }
+        }
         cursor = lookahead.end_scalar;
+        dfa_scan_cache.valid = false;
         have_lookahead = false;
         memset(&lookahead, 0, sizeof(lookahead));
         continue;
@@ -5411,7 +7067,8 @@ malformed_action:
         goto done;
     }
     result.farthest_scalar = cursor;
-    result.farthest_byte = view->byte_offsets[cursor];
+    result.farthest_byte = cetta_lp_native_utf8_scalar_view_byte_offset(
+        view, cursor);
     if (exact_trace) {
         ppguarded_lex_exec_v1_sha_u32(&trace, (uint32_t)result.outcome);
         ppguarded_lex_exec_v1_sha_u32(&trace, result.farthest_scalar);
@@ -5444,6 +7101,9 @@ malformed_action:
     ok = true;
 
 done:
+    rsdfa_v1_ascii_transition_index_free(&ascii_index);
+    ppguarded_lex_cursor_v1_dispatch_index_free(&dispatch_index);
+    free(source_lefts);
     free(values);
     free(states);
     free(dfa_tokens);
@@ -5465,7 +7125,7 @@ bool ppguarded_lex_cursor_v1_program_run_scalar_view_prevalidated(
     return ppguarded_lex_cursor_v1_program_run_impl(
         program, view, NULL, NULL, 0u, NULL,
         NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
-        NULL, NULL,
+        NULL, NULL, NULL,
         true, work_limit, out, error_buf, error_buf_size);
 }
 
@@ -5485,8 +7145,124 @@ bool ppguarded_lex_cursor_v1_program_run_scalar_view(
     return ppguarded_lex_cursor_v1_program_run_impl(
         program, view, NULL, NULL, 0u, NULL,
         NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
-        NULL, NULL,
+        NULL, NULL, NULL,
         true, work_limit, out, error_buf, error_buf_size);
+}
+
+bool ppguarded_lex_cursor_v1_program_run_events_scalar_view_prevalidated(
+    const PPGuardedLexCursorV1Program *program,
+    const CettaLpNativeUtf8ScalarView *view,
+    const PPGuardedLexCursorV1EventSink *sink,
+    PPGuardedLexCursorV1Observation observation,
+    uint64_t work_limit,
+    PPGuardedLexCursorV1Receipt *out,
+    char *error_buf,
+    size_t error_buf_size) {
+    if (observation > PPGUARDED_LEX_CURSOR_V1_EXACT_TRACE) {
+        ppguarded_lex_exec_v1_set_error(
+            error_buf, error_buf_size,
+            "cursor occurrence run has an unknown observation mode");
+        return false;
+    }
+    return ppguarded_lex_cursor_v1_program_run_impl(
+        program, view, NULL, NULL, 0u, NULL,
+        NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
+        NULL, NULL, sink,
+        observation == PPGUARDED_LEX_CURSOR_V1_EXACT_TRACE,
+        work_limit, out, error_buf, error_buf_size);
+}
+
+bool ppguarded_lex_cursor_v1_program_run_events_scalar_view(
+    const PPGuardedLexCursorV1Program *program,
+    const CettaLpNativeUtf8ScalarView *view,
+    const PPGuardedLexCursorV1EventSink *sink,
+    PPGuardedLexCursorV1Observation observation,
+    uint64_t work_limit,
+    PPGuardedLexCursorV1Receipt *out,
+    char *error_buf,
+    size_t error_buf_size) {
+    if (!ppguarded_lex_cursor_v1_program_validate(
+            program, error_buf, error_buf_size) ||
+        !cetta_lp_native_utf8_scalar_view_validate(
+            view, error_buf, error_buf_size)) {
+        return false;
+    }
+    return
+        ppguarded_lex_cursor_v1_program_run_events_scalar_view_prevalidated(
+            program, view, sink, observation, work_limit, out,
+            error_buf, error_buf_size);
+}
+
+bool ppguarded_lex_cursor_v1_program_run_events_bytes_prevalidated(
+    const PPGuardedLexCursorV1Program *program,
+    const uint8_t *input_bytes,
+    size_t input_byte_len,
+    const PPGuardedLexCursorV1EventSink *sink,
+    PPGuardedLexCursorV1Observation observation,
+    uint64_t work_limit,
+    PPGuardedLexCursorV1Receipt *out,
+    char *error_buf,
+    size_t error_buf_size) {
+    CettaLpNativeUtf8ScalarBuffer buffer;
+    bool ok;
+
+    cetta_lp_native_utf8_scalar_buffer_init(&buffer);
+    if (!cetta_lp_native_utf8_scalar_buffer_prepare(
+            &buffer, input_bytes, input_byte_len,
+            error_buf, error_buf_size)) {
+        cetta_lp_native_utf8_scalar_buffer_free(&buffer);
+        return false;
+    }
+    ok =
+        ppguarded_lex_cursor_v1_program_run_events_scalar_view_prevalidated(
+            program, &buffer.view, sink, observation, work_limit, out,
+            error_buf, error_buf_size);
+    cetta_lp_native_utf8_scalar_buffer_free(&buffer);
+    return ok;
+}
+
+bool ppguarded_lex_cursor_v1_program_run_events_bytes(
+    const PPGuardedLexCursorV1Program *program,
+    const uint8_t *input_bytes,
+    size_t input_byte_len,
+    const PPGuardedLexCursorV1EventSink *sink,
+    PPGuardedLexCursorV1Observation observation,
+    uint64_t work_limit,
+    PPGuardedLexCursorV1Receipt *out,
+    char *error_buf,
+    size_t error_buf_size) {
+    if (!ppguarded_lex_cursor_v1_program_validate(
+            program, error_buf, error_buf_size)) {
+        return false;
+    }
+    return ppguarded_lex_cursor_v1_program_run_events_bytes_prevalidated(
+        program, input_bytes, input_byte_len, sink, observation,
+        work_limit, out, error_buf, error_buf_size);
+}
+
+bool ppguarded_lex_cursor_v1_program_run_bytes(
+    const PPGuardedLexCursorV1Program *program,
+    const uint8_t *input_bytes,
+    size_t input_byte_len,
+    uint64_t work_limit,
+    PPGuardedLexCursorV1Receipt *out,
+    char *error_buf,
+    size_t error_buf_size) {
+    CettaLpNativeUtf8ScalarBuffer buffer;
+    bool ok;
+
+    cetta_lp_native_utf8_scalar_buffer_init(&buffer);
+    if (!cetta_lp_native_utf8_scalar_buffer_prepare(
+            &buffer, input_bytes, input_byte_len,
+            error_buf, error_buf_size)) {
+        cetta_lp_native_utf8_scalar_buffer_free(&buffer);
+        return false;
+    }
+    ok = ppguarded_lex_cursor_v1_program_run_scalar_view(
+        program, &buffer.view, work_limit, out,
+        error_buf, error_buf_size);
+    cetta_lp_native_utf8_scalar_buffer_free(&buffer);
+    return ok;
 }
 
 bool ppguarded_lex_cursor_v1_program_run_semantic_lattice_prevalidated(
@@ -5513,6 +7289,7 @@ bool ppguarded_lex_cursor_v1_program_run_semantic_lattice_prevalidated(
         .context = &atom_context,
         .atom_arena = &result.arena,
         .scalar = ppguarded_lex_cursor_v1_atom_scalar,
+        .neutral = ppguarded_lex_cursor_v1_atom_neutral,
         .action = ppguarded_lex_cursor_v1_atom_action,
     };
     if (!out ||
@@ -5528,7 +7305,7 @@ bool ppguarded_lex_cursor_v1_program_run_semantic_lattice_prevalidated(
             &result.value_parser_work_item_len,
             &result.prepared_fallback_run_len,
             &result.prepared_fallback_work_item_len,
-            true, work_limit, &result.receipt,
+            NULL, true, work_limit, &result.receipt,
             error_buf, error_buf_size) ||
         !ppguarded_lex_cursor_v1_finish_atom_result(
             &result, root, error_buf, error_buf_size)) {
@@ -5593,6 +7370,7 @@ static bool ppguarded_lex_cursor_v1_program_run_semantic_direct_mode(
         .context = &atom_context,
         .atom_arena = &result.arena,
         .scalar = ppguarded_lex_cursor_v1_atom_scalar,
+        .neutral = ppguarded_lex_cursor_v1_atom_neutral,
         .action = ppguarded_lex_cursor_v1_atom_action,
     };
     if (!out ||
@@ -5607,7 +7385,7 @@ static bool ppguarded_lex_cursor_v1_program_run_semantic_direct_mode(
             &result.value_parser_work_item_len,
             &result.prepared_fallback_run_len,
             &result.prepared_fallback_work_item_len,
-            exact_trace, work_limit, &result.receipt,
+            NULL, exact_trace, work_limit, &result.receipt,
             error_buf, error_buf_size) ||
         !ppguarded_lex_cursor_v1_finish_atom_result(
             &result, root, error_buf, error_buf_size)) {
@@ -5667,7 +7445,7 @@ bool ppguarded_lex_cursor_v1_program_run_semantic_direct_bytes(
     bool ok;
 
     cetta_lp_native_utf8_scalar_buffer_init(&buffer);
-    if (!cetta_lp_native_utf8_scalar_buffer_decode(
+    if (!cetta_lp_native_utf8_scalar_buffer_prepare(
             &buffer, input_bytes, input_byte_len,
             error_buf, error_buf_size)) {
         cetta_lp_native_utf8_scalar_buffer_free(&buffer);
@@ -5699,7 +7477,7 @@ bool ppguarded_lex_cursor_v1_program_run_semantic_direct_bytes_prevalidated(
         return false;
     }
     cetta_lp_native_utf8_scalar_buffer_init(&buffer);
-    if (!cetta_lp_native_utf8_scalar_buffer_decode(
+    if (!cetta_lp_native_utf8_scalar_buffer_prepare(
             &buffer, input_bytes, input_byte_len,
             error_buf, error_buf_size)) {
         cetta_lp_native_utf8_scalar_buffer_free(&buffer);
@@ -5779,7 +7557,7 @@ bool ppguarded_lex_cursor_v1_program_run_projected_direct_bytes_prevalidated(
         }
         goto done;
     }
-    if (!cetta_lp_native_utf8_scalar_buffer_decode(
+    if (!cetta_lp_native_utf8_scalar_buffer_prepare(
             &buffer, input_bytes, input_byte_len,
             error_buf, error_buf_size)) {
         goto done;
@@ -5795,6 +7573,7 @@ bool ppguarded_lex_cursor_v1_program_run_projected_direct_bytes_prevalidated(
         .context = &projection_context,
         .atom_arena = NULL,
         .scalar = ppguarded_lex_cursor_v1_projection_scalar,
+        .neutral = ppguarded_lex_cursor_v1_projection_neutral,
         .action = ppguarded_lex_cursor_v1_projection_action,
         .span = semantic_masks
             ? ppguarded_lex_cursor_v1_projection_span : NULL,
@@ -5812,6 +7591,7 @@ bool ppguarded_lex_cursor_v1_program_run_projected_direct_bytes_prevalidated(
             &result.value_parser_work_item_len,
             &prepared_fallback_run_len,
             &prepared_fallback_work_item_len,
+            NULL,
             observation == PPGUARDED_LEX_CURSOR_V1_EXACT_TRACE,
             work_limit, &result.receipt,
             error_buf, error_buf_size)) {
@@ -5894,6 +7674,7 @@ bool ppguarded_lex_cursor_v1_program_run_semantic_hybrid_prevalidated(
         .context = &atom_context,
         .atom_arena = &result.arena,
         .scalar = ppguarded_lex_cursor_v1_atom_scalar,
+        .neutral = ppguarded_lex_cursor_v1_atom_neutral,
         .action = ppguarded_lex_cursor_v1_atom_action,
     };
     if (!program || !pack || !lexical_plan || !exec_plan || !view || !out ||
@@ -5950,7 +7731,7 @@ bool ppguarded_lex_cursor_v1_program_run_semantic_hybrid_prevalidated(
             &result.value_parser_work_item_len,
             &result.prepared_fallback_run_len,
             &result.prepared_fallback_work_item_len,
-            true, work_limit, &result.receipt,
+            NULL, true, work_limit, &result.receipt,
             error_buf, error_buf_size) ||
         !ppguarded_lex_cursor_v1_finish_atom_result(
             &result, root, error_buf, error_buf_size)) {
@@ -6021,7 +7802,7 @@ bool ppguarded_lex_cursor_v1_program_run_semantic_hybrid_bytes(
     bool ok;
 
     cetta_lp_native_utf8_scalar_buffer_init(&buffer);
-    if (!cetta_lp_native_utf8_scalar_buffer_decode(
+    if (!cetta_lp_native_utf8_scalar_buffer_prepare(
             &buffer, input_bytes, input_byte_len,
             error_buf, error_buf_size)) {
         cetta_lp_native_utf8_scalar_buffer_free(&buffer);
@@ -6055,6 +7836,7 @@ bool ppguarded_lex_exec_v1_plan_build(
     RSDFAV1BuildOutcome build_outcome = RSDFA_V1_BUILD_COMPLETED;
     bool *used_guards = NULL;
     int32_t start_state_id;
+    uint32_t part_len = 1u;
     uint32_t index;
     bool ok = false;
 
@@ -6067,9 +7849,7 @@ bool ppguarded_lex_exec_v1_plan_build(
         !ppguarded_lex_exec_v1_limits_valid(limits) ||
         lexical_nfa->nfa.tag_len == 0u ||
         lexical_nfa->nfa.tag_len != lexical_plan->entry_len ||
-        guarded_plan->entry_len == 0u ||
         guarded_plan->entry_len != guarded_plan->prefix_nfa.nfa.tag_len ||
-        guard_nfa->nfa.tag_len == 0u ||
         guard_nfa->nfa.tag_len != guard_plan->entry_len ||
         guarded_plan->entry_len != guard_plan->entry_len ||
         lexical_plan->entry_len >
@@ -6101,18 +7881,28 @@ bool ppguarded_lex_exec_v1_plan_build(
         goto done;
     }
     cetta_lp_native_grammar_free(&validation);
-    used_guards = calloc(guard_plan->entry_len, sizeof(*used_guards));
+    if (guard_plan->entry_len > 0u) {
+        used_guards = calloc(
+            guard_plan->entry_len, sizeof(*used_guards));
+    }
     result.projected_tag_terminal_ids = malloc(
         sizeof(*result.projected_tag_terminal_ids) *
         (size_t)(lexical_plan->entry_len + guarded_plan->entry_len));
-    result.guard_local_for_guarded = malloc(
-        sizeof(*result.guard_local_for_guarded) *
-        (size_t)guarded_plan->entry_len);
+    if (guarded_plan->entry_len > 0u) {
+        result.guard_local_for_guarded = malloc(
+            sizeof(*result.guard_local_for_guarded) *
+            (size_t)guarded_plan->entry_len);
+    }
     result.terminal_len = guard_plan->terminal_len + guarded_plan->entry_len;
-    result.terminals = malloc(
-        sizeof(*result.terminals) * (size_t)result.terminal_len);
-    if (!used_guards || !result.projected_tag_terminal_ids ||
-        !result.guard_local_for_guarded || !result.terminals ||
+    if (result.terminal_len > 0u) {
+        result.terminals = malloc(
+            sizeof(*result.terminals) * (size_t)result.terminal_len);
+    }
+    if ((guard_plan->entry_len > 0u && !used_guards) ||
+        !result.projected_tag_terminal_ids ||
+        (guarded_plan->entry_len > 0u &&
+         !result.guard_local_for_guarded) ||
+        (result.terminal_len > 0u && !result.terminals) ||
         !ppnative_v1_terminal_plan_build(
             pack, &result.scalar_terminals,
             error_buf, error_buf_size)) {
@@ -6167,10 +7957,12 @@ bool ppguarded_lex_exec_v1_plan_build(
             : guarded_plan->terminals[index - guard_plan->terminal_len];
     }
     parts[0] = lexical_nfa;
-    parts[1] = &guarded_plan->prefix_nfa;
-    parts[2] = guard_nfa;
+    if (guarded_plan->entry_len > 0u) {
+        parts[part_len++] = &guarded_plan->prefix_nfa;
+        parts[part_len++] = guard_nfa;
+    }
     if (!ppguarded_lex_exec_v1_union_build(
-            parts, 3u, &combined, error_buf, error_buf_size) ||
+            parts, part_len, &combined, error_buf, error_buf_size) ||
         !rsdfa_v1_plan_build(
             &combined.nfa, limits->dfa_state_limit,
             limits->dfa_transition_limit, &result.dfa, &build_outcome,
@@ -6221,13 +8013,15 @@ bool ppguarded_lex_exec_v1_plan_build(
         !pplex_v1_witness_family_prepare(
             pack, lexical_plan, &result.ordinary_witness_parsers,
             error_buf, error_buf_size) ||
-        !ppguard_ref_v1_witness_family_prepare(
-            pack, guard_plan, &result.guard_witness_parsers,
-            error_buf, error_buf_size) ||
-        !ppguarded_lex_exec_v1_guarded_witness_family_prepare(
-            pack, lexical_plan, guard_plan, guarded_plan,
-            &result.guarded_witness_parsers,
-            error_buf, error_buf_size)) {
+        (guard_plan->entry_len > 0u &&
+         !ppguard_ref_v1_witness_family_prepare(
+             pack, guard_plan, &result.guard_witness_parsers,
+             error_buf, error_buf_size)) ||
+        (guarded_plan->entry_len > 0u &&
+         !ppguarded_lex_exec_v1_guarded_witness_family_prepare(
+             pack, lexical_plan, guard_plan, guarded_plan,
+             &result.guarded_witness_parsers,
+             error_buf, error_buf_size))) {
         goto done;
     }
     result.start_state = (Atom *)start_state;
@@ -6691,8 +8485,10 @@ static bool ppguarded_lex_exec_v1_projected_relation_build(
 
     if (!projected_lattice ||
         (projected_value_len > 0u && !projected_values) ||
-        !guard_relation || !guard_plan || guard_plan->entry_len == 0u ||
-        !guard_plan->guard_terminal_ids || !atom_owners ||
+        !guard_relation || !guard_plan ||
+        (guard_plan->entry_len > 0u &&
+         !guard_plan->guard_terminal_ids) ||
+        !atom_owners ||
         atom_owner_len == 0u || !out ||
         !ppguard_relation_v1_validate(
             guard_relation, error_buf, error_buf_size) ||

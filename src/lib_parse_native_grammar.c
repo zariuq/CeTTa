@@ -6896,6 +6896,7 @@ Atom *cetta_lp_native_gll_forest_data(const CettaLpNativeGrammar *grammar,
 
 typedef struct {
     const uint8_t *bytes;
+    const uint8_t *ascii_bytes;
     size_t byte_len;
     size_t byte_pos;
     uint32_t *codepoints;
@@ -7007,6 +7008,7 @@ static void utf8_input_init_scalar_view(
     memset(input, 0, sizeof(*input));
     input->byte_len = view->input_byte_len;
     input->byte_pos = view->input_byte_len;
+    input->ascii_bytes = view->ascii_bytes;
     input->codepoints = (uint32_t *)view->codepoints;
     input->byte_offsets = (uint32_t *)view->byte_offsets;
     input->scalar_len = view->scalar_len;
@@ -7101,7 +7103,7 @@ static bool utf8_input_finish(CettaLpNativeUtf8Input *input,
         if (!utf8_input_decode_next(input, error_buf, error_buf_size))
             return false;
     }
-    if (!input->byte_offsets) {
+    if (!input->byte_offsets && !input->ascii_bytes) {
         if (!input->owns_arrays || !utf8_input_reserve(input, 1u))
             return false;
     }
@@ -7183,6 +7185,51 @@ done:
     return ok;
 }
 
+bool cetta_lp_native_utf8_scalar_buffer_prepare(
+    CettaLpNativeUtf8ScalarBuffer *buffer,
+    const uint8_t *input_bytes,
+    size_t input_byte_len,
+    char *error_buf,
+    size_t error_buf_size) {
+    CettaLpNativeUtf8ScalarBuffer result;
+    size_t index;
+
+    if (error_buf && error_buf_size > 0u)
+        error_buf[0] = '\0';
+    if (!buffer || (input_byte_len > 0u && !input_bytes) ||
+        input_byte_len > UINT32_MAX) {
+        slr_summary_set_error(
+            error_buf, error_buf_size,
+            "bad UTF-8 scalar source input");
+        return false;
+    }
+    if (input_byte_len == 0u) {
+        return cetta_lp_native_utf8_scalar_buffer_decode(
+            buffer, input_bytes, input_byte_len,
+            error_buf, error_buf_size);
+    }
+    for (index = 0u; index < input_byte_len; index++) {
+        if ((input_bytes[index] & UINT8_C(0x80)) != 0u) {
+            return cetta_lp_native_utf8_scalar_buffer_decode(
+                buffer, input_bytes, input_byte_len,
+                error_buf, error_buf_size);
+        }
+    }
+    cetta_lp_native_utf8_scalar_buffer_init(&result);
+    result.view = (CettaLpNativeUtf8ScalarView){
+        .codepoints = NULL,
+        .byte_offsets = NULL,
+        .scalar_len = (uint32_t)input_byte_len,
+        .input_byte_len = (uint32_t)input_byte_len,
+        .decoded_byte_len = (uint32_t)input_byte_len,
+        .source_pass_count = 1u,
+        .ascii_bytes = input_bytes,
+    };
+    cetta_lp_native_utf8_scalar_buffer_free(buffer);
+    *buffer = result;
+    return true;
+}
+
 static const CettaLpNativeUtf8Terminal *utf8_terminal_find(
     const CettaLpNativeUtf8Terminal *terminals,
     uint32_t terminal_len,
@@ -7247,7 +7294,9 @@ static bool utf8_terminal_match(
     }
     if (position >= input->scalar_len)
         return true;
-    value = input->codepoints[position];
+    value = input->ascii_bytes
+        ? (uint32_t)input->ascii_bytes[position]
+        : input->codepoints[position];
     if (terminal->kind == CETTA_LP_NATIVE_UTF8_TERMINAL_ANY ||
         (terminal->kind == CETTA_LP_NATIVE_UTF8_TERMINAL_SCALAR &&
          terminal->scalar == value) ||
@@ -7378,15 +7427,36 @@ bool cetta_lp_native_utf8_scalar_view_validate(
     size_t error_buf_size) {
     uint32_t index;
 
-    if (!view || (view->scalar_len > 0u && !view->codepoints) ||
-        !view->byte_offsets ||
+    if (!view ||
         !utf8_decode_receipt_valid(
             view->input_byte_len, view->decoded_byte_len,
             view->source_pass_count) ||
-        view->byte_offsets[0] != 0u ||
-        view->byte_offsets[view->scalar_len] != view->input_byte_len) {
+        !cetta_lp_native_utf8_scalar_view_has_storage(view)) {
         slr_summary_set_error(error_buf, error_buf_size,
                               "malformed UTF-8 scalar view header");
+        return false;
+    }
+    if (view->ascii_bytes) {
+        if (view->codepoints || view->byte_offsets ||
+            view->scalar_len != view->input_byte_len) {
+            slr_summary_set_error(error_buf, error_buf_size,
+                                  "malformed ASCII identity scalar view");
+            return false;
+        }
+        for (index = 0u; index < view->scalar_len; index++) {
+            if ((view->ascii_bytes[index] & UINT8_C(0x80)) != 0u) {
+                slr_summary_set_error(
+                    error_buf, error_buf_size,
+                    "ASCII identity scalar view contains a non-ASCII byte");
+                return false;
+            }
+        }
+        return true;
+    }
+    if (view->byte_offsets[0] != 0u ||
+        view->byte_offsets[view->scalar_len] != view->input_byte_len) {
+        slr_summary_set_error(error_buf, error_buf_size,
+                              "malformed UTF-8 scalar view offsets");
         return false;
     }
     for (index = 0u; index < view->scalar_len; index++) {
@@ -7864,16 +7934,23 @@ static uint32_t native_parse_input_byte_len(
         ? (uint32_t)input->utf8->byte_len : input->lattice->input_byte_len;
 }
 
-static const uint32_t *native_parse_input_codepoints(
-    const CettaLpNativeParseInput *input) {
-    return input->kind == CETTA_LP_NATIVE_PARSE_INPUT_UTF8
-        ? input->utf8->codepoints : input->lattice->codepoints;
+static uint32_t native_parse_input_scalar_at(
+    const CettaLpNativeParseInput *input,
+    uint32_t index) {
+    if (input->kind == CETTA_LP_NATIVE_PARSE_INPUT_LATTICE)
+        return input->lattice->codepoints[index];
+    return input->utf8->ascii_bytes
+        ? (uint32_t)input->utf8->ascii_bytes[index]
+        : input->utf8->codepoints[index];
 }
 
-static const uint32_t *native_parse_input_byte_offsets(
-    const CettaLpNativeParseInput *input) {
-    return input->kind == CETTA_LP_NATIVE_PARSE_INPUT_UTF8
-        ? input->utf8->byte_offsets : input->lattice->byte_offsets;
+static uint32_t native_parse_input_byte_offset(
+    const CettaLpNativeParseInput *input,
+    uint32_t index) {
+    if (input->kind == CETTA_LP_NATIVE_PARSE_INPUT_LATTICE)
+        return input->lattice->byte_offsets[index];
+    return input->utf8->ascii_bytes
+        ? index : input->utf8->byte_offsets[index];
 }
 
 static uint32_t native_parse_input_decoded_byte_len(
@@ -7919,24 +7996,22 @@ static bool native_forest_copy_input(CettaLpNativeUtf8Forest *forest,
                                      char *error_buf,
                                      size_t error_buf_size) {
     uint32_t scalar_len = native_parse_input_scalar_len(input);
-    const uint32_t *codepoints = native_parse_input_codepoints(input);
-    const uint32_t *byte_offsets = native_parse_input_byte_offsets(input);
+    uint32_t index;
 
     if (scalar_len > 0u) {
         forest->codepoints = cetta_malloc(
             sizeof(*forest->codepoints) * scalar_len);
-        memcpy(forest->codepoints, codepoints,
-               sizeof(*forest->codepoints) * scalar_len);
+        for (index = 0u; index < scalar_len; index++) {
+            forest->codepoints[index] =
+                native_parse_input_scalar_at(input, index);
+        }
     }
     forest->byte_offsets = cetta_malloc(
         sizeof(*forest->byte_offsets) * ((size_t)scalar_len + 1u));
-    if (!byte_offsets) {
-        slr_summary_set_error(error_buf, error_buf_size,
-                              "UTF-8 input lacks byte offsets");
-        return false;
+    for (index = 0u; index <= scalar_len; index++) {
+        forest->byte_offsets[index] =
+            native_parse_input_byte_offset(input, index);
     }
-    memcpy(forest->byte_offsets, byte_offsets,
-           sizeof(*forest->byte_offsets) * ((size_t)scalar_len + 1u));
     forest->scalar_len = scalar_len;
     forest->input_byte_len = native_parse_input_byte_len(input);
     forest->decoded_byte_len = native_parse_input_decoded_byte_len(input);
@@ -8073,8 +8148,6 @@ static bool native_forest_export(
     uint32_t node_idx;
     uint32_t choice_write = 0u;
     uint32_t scalar_len = native_parse_input_scalar_len(input);
-    const uint32_t *codepoints = native_parse_input_codepoints(input);
-    const uint32_t *byte_offsets = native_parse_input_byte_offsets(input);
 
     if (!utf8_forest_reachable_map(nodes, internal_roots, &reachable, &map,
                                 &reachable_len)) {
@@ -8126,8 +8199,10 @@ static bool native_forest_export(
         if (source->left > scalar_len || source->right > scalar_len) {
             goto malformed;
         }
-        target->byte_left = byte_offsets[source->left];
-        target->byte_right = byte_offsets[source->right];
+        target->byte_left =
+            native_parse_input_byte_offset(input, source->left);
+        target->byte_right =
+            native_parse_input_byte_offset(input, source->right);
         target->choice_begin = choice_write;
         if (kind == CETTA_LP_NATIVE_GLL_NODE_TERM) {
             target->symbol_id = gll_node_symbol_value(source);
@@ -8144,7 +8219,7 @@ static bool native_forest_export(
                 if (source->right != source->left + 1u ||
                     source->left >= scalar_len ||
                     gll_node_terminal_value(source) !=
-                        codepoints[source->left]) {
+                        native_parse_input_scalar_at(input, source->left)) {
                     goto malformed;
                 }
                 target->terminal_scalar =
@@ -8203,7 +8278,8 @@ static bool native_forest_export(
             if (pivot > scalar_len)
                 goto malformed;
             target_choice->scalar_pivot = pivot;
-            target_choice->byte_pivot = byte_offsets[pivot];
+            target_choice->byte_pivot =
+                native_parse_input_byte_offset(input, pivot);
             target->choice_len++;
         }
     }
@@ -9205,7 +9281,7 @@ finish_result:
         goto done;
     }
     result.farthest_byte =
-        native_parse_input_byte_offsets(input)[farthest];
+        native_parse_input_byte_offset(input, farthest);
     result.graph_node_len = gss_nodes.len;
     result.work_item_len = seen.len;
     cetta_lp_native_utf8_forest_free(out);
@@ -10906,7 +10982,7 @@ finish_result:
         goto done;
     }
     result.farthest_byte =
-        native_parse_input_byte_offsets(input)[farthest];
+        native_parse_input_byte_offset(input, farthest);
     result.graph_node_len = configs.len;
     result.stack_node_len = stacks.len;
     result.work_item_len = work_items;

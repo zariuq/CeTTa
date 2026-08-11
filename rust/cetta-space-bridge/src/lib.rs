@@ -2414,7 +2414,7 @@ fn contextless_candidate_can_escape(
         return false;
     }
     let candidate_namespace = (factor_idx + 1) as u8;
-    let stack = vec![(
+    let mut stack = vec![(
         ExprEnv {
             n: factor.namespace,
             v: factor.variable_offset,
@@ -2423,7 +2423,7 @@ fn contextless_candidate_can_escape(
         },
         ExprEnv::new(candidate_namespace, atom_expr),
     )];
-    let Ok(bindings) = unify(stack) else {
+    let Ok(bindings) = unify(&mut stack) else {
         return false;
     };
     bindings.iter().any(|(&(side, _), value)| {
@@ -2661,7 +2661,7 @@ impl ContextualResidualQueryCursor {
                 ));
                 chosen_entries.push(chosen);
             }
-            let row = if let Ok(bindings) = unify(stack) {
+            let row = if let Ok(bindings) = unify(&mut stack) {
                 let mut encoded = Vec::new();
                 for (&(side, idx), expr_env) in bindings.iter() {
                     if side == 0 {
@@ -2722,7 +2722,7 @@ impl ContextualResidualQueryCursor {
                     ),
                 ));
             }
-            if unify(stack).is_ok() {
+            if unify(&mut stack).is_ok() {
                 let remaining =
                     multiplicity
                         .checked_mul(remaining_activations)
@@ -3301,7 +3301,7 @@ fn accumulate_contextual_query_rows(
             chosen_entries.push(chosen_entry);
         }
 
-        if let Ok(bindings) = unify(stack) {
+        if let Ok(bindings) = unify(&mut stack) {
             let mut row = Vec::new();
             for (&(side, idx), expr_env) in bindings.iter() {
                 if side != 0 {

@@ -74,7 +74,7 @@ EXPECTED_CURSOR_CERTIFICATE_DIGEST = (
     "f474ce55b85bb50dd78f33be2361a2722e732e046ae16b39b1afdabfb8e0195f"
 )
 EXPECTED_CURSOR_PROGRAM_DIGEST = (
-    "df58260e36ad8e9cccddf23831060fa80c4e4637f216fad1d13d3887cafecac3"
+    "f465beefb262396a789dd2ecf3916b43dc5fc328a6e7af8f7c686f810a4cae6c"
 )
 EXPECTED_GUARD_ACTION_COMPILER_DIGEST = (
     "ca623a23e19f2e5369b59906ada3cbcefcfbd2ccba64dedb9c7df6e463877cbf"
@@ -100,13 +100,13 @@ EXPECTED_SLR_SHADOW_MATRIX_DIGEST = (
     "a40e913b655e4dc9ae862bdb5733934a781213feaadc7f0d5795b2485311e2e7"
 )
 EXPECTED_CURSOR_TRACE_MATRIX_DIGEST = (
-    "2b4de3e0ee179ebb4cdf8481cb17d5faef926ea85ec76d4c36eee0d2da97b617"
+    "4550e9fcd4abe3b44900dd47e2577babb16f967c8090d0b5bbe964a3f8e56ea9"
 )
 EXPECTED_CURSOR_SEMANTIC_MATRIX_DIGEST = (
-    "fa3a54c7ff1b59e8925dcd71d1397b16a37794836a56066f07320c4f2a56cc09"
+    "e9950304bb60ce67ec0912f3bbd683f5f175ccf08f8bb98f9f3a4db7fc091dc5"
 )
 EXPECTED_CURSOR_HYBRID_SEMANTIC_MATRIX_DIGEST = (
-    "77d9f07b0d7eeabf4f400a30ce5067fa7f7308a235994e9c0aba7fa3a1752176"
+    "d067ef7044f8d439ac5244405f55fd6975383e2e0bfa08357ec841525a0aba7d"
 )
 EXPECTED_CURSOR_HYBRID_GROWTH_DIGEST = (
     "8bd5481eb619f9df6f2fa251d31c481f70d04e4a118906aa8c53b46b84610f88"
@@ -512,7 +512,7 @@ def require_execution_seals(row: dict[str, object]) -> None:
         "cursor-certificate-non-prefix-free-tokens": "0",
         "cursor-certificate-unsupported-guards": "0",
         "cursor-certificate-boundary-crossings": "0",
-        "cursor-certificate-first-domain-overlaps": "0",
+        "cursor-certificate-token-prefix-overlaps": "0",
         "cursor-program-built": "1",
         "cursor-program-digest": EXPECTED_CURSOR_PROGRAM_DIGEST,
         "cursor-program-dfa-states": "82",
@@ -546,6 +546,7 @@ def require_execution_seals(row: dict[str, object]) -> None:
         "cursor-program-action-mutations-killed": "3",
         "cursor-program-value-programs": "7",
         "cursor-program-value-programs-complete": "1",
+        "cursor-program-semantic-required-sources": "3",
         "cursor-program-value-program-conflicts": "0",
         "cursor-program-direct-semantic-agreement": "1",
         "cursor-program-semantic-agreement": "1",
@@ -1119,6 +1120,8 @@ def main() -> int:
                 < cursor_counts["semantic-action-executions"]
                 or cursor_counts["semantic-mutations-killed"]
                 != (
+                    1
+                    +
                     int(
                         cursor_counts["ordinary-span-tokens"]
                         + cursor_counts["guarded-span-tokens"]

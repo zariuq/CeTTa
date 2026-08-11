@@ -1,0 +1,13 @@
+(ProofTraceInputAssertionV1
+  input-identity-v1
+  (ProofAssertionV1
+    (ProofAssertionListConsV1
+      (ProofAssertionVariableV1 input-x-v1 input-wff-v1)
+      ProofAssertionListNilV1)
+    ProofAssertionListNilV1
+    input-wff-v1
+    (ProofSequenceConsV1 input-x-v1 ProofSequenceNilV1)
+    ProofAssertionListNilV1)
+  (ProofTraceFrameConsV1
+    (ProofTraceFrameVariableV1 input-x-v1 input-wff-v1)
+    ProofTraceFrameNilV1))

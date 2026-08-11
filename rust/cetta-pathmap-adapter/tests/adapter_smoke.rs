@@ -1,6 +1,6 @@
 use cetta_pathmap_adapter::{OverlayZipper, ZipperSnapshotExt};
 use pathmap::PathMap;
-use pathmap::zipper::{Zipper, ZipperMoving};
+use pathmap::zipper::{Zipper, ZipperMoving, ZipperValues};
 
 #[test]
 fn snapshot_extension_roots_focus_value() {
@@ -35,4 +35,21 @@ fn overlay_zipper_child_count_follows_virtual_overlay_at_focus() {
     oz.descend_to([1u8]);
     assert_eq!(oz.path(), &[1u8]);
     assert_eq!(oz.child_count(), 2);
+}
+
+#[test]
+fn overlay_zipper_value_lookup_follows_virtual_overlay_below_focus() {
+    let mut base = PathMap::new();
+    base.set_val_at([1u8, 7u8], 17u8);
+    base.set_val_at([2u8, 8u8], 28u8);
+
+    let mut overlay = PathMap::new();
+    overlay.set_val_at([1u8, 7u8], 97u8);
+    overlay.set_val_at([3u8, 9u8], 39u8);
+
+    let oz = OverlayZipper::new(base.read_zipper(), overlay.read_zipper());
+    assert_eq!(oz.val_at([1u8, 7u8]), Some(&17u8));
+    assert_eq!(oz.val_at([2u8, 8u8]), Some(&28u8));
+    assert_eq!(oz.val_at([3u8, 9u8]), Some(&39u8));
+    assert_eq!(oz.val_at([4u8, 0u8]), None);
 }

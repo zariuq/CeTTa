@@ -665,7 +665,7 @@ pub fn counted_query_only_packet_rows(
         let atom_expr = Expr {
             ptr: candidate.atom_expr_bytes.as_ptr().cast_mut(),
         };
-        if let Ok(bindings) = unify(vec![(*factor, ExprEnv::new(1, atom_expr))]) {
+        if let Ok(bindings) = unify(&mut vec![(*factor, ExprEnv::new(1, atom_expr))]) {
             let signature = query_binding_signature_packet(space, &bindings)?;
             let mut row = Vec::new();
             append_u32_be(&mut row, 0);
@@ -770,7 +770,7 @@ pub fn counted_factor_candidates(
         let atom_expr = Expr {
             ptr: decoded.atom_expr_bytes.as_ptr().cast_mut(),
         };
-        if unify(vec![(
+        if unify(&mut vec![(
             ExprEnv::new(0, factor_expr),
             ExprEnv::new(1, atom_expr),
         )])
@@ -789,7 +789,7 @@ pub fn counted_factor_candidates(
         let atom_expr = Expr {
             ptr: decoded.atom_expr_bytes.as_ptr().cast_mut(),
         };
-        if unify(vec![(
+        if unify(&mut vec![(
             ExprEnv::new(0, factor_expr),
             ExprEnv::new(1, atom_expr),
         )])
@@ -947,7 +947,7 @@ fn accumulate_counted_query_rows_detailed(
             stack.push((*factor, ExprEnv::new((factor_idx + 1) as u8, atom_expr)));
             factor_counts.push(chosen_entry.count);
         }
-        if let Ok(bindings) = unify(stack) {
+        if let Ok(bindings) = unify(&mut stack) {
             if let Ok(signature) = query_binding_signature(space, &bindings) {
                 rows.push(CountedDetailedRow {
                     bindings: signature,
@@ -1183,7 +1183,7 @@ impl CountedGeneralQueryCursor {
                 factor_counts.push(chosen_entry.count);
             }
 
-            let row = if let Ok(bindings) = unify(stack) {
+            let row = if let Ok(bindings) = unify(&mut stack) {
                 let signature = query_binding_signature_packet(space, &bindings)?;
                 let mut row = Vec::new();
                 append_multi_ref_counted_multiplicities_packet(&mut row, &factor_counts).and_then(
@@ -1239,7 +1239,7 @@ impl CountedGeneralQueryCursor {
                             .to_string()
                     })?;
             }
-            let matched = unify(stack).is_ok();
+            let matched = unify(&mut stack).is_ok();
             self.advance();
             if matched {
                 total = total.checked_add(multiplicity).ok_or_else(|| {

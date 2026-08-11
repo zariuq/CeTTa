@@ -109,7 +109,7 @@ CASES = {
         "sources": (
             "core/syntax_core_v1.metta",
             "shared/lookahead_core_v1.metta",
-            "languages/metamath_appendix_e_v1.metta",
+            "../../../langdef/metamath/syntax_v1.metta",
         ),
         "summary": (270, 375, 645, 1),
     },
@@ -131,7 +131,7 @@ CASES = {
             "core/syntax_core_v1.metta",
             "shared/lookahead_core_v1.metta",
             "shared/char_core_v1.metta",
-            "languages/tptp_fof_cnf_v1.metta",
+            "../../../langdef/tptp/syntax_fof_cnf_v1.metta",
         ),
         "summary": (688, 562, 1250, 1),
     },

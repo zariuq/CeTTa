@@ -785,7 +785,7 @@ impl FlatCountedQueryIndex {
                 let atom_expr = Expr {
                     ptr: entry.atom_expr_bytes.as_ptr().cast_mut(),
                 };
-                if unify(vec![(*factor, ExprEnv::new(1, atom_expr))]).is_ok() {
+                if unify(&mut vec![(*factor, ExprEnv::new(1, atom_expr))]).is_ok() {
                     candidates.insert(entry.atom_expr_bytes.clone(), entry);
                 }
             }

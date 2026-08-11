@@ -36,7 +36,7 @@ typedef enum {
     PPGUARDED_LEX_CURSOR_V1_NON_PREFIX_FREE_TOKEN = UINT32_C(1) << 7u,
     PPGUARDED_LEX_CURSOR_V1_UNSUPPORTED_GUARD = UINT32_C(1) << 8u,
     PPGUARDED_LEX_CURSOR_V1_BOUNDARY_CROSSING = UINT32_C(1) << 9u,
-    PPGUARDED_LEX_CURSOR_V1_FIRST_DOMAIN_OVERLAP = UINT32_C(1) << 10u
+    PPGUARDED_LEX_CURSOR_V1_TOKEN_PREFIX_OVERLAP = UINT32_C(1) << 10u
 } PPGuardedLexCursorV1Failure;
 
 /*
@@ -62,7 +62,7 @@ typedef struct {
     uint32_t non_prefix_free_token_len;
     uint32_t unsupported_guard_len;
     uint32_t boundary_crossing_len;
-    uint32_t first_domain_overlap_len;
+    uint32_t token_prefix_overlap_len;
     uint32_t failure_mask;
     bool eligible;
     char digest[65];
@@ -92,6 +92,7 @@ typedef struct {
     uint32_t guard_range_begin;
     uint32_t guard_range_len;
     bool guard_accepts_eof;
+    bool semantic_value_required;
     uint32_t semantic_start_state_id;
     uint32_t semantic_program_index;
 } PPGuardedLexCursorV1Terminal;
@@ -151,10 +152,12 @@ typedef struct {
  * program is bound later from the independently certified GSLT compiler;
  * actions are never inferred from recognition tables.  Token-value SLR
  * programs are an optional specialization: every conflict-free independent
- * start is retained, while value_programs_complete is true exactly when every
- * lexical/guard start has a program.  A nonzero value_program_conflict_len
- * records structural ineligibility, not a build failure; malformed inputs and
- * resource failures still fail the build.
+ * start is retained.  Once actions are bound, a fixed-point dependency
+ * analysis marks the terminal values observable from the start result;
+ * value_programs_complete is true exactly when every such lexical/guard start
+ * has a program.  A nonzero value_program_conflict_len records conflicts in
+ * the full family, including semantically dead starts, rather than a build
+ * failure; malformed inputs and resource failures still fail the build.
  */
 typedef struct {
     RSDFAV1Program dfa;
@@ -178,6 +181,43 @@ typedef struct {
     char certificate_digest[65];
     char program_digest[65];
 } PPGuardedLexCursorV1Program;
+
+/*
+ * A checked sparse realization of the final SLR terminal columns.  Each
+ * state owns two source-index slices, preserving the canonical terminal
+ * order: scalar sources first participate in zero-copy scalar selection;
+ * span sources participate after the shared DFA scan.  Membership is
+ * derived solely from non-error cells in the owning SLR action table.
+ * This object is execution data and deliberately remains outside the
+ * generated cursor-program ABI.
+ */
+typedef struct {
+    uint32_t *scalar_offsets;
+    uint32_t *scalar_source_indices;
+    uint32_t *span_offsets;
+    uint32_t *span_source_indices;
+    uint32_t state_len;
+    uint32_t scalar_candidate_len;
+    uint32_t span_candidate_len;
+} PPGuardedLexCursorV1DispatchIndex;
+
+void ppguarded_lex_cursor_v1_dispatch_index_init(
+    PPGuardedLexCursorV1DispatchIndex *index);
+
+void ppguarded_lex_cursor_v1_dispatch_index_free(
+    PPGuardedLexCursorV1DispatchIndex *index);
+
+bool ppguarded_lex_cursor_v1_dispatch_index_build(
+    const PPGuardedLexCursorV1Program *program,
+    PPGuardedLexCursorV1DispatchIndex *out,
+    char *error_buf,
+    size_t error_buf_size);
+
+bool ppguarded_lex_cursor_v1_dispatch_index_validate(
+    const PPGuardedLexCursorV1Program *program,
+    const PPGuardedLexCursorV1DispatchIndex *index,
+    char *error_buf,
+    size_t error_buf_size);
 
 void ppguarded_lex_cursor_v1_program_init(
     PPGuardedLexCursorV1Program *program);
@@ -284,6 +324,10 @@ typedef struct {
     uint32_t guarded_span_token_len;
     uint32_t shift_len;
     uint32_t reduce_len;
+    uint32_t epsilon_reduce_len;
+    uint32_t unit_reduce_len;
+    uint32_t reselect_reduce_len;
+    uint32_t unit_reselect_reduce_len;
     uint32_t cursor_scan_len;
     uint32_t max_stack_len;
     uint32_t source_pass_count;
@@ -291,6 +335,167 @@ typedef struct {
     uint64_t parser_work_item_len;
     char trace_digest[65];
 } PPGuardedLexCursorV1Receipt;
+
+typedef enum {
+    PPGUARDED_LEX_CURSOR_V1_COUNTERS_ONLY = 0,
+    PPGUARDED_LEX_CURSOR_V1_EXACT_TRACE = 1
+} PPGuardedLexCursorV1Observation;
+
+/*
+ * Proof-relevant occurrence stream emitted by the deterministic cursor.
+ * Symbol and production identities are copied from the generated SLR/terminal
+ * program; the generic runtime neither names nor interprets guest-language
+ * constructs.  REDUCE spans are the exact covered source interval, including
+ * zero-width epsilon reductions.  ACCEPT is emitted only after the complete
+ * start derivation has been recognized.
+ *
+ * Consumers should update an isolated transaction and commit it only on
+ * ACCEPT.  A later parse failure therefore cannot publish a partial fold.
+ */
+typedef enum {
+    PPGUARDED_LEX_CURSOR_V1_EVENT_SHIFT = 0,
+    PPGUARDED_LEX_CURSOR_V1_EVENT_REDUCE = 1,
+    PPGUARDED_LEX_CURSOR_V1_EVENT_ACCEPT = 2,
+    /*
+     * An authored reduction inside the deterministic value program of one
+     * shifted terminal.  source_index names that enclosing terminal while
+     * production_label retains the exact normalized production occurrence.
+     * Its certified transparent-inline source fiber remains available to
+     * consumers that bind authored source occurrences.
+     */
+    PPGUARDED_LEX_CURSOR_V1_EVENT_SEMANTIC_REDUCE = 3
+} PPGuardedLexCursorV1EventKind;
+
+typedef struct {
+    PPGuardedLexCursorV1EventKind kind;
+    uint32_t symbol_id;
+    uint32_t source_index;
+    uint32_t production_index;
+    uint32_t production_label;
+    uint32_t rhs_len;
+    bool authored;
+    uint32_t left_scalar;
+    uint32_t right_scalar;
+    uint32_t left_byte;
+    uint32_t right_byte;
+} PPGuardedLexCursorV1Event;
+
+typedef bool (*PPGuardedLexCursorV1EventEmitFn)(
+    void *context,
+    const PPGuardedLexCursorV1Event *event,
+    char *error_buf,
+    size_t error_buf_size);
+
+typedef bool (*PPGuardedLexCursorV1SemanticOccurrenceRequiredFn)(
+    void *context,
+    uint32_t source_index);
+
+typedef enum {
+    PPGUARDED_LEX_CURSOR_V1_OCCURRENCE_PROJECTION_UNHANDLED = 0,
+    PPGUARDED_LEX_CURSOR_V1_OCCURRENCE_PROJECTION_ACCEPTED = 1,
+    PPGUARDED_LEX_CURSOR_V1_OCCURRENCE_PROJECTION_WORK_LIMIT = 2
+} PPGuardedLexCursorV1SemanticOccurrenceProjectionOutcome;
+
+typedef struct {
+    PPGuardedLexCursorV1SemanticOccurrenceProjectionOutcome outcome;
+    uint32_t production_label;
+    uint32_t left_scalar;
+    uint32_t right_scalar;
+    uint64_t work_item_len;
+} PPGuardedLexCursorV1SemanticOccurrenceProjection;
+
+typedef bool (*PPGuardedLexCursorV1SemanticOccurrenceProjectFn)(
+    void *context,
+    const CettaLpNativeUtf8ScalarView *view,
+    uint32_t source_index,
+    uint32_t left_scalar,
+    uint32_t right_scalar,
+    uint64_t work_limit,
+    PPGuardedLexCursorV1SemanticOccurrenceProjection *out,
+    char *error_buf,
+    size_t error_buf_size);
+
+typedef struct {
+    void *context;
+    PPGuardedLexCursorV1EventEmitFn emit;
+    /*
+     * Optional observation-liveness masks over canonical cursor source and
+     * production indices.  A null mask requests the complete corresponding
+     * event stream.  A present mask must cover the complete owning domain;
+     * zero cells suppress only the callback, never parser execution, spans,
+     * work accounting, or trace construction.
+     */
+    const uint8_t *shift_event_live;
+    uint32_t shift_event_live_len;
+    const uint8_t *reduction_event_live;
+    uint32_t reduction_event_live_len;
+    /*
+     * Ask the cursor to interpret selected terminal value programs in the
+     * source-span algebra and emit their nested authored reductions.
+     * `semantic_occurrence_required`, when present, is the independent
+     * observation-liveness predicate.  Otherwise final-result semantic
+     * liveness is used for backward-compatible event audits.  Ordinary event
+     * consumers leave `semantic_occurrences` false.
+     */
+    bool semantic_occurrences;
+    PPGuardedLexCursorV1SemanticOccurrenceRequiredFn
+        semantic_occurrence_required;
+    /*
+     * An optional compiler-certified quotient of nested semantic reductions.
+     * ACCEPTED supplies the one reduction observed by this consumer;
+     * UNHANDLED preserves the complete value-program fallback.
+     */
+    PPGuardedLexCursorV1SemanticOccurrenceProjectFn
+        semantic_occurrence_project;
+} PPGuardedLexCursorV1EventSink;
+
+/*
+ * Run recognition while emitting the requested occurrence observation.  A
+ * sink without liveness masks receives the complete stream.  Observation is
+ * semantically transparent: the ordinary receipt is unchanged, and a
+ * consumer failure fails the run rather than silently dropping a live event.
+ */
+bool ppguarded_lex_cursor_v1_program_run_events_scalar_view_prevalidated(
+    const PPGuardedLexCursorV1Program *program,
+    const CettaLpNativeUtf8ScalarView *view,
+    const PPGuardedLexCursorV1EventSink *sink,
+    PPGuardedLexCursorV1Observation observation,
+    uint64_t work_limit,
+    PPGuardedLexCursorV1Receipt *out,
+    char *error_buf,
+    size_t error_buf_size);
+
+bool ppguarded_lex_cursor_v1_program_run_events_scalar_view(
+    const PPGuardedLexCursorV1Program *program,
+    const CettaLpNativeUtf8ScalarView *view,
+    const PPGuardedLexCursorV1EventSink *sink,
+    PPGuardedLexCursorV1Observation observation,
+    uint64_t work_limit,
+    PPGuardedLexCursorV1Receipt *out,
+    char *error_buf,
+    size_t error_buf_size);
+
+bool ppguarded_lex_cursor_v1_program_run_events_bytes_prevalidated(
+    const PPGuardedLexCursorV1Program *program,
+    const uint8_t *input_bytes,
+    size_t input_byte_len,
+    const PPGuardedLexCursorV1EventSink *sink,
+    PPGuardedLexCursorV1Observation observation,
+    uint64_t work_limit,
+    PPGuardedLexCursorV1Receipt *out,
+    char *error_buf,
+    size_t error_buf_size);
+
+bool ppguarded_lex_cursor_v1_program_run_events_bytes(
+    const PPGuardedLexCursorV1Program *program,
+    const uint8_t *input_bytes,
+    size_t input_byte_len,
+    const PPGuardedLexCursorV1EventSink *sink,
+    PPGuardedLexCursorV1Observation observation,
+    uint64_t work_limit,
+    PPGuardedLexCursorV1Receipt *out,
+    char *error_buf,
+    size_t error_buf_size);
 
 /*
  * Semantic execution of the deterministic cursor owns every constructed
@@ -341,11 +546,6 @@ typedef enum {
     PPGUARDED_LEX_CURSOR_V1_PREPARED_GLR = 1
 } PPGuardedLexCursorV1PreparedBackend;
 
-typedef enum {
-    PPGUARDED_LEX_CURSOR_V1_COUNTERS_ONLY = 0,
-    PPGUARDED_LEX_CURSOR_V1_EXACT_TRACE = 1
-} PPGuardedLexCursorV1Observation;
-
 void ppguarded_lex_cursor_v1_semantic_result_init(
     PPGuardedLexCursorV1SemanticResult *result);
 
@@ -363,6 +563,19 @@ bool ppguarded_lex_cursor_v1_program_run_scalar_view_prevalidated(
 bool ppguarded_lex_cursor_v1_program_run_scalar_view(
     const PPGuardedLexCursorV1Program *program,
     const CettaLpNativeUtf8ScalarView *view,
+    uint64_t work_limit,
+    PPGuardedLexCursorV1Receipt *out,
+    char *error_buf,
+    size_t error_buf_size);
+
+/*
+ * Production byte-source recognition entry point.  UTF-8 is decoded once
+ * before the validated deterministic cursor runs.
+ */
+bool ppguarded_lex_cursor_v1_program_run_bytes(
+    const PPGuardedLexCursorV1Program *program,
+    const uint8_t *input_bytes,
+    size_t input_byte_len,
     uint64_t work_limit,
     PPGuardedLexCursorV1Receipt *out,
     char *error_buf,
