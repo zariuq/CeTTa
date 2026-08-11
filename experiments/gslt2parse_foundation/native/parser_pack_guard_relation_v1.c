@@ -531,8 +531,9 @@ static bool ppguard_relation_v1_build_impl(
     result.atom_storage = atom_storage;
     if (error_buf && error_buf_size > 0u)
         error_buf[0] = '\0';
-    if (!base_lattice || !out || guard_terminal_len == 0u ||
-        !guard_terminal_ids || (match_len > 0u && !matches) ||
+    if (!base_lattice || !out ||
+        (guard_terminal_len > 0u && !guard_terminal_ids) ||
+        (match_len > 0u && !matches) ||
         (base_witness_len > 0u && !base_witness_values) ||
         (atom_storage != PPGUARD_RELATION_V1_ATOMS_SELF_CONTAINED &&
          atom_storage != PPGUARD_RELATION_V1_ATOMS_BORROWED) ||
@@ -571,14 +572,16 @@ static bool ppguard_relation_v1_build_impl(
             "positive guard terminal allocation overflow");
         goto done;
     }
-    sorted_guard_ids = malloc(
-        sizeof(*sorted_guard_ids) * (size_t)guard_terminal_len);
-    if (!sorted_guard_ids)
-        goto done;
-    memcpy(sorted_guard_ids, guard_terminal_ids,
-           sizeof(*sorted_guard_ids) * (size_t)guard_terminal_len);
-    qsort(sorted_guard_ids, guard_terminal_len,
-          sizeof(*sorted_guard_ids), ppguard_relation_v1_u32_compare);
+    if (guard_terminal_len > 0u) {
+        sorted_guard_ids = malloc(
+            sizeof(*sorted_guard_ids) * (size_t)guard_terminal_len);
+        if (!sorted_guard_ids)
+            goto done;
+        memcpy(sorted_guard_ids, guard_terminal_ids,
+               sizeof(*sorted_guard_ids) * (size_t)guard_terminal_len);
+        qsort(sorted_guard_ids, guard_terminal_len,
+              sizeof(*sorted_guard_ids), ppguard_relation_v1_u32_compare);
+    }
     for (index = 0u; index < guard_terminal_len; index++) {
         if ((index > 0u &&
              sorted_guard_ids[index - 1u] == sorted_guard_ids[index]) ||
@@ -789,9 +792,11 @@ static bool ppguard_relation_v1_build_impl(
                sizeof(*result.terminal_ids) *
                (size_t)base_lattice->terminal_len);
     }
-    memcpy(result.terminal_ids + base_lattice->terminal_len,
-           sorted_guard_ids,
-           sizeof(*result.terminal_ids) * (size_t)guard_terminal_len);
+    if (guard_terminal_len > 0u) {
+        memcpy(result.terminal_ids + base_lattice->terminal_len,
+               sorted_guard_ids,
+               sizeof(*result.terminal_ids) * (size_t)guard_terminal_len);
+    }
     qsort(result.terminal_ids, terminal_len,
           sizeof(*result.terminal_ids), ppguard_relation_v1_u32_compare);
     if (base_lattice->edge_len > 0u) {

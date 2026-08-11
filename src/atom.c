@@ -1247,35 +1247,85 @@ typedef struct {
 
 static __thread SymbolLiteralCacheEntry g_symbol_literal_cache[SYMBOL_LITERAL_CACHE_SIZE];
 
-static _Atomic uint32_t g_var_base_counter = 1;
+/* The packed VarId ABI has a 32-bit base.  Keep the reservation cursor one
+ * bit wider so exhaustion remains distinguishable from wraparound. */
+static _Atomic uint64_t g_var_base_counter = 1;
 #define VAR_ID_BLOCK_SIZE 4096u
 
 typedef struct {
-    uint32_t next;
+    uint64_t next;
     uint32_t remaining;
 } VarIdBlockCache;
 
 static __thread VarIdBlockCache g_var_base_block_cache = {0};
 
-static uint32_t fresh_var_base_block_next(void) {
-    while (g_var_base_block_cache.remaining > 0) {
-        uint32_t value = g_var_base_block_cache.next++;
+static bool fresh_var_base_try(uint32_t *base_out) {
+    if (!base_out)
+        return false;
+
+    if (g_var_base_block_cache.remaining > 0u) {
+        uint64_t value = g_var_base_block_cache.next++;
+
         g_var_base_block_cache.remaining--;
-        if (value != 0)
-            return value;
+        if (value == 0u || value > UINT32_MAX) {
+            g_var_base_block_cache.remaining = 0u;
+            return false;
+        }
+        *base_out = (uint32_t)value;
+        return true;
     }
 
-    uint32_t start = atomic_fetch_add_explicit(&g_var_base_counter,
-                                               VAR_ID_BLOCK_SIZE,
-                                               memory_order_relaxed);
-    g_var_base_block_cache.next = start;
-    g_var_base_block_cache.remaining = VAR_ID_BLOCK_SIZE;
-    return fresh_var_base_block_next();
+    for (;;) {
+        uint64_t start = atomic_load_explicit(
+            &g_var_base_counter, memory_order_relaxed);
+        uint64_t available;
+        uint64_t block_size;
+        uint64_t after;
+
+        /* Base zero means "no variable".  UINT32_MAX + 1 is the exhausted
+         * sentinel in the wider reservation cursor. */
+        if (start == 0u || start > UINT32_MAX)
+            return false;
+        available = (uint64_t)UINT32_MAX - start + 1u;
+        block_size = available < VAR_ID_BLOCK_SIZE
+            ? available : VAR_ID_BLOCK_SIZE;
+        after = start + block_size;
+        if (!atomic_compare_exchange_weak_explicit(
+                &g_var_base_counter, &start, after,
+                memory_order_relaxed, memory_order_relaxed))
+            continue;
+        g_var_base_block_cache.next = start;
+        g_var_base_block_cache.remaining = (uint32_t)block_size;
+        return fresh_var_base_try(base_out);
+    }
+}
+
+bool fresh_var_id_try(VarId *id_out) {
+    uint32_t base;
+
+    if (!id_out || !fresh_var_base_try(&base))
+        return false;
+    *id_out = (VarId)base;
+    return true;
 }
 
 VarId fresh_var_id(void) {
-    return (VarId)fresh_var_base_block_next();
+    VarId id;
+
+    if (fresh_var_id_try(&id))
+        return id;
+    fputs("fatal: fresh-variable identity space exhausted\n", stderr);
+    abort();
 }
+
+#ifdef CETTA_TEST_HOOKS
+void fresh_var_id_test_reset(uint64_t next_base) {
+    atomic_store_explicit(
+        &g_var_base_counter, next_base, memory_order_relaxed);
+    g_var_base_block_cache.next = 0u;
+    g_var_base_block_cache.remaining = 0u;
+}
+#endif
 
 uint32_t var_base_id(VarId id) {
     return (uint32_t)(id & 0xFFFFFFFFu);

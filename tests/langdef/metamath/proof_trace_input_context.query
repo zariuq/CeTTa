@@ -1,0 +1,11 @@
+(ProofTraceInputBuildContextV1
+  input-request-v1 ProofTraceNatZeroV1
+  (ProofTraceNatSuccV1
+    (ProofTraceNatSuccV1 ProofTraceNatZeroV1))
+  (ProofTraceContextConsV1
+    (ProofSequenceConsV1 input-wff-v1
+      (ProofSequenceConsV1 input-a-v1 ProofSequenceNilV1))
+    (ProofTraceContextConsV1
+      (ProofSequenceConsV1 input-wff-v1
+        (ProofSequenceConsV1 input-dummy-v1 ProofSequenceNilV1))
+      ProofTraceContextNilV1)))

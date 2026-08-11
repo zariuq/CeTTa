@@ -1,0 +1,6 @@
+(ProofTraceCompileNormalV1
+  (ProofTraceLabelConsV1 codec-label-m-v1
+    (ProofTraceLabelConsV1 codec-label-e-v1 ProofTraceLabelNilV1))
+  (ProofTraceConsV1 (ProofTracePushV1 codec-formula-m-v1)
+    (ProofTraceConsV1 (ProofTracePushV1 codec-formula-e-v1)
+      ProofTraceNilV1)))

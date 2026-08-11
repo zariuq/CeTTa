@@ -1,0 +1,40 @@
+(ProofTraceAcceptedV1
+  (ProofTraceContextConsV1
+    (ProofSequenceConsV1 trace-wff
+      (ProofSequenceConsV1 trace-a ProofSequenceNilV1))
+    (ProofTraceContextConsV1
+      (ProofSequenceConsV1 trace-turnstile
+        (ProofSequenceConsV1 trace-a ProofSequenceNilV1))
+      ProofTraceContextNilV1))
+  (ProofTraceConsV1
+    (ProofTracePushV1
+      (ProofSequenceConsV1 trace-wff
+        (ProofSequenceConsV1 trace-a ProofSequenceNilV1)))
+    (ProofTraceConsV1
+      (ProofTracePushV1
+        (ProofSequenceConsV1 trace-turnstile
+          (ProofSequenceConsV1 trace-a ProofSequenceNilV1)))
+      (ProofTraceConsV1
+        (ProofTraceApplyV1
+          (ProofAssertionV1
+            (ProofAssertionListConsV1
+              (ProofAssertionVariableV1 trace-x trace-wff)
+              ProofAssertionListNilV1)
+            (ProofAssertionListConsV1
+              (ProofAssertionEssentialV1
+                (ProofSequenceConsV1 trace-turnstile
+                  (ProofSequenceConsV1 trace-x ProofSequenceNilV1)))
+              ProofAssertionListNilV1)
+            trace-turnstile
+            (ProofSequenceConsV1 trace-x ProofSequenceNilV1)
+            ProofAssertionListNilV1)
+          (ProofTraceFrameConsV1
+            (ProofTraceFrameEssentialV1
+              (ProofSequenceConsV1 trace-turnstile
+                (ProofSequenceConsV1 trace-x ProofSequenceNilV1)))
+            (ProofTraceFrameConsV1
+              (ProofTraceFrameVariableV1 trace-x trace-wff)
+              ProofTraceFrameNilV1)))
+        ProofTraceNilV1)))
+  (ProofSequenceConsV1 trace-turnstile
+    (ProofSequenceConsV1 trace-a ProofSequenceNilV1)))

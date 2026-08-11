@@ -300,6 +300,10 @@ static bool ppsemantic_mask_v1_edge_shape(
         *out_erased_head = "nfa-epsilon";
         *out_erased_argument_len = 2u;
     } else if (ppsemantic_mask_v1_expr_head(
+                   edge, "semantic-mask-nfa-eof", 2u)) {
+        *out_erased_head = "nfa-eof";
+        *out_erased_argument_len = 2u;
+    } else if (ppsemantic_mask_v1_expr_head(
                    edge, "semantic-mask-nfa-any", 3u)) {
         *out_erased_head = "nfa-any";
         *out_erased_argument_len = 2u;
@@ -782,8 +786,10 @@ bool ppsemantic_mask_dfa_v1_program_validate(
     return true;
 }
 
-bool ppsemantic_mask_dfa_v1_program_build(
+static bool ppsemantic_mask_dfa_v1_program_build_impl(
     const PPSemanticMaskNfaV1Plan *mask,
+    const uint32_t *action_quotient,
+    uint32_t quotient_action_len,
     uint32_t state_limit,
     uint32_t transition_limit,
     PPSemanticMaskDfaV1Program *out,
@@ -792,7 +798,9 @@ bool ppsemantic_mask_dfa_v1_program_build(
     size_t error_buf_size) {
     PPSemanticMaskDfaV1Program result;
     RSDFAV1Plan dfa;
+    uint32_t *edge_actions = NULL;
     RSDFAV1BuildOutcome build_outcome = RSDFA_V1_BUILD_STATE_LIMIT;
+    uint32_t index;
     bool ok = false;
 
     ppsemantic_mask_dfa_v1_program_init(&result);
@@ -802,15 +810,57 @@ bool ppsemantic_mask_dfa_v1_program_build(
     if (outcome)
         *outcome = build_outcome;
     if (!mask || !mask->erased.nfa.state_len || !mask->edge_actions ||
-        mask->action_len == 0u || !out || !outcome ||
+        mask->action_len == 0u || quotient_action_len == 0u ||
+        !out || !outcome ||
         state_limit == 0u || transition_limit == 0u) {
         ppsemantic_mask_v1_set_error(
             error_buf, error_buf_size,
             "bad semantic-mask DFA build arguments");
         goto done;
     }
+    if (action_quotient) {
+        if ((size_t)mask->erased.nfa.edge_len >
+                SIZE_MAX / sizeof(*edge_actions)) {
+            ppsemantic_mask_v1_set_error(
+                error_buf, error_buf_size,
+                "semantic-mask quotient edge table overflows");
+            goto done;
+        }
+        edge_actions = malloc(
+            sizeof(*edge_actions) *
+            (size_t)(mask->erased.nfa.edge_len
+                ? mask->erased.nfa.edge_len : 1u));
+        if (!edge_actions) {
+            ppsemantic_mask_v1_set_error(
+                error_buf, error_buf_size,
+                "cannot allocate semantic-mask quotient edge table");
+            goto done;
+        }
+        for (index = 0u; index < mask->erased.nfa.edge_len; index++) {
+            uint32_t action = mask->edge_actions[index];
+            if (action == UINT32_MAX) {
+                edge_actions[index] = UINT32_MAX;
+                continue;
+            }
+            if (action >= mask->action_len ||
+                action_quotient[action] >= quotient_action_len) {
+                ppsemantic_mask_v1_set_error(
+                    error_buf, error_buf_size,
+                    "semantic-mask action quotient is out of range");
+                goto done;
+            }
+            edge_actions[index] = action_quotient[action];
+        }
+    } else if (quotient_action_len != mask->action_len) {
+        ppsemantic_mask_v1_set_error(
+            error_buf, error_buf_size,
+            "identity semantic-mask quotient changed action length");
+        goto done;
+    }
     if (!rsdfa_v1_plan_build_annotated(
-            &mask->erased.nfa, mask->edge_actions, UINT32_MAX,
+            &mask->erased.nfa,
+            edge_actions ? edge_actions : mask->edge_actions,
+            UINT32_MAX,
             state_limit, transition_limit, &dfa, &build_outcome,
             error_buf, error_buf_size)) {
         goto done;
@@ -820,7 +870,7 @@ bool ppsemantic_mask_dfa_v1_program_build(
         ok = true;
         goto done;
     }
-    result.action_len = mask->action_len;
+    result.action_len = quotient_action_len;
     if (!rsdfa_v1_plan_export_program(
             &dfa, &result.dfa, error_buf, error_buf_size) ||
         !rsdfa_v1_plan_export_transition_annotations(
@@ -837,15 +887,53 @@ bool ppsemantic_mask_dfa_v1_program_build(
     ok = true;
 
 done:
+    free(edge_actions);
     rsdfa_v1_plan_free(&dfa);
     ppsemantic_mask_dfa_v1_program_free(&result);
     return ok;
 }
 
+bool ppsemantic_mask_dfa_v1_program_build(
+    const PPSemanticMaskNfaV1Plan *mask,
+    uint32_t state_limit,
+    uint32_t transition_limit,
+    PPSemanticMaskDfaV1Program *out,
+    RSDFAV1BuildOutcome *outcome,
+    char *error_buf,
+    size_t error_buf_size) {
+    return ppsemantic_mask_dfa_v1_program_build_impl(
+        mask, NULL, mask ? mask->action_len : 0u,
+        state_limit, transition_limit, out, outcome,
+        error_buf, error_buf_size);
+}
+
+bool ppsemantic_mask_dfa_v1_program_build_quotient(
+    const PPSemanticMaskNfaV1Plan *mask,
+    const uint32_t *action_quotient,
+    uint32_t quotient_action_len,
+    uint32_t state_limit,
+    uint32_t transition_limit,
+    PPSemanticMaskDfaV1Program *out,
+    RSDFAV1BuildOutcome *outcome,
+    char *error_buf,
+    size_t error_buf_size) {
+    if (!action_quotient) {
+        ppsemantic_mask_v1_set_error(
+            error_buf, error_buf_size,
+            "semantic-mask quotient is absent");
+        return false;
+    }
+    return ppsemantic_mask_dfa_v1_program_build_impl(
+        mask, action_quotient, quotient_action_len,
+        state_limit, transition_limit, out, outcome,
+        error_buf, error_buf_size);
+}
+
 static bool ppsemantic_mask_dfa_v1_state_accepts(
     const RSDFAV1Program *program,
     uint32_t state_index,
-    uint32_t tag) {
+    uint32_t tag,
+    bool at_eof) {
     const RSDFAV1ProgramState *state;
     uint32_t low;
     uint32_t high;
@@ -860,6 +948,20 @@ static bool ppsemantic_mask_dfa_v1_state_accepts(
     while (low < high) {
         uint32_t middle = low + (high - low) / 2u;
         uint32_t value = program->accept_tags[middle];
+        if (tag < value)
+            high = middle;
+        else if (tag > value)
+            low = middle + 1u;
+        else
+            return true;
+    }
+    if (!at_eof)
+        return false;
+    low = state->eof_accept_begin;
+    high = state->eof_accept_begin + state->eof_accept_len;
+    while (low < high) {
+        uint32_t middle = low + (high - low) / 2u;
+        uint32_t value = program->eof_accept_tags[middle];
         if (tag < value)
             high = middle;
         else if (tag > value)
@@ -911,7 +1013,8 @@ bool ppsemantic_mask_dfa_v1_run_exact_prevalidated(
         uint32_t low;
         uint32_t high;
         uint32_t transition_index = UINT32_MAX;
-        uint32_t scalar = view->codepoints[cursor];
+        uint32_t scalar = cetta_lp_native_utf8_scalar_view_scalar_at(
+            view, cursor);
 
         if (state >= dfa->state_len) {
             ppsemantic_mask_v1_set_error(
@@ -957,7 +1060,8 @@ bool ppsemantic_mask_dfa_v1_run_exact_prevalidated(
             program->transition_actions[transition_index];
         state = dfa->transitions[transition_index].target;
     }
-    if (ppsemantic_mask_dfa_v1_state_accepts(dfa, state, tag))
+    if (ppsemantic_mask_dfa_v1_state_accepts(
+            dfa, state, tag, right == view->scalar_len))
         result.outcome = PPSEMANTIC_MASK_DFA_V1_ACCEPTED;
     *out = result;
     return true;
@@ -1667,7 +1771,7 @@ static bool ppsemantic_mask_trace_v1_build_accepts(
         }
         for (tag = 0u; tag < program->dfa.tag_len; tag++) {
             bool dfa_accepts = ppsemantic_mask_dfa_v1_state_accepts(
-                &program->dfa, state_index, tag);
+                &program->dfa, state_index, tag, false);
             bool witness_accepts =
                 program->accept_nfa_states[
                     (size_t)state_index * program->dfa.tag_len + tag] !=
@@ -1865,7 +1969,8 @@ bool ppsemantic_mask_trace_dfa_v1_run_exact_prevalidated(
         uint32_t low;
         uint32_t high;
         uint32_t transition_index = UINT32_MAX;
-        uint32_t scalar = view->codepoints[cursor];
+        uint32_t scalar = cetta_lp_native_utf8_scalar_view_scalar_at(
+            view, cursor);
 
         if (state >= dfa->state_len) {
             ppsemantic_mask_v1_set_error(

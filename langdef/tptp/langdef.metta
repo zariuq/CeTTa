@@ -1,0 +1,12 @@
+(gslt-langdef-v1
+  (name TptpFofCnfV1)
+  (source "../../experiments/gslt2parse_foundation/presentations/core/syntax_core_v1.metta")
+  (source "../../experiments/gslt2parse_foundation/presentations/shared/lookahead_core_v1.metta")
+  (source "../../experiments/gslt2parse_foundation/presentations/shared/char_core_v1.metta")
+  (source "syntax_fof_cnf_v1.metta")
+  (start (pp-def tptp-file))
+  (parser-pack "generated/parser_pack_v1.abi")
+  (lock "generated/langdef_lock_v1.metta")
+  (program-source "atp_bridge_v1.metta")
+  (program "generated/atp_bridge_v1.generated.metta")
+  (import-entry tptp:parse->import))

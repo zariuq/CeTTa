@@ -1,0 +1,12 @@
+(ProofTraceCompileCompressedV1
+  (ProofTraceLabelConsV1 codec-label-m-v1
+    (ProofTraceLabelConsV1 codec-label-e-v1 ProofTraceLabelNilV1))
+  (ProofTraceLabelConsV1 codec-label-r-v1 ProofTraceLabelNilV1)
+  (ProofTraceCodeConsV1 65
+    (ProofTraceCodeConsV1 90
+      (ProofTraceCodeConsV1 68 ProofTraceCodeNilV1)))
+  (ProofTraceConsV1 (ProofTracePushV1 codec-formula-m-v1)
+    (ProofTraceConsV1 ProofTraceSaveV1
+      (ProofTraceConsV1
+        (ProofTraceRestoreV1 ProofTraceNatZeroV1)
+        ProofTraceNilV1))))

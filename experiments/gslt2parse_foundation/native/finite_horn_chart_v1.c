@@ -26,6 +26,7 @@
 #include <time.h>
 #include <limits.h>
 #include <errno.h>
+#include <unistd.h>
 
 static void fail_resource(const char *what) {
     fprintf(stderr, "resource limit: %s\n", what);
@@ -1564,6 +1565,60 @@ static int write_unique_certificate(const char *path, int answer_count,
     return 1;
 }
 
+static int write_answer_stream(const char *path, int answer_count,
+                               char *const *ordered_terms) {
+    char temporary[PATH_MAX];
+    int descriptor = -1;
+    FILE *output = NULL;
+    int published = 0;
+
+    if (!path) return 1;
+    if (snprintf(temporary, sizeof(temporary), "%s.tmp.XXXXXX", path) >=
+        (int)sizeof(temporary)) {
+        fprintf(stderr, "answer-stream output path is too long\n");
+        return 0;
+    }
+    descriptor = mkstemp(temporary);
+    if (descriptor < 0) {
+        fprintf(stderr, "cannot create answer-stream output %s: %s\n",
+                path, strerror(errno));
+        return 0;
+    }
+    output = fdopen(descriptor, "wb");
+    if (!output) {
+        fprintf(stderr, "cannot open answer-stream output %s: %s\n",
+                path, strerror(errno));
+        close(descriptor);
+        unlink(temporary);
+        return 0;
+    }
+    descriptor = -1;
+    for (int index = 0; index < answer_count; index++) {
+        if (fputs(ordered_terms[index], output) == EOF ||
+            fputc('\n', output) == EOF) {
+            fprintf(stderr, "cannot write answer-stream output %s\n", path);
+            goto done;
+        }
+    }
+    if (fclose(output) != 0) {
+        output = NULL;
+        fprintf(stderr, "cannot finish answer-stream output %s\n", path);
+        goto done;
+    }
+    output = NULL;
+    if (rename(temporary, path) != 0) {
+        fprintf(stderr, "cannot publish answer-stream output %s: %s\n",
+                path, strerror(errno));
+        goto done;
+    }
+    published = 1;
+
+done:
+    if (output) (void)fclose(output);
+    if (!published) (void)unlink(temporary);
+    return published;
+}
+
 static void ordered_text_digest(char *const *texts,
                                 int text_count,
                                 char digest[65]) {
@@ -1594,6 +1649,7 @@ int main(int argc, char **argv) {
     const char *root = NULL, *infile = NULL, *intext = NULL;
     const char *query_text = NULL, *query_file = NULL;
     const char *replay_arg = NULL, *cert_out = NULL;
+    const char *answer_out = NULL;
     const char *pres[64]; int npres = 0;
     const char *reflect_pres[64]; int nreflect_pres = 0;
     int show_certs = 0, summary_only = 0, interpreted = 0, max_rounds = 10000000;
@@ -1607,6 +1663,8 @@ int main(int argc, char **argv) {
         else if (!strcmp(argv[i], "--query-file") && i + 1 < argc) query_file = argv[++i];
         else if (!strcmp(argv[i], "--certs")) show_certs = 1;
         else if (!strcmp(argv[i], "--cert-out") && i + 1 < argc) cert_out = argv[++i];
+        else if (!strcmp(argv[i], "--answer-out") && i + 1 < argc && !answer_out)
+            answer_out = argv[++i];
         else if (!strcmp(argv[i], "--summary")) summary_only = 1;
         else if (!strcmp(argv[i], "--interpreted")) interpreted = 1;
         else if (!strcmp(argv[i], "--replay") && i + 1 < argc) replay_arg = argv[++i];
@@ -1639,11 +1697,16 @@ int main(int argc, char **argv) {
             "usage: finite_horn_chart_v1 <presentation-file>...\n"
             "       [--reflect-source <presentation-file>]...\n"
             "       (--query-text <term> | --query-file <file>) [--certs]\n"
+            "       [--answer-out <finite-Horn-answer-stream>]\n"
             "   or: <presentation-file>... --root <name>\n"
             "       (--input-file <f> | --input-text <s>) [--certs] [--summary]\n"
             "       [--cert-out <file>] [--replay <file>]\n"
             "       [--interpreted] [--timeout SEC] [--max-rounds N]\n"
             "       [--max-nodes N] [--max-depth N] [--max-steps N]\n");
+        return 1;
+    }
+    if (answer_out && !query_text && !query_file) {
+        fprintf(stderr, "--answer-out is available only for generic queries\n");
         return 1;
     }
 
@@ -1681,7 +1744,21 @@ int main(int argc, char **argv) {
             fhgslt_package_free(checked_package);
             return 0;
         }
-        reflected_rule_count = fhgslt_package_rule_count(reflection_source);
+        size_t reflected_source_rules =
+            fhgslt_package_rule_count(reflection_source);
+        size_t reflected_source_operators =
+            fhgslt_package_operator_count(reflection_source);
+        if (reflected_source_rules >
+            SIZE_MAX - reflected_source_operators) {
+            printf("{\"outcome\":\"MalformedPresentation\","
+                   "\"reason\":\"reflected declaration count overflow\"}\n");
+            fhgslt_package_free(reflection_source);
+            fhgslt_package_free(checked_package);
+            free(reflected_text);
+            return 0;
+        }
+        reflected_rule_count =
+            reflected_source_rules + reflected_source_operators;
         fhgslt_package_free(reflection_source);
     }
 
@@ -1836,6 +1913,23 @@ int main(int argc, char **argv) {
         }
         char term_digest[65];
         ordered_text_digest(keys, answer_count, term_digest);
+        if (query_stop != QUERY_STOP_NONE && answer_out) {
+            fprintf(stderr,
+                    "refusing to publish an incomplete answer stream (%s)\n",
+                    query_outcome);
+            for (int i = 0; i < answer_count; i++) free(keys[i]);
+            free(keys);
+            free(ordered);
+            free(owned_query);
+            return 3;
+        }
+        if (!write_answer_stream(answer_out, answer_count, keys)) {
+            for (int i = 0; i < answer_count; i++) free(keys[i]);
+            free(keys);
+            free(ordered);
+            free(owned_query);
+            return 3;
+        }
         if (!write_unique_certificate(cert_out, answer_count, ordered)) {
             for (int i = 0; i < answer_count; i++) free(keys[i]);
             free(keys);

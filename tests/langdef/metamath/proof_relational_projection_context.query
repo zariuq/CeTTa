@@ -1,0 +1,10 @@
+(ProofRelationalProjectionContextEntryV1
+  RelationalProjectionCanaryProofV1 projection-canary-request-v1
+  projection-canary-position-1-v1
+  (ProofSequenceConsV1
+    (ProofRelationalTokenV1
+      RelationalProjectionCanaryProofV1 projection-canary-wff-v1)
+    (ProofSequenceConsV1
+      (ProofRelationalTokenV1
+        RelationalProjectionCanaryProofV1 projection-canary-dummy-v1)
+      ProofSequenceNilV1)))

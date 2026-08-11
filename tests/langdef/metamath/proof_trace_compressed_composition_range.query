@@ -1,0 +1,11 @@
+(ProofTraceInputVerifyCompressedV1
+  compressed-request-v1
+  (ProofTraceLabelConsV1 compressed-wph-v1
+    (ProofTraceLabelConsV1 compressed-wps-v1 ProofTraceLabelNilV1))
+  (ProofTraceLabelConsV1 compressed-wi-v1 ProofTraceLabelNilV1)
+  (ProofTraceCodeConsV1 65
+    (ProofTraceCodeConsV1 66
+      (ProofTraceCodeConsV1 67
+        (ProofTraceCodeConsV1 90
+          (ProofTraceCodeConsV1 69
+            (ProofTraceCodeConsV1 67 ProofTraceCodeNilV1)))))))

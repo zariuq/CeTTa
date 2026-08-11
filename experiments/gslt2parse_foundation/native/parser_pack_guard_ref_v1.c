@@ -319,8 +319,8 @@ static bool ppguard_ref_v1_relation_build(
     cetta_lp_native_grammar_init(&grammar);
     if (error_buf && error_buf_size > 0u)
         error_buf[0] = '\0';
-    if (!pack || !plan || !scan_tags || !scan || !base_lattice ||
-        !out || !receipt || scan_tag_len == 0u ||
+    if (!pack || !plan || !scan || !base_lattice ||
+        !out || !receipt ||
         scan_tag_len != scan->tag_len || scan_tag_len != plan->entry_len ||
         scan->outcome != RSDFA_V1_SCAN_COMPLETED ||
         scan->source_pass_count != base_lattice->source_pass_count ||
@@ -333,6 +333,32 @@ static bool ppguard_ref_v1_relation_build(
         ppguard_ref_v1_set_error(
             error_buf, error_buf_size,
             "bad closed-reference guard realization inputs");
+        goto done;
+    }
+    if (scan_tag_len == 0u) {
+        if (scan->token_len != 0u ||
+            !ppguard_relation_v1_build(
+                base_lattice, base_witness_values, base_witness_len,
+                NULL, 0u, NULL, 0u, plan->plan_digest,
+                out, error_buf, error_buf_size)) {
+            if (error_buf && error_buf_size > 0u &&
+                error_buf[0] == '\0') {
+                ppguard_ref_v1_set_error(
+                    error_buf, error_buf_size,
+                    "empty guard family did not preserve its base relation");
+            }
+            goto done;
+        }
+        result.source_pass_count = base_lattice->source_pass_count;
+        memcpy(result.relation_digest, out->relation_digest, 65u);
+        *receipt = result;
+        ok = true;
+        goto done;
+    }
+    if (!scan_tags) {
+        ppguard_ref_v1_set_error(
+            error_buf, error_buf_size,
+            "nonempty guard family has no scan tags");
         goto done;
     }
     seen = calloc(plan->entry_len, sizeof(*seen));

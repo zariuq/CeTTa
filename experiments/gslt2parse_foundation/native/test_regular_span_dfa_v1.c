@@ -278,6 +278,7 @@ int main(void) {
     };
     RSDFAV1Plan plan;
     RSDFAV1Program program;
+    RSDFAV1AsciiTransitionIndex ascii_index;
     RSDFAV1InclusionResult inclusion;
     RSDFAV1FunctionalityResult functionality;
     RSDFAV1ScanResult result;
@@ -288,6 +289,7 @@ int main(void) {
 
     rsdfa_v1_plan_init(&plan);
     rsdfa_v1_program_init(&program);
+    rsdfa_v1_ascii_transition_index_init(&ascii_index);
     rsdfa_v1_inclusion_result_init(&inclusion);
     rsdfa_v1_functionality_result_init(&functionality);
     rsdfa_v1_scan_result_init(&result);
@@ -305,6 +307,11 @@ int main(void) {
     CHECK(rsdfa_v1_plan_export_program(
               &plan, &program, error, sizeof(error)) &&
           rsdfa_v1_program_validate(&program, error, sizeof(error)) &&
+          rsdfa_v1_ascii_transition_index_build(
+              &program, &ascii_index, error, sizeof(error)) &&
+          rsdfa_v1_ascii_transition_index_validate(
+              &program, &ascii_index, error, sizeof(error)) &&
+          ascii_index.state_len == program.state_len &&
           program.state_len == plan.state_len &&
           program.transition_len == plan.transition_len &&
           program.tag_len == plan.tag_len,
@@ -451,6 +458,20 @@ int main(void) {
               "restored DFA program did not validate");
         checks += 2u;
     }
+    {
+        uint32_t saved_ascii = ascii_index.targets[0];
+
+        ascii_index.targets[0] =
+            saved_ascii == UINT32_MAX ? 0u : UINT32_MAX;
+        CHECK(!rsdfa_v1_ascii_transition_index_validate(
+                  &program, &ascii_index, error, sizeof(error)),
+              "exported DFA program accepted a corrupt ASCII index");
+        ascii_index.targets[0] = saved_ascii;
+        CHECK(rsdfa_v1_ascii_transition_index_validate(
+                  &program, &ascii_index, error, sizeof(error)),
+              "restored DFA ASCII index did not validate");
+        checks += 2u;
+    }
 
     CHECK(rsdfa_v1_program_tag_inclusion(
               &program, 1u, &program, 0u, 128u,
@@ -505,6 +526,7 @@ int main(void) {
 
     {
         RSDFAV1TagLanguage languages[5];
+        bool prefix_overlap = false;
         bool stops = false;
         uint32_t index;
 
@@ -560,12 +582,32 @@ int main(void) {
                   &plan, 1u, a_range, 1u, &stops,
                   error, sizeof(error)) && stops,
               "dead transitions from other tags polluted local stopping");
+        CHECK(rsdfa_v1_plan_tags_prefix_overlap(
+                  &plan, 0u, 1u, &prefix_overlap,
+                  error, sizeof(error)) && prefix_overlap,
+              "repetition/singleton cross-tag prefix was missed");
+        CHECK(rsdfa_v1_plan_tags_prefix_overlap(
+                  &plan, 1u, 4u, &prefix_overlap,
+                  error, sizeof(error)) && !prefix_overlap,
+              "disjoint singleton tags were reported prefix-overlapping");
+        CHECK(rsdfa_v1_plan_tags_prefix_overlap(
+                  &plan, 2u, 1u, &prefix_overlap,
+                  error, sizeof(error)) && prefix_overlap,
+              "ordinary empty tag was not recognized as a prefix");
+        CHECK(rsdfa_v1_plan_tags_prefix_overlap(
+                  &plan, 3u, 1u, &prefix_overlap,
+                  error, sizeof(error)) && prefix_overlap,
+              "EOF-conditioned equality was not recognized");
+        CHECK(!rsdfa_v1_plan_tags_prefix_overlap(
+                  &plan, 1u, 1u, &prefix_overlap,
+                  error, sizeof(error)),
+              "same-tag cross-prefix query did not fail closed");
         CHECK(!rsdfa_v1_plan_tag_language(
                   &plan, 5u, &languages[0], error, sizeof(error)),
               "out-of-range tag language did not fail closed");
         for (index = 0u; index < 5u; index++)
             rsdfa_v1_tag_language_free(&languages[index]);
-        checks += 9u;
+        checks += 14u;
     }
 
     {
@@ -1129,6 +1171,7 @@ int main(void) {
     rsdfa_v1_parser_lattice_free(&parser_lattice);
     rsdfa_v1_inclusion_result_free(&inclusion);
     rsdfa_v1_functionality_result_free(&functionality);
+    rsdfa_v1_ascii_transition_index_free(&ascii_index);
     rsdfa_v1_program_free(&program);
     rsdfa_v1_plan_free(&plan);
     printf("(RegularSpanDFAV1NativeSummary %u 0)\n", checks);
