@@ -22,12 +22,22 @@ from typing import Any
 
 
 SCHEMA = "cetta-petta-corpus-v1"
-EXPECTED_TOTAL = 176
-EXPECTED_CONTROLLED = 5
+EXPECTED_TOTAL = 183
+EXPECTED_CONTROLLED = 6
 ANSI_RE = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
 MORK_READY_BANNER = "MORK init: done\n"
 PYTHON_RUNTIME_WARNING = (
     "Could not find platform dependent libraries <exec_prefix>\n"
+)
+OPTIONAL_MORK_INIT_FAILURE_RE = re.compile(
+    r"\AERROR: <PETTA_ROOT>/mork_ffi/morkspaces\.pl:[0-9]+:\n"
+    r"ERROR:    library/3: Unknown procedure: library_path/1\n"
+    r"Warning: <PETTA_ROOT>/mork_ffi/morkspaces\.pl:[0-9]+:\n"
+    r"Warning:    Goal \(directive\) failed: user:\(library\(mork_ffi,"
+    r"'morklib\.so',(?P<temporary>_[0-9]+)\),"
+    r"use_foreign_library\((?P=temporary)\),"
+    r"current_predicate\(mork/3\)->writeln\(\"MORK init: done\"\);"
+    r"writeln\(\"MORK init: failed\"\)\)\n"
 )
 VARIABLE_TERMINATORS = frozenset(" \t\r\n()[]{}\",")
 TEST_DIAGNOSTIC_SUFFIXES = (". ✅ ", ". ❌ ")
@@ -36,6 +46,30 @@ SPECIALIZER_DIAGNOSTIC_RE = re.compile(
 )
 MAX_CAPTURE_BYTES = 16 * 1024 * 1024
 
+KNOWN_OPTIONAL_CAPABILITIES = frozenset({"lib-prolog"})
+CASE_CAPABILITY_REQUIREMENTS: dict[str, tuple[str, ...]] = {
+    "git_import2.metta": ("lib-prolog",),
+    "prologimport.metta": ("lib-prolog",),
+    "test_datetime.metta": ("lib-prolog",),
+}
+
+LLM_PY_STR_HELPER_OVERLAP = """\
+(= (py-str-helper () $outp) $outp)
+(= (py-str-helper $L $outp)
+   (let* (($head (car-atom $L))
+          ($tail (cdr-atom $L))
+          ($outp2 (py-call (operator.add $outp (py-call (str $head))))))
+     (py-str-helper $tail $outp2)))
+"""
+LLM_PY_STR_HELPER_GUARDED = """\
+(= (py-str-helper $L $outp)
+   (if (== $L ())
+       $outp
+       (let* (($head (car-atom $L))
+              ($tail (cdr-atom $L))
+              ($outp2 (py-call (operator.add $outp (py-call (str $head))))))
+         (py-str-helper $tail $outp2))))
+"""
 CONTROLLED_CASES: dict[str, dict[str, Any]] = {
     "git_import2.metta": {
         "class": "external",
@@ -52,6 +86,8 @@ CONTROLLED_CASES: dict[str, dict[str, Any]] = {
         "source_replacements": {
             "https://github.com/patham9/faiss_ffi": "./faiss_ffi",
             "build.sh": "../../fixture/build.sh",
+            "(library lib_faiss)":
+                "(library faiss_ffi lib_faiss)",
         },
         "source_prefix": "!(import! &self (library lib_import))\n\n",
     },
@@ -65,8 +101,13 @@ CONTROLLED_CASES: dict[str, dict[str, Any]] = {
         "class": "external",
         "name": "deterministic-llm-fixture",
         "mode": "complete",
+        "kind": "patched-library",
         "stdin": "",
         "python_files": ["openai.py"],
+        "library_file": "lib/lib_llm.metta",
+        "library_replacements": {
+            LLM_PY_STR_HELPER_OVERLAP: LLM_PY_STR_HELPER_GUARDED,
+        },
     },
     "repl.metta": {
         "class": "interactive",
@@ -81,6 +122,14 @@ CONTROLLED_CASES: dict[str, dict[str, Any]] = {
         "mode": "complete",
         "stdin": "",
         "python_files": ["torch.py"],
+    },
+    "test_datetime.metta": {
+        "class": "external",
+        "name": "deterministic-clock-fixture",
+        "mode": "complete",
+        "kind": "source-file-with-library",
+        "stdin": "",
+        "source_file": "tests/petta/fixtures/test_datetime_fixed.metta",
     },
 }
 
@@ -107,7 +156,12 @@ NEGATIVE_CASES = {
 # controlled clone/build fixture.
 HERMETIC_REQUIRED_FILES: dict[str, tuple[str, ...]] = {
     "git_import.metta": ("repos/test_metta_lib/test.metta",),
+    "llm_cities.metta": ("lib/lib_llm.metta", "lib/lib_llm.py"),
     "metamo_tea_break.metta": ("lib/lib_metamo.metta",),
+    "test_datetime.metta": (
+        "lib/lib_datetime.metta",
+        "lib/lib_datetime.pl",
+    ),
 }
 
 
@@ -283,8 +337,13 @@ def normalize_oracle_stderr(
     text: str, petta_dir: Path, extra_roots: tuple[Path, ...] = ()
 ) -> str:
     normalized = normalize_stream(text, petta_dir, extra_roots)
-    if normalized.startswith(PYTHON_RUNTIME_WARNING):
-        return normalized[len(PYTHON_RUNTIME_WARNING):]
+    while True:
+        previous = normalized
+        if normalized.startswith(PYTHON_RUNTIME_WARNING):
+            normalized = normalized[len(PYTHON_RUNTIME_WARNING):]
+        normalized = OPTIONAL_MORK_INIT_FAILURE_RE.sub("", normalized, count=1)
+        if normalized == previous:
+            break
     return normalized
 
 
@@ -298,8 +357,9 @@ def normalization_contract() -> dict[str, Any]:
             "Not specialized <generated-head>/<arity>"
         ],
         "drop_exact_leading_oracle_stdout": [MORK_READY_BANNER],
-        "drop_exact_leading_python_stderr": [
-            PYTHON_RUNTIME_WARNING
+        "drop_exact_leading_oracle_stderr": [
+            PYTHON_RUNTIME_WARNING,
+            "optional MORK library_path/1 initialization failure block",
         ],
         "max_captured_output_bytes": MAX_CAPTURE_BYTES,
     }
@@ -351,6 +411,72 @@ def local_git_fixture_workspace(
             transformed = transformed.replace(original, replacement)
         transformed_source = program_dir / source.name
         transformed_source.write_text(transformed, encoding="utf-8")
+        yield workspace, transformed_source
+
+
+@contextmanager
+def patched_library_fixture_workspace(
+    petta_dir: Path,
+    source: Path,
+    fixture: dict[str, Any],
+):
+    with tempfile.TemporaryDirectory(
+        prefix="cetta-petta-library-fixture-"
+    ) as temporary:
+        workspace = Path(temporary)
+        examples_dir = workspace / "examples"
+        examples_dir.mkdir()
+        transformed_source = examples_dir / source.name
+        shutil.copy2(source, transformed_source)
+
+        upstream_library = petta_dir / fixture["library_file"]
+        library_dir = workspace / upstream_library.parent.name
+        library_dir.mkdir()
+        transformed_library = library_dir / upstream_library.name
+        transformed = upstream_library.read_text(encoding="utf-8")
+        for original, replacement in fixture[
+            "library_replacements"
+        ].items():
+            occurrences = transformed.count(original)
+            if occurrences != 1:
+                raise RuntimeError(
+                    f"{source.name}: expected one library occurrence of "
+                    f"{original!r}, found {occurrences}"
+                )
+            transformed = transformed.replace(original, replacement)
+        transformed_library.write_text(transformed, encoding="utf-8")
+
+        for child in upstream_library.parent.iterdir():
+            if child.name == upstream_library.name:
+                continue
+            os.symlink(
+                child,
+                library_dir / child.name,
+                target_is_directory=child.is_dir(),
+            )
+        yield workspace, transformed_source
+
+
+@contextmanager
+def source_file_with_library_fixture_workspace(
+    repo_root: Path,
+    petta_dir: Path,
+    fixture: dict[str, Any],
+):
+    with tempfile.TemporaryDirectory(
+        prefix="cetta-petta-source-fixture-"
+    ) as temporary:
+        workspace = Path(temporary)
+        examples_dir = workspace / "examples"
+        examples_dir.mkdir()
+        source = repo_root / fixture["source_file"]
+        transformed_source = examples_dir / source.name
+        shutil.copy2(source, transformed_source)
+        os.symlink(
+            petta_dir / "lib",
+            workspace / "lib",
+            target_is_directory=True,
+        )
         yield workspace, transformed_source
 
 
@@ -589,6 +715,58 @@ def run_oracle(
             normalize_oracle_stdout(stdout, petta_dir, (repo_root,)),
             normalize_oracle_stderr(stderr, petta_dir, (repo_root,)),
         )
+    if fixture and fixture.get("kind") == "source-file-with-library":
+        with source_file_with_library_fixture_workspace(
+            repo_root, petta_dir, fixture
+        ) as (workspace, transformed_source):
+            exit_code, stdout, stderr = run_complete_process(
+                [
+                    "sh",
+                    str(petta_dir / "run.sh"),
+                    str(transformed_source),
+                    "--silent",
+                ],
+                workspace,
+                environment,
+                fixture.get("stdin", ""),
+                timeout_seconds,
+                f"SWI corrected oracle for {source.name}",
+            )
+            return (
+                exit_code,
+                normalize_oracle_stdout(
+                    stdout, petta_dir, (workspace,)
+                ),
+                normalize_oracle_stderr(
+                    stderr, petta_dir, (workspace,)
+                ),
+            )
+    if fixture and fixture.get("kind") == "patched-library":
+        with patched_library_fixture_workspace(
+            petta_dir, source, fixture
+        ) as (workspace, transformed_source):
+            exit_code, stdout, stderr = run_complete_process(
+                [
+                    "sh",
+                    str(petta_dir / "run.sh"),
+                    str(transformed_source),
+                    "--silent",
+                ],
+                workspace,
+                environment,
+                fixture.get("stdin", ""),
+                timeout_seconds,
+                f"SWI corrected oracle for {source.name}",
+            )
+            return (
+                exit_code,
+                normalize_oracle_stdout(
+                    stdout, petta_dir, (workspace,)
+                ),
+                normalize_oracle_stderr(
+                    stderr, petta_dir, (workspace,)
+                ),
+            )
     if fixture and fixture.get("kind") == "local-git":
         with local_git_fixture_workspace(
             repo_root, petta_dir, source, fixture
@@ -655,6 +833,64 @@ def run_cetta(
             "petta",
             str(corrected_source),
         ]
+    if fixture and fixture.get("kind") == "source-file-with-library":
+        try:
+            with source_file_with_library_fixture_workspace(
+                repo_root, petta_dir, fixture
+            ) as (workspace, transformed_source):
+                exit_code, stdout, stderr = run_complete_process(
+                    [
+                        str(cetta),
+                        "--lang",
+                        "petta",
+                        str(transformed_source),
+                    ],
+                    workspace,
+                    environment,
+                    fixture.get("stdin", ""),
+                    timeout_seconds,
+                    f"CeTTa corrected run for {source.name}",
+                )
+                return (
+                    exit_code,
+                    normalize_cetta_stdout(
+                        stdout, petta_dir, (cetta.parent, workspace)
+                    ),
+                    normalize_oracle_stderr(
+                        stderr, petta_dir, (cetta.parent, workspace)
+                    ),
+                )
+        except RuntimeError as error:
+            return "controlled-failure", "", f"{error}\n"
+    if fixture and fixture.get("kind") == "patched-library":
+        try:
+            with patched_library_fixture_workspace(
+                petta_dir, source, fixture
+            ) as (workspace, transformed_source):
+                exit_code, stdout, stderr = run_complete_process(
+                    [
+                        str(cetta),
+                        "--lang",
+                        "petta",
+                        str(transformed_source),
+                    ],
+                    workspace,
+                    environment,
+                    fixture.get("stdin", ""),
+                    timeout_seconds,
+                    f"CeTTa corrected run for {source.name}",
+                )
+                return (
+                    exit_code,
+                    normalize_cetta_stdout(
+                        stdout, petta_dir, (cetta.parent, workspace)
+                    ),
+                    normalize_oracle_stderr(
+                        stderr, petta_dir, (cetta.parent, workspace)
+                    ),
+                )
+        except RuntimeError as error:
+            return "controlled-failure", "", f"{error}\n"
     if fixture and fixture.get("kind") == "local-git":
         try:
             with local_git_fixture_workspace(
@@ -828,6 +1064,14 @@ def fixture_record(
         record["upstream"] = {
             "kind": "pinned-petta-oracle",
         }
+    if "library_replacements" in fixture:
+        record["library_file"] = fixture["library_file"]
+        record["library_replacements"] = fixture[
+            "library_replacements"
+        ]
+        record["upstream"] = {
+            "kind": "pinned-petta-oracle",
+        }
     if fixture.get("python_files"):
         record["environment"] = {
             "PYTHONPATH": "tests/petta/fixtures/python",
@@ -855,6 +1099,32 @@ def hermetic_required_file_records(
     return records
 
 
+def validate_case_capability_requirements(
+    example_names: set[str],
+) -> None:
+    missing_cases = sorted(
+        set(CASE_CAPABILITY_REQUIREMENTS) - example_names
+    )
+    if missing_cases:
+        raise RuntimeError(
+            "capability-classified corpus entries are missing: "
+            + ", ".join(missing_cases)
+        )
+    declared_capabilities = {
+        capability
+        for capabilities in CASE_CAPABILITY_REQUIREMENTS.values()
+        for capability in capabilities
+    }
+    unknown_capabilities = sorted(
+        declared_capabilities - KNOWN_OPTIONAL_CAPABILITIES
+    )
+    if unknown_capabilities:
+        raise RuntimeError(
+            "corpus entries require unknown optional capabilities: "
+            + ", ".join(unknown_capabilities)
+        )
+
+
 def build_manifest(
     petta_dir: Path, timeout_seconds: float
 ) -> dict[str, Any]:
@@ -873,6 +1143,7 @@ def build_manifest(
             "fixture-backed corpus entries are missing: "
             + ", ".join(missing_fixtures)
         )
+    validate_case_capability_requirements(names)
 
     tracked = tracked_examples(petta_dir)
     entries: list[dict[str, Any]] = []
@@ -902,6 +1173,11 @@ def build_manifest(
         }
         if source.name in NEGATIVE_CASES:
             entry["negative_contract"] = NEGATIVE_CASES[source.name]
+        required_capabilities = CASE_CAPABILITY_REQUIREMENTS.get(
+            source.name, ()
+        )
+        if required_capabilities:
+            entry["required_capabilities"] = list(required_capabilities)
 
         required_files = hermetic_required_file_records(
             petta_dir, source.name
@@ -1036,6 +1312,7 @@ def verify_manifest(
         raise RuntimeError(
             f"manifest/disk name mismatch: missing={missing}, extra={extra}"
         )
+    validate_case_capability_requirements(manifest_names)
 
     repo_root = Path(__file__).resolve().parents[1]
     tracked = tracked_examples(petta_dir)
@@ -1088,6 +1365,20 @@ def verify_manifest(
             raise RuntimeError(
                 f"{name}: class is {entry.get('class')!r}, "
                 f"expected {expected_class!r}"
+            )
+        expected_capabilities = list(
+            CASE_CAPABILITY_REQUIREMENTS.get(name, ())
+        )
+        if expected_capabilities:
+            if entry.get("required_capabilities") != expected_capabilities:
+                raise RuntimeError(
+                    f"{name}: required capabilities are "
+                    f"{entry.get('required_capabilities')!r}, "
+                    f"expected {expected_capabilities!r}"
+                )
+        elif "required_capabilities" in entry:
+            raise RuntimeError(
+                f"{name}: unexpected required capabilities"
             )
         if name in NEGATIVE_CASES:
             if entry.get("negative_contract") != NEGATIVE_CASES[name]:
@@ -1177,12 +1468,57 @@ def verify_exact_match_counts(counts: dict[str, int], selected: int) -> None:
         )
 
 
+def select_entries(
+    entries: list[dict[str, Any]],
+    only: set[str],
+    excluded_capabilities: set[str],
+    limit: int | None,
+) -> tuple[list[dict[str, Any]], list[str]]:
+    unknown_examples = sorted(
+        only - {entry["name"] for entry in entries}
+    )
+    if unknown_examples:
+        raise RuntimeError(
+            "requested examples are absent from the manifest: "
+            + ", ".join(unknown_examples)
+        )
+    unknown_capabilities = sorted(
+        excluded_capabilities - KNOWN_OPTIONAL_CAPABILITIES
+    )
+    if unknown_capabilities:
+        raise RuntimeError(
+            "unknown optional capabilities: "
+            + ", ".join(unknown_capabilities)
+        )
+
+    selected = [
+        entry for entry in entries if not only or entry["name"] in only
+    ]
+    excluded_names = [
+        entry["name"]
+        for entry in selected
+        if excluded_capabilities.intersection(
+            entry.get("required_capabilities", ())
+        )
+    ]
+    excluded_name_set = set(excluded_names)
+    selected = [
+        entry
+        for entry in selected
+        if entry["name"] not in excluded_name_set
+    ]
+    if limit is not None:
+        selected = selected[:limit]
+    return selected, excluded_names
+
+
 def compare_manifest(
     petta_dir: Path,
     manifest_path: Path,
     cetta: Path,
     out_dir: Path,
     only: set[str],
+    excluded_capabilities: set[str],
     limit: int | None,
     timeout_override: float | None,
     require_complete: bool,
@@ -1190,17 +1526,9 @@ def compare_manifest(
 ) -> None:
     verify_manifest(petta_dir, manifest_path, require_complete)
     manifest = load_manifest(manifest_path)
-    entries = manifest["entries"]
-    if only:
-        unknown = sorted(only - {entry["name"] for entry in entries})
-        if unknown:
-            raise RuntimeError(
-                "requested examples are absent from the manifest: "
-                + ", ".join(unknown)
-            )
-        entries = [entry for entry in entries if entry["name"] in only]
-    if limit is not None:
-        entries = entries[:limit]
+    entries, excluded_names = select_entries(
+        manifest["entries"], only, excluded_capabilities, limit
+    )
 
     if not cetta.is_file():
         raise RuntimeError(f"CeTTa binary does not exist: {cetta}")
@@ -1284,6 +1612,8 @@ def compare_manifest(
         "cetta": str(cetta),
         "cetta_sha256": sha256_file(cetta),
         "counts": dict(sorted(counts.items())),
+        "excluded_capabilities": sorted(excluded_capabilities),
+        "excluded_examples": excluded_names,
         "selected": len(entries),
     }
     (out_dir / "summary.json").write_text(
@@ -1310,6 +1640,9 @@ def parse_args() -> argparse.Namespace:
             sub.add_argument("--cetta", type=Path, required=True)
             sub.add_argument("--out", type=Path, required=True)
             sub.add_argument("--only", action="append", default=[])
+            sub.add_argument(
+                "--exclude-capability", action="append", default=[]
+            )
             sub.add_argument("--limit", type=int)
             sub.add_argument("--timeout", type=float)
             sub.add_argument("--require-complete", action="store_true")
@@ -1337,6 +1670,7 @@ def main() -> int:
                 args.cetta.resolve(),
                 args.out.resolve(),
                 set(args.only),
+                set(args.exclude_capability),
                 args.limit,
                 args.timeout,
                 args.require_complete,

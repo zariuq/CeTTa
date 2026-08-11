@@ -1,6 +1,6 @@
-(: typed-pair (-> Number Expression Expression))
-(: typed-pair (-> Number Expression Expression))
-(: typed-pair (-> Number Expression Expression Extra))
+(: typed-pair (-> Number Atom Expression))
+(: typed-pair (-> Number Atom Expression))
+(: typed-pair (-> Number Atom Expression Extra))
 
 (= (typed-pair $strict $syntax)
    (pair $strict $syntax))

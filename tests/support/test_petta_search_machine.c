@@ -1,3 +1,5 @@
+#include "eval.h"
+#include "library.h"
 #include "parser.h"
 #include "match.h"
 #include "petta_program.h"
@@ -17,6 +19,337 @@ static Atom *parse_one(Arena *arena, const char *source) {
     Atom *result = count == 1 && forms ? forms[0] : NULL;
     free(forms);
     return result;
+}
+
+static void add_clause(
+    Space *space, Arena *arena, const char *source);
+
+static Atom *test_nest_unary(
+    Arena *arena, Atom *head, Atom *leaf, size_t depth) {
+    Atom *nested = leaf;
+    for (size_t index = 0u; index < depth; index++) {
+        nested = atom_expr2(arena, head, nested);
+        assert(nested);
+    }
+    return nested;
+}
+
+static AtomId test_nest_unary_id(
+    TermUniverse *universe, AtomId head,
+    AtomId leaf, size_t depth) {
+    AtomId nested = leaf;
+    for (size_t index = 0u; index < depth; index++) {
+        AtomId elems[2] = {head, nested};
+        nested = tu_expr_from_ids(universe, elems, 2u);
+        assert(nested != CETTA_ATOM_ID_NONE);
+    }
+    return nested;
+}
+
+static AtomId test_descend_unary_id(
+    const TermUniverse *universe, AtomId root,
+    AtomId head, size_t depth) {
+    AtomId cursor = root;
+    for (size_t index = 0u; index < depth; index++) {
+        assert(tu_kind(universe, cursor) == ATOM_EXPR);
+        assert(tu_arity(universe, cursor) == 2u);
+        assert(tu_child(universe, cursor, 0u) == head);
+        cursor = tu_child(universe, cursor, 1u);
+    }
+    return cursor;
+}
+
+static void test_deep_typecheck_source_rewrites(
+    TermUniverse *universe) {
+    enum { DEEP_FINITE_DEPTH = 4096 };
+    SymbolId box_symbol = symbol_intern_cstr(
+        g_symbols, "deep-source-box");
+    SymbolId type_symbol = symbol_intern_cstr(
+        g_symbols, "DeepSourceType");
+    SymbolId leaf_symbol = symbol_intern_cstr(
+        g_symbols, "deep-source-leaf");
+    SymbolId body_symbol = symbol_intern_cstr(
+        g_symbols, "deep-source-body");
+    SymbolId space_symbol = symbol_intern_cstr(
+        g_symbols, "deep-source-space");
+    SymbolId variable_symbol = symbol_intern_cstr(
+        g_symbols, "$deep-source-whole");
+    SymbolId at_symbol = symbol_intern_cstr(g_symbols, "@");
+    assert(box_symbol != SYMBOL_ID_NONE);
+    assert(type_symbol != SYMBOL_ID_NONE);
+    assert(leaf_symbol != SYMBOL_ID_NONE);
+    assert(body_symbol != SYMBOL_ID_NONE);
+    assert(space_symbol != SYMBOL_ID_NONE);
+    assert(variable_symbol != SYMBOL_ID_NONE);
+    assert(at_symbol != SYMBOL_ID_NONE);
+
+    AtomId box = tu_intern_symbol(universe, box_symbol);
+    AtomId type = tu_intern_symbol(universe, type_symbol);
+    AtomId leaf = tu_intern_symbol(universe, leaf_symbol);
+    AtomId body = tu_intern_symbol(universe, body_symbol);
+    AtomId space = tu_intern_symbol(universe, space_symbol);
+    AtomId brand = tu_intern_symbol(
+        universe, symbol_intern_cstr(g_symbols, "brand"));
+    AtomId quote = tu_intern_symbol(
+        universe, g_builtin_syms.quote);
+    AtomId match = tu_intern_symbol(
+        universe, g_builtin_syms.match);
+    AtomId case_head = tu_intern_symbol(
+        universe, g_builtin_syms.case_text);
+    AtomId at = tu_intern_symbol(universe, at_symbol);
+    AtomId variable = tu_intern_var(
+        universe, variable_symbol, fresh_var_id());
+    assert(box != CETTA_ATOM_ID_NONE);
+    assert(type != CETTA_ATOM_ID_NONE);
+    assert(leaf != CETTA_ATOM_ID_NONE);
+    assert(body != CETTA_ATOM_ID_NONE);
+    assert(space != CETTA_ATOM_ID_NONE);
+    assert(brand != CETTA_ATOM_ID_NONE);
+    assert(quote != CETTA_ATOM_ID_NONE);
+    assert(match != CETTA_ATOM_ID_NONE);
+    assert(case_head != CETTA_ATOM_ID_NONE);
+    assert(at != CETTA_ATOM_ID_NONE);
+    assert(variable != CETTA_ATOM_ID_NONE);
+
+    CettaLibraryContext context = {0};
+    cetta_eval_session_init(
+        &context.session, CETTA_LANGUAGE_PETTA,
+        cetta_profile_petta_extended());
+    CettaLibraryContext *previous =
+        eval_current_library_context();
+    eval_set_library_context(&context);
+
+    AtomId marker_elems[3] = {brand, type, leaf};
+    AtomId marker = tu_expr_from_ids(
+        universe, marker_elems, 3u);
+    AtomId deep_marker = test_nest_unary_id(
+        universe, box, marker, DEEP_FINITE_DEPTH);
+    AtomId document[1] = {deep_marker};
+    cetta_petta_erase_typecheck_marks_document(
+        universe, document, 1);
+    assert(test_descend_unary_id(
+               universe, document[0], box,
+               DEEP_FINITE_DEPTH) == leaf);
+
+    /* Quotation is an explicit semantic boundary: even at the same depth,
+     * its marker payload remains literal. */
+    AtomId quote_elems[2] = {quote, marker};
+    AtomId quoted_marker = tu_expr_from_ids(
+        universe, quote_elems, 2u);
+    AtomId deep_quoted_marker = test_nest_unary_id(
+        universe, box, quoted_marker, DEEP_FINITE_DEPTH);
+    document[0] = deep_quoted_marker;
+    cetta_petta_erase_typecheck_marks_document(
+        universe, document, 1);
+    assert(document[0] == deep_quoted_marker);
+
+    AtomId target_elems[2] = {box, leaf};
+    AtomId target = tu_expr_from_ids(
+        universe, target_elems, 2u);
+    AtomId as_elems[3] = {at, variable, target};
+    AtomId as_pattern = tu_expr_from_ids(
+        universe, as_elems, 3u);
+    AtomId deep_as_pattern = test_nest_unary_id(
+        universe, box, as_pattern, DEEP_FINITE_DEPTH);
+    AtomId match_elems[4] = {
+        match, space, deep_as_pattern, body,
+    };
+    AtomId match_form = tu_expr_from_ids(
+        universe, match_elems, 4u);
+    document[0] = match_form;
+    cetta_petta_erase_typecheck_marks_document(
+        universe, document, 1);
+    AtomId normalized_match = document[0];
+    assert(tu_kind(universe, normalized_match) == ATOM_EXPR);
+    assert(tu_arity(universe, normalized_match) == 4u);
+    assert(test_descend_unary_id(
+               universe,
+               tu_child(universe, normalized_match, 2u),
+               box, DEEP_FINITE_DEPTH) == target);
+    AtomId match_body = tu_child(
+        universe, normalized_match, 3u);
+    assert(tu_kind(universe, match_body) == ATOM_EXPR);
+    assert(tu_arity(universe, match_body) == 4u);
+    assert(tu_head_sym(universe, match_body) ==
+           g_builtin_syms.let);
+    assert(tu_child(universe, match_body, 1u) == variable);
+    assert(tu_child(universe, match_body, 2u) == target);
+    assert(tu_child(universe, match_body, 3u) == body);
+
+    /* The case branch grammar is a distinct traversal mode.  Exercise the
+     * same deep alias through it, plus an ordinary branch that must remain
+     * free of synthetic lets. */
+    AtomId branch_elems[2] = {deep_as_pattern, body};
+    AtomId branch = tu_expr_from_ids(
+        universe, branch_elems, 2u);
+    AtomId plain_branch_elems[2] = {leaf, body};
+    AtomId plain_branch = tu_expr_from_ids(
+        universe, plain_branch_elems, 2u);
+    AtomId branches_elems[2] = {branch, plain_branch};
+    AtomId branches = tu_expr_from_ids(
+        universe, branches_elems, 2u);
+    AtomId case_elems[3] = {case_head, leaf, branches};
+    AtomId case_form = tu_expr_from_ids(
+        universe, case_elems, 3u);
+    document[0] = case_form;
+    cetta_petta_erase_typecheck_marks_document(
+        universe, document, 1);
+    AtomId normalized_branches = tu_child(
+        universe, document[0], 2u);
+    AtomId normalized_branch = tu_child(
+        universe, normalized_branches, 0u);
+    assert(test_descend_unary_id(
+               universe,
+               tu_child(universe, normalized_branch, 0u),
+               box, DEEP_FINITE_DEPTH) == target);
+    AtomId branch_body = tu_child(
+        universe, normalized_branch, 1u);
+    assert(tu_head_sym(universe, branch_body) ==
+           g_builtin_syms.let);
+    assert(tu_child(
+               universe, normalized_branches, 1u) ==
+           plain_branch);
+
+    eval_set_library_context(previous);
+}
+
+static void test_deep_cons_semantics(Arena *arena) {
+    enum { DEEP_FINITE_DEPTH = 4096 };
+    Atom *box = atom_symbol(arena, "deep-cons-box");
+    Atom *item = atom_symbol(arena, "deep-cons-item");
+    Atom *tail = atom_unit(arena);
+    Atom *cons = petta_semantics_open_cons_value(
+        arena, item, tail);
+    Atom *scalar = atom_symbol(arena, "deep-cons-scalar");
+    assert(box && item && tail && cons && scalar);
+
+    Atom *deep_cons = test_nest_unary(
+        arena, box, cons, DEEP_FINITE_DEPTH);
+    Atom *deep_cons_peer = test_nest_unary(
+        arena, box, cons, DEEP_FINITE_DEPTH);
+    Atom *deep_scalar = test_nest_unary(
+        arena, box, scalar, DEEP_FINITE_DEPTH);
+
+    assert(petta_semantics_value_contains_observable_open_cons(
+        deep_cons));
+    assert(!petta_semantics_value_contains_observable_open_cons(
+        deep_scalar));
+
+    Atom *materialized = petta_semantics_materialize_value(
+        arena, deep_cons);
+    assert(materialized);
+    assert(!petta_semantics_value_contains_observable_open_cons(
+        materialized));
+    Atom *cursor = materialized;
+    for (size_t depth = 0u;
+         depth < DEEP_FINITE_DEPTH; depth++) {
+        assert(cursor->kind == ATOM_EXPR);
+        assert(cursor->expr.len == 2u);
+        assert(atom_alpha_eq(cursor->expr.elems[0], box));
+        cursor = cursor->expr.elems[1];
+    }
+    assert(cursor->kind == ATOM_EXPR);
+    assert(cursor->expr.len == 1u);
+    assert(atom_alpha_eq(cursor->expr.elems[0], item));
+
+    Atom *open_tail = atom_var_with_id(
+        arena, "deep-open-tail", fresh_var_id());
+    Atom *open_cons = petta_semantics_open_cons_value(
+        arena, item, open_tail);
+    Atom *observable_open = petta_semantics_materialize_value(
+        arena, open_cons);
+    assert(open_tail && open_cons && observable_open);
+    assert(!petta_semantics_is_open_cons_value(observable_open));
+    assert(observable_open->kind == ATOM_EXPR);
+    assert(observable_open->expr.len == 3u);
+    assert(petta_semantics_form(
+               atom_head_symbol_id(observable_open)) ==
+           PETTA_FORM_CONS);
+    assert(atom_alpha_eq(observable_open->expr.elems[1], item));
+    assert(observable_open->expr.elems[2]->kind == ATOM_VAR);
+    assert(observable_open->expr.elems[2]->var_id ==
+           open_tail->var_id);
+
+    assert(petta_semantics_contains_cons_constraint(deep_cons));
+    assert(!petta_semantics_contains_cons_constraint(deep_scalar));
+    assert(petta_semantics_cons_pattern_may_match(
+        deep_cons, deep_cons_peer));
+    assert(!petta_semantics_cons_pattern_may_match(
+        deep_cons, deep_scalar));
+
+    BindingsBuilder builder;
+    assert(bindings_builder_init(&builder, NULL));
+    assert(petta_semantics_match_cons_constraint(
+        arena, deep_cons, deep_cons_peer, &builder));
+    assert(bindings_builder_bindings(&builder)->len == 0u);
+    assert(!petta_semantics_match_cons_constraint(
+        arena, deep_cons, deep_scalar, &builder));
+    assert(bindings_builder_bindings(&builder)->len == 0u);
+    bindings_builder_free(&builder);
+}
+
+static void test_answer_materialization_boundaries(
+    Space *space, Arena *persistent, Arena *answers) {
+    enum { DEEP_FINITE_DEPTH = 4096 };
+    add_clause(
+        space, persistent,
+        "(= (answer-materialization-open) (cons a $tail))");
+
+    Atom *query = parse_one(
+        answers, "(answer-materialization-open)");
+    assert(query);
+    PettaMachine machine;
+    assert(petta_machine_init(
+        &machine, space, answers, query, NULL, NULL));
+    Atom *answer = NULL;
+    Bindings environment;
+    assert(petta_machine_next(
+               &machine, &answer, &environment) ==
+           PETTA_MACHINE_STEP_ANSWER);
+    assert(answer && answer->kind == ATOM_EXPR);
+    assert(answer->expr.len == 3u);
+    assert(!petta_semantics_is_open_cons_value(answer));
+    assert(petta_semantics_form(atom_head_symbol_id(answer)) ==
+           PETTA_FORM_CONS);
+    assert(atom_is_symbol_id(
+        answer->expr.elems[1],
+        symbol_intern_cstr(g_symbols, "a")));
+    assert(answer->expr.elems[2]->kind == ATOM_VAR);
+    bindings_free(&environment);
+    assert(petta_machine_next(
+               &machine, &answer, &environment) ==
+           PETTA_MACHINE_STEP_EXHAUSTED);
+    bindings_free(&environment);
+    petta_machine_destroy(&machine);
+
+    Atom *box = atom_symbol(answers, "deep-answer-box");
+    Atom *leaf = atom_symbol(answers, "deep-answer-leaf");
+    Atom *deep = test_nest_unary(
+        answers, box, leaf, DEEP_FINITE_DEPTH);
+    Atom *quote = atom_symbol_id(
+        answers, g_builtin_syms.quote);
+    Atom *quoted = atom_expr2(answers, quote, deep);
+    assert(box && leaf && deep && quote && quoted);
+    assert(petta_machine_init(
+        &machine, space, answers, quoted, NULL, NULL));
+    assert(petta_machine_next(
+               &machine, &answer, &environment) ==
+           PETTA_MACHINE_STEP_ANSWER);
+    Atom *cursor = answer;
+    for (size_t depth = 0u;
+         depth < DEEP_FINITE_DEPTH; depth++) {
+        assert(cursor && cursor->kind == ATOM_EXPR);
+        assert(cursor->expr.len == 2u);
+        assert(atom_alpha_eq(cursor->expr.elems[0], box));
+        cursor = cursor->expr.elems[1];
+    }
+    assert(atom_alpha_eq(cursor, leaf));
+    bindings_free(&environment);
+    assert(petta_machine_next(
+               &machine, &answer, &environment) ==
+           PETTA_MACHINE_STEP_EXHAUSTED);
+    bindings_free(&environment);
+    petta_machine_destroy(&machine);
 }
 
 static void test_logical_list_cursor_boundaries(Arena *arena) {
@@ -269,6 +602,182 @@ static void add_clause(Space *space, Arena *arena, const char *source) {
     space_add(space, clause);
 }
 
+typedef struct {
+    size_t calls;
+} CapacitySpecializerProbe;
+
+static PettaSpecializeResult decline_specialization_for_capacity(
+    void *context, Space *space, Arena *arena,
+    Atom *call, Atom **prepared_call) {
+    (void)space;
+    (void)call;
+    CapacitySpecializerProbe *probe = context;
+    assert(probe && arena && prepared_call);
+    probe->calls++;
+    /* A declining accelerator has no authority to substitute even a
+     * well-formed non-NULL result.  The machine must retain the source call. */
+    *prepared_call = atom_symbol(
+        arena, "capacity-specializer-poison");
+    assert(*prepared_call);
+    return PETTA_SPECIALIZE_CAPACITY;
+}
+
+static void test_specializer_capacity_fallback(
+    Space *space, Arena *persistent, Arena *answers) {
+    add_clause(
+        space, persistent,
+        "(= (capacity-specializer-fallback $value) $value)");
+    Atom *query = parse_one(
+        answers,
+        "(capacity-specializer-fallback capacity-source-value)");
+    Atom *expected = atom_symbol(
+        answers, "capacity-source-value");
+    assert(query && expected);
+
+    CapacitySpecializerProbe probe = {0};
+    PettaMachineHost host = {
+        .context = &probe,
+        .prepare_call = decline_specialization_for_capacity,
+    };
+    PettaMachine machine;
+    assert(petta_machine_init(
+        &machine, space, answers, query, NULL, &host));
+    Atom *answer = NULL;
+    Bindings environment;
+    assert(petta_machine_next(
+               &machine, &answer, &environment) ==
+           PETTA_MACHINE_STEP_ANSWER);
+    assert(atom_alpha_eq(answer, expected));
+    bindings_free(&environment);
+    assert(probe.calls == 1u);
+    PettaMachineStats stats;
+    assert(petta_machine_stats(&machine, &stats));
+    assert(stats.specializer_prepare_calls == 1u);
+    assert(stats.specializer_prepare_capacity_declines == 1u);
+    assert(petta_machine_next(
+               &machine, &answer, &environment) ==
+           PETTA_MACHINE_STEP_EXHAUSTED);
+    bindings_free(&environment);
+    petta_machine_destroy(&machine);
+}
+
+static void test_deep_callable_detection(
+    Space *space, Arena *persistent, Arena *answers) {
+    enum { DEEP_FINITE_DEPTH = 4096 };
+    Atom *box = atom_symbol(persistent, "deep-callable-box");
+    Atom *empty_head = atom_symbol(persistent, "empty");
+    Atom *empty_items[] = {empty_head};
+    Atom *empty_call = atom_expr(persistent, empty_items, 1u);
+    Atom *body = test_nest_unary(
+        persistent, box, empty_call, DEEP_FINITE_DEPTH);
+    Atom *relation_head = atom_symbol(
+        persistent, "deep-callable-regression");
+    Atom *lhs_items[] = {relation_head};
+    Atom *lhs = atom_expr(persistent, lhs_items, 1u);
+    Atom *equation = atom_expr3(
+        persistent,
+        atom_symbol_id(persistent, g_builtin_syms.equals),
+        lhs, body);
+    assert(box && empty_head && empty_call && body &&
+           relation_head && lhs && equation);
+    space_add(space, equation);
+
+    Atom *query_head = atom_symbol(
+        answers, "deep-callable-regression");
+    Atom *query_items[] = {query_head};
+    Atom *query = atom_expr(answers, query_items, 1u);
+    assert(query_head && query);
+    PettaMachine machine;
+    assert(petta_machine_init(
+        &machine, space, answers, query, NULL, NULL));
+    Atom *answer = NULL;
+    Bindings environment;
+    PettaMachineStep step = petta_machine_next(
+        &machine, &answer, &environment);
+    assert(step == PETTA_MACHINE_STEP_EXHAUSTED);
+    bindings_free(&environment);
+    petta_machine_destroy(&machine);
+}
+
+static void test_deep_functional_match_pattern(
+    Space *space, Arena *persistent, Arena *answers) {
+    enum { DEEP_FINITE_DEPTH = 4096 };
+    add_clause(
+        space, persistent,
+        "(: &self (SpaceOf Atom))");
+    add_clause(
+        space, persistent,
+        "(: deep-pattern-id (-[det]-> Atom Atom))");
+    add_clause(
+        space, persistent,
+        "(= (deep-pattern-id $value) $value)");
+
+    Atom *stored_box = atom_symbol(
+        persistent, "deep-functional-pattern-box");
+    Atom *stored_leaf = atom_symbol(
+        persistent, "deep-functional-pattern-leaf");
+    Atom *stored = test_nest_unary(
+        persistent, stored_box, stored_leaf,
+        DEEP_FINITE_DEPTH);
+    assert(stored_box && stored_leaf && stored);
+    space_add(space, stored);
+
+    Atom *box = atom_symbol(
+        answers, "deep-functional-pattern-box");
+    Atom *leaf = atom_symbol(
+        answers, "deep-functional-pattern-leaf");
+    Atom *det_head = atom_symbol(
+        answers, "deep-pattern-id");
+    Atom *det_call = atom_expr2(answers, det_head, leaf);
+    Atom *pattern = test_nest_unary(
+        answers, box, det_call, DEEP_FINITE_DEPTH);
+    Atom *match_head = atom_symbol_id(
+        answers, g_builtin_syms.match);
+    Atom *self = atom_symbol(answers, "&self");
+    Atom *truth = atom_symbol(answers, "true");
+    Atom *match_items[] = {
+        match_head, self, pattern, truth,
+    };
+    Atom *query = atom_expr(answers, match_items, 4u);
+    assert(box && leaf && det_head && det_call && pattern);
+    assert(match_head && self && truth && query);
+
+    PettaMachine machine;
+    assert(petta_machine_init(
+        &machine, space, answers, query, NULL, NULL));
+    Atom *answer = NULL;
+    Bindings environment;
+    assert(petta_machine_next(
+               &machine, &answer, &environment) ==
+           PETTA_MACHINE_STEP_ANSWER);
+    assert(atom_alpha_eq(answer, truth));
+    bindings_free(&environment);
+    assert(petta_machine_next(
+               &machine, &answer, &environment) ==
+           PETTA_MACHINE_STEP_EXHAUSTED);
+    bindings_free(&environment);
+    petta_machine_destroy(&machine);
+}
+
+static void format_nary_application(
+    char *buffer, size_t capacity, const char *head,
+    const char *argument_prefix, size_t argument_count) {
+    assert(buffer && capacity > 0u && head && argument_prefix);
+    size_t used = 0u;
+    int written = snprintf(buffer, capacity, "(%s", head);
+    assert(written >= 0 && (size_t)written < capacity);
+    used = (size_t)written;
+    for (size_t index = 0u; index < argument_count; index++) {
+        written = snprintf(
+            buffer + used, capacity - used,
+            " %s%zu", argument_prefix, index);
+        assert(written >= 0 && (size_t)written < capacity - used);
+        used += (size_t)written;
+    }
+    written = snprintf(buffer + used, capacity - used, ")");
+    assert(written == 1);
+}
+
 static void expect_value_type(
     Space *space, Arena *arena, const char *value_source,
     const char *type_source, PettaTypecheckVerdict verdict) {
@@ -508,6 +1017,27 @@ static void test_constructor_slot_frame_plans(
     assert(ordinary_plan->role == PETTA_PLAN_DATA);
     assert(ordinary_plan->execution == PETTA_PLAN_EXEC_GENERIC);
     assert(ordinary_plan->contains_call);
+
+    Atom *deep_plan_head = parse_one(
+        persistent, "deep-plan-box");
+    Atom *deep_plan_leaf = parse_one(
+        persistent, "deep-plan-leaf");
+    Atom *deep_data = test_nest_unary(
+        persistent, deep_plan_head, deep_plan_leaf, 4096u);
+    const PettaPlanNode *deep_plan =
+        petta_program_plan_current(program, deep_data);
+    assert(deep_plan);
+    assert(!deep_plan->contains_call);
+    const PettaPlanNode *deep_cursor = deep_plan;
+    for (size_t depth = 0u; depth < 4096u; depth++) {
+        assert(deep_cursor->role == PETTA_PLAN_DATA);
+        assert(deep_cursor->child_count == 2u);
+        assert(deep_cursor->children);
+        assert(deep_cursor->children[0u].role == PETTA_PLAN_VALUE);
+        deep_cursor = &deep_cursor->children[1u];
+    }
+    assert(deep_cursor->role == PETTA_PLAN_VALUE);
+    assert(deep_cursor->child_count == 0u);
 
     Atom *pure_grounded = parse_one(
         persistent, "(+ 1 2)");
@@ -2137,7 +2667,31 @@ static void test_deterministic_heap_collection(
     assert(petta_machine_stats(&machine, &stats));
     assert(stats.deterministic_heap_collections > 0u);
     assert(stats.deterministic_minor_heap_collections > 0u);
+    assert(
+        stats.deterministic_heap_collection_elapsed_ns ==
+        stats.deterministic_minor_heap_collection_elapsed_ns +
+            stats.deterministic_major_heap_collection_elapsed_ns);
     assert(stats.deterministic_heap_bytes_promoted > 0u);
+    assert(
+        stats.deterministic_heap_bytes_promoted ==
+        stats.deterministic_minor_heap_bytes_promoted +
+            stats.deterministic_major_heap_bytes_promoted);
+    assert(
+        stats.deterministic_heap_bytes_promoted ==
+        stats.deterministic_root_atom_bytes_promoted +
+            stats.deterministic_binding_atom_bytes_promoted);
+    assert(
+        stats.deterministic_root_atom_bytes_promoted ==
+        stats.deterministic_query_atom_bytes_promoted +
+            stats.deterministic_visible_atom_bytes_promoted +
+            stats.deterministic_type_atom_bytes_promoted +
+            stats.deterministic_goal_atom_bytes_promoted);
+    assert(
+        stats.deterministic_goal_atom_bytes_promoted ==
+        stats.deterministic_goal_first_bytes_promoted +
+            stats.deterministic_goal_second_bytes_promoted +
+            stats.deterministic_goal_third_bytes_promoted +
+            stats.deterministic_goal_fourth_bytes_promoted);
     assert(stats.deterministic_heap_bytes_reclaimed > 0u);
     assert(stats.deterministic_binding_entries_discarded > 0u);
     assert(stats.maximum_nursery_live_bytes > 0u);
@@ -2802,6 +3356,10 @@ int main(void) {
         &universe, &persistent, &answers);
     test_typed_data_purity_boundary(
         &universe, &persistent);
+    test_deep_typecheck_source_rewrites(&universe);
+    test_deep_cons_semantics(&answers);
+    test_answer_materialization_boundaries(
+        &space, &persistent, &answers);
     test_logical_list_cursor_boundaries(&answers);
     test_private_variant_summary(&answers);
     test_binding_prefix_factoring(&answers);
@@ -2809,6 +3367,12 @@ int main(void) {
     test_lexical_free_variable_projection(&answers);
     test_reachable_binding_projection(&answers);
     test_host_environment_projection(&space, &answers);
+    test_deep_callable_detection(
+        &space, &persistent, &answers);
+    test_specializer_capacity_fallback(
+        &space, &persistent, &answers);
+    test_deep_functional_match_pattern(
+        &space, &persistent, &answers);
     test_deterministic_clause_elision(
         &space, &persistent, &answers);
     test_ground_boolean_choice_elision(
@@ -2967,6 +3531,12 @@ int main(void) {
     expect_answers(
         &space, &answers,
         "(+ 1)", partial_intrinsic, 1u);
+    const char *overapplied_intrinsic[] = {
+        "(Error (domain_error (function_input_arities + (2)) 3) none)",
+    };
+    expect_answers(
+        &space, &answers,
+        "(+ 1 2 3)", overapplied_intrinsic, 1u);
     add_clause(
         &space, &persistent,
         "(= (overloaded one) exact)");
@@ -2988,7 +3558,8 @@ int main(void) {
         &space, &persistent,
         "(= (returns-data) 1)");
     const char *overapplied_data[] = {
-        "(partial returns-data (extra))",
+        "(Error (domain_error "
+        "(function_input_arities returns-data (0)) 1) none)",
     };
     expect_answers(
         &space, &answers,
@@ -3005,6 +3576,45 @@ int main(void) {
     expect_answers(
         &space, &answers,
         "(mixed-arity a b)", gap_stays_partial, 1u);
+    const char *mixed_overapplication[] = {
+        "(Error (domain_error "
+        "(function_input_arities mixed-arity (1 3)) 4) none)",
+    };
+    expect_answers(
+        &space, &answers,
+        "(mixed-arity a b c d)", mixed_overapplication, 1u);
+
+    /* Arity is semantic data, not a machine-word bitmap.  Keep both exact
+     * application and the complete overapplication diagnostic correct above
+     * the usual 64- and 128-bit shortcut boundaries. */
+    enum { WIDE_ARITY = 130 };
+    char wide_lhs[4096];
+    char wide_equation[8192];
+    char wide_exact_call[4096];
+    char wide_overapplied_call[4096];
+    format_nary_application(
+        wide_lhs, sizeof wide_lhs, "wide-arity", "$x", WIDE_ARITY);
+    int wide_equation_length = snprintf(
+        wide_equation, sizeof wide_equation, "(= %s wide)", wide_lhs);
+    assert(wide_equation_length >= 0 &&
+           (size_t)wide_equation_length < sizeof wide_equation);
+    add_clause(&space, &persistent, wide_equation);
+    format_nary_application(
+        wide_exact_call, sizeof wide_exact_call,
+        "wide-arity", "a", WIDE_ARITY);
+    const char *wide_exact[] = {"wide"};
+    expect_answers(
+        &space, &answers, wide_exact_call, wide_exact, 1u);
+    format_nary_application(
+        wide_overapplied_call, sizeof wide_overapplied_call,
+        "wide-arity", "a", WIDE_ARITY + 1u);
+    const char *wide_overapplication[] = {
+        "(Error (domain_error "
+        "(function_input_arities wide-arity (130)) 131) none)",
+    };
+    expect_answers(
+        &space, &answers, wide_overapplied_call,
+        wide_overapplication, 1u);
     add_clause(
         &space, &persistent,
         "(= (select-callable special) (#+ 1))");
@@ -3018,7 +3628,7 @@ int main(void) {
         "(select-callable other 2)", NULL, 0u);
     add_clause(
         &space, &persistent,
-        "(: typed-map (-> Expression %Undefined%))");
+        "(: typed-map (-> Atom %Undefined%))");
     add_clause(
         &space, &persistent,
         "(= (typed-map ($f ())) ())");
@@ -3157,6 +3767,13 @@ int main(void) {
                &collapse_environment) ==
            PETTA_MACHINE_STEP_EXHAUSTED);
     bindings_free(&collapse_environment);
+    PettaMachineStats collapse_stats;
+    assert(petta_machine_stats(
+        &collapse_machine, &collapse_stats));
+    /* The public machine owns one defensive query copy.  Its synchronous
+     * collapse child borrows the immutable body from the paused parent, so a
+     * suspend/resume cycle must not introduce a second query copy. */
+    assert(collapse_stats.atom_copy_query_calls == 1u);
     petta_machine_destroy(&collapse_machine);
 
     TransactionProbe transaction_probe = {

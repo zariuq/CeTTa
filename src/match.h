@@ -120,6 +120,27 @@ bool      bindings_project_reachable(const Bindings *src,
                                      Atom *const *roots,
                                      size_t root_count,
                                      Bindings *dst);
+/* As above, while translating each entry-prefix boundary through the
+ * projection.  A mark names the number of logical binding entries preceding
+ * a live activation frame; it is updated to the corresponding prefix length
+ * in `dst`.  The operation is transactional with respect to the marks. */
+bool      bindings_project_reachable_with_entry_marks(
+              const Bindings *src, Atom *const *roots,
+              size_t root_count, uint32_t *entry_marks,
+              size_t entry_mark_count, Bindings *dst);
+/* A persistent source term can name a fresh activation namespace without
+ * first being copied into that namespace.  Each epoch root contributes the
+ * variables of `atom`, rewritten through `epoch`, to the same reachability
+ * closure as ordinary materialized roots. */
+typedef struct {
+    Atom *atom;
+    uint32_t epoch;
+} BindingsEpochRoot;
+bool      bindings_project_reachable_with_epoch_roots_and_entry_marks(
+              const Bindings *src, Atom *const *roots,
+              size_t root_count, const BindingsEpochRoot *epoch_roots,
+              size_t epoch_root_count, uint32_t *entry_marks,
+              size_t entry_mark_count, Bindings *dst);
 /*
  * Replace `full` by the branch-relative suffix beyond `base` when `base` is
  * an exact ordered prefix of its logical bindings and constraints.
@@ -226,6 +247,23 @@ void      bindings_builder_commit(BindingsBuilder *bb);
 bool      bindings_builder_compact_reachable(
               BindingsBuilder *bb, Atom *const *roots, size_t root_count,
               uint32_t *checkpoint_marks, size_t checkpoint_count,
+              uint64_t *discarded_logical_items,
+              uint64_t *discarded_trail_entries);
+/* Preserve both rollback checkpoints and logical entry-prefix boundaries.
+ * The latter are used by activation views whose source variables may consult
+ * only bindings created at or after a particular frame boundary. */
+bool      bindings_builder_compact_reachable_with_entry_marks(
+              BindingsBuilder *bb, Atom *const *roots, size_t root_count,
+              uint32_t *checkpoint_marks, size_t checkpoint_count,
+              uint32_t *entry_marks, size_t entry_mark_count,
+              uint64_t *discarded_logical_items,
+              uint64_t *discarded_trail_entries);
+bool      bindings_builder_compact_reachable_with_epoch_roots_and_entry_marks(
+              BindingsBuilder *bb, Atom *const *roots, size_t root_count,
+              const BindingsEpochRoot *epoch_roots,
+              size_t epoch_root_count,
+              uint32_t *checkpoint_marks, size_t checkpoint_count,
+              uint32_t *entry_marks, size_t entry_mark_count,
               uint64_t *discarded_logical_items,
               uint64_t *discarded_trail_entries);
 bool      bindings_builder_add_id_fresh(BindingsBuilder *bb, VarId var_id,

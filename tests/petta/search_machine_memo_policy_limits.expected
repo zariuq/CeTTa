@@ -1,0 +1,37 @@
+true
+true
+true
+true
+true
+true
+12.1
+12.1
+((cache_hit 1) (cache_miss 1))
+true
+true
+true
+5
+5
+((cache_hit 1) (cache_miss 1) (answer_limit_truncated 1))
+true
+true
+true
+1
+1
+2
+3
+1
+((cache_hit 1) (cache_miss 4))
+true
+true
+1
+1
+2
+3
+1
+((cache_hit 2) (cache_miss 3))
+true
+true
+7
+7
+((cache_miss 2))

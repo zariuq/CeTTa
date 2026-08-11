@@ -3030,6 +3030,30 @@ static bool bindings_reachable_vars_add_atom(
     return true;
 }
 
+static bool bindings_reachable_vars_add_epoch_root(
+    BindingsReachableVars *vars,
+    const BindingsEpochRoot *root) {
+    if (!vars || !root || !root->atom || root->epoch == 0u)
+        return false;
+    if (!atom_has_vars(root->atom))
+        return true;
+    VarIdSet found;
+    var_id_set_init(&found);
+    if (!collect_var_ids(root->atom, &found)) {
+        var_id_set_free(&found);
+        return false;
+    }
+    for (uint32_t i = 0u; i < found.len; i++) {
+        if (!bindings_reachable_vars_add(
+                vars, var_epoch_id(found.items[i], root->epoch))) {
+            var_id_set_free(&found);
+            return false;
+        }
+    }
+    var_id_set_free(&found);
+    return true;
+}
+
 static bool bindings_reachable_atom_intersects(
     const BindingsReachableVars *vars, Atom *atom, bool *intersects) {
     *intersects = false;
@@ -3125,9 +3149,11 @@ static int bindings_reachable_entry_index_compare(
  */
 static bool bindings_project_reachable_sparse(
     const Bindings *src, Atom *const *roots, size_t root_count,
-    Bindings *dst) {
+    const BindingsEpochRoot *epoch_roots,
+    size_t epoch_root_count, Bindings *dst) {
     if (!src || !dst || src == dst ||
         (root_count > 0u && !roots) ||
+        (epoch_root_count > 0u && !epoch_roots) ||
         src->legacy_fallback_count != 0u ||
         src->eq_len != 0u ||
         src->len < BINDINGS_LOOKUP_INDEX_THRESHOLD ||
@@ -3151,6 +3177,12 @@ static bool bindings_project_reachable_sparse(
     for (size_t i = 0u; i < root_count; i++) {
         if (!bindings_reachable_vars_add_atom(&live, roots[i]))
             goto fail;
+    }
+    for (size_t i = 0u; i < epoch_root_count; i++) {
+        if (!bindings_reachable_vars_add_epoch_root(
+                &live, &epoch_roots[i])) {
+            goto fail;
+        }
     }
     while (live.work_next < live.work_len) {
         VarId id = live.work[live.work_next++];
@@ -3227,6 +3259,8 @@ fail:
 
 static bool bindings_project_reachable_selected(
     const Bindings *src, Atom *const *roots, size_t root_count,
+    const BindingsEpochRoot *epoch_roots,
+    size_t epoch_root_count,
     Bindings *dst, bool **keep_entries_out,
     bool **keep_constraints_out) {
     bool return_selection =
@@ -3236,6 +3270,8 @@ static bool bindings_project_reachable_selected(
         !dst || src == dst || (root_count > 0u && !roots)) {
         return false;
     }
+    if (epoch_root_count > 0u && !epoch_roots)
+        return false;
     if (return_selection) {
         *keep_entries_out = NULL;
         *keep_constraints_out = NULL;
@@ -3249,7 +3285,8 @@ static bool bindings_project_reachable_selected(
         src->len >= BINDINGS_LOOKUP_INDEX_THRESHOLD &&
         bindings_lookup_index_enabled()) {
         return bindings_project_reachable_sparse(
-            src, roots, root_count, dst);
+            src, roots, root_count,
+            epoch_roots, epoch_root_count, dst);
     }
     cetta_runtime_stats_inc(
         CETTA_RUNTIME_COUNTER_BINDINGS_PROJECT_DENSE);
@@ -3281,6 +3318,12 @@ static bool bindings_project_reachable_selected(
     for (size_t i = 0u; i < root_count; i++) {
         if (!bindings_reachable_vars_add_atom(&live, roots[i]))
             goto fail;
+    }
+    for (size_t i = 0u; i < epoch_root_count; i++) {
+        if (!bindings_reachable_vars_add_epoch_root(
+                &live, &epoch_roots[i])) {
+            goto fail;
+        }
     }
 
     /*
@@ -3417,11 +3460,70 @@ fail:
     return false;
 }
 
+bool bindings_project_reachable_with_entry_marks(
+    const Bindings *src, Atom *const *roots, size_t root_count,
+    uint32_t *entry_marks, size_t entry_mark_count,
+    Bindings *dst) {
+    return bindings_project_reachable_with_epoch_roots_and_entry_marks(
+        src, roots, root_count, NULL, 0u,
+        entry_marks, entry_mark_count, dst);
+}
+
+bool bindings_project_reachable_with_epoch_roots_and_entry_marks(
+    const Bindings *src, Atom *const *roots, size_t root_count,
+    const BindingsEpochRoot *epoch_roots,
+    size_t epoch_root_count, uint32_t *entry_marks,
+    size_t entry_mark_count, Bindings *dst) {
+    if (!src || !dst ||
+        (epoch_root_count > 0u && !epoch_roots) ||
+        (entry_mark_count > 0u && !entry_marks)) {
+        return false;
+    }
+    for (size_t i = 0u; i < entry_mark_count; i++) {
+        if (entry_marks[i] > src->len)
+            return false;
+    }
+
+    Bindings projected;
+    bool *keep_entries = NULL;
+    bool *keep_constraints = NULL;
+    if (!bindings_project_reachable_selected(
+            src, roots, root_count,
+            epoch_roots, epoch_root_count, &projected,
+            &keep_entries, &keep_constraints)) {
+        return false;
+    }
+
+    uint32_t *next_marks = entry_mark_count
+        ? cetta_malloc(entry_mark_count * sizeof(*next_marks))
+        : NULL;
+    for (size_t mark_index = 0u;
+         mark_index < entry_mark_count; mark_index++) {
+        uint32_t retained = 0u;
+        for (uint32_t entry = 0u;
+             entry < entry_marks[mark_index]; entry++) {
+            if (keep_entries[entry])
+                retained++;
+        }
+        next_marks[mark_index] = retained;
+    }
+
+    *dst = projected;
+    if (entry_mark_count > 0u) {
+        memcpy(entry_marks, next_marks,
+               entry_mark_count * sizeof(*entry_marks));
+    }
+    free(next_marks);
+    free(keep_entries);
+    free(keep_constraints);
+    return true;
+}
+
 bool bindings_project_reachable(
     const Bindings *src, Atom *const *roots, size_t root_count,
     Bindings *dst) {
-    return bindings_project_reachable_selected(
-        src, roots, root_count, dst, NULL, NULL);
+    return bindings_project_reachable_with_entry_marks(
+        src, roots, root_count, NULL, 0u, dst);
 }
 
 static int bindings_checkpoint_mark_compare(
@@ -3445,9 +3547,25 @@ static size_t bindings_checkpoint_mark_find(
     return low;
 }
 
-bool bindings_builder_compact_reachable(
+bool bindings_builder_compact_reachable_with_entry_marks(
     BindingsBuilder *bb, Atom *const *roots, size_t root_count,
     uint32_t *checkpoint_marks, size_t checkpoint_count,
+    uint32_t *entry_marks, size_t entry_mark_count,
+    uint64_t *discarded_logical_items,
+    uint64_t *discarded_trail_entries) {
+    return bindings_builder_compact_reachable_with_epoch_roots_and_entry_marks(
+        bb, roots, root_count, NULL, 0u,
+        checkpoint_marks, checkpoint_count,
+        entry_marks, entry_mark_count,
+        discarded_logical_items, discarded_trail_entries);
+}
+
+bool bindings_builder_compact_reachable_with_epoch_roots_and_entry_marks(
+    BindingsBuilder *bb, Atom *const *roots, size_t root_count,
+    const BindingsEpochRoot *epoch_roots,
+    size_t epoch_root_count,
+    uint32_t *checkpoint_marks, size_t checkpoint_count,
+    uint32_t *entry_marks, size_t entry_mark_count,
     uint64_t *discarded_logical_items,
     uint64_t *discarded_trail_entries) {
     if (discarded_logical_items)
@@ -3455,7 +3573,9 @@ bool bindings_builder_compact_reachable(
     if (discarded_trail_entries)
         *discarded_trail_entries = 0u;
     if (!bb || (root_count > 0u && !roots) ||
+        (epoch_root_count > 0u && !epoch_roots) ||
         (checkpoint_count > 0u && !checkpoint_marks) ||
+        (entry_mark_count > 0u && !entry_marks) ||
         checkpoint_count > UINT32_MAX) {
         return false;
     }
@@ -3465,12 +3585,17 @@ bool bindings_builder_compact_reachable(
         if (checkpoint_marks[i] > old_trail_len)
             return false;
     }
+    for (size_t i = 0u; i < entry_mark_count; i++) {
+        if (entry_marks[i] > bb->current.len)
+            return false;
+    }
 
     Bindings projected;
     bool *keep_entries = NULL;
     bool *keep_constraints = NULL;
     if (!bindings_project_reachable_selected(
-            &bb->current, roots, root_count, &projected,
+            &bb->current, roots, root_count,
+            epoch_roots, epoch_root_count, &projected,
             &keep_entries, &keep_constraints)) {
         return false;
     }
@@ -3531,6 +3656,7 @@ bool bindings_builder_compact_reachable(
 
     uint32_t *sorted_marks = NULL;
     uint32_t *next_marks = NULL;
+    uint32_t *next_entry_marks = NULL;
     BindingsBuilderTrailEntry *next_trail = NULL;
     size_t unique_count = 0u;
     if (checkpoint_count > 0u) {
@@ -3552,6 +3678,12 @@ bool bindings_builder_compact_reachable(
         }
         next_trail = cetta_malloc(
             unique_count * sizeof(*next_trail));
+    }
+    if (entry_mark_count > 0u) {
+        next_entry_marks = cetta_malloc(
+            entry_mark_count * sizeof(*next_entry_marks));
+        for (size_t i = 0u; i < entry_mark_count; i++)
+            next_entry_marks[i] = entry_prefix[entry_marks[i]];
     }
 
     bool valid = true;
@@ -3624,6 +3756,7 @@ bool bindings_builder_compact_reachable(
         free(private_constraint_prefix);
         free(sorted_marks);
         free(next_marks);
+        free(next_entry_marks);
         free(next_trail);
         return false;
     }
@@ -3640,6 +3773,10 @@ bool bindings_builder_compact_reachable(
     if (checkpoint_count > 0u) {
         memcpy(checkpoint_marks, next_marks,
                checkpoint_count * sizeof(*checkpoint_marks));
+    }
+    if (entry_mark_count > 0u) {
+        memcpy(entry_marks, next_entry_marks,
+               entry_mark_count * sizeof(*entry_marks));
     }
     if (discarded_logical_items &&
         old_logical_items > next_logical_items) {
@@ -3661,7 +3798,20 @@ bool bindings_builder_compact_reachable(
     free(private_constraint_prefix);
     free(sorted_marks);
     free(next_marks);
+    free(next_entry_marks);
     return true;
+}
+
+bool bindings_builder_compact_reachable(
+    BindingsBuilder *bb, Atom *const *roots, size_t root_count,
+    uint32_t *checkpoint_marks, size_t checkpoint_count,
+    uint64_t *discarded_logical_items,
+    uint64_t *discarded_trail_entries) {
+    return bindings_builder_compact_reachable_with_entry_marks(
+        bb, roots, root_count,
+        checkpoint_marks, checkpoint_count,
+        NULL, 0u,
+        discarded_logical_items, discarded_trail_entries);
 }
 
 static void rename_var_map_init(RenameVarMap *map) {

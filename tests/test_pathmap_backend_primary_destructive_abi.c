@@ -229,6 +229,85 @@ static void test_candidate_shadow_append_is_incremental(
     (void)arena;
 }
 
+static void test_candidate_shadow_is_demand_materialized(
+    Arena *arena, TermUniverse *universe,
+    SymbolId edge_sym, SymbolId a_sym, SymbolId b_sym, SymbolId c_sym) {
+    Space space;
+    SubstMatchSet matches;
+    CettaIndex *candidates = NULL;
+    Atom *edge_ab = make_edge(arena, edge_sym, a_sym, b_sym);
+    Atom *edge_bc = make_edge(arena, edge_sym, b_sym, c_sym);
+
+    space_init_with_universe(&space, universe);
+    space.kind = SPACE_KIND_HASH;
+    assert(space_match_backend_try_set(&space, SPACE_ENGINE_PATHMAP));
+
+    space_add(&space, edge_ab);
+    assert(space_length64(&space) == 1u);
+    assert(!space.match_backend.pathmap.bridge.native_shadow_synced);
+    assert(space.native.len == 0u);
+
+    space_subst_query(&space, arena, edge_ab, &matches);
+    assert(matches.len == 1u);
+    smset_free(&matches);
+    assert(!space.match_backend.pathmap.bridge.native_shadow_synced);
+    assert(space.native.len == 0u);
+
+    assert(space_match_candidates64(&space, edge_ab, &candidates) == 1u);
+    free(candidates);
+    assert(space.match_backend.pathmap.bridge.native_shadow_synced);
+    assert(space.native.len == 1u);
+
+    space_add(&space, edge_bc);
+    assert(space_length64(&space) == 2u);
+    assert(space.match_backend.pathmap.bridge.native_shadow_synced);
+    assert(space.native.len == 2u);
+
+    space_free(&space);
+}
+
+static void test_ground_existence_stays_shadow_free(
+    Arena *arena, TermUniverse *universe,
+    SymbolId edge_sym, SymbolId a_sym, SymbolId b_sym, SymbolId c_sym) {
+    Space space;
+    Atom *present = make_edge(arena, edge_sym, a_sym, b_sym);
+    Atom *missing = make_edge(arena, edge_sym, b_sym, c_sym);
+    bool applicable = false;
+
+    space_init_with_universe(&space, universe);
+    space.kind = SPACE_KIND_HASH;
+    assert(space_match_backend_try_set(&space, SPACE_ENGINE_PATHMAP));
+    space_add(&space, present);
+    assert(!space.match_backend.pathmap.bridge.native_shadow_synced);
+    assert(space.native.len == 0u);
+
+    assert(space_match_exists_ground_exact(
+        &space, present, &applicable));
+    assert(applicable);
+    assert(!space_match_exists_ground_exact(
+        &space, missing, &applicable));
+    assert(applicable);
+    assert(!space.match_backend.pathmap.bridge.native_shadow_synced);
+    assert(space.native.len == 0u);
+
+    /* Once a stored row contains a variable, structural membership no longer
+       decides ground match existence.  Declining must remain shadow-free. */
+    Atom *open = make_edge_with_atom(
+        arena, edge_sym,
+        atom_var_with_spelling(
+            arena, symbol_intern_cstr(g_symbols, "existence-x"), 84001u),
+        atom_symbol_id(arena, c_sym));
+    space_add(&space, open);
+    applicable = true;
+    assert(!space_match_exists_ground_exact(
+        &space, missing, &applicable));
+    assert(!applicable);
+    assert(!space.match_backend.pathmap.bridge.native_shadow_synced);
+    assert(space.native.len == 0u);
+
+    space_free(&space);
+}
+
 static void test_native_fallback_index_append(Arena *arena,
                                               TermUniverse *universe) {
     Space space;
@@ -446,6 +525,10 @@ int main(void) {
     test_batch_mutation_transaction(
         &arena, &universe, edge_sym, a_sym, b_sym, c_sym, d_sym, e_sym);
     test_indexed_opening_spelling_capture_fence(&arena, &universe);
+    test_candidate_shadow_is_demand_materialized(
+        &arena, &universe, edge_sym, a_sym, b_sym, c_sym);
+    test_ground_existence_stays_shadow_free(
+        &arena, &universe, edge_sym, a_sym, b_sym, c_sym);
     test_candidate_shadow_append_is_incremental(&arena, &universe, id_ab);
     test_native_fallback_index_append(&arena, &universe);
 

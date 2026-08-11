@@ -14,11 +14,13 @@
 typedef enum {
     PREPARED_PURE_LITERAL = 0,
     PREPARED_PURE_ENTRY_ARGUMENT,
+    PREPARED_PURE_EVAL_ENTRY_ARGUMENT,
     PREPARED_PURE_SLOT,
     PREPARED_PURE_EVAL_SLOT,
     PREPARED_PURE_BUILD,
     PREPARED_PURE_OBSERVE,
     PREPARED_PURE_REGISTER,
+    PREPARED_PURE_INTRINSIC,
     PREPARED_PURE_BIND,
     PREPARED_PURE_IF,
     PREPARED_PURE_CALL,
@@ -30,11 +32,13 @@ typedef struct {
     SymbolId head;
     CettaGsltRegisterInstruction instruction;
     CettaGsltRegisterResultKind result_kind;
+    CettaGsltPreparedPureIntrinsicInstruction intrinsic_instruction;
     uint32_t first_child;
     uint32_t child_count;
     uint32_t auxiliary;
     uint32_t first_live_slot;
     uint32_t live_slot_count;
+    bool call_arguments_are_values;
     bool tail_position;
 } PreparedPureNode;
 
@@ -179,6 +183,7 @@ struct CettaPreparedPureProgram {
     /* Closed entry values belong to one invocation, not to the compiled
      * node graph.  Keeping them separate makes a parked cached program
      * root-free and prevents it from retaining pointers into an eval arena. */
+    SymbolId entry_head;
     Atom **entry_arguments;
     size_t entry_argument_count;
 
@@ -742,7 +747,11 @@ static bool prepared_pure_plan_builds_structural_values(
     if (!program)
         return false;
     for (size_t index = 0u; index < program->node_len; index++) {
-        if (program->nodes[index].kind == PREPARED_PURE_BUILD)
+        const PreparedPureNode *node = &program->nodes[index];
+        if (node->kind == PREPARED_PURE_BUILD ||
+            (node->kind == PREPARED_PURE_INTRINSIC &&
+             node->intrinsic_instruction ==
+                 CETTA_GSLT_PREPARED_PURE_INTRINSIC_DECONSTRUCT_NONEMPTY_EXPRESSION))
             return true;
     }
     return false;
@@ -832,7 +841,8 @@ static bool prepared_pure_mark_frame_live_slots(
     const PreparedPureNode *node = &program->nodes[frame->node];
 
     if (node->kind == PREPARED_PURE_LITERAL ||
-        node->kind == PREPARED_PURE_ENTRY_ARGUMENT)
+        node->kind == PREPARED_PURE_ENTRY_ARGUMENT ||
+        node->kind == PREPARED_PURE_EVAL_ENTRY_ARGUMENT)
         return true;
     if (node->kind == PREPARED_PURE_SLOT ||
         node->kind == PREPARED_PURE_EVAL_SLOT) {
@@ -1228,6 +1238,25 @@ static bool prepared_pure_register_program(
     return true;
 }
 
+static bool prepared_pure_intrinsic_program(
+    SymbolId head, CettaExprLen arity,
+    CettaGsltPreparedPureIntrinsicInstruction *instruction_out) {
+#define PREPARED_PURE_INTRINSIC(                                        \
+    field, expected_arity, discipline, instruction)                    \
+    if (head == g_builtin_syms.field && arity == (expected_arity)) {    \
+        if ((discipline) !=                                             \
+            CETTA_GSLT_PREPARED_PURE_INTRINSIC_OPERANDS_STRICT_ALL)    \
+            return false;                                               \
+        if (instruction_out)                                            \
+            *instruction_out = (instruction);                           \
+        return true;                                                    \
+    }
+    CETTA_GSLT_PREPARED_PURE_INTRINSIC_HEAD_ROWS(
+        PREPARED_PURE_INTRINSIC)
+#undef PREPARED_PURE_INTRINSIC
+    return false;
+}
+
 static bool prepared_pure_builtin_surface(SymbolId head) {
     return symbol_id_is_builtin_surface(head);
 }
@@ -1547,7 +1576,12 @@ static bool prepared_pure_compile_children(
                   require_inert_templates, &children[i]);
         if (!ok) {
             free(children);
-            return false;
+            return prepared_pure_reject(
+                program,
+                evaluate
+                    ? "evaluated child is outside the pure machine fragment"
+                    : "delayed child is outside the pure machine fragment",
+                source[i]);
         }
     }
     *children_out = children;
@@ -1593,6 +1627,8 @@ static PreparedPureHeadRole prepared_pure_head_role(
     if (prepared_pure_control_program(head->sym_id, arity, NULL) ||
         prepared_pure_register_program(program,
             head->sym_id, arity, NULL, NULL) ||
+        prepared_pure_intrinsic_program(
+            head->sym_id, arity, NULL) ||
         is_grounded_op(head->sym_id) ||
         prepared_pure_builtin_surface(head->sym_id)) {
         return PREPARED_PURE_HEAD_CALLABLE;
@@ -1653,6 +1689,8 @@ static bool prepared_pure_compile_template(
             CettaExprLen payload_arity = source->expr.len - 1u;
             if (prepared_pure_register_program(program,
                     payload_head->sym_id, payload_arity, NULL, NULL) ||
+                prepared_pure_intrinsic_program(
+                    payload_head->sym_id, payload_arity, NULL) ||
                 prepared_pure_control_program(
                     payload_head->sym_id, payload_arity, NULL)) {
                 return prepared_pure_compile_eval(
@@ -1687,10 +1725,16 @@ static bool prepared_pure_compile_eval(
         uint32_t slot = 0u;
         if (!prepared_pure_context_lookup(context, source->var_id, &slot))
             return false;
+        /* Eager clause and let bindings are populated only after their
+         * producing child has completed.  Re-evaluating an expression-valued
+         * result would mistake flat data such as `(1)` for a dynamic call.
+         * Need bindings retain EVAL_SLOT because they may still be suspended. */
         return prepared_pure_add_node(
             program,
             (PreparedPureNode){
-                .kind = PREPARED_PURE_EVAL_SLOT,
+                .kind = program->call_mode == CETTA_GSLT_PURE_CALL_EAGER
+                    ? PREPARED_PURE_SLOT
+                    : PREPARED_PURE_EVAL_SLOT,
                 .auxiliary = slot,
             },
             NULL, 0u, node_out);
@@ -1763,8 +1807,26 @@ static bool prepared_pure_compile_eval(
         return prepared_pure_compile_template(
             program, context, source, depth, true, node_out);
     Atom *head_atom = source->expr.elems[0];
-    if (!head_atom || head_atom->kind != ATOM_SYMBOL)
+    if (!head_atom)
         return false;
+    if (head_atom->kind != ATOM_SYMBOL) {
+        if (program->call_mode != CETTA_GSLT_PURE_CALL_EAGER ||
+            head_atom->kind != ATOM_GROUNDED ||
+            head_atom->ground.gkind == GV_CAPTURE ||
+            head_atom->ground.gkind == GV_FOREIGN) {
+            return false;
+        }
+        uint32_t *children = NULL;
+        if (!prepared_pure_compile_children(
+                program, context, source->expr.elems, source->expr.len,
+                depth, true, false, &children))
+            return false;
+        bool ok = prepared_pure_add_node(
+            program, (PreparedPureNode){.kind = PREPARED_PURE_BUILD},
+            children, source->expr.len, node_out);
+        free(children);
+        return ok;
+    }
     SymbolId head = head_atom->sym_id;
     CettaExprLen arity = source->expr.len - 1u;
     CettaGsltFoldControl control;
@@ -1795,20 +1857,26 @@ static bool prepared_pure_compile_eval(
             if (!prepared_pure_compile_eval(
                     program, context, source->expr.elems[2],
                     depth + 1u, &bound))
-                return false;
+                return prepared_pure_reject(
+                    program, "let bound expression is outside the fragment",
+                    source->expr.elems[2]);
             size_t saved_bindings = context->len;
             uint32_t pattern_index = 0u;
             if (!prepared_pure_compile_bind_pattern(
                     program, context, source->expr.elems[1],
                     &pattern_index))
-                return false;
+                return prepared_pure_reject(
+                    program, "let pattern is outside the fragment",
+                    source->expr.elems[1]);
             uint32_t body = 0u;
             bool body_ok = prepared_pure_compile_eval(
                 program, context, source->expr.elems[3],
                 depth + 1u, &body);
             context->len = saved_bindings;
             if (!body_ok)
-                return false;
+                return prepared_pure_reject(
+                    program, "let body is outside the fragment",
+                    source->expr.elems[3]);
             uint32_t children[2] = {bound, body};
             return prepared_pure_add_node(
                 program,
@@ -1844,6 +1912,27 @@ static bool prepared_pure_compile_eval(
         return ok;
     }
 
+    CettaGsltPreparedPureIntrinsicInstruction intrinsic_instruction;
+    if (prepared_pure_intrinsic_program(
+            head, arity, &intrinsic_instruction)) {
+        uint32_t *children = NULL;
+        if (!prepared_pure_compile_children(
+                program, context, &source->expr.elems[1], arity,
+                depth, true, false, &children))
+            return false;
+        bool ok = prepared_pure_add_node(
+            program,
+            (PreparedPureNode){
+                .kind = PREPARED_PURE_INTRINSIC,
+                .atom = head_atom,
+                .head = head,
+                .intrinsic_instruction = intrinsic_instruction,
+            },
+            children, arity, node_out);
+        free(children);
+        return ok;
+    }
+
     bool defined = false;
     CettaGsltQueryEffect effect =
         space_query_effect_for_head(program->space, head, &defined);
@@ -1873,6 +1962,7 @@ static bool prepared_pure_compile_eval(
                 .kind = PREPARED_PURE_CALL,
                 .head = head,
                 .auxiliary = head_index,
+                .call_arguments_are_values = eager_arguments,
             },
             children, arity, node_out);
         free(children);
@@ -2559,8 +2649,13 @@ static bool prepared_pure_expression_is_callable(
         value->expr.len == 0u)
         return false;
     Atom *head = value->expr.elems[0];
-    if (!head || head->kind != ATOM_SYMBOL)
+    if (!head)
         return true;
+    if (head->kind != ATOM_SYMBOL) {
+        return head->kind != ATOM_GROUNDED ||
+               head->ground.gkind == GV_CAPTURE ||
+               head->ground.gkind == GV_FOREIGN;
+    }
     CettaExprLen expression_arity = value->expr.len - 1u;
     if (expression_arity > UINT32_MAX)
         return true;
@@ -3350,6 +3445,36 @@ static Atom *prepared_pure_execute_register(
 #endif
 }
 
+/* Execute only the successful value arm named by the generated intrinsic
+ * program.  A fault, computation zero, or unsupported payload returns NULL;
+ * the caller then replays the source through the canonical evaluator. */
+static Atom *prepared_pure_execute_intrinsic(
+    const CettaPreparedPureProgram *program, Arena *arena,
+    CettaGsltPreparedPureIntrinsicInstruction instruction,
+    Atom *head, Atom *const *arguments, uint32_t arity) {
+    if (!program || !program->construct_value || !arena || !head ||
+        !arguments)
+        return NULL;
+    switch (instruction) {
+    case CETTA_GSLT_PREPARED_PURE_INTRINSIC_GROUNDED_DISPATCH:
+        return grounded_dispatch(arena, head, (Atom **)arguments, arity);
+    case CETTA_GSLT_PREPARED_PURE_INTRINSIC_DECONSTRUCT_NONEMPTY_EXPRESSION: {
+        if (arity != 1u || !arguments[0] ||
+            arguments[0]->kind != ATOM_EXPR ||
+            arguments[0]->expr.len == 0u)
+            return NULL;
+        Atom *tail = program->construct_value(
+            arena, arguments[0]->expr.elems + 1u,
+            arguments[0]->expr.len - 1u);
+        if (!tail)
+            return NULL;
+        Atom *pair[2] = {arguments[0]->expr.elems[0], tail};
+        return program->construct_value(arena, pair, 2u);
+    }
+    }
+    return NULL;
+}
+
 static bool prepared_pure_push_dynamic_frame(
     CettaPreparedPureProgram *program, Atom *atom) {
     if (!program || !atom || program->dynamic_value_len > UINT32_MAX ||
@@ -3381,10 +3506,10 @@ static bool prepared_pure_push_dynamic_value(
 }
 
 /* Evaluate the value demanded by an eval-position variable.  This deliberately
- * accepts only the generated register-expression language.  Any user call,
- * control form, grounded extension, or inert constructor expression declines
- * to the canonical evaluator.  The explicit stack keeps nested arithmetic off
- * the native C stack. */
+ * accepts only the generated register and intrinsic languages.  Any user call,
+ * control form, unadmitted grounded extension, or inert constructor expression
+ * declines to the canonical evaluator.  The explicit stack keeps nested
+ * arithmetic and structural operations off the native C stack. */
 static bool prepared_pure_eval_dynamic_register_value(
     CettaPreparedPureProgram *program, Arena *arena,
     Atom *input, Atom **result_out) {
@@ -3408,11 +3533,17 @@ static bool prepared_pure_eval_dynamic_register_value(
         }
         Atom *head = current->expr.elems[0];
         CettaExprLen arity = current->expr.len - 1u;
-        CettaGsltRegisterResultKind result_kind;
-        CettaGsltRegisterInstruction instruction;
-        if (!head || head->kind != ATOM_SYMBOL ||
-            !prepared_pure_register_program(program,
-                head->sym_id, arity, &result_kind, &instruction))
+        CettaGsltRegisterResultKind result_kind = {0};
+        CettaGsltRegisterInstruction instruction = {0};
+        CettaGsltPreparedPureIntrinsicInstruction intrinsic_instruction = {0};
+        if (!head || head->kind != ATOM_SYMBOL)
+            return false;
+        bool is_register = prepared_pure_register_program(
+            program, head->sym_id, arity, &result_kind, &instruction);
+        bool is_intrinsic = !is_register &&
+            prepared_pure_intrinsic_program(
+                head->sym_id, arity, &intrinsic_instruction);
+        if (!is_register && !is_intrinsic)
             return false;
         if (frame->child_index < arity) {
             if (program->dynamic_value_len !=
@@ -3428,9 +3559,13 @@ static bool prepared_pure_eval_dynamic_register_value(
         if (program->dynamic_value_len !=
             (size_t)frame->value_base + arity)
             return false;
-        Atom *result = prepared_pure_execute_register(
-            program, arena, instruction, result_kind,
-            &program->dynamic_values[frame->value_base], arity);
+        Atom *result = is_register
+            ? prepared_pure_execute_register(
+                  program, arena, instruction, result_kind,
+                  &program->dynamic_values[frame->value_base], arity)
+            : prepared_pure_execute_intrinsic(
+                  program, arena, intrinsic_instruction, head,
+                  &program->dynamic_values[frame->value_base], arity);
         program->dynamic_value_len = frame->value_base;
         if (!result || atom_is_error(result) ||
             !prepared_pure_push_dynamic_value(program, result))
@@ -3471,8 +3606,17 @@ static PreparedPureChildrenState prepared_pure_finish_children(
             return PREPARED_PURE_CHILDREN_FAILED;
         frame->child_index++;
     }
-    if (frame->child_index == node->child_count)
+    if (frame->child_index == node->child_count) {
+        if (node->kind == PREPARED_PURE_CALL &&
+            node->call_arguments_are_values) {
+            if (node->child_count > 64u)
+                return PREPARED_PURE_CHILDREN_FAILED;
+            frame->ready_arguments = node->child_count == 64u
+                ? UINT64_MAX
+                : (UINT64_C(1) << node->child_count) - UINT64_C(1);
+        }
         return PREPARED_PURE_CHILDREN_READY;
+    }
     if (!prepared_pure_push_frame(
             program,
             program->children[node->first_child + frame->child_index],
@@ -3686,36 +3830,20 @@ CettaPreparedPureProgram *cetta_prepared_pure_program_compile(
  * receives values already computed by its enclosing machine.  Neither is
  * source syntax to recursively recompile.  Entry nodes preserve that boundary
  * and make admission independent of the depth of the carried representation. */
-static bool prepared_pure_compile_closed_entry_call(
+static bool prepared_pure_compile_entry_arguments(
     CettaPreparedPureProgram *program, Atom *expression,
-    bool entry_arguments_are_values,
-    bool *admitted, uint32_t *root_out) {
-    if (admitted)
-        *admitted = false;
-    if (!program || !expression || !admitted || !root_out ||
-        (program->call_mode != CETTA_GSLT_PURE_CALL_CALL_BY_NEED &&
-         !entry_arguments_are_values) ||
+    PreparedPureNodeKind kind, uint32_t **children_out) {
+    if (children_out)
+        *children_out = NULL;
+    if (!program || !expression || !children_out ||
         expression->kind != ATOM_EXPR || expression->expr.len == 0u ||
-        !expression->expr.elems[0] ||
-        expression->expr.elems[0]->kind != ATOM_SYMBOL)
-        return true;
-
-    SymbolId head = expression->expr.elems[0]->sym_id;
-    bool defined = false;
-    if (space_query_effect_for_head(
-            program->space, head, &defined) !=
-            CETTA_GSLT_QUERY_EFFECT_PURE ||
-        !defined)
-        return true;
-
-    *admitted = true;
-    uint32_t head_index = 0u;
-    if (!prepared_pure_head_index(program, head, &head_index))
+        (kind != PREPARED_PURE_ENTRY_ARGUMENT &&
+         kind != PREPARED_PURE_EVAL_ENTRY_ARGUMENT) ||
+        program->entry_head != SYMBOL_ID_NONE ||
+        program->entry_arguments || program->entry_argument_count != 0u)
         return false;
 
     CettaExprLen arity = expression->expr.len - 1u;
-    if (program->entry_arguments || program->entry_argument_count != 0u)
-        return false;
     program->entry_arguments = arity
         ? calloc((size_t)arity, sizeof(*program->entry_arguments))
         : NULL;
@@ -3732,27 +3860,106 @@ static bool prepared_pure_compile_closed_entry_call(
         if (!prepared_pure_add_node(
                 program,
                 (PreparedPureNode){
-                    .kind = PREPARED_PURE_ENTRY_ARGUMENT,
+                    .kind = kind,
                     .auxiliary = i,
                 },
                 NULL, 0u, &children[i])) {
             free(children);
             return false;
         }
+        program->entry_arguments[i] = expression->expr.elems[i + 1u];
     }
+    *children_out = children;
+    return true;
+}
+
+static bool prepared_pure_compile_closed_entry_call(
+    CettaPreparedPureProgram *program, Atom *expression,
+    bool entry_arguments_are_values,
+    bool *admitted, uint32_t *root_out) {
+    if (admitted)
+        *admitted = false;
+    if (!program || !expression || !admitted || !root_out ||
+        (program->call_mode != CETTA_GSLT_PURE_CALL_CALL_BY_NEED &&
+         !entry_arguments_are_values) ||
+        expression->kind != ATOM_EXPR || expression->expr.len == 0u ||
+        !expression->expr.elems[0] ||
+        expression->expr.elems[0]->kind != ATOM_SYMBOL)
+        return true;
+
+    SymbolId head = expression->expr.elems[0]->sym_id;
+    CettaExprLen arity = expression->expr.len - 1u;
+    CettaGsltFoldControl control;
+    if (prepared_pure_control_program(head, arity, &control)) {
+        /* A Need control's operands are invocation data while its scheduling
+         * discipline is generated language semantics.  Compile that fixed
+         * discipline once and demand only the operands selected at runtime.
+         * Bind carries a pattern/environment extension and therefore remains
+         * on the ordinary per-expression compiler until it has an equally
+         * general parameter representation. */
+        if (program->call_mode != CETTA_GSLT_PURE_CALL_CALL_BY_NEED ||
+            (control != CETTA_GSLT_FOLD_CONTROL_BRANCH &&
+             control != CETTA_GSLT_FOLD_CONTROL_EVALUATE))
+            return true;
+
+        uint32_t *children = NULL;
+        *admitted = true;
+        if (!prepared_pure_compile_entry_arguments(
+                program, expression,
+                PREPARED_PURE_EVAL_ENTRY_ARGUMENT, &children))
+            return false;
+        bool compiled = false;
+        if (control == CETTA_GSLT_FOLD_CONTROL_BRANCH && arity == 3u) {
+            compiled = prepared_pure_add_node(
+                program,
+                (PreparedPureNode){.kind = PREPARED_PURE_IF},
+                children, arity, root_out);
+        } else if (control == CETTA_GSLT_FOLD_CONTROL_EVALUATE &&
+                   arity == 1u) {
+            *root_out = children[0];
+            compiled = true;
+        }
+        free(children);
+        if (compiled)
+            program->entry_head = head;
+        return compiled;
+    }
+    /* Generated value rows are expressions, not equation-defined entry
+     * relations.  Let compile_eval lower their concrete occurrences. */
+    if (prepared_pure_register_program(
+            program, head, arity, NULL, NULL) ||
+        prepared_pure_intrinsic_program(head, arity, NULL)) {
+        return true;
+    }
+    bool defined = false;
+    if (space_query_effect_for_head(
+            program->space, head, &defined) !=
+            CETTA_GSLT_QUERY_EFFECT_PURE ||
+        !defined)
+        return true;
+
+    *admitted = true;
+    uint32_t head_index = 0u;
+    if (!prepared_pure_head_index(program, head, &head_index))
+        return false;
+
+    uint32_t *children = NULL;
+    if (!prepared_pure_compile_entry_arguments(
+            program, expression, PREPARED_PURE_ENTRY_ARGUMENT,
+            &children))
+        return false;
     bool compiled = prepared_pure_add_node(
         program,
         (PreparedPureNode){
             .kind = PREPARED_PURE_CALL,
             .head = head,
             .auxiliary = head_index,
+            .call_arguments_are_values = entry_arguments_are_values,
         },
         children, arity, root_out);
     free(children);
-    if (compiled) {
-        for (CettaExprIndex i = 0u; i < arity; i++)
-            program->entry_arguments[i] = expression->expr.elems[i + 1u];
-    }
+    if (compiled)
+        program->entry_head = head;
     return compiled;
 }
 
@@ -3775,10 +3982,20 @@ CettaPreparedPureProgram *cetta_prepared_pure_program_compile_closed(
         return NULL;
     if (expression->kind == ATOM_EXPR && expression->expr.len > 0u) {
         Atom *root_head = expression->expr.elems[0];
-        if (root_head && root_head->kind == ATOM_SYMBOL &&
+        CettaExprLen root_arity = expression->expr.len - 1u;
+        bool generated_expression =
+            root_head && root_head->kind == ATOM_SYMBOL &&
+            (prepared_pure_control_program(
+                 root_head->sym_id, root_arity, NULL) ||
+             prepared_pure_register_program(
+                 NULL, root_head->sym_id, root_arity, NULL, NULL) ||
+             prepared_pure_intrinsic_program(
+                 root_head->sym_id, root_arity, NULL));
+        if (!generated_expression && root_head &&
+            root_head->kind == ATOM_SYMBOL &&
             !CETTA_GSLT_ACCELERATOR_CALL_POLICY_SUPPORTED(
                 space, root_head->sym_id,
-                (CettaExprLen)(expression->expr.len - 1u)))
+                root_arity))
             return NULL;
     }
     CettaPreparedPureProgram *program = calloc(1u, sizeof(*program));
@@ -3828,26 +4045,14 @@ bool cetta_prepared_pure_program_rebind_closed_entry_call(
         program->root >= program->node_len)
         return false;
 
-    PreparedPureNode *root = &program->nodes[program->root];
     Atom *head = expression->expr.elems[0];
     CettaExprLen arity = expression->expr.len - 1u;
     if (!head || head->kind != ATOM_SYMBOL ||
-        root->kind != PREPARED_PURE_CALL || root->head != head->sym_id ||
-        root->child_count != arity ||
+        program->entry_head == SYMBOL_ID_NONE ||
+        program->entry_head != head->sym_id ||
         program->entry_argument_count != arity ||
-        root->first_child > program->child_len ||
-        arity > program->child_len - root->first_child)
+        (arity > 0u && !program->entry_arguments))
         return false;
-
-    for (CettaExprIndex i = 0u; i < arity; i++) {
-        uint32_t child_index =
-            program->children[root->first_child + i];
-        if (child_index >= program->node_len ||
-            program->nodes[child_index].kind !=
-                PREPARED_PURE_ENTRY_ARGUMENT ||
-            program->nodes[child_index].auxiliary != i)
-            return false;
-    }
     for (CettaExprIndex i = 0u; i < arity; i++) {
         program->entry_arguments[i] = expression->expr.elems[i + 1u];
     }
@@ -3986,38 +4191,60 @@ static bool prepared_pure_program_execute_internal(
                 CettaGsltFoldControl control;
                 if (prepared_pure_control_program(
                         head, arity, &control)) {
-                    if (control != CETTA_GSLT_FOLD_CONTROL_EVALUATE ||
-                        arity != 1u)
-                        return prepared_pure_runtime_decline(
-                            program,
-                            "dynamic control lies outside the machine",
-                            NULL);
                     frame->value_base = (uint32_t)program->value_len;
-                    frame->state = 20u;
-                    if (!prepared_pure_push_runtime_frame(
-                            program, source->expr.elems[1]))
-                        return prepared_pure_runtime_decline(
-                            program, "cannot push dynamic evaluation",
-                            NULL);
-                    continue;
+                    if (control == CETTA_GSLT_FOLD_CONTROL_EVALUATE &&
+                        arity == 1u) {
+                        frame->state = 20u;
+                        if (!prepared_pure_push_runtime_frame(
+                                program, source->expr.elems[1]))
+                            return prepared_pure_runtime_decline(
+                                program, "cannot push dynamic evaluation",
+                                NULL);
+                        continue;
+                    }
+                    if (control == CETTA_GSLT_FOLD_CONTROL_BRANCH &&
+                        arity == 3u) {
+                        frame->state = 30u;
+                        if (!prepared_pure_push_runtime_frame(
+                                program, source->expr.elems[1]))
+                            return prepared_pure_runtime_decline(
+                                program,
+                                "cannot push dynamic branch condition",
+                                NULL);
+                        continue;
+                    }
+                    return prepared_pure_runtime_decline(
+                        program,
+                        "dynamic control lies outside the machine",
+                        NULL);
                 }
-                CettaGsltRegisterResultKind result_kind;
-                CettaGsltRegisterInstruction instruction;
-                if (prepared_pure_register_program(program,
-                        head, arity, &result_kind, &instruction)) {
+                CettaGsltRegisterResultKind result_kind = {0};
+                CettaGsltRegisterInstruction instruction = {0};
+                CettaGsltPreparedPureIntrinsicInstruction
+                    intrinsic_instruction = {0};
+                bool generated_value_program =
+                    prepared_pure_register_program(program,
+                        head, arity, &result_kind, &instruction);
+                if (!generated_value_program) {
+                    generated_value_program =
+                        prepared_pure_intrinsic_program(
+                            head, arity, &intrinsic_instruction);
+                }
+                if (generated_value_program) {
                     (void)result_kind;
                     (void)instruction;
+                    (void)intrinsic_instruction;
                     frame->value_base = (uint32_t)program->value_len;
                     frame->child_index = 0u;
                     frame->state = 10u;
                     if (arity == 0u)
                         return prepared_pure_runtime_decline(
-                            program, "zero-arity register instruction",
+                            program, "zero-arity generated instruction",
                             NULL);
                     if (!prepared_pure_push_runtime_frame(
                             program, source->expr.elems[1]))
                         return prepared_pure_runtime_decline(
-                            program, "cannot push register argument", NULL);
+                            program, "cannot push generated argument", NULL);
                     continue;
                 }
                 uint32_t head_index = 0u;
@@ -4055,11 +4282,54 @@ static bool prepared_pure_program_execute_internal(
                 program->frame_len--;
                 continue;
             }
+            if (frame->state == 30u) {
+                if (program->value_len !=
+                    (size_t)frame->value_base + 1u)
+                    return prepared_pure_runtime_decline(
+                        program,
+                        "dynamic branch condition invariant failed",
+                        NULL);
+                Atom *condition =
+                    program->values[--program->value_len];
+                CettaExprIndex branch;
+                if (prepared_pure_is_true(condition))
+                    branch = 2u;
+                else if (prepared_pure_is_false(condition))
+                    branch = 3u;
+                else
+                    return prepared_pure_runtime_decline(
+                        program,
+                        "dynamic branch condition is not boolean",
+                        NULL);
+                frame->state = 31u;
+                if (!prepared_pure_push_runtime_frame(
+                        program, source->expr.elems[branch]))
+                    return prepared_pure_runtime_decline(
+                        program, "cannot push dynamic selected branch",
+                        NULL);
+                continue;
+            }
+            if (frame->state == 31u) {
+                if (program->value_len !=
+                    (size_t)frame->value_base + 1u)
+                    return prepared_pure_runtime_decline(
+                        program,
+                        "dynamic selected branch invariant failed",
+                        NULL);
+                if (!prepared_pure_memo_complete(
+                        program, frame,
+                        program->values[frame->value_base]))
+                    return prepared_pure_runtime_decline(
+                        program, "cannot update dynamic branch thunk",
+                        NULL);
+                program->frame_len--;
+                continue;
+            }
             if (frame->state == 10u) {
                 if (program->value_len !=
                     (size_t)frame->value_base + frame->child_index + 1u)
                     return prepared_pure_runtime_decline(
-                        program, "register argument invariant failed",
+                        program, "generated argument invariant failed",
                         NULL);
                 frame->child_index++;
                 if (frame->child_index < arity) {
@@ -4067,25 +4337,35 @@ static bool prepared_pure_program_execute_internal(
                             program,
                             source->expr.elems[frame->child_index + 1u]))
                         return prepared_pure_runtime_decline(
-                            program, "cannot push register argument", NULL);
+                            program, "cannot push generated argument", NULL);
                     continue;
                 }
-                CettaGsltRegisterResultKind result_kind;
-                CettaGsltRegisterInstruction instruction;
+                CettaGsltRegisterResultKind result_kind = {0};
+                CettaGsltRegisterInstruction instruction = {0};
+                CettaGsltPreparedPureIntrinsicInstruction
+                    intrinsic_instruction = {0};
                 Atom *head = source->expr.elems[0];
-                if (!prepared_pure_register_program(program,
-                        head->sym_id, arity,
-                        &result_kind, &instruction))
+                bool is_register = prepared_pure_register_program(
+                    program, head->sym_id, arity,
+                    &result_kind, &instruction);
+                bool is_intrinsic = !is_register &&
+                    prepared_pure_intrinsic_program(
+                        head->sym_id, arity, &intrinsic_instruction);
+                if (!is_register && !is_intrinsic)
                     return prepared_pure_runtime_decline(
-                        program, "register descriptor changed", NULL);
-                Atom *result = prepared_pure_execute_register(
-                    program, arena, instruction, result_kind,
-                    &program->values[frame->value_base], arity);
+                        program, "generated descriptor changed", NULL);
+                Atom *result = is_register
+                    ? prepared_pure_execute_register(
+                          program, arena, instruction, result_kind,
+                          &program->values[frame->value_base], arity)
+                    : prepared_pure_execute_intrinsic(
+                          program, arena, intrinsic_instruction, head,
+                          &program->values[frame->value_base], arity);
                 program->value_len = frame->value_base;
                 if (!result || atom_is_error(result) ||
                     !prepared_pure_push_value(program, result))
                     return prepared_pure_runtime_decline(
-                        program, "dynamic register arm declined", NULL);
+                        program, "dynamic generated arm declined", NULL);
                 if (!prepared_pure_memo_complete(
                         program, frame, result))
                     return prepared_pure_runtime_decline(
@@ -4119,6 +4399,44 @@ static bool prepared_pure_program_execute_internal(
                     program->entry_arguments[node->auxiliary]))
                 return prepared_pure_runtime_decline(
                     program, "missing invocation entry argument", node);
+            program->frame_len--;
+            continue;
+        }
+        if (node->kind == PREPARED_PURE_EVAL_ENTRY_ARGUMENT) {
+            if (node->auxiliary >= program->entry_argument_count ||
+                !program->entry_arguments[node->auxiliary])
+                return prepared_pure_runtime_decline(
+                    program, "missing demanded entry argument", node);
+            if (frame->state == 0u) {
+                Atom *source =
+                    program->entry_arguments[node->auxiliary];
+                if (!prepared_pure_expression_is_callable(
+                        program, source)) {
+                    if (!prepared_pure_push_value(program, source))
+                        return prepared_pure_runtime_decline(
+                            program, "cannot push demanded entry value",
+                            node);
+                    program->frame_len--;
+                    continue;
+                }
+                frame->value_base = (uint32_t)program->value_len;
+                frame->state = 1u;
+                if (!prepared_pure_push_runtime_frame(program, source))
+                    return prepared_pure_runtime_decline(
+                        program,
+                        "demanded entry argument lies outside the machine",
+                        node);
+                continue;
+            }
+            if (frame->state != 1u ||
+                program->value_len !=
+                    (size_t)frame->value_base + 1u)
+                return prepared_pure_runtime_decline(
+                    program,
+                    "demanded entry argument return invariant failed",
+                    node);
+            program->entry_arguments[node->auxiliary] =
+                program->values[frame->value_base];
             program->frame_len--;
             continue;
         }
@@ -4335,6 +4653,18 @@ static bool prepared_pure_program_execute_internal(
                 !prepared_pure_push_value(program, result))
                 return prepared_pure_runtime_decline(
                     program, "generated register arm declined", node);
+            program->frame_len--;
+            continue;
+        }
+        if (node->kind == PREPARED_PURE_INTRINSIC) {
+            Atom *result = prepared_pure_execute_intrinsic(
+                program, arena, node->intrinsic_instruction, node->atom,
+                &program->values[frame->value_base], node->child_count);
+            program->value_len = frame->value_base;
+            if (!result || atom_is_error(result) ||
+                !prepared_pure_push_value(program, result))
+                return prepared_pure_runtime_decline(
+                    program, "generated intrinsic arm declined", node);
             program->frame_len--;
             continue;
         }
