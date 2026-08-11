@@ -214,11 +214,36 @@
                                        (nursery-values $arguments)))
        ())))
 
+(gslt prepared-pure-intrinsic-execution
+  ; This is an extensible positive capability list, not a claim that every
+  ; evaluator builtin is safe to stage.  A direct grounded dispatch reuses
+  ; the canonical operation implementation.  Structural instructions name
+  ; only their successful value case; every fault or zero-result case falls
+  ; back to the canonical evaluator.
+  (sort Instruction)
+  (instruction grounded-dispatch)
+  (instruction deconstruct-nonempty-expression)
+  (sort OperandDiscipline)
+  (operand-discipline strict-all)
+  (rule intrinsic-is-pure
+    (= (effects (prepared-pure-intrinsic $instruction $arguments)) pure))
+  (law failed-intrinsic-replays-canonically
+    (implies
+      (not (intrinsic-applicable $instruction $arguments))
+      (= (intrinsic-execution $instruction $arguments)
+         canonical-evaluator))))
+
 (gslt determinate-fold-continuation
   (sort Control)
   (value bind)
   (value branch)
   (value evaluate)
+  (sort OperandRole)
+  (operand-role evaluated)
+  (operand-role pattern)
+  (control-operands bind pattern evaluated evaluated)
+  (control-operands branch evaluated evaluated evaluated)
+  (control-operands evaluate evaluated)
   (state (fold-frame $items $index $accumulator bind-step))
   (state (fold-frame $items $index $accumulator evaluate-step))
   (state (fold-frame $items $index $accumulator evacuate-carry))
@@ -252,7 +277,9 @@
       (= (fold-execution $step) ordinary-fold)))
   (law unused-item-preserves-demand
     (= (demand (prepared-fold $step) $item)
-       (demand (ordinary-fold $step) $item))))
+       (demand (ordinary-fold $step) $item)))
+  (law pattern-operands-are-not-evaluation-contexts
+    (= (effects (control-operand pattern $syntax)) pure)))
 
 (gslt determinate-pure-call-continuation
   (sort CallMode)
@@ -433,6 +460,7 @@
               total-expression-normalization
               value-allocation
               register-expression-execution
+              prepared-pure-intrinsic-execution
               determinate-fold-continuation
               determinate-pure-call-continuation
               evaluator-root-frames))
@@ -487,6 +515,10 @@
   (register-head <= 2 boolean integer-less-equal)
   (register-head >= 2 boolean integer-greater-equal)
   (register-head numeric-eq 2 boolean integer-equal)
+  (prepared-pure-intrinsic-head
+    abs-math 1 strict-all grounded-dispatch)
+  (prepared-pure-intrinsic-head
+    decons-atom 1 strict-all deconstruct-nonempty-expression)
   (fold-control-head let 3 bind)
   (fold-control-head if 3 branch)
   (fold-control-head eval 1 evaluate)
@@ -556,7 +588,7 @@
       (eval (== $item same)))
     False)
   (fold-case nondeterministic-step fallback 0
-    (reify
+    (collapse
       (foldl-atom (1 2) 0 $accumulator $item
         (superpose
           ((+ $accumulator $item)
@@ -569,7 +601,7 @@
         (eval (+ $accumulator $item))))
     6)
   (observation-case effect-occurs-once
-    (reify
+    (collapse
       (match &self (generated-fold-seen $item) $item))
     (1 2 3))
   (prime-fold-case unused-faulting-item admitted 1
@@ -578,6 +610,6 @@
       (eval (generated-fold-count $accumulator $item)))
     9)
   (petta-fold-case failed-step fallback 0
-    (reify
+    (collapse
       (foldl-atom (a b) () $accumulator $item (empty)))
     ()))

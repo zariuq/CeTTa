@@ -6,6 +6,7 @@
 #include "mork_space_bridge_runtime.h"
 #include "native/native_modules.h"
 #include "parser.h"
+#include "petta_search_machine.h"
 #include "petta_typecheck.h"
 #include "rhocalc_core.h"
 #include "rhocalc_syntax.h"
@@ -35,7 +36,8 @@ enum {
     CETTA_LIBRARY_RHO = 1u << 5,
     CETTA_LIBRARY_RHOMETTA = 1u << 6,
     CETTA_LIBRARY_PETTA_IMPORT = 1u << 7,
-    CETTA_LIBRARY_LIB_PROLOG = 1u << 8
+    CETTA_LIBRARY_LIB_PROLOG = 1u << 8,
+    CETTA_LIBRARY_PETTA_MEMO = 1u << 9
 };
 
 typedef struct {
@@ -53,6 +55,7 @@ static const CettaLibrarySpec CETTA_LIBRARIES[] = {
     {"rhometta", CETTA_LIBRARY_RHOMETTA},
     {"lib_import", CETTA_LIBRARY_PETTA_IMPORT},
     {"lib_prolog", CETTA_LIBRARY_LIB_PROLOG},
+    {"lib_memo", CETTA_LIBRARY_PETTA_MEMO},
 };
 
 static const char *CETTA_MM2_PROGRAM_HANDLE_KIND = "mork-program";
@@ -343,6 +346,19 @@ void cetta_library_context_init_for_language_profile(CettaLibraryContext *ctx,
     ctx->petta_tabled_relation_cap = 0u;
     ctx->petta_tabled_symbol_table_instance =
         symbol_table_instance_id(g_symbols);
+    memset(&ctx->petta_memo, 0, sizeof(ctx->petta_memo));
+    ctx->petta_memo.symbol_table_instance =
+        symbol_table_instance_id(g_symbols);
+    ctx->petta_memo.strategy =
+        CETTA_PETTA_MEMO_STRATEGY_WTINYLFU;
+    ctx->petta_memo.unique_limit = 100u;
+    ctx->petta_memo.size_limit_bytes = UINT64_C(5368709120);
+    ctx->petta_memo.float_precision = 12u;
+    ctx->petta_memo.answer_limit = 2048u;
+    ctx->petta_memo.aggregate =
+        CETTA_PETTA_MEMO_AGGREGATE_NONE;
+    ctx->petta_shared_table = language_id == CETTA_LANGUAGE_PETTA
+        ? petta_machine_table_new() : NULL;
     /* Prime's guarded relational plan is the default execution strategy.
        The environment switch exists only so the differential gate can retain
        the canonical evaluator as an executable reference implementation. */
@@ -395,6 +411,16 @@ void cetta_library_context_free(CettaLibraryContext *ctx) {
     ctx->petta_tabled_relation_len = 0u;
     ctx->petta_tabled_relation_cap = 0u;
     ctx->petta_tabled_symbol_table_instance = 0u;
+    free(ctx->petta_memo.all_arities);
+    free(ctx->petta_memo.exact_arities);
+    ctx->petta_memo.all_arities = NULL;
+    ctx->petta_memo.exact_arities = NULL;
+    ctx->petta_memo.all_arity_len = 0u;
+    ctx->petta_memo.all_arity_cap = 0u;
+    ctx->petta_memo.exact_arity_len = 0u;
+    ctx->petta_memo.exact_arity_cap = 0u;
+    petta_machine_table_free(ctx->petta_shared_table);
+    ctx->petta_shared_table = NULL;
     petta_program_free(ctx->petta_program);
     ctx->petta_program = NULL;
     ctx->prime_relational_plan_enabled = false;
@@ -591,6 +617,316 @@ bool cetta_library_petta_tabled_relation_set(
     ctx->petta_tabled_relations[index] = key;
     ctx->petta_tabled_relation_len++;
     return true;
+}
+
+static void cetta_library_petta_memo_sync(
+    CettaLibraryContext *ctx) {
+    if (!ctx)
+        return;
+    uint64_t instance = symbol_table_instance_id(g_symbols);
+    if (ctx->petta_memo.symbol_table_instance == instance)
+        return;
+    ctx->petta_memo.all_arity_len = 0u;
+    ctx->petta_memo.exact_arity_len = 0u;
+    ctx->petta_memo.symbol_table_instance = instance;
+    petta_machine_table_reset(ctx->petta_shared_table);
+}
+
+static uint32_t cetta_library_symbol_lower_bound(
+    const SymbolId *items, uint32_t length, SymbolId key) {
+    uint32_t low = 0u;
+    uint32_t high = length;
+    while (low < high) {
+        uint32_t middle = low + (high - low) / 2u;
+        if (items[middle] < key)
+            low = middle + 1u;
+        else
+            high = middle;
+    }
+    return low;
+}
+
+static uint32_t cetta_library_relation_lower_bound(
+    const CettaPettaRelationKey *items, uint32_t length,
+    CettaPettaRelationKey key) {
+    uint32_t low = 0u;
+    uint32_t high = length;
+    while (low < high) {
+        uint32_t middle = low + (high - low) / 2u;
+        if (cetta_library_petta_relation_key_compare(
+                items[middle], key) < 0) {
+            low = middle + 1u;
+        } else {
+            high = middle;
+        }
+    }
+    return low;
+}
+
+typedef struct {
+    const char *name;
+    CettaExprLen minimum_arity;
+    CettaExprLen maximum_arity;
+} CettaPettaMemoControlSpec;
+
+static const CettaPettaMemoControlSpec CETTA_PETTA_MEMO_CONTROLS[] = {
+    [CETTA_PETTA_MEMO_CONTROL_MEMOIZE] =
+        {"memoize", 1u, 2u},
+    [CETTA_PETTA_MEMO_CONTROL_CONFIGURE] =
+        {"config-memoize", 1u, 3u},
+    [CETTA_PETTA_MEMO_CONTROL_GET_CONFIG] =
+        {"get-memoize-config", 0u, 0u},
+    [CETTA_PETTA_MEMO_CONTROL_CLEAR] =
+        {"clear-memoize", 0u, 0u},
+    [CETTA_PETTA_MEMO_CONTROL_INVALIDATE] =
+        {"invalidate-memoize", 1u, 1u},
+    [CETTA_PETTA_MEMO_CONTROL_IS_MEMOIZED] =
+        {"is-memoized", 1u, 2u},
+    [CETTA_PETTA_MEMO_CONTROL_GET_STATS] =
+        {"get-memoize-stats", 0u, 0u},
+    [CETTA_PETTA_MEMO_CONTROL_CLEAR_STATS] =
+        {"clear-memoize-stats", 0u, 0u},
+};
+
+static bool cetta_library_petta_memo_control_lookup(
+    SymbolId head, CettaPettaMemoControl *control_out) {
+    if (head == SYMBOL_ID_NONE || !g_symbols)
+        return false;
+    const char *name = symbol_bytes(g_symbols, head);
+    if (!name)
+        return false;
+    for (size_t index = 0u;
+         index < CETTA_PETTA_MEMO_CONTROL_COUNT; index++) {
+        if (strcmp(name, CETTA_PETTA_MEMO_CONTROLS[index].name) == 0) {
+            if (control_out)
+                *control_out = (CettaPettaMemoControl)index;
+            return true;
+        }
+    }
+    return false;
+}
+
+bool cetta_library_petta_memo_control_import(
+    CettaLibraryContext *ctx, SymbolId head) {
+    CettaPettaMemoControl control;
+    if (!ctx ||
+        ctx->session.language_id != CETTA_LANGUAGE_PETTA ||
+        !cetta_library_petta_memo_control_lookup(head, &control)) {
+        return false;
+    }
+    ctx->petta_memo.imported_controls[control] = true;
+    return true;
+}
+
+bool cetta_library_petta_memo_control_imported(
+    CettaLibraryContext *ctx, SymbolId head) {
+    CettaPettaMemoControl control;
+    return ctx &&
+        ctx->session.language_id == CETTA_LANGUAGE_PETTA &&
+        cetta_library_petta_memo_control_lookup(head, &control) &&
+        ctx->petta_memo.imported_controls[control];
+}
+
+PeTTaNamedArity cetta_library_petta_memo_control_named_arity(
+    CettaLibraryContext *ctx, SymbolId head,
+    CettaExprLen supplied) {
+    CettaPettaMemoControl control;
+    if (!ctx ||
+        ctx->session.language_id != CETTA_LANGUAGE_PETTA ||
+        !cetta_library_petta_memo_control_lookup(head, &control) ||
+        !ctx->petta_memo.imported_controls[control]) {
+        return (PeTTaNamedArity){0};
+    }
+    const CettaPettaMemoControlSpec *spec =
+        &CETTA_PETTA_MEMO_CONTROLS[control];
+    return (PeTTaNamedArity){
+        .known = true,
+        .exact = supplied >= spec->minimum_arity &&
+                 supplied <= spec->maximum_arity,
+        .larger = supplied < spec->maximum_arity,
+        .smaller = supplied > spec->minimum_arity,
+    };
+}
+
+bool cetta_library_petta_memo_contains(
+    CettaLibraryContext *ctx, SymbolId head,
+    CettaExprLen arity) {
+    if (!ctx || head == SYMBOL_ID_NONE)
+        return false;
+    cetta_library_petta_memo_sync(ctx);
+    uint32_t all = cetta_library_symbol_lower_bound(
+        ctx->petta_memo.all_arities,
+        ctx->petta_memo.all_arity_len, head);
+    if (all < ctx->petta_memo.all_arity_len &&
+        ctx->petta_memo.all_arities[all] == head) {
+        return true;
+    }
+    CettaPettaRelationKey key = {
+        .head = head,
+        .arity = arity,
+    };
+    uint32_t exact = cetta_library_relation_lower_bound(
+        ctx->petta_memo.exact_arities,
+        ctx->petta_memo.exact_arity_len, key);
+    return exact < ctx->petta_memo.exact_arity_len &&
+        cetta_library_petta_relation_key_compare(
+            ctx->petta_memo.exact_arities[exact], key) == 0;
+}
+
+bool cetta_library_petta_memo_enable(
+    CettaLibraryContext *ctx, SymbolId head,
+    bool every_arity, CettaExprLen arity) {
+    if (!ctx || head == SYMBOL_ID_NONE)
+        return false;
+    cetta_library_petta_memo_sync(ctx);
+    if (every_arity) {
+        uint32_t index = cetta_library_symbol_lower_bound(
+            ctx->petta_memo.all_arities,
+            ctx->petta_memo.all_arity_len, head);
+        if (index < ctx->petta_memo.all_arity_len &&
+            ctx->petta_memo.all_arities[index] == head) {
+            return true;
+        }
+        if (ctx->petta_memo.all_arity_len ==
+            ctx->petta_memo.all_arity_cap) {
+            uint32_t next = ctx->petta_memo.all_arity_cap
+                ? ctx->petta_memo.all_arity_cap * 2u : 8u;
+            if (next <= ctx->petta_memo.all_arity_cap ||
+                (size_t)next > SIZE_MAX / sizeof(SymbolId)) {
+                return false;
+            }
+            ctx->petta_memo.all_arities = cetta_realloc(
+                ctx->petta_memo.all_arities,
+                sizeof(SymbolId) * (size_t)next);
+            ctx->petta_memo.all_arity_cap = next;
+        }
+        memmove(
+            ctx->petta_memo.all_arities + index + 1u,
+            ctx->petta_memo.all_arities + index,
+            sizeof(SymbolId) *
+                (size_t)(ctx->petta_memo.all_arity_len - index));
+        ctx->petta_memo.all_arities[index] = head;
+        ctx->petta_memo.all_arity_len++;
+        petta_machine_table_reset(ctx->petta_shared_table);
+        return true;
+    }
+
+    CettaPettaRelationKey key = {
+        .head = head,
+        .arity = arity,
+    };
+    uint32_t index = cetta_library_relation_lower_bound(
+        ctx->petta_memo.exact_arities,
+        ctx->petta_memo.exact_arity_len, key);
+    if (index < ctx->petta_memo.exact_arity_len &&
+        cetta_library_petta_relation_key_compare(
+            ctx->petta_memo.exact_arities[index], key) == 0) {
+        return true;
+    }
+    if (ctx->petta_memo.exact_arity_len ==
+        ctx->petta_memo.exact_arity_cap) {
+        uint32_t next = ctx->petta_memo.exact_arity_cap
+            ? ctx->petta_memo.exact_arity_cap * 2u : 8u;
+        if (next <= ctx->petta_memo.exact_arity_cap ||
+            (size_t)next > SIZE_MAX /
+                sizeof(*ctx->petta_memo.exact_arities)) {
+            return false;
+        }
+        ctx->petta_memo.exact_arities = cetta_realloc(
+            ctx->petta_memo.exact_arities,
+            sizeof(*ctx->petta_memo.exact_arities) *
+                (size_t)next);
+        ctx->petta_memo.exact_arity_cap = next;
+    }
+    memmove(
+        ctx->petta_memo.exact_arities + index + 1u,
+        ctx->petta_memo.exact_arities + index,
+        sizeof(*ctx->petta_memo.exact_arities) *
+            (size_t)(ctx->petta_memo.exact_arity_len - index));
+    ctx->petta_memo.exact_arities[index] = key;
+    ctx->petta_memo.exact_arity_len++;
+    petta_machine_table_reset(ctx->petta_shared_table);
+    return true;
+}
+
+bool cetta_library_petta_memo_is_enabled(
+    CettaLibraryContext *ctx, SymbolId head,
+    bool exact_arity, CettaExprLen arity) {
+    if (!ctx || head == SYMBOL_ID_NONE)
+        return false;
+    if (exact_arity)
+        return cetta_library_petta_memo_contains(
+            ctx, head, arity);
+    cetta_library_petta_memo_sync(ctx);
+    uint32_t all = cetta_library_symbol_lower_bound(
+        ctx->petta_memo.all_arities,
+        ctx->petta_memo.all_arity_len, head);
+    if (all < ctx->petta_memo.all_arity_len &&
+        ctx->petta_memo.all_arities[all] == head) {
+        return true;
+    }
+    CettaPettaRelationKey low = {
+        .head = head,
+        .arity = 0u,
+    };
+    uint32_t exact = cetta_library_relation_lower_bound(
+        ctx->petta_memo.exact_arities,
+        ctx->petta_memo.exact_arity_len, low);
+    return exact < ctx->petta_memo.exact_arity_len &&
+        ctx->petta_memo.exact_arities[exact].head == head;
+}
+
+void cetta_library_petta_memo_clear_stats(
+    CettaLibraryContext *ctx) {
+    if (!ctx)
+        return;
+    ctx->petta_memo.cache_hits = 0u;
+    ctx->petta_memo.cache_misses = 0u;
+    ctx->petta_memo.answer_limit_truncated = 0u;
+}
+
+void cetta_library_petta_memo_clear(
+    CettaLibraryContext *ctx) {
+    if (!ctx)
+        return;
+    petta_machine_table_reset(ctx->petta_shared_table);
+    cetta_library_petta_memo_clear_stats(ctx);
+}
+
+void cetta_library_petta_memo_invalidate(
+    CettaLibraryContext *ctx, SymbolId head) {
+    (void)head;
+    if (!ctx)
+        return;
+    /* Conservative v1 invalidation is whole-table.  The cache is a physical
+     * accelerator, so broader invalidation changes work but never answers;
+     * dependency-scoped generations can refine this later. */
+    petta_machine_table_reset(ctx->petta_shared_table);
+}
+
+void cetta_library_petta_memo_observe(
+    CettaLibraryContext *ctx, SymbolId head,
+    CettaExprLen arity, bool cache_hit) {
+    if (!ctx || !cetta_library_petta_memo_contains(
+                    ctx, head, arity)) {
+        return;
+    }
+    uint64_t *counter = cache_hit
+        ? &ctx->petta_memo.cache_hits
+        : &ctx->petta_memo.cache_misses;
+    if (*counter != UINT64_MAX)
+        (*counter)++;
+}
+
+void cetta_library_petta_memo_observe_truncation(
+    CettaLibraryContext *ctx, SymbolId head,
+    CettaExprLen arity) {
+    if (!ctx || !cetta_library_petta_memo_contains(
+                    ctx, head, arity)) {
+        return;
+    }
+    if (ctx->petta_memo.answer_limit_truncated != UINT64_MAX)
+        ctx->petta_memo.answer_limit_truncated++;
 }
 
 static void copy_parent_dir(char *dst, size_t dst_sz, const char *path);
@@ -8254,7 +8590,8 @@ bool cetta_library_import_library_member(
      * wrapper of the same name.
      */
     if (ctx->session.language_id == CETTA_LANGUAGE_PETTA &&
-        strcmp(member, "lib_import") == 0) {
+        (strcmp(member, "lib_import") == 0 ||
+         strcmp(member, "lib_memo") == 0)) {
         return cetta_library_import(
             ctx, member, space, eval_arena,
             persistent_arena, registry, fuel, error_out);
@@ -8293,6 +8630,81 @@ bool cetta_library_import_library_member(
             ctx, member, space, target_is_fresh,
             eval_arena, persistent_arena, registry, fuel, error_out);
     }
+    ctx->petta_trusted_library_import_depth--;
+    return imported;
+}
+
+bool cetta_library_import_rooted_library_member(
+    CettaLibraryContext *ctx, const char *root,
+    const char *member, Space *space, bool target_is_fresh,
+    Arena *eval_arena, Arena *persistent_arena,
+    Registry *registry, int fuel, Atom **error_out) {
+    if (!ctx || !root || !member || !space || !eval_arena ||
+        !persistent_arena || !registry || !error_out) {
+        return false;
+    }
+    if (!module_name_is_legal(root)) {
+        *error_out = atom_symbol(
+            eval_arena, "illegal library root name");
+        return false;
+    }
+    if (!library_member_name_is_safe(member)) {
+        *error_out = atom_symbol(
+            eval_arena, "illegal library member name");
+        return false;
+    }
+    if (!cetta_module_policy_allows(
+            &ctx->session.module_policy,
+            CETTA_MODULE_PROVIDER_REGISTERED_ROOTS)) {
+        *error_out = atom_symbol(
+            eval_arena, "registered module roots disabled");
+        return false;
+    }
+
+    const CettaModuleMount *mount =
+        cetta_library_find_module_mount(ctx, root);
+    if (!mount || !module_mount_visible(ctx, mount)) {
+        *error_out = atom_symbol(
+            eval_arena, "unknown library root");
+        return false;
+    }
+
+    CettaImportPlan plan;
+    memset(&plan, 0, sizeof(plan));
+    plan.spec.kind = CETTA_MODULE_SPEC_REGISTERED_ROOT;
+    snprintf(plan.spec.raw_spec, sizeof(plan.spec.raw_spec),
+             "%s:%s", root, member);
+    snprintf(plan.spec.namespace_name,
+             sizeof(plan.spec.namespace_name), "%s", root);
+    snprintf(plan.spec.path_or_member,
+             sizeof(plan.spec.path_or_member), "%s", member);
+    plan.logical_target_space = logical_import_space(ctx, space);
+    plan.execution_target_space = space;
+    plan.target_is_fresh = target_is_fresh;
+    plan.transactional =
+        ctx->session.module_policy.transactional_imports &&
+        !target_is_fresh;
+    plan.provider_kind = mount->provider_kind;
+
+    char candidate[PATH_MAX];
+    char reason[160];
+    if (!path_join2(
+            candidate, sizeof(candidate),
+            mount->root_path, member) ||
+        !resolve_module_candidate_with_format(
+            candidate, plan.canonical_path,
+            sizeof(plan.canonical_path), &plan.format,
+            reason, sizeof(reason))) {
+        *error_out = atom_symbol(
+            eval_arena,
+            reason[0] ? reason : "library member unavailable");
+        return false;
+    }
+
+    ctx->petta_trusted_library_import_depth++;
+    bool imported = execute_import_plan(
+        ctx, &plan, eval_arena, persistent_arena,
+        registry, fuel, error_out);
     ctx->petta_trusted_library_import_depth--;
     return imported;
 }

@@ -13,7 +13,7 @@
 (cetta_foreign_echo (cetta_foreign_compound_result))
 (cetta_foreign_echo (cetta_foreign_compound_result))
 (cetta_foreign_term_kind (cetta_foreign_compound_result))
-(cetta_foreign_term_kind (quote (fixture_handle 7)))
+(cetta_foreign_term_kind (fixture_handle 7))
 (assertaPredicate (Predicate (cetta_foreign_hello world)))
 (callPredicate (Predicate (cetta_foreign_hello $V0)))
 (import_prolog_function cetta_foreign_hello)

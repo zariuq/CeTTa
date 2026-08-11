@@ -1,8 +1,11 @@
 is rest, should rest. ✅ 
 is active, should active. ✅ 
 is 42, should 42. ✅ 
+is 42, should 42. ✅ 
 is (), should (). ✅ 
 is (new-state 3), should (new-state 3). ✅ 
+true
+true
 true
 true
 true

@@ -736,6 +736,15 @@ bool space_match_backend_store_atom_direct(Space *s, Atom *atom) {
     return false;
 }
 
+bool space_match_backend_contains_atom_structural_direct(
+    Space *s, Atom *atom, bool *out_found) {
+    (void)s;
+    (void)atom;
+    if (out_found)
+        *out_found = false;
+    return false;
+}
+
 SpaceBackendBatchResult space_match_backend_store_atom_ids_batch_direct(
     Space *s, const AtomId *atom_ids, CettaCount atom_count,
     uint64_t *out_added) {

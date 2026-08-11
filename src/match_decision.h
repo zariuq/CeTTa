@@ -19,6 +19,10 @@ uint64_t cetta_match_decision_compiler_identity(void);
 typedef enum {
     CETTA_MATCH_DECISION_LINEAR = 0,
     CETTA_MATCH_DECISION_DEEP = 1,
+    /* Intersect every observable structural path.  This is useful for
+     * finite clause families whose discrimination is distributed across
+     * several positions; the exact matcher still verifies every survivor. */
+    CETTA_MATCH_DECISION_CONJUNCTIVE = 2,
 } CettaMatchDecisionMode;
 
 typedef enum {

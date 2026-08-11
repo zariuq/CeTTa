@@ -238,6 +238,8 @@ int main(void) {
             &compacted_branch, post_dead, atom_int(&arena, 32));
     uint32_t invalid_mark =
         bindings_builder_save(&compacted_branch) + 1u;
+    uint32_t invalid_entry_mark =
+        compacted_branch.current.len + 1u;
     Atom *compact_roots[1] = {post_live};
     CHECK(compact_fixture &&
               !bindings_builder_compact_reachable(
@@ -247,20 +249,33 @@ int main(void) {
                   bindings_builder_save(&compacted_branch) + 1u &&
               compacted_branch.current.len == 6u,
           "invalid compaction marks fail without mutating the branch");
+    CHECK(!bindings_builder_compact_reachable_with_entry_marks(
+              &compacted_branch, compact_roots, 1u,
+              NULL, 0u, &invalid_entry_mark, 1u,
+              NULL, NULL) &&
+              invalid_entry_mark == 7u &&
+              compacted_branch.current.len == 6u,
+          "invalid entry-prefix marks fail transactionally");
     uint32_t compact_marks[2] = {
         compact_mark_a, compact_mark_b,
     };
+    uint32_t compact_entry_marks[2] = {2u, 4u};
     uint64_t compact_discarded = 0u;
     uint64_t compact_trail_discarded = 0u;
-    bool compact_ok = bindings_builder_compact_reachable(
+    bool compact_ok =
+        bindings_builder_compact_reachable_with_entry_marks(
         &compacted_branch, compact_roots, 1u,
-        compact_marks, 2u, &compact_discarded,
+        compact_marks, 2u,
+        compact_entry_marks, 2u,
+        &compact_discarded,
         &compact_trail_discarded);
     CHECK(compact_ok &&
               compacted_branch.current.len == 3u &&
               compacted_branch.trail_len == 2u &&
               compact_marks[0] == 0u &&
               compact_marks[1] == 1u &&
+              compact_entry_marks[0] == 1u &&
+              compact_entry_marks[1] == 2u &&
               compact_discarded == 3u &&
               compact_trail_discarded == 4u &&
               binding_is_int(
@@ -295,6 +310,115 @@ int main(void) {
                   mid_live->var_id) == NULL,
           "compacted nested marks preserve exact rollback states");
     bindings_builder_free(&compacted_branch);
+
+    Atom *projection_root = atom_var_with_id(
+        &arena, "projection-root", late_id);
+    Atom *projection_roots[1] = {projection_root};
+    uint32_t projection_marks[2] = {64u, 65u};
+    Bindings projected;
+    CHECK(bindings_project_reachable_with_entry_marks(
+              &base, projection_roots, 1u,
+              projection_marks, 2u, &projected) &&
+              projected.len == 1u &&
+              projection_marks[0] == 0u &&
+              projection_marks[1] == 1u &&
+              binding_is_int(&projected, late_id, 1000),
+          "deterministic projection remaps activation entry boundaries");
+    bindings_free(&projected);
+    uint32_t invalid_projection_mark = 66u;
+    CHECK(!bindings_project_reachable_with_entry_marks(
+              &base, projection_roots, 1u,
+              &invalid_projection_mark, 1u, &projected) &&
+              invalid_projection_mark == 66u,
+          "invalid projection entry boundary leaves its mark unchanged");
+
+    Atom *activation_local = atom_var_with_id(
+        &arena, "activation-local", test_id(7200u));
+    Atom *activation_outer = atom_var_with_id(
+        &arena, "activation-outer", test_id(7201u));
+    VarId activation_epoch_id =
+        var_epoch_id(activation_local->var_id, 17u);
+    Bindings activation_environment;
+    bindings_init(&activation_environment);
+    bool activation_fixture =
+        bindings_add_id(
+            &activation_environment, test_id(7199u), SYMBOL_ID_NONE,
+            atom_int(&arena, -1)) &&
+        bindings_add_id(
+            &activation_environment, activation_epoch_id,
+            activation_local->sym_id, activation_outer) &&
+        bindings_add_id(
+            &activation_environment, activation_outer->var_id,
+            activation_outer->sym_id, atom_int(&arena, 77)) &&
+        bindings_add_id(
+            &activation_environment, test_id(7202u), SYMBOL_ID_NONE,
+            atom_int(&arena, -2));
+    BindingsEpochRoot activation_root = {
+        .atom = activation_local,
+        .epoch = 17u,
+    };
+    uint32_t activation_projection_marks[3] = {1u, 2u, 4u};
+    CHECK(activation_fixture &&
+              bindings_project_reachable_with_epoch_roots_and_entry_marks(
+                  &activation_environment, NULL, 0u,
+                  &activation_root, 1u,
+                  activation_projection_marks, 3u,
+                  &projected) &&
+              projected.len == 2u &&
+              activation_projection_marks[0] == 0u &&
+              activation_projection_marks[1] == 1u &&
+              activation_projection_marks[2] == 2u &&
+              bindings_lookup_id(
+                  &projected, activation_epoch_id) == activation_outer &&
+              binding_is_int(
+                  &projected, activation_outer->var_id, 77) &&
+              bindings_lookup_id(
+                  &projected, test_id(7199u)) == NULL &&
+              activation_local->var_id == test_id(7200u),
+          "epoch roots preserve activation-local and transitive outer bindings without rewriting the source");
+    bindings_free(&projected);
+
+    BindingsBuilder activation_branch = {0};
+    uint32_t activation_entry_mark = 2u;
+    uint64_t activation_discarded = 0u;
+    bool activation_branch_initialized =
+        bindings_builder_init(
+            &activation_branch, &activation_environment);
+    bool activation_compact =
+        activation_branch_initialized &&
+        bindings_builder_compact_reachable_with_epoch_roots_and_entry_marks(
+            &activation_branch, NULL, 0u,
+            &activation_root, 1u,
+            NULL, 0u, &activation_entry_mark, 1u,
+            &activation_discarded, NULL);
+    CHECK(activation_compact &&
+              activation_branch.current.len == 2u &&
+              activation_entry_mark == 1u &&
+              activation_discarded == 2u &&
+              bindings_lookup_id(
+                  &activation_branch.current,
+                  activation_epoch_id) == activation_outer &&
+              binding_is_int(
+                  &activation_branch.current,
+                  activation_outer->var_id, 77),
+          "choice compaction keeps an unmaterialized activation namespace and remaps its entry boundary");
+    if (activation_branch_initialized)
+        bindings_builder_free(&activation_branch);
+
+    BindingsEpochRoot invalid_activation_root = {
+        .atom = activation_local,
+        .epoch = 0u,
+    };
+    uint32_t invalid_activation_mark = 4u;
+    CHECK(!bindings_project_reachable_with_epoch_roots_and_entry_marks(
+              &activation_environment, NULL, 0u,
+              &invalid_activation_root, 1u,
+              &invalid_activation_mark, 1u, &projected) &&
+              invalid_activation_mark == 4u &&
+              activation_environment.len == 4u,
+          "an invalid activation epoch fails without mutating marks or the source environment");
+    bindings_free(&projected);
+    bindings_free(&activation_environment);
 
     bool original_unchanged =
         bindings_lookup_id(&base, branch_a) == NULL &&

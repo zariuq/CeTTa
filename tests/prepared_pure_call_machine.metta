@@ -50,3 +50,42 @@
 (= (prepared-nested-constructor $x)
    (Box (prepared-nested-leaf $x)))
 !(prepared-nested-constructor 41)
+
+; Eager call arguments and clause bindings are values after their producing
+; child completes.  A flat expression value must remain data across recursive
+; tail calls rather than being reinterpreted as a dynamic operator call.
+(= (prepared-flat-member $needle $items)
+   (if (== $items ())
+       False
+       (let ($head $tail) (decons-atom $items)
+         (if (== $needle $head)
+             True
+             (prepared-flat-member $needle $tail)))))
+!(prepared-flat-member 2 (1 2 3))
+; Negative: exhausting the same expression-valued tail must remain false.
+!(prepared-flat-member 4 (1 2 3))
+
+; A grounded data head does not make an expression callable.  Its children
+; are still eager computations and must be rebuilt from their values.
+(= (prepared-grounded-data $x) (1 (+ $x 3)))
+!(prepared-grounded-data 2)
+
+; Negative: an expression-valued head remains dynamically callable.  The
+; prepared fragment must decline rather than reclassifying it as data.
+(= (prepared-dynamic-head) +)
+!((prepared-dynamic-head) 20 22)
+
+; Intrinsic admission is structural rather than guest-specific: a generated
+; strict primitive and a successful expression decomposition compose through
+; the same bind program.  The pattern is syntax and must not be scanned as an
+; executable variable-headed expression.
+(= (prepared-intrinsic-composition $ignored)
+   (let ($head $tail) (decons-atom (a b c))
+     (Triple $head (abs-math -7) $tail)))
+!(prepared-intrinsic-composition ignored)
+
+; Negative: the generated deconstruction instruction implements only the
+; successful nonempty-expression arm.  Computation zero and dialect-specific
+; errors must decline and replay through the canonical evaluator.
+(= (prepared-intrinsic-fallback $ignored) (decons-atom ()))
+!(prepared-intrinsic-fallback ignored)

@@ -19,6 +19,9 @@
 typedef enum {
     PETTA_MACHINE_HOST_NONE = 0,
     PETTA_MACHINE_HOST_STRICT_APPLICATION,
+    /* Evaluate only argument zero.  Space operations use this mode because
+     * their space expression is strict while atom payloads remain syntax. */
+    PETTA_MACHINE_HOST_STRICT_FIRST_APPLICATION,
     PETTA_MACHINE_HOST_READY_APPLICATION,
     /*
      * The host explicitly supersedes a machine-native form for a selected
@@ -92,6 +95,41 @@ typedef struct {
         char *diagnostic, size_t diagnostic_size);
 } PettaAnalysisService;
 
+/*
+ * Session-owned answer table for opt-in PeTTa tabling and memoization.
+ * The representation is private to the machine; a root machine borrows the
+ * table only when no other root is using it, while recursive generator
+ * machines share that same lease.  This keeps cached answers alive across
+ * top-level requests without making an evaluator arena their owner.
+ */
+typedef struct PettaMachineTable PettaMachineTable;
+
+typedef enum {
+    PETTA_MEMO_AGGREGATE_NONE = 0,
+    PETTA_MEMO_AGGREGATE_MIN,
+    PETTA_MEMO_AGGREGATE_MAX,
+    PETTA_MEMO_AGGREGATE_SUM,
+    PETTA_MEMO_AGGREGATE_COUNT,
+} PettaMemoAggregateMode;
+
+typedef enum {
+    PETTA_MEMO_RETENTION_WTINYLFU = 0,
+    PETTA_MEMO_RETENTION_LRU,
+} PettaMemoRetentionPolicy;
+
+PettaMachineTable *petta_machine_table_new(void);
+void petta_machine_table_free(PettaMachineTable *table);
+void petta_machine_table_reset(PettaMachineTable *table);
+/* Enforce cache-only retention after a root machine has released its lease.
+ * Completed non-memo SLG entries are not charged to these library controls.
+ * On allocation failure the table is cleared, preserving answers by forcing
+ * ordinary recomputation on the next call. */
+bool petta_machine_table_maintain(
+    PettaMachineTable *table,
+    PettaMemoRetentionPolicy policy,
+    uint32_t unique_limit,
+    uint64_t size_limit_bytes);
+
 /* A collection producer lends each fully evaluated item to a synchronous,
  * side-effect-free consumer.  The consumer must not retain item beyond the
  * callback.  A declined producer invalidates all consumer state accumulated
@@ -134,6 +172,11 @@ typedef struct {
     bool (*resolve_value_reference)(
         void *context, Arena *arena, Atom *reference,
         Atom **resolved);
+    /* Some languages assign reference meaning even to an occurrence whose
+     * source plan otherwise classifies it as a value.  Others preserve such
+     * an authored occurrence as data.  The host owns that language policy;
+     * the search machine still resolves only at a SOLVE boundary. */
+    bool resolve_value_references_in_value_role;
     bool (*evaluate)(
         void *context, Space *space, Arena *arena, Atom *expression,
         const Bindings *environment, OutcomeSet *outcomes);
@@ -197,6 +240,12 @@ typedef struct {
     Atom *(*execute_prepared_pure_call)(
         void *context, Space *space, Arena *result_arena,
         Atom *prepared_call);
+    /* Native opt-in capabilities whose names are not part of the core
+     * PeTTa presentation.  Returning known=false leaves the occurrence
+     * available to ordinary equations, data, or an optional foreign
+     * extension. */
+    PeTTaNamedArity (*native_named_arity)(
+        void *context, SymbolId head, CettaExprLen supplied);
     PeTTaNamedArity (*foreign_named_arity)(
         void *context, SymbolId head, CettaExprLen supplied);
     /* Same classification including plan-time auto-resolved engine names;
@@ -207,7 +256,7 @@ typedef struct {
      * match): may register the name as auto-resolved on first proof. */
     PeTTaNamedArity (*foreign_named_arity_resolving)(
         void *context, SymbolId head, CettaExprLen supplied);
-    bool (*foreign_call)(
+    bool (*extension_call)(
         void *context, Arena *arena,
         Atom *expression, Atom *expected,
         const Bindings *environment, OutcomeSet *outcomes,
@@ -250,6 +299,23 @@ typedef struct {
     bool (*tabled_relation_set)(
         void *context, SymbolId head, CettaExprLen arity,
         bool enabled);
+    /* A shared table is an optional physical realization.  The language
+     * still decides which relations are memoized through the callbacks
+     * below; merely supplying storage cannot make a call cacheable. */
+    PettaMachineTable *shared_table;
+    bool (*memoized_relation_contains)(
+        void *context, SymbolId head, CettaExprLen arity);
+    PettaMemoAggregateMode (*memoized_relation_aggregate)(
+        void *context, SymbolId head, CettaExprLen arity);
+    uint32_t (*memoized_relation_float_precision)(
+        void *context, SymbolId head, CettaExprLen arity);
+    uint32_t (*memoized_relation_answer_limit)(
+        void *context, SymbolId head, CettaExprLen arity);
+    void (*memoized_relation_observed)(
+        void *context, SymbolId head, CettaExprLen arity,
+        bool cache_hit);
+    void (*memoized_relation_truncated)(
+        void *context, SymbolId head, CettaExprLen arity);
     /*
      * Transactions are explicit machine delimiters.  The host owns the
      * mutable-resource snapshot, while the machine owns relational control:
@@ -375,6 +441,16 @@ typedef struct {
     uint64_t relation_slot_operands_reused;
     uint64_t atom_copy_calls;
     uint64_t atom_copy_allocated_bytes;
+    uint64_t atom_copy_query_calls;
+    uint64_t atom_copy_query_allocated_bytes;
+    uint64_t atom_copy_answer_calls;
+    uint64_t atom_copy_answer_allocated_bytes;
+    uint64_t atom_copy_visible_variable_calls;
+    uint64_t atom_copy_visible_variable_allocated_bytes;
+    uint64_t atom_copy_visible_value_calls;
+    uint64_t atom_copy_visible_value_allocated_bytes;
+    uint64_t atom_copy_error_calls;
+    uint64_t atom_copy_error_allocated_bytes;
     uint64_t atom_freshen_calls;
     uint64_t atom_freshen_allocated_bytes;
     uint64_t specializer_prepare_calls;
@@ -383,6 +459,7 @@ typedef struct {
     uint64_t specializer_prepare_relevance_bounded;
     uint64_t specializer_prepare_rewritten;
     uint64_t specializer_prepare_unchanged;
+    uint64_t specializer_prepare_capacity_declines;
     uint64_t specializer_prepare_elapsed_ns;
     uint64_t choice_resumes;
     uint64_t choice_continuation_snapshots;
@@ -395,8 +472,23 @@ typedef struct {
     uint64_t deterministic_heap_collections;
     uint64_t deterministic_minor_heap_collections;
     uint64_t deterministic_major_heap_collections;
+    uint64_t deterministic_heap_collection_elapsed_ns;
+    uint64_t deterministic_minor_heap_collection_elapsed_ns;
+    uint64_t deterministic_major_heap_collection_elapsed_ns;
     uint64_t deterministic_goal_roots_scanned;
     uint64_t deterministic_heap_bytes_promoted;
+    uint64_t deterministic_minor_heap_bytes_promoted;
+    uint64_t deterministic_major_heap_bytes_promoted;
+    uint64_t deterministic_root_atom_bytes_promoted;
+    uint64_t deterministic_query_atom_bytes_promoted;
+    uint64_t deterministic_visible_atom_bytes_promoted;
+    uint64_t deterministic_type_atom_bytes_promoted;
+    uint64_t deterministic_goal_atom_bytes_promoted;
+    uint64_t deterministic_goal_first_bytes_promoted;
+    uint64_t deterministic_goal_second_bytes_promoted;
+    uint64_t deterministic_goal_third_bytes_promoted;
+    uint64_t deterministic_goal_fourth_bytes_promoted;
+    uint64_t deterministic_binding_atom_bytes_promoted;
     uint64_t deterministic_heap_bytes_reclaimed;
     uint64_t deterministic_binding_entries_discarded;
     uint64_t choice_binding_collections;
@@ -414,6 +506,14 @@ typedef struct {
     uint64_t count_aggregate_match_folds;
     uint64_t count_aggregate_match_answers;
     uint64_t count_aggregate_let_fusions;
+    uint64_t match_existence_observer_folds;
+    uint64_t child_machine_init_attempts;
+    uint64_t child_machine_init_successes;
+    uint64_t child_machine_projected_entries;
+    uint64_t child_machine_projection_elapsed_ns;
+    uint64_t child_machine_init_elapsed_ns;
+    uint64_t child_machine_destroy_calls;
+    uint64_t child_machine_destroy_elapsed_ns;
     uint64_t host_environment_entries_observed;
     uint64_t host_environment_entries_forwarded;
     size_t maximum_goal_depth;

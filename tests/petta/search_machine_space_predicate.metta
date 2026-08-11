@@ -1,4 +1,4 @@
-(: succeedsPredicate (-> Expression Bool))
+(: succeedsPredicate (-> Atom Bool))
 (= (succeedsPredicate $pattern)
    (quote
      (case
