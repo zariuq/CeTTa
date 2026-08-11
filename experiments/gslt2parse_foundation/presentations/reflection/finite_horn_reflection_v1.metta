@@ -8,6 +8,7 @@
     (operator q-succ 1)
     (operator q-sym 1)
     (operator q-var 1)
+    (operator source-operator 3)
     (operator source-rule 2)
   )
   (equations)

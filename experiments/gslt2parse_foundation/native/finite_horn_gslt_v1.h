@@ -50,7 +50,8 @@ bool fhgslt_package_quoted_rules(const FHGSLTPackage *package,
                                  size_t error_cap);
 
 /* Derive the canonical finite-Horn reflection used by compiler GSLTs.
- * Every admitted source rule becomes one ground source-rule/2 fact. */
+ * Every admitted operator declaration becomes one ground source-operator/3
+ * fact, and every admitted source rule becomes one ground source-rule/2 fact. */
 bool fhgslt_package_reflected_presentation(const FHGSLTPackage *package,
                                            uint8_t **out,
                                            size_t *out_len,

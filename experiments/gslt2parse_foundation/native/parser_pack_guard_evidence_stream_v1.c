@@ -320,8 +320,7 @@ malformed:
             "failed while reading positive guard evidence stream");
         goto done;
     }
-    if (!header || metadata_index != 4u || !ended ||
-        result.derivation_len == 0u) {
+    if (!header || metadata_index != 4u || !ended) {
         ppguard_evidence_wire_v1_set_error(
             error_buf, error_buf_size,
             "incomplete positive guard evidence stream");

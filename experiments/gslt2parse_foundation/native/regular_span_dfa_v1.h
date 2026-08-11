@@ -73,6 +73,8 @@ typedef struct {
     uint32_t eof_accept_len;
 } RSDFAV1ProgramState;
 
+enum { RSDFA_V1_ASCII_CARDINALITY = 128u };
+
 typedef struct {
     RSDFAV1ProgramState *states;
     RSDFAV1ProgramTransition *transitions;
@@ -85,6 +87,16 @@ typedef struct {
     uint32_t start_state;
     uint32_t tag_len;
 } RSDFAV1Program;
+
+/*
+ * A separate execution index over the canonical interval DFA.  Rows are DFA
+ * states and columns are ASCII scalars.  The index never changes the DFA ABI
+ * and validation recomputes every cell from the authoritative transitions.
+ */
+typedef struct {
+    uint32_t *targets;
+    uint32_t state_len;
+} RSDFAV1AsciiTransitionIndex;
 
 /*
  * Exact NFA-state subsets carried by a determinized plan.  Rows correspond
@@ -237,6 +249,23 @@ void rsdfa_v1_plan_free(RSDFAV1Plan *plan);
 void rsdfa_v1_program_init(RSDFAV1Program *program);
 void rsdfa_v1_program_free(RSDFAV1Program *program);
 
+void rsdfa_v1_ascii_transition_index_init(
+    RSDFAV1AsciiTransitionIndex *index);
+void rsdfa_v1_ascii_transition_index_free(
+    RSDFAV1AsciiTransitionIndex *index);
+
+bool rsdfa_v1_ascii_transition_index_build(
+    const RSDFAV1Program *program,
+    RSDFAV1AsciiTransitionIndex *out,
+    char *error_buf,
+    size_t error_buf_size);
+
+bool rsdfa_v1_ascii_transition_index_validate(
+    const RSDFAV1Program *program,
+    const RSDFAV1AsciiTransitionIndex *index,
+    char *error_buf,
+    size_t error_buf_size);
+
 void rsdfa_v1_subset_table_init(RSDFAV1SubsetTable *table);
 void rsdfa_v1_subset_table_free(RSDFAV1SubsetTable *table);
 
@@ -320,6 +349,20 @@ bool rsdfa_v1_plan_tag_language(
     const RSDFAV1Plan *plan,
     uint32_t tag,
     RSDFAV1TagLanguage *out,
+    char *error_buf,
+    size_t error_buf_size);
+
+/*
+ * Decide whether one tag can accept a scalar sequence that is a prefix of a
+ * sequence accepted by the other tag (including equality).  The decision is
+ * exact for the completed combined DFA and includes EOF-conditioned matches.
+ * It is the cross-tag analogue of the tag-local prefix_free fact above.
+ */
+bool rsdfa_v1_plan_tags_prefix_overlap(
+    const RSDFAV1Plan *plan,
+    uint32_t left_tag,
+    uint32_t right_tag,
+    bool *out,
     char *error_buf,
     size_t error_buf_size);
 
@@ -415,6 +458,18 @@ bool rsdfa_v1_scan_cursor_longest_prevalidated(
 
 bool rsdfa_v1_program_scan_cursor_longest_prevalidated(
     const RSDFAV1Program *program,
+    const CettaLpNativeUtf8ScalarView *view,
+    uint32_t start_scalar,
+    uint64_t work_limit,
+    RSDFAV1Token *tokens,
+    uint32_t token_capacity,
+    RSDFAV1CursorScanResult *out,
+    char *error_buf,
+    size_t error_buf_size);
+
+bool rsdfa_v1_program_scan_cursor_longest_indexed_prevalidated(
+    const RSDFAV1Program *program,
+    const RSDFAV1AsciiTransitionIndex *ascii_index,
     const CettaLpNativeUtf8ScalarView *view,
     uint32_t start_scalar,
     uint64_t work_limit,

@@ -1,0 +1,6 @@
+(ProofTraceInputBuildContextV1
+  input-request-v1 ProofTraceNatZeroV1
+  (ProofTraceNatSuccV1
+    (ProofTraceNatSuccV1
+      (ProofTraceNatSuccV1 ProofTraceNatZeroV1)))
+  ?context)

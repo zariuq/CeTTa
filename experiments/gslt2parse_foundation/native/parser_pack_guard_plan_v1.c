@@ -427,13 +427,15 @@ static bool ppguard_plan_v1_guard_tags_bijective(
     size_t tag_index;
     bool ok = false;
 
-    if (!plan || !guard_nfa_tags ||
-        guard_nfa_tag_len != plan->entry_len) {
+    if (!plan || guard_nfa_tag_len != plan->entry_len ||
+        (guard_nfa_tag_len > 0u && !guard_nfa_tags)) {
         ppguard_plan_v1_set_error(
             error_buf, error_buf_size,
             "positive guard NFA tag inventory is not bijective");
         return false;
     }
+    if (plan->entry_len == 0u)
+        return true;
     matched = calloc(plan->entry_len, sizeof(*matched));
     if (!matched)
         return false;
@@ -499,14 +501,16 @@ static bool ppguard_plan_v1_matches(
     uint32_t index;
     bool ok = false;
 
-    if (!pack || !plan || plan->entry_len == 0u ||
+    if (!pack || !plan ||
         plan->production_len != plan->entry_len ||
         plan->entry_len > UINT32_MAX - plan->lexical_terminal_len ||
         plan->terminal_len != plan->lexical_terminal_len + plan->entry_len ||
         plan->state_len > plan->entry_len ||
-        plan->derivation_len == 0u || !plan->entries ||
-        !plan->derivations || !plan->terminals || !plan->productions ||
-        !plan->production_items || !plan->guard_terminal_ids ||
+        (plan->entry_len > 0u && (!plan->entries ||
+         !plan->productions || !plan->production_items ||
+         !plan->guard_terminal_ids)) ||
+        (plan->derivation_len > 0u && !plan->derivations) ||
+        (plan->terminal_len > 0u && !plan->terminals) ||
         (plan->state_len > 0u && !plan->states) ||
         !ppguard_plan_v1_digest_valid(plan->base_pack_digest) ||
         !ppguard_plan_v1_digest_valid(plan->source_digest) ||
@@ -559,9 +563,11 @@ static bool ppguard_plan_v1_matches(
             goto done;
         }
     }
-    answers = calloc(plan->entry_len, sizeof(*answers));
-    if (!answers)
-        goto done;
+    if (plan->entry_len > 0u) {
+        answers = calloc(plan->entry_len, sizeof(*answers));
+        if (!answers)
+            goto done;
+    }
     extension = (PPNativeV1ForestExtension){
         .states = plan->states,
         .state_len = plan->state_len,
@@ -772,9 +778,9 @@ bool ppguard_plan_v1_build(
     if (error_buf && error_buf_size > 0u)
         error_buf[0] = '\0';
     if (!pack || !provenance || !out ||
-        provenance->derivation_len == 0u ||
         provenance->derivation_len > UINT32_MAX ||
-        !provenance->derivations ||
+        (provenance->derivation_len > 0u &&
+         !provenance->derivations) ||
         !ppguard_plan_v1_digest_valid(pack->pack_digest) ||
         !ppguard_plan_v1_digest_valid(provenance->source_digest) ||
         !ppguard_plan_v1_digest_valid(
@@ -785,9 +791,9 @@ bool ppguard_plan_v1_build(
             provenance->regular_compiler_digest) ||
         !ppguard_plan_v1_digest_valid(
             provenance->guard_nfa_answer_digest) ||
-        provenance->guard_nfa_tag_len == 0u ||
         provenance->guard_nfa_tag_len > UINT32_MAX ||
-        !provenance->guard_nfa_tags ||
+        (provenance->guard_nfa_tag_len > 0u &&
+         !provenance->guard_nfa_tags) ||
         !ppguard_plan_v1_array_fits(
             provenance->derivation_len, sizeof(*raw))) {
         ppguard_plan_v1_set_error(
@@ -812,9 +818,11 @@ bool ppguard_plan_v1_build(
             "positive guard lexical terminal count overflow");
         goto done;
     }
-    raw = calloc(provenance->derivation_len, sizeof(*raw));
-    if (!raw)
-        goto done;
+    if (provenance->derivation_len > 0u) {
+        raw = calloc(provenance->derivation_len, sizeof(*raw));
+        if (!raw)
+            goto done;
+    }
     for (raw_index = 0u;
          raw_index < provenance->derivation_len; raw_index++) {
         PPGuardPlanV1RawDerivation *derivation = &raw[raw_index];
@@ -884,7 +892,7 @@ bool ppguard_plan_v1_build(
             entry_len++;
         }
     }
-    if (entry_len == 0u || entry_len > UINT32_MAX ||
+    if (entry_len > UINT32_MAX ||
         entry_len > UINT32_MAX - pack->production_len ||
         entry_len > UINT32_MAX - pack->state_len ||
         entry_len > UINT32_MAX - pack->terminal_len -
@@ -898,23 +906,31 @@ bool ppguard_plan_v1_build(
     result.derivation_len = (uint32_t)provenance->derivation_len;
     result.production_len = result.entry_len;
     result.terminal_len = result.lexical_terminal_len + result.entry_len;
-    result.entries = calloc(result.entry_len, sizeof(*result.entries));
-    result.derivations = calloc(
-        result.derivation_len, sizeof(*result.derivations));
-    result.states = calloc(result.entry_len, sizeof(*result.states));
-    result.terminals = calloc(
-        result.terminal_len, sizeof(*result.terminals));
-    result.productions = calloc(
-        result.production_len, sizeof(*result.productions));
-    result.production_items = calloc(
-        result.production_len, sizeof(*result.production_items));
-    result.guard_terminal_ids = malloc(
-        sizeof(*result.guard_terminal_ids) * result.entry_len);
-    answers = calloc(result.entry_len, sizeof(*answers));
-    if (!result.entries || !result.derivations || !result.states ||
-        !result.terminals || !result.productions ||
-        !result.production_items || !result.guard_terminal_ids ||
-        !answers) {
+    if (result.entry_len > 0u) {
+        result.entries = calloc(result.entry_len, sizeof(*result.entries));
+        result.states = calloc(result.entry_len, sizeof(*result.states));
+        result.productions = calloc(
+            result.production_len, sizeof(*result.productions));
+        result.production_items = calloc(
+            result.production_len, sizeof(*result.production_items));
+        result.guard_terminal_ids = malloc(
+            sizeof(*result.guard_terminal_ids) * result.entry_len);
+        answers = calloc(result.entry_len, sizeof(*answers));
+    }
+    if (result.derivation_len > 0u) {
+        result.derivations = calloc(
+            result.derivation_len, sizeof(*result.derivations));
+    }
+    if (result.terminal_len > 0u) {
+        result.terminals = calloc(
+            result.terminal_len, sizeof(*result.terminals));
+    }
+    if ((result.entry_len > 0u &&
+         (!result.entries || !result.states || !result.productions ||
+          !result.production_items || !result.guard_terminal_ids ||
+          !answers)) ||
+        (result.derivation_len > 0u && !result.derivations) ||
+        (result.terminal_len > 0u && !result.terminals)) {
         goto done;
     }
     for (entry_index = 0u;

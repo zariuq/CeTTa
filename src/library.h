@@ -137,6 +137,8 @@ void cetta_library_context_init_for_language_profile(CettaLibraryContext *ctx,
                                                      CettaLanguageId language_id,
                                                      const CettaProfile *profile);
 void cetta_library_context_free(CettaLibraryContext *ctx);
+bool cetta_library_root_for_exec_path(const char *argv0,
+                                      char *output, size_t output_size);
 void cetta_library_context_set_exec_path(CettaLibraryContext *ctx, const char *argv0);
 void cetta_library_context_set_script_path(CettaLibraryContext *ctx, const char *filename);
 void cetta_library_context_set_cli_args(CettaLibraryContext *ctx, int argc,

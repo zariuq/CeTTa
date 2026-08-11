@@ -167,8 +167,10 @@ static bool root_has_extent(const CettaLpNativeUtf8Forest *forest,
 
 static void test_owned_scalar_buffer(TestCounts *counts) {
     static const uint8_t valid[] = {'a', 0u, 0xceu, 0xbbu};
+    static const uint8_t ascii[] = {'a', 0u, '!'};
     static const uint8_t invalid[] = {0xc0u, 0xafu};
     CettaLpNativeUtf8ScalarBuffer buffer;
+    CettaLpNativeUtf8ScalarView corrupt_ascii;
     const uint32_t *saved_codepoints;
     const uint32_t *saved_offsets;
     char error[256] = {0};
@@ -204,6 +206,45 @@ static void test_owned_scalar_buffer(TestCounts *counts) {
         buffer.byte_offsets == saved_offsets &&
         buffer.view.scalar_len == 3u,
         "failed scalar decode preserves the previous owner");
+    error[0] = '\0';
+    (void)expect(
+        counts,
+        cetta_lp_native_utf8_scalar_buffer_prepare(
+            &buffer, ascii, sizeof(ascii), error, sizeof(error)) &&
+        !buffer.codepoints && !buffer.byte_offsets &&
+        buffer.view.ascii_bytes == ascii &&
+        buffer.view.scalar_len == sizeof(ascii) &&
+        buffer.view.input_byte_len == sizeof(ascii) &&
+        buffer.view.decoded_byte_len == sizeof(ascii) &&
+        buffer.view.source_pass_count == 1u &&
+        cetta_lp_native_utf8_scalar_view_scalar_at(&buffer.view, 0u) ==
+            (uint32_t)'a' &&
+        cetta_lp_native_utf8_scalar_view_scalar_at(&buffer.view, 1u) == 0u &&
+        cetta_lp_native_utf8_scalar_view_byte_offset(&buffer.view, 3u) == 3u &&
+        cetta_lp_native_utf8_scalar_view_validate(
+            &buffer.view, error, sizeof(error)),
+        error[0] ? error : "ASCII scalar source uses an identity view");
+    corrupt_ascii = buffer.view;
+    corrupt_ascii.ascii_bytes = invalid;
+    corrupt_ascii.scalar_len = 2u;
+    corrupt_ascii.input_byte_len = 2u;
+    corrupt_ascii.decoded_byte_len = 2u;
+    error[0] = '\0';
+    (void)expect(
+        counts,
+        !cetta_lp_native_utf8_scalar_view_validate(
+            &corrupt_ascii, error, sizeof(error)) &&
+        strstr(error, "non-ASCII") != NULL,
+        "ASCII identity view rejects a high-bit byte");
+    error[0] = '\0';
+    (void)expect(
+        counts,
+        cetta_lp_native_utf8_scalar_buffer_prepare(
+            &buffer, valid, sizeof(valid), error, sizeof(error)) &&
+        buffer.codepoints && buffer.byte_offsets &&
+        !buffer.view.ascii_bytes && buffer.view.scalar_len == 3u &&
+        buffer.codepoints[2] == UINT32_C(0x03bb),
+        error[0] ? error : "non-ASCII scalar source uses validated decode");
     error[0] = '\0';
     (void)expect(
         counts,
@@ -326,22 +367,25 @@ static void test_borrowed_scalar_view_and_receipts(TestCounts *counts) {
         {CETTA_LP_NATIVE_SYMBOL_TM, 1u, 0u},
         {CETTA_LP_NATIVE_SYMBOL_TM, 2u, 0u},
     };
-    static const CettaLpNativeUnicodeRange lambda_range[] = {
+    static const CettaLpNativeUnicodeRange first_range[] = {
+        {(uint32_t)'x', (uint32_t)'x'},
         {UINT32_C(0x03bb), UINT32_C(0x03bb)},
     };
     static const CettaLpNativeUtf8Terminal terminals[] = {
         {0u, CETTA_LP_NATIVE_UTF8_TERMINAL_RANGES, 0u,
-         lambda_range, 1u},
+         first_range, 2u},
         {1u, CETTA_LP_NATIVE_UTF8_TERMINAL_ANY, 0u, NULL, 0u},
         {2u, CETTA_LP_NATIVE_UTF8_TERMINAL_EOF, 0u, NULL, 0u},
     };
     static const uint32_t codepoints[] = {UINT32_C(0x03bb), 0x21u};
     static const uint32_t byte_offsets[] = {0u, 2u, 3u};
     static const uint32_t corrupt_offsets[] = {0u, 1u, 3u};
+    static const uint8_t ascii_input[] = {'x', '!'};
     const CettaLpNativeUtf8ScalarView view = {
         codepoints, byte_offsets, 2u, 3u, 0u, 0u,
     };
     CettaLpNativeUtf8ScalarView corrupt_view;
+    CettaLpNativeUtf8ScalarBuffer ascii_buffer;
     CettaLpNativeGrammar grammar;
     CettaLpNativeUtf8Forest forest;
     char error[256] = {0};
@@ -350,6 +394,7 @@ static void test_borrowed_scalar_view_and_receipts(TestCounts *counts) {
         (void)expect(counts, false, "build borrowed-view GLL grammar");
         return;
     }
+    cetta_lp_native_utf8_scalar_buffer_init(&ascii_buffer);
     cetta_lp_native_utf8_forest_init(&forest);
     (void)expect(
         counts,
@@ -379,6 +424,36 @@ static void test_borrowed_scalar_view_and_receipts(TestCounts *counts) {
             forest_has_terminal(&forest, 1u, 1u, 2u, 2u, 3u, false) &&
             forest_has_terminal(&forest, 2u, 2u, 2u, 3u, 3u, true),
         "borrowed GLL view preserves forest spans");
+    cetta_lp_native_utf8_forest_free(&forest);
+
+    error[0] = '\0';
+    (void)expect(
+        counts,
+        cetta_lp_native_utf8_scalar_buffer_prepare(
+            &ascii_buffer, ascii_input, sizeof(ascii_input),
+            error, sizeof(error)) &&
+        ascii_buffer.view.ascii_bytes == ascii_input,
+        error[0] ? error : "prepare ASCII identity scalar view");
+    error[0] = '\0';
+    (void)expect(
+        counts,
+        cetta_lp_native_gll_parse_utf8_scalar_view_forest(
+            &grammar, STATE, terminals, 3u, &ascii_buffer.view, 1000u,
+            &forest, error, sizeof(error)),
+        error[0] ? error : "parse ASCII identity scalar view with GLL");
+    (void)expect(
+        counts,
+        forest.outcome == CETTA_LP_NATIVE_UTF8_FOREST_COMPLETED &&
+            forest.source_pass_count == 1u &&
+            forest.decoded_byte_len == 2u &&
+            forest.scalar_len == 2u &&
+            forest.codepoints[0] == (uint32_t)'x' &&
+            forest.codepoints[1] == (uint32_t)'!' &&
+            forest.byte_offsets[0] == 0u &&
+            forest.byte_offsets[1] == 1u &&
+            forest.byte_offsets[2] == 2u &&
+            forest.root_len == 1u && root_has_extent(&forest, 0u, 2u),
+        "GLL identity view exports the same normalized forest boundary");
     cetta_lp_native_utf8_forest_free(&forest);
 
     corrupt_view = view;
@@ -416,6 +491,7 @@ static void test_borrowed_scalar_view_and_receipts(TestCounts *counts) {
             strstr(error, "scalar view index") != NULL,
         "GLL rejects a corrupt scalar-view byte index");
     cetta_lp_native_utf8_forest_free(&forest);
+    cetta_lp_native_utf8_scalar_buffer_free(&ascii_buffer);
     cetta_lp_native_grammar_free(&grammar);
 }
 

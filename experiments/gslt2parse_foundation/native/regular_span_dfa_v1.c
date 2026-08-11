@@ -427,6 +427,130 @@ bool rsdfa_v1_program_validate(
     return true;
 }
 
+void rsdfa_v1_ascii_transition_index_init(
+    RSDFAV1AsciiTransitionIndex *index) {
+    if (index)
+        memset(index, 0, sizeof(*index));
+}
+
+void rsdfa_v1_ascii_transition_index_free(
+    RSDFAV1AsciiTransitionIndex *index) {
+    if (!index)
+        return;
+    free(index->targets);
+    memset(index, 0, sizeof(*index));
+}
+
+static uint32_t rsdfa_v1_ascii_transition_target(
+    const RSDFAV1Program *program,
+    uint32_t state_index,
+    uint32_t ascii) {
+    const RSDFAV1ProgramState *state = &program->states[state_index];
+    uint32_t low = 0u;
+    uint32_t high = state->transition_len;
+
+    while (low < high) {
+        uint32_t middle = low + (high - low) / 2u;
+        const RSDFAV1ProgramTransition *transition =
+            &program->transitions[state->transition_begin + middle];
+
+        if (ascii < transition->low)
+            high = middle;
+        else if (ascii > transition->high)
+            low = middle + 1u;
+        else
+            return transition->target;
+    }
+    return RSDFA_V1_NO_STATE;
+}
+
+bool rsdfa_v1_ascii_transition_index_validate(
+    const RSDFAV1Program *program,
+    const RSDFAV1AsciiTransitionIndex *index,
+    char *error_buf,
+    size_t error_buf_size) {
+    uint32_t state;
+
+    if (error_buf && error_buf_size > 0u)
+        error_buf[0] = '\0';
+    if (!rsdfa_v1_program_validate(
+            program, error_buf, error_buf_size) ||
+        !index || !index->targets || index->state_len != program->state_len) {
+        if (error_buf && error_buf_size > 0u && error_buf[0] == '\0') {
+            rsdfa_v1_set_error(
+                error_buf, error_buf_size,
+                "bad regular-span DFA ASCII transition index");
+        }
+        return false;
+    }
+    for (state = 0u; state < index->state_len; state++) {
+        uint32_t ascii;
+
+        for (ascii = 0u; ascii < RSDFA_V1_ASCII_CARDINALITY; ascii++) {
+            if (index->targets[
+                    (size_t)state * RSDFA_V1_ASCII_CARDINALITY + ascii] !=
+                rsdfa_v1_ascii_transition_target(program, state, ascii)) {
+                rsdfa_v1_set_error(
+                    error_buf, error_buf_size,
+                    "regular-span DFA ASCII index disagrees with its transitions");
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
+bool rsdfa_v1_ascii_transition_index_build(
+    const RSDFAV1Program *program,
+    RSDFAV1AsciiTransitionIndex *out,
+    char *error_buf,
+    size_t error_buf_size) {
+    RSDFAV1AsciiTransitionIndex result;
+    size_t target_len;
+    uint32_t state;
+
+    rsdfa_v1_ascii_transition_index_init(&result);
+    if (!out || !rsdfa_v1_program_validate(
+            program, error_buf, error_buf_size) ||
+        (size_t)program->state_len >
+            SIZE_MAX / RSDFA_V1_ASCII_CARDINALITY ||
+        (target_len =
+             (size_t)program->state_len * RSDFA_V1_ASCII_CARDINALITY) >
+            SIZE_MAX / sizeof(*result.targets)) {
+        if (error_buf && error_buf_size > 0u && error_buf[0] == '\0') {
+            rsdfa_v1_set_error(
+                error_buf, error_buf_size,
+                "bad regular-span DFA ASCII index build input");
+        }
+        return false;
+    }
+    result.targets = malloc(sizeof(*result.targets) * target_len);
+    if (!result.targets) {
+        rsdfa_v1_set_error(
+            error_buf, error_buf_size,
+            "failed to allocate regular-span DFA ASCII index");
+        return false;
+    }
+    result.state_len = program->state_len;
+    for (state = 0u; state < result.state_len; state++) {
+        uint32_t ascii;
+
+        for (ascii = 0u; ascii < RSDFA_V1_ASCII_CARDINALITY; ascii++) {
+            result.targets[
+                (size_t)state * RSDFA_V1_ASCII_CARDINALITY + ascii] =
+                rsdfa_v1_ascii_transition_target(program, state, ascii);
+        }
+    }
+    if (!rsdfa_v1_ascii_transition_index_validate(
+            program, &result, error_buf, error_buf_size)) {
+        rsdfa_v1_ascii_transition_index_free(&result);
+        return false;
+    }
+    rsdfa_v1_ascii_transition_index_free(out);
+    *out = result;
+    return true;
+}
+
 bool rsdfa_v1_plan_export_program(
     const RSDFAV1Plan *plan,
     RSDFAV1Program *out,
@@ -1837,6 +1961,77 @@ done:
     return ok;
 }
 
+bool rsdfa_v1_plan_tags_prefix_overlap(
+    const RSDFAV1Plan *plan,
+    uint32_t left_tag,
+    uint32_t right_tag,
+    bool *out,
+    char *error_buf,
+    size_t error_buf_size) {
+    const RSDFAV1PlanImpl *impl = plan ? plan->impl : NULL;
+    bool *left_can_accept = NULL;
+    bool *right_can_accept = NULL;
+    uint32_t state_index;
+    bool overlap = false;
+    bool ok = false;
+
+    if (error_buf && error_buf_size > 0u)
+        error_buf[0] = '\0';
+    if (!impl || !out || left_tag >= plan->tag_len ||
+        right_tag >= plan->tag_len || left_tag == right_tag ||
+        impl->state_len == 0u || impl->state_len != plan->state_len ||
+        impl->start_state >= impl->state_len) {
+        rsdfa_v1_set_error(
+            error_buf, error_buf_size,
+            "bad DFA cross-tag prefix-overlap arguments");
+        goto done;
+    }
+    left_can_accept = calloc(
+        impl->state_len, sizeof(*left_can_accept));
+    right_can_accept = calloc(
+        impl->state_len, sizeof(*right_can_accept));
+    if (!left_can_accept || !right_can_accept) {
+        rsdfa_v1_set_error(
+            error_buf, error_buf_size,
+            "failed to allocate DFA cross-tag prefix analysis");
+        goto done;
+    }
+    if (!rsdfa_v1_tag_can_accept(
+            impl, left_tag, left_can_accept) ||
+        !rsdfa_v1_tag_can_accept(
+            impl, right_tag, right_can_accept)) {
+        *out = false;
+        ok = true;
+        goto done;
+    }
+    for (state_index = 0u;
+         state_index < impl->state_len; state_index++) {
+        const RSDFAV1State *state = &impl->states[state_index];
+        bool left_ordinary = rsdfa_v1_state_has_tag(
+            state->accept_tags, state->accept_len, left_tag);
+        bool right_ordinary = rsdfa_v1_state_has_tag(
+            state->accept_tags, state->accept_len, right_tag);
+        bool left_eof = rsdfa_v1_state_has_tag(
+            state->eof_accept_tags, state->eof_accept_len, left_tag);
+        bool right_eof = rsdfa_v1_state_has_tag(
+            state->eof_accept_tags, state->eof_accept_len, right_tag);
+
+        if ((left_ordinary && right_can_accept[state_index]) ||
+            (right_ordinary && left_can_accept[state_index]) ||
+            (left_eof && right_eof)) {
+            overlap = true;
+            break;
+        }
+    }
+    *out = overlap;
+    ok = true;
+
+done:
+    free(right_can_accept);
+    free(left_can_accept);
+    return ok;
+}
+
 static bool rsdfa_v1_ranges_overlap(
     uint32_t left_low,
     uint32_t left_high,
@@ -2568,12 +2763,16 @@ static bool rsdfa_v1_scan_next(const RSDFAV1ScanInput *input,
             scalar, width);
     }
     if (scalar_position >= input->view->scalar_len ||
-        input->view->byte_offsets[scalar_position] != byte_position) {
+        cetta_lp_native_utf8_scalar_view_byte_offset(
+            input->view, scalar_position) != byte_position) {
         return false;
     }
-    *scalar = input->view->codepoints[scalar_position];
-    *width = input->view->byte_offsets[scalar_position + 1u] -
-        input->view->byte_offsets[scalar_position];
+    *scalar = cetta_lp_native_utf8_scalar_view_scalar_at(
+        input->view, scalar_position);
+    *width = cetta_lp_native_utf8_scalar_view_byte_offset(
+        input->view, scalar_position + 1u) -
+        cetta_lp_native_utf8_scalar_view_byte_offset(
+            input->view, scalar_position);
     return true;
 }
 
@@ -2839,8 +3038,7 @@ static bool rsdfa_v1_scan_cursor_longest_impl(
         start_scalar > view->scalar_len ||
         token_capacity < plan->tag_len ||
         (plan->tag_len > 0u && !tokens) ||
-        !view->byte_offsets ||
-        (view->scalar_len > 0u && !view->codepoints)) {
+        !cetta_lp_native_utf8_scalar_view_has_storage(view)) {
         rsdfa_v1_set_error(error_buf, error_buf_size,
                            "bad regular-span DFA cursor arguments");
         return false;
@@ -2851,7 +3049,8 @@ static bool rsdfa_v1_scan_cursor_longest_impl(
     result.outcome = RSDFA_V1_CURSOR_SCAN_COMPLETED;
     result.start_scalar = start_scalar;
     result.stop_scalar = start_scalar;
-    result.start_byte = view->byte_offsets[start_scalar];
+    result.start_byte = cetta_lp_native_utf8_scalar_view_byte_offset(
+        view, start_scalar);
     result.stop_byte = result.start_byte;
     state = plan->impl->start_state;
     scalar_position = start_scalar;
@@ -2871,12 +3070,14 @@ static bool rsdfa_v1_scan_cursor_longest_impl(
         result.work_item_len++;
         target = rsdfa_v1_transition_find(
             &plan->impl->states[state],
-            view->codepoints[scalar_position]);
+            cetta_lp_native_utf8_scalar_view_scalar_at(
+                view, scalar_position));
         if (target == RSDFA_V1_NO_STATE)
             goto finish;
         state = target;
         scalar_position++;
-        byte_position = view->byte_offsets[scalar_position];
+        byte_position = cetta_lp_native_utf8_scalar_view_byte_offset(
+            view, scalar_position);
         result.stop_scalar = scalar_position;
         result.stop_byte = byte_position;
         rsdfa_v1_cursor_record_accepts(
@@ -2968,7 +3169,8 @@ static void rsdfa_v1_program_cursor_record_accepts(
     uint32_t start_byte,
     uint32_t end_scalar,
     uint32_t end_byte,
-    RSDFAV1Token *tokens) {
+    RSDFAV1Token *tokens,
+    uint64_t *small_tag_set) {
     const RSDFAV1ProgramState *state = &program->states[state_index];
     const uint32_t *tags = eof
         ? program->eof_accept_tags : program->accept_tags;
@@ -2979,6 +3181,8 @@ static void rsdfa_v1_program_cursor_record_accepts(
 
     for (index = 0u; index < len; index++) {
         uint32_t tag = tags[begin + index];
+        if (small_tag_set)
+            *small_tag_set |= UINT64_C(1) << tag;
         tokens[tag] = (RSDFAV1Token){
             .tag = tag,
             .start_scalar = start_scalar,
@@ -2991,6 +3195,7 @@ static void rsdfa_v1_program_cursor_record_accepts(
 
 static bool rsdfa_v1_program_scan_cursor_longest_impl(
     const RSDFAV1Program *program,
+    const RSDFAV1AsciiTransitionIndex *ascii_index,
     const CettaLpNativeUtf8ScalarView *view,
     uint32_t start_scalar,
     uint64_t work_limit,
@@ -3005,6 +3210,8 @@ static bool rsdfa_v1_program_scan_cursor_longest_impl(
     uint32_t byte_position;
     uint32_t index;
     uint32_t write = 0u;
+    uint64_t small_tag_set = 0u;
+    uint64_t *small_tag_set_ptr = NULL;
 
     memset(&result, 0, sizeof(result));
     if (!program || !program->states || program->state_len == 0u ||
@@ -3012,26 +3219,33 @@ static bool rsdfa_v1_program_scan_cursor_longest_impl(
         program->tag_len == 0u || !view || !out || work_limit == 0u ||
         start_scalar > view->scalar_len ||
         token_capacity < program->tag_len || !tokens ||
-        !view->byte_offsets ||
-        (view->scalar_len > 0u && !view->codepoints)) {
+        (ascii_index &&
+         (!ascii_index->targets ||
+          ascii_index->state_len != program->state_len)) ||
+        !cetta_lp_native_utf8_scalar_view_has_storage(view)) {
         rsdfa_v1_set_error(error_buf, error_buf_size,
                            "bad regular-span DFA program cursor arguments");
         return false;
     }
-    for (index = 0u; index < program->tag_len; index++)
-        tokens[index].tag = UINT32_MAX;
+    if (program->tag_len <= 64u) {
+        small_tag_set_ptr = &small_tag_set;
+    } else {
+        for (index = 0u; index < program->tag_len; index++)
+            tokens[index].tag = UINT32_MAX;
+    }
 
     result.outcome = RSDFA_V1_CURSOR_SCAN_COMPLETED;
     result.start_scalar = start_scalar;
     result.stop_scalar = start_scalar;
-    result.start_byte = view->byte_offsets[start_scalar];
+    result.start_byte = cetta_lp_native_utf8_scalar_view_byte_offset(
+        view, start_scalar);
     result.stop_byte = result.start_byte;
     state = program->start_state;
     scalar_position = start_scalar;
     byte_position = result.start_byte;
     rsdfa_v1_program_cursor_record_accepts(
         program, state, false, start_scalar, result.start_byte,
-        scalar_position, byte_position, tokens);
+        scalar_position, byte_position, tokens, small_tag_set_ptr);
 
     while (scalar_position < view->scalar_len) {
         uint32_t target;
@@ -3041,29 +3255,48 @@ static bool rsdfa_v1_program_scan_cursor_longest_impl(
             goto finish;
         }
         result.work_item_len++;
-        target = rsdfa_v1_program_transition_find(
-            program, state, view->codepoints[scalar_position]);
+        if (view->ascii_bytes && ascii_index) {
+            target = ascii_index->targets[
+                (size_t)state * RSDFA_V1_ASCII_CARDINALITY +
+                view->ascii_bytes[scalar_position]];
+        } else {
+            target = rsdfa_v1_program_transition_find(
+                program, state,
+                cetta_lp_native_utf8_scalar_view_scalar_at(
+                    view, scalar_position));
+        }
         if (target == RSDFA_V1_NO_STATE)
             goto finish;
         state = target;
         scalar_position++;
-        byte_position = view->byte_offsets[scalar_position];
+        byte_position = view->ascii_bytes
+            ? scalar_position
+            : cetta_lp_native_utf8_scalar_view_byte_offset(
+                view, scalar_position);
         result.stop_scalar = scalar_position;
         result.stop_byte = byte_position;
         rsdfa_v1_program_cursor_record_accepts(
             program, state, false, start_scalar, result.start_byte,
-            scalar_position, byte_position, tokens);
+            scalar_position, byte_position, tokens, small_tag_set_ptr);
     }
 
     result.reached_eof = true;
     rsdfa_v1_program_cursor_record_accepts(
         program, state, true, start_scalar, result.start_byte,
-        scalar_position, byte_position, tokens);
+        scalar_position, byte_position, tokens, small_tag_set_ptr);
 
 finish:
-    for (index = 0u; index < program->tag_len; index++) {
-        if (tokens[index].tag != UINT32_MAX)
-            tokens[write++] = tokens[index];
+    if (small_tag_set_ptr) {
+        while (small_tag_set != 0u) {
+            uint32_t tag = (uint32_t)__builtin_ctzll(small_tag_set);
+            tokens[write++] = tokens[tag];
+            small_tag_set &= small_tag_set - 1u;
+        }
+    } else {
+        for (index = 0u; index < program->tag_len; index++) {
+            if (tokens[index].tag != UINT32_MAX)
+                tokens[write++] = tokens[index];
+        }
     }
     result.accept_len = write;
     *out = result;
@@ -3081,7 +3314,24 @@ bool rsdfa_v1_program_scan_cursor_longest_prevalidated(
     char *error_buf,
     size_t error_buf_size) {
     return rsdfa_v1_program_scan_cursor_longest_impl(
-        program, view, start_scalar, work_limit,
+        program, NULL, view, start_scalar, work_limit,
+        tokens, token_capacity, out,
+        error_buf, error_buf_size);
+}
+
+bool rsdfa_v1_program_scan_cursor_longest_indexed_prevalidated(
+    const RSDFAV1Program *program,
+    const RSDFAV1AsciiTransitionIndex *ascii_index,
+    const CettaLpNativeUtf8ScalarView *view,
+    uint32_t start_scalar,
+    uint64_t work_limit,
+    RSDFAV1Token *tokens,
+    uint32_t token_capacity,
+    RSDFAV1CursorScanResult *out,
+    char *error_buf,
+    size_t error_buf_size) {
+    return rsdfa_v1_program_scan_cursor_longest_impl(
+        program, ascii_index, view, start_scalar, work_limit,
         tokens, token_capacity, out,
         error_buf, error_buf_size);
 }
@@ -3103,7 +3353,7 @@ bool rsdfa_v1_program_scan_cursor_longest(
         return false;
     }
     return rsdfa_v1_program_scan_cursor_longest_impl(
-        program, view, start_scalar, work_limit,
+        program, NULL, view, start_scalar, work_limit,
         tokens, token_capacity, out,
         error_buf, error_buf_size);
 }

@@ -22,8 +22,8 @@ WITHOUT_DEFINITION = (
     PRESENTATIONS / "mutations" / "two_char_without_definition_v1.metta"
 )
 CHAR_CORE = PRESENTATIONS / "shared" / "char_core_v1.metta"
-METAMATH = PRESENTATIONS / "languages" / "metamath_appendix_e_v1.metta"
-TPTP = PRESENTATIONS / "languages" / "tptp_fof_cnf_v1.metta"
+METAMATH = ROOT / "langdef" / "metamath" / "syntax_v1.metta"
+TPTP = ROOT / "langdef" / "tptp" / "syntax_fof_cnf_v1.metta"
 LOOKAHEAD = PRESENTATIONS / "shared" / "lookahead_core_v1.metta"
 MEGALODON = PRESENTATIONS / "languages" / "megalodon_dynamic_v1.metta"
 GROUND_RELATIONS = PRESENTATIONS / "shared" / "ground_relations_v1.metta"
@@ -61,7 +61,7 @@ EXPECTED_PACKAGE_DIGEST = (
     "bd763693062eeaea7e95fe73f036af4e1707fe1f338c25345a622de25d48e7a4"
 )
 EXPECTED_METAMATH_DIGEST = (
-    "2ac262043b615f049fdb0411675cdc858034ea0ce7c8372f6dee5eaa486cda77"
+    "1b4c1d1da9de08262cc1c3d18443bb02efde9147f3321e8923af75db05282f57"
 )
 EXPECTED_TPTP_DIGEST = (
     "4bb4743974e886104667e91cac389784b6e62a267815bb0745272db2a353f104"

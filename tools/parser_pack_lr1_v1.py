@@ -55,6 +55,13 @@ class LR1Conflict:
 
 
 @dataclass(frozen=True, slots=True)
+class LRActionCell:
+    state: int
+    lookahead: GrammarIdentity
+    actions: tuple[tuple[str, int], ...]
+
+
+@dataclass(frozen=True, slots=True)
 class LR1Summary:
     grammar_digest: str
     table_digest: str
@@ -71,6 +78,7 @@ class LR1Summary:
     conflict_len: int
     max_state_items: int
     conflicts: tuple[LR1Conflict, ...]
+    action_cells: tuple[LRActionCell, ...]
 
 
 def app(term: SExpr, name: str, arity: int) -> tuple[SExpr, ...] | None:
@@ -462,6 +470,7 @@ def analyze_lr1(unpruned: Grammar) -> LR1Summary:
                 actions[(state_index, lookahead)].add(("reduce", production_index))
 
     conflicts: list[LR1Conflict] = []
+    action_cells: list[LRActionCell] = []
     shift_len = 0
     reduce_len = 0
     accept_len = 0
@@ -470,6 +479,7 @@ def analyze_lr1(unpruned: Grammar) -> LR1Summary:
         actions.items(), key=lambda item: (item[0][0], identity_text(item[0][1]))
     ):
         ordered = tuple(sorted(values))
+        action_cells.append(LRActionCell(state_index, lookahead, ordered))
         shift_len += sum(kind == "shift" for kind, _ in ordered)
         reduce_len += sum(kind == "reduce" for kind, _ in ordered)
         accept_len += sum(kind == "accept" for kind, _ in ordered)
@@ -536,6 +546,7 @@ def analyze_lr1(unpruned: Grammar) -> LR1Summary:
         conflict_len=conflict_len,
         max_state_items=max(map(len, states)),
         conflicts=tuple(conflicts),
+        action_cells=tuple(action_cells),
     )
 
 

@@ -39,6 +39,7 @@
     (operator semantic-mask-nfa-char 4)
     (operator semantic-mask-nfa-class 4)
     (operator semantic-mask-nfa-epsilon 2)
+    (operator semantic-mask-nfa-eof 2)
     (operator semantic-mask-nfa-start 1)
   )
   (equations)
@@ -52,6 +53,21 @@
           ?name (sir-definition ?name (sir-node ?label ?body)))
         (compile-semantic-mask-grammar
           semantic-mask-copy ?body ?regex)))
+
+    (rule compile-semantic-mask-left-node-root-definition
+      (head
+        (compile-semantic-mask-definition
+          ?label
+          (mrx-definition ?label (mrx-seq ?node-regex ?suffix-regex))))
+      (body
+        (compile-definition
+          ?name
+          (sir-definition
+            ?name (sir-left (sir-node ?label ?body) ?suffix)))
+        (compile-semantic-mask-grammar
+          semantic-mask-copy (sir-node ?label ?body) ?node-regex)
+        (compile-semantic-mask-grammar
+          semantic-mask-drop ?suffix ?suffix-regex)))
 
     (rule compile-semantic-mask-guarded-root-definition
       (head
@@ -75,6 +91,18 @@
           ?name (sir-definition ?name (sir-node ?label ?body)))
         (compile-semantic-mask-grammar
           semantic-mask-copy ?body ?regex)))
+
+    (rule compile-semantic-mask-left-node-root-link
+      (head (compile-semantic-mask-root-link ?name ?label))
+      (body
+        (compile-definition
+          ?name
+          (sir-definition
+            ?name (sir-left (sir-node ?label ?body) ?suffix)))
+        (compile-semantic-mask-grammar
+          semantic-mask-copy (sir-node ?label ?body) ?node-regex)
+        (compile-semantic-mask-grammar
+          semantic-mask-drop ?suffix ?suffix-regex)))
 
     (rule compile-semantic-mask-guarded-root-link
       (head (compile-semantic-mask-root-link ?name ?label))
@@ -123,6 +151,11 @@
       (head
         (compile-semantic-mask-grammar
           ?mode (sir-eps nil) mrx-eps))
+      (body))
+    (rule compile-semantic-mask-eof
+      (head
+        (compile-semantic-mask-grammar
+          ?mode sir-eof mrx-eof))
       (body))
     (rule compile-semantic-mask-lit
       (head
@@ -249,6 +282,13 @@
         (semantic-mask-nfa-edge
           ?tag mrx-eps ?path
           (semantic-mask-nfa-epsilon
+            (smn-in ?path) (smn-out ?path))))
+      (body))
+    (rule semantic-mask-nfa-eof
+      (head
+        (semantic-mask-nfa-edge
+          ?tag mrx-eof ?path
+          (semantic-mask-nfa-eof
             (smn-in ?path) (smn-out ?path))))
       (body))
     (rule semantic-mask-nfa-char
