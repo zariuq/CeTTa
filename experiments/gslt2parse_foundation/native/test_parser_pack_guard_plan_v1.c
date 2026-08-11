@@ -349,6 +349,7 @@ int main(void) {
     PPABIV1Pack pack;
     PPLexV1Plan lexical;
     PPGuardPlanV1 plan;
+    PPGuardPlanV1 empty_plan;
     PPGuardPlanV1 reordered_plan;
     PPGuardPlanV1 multiproof_plan;
     PPGuardPlanV1 rejected_plan;
@@ -356,6 +357,7 @@ int main(void) {
     PPGuardRelationV1 derived_relation;
     PPGuardRelationV1 absent_relation;
     PPGuardRelationV1 wrong_source_relation;
+    CettaLpNativeGrammar lexical_grammar;
     PPNativeV1Result main_gll;
     PPNativeV1Result main_glr;
     PPNativeV1Result derived_gll;
@@ -375,6 +377,8 @@ int main(void) {
     PPGuardPlanV1Receipt absent_glr_receipt = {0};
     PPGuardPlanV1Receipt rejected_receipt = {0};
     CettaLpNativeGrammar grammar;
+    CettaLpNativeGrammarSummary lexical_summary;
+    CettaLpNativeGrammarSummary empty_guard_summary;
     Atom *main_owner;
     Atom *root_owner;
     Atom *lex_owner;
@@ -404,6 +408,7 @@ int main(void) {
     PPGuardPlanV1DerivationInput duplicate_derivations[3];
     PPGuardPlanV1DerivationInput conflict_derivations[3];
     PPGuardPlanV1ProvenanceInput provenance;
+    PPGuardPlanV1ProvenanceInput empty_provenance;
     const PPGuardPlanV1Entry *open_entry;
     const PPGuardPlanV1Entry *root_entry;
     uint32_t *base_terminal_ids = NULL;
@@ -422,6 +427,7 @@ int main(void) {
     bool mutated_certificate_rejected;
     uint32_t saved_terminal_id;
     char answer_digest[65] = {0};
+    char empty_answer_digest[65] = {0};
     char error[512] = {0};
     TestCounts counts = {0};
 
@@ -434,6 +440,7 @@ int main(void) {
     ppabi_v1_pack_init(&pack);
     pplex_v1_plan_init(&lexical);
     ppguard_plan_v1_init(&plan);
+    ppguard_plan_v1_init(&empty_plan);
     ppguard_plan_v1_init(&reordered_plan);
     ppguard_plan_v1_init(&multiproof_plan);
     ppguard_plan_v1_init(&rejected_plan);
@@ -451,6 +458,7 @@ int main(void) {
     ppnative_v1_result_init(&absent_glr);
     ppnative_v1_result_init(&rejected_result);
     cetta_lp_native_grammar_init(&grammar);
+    cetta_lp_native_grammar_init(&lexical_grammar);
 
     main_owner = atom_symbol(&arena, "main");
     root_owner = atom_symbol(&arena, "root-guard");
@@ -485,6 +493,64 @@ int main(void) {
                 &pack, tags, 1u, DIGEST_B, DIGEST_C,
                 &lexical, error, sizeof(error)),
             error[0] ? error : "build lexical side of composite plan");
+
+    REQUIRE(&counts,
+            answer_set_digest(NULL, 0u, empty_answer_digest),
+            "compute canonical empty guard answer-set digest");
+    empty_provenance = (PPGuardPlanV1ProvenanceInput){
+        .source_digest = DIGEST_A,
+        .pre_reflection_digest = DIGEST_B,
+        .environment_digest = DIGEST_C,
+        .answer_set_digest = empty_answer_digest,
+        .regular_compiler_digest = DIGEST_B,
+        .guard_nfa_answer_digest = DIGEST_C,
+        .guard_nfa_tags = NULL,
+        .guard_nfa_tag_len = 0u,
+        .derivations = NULL,
+        .derivation_len = 0u,
+    };
+    REQUIRE(&counts,
+            ppguard_plan_v1_build(
+                &pack, &lexical, &empty_provenance,
+                &empty_plan, error, sizeof(error)) &&
+                empty_plan.entry_len == 0u &&
+                empty_plan.derivation_len == 0u &&
+                empty_plan.state_len == 0u &&
+                empty_plan.production_len == 0u &&
+                empty_plan.lexical_terminal_len == lexical.entry_len &&
+                empty_plan.terminal_len == lexical.entry_len &&
+                strlen(empty_plan.plan_digest) == 64u &&
+                strlen(empty_plan.evidence_digest) == 64u,
+            error[0] ? error :
+                "empty guard family is the identity extension");
+    REQUIRE(&counts,
+            pplex_v1_grammar_build(
+                &pack, &lexical, &lexical_grammar,
+                error, sizeof(error)),
+            error[0] ? error :
+                "build lexical grammar before empty guard composition");
+    cetta_lp_native_grammar_summary(&lexical_grammar, &lexical_summary);
+    REQUIRE(&counts,
+            ppguard_plan_v1_grammar_build(
+                &pack, &lexical, &empty_plan, &grammar,
+                error, sizeof(error)),
+            error[0] ? error :
+                "empty guard plan preserves the lexical grammar exactly");
+    cetta_lp_native_grammar_summary(&grammar, &empty_guard_summary);
+    REQUIRE(&counts,
+            memcmp(&lexical_summary, &empty_guard_summary,
+                   sizeof(lexical_summary)) == 0,
+            "empty guard composition preserves every grammar count");
+    cetta_lp_native_grammar_free(&grammar);
+    empty_provenance.guard_nfa_tags = tags;
+    empty_provenance.guard_nfa_tag_len = 1u;
+    error[0] = '\0';
+    REQUIRE(&counts,
+            !ppguard_plan_v1_build(
+                &pack, &lexical, &empty_provenance,
+                &rejected_plan, error, sizeof(error)) &&
+                strstr(error, "bijective") != NULL,
+            "empty guard evidence rejects a nonempty compiled tag inventory");
 
     open_body = unary(
         &arena, "sir-eps", atom_symbol(&arena, "nested-body"));
@@ -1006,6 +1072,7 @@ done:
     free(bad_productions);
     free(mutated_derivation_canonical);
     free(base_terminal_ids);
+    cetta_lp_native_grammar_free(&lexical_grammar);
     cetta_lp_native_grammar_free(&grammar);
     ppnative_v1_result_free(&rejected_result);
     ppnative_v1_result_free(&absent_glr);
@@ -1024,6 +1091,7 @@ done:
     ppguard_plan_v1_free(&multiproof_plan);
     ppguard_plan_v1_free(&reordered_plan);
     ppguard_plan_v1_free(&plan);
+    ppguard_plan_v1_free(&empty_plan);
     pplex_v1_plan_free(&lexical);
     ppabi_v1_pack_free(&pack);
     arena_free(&arena);

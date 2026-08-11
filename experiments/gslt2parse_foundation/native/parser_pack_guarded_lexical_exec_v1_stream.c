@@ -2,6 +2,10 @@
 
 #include "finite_horn_answer_stream_v1.h"
 #include "finite_horn_ground_term_v1.h"
+#include "indexed_checker_effect_v1.h"
+#include "indexed_inference_state_v1.h"
+#include "parser_occurrence_file_resolver_v1.h"
+#include "parser_occurrence_fold_v1.h"
 #include "parser_pack_abi_stream_v1.h"
 #include "parser_pack_cursor_c_emitter_v1.h"
 #include "parser_pack_guard_evidence_stream_v1.h"
@@ -117,6 +121,24 @@ static const char *cursor_outcome_name(
         return "work-limit";
     }
     return "unknown";
+}
+
+static uint32_t indexed_checker_effect_kind_len(
+    const PPIndexedCheckerEffectV1Plan *plan) {
+    bool seen[PPINDEXED_CHECKER_EFFECT_V1_COUNT] = {false};
+    uint32_t count = 0u;
+    uint32_t index;
+
+    if (!plan || !plan->effect_by_operation)
+        return 0u;
+    for (index = 0u; index < plan->operation_len; index++) {
+        uint32_t kind = (uint32_t)plan->effect_by_operation[index];
+        if (kind >= PPINDEXED_CHECKER_EFFECT_V1_COUNT || seen[kind])
+            continue;
+        seen[kind] = true;
+        count++;
+    }
+    return count;
 }
 
 static bool cursor_receipts_equal(
@@ -795,6 +817,9 @@ static bool run(const char *abi_path,
                 const char *guarded_compiler_digest,
                 const char *action_answer_path,
                 const char *action_compiler_digest,
+                const char *occurrence_fold_path,
+                const char *indexed_checker_effect_path,
+                const char *indexed_checker_effect_digest,
                 uint32_t benchmark_iterations,
                 bool cursor_hybrid_only,
                 const char *emit_c_path,
@@ -815,6 +840,8 @@ static bool run(const char *abi_path,
     FHAnswerStreamV1 guard_answers;
     FHAnswerStreamV1 guarded_answers;
     FHAnswerStreamV1 action_answers;
+    FHAnswerStreamV1 occurrence_fold_answers;
+    FHAnswerStreamV1 indexed_checker_effect_answers;
     RSNFAV1Plan lexical_nfa;
     RSNFAV1Plan guard_nfa;
     PPLexV1Plan lexical_plan;
@@ -824,6 +851,15 @@ static bool run(const char *abi_path,
     PPGuardedLexV1Plan guarded_plan;
     PPGuardedLexExecV1Plan exec_plan;
     PPGuardedLexCursorV1Program cursor_program;
+    PPOccurrenceFoldV1Plan occurrence_fold_plan;
+    PPIndexedCheckerEffectV1Plan indexed_checker_effect_plan;
+    PPIndexedInferenceV1State indexed_inference_state;
+    PPIndexedInferenceV1Fold indexed_inference_fold;
+    PPIndexedInferenceV1Summary indexed_inference_summary;
+    PPOccurrenceFileResolverV1 source_resolver;
+    PPIndexedInferenceV1SourceResolver source_resolver_interface;
+    PPOccurrenceFoldV1Receipt occurrence_fold_receipt;
+    PPOccurrenceFoldV1Trace occurrence_fold_audit;
     PPGuardedLexCursorV1Receipt cursor_receipt;
     PPGuardedLexCursorV1SemanticResult cursor_gll_semantic;
     PPGuardedLexCursorV1SemanticResult cursor_glr_semantic;
@@ -851,6 +887,7 @@ static bool run(const char *abi_path,
     uint32_t cursor_action_agreements = 0u;
     uint32_t cursor_action_mutations = 0u;
     uint32_t cursor_semantic_mutations = 0u;
+    uint32_t cursor_semantic_required_sources = 0u;
     uint32_t cursor_direct_semantic_agreement = 0u;
     uint32_t cursor_hybrid_semantic_agreement = 0u;
     uint32_t cursor_hybrid_bytes_agreement = 0u;
@@ -859,6 +896,10 @@ static bool run(const char *abi_path,
     size_t input_len = 0u;
     char error[512] = {0};
     bool cursor_program_built = false;
+    bool occurrence_fold_built = false;
+    bool indexed_checker_effect_built = false;
+    bool indexed_inference_fold_initialized = false;
+    bool indexed_inference_summary_built = false;
     bool ok = false;
 
     ppabi_v1_wire_init(&pack_wire);
@@ -867,6 +908,8 @@ static bool run(const char *abi_path,
     fh_answer_stream_v1_init(&guard_answers);
     fh_answer_stream_v1_init(&guarded_answers);
     fh_answer_stream_v1_init(&action_answers);
+    fh_answer_stream_v1_init(&occurrence_fold_answers);
+    fh_answer_stream_v1_init(&indexed_checker_effect_answers);
     rsnfa_v1_plan_init(&lexical_nfa);
     rsnfa_v1_plan_init(&guard_nfa);
     pplex_v1_plan_init(&lexical_plan);
@@ -875,6 +918,16 @@ static bool run(const char *abi_path,
     ppguarded_lex_v1_plan_init(&guarded_plan);
     ppguarded_lex_exec_v1_plan_init(&exec_plan);
     ppguarded_lex_cursor_v1_program_init(&cursor_program);
+    ppoccurrence_fold_v1_plan_init(&occurrence_fold_plan);
+    ppindexed_checker_effect_v1_plan_init(
+        &indexed_checker_effect_plan);
+    ppindexed_inference_v1_state_init(&indexed_inference_state);
+    ppoccurrence_file_resolver_v1_init(&source_resolver);
+    memset(
+        &source_resolver_interface, 0,
+        sizeof(source_resolver_interface));
+    memset(&indexed_inference_fold, 0, sizeof(indexed_inference_fold));
+    memset(&indexed_inference_summary, 0, sizeof(indexed_inference_summary));
     ppguarded_lex_cursor_v1_semantic_result_init(&cursor_gll_semantic);
     ppguarded_lex_cursor_v1_semantic_result_init(&cursor_glr_semantic);
     ppguarded_lex_cursor_v1_semantic_result_init(&cursor_direct_semantic);
@@ -893,6 +946,8 @@ static bool run(const char *abi_path,
     arena_init(&action_bytecode_arena);
     memset(&derived_view, 0, sizeof(derived_view));
     memset(&cursor_receipt, 0, sizeof(cursor_receipt));
+    memset(&occurrence_fold_receipt, 0, sizeof(occurrence_fold_receipt));
+    memset(&occurrence_fold_audit, 0, sizeof(occurrence_fold_audit));
     if (!ppabi_v1_wire_read(
             &pack_wire, abi_path, error, sizeof(error)) ||
         !ppabi_v1_wire_load_pack(
@@ -912,18 +967,17 @@ static bool run(const char *abi_path,
         !fh_answer_stream_v1_read(
             &guard_answers, guard_nfa_path,
             error, sizeof(error)) ||
-        guard_answers.len == 0u ||
         guard_answers.len > UINT32_MAX ||
-        !rsnfa_v1_plan_load(
-            &pack, guard_answers.terms, guard_answers.len,
-            &guard_nfa, error, sizeof(error)) ||
+        (guard_answers.len > 0u &&
+         !rsnfa_v1_plan_load(
+             &pack, guard_answers.terms, guard_answers.len,
+             &guard_nfa, error, sizeof(error))) ||
         !ppguard_evidence_wire_v1_read(
             &evidence, guard_evidence_path,
             error, sizeof(error)) ||
         !fh_answer_stream_v1_read(
             &guarded_answers, guarded_nfa_path,
             error, sizeof(error)) ||
-        guarded_answers.len == 0u ||
         !read_input(input_path, &input, &input_len,
                     error, sizeof(error))) {
         goto rejected;
@@ -982,6 +1036,111 @@ static bool run(const char *abi_path,
             error, sizeof(error)))) {
         goto rejected;
     }
+    if (occurrence_fold_path) {
+        if (!cursor_program_built ||
+            !fh_answer_stream_v1_read(
+                &occurrence_fold_answers, occurrence_fold_path,
+                error, sizeof(error)) ||
+            !ppoccurrence_fold_v1_plan_build(
+                &pack, &lexical_plan, &cursor_program,
+                occurrence_fold_answers.terms,
+                occurrence_fold_answers.len,
+                occurrence_fold_answers.digest,
+                &occurrence_fold_plan, error, sizeof(error))) {
+            goto rejected;
+        }
+        occurrence_fold_built = true;
+    }
+    if (indexed_checker_effect_path) {
+        if (!occurrence_fold_built ||
+            !indexed_checker_effect_digest ||
+            !fh_answer_stream_v1_read(
+                &indexed_checker_effect_answers,
+                indexed_checker_effect_path,
+                error, sizeof(error)) ||
+            !ppindexed_checker_effect_v1_plan_build(
+                &cursor_program, &occurrence_fold_plan,
+                indexed_checker_effect_answers.terms,
+                indexed_checker_effect_answers.len,
+                indexed_checker_effect_digest,
+                &indexed_checker_effect_plan,
+                error, sizeof(error))) {
+            goto rejected;
+        }
+        indexed_checker_effect_built = true;
+    }
+    if (occurrence_fold_built) {
+        PPOccurrenceFoldV1Backend fold_backend;
+
+        if (indexed_checker_effect_built) {
+            if (!ppoccurrence_file_resolver_v1_configure(
+                    &source_resolver,
+                    &cursor_program, &occurrence_fold_plan,
+                    input_path, input, input_len,
+                    PPGUARDED_LEX_CURSOR_V1_EXACT_TRACE,
+                    limits.parse_work_limit, UINT64_C(0),
+                    UINT32_C(4096),
+                    error, sizeof(error))) {
+                goto rejected;
+            }
+            source_resolver_interface =
+                ppoccurrence_file_resolver_v1_interface(
+                    &source_resolver);
+            if (!ppindexed_inference_v1_fold_init(
+                    &indexed_inference_fold,
+                    &cursor_program, &occurrence_fold_plan,
+                    &indexed_checker_effect_plan,
+                    &source_resolver_interface,
+                    &indexed_inference_state,
+                    error, sizeof(error))) {
+                goto rejected;
+            }
+            indexed_inference_fold_initialized = true;
+            fold_backend = ppindexed_inference_v1_fold_backend(
+                &indexed_inference_fold);
+        } else {
+            ppoccurrence_fold_v1_trace_init(
+                &occurrence_fold_audit, &occurrence_fold_plan);
+            fold_backend = ppoccurrence_fold_v1_trace_backend(
+                &occurrence_fold_audit);
+        }
+        if (!ppoccurrence_fold_v1_run_bytes(
+                &cursor_program, &occurrence_fold_plan,
+                input, input_len, &fold_backend,
+                PPGUARDED_LEX_CURSOR_V1_EXACT_TRACE,
+                limits.parse_work_limit, &occurrence_fold_receipt,
+                error, sizeof(error))) {
+            goto rejected;
+        }
+        if (indexed_inference_fold_initialized) {
+            occurrence_fold_audit =
+                indexed_inference_fold.occurrence_trace;
+            indexed_inference_summary_built =
+                indexed_inference_fold.receipt.committed &&
+                ppindexed_inference_v1_state_summary(
+                    &indexed_inference_state,
+                    &indexed_inference_summary);
+            if (indexed_inference_fold.receipt.committed &&
+                !indexed_inference_summary_built) {
+                (void)snprintf(
+                    error, sizeof(error),
+                    "committed indexed inference state has no summary");
+                goto rejected;
+            }
+        }
+    }
+    if (cursor_program.actions_bound) {
+        uint32_t terminal_index;
+
+        for (terminal_index = 0u;
+             terminal_index < cursor_program.terminal_len;
+             terminal_index++) {
+            if (cursor_program.terminals[
+                    terminal_index].semantic_value_required) {
+                cursor_semantic_required_sources++;
+            }
+        }
+    }
     if (emit_c_path) {
         FILE *generated = NULL;
         bool emitted;
@@ -1002,6 +1161,17 @@ static bool run(const char *abi_path,
         emitted = ppguarded_lex_cursor_v1_emit_c(
             &cursor_program, generated, emit_c_prefix,
             error, sizeof(error));
+        if (emitted && occurrence_fold_built) {
+            emitted = ppoccurrence_fold_v1_emit_c(
+                &cursor_program, &occurrence_fold_plan,
+                generated, emit_c_prefix, error, sizeof(error));
+        }
+        if (emitted && indexed_checker_effect_built) {
+            emitted = ppindexed_checker_effect_v1_emit_c(
+                &cursor_program, &occurrence_fold_plan,
+                &indexed_checker_effect_plan,
+                generated, emit_c_prefix, error, sizeof(error));
+        }
         close_status = fclose(generated);
         if (!emitted || close_status != 0) {
             if (error[0] == '\0') {
@@ -1083,11 +1253,47 @@ static bool run(const char *abi_path,
     }
     if (cursor_program.actions_bound) {
         uint32_t production_id;
+        uint32_t mutation_production_id =
+            guard_plan.production_len > 0u
+                ? pack.production_len : UINT32_MAX;
+        uint32_t mutation_slr_index = 0u;
         if (!ppguarded_lex_cursor_v1_program_validate_bound(
                 &cursor_program, &pack, &lexical_plan, &guard_plan,
                 &guarded_plan,
                 error, sizeof(error))) {
             goto rejected;
+        }
+        if (mutation_production_id != UINT32_MAX) {
+            while (mutation_slr_index <
+                       cursor_program.final_slr.authored_production_len &&
+                   cursor_program.final_slr.productions[
+                       mutation_slr_index].label !=
+                       mutation_production_id) {
+                mutation_slr_index++;
+            }
+        }
+        if (mutation_production_id == UINT32_MAX ||
+            mutation_slr_index >=
+                cursor_program.final_slr.authored_production_len ||
+            cursor_program.final_slr.productions[
+                mutation_slr_index].rhs_len == 0u) {
+            mutation_slr_index = 0u;
+            while (mutation_slr_index <
+                       cursor_program.final_slr.authored_production_len &&
+                   cursor_program.final_slr.productions[
+                       mutation_slr_index].rhs_len == 0u) {
+                mutation_slr_index++;
+            }
+            if (mutation_slr_index >=
+                cursor_program.final_slr.authored_production_len) {
+                (void)snprintf(
+                    error, sizeof(error),
+                    "cursor action program has no mutable SLR row");
+                goto rejected;
+            }
+            mutation_production_id =
+                cursor_program.final_slr.productions[
+                    mutation_slr_index].label;
         }
         for (production_id = 0u;
              production_id < cursor_program.actions.production_len;
@@ -1135,9 +1341,8 @@ static bool run(const char *abi_path,
         {
             PPActionBytecodeV1Instruction *instruction;
             PPActionBytecodeV1InstructionKind saved_kind;
-            uint32_t extension_id = pack.production_len;
             uint32_t instruction_id = cursor_program.actions.productions[
-                extension_id].instruction_begin;
+                mutation_production_id].instruction_begin;
             instruction = &cursor_program.actions.instructions[
                 instruction_id];
             saved_kind = instruction->kind;
@@ -1149,7 +1354,7 @@ static bool run(const char *abi_path,
                 instruction->kind = saved_kind;
                 (void)snprintf(
                     error, sizeof(error),
-                    "corrupted extension action survived validation");
+                    "corrupted action survived validation");
                 goto rejected;
             }
             instruction->kind = saved_kind;
@@ -1162,23 +1367,9 @@ static bool run(const char *abi_path,
             cursor_action_mutations++;
         }
         {
-            uint32_t extension_id = pack.production_len;
-            uint32_t slr_index = 0u;
             CettaLpNativeSlrProgramProduction *production;
-            while (slr_index <
-                       cursor_program.final_slr.authored_production_len &&
-                   cursor_program.final_slr.productions[
-                       slr_index].label != extension_id) {
-                slr_index++;
-            }
-            if (slr_index >=
-                cursor_program.final_slr.authored_production_len) {
-                (void)snprintf(
-                    error, sizeof(error),
-                    "extension action has no SLR production row");
-                goto rejected;
-            }
-            production = &cursor_program.final_slr.productions[slr_index];
+            production = &cursor_program.final_slr.productions[
+                mutation_slr_index];
             CettaLpNativeSymbol *item = &cursor_program.final_slr.rhs[
                 production->rhs_begin];
             SymbolId saved_name = item->name;
@@ -1470,6 +1661,45 @@ static bool run(const char *abi_path,
         cursor_program.value_programs_complete) {
         cursor_direct_semantic_agreement = 1u;
     }
+    if (cursor_program.actions_bound) {
+        uint32_t terminal_index;
+        bool tested = false;
+
+        for (terminal_index = 0u;
+             terminal_index < cursor_program.terminal_len;
+             terminal_index++) {
+            PPGuardedLexCursorV1Terminal *terminal =
+                &cursor_program.terminals[terminal_index];
+
+            if (terminal->semantic_value_required)
+                continue;
+            terminal->semantic_value_required = true;
+            if (ppguarded_lex_cursor_v1_program_validate_bound(
+                    &cursor_program, &pack, &lexical_plan, &guard_plan,
+                    &guarded_plan, error, sizeof(error))) {
+                terminal->semantic_value_required = false;
+                (void)snprintf(
+                    error, sizeof(error),
+                    "forged cursor semantic dependency survived validation");
+                goto rejected;
+            }
+            terminal->semantic_value_required = false;
+            if (!ppguarded_lex_cursor_v1_program_validate_bound(
+                    &cursor_program, &pack, &lexical_plan, &guard_plan,
+                    &guarded_plan, error, sizeof(error))) {
+                goto rejected;
+            }
+            cursor_semantic_mutations++;
+            tested = true;
+            break;
+        }
+        if (!tested) {
+            (void)snprintf(
+                error, sizeof(error),
+                "cursor semantic dependency gate found no elided source");
+            goto rejected;
+        }
+    }
     if (cursor_program.actions_bound &&
         cursor_receipt.ordinary_span_token_len +
                 cursor_receipt.guarded_span_token_len > 0u) {
@@ -1684,8 +1914,8 @@ static bool run(const char *abi_path,
            exec_plan.cursor_certificate.unsupported_guard_len);
     printf("cursor-certificate-boundary-crossings\t%u\n",
            exec_plan.cursor_certificate.boundary_crossing_len);
-    printf("cursor-certificate-first-domain-overlaps\t%u\n",
-           exec_plan.cursor_certificate.first_domain_overlap_len);
+    printf("cursor-certificate-token-prefix-overlaps\t%u\n",
+           exec_plan.cursor_certificate.token_prefix_overlap_len);
     printf("cursor-program-built\t%u\n",
            cursor_program_built ? 1u : 0u);
     if (cursor_program_built) {
@@ -1718,6 +1948,8 @@ static bool run(const char *abi_path,
                cursor_program.value_program_len);
         printf("cursor-program-value-programs-complete\t%u\n",
                cursor_program.value_programs_complete ? 1u : 0u);
+        printf("cursor-program-semantic-required-sources\t%u\n",
+               cursor_semantic_required_sources);
         printf("cursor-program-value-program-conflicts\t%u\n",
                cursor_program.value_program_conflict_len);
         printf("cursor-program-direct-value-program-runs\t%u\n",
@@ -1820,6 +2052,109 @@ static bool run(const char *abi_path,
     printf("cursor-program-parser-work\t%llu\n",
            (unsigned long long)cursor_receipt.parser_work_item_len);
     }
+    printf("occurrence-fold-built\t%u\n",
+           occurrence_fold_built ? 1u : 0u);
+    if (occurrence_fold_built) {
+        printf("occurrence-fold-plan-digest\t%s\n",
+               occurrence_fold_plan.plan_digest);
+        printf("occurrence-fold-roles\t%u\n",
+               occurrence_fold_plan.role_len);
+        printf("occurrence-fold-nodes\t%u\n",
+               occurrence_fold_plan.node_len);
+        printf("occurrence-fold-operations\t%u\n",
+               occurrence_fold_plan.operation_len);
+        printf("occurrence-fold-terminal-bindings\t%u\n",
+               occurrence_fold_plan.terminal_len);
+        printf("occurrence-fold-production-bindings\t%u\n",
+               occurrence_fold_plan.production_len);
+        printf("occurrence-fold-steps\t%u\n",
+               occurrence_fold_receipt.step_len);
+        printf("occurrence-fold-shift-steps\t%u\n",
+               occurrence_fold_receipt.shift_step_len);
+        printf("occurrence-fold-reduce-steps\t%u\n",
+               occurrence_fold_receipt.reduce_step_len);
+        printf("occurrence-fold-values\t%u\n",
+               occurrence_fold_receipt.value_len);
+        printf("occurrence-fold-max-pending-values\t%u\n",
+               occurrence_fold_receipt.max_pending_value_len);
+        printf("occurrence-fold-committed\t%u\n",
+               occurrence_fold_receipt.committed ? 1u : 0u);
+        printf("occurrence-fold-trace-digest\t%s\n",
+               occurrence_fold_audit.committed
+                   ? occurrence_fold_audit.digest : "");
+    }
+    printf("indexed-checker-effect-built\t%u\n",
+           indexed_checker_effect_built ? 1u : 0u);
+    if (indexed_checker_effect_built) {
+        printf("indexed-checker-effect-plan-digest\t%s\n",
+               indexed_checker_effect_plan.plan_digest);
+        printf("indexed-checker-effect-operations\t%u\n",
+               indexed_checker_effect_plan.operation_len);
+        printf("indexed-checker-effect-kinds\t%u\n",
+               indexed_checker_effect_kind_len(
+                   &indexed_checker_effect_plan));
+        printf("indexed-inference-committed\t%u\n",
+               indexed_inference_fold.receipt.committed ? 1u : 0u);
+        printf("indexed-inference-state-digest\t%s\n",
+               indexed_inference_fold.receipt.committed
+                   ? indexed_inference_fold.receipt.state_digest : "");
+        printf("indexed-inference-occurrence-digest\t%s\n",
+               indexed_inference_fold.receipt.committed
+                   ? indexed_inference_fold.receipt.occurrence_digest : "");
+        printf("indexed-inference-effects\t%u\n",
+               indexed_inference_fold.receipt.effect_len);
+        printf("indexed-inference-scope-opens\t%u\n",
+               indexed_inference_fold.receipt.scope_open_len);
+        printf("indexed-inference-scope-closes\t%u\n",
+               indexed_inference_fold.receipt.scope_close_len);
+        printf("indexed-inference-scope-completions\t%u\n",
+               indexed_inference_fold.receipt.scope_complete_len);
+        printf("indexed-inference-proof-steps\t%u\n",
+               indexed_inference_fold.receipt.proof_step_len);
+        printf("indexed-inference-rule-applications\t%u\n",
+               indexed_inference_fold.receipt.proof_application_len);
+        printf("indexed-inference-unknown-steps\t%u\n",
+               indexed_inference_fold.receipt.unknown_step_len);
+        printf("indexed-inference-proof-digest\t%s\n",
+               indexed_inference_fold.receipt.committed
+                   ? indexed_inference_fold.receipt.proof_digest : "");
+        printf("indexed-inference-source-digest\t%s\n",
+               indexed_inference_fold.receipt.committed
+                   ? indexed_inference_fold.receipt.source_digest : "");
+        printf("indexed-inference-sources\t%u\n",
+               source_resolver.source_len);
+        printf("indexed-inference-skipped-sources\t%u\n",
+               source_resolver.skipped_source_len);
+        printf("indexed-inference-source-max-depth\t%u\n",
+               source_resolver.max_depth);
+        printf("indexed-inference-atoms\t%u\n",
+               indexed_inference_summary_built
+                   ? indexed_inference_summary.atom_len : 0u);
+        printf("indexed-inference-objects\t%u\n",
+               indexed_inference_summary_built
+                   ? indexed_inference_summary.object_len : 0u);
+        printf("indexed-inference-constants\t%u\n",
+               indexed_inference_summary_built
+                   ? indexed_inference_summary.constant_len : 0u);
+        printf("indexed-inference-variables\t%u\n",
+               indexed_inference_summary_built
+                   ? indexed_inference_summary.variable_len : 0u);
+        printf("indexed-inference-hypotheses\t%u\n",
+               indexed_inference_summary_built
+                   ? indexed_inference_summary.hypothesis_len : 0u);
+        printf("indexed-inference-rules\t%u\n",
+               indexed_inference_summary_built
+                   ? indexed_inference_summary.rule_len : 0u);
+        printf("indexed-inference-active-hypotheses\t%u\n",
+               indexed_inference_summary_built
+                   ? indexed_inference_summary.active_hypothesis_len : 0u);
+        printf("indexed-inference-active-distinct\t%u\n",
+               indexed_inference_summary_built
+                   ? indexed_inference_summary.active_distinct_len : 0u);
+        printf("indexed-inference-scope-depth\t%u\n",
+               indexed_inference_summary_built
+                   ? indexed_inference_summary.scope_depth : 0u);
+    }
     printf("dfa-states\t%u\n", exec_plan.dfa.state_len);
     printf("dfa-transitions\t%u\n", exec_plan.dfa.transition_len);
     printf("source-passes\t%u\n", result.receipt.source_pass_count);
@@ -1913,6 +2248,13 @@ rejected:
 
 done:
     free(input);
+    if (indexed_inference_fold_initialized)
+        ppindexed_inference_v1_fold_free(&indexed_inference_fold);
+    ppoccurrence_file_resolver_v1_free(&source_resolver);
+    ppindexed_inference_v1_state_free(&indexed_inference_state);
+    ppindexed_checker_effect_v1_plan_free(
+        &indexed_checker_effect_plan);
+    ppoccurrence_fold_v1_plan_free(&occurrence_fold_plan);
     arena_free(&action_bytecode_arena);
     arena_free(&action_tree_arena);
     arena_free(&action_slot_arena);
@@ -1938,6 +2280,8 @@ done:
     rsnfa_v1_plan_free(&guard_nfa);
     rsnfa_v1_plan_free(&lexical_nfa);
     fh_answer_stream_v1_free(&guarded_answers);
+    fh_answer_stream_v1_free(&indexed_checker_effect_answers);
+    fh_answer_stream_v1_free(&occurrence_fold_answers);
     fh_answer_stream_v1_free(&action_answers);
     fh_answer_stream_v1_free(&guard_answers);
     fh_answer_stream_v1_free(&lexical_answers);
@@ -1952,58 +2296,103 @@ int main(int argc, char **argv) {
     const char *action_compiler_digest = NULL;
     const char *emit_c_path = NULL;
     const char *emit_c_prefix = NULL;
-    int benchmark_index = 0;
+    const char *occurrence_fold_path = NULL;
+    const char *indexed_checker_effect_path = NULL;
+    const char *indexed_checker_effect_digest = NULL;
+    int option_index;
     uint32_t benchmark_iterations = 0u;
     bool cursor_hybrid_only = false;
     bool ok;
 
-    if (argc < 9 || argc > 14) {
+    if (argc < 9 || argc > 21) {
         fprintf(stderr,
                 "usage: parser_pack_guarded_lexical_exec_v1_stream "
                 "ABI LEXICAL_NFA GUARD_NFA GUARD_EVIDENCE GUARDED_NFA "
                 "INPUT REGULAR_COMPILER_SHA256 GUARDED_COMPILER_SHA256 "
                 "[BENCHMARK_ITERATIONS | "
                 "ACTION_ANSWERS ACTION_COMPILER_SHA256 "
-                "[BENCHMARK_ITERATIONS | "
-                "--cursor-hybrid-only BENCHMARK_ITERATIONS | "
-                "--emit-c OUTPUT_C IDENTIFIER_PREFIX]]\n");
+                "[BENCHMARK_ITERATIONS] "
+                "[--cursor-hybrid-only BENCHMARK_ITERATIONS] "
+                "[--occurrence-fold COMPILED_FOLD_ANSWERS] "
+                "[--indexed-checker-effects COMPILED_EFFECTS "
+                "PLAN_SHA256] "
+                "[--emit-c OUTPUT_C IDENTIFIER_PREFIX]]\n");
         return 1;
     }
     if (argc >= 11) {
         action_answer_path = argv[9];
         action_compiler_digest = argv[10];
-        if (argc == 12)
-            benchmark_index = 11;
-        else if (argc == 13) {
-            if (strcmp(argv[11], "--cursor-hybrid-only") != 0) {
+        option_index = 11;
+    } else if (argc == 10) {
+        option_index = 9;
+    } else {
+        option_index = argc;
+    }
+    while (option_index < argc) {
+        char *end = NULL;
+        unsigned long parsed;
+
+        if (strcmp(argv[option_index], "--cursor-hybrid-only") == 0) {
+            if (cursor_hybrid_only ||
+                option_index + 1 >= argc ||
+                benchmark_iterations != 0u) {
                 fprintf(stderr, "invalid cursor-only benchmark mode\n");
                 return 1;
             }
             cursor_hybrid_only = true;
-            benchmark_index = 12;
-        } else if (argc == 14) {
-            if (strcmp(argv[11], "--emit-c") != 0) {
+            option_index++;
+        } else if (strcmp(argv[option_index], "--emit-c") == 0) {
+            if (emit_c_path || option_index + 2 >= argc) {
                 fprintf(stderr, "invalid cursor C-emission mode\n");
                 return 1;
             }
-            emit_c_path = argv[12];
-            emit_c_prefix = argv[13];
+            emit_c_path = argv[option_index + 1];
+            emit_c_prefix = argv[option_index + 2];
+            option_index += 3;
+            continue;
+        } else if (strcmp(
+                       argv[option_index],
+                       "--occurrence-fold") == 0) {
+            if (occurrence_fold_path || option_index + 1 >= argc) {
+                fprintf(stderr, "invalid occurrence-fold mode\n");
+                return 1;
+            }
+            occurrence_fold_path = argv[option_index + 1];
+            option_index += 2;
+            continue;
+        } else if (strcmp(
+                       argv[option_index],
+                       "--indexed-checker-effects") == 0) {
+            if (indexed_checker_effect_path ||
+                option_index + 2 >= argc) {
+                fprintf(
+                    stderr,
+                    "invalid indexed-checker effect mode\n");
+                return 1;
+            }
+            indexed_checker_effect_path = argv[option_index + 1];
+            indexed_checker_effect_digest = argv[option_index + 2];
+            option_index += 3;
+            continue;
+        } else if (benchmark_iterations != 0u) {
+            fprintf(stderr, "repeated benchmark iteration count\n");
+            return 1;
         }
-    } else if (argc == 10) {
-        benchmark_index = 9;
-    }
-    if (benchmark_index != 0) {
-        char *end = NULL;
-        unsigned long parsed;
-
         errno = 0;
-        parsed = strtoul(argv[benchmark_index], &end, 10);
+        parsed = strtoul(argv[option_index], &end, 10);
         if (errno != 0 || !end || *end != '\0' ||
             parsed == 0ul || parsed > UINT32_MAX) {
             fprintf(stderr, "invalid benchmark iteration count\n");
             return 1;
         }
         benchmark_iterations = (uint32_t)parsed;
+        option_index++;
+    }
+    if (indexed_checker_effect_path && !occurrence_fold_path) {
+        fprintf(
+            stderr,
+            "indexed-checker effects require an occurrence fold\n");
+        return 1;
     }
     symbol_table_init(&symbols);
     symbol_table_init_builtins(&symbols, &g_builtin_syms);
@@ -2012,7 +2401,10 @@ int main(int argc, char **argv) {
     g_var_intern = NULL;
     ok = run(argv[1], argv[2], argv[3], argv[4], argv[5], argv[6],
              argv[7], argv[8], action_answer_path,
-             action_compiler_digest, benchmark_iterations,
+             action_compiler_digest, occurrence_fold_path,
+             indexed_checker_effect_path,
+             indexed_checker_effect_digest,
+             benchmark_iterations,
              cursor_hybrid_only, emit_c_path, emit_c_prefix);
     symbol_table_free(&symbols);
     g_symbols = NULL;

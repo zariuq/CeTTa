@@ -120,6 +120,30 @@ bool      bindings_project_reachable(const Bindings *src,
                                      Atom *const *roots,
                                      size_t root_count,
                                      Bindings *dst);
+/* As above, while translating each logical entry-prefix boundary through the
+ * projection.  A mark names the number of binding entries preceding a live
+ * activation.  Marks change only after a successful projection. */
+bool      bindings_project_reachable_with_entry_marks(
+              const Bindings *src, Atom *const *roots,
+              size_t root_count, uint32_t *entry_marks,
+              size_t entry_mark_count, Bindings *dst);
+/* A persistent source term can name a fresh activation namespace without
+ * first being copied into that namespace.  Each epoch root contributes the
+ * variables of `atom`, rewritten through `epoch`, to the same reachability
+ * closure as ordinary materialized roots. */
+typedef struct {
+    Atom *atom;
+    uint32_t epoch;
+} BindingsEpochRoot;
+bool      bindings_project_reachable_with_epoch_roots(
+              const Bindings *src, Atom *const *roots,
+              size_t root_count, const BindingsEpochRoot *epoch_roots,
+              size_t epoch_root_count, Bindings *dst);
+bool      bindings_project_reachable_with_epoch_roots_and_entry_marks(
+              const Bindings *src, Atom *const *roots,
+              size_t root_count, const BindingsEpochRoot *epoch_roots,
+              size_t epoch_root_count, uint32_t *entry_marks,
+              size_t entry_mark_count, Bindings *dst);
 /*
  * Replace `full` by the branch-relative suffix beyond `base` when `base` is
  * an exact ordered prefix of its logical bindings and constraints.
@@ -189,6 +213,17 @@ Atom     *bindings_apply_rewrite_vars(Bindings *b, Arena *a, Atom *atom,
                                       BindingsRewriteVarFn rewrite_var,
                                       void *rewrite_ctx);
 Atom     *bindings_apply_epoch(Bindings *b, Arena *a, Atom *atom, uint32_t epoch);
+/* Apply an epoch-standardized source term through only the binding suffix
+ * beginning at `first_entry`.  This is the activation-local view: source and
+ * reached variables cannot see bindings that predate the activation. */
+Atom     *bindings_apply_epoch_since(Bindings *b, Arena *a, Atom *atom,
+                                     uint32_t epoch, uint32_t first_entry);
+/* Compose activation-local substitution with the full outer environment in
+ * one traversal.  Source variables consult only the activation suffix;
+ * variables reached through their values consult the complete environment. */
+Atom     *bindings_apply_epoch_then_all(Bindings *b, Arena *a, Atom *atom,
+                                        uint32_t epoch,
+                                        uint32_t first_entry);
 Atom     *atom_freshen_epoch(Arena *a, Atom *atom, uint32_t epoch);
 Atom     *bindings_to_atom(Arena *a, const Bindings *b);
 bool      bindings_from_atom(Atom *atom, Bindings *out);
@@ -215,6 +250,29 @@ bool      bindings_builder_compact_reachable(
               uint32_t *checkpoint_marks, size_t checkpoint_count,
               uint64_t *discarded_logical_items,
               uint64_t *discarded_trail_entries);
+bool      bindings_builder_compact_reachable_with_epoch_roots(
+              BindingsBuilder *bb, Atom *const *roots, size_t root_count,
+              const BindingsEpochRoot *epoch_roots,
+              size_t epoch_root_count,
+              uint32_t *checkpoint_marks, size_t checkpoint_count,
+              uint64_t *discarded_logical_items,
+              uint64_t *discarded_trail_entries);
+/* Preserve both rollback checkpoints and logical activation boundaries.
+ * Entry marks are remapped transactionally with the compacted environment. */
+bool      bindings_builder_compact_reachable_with_entry_marks(
+              BindingsBuilder *bb, Atom *const *roots, size_t root_count,
+              uint32_t *checkpoint_marks, size_t checkpoint_count,
+              uint32_t *entry_marks, size_t entry_mark_count,
+              uint64_t *discarded_logical_items,
+              uint64_t *discarded_trail_entries);
+bool      bindings_builder_compact_reachable_with_epoch_roots_and_entry_marks(
+              BindingsBuilder *bb, Atom *const *roots, size_t root_count,
+              const BindingsEpochRoot *epoch_roots,
+              size_t epoch_root_count,
+              uint32_t *checkpoint_marks, size_t checkpoint_count,
+              uint32_t *entry_marks, size_t entry_mark_count,
+              uint64_t *discarded_logical_items,
+              uint64_t *discarded_trail_entries);
 bool      bindings_builder_add_id_fresh(BindingsBuilder *bb, VarId var_id,
                                         SymbolId spelling, Atom *val);
 bool      bindings_builder_add_var_fresh(BindingsBuilder *bb, Atom *var,
@@ -233,8 +291,19 @@ bool simple_match_builder(Atom *pattern, Atom *target, BindingsBuilder *bb);
 
 /* ── Variable renaming (standardization apart, à la Vampire) ───────────── */
 
-/* Get a fresh suffix for variable renaming. Monotonically increasing. */
+/* Try to obtain a fresh nonzero suffix for variable renaming.  The finite
+ * suffix space is never recycled: exhaustion fails closed. */
+bool fresh_var_suffix_try(uint32_t *suffix_out);
+
+/* Get a fresh suffix for variable renaming.  Legacy convenience wrapper;
+ * aborts rather than reusing an identity if the finite suffix space is
+ * exhausted. */
 uint32_t fresh_var_suffix(void);
+
+#ifdef CETTA_TEST_HOOKS
+/* Single-threaded boundary-test hook.  Not present in production builds. */
+void fresh_var_suffix_test_reset(uint64_t next_suffix);
+#endif
 
 /* Rename all variables in atom: $name → $name#suffix.
    Returns new arena-allocated atom. Non-variable atoms returned as-is. */
@@ -273,6 +342,12 @@ bool match_leaf_patch_view_enabled(void);
  * back with no partial binding). Result == match_atoms_epoch on that shape. */
 bool match_atoms_epoch_positional_linear(Atom *query, Atom *lhs, Bindings *b,
                                          Arena *a, uint32_t epoch);
+/* Builder form of the same admitted view.  It does not clone the environment:
+ * callers that want a general-matcher fallback must save both the builder and
+ * arena marks, then roll back on false before invoking that fallback. */
+bool match_atoms_epoch_positional_linear_builder(
+         Atom *query, Atom *lhs, BindingsBuilder *bb,
+         Arena *a, uint32_t epoch);
 bool match_atoms_atom_id_epoch(Atom *left, const TermUniverse *candidate_universe,
                                AtomId right_id, Bindings *b, Arena *a,
                                uint32_t epoch);

@@ -1,0 +1,6 @@
+(ProofTraceInputVerifyCompressedV1
+  input-request-v1
+  (ProofTraceLabelConsV1 input-hx-v1 ProofTraceLabelNilV1)
+  (ProofTraceLabelConsV1 input-identity-v1 ProofTraceLabelNilV1)
+  (ProofTraceCodeConsV1 65
+    (ProofTraceCodeConsV1 66 ProofTraceCodeNilV1)))

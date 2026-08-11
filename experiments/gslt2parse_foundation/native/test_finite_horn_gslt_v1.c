@@ -12,7 +12,7 @@ static const char CORE[] =
     "(gslt-presentation-v1 Core\n"
     " (rewrites (rule r (head (p ?x)) (body)))\n"
     " (equations)\n"
-    " (signature (operator q 2) (operator p 01)))";
+    " (signature (operator q 2) (operator dormant 3) (operator p 01)))";
 
 static const char LEAF[] =
     "(gslt-presentation-v1 Leaf "
@@ -20,7 +20,8 @@ static const char LEAF[] =
     "(rewrites (rule s (head (q left right)) (body (p \"λ😀\")))))";
 
 static const char CORE_CANONICAL[] =
-    "(gslt-presentation-v1 Core (signature (operator p 1) (operator q 2)) "
+    "(gslt-presentation-v1 Core (signature (operator dormant 3) "
+    "(operator p 1) (operator q 2)) "
     "(equations) (rewrites (rule r (head (p ?x)) (body))))\n";
 
 static const char CORE_QUOTED[] =
@@ -103,6 +104,20 @@ static bool digest_for_strings(const char *const *texts,
     return ok;
 }
 
+static size_t count_bytes(const uint8_t *bytes,
+                          size_t len,
+                          const char *needle) {
+    size_t needle_len = strlen(needle);
+    size_t count = 0u;
+    if (needle_len == 0u || needle_len > len)
+        return 0u;
+    for (size_t offset = 0u; offset + needle_len <= len; offset++) {
+        if (memcmp(bytes + offset, needle, needle_len) == 0)
+            count++;
+    }
+    return count;
+}
+
 static bool local_canaries(size_t *passed) {
     char error[ERROR_CAP] = {0};
     const char *texts[] = {CORE, LEAF};
@@ -113,7 +128,7 @@ static bool local_canaries(size_t *passed) {
         return false;
     }
     if (fhgslt_package_presentation_count(package) != 2u ||
-        fhgslt_package_operator_count(package) != 2u ||
+        fhgslt_package_operator_count(package) != 3u ||
         fhgslt_package_rule_count(package) != 2u) {
         fprintf(stderr, "positive package counts changed\n");
         fhgslt_package_free(package);
@@ -264,6 +279,26 @@ static bool local_canaries(size_t *passed) {
         fhgslt_package_free(package);
         return false;
     }
+    (*passed)++;
+
+    uint8_t *reflected = NULL;
+    size_t reflected_len = 0u;
+    static const char dormant_fact[] =
+        "(source-operator (q-sym Core) (q-sym dormant) "
+        "(q-succ (q-succ (q-succ q-zero))))";
+    if (!fhgslt_package_reflected_presentation(
+            package, &reflected, &reflected_len, error, sizeof(error)) ||
+        count_bytes(reflected, reflected_len,
+                    "(head (source-operator ") != 3u ||
+        count_bytes(reflected, reflected_len,
+                    "(head (source-rule ") != 2u ||
+        count_bytes(reflected, reflected_len, dormant_fact) != 1u) {
+        fprintf(stderr, "declaration-complete reflection changed: %s\n", error);
+        free(reflected);
+        fhgslt_package_free(package);
+        return false;
+    }
+    free(reflected);
     (*passed)++;
 
     const char core_without_rule[] =
@@ -562,7 +597,7 @@ int main(int argc, char **argv) {
     size_t passed = 0u;
     if (!local_canaries(&passed) || !external_package(argc, argv, &passed))
         return 1;
-    size_t expected = argc == 1 ? 22u : 23u;
+    size_t expected = argc == 1 ? 23u : 24u;
     if (passed != expected) {
         fprintf(stderr,
                 "canary accounting mismatch: expected %zu, got %zu\n",

@@ -29,6 +29,7 @@
 #define BINDINGS_TEMP_STACK_CAP 32
 #define BINDINGS_POOL_CLASS_COUNT 4
 #define BINDINGS_MEMO_STACK_CAP 32
+#define BINDINGS_MEMO_INDEX_THRESHOLD 16u
 #define BINDINGS_LOOKUP_CACHE_MISS UINT32_MAX
 #define BINDINGS_LOOKUP_INDEX_THRESHOLD 16u
 #define FRESHEN_EPOCH_MEMO_INLINE_CAP 64u
@@ -1377,6 +1378,7 @@ static bool bindings_add_inplace_internal(Bindings *b, VarId var_id,
             !b->entries[existing_idx].legacy_name_fallback) {
             b->entries[existing_idx].legacy_name_fallback = true;
             b->legacy_fallback_count++;
+            b->cycle_state = BINDINGS_CYCLE_UNKNOWN;
         }
         if (normalize_constraints && !bindings_normalize_constraints(b))
             return false;
@@ -1385,7 +1387,10 @@ static bool bindings_add_inplace_internal(Bindings *b, VarId var_id,
     if (!bindings_reserve_entries(b, b->len + 1)) {
         return false;
     }
-    bindings_cycle_note_edge(b, var_id, val);
+    if (legacy_name_fallback)
+        b->cycle_state = BINDINGS_CYCLE_UNKNOWN;
+    else
+        bindings_cycle_note_edge(b, var_id, val);
     b->entries[b->len].var_id = var_id;
     b->entries[b->len].spelling = spelling;
     b->entries[b->len].name_key = name_key;
@@ -1676,11 +1681,18 @@ static bool bindings_apply_seen_reserve(
 }
 
 typedef struct {
+    VarId id;
+    uint32_t index_plus_one;
+} BindingApplyMemoSlot;
+
+typedef struct {
     VarId *ids;
     Atom **vals;
     uint32_t len;
     uint32_t cap;
     bool heap;
+    BindingApplyMemoSlot *slots;
+    size_t slot_cap;
 } BindingApplyMemo;
 
 static inline void bindings_apply_memo_init(BindingApplyMemo *memo, VarId *ids,
@@ -1690,18 +1702,25 @@ static inline void bindings_apply_memo_init(BindingApplyMemo *memo, VarId *ids,
     memo->len = 0;
     memo->cap = cap;
     memo->heap = false;
+    memo->slots = NULL;
+    memo->slot_cap = 0u;
 }
 
 static void bindings_apply_memo_release(BindingApplyMemo *memo) {
-    if (!memo->heap)
+    if (!memo)
         return;
-    free(memo->ids);
-    free(memo->vals);
+    if (memo->heap) {
+        free(memo->ids);
+        free(memo->vals);
+    }
+    free(memo->slots);
     memo->ids = NULL;
     memo->vals = NULL;
     memo->len = 0;
     memo->cap = 0;
     memo->heap = false;
+    memo->slots = NULL;
+    memo->slot_cap = 0u;
 }
 
 static bool bindings_apply_memo_reserve(BindingApplyMemo *memo, uint32_t needed) {
@@ -1727,7 +1746,73 @@ static bool bindings_apply_memo_reserve(BindingApplyMemo *memo, uint32_t needed)
     return true;
 }
 
+static bool bindings_apply_memo_index_insert(
+    BindingApplyMemoSlot *slots, size_t slot_cap,
+    VarId id, uint32_t index) {
+    if (!slots || slot_cap == 0u || id == VAR_ID_NONE)
+        return false;
+    size_t mask = slot_cap - 1u;
+    size_t slot = bindings_var_id_hash(id) & mask;
+    while (slots[slot].id != VAR_ID_NONE &&
+           !binding_var_eq(slots[slot].id, id)) {
+        slot = (slot + 1u) & mask;
+    }
+    slots[slot].id = id;
+    slots[slot].index_plus_one = index + 1u;
+    return true;
+}
+
+static bool bindings_apply_memo_index_build(
+    BindingApplyMemo *memo, uint32_t needed) {
+    if (!memo)
+        return false;
+    size_t minimum = (size_t)needed * 2u;
+    if (minimum < needed)
+        return false;
+    size_t slot_cap = 32u;
+    while (slot_cap < minimum) {
+        if (slot_cap > SIZE_MAX / 2u)
+            return false;
+        slot_cap *= 2u;
+    }
+    if (slot_cap > SIZE_MAX / sizeof(*memo->slots))
+        return false;
+    BindingApplyMemoSlot *slots =
+        cetta_malloc(slot_cap * sizeof(*slots));
+    memset(slots, 0, slot_cap * sizeof(*slots));
+    for (uint32_t i = 0u; i < memo->len; i++) {
+        if (!bindings_apply_memo_index_insert(
+                slots, slot_cap, memo->ids[i], i)) {
+            free(slots);
+            return false;
+        }
+    }
+    free(memo->slots);
+    memo->slots = slots;
+    memo->slot_cap = slot_cap;
+    return true;
+}
+
+static uint32_t bindings_apply_memo_index_find(
+    const BindingApplyMemo *memo, VarId id) {
+    if (!memo || !memo->slots || memo->slot_cap == 0u ||
+        id == VAR_ID_NONE)
+        return 0u;
+    size_t mask = memo->slot_cap - 1u;
+    size_t slot = bindings_var_id_hash(id) & mask;
+    while (memo->slots[slot].id != VAR_ID_NONE) {
+        if (binding_var_eq(memo->slots[slot].id, id))
+            return memo->slots[slot].index_plus_one;
+        slot = (slot + 1u) & mask;
+    }
+    return 0u;
+}
+
 static Atom *bindings_apply_memo_lookup(BindingApplyMemo *memo, VarId id) {
+    if (memo->slots) {
+        uint32_t found = bindings_apply_memo_index_find(memo, id);
+        return found > 0u ? memo->vals[found - 1u] : NULL;
+    }
     for (uint32_t i = memo->len; i > 0; i--) {
         if (binding_var_eq(memo->ids[i - 1], id))
             return memo->vals[i - 1];
@@ -1736,23 +1821,41 @@ static Atom *bindings_apply_memo_lookup(BindingApplyMemo *memo, VarId id) {
 }
 
 static bool bindings_apply_memo_store(BindingApplyMemo *memo, VarId id, Atom *val) {
-    for (uint32_t i = 0; i < memo->len; i++) {
-        if (binding_var_eq(memo->ids[i], id)) {
-            memo->vals[i] = val;
+    if (memo->slots) {
+        uint32_t found = bindings_apply_memo_index_find(memo, id);
+        if (found > 0u) {
+            memo->vals[found - 1u] = val;
             return true;
+        }
+    } else {
+        for (uint32_t i = 0; i < memo->len; i++) {
+            if (binding_var_eq(memo->ids[i], id)) {
+                memo->vals[i] = val;
+                return true;
+            }
         }
     }
     if (!bindings_apply_memo_reserve(memo, memo->len + 1))
         return false;
+    if (memo->slots && (size_t)(memo->len + 1u) * 2u > memo->slot_cap &&
+        !bindings_apply_memo_index_build(memo, memo->len + 1u))
+        return false;
     memo->ids[memo->len] = id;
     memo->vals[memo->len] = val;
+    if (memo->slots && !bindings_apply_memo_index_insert(
+            memo->slots, memo->slot_cap, id, memo->len))
+        return false;
     memo->len++;
+    if (!memo->slots && memo->len >= BINDINGS_MEMO_INDEX_THRESHOLD &&
+        !bindings_apply_memo_index_build(memo, memo->len))
+        return false;
     return true;
 }
 
 static Atom *bindings_apply_seen_with_rewrite(Bindings *b, Arena *a, Atom *atom,
                                               BindingApplySeen *seen,
                                               uint32_t seen_len,
+                                              bool track_cycles,
                                               BindingApplyMemo *memo,
                                               BindingsRewriteVarFn rewrite_var,
                                               void *rewrite_ctx) {
@@ -1764,7 +1867,8 @@ static Atom *bindings_apply_seen_with_rewrite(Bindings *b, Arena *a, Atom *atom,
     case ATOM_VAR: {
         Atom *memoized = bindings_apply_memo_lookup(memo, atom->var_id);
         if (memoized) return memoized;
-        if (bindings_seen_var(seen->ids, seen_len, atom->var_id)) {
+        if (track_cycles &&
+            bindings_seen_var(seen->ids, seen_len, atom->var_id)) {
             Atom *result = rewrite_var ? rewrite_var(a, atom, rewrite_ctx) : atom;
             if (result)
                 bindings_apply_memo_store(memo, atom->var_id, result);
@@ -1779,12 +1883,17 @@ static Atom *bindings_apply_seen_with_rewrite(Bindings *b, Arena *a, Atom *atom,
                 bindings_apply_memo_store(memo, atom->var_id, result);
             return result;
         }
-        if (!bindings_apply_seen_reserve(
-                seen, seen_len, seen_len + 1u))
-            return NULL;
-        seen->ids[seen_len] = atom->var_id;
-        Atom *result = bindings_apply_seen_with_rewrite(b, a, val, seen, seen_len + 1,
-                                                        memo, rewrite_var, rewrite_ctx);
+        uint32_t next_seen_len = seen_len;
+        if (track_cycles) {
+            if (!bindings_apply_seen_reserve(
+                    seen, seen_len, seen_len + 1u))
+                return NULL;
+            seen->ids[seen_len] = atom->var_id;
+            next_seen_len++;
+        }
+        Atom *result = bindings_apply_seen_with_rewrite(
+            b, a, val, seen, next_seen_len, track_cycles,
+            memo, rewrite_var, rewrite_ctx);
         if (result)
             bindings_apply_memo_store(memo, atom->var_id, result);
         return result;
@@ -1795,7 +1904,8 @@ static Atom *bindings_apply_seen_with_rewrite(Bindings *b, Arena *a, Atom *atom,
             Atom *child = atom->expr.elems[i];
             Atom *next = atom_has_vars(child)
                 ? bindings_apply_seen_with_rewrite(b, a, child,
-                                                   seen, seen_len, memo,
+                                                   seen, seen_len,
+                                                   track_cycles, memo,
                                                    rewrite_var, rewrite_ctx)
                 : child;
             if (!next)
@@ -1842,8 +1952,17 @@ Atom *bindings_apply_rewrite_vars(Bindings *b, Arena *a, Atom *atom,
     BindingApplyMemo memo;
     bindings_apply_memo_init(&memo, memo_id_stack, memo_val_stack,
                              BINDINGS_MEMO_STACK_CAP);
-    Atom *result = bindings_apply_seen_with_rewrite(b, a, atom, &seen, 0, &memo,
-                                                    rewrite_var, rewrite_ctx);
+    /* `cycle_state` is a derived certificate maintained by every binding
+     * mutation.  Once it proves the substitution graph acyclic, active-path
+     * membership cannot affect the result, so do not build or scan that
+     * transient structure.  Unknown and witnessed-cyclic environments retain
+     * the independent general guard below. */
+    bool track_cycles =
+        b->cycle_state != BINDINGS_CYCLE_ACYCLIC ||
+        b->legacy_fallback_count != 0u;
+    Atom *result = bindings_apply_seen_with_rewrite(
+        b, a, atom, &seen, 0, track_cycles, &memo,
+        rewrite_var, rewrite_ctx);
     bindings_apply_memo_release(&memo);
     bindings_apply_seen_release(&seen);
     return result;
@@ -1854,37 +1973,65 @@ Atom *bindings_apply(Bindings *b, Arena *a, Atom *atom) {
     return bindings_apply_rewrite_vars(b, a, atom, NULL, NULL);
 }
 
-static Atom *bindings_apply_seen_epoch(Bindings *b, Arena *a, Atom *atom, uint32_t epoch,
-                                       bool original_side,
+static Atom *bindings_lookup_id_since(Bindings *b, VarId id,
+                                      uint32_t first_entry) {
+    if (first_entry == 0u)
+        return bindings_lookup_id(b, id);
+    cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_BINDINGS_LOOKUP);
+    for (uint32_t i = b->len; i > first_entry; i--) {
+        const Binding *entry = &b->entries[i - 1u];
+        if (binding_var_eq(entry->var_id, id))
+            return entry->val;
+    }
+    return NULL;
+}
+
+static Atom *bindings_apply_seen_epoch(Bindings *b, Arena *a, Atom *atom,
+                                       uint32_t epoch, bool original_side,
+                                       uint32_t first_entry,
+                                       bool resolve_outer,
                                        BindingApplySeen *seen,
                                        uint32_t seen_len,
-                                       BindingApplyMemo *memo) {
+                                       bool track_cycles,
+                                       BindingApplyMemo *local_memo,
+                                       BindingApplyMemo *outer_memo) {
     if (!atom_has_vars(atom))
         return atom;
     cetta_runtime_stats_inc(
         CETTA_RUNTIME_COUNTER_BINDINGS_APPLY_EPOCH_NODE_VISIT);
     switch (atom->kind) {
     case ATOM_VAR: {
-        VarId lookup_id = original_side ? var_epoch_id(atom->var_id, epoch) : atom->var_id;
+        bool outer_lookup = resolve_outer && !original_side;
+        uint32_t lookup_first = outer_lookup ? 0u : first_entry;
+        BindingApplyMemo *memo = outer_lookup ? outer_memo : local_memo;
+        VarId lookup_id = original_side
+            ? var_epoch_id(atom->var_id, epoch) : atom->var_id;
         Atom *memoized = bindings_apply_memo_lookup(memo, lookup_id);
         if (memoized) return memoized;
-        if (bindings_seen_var(seen->ids, seen_len, lookup_id)) {
+        if (track_cycles &&
+            bindings_seen_var(seen->ids, seen_len, lookup_id)) {
             Atom *result = original_side ? epoch_var_atom(a, atom, epoch) : atom;
             bindings_apply_memo_store(memo, lookup_id, result);
             return result;
         }
-        Atom *val = bindings_lookup_id(b, lookup_id);
+        Atom *val = bindings_lookup_id_since(b, lookup_id, lookup_first);
+        if (!val && outer_lookup)
+            val = bindings_lookup_spelling(b, atom->sym_id);
         if (!val) {
             Atom *result = original_side ? epoch_var_atom(a, atom, epoch) : atom;
             bindings_apply_memo_store(memo, lookup_id, result);
             return result;
         }
-        if (!bindings_apply_seen_reserve(
-                seen, seen_len, seen_len + 1u))
-            return NULL;
-        seen->ids[seen_len] = lookup_id;
+        if (track_cycles) {
+            if (!bindings_apply_seen_reserve(
+                    seen, seen_len, seen_len + 1u))
+                return NULL;
+            seen->ids[seen_len] = lookup_id;
+        }
         Atom *result = bindings_apply_seen_epoch(
-            b, a, val, epoch, false, seen, seen_len + 1, memo);
+            b, a, val, epoch, false, first_entry, resolve_outer,
+            seen, seen_len + (track_cycles ? 1u : 0u), track_cycles,
+            local_memo, outer_memo);
         bindings_apply_memo_store(memo, lookup_id, result);
         return result;
     }
@@ -1893,8 +2040,10 @@ static Atom *bindings_apply_seen_epoch(Bindings *b, Arena *a, Atom *atom, uint32
         for (CettaExprIndex i = 0; i < atom->expr.len; i++) {
             Atom *child = atom->expr.elems[i];
             Atom *next = atom_has_vars(child)
-                ? bindings_apply_seen_epoch(b, a, child, epoch, original_side,
-                                            seen, seen_len, memo)
+                ? bindings_apply_seen_epoch(
+                      b, a, child, epoch, original_side,
+                      first_entry, resolve_outer, seen, seen_len,
+                      track_cycles, local_memo, outer_memo)
                 : child;
             if (!new_elems && next != atom->expr.elems[i]) {
                 new_elems = arena_alloc(a, sizeof(Atom *) * atom->expr.len);
@@ -1912,21 +2061,60 @@ static Atom *bindings_apply_seen_epoch(Bindings *b, Arena *a, Atom *atom, uint32
     }
 }
 
-Atom *bindings_apply_epoch(Bindings *b, Arena *a, Atom *atom, uint32_t epoch) {
+static Atom *bindings_apply_epoch_view(Bindings *b, Arena *a, Atom *atom,
+                                       uint32_t epoch,
+                                       uint32_t first_entry,
+                                       bool resolve_outer) {
+    if (!b || !a || !atom || first_entry > b->len)
+        return NULL;
     VarId seen_stack[BINDINGS_SEEN_STACK_CAP];
-    VarId memo_id_stack[BINDINGS_MEMO_STACK_CAP];
-    Atom *memo_val_stack[BINDINGS_MEMO_STACK_CAP];
+    VarId local_memo_id_stack[BINDINGS_MEMO_STACK_CAP];
+    Atom *local_memo_val_stack[BINDINGS_MEMO_STACK_CAP];
+    VarId outer_memo_id_stack[BINDINGS_MEMO_STACK_CAP];
+    Atom *outer_memo_val_stack[BINDINGS_MEMO_STACK_CAP];
     BindingApplySeen seen;
     bindings_apply_seen_init(
         &seen, seen_stack, BINDINGS_SEEN_STACK_CAP);
-    BindingApplyMemo memo;
-    bindings_apply_memo_init(&memo, memo_id_stack, memo_val_stack,
+    BindingApplyMemo local_memo;
+    BindingApplyMemo outer_memo;
+    bindings_apply_memo_init(
+        &local_memo, local_memo_id_stack, local_memo_val_stack,
+        BINDINGS_MEMO_STACK_CAP);
+    bindings_apply_memo_init(
+        &outer_memo, outer_memo_id_stack, outer_memo_val_stack,
                              BINDINGS_MEMO_STACK_CAP);
+    /* The builder maintains an exact acyclicity certificate for the current
+     * substitution graph.  Epoch rewriting changes only the input variable
+     * identifier used for the first lookup; every traversed binding edge is
+     * already represented in that certified graph. */
+    bool track_cycles =
+        b->cycle_state != BINDINGS_CYCLE_ACYCLIC ||
+        b->legacy_fallback_count != 0u;
     Atom *result = bindings_apply_seen_epoch(
-        b, a, atom, epoch, true, &seen, 0, &memo);
-    bindings_apply_memo_release(&memo);
+        b, a, atom, epoch, true, first_entry, resolve_outer,
+        &seen, 0, track_cycles, &local_memo, &outer_memo);
+    bindings_apply_memo_release(&outer_memo);
+    bindings_apply_memo_release(&local_memo);
     bindings_apply_seen_release(&seen);
     return result;
+}
+
+Atom *bindings_apply_epoch_since(Bindings *b, Arena *a, Atom *atom,
+                                 uint32_t epoch, uint32_t first_entry) {
+    return bindings_apply_epoch_view(
+        b, a, atom, epoch, first_entry, false);
+}
+
+Atom *bindings_apply_epoch_then_all(Bindings *b, Arena *a, Atom *atom,
+                                    uint32_t epoch,
+                                    uint32_t first_entry) {
+    return bindings_apply_epoch_view(
+        b, a, atom, epoch, first_entry, true);
+}
+
+Atom *bindings_apply_epoch(Bindings *b, Arena *a, Atom *atom,
+                           uint32_t epoch) {
+    return bindings_apply_epoch_since(b, a, atom, epoch, 0u);
 }
 
 static void freshen_epoch_memo_clear(FreshenEpochMemoSlot *slots, size_t cap) {
@@ -2405,7 +2593,10 @@ static bool bindings_builder_add_id_internal(BindingsBuilder *bb, VarId var_id,
         bb->trail_len--;
         return false;
     }
-    bindings_cycle_note_edge(&bb->current, var_id, val);
+    if (legacy_name_fallback)
+        bb->current.cycle_state = BINDINGS_CYCLE_UNKNOWN;
+    else
+        bindings_cycle_note_edge(&bb->current, var_id, val);
     bb->current.entries[bb->current.len].var_id = var_id;
     bb->current.entries[bb->current.len].spelling = spelling;
     bb->current.entries[bb->current.len].name_key = name_key;
@@ -2599,11 +2790,13 @@ void bindings_builder_take(BindingsBuilder *bb, Bindings *out) {
 
 /* ── Variable renaming (standardization apart) ─────────────────────────── */
 
-static _Atomic uint32_t g_var_counter = 1;
+/* The packed VarId ABI has a 32-bit suffix.  Keep the reservation cursor one
+ * bit wider so reaching the end is distinguishable from wrapping to zero. */
+static _Atomic uint64_t g_var_counter = 1;
 #define FRESH_VAR_SUFFIX_BLOCK_SIZE 4096u
 
 typedef struct {
-    uint32_t next;
+    uint64_t next;
     uint32_t remaining;
 } FreshVarSuffixBlockCache;
 
@@ -2626,23 +2819,64 @@ typedef struct {
     uint32_t cap;
 } RenameVarMap;
 
-uint32_t fresh_var_suffix(void) {
-    /* Epoch 0 means "no standardization-apart tag", so fresh suffixes must
-       start at 1 and keep skipping 0 on unsigned wraparound. */
-    while (g_fresh_var_suffix_block_cache.remaining > 0) {
-        uint32_t suffix = g_fresh_var_suffix_block_cache.next++;
+bool fresh_var_suffix_try(uint32_t *suffix_out) {
+    if (!suffix_out)
+        return false;
+
+    if (g_fresh_var_suffix_block_cache.remaining > 0u) {
+        uint64_t suffix = g_fresh_var_suffix_block_cache.next++;
+
         g_fresh_var_suffix_block_cache.remaining--;
-        if (suffix != 0)
-            return suffix;
+        if (suffix == 0u || suffix > UINT32_MAX) {
+            g_fresh_var_suffix_block_cache.remaining = 0u;
+            return false;
+        }
+        *suffix_out = (uint32_t)suffix;
+        return true;
     }
 
-    uint32_t start = atomic_fetch_add_explicit(&g_var_counter,
-                                               FRESH_VAR_SUFFIX_BLOCK_SIZE,
-                                               memory_order_relaxed);
-    g_fresh_var_suffix_block_cache.next = start;
-    g_fresh_var_suffix_block_cache.remaining = FRESH_VAR_SUFFIX_BLOCK_SIZE;
-    return fresh_var_suffix();
+    for (;;) {
+        uint64_t start = atomic_load_explicit(
+            &g_var_counter, memory_order_relaxed);
+        uint64_t available;
+        uint64_t block_size;
+        uint64_t after;
+
+        /* Epoch zero means "no standardization-apart tag".  UINT32_MAX + 1
+         * is the exhausted sentinel in the wider reservation cursor. */
+        if (start == 0u || start > UINT32_MAX)
+            return false;
+        available = (uint64_t)UINT32_MAX - start + 1u;
+        block_size = available < FRESH_VAR_SUFFIX_BLOCK_SIZE
+            ? available : FRESH_VAR_SUFFIX_BLOCK_SIZE;
+        after = start + block_size;
+        if (!atomic_compare_exchange_weak_explicit(
+                &g_var_counter, &start, after,
+                memory_order_relaxed, memory_order_relaxed))
+            continue;
+        g_fresh_var_suffix_block_cache.next = start;
+        g_fresh_var_suffix_block_cache.remaining = (uint32_t)block_size;
+        return fresh_var_suffix_try(suffix_out);
+    }
 }
+
+uint32_t fresh_var_suffix(void) {
+    uint32_t suffix;
+
+    if (fresh_var_suffix_try(&suffix))
+        return suffix;
+    fputs("fatal: fresh-variable suffix space exhausted\n", stderr);
+    abort();
+}
+
+#ifdef CETTA_TEST_HOOKS
+void fresh_var_suffix_test_reset(uint64_t next_suffix) {
+    atomic_store_explicit(
+        &g_var_counter, next_suffix, memory_order_relaxed);
+    g_fresh_var_suffix_block_cache.next = 0u;
+    g_fresh_var_suffix_block_cache.remaining = 0u;
+}
+#endif
 
 static void var_id_set_init(VarIdSet *set) {
     set->items = NULL;
@@ -2978,6 +3212,30 @@ static bool bindings_reachable_vars_add_atom(
     return true;
 }
 
+static bool bindings_reachable_vars_add_epoch_root(
+    BindingsReachableVars *vars,
+    const BindingsEpochRoot *root) {
+    if (!vars || !root || !root->atom || root->epoch == 0u)
+        return false;
+    if (!atom_has_vars(root->atom))
+        return true;
+    VarIdSet found;
+    var_id_set_init(&found);
+    if (!collect_var_ids(root->atom, &found)) {
+        var_id_set_free(&found);
+        return false;
+    }
+    for (uint32_t i = 0u; i < found.len; i++) {
+        if (!bindings_reachable_vars_add(
+                vars, var_epoch_id(found.items[i], root->epoch))) {
+            var_id_set_free(&found);
+            return false;
+        }
+    }
+    var_id_set_free(&found);
+    return true;
+}
+
 static bool bindings_reachable_atom_intersects(
     const BindingsReachableVars *vars, Atom *atom, bool *intersects) {
     *intersects = false;
@@ -3073,9 +3331,12 @@ static int bindings_reachable_entry_index_compare(
  */
 static bool bindings_project_reachable_sparse(
     const Bindings *src, Atom *const *roots, size_t root_count,
+    const BindingsEpochRoot *epoch_roots,
+    size_t epoch_root_count,
     Bindings *dst) {
     if (!src || !dst || src == dst ||
         (root_count > 0u && !roots) ||
+        (epoch_root_count > 0u && !epoch_roots) ||
         src->legacy_fallback_count != 0u ||
         src->eq_len != 0u ||
         src->len < BINDINGS_LOOKUP_INDEX_THRESHOLD ||
@@ -3099,6 +3360,12 @@ static bool bindings_project_reachable_sparse(
     for (size_t i = 0u; i < root_count; i++) {
         if (!bindings_reachable_vars_add_atom(&live, roots[i]))
             goto fail;
+    }
+    for (size_t i = 0u; i < epoch_root_count; i++) {
+        if (!bindings_reachable_vars_add_epoch_root(
+                &live, &epoch_roots[i])) {
+            goto fail;
+        }
     }
     while (live.work_next < live.work_len) {
         VarId id = live.work[live.work_next++];
@@ -3175,6 +3442,8 @@ fail:
 
 static bool bindings_project_reachable_selected(
     const Bindings *src, Atom *const *roots, size_t root_count,
+    const BindingsEpochRoot *epoch_roots,
+    size_t epoch_root_count,
     Bindings *dst, bool **keep_entries_out,
     bool **keep_constraints_out) {
     bool return_selection =
@@ -3184,6 +3453,8 @@ static bool bindings_project_reachable_selected(
         !dst || src == dst || (root_count > 0u && !roots)) {
         return false;
     }
+    if (epoch_root_count > 0u && !epoch_roots)
+        return false;
     if (return_selection) {
         *keep_entries_out = NULL;
         *keep_constraints_out = NULL;
@@ -3197,7 +3468,8 @@ static bool bindings_project_reachable_selected(
         src->len >= BINDINGS_LOOKUP_INDEX_THRESHOLD &&
         bindings_lookup_index_enabled()) {
         return bindings_project_reachable_sparse(
-            src, roots, root_count, dst);
+            src, roots, root_count,
+            epoch_roots, epoch_root_count, dst);
     }
     cetta_runtime_stats_inc(
         CETTA_RUNTIME_COUNTER_BINDINGS_PROJECT_DENSE);
@@ -3229,6 +3501,12 @@ static bool bindings_project_reachable_selected(
     for (size_t i = 0u; i < root_count; i++) {
         if (!bindings_reachable_vars_add_atom(&live, roots[i]))
             goto fail;
+    }
+    for (size_t i = 0u; i < epoch_root_count; i++) {
+        if (!bindings_reachable_vars_add_epoch_root(
+                &live, &epoch_roots[i])) {
+            goto fail;
+        }
     }
 
     /*
@@ -3365,11 +3643,85 @@ fail:
     return false;
 }
 
+bool bindings_project_reachable_with_epoch_roots_and_entry_marks(
+    const Bindings *src, Atom *const *roots, size_t root_count,
+    const BindingsEpochRoot *epoch_roots,
+    size_t epoch_root_count, uint32_t *entry_marks,
+    size_t entry_mark_count, Bindings *dst) {
+    if (!dst ||
+        (epoch_root_count > 0u && !epoch_roots) ||
+        (entry_mark_count > 0u && (!src || !entry_marks)) ||
+        entry_mark_count > SIZE_MAX / sizeof(uint32_t)) {
+        return false;
+    }
+    for (size_t index = 0u; index < entry_mark_count; index++) {
+        if (entry_marks[index] > src->len)
+            return false;
+    }
+
+    Bindings projected;
+    bool *keep_entries = NULL;
+    bool *keep_constraints = NULL;
+    if (!bindings_project_reachable_selected(
+            src, roots, root_count,
+            epoch_roots, epoch_root_count, &projected,
+            &keep_entries, &keep_constraints)) {
+        return false;
+    }
+
+    uint32_t *next_marks = entry_mark_count
+        ? malloc(entry_mark_count * sizeof(*next_marks)) : NULL;
+    if (entry_mark_count > 0u && !next_marks) {
+        bindings_free(&projected);
+        free(keep_entries);
+        free(keep_constraints);
+        return false;
+    }
+    for (size_t mark_index = 0u;
+         mark_index < entry_mark_count; mark_index++) {
+        uint32_t retained = 0u;
+        for (uint32_t entry = 0u;
+             entry < entry_marks[mark_index]; entry++) {
+            if (keep_entries[entry])
+                retained++;
+        }
+        next_marks[mark_index] = retained;
+    }
+
+    *dst = projected;
+    if (entry_mark_count > 0u) {
+        memcpy(entry_marks, next_marks,
+               entry_mark_count * sizeof(*entry_marks));
+    }
+    free(next_marks);
+    free(keep_entries);
+    free(keep_constraints);
+    return true;
+}
+
+bool bindings_project_reachable_with_entry_marks(
+    const Bindings *src, Atom *const *roots, size_t root_count,
+    uint32_t *entry_marks, size_t entry_mark_count,
+    Bindings *dst) {
+    return bindings_project_reachable_with_epoch_roots_and_entry_marks(
+        src, roots, root_count, NULL, 0u,
+        entry_marks, entry_mark_count, dst);
+}
+
+bool bindings_project_reachable_with_epoch_roots(
+    const Bindings *src, Atom *const *roots, size_t root_count,
+    const BindingsEpochRoot *epoch_roots,
+    size_t epoch_root_count, Bindings *dst) {
+    return bindings_project_reachable_with_epoch_roots_and_entry_marks(
+        src, roots, root_count, epoch_roots, epoch_root_count,
+        NULL, 0u, dst);
+}
+
 bool bindings_project_reachable(
     const Bindings *src, Atom *const *roots, size_t root_count,
     Bindings *dst) {
-    return bindings_project_reachable_selected(
-        src, roots, root_count, dst, NULL, NULL);
+    return bindings_project_reachable_with_entry_marks(
+        src, roots, root_count, NULL, 0u, dst);
 }
 
 static int bindings_checkpoint_mark_compare(
@@ -3393,9 +3745,12 @@ static size_t bindings_checkpoint_mark_find(
     return low;
 }
 
-bool bindings_builder_compact_reachable(
+bool bindings_builder_compact_reachable_with_epoch_roots_and_entry_marks(
     BindingsBuilder *bb, Atom *const *roots, size_t root_count,
+    const BindingsEpochRoot *epoch_roots,
+    size_t epoch_root_count,
     uint32_t *checkpoint_marks, size_t checkpoint_count,
+    uint32_t *entry_marks, size_t entry_mark_count,
     uint64_t *discarded_logical_items,
     uint64_t *discarded_trail_entries) {
     if (discarded_logical_items)
@@ -3403,8 +3758,11 @@ bool bindings_builder_compact_reachable(
     if (discarded_trail_entries)
         *discarded_trail_entries = 0u;
     if (!bb || (root_count > 0u && !roots) ||
+        (epoch_root_count > 0u && !epoch_roots) ||
         (checkpoint_count > 0u && !checkpoint_marks) ||
-        checkpoint_count > UINT32_MAX) {
+        (entry_mark_count > 0u && !entry_marks) ||
+        checkpoint_count > UINT32_MAX ||
+        entry_mark_count > SIZE_MAX / sizeof(uint32_t)) {
         return false;
     }
 
@@ -3413,12 +3771,17 @@ bool bindings_builder_compact_reachable(
         if (checkpoint_marks[i] > old_trail_len)
             return false;
     }
+    for (size_t i = 0u; i < entry_mark_count; i++) {
+        if (entry_marks[i] > bb->current.len)
+            return false;
+    }
 
     Bindings projected;
     bool *keep_entries = NULL;
     bool *keep_constraints = NULL;
     if (!bindings_project_reachable_selected(
-            &bb->current, roots, root_count, &projected,
+            &bb->current, roots, root_count,
+            epoch_roots, epoch_root_count, &projected,
             &keep_entries, &keep_constraints)) {
         return false;
     }
@@ -3479,6 +3842,7 @@ bool bindings_builder_compact_reachable(
 
     uint32_t *sorted_marks = NULL;
     uint32_t *next_marks = NULL;
+    uint32_t *next_entry_marks = NULL;
     BindingsBuilderTrailEntry *next_trail = NULL;
     size_t unique_count = 0u;
     if (checkpoint_count > 0u) {
@@ -3500,6 +3864,26 @@ bool bindings_builder_compact_reachable(
         }
         next_trail = cetta_malloc(
             unique_count * sizeof(*next_trail));
+    }
+    if (entry_mark_count > 0u) {
+        next_entry_marks = malloc(
+            entry_mark_count * sizeof(*next_entry_marks));
+        if (!next_entry_marks) {
+            bindings_free(&projected);
+            free(keep_entries);
+            free(keep_constraints);
+            free(entry_prefix);
+            free(legacy_prefix);
+            free(private_entry_prefix);
+            free(constraint_prefix);
+            free(private_constraint_prefix);
+            free(sorted_marks);
+            free(next_marks);
+            free(next_trail);
+            return false;
+        }
+        for (size_t i = 0u; i < entry_mark_count; i++)
+            next_entry_marks[i] = entry_prefix[entry_marks[i]];
     }
 
     bool valid = true;
@@ -3572,6 +3956,7 @@ bool bindings_builder_compact_reachable(
         free(private_constraint_prefix);
         free(sorted_marks);
         free(next_marks);
+        free(next_entry_marks);
         free(next_trail);
         return false;
     }
@@ -3588,6 +3973,10 @@ bool bindings_builder_compact_reachable(
     if (checkpoint_count > 0u) {
         memcpy(checkpoint_marks, next_marks,
                checkpoint_count * sizeof(*checkpoint_marks));
+    }
+    if (entry_mark_count > 0u) {
+        memcpy(entry_marks, next_entry_marks,
+               entry_mark_count * sizeof(*entry_marks));
     }
     if (discarded_logical_items &&
         old_logical_items > next_logical_items) {
@@ -3609,7 +3998,45 @@ bool bindings_builder_compact_reachable(
     free(private_constraint_prefix);
     free(sorted_marks);
     free(next_marks);
+    free(next_entry_marks);
     return true;
+}
+
+bool bindings_builder_compact_reachable_with_entry_marks(
+    BindingsBuilder *bb, Atom *const *roots, size_t root_count,
+    uint32_t *checkpoint_marks, size_t checkpoint_count,
+    uint32_t *entry_marks, size_t entry_mark_count,
+    uint64_t *discarded_logical_items,
+    uint64_t *discarded_trail_entries) {
+    return bindings_builder_compact_reachable_with_epoch_roots_and_entry_marks(
+        bb, roots, root_count, NULL, 0u,
+        checkpoint_marks, checkpoint_count,
+        entry_marks, entry_mark_count,
+        discarded_logical_items, discarded_trail_entries);
+}
+
+bool bindings_builder_compact_reachable_with_epoch_roots(
+    BindingsBuilder *bb, Atom *const *roots, size_t root_count,
+    const BindingsEpochRoot *epoch_roots,
+    size_t epoch_root_count,
+    uint32_t *checkpoint_marks, size_t checkpoint_count,
+    uint64_t *discarded_logical_items,
+    uint64_t *discarded_trail_entries) {
+    return bindings_builder_compact_reachable_with_epoch_roots_and_entry_marks(
+        bb, roots, root_count, epoch_roots, epoch_root_count,
+        checkpoint_marks, checkpoint_count, NULL, 0u,
+        discarded_logical_items, discarded_trail_entries);
+}
+
+bool bindings_builder_compact_reachable(
+    BindingsBuilder *bb, Atom *const *roots, size_t root_count,
+    uint32_t *checkpoint_marks, size_t checkpoint_count,
+    uint64_t *discarded_logical_items,
+    uint64_t *discarded_trail_entries) {
+    return bindings_builder_compact_reachable_with_entry_marks(
+        bb, roots, root_count,
+        checkpoint_marks, checkpoint_count, NULL, 0u,
+        discarded_logical_items, discarded_trail_entries);
 }
 
 static void rename_var_map_init(RenameVarMap *map) {
@@ -3979,11 +4406,23 @@ bool simple_match_builder(Atom *pattern, Atom *target, BindingsBuilder *bb) {
 
 /* ── Loop-binding rejection (occurs check) ─────────────────────────────── */
 
-static int32_t bindings_find_entry_index_for_loop(const Bindings *b, VarId var_id) {
+static int32_t bindings_find_entry_index_for_loop(
+        const Bindings *b, const Atom *var) {
+    if (!b || !var || var->kind != ATOM_VAR)
+        return -1;
     for (uint32_t i = b->len; i > 0; i--) {
         uint32_t idx = i - 1;
-        if (binding_var_eq(b->entries[idx].var_id, var_id))
+        if (binding_var_eq(b->entries[idx].var_id, var->var_id))
             return (int32_t)idx;
+    }
+    if (b->legacy_fallback_count != 0u) {
+        /* Keep the same precedence as bindings_lookup_spelling: legacy
+         * serialized environments select the first spelling entry. */
+        for (uint32_t i = 0u; i < b->len; i++) {
+            if (b->entries[i].legacy_name_fallback &&
+                b->entries[i].spelling == var->sym_id)
+                return (int32_t)i;
+        }
     }
     return -1;
 }
@@ -4027,13 +4466,17 @@ static bool bindings_loop_push(BindingsLoopStack *stack,
 static bool bindings_entry_is_trivial_self(const Bindings *b, uint32_t idx) {
     Atom *value = b->entries[idx].val;
     return value->kind == ATOM_VAR &&
-           value->var_id == b->entries[idx].var_id;
+           (value->var_id == b->entries[idx].var_id ||
+            (b->entries[idx].legacy_name_fallback &&
+             !value->name_key &&
+             value->sym_id == b->entries[idx].spelling));
 }
 
 bool bindings_has_loop(const Bindings *b) {
     if (!b || b->len == 0)
         return false;
-    if (b->cycle_state == BINDINGS_CYCLE_ACYCLIC)
+    if (b->cycle_state == BINDINGS_CYCLE_ACYCLIC &&
+        b->legacy_fallback_count == 0u)
         return false;
     if (b->cycle_state == BINDINGS_CYCLE_PRESENT)
         return true;
@@ -4072,8 +4515,7 @@ bool bindings_has_loop(const Bindings *b) {
             cetta_runtime_stats_inc(
                 CETTA_RUNTIME_COUNTER_BINDINGS_LOOP_NODE_VISIT);
             if (atom->kind == ATOM_VAR) {
-                int32_t found = bindings_find_entry_index_for_loop(
-                    b, atom->var_id);
+                int32_t found = bindings_find_entry_index_for_loop(b, atom);
                 if (found < 0) continue;
                 uint32_t entry = (uint32_t)found;
                 cetta_runtime_stats_inc(
@@ -4555,6 +4997,55 @@ bool match_atoms_epoch_positional_linear(Atom *query, Atom *lhs, Bindings *b,
         }
     }
     bindings_replace(b, &trial);
+    return true;
+}
+
+bool match_atoms_epoch_positional_linear_builder(
+        Atom *query, Atom *lhs, BindingsBuilder *bb,
+        Arena *a, uint32_t epoch) {
+    if (!query || !lhs || !bb || !a)
+        return false;
+    if (query->kind != ATOM_EXPR || lhs->kind != ATOM_EXPR)
+        return false;
+    if (lhs->expr.len == 0u || query->expr.len != lhs->expr.len)
+        return false;
+    Atom *lh = lhs->expr.elems[0];
+    Atom *qh = query->expr.elems[0];
+    if (!lh || !qh || lh->kind != ATOM_SYMBOL || qh->kind != ATOM_SYMBOL ||
+        lh->sym_id != qh->sym_id)
+        return false;
+
+    /* This realization is deliberately narrower than head-linearity alone.
+     * It is the flat, ground-argument leaf view proved equivalent to matching;
+     * the generated flow fact selects candidates, while these checks keep the
+     * runtime generic and fail closed outside the theorem's domain. */
+    VarId seen[16];
+    uint32_t nseen = 0u;
+    Bindings *current = &bb->current;
+    if (current->eq_len != 0u)
+        return false;
+    for (CettaExprIndex i = 1u; i < lhs->expr.len; i++) {
+        Atom *pi = lhs->expr.elems[i];
+        Atom *qi = query->expr.elems[i];
+        if (!pi || !qi || pi->kind != ATOM_VAR || atom_has_vars(qi))
+            return false;
+        VarId eid = var_epoch_id(pi->var_id, epoch);
+        if (bindings_lookup_id(current, eid))
+            return false;
+        for (uint32_t j = 0u; j < nseen; j++)
+            if (seen[j] == eid)
+                return false;
+        if (nseen >= (sizeof seen / sizeof seen[0]))
+            return false;
+        seen[nseen++] = eid;
+    }
+
+    for (CettaExprIndex i = 1u; i < lhs->expr.len; i++) {
+        Atom *binding_var = epoch_var_atom(a, lhs->expr.elems[i], epoch);
+        if (!binding_var || !bindings_builder_add_var_fresh(
+                bb, binding_var, query->expr.elems[i]))
+            return false;
+    }
     return true;
 }
 

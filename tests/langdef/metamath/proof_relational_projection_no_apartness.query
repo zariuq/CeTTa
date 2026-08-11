@@ -1,0 +1,5 @@
+(ProofRelationalProjectionApartnessEntryV1
+  RelationalProjectionCanaryProofV1
+  (ProofRelationalLabelV1
+    RelationalProjectionCanaryProofV1 projection-canary-identity-v1)
+  ?left ?right)

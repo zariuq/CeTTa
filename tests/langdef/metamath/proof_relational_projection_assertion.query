@@ -1,0 +1,9 @@
+(source-proof-trace-input-assertion-v1
+  (ProofRelationalLabelV1
+    RelationalProjectionCanaryProofV1 projection-canary-identity-v1)
+  (ProofRelationalTokenV1
+    RelationalProjectionCanaryProofV1 projection-canary-wff-v1)
+  (ProofSequenceConsV1
+    (ProofRelationalTokenV1
+      RelationalProjectionCanaryProofV1 projection-canary-x-v1)
+    ProofSequenceNilV1))

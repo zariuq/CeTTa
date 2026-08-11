@@ -97,10 +97,12 @@ typedef struct {
 
 /*
  * A borrowed, already-decoded scalar sequence.  Byte offsets describe the
- * normalized UTF-8 encoding of the sequence and begin at zero.  A derived
- * view performs no source work, so decoded_byte_len and source_pass_count are
- * both zero.  A producer that performs the source decode sets them to the
- * complete byte length and one respectively.
+ * normalized UTF-8 encoding of the sequence and begin at zero.  An ASCII
+ * identity view instead borrows ascii_bytes: every byte is one scalar and
+ * every scalar position is its byte offset.  A derived view performs no
+ * source work, so decoded_byte_len and source_pass_count are both zero.  A
+ * producer that performs the source decode or ASCII validation sets them to
+ * the complete byte length and one respectively.
  */
 typedef struct {
     const uint32_t *codepoints;
@@ -109,7 +111,30 @@ typedef struct {
     uint32_t input_byte_len;
     uint32_t decoded_byte_len;
     uint32_t source_pass_count;
+    const uint8_t *ascii_bytes;
 } CettaLpNativeUtf8ScalarView;
+
+static inline bool cetta_lp_native_utf8_scalar_view_has_storage(
+    const CettaLpNativeUtf8ScalarView *view) {
+    return view &&
+        (view->ascii_bytes ||
+         (view->byte_offsets &&
+          (view->scalar_len == 0u || view->codepoints)));
+}
+
+static inline uint32_t cetta_lp_native_utf8_scalar_view_scalar_at(
+    const CettaLpNativeUtf8ScalarView *view,
+    uint32_t index) {
+    return view->ascii_bytes
+        ? (uint32_t)view->ascii_bytes[index]
+        : view->codepoints[index];
+}
+
+static inline uint32_t cetta_lp_native_utf8_scalar_view_byte_offset(
+    const CettaLpNativeUtf8ScalarView *view,
+    uint32_t index) {
+    return view->ascii_bytes ? index : view->byte_offsets[index];
+}
 
 /*
  * An owned scalar view produced by exactly one complete UTF-8 source pass.
@@ -128,6 +153,18 @@ void cetta_lp_native_utf8_scalar_buffer_free(
     CettaLpNativeUtf8ScalarBuffer *buffer);
 
 bool cetta_lp_native_utf8_scalar_buffer_decode(
+    CettaLpNativeUtf8ScalarBuffer *buffer,
+    const uint8_t *input_bytes,
+    size_t input_byte_len,
+    char *error_buf,
+    size_t error_buf_size);
+
+/*
+ * Prepare one validated source view.  ASCII input is borrowed without
+ * materializing scalar or offset arrays; other UTF-8 input is decoded into
+ * owned arrays.  The borrowed view remains valid only while input_bytes does.
+ */
+bool cetta_lp_native_utf8_scalar_buffer_prepare(
     CettaLpNativeUtf8ScalarBuffer *buffer,
     const uint8_t *input_bytes,
     size_t input_byte_len,

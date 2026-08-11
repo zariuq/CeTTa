@@ -123,23 +123,27 @@
 (= (lib_parse:mm-proof-start-token $token $next)
    (if (== $token "(")
      (lib_parse:mm-emit MM_LP $next ProofHeader)
+     (if (== $token "?")
+       (lib_parse:mm-emit MM_UNKNOWN $next ProofNormal)
      (if (lib_parse:mm-control-token $token)
        (Rejected (mm-lex bad-proof-token $token))
        (if (lib_parse:mm-proof-reference-valid $token)
          (lib_parse:mm-emit (lib_parse:mm-proof-label $token) $next ProofNormal)
-         (Rejected (mm-lex invalid-proof-reference $token))))))
+         (Rejected (mm-lex invalid-proof-reference $token)))))))
 
 (= (lib_parse:mm-proof-normal-token $token $next)
    (if (== $token "$.")
      (lib_parse:mm-emit MM_DOT $next Start)
      (if (or (== $token "(") (== $token ")"))
        (Rejected (mm-lex bad-proof-token $token))
+       (if (== $token "?")
+         (lib_parse:mm-emit MM_UNKNOWN $next ProofNormal)
        (if (lib_parse:mm-control-token $token)
          (Rejected (mm-lex bad-proof-token $token))
          (if (lib_parse:mm-proof-reference-valid $token)
            (lib_parse:mm-emit
              (lib_parse:mm-proof-label $token) $next ProofNormal)
-           (Rejected (mm-lex invalid-proof-reference $token)))))))
+           (Rejected (mm-lex invalid-proof-reference $token))))))))
 
 (= (lib_parse:mm-proof-header-token $token $next)
    (if (== $token ")")
@@ -239,8 +243,8 @@
 ; keeps import resolution explicit and permits identity hashing at admission.
 (= (lib_parse:mm-parse-database-shared $grammar-path $tokens)
    (gparse:slr-parse-shared
-     $grammar-path lib_parse:mm-source-grammar database $tokens))
+     $grammar-path lib_parse:mm-source-grammar outer_database $tokens))
 
 (= (lib_parse:mm-parse-statement-shared $grammar-path $tokens)
    (gparse:slr-parse-shared
-     $grammar-path lib_parse:mm-source-grammar statement $tokens))
+     $grammar-path lib_parse:mm-source-grammar outer_statement $tokens))

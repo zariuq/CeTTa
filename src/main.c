@@ -18,6 +18,7 @@
 #include "rhocalc_core.h"
 #include "rhocalc_syntax.h"
 #include "stats.h"
+#include "native/langdef_module.h"
 #include <inttypes.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -961,6 +962,7 @@ typedef struct {
     CettaSyntaxId syntax;
     const CettaLanguageSpec *lang;
     const CettaProfile *profile;
+    char langdef_manifest_path[PATH_MAX];
 } CettaCliEndpoint;
 
 static void endpoint_init(CettaCliEndpoint *endpoint, const char *lang_name) {
@@ -969,11 +971,28 @@ static void endpoint_init(CettaCliEndpoint *endpoint, const char *lang_name) {
     endpoint->syntax = CETTA_SYNTAX_AUTO;
     endpoint->lang = NULL;
     endpoint->profile = NULL;
+    endpoint->langdef_manifest_path[0] = '\0';
 }
 
-static bool endpoint_resolve(CettaCliEndpoint *endpoint, const char *role) {
+static bool endpoint_resolve(CettaCliEndpoint *endpoint, const char *role,
+                             const char *exec_path) {
+    char langdef_error[256] = {0};
+
     endpoint->lang = cetta_language_lookup(endpoint->lang_name);
     if (!endpoint->lang) {
+        if (cetta_langdef_resolve_named_manifest_v1(
+                exec_path, endpoint->lang_name,
+                endpoint->langdef_manifest_path,
+                sizeof(endpoint->langdef_manifest_path),
+                langdef_error, sizeof(langdef_error))) {
+            if (endpoint->profile_name) {
+                fprintf(stderr,
+                        "error: %s language definition '%s' has no named profiles\n",
+                        role, endpoint->lang_name);
+                return false;
+            }
+            return true;
+        }
         fprintf(stderr, "error: unknown %s language '%s'\n",
                 role, endpoint->lang_name);
         cetta_language_print_inventory(stderr);
@@ -1217,6 +1236,7 @@ static void print_usage(FILE *out) {
 #endif
     fputs("       cetta [--lang rhocalc --profile <strict-core|cost>] [--syntax <mrho|rho>] <file>\n", out);
     fputs("       cetta [--lang <name>] [--import-mode <upstream|relative|ancestor-walk>] <file.metta>\n", out);
+    fputs("       cetta --lang <langdef> --langdef-proof-backend <authority|generated-relational-audit-v1|frame-cache-diagnostic-v1> <file>\n", out);
     fputs("       note: repeated --lang under --translate means source then target endpoint\n", out);
     fputs("       cetta --help | -h                    # print this usage summary\n", out);
     fputs("       cetta --version | -v                 # print binary version and build mode\n", out);
@@ -1902,6 +1922,96 @@ static MainPettaBlockLoadResult main_petta_load_declaration_block(
               : MAIN_PETTA_BLOCK_LOAD_FAILED;
 }
 
+static int main_run_langdef_source(const char *manifest_path,
+                                   const char *filename,
+                                   const char *inline_text,
+                                   CettaLangDefProofExecutionV1 proof_execution,
+                                   bool emit_runtime_stats) {
+    Arena arena;
+    SymbolTable symbol_table;
+    VarInternTable var_intern_table;
+    HashConsTable hashcons_table;
+    CettaLangDefRunReceiptV1 receipt = {
+        .status = CETTA_LANGDEF_RUN_V1_ERROR,
+        .result = NULL,
+    };
+    char error[512] = {0};
+    bool ok;
+    int rc;
+
+    arena_init(&arena);
+    arena_set_runtime_kind(&arena, CETTA_ARENA_RUNTIME_KIND_PERSISTENT);
+    symbol_table_init(&symbol_table);
+    symbol_table_init_builtins(&symbol_table, &g_builtin_syms);
+    g_symbols = &symbol_table;
+    var_intern_init(&var_intern_table);
+    g_var_intern = &var_intern_table;
+    hashcons_init(&hashcons_table);
+    g_hashcons = &hashcons_table;
+    arena_set_hashcons(&arena, &hashcons_table);
+
+    if (emit_runtime_stats) {
+        cetta_runtime_stats_reset();
+        cetta_runtime_stats_enable();
+    }
+    ok = inline_text
+        ? cetta_langdef_run_bytes_with_proof_execution_v1(
+              manifest_path, (const uint8_t *)inline_text,
+              strlen(inline_text), NULL, proof_execution,
+              &arena, &receipt,
+              error, sizeof(error))
+        : cetta_langdef_run_file_with_proof_execution_v1(
+              manifest_path, filename, proof_execution,
+              &arena, &receipt,
+              error, sizeof(error));
+    if (!ok) {
+        fprintf(stderr, "error: %s\n",
+                error[0] ? error : "language-definition execution failed");
+        rc = 1;
+    } else {
+        FILE *output =
+            receipt.status == CETTA_LANGDEF_RUN_V1_ACCEPTED ||
+                    receipt.status ==
+                        CETTA_LANGDEF_RUN_V1_ACCEPTED_INCOMPLETE
+            ? stdout : stderr;
+        atom_print(receipt.result, output);
+        fputc('\n', output);
+        switch (receipt.status) {
+        case CETTA_LANGDEF_RUN_V1_ACCEPTED:
+        case CETTA_LANGDEF_RUN_V1_ACCEPTED_INCOMPLETE:
+            rc = 0;
+            break;
+        case CETTA_LANGDEF_RUN_V1_REJECTED:
+            rc = 2;
+            break;
+        case CETTA_LANGDEF_RUN_V1_INCOMPLETE:
+            rc = 3;
+            break;
+        case CETTA_LANGDEF_RUN_V1_UNSUPPORTED:
+            rc = 4;
+            break;
+        case CETTA_LANGDEF_RUN_V1_ERROR:
+        default:
+            rc = 1;
+            break;
+        }
+    }
+    if (emit_runtime_stats) {
+        CettaRuntimeStats stats;
+        cetta_runtime_stats_snapshot(&stats);
+        cetta_runtime_stats_print(stderr, &stats);
+    }
+
+    g_hashcons = NULL;
+    g_var_intern = NULL;
+    g_symbols = NULL;
+    hashcons_free(&hashcons_table);
+    var_intern_free(&var_intern_table);
+    symbol_table_free(&symbol_table);
+    arena_free(&arena);
+    return rc;
+}
+
 int main(int argc, char **argv) {
     /* Install SIGSEGV handler on alternate stack so it works during stack overflow */
     {
@@ -1935,6 +2045,9 @@ int main(int argc, char **argv) {
     bool compile_stdlib_mode = false;
     bool count_only = false;
     bool emit_runtime_stats = false;
+    CettaLangDefProofExecutionV1 langdef_proof_execution =
+        CETTA_LANGDEF_PROOF_EXECUTION_V1_AUTHORITY;
+    bool langdef_proof_execution_requested = false;
     bool emit_prime_need_trace = false;
     bool prime_need_trace_failed = false;
     bool petta_strict = false;
@@ -2003,6 +2116,32 @@ int main(int argc, char **argv) {
         }
         if (strcmp(argv[i], "--emit-runtime-stats") == 0) {
             emit_runtime_stats = true;
+            continue;
+        }
+        if (strcmp(argv[i], "--langdef-proof-backend") == 0) {
+            if (i + 1 >= argc) {
+                print_usage(stderr);
+                return 1;
+            }
+            const char *value = argv[++i];
+            if (strcmp(value, "authority") == 0) {
+                langdef_proof_execution =
+                    CETTA_LANGDEF_PROOF_EXECUTION_V1_AUTHORITY;
+            } else if (strcmp(
+                           value, "frame-cache-diagnostic-v1") == 0) {
+                langdef_proof_execution =
+                    CETTA_LANGDEF_PROOF_EXECUTION_V1_FRAME_CACHE_DIAGNOSTIC;
+            } else if (strcmp(
+                           value, "generated-relational-audit-v1") == 0) {
+                langdef_proof_execution =
+                    CETTA_LANGDEF_PROOF_EXECUTION_V1_GENERATED_RELATIONAL_AUDIT;
+            } else {
+                fprintf(stderr,
+                        "error: unknown langdef proof backend '%s'\n",
+                        value);
+                return 2;
+            }
+            langdef_proof_execution_requested = true;
             continue;
         }
         if (strcmp(argv[i], "--emit-prime-need-trace") == 0) {
@@ -2235,11 +2374,55 @@ int main(int argc, char **argv) {
     if (translate_mode && !target_endpoint.lang_name) {
         target_endpoint = source_endpoint;
     }
-    if (!endpoint_resolve(&source_endpoint, "source")) {
+    if (!endpoint_resolve(&source_endpoint, "source", argv[0])) {
         free(inline_buf);
         return 2;
     }
-    if (translate_mode && !endpoint_resolve(&target_endpoint, "target")) {
+    if (translate_mode &&
+        !endpoint_resolve(&target_endpoint, "target", argv[0])) {
+        free(inline_buf);
+        return 2;
+    }
+    if (translate_mode && target_endpoint.langdef_manifest_path[0]) {
+        fprintf(stderr,
+                "error: language-definition endpoints do not support translation yet\n");
+        free(inline_buf);
+        return 2;
+    }
+
+    if (source_endpoint.langdef_manifest_path[0]) {
+        bool unsupported_option =
+            translate_mode || compile_mode || compile_stdlib_mode ||
+            list_profiles || source_endpoint.syntax != CETTA_SYNTAX_AUTO ||
+            import_mode_overridden || petta_strict || petta_strict_det ||
+            emit_prime_need_trace || prime_rewrite_frontier ||
+            prefer_rationals_cli || eval_hashcons || fuel_override > 0 ||
+            num_threads_requested || rho_reduction_limit_requested ||
+            rho_scheduler_requested ||
+            mm2_step_limit != CETTA_MM2_DEFAULT_RUN_STEPS ||
+            space_engine != SPACE_ENGINE_NATIVE;
+        if (unsupported_option) {
+            fprintf(stderr,
+                    "error: selected language definition supports direct source execution only\n");
+            free(inline_buf);
+            return 2;
+        }
+        if (!filename && !inline_text) {
+            print_usage(stderr);
+            free(inline_buf);
+            return 1;
+        }
+        int langdef_rc = main_run_langdef_source(
+            source_endpoint.langdef_manifest_path,
+            filename, inline_text, langdef_proof_execution,
+            emit_runtime_stats);
+        free(inline_buf);
+        return langdef_rc;
+    }
+
+    if (langdef_proof_execution_requested) {
+        fprintf(stderr,
+                "error: --langdef-proof-backend requires a loaded language definition\n");
         free(inline_buf);
         return 2;
     }
