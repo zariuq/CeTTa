@@ -3,9 +3,19 @@
 #include "parser.h"
 #include "he_compiled_reader.h"
 #include "gslt_language_runtime.h"
+#include "gslt_abt_provider_v1.h"
+#include "gslt_revisioned_space_provider_v1.h"
+#include "gslt_support_transform_runtime.h"
+#include "generated/gslt_il_language_v1.generated.h"
+#include "generated/metta_interact_language_v1.generated.h"
+#include "generated/mm2_gslt_profile_v1.generated.h"
 #include "generated/subzero_language_v1.generated.h"
 #include "generated/zero_language_v1.generated.h"
 #include "generated/zero_exp_language_v1.generated.h"
+#include "generated/zero_emit_language_v1.generated.h"
+#include "generated/zero_interact_language_v1.generated.h"
+#include "generated/zero_interact_provider_catalog_v1.generated.h"
+#include "generated/zerouv_language_v1.generated.h"
 #include "petta_compiled_reader.h"
 #include "petta_typecheck.h"
 #include "lib_prolog.h"
@@ -45,7 +55,66 @@ static bool g_quiet_results = false;
 static uint64_t g_prime_need_trace_form = 0u;
 static const uint64_t CETTA_MM2_DEFAULT_RUN_STEPS = 1000000000000000ULL;
 static const uint32_t CETTA_RHOCALC_DEFAULT_REDUCTION_LIMIT = 100000u;
+static const int CETTA_MM2_GSLT_EXIT_EXPIRED = 3;
 static const int CETTA_RHOCALC_EXIT_REDUCTION_LIMIT_EXHAUSTED = 3;
+
+static const CettaGsltEmbeddedLanguageV1 *
+embedded_gslt_descriptor(CettaLanguageId language_id,
+                         const CettaProfile *profile) {
+    switch (language_id) {
+    case CETTA_LANGUAGE_SUBZERO:
+        return &cetta_subzero_language_v1;
+    case CETTA_LANGUAGE_ZERO:
+        if (profile && profile->id == CETTA_PROFILE_ZERO_EXP)
+            return &cetta_zero_exp_language_v1;
+        if (profile && profile->id == CETTA_PROFILE_ZERO_EMIT)
+            return &cetta_zero_emit_language_v1;
+        if (profile && profile->id == CETTA_PROFILE_ZERO_INTERACT)
+            return &cetta_zero_interact_language_v1;
+        return &cetta_zero_language_v1;
+    case CETTA_LANGUAGE_GSLT_IL:
+        return &cetta_gslt_il_language_v1;
+    case CETTA_LANGUAGE_ZEROUV:
+        return &cetta_zerouv_language_v1;
+    case CETTA_LANGUAGE_METTA_INTERACT:
+        return &cetta_metta_interact_language_v1;
+    default:
+        return NULL;
+    }
+}
+
+static const CettaGsltRevisionedSpaceSchemaV1
+    CETTA_ZERO_INTERACT_SPACE_SCHEMA_V1 = {
+        .open_relation = "zero-space-open",
+        .open_semantic_id = "zero.revisioned-space.open.v1",
+        .member_relation = "zero-space-member",
+        .member_semantic_id = "zero.revisioned-space.member.v1",
+        .candidate_relation = "zero-space-candidate",
+        .candidate_semantic_id = "zero.revisioned-space.candidate.v1",
+        .emit_relation = "zero-space-emit",
+        .emit_semantic_id = "zero.revisioned-space.emit.v1",
+        .program_nil_constructor = "zero-program-nil",
+        .program_cons_constructor = "zero-program-cons",
+        .world_token_constructor = "zero-world-token",
+        .stored_occurrence_constructor = "zero-space-stored-occurrence",
+        .emitted_occurrence_constructor = "zero-space-emitted-occurrence",
+        .open_receipt_constructor = "zero-space-open-receipt",
+        .emit_receipt_constructor = "zero-space-emit-receipt",
+};
+
+static const CettaGsltAbtProviderSchemaV1
+    CETTA_ZERO_INTERACT_ABT_SCHEMA_V1 = {
+        .field_depth_relation = "qabt-field-depth",
+        .field_depth_semantic_id = "abt.default-signature.field-depth.v1",
+        .transport_relation = "qabt-transport",
+        .transport_semantic_id = "abt.default-signature.transport.v1",
+};
+
+typedef enum {
+    CETTA_MM2_GSLT_REALIZATION_AUTO = 0,
+    CETTA_MM2_GSLT_REALIZATION_NATIVE_C,
+    CETTA_MM2_GSLT_REALIZATION_RUST_PATHMAP_ABI,
+} CettaMm2GsltRealization;
 
 typedef enum {
     CETTA_DISPLAY_VARS_AUTO = 0,
@@ -109,7 +178,8 @@ static bool result_set_all_empty(ResultSet *rs,
     for (uint32_t i = 0; i < rs->len; i++) {
         Atom *item = rs->items[i];
         if (!(language_id != CETTA_LANGUAGE_PRIME &&
-              language_id != CETTA_LANGUAGE_ZERO && atom_is_empty(item)) &&
+              !cetta_language_uses_embedded_gslt(language_id) &&
+              atom_is_empty(item)) &&
             !(item->kind == ATOM_EXPR && item->expr.len == 0)) {
             return false;
         }
@@ -720,6 +790,97 @@ static bool write_pretty_results(FILE *out, ResultSet *rs, bool pretty_vars,
     return true;
 }
 
+static bool mm2_read_u32_be(const uint8_t *packet, size_t packet_len,
+                            size_t *offset, uint32_t *out_value) {
+    if (!packet || !offset || !out_value || *offset > packet_len ||
+        packet_len - *offset < 4u) {
+        return false;
+    }
+    *out_value = ((uint32_t)packet[*offset] << 24) |
+                 ((uint32_t)packet[*offset + 1u] << 16) |
+                 ((uint32_t)packet[*offset + 2u] << 8) |
+                 (uint32_t)packet[*offset + 3u];
+    *offset += 4u;
+    return true;
+}
+
+static bool mm2_decode_expr_rows(Arena *arena,
+                                 const uint8_t *packet,
+                                 size_t packet_len,
+                                 uint64_t row_count,
+                                 Atom ***out_atoms,
+                                 const char **out_error) {
+    if (out_atoms)
+        *out_atoms = NULL;
+    if (out_error)
+        *out_error = NULL;
+    if (!arena || (!packet && packet_len != 0u) || !out_atoms ||
+        row_count > SIZE_MAX / sizeof(Atom *)) {
+        if (out_error)
+            *out_error = "invalid MM2 bridge observation packet";
+        return false;
+    }
+
+    Atom **atoms = row_count
+        ? cetta_malloc(sizeof(Atom *) * (size_t)row_count)
+        : NULL;
+    size_t offset = 0u;
+    for (uint64_t row = 0u; row < row_count; row++) {
+        uint32_t expr_len = 0u;
+        if (!mm2_read_u32_be(packet, packet_len, &offset, &expr_len) ||
+            expr_len == 0u || offset > packet_len ||
+            (size_t)expr_len > packet_len - offset ||
+            !cetta_mm2_bridge_expr_packet_to_atom(
+                arena, packet + offset, expr_len,
+                &atoms[(size_t)row], out_error)) {
+            free(atoms);
+            if (out_error && !*out_error)
+                *out_error = "malformed MM2 bridge observation row";
+            return false;
+        }
+        offset += expr_len;
+    }
+    if (offset != packet_len) {
+        free(atoms);
+        if (out_error)
+            *out_error = "MM2 bridge observation has trailing rows";
+        return false;
+    }
+    *out_atoms = atoms;
+    return true;
+}
+
+static bool mm2_print_alpha_canonical_atoms(Arena *arena,
+                                            Atom *const *atoms,
+                                            size_t atom_count,
+                                            FILE *out,
+                                            const char **out_error) {
+    if (out_error)
+        *out_error = NULL;
+    if (!arena || (!atoms && atom_count != 0u) || !out) {
+        if (out_error)
+            *out_error = "invalid MM2 canonical observation arguments";
+        return false;
+    }
+    Atom **canonical = atom_count
+        ? cetta_malloc(sizeof(Atom *) * atom_count)
+        : NULL;
+    for (size_t index = 0u; index < atom_count; index++) {
+        canonical[index] = cetta_mm2_canonical_surface_atom(
+            arena, atoms[index], out_error);
+        if (!canonical[index]) {
+            free(canonical);
+            return false;
+        }
+    }
+    for (size_t index = 0u; index < atom_count; index++) {
+        atom_print(canonical[index], out);
+        fputc('\n', out);
+    }
+    free(canonical);
+    return true;
+}
+
 static int run_mm2_program_via_mork(Arena *arena, Atom **atoms, int n,
                                     bool count_only, uint64_t step_limit) {
     CettaMorkSpaceHandle *space = NULL;
@@ -788,6 +949,157 @@ static int run_mm2_program_via_mork(Arena *arena, Atom **atoms, int n,
 done:
     cetta_mork_bridge_bytes_free(dump, dump_len);
     cetta_mork_bridge_space_free(space);
+    return rc;
+}
+
+static int run_mm2_program_via_gslt(
+    Arena *arena, Atom **atoms, int n, bool count_only, uint64_t step_limit,
+    CettaMm2GsltRealization realization) {
+    bool physical_supported = false;
+    if (realization != CETTA_MM2_GSLT_REALIZATION_NATIVE_C &&
+        cetta_mork_bridge_is_available() &&
+        cetta_mork_bridge_support_transform_profile_supported_v1(
+            cetta_mm2_gslt_profile_v1.physical_profile_packet,
+            cetta_mm2_gslt_profile_v1.physical_profile_packet_size,
+            &physical_supported) &&
+        physical_supported) {
+        CettaMorkSpaceHandle *space = cetta_mork_bridge_space_new();
+        if (!space) {
+            fprintf(stderr,
+                    "error: MM2 GSLT physical space allocation failed: %s\n",
+                    cetta_mork_bridge_last_error());
+            return 1;
+        }
+        uint64_t ignored = 0u;
+        uint64_t performed = 0u;
+        uint64_t final_size = 0u;
+        uint8_t *rows_packet = NULL;
+        size_t rows_packet_len = 0u;
+        uint64_t dump_rows = 0u;
+        bool has_work = false;
+        int physical_rc = 0;
+        for (int index = 0; index < n; index++) {
+            char *surface = cetta_mm2_atom_to_surface_string(
+                arena, atoms[index]);
+            if (!cetta_mork_bridge_space_add_text(
+                    space, surface, &ignored)) {
+                fprintf(stderr,
+                        "error: MM2 GSLT physical load failed: %s\n",
+                        cetta_mork_bridge_last_error());
+                physical_rc = 1;
+                goto physical_done;
+            }
+        }
+        if (!cetta_mork_bridge_space_step_support_transform_v1(
+                space,
+                cetta_mm2_gslt_profile_v1.physical_profile_packet,
+                cetta_mm2_gslt_profile_v1.physical_profile_packet_size,
+                step_limit, &performed) ||
+            !cetta_mork_bridge_space_has_support_transform_work_v1(
+                space,
+                cetta_mm2_gslt_profile_v1.physical_profile_packet,
+                cetta_mm2_gslt_profile_v1.physical_profile_packet_size,
+                &has_work) ||
+            !cetta_mork_bridge_space_size(space, &final_size)) {
+            fprintf(stderr,
+                    "error: MM2 GSLT physical execution failed: %s\n",
+                    cetta_mork_bridge_last_error());
+            physical_rc = 1;
+            goto physical_done;
+        }
+        if (count_only) {
+            fprintf(stdout, "%" PRIu64 "\n", final_size);
+        } else {
+            Atom **observed = NULL;
+            const char *decode_error = NULL;
+            if (!cetta_mork_bridge_space_dump_expr_rows(
+                    space, &rows_packet, &rows_packet_len, &dump_rows)) {
+                fprintf(stderr,
+                        "error: MM2 GSLT physical observation failed: %s\n",
+                        cetta_mork_bridge_last_error());
+                physical_rc = 1;
+                goto physical_done;
+            }
+            if (dump_rows != final_size ||
+                !mm2_decode_expr_rows(
+                    arena, rows_packet, rows_packet_len, dump_rows,
+                    &observed, &decode_error)) {
+                fprintf(stderr,
+                        "error: MM2 GSLT physical observation decode failed: %s\n",
+                        decode_error ? decode_error : "row count mismatch");
+                physical_rc = 1;
+                goto physical_done;
+            }
+            for (uint64_t row = 0u; row < dump_rows; row++) {
+                Atom *surface = cetta_mm2_canonical_surface_atom(
+                    arena, observed[(size_t)row], &decode_error);
+                if (!surface) {
+                    fprintf(stderr,
+                            "error: MM2 GSLT physical observation could not "
+                            "be projected: %s\n",
+                            decode_error ? decode_error : "unknown bridge error");
+                    free(observed);
+                    physical_rc = 1;
+                    goto physical_done;
+                }
+                atom_print(surface, stdout);
+                fputc('\n', stdout);
+            }
+            free(observed);
+        }
+        if (has_work) {
+            fprintf(stderr,
+                    "(Mm2GsltStatus expired steps=%" PRIu64
+                    " residual-atoms=%" PRIu64 ")\n",
+                    performed, final_size);
+            physical_rc = CETTA_MM2_GSLT_EXIT_EXPIRED;
+        }
+
+physical_done:
+        cetta_mork_bridge_bytes_free(rows_packet, rows_packet_len);
+        cetta_mork_bridge_space_free(space);
+        return physical_rc;
+    }
+    if (realization == CETTA_MM2_GSLT_REALIZATION_RUST_PATHMAP_ABI) {
+        fprintf(stderr,
+                "error: requested MM2 GSLT Rust/PathMap via C ABI "
+                "realization is unavailable: %s\n",
+                cetta_mork_bridge_last_error());
+        return 2;
+    }
+
+    CettaGsltSupportTransformResultV1 result = {0};
+    char error[512] = {0};
+    if (!cetta_gslt_support_transform_run_v1(
+            &cetta_mm2_gslt_profile_v1, arena, atoms, (size_t)n,
+            step_limit, &result, error, sizeof(error))) {
+        fprintf(stderr, "error: MM2 GSLT execution failed: %s\n",
+                error[0] ? error : "unknown support-transform fault");
+        cetta_gslt_support_transform_result_free_v1(&result);
+        return 1;
+    }
+
+    int rc = 0;
+    const char *canonical_error = NULL;
+    if (count_only) {
+        fprintf(stdout, "%zu\n", result.atom_count);
+    } else if (!mm2_print_alpha_canonical_atoms(
+                   arena, result.atoms, result.atom_count,
+                   stdout, &canonical_error)) {
+        fprintf(stderr,
+                "error: MM2 GSLT reference observation could not be "
+                "canonicalized: %s\n",
+                canonical_error ? canonical_error : "unknown bridge error");
+        rc = 1;
+    }
+    if (rc == 0 && result.outcome == CETTA_GSLT_SUPPORT_EXPIRED) {
+        fprintf(stderr,
+                "(Mm2GsltStatus expired steps=%" PRIu64
+                " residual-atoms=%zu)\n",
+                result.steps, result.atom_count);
+        rc = CETTA_MM2_GSLT_EXIT_EXPIRED;
+    }
+    cetta_gslt_support_transform_result_free_v1(&result);
     return rc;
 }
 
@@ -883,7 +1195,7 @@ static void write_results(FILE *out, ResultSet *rs,
     }
 
     bool hide_legacy_empty = language_id != CETTA_LANGUAGE_PRIME &&
-                             language_id != CETTA_LANGUAGE_ZERO;
+        !cetta_language_uses_embedded_gslt(language_id);
     for (uint32_t i = 0; i < rs->len; i++) {
         if (!hide_legacy_empty || !atom_is_empty(rs->items[i]))
             visible_len++;
@@ -1246,14 +1558,42 @@ static void print_usage(FILE *out) {
     fputs("       cetta --num-threads <n> <file>             # set OS-thread budget for parallel-capable execution\n", out);
     fputs("       cetta --rho-reduction-limit <n> <file>            # run at most n strict-core rho COMM reductions (default 100000)\n", out);
     fputs("       cetta --rho-scheduler <canonical|rotating> <file> # select strict-core rho reduction policy\n", out);
-    fputs("       cetta --lang mm2 --steps <n> <file.mm2> # run at most n MM2 steps\n", out);
+    fputs("       cetta --lang mm2 [--steps <n>] <file.mm2> # upstream MORK ABI\n", out);
+    fputs("       cetta --lang mm2 --profile gslt [--space-engine <native|pathmap>] [--steps <n>] <file.mm2>\n", out);
     fputs("       cetta --space-engine <name> <file.metta>\n", out);
     fputs("       cetta --space-match-backend <name> <file.metta>   # alias for --space-engine\n", out);
-    fputs("       cetta --lang <zero|subzero> --gslt-realization <horn-reference|compiled-worklist> <file.metta>\n", out);
+    fputs("       cetta --lang <zero|subzero|gslt-il|zerouv|metta-interact> --gslt-realization <horn-reference|compiled-worklist> <file.metta>\n", out);
+    fputs("       cetta --lang zero <file.metta> # direct (eval subject) and (zero-query pattern template) requests; ! is not Zero syntax\n", out);
+    fputs("       cetta --lang zero --profile emit <file.metta> # revision-threaded match/let/eval/emit; add-atom aliases persistent emit\n", out);
+    fputs("       cetta --lang zero --profile interact [--space-engine <native|pathmap>] <file.metta> # authenticated immutable revisions; native C or Rust/PathMap via C ABI\n", out);
+    fputs("       cetta --lang gslt-il <file.metta> # spaces, directed equations, routes, and one-step ! requests\n", out);
+    fputs("       cetta --lang zerouv <file.metta> # productive step, finite paths, authored control, and recurrence articles\n", out);
+    fputs("       cetta --lang metta-interact <file.metta> # revisioned events, continuations, and inspectable cost\n", out);
     fputs("       cetta [--lang <name>] --list-profiles\n", out);
     fputs("       cetta --list-space-engines\n", out);
     fputs("       cetta --list-space-match-backends                 # alias for --list-space-engines\n", out);
     fputs("       cetta --list-languages\n", out);
+    fputs("\nMM2 execution contracts:\n", out);
+    fputs("  default      upstream support-valued MORK ABI; least serialized exec atom first\n", out);
+    fputs("  gslt         authored support-transform profile; native C or Rust/PathMap via C ABI\n", out);
+    fputs("  gslt input   comma patterns, or I factors BTM / == / !=\n", out);
+    fputs("  gslt output  comma additions, or O sinks + / - / head / tail / count / pure-f64\n", out);
+    fputs("  gslt unknown unsupported exec directives remain inert in the final support\n", out);
+    fputs("  gslt order   least full directive by MORK compact-expression byte order\n", out);
+    fputs("  gslt plans   generated exec is decoded at runtime and cached by alpha-normalized structure\n", out);
+    fputs("  gslt engine  native selects native C; pathmap selects Rust/PathMap via the C ABI\n", out);
+    fputs("  gslt auto    without --space-engine, prefer Rust/PathMap when present, otherwise native C\n", out);
+    fprintf(out,
+            "  --steps n    exact external upper bound (default %" PRIu64 "); zero executes nothing\n",
+            CETTA_MM2_DEFAULT_RUN_STEPS);
+    fputs("  observation  final support dump; GSLT expiration is explicit and exits with status 3\n", out);
+    fputs("  profiles     plain mm2 retains upstream MORK through its C ABI; gslt selects authored semantics\n", out);
+    fputs("\nGSLT-IL authoring:\n", out);
+    fputs("  (in &space (= left right))       directed rule in a named semantic space\n", out);
+    fputs("  (route name &source &target)     forward operational route declaration\n", out);
+    fputs("  (= (name left) right)            finite route action\n", out);
+    fputs("  (! (in &space state)) | (! (name state))  one generating step; chaining is a runner layer\n", out);
+    fputs("  route laws   identity/composition belong to the admitted diagram; exactness requires evidence\n", out);
 }
 
 static void print_version(FILE *out) {
@@ -1664,6 +2004,9 @@ typedef struct {
     void *document_reader_context;
     void (*document_reader_free)(void *context);
     CettaGsltLanguage *gslt_language;
+    CettaGsltRevisionedSpaceProviderV1 *gslt_revisioned_space_provider;
+    CettaGsltAbtProviderV1 *gslt_abt_provider;
+    CettaGsltOwnedProviderRegistryV1 gslt_physical_providers;
 } CettaMainCleanup;
 
 static void cetta_main_cleanup_registry_spaces(
@@ -1724,6 +2067,13 @@ static void cetta_main_cleanup(CettaMainCleanup *cleanup) {
         cleanup->document_reader_free(cleanup->document_reader_context);
     cleanup->document_reader_context = NULL;
     cleanup->document_reader_free = NULL;
+    cetta_gslt_owned_provider_registry_free_v1(
+        &cleanup->gslt_physical_providers);
+    cetta_gslt_revisioned_space_provider_free_v1(
+        cleanup->gslt_revisioned_space_provider);
+    cleanup->gslt_revisioned_space_provider = NULL;
+    cetta_gslt_abt_provider_free_v1(cleanup->gslt_abt_provider);
+    cleanup->gslt_abt_provider = NULL;
     cetta_gslt_language_free(cleanup->gslt_language);
     cleanup->gslt_language = NULL;
 
@@ -1992,6 +2342,7 @@ int main(int argc, char **argv) {
     bool rho_scheduler_requested = false;
     uint64_t mm2_step_limit = CETTA_MM2_DEFAULT_RUN_STEPS;
     SpaceEngine space_engine = SPACE_ENGINE_NATIVE;
+    bool space_engine_requested = false;
     CettaGsltRealization gslt_realization =
         CETTA_GSLT_REALIZATION_HORN_REFERENCE;
     bool gslt_realization_requested = false;
@@ -2186,6 +2537,7 @@ int main(int argc, char **argv) {
                 space_match_backend_print_inventory(stderr);
                 return 2;
             }
+            space_engine_requested = true;
             continue;
         }
         if (strcmp(argv[i], "--gslt-realization") == 0) {
@@ -2302,10 +2654,10 @@ int main(int argc, char **argv) {
     const CettaLanguageSpec *lang = source_endpoint.lang;
     profile = source_endpoint.profile;
     if (gslt_realization_requested &&
-        source_endpoint.lang->id != CETTA_LANGUAGE_SUBZERO &&
-        source_endpoint.lang->id != CETTA_LANGUAGE_ZERO) {
+        !cetta_language_uses_embedded_gslt(source_endpoint.lang->id)) {
         fprintf(stderr,
-                "error: --gslt-realization requires --lang zero or subzero\n");
+                "error: --gslt-realization requires an embedded generated "
+                "GSLT language (zero, subzero, gslt-il, zerouv, or metta-interact)\n");
         return 2;
     }
 
@@ -2443,6 +2795,16 @@ int main(int argc, char **argv) {
         return 2;
     }
 
+    bool mm2_gslt_profile =
+        profile && profile->id == CETTA_PROFILE_MM2_GSLT;
+    if (mm2_gslt_profile && (compile_mode || compile_stdlib_mode)) {
+        fprintf(stderr,
+                "error: compile modes are not declared observations of "
+                "--lang mm2 --profile gslt\n");
+        free(inline_buf);
+        return 2;
+    }
+
     /* --compile-stdlib: parse .metta file, emit C blob header, exit */
     if (compile_stdlib_mode) {
         Arena tmp_arena;
@@ -2470,6 +2832,7 @@ int main(int argc, char **argv) {
     }
 
     if (!compile_mode && strcmp(lang->canonical, "mm2") == 0 &&
+        !mm2_gslt_profile &&
         filename && !inline_text && path_has_suffix(filename, ".mm2")) {
         int mm2_rc = run_mm2_file_via_mork(filename, count_only, mm2_step_limit);
         free(inline_buf);
@@ -2508,6 +2871,8 @@ int main(int argc, char **argv) {
     cleanup.document_reader_context = NULL;
     cleanup.document_reader_free = NULL;
     cleanup.gslt_language = NULL;
+    cleanup.gslt_revisioned_space_provider = NULL;
+    cleanup.gslt_abt_provider = NULL;
     cleanup.libraries = &libraries;
     cleanup.space = &space;
     cleanup.registry = &registry;
@@ -2549,11 +2914,40 @@ int main(int argc, char **argv) {
             rc = 1;
             goto cleanup;
         }
-        cetta_mm2_lower_atoms(&arena, atoms, n);
+        if (!mm2_gslt_profile)
+            cetta_mm2_lower_atoms(&arena, atoms, n);
     }
     if (emit_runtime_stats) {
         cetta_runtime_stats_reset();
         cetta_runtime_stats_enable();
+    }
+    if (lang_is_mm2 && mm2_gslt_profile) {
+        CettaMm2GsltRealization mm2_realization =
+            CETTA_MM2_GSLT_REALIZATION_AUTO;
+        if (space_engine_requested) {
+            if (space_engine == SPACE_ENGINE_NATIVE) {
+                mm2_realization = CETTA_MM2_GSLT_REALIZATION_NATIVE_C;
+            } else if (space_engine == SPACE_ENGINE_PATHMAP) {
+                mm2_realization =
+                    CETTA_MM2_GSLT_REALIZATION_RUST_PATHMAP_ABI;
+            } else {
+                fprintf(stderr,
+                        "error: MM2 GSLT supports only native or pathmap "
+                        "space engines\n");
+                rc = 2;
+                goto cleanup;
+            }
+        }
+        int mm2_rc = run_mm2_program_via_gslt(
+            &arena, atoms, n, count_only, mm2_step_limit,
+            mm2_realization);
+        if (emit_runtime_stats) {
+            CettaRuntimeStats stats;
+            cetta_runtime_stats_snapshot(&stats);
+            cetta_runtime_stats_print(stderr, &stats);
+        }
+        rc = mm2_rc;
+        goto cleanup;
     }
     if (lang_is_mm2 &&
         !cetta_mm2_atoms_have_top_level_eval(atoms, n)) {
@@ -2626,17 +3020,12 @@ int main(int argc, char **argv) {
         document_reader_capability = "petta-reader-direct-v1";
     else if (lang->id == CETTA_LANGUAGE_PRIME)
         document_reader_capability = "prime-reader-direct-v1";
-    else if (lang->id == CETTA_LANGUAGE_SUBZERO ||
-             lang->id == CETTA_LANGUAGE_ZERO) {
+    else if (cetta_language_uses_embedded_gslt(lang->id)) {
         char language_error[512] = {0};
         const CettaGsltEmbeddedLanguageV1 *descriptor =
-            &cetta_subzero_language_v1;
-        if (lang->id == CETTA_LANGUAGE_ZERO) {
-            descriptor = profile && profile->id == CETTA_PROFILE_ZERO_EXP
-                ? &cetta_zero_exp_language_v1
-                : &cetta_zero_language_v1;
-        }
-        if (!cetta_gslt_language_load_embedded_for_realization(
+            embedded_gslt_descriptor(lang->id, profile);
+        if (!descriptor ||
+            !cetta_gslt_language_load_embedded_for_realization(
                 descriptor, gslt_realization,
                 &gslt_language,
                 language_error, sizeof(language_error)) ||
@@ -2795,8 +3184,7 @@ int main(int argc, char **argv) {
         }
     }
 
-    if (lang->id == CETTA_LANGUAGE_SUBZERO ||
-        lang->id == CETTA_LANGUAGE_ZERO) {
+    if (gslt_language) {
         if (compile_mode) {
             fprintf(stderr,
                     "error: --compile is not a declared %s observation\n",
@@ -2809,17 +3197,73 @@ int main(int argc, char **argv) {
         for (int index = 0; index < n; index++)
             forms[index] = term_universe_get_atom(
                 &libraries.term_universe, atom_ids[index]);
-        CettaGsltLanguageResult observed;
+        CettaGsltLanguageResult observed = {0};
         CettaGsltHornLimits limits = {
             .max_rule_attempts = 10000000u,
             .max_answers = 1000000u,
             .max_depth = 10000u,
         };
         char language_error[512] = {0};
-        bool executed = cetta_gslt_language_execute_atoms_with_realization(
-            gslt_language, gslt_realization,
-            forms, (size_t)n, &eval_arena, limits,
-            &observed, language_error, sizeof(language_error));
+        bool interact_profile = profile &&
+            profile->id == CETTA_PROFILE_ZERO_INTERACT;
+        if (interact_profile) {
+            cleanup.gslt_revisioned_space_provider =
+                cetta_gslt_revisioned_space_provider_create_v1(
+                    space_engine, &CETTA_ZERO_INTERACT_SPACE_SCHEMA_V1,
+                    language_error, sizeof(language_error));
+            if (!cleanup.gslt_revisioned_space_provider) {
+                free(forms);
+                fprintf(
+                    stderr,
+                    "error: could not bind the revisioned space provider: %s\n",
+                    language_error[0] ? language_error : "unknown failure");
+                rc = 1;
+                goto cleanup;
+            }
+            cleanup.gslt_abt_provider = cetta_gslt_abt_provider_create_v1(
+                &CETTA_ZERO_INTERACT_ABT_SCHEMA_V1, NULL,
+                language_error, sizeof(language_error));
+            if (!cleanup.gslt_abt_provider) {
+                free(forms);
+                fprintf(
+                    stderr,
+                    "error: could not bind the ABT provider: %s\n",
+                    language_error[0] ? language_error : "unknown failure");
+                rc = 1;
+                goto cleanup;
+            }
+            const CettaGsltProviderRegistryV1 *provider_registries[] = {
+                cetta_gslt_revisioned_space_provider_registry_v1(
+                    cleanup.gslt_revisioned_space_provider),
+                cetta_gslt_abt_provider_registry_v1(
+                    cleanup.gslt_abt_provider),
+            };
+            if (!cetta_gslt_provider_registry_union_v1(
+                    provider_registries,
+                    sizeof(provider_registries) /
+                        sizeof(provider_registries[0]),
+                    &cleanup.gslt_physical_providers,
+                    language_error, sizeof(language_error))) {
+                free(forms);
+                fprintf(
+                    stderr,
+                    "error: could not compose physical providers: %s\n",
+                    language_error[0] ? language_error : "unknown failure");
+                rc = 1;
+                goto cleanup;
+            }
+        }
+        bool executed = interact_profile
+            ? cetta_gslt_language_execute_atoms_with_realization_and_providers_v1(
+                  gslt_language, gslt_realization,
+                  &cetta_zero_interact_provider_catalog_v1,
+                  &cleanup.gslt_physical_providers.registry,
+                  forms, (size_t)n, &eval_arena, limits,
+                  &observed, language_error, sizeof(language_error))
+            : cetta_gslt_language_execute_atoms_with_realization(
+                  gslt_language, gslt_realization,
+                  forms, (size_t)n, &eval_arena, limits,
+                  &observed, language_error, sizeof(language_error));
         free(forms);
         if (!executed) {
             fprintf(stderr, "error: generated language execution failed: %s\n",

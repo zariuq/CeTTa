@@ -159,6 +159,14 @@ extern CettaMorkStatus mork_space_contains_expr_bytes(const CettaMorkSpaceHandle
 extern CettaMorkStatus mork_space_size(const CettaMorkSpaceHandle *space);
 extern CettaMorkStatus mork_space_step(CettaMorkSpaceHandle *space,
                                        uint64_t steps);
+extern CettaMorkStatus mork_support_transform_profile_supported_v1(
+    const uint8_t *packet, size_t packet_len) __attribute__((weak));
+extern CettaMorkStatus mork_space_step_support_transform_v1(
+    CettaMorkSpaceHandle *space, const uint8_t *packet, size_t packet_len,
+    uint64_t steps) __attribute__((weak));
+extern CettaMorkStatus mork_space_has_support_transform_work_v1(
+    CettaMorkSpaceHandle *space, const uint8_t *packet,
+    size_t packet_len) __attribute__((weak));
 extern CettaMorkStatus mork_space_dump_act_file(CettaMorkSpaceHandle *space,
                                                 const uint8_t *path,
                                                 size_t len);
@@ -727,6 +735,45 @@ bool cetta_mork_bridge_space_step(CettaMorkSpaceHandle *space,
                                     mork_space_step(space, steps),
                                     out_performed,
                                     bridge_free_bytes);
+}
+
+bool cetta_mork_bridge_support_transform_profile_supported_v1(
+    const uint8_t *packet, size_t packet_len, bool *out_supported) {
+    if (out_supported)
+        *out_supported = false;
+    if (!packet || !mork_support_transform_profile_supported_v1)
+        return true;
+    return bridge_take_status_bool(
+        "mork_support_transform_profile_supported_v1 failed: ",
+        mork_support_transform_profile_supported_v1(packet, packet_len),
+        out_supported, bridge_free_bytes);
+}
+
+bool cetta_mork_bridge_space_step_support_transform_v1(
+    CettaMorkSpaceHandle *space, const uint8_t *packet, size_t packet_len,
+    uint64_t steps, uint64_t *out_performed) {
+    if (!space || !packet || !mork_space_step_support_transform_v1) {
+        bridge_set_error("support-transform physical stepping is unavailable");
+        return false;
+    }
+    return bridge_take_status_value(
+        "mork_space_step_support_transform_v1 failed: ",
+        mork_space_step_support_transform_v1(
+            space, packet, packet_len, steps),
+        out_performed, bridge_free_bytes);
+}
+
+bool cetta_mork_bridge_space_has_support_transform_work_v1(
+    CettaMorkSpaceHandle *space, const uint8_t *packet, size_t packet_len,
+    bool *out_has_work) {
+    if (!space || !packet || !mork_space_has_support_transform_work_v1) {
+        bridge_set_error("support-transform physical completion check is unavailable");
+        return false;
+    }
+    return bridge_take_status_bool(
+        "mork_space_has_support_transform_work_v1 failed: ",
+        mork_space_has_support_transform_work_v1(space, packet, packet_len),
+        out_has_work, bridge_free_bytes);
 }
 
 bool cetta_mork_bridge_space_dump(CettaMorkSpaceHandle *space,
@@ -2241,6 +2288,14 @@ typedef struct CettaMorkBridgeApi {
                                                  size_t len);
     CettaMorkStatus (*space_size)(const CettaMorkSpaceHandle *space);
     CettaMorkStatus (*space_step)(CettaMorkSpaceHandle *space, uint64_t steps);
+    CettaMorkStatus (*support_transform_profile_supported_v1)(
+        const uint8_t *packet, size_t packet_len);
+    CettaMorkStatus (*space_step_support_transform_v1)(
+        CettaMorkSpaceHandle *space, const uint8_t *packet,
+        size_t packet_len, uint64_t steps);
+    CettaMorkStatus (*space_has_support_transform_work_v1)(
+        CettaMorkSpaceHandle *space, const uint8_t *packet,
+        size_t packet_len);
     CettaMorkStatus (*space_dump_act_file)(CettaMorkSpaceHandle *space,
                                            const uint8_t *path,
                                            size_t len);
@@ -2587,6 +2642,15 @@ static bool bridge_load_api(void) {
     bridge_resolve_symbol_optional(
         (void **)&g_mork_bridge_api.space_dump_expr_rows,
         "mork_space_dump_expr_rows");
+    bridge_resolve_symbol_optional(
+        (void **)&g_mork_bridge_api.support_transform_profile_supported_v1,
+        "mork_support_transform_profile_supported_v1");
+    bridge_resolve_symbol_optional(
+        (void **)&g_mork_bridge_api.space_step_support_transform_v1,
+        "mork_space_step_support_transform_v1");
+    bridge_resolve_symbol_optional(
+        (void **)&g_mork_bridge_api.space_has_support_transform_work_v1,
+        "mork_space_has_support_transform_work_v1");
     bridge_resolve_symbol_optional(
         (void **)&g_mork_bridge_api.space_dump_contextual_exact_rows,
         "mork_space_dump_contextual_exact_rows");
@@ -3267,6 +3331,51 @@ bool cetta_mork_bridge_space_step(CettaMorkSpaceHandle *space,
                                     g_mork_bridge_api.space_step(space, steps),
                                     out_performed,
                                     bridge_free_bytes);
+}
+
+bool cetta_mork_bridge_support_transform_profile_supported_v1(
+    const uint8_t *packet, size_t packet_len, bool *out_supported) {
+    if (out_supported)
+        *out_supported = false;
+    if (!packet || !bridge_load_api())
+        return false;
+    if (!g_mork_bridge_api.support_transform_profile_supported_v1)
+        return true;
+    return bridge_take_status_bool(
+        "mork_support_transform_profile_supported_v1 failed: ",
+        g_mork_bridge_api.support_transform_profile_supported_v1(
+            packet, packet_len),
+        out_supported, bridge_free_bytes);
+}
+
+bool cetta_mork_bridge_space_step_support_transform_v1(
+    CettaMorkSpaceHandle *space, const uint8_t *packet, size_t packet_len,
+    uint64_t steps, uint64_t *out_performed) {
+    if (!space || !packet || !bridge_load_api() ||
+        !g_mork_bridge_api.space_step_support_transform_v1) {
+        bridge_set_error("support-transform physical stepping is unavailable");
+        return false;
+    }
+    return bridge_take_status_value(
+        "mork_space_step_support_transform_v1 failed: ",
+        g_mork_bridge_api.space_step_support_transform_v1(
+            space, packet, packet_len, steps),
+        out_performed, bridge_free_bytes);
+}
+
+bool cetta_mork_bridge_space_has_support_transform_work_v1(
+    CettaMorkSpaceHandle *space, const uint8_t *packet, size_t packet_len,
+    bool *out_has_work) {
+    if (!space || !packet || !bridge_load_api() ||
+        !g_mork_bridge_api.space_has_support_transform_work_v1) {
+        bridge_set_error("support-transform physical completion check is unavailable");
+        return false;
+    }
+    return bridge_take_status_bool(
+        "mork_space_has_support_transform_work_v1 failed: ",
+        g_mork_bridge_api.space_has_support_transform_work_v1(
+            space, packet, packet_len),
+        out_has_work, bridge_free_bytes);
 }
 
 bool cetta_mork_bridge_space_dump(CettaMorkSpaceHandle *space,

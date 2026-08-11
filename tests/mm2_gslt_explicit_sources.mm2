@@ -1,0 +1,9 @@
+(chosen one)
+(a one)
+(a two)
+
+(exec (0 sources)
+  (I (BTM (chosen $x))
+     (== (a $x) (a $x))
+     (!= (a $x) (a $y)))
+  (O (+ (different $x $y))))

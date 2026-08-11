@@ -1,0 +1,1 @@
+[(finished (answer alpha) z (trace (event r1 inspect 0 (task alpha) (checked alpha) (s z)) (trace (event r1 solve 1 (checked alpha) (answer alpha) (s (s z))) end)))]

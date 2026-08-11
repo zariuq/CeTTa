@@ -1,0 +1,5 @@
+(site r1 cheap (task $x) (done $x) (s z))
+(site r1 dear (task $x) (done $x) (s (s z)))
+(! (events r1 (task alpha)))
+(! (fire r1 (s z) (task alpha) cheap))
+(! (fire r1 (s z) (task alpha) dear))

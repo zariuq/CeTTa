@@ -1,0 +1,5 @@
+(seed a)
+
+(exec (0 unknown)
+  (, (seed $x))
+  (O (mystery (bad $x))))

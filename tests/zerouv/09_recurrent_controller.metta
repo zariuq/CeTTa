@@ -1,0 +1,6 @@
+(= off on)
+(= on off)
+(= (toggle off) on)
+(= (toggle on) off)
+(accept toggle on)
+(! (recur toggle (path off (path on (path off end))) on))

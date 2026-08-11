@@ -356,7 +356,7 @@ def main() -> int:
     )
 
     subject = qapp(qsym("f"), qsym("a"))
-    evaluate_surface = qapp(qsym("!"), subject)
+    evaluate_surface = qapp(qsym("eval"), subject)
     classified_evaluate = relation_answers(
         chart,
         sources,
@@ -375,7 +375,7 @@ def main() -> int:
     )
     if evaluated != [qapp(qsym("g"), qsym("a"))]:
         raise GateFailure(f"chart changed query-derived evaluation: {evaluated}")
-    require_cli_pair(cetta, "(= (f $x) (g $x)) (! (f a))", "[(g a)]")
+    require_cli_pair(cetta, "(= (f $x) (g $x)) (eval (f a))", "[(g a)]")
 
     reify_evaluate_surface = qapp(qsym("reify"), evaluate_surface)
     classified_reify_evaluate = relation_answers(
@@ -401,7 +401,7 @@ def main() -> int:
         )
     require_cli_pair(
         cetta,
-        "(= (f $x) (g $x)) (reify (! (f a)))",
+        "(= (f $x) (g $x)) (reify (eval (f a)))",
         "[((g a))]",
     )
 
@@ -442,7 +442,7 @@ def main() -> int:
         qsym("unknown")
     ]:
         raise GateFailure("closed empty production did not retain inertness")
-    require_cli_pair(cetta, "(! unknown)", "[unknown]")
+    require_cli_pair(cetta, "(eval unknown)", "[unknown]")
 
     reify_inert_request = (
         f"(zero-reify-evaluate-request request-reify-inert "
@@ -457,7 +457,7 @@ def main() -> int:
         chart, sources, reify_inert_request, reify_inert_produced
     ) != [qapp(qsym("unknown"))]:
         raise GateFailure("reified inert evaluation lost its singleton")
-    require_cli_pair(cetta, "(reify (! unknown))", "[(unknown)]")
+    require_cli_pair(cetta, "(reify (eval unknown))", "[(unknown)]")
 
     empty_request = (
         f"(zero-query-request request-three {qsym('absent')} {qsym('hit')})"
@@ -482,7 +482,7 @@ def main() -> int:
         cetta, "(reify (zero-query absent hit))", "[()]"
     )
     require_cli_pair(
-        cetta, "(= a hit) (collapse (! a))", "[]"
+        cetta, "(= a hit) (collapse (eval a))", "[]"
     )
 
     ground_request = (
@@ -493,7 +493,7 @@ def main() -> int:
         qsym("grounded")
     ]:
         raise GateFailure("declared ground capability did not cross the portal")
-    require_cli_pair(cetta, "(! native)", "[native]")
+    require_cli_pair(cetta, "(eval native)", "[native]")
 
     runner_subject = qsym("a")
     runner_continuation = qsym("zero-halt")

@@ -52,11 +52,14 @@ typedef struct {
 
 typedef struct {
     const CettaGsltHornProgram *program;
+    const CettaGsltProviderRegistryV1 *providers;
     Arena *output;
     Arena scratch;
     Atom *query;
     CettaGsltHornLimits limits;
     CettaGsltHornResult *result;
+    char *error;
+    size_t error_size;
     bool stopped;
     bool faulted;
 } GsltHornRun;
@@ -661,6 +664,52 @@ static void horn_solve(GsltHornRun *run, Atom *const *goals,
         bindings_builder_bindings(builder), &run->scratch, goals[0]);
     const GsltHornBucket *bucket = horn_find_bucket(run->program, goal);
     if (!bucket) {
+        const CettaGsltProviderV1 *provider =
+            cetta_gslt_provider_find_v1(run->providers, goal);
+        if (provider) {
+            CettaGsltProviderAnswersV1 answers = {0};
+            CettaGsltProviderOutcomeV1 provider_outcome = provider->query(
+                provider->context, &run->scratch, goal,
+                run->limits.max_answers, &answers,
+                run->error, run->error_size);
+            if (provider_outcome == CETTA_GSLT_PROVIDER_COMPLETED &&
+                answers.answer_count > run->limits.max_answers)
+                provider_outcome = CETTA_GSLT_PROVIDER_ANSWER_LIMIT;
+            if (provider_outcome == CETTA_GSLT_PROVIDER_ANSWER_LIMIT) {
+                run->result->outcome = CETTA_GSLT_HORN_ANSWER_LIMIT;
+                run->stopped = true;
+            } else if (provider_outcome != CETTA_GSLT_PROVIDER_COMPLETED) {
+                run->result->outcome = CETTA_GSLT_HORN_FAULT;
+                run->faulted = true;
+                run->stopped = true;
+            }
+            for (size_t index = 0u;
+                 index < answers.answer_count && !run->stopped; index++) {
+                Atom *answer = answers.answers[index];
+                if (!answer || answer->kind != ATOM_EXPR ||
+                    answer->expr.len != goal->expr.len ||
+                    answer->expr.elems[0]->kind != ATOM_SYMBOL ||
+                    answer->expr.elems[0]->sym_id !=
+                        goal->expr.elems[0]->sym_id) {
+                    horn_error(
+                        run->error, run->error_size,
+                        "semantic provider %s returned a malformed %s/%u answer",
+                        provider->semantic_id, provider->relation,
+                        provider->arity);
+                    run->result->outcome = CETTA_GSLT_HORN_FAULT;
+                    run->faulted = true;
+                    run->stopped = true;
+                    break;
+                }
+                uint32_t binding_mark = bindings_builder_save(builder);
+                if (match_atoms_builder(goal, answer, builder))
+                    horn_solve(
+                        run, goals + 1u, goal_count - 1u,
+                        builder, depth + 1u);
+                bindings_builder_rollback(builder, binding_mark);
+            }
+            cetta_gslt_provider_answers_free_v1(&answers);
+        }
         arena_reset(&run->scratch, goal_mark);
         return;
     }
@@ -709,6 +758,16 @@ bool cetta_gslt_horn_query(
     const CettaGsltHornProgram *program, Arena *output_arena,
     Atom *query, CettaGsltHornLimits limits,
     CettaGsltHornResult *result, char *error, size_t error_size) {
+    return cetta_gslt_horn_query_with_providers_v1(
+        program, NULL, output_arena, query, limits,
+        result, error, error_size);
+}
+
+bool cetta_gslt_horn_query_with_providers_v1(
+    const CettaGsltHornProgram *program,
+    const CettaGsltProviderRegistryV1 *providers,
+    Arena *output_arena, Atom *query, CettaGsltHornLimits limits,
+    CettaGsltHornResult *result, char *error, size_t error_size) {
     if (!program || !output_arena || !query || !result)
         return horn_error(error, error_size,
                           "invalid GSLT Horn query request");
@@ -717,13 +776,19 @@ bool cetta_gslt_horn_query(
         limits.max_depth == 0u)
         return horn_error(error, error_size,
                           "GSLT Horn limits must be positive");
+    if (!cetta_gslt_provider_registry_validate_v1(
+            providers, error, error_size))
+        return false;
 
     GsltHornRun run = {
         .program = program,
+        .providers = providers,
         .output = output_arena,
         .query = query,
         .limits = limits,
         .result = result,
+        .error = error,
+        .error_size = error_size,
     };
     arena_init(&run.scratch);
     arena_set_runtime_kind(&run.scratch, CETTA_ARENA_RUNTIME_KIND_SCRATCH);
@@ -742,8 +807,9 @@ bool cetta_gslt_horn_query(
     bindings_free(&empty);
     arena_free(&run.scratch);
     if (run.faulted) {
-        horn_error(error, error_size,
-                   "GSLT Horn execution faulted");
+        if (!error || error_size == 0u || error[0] == '\0')
+            horn_error(error, error_size,
+                       "GSLT Horn execution faulted");
         return false;
     }
     return true;

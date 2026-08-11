@@ -114,7 +114,9 @@ def main() -> int:
     parser.add_argument("--schema", type=Path, required=True)
     parser.add_argument("--manifest", type=Path, required=True)
     parser.add_argument("--source-root", type=Path, required=True)
-    parser.add_argument("--profile", choices=("base", "exp"), required=True)
+    parser.add_argument(
+        "--profile", choices=("base", "exp", "emit", "interact"), required=True
+    )
     parser.add_argument("--header", type=Path, required=True)
     parser.add_argument("--source", type=Path, required=True)
     parser.add_argument("--symbol", required=True)

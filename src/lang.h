@@ -20,7 +20,10 @@ typedef enum {
     CETTA_LANGUAGE_RHOCALC = 11,
     CETTA_LANGUAGE_PRIME = 12,
     CETTA_LANGUAGE_SUBZERO = 13,
-    CETTA_LANGUAGE_ZERO = 14
+    CETTA_LANGUAGE_ZERO = 14,
+    CETTA_LANGUAGE_GSLT_IL = 15,
+    CETTA_LANGUAGE_ZEROUV = 16,
+    CETTA_LANGUAGE_METTA_INTERACT = 17
 } CettaLanguageId;
 
 typedef enum {
@@ -53,6 +56,7 @@ bool cetta_syntax_from_name(const char *name, CettaSyntaxId *out_syntax);
 CettaSyntaxId cetta_syntax_default_for_language(CettaLanguageId id);
 CettaSyntaxId cetta_syntax_infer_for_path(CettaLanguageId id, const char *path);
 bool cetta_language_supports_syntax(CettaLanguageId id, CettaSyntaxId syntax);
+bool cetta_language_uses_embedded_gslt(CettaLanguageId id);
 const char *cetta_relative_module_policy_name(CettaRelativeModulePolicy policy);
 bool cetta_relative_module_policy_from_name(const char *name,
                                             CettaRelativeModulePolicy *out_policy);

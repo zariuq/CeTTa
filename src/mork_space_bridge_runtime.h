@@ -155,6 +155,14 @@ bool cetta_mork_bridge_space_size(const CettaMorkSpaceHandle *space,
 bool cetta_mork_bridge_space_step(CettaMorkSpaceHandle *space,
                                   uint64_t steps,
                                   uint64_t *out_performed);
+bool cetta_mork_bridge_support_transform_profile_supported_v1(
+    const uint8_t *packet, size_t packet_len, bool *out_supported);
+bool cetta_mork_bridge_space_step_support_transform_v1(
+    CettaMorkSpaceHandle *space, const uint8_t *packet, size_t packet_len,
+    uint64_t steps, uint64_t *out_performed);
+bool cetta_mork_bridge_space_has_support_transform_work_v1(
+    CettaMorkSpaceHandle *space, const uint8_t *packet, size_t packet_len,
+    bool *out_has_work);
 bool cetta_mork_bridge_space_dump(CettaMorkSpaceHandle *space,
                                   uint8_t **out_packet,
                                   size_t *out_len,

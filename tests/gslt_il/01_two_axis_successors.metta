@@ -1,0 +1,6 @@
+(in &stage-0 (= ready done))
+(in &stage-1 (= mapped-ready mapped-done))
+(route grow &stage-0 &stage-1)
+(= (grow ready) mapped-ready)
+(= (grow done) mapped-done)
+(! (grow ready))
