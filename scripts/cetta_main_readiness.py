@@ -164,7 +164,6 @@ def artifact_identity(
             {
                 "PathMap": root.parent / "PathMap",
                 "MORK": root.parent / "MORK",
-                "Mettapedia": mettapedia_root,
             }
         ),
         "property_schema": manifest["schema"],
@@ -425,6 +424,7 @@ def run_logged(
 def common_readiness_commands() -> list[list[str]]:
     return [
         ["make", "BUILD=main", "test-correctness-all"],
+        ["make", "BUILD=main", "test-profiles"],
         ["make", "BUILD=main", "test-asan"],
         ["make", "BUILD=main", "test-tsan"],
         ["make", "BUILD=main", "test-rhocalc-cost-commit-audit"],
@@ -454,6 +454,13 @@ def readiness_commands(tier: str) -> list[list[str]]:
         ]
     if tier == "exhaustive":
         return common + [
+            ["make", "BUILD=main", "test-petta-corpus-differential"],
+            ["make", "BUILD=main", "test-petta-native-core-no-libpl"],
+            ["make", "BUILD=main", "test-eval-gc-asan-full-differential"],
+            ["make", "BUILD=main", "test-main-readiness-model"],
+            ["make", "BUILD=main", "main-readiness-mutation-qualification"],
+            ["make", "BUILD=main", "main-readiness-space-ladders"],
+            ["make", "BUILD=main", "main-readiness-thresholds"],
             ["make", "BUILD=main", "bench-light"],
             [
                 "make",
@@ -582,6 +589,25 @@ def main() -> int:
             file=sys.stderr,
         )
         return 2
+    petta_oracle_root: Path | None = None
+    if args.tier == "exhaustive":
+        petta_oracle = os.environ.get("PETTA_ORACLE_ROOT", "")
+        if not petta_oracle:
+            print(
+                "FAIL: set PETTA_ORACLE_ROOT to the pinned PeTTa checkout; "
+                "the exhaustive dialect differential may not be skipped",
+                file=sys.stderr,
+            )
+            return 2
+        petta_oracle_root = Path(petta_oracle).expanduser().resolve()
+        if not petta_oracle_root.is_dir() or not (
+            petta_oracle_root / "run.sh"
+        ).is_file():
+            print(
+                "FAIL: PETTA_ORACLE_ROOT is not a PeTTa checkout",
+                file=sys.stderr,
+            )
+            return 2
     if args.tier == "exhaustive" and os.environ.get("BENCH_ALLOW_HEAVY") != "1":
         print(
             "FAIL: set BENCH_ALLOW_HEAVY=1 to authorize the complete heavy matrix",
@@ -637,6 +663,8 @@ def main() -> int:
     environment["METTAPEDIA_ROOT"] = str(mettapedia_root)
     if args.tier == "exhaustive":
         environment["BENCH_ALLOW_HEAVY"] = "1"
+        assert petta_oracle_root is not None
+        environment["PETTA_ORACLE_ROOT"] = str(petta_oracle_root)
     commands = readiness_commands(args.tier)
     if args.dry_run:
         summary = {
@@ -695,6 +723,14 @@ def main() -> int:
         },
         "mettapedia_commit": capture(
             ["git", "-C", str(mettapedia_root), "rev-parse", "HEAD"], root
+        ),
+        "petta_oracle_commit": (
+            capture(
+                ["git", "-C", str(petta_oracle_root), "rev-parse", "HEAD"],
+                root,
+            )
+            if petta_oracle_root is not None
+            else None
         ),
         "performance_baseline": {
             key: value

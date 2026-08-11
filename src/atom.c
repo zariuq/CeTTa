@@ -3720,7 +3720,7 @@ static void atom_print_mode(
             for (const char *p = a->ground.sval; *p; p++) {
                 if (*p == '\n') fputs("\\n", out);
                 else if (*p == '"') fputs("\\\"", out);
-                else if (*p == '\\' && !petta) fputs("\\\\", out);
+                else if (*p == '\\') fputs("\\\\", out);
                 else fputc(*p, out);
             }
             fputc('"', out);

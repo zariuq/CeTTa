@@ -428,6 +428,9 @@ static const char *const CETTA_RUNTIME_COUNTER_NAMES[CETTA_RUNTIME_COUNTER_COUNT
     "prime-relational-plan-suspend-decline",
     "prime-relational-plan-commit",
     "prime-relational-plan-replay-safe-argument",
+    "prepared-pure-call-compile-attempt",
+    "prepared-pure-call-compile-decline",
+    "prepared-pure-call-execution-decline",
 };
 
 static int64_t clamp_counter(uint64_t value) {

@@ -1,0 +1,1 @@
+(= (directory-value-b) b)

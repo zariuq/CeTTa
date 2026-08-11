@@ -111,6 +111,16 @@ bool petta_program_predeclare_equation(
     PettaProgram *program, Atom *atom);
 
 /*
+ * True when the parsed document or a live Space occurrence declares a named
+ * equation head.  This is the source-order-independent name check used by
+ * opt-in library controls such as memoize: the document is parsed before its
+ * directives run, but no later equation is installed early merely to prove
+ * that its function name exists.
+ */
+bool petta_program_head_declared(
+    const PettaProgram *program, SymbolId head);
+
+/*
  * Derive a source-occurrence plan from the currently live program.  Top-level
  * execution and module initialization call this only when prior source forms
  * have completed, so runtime definitions become visible in source order.

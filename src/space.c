@@ -1660,10 +1660,14 @@ static bool space_store_atom_via_backend_primary(
         *out_transition_failed = false;
     if (!s || !atom)
         return false;
-    /* Stable atoms can be interned by the caller and then stored through the
-       AtomId route, preserving a zero-copy logical shadow for later observers. */
+    /* A PathMap-only space should not pay for a complete native AtomId view
+       before any native candidate consumer asks for one.  Once that derived
+       view exists, keep using the AtomId route so later inserts extend its
+       indexes incrementally instead of invalidating and rebuilding them. */
     if (s->match_backend.kind == SPACE_ENGINE_PATHMAP &&
-        space_tracks_atom_ids(s) && term_universe_atom_is_stable(atom))
+        space_tracks_atom_ids(s) && term_universe_atom_is_stable(atom) &&
+        s->native.len > 0u &&
+        s->match_backend.pathmap.bridge.native_shadow_synced)
         return false;
     if (s->match_backend.kind == SPACE_ENGINE_PATHMAP &&
         (space_atom_form_is(atom, g_builtin_syms.equals, 3u) ||
@@ -2195,6 +2199,20 @@ static CettaGsltQueryEffect space_generated_query_head_effect(
     return CETTA_GSLT_QUERY_EFFECT_PURE;
 }
 
+static bool space_generated_fold_control(
+    SymbolId head, CettaExprLen arity,
+    CettaGsltFoldControl *control_out) {
+#define SPACE_FOLD_CONTROL(field, expected_arity, control) \
+    if (head == g_builtin_syms.field && arity == (expected_arity)) { \
+        if (control_out) \
+            *control_out = (control); \
+        return true; \
+    }
+    CETTA_GSLT_FOLD_CONTROL_HEAD_ROWS(SPACE_FOLD_CONTROL)
+#undef SPACE_FOLD_CONTROL
+    return false;
+}
+
 static size_t space_effect_cache_slot(const Space *space, SymbolId head) {
     uint64_t key = space_instance_id(space) ^
         ((uint64_t)head * UINT64_C(11400714819323198485));
@@ -2299,11 +2317,15 @@ static bool space_effect_scan_rhs(
             current->expr.len == 0u) {
             continue;
         }
+        CettaGsltFoldControl control = {0};
+        bool has_control = false;
         Atom *head = current->expr.elems[0];
         if (!head || head->kind != ATOM_SYMBOL) {
             graph->nodes[node_index].base_effect =
                 CETTA_GSLT_QUERY_EFFECT_UNCERTAIN_HEAD;
         } else {
+            has_control = space_generated_fold_control(
+                head->sym_id, current->expr.len - 1u, &control);
             bool grounded = is_grounded_op(head->sym_id);
             bool builtin = symbol_id_is_builtin_surface(head->sym_id);
             bool defined = space_equations_may_match_known_head(
@@ -2331,6 +2353,13 @@ static bool space_effect_scan_rhs(
             }
         }
         for (CettaExprIndex i = 1u; i < current->expr.len; i++) {
+            CettaGsltControlOperandRole role;
+            if (has_control &&
+                cetta_gslt_fold_control_operand_role(
+                    control, i - 1u, &role) &&
+                role == CETTA_GSLT_CONTROL_OPERAND_PATTERN) {
+                continue;
+            }
             Atom *child = current->expr.elems[i];
             if (!child || child->kind != ATOM_EXPR)
                 continue;
@@ -4222,6 +4251,39 @@ bool space_contains_exact(Space *s, Atom *atom) {
     CettaIndex n = space_exact_match_indices64(s, atom, &matches);
     free(matches);
     return n > 0;
+}
+
+bool space_match_exists_ground_exact(Space *s, Atom *pattern,
+                                     bool *out_applicable) {
+    bool found = false;
+
+    if (out_applicable)
+        *out_applicable = false;
+    if (!s || !pattern || atom_has_vars(pattern) ||
+        !atom_is_exact_indexable(pattern)) {
+        return false;
+    }
+
+    if (space_engine_uses_pathmap(s->match_backend.kind)) {
+        /* Backend-primary PathMap maintains this one-bit row-class summary as
+           exact AtomIds are added.  A dirty summary would require projecting
+           the backend to prove the premise, so decline and leave the ordinary
+           matcher in charge. */
+        if (s->native.has_non_exact_atoms_dirty ||
+            s->native.has_non_exact_atoms ||
+            !space_match_backend_contains_atom_structural_direct(
+                s, pattern, &found)) {
+            return false;
+        }
+    } else {
+        if (!space_contains_only_exact_atoms(s))
+            return false;
+        found = space_contains_exact(s, pattern);
+    }
+
+    if (out_applicable)
+        *out_applicable = true;
+    return found;
 }
 
 bool space_contains_canonical(Space *s, Atom *atom, bool *out_applicable) {

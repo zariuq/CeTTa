@@ -166,6 +166,7 @@ uint64_t eval_current_max_rational_digits(void);
 uint32_t eval_current_num_threads(void);
 void eval_set_library_context(CettaLibraryContext *ctx);
 CettaLibraryContext *eval_current_library_context(void);
+
 /* Rhometta deferred payload mode: each payload evaluates against a
  * sibling-isolated transactional snapshot.  The flag marks that context; the
  * owner epoch distinguishes payload-local scratch from shared resources. */

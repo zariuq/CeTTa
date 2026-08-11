@@ -13,6 +13,7 @@ import time
 from pathlib import Path
 
 from bench_d4_progress import census_classification
+from cetta_main_readiness import readiness_commands
 from cetta_readiness_model import (
     ReadinessModelError,
     calibration_subject,
@@ -238,6 +239,7 @@ def main() -> int:
             "paths_sha256",
             "content_sha256",
             "excluded_paths",
+            "excluded_suffixes",
         },
         "candidate content identity leaked Git topology",
     )
@@ -519,7 +521,25 @@ def main() -> int:
     finally:
         scratch.unlink(missing_ok=True)
     print("PASS largest-scale witness must belong to exhaustive evidence")
-    print("SUMMARY cetta-readiness-model 30/30 PASS")
+
+    routine_targets = {command[-1] for command in readiness_commands("routine")}
+    exhaustive_targets = {
+        command[-1] for command in readiness_commands("exhaustive")
+    }
+    petta_oracle_targets = {
+        "test-petta-corpus-differential",
+        "test-petta-native-core-no-libpl",
+    }
+    require(
+        petta_oracle_targets.isdisjoint(routine_targets),
+        "external PeTTa oracle differentials burden the routine developer tier",
+    )
+    require(
+        petta_oracle_targets <= exhaustive_targets,
+        "exhaustive readiness omits a PeTTa oracle differential",
+    )
+    print("PASS PeTTa oracle differentials are exhaustive-only merge gates")
+    print("SUMMARY cetta-readiness-model 31/31 PASS")
     return 0
 
 

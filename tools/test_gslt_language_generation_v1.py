@@ -87,6 +87,32 @@ def compiler_digest(source: Path) -> str:
     return match.group(1)
 
 
+def copy_language_inputs(
+    manifest: Path,
+    source_root: Path,
+    destination: Path,
+    profile: str | None,
+) -> Path:
+    """Copy only the declared language inputs, preserving source-root paths."""
+    definition = language_generator.parse_manifest(manifest, profile)
+    inputs = [manifest]
+    inputs.extend(
+        (manifest.parent / relative).resolve()
+        for relative in definition.semantic_sources
+    )
+    for source in inputs:
+        try:
+            relative = source.relative_to(source_root)
+        except ValueError as error:
+            raise GateFailure(
+                f"declared language input escapes source root: {source}"
+            ) from error
+        target = destination / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(source, target)
+    return destination / manifest.relative_to(source_root)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--generator", type=Path, required=True)
@@ -146,8 +172,12 @@ def main() -> int:
         )
 
         copied_language = temporary / "language"
-        shutil.copytree(source_root, copied_language)
-        copied_manifest = copied_language / manifest.relative_to(source_root)
+        copied_manifest = copy_language_inputs(
+            manifest,
+            source_root,
+            copied_language,
+            arguments.profile,
+        )
         copied_definition = language_generator.parse_manifest(
             copied_manifest, arguments.profile
         )

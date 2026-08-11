@@ -183,7 +183,16 @@ def write_summary_tsv(path: Path, results: dict[str, Any]) -> None:
         "specializer_prepare_relevance_bounded",
         "specializer_prepare_rewritten",
         "specializer_prepare_unchanged",
+        "specializer_prepare_capacity_declines",
         "specializer_prepare_elapsed_ns",
+        "match_existence_observer_folds",
+        "child_machine_init_attempts",
+        "child_machine_init_successes",
+        "child_machine_projected_entries",
+        "child_machine_projection_elapsed_ns",
+        "child_machine_init_elapsed_ns",
+        "child_machine_destroy_calls",
+        "child_machine_destroy_elapsed_ns",
         "heap_bytes_reclaimed",
         "ttfa_ms_max",
         "max_goal_depth",
@@ -245,6 +254,11 @@ def main() -> int:
         default="0",
     )
     parser.add_argument(
+        "--clause-body-activation",
+        choices=("0", "1"),
+        default="0",
+    )
+    parser.add_argument(
         "--paired-baseline",
         action="store_true",
         help=(
@@ -279,6 +293,9 @@ def main() -> int:
         "CETTA_TERM_UNIVERSE_SOURCE_ID_MEMO": (
             args.term_universe_source_id_memo
         ),
+        "CETTA_PETTA_CLAUSE_BODY_ACTIVATION": (
+            args.clause_body_activation
+        ),
     }
     baseline_environment = {
         "CETTA_PETTA_SEARCH_MACHINE": "1",
@@ -288,6 +305,7 @@ def main() -> int:
             args.specializer_route_cache
         ),
         "CETTA_TERM_UNIVERSE_SOURCE_ID_MEMO": "0",
+        "CETTA_PETTA_CLAUSE_BODY_ACTIVATION": "0",
     }
 
     results: dict[str, Any] = {}

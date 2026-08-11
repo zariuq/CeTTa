@@ -143,7 +143,7 @@
       "implementation_path": "eval/match-chain-frontier",
       "source_anchors": [
         {"path": "src/eval.c", "symbol": "handle_match(Space *s, Arena *a, Atom *atom", "expected_occurrences": 1},
-        {"path": "src/eval.c", "symbol": "static uint64_t g_chain_progress = 0;", "expected_occurrences": 1}
+        {"path": "src/eval.c", "symbol": "static __thread uint64_t g_match_chain_progress = 0u;", "expected_occurrences": 1}
       ],
       "routine_witnesses": ["make bench-d3-backends", "make bench-d3-nodup-backends", "d4-progress:bounded"],
       "exhaustive_witnesses": ["make bench-d4-backends", "make probe-d4-nodup-capability-backends"],
