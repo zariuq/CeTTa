@@ -274,6 +274,8 @@ const CettaGsltEmbeddedLanguageV1 cetta_gslt_pipeline_canary_v1 = {
     .entry_arity = 0u,
     .program_position = 0u,
     .result_position = 0u,
+    .query_relation = NULL,
+    .query_arity = 0u,
     .request_pipeline = &(const CettaGsltRequestPipelineV1){
         .classify_relation = "canary-classify",
         .produce_relation = "canary-produce",
@@ -283,5 +285,5 @@ const CettaGsltEmbeddedLanguageV1 cetta_gslt_pipeline_canary_v1 = {
     },
     .observation = "bag",
     .manifest_sha256 = "bbc8baca181858fcae50a2d96d801762bd037e7901b527bcf8fc9dcdfcfaac3f",
-    .compiler_sha256 = "f815d807be39d0b1ce08c09c70c1deded227df9ee2ff50acf6bebce92fbcbb48",
+    .compiler_sha256 = "31326d3976c522fefefe1d1cacec29660fb95f993ee23e55622cad431eb4d68a",
 };

@@ -990,6 +990,8 @@ const CettaGsltEmbeddedLanguageV1 cetta_gslt_il_language_v1 = {
     .entry_arity = 0u,
     .program_position = 0u,
     .result_position = 0u,
+    .query_relation = NULL,
+    .query_arity = 0u,
     .request_pipeline = &(const CettaGsltRequestPipelineV1){
         .classify_relation = "gslt-il-classify",
         .produce_relation = "gslt-il-produce",
@@ -999,5 +1001,5 @@ const CettaGsltEmbeddedLanguageV1 cetta_gslt_il_language_v1 = {
     },
     .observation = "bag",
     .manifest_sha256 = "2a202f9517c85119b1500c65d134713742b6a0427ee5d66e1b45ab85bb353a62",
-    .compiler_sha256 = "f815d807be39d0b1ce08c09c70c1deded227df9ee2ff50acf6bebce92fbcbb48",
+    .compiler_sha256 = "31326d3976c522fefefe1d1cacec29660fb95f993ee23e55622cad431eb4d68a",
 };

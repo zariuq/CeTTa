@@ -11,13 +11,15 @@
 
 #include "abt.h"
 #include "eval.h"
+#include "generated/prime_nik_authorities_v1.generated.h"
 #include "he_typing.h"
+#include "nik_runtime.h"
 #include "space.h"
 #include "symbol.h"
 
-#define PRIME_DEF_SCHEMA_VERSION 1
+#define PRIME_DEF_SCHEMA_VERSION 2
 #define PRIME_DIALECT_MAJOR 0
-#define PRIME_DIALECT_MINOR 2
+#define PRIME_DIALECT_MINOR 3
 
 static const char *const PRIME_JUDGMENT_NAMES[] = {
     "Form", "Synth", "Check", "Analyze", "Convert", "Refine", "May",
@@ -74,6 +76,125 @@ static Atom *prime_incomplete(Arena *a, Atom *judgment, Atom *reason) {
     return prime_verdict(a, "Incomplete", judgment, reason);
 }
 
+static Atom *prime_nik_authority_atom(
+    Arena *a, const char *alias, const char *system_id,
+    const char *revision, const char *digest) {
+    Atom *items[5] = {
+        prime_sym(a, "NIKAuthorityV1"),
+        prime_sym(a, alias),
+        atom_string(a, system_id),
+        atom_string(a, revision),
+        atom_string(a, digest)};
+    return atom_expr(a, items, 5);
+}
+
+static Atom *prime_nik_catalog_atom(Arena *a) {
+    size_t count = cetta_prime_nik_authorities_v1_count;
+    Atom **items = arena_alloc(a, sizeof(*items) * (count + 2u));
+    items[0] = prime_sym(a, "NIKAuthorityCatalogV1");
+    items[1] = atom_string(
+        a, cetta_prime_nik_authorities_v1_catalog_sha256);
+    for (size_t index = 0u; index < count; index++) {
+        const CettaNikAuthorityV1 *authority =
+            &cetta_prime_nik_authorities_v1[index];
+        items[index + 2u] = prime_nik_authority_atom(
+            a, authority->alias, authority->system_id,
+            authority->revision, authority->digest);
+    }
+    return atom_expr(a, items, (CettaExprIndex)(count + 2u));
+}
+
+static const char *prime_nik_horn_outcome_name(
+    bool ran, CettaGsltHornOutcome outcome) {
+    if (!ran)
+        return "not-run";
+    switch (outcome) {
+    case CETTA_GSLT_HORN_COMPLETED:
+        return "completed";
+    case CETTA_GSLT_HORN_RULE_LIMIT:
+        return "rule-limit";
+    case CETTA_GSLT_HORN_ANSWER_LIMIT:
+        return "answer-limit";
+    case CETTA_GSLT_HORN_DEPTH_LIMIT:
+        return "depth-limit";
+    case CETTA_GSLT_HORN_FAULT:
+        return "fault";
+    }
+    return "fault";
+}
+
+static Atom *prime_nik_attempt_count(Arena *a, uint64_t attempts) {
+    return atom_int(
+        a, attempts > (uint64_t)INT64_MAX
+               ? INT64_MAX : (int64_t)attempts);
+}
+
+static Atom *prime_nik_receipt_atom(
+    Arena *a, Atom *requested_authority,
+    const CettaNikReceiptV1 *receipt, const char *diagnostic) {
+    Atom *authority = requested_authority;
+    if (receipt->authority_alias && receipt->system_id &&
+        receipt->revision && receipt->authority_digest) {
+        authority = prime_nik_authority_atom(
+            a, receipt->authority_alias, receipt->system_id,
+            receipt->revision, receipt->authority_digest);
+    }
+    Atom *native_items[4] = {
+        prime_sym(a, "NativeReplay"),
+        prime_sym(
+            a, receipt->native_ran
+                   ? cetta_inference_status_name(receipt->native_status)
+                   : "not-run"),
+        receipt->native_accepted ? atom_true(a) : atom_false(a),
+        prime_nik_attempt_count(a, receipt->native_nodes)};
+    Atom *reference_items[4] = {
+        prime_sym(a, "HornReference"),
+        prime_sym(
+            a, prime_nik_horn_outcome_name(
+                   receipt->reference_ran, receipt->reference_outcome)),
+        receipt->reference_accepted ? atom_true(a) : atom_false(a),
+        prime_nik_attempt_count(a, receipt->reference_rule_attempts)};
+    Atom *compiled_items[4] = {
+        prime_sym(a, "CompiledWorklist"),
+        prime_sym(
+            a, prime_nik_horn_outcome_name(
+                   receipt->compiled_ran, receipt->compiled_outcome)),
+        receipt->compiled_accepted ? atom_true(a) : atom_false(a),
+        prime_nik_attempt_count(a, receipt->compiled_rule_attempts)};
+    Atom *realizations_items[4] = {
+        prime_sym(a, "Realizations"),
+        atom_expr(a, native_items, 4),
+        atom_expr(a, reference_items, 4),
+        atom_expr(a, compiled_items, 4)};
+    bool conclusive = receipt->outcome == CETTA_NIK_ACCEPTED ||
+        receipt->outcome == CETTA_NIK_REJECTED;
+    bool agreement = conclusive && receipt->native_ran &&
+        receipt->reference_ran && receipt->compiled_ran &&
+        receipt->native_accepted == receipt->reference_accepted &&
+        receipt->reference_accepted == receipt->compiled_accepted;
+    Atom *items[8] = {
+        prime_sym(a, "NIKReceiptV1"),
+        authority,
+        prime_expr2(
+            a, "Catalog",
+            receipt->catalog_digest
+                ? atom_string(a, receipt->catalog_digest)
+                : prime_sym(a, "Unavailable")),
+        prime_expr2(
+            a, "Outcome", prime_sym(a, cetta_nik_outcome_name(receipt->outcome))),
+        atom_expr(a, realizations_items, 4),
+        prime_expr2(a, "Agreement",
+                    agreement ? atom_true(a) : atom_false(a)),
+        prime_expr2(a, "TotalWork",
+                    prime_nik_attempt_count(a, receipt->total_work)),
+        prime_expr2(
+            a, "Diagnostic",
+            diagnostic && diagnostic[0]
+                ? atom_string(a, diagnostic)
+                : prime_sym(a, "None"))};
+    return atom_expr(a, items, 8);
+}
+
 static Atom *unquote_data(Atom *atom) {
     while (atom && atom->kind == ATOM_EXPR && atom->expr.len == 2 &&
            atom_is_symbol_id(atom->expr.elems[0], g_builtin_syms.quote)) {
@@ -117,6 +238,10 @@ typedef struct {
     CettaHeTypingBudget typing;
     uint64_t phase_spent[PRIME_RESOURCE_PHASE_COUNT];
 } PrimeResourceLedger;
+
+static uint64_t prime_u64_add_sat(uint64_t left, uint64_t right) {
+    return UINT64_MAX - left < right ? UINT64_MAX : left + right;
+}
 
 static const char *const PRIME_RESOURCE_PHASE_NAMES[] = {
     "formation", "synthesis", "normalization", "checking", "refinement",
@@ -231,7 +356,7 @@ Atom *prime_semantics_package_atom(Arena *a) {
     he_typing_budget_init_unbounded(&declared_budget);
 
     Atom *identity_items[5] = {
-        prime_sym(a, "PrimeIdentityV1"),
+        prime_sym(a, "PrimeIdentityV2"),
         prime_expr2(a, "Language", prime_sym(a, "prime")),
         prime_expr2(a, "LongName", prime_sym(a, "metta-prime")),
         prime_expr2(a, "SchemaVersion",
@@ -312,8 +437,8 @@ Atom *prime_semantics_package_atom(Arena *a) {
                     prime_sym(a, "type-index-refinement")),
         prime_expr2(a, "PredicateRequestMarker",
                     prime_sym(a, "type-level-function"))};
-    Atom *typing_items[8] = {
-        prime_sym(a, "TypingRulesV1"), judgments,
+    Atom *dependent_checking_items[8] = {
+        prime_sym(a, "PrimeDependentCheckingV1"), judgments,
         prime_named_list(a, "ConsistencyEdges", edge_names, 5),
         prime_named_list(a, "CheckedEdges", edge_names, 2),
         prime_sym(a, "DependentTelescopes"),
@@ -321,7 +446,14 @@ Atom *prime_semantics_package_atom(Arena *a) {
         prime_expr2(a, "Convert",
                     prime_sym(a, "ComputedConversionEvidenceNotDefEq")),
         atom_expr(a, refinement_items, 3)};
-    Atom *typing = atom_expr(a, typing_items, 8);
+    Atom *checking_items[5] = {
+        prime_sym(a, "CheckingV1"),
+        prime_expr2(a, "Gradual",
+                    prime_sym(a, "UnannotatedProgramsUnchecked")),
+        prime_expr2(a, "AuthorityIndexedJudgment", prime_sym(a, "Check")),
+        prime_nik_catalog_atom(a),
+        atom_expr(a, dependent_checking_items, 8)};
+    Atom *checking = atom_expr(a, checking_items, 5);
 
     Atom *results = prime_named_list(
         a, "Results", PRIME_RESULT_NAMES,
@@ -381,9 +513,11 @@ Atom *prime_semantics_package_atom(Arena *a) {
         atom_expr(a, effect_items, 5), resources};
     Atom *effects_resources = atom_expr(a, effects_resources_items, 3);
 
-    Atom *evidence_items[11] = {
-        prime_sym(a, "EvidenceSchemaV1"), prime_sym(a, "PrimeVerdict"),
+    Atom *evidence_items[13] = {
+        prime_sym(a, "EvidenceSchemaV2"), prime_sym(a, "PrimeVerdict"),
         prime_sym(a, "PrimeEvidenceV1"), prime_sym(a, "ResourceLedgerV1"),
+        prime_sym(a, "NIKReceiptV1"),
+        prime_sym(a, "AuthorityBoundProofReplay"),
         prime_sym(a, "typed-answer-v2"),
         prime_sym(a, "answer-substitution-v2"),
         prime_sym(a, "SearchAndEvaluationAreUntrustedProducers"),
@@ -391,10 +525,10 @@ Atom *prime_semantics_package_atom(Arena *a) {
         prime_sym(a, "ConversionCertificatesReplayChecked"),
         prime_sym(a, "CertificateCorrespondenceOpen"),
         prime_sym(a, "SourcePackageHashRequiredExternally")};
-    Atom *evidence = atom_expr(a, evidence_items, 11);
+    Atom *evidence = atom_expr(a, evidence_items, 13);
 
     Atom *package_items[8] = {
-        prime_sym(a, "PrimeDefV1"), identity, language_def, contexts, typing,
+        prime_sym(a, "PrimeDefV2"), identity, language_def, contexts, checking,
         result_algebra, effects_resources, evidence};
     Atom *package = atom_expr(a, package_items, 8);
     return prime_semantics_validate_package(package) ? package : NULL;
@@ -441,6 +575,42 @@ static bool prime_int_field(Atom *atom, const char *head, int64_t value) {
            atom->expr.elems[1]->ground.ival == value;
 }
 
+static bool prime_string_value(Atom *atom, const char *value) {
+    return atom && atom->kind == ATOM_GROUNDED &&
+           atom->ground.gkind == GV_STRING && atom->ground.sval &&
+           strcmp(atom->ground.sval, value) == 0;
+}
+
+static bool prime_nik_authority_valid(
+    Atom *atom, const CettaNikAuthorityV1 *expected) {
+    return prime_schema_expr(atom, "NIKAuthorityV1", 5) &&
+           is_symbol_named(atom->expr.elems[1], expected->alias) &&
+           prime_string_value(atom->expr.elems[2], expected->system_id) &&
+           prime_string_value(atom->expr.elems[3], expected->revision) &&
+           prime_string_value(atom->expr.elems[4], expected->digest);
+}
+
+static bool prime_nik_catalog_valid(Atom *catalog) {
+    size_t count = cetta_prime_nik_authorities_v1_count;
+    if (count > UINT32_MAX - 2u ||
+        !prime_schema_expr(
+            catalog, "NIKAuthorityCatalogV1",
+            (CettaExprLen)(count + 2u)) ||
+        !prime_string_value(
+            catalog->expr.elems[1],
+            cetta_prime_nik_authorities_v1_catalog_sha256)) {
+        return false;
+    }
+    for (size_t index = 0u; index < count; index++) {
+        if (!prime_nik_authority_valid(
+                catalog->expr.elems[index + 2u],
+                &cetta_prime_nik_authorities_v1[index])) {
+            return false;
+        }
+    }
+    return count >= 2u;
+}
+
 bool prime_semantics_validate_package(Atom *package) {
     static const char *const syntax_names[] = {
         "HomoiconicSExpressions", "ExplicitBangEvaluation",
@@ -468,16 +638,17 @@ bool prime_semantics_validate_package(Atom *package) {
         "TransitiveEffectAdmissionOpen"};
     static const char *const evidence_names[] = {
         "PrimeVerdict", "PrimeEvidenceV1", "ResourceLedgerV1",
+        "NIKReceiptV1", "AuthorityBoundProofReplay",
         "typed-answer-v2", "answer-substitution-v2",
         "SearchAndEvaluationAreUntrustedProducers",
         "TypingRecheckedBeforeAcceptance",
         "ConversionCertificatesReplayChecked",
         "CertificateCorrespondenceOpen", "SourcePackageHashRequiredExternally"};
 
-    if (!prime_schema_expr(package, "PrimeDefV1", 8)) return false;
+    if (!prime_schema_expr(package, "PrimeDefV2", 8)) return false;
 
     Atom *identity = package->expr.elems[1];
-    if (!prime_schema_expr(identity, "PrimeIdentityV1", 5) ||
+    if (!prime_schema_expr(identity, "PrimeIdentityV2", 5) ||
         !prime_symbol_field(identity->expr.elems[1], "Language", "prime") ||
         !prime_symbol_field(identity->expr.elems[2], "LongName",
                             "metta-prime") ||
@@ -540,20 +711,30 @@ bool prime_semantics_validate_package(Atom *package) {
         return false;
     }
 
-    Atom *typing = package->expr.elems[4];
-    if (!prime_schema_expr(typing, "TypingRulesV1", 8) ||
-        !prime_exact_symbol_list(typing->expr.elems[1], "Judgments",
+    Atom *checking = package->expr.elems[4];
+    if (!prime_schema_expr(checking, "CheckingV1", 5) ||
+        !prime_symbol_field(checking->expr.elems[1], "Gradual",
+                            "UnannotatedProgramsUnchecked") ||
+        !prime_symbol_field(checking->expr.elems[2],
+                            "AuthorityIndexedJudgment", "Check") ||
+        !prime_nik_catalog_valid(checking->expr.elems[3])) {
+        return false;
+    }
+    Atom *dependent = checking->expr.elems[4];
+    if (!prime_schema_expr(dependent, "PrimeDependentCheckingV1", 8) ||
+        !prime_exact_symbol_list(dependent->expr.elems[1], "Judgments",
                                  PRIME_JUDGMENT_NAMES, 8) ||
-        !prime_exact_symbol_list(typing->expr.elems[2], "ConsistencyEdges",
+        !prime_exact_symbol_list(dependent->expr.elems[2], "ConsistencyEdges",
                                  consistency_edge_names, 5) ||
-        !prime_exact_symbol_list(typing->expr.elems[3], "CheckedEdges",
+        !prime_exact_symbol_list(dependent->expr.elems[3], "CheckedEdges",
                                  checked_edge_names, 2) ||
-        !is_symbol_named(typing->expr.elems[4], "DependentTelescopes") ||
-        !is_symbol_named(typing->expr.elems[5],
+        !is_symbol_named(dependent->expr.elems[4], "DependentTelescopes") ||
+        !is_symbol_named(dependent->expr.elems[5],
                          "BidirectionalSynthesisAndChecking") ||
-        !prime_symbol_field(typing->expr.elems[6], "Convert",
+        !prime_symbol_field(dependent->expr.elems[6], "Convert",
                             "ComputedConversionEvidenceNotDefEq") ||
-        !prime_schema_expr(typing->expr.elems[7], "RefinementRulesV1", 3)) {
+        !prime_schema_expr(dependent->expr.elems[7],
+                           "RefinementRulesV1", 3)) {
         return false;
     }
 
@@ -600,7 +781,7 @@ bool prime_semantics_validate_package(Atom *package) {
     }
 
     return prime_exact_symbol_list(package->expr.elems[7],
-                                   "EvidenceSchemaV1", evidence_names, 10);
+                                   "EvidenceSchemaV2", evidence_names, 12);
 }
 
 static bool is_primitive_type_symbol(Atom *atom) {
@@ -1627,6 +1808,61 @@ static Atom *prime_may_or_must(Space *space, Arena *a, Atom *judgment,
                          prime_expr1(a, "no-value-branch-of-type"));
 }
 
+static void prime_account_nik_work(
+    PrimeResourceLedger *ledger, uint64_t work) {
+    if (!ledger->typing.steps_limited)
+        return;
+    uint64_t spent = work > ledger->typing.steps_remaining
+        ? ledger->typing.steps_remaining : work;
+    ledger->typing.steps_remaining -= spent;
+    ledger->typing.steps_spent = prime_u64_add_sat(
+        ledger->typing.steps_spent, spent);
+    ledger->typing.work_steps_observed = prime_u64_add_sat(
+        ledger->typing.work_steps_observed, spent);
+    ledger->phase_spent[PRIME_RESOURCE_CHECKING] = prime_u64_add_sat(
+        ledger->phase_spent[PRIME_RESOURCE_CHECKING], spent);
+}
+
+static Atom *prime_nik_check(
+    Arena *a, Atom *judgment, Atom *authority,
+    Atom *claim, Atom *proof, PrimeResourceLedger *ledger) {
+    if (!authority || authority->kind != ATOM_SYMBOL) {
+        return prime_undetermined(
+            a, judgment, prime_expr2(a, "NIKMalformedAuthority", authority));
+    }
+    if (ledger->typing.steps_limited &&
+        ledger->typing.steps_remaining == 0u) {
+        return prime_incomplete(
+            a, judgment, prime_expr1(a, "nik-work-limit-exhausted"));
+    }
+
+    CettaNikLimits limits = {0};
+    if (ledger->typing.steps_limited)
+        limits.max_total_work = ledger->typing.steps_remaining;
+    CettaNikReceiptV1 receipt;
+    char diagnostic[512] = {0};
+    CettaNikOutcome outcome = cetta_nik_check_v1(
+        atom_name_cstr(authority), claim, proof, limits, a, &receipt,
+        diagnostic, sizeof(diagnostic));
+    prime_account_nik_work(ledger, receipt.total_work);
+    Atom *evidence = prime_nik_receipt_atom(
+        a, authority, &receipt, diagnostic);
+
+    switch (outcome) {
+    case CETTA_NIK_ACCEPTED:
+        return prime_established(a, judgment, evidence);
+    case CETTA_NIK_REJECTED:
+        return prime_refuted(a, judgment, evidence);
+    case CETTA_NIK_INCOMPLETE:
+        return prime_incomplete(a, judgment, evidence);
+    case CETTA_NIK_MALFORMED:
+    case CETTA_NIK_UNSUPPORTED:
+    case CETTA_NIK_FAULT:
+        return prime_undetermined(a, judgment, evidence);
+    }
+    return prime_undetermined(a, judgment, evidence);
+}
+
 static Atom *prime_judge_raw(Arena *a, Space *space, Atom *judgment,
                              PrimeResourceLedger *ledger) {
     judgment = unquote_data(judgment);
@@ -1664,16 +1900,26 @@ static Atom *prime_judge_raw(Arena *a, Space *space, Atom *judgment,
                            ledger);
     }
 
-    if (strcmp(name, "Check") == 0 || strcmp(name, "Analyze") == 0) {
+    if (strcmp(name, "Check") == 0) {
+        if (judgment->expr.len == 4)
+            return prime_nik_check(
+                a, judgment, judgment->expr.elems[1],
+                judgment->expr.elems[2], judgment->expr.elems[3], ledger);
         if (judgment->expr.len != 3)
             return prime_refuted(
-                a, judgment,
-                prime_expr1(a, strcmp(name, "Check") == 0
-                                   ? "Check-arity"
-                                   : "Analyze-arity"));
+                a, judgment, prime_expr1(a, "Check-arity"));
         return prime_check_or_analyze(
             space, a, judgment, judgment->expr.elems[1],
-            judgment->expr.elems[2], ledger, strcmp(name, "Check") == 0);
+            judgment->expr.elems[2], ledger, true);
+    }
+
+    if (strcmp(name, "Analyze") == 0) {
+        if (judgment->expr.len != 3)
+            return prime_refuted(
+                a, judgment, prime_expr1(a, "Analyze-arity"));
+        return prime_check_or_analyze(
+            space, a, judgment, judgment->expr.elems[1],
+            judgment->expr.elems[2], ledger, false);
     }
 
     if (strcmp(name, "Convert") == 0) {

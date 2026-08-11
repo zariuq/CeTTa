@@ -49,6 +49,8 @@ typedef struct {
     uint32_t entry_arity;
     uint32_t program_position;
     uint32_t result_position;
+    const char *query_relation;
+    uint32_t query_arity;
     const CettaGsltRequestPipelineV1 *request_pipeline;
     const char *observation;
     const char *manifest_sha256;
@@ -121,6 +123,17 @@ bool cetta_gslt_language_execute_atoms_with_realization_and_providers_v1(
     Atom *const *forms, size_t form_count,
     Arena *output_arena, CettaGsltHornLimits limits,
     CettaGsltLanguageResult *result,
+    char *error, size_t error_size);
+
+/* Execute one admitted relation exposed by a `(query-entry ...)` manifest.
+ * This is the internal-service counterpart of whole-document execution: the
+ * caller supplies the complete query and receives the raw relation answers. */
+bool cetta_gslt_language_query_v1(
+    const CettaGsltLanguage *language,
+    CettaGsltRealization realization,
+    Arena *output_arena, Atom *query,
+    CettaGsltHornLimits limits,
+    CettaGsltHornResult *result,
     char *error, size_t error_size);
 
 const char *cetta_gslt_realization_name(CettaGsltRealization realization);
