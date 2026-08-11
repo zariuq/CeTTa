@@ -1,4 +1,4 @@
-(: unwrap-quoted (-> Expression %Undefined%))
+(: unwrap-quoted (-> Atom %Undefined%))
 
 (= (unwrap-quoted (quote $value))
    (let $commit (cut) (quote (quoted $value))))

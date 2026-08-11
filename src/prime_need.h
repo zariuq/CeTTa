@@ -277,11 +277,4 @@ bool prime_need_receipt_event_at(const PrimeNeedReceipt *receipt,
                                  size_t index,
                                  PrimeNeedReceiptEvent *out_event);
 
-/* True iff the DELTA from `before` to `after` (the events `after` adds) is
- * free of READ_STATE / WRITE_STATE / RESAMPLE.  Ground-call memoization admits
- * a completed call only when this holds.  Conservative: returns false on any
- * allocation failure. */
-bool prime_need_receipt_delta_is_pure(const PrimeNeedReceipt *before,
-                                      const PrimeNeedReceipt *after);
-
 #endif /* CETTA_PRIME_NEED_H */

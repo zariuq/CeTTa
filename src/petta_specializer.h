@@ -30,6 +30,8 @@ typedef enum {
     PETTA_SPECIALIZE_UNCHANGED_RELEVANCE_BOUNDED,
     PETTA_SPECIALIZE_REWRITTEN,
     PETTA_SPECIALIZE_INVALIDATED,
+    /* The optional accelerator could not finish.  `*out_call` remains the
+     * source call, whose canonical execution is still authoritative. */
     PETTA_SPECIALIZE_CAPACITY,
 } PettaSpecializeResult;
 

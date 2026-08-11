@@ -69,12 +69,17 @@ typedef struct {
     bool known;
     bool exact;
     bool larger;
+    bool smaller;
 } PeTTaNamedArity;
 
 PeTTaForm petta_semantics_form(SymbolId head);
 PeTTaNamedArity petta_semantics_named_arity(
     struct Space *space, Arena *scratch, Atom *head,
     CettaExprLen supplied);
+Atom *petta_semantics_function_overapplication_error(
+    Arena *arena, Atom *head,
+    const CettaExprLen *known_input_arities,
+    size_t known_arity_count, CettaExprLen actual_input_arity);
 bool petta_semantics_boolean_relation_arity(
     SymbolId head, uint32_t *arity);
 bool petta_semantics_intrinsic_partial_arity(
@@ -136,16 +141,29 @@ bool petta_semantics_logical_list_length(
     Atom *list, CettaExprLen *length);
 Atom *petta_semantics_materialize_closed_logical_list(
     Arena *arena, Atom *list);
+/* Reify the complete logical-list carrier for observation.  Closed spines
+ * become PeTTa's flat expression carrier; an unresolved or improper tail is
+ * retained as authored `(cons Head Tail)` syntax.  The private carrier tag is
+ * never observable in either case. */
+Atom *petta_semantics_materialize_logical_list(
+    Arena *arena, Atom *list);
 
 /* Constructor and observation policies used by generated machines.  An
  * evaluated `(cons Head Tail)` becomes the internal O(1) list carrier;
  * unrelated constructors remain ordinary expressions.  Observation copies
- * a closed carrier graph to an arena-owned flat PeTTa value and rejects an
- * unresolved open tail. */
+ * a carrier graph to an arena-owned PeTTa value, preserving an unresolved
+ * tail as authored `cons` syntax. */
 Atom *petta_semantics_construct_value(
     Arena *arena, Atom **elements, CettaExprLen length);
 Atom *petta_semantics_materialize_value(
     Arena *arena, Atom *value);
+/* True exactly when materialize_value has an observable open-cons carrier
+ * to erase.  Opaque closures and quoted syntax are not observation
+ * boundaries, so carriers below them deliberately do not count.  Allocation
+ * failure is conservative: callers must not expose a carrier through an
+ * optimization merely because the inspection could not finish. */
+bool petta_semantics_value_contains_observable_open_cons(
+    const Atom *value);
 bool petta_semantics_contains_cons_constraint(const Atom *atom);
 /*
  * Conservative clause-index discriminator for PeTTa list patterns.

@@ -476,6 +476,7 @@ PeTTaNamedArity petta_semantics_named_arity(
     info.known = found;
     info.exact = has_exact;
     info.larger = found && maximum > supplied;
+    info.smaller = found && minimum < supplied;
 
     CettaExprLen intrinsic = 0u;
     if (petta_semantics_intrinsic_partial_arity(
@@ -483,6 +484,7 @@ PeTTaNamedArity petta_semantics_named_arity(
         info.known = true;
         info.exact = info.exact || intrinsic == supplied;
         info.larger = info.larger || intrinsic > supplied;
+        info.smaller = info.smaller || intrinsic < supplied;
     }
 
     Atom **types = NULL;
@@ -500,10 +502,53 @@ PeTTaNamedArity petta_semantics_named_arity(
         info.known = true;
         info.exact = info.exact || arity == supplied;
         info.larger = info.larger || arity > supplied;
+        info.smaller = info.smaller || arity < supplied;
     }
     free(types);
-    (void)minimum;
     return info;
+}
+
+Atom *petta_semantics_function_overapplication_error(
+    Arena *arena, Atom *head,
+    const CettaExprLen *known_input_arities,
+    size_t known_arity_count, CettaExprLen actual_input_arity) {
+    if (!arena || !head ||
+        (known_arity_count > 0u && !known_input_arities) ||
+        known_arity_count > SIZE_MAX / sizeof(Atom *) ||
+        actual_input_arity > (CettaExprLen)INT64_MAX) {
+        return NULL;
+    }
+
+    Atom **arity_atoms = known_arity_count
+        ? arena_alloc(arena, sizeof(*arity_atoms) * known_arity_count)
+        : NULL;
+    if (known_arity_count > 0u && !arity_atoms)
+        return NULL;
+    for (size_t index = 0u; index < known_arity_count; index++) {
+        if (known_input_arities[index] > (CettaExprLen)INT64_MAX)
+            return NULL;
+        arity_atoms[index] = atom_int(
+            arena, (int64_t)known_input_arities[index]);
+        if (!arity_atoms[index])
+            return NULL;
+    }
+
+    Atom *known = atom_expr(
+        arena, arity_atoms, (CettaExprLen)known_arity_count);
+    Atom *arity_domain = known
+        ? atom_expr3(
+              arena, atom_symbol(arena, "function_input_arities"),
+              head, known)
+        : NULL;
+    Atom *domain_error = arity_domain
+        ? atom_expr3(
+              arena, atom_symbol(arena, "domain_error"),
+              arity_domain,
+              atom_int(arena, (int64_t)actual_input_arity))
+        : NULL;
+    return domain_error
+        ? atom_error(arena, domain_error, atom_symbol(arena, "none"))
+        : NULL;
 }
 
 bool petta_semantics_is_cons_constraint(const Atom *atom) {
@@ -634,6 +679,91 @@ Atom *petta_semantics_materialize_closed_logical_list(
     return result;
 }
 
+Atom *petta_semantics_materialize_logical_list(
+    Arena *arena, Atom *list) {
+    if (!arena || !list)
+        return NULL;
+    if (!petta_semantics_is_open_cons_value(list))
+        return list->kind == ATOM_EXPR ? list : NULL;
+
+    Atom **heads = NULL;
+    size_t length = 0u;
+    size_t capacity = 0u;
+    Atom *cursor = list;
+    while (petta_semantics_is_open_cons_value(cursor)) {
+        if (length == capacity) {
+            size_t next = capacity ? capacity * 2u : 64u;
+            if (next <= capacity ||
+                next > SIZE_MAX / sizeof(*heads)) {
+                free(heads);
+                return NULL;
+            }
+            void *grown = realloc(heads, sizeof(*heads) * next);
+            if (!grown) {
+                free(heads);
+                return NULL;
+            }
+            heads = grown;
+            capacity = next;
+        }
+        heads[length++] = cursor->expr.elems[1];
+        cursor = cursor->expr.elems[2];
+        if (!cursor) {
+            free(heads);
+            return NULL;
+        }
+    }
+
+    if (cursor->kind == ATOM_EXPR) {
+        if ((uint64_t)cursor->expr.len >
+                (uint64_t)(SIZE_MAX - length)) {
+            free(heads);
+            return NULL;
+        }
+        size_t total = length + (size_t)cursor->expr.len;
+        if (!cetta_expr_len_fits_size((CettaExprLen)total) ||
+            total > SIZE_MAX / sizeof(*heads)) {
+            free(heads);
+            return NULL;
+        }
+        if (total > capacity) {
+            void *grown = realloc(heads, sizeof(*heads) * total);
+            if (!grown && total > 0u) {
+                free(heads);
+                return NULL;
+            }
+            heads = grown;
+        }
+        if (cursor->expr.len > 0u) {
+            memcpy(heads + length, cursor->expr.elems,
+                   sizeof(*heads) * (size_t)cursor->expr.len);
+        }
+        Atom *result = atom_expr(
+            arena, heads, (CettaExprLen)total);
+        free(heads);
+        return result;
+    }
+
+    const PeTTaSymbolIds *ids = petta_symbol_ids();
+    Atom *cons = ids->cons != SYMBOL_ID_NONE
+        ? atom_symbol_id(arena, ids->cons) : NULL;
+    Atom *result = cursor;
+    if (!cons) {
+        free(heads);
+        return NULL;
+    }
+    for (size_t index = length; index > 0u; index--) {
+        result = atom_expr3(
+            arena, cons, heads[index - 1u], result);
+        if (!result) {
+            free(heads);
+            return NULL;
+        }
+    }
+    free(heads);
+    return result;
+}
+
 Atom *petta_semantics_flatten_closed_open_cons(Arena *arena, Atom *atom) {
     if (!arena || !atom || atom->kind != ATOM_EXPR)
         return atom;
@@ -737,7 +867,6 @@ typedef struct {
     CettaExprLen length;
     CettaExprIndex next;
     Atom **result_slot;
-    bool owns_source_children;
 } PeTTaMaterializeFrame;
 
 static bool petta_materialize_frame_reserve(
@@ -758,72 +887,6 @@ static bool petta_materialize_frame_reserve(
         return false;
     *frames = grown;
     *capacity = next;
-    return true;
-}
-
-static bool petta_materialize_list_sources(
-    Atom *value, Atom ***items_out, CettaExprLen *length_out) {
-    if (items_out)
-        *items_out = NULL;
-    if (length_out)
-        *length_out = 0u;
-    if (!value || !items_out || !length_out ||
-        !petta_semantics_is_open_cons_value(value))
-        return false;
-    Atom **items = NULL;
-    size_t length = 0u;
-    size_t capacity = 0u;
-    Atom *cursor = value;
-    while (petta_semantics_is_open_cons_value(cursor)) {
-        if (length == capacity) {
-            size_t next = capacity ? capacity * 2u : 64u;
-            if (next <= capacity || next > SIZE_MAX / sizeof(*items)) {
-                free(items);
-                return false;
-            }
-            void *grown = realloc(items, sizeof(*items) * next);
-            if (!grown) {
-                free(items);
-                return false;
-            }
-            items = grown;
-            capacity = next;
-        }
-        items[length++] = cursor->expr.elems[1];
-        cursor = cursor->expr.elems[2];
-        if (!cursor) {
-            free(items);
-            return false;
-        }
-    }
-    if (cursor->kind != ATOM_EXPR ||
-        (uint64_t)cursor->expr.len > (uint64_t)(SIZE_MAX - length)) {
-        free(items);
-        return false;
-    }
-    size_t total = length + (size_t)cursor->expr.len;
-    if (total > capacity) {
-        if (total > SIZE_MAX / sizeof(*items)) {
-            free(items);
-            return false;
-        }
-        void *grown = realloc(items, sizeof(*items) * total);
-        if (!grown && total > 0u) {
-            free(items);
-            return false;
-        }
-        items = grown;
-    }
-    if (cursor->expr.len > 0u) {
-        memcpy(items + length, cursor->expr.elems,
-               sizeof(*items) * (size_t)cursor->expr.len);
-    }
-    if (!cetta_expr_len_fits_size((CettaExprLen)total)) {
-        free(items);
-        return false;
-    }
-    *items_out = items;
-    *length_out = (CettaExprLen)total;
     return true;
 }
 
@@ -864,21 +927,18 @@ Atom *petta_semantics_materialize_value(
             goto fail; \
         break; \
     } \
+    if (petta_semantics_is_open_cons_value(petta_source__)) { \
+        petta_source__ = petta_semantics_materialize_logical_list( \
+            arena, petta_source__); \
+        if (!petta_source__) \
+            goto fail; \
+    } \
     Atom **petta_sources__ = petta_source__->expr.elems; \
     CettaExprLen petta_count__ = petta_source__->expr.len; \
-    bool petta_owned__ = false; \
-    if (petta_semantics_is_open_cons_value(petta_source__)) { \
-        if (!petta_materialize_list_sources( \
-                petta_source__, &petta_sources__, &petta_count__)) \
-            goto fail; \
-        petta_owned__ = true; \
-    } \
     if (!cetta_expr_len_mul_fits_size( \
             petta_count__, sizeof(Atom *)) || \
         !petta_materialize_frame_reserve( \
             &frames, &capacity, length + 1u)) { \
-        if (petta_owned__) \
-            free(petta_sources__); \
         goto fail; \
     } \
     Atom **petta_results__ = petta_count__ \
@@ -886,8 +946,6 @@ Atom *petta_semantics_materialize_value(
               arena, sizeof(*petta_results__) * (size_t)petta_count__) \
         : NULL; \
     if (petta_count__ > 0u && !petta_results__) { \
-        if (petta_owned__) \
-            free(petta_sources__); \
         goto fail; \
     } \
     frames[length++] = (PeTTaMaterializeFrame){ \
@@ -896,7 +954,6 @@ Atom *petta_semantics_materialize_value(
         .result_children = petta_results__, \
         .length = petta_count__, \
         .result_slot = petta_slot__, \
-        .owns_source_children = petta_owned__, \
     }; \
 } while (0)
 
@@ -915,8 +972,6 @@ Atom *petta_semantics_materialize_value(
         if (!built)
             goto fail;
         *frame->result_slot = built;
-        if (frame->owns_source_children)
-            free(frame->source_children);
         length--;
     }
     free(frames);
@@ -924,10 +979,6 @@ Atom *petta_semantics_materialize_value(
     return result;
 
 fail:
-    for (size_t index = 0u; index < length; index++) {
-        if (frames[index].owns_source_children)
-            free(frames[index].source_children);
-    }
     free(frames);
 #undef PETTA_MATERIALIZE_PUSH
     return NULL;
@@ -936,18 +987,16 @@ fail:
 typedef struct {
     Atom *left;
     Atom *right;
-    uint32_t depth;
 } PeTTaConsMatchPair;
 
 typedef struct {
     const Atom *pattern;
     const Atom *value;
-    uint32_t depth;
 } PeTTaConsShapePair;
 
 static bool petta_cons_match_pair_push(
     PeTTaConsMatchPair **pairs, size_t *length, size_t *capacity,
-    Atom *left, Atom *right, uint32_t depth) {
+    Atom *left, Atom *right) {
     if (*length == *capacity) {
         size_t next = *capacity ? *capacity * 2u : 32u;
         if (next <= *capacity ||
@@ -960,14 +1009,13 @@ static bool petta_cons_match_pair_push(
         *capacity = next;
     }
     (*pairs)[(*length)++] =
-        (PeTTaConsMatchPair){
-            .left = left, .right = right, .depth = depth};
+        (PeTTaConsMatchPair){.left = left, .right = right};
     return true;
 }
 
 static bool petta_cons_shape_pair_push(
     PeTTaConsShapePair **pairs, size_t *length, size_t *capacity,
-    const Atom *pattern, const Atom *value, uint32_t depth) {
+    const Atom *pattern, const Atom *value) {
     if (*length == *capacity) {
         size_t next = *capacity ? *capacity * 2u : 32u;
         if (next <= *capacity ||
@@ -983,7 +1031,6 @@ static bool petta_cons_shape_pair_push(
         (PeTTaConsShapePair){
             .pattern = pattern,
             .value = value,
-            .depth = depth,
         };
     return true;
 }
@@ -997,7 +1044,7 @@ bool petta_semantics_cons_pattern_may_match(
     size_t length = 0u;
     size_t capacity = 0u;
     if (!petta_cons_shape_pair_push(
-            &pairs, &length, &capacity, pattern, value, 0u)) {
+            &pairs, &length, &capacity, pattern, value)) {
         return true;
     }
 
@@ -1005,7 +1052,7 @@ bool petta_semantics_cons_pattern_may_match(
         PeTTaConsShapePair pair = pairs[--length];
         pattern = pair.pattern;
         value = pair.value;
-        if (!pattern || !value || pair.depth > 2048u ||
+        if (!pattern || !value ||
             pattern->kind == ATOM_VAR ||
             value->kind == ATOM_VAR) {
             continue;
@@ -1036,11 +1083,10 @@ bool petta_semantics_cons_pattern_may_match(
         for (CettaExprIndex index = pattern->expr.len;
              index > 0u; index--) {
             CettaExprIndex child = index - 1u;
-            if (!petta_cons_shape_pair_push(
-                    &pairs, &length, &capacity,
-                    pattern->expr.elems[child],
-                    value->expr.elems[child],
-                    pair.depth + 1u)) {
+                if (!petta_cons_shape_pair_push(
+                        &pairs, &length, &capacity,
+                        pattern->expr.elems[child],
+                        value->expr.elems[child])) {
                 free(pairs);
                 return true;
             }
@@ -1062,14 +1108,12 @@ bool petta_semantics_match_cons_constraint(
     size_t length = 0u;
     size_t capacity = 0u;
     if (!petta_cons_match_pair_push(
-            &pairs, &length, &capacity, constraint, value, 0u)) {
+            &pairs, &length, &capacity, constraint, value)) {
         return false;
     }
 
     while (length > 0u) {
         PeTTaConsMatchPair pair = pairs[--length];
-        if (pair.depth > 2048u)
-            goto fail;
         const Bindings *current =
             bindings_builder_bindings(builder);
         Atom *left = bindings_apply_if_vars(
@@ -1105,8 +1149,7 @@ bool petta_semantics_match_cons_constraint(
                 if (!petta_cons_match_pair_push(
                         &pairs, &length, &capacity,
                         left->expr.elems[child],
-                        right->expr.elems[child],
-                        pair.depth + 1u)) {
+                        right->expr.elems[child])) {
                     goto fail;
                 }
             }
@@ -1159,10 +1202,10 @@ bool petta_semantics_match_cons_constraint(
         }
         if (!petta_cons_match_pair_push(
                 &pairs, &length, &capacity,
-                left_tail, right_tail, pair.depth + 1u) ||
+                left_tail, right_tail) ||
             !petta_cons_match_pair_push(
                 &pairs, &length, &capacity,
-                left_head, right_head, pair.depth + 1u)) {
+                left_head, right_head)) {
             goto fail;
         }
     }
@@ -1178,19 +1221,25 @@ fail:
 
 typedef struct {
     Atom *atom;
-    uint32_t depth;
 } PeTTaConsWalkItem;
 
-bool petta_semantics_contains_cons_constraint(const Atom *root) {
+static bool petta_semantics_contains_cons_walk(
+    const Atom *root, bool observable_open_only) {
     if (!root)
         return false;
     PeTTaConsWalkItem *stack = NULL;
     size_t length = 0u;
     size_t capacity = 0u;
-    if (petta_semantics_is_cons_constraint(root))
+    bool root_matches = observable_open_only
+        ? petta_semantics_is_open_cons_value(root)
+        : petta_semantics_is_cons_constraint(root);
+    if (root_matches)
         return true;
-    if (root->kind != ATOM_EXPR)
+    if (root->kind != ATOM_EXPR ||
+        (observable_open_only &&
+         petta_materialize_opaque_value(root))) {
         return false;
+    }
     for (CettaExprIndex index = root->expr.len;
          index > 0u; index--) {
         if (length == capacity) {
@@ -1198,7 +1247,8 @@ bool petta_semantics_contains_cons_constraint(const Atom *root) {
             if (next <= capacity ||
                 next > SIZE_MAX / sizeof(*stack)) {
                 free(stack);
-                return false;
+                /* Unknown must take the conservative cons-capable route. */
+                return true;
             }
             stack = stack
                 ? cetta_realloc(stack, sizeof(*stack) * next)
@@ -1207,20 +1257,23 @@ bool petta_semantics_contains_cons_constraint(const Atom *root) {
         }
         stack[length++] = (PeTTaConsWalkItem){
             .atom = root->expr.elems[index - 1u],
-            .depth = 1u,
         };
     }
     while (length > 0u) {
         PeTTaConsWalkItem item = stack[--length];
         Atom *atom = item.atom;
-        if (item.depth > 2048u)
-            continue;
-        if (petta_semantics_is_cons_constraint(atom)) {
+        bool matches = observable_open_only
+            ? petta_semantics_is_open_cons_value(atom)
+            : petta_semantics_is_cons_constraint(atom);
+        if (matches) {
             free(stack);
             return true;
         }
-        if (!atom || atom->kind != ATOM_EXPR)
+        if (!atom || atom->kind != ATOM_EXPR ||
+            (observable_open_only &&
+             petta_materialize_opaque_value(atom))) {
             continue;
+        }
         for (CettaExprIndex index = atom->expr.len;
              index > 0u; index--) {
             if (length == capacity) {
@@ -1228,7 +1281,8 @@ bool petta_semantics_contains_cons_constraint(const Atom *root) {
                 if (next <= capacity ||
                     next > SIZE_MAX / sizeof(*stack)) {
                     free(stack);
-                    return false;
+                    /* Unknown must take the conservative cons-capable route. */
+                    return true;
                 }
                 stack = cetta_realloc(
                     stack, sizeof(*stack) * next);
@@ -1236,12 +1290,20 @@ bool petta_semantics_contains_cons_constraint(const Atom *root) {
             }
             stack[length++] = (PeTTaConsWalkItem){
                 .atom = atom->expr.elems[index - 1u],
-                .depth = item.depth + 1u,
             };
         }
     }
     free(stack);
     return false;
+}
+
+bool petta_semantics_value_contains_observable_open_cons(
+    const Atom *value) {
+    return petta_semantics_contains_cons_walk(value, true);
+}
+
+bool petta_semantics_contains_cons_constraint(const Atom *root) {
+    return petta_semantics_contains_cons_walk(root, false);
 }
 
 static uint32_t petta_unique_capacity(CettaExprLen len) {

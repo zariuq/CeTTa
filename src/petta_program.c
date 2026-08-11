@@ -506,6 +506,30 @@ bool petta_program_predeclare_equation(
            petta_head_insert(&program->predeclared_heads, head);
 }
 
+bool petta_program_head_declared(
+    const PettaProgram *program, SymbolId head) {
+    if (!program || head == SYMBOL_ID_NONE)
+        return false;
+    if (petta_head_contains(&program->predeclared_heads, head))
+        return true;
+    for (size_t space_index = 0u;
+         space_index < program->space_len; space_index++) {
+        const PettaProgramSpace *space =
+            &program->spaces[space_index];
+        if (!space->space ||
+            space->instance_id !=
+                space_instance_id(space->space)) {
+            continue;
+        }
+        for (size_t clause_index = 0u;
+             clause_index < space->clause_len; clause_index++) {
+            if (space->clauses[clause_index].head == head)
+                return true;
+        }
+    }
+    return false;
+}
+
 bool petta_program_head_is_intrinsic(SymbolId head) {
     const char *name =
         head == SYMBOL_ID_NONE
@@ -540,7 +564,6 @@ bool petta_program_head_is_intrinsic(SymbolId head) {
 typedef struct {
     Atom *atom;
     PettaPlanNode *plan;
-    uint32_t depth;
 } PettaPlanBuildItem;
 
 typedef struct {
@@ -648,7 +671,7 @@ static const PettaPlanNode *petta_plan_build(
         PettaPlanBuildItem item = work[--work_len];
         Atom *atom = item.atom;
         PettaPlanNode *node = item.plan;
-        if (!atom || !node || item.depth > 2048u) {
+        if (!atom || !node) {
             ok = false;
             break;
         }
@@ -718,7 +741,6 @@ static const PettaPlanNode *petta_plan_build(
             work[work_len++] = (PettaPlanBuildItem){
                 .atom = atom->expr.elems[child],
                 .plan = &children[child],
-                .depth = item.depth + 1u,
             };
         }
     }

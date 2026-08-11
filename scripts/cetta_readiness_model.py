@@ -343,7 +343,10 @@ def git_value(root: Path, *args: str) -> str:
 
 
 def working_tree_content_identity(
-    root: Path, *, excluded_paths: Sequence[str] = ("README.md",)
+    root: Path,
+    *,
+    excluded_paths: Sequence[str] = ("README.md",),
+    excluded_suffixes: Sequence[str] = (),
 ) -> dict[str, Any]:
     """Hash the effective candidate bytes independently of Git commit topology."""
     result = subprocess.run(
@@ -364,7 +367,9 @@ def working_tree_content_identity(
     names = sorted(
         os.fsdecode(name)
         for name in result.stdout.split(b"\0")
-        if name and os.fsdecode(name) not in excluded
+        if name
+        and os.fsdecode(name) not in excluded
+        and not os.fsdecode(name).endswith(tuple(excluded_suffixes))
     )
     entries: list[dict[str, Any]] = []
     for name in names:
@@ -403,12 +408,16 @@ def working_tree_content_identity(
         "paths_sha256": sha256_bytes(canonical_json(names)),
         "content_sha256": sha256_bytes(canonical_json(entries)),
         "excluded_paths": sorted(excluded),
+        "excluded_suffixes": sorted(excluded_suffixes),
     }
 
 
 def repository_identity(root: Path) -> dict[str, Any]:
     diff = subprocess.run(
-        ["git", "diff", "--binary", "HEAD", "--", ":(exclude)README.md"],
+        [
+            "git", "diff", "--binary", "HEAD", "--", ".",
+            ":(exclude,glob)**/*.md", ":(exclude,glob)*.md",
+        ],
         cwd=root,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
@@ -422,7 +431,9 @@ def repository_identity(root: Path) -> dict[str, Any]:
             "--cached",
             "HEAD",
             "--",
-            ":(exclude)README.md",
+            ".",
+            ":(exclude,glob)**/*.md",
+            ":(exclude,glob)*.md",
         ],
         cwd=root,
         stdout=subprocess.PIPE,
@@ -435,7 +446,7 @@ def repository_identity(root: Path) -> dict[str, Any]:
     untracked = {
         name: sha256_file(root / name)
         for name in sorted(untracked_names)
-        if name != "README.md" and (root / name).is_file()
+        if not name.endswith(".md") and (root / name).is_file()
     }
     return {
         "commit": git_value(root, "rev-parse", "HEAD"),
@@ -444,7 +455,9 @@ def repository_identity(root: Path) -> dict[str, Any]:
         "tracked_diff_sha256": sha256_bytes(diff),
         "staged_diff_sha256": sha256_bytes(staged),
         "untracked_sha256": untracked,
-        "working_tree": working_tree_content_identity(root),
+        "working_tree": working_tree_content_identity(
+            root, excluded_suffixes=(".md",)
+        ),
     }
 
 

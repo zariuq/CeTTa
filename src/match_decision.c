@@ -12,6 +12,7 @@ enum {
     CETTA_MATCH_DECISION_MAX_PATHS = 4096u,
     CETTA_MATCH_DECISION_KEY_INDEX_MIN_KEYS = 8u,
     CETTA_MATCH_DECISION_KEY_INDEX_MIN_CAPACITY = 16u,
+    CETTA_MATCH_DECISION_CONJUNCTIVE_MAX_MASK_BYTES = 64u * 1024u * 1024u,
 };
 
 typedef enum {
@@ -51,6 +52,7 @@ typedef struct {
     uint32_t *wildcard_refs;
     uint32_t wildcard_count;
     uint32_t wildcard_capacity;
+    uint64_t *wildcard_bits;
 } CettaMatchDecisionPath;
 
 typedef struct {
@@ -76,6 +78,9 @@ struct CettaMatchDecision {
     size_t candidate_source_capacity;
     CettaMatchDecisionRefList *working_lists;
     size_t working_list_capacity;
+    uint64_t *candidate_bits;
+    uint64_t *path_bits;
+    size_t bit_word_count;
     CettaMatchDecisionStats stats;
 };
 
@@ -511,6 +516,7 @@ static void match_decision_path_free(CettaMatchDecisionPath *path) {
     free(path->key_slots);
     free(path->keys);
     free(path->wildcard_refs);
+    free(path->wildcard_bits);
     free(path->path);
     memset(path, 0, sizeof(*path));
 }
@@ -536,6 +542,44 @@ static void match_decision_remove_empty_paths(
     decision->path_count = write;
 }
 
+static bool match_decision_build_conjunctive_masks(
+    CettaMatchDecision *decision) {
+    if (!decision || decision->clause_count == 0u)
+        return false;
+    size_t words = decision->clause_count / 64u +
+        (decision->clause_count % 64u != 0u ? 1u : 0u);
+    if (words == 0u || words > SIZE_MAX / sizeof(uint64_t) ||
+        decision->path_count > SIZE_MAX / words)
+        return false;
+    size_t path_words = decision->path_count * words;
+    if (path_words >
+        CETTA_MATCH_DECISION_CONJUNCTIVE_MAX_MASK_BYTES /
+            sizeof(uint64_t)) {
+        return false;
+    }
+    decision->candidate_bits = calloc(words, sizeof(uint64_t));
+    decision->path_bits = calloc(words, sizeof(uint64_t));
+    if (!decision->candidate_bits || !decision->path_bits)
+        return false;
+    decision->bit_word_count = words;
+    for (size_t path_index = 0u;
+         path_index < decision->path_count; path_index++) {
+        CettaMatchDecisionPath *path = &decision->paths[path_index];
+        path->wildcard_bits = calloc(words, sizeof(uint64_t));
+        if (!path->wildcard_bits)
+            return false;
+        for (uint32_t index = 0u;
+             index < path->wildcard_count; index++) {
+            uint32_t clause = path->wildcard_refs[index];
+            if (clause >= decision->clause_count)
+                return false;
+            path->wildcard_bits[clause / 64u] |=
+                UINT64_C(1) << (clause % 64u);
+        }
+    }
+    return true;
+}
+
 CettaMatchDecision *cetta_match_decision_compile(
     SpaceReadToken read,
     CettaMatchDecisionSemanticIdentity semantic_identity,
@@ -548,7 +592,8 @@ CettaMatchDecision *cetta_match_decision_compile(
     if (!clauses || clause_count == 0u || clause_count > UINT32_MAX ||
         !space_read_token_is_current(read) ||
         (mode != CETTA_MATCH_DECISION_LINEAR &&
-         mode != CETTA_MATCH_DECISION_DEEP)) {
+         mode != CETTA_MATCH_DECISION_DEEP &&
+         mode != CETTA_MATCH_DECISION_CONJUNCTIVE)) {
         return NULL;
     }
     if (max_depth == 0u)
@@ -574,7 +619,8 @@ CettaMatchDecision *cetta_match_decision_compile(
     decision->clause_count = clause_count;
     decision->stats.compilations = 1u;
 
-    if (mode == CETTA_MATCH_DECISION_DEEP) {
+    if (mode == CETTA_MATCH_DECISION_DEEP ||
+        mode == CETTA_MATCH_DECISION_CONJUNCTIVE) {
         if (!match_decision_gather_paths(
                 decision, classify, classify_context)) {
             cetta_match_decision_free(decision);
@@ -589,6 +635,11 @@ CettaMatchDecision *cetta_match_decision_compile(
             }
         }
         match_decision_remove_empty_paths(decision);
+        if (mode == CETTA_MATCH_DECISION_CONJUNCTIVE &&
+            !match_decision_build_conjunctive_masks(decision)) {
+            cetta_match_decision_free(decision);
+            return NULL;
+        }
     }
     cetta_runtime_stats_inc(
         CETTA_RUNTIME_COUNTER_MATCH_DECISION_COMPILE);
@@ -634,6 +685,8 @@ void cetta_match_decision_free(CettaMatchDecision *decision) {
     free(decision->candidate_locals);
     free(decision->candidate_sources);
     free(decision->working_lists);
+    free(decision->candidate_bits);
+    free(decision->path_bits);
     free(decision);
 }
 
@@ -978,6 +1031,130 @@ static bool match_decision_path_candidate_count(
               decision, path, value, value_absent, accepted_count);
 }
 
+static bool match_decision_bits_add_refs(
+    CettaMatchDecision *decision, uint64_t *bits,
+    const uint32_t *refs, uint32_t count) {
+    if (!decision || !bits || (count > 0u && !refs))
+        return false;
+    for (uint32_t index = 0u; index < count; index++) {
+        uint32_t clause = refs[index];
+        if (clause >= decision->clause_count)
+            return false;
+        bits[clause / 64u] |= UINT64_C(1) << (clause % 64u);
+    }
+    return true;
+}
+
+static bool match_decision_conjunctive_candidates(
+    CettaMatchDecision *decision, const CettaMatchDecisionQuery *query,
+    uint64_t ready_arguments, size_t *candidate_count,
+    bool *observed_path) {
+    if (!decision || !query || !candidate_count || !observed_path ||
+        !decision->candidate_bits || !decision->path_bits ||
+        decision->bit_word_count == 0u) {
+        return false;
+    }
+    *candidate_count = 0u;
+    *observed_path = false;
+    for (size_t word = 0u; word < decision->bit_word_count; word++)
+        decision->candidate_bits[word] = UINT64_MAX;
+    size_t tail_bits = decision->clause_count % 64u;
+    if (tail_bits != 0u) {
+        decision->candidate_bits[decision->bit_word_count - 1u] =
+            (UINT64_C(1) << tail_bits) - 1u;
+    }
+
+    for (size_t path_index = 0u;
+         path_index < decision->path_count; path_index++) {
+        CettaMatchDecisionPath *path = &decision->paths[path_index];
+        Atom *value = NULL;
+        CettaMatchDecisionQueryState query_state =
+            match_decision_query_at_path(
+                query, path->path, path->path_len,
+                ready_arguments, &value);
+        if (query_state == CETTA_MATCH_DECISION_QUERY_UNKNOWN) {
+            decision->stats.unavailable_path_fallbacks++;
+            cetta_runtime_stats_inc(
+                CETTA_RUNTIME_COUNTER_MATCH_DECISION_UNAVAILABLE_PATH);
+            continue;
+        }
+        *observed_path = true;
+        bool value_absent =
+            query_state == CETTA_MATCH_DECISION_QUERY_ABSENT;
+        memset(decision->path_bits, 0,
+               decision->bit_word_count * sizeof(uint64_t));
+        if (match_decision_policy(query_state, NULL, value) !=
+            CETTA_MD_POLICY_REFUTE) {
+            memcpy(decision->path_bits, path->wildcard_bits,
+                   decision->bit_word_count * sizeof(uint64_t));
+        }
+        if (match_decision_exact_key_plan_enabled()) {
+            const CettaMatchDecisionKey *keys[2] = {NULL, NULL};
+            uint32_t key_count = match_decision_path_exact_keys(
+                decision, path, value, value_absent, keys);
+            for (uint32_t key = 0u; key < key_count; key++) {
+                if (!match_decision_bits_add_refs(
+                        decision, decision->path_bits,
+                        keys[key]->clause_refs,
+                        keys[key]->clause_count)) {
+                    return false;
+                }
+            }
+        } else {
+            for (uint32_t key = 0u; key < path->key_count; key++) {
+                decision->stats.generic_key_policy_scans++;
+                if (match_decision_policy(
+                        query_state, &path->keys[key], value) ==
+                    CETTA_MD_POLICY_REFUTE) {
+                    continue;
+                }
+                if (!match_decision_bits_add_refs(
+                        decision, decision->path_bits,
+                        path->keys[key].clause_refs,
+                        path->keys[key].clause_count)) {
+                    return false;
+                }
+            }
+        }
+        bool any = false;
+        for (size_t word = 0u;
+             word < decision->bit_word_count; word++) {
+            decision->candidate_bits[word] &= decision->path_bits[word];
+            any = any || decision->candidate_bits[word] != 0u;
+        }
+        if (!any)
+            break;
+    }
+
+    if (!*observed_path)
+        return true;
+    size_t count = 0u;
+    for (size_t word = 0u; word < decision->bit_word_count; word++) {
+        uint64_t remaining = decision->candidate_bits[word];
+        while (remaining != 0u) {
+            remaining &= remaining - 1u;
+            count++;
+        }
+    }
+    if (!match_decision_reserve(
+            (void **)&decision->candidate_locals,
+            &decision->candidate_local_capacity,
+            count, sizeof(*decision->candidate_locals))) {
+        return false;
+    }
+    size_t write = 0u;
+    for (size_t clause = 0u; clause < decision->clause_count; clause++) {
+        if ((decision->candidate_bits[clause / 64u] &
+             (UINT64_C(1) << (clause % 64u))) != 0u) {
+            decision->candidate_locals[write++] = (uint32_t)clause;
+        }
+    }
+    if (write != count)
+        return false;
+    *candidate_count = count;
+    return true;
+}
+
 static bool match_decision_merge_lists(
     CettaMatchDecision *decision,
     CettaMatchDecisionRefList *lists, uint32_t list_count,
@@ -1104,7 +1281,19 @@ static CettaMatchDecisionSelectState match_decision_select_query(
     }
 
     bool ok = true;
-    if (!selected_pivot) {
+    if (decision->mode == CETTA_MATCH_DECISION_CONJUNCTIVE) {
+        bool observed_path = false;
+        ok = match_decision_conjunctive_candidates(
+            decision, query, ready_arguments,
+            &local_count, &observed_path);
+        if (ok && !observed_path) {
+            decision->stats.linear_fallbacks++;
+            cetta_runtime_stats_inc(
+                CETTA_RUNTIME_COUNTER_MATCH_DECISION_LINEAR_FALLBACK);
+            ok = match_decision_linear_candidates(
+                decision, &local_count);
+        }
+    } else if (!selected_pivot) {
         decision->stats.linear_fallbacks++;
         cetta_runtime_stats_inc(
             CETTA_RUNTIME_COUNTER_MATCH_DECISION_LINEAR_FALLBACK);
