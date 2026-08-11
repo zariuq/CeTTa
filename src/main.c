@@ -1227,6 +1227,8 @@ static void print_usage(FILE *out) {
     fputs("       cetta [--lang rhocalc --profile <strict-core|cost>] [--syntax <mrho|rho>] <file>\n", out);
     fputs("       cetta [--lang <name>] [--import-mode <upstream|relative|ancestor-walk>] <file.metta>\n", out);
     fputs("       note: repeated --lang under --translate means source then target endpoint\n", out);
+    fputs("       note: --lang petta consumes consecutive .metta files in order\n", out);
+    fputs("       note: other languages run one file; remaining arguments are available through system:args\n", out);
     fputs("       cetta --help | -h                    # print this usage summary\n", out);
     fputs("       cetta --version | -v                 # print binary version and build mode\n", out);
     fputs("       cetta --compile <file.metta>           # emit LLVM IR to stdout\n", out);
@@ -1969,6 +1971,9 @@ int main(int argc, char **argv) {
     size_t inline_cap = 0;
     const char *script_path = NULL;
     int script_arg_start = -1;
+    int filename_arg_index = -1;
+    int petta_file_arg_cursor = -1;
+    int petta_file_arg_end = -1;
     bool compile_mode = false;
     bool compile_stdlib_mode = false;
     bool count_only = false;
@@ -2278,6 +2283,7 @@ int main(int argc, char **argv) {
         }
         if (!filename) {
             filename = argv[i];
+            filename_arg_index = i;
             script_path = filename;
             script_arg_start = i + 1;
             break;
@@ -2301,6 +2307,15 @@ int main(int argc, char **argv) {
 
     const CettaLanguageSpec *lang = source_endpoint.lang;
     profile = source_endpoint.profile;
+    if (lang->id == CETTA_LANGUAGE_PETTA && filename && !inline_text) {
+        petta_file_arg_cursor = filename_arg_index;
+        petta_file_arg_end = filename_arg_index + 1;
+        while (petta_file_arg_end < argc &&
+               path_has_suffix(argv[petta_file_arg_end], ".metta")) {
+            petta_file_arg_end++;
+        }
+        script_arg_start = petta_file_arg_end;
+    }
     if (gslt_realization_requested &&
         source_endpoint.lang->id != CETTA_LANGUAGE_SUBZERO &&
         source_endpoint.lang->id != CETTA_LANGUAGE_ZERO) {
@@ -2877,6 +2892,21 @@ int main(int argc, char **argv) {
     if (lang->id != CETTA_LANGUAGE_PETTA)
         main_add_builtin_type_decls(&space, &arena, lang->id, profile);
 
+    int i = 0;
+    bool stop_document_sequence = false;
+    FILE *output_spool = NULL;
+    if (!compile_mode) {
+        output_spool = tmpfile();
+        if (!output_spool) {
+            fprintf(stderr, "error: could not create output spool\n");
+            rc = 1;
+            goto cleanup;
+        }
+        cleanup.output_spool = output_spool;
+    }
+
+process_petta_document:
+
     /*
      * Upstream PeTTa's parse pass registers every top-level equation head
      * before the execution pass begins.  Record only those authored
@@ -3003,20 +3033,11 @@ int main(int argc, char **argv) {
                 pi = block_end;
             }
         }
-        compile_space_to_llvm(&space, &arena, stdout);
-        rc = 0;
-        goto cleanup;
+        goto petta_document_complete;
     }
 
     /* Process top-level atoms */
-    int i = 0;
-    FILE *output_spool = tmpfile();
-    if (!output_spool) {
-        fprintf(stderr, "error: could not create output spool\n");
-        rc = 1;
-        goto cleanup;
-    }
-    cleanup.output_spool = output_spool;
+    i = 0;
     while (i < n) {
         if (lang_is_mm2) {
             Atom *at = atoms[i];
@@ -3216,7 +3237,10 @@ int main(int argc, char **argv) {
             arena_set_runtime_kind(&eval_arena, CETTA_ARENA_RUNTIME_KIND_EVAL);
             arena_set_hashcons(
                 &eval_arena, eval_hashcons ? &hashcons_table : NULL);
-            if (stop_after_error) break;
+            if (stop_after_error) {
+                stop_document_sequence = true;
+                break;
+            }
             i += exec_width;
             continue;
         }
@@ -3275,6 +3299,42 @@ int main(int argc, char **argv) {
             goto cleanup;
         }
         i = block_end;
+    }
+
+petta_document_complete:
+    if (!stop_document_sequence &&
+        lang->id == CETTA_LANGUAGE_PETTA &&
+        petta_file_arg_cursor >= 0 &&
+        petta_file_arg_cursor + 1 < petta_file_arg_end) {
+        petta_file_arg_cursor++;
+        filename = argv[petta_file_arg_cursor];
+        script_path = filename;
+        cetta_library_context_set_script_path(&libraries, script_path);
+
+        free(atom_ids);
+        atom_ids = NULL;
+        cleanup.atom_ids = NULL;
+        document_reader_error[0] = '\0';
+        n = parse_metta_file_ids_diagnostic(
+            filename, &libraries.term_universe, &atom_ids,
+            document_reader_error, sizeof(document_reader_error));
+        cleanup.atom_ids = atom_ids;
+        if (n < 0) {
+            if (document_reader_error[0]) {
+                fprintf(stderr, "error: compiled PeTTa reader: %s\n",
+                        document_reader_error);
+            }
+            fprintf(stderr, "error: could not read %s\n", filename);
+            rc = 1;
+            goto cleanup;
+        }
+        goto process_petta_document;
+    }
+
+    if (compile_mode) {
+        compile_space_to_llvm(&space, &arena, stdout);
+        rc = 0;
+        goto cleanup;
     }
 
     if (fseek(output_spool, 0, SEEK_SET) != 0) {

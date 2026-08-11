@@ -1,4 +1,4 @@
-is "path\file", should "path\file". ✅ 
+is "path\\file", should "path\\file". ✅ 
 is 0.16666666666666666, should 0.16666666666666666. ✅ 
 0.35000000000000003
 true

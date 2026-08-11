@@ -9,6 +9,11 @@
 !(change-state! counter (+ 20 22))
 !(test (get-state counter) 42)
 
+; A resource-shaped state name denotes the location here, not the value
+; already stored at that location.  Nested use must preserve that boundary.
+!(change-state! &counter-resource 41)
+!(test (let $value (get-state &counter-resource) (+ $value 1)) 42)
+
 ; Malformed bind! forms have no relational answer.
 !(test (collapse (bind! invalid not-a-new-state)) ())
 

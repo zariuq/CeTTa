@@ -1,7 +1,7 @@
 (= (p1 $x) (+ 1 $x))
 (= (tag $x) (Tagged $x))
 
-(: mixed (-> Expression Expression Expression %Undefined%))
+(: mixed (-> Atom Atom Atom %Undefined%))
 
 ; This general clause admits the higher-order parameter for specialization
 ; without contributing an answer.  The specific clause below then checks that

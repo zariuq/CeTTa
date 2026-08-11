@@ -63,3 +63,14 @@
    (Pair (ctx:get $saved choice) (ctx:get $saved choice)))
 !(match &ctx:store (StoredContext $saved)
    (ctx:view $saved 1))
+
+; A Prime registry name is a demanded value reference when it reaches a
+; relation's value slot.  An unbound name remains ordinary data; resolving it
+; must not be guessed during planning.
+(= (ctx:reference-classify $candidate)
+   (case $candidate
+     (((RefBox $value) (ResolvedReference $value))
+      ($_ (UnresolvedReference $candidate)))))
+!(bind! &ctx:reference-value (RefBox resolved))
+!(ctx:reference-classify &ctx:reference-value)
+!(ctx:reference-classify &ctx:unbound-reference)

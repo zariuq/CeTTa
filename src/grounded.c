@@ -75,11 +75,291 @@ static void sb_append(StringBuf *sb, const char *s) {
     sb_append_n(sb, s, strlen(s));
 }
 
+static void sb_append_char(StringBuf *sb, char value) {
+    sb_append_n(sb, &value, 1u);
+}
+
 static void sb_free(StringBuf *sb) {
     free(sb->buf);
     sb->buf = NULL;
     sb->len = 0;
     sb->cap = 0;
+}
+
+typedef enum {
+    PETTA_REPRA_ATOM = 0,
+    PETTA_REPRA_CHAR,
+} PettaRepraActionKind;
+
+typedef struct {
+    PettaRepraActionKind kind;
+    Atom *atom;
+    char character;
+} PettaRepraAction;
+
+typedef struct {
+    PettaRepraAction *items;
+    size_t length;
+    size_t capacity;
+} PettaRepraStack;
+
+static bool petta_repra_push(
+    PettaRepraStack *stack, PettaRepraAction action) {
+    if (stack->length == stack->capacity) {
+        size_t next = stack->capacity ? stack->capacity * 2u : 64u;
+        if (next <= stack->capacity ||
+            next > SIZE_MAX / sizeof(*stack->items)) {
+            return false;
+        }
+        stack->items = cetta_realloc(
+            stack->items, sizeof(*stack->items) * next);
+        stack->capacity = next;
+    }
+    stack->items[stack->length++] = action;
+    return true;
+}
+
+static bool petta_repra_push_atom(
+    PettaRepraStack *stack, Atom *atom) {
+    return petta_repra_push(
+        stack,
+        (PettaRepraAction){
+            .kind = PETTA_REPRA_ATOM,
+            .atom = atom,
+        });
+}
+
+static bool petta_repra_push_char(
+    PettaRepraStack *stack, char character) {
+    return petta_repra_push(
+        stack,
+        (PettaRepraAction){
+            .kind = PETTA_REPRA_CHAR,
+            .character = character,
+        });
+}
+
+static bool petta_repra_plain_identifier(const char *text) {
+    if (!text || text[0] < 'a' || text[0] > 'z')
+        return false;
+    for (const unsigned char *cursor =
+             (const unsigned char *)text + 1u;
+         *cursor; cursor++) {
+        if (!((*cursor >= 'a' && *cursor <= 'z') ||
+              (*cursor >= 'A' && *cursor <= 'Z') ||
+              (*cursor >= '0' && *cursor <= '9') ||
+              *cursor == '_')) {
+            return false;
+        }
+    }
+    return true;
+}
+
+static bool petta_repra_plain_graphic(const char *text) {
+    static const char *const graphic = "#$&*+-./:<=>?@^~\\`";
+    if (!text || !text[0] || strcmp(text, ".") == 0 ||
+        strcmp(text, ",") == 0) {
+        return false;
+    }
+    for (const char *cursor = text; *cursor; cursor++) {
+        if (!strchr(graphic, *cursor))
+            return false;
+    }
+    return true;
+}
+
+static bool petta_repra_plain_symbol(const char *text) {
+    return text &&
+           (petta_repra_plain_identifier(text) ||
+           petta_repra_plain_graphic(text) ||
+           strcmp(text, "{}") == 0 ||
+           strcmp(text, "!") == 0 ||
+           strcmp(text, ";") == 0);
+}
+
+static void petta_repra_append_symbol(
+    StringBuf *output, const char *text) {
+    if (petta_repra_plain_symbol(text)) {
+        sb_append(output, text);
+        return;
+    }
+    sb_append_char(output, '\'');
+    for (const unsigned char *cursor =
+             (const unsigned char *)(text ? text : "");
+         *cursor; cursor++) {
+        switch (*cursor) {
+        case '\'': sb_append(output, "\\\'"); break;
+        case '\\': sb_append(output, "\\\\"); break;
+        case '\n': sb_append(output, "\\n"); break;
+        case '\r': sb_append(output, "\\r"); break;
+        case '\t': sb_append(output, "\\t"); break;
+        default: sb_append_char(output, (char)*cursor); break;
+        }
+    }
+    sb_append_char(output, '\'');
+}
+
+static void petta_repra_append_string(
+    StringBuf *output, const char *text) {
+    sb_append_char(output, '"');
+    for (const unsigned char *cursor =
+             (const unsigned char *)(text ? text : "");
+         *cursor; cursor++) {
+        switch (*cursor) {
+        case '"': sb_append(output, "\\\""); break;
+        case '\\': sb_append(output, "\\\\"); break;
+        case '\n': sb_append(output, "\\n"); break;
+        case '\r': sb_append(output, "\\r"); break;
+        case '\t': sb_append(output, "\\t"); break;
+        default: sb_append_char(output, (char)*cursor); break;
+        }
+    }
+    sb_append_char(output, '"');
+}
+
+/*
+ * PeTTa's repra/1 is SWI term_to_atom/2: expressions are Prolog lists and
+ * atoms use quoted(true) syntax.  Render directly instead of entering SWI on
+ * every key; tile-style programs deliberately use the resulting Symbol as a
+ * hashed set key.  The explicit stack keeps this safe for deep MeTTa data.
+ */
+static bool petta_repra_render(
+    Arena *arena, Atom *root, StringBuf *output) {
+    PettaRepraStack stack = {0};
+    bool ok = root && output;
+    if (ok)
+        ok = petta_repra_push_atom(&stack, root);
+
+    while (ok && stack.length > 0u) {
+        PettaRepraAction action = stack.items[--stack.length];
+        if (action.kind == PETTA_REPRA_CHAR) {
+            sb_append_char(output, action.character);
+            continue;
+        }
+
+        Atom *atom = action.atom;
+        if (!atom) {
+            ok = false;
+            break;
+        }
+        switch (atom->kind) {
+        case ATOM_SYMBOL:
+            petta_repra_append_symbol(
+                output, symbol_bytes(g_symbols, atom->sym_id));
+            break;
+        case ATOM_VAR: {
+            char variable[64];
+            int length = snprintf(
+                variable, sizeof(variable), "_V%" PRIu64,
+                (uint64_t)atom->var_id);
+            if (length <= 0 || (size_t)length >= sizeof(variable)) {
+                ok = false;
+                break;
+            }
+            sb_append_n(output, variable, (size_t)length);
+            break;
+        }
+        case ATOM_GROUNDED:
+            switch (atom->ground.gkind) {
+            case GV_INT: {
+                char integer[64];
+                int length = snprintf(
+                    integer, sizeof(integer), "%" PRId64,
+                    atom->ground.ival);
+                if (length <= 0 || (size_t)length >= sizeof(integer)) {
+                    ok = false;
+                    break;
+                }
+                sb_append_n(output, integer, (size_t)length);
+                break;
+            }
+            case GV_FLOAT:
+            case GV_BIGINT:
+            case GV_RATIONAL: {
+                char *rendered = atom_to_parseable_string(arena, atom);
+                if (!rendered) {
+                    ok = false;
+                    break;
+                }
+                sb_append(output, rendered);
+                break;
+            }
+            case GV_BOOL:
+                sb_append(output, atom->ground.bval ? "true" : "false");
+                break;
+            case GV_STRING:
+                petta_repra_append_string(output, atom->ground.sval);
+                break;
+            case GV_SPACE:
+            case GV_STATE:
+            case GV_CAPTURE:
+            case GV_FOREIGN:
+            case GV_PRIME_NEED_CAPABILITY:
+            case GV_PRIME_CONTEXT:
+            case GV_INTERNAL_TAG:
+                ok = false;
+                break;
+            }
+            break;
+        case ATOM_EXPR: {
+            Atom *compound = NULL;
+            if (atom_petta_prolog_compound_body(atom, &compound)) {
+                CettaExprLen length = compound->expr.len;
+                petta_repra_append_symbol(
+                    output,
+                    symbol_bytes(
+                        g_symbols, compound->expr.elems[0]->sym_id));
+                if (length == 1u)
+                    break;
+                sb_append_char(output, '(');
+                if (!petta_repra_push_char(&stack, ')')) {
+                    ok = false;
+                    break;
+                }
+                for (CettaExprIndex index = length;
+                     index > 1u; index--) {
+                    if (!petta_repra_push_atom(
+                            &stack,
+                            compound->expr.elems[index - 1u]) ||
+                        (index > 2u &&
+                         !petta_repra_push_char(&stack, ','))) {
+                        ok = false;
+                        break;
+                    }
+                }
+                break;
+            }
+            if (petta_semantics_is_open_cons_value(atom)) {
+                Atom *materialized =
+                    petta_semantics_materialize_closed_logical_list(
+                        arena, atom);
+                if (!materialized) {
+                    ok = false;
+                    break;
+                }
+                atom = materialized;
+            }
+            sb_append_char(output, '[');
+            if (!petta_repra_push_char(&stack, ']')) {
+                ok = false;
+                break;
+            }
+            for (CettaExprIndex index = atom->expr.len;
+                 index > 0u; index--) {
+                if (!petta_repra_push_atom(
+                        &stack, atom->expr.elems[index - 1u]) ||
+                    (index > 1u &&
+                     !petta_repra_push_char(&stack, ','))) {
+                    ok = false;
+                    break;
+                }
+            }
+            break;
+        }
+        }
+    }
+    free(stack.items);
+    return ok;
 }
 
 static uint32_t next_pow2_u32(uint32_t n) {
@@ -337,9 +617,13 @@ static bool get_numeric_arg(Atom *a, NumArg *out) {
         eval_current_language_id &&
         eval_current_language_id() == CETTA_LANGUAGE_PETTA &&
         (symbol_eq_cstr(g_symbols, a->sym_id, "inf") ||
-         symbol_eq_cstr(g_symbols, a->sym_id, "-inf"))) {
-        out->val = symbol_eq_cstr(
-            g_symbols, a->sym_id, "-inf") ? -INFINITY : INFINITY;
+         symbol_eq_cstr(g_symbols, a->sym_id, "-inf") ||
+         symbol_eq_cstr(g_symbols, a->sym_id, "nan"))) {
+        bool nan_value = symbol_eq_cstr(g_symbols, a->sym_id, "nan");
+        out->val = nan_value
+            ? NAN
+            : (symbol_eq_cstr(g_symbols, a->sym_id, "-inf")
+                   ? -INFINITY : INFINITY);
         out->ival = 0;
         out->bigint = NULL;
         out->rational = NULL;
@@ -674,6 +958,11 @@ static bool grounded_mod_uses_floor_division(void) {
            eval_current_language_id() == CETTA_LANGUAGE_PETTA;
 }
 
+static bool grounded_current_language_is_petta(void) {
+    return eval_current_language_id &&
+           eval_current_language_id() == CETTA_LANGUAGE_PETTA;
+}
+
 #if CETTA_BUILD_WITH_GMP
 static Atom *eval_integer_binary_gmp(Arena *a, Atom *head, SymbolId head_id,
                                      Atom **args, uint32_t nargs,
@@ -982,7 +1271,15 @@ static Atom *grounded_repra(
     Arena *a, Atom *head, Atom **args, uint32_t nargs) {
     if (nargs != 1u)
         return grounded_incorrect_arity(a, head, args, nargs);
-    return atom_symbol(a, atom_to_parseable_string(a, args[0]));
+    StringBuf rendered;
+    sb_init(&rendered);
+    bool exact = petta_repra_render(a, args[0], &rendered);
+    Atom *result = atom_symbol(
+        a, exact && rendered.buf
+            ? rendered.buf
+            : atom_to_parseable_string(a, args[0]));
+    sb_free(&rendered);
+    return result;
 }
 
 static Atom *grounded_sha256(Arena *a, Atom *head, Atom **args,
@@ -1725,11 +2022,17 @@ Atom *grounded_dispatch(Arena *a, Atom *head, Atom **args, uint32_t nargs) {
         bool rust_compat = eval_current_uses_rust_he_compat_semantics();
         if (nargs != 1)
             return grounded_incorrect_arity(a, head, args, nargs);
-        if (args[0]->kind != ATOM_EXPR)
+        if (args[0]->kind != ATOM_EXPR) {
+            if (grounded_current_language_is_petta())
+                return atom_unit(a);
             return grounded_string_error(a, head, args, nargs,
                                          "Atom is not an ExpressionAtom");
-        if (args[0]->expr.len == 0)
+        }
+        if (args[0]->expr.len == 0) {
+            if (grounded_current_language_is_petta())
+                return atom_empty(a);
             return grounded_string_error(a, head, args, nargs, "Empty expression");
+        }
 
         bool has_float = false;
         bool has_exact_extended = false;
@@ -1828,6 +2131,10 @@ Atom *grounded_dispatch(Arena *a, Atom *head, Atom **args, uint32_t nargs) {
     if ((head_id == g_builtin_syms.size || head_id == g_builtin_syms.size_atom) && nargs == 1) {
         if (args[0]->kind == ATOM_EXPR)
             return atom_int(a, args[0]->expr.len);
+        if (head_id == g_builtin_syms.size_atom &&
+            grounded_current_language_is_petta()) {
+            return atom_unit(a);
+        }
         if (head_id == g_builtin_syms.size &&
             args[0]->kind == ATOM_GROUNDED &&
             args[0]->ground.gkind == GV_SPACE) {
@@ -1850,20 +2157,27 @@ Atom *grounded_dispatch(Arena *a, Atom *head, Atom **args, uint32_t nargs) {
             return NULL;
         }
         if (args[1]->kind != ATOM_GROUNDED || args[1]->ground.gkind != GV_INT) {
+            if (grounded_current_language_is_petta())
+                return atom_empty(a);
             if (args[1]->kind == ATOM_GROUNDED)
                 return grounded_bad_arg_type(a, head, args, nargs, 2,
                                              atom_symbol(a, "Number"), args[1]);
             return NULL;
         }
         int64_t idx = args[1]->ground.ival;
-        if (idx < 0 || (uint64_t)idx >= args[0]->expr.len)
+        if (idx < 0 || (uint64_t)idx >= args[0]->expr.len) {
+            if (grounded_current_language_is_petta())
+                return atom_empty(a);
             return atom_error(a, grounded_call_expr(a, head, args, nargs),
                               atom_string(a, "Index is out of bounds"));
+        }
         return args[0]->expr.elems[idx];
     }
 
     if (head_id == g_builtin_syms.unique_atom && nargs == 1) {
         if (args[0]->kind != ATOM_EXPR) {
+            if (grounded_current_language_is_petta())
+                return atom_unit(a);
             if (args[0]->kind == ATOM_GROUNDED)
                 return grounded_bad_arg_type(a, head, args, nargs, 1,
                                              atom_expression_type(a), args[0]);
@@ -1922,6 +2236,8 @@ Atom *grounded_dispatch(Arena *a, Atom *head, Atom **args, uint32_t nargs) {
 
     if (head_id == g_builtin_syms.intersection_atom && nargs == 2) {
         if (args[0]->kind != ATOM_EXPR || args[1]->kind != ATOM_EXPR) {
+            if (grounded_current_language_is_petta())
+                return atom_unit(a);
             if (args[0]->kind == ATOM_GROUNDED)
                 return grounded_bad_arg_type(a, head, args, nargs, 1,
                                              atom_expression_type(a), args[0]);

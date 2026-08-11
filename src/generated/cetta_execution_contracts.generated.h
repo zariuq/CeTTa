@@ -2,7 +2,7 @@
 #define CETTA_EXECUTION_CONTRACTS_GENERATED_H
 
 /* Generated from lib/gslt_execution_contracts.metta.
- * Source SHA-256: 74ede1be383a633b23322f418beaacb053addb9a10030add66c089a49598c574
+ * Source SHA-256: 8ce6063233739673366c88c8cbeb80c246e85e8f63ea1f3ee131982ee462f7cf
  */
 
 #include <stdbool.h>
@@ -168,10 +168,74 @@ static inline bool cetta_gslt_register_operand_discipline(
     X(numeric_eq, 2u, CETTA_GSLT_REGISTER_RESULT_BOOLEAN, CETTA_GSLT_REGISTER_INSTRUCTION_INTEGER_EQUAL)
 
 typedef enum {
+    CETTA_GSLT_PREPARED_PURE_INTRINSIC_GROUNDED_DISPATCH = 0,
+    CETTA_GSLT_PREPARED_PURE_INTRINSIC_DECONSTRUCT_NONEMPTY_EXPRESSION = 1,
+} CettaGsltPreparedPureIntrinsicInstruction;
+
+typedef enum {
+    CETTA_GSLT_PREPARED_PURE_INTRINSIC_OPERANDS_STRICT_ALL = 0,
+} CettaGsltPreparedPureIntrinsicOperandDiscipline;
+
+#define CETTA_GSLT_PREPARED_PURE_INTRINSIC_HEAD_ROWS(X)     X(abs_math, 1u, CETTA_GSLT_PREPARED_PURE_INTRINSIC_OPERANDS_STRICT_ALL, CETTA_GSLT_PREPARED_PURE_INTRINSIC_GROUNDED_DISPATCH) \
+    X(decons_atom, 1u, CETTA_GSLT_PREPARED_PURE_INTRINSIC_OPERANDS_STRICT_ALL, CETTA_GSLT_PREPARED_PURE_INTRINSIC_DECONSTRUCT_NONEMPTY_EXPRESSION)
+
+typedef enum {
     CETTA_GSLT_FOLD_CONTROL_BIND = 0,
     CETTA_GSLT_FOLD_CONTROL_BRANCH = 1,
     CETTA_GSLT_FOLD_CONTROL_EVALUATE = 2,
 } CettaGsltFoldControl;
+
+typedef enum {
+    CETTA_GSLT_CONTROL_OPERAND_EVALUATED = 0,
+    CETTA_GSLT_CONTROL_OPERAND_PATTERN = 1,
+} CettaGsltControlOperandRole;
+
+static inline bool cetta_gslt_fold_control_operand_role(
+    CettaGsltFoldControl control, uint32_t operand_index,
+    CettaGsltControlOperandRole *role_out) {
+    if (!role_out)
+        return false;
+    switch (control) {
+    case CETTA_GSLT_FOLD_CONTROL_BIND:
+        switch (operand_index) {
+        case 0u:
+            *role_out = CETTA_GSLT_CONTROL_OPERAND_PATTERN;
+            return true;
+        case 1u:
+            *role_out = CETTA_GSLT_CONTROL_OPERAND_EVALUATED;
+            return true;
+        case 2u:
+            *role_out = CETTA_GSLT_CONTROL_OPERAND_EVALUATED;
+            return true;
+        default:
+            return false;
+        }
+    case CETTA_GSLT_FOLD_CONTROL_BRANCH:
+        switch (operand_index) {
+        case 0u:
+            *role_out = CETTA_GSLT_CONTROL_OPERAND_EVALUATED;
+            return true;
+        case 1u:
+            *role_out = CETTA_GSLT_CONTROL_OPERAND_EVALUATED;
+            return true;
+        case 2u:
+            *role_out = CETTA_GSLT_CONTROL_OPERAND_EVALUATED;
+            return true;
+        default:
+            return false;
+        }
+    case CETTA_GSLT_FOLD_CONTROL_EVALUATE:
+        switch (operand_index) {
+        case 0u:
+            *role_out = CETTA_GSLT_CONTROL_OPERAND_EVALUATED;
+            return true;
+        default:
+            return false;
+        }
+    default:
+        return false;
+    }
+}
 
 typedef enum {
     CETTA_GSLT_PURE_CALL_EAGER = 0,

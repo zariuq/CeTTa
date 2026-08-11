@@ -35,6 +35,53 @@ typedef struct {
     CettaExprLen arity;
 } CettaPettaRelationKey;
 
+typedef enum {
+    CETTA_PETTA_MEMO_STRATEGY_WTINYLFU = 0,
+    CETTA_PETTA_MEMO_STRATEGY_LRU,
+} CettaPettaMemoStrategy;
+
+typedef enum {
+    CETTA_PETTA_MEMO_AGGREGATE_NONE = 0,
+    CETTA_PETTA_MEMO_AGGREGATE_MIN,
+    CETTA_PETTA_MEMO_AGGREGATE_MAX,
+    CETTA_PETTA_MEMO_AGGREGATE_SUM,
+    CETTA_PETTA_MEMO_AGGREGATE_COUNT,
+} CettaPettaMemoAggregate;
+
+typedef enum {
+    CETTA_PETTA_MEMO_CONTROL_MEMOIZE = 0,
+    CETTA_PETTA_MEMO_CONTROL_CONFIGURE,
+    CETTA_PETTA_MEMO_CONTROL_GET_CONFIG,
+    CETTA_PETTA_MEMO_CONTROL_CLEAR,
+    CETTA_PETTA_MEMO_CONTROL_INVALIDATE,
+    CETTA_PETTA_MEMO_CONTROL_IS_MEMOIZED,
+    CETTA_PETTA_MEMO_CONTROL_GET_STATS,
+    CETTA_PETTA_MEMO_CONTROL_CLEAR_STATS,
+    CETTA_PETTA_MEMO_CONTROL_COUNT,
+} CettaPettaMemoControl;
+
+typedef struct {
+    SymbolId *all_arities;
+    uint32_t all_arity_len;
+    uint32_t all_arity_cap;
+    CettaPettaRelationKey *exact_arities;
+    uint32_t exact_arity_len;
+    uint32_t exact_arity_cap;
+    uint64_t symbol_table_instance;
+    CettaPettaMemoStrategy strategy;
+    uint32_t unique_limit;
+    uint64_t size_limit_bytes;
+    uint32_t float_precision;
+    uint32_t answer_limit;
+    CettaPettaMemoAggregate aggregate;
+    uint64_t cache_hits;
+    uint64_t cache_misses;
+    uint64_t answer_limit_truncated;
+    bool imported_controls[CETTA_PETTA_MEMO_CONTROL_COUNT];
+} CettaPettaMemoState;
+
+struct PettaMachineTable;
+
 struct CettaPettaTokenSpaceClauseRegistry;
 
 typedef struct CettaLibraryContext {
@@ -75,6 +122,8 @@ typedef struct CettaLibraryContext {
     uint32_t petta_tabled_relation_len;
     uint32_t petta_tabled_relation_cap;
     uint64_t petta_tabled_symbol_table_instance;
+    CettaPettaMemoState petta_memo;
+    struct PettaMachineTable *petta_shared_table;
     bool prime_relational_plan_enabled;
     PettaProgram *petta_program;
     struct CettaPettaTokenSpaceClauseRegistry *
@@ -129,6 +178,11 @@ bool cetta_library_import_library_member(
     Space *space, bool target_is_fresh,
     Arena *eval_arena, Arena *persistent_arena,
     Registry *registry, int fuel, Atom **error_out);
+bool cetta_library_import_rooted_library_member(
+    CettaLibraryContext *ctx, const char *root,
+    const char *member, Space *space, bool target_is_fresh,
+    Arena *eval_arena, Arena *persistent_arena,
+    Registry *registry, int fuel, Atom **error_out);
 /*
  * Resolve a PeTTa `(library Member)` value through the same package mounts
  * and ancestor search used by descriptor imports, without loading it.
@@ -169,6 +223,32 @@ bool cetta_library_petta_tabled_relation_contains(
 bool cetta_library_petta_tabled_relation_set(
     CettaLibraryContext *ctx, SymbolId head, CettaExprLen arity,
     bool enabled);
+bool cetta_library_petta_memo_contains(
+    CettaLibraryContext *ctx, SymbolId head, CettaExprLen arity);
+bool cetta_library_petta_memo_enable(
+    CettaLibraryContext *ctx, SymbolId head,
+    bool every_arity, CettaExprLen arity);
+bool cetta_library_petta_memo_is_enabled(
+    CettaLibraryContext *ctx, SymbolId head,
+    bool exact_arity, CettaExprLen arity);
+void cetta_library_petta_memo_clear(CettaLibraryContext *ctx);
+void cetta_library_petta_memo_invalidate(
+    CettaLibraryContext *ctx, SymbolId head);
+void cetta_library_petta_memo_clear_stats(
+    CettaLibraryContext *ctx);
+void cetta_library_petta_memo_observe(
+    CettaLibraryContext *ctx, SymbolId head,
+    CettaExprLen arity, bool cache_hit);
+void cetta_library_petta_memo_observe_truncation(
+    CettaLibraryContext *ctx, SymbolId head,
+    CettaExprLen arity);
+bool cetta_library_petta_memo_control_import(
+    CettaLibraryContext *ctx, SymbolId head);
+bool cetta_library_petta_memo_control_imported(
+    CettaLibraryContext *ctx, SymbolId head);
+PeTTaNamedArity cetta_library_petta_memo_control_named_arity(
+    CettaLibraryContext *ctx, SymbolId head,
+    CettaExprLen supplied);
 bool cetta_library_petta_process_text(
     CettaLibraryContext *ctx, Space *space,
     Arena *eval_arena, Arena *persistent_arena,

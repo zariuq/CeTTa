@@ -5,3 +5,8 @@
 [(Same same)]
 [(Rigid same tail)]
 [(Box 42)]
+[True]
+[False]
+[(1 5)]
+[42]
+[(Triple a 7 (b c))]

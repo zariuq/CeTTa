@@ -160,6 +160,15 @@ bool space_match_backend_store_atom_direct(Space *s, Atom *atom) {
     return false;
 }
 
+bool space_match_backend_contains_atom_structural_direct(
+    Space *s, Atom *atom, bool *out_found) {
+    (void)s;
+    (void)atom;
+    if (out_found)
+        *out_found = false;
+    return false;
+}
+
 SpaceBackendBatchResult space_match_backend_store_atom_ids_batch_direct(
     Space *s, const AtomId *atom_ids, CettaCount atom_count,
     uint64_t *out_added) {
@@ -1114,6 +1123,65 @@ int main(void) {
 
     SymbolId pair_sym = symbol_intern_cstr(g_symbols, "pair");
     SymbolId box_sym = symbol_intern_cstr(g_symbols, "box");
+
+    {
+        Arena exact_persistent;
+        Arena exact_scratch_a;
+        Arena exact_scratch_b;
+        Arena exact_scratch_c;
+        TermUniverse exact_universe;
+        Space exact_match_space;
+        SymbolId relation =
+            symbol_intern_cstr(g_symbols, "exact-match-existence");
+
+        arena_init(&exact_persistent);
+        arena_init(&exact_scratch_a);
+        arena_init(&exact_scratch_b);
+        arena_init(&exact_scratch_c);
+        term_universe_init(&exact_universe);
+        term_universe_set_persistent_arena(
+            &exact_universe, &exact_persistent);
+        Atom *present = atom_expr2(
+            &exact_scratch_a,
+            atom_symbol_id(&exact_scratch_a, relation),
+            atom_symbol(&exact_scratch_a, "present"));
+        Atom *missing = atom_expr2(
+            &exact_scratch_b,
+            atom_symbol_id(&exact_scratch_b, relation),
+            atom_symbol(&exact_scratch_b, "missing"));
+        Atom *open = atom_expr2(
+            &exact_scratch_c,
+            atom_symbol_id(&exact_scratch_c, relation),
+            atom_var_with_id(&exact_scratch_c, "x", 991u));
+        bool applicable = false;
+
+        space_init_with_universe(&exact_match_space, &exact_universe);
+        space_add(&exact_match_space, present);
+        assert(space_match_exists_ground_exact(
+            &exact_match_space, present, &applicable));
+        assert(applicable);
+        assert(!space_match_exists_ground_exact(
+            &exact_match_space, missing, &applicable));
+        assert(applicable);
+
+        /* A stored-side variable makes ground match existence broader than
+           structural membership, so the exact fragment must decline. */
+        space_add(&exact_match_space, open);
+        applicable = true;
+        assert(!space_match_exists_ground_exact(
+            &exact_match_space, missing, &applicable));
+        assert(!applicable);
+        applicable = true;
+        assert(!space_match_exists_ground_exact(
+            &exact_match_space, open, &applicable));
+        assert(!applicable);
+        space_free(&exact_match_space);
+        term_universe_free(&exact_universe);
+        arena_free(&exact_scratch_c);
+        arena_free(&exact_scratch_b);
+        arena_free(&exact_scratch_a);
+        arena_free(&exact_persistent);
+    }
 
     {
         Arena alpha_persistent;

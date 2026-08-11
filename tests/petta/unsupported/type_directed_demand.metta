@@ -1,4 +1,4 @@
-(: typed-pair (-> Number Expression Expression))
+(: typed-pair (-> Number Atom Expression))
 (= (typed-pair $strict $syntax)
    (pair $strict $syntax))
 
