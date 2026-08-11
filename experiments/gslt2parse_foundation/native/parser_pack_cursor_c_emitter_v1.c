@@ -338,7 +338,7 @@ static void pp_cursor_c_v1_terminals(
             "(PPGuardedLexCursorV1TerminalKind)%u, "
             "(CettaLpNativeUtf8TerminalKind)%u, UINT32_C(%u), "
             "UINT32_C(%u), UINT32_C(%u), UINT32_C(%u), UINT32_C(%u), "
-            "UINT32_C(%u), UINT32_C(%u), %s, UINT32_C(%u), "
+            "UINT32_C(%u), UINT32_C(%u), %s, %s, UINT32_C(%u), "
             "UINT32_C(%u) }%s\n",
             terminal->terminal_id, terminal->slr_terminal_index,
             (unsigned int)terminal->kind,
@@ -347,6 +347,7 @@ static void pp_cursor_c_v1_terminals(
             terminal->dfa_tag, terminal->guard_dfa_tag,
             terminal->guard_range_begin, terminal->guard_range_len,
             terminal->guard_accepts_eof ? "true" : "false",
+            terminal->semantic_value_required ? "true" : "false",
             terminal->semantic_start_state_id,
             terminal->semantic_program_index,
             index + 1u == len ? "" : ",");

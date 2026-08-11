@@ -595,25 +595,40 @@ static bool library_root_has_lib_dir(const char *root) {
            stat(path, &st) == 0 && S_ISDIR(st.st_mode);
 }
 
-void cetta_library_context_set_exec_path(CettaLibraryContext *ctx, const char *argv0) {
+bool cetta_library_root_for_exec_path(const char *argv0,
+                                      char *output, size_t output_size) {
     char resolved[PATH_MAX];
     char parent[PATH_MAX];
     char *slash;
 
-    ctx->root_dir[0] = '\0';
-    if (!argv0) return;
-    if (!realpath(argv0, resolved)) return;
+    if (!output || output_size == 0u)
+        return false;
+    output[0] = '\0';
+    if (!argv0 || !realpath(argv0, resolved))
+        return false;
     slash = strrchr(resolved, '/');
-    if (!slash) return;
+    if (!slash)
+        return false;
     *slash = '\0';
-    snprintf(ctx->root_dir, sizeof(ctx->root_dir), "%s", resolved);
-    if (!library_root_has_lib_dir(ctx->root_dir)) {
-        copy_parent_dir(parent, sizeof(parent), ctx->root_dir);
-        if (strcmp(parent, ctx->root_dir) != 0 &&
+    if (!library_root_has_lib_dir(resolved)) {
+        copy_parent_dir(parent, sizeof(parent), resolved);
+        if (strcmp(parent, resolved) != 0 &&
             library_root_has_lib_dir(parent)) {
-            snprintf(ctx->root_dir, sizeof(ctx->root_dir), "%s", parent);
+            snprintf(resolved, sizeof(resolved), "%s", parent);
         }
     }
+    if (strlen(resolved) >= output_size)
+        return false;
+    memcpy(output, resolved, strlen(resolved) + 1u);
+    return true;
+}
+
+void cetta_library_context_set_exec_path(CettaLibraryContext *ctx, const char *argv0) {
+    if (!ctx)
+        return;
+    if (!cetta_library_root_for_exec_path(
+            argv0, ctx->root_dir, sizeof(ctx->root_dir)))
+        ctx->root_dir[0] = '\0';
 }
 
 static void copy_parent_dir(char *dst, size_t dst_sz, const char *path) {

@@ -10,7 +10,7 @@
 #include "parser_pack_guarded_lexical_exec_v1.h"
 
 const char *he_reader_cursor_v1_program_digest(void) {
-    return "df58260e36ad8e9cccddf23831060fa80c4e4637f216fad1d13d3887cafecac3";
+    return "f465beefb262396a789dd2ecf3916b43dc5fc328a6e7af8f7c686f810a4cae6c";
 }
 
 static bool he_reader_cursor_v1_copy(void **target, const void *source, size_t size,
@@ -4396,14 +4396,14 @@ static const uint32_t he_reader_cursor_v1_final_lhs_indices[282] = {
 };
 
 static const PPGuardedLexCursorV1Terminal he_reader_cursor_v1_terminals[8] = {
-    { UINT32_C(29), UINT32_C(0), (PPGuardedLexCursorV1TerminalKind)1, (CettaLpNativeUtf8TerminalKind)0, UINT32_C(0), UINT32_C(0), UINT32_C(0), UINT32_C(1), UINT32_C(4294967295), UINT32_C(0), UINT32_C(0), false, UINT32_C(9), UINT32_C(1) },
-    { UINT32_C(27), UINT32_C(2), (PPGuardedLexCursorV1TerminalKind)0, (CettaLpNativeUtf8TerminalKind)1, UINT32_C(0), UINT32_C(0), UINT32_C(0), UINT32_C(4294967295), UINT32_C(4294967295), UINT32_C(0), UINT32_C(0), false, UINT32_C(4294967295), UINT32_C(4294967295) },
-    { UINT32_C(23), UINT32_C(3), (PPGuardedLexCursorV1TerminalKind)0, (CettaLpNativeUtf8TerminalKind)3, UINT32_C(0), UINT32_C(0), UINT32_C(10), UINT32_C(4294967295), UINT32_C(4294967295), UINT32_C(10), UINT32_C(0), false, UINT32_C(4294967295), UINT32_C(4294967295) },
-    { UINT32_C(35), UINT32_C(4), (PPGuardedLexCursorV1TerminalKind)2, (CettaLpNativeUtf8TerminalKind)0, UINT32_C(0), UINT32_C(10), UINT32_C(0), UINT32_C(4), UINT32_C(9), UINT32_C(10), UINT32_C(2), true, UINT32_C(2), UINT32_C(4) },
-    { UINT32_C(36), UINT32_C(6), (PPGuardedLexCursorV1TerminalKind)2, (CettaLpNativeUtf8TerminalKind)0, UINT32_C(0), UINT32_C(12), UINT32_C(0), UINT32_C(5), UINT32_C(7), UINT32_C(12), UINT32_C(12), true, UINT32_C(31), UINT32_C(5) },
-    { UINT32_C(6), UINT32_C(10), (PPGuardedLexCursorV1TerminalKind)0, (CettaLpNativeUtf8TerminalKind)2, UINT32_C(40), UINT32_C(24), UINT32_C(0), UINT32_C(4294967295), UINT32_C(4294967295), UINT32_C(24), UINT32_C(0), false, UINT32_C(4294967295), UINT32_C(4294967295) },
-    { UINT32_C(37), UINT32_C(16), (PPGuardedLexCursorV1TerminalKind)2, (CettaLpNativeUtf8TerminalKind)0, UINT32_C(0), UINT32_C(24), UINT32_C(0), UINT32_C(6), UINT32_C(8), UINT32_C(24), UINT32_C(12), true, UINT32_C(33), UINT32_C(6) },
-    { UINT32_C(7), UINT32_C(18), (PPGuardedLexCursorV1TerminalKind)0, (CettaLpNativeUtf8TerminalKind)2, UINT32_C(41), UINT32_C(36), UINT32_C(0), UINT32_C(4294967295), UINT32_C(4294967295), UINT32_C(36), UINT32_C(0), false, UINT32_C(4294967295), UINT32_C(4294967295) }
+    { UINT32_C(29), UINT32_C(0), (PPGuardedLexCursorV1TerminalKind)1, (CettaLpNativeUtf8TerminalKind)0, UINT32_C(0), UINT32_C(0), UINT32_C(0), UINT32_C(1), UINT32_C(4294967295), UINT32_C(0), UINT32_C(0), false, true, UINT32_C(9), UINT32_C(1) },
+    { UINT32_C(27), UINT32_C(2), (PPGuardedLexCursorV1TerminalKind)0, (CettaLpNativeUtf8TerminalKind)1, UINT32_C(0), UINT32_C(0), UINT32_C(0), UINT32_C(4294967295), UINT32_C(4294967295), UINT32_C(0), UINT32_C(0), false, false, UINT32_C(4294967295), UINT32_C(4294967295) },
+    { UINT32_C(23), UINT32_C(3), (PPGuardedLexCursorV1TerminalKind)0, (CettaLpNativeUtf8TerminalKind)3, UINT32_C(0), UINT32_C(0), UINT32_C(10), UINT32_C(4294967295), UINT32_C(4294967295), UINT32_C(10), UINT32_C(0), false, false, UINT32_C(4294967295), UINT32_C(4294967295) },
+    { UINT32_C(35), UINT32_C(4), (PPGuardedLexCursorV1TerminalKind)2, (CettaLpNativeUtf8TerminalKind)0, UINT32_C(0), UINT32_C(10), UINT32_C(0), UINT32_C(4), UINT32_C(9), UINT32_C(10), UINT32_C(2), true, false, UINT32_C(2), UINT32_C(4) },
+    { UINT32_C(36), UINT32_C(6), (PPGuardedLexCursorV1TerminalKind)2, (CettaLpNativeUtf8TerminalKind)0, UINT32_C(0), UINT32_C(12), UINT32_C(0), UINT32_C(5), UINT32_C(7), UINT32_C(12), UINT32_C(12), true, true, UINT32_C(31), UINT32_C(5) },
+    { UINT32_C(6), UINT32_C(10), (PPGuardedLexCursorV1TerminalKind)0, (CettaLpNativeUtf8TerminalKind)2, UINT32_C(40), UINT32_C(24), UINT32_C(0), UINT32_C(4294967295), UINT32_C(4294967295), UINT32_C(24), UINT32_C(0), false, false, UINT32_C(4294967295), UINT32_C(4294967295) },
+    { UINT32_C(37), UINT32_C(16), (PPGuardedLexCursorV1TerminalKind)2, (CettaLpNativeUtf8TerminalKind)0, UINT32_C(0), UINT32_C(24), UINT32_C(0), UINT32_C(6), UINT32_C(8), UINT32_C(24), UINT32_C(12), true, true, UINT32_C(33), UINT32_C(6) },
+    { UINT32_C(7), UINT32_C(18), (PPGuardedLexCursorV1TerminalKind)0, (CettaLpNativeUtf8TerminalKind)2, UINT32_C(41), UINT32_C(36), UINT32_C(0), UINT32_C(4294967295), UINT32_C(4294967295), UINT32_C(36), UINT32_C(0), false, false, UINT32_C(4294967295), UINT32_C(4294967295) }
 };
 
 static const CettaLpNativeUnicodeRange he_reader_cursor_v1_ranges[36] = {
@@ -37816,7 +37816,7 @@ bool he_reader_cursor_v1_program_init(PPGuardedLexCursorV1Program *out,
     memcpy(result.guarded_plan_digest, "c782d8a7d08f1f4b5004855f286bbb90367c9699230a49cdcf96f5f91f03aecf", sizeof(result.guarded_plan_digest));
     memcpy(result.execution_plan_digest, "73f10ee4fb310df6006c2bce635e584eebbd4260fd2d039d3efecd2da6b56b35", sizeof(result.execution_plan_digest));
     memcpy(result.certificate_digest, "f474ce55b85bb50dd78f33be2361a2722e732e046ae16b39b1afdabfb8e0195f", sizeof(result.certificate_digest));
-    memcpy(result.program_digest, "df58260e36ad8e9cccddf23831060fa80c4e4637f216fad1d13d3887cafecac3", sizeof(result.program_digest));
+    memcpy(result.program_digest, "f465beefb262396a789dd2ecf3916b43dc5fc328a6e7af8f7c686f810a4cae6c", sizeof(result.program_digest));
     if (!ppguarded_lex_cursor_v1_program_validate(
             &result, error_buf, error_buf_size)) goto fail;
     ppguarded_lex_cursor_v1_program_free(out);

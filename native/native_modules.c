@@ -7,8 +7,10 @@
 #include "library.h"
 #include "lib_parse_inference_native.h"
 #include "lib_parse_native_grammar.h"
+#include "native/langdef_module.h"
 
 #define CETTA_NATIVE_IMPORT_GPARSE (1u << 24)
+#define CETTA_NATIVE_IMPORT_LANGDEF (1u << 25)
 
 static Atom *native_module_error(Arena *a, Atom *source, const char *message) {
     return atom_error(a, source, atom_string(a, message));
@@ -1124,6 +1126,7 @@ static bool native_module_loaded(const CettaLibraryContext *ctx,
 
 static const CettaNativeBuiltinModule g_native_modules[] = {
     {"gparse", CETTA_NATIVE_IMPORT_GPARSE, gparse_dispatch},
+    {"langdef", CETTA_NATIVE_IMPORT_LANGDEF, cetta_langdef_module_dispatch},
 };
 
 const CettaNativeBuiltinModule *cetta_native_module_lookup(const char *name) {

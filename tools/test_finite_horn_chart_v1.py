@@ -50,7 +50,7 @@ CASES = {
         "sources": (
             "core/syntax_core_v1.metta",
             "shared/lookahead_core_v1.metta",
-            "languages/metamath_appendix_e_v1.metta",
+            "../../../langdef/metamath/syntax_v1.metta",
         ),
         "productions": (
             270,
@@ -90,7 +90,7 @@ CASES = {
             "core/syntax_core_v1.metta",
             "shared/lookahead_core_v1.metta",
             "shared/char_core_v1.metta",
-            "languages/tptp_fof_cnf_v1.metta",
+            "../../../langdef/tptp/syntax_fof_cnf_v1.metta",
         ),
         "productions": (
             688,
