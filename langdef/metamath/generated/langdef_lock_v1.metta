@@ -64,5 +64,5 @@
   (extension-artifact-sha256 "proof-relational-runtime-v1" "generated/proof_relational_runtime_v1.answers" "37119130c47dd4b975118fb1a2ef14a8f6dbaa49ced6eac9930793219613e4e1")
   (extension-artifact-sha256 "proof-storage-analysis-payload-v1" "generated/proof_storage_analysis_payload_v1.metta" "73157c0bd086903c77f79b89bd186a7e5ebdcfa982d167768dfcdb0f27352dcf")
   (extension-artifact-sha256 "proof-storage-plan-v1" "generated/proof_storage_plan_v1.answers" "2bff968f16ff85d9e65b82c99598776306fc429b7bf8d2d4c1481c9fe3fbe3f3")
-  (compiled-cursor-sha256 "41d68194feb32f88e5abda219ad96e02ab5e0524fddf0d99f9e5a0291ce2c8ea")
+  (compiled-cursor-sha256 "1e06956c708c2297b0e62e096976b803f824a730a2e426c9261fc018e40eebc3")
 )

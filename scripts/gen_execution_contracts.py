@@ -17,6 +17,7 @@ import os
 import re
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 from gen_semiring_fixtures import SExpr, SpecError, is_form, parse_forms, sexpr
@@ -1821,10 +1822,19 @@ def render_petta_fold_expected(spec: Spec) -> str:
         "petta")
 
 
+def unique_runtime_fixture(prefix: str, fixture_text: str) -> Path:
+    runtime_dir = ROOT / "runtime"
+    runtime_dir.mkdir(parents=True, exist_ok=True)
+    with tempfile.NamedTemporaryFile(
+            mode="w", encoding="utf-8", prefix=prefix, suffix=".metta",
+            dir=runtime_dir, delete=False) as handle:
+        handle.write(fixture_text)
+        return Path(handle.name)
+
+
 def oracle_expected(cetta: Path, fixture_text: str) -> str:
-    scratch = ROOT / "runtime" / "execution-contracts-oracle.metta"
-    scratch.parent.mkdir(parents=True, exist_ok=True)
-    scratch.write_text(fixture_text)
+    scratch = unique_runtime_fixture(
+        "execution-contracts-oracle.", fixture_text)
     env = os.environ.copy()
     env["CETTA_PATHMAP_QUERY_INDEX"] = "1"
     env["CETTA_PATHMAP_PULL_CONSUMERS"] = "0"
@@ -1845,9 +1855,8 @@ def oracle_expected(cetta: Path, fixture_text: str) -> str:
 
 def fold_oracle_expected(
         cetta: Path, fixture_text: str, language: str) -> str:
-    scratch = ROOT / "runtime" / f"determinate-fold-{language}-oracle.metta"
-    scratch.parent.mkdir(parents=True, exist_ok=True)
-    scratch.write_text(fixture_text)
+    scratch = unique_runtime_fixture(
+        f"determinate-fold-{language}-oracle.", fixture_text)
     env = os.environ.copy()
     env["CETTA_MATCH_CHAIN_TRACE"] = "1"
     command = [str(cetta), "--quiet", "--lang", language]
@@ -1877,9 +1886,8 @@ def verify_prepared_fold_runtime(
         expected_pure_admissions: int | None = None,
         expected_pure_steps: int | None = None,
         expected_pure_declines: int | None = None) -> None:
-    scratch = ROOT / "runtime" / f"determinate-fold-{language}-prepared.metta"
-    scratch.parent.mkdir(parents=True, exist_ok=True)
-    scratch.write_text(fixture_text)
+    scratch = unique_runtime_fixture(
+        f"determinate-fold-{language}-prepared.", fixture_text)
     env = os.environ.copy()
     env.pop("CETTA_MATCH_CHAIN_TRACE", None)
     command = [
