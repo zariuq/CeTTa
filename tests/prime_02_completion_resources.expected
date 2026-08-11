@@ -42,6 +42,6 @@
 [Indeterminate]
 [Determinate]
 [(ResourceLedgerV1 (mode ExplicitProducerBound) (producer-initial 1000) (producer-spent 0) (producer-remaining 1000) (ObservedWork (formation 7) (synthesis 0) (normalization 0) (checking 13) (refinement 0) (evaluation 0)) (DeclaredLimits (structural-type-traversal DynamicWorklists) (type-storage Dynamic) (applicability-storage Dynamic) (evaluator-stack-budget-bytes RuntimeDeclared)) (Observed (max-depth 0) (type-storage-exhausted False) (evaluator-stack-exhausted False) (applicability-storage-exhausted False)))]
-[(PrimeDefRoots LanguageDefV1 ContextsAndSchemesV1 TypingRulesV1 ResultAlgebraV1 EffectsAndResourcesV1 EvidenceSchemaV1)]
+[(PrimeDefRoots LanguageDefV1 ContextsAndSchemesV1 CheckingV1 ResultAlgebraV1 EffectsAndResourcesV1 EvidenceSchemaV2)]
 [((InformationOrderV1 (Below Incomplete Established) (Below Incomplete Refuted) (Below Undetermined Established) (Below Undetermined Refuted) (Incomparable Incomplete Undetermined) (Incomparable Established Refuted) (BudgetLaw DeterminateStable)) (ResourcePolicyV1 NoImplicitStepBound ExplicitProducerBudget BoundedProducersReportResourceLedger ResourceStatusVisibleWhenSemanticallyRelevant UnboundedModeDoesNotMeterSteps (StructuralTypeTraversal DynamicWorklists) (TypeStorage Dynamic) (ApplicabilityStorage Dynamic) (EvaluatorStackBudget RuntimeSelectedAndReported) TotalityRequiresCertifiedCompletion))]
 [(Error (prime-package &self extra) IncorrectNumberOfArguments)]

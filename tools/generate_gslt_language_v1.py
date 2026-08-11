@@ -25,12 +25,14 @@ class Manifest:
     syntax_backend: str
     term_abi: str
     semantic_sources: tuple[str, ...]
-    program_nil: str
-    program_cons: str
+    program_nil: str | None
+    program_cons: str | None
     entry_relation: str | None
     entry_arity: int
     program_position: int
     result_position: int
+    query_relation: str | None
+    query_arity: int
     classify_relation: str | None
     produce_relation: str | None
     observe_relation: str | None
@@ -206,6 +208,7 @@ def parse_manifest(path: Path, selected_profile: str | None = None) -> Manifest:
         "semantic-source",
         "program-carrier",
         "entry",
+        "query-entry",
         "request-pipeline",
         "observation",
         "profile",
@@ -255,8 +258,8 @@ def parse_manifest(path: Path, selected_profile: str | None = None) -> Manifest:
         if tag in singleton:
             raise CompileError(f"{path}: duplicate field {tag}")
         singleton[tag] = item
-    required = known - {
-        "semantic-source", "entry", "request-pipeline", "profile"
+    required = {
+        "name", "syntax-backend", "term-abi", "observation"
     }
     missing = sorted(required - singleton.keys())
     if missing or not sources:
@@ -267,19 +270,33 @@ def parse_manifest(path: Path, selected_profile: str | None = None) -> Manifest:
         "name", "syntax-backend", "term-abi", "observation"
     )):
         raise CompileError(f"{path}: malformed scalar field")
-    carrier = singleton["program-carrier"]
-    if len(carrier) != 3:
-        raise CompileError(f"{path}: malformed program carrier")
     has_entry = "entry" in singleton
+    has_query = "query-entry" in singleton
     has_pipeline = "request-pipeline" in singleton
-    if has_entry == has_pipeline:
+    if sum((has_entry, has_query, has_pipeline)) != 1:
         raise CompileError(
-            f"{path}: expected exactly one entry or request-pipeline"
+            f"{path}: expected exactly one entry, query-entry, or "
+            "request-pipeline"
         )
+    carrier = singleton.get("program-carrier")
+    if has_query:
+        if carrier is not None:
+            raise CompileError(
+                f"{path}: query-entry does not admit a program carrier"
+            )
+        program_nil = None
+        program_cons = None
+    else:
+        if carrier is None or len(carrier) != 3:
+            raise CompileError(f"{path}: malformed program carrier")
+        program_nil = text(carrier[1], f"{path}: program nil")
+        program_cons = text(carrier[2], f"{path}: program cons")
     entry_relation: str | None = None
     arity = 0
     program_position = 0
     result_position = 0
+    query_relation: str | None = None
+    query_arity = 0
     classify_relation: str | None = None
     produce_relation: str | None = None
     observe_relation: str | None = None
@@ -305,6 +322,16 @@ def parse_manifest(path: Path, selected_profile: str | None = None) -> Manifest:
         ):
             raise CompileError(f"{path}: invalid entry positions")
         entry_relation = text(entry[1], f"{path}: entry relation")
+    elif has_query:
+        query = singleton["query-entry"]
+        if len(query) != 3 or not isinstance(query[2], int):
+            raise CompileError(f"{path}: malformed query-entry")
+        query_arity = query[2]
+        if query_arity <= 0 or query_arity >= 2**32 - 1:
+            raise CompileError(f"{path}: invalid query-entry arity")
+        query_relation = text(
+            query[1], f"{path}: query-entry relation"
+        )
     else:
         pipeline = singleton["request-pipeline"]
         if len(pipeline) != 6:
@@ -329,12 +356,14 @@ def parse_manifest(path: Path, selected_profile: str | None = None) -> Manifest:
         ),
         term_abi=text(singleton["term-abi"][1], f"{path}: term-abi"),
         semantic_sources=tuple(sources),
-        program_nil=text(carrier[1], f"{path}: program nil"),
-        program_cons=text(carrier[2], f"{path}: program cons"),
+        program_nil=program_nil,
+        program_cons=program_cons,
         entry_relation=entry_relation,
         entry_arity=arity,
         program_position=program_position,
         result_position=result_position,
+        query_relation=query_relation,
+        query_arity=query_arity,
         classify_relation=classify_relation,
         produce_relation=produce_relation,
         observe_relation=observe_relation,
@@ -479,12 +508,14 @@ def main() -> int:
         + f"        .length = sizeof({plan_array}),\n"
         + f"        .sha256 = {c_string(sha256(compiled_plan).hexdigest())},\n"
         + "    },\n"
-        + f"    .program_nil = {c_string(manifest.program_nil)},\n"
-        + f"    .program_cons = {c_string(manifest.program_cons)},\n"
+        + f"    .program_nil = {c_string(manifest.program_nil) if manifest.program_nil else 'NULL'},\n"
+        + f"    .program_cons = {c_string(manifest.program_cons) if manifest.program_cons else 'NULL'},\n"
         + f"    .entry_relation = {c_string(manifest.entry_relation) if manifest.entry_relation else 'NULL'},\n"
         + f"    .entry_arity = {manifest.entry_arity}u,\n"
         + f"    .program_position = {manifest.program_position}u,\n"
         + f"    .result_position = {manifest.result_position}u,\n"
+        + f"    .query_relation = {c_string(manifest.query_relation) if manifest.query_relation else 'NULL'},\n"
+        + f"    .query_arity = {manifest.query_arity}u,\n"
         + (
             "    .request_pipeline = &(const CettaGsltRequestPipelineV1){\n"
             f"        .classify_relation = {c_string(manifest.classify_relation)},\n"

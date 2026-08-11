@@ -59,12 +59,12 @@ int main(void) {
 
     Atom *package = prime_semantics_package_atom(&arena);
     if (!package || !prime_semantics_validate_package(package)) {
-        fprintf(stderr, "valid PrimeDefV1 package was rejected\n");
+        fprintf(stderr, "valid PrimeDefV2 package was rejected\n");
         goto cleanup;
     }
 
     Atom *bad_root = copy_expr_with(
-        &arena, package, 0, atom_symbol(&arena, "BrokenPrimeDefV1"));
+        &arena, package, 0, atom_symbol(&arena, "BrokenPrimeDefV2"));
     if (!bad_root || prime_semantics_validate_package(bad_root)) {
         fprintf(stderr, "broken PrimeDef root was accepted\n");
         goto cleanup;
@@ -94,6 +94,35 @@ int main(void) {
     if (!noncanonical_package ||
         prime_semantics_validate_package(noncanonical_package)) {
         fprintf(stderr, "missing canonical-binder capability was accepted\n");
+        goto cleanup;
+    }
+
+    Atom *checking = package->expr.elems[4];
+    Atom *mandatory_graduality = parse_one(
+        &arena, "(Gradual MandatoryTyping)");
+    Atom *mandatory_checking = copy_expr_with(
+        &arena, checking, 1, mandatory_graduality);
+    Atom *mandatory_package = copy_expr_with(
+        &arena, package, 4, mandatory_checking);
+    if (!mandatory_package ||
+        prime_semantics_validate_package(mandatory_package)) {
+        fprintf(stderr, "mandatory typing replaced Prime graduality\n");
+        goto cleanup;
+    }
+
+    Atom *catalog = checking->expr.elems[3];
+    Atom *wrong_catalog = copy_expr_with(
+        &arena, catalog, 1,
+        atom_string(
+            &arena,
+            "0000000000000000000000000000000000000000000000000000000000000000"));
+    Atom *wrong_catalog_checking = copy_expr_with(
+        &arena, checking, 3, wrong_catalog);
+    Atom *wrong_catalog_package = copy_expr_with(
+        &arena, package, 4, wrong_catalog_checking);
+    if (!wrong_catalog_package ||
+        prime_semantics_validate_package(wrong_catalog_package)) {
+        fprintf(stderr, "wrong NIK authority catalog identity was accepted\n");
         goto cleanup;
     }
 
@@ -1043,7 +1072,7 @@ int main(void) {
         goto cleanup;
     }
 
-    puts("PASS: PrimeDefV1 validation and conversion-certificate replay");
+    puts("PASS: PrimeDefV2 validation and conversion-certificate replay");
     rc = 0;
 
 cleanup:

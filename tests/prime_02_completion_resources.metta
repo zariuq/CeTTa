@@ -44,29 +44,31 @@
         (PrimeEvidenceV1 $evidence $information $ledger)))
    ExplicitProducerBound)
 (= (prime-order-and-resources
-      (PrimeDefV1
-        $identity $language $contexts $typing
+      (PrimeDefV2
+        $identity $language $contexts $checking
         (ResultAlgebraV1 $results $information $nondeterminism)
         (EffectsAndResourcesV1 $effects $resources)
         $evidence))
    ($information $resources))
 (= (prime-def-roots
-      (PrimeDefV1
+      (PrimeDefV2
         $identity
         (LanguageDefV1 $syntax $binders $equations $rewrites)
         (ContextsAndSchemesV1
           $classes $markers $no-generalization $fresh $rigid $substitutions)
-        (TypingRulesV1
-          $judgments $edges $checked $telescopes $bidirectional $convert
-          $refinements)
+        (CheckingV1 $gradual $authority-indexed $catalog
+          (PrimeDependentCheckingV1
+            $judgments $edges $checked $telescopes $bidirectional $convert
+            $refinements))
         (ResultAlgebraV1 $results $information $nondeterminism)
         (EffectsAndResourcesV1 $effects $resources)
-        (EvidenceSchemaV1
-          $verdict $prime-evidence $ledger $answer $substitution $producer
-          $recheck $normal-forms $correspondence $source-identity)))
+        (EvidenceSchemaV2
+          $verdict $prime-evidence $ledger $nik-receipt $authority-replay
+          $answer $substitution $producer $recheck $normal-forms
+          $correspondence $source-identity)))
    (PrimeDefRoots
-     LanguageDefV1 ContextsAndSchemesV1 TypingRulesV1 ResultAlgebraV1
-     EffectsAndResourcesV1 EvidenceSchemaV1))
+     LanguageDefV1 ContextsAndSchemesV1 CheckingV1 ResultAlgebraV1
+     EffectsAndResourcesV1 EvidenceSchemaV2))
 
 ; Closed judgments never solve rigid or out-of-scope variables silently.
 !(prime-labeled-status OpenExpected

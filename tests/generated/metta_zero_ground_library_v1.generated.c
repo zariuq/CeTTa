@@ -2640,6 +2640,8 @@ const CettaGsltEmbeddedLanguageV1 cetta_zero_ground_library_v1 = {
     .entry_arity = 0u,
     .program_position = 0u,
     .result_position = 0u,
+    .query_relation = NULL,
+    .query_arity = 0u,
     .request_pipeline = &(const CettaGsltRequestPipelineV1){
         .classify_relation = "zero-classify",
         .produce_relation = "zero-produce",
@@ -2649,5 +2651,5 @@ const CettaGsltEmbeddedLanguageV1 cetta_zero_ground_library_v1 = {
     },
     .observation = "bag",
     .manifest_sha256 = "728940b1389e1e2cef751fda3e5546e3c91408539a8c5fbfc47664e03f7aecf5",
-    .compiler_sha256 = "f815d807be39d0b1ce08c09c70c1deded227df9ee2ff50acf6bebce92fbcbb48",
+    .compiler_sha256 = "31326d3976c522fefefe1d1cacec29660fb95f993ee23e55622cad431eb4d68a",
 };

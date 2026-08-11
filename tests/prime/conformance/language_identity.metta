@@ -1,5 +1,5 @@
 (= (prime-contract:package-class
-      (PrimeDefV1 $identity $language $contexts $typing $results $effects
+      (PrimeDefV2 $identity $language $contexts $checking $results $effects
                   $evidence))
    PrimePackage)
 (= (prime-contract:package-class (prime-package $space))
