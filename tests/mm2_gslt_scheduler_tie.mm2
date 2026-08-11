@@ -1,0 +1,11 @@
+(trigger)
+
+(exec same
+  (, (trigger))
+  (O (+ (ran b))
+     (- (trigger))))
+
+(exec same
+  (, (trigger))
+  (O (+ (ran a))
+     (- (trigger))))

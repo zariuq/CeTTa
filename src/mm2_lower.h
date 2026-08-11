@@ -102,4 +102,26 @@ bool cetta_mm2_atom_id_to_contextual_bridge_expr_packet(
     uint8_t **out_context_bytes, size_t *out_context_len,
     const char **out_error);
 
+/* Decode one stable, length-delimited MORK bridge expression into a CeTTa
+   atom. Variable slots are expression-local and receive deterministic
+   presentation names v0, v1, ... while preserving co-reference. */
+bool cetta_mm2_bridge_expr_packet_to_atom(Arena *a,
+                                          const uint8_t *packet,
+                                          size_t packet_len,
+                                          Atom **out_atom,
+                                          const char **out_error);
+
+/* Canonicalize only the presentation of variables in one MM2 atom. This is
+   the encode/decode round trip used to make reference and physical observers
+   agree without rerunning either semantics. */
+Atom *cetta_mm2_alpha_canonicalize_atom(Arena *a, Atom *atom,
+                                        const char **out_error);
+
+/* Project one atom to MM2's observable surface representation. Variables are
+   alpha-canonicalized and f64 tokens use the shortest round-tripping spelling
+   selected by Rust's Debug contract. The latter is part of MORK's pure-sink
+   behavior, not CeTTa's language-independent grounded-value printer. */
+Atom *cetta_mm2_canonical_surface_atom(Arena *a, Atom *atom,
+                                       const char **out_error);
+
 #endif /* CETTA_MM2_LOWER_H */

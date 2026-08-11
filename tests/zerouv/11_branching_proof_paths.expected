@@ -1,0 +1,1 @@
+[(reachable done (path a (path left (path done end)))), (reachable done (path a (path right (path done end))))]

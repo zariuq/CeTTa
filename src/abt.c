@@ -686,7 +686,13 @@ static Atom *abt_transform_var(const AbtSignature *signature, Arena *arena,
             return abt_make_idx(arena, variable + amount);
         }
         uint64_t amount = (uint64_t)(-(transform->delta + 1)) + 1u;
-        if (variable < amount) return NULL;
+        if (CETTA_ABT_MUTATION == 24) {
+            if (variable < amount) return NULL;
+        } else {
+            if (target > UINT64_MAX - amount ||
+                variable < target + amount)
+                return NULL;
+        }
         return abt_make_idx(arena, variable - amount);
     }
     case ABT_TRANSFORM_SUBST:

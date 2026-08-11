@@ -1,0 +1,7 @@
+(route first &stage-0 &stage-1)
+(route second &stage-1 &stage-2)
+(route composed &stage-0 &stage-2)
+(= (first a) b)
+(= (second b) c)
+(= (composed a) c)
+(! (composed a))

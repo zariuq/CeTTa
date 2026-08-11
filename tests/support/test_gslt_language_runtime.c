@@ -548,19 +548,23 @@ int main(int argc, char **argv) {
                 "public query retains its authored occurrence evidence");
             run_document_realization(
                 language, realization, &source, &answers,
-                "(= (f $x) (g $x))\n(! (f a))\n", "(g a)", 1u,
+                "(= (f $x) (g $x))\n(eval (f a))\n", "(g a)", 1u,
                 "request pipeline derives evaluation through public query");
             run_document_realization(
                 language, realization, &source, &answers,
-                "(! unknown)\n", "unknown", 1u,
+                "(eval unknown)\n", "unknown", 1u,
                 "closed empty producer retains an inert subject");
             run_document_realization(
                 language, realization, &source, &answers,
-                "(! native)\n", "native", 1u,
+                "(= a b)\n(! a)\n", "unused", 0u,
+                "bang remains outside the admitted Zero request language");
+            run_document_realization(
+                language, realization, &source, &answers,
+                "(eval native)\n", "native", 1u,
                 "grounding declines when no library is composed");
             run_document_evidence_realization(
                 language, realization, &source, &answers,
-                "(! native)\n", "zero-inert-evidence", NULL,
+                "(eval native)\n", "zero-inert-evidence", NULL,
                 "declined grounding retains explicit inert evidence");
             run_document_realization(
                 language, realization, &source, &answers,
@@ -578,7 +582,7 @@ int main(int argc, char **argv) {
                 "incomplete producer cannot publish its first occurrence");
             run_completion_boundary(
                 language, realization, &source, &answers,
-                "(! unknown)\n",
+                "(eval unknown)\n",
                 "completed empty producer reaches inert observation");
         }
     }
@@ -630,11 +634,11 @@ int main(int argc, char **argv) {
                   "library composition adds exactly its authored rule");
             run_document_realization(
                 language, realization, &source, &answers,
-                "(! native)\n", "grounded", 1u,
+                "(eval native)\n", "grounded", 1u,
                 "grounding is supplied by the composed library relation");
             run_document_evidence_realization(
                 language, realization, &source, &answers,
-                "(! native)\n",
+                "(eval native)\n",
                 "zero-observed-evidence", "zero-ground-evidence",
                 "library grounding retains its authored capability evidence");
         }

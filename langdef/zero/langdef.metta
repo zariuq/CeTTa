@@ -11,4 +11,10 @@
     zero-produced-nil zero-produced-cons)
   (profile exp
     (semantic-source "semantics/semantic_runner_v1.metta"))
+  (profile emit
+    (semantic-source "semantics/revisioned_emit_v1.metta"))
+  (profile interact
+    (semantic-source "semantics/open_substitution_v1.metta")
+    (semantic-source "semantics/support_indexed_abt_match_v1.metta")
+    (semantic-source "semantics/revisioned_interact_v1.metta"))
   (observation bag))

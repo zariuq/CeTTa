@@ -3,6 +3,14 @@ use mork_expr::{Expr, ExprEnv, apply_e, item_sink};
 use pathmap::PathMap;
 use std::collections::BTreeMap;
 
+mod support_transform;
+
+pub use support_transform::{
+    NativeSupportProvider, PhysicalProviderRegistry, SupportOperatorDeclaration,
+    SupportProviderKind, SupportTransformExecutor, SupportTransformProfile,
+    SupportTransformRun, SupportTransformStats, run_support_transform_packet,
+};
+
 type ExprVar = (u8, u8);
 
 fn instantiate_factor(factor: ExprEnv, bindings: &BTreeMap<ExprVar, ExprEnv>) -> Vec<u8> {

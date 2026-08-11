@@ -47,4 +47,14 @@ bool cetta_gslt_compiled_query_v1(
     CettaGsltHornResult *result,
     char *error, size_t error_size);
 
+/* Compiled-plan counterpart of the Horn provider seam.  The same registry
+ * and finite-frontier contract are used by both realizations. */
+bool cetta_gslt_compiled_query_with_providers_v1(
+    const CettaGsltCompiledProgram *program,
+    const CettaGsltProviderRegistryV1 *providers,
+    Arena *output_arena, Atom *query,
+    CettaGsltHornLimits limits,
+    CettaGsltHornResult *result,
+    char *error, size_t error_size);
+
 #endif /* CETTA_GSLT_COMPILED_RUNTIME_H */

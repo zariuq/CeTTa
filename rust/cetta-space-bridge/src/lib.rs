@@ -17,6 +17,11 @@
 //! external ownership protocol or synchronization layer.
 
 use cetta_pathmap_adapter::{OverlayZipper, ZipperSnapshotExt};
+#[cfg(feature = "pathmap-space")]
+use cetta_mork_adapter::{
+    PhysicalProviderRegistry, SupportTransformExecutor,
+    run_support_transform_packet,
+};
 use cetta_space::{
     CountedEntry, CountedGeneralQueryCursor, FlatCountedCursorStats, FlatCountedIndexStats,
     FlatCountedQueryAdmission, FlatCountedQueryCursor, FlatCountedQueryIndex,
@@ -29,7 +34,7 @@ use cetta_space::{
     stable_bridge_expr_packet_bytes,
 };
 use mork::space::Space;
-use mork_expr::{Expr, ExprEnv, Tag, maybe_byte_item, unify};
+use mork_expr::{Expr, ExprEnv, Tag, item_byte, maybe_byte_item, unify};
 use pathmap::PathMap;
 use pathmap::ring::AlgebraicStatus;
 use pathmap::zipper::{
@@ -4505,7 +4510,28 @@ pub extern "C" fn mork_space_unique_size(space: *const MorkSpace) -> MorkStatus 
     })
 }
 
-/// Advances the raw-expression MORK space for up to `steps` calculus steps.
+fn raw_space_has_exec(space: &Space) -> bool {
+    const EXEC_PREFIX: [u8; 6] = const {
+        [
+            item_byte(Tag::Arity(4)),
+            item_byte(Tag::SymbolSize(4)),
+            b'e',
+            b'x',
+            b'e',
+            b'c',
+        ]
+    };
+    let mut zipper = space.btm.read_zipper_at_borrowed_path(&EXEC_PREFIX);
+    zipper.to_next_val()
+}
+
+/// Advances the raw-expression MORK space for at most `steps` directives.
+///
+/// Upstream `Space::metta_calculus` checks its bound after interpreting the
+/// next directive.  Calling it with zero therefore performs exactly one
+/// directive when work exists.  The bridge uses that one-step behavior only
+/// after inspecting the language-visible `exec` frontier, so its public bound
+/// is exact and zero is an identity.
 #[unsafe(no_mangle)]
 pub extern "C" fn mork_space_step(space: *mut MorkSpace, steps: u64) -> MorkStatus {
     with_catch_status(|| unsafe {
@@ -4519,13 +4545,113 @@ pub extern "C" fn mork_space_step(space: *mut MorkSpace, steps: u64) -> MorkStat
                 b"counted PathMap bridge spaces do not support metta_calculus stepping".to_vec(),
             );
         }
-        let capped = if steps > usize::MAX as u64 {
-            usize::MAX
+        let limit = if steps > usize::MAX as u64 {
+            usize::MAX as u64
         } else {
-            steps as usize
+            steps
         };
-        let performed = bridge.inner.metta_calculus(capped);
-        MorkStatus::ok(performed as u64)
+        let mut performed = 0u64;
+        while performed < limit && raw_space_has_exec(&bridge.inner) {
+            let _upstream_report = bridge.inner.metta_calculus(0);
+            performed += 1;
+        }
+        MorkStatus::ok(performed)
+    })
+}
+
+unsafe fn support_transform_packet<'a>(
+    packet: *const u8,
+    packet_len: usize,
+) -> Result<&'a [u8], MorkStatus> {
+    if packet.is_null() {
+        return Err(MorkStatus::err(
+            MorkStatusCode::Null,
+            b"null support-transform physical profile".to_vec(),
+        ));
+    }
+    Ok(unsafe { std::slice::from_raw_parts(packet, packet_len) })
+}
+
+/// Checks whether this bridge can realize an authored support-transform
+/// profile without mutating a space.
+#[unsafe(no_mangle)]
+pub extern "C" fn mork_support_transform_profile_supported_v1(
+    packet: *const u8,
+    packet_len: usize,
+) -> MorkStatus {
+    with_catch_status(|| {
+        let packet = match unsafe { support_transform_packet(packet, packet_len) } {
+            Ok(packet) => packet,
+            Err(error) => return error,
+        };
+        match SupportTransformExecutor::from_packet(
+            packet,
+            PhysicalProviderRegistry::mork_native(),
+        ) {
+            Ok(_) => MorkStatus::ok(1),
+            Err(_) => MorkStatus::ok(0),
+        }
+    })
+}
+
+/// Runs at most `steps` supported directives using the authored physical
+/// profile. Unsupported or malformed directives remain ordinary inert atoms.
+#[unsafe(no_mangle)]
+pub extern "C" fn mork_space_step_support_transform_v1(
+    space: *mut MorkSpace,
+    packet: *const u8,
+    packet_len: usize,
+    steps: u64,
+) -> MorkStatus {
+    with_catch_status(|| unsafe {
+        let bridge = match bridge_space_mut(space) {
+            Ok(space) => space,
+            Err(error) => return error,
+        };
+        if bridge_uses_counted_storage(bridge) {
+            return MorkStatus::err(
+                MorkStatusCode::Internal,
+                b"support-transform execution requires raw support storage".to_vec(),
+            );
+        }
+        let packet = match support_transform_packet(packet, packet_len) {
+            Ok(packet) => packet,
+            Err(error) => return error,
+        };
+        match run_support_transform_packet(&mut bridge.inner, packet, steps) {
+            Ok(run) => MorkStatus::ok(run.performed),
+            Err(error) => MorkStatus::err(MorkStatusCode::Internal, error.into_bytes()),
+        }
+    })
+}
+
+/// Reports whether at least one supported directive remains under the
+/// authored physical profile. This is the completion witness for exact fuel.
+#[unsafe(no_mangle)]
+pub extern "C" fn mork_space_has_support_transform_work_v1(
+    space: *mut MorkSpace,
+    packet: *const u8,
+    packet_len: usize,
+) -> MorkStatus {
+    with_catch_status(|| unsafe {
+        let bridge = match bridge_space_mut(space) {
+            Ok(space) => space,
+            Err(error) => return error,
+        };
+        if bridge_uses_counted_storage(bridge) {
+            return MorkStatus::err(
+                MorkStatusCode::Internal,
+                b"support-transform execution requires raw support storage".to_vec(),
+            );
+        }
+        let packet = match support_transform_packet(packet, packet_len) {
+            Ok(packet) => packet,
+            Err(error) => return error,
+        };
+        match run_support_transform_packet(&mut bridge.inner, packet, 0) {
+            Ok(run) => MorkStatus::ok(u64::from(run.has_work)),
+            Err(error) => MorkStatus::err(MorkStatusCode::Internal, error.into_bytes()),
+        }
     })
 }
 
@@ -9857,6 +9983,10 @@ mod tests {
         assert!(status_ok(&add));
         assert_eq!(add.value, 3);
 
+        let stopped = mork_space_step(raw, 0);
+        assert!(status_ok(&stopped));
+        assert_eq!(stopped.value, 0);
+
         let ran = mork_space_step(raw, 1);
         assert!(status_ok(&ran));
         assert_eq!(ran.value, 1);
@@ -9871,6 +10001,48 @@ mod tests {
         assert!(!rendered.contains("(exec (0 step)"));
 
         mork_bytes_free(dump.data, dump.len);
+        mork_space_free(raw);
+    }
+
+    #[test]
+    fn ffi_space_step_obeys_exact_directive_bound() {
+        let _guard = test_guard();
+        let raw = mork_space_new();
+        assert!(!raw.is_null());
+
+        let input = b"(seed)\n(exec (0 first) (, (seed)) (O (+ (first-done))))\n(exec (1 second) (, (seed)) (O (+ (second-done))))\n";
+        let add = mork_space_add_sexpr(raw, input.as_ptr(), input.len());
+        assert!(status_ok(&add));
+        assert_eq!(add.value, 3);
+
+        let first = mork_space_step(raw, 1);
+        assert!(status_ok(&first));
+        assert_eq!(first.value, 1);
+
+        let first_dump = mork_space_dump(raw);
+        assert!(buffer_ok(&first_dump));
+        let first_text = unsafe {
+            std::slice::from_raw_parts(first_dump.data, first_dump.len)
+        };
+        let first_rendered = std::str::from_utf8(first_text).unwrap();
+        assert_eq!(first_rendered.matches("(exec ").count(), 1);
+        mork_bytes_free(first_dump.data, first_dump.len);
+
+        let second = mork_space_step(raw, 1);
+        assert!(status_ok(&second));
+        assert_eq!(second.value, 1);
+
+        let final_dump = mork_space_dump(raw);
+        assert!(buffer_ok(&final_dump));
+        let final_text = unsafe {
+            std::slice::from_raw_parts(final_dump.data, final_dump.len)
+        };
+        let final_rendered = std::str::from_utf8(final_text).unwrap();
+        assert!(!final_rendered.contains("(exec "));
+        assert!(final_rendered.contains("(first-done)"));
+        assert!(final_rendered.contains("(second-done)"));
+        mork_bytes_free(final_dump.data, final_dump.len);
+
         mork_space_free(raw);
     }
 

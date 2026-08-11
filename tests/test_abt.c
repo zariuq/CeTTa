@@ -15,7 +15,7 @@
 
 enum {
     ABT_DEEP_TERM_DEPTH = CETTA_ABT_MUTATION == 0 ? 100000 : 1000,
-    ABT_EXPECTED_CHECKS = 110,
+    ABT_EXPECTED_CHECKS = 114,
 };
 
 static unsigned failures = 0;
@@ -318,6 +318,23 @@ static void test_shift_and_substitution(Arena *arena,
           "shift below cutoff preserves the original variable pointer");
     CHECK(abt_shift(signature, arena, 0, 0u, lam_term) == lam_term,
           "zero shift preserves the original term pointer");
+
+    check_atom_eq(
+        "negative shift removes one unused outer level",
+        abt_shift(signature, arena, -1, 0u, var(arena, 1)),
+        var(arena, 0));
+    CHECK(abt_shift(signature, arena, -1, 0u, var(arena, 0)) == NULL,
+          "negative shift rejects a referenced removed level");
+    CHECK(abt_shift(
+              signature, arena, -1, 0u,
+              node2(arena, "Lam", type, var(arena, 1))) == NULL,
+          "negative shift rejects capture beneath a binder");
+    check_atom_eq(
+        "negative shift preserves a remaining outer level beneath a binder",
+        abt_shift(
+            signature, arena, -1, 0u,
+            node2(arena, "Lam", type, var(arena, 2))),
+        node2(arena, "Lam", type, var(arena, 1)));
 
     Atom *app_term = node2(
         arena, "App", atom_symbol(arena, "f"), var(arena, 0));

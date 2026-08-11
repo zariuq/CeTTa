@@ -1,0 +1,3 @@
+(mid a)
+(seed a)
+(exec (1 second) (, (mid a)) (, (done a)))

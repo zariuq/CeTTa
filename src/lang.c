@@ -35,6 +35,15 @@ static const CettaLanguageSpec CETTA_LANGUAGES[] = {
     {CETTA_LANGUAGE_ZERO, "metta-zero", "zero", true,
      "Alias for the generated query-first MeTTa Zero candidate",
      CETTA_RELATIVE_MODULE_POLICY_CURRENT_DIR_ONLY},
+    {CETTA_LANGUAGE_GSLT_IL, "gslt-il", "gslt-il", true,
+     "Experimental generated MeTTa-facing indexed GSLT metalanguage",
+     CETTA_RELATIVE_MODULE_POLICY_CURRENT_DIR_ONLY},
+    {CETTA_LANGUAGE_ZEROUV, "zerouv", "zerouv", true,
+     "Experimental productive and recurrent MeTTa candidate",
+     CETTA_RELATIVE_MODULE_POLICY_CURRENT_DIR_ONLY},
+    {CETTA_LANGUAGE_METTA_INTERACT, "metta-interact", "metta-interact", true,
+     "Experimental proof-relevant interaction and cost language",
+     CETTA_RELATIVE_MODULE_POLICY_CURRENT_DIR_ONLY},
     {CETTA_LANGUAGE_MM2, "mm2", "mm2", true,
      "Direct MM2 lowering plus MORK-backed execution for pure program files",
      CETTA_RELATIVE_MODULE_POLICY_CURRENT_DIR_ONLY},
@@ -164,6 +173,14 @@ bool cetta_language_supports_syntax(CettaLanguageId id, CettaSyntaxId syntax) {
                syntax == CETTA_SYNTAX_METTA;
     }
     return syntax == CETTA_SYNTAX_METTA;
+}
+
+bool cetta_language_uses_embedded_gslt(CettaLanguageId id) {
+    return id == CETTA_LANGUAGE_SUBZERO ||
+           id == CETTA_LANGUAGE_ZERO ||
+           id == CETTA_LANGUAGE_GSLT_IL ||
+           id == CETTA_LANGUAGE_ZEROUV ||
+           id == CETTA_LANGUAGE_METTA_INTERACT;
 }
 
 const char *cetta_relative_module_policy_name(CettaRelativeModulePolicy policy) {

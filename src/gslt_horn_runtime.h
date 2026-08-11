@@ -2,6 +2,7 @@
 #define CETTA_GSLT_HORN_RUNTIME_H
 
 #include "atom.h"
+#include "gslt_provider_runtime.h"
 
 #include <stdbool.h>
 #include <stddef.h>
@@ -70,11 +71,21 @@ bool cetta_gslt_horn_query(
     Atom *query, CettaGsltHornLimits limits,
     CettaGsltHornResult *result, char *error, size_t error_size);
 
+/* Execute with a finite semantic-provider registry.  Authored Horn rules take
+ * precedence: a provider is consulted only for a predicate with no authored
+ * rule bucket, so physical registration cannot override language meaning. */
+bool cetta_gslt_horn_query_with_providers_v1(
+    const CettaGsltHornProgram *program,
+    const CettaGsltProviderRegistryV1 *providers,
+    Arena *output_arena, Atom *query, CettaGsltHornLimits limits,
+    CettaGsltHornResult *result, char *error, size_t error_size);
+
 void cetta_gslt_horn_result_free(CettaGsltHornResult *result);
 
 /* Shared finite-Horn quotation ABI for host Atoms.  Quotation preserves
- * repeated variables by occurrence-local de Bruijn indices; unknown grounded
- * values remain opaque data. */
+ * repeated host matching variables by occurrence-local slots.  Canonical
+ * object binders remain explicit (idx n) data; unknown grounded values remain
+ * opaque data. */
 Atom *cetta_gslt_quote_atom_v1(Arena *arena, const Atom *atom);
 Atom *cetta_gslt_unquote_atom_v1(Arena *arena, const Atom *quoted);
 
