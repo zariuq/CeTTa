@@ -417,7 +417,8 @@ PETTA_TYPECHECK_V2_SRC =
 ifeq ($(ENABLE_PETTA_TYPECHECK_V2),1)
 PETTA_TYPECHECK_V2_SRC = src/petta_typecheck.c
 endif
-SRC = src/symbol.c src/atom.c src/name_key.c src/atom_blob.c src/abt.c src/parser.c $(COMPILED_READER_RUNTIME_SRC) src/mm2_lower.c src/subst_tree.c src/space.c src/registry_resolver.c src/space_match_backend.c src/match.c src/match_decision.c src/term_canon.c src/variant_shape.c src/variant_instance.c src/answer_bank.c src/table_store.c src/search_machine.c src/petta_program.c src/petta_search_machine.c $(PETTA_TYPECHECK_V2_SRC) src/petta_specializer.c src/rule_machine.c $(LIB_PROLOG_SRC) src/term_universe.c src/stats.c src/parallel_executor.c src/prime_need.c src/petta_semantics.c src/prepared_pure_machine.c src/eval.c src/grounded.c src/he_typing.c src/inference_checker.c src/nik_runtime.c src/prime_semantics.c src/text_source.c src/native_handle.c src/native_sha256.c src/mork_space_bridge_runtime.c src/library.c src/langdef_pack.c src/gslt_provider_runtime.c src/gslt_space_fact_provider_v1.c src/gslt_revisioned_space_provider_v1.c src/gslt_abt_provider_v1.c src/gslt_horn_runtime.c src/gslt_compiled_runtime.c src/gslt_language_runtime.c src/gslt_pure_provider_v1.c src/gslt_support_transform_runtime.c src/generated/prime_nik_authorities_v1.generated.c src/generated/prime_nik_runtime_v1.generated.c src/generated/gslt_il_language_v1.generated.c src/generated/metta_interact_language_v1.generated.c src/generated/mm2_gslt_profile_v1.generated.c src/generated/subzero_language_v1.generated.c src/generated/zero_language_v1.generated.c src/generated/zero_exp_language_v1.generated.c src/generated/zero_emit_language_v1.generated.c src/generated/zero_interact_language_v1.generated.c src/generated/zero_interact_provider_catalog_v1.generated.c src/generated/zerouv_language_v1.generated.c src/he_small_step_pack.c src/lib_parse_native_grammar.c src/lib_parse_inference_native.c experiments/gslt2parse_foundation/native/finite_horn_gslt_v1.c experiments/gslt2parse_foundation/native/finite_horn_ground_term_v1.c experiments/gslt2parse_foundation/native/parser_term_projection_v1.c experiments/gslt2parse_foundation/native/parser_pack_abi_v1.c experiments/gslt2parse_foundation/native/parser_action_bytecode_v1.c experiments/gslt2parse_foundation/native/parser_pack_native_v1.c experiments/gslt2parse_foundation/native/parser_pack_lexical_v1.c experiments/gslt2parse_foundation/native/parser_pack_gll_v1.c experiments/gslt2parse_foundation/native/parser_pack_glr_v1.c experiments/gslt2parse_foundation/native/regular_span_dfa_v1.c experiments/gslt2parse_foundation/native/regular_span_nfa_v1.c $(PYTHON_SRC) src/session.c src/lang.c src/rhocalc_core.c src/rhocalc_syntax.c src/compile.c src/runtime.c src/cetta_stdlib.c native/native_modules.c src/main.c
+SRC = src/symbol.c src/atom.c src/name_key.c src/atom_blob.c src/abt.c src/parser.c $(COMPILED_READER_RUNTIME_SRC) src/mm2_lower.c src/subst_tree.c src/space.c src/registry_resolver.c src/space_match_backend.c src/match.c src/match_decision.c src/term_canon.c src/variant_shape.c src/variant_instance.c src/answer_bank.c src/table_store.c src/search_machine.c src/petta_program.c src/petta_search_machine.c $(PETTA_TYPECHECK_V2_SRC) src/petta_specializer.c src/rule_machine.c $(LIB_PROLOG_SRC) src/term_universe.c src/stats.c src/parallel_executor.c src/prime_need.c src/petta_semantics.c src/prepared_pure_machine.c src/eval.c src/grounded.c src/he_typing.c src/inference_checker.c src/inference_side_condition_provider.c src/nik_runtime.c src/prime_semantics.c src/text_source.c src/native_handle.c src/native_sha256.c src/mork_space_bridge_runtime.c src/library.c src/langdef_pack.c src/gslt_provider_runtime.c src/gslt_space_fact_provider_v1.c src/gslt_revisioned_space_provider_v1.c src/gslt_abt_provider_v1.c src/gslt_horn_runtime.c src/gslt_compiled_runtime.c src/gslt_language_runtime.c src/gslt_pure_provider_v1.c src/gslt_support_transform_runtime.c src/generated/prime_nik_authorities_v1.generated.c src/generated/prime_nik_runtime_v1.generated.c src/generated/gslt_il_language_v1.generated.c src/generated/metta_interact_language_v1.generated.c src/generated/mm2_gslt_profile_v1.generated.c src/generated/subzero_language_v1.generated.c src/generated/zero_language_v1.generated.c src/generated/zero_exp_language_v1.generated.c src/generated/zero_emit_language_v1.generated.c src/generated/zero_interact_language_v1.generated.c src/generated/zero_interact_provider_catalog_v1.generated.c src/generated/zerouv_language_v1.generated.c src/he_small_step_pack.c src/lib_parse_native_grammar.c src/lib_parse_inference_native.c experiments/gslt2parse_foundation/native/finite_horn_gslt_v1.c experiments/gslt2parse_foundation/native/finite_horn_ground_term_v1.c experiments/gslt2parse_foundation/native/parser_term_projection_v1.c experiments/gslt2parse_foundation/native/parser_pack_abi_v1.c experiments/gslt2parse_foundation/native/parser_action_bytecode_v1.c experiments/gslt2parse_foundation/native/parser_pack_native_v1.c experiments/gslt2parse_foundation/native/parser_pack_lexical_v1.c experiments/gslt2parse_foundation/native/parser_pack_gll_v1.c experiments/gslt2parse_foundation/native/parser_pack_glr_v1.c experiments/gslt2parse_foundation/native/regular_span_dfa_v1.c experiments/gslt2parse_foundation/native/regular_span_nfa_v1.c $(PYTHON_SRC) src/session.c src/lang.c src/rhocalc_core.c src/rhocalc_syntax.c src/compile.c src/runtime.c src/cetta_stdlib.c native/native_modules.c src/main.c
+SRC += src/generated/prime_nik_side_condition_provider_catalog_v1.generated.c
 LANGDEF_COMPILED_CURSOR_RUNTIME_SRC = \
 	experiments/gslt2parse_foundation/native/finite_horn_answer_stream_v1.c \
 	experiments/gslt2parse_foundation/native/parser_pack_guard_evidence_stream_v1.c \
@@ -1075,7 +1076,35 @@ PRIME_NIK_AUTHORITIES_GENERATED_H = src/generated/prime_nik_authorities_v1.gener
 PRIME_NIK_AUTHORITIES_GENERATED_C = src/generated/prime_nik_authorities_v1.generated.c
 PRIME_NIK_RUNTIME_GENERATED_H = src/generated/prime_nik_runtime_v1.generated.h
 PRIME_NIK_RUNTIME_GENERATED_C = src/generated/prime_nik_runtime_v1.generated.c
+PRIME_NIK_SIDE_CONDITION_PROVIDER_CATALOG_V1 = langdef/prime/nik_side_condition_provider_catalog_v1.metta
+PRIME_NIK_SIDE_CONDITION_PROVIDER_CATALOG_GENERATED_H = src/generated/prime_nik_side_condition_provider_catalog_v1.generated.h
+PRIME_NIK_SIDE_CONDITION_PROVIDER_CATALOG_GENERATED_C = src/generated/prime_nik_side_condition_provider_catalog_v1.generated.c
+PRIME_NIK_MEGALODON_TEST_V1 = tools/test_nik_megalodon_implicational_v1.py
+PRIME_NIK_MEGALODON_POSITIVE_V1 = tests/support/megalodon/positive_imp_modus_ponens.mg
+PRIME_NIK_MEGALODON_NEGATIVE_V1 = tests/support/megalodon/negative_wrong_exact.mg
+PRIME_NIK_MEGALODON_TERM_TEST_V1 = tools/test_nik_megalodon_term_quantified_v1.py
+PRIME_NIK_MEGALODON_TERM_POSITIVE_V1 = tests/support/megalodon/positive_term_forall_identity.mg
+PRIME_NIK_MEGALODON_TERM_WITNESS_V1 = tests/support/megalodon/positive_term_forall_identity.nik
+PRIME_NIK_MEGALODON_TERM_EXPORTER_V1 = tests/support/export_prime_nik_megalodon_term_v1.lean
+PRIME_NIK_MEGALODON_POLY_TEST_V1 = tools/test_nik_megalodon_polymorphic_v1.py
+PRIME_NIK_MEGALODON_POLY_POSITIVE_V1 = tests/support/megalodon/positive_type_polymorphic_reuse.mg
+PRIME_NIK_MEGALODON_POLY_WITNESS_V1 = tests/support/megalodon/positive_type_polymorphic_reuse.nik
+PRIME_NIK_MEGALODON_POLY_EXPORTER_V1 = tests/support/export_prime_nik_megalodon_polymorphic_v1.lean
+PRIME_NIK_MEGALODON_KNOWN_IMP_TEST_V1 = tools/test_nik_megalodon_known_implication_v1.py
+PRIME_NIK_MEGALODON_KNOWN_IMP_POSITIVE_V1 = tests/support/megalodon/positive_known_implication_reuse.mg
+PRIME_NIK_MEGALODON_KNOWN_IMP_WITNESS_V1 = tests/support/megalodon/positive_known_implication_reuse.nik
+PRIME_NIK_MEGALODON_KNOWN_IMP_EXPORTER_V1 = tests/support/export_prime_nik_megalodon_known_implication_v1.lean
+PRIME_NIK_MEGALODON_DEFINITION_TEST_V1 = tools/test_nik_megalodon_definition_conversion_v1.py
+PRIME_NIK_MEGALODON_DEFINITION_POSITIVE_V1 = tests/support/megalodon/positive_definition_conversion.mg
+PRIME_NIK_MEGALODON_DEFINITION_WITNESS_V1 = tests/support/megalodon/positive_definition_conversion.nik
+PRIME_NIK_MEGALODON_DEFINITION_EXPORTER_V1 = tests/support/export_prime_nik_megalodon_definition_v1.lean
+PRIME_NIK_MEGALODON_TACTICS_TEST_V1 = tools/test_nik_megalodon_tactics_package_v1.py
+PRIME_NIK_MEGALODON_TACTICS_POSITIVE_V1 = tests/support/megalodon/positive_tactics_package.mg
+PRIME_NIK_PROOF_DAG_COMPILER_V1 = tools/nik_proof_dag_v1.py
+PRIME_NIK_PROOF_DAG_TEST_V1 = tools/test_nik_proof_dag_v1.py
+MEGALODON_AUTO_BIN ?= $(abspath ../../Mettapedia/megalodon/bin/megalodon)
 METTAPEDIA_LEAN_ROOT ?=
+METTAPEDIA_LEAN_AUTO_ROOT ?= $(abspath ../../Mettapedia/lean/mettapedia)
 GSLT_IL_LANGDEF_V1 = langdef/gslt-il/langdef.metta
 GSLT_IL_FINITE_COMMAND_V1 = langdef/gslt-il/semantics/finite_indexed_command_v1.metta
 GSLT_IL_GENERATED_LANGUAGE_V1_H = src/generated/gslt_il_language_v1.generated.h
@@ -8227,7 +8256,7 @@ test-list-lanes: $(BIN)
 bench-list: $(BIN) test-list-lanes
 	@./scripts/bench_list_lanes.py --cetta ./$(BIN)
 
-test: $(BIN) test-manifest-strict test-git-module test-symbolid-guard test-variant-shape-roundtrip test-bindings-lookup-index test-atom-deep-copy-iterative test-abt test-rhometta-payload-map-capacity-c test-space-term-universe-membership test-help-flags test-rhocalc test-he-contract-suite test-he-return-contract-correlation test-closed-stream-fastpath test-parse-depth-guard test-stdlib-growth-memory-regression test-rhometta-macro-audit test-eval-gc-adversarial test-list-lanes test-syn-lanes test-lib-prolog test-petta-libpl test-petta-process-text test-match-decision test-petta-search-machine test-petta-semantics test-petta-corpus-manifest-unit test-petta-chainer-manifest-unit test-gslt-provider-generation-v1 test-gslt-provider-runtime test-subzero test-mettazero test-gslt-il test-zerouv test-metta-interact test-mm2-gslt-profile-v1
+test: $(BIN) test-manifest-strict test-git-module test-symbolid-guard test-variant-shape-roundtrip test-bindings-lookup-index test-atom-deep-copy-iterative test-abt test-rhometta-payload-map-capacity-c test-space-term-universe-membership test-help-flags test-rhocalc test-he-contract-suite test-he-return-contract-correlation test-closed-stream-fastpath test-parse-depth-guard test-stdlib-growth-memory-regression test-rhometta-macro-audit test-eval-gc-adversarial test-list-lanes test-syn-lanes test-lib-prolog test-petta-libpl test-petta-process-text test-match-decision test-petta-search-machine test-petta-semantics test-petta-corpus-manifest-unit test-petta-chainer-manifest-unit test-gslt-provider-generation-v1 test-gslt-provider-runtime test-prime-nik-v1 test-subzero test-mettazero test-gslt-il test-zerouv test-metta-interact test-mm2-gslt-profile-v1
 	@pass=0; fail=0; skip=0; no_exp=0; \
 	cache_dir="$(GIT_TEST_CACHE_DIR)"; mkdir -p "$$cache_dir"; export CETTA_GIT_MODULE_CACHE_DIR="$$cache_dir"; \
 	for f in tests/test_*.metta tests/spec_*.metta tests/he_*.metta; do \
@@ -10662,7 +10691,7 @@ else
 	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 $@
 endif
 
-test-prime: $(BIN) test-prime-coverage test-prime-budget-monotonicity test-prime-package-validation test-prime-internal-graduality
+test-prime: $(BIN) test-prime-coverage test-prime-budget-monotonicity test-prime-package-validation test-prime-internal-graduality test-prime-nik-v1
 	@pass=0; fail=0; \
 	for f in $(PRIME_FAST_TESTS); do \
 		exp="$${f%.metta}.expected"; \
@@ -16716,6 +16745,7 @@ test-gslt-language-runtime: $(GSLT_LANGUAGE_RUNTIME_TEST_BIN)
 $(NIK_RUNTIME_TEST_BIN): \
 		tests/support/test_nik_runtime_v1.c \
 		src/nik_runtime.h \
+		src/nik_runtime_internal.h \
 		src/inference_checker.h \
 		$(PRIME_NIK_AUTHORITIES_GENERATED_H) \
 		$(PRIME_NIK_AUTHORITIES_GENERATED_C) \
@@ -17384,6 +17414,23 @@ $(PRIME_NIK_RUNTIME_GENERATED_H) $(PRIME_NIK_RUNTIME_GENERATED_C) &: \
 		--symbol cetta_prime_nik_runtime_v1 \
 		--header-include generated/prime_nik_runtime_v1.generated.h
 
+$(PRIME_NIK_SIDE_CONDITION_PROVIDER_CATALOG_GENERATED_H) \
+$(PRIME_NIK_SIDE_CONDITION_PROVIDER_CATALOG_GENERATED_C) &: \
+		$(GSLT_PROVIDER_CATALOG_GENERATOR_V1) \
+		tools/gslt2parse_schema_v1.py \
+		$(PRIME_NIK_SIDE_CONDITION_PROVIDER_CATALOG_V1) \
+		$(PRIME_NIK_RUNTIME_MANIFEST_V1) \
+		$(PRIME_NIK_RUNTIME_GENERATED_H) \
+		$(PRIME_NIK_RUNTIME_GENERATED_C)
+	@python3 $(GSLT_PROVIDER_CATALOG_GENERATOR_V1) \
+		--catalog $(PRIME_NIK_SIDE_CONDITION_PROVIDER_CATALOG_V1) \
+		--language-manifest $(PRIME_NIK_RUNTIME_MANIFEST_V1) \
+		--source-root langdef \
+		--header $(PRIME_NIK_SIDE_CONDITION_PROVIDER_CATALOG_GENERATED_H) \
+		--source $(PRIME_NIK_SIDE_CONDITION_PROVIDER_CATALOG_GENERATED_C) \
+		--symbol cetta_prime_nik_side_condition_provider_catalog_v1 \
+		--header-include generated/prime_nik_side_condition_provider_catalog_v1.generated.h
+
 .PHONY: test-prime-nik-generation-v1
 test-prime-nik-generation-v1: \
 		$(PRIME_NIK_AUTHORITY_GENERATION_TEST_V1) \
@@ -17391,7 +17438,9 @@ test-prime-nik-generation-v1: \
 		$(PRIME_NIK_AUTHORITIES_GENERATED_H) \
 		$(PRIME_NIK_AUTHORITIES_GENERATED_C) \
 		$(PRIME_NIK_RUNTIME_GENERATED_H) \
-		$(PRIME_NIK_RUNTIME_GENERATED_C)
+		$(PRIME_NIK_RUNTIME_GENERATED_C) \
+		$(PRIME_NIK_SIDE_CONDITION_PROVIDER_CATALOG_GENERATED_H) \
+		$(PRIME_NIK_SIDE_CONDITION_PROVIDER_CATALOG_GENERATED_C)
 	@python3 $(PRIME_NIK_AUTHORITY_GENERATION_TEST_V1) \
 		--generator $(PRIME_NIK_AUTHORITY_GENERATOR_V1) \
 		--catalog $(PRIME_NIK_AUTHORITY_CATALOG_V1) \
@@ -17408,6 +17457,15 @@ test-prime-nik-generation-v1: \
 		--source $(PRIME_NIK_RUNTIME_GENERATED_C) \
 		--symbol cetta_prime_nik_runtime_v1 \
 		--header-include generated/prime_nik_runtime_v1.generated.h
+	@python3 $(GSLT_PROVIDER_CATALOG_GENERATION_TEST_V1) \
+		--generator $(GSLT_PROVIDER_CATALOG_GENERATOR_V1) \
+		--catalog $(PRIME_NIK_SIDE_CONDITION_PROVIDER_CATALOG_V1) \
+		--language-manifest $(PRIME_NIK_RUNTIME_MANIFEST_V1) \
+		--source-root langdef \
+		--header $(PRIME_NIK_SIDE_CONDITION_PROVIDER_CATALOG_GENERATED_H) \
+		--source $(PRIME_NIK_SIDE_CONDITION_PROVIDER_CATALOG_GENERATED_C) \
+		--symbol cetta_prime_nik_side_condition_provider_catalog_v1 \
+		--header-include generated/prime_nik_side_condition_provider_catalog_v1.generated.h
 
 .PHONY: test-prime-nik-lean-export-v1
 test-prime-nik-lean-export-v1: $(PRIME_NIK_AUTHORITY_EXPORTER_V1)
@@ -17426,7 +17484,216 @@ test-prime-nik-lean-export-v1: $(PRIME_NIK_AUTHORITY_EXPORTER_V1)
 			"$(abspath $(PRIME_NIK_AUTHORITY_EXPORTER_V1))" \
 			"$$tmp_catalog_abs"; \
 	cmp -s "$$tmp_catalog_abs" "$$checked_catalog_abs"; \
-	echo "(PrimeNikLeanExportV1Summary exact=1 authorities=2)"
+	echo "(PrimeNikLeanExportV1Summary exact=1 authorities=4)"
+
+.PHONY: test-prime-nik-megalodon-v1
+test-prime-nik-megalodon-v1: \
+		$(PRIME_NIK_MEGALODON_TEST_V1) \
+		$(PRIME_NIK_MEGALODON_POSITIVE_V1) \
+		$(PRIME_NIK_MEGALODON_NEGATIVE_V1)
+	@set -eu; \
+	if [ -x "$(MEGALODON_AUTO_BIN)" ]; then \
+		python3 $(PRIME_NIK_MEGALODON_TEST_V1) \
+			--megalodon "$(MEGALODON_AUTO_BIN)" \
+			--catalog $(PRIME_NIK_AUTHORITY_CATALOG_V1) \
+			--positive $(PRIME_NIK_MEGALODON_POSITIVE_V1) \
+			--negative $(PRIME_NIK_MEGALODON_NEGATIVE_V1); \
+	else \
+		echo "SKIP: Megalodon executable differential (binary unavailable)"; \
+	fi
+
+.PHONY: test-prime-nik-megalodon-term-v1
+test-prime-nik-megalodon-term-v1: \
+		$(BIN) \
+		$(PRIME_NIK_MEGALODON_TERM_TEST_V1) \
+		$(PRIME_NIK_MEGALODON_TERM_POSITIVE_V1) \
+		$(PRIME_NIK_MEGALODON_TERM_WITNESS_V1) \
+		$(PRIME_NIK_MEGALODON_TERM_EXPORTER_V1) \
+		$(PRIME_NIK_AUTHORITY_CATALOG_V1)
+	@set -eu; \
+	if [ ! -x "$(MEGALODON_AUTO_BIN)" ]; then \
+		echo "SKIP: Megalodon executable term differential (binary unavailable)"; \
+		exit 0; \
+	fi; \
+	lean_root="$(METTAPEDIA_LEAN_ROOT)"; \
+	if [ -z "$$lean_root" ] && \
+	   [ -f "$(METTAPEDIA_LEAN_AUTO_ROOT)/lakefile.lean" ]; then \
+		lean_root="$(METTAPEDIA_LEAN_AUTO_ROOT)"; \
+	fi; \
+	witness_abs=$$(realpath "$(PRIME_NIK_MEGALODON_TERM_WITNESS_V1)"); \
+	if [ -n "$$lean_root" ]; then \
+		mkdir -p $(BOOTSTRAP_TMPDIR); \
+		tmp_witness=$$(mktemp "$(BOOTSTRAP_TMPDIR)/prime-nik-megalodon-term.XXXXXX"); \
+		tmp_witness_abs=$$(realpath "$$tmp_witness"); \
+		trap 'rm -f "$$tmp_witness_abs"' EXIT INT TERM; \
+		(cd "$$lean_root" && lake env lean --run \
+			"$(abspath $(PRIME_NIK_MEGALODON_TERM_EXPORTER_V1))" \
+			"$$tmp_witness_abs"); \
+		cmp -s "$$tmp_witness_abs" "$$witness_abs"; \
+		witness_abs="$$tmp_witness_abs"; \
+	fi; \
+	python3 $(PRIME_NIK_MEGALODON_TERM_TEST_V1) \
+		--megalodon "$(MEGALODON_AUTO_BIN)" \
+		--cetta "$(abspath $(BIN))" \
+		--catalog $(PRIME_NIK_AUTHORITY_CATALOG_V1) \
+		--positive $(PRIME_NIK_MEGALODON_TERM_POSITIVE_V1) \
+		--lean-witness "$$witness_abs"
+
+.PHONY: test-prime-nik-megalodon-polymorphic-v1
+test-prime-nik-megalodon-polymorphic-v1: \
+		$(BIN) \
+		$(PRIME_NIK_MEGALODON_POLY_TEST_V1) \
+		$(PRIME_NIK_MEGALODON_POLY_POSITIVE_V1) \
+		$(PRIME_NIK_MEGALODON_POLY_WITNESS_V1) \
+		$(PRIME_NIK_MEGALODON_POLY_EXPORTER_V1) \
+		$(PRIME_NIK_AUTHORITY_CATALOG_V1)
+	@set -eu; \
+	if [ ! -x "$(MEGALODON_AUTO_BIN)" ]; then \
+		echo "SKIP: Megalodon executable polymorphic differential (binary unavailable)"; \
+		exit 0; \
+	fi; \
+	lean_root="$(METTAPEDIA_LEAN_ROOT)"; \
+	if [ -z "$$lean_root" ] && \
+	   [ -f "$(METTAPEDIA_LEAN_AUTO_ROOT)/lakefile.lean" ]; then \
+		lean_root="$(METTAPEDIA_LEAN_AUTO_ROOT)"; \
+	fi; \
+	witness_abs=$$(realpath "$(PRIME_NIK_MEGALODON_POLY_WITNESS_V1)"); \
+	if [ -n "$$lean_root" ]; then \
+		mkdir -p $(BOOTSTRAP_TMPDIR); \
+		tmp_witness=$$(mktemp "$(BOOTSTRAP_TMPDIR)/prime-nik-megalodon-poly.XXXXXX"); \
+		tmp_witness_abs=$$(realpath "$$tmp_witness"); \
+		trap 'rm -f "$$tmp_witness_abs"' EXIT INT TERM; \
+		(cd "$$lean_root" && lake env lean --run \
+			"$(abspath $(PRIME_NIK_MEGALODON_POLY_EXPORTER_V1))" \
+			"$$tmp_witness_abs"); \
+		cmp -s "$$tmp_witness_abs" "$$witness_abs"; \
+		witness_abs="$$tmp_witness_abs"; \
+	fi; \
+	python3 $(PRIME_NIK_MEGALODON_POLY_TEST_V1) \
+		--megalodon "$(MEGALODON_AUTO_BIN)" \
+		--cetta "$(abspath $(BIN))" \
+		--catalog $(PRIME_NIK_AUTHORITY_CATALOG_V1) \
+		--positive $(PRIME_NIK_MEGALODON_POLY_POSITIVE_V1) \
+		--lean-witness "$$witness_abs"
+
+.PHONY: test-prime-nik-megalodon-known-implication-v1
+test-prime-nik-megalodon-known-implication-v1: \
+		$(BIN) \
+		$(PRIME_NIK_MEGALODON_KNOWN_IMP_TEST_V1) \
+		$(PRIME_NIK_MEGALODON_KNOWN_IMP_POSITIVE_V1) \
+		$(PRIME_NIK_MEGALODON_KNOWN_IMP_WITNESS_V1) \
+		$(PRIME_NIK_MEGALODON_KNOWN_IMP_EXPORTER_V1) \
+		$(PRIME_NIK_AUTHORITY_CATALOG_V1)
+	@set -eu; \
+	if [ ! -x "$(MEGALODON_AUTO_BIN)" ]; then \
+		echo "SKIP: Megalodon executable known-implication differential (binary unavailable)"; \
+		exit 0; \
+	fi; \
+	lean_root="$(METTAPEDIA_LEAN_ROOT)"; \
+	if [ -z "$$lean_root" ] && \
+	   [ -f "$(METTAPEDIA_LEAN_AUTO_ROOT)/lakefile.lean" ]; then \
+		lean_root="$(METTAPEDIA_LEAN_AUTO_ROOT)"; \
+	fi; \
+	witness_abs=$$(realpath "$(PRIME_NIK_MEGALODON_KNOWN_IMP_WITNESS_V1)"); \
+	if [ -n "$$lean_root" ]; then \
+		mkdir -p $(BOOTSTRAP_TMPDIR); \
+		tmp_witness=$$(mktemp "$(BOOTSTRAP_TMPDIR)/prime-nik-megalodon-known-imp.XXXXXX"); \
+		tmp_witness_abs=$$(realpath "$$tmp_witness"); \
+		trap 'rm -f "$$tmp_witness_abs"' EXIT INT TERM; \
+		(cd "$$lean_root" && lake env lean --run \
+			"$(abspath $(PRIME_NIK_MEGALODON_KNOWN_IMP_EXPORTER_V1))" \
+			"$$tmp_witness_abs"); \
+		cmp -s "$$tmp_witness_abs" "$$witness_abs"; \
+		witness_abs="$$tmp_witness_abs"; \
+	fi; \
+	python3 $(PRIME_NIK_MEGALODON_KNOWN_IMP_TEST_V1) \
+		--megalodon "$(MEGALODON_AUTO_BIN)" \
+		--cetta "$(abspath $(BIN))" \
+		--positive $(PRIME_NIK_MEGALODON_KNOWN_IMP_POSITIVE_V1) \
+		--lean-witness "$$witness_abs"
+
+.PHONY: test-prime-nik-megalodon-definition-v1
+test-prime-nik-megalodon-definition-v1: \
+		$(BIN) \
+		$(PRIME_NIK_MEGALODON_DEFINITION_TEST_V1) \
+		$(PRIME_NIK_MEGALODON_DEFINITION_POSITIVE_V1) \
+		$(PRIME_NIK_MEGALODON_DEFINITION_WITNESS_V1) \
+		$(PRIME_NIK_MEGALODON_DEFINITION_EXPORTER_V1) \
+		$(PRIME_NIK_AUTHORITY_CATALOG_V1)
+	@set -eu; \
+	if [ ! -x "$(MEGALODON_AUTO_BIN)" ]; then \
+		echo "SKIP: Megalodon executable definition differential (binary unavailable)"; \
+		exit 0; \
+	fi; \
+	lean_root="$(METTAPEDIA_LEAN_ROOT)"; \
+	if [ -z "$$lean_root" ] && \
+	   [ -f "$(METTAPEDIA_LEAN_AUTO_ROOT)/lakefile.lean" ]; then \
+		lean_root="$(METTAPEDIA_LEAN_AUTO_ROOT)"; \
+	fi; \
+	witness_abs=$$(realpath "$(PRIME_NIK_MEGALODON_DEFINITION_WITNESS_V1)"); \
+	if [ -n "$$lean_root" ]; then \
+		mkdir -p $(BOOTSTRAP_TMPDIR); \
+		tmp_witness=$$(mktemp "$(BOOTSTRAP_TMPDIR)/prime-nik-megalodon-definition.XXXXXX"); \
+		tmp_witness_abs=$$(realpath "$$tmp_witness"); \
+		trap 'rm -f "$$tmp_witness_abs"' EXIT INT TERM; \
+		(cd "$$lean_root" && lake env lean --run \
+			"$(abspath $(PRIME_NIK_MEGALODON_DEFINITION_EXPORTER_V1))" \
+			"$$tmp_witness_abs"); \
+		cmp -s "$$tmp_witness_abs" "$$witness_abs"; \
+		witness_abs="$$tmp_witness_abs"; \
+	fi; \
+	python3 $(PRIME_NIK_MEGALODON_DEFINITION_TEST_V1) \
+		--megalodon "$(MEGALODON_AUTO_BIN)" \
+		--cetta "$(abspath $(BIN))" \
+		--catalog $(PRIME_NIK_AUTHORITY_CATALOG_V1) \
+		--positive $(PRIME_NIK_MEGALODON_DEFINITION_POSITIVE_V1) \
+		--lean-witness "$$witness_abs"
+
+.PHONY: test-prime-nik-proof-dag-v1
+test-prime-nik-proof-dag-v1: \
+		$(PRIME_NIK_PROOF_DAG_COMPILER_V1) \
+		$(PRIME_NIK_PROOF_DAG_TEST_V1)
+	python3 $(PRIME_NIK_PROOF_DAG_TEST_V1)
+
+.PHONY: test-prime-nik-megalodon-tactics-package-v1
+test-prime-nik-megalodon-tactics-package-v1: \
+		$(BIN) \
+		$(NIK_RUNTIME_TEST_BIN) \
+		$(PRIME_NIK_PROOF_DAG_COMPILER_V1) \
+		$(PRIME_NIK_MEGALODON_TACTICS_TEST_V1) \
+		$(PRIME_NIK_MEGALODON_TACTICS_POSITIVE_V1) \
+		$(PRIME_NIK_AUTHORITY_CATALOG_V1)
+	@set -eu; \
+	if [ ! -x "$(MEGALODON_AUTO_BIN)" ]; then \
+		echo "SKIP: Megalodon tactics-package differential (binary unavailable)"; \
+		exit 0; \
+	fi; \
+	python3 $(PRIME_NIK_MEGALODON_TACTICS_TEST_V1) \
+		--megalodon "$(MEGALODON_AUTO_BIN)" \
+		--cetta "$(abspath $(BIN))" \
+		--differential "$(abspath $(NIK_RUNTIME_TEST_BIN))" \
+		--positive $(PRIME_NIK_MEGALODON_TACTICS_POSITIVE_V1)
+
+.PHONY: test-prime-nik-v1
+test-prime-nik-v1: test-nik-runtime-v1 test-prime-nik-generation-v1 \
+		test-prime-nik-proof-dag-v1 \
+		test-prime-nik-megalodon-v1 test-prime-nik-megalodon-term-v1 \
+		test-prime-nik-megalodon-polymorphic-v1 \
+		test-prime-nik-megalodon-known-implication-v1 \
+		test-prime-nik-megalodon-definition-v1 \
+		test-prime-nik-megalodon-tactics-package-v1
+	@set -eu; \
+	lean_root="$(METTAPEDIA_LEAN_ROOT)"; \
+	if [ -z "$$lean_root" ] && \
+	   [ -f "$(METTAPEDIA_LEAN_AUTO_ROOT)/lakefile.lean" ]; then \
+		lean_root="$(METTAPEDIA_LEAN_AUTO_ROOT)"; \
+	fi; \
+	if [ -n "$$lean_root" ]; then \
+		$(MAKE) -s METTAPEDIA_LEAN_ROOT="$$lean_root" \
+			test-prime-nik-lean-export-v1; \
+	else \
+		echo "SKIP: Prime NIK Lean export (Mettapedia Lean project unavailable)"; \
+	fi
 
 $(MM2_GSLT_PROFILE_GENERATED_H) $(MM2_GSLT_PROFILE_GENERATED_C) &: \
 		$(GSLT_SUPPORT_TRANSFORM_GENERATOR_V1) \

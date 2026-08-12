@@ -8,15 +8,16 @@
 #include "atom.h"
 
 /*
- * Native checker for the side-condition-free serialized fragment of admitted
- * finite inference presentations.
+ * Native checker for serialized admitted finite inference presentations.
  *
  * The serialized input vocabulary is the language-neutral
  * GPresentation/GRule/GRuleInst vocabulary used by the executable generic
  * inference checker.  A presentation is admitted once, then proof actions are
- * consumed incrementally without retaining an action list or proof tree.  The
- * v0 GRule wire form has no side-condition field; a future wire revision must
- * carry generic side conditions before presentations using them are admitted.
+ * consumed incrementally without retaining an action list or proof tree.
+ * GPresentationV1 carries side-condition and conversion fields exactly.
+ * Its admitted generic side conditions execute through the registered ABT
+ * providers; malformed or unknown conditions fail closed and are never
+ * erased.
  */
 
 typedef enum {
@@ -62,8 +63,10 @@ typedef struct {
 const char *cetta_inference_status_name(CettaInferenceStatus status);
 
 /*
- * Validate and index a canonical GPresentation value.  The checker borrows
- * immutable pattern atoms from presentation, so presentation must outlive it.
+ * Validate and index a canonical GPresentationV1 value.  Legacy
+ * GPresentation remains accepted only as the explicitly side-condition-free
+ * version-zero carrier.  The checker borrows immutable pattern atoms from
+ * presentation, so presentation must outlive it.
  */
 CettaInferenceStatus cetta_inference_checker_create(
     Atom *presentation,
@@ -177,6 +180,65 @@ CettaInferenceStatus cetta_inference_check_raw_proof(
     Atom *presentation,
     Atom *goal,
     Atom *proof,
+    CettaInferenceReplayLimits limits,
+    CettaInferenceReplayStats *stats,
+    Arena *arena,
+    char *error_buf,
+    size_t error_buf_size);
+
+/*
+ * Replay the same RawProof wire form against an already admitted checker.
+ * The checker is immutable during replay and may therefore be reused across
+ * independent traces.  This is the production path for revisioned authority
+ * packages; the presentation-taking helper above remains the one-shot
+ * convenience entry point.
+ */
+CettaInferenceStatus cetta_inference_checker_check_raw_proof(
+    const CettaInferenceChecker *checker,
+    Atom *goal,
+    Atom *proof,
+    CettaInferenceReplayLimits limits,
+    CettaInferenceReplayStats *stats,
+    Arena *arena,
+    char *error_buf,
+    size_t error_buf_size);
+
+/*
+ * Replay the exact versioned chronological ProofGSLT carriers:
+ *
+ *   (GProofDAG 1 nodes root-id target)
+ *   (GDNode id (GRuleInst "rule" arguments) references)
+ *
+ * Version 2 retains the same judgment while sharing every Pattern subtree:
+ *
+ *   (GProofDAG 2 pattern-nodes nodes root-id target-pattern-id)
+ *   (GPatternNode id pattern-key)
+ *   (GDNode id (GRuleRefs "rule" argument-pattern-ids) references)
+ *
+ * Node references are `(GRNode id)` values in canonical LNil/LCons lists.
+ * `(GRPremise index)` is part of the general open-article carrier but is
+ * rejected here because NIK Check submits a closed article.  Version, target,
+ * unique node identity, backward references, ordered premises, and root are
+ * all checked.  Version-2 Pattern ids are chronological ordinals; their keys
+ * are GPKBVar, GPKFVar, GPKApply, GPKLambda, GPKMultiLambda, GPKSubst, or
+ * GPKCollection.  Pattern materialization is untrusted transport: replay is
+ * still decided by the same admitted checker.  The admitted checker remains
+ * immutable and reusable.
+ */
+CettaInferenceStatus cetta_inference_checker_check_dag_article(
+    const CettaInferenceChecker *checker,
+    Atom *goal,
+    Atom *article,
+    CettaInferenceReplayLimits limits,
+    CettaInferenceReplayStats *stats,
+    Arena *arena,
+    char *error_buf,
+    size_t error_buf_size);
+
+CettaInferenceStatus cetta_inference_check_dag_article(
+    Atom *presentation,
+    Atom *goal,
+    Atom *article,
     CettaInferenceReplayLimits limits,
     CettaInferenceReplayStats *stats,
     Arena *arena,
