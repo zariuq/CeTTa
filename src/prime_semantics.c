@@ -13,6 +13,7 @@
 #include "eval.h"
 #include "generated/prime_nik_authorities_v1.generated.h"
 #include "he_typing.h"
+#include "library.h"
 #include "nik_runtime.h"
 #include "space.h"
 #include "symbol.h"
@@ -166,10 +167,9 @@ static Atom *prime_nik_receipt_atom(
         atom_expr(a, native_items, 4),
         atom_expr(a, reference_items, 4),
         atom_expr(a, compiled_items, 4)};
-    bool conclusive = receipt->outcome == CETTA_NIK_ACCEPTED ||
-        receipt->outcome == CETTA_NIK_REJECTED;
-    bool agreement = conclusive && receipt->native_ran &&
-        receipt->reference_ran && receipt->compiled_ran &&
+    bool agreement_checked = receipt->native_ran &&
+        receipt->reference_ran && receipt->compiled_ran;
+    bool agreement = agreement_checked &&
         receipt->native_accepted == receipt->reference_accepted &&
         receipt->reference_accepted == receipt->compiled_accepted;
     Atom *items[8] = {
@@ -183,8 +183,11 @@ static Atom *prime_nik_receipt_atom(
         prime_expr2(
             a, "Outcome", prime_sym(a, cetta_nik_outcome_name(receipt->outcome))),
         atom_expr(a, realizations_items, 4),
-        prime_expr2(a, "Agreement",
-                    agreement ? atom_true(a) : atom_false(a)),
+        prime_expr2(
+            a, "Agreement",
+            agreement_checked
+                ? (agreement ? atom_true(a) : atom_false(a))
+                : prime_sym(a, "not-run")),
         prime_expr2(a, "TotalWork",
                     prime_nik_attempt_count(a, receipt->total_work)),
         prime_expr2(
@@ -1837,14 +1840,27 @@ static Atom *prime_nik_check(
     }
 
     CettaNikLimits limits = {0};
-    if (ledger->typing.steps_limited)
-        limits.max_total_work = ledger->typing.steps_remaining;
+    if (ledger->typing.steps_limited) {
+        limits.replay.max_nodes =
+            ledger->typing.steps_remaining > (uint64_t)SIZE_MAX
+                ? SIZE_MAX
+                : (size_t)ledger->typing.steps_remaining;
+    }
     CettaNikReceiptV1 receipt;
     char diagnostic[512] = {0};
-    CettaNikOutcome outcome = cetta_nik_check_v1(
-        atom_name_cstr(authority), claim, proof, limits, a, &receipt,
-        diagnostic, sizeof(diagnostic));
-    prime_account_nik_work(ledger, receipt.total_work);
+    CettaLibraryContext *library = eval_current_library_context();
+    CettaNikRuntimeV1 *runtime = library
+        ? cetta_library_context_nik_runtime(
+            library, diagnostic, sizeof(diagnostic))
+        : NULL;
+    CettaNikOutcome outcome = runtime
+        ? cetta_nik_runtime_v1_check(
+            runtime, atom_name_cstr(authority), claim, proof, limits, a,
+            &receipt, diagnostic, sizeof(diagnostic))
+        : cetta_nik_check_v1(
+            atom_name_cstr(authority), claim, proof, limits, a, &receipt,
+            diagnostic, sizeof(diagnostic));
+    prime_account_nik_work(ledger, receipt.native_nodes);
     Atom *evidence = prime_nik_receipt_atom(
         a, authority, &receipt, diagnostic);
 

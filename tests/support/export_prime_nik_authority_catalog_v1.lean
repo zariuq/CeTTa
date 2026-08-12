@@ -1,13 +1,17 @@
 import Mettapedia.Languages.MeTTa.Prime.MinimalCheckingPackage
+import Mettapedia.Languages.Megalodon.ImplicationalKernel
+import Mettapedia.Languages.Megalodon.TheoryAdmissionKernel
+import Mettapedia.Languages.Megalodon.DefinitionConversionWireRefinement
 import Mettapedia.GSLT.LanguageDef.InferenceMeTTaRender
+import Mettapedia.GSLT.LanguageDef.InferenceABTWireRefinement
 import MeTTailCore.Crypto.SHA256
 
 /-!
 # Export the Prime NIK calibration authority catalog
 
-The catalog contains two deliberately different admitted rule packages and
-one accepted proof for each.  It is data for CeTTa's generic checker
-pipeline; neither package is privileged as Prime's unique type theory.
+The catalog contains independently named admitted rule packages and one
+accepted proof for each.  It is data for CeTTa's generic checker pipeline;
+no package is privileged as Prime's unique type theory.
 -/
 
 namespace Cetta.Prime.NIK.AuthorityCatalogV1
@@ -28,13 +32,31 @@ private def authority (shortName system revision : String)
 def catalog : String :=
   let dttPresentation := renderPresentation dttCache
   let hotgPresentation := renderPresentation hotgCache
+  let megalodonImpPresentation := renderPresentation
+    Mettapedia.Languages.Megalodon.ImplicationalKernel.presentation
+  let megalodonTermPresentation := renderPresentation
+    Mettapedia.Languages.Megalodon.TheoryAdmissionKernel.presentation
   "(nik-authority-catalog-v1\n" ++
     authority "DTT" "prime.dtt.calibration" "1"
       dttPresentation (renderPattern dttIdZeroGoal)
       (renderRawProof dttProofIdZero) ++ "\n" ++
     authority "HOTG" "prime.hotg.calibration" "1"
       hotgPresentation (renderPattern hotgPowerGoal)
-      (renderRawProof hotgProofPower) ++ "\n)\n"
+      (renderRawProof hotgProofPower) ++ "\n" ++
+    authority "MEGALODON-IMP" "megalodon.mathdata.implicational" "1"
+      megalodonImpPresentation
+      (renderPattern
+        Mettapedia.Languages.Megalodon.ImplicationalKernel.modusPonensGoal)
+      (renderRawProof
+        Mettapedia.Languages.Megalodon.ImplicationalKernel.modusPonensArticle) ++
+      "\n" ++
+    authority "MEGALODON-TERM" "megalodon.mathdata.definition-conversion" "10"
+      megalodonTermPresentation
+      (renderPattern
+        Mettapedia.Languages.Megalodon.TheoryAdmissionKernel.canaryGoal)
+      (renderRawProof
+        Mettapedia.Languages.Megalodon.TheoryAdmissionKernel.canaryArticle) ++
+      "\n)\n"
 
 def main (arguments : List String) : IO UInt32 := do
   match arguments with

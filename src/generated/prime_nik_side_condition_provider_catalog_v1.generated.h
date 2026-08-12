@@ -1,0 +1,8 @@
+#ifndef CETTA_GENERATED_CETTA_PRIME_NIK_SIDE_CONDITION_PROVIDER_CATALOG_V1_H
+#define CETTA_GENERATED_CETTA_PRIME_NIK_SIDE_CONDITION_PROVIDER_CATALOG_V1_H
+
+#include "gslt_provider_runtime.h"
+
+extern const CettaGsltProviderCatalogV1 cetta_prime_nik_side_condition_provider_catalog_v1;
+
+#endif /* CETTA_GENERATED_CETTA_PRIME_NIK_SIDE_CONDITION_PROVIDER_CATALOG_V1_H */

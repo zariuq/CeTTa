@@ -5,6 +5,7 @@
 #include "mm2_lower.h"
 #include "mork_space_bridge_runtime.h"
 #include "native/native_modules.h"
+#include "nik_runtime.h"
 #include "parser.h"
 #include "petta_search_machine.h"
 #include "petta_typecheck.h"
@@ -320,6 +321,9 @@ void cetta_library_context_init_for_language_profile(CettaLibraryContext *ctx,
                                                      CettaLanguageId language_id,
                                                      const CettaProfile *profile) {
     cetta_eval_session_init(&ctx->session, language_id, profile);
+    ctx->nik_runtime_mutex_ready =
+        pthread_mutex_init(&ctx->nik_runtime_mutex, NULL) == 0;
+    ctx->nik_runtime = NULL;
     term_universe_init(&ctx->term_universe);
     ctx->active_mask = 0;
     ctx->root_dir[0] = '\0';
@@ -388,6 +392,12 @@ void cetta_library_context_init_for_language_profile(CettaLibraryContext *ctx,
 
 void cetta_library_context_free(CettaLibraryContext *ctx) {
     if (!ctx) return;
+    cetta_nik_runtime_v1_free(ctx->nik_runtime);
+    ctx->nik_runtime = NULL;
+    if (ctx->nik_runtime_mutex_ready) {
+        pthread_mutex_destroy(&ctx->nik_runtime_mutex);
+        ctx->nik_runtime_mutex_ready = false;
+    }
     for (uint32_t i = 0; i < ctx->loaded_module_len; i++) {
         Space *space = ctx->loaded_modules[i].space;
         if (!space) continue;
@@ -433,6 +443,35 @@ void cetta_library_context_free(CettaLibraryContext *ctx) {
         cetta_foreign_runtime_free(ctx->foreign_runtime);
         ctx->foreign_runtime = NULL;
     }
+}
+
+struct CettaNikRuntimeV1 *cetta_library_context_nik_runtime(
+    CettaLibraryContext *ctx,
+    char *error_buf,
+    size_t error_buf_size) {
+    if (error_buf && error_buf_size > 0u)
+        error_buf[0] = '\0';
+    if (!ctx) {
+        if (error_buf && error_buf_size > 0u)
+            (void)snprintf(
+                error_buf, error_buf_size,
+                "NIK runtime requires a library context");
+        return NULL;
+    }
+    if (!ctx->nik_runtime_mutex_ready) {
+        if (error_buf && error_buf_size > 0u)
+            (void)snprintf(
+                error_buf, error_buf_size,
+                "NIK runtime session mutex is unavailable");
+        return NULL;
+    }
+    pthread_mutex_lock(&ctx->nik_runtime_mutex);
+    if (!ctx->nik_runtime)
+        ctx->nik_runtime = cetta_nik_runtime_v1_new(
+            error_buf, error_buf_size);
+    struct CettaNikRuntimeV1 *runtime = ctx->nik_runtime;
+    pthread_mutex_unlock(&ctx->nik_runtime_mutex);
+    return runtime;
 }
 
 static void cetta_library_petta_translator_rule_sync(

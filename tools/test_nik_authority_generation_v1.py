@@ -49,6 +49,47 @@ def write_form(path: Path, value: sx.SExpr) -> None:
     path.write_text(sx.render(value) + "\n", encoding="utf-8")
 
 
+def rewrite_first(
+    value: sx.SExpr,
+    predicate,
+    replacement,
+) -> tuple[sx.SExpr, bool]:
+    if predicate(value):
+        return replacement(value), True
+    if not isinstance(value, tuple):
+        return value, False
+    rewritten: list[sx.SExpr] = []
+    changed = False
+    for item in value:
+        if changed:
+            rewritten.append(item)
+            continue
+        next_item, changed = rewrite_first(item, predicate, replacement)
+        rewritten.append(next_item)
+    return tuple(rewritten), changed
+
+
+def authority_with_presentation(
+    authority: tuple[sx.SExpr, ...], presentation: sx.SExpr
+) -> tuple[sx.SExpr, ...]:
+    updated = list(authority)
+    updated[4] = sx.StringLiteral(
+        sha256(sx.render(presentation).encode("utf-8")).hexdigest()
+    )
+    updated[5] = presentation
+    return tuple(updated)
+
+
+def count_tag(value: sx.SExpr, tag: str) -> int:
+    if not isinstance(value, tuple):
+        return 0
+    here = int(
+        bool(value) and isinstance(value[0], sx.Symbol) and
+        value[0].text == tag
+    )
+    return here + sum(count_tag(item, tag) for item in value)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--generator", type=Path, required=True)
@@ -91,6 +132,16 @@ def main() -> int:
         for generated, checked_in in comparisons:
             if generated.read_bytes() != checked_in.read_bytes():
                 raise SystemExit(f"generated artifact drifted: {checked_in.name}")
+        expected_support_checks = count_tag(root, "Formal")
+        actual_support_checks = semantic.read_text(encoding="utf-8").count(
+            "(nik-pattern-supported-at "
+        )
+        if actual_support_checks != expected_support_checks:
+            raise SystemExit(
+                "generated runtime does not validate every formal at its "
+                f"binder support: expected {expected_support_checks}, "
+                f"found {actual_support_checks}"
+            )
 
         mutations: list[tuple[str, sx.SExpr]] = []
         mutations.append(("singular", (root[0], root[1])))
@@ -104,13 +155,14 @@ def main() -> int:
         mutations.append(("wrong-digest", (root[0], tuple(wrong_digest), *root[2:])))
 
         duplicate_depth_presentation: sx.SExpr = (
-            sx.Symbol("GPresentation"),
+            sx.Symbol("GPresentationV1"),
+            1,
             sx.Symbol("LNil"),
             sx.Symbol("LNil"),
             (
                 sx.Symbol("LCons"),
                 (
-                    sx.Symbol("GRule"),
+                    sx.Symbol("GRuleV1"),
                     sx.StringLiteral("duplicate-depth"),
                     (
                         sx.Symbol("LCons"),
@@ -139,9 +191,11 @@ def main() -> int:
                             ),
                         ),
                     ),
+                    sx.Symbol("LNil"),
                 ),
                 sx.Symbol("LNil"),
             ),
+            sx.Symbol("GNoConversion"),
         )
         duplicate_depth_authority = list(root[1])
         duplicate_depth_authority[4] = sx.StringLiteral(
@@ -154,6 +208,71 @@ def main() -> int:
             (
                 "duplicate-formal-across-depths",
                 (root[0], tuple(duplicate_depth_authority), *root[2:]),
+            )
+        )
+
+        dtt_authority = root[1]
+        if not isinstance(dtt_authority, tuple):
+            raise SystemExit("DTT authority is malformed")
+        dtt_presentation = dtt_authority[5]
+
+        wrong_support, changed = rewrite_first(
+            dtt_presentation,
+            lambda value: isinstance(value, tuple)
+            and value
+            == (
+                sx.Symbol("Formal"),
+                sx.StringLiteral("u"),
+                1,
+            ),
+            lambda _value: (
+                sx.Symbol("Formal"),
+                sx.StringLiteral("u"),
+                0,
+            ),
+        )
+        if not changed:
+            raise SystemExit("DTT beta formal was not found")
+        mutations.append(
+            (
+                "side-condition-support-depth",
+                (
+                    root[0],
+                    authority_with_presentation(dtt_authority, wrong_support),
+                    *root[2:],
+                ),
+            )
+        )
+
+        wrong_position, changed = rewrite_first(
+            dtt_presentation,
+            lambda value: isinstance(value, tuple)
+            and value
+            == (
+                sx.Symbol("GExplicitSubstitution"),
+                0,
+                0,
+                1,
+                2,
+            ),
+            lambda _value: (
+                sx.Symbol("GExplicitSubstitution"),
+                0,
+                0,
+                1,
+                9,
+            ),
+        )
+        if not changed:
+            raise SystemExit("DTT beta side condition was not found")
+        mutations.append(
+            (
+                "side-condition-argument-position",
+                (
+                    root[0],
+                    authority_with_presentation(dtt_authority, wrong_position),
+                    *root[2:],
+                ),
             )
         )
 
@@ -174,7 +293,7 @@ def main() -> int:
 
     print(
         "(NikAuthorityGenerationV1Summary deterministic=1 "
-        "plural=1 mutations-killed=4)"
+        "plural=1 mutations-killed=6)"
     )
     return 0
 

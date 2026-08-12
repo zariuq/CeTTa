@@ -64,6 +64,35 @@ typedef struct {
     bool faulted;
 } GsltHornRun;
 
+typedef enum {
+    GSLT_HORN_FRAME_ENTER = 0,
+    GSLT_HORN_FRAME_RULES,
+    GSLT_HORN_FRAME_PROVIDER,
+    GSLT_HORN_FRAME_AFTER_RULE_CHILD,
+    GSLT_HORN_FRAME_AFTER_PROVIDER_CHILD,
+} GsltHornFramePhase;
+
+typedef struct {
+    Atom **goals;
+    uint32_t goal_count;
+    uint32_t depth;
+    GsltHornFramePhase phase;
+    ArenaMark goal_mark;
+    ArenaMark branch_mark;
+    Atom *goal;
+    const GsltHornBucket *bucket;
+    CettaGsltProviderAnswersV1 provider_answers;
+    uint32_t candidate;
+    size_t provider_index;
+    uint32_t binding_mark;
+} GsltHornFrame;
+
+typedef struct {
+    GsltHornFrame *items;
+    size_t count;
+    size_t cap;
+} GsltHornFrameStack;
+
 static bool horn_error(char *buffer, size_t size, const char *format, ...) {
     if (buffer && size > 0u) {
         va_list arguments;
@@ -642,38 +671,119 @@ static bool horn_result_push(GsltHornRun *run,
     return true;
 }
 
+static bool horn_frame_stack_push(GsltHornFrameStack *stack,
+                                  GsltHornFrame frame) {
+    if (stack->count == stack->cap) {
+        size_t next = stack->cap ? stack->cap * 2u : 64u;
+        if (next < stack->cap ||
+            next > SIZE_MAX / sizeof(*stack->items))
+            return false;
+        stack->items = cetta_realloc(
+            stack->items, sizeof(*stack->items) * next);
+        stack->cap = next;
+    }
+    stack->items[stack->count++] = frame;
+    return true;
+}
+
+static void horn_frame_release(GsltHornRun *run,
+                               BindingsBuilder *builder,
+                               GsltHornFrame *frame) {
+    if (frame->phase == GSLT_HORN_FRAME_AFTER_RULE_CHILD ||
+        frame->phase == GSLT_HORN_FRAME_AFTER_PROVIDER_CHILD) {
+        bindings_builder_rollback(builder, frame->binding_mark);
+        arena_reset(&run->scratch, frame->branch_mark);
+    }
+    if (frame->phase == GSLT_HORN_FRAME_PROVIDER ||
+        frame->phase == GSLT_HORN_FRAME_AFTER_PROVIDER_CHILD)
+        cetta_gslt_provider_answers_free_v1(&frame->provider_answers);
+    if (frame->phase != GSLT_HORN_FRAME_ENTER)
+        arena_reset(&run->scratch, frame->goal_mark);
+}
+
+static void horn_frame_stack_release(GsltHornRun *run,
+                                     BindingsBuilder *builder,
+                                     GsltHornFrameStack *stack) {
+    while (stack->count > 0u) {
+        GsltHornFrame *frame = &stack->items[stack->count - 1u];
+        horn_frame_release(run, builder, frame);
+        stack->count--;
+    }
+    free(stack->items);
+    memset(stack, 0, sizeof(*stack));
+}
+
+static void horn_fault(GsltHornRun *run, const char *message) {
+    run->result->outcome = CETTA_GSLT_HORN_FAULT;
+    run->faulted = true;
+    run->stopped = true;
+    (void)horn_error(run->error, run->error_size, "%s", message);
+}
+
 static void horn_solve(GsltHornRun *run, Atom *const *goals,
                        uint32_t goal_count, BindingsBuilder *builder,
                        uint32_t depth) {
-    if (run->stopped)
-        return;
-    if (depth > run->result->max_depth_observed)
-        run->result->max_depth_observed = depth;
-    if (depth > run->limits.max_depth) {
-        run->result->outcome = CETTA_GSLT_HORN_DEPTH_LIMIT;
-        run->stopped = true;
-        return;
-    }
-    if (goal_count == 0u) {
-        (void)horn_result_push(run, bindings_builder_bindings(builder));
+    GsltHornFrameStack stack = {0};
+    if (!horn_frame_stack_push(
+            &stack,
+            (GsltHornFrame){
+                .goals = (Atom **)goals,
+                .goal_count = goal_count,
+                .depth = depth,
+                .phase = GSLT_HORN_FRAME_ENTER,
+            })) {
+        horn_fault(run, "cannot allocate GSLT Horn worklist");
         return;
     }
 
-    ArenaMark goal_mark = arena_mark(&run->scratch);
-    Atom *goal = bindings_apply_if_vars(
-        bindings_builder_bindings(builder), &run->scratch, goals[0]);
-    const GsltHornBucket *bucket = horn_find_bucket(run->program, goal);
-    if (!bucket) {
-        const CettaGsltProviderV1 *provider =
-            cetta_gslt_provider_find_v1(run->providers, goal);
-        if (provider) {
-            CettaGsltProviderAnswersV1 answers = {0};
+    while (stack.count > 0u && !run->stopped) {
+        GsltHornFrame *frame = &stack.items[stack.count - 1u];
+
+        if (frame->phase == GSLT_HORN_FRAME_ENTER) {
+            if (frame->depth > run->result->max_depth_observed)
+                run->result->max_depth_observed = frame->depth;
+            if (frame->depth > run->limits.max_depth) {
+                run->result->outcome = CETTA_GSLT_HORN_DEPTH_LIMIT;
+                run->stopped = true;
+                continue;
+            }
+            if (frame->goal_count == 0u) {
+                (void)horn_result_push(
+                    run, bindings_builder_bindings(builder));
+                stack.count--;
+                continue;
+            }
+
+            frame->goal_mark = arena_mark(&run->scratch);
+            frame->goal = bindings_apply_if_vars(
+                bindings_builder_bindings(builder), &run->scratch,
+                frame->goals[0]);
+            if (!frame->goal) {
+                frame->phase = GSLT_HORN_FRAME_RULES;
+                horn_fault(run, "cannot resolve GSLT Horn goal");
+                continue;
+            }
+            frame->bucket = horn_find_bucket(run->program, frame->goal);
+            if (frame->bucket) {
+                frame->phase = GSLT_HORN_FRAME_RULES;
+                continue;
+            }
+
+            const CettaGsltProviderV1 *provider =
+                cetta_gslt_provider_find_v1(run->providers, frame->goal);
+            if (!provider) {
+                arena_reset(&run->scratch, frame->goal_mark);
+                stack.count--;
+                continue;
+            }
+            frame->phase = GSLT_HORN_FRAME_PROVIDER;
             CettaGsltProviderOutcomeV1 provider_outcome = provider->query(
-                provider->context, &run->scratch, goal,
-                run->limits.max_answers, &answers,
+                provider->context, &run->scratch, frame->goal,
+                run->limits.max_answers, &frame->provider_answers,
                 run->error, run->error_size);
             if (provider_outcome == CETTA_GSLT_PROVIDER_COMPLETED &&
-                answers.answer_count > run->limits.max_answers)
+                frame->provider_answers.answer_count >
+                    run->limits.max_answers)
                 provider_outcome = CETTA_GSLT_PROVIDER_ANSWER_LIMIT;
             if (provider_outcome == CETTA_GSLT_PROVIDER_ANSWER_LIMIT) {
                 run->result->outcome = CETTA_GSLT_HORN_ANSWER_LIMIT;
@@ -683,75 +793,139 @@ static void horn_solve(GsltHornRun *run, Atom *const *goals,
                 run->faulted = true;
                 run->stopped = true;
             }
-            for (size_t index = 0u;
-                 index < answers.answer_count && !run->stopped; index++) {
-                Atom *answer = answers.answers[index];
-                if (!answer || answer->kind != ATOM_EXPR ||
-                    answer->expr.len != goal->expr.len ||
-                    answer->expr.elems[0]->kind != ATOM_SYMBOL ||
-                    answer->expr.elems[0]->sym_id !=
-                        goal->expr.elems[0]->sym_id) {
-                    horn_error(
+            continue;
+        }
+
+        if (frame->phase == GSLT_HORN_FRAME_AFTER_RULE_CHILD) {
+            bindings_builder_rollback(builder, frame->binding_mark);
+            arena_reset(&run->scratch, frame->branch_mark);
+            frame->phase = GSLT_HORN_FRAME_RULES;
+            continue;
+        }
+        if (frame->phase == GSLT_HORN_FRAME_AFTER_PROVIDER_CHILD) {
+            bindings_builder_rollback(builder, frame->binding_mark);
+            arena_reset(&run->scratch, frame->branch_mark);
+            frame->phase = GSLT_HORN_FRAME_PROVIDER;
+            continue;
+        }
+
+        if (frame->phase == GSLT_HORN_FRAME_PROVIDER) {
+            if (frame->provider_index >=
+                frame->provider_answers.answer_count) {
+                cetta_gslt_provider_answers_free_v1(
+                    &frame->provider_answers);
+                arena_reset(&run->scratch, frame->goal_mark);
+                stack.count--;
+                continue;
+            }
+            const CettaGsltProviderV1 *provider =
+                cetta_gslt_provider_find_v1(run->providers, frame->goal);
+            Atom *answer = frame->provider_answers.answers[
+                frame->provider_index++];
+            if (!provider || !answer || answer->kind != ATOM_EXPR ||
+                answer->expr.len != frame->goal->expr.len ||
+                answer->expr.elems[0]->kind != ATOM_SYMBOL ||
+                answer->expr.elems[0]->sym_id !=
+                    frame->goal->expr.elems[0]->sym_id) {
+                if (provider) {
+                    (void)horn_error(
                         run->error, run->error_size,
                         "semantic provider %s returned a malformed %s/%u answer",
                         provider->semantic_id, provider->relation,
                         provider->arity);
-                    run->result->outcome = CETTA_GSLT_HORN_FAULT;
-                    run->faulted = true;
-                    run->stopped = true;
-                    break;
                 }
-                uint32_t binding_mark = bindings_builder_save(builder);
-                if (match_atoms_builder(goal, answer, builder))
-                    horn_solve(
-                        run, goals + 1u, goal_count - 1u,
-                        builder, depth + 1u);
-                bindings_builder_rollback(builder, binding_mark);
+                run->result->outcome = CETTA_GSLT_HORN_FAULT;
+                run->faulted = true;
+                run->stopped = true;
+                continue;
             }
-            cetta_gslt_provider_answers_free_v1(&answers);
+            frame->binding_mark = bindings_builder_save(builder);
+            frame->branch_mark = arena_mark(&run->scratch);
+            if (!match_atoms_builder(frame->goal, answer, builder)) {
+                bindings_builder_rollback(builder, frame->binding_mark);
+                arena_reset(&run->scratch, frame->branch_mark);
+                continue;
+            }
+            if (frame->depth == UINT32_MAX) {
+                frame->phase = GSLT_HORN_FRAME_AFTER_PROVIDER_CHILD;
+                horn_fault(run, "GSLT Horn provider continuation is too deep");
+                continue;
+            }
+            frame->phase = GSLT_HORN_FRAME_AFTER_PROVIDER_CHILD;
+            if (!horn_frame_stack_push(
+                    &stack,
+                    (GsltHornFrame){
+                        .goals = frame->goals + 1u,
+                        .goal_count = frame->goal_count - 1u,
+                        .depth = frame->depth + 1u,
+                        .phase = GSLT_HORN_FRAME_ENTER,
+                    }))
+                horn_fault(run, "cannot grow GSLT Horn worklist");
+            continue;
         }
-        arena_reset(&run->scratch, goal_mark);
-        return;
-    }
-    for (uint32_t candidate = 0u;
-         candidate < bucket->rule_count && !run->stopped;
-         candidate++) {
-        if (run->result->rule_attempts >= run->limits.max_rule_attempts) {
+
+        if (frame->candidate >= frame->bucket->rule_count) {
+            arena_reset(&run->scratch, frame->goal_mark);
+            stack.count--;
+            continue;
+        }
+        if (run->result->rule_attempts >=
+            run->limits.max_rule_attempts) {
             run->result->outcome = CETTA_GSLT_HORN_RULE_LIMIT;
             run->stopped = true;
-            break;
+            continue;
         }
+        uint32_t candidate = frame->candidate++;
         run->result->rule_attempts++;
-        uint32_t binding_mark = bindings_builder_save(builder);
-        ArenaMark rule_mark = arena_mark(&run->scratch);
-        const GsltHornRule *rule =
-            &run->program->rules[bucket->rules[candidate]];
+        frame->binding_mark = bindings_builder_save(builder);
+        frame->branch_mark = arena_mark(&run->scratch);
+        const GsltHornRule *rule = &run->program->rules[
+            frame->bucket->rules[candidate]];
         Atom *fresh_clause = rename_vars(
             &run->scratch, rule->clause, fresh_var_suffix());
         if (!fresh_clause || fresh_clause->kind != ATOM_EXPR ||
             fresh_clause->expr.len < 2u) {
-            run->result->outcome = CETTA_GSLT_HORN_FAULT;
-            run->faulted = true;
-            run->stopped = true;
-        } else if (match_atoms_builder(
-                       goal, fresh_clause->expr.elems[1], builder)) {
-            run->result->rule_matches++;
-            uint32_t body_count =
-                (uint32_t)(fresh_clause->expr.len - 2u);
-            uint32_t next_count = body_count + goal_count - 1u;
-            Atom **next = next_count
-                ? arena_alloc(&run->scratch, sizeof(*next) * next_count)
-                : NULL;
-            for (uint32_t index = 0u; index < body_count; index++)
-                next[index] = fresh_clause->expr.elems[index + 2u];
-            for (uint32_t index = 1u; index < goal_count; index++)
-                next[body_count + index - 1u] = goals[index];
-            horn_solve(run, next, next_count, builder, depth + 1u);
+            frame->phase = GSLT_HORN_FRAME_AFTER_RULE_CHILD;
+            horn_fault(run, "cannot instantiate GSLT Horn rule");
+            continue;
         }
-        bindings_builder_rollback(builder, binding_mark);
-        arena_reset(&run->scratch, rule_mark);
+        if (!match_atoms_builder(
+                frame->goal, fresh_clause->expr.elems[1], builder)) {
+            bindings_builder_rollback(builder, frame->binding_mark);
+            arena_reset(&run->scratch, frame->branch_mark);
+            continue;
+        }
+        run->result->rule_matches++;
+        uint32_t body_count =
+            (uint32_t)(fresh_clause->expr.len - 2u);
+        uint64_t next_count_wide = (uint64_t)body_count +
+            (uint64_t)frame->goal_count - 1u;
+        if (next_count_wide > UINT32_MAX || frame->depth == UINT32_MAX) {
+            frame->phase = GSLT_HORN_FRAME_AFTER_RULE_CHILD;
+            horn_fault(run, "GSLT Horn continuation is too large");
+            continue;
+        }
+        uint32_t next_count = (uint32_t)next_count_wide;
+        Atom **next = next_count
+            ? arena_alloc(&run->scratch, sizeof(*next) * next_count)
+            : NULL;
+        for (uint32_t index = 0u; index < body_count; index++)
+            next[index] = fresh_clause->expr.elems[index + 2u];
+        for (uint32_t index = 1u; index < frame->goal_count; index++)
+            next[body_count + index - 1u] = frame->goals[index];
+        frame->phase = GSLT_HORN_FRAME_AFTER_RULE_CHILD;
+        if (!horn_frame_stack_push(
+                &stack,
+                (GsltHornFrame){
+                    .goals = next,
+                    .goal_count = next_count,
+                    .depth = frame->depth + 1u,
+                    .phase = GSLT_HORN_FRAME_ENTER,
+                }))
+            horn_fault(run, "cannot grow GSLT Horn worklist");
     }
-    arena_reset(&run->scratch, goal_mark);
+
+    horn_frame_stack_release(run, builder, &stack);
 }
 
 bool cetta_gslt_horn_query(

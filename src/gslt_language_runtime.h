@@ -136,6 +136,16 @@ bool cetta_gslt_language_query_v1(
     CettaGsltHornResult *result,
     char *error, size_t error_size);
 
+bool cetta_gslt_language_query_with_providers_v1(
+    const CettaGsltLanguage *language,
+    CettaGsltRealization realization,
+    const CettaGsltProviderCatalogV1 *catalog,
+    const CettaGsltProviderRegistryV1 *physical_providers,
+    Arena *output_arena, Atom *query,
+    CettaGsltHornLimits limits,
+    CettaGsltHornResult *result,
+    char *error, size_t error_size);
+
 const char *cetta_gslt_realization_name(CettaGsltRealization realization);
 bool cetta_gslt_realization_parse(
     const char *name, CettaGsltRealization *realization);

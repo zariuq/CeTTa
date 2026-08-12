@@ -44,13 +44,43 @@ typedef struct {
     uint64_t total_work;
 } CettaNikReceiptV1;
 
+typedef struct CettaNikRuntimeV1 CettaNikRuntimeV1;
+
 const char *cetta_nik_outcome_name(CettaNikOutcome outcome);
 
 /*
- * Check one closed claim against one named admitted authority.  The same
- * Lean-emitted catalog is replayed by the structural native checker and by
- * both finite-Horn GSLT realizations.  Search is deliberately outside this
- * interface.
+ * A runtime owns the validated and indexed form of each authority revision.
+ * Authorities are admitted lazily on first use and then remain immutable for
+ * concurrent proof replay.  The runtime must not outlive the active symbol
+ * table from which its presentation atoms were interned.
+ */
+CettaNikRuntimeV1 *cetta_nik_runtime_v1_new(
+    char *error_buf,
+    size_t error_buf_size);
+
+void cetta_nik_runtime_v1_free(CettaNikRuntimeV1 *runtime);
+
+size_t cetta_nik_runtime_v1_admission_count(
+    CettaNikRuntimeV1 *runtime);
+
+CettaNikOutcome cetta_nik_runtime_v1_check(
+    CettaNikRuntimeV1 *runtime,
+    const char *authority_alias,
+    Atom *claim,
+    Atom *proof,
+    CettaNikLimits limits,
+    Arena *arena,
+    CettaNikReceiptV1 *receipt,
+    char *error_buf,
+    size_t error_buf_size);
+
+/*
+ * Check one closed claim against one named admitted authority using the
+ * selected native structural realization.  Cross-realization differential
+ * replay is a qualification operation, not part of ordinary execution.  This
+ * one-shot convenience entry allocates a temporary runtime; long-lived CeTTa
+ * sessions should use cetta_nik_runtime_v1_check so authority admission is
+ * reused.  Search is deliberately outside this interface.
  */
 CettaNikOutcome cetta_nik_check_v1(
     const char *authority_alias,

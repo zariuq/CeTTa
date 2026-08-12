@@ -9,7 +9,7 @@
           (Catalog $catalog)
           (Outcome accepted)
           $realizations
-          (Agreement True)
+          (Agreement not-run)
           (TotalWork $work)
           (Diagnostic None))))
    ($label $authority $system $revision True))
@@ -21,10 +21,12 @@
           (AuthorityIndexedJudgment $judgment)
           (NIKAuthorityCatalogV1 $catalog
             (NIKAuthorityV1 $first $first-system $first-revision $first-digest)
-            (NIKAuthorityV1 $second $second-system $second-revision $second-digest))
+            (NIKAuthorityV1 $second $second-system $second-revision $second-digest)
+            (NIKAuthorityV1 $third $third-system $third-revision $third-digest)
+            (NIKAuthorityV1 $fourth $fourth-system $fourth-revision $fourth-digest))
           $local)
         $results $effects $evidence))
-   (PrimeChecking $gradual $judgment $first $second))
+   (PrimeChecking $gradual $judgment $first $second $third $fourth))
 
 (= (nik-unsupported-receipt $label
       (PrimeVerdict Undetermined $judgment
@@ -36,7 +38,7 @@
             (NativeReplay not-run False 0)
             (HornReference not-run False 0)
             (CompiledWorklist not-run False 0))
-          (Agreement False)
+          (Agreement not-run)
           (TotalWork 0)
           $diagnostic)))
    ($label $authority False))
@@ -58,8 +60,37 @@
        LNil)))
 (= (hotg-proof)
    (GProof
-     (GRuleInst "q" (LCons (PApp "n" LNil) LNil))
+     (GRuleInst "q" LNil)
      PrNil))
+
+(= (megalodon-imp-goal)
+   (PApp "MProves"
+     (LCons (PApp "MCtxNil" LNil)
+       (LCons
+         (PApp "MImp"
+           (LCons (PApp "MAtom" (LCons (PApp "MZero" LNil) LNil))
+             (LCons
+               (PApp "MAtom" (LCons (PApp "MZero" LNil) LNil))
+               LNil)))
+         LNil))))
+(= (megalodon-imp-proof)
+   (GProof
+     (GRuleInst "megalodon-imp-intro"
+       (LCons (PApp "MCtxNil" LNil)
+         (LCons
+           (PApp "MAtom" (LCons (PApp "MZero" LNil) LNil))
+           (LCons
+             (PApp "MAtom" (LCons (PApp "MZero" LNil) LNil))
+             LNil))))
+     (PrCons
+       (GProof
+         (GRuleInst "megalodon-hyp-zero"
+           (LCons (PApp "MCtxNil" LNil)
+             (LCons
+               (PApp "MAtom" (LCons (PApp "MZero" LNil) LNil))
+               LNil)))
+         PrNil)
+       PrNil)))
 
 (= (nik-check $authority $goal-computation $proof-computation)
    (let $goal $goal-computation
@@ -74,12 +105,17 @@
    (nik-check DTT (dtt-goal) (dtt-proof)))
 (= (hotg-check)
    (nik-check HOTG (hotg-goal) (hotg-proof)))
+(= (megalodon-imp-check)
+   (nik-check MEGALODON-IMP
+     (megalodon-imp-goal) (megalodon-imp-proof)))
 
 !(nik-package (prime-package &self))
 !(nik-receipt DTTReceipt (dtt-check))
 !(nik-receipt HOTGReceipt (hotg-check))
+!(nik-receipt MegalodonImpReceipt (megalodon-imp-check))
 !(nik-status DTTAccepts (dtt-check))
 !(nik-status HOTGAccepts (hotg-check))
+!(nik-status MegalodonImpAccepts (megalodon-imp-check))
 !(nik-status DTTRejectsHOTGProof
    (nik-check DTT (dtt-goal) (hotg-proof)))
 !(nik-status HOTGRejectsDTTProof
@@ -91,10 +127,12 @@
 !(nik-status MalformedArticle
    (nik-check DTT (dtt-goal)
      (GProof (GRuleInst "z" LNil) BrokenChildren)))
-!(nik-status AggregateBoundTooSmall
-   (nik-check-bounded DTT (dtt-goal) (dtt-proof) 12))
-!(nik-status AggregateBoundExact
-   (nik-check-bounded DTT (dtt-goal) (dtt-proof) 13))
+!(nik-status SemanticBoundTooSmall
+   (nik-check-bounded MEGALODON-IMP
+     (megalodon-imp-goal) (megalodon-imp-proof) 1))
+!(nik-status SemanticBoundExact
+   (nik-check-bounded MEGALODON-IMP
+     (megalodon-imp-goal) (megalodon-imp-proof) 2))
 !(nik-status ExistingDependentCheck
    (prime-judge &self (Check 1 Number)))
 !(+ 1 2)
