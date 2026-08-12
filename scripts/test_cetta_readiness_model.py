@@ -5,7 +5,6 @@ from __future__ import annotations
 
 import json
 import os
-import shutil
 import subprocess
 import sys
 import tempfile
@@ -14,6 +13,12 @@ from pathlib import Path
 
 from bench_d4_progress import census_classification
 from cetta_main_readiness import readiness_commands
+from cetta_readiness_ladders import (
+    primary_contract,
+    realized_witness_ids,
+    required_ladder_witness_ids,
+    scheduled_cases,
+)
 from cetta_readiness_model import (
     ReadinessModelError,
     calibration_subject,
@@ -22,8 +27,10 @@ from cetta_readiness_model import (
     growth_verdict,
     load_property_manifest,
     memory_rate_verdict,
+    missing_frontier_witness_ids,
     paired_growth_verdict,
     qualification_verdict,
+    required_frontier_witness_ids,
     resolve_source_anchors,
     route_contract,
     terminate_process_session,
@@ -33,11 +40,18 @@ from cetta_readiness_model import (
 
 ROOT = Path(__file__).resolve().parent.parent
 MANIFEST = ROOT / "benchmarks/main_readiness_properties.json"
+PASS_COUNT = 0
 
 
 def require(condition: bool, message: str) -> None:
     if not condition:
         raise AssertionError(message)
+
+
+def report_pass(message: str) -> None:
+    global PASS_COUNT
+    PASS_COUNT += 1
+    print(f"PASS {message}")
 
 
 def session_pids(session_id: int) -> list[int]:
@@ -111,94 +125,190 @@ def check_nested_session_cleanup() -> None:
         terminate_process_session(process)
 
 
-def benchmark_runtime_artifacts() -> set[Path]:
-    roots = (
-        ROOT / "runtime/bench_space_backend",
-        ROOT / "runtime/bench_space_transfer",
-    )
-    return {
-        artifact.resolve()
-        for runtime_root in roots
-        if runtime_root.exists()
-        for artifact in runtime_root.iterdir()
-        if artifact.is_dir() and artifact.name.startswith(".bench_space_")
-    }
-
-
 def run_scale_fixture(environment: dict[str, str]) -> subprocess.CompletedProcess[str]:
-    artifacts_before = benchmark_runtime_artifacts()
-    try:
-        return subprocess.run(
-            ["./scripts/bench_space_scale_ladder.sh", "100", "1"],
-            cwd=ROOT,
-            env=environment,
-            text=True,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            check=False,
-        )
-    finally:
-        for artifact in benchmark_runtime_artifacts() - artifacts_before:
-            shutil.rmtree(artifact)
+    return subprocess.run(
+        ["./scripts/bench_space_scale_ladder.sh", "100 1000", "1"],
+        cwd=ROOT,
+        env=environment,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        check=False,
+    )
 
 
-def check_scale_census_exit_contract() -> None:
+def check_scale_frontier_exit_contract() -> None:
     runtime = ROOT / "runtime"
     runtime.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(
-        prefix="scale-census-contract-", dir=runtime
+        prefix="scale-frontier-contract-", dir=runtime
     ) as scratch:
-        fake_binary = Path(scratch) / "fake-cetta"
-        fake_binary.write_text(
+        fake_backend = Path(scratch) / "fake-backend"
+        fake_transfer = Path(scratch) / "fake-transfer"
+        evidence_dir = Path(scratch) / "evidence"
+        canonical_log = (
+            ROOT / "runtime/bench_space_scale_ladder/generator_materialized_100.log"
+        )
+        canonical_before = (
+            canonical_log.read_bytes() if canonical_log.exists() else None
+        )
+        fake_backend.write_text(
             "#!/usr/bin/env bash\n"
-            "if [ \"${CETTA_SCALE_FIXTURE_MODE:-fail}\" = timeout ]; then\n"
+            "set -eu\n"
+            "mode=$1; count=$2; scenario=${4:-suite_total}\n"
+            "if [ \"$mode\" = prepare-act ]; then\n"
+            "  test \"$(wc -l <\"$CETTA_BENCH_CORPUS_PATH\")\" = \"$count\"\n"
+            "  test \"$(head -1 \"$CETTA_BENCH_CORPUS_PATH\")\" = '(friend sam 0)'\n"
+            "  test \"$(tail -1 \"$CETTA_BENCH_CORPUS_PATH\")\" = \"(friend sam $((count - 1)))\"\n"
+            "  printf fake-act >\"$CETTA_BENCH_ACT_PATH\"\n"
+            "  exit 0\n"
+            "fi\n"
+            "fixture_mode=${CETTA_SCALE_FIXTURE_MODE:-pass}\n"
+            "if [ \"${CETTA_SCALE_FIXTURE_LITMUS_TIMEOUT:-0}\" = 1 ] && "
+            "[ \"${CETTA_BENCH_MATERIALIZED_RANGE:-0}\" = 1 ]; then\n"
             "  sleep 5\n"
             "fi\n"
-            "exit 7\n",
+            "if [ \"${CETTA_BENCH_MATERIALIZED_RANGE:-0}\" = 1 ]; then fixture_mode=pass; fi\n"
+            "if [ \"$fixture_mode\" = fail ]; then exit 7; fi\n"
+            "if [ \"$fixture_mode\" = timeout ] && "
+            "[ \"$count\" = 1000 ]; then sleep 5; fi\n"
+            "pathmap=0; case \"$mode\" in pathmap) pathmap=$count;; esac\n"
+            "rows=$count; [ \"$scenario\" = suite_total ] && rows=$((count - 1))\n"
+            "printf 'kind\\tmode\\tscenario\\tfact_count\\tmatch_rounds\\tcount\\ttime_s\\trss_kb\\tscenario_ns\\tterm_universe_inserts\\tterm_universe_blob_bytes\\tspace_atom_id_capacity_bytes_peak\\tpathmap_direct_store\\tmork_add_call\\tmork_add_batch_items\\n'\n"
+            "printf 'backend\\t%s\\t%s\\t%s\\t1\\t%s\\t0.01\\t%s\\t%s\\t%s\\t%s\\t%s\\t%s\\t0\\t0\\n' "
+            "\"$mode\" \"$scenario\" \"$count\" \"$rows\" "
+            "\"$((1000 + count))\" \"$((count * 1000))\" "
+            "\"$((count + 1))\" \"$((count + 2))\" \"$((count + 3))\" \"$pathmap\"\n",
             encoding="utf-8",
         )
-        fake_binary.chmod(0o755)
+        fake_transfer.write_text(
+            "#!/usr/bin/env bash\n"
+            "set -eu\n"
+            "case_id=$1; count=$2; scenario=${4:-suite_total}\n"
+            "if [ \"${CETTA_SCALE_FIXTURE_MODE:-pass}\" = fail ]; then exit 7; fi\n"
+            "if [ \"${CETTA_SCALE_FIXTURE_MODE:-pass}\" = timeout ] && "
+            "[ \"$count\" = 1000 ]; then sleep 5; fi\n"
+            "pathmap=0; batch=0\n"
+            "case \"$case_id\" in\n"
+            "  native-to-pathmap|pathmap-to-native|pathmap-to-mork-live|mork-live-to-pathmap) pathmap=$count;;\n"
+            "  native-to-mork-live) batch=$count;;\n"
+            "esac\n"
+            "printf 'kind\\tcase_id\\tsource_kind\\ttarget_kind\\troute_class\\tscenario\\tfact_count\\tmatch_rounds\\tcount\\ttime_s\\trss_kb\\tscenario_ns\\tterm_universe_inserts\\tterm_universe_blob_bytes\\tspace_atom_id_capacity_bytes_peak\\tpathmap_direct_store\\tmork_add_call\\tmork_add_batch_items\\n'\n"
+            "printf 'transfer\\t%s\\tnative\\tpathmap\\tmaterialized-shim\\t%s\\t%s\\t1\\t%s\\t0.01\\t%s\\t%s\\t%s\\t%s\\t%s\\t%s\\t0\\t%s\\n' "
+            "\"$case_id\" \"$scenario\" \"$count\" \"$count\" "
+            "\"$((1000 + count))\" \"$((count * 1000))\" "
+            "\"$((count + 1))\" \"$((count + 2))\" \"$((count + 3))\" "
+            "\"$pathmap\" \"$batch\"\n",
+            encoding="utf-8",
+        )
+        for fixture in (fake_backend, fake_transfer):
+            fixture.chmod(0o755)
         base_environment = os.environ.copy()
         base_environment.update(
             {
-                "CETTA_BIN": str(fake_binary),
-                "BACKEND_MODES_STR": "native",
-                "TRANSFER_CASES_STR": "native-to-pathmap",
+                "CETTA_BENCH_BACKEND_SCRIPT": str(fake_backend),
+                "CETTA_BENCH_TRANSFER_SCRIPT": str(fake_transfer),
+                "CETTA_SCALE_RUNTIME_DIR": str(evidence_dir),
+                "CETTA_SCALE_CASE_TIMEOUT_S": "0.05",
+                "CETTA_GENERATOR_LITMUS_FACT_COUNT": "100",
+                # These attempted weakenings must be ignored by qualification.
+                "BACKEND_MODES_STR": "",
+                "TRANSFER_CASES_STR": "",
+                "CETTA_ADMITTED_10M_CASES": "",
+                "CETTA_SCALE_MAX_TIME_EXPONENT": "99",
+                "CETTA_SCALE_MAX_RSS_EXPONENT": "99",
+                "CETTA_GENERATOR_LITMUS_ADMISSION": "required",
             }
         )
         failure_environment = dict(base_environment)
-        failure_environment.update(
-            {"CETTA_SCALE_FIXTURE_MODE": "fail", "TIMEOUT_S": "5"}
-        )
+        failure_environment["CETTA_SCALE_FIXTURE_MODE"] = "fail"
         failed = run_scale_fixture(failure_environment)
-        require(failed.returncode != 0, "scale census accepted execution failure")
+        require(failed.returncode != 0, "scale frontier accepted execution failure")
         require(
-            "SCALE_CENSUS_STATUS=failed" in failed.stdout
-            and "SCALE_CENSUS_FAILURES=2" in failed.stdout,
-            "scale census did not preserve genuine failure evidence",
+            "SPACE_FRONTIER_STATUS=failed" in failed.stdout
+            and "SPACE_FRONTIER_FAILURES=1" in failed.stdout,
+            "scale frontier did not preserve genuine failure evidence",
         )
-        print("PASS scale census rejects genuine execution failures")
+        report_pass("scale frontier rejects genuine execution failures")
 
         timeout_environment = dict(base_environment)
-        timeout_environment.update(
-            {"CETTA_SCALE_FIXTURE_MODE": "timeout", "TIMEOUT_S": "0.05"}
-        )
-        observed = run_scale_fixture(timeout_environment)
+        timeout_environment["CETTA_SCALE_FIXTURE_MODE"] = "timeout"
+        timed_out = run_scale_fixture(timeout_environment)
         require(
-            observed.returncode == 0,
-            "non-authoritative scale timeout made the capability census fail",
+            timed_out.returncode != 0
+            and "SPACE_FRONTIER_STATUS=failed" in timed_out.stdout
+            and "SPACE_FRONTIER_TIMEOUTS=1" in timed_out.stdout,
+            "required frontier timeout did not fail closed",
+        )
+        report_pass("every frontier case is required and times out fail closed")
+
+        passing_environment = dict(base_environment)
+        passing_environment["CETTA_SCALE_FIXTURE_MODE"] = "pass"
+        passed = run_scale_fixture(passing_environment)
+        require(
+            passed.returncode == 0,
+            "passing frontier fixture failed:\n" + passed.stdout,
         )
         require(
-            "SCALE_CENSUS_STATUS=observed" in observed.stdout
-            and "SCALE_CENSUS_FAILURES=0" in observed.stdout
-            and "SCALE_CENSUS_TIMEOUTS=2" in observed.stdout
-            and "SCALE_CENSUS_AUTHORITATIVE_READINESS=0" in observed.stdout,
-            "scale timeout was not explicitly classified as non-authoritative",
+            "SPACE_FRONTIER_REQUIRED_CASES=12" in passed.stdout
+            and "SPACE_FRONTIER_BASE_CASES=12" in passed.stdout
+            and "SPACE_FRONTIER_EXECUTED_CASES=12" in passed.stdout
+            and "SPACE_FRONTIER_STATUS=passed" in passed.stdout,
+            "complete frontier execution did not report all required cases",
         )
-        print("PASS scale timeouts remain non-authoritative observations")
+        report_pass("fixed twelve-case frontier emits measurement evidence")
+
+        manifest = load_property_manifest(MANIFEST)
+        realized = {
+            line.split("=", 1)[1]
+            for line in passed.stdout.splitlines()
+            if line.startswith("SPACE_FRONTIER_WITNESS=")
+        }
+        require(
+            not missing_frontier_witness_ids(manifest, realized, 1000),
+            "passing frontier omitted a manifest-claimed witness",
+        )
+        removed_witness = next(
+            iter(required_frontier_witness_ids(manifest, 1000))
+        )
+        require(
+            missing_frontier_witness_ids(
+                manifest, realized - {removed_witness}, 1000
+            )
+            == [removed_witness],
+            "frontier accepted a fabricated execution-derived witness set",
+        )
+        report_pass("manifest frontier claims are checked against realized IDs")
+
+        litmus_environment = dict(passing_environment)
+        litmus_environment.update(
+            {
+                "CETTA_SCALE_FIXTURE_LITMUS_TIMEOUT": "1",
+                "CETTA_GENERATOR_LITMUS_TIMEOUT_S": "0.05",
+            }
+        )
+        litmus = run_scale_fixture(litmus_environment)
+        require(
+            litmus.returncode == 0
+            and "GENERATOR_LITMUS_STATUS=observed-timeout" in litmus.stdout
+            and "GENERATOR_LITMUS_AUTHORITATIVE_READINESS=0" in litmus.stdout,
+            "observational generator timeout blocked readiness",
+        )
+        report_pass("generator capability timeout remains observational")
+        canonical_after = (
+            canonical_log.read_bytes() if canonical_log.exists() else None
+        )
+        require(
+            canonical_after == canonical_before
+            and (evidence_dir / "generator_materialized_100.log").is_file(),
+            "frontier fixture overwrote authoritative benchmark evidence",
+        )
+        report_pass("frontier fixtures isolate their generated evidence")
 
 
 def main() -> int:
+    global PASS_COUNT
+    PASS_COUNT = 0
     manifest = load_property_manifest(MANIFEST)
     anchors = resolve_source_anchors(ROOT, manifest)
     require(anchors, "source anchors did not resolve")
@@ -207,28 +317,28 @@ def main() -> int:
         == {prop["id"] for prop in manifest["properties"]},
         "not every property has a resolved source anchor",
     )
-    print(f"PASS readiness manifest {len(manifest['properties'])} properties")
-    print(f"PASS readiness source anchors {len(anchors)} resolved")
+    report_pass(f"readiness manifest {len(manifest['properties'])} properties")
+    report_pass(f"readiness source anchors {len(anchors)} resolved")
     require(
         manifest["negative_calibration_witnesses"],
         "negative calibration registry is empty",
     )
-    print(
-        "PASS readiness negative registry "
+    report_pass(
+        "readiness negative registry "
         f"{len(manifest['negative_calibration_witnesses'])} resolved"
     )
 
     check_session_cleanup(
         ["bash", "-c", "(sleep 300) & wait"], leader_exits=False
     )
-    print("PASS live readiness process session is cleaned recursively")
+    report_pass("live readiness process session is cleaned recursively")
     check_session_cleanup(
         ["bash", "-c", "sleep 300 & exit 0"], leader_exits=True
     )
-    print("PASS exited readiness session leader cannot strand descendants")
+    report_pass("exited readiness session leader cannot strand descendants")
     check_nested_session_cleanup()
-    print("PASS nested readiness process sessions are cleaned recursively")
-    check_scale_census_exit_contract()
+    report_pass("nested readiness process sessions are cleaned recursively")
+    check_scale_frontier_exit_contract()
 
     candidate_content = working_tree_content_identity(ROOT)
     require(
@@ -247,19 +357,19 @@ def main() -> int:
         candidate_content["excluded_paths"] == ["README.md"],
         "the concurrent README edit was not isolated from readiness identity",
     )
-    print("PASS candidate identity is content-addressed, not commit-addressed")
+    report_pass("candidate identity is content-addressed, not commit-addressed")
 
     sizes = [10000.0, 30000.0, 100000.0, 300000.0]
     linear = [(size, 0.00002 * size + 0.2) for size in sizes]
     linear_rss = [(size, 16000.0 + 0.04 * size) for size in sizes]
     require(growth_verdict(linear, linear_rss)["passed"],
             "positive linear calibration was rejected")
-    print("PASS positive linear growth calibration")
+    report_pass("positive linear growth calibration")
 
     quadratic = [(size, 1e-8 * size * size) for size in sizes]
     require(not growth_verdict(quadratic, linear_rss)["passed"],
             "quadratic-growth mutant survived")
-    print("PASS mutant quadratic-growth rejected")
+    report_pass("mutant quadratic-growth rejected")
 
     baseline_bytes = [(size, 24.0 * size + 4096.0) for size in sizes]
     require(
@@ -275,12 +385,13 @@ def main() -> int:
         )["passed"],
         "per-entry-leak mutant survived",
     )
-    print("PASS mutant per-entry-leak rejected")
+    report_pass("mutant per-entry-leak rejected")
 
     paired_arguments = {
         "max_time_ratio": 1.5,
         "time_absolute_slack": 0.01,
-        "max_time_slope_delta": 0.35,
+        "max_time_increment_ratio": 1.75,
+        "max_time_exponent_delta": 0.35,
         "max_rss_ratio": 1.25,
         "rss_absolute_slack": 4096.0,
         "max_rss_slope_delta": 0.25,
@@ -301,21 +412,80 @@ def main() -> int:
         )["passed"],
         "baseline-equivalent superlinear implementation was rejected",
     )
-    print("PASS paired growth accepts unchanged implementation shape")
+    report_pass("paired growth accepts unchanged implementation shape")
 
-    quadratic_candidate = [(size, 1e-8 * size**2) for size in sizes]
-    linear_baseline = [(size, 2e-5 * size) for size in sizes]
+    fixed_overhead_baseline = [
+        (size, 30.0 + 2e-5 * size) for size in sizes
+    ]
+    lower_cost_candidate = [
+        (size, 0.2 + 1e-5 * size) for size in sizes
+    ]
     require(
-        not paired_growth_verdict(
-            quadratic_candidate,
-            linear_baseline,
+        paired_growth_verdict(
+            lower_cost_candidate,
+            fixed_overhead_baseline,
             candidate_rss_growth,
             baseline_rss_growth,
             **paired_arguments,
         )["passed"],
+        "fixed baseline startup cost caused a false scaling rejection",
+    )
+    report_pass("paired growth separates startup cost from marginal work")
+
+    noisy_baseline = list(zip(sizes, (2.0, 1.0, 5.0, 9.0)))
+    bounded_candidate = list(zip(sizes, (2.0, 2.5, 6.0, 10.0)))
+    noisy_result = paired_growth_verdict(
+        bounded_candidate,
+        noisy_baseline,
+        candidate_rss_growth,
+        baseline_rss_growth,
+        **paired_arguments,
+    )
+    require(
+        noisy_result["time_increments"][0]["limit"]
+        == paired_arguments["time_absolute_slack"],
+        "negative baseline delta produced a negative increment allowance",
+    )
+    report_pass("noisy negative baseline increment uses nonnegative work")
+
+    quadratic_candidate = [(size, 1e-10 * size**2) for size in sizes]
+    linear_baseline = [(size, 2e-5 * size) for size in sizes]
+    quadratic_result = paired_growth_verdict(
+        quadratic_candidate,
+        linear_baseline,
+        candidate_rss_growth,
+        baseline_rss_growth,
+        **paired_arguments,
+    )
+    require(
+        all(cell["passed"] for cell in quadratic_result["time_cells"]),
+        "quadratic canary did not isolate the marginal-time contract",
+    )
+    require(
+        not quadratic_result["time_increment_passed"]
+        and not quadratic_result["passed"],
         "paired quadratic-growth mutant survived",
     )
-    print("PASS paired growth rejects a complexity-class regression")
+    report_pass("paired growth rejects a complexity-class regression")
+
+    tuned_superlinear = paired_growth_verdict(
+        list(zip(sizes, (0.040, 0.182, 0.971, 4.471))),
+        list(zip(sizes, (0.100, 0.300, 1.000, 3.000))),
+        candidate_rss_growth,
+        baseline_rss_growth,
+        **paired_arguments,
+    )
+    require(
+        all(cell["passed"] for cell in tuned_superlinear["time_cells"])
+        and tuned_superlinear["time_increment_passed"],
+        "tuned-superlinear canary did not isolate exponent assurance",
+    )
+    require(
+        not tuned_superlinear["time_exponent_passed"]
+        and not tuned_superlinear["passed"],
+        "lower-constant superlinear mutant survived marginal-rate analysis",
+    )
+    report_pass("marginal rates reject a tuned lower-constant exponent regression")
 
     require(
         not paired_growth_verdict(
@@ -327,7 +497,7 @@ def main() -> int:
         )["passed"],
         "paired constant-time slowdown survived",
     )
-    print("PASS paired growth rejects a material constant slowdown")
+    report_pass("paired growth rejects a material constant slowdown")
 
     require(
         not paired_growth_verdict(
@@ -339,11 +509,11 @@ def main() -> int:
         )["passed"],
         "paired RSS-growth mutant survived",
     )
-    print("PASS paired growth rejects material RSS growth")
+    report_pass("paired growth rejects material RSS growth")
 
     route_ok, _ = route_contract("pathmap-primary", "native-space")
     require(not route_ok, "wrong-backend-routing mutant survived")
-    print("PASS mutant wrong-backend-routing rejected")
+    report_pass("mutant wrong-backend-routing rejected")
 
     observer_counters = {
         "cost-rho-parallel-state-only-run": 1,
@@ -355,7 +525,7 @@ def main() -> int:
         zero=("cost-rho-receipt-event-retained",),
     )
     require(not observer_ok, "observer-work-state-only mutant survived")
-    print("PASS mutant observer-work-state-only rejected")
+    report_pass("mutant observer-work-state-only rejected")
 
     claim_counters = {"acquired": 7, "committed": 3, "released": 3}
     claim_ok, _ = counter_contract(
@@ -363,7 +533,7 @@ def main() -> int:
         conservation=(("acquired", "committed", "released"),),
     )
     require(not claim_ok, "broken-claim-rollback mutant survived")
-    print("PASS mutant broken-claim-rollback rejected")
+    report_pass("mutant broken-claim-rollback rejected")
 
     identity = {
         "schema": "cetta.main-readiness.evidence.v3",
@@ -384,7 +554,7 @@ def main() -> int:
     changed_dependencies["dependencies"]["mork"] = "mork-b"
     require(evidence_key(changed_dependencies) != original,
             "evidence key ignored dependency commit")
-    print("PASS content-addressed evidence key covers all required dimensions")
+    report_pass("content-addressed evidence key covers all required dimensions")
 
     artifact = {
         "schema": "cetta.main-readiness.evidence.v3",
@@ -414,7 +584,7 @@ def main() -> int:
         calibration_subject(changed_incidentals) == subject,
         "calibration subject included tier-local build products",
     )
-    print("PASS calibration subject excludes tier-local build products")
+    report_pass("calibration subject excludes tier-local build products")
 
     subject_key = evidence_key(subject)
     records = [
@@ -435,7 +605,7 @@ def main() -> int:
         )["qualified"],
         "five clean differential pairs did not qualify",
     )
-    print("PASS five clean differential pairs qualify")
+    report_pass("five clean differential pairs qualify")
 
     disagreement = json.loads(json.dumps(records))
     disagreement[-1]["exhaustive_status"] = "failed"
@@ -445,7 +615,7 @@ def main() -> int:
         )["qualified"],
         "routine/exhaustive disagreement was accepted",
     )
-    print("PASS routine/exhaustive disagreement blocks qualification")
+    report_pass("routine/exhaustive disagreement blocks qualification")
 
     unqualified_mutant = json.loads(json.dumps(records))
     unqualified_mutant[-1]["routine_mutants_killed"] = False
@@ -455,7 +625,7 @@ def main() -> int:
         )["qualified"],
         "surviving mutant was accepted",
     )
-    print("PASS surviving mutant blocks qualification")
+    report_pass("surviving mutant blocks qualification")
 
     unauthenticated_prefix = json.loads(json.dumps(records))
     unauthenticated_prefix[-1]["common_prefix_match"] = False
@@ -467,7 +637,7 @@ def main() -> int:
         )["qualified"],
         "unauthenticated common-prefix evidence was accepted",
     )
-    print("PASS unauthenticated common-prefix reuse blocks qualification")
+    report_pass("unauthenticated common-prefix reuse blocks qualification")
 
     require(
         census_classification({"passed": True, "status": "completed"})
@@ -486,7 +656,7 @@ def main() -> int:
         == ("failed", False),
         "failed D4 process was accepted as a capability boundary",
     )
-    print("PASS D4 capability census remains non-authoritative")
+    report_pass("D4 capability census remains non-authoritative")
 
     malformed = json.loads(MANIFEST.read_text(encoding="utf-8"))
     malformed["properties"][1]["largest_scale_class"] = (
@@ -504,7 +674,7 @@ def main() -> int:
             raise AssertionError("duplicate largest-scale class was accepted")
     finally:
         scratch.unlink(missing_ok=True)
-    print("PASS duplicate largest-scale class rejected")
+    report_pass("duplicate largest-scale class rejected")
 
     malformed = json.loads(MANIFEST.read_text(encoding="utf-8"))
     malformed["properties"][0]["largest_scale_witness"] = (
@@ -520,7 +690,59 @@ def main() -> int:
             raise AssertionError("routine proxy was accepted as largest-scale witness")
     finally:
         scratch.unlink(missing_ok=True)
-    print("PASS largest-scale witness must belong to exhaustive evidence")
+    report_pass("largest-scale witness must belong to exhaustive evidence")
+
+    manifest = load_property_manifest(MANIFEST)
+    largest_size = manifest["exhaustive_ladder_sizes"][-1]
+    executed = [
+        {"kind": "backend", "case": case, "size": largest_size}
+        for case in (
+            "native", "pathmap", "mork-live", "mork-open-act", "mork-load-act"
+        )
+    ] + [
+        {"kind": "transfer", "case": "native-to-pathmap", "size": largest_size}
+    ]
+    produced = set(realized_witness_ids("exhaustive", executed))
+    required = required_ladder_witness_ids(manifest)
+    require(
+        required <= produced,
+        "executed largest-scale rows did not produce their manifest witnesses",
+    )
+    produced_without_native = set(
+        realized_witness_ids(
+            "exhaustive",
+            [row for row in executed if row["case"] != "native"],
+        )
+    )
+    require(
+        f"space-ladder-exhaustive:native@{largest_size}"
+        in required - produced_without_native,
+        "missing executed largest-scale row remained self-certified",
+    )
+    report_pass("largest-scale witness identities are execution-derived")
+
+    transfer_row = {
+        "case_id": "native-to-pathmap",
+        "fact_count": "100",
+        "count": "100",
+        "term_universe_inserts": "200",
+        "term_universe_blob_bytes": "4096",
+        "space_atom_id_capacity_bytes_peak": "1024",
+        "pathmap_direct_store": "100",
+        "mork_add_call": "0",
+        "mork_add_batch_items": "0",
+    }
+    require(
+        not primary_contract("transfer", transfer_row),
+        "positive transfer counter contract failed",
+    )
+    transfer_mutant = dict(transfer_row)
+    transfer_mutant["pathmap_direct_store"] = "0"
+    require(
+        bool(primary_contract("transfer", transfer_mutant)),
+        "transfer counter mutant survived",
+    )
+    report_pass("transfer runtime counter mutation rejected")
 
     routine_targets = {command[-1] for command in readiness_commands("routine")}
     exhaustive_targets = {
@@ -538,8 +760,85 @@ def main() -> int:
         petta_oracle_targets <= exhaustive_targets,
         "exhaustive readiness omits a PeTTa oracle differential",
     )
-    print("PASS PeTTa oracle differentials are exhaustive-only merge gates")
-    print("SUMMARY cetta-readiness-model 31/31 PASS")
+    report_pass("PeTTa oracle differentials are exhaustive-only merge gates")
+
+    routine_ladder = "main-readiness-space-ladders"
+    stress_ladder = "main-readiness-space-ladders-exhaustive"
+    frontier_ladder = "main-readiness-space-frontier"
+    exhaustive_order = [
+        command[-1] for command in readiness_commands("exhaustive")
+    ]
+    require(
+        routine_ladder in routine_targets
+        and stress_ladder not in routine_targets
+        and frontier_ladder not in routine_targets,
+        "routine readiness does not isolate the paired ladder from 1M stress",
+    )
+    require(
+        routine_ladder in exhaustive_targets
+        and stress_ladder in exhaustive_targets
+        and frontier_ladder in exhaustive_targets,
+        "exhaustive readiness must run paired regression, candidate stress, and frontier",
+    )
+    require(
+        exhaustive_order.index(routine_ladder)
+        < exhaustive_order.index(stress_ladder)
+        < exhaustive_order.index(frontier_ladder),
+        "storage stress/frontier order is not progressively increasing",
+    )
+    report_pass("exhaustive storage checks progress from paired to 1M to 10M")
+
+    schedule_fixture = [
+        ("backend", "native", size) for size in (1, 2, 4, 8)
+    ] + [
+        ("transfer", "native-to-pathmap", size) for size in (1, 2, 4, 8)
+    ]
+    schedules = [scheduled_cases(schedule_fixture, index) for index in range(3)]
+    require(
+        all(sorted(schedule) == sorted(schedule_fixture) for schedule in schedules),
+        "a repeated ladder schedule omitted or duplicated a cell",
+    )
+    require(
+        len({tuple(schedule) for schedule in schedules}) == len(schedules),
+        "repeated ladder schedules preserve a confounded monotone order",
+    )
+    report_pass("repeated ladder samples use complete distinct schedules")
+
+    makefile = (ROOT / "Makefile").read_text(encoding="utf-8")
+    heavy_body = makefile.split("\nbench-heavy:\n", 1)[1].split(
+        "\nbench-prime-light:", 1
+    )[0]
+    require(
+        "bench-space-scale-ladder" not in heavy_body,
+        "10M frontier was duplicated inside mandatory bench-heavy",
+    )
+    require(
+        "probe-d4-nodup-capability-backends" not in heavy_body,
+        "duplicate non-authoritative D4 census returned to bench-heavy",
+    )
+    require(
+        "main-readiness-rho-adaptive" in heavy_body,
+        "bench-heavy lost adaptive paired rho qualification",
+    )
+    require(
+        "\nbench-space-scale-ladder:\n" in makefile,
+        "explicit standalone 10M frontier target is missing",
+    )
+    require(
+        "\nmain-readiness-space-frontier:\n" in makefile,
+        "exhaustive readiness has no witnessed 10M frontier target",
+    )
+    adaptive_body = makefile.split("\nmain-readiness-rho-adaptive:\n", 1)[1].split(
+        "\nmain-readiness-routine:", 1
+    )[0]
+    require(
+        "if ! out=$$(./scripts/compare_witness.sh --enforce-rss-against"
+        in adaptive_body
+        and "printf '%s\\n' \"$$out\"; exit 1" in adaptive_body,
+        "adaptive rho RSS enforcement can swallow a failing comparison",
+    )
+    report_pass("mandatory heavy graph does not duplicate the explicit frontier")
+    print(f"SUMMARY cetta-readiness-model {PASS_COUNT} PASS")
     return 0
 
 

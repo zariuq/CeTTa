@@ -9,6 +9,8 @@ import datetime as dt
 import hashlib
 import json
 import os
+import random
+import statistics
 import subprocess
 import sys
 import time
@@ -39,11 +41,34 @@ DEFAULT_BACKENDS = (
     "mork-open-act",
     "mork-load-act",
 )
-DEFAULT_TRANSFERS = (
+ROUTINE_TRANSFERS = (
     "native-to-pathmap",
     "native-to-mork-live",
     "mork-live-to-native",
 )
+EXHAUSTIVE_TRANSFERS = (
+    *ROUTINE_TRANSFERS,
+    "pathmap-to-native",
+    "pathmap-to-mork-live",
+    "mork-live-to-pathmap",
+    "mork-live-to-open-act",
+    "mork-live-to-load-act",
+)
+SCHEDULE_SEED = 0xC377A
+
+# Coefficients for counters already emitted by the runtime.  The transfer
+# scripts independently assert destination cardinality, exact lookup, and full
+# scan results; these counters additionally pin the observed storage route.
+TRANSFER_COUNTER_COEFFICIENTS = {
+    "native-to-pathmap": (1, 0, 0),
+    "native-to-mork-live": (0, 0, 1),
+    "pathmap-to-native": (1, 0, 0),
+    "pathmap-to-mork-live": (1, 0, 0),
+    "mork-live-to-native": (0, 1, 0),
+    "mork-live-to-pathmap": (1, 1, 0),
+    "mork-live-to-open-act": (0, 1, 0),
+    "mork-live-to-load-act": (0, 1, 0),
+}
 
 
 def comma_list(value: str) -> tuple[str, ...]:
@@ -74,6 +99,12 @@ def parse_args() -> argparse.Namespace:
         )
     )
     parser.add_argument(
+        "--tier",
+        choices=("routine", "exhaustive"),
+        default="routine",
+        help="select the manifest-defined ladder and case coverage",
+    )
+    parser.add_argument(
         "--binary",
         type=Path,
         default=Path(
@@ -95,22 +126,28 @@ def parse_args() -> argparse.Namespace:
         help="fail rather than emit observational-only unpaired evidence",
     )
     parser.add_argument(
+        "--candidate-only",
+        action="store_true",
+        help=(
+            "ignore the readiness baseline and enforce candidate-side "
+            "correctness, counters, memory, and absolute growth"
+        ),
+    )
+    parser.add_argument(
         "--sizes",
         type=size_list,
-        default=tuple(manifest["routine_ladder_sizes"]),
+        default=None,
     )
     parser.add_argument(
         "--backend-modes", type=comma_list, default=DEFAULT_BACKENDS
     )
-    parser.add_argument(
-        "--transfer-cases", type=comma_list, default=DEFAULT_TRANSFERS
-    )
+    parser.add_argument("--transfer-cases", type=comma_list, default=None)
     parser.add_argument("--per-case-timeout", type=int, default=900)
     parser.add_argument(
-        "--max-time-slope",
+        "--max-time-exponent",
         type=float,
-        default=1.35,
-        help="provisional bound; recorded unless --enforce-growth is supplied",
+        default=1.5,
+        help="marginal-work exponent bound enforced by --enforce-growth",
     )
     parser.add_argument(
         "--max-rss-slope",
@@ -125,28 +162,48 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--max-paired-time-ratio", type=float, default=1.5)
     parser.add_argument("--paired-time-slack-ms", type=float, default=50.0)
-    parser.add_argument("--max-time-slope-delta", type=float, default=0.35)
+    parser.add_argument("--max-time-increment-ratio", type=float, default=1.75)
+    parser.add_argument(
+        "--max-time-exponent-delta", type=float, default=0.35
+    )
     parser.add_argument("--max-paired-rss-ratio", type=float, default=1.25)
     parser.add_argument("--paired-rss-slack-kib", type=float, default=16384.0)
     parser.add_argument("--max-rss-slope-delta", type=float, default=0.25)
+    parser.add_argument(
+        "--samples-per-point",
+        type=int,
+        default=1,
+        help="repeat every ladder point and use metric medians for growth",
+    )
     parser.add_argument(
         "--output",
         type=Path,
         default=ROOT / "runtime/main_readiness_ladders_current.json",
     )
     args = parser.parse_args()
+    if args.sizes is None:
+        args.sizes = tuple(manifest[f"{args.tier}_ladder_sizes"])
+    if args.transfer_cases is None:
+        args.transfer_cases = (
+            ROUTINE_TRANSFERS
+            if args.tier == "routine"
+            else EXHAUSTIVE_TRANSFERS
+        )
     if args.per_case_timeout <= 0:
         parser.error("--per-case-timeout must be positive")
-    if args.max_time_slope <= 0 or args.max_rss_slope <= 0:
-        parser.error("growth-slope bounds must be positive")
+    if args.max_time_exponent <= 0 or args.max_rss_slope <= 0:
+        parser.error("growth bounds must be positive")
     paired_positive = (
         args.max_paired_time_ratio,
-        args.max_time_slope_delta,
+        args.max_time_increment_ratio,
+        args.max_time_exponent_delta,
         args.max_paired_rss_ratio,
         args.max_rss_slope_delta,
     )
     if any(value <= 0 for value in paired_positive):
         parser.error("paired growth bounds must be positive")
+    if args.samples_per_point <= 0:
+        parser.error("--samples-per-point must be positive")
     if args.paired_time_slack_ms < 0 or args.paired_rss_slack_kib < 0:
         parser.error("paired growth slack must be nonnegative")
     if args.require_baseline and args.baseline_binary is None:
@@ -154,8 +211,12 @@ def parse_args() -> argparse.Namespace:
             "--require-baseline needs --baseline-binary or "
             "CETTA_READINESS_BASELINE_STATS_BIN"
         )
+    if args.require_baseline and args.candidate_only:
+        parser.error("--require-baseline and --candidate-only are incompatible")
+    if args.candidate_only:
+        args.baseline_binary = None
     unknown_backends = set(args.backend_modes) - set(DEFAULT_BACKENDS)
-    unknown_transfers = set(args.transfer_cases) - set(DEFAULT_TRANSFERS)
+    unknown_transfers = set(args.transfer_cases) - set(EXHAUSTIVE_TRANSFERS)
     if unknown_backends:
         parser.error(f"unknown backend modes: {sorted(unknown_backends)}")
     if unknown_transfers:
@@ -190,6 +251,38 @@ def integer(row: dict[str, str], name: str) -> int:
         return int(value)
     except ValueError as exc:
         raise ReadinessModelError(f"{name!r} is not an integer: {value!r}") from exc
+
+
+def realized_witness_ids(
+    tier: str, runs: list[dict[str, Any]]
+) -> list[str]:
+    tier_suffix = "-exhaustive" if tier == "exhaustive" else ""
+    return sorted(
+        {
+            f"{'space' if run['kind'] == 'backend' else 'transfer'}-ladder"
+            f"{tier_suffix}:{run['case']}@{run['size']}"
+            for run in runs
+        }
+    )
+
+
+def required_ladder_witness_ids(manifest: dict[str, Any]) -> set[str]:
+    prefixes = ("space-ladder-exhaustive:", "transfer-ladder-exhaustive:")
+    return {
+        witness
+        for prop in manifest["properties"]
+        for witness in prop["exhaustive_witnesses"]
+        if witness.startswith(prefixes)
+    }
+
+
+def scheduled_cases(
+    cases: list[tuple[str, str, int]], sample_index: int
+) -> list[tuple[str, str, int]]:
+    """Return one reproducible ordering without a size/time confound."""
+    scheduled = list(cases)
+    random.Random(SCHEDULE_SEED + sample_index).shuffle(scheduled)
+    return scheduled
 
 
 def primary_contract(kind: str, row: dict[str, str]) -> list[str]:
@@ -229,19 +322,12 @@ def primary_contract(kind: str, row: dict[str, str]) -> list[str]:
         case_id = row["case_id"]
         if count != size:
             failures.append(f"transfer residual count {count} != {size}")
-        if row.get("route_class") != "materialized-shim":
-            failures.append(
-                "representative transfer must report materialized-shim route"
-            )
-        if case_id == "native-to-pathmap":
-            expected = (size, 0, 0)
-        elif case_id == "native-to-mork-live":
-            expected = (0, 0, size)
-        elif case_id == "mork-live-to-native":
-            expected = (0, size, 0)
-        else:
+        coefficients = TRANSFER_COUNTER_COEFFICIENTS.get(case_id)
+        if coefficients is None:
             failures.append(f"unknown transfer case {case_id!r}")
             expected = (pathmap_stores, mork_adds, mork_batch_items)
+        else:
+            expected = tuple(coefficient * size for coefficient in coefficients)
     else:
         raise ReadinessModelError(f"unknown ladder kind {kind!r}")
 
@@ -272,6 +358,15 @@ def run_case(
         "suite_total",
     ]
     environment = os.environ.copy()
+    for inherited_name in (
+        "CETTA_BENCH_CORPUS_PATH",
+        "CETTA_BENCH_ACT_PATH",
+        "CETTA_BENCH_MATERIALIZED_RANGE",
+        "CETTA_BENCH_RANGE_CHUNK",
+        "CETTA_TRANSFER_ROUTE",
+        "BENCH_KEEP_TMP",
+    ):
+        environment.pop(inherited_name, None)
     environment["CETTA_BIN"] = str(binary)
     environment["CETTA_BENCH_EMIT_RUNTIME_STATS"] = "1"
     print(
@@ -319,13 +414,14 @@ def run_case(
 def series_evidence(
     runs: list[dict[str, Any]],
     *,
-    max_time_slope: float,
+    max_time_exponent: float,
     max_rss_slope: float,
     memory_limits: dict[str, float] | None = None,
     baseline_runs: list[dict[str, Any]] | None = None,
     max_paired_time_ratio: float = 1.5,
     paired_time_slack_ns: float = 50_000_000.0,
-    max_time_slope_delta: float = 0.35,
+    max_time_increment_ratio: float = 1.75,
+    max_time_exponent_delta: float = 0.35,
     max_paired_rss_ratio: float = 1.25,
     paired_rss_slack_kib: float = 16384.0,
     max_rss_slope_delta: float = 0.25,
@@ -339,21 +435,30 @@ def series_evidence(
     evidence: dict[str, Any] = {}
     for (kind, case), samples in sorted(grouped.items()):
         samples.sort(key=lambda sample: sample["size"])
+        samples_by_size: dict[int, list[dict[str, Any]]] = defaultdict(list)
+        for sample in samples:
+            samples_by_size[sample["size"]].append(sample)
+
+        def median_field(size: int, field: str) -> float:
+            return statistics.median(
+                float(sample["row"][field])
+                for sample in samples_by_size[size]
+            )
+
+        sizes = sorted(samples_by_size)
         time_samples = [
-            (sample["size"], float(sample["row"]["scenario_ns"]))
-            for sample in samples
+            (size, median_field(size, "scenario_ns")) for size in sizes
         ]
         rss_samples = [
-            (sample["size"], float(sample["row"]["rss_kb"]))
-            for sample in samples
+            (size, median_field(size, "rss_kb")) for size in sizes
         ]
         modeled_memory = [
             (
-                sample["size"],
-                float(sample["row"]["term_universe_blob_bytes"])
-                + float(sample["row"]["space_atom_id_capacity_bytes_peak"]),
+                size,
+                median_field(size, "term_universe_blob_bytes")
+                + median_field(size, "space_atom_id_capacity_bytes_peak"),
             )
-            for sample in samples
+            for size in sizes
         ]
         memory_rate, memory_intercept = linear_fit(modeled_memory)
         series_name = f"{kind}:{case}"
@@ -362,7 +467,7 @@ def series_evidence(
             "growth": growth_verdict(
                 time_samples,
                 rss_samples,
-                max_time_slope=max_time_slope,
+                max_time_exponent=max_time_exponent,
                 max_rss_slope=max_rss_slope,
             ),
             "modeled_bytes_per_entry": memory_rate,
@@ -375,25 +480,39 @@ def series_evidence(
                 if memory_limit is not None
                 else None
             ),
-            "sizes": [sample["size"] for sample in samples],
+            "sizes": sizes,
+            "samples_per_size": {
+                str(size): len(samples_by_size[size]) for size in sizes
+            },
         }
         if baseline_runs is not None:
             baseline_samples = baseline_grouped.get((kind, case), [])
             baseline_samples.sort(key=lambda sample: sample["size"])
+            baseline_by_size: dict[int, list[dict[str, Any]]] = defaultdict(list)
+            for sample in baseline_samples:
+                baseline_by_size[sample["size"]].append(sample)
+
+            def baseline_median_field(size: int, field: str) -> float:
+                return statistics.median(
+                    float(sample["row"][field])
+                    for sample in baseline_by_size[size]
+                )
+
             item["paired"] = paired_growth_verdict(
                 time_samples,
                 [
-                    (sample["size"], float(sample["row"]["scenario_ns"]))
-                    for sample in baseline_samples
+                    (size, baseline_median_field(size, "scenario_ns"))
+                    for size in sorted(baseline_by_size)
                 ],
                 rss_samples,
                 [
-                    (sample["size"], float(sample["row"]["rss_kb"]))
-                    for sample in baseline_samples
+                    (size, baseline_median_field(size, "rss_kb"))
+                    for size in sorted(baseline_by_size)
                 ],
                 max_time_ratio=max_paired_time_ratio,
                 time_absolute_slack=paired_time_slack_ns,
-                max_time_slope_delta=max_time_slope_delta,
+                max_time_increment_ratio=max_time_increment_ratio,
+                max_time_exponent_delta=max_time_exponent_delta,
                 max_rss_ratio=max_paired_rss_ratio,
                 rss_absolute_slack=paired_rss_slack_kib,
                 max_rss_slope_delta=max_rss_slope_delta,
@@ -437,7 +556,8 @@ def main() -> int:
             for mode in args.backend_modes:
                 witness = f"space-ladder:{mode}"
                 if (
-                    size == args.sizes[-1]
+                    args.tier == "routine"
+                    and size == args.sizes[-1]
                     and witness not in routine_scale_representatives
                 ):
                     continue
@@ -445,38 +565,44 @@ def main() -> int:
             for case in args.transfer_cases:
                 witness = f"transfer-ladder:{case}"
                 if (
-                    size == args.sizes[-1]
+                    args.tier == "routine"
+                    and size == args.sizes[-1]
                     and witness not in routine_scale_representatives
                 ):
                     continue
                 cases.append(("transfer", case, size))
-        for index, (kind, case, size) in enumerate(cases):
-            order = [("candidate", binary)]
-            if baseline_binary is not None:
-                order = (
-                    [("baseline", baseline_binary), ("candidate", binary)]
-                    if index % 2 == 0
-                    else [("candidate", binary), ("baseline", baseline_binary)]
-                )
-            for role, selected_binary in order:
-                result = run_case(
-                    kind=kind,
-                    case=case,
-                    size=size,
-                    binary=selected_binary,
-                    timeout=args.per_case_timeout,
-                    role=role,
-                )
-                (runs if role == "candidate" else baseline_runs).append(result)
+        pair_index = 0
+        for sample_index in range(args.samples_per_point):
+            for kind, case, size in scheduled_cases(cases, sample_index):
+                order = [("candidate", binary)]
+                if baseline_binary is not None:
+                    order = (
+                        [("baseline", baseline_binary), ("candidate", binary)]
+                        if pair_index % 2 == 0
+                        else [("candidate", binary), ("baseline", baseline_binary)]
+                    )
+                for role, selected_binary in order:
+                    result = run_case(
+                        kind=kind,
+                        case=case,
+                        size=size,
+                        binary=selected_binary,
+                        timeout=args.per_case_timeout,
+                        role=role,
+                    )
+                    result["sample_index"] = sample_index
+                    (runs if role == "candidate" else baseline_runs).append(result)
+                pair_index += 1
         series = series_evidence(
             runs,
-            max_time_slope=args.max_time_slope,
+            max_time_exponent=args.max_time_exponent,
             max_rss_slope=args.max_rss_slope,
             memory_limits=manifest["modeled_memory_bytes_per_entry_limits"],
             baseline_runs=(baseline_runs if baseline_binary is not None else None),
             max_paired_time_ratio=args.max_paired_time_ratio,
             paired_time_slack_ns=args.paired_time_slack_ms * 1_000_000.0,
-            max_time_slope_delta=args.max_time_slope_delta,
+            max_time_increment_ratio=args.max_time_increment_ratio,
+            max_time_exponent_delta=args.max_time_exponent_delta,
             max_paired_rss_ratio=args.max_paired_rss_ratio,
             paired_rss_slack_kib=args.paired_rss_slack_kib,
             max_rss_slope_delta=args.max_rss_slope_delta,
@@ -519,11 +645,18 @@ def main() -> int:
         for name, item in series.items()
         if item["paired"] is not None and not item["paired"]["passed"]
     ]
+    realized_witnesses = realized_witness_ids(args.tier, runs)
+    missing_largest_witnesses = (
+        sorted(required_ladder_witness_ids(manifest) - set(realized_witnesses))
+        if args.tier == "exhaustive"
+        else []
+    )
     passed = (
         not primary_failures
         and not baseline_primary_failures
         and not memory_failures
         and not paired_failures
+        and not missing_largest_witnesses
         and (
             not args.enforce_growth
             or not absolute_growth_bound_exceedances
@@ -537,10 +670,15 @@ def main() -> int:
         "schema": "cetta.main-readiness.ladders.v1",
         "created_utc": dt.datetime.now(dt.timezone.utc).isoformat(),
         "status": "passed" if passed else "failed",
+        "tier": args.tier,
         "qualification": (
             "absolute-and-paired-growth-enforced"
+            if args.enforce_growth and baseline_binary is not None
+            else "absolute-growth-enforced"
             if args.enforce_growth
             else "counter-primary-paired-growth-enforced"
+            if baseline_binary is not None
+            else "counter-primary-only"
         ),
         "manifest_schema": manifest["schema"],
         "manifest_sha256": sha256_file(MANIFEST),
@@ -555,6 +693,8 @@ def main() -> int:
         "sizes": list(args.sizes),
         "backend_modes": list(args.backend_modes),
         "transfer_cases": list(args.transfer_cases),
+        "samples_per_point": args.samples_per_point,
+        "schedule_seed": SCHEDULE_SEED,
         "primary_failures": primary_failures,
         "baseline_primary_failures": baseline_primary_failures,
         "absolute_growth_bound_exceedances": (
@@ -562,6 +702,8 @@ def main() -> int:
         ),
         "paired_growth_failures": paired_failures,
         "modeled_memory_failures": memory_failures,
+        "realized_witnesses": realized_witnesses,
+        "missing_largest_scale_witnesses": missing_largest_witnesses,
         "growth_enforced": args.enforce_growth,
         "series": series,
         "runs": runs,

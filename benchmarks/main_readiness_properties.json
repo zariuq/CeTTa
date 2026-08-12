@@ -6,6 +6,8 @@
     "mutant:observer-work-state-only",
     "mutant:per-entry-leak",
     "mutant:quadratic-growth",
+    "mutant:transfer-counter-mismatch",
+    "mutant:tuned-superlinear-growth",
     "mutant:wrong-backend-routing"
   ],
   "negative_calibration_witnesses": {
@@ -14,12 +16,13 @@
     "negative:modeled-memory-rate-excess": "make main-readiness-mutation-qualification",
     "negative:paired-performance-regression": "python3 scripts/test_rhocalc_paired_samples.py",
     "negative:paired-scaling-regression": "make main-readiness-mutation-qualification",
-    "negative:route-class-or-counter-mismatch": "make main-readiness-space-ladders",
     "negative:route-counter-mismatch": "make main-readiness-mutation-qualification",
     "negative:silent-timeout": "python3 scripts/test_cetta_readiness_model.py",
-    "negative:state-only-observer-materialization": "make main-readiness-mutation-qualification"
+    "negative:state-only-observer-materialization": "make main-readiness-mutation-qualification",
+    "negative:transfer-counter-mismatch": "make main-readiness-mutation-qualification"
   },
   "routine_ladder_sizes": [10000, 30000, 100000, 300000],
+  "exhaustive_ladder_sizes": [125000, 250000, 500000, 1000000],
   "modeled_memory_bytes_per_entry_limits": {
     "backend:native": 128.0
   },
@@ -34,13 +37,12 @@
         {"path": "src/term_universe.c", "symbol": "term_universe_compact32_auto_migration_threshold(", "expected_occurrences": 2}
       ],
       "routine_witnesses": ["space-ladder:native", "make main-readiness-thresholds", "make test-space-term-universe-membership"],
-      "exhaustive_witnesses": ["make bench-space-scale-ladder", "scale-census:backend:native@10000000"],
+      "exhaustive_witnesses": ["make main-readiness-space-ladders-exhaustive", "space-ladder-exhaustive:native@1000000", "make main-readiness-space-frontier", "space-frontier:backend:native@10000000", "make main-readiness-thresholds"],
       "positive_calibration": "space-ladder:native",
       "negative_calibrations": ["negative:paired-scaling-regression", "negative:modeled-memory-rate-excess"],
       "routine_scale_representative": "space-ladder:native",
       "largest_scale_class": "native-term-universe",
-      "largest_scale_witness": "scale-census:backend:native@10000000",
-      "evidence": ["correctness", "operation-count", "time-slope", "rss-slope", "threshold"]
+      "largest_scale_witness": "space-frontier:backend:native@10000000"
     },
     {
       "id": "space.pathmap.storage",
@@ -50,46 +52,30 @@
         {"path": "src/mork_space_bridge_runtime.c", "symbol": "CettaMorkSpaceHandle *cetta_mork_bridge_space_new_pathmap(", "expected_occurrences": 2}
       ],
       "routine_witnesses": ["space-ladder:pathmap", "make test-pathmap-backend-primary-destructive-abi"],
-      "exhaustive_witnesses": ["make bench-space-scale-ladder", "scale-census:backend:pathmap@10000000"],
+      "exhaustive_witnesses": ["make main-readiness-space-ladders-exhaustive", "space-ladder-exhaustive:pathmap@1000000", "make main-readiness-space-frontier", "space-frontier:backend:pathmap@10000000", "make test-pathmap-backend-primary-destructive-abi"],
       "positive_calibration": "space-ladder:pathmap",
       "negative_calibrations": ["negative:route-counter-mismatch"],
       "routine_scale_representative": "space-ladder:pathmap",
       "largest_scale_class": "pathmap-primary",
-      "largest_scale_witness": "scale-census:backend:pathmap@10000000",
-      "evidence": ["correctness", "route-counter", "time-slope", "rss-slope", "threshold"]
+      "largest_scale_witness": "space-frontier:backend:pathmap@10000000"
     },
     {
-      "id": "space.mork.live",
-      "implementation_path": "mork-ffi/live-space",
+      "id": "space.mork.storage",
+      "implementation_path": "mork-ffi/live-and-act-storage",
       "source_anchors": [
         {"path": "src/library.c", "symbol": "static Atom *cetta_library_dispatch_mork(", "expected_occurrences": 1},
-        {"path": "src/mork_space_bridge_runtime.c", "symbol": "bool cetta_mork_bridge_space_add_expr_bytes_batch(", "expected_occurrences": 2}
-      ],
-      "routine_witnesses": ["space-ladder:mork-live", "make test-mork-add-atoms-runtime-stats"],
-      "exhaustive_witnesses": ["make bench-space-scale-ladder", "make bench-ffi-friction-stress", "scale-census:backend:mork-live@10000000"],
-      "positive_calibration": "space-ladder:mork-live",
-      "negative_calibrations": ["negative:route-counter-mismatch"],
-      "routine_scale_representative": "space-ladder:mork-live",
-      "largest_scale_class": "mork-live-ffi",
-      "largest_scale_witness": "scale-census:backend:mork-live@10000000",
-      "evidence": ["correctness", "route-counter", "operation-count", "time-slope", "rss-slope"]
-    },
-    {
-      "id": "space.mork.act",
-      "implementation_path": "mork-ffi/act-snapshot-load",
-      "source_anchors": [
+        {"path": "src/mork_space_bridge_runtime.c", "symbol": "bool cetta_mork_bridge_space_add_expr_bytes_batch(", "expected_occurrences": 2},
         {"path": "src/library.c", "symbol": "static Atom *mork_space_open_act_native(", "expected_occurrences": 1},
         {"path": "src/library.c", "symbol": "static Atom *mork_space_import_act_native(", "expected_occurrences": 1},
         {"path": "src/mork_space_bridge_runtime.c", "symbol": "bool cetta_mork_bridge_space_load_act_file(", "expected_occurrences": 2}
       ],
-      "routine_witnesses": ["space-ladder:mork-open-act", "space-ladder:mork-load-act"],
-      "exhaustive_witnesses": ["make bench-space-scale-ladder", "scale-census:backend:mork-load-act@10000000"],
-      "positive_calibration": "space-ladder:mork-open-act",
-      "negative_calibrations": ["negative:loaded-cardinality-mismatch"],
-      "routine_scale_representative": "space-ladder:mork-open-act",
-      "largest_scale_class": "mork-act-snapshot",
-      "largest_scale_witness": "scale-census:backend:mork-load-act@10000000",
-      "evidence": ["correctness", "row-count", "time-slope", "rss-slope", "serialization"]
+      "routine_witnesses": ["space-ladder:mork-live", "space-ladder:mork-open-act", "space-ladder:mork-load-act", "make test-mork-add-atoms-runtime-stats"],
+      "exhaustive_witnesses": ["make main-readiness-space-ladders-exhaustive", "space-ladder-exhaustive:mork-live@1000000", "space-ladder-exhaustive:mork-open-act@1000000", "space-ladder-exhaustive:mork-load-act@1000000", "make main-readiness-space-frontier", "space-frontier:backend:mork-load-act@10000000", "make bench-ffi-friction-stress"],
+      "positive_calibration": "space-ladder:mork-live",
+      "negative_calibrations": ["negative:route-counter-mismatch", "negative:loaded-cardinality-mismatch"],
+      "routine_scale_representative": "space-ladder:mork-live",
+      "largest_scale_class": "mork-live-act-storage",
+      "largest_scale_witness": "space-frontier:backend:mork-load-act@10000000"
     },
     {
       "id": "space.transfer.in-memory",
@@ -100,13 +86,12 @@
         {"path": "scripts/bench_space_transfer_matrix.sh", "symbol": "case_route_class() {", "expected_occurrences": 1}
       ],
       "routine_witnesses": ["transfer-ladder:native-to-pathmap", "transfer-ladder:native-to-mork-live", "transfer-ladder:mork-live-to-native"],
-      "exhaustive_witnesses": ["make bench-space-transfer-matrix", "make bench-space-scale-ladder", "scale-census:transfer:native-to-pathmap@10000000"],
+      "exhaustive_witnesses": ["make bench-space-transfer-matrix", "make main-readiness-space-ladders-exhaustive", "transfer-ladder-exhaustive:native-to-pathmap@1000000", "make main-readiness-space-frontier", "space-frontier:transfer:native-to-pathmap@10000000"],
       "positive_calibration": "transfer-ladder:native-to-pathmap",
-      "negative_calibrations": ["negative:route-class-or-counter-mismatch"],
+      "negative_calibrations": ["negative:transfer-counter-mismatch"],
       "routine_scale_representative": "transfer-ladder:native-to-pathmap",
       "largest_scale_class": "materialized-space-copy",
-      "largest_scale_witness": "scale-census:transfer:native-to-pathmap@10000000",
-      "evidence": ["correctness", "source-count", "target-count", "route", "time-slope", "rss-slope"]
+      "largest_scale_witness": "space-frontier:transfer:native-to-pathmap@10000000"
     },
     {
       "id": "rho.threaded.execution",
@@ -120,8 +105,7 @@
       "positive_calibration": "witness:rhocalc_threaded_adaptive",
       "negative_calibrations": ["negative:paired-performance-regression"],
       "largest_scale_class": "rho-generated-wave",
-      "largest_scale_witness": "make bench-rho-threaded-generated",
-      "evidence": ["correctness", "work-count", "wave-width", "paired-time", "rss"]
+      "largest_scale_witness": "make bench-rho-threaded-generated"
     },
     {
       "id": "rho.cost.threaded.execution",
@@ -135,8 +119,7 @@
       "positive_calibration": "make test-rhocalc-cost-observer-transparency",
       "negative_calibrations": ["negative:state-only-observer-materialization", "negative:claim-nonconservation"],
       "largest_scale_class": "cost-rho-funded-wave",
-      "largest_scale_witness": "make bench-rho-cost-threaded-heavy",
-      "evidence": ["correctness", "claim-count", "funding-count", "observer-absence", "paired-time", "rss"]
+      "largest_scale_witness": "make bench-rho-cost-threaded-heavy"
     },
     {
       "id": "forward-chain.depth",
@@ -146,12 +129,11 @@
         {"path": "src/eval.c", "symbol": "static __thread uint64_t g_match_chain_progress = 0u;", "expected_occurrences": 1}
       ],
       "routine_witnesses": ["make bench-d3-backends", "make bench-d3-nodup-backends", "d4-progress:bounded"],
-      "exhaustive_witnesses": ["make bench-d4-backends", "make probe-d4-nodup-capability-backends"],
+      "exhaustive_witnesses": ["make bench-d4-backends", "make bench-d4-nodup-backends"],
       "positive_calibration": "d4-progress:bounded",
       "negative_calibrations": ["negative:silent-timeout"],
       "largest_scale_class": "forward-chain-d4",
-      "largest_scale_witness": "make bench-d4-backends",
-      "evidence": ["correctness", "progress-count", "progress-slope", "rss-slope", "non-authoritative-capability-census"]
+      "largest_scale_witness": "make bench-d4-nodup-backends"
     }
   ]
 }
