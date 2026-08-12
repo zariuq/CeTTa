@@ -1,5 +1,7 @@
 #include "proof_gslt_relational_runtime_v1.h"
 
+#include "gslt_finite_fact_provider_v1.h"
+
 #include "finite_horn_answer_stream_v1.h"
 #include "relational_value_list_v1.h"
 
@@ -127,6 +129,10 @@ typedef struct {
     PPOSLFNativeCapabilitySetV1 pending_capabilities;
     bool pending_capabilities_ready;
     PPProofRuntimePersistentCacheV1 *persistent_cache;
+    CettaGsltLanguage *compiled_audit_language;
+    const CettaGsltEmbeddedLanguageV1 *compiled_audit_descriptor;
+    const CettaGsltProviderCatalogV1 *compiled_audit_catalog;
+    CettaGsltHornLimits compiled_audit_limits;
 } PPProofRuntimeImplV1;
 
 typedef struct {
@@ -203,6 +209,11 @@ static bool ppproof_runtime_v1_fail(
         va_end(arguments);
     }
     return false;
+}
+
+static uint64_t ppproof_runtime_v1_add_u64_sat(
+    uint64_t left, uint64_t right) {
+    return UINT64_MAX - left < right ? UINT64_MAX : left + right;
 }
 
 static bool ppproof_runtime_v1_expr_head(
@@ -292,6 +303,7 @@ static void ppproof_runtime_v1_impl_free(PPProofRuntimeImplV1 *impl) {
         return;
     pposlf_native_capability_set_v1_free(&impl->pending_capabilities);
     ppproof_runtime_v1_persistent_cache_free(impl->persistent_cache);
+    cetta_gslt_language_free(impl->compiled_audit_language);
     free(impl->outcome_queries);
     free(impl->input_bytes);
     free(impl->distinct_pairs);
@@ -301,6 +313,55 @@ static void ppproof_runtime_v1_impl_free(PPProofRuntimeImplV1 *impl) {
     free(impl->tables);
     fh_answer_stream_v1_free(&impl->answers);
     free(impl);
+}
+
+static bool ppproof_runtime_v1_optional_text_equal(
+    const char *left, const char *right) {
+    return (!left && !right) ||
+        (left && right && strcmp(left, right) == 0);
+}
+
+bool ppproof_gslt_relational_runtime_v1_attach_compiled_audit(
+    PPProofGSLTRelationalRuntimeV1 *runtime,
+    const CettaGsltEmbeddedLanguageV1 *descriptor,
+    const CettaGsltProviderCatalogV1 *catalog,
+    CettaGsltHornLimits limits,
+    char *error_buf,
+    size_t error_buf_size) {
+    PPProofRuntimeImplV1 *impl = runtime ? runtime->implementation : NULL;
+    CettaGsltLanguage *language = NULL;
+    if (error_buf && error_buf_size > 0u)
+        error_buf[0] = '\0';
+    if (!impl || !descriptor || !catalog || !descriptor->name ||
+        !descriptor->manifest_sha256 || !descriptor->query_relation ||
+        descriptor->query_arity != 1u ||
+        limits.max_rule_attempts == 0u || limits.max_answers == 0u ||
+        limits.max_depth == 0u)
+        return ppproof_runtime_v1_fail(
+            error_buf, error_buf_size,
+            "invalid compiled proof audit attachment");
+    if (!cetta_gslt_provider_catalog_validate_v1(
+            catalog, error_buf, error_buf_size))
+        return false;
+    if (
+        strcmp(catalog->language_name, descriptor->name) != 0 ||
+        !ppproof_runtime_v1_optional_text_equal(
+            catalog->profile_name, descriptor->profile_name) ||
+        strcmp(catalog->language_manifest_sha256,
+               descriptor->manifest_sha256) != 0)
+        return ppproof_runtime_v1_fail(
+            error_buf, error_buf_size,
+            "invalid compiled proof audit attachment");
+    if (!cetta_gslt_language_load_embedded_for_realization(
+            descriptor, CETTA_GSLT_REALIZATION_COMPILED_WORKLIST,
+            &language, error_buf, error_buf_size))
+        return false;
+    cetta_gslt_language_free(impl->compiled_audit_language);
+    impl->compiled_audit_language = language;
+    impl->compiled_audit_descriptor = descriptor;
+    impl->compiled_audit_catalog = catalog;
+    impl->compiled_audit_limits = limits;
+    return true;
 }
 
 void ppproof_gslt_relational_runtime_v1_init(
@@ -2132,6 +2193,165 @@ ppproof_runtime_v1_outcome_query(
     return NULL;
 }
 
+static bool ppproof_runtime_v1_compiled_audit(
+    PPProofRuntimeImplV1 *impl,
+    const CettaGsltProviderRegistryV1 *providers,
+    Atom *query,
+    PPOSLFNativeVMOutcomeV1 primary_outcome,
+    char *error_buf,
+    size_t error_buf_size) {
+    Arena output;
+    CettaGsltHornResult result = {0};
+    CettaGsltHornOutcome compiled_outcome = CETTA_GSLT_HORN_FAULT;
+    size_t compiled_answer_count = 0u;
+    uint64_t compiled_rule_attempts = 0u;
+    bool agreed = false;
+    bool executed;
+
+    if (!impl || !impl->compiled_audit_language ||
+        !impl->compiled_audit_descriptor ||
+        !impl->compiled_audit_catalog || !providers || !query)
+        return ppproof_runtime_v1_fail(
+            error_buf, error_buf_size,
+            "compiled proof audit is incompletely attached");
+    arena_init(&output);
+    Atom **elements = arena_alloc(&output, sizeof(*elements) * 2u);
+    elements[0] = atom_symbol(
+        &output, impl->compiled_audit_descriptor->query_relation);
+    elements[1] = query;
+    Atom *service_query = elements[0]
+        ? atom_expr(&output, elements, 2u) : NULL;
+    impl->receipt.compiled_audit_attempts++;
+    executed = service_query &&
+        cetta_gslt_language_query_with_providers_v1(
+            impl->compiled_audit_language,
+            CETTA_GSLT_REALIZATION_COMPILED_WORKLIST,
+            impl->compiled_audit_catalog, providers,
+            &output, service_query, impl->compiled_audit_limits,
+            &result, error_buf, error_buf_size);
+    if (executed && primary_outcome == PPOSLF_NATIVE_VM_PROVED_V1)
+        agreed = result.outcome == CETTA_GSLT_HORN_COMPLETED &&
+            result.answer_count > 0u;
+    else if (executed && primary_outcome == PPOSLF_NATIVE_VM_NO_PROOF_V1)
+        agreed = result.outcome == CETTA_GSLT_HORN_COMPLETED &&
+            result.answer_count == 0u;
+    else if (executed &&
+             primary_outcome == PPOSLF_NATIVE_VM_RESOURCE_EXHAUSTED_V1)
+        agreed = result.outcome == CETTA_GSLT_HORN_RULE_LIMIT ||
+            result.outcome == CETTA_GSLT_HORN_DEPTH_LIMIT ||
+            result.outcome == CETTA_GSLT_HORN_ANSWER_LIMIT;
+    if (agreed)
+        impl->receipt.compiled_audit_agreements++;
+    impl->receipt.compiled_rule_attempts = ppproof_runtime_v1_add_u64_sat(
+        impl->receipt.compiled_rule_attempts, result.rule_attempts);
+    impl->receipt.compiled_rule_matches = ppproof_runtime_v1_add_u64_sat(
+        impl->receipt.compiled_rule_matches, result.rule_matches);
+    impl->receipt.compiled_dispatch_rejects =
+        ppproof_runtime_v1_add_u64_sat(
+            impl->receipt.compiled_dispatch_rejects,
+            result.rule_dispatch_rejects);
+    impl->receipt.compiled_outer_head_elisions =
+        ppproof_runtime_v1_add_u64_sat(
+            impl->receipt.compiled_outer_head_elisions,
+            result.rule_outer_head_elisions);
+    impl->receipt.compiled_prefilter_rejects = ppproof_runtime_v1_add_u64_sat(
+        impl->receipt.compiled_prefilter_rejects,
+        result.rule_prefilter_rejects);
+    impl->receipt.compiled_ground_dense_attempts =
+        ppproof_runtime_v1_add_u64_sat(
+            impl->receipt.compiled_ground_dense_attempts,
+            result.rule_ground_dense_attempts);
+    impl->receipt.compiled_flat_head_attempts =
+        ppproof_runtime_v1_add_u64_sat(
+            impl->receipt.compiled_flat_head_attempts,
+            result.rule_flat_head_attempts);
+    impl->receipt.compiled_general_head_attempts =
+        ppproof_runtime_v1_add_u64_sat(
+            impl->receipt.compiled_general_head_attempts,
+            result.rule_general_head_attempts);
+    impl->receipt.compiled_constructor_guided_attempts =
+        ppproof_runtime_v1_add_u64_sat(
+            impl->receipt.compiled_constructor_guided_attempts,
+            result.rule_constructor_guided_attempts);
+    impl->receipt.compiled_constructor_guided_matches =
+        ppproof_runtime_v1_add_u64_sat(
+            impl->receipt.compiled_constructor_guided_matches,
+            result.rule_constructor_guided_matches);
+    impl->receipt.compiled_constructor_nodes_elided =
+        ppproof_runtime_v1_add_u64_sat(
+            impl->receipt.compiled_constructor_nodes_elided,
+            result.rule_constructor_nodes_elided);
+    impl->receipt.compiled_flat_head_matches = ppproof_runtime_v1_add_u64_sat(
+        impl->receipt.compiled_flat_head_matches,
+        result.rule_flat_head_matches);
+    impl->receipt.compiled_ground_dense_matches =
+        ppproof_runtime_v1_add_u64_sat(
+            impl->receipt.compiled_ground_dense_matches,
+            result.rule_ground_dense_matches);
+    impl->receipt.compiled_variable_slot_buffer_uses =
+        ppproof_runtime_v1_add_u64_sat(
+            impl->receipt.compiled_variable_slot_buffer_uses,
+            result.rule_variable_slot_buffer_uses);
+    impl->receipt.compiled_variable_slot_bytes_elided =
+        ppproof_runtime_v1_add_u64_sat(
+            impl->receipt.compiled_variable_slot_bytes_elided,
+            result.rule_variable_slot_bytes_elided);
+    impl->receipt.compiled_variable_slot_clear_bytes_elided =
+        ppproof_runtime_v1_add_u64_sat(
+            impl->receipt.compiled_variable_slot_clear_bytes_elided,
+            result.rule_variable_slot_clear_bytes_elided);
+    impl->receipt.compiled_ground_subterm_cache_hits =
+        ppproof_runtime_v1_add_u64_sat(
+            impl->receipt.compiled_ground_subterm_cache_hits,
+            result.rule_ground_subterm_cache_hits);
+    impl->receipt.compiled_ground_subterm_nodes_elided =
+        ppproof_runtime_v1_add_u64_sat(
+            impl->receipt.compiled_ground_subterm_nodes_elided,
+            result.rule_ground_subterm_nodes_elided);
+    impl->receipt.compiled_worklist_states_created =
+        ppproof_runtime_v1_add_u64_sat(
+            impl->receipt.compiled_worklist_states_created,
+            result.worklist_states_created);
+    impl->receipt.compiled_worklist_states_reclaimed =
+        ppproof_runtime_v1_add_u64_sat(
+            impl->receipt.compiled_worklist_states_reclaimed,
+            result.worklist_states_reclaimed);
+    if (impl->receipt.compiled_worklist_pending_peak <
+        result.worklist_pending_peak)
+        impl->receipt.compiled_worklist_pending_peak =
+            result.worklist_pending_peak;
+    if (impl->receipt.compiled_worklist_state_bytes_peak <
+        result.worklist_state_bytes_peak)
+        impl->receipt.compiled_worklist_state_bytes_peak =
+            result.worklist_state_bytes_peak;
+    if (impl->receipt.compiled_maximum_goal_depth <
+        result.max_depth_observed)
+        impl->receipt.compiled_maximum_goal_depth =
+            result.max_depth_observed;
+    compiled_outcome = result.outcome;
+    compiled_answer_count = result.answer_count;
+    compiled_rule_attempts = result.rule_attempts;
+    cetta_gslt_horn_result_free(&result);
+    arena_free(&output);
+    if (!executed)
+        return false;
+    if (!agreed) {
+        const char *query_name =
+            query->kind == ATOM_EXPR && query->expr.len > 0u &&
+            query->expr.elems[0] &&
+            query->expr.elems[0]->kind == ATOM_SYMBOL
+                ? atom_name_cstr(query->expr.elems[0]) : "<malformed>";
+        return ppproof_runtime_v1_fail(
+            error_buf, error_buf_size,
+            "generated proof realizations disagree on %s: primary=%u "
+            "compiled=%u answers=%zu attempts=%llu",
+            query_name, (unsigned)primary_outcome,
+            (unsigned)compiled_outcome, compiled_answer_count,
+            (unsigned long long)compiled_rule_attempts);
+    }
+    return true;
+}
+
 static PPRelationalStateProofV1Result ppproof_runtime_v1_execute(
     void *context,
     const PPRelationalStateProofV1Request *request,
@@ -2140,6 +2360,7 @@ static PPRelationalStateProofV1Result ppproof_runtime_v1_execute(
     PPProofRuntimeImplV1 *impl = context;
     PPProofRuntimeRowsV1 rows;
     PPOSLFNativeCapabilitySetV1 capabilities;
+    CettaGsltFiniteFactProviderSetV1 *compiled_audit_providers = NULL;
     PPOSLFNativeVMResultV1 result;
     PPRelationalStateProofV1Result outcome =
         PPRELATIONAL_STATE_PROOF_V1_INVALID;
@@ -2273,6 +2494,25 @@ static PPRelationalStateProofV1Result ppproof_runtime_v1_execute(
             rows.rows, rows.row_len,
             error_buf, error_buf_size))
         goto done;
+    if (impl->compiled_audit_language) {
+        CettaGsltFiniteFactSpanV1 spans[2] = {
+            {
+                .rows = impl->persistent_cache->rows.rows,
+                .row_count = impl->persistent_cache->rows.row_len,
+            },
+            {
+                .rows = rows.rows,
+                .row_count = rows.row_len,
+            },
+        };
+        compiled_audit_providers =
+            cetta_gslt_finite_fact_provider_set_create_borrowed_v1(
+                impl->compiled_audit_catalog->requirements,
+                impl->compiled_audit_catalog->requirement_count,
+                spans, 2u, error_buf, error_buf_size);
+        if (!compiled_audit_providers)
+            goto done;
+    }
     candidate_len = ppproof_runtime_v1_outcome_query_count(impl, input);
     if (candidate_len == 0u)
         goto done;
@@ -2289,6 +2529,13 @@ static PPRelationalStateProofV1Result ppproof_runtime_v1_execute(
                 impl->vm, &capabilities, query, impl->limits, &result))
             goto done;
         impl->receipt.outcome_query_attempts++;
+        if (compiled_audit_providers &&
+            !ppproof_runtime_v1_compiled_audit(
+                impl,
+                cetta_gslt_finite_fact_provider_set_registry_v1(
+                    compiled_audit_providers),
+                query, result.outcome, error_buf, error_buf_size))
+            goto done;
         if (result.outcome != PPOSLF_NATIVE_VM_NO_PROOF_V1)
             break;
     }
@@ -2383,6 +2630,8 @@ done:
             error_buf, error_buf_size,
             "generated relational proof execution failed closed");
     free(claim_bytes);
+    cetta_gslt_finite_fact_provider_set_free_v1(
+        compiled_audit_providers);
     pposlf_native_vm_result_v1_free(&result);
     pposlf_native_capability_set_v1_free(&capabilities);
     ppproof_runtime_v1_rows_free(&rows);

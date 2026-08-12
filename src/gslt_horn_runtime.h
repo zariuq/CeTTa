@@ -46,6 +46,26 @@ typedef struct {
     size_t answer_count;
     uint64_t rule_attempts;
     uint64_t rule_matches;
+    uint64_t rule_dispatch_rejects;
+    uint64_t rule_outer_head_elisions;
+    uint64_t rule_prefilter_rejects;
+    uint64_t rule_ground_dense_attempts;
+    uint64_t rule_flat_head_attempts;
+    uint64_t rule_general_head_attempts;
+    uint64_t rule_constructor_guided_attempts;
+    uint64_t rule_constructor_guided_matches;
+    uint64_t rule_constructor_nodes_elided;
+    uint64_t rule_flat_head_matches;
+    uint64_t rule_ground_dense_matches;
+    uint64_t rule_variable_slot_buffer_uses;
+    uint64_t rule_variable_slot_bytes_elided;
+    uint64_t rule_variable_slot_clear_bytes_elided;
+    uint64_t rule_ground_subterm_cache_hits;
+    uint64_t rule_ground_subterm_nodes_elided;
+    uint64_t worklist_states_created;
+    uint64_t worklist_states_reclaimed;
+    uint64_t worklist_pending_peak;
+    uint64_t worklist_state_bytes_peak;
     uint32_t max_depth_observed;
 } CettaGsltHornResult;
 

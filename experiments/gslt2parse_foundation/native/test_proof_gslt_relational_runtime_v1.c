@@ -1,5 +1,8 @@
 #include "proof_gslt_relational_runtime_v1.h"
 
+#include "langdef/metamath/generated/proof_machine_language_v1.generated.h"
+#include "langdef/metamath/generated/proof_machine_provider_catalog_v1.generated.h"
+
 #include "parser_occurrence_fold_v1.h"
 #include "parser_occurrence_span_mask_v1.h"
 #include "parser_pack_guarded_lexical_exec_v1.h"
@@ -165,6 +168,20 @@ static bool run_database(
              expect(proof_receipt.generated_event_len > 0u &&
                         proof_receipt.external_event_len > 0u,
                     "proof receipt omitted generated or state evidence") &&
+             expect(proof_receipt.compiled_audit_attempts ==
+                        proof_receipt.outcome_query_attempts &&
+                        proof_receipt.compiled_audit_agreements ==
+                        proof_receipt.compiled_audit_attempts &&
+                        proof_receipt.compiled_rule_attempts > 0u &&
+                        proof_receipt.compiled_constructor_guided_attempts >
+                            0u &&
+                        proof_receipt.compiled_constructor_nodes_elided > 0u &&
+                        proof_receipt
+                            .compiled_variable_slot_clear_bytes_elided > 0u &&
+                        proof_receipt.compiled_worklist_states_created > 0u &&
+                        proof_receipt.compiled_worklist_states_reclaimed ==
+                            proof_receipt.compiled_worklist_states_created,
+                    "compiled proof audit did not agree on every outcome query") &&
              expect(proof_receipt.capability_digest[0] != '\0',
                     "escaping proof receipt omitted its forced commitment");
         if (proof_receipt.constructor_chain_nodes > 0u &&
@@ -182,7 +199,17 @@ static bool run_database(
                     "match-bytes=%llu positional=%llu/%llu/%llu "
                     "expand-bytes=%llu nodes=%llu "
                     "rollback-reclaimed=%llu max-frames=%u "
-                    "max-goal-depth=%u\n",
+                    "max-goal-depth=%u compiled-attempts=%llu "
+                    "compiled-matches=%llu compiled-dispatch=%llu "
+                    "compiled-outer-head=%llu "
+                    "compiled-prefilter=%llu "
+                    "compiled-flat=%llu compiled-ground-dense=%llu "
+                    "compiled-constructor=%llu/%llu "
+                    "compiled-constructor-nodes-elided=%llu "
+                    "compiled-slot-clear-bytes-elided=%llu "
+                    "compiled-states=%llu/%llu compiled-pending-peak=%llu "
+                    "compiled-state-bytes-peak=%llu "
+                    "compiled-depth=%u\n",
                     path,
                     (unsigned long long)proof_receipt.stats.rule_attempts,
                     (unsigned long long)
@@ -226,7 +253,38 @@ static bool run_database(
                     (unsigned long long)proof_receipt.stats
                         .rollback_arena_bytes_reclaimed,
                     proof_receipt.stats.maximum_search_frame_depth,
-                    proof_receipt.stats.maximum_goal_depth);
+                    proof_receipt.stats.maximum_goal_depth,
+                    (unsigned long long)
+                        proof_receipt.compiled_rule_attempts,
+                    (unsigned long long)
+                        proof_receipt.compiled_rule_matches,
+                    (unsigned long long)
+                        proof_receipt.compiled_dispatch_rejects,
+                    (unsigned long long)
+                        proof_receipt.compiled_outer_head_elisions,
+                    (unsigned long long)
+                        proof_receipt.compiled_prefilter_rejects,
+                    (unsigned long long)
+                        proof_receipt.compiled_flat_head_matches,
+                    (unsigned long long)
+                        proof_receipt.compiled_ground_dense_matches,
+                    (unsigned long long)
+                        proof_receipt.compiled_constructor_guided_attempts,
+                    (unsigned long long)
+                        proof_receipt.compiled_constructor_guided_matches,
+                    (unsigned long long)
+                        proof_receipt.compiled_constructor_nodes_elided,
+                    (unsigned long long)proof_receipt
+                        .compiled_variable_slot_clear_bytes_elided,
+                    (unsigned long long)
+                        proof_receipt.compiled_worklist_states_created,
+                    (unsigned long long)
+                        proof_receipt.compiled_worklist_states_reclaimed,
+                    (unsigned long long)
+                        proof_receipt.compiled_worklist_pending_peak,
+                    (unsigned long long)
+                        proof_receipt.compiled_worklist_state_bytes_peak,
+                    proof_receipt.compiled_maximum_goal_depth);
     } else {
         ok = expect(!executed && !state_run.receipt.committed,
                     "invalid raw proof transaction unexpectedly committed") &&
@@ -241,6 +299,20 @@ static bool run_database(
              expect(proof_receipt.proof_result ==
                         PPRELATIONAL_STATE_PROOF_V1_REJECTED,
                     "negative raw proof selected a non-rejection outcome") &&
+             expect(proof_receipt.compiled_audit_attempts ==
+                        proof_receipt.outcome_query_attempts &&
+                        proof_receipt.compiled_audit_agreements ==
+                        proof_receipt.compiled_audit_attempts &&
+                        proof_receipt.compiled_rule_attempts > 0u &&
+                        proof_receipt.compiled_constructor_guided_attempts >
+                            0u &&
+                        proof_receipt.compiled_constructor_nodes_elided > 0u &&
+                        proof_receipt
+                            .compiled_variable_slot_clear_bytes_elided > 0u &&
+                        proof_receipt.compiled_worklist_states_created > 0u &&
+                        proof_receipt.compiled_worklist_states_reclaimed ==
+                            proof_receipt.compiled_worklist_states_created,
+                    "compiled proof audit disagreed on a negative outcome") &&
              expect(proof_receipt.capability_digest[0] != '\0',
                     "negative proof receipt omitted its forced commitment");
     }
@@ -329,6 +401,18 @@ int main(int argc, char **argv) {
         limits, error, sizeof(error));
     if (!expect(initialized, error[0] ? error :
                 "generated relational provider did not prepare"))
+        goto done;
+    const CettaGsltHornLimits compiled_audit_limits = {
+        .max_rule_attempts = UINT64_C(100000000),
+        .max_answers = UINT64_C(1024),
+        .max_depth = UINT32_MAX,
+    };
+    initialized = ppproof_gslt_relational_runtime_v1_attach_compiled_audit(
+        &proof_runtime, &cetta_metamath_proof_machine_v1,
+        &cetta_metamath_proof_machine_provider_catalog_v1,
+        compiled_audit_limits, error, sizeof(error));
+    if (!expect(initialized, error[0] ? error :
+                "generated compiled proof audit did not attach"))
         goto done;
     ok = run_database(argv[3], &program, &fold, &span_mask, &state,
                       &proof_runtime, PPRELATIONAL_STATE_PROOF_V1_VERIFIED,

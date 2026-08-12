@@ -71,6 +71,26 @@ typedef struct {
     size_t answer_count;
     uint64_t rule_attempts;
     uint64_t rule_matches;
+    uint64_t rule_dispatch_rejects;
+    uint64_t rule_outer_head_elisions;
+    uint64_t rule_prefilter_rejects;
+    uint64_t rule_ground_dense_attempts;
+    uint64_t rule_flat_head_attempts;
+    uint64_t rule_general_head_attempts;
+    uint64_t rule_constructor_guided_attempts;
+    uint64_t rule_constructor_guided_matches;
+    uint64_t rule_constructor_nodes_elided;
+    uint64_t rule_flat_head_matches;
+    uint64_t rule_ground_dense_matches;
+    uint64_t rule_variable_slot_buffer_uses;
+    uint64_t rule_variable_slot_bytes_elided;
+    uint64_t rule_variable_slot_clear_bytes_elided;
+    uint64_t rule_ground_subterm_cache_hits;
+    uint64_t rule_ground_subterm_nodes_elided;
+    uint64_t worklist_states_created;
+    uint64_t worklist_states_reclaimed;
+    uint64_t worklist_pending_peak;
+    uint64_t worklist_state_bytes_peak;
     uint32_t max_depth_observed;
 } CettaGsltLanguageResult;
 
@@ -131,6 +151,19 @@ bool cetta_gslt_language_execute_atoms_with_realization_and_providers_v1(
 bool cetta_gslt_language_query_v1(
     const CettaGsltLanguage *language,
     CettaGsltRealization realization,
+    Arena *output_arena, Atom *query,
+    CettaGsltHornLimits limits,
+    CettaGsltHornResult *result,
+    char *error, size_t error_size);
+
+/* Provider-backed counterpart of query_v1.  The catalog must target this
+ * exact manifest and realization; only catalog-authorized physical relations
+ * are visible to the query. */
+bool cetta_gslt_language_query_with_providers_v1(
+    const CettaGsltLanguage *language,
+    CettaGsltRealization realization,
+    const CettaGsltProviderCatalogV1 *catalog,
+    const CettaGsltProviderRegistryV1 *physical_providers,
     Arena *output_arena, Atom *query,
     CettaGsltHornLimits limits,
     CettaGsltHornResult *result,

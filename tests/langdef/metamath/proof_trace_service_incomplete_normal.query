@@ -1,0 +1,4 @@
+(ProofTraceServiceV1
+  (ProofTraceInputAcceptIncompleteNormalV1
+    input-request-v1
+    (ProofTraceLabelConsV1 input-unknown-v1 ProofTraceLabelNilV1)))

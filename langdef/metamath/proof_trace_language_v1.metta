@@ -1,0 +1,13 @@
+(gslt-language-v1
+  (name metamath-proof-trace-v1)
+  (syntax-backend he-reader-direct-v1)
+  (term-abi finite-horn-quote-v1)
+  (semantic-source "generated/proof_semantic_exec_v1.metta")
+  (semantic-source "../../experiments/gslt2parse_foundation/presentations/core/proof_gslt_trace_semantics_v1.metta")
+  (semantic-source "../../experiments/gslt2parse_foundation/presentations/core/proof_gslt_trace_compiler_v1.metta")
+  (semantic-source "../../experiments/gslt2parse_foundation/presentations/core/proof_gslt_trace_input_v1.metta")
+  (semantic-source "../../experiments/gslt2parse_foundation/presentations/core/proof_gslt_trace_input_interface_v1.metta")
+  (semantic-source "../../experiments/gslt2parse_foundation/presentations/core/proof_gslt_trace_service_v1.metta")
+  (semantic-source "proof_trace_codec_v1.metta")
+  (query-entry ProofTraceServiceV1 1)
+  (observation bag))
