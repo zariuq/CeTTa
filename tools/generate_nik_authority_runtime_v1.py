@@ -24,11 +24,27 @@ class Formal:
 
 
 @dataclass(frozen=True)
+class SideCondition:
+    kind: str
+    ambient_depth: int
+    body_argument: int
+    replacement_argument: int | None
+    result_argument: int
+
+
+@dataclass(frozen=True)
 class Rule:
     identifier: str
     formals: tuple[Formal, ...]
     premises: tuple[sx.SExpr, ...]
     conclusion: sx.SExpr
+    side_conditions: tuple[SideCondition, ...]
+
+
+@dataclass(frozen=True)
+class Constructor:
+    name: str
+    arity: int
 
 
 @dataclass(frozen=True)
@@ -38,6 +54,7 @@ class Authority:
     revision: str
     digest: str
     presentation: sx.SExpr
+    constructors: tuple[Constructor, ...]
     rules: tuple[Rule, ...]
     positive_goal: sx.SExpr
     positive_proof: sx.SExpr
@@ -88,7 +105,7 @@ def make_wire_list(values: tuple[sx.SExpr, ...], nil: str, cons: str) -> sx.SExp
 
 
 def parse_rule(value: sx.SExpr, context: str) -> Rule:
-    items = tagged(value, "GRule", 4, context)
+    items = tagged(value, "GRuleV1", 5, context)
     identifier = text(items[1], f"{context} identifier")
     raw_formals = wire_list(items[2], "LNil", "LCons", f"{context} formals")
     formals: list[Formal] = []
@@ -107,7 +124,72 @@ def parse_rule(value: sx.SExpr, context: str) -> Rule:
     premises = wire_list(
         items[3], "LNil", "LCons", f"{context} premises"
     )
-    return Rule(identifier, tuple(formals), premises, items[4])
+    raw_side_conditions = wire_list(
+        items[5], "LNil", "LCons", f"{context} side conditions"
+    )
+    side_conditions: list[SideCondition] = []
+    for condition_index, raw_condition in enumerate(raw_side_conditions):
+        condition_context = (
+            f"{context} side condition {condition_index}"
+        )
+        condition = form(raw_condition, condition_context)
+        tag = symbol(condition[0], f"{condition_context} tag")
+        if tag == "GExplicitSubstitution" and len(condition) == 5:
+            fields = condition[1:]
+            replacement_argument: int | None = fields[2]
+            result_argument = fields[3]
+        elif tag == "GUnusedBinderElimination" and len(condition) == 4:
+            fields = condition[1:]
+            replacement_argument = None
+            result_argument = fields[2]
+        else:
+            raise GenerationError(
+                f"{condition_context}: unknown or malformed condition"
+            )
+        if not all(isinstance(field, int) and field >= 0 for field in fields):
+            raise GenerationError(
+                f"{condition_context}: fields must be nonnegative integers"
+            )
+        ambient_depth = fields[0]
+        body_argument = fields[1]
+        referenced = [body_argument, result_argument]
+        if replacement_argument is not None:
+            referenced.append(replacement_argument)
+        if any(argument >= len(formals) for argument in referenced):
+            raise GenerationError(
+                f"{condition_context}: formal index is out of range"
+            )
+        if (
+            formals[body_argument].depth != ambient_depth + 1
+            or formals[result_argument].depth != ambient_depth
+            or (
+                replacement_argument is not None
+                and formals[replacement_argument].depth != ambient_depth
+            )
+        ):
+            raise GenerationError(
+                f"{condition_context}: formal support depths disagree"
+            )
+        side_conditions.append(
+            SideCondition(
+                tag,
+                ambient_depth,
+                body_argument,
+                replacement_argument,
+                result_argument,
+            )
+        )
+    return Rule(
+        identifier, tuple(formals), premises, items[4], tuple(side_conditions)
+    )
+
+
+def parse_constructor(value: sx.SExpr, context: str) -> Constructor:
+    items = tagged(value, "CDecl", 2, context)
+    name = text(items[1], f"{context} name")
+    if not isinstance(items[2], int) or items[2] < 0:
+        raise GenerationError(f"{context}: invalid constructor arity")
+    return Constructor(name, items[2])
 
 
 def parse_authority(value: sx.SExpr, index: int) -> Authority:
@@ -119,14 +201,34 @@ def parse_authority(value: sx.SExpr, index: int) -> Authority:
     digest = text(items[4], f"{context} digest")
     if not re.fullmatch(r"[0-9a-f]{64}", digest):
         raise GenerationError(f"{context}: digest is not lowercase SHA-256")
-    presentation = tagged(items[5], "GPresentation", 3, f"{context} presentation")
+    presentation = tagged(
+        items[5], "GPresentationV1", 5, f"{context} presentation"
+    )
+    if presentation[1] != 1:
+        raise GenerationError(f"{context}: unsupported presentation version")
+    conversion = presentation[5]
+    if not (
+        isinstance(conversion, sx.Symbol)
+        and conversion.text == "GNoConversion"
+    ):
+        tagged(conversion, "GConversion", 2, f"{context} conversion")
     actual_digest = sha256(sx.render(items[5]).encode("utf-8")).hexdigest()
     if digest != actual_digest:
         raise GenerationError(
             f"{context}: digest does not identify the rendered presentation"
         )
+    raw_constructors = wire_list(
+        presentation[2], "LNil", "LCons", f"{context} constructors"
+    )
+    constructors = tuple(
+        parse_constructor(raw, f"{context} constructor {constructor_index}")
+        for constructor_index, raw in enumerate(raw_constructors)
+    )
+    constructor_names = [constructor.name for constructor in constructors]
+    if len(set(constructor_names)) != len(constructor_names):
+        raise GenerationError(f"{context}: duplicate constructor declaration")
     raw_rules = wire_list(
-        presentation[3], "LNil", "LCons", f"{context} rules"
+        presentation[4], "LNil", "LCons", f"{context} rules"
     )
     rules = tuple(
         parse_rule(raw, f"{context} rule {rule_index}")
@@ -139,6 +241,7 @@ def parse_authority(value: sx.SExpr, index: int) -> Authority:
         revision,
         digest,
         items[5],
+        constructors,
         rules,
         positive[1],
         positive[2],
@@ -168,6 +271,24 @@ def parse_catalog(path: Path) -> tuple[Authority, ...]:
     if len(set(identities)) != len(identities):
         raise GenerationError(f"{path}: duplicate authority identity")
     return authorities
+
+
+def catalog_identity_digest(authorities: tuple[Authority, ...]) -> str:
+    """Hash the exact runtime authority identities with unambiguous framing."""
+    digest = sha256()
+    digest.update(b"NIKAuthorityCatalogV1\0")
+    digest.update(len(authorities).to_bytes(8, "big"))
+    for authority in authorities:
+        for field in (
+            authority.alias,
+            authority.system_id,
+            authority.revision,
+            authority.digest,
+        ):
+            encoded = field.encode("utf-8")
+            digest.update(len(encoded).to_bytes(8, "big"))
+            digest.update(encoded)
+    return digest.hexdigest()
 
 
 def authority_term(authority: Authority) -> sx.SExpr:
@@ -252,6 +373,32 @@ class HornRule:
     body: tuple[sx.SExpr, ...]
 
 
+def side_condition_goal(
+    condition: SideCondition,
+    arguments: tuple[sx.Variable, ...],
+) -> sx.SExpr:
+    body = arguments[condition.body_argument]
+    result = arguments[condition.result_argument]
+    if condition.kind == "GExplicitSubstitution":
+        if condition.replacement_argument is None:
+            raise GenerationError(
+                "explicit substitution has no replacement argument"
+            )
+        return (
+            sx.Symbol("nik-explicit-substitution"),
+            body,
+            arguments[condition.replacement_argument],
+            result,
+        )
+    if condition.kind == "GUnusedBinderElimination":
+        return (
+            sx.Symbol("nik-unused-binder-elimination"),
+            body,
+            result,
+        )
+    raise GenerationError(f"unknown side-condition kind {condition.kind}")
+
+
 def specialized_rules(authorities: tuple[Authority, ...]) -> tuple[HornRule, ...]:
     output: list[HornRule] = []
     for authority_index, authority in enumerate(authorities):
@@ -261,6 +408,157 @@ def specialized_rules(authorities: tuple[Authority, ...]) -> tuple[HornRule, ...
                 f"nik-authority-{authority_index}",
                 (sx.Symbol("nik-authority"), identity),
                 (),
+            )
+        )
+        vocabulary = sx.Symbol("nik-vocabulary")
+        vocabulary_list = sx.Symbol("nik-vocabulary-list")
+        list_head = sx.Variable(f"vocab_list_head_{authority_index}")
+        list_tail = sx.Variable(f"vocab_list_tail_{authority_index}")
+        output.extend(
+            (
+                HornRule(
+                    f"nik-vocabulary-list-{authority_index}-nil",
+                    (vocabulary_list, identity, sx.Symbol("LNil")),
+                    (),
+                ),
+                HornRule(
+                    f"nik-vocabulary-list-{authority_index}-cons",
+                    (
+                        vocabulary_list,
+                        identity,
+                        (sx.Symbol("LCons"), list_head, list_tail),
+                    ),
+                    (
+                        (vocabulary, identity, list_head),
+                        (vocabulary_list, identity, list_tail),
+                    ),
+                ),
+            )
+        )
+        atom_name = sx.Variable(f"vocab_atom_{authority_index}")
+        output.append(
+            HornRule(
+                f"nik-vocabulary-{authority_index}-atom",
+                (
+                    vocabulary,
+                    identity,
+                    (sx.Symbol("PApp"), atom_name, sx.Symbol("LNil")),
+                ),
+                tuple(
+                    (
+                        sx.Symbol("nik-name-distinct"),
+                        atom_name,
+                        sx.StringLiteral(constructor.name),
+                    )
+                    for constructor in authority.constructors
+                ),
+            )
+        )
+        for constructor_index, constructor in enumerate(authority.constructors):
+            constructor_arguments = tuple(
+                sx.Variable(
+                    f"vocab_{authority_index}_{constructor_index}_{argument_index}"
+                )
+                for argument_index in range(constructor.arity)
+            )
+            output.append(
+                HornRule(
+                    f"nik-vocabulary-{authority_index}-constructor-{constructor_index}",
+                    (
+                        vocabulary,
+                        identity,
+                        (
+                            sx.Symbol("PApp"),
+                            sx.StringLiteral(constructor.name),
+                            make_wire_list(
+                                constructor_arguments, "LNil", "LCons"
+                            ),
+                        ),
+                    ),
+                    tuple(
+                        (vocabulary, identity, argument)
+                        for argument in constructor_arguments
+                    ),
+                )
+            )
+        variable_index = sx.Variable(f"vocab_var_{authority_index}")
+        lambda_body = sx.Variable(f"vocab_lam_body_{authority_index}")
+        multi_arity = sx.Variable(f"vocab_multi_arity_{authority_index}")
+        multi_body = sx.Variable(f"vocab_multi_body_{authority_index}")
+        subst_body = sx.Variable(f"vocab_subst_body_{authority_index}")
+        subst_replacement = sx.Variable(
+            f"vocab_subst_replacement_{authority_index}"
+        )
+        collection_kind = sx.Variable(
+            f"vocab_collection_kind_{authority_index}"
+        )
+        collection_elements = sx.Variable(
+            f"vocab_collection_elements_{authority_index}"
+        )
+        output.extend(
+            (
+                HornRule(
+                    f"nik-vocabulary-{authority_index}-variable",
+                    (
+                        vocabulary,
+                        identity,
+                        (sx.Symbol("Var"), variable_index),
+                    ),
+                    (),
+                ),
+                HornRule(
+                    f"nik-vocabulary-{authority_index}-lambda",
+                    (
+                        vocabulary,
+                        identity,
+                        (sx.Symbol("PLam"), sx.Symbol("BNone"), lambda_body),
+                    ),
+                    ((vocabulary, identity, lambda_body),),
+                ),
+                HornRule(
+                    f"nik-vocabulary-{authority_index}-multi-lambda",
+                    (
+                        vocabulary,
+                        identity,
+                        (
+                            sx.Symbol("PMultiLam"),
+                            multi_arity,
+                            sx.Symbol("LNil"),
+                            multi_body,
+                        ),
+                    ),
+                    ((vocabulary, identity, multi_body),),
+                ),
+                HornRule(
+                    f"nik-vocabulary-{authority_index}-substitution",
+                    (
+                        vocabulary,
+                        identity,
+                        (
+                            sx.Symbol("PSubst"),
+                            subst_body,
+                            subst_replacement,
+                        ),
+                    ),
+                    (
+                        (vocabulary, identity, subst_body),
+                        (vocabulary, identity, subst_replacement),
+                    ),
+                ),
+                HornRule(
+                    f"nik-vocabulary-{authority_index}-collection",
+                    (
+                        vocabulary,
+                        identity,
+                        (
+                            sx.Symbol("PCollection"),
+                            collection_kind,
+                            collection_elements,
+                            sx.Symbol("RNone"),
+                        ),
+                    ),
+                    ((vocabulary_list, identity, collection_elements),),
+                ),
             )
         )
         for rule_index, rule in enumerate(authority.rules):
@@ -290,13 +588,34 @@ def specialized_rules(authorities: tuple[Authority, ...]) -> tuple[HornRule, ...
                 make_wire_list(children, "PrNil", "PrCons"),
             )
             head = (sx.Symbol("nik-check"), identity, conclusion, proof)
-            body = tuple(
+            vocabulary_body = tuple(
+                (vocabulary, identity, argument)
+                for argument in arguments
+            )
+            support_body = tuple(
+                (
+                    sx.Symbol("nik-pattern-supported-at"),
+                    formal.depth,
+                    argument,
+                )
+                for formal, argument in zip(
+                    rule.formals, arguments, strict=True
+                )
+            )
+            side_condition_body = tuple(
+                side_condition_goal(condition, arguments)
+                for condition in rule.side_conditions
+            )
+            premise_body = tuple(
                 (sx.Symbol("nik-check"), identity, premise, child)
                 for premise, child in zip(premises, children, strict=True)
             )
             output.append(
                 HornRule(
-                    f"nik-rule-{authority_index}-{rule_index}", head, body
+                    f"nik-rule-{authority_index}-{rule_index}",
+                    head,
+                    vocabulary_body + support_body +
+                    side_condition_body + premise_body,
                 )
             )
     return tuple(output)
@@ -315,7 +634,11 @@ def collect_operators(value: sx.SExpr, output: set[tuple[str, int]]) -> None:
 
 def render_semantics(authorities: tuple[Authority, ...]) -> str:
     rules = specialized_rules(authorities)
-    operators: set[tuple[str, int]] = set()
+    operators: set[tuple[str, int]] = {
+        ("nik-explicit-substitution", 3),
+        ("nik-pattern-supported-at", 2),
+        ("nik-unused-binder-elimination", 2),
+    }
     for rule in rules:
         collect_operators(rule.head, operators)
         for goal in rule.body:
@@ -425,7 +748,7 @@ def main() -> int:
     if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", arguments.symbol):
         raise GenerationError("registry symbol is not a C identifier")
     authorities = parse_catalog(arguments.catalog)
-    catalog_digest = sha256(arguments.catalog.read_bytes()).hexdigest()
+    catalog_digest = catalog_identity_digest(authorities)
     write_if_changed(arguments.semantic, render_semantics(authorities))
     write_if_changed(arguments.header, render_header(arguments.symbol))
     write_if_changed(
