@@ -1,8 +1,10 @@
 #include "atom.h"
 #include "eval.h"
+#include "generated/prime_nik_authorities_v1.generated.h"
 #include "he_typing.h"
 #include "library.h"
 #include "match.h"
+#include "nik_runtime.h"
 #include "parser.h"
 #include "prime_semantics.h"
 #include "symbol.h"
@@ -123,6 +125,95 @@ int main(void) {
     if (!wrong_catalog_package ||
         prime_semantics_validate_package(wrong_catalog_package)) {
         fprintf(stderr, "wrong NIK authority catalog identity was accepted\n");
+        goto cleanup;
+    }
+
+    char nik_error[512] = {0};
+    CettaNikRuntimeV1 *nik_runtime = cetta_library_context_nik_runtime(
+        &libraries, nik_error, sizeof(nik_error));
+    if (!nik_runtime || cetta_nik_runtime_v1_admission_count(nik_runtime) != 0u) {
+        fprintf(stderr, "Prime NIK runtime did not begin lazily: %s\n", nik_error);
+        goto cleanup;
+    }
+    const CettaNikAuthorityV1 *dtt = &cetta_prime_nik_authorities_v1[0];
+    Atom *dtt_goal = parse_one(&scratch, dtt->positive_goal_metta);
+    Atom *dtt_proof = parse_one(&scratch, dtt->positive_proof_metta);
+    Atom *other_proof = parse_one(
+        &scratch, cetta_prime_nik_authorities_v1[1].positive_proof_metta);
+    Atom *prime_judge_head = atom_symbol(&scratch, "prime-judge");
+    Atom *dtt_judgment = atom_expr(
+        &scratch,
+        (Atom *[]){atom_symbol(&scratch, "Check"),
+                   atom_symbol(&scratch, dtt->alias),
+                   dtt_goal, dtt_proof},
+        4u);
+    Atom *judge_args[2] = {
+        atom_space(&scratch, &space),
+        dtt_judgment,
+    };
+    Atom *established = prime_semantics_dispatch(
+        &scratch, prime_judge_head, judge_args, 2u);
+    if (!established || established->kind != ATOM_EXPR ||
+        established->expr.len < 2u ||
+        !atom_is_symbol(established->expr.elems[0], "PrimeVerdict") ||
+        !atom_is_symbol(established->expr.elems[1], "Established") ||
+        cetta_nik_runtime_v1_admission_count(nik_runtime) != 1u) {
+        fprintf(stderr, "Prime did not admit and reuse its NIK authority: ");
+        atom_print(established, stderr);
+        fprintf(
+            stderr, " (admissions=%zu)\n",
+            cetta_nik_runtime_v1_admission_count(nik_runtime));
+        goto cleanup;
+    }
+    Atom *dtt_dag_nodes = parse_one(
+        &scratch,
+        "(LCons (GDNode 0 (GRuleInst \"j\" LNil) LNil) "
+        "  (LCons (GDNode 1 (GRuleInst \"z\" LNil) LNil) "
+        "    (LCons (GDNode 2 "
+        "      (GRuleInst \"k\" "
+        "        (LCons (PApp \"i\" LNil) "
+        "          (LCons (PApp \"Z\" LNil) "
+        "            (LCons (PApp \"N\" LNil) "
+        "              (LCons (PApp \"N\" LNil) LNil))))) "
+        "      (LCons (GRNode 0) (LCons (GRNode 1) LNil))) LNil)))");
+    Atom *dtt_dag_proof = atom_expr(
+        &scratch,
+        (Atom *[]){atom_symbol(&scratch, "GProofDAG"), atom_int(&scratch, 1),
+                   dtt_dag_nodes, atom_int(&scratch, 2), dtt_goal},
+        5u);
+    Atom *dag_judgment = atom_expr(
+        &scratch,
+        (Atom *[]){atom_symbol(&scratch, "Check"),
+                   atom_symbol(&scratch, dtt->alias),
+                   dtt_goal, dtt_dag_proof},
+        4u);
+    judge_args[1] = dag_judgment;
+    Atom *dag_established = prime_semantics_dispatch(
+        &scratch, prime_judge_head, judge_args, 2u);
+    if (!dag_established || dag_established->kind != ATOM_EXPR ||
+        dag_established->expr.len < 2u ||
+        !atom_is_symbol(dag_established->expr.elems[0], "PrimeVerdict") ||
+        !atom_is_symbol(dag_established->expr.elems[1], "Established") ||
+        cetta_nik_runtime_v1_admission_count(nik_runtime) != 1u) {
+        fprintf(stderr,
+                "Prime did not replay a compact article through its admitted NIK authority\n");
+        goto cleanup;
+    }
+    Atom *wrong_dtt_judgment = atom_expr(
+        &scratch,
+        (Atom *[]){atom_symbol(&scratch, "Check"),
+                   atom_symbol(&scratch, dtt->alias),
+                   dtt_goal, other_proof},
+        4u);
+    judge_args[1] = wrong_dtt_judgment;
+    Atom *refuted = prime_semantics_dispatch(
+        &scratch, prime_judge_head, judge_args, 2u);
+    if (!refuted || refuted->kind != ATOM_EXPR ||
+        refuted->expr.len < 2u ||
+        !atom_is_symbol(refuted->expr.elems[0], "PrimeVerdict") ||
+        !atom_is_symbol(refuted->expr.elems[1], "Refuted") ||
+        cetta_nik_runtime_v1_admission_count(nik_runtime) != 1u) {
+        fprintf(stderr, "Prime rebuilt or corrupted its admitted NIK authority\n");
         goto cleanup;
     }
 

@@ -12,6 +12,7 @@
 #include "space.h"
 #include <stdbool.h>
 #include <limits.h>
+#include <pthread.h>
 
 #define CETTA_MAX_MODULE_ROOTS 32
 #define CETTA_MAX_IMPORT_DIR_DEPTH 32
@@ -84,8 +85,13 @@ struct PettaMachineTable;
 
 struct CettaPettaTokenSpaceClauseRegistry;
 
+struct CettaNikRuntimeV1;
+
 typedef struct CettaLibraryContext {
     CettaEvalSession session;
+    pthread_mutex_t nik_runtime_mutex;
+    bool nik_runtime_mutex_ready;
+    struct CettaNikRuntimeV1 *nik_runtime;
     TermUniverse term_universe;
     uint32_t active_mask;
     char root_dir[4096];
@@ -137,6 +143,10 @@ void cetta_library_context_init_for_language_profile(CettaLibraryContext *ctx,
                                                      CettaLanguageId language_id,
                                                      const CettaProfile *profile);
 void cetta_library_context_free(CettaLibraryContext *ctx);
+struct CettaNikRuntimeV1 *cetta_library_context_nik_runtime(
+    CettaLibraryContext *ctx,
+    char *error_buf,
+    size_t error_buf_size);
 bool cetta_library_root_for_exec_path(const char *argv0,
                                       char *output, size_t output_size);
 void cetta_library_context_set_exec_path(CettaLibraryContext *ctx, const char *argv0);

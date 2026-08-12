@@ -4,7 +4,9 @@
     (operator canary-route 2)
     (operator canary-left 1)
     (operator canary-right 1)
-    (operator canary-pair 2))
+    (operator canary-pair 2)
+    (operator canary-deep 1)
+    (operator canary-succ 1))
   (equations)
   (rewrites
     (rule canary-link-alpha-beta-one
@@ -34,4 +36,11 @@
       (body
         (canary-left ?left)
         (canary-right ?right)))
+    (rule canary-deep-zero
+      (head (canary-deep canary-zero))
+      (body))
+    (rule canary-deep-succ
+      (head (canary-deep (canary-succ ?rest)))
+      (body
+        (canary-deep ?rest)))
   ))
