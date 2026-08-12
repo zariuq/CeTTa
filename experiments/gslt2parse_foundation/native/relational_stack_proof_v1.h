@@ -80,6 +80,21 @@ typedef struct {
     uint32_t assertion_hypothesis_table;
     uint32_t assertion_disjoint_table;
     uint32_t symbol_kind_table;
+    /* Derived from a generated proof-call region whose only exported
+     * observation is a value verdict.  Without this admission, transaction
+     * scratch must be released rather than retained for reuse. */
+    bool scratch_reuse_admitted;
+    /* Derived from the complete recursive support/apartness fragment in the
+     * generated proof semantics.  It licenses dense support and apartness
+     * carriers; absence selects the structural source check. */
+    bool finite_support_admitted;
+    /* Derived from a generated compressed-proof action whose finite header is
+     * available before its indexed instruction stream.  Absence preserves the
+     * source machine but forbids the cached prepared-table realization. */
+    bool indexed_values_admitted;
+    /* Derived from a flat literal-or-slot template whose literal runs are
+     * immutable for the lifetime of the compiled frame. */
+    bool literal_hole_admitted;
     char native_type_digest[65];
     char storage_plan_digest[65];
 } PPRelationalStackProofV1CacheAdmission;
@@ -93,7 +108,21 @@ typedef struct {
     uint64_t miss_len;
     uint64_t retained_source_len;
     uint64_t source_reuse_len;
+    uint64_t template_cell_len;
+    uint64_t template_part_len;
+    uint64_t template_head_len;
+    uint64_t scratch_acquire_len;
+    uint64_t scratch_reuse_len;
     uint32_t entry_len;
+    uint32_t lookup_index_capacity;
+    uint32_t scratch_formula_capacity;
+    uint32_t scratch_stack_capacity;
+    uint32_t scratch_heap_capacity;
+    uint32_t scratch_substitution_capacity;
+    uint32_t scratch_support_width;
+    uint32_t scratch_support_slot_capacity;
+    uint64_t scratch_support_compute_len;
+    uint64_t scratch_support_hit_len;
 } PPRelationalStackProofV1CacheStats;
 
 bool pprelational_stack_proof_v1_machine_validate(

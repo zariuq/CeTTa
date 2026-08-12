@@ -428,6 +428,10 @@ static bool setup(TestStore *store,
     ADD3(TEST_ASSERTION_HYPOTHESIS, claim, p10, ha);
     ADD3(TEST_ASSERTION_HYPOTHESIS, claim, p20, hb);
     ADD3(TEST_ASSERTION_DISJOINT, rule, x, y);
+    /* A repeated semantic obligation is intentional: the generic compiled
+     * machine must reuse each slot's exact support summary rather than scan
+     * both substitution images again. */
+    ADD3(TEST_ASSERTION_DISJOINT, rule, x, y);
     ADD4(TEST_ACTIVE_HYPOTHESIS, ha, k_bind, a, f_ha);
     ADD4(TEST_ACTIVE_HYPOTHESIS, hb, k_bind, b, f_hb);
     ADD4(TEST_ACTIVE_HYPOTHESIS, actual, k_match, constructor, f_actual);
@@ -480,6 +484,10 @@ static bool setup(TestStore *store,
         .assertion_hypothesis_table = TEST_ASSERTION_HYPOTHESIS,
         .assertion_disjoint_table = TEST_ASSERTION_DISJOINT,
         .symbol_kind_table = TEST_SYMBOL_KIND,
+        .scratch_reuse_admitted = true,
+        .finite_support_admitted = true,
+        .indexed_values_admitted = true,
+        .literal_hole_admitted = true,
     };
     memset(admission->native_type_digest, '1', 64u);
     admission->native_type_digest[64] = '\0';
@@ -588,7 +596,19 @@ int main(void) {
            "cached normal frame cannot be reused");
     expect(pprelational_stack_proof_v1_cache_stats(&cache, &stats) &&
                stats.entry_len == 1u && stats.miss_len == 1u &&
-               stats.hit_len == 1u,
+               stats.hit_len == 1u &&
+               stats.lookup_index_capacity >= 16u &&
+               stats.scratch_acquire_len == 2u &&
+               stats.scratch_reuse_len == 1u &&
+               stats.scratch_formula_capacity != 0u &&
+               stats.scratch_stack_capacity != 0u &&
+               stats.scratch_substitution_capacity != 0u &&
+               stats.scratch_support_width >= 2u &&
+               stats.scratch_support_slot_capacity >= 2u &&
+               stats.scratch_support_compute_len == 4u &&
+               stats.scratch_support_hit_len == 4u &&
+               stats.template_head_len != 0u &&
+               stats.template_part_len < stats.template_cell_len,
            "cache statistics do not expose one compile and one reuse");
 
     uncached = pprelational_stack_proof_v1_compressed(
@@ -602,7 +622,10 @@ int main(void) {
                stats.entry_len == 2u && stats.miss_len == 1u &&
                stats.hit_len == 2u &&
                stats.retained_source_len == 1u &&
-               stats.source_reuse_len == 0u,
+               stats.source_reuse_len == 0u &&
+               stats.scratch_acquire_len == 3u &&
+               stats.scratch_reuse_len == 2u &&
+               stats.scratch_heap_capacity != 0u,
            "compressed execution did not retain its admitted source frame");
 
     {
@@ -676,6 +699,86 @@ int main(void) {
                    error, sizeof(error)),
                "cache accepted mismatched generated admission");
         pprelational_stack_proof_v1_cache_free(&rejected_cache);
+    }
+
+    {
+        PPRelationalStackProofV1CacheAdmission bad = admission;
+        PPRelationalStackProofV1Cache rejected_cache = {0};
+        bad.scratch_reuse_admitted = false;
+        expect(!pprelational_stack_proof_v1_cache_init(
+                   &rejected_cache, &store, &machine, &bad,
+                   error, sizeof(error)),
+               "cache accepted a missing generated scratch-region admission");
+        pprelational_stack_proof_v1_cache_free(&rejected_cache);
+    }
+
+    {
+        PPRelationalStackProofV1CacheAdmission fallback_admission =
+            admission;
+        PPRelationalStackProofV1Cache fallback_cache = {0};
+        PPRelationalStackProofV1CacheStats fallback_stats;
+        fallback_admission.finite_support_admitted = false;
+        expect(pprelational_stack_proof_v1_cache_init(
+                   &fallback_cache, &store, &machine,
+                   &fallback_admission, error, sizeof(error)) &&
+                   pprelational_stack_proof_v1_normal_cached(
+                       &store, &machine, &fallback_cache, &normal,
+                       error, sizeof(error)) ==
+                       pprelational_stack_proof_v1_normal(
+                           &store, &machine, &normal,
+                           error, sizeof(error)) &&
+                   pprelational_stack_proof_v1_cache_stats(
+                       &fallback_cache, &fallback_stats) &&
+                   fallback_stats.scratch_support_width == 0u,
+               "missing support admission did not select the exact source check");
+        pprelational_stack_proof_v1_cache_free(&fallback_cache);
+    }
+
+    {
+        PPRelationalStackProofV1CacheAdmission fallback_admission =
+            admission;
+        PPRelationalStackProofV1Cache fallback_cache = {0};
+        PPRelationalStackProofV1CacheStats fallback_stats;
+        fallback_admission.literal_hole_admitted = false;
+        expect(pprelational_stack_proof_v1_cache_init(
+                   &fallback_cache, &store, &machine,
+                   &fallback_admission, error, sizeof(error)) &&
+                   pprelational_stack_proof_v1_normal_cached(
+                       &store, &machine, &fallback_cache, &normal,
+                       error, sizeof(error)) ==
+                       pprelational_stack_proof_v1_normal(
+                           &store, &machine, &normal,
+                           error, sizeof(error)) &&
+                   pprelational_stack_proof_v1_cache_stats(
+                       &fallback_cache, &fallback_stats) &&
+                   fallback_stats.template_head_len == 0u &&
+                   fallback_stats.template_part_len ==
+                       fallback_stats.template_cell_len,
+               "missing literal/hole admission coalesced a template");
+        pprelational_stack_proof_v1_cache_free(&fallback_cache);
+    }
+
+    {
+        PPRelationalStackProofV1CacheAdmission fallback_admission =
+            admission;
+        PPRelationalStackProofV1Cache fallback_cache = {0};
+        fallback_admission.indexed_values_admitted = false;
+        expect(pprelational_stack_proof_v1_cache_init(
+                   &fallback_cache, &store, &machine,
+                   &fallback_admission, error, sizeof(error)) &&
+                   pprelational_stack_proof_v1_normal_cached(
+                       &store, &machine, &fallback_cache, &normal,
+                       error, sizeof(error)) ==
+                       pprelational_stack_proof_v1_normal(
+                           &store, &machine, &normal,
+                           error, sizeof(error)) &&
+                   pprelational_stack_proof_v1_compressed_cached(
+                       &store, &machine, &fallback_cache, &compressed,
+                       error, sizeof(error)) ==
+                       PPRELATIONAL_STACK_PROOF_V1_INVALID &&
+                   strstr(error, "prepared indexed-value table") != NULL,
+               "missing indexed-value admission did not fail closed");
+        pprelational_stack_proof_v1_cache_free(&fallback_cache);
     }
 
     {

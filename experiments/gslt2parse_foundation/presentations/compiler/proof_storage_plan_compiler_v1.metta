@@ -18,9 +18,14 @@
     (operator proof-machine-binding-v1 4)
     (operator proof-machine-id-v1 1)
     (operator proof-machine-table-read-v1 4)
+    (operator proof-finite-support-plan-v1 11)
+    (operator proof-indexed-value-plan-v1 7)
+    (operator proof-literal-hole-plan-v1 7)
     (operator proof-sequence-evidence-artifact-v1 1)
     (operator proof-sequence-evidence-assertion-judgment-role-v1 3)
     (operator proof-sequence-evidence-constructor-role-v1 4)
+    (operator proof-sequence-evidence-judgment-role-v1 3)
+    (operator proof-sequence-evidence-rule-role-v1 3)
     (operator proof-sequence-id-v1 2)
     (operator proof-sequence-layout-v1 7)
     (operator proof-sequence-relational-artifact-v1 1)
@@ -31,7 +36,12 @@
     (operator proof-storage-region-v1 2)
     (operator proof-storage-required-v1 1)
     (operator proof-succ-v1 1)
+    (operator q-app 2)
+    (operator q-cons 2)
+    (operator q-sym 1)
     (operator q-succ 1)
+    (operator q-var 1)
+    (operator oslf-step-schema-v1 4)
     (operator state-action-v1 3)
     (operator state-byte-literal-v1 1)
     (operator state-check-proof-compressed-v1 5)
@@ -243,6 +253,197 @@
         (compile-oslf-native-type-v1
           (oslf-head-signature-v1 ?nil q-zero))))
 
+    ; An immutable flat sequence can compile adjacent literal cells into runs
+    ; while retaining dense substitution slots as holes.  The compiler derives
+    ; the permission from the sequence layout and persistent frame inputs; the
+    ; runtime supplies only the vocabulary-independent run interpreter.
+    (rule proof-storage-literal-hole-program-v1
+      (head
+        (compile-proof-storage-plan-v1
+          (proof-literal-hole-plan-v1
+            ?machine ?owner ?cons ?nil
+            literal-hole-run-program-v1 state-run-region-v1
+            proof-call-region-v1)))
+      (body
+        (compile-proof-storage-plan-v1
+          (proof-machine-binding-v1
+            ?machine ?owner ?base ?provable))
+        (compile-proof-storage-plan-v1
+          (proof-sequence-layout-v1
+            ?owner ?base ?provable ?cons ?nil
+            flat-symbol-id-vector-v1 proof-call-region-v1))
+        (compile-proof-storage-plan-v1
+          (proof-machine-table-read-v1
+            ?machine formula-v1 ?formula state-persistent-v1))
+        (compile-proof-storage-plan-v1
+          (proof-machine-table-read-v1
+            ?machine mandatory-variable-v1 ?mandatory state-persistent-v1))))
+
+    ; A finite support carrier is admitted only for the complete recursive
+    ; sequence-apartness fragment.  The evidence roles bind the authored
+    ; calculus to these native-type schemas; the schemas then prevent a role
+    ; label from licensing a differently shaped rule.
+    (rule proof-storage-finite-support-v1
+      (head
+        (compile-proof-storage-plan-v1
+          (proof-finite-support-plan-v1
+            ?owner ?cons ?nil ?support-apart ?token-against
+            ?pair-allowed ?apart ?literal ?variable
+            finite-dense-bitset-v1 finite-apartness-matrix-v1)))
+      (body
+        (proof-sequence-evidence-artifact-v1
+          (proof-sequence-evidence-constructor-role-v1
+            ?owner ?base sequence-cons-v1 ?cons))
+        (proof-sequence-evidence-artifact-v1
+          (proof-sequence-evidence-constructor-role-v1
+            ?owner ?base sequence-nil-v1 ?nil))
+        (proof-sequence-evidence-artifact-v1
+          (proof-sequence-evidence-judgment-role-v1
+            ?owner support-apart-v1 ?support-apart))
+        (proof-sequence-evidence-artifact-v1
+          (proof-sequence-evidence-judgment-role-v1
+            ?owner token-against-sequence-v1 ?token-against))
+        (proof-sequence-evidence-artifact-v1
+          (proof-sequence-evidence-judgment-role-v1
+            ?owner pair-allowed-v1 ?pair-allowed))
+        (proof-sequence-evidence-artifact-v1
+          (proof-sequence-evidence-judgment-role-v1
+            ?owner apart-v1 ?apart))
+        (proof-sequence-evidence-artifact-v1
+          (proof-sequence-evidence-judgment-role-v1
+            ?owner literal-v1 ?literal))
+        (proof-sequence-evidence-artifact-v1
+          (proof-sequence-evidence-judgment-role-v1
+            ?owner variable-v1 ?variable))
+        (proof-sequence-evidence-artifact-v1
+          (proof-sequence-evidence-rule-role-v1
+            ?owner support-apart-cons-v1 ?support-cons-rule))
+        (proof-sequence-evidence-artifact-v1
+          (proof-sequence-evidence-rule-role-v1
+            ?owner support-apart-nil-v1 ?support-nil-rule))
+        (proof-sequence-evidence-artifact-v1
+          (proof-sequence-evidence-rule-role-v1
+            ?owner token-against-cons-v1 ?token-cons-rule))
+        (proof-sequence-evidence-artifact-v1
+          (proof-sequence-evidence-rule-role-v1
+            ?owner token-against-nil-v1 ?token-nil-rule))
+        (proof-sequence-evidence-artifact-v1
+          (proof-sequence-evidence-rule-role-v1
+            ?owner pair-apart-v1 ?pair-apart-rule))
+        (proof-sequence-evidence-artifact-v1
+          (proof-sequence-evidence-rule-role-v1
+            ?owner pair-left-literal-v1 ?pair-left-literal-rule))
+        (proof-sequence-evidence-artifact-v1
+          (proof-sequence-evidence-rule-role-v1
+            ?owner pair-right-literal-v1 ?pair-right-literal-rule))
+        (compile-oslf-native-type-v1
+          (oslf-head-signature-v1 ?cons (q-succ (q-succ q-zero))))
+        (compile-oslf-native-type-v1
+          (oslf-head-signature-v1 ?nil q-zero))
+        (compile-oslf-native-type-v1
+          (oslf-head-signature-v1
+            ?support-apart (q-succ (q-succ q-zero))))
+        (compile-oslf-native-type-v1
+          (oslf-head-signature-v1
+            ?token-against (q-succ (q-succ q-zero))))
+        (compile-oslf-native-type-v1
+          (oslf-head-signature-v1
+            ?pair-allowed (q-succ (q-succ q-zero))))
+        (compile-oslf-native-type-v1
+          (oslf-head-signature-v1 ?apart (q-succ (q-succ q-zero))))
+        (compile-oslf-native-type-v1
+          (oslf-head-signature-v1 ?literal (q-succ q-zero)))
+        (compile-oslf-native-type-v1
+          (oslf-head-signature-v1 ?variable (q-succ q-zero)))
+        (compile-oslf-native-type-v1
+          (oslf-step-schema-v1
+            ?owner ?support-cons-rule
+            (q-app (q-sym ?support-apart)
+              (q-cons
+                (q-app (q-sym ?cons)
+                  (q-cons (q-var q-zero)
+                    (q-cons (q-var (q-succ q-zero)) q-nil)))
+                (q-cons (q-var (q-succ (q-succ q-zero))) q-nil)))
+            (q-cons
+              (q-app (q-sym ?token-against)
+                (q-cons (q-var q-zero)
+                  (q-cons (q-var (q-succ (q-succ q-zero))) q-nil)))
+              (q-cons
+                (q-app (q-sym ?support-apart)
+                  (q-cons (q-var (q-succ q-zero))
+                    (q-cons (q-var (q-succ (q-succ q-zero))) q-nil)))
+                q-nil))))
+        (compile-oslf-native-type-v1
+          (oslf-step-schema-v1
+            ?owner ?support-nil-rule
+            (q-app (q-sym ?support-apart)
+              (q-cons (q-app (q-sym ?nil) q-nil)
+                (q-cons (q-var q-zero) q-nil)))
+            q-nil))
+        (compile-oslf-native-type-v1
+          (oslf-step-schema-v1
+            ?owner ?token-cons-rule
+            (q-app (q-sym ?token-against)
+              (q-cons (q-var q-zero)
+                (q-cons
+                  (q-app (q-sym ?cons)
+                    (q-cons (q-var (q-succ q-zero))
+                      (q-cons (q-var (q-succ (q-succ q-zero))) q-nil)))
+                  q-nil)))
+            (q-cons
+              (q-app (q-sym ?pair-allowed)
+                (q-cons (q-var q-zero)
+                  (q-cons (q-var (q-succ q-zero)) q-nil)))
+              (q-cons
+                (q-app (q-sym ?token-against)
+                  (q-cons (q-var q-zero)
+                    (q-cons (q-var (q-succ (q-succ q-zero))) q-nil)))
+                q-nil))))
+        (compile-oslf-native-type-v1
+          (oslf-step-schema-v1
+            ?owner ?token-nil-rule
+            (q-app (q-sym ?token-against)
+              (q-cons (q-var q-zero)
+                (q-cons (q-app (q-sym ?nil) q-nil) q-nil)))
+            q-nil))
+        (compile-oslf-native-type-v1
+          (oslf-step-schema-v1
+            ?owner ?pair-apart-rule
+            (q-app (q-sym ?pair-allowed)
+              (q-cons (q-var q-zero)
+                (q-cons (q-var (q-succ q-zero)) q-nil)))
+            (q-cons
+              (q-app (q-sym ?variable)
+                (q-cons (q-var q-zero) q-nil))
+              (q-cons
+                (q-app (q-sym ?variable)
+                  (q-cons (q-var (q-succ q-zero)) q-nil))
+                (q-cons
+                  (q-app (q-sym ?apart)
+                    (q-cons (q-var q-zero)
+                      (q-cons (q-var (q-succ q-zero)) q-nil)))
+                  q-nil)))))
+        (compile-oslf-native-type-v1
+          (oslf-step-schema-v1
+            ?owner ?pair-left-literal-rule
+            (q-app (q-sym ?pair-allowed)
+              (q-cons (q-var q-zero)
+                (q-cons (q-var (q-succ q-zero)) q-nil)))
+            (q-cons
+              (q-app (q-sym ?literal)
+                (q-cons (q-var q-zero) q-nil))
+              q-nil)))
+        (compile-oslf-native-type-v1
+          (oslf-step-schema-v1
+            ?owner ?pair-right-literal-rule
+            (q-app (q-sym ?pair-allowed)
+              (q-cons (q-var q-zero)
+                (q-cons (q-var (q-succ q-zero)) q-nil)))
+            (q-cons
+              (q-app (q-sym ?literal)
+                (q-cons (q-var (q-succ q-zero)) q-nil))
+              q-nil)))))
+
     (rule proof-storage-machine-binding-v1
       (head
         (compile-proof-storage-plan-v1
@@ -327,6 +528,38 @@
         (compile-proof-storage-plan-v1
           (proof-machine-binding-v1
             ?machine ?owner ?base ?provable))))
+
+    ; A prepared indexed-value table is admitted only when the complete
+    ; ordered header and the indexed instruction stream are distinct inputs
+    ; of one bounded proof call, and the machine supplies an explicit numeric
+    ; decoder.  The runtime supplies the table algorithm; this record supplies
+    ; the local property that licenses it.
+    (rule proof-storage-indexed-value-table-v1
+      (head
+        (compile-proof-storage-plan-v1
+          (proof-indexed-value-plan-v1
+            ?operation ?index ?machine ?header-role ?code-role
+            prepared-indexed-value-table-v1 proof-call-region-v1)))
+      (body
+        (state-action-v1
+          ?operation ?index
+          (state-check-proof-compressed-v1
+            ?machine ?label-role ?formula-role ?header-role ?code-role))
+        (state-proof-machine-v1
+          ?machine
+          (state-stack-proof-machine-v1
+            ?tables ?kinds
+            (state-proof-decoder-v1
+              ?terminal-low ?terminal-high
+              ?continuation-low ?continuation-high
+              ?save ?unknown
+              ?terminal-radix ?terminal-bias
+              ?continuation-radix ?continuation-bias ?unknown-policy)))
+        (compile-proof-storage-plan-v1
+          (proof-call-region-plan-v1
+            ?operation ?index ?machine ?owner ?provable
+            proof-call-region-v1 flat-symbol-id-vector-v1
+            proof-verdict-only-v1))))
 
     (rule proof-storage-required-table-v1
       (head

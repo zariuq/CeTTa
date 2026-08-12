@@ -1,5 +1,6 @@
 #include "gslt_compiled_runtime.h"
 
+#include "gslt_dense_bitset_v1.h"
 #include "match.h"
 #include "native_sha256.h"
 
@@ -93,7 +94,15 @@ struct CettaGsltCompiledProgram {
     size_t bucket_slot_cap;
     uint64_t bucket_insert_collisions;
     size_t bucket_max_probe;
+    size_t dispatch_scratch_slot_capacity;
+    size_t dispatch_scratch_allocation_count;
     uint32_t max_variable_count;
+    uint32_t variable_support_slot_capacity;
+    size_t variable_support_word_capacity;
+    size_t variable_support_allocation_count;
+    uint32_t flat_variable_head_rule_count;
+    uint32_t ground_cached_plan_node_count;
+    uint64_t ground_cached_value_node_count;
 };
 
 typedef struct {
@@ -314,7 +323,7 @@ static bool compiled_validate_nodes(
 }
 
 static bool compiled_validate_rule_forest(
-    const CettaGsltCompiledProgram *program,
+    CettaGsltCompiledProgram *program,
     char *error, size_t error_size) {
     uint8_t *claimed = cetta_malloc(program->node_count);
     memset(claimed, 0, program->node_count);
@@ -325,7 +334,22 @@ static bool compiled_validate_rule_forest(
     size_t stack_capacity = (size_t)program->child_count +
         (size_t)program->body_count + (size_t)program->rule_count;
     uint32_t *stack = cetta_malloc(sizeof(*stack) * stack_capacity);
+    CettaGsltDenseBitsetV1 variable_support = {0};
     bool valid = true;
+    uint32_t support_slot_capacity = 0u;
+    for (uint32_t rule_index = 0u;
+         valid && rule_index < program->rule_count; rule_index++) {
+        uint32_t variable_count = program->rules[rule_index].variable_count;
+        valid = variable_count <= program->node_count;
+        if (valid && variable_count > support_slot_capacity)
+            support_slot_capacity = variable_count;
+    }
+    valid = valid && cetta_gslt_dense_bitset_init_v1(
+                         &variable_support, support_slot_capacity);
+    program->variable_support_slot_capacity = support_slot_capacity;
+    program->variable_support_word_capacity = variable_support.word_len;
+    program->variable_support_allocation_count =
+        variable_support.word_len != 0u ? 1u : 0u;
     for (uint32_t rule_index = 0u;
          valid && rule_index < program->rule_count; rule_index++) {
         const GsltCompiledRule *rule = &program->rules[rule_index];
@@ -343,10 +367,7 @@ static bool compiled_validate_rule_forest(
                 valid = false;
                 break;
             }
-        uint8_t *variables = rule->variable_count
-            ? cetta_malloc(rule->variable_count) : NULL;
-        if (variables)
-            memset(variables, 0, rule->variable_count);
+        cetta_gslt_dense_bitset_clear_v1(&variable_support);
         size_t stack_count = 0u;
         if (valid)
             stack[stack_count++] = rule->head;
@@ -371,18 +392,23 @@ static bool compiled_validate_rule_forest(
             const GsltCompiledNode *node = &program->nodes[node_index];
             if (node->kind == GSLT_PLAN_VARIABLE) {
                 valid = node->variable < rule->variable_count;
-                if (valid)
-                    variables[node->variable] = 1u;
+                if (valid) {
+                    bool changed;
+                    valid = cetta_gslt_dense_bitset_set_v1(
+                        &variable_support, node->variable, &changed);
+                }
             } else if (node->kind == GSLT_PLAN_APPLICATION) {
                 for (uint32_t child = 0u; child < node->child_count; child++)
                     stack[stack_count++] = program->children[
                         node->child_offset + child];
             }
         }
-        for (uint32_t variable = 0u;
-             valid && variable < rule->variable_count; variable++)
-            valid = variables[variable] != 0u;
-        free(variables);
+        if (valid) {
+            bool full;
+            valid = cetta_gslt_dense_bitset_prefix_full_v1(
+                        &variable_support, rule->variable_count, &full) &&
+                    full;
+        }
     }
     for (uint32_t node = 0u; valid && node < program->node_count; node++)
         valid = claimed[node] != 0u;
@@ -391,6 +417,7 @@ static bool compiled_validate_rule_forest(
     free(stack);
     free(body_slots);
     free(claimed);
+    cetta_gslt_dense_bitset_free_v1(&variable_support);
     if (!valid)
         return compiled_error(error, error_size,
                               "compiled GSLT rule forest is malformed");
@@ -408,6 +435,8 @@ static void compiled_analyze_rule_shapes(CettaGsltCompiledProgram *program) {
             flat = program->nodes[child].kind == GSLT_PLAN_VARIABLE;
         }
         rule->flat_variable_head = flat;
+        if (flat)
+            program->flat_variable_head_rule_count++;
         if (rule->variable_count > program->max_variable_count)
             program->max_variable_count = rule->variable_count;
     }
@@ -583,28 +612,23 @@ static bool compiled_build_ground_cache(
         node->ground_atom = cached;
         node->ground_node_count = node_count > UINT32_MAX
             ? UINT32_MAX : (uint32_t)node_count;
+        program->ground_cached_plan_node_count++;
+        program->ground_cached_value_node_count = compiled_u64_add_sat(
+            program->ground_cached_value_node_count, node_count);
     }
     return true;
 }
 
 static uint32_t compiled_bucket_dispatch_child(
     const CettaGsltCompiledProgram *program,
-    const GsltCompiledBucket *bucket) {
+    const GsltCompiledBucket *bucket,
+    GsltCompiledDispatchCountSlot *counts, size_t capacity) {
     uint32_t best_child = UINT32_MAX;
     uint64_t best_score = 0u;
-    if (!bucket || bucket->rule_count == 0u ||
-        (size_t)bucket->rule_count >
-            SIZE_MAX / (2u * sizeof(GsltCompiledDispatchCountSlot)))
+    if (!bucket || !counts || bucket->rule_count == 0u ||
+        (size_t)bucket->rule_count > SIZE_MAX / 2u ||
+        capacity < (size_t)bucket->rule_count * 2u)
         return best_child;
-    size_t required = (size_t)bucket->rule_count * 2u;
-    size_t capacity = 8u;
-    while (capacity < required) {
-        if (capacity > SIZE_MAX / 2u)
-            return best_child;
-        capacity *= 2u;
-    }
-    GsltCompiledDispatchCountSlot *counts =
-        cetta_malloc(sizeof(*counts) * capacity);
     for (uint32_t child = 0u; child < bucket->arity; child++) {
         memset(counts, 0, sizeof(*counts) * capacity);
         uint64_t rigid = 0u;
@@ -642,7 +666,6 @@ static uint32_t compiled_bucket_dispatch_child(
             best_child = child;
         }
     }
-    free(counts);
     return best_child;
 }
 
@@ -679,8 +702,10 @@ static GsltCompiledDispatchGroup *compiled_dispatch_group(
 
 static bool compiled_build_bucket_dispatch(
     const CettaGsltCompiledProgram *program,
-    GsltCompiledBucket *bucket) {
-    bucket->dispatch_child = compiled_bucket_dispatch_child(program, bucket);
+    GsltCompiledBucket *bucket,
+    GsltCompiledDispatchCountSlot *counts, size_t capacity) {
+    bucket->dispatch_child = compiled_bucket_dispatch_child(
+        program, bucket, counts, capacity);
     if (bucket->dispatch_child == UINT32_MAX)
         return true;
     for (uint32_t position = 0u;
@@ -825,12 +850,39 @@ static bool compiled_build_buckets(CettaGsltCompiledProgram *program,
             return compiled_error(error, error_size,
                                   "cannot index compiled GSLT rules");
     }
+    size_t maximum_rules = 0u;
     for (uint32_t index = 0u; index < program->bucket_count; index++)
-        if (!compiled_build_bucket_dispatch(
-                program, &program->buckets[index]))
+        if (program->buckets[index].rule_count > maximum_rules)
+            maximum_rules = program->buckets[index].rule_count;
+    if (maximum_rules > SIZE_MAX / 2u ||
+        maximum_rules * 2u >
+            SIZE_MAX / sizeof(GsltCompiledDispatchCountSlot))
+        return compiled_error(
+            error, error_size,
+            "compiled GSLT dispatch scratch exceeds host size");
+    size_t required = maximum_rules * 2u;
+    size_t capacity = 8u;
+    while (capacity < required) {
+        if (capacity > SIZE_MAX / 2u)
             return compiled_error(
                 error, error_size,
-                "cannot build compiled GSLT discrimination index");
+                "compiled GSLT dispatch scratch exceeds host size");
+        capacity *= 2u;
+    }
+    GsltCompiledDispatchCountSlot *counts =
+        cetta_malloc(sizeof(*counts) * capacity);
+    program->dispatch_scratch_slot_capacity = capacity;
+    program->dispatch_scratch_allocation_count = 1u;
+    bool dispatched = true;
+    for (uint32_t index = 0u;
+         dispatched && index < program->bucket_count; index++)
+        dispatched = compiled_build_bucket_dispatch(
+            program, &program->buckets[index], counts, capacity);
+    free(counts);
+    if (!dispatched)
+        return compiled_error(
+            error, error_size,
+            "cannot build compiled GSLT discrimination index");
     return compiled_index_buckets(program, error, error_size);
 }
 
@@ -977,9 +1029,30 @@ bool cetta_gslt_compiled_program_index_stats_v1(
         .slot_count = program->bucket_slot_cap,
         .insertion_collisions = program->bucket_insert_collisions,
         .maximum_probe = program->bucket_max_probe,
+        .dispatch_scratch_slot_capacity =
+            program->dispatch_scratch_slot_capacity,
+        .dispatch_scratch_allocation_count =
+            program->dispatch_scratch_allocation_count,
+        .variable_support_slot_capacity =
+            program->variable_support_slot_capacity,
+        .variable_support_word_capacity =
+            program->variable_support_word_capacity,
+        .variable_support_allocation_count =
+            program->variable_support_allocation_count,
+        .plan_node_count = program->node_count,
+        .flat_variable_head_rule_count =
+            program->flat_variable_head_rule_count,
+        .ground_cached_plan_node_count =
+            program->ground_cached_plan_node_count,
+        .ground_cached_value_node_count =
+            program->ground_cached_value_node_count,
     };
     for (uint32_t index = 0u; index < program->bucket_count; index++) {
         const GsltCompiledBucket *bucket = &program->buckets[index];
+        stats->head_indexed_rule_count =
+            SIZE_MAX - stats->head_indexed_rule_count < bucket->rule_count
+                ? SIZE_MAX
+                : stats->head_indexed_rule_count + bucket->rule_count;
         if (bucket->dispatch_child != UINT32_MAX)
             stats->dispatch_bucket_count++;
         stats->dispatch_group_count =
@@ -1679,6 +1752,9 @@ bool cetta_gslt_compiled_query_with_providers_v1(
     if (variable_epochs)
         memset(variable_epochs, 0,
                sizeof(*variable_epochs) * program->max_variable_count);
+    result->rule_variable_slot_capacity = program->max_variable_count;
+    result->rule_variable_slot_allocation_count =
+        program->max_variable_count > 0u ? 2u : 0u;
     uint64_t variable_epoch = 0u;
     uint64_t worklist_live_bytes = 0u;
     Atom *initial_goals[] = {query};
@@ -1880,7 +1956,7 @@ bool cetta_gslt_compiled_query_with_providers_v1(
                         result->rule_variable_slot_clear_bytes_elided,
                         compiled_u64_mul_sat(
                             (uint64_t)rule->variable_count,
-                            (uint64_t)sizeof(*variables)));
+                            (uint64_t)sizeof(*variable_epochs)));
             }
             Bindings bindings;
             bindings_init(&bindings);

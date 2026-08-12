@@ -920,6 +920,12 @@ static void language_accumulate_stage(
     result->rule_ground_dense_matches = language_u64_add_sat(
         result->rule_ground_dense_matches,
         stage->rule_ground_dense_matches);
+    result->rule_variable_slot_capacity = language_u64_add_sat(
+        result->rule_variable_slot_capacity,
+        stage->rule_variable_slot_capacity);
+    result->rule_variable_slot_allocation_count = language_u64_add_sat(
+        result->rule_variable_slot_allocation_count,
+        stage->rule_variable_slot_allocation_count);
     result->rule_variable_slot_buffer_uses = language_u64_add_sat(
         result->rule_variable_slot_buffer_uses,
         stage->rule_variable_slot_buffer_uses);
@@ -1326,6 +1332,10 @@ static bool language_execute_atoms_authorized(
         horn.rule_constructor_nodes_elided;
     result->rule_flat_head_matches = horn.rule_flat_head_matches;
     result->rule_ground_dense_matches = horn.rule_ground_dense_matches;
+    result->rule_variable_slot_capacity =
+        horn.rule_variable_slot_capacity;
+    result->rule_variable_slot_allocation_count =
+        horn.rule_variable_slot_allocation_count;
     result->rule_variable_slot_buffer_uses =
         horn.rule_variable_slot_buffer_uses;
     result->rule_variable_slot_bytes_elided =
