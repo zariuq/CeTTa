@@ -1,0 +1,8 @@
+#ifndef CETTA_GENERATED_CETTA_METAMATH_PROOF_MACHINE_PROVIDER_CATALOG_V1_H
+#define CETTA_GENERATED_CETTA_METAMATH_PROOF_MACHINE_PROVIDER_CATALOG_V1_H
+
+#include "gslt_provider_runtime.h"
+
+extern const CettaGsltProviderCatalogV1 cetta_metamath_proof_machine_provider_catalog_v1;
+
+#endif /* CETTA_GENERATED_CETTA_METAMATH_PROOF_MACHINE_PROVIDER_CATALOG_V1_H */

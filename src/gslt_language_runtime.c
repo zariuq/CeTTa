@@ -798,9 +798,10 @@ static bool language_run_query(
     return language_error(error, error_size, "unknown GSLT realization");
 }
 
-bool cetta_gslt_language_query_v1(
+static bool language_query_authorized_v1(
     const CettaGsltLanguage *language,
     CettaGsltRealization realization,
+    const CettaGsltProviderRegistryV1 *providers,
     Arena *output_arena, Atom *query,
     CettaGsltHornLimits limits,
     CettaGsltHornResult *result,
@@ -824,8 +825,60 @@ bool cetta_gslt_language_query_v1(
                               "query does not match the admitted entry");
     memset(result, 0, sizeof(*result));
     return language_run_query(
+        language, realization, providers, output_arena, query, limits,
+        result, error, error_size);
+}
+
+bool cetta_gslt_language_query_v1(
+    const CettaGsltLanguage *language,
+    CettaGsltRealization realization,
+    Arena *output_arena, Atom *query,
+    CettaGsltHornLimits limits,
+    CettaGsltHornResult *result,
+    char *error, size_t error_size) {
+    return language_query_authorized_v1(
         language, realization, NULL, output_arena, query, limits,
         result, error, error_size);
+}
+
+bool cetta_gslt_language_query_with_providers_v1(
+    const CettaGsltLanguage *language,
+    CettaGsltRealization realization,
+    const CettaGsltProviderCatalogV1 *catalog,
+    const CettaGsltProviderRegistryV1 *physical_providers,
+    Arena *output_arena, Atom *query,
+    CettaGsltHornLimits limits,
+    CettaGsltHornResult *result,
+    char *error, size_t error_size) {
+    if (!language)
+        return language_error(
+            error, error_size, "provider query has no GSLT language");
+    if (catalog) {
+        if (!cetta_gslt_provider_catalog_validate_v1(
+                catalog, error, error_size))
+            return false;
+        if (strcmp(catalog->language_name, language->name) != 0 ||
+            !language_optional_text_equal(
+                catalog->profile_name, language->profile_name) ||
+            strcmp(catalog->language_manifest_sha256,
+                   language->manifest_sha256) != 0)
+            return language_error(
+                error, error_size,
+                "semantic-provider catalog targets another language authority");
+    }
+    CettaGsltAuthorizedProviderRegistryV1 authorized = {0};
+    if (!cetta_gslt_provider_registry_authorize_v1(
+            catalog, physical_providers, &authorized,
+            error, error_size))
+        return false;
+    const CettaGsltProviderRegistryV1 *providers =
+        authorized.registry.provider_count > 0u
+            ? &authorized.registry : NULL;
+    bool ok = language_query_authorized_v1(
+        language, realization, providers, output_arena, query, limits,
+        result, error, error_size);
+    cetta_gslt_authorized_provider_registry_free_v1(&authorized);
+    return ok;
 }
 
 static uint64_t language_u64_add_sat(uint64_t left, uint64_t right) {
@@ -838,6 +891,61 @@ static void language_accumulate_stage(
         result->rule_attempts, stage->rule_attempts);
     result->rule_matches = language_u64_add_sat(
         result->rule_matches, stage->rule_matches);
+    result->rule_dispatch_rejects = language_u64_add_sat(
+        result->rule_dispatch_rejects, stage->rule_dispatch_rejects);
+    result->rule_outer_head_elisions = language_u64_add_sat(
+        result->rule_outer_head_elisions,
+        stage->rule_outer_head_elisions);
+    result->rule_prefilter_rejects = language_u64_add_sat(
+        result->rule_prefilter_rejects, stage->rule_prefilter_rejects);
+    result->rule_ground_dense_attempts = language_u64_add_sat(
+        result->rule_ground_dense_attempts,
+        stage->rule_ground_dense_attempts);
+    result->rule_flat_head_attempts = language_u64_add_sat(
+        result->rule_flat_head_attempts, stage->rule_flat_head_attempts);
+    result->rule_general_head_attempts = language_u64_add_sat(
+        result->rule_general_head_attempts,
+        stage->rule_general_head_attempts);
+    result->rule_constructor_guided_attempts = language_u64_add_sat(
+        result->rule_constructor_guided_attempts,
+        stage->rule_constructor_guided_attempts);
+    result->rule_constructor_guided_matches = language_u64_add_sat(
+        result->rule_constructor_guided_matches,
+        stage->rule_constructor_guided_matches);
+    result->rule_constructor_nodes_elided = language_u64_add_sat(
+        result->rule_constructor_nodes_elided,
+        stage->rule_constructor_nodes_elided);
+    result->rule_flat_head_matches = language_u64_add_sat(
+        result->rule_flat_head_matches, stage->rule_flat_head_matches);
+    result->rule_ground_dense_matches = language_u64_add_sat(
+        result->rule_ground_dense_matches,
+        stage->rule_ground_dense_matches);
+    result->rule_variable_slot_buffer_uses = language_u64_add_sat(
+        result->rule_variable_slot_buffer_uses,
+        stage->rule_variable_slot_buffer_uses);
+    result->rule_variable_slot_bytes_elided = language_u64_add_sat(
+        result->rule_variable_slot_bytes_elided,
+        stage->rule_variable_slot_bytes_elided);
+    result->rule_variable_slot_clear_bytes_elided = language_u64_add_sat(
+        result->rule_variable_slot_clear_bytes_elided,
+        stage->rule_variable_slot_clear_bytes_elided);
+    result->rule_ground_subterm_cache_hits = language_u64_add_sat(
+        result->rule_ground_subterm_cache_hits,
+        stage->rule_ground_subterm_cache_hits);
+    result->rule_ground_subterm_nodes_elided = language_u64_add_sat(
+        result->rule_ground_subterm_nodes_elided,
+        stage->rule_ground_subterm_nodes_elided);
+    result->worklist_states_created = language_u64_add_sat(
+        result->worklist_states_created, stage->worklist_states_created);
+    result->worklist_states_reclaimed = language_u64_add_sat(
+        result->worklist_states_reclaimed,
+        stage->worklist_states_reclaimed);
+    if (stage->worklist_pending_peak > result->worklist_pending_peak)
+        result->worklist_pending_peak = stage->worklist_pending_peak;
+    if (stage->worklist_state_bytes_peak >
+        result->worklist_state_bytes_peak)
+        result->worklist_state_bytes_peak =
+            stage->worklist_state_bytes_peak;
     if (stage->max_depth_observed > result->max_depth_observed)
         result->max_depth_observed = stage->max_depth_observed;
     result->outcome = stage->outcome;
@@ -1204,6 +1312,34 @@ static bool language_execute_atoms_authorized(
     result->outcome = horn.outcome;
     result->rule_attempts = horn.rule_attempts;
     result->rule_matches = horn.rule_matches;
+    result->rule_dispatch_rejects = horn.rule_dispatch_rejects;
+    result->rule_outer_head_elisions = horn.rule_outer_head_elisions;
+    result->rule_prefilter_rejects = horn.rule_prefilter_rejects;
+    result->rule_ground_dense_attempts = horn.rule_ground_dense_attempts;
+    result->rule_flat_head_attempts = horn.rule_flat_head_attempts;
+    result->rule_general_head_attempts = horn.rule_general_head_attempts;
+    result->rule_constructor_guided_attempts =
+        horn.rule_constructor_guided_attempts;
+    result->rule_constructor_guided_matches =
+        horn.rule_constructor_guided_matches;
+    result->rule_constructor_nodes_elided =
+        horn.rule_constructor_nodes_elided;
+    result->rule_flat_head_matches = horn.rule_flat_head_matches;
+    result->rule_ground_dense_matches = horn.rule_ground_dense_matches;
+    result->rule_variable_slot_buffer_uses =
+        horn.rule_variable_slot_buffer_uses;
+    result->rule_variable_slot_bytes_elided =
+        horn.rule_variable_slot_bytes_elided;
+    result->rule_variable_slot_clear_bytes_elided =
+        horn.rule_variable_slot_clear_bytes_elided;
+    result->rule_ground_subterm_cache_hits =
+        horn.rule_ground_subterm_cache_hits;
+    result->rule_ground_subterm_nodes_elided =
+        horn.rule_ground_subterm_nodes_elided;
+    result->worklist_states_created = horn.worklist_states_created;
+    result->worklist_states_reclaimed = horn.worklist_states_reclaimed;
+    result->worklist_pending_peak = horn.worklist_pending_peak;
+    result->worklist_state_bytes_peak = horn.worklist_state_bytes_peak;
     result->max_depth_observed = horn.max_depth_observed;
     if (horn.outcome != CETTA_GSLT_HORN_COMPLETED) {
         cetta_gslt_horn_result_free(&horn);

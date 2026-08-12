@@ -1,6 +1,7 @@
 #include "tests/generated/gslt_provider_canary_v1.generated.h"
 #include "tests/generated/gslt_provider_canary_catalog_v1.generated.h"
 #include "gslt_compiled_runtime.h"
+#include "gslt_finite_fact_provider_v1.h"
 #include "gslt_horn_runtime.h"
 #include "gslt_provider_runtime.h"
 #include "gslt_space_fact_provider_v1.h"
@@ -593,6 +594,208 @@ static void exercise_space_provider_backend(SpaceEngine engine) {
     cetta_gslt_space_fact_provider_free_v1(space_provider);
 }
 
+static void exercise_finite_fact_provider(
+    CettaGsltRealization realization) {
+    const char *realization_name = cetta_gslt_realization_name(realization);
+    char label[256];
+    char error[ERROR_CAP] = {0};
+    Arena fact_arena;
+    Arena source_arena;
+    Arena output;
+    arena_init(&fact_arena);
+    arena_init(&source_arena);
+    arena_init(&output);
+    Atom *program = make_provider_program(&fact_arena);
+    Atom *rows[3] = {
+        make_space_provider_fact(&fact_arena, program, "alpha"),
+        make_space_provider_fact(&fact_arena, program, "alpha"),
+        make_space_provider_fact(&fact_arena, program, "beta"),
+    };
+    CettaGsltFiniteFactSpanV1 spans[2] = {
+        {.rows = rows, .row_count = 1u},
+        {.rows = rows + 1u, .row_count = 2u},
+    };
+    CettaGsltFiniteFactProviderSetV1 *set =
+        cetta_gslt_finite_fact_provider_set_create_borrowed_v1(
+            cetta_gslt_provider_canary_catalog_v1.requirements,
+            cetta_gslt_provider_canary_catalog_v1.requirement_count,
+            spans, 2u, error, sizeof(error));
+    (void)snprintf(
+        label, sizeof(label),
+        "%s builds a catalog-shaped finite provider from two spans",
+        realization_name);
+    if (!set)
+        fprintf(stderr, "DETAIL: %s: %s\n", label, error);
+    CHECK(set &&
+              cetta_gslt_finite_fact_provider_set_row_count_v1(set) == 3u,
+          label);
+
+    CettaGsltLanguage *language = NULL;
+    memset(error, 0, sizeof(error));
+    bool ok = set && cetta_gslt_language_load_embedded_for_realization(
+        &cetta_gslt_provider_canary_v1, realization,
+        &language, error, sizeof(error));
+    (void)snprintf(
+        label, sizeof(label), "%s loads for finite-provider execution",
+        realization_name);
+    CHECK(ok && language, label);
+
+    Atom **forms = NULL;
+    int form_count = parse_metta_text("seed", &source_arena, &forms);
+    CettaGsltHornLimits limits = {
+        .max_rule_attempts = 1000u,
+        .max_answers = 100u,
+        .max_depth = 100u,
+    };
+    CettaGsltLanguageResult result = {0};
+    memset(error, 0, sizeof(error));
+    ok = language && form_count == 1 &&
+        cetta_gslt_language_execute_atoms_with_realization_and_providers_v1(
+            language, realization,
+            &cetta_gslt_provider_canary_catalog_v1,
+            cetta_gslt_finite_fact_provider_set_registry_v1(set),
+            forms, 1u, &output, limits, &result,
+            error, sizeof(error));
+    size_t alpha = 0u;
+    size_t beta = 0u;
+    if (ok) {
+        for (size_t index = 0u; index < result.answer_count; index++) {
+            alpha += value_is_symbol(result.answers[index], "alpha")
+                ? 1u : 0u;
+            beta += value_is_symbol(result.answers[index], "beta")
+                ? 1u : 0u;
+        }
+    }
+    (void)snprintf(
+        label, sizeof(label),
+        "%s preserves finite-row occurrence order and multiplicity",
+        realization_name);
+    if (!ok)
+        fprintf(stderr, "DETAIL: %s: %s\n", label, error);
+    CHECK(ok && result.outcome == CETTA_GSLT_HORN_COMPLETED &&
+              result.answer_count == 3u && alpha == 2u && beta == 1u,
+          label);
+    if (ok)
+        cetta_gslt_language_result_free(&result);
+
+    Atom *wrong = make_wrong_space_provider_fact(&fact_arena, program);
+    CettaGsltFiniteFactSpanV1 wrong_span = {
+        .rows = &wrong,
+        .row_count = 1u,
+    };
+    memset(error, 0, sizeof(error));
+    CettaGsltFiniteFactProviderSetV1 *wrong_set =
+        cetta_gslt_finite_fact_provider_set_create_borrowed_v1(
+            cetta_gslt_provider_canary_catalog_v1.requirements,
+            cetta_gslt_provider_canary_catalog_v1.requirement_count,
+            &wrong_span, 1u, error, sizeof(error));
+    CHECK(!wrong_set && error[0] != '\0',
+          "finite provider rejects a row outside its generated inventory");
+    cetta_gslt_finite_fact_provider_set_free_v1(wrong_set);
+
+    Atom **open_forms = NULL;
+    int open_count = parse_metta_text(
+        "(provider-external $program (q-sym (q-str \"alpha\")))",
+        &fact_arena, &open_forms);
+    Atom *open = open_count == 1 && open_forms ? open_forms[0] : NULL;
+    CettaGsltFiniteFactSpanV1 open_span = {
+        .rows = &open,
+        .row_count = open ? 1u : 0u,
+    };
+    memset(error, 0, sizeof(error));
+    CettaGsltFiniteFactProviderSetV1 *open_set = open
+        ? cetta_gslt_finite_fact_provider_set_create_borrowed_v1(
+              cetta_gslt_provider_canary_catalog_v1.requirements,
+              cetta_gslt_provider_canary_catalog_v1.requirement_count,
+              &open_span, 1u, error, sizeof(error))
+        : NULL;
+    CHECK(open && !open_set && error[0] != '\0',
+          "finite provider rejects an open row");
+    cetta_gslt_finite_fact_provider_set_free_v1(open_set);
+    free(open_forms);
+
+    free(forms);
+    cetta_gslt_language_free(language);
+    cetta_gslt_finite_fact_provider_set_free_v1(set);
+    arena_free(&output);
+    arena_free(&source_arena);
+    arena_free(&fact_arena);
+}
+
+static void exercise_finite_fact_rigid_index(void) {
+    Arena fact_arena;
+    Arena answer_arena;
+    arena_init(&fact_arena);
+    arena_init(&answer_arena);
+    Atom **rows = NULL;
+    int row_count = parse_metta_text(
+        "(indexed-fact common alpha)\n"
+        "(indexed-fact common alpha)\n"
+        "(indexed-fact common beta)\n",
+        &fact_arena, &rows);
+    CettaGsltProviderRequirementV1 requirement = {
+        .relation = "indexed-fact",
+        .arity = 2u,
+        .semantic_id = "canary.ordered-rigid-index.v1",
+    };
+    CettaGsltFiniteFactSpanV1 span = {
+        .rows = rows,
+        .row_count = row_count == 3 ? 3u : 0u,
+    };
+    char error[ERROR_CAP] = {0};
+    CettaGsltFiniteFactProviderSetV1 *set = row_count == 3
+        ? cetta_gslt_finite_fact_provider_set_create_borrowed_v1(
+              &requirement, 1u, &span, 1u, error, sizeof(error))
+        : NULL;
+    CHECK(set != NULL,
+          "finite provider admits a useful generated rigid coordinate");
+    const CettaGsltProviderRegistryV1 *registry =
+        cetta_gslt_finite_fact_provider_set_registry_v1(set);
+    const CettaGsltProviderV1 *provider = set
+        ? cetta_gslt_provider_find_v1(registry, rows[0]) : NULL;
+    CettaGsltProviderAnswersV1 answers = {0};
+    CettaGsltProviderOutcomeV1 outcome = provider
+        ? provider->query(provider->context, &answer_arena, rows[0], 10u,
+              &answers, error, sizeof(error))
+        : CETTA_GSLT_PROVIDER_FAULT;
+    CHECK(outcome == CETTA_GSLT_PROVIDER_COMPLETED &&
+              answers.answer_count == 2u &&
+              atom_eq(answers.answers[0], rows[0]) &&
+              atom_eq(answers.answers[1], rows[1]),
+          "rigid finite-provider index preserves duplicate occurrence order");
+    cetta_gslt_provider_answers_free_v1(&answers);
+
+    Atom **open_forms = NULL;
+    int open_count = parse_metta_text(
+        "(indexed-fact common $value)", &fact_arena, &open_forms);
+    Atom *open = open_count == 1 && open_forms ? open_forms[0] : NULL;
+    provider = set && open
+        ? cetta_gslt_provider_find_v1(registry, open) : NULL;
+    memset(&answers, 0, sizeof(answers));
+    memset(error, 0, sizeof(error));
+    outcome = provider
+        ? provider->query(provider->context, &answer_arena, open, 10u,
+              &answers, error, sizeof(error))
+        : CETTA_GSLT_PROVIDER_FAULT;
+    CHECK(outcome == CETTA_GSLT_PROVIDER_COMPLETED &&
+              answers.answer_count == 3u,
+          "open indexed coordinate falls back to the complete finite bag");
+    cetta_gslt_provider_answers_free_v1(&answers);
+
+    CettaGsltFiniteFactProviderStatsV1 stats;
+    cetta_gslt_finite_fact_provider_set_stats_v1(set, &stats);
+    CHECK(stats.queries == 2u && stats.indexed_queries == 1u &&
+              stats.rows_considered == 5u && stats.rows_skipped == 1u &&
+              stats.indexed_relations == 1u,
+          "finite-provider counters witness physical row discrimination");
+
+    free(open_forms);
+    cetta_gslt_finite_fact_provider_set_free_v1(set);
+    free(rows);
+    arena_free(&answer_arena);
+    arena_free(&fact_arena);
+}
+
 int main(void) {
     SymbolTable symbols;
     VarInternTable variable_names;
@@ -634,6 +837,9 @@ int main(void) {
     exercise_language(CETTA_GSLT_REALIZATION_HORN_REFERENCE);
     exercise_language(CETTA_GSLT_REALIZATION_COMPILED_WORKLIST);
     exercise_space_provider_backend(SPACE_ENGINE_NATIVE);
+    exercise_finite_fact_provider(CETTA_GSLT_REALIZATION_HORN_REFERENCE);
+    exercise_finite_fact_provider(CETTA_GSLT_REALIZATION_COMPILED_WORKLIST);
+    exercise_finite_fact_rigid_index();
 #if CETTA_BUILD_WITH_PATHMAP_SPACE
     exercise_space_provider_backend(SPACE_ENGINE_PATHMAP);
 #else

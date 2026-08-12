@@ -417,7 +417,7 @@ PETTA_TYPECHECK_V2_SRC =
 ifeq ($(ENABLE_PETTA_TYPECHECK_V2),1)
 PETTA_TYPECHECK_V2_SRC = src/petta_typecheck.c
 endif
-SRC = src/symbol.c src/atom.c src/name_key.c src/atom_blob.c src/abt.c src/parser.c $(COMPILED_READER_RUNTIME_SRC) src/mm2_lower.c src/subst_tree.c src/space.c src/registry_resolver.c src/space_match_backend.c src/match.c src/match_decision.c src/term_canon.c src/variant_shape.c src/variant_instance.c src/answer_bank.c src/table_store.c src/search_machine.c src/petta_program.c src/petta_search_machine.c $(PETTA_TYPECHECK_V2_SRC) src/petta_specializer.c src/rule_machine.c $(LIB_PROLOG_SRC) src/term_universe.c src/stats.c src/parallel_executor.c src/prime_need.c src/petta_semantics.c src/prepared_pure_machine.c src/eval.c src/grounded.c src/he_typing.c src/inference_checker.c src/nik_runtime.c src/prime_semantics.c src/text_source.c src/native_handle.c src/native_sha256.c src/mork_space_bridge_runtime.c src/library.c src/langdef_pack.c src/gslt_provider_runtime.c src/gslt_space_fact_provider_v1.c src/gslt_revisioned_space_provider_v1.c src/gslt_abt_provider_v1.c src/gslt_horn_runtime.c src/gslt_compiled_runtime.c src/gslt_language_runtime.c src/gslt_pure_provider_v1.c src/gslt_support_transform_runtime.c src/generated/prime_nik_authorities_v1.generated.c src/generated/prime_nik_runtime_v1.generated.c src/generated/gslt_il_language_v1.generated.c src/generated/metta_interact_language_v1.generated.c src/generated/mm2_gslt_profile_v1.generated.c src/generated/subzero_language_v1.generated.c src/generated/zero_language_v1.generated.c src/generated/zero_exp_language_v1.generated.c src/generated/zero_emit_language_v1.generated.c src/generated/zero_interact_language_v1.generated.c src/generated/zero_interact_provider_catalog_v1.generated.c src/generated/zerouv_language_v1.generated.c src/he_small_step_pack.c src/lib_parse_native_grammar.c src/lib_parse_inference_native.c experiments/gslt2parse_foundation/native/finite_horn_gslt_v1.c experiments/gslt2parse_foundation/native/finite_horn_ground_term_v1.c experiments/gslt2parse_foundation/native/parser_term_projection_v1.c experiments/gslt2parse_foundation/native/parser_pack_abi_v1.c experiments/gslt2parse_foundation/native/parser_action_bytecode_v1.c experiments/gslt2parse_foundation/native/parser_pack_native_v1.c experiments/gslt2parse_foundation/native/parser_pack_lexical_v1.c experiments/gslt2parse_foundation/native/parser_pack_gll_v1.c experiments/gslt2parse_foundation/native/parser_pack_glr_v1.c experiments/gslt2parse_foundation/native/regular_span_dfa_v1.c experiments/gslt2parse_foundation/native/regular_span_nfa_v1.c $(PYTHON_SRC) src/session.c src/lang.c src/rhocalc_core.c src/rhocalc_syntax.c src/compile.c src/runtime.c src/cetta_stdlib.c native/native_modules.c src/main.c
+SRC = src/symbol.c src/atom.c src/name_key.c src/atom_blob.c src/abt.c src/parser.c $(COMPILED_READER_RUNTIME_SRC) src/mm2_lower.c src/subst_tree.c src/space.c src/registry_resolver.c src/space_match_backend.c src/match.c src/match_decision.c src/term_canon.c src/variant_shape.c src/variant_instance.c src/answer_bank.c src/table_store.c src/search_machine.c src/petta_program.c src/petta_search_machine.c $(PETTA_TYPECHECK_V2_SRC) src/petta_specializer.c src/rule_machine.c $(LIB_PROLOG_SRC) src/term_universe.c src/stats.c src/parallel_executor.c src/prime_need.c src/petta_semantics.c src/prepared_pure_machine.c src/eval.c src/grounded.c src/he_typing.c src/inference_checker.c src/nik_runtime.c src/prime_semantics.c src/text_source.c src/native_handle.c src/native_sha256.c src/mork_space_bridge_runtime.c src/library.c src/langdef_pack.c src/gslt_provider_runtime.c src/gslt_space_fact_provider_v1.c src/gslt_finite_fact_provider_v1.c src/gslt_revisioned_space_provider_v1.c src/gslt_abt_provider_v1.c src/gslt_horn_runtime.c src/gslt_compiled_runtime.c src/gslt_language_runtime.c src/gslt_pure_provider_v1.c src/gslt_support_transform_runtime.c src/generated/prime_nik_authorities_v1.generated.c src/generated/prime_nik_runtime_v1.generated.c src/generated/gslt_il_language_v1.generated.c src/generated/metta_interact_language_v1.generated.c src/generated/mm2_gslt_profile_v1.generated.c src/generated/subzero_language_v1.generated.c src/generated/zero_language_v1.generated.c src/generated/zero_exp_language_v1.generated.c src/generated/zero_emit_language_v1.generated.c src/generated/zero_interact_language_v1.generated.c src/generated/zero_interact_provider_catalog_v1.generated.c src/generated/zerouv_language_v1.generated.c src/he_small_step_pack.c src/lib_parse_native_grammar.c src/lib_parse_inference_native.c experiments/gslt2parse_foundation/native/finite_horn_gslt_v1.c experiments/gslt2parse_foundation/native/finite_horn_ground_term_v1.c experiments/gslt2parse_foundation/native/parser_term_projection_v1.c experiments/gslt2parse_foundation/native/parser_pack_abi_v1.c experiments/gslt2parse_foundation/native/parser_action_bytecode_v1.c experiments/gslt2parse_foundation/native/parser_pack_native_v1.c experiments/gslt2parse_foundation/native/parser_pack_lexical_v1.c experiments/gslt2parse_foundation/native/parser_pack_gll_v1.c experiments/gslt2parse_foundation/native/parser_pack_glr_v1.c experiments/gslt2parse_foundation/native/regular_span_dfa_v1.c experiments/gslt2parse_foundation/native/regular_span_nfa_v1.c $(PYTHON_SRC) src/session.c src/lang.c src/rhocalc_core.c src/rhocalc_syntax.c src/compile.c src/runtime.c src/cetta_stdlib.c native/native_modules.c src/main.c
 LANGDEF_COMPILED_CURSOR_RUNTIME_SRC = \
 	experiments/gslt2parse_foundation/native/finite_horn_answer_stream_v1.c \
 	experiments/gslt2parse_foundation/native/parser_pack_guard_evidence_stream_v1.c \
@@ -872,6 +872,12 @@ PROOF_GSLT_RELATIONAL_RUNTIME_NATIVE_V1_TEST_LINK_OBJ = \
 	$(OSLF_NATIVE_TYPE_VM_V1_MATCH_OBJ) \
 	$(OSLF_NATIVE_TYPE_VM_V1_VARIANT_OBJ) \
 	$(OSLF_NATIVE_TYPE_VM_V1_PRIME_NEED_OBJ) \
+	experiments/gslt2parse_foundation/native/finite_horn_gslt_v1.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o \
+	src/gslt_provider_runtime.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o \
+	src/gslt_finite_fact_provider_v1.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o \
+	src/gslt_horn_runtime.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o \
+	src/gslt_compiled_runtime.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o \
+	src/gslt_language_runtime.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o \
 	$(PROOF_GSLT_RELATIONAL_RUNTIME_NATIVE_V1_OBJ)
 OSLF_NATIVE_TYPE_INSPECT_V1_SRC = tools/oslf_native_type_inspect_v1.c
 OSLF_NATIVE_TYPE_INSPECT_V1_OBJ = runtime/bootstrap/oslf_native_type_inspect_v1.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o
@@ -1152,6 +1158,22 @@ GSLT_PROVIDER_CANARY_V1_MANIFEST = tests/fixtures/gslt_provider_canary_v1/langde
 GSLT_PROVIDER_CANARY_V1_SOURCE = tests/fixtures/gslt_provider_canary_v1/semantics/provider_call_v1.metta
 GSLT_PROVIDER_CANARY_V1_GENERATED_H = tests/generated/gslt_provider_canary_v1.generated.h
 GSLT_PROVIDER_CANARY_V1_GENERATED_C = tests/generated/gslt_provider_canary_v1.generated.c
+PROOF_TRACE_COMPILED_CANARY_V1_MANIFEST = tests/fixtures/proof_trace_compiled_canary_v1/langdef.metta
+PROOF_TRACE_COMPILED_CANARY_V1_GENERATED_H = tests/generated/proof_trace_compiled_canary_v1.generated.h
+PROOF_TRACE_COMPILED_CANARY_V1_GENERATED_C = tests/generated/proof_trace_compiled_canary_v1.generated.c
+PROOF_TRACE_COMPILED_RUNTIME_V1_TEST_BIN = runtime/test_proof_trace_compiled_runtime_v1-$(BUILD_OBJ_TAG)
+METAMATH_PROOF_TRACE_LANGUAGE_V1_MANIFEST = langdef/metamath/proof_trace_language_v1.metta
+METAMATH_PROOF_TRACE_LANGUAGE_V1_GENERATED_H = langdef/metamath/generated/proof_trace_language_v1.generated.h
+METAMATH_PROOF_TRACE_LANGUAGE_V1_GENERATED_C = langdef/metamath/generated/proof_trace_language_v1.generated.c
+METAMATH_PROOF_TRACE_PROVIDER_CATALOG_V1 = langdef/metamath/proof_trace_provider_catalog_v1.metta
+METAMATH_PROOF_TRACE_PROVIDER_CATALOG_V1_GENERATED_H = langdef/metamath/generated/proof_trace_provider_catalog_v1.generated.h
+METAMATH_PROOF_TRACE_PROVIDER_CATALOG_V1_GENERATED_C = langdef/metamath/generated/proof_trace_provider_catalog_v1.generated.c
+METAMATH_PROOF_MACHINE_LANGUAGE_V1_MANIFEST = langdef/metamath/proof_machine_language_v1.metta
+METAMATH_PROOF_MACHINE_LANGUAGE_V1_GENERATED_H = langdef/metamath/generated/proof_machine_language_v1.generated.h
+METAMATH_PROOF_MACHINE_LANGUAGE_V1_GENERATED_C = langdef/metamath/generated/proof_machine_language_v1.generated.c
+METAMATH_PROOF_MACHINE_PROVIDER_CATALOG_V1 = langdef/metamath/proof_machine_provider_catalog_v1.metta
+METAMATH_PROOF_MACHINE_PROVIDER_CATALOG_V1_GENERATED_H = langdef/metamath/generated/proof_machine_provider_catalog_v1.generated.h
+METAMATH_PROOF_MACHINE_PROVIDER_CATALOG_V1_GENERATED_C = langdef/metamath/generated/proof_machine_provider_catalog_v1.generated.c
 GSLT_PROVIDER_CATALOG_GENERATOR_V1 = tools/generate_gslt_provider_catalog_v1.py
 GSLT_PROVIDER_CATALOG_GENERATION_TEST_V1 = tools/test_gslt_provider_catalog_generation_v1.py
 GSLT_PROVIDER_CANARY_CATALOG_V1 = tests/fixtures/gslt_provider_canary_v1/provider_catalog_v1.metta
@@ -1274,6 +1296,7 @@ PROOF_GSLT_SEQUENCE_CANARY_V1 = experiments/gslt2parse_foundation/presentations/
 PROOF_GSLT_TRACE_ORDER_CANARY_V1 = experiments/gslt2parse_foundation/presentations/canaries/proof_gslt_trace_order_v1.metta
 PROOF_GSLT_TRACE_CODEC_CANARY_V1 = experiments/gslt2parse_foundation/presentations/canaries/proof_gslt_trace_codec_v1.metta
 PROOF_GSLT_TRACE_INPUT_CANARY_V1 = experiments/gslt2parse_foundation/presentations/canaries/proof_gslt_trace_input_v1.metta
+PROOF_GSLT_TRACE_SERVICE_V1 = experiments/gslt2parse_foundation/presentations/core/proof_gslt_trace_service_v1.metta
 PROOF_GSLT_TRACE_EXECUTION_COMPOSITION_V1 = experiments/gslt2parse_foundation/presentations/canaries/proof_gslt_trace_execution_composition_v1.metta
 PROOF_GSLT_TRACE_COMPRESSED_COMPOSITION_CANARY_V1 = experiments/gslt2parse_foundation/presentations/canaries/proof_gslt_trace_compressed_composition_v1.metta
 PROOF_GSLT_RELATIONAL_PROJECTION_CANARY_V1 = experiments/gslt2parse_foundation/presentations/canaries/proof_gslt_relational_projection_v1.metta
@@ -1401,6 +1424,23 @@ METAMATH_PROOF_TRACE_NATIVE_PROGRAM_V1_SOURCES = \
 	$(PROOF_GSLT_TRACE_INPUT_V1) \
 	$(PROOF_GSLT_TRACE_INPUT_INTERFACE_V1) \
 	$(METAMATH_PROOF_TRACE_CODEC_V1)
+METAMATH_PROOF_MACHINE_COMPILED_V1_SOURCES = \
+	$(METAMATH_PROOF_TRACE_NATIVE_PROGRAM_V1_SOURCES) \
+	$(PROOF_GSLT_ARTICLE_CORE_V1) \
+	$(PROOF_GSLT_ARTICLE_INTERFACE_V1) \
+	$(PROOF_GSLT_SEQUENCE_RELATIONS_V1) \
+	$(PROOF_GSLT_SEQUENCE_SCHEMA_V1) \
+	$(METAMATH_OCCURRENCE_FOLD_CORE_V1) \
+	$(METAMATH_SOURCE_FOLD_V1) \
+	$(METAMATH_RELATIONAL_STATE_CORE_V1) \
+	$(METAMATH_SOURCE_PROOF_V1) \
+	$(PROOF_GSLT_RELATIONAL_PROJECTION_CORE_V1) \
+	$(PROOF_GSLT_RELATIONAL_PROJECTION_INTERFACE_V1) \
+	$(PROOF_GSLT_RELATIONAL_PROJECTION_COMPILER_V1) \
+	$(METAMATH_SOURCE_STATE_V1) \
+	$(PROOF_GSLT_METAMATH_CALCULUS_V1) \
+	$(PROOF_GSLT_METAMATH_RELATIONAL_PROJECTION_V1) \
+	$(PROOF_GSLT_TRACE_SERVICE_V1)
 METAMATH_PROOF_TRACE_NATIVE_PROGRAM_V1_DIR = runtime/bootstrap/metamath-proof-trace-native-v1.$(BUILD_OBJ_TAG)
 METAMATH_PROOF_TRACE_NATIVE_PROGRAM_V1_NTT = $(METAMATH_PROOF_TRACE_NATIVE_PROGRAM_V1_DIR)/ntt.answers
 METAMATH_PROOF_TRACE_NATIVE_CAPABILITY_V1 = $(METAMATH_PROOF_TRACE_NATIVE_PROGRAM_V1_DIR)/capability-reflection.answers
@@ -6312,6 +6352,7 @@ test-metamath-cogslt-langdef-v1: $(BIN) \
 		test-metamath-cogslt-proof-semantic-exec-v1 \
 		test-metamath-cogslt-proof-relational-projection-v1 \
 		test-metamath-cogslt-proof-trace-semantics-v1 \
+		test-metamath-cogslt-proof-trace-compiled-v1 \
 		test-cogslt-oslf-native-type-vm-v1 \
 		test-cogslt-relational-state-transaction-v1 \
 		test-cogslt-first-order-frame-decoder-v1 \
@@ -15995,6 +16036,10 @@ $(OSLF_NATIVE_TYPE_VM_V1_TEST_BIN): \
 $(PROOF_GSLT_RELATIONAL_RUNTIME_NATIVE_V1_TEST_BIN): \
 		$(PROOF_GSLT_RELATIONAL_RUNTIME_NATIVE_V1_TEST_SRC) \
 		$(METAMATH_CURSOR_FOLD_GENERATED_C_V1) \
+		$(METAMATH_PROOF_MACHINE_LANGUAGE_V1_GENERATED_H) \
+		$(METAMATH_PROOF_MACHINE_LANGUAGE_V1_GENERATED_C) \
+		$(METAMATH_PROOF_MACHINE_PROVIDER_CATALOG_V1_GENERATED_H) \
+		$(METAMATH_PROOF_MACHINE_PROVIDER_CATALOG_V1_GENERATED_C) \
 		$(PROOF_GSLT_RELATIONAL_RUNTIME_NATIVE_V1_TEST_LINK_OBJ) \
 		$(BUILD_CONFIG_HEADER)
 	@mkdir -p $(dir $@)
@@ -16002,6 +16047,8 @@ $(PROOF_GSLT_RELATIONAL_RUNTIME_NATIVE_V1_TEST_BIN): \
 		-Wl,--gc-sections \
 		-o $@ $(PROOF_GSLT_RELATIONAL_RUNTIME_NATIVE_V1_TEST_SRC) \
 		$(METAMATH_CURSOR_FOLD_GENERATED_C_V1) \
+		$(METAMATH_PROOF_MACHINE_LANGUAGE_V1_GENERATED_C) \
+		$(METAMATH_PROOF_MACHINE_PROVIDER_CATALOG_V1_GENERATED_C) \
 		$(PROOF_GSLT_RELATIONAL_RUNTIME_NATIVE_V1_TEST_LINK_OBJ) \
 		$(OSLF_NATIVE_TYPE_VM_V1_LDFLAGS)
 
@@ -16019,6 +16066,23 @@ test-cogslt-proof-gslt-relational-runtime-v1: \
 		tests/langdef/metamath/invalid_theorem_compressed_incomplete_tail.mm \
 		tests/langdef/metamath/invalid_theorem_normal_incomplete_tail.mm \
 		tests/langdef/metamath/positive_theorem_compressed_incomplete_after_continuation.mm
+	@python3 tools/test_gslt_language_generation_v1.py \
+		--generator $(GSLT_LANGUAGE_GENERATOR_V1) \
+		--manifest $(METAMATH_PROOF_MACHINE_LANGUAGE_V1_MANIFEST) \
+		--source-root . \
+		--header $(METAMATH_PROOF_MACHINE_LANGUAGE_V1_GENERATED_H) \
+		--source $(METAMATH_PROOF_MACHINE_LANGUAGE_V1_GENERATED_C) \
+		--symbol cetta_metamath_proof_machine_v1 \
+		--header-include langdef/metamath/generated/proof_machine_language_v1.generated.h
+	@python3 $(GSLT_PROVIDER_CATALOG_GENERATION_TEST_V1) \
+		--generator $(GSLT_PROVIDER_CATALOG_GENERATOR_V1) \
+		--catalog $(METAMATH_PROOF_MACHINE_PROVIDER_CATALOG_V1) \
+		--language-manifest $(METAMATH_PROOF_MACHINE_LANGUAGE_V1_MANIFEST) \
+		--source-root . \
+		--header $(METAMATH_PROOF_MACHINE_PROVIDER_CATALOG_V1_GENERATED_H) \
+		--source $(METAMATH_PROOF_MACHINE_PROVIDER_CATALOG_V1_GENERATED_C) \
+		--symbol cetta_metamath_proof_machine_provider_catalog_v1 \
+		--header-include langdef/metamath/generated/proof_machine_provider_catalog_v1.generated.h
 	@$(PROOF_GSLT_RELATIONAL_RUNTIME_NATIVE_V1_TEST_BIN) \
 		$(PROOF_GSLT_METAMATH_RELATIONAL_RUNTIME_ABI_V1) \
 		$(METAMATH_PROOF_MACHINE_NTT_V1) \
@@ -16689,6 +16753,8 @@ $(GSLT_LANGUAGE_RUNTIME_TEST_BIN): \
 		$(METTAZERO_GENERATED_LANGUAGE_V1_C) \
 		$(METTAZERO_EXP_GENERATED_LANGUAGE_V1_H) \
 		$(METTAZERO_EXP_GENERATED_LANGUAGE_V1_C) \
+		$(GSLT_IL_GENERATED_LANGUAGE_V1_H) \
+		$(GSLT_IL_GENERATED_LANGUAGE_V1_C) \
 		$(METTAZERO_GROUND_LIBRARY_CANARY_V1_GENERATED_H) \
 		$(METTAZERO_GROUND_LIBRARY_CANARY_V1_GENERATED_C) \
 		$(GSLT_COMPILED_CANARY_V1_GENERATED_H) \
@@ -16738,6 +16804,7 @@ $(GSLT_PROVIDER_RUNTIME_TEST_BIN): \
 		tests/support/test_gslt_provider_runtime.c \
 		src/gslt_provider_runtime.h \
 		src/gslt_space_fact_provider_v1.h \
+		src/gslt_finite_fact_provider_v1.h \
 		src/gslt_horn_runtime.h \
 		src/gslt_compiled_runtime.h \
 		$(GSLT_PROVIDER_CANARY_V1_GENERATED_H) \
@@ -16756,6 +16823,57 @@ $(GSLT_PROVIDER_RUNTIME_TEST_BIN): \
 .PHONY: test-gslt-provider-runtime
 test-gslt-provider-runtime: $(GSLT_PROVIDER_RUNTIME_TEST_BIN)
 	@$(GSLT_PROVIDER_RUNTIME_TEST_BIN)
+
+$(PROOF_TRACE_COMPILED_RUNTIME_V1_TEST_BIN): \
+		tests/support/test_proof_trace_compiled_runtime_v1.c \
+		$(METAMATH_PROOF_TRACE_LANGUAGE_V1_GENERATED_H) \
+		$(METAMATH_PROOF_TRACE_LANGUAGE_V1_GENERATED_C) \
+		$(METAMATH_PROOF_TRACE_PROVIDER_CATALOG_V1_GENERATED_H) \
+		$(METAMATH_PROOF_TRACE_PROVIDER_CATALOG_V1_GENERATED_C) \
+		src/gslt_finite_fact_provider_v1.h \
+		$(FALLBACK_EVAL_TEST_LINK_OBJ) \
+		$(BRIDGE_DEPS)
+	@mkdir -p runtime
+	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ \
+		tests/support/test_proof_trace_compiled_runtime_v1.c \
+		$(METAMATH_PROOF_TRACE_LANGUAGE_V1_GENERATED_C) \
+		$(METAMATH_PROOF_TRACE_PROVIDER_CATALOG_V1_GENERATED_C) \
+		$(FALLBACK_EVAL_TEST_LINK_OBJ) $(LDFLAGS)
+
+.PHONY: test-metamath-cogslt-proof-trace-compiled-v1
+test-metamath-cogslt-proof-trace-compiled-v1: \
+		$(PROOF_TRACE_COMPILED_RUNTIME_V1_TEST_BIN)
+	@if rg -ni 'metamath|proof[_ -]?trace|compressed[_ -]?proof|mandatory[_ -]?hypothesis' \
+			src/gslt_compiled_runtime.c src/gslt_compiled_runtime.h; then \
+		echo 'guest-specific proof vocabulary entered the generic compiled runtime' >&2; \
+		exit 1; \
+	fi
+	@python3 tools/test_gslt_language_generation_v1.py \
+		--generator $(GSLT_LANGUAGE_GENERATOR_V1) \
+		--manifest $(METAMATH_PROOF_TRACE_LANGUAGE_V1_MANIFEST) \
+		--source-root . \
+		--header $(METAMATH_PROOF_TRACE_LANGUAGE_V1_GENERATED_H) \
+		--source $(METAMATH_PROOF_TRACE_LANGUAGE_V1_GENERATED_C) \
+		--symbol cetta_metamath_proof_trace_v1 \
+		--header-include langdef/metamath/generated/proof_trace_language_v1.generated.h
+	@python3 $(GSLT_PROVIDER_CATALOG_GENERATION_TEST_V1) \
+		--generator $(GSLT_PROVIDER_CATALOG_GENERATOR_V1) \
+		--catalog $(METAMATH_PROOF_TRACE_PROVIDER_CATALOG_V1) \
+		--language-manifest $(METAMATH_PROOF_TRACE_LANGUAGE_V1_MANIFEST) \
+		--source-root . \
+		--header $(METAMATH_PROOF_TRACE_PROVIDER_CATALOG_V1_GENERATED_H) \
+		--source $(METAMATH_PROOF_TRACE_PROVIDER_CATALOG_V1_GENERATED_C) \
+		--symbol cetta_metamath_proof_trace_provider_catalog_v1 \
+		--header-include langdef/metamath/generated/proof_trace_provider_catalog_v1.generated.h
+	@$(PROOF_TRACE_COMPILED_RUNTIME_V1_TEST_BIN) \
+		$(PROOF_GSLT_TRACE_INPUT_CANARY_V1) \
+		$(PROOF_GSLT_TRACE_COMPRESSED_COMPOSITION_CANARY_V1) \
+		tests/langdef/metamath/proof_trace_service_normal.query \
+		tests/langdef/metamath/proof_trace_service_wrong_target.query \
+		tests/langdef/metamath/proof_trace_service_compressed.query \
+		tests/langdef/metamath/proof_trace_service_compressed_range.query \
+		tests/langdef/metamath/proof_trace_service_incomplete_normal.query \
+		tests/langdef/metamath/proof_trace_service_unknown_not_verified.query
 
 $(GSLT_ABT_PROVIDER_V1_TEST_BIN): \
 		tests/support/test_gslt_abt_provider_v1.c \
@@ -17716,6 +17834,79 @@ $(GSLT_PROVIDER_CANARY_V1_GENERATED_H) $(GSLT_PROVIDER_CANARY_V1_GENERATED_C) &:
 		--source $(GSLT_PROVIDER_CANARY_V1_GENERATED_C) \
 		--symbol cetta_gslt_provider_canary_v1 \
 		--header-include tests/generated/gslt_provider_canary_v1.generated.h
+
+$(PROOF_TRACE_COMPILED_CANARY_V1_GENERATED_H) $(PROOF_TRACE_COMPILED_CANARY_V1_GENERATED_C) &: \
+		$(GSLT_LANGUAGE_GENERATOR_V1) \
+		tools/gslt2parse_schema_v1.py \
+		$(PROOF_TRACE_COMPILED_CANARY_V1_MANIFEST) \
+		$(METAMATH_PROOF_TRACE_NATIVE_PROGRAM_V1_SOURCES) \
+		$(PROOF_GSLT_TRACE_INPUT_CANARY_V1) \
+		$(PROOF_GSLT_TRACE_COMPRESSED_COMPOSITION_CANARY_V1)
+	@python3 $(GSLT_LANGUAGE_GENERATOR_V1) \
+		--manifest $(PROOF_TRACE_COMPILED_CANARY_V1_MANIFEST) \
+		--source-root . \
+		--header $(PROOF_TRACE_COMPILED_CANARY_V1_GENERATED_H) \
+		--source $(PROOF_TRACE_COMPILED_CANARY_V1_GENERATED_C) \
+		--symbol cetta_proof_trace_compiled_canary_v1 \
+		--header-include tests/generated/proof_trace_compiled_canary_v1.generated.h
+
+$(METAMATH_PROOF_TRACE_LANGUAGE_V1_GENERATED_H) $(METAMATH_PROOF_TRACE_LANGUAGE_V1_GENERATED_C) &: \
+		$(GSLT_LANGUAGE_GENERATOR_V1) \
+		tools/gslt2parse_schema_v1.py \
+		$(METAMATH_PROOF_TRACE_LANGUAGE_V1_MANIFEST) \
+		$(METAMATH_PROOF_TRACE_NATIVE_PROGRAM_V1_SOURCES) \
+		$(PROOF_GSLT_TRACE_SERVICE_V1)
+	@python3 $(GSLT_LANGUAGE_GENERATOR_V1) \
+		--manifest $(METAMATH_PROOF_TRACE_LANGUAGE_V1_MANIFEST) \
+		--source-root . \
+		--header $(METAMATH_PROOF_TRACE_LANGUAGE_V1_GENERATED_H) \
+		--source $(METAMATH_PROOF_TRACE_LANGUAGE_V1_GENERATED_C) \
+		--symbol cetta_metamath_proof_trace_v1 \
+		--header-include langdef/metamath/generated/proof_trace_language_v1.generated.h
+
+$(METAMATH_PROOF_TRACE_PROVIDER_CATALOG_V1_GENERATED_H) $(METAMATH_PROOF_TRACE_PROVIDER_CATALOG_V1_GENERATED_C) &: \
+		$(GSLT_PROVIDER_CATALOG_GENERATOR_V1) \
+		tools/gslt2parse_schema_v1.py \
+		$(METAMATH_PROOF_TRACE_PROVIDER_CATALOG_V1) \
+		$(METAMATH_PROOF_TRACE_LANGUAGE_V1_MANIFEST) \
+		$(METAMATH_PROOF_TRACE_NATIVE_PROGRAM_V1_SOURCES) \
+		$(PROOF_GSLT_TRACE_SERVICE_V1)
+	@python3 $(GSLT_PROVIDER_CATALOG_GENERATOR_V1) \
+		--catalog $(METAMATH_PROOF_TRACE_PROVIDER_CATALOG_V1) \
+		--language-manifest $(METAMATH_PROOF_TRACE_LANGUAGE_V1_MANIFEST) \
+		--source-root . \
+		--header $(METAMATH_PROOF_TRACE_PROVIDER_CATALOG_V1_GENERATED_H) \
+		--source $(METAMATH_PROOF_TRACE_PROVIDER_CATALOG_V1_GENERATED_C) \
+		--symbol cetta_metamath_proof_trace_provider_catalog_v1 \
+		--header-include langdef/metamath/generated/proof_trace_provider_catalog_v1.generated.h
+
+$(METAMATH_PROOF_MACHINE_LANGUAGE_V1_GENERATED_H) $(METAMATH_PROOF_MACHINE_LANGUAGE_V1_GENERATED_C) &: \
+		$(GSLT_LANGUAGE_GENERATOR_V1) \
+		tools/gslt2parse_schema_v1.py \
+		$(METAMATH_PROOF_MACHINE_LANGUAGE_V1_MANIFEST) \
+		$(METAMATH_PROOF_MACHINE_COMPILED_V1_SOURCES)
+	@python3 $(GSLT_LANGUAGE_GENERATOR_V1) \
+		--manifest $(METAMATH_PROOF_MACHINE_LANGUAGE_V1_MANIFEST) \
+		--source-root . \
+		--header $(METAMATH_PROOF_MACHINE_LANGUAGE_V1_GENERATED_H) \
+		--source $(METAMATH_PROOF_MACHINE_LANGUAGE_V1_GENERATED_C) \
+		--symbol cetta_metamath_proof_machine_v1 \
+		--header-include langdef/metamath/generated/proof_machine_language_v1.generated.h
+
+$(METAMATH_PROOF_MACHINE_PROVIDER_CATALOG_V1_GENERATED_H) $(METAMATH_PROOF_MACHINE_PROVIDER_CATALOG_V1_GENERATED_C) &: \
+		$(GSLT_PROVIDER_CATALOG_GENERATOR_V1) \
+		tools/gslt2parse_schema_v1.py \
+		$(METAMATH_PROOF_MACHINE_PROVIDER_CATALOG_V1) \
+		$(METAMATH_PROOF_MACHINE_LANGUAGE_V1_MANIFEST) \
+		$(METAMATH_PROOF_MACHINE_COMPILED_V1_SOURCES)
+	@python3 $(GSLT_PROVIDER_CATALOG_GENERATOR_V1) \
+		--catalog $(METAMATH_PROOF_MACHINE_PROVIDER_CATALOG_V1) \
+		--language-manifest $(METAMATH_PROOF_MACHINE_LANGUAGE_V1_MANIFEST) \
+		--source-root . \
+		--header $(METAMATH_PROOF_MACHINE_PROVIDER_CATALOG_V1_GENERATED_H) \
+		--source $(METAMATH_PROOF_MACHINE_PROVIDER_CATALOG_V1_GENERATED_C) \
+		--symbol cetta_metamath_proof_machine_provider_catalog_v1 \
+		--header-include langdef/metamath/generated/proof_machine_provider_catalog_v1.generated.h
 
 $(GSLT_PROVIDER_CANARY_CATALOG_GENERATED_H) $(GSLT_PROVIDER_CANARY_CATALOG_GENERATED_C) &: \
 		$(GSLT_PROVIDER_CATALOG_GENERATOR_V1) \
