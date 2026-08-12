@@ -131,7 +131,10 @@ static bool generated_artifact_guest_canary(
                     0u,
                     &cache_admission,
                     error,
-                    sizeof(error)),
+                    sizeof(error)) &&
+                    cache_admission.scratch_reuse_admitted &&
+                    !cache_admission.indexed_values_admitted &&
+                    cache_admission.literal_hole_admitted,
                 error[0] ? error
                          : "generated guest did not yield cache admission") ||
         !mutated_admission_canaries(
@@ -201,6 +204,11 @@ static bool structurally_renamed_guest_canary(void) {
          "GuestProvable", "proof-call-region-v1",
          "flat-symbol-id-vector-v1", "proof-verdict-only-v1"},
     };
+    static PPProofLiteralHolePlanV1 literal_holes[] = {
+        {"guest-machine", "GuestProof", "GuestCons", "GuestNil",
+         "literal-hole-run-program-v1", "state-run-region-v1",
+         "proof-call-region-v1"},
+    };
     static PPOSLFNativeHeadSignatureV1 signatures[] = {
         {"GuestCons", 2u},
         {"GuestNil", 0u},
@@ -217,6 +225,9 @@ static bool structurally_renamed_guest_canary(void) {
         .sequence_len = sizeof(sequences) / sizeof(sequences[0]),
         .calls = calls,
         .call_len = sizeof(calls) / sizeof(calls[0]),
+        .literal_holes = literal_holes,
+        .literal_hole_len =
+            sizeof(literal_holes) / sizeof(literal_holes[0]),
     };
     PPOSLFNativeTypePlanV1 native_types = {
         .head_signatures = signatures,
@@ -287,6 +298,9 @@ static bool structurally_renamed_guest_canary(void) {
                     error, sizeof(error)) &&
                     cache_admission.formula_table ==
                         state_machine.formula_table &&
+                    cache_admission.scratch_reuse_admitted &&
+                    cache_admission.literal_hole_admitted &&
+                    !cache_admission.indexed_values_admitted &&
                     strcmp(cache_admission.native_type_digest,
                            decoder.native_type_digest) == 0 &&
                     strcmp(cache_admission.storage_plan_digest,
@@ -456,6 +470,18 @@ int main(int argc, char **argv) {
                 "generated storage table count changed") &&
          expect(storage.read_len == 9u,
                 "generated machine-read count changed") &&
+         expect(storage.finite_support_len == 1u &&
+                    ppproof_storage_plan_v1_finite_support(
+                        &storage, "MetamathProofV1") != NULL,
+                "generated finite-support admission is missing") &&
+         expect(storage.indexed_value_len == 1u &&
+                    ppproof_storage_plan_v1_indexed_value(
+                        &storage, "mm-stack-proof-machine-v1") != NULL,
+                "generated indexed-value admission is missing") &&
+         expect(storage.literal_hole_len == 1u &&
+                    ppproof_storage_plan_v1_literal_hole(
+                        &storage, "mm-stack-proof-machine-v1") != NULL,
+                "generated literal/hole admission is missing") &&
          expect(native_types.head_signature_len == 26u,
                 "generated native head-signature count changed") &&
          structurally_renamed_guest_canary() &&

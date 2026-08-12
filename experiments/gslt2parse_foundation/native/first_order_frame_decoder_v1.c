@@ -180,6 +180,10 @@ bool ppfirst_order_frame_decoder_v1_cache_admission(
         .assertion_hypothesis_table = machine->assertion_hypothesis_table,
         .assertion_disjoint_table = machine->assertion_disjoint_table,
         .symbol_kind_table = machine->symbol_kind_table,
+        .scratch_reuse_admitted = true,
+        .finite_support_admitted = decoder->finite_support != NULL,
+        .indexed_values_admitted = decoder->indexed_value != NULL,
+        .literal_hole_admitted = decoder->literal_hole != NULL,
     };
     memcpy(admission_out->native_type_digest,
            decoder->native_type_digest,
@@ -245,6 +249,9 @@ bool ppfirst_order_frame_decoder_v1_admit(
     PPFirstOrderFrameDecoderV1 decoder = {0};
     const PPProofStorageMachineV1 *machine;
     const PPProofStorageSequenceV1 *sequence;
+    const PPProofFiniteSupportPlanV1 *finite_support;
+    const PPProofIndexedValuePlanV1 *indexed_value;
+    const PPProofLiteralHolePlanV1 *literal_hole;
     const char *machine_name;
 
     if (error_buf && error_buf_size > 0u)
@@ -273,6 +280,42 @@ bool ppfirst_order_frame_decoder_v1_admit(
         return ppfirst_order_frame_decoder_v1_fail(
             error_buf, error_buf_size,
             "proof sequence is unsupported by the first-order frame backend");
+    finite_support = ppproof_storage_plan_v1_finite_support(
+        storage_plan, machine->owner);
+    if (finite_support &&
+        (strcmp(finite_support->cons, sequence->cons) != 0 ||
+         strcmp(finite_support->nil, sequence->nil) != 0 ||
+         strcmp(finite_support->support_carrier,
+                "finite-dense-bitset-v1") != 0 ||
+         strcmp(finite_support->apartness_carrier,
+                "finite-apartness-matrix-v1") != 0))
+        return ppfirst_order_frame_decoder_v1_fail(
+            error_buf, error_buf_size,
+            "finite support plan is unsupported by the frame backend");
+    indexed_value = ppproof_storage_plan_v1_indexed_value(
+        storage_plan, machine->machine);
+    if (indexed_value &&
+        (strcmp(indexed_value->carrier,
+                "prepared-indexed-value-table-v1") != 0 ||
+         strcmp(indexed_value->region, "proof-call-region-v1") != 0))
+        return ppfirst_order_frame_decoder_v1_fail(
+            error_buf, error_buf_size,
+            "indexed value plan is unsupported by the frame backend");
+    literal_hole = ppproof_storage_plan_v1_literal_hole(
+        storage_plan, machine->machine);
+    if (literal_hole &&
+        (strcmp(literal_hole->owner, machine->owner) != 0 ||
+         strcmp(literal_hole->cons, sequence->cons) != 0 ||
+         strcmp(literal_hole->nil, sequence->nil) != 0 ||
+         strcmp(literal_hole->carrier,
+                "literal-hole-run-program-v1") != 0 ||
+         strcmp(literal_hole->source_region,
+                "state-run-region-v1") != 0 ||
+         strcmp(literal_hole->execution_region,
+                "proof-call-region-v1") != 0))
+        return ppfirst_order_frame_decoder_v1_fail(
+            error_buf, error_buf_size,
+            "literal/hole plan is unsupported by the frame backend");
     if (!ppfirst_order_frame_decoder_v1_head_arity(
             native_types, machine->provable, 1u,
             error_buf, error_buf_size) ||
@@ -282,6 +325,25 @@ bool ppfirst_order_frame_decoder_v1_admit(
         !ppfirst_order_frame_decoder_v1_head_arity(
             native_types, sequence->nil, 0u,
             error_buf, error_buf_size) ||
+        (finite_support &&
+         (!ppfirst_order_frame_decoder_v1_head_arity(
+              native_types, finite_support->support_apart, 2u,
+              error_buf, error_buf_size) ||
+          !ppfirst_order_frame_decoder_v1_head_arity(
+              native_types, finite_support->token_against, 2u,
+              error_buf, error_buf_size) ||
+          !ppfirst_order_frame_decoder_v1_head_arity(
+              native_types, finite_support->pair_allowed, 2u,
+              error_buf, error_buf_size) ||
+          !ppfirst_order_frame_decoder_v1_head_arity(
+              native_types, finite_support->apart, 2u,
+              error_buf, error_buf_size) ||
+          !ppfirst_order_frame_decoder_v1_head_arity(
+              native_types, finite_support->literal, 1u,
+              error_buf, error_buf_size) ||
+          !ppfirst_order_frame_decoder_v1_head_arity(
+              native_types, finite_support->variable, 1u,
+              error_buf, error_buf_size))) ||
         !ppfirst_order_frame_decoder_v1_calls(
             storage_plan, machine, error_buf, error_buf_size) ||
         !ppfirst_order_frame_decoder_v1_table_dependencies(
@@ -294,6 +356,9 @@ bool ppfirst_order_frame_decoder_v1_admit(
     decoder.provable = machine->provable;
     decoder.sequence_cons = sequence->cons;
     decoder.sequence_nil = sequence->nil;
+    decoder.finite_support = finite_support;
+    decoder.indexed_value = indexed_value;
+    decoder.literal_hole = literal_hole;
     decoder.storage_plan = storage_plan;
     memcpy(decoder.native_type_digest, native_types->semantic_digest,
            sizeof(decoder.native_type_digest));

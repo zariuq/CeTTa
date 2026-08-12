@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 from dataclasses import replace
+from hashlib import sha256
 from pathlib import Path
 import re
 import shutil
@@ -17,6 +18,73 @@ import gslt2parse_schema_v1 as sx
 
 class GateFailure(RuntimeError):
     pass
+
+
+def check_compiled_plan_wire_canary() -> None:
+    presentation = sx.Presentation(
+        name="CompiledPlanWireCanaryV1",
+        operators=(sx.OperatorDecl("ready", 0),),
+        rules=(
+            sx.RuleDecl(
+                "ready-rule",
+                (sx.Symbol("ready"),),
+                (),
+            ),
+        ),
+        source=Path("<compiled-plan-wire-canary>"),
+    )
+    expected = bytes(
+        [
+            67, 71, 80, 49,
+            1, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0,
+            5, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 0, 5, 0, 0, 0, 114, 101, 97, 100, 121,
+            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            10, 0, 0, 0, 114, 101, 97, 100, 121, 45, 114, 117, 108, 101,
+        ]
+    )
+    actual = language_generator.compile_plan((presentation,))
+    if actual != expected:
+        raise GateFailure("compiled-plan CGP1 wire canary changed")
+    if sha256(actual).hexdigest() != (
+        "9016f66beb8220e8c985e2e36dd17cacfcf824a987bf2275f335897084a04572"
+    ):
+        raise GateFailure("compiled-plan CGP1 wire canary digest changed")
+
+    binary_presentation = sx.Presentation(
+        name="CompiledPlanBinaryCanaryV1",
+        operators=(sx.OperatorDecl("pair", 2),),
+        rules=(
+            sx.RuleDecl(
+                "pair",
+                (sx.Symbol("pair"), sx.Variable("x"), sx.Variable("y")),
+                (),
+            ),
+        ),
+        source=Path("<compiled-plan-binary-canary>"),
+    )
+    binary_expected = bytes(
+        [
+            67, 71, 80, 49,
+            3, 0, 0, 0, 2, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0,
+            2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 0, 0, 0, 0, 0,
+            2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 1, 0, 0, 0, 0, 0, 0, 0,
+            5, 0, 0, 0, 0, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 0, 4, 0, 0, 0, 112, 97, 105, 114,
+            0, 0, 0, 0, 1, 0, 0, 0,
+            2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 0, 0, 0,
+            4, 0, 0, 0, 112, 97, 105, 114,
+        ]
+    )
+    binary_actual = language_generator.compile_plan((binary_presentation,))
+    if binary_actual != binary_expected:
+        raise GateFailure("compiled-plan binary CGP1 wire canary changed")
+    if sha256(binary_actual).hexdigest() != (
+        "ca23b221d503e538a0d668dc448284014c2d5db30258c3fc5399e6e6fb7cea79"
+    ):
+        raise GateFailure("compiled-plan binary CGP1 digest changed")
 
 
 def generate(
@@ -124,6 +192,8 @@ def main() -> int:
     parser.add_argument("--symbol", required=True)
     parser.add_argument("--header-include", required=True)
     arguments = parser.parse_args()
+
+    check_compiled_plan_wire_canary()
 
     generator = arguments.generator.resolve()
     manifest = arguments.manifest.resolve()
@@ -281,7 +351,7 @@ def main() -> int:
     print(
         "(GsltLanguageGenerationV1Summary "
         "deterministic=1 checked-in=1 semantic-digest-closure=1 "
-        "compiled-plan-closure=1 compiler-closure=1)"
+        "compiled-plan-closure=1 compiler-closure=1 wire-canary=1)"
     )
     return 0
 

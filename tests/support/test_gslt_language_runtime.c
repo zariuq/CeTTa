@@ -18,7 +18,10 @@
 #include <stdlib.h>
 #include <string.h>
 
-enum { ERROR_CAP = 1024 };
+enum {
+    ERROR_CAP = 1024,
+    EXPECTED_CHECKS = 351,
+};
 
 static unsigned checks;
 static unsigned failures;
@@ -204,7 +207,8 @@ static void check_finite_variable_plan_admission(
 }
 
 static uint64_t check_compiled_index_shape(
-    const CettaGsltEmbeddedLanguageV1 *descriptor) {
+    const CettaGsltEmbeddedLanguageV1 *descriptor,
+    size_t *support_slots, size_t *support_words) {
     CettaGsltCompiledProgram *program = NULL;
     CettaGsltCompiledIndexStatsV1 stats = {0};
     char error[ERROR_CAP] = {0};
@@ -222,6 +226,9 @@ static uint64_t check_compiled_index_shape(
           "compiled plan exposes its generic index certificate");
     CHECK(stats.bucket_count > 0u,
           "compiled index contains at least one head/arity bucket");
+    CHECK(stats.head_indexed_rule_count ==
+              cetta_gslt_compiled_program_rule_count(program),
+          "every admitted rule enters one generated head/arity bucket");
     CHECK(stats.slot_count >= stats.bucket_count * 2u,
           "compiled index maintains its admitted load-factor bound");
     CHECK(stats.maximum_probe <= stats.insertion_collisions,
@@ -229,8 +236,131 @@ static uint64_t check_compiled_index_shape(
     CHECK(stats.dispatch_bucket_count <= stats.bucket_count &&
               stats.dispatch_group_count >= stats.dispatch_bucket_count,
           "compiled coordinate index is derived within head/arity buckets");
+    CHECK(stats.dispatch_scratch_slot_capacity >= 2u &&
+              stats.dispatch_scratch_allocation_count == 1u,
+          "all coordinate analyses reuse one finite scratch allocation");
+    CHECK(stats.variable_support_word_capacity ==
+              stats.variable_support_slot_capacity / 64u +
+                  (stats.variable_support_slot_capacity % 64u != 0u) &&
+              stats.variable_support_allocation_count <= 1u,
+          "finite dense support drives one exact packed admission buffer");
+    CHECK(stats.plan_node_count > 0u &&
+              stats.flat_variable_head_rule_count <=
+                  cetta_gslt_compiled_program_rule_count(program) &&
+              stats.ground_cached_plan_node_count > 0u &&
+              stats.ground_cached_plan_node_count <= stats.plan_node_count &&
+              stats.ground_cached_value_node_count >=
+                  stats.ground_cached_plan_node_count,
+          "generated plan drives bounded flat-head and ground-cache analyses");
+    if (support_slots)
+        *support_slots += stats.variable_support_slot_capacity;
+    if (support_words)
+        *support_words += stats.variable_support_word_capacity;
     cetta_gslt_compiled_program_free(program);
     return stats.insertion_collisions;
+}
+
+static void check_independent_compiled_wire_canary(void) {
+    static const uint8_t canary[] = {
+        67u, 71u, 80u, 49u,
+        1u, 0u, 0u, 0u, 0u, 0u, 0u, 0u,
+        1u, 0u, 0u, 0u, 0u, 0u, 0u, 0u,
+        5u, 0u, 0u, 0u, 0u, 0u, 0u, 0u, 0u, 0u,
+        0u, 0u, 0u, 0u, 0u, 0u, 0u, 0u, 0u, 0u,
+        0u, 5u, 0u, 0u, 0u, 114u, 101u, 97u, 100u, 121u,
+        0u, 0u, 0u, 0u, 0u, 0u, 0u, 0u,
+        0u, 0u, 0u, 0u, 0u, 0u, 0u, 0u,
+        10u, 0u, 0u, 0u, 114u, 101u, 97u, 100u, 121u,
+        45u, 114u, 117u, 108u, 101u,
+    };
+    static const char canary_digest[] =
+        "9016f66beb8220e8c985e2e36dd17cacfcf824a987bf2275f335897084a04572";
+    static const uint8_t binary_canary[] = {
+        67u, 71u, 80u, 49u,
+        3u, 0u, 0u, 0u, 2u, 0u, 0u, 0u,
+        1u, 0u, 0u, 0u, 0u, 0u, 0u, 0u,
+        2u, 0u, 0u, 0u, 0u, 0u, 0u, 0u, 0u, 0u,
+        0u, 0u, 0u, 0u, 0u, 0u, 0u, 0u, 0u, 0u,
+        0u, 0u, 0u, 0u, 0u,
+        2u, 0u, 0u, 0u, 0u, 0u, 0u, 0u, 0u, 0u,
+        0u, 0u, 0u, 0u, 0u, 0u, 0u, 1u, 0u, 0u, 0u,
+        0u, 0u, 0u, 0u,
+        5u, 0u, 0u, 0u, 0u, 2u, 0u, 0u, 0u, 0u,
+        0u, 0u, 0u, 0u, 0u, 0u, 0u, 0u, 0u, 0u,
+        0u, 4u, 0u, 0u, 0u, 112u, 97u, 105u, 114u,
+        0u, 0u, 0u, 0u, 1u, 0u, 0u, 0u,
+        2u, 0u, 0u, 0u, 0u, 0u, 0u, 0u,
+        0u, 0u, 0u, 0u, 2u, 0u, 0u, 0u,
+        4u, 0u, 0u, 0u, 112u, 97u, 105u, 114u,
+    };
+    static const char binary_digest[] =
+        "ca23b221d503e538a0d668dc448284014c2d5db30258c3fc5399e6e6fb7cea79";
+    CettaGsltCompiledProgram *program = NULL;
+    char error[ERROR_CAP] = {0};
+    CettaGsltCompiledInputV1 input = {
+        .bytes = canary,
+        .length = sizeof(canary),
+        .sha256 = canary_digest,
+    };
+    CHECK(cetta_gslt_compiled_program_load_v1(
+              &input, &program, error, sizeof(error)),
+          "independently specified CGP1 packet loads in generic C");
+    if (program) {
+        CHECK(cetta_gslt_compiled_program_rule_count(program) == 1u,
+              "independent CGP1 packet preserves its rule inventory");
+        cetta_gslt_compiled_program_free(program);
+        program = NULL;
+    }
+
+    input.bytes = binary_canary;
+    input.length = sizeof(binary_canary);
+    input.sha256 = binary_digest;
+    memset(error, 0, sizeof(error));
+    CHECK(cetta_gslt_compiled_program_load_v1(
+              &input, &program, error, sizeof(error)),
+          "binary CGP1 packet with dense variables loads in generic C");
+    if (program) {
+        CHECK(cetta_gslt_compiled_program_rule_count(program) == 1u,
+              "binary CGP1 packet preserves its rule inventory");
+        cetta_gslt_compiled_program_free(program);
+        program = NULL;
+    }
+
+    uint8_t trailing[sizeof(canary) + 1u];
+    char digest[65];
+    memcpy(trailing, canary, sizeof(canary));
+    trailing[sizeof(canary)] = 0u;
+    cetta_native_sha256_hex(trailing, sizeof(trailing), digest);
+    input.bytes = trailing;
+    input.length = sizeof(trailing);
+    input.sha256 = digest;
+    memset(error, 0, sizeof(error));
+    CHECK(!cetta_gslt_compiled_program_load_v1(
+              &input, &program, error, sizeof(error)),
+          "digest-valid trailing CGP1 byte fails exact consumption");
+
+    uint8_t malformed[sizeof(canary)];
+    memcpy(malformed, canary, sizeof(canary));
+    malformed[45u] = 0u;
+    cetta_native_sha256_hex(malformed, sizeof(malformed), digest);
+    input.bytes = malformed;
+    input.length = sizeof(malformed);
+    input.sha256 = digest;
+    memset(error, 0, sizeof(error));
+    CHECK(!cetta_gslt_compiled_program_load_v1(
+              &input, &program, error, sizeof(error)),
+          "digest-valid NUL text fails CGP1 framing");
+
+    memcpy(malformed, canary, sizeof(canary));
+    malformed[20u] = 0u;
+    cetta_native_sha256_hex(malformed, sizeof(malformed), digest);
+    input.bytes = malformed;
+    input.sha256 = digest;
+    memset(error, 0, sizeof(error));
+    CHECK(!cetta_gslt_compiled_program_load_v1(
+              &input, &program, error, sizeof(error)) &&
+              strstr(error, "node table") != NULL,
+          "digest-valid unknown node kind fails structural admission");
 }
 
 static bool all_answers_equal(const CettaGsltLanguageResult *result,
@@ -475,9 +605,14 @@ static void check_compiled_optimizations_cross_guest(
                       compiled.worklist_states_created &&
                   compiled.worklist_state_bytes_peak > 0u,
               "cross-guest worklists reclaim every value-owned state region");
-        CHECK(reference.rule_variable_slot_buffer_uses == 0u &&
+        CHECK(reference.rule_variable_slot_capacity == 0u &&
+                  reference.rule_variable_slot_allocation_count == 0u &&
+                  reference.rule_variable_slot_buffer_uses == 0u &&
                   reference.rule_variable_slot_bytes_elided == 0u &&
                   reference.rule_variable_slot_clear_bytes_elided == 0u &&
+                  compiled.rule_variable_slot_capacity > 0u &&
+                  compiled.rule_variable_slot_allocation_count > 0u &&
+                  compiled.rule_variable_slot_allocation_count % 2u == 0u &&
                   compiled.rule_variable_slot_buffer_uses > 1u &&
                   compiled.rule_variable_slot_bytes_elided > 0u &&
                   compiled.rule_variable_slot_clear_bytes_elided > 0u,
@@ -769,6 +904,8 @@ int main(int argc, char **argv) {
         &compiled_source, CETTA_ARENA_RUNTIME_KIND_PERSISTENT);
     arena_init(&answers);
 
+    check_independent_compiled_wire_canary();
+
     TermUniverse universe;
     term_universe_init(&universe);
     term_universe_set_persistent_arena(&universe, &compiled_source);
@@ -913,12 +1050,20 @@ int main(int argc, char **argv) {
     check_finite_variable_plan_admission(&cetta_subzero_language_v1);
     check_finite_variable_plan_admission(&cetta_zero_language_v1);
     check_finite_variable_plan_admission(&cetta_zero_exp_language_v1);
+    size_t support_slots = 0u;
+    size_t support_words = 0u;
     uint64_t index_collisions =
-        check_compiled_index_shape(&cetta_subzero_language_v1) +
-        check_compiled_index_shape(&cetta_zero_language_v1) +
-        check_compiled_index_shape(&cetta_zero_exp_language_v1);
+        check_compiled_index_shape(
+            &cetta_subzero_language_v1, &support_slots, &support_words) +
+        check_compiled_index_shape(
+            &cetta_zero_language_v1, &support_slots, &support_words) +
+        check_compiled_index_shape(
+            &cetta_zero_exp_language_v1, &support_slots, &support_words);
     CHECK(index_collisions > 0u,
           "cross-guest indexes exercise collision resolution");
+    CHECK(support_slots > 0u && support_words > 0u &&
+              support_words <= support_slots,
+          "cross-guest plans exercise packed finite-support admission");
 
     size_t divergent_length = cetta_subzero_language_v1.compiled_plan.length;
     uint8_t *divergent_plan = malloc(divergent_length);
@@ -1254,6 +1399,12 @@ int main(int argc, char **argv) {
     g_var_intern = NULL;
     var_intern_free(&variable_names);
     symbol_table_free(&symbols);
+    if (checks != EXPECTED_CHECKS) {
+        fprintf(stderr,
+                "FAIL: runtime gate executed %u checks; expected %u\n",
+                checks, EXPECTED_CHECKS);
+        failures++;
+    }
     if (failures != 0u) {
         fprintf(stderr, "GsltLanguageRuntimeSummary checks=%u failures=%u\n",
                 checks, failures);
