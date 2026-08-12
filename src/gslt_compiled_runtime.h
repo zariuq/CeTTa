@@ -15,6 +15,16 @@ typedef struct {
     const char *sha256;
 } CettaGsltCompiledInputV1;
 
+typedef struct {
+    size_t bucket_count;
+    size_t slot_count;
+    uint64_t insertion_collisions;
+    size_t maximum_probe;
+    size_t dispatch_bucket_count;
+    size_t dispatch_group_count;
+    size_t dispatch_wildcard_count;
+} CettaGsltCompiledIndexStatsV1;
+
 bool cetta_gslt_compiled_program_load_v1(
     const CettaGsltCompiledInputV1 *input,
     CettaGsltCompiledProgram **out,
@@ -24,6 +34,10 @@ void cetta_gslt_compiled_program_free(CettaGsltCompiledProgram *program);
 
 size_t cetta_gslt_compiled_program_rule_count(
     const CettaGsltCompiledProgram *program);
+
+bool cetta_gslt_compiled_program_index_stats_v1(
+    const CettaGsltCompiledProgram *program,
+    CettaGsltCompiledIndexStatsV1 *stats);
 
 /* Admission bridge between authored source and its generated residual plan.
  * Equality is alpha-invariant and rule-order invariant, but preserves every
