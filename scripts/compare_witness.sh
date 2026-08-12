@@ -6,12 +6,16 @@ usage() {
 Usage:
   scripts/compare_witness.sh <name>
   scripts/compare_witness.sh --enforce-material <name>
+  scripts/compare_witness.sh --enforce-rss-against <baseline-name> <name>
 
 Runs a witness via scripts/run_witness.sh, compares it against a recorded
 solid-anchor baseline when one exists for the current HEAD, and also reports
 the nearest contextual checkpoint separately.  --enforce-material additionally
 fails when elapsed time or peak RSS exceeds the recorded baseline by both 25%
 and a small absolute noise allowance (10 seconds or 64 MiB respectively).
+--enforce-rss-against applies only the same peak-RSS rule, using another
+witness's solid-anchor record.  This is suitable for adaptive timing witnesses
+whose sample count deliberately varies.
 EOF
 }
 
@@ -19,8 +23,16 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 baseline_file="$repo_root/benchmarks/baseline_records.tsv"
 
 enforce_material=0
+enforce_rss=0
+baseline_name=""
 if [[ "${1:-}" == "--enforce-material" ]]; then
     enforce_material=1
+    shift
+elif [[ "${1:-}" == "--enforce-rss-against" ]]; then
+    enforce_rss=1
+    shift
+    baseline_name="${1:-}"
+    [[ -n "$baseline_name" ]] || { usage >&2; exit 2; }
     shift
 fi
 
@@ -30,6 +42,9 @@ if [[ $# -ne 1 ]]; then
 fi
 
 name="$1"
+if [[ -z "$baseline_name" ]]; then
+    baseline_name="$name"
+fi
 run_output="$("$repo_root/scripts/run_witness.sh" "$name")"
 
 current_status="$(printf '%s\n' "$run_output" | awk -F= '/^STATUS=/{print $2; exit}')"
@@ -88,7 +103,7 @@ context_distance=""
 while IFS=$'\t' read -r row_name repo_label commit status elapsed rss_kib \
     _build_hint _timeout_s _resource_hint_kib note role; do
     [[ "$row_name" == "name" ]] && continue
-    [[ "$row_name" != "$name" ]] && continue
+    [[ "$row_name" != "$baseline_name" ]] && continue
     if ! git -C "$repo_root" merge-base --is-ancestor "$commit" HEAD 2>/dev/null; then
         continue
     fi
@@ -165,8 +180,9 @@ print_compare_block "COMPARE_CONTEXT" "$context_line" "$context_distance"
 printf 'COMPARE_TREE_STATE=%s\n' "$current_tree"
 printf 'COMPARE_SAMPLE_FACTOR=%s\n' "$sample_factor"
 printf 'COMPARE_STRUCTURED_EVIDENCE=%s\n' "${current_evidence_status:-none}"
+printf 'COMPARE_BASELINE_NAME=%s\n' "$baseline_name"
 
-if [[ "$enforce_material" -eq 1 ]]; then
+if [[ "$enforce_material" -eq 1 || "$enforce_rss" -eq 1 ]]; then
     if [[ "$current_status" != "pass" ]]; then
         echo "FAIL: current witness did not pass" >&2
         exit 1
@@ -186,7 +202,7 @@ if [[ "$enforce_material" -eq 1 ]]; then
         exit 1
     fi
     base_ms="$(elapsed_to_ms "$base_elapsed")"
-    if [[ -n "$cur_ms" && -n "$base_ms" ]]; then
+    if [[ "$enforce_material" -eq 1 && -n "$cur_ms" && -n "$base_ms" ]]; then
         elapsed_material="$(awk -v cur="$cur_ms" -v base="$base_ms" \
             -v factor="$sample_factor" \
             'BEGIN { expected = base * factor; print (cur > expected * 1.25 && cur - expected > 10000) ? 1 : 0 }')"
@@ -204,5 +220,9 @@ if [[ "$enforce_material" -eq 1 ]]; then
             exit 1
         fi
     fi
-    echo "COMPARE_MATERIAL_REGRESSION=none"
+    if [[ "$enforce_material" -eq 1 ]]; then
+        echo "COMPARE_MATERIAL_REGRESSION=none"
+    else
+        echo "COMPARE_RSS_REGRESSION=none"
+    fi
 fi

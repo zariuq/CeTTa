@@ -8,11 +8,14 @@ FACT_COUNT="${2:-10000}"
 MATCH_ROUNDS="${3:-3}"
 SCENARIOS_STR="${4:-insert_only exact_hit_after_insert full_scan_after_insert post_remove_count_after_insert suite_total}"
 RUNTIME_DIR="$ROOT/runtime/bench_space_backend"
-ACT_PATH="$RUNTIME_DIR/mork_backend_${FACT_COUNT}.act"
+ACT_PATH="${CETTA_BENCH_ACT_PATH:-$RUNTIME_DIR/mork_backend_${FACT_COUNT}.act}"
+CORPUS_PATH="${CETTA_BENCH_CORPUS_PATH:-}"
+RANGE_CHUNK="${CETTA_BENCH_RANGE_CHUNK:-100000}"
+MATERIALIZED_RANGE="${CETTA_BENCH_MATERIALIZED_RANGE:-0}"
 
 usage() {
     cat <<EOF
-Usage: $(basename "$0") [all|compare|native|pathmap|mork-live|mork-open-act|mork-load-act] [FACT_COUNT] [MATCH_ROUNDS] [SCENARIOS]
+Usage: $(basename "$0") [all|compare|native|pathmap|mork-live|mork-open-act|mork-load-act|prepare-act] [FACT_COUNT] [MATCH_ROUNDS] [SCENARIOS]
 
 Examples:
   ./scripts/bench_space_backend_matrix.sh all 10000 3
@@ -26,7 +29,7 @@ die() {
 }
 
 case "$MODE" in
-    all|compare|native|pathmap|mork-live|mork-open-act|mork-load-act)
+    all|compare|native|pathmap|mork-live|mork-open-act|mork-load-act|prepare-act)
         ;;
     -h|--help)
         usage
@@ -42,9 +45,23 @@ esac
 [ "$FACT_COUNT" -gt 42 ] || die "FACT_COUNT must be greater than 42 because the workload removes (friend sam 42)"
 [ "$MATCH_ROUNDS" -gt 0 ] || die "MATCH_ROUNDS must be positive"
 [ -x "$BIN" ] || die "Missing executable $BIN"
+[[ "$RANGE_CHUNK" =~ ^[0-9]+$ ]] || die "CETTA_BENCH_RANGE_CHUNK must be a positive integer"
+[ "$RANGE_CHUNK" -gt 0 ] || die "CETTA_BENCH_RANGE_CHUNK must be positive"
+case "$MATERIALIZED_RANGE" in
+    0|1) ;;
+    *) die "CETTA_BENCH_MATERIALIZED_RANGE must be 0 or 1" ;;
+esac
+if [ -n "$CORPUS_PATH" ]; then
+    [ -f "$CORPUS_PATH" ] || die "Missing corpus $CORPUS_PATH"
+fi
 
 mkdir -p "$RUNTIME_DIR"
 tmp_dir=$(mktemp -d "$RUNTIME_DIR/.bench_space_backend.XXXXXX")
+CORPUS_IMPORT_PATH=""
+if [ -n "$CORPUS_PATH" ]; then
+    ln -s "$(realpath -- "$CORPUS_PATH")" "$tmp_dir/friend_corpus.metta"
+    CORPUS_IMPORT_PATH="friend_corpus.metta"
+fi
 preserve_tmp="${BENCH_KEEP_TMP:-0}"
 cleanup() {
     if [ "$preserve_tmp" = "1" ]; then
@@ -74,10 +91,14 @@ preserve_failure_artifacts() {
 run_cetta_file() {
     local file=$1
     local output=$2
+    local space_engine=${3:-}
     local status=0
     local -a command=("$BIN")
     if [ "${CETTA_BENCH_EMIT_RUNTIME_STATS:-0}" = "1" ]; then
         command+=(--emit-runtime-stats)
+    fi
+    if [ -n "$space_engine" ]; then
+        command+=(--space-engine "$space_engine")
     fi
     command+=(--quiet --profile he-extended --lang he "$file")
     (
@@ -119,9 +140,11 @@ mode_setup() {
     local mode=$1
     case "$mode" in
         native)
-            cat <<'EOF'
+            if [ -z "$CORPUS_PATH" ]; then
+                cat <<'EOF'
 !(bind! &space (new-space native))
 EOF
+            fi
             ;;
         pathmap)
             cat <<'EOF'
@@ -150,28 +173,79 @@ EOF
     esac
 }
 
-mode_insert() {
+emit_range_inserts() {
     local mode=$1
-    case "$mode" in
-        native|pathmap)
-            cat <<EOF
+    local start=0
+    local stop
+    local chunk=$RANGE_CHUNK
+
+    if [ "$MATERIALIZED_RANGE" = "1" ]; then
+        chunk=$FACT_COUNT
+    fi
+    while [ "$start" -lt "$FACT_COUNT" ]; do
+        stop=$((start + chunk))
+        if [ "$stop" -gt "$FACT_COUNT" ]; then
+            stop=$FACT_COUNT
+        fi
+        case "$mode" in
+            native|pathmap)
+                cat <<EOF
 !(let \$ignored
    (collapse
-     (let \$xs (eval (list:range $FACT_COUNT))
+     (let \$xs (eval (list:range $start $stop))
        (let \$i (superpose \$xs)
          (add-atom &space (friend sam \$i)))))
    ())
 EOF
-            ;;
-        mork-live)
-            cat <<EOF
+                ;;
+            mork-live)
+                cat <<EOF
 !(let \$ignored
    (collapse
-     (let \$xs (eval (list:range $FACT_COUNT))
+     (let \$xs (eval (list:range $start $stop))
        (let \$i (superpose \$xs)
          (mork:add-atom &space (friend sam \$i)))))
    ())
 EOF
+                ;;
+            *)
+                die "Unsupported range-insert mode: $mode"
+                ;;
+        esac
+        start=$stop
+    done
+}
+
+mode_insert() {
+    local mode=$1
+    if [ -n "$CORPUS_PATH" ]; then
+        case "$mode" in
+            native)
+                printf '!(import! &space "%s")\n' "$CORPUS_IMPORT_PATH"
+                ;;
+            pathmap)
+                printf '!(import! &corpus "%s")\n' "$CORPUS_IMPORT_PATH"
+                printf '!(add-atoms &space (get-atoms &corpus))\n'
+                ;;
+            mork-live)
+                [ -f "$ACT_PATH" ] || die "Missing ACT corpus $ACT_PATH"
+                printf '!(mork:load-act! &space "%s")\n' "$ACT_PATH"
+                ;;
+            mork-open-act|mork-load-act)
+                [ -f "$ACT_PATH" ] || die "Missing ACT corpus $ACT_PATH"
+                ;;
+            *)
+                die "Unknown mode: $mode"
+                ;;
+        esac
+        return
+    fi
+    case "$mode" in
+        native|pathmap)
+            emit_range_inserts "$mode"
+            ;;
+        mork-live)
+            emit_range_inserts "$mode"
             ;;
         mork-open-act|mork-load-act)
             ;;
@@ -230,20 +304,31 @@ remove_call() {
 
 render_prepare_file() {
     local out=$1
-    cat >"$out" <<EOF
-!(import! &self list)
+    if [ -n "$CORPUS_PATH" ]; then
+        cat >"$out" <<EOF
 !(import! &self mork)
+!(import! &corpus "$CORPUS_IMPORT_PATH")
 !(bind! &space (mork:new-space))
-!(let \$ignored
-   (collapse
-     (let \$xs (eval (list:range $FACT_COUNT))
-       (let \$i (superpose \$xs)
-         (mork:add-atom &space (friend sam \$i)))))
-   ())
+!(mork:add-atoms &space (get-atoms &corpus))
 !(assertEqualToResult (mork:size &space) ($FACT_COUNT))
 !(mork:dump! &space "$ACT_PATH")
 !(println! (bench prepared_rows $FACT_COUNT))
 EOF
+        return
+    fi
+    {
+        cat <<'EOF'
+!(import! &self list)
+!(import! &self mork)
+!(bind! &space (mork:new-space))
+EOF
+        emit_range_inserts mork-live
+        cat <<EOF
+!(assertEqualToResult (mork:size &space) ($FACT_COUNT))
+!(mork:dump! &space "$ACT_PATH")
+!(println! (bench prepared_rows $FACT_COUNT))
+EOF
+    } >"$out"
 }
 
 scenario_program_path() {
@@ -369,6 +454,7 @@ expect_value() {
 prepare_act() {
     local file="$tmp_dir/prepare.metta"
     local log="$tmp_dir/prepare.log"
+    mkdir -p "$(dirname -- "$ACT_PATH")"
     render_prepare_file "$file"
     if run_cetta_file "$file" "$log"; then
         :
@@ -399,11 +485,15 @@ run_mode_scenario() {
     local pathmap_direct_store
     local mork_add_call
     local mork_add_batch_items
+    local default_space_engine=""
 
     file=$(scenario_program_path "$mode" "$scenario")
     log=$(scenario_log_path "$mode" "$scenario")
+    if [ "$mode" = native ]; then
+        default_space_engine=native
+    fi
     render_program "$mode" "$scenario" "$file"
-    if run_cetta_file "$file" "$log"; then
+    if run_cetta_file "$file" "$log" "$default_space_engine"; then
         :
     else
         local status=$?
@@ -445,6 +535,11 @@ run_mode_scenario() {
 }
 
 IFS=' ' read -r -a scenarios <<< "$SCENARIOS_STR"
+if [ "$MODE" = "prepare-act" ]; then
+    prepare_act
+    printf 'prepared-act\t%s\t%s\n' "$FACT_COUNT" "$ACT_PATH"
+    exit 0
+fi
 selected_modes=()
 case "$MODE" in
     all)

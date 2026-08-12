@@ -460,6 +460,8 @@ def readiness_commands(tier: str) -> list[list[str]]:
             ["make", "BUILD=main", "test-main-readiness-model"],
             ["make", "BUILD=main", "main-readiness-mutation-qualification"],
             ["make", "BUILD=main", "main-readiness-space-ladders"],
+            ["make", "BUILD=main", "main-readiness-space-ladders-exhaustive"],
+            ["make", "BUILD=main", "main-readiness-space-frontier"],
             ["make", "BUILD=main", "main-readiness-thresholds"],
             ["make", "BUILD=main", "bench-light"],
             [
