@@ -57,6 +57,8 @@ typedef struct {
     uint64_t rule_constructor_nodes_elided;
     uint64_t rule_flat_head_matches;
     uint64_t rule_ground_dense_matches;
+    uint64_t rule_variable_slot_capacity;
+    uint64_t rule_variable_slot_allocation_count;
     uint64_t rule_variable_slot_buffer_uses;
     uint64_t rule_variable_slot_bytes_elided;
     uint64_t rule_variable_slot_clear_bytes_elided;

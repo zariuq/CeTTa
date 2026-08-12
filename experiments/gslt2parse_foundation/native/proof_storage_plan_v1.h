@@ -56,6 +56,40 @@ typedef struct {
 } PPProofStorageCallV1;
 
 typedef struct {
+    const char *owner;
+    const char *cons;
+    const char *nil;
+    const char *support_apart;
+    const char *token_against;
+    const char *pair_allowed;
+    const char *apart;
+    const char *literal;
+    const char *variable;
+    const char *support_carrier;
+    const char *apartness_carrier;
+} PPProofFiniteSupportPlanV1;
+
+typedef struct {
+    const char *operation;
+    uint32_t action_index;
+    const char *machine;
+    const char *header_role;
+    const char *code_role;
+    const char *carrier;
+    const char *region;
+} PPProofIndexedValuePlanV1;
+
+typedef struct {
+    const char *machine;
+    const char *owner;
+    const char *cons;
+    const char *nil;
+    const char *carrier;
+    const char *source_region;
+    const char *execution_region;
+} PPProofLiteralHolePlanV1;
+
+typedef struct {
     PPProofStorageTableV1 *tables;
     uint32_t table_len;
     PPProofStorageMachineV1 *machines;
@@ -66,6 +100,12 @@ typedef struct {
     uint32_t sequence_len;
     PPProofStorageCallV1 *calls;
     uint32_t call_len;
+    PPProofFiniteSupportPlanV1 *finite_supports;
+    uint32_t finite_support_len;
+    PPProofIndexedValuePlanV1 *indexed_values;
+    uint32_t indexed_value_len;
+    PPProofLiteralHolePlanV1 *literal_holes;
+    uint32_t literal_hole_len;
     char semantic_digest[65];
     void *storage;
 } PPProofStoragePlanV1;
@@ -91,5 +131,11 @@ const PPProofStorageSequenceV1 *ppproof_storage_plan_v1_sequence(
     const PPProofStoragePlanV1 *plan,
     const char *owner,
     const char *provable);
+const PPProofFiniteSupportPlanV1 *ppproof_storage_plan_v1_finite_support(
+    const PPProofStoragePlanV1 *plan, const char *owner);
+const PPProofIndexedValuePlanV1 *ppproof_storage_plan_v1_indexed_value(
+    const PPProofStoragePlanV1 *plan, const char *machine);
+const PPProofLiteralHolePlanV1 *ppproof_storage_plan_v1_literal_hole(
+    const PPProofStoragePlanV1 *plan, const char *machine);
 
 #endif

@@ -1,4 +1,5 @@
 #include "lib_parse_native_grammar.h"
+#include "gslt_dense_bitset_v1.h"
 
 #include <stdarg.h>
 #include <stdio.h>
@@ -452,10 +453,7 @@ typedef struct {
     uint32_t cap;
 } CettaLpNativeIdVec;
 
-typedef struct {
-    uint64_t *words;
-    uint32_t word_len;
-} CettaLpNativeBitset;
+typedef CettaGsltDenseBitsetV1 CettaLpNativeBitset;
 
 typedef struct {
     CettaLpNativeItem *items;
@@ -613,66 +611,34 @@ static void itemvec_sort(CettaLpNativeItemVec *vec) {
     qsort(vec->items, vec->len, sizeof(*vec->items), cmp_items);
 }
 
-static void bitset_zero(CettaLpNativeBitset *bitset) {
-    if (!bitset || !bitset->words)
-        return;
-    memset(bitset->words, 0, sizeof(uint64_t) * bitset->word_len);
-}
-
 static bool bitset_init(CettaLpNativeBitset *bitset, uint32_t bit_count) {
-    if (!bitset)
-        return false;
-    bitset->word_len = (bit_count + 63u) / 64u;
-    bitset->words = NULL;
-    if (bitset->word_len == 0)
-        return true;
-    bitset->words = cetta_malloc(sizeof(uint64_t) * bitset->word_len);
-    bitset_zero(bitset);
-    return true;
+    return cetta_gslt_dense_bitset_init_v1(bitset, bit_count);
 }
 
 static void bitset_free(CettaLpNativeBitset *bitset) {
-    if (!bitset)
-        return;
-    free(bitset->words);
-    bitset->words = NULL;
-    bitset->word_len = 0;
+    cetta_gslt_dense_bitset_free_v1(bitset);
 }
 
 static bool bitset_set(CettaLpNativeBitset *bitset, uint32_t idx) {
-    uint32_t word = idx / 64u;
-    uint64_t mask = 1ull << (idx % 64u);
     bool changed;
 
-    if (!bitset || word >= bitset->word_len)
-        return false;
-    changed = (bitset->words[word] & mask) == 0;
-    bitset->words[word] |= mask;
-    return changed;
+    return cetta_gslt_dense_bitset_set_v1(
+               bitset, idx, &changed) && changed;
 }
 
 static bool bitset_test(const CettaLpNativeBitset *bitset, uint32_t idx) {
-    uint32_t word = idx / 64u;
-    uint64_t mask = 1ull << (idx % 64u);
+    bool present;
 
-    if (!bitset || word >= bitset->word_len)
-        return false;
-    return (bitset->words[word] & mask) != 0;
+    return cetta_gslt_dense_bitset_test_v1(
+               bitset, idx, &present) && present;
 }
 
 static bool bitset_or_changed(CettaLpNativeBitset *dst,
                               const CettaLpNativeBitset *src) {
-    bool changed = false;
-    uint32_t i;
+    bool changed;
 
-    for (i = 0; i < dst->word_len && i < src->word_len; i++) {
-        uint64_t next = dst->words[i] | src->words[i];
-        if (next != dst->words[i]) {
-            dst->words[i] = next;
-            changed = true;
-        }
-    }
-    return changed;
+    return cetta_gslt_dense_bitset_union_changed_v1(
+               dst, src, &changed) && changed;
 }
 
 static bool copy_rhs_symbol_array(CettaLpNativeSymbol **out,

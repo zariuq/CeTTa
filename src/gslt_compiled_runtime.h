@@ -18,11 +18,21 @@ typedef struct {
 typedef struct {
     size_t bucket_count;
     size_t slot_count;
+    size_t head_indexed_rule_count;
     uint64_t insertion_collisions;
     size_t maximum_probe;
     size_t dispatch_bucket_count;
     size_t dispatch_group_count;
     size_t dispatch_wildcard_count;
+    size_t dispatch_scratch_slot_capacity;
+    size_t dispatch_scratch_allocation_count;
+    size_t variable_support_slot_capacity;
+    size_t variable_support_word_capacity;
+    size_t variable_support_allocation_count;
+    size_t plan_node_count;
+    size_t flat_variable_head_rule_count;
+    size_t ground_cached_plan_node_count;
+    uint64_t ground_cached_value_node_count;
 } CettaGsltCompiledIndexStatsV1;
 
 bool cetta_gslt_compiled_program_load_v1(

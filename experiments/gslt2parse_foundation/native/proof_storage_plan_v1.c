@@ -17,7 +17,10 @@ typedef enum {
     PPPROOF_STORAGE_RECORD_V1_MACHINE,
     PPPROOF_STORAGE_RECORD_V1_READ,
     PPPROOF_STORAGE_RECORD_V1_SEQUENCE,
-    PPPROOF_STORAGE_RECORD_V1_CALL
+    PPPROOF_STORAGE_RECORD_V1_CALL,
+    PPPROOF_STORAGE_RECORD_V1_FINITE_SUPPORT,
+    PPPROOF_STORAGE_RECORD_V1_INDEXED_VALUE,
+    PPPROOF_STORAGE_RECORD_V1_LITERAL_HOLE
 } PPProofStorageRecordV1;
 
 typedef struct {
@@ -26,6 +29,9 @@ typedef struct {
     uint32_t reads;
     uint32_t sequences;
     uint32_t calls;
+    uint32_t finite_supports;
+    uint32_t indexed_values;
+    uint32_t literal_holes;
 } PPProofStorageCountsV1;
 
 static bool ppproof_storage_plan_v1_fail(
@@ -118,6 +124,15 @@ static PPProofStorageRecordV1 ppproof_storage_plan_v1_record(
     if (ppproof_storage_plan_v1_expr_head(
             record, "proof-call-region-plan-v1", 8u))
         return PPPROOF_STORAGE_RECORD_V1_CALL;
+    if (ppproof_storage_plan_v1_expr_head(
+            record, "proof-finite-support-plan-v1", 11u))
+        return PPPROOF_STORAGE_RECORD_V1_FINITE_SUPPORT;
+    if (ppproof_storage_plan_v1_expr_head(
+            record, "proof-indexed-value-plan-v1", 7u))
+        return PPPROOF_STORAGE_RECORD_V1_INDEXED_VALUE;
+    if (ppproof_storage_plan_v1_expr_head(
+            record, "proof-literal-hole-plan-v1", 7u))
+        return PPPROOF_STORAGE_RECORD_V1_LITERAL_HOLE;
     return PPPROOF_STORAGE_RECORD_V1_UNKNOWN;
 }
 
@@ -190,6 +205,27 @@ static int ppproof_storage_plan_v1_call_compare(
     return 0;
 }
 
+static int ppproof_storage_plan_v1_finite_support_compare(
+    const void *left_raw, const void *right_raw) {
+    const PPProofFiniteSupportPlanV1 *left = left_raw;
+    const PPProofFiniteSupportPlanV1 *right = right_raw;
+    return strcmp(left->owner, right->owner);
+}
+
+static int ppproof_storage_plan_v1_indexed_value_compare(
+    const void *left_raw, const void *right_raw) {
+    const PPProofIndexedValuePlanV1 *left = left_raw;
+    const PPProofIndexedValuePlanV1 *right = right_raw;
+    return strcmp(left->machine, right->machine);
+}
+
+static int ppproof_storage_plan_v1_literal_hole_compare(
+    const void *left_raw, const void *right_raw) {
+    const PPProofLiteralHolePlanV1 *left = left_raw;
+    const PPProofLiteralHolePlanV1 *right = right_raw;
+    return strcmp(left->machine, right->machine);
+}
+
 void ppproof_storage_plan_v1_init(PPProofStoragePlanV1 *plan) {
     if (plan)
         memset(plan, 0, sizeof(*plan));
@@ -210,6 +246,9 @@ void ppproof_storage_plan_v1_free(PPProofStoragePlanV1 *plan) {
     free(plan->reads);
     free(plan->sequences);
     free(plan->calls);
+    free(plan->finite_supports);
+    free(plan->indexed_values);
+    free(plan->literal_holes);
     memset(plan, 0, sizeof(*plan));
 }
 
@@ -313,6 +352,72 @@ const PPProofStorageSequenceV1 *ppproof_storage_plan_v1_sequence(
                : NULL;
 }
 
+const PPProofFiniteSupportPlanV1 *ppproof_storage_plan_v1_finite_support(
+    const PPProofStoragePlanV1 *plan, const char *owner) {
+    uint32_t low = 0u;
+    uint32_t high;
+
+    if (!plan || !owner)
+        return NULL;
+    high = plan->finite_support_len;
+    while (low < high) {
+        uint32_t middle = low + (high - low) / 2u;
+        int compared = strcmp(plan->finite_supports[middle].owner, owner);
+        if (compared < 0)
+            low = middle + 1u;
+        else
+            high = middle;
+    }
+    return low < plan->finite_support_len &&
+                   strcmp(plan->finite_supports[low].owner, owner) == 0
+               ? &plan->finite_supports[low]
+               : NULL;
+}
+
+const PPProofIndexedValuePlanV1 *ppproof_storage_plan_v1_indexed_value(
+    const PPProofStoragePlanV1 *plan, const char *machine) {
+    uint32_t low = 0u;
+    uint32_t high;
+
+    if (!plan || !machine)
+        return NULL;
+    high = plan->indexed_value_len;
+    while (low < high) {
+        uint32_t middle = low + (high - low) / 2u;
+        int compared = strcmp(plan->indexed_values[middle].machine, machine);
+        if (compared < 0)
+            low = middle + 1u;
+        else
+            high = middle;
+    }
+    return low < plan->indexed_value_len &&
+                   strcmp(plan->indexed_values[low].machine, machine) == 0
+               ? &plan->indexed_values[low]
+               : NULL;
+}
+
+const PPProofLiteralHolePlanV1 *ppproof_storage_plan_v1_literal_hole(
+    const PPProofStoragePlanV1 *plan, const char *machine) {
+    uint32_t low = 0u;
+    uint32_t high;
+
+    if (!plan || !machine)
+        return NULL;
+    high = plan->literal_hole_len;
+    while (low < high) {
+        uint32_t middle = low + (high - low) / 2u;
+        int compared = strcmp(plan->literal_holes[middle].machine, machine);
+        if (compared < 0)
+            low = middle + 1u;
+        else
+            high = middle;
+    }
+    return low < plan->literal_hole_len &&
+                   strcmp(plan->literal_holes[low].machine, machine) == 0
+               ? &plan->literal_holes[low]
+               : NULL;
+}
+
 static bool ppproof_storage_plan_v1_parse_table(
     const Atom *record, PPProofStorageTableV1 *table,
     char *error, size_t error_size) {
@@ -399,6 +504,76 @@ static bool ppproof_storage_plan_v1_parse_call(
     return true;
 }
 
+static bool ppproof_storage_plan_v1_parse_finite_support(
+    const Atom *record, PPProofFiniteSupportPlanV1 *support,
+    char *error, size_t error_size) {
+    const char **fields[] = {
+        &support->owner, &support->cons, &support->nil,
+        &support->support_apart, &support->token_against,
+        &support->pair_allowed, &support->apart, &support->literal,
+        &support->variable, &support->support_carrier,
+        &support->apartness_carrier,
+    };
+    uint32_t index;
+
+    for (index = 0u; index < sizeof(fields) / sizeof(fields[0]); index++) {
+        *fields[index] = ppproof_storage_plan_v1_symbol(
+            record->expr.elems[index + 1u]);
+        if (!*fields[index])
+            return ppproof_storage_plan_v1_fail(
+                error, error_size,
+                "proof finite-support record is malformed");
+    }
+    return true;
+}
+
+static bool ppproof_storage_plan_v1_parse_indexed_value(
+    const Atom *record, PPProofIndexedValuePlanV1 *indexed,
+    char *error, size_t error_size) {
+    indexed->operation = ppproof_storage_plan_v1_symbol(
+        record->expr.elems[1]);
+    indexed->machine = ppproof_storage_plan_v1_symbol(
+        record->expr.elems[3]);
+    indexed->header_role = ppproof_storage_plan_v1_symbol(
+        record->expr.elems[4]);
+    indexed->code_role = ppproof_storage_plan_v1_symbol(
+        record->expr.elems[5]);
+    indexed->carrier = ppproof_storage_plan_v1_symbol(
+        record->expr.elems[6]);
+    indexed->region = ppproof_storage_plan_v1_symbol(
+        record->expr.elems[7]);
+    if (!indexed->operation ||
+        !ppproof_storage_plan_v1_u32(
+            record->expr.elems[2], &indexed->action_index) ||
+        !indexed->machine || !indexed->header_role || !indexed->code_role ||
+        strcmp(indexed->header_role, indexed->code_role) == 0 ||
+        !indexed->carrier || !indexed->region)
+        return ppproof_storage_plan_v1_fail(
+            error, error_size, "proof indexed-value record is malformed");
+    return true;
+}
+
+static bool ppproof_storage_plan_v1_parse_literal_hole(
+    const Atom *record, PPProofLiteralHolePlanV1 *program,
+    char *error, size_t error_size) {
+    const char **fields[] = {
+        &program->machine, &program->owner, &program->cons,
+        &program->nil, &program->carrier, &program->source_region,
+        &program->execution_region,
+    };
+    uint32_t index;
+
+    for (index = 0u; index < sizeof(fields) / sizeof(fields[0]); index++) {
+        *fields[index] = ppproof_storage_plan_v1_symbol(
+            record->expr.elems[index + 1u]);
+        if (!*fields[index])
+            return ppproof_storage_plan_v1_fail(
+                error, error_size,
+                "proof literal/hole record is malformed");
+    }
+    return true;
+}
+
 static bool ppproof_storage_plan_v1_validate(
     const PPProofStoragePlanV1 *plan,
     char *error, size_t error_size) {
@@ -440,6 +615,27 @@ static bool ppproof_storage_plan_v1_validate(
             return ppproof_storage_plan_v1_fail(
                 error, error_size, "proof storage call is duplicated");
     }
+    for (index = 1u; index < plan->finite_support_len; index++) {
+        if (strcmp(plan->finite_supports[index - 1u].owner,
+                   plan->finite_supports[index].owner) == 0)
+            return ppproof_storage_plan_v1_fail(
+                error, error_size,
+                "proof finite-support plan is duplicated");
+    }
+    for (index = 1u; index < plan->indexed_value_len; index++) {
+        if (strcmp(plan->indexed_values[index - 1u].machine,
+                   plan->indexed_values[index].machine) == 0)
+            return ppproof_storage_plan_v1_fail(
+                error, error_size,
+                "proof indexed-value plan is duplicated");
+    }
+    for (index = 1u; index < plan->literal_hole_len; index++) {
+        if (strcmp(plan->literal_holes[index - 1u].machine,
+                   plan->literal_holes[index].machine) == 0)
+            return ppproof_storage_plan_v1_fail(
+                error, error_size,
+                "proof literal/hole plan is duplicated");
+    }
     for (index = 0u; index < plan->read_len; index++) {
         const PPProofStorageReadV1 *read = &plan->reads[index];
         const PPProofStorageTableV1 *table =
@@ -478,6 +674,82 @@ static bool ppproof_storage_plan_v1_validate(
             return ppproof_storage_plan_v1_fail(
                 error, error_size,
                 "proof storage call disagrees with its machine or sequence");
+    }
+    for (index = 0u; index < plan->finite_support_len; index++) {
+        const PPProofFiniteSupportPlanV1 *support =
+            &plan->finite_supports[index];
+        uint32_t sequence_index;
+        bool sequence_found = false;
+        for (sequence_index = 0u;
+             sequence_index < plan->sequence_len; sequence_index++) {
+            const PPProofStorageSequenceV1 *sequence =
+                &plan->sequences[sequence_index];
+            if (strcmp(sequence->owner, support->owner) == 0 &&
+                strcmp(sequence->cons, support->cons) == 0 &&
+                strcmp(sequence->nil, support->nil) == 0) {
+                sequence_found = true;
+                break;
+            }
+        }
+        if (!sequence_found)
+            return ppproof_storage_plan_v1_fail(
+                error, error_size,
+                "proof finite-support plan lacks its sequence layout");
+    }
+    for (index = 0u; index < plan->indexed_value_len; index++) {
+        const PPProofIndexedValuePlanV1 *indexed =
+            &plan->indexed_values[index];
+        uint32_t call_index;
+        bool call_found = false;
+        if (!ppproof_storage_plan_v1_machine(plan, indexed->machine))
+            return ppproof_storage_plan_v1_fail(
+                error, error_size,
+                "proof indexed-value plan names an unknown machine");
+        for (call_index = 0u; call_index < plan->call_len; call_index++) {
+            const PPProofStorageCallV1 *call = &plan->calls[call_index];
+            if (strcmp(call->operation, indexed->operation) == 0 &&
+                call->action_index == indexed->action_index &&
+                strcmp(call->machine, indexed->machine) == 0 &&
+                strcmp(call->region, indexed->region) == 0) {
+                call_found = true;
+                break;
+            }
+        }
+        if (!call_found)
+            return ppproof_storage_plan_v1_fail(
+                error, error_size,
+                "proof indexed-value plan lacks its generated call site");
+    }
+    for (index = 0u; index < plan->literal_hole_len; index++) {
+        const PPProofLiteralHolePlanV1 *program =
+            &plan->literal_holes[index];
+        const PPProofStorageMachineV1 *machine =
+            ppproof_storage_plan_v1_machine(plan, program->machine);
+        const PPProofStorageSequenceV1 *sequence;
+        const PPProofStorageReadV1 *formula_read;
+        const PPProofStorageReadV1 *mandatory_read;
+        if (!machine || strcmp(machine->owner, program->owner) != 0)
+            return ppproof_storage_plan_v1_fail(
+                error, error_size,
+                "proof literal/hole plan names an incompatible machine");
+        sequence = ppproof_storage_plan_v1_sequence(
+            plan, machine->owner, machine->provable);
+        formula_read = ppproof_storage_plan_v1_read(
+            plan, machine->machine, "formula-v1");
+        mandatory_read = ppproof_storage_plan_v1_read(
+            plan, machine->machine, "mandatory-variable-v1");
+        if (!sequence || strcmp(sequence->cons, program->cons) != 0 ||
+            strcmp(sequence->nil, program->nil) != 0 ||
+            strcmp(sequence->region, program->execution_region) != 0 ||
+            !formula_read || !mandatory_read ||
+            formula_read->lifetime !=
+                PPPROOF_STORAGE_LIFETIME_V1_PERSISTENT ||
+            mandatory_read->lifetime !=
+                PPPROOF_STORAGE_LIFETIME_V1_PERSISTENT ||
+            strcmp(program->source_region, "state-run-region-v1") != 0)
+            return ppproof_storage_plan_v1_fail(
+                error, error_size,
+                "proof literal/hole plan lacks immutable sequence inputs");
     }
     return true;
 }
@@ -532,6 +804,15 @@ bool ppproof_storage_plan_v1_load(
         case PPPROOF_STORAGE_RECORD_V1_CALL:
             count = &counts.calls;
             break;
+        case PPPROOF_STORAGE_RECORD_V1_FINITE_SUPPORT:
+            count = &counts.finite_supports;
+            break;
+        case PPPROOF_STORAGE_RECORD_V1_INDEXED_VALUE:
+            count = &counts.indexed_values;
+            break;
+        case PPPROOF_STORAGE_RECORD_V1_LITERAL_HOLE:
+            count = &counts.literal_holes;
+            break;
         case PPPROOF_STORAGE_RECORD_V1_UNKNOWN:
         default:
             ppproof_storage_plan_v1_fail(
@@ -564,13 +845,25 @@ bool ppproof_storage_plan_v1_load(
             sizeof(*result.sequences), error_buf, error_buf_size) ||
         !ppproof_storage_plan_v1_alloc(
             (void **)&result.calls, counts.calls,
-            sizeof(*result.calls), error_buf, error_buf_size))
+            sizeof(*result.calls), error_buf, error_buf_size) ||
+        !ppproof_storage_plan_v1_alloc(
+            (void **)&result.finite_supports, counts.finite_supports,
+            sizeof(*result.finite_supports), error_buf, error_buf_size) ||
+        !ppproof_storage_plan_v1_alloc(
+            (void **)&result.indexed_values, counts.indexed_values,
+            sizeof(*result.indexed_values), error_buf, error_buf_size) ||
+        !ppproof_storage_plan_v1_alloc(
+            (void **)&result.literal_holes, counts.literal_holes,
+            sizeof(*result.literal_holes), error_buf, error_buf_size))
         goto done;
     result.table_len = counts.tables;
     result.machine_len = counts.machines;
     result.read_len = counts.reads;
     result.sequence_len = counts.sequences;
     result.call_len = counts.calls;
+    result.finite_support_len = counts.finite_supports;
+    result.indexed_value_len = counts.indexed_values;
+    result.literal_hole_len = counts.literal_holes;
     for (index = 0u; index < storage->answers.len; index++) {
         const Atom *record = NULL;
         PPProofStorageRecordV1 kind = ppproof_storage_plan_v1_record(
@@ -603,6 +896,21 @@ bool ppproof_storage_plan_v1_load(
                 record, &result.calls[writes.calls++],
                 error_buf, error_buf_size);
             break;
+        case PPPROOF_STORAGE_RECORD_V1_FINITE_SUPPORT:
+            parsed = ppproof_storage_plan_v1_parse_finite_support(
+                record, &result.finite_supports[writes.finite_supports++],
+                error_buf, error_buf_size);
+            break;
+        case PPPROOF_STORAGE_RECORD_V1_INDEXED_VALUE:
+            parsed = ppproof_storage_plan_v1_parse_indexed_value(
+                record, &result.indexed_values[writes.indexed_values++],
+                error_buf, error_buf_size);
+            break;
+        case PPPROOF_STORAGE_RECORD_V1_LITERAL_HOLE:
+            parsed = ppproof_storage_plan_v1_parse_literal_hole(
+                record, &result.literal_holes[writes.literal_holes++],
+                error_buf, error_buf_size);
+            break;
         case PPPROOF_STORAGE_RECORD_V1_UNKNOWN:
         default:
             break;
@@ -620,6 +928,15 @@ bool ppproof_storage_plan_v1_load(
           ppproof_storage_plan_v1_sequence_compare);
     qsort(result.calls, result.call_len, sizeof(*result.calls),
           ppproof_storage_plan_v1_call_compare);
+    qsort(result.finite_supports, result.finite_support_len,
+          sizeof(*result.finite_supports),
+          ppproof_storage_plan_v1_finite_support_compare);
+    qsort(result.indexed_values, result.indexed_value_len,
+          sizeof(*result.indexed_values),
+          ppproof_storage_plan_v1_indexed_value_compare);
+    qsort(result.literal_holes, result.literal_hole_len,
+          sizeof(*result.literal_holes),
+          ppproof_storage_plan_v1_literal_hole_compare);
     if (!ppproof_storage_plan_v1_validate(
             &result, error_buf, error_buf_size))
         goto done;
