@@ -798,9 +798,10 @@ static bool language_run_query(
     return language_error(error, error_size, "unknown GSLT realization");
 }
 
-bool cetta_gslt_language_query_v1(
+static bool language_query_authorized(
     const CettaGsltLanguage *language,
     CettaGsltRealization realization,
+    const CettaGsltProviderRegistryV1 *providers,
     Arena *output_arena, Atom *query,
     CettaGsltHornLimits limits,
     CettaGsltHornResult *result,
@@ -824,8 +825,60 @@ bool cetta_gslt_language_query_v1(
                               "query does not match the admitted entry");
     memset(result, 0, sizeof(*result));
     return language_run_query(
-        language, realization, NULL, output_arena, query, limits,
+        language, realization, providers, output_arena, query, limits,
         result, error, error_size);
+}
+
+bool cetta_gslt_language_query_v1(
+    const CettaGsltLanguage *language,
+    CettaGsltRealization realization,
+    Arena *output_arena, Atom *query,
+    CettaGsltHornLimits limits,
+    CettaGsltHornResult *result,
+    char *error, size_t error_size) {
+    return cetta_gslt_language_query_with_providers_v1(
+        language, realization, NULL, NULL,
+        output_arena, query, limits, result, error, error_size);
+}
+
+bool cetta_gslt_language_query_with_providers_v1(
+    const CettaGsltLanguage *language,
+    CettaGsltRealization realization,
+    const CettaGsltProviderCatalogV1 *catalog,
+    const CettaGsltProviderRegistryV1 *physical_providers,
+    Arena *output_arena, Atom *query,
+    CettaGsltHornLimits limits,
+    CettaGsltHornResult *result,
+    char *error, size_t error_size) {
+    if (!language)
+        return language_error(error, error_size,
+                              "provider query has no GSLT language");
+    if (catalog) {
+        if (!cetta_gslt_provider_catalog_validate_v1(
+                catalog, error, error_size))
+            return false;
+        if (strcmp(catalog->language_name, language->name) != 0 ||
+            !language_optional_text_equal(
+                catalog->profile_name, language->profile_name) ||
+            strcmp(catalog->language_manifest_sha256,
+                   language->manifest_sha256) != 0)
+            return language_error(
+                error, error_size,
+                "semantic-provider catalog targets another language authority");
+    }
+    CettaGsltAuthorizedProviderRegistryV1 authorized = {0};
+    if (!cetta_gslt_provider_registry_authorize_v1(
+            catalog, physical_providers, &authorized,
+            error, error_size))
+        return false;
+    const CettaGsltProviderRegistryV1 *providers =
+        authorized.registry.provider_count > 0u
+            ? &authorized.registry : NULL;
+    bool ok = language_query_authorized(
+        language, realization, providers,
+        output_arena, query, limits, result, error, error_size);
+    cetta_gslt_authorized_provider_registry_free_v1(&authorized);
+    return ok;
 }
 
 static uint64_t language_u64_add_sat(uint64_t left, uint64_t right) {

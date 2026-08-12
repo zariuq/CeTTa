@@ -57,7 +57,7 @@ static void test_renamed_canary(Arena *queries, Arena *answers,
         fprintf(stderr, "canary load diagnostic: %s\n", error);
         return;
     }
-    CHECK(cetta_gslt_horn_program_rule_count(program) == 7u,
+    CHECK(cetta_gslt_horn_program_rule_count(program) == 9u,
           "all canary rule occurrences are retained");
 
     Atom *query = parse_one(queries, "(canary-route $from $to)");
@@ -113,6 +113,42 @@ static void test_renamed_canary(Arena *queries, Arena *answers,
     CHECK(result.outcome == CETTA_GSLT_HORN_COMPLETED &&
               result.answer_count == 0u,
           "unknown relation is inert rather than an error");
+    cetta_gslt_horn_result_free(&result);
+
+    enum { DEEP_DERIVATION = 30000 };
+    Atom *counter = atom_symbol(queries, "canary-zero");
+    Atom *successor = atom_symbol(queries, "canary-succ");
+    for (uint32_t index = 0u; index < DEEP_DERIVATION; index++)
+        counter = atom_expr2(queries, successor, counter);
+    Atom *deep_query = atom_expr2(
+        queries, atom_symbol(queries, "canary-deep"), counter);
+    CettaGsltHornLimits deep_limits = {
+        .max_rule_attempts = 100000u,
+        .max_answers = 2u,
+        .max_depth = DEEP_DERIVATION + 2u,
+    };
+    memset(error, 0, sizeof(error));
+    CHECK(deep_query && cetta_gslt_horn_query(
+              program, answers, deep_query, deep_limits,
+              &result, error, sizeof(error)),
+          "deep Horn derivation executes on the explicit worklist");
+    CHECK(result.outcome == CETTA_GSLT_HORN_COMPLETED &&
+              result.answer_count == 1u &&
+              result.max_depth_observed == DEEP_DERIVATION + 1u,
+          "deep Horn derivation completes without consuming the C stack");
+    CHECK(answers_equal(&result, deep_query),
+          "deep Horn derivation preserves its closed query");
+    cetta_gslt_horn_result_free(&result);
+
+    deep_limits.max_depth = 1000u;
+    memset(error, 0, sizeof(error));
+    CHECK(cetta_gslt_horn_query(
+              program, answers, deep_query, deep_limits,
+              &result, error, sizeof(error)),
+          "deep Horn derivation retains an explicit depth boundary");
+    CHECK(result.outcome == CETTA_GSLT_HORN_DEPTH_LIMIT &&
+              result.answer_count == 0u,
+          "deep Horn derivation reports bounded incompleteness");
     cetta_gslt_horn_result_free(&result);
     cetta_gslt_horn_program_free(program);
 }
