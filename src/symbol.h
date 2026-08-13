@@ -429,7 +429,16 @@ static inline uint64_t symbol_table_instance_id(const SymbolTable *st) {
     X(native_handle, "NativeHandle") \
     /* Append-only builtin extension: preserve every established SymbolId. */ \
     X(if_text, "if") \
-    X(empty_form, "empty")
+    X(empty_form, "empty") \
+    X(petta_member, "member") \
+    X(petta_last, "last") \
+    X(petta_the, "the") \
+    X(petta_make_list, "make-list") \
+    X(petta_msort, "msort") \
+    X(petta_transaction, "transaction") \
+    X(petta_with_mutex, "with_mutex") \
+    X(petta_min, "min") \
+    X(petta_max, "max")
 
 /* Builtins whose grounded-operation capability is independent of language
    and profile.  symbol_table_init_builtins compiles this declaration into

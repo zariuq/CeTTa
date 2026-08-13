@@ -31,6 +31,8 @@ bool variant_instance_promote_atoms_to_arena(Arena *dst,
                                              VariantInstance *instance);
 bool variant_instance_promote_atoms_with_session(
     AtomDeepCopySession *session, VariantInstance *instance);
+bool variant_instance_atoms_closed_for_arena(
+    const VariantInstance *instance, const Arena *arena);
 bool variant_instance_from_shape(VariantInstance *out, const VariantShape *shape);
 bool variant_instance_append_rebased(Arena *dst, VariantInstance *instance,
                                      Atom **out_skeleton,

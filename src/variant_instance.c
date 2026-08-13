@@ -155,6 +155,21 @@ bool variant_instance_promote_atoms_with_session(
     return true;
 }
 
+bool variant_instance_atoms_closed_for_arena(
+    const VariantInstance *instance, const Arena *arena) {
+    VariantInstanceStorage *storage = variant_instance_storage(instance);
+    if (!arena)
+        return false;
+    if (!storage)
+        return true;
+    for (uint32_t i = 0u; i < storage->slot_count; i++) {
+        Atom *value = storage->slot_vals[i];
+        if (value && !atom_graph_is_closed_for_arena(arena, value))
+            return false;
+    }
+    return true;
+}
+
 bool variant_instance_from_shape(VariantInstance *out, const VariantShape *shape) {
     VariantInstanceStorage *storage;
     if (!out || !shape)
