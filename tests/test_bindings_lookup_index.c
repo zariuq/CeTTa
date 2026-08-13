@@ -513,6 +513,27 @@ int main(void) {
               binding_is_int(&projected, late_id, 1000),
           "deterministic projection remaps activation entry boundaries");
     bindings_free(&projected);
+    Atom *stable_projection_root = atom_expr2(
+        &arena, atom_symbol(&arena, "StableProjection"), projection_root);
+    Atom *stable_projection_roots[1] = {stable_projection_root};
+    CHECK((stable_projection_root->flags & ATOM_FLAG_HASH_STABLE) != 0u &&
+              bindings_project_reachable(
+                  &base, stable_projection_roots, 1u, &projected) &&
+              projected.len == 1u &&
+              binding_is_int(&projected, late_id, 1000),
+          "hash-stable projection uses the acyclic variable collector");
+    bindings_free(&projected);
+    Atom *cyclic_projection_root = atom_expr_builder_begin(&arena, 2u);
+    cyclic_projection_root->expr.elems[0] = cyclic_projection_root;
+    cyclic_projection_root->expr.elems[1] = projection_root;
+    cyclic_projection_root = atom_expr_builder_finish(
+        &arena, cyclic_projection_root);
+    Atom *cyclic_projection_roots[1] = {cyclic_projection_root};
+    CHECK(cyclic_projection_root &&
+              (cyclic_projection_root->flags & ATOM_FLAG_HASH_STABLE) == 0u &&
+              !bindings_project_reachable(
+                  &base, cyclic_projection_roots, 1u, &projected),
+          "non-stable cyclic projection retains the guarded collector");
     uint32_t invalid_projection_mark = 66u;
     CHECK(!bindings_project_reachable_with_entry_marks(
               &base, projection_roots, 1u,

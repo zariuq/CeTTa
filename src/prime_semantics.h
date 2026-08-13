@@ -5,7 +5,40 @@
 #include <stdint.h>
 
 #include "atom.h"
+#include "he_typing_authority.h"
+#include "nik_direct_authority.h"
 #include "space.h"
+
+/* Certificate-free NIK face for Prime's native type judgments.  It excludes
+ * May/Must evaluation and the four-argument Check form used to import proof
+ * objects from external authorities. */
+typedef struct {
+    const CettaNikDirectAuthorityV1 *authority;
+    const CettaHeTypingCoreDirectServiceV1 *he_typing_core_backend;
+    Atom *(*judge)(Arena *arena, Space *space, Atom *judgment,
+                   bool steps_limited, uint64_t steps);
+} CettaPrimeTypingDirectServiceV1;
+
+extern const CettaNikDirectAuthorityV1
+    cetta_prime_typing_direct_authority_v1;
+extern const CettaPrimeTypingDirectServiceV1
+    cetta_prime_typing_direct_service_v1;
+
+bool cetta_prime_typing_direct_service_v1_is_valid(
+    const CettaPrimeTypingDirectServiceV1 *service);
+
+/* Returns NULL when the claim is not one of Prime's native type judgments. */
+Atom *prime_semantics_judge_typing_direct(
+    Arena *arena, Space *space, Atom *judgment,
+    bool steps_limited, uint64_t steps);
+
+bool cetta_prime_typing_direct_authority_token_v1(
+    const Space *space, uint32_t policy_identity,
+    CettaNikDirectAuthorityTokenV1 *token);
+
+bool cetta_prime_typing_direct_authority_token_v1_is_current(
+    const CettaNikDirectAuthorityTokenV1 *token,
+    const Space *space, uint32_t policy_identity);
 
 /* MeTTa-Prime is a language package, not an HE profile.  The weak hooks keep
  * standalone evaluator test binaries linkable when this module is omitted. */
