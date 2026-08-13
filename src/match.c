@@ -686,6 +686,15 @@ static BindingsLookupIndex *bindings_lookup_index_sync(Bindings *bindings) {
     return index;
 }
 
+#ifdef CETTA_TEST_HOOKS
+void bindings_lookup_index_test_clear(Bindings *bindings) {
+    if (!bindings)
+        return;
+    bindings_lookup_index_release(bindings->lookup_index);
+    bindings->lookup_index = NULL;
+}
+#endif
+
 static inline void bindings_lookup_cache_reset(Bindings *b) {
     b->lookup_cache_count = 0;
     b->lookup_cache_next = 0;
@@ -4045,6 +4054,16 @@ bool bindings_project_reachable_with_epoch_roots_and_entry_marks(
     for (size_t index = 0u; index < entry_mark_count; index++) {
         if (entry_marks[index] > src->len)
             return false;
+    }
+
+    /* Selection maps exist only to translate entry-prefix marks.  Asking for
+     * them when there are no marks forces the dense projector and defeats the
+     * maintained VarId index for every ordinary host/child projection. */
+    if (entry_mark_count == 0u) {
+        return bindings_project_reachable_selected(
+            src, roots, root_count,
+            epoch_roots, epoch_root_count, dst,
+            NULL, NULL);
     }
 
     Bindings projected;
