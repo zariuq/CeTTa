@@ -46,7 +46,7 @@ typedef struct {
      * Zero means unknown, one means proved acyclic, and two means a cycle was
      * witnessed.  The entries remain authoritative; the full checker handles
      * unknown state.
-     */
+    */
     uint8_t cycle_state;
     /*
      * Derived count of entries that participate in the legacy spelling-keyed
@@ -163,6 +163,8 @@ bool      bindings_promote_logical_atoms_to_arena(Bindings *bindings,
                                                    Arena *dst);
 bool      bindings_promote_logical_atoms_with_session(
               Bindings *bindings, AtomDeepCopySession *session);
+bool      bindings_logical_atoms_closed_for_arena(
+              const Bindings *bindings, const Arena *arena);
 size_t    bindings_entry_active_bytes(void);
 size_t    bindings_constraint_active_bytes(void);
 void      bindings_thread_cache_free(void);

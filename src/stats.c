@@ -431,6 +431,12 @@ static const char *const CETTA_RUNTIME_COUNTER_NAMES[CETTA_RUNTIME_COUNTER_COUNT
     "prepared-pure-call-compile-attempt",
     "prepared-pure-call-compile-decline",
     "prepared-pure-call-execution-decline",
+    "prime-need-region-admission",
+    "prime-need-region-commit",
+    "prime-need-region-fallback",
+    "prime-need-region-promoted-outcome",
+    "prime-need-region-depth-peak",
+    "prime-need-region-reclaimed-bytes",
 };
 
 static int64_t clamp_counter(uint64_t value) {

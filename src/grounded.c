@@ -516,33 +516,104 @@ static bool find_unused_alpha_equal_atom(Atom **elems, bool *used,
     return false;
 }
 
+#define GROUNDED_OP_CACHE_CAP 64u
+
+enum {
+    GROUNDED_OP_CACHE_COMMON = 1u << 0,
+    GROUNDED_OP_CACHE_PRIME = 1u << 1,
+    GROUNDED_OP_CACHE_PETTA = 1u << 2,
+    GROUNDED_OP_CACHE_DEPENDENT_TYPING = 1u << 3,
+};
+
+typedef struct {
+    const SymbolTable *table;
+    uint64_t table_instance_id;
+    SymbolId ids[GROUNDED_OP_CACHE_CAP];
+    uint8_t capabilities[GROUNDED_OP_CACHE_CAP];
+} GroundedOpCache;
+
+static _Thread_local GroundedOpCache g_grounded_op_cache;
+
+static bool grounded_op_capabilities_apply(uint8_t capabilities) {
+    if ((capabilities & GROUNDED_OP_CACHE_COMMON) != 0u)
+        return true;
+    if (capabilities == 0u)
+        return false;
+
+    const CettaLanguageId language_id = eval_current_language_id
+        ? eval_current_language_id() : CETTA_LANGUAGE_HE;
+    if (language_id == CETTA_LANGUAGE_PRIME &&
+        (capabilities & GROUNDED_OP_CACHE_PRIME) != 0u) {
+        return true;
+    }
+    if (language_id == CETTA_LANGUAGE_PETTA &&
+        (capabilities & GROUNDED_OP_CACHE_PETTA) != 0u) {
+        return true;
+    }
+    return (capabilities & GROUNDED_OP_CACHE_DEPENDENT_TYPING) != 0u &&
+        eval_current_profile_enables_dependent_telescope &&
+        eval_current_profile_enables_dependent_telescope();
+}
+
 bool is_grounded_op(SymbolId id) {
+    if (id == SYMBOL_ID_NONE)
+        return false;
+
+    const uint64_t table_instance_id =
+        symbol_table_instance_id(g_symbols);
+    GroundedOpCache *cache = &g_grounded_op_cache;
+    if (cache->table != g_symbols ||
+        cache->table_instance_id != table_instance_id) {
+        memset(cache, 0, sizeof(*cache));
+        cache->table = g_symbols;
+        cache->table_instance_id = table_instance_id;
+    }
+    size_t cache_slot =
+        ((size_t)id * UINT32_C(2654435761)) &
+        (GROUNDED_OP_CACHE_CAP - 1u);
+    if (cache->ids[cache_slot] == id)
+        return grounded_op_capabilities_apply(
+            cache->capabilities[cache_slot]);
+
+    uint8_t capabilities = 0u;
     /* Compiled operators are opcodes: dispatch their interned IDs before
        consulting any extensible name-based registry. */
     if ((symbol_flags(g_symbols, id) &
-         CETTA_SYMBOL_FLAG_STATIC_GROUNDED_OP) != 0u)
-        return true;
+         CETTA_SYMBOL_FLAG_STATIC_GROUNDED_OP) != 0u) {
+        capabilities = GROUNDED_OP_CACHE_COMMON;
+        goto classified;
+    }
 
     /* Check __cetta_lib_ prefix via string lookup only for non-static IDs. */
-    const char *name = id == SYMBOL_ID_NONE
-        ? NULL : symbol_bytes(g_symbols, id);
-    if (name && strncmp(name, "__cetta_lib_", 12) == 0)
-        return true;
-    /* Guard the expensive name-op checks by their cheap language/profile
-       condition so inactive dialect registries remain off the shared path. */
-    const CettaLanguageId language_id = eval_current_language_id
-        ? eval_current_language_id() : CETTA_LANGUAGE_HE;
-    if (name && language_id == CETTA_LANGUAGE_PRIME &&
-        prime_semantics_is_op && prime_semantics_is_op(name))
-        return true;
-    if (language_id == CETTA_LANGUAGE_PETTA &&
-        petta_semantics_form(id) == PETTA_FORM_REPRA)
-        return true;
-    if (name && eval_current_profile_enables_dependent_telescope &&
-        eval_current_profile_enables_dependent_telescope() &&
-        he_typing_is_op && he_typing_is_op(name))
-        return true;
-    return false;
+    const char *name = symbol_bytes(g_symbols, id);
+    if (name && strncmp(name, "__cetta_lib_", 12) == 0) {
+        capabilities = GROUNDED_OP_CACHE_COMMON;
+        goto classified;
+    }
+
+    /* Cache dialect membership rather than a result for the currently active
+       profile.  Most symbols have no capability bits and stay on the universal
+       false path; profile changes remain exact for the few dialect operators. */
+    if (name) {
+        bool prime_op = prime_semantics_is_op_id
+            ? prime_semantics_is_op_id(id)
+            : prime_semantics_is_op && prime_semantics_is_op(name);
+        if (prime_op)
+            capabilities |= GROUNDED_OP_CACHE_PRIME;
+
+        bool typing_op = he_typing_is_op_id
+            ? he_typing_is_op_id(id)
+            : he_typing_is_op && he_typing_is_op(name);
+        if (typing_op)
+            capabilities |= GROUNDED_OP_CACHE_DEPENDENT_TYPING;
+    }
+    if (petta_semantics_form(id) == PETTA_FORM_REPRA)
+        capabilities |= GROUNDED_OP_CACHE_PETTA;
+
+classified:
+    cache->ids[cache_slot] = id;
+    cache->capabilities[cache_slot] = capabilities;
+    return grounded_op_capabilities_apply(capabilities);
 }
 
 /* Deliberately absent from the type-pure capability: space mutation

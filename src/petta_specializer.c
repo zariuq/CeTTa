@@ -128,11 +128,15 @@ typedef struct {
     size_t cap;
 } PettaStringBuilder;
 
+typedef struct PettaSpecializerSemanticCache
+    PettaSpecializerSemanticCache;
+
 typedef struct {
     Space *space;
     PettaProgram *program;
     Arena *persistent;
     Arena scratch;
+    PettaSpecializerSemanticCache *semantic_cache;
     SymbolId *visiting;
     size_t visiting_len;
     size_t visiting_cap;
@@ -153,7 +157,35 @@ typedef struct {
 static _Thread_local PettaSpecializationRecords
     g_petta_specializations = {0};
 
-enum { PETTA_RELATION_RELEVANCE_CACHE_SLOTS = 256 };
+enum {
+    PETTA_CALLABLE_CACHE_SLOTS = 256,
+    PETTA_NAMED_ARITY_CACHE_SLOTS = 256,
+    PETTA_RELATION_RELEVANCE_CACHE_SLOTS = 256,
+};
+
+typedef struct {
+    SymbolId symbol;
+    bool callable;
+    bool used;
+} PettaCallableCacheSlot;
+
+typedef struct {
+    SymbolId symbol;
+    CettaExprLen supplied;
+    PeTTaNamedArity arity;
+    bool used;
+} PettaNamedArityCacheSlot;
+
+struct PettaSpecializerSemanticCache {
+    Space *space;
+    uint64_t space_instance;
+    uint64_t mutation_epoch;
+    const SymbolTable *symbols;
+    uint64_t symbol_table_instance;
+    PettaCallableCacheSlot callable[PETTA_CALLABLE_CACHE_SLOTS];
+    PettaNamedArityCacheSlot
+        named_arity[PETTA_NAMED_ARITY_CACHE_SLOTS];
+};
 
 typedef struct {
     Space *space;
@@ -167,6 +199,8 @@ typedef struct {
 static _Thread_local PettaRelationRelevanceCacheSlot
     g_petta_relation_relevance_cache[
         PETTA_RELATION_RELEVANCE_CACHE_SLOTS];
+static _Thread_local PettaSpecializerSemanticCache
+    g_petta_semantic_cache;
 
 static bool petta_atom_vector_push(
     PettaAtomVector *vector, Atom *atom);
@@ -791,7 +825,34 @@ static bool petta_variable_is_direct_callable(
     return false;
 }
 
-static bool petta_symbol_is_callable(
+static PettaSpecializerSemanticCache *
+petta_semantic_cache_prepare(
+    Space *space) {
+    if (!space || !g_symbols)
+        return NULL;
+    uint64_t space_instance = space_instance_id(space);
+    uint64_t mutation_epoch = space_global_mutation_epoch();
+    uint64_t symbol_table_instance =
+        symbol_table_instance_id(g_symbols);
+    if (g_petta_semantic_cache.space != space ||
+        g_petta_semantic_cache.space_instance != space_instance ||
+        g_petta_semantic_cache.mutation_epoch != mutation_epoch ||
+        g_petta_semantic_cache.symbols != g_symbols ||
+        g_petta_semantic_cache.symbol_table_instance !=
+            symbol_table_instance) {
+        memset(&g_petta_semantic_cache, 0,
+               sizeof(g_petta_semantic_cache));
+        g_petta_semantic_cache.space = space;
+        g_petta_semantic_cache.space_instance = space_instance;
+        g_petta_semantic_cache.mutation_epoch = mutation_epoch;
+        g_petta_semantic_cache.symbols = g_symbols;
+        g_petta_semantic_cache.symbol_table_instance =
+            symbol_table_instance;
+    }
+    return &g_petta_semantic_cache;
+}
+
+static bool petta_symbol_is_callable_uncached(
     Space *space, Arena *scratch, SymbolId symbol) {
     if (!space || !scratch || symbol == SYMBOL_ID_NONE)
         return false;
@@ -823,6 +884,69 @@ static bool petta_symbol_is_callable(
     }
     free(types);
     return callable;
+}
+
+/* Callability is a property of one admitted space state and symbol table,
+ * not of an individual call.  Keep the ordinary evaluator authoritative and
+ * memoize only this exact classification.  The process-wide mutation epoch
+ * also covers an overlay whose base changes without changing the overlay's
+ * own revision. */
+static bool petta_symbol_is_callable(
+    PettaSpecializerContext *context, SymbolId symbol) {
+    if (!context || !context->space ||
+        symbol == SYMBOL_ID_NONE) {
+        return false;
+    }
+    PettaSpecializerSemanticCache *cache =
+        context->semantic_cache;
+    if (!cache) {
+        return petta_symbol_is_callable_uncached(
+            context->space, &context->scratch, symbol);
+    }
+    PettaCallableCacheSlot *slot = &cache->callable[
+        (size_t)symbol & (PETTA_CALLABLE_CACHE_SLOTS - 1u)];
+    if (slot->used && slot->symbol == symbol)
+        return slot->callable;
+    *slot = (PettaCallableCacheSlot){
+        .symbol = symbol,
+        .callable = petta_symbol_is_callable_uncached(
+            context->space, &context->scratch, symbol),
+        .used = true,
+    };
+    return slot->callable;
+}
+
+static PeTTaNamedArity petta_specializer_named_arity(
+    PettaSpecializerContext *context, Atom *head,
+    CettaExprLen supplied) {
+    if (!context || !context->space || !head ||
+        head->kind != ATOM_SYMBOL) {
+        return (PeTTaNamedArity){0};
+    }
+    PettaSpecializerSemanticCache *cache =
+        context->semantic_cache;
+    if (!cache) {
+        return petta_semantics_named_arity(
+            context->space, &context->scratch, head, supplied);
+    }
+    SymbolId symbol = head->sym_id;
+    size_t index =
+        ((size_t)symbol * 33u + (size_t)supplied) &
+        (PETTA_NAMED_ARITY_CACHE_SLOTS - 1u);
+    PettaNamedArityCacheSlot *slot =
+        &cache->named_arity[index];
+    if (slot->used && slot->symbol == symbol &&
+        slot->supplied == supplied) {
+        return slot->arity;
+    }
+    *slot = (PettaNamedArityCacheSlot){
+        .symbol = symbol,
+        .supplied = supplied,
+        .arity = petta_semantics_named_arity(
+            context->space, &context->scratch, head, supplied),
+        .used = true,
+    };
+    return slot->arity;
 }
 
 static size_t petta_relation_relevance_cache_index(
@@ -961,8 +1085,7 @@ petta_relation_body_relevance(
             atom->expr.len > 1u && head &&
             head->kind == ATOM_SYMBOL &&
             petta_symbol_is_callable(
-                context->space, &context->scratch,
-                head->sym_id);
+                context, head->sym_id);
         if ((size_t)atom->expr.len >
                 SIZE_MAX - stack.len ||
             !petta_reserve(
@@ -1083,8 +1206,7 @@ static Atom *petta_specializable_value(
     }
     if (atom->kind == ATOM_SYMBOL) {
         return petta_symbol_is_callable(
-                   context->space, &context->scratch,
-                   atom->sym_id)
+                   context, atom->sym_id)
             ? atom : NULL;
     }
     if (atom->kind != ATOM_EXPR ||
@@ -1093,9 +1215,8 @@ static Atom *petta_specializable_value(
         return NULL;
     }
     CettaExprLen supplied = atom->expr.len - 1u;
-    PeTTaNamedArity arity = petta_semantics_named_arity(
-        context->space, &context->scratch,
-        atom->expr.elems[0], supplied);
+    PeTTaNamedArity arity = petta_specializer_named_arity(
+        context, atom->expr.elems[0], supplied);
     if (!arity.known || arity.exact || !arity.larger)
         return NULL;
     return petta_semantics_partial_value(
@@ -1112,9 +1233,10 @@ static Atom *petta_specializable_value(
  *
  * This is a bounded accelerator, never an authority: an oversized frontier
  * or any shape we cannot classify takes the original analysis.  A deep unary
- * forest is bounded separately by a per-call node budget.  Reaching it says
- * nothing about later calls of the same relation, which receive their own
- * bounded relevance check.
+ * forest is bounded separately by a per-call node budget.  Reaching that
+ * budget declines specialization for this call and leaves it to the ordinary
+ * evaluator; it must not turn a bounded rejection test into an unbounded
+ * optimization attempt.  Later calls receive their own relevance check.
  * The outer call head is deliberately excluded because source equations pin
  * it to the selected relation head; nested expression heads remain visible
  * because a nested source variable may bind them.
@@ -1156,8 +1278,7 @@ petta_call_may_supply_specializable_value(
             return PETTA_RELEVANCE_YES;
         if (atom->kind == ATOM_SYMBOL &&
             petta_symbol_is_callable(
-                context->space, &context->scratch,
-                atom->sym_id)) {
+                context, atom->sym_id)) {
             return PETTA_RELEVANCE_YES;
         }
         if (atom->kind != ATOM_EXPR || atom->expr.len == 0u)
@@ -1167,9 +1288,8 @@ petta_call_may_supply_specializable_value(
         Atom *head = atom->expr.elems[0];
         if (head && head->kind == ATOM_SYMBOL) {
             CettaExprLen supplied = atom->expr.len - 1u;
-            PeTTaNamedArity arity = petta_semantics_named_arity(
-                context->space, &context->scratch,
-                head, supplied);
+            PeTTaNamedArity arity = petta_specializer_named_arity(
+                context, head, supplied);
             if (arity.known && !arity.exact && arity.larger)
                 return PETTA_RELEVANCE_YES;
         }
@@ -1522,11 +1642,10 @@ static Atom *petta_specializer_ready_value(
     }
 
     bool callable = petta_symbol_is_callable(
-        context->space, &context->scratch, head->sym_id);
+        context, head->sym_id);
     PeTTaNamedArity arity = callable
-        ? petta_semantics_named_arity(
-              context->space, &context->scratch,
-              head, supplied)
+        ? petta_specializer_named_arity(
+              context, head, supplied)
         : (PeTTaNamedArity){0};
     if (callable && (!arity.known || arity.exact ||
                      !arity.larger)) {
@@ -1620,8 +1739,7 @@ static bool petta_analyze_forwarded_calls(
         if (atom->expr.len > 1u &&
             atom->expr.elems[0]->kind == ATOM_SYMBOL &&
             petta_symbol_is_callable(
-                context->space, &context->scratch,
-                atom->expr.elems[0]->sym_id)) {
+                context, atom->expr.elems[0]->sym_id)) {
             bool carries = false;
             for (CettaExprIndex index = 1u;
                  index < atom->expr.len; index++) {
@@ -2034,10 +2152,8 @@ static bool petta_specializer_analyze_call(
             return true;
         }
         if (relevance == PETTA_RELEVANCE_NODE_BUDGET) {
-            /* A node budget is uncertainty about this call, not a stable
-             * property of the relation.  Fall back here, but let later calls
-             * earn their own bounded negative proof. */
             analysis->relevance_bounded = true;
+            return true;
         }
     }
     if (petta_visiting_contains(context, source))
@@ -2199,6 +2315,7 @@ PettaSpecializeResult petta_specializer_prepare_call(
         .space = space,
         .program = program,
         .persistent = persistent_arena,
+        .semantic_cache = petta_semantic_cache_prepare(space),
     };
     arena_init(&context.scratch);
     arena_set_runtime_kind(
@@ -2517,5 +2634,7 @@ void petta_specializer_reset_thread(void) {
     memset(
         &g_petta_specializations, 0,
         sizeof(g_petta_specializations));
+    memset(&g_petta_semantic_cache, 0,
+           sizeof(g_petta_semantic_cache));
     petta_relation_relevance_cache_clear();
 }

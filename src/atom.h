@@ -86,7 +86,6 @@ typedef enum {
  * of semantic term depth. */
 #define ATOM_FLAG_HAS_IDENTITY_GROUNDED 0x80u
 #define ATOM_FLAG_HAS_THREAD_LOCAL_RESOURCE 0x100u
-
 /*
  * VariantShape reserves this VarId prefix for its runtime-private slots.
  * Keeping the namespace test beside VarId lets immutable atoms summarize the
@@ -212,6 +211,17 @@ void *arena_alloc(Arena *a, size_t size);
 char *arena_strdup(Arena *a, const char *s);
 bool  arena_owns_ptr(const Arena *a, const void *ptr);
 bool  arena_owns_atom(const Arena *a, const Atom *atom);
+/* Exact compositional ownership certificate: every arena-owned pointer in
+ * the atom graph belongs to `arena`; globally owned immutable nodes are also
+ * permitted.  Identity-bearing external resources deliberately fail. */
+bool  atom_graph_is_closed_for_arena(const Arena *arena,
+                                     const Atom *atom);
+/* Exact bounds of every arena identity reachable through ordinary atom-owned
+ * storage.  Identity-bearing external resources are intentionally
+ * unsupported. */
+bool  atom_graph_arena_id_bounds(const Atom *atom,
+                                 uint32_t *min_id,
+                                 uint32_t *max_id);
 char *cetta_bigint_canonicalize_owned(const char *text);
 bool  cetta_bigint_text_fits_i64(const char *text, int64_t *out);
 int   cetta_bigint_compare_cstr(const char *lhs, const char *rhs);
@@ -409,6 +419,13 @@ const CettaPrimeContext *atom_prime_context_value(const Atom *atom);
 Atom *atom_prime_context_lookup(const CettaPrimeContext *context, Atom *key);
 uint32_t atom_prime_context_depth(const CettaPrimeContext *context);
 Atom *atom_expr(Arena *a, Atom **elems, CettaExprLen len);
+/* Single-allocation expression construction for incremental producers.
+ * `begin` returns an unpublished draft whose child vector the caller fills;
+ * `finish` computes all derived flags and returns the immutable expression
+ * (or an existing hash-consed representative).  Apart from filling its child
+ * vector, a draft must never escape or be consumed as an Atom before `finish`. */
+Atom *atom_expr_builder_begin(Arena *a, CettaExprLen len);
+Atom *atom_expr_builder_finish(Arena *a, Atom *draft);
 /* Compatibility wrapper; immutable atoms are shared universally when the
    global hash-cons table is active. */
 Atom *atom_expr_shared(Arena *a, Atom **elems, CettaExprLen len);
