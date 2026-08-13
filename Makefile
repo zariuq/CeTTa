@@ -35,13 +35,14 @@ ENABLE_PIC ?= 0
 CETTA_PROVENANCE_ASSERT ?= 0
 RHOCOST_COMMIT_AUDIT ?= 0
 ENABLE_PRIME_RECEIPT_PRIMARY_INDEX ?= 0
+ENABLE_PRIME_CAUSAL_RECEIPTS ?= 0
 ENABLE_PRIME_NEED_HEAP_INDEX ?= 1
 ENABLE_PRIME_NEED_CLOSURE_CAPTURE ?= 0
 ENABLE_PRIME_EVAL_STACK ?= 1
 ENABLE_LIB_PROLOG ?= auto
 ENABLE_PETTA_TYPECHECK_V2 ?= 1
 ENABLE_LANGDEF_DIAGNOSTIC_BACKENDS ?= 0
-PRIME_NEED_ALGEBRA_CHECKS := 98
+PRIME_NEED_ALGEBRA_CHECKS := 97
 PRIME_NEED_CLOSURE_CAPTURE_GATE :=
 PRIME_NEED_CLOSURE_CAPTURE_STATS_GATE :=
 PRIME_EVAL_STACK_GATE :=
@@ -98,6 +99,9 @@ $(error RHOCOST_COMMIT_AUDIT must be 0 or 1)
 endif
 ifneq ($(filter $(ENABLE_PRIME_RECEIPT_PRIMARY_INDEX),0 1),$(ENABLE_PRIME_RECEIPT_PRIMARY_INDEX))
 $(error ENABLE_PRIME_RECEIPT_PRIMARY_INDEX must be 0 or 1)
+endif
+ifneq ($(filter $(ENABLE_PRIME_CAUSAL_RECEIPTS),0 1),$(ENABLE_PRIME_CAUSAL_RECEIPTS))
+$(error ENABLE_PRIME_CAUSAL_RECEIPTS must be 0 or 1)
 endif
 ifneq ($(filter $(ENABLE_PRIME_NEED_HEAP_INDEX),0 1),$(ENABLE_PRIME_NEED_HEAP_INDEX))
 $(error ENABLE_PRIME_NEED_HEAP_INDEX must be 0 or 1)
@@ -306,6 +310,9 @@ BUILD_OBJ_TAG := $(BUILD_OBJ_TAG).rhocost-audit
 endif
 ifeq ($(ENABLE_PRIME_RECEIPT_PRIMARY_INDEX),1)
 BUILD_OBJ_TAG := $(BUILD_OBJ_TAG).prime-receipt-primary-index
+endif
+ifeq ($(ENABLE_PRIME_CAUSAL_RECEIPTS),1)
+BUILD_OBJ_TAG := $(BUILD_OBJ_TAG).prime-causal-receipts
 endif
 ifeq ($(ENABLE_PRIME_NEED_HEAP_INDEX),1)
 BUILD_OBJ_TAG := $(BUILD_OBJ_TAG).prime-need-heap-index
@@ -2281,7 +2288,7 @@ test-bindings-lookup-index: $(BINDINGS_LOOKUP_INDEX_TEST_BIN)
 	@enabled=$$($(call cetta_exec,./$(BINDINGS_LOOKUP_INDEX_TEST_BIN))); \
 	disabled=$$(CETTA_BINDINGS_LOOKUP_INDEX=0 $(call cetta_exec,./$(BINDINGS_LOOKUP_INDEX_TEST_BIN))); \
 	audited=$$(CETTA_BINDINGS_DERIVED_AUDIT=1 $(call cetta_exec,./$(BINDINGS_LOOKUP_INDEX_TEST_BIN))); \
-	expected='(BindingsLookupIndexSummary 72 72 0)'; \
+	expected='(BindingsLookupIndexSummary 80 80 0)'; \
 	printf '%s\n' "$$enabled"; \
 	test "$$enabled" = "$$expected" && test "$$disabled" = "$$expected" && \
 		test "$$audited" = "$$expected"
@@ -2327,6 +2334,7 @@ $(PRIME_CONTEXT_MUTATION_TEST_BIN): tests/test_prime_need.c src/prime_need.c src
 	$(CC) $(CPPFLAGS) $(PRIME_NEED_UNIT_CPPFLAGS) $(CFLAGS) -DCETTA_PRIME_CONTEXT_MUTATION=1 \
 		-o $@ tests/test_prime_need.c src/prime_need.c src/symbol.c src/atom.c $(LDFLAGS)
 
+ifeq ($(ENABLE_PRIME_CAUSAL_RECEIPTS),1)
 test-prime-need-algebra: $(PRIME_NEED_TEST_BIN)
 	@result=$$(./$(PRIME_NEED_TEST_BIN) 2>&1); \
 	printf '%s\n' "$$result"; \
@@ -2334,6 +2342,11 @@ test-prime-need-algebra: $(PRIME_NEED_TEST_BIN)
 		echo "FAIL: Prime Need algebra exact summary absent or duplicated"; \
 		exit 1; \
 	fi
+else
+test-prime-need-algebra:
+	@$(MAKE) -s BUILD=$(BUILD_CANON) \
+		ENABLE_PRIME_CAUSAL_RECEIPTS=1 $@
+endif
 
 .PHONY: test-prime-need-quote-preservation
 test-prime-need-quote-preservation: $(BIN)
@@ -2502,7 +2515,12 @@ probe-prime-equation-call-sharing-tournament: $(BIN)
 	fi; \
 	echo "PASS: current equation-call sharing frontier characterized (law remains open)"
 
-test-prime-equation-call-sharing-tournament: $(BIN)
+test-prime-equation-call-sharing-tournament:
+	@$(MAKE) -s BUILD=$(BUILD_CANON) \
+		ENABLE_PRIME_CAUSAL_RECEIPTS=1 \
+		test-prime-equation-call-sharing-tournament-body
+
+test-prime-equation-call-sharing-tournament-body: $(BIN)
 	@set -eu; \
 	result=$$(CETTA_BIN="$(abspath $(BIN))" \
 		python3 tests/prime/run_need_equation_call_tournament.py 2>&1); \
@@ -2517,6 +2535,75 @@ test-prime-equation-call-sharing-tournament: $(BIN)
 		echo "FAIL: Prime native receipt mutation summary absent or duplicated"; \
 		exit 1; \
 	fi
+
+test-prime-causal-receipt-disabled-transparency:
+	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 \
+		ENABLE_PRIME_CAUSAL_RECEIPTS=0 \
+		test-prime-causal-receipt-disabled-transparency-body
+
+test-prime-causal-receipt-disabled-transparency-body: $(BIN)
+	@set -eu; \
+	stdout_file=$$(mktemp); stderr_file=$$(mktemp); \
+	state_stdout=$$(mktemp); state_stderr=$$(mktemp); \
+	trap 'rm -f "$$stdout_file" "$$stderr_file" "$$state_stdout" "$$state_stderr"' EXIT; \
+	$(CETTA_BIN_INVOKE) --emit-runtime-stats --lang prime \
+		examples/chaining/obfc_xp_prime.metta \
+		>"$$stdout_file" 2>"$$stderr_file"; \
+	actual_hash=$$(sha256sum "$$stdout_file" | awk '{print $$1}'); \
+	test "$$actual_hash" = \
+		'b094dbd4f31f262cce26c1700bde0b1dea732ef6418a1cb031c31be0f5f80ce5'; \
+	for counter in \
+		prime-need-receipt-begin \
+		prime-need-receipt-event-observe-cell \
+		prime-need-receipt-event-inspect-origin \
+		prime-need-receipt-event-use-equation \
+		prime-need-receipt-event-resample; do \
+		value=$$(sed -n "s/^runtime-counter $$counter //p" "$$stderr_file"); \
+		if [ "$$value" != 0 ]; then \
+			echo "FAIL: disabled causal receipt counter $$counter = $$value"; \
+			exit 1; \
+		fi; \
+	done; \
+	$(CETTA_BIN_INVOKE) --emit-runtime-stats --lang prime \
+		tests/prime/need_branch_effect_isolation.metta \
+		>"$$state_stdout" 2>"$$state_stderr"; \
+	diff -u tests/prime/need_branch_effect_isolation.expected \
+		"$$state_stdout"; \
+	for counter in \
+		prime-need-receipt-begin \
+		prime-need-receipt-event-observe-cell \
+		prime-need-receipt-event-inspect-origin \
+		prime-need-receipt-event-use-equation \
+		prime-need-receipt-event-resample; do \
+		value=$$(sed -n "s/^runtime-counter $$counter //p" "$$state_stderr"); \
+		if [ "$$value" != 0 ]; then \
+			echo "FAIL: disabled causal receipt counter $$counter = $$value"; \
+			exit 1; \
+		fi; \
+	done; \
+	branch_writes=$$(sed -n \
+		's/^runtime-counter prime-need-branch-state-write //p' \
+		"$$state_stderr"); \
+	carrier_frames=$$(sed -n \
+		's/^runtime-counter prime-need-carrier-frame-alloc //p' \
+		"$$state_stderr"); \
+	if [ -z "$$branch_writes" ] || [ "$$branch_writes" -eq 0 ] || \
+	   [ -z "$$carrier_frames" ] || [ "$$carrier_frames" -eq 0 ]; then \
+		echo 'FAIL: semantic branch state was not exercised'; \
+		exit 1; \
+	fi; \
+	if $(CETTA_BIN_INVOKE) --emit-prime-need-trace --lang prime \
+		examples/chaining/obfc_xp_prime.metta \
+		>/dev/null 2>"$$stderr_file"; then \
+		echo 'FAIL: disabled causal receipt trace was accepted'; \
+		exit 1; \
+	fi; \
+	grep -Fq 'requires a causal-receipt build' "$$stderr_file"; \
+	if nm -g "$(BIN)" | grep -Eq '[[:space:]]prime_need_receipt_'; then \
+		echo 'FAIL: disabled build exports causal-receipt machinery'; \
+		exit 1; \
+	fi; \
+	echo 'PASS: disabled Prime causal receipts perform zero observer work'
 
 test-prime-cell-causal-reference:
 	@python3 tests/prime/test_cell_causal_reference.py
@@ -2729,7 +2816,7 @@ test-prime-need-equation-choice-sharing-body: $(BIN)
 			exit 1; \
 		fi; \
 		writes=$$(sed -n \
-			's/^runtime-counter prime-need-receipt-state-write //p' \
+			's/^runtime-counter prime-need-branch-state-write //p' \
 			"$$stderr_file"); \
 		if [ "$$writes" != 1 ]; then \
 			echo "FAIL: mixed equations invoked the source producer $$writes times"; \
@@ -2758,7 +2845,7 @@ test-prime-need-equation-choice-sharing-mutation-body: $(BIN)
 			tests/prime/need_equation_choice_sharing.metta \
 			>"$$stdout_file" 2>"$$stderr_file"; \
 		writes=$$(sed -n \
-			's/^runtime-counter prime-need-receipt-state-write //p' \
+			's/^runtime-counter prime-need-branch-state-write //p' \
 			"$$stderr_file"); \
 		if [ "$$writes" != 2 ]; then \
 			echo "FAIL: rule-local-thunk mutation produced $$writes writes, expected 2"; \
@@ -2766,6 +2853,7 @@ test-prime-need-equation-choice-sharing-mutation-body: $(BIN)
 		fi; \
 		echo "PASS: rule-local-thunk mutation repeats the source producer and is killed"
 
+ifeq ($(ENABLE_PRIME_CAUSAL_RECEIPTS),1)
 test-prime-need-mutations: $(BIN) test-prime-need-algebra \
 		test-prime-need-correspondence test-prime-need-gc-lifetime \
 		test-prime-need-boundaries \
@@ -2792,8 +2880,8 @@ test-prime-need-mutations: $(BIN) test-prime-need-algebra \
 			                                                          expected=tests/prime/need_application.expected ;; \
 			DROP_RESULT_CONTRACT) source=tests/prime/gradual/annotation_boundary.metta; \
 			                      expected=tests/prime/gradual/annotation_boundary.expected ;; \
-			DYNAMIC_SCOPE) source=tests/prime/conformance/cell_lexical_refinement.metta; \
-			               expected=tests/prime/conformance/cell_lexical_refinement.expected ;; \
+			DYNAMIC_SCOPE) source=tests/prime/need_closure_capture.metta; \
+			               expected=tests/prime/need_closure_capture.expected ;; \
 		esac; \
 		object="$$mutation_dir/eval-$$mutation.o"; \
 		binary="$$mutation_dir/cetta-$$mutation"; \
@@ -2842,6 +2930,11 @@ test-prime-need-mutations: $(BIN) test-prime-need-algebra \
 		exit 1; \
 	fi; \
 	echo "PASS: Prime Need FAULT_NOT_CACHED mutation killed"
+else
+test-prime-need-mutations:
+	@$(MAKE) -s BUILD=$(BUILD_CANON) \
+		ENABLE_PRIME_CAUSAL_RECEIPTS=1 $@
+endif
 
 $(REGISTRY_RESOLVER_TEST_OBJ): $(REGISTRY_RESOLVER_TEST_SRC) src/registry_resolver.h src/space.h src/name_key.h $(BUILD_CONFIG_HEADER)
 	@mkdir -p runtime/bootstrap
@@ -3540,6 +3633,7 @@ $(BUILD_CONFIG_STAMP): $(BUILD_CONFIG_INPUTS)
 	printf '#define CETTA_BUILD_WITH_LANGDEF_DIAGNOSTIC_BACKENDS %s\n' "$(ENABLE_LANGDEF_DIAGNOSTIC_BACKENDS)" >> "$$tmp_cfg"; \
 	printf '#define CETTA_BUILD_WITH_RUNTIME_STATS %s\n' "$(ENABLE_RUNTIME_STATS)" >> "$$tmp_cfg"; \
 	printf '#define CETTA_BUILD_WITH_RUNTIME_TIMING %s\n' "$(ENABLE_RUNTIME_TIMING)" >> "$$tmp_cfg"; \
+	printf '#define CETTA_BUILD_WITH_PRIME_CAUSAL_RECEIPTS %s\n' "$(ENABLE_PRIME_CAUSAL_RECEIPTS)" >> "$$tmp_cfg"; \
 	printf '#define CETTA_RHOCOST_COMMIT_AUDIT %s\n' "$(RHOCOST_COMMIT_AUDIT)" >> "$$tmp_cfg"; \
 	if [ -f "$(BUILD_CONFIG_HEADER)" ] && cmp -s "$$tmp_cfg" "$(BUILD_CONFIG_HEADER)"; then \
 		rm -f "$$tmp_cfg"; \
@@ -3565,6 +3659,7 @@ $(STAGE0_BUILD_CONFIG_STAMP): $(BUILD_CONFIG_INPUTS)
 	printf '#define CETTA_BUILD_WITH_LANGDEF_DIAGNOSTIC_BACKENDS %s\n' "$(ENABLE_LANGDEF_DIAGNOSTIC_BACKENDS)" >> "$$tmp_cfg"; \
 	printf '#define CETTA_BUILD_WITH_RUNTIME_STATS 0\n' >> "$$tmp_cfg"; \
 	printf '#define CETTA_BUILD_WITH_RUNTIME_TIMING 0\n' >> "$$tmp_cfg"; \
+	printf '#define CETTA_BUILD_WITH_PRIME_CAUSAL_RECEIPTS %s\n' "$(ENABLE_PRIME_CAUSAL_RECEIPTS)" >> "$$tmp_cfg"; \
 	printf '#define CETTA_RHOCOST_COMMIT_AUDIT %s\n' "$(RHOCOST_COMMIT_AUDIT)" >> "$$tmp_cfg"; \
 	if [ -f "$(STAGE0_BUILD_CONFIG_HEADER)" ] && cmp -s "$$tmp_cfg" "$(STAGE0_BUILD_CONFIG_HEADER)"; then \
 		rm -f "$$tmp_cfg"; \
@@ -11223,6 +11318,7 @@ test-prime-all: test-prime test-prime-relational-plan test-prime-need-algebra \
 	test-prime-need-effect-isolation \
 	test-prime-need-equation-choice-sharing \
 	test-prime-equation-call-sharing-tournament \
+	test-prime-causal-receipt-disabled-transparency \
 	test-prime-evaluation-strategy-contrast \
 	test-prime-need-mutations \
 	test-prime-crossdialect test-prime-universal-name-surface \
@@ -12785,7 +12881,40 @@ test-petta-type-langdef-source-binding-v1:
 	rm -f "$$tmpdir/binding-normalized.c"; \
 	echo "PASS: PeTTa type langdef source binding is valid and deterministic"
 
-test-petta-search-machine: $(PETTA_SEARCH_MACHINE_TEST_BIN) $(BIN) test-petta-type-langdef-source-binding-v1 test-petta-capability-ledger test-petta-specializer-relevance-filter test-petta-mam-contender-mutations test-petta-extended-query-algebra test-petta-prepared-register-loop test-petta-specialized-pure-call test-petta-memoization test-petta-match-existence-fusion
+.PHONY: test-petta-clause-slot-admission
+test-petta-clause-slot-admission: $(BIN)
+	@set -eu; \
+	optimized=$$(mktemp runtime/petta-clause-slot-optimized.XXXXXX); \
+	reference=$$(mktemp runtime/petta-clause-slot-reference.XXXXXX); \
+	extended=$$(mktemp runtime/petta-clause-slot-extended.XXXXXX); \
+	extended_reference=$$(mktemp runtime/petta-clause-slot-extended-reference.XXXXXX); \
+	trap 'rm -f "$$optimized" "$$reference" "$$extended" "$$extended_reference"' EXIT INT TERM; \
+	CETTA_PETTA_SEARCH_MACHINE=1 ./$(BIN) --lang petta \
+		tests/petta/search_machine_clause_slot_admission.metta \
+		>"$$optimized"; \
+	CETTA_PETTA_SEARCH_MACHINE=1 \
+		CETTA_PETTA_CLAUSE_SLOT_FRAME_REFERENCE=1 \
+		./$(BIN) --lang petta \
+		tests/petta/search_machine_clause_slot_admission.metta \
+		>"$$reference"; \
+	diff -u tests/petta/search_machine_clause_slot_admission.expected \
+		"$$optimized"; \
+	diff -u "$$reference" "$$optimized"; \
+	CETTA_PETTA_SEARCH_MACHINE=1 ./$(BIN) --lang petta \
+		--profile extended \
+		tests/petta/search_machine_clause_slot_admission.metta \
+		>"$$extended"; \
+	CETTA_PETTA_SEARCH_MACHINE=1 \
+		CETTA_PETTA_CLAUSE_SLOT_FRAME_REFERENCE=1 \
+		./$(BIN) --lang petta --profile extended \
+		tests/petta/search_machine_clause_slot_admission.metta \
+		>"$$extended_reference"; \
+	diff -u tests/petta/search_machine_clause_slot_admission.expected \
+		"$$extended"; \
+	diff -u "$$extended_reference" "$$extended"; \
+	echo "PASS: PeTTa clause-slot admission preserves query-visible aliases and occurrence identity"
+
+test-petta-search-machine: $(PETTA_SEARCH_MACHINE_TEST_BIN) $(BIN) test-petta-type-langdef-source-binding-v1 test-petta-capability-ledger test-petta-specializer-relevance-filter test-petta-mam-contender-mutations test-petta-extended-query-algebra test-petta-prepared-register-loop test-petta-specialized-pure-call test-petta-memoization test-petta-match-existence-fusion test-petta-clause-slot-admission
 	@./$(PETTA_SEARCH_MACHINE_TEST_BIN)
 	@machine_stats=$$(CETTA_PETTA_MACHINE_STATS=1 \
 		./$(BIN) --lang petta -e '!(+ 1 2)' \

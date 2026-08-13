@@ -42,10 +42,9 @@ typedef struct {
     uint8_t lookup_cache_count;
     uint8_t lookup_cache_next;
     /*
-     * Derived certificate for the substitution graph in `entries`.
-     * Zero means unknown, one means proved acyclic, and two means a cycle was
-     * witnessed.  The entries remain authoritative; the full checker handles
-     * unknown state.
+     * Cached summary of the substitution graph in `entries`.  Zero means
+     * unknown, one means acyclic, and two means a cycle was witnessed.  The
+     * entries remain authoritative; unknown state uses the full traversal.
     */
     uint8_t cycle_state;
     /*
@@ -158,11 +157,12 @@ bool      bindings_project_reachable_with_epoch_roots_and_entry_marks(
  * Replace `full` by the branch-relative suffix beyond `base` when `base` is
  * an exact ordered prefix of its logical bindings and constraints.
  *
- * The prefix test is a certificate, not a semantic guess: any mismatch leaves
- * `full` unchanged and reports `factored == false`.  Prime occurrence state is
- * orthogonal to the logical prefix and is retained whenever it differs from
- * the base.  This lets evaluator boundaries carry only newly learned logical
- * substitutions while preserving the canonical full-environment fallback.
+ * Exact ordered comparison decides the prefix relation directly: any mismatch
+ * leaves `full` unchanged and reports `factored == false`.  Prime occurrence
+ * state is orthogonal to the logical prefix and is retained whenever it
+ * differs from the base.  This lets evaluator boundaries carry only newly
+ * learned logical substitutions while preserving the canonical
+ * full-environment fallback.
  */
 bool      bindings_factor_prefix(Bindings *full, const Bindings *base,
                                  bool *factored,
@@ -188,9 +188,15 @@ void      bindings_invalidate_after_key_rewrite(Bindings *bindings);
  * matching the former zero-inited inline fields.  Mutable views materialize the
  * PrimeOccurrence on first use (Prime-only; HE evaluation never calls them). */
 const PrimeNeedSnapshot *bindings_need_view(const Bindings *b);
-const PrimeNeedReceipt  *bindings_receipt_view(const Bindings *b);
+const PrimeNeedBranchState *bindings_branch_state_view(const Bindings *b);
 PrimeNeedSnapshot        *bindings_need_mut(Bindings *b);
-PrimeNeedReceipt         *bindings_receipt_mut(Bindings *b);
+PrimeNeedBranchState      *bindings_branch_state_mut(Bindings *b);
+#if CETTA_BUILD_WITH_PRIME_CAUSAL_RECEIPTS
+const PrimeNeedReceipt    *bindings_receipt_view(const Bindings *b);
+PrimeNeedReceipt          *bindings_receipt_mut(Bindings *b);
+#endif
+uint64_t                  bindings_occurrence_token(const Bindings *b);
+bool                      bindings_refresh_occurrence_token(Bindings *b);
 bool                      bindings_prime_present(const Bindings *b);
 /* Copy both Prime components from src into dst (materializing dst's occurrence
  * only when src has present state; otherwise dst's occurrence is released). */
@@ -198,6 +204,8 @@ void      bindings_prime_assign(Bindings *dst, const Bindings *src);
 /* Set dst's Prime components from explicit values (builder-trail restore, which
  * snapshots by value); clears dst's occurrence when both values are absent. */
 void      bindings_prime_set(Bindings *dst, const PrimeNeedSnapshot *need,
+                             const PrimeNeedBranchState *branch_state,
+                             uint64_t occurrence_token,
                              const PrimeNeedReceipt *receipt);
 Atom     *bindings_lookup_id(Bindings *b, VarId var_id);
 Atom     *bindings_lookup_var(Bindings *b, Atom *var);
@@ -361,6 +369,13 @@ bool match_atoms_epoch(Atom *left, Atom *right, Bindings *b, Arena *a, uint32_t 
 bool match_atoms_epoch_builder(Atom *left, Atom *right,
                                BindingsBuilder *bb, Arena *a,
                                uint32_t epoch);
+/* Clause-frame orientation of the same relation.  When two otherwise unbound
+ * variables meet, bind the standardized-apart right rule slot to the live
+ * left call variable.  This keeps a successful frame local when possible;
+ * callers must still audit the appended keys and roll back on escape. */
+bool match_atoms_epoch_builder_rule_local(
+         Atom *left, Atom *right, BindingsBuilder *bb,
+         Arena *a, uint32_t epoch);
 /* Match an activation-local source term without first materializing the
  * complete substituted term.  Variables in `left_original` are interpreted
  * through `left_epoch` and the binding suffix beginning at

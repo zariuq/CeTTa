@@ -12,7 +12,7 @@
 struct PrimeNeedFrame {
     const PrimeNeedFrame *parent;
     Arena *owner;
-    /* O(1) certificate for the complete parent path.  NULL denotes a path
+    /* Cached common owner for the complete parent path.  NULL denotes a path
      * whose immutable prefix lives in a longer-lived arena. */
     Arena *closure_owner;
     /* Conservative summary of every arena that owns storage reachable from
@@ -226,8 +226,8 @@ struct PrimeNeedReceiptFrame {
     const PrimeNeedReceiptFrame *left;
     const PrimeNeedReceiptFrame *right;
     Arena *owner;
-    /* O(1) ownership certificate for the complete reachable sub-DAG.
-     * NULL denotes a cross-arena join. */
+    /* Cached common owner for the complete reachable sub-DAG.  NULL denotes
+     * a cross-arena join. */
     Arena *closure_owner;
     uint64_t arena_bloom;
     uint32_t arena_min_id;
@@ -531,8 +531,8 @@ bool prime_need_arena_audit_snapshot(
     return true;
 }
 
-bool prime_need_arena_audit_receipt(
-    PrimeNeedArenaAudit *audit, const PrimeNeedReceipt *receipt) {
+bool prime_need_arena_audit_branch_state(
+    PrimeNeedArenaAudit *audit, const PrimeNeedBranchState *receipt) {
     if (!audit || !receipt)
         return false;
     if (receipt->session_id == 0u || !receipt->owner)
@@ -540,6 +540,10 @@ bool prime_need_arena_audit_receipt(
     if (receipt->owner == audit->forbidden ||
         (receipt->top && receipt->owner != receipt->top->owner))
         return false;
+    if (!prime_need_branch_state_has_events(receipt))
+        return true;
+    cetta_runtime_stats_inc(
+        CETTA_RUNTIME_COUNTER_PRIME_NEED_CARRIER_AUDIT);
     if (receipt->top && receipt->top->closure_owner)
         return receipt->top->closure_owner != audit->forbidden;
     if (receipt->top && prime_need_arena_range_excludes(
@@ -1883,20 +1887,20 @@ static bool prime_need_receipt_reachable(
     const PrimeNeedReceiptFrame *target) {
     size_t visited = 0u;
     cetta_runtime_stats_inc(
-        CETTA_RUNTIME_COUNTER_PRIME_NEED_RECEIPT_REACH_QUERY);
+        CETTA_RUNTIME_COUNTER_PRIME_NEED_CARRIER_REACH_QUERY);
     if (!target) {
         cetta_runtime_stats_inc(
-            CETTA_RUNTIME_COUNTER_PRIME_NEED_RECEIPT_REACH_EMPTY_TARGET_ACCEPT);
+            CETTA_RUNTIME_COUNTER_PRIME_NEED_CARRIER_REACH_EMPTY_TARGET_ACCEPT);
         return true;
     }
     if (!top || top->session_id != target->session_id) {
         cetta_runtime_stats_inc(
-            CETTA_RUNTIME_COUNTER_PRIME_NEED_RECEIPT_REACH_BOUNDARY_REJECT);
+            CETTA_RUNTIME_COUNTER_PRIME_NEED_CARRIER_REACH_BOUNDARY_REJECT);
         return false;
     }
     if (top->identity_id == target->identity_id) {
         cetta_runtime_stats_inc(
-            CETTA_RUNTIME_COUNTER_PRIME_NEED_RECEIPT_REACH_SELF_ACCEPT);
+            CETTA_RUNTIME_COUNTER_PRIME_NEED_CARRIER_REACH_SELF_ACCEPT);
         return true;
     }
     /* Every receipt edge points to a frame of strictly smaller depth.
@@ -1905,7 +1909,7 @@ static bool prime_need_receipt_reachable(
      * both without collecting the transitive DAG. */
     if (top->depth <= target->depth) {
         cetta_runtime_stats_inc(
-            CETTA_RUNTIME_COUNTER_PRIME_NEED_RECEIPT_REACH_DEPTH_REJECT);
+            CETTA_RUNTIME_COUNTER_PRIME_NEED_CARRIER_REACH_DEPTH_REJECT);
         return false;
     }
     if ((top->left &&
@@ -1913,7 +1917,7 @@ static bool prime_need_receipt_reachable(
         (top->right &&
          top->right->identity_id == target->identity_id)) {
         cetta_runtime_stats_inc(
-            CETTA_RUNTIME_COUNTER_PRIME_NEED_RECEIPT_REACH_PARENT_ACCEPT);
+            CETTA_RUNTIME_COUNTER_PRIME_NEED_CARRIER_REACH_PARENT_ACCEPT);
         return true;
     }
 #if CETTA_PRIME_RECEIPT_PRIMARY_INDEX
@@ -1922,28 +1926,28 @@ static bool prime_need_receipt_reachable(
         top, target, &index_steps);
 #if CETTA_BUILD_WITH_RUNTIME_STATS
     cetta_runtime_stats_add(
-        CETTA_RUNTIME_COUNTER_PRIME_NEED_RECEIPT_REACH_INDEX_STEP,
+        CETTA_RUNTIME_COUNTER_PRIME_NEED_CARRIER_REACH_INDEX_STEP,
         (uint64_t)index_steps);
 #endif
     if (indexed) {
         cetta_runtime_stats_inc(
-            CETTA_RUNTIME_COUNTER_PRIME_NEED_RECEIPT_REACH_INDEX_ACCEPT);
+            CETTA_RUNTIME_COUNTER_PRIME_NEED_CARRIER_REACH_INDEX_ACCEPT);
         return true;
     }
 #endif
     cetta_runtime_stats_inc(
-        CETTA_RUNTIME_COUNTER_PRIME_NEED_RECEIPT_REACH_FALLBACK);
+        CETTA_RUNTIME_COUNTER_PRIME_NEED_CARRIER_REACH_FALLBACK);
     bool found = prime_need_receipt_reaches_exact(
         top, target, &visited);
 #if CETTA_BUILD_WITH_RUNTIME_STATS
     cetta_runtime_stats_add(
-        CETTA_RUNTIME_COUNTER_PRIME_NEED_RECEIPT_REACH_FALLBACK_FRAME,
+        CETTA_RUNTIME_COUNTER_PRIME_NEED_CARRIER_REACH_FALLBACK_FRAME,
         (uint64_t)visited);
 #endif
     return found;
 }
 
-void prime_need_receipt_init(PrimeNeedReceipt *receipt) {
+void prime_need_branch_state_init(PrimeNeedBranchState *receipt) {
     if (!receipt)
         return;
     receipt->top = NULL;
@@ -1951,10 +1955,11 @@ void prime_need_receipt_init(PrimeNeedReceipt *receipt) {
     receipt->owner = NULL;
 }
 
-bool prime_need_receipt_begin(Arena *owner, PrimeNeedReceipt *receipt) {
+static bool prime_need_carrier_begin(
+    Arena *owner, PrimeNeedBranchState *receipt) {
     if (!owner || !receipt)
         return false;
-    if (prime_need_receipt_present(receipt))
+    if (prime_need_branch_state_present(receipt))
         return receipt->owner == owner;
     receipt->top = NULL;
     receipt->session_id = prime_need_fresh_nonzero(
@@ -1963,17 +1968,31 @@ bool prime_need_receipt_begin(Arena *owner, PrimeNeedReceipt *receipt) {
     return receipt->session_id != 0u;
 }
 
-bool prime_need_receipt_present(const PrimeNeedReceipt *receipt) {
+bool prime_need_branch_state_begin(
+    Arena *owner, PrimeNeedBranchState *state) {
+    return prime_need_carrier_begin(owner, state);
+}
+
+#if CETTA_BUILD_WITH_PRIME_CAUSAL_RECEIPTS
+bool prime_need_receipt_begin(Arena *owner, PrimeNeedReceipt *receipt) {
+    cetta_runtime_stats_inc(
+        CETTA_RUNTIME_COUNTER_PRIME_NEED_RECEIPT_BEGIN);
+    return prime_need_carrier_begin(owner, receipt);
+}
+#endif
+
+bool prime_need_branch_state_present(const PrimeNeedBranchState *receipt) {
     return receipt && receipt->session_id != 0u && receipt->owner;
 }
 
-bool prime_need_receipt_is_ancestor(const PrimeNeedReceipt *ancestor,
-                                    const PrimeNeedReceipt *descendant) {
+bool prime_need_branch_state_is_ancestor(
+    const PrimeNeedBranchState *ancestor,
+    const PrimeNeedBranchState *descendant) {
     if (!ancestor || !descendant)
         return false;
-    if (!prime_need_receipt_present(ancestor))
+    if (!prime_need_branch_state_present(ancestor))
         return true;
-    if (!prime_need_receipt_present(descendant) ||
+    if (!prime_need_branch_state_present(descendant) ||
         ancestor->session_id != descendant->session_id)
         return false;
     return prime_need_receipt_reachable(descendant->top, ancestor->top);
@@ -1994,6 +2013,7 @@ static bool prime_need_receipt_events_conflict(
         return false;
     const PrimeNeedReceiptEvent *a = &left->event;
     const PrimeNeedReceiptEvent *b = &right->event;
+#if CETTA_BUILD_WITH_PRIME_CAUSAL_RECEIPTS
     if ((a->kind == PRIME_NEED_RECEIPT_OBSERVE_CELL ||
          a->kind == PRIME_NEED_RECEIPT_INSPECT_ORIGIN) &&
         a->kind == b->kind) {
@@ -2001,6 +2021,7 @@ static bool prime_need_receipt_events_conflict(
                a->thunk_id == b->thunk_id &&
                !atom_eq(a->after, b->after);
     }
+#endif
     bool a_state = a->kind == PRIME_NEED_RECEIPT_READ_STATE ||
                    a->kind == PRIME_NEED_RECEIPT_WRITE_STATE;
     bool b_state = b->kind == PRIME_NEED_RECEIPT_READ_STATE ||
@@ -2015,17 +2036,18 @@ static bool prime_need_receipt_events_conflict(
     return true;
 }
 
-bool prime_need_receipt_compatible(const PrimeNeedReceipt *left,
-                                   const PrimeNeedReceipt *right) {
+bool prime_need_branch_state_compatible(
+    const PrimeNeedBranchState *left,
+    const PrimeNeedBranchState *right) {
     if (!left || !right)
         return false;
-    if (!prime_need_receipt_present(left) ||
-        !prime_need_receipt_present(right))
+    if (!prime_need_branch_state_present(left) ||
+        !prime_need_branch_state_present(right))
         return true;
     if (left->session_id != right->session_id)
         return false;
-    if (prime_need_receipt_is_ancestor(left, right) ||
-        prime_need_receipt_is_ancestor(right, left))
+    if (prime_need_branch_state_is_ancestor(left, right) ||
+        prime_need_branch_state_is_ancestor(right, left))
         return true;
     PrimeNeedReceiptFrames left_frames = {0};
     PrimeNeedReceiptFrames right_frames = {0};
@@ -2055,30 +2077,41 @@ bool prime_need_receipt_compatible(const PrimeNeedReceipt *left,
 }
 
 static PrimeNeedReceiptFrame *prime_need_receipt_alloc_frame(Arena *owner) {
-    return owner ? arena_alloc(owner, sizeof(PrimeNeedReceiptFrame)) : NULL;
+    PrimeNeedReceiptFrame *frame =
+        owner ? arena_alloc(owner, sizeof(PrimeNeedReceiptFrame)) : NULL;
+    if (frame) {
+        cetta_runtime_stats_inc(
+            CETTA_RUNTIME_COUNTER_PRIME_NEED_CARRIER_FRAME_ALLOC);
+        cetta_runtime_stats_add(
+            CETTA_RUNTIME_COUNTER_PRIME_NEED_CARRIER_FRAME_BYTES,
+            sizeof(PrimeNeedReceiptFrame));
+    }
+    return frame;
 }
 
-bool prime_need_receipt_merge(PrimeNeedReceipt *dst,
-                              const PrimeNeedReceipt *src) {
-    if (!dst || !src || !prime_need_receipt_present(src))
-        return dst != NULL;
-    if (!prime_need_receipt_present(dst)) {
+bool prime_need_branch_state_merge_nonempty(
+    PrimeNeedBranchState *dst, const PrimeNeedBranchState *src) {
+    cetta_runtime_stats_inc(
+        CETTA_RUNTIME_COUNTER_PRIME_NEED_CARRIER_MERGE);
+    if (!dst || !src || !prime_need_branch_state_has_events(src))
+        return false;
+    if (!prime_need_branch_state_present(dst)) {
         *dst = *src;
         return true;
     }
     if (dst->session_id == src->session_id && dst->top == src->top) {
         cetta_runtime_stats_inc(
-            CETTA_RUNTIME_COUNTER_PRIME_NEED_RECEIPT_MERGE_IDENTICAL);
+            CETTA_RUNTIME_COUNTER_PRIME_NEED_CARRIER_MERGE_IDENTICAL);
         *dst = *src;
         return true;
     }
-    if (prime_need_receipt_is_ancestor(dst, src)) {
+    if (prime_need_branch_state_is_ancestor(dst, src)) {
         *dst = *src;
         return true;
     }
-    if (prime_need_receipt_is_ancestor(src, dst))
+    if (prime_need_branch_state_is_ancestor(src, dst))
         return true;
-    if (!prime_need_receipt_compatible(dst, src))
+    if (!prime_need_branch_state_compatible(dst, src))
         return false;
     Arena *owner = dst->owner ? dst->owner : src->owner;
     uint64_t identity_id = prime_need_fresh_nonzero(
@@ -2118,7 +2151,7 @@ static bool prime_need_receipt_append_with_lifetime(
         ? owner : base && base->owner ? base->owner : owner;
     if (!actual_owner)
         return false;
-    uint64_t session_id = base && prime_need_receipt_present(base)
+    uint64_t session_id = base && prime_need_branch_state_present(base)
         ? base->session_id
         : prime_need_fresh_nonzero(&g_prime_need_next_receipt_session);
     uint64_t event_id = prime_need_fresh_nonzero(
@@ -2157,6 +2190,35 @@ static bool prime_need_receipt_append_with_lifetime(
         .session_id = session_id,
         .owner = actual_owner,
     };
+#if CETTA_BUILD_WITH_RUNTIME_STATS
+    CettaRuntimeCounter event_counter =
+        CETTA_RUNTIME_COUNTER_PRIME_NEED_RECEIPT_EVENT_OBSERVE_CELL;
+    switch (event.kind) {
+    case PRIME_NEED_RECEIPT_OBSERVE_CELL:
+        break;
+    case PRIME_NEED_RECEIPT_INSPECT_ORIGIN:
+        event_counter =
+            CETTA_RUNTIME_COUNTER_PRIME_NEED_RECEIPT_EVENT_INSPECT_ORIGIN;
+        break;
+    case PRIME_NEED_RECEIPT_READ_STATE:
+        event_counter =
+            CETTA_RUNTIME_COUNTER_PRIME_NEED_CARRIER_EVENT_READ_STATE;
+        break;
+    case PRIME_NEED_RECEIPT_WRITE_STATE:
+        event_counter =
+            CETTA_RUNTIME_COUNTER_PRIME_NEED_CARRIER_EVENT_WRITE_STATE;
+        break;
+    case PRIME_NEED_RECEIPT_USE_EQUATION:
+        event_counter =
+            CETTA_RUNTIME_COUNTER_PRIME_NEED_RECEIPT_EVENT_USE_EQUATION;
+        break;
+    case PRIME_NEED_RECEIPT_RESAMPLE:
+        event_counter =
+            CETTA_RUNTIME_COUNTER_PRIME_NEED_RECEIPT_EVENT_RESAMPLE;
+        break;
+    }
+    cetta_runtime_stats_inc(event_counter);
+#endif
     return true;
 }
 
@@ -2167,6 +2229,7 @@ static bool prime_need_receipt_append(
         owner, base, event, false, out);
 }
 
+#if CETTA_BUILD_WITH_PRIME_CAUSAL_RECEIPTS
 bool prime_need_receipt_observe_cell(
     Arena *owner, const PrimeNeedReceipt *base,
     uint64_t need_session_id, uint64_t thunk_id, Atom *outcome,
@@ -2220,51 +2283,6 @@ bool prime_need_receipt_observe_source_cell_branch_local(
         outcome, true, out);
 }
 
-static bool prime_need_receipt_evaluate_source_cell_event(
-    Arena *owner, const PrimeNeedReceipt *base,
-    uint64_t need_session_id, uint64_t thunk_id,
-    uint64_t source_occurrence_id, uint64_t source_argument_index,
-    Atom *origin, bool branch_local, PrimeNeedReceipt *out) {
-    if (need_session_id == 0u || thunk_id == 0u || !origin)
-        return false;
-    return prime_need_receipt_append_with_lifetime(
-        owner, base,
-        (PrimeNeedReceiptEvent){
-            .kind = PRIME_NEED_RECEIPT_EVALUATE_CELL,
-            .need_session_id = need_session_id,
-            .thunk_id = thunk_id,
-            .source_occurrence_id = source_occurrence_id,
-            .source_argument_index = source_argument_index,
-            .before = origin,
-        },
-        branch_local,
-        out);
-}
-
-bool prime_need_receipt_evaluate_source_cell(
-    Arena *owner, const PrimeNeedReceipt *base,
-    uint64_t need_session_id, uint64_t thunk_id,
-    uint64_t source_occurrence_id, uint64_t source_argument_index,
-    Atom *origin, PrimeNeedReceipt *out) {
-    return prime_need_receipt_evaluate_source_cell_event(
-        owner, base, need_session_id, thunk_id,
-        source_occurrence_id, source_argument_index,
-        origin, false, out);
-}
-
-bool prime_need_receipt_evaluate_source_cell_branch_local(
-    Arena *owner, const PrimeNeedReceipt *base,
-    uint64_t need_session_id, uint64_t thunk_id,
-    uint64_t source_occurrence_id, uint64_t source_argument_index,
-    Atom *origin, PrimeNeedReceipt *out) {
-    if (!owner)
-        return false;
-    return prime_need_receipt_evaluate_source_cell_event(
-        owner, base, need_session_id, thunk_id,
-        source_occurrence_id, source_argument_index,
-        origin, true, out);
-}
-
 static bool prime_need_receipt_inspect_origin_event(
     Arena *owner, const PrimeNeedReceipt *base,
     uint64_t need_session_id, uint64_t thunk_id, Atom *origin_view,
@@ -2302,10 +2320,11 @@ bool prime_need_receipt_inspect_origin_branch_local(
         owner, base, need_session_id, thunk_id, origin_view,
         true, out);
 }
+#endif
 
-bool prime_need_receipt_read_state(
-    Arena *owner, const PrimeNeedReceipt *base, StateCell *cell,
-    Atom *value, PrimeNeedReceipt *out) {
+bool prime_need_branch_state_read(
+    Arena *owner, const PrimeNeedBranchState *base, StateCell *cell,
+    Atom *value, PrimeNeedBranchState *out) {
     if (!cell || !value)
         return false;
     return prime_need_receipt_append(
@@ -2318,9 +2337,9 @@ bool prime_need_receipt_read_state(
         out);
 }
 
-bool prime_need_receipt_write_state(
-    Arena *owner, const PrimeNeedReceipt *base, StateCell *cell,
-    Atom *before, Atom *after, PrimeNeedReceipt *out) {
+bool prime_need_branch_state_write(
+    Arena *owner, const PrimeNeedBranchState *base, StateCell *cell,
+    Atom *before, Atom *after, PrimeNeedBranchState *out) {
     if (!cell || !before || !after)
         return false;
     return prime_need_receipt_append(
@@ -2332,6 +2351,20 @@ bool prime_need_receipt_write_state(
             .after = after,
         },
         out);
+}
+
+#if CETTA_BUILD_WITH_PRIME_CAUSAL_RECEIPTS
+bool prime_need_receipt_read_state(
+    Arena *owner, const PrimeNeedReceipt *base, StateCell *cell,
+    Atom *value, PrimeNeedReceipt *out) {
+    return prime_need_branch_state_read(owner, base, cell, value, out);
+}
+
+bool prime_need_receipt_write_state(
+    Arena *owner, const PrimeNeedReceipt *base, StateCell *cell,
+    Atom *before, Atom *after, PrimeNeedReceipt *out) {
+    return prime_need_branch_state_write(
+        owner, base, cell, before, after, out);
 }
 
 static bool prime_need_receipt_use_equation_event(
@@ -2427,14 +2460,15 @@ bool prime_need_receipt_resample_branch_local(
     return prime_need_receipt_resample_event(
         owner, base, origin, true, out);
 }
+#endif
 
-bool prime_need_receipt_state_value(const PrimeNeedReceipt *receipt,
-                                    StateCell *cell, Atom **out_value) {
-    if (!receipt || !cell || !out_value ||
-        !prime_need_receipt_present(receipt))
+bool prime_need_branch_state_value(const PrimeNeedBranchState *state,
+                                   StateCell *cell, Atom **out_value) {
+    if (!state || !cell || !out_value ||
+        !prime_need_branch_state_present(state))
         return false;
     PrimeNeedReceiptFrames frames = {0};
-    if (!prime_need_receipt_collect_all(receipt->top, &frames))
+    if (!prime_need_receipt_collect_all(state->top, &frames))
         return false;
     const PrimeNeedReceiptFrame *latest = NULL;
     for (size_t i = 0u; i < frames.len; i++) {
@@ -2455,6 +2489,13 @@ bool prime_need_receipt_state_value(const PrimeNeedReceipt *receipt,
     return true;
 }
 
+#if CETTA_BUILD_WITH_PRIME_CAUSAL_RECEIPTS
+bool prime_need_receipt_state_value(const PrimeNeedReceipt *receipt,
+                                    StateCell *cell, Atom **out_value) {
+    return prime_need_branch_state_value(receipt, cell, out_value);
+}
+#endif
+
 static int prime_need_receipt_event_compare(const void *left,
                                             const void *right) {
     const PrimeNeedReceiptFrame *const *a = left;
@@ -2469,7 +2510,7 @@ static int prime_need_receipt_event_compare(const void *left,
 static bool prime_need_receipt_collect_events(
     const PrimeNeedReceipt *receipt, PrimeNeedReceiptFrames *events) {
     PrimeNeedReceiptFrames all = {0};
-    if (!receipt || !events || !prime_need_receipt_present(receipt))
+    if (!receipt || !events || !prime_need_branch_state_present(receipt))
         return receipt && events;
     if (!prime_need_receipt_collect_all(receipt->top, &all))
         return false;
@@ -2489,6 +2530,7 @@ static bool prime_need_receipt_collect_events(
     return true;
 }
 
+#if CETTA_BUILD_WITH_PRIME_CAUSAL_RECEIPTS
 size_t prime_need_receipt_event_count(const PrimeNeedReceipt *receipt) {
     PrimeNeedReceiptFrames events = {0};
     if (!prime_need_receipt_collect_events(receipt, &events))
@@ -2512,15 +2554,17 @@ bool prime_need_receipt_event_at(const PrimeNeedReceipt *receipt,
     prime_need_receipt_frames_free(&events);
     return true;
 }
+#endif
 
-bool prime_need_receipt_equal(const PrimeNeedReceipt *left,
-                              const PrimeNeedReceipt *right) {
+bool prime_need_branch_state_equal(
+    const PrimeNeedBranchState *left,
+    const PrimeNeedBranchState *right) {
     if (!left || !right)
         return false;
-    if (!prime_need_receipt_present(left) ||
-        !prime_need_receipt_present(right))
-        return !prime_need_receipt_present(left) &&
-               !prime_need_receipt_present(right);
+    if (!prime_need_branch_state_present(left) ||
+        !prime_need_branch_state_present(right))
+        return !prime_need_branch_state_present(left) &&
+               !prime_need_branch_state_present(right);
     if (left->session_id != right->session_id)
         return false;
     PrimeNeedReceiptFrames a = {0};
@@ -2628,18 +2672,21 @@ static int prime_need_receipt_frame_depth_compare(
         ? -1 : left_address > right_address ? 1 : 0;
 }
 
-bool prime_need_receipt_promote(Arena *dst, PrimeNeedReceipt *receipt) {
+bool prime_need_branch_state_promote(
+    Arena *dst, PrimeNeedBranchState *receipt) {
     if (!dst || !receipt)
         return false;
-    if (!prime_need_receipt_present(receipt))
+    if (!prime_need_branch_state_present(receipt))
         return true;
-    if (receipt->owner == dst &&
-        (!receipt->top || receipt->top->closure_owner == dst))
-        return true;
-    if (!receipt->top) {
+    if (!prime_need_branch_state_has_events(receipt)) {
         receipt->owner = dst;
         return true;
     }
+    cetta_runtime_stats_inc(
+        CETTA_RUNTIME_COUNTER_PRIME_NEED_CARRIER_PROMOTE);
+    if (receipt->owner == dst &&
+        (!receipt->top || receipt->top->closure_owner == dst))
+        return true;
     PrimeNeedReceiptFrames originals = {0};
     if (!prime_need_receipt_collect_all(receipt->top, &originals))
         return false;
@@ -2662,6 +2709,8 @@ bool prime_need_receipt_promote(Arena *dst, PrimeNeedReceipt *receipt) {
         PrimeNeedReceiptFrame *copy = prime_need_receipt_alloc_frame(dst);
         if (!copy)
             goto fail;
+        cetta_runtime_stats_inc(
+            CETTA_RUNTIME_COUNTER_PRIME_NEED_CARRIER_PROMOTED_FRAME);
         *copy = *source;
         copy->left = left;
         copy->right = right;
@@ -2698,19 +2747,21 @@ fail:
     return false;
 }
 
-bool prime_need_receipt_promote_suffix_with_session(
+bool prime_need_branch_state_promote_suffix_with_session(
     Arena *dst, const Arena *forbidden,
-    AtomDeepCopySession *copy_session, PrimeNeedReceipt *receipt) {
+    AtomDeepCopySession *copy_session, PrimeNeedBranchState *receipt) {
     if (!dst || !forbidden || !copy_session || !receipt ||
         dst == forbidden)
         return false;
-    if (!prime_need_receipt_present(receipt) || !receipt->top)
+    if (!prime_need_branch_state_has_events(receipt))
         return true;
+    cetta_runtime_stats_inc(
+        CETTA_RUNTIME_COUNTER_PRIME_NEED_CARRIER_PROMOTE_SUFFIX);
     if (receipt->top->closure_owner &&
         receipt->top->closure_owner != forbidden)
         return true;
     if (receipt->top->owner != forbidden &&
-        prime_need_receipt_excludes_arena(receipt, forbidden))
+        prime_need_branch_state_excludes_arena(receipt, forbidden))
         return true;
 
     PrimeNeedReceiptFrames originals = {0};
@@ -2796,6 +2847,8 @@ bool prime_need_receipt_promote_suffix_with_session(
             ok = false;
             break;
         }
+        cetta_runtime_stats_inc(
+            CETTA_RUNTIME_COUNTER_PRIME_NEED_CARRIER_PROMOTED_SUFFIX_FRAME);
         *copy = *source;
         copy->left = left;
         copy->right = right;
@@ -2830,7 +2883,7 @@ bool prime_need_receipt_promote_suffix_with_session(
     }
     if (ok) {
         promoted.owner = promoted.top ? promoted.top->owner : dst;
-        ok = prime_need_receipt_excludes_arena(&promoted, forbidden);
+        ok = prime_need_branch_state_excludes_arena(&promoted, forbidden);
     }
     prime_need_receipt_copy_map_free(&copies);
     prime_need_receipt_frames_free(&suffix);
@@ -2841,8 +2894,8 @@ bool prime_need_receipt_promote_suffix_with_session(
     return true;
 }
 
-bool prime_need_receipt_promote_suffix(
-    Arena *dst, const Arena *forbidden, PrimeNeedReceipt *receipt) {
+bool prime_need_branch_state_promote_suffix(
+    Arena *dst, const Arena *forbidden, PrimeNeedBranchState *receipt) {
     if (!dst || !forbidden || !receipt || dst == forbidden)
         return false;
     ArenaMark dst_mark = arena_mark(dst);
@@ -2850,7 +2903,7 @@ bool prime_need_receipt_promote_suffix(
         atom_deep_copy_session_new(dst);
     if (!copy_session)
         return false;
-    bool promoted = prime_need_receipt_promote_suffix_with_session(
+    bool promoted = prime_need_branch_state_promote_suffix_with_session(
         dst, forbidden, copy_session, receipt);
     atom_deep_copy_session_free(copy_session);
     if (!promoted)
@@ -2858,13 +2911,13 @@ bool prime_need_receipt_promote_suffix(
     return promoted;
 }
 
-bool prime_need_receipt_excludes_arena(
-    const PrimeNeedReceipt *receipt, const Arena *forbidden) {
+bool prime_need_branch_state_excludes_arena(
+    const PrimeNeedBranchState *receipt, const Arena *forbidden) {
     PrimeNeedArenaAudit *audit =
         prime_need_arena_audit_new(forbidden);
     if (!audit)
         return false;
-    bool excludes = prime_need_arena_audit_receipt(
+    bool excludes = prime_need_arena_audit_branch_state(
         audit, receipt);
     prime_need_arena_audit_free(audit);
     return excludes;

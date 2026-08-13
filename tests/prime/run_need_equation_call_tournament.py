@@ -135,7 +135,6 @@ def validate_native_receipts(forms: dict[int, list[Answer]]):
     do not claim a C refinement theorem for causal reachability.
     """
     required = {
-        "evaluate-cell": ("need-session", "cell", "before"),
         "observe-cell": ("need-session", "cell", "after"),
         "inspect-origin": ("need-session", "cell", "after"),
         "read-state": ("state", "after"),
@@ -183,7 +182,7 @@ def validate_native_receipts(forms: dict[int, list[Answer]]):
                     )
                 application = event_field(event, "application")
                 argument = event_field(event, "argument")
-                if event_name in {"evaluate-cell", "observe-cell"}:
+                if event_name == "observe-cell":
                     require(
                         (application is None) == (argument is None),
                         f"form {form}: partial source-argument identity",
@@ -288,8 +287,11 @@ def admitted_bag(forms, form: int) -> Counter[str]:
 
 
 def producer_count(forms, form: int) -> int:
-    return len(set().union(*(event_ids(answer, "evaluate-cell")
-                             for answer in forms[form])))
+    return len({
+        (event_field(event, "need-session"), event_field(event, "cell"))
+        for answer in forms[form]
+        for event in answer.events_named("observe-cell")
+    })
 
 
 def main() -> int:
@@ -321,8 +323,6 @@ def main() -> int:
         lambda: (
             require(value_bag(forms, 1) == Counter({"c01-unused": 1}),
                     "unused fault did not return exactly once"),
-            require(not forms[1][0].events_named("evaluate-cell"),
-                    "unused argument was evaluated"),
             require(not forms[1][0].events_named("observe-cell"),
                     "unused argument was observed"),
             require(not forms[1][0].events_named("write-state"),
@@ -333,9 +333,8 @@ def main() -> int:
     def case02():
         require(value_bag(forms, 2) == Counter({"c02-a": 1, "c02-b": 1}),
                 "strict candidates lost an answer")
-        require(len(set().union(*(event_ids(a, "evaluate-cell")
-                                  for a in forms[2]))) == 1,
-                "strict candidates did not share one producer event")
+        require(producer_count(forms, 2) == 1,
+                "strict candidates did not share one source cell")
         require(len(set().union(*(field_set(a, "use-equation", "rule")
                                   for a in forms[2]))) == 2,
                 "strict candidates lost rule-occurrence identity")
@@ -348,9 +347,8 @@ def main() -> int:
             "(c03-wild A)": 1,
             "(c03-wild B)": 1,
         }), "strict/wild answer bag is wrong")
-        require(len(set().union(*(event_ids(a, "evaluate-cell")
-                                  for a in forms[3]))) == 1,
-                "strict/wild candidates repeated the producer")
+        require(producer_count(forms, 3) == 1,
+                "strict/wild candidates did not share one source cell")
         require(all(field_set(a, "observe-cell", "cell") == {"1"}
                     for a in forms[3]),
                 "strict/wild answers did not retain one shared cell")
@@ -362,8 +360,7 @@ def main() -> int:
             "c04-strict": 1, "c04-constant": 1,
         }), "constant wildcard multiplicity is wrong")
         constant = next(a for a in forms[4] if a.value == "c04-constant")
-        require(not constant.events_named("evaluate-cell") and
-                not constant.events_named("observe-cell"),
+        require(not constant.events_named("observe-cell"),
                 "constant wildcard receipt contains irrelevant support")
 
     case("04-strict-wild-constant", case04)
@@ -457,9 +454,8 @@ def main() -> int:
             "(c11-resample A A)": 1, "(c11-resample A B)": 1,
             "(c11-resample B A)": 1, "(c11-resample B B)": 1,
         }), "resample failed to form the fresh-event cross-product")
-        require(len(set().union(*(event_ids(a, "evaluate-cell")
-                                  for a in forms[13]))) == 1,
-                "delay repeated its producer")
+        require(producer_count(forms, 13) == 1,
+                "delay did not retain one shared source cell")
         require(all(len(event_ids(a, "resample")) == 2 for a in forms[14]),
                 "each resample answer must contain two fresh events")
 
@@ -560,8 +556,7 @@ def main() -> int:
 
     policy_observations = {}
 
-    def check_experimental_frontier(frontier: str,
-                                    expected_case02_producers: int):
+    def check_experimental_frontier(frontier: str):
         observed, observed_completion, _ = run_frontier(frontier)
         policy_observations[frontier] = observed
 
@@ -583,9 +578,8 @@ def main() -> int:
             require(admitted_bag(observed, 2) ==
                     Counter({"c02-a": 1, "c02-b": 1}),
                     "strict/strict admitted answers changed")
-            require(producer_count(observed, 2) ==
-                    expected_case02_producers,
-                    "strict/strict producer characterization changed")
+            require(producer_count(observed, 2) == 1,
+                    "strict/strict source-cell identity changed")
             require(len(set().union(*(field_set(a, "use-equation", "rule")
                                       for a in admitted(observed, 2)))) == 2,
                     "strict/strict lost rule occurrence identity")
@@ -612,8 +606,7 @@ def main() -> int:
             }), "strict/constant admitted answers changed")
             constant = next(a for a in admitted(observed, 4)
                             if a.value == "c04-constant")
-            require(not constant.events_named("evaluate-cell") and
-                    not constant.events_named("observe-cell"),
+            require(not constant.events_named("observe-cell"),
                     "constant answer inherited irrelevant support")
 
         add_case("04-strict-wild-constant", experimental04)
@@ -664,8 +657,8 @@ def main() -> int:
                 "c07-right": {"2"},
                 "c07-both": {"1", "2"},
             }, "overlapping answers do not carry exact support")
-            require(producer_count(observed, 7) == 4,
-                    "overlapping-support red characterization changed")
+            require(producer_count(observed, 7) == 2,
+                    "overlapping support lost source-cell identity")
 
         add_case("07-overlapping-supports", experimental07)
 
@@ -774,8 +767,8 @@ def main() -> int:
                 "c15-right": {"2"},
                 "c15-both": {"2"},
             }, "pre-forced overlap acquired excess support")
-            require(producer_count(observed, 28) == 2,
-                    "pre-forced overlap red producer characterization changed")
+            require(producer_count(observed, 28) == 1,
+                    "pre-forced overlap lost source-cell identity")
 
         add_case("15-pre-forced-overlap", experimental15)
 
@@ -795,8 +788,8 @@ def main() -> int:
 
         add_case("16-nonlinear-equality-support", experimental16)
 
-    check_experimental_frontier("candidate-local", 2)
-    check_experimental_frontier("demand-cohort", 1)
+    check_experimental_frontier("candidate-local")
+    check_experimental_frontier("demand-cohort")
 
     mutation_checks = []
 
@@ -814,8 +807,11 @@ def main() -> int:
 
     def duplicate_producer_setup(mutated):
         source = deepcopy(admitted(mutated, 2)[0]
-                          .events_named("evaluate-cell")[0])
+                          .events_named("observe-cell")[0])
         source[1] = "900001"
+        for field in source[3:]:
+            if isinstance(field, list) and field[0] == "cell":
+                field[1] = "900001"
         admitted(mutated, 2)[1].events.append(source)
 
     mutation(
@@ -823,7 +819,7 @@ def main() -> int:
         duplicate_producer_setup,
         lambda mutated: require(
             producer_count(mutated, 2) == 1,
-            "one source occurrence acquired two producer events",
+            "one source occurrence acquired two source cells",
         ),
     )
 

@@ -3,3 +3,6 @@
 (token-ref-lifetime (alive) ())
 reused-token-slot-protected
 (front tail-1 tail-2)
+(plain-ref-lifetime (live temporary) (live))
+(plain-prolog-fallthrough (prolog-only) ())
+(plain-collision-precedence (live temporary) (legacy))
