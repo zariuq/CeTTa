@@ -2007,17 +2007,48 @@ Atom *bindings_apply(Bindings *b, Arena *a, Atom *atom) {
     return bindings_apply_rewrite_vars(b, a, atom, NULL, NULL);
 }
 
+static size_t bindings_dereference_limit(const Bindings *bindings);
+
 static Atom *bindings_lookup_id_since(Bindings *b, VarId id,
                                       uint32_t first_entry) {
-    if (first_entry == 0u)
-        return bindings_lookup_id(b, id);
-    cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_BINDINGS_LOOKUP);
-    for (uint32_t i = b->len; i > first_entry; i--) {
-        const Binding *entry = &b->entries[i - 1u];
-        if (binding_var_eq(entry->var_id, id))
-            return entry->val;
+    int32_t index = bindings_lookup_index(b, id);
+
+    if (index < 0 || (uint32_t)index < first_entry)
+        return NULL;
+    return b->entries[(uint32_t)index].val;
+}
+
+bool bindings_resolve_epoch_view_ground(
+        const Bindings *bindings, const Atom *source_variable,
+        uint32_t epoch, uint32_t first_entry, Atom **ground_out) {
+    Atom *value;
+    size_t dereferences = 0u;
+    size_t dereference_limit;
+
+    if (ground_out)
+        *ground_out = NULL;
+    if (!bindings || !source_variable || !ground_out ||
+        source_variable->kind != ATOM_VAR ||
+        first_entry > bindings->len)
+        return false;
+    value = bindings_lookup_id_since(
+        (Bindings *)bindings,
+        var_epoch_id(source_variable->var_id, epoch), first_entry);
+    dereference_limit = bindings_dereference_limit(bindings);
+    while (value && value->kind == ATOM_VAR) {
+        Atom *next;
+
+        if (++dereferences > dereference_limit)
+            return true;
+        next = bindings_lookup_id(
+            (Bindings *)bindings, value->var_id);
+        if (!next)
+            return true;
+        value = next;
     }
-    return NULL;
+    if (value && !atom_has_vars(value))
+        *ground_out = value;
+    return true;
 }
 
 static Atom *bindings_apply_seen_epoch(Bindings *b, Arena *a, Atom *atom,
@@ -2514,27 +2545,96 @@ bool binding_set_push_move(BindingSet *bs, Bindings *b) {
 static bool bindings_builder_trail_reserve(BindingsBuilder *bb, uint32_t needed) {
     if (needed <= bb->trail_cap)
         return true;
-    uint32_t next_cap = bb->trail_cap ? bb->trail_cap * 2 : 8;
-    while (next_cap < needed)
-        next_cap *= 2;
+    uint32_t next_cap = bb->trail_cap;
+    if (next_cap == 0u)
+        next_cap = 8u;
+    else if (next_cap > UINT32_MAX / 2u)
+        next_cap = needed;
+    else
+        next_cap *= 2u;
+    while (next_cap < needed) {
+        if (next_cap > UINT32_MAX / 2u)
+            next_cap = needed;
+        else
+            next_cap *= 2u;
+    }
+    if ((size_t)next_cap >
+        SIZE_MAX / sizeof(BindingsBuilderTrailEntry)) {
+        return false;
+    }
     bb->trail = cetta_realloc(bb->trail,
-                              sizeof(BindingsBuilderTrailEntry) * next_cap);
+                              sizeof(BindingsBuilderTrailEntry) *
+                                  (size_t)next_cap);
     bb->trail_cap = next_cap;
     return true;
 }
 
-static bool bindings_builder_snapshot(BindingsBuilder *bb) {
-    if (!bindings_builder_trail_reserve(bb, bb->trail_len + 1))
+static bool bindings_builder_prime_trail_reserve(
+    BindingsBuilder *bb, uint32_t needed) {
+    if (needed <= bb->prime_trail_cap)
+        return true;
+    uint32_t next_cap = bb->prime_trail_cap;
+    if (next_cap == 0u)
+        next_cap = 8u;
+    else if (next_cap > UINT32_MAX / 2u)
+        next_cap = needed;
+    else
+        next_cap *= 2u;
+    while (next_cap < needed) {
+        if (next_cap > UINT32_MAX / 2u)
+            next_cap = needed;
+        else
+            next_cap *= 2u;
+    }
+    if ((size_t)next_cap > SIZE_MAX / sizeof(*bb->prime_trail))
         return false;
+    bb->prime_trail = cetta_realloc(
+        bb->prime_trail, sizeof(*bb->prime_trail) * (size_t)next_cap);
+    bb->prime_trail_cap = next_cap;
+    return true;
+}
+
+static const PrimeOccurrence *bindings_builder_checkpoint_prime(
+    const BindingsBuilder *bb, const BindingsBuilderTrailEntry *entry) {
+    if (!entry->prime_state_present)
+        return NULL;
+    if (entry->prime_state_mark >= bb->prime_trail_len)
+        return NULL;
+    return &bb->prime_trail[entry->prime_state_mark];
+}
+
+static bool bindings_builder_snapshot(BindingsBuilder *bb) {
+    if (!bb || bb->trail_len == UINT32_MAX ||
+        !bindings_builder_trail_reserve(bb, bb->trail_len + 1u)) {
+        return false;
+    }
+    bool prime_present = bindings_prime_present(&bb->current);
+    if (prime_present &&
+        (bb->prime_trail_len == UINT32_MAX ||
+         !bindings_builder_prime_trail_reserve(
+             bb, bb->prime_trail_len + 1u))) {
+        return false;
+    }
     bb->trail[bb->trail_len++] = (BindingsBuilderTrailEntry){
         .len = bb->current.len,
         .eq_len = bb->current.eq_len,
+        .prime_state_mark = bb->prime_trail_len,
         .cycle_state = bb->current.cycle_state,
         .derived_nonzero = bindings_derived_nonzero(&bb->current),
-        .prime_need = *bindings_need_view(&bb->current),
-        .prime_receipt = *bindings_receipt_view(&bb->current),
+        .prime_state_present = prime_present,
     };
+    if (prime_present)
+        bb->prime_trail[bb->prime_trail_len++] = *bb->current.prime_ext;
     return true;
+}
+
+static void bindings_builder_discard_latest_snapshot(BindingsBuilder *bb) {
+    assert(bb && bb->trail_len > 0u);
+    const BindingsBuilderTrailEntry *entry =
+        &bb->trail[bb->trail_len - 1u];
+    assert(entry->prime_state_mark <= bb->prime_trail_len);
+    bb->prime_trail_len = entry->prime_state_mark;
+    bb->trail_len--;
 }
 
 bool bindings_builder_init(BindingsBuilder *bb, const Bindings *base) {
@@ -2542,6 +2642,9 @@ bool bindings_builder_init(BindingsBuilder *bb, const Bindings *base) {
     bb->trail = NULL;
     bb->trail_len = 0;
     bb->trail_cap = 0;
+    bb->prime_trail = NULL;
+    bb->prime_trail_len = 0;
+    bb->prime_trail_cap = 0;
     bb->growth_count = 0u;
     if (!base)
         return true;
@@ -2550,6 +2653,10 @@ bool bindings_builder_init(BindingsBuilder *bb, const Bindings *base) {
         bb->trail = NULL;
         bb->trail_len = 0;
         bb->trail_cap = 0;
+        free(bb->prime_trail);
+        bb->prime_trail = NULL;
+        bb->prime_trail_len = 0;
+        bb->prime_trail_cap = 0;
         bindings_free(&bb->current);
         return false;
     }
@@ -2561,6 +2668,9 @@ void bindings_builder_init_owned(BindingsBuilder *bb, Bindings *owned) {
     bb->trail = NULL;
     bb->trail_len = 0;
     bb->trail_cap = 0;
+    bb->prime_trail = NULL;
+    bb->prime_trail_len = 0;
+    bb->prime_trail_cap = 0;
     bb->growth_count = 0u;
     bindings_init(owned);
 }
@@ -2570,6 +2680,10 @@ void bindings_builder_free(BindingsBuilder *bb) {
     bb->trail = NULL;
     bb->trail_len = 0;
     bb->trail_cap = 0;
+    free(bb->prime_trail);
+    bb->prime_trail = NULL;
+    bb->prime_trail_len = 0;
+    bb->prime_trail_cap = 0;
     bb->growth_count = 0u;
     bindings_free(&bb->current);
 }
@@ -2584,13 +2698,18 @@ void bindings_builder_rollback(BindingsBuilder *bb, uint32_t mark) {
     bool restored = false;
     while (bb->trail_len > mark) {
         BindingsBuilderTrailEntry *entry = &bb->trail[--bb->trail_len];
+        const PrimeOccurrence *prime =
+            bindings_builder_checkpoint_prime(bb, entry);
         bb->current.len = entry->len;
         bb->current.eq_len = entry->eq_len;
         bb->current.cycle_state = entry->cycle_state;
         restored_derived_nonzero = entry->derived_nonzero;
         restored = true;
-        bindings_prime_set(&bb->current, &entry->prime_need,
-                           &entry->prime_receipt);
+        bindings_prime_set(
+            &bb->current,
+            prime ? &prime->prime_need : NULL,
+            prime ? &prime->prime_receipt : NULL);
+        bb->prime_trail_len = entry->prime_state_mark;
     }
     if (restored) {
         bindings_restore_derived_counts(
@@ -2608,6 +2727,12 @@ void bindings_builder_rollback(BindingsBuilder *bb, uint32_t mark) {
 
 void bindings_builder_commit(BindingsBuilder *bb) {
     bb->trail_len = 0;
+    bb->prime_trail_len = 0;
+}
+
+bool bindings_builder_prime_present(const BindingsBuilder *bb) {
+    return bb &&
+        (bindings_prime_present(&bb->current) || bb->prime_trail_len > 0u);
 }
 
 static bool bindings_builder_add_constraint_internal(BindingsBuilder *bb,
@@ -2653,7 +2778,7 @@ static bool bindings_builder_add_id_internal(BindingsBuilder *bb, VarId var_id,
         return false;
 
     if (!bindings_reserve_entries(&bb->current, bb->current.len + 1)) {
-        bb->trail_len--;
+        bindings_builder_discard_latest_snapshot(bb);
         return false;
     }
     if (legacy_name_fallback)
@@ -2704,7 +2829,7 @@ static bool bindings_builder_store_constraint(BindingsBuilder *bb,
     if (!bindings_builder_snapshot(bb))
         return false;
     if (!bindings_reserve_constraints(&bb->current, bb->current.eq_len + 1)) {
-        bb->trail_len--;
+        bindings_builder_discard_latest_snapshot(bb);
         return false;
     }
     bb->current.constraints[bb->current.eq_len++] = next;
@@ -2848,6 +2973,10 @@ void bindings_builder_take(BindingsBuilder *bb, Bindings *out) {
     bb->trail = NULL;
     bb->trail_len = 0;
     bb->trail_cap = 0;
+    free(bb->prime_trail);
+    bb->prime_trail = NULL;
+    bb->prime_trail_len = 0;
+    bb->prime_trail_cap = 0;
     bb->growth_count = 0u;
 }
 
@@ -3927,6 +4056,9 @@ bool bindings_builder_compact_reachable_with_epoch_roots_and_entry_marks(
     uint32_t *next_marks = NULL;
     uint32_t *next_entry_marks = NULL;
     BindingsBuilderTrailEntry *next_trail = NULL;
+    PrimeOccurrence *next_prime_trail = NULL;
+    uint32_t next_prime_len = 0u;
+    uint32_t next_prime_cap = 0u;
     size_t unique_count = 0u;
     if (checkpoint_count > 0u) {
         sorted_marks = cetta_malloc(
@@ -3947,6 +4079,19 @@ bool bindings_builder_compact_reachable_with_epoch_roots_and_entry_marks(
         }
         next_trail = cetta_malloc(
             unique_count * sizeof(*next_trail));
+        for (size_t i = 0u; i < unique_count; i++) {
+            uint32_t mark = sorted_marks[i];
+            bool prime_present =
+                mark == old_trail_len
+                    ? bindings_prime_present(&bb->current)
+                    : bb->trail[mark].prime_state_present != 0u;
+            if (prime_present)
+                next_prime_cap++;
+        }
+        if (next_prime_cap > 0u) {
+            next_prime_trail = cetta_malloc(
+                (size_t)next_prime_cap * sizeof(*next_prime_trail));
+        }
     }
     if (entry_mark_count > 0u) {
         next_entry_marks = malloc(
@@ -3963,6 +4108,7 @@ bool bindings_builder_compact_reachable_with_epoch_roots_and_entry_marks(
             free(sorted_marks);
             free(next_marks);
             free(next_trail);
+            free(next_prime_trail);
             return false;
         }
         for (size_t i = 0u; i < entry_mark_count; i++)
@@ -3972,20 +4118,26 @@ bool bindings_builder_compact_reachable_with_epoch_roots_and_entry_marks(
     bool valid = true;
     for (size_t i = 0u; i < unique_count; i++) {
         uint32_t mark = sorted_marks[i];
-        BindingsBuilderTrailEntry state =
-            mark == old_trail_len
-                ? (BindingsBuilderTrailEntry){
-                      .len = bb->current.len,
-                      .eq_len = bb->current.eq_len,
-                      .cycle_state = bb->current.cycle_state,
-                      .derived_nonzero =
-                          bindings_derived_nonzero(&bb->current),
-                      .prime_need =
-                          *bindings_need_view(&bb->current),
-                      .prime_receipt =
-                          *bindings_receipt_view(&bb->current),
-                  }
-                : bb->trail[mark];
+        BindingsBuilderTrailEntry state;
+        const PrimeOccurrence *prime = NULL;
+        if (mark == old_trail_len) {
+            state = (BindingsBuilderTrailEntry){
+                .len = bb->current.len,
+                .eq_len = bb->current.eq_len,
+                .cycle_state = bb->current.cycle_state,
+                .derived_nonzero =
+                    bindings_derived_nonzero(&bb->current),
+            };
+            if (bindings_prime_present(&bb->current))
+                prime = bb->current.prime_ext;
+        } else {
+            state = bb->trail[mark];
+            prime = bindings_builder_checkpoint_prime(bb, &state);
+            if (state.prime_state_present && !prime) {
+                valid = false;
+                break;
+            }
+        }
         if (state.len > bb->current.len ||
             state.eq_len > bb->current.eq_len) {
             valid = false;
@@ -4013,6 +4165,15 @@ bool bindings_builder_compact_reachable_with_epoch_roots_and_entry_marks(
                     state.cycle_state == BINDINGS_CYCLE_ACYCLIC
                 ? BINDINGS_CYCLE_ACYCLIC
                 : BINDINGS_CYCLE_UNKNOWN;
+        state.prime_state_mark = next_prime_len;
+        state.prime_state_present = prime != NULL;
+        if (prime) {
+            if (next_prime_len >= next_prime_cap) {
+                valid = false;
+                break;
+            }
+            next_prime_trail[next_prime_len++] = *prime;
+        }
         next_trail[i] = state;
     }
     if (valid) {
@@ -4041,6 +4202,7 @@ bool bindings_builder_compact_reachable_with_epoch_roots_and_entry_marks(
         free(next_marks);
         free(next_entry_marks);
         free(next_trail);
+        free(next_prime_trail);
         return false;
     }
 
@@ -4050,9 +4212,13 @@ bool bindings_builder_compact_reachable_with_epoch_roots_and_entry_marks(
         (uint64_t)projected.len + projected.eq_len;
     bindings_replace(&bb->current, &projected);
     free(bb->trail);
+    free(bb->prime_trail);
     bb->trail = next_trail;
     bb->trail_len = (uint32_t)unique_count;
     bb->trail_cap = (uint32_t)unique_count;
+    bb->prime_trail = next_prime_trail;
+    bb->prime_trail_len = next_prime_len;
+    bb->prime_trail_cap = next_prime_cap;
     if (checkpoint_count > 0u) {
         memcpy(checkpoint_marks, next_marks,
                checkpoint_count * sizeof(*checkpoint_marks));
@@ -4659,7 +4825,7 @@ static bool is_space_value_type(Atom *atom) {
 typedef struct {
     Atom *left;
     Atom *right;
-    bool tagged;
+    uint8_t tagged;
     bool active;
 } MatchPathSlot;
 
@@ -4689,7 +4855,7 @@ static void match_path_free(MatchPathSet *path) {
     if (path->slots != path->inline_slots) free(path->slots);
 }
 
-static size_t match_path_hash(Atom *left, Atom *right, bool tagged) {
+static size_t match_path_hash(Atom *left, Atom *right, uint8_t tagged) {
     uintptr_t x = (uintptr_t)left >> 4;
     uintptr_t y = (uintptr_t)right >> 4;
     x ^= y + (uintptr_t)0x9e3779b9u + (x << 6) + (x >> 2);
@@ -4735,7 +4901,7 @@ static bool match_path_rehash(MatchPathSet *path, size_t new_cap) {
    DFS path. Inactive entries remain as reusable hash slots, so shared finite
    subterms do not count as cycles. */
 static bool match_path_enter(MatchPathSet *path, Atom *left, Atom *right,
-                             bool tagged) {
+                             uint8_t tagged) {
     size_t occupied = path->active + path->tombstones;
     if ((occupied + 1u) * 4u >= path->cap * 3u) {
         size_t live_after = path->active + 1u;
@@ -4777,7 +4943,7 @@ static bool match_path_enter(MatchPathSet *path, Atom *left, Atom *right,
 }
 
 static void match_path_leave(MatchPathSet *path, Atom *left, Atom *right,
-                             bool tagged) {
+                             uint8_t tagged) {
     size_t mask = path->cap - 1u;
     size_t pos = match_path_hash(left, right, tagged) & mask;
     for (;;) {
@@ -4997,6 +5163,10 @@ static bool match_atoms_epoch_worklist(Atom *left, Atom *right,
                                        Bindings *bindings,
                                        BindingsBuilder *builder,
                                        Arena *a, uint32_t epoch);
+static bool match_atoms_epoch_view_worklist(
+    Atom *left, uint32_t left_epoch, uint32_t left_first_entry,
+    Atom *right, Bindings *bindings, BindingsBuilder *builder,
+    Arena *a, uint32_t right_epoch);
 static bool match_atoms_atom_id_epoch_worklist(
     Atom *left, const TermUniverse *candidate_universe, AtomId right_id,
     Bindings *b, Arena *a, uint32_t epoch);
@@ -5141,6 +5311,15 @@ bool match_atoms_epoch_builder(Atom *left, Atom *right,
     return match_atoms_epoch_worklist(left, right, NULL, bb, a, epoch);
 }
 
+bool match_atoms_epoch_view_builder(
+        Atom *left_original, uint32_t left_epoch,
+        uint32_t left_first_entry, Atom *right_original,
+        BindingsBuilder *bb, Arena *a, uint32_t right_epoch) {
+    return match_atoms_epoch_view_worklist(
+        left_original, left_epoch, left_first_entry,
+        right_original, NULL, bb, a, right_epoch);
+}
+
 bool match_atoms_atom_id_epoch(Atom *left, const TermUniverse *candidate_universe,
                                AtomId right_id, Bindings *b, Arena *a,
                                uint32_t epoch) {
@@ -5245,6 +5424,7 @@ typedef struct {
     bool exit;
     Atom *left;
     Atom *right;
+    bool left_original;
     bool right_original;
 } EpochMatchPair;
 
@@ -5256,7 +5436,8 @@ typedef struct {
 } EpochMatchWorklist;
 
 static bool epoch_match_push(EpochMatchWorklist *work, Atom *left,
-                             Atom *right, bool right_original) {
+                             bool left_original, Atom *right,
+                             bool right_original) {
     if (work->len == work->cap) {
         size_t next_cap = work->cap * 2u;
         if (next_cap <= work->cap ||
@@ -5270,38 +5451,54 @@ static bool epoch_match_push(EpochMatchWorklist *work, Atom *left,
         work->cap = next_cap;
     }
     work->items[work->len++] =
-        (EpochMatchPair){false, left, right, right_original};
+        (EpochMatchPair){
+            false, left, right, left_original, right_original};
     return true;
 }
 
 static bool epoch_match_push_exit(EpochMatchWorklist *work, Atom *left,
-                                  Atom *right, bool right_original) {
-    if (!epoch_match_push(work, left, right, right_original)) return false;
+                                  bool left_original, Atom *right,
+                                  bool right_original) {
+    if (!epoch_match_push(
+            work, left, left_original, right, right_original))
+        return false;
     work->items[work->len - 1u].exit = true;
     return true;
 }
 
-static bool match_atoms_epoch_worklist(Atom *left, Atom *right,
-                                       Bindings *bindings,
-                                       BindingsBuilder *builder,
-                                       Arena *a, uint32_t epoch) {
+static bool match_atoms_epoch_views_worklist(
+        Atom *left, bool left_original, uint32_t left_epoch,
+        uint32_t left_first_entry, Atom *right,
+        Bindings *bindings, BindingsBuilder *builder,
+        Arena *a, uint32_t right_epoch) {
     EpochMatchWorklist work;
     MatchPathSet path;
+    Bindings *initial = builder ? &builder->current : bindings;
+
+    if (!left || !right || !initial || !a ||
+        (left_original && left_first_entry > initial->len))
+        return false;
     work.items = work.inline_items;
     work.len = 0;
     work.cap = sizeof work.inline_items / sizeof work.inline_items[0];
     match_path_init(&path);
-    if (!epoch_match_push(&work, left, right, true)) goto fail;
+    if (!epoch_match_push(
+            &work, left, left_original, right, true))
+        goto fail;
 
     while (work.len > 0) {
         EpochMatchPair pair = work.items[--work.len];
+        uint8_t path_tag =
+            (pair.left_original ? UINT8_C(2) : UINT8_C(0)) |
+            (pair.right_original ? UINT8_C(1) : UINT8_C(0));
         if (pair.exit) {
             match_path_leave(&path, pair.left, pair.right,
-                             pair.right_original);
+                             path_tag);
             continue;
         }
         left = pair.left;
         right = pair.right;
+        left_original = pair.left_original;
         bool right_original = pair.right_original;
         Bindings *current = builder ? &builder->current : bindings;
         size_t dereferences = 0;
@@ -5309,6 +5506,24 @@ static bool match_atoms_epoch_worklist(Atom *left, Atom *right,
 
 retry_pair:
         if (left->kind == ATOM_VAR) {
+            if (left_original) {
+                VarId left_id = var_epoch_id(
+                    left->var_id, left_epoch);
+                Atom *existing = bindings_lookup_id_since(
+                    current, left_id, left_first_entry);
+
+                if (existing) {
+                    if (++dereferences > dereference_limit)
+                        goto fail;
+                    left = existing;
+                } else {
+                    left = epoch_var_atom(a, left, left_epoch);
+                    if (!left)
+                        goto fail;
+                }
+                left_original = false;
+                goto retry_pair;
+            }
             Atom *existing = bindings_lookup_var(current, left);
             if (existing) {
                 if (++dereferences > dereference_limit) goto fail;
@@ -5317,7 +5532,8 @@ retry_pair:
             }
             if (right->kind == ATOM_VAR) {
                 VarId right_id = right_original
-                    ? var_epoch_id(right->var_id, epoch) : right->var_id;
+                    ? var_epoch_id(right->var_id, right_epoch)
+                    : right->var_id;
                 cetta_runtime_stats_inc(
                     CETTA_RUNTIME_COUNTER_BINDINGS_LOOKUP_MATCH);
                 Atom *right_existing = bindings_lookup_id(current, right_id);
@@ -5329,7 +5545,7 @@ retry_pair:
                 }
                 if (left->var_id == right_id) continue;
                 Atom *value = right_original
-                    ? epoch_var_atom(a, right, epoch) : right;
+                    ? epoch_var_atom(a, right, right_epoch) : right;
                 bool added = value && (builder
                     ? bindings_builder_add_var_fresh(builder, left, value)
                     : bindings_add_var(bindings, left, value));
@@ -5337,7 +5553,8 @@ retry_pair:
                 continue;
             }
             Atom *value = right_original
-                ? bindings_apply_epoch(current, a, right, epoch) : right;
+                ? bindings_apply_epoch(
+                    current, a, right, right_epoch) : right;
             bool added = value && (builder
                 ? bindings_builder_add_var_fresh(builder, left, value)
                 : bindings_add_var(bindings, left, value));
@@ -5346,7 +5563,8 @@ retry_pair:
         }
         if (right->kind == ATOM_VAR) {
             VarId right_id = right_original
-                ? var_epoch_id(right->var_id, epoch) : right->var_id;
+                ? var_epoch_id(right->var_id, right_epoch)
+                : right->var_id;
             cetta_runtime_stats_inc(
                 CETTA_RUNTIME_COUNTER_BINDINGS_LOOKUP_MATCH);
             Atom *existing = bindings_lookup_id(current, right_id);
@@ -5357,10 +5575,16 @@ retry_pair:
                 goto retry_pair;
             }
             Atom *binding_var = right_original
-                ? epoch_var_atom(a, right, epoch) : right;
-            bool added = binding_var && (builder
-                ? bindings_builder_add_var_fresh(builder, binding_var, left)
-                : bindings_add_var(bindings, binding_var, left));
+                ? epoch_var_atom(a, right, right_epoch) : right;
+            Atom *binding_value = left_original
+                ? bindings_apply_epoch_then_all(
+                    current, a, left, left_epoch, left_first_entry)
+                : left;
+            bool added = binding_var && binding_value && (builder
+                ? bindings_builder_add_var_fresh(
+                    builder, binding_var, binding_value)
+                : bindings_add_var(
+                    bindings, binding_var, binding_value));
             if (!added) goto fail;
             continue;
         }
@@ -5375,14 +5599,18 @@ retry_pair:
         if (left->kind != ATOM_EXPR || right->kind != ATOM_EXPR ||
             left->expr.len != right->expr.len)
             goto fail;
-        if (!match_path_enter(&path, left, right, right_original) ||
+        path_tag =
+            (left_original ? UINT8_C(2) : UINT8_C(0)) |
+            (right_original ? UINT8_C(1) : UINT8_C(0));
+        if (!match_path_enter(&path, left, right, path_tag) ||
             !epoch_match_push_exit(
-                &work, left, right, right_original))
+                &work, left, left_original, right, right_original))
             goto fail;
         for (CettaExprIndex i = left->expr.len; i > 0; i--) {
             CettaExprIndex child = i - 1u;
-            if (!epoch_match_push(&work, left->expr.elems[child],
-                                  right->expr.elems[child], right_original))
+            if (!epoch_match_push(
+                    &work, left->expr.elems[child], left_original,
+                    right->expr.elems[child], right_original))
                 goto fail;
         }
     }
@@ -5394,6 +5622,23 @@ fail:
     if (work.items != work.inline_items) free(work.items);
     match_path_free(&path);
     return false;
+}
+
+static bool match_atoms_epoch_worklist(Atom *left, Atom *right,
+                                       Bindings *bindings,
+                                       BindingsBuilder *builder,
+                                       Arena *a, uint32_t epoch) {
+    return match_atoms_epoch_views_worklist(
+        left, false, 0u, 0u, right, bindings, builder, a, epoch);
+}
+
+static bool match_atoms_epoch_view_worklist(
+        Atom *left, uint32_t left_epoch, uint32_t left_first_entry,
+        Atom *right, Bindings *bindings, BindingsBuilder *builder,
+        Arena *a, uint32_t right_epoch) {
+    return match_atoms_epoch_views_worklist(
+        left, true, left_epoch, left_first_entry,
+        right, bindings, builder, a, right_epoch);
 }
 
 typedef struct {

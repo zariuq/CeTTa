@@ -90,6 +90,8 @@ static bool run_database(
     PPOccurrenceFoldV1Backend fold_backend;
     PPOccurrenceFoldV1Receipt fold_receipt;
     PPProofGSLTRelationalRuntimeV1Receipt proof_receipt;
+    PPProofGSLTRelationalRuntimeV1Profile profile_before;
+    PPProofGSLTRelationalRuntimeV1Profile profile_after;
     char error[512] = {0};
     bool executed;
     bool initialized;
@@ -99,12 +101,18 @@ static bool run_database(
     memset(&state_run, 0, sizeof(state_run));
     memset(&fold_receipt, 0, sizeof(fold_receipt));
     memset(&proof_receipt, 0, sizeof(proof_receipt));
+    memset(&profile_before, 0, sizeof(profile_before));
+    memset(&profile_after, 0, sizeof(profile_after));
     if (!expect(read_file(path, &bytes, &byte_len),
                 "raw proof fixture could not be read"))
         goto done;
     proof_backend = ppproof_gslt_relational_runtime_v1_backend(proof_runtime);
     if (!expect(proof_backend.execute != NULL,
                 "prepared generated proof provider has no backend"))
+        goto done;
+    if (!expect(ppproof_gslt_relational_runtime_v1_profile(
+                    proof_runtime, &profile_before),
+                "prepared generated proof provider has no profile"))
         goto done;
     initialized = pprelational_state_program_v1_run_init_with_proof_backend(
         &state_run, fold, state, NULL, NULL, &proof_backend,
@@ -120,6 +128,22 @@ static bool run_database(
         UINT64_C(100000000), &fold_receipt, error, sizeof(error));
     receipt_available = ppproof_gslt_relational_runtime_v1_last_receipt(
         proof_runtime, &proof_receipt);
+    if (!expect(ppproof_gslt_relational_runtime_v1_profile(
+                    proof_runtime, &profile_after) &&
+                    receipt_available &&
+                    profile_after.query_executions >=
+                        profile_before.query_executions &&
+                    profile_after.query_executions -
+                            profile_before.query_executions >=
+                        proof_receipt.outcome_query_attempts,
+                "generated query profile did not count the final request"))
+        goto done;
+    if (expected_result_count > 1u &&
+        !expect(profile_after.query_executions -
+                        profile_before.query_executions >
+                    proof_receipt.outcome_query_attempts,
+                "aggregate query profile collapsed multiple proof requests"))
+        goto done;
 
     if (expected_result == PPRELATIONAL_STATE_PROOF_V1_VERIFIED ||
         expected_result == PPRELATIONAL_STATE_PROOF_V1_INCOMPLETE) {
@@ -196,7 +220,8 @@ static bool run_database(
                     "collections=%llu roots=%llu binding-collections=%llu "
                     "binding-roots=%llu binding-items-discarded=%llu "
                     "copied=%llu reclaimed=%llu materialize=%llu "
-                    "match-bytes=%llu positional=%llu/%llu/%llu "
+                    "match-bytes=%llu ground-body-reuse=%llu "
+                    "positional=%llu/%llu/%llu "
                     "expand-bytes=%llu nodes=%llu "
                     "rollback-reclaimed=%llu max-frames=%u "
                     "max-goal-depth=%u compiled-attempts=%llu "
@@ -240,6 +265,8 @@ static bool run_database(
                         .goal_materialization_arena_bytes,
                     (unsigned long long)proof_receipt.stats
                         .generated_match_arena_bytes,
+                    (unsigned long long)proof_receipt.stats
+                        .ground_dense_ground_body_reuses,
                     (unsigned long long)proof_receipt.stats
                         .positional_linear_rule_matches,
                     (unsigned long long)proof_receipt.stats

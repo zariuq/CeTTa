@@ -42,6 +42,8 @@ typedef enum {
 typedef struct {
     CettaGsltIndexedInstructionPlanV1 plan;
     uint64_t accumulator;
+    uint64_t consumed_byte_len;
+    uint64_t emitted_instruction_len;
     bool open_index;
     bool ready;
 } CettaGsltIndexedInstructionDecoderV1;

@@ -80,6 +80,15 @@ typedef struct {
 } PPProofIndexedValuePlanV1;
 
 typedef struct {
+    const char *operation;
+    uint32_t action_index;
+    const char *machine;
+    const char *carrier;
+    const char *validation;
+    const char *region;
+} PPProofFrameIndexPlanV1;
+
+typedef struct {
     const char *machine;
     const char *owner;
     const char *cons;
@@ -104,6 +113,8 @@ typedef struct {
     uint32_t finite_support_len;
     PPProofIndexedValuePlanV1 *indexed_values;
     uint32_t indexed_value_len;
+    PPProofFrameIndexPlanV1 *frame_indexes;
+    uint32_t frame_index_len;
     PPProofLiteralHolePlanV1 *literal_holes;
     uint32_t literal_hole_len;
     char semantic_digest[65];
@@ -135,6 +146,20 @@ const PPProofFiniteSupportPlanV1 *ppproof_storage_plan_v1_finite_support(
     const PPProofStoragePlanV1 *plan, const char *owner);
 const PPProofIndexedValuePlanV1 *ppproof_storage_plan_v1_indexed_value(
     const PPProofStoragePlanV1 *plan, const char *machine);
+bool ppproof_indexed_value_plan_v1_admits(
+    const PPProofIndexedValuePlanV1 *plan,
+    const char *operation,
+    uint32_t action_index,
+    const char *machine,
+    const char *header_role,
+    const char *code_role);
+const PPProofFrameIndexPlanV1 *ppproof_storage_plan_v1_frame_index(
+    const PPProofStoragePlanV1 *plan, const char *machine);
+bool ppproof_frame_index_plan_v1_admits(
+    const PPProofFrameIndexPlanV1 *plan,
+    const char *operation,
+    uint32_t action_index,
+    const char *machine);
 const PPProofLiteralHolePlanV1 *ppproof_storage_plan_v1_literal_hole(
     const PPProofStoragePlanV1 *plan, const char *machine);
 

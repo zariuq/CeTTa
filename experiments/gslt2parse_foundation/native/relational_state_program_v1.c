@@ -3489,6 +3489,7 @@ static bool ppstate_v1_execute_proof(
     PPRelationalStateProgramV1Run *run,
     PPRelationalStateRunImplV1 *impl,
     const PPRelationalStateActionV1 *action,
+    uint32_t action_index,
     const PPOccurrenceFoldV1Step *step,
     uint32_t *matched_out, char *error_buf, size_t error_buf_size) {
     PPRelationalValueV1Slice *labels = NULL;
@@ -3506,9 +3507,27 @@ static bool ppstate_v1_execute_proof(
         PPRELATIONAL_STATE_PROOF_V1_INVALID;
     bool compressed = action->kind ==
         PPRELATIONAL_STATE_ACTION_V1_CHECK_PROOF_COMPRESSED;
+    const char *operation =
+        impl && impl->occurrence_plan && action &&
+                action->operation_id < impl->occurrence_plan->operation_len
+            ? impl->occurrence_plan->operations[action->operation_id]
+            : NULL;
+    const char *header_role =
+        impl && impl->occurrence_plan && action &&
+                action->proof_step_role_id < impl->occurrence_plan->role_len
+            ? impl->occurrence_plan->roles[action->proof_step_role_id]
+            : NULL;
+    const char *code_role =
+        compressed && impl && impl->occurrence_plan && action &&
+                action->proof_code_role_id < impl->occurrence_plan->role_len
+            ? impl->occurrence_plan->roles[action->proof_code_role_id]
+            : NULL;
     bool ok = false;
 
-    if (!step || action->proof_machine_id >= impl->plan->proof_machine_len ||
+    if (!step || !operation || !header_role ||
+        (compressed && !code_role) ||
+        action_index == UINT32_MAX ||
+        action->proof_machine_id >= impl->plan->proof_machine_len ||
         !ppstate_v1_role_slices(
             step, action->proof_label_role_id, &labels, &label_len) ||
         !ppstate_v1_role_slices(
@@ -3530,6 +3549,10 @@ static bool ppstate_v1_execute_proof(
         PPRelationalStateProofV1Request request = {
             .store = &store,
             .state_plan = impl->plan,
+            .operation = operation,
+            .action_index = action_index,
+            .header_role = header_role,
+            .code_role = code_role,
             .proof_machine_id = action->proof_machine_id,
             .compressed = compressed,
             .label = labels[0],
@@ -3647,6 +3670,7 @@ static bool ppstate_v1_execute_action(
     PPRelationalStateProgramV1Run *run,
     PPRelationalStateRunImplV1 *impl,
     const PPRelationalStateActionV1 *action,
+    uint32_t action_index,
     const PPOccurrenceFoldV1Step *step,
     char *error_buf, size_t error_buf_size) {
     uint32_t index;
@@ -4160,7 +4184,7 @@ ppstate_v1_copy_complete:
     case PPRELATIONAL_STATE_ACTION_V1_CHECK_PROOF_NORMAL:
     case PPRELATIONAL_STATE_ACTION_V1_CHECK_PROOF_COMPRESSED:
         if (!ppstate_v1_execute_proof(
-                run, impl, action, step, &matched,
+                run, impl, action, action_index, step, &matched,
                 error_buf, error_buf_size))
             return false;
         if (UINT32_MAX - run->receipt.input_len < matched) {
@@ -4293,7 +4317,7 @@ static bool ppstate_v1_backend_apply(void *context,
         if (!ppstate_v1_execute_action(
                 run, impl,
                 &impl->plan->actions[program->action_begin + index],
-                step, error_buf, error_buf_size))
+                index, step, error_buf, error_buf_size))
             return false;
     }
     if (!ppstate_v1_transaction_clear(impl)) {
@@ -4407,7 +4431,8 @@ static bool ppstate_v1_backend_commit(void *context, char *error_buf,
     }
     for (index = 0u; index < impl->plan->final_action_len; index++) {
         if (!ppstate_v1_execute_action(
-                run, impl, &impl->plan->final_actions[index], NULL,
+                run, impl, &impl->plan->final_actions[index], UINT32_MAX,
+                NULL,
                 error_buf, error_buf_size))
             return false;
     }
