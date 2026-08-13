@@ -114,9 +114,9 @@ bool petta_typecheck_declaration_block_under_authority(
     Atom *const *forms, size_t form_count,
     PettaTypecheckPolicy policy, PettaTypecheckBlockResult *result);
 
-/* Qualification route used while the authority-pinned realization runs
- * beside the legacy path.  The default remains legacy until the complete
- * parity and performance gates ratify replacement. */
+/* Production route.  The explicit unqualified entry point above remains an
+ * independent differential oracle, while selected source admission retains
+ * every inferred fact under the exact authority realization and policy. */
 bool petta_typecheck_declaration_block_selected(
     PettaProgram *program, Space *space, Registry *registry,
     Atom *const *forms, size_t form_count,
