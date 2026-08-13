@@ -122,6 +122,21 @@ bool petta_typecheck_declaration_block_selected(
     Atom *const *forms, size_t form_count,
     PettaTypecheckPolicy policy, PettaTypecheckBlockResult *result);
 
+/* Mark the same direct declaration judgment as an admission boundary.  This
+ * wrapper is reserved for declarations entering a program revision; checking
+ * a runnable source form must use the judgment entry point above. */
+bool petta_typecheck_declaration_admission_under_authority(
+    const CettaNikDirectAuthorityV1 *authority,
+    PettaProgram *program, Space *space, Registry *registry,
+    Atom *const *forms, size_t form_count,
+    PettaTypecheckPolicy policy, PettaTypecheckBlockResult *result);
+
+/* Production declaration-admission route under the selected authority. */
+bool petta_typecheck_declaration_admission_selected(
+    PettaProgram *program, Space *space, Registry *registry,
+    Atom *const *forms, size_t form_count,
+    PettaTypecheckPolicy policy, PettaTypecheckBlockResult *result);
+
 typedef enum {
     PETTA_TYPECHECK_MUTATION_ADD = 0,
     PETTA_TYPECHECK_MUTATION_REMOVE,

@@ -3559,11 +3559,27 @@ static void test_declaration_authority_parity(
         &legacy_negative, &authority_negative);
     assert(authority_negative.verdict == PETTA_TYPECHECK_REFUTED);
 
+    /* Declaring an admission boundary changes observability only: the direct
+     * negative judgment and diagnostic remain byte-for-byte identical. */
+    PettaTypecheckBlockResult admission_negative;
+    assert(petta_typecheck_declaration_admission_under_authority(
+        &petta_typecheck_v2_direct_authority_v1,
+        authority_program, &authority_space, NULL,
+        negative, 2u, PETTA_TYPECHECK_POLICY_DEFAULT,
+        &admission_negative));
+    assert_typecheck_block_results_equal(
+        &authority_negative, &admission_negative);
+
     CettaNikDirectAuthorityV1 invalid =
         petta_typecheck_v2_direct_authority_v1;
     invalid.realization_identity = 0u;
     PettaTypecheckBlockResult invalid_result;
     assert(!petta_typecheck_declaration_block_under_authority(
+        &invalid, authority_program, &authority_space, NULL,
+        positive, 2u, PETTA_TYPECHECK_POLICY_DEFAULT,
+        &invalid_result));
+    assert(invalid_result.fault == PETTA_TYPECHECK_FAULT_INVALID_ARGUMENT);
+    assert(!petta_typecheck_declaration_admission_under_authority(
         &invalid, authority_program, &authority_space, NULL,
         positive, 2u, PETTA_TYPECHECK_POLICY_DEFAULT,
         &invalid_result));
@@ -3577,7 +3593,7 @@ static void test_declaration_authority_parity(
     };
     assert(selected_forms[0]);
     PettaTypecheckBlockResult selected_result;
-    assert(petta_typecheck_declaration_block_selected(
+    assert(petta_typecheck_declaration_admission_selected(
         selected_program, &selected_space, NULL,
         selected_forms, 1u, PETTA_TYPECHECK_POLICY_DEFAULT,
         &selected_result));

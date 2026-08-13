@@ -4,6 +4,7 @@
 #include "petta_semantics.h"
 #include "match.h"
 #include "parser.h"
+#include "stats.h"
 #include "symbol.h"
 
 #include <stdarg.h>
@@ -8203,6 +8204,39 @@ bool petta_typecheck_declaration_block_selected(
     Atom *const *forms, size_t form_count,
     PettaTypecheckPolicy policy, PettaTypecheckBlockResult *result) {
     return petta_typecheck_declaration_block_under_authority(
+        &petta_typecheck_v2_direct_authority_v1,
+        program, space, registry, forms, form_count,
+        policy, result);
+}
+
+bool petta_typecheck_declaration_admission_under_authority(
+    const CettaNikDirectAuthorityV1 *authority,
+    PettaProgram *program, Space *space, Registry *registry,
+    Atom *const *forms, size_t form_count,
+    PettaTypecheckPolicy policy, PettaTypecheckBlockResult *result) {
+    cetta_runtime_stats_inc(
+        CETTA_RUNTIME_COUNTER_PETTA_TYPECHECK_DECLARATION_ADMISSION_ATTEMPT);
+    bool judged = petta_typecheck_declaration_block_under_authority(
+        authority, program, space, registry, forms, form_count,
+        policy, result);
+    if (!judged || !result) {
+        cetta_runtime_stats_inc(
+            CETTA_RUNTIME_COUNTER_PETTA_TYPECHECK_DECLARATION_ADMISSION_FAULT);
+    } else if (result->verdict == PETTA_TYPECHECK_REFUTED) {
+        cetta_runtime_stats_inc(
+            CETTA_RUNTIME_COUNTER_PETTA_TYPECHECK_DECLARATION_ADMISSION_REFUTED);
+    } else {
+        cetta_runtime_stats_inc(
+            CETTA_RUNTIME_COUNTER_PETTA_TYPECHECK_DECLARATION_ADMISSION_ACCEPTED);
+    }
+    return judged;
+}
+
+bool petta_typecheck_declaration_admission_selected(
+    PettaProgram *program, Space *space, Registry *registry,
+    Atom *const *forms, size_t form_count,
+    PettaTypecheckPolicy policy, PettaTypecheckBlockResult *result) {
+    return petta_typecheck_declaration_admission_under_authority(
         &petta_typecheck_v2_direct_authority_v1,
         program, space, registry, forms, form_count,
         policy, result);
