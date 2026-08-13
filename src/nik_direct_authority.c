@@ -1,6 +1,8 @@
 #include "nik_direct_authority.h"
 
+#include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 
 static bool direct_digest_is_sha256(const char *digest) {
     if (!digest || strlen(digest) != 64u)
@@ -116,4 +118,19 @@ bool cetta_nik_direct_authority_token_v1_equal(
     return memcmp(
         left->words, right->words,
         (size_t)left->length * sizeof(left->words[0])) == 0;
+}
+
+bool cetta_nik_typed_applicability_pruning_enabled(void) {
+    static __thread bool configured = false;
+    static __thread bool enabled = true;
+    if (!configured) {
+        const char *setting = getenv("CETTA_NIK_TYPED_APPLICABILITY");
+        enabled =
+            !setting || !(strcmp(setting, "0") == 0 ||
+                          strcasecmp(setting, "false") == 0 ||
+                          strcasecmp(setting, "off") == 0 ||
+                          strcasecmp(setting, "no") == 0);
+        configured = true;
+    }
+    return enabled;
 }

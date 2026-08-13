@@ -94,4 +94,9 @@ bool cetta_nik_direct_authority_token_v1_equal(
     const CettaNikDirectAuthorityTokenV1 *left,
     const CettaNikDirectAuthorityTokenV1 *right);
 
+/* Production defaults to the direct typed-applicability license.  The shared
+ * opt-out exists so qualification tests can run the exact historical search
+ * path in a separate process and compare answers and work. */
+bool cetta_nik_typed_applicability_pruning_enabled(void);
+
 #endif /* CETTA_NIK_DIRECT_AUTHORITY_H */
