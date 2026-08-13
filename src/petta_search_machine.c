@@ -9973,7 +9973,8 @@ static bool petta_machine_typecheck_value_ready(
  * the original goal-scheduling route. */
 static bool petta_machine_typed_signature_is_natively_refuted(
     PettaMachineImpl *machine, Atom *expression, Atom *type) {
-    if (!petta_machine_type_obligations_enabled(machine) ||
+    if (!cetta_nik_typed_applicability_pruning_enabled() ||
+        !petta_machine_type_obligations_enabled(machine) ||
         !machine->space ||
         !expression || expression->kind != ATOM_EXPR ||
         expression->expr.len == 0u ||

@@ -15950,29 +15950,13 @@ static Atom *prime_need_typecheck_argument(Atom *argument) {
     return prime_need_source_argument(argument, NULL);
 }
 
-static __thread bool g_typed_applicability_config_ready = false;
-static __thread bool g_typed_applicability_enabled = true;
-
-static bool typed_applicability_pruning_enabled(void) {
-    if (!g_typed_applicability_config_ready) {
-        const char *setting = getenv("CETTA_NIK_TYPED_APPLICABILITY");
-        g_typed_applicability_enabled =
-            !setting || !(strcmp(setting, "0") == 0 ||
-                          strcasecmp(setting, "false") == 0 ||
-                          strcasecmp(setting, "off") == 0 ||
-                          strcasecmp(setting, "no") == 0);
-        g_typed_applicability_config_ready = true;
-    }
-    return g_typed_applicability_enabled;
-}
-
 /* Closed, variable-free type pairs admit a direct negative judgment before
  * allocating a speculative matcher environment.  NONE is the only result
  * used as a license: dynamic, structural, unknown, and fuel-exhausted cases
  * all retain the historical matching path. */
 static bool typed_applicability_candidate_is_natively_refuted(
     Atom *actual, Atom *expected) {
-    if (!typed_applicability_pruning_enabled() ||
+    if (!cetta_nik_typed_applicability_pruning_enabled() ||
         !actual || !expected || atom_has_vars(actual) ||
         atom_has_vars(expected) || atom_has_registry_refs(actual) ||
         atom_has_registry_refs(expected)) {

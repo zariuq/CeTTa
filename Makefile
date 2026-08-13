@@ -13779,7 +13779,7 @@ test-petta-semantics: $(BIN) test-petta-multifile
 	echo "PASS: PeTTa relational control, stream bags, list length, parse-as-data, implicit spaces, shared sequencing, named state, alpha uniqueness, metatype and typed-failure policy, library descriptors, and stable term order"
 
 .PHONY: test-petta-corpus-manifest-unit probe-petta-corpus-manifest test-petta-corpus-manifest probe-petta-corpus-differential test-petta-corpus-differential test-petta-corpus-native-core test-petta-native-core-no-libpl
-.PHONY: test-petta-typecheck-v2 test-petta-typecheck-v2-manifest test-petta-typecheck-v2-isolation-stats test-petta-typecheck-v2-omission
+.PHONY: test-petta-typecheck-v2 test-petta-typecheck-v2-manifest test-petta-typecheck-v2-isolation-stats test-petta-typecheck-v2-omission test-petta-nik-admission-boundary-controls test-petta-nik-typed-chaining test-petta-nik-typed-space-query
 test-petta-typecheck-v2-manifest:
 	@test -n "$(PETTA_TYPECHECK_REFERENCE_ROOT)" || \
 		(echo 'set PETTA_TYPECHECK_REFERENCE_ROOT to the pinned Roman checkout' >&2; exit 2)
@@ -13788,7 +13788,7 @@ test-petta-typecheck-v2-manifest:
 		--reference-root "$(PETTA_TYPECHECK_REFERENCE_ROOT)" \
 		--validate-only
 
-test-petta-typecheck-v2: $(BIN) $(PETTA_SEARCH_MACHINE_TEST_BIN) test-petta-typecheck-v2-manifest test-petta-typecheck-v2-isolation-stats test-petta-typecheck-v2-omission
+test-petta-typecheck-v2: $(BIN) $(PETTA_SEARCH_MACHINE_TEST_BIN) test-petta-typecheck-v2-manifest test-petta-typecheck-v2-isolation-stats test-petta-typecheck-v2-omission test-petta-nik-admission-boundary-controls test-petta-nik-typed-chaining test-petta-nik-typed-space-query
 	@./$(PETTA_SEARCH_MACHINE_TEST_BIN)
 	@CETTA_BIN=./$(BIN) scripts/test_petta_typecheck_v2.sh
 	@receipt=$$(mktemp -d runtime/typecheck-v2-acceptance.XXXXXX); \
@@ -13900,6 +13900,138 @@ ifeq ($(ENABLE_RUNTIME_STATS),1)
 else
 	@echo 'INFO: typecheck-v2 isolation counter requires runtime stats; re-running with ENABLE_RUNTIME_STATS=1'
 	@$(MAKE) BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 $@
+endif
+
+test-petta-nik-admission-boundary-controls:
+ifeq ($(ENABLE_RUNTIME_STATS),1)
+	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 $(BIN)
+	@set -e; \
+	static_out=runtime/petta-nik-static-admission.out; \
+	static_err=runtime/petta-nik-static-admission.err; \
+	gradual_out=runtime/petta-nik-gradual-boundary.out; \
+	gradual_err=runtime/petta-nik-gradual-boundary.err; \
+	$(CETTA_BIN_INVOKE) --emit-runtime-stats --lang petta \
+		--profile typecheck-v2 \
+		benchmarks/nik/petta_static_admission_chain.metta \
+		>"$$static_out" 2>"$$static_err"; \
+	cmp -s benchmarks/nik/petta_static_admission_chain.expected \
+		"$$static_out"; \
+	grep -Fqx 'runtime-counter petta-typecheck-declaration-admission-attempt 1' \
+		"$$static_err"; \
+	grep -Fqx 'runtime-counter petta-typecheck-declaration-admission-accepted 1' \
+		"$$static_err"; \
+	grep -Fqx 'runtime-counter petta-typecheck-declaration-admission-refuted 0' \
+		"$$static_err"; \
+	grep -Fqx 'runtime-counter petta-typecheck-declaration-admission-fault 0' \
+		"$$static_err"; \
+	grep -Fqx 'runtime-counter petta-typecheck-boundary-entry 0' \
+		"$$static_err"; \
+	grep -Fqx 'runtime-counter petta-type-obligation-cache-hit 0' \
+		"$$static_err"; \
+	grep -Fqx 'runtime-counter petta-type-obligation-cache-miss 0' \
+		"$$static_err"; \
+	$(CETTA_BIN_INVOKE) --emit-runtime-stats --lang petta \
+		--profile typecheck-v2 \
+		benchmarks/nik/petta_gradual_boundary_chain.metta \
+		>"$$gradual_out" 2>"$$gradual_err"; \
+	cmp -s "$$static_out" "$$gradual_out"; \
+	grep -Fqx 'runtime-counter petta-typecheck-declaration-admission-attempt 1' \
+		"$$gradual_err"; \
+	grep -Fqx 'runtime-counter petta-typecheck-declaration-admission-accepted 1' \
+		"$$gradual_err"; \
+	grep -Fqx 'runtime-counter petta-typecheck-boundary-entry 1001' \
+		"$$gradual_err"; \
+	grep -Eq '^runtime-counter petta-type-obligation-cache-hit [1-9][0-9]*$$' \
+		"$$gradual_err"; \
+	grep -Eq '^runtime-counter petta-type-obligation-cache-miss [1-9][0-9]*$$' \
+		"$$gradual_err"; \
+	echo 'PASS: one-time PeTTa NIK admission leaves the static interior free while the gradual control pays 1001 boundaries'
+else
+	@echo 'INFO: PeTTa NIK admission controls require runtime stats; re-running with ENABLE_RUNTIME_STATS=1'
+	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 $@
+endif
+
+test-petta-nik-typed-chaining:
+ifeq ($(ENABLE_RUNTIME_STATS),1)
+	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 $(BIN)
+	@set -e; \
+	optimized_out=runtime/petta-nik-typed-chaining.out; \
+	optimized_err=runtime/petta-nik-typed-chaining.err; \
+	reference_out=runtime/petta-nik-typed-chaining-reference.out; \
+	reference_err=runtime/petta-nik-typed-chaining-reference.err; \
+	CETTA_PETTA_SEARCH_MACHINE=1 CETTA_PETTA_MACHINE_STATS=1 \
+		$(CETTA_BIN_INVOKE) --emit-runtime-stats --lang petta \
+		--profile typecheck-v2 \
+		benchmarks/nik/petta_typed_chaining.metta \
+		>"$$optimized_out" 2>"$$optimized_err"; \
+	cmp -s benchmarks/nik/petta_typed_chaining.expected \
+		"$$optimized_out"; \
+	CETTA_PETTA_SEARCH_MACHINE=1 CETTA_PETTA_MACHINE_STATS=1 \
+		CETTA_NIK_TYPED_APPLICABILITY=0 \
+		$(CETTA_BIN_INVOKE) --emit-runtime-stats --lang petta \
+		--profile typecheck-v2 \
+		benchmarks/nik/petta_typed_chaining.metta \
+		>"$$reference_out" 2>"$$reference_err"; \
+	cmp -s "$$optimized_out" "$$reference_out"; \
+	grep -Fqx 'runtime-counter petta-typed-dispatch-signature-refuted 300000' \
+		"$$optimized_err"; \
+	grep -Fqx 'runtime-counter petta-typed-dispatch-signature-refuted 0' \
+		"$$reference_err"; \
+	optimized_transitions=$$(sed -n \
+		's/^PETTA_MACHINE_STATS transitions=\([0-9][0-9]*\) .*/\1/p' \
+		"$$optimized_err"); \
+	reference_transitions=$$(sed -n \
+		's/^PETTA_MACHINE_STATS transitions=\([0-9][0-9]*\) .*/\1/p' \
+		"$$reference_err"); \
+	test -n "$$optimized_transitions"; \
+	test -n "$$reference_transitions"; \
+	test "$$reference_transitions" -ge \
+		$$((optimized_transitions * 3)); \
+	echo "PASS: PeTTa direct typing removes 300000 recursive overload branches ($$optimized_transitions versus $$reference_transitions transitions)"
+else
+	@echo 'INFO: PeTTa typed-chaining control requires runtime stats; re-running with ENABLE_RUNTIME_STATS=1'
+	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 $@
+endif
+
+test-petta-nik-typed-space-query:
+ifeq ($(ENABLE_RUNTIME_STATS),1)
+	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 $(BIN)
+	@set -e; \
+	indexed_out=runtime/petta-nik-typed-space-query.out; \
+	indexed_err=runtime/petta-nik-typed-space-query.err; \
+	scan_out=runtime/petta-nik-typed-space-query-scan.out; \
+	scan_err=runtime/petta-nik-typed-space-query-scan.err; \
+	$(CETTA_BIN_INVOKE) --emit-runtime-stats --lang petta \
+		--profile typecheck-v2 \
+		benchmarks/nik/petta_type_space_query.metta \
+		>"$$indexed_out" 2>"$$indexed_err"; \
+	cmp -s benchmarks/nik/petta_type_space_query.expected \
+		"$$indexed_out"; \
+	CETTA_TYPE_SPACE_INDEX=0 \
+		$(CETTA_BIN_INVOKE) --emit-runtime-stats --lang petta \
+		--profile typecheck-v2 \
+		benchmarks/nik/petta_type_space_query.metta \
+		>"$$scan_out" 2>"$$scan_err"; \
+	cmp -s "$$indexed_out" "$$scan_out"; \
+	grep -Eq '^runtime-counter declared-type-indexed-lookup [1-9][0-9]*$$' \
+		"$$indexed_err"; \
+	grep -Fqx 'runtime-counter declared-type-full-scan-row 0' \
+		"$$indexed_err"; \
+	grep -Fqx 'runtime-counter declared-type-indexed-lookup 0' \
+		"$$scan_err"; \
+	indexed_rows=$$(sed -n \
+		's/^runtime-counter declared-type-indexed-row \([0-9][0-9]*\)$$/\1/p' \
+		"$$indexed_err"); \
+	scan_rows=$$(sed -n \
+		's/^runtime-counter declared-type-full-scan-row \([0-9][0-9]*\)$$/\1/p' \
+		"$$scan_err"); \
+	test -n "$$indexed_rows"; \
+	test -n "$$scan_rows"; \
+	test "$$scan_rows" -gt $$((indexed_rows * 1000)); \
+	echo "PASS: PeTTa typed-space indexing preserves answers while reducing declaration rows by over 1000x ($$indexed_rows versus $$scan_rows)"
+else
+	@echo 'INFO: PeTTa typed-space control requires runtime stats; re-running with ENABLE_RUNTIME_STATS=1'
+	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 $@
 endif
 
 test-petta-typecheck-v2-omission:

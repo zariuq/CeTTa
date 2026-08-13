@@ -442,6 +442,13 @@ static const char *const CETTA_RUNTIME_COUNTER_NAMES[CETTA_RUNTIME_COUNTER_COUNT
     "bindings-cycle-ground-value",
     "petta-typed-dispatch-signature-refuted",
     "nik-typed-applicability-candidate-refuted",
+    "petta-typecheck-declaration-admission-attempt",
+    "petta-typecheck-declaration-admission-accepted",
+    "petta-typecheck-declaration-admission-refuted",
+    "petta-typecheck-declaration-admission-fault",
+    "declared-type-indexed-lookup",
+    "declared-type-indexed-row",
+    "declared-type-full-scan-row",
 };
 
 static int64_t clamp_counter(uint64_t value) {

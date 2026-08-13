@@ -10,6 +10,7 @@
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 
 static _Thread_local SpaceMatchBackendError g_space_match_backend_error =
     SPACE_MATCH_BACKEND_ERROR_NONE;
@@ -20,6 +21,25 @@ static _Thread_local uint64_t
 static _Thread_local CettaCount g_query_results_capacity_limit_override = 0;
 static _Atomic uint64_t g_space_next_instance_id = 1u;
 static _Atomic uint64_t g_space_global_mutation_epoch = 0u;
+
+static _Thread_local bool g_declared_type_index_configured = false;
+static _Thread_local bool g_declared_type_index_enabled = true;
+
+/* The native index is the production path.  Its opt-out exists solely so a
+ * separate qualification process can compare it with the observationally
+ * identical logical-space scan. */
+static bool declared_type_index_enabled(void) {
+    if (!g_declared_type_index_configured) {
+        const char *setting = getenv("CETTA_TYPE_SPACE_INDEX");
+        g_declared_type_index_enabled =
+            !setting || !(strcmp(setting, "0") == 0 ||
+                          strcasecmp(setting, "false") == 0 ||
+                          strcasecmp(setting, "off") == 0 ||
+                          strcasecmp(setting, "no") == 0);
+        g_declared_type_index_configured = true;
+    }
+    return g_declared_type_index_enabled;
+}
 
 static uint64_t space_fresh_instance_id(void) {
     uint64_t id = atomic_fetch_add_explicit(
@@ -4521,13 +4541,15 @@ static uint32_t get_annotated_types(Space *s, Arena *a, Atom *atom,
                                     Atom ***out_types,
                                     CettaTypeInferenceBudget *budget,
                                     SpaceDeclaredTypeLookupCost *cost) {
-    if (space_has_overlay_base(s)) {
+    if (space_has_overlay_base(s) || !declared_type_index_enabled()) {
         Atom **types = NULL;
         uint32_t count = 0, cap = 0;
         CettaCount logical_len = space_length64(s);
         for (CettaIndex i = 0; i < logical_len; i++) {
             if (cost)
                 cost->full_space_rows_examined++;
+            cetta_runtime_stats_inc(
+                CETTA_RUNTIME_COUNTER_DECLARED_TYPE_FULL_SCAN_ROW);
             if (!type_inference_step(budget, 1)) break;
             Atom *annotation = space_get_at64(s, i);
             if (!annotation || annotation->kind != ATOM_EXPR ||
@@ -4552,6 +4574,8 @@ static uint32_t get_annotated_types(Space *s, Arena *a, Atom *atom,
     ensure_ty_ann_index(s);
     if (cost)
         cost->indexed_lookups++;
+    cetta_runtime_stats_inc(
+        CETTA_RUNTIME_COUNTER_DECLARED_TYPE_INDEXED_LOOKUP);
     uint32_t h = atom_hash_for_index(atom);
     TypeAnnBucket *bucket = &s->native.ty_idx.buckets[h];
     Atom **types = NULL;
@@ -4559,6 +4583,8 @@ static uint32_t get_annotated_types(Space *s, Arena *a, Atom *atom,
     for (CettaIndex i = 0; i < bucket->len; i++) {
         if (cost)
             cost->indexed_rows_examined++;
+        cetta_runtime_stats_inc(
+            CETTA_RUNTIME_COUNTER_DECLARED_TYPE_INDEXED_ROW);
         if (!type_inference_step(budget, 1)) break;
         AtomId annotation_id = space_indexed_occurrence_atom_id(
             s, bucket->atom_indices, bucket->atom_ids, i);
