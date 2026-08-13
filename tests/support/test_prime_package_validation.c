@@ -1,6 +1,7 @@
 #include "atom.h"
 #include "eval.h"
 #include "generated/prime_nik_authorities_v1.generated.h"
+#include "generated/prime_typing_closed_formation_source_binding_v1.generated.h"
 #include "he_typing.h"
 #include "library.h"
 #include "match.h"
@@ -12,6 +13,7 @@
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
 static Atom *copy_expr_with(Arena *arena, Atom *source, uint32_t index,
                             Atom *replacement) {
@@ -58,6 +60,103 @@ int main(void) {
         &libraries, CETTA_LANGUAGE_PRIME, cetta_profile_prime_default());
     libraries_ready = true;
     eval_set_library_context(&libraries);
+
+    const CettaPrimeTypingDirectServiceV1 *typing_service =
+        &cetta_prime_typing_direct_service_v1;
+    if (!cetta_prime_typing_direct_service_v1_is_valid(typing_service) ||
+        typing_service->authority !=
+            &cetta_prime_typing_direct_authority_v1 ||
+        typing_service->he_typing_core_backend !=
+            &cetta_he_typing_core_direct_service_v1) {
+        fprintf(stderr, "Prime direct typing authority is invalid\n");
+        goto cleanup;
+    }
+    const CettaNikDirectSourceBindingV1 *typing_source =
+        &prime_typing_closed_formation_source_binding_v1;
+    if (!cetta_nik_direct_source_binding_v1_is_valid(typing_source) ||
+        typing_source->authority != typing_service->authority ||
+        strcmp(
+            typing_source->semantic_scope,
+            "prime.typing.closed-formation") != 0 ||
+        typing_source->coverage !=
+            CETTA_NIK_DIRECT_SOURCE_AUTHORED_FRAGMENT) {
+        fprintf(stderr, "Prime typing source binding is invalid\n");
+        goto cleanup;
+    }
+    CettaNikDirectSourceBindingV1 invalid_typing_source = *typing_source;
+    invalid_typing_source.coverage = 0;
+    if (cetta_nik_direct_source_binding_v1_is_valid(
+            &invalid_typing_source)) {
+        fprintf(stderr, "Prime accepted an invalid typing source binding\n");
+        goto cleanup;
+    }
+    Atom *native_form = parse_one(&scratch, "(Form Number)");
+    Atom *native_verdict = typing_service->judge(
+        &scratch, &space, native_form, false, 0u);
+    if (!native_verdict || native_verdict->kind != ATOM_EXPR ||
+        native_verdict->expr.len != 4u ||
+        !atom_is_symbol(native_verdict->expr.elems[0], "PrimeVerdict") ||
+        !atom_is_symbol(native_verdict->expr.elems[1], "Established")) {
+        fprintf(stderr, "Prime direct typing authority did not form Number\n");
+        goto cleanup;
+    }
+    Atom *external_check = parse_one(
+        &scratch, "(Check EXTERNAL-AUTHORITY goal proof)");
+    Atom *evaluation_claim = parse_one(
+        &scratch, "(May (PrimeAnswers Complete) Number)");
+    if (typing_service->judge(
+            &scratch, &space, external_check, false, 0u) ||
+        typing_service->judge(
+            &scratch, &space, evaluation_claim, false, 0u) ||
+        typing_service->judge(
+            &scratch, &space, native_form, true, 0u)) {
+        fprintf(stderr,
+                "Prime direct typing authority crossed a non-typing boundary\n");
+        goto cleanup;
+    }
+    CettaPrimeTypingDirectServiceV1 invalid_typing_service = *typing_service;
+    invalid_typing_service.judge = NULL;
+    if (cetta_prime_typing_direct_service_v1_is_valid(
+            &invalid_typing_service)) {
+        fprintf(stderr, "Prime accepted an incomplete direct typing service\n");
+        goto cleanup;
+    }
+    invalid_typing_service = *typing_service;
+    invalid_typing_service.he_typing_core_backend = NULL;
+    if (cetta_prime_typing_direct_service_v1_is_valid(
+            &invalid_typing_service)) {
+        fprintf(stderr, "Prime accepted a missing HE typing backend\n");
+        goto cleanup;
+    }
+
+    CettaNikDirectAuthorityTokenV1 pure_typing_token;
+    if (!cetta_prime_typing_direct_authority_token_v1(
+            NULL, 17u, &pure_typing_token) ||
+        !cetta_prime_typing_direct_authority_token_v1_is_current(
+            &pure_typing_token, NULL, 17u) ||
+        cetta_prime_typing_direct_authority_token_v1_is_current(
+            &pure_typing_token, NULL, 18u)) {
+        fprintf(stderr, "Prime pure typing token did not pin policy identity\n");
+        goto cleanup;
+    }
+    Space token_space;
+    space_init_with_universe(&token_space, &universe);
+    CettaNikDirectAuthorityTokenV1 mutable_typing_token;
+    bool mutable_token_ok =
+        cetta_prime_typing_direct_authority_token_v1(
+            &token_space, 19u, &mutable_typing_token) &&
+        cetta_prime_typing_direct_authority_token_v1_is_current(
+            &mutable_typing_token, &token_space, 19u);
+    space_add(
+        &token_space, atom_symbol(&arena, "prime-typing-token-mutation"));
+    bool stale_token_rejected =
+        !cetta_prime_typing_direct_authority_token_v1_is_current(
+            &mutable_typing_token, &token_space, 19u);
+    space_free(&token_space);
+    if (!mutable_token_ok || !stale_token_rejected) {
+        fprintf(stderr, "Prime typing token did not pin space revision\n");
+        goto cleanup;
+    }
 
     Atom *package = prime_semantics_package_atom(&arena);
     if (!package || !prime_semantics_validate_package(package)) {

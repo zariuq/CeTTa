@@ -12,7 +12,7 @@
 #include "abt.h"
 #include "eval.h"
 #include "generated/prime_nik_authorities_v1.generated.h"
-#include "he_typing.h"
+#include "he_typing_authority.h"
 #include "library.h"
 #include "nik_runtime.h"
 #include "space.h"
@@ -21,6 +21,16 @@
 #define PRIME_DEF_SCHEMA_VERSION 2
 #define PRIME_DIALECT_MAJOR 0
 #define PRIME_DIALECT_MINOR 3
+
+const CettaNikDirectAuthorityV1
+    cetta_prime_typing_direct_authority_v1 = {
+        .alias = "PRIME-TYPING",
+        .system_id = "prime.typing",
+        .authority_identity = UINT64_C(0x7072696d652e7479),
+        .realization_identity = UINT64_C(0x63657474612e7072),
+        .authority_revision = 1u,
+        .realization_abi = 1u,
+    };
 
 static const char *const PRIME_JUDGMENT_NAMES[] = {
     "Form", "Synth", "Check", "Analyze", "Convert", "Refine", "May",
@@ -525,7 +535,7 @@ Atom *prime_semantics_package_atom(Arena *a) {
         prime_sym(a, "answer-substitution-v2"),
         prime_sym(a, "SearchAndEvaluationAreUntrustedProducers"),
         prime_sym(a, "TypingRecheckedBeforeAcceptance"),
-        prime_sym(a, "ConversionCertificatesReplayChecked"),
+        prime_sym(a, "ConversionEvidenceComputedOnce"),
         prime_sym(a, "CertificateCorrespondenceOpen"),
         prime_sym(a, "SourcePackageHashRequiredExternally")};
     Atom *evidence = atom_expr(a, evidence_items, 13);
@@ -645,7 +655,7 @@ bool prime_semantics_validate_package(Atom *package) {
         "typed-answer-v2", "answer-substitution-v2",
         "SearchAndEvaluationAreUntrustedProducers",
         "TypingRecheckedBeforeAcceptance",
-        "ConversionCertificatesReplayChecked",
+        "ConversionEvidenceComputedOnce",
         "CertificateCorrespondenceOpen", "SourcePackageHashRequiredExternally"};
 
     if (!prime_schema_expr(package, "PrimeDefV2", 8)) return false;
@@ -1488,21 +1498,11 @@ static Atom *prime_convert(Space *space, Arena *a, Atom *judgment,
         return prime_undetermined(a, judgment, atom_expr(a, reason_items, 3));
     }
     bool equal = atom_eq(left_nf, right_nf);
-    Atom *certificate = prime_conversion_certificate_atom(
+    Atom *evidence = prime_conversion_certificate_atom(
         a, left, right, left_nf, right_nf, equal);
-    bool replay_equal = false;
-    uint64_t replay_before = prime_resource_phase_begin(ledger);
-    bool replayed = prime_replay_conversion_certificate_budgeted(
-        a, space, certificate, &ledger->typing, &replay_equal);
-    prime_resource_phase_end(ledger, PRIME_RESOURCE_NORMALIZATION,
-                             replay_before);
-    if (!replayed || replay_equal != equal)
-        return prime_undetermined(
-            a, judgment,
-            prime_expr1(a, "conversion-certificate-replay-failed"));
     return equal
-        ? prime_established(a, judgment, certificate)
-        : prime_refuted(a, judgment, certificate);
+        ? prime_established(a, judgment, evidence)
+        : prime_refuted(a, judgment, evidence);
 }
 
 static Atom *prime_refine(Space *space, Arena *a, Atom *judgment,
@@ -1979,6 +1979,88 @@ static Atom *prime_judge(Arena *a, Space *space, Atom *judgment,
     return steps_limited ? prime_attach_ledger(a, verdict, &ledger) : verdict;
 }
 
+static bool prime_is_native_typing_judgment(Atom *judgment) {
+    judgment = unquote_data(judgment);
+    if (!judgment || judgment->kind != ATOM_EXPR ||
+        judgment->expr.len == 0 ||
+        judgment->expr.elems[0]->kind != ATOM_SYMBOL) {
+        return false;
+    }
+    const char *name = atom_name_cstr(judgment->expr.elems[0]);
+    if (!name) return false;
+    if ((strcmp(name, "Form") == 0 || strcmp(name, "Synth") == 0 ||
+         strcmp(name, "Refine") == 0) && judgment->expr.len == 2) {
+        return true;
+    }
+    return (strcmp(name, "Check") == 0 ||
+            strcmp(name, "Analyze") == 0 ||
+            strcmp(name, "Convert") == 0) && judgment->expr.len == 3;
+}
+
+Atom *prime_semantics_judge_typing_direct(
+    Arena *a, Space *space, Atom *judgment,
+    bool steps_limited, uint64_t steps) {
+    if (!a || !space || (steps_limited && steps == 0) ||
+        !prime_is_native_typing_judgment(judgment)) {
+        return NULL;
+    }
+    return prime_judge(a, space, judgment, steps_limited, steps);
+}
+
+const CettaPrimeTypingDirectServiceV1
+    cetta_prime_typing_direct_service_v1 = {
+        .authority = &cetta_prime_typing_direct_authority_v1,
+        .he_typing_core_backend =
+            &cetta_he_typing_core_direct_service_v1,
+        .judge = prime_semantics_judge_typing_direct,
+    };
+
+bool cetta_prime_typing_direct_service_v1_is_valid(
+    const CettaPrimeTypingDirectServiceV1 *service) {
+    return service &&
+           cetta_nik_direct_authority_v1_is_valid(service->authority) &&
+           cetta_he_typing_core_direct_service_v1_is_valid(
+               service->he_typing_core_backend) &&
+           service->judge;
+}
+
+bool cetta_prime_typing_direct_authority_token_v1(
+    const Space *space, uint32_t policy_identity,
+    CettaNikDirectAuthorityTokenV1 *token) {
+    if (!space) {
+        return cetta_nik_direct_authority_v1_token(
+            &cetta_prime_typing_direct_authority_v1,
+            policy_identity, NULL, token);
+    }
+
+    uint64_t epoch_before = space_global_mutation_epoch();
+    SpaceReadToken read = space_read_token(space);
+    uint64_t epoch_after = space_global_mutation_epoch();
+    if (epoch_before != epoch_after ||
+        !space_read_token_matches_live_space(read, space)) {
+        if (token) *token = (CettaNikDirectAuthorityTokenV1){0};
+        return false;
+    }
+
+    CettaNikDirectAuthorityTokenV1 mutable = {
+        .words = {read.instance_id, read.revision, epoch_after},
+        .length = 3u,
+    };
+    return cetta_nik_direct_authority_v1_token(
+        &cetta_prime_typing_direct_authority_v1,
+        policy_identity, &mutable, token);
+}
+
+bool cetta_prime_typing_direct_authority_token_v1_is_current(
+    const CettaNikDirectAuthorityTokenV1 *token,
+    const Space *space, uint32_t policy_identity) {
+    CettaNikDirectAuthorityTokenV1 current;
+    return token &&
+           cetta_prime_typing_direct_authority_token_v1(
+               space, policy_identity, &current) &&
+           cetta_nik_direct_authority_token_v1_equal(token, &current);
+}
+
 static const char *const PRIME_OP_NAMES[] = {"prime-package", "prime-judge"};
 
 bool prime_semantics_is_op_id(SymbolId id) {
@@ -2038,7 +2120,12 @@ Atom *prime_semantics_dispatch(Arena *a, Atom *head, Atom **args,
         if (steps_limited && !arg_budget(args[2], &steps))
             return prime_refuted(a, unquote_data(args[1]),
                                  prime_expr1(a, "budget-not-positive-integer"));
-        return prime_judge(a, space, args[1], steps_limited, steps);
+        Atom *native_verdict =
+            cetta_prime_typing_direct_service_v1.judge(
+                a, space, args[1], steps_limited, steps);
+        return native_verdict
+            ? native_verdict
+            : prime_judge(a, space, args[1], steps_limited, steps);
     }
 
     return NULL;
