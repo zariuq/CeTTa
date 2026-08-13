@@ -1,4 +1,5 @@
 #include "eval.h"
+#include "generated/petta_typecheck_v2_source_binding_v1.generated.h"
 #include "library.h"
 #include "parser.h"
 #include "match.h"
@@ -3249,6 +3250,41 @@ static void test_direct_authority_identity_contract(void) {
     assert(!cetta_nik_direct_authority_v1_is_valid(&invalid));
 }
 
+static void test_direct_source_binding_contract(void) {
+    const CettaNikDirectSourceBindingV1 *binding =
+        &petta_typecheck_v2_source_binding_v1;
+    assert(cetta_nik_direct_source_binding_v1_is_valid(binding));
+    assert(binding->authority ==
+        &petta_typecheck_v2_direct_authority_v1);
+    assert(strcmp(binding->schema_id, "finite-horn-gslt-v1") == 0);
+    assert(strcmp(
+        binding->presentation_id, "petta-typecheck-v2-guard") == 0);
+    assert(strcmp(
+        binding->semantic_scope,
+        "petta.typecheck-v2.guard-core") == 0);
+    assert(binding->coverage ==
+        CETTA_NIK_DIRECT_SOURCE_AUTHORED_FRAGMENT);
+    assert(binding->coverage !=
+        CETTA_NIK_DIRECT_SOURCE_COMPLETE_PRESENTATION);
+
+    CettaNikDirectSourceBindingV1 invalid = *binding;
+    invalid.semantic_scope = "";
+    assert(!cetta_nik_direct_source_binding_v1_is_valid(&invalid));
+    invalid = *binding;
+    invalid.source_sha256 = "short";
+    assert(!cetta_nik_direct_source_binding_v1_is_valid(&invalid));
+    invalid = *binding;
+    invalid.package_sha256 =
+        "EF8FBACD54E350DC0A25A965A457137714F06AEBBD1FD4756FFBB0838A8F84E2";
+    assert(!cetta_nik_direct_source_binding_v1_is_valid(&invalid));
+    invalid = *binding;
+    invalid.coverage = (CettaNikDirectSourceCoverageV1)0;
+    assert(!cetta_nik_direct_source_binding_v1_is_valid(&invalid));
+    invalid = *binding;
+    invalid.authority = NULL;
+    assert(!cetta_nik_direct_source_binding_v1_is_valid(&invalid));
+}
+
 static void test_inferred_signature_authority_provenance(
     TermUniverse *universe, Arena *arena) {
     PettaProgram *program = petta_program_new();
@@ -3605,6 +3641,7 @@ int main(void) {
 
     test_analysis_capability_contract(&space, &answers);
     test_direct_authority_identity_contract();
+    test_direct_source_binding_contract();
     test_inferred_signature_authority_provenance(
         &universe, &answers);
     test_declaration_authority_parity(&universe, &answers);

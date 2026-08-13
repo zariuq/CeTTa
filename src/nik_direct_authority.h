@@ -20,6 +20,29 @@ typedef struct {
     uint32_t realization_abi;
 } CettaNikDirectAuthorityV1;
 
+/* How much of a direct authority is described by one authored source.
+ * Fragment bindings are qualification inputs only: they must never be used
+ * to claim complete source/native correspondence or to license a fast path
+ * whose missing judgments matter. */
+typedef enum {
+    CETTA_NIK_DIRECT_SOURCE_AUTHORED_FRAGMENT = 1,
+    CETTA_NIK_DIRECT_SOURCE_COMPLETE_PRESENTATION = 2,
+} CettaNikDirectSourceCoverageV1;
+
+/* Build/admission metadata connecting an independently authored language
+ * presentation to a native direct authority.  The runtime does not execute
+ * this source and hot-path stamps/tokens do not carry these strings.  A valid
+ * binding states provenance and coverage, not an adequacy proof. */
+typedef struct {
+    const CettaNikDirectAuthorityV1 *authority;
+    const char *schema_id;
+    const char *presentation_id;
+    const char *semantic_scope;
+    const char *source_sha256;
+    const char *package_sha256;
+    CettaNikDirectSourceCoverageV1 coverage;
+} CettaNikDirectSourceBindingV1;
+
 /* Static provenance for a fact computed under one authority realization and
  * one authored policy.  Mutable stores are pinned separately by their native
  * revision tokens. */
@@ -46,6 +69,9 @@ typedef struct {
 
 bool cetta_nik_direct_authority_v1_is_valid(
     const CettaNikDirectAuthorityV1 *authority);
+
+bool cetta_nik_direct_source_binding_v1_is_valid(
+    const CettaNikDirectSourceBindingV1 *binding);
 
 bool cetta_nik_direct_authority_v1_stamp(
     const CettaNikDirectAuthorityV1 *authority,
