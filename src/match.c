@@ -893,6 +893,11 @@ static void bindings_cycle_note_edge(Bindings *bindings, VarId var_id,
         bindings->cycle_state != BINDINGS_CYCLE_ACYCLIC) {
         return;
     }
+    if (!atom_has_vars(value)) {
+        cetta_runtime_stats_inc(
+            CETTA_RUNTIME_COUNTER_BINDINGS_CYCLE_GROUND_VALUE);
+        return;
+    }
     BindingsReachability reaches =
         bindings_value_reaches_var(bindings, value, var_id);
     if (reaches == BINDINGS_REACHABILITY_PRESENT) {
@@ -3172,9 +3177,49 @@ static bool rename_walk_stack_push(RenameWalkStack *stack,
 static Atom g_rename_walk_active;
 static Atom g_rename_walk_complete;
 
+/* Hash-stable atoms are immutable published graphs assembled only from
+ * hash-stable children. They cannot acquire a back edge after publication,
+ * so variable collection needs neither active/complete states nor a memo. */
+static bool collect_var_ids_hash_stable(Atom *root, VarIdSet *set) {
+    RenameWalkStack stack;
+    rename_walk_stack_init(&stack);
+    if (!rename_walk_stack_push(
+            &stack, (RenameWalkTask){RENAME_WALK_ENTER, root}))
+        goto fail;
+    while (stack.len > 0u) {
+        Atom *atom = stack.tasks[--stack.len].atom;
+        if (!atom)
+            goto fail;
+        if (!atom_has_vars(atom))
+            continue;
+        if (atom->kind == ATOM_VAR) {
+            if (!var_id_set_add(set, atom->var_id))
+                goto fail;
+            continue;
+        }
+        if (atom->kind != ATOM_EXPR)
+            continue;
+        for (CettaExprIndex i = atom->expr.len; i > 0u; i--) {
+            if (!rename_walk_stack_push(
+                    &stack,
+                    (RenameWalkTask){RENAME_WALK_ENTER,
+                                     atom->expr.elems[i - 1u]}))
+                goto fail;
+        }
+    }
+    rename_walk_stack_free(&stack);
+    return true;
+
+fail:
+    rename_walk_stack_free(&stack);
+    return false;
+}
+
 static bool collect_var_ids(Atom *root, VarIdSet *set) {
     if (!root || !set)
         return false;
+    if ((root->flags & ATOM_FLAG_HASH_STABLE) != 0u)
+        return collect_var_ids_hash_stable(root, set);
     RenameWalkStack stack;
     FreshenEpochMemo states;
     rename_walk_stack_init(&stack);
