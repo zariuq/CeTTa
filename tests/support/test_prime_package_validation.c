@@ -2,12 +2,15 @@
 #include "eval.h"
 #include "generated/prime_nik_authorities_v1.generated.h"
 #include "generated/prime_typing_closed_formation_source_binding_v1.generated.h"
+#include "generated/prime_typing_native_ground_judgments_source_binding_v1.generated.h"
+#include "generated/prime_typing_typed_publication_core_source_binding_v1.generated.h"
 #include "he_typing.h"
 #include "library.h"
 #include "match.h"
 #include "nik_runtime.h"
 #include "parser.h"
 #include "prime_semantics.h"
+#include "prime_typing_publication.h"
 #include "symbol.h"
 #include "term_universe.h"
 
@@ -31,6 +34,27 @@ static Atom *parse_one(Arena *arena, const char *text) {
     Atom *result = count == 1 && forms ? forms[0] : NULL;
     free(forms);
     return result;
+}
+
+static bool expect_direct_typing_status(
+    Arena *arena, Space *space,
+    const CettaPrimeTypingDirectServiceV1 *service,
+    const char *claim_text, const char *expected_status) {
+    Atom *claim = parse_one(arena, claim_text);
+    Atom *verdict = claim
+        ? service->judge(arena, space, claim, false, 0u)
+        : NULL;
+    if (verdict && verdict->kind == ATOM_EXPR &&
+        verdict->expr.len == 4u &&
+        atom_is_symbol(verdict->expr.elems[0], "PrimeVerdict") &&
+        atom_is_symbol(verdict->expr.elems[1], expected_status)) {
+        return true;
+    }
+    fprintf(stderr, "Prime direct typing status mismatch for %s: ",
+            claim_text);
+    atom_print(verdict, stderr);
+    fprintf(stderr, " (expected %s)\n", expected_status);
+    return false;
 }
 
 int main(void) {
@@ -90,16 +114,119 @@ int main(void) {
         fprintf(stderr, "Prime accepted an invalid typing source binding\n");
         goto cleanup;
     }
-    Atom *native_form = parse_one(&scratch, "(Form Number)");
-    Atom *native_verdict = typing_service->judge(
-        &scratch, &space, native_form, false, 0u);
-    if (!native_verdict || native_verdict->kind != ATOM_EXPR ||
-        native_verdict->expr.len != 4u ||
-        !atom_is_symbol(native_verdict->expr.elems[0], "PrimeVerdict") ||
-        !atom_is_symbol(native_verdict->expr.elems[1], "Established")) {
-        fprintf(stderr, "Prime direct typing authority did not form Number\n");
+
+    const CettaNikDirectSourceBindingV1 *native_ground_source =
+        &prime_typing_native_ground_judgments_source_binding_v1;
+    if (!cetta_nik_direct_source_binding_v1_is_valid(native_ground_source) ||
+        native_ground_source->authority != typing_service->authority ||
+        strcmp(native_ground_source->semantic_scope,
+               "prime.typing.native-ground-judgments") != 0 ||
+        native_ground_source->coverage !=
+            CETTA_NIK_DIRECT_SOURCE_AUTHORED_FRAGMENT) {
+        fprintf(stderr, "Prime native-ground source binding is invalid\n");
         goto cleanup;
     }
+    CettaNikDirectSourceBindingV1 invalid_native_ground_source =
+        *native_ground_source;
+    invalid_native_ground_source.semantic_scope = NULL;
+    if (cetta_nik_direct_source_binding_v1_is_valid(
+            &invalid_native_ground_source)) {
+        fprintf(stderr,
+                "Prime accepted an invalid native-ground source binding\n");
+        goto cleanup;
+    }
+
+    const CettaPrimeTypedPublicationDirectServiceV1 *publication_service =
+        &cetta_prime_typed_publication_direct_service_v1;
+    if (!cetta_prime_typed_publication_direct_service_v1_is_valid(
+            publication_service) ||
+        publication_service->authority !=
+            &cetta_prime_typed_publication_direct_authority_v1) {
+        fprintf(stderr, "Prime typed-publication authority is invalid\n");
+        goto cleanup;
+    }
+    const CettaNikDirectSourceBindingV1 *publication_source =
+        &prime_typing_typed_publication_core_source_binding_v1;
+    if (!cetta_nik_direct_source_binding_v1_is_valid(publication_source) ||
+        publication_source->authority != publication_service->authority ||
+        strcmp(publication_source->semantic_scope,
+               "prime.typing.result-contract-publication-core") != 0 ||
+        publication_source->coverage !=
+            CETTA_NIK_DIRECT_SOURCE_AUTHORED_FRAGMENT) {
+        fprintf(stderr, "Prime typed-publication source binding is invalid\n");
+        goto cleanup;
+    }
+    Atom *publication_number = parse_one(&scratch, "Number");
+    Atom *publication_string = parse_one(&scratch, "String");
+    Atom *publication_bool = parse_one(&scratch, "Bool");
+    Atom *publication_dynamic = parse_one(&scratch, "%Undefined%");
+    Atom *publication_atom = parse_one(&scratch, "Atom");
+    Atom *actual_number[1] = {publication_number};
+    Atom *alternative_contracts[2] = {
+        publication_string, publication_number};
+    Atom *refuted_contracts[2] = {
+        publication_string, publication_bool};
+    Atom *dynamic_contract[1] = {publication_dynamic};
+    Atom *top_contract[1] = {publication_atom};
+    if (!publication_number || !publication_string || !publication_bool ||
+        !publication_dynamic || !publication_atom ||
+        !publication_service->accepts_any(
+            actual_number, 1u, alternative_contracts, 2u) ||
+        publication_service->accepts_any(
+            actual_number, 1u, refuted_contracts, 2u) ||
+        !publication_service->accepts_any(
+            actual_number, 1u, dynamic_contract, 1u) ||
+        !publication_service->accepts_any(
+            actual_number, 1u, top_contract, 1u) ||
+        publication_service->accepts_any(
+            NULL, 1u, alternative_contracts, 2u)) {
+        fprintf(stderr,
+                "Prime typed-publication direct judgments are inconsistent\n");
+        goto cleanup;
+    }
+    CettaPrimeTypedPublicationDirectServiceV1 invalid_publication_service =
+        *publication_service;
+    invalid_publication_service.accepts_any = NULL;
+    if (cetta_prime_typed_publication_direct_service_v1_is_valid(
+            &invalid_publication_service)) {
+        fprintf(stderr,
+                "Prime accepted an incomplete typed-publication service\n");
+        goto cleanup;
+    }
+
+    if (!expect_direct_typing_status(
+            &scratch, &space, typing_service,
+            "(Form Number)", "Established") ||
+        !expect_direct_typing_status(
+            &scratch, &space, typing_service,
+            "(Form 7)", "Refuted") ||
+        !expect_direct_typing_status(
+            &scratch, &space, typing_service,
+            "(Synth 7)", "Established") ||
+        !expect_direct_typing_status(
+            &scratch, &space, typing_service,
+            "(Check 7 Number)", "Established") ||
+        !expect_direct_typing_status(
+            &scratch, &space, typing_service,
+            "(Check 7 String)", "Refuted") ||
+        !expect_direct_typing_status(
+            &scratch, &space, typing_service,
+            "(Analyze 7 %Undefined%)", "Established") ||
+        !expect_direct_typing_status(
+            &scratch, &space, typing_service,
+            "(Check 7 %Undefined%)", "Undetermined") ||
+        !expect_direct_typing_status(
+            &scratch, &space, typing_service,
+            "(Convert (+ 1 1) 2)", "Established") ||
+        !expect_direct_typing_status(
+            &scratch, &space, typing_service,
+            "(Convert Number String)", "Refuted") ||
+        !expect_direct_typing_status(
+            &scratch, &space, typing_service,
+            "(Refine Number)", "Established")) {
+        goto cleanup;
+    }
+    Atom *native_form = parse_one(&scratch, "(Form Number)");
     Atom *external_check = parse_one(
         &scratch, "(Check EXTERNAL-AUTHORITY goal proof)");
     Atom *evaluation_claim = parse_one(
