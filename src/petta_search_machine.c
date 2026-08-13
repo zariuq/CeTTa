@@ -367,6 +367,7 @@ typedef struct {
             Atom **types;
             uint32_t count;
             uint32_t next;
+            bool overload_dispatch;
             Atom *expression;
             Atom *expected;
             const PettaPlanNode *plan;
@@ -7982,7 +7983,7 @@ static bool petta_machine_advance_choice(
                     machine, choice->as.typed_call.expression,
                     choice->as.typed_call.expected, type,
                     choice->barrier,
-                    choice->as.typed_call.count > 1u,
+                    choice->as.typed_call.overload_dispatch,
                     choice->as.typed_call.plan)) {
                 *failure = PETTA_MACHINE_STEP_CAPACITY;
                 return false;
@@ -9843,6 +9844,9 @@ static bool petta_machine_start_match_choice(
     return false;
 }
 
+static bool petta_machine_typed_signature_is_natively_refuted(
+    PettaMachineImpl *machine, Atom *expression, Atom *type);
+
 static bool petta_machine_start_typed_call_choice(
     PettaMachineImpl *machine, Atom *expression, Atom *expected,
     Atom **types, uint32_t count, uint32_t barrier,
@@ -9859,7 +9863,16 @@ static bool petta_machine_start_typed_call_choice(
         if (petta_machine_type_signature_applies(types[index], nargs))
             types[applicable++] = types[index];
     }
-    count = applicable;
+    bool overload_dispatch = applicable > 1u;
+    uint32_t retained = 0u;
+    for (uint32_t index = 0u; index < applicable; index++) {
+        if (!overload_dispatch ||
+            !petta_machine_typed_signature_is_natively_refuted(
+                machine, expression, types[index])) {
+            types[retained++] = types[index];
+        }
+    }
+    count = retained;
     if (count == 0u) {
         free(types);
         return false;
@@ -9873,6 +9886,7 @@ static bool petta_machine_start_typed_call_choice(
             .types = types,
             .count = count,
             .next = 0u,
+            .overload_dispatch = overload_dispatch,
             .expression = expression,
             .expected = expected,
             .plan = plan,
@@ -9984,6 +9998,83 @@ static bool petta_machine_judge_native_type(
 
 static bool petta_machine_typecheck_value_ready(
     PettaMachineImpl *machine, Atom *value);
+
+/* A closed direct judgment can reject an overload before the machine
+ * allocates and later rolls back that branch.  This is deliberately only a
+ * ground prefilter: dependent/open formals, executable arguments, runtime
+ * classifiers, incomplete judgments, and changed authority state all retain
+ * the original goal-scheduling route. */
+static bool petta_machine_typed_signature_is_natively_refuted(
+    PettaMachineImpl *machine, Atom *expression, Atom *type) {
+    if (!cetta_nik_typed_applicability_pruning_enabled() ||
+        !petta_machine_type_obligations_enabled(machine) ||
+        !machine->space ||
+        !expression || expression->kind != ATOM_EXPR ||
+        expression->expr.len == 0u ||
+        !petta_machine_type_signature_applies(
+            type, expression->expr.len - 1u)) {
+        return false;
+    }
+
+    CettaExprLen length = expression->expr.len;
+    for (CettaExprIndex index = 1u; index < length; index++) {
+        Atom *binder = NULL;
+        Atom *formal = NULL;
+        (void)petta_machine_split_dependent_domain(
+            type->expr.elems[index], &binder, &formal);
+        Atom *value = expression->expr.elems[index];
+        if (binder || !formal || atom_has_vars(formal) ||
+            petta_machine_analysis_has_runtime_classifier(
+                machine, formal) ||
+            !value || atom_is_error(value) || atom_has_vars(value) ||
+            !petta_machine_typecheck_value_ready(machine, value)) {
+            return false;
+        }
+    }
+
+    uint64_t authority_epoch = space_global_mutation_epoch();
+    uint32_t authority_policy = petta_machine_analysis_policy(machine);
+    SpaceReadToken authority_read = space_read_token(machine->space);
+    PettaMachineAuthorityToken authority_before;
+    if (!petta_machine_authority_token(machine, &authority_before))
+        return false;
+
+    bool refuted = false;
+    for (CettaExprIndex index = 1u; index < length; index++) {
+        Atom *formal = NULL;
+        (void)petta_machine_split_dependent_domain(
+            type->expr.elems[index], NULL, &formal);
+        if (petta_machine_type_is_atom_data(formal) ||
+            petta_machine_type_is_unconstrained(formal)) {
+            continue;
+        }
+        PettaAnalysisResult result = {0};
+        if (!petta_machine_judge_native_type(
+                machine, expression->expr.elems[index], formal, &result) ||
+            result.fault != PETTA_ANALYSIS_FAULT_NONE ||
+            result.verdict == PETTA_ANALYSIS_INCOMPLETE) {
+            return false;
+        }
+        if (result.verdict == PETTA_ANALYSIS_REFUTED)
+            refuted = true;
+    }
+
+    PettaMachineAuthorityToken authority_after;
+    if (!petta_machine_authority_token(machine, &authority_after) ||
+        space_global_mutation_epoch() != authority_epoch ||
+        petta_machine_analysis_policy(machine) != authority_policy ||
+        !space_read_token_matches_live_space(
+            authority_read, machine->space) ||
+        !petta_machine_authority_token_eq(
+            &authority_before, &authority_after)) {
+        return false;
+    }
+    if (refuted) {
+        cetta_runtime_stats_inc(
+            CETTA_RUNTIME_COUNTER_PETTA_TYPED_DISPATCH_SIGNATURE_REFUTED);
+    }
+    return refuted;
+}
 
 static bool petta_machine_add_type_obligation(
     PettaMachineImpl *machine, Atom *value, Atom *formal,
