@@ -1,4 +1,5 @@
 #include "eval.h"
+#include "generated/he_profiled_type_inference_core_source_binding_v1.generated.h"
 #include "generated/he_typing_consistency_core_source_binding_v1.generated.h"
 #include "he_typing_authority.h"
 #include "space.h"
@@ -81,8 +82,29 @@ int main(void) {
     assert(source->coverage ==
         CETTA_NIK_DIRECT_SOURCE_AUTHORED_FRAGMENT);
 
+    const CettaNikDirectSourceBindingV1 *profile_source =
+        &he_profiled_type_inference_core_source_binding_v1;
+    assert(cetta_nik_direct_source_binding_v1_is_valid(profile_source));
+    assert(profile_source->authority == profile_service->authority);
+    assert(profile_source->authority != core_service->authority);
+    assert(strcmp(profile_source->schema_id, "finite-horn-gslt-v1") == 0);
+    assert(strcmp(
+        profile_source->presentation_id,
+        "he-profiled-type-inference-core") == 0);
+    assert(strcmp(
+        profile_source->semantic_scope,
+        "he.profiled-type-inference.ground-declaration-application-core") == 0);
+    assert(profile_source->coverage ==
+        CETTA_NIK_DIRECT_SOURCE_AUTHORED_FRAGMENT);
+
     CettaNikDirectSourceBindingV1 invalid_source = *source;
     invalid_source.semantic_scope = "";
+    assert(!cetta_nik_direct_source_binding_v1_is_valid(&invalid_source));
+    invalid_source = *profile_source;
+    invalid_source.authority = NULL;
+    assert(!cetta_nik_direct_source_binding_v1_is_valid(&invalid_source));
+    invalid_source = *profile_source;
+    invalid_source.coverage = (CettaNikDirectSourceCoverageV1)0;
     assert(!cetta_nik_direct_source_binding_v1_is_valid(&invalid_source));
 
     Atom *number = atom_symbol(&persistent, "Number");
@@ -117,6 +139,31 @@ int main(void) {
     inferred_count = profile_service->infer(
         &space, &persistent, subject, &inferred_types);
     assert(type_list_has_symbol(inferred_types, inferred_count, "String"));
+    free(inferred_types);
+
+    Atom *inferred_id = atom_symbol(&persistent, "inferred-id");
+    Atom *number_to_number = atom_expr3(
+        &persistent, atom_symbol(&persistent, "->"), number, number);
+    assert(inferred_id && number_to_number);
+    space_add(
+        &space,
+        atom_expr3(
+            &persistent, atom_symbol(&persistent, ":"),
+            inferred_id, number_to_number));
+    Atom *accepted_application = atom_expr2(
+        &persistent, inferred_id, atom_int(&persistent, 7));
+    inferred_types = NULL;
+    inferred_count = profile_service->infer(
+        &space, &persistent, accepted_application, &inferred_types);
+    assert(type_list_has_symbol(inferred_types, inferred_count, "Number"));
+    free(inferred_types);
+
+    Atom *refuted_application = atom_expr2(
+        &persistent, inferred_id, atom_string(&persistent, "wrong"));
+    inferred_types = NULL;
+    inferred_count = profile_service->infer(
+        &space, &persistent, refuted_application, &inferred_types);
+    assert(!type_list_has_symbol(inferred_types, inferred_count, "Number"));
     free(inferred_types);
 
 #if CETTA_BUILD_WITH_RUNTIME_STATS

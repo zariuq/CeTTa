@@ -440,6 +440,7 @@ static const char *const CETTA_RUNTIME_COUNTER_NAMES[CETTA_RUNTIME_COUNTER_COUNT
     "he-profiled-type-cache-hit",
     "he-profiled-type-cache-miss",
     "bindings-cycle-ground-value",
+    "petta-typed-dispatch-signature-refuted",
 };
 
 static int64_t clamp_counter(uint64_t value) {

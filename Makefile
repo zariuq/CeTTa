@@ -425,7 +425,7 @@ ifeq ($(ENABLE_PETTA_TYPECHECK_V2),1)
 PETTA_TYPECHECK_V2_SRC = src/petta_typecheck.c \
 	src/generated/petta_typecheck_v2_source_binding_v1.generated.c
 endif
-SRC = src/symbol.c src/atom.c src/name_key.c src/atom_blob.c src/abt.c src/parser.c $(COMPILED_READER_RUNTIME_SRC) src/mm2_lower.c src/subst_tree.c src/space.c src/registry_resolver.c src/space_match_backend.c src/match.c src/match_decision.c src/term_canon.c src/variant_shape.c src/variant_instance.c src/answer_bank.c src/table_store.c src/search_machine.c src/petta_program.c src/petta_search_machine.c $(PETTA_TYPECHECK_V2_SRC) src/petta_specializer.c src/rule_machine.c $(LIB_PROLOG_SRC) src/term_universe.c src/stats.c src/parallel_executor.c src/prime_need.c src/petta_semantics.c src/prepared_pure_machine.c src/eval.c src/grounded.c src/he_typing.c src/he_typing_authority.c src/generated/he_typing_consistency_core_source_binding_v1.generated.c src/inference_checker.c src/nik_direct_authority.c src/nik_runtime.c src/prime_semantics.c src/generated/prime_typing_closed_formation_source_binding_v1.generated.c src/text_source.c src/native_handle.c src/native_sha256.c src/mork_space_bridge_runtime.c src/library.c src/langdef_pack.c src/gslt_provider_runtime.c src/gslt_space_fact_provider_v1.c src/gslt_finite_fact_provider_v1.c src/gslt_revisioned_space_provider_v1.c src/gslt_abt_provider_v1.c src/gslt_horn_runtime.c src/gslt_dense_bitset_v1.c src/gslt_compiled_runtime.c src/gslt_indexed_instruction_decoder_v1.c src/gslt_indexed_value_table_v1.c src/gslt_split_indexed_table_v1.c src/gslt_literal_hole_program_v1.c src/gslt_u32_index_v1.c src/gslt_u32_slice_arena_v1.c src/gslt_epoch_slots_v1.c src/gslt_ground_dense_term_v1.c src/gslt_language_runtime.c src/gslt_pure_provider_v1.c src/gslt_support_transform_runtime.c src/generated/prime_nik_authorities_v1.generated.c src/generated/prime_nik_runtime_v1.generated.c src/generated/gslt_il_language_v1.generated.c src/generated/metta_interact_language_v1.generated.c src/generated/mm2_gslt_profile_v1.generated.c src/generated/subzero_language_v1.generated.c src/generated/zero_language_v1.generated.c src/generated/zero_exp_language_v1.generated.c src/generated/zero_emit_language_v1.generated.c src/generated/zero_interact_language_v1.generated.c src/generated/zero_interact_provider_catalog_v1.generated.c src/generated/zerouv_language_v1.generated.c src/he_small_step_pack.c src/lib_parse_native_grammar.c src/lib_parse_inference_native.c experiments/gslt2parse_foundation/native/finite_horn_gslt_v1.c experiments/gslt2parse_foundation/native/finite_horn_ground_term_v1.c experiments/gslt2parse_foundation/native/parser_term_projection_v1.c experiments/gslt2parse_foundation/native/parser_pack_abi_v1.c experiments/gslt2parse_foundation/native/parser_action_bytecode_v1.c experiments/gslt2parse_foundation/native/parser_pack_native_v1.c experiments/gslt2parse_foundation/native/parser_pack_lexical_v1.c experiments/gslt2parse_foundation/native/parser_pack_gll_v1.c experiments/gslt2parse_foundation/native/regular_span_dfa_v1.c experiments/gslt2parse_foundation/native/regular_span_nfa_v1.c $(PYTHON_SRC) src/session.c src/lang.c src/rhocalc_core.c src/rhocalc_syntax.c src/compile.c src/runtime.c src/cetta_stdlib.c native/native_modules.c src/main.c
+SRC = src/symbol.c src/atom.c src/name_key.c src/atom_blob.c src/abt.c src/parser.c $(COMPILED_READER_RUNTIME_SRC) src/mm2_lower.c src/subst_tree.c src/space.c src/registry_resolver.c src/space_match_backend.c src/match.c src/match_decision.c src/term_canon.c src/variant_shape.c src/variant_instance.c src/answer_bank.c src/table_store.c src/search_machine.c src/petta_program.c src/petta_search_machine.c $(PETTA_TYPECHECK_V2_SRC) src/petta_specializer.c src/rule_machine.c $(LIB_PROLOG_SRC) src/term_universe.c src/stats.c src/parallel_executor.c src/prime_need.c src/petta_semantics.c src/prepared_pure_machine.c src/eval.c src/grounded.c src/he_typing.c src/he_typing_authority.c src/generated/he_typing_consistency_core_source_binding_v1.generated.c src/generated/he_profiled_type_inference_core_source_binding_v1.generated.c src/inference_checker.c src/nik_direct_authority.c src/nik_runtime.c src/prime_semantics.c src/generated/prime_typing_closed_formation_source_binding_v1.generated.c src/text_source.c src/native_handle.c src/native_sha256.c src/mork_space_bridge_runtime.c src/library.c src/langdef_pack.c src/gslt_provider_runtime.c src/gslt_space_fact_provider_v1.c src/gslt_finite_fact_provider_v1.c src/gslt_revisioned_space_provider_v1.c src/gslt_abt_provider_v1.c src/gslt_horn_runtime.c src/gslt_dense_bitset_v1.c src/gslt_compiled_runtime.c src/gslt_indexed_instruction_decoder_v1.c src/gslt_indexed_value_table_v1.c src/gslt_split_indexed_table_v1.c src/gslt_literal_hole_program_v1.c src/gslt_u32_index_v1.c src/gslt_u32_slice_arena_v1.c src/gslt_epoch_slots_v1.c src/gslt_ground_dense_term_v1.c src/gslt_language_runtime.c src/gslt_pure_provider_v1.c src/gslt_support_transform_runtime.c src/generated/prime_nik_authorities_v1.generated.c src/generated/prime_nik_runtime_v1.generated.c src/generated/gslt_il_language_v1.generated.c src/generated/metta_interact_language_v1.generated.c src/generated/mm2_gslt_profile_v1.generated.c src/generated/subzero_language_v1.generated.c src/generated/zero_language_v1.generated.c src/generated/zero_exp_language_v1.generated.c src/generated/zero_emit_language_v1.generated.c src/generated/zero_interact_language_v1.generated.c src/generated/zero_interact_provider_catalog_v1.generated.c src/generated/zerouv_language_v1.generated.c src/he_small_step_pack.c src/lib_parse_native_grammar.c src/lib_parse_inference_native.c experiments/gslt2parse_foundation/native/finite_horn_gslt_v1.c experiments/gslt2parse_foundation/native/finite_horn_ground_term_v1.c experiments/gslt2parse_foundation/native/parser_term_projection_v1.c experiments/gslt2parse_foundation/native/parser_pack_abi_v1.c experiments/gslt2parse_foundation/native/parser_action_bytecode_v1.c experiments/gslt2parse_foundation/native/parser_pack_native_v1.c experiments/gslt2parse_foundation/native/parser_pack_lexical_v1.c experiments/gslt2parse_foundation/native/parser_pack_gll_v1.c experiments/gslt2parse_foundation/native/regular_span_dfa_v1.c experiments/gslt2parse_foundation/native/regular_span_nfa_v1.c $(PYTHON_SRC) src/session.c src/lang.c src/rhocalc_core.c src/rhocalc_syntax.c src/compile.c src/runtime.c src/cetta_stdlib.c native/native_modules.c src/main.c
 SRC += src/inference_side_condition_provider.c \
 	src/generated/prime_nik_side_condition_provider_catalog_v1.generated.c \
 	experiments/gslt2parse_foundation/native/parser_pack_glr_v1.c
@@ -13705,6 +13705,8 @@ ifeq ($(ENABLE_RUNTIME_STATS),1)
 	ordinary_err=runtime/typecheck-v2-isolation-ordinary.err; \
 	typed_out=runtime/typecheck-v2-isolation-typed.out; \
 	typed_err=runtime/typecheck-v2-isolation-typed.err; \
+	typed_dispatch_out=runtime/typecheck-v2-typed-dispatch.out; \
+	typed_dispatch_err=runtime/typecheck-v2-typed-dispatch.err; \
 	authority_out=runtime/typecheck-v2-authority-reuse.out; \
 	authority_err=runtime/typecheck-v2-authority-reuse.err; \
 	relocation_out=runtime/typecheck-v2-obligation-relocation.out; \
@@ -13728,6 +13730,14 @@ ifeq ($(ENABLE_RUNTIME_STATS),1)
 	grep -Fqx '1' "$$typed_out"; \
 	grep -Eq '^runtime-counter petta-typecheck-boundary-entry [1-9][0-9]*$$' \
 		"$$typed_err"; \
+	grep -Fqx 'runtime-counter petta-typed-dispatch-signature-refuted 0' \
+		"$$typed_err"; \
+	$(CETTA_BIN_INVOKE) --emit-runtime-stats --lang petta \
+		--profile typecheck-v2 \
+		tests/petta/typecheck_v2_repros/27_overload_mismatch_prunes_branch.metta \
+		>"$$typed_dispatch_out" 2>"$$typed_dispatch_err"; \
+	grep -Eq '^runtime-counter petta-typed-dispatch-signature-refuted [1-9][0-9]*$$' \
+		"$$typed_dispatch_err"; \
 	$(CETTA_BIN_INVOKE) --emit-runtime-stats --lang petta \
 		--profile typecheck-v2 \
 		tests/petta/typecheck_v2_repros/11_stale_obligation_nonconflicting_addition.metta \
@@ -14076,8 +14086,33 @@ test-he-type-langdef-source-binding-v1:
 	rm -f "$$tmpdir/binding-normalized.c"; \
 	echo "PASS: HE type langdef source binding is valid and deterministic"
 
+.PHONY: test-he-profiled-type-langdef-source-binding-v1
+test-he-profiled-type-langdef-source-binding-v1:
+	@python3 tools/gslt2parse_schema_v1.py \
+		langdef/he/generated/profiled_type_inference_core_v1.metta >/dev/null
+	@mkdir -p $(BOOTSTRAP_TMPDIR); \
+	tmpdir=$$(mktemp -d "$(BOOTSTRAP_TMPDIR)/he-profiled-type-binding.XXXXXX"); \
+	trap 'rm -f "$$tmpdir/binding.h" "$$tmpdir/binding.c" "$$tmpdir/binding-normalized.c"; rmdir "$$tmpdir"' EXIT INT TERM; \
+	python3 tools/generate_nik_direct_source_binding_v1.py \
+		--presentation langdef/he/generated/profiled_type_inference_core_v1.metta \
+		--symbol-prefix he_profiled_type_inference_core \
+		--authority-symbol cetta_he_profiled_type_inference_direct_authority_v1 \
+		--authority-header he_typing_authority.h \
+		--semantic-scope he.profiled-type-inference.ground-declaration-application-core \
+		--coverage fragment \
+		--header-output "$$tmpdir/binding.h" \
+		--source-output "$$tmpdir/binding.c"; \
+	sed 's#generated/binding.h#generated/he_profiled_type_inference_core_source_binding_v1.generated.h#' \
+		"$$tmpdir/binding.c" > "$$tmpdir/binding-normalized.c"; \
+	cmp -s "$$tmpdir/binding.h" \
+		src/generated/he_profiled_type_inference_core_source_binding_v1.generated.h; \
+	cmp -s "$$tmpdir/binding-normalized.c" \
+		src/generated/he_profiled_type_inference_core_source_binding_v1.generated.c; \
+	rm -f "$$tmpdir/binding-normalized.c"; \
+	echo "PASS: HE profiled type langdef source binding is valid and deterministic"
+
 .PHONY: test-he-typing-direct-authority
-test-he-typing-direct-authority: $(HE_TYPING_DIRECT_TEST_BIN) test-he-type-langdef-source-binding-v1
+test-he-typing-direct-authority: $(HE_TYPING_DIRECT_TEST_BIN) test-he-type-langdef-source-binding-v1 test-he-profiled-type-langdef-source-binding-v1
 	@./$(HE_TYPING_DIRECT_TEST_BIN)
 
 test-he-contract-suite: $(BIN) test-he-compat-catalog-guards test-he-typing-direct-authority

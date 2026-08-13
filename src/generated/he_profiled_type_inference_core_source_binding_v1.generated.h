@@ -1,0 +1,9 @@
+#ifndef CETTA_GENERATED_HE_PROFILED_TYPE_INFERENCE_CORE_SOURCE_BINDING_V1_H
+#define CETTA_GENERATED_HE_PROFILED_TYPE_INFERENCE_CORE_SOURCE_BINDING_V1_H
+
+#include "nik_direct_authority.h"
+
+extern const CettaNikDirectSourceBindingV1
+    he_profiled_type_inference_core_source_binding_v1;
+
+#endif /* CETTA_GENERATED_HE_PROFILED_TYPE_INFERENCE_CORE_SOURCE_BINDING_V1_H */
