@@ -2,6 +2,7 @@
 
 #include "finite_horn_answer_stream_v1.h"
 #include "finite_horn_ground_term_v1.h"
+#include "gslt_ground_dense_term_v1.h"
 #include "match.h"
 #include "native_sha256.h"
 
@@ -16,8 +17,14 @@ typedef struct {
     Atom *head;
     Atom **body;
     uint32_t body_len;
+    uint32_t variable_count;
     bool body_variables_in_head;
     bool head_linear;
+    bool ground_dense_ready;
+    bool *body_ground;
+    bool *body_activation_view_admitted;
+    CettaGsltGroundDenseTermProgramV1 ground_dense_head;
+    CettaGsltGroundDenseTermProgramV1 *ground_dense_body;
 } PPOSLFNativeCompiledRuleV1;
 
 typedef struct {
@@ -28,6 +35,92 @@ typedef struct {
     bool has_exact_group;
     bool has_external_relation;
 } PPOSLFNativeApplicationDispatchV1;
+
+static uint64_t pposlf_native_stats_add_sat_v1(
+    uint64_t left, uint64_t right) {
+    return UINT64_MAX - left < right ? UINT64_MAX : left + right;
+}
+
+void pposlf_native_vm_stats_v1_accumulate(
+    PPOSLFNativeVMStatsV1 *aggregate,
+    const PPOSLFNativeVMStatsV1 *sample) {
+    if (!aggregate || !sample)
+        return;
+#define PPOSLF_NATIVE_STATS_SUM_V1(field)                                      \
+    aggregate->field = pposlf_native_stats_add_sat_v1(                        \
+        aggregate->field, sample->field)
+    PPOSLF_NATIVE_STATS_SUM_V1(goals_entered);
+    PPOSLF_NATIVE_STATS_SUM_V1(rule_attempts);
+    PPOSLF_NATIVE_STATS_SUM_V1(rule_matches);
+    PPOSLF_NATIVE_STATS_SUM_V1(ground_pattern_rule_attempts);
+    PPOSLF_NATIVE_STATS_SUM_V1(ground_pattern_rule_matches);
+    PPOSLF_NATIVE_STATS_SUM_V1(ground_dense_match_nodes);
+    PPOSLF_NATIVE_STATS_SUM_V1(ground_dense_rigid_subtrees_compared);
+    PPOSLF_NATIVE_STATS_SUM_V1(ground_dense_slot_writes);
+    PPOSLF_NATIVE_STATS_SUM_V1(ground_dense_slot_compares);
+    PPOSLF_NATIVE_STATS_SUM_V1(ground_dense_expression_materializations);
+    PPOSLF_NATIVE_STATS_SUM_V1(ground_dense_rigid_subtrees_reused);
+    PPOSLF_NATIVE_STATS_SUM_V1(ground_dense_ground_body_reuses);
+    PPOSLF_NATIVE_STATS_SUM_V1(ground_dense_workspace_growths);
+    PPOSLF_NATIVE_STATS_SUM_V1(ground_dense_view_nodes);
+    PPOSLF_NATIVE_STATS_SUM_V1(ground_dense_view_variable_resolutions);
+    PPOSLF_NATIVE_STATS_SUM_V1(ground_dense_view_deferrals);
+    PPOSLF_NATIVE_STATS_SUM_V1(positional_linear_rule_attempts);
+    PPOSLF_NATIVE_STATS_SUM_V1(positional_linear_rule_matches);
+    PPOSLF_NATIVE_STATS_SUM_V1(positional_linear_rule_fallbacks);
+    PPOSLF_NATIVE_STATS_SUM_V1(deferred_epoch_goal_materializations);
+    PPOSLF_NATIVE_STATS_SUM_V1(activation_view_goal_admissions);
+    PPOSLF_NATIVE_STATS_SUM_V1(activation_view_rule_attempts);
+    PPOSLF_NATIVE_STATS_SUM_V1(activation_view_rule_matches);
+    PPOSLF_NATIVE_STATS_SUM_V1(activation_view_fallback_materializations);
+    PPOSLF_NATIVE_STATS_SUM_V1(structural_shape_guard_attempts);
+    PPOSLF_NATIVE_STATS_SUM_V1(structural_shape_guard_rejections);
+    PPOSLF_NATIVE_STATS_SUM_V1(structural_shape_guard_unknowns);
+    PPOSLF_NATIVE_STATS_SUM_V1(compiled_application_dispatches);
+    PPOSLF_NATIVE_STATS_SUM_V1(indexed_candidate_visits);
+    PPOSLF_NATIVE_STATS_SUM_V1(full_scan_candidate_visits);
+    PPOSLF_NATIVE_STATS_SUM_V1(external_row_candidate_visits);
+    PPOSLF_NATIVE_STATS_SUM_V1(external_row_matches);
+    PPOSLF_NATIVE_STATS_SUM_V1(external_exact_key_lookups);
+    PPOSLF_NATIVE_STATS_SUM_V1(external_exact_key_hits);
+    PPOSLF_NATIVE_STATS_SUM_V1(external_prefix_key_lookups);
+    PPOSLF_NATIVE_STATS_SUM_V1(external_prefix_key_hits);
+    PPOSLF_NATIVE_STATS_SUM_V1(external_prefix_key_candidates);
+    PPOSLF_NATIVE_STATS_SUM_V1(external_prefix_memo_hits);
+    PPOSLF_NATIVE_STATS_SUM_V1(external_prefix_memo_misses);
+    PPOSLF_NATIVE_STATS_SUM_V1(generated_continuations);
+    PPOSLF_NATIVE_STATS_SUM_V1(generated_raw_tail_deterministic_continuations);
+    PPOSLF_NATIVE_STATS_SUM_V1(generated_tail_deterministic_continuations);
+    PPOSLF_NATIVE_STATS_SUM_V1(generated_tail_frame_reuses);
+    PPOSLF_NATIVE_STATS_SUM_V1(deferred_shape_guard_candidates);
+    PPOSLF_NATIVE_STATS_SUM_V1(deferred_shape_guard_attempts);
+    PPOSLF_NATIVE_STATS_SUM_V1(external_continuations);
+    PPOSLF_NATIVE_STATS_SUM_V1(external_tail_deterministic_continuations);
+    PPOSLF_NATIVE_STATS_SUM_V1(external_tail_frame_reuses);
+    PPOSLF_NATIVE_STATS_SUM_V1(deterministic_tail_collections);
+    PPOSLF_NATIVE_STATS_SUM_V1(deterministic_tail_collection_failures);
+    PPOSLF_NATIVE_STATS_SUM_V1(deterministic_goal_roots_scanned);
+    PPOSLF_NATIVE_STATS_SUM_V1(deterministic_binding_collections);
+    PPOSLF_NATIVE_STATS_SUM_V1(deterministic_binding_collection_failures);
+    PPOSLF_NATIVE_STATS_SUM_V1(deterministic_binding_roots_scanned);
+    PPOSLF_NATIVE_STATS_SUM_V1(deterministic_binding_items_discarded);
+    PPOSLF_NATIVE_STATS_SUM_V1(deterministic_trail_entries_discarded);
+    PPOSLF_NATIVE_STATS_SUM_V1(deterministic_arena_bytes_copied);
+    PPOSLF_NATIVE_STATS_SUM_V1(deterministic_arena_bytes_reclaimed);
+    PPOSLF_NATIVE_STATS_SUM_V1(goal_materialization_arena_bytes);
+    PPOSLF_NATIVE_STATS_SUM_V1(generated_match_arena_bytes);
+    PPOSLF_NATIVE_STATS_SUM_V1(body_expansion_arena_bytes);
+    PPOSLF_NATIVE_STATS_SUM_V1(pending_goal_node_arena_bytes);
+    PPOSLF_NATIVE_STATS_SUM_V1(rollback_arena_bytes_reclaimed);
+#undef PPOSLF_NATIVE_STATS_SUM_V1
+    if (aggregate->maximum_goal_depth < sample->maximum_goal_depth)
+        aggregate->maximum_goal_depth = sample->maximum_goal_depth;
+    if (aggregate->maximum_search_frame_depth <
+        sample->maximum_search_frame_depth) {
+        aggregate->maximum_search_frame_depth =
+            sample->maximum_search_frame_depth;
+    }
+}
 
 typedef struct {
     const PPOSLFNativeTypePlanV1 *plan;
@@ -97,6 +190,7 @@ struct PPOSLFNativePendingGoalV1 {
     uint32_t epoch;
     uint32_t activation_first_entry;
     bool epoch_original;
+    bool activation_view_admitted;
     PPOSLFNativePendingGoalV1 *next;
 };
 
@@ -127,7 +221,7 @@ typedef struct {
     Arena scratch;
     Arena survivor;
     BindingsBuilder bindings;
-    BindingsBuilder ground_bindings;
+    CettaGsltGroundDenseWorkspaceV1 ground_dense_workspace;
     PPOSLFNativePrefixMemoV1 prefix_memo;
     const PPOSLFNativeCapabilitySetImplV1 *capabilities;
     PPOSLFNativeVMProofEventV1 *proof_events;
@@ -174,6 +268,137 @@ static bool pposlf_native_type_vm_v1_expr_head(
     return term && term->kind == ATOM_EXPR &&
            term->expr.len == arity + 1u &&
            atom_is_symbol(term->expr.elems[0], head);
+}
+
+/* Substitution can replace variables but cannot replace an enclosing
+ * application constructor.  This local recognizer is therefore the exact
+ * admission condition for dispatching an activation closure from its source
+ * term while deferring all descendant substitution. */
+static bool pposlf_native_type_vm_v1_rigid_application_dispatch(
+    const Atom *term) {
+    return term && term->kind == ATOM_EXPR && term->expr.len > 0u &&
+           term->expr.elems[0] &&
+           term->expr.elems[0]->kind == ATOM_SYMBOL;
+}
+
+typedef struct {
+    const Atom *source;
+    const Atom *pattern;
+} PPOSLFNativeActivationViewPairV1;
+
+/* Decide whether matching `source` as an activation view against `pattern`
+ * can demand construction of a substituted source expression.  A pattern
+ * variable captures its entire counterpart; that is allocation-free only
+ * when the source counterpart is not a variable-bearing expression. */
+static bool pposlf_native_type_vm_v1_activation_pair_analyze(
+    const Atom *source, const Atom *pattern, bool *admitted_out) {
+    PPOSLFNativeActivationViewPairV1 inline_pairs[32];
+    PPOSLFNativeActivationViewPairV1 *pairs = inline_pairs;
+    size_t pair_len = 0u;
+    size_t pair_cap = sizeof(inline_pairs) / sizeof(inline_pairs[0]);
+    bool ok = false;
+
+    if (admitted_out)
+        *admitted_out = false;
+    if (!source || !pattern || !admitted_out)
+        return false;
+    pairs[pair_len++] = (PPOSLFNativeActivationViewPairV1){
+        .source = source,
+        .pattern = pattern,
+    };
+    while (pair_len != 0u) {
+        PPOSLFNativeActivationViewPairV1 pair = pairs[--pair_len];
+
+        if (!pair.source || !pair.pattern)
+            goto done;
+        if (pair.pattern->kind == ATOM_VAR) {
+            if (pair.source->kind == ATOM_EXPR &&
+                atom_has_vars((Atom *)pair.source)) {
+                ok = true;
+                goto done;
+            }
+            continue;
+        }
+        if (pair.source->kind != ATOM_EXPR ||
+            pair.pattern->kind != ATOM_EXPR ||
+            pair.source->expr.len != pair.pattern->expr.len)
+            continue;
+        if ((size_t)pair.source->expr.len > SIZE_MAX - pair_len)
+            goto done;
+        size_t required = pair_len + (size_t)pair.source->expr.len;
+        if (required > pair_cap) {
+            size_t next_cap = pair_cap;
+            PPOSLFNativeActivationViewPairV1 *grown;
+
+            while (next_cap < required) {
+                if (next_cap > SIZE_MAX / 2u)
+                    goto done;
+                next_cap *= 2u;
+            }
+            if (next_cap > SIZE_MAX / sizeof(*pairs))
+                goto done;
+            grown = malloc(next_cap * sizeof(*pairs));
+            if (!grown)
+                goto done;
+            memcpy(grown, pairs, pair_len * sizeof(*pairs));
+            if (pairs != inline_pairs)
+                free(pairs);
+            pairs = grown;
+            pair_cap = next_cap;
+        }
+        for (CettaExprIndex child = 0u;
+             child < pair.source->expr.len; child++) {
+            pairs[pair_len++] = (PPOSLFNativeActivationViewPairV1){
+                .source = pair.source->expr.elems[child],
+                .pattern = pair.pattern->expr.elems[child],
+            };
+        }
+    }
+    *admitted_out = true;
+    ok = true;
+
+done:
+    if (pairs != inline_pairs)
+        free(pairs);
+    return ok;
+}
+
+static bool pposlf_native_type_vm_v1_activation_view_analyze(
+    const PPOSLFNativeTypeVMImplV1 *impl,
+    const Atom *source, bool *admitted_out) {
+    const Atom *source_head;
+
+    if (admitted_out)
+        *admitted_out = false;
+    if (!impl || !source || !admitted_out ||
+        !pposlf_native_type_vm_v1_rigid_application_dispatch(source))
+        return admitted_out != NULL;
+    source_head = source->expr.elems[0];
+    for (uint32_t candidate = 0u;
+         candidate < impl->rule_len; candidate++) {
+        const Atom *pattern = impl->rules[candidate].head;
+        bool pair_admitted;
+
+        if (!pattern)
+            return false;
+        if (pattern->kind == ATOM_VAR) {
+            *admitted_out = false;
+            return true;
+        }
+        if (!pposlf_native_type_vm_v1_rigid_application_dispatch(
+                pattern) ||
+            pattern->expr.elems[0]->sym_id != source_head->sym_id)
+            continue;
+        if (!pposlf_native_type_vm_v1_activation_pair_analyze(
+                source, pattern, &pair_admitted))
+            return false;
+        if (!pair_admitted) {
+            *admitted_out = false;
+            return true;
+        }
+    }
+    *admitted_out = true;
+    return true;
 }
 
 static const char *pposlf_native_type_vm_v1_quoted_symbol(
@@ -402,6 +627,25 @@ static void pposlf_native_type_vm_v1_impl_free(
     PPOSLFNativeTypeVMImplV1 *impl) {
     if (!impl)
         return;
+    if (impl->rules) {
+        for (uint32_t rule_index = 0u;
+             rule_index < impl->rule_len; rule_index++) {
+            PPOSLFNativeCompiledRuleV1 *rule =
+                &impl->rules[rule_index];
+            if (rule->ground_dense_body) {
+                for (uint32_t body = 0u;
+                     body < rule->body_len; body++) {
+                    cetta_gslt_ground_dense_term_program_free_v1(
+                        &rule->ground_dense_body[body]);
+                }
+            }
+            free(rule->ground_dense_body);
+            free(rule->body_ground);
+            free(rule->body_activation_view_admitted);
+            cetta_gslt_ground_dense_term_program_free_v1(
+                &rule->ground_dense_head);
+        }
+    }
     arena_free(&impl->program_arena);
     free(impl->application_dispatch);
     free(impl->rules);
@@ -2019,8 +2263,11 @@ static PPOSLFNativeTypeVMImplV1 *pposlf_native_type_vm_v1_build(
                 "native NTT rule contains an invalid term span");
             goto fail;
         }
+        rule->variable_count = step->variable_count;
         rule->body_variables_in_head = flow.body_variables_in_head;
         rule->head_linear = flow.head_linear;
+        cetta_gslt_ground_dense_term_program_init_v1(
+            &rule->ground_dense_head);
         rule->head = pposlf_native_type_vm_v1_compile_term(
             impl, plan, step->head, compiled, state,
             error_buf, error_buf_size);
@@ -2031,6 +2278,18 @@ static PPOSLFNativeTypeVMImplV1 *pposlf_native_type_vm_v1_build(
             rule->body = arena_alloc(
                 &impl->program_arena,
                 (size_t)rule->body_len * sizeof(*rule->body));
+            rule->body_activation_view_admitted = calloc(
+                rule->body_len,
+                sizeof(*rule->body_activation_view_admitted));
+            rule->body_ground = calloc(
+                rule->body_len, sizeof(*rule->body_ground));
+            if (!rule->body || !rule->body_ground ||
+                !rule->body_activation_view_admitted) {
+                pposlf_native_type_vm_v1_set_error(
+                    error_buf, error_buf_size,
+                    "cannot allocate native NTT body analyses");
+                goto fail;
+            }
             for (uint32_t body = 0u; body < rule->body_len; body++) {
                 uint32_t root =
                     plan->body_roots[step->body_begin + body];
@@ -2039,6 +2298,67 @@ static PPOSLFNativeTypeVMImplV1 *pposlf_native_type_vm_v1_build(
                     error_buf, error_buf_size);
                 if (!rule->body[body])
                     goto fail;
+                rule->body_ground[body] =
+                    !atom_has_vars(rule->body[body]);
+            }
+        }
+        if (rule->body_variables_in_head) {
+            if (!cetta_gslt_ground_dense_term_compile_v1(
+                    &rule->ground_dense_head, rule->head, 1u,
+                    rule->variable_count, error_buf, error_buf_size) ||
+                cetta_gslt_ground_dense_term_is_linear_v1(
+                    &rule->ground_dense_head) != rule->head_linear) {
+                if (!error_buf || error_buf_size == 0u ||
+                    error_buf[0] == '\0') {
+                    pposlf_native_type_vm_v1_set_error(
+                        error_buf, error_buf_size,
+                        "native NTT dense head disagrees with generated flow");
+                }
+                goto fail;
+            }
+            if (rule->body_len > 0u) {
+                rule->ground_dense_body = calloc(
+                    rule->body_len, sizeof(*rule->ground_dense_body));
+                if (!rule->ground_dense_body) {
+                    pposlf_native_type_vm_v1_set_error(
+                        error_buf, error_buf_size,
+                        "cannot allocate native NTT dense body programs");
+                    goto fail;
+                }
+                for (uint32_t body = 0u;
+                     body < rule->body_len; body++) {
+                    cetta_gslt_ground_dense_term_program_init_v1(
+                        &rule->ground_dense_body[body]);
+                    if (rule->body_ground[body])
+                        continue;
+                    if (!cetta_gslt_ground_dense_term_compile_v1(
+                            &rule->ground_dense_body[body],
+                            rule->body[body], 1u,
+                            rule->variable_count,
+                            error_buf, error_buf_size))
+                        goto fail;
+                }
+            }
+            rule->ground_dense_ready = true;
+        }
+    }
+    for (uint32_t rule_index = 0u;
+         rule_index < impl->rule_len; rule_index++) {
+        PPOSLFNativeCompiledRuleV1 *rule =
+            &impl->rules[rule_index];
+
+        for (uint32_t body = 0u; body < rule->body_len; body++) {
+            if (!rule->body_variables_in_head) {
+                rule->body_activation_view_admitted[body] = false;
+                continue;
+            }
+            if (!pposlf_native_type_vm_v1_activation_view_analyze(
+                    impl, rule->body[body],
+                    &rule->body_activation_view_admitted[body])) {
+                pposlf_native_type_vm_v1_set_error(
+                    error_buf, error_buf_size,
+                    "cannot analyze activation-view consumers");
+                goto fail;
             }
         }
     }
@@ -2674,7 +2994,97 @@ typedef struct {
     bool initialized;
     bool waiting_child;
     bool saw_resource;
+    bool goal_is_activation_view;
 } PPOSLFNativeSearchFrameV1;
+
+/* Refine a relation-wide capability range only after a concrete goal exists.
+ * Activation views intentionally postpone this work: exact canonical keys and
+ * rigid prefixes are observations of the substituted value, not of its source
+ * closure. */
+static void pposlf_native_type_vm_v1_refine_external_range(
+    PPOSLFNativeSearchV1 *search,
+    PPOSLFNativeSearchFrameV1 *frame) {
+    uint32_t external_relation;
+
+    if (!search || !frame || !frame->goal ||
+        frame->goal_is_activation_view || !search->capabilities ||
+        frame->external_offset >= frame->external_end)
+        return;
+    external_relation = frame->external_relation;
+    if (!atom_has_vars(frame->goal)) {
+        uint32_t exact_row;
+
+        search->stats.external_exact_key_lookups++;
+        if (pposlf_native_type_vm_v1_exact_capability_row(
+                search->capabilities, external_relation,
+                frame->goal, &exact_row)) {
+            frame->external_offset = exact_row;
+            frame->external_end = exact_row + 1u;
+            search->stats.external_exact_key_hits++;
+        } else {
+            frame->external_offset = frame->external_end;
+        }
+        return;
+    }
+    if (frame->goal->kind == ATOM_EXPR) {
+        CettaExprLen prefix_elements = 1u;
+        const uint8_t *prefix = NULL;
+        size_t prefix_len = 0u;
+        uint32_t begin;
+        uint32_t end;
+
+        while (prefix_elements < frame->goal->expr.len &&
+               !atom_has_vars(
+                   frame->goal->expr.elems[prefix_elements]))
+            prefix_elements++;
+        if (prefix_elements > 1u &&
+            pposlf_native_prefix_memo_v1_get(
+                search, frame->goal, prefix_elements,
+                &prefix, &prefix_len)) {
+            search->stats.external_prefix_key_lookups++;
+            pposlf_native_type_vm_v1_capability_prefix_range(
+                search->capabilities, external_relation,
+                prefix, prefix_len, &begin, &end);
+            frame->external_offset = begin;
+            frame->external_end = end;
+            search->stats.external_prefix_key_candidates +=
+                (uint64_t)(end - begin);
+            if (begin < end)
+                search->stats.external_prefix_key_hits++;
+        }
+    }
+}
+
+static bool pposlf_native_type_vm_v1_materialize_activation_view(
+    PPOSLFNativeSearchV1 *search,
+    PPOSLFNativeSearchFrameV1 *frame) {
+    size_t before;
+    size_t after;
+    Atom *goal;
+
+    if (!search || !frame || !frame->goals)
+        return false;
+    if (!frame->goal_is_activation_view)
+        return frame->goal != NULL;
+    before = arena_accounted_live_bytes(&search->scratch);
+    search->stats.deferred_epoch_goal_materializations++;
+    search->stats.activation_view_fallback_materializations++;
+    goal = bindings_apply_epoch_then_all(
+        (Bindings *)bindings_builder_bindings(&search->bindings),
+        &search->scratch, frame->goals->goal,
+        frame->goals->epoch,
+        frame->goals->activation_first_entry);
+    after = arena_accounted_live_bytes(&search->scratch);
+    if (after > before)
+        search->stats.goal_materialization_arena_bytes += after - before;
+    if (!goal)
+        return false;
+    frame->goal = goal;
+    frame->goal_is_activation_view = false;
+    pposlf_native_type_vm_v1_refine_external_range(search, frame);
+    frame->candidate_arena_mark = arena_mark(&search->scratch);
+    return true;
+}
 
 static bool pposlf_native_type_vm_v1_push_search_frame(
     PPOSLFNativeSearchFrameV1 **frames,
@@ -2987,7 +3397,7 @@ static bool pposlf_native_type_vm_v1_compact_search_bindings(
             marks[mark_len] = frame->candidate_binding_mark;
             mark_fields[mark_len++] = &frame->candidate_binding_mark;
         }
-        if (frame->goal &&
+        if (frame->goal && !frame->goal_is_activation_view &&
             !pposlf_native_atom_root_push_v1(
                 &roots, &root_len, &root_cap, frame->goal))
             goto done;
@@ -3061,18 +3471,7 @@ done:
 
 static bool pposlf_native_type_vm_v1_builder_has_prime_state(
     const BindingsBuilder *builder) {
-    if (!builder)
-        return true;
-    if (bindings_prime_present(&builder->current))
-        return true;
-    for (uint32_t index = 0u; index < builder->trail_len; index++) {
-        if (prime_need_snapshot_present(
-                &builder->trail[index].prime_need) ||
-            prime_need_receipt_present(
-                &builder->trail[index].prime_receipt))
-            return true;
-    }
-    return false;
+    return !builder || bindings_builder_prime_present(builder);
 }
 
 static bool pposlf_native_type_vm_v1_stage_builder_atoms(
@@ -3182,7 +3581,9 @@ static void pposlf_native_type_vm_v1_commit_builder_atoms(
  * A generated deterministic-tail transition is a safe point: no C local
  * carries a guest value across it.  The complete live atom graph is named by
  * the generic search state itself -- materialized frame goals, shared pending
- * continuations, and both rollback-aware binding builders.  Proof receipts
+ * continuations, and the rollback-aware binding builder.  Dense ground
+ * substitutions are discarded before every safe point and retain no logical
+ * roots.  Proof receipts
  * carry only generated-step or capability-row indices, while the prefix memo
  * owns a separate arena.
  *
@@ -3218,9 +3619,7 @@ static bool pposlf_native_type_vm_v1_collect_deterministic_tail(
         frame_len > SIZE_MAX / sizeof(*frame_goal_copies))
         return false;
     if (pposlf_native_type_vm_v1_builder_has_prime_state(
-            &search->bindings) ||
-        pposlf_native_type_vm_v1_builder_has_prime_state(
-            &search->ground_bindings))
+            &search->bindings))
         return false;
 
     frame_pending_copies = calloc(
@@ -3326,12 +3725,8 @@ static bool pposlf_native_type_vm_v1_collect_deterministic_tail(
     }
     if (!pposlf_native_type_vm_v1_stage_builder_atoms(
             &search->bindings, &search->scratch, session) ||
-        !pposlf_native_type_vm_v1_stage_builder_atoms(
-            &search->ground_bindings, &search->scratch, session) ||
         !pposlf_native_type_vm_v1_builder_atoms_forwarded(
-            &search->bindings, &search->scratch, session) ||
-        !pposlf_native_type_vm_v1_builder_atoms_forwarded(
-            &search->ground_bindings, &search->scratch, session))
+            &search->bindings, &search->scratch, session))
         goto done;
 
     before_arena_bytes = arena_accounted_live_bytes(&search->scratch);
@@ -3343,8 +3738,6 @@ static bool pposlf_native_type_vm_v1_collect_deterministic_tail(
 
     pposlf_native_type_vm_v1_commit_builder_atoms(
         &search->bindings, &search->scratch, session);
-    pposlf_native_type_vm_v1_commit_builder_atoms(
-        &search->ground_bindings, &search->scratch, session);
 
     arena_free(&search->scratch);
     arena_init(&search->scratch);
@@ -3705,6 +4098,75 @@ static bool pposlf_native_type_vm_v1_generated_tail_deterministic(
     return true;
 }
 
+/* A raw tail has no later generated candidate and no extensional row.  This
+ * fact is read entirely from the compiled cursors, so it is independent of
+ * whether the current goal is materialized or retained as an activation
+ * view. */
+static bool pposlf_native_type_vm_v1_generated_raw_tail(
+    const PPOSLFNativeTypeVMImplV1 *vm,
+    const PPOSLFNativeSearchFrameV1 *frame) {
+    const PPOSLFNativeTypePlanV1 *plan;
+    uint32_t exact_offset;
+    uint32_t variable_offset;
+    uint32_t full_offset;
+    uint32_t candidate;
+
+    if (!vm || !(plan = vm->plan) || !frame ||
+        frame->external_offset < frame->external_end)
+        return false;
+    exact_offset = frame->exact_offset;
+    variable_offset = frame->variable_offset;
+    full_offset = frame->full_offset;
+    return !pposlf_native_type_vm_v1_next_candidate(
+        plan, frame->full_scan,
+        frame->exact_group, frame->has_exact,
+        frame->variable_group, frame->has_variable,
+        &exact_offset, &variable_offset, &full_offset, &candidate);
+}
+
+static void pposlf_native_type_vm_v1_add_ground_dense_stats(
+    PPOSLFNativeSearchV1 *search,
+    const CettaGsltGroundDenseStatsV1 *stats) {
+    if (!search || !stats)
+        return;
+    search->stats.ground_dense_match_nodes += stats->match_nodes;
+    search->stats.ground_dense_rigid_subtrees_compared +=
+        stats->rigid_subtrees_compared;
+    search->stats.ground_dense_slot_writes += stats->slot_writes;
+    search->stats.ground_dense_slot_compares += stats->slot_compares;
+    search->stats.ground_dense_expression_materializations +=
+        stats->expression_materializations;
+    search->stats.ground_dense_rigid_subtrees_reused +=
+        stats->rigid_subtrees_reused;
+    search->stats.ground_dense_workspace_growths +=
+        stats->workspace_growths;
+    search->stats.ground_dense_view_nodes += stats->view_nodes;
+    search->stats.ground_dense_view_variable_resolutions +=
+        stats->view_variable_resolutions;
+    search->stats.ground_dense_view_deferrals +=
+        stats->view_deferrals;
+}
+
+typedef struct {
+    const Bindings *bindings;
+    uint32_t epoch;
+    uint32_t first_entry;
+} PPOSLFNativeDenseActivationResolverV1;
+
+static CettaGsltGroundDenseStatusV1
+pposlf_native_type_vm_v1_resolve_dense_activation_variable(
+        void *context, Atom *source_variable, Atom **target_out) {
+    const PPOSLFNativeDenseActivationResolverV1 *resolver = context;
+
+    if (!resolver || !bindings_resolve_epoch_view_ground(
+            resolver->bindings, source_variable, resolver->epoch,
+            resolver->first_entry, target_out))
+        return CETTA_GSLT_GROUND_DENSE_INVALID_V1;
+    return *target_out
+        ? CETTA_GSLT_GROUND_DENSE_OK_V1
+        : CETTA_GSLT_GROUND_DENSE_DEFER_V1;
+}
+
 static PPOSLFNativeSearchOutcomeV1 pposlf_native_type_vm_v1_search(
     PPOSLFNativeSearchV1 *search,
     PPOSLFNativePendingGoalV1 *goals) {
@@ -3766,7 +4228,15 @@ static PPOSLFNativeSearchOutcomeV1 pposlf_native_type_vm_v1_search(
             }
             materialize_before =
                 arena_accounted_live_bytes(&search->scratch);
-            if (frame->goals->epoch_original) {
+            if (frame->goals->epoch_original &&
+                frame->goals->activation_view_admitted &&
+                frame->goals->activation_first_entry <=
+                    bindings_builder_bindings(
+                        &search->bindings)->len) {
+                frame->goal = frame->goals->goal;
+                frame->goal_is_activation_view = true;
+                search->stats.activation_view_goal_admissions++;
+            } else if (frame->goals->epoch_original) {
                 search->stats.deferred_epoch_goal_materializations++;
                 frame->goal = bindings_apply_epoch_then_all(
                     (Bindings *)bindings_builder_bindings(
@@ -3810,46 +4280,8 @@ static PPOSLFNativeSearchOutcomeV1 pposlf_native_type_vm_v1_search(
                 frame->external_end =
                     search->capabilities->relation_offsets[
                         external_relation + 1u];
-                if (!atom_has_vars(frame->goal)) {
-                    uint32_t exact_row;
-
-                    search->stats.external_exact_key_lookups++;
-                    if (pposlf_native_type_vm_v1_exact_capability_row(
-                            search->capabilities, external_relation,
-                            frame->goal, &exact_row)) {
-                        frame->external_offset = exact_row;
-                        frame->external_end = exact_row + 1u;
-                        search->stats.external_exact_key_hits++;
-                    } else {
-                        frame->external_offset = frame->external_end;
-                    }
-                } else {
-                    CettaExprLen prefix_elements = 1u;
-                    const uint8_t *prefix = NULL;
-                    size_t prefix_len = 0u;
-                    uint32_t begin;
-                    uint32_t end;
-
-                    while (prefix_elements < frame->goal->expr.len &&
-                           !atom_has_vars(
-                               frame->goal->expr.elems[prefix_elements]))
-                        prefix_elements++;
-                    if (prefix_elements > 1u &&
-                        pposlf_native_prefix_memo_v1_get(
-                            search, frame->goal, prefix_elements,
-                            &prefix, &prefix_len)) {
-                        search->stats.external_prefix_key_lookups++;
-                        pposlf_native_type_vm_v1_capability_prefix_range(
-                            search->capabilities, external_relation,
-                            prefix, prefix_len, &begin, &end);
-                        frame->external_offset = begin;
-                        frame->external_end = end;
-                        search->stats.external_prefix_key_candidates +=
-                            (uint64_t)(end - begin);
-                        if (begin < end)
-                            search->stats.external_prefix_key_hits++;
-                    }
-                }
+                pposlf_native_type_vm_v1_refine_external_range(
+                    search, frame);
             }
             frame->candidate_arena_mark =
                 arena_mark(&search->scratch);
@@ -3863,12 +4295,14 @@ static PPOSLFNativeSearchOutcomeV1 pposlf_native_type_vm_v1_search(
             uint32_t candidate;
             uint32_t epoch = 0u;
             uint32_t activation_first_entry = 0u;
-            uint32_t ground_binding_mark = 0u;
             bool goal_ground = false;
             bool ground_pattern = false;
             bool expansion_failed = false;
             bool tail_deterministic = false;
             uint32_t rejected_tail_candidates = 0u;
+            CettaGsltGroundDenseStatusV1 ground_dense_status =
+                CETTA_GSLT_GROUND_DENSE_INVALID_V1;
+            CettaGsltGroundDenseStatsV1 ground_dense_stats = {0};
             PPOSLFNativeShapeCompatibilityV1 shape_compatibility;
             size_t match_before;
             size_t match_after;
@@ -3897,6 +4331,16 @@ static PPOSLFNativeSearchOutcomeV1 pposlf_native_type_vm_v1_search(
                 search->stats.indexed_candidate_visits++;
             search->stats.rule_attempts++;
             rule = &search->vm->rules[candidate];
+            if (frame->goal_is_activation_view &&
+                rule->ground_dense_ready &&
+                !pposlf_native_type_vm_v1_generated_raw_tail(
+                    search->vm, frame) &&
+                !pposlf_native_type_vm_v1_materialize_activation_view(
+                    search, frame)) {
+                frame->saw_resource = true;
+                frame->stage = PPOSLF_NATIVE_SEARCH_EXTERNAL_V1;
+                continue;
+            }
             search->stats.structural_shape_guard_attempts++;
             shape_compatibility =
                 pposlf_native_type_vm_v1_structural_shape_compatibility(
@@ -3914,23 +4358,61 @@ static PPOSLFNativeSearchOutcomeV1 pposlf_native_type_vm_v1_search(
                 bindings_builder_bindings(&search->bindings)->len;
             frame->proof_mark = search->proof_event_len;
             match_before = arena_accounted_live_bytes(&search->scratch);
-            goal_ground = !atom_has_vars(frame->goal);
-            ground_pattern = goal_ground && rule->body_variables_in_head;
-            if (ground_pattern) {
-                ground_binding_mark = bindings_builder_save(
-                    &search->ground_bindings);
+            goal_ground = !frame->goal_is_activation_view &&
+                !atom_has_vars(frame->goal);
+            if (frame->goal_is_activation_view)
+                search->stats.activation_view_rule_attempts++;
+            if (rule->ground_dense_ready &&
+                (goal_ground || frame->goal_is_activation_view)) {
                 search->stats.ground_pattern_rule_attempts++;
-                if (!simple_match_builder(
-                        rule->head, frame->goal,
-                        &search->ground_bindings)) {
-                    bindings_builder_rollback(
-                        &search->ground_bindings, ground_binding_mark);
+                if (frame->goal_is_activation_view) {
+                    PPOSLFNativeDenseActivationResolverV1 resolver = {
+                        .bindings = bindings_builder_bindings(
+                            &search->bindings),
+                        .epoch = frame->goals->epoch,
+                        .first_entry =
+                            frame->goals->activation_first_entry,
+                    };
+
+                    ground_dense_status =
+                        cetta_gslt_ground_dense_term_match_view_v1(
+                        &search->ground_dense_workspace,
+                        &rule->ground_dense_head, frame->goals->goal,
+                        pposlf_native_type_vm_v1_resolve_dense_activation_variable,
+                        &resolver, &ground_dense_stats);
+                } else {
+                    ground_dense_status =
+                        cetta_gslt_ground_dense_term_match_v1(
+                            &search->ground_dense_workspace,
+                            &rule->ground_dense_head, frame->goal,
+                            &ground_dense_stats);
+                }
+                pposlf_native_type_vm_v1_add_ground_dense_stats(
+                    search, &ground_dense_stats);
+                if (ground_dense_status ==
+                    CETTA_GSLT_GROUND_DENSE_MISMATCH_V1) {
                     pposlf_native_type_vm_v1_rollback_search_branch(
                         search, frame);
                     continue;
                 }
-                search->stats.ground_pattern_rule_matches++;
-            } else {
+                if (ground_dense_status ==
+                    CETTA_GSLT_GROUND_DENSE_OK_V1) {
+                    ground_pattern = true;
+                    search->stats.ground_pattern_rule_matches++;
+                    if (frame->goal_is_activation_view)
+                        search->stats.activation_view_rule_matches++;
+                } else if (ground_dense_status !=
+                           CETTA_GSLT_GROUND_DENSE_DEFER_V1) {
+                    cetta_gslt_ground_dense_workspace_discard_match_v1(
+                        &search->ground_dense_workspace);
+                    pposlf_native_type_vm_v1_rollback_search_branch(
+                        search, frame);
+                    frame->saw_resource = true;
+                    frame->stage = PPOSLF_NATIVE_SEARCH_EXTERNAL_V1;
+                    continue;
+                }
+            }
+            if (!ground_pattern) {
                 bool matched = false;
                 if (!fresh_var_suffix_try(&epoch)) {
                     pposlf_native_type_vm_v1_rollback_search_branch(
@@ -3956,10 +4438,20 @@ static PPOSLFNativeSearchOutcomeV1 pposlf_native_type_vm_v1_search(
                             frame->candidate_arena_mark);
                     }
                 }
-                if (!matched)
+                if (!matched && frame->goal_is_activation_view) {
+                    matched = match_atoms_epoch_view_builder(
+                        frame->goals->goal,
+                        frame->goals->epoch,
+                        frame->goals->activation_first_entry,
+                        rule->head, &search->bindings,
+                        &search->scratch, epoch);
+                    if (matched)
+                        search->stats.activation_view_rule_matches++;
+                } else if (!matched) {
                     matched = match_atoms_epoch_builder(
                         frame->goal, rule->head, &search->bindings,
                         &search->scratch, epoch);
+                }
                 if (!matched ||
                     bindings_has_loop(
                         bindings_builder_bindings(&search->bindings))) {
@@ -3979,8 +4471,8 @@ static PPOSLFNativeSearchOutcomeV1 pposlf_native_type_vm_v1_search(
                     PPOSLF_NATIVE_VM_PROOF_GENERATED_STEP_V1,
                     candidate)) {
                 if (ground_pattern)
-                    bindings_builder_rollback(
-                        &search->ground_bindings, ground_binding_mark);
+                    cetta_gslt_ground_dense_workspace_discard_match_v1(
+                        &search->ground_dense_workspace);
                 pposlf_native_type_vm_v1_rollback_search_branch(
                     search, frame);
                 frame->saw_resource = true;
@@ -3990,8 +4482,8 @@ static PPOSLFNativeSearchOutcomeV1 pposlf_native_type_vm_v1_search(
             if (rule->body_len > 0u &&
                 frame->goals->depth == UINT32_MAX) {
                 if (ground_pattern)
-                    bindings_builder_rollback(
-                        &search->ground_bindings, ground_binding_mark);
+                    cetta_gslt_ground_dense_workspace_discard_match_v1(
+                        &search->ground_dense_workspace);
                 pposlf_native_type_vm_v1_rollback_search_branch(
                     search, frame);
                 frame->saw_resource = true;
@@ -4013,12 +4505,26 @@ static PPOSLFNativeSearchOutcomeV1 pposlf_native_type_vm_v1_search(
                     search->stats.pending_goal_node_arena_bytes +=
                         node_after - node_before;
                 }
-                Atom *body_goal = ground_pattern
-                    ? bindings_apply_if_vars(
-                          (Bindings *)bindings_builder_bindings(
-                              &search->ground_bindings),
-                          &search->scratch, rule->body[body - 1u])
-                    : rule->body[body - 1u];
+                Atom *body_goal = rule->body[body - 1u];
+
+                if (ground_pattern && item &&
+                    rule->body_ground[body - 1u]) {
+                    search->stats.ground_dense_ground_body_reuses++;
+                } else if (ground_pattern && item) {
+                    memset(&ground_dense_stats, 0,
+                           sizeof(ground_dense_stats));
+                    ground_dense_status =
+                        cetta_gslt_ground_dense_term_instantiate_v1(
+                            &search->ground_dense_workspace,
+                            &rule->ground_dense_body[body - 1u],
+                            &search->scratch, &body_goal,
+                            &ground_dense_stats);
+                    pposlf_native_type_vm_v1_add_ground_dense_stats(
+                        search, &ground_dense_stats);
+                    if (ground_dense_status !=
+                        CETTA_GSLT_GROUND_DENSE_OK_V1)
+                        body_goal = NULL;
+                }
 
                 if (!item || !body_goal ||
                     (ground_pattern && atom_has_vars(body_goal))) {
@@ -4032,6 +4538,9 @@ static PPOSLFNativeSearchOutcomeV1 pposlf_native_type_vm_v1_search(
                     .activation_first_entry =
                         ground_pattern ? 0u : activation_first_entry,
                     .epoch_original = !ground_pattern,
+                    .activation_view_admitted =
+                        !ground_pattern &&
+                        rule->body_activation_view_admitted[body - 1u],
                     .next = expanded,
                 };
                 expanded = item;
@@ -4043,8 +4552,8 @@ static PPOSLFNativeSearchOutcomeV1 pposlf_native_type_vm_v1_search(
                     expansion_after - expansion_before;
             }
             if (ground_pattern)
-                bindings_builder_rollback(
-                    &search->ground_bindings, ground_binding_mark);
+                cetta_gslt_ground_dense_workspace_discard_match_v1(
+                    &search->ground_dense_workspace);
             if (expansion_failed) {
                 pposlf_native_type_vm_v1_rollback_search_branch(
                     search, frame);
@@ -4097,6 +4606,15 @@ static PPOSLFNativeSearchOutcomeV1 pposlf_native_type_vm_v1_search(
             if (frame_len > search->stats.maximum_search_frame_depth)
                 search->stats.maximum_search_frame_depth = frame_len;
             continue;
+        }
+
+        if (frame->stage == PPOSLF_NATIVE_SEARCH_EXTERNAL_V1 &&
+            frame->goal_is_activation_view &&
+            frame->external_offset < frame->external_end &&
+            !pposlf_native_type_vm_v1_materialize_activation_view(
+                search, frame)) {
+            frame->saw_resource = true;
+            frame->external_offset = frame->external_end;
         }
 
         if (frame->external_offset < frame->external_end) {
@@ -4284,13 +4802,8 @@ static bool pposlf_native_type_vm_v1_prove_with_capabilities_mode(
         arena_free(&search.scratch);
         return false;
     }
-    if (!bindings_builder_init(&search.ground_bindings, NULL)) {
-        bindings_builder_free(&search.bindings);
-        pposlf_native_prefix_memo_v1_free(&search.prefix_memo);
-        arena_free(&search.survivor);
-        arena_free(&search.scratch);
-        return false;
-    }
+    cetta_gslt_ground_dense_workspace_init_v1(
+        &search.ground_dense_workspace);
     root = (PPOSLFNativePendingGoalV1){
         .goal = query,
         .depth = 0u,
@@ -4319,7 +4832,8 @@ static bool pposlf_native_type_vm_v1_prove_with_capabilities_mode(
         result->outcome = PPOSLF_NATIVE_VM_NO_PROOF_V1;
     }
     free(search.proof_events);
-    bindings_builder_free(&search.ground_bindings);
+    cetta_gslt_ground_dense_workspace_free_v1(
+        &search.ground_dense_workspace);
     bindings_builder_free(&search.bindings);
     pposlf_native_prefix_memo_v1_free(&search.prefix_memo);
     arena_free(&search.survivor);

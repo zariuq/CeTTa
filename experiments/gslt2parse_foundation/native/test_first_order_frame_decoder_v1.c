@@ -436,6 +436,8 @@ int main(int argc, char **argv) {
     SymbolTable symbols;
     PPOSLFNativeTypePlanV1 native_types;
     PPProofStoragePlanV1 storage;
+    const PPProofIndexedValuePlanV1 *indexed_value;
+    const PPProofFrameIndexPlanV1 *frame_index;
     char error[512] = {0};
     bool ok = true;
 
@@ -466,6 +468,10 @@ int main(int argc, char **argv) {
         ok = false;
         goto done;
     }
+    indexed_value = ppproof_storage_plan_v1_indexed_value(
+        &storage, "mm-stack-proof-machine-v1");
+    frame_index = ppproof_storage_plan_v1_frame_index(
+        &storage, "mm-stack-proof-machine-v1");
     ok = expect(storage.table_len == 19u,
                 "generated storage table count changed") &&
          expect(storage.read_len == 9u,
@@ -475,9 +481,33 @@ int main(int argc, char **argv) {
                         &storage, "MetamathProofV1") != NULL,
                 "generated finite-support admission is missing") &&
          expect(storage.indexed_value_len == 1u &&
-                    ppproof_storage_plan_v1_indexed_value(
-                        &storage, "mm-stack-proof-machine-v1") != NULL,
+                    indexed_value != NULL,
                 "generated indexed-value admission is missing") &&
+         expect(ppproof_indexed_value_plan_v1_admits(
+                    indexed_value, "mm-check-theorem-compressed", 14u,
+                    "mm-stack-proof-machine-v1", "mm-proof-step",
+                    "mm-compressed-word"),
+                "indexed-value admission matches its generated call site") &&
+         expect(!ppproof_indexed_value_plan_v1_admits(
+                    indexed_value, "mm-check-theorem-compressed", 13u,
+                    "mm-stack-proof-machine-v1", "mm-proof-step",
+                    "mm-compressed-word"),
+                "indexed-value admission rejects a different action occurrence") &&
+         expect(!ppproof_indexed_value_plan_v1_admits(
+                    indexed_value, "mm-check-theorem-compressed", 14u,
+                    "mm-stack-proof-machine-v1", "mm-proof-label",
+                    "mm-compressed-word"),
+                "indexed-value admission rejects a different header role") &&
+         expect(storage.frame_index_len == 1u && frame_index != NULL,
+                "generated frame-index admission is missing") &&
+         expect(ppproof_frame_index_plan_v1_admits(
+                    frame_index, "mm-check-theorem-compressed", 14u,
+                    "mm-stack-proof-machine-v1"),
+                "frame-index admission matches its generated call site") &&
+         expect(!ppproof_frame_index_plan_v1_admits(
+                    frame_index, "mm-check-theorem-compressed", 13u,
+                    "mm-stack-proof-machine-v1"),
+                "frame-index admission rejects a different action occurrence") &&
          expect(storage.literal_hole_len == 1u &&
                     ppproof_storage_plan_v1_literal_hole(
                         &storage, "mm-stack-proof-machine-v1") != NULL,

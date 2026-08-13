@@ -50,6 +50,13 @@ typedef struct {
     char capability_digest[65];
 } PPProofGSLTRelationalRuntimeV1Receipt;
 
+/* Aggregate of every generated outcome query executed by one prepared
+ * runtime.  It is diagnostic only and never participates in a verdict. */
+typedef struct {
+    uint64_t query_executions;
+    PPOSLFNativeVMStatsV1 stats;
+} PPProofGSLTRelationalRuntimeV1Profile;
+
 typedef struct {
     void *implementation;
 } PPProofGSLTRelationalRuntimeV1;
@@ -94,5 +101,9 @@ PPRelationalStateProofV1Backend ppproof_gslt_relational_runtime_v1_backend(
 bool ppproof_gslt_relational_runtime_v1_last_receipt(
     PPProofGSLTRelationalRuntimeV1 *runtime,
     PPProofGSLTRelationalRuntimeV1Receipt *receipt_out);
+
+bool ppproof_gslt_relational_runtime_v1_profile(
+    const PPProofGSLTRelationalRuntimeV1 *runtime,
+    PPProofGSLTRelationalRuntimeV1Profile *profile_out);
 
 #endif

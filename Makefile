@@ -40,6 +40,7 @@ ENABLE_PRIME_NEED_CLOSURE_CAPTURE ?= 0
 ENABLE_PRIME_EVAL_STACK ?= 1
 ENABLE_LIB_PROLOG ?= auto
 ENABLE_PETTA_TYPECHECK_V2 ?= 1
+ENABLE_LANGDEF_DIAGNOSTIC_BACKENDS ?= 0
 PRIME_NEED_ALGEBRA_CHECKS := 98
 PRIME_NEED_CLOSURE_CAPTURE_GATE :=
 PRIME_NEED_CLOSURE_CAPTURE_STATS_GATE :=
@@ -85,6 +86,9 @@ $(error ENABLE_PIC must be 0 or 1)
 endif
 ifneq ($(filter $(ENABLE_PETTA_TYPECHECK_V2),0 1),$(ENABLE_PETTA_TYPECHECK_V2))
 $(error ENABLE_PETTA_TYPECHECK_V2 must be 0 or 1)
+endif
+ifneq ($(filter $(ENABLE_LANGDEF_DIAGNOSTIC_BACKENDS),0 1),$(ENABLE_LANGDEF_DIAGNOSTIC_BACKENDS))
+$(error ENABLE_LANGDEF_DIAGNOSTIC_BACKENDS must be 0 or 1)
 endif
 ifneq ($(filter $(CETTA_PROVENANCE_ASSERT),0 1),$(CETTA_PROVENANCE_ASSERT))
 $(error CETTA_PROVENANCE_ASSERT must be 0 or 1)
@@ -318,6 +322,9 @@ endif
 ifeq ($(ENABLE_PETTA_TYPECHECK_V2),0)
 BUILD_OBJ_TAG := $(BUILD_OBJ_TAG).no-petta-typecheck-v2
 endif
+ifeq ($(ENABLE_LANGDEF_DIAGNOSTIC_BACKENDS),1)
+BUILD_OBJ_TAG := $(BUILD_OBJ_TAG).langdef-diagnostics
+endif
 SANITIZER_WORDS := $(subst $(comma), ,$(SANITIZERS))
 
 # Test and probe invocations must not share the public ./cetta output.  A
@@ -417,7 +424,7 @@ PETTA_TYPECHECK_V2_SRC =
 ifeq ($(ENABLE_PETTA_TYPECHECK_V2),1)
 PETTA_TYPECHECK_V2_SRC = src/petta_typecheck.c
 endif
-SRC = src/symbol.c src/atom.c src/name_key.c src/atom_blob.c src/abt.c src/parser.c $(COMPILED_READER_RUNTIME_SRC) src/mm2_lower.c src/subst_tree.c src/space.c src/registry_resolver.c src/space_match_backend.c src/match.c src/match_decision.c src/term_canon.c src/variant_shape.c src/variant_instance.c src/answer_bank.c src/table_store.c src/search_machine.c src/petta_program.c src/petta_search_machine.c $(PETTA_TYPECHECK_V2_SRC) src/petta_specializer.c src/rule_machine.c $(LIB_PROLOG_SRC) src/term_universe.c src/stats.c src/parallel_executor.c src/prime_need.c src/petta_semantics.c src/prepared_pure_machine.c src/eval.c src/grounded.c src/he_typing.c src/inference_checker.c src/nik_direct_authority.c src/nik_runtime.c src/prime_semantics.c src/text_source.c src/native_handle.c src/native_sha256.c src/mork_space_bridge_runtime.c src/library.c src/langdef_pack.c src/gslt_provider_runtime.c src/gslt_space_fact_provider_v1.c src/gslt_finite_fact_provider_v1.c src/gslt_revisioned_space_provider_v1.c src/gslt_abt_provider_v1.c src/gslt_horn_runtime.c src/gslt_dense_bitset_v1.c src/gslt_compiled_runtime.c src/gslt_indexed_instruction_decoder_v1.c src/gslt_indexed_value_table_v1.c src/gslt_literal_hole_program_v1.c src/gslt_u32_index_v1.c src/gslt_u32_slice_arena_v1.c src/gslt_epoch_slots_v1.c src/gslt_language_runtime.c src/gslt_pure_provider_v1.c src/gslt_support_transform_runtime.c src/generated/prime_nik_authorities_v1.generated.c src/generated/prime_nik_runtime_v1.generated.c src/generated/gslt_il_language_v1.generated.c src/generated/metta_interact_language_v1.generated.c src/generated/mm2_gslt_profile_v1.generated.c src/generated/subzero_language_v1.generated.c src/generated/zero_language_v1.generated.c src/generated/zero_exp_language_v1.generated.c src/generated/zero_emit_language_v1.generated.c src/generated/zero_interact_language_v1.generated.c src/generated/zero_interact_provider_catalog_v1.generated.c src/generated/zerouv_language_v1.generated.c src/he_small_step_pack.c src/lib_parse_native_grammar.c src/lib_parse_inference_native.c experiments/gslt2parse_foundation/native/finite_horn_gslt_v1.c experiments/gslt2parse_foundation/native/finite_horn_ground_term_v1.c experiments/gslt2parse_foundation/native/parser_term_projection_v1.c experiments/gslt2parse_foundation/native/parser_pack_abi_v1.c experiments/gslt2parse_foundation/native/parser_action_bytecode_v1.c experiments/gslt2parse_foundation/native/parser_pack_native_v1.c experiments/gslt2parse_foundation/native/parser_pack_lexical_v1.c experiments/gslt2parse_foundation/native/parser_pack_gll_v1.c experiments/gslt2parse_foundation/native/regular_span_dfa_v1.c experiments/gslt2parse_foundation/native/regular_span_nfa_v1.c $(PYTHON_SRC) src/session.c src/lang.c src/rhocalc_core.c src/rhocalc_syntax.c src/compile.c src/runtime.c src/cetta_stdlib.c native/native_modules.c src/main.c
+SRC = src/symbol.c src/atom.c src/name_key.c src/atom_blob.c src/abt.c src/parser.c $(COMPILED_READER_RUNTIME_SRC) src/mm2_lower.c src/subst_tree.c src/space.c src/registry_resolver.c src/space_match_backend.c src/match.c src/match_decision.c src/term_canon.c src/variant_shape.c src/variant_instance.c src/answer_bank.c src/table_store.c src/search_machine.c src/petta_program.c src/petta_search_machine.c $(PETTA_TYPECHECK_V2_SRC) src/petta_specializer.c src/rule_machine.c $(LIB_PROLOG_SRC) src/term_universe.c src/stats.c src/parallel_executor.c src/prime_need.c src/petta_semantics.c src/prepared_pure_machine.c src/eval.c src/grounded.c src/he_typing.c src/inference_checker.c src/nik_direct_authority.c src/nik_runtime.c src/prime_semantics.c src/text_source.c src/native_handle.c src/native_sha256.c src/mork_space_bridge_runtime.c src/library.c src/langdef_pack.c src/gslt_provider_runtime.c src/gslt_space_fact_provider_v1.c src/gslt_finite_fact_provider_v1.c src/gslt_revisioned_space_provider_v1.c src/gslt_abt_provider_v1.c src/gslt_horn_runtime.c src/gslt_dense_bitset_v1.c src/gslt_compiled_runtime.c src/gslt_indexed_instruction_decoder_v1.c src/gslt_indexed_value_table_v1.c src/gslt_split_indexed_table_v1.c src/gslt_literal_hole_program_v1.c src/gslt_u32_index_v1.c src/gslt_u32_slice_arena_v1.c src/gslt_epoch_slots_v1.c src/gslt_ground_dense_term_v1.c src/gslt_language_runtime.c src/gslt_pure_provider_v1.c src/gslt_support_transform_runtime.c src/generated/prime_nik_authorities_v1.generated.c src/generated/prime_nik_runtime_v1.generated.c src/generated/gslt_il_language_v1.generated.c src/generated/metta_interact_language_v1.generated.c src/generated/mm2_gslt_profile_v1.generated.c src/generated/subzero_language_v1.generated.c src/generated/zero_language_v1.generated.c src/generated/zero_exp_language_v1.generated.c src/generated/zero_emit_language_v1.generated.c src/generated/zero_interact_language_v1.generated.c src/generated/zero_interact_provider_catalog_v1.generated.c src/generated/zerouv_language_v1.generated.c src/he_small_step_pack.c src/lib_parse_native_grammar.c src/lib_parse_inference_native.c experiments/gslt2parse_foundation/native/finite_horn_gslt_v1.c experiments/gslt2parse_foundation/native/finite_horn_ground_term_v1.c experiments/gslt2parse_foundation/native/parser_term_projection_v1.c experiments/gslt2parse_foundation/native/parser_pack_abi_v1.c experiments/gslt2parse_foundation/native/parser_action_bytecode_v1.c experiments/gslt2parse_foundation/native/parser_pack_native_v1.c experiments/gslt2parse_foundation/native/parser_pack_lexical_v1.c experiments/gslt2parse_foundation/native/parser_pack_gll_v1.c experiments/gslt2parse_foundation/native/regular_span_dfa_v1.c experiments/gslt2parse_foundation/native/regular_span_nfa_v1.c $(PYTHON_SRC) src/session.c src/lang.c src/rhocalc_core.c src/rhocalc_syntax.c src/compile.c src/runtime.c src/cetta_stdlib.c native/native_modules.c src/main.c
 SRC += src/inference_side_condition_provider.c \
 	src/generated/prime_nik_side_condition_provider_catalog_v1.generated.c \
 	experiments/gslt2parse_foundation/native/parser_pack_glr_v1.c
@@ -443,13 +450,16 @@ LANGDEF_COMPILED_CURSOR_RUNTIME_SRC = \
 	experiments/gslt2parse_foundation/native/oslf_native_type_vm_v1.c \
 	experiments/gslt2parse_foundation/native/proof_gslt_relational_runtime_v1.c \
 	experiments/gslt2parse_foundation/native/proof_storage_plan_v1.c \
-	experiments/gslt2parse_foundation/native/first_order_frame_decoder_v1.c \
 	experiments/gslt2parse_foundation/native/relational_stack_proof_v1.c \
 	experiments/gslt2parse_foundation/native/relational_state_program_v1.c \
 	experiments/gslt2parse_foundation/native/parser_atom_projection_v1.c \
 	experiments/gslt2parse_foundation/native/parser_atom_projection_events_v1.c \
 	experiments/gslt2parse_foundation/native/parser_atom_projection_action_v1.c \
 	experiments/gslt2parse_foundation/native/semantic_mask_nfa_v1.c
+ifeq ($(ENABLE_LANGDEF_DIAGNOSTIC_BACKENDS),1)
+LANGDEF_COMPILED_CURSOR_RUNTIME_SRC += \
+	experiments/gslt2parse_foundation/native/first_order_frame_decoder_v1.c
+endif
 SRC += experiments/gslt2parse_foundation/native/parser_pack_abi_stream_v1.c \
 	$(LANGDEF_COMPILED_CURSOR_RUNTIME_SRC) native/langdef_module.c
 ifeq ($(ENABLE_RUNTIME_STATS),1)
@@ -678,6 +688,9 @@ PROOF_GSLT_RELATIONAL_DECLARATION_V1_TEST_LINK_OBJ = \
 	$(PROOF_GSLT_RELATIONAL_ASSERTION_V1_OBJ) \
 	$(PROOF_GSLT_RELATIONAL_DECLARATION_V1_OBJ) \
 	$(PROOF_GSLT_RELATIONAL_MACHINE_V1_OBJ) \
+	$(GSLT_INDEXED_INSTRUCTION_DECODER_V1_OBJ) \
+	$(GSLT_SPLIT_INDEXED_TABLE_V1_OBJ) \
+	$(GSLT_U32_INDEX_V1_OBJ) \
 	$(RELATIONAL_VALUE_LIST_V1_OBJ)
 RELATIONAL_STACK_PROOF_V1_SRC = experiments/gslt2parse_foundation/native/relational_stack_proof_v1.c
 RELATIONAL_STACK_PROOF_V1_HEADER = experiments/gslt2parse_foundation/native/relational_stack_proof_v1.h
@@ -701,6 +714,12 @@ GSLT_INDEXED_VALUE_TABLE_V1_OBJ = src/gslt_indexed_value_table_v1.$(BUILD_OBJ_TA
 GSLT_INDEXED_VALUE_TABLE_V1_TEST_SRC = tests/support/test_gslt_indexed_value_table_v1.c
 GSLT_INDEXED_VALUE_TABLE_V1_TEST_OBJ = runtime/bootstrap/test_gslt_indexed_value_table_v1.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o
 GSLT_INDEXED_VALUE_TABLE_V1_TEST_BIN = runtime/test_gslt_indexed_value_table_v1-$(BUILD_OBJ_TAG)
+GSLT_SPLIT_INDEXED_TABLE_V1_SRC = src/gslt_split_indexed_table_v1.c
+GSLT_SPLIT_INDEXED_TABLE_V1_HEADER = src/gslt_split_indexed_table_v1.h
+GSLT_SPLIT_INDEXED_TABLE_V1_OBJ = src/gslt_split_indexed_table_v1.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o
+GSLT_SPLIT_INDEXED_TABLE_V1_TEST_SRC = tests/support/test_gslt_split_indexed_table_v1.c
+GSLT_SPLIT_INDEXED_TABLE_V1_TEST_OBJ = runtime/bootstrap/test_gslt_split_indexed_table_v1.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o
+GSLT_SPLIT_INDEXED_TABLE_V1_TEST_BIN = runtime/test_gslt_split_indexed_table_v1-$(BUILD_OBJ_TAG)
 GSLT_LITERAL_HOLE_PROGRAM_V1_SRC = src/gslt_literal_hole_program_v1.c
 GSLT_LITERAL_HOLE_PROGRAM_V1_HEADER = src/gslt_literal_hole_program_v1.h
 GSLT_LITERAL_HOLE_PROGRAM_V1_OBJ = src/gslt_literal_hole_program_v1.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o
@@ -725,6 +744,19 @@ GSLT_EPOCH_SLOTS_V1_OBJ = src/gslt_epoch_slots_v1.$(BUILD_OBJ_TAG)$(if $(filter 
 GSLT_EPOCH_SLOTS_V1_TEST_SRC = tests/support/test_gslt_epoch_slots_v1.c
 GSLT_EPOCH_SLOTS_V1_TEST_OBJ = runtime/bootstrap/test_gslt_epoch_slots_v1.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o
 GSLT_EPOCH_SLOTS_V1_TEST_BIN = runtime/test_gslt_epoch_slots_v1-$(BUILD_OBJ_TAG)
+GSLT_GROUND_DENSE_TERM_V1_SRC = src/gslt_ground_dense_term_v1.c
+GSLT_GROUND_DENSE_TERM_V1_HEADER = src/gslt_ground_dense_term_v1.h
+GSLT_GROUND_DENSE_TERM_V1_OBJ = src/gslt_ground_dense_term_v1.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o
+GSLT_GROUND_DENSE_TERM_V1_TEST_SRC = tests/support/test_gslt_ground_dense_term_v1.c
+GSLT_GROUND_DENSE_TERM_V1_TEST_OBJ = runtime/bootstrap/test_gslt_ground_dense_term_v1.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o
+GSLT_GROUND_DENSE_TERM_V1_TEST_BIN = runtime/test_gslt_ground_dense_term_v1-$(BUILD_OBJ_TAG)
+GSLT_GROUND_DENSE_TERM_V1_TEST_LINK_OBJ = \
+	src/symbol.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o \
+	src/atom.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o \
+	src/name_key.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o \
+	src/native_sha256.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o \
+	$(GSLT_EPOCH_SLOTS_V1_OBJ) \
+	$(GSLT_GROUND_DENSE_TERM_V1_OBJ)
 RELATIONAL_STATE_PROGRAM_V1_SRC = experiments/gslt2parse_foundation/native/relational_state_program_v1.c
 RELATIONAL_STATE_PROGRAM_V1_HEADER = experiments/gslt2parse_foundation/native/relational_state_program_v1.h
 RELATIONAL_STATE_PROGRAM_V1_OBJ = experiments/gslt2parse_foundation/native/relational_state_program_v1.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o
@@ -917,6 +949,8 @@ OSLF_NATIVE_TYPE_VM_V1_TEST_LINK_OBJ = \
 	experiments/gslt2parse_foundation/native/finite_horn_ground_term_v1.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o \
 	$(FINITE_HORN_ANSWER_STREAM_V1_OBJ) \
 	$(OSLF_NATIVE_TYPE_PLAN_V1_OBJ) \
+	$(GSLT_EPOCH_SLOTS_V1_OBJ) \
+	$(GSLT_GROUND_DENSE_TERM_V1_OBJ) \
 	$(OSLF_NATIVE_TYPE_VM_V1_OBJ) \
 	$(OSLF_NATIVE_TYPE_VM_V1_MATCH_OBJ) \
 	$(OSLF_NATIVE_TYPE_VM_V1_VARIANT_OBJ) \
@@ -927,6 +961,7 @@ OSLF_NATIVE_TYPE_VM_V1_LDFLAGS = \
 PROOF_GSLT_RELATIONAL_RUNTIME_NATIVE_V1_TEST_LINK_OBJ = \
 	$(PARSER_PACK_CURSOR_GENERATED_V1_LINK_OBJ) \
 	$(OSLF_NATIVE_TYPE_PLAN_V1_OBJ) \
+	$(GSLT_GROUND_DENSE_TERM_V1_OBJ) \
 	$(OSLF_NATIVE_TYPE_VM_V1_OBJ) \
 	$(OSLF_NATIVE_TYPE_VM_V1_MATCH_OBJ) \
 	$(OSLF_NATIVE_TYPE_VM_V1_VARIANT_OBJ) \
@@ -1621,6 +1656,7 @@ METAMATH_SET_MM_V1 ?=
 METAMATH_SET_MM_SHA256_V1 = 6ecbc6c3c8c4beb42f905a49f6442be16087b606eed6933b41b3c930a078f18b
 METAMATH_SET_MM_IMPORT_COUNT_V1 = 274071
 METAMATH_COGSLT_CORE_BIN_V1 = runtime/cetta-metamath-core-v1
+METAMATH_COGSLT_DIAGNOSTIC_BIN_V1 = runtime/cetta-metamath-diagnostic-$(BUILD_OBJ_TAG)
 METAMATH_TEST_ROOT_V1 ?=
 METAMATH_MMLEAN4_ROOT_V1 ?=
 METAMATH_MMLEAN4_BIN_V1 ?=
@@ -1713,6 +1749,7 @@ define cetta_exec
 $(if $(filter 1,$(SANITIZER_REPEATABLE)),env CETTA_SANITIZER_REPEATABLE=1 CETTA_WRAPPED_BIN=$1 $(CETTA_EXEC_WRAPPER),$1)
 endef
 CETTA_BIN_INVOKE = $(call cetta_exec,./$(BIN))
+METAMATH_COGSLT_DIAGNOSTIC_BIN_INVOKE = $(call cetta_exec,./$(METAMATH_COGSLT_DIAGNOSTIC_BIN_V1))
 ifeq ($(SANITIZER_REPEATABLE),1)
 export CETTA_SANITIZER_REPEATABLE := 1
 export CETTA_WRAPPED_BIN := $(abspath $(BIN))
@@ -2239,7 +2276,7 @@ test-bindings-lookup-index: $(BINDINGS_LOOKUP_INDEX_TEST_BIN)
 	@enabled=$$($(call cetta_exec,./$(BINDINGS_LOOKUP_INDEX_TEST_BIN))); \
 	disabled=$$(CETTA_BINDINGS_LOOKUP_INDEX=0 $(call cetta_exec,./$(BINDINGS_LOOKUP_INDEX_TEST_BIN))); \
 	audited=$$(CETTA_BINDINGS_DERIVED_AUDIT=1 $(call cetta_exec,./$(BINDINGS_LOOKUP_INDEX_TEST_BIN))); \
-	expected='(BindingsLookupIndexSummary 53 53 0)'; \
+	expected='(BindingsLookupIndexSummary 70 70 0)'; \
 	printf '%s\n' "$$enabled"; \
 	test "$$enabled" = "$$expected" && test "$$disabled" = "$$expected" && \
 		test "$$audited" = "$$expected"
@@ -3460,6 +3497,17 @@ DEPS = $(OBJ:.o=.d) $(STAGE0_OBJ:.o=.d) \
 	$(PRIME_READER_AST_ORACLE_OBJ:.o=.d) \
 	$(PAYLOAD_MAP_CAPACITY_TEST_OBJ:.o=.d) \
 	$(RHOCALC_ABT_SUBSTITUTION_TEST_OBJ:.o=.d) \
+	$(OSLF_NATIVE_TYPE_VM_V1_OBJ:.o=.d) \
+	$(OSLF_NATIVE_TYPE_VM_V1_TEST_OBJ:.o=.d) \
+	$(OSLF_NATIVE_TYPE_VM_V1_MATCH_OBJ:.o=.d) \
+	$(OSLF_NATIVE_TYPE_VM_V1_VARIANT_OBJ:.o=.d) \
+	$(OSLF_NATIVE_TYPE_VM_V1_PRIME_NEED_OBJ:.o=.d) \
+	$(OSLF_NATIVE_TYPE_VM_V1_TEST_LINK_OBJ:.o=.d) \
+	$(PROOF_GSLT_RELATIONAL_RUNTIME_NATIVE_V1_TEST_LINK_OBJ:.o=.d) \
+	$(LANGDEF_COMPILER_V1_OBJ:.o=.d) \
+	$(LANGDEF_FINITE_HORN_GSLT_V1_OBJ:.o=.d) \
+	$(LANGDEF_METTA_EQUATION_COMPILER_V1_OBJ:.o=.d) \
+	$(LANGDEF_COMPILER_V1_LINK_OBJ:.o=.d) \
 	$(GSLT2PARSE_AUX_OBJ:.o=.d)
 
 # Remake configuration stamps before evaluating object dependencies.  The
@@ -3484,6 +3532,7 @@ $(BUILD_CONFIG_STAMP): $(BUILD_CONFIG_INPUTS)
 	printf '#define CETTA_BUILD_WITH_GMP %s\n' "$(ENABLE_GMP)" >> "$$tmp_cfg"; \
 	printf '#define CETTA_BUILD_WITH_LIB_PROLOG %s\n' "$(LIB_PROLOG_ENABLED)" >> "$$tmp_cfg"; \
 	printf '#define CETTA_BUILD_WITH_PETTA_TYPECHECK_V2 %s\n' "$(ENABLE_PETTA_TYPECHECK_V2)" >> "$$tmp_cfg"; \
+	printf '#define CETTA_BUILD_WITH_LANGDEF_DIAGNOSTIC_BACKENDS %s\n' "$(ENABLE_LANGDEF_DIAGNOSTIC_BACKENDS)" >> "$$tmp_cfg"; \
 	printf '#define CETTA_BUILD_WITH_RUNTIME_STATS %s\n' "$(ENABLE_RUNTIME_STATS)" >> "$$tmp_cfg"; \
 	printf '#define CETTA_BUILD_WITH_RUNTIME_TIMING %s\n' "$(ENABLE_RUNTIME_TIMING)" >> "$$tmp_cfg"; \
 	printf '#define CETTA_RHOCOST_COMMIT_AUDIT %s\n' "$(RHOCOST_COMMIT_AUDIT)" >> "$$tmp_cfg"; \
@@ -3508,6 +3557,7 @@ $(STAGE0_BUILD_CONFIG_STAMP): $(BUILD_CONFIG_INPUTS)
 	printf '#define CETTA_BUILD_WITH_GMP %s\n' "$(ENABLE_GMP)" >> "$$tmp_cfg"; \
 	printf '#define CETTA_BUILD_WITH_LIB_PROLOG %s\n' "$(LIB_PROLOG_ENABLED)" >> "$$tmp_cfg"; \
 	printf '#define CETTA_BUILD_WITH_PETTA_TYPECHECK_V2 %s\n' "$(ENABLE_PETTA_TYPECHECK_V2)" >> "$$tmp_cfg"; \
+	printf '#define CETTA_BUILD_WITH_LANGDEF_DIAGNOSTIC_BACKENDS %s\n' "$(ENABLE_LANGDEF_DIAGNOSTIC_BACKENDS)" >> "$$tmp_cfg"; \
 	printf '#define CETTA_BUILD_WITH_RUNTIME_STATS 0\n' >> "$$tmp_cfg"; \
 	printf '#define CETTA_BUILD_WITH_RUNTIME_TIMING 0\n' >> "$$tmp_cfg"; \
 	printf '#define CETTA_RHOCOST_COMMIT_AUDIT %s\n' "$(RHOCOST_COMMIT_AUDIT)" >> "$$tmp_cfg"; \
@@ -4028,6 +4078,13 @@ $(GSLT_EPOCH_SLOTS_V1_OBJ): \
 	@mkdir -p $(dir $@)
 	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
 
+$(GSLT_GROUND_DENSE_TERM_V1_OBJ): \
+		$(GSLT_GROUND_DENSE_TERM_V1_SRC) \
+		$(GSLT_GROUND_DENSE_TERM_V1_HEADER) \
+		$(GSLT_EPOCH_SLOTS_V1_HEADER) $(BUILD_CONFIG_HEADER)
+	@mkdir -p $(dir $@)
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+
 $(RELATIONAL_STACK_PROOF_V1_OBJ): $(RELATIONAL_STACK_PROOF_V1_SRC) $(RELATIONAL_STACK_PROOF_V1_HEADER) $(RELATIONAL_STORE_V1_HEADER) $(RELATIONAL_VALUE_LIST_V1_HEADER) $(GSLT_DENSE_BITSET_V1_HEADER) $(GSLT_INDEXED_INSTRUCTION_DECODER_V1_HEADER) $(GSLT_INDEXED_VALUE_TABLE_V1_HEADER) $(GSLT_LITERAL_HOLE_PROGRAM_V1_HEADER) $(GSLT_U32_INDEX_V1_HEADER) $(GSLT_U32_SLICE_ARENA_V1_HEADER) $(GSLT_EPOCH_SLOTS_V1_HEADER) $(BUILD_CONFIG_HEADER)
 	@mkdir -p $(dir $@)
 	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
@@ -4085,6 +4142,10 @@ $(PROOF_GSLT_RELATIONAL_MACHINE_V1_OBJ): \
 		$(PROOF_GSLT_RELATIONAL_DECLARATION_V1_HEADER) \
 		$(PROOF_GSLT_RELATIONAL_ASSERTION_V1_HEADER) \
 		$(PROOF_GSLT_SEQUENCE_EVIDENCE_V1_HEADER) \
+		$(GSLT_INDEXED_INSTRUCTION_DECODER_V1_HEADER) \
+		$(GSLT_SPLIT_INDEXED_TABLE_V1_HEADER) \
+		$(GSLT_U32_INDEX_V1_HEADER) \
+		$(PROOF_STORAGE_PLAN_V1_HEADER) \
 		$(RELATIONAL_STATE_PROGRAM_V1_HEADER) \
 		$(RELATIONAL_STORE_V1_HEADER) \
 		$(RELATIONAL_VALUE_LIST_V1_HEADER) $(BUILD_CONFIG_HEADER)
@@ -6252,7 +6313,7 @@ test-metamath-cogslt-proof-storage-plan-v1: \
 		$(METAMATH_PROOF_STORAGE_DENOTED_KEYS_V1); \
 	test "$$(rg -c '^    \(rule answer-fact-' \
 		$(METAMATH_PROOF_STORAGE_ANALYSIS_PAYLOAD_V1))" -eq 332; \
-	test "$$(wc -l <$(METAMATH_PROOF_STORAGE_PLAN_V1))" -eq 35; \
+	test "$$(wc -l <$(METAMATH_PROOF_STORAGE_PLAN_V1))" -eq 36; \
 	test "$$(rg -c '^\(compile-proof-storage-plan-v1 \(state-table-storage-v1 ' \
 		$(METAMATH_PROOF_STORAGE_PLAN_V1))" -eq 19; \
 	test "$$(rg -c '^\(compile-proof-storage-plan-v1 \(proof-machine-table-read-v1 ' \
@@ -6262,6 +6323,8 @@ test-metamath-cogslt-proof-storage-plan-v1: \
 	test "$$(rg -c '^\(compile-proof-storage-plan-v1 \(proof-finite-support-plan-v1 ' \
 		$(METAMATH_PROOF_STORAGE_PLAN_V1))" -eq 1; \
 	test "$$(rg -c '^\(compile-proof-storage-plan-v1 \(proof-indexed-value-plan-v1 ' \
+		$(METAMATH_PROOF_STORAGE_PLAN_V1))" -eq 1; \
+	test "$$(rg -c '^\(compile-proof-storage-plan-v1 \(proof-frame-index-plan-v1 ' \
 		$(METAMATH_PROOF_STORAGE_PLAN_V1))" -eq 1; \
 	test "$$(rg -c '^\(compile-proof-storage-plan-v1 \(proof-literal-hole-plan-v1 ' \
 		$(METAMATH_PROOF_STORAGE_PLAN_V1))" -eq 1; \
@@ -6276,6 +6339,9 @@ test-metamath-cogslt-proof-storage-plan-v1: \
 		$(METAMATH_PROOF_STORAGE_PLAN_V1); \
 	rg -F -x -q \
 		'(compile-proof-storage-plan-v1 (proof-indexed-value-plan-v1 mm-check-theorem-compressed 14 mm-stack-proof-machine-v1 mm-proof-step mm-compressed-word prepared-indexed-value-table-v1 proof-call-region-v1))' \
+		$(METAMATH_PROOF_STORAGE_PLAN_V1); \
+	rg -F -x -q \
+		'(compile-proof-storage-plan-v1 (proof-frame-index-plan-v1 mm-check-theorem-compressed 14 mm-stack-proof-machine-v1 u32-open-addressed-index-v1 duplicate-reject-v1 proof-call-region-v1))' \
 		$(METAMATH_PROOF_STORAGE_PLAN_V1); \
 	rg -F -x -q \
 		'(compile-proof-storage-plan-v1 (proof-literal-hole-plan-v1 mm-stack-proof-machine-v1 MetamathProofV1 ProofSequenceConsV1 ProofSequenceNilV1 literal-hole-run-program-v1 state-run-region-v1 proof-call-region-v1))' \
@@ -6297,6 +6363,10 @@ test-metamath-cogslt-proof-storage-plan-v1: \
 		$(METAMATH_PROOF_STORAGE_COMBINED_V1) \
 		>"$$work/indexed-disable.answers"; \
 	sed \
+		's/(state-table-v1 mm-state-assertion-mandatory-variable 2 2 state-persistent-v1)/(state-table-v1 mm-state-assertion-mandatory-variable 2 1 state-persistent-v1)/' \
+		$(METAMATH_PROOF_STORAGE_COMBINED_V1) \
+		>"$$work/frame-key-mutation.answers"; \
+	sed \
 		's/(state-table-v1 mm-state-formula 2 1 state-persistent-v1)/(state-table-v1 mm-state-formula 2 1 state-scoped-v1)/' \
 		$(METAMATH_PROOF_STORAGE_COMBINED_V1) \
 		>"$$work/literal-scoped.answers"; \
@@ -6304,7 +6374,7 @@ test-metamath-cogslt-proof-storage-plan-v1: \
 		"$$work/delete.answers"; then exit 1; fi; \
 	if cmp -s $(METAMATH_PROOF_STORAGE_COMBINED_V1) \
 		"$$work/falsify.answers"; then exit 1; fi; \
-	for lane in delete falsify support-delete indexed-disable literal-scoped; do \
+	for lane in delete falsify support-delete indexed-disable frame-key-mutation literal-scoped; do \
 		$(LANGDEF_COMPILER_V1_BIN) answer-facts \
 			--source "$$work/$$lane.answers" \
 			--out "$$work/$$lane.metta" >/dev/null; \
@@ -6330,6 +6400,7 @@ test-metamath-cogslt-proof-storage-plan-v1: \
 			--out "$$work/$$lane-denoted-keys.answers" >/dev/null; \
 		if [[ "$$lane" == support-delete || \
 			"$$lane" == indexed-disable || \
+			"$$lane" == frame-key-mutation || \
 			"$$lane" == literal-scoped ]]; then \
 			cmp "$$work/$$lane-required-keys.answers" \
 				"$$work/$$lane-denoted-keys.answers"; \
@@ -6359,11 +6430,15 @@ test-metamath-cogslt-proof-storage-plan-v1: \
 		"$$work/indexed-disable-plan.answers"; then exit 1; fi; \
 	rg -q 'proof-call-region-plan-v1.*mm-check-theorem-compressed' \
 		"$$work/indexed-disable-plan.answers"; \
+	if rg -q 'proof-frame-index-plan-v1' \
+		"$$work/frame-key-mutation-plan.answers"; then exit 1; fi; \
+	rg -q 'proof-indexed-value-plan-v1.*mm-check-theorem-compressed' \
+		"$$work/frame-key-mutation-plan.answers"; \
 	if rg -q 'proof-literal-hole-plan-v1' \
 		"$$work/literal-scoped-plan.answers"; then exit 1; fi; \
 	rg -q 'proof-call-region-plan-v1.*mm-check-theorem-normal' \
 		"$$work/literal-scoped-plan.answers"; \
-	printf '%s\n' '(MetamathProofStoragePlanV1Summary 21 21 0)'
+	printf '%s\n' '(MetamathProofStoragePlanV1Summary 24 24 0)'
 
 .PHONY: test-metamath-cogslt-load-bearing-mutations-v1
 test-metamath-cogslt-load-bearing-mutations-v1:
@@ -6527,6 +6602,14 @@ test-metamath-cogslt-syntax-v1: $(METAMATH_CURSOR_FOLD_TEST_BIN_V1)
 		test-metamath-cogslt-regeneration-v1
 	@echo '(MetamathCoGSLTSyntaxV1Summary 3 3 0)'
 
+.PHONY: test-metamath-cogslt-diagnostic-binary-v1
+test-metamath-cogslt-diagnostic-binary-v1:
+	@$(MAKE) --no-print-directory BUILD=$(BUILD) \
+		ENABLE_LIB_PROLOG=$(ENABLE_LIB_PROLOG) \
+		ENABLE_LANGDEF_DIAGNOSTIC_BACKENDS=1 \
+		BIN=$(METAMATH_COGSLT_DIAGNOSTIC_BIN_V1) \
+		$(METAMATH_COGSLT_DIAGNOSTIC_BIN_V1) >/dev/null
+
 .PHONY: test-metamath-cogslt-langdef-v1
 test-metamath-cogslt-langdef-v1: $(BIN) \
 		$(METAMATH_COMPILED_CURSOR_V1) $(METAMATH_LANGDEF_LOCK_V1) \
@@ -6537,7 +6620,8 @@ test-metamath-cogslt-langdef-v1: $(BIN) \
 		test-cogslt-oslf-native-type-vm-v1 \
 		test-cogslt-relational-state-transaction-v1 \
 		test-cogslt-first-order-frame-decoder-v1 \
-		test-cogslt-relational-stack-proof-cache-v1
+		test-cogslt-relational-stack-proof-cache-v1 \
+		test-metamath-cogslt-diagnostic-binary-v1
 	@test_output=$$($(CETTA_BIN_INVOKE) --lang prime \
 		tests/langdef/metamath/langdef_parse.metta); \
 	if printf '%s\n' "$$test_output" | rg -q '\(Error '; then \
@@ -6607,7 +6691,7 @@ test-metamath-cogslt-langdef-v1: $(BIN) \
 	printf '%s\n' "$$authority_output" | \
 		rg -q 'OSLF step application violates its head signature'; \
 	if diagnostic_output=$$(CETTA_LANGDEF_ROOT="$$registry_root" \
-		$(CETTA_BIN_INVOKE) --lang "$$selector" \
+		$(METAMATH_COGSLT_DIAGNOSTIC_BIN_INVOKE) --lang "$$selector" \
 		--langdef-proof-backend frame-cache-diagnostic-v1 \
 		tests/langdef/metamath/positive_theorem_normal_reuse.mm \
 		2>&1); then \
@@ -6640,7 +6724,7 @@ test-metamath-cogslt-langdef-v1: $(BIN) \
 		rg -q '^\(LangDef:RunAccepted MetamathV1 '; \
 	diagnostic_status=0; \
 	diagnostic_output=$$(CETTA_LANGDEF_ROOT="$$registry_root" \
-		$(CETTA_BIN_INVOKE) --lang "$$selector" \
+		$(METAMATH_COGSLT_DIAGNOSTIC_BIN_INVOKE) --lang "$$selector" \
 		--langdef-proof-backend frame-cache-diagnostic-v1 \
 		tests/langdef/metamath/positive_theorem_normal_reuse.mm \
 		2>&1) || diagnostic_status=$$?; \
@@ -6674,7 +6758,7 @@ test-metamath-cogslt-langdef-v1: $(BIN) \
 		rg -q '^\(LangDef:RunAccepted MetamathV1 '; \
 	diagnostic_status=0; \
 	diagnostic_output=$$(CETTA_LANGDEF_ROOT="$$registry_root" \
-		$(CETTA_BIN_INVOKE) --lang "$$selector" \
+		$(METAMATH_COGSLT_DIAGNOSTIC_BIN_INVOKE) --lang "$$selector" \
 		--langdef-proof-backend frame-cache-diagnostic-v1 \
 		tests/langdef/metamath/positive_theorem_normal_reuse.mm \
 		2>&1) || diagnostic_status=$$?; \
@@ -6701,14 +6785,19 @@ test-metamath-cogslt-langdef-v1: $(BIN) \
 		--lock-out "$$lock_dir/generated/langdef_lock_v1.metta" >/dev/null; \
 	selector=$$(basename "$$lock_dir"); \
 	registry_root=$$(dirname "$$lock_dir"); \
+	authority_status=0; \
 	authority_output=$$(CETTA_LANGDEF_ROOT="$$registry_root" \
 		$(CETTA_BIN_INVOKE) --lang "$$selector" \
-		tests/langdef/metamath/positive_theorem_compressed_reuse.mm); \
+		tests/langdef/metamath/positive_theorem_compressed_reuse.mm \
+		2>&1) || authority_status=$$?; \
+	if [[ "$$authority_status" -eq 0 ]]; then \
+		printf '%s\n' "$$authority_output" >&2; exit 1; \
+	fi; \
 	printf '%s\n' "$$authority_output" | \
-		rg -q '^\(LangDef:RunAccepted MetamathV1 '; \
+		rg -q 'compressed proof lacks generated indexed-value admission'; \
 	diagnostic_status=0; \
 	diagnostic_output=$$(CETTA_LANGDEF_ROOT="$$registry_root" \
-		$(CETTA_BIN_INVOKE) --lang "$$selector" \
+		$(METAMATH_COGSLT_DIAGNOSTIC_BIN_INVOKE) --lang "$$selector" \
 		--langdef-proof-backend frame-cache-diagnostic-v1 \
 		tests/langdef/metamath/positive_theorem_compressed_reuse.mm \
 		2>&1) || diagnostic_status=$$?; \
@@ -6717,7 +6806,111 @@ test-metamath-cogslt-langdef-v1: $(BIN) \
 	fi; \
 	printf '%s\n' "$$diagnostic_output" | \
 		rg -q 'prepared indexed-value table is not admitted'
-	@echo '(MetamathCoGSLTLangDefV1Summary 11 11 0)'
+	@set -euo pipefail; \
+	lock_dir=$$(mktemp -d langdef/frame-index-admission-XXXXXX); \
+	trap 'rm -rf "$$lock_dir"' EXIT INT TERM; \
+	cp -R $(METAMATH_LANGDEF_DIR_V1)/. "$$lock_dir/"; \
+	sed '/proof-frame-index-plan-v1/d' \
+		"$$lock_dir/generated/proof_storage_plan_v1.answers" \
+		>"$$lock_dir/generated/proof_storage_plan_v1.answers.mutated"; \
+	mv "$$lock_dir/generated/proof_storage_plan_v1.answers.mutated" \
+		"$$lock_dir/generated/proof_storage_plan_v1.answers"; \
+	if rg -q 'proof-frame-index-plan-v1' \
+		"$$lock_dir/generated/proof_storage_plan_v1.answers"; then exit 1; fi; \
+	$(LANGDEF_COMPILER_V1_BIN) seal \
+		--manifest "$$lock_dir/langdef.metta" \
+		--pack "$$lock_dir/generated/normalized_parser_pack_v1.abi" \
+		--compiled-cursor "$$lock_dir/generated/syntax_cursor_fold_v1.generated.so" \
+		--lock-out "$$lock_dir/generated/langdef_lock_v1.metta" >/dev/null; \
+	selector=$$(basename "$$lock_dir"); \
+	registry_root=$$(dirname "$$lock_dir"); \
+	authority_status=0; \
+	authority_output=$$(CETTA_LANGDEF_ROOT="$$registry_root" \
+		$(CETTA_BIN_INVOKE) --lang "$$selector" \
+		tests/langdef/metamath/positive_theorem_compressed_reuse.mm \
+		2>&1) || authority_status=$$?; \
+	if [[ "$$authority_status" -eq 0 ]]; then \
+		printf '%s\n' "$$authority_output" >&2; exit 1; \
+	fi; \
+	printf '%s\n' "$$authority_output" | \
+		rg -q 'compressed proof lacks generated frame-index admission'
+	@set -euo pipefail; \
+	lock_dir=$$(mktemp -d langdef/frame-index-carrier-XXXXXX); \
+	trap 'rm -rf "$$lock_dir"' EXIT INT TERM; \
+	cp -R $(METAMATH_LANGDEF_DIR_V1)/. "$$lock_dir/"; \
+	sed 's/u32-open-addressed-index-v1/unsupported-frame-index-v1/' \
+		"$$lock_dir/generated/proof_storage_plan_v1.answers" \
+		>"$$lock_dir/generated/proof_storage_plan_v1.answers.mutated"; \
+	mv "$$lock_dir/generated/proof_storage_plan_v1.answers.mutated" \
+		"$$lock_dir/generated/proof_storage_plan_v1.answers"; \
+	rg -Fq 'unsupported-frame-index-v1' \
+		"$$lock_dir/generated/proof_storage_plan_v1.answers"; \
+	$(LANGDEF_COMPILER_V1_BIN) seal \
+		--manifest "$$lock_dir/langdef.metta" \
+		--pack "$$lock_dir/generated/normalized_parser_pack_v1.abi" \
+		--compiled-cursor "$$lock_dir/generated/syntax_cursor_fold_v1.generated.so" \
+		--lock-out "$$lock_dir/generated/langdef_lock_v1.metta" >/dev/null; \
+	selector=$$(basename "$$lock_dir"); \
+	registry_root=$$(dirname "$$lock_dir"); \
+	authority_status=0; \
+	authority_output=$$(CETTA_LANGDEF_ROOT="$$registry_root" \
+		$(CETTA_BIN_INVOKE) --lang "$$selector" \
+		tests/langdef/metamath/positive_theorem_compressed_reuse.mm \
+		2>&1) || authority_status=$$?; \
+	if [[ "$$authority_status" -eq 0 ]]; then \
+		printf '%s\n' "$$authority_output" >&2; exit 1; \
+	fi; \
+	printf '%s\n' "$$authority_output" | \
+		rg -q 'generated frame-index plan does not admit the compressed backend'
+	@set -euo pipefail; \
+	lock_dir=$$(mktemp -d langdef/indexed-value-call-site-XXXXXX); \
+	trap 'rm -rf "$$lock_dir"' EXIT INT TERM; \
+	cp -R $(METAMATH_LANGDEF_DIR_V1)/. "$$lock_dir/"; \
+	sed \
+		-e 's/(proof-call-region-plan-v1 mm-check-theorem-compressed 14 /(proof-call-region-plan-v1 mm-check-theorem-compressed 13 /' \
+		-e 's/(proof-indexed-value-plan-v1 mm-check-theorem-compressed 14 /(proof-indexed-value-plan-v1 mm-check-theorem-compressed 13 /' \
+		-e 's/(proof-frame-index-plan-v1 mm-check-theorem-compressed 14 /(proof-frame-index-plan-v1 mm-check-theorem-compressed 13 /' \
+		"$$lock_dir/generated/proof_storage_plan_v1.answers" \
+		>"$$lock_dir/generated/proof_storage_plan_v1.answers.mutated"; \
+	mv "$$lock_dir/generated/proof_storage_plan_v1.answers.mutated" \
+		"$$lock_dir/generated/proof_storage_plan_v1.answers"; \
+	rg -Fq '(proof-indexed-value-plan-v1 mm-check-theorem-compressed 13 ' \
+		"$$lock_dir/generated/proof_storage_plan_v1.answers"; \
+	rg -Fq '(proof-frame-index-plan-v1 mm-check-theorem-compressed 13 ' \
+		"$$lock_dir/generated/proof_storage_plan_v1.answers"; \
+	$(LANGDEF_COMPILER_V1_BIN) seal \
+		--manifest "$$lock_dir/langdef.metta" \
+		--pack "$$lock_dir/generated/normalized_parser_pack_v1.abi" \
+		--compiled-cursor "$$lock_dir/generated/syntax_cursor_fold_v1.generated.so" \
+		--lock-out "$$lock_dir/generated/langdef_lock_v1.metta" >/dev/null; \
+	selector=$$(basename "$$lock_dir"); \
+	registry_root=$$(dirname "$$lock_dir"); \
+	authority_status=0; \
+	authority_output=$$(CETTA_LANGDEF_ROOT="$$registry_root" \
+		$(CETTA_BIN_INVOKE) --lang "$$selector" \
+		tests/langdef/metamath/positive_theorem_compressed_reuse.mm \
+		2>&1) || authority_status=$$?; \
+	if [[ "$$authority_status" -eq 0 ]]; then \
+		printf '%s\n' "$$authority_output" >&2; exit 1; \
+	fi; \
+	printf '%s\n' "$$authority_output" | \
+		rg -q 'indexed-value admission does not match its generated call site'
+	@set -euo pipefail; \
+	status=0; \
+	output=$$($(CETTA_BIN_INVOKE) --lang metamath \
+		--langdef-proof-backend frame-cache-diagnostic-v1 \
+		tests/langdef/metamath/positive_theorem_normal_reuse.mm \
+		2>&1) || status=$$?; \
+	test "$$status" -ne 0; \
+	printf '%s\n' "$$output" | \
+		rg -q "unknown langdef proof backend 'frame-cache-diagnostic-v1'"
+	@if nm -g $(BIN) | rg -q 'ppfirst_order_frame_decoder_v1_'; then \
+		echo 'public LanguageDef binary links the diagnostic frame decoder'; \
+		exit 1; \
+	fi
+	@nm -g $(METAMATH_COGSLT_DIAGNOSTIC_BIN_V1) | \
+		rg -q 'ppfirst_order_frame_decoder_v1_admit'
+	@echo '(MetamathCoGSLTLangDefV1Summary 14 14 0)'
 
 .PHONY: test-metamath-cogslt-cli-v1 \
 		test-metamath-cogslt-cli-core-v1
@@ -6730,6 +6923,7 @@ test-metamath-cogslt-cli-v1:
 
 test-metamath-cogslt-cli-core-v1: $(BIN) \
 		$(METAMATH_COMPILED_CURSOR_V1) $(METAMATH_LANGDEF_LOCK_V1) \
+		test-metamath-cogslt-diagnostic-binary-v1 \
 		tests/langdef/metamath/invalid_theorem_compressed_save_after_continuation.mm \
 		tests/langdef/metamath/invalid_theorem_compressed_incomplete_tail.mm \
 		tests/langdef/metamath/invalid_theorem_normal_incomplete_tail.mm \
@@ -6782,7 +6976,7 @@ test-metamath-cogslt-cli-core-v1: $(BIN) \
 		fi; \
 	done; \
 	status=0; \
-	diagnostic_open_save=$$($(CETTA_BIN_INVOKE) --lang metamath \
+	diagnostic_open_save=$$($(METAMATH_COGSLT_DIAGNOSTIC_BIN_INVOKE) --lang metamath \
 		--langdef-proof-backend frame-cache-diagnostic-v1 \
 		tests/langdef/metamath/invalid_theorem_compressed_save_after_continuation.mm \
 		2>&1) || status=$$?; \
@@ -16656,6 +16850,29 @@ test-gslt-indexed-value-table-v1: $(GSLT_INDEXED_VALUE_TABLE_V1_TEST_BIN)
 		exit 1; \
 	fi
 
+$(GSLT_SPLIT_INDEXED_TABLE_V1_TEST_OBJ): \
+		$(GSLT_SPLIT_INDEXED_TABLE_V1_TEST_SRC) \
+		$(GSLT_SPLIT_INDEXED_TABLE_V1_HEADER) $(BUILD_CONFIG_HEADER)
+	@mkdir -p $(dir $@)
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) \
+		-c -o $@ $(GSLT_SPLIT_INDEXED_TABLE_V1_TEST_SRC)
+
+$(GSLT_SPLIT_INDEXED_TABLE_V1_TEST_BIN): \
+		$(GSLT_SPLIT_INDEXED_TABLE_V1_TEST_OBJ) \
+		$(GSLT_SPLIT_INDEXED_TABLE_V1_OBJ)
+	@mkdir -p $(dir $@)
+	$(CC) $(CFLAGS) -Wl,--gc-sections -o $@ $^ $(LDFLAGS)
+
+.PHONY: test-gslt-split-indexed-table-v1
+test-gslt-split-indexed-table-v1: $(GSLT_SPLIT_INDEXED_TABLE_V1_TEST_BIN)
+	@$(GSLT_SPLIT_INDEXED_TABLE_V1_TEST_BIN)
+	@if rg -ni 'metamath|megalodon|tptp|set\.mm' \
+		$(GSLT_SPLIT_INDEXED_TABLE_V1_SRC) \
+		$(GSLT_SPLIT_INDEXED_TABLE_V1_HEADER); then \
+		echo 'guest-language knowledge leaked into the split indexed table'; \
+		exit 1; \
+	fi
+
 $(GSLT_LITERAL_HOLE_PROGRAM_V1_TEST_OBJ): \
 		$(GSLT_LITERAL_HOLE_PROGRAM_V1_TEST_SRC) \
 		$(GSLT_LITERAL_HOLE_PROGRAM_V1_HEADER) $(BUILD_CONFIG_HEADER)
@@ -16746,6 +16963,30 @@ test-gslt-epoch-slots-v1: $(GSLT_EPOCH_SLOTS_V1_TEST_BIN)
 		exit 1; \
 	fi
 
+$(GSLT_GROUND_DENSE_TERM_V1_TEST_OBJ): \
+		$(GSLT_GROUND_DENSE_TERM_V1_TEST_SRC) \
+		$(GSLT_GROUND_DENSE_TERM_V1_HEADER) $(BUILD_CONFIG_HEADER)
+	@mkdir -p $(dir $@)
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) \
+		-c -o $@ $(GSLT_GROUND_DENSE_TERM_V1_TEST_SRC)
+
+$(GSLT_GROUND_DENSE_TERM_V1_TEST_BIN): \
+		$(GSLT_GROUND_DENSE_TERM_V1_TEST_OBJ) \
+		$(GSLT_GROUND_DENSE_TERM_V1_TEST_LINK_OBJ)
+	@mkdir -p $(dir $@)
+	$(CC) $(CFLAGS) -Wl,--gc-sections -o $@ $^ $(LDFLAGS)
+
+.PHONY: test-gslt-ground-dense-term-v1
+test-gslt-ground-dense-term-v1: \
+		$(GSLT_GROUND_DENSE_TERM_V1_TEST_BIN)
+	@$(GSLT_GROUND_DENSE_TERM_V1_TEST_BIN)
+	@if rg -ni 'metamath|megalodon|tptp|compressed[_ -]?proof|mandatory[_ -]?hypothesis' \
+		$(GSLT_GROUND_DENSE_TERM_V1_SRC) \
+		$(GSLT_GROUND_DENSE_TERM_V1_HEADER); then \
+		echo 'guest-language knowledge leaked into the dense term machine'; \
+		exit 1; \
+	fi
+
 $(RELATIONAL_STACK_PROOF_CACHE_V1_TEST_OBJ): \
 		$(RELATIONAL_STACK_PROOF_CACHE_V1_TEST_SRC) \
 		$(RELATIONAL_STACK_PROOF_V1_HEADER) \
@@ -16766,10 +17007,12 @@ test-cogslt-relational-stack-proof-cache-v1: \
 		test-gslt-dense-bitset-v1 \
 		test-gslt-indexed-instruction-decoder-v1 \
 		test-gslt-indexed-value-table-v1 \
+		test-gslt-split-indexed-table-v1 \
 		test-gslt-literal-hole-program-v1 \
 		test-gslt-u32-index-v1 \
 		test-gslt-u32-slice-arena-v1 \
 		test-gslt-epoch-slots-v1 \
+		test-gslt-ground-dense-term-v1 \
 		$(RELATIONAL_STACK_PROOF_CACHE_V1_TEST_BIN)
 	@$(RELATIONAL_STACK_PROOF_CACHE_V1_TEST_BIN)
 	@if rg -ni 'metamath|megalodon|tptp|set\.mm' \
@@ -16885,6 +17128,7 @@ $(PROOF_GSLT_RELATIONAL_DECLARATION_V1_TEST_OBJ): \
 		$(PROOF_GSLT_RELATIONAL_MACHINE_V1_HEADER) \
 		$(PROOF_GSLT_RELATIONAL_ASSERTION_V1_HEADER) \
 		$(PROOF_GSLT_SEQUENCE_EVIDENCE_V1_HEADER) \
+		$(PROOF_STORAGE_PLAN_V1_HEADER) \
 		$(RELATIONAL_VALUE_LIST_V1_HEADER) \
 		$(PROOF_GSLT_ARTICLE_V1_HEADER) $(BUILD_CONFIG_HEADER)
 	@mkdir -p $(dir $@)

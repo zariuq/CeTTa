@@ -70,6 +70,7 @@ CettaGsltIndexedDecodeResultV1 cetta_gslt_indexed_instruction_feed_v1(
     plan = &decoder->plan;
     event->kind = CETTA_GSLT_INDEXED_INSTRUCTION_NONE_V1;
     event->index = 0u;
+    decoder->consumed_byte_len++;
 
     if (indexed_in_range(byte, plan->terminal_low, plan->terminal_high)) {
         digit = (uint64_t)(byte - plan->terminal_low) +
@@ -82,6 +83,7 @@ CettaGsltIndexedDecodeResultV1 cetta_gslt_indexed_instruction_feed_v1(
         decoder->open_index = false;
         event->kind = CETTA_GSLT_INDEXED_INSTRUCTION_USE_V1;
         event->index = value;
+        decoder->emitted_instruction_len++;
         return CETTA_GSLT_INDEXED_DECODE_OK_V1;
     }
     if (indexed_in_range(
@@ -100,12 +102,14 @@ CettaGsltIndexedDecodeResultV1 cetta_gslt_indexed_instruction_feed_v1(
         if (decoder->open_index)
             return CETTA_GSLT_INDEXED_DECODE_SAVE_INSIDE_INDEX_V1;
         event->kind = CETTA_GSLT_INDEXED_INSTRUCTION_SAVE_V1;
+        decoder->emitted_instruction_len++;
         return CETTA_GSLT_INDEXED_DECODE_OK_V1;
     }
     if (byte == plan->unknown_byte) {
         decoder->accumulator = 0u;
         decoder->open_index = false;
         event->kind = CETTA_GSLT_INDEXED_INSTRUCTION_UNKNOWN_V1;
+        decoder->emitted_instruction_len++;
         return CETTA_GSLT_INDEXED_DECODE_OK_V1;
     }
     return CETTA_GSLT_INDEXED_DECODE_INVALID_BYTE_V1;

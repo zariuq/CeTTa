@@ -2,6 +2,7 @@
 #define CETTA_GSLT2PARSE_PROOF_GSLT_RELATIONAL_MACHINE_V1_H
 
 #include "proof_gslt_relational_declaration_v1.h"
+#include "proof_storage_plan_v1.h"
 #include "relational_value_list_v1.h"
 
 typedef enum {
@@ -31,11 +32,22 @@ typedef struct {
     uint32_t code_len;
 } PPProofGSLTRelationalCompressedInputV1;
 
+typedef enum {
+    PPPROOF_GSLT_RELATIONAL_EXECUTION_V1_NONE = 0,
+    PPPROOF_GSLT_RELATIONAL_EXECUTION_V1_LABEL_STREAM = 1,
+    PPPROOF_GSLT_RELATIONAL_EXECUTION_V1_INDEXED_INSTRUCTION_STREAM = 2
+} PPProofGSLTRelationalExecutionV1;
+
 typedef struct {
     uint32_t proof_step_len;
     uint32_t context_premise_len;
     uint32_t article_node_len;
+    uint64_t decoded_byte_len;
+    uint64_t decoded_instruction_len;
+    uint32_t prepared_value_len;
+    uint32_t saved_value_len;
     PPProofGSLTArticleV1Receipt article;
+    PPProofGSLTRelationalExecutionV1 execution;
     bool complete;
 } PPProofGSLTRelationalMachineV1Receipt;
 
@@ -61,6 +73,8 @@ ppproof_gslt_relational_machine_v1_compressed(
     const PPProofGSLTPlanV1 *proof_plan,
     const PPProofGSLTSequenceEvidenceABIV1 *evidence_abi,
     const PPProofGSLTRelationalAssertionPlanV1 *relational_plan,
+    const PPProofIndexedValuePlanV1 *indexed_value_plan,
+    const PPProofFrameIndexPlanV1 *frame_index_plan,
     const PPProofGSLTRelationalCompressedInputV1 *input,
     const PPProofGSLTArticleV1Limits *limits,
     PPProofGSLTRelationalMachineV1Receipt *receipt_out,

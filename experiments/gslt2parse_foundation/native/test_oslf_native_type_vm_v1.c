@@ -22,6 +22,42 @@ static bool expect(bool condition, const char *message) {
     return condition;
 }
 
+static bool exercise_stats_accumulation(void) {
+    PPOSLFNativeVMStatsV1 aggregate = {
+        .rule_attempts = UINT64_MAX - 1u,
+        .maximum_goal_depth = 3u,
+        .maximum_search_frame_depth = 8u,
+    };
+    const PPOSLFNativeVMStatsV1 sample = {
+        .goals_entered = 2u,
+        .rule_attempts = 3u,
+        .activation_view_rule_attempts = 13u,
+        .activation_view_fallback_materializations = 17u,
+        .ground_dense_view_nodes = 19u,
+        .ground_dense_ground_body_reuses = 23u,
+        .body_expansion_arena_bytes = 5u,
+        .pending_goal_node_arena_bytes = 7u,
+        .maximum_goal_depth = 11u,
+        .maximum_search_frame_depth = 4u,
+    };
+
+    pposlf_native_vm_stats_v1_accumulate(&aggregate, &sample);
+    return expect(aggregate.rule_attempts == UINT64_MAX,
+                  "OSLF profile aggregation wrapped a saturated counter") &&
+           expect(aggregate.goals_entered == 2u &&
+                      aggregate.activation_view_rule_attempts == 13u &&
+                      aggregate.activation_view_fallback_materializations ==
+                          17u &&
+                      aggregate.ground_dense_view_nodes == 19u &&
+                      aggregate.ground_dense_ground_body_reuses == 23u &&
+                      aggregate.body_expansion_arena_bytes == 5u &&
+                      aggregate.pending_goal_node_arena_bytes == 7u,
+                  "OSLF profile aggregation lost an additive counter") &&
+           expect(aggregate.maximum_goal_depth == 11u &&
+                      aggregate.maximum_search_frame_depth == 8u,
+                  "OSLF profile aggregation did not preserve maxima");
+}
+
 static Atom *unary(Arena *arena, const char *head, Atom *argument) {
     Atom *elements[2] = {
         atom_symbol(arena, head),
@@ -247,6 +283,11 @@ static bool exercise_canary(
     Atom *root_to_seven;
     Atom *root_to_leaf;
     Atom *leaf_to_root;
+    Atom *view_start;
+    Atom *view_choice_start;
+    Atom *view_defer_start;
+    Atom *ground_body_start;
+    Atom *dynamic_body_start;
     Atom *wide;
     Atom *deep_list;
     Atom *deep_query;
@@ -264,9 +305,9 @@ static bool exercise_canary(
     char error[512] = {0};
     bool ok = false;
 
-    if (!prepare_program(full_path, 13u, &full_plan, &full_vm))
+    if (!prepare_program(full_path, 30u, &full_plan, &full_vm))
         return false;
-    if (!prepare_program(deleted_path, 12u, &deleted_plan, &deleted_vm)) {
+    if (!prepare_program(deleted_path, 29u, &deleted_plan, &deleted_vm)) {
         pposlf_native_type_vm_v1_free(&full_vm);
         pposlf_native_type_plan_v1_free(&full_plan);
         return false;
@@ -282,6 +323,21 @@ static bool exercise_canary(
         &query_arena, "canary-path-v1", root, leaf);
     leaf_to_root = binary(
         &query_arena, "canary-path-v1", leaf, root);
+    view_start = unary(
+        &query_arena, "canary-view-start-v1",
+        atom_symbol(&query_arena, "go"));
+    view_choice_start = unary(
+        &query_arena, "canary-view-choice-start-v1",
+        atom_symbol(&query_arena, "go"));
+    view_defer_start = unary(
+        &query_arena, "canary-view-defer-start-v1",
+        atom_symbol(&query_arena, "go"));
+    ground_body_start = unary(
+        &query_arena, "canary-ground-body-start-v1",
+        atom_symbol(&query_arena, "go"));
+    dynamic_body_start = unary(
+        &query_arena, "canary-dynamic-body-start-v1",
+        atom_symbol(&query_arena, "witness"));
     wide = unary(
         &query_arena, "canary-wide-v1",
         atom_bigint(
@@ -309,7 +365,9 @@ static bool exercise_canary(
     tail_choice = unary(
         &query_arena, "canary-tail-choice-v1",
         atom_symbol(&query_arena, "go"));
-    if (!deep_query || !invalid_query || !tail_choice)
+    if (!view_start || !view_choice_start || !view_defer_start ||
+        !ground_body_start || !dynamic_body_start ||
+        !deep_query || !invalid_query || !tail_choice)
         goto done;
 
     if (!expect(pposlf_native_type_plan_v1_step_range(
@@ -330,6 +388,40 @@ static bool exercise_canary(
                 "closed generated query did not use its head index");
     pposlf_native_vm_result_v1_free(&result);
     if (!prove_expect(
+            &full_vm, ground_body_start, ample,
+            PPOSLF_NATIVE_VM_PROVED_V1, &result,
+            "structurally ground generated body did not prove"))
+        goto done;
+    ok = expect(result.stats.ground_dense_ground_body_reuses == 1u &&
+                    result.stats.ground_dense_expression_materializations ==
+                        0u,
+                "ground body did not bypass dynamic instantiation exactly") &&
+         ok;
+    pposlf_native_vm_result_v1_free(&result);
+    if (!prove_expect(
+            &full_vm, dynamic_body_start, ample,
+            PPOSLF_NATIVE_VM_PROVED_V1, &result,
+            "variable-bearing generated body did not prove"))
+        goto done;
+    ok = expect(result.stats.ground_dense_ground_body_reuses == 0u &&
+                    result.stats.ground_dense_expression_materializations >
+                        0u,
+                "variable-bearing body was incorrectly treated as ground") &&
+         ok;
+    pposlf_native_vm_result_v1_free(&result);
+    if (!prove_expect(
+            &full_vm, view_choice_start, ample,
+            PPOSLF_NATIVE_VM_PROVED_V1, &result,
+            "non-raw activation-view choice did not prove"))
+        goto done;
+    ok = expect(result.stats.activation_view_goal_admissions > 0u &&
+                    result.stats
+                        .activation_view_fallback_materializations > 0u &&
+                    result.stats.generated_tail_frame_reuses > 0u,
+                "a non-raw activation view did not force once before tail reuse") &&
+         ok;
+    pposlf_native_vm_result_v1_free(&result);
+    if (!prove_expect(
             &full_vm, root_to_leaf, ample,
             PPOSLF_NATIVE_VM_PROVED_V1, &result,
             "recursive generated path rule did not prove"))
@@ -343,6 +435,59 @@ static bool exercise_canary(
          expect(result.stats.positional_linear_rule_attempts > 0u &&
                     result.stats.positional_linear_rule_matches > 0u,
                 "generated head-linearity did not select its positional view") &&
+         ok;
+    pposlf_native_vm_result_v1_free(&result);
+    if (!prove_expect(
+            &full_vm, view_start, ample,
+            PPOSLF_NATIVE_VM_PROVED_V1, &result,
+            "range-restricted activation-view chain did not prove"))
+        goto done;
+    if (!(result.stats.activation_view_goal_admissions > 0u &&
+          result.stats.activation_view_rule_attempts > 0u &&
+          result.stats.activation_view_rule_matches > 0u &&
+          result.stats.ground_dense_view_nodes > 0u &&
+          result.stats.ground_dense_view_variable_resolutions > 0u &&
+          result.stats.activation_view_fallback_materializations == 0u)) {
+        fprintf(stderr,
+                "activation-dense stats: admissions=%llu attempts=%llu "
+                "matches=%llu view-nodes=%llu resolutions=%llu defers=%llu "
+                "materializations=%llu\n",
+                (unsigned long long)result.stats
+                    .activation_view_goal_admissions,
+                (unsigned long long)result.stats
+                    .activation_view_rule_attempts,
+                (unsigned long long)result.stats
+                    .activation_view_rule_matches,
+                (unsigned long long)result.stats.ground_dense_view_nodes,
+                (unsigned long long)result.stats
+                    .ground_dense_view_variable_resolutions,
+                (unsigned long long)result.stats.ground_dense_view_deferrals,
+                (unsigned long long)result.stats
+                    .activation_view_fallback_materializations);
+    }
+    ok = expect(result.stats.activation_view_goal_admissions > 0u &&
+                    result.stats.activation_view_rule_attempts > 0u &&
+                    result.stats.activation_view_rule_matches > 0u &&
+                    result.stats.ground_dense_view_nodes > 0u &&
+                    result.stats
+                        .ground_dense_view_variable_resolutions > 0u &&
+                    result.stats
+                        .activation_view_fallback_materializations == 0u,
+                "range-restricted rule did not use its admitted activation view") &&
+         ok;
+    pposlf_native_vm_result_v1_free(&result);
+    if (!prove_expect(
+            &full_vm, view_defer_start, ample,
+            PPOSLF_NATIVE_VM_PROVED_V1, &result,
+            "an unresolved dense view did not fall back exactly"))
+        goto done;
+    ok = expect(result.stats.activation_view_goal_admissions > 0u &&
+                    result.stats.activation_view_rule_matches > 0u &&
+                    result.stats.ground_dense_view_nodes > 0u &&
+                    result.stats.ground_dense_view_deferrals > 0u &&
+                    result.stats
+                        .activation_view_fallback_materializations == 0u,
+                "an unresolved dense view did not use the general view fallback") &&
          ok;
     pposlf_native_vm_result_v1_free(&result);
     if (!prove_expect(
@@ -585,7 +730,7 @@ static bool exercise_search_hashcons_isolation(const char *program_path) {
     bool control_arena_ready = false;
     bool ok = false;
 
-    if (!prepare_program(program_path, 13u, &plan, &vm))
+    if (!prepare_program(program_path, 30u, &plan, &vm))
         return false;
     pposlf_native_vm_result_v1_init(&result);
     arena_init(&query_arena);
@@ -762,6 +907,11 @@ static bool exercise_open_program(
          expect(result.stats.ground_pattern_rule_attempts > 0u &&
                     result.stats.ground_pattern_rule_matches > 0u,
                 "range-restricted rule did not use ground specialization") &&
+         expect(result.stats.ground_dense_match_nodes > 0u &&
+                    result.stats.ground_dense_slot_writes > 0u &&
+                    result.stats
+                        .ground_dense_expression_materializations > 0u,
+                "ground specialization did not execute dense matching and instantiation") &&
          expect(result.stats.deferred_epoch_goal_materializations == 0u,
                 "ground specialization retained a deferred epoch goal") &&
          expect(result.stats.compiled_application_dispatches > 0u,
@@ -814,8 +964,16 @@ static bool exercise_open_program(
          expect(result.stats.ground_pattern_rule_attempts == 0u &&
                     result.stats.ground_pattern_rule_matches == 0u,
                 "non-range-restricted rule used ground specialization") &&
-         expect(result.stats.deferred_epoch_goal_materializations > 0u,
-                "open generated body did not defer epoch materialization") &&
+         expect(result.stats.ground_dense_match_nodes == 0u &&
+                    result.stats.ground_dense_slot_writes == 0u &&
+                    result.stats
+                        .ground_dense_expression_materializations == 0u,
+                "non-range-restricted rule entered the dense ground machine") &&
+         expect(result.stats.deferred_epoch_goal_materializations > 0u &&
+                    result.stats.activation_view_goal_admissions == 0u &&
+                    result.stats
+                        .activation_view_fallback_materializations == 0u,
+                "non-range-restricted body bypassed activation-view admission") &&
          ok;
     pposlf_native_vm_result_v1_free(&result);
 
@@ -1372,7 +1530,8 @@ int main(int argc, char **argv) {
     g_hashcons = NULL;
     g_var_intern = NULL;
 
-    ok = exercise_positional_linear_builder_view() &&
+    ok = exercise_stats_accumulation() &&
+         exercise_positional_linear_builder_view() &&
          prepare_large_program(argv[1], 629u) &&
          prepare_large_program(argv[2], 969u) &&
          exercise_canary(argv[3], argv[4]) &&

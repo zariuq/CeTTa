@@ -31,10 +31,25 @@ typedef struct {
     uint64_t rule_matches;
     uint64_t ground_pattern_rule_attempts;
     uint64_t ground_pattern_rule_matches;
+    uint64_t ground_dense_match_nodes;
+    uint64_t ground_dense_rigid_subtrees_compared;
+    uint64_t ground_dense_slot_writes;
+    uint64_t ground_dense_slot_compares;
+    uint64_t ground_dense_expression_materializations;
+    uint64_t ground_dense_rigid_subtrees_reused;
+    uint64_t ground_dense_ground_body_reuses;
+    uint64_t ground_dense_workspace_growths;
+    uint64_t ground_dense_view_nodes;
+    uint64_t ground_dense_view_variable_resolutions;
+    uint64_t ground_dense_view_deferrals;
     uint64_t positional_linear_rule_attempts;
     uint64_t positional_linear_rule_matches;
     uint64_t positional_linear_rule_fallbacks;
     uint64_t deferred_epoch_goal_materializations;
+    uint64_t activation_view_goal_admissions;
+    uint64_t activation_view_rule_attempts;
+    uint64_t activation_view_rule_matches;
+    uint64_t activation_view_fallback_materializations;
     uint64_t structural_shape_guard_attempts;
     uint64_t structural_shape_guard_rejections;
     uint64_t structural_shape_guard_unknowns;
@@ -77,6 +92,12 @@ typedef struct {
     uint32_t maximum_goal_depth;
     uint32_t maximum_search_frame_depth;
 } PPOSLFNativeVMStatsV1;
+
+/* Add one vocabulary-neutral execution profile into an aggregate.  Event
+ * counters saturate rather than wrap; peak depths retain their maximum. */
+void pposlf_native_vm_stats_v1_accumulate(
+    PPOSLFNativeVMStatsV1 *aggregate,
+    const PPOSLFNativeVMStatsV1 *sample);
 
 /*
  * Generated-step indices address the canonical step_schema vector of

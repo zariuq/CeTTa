@@ -20,6 +20,7 @@ typedef enum {
     PPPROOF_STORAGE_RECORD_V1_CALL,
     PPPROOF_STORAGE_RECORD_V1_FINITE_SUPPORT,
     PPPROOF_STORAGE_RECORD_V1_INDEXED_VALUE,
+    PPPROOF_STORAGE_RECORD_V1_FRAME_INDEX,
     PPPROOF_STORAGE_RECORD_V1_LITERAL_HOLE
 } PPProofStorageRecordV1;
 
@@ -31,6 +32,7 @@ typedef struct {
     uint32_t calls;
     uint32_t finite_supports;
     uint32_t indexed_values;
+    uint32_t frame_indexes;
     uint32_t literal_holes;
 } PPProofStorageCountsV1;
 
@@ -131,6 +133,9 @@ static PPProofStorageRecordV1 ppproof_storage_plan_v1_record(
             record, "proof-indexed-value-plan-v1", 7u))
         return PPPROOF_STORAGE_RECORD_V1_INDEXED_VALUE;
     if (ppproof_storage_plan_v1_expr_head(
+            record, "proof-frame-index-plan-v1", 6u))
+        return PPPROOF_STORAGE_RECORD_V1_FRAME_INDEX;
+    if (ppproof_storage_plan_v1_expr_head(
             record, "proof-literal-hole-plan-v1", 7u))
         return PPPROOF_STORAGE_RECORD_V1_LITERAL_HOLE;
     return PPPROOF_STORAGE_RECORD_V1_UNKNOWN;
@@ -219,6 +224,13 @@ static int ppproof_storage_plan_v1_indexed_value_compare(
     return strcmp(left->machine, right->machine);
 }
 
+static int ppproof_storage_plan_v1_frame_index_compare(
+    const void *left_raw, const void *right_raw) {
+    const PPProofFrameIndexPlanV1 *left = left_raw;
+    const PPProofFrameIndexPlanV1 *right = right_raw;
+    return strcmp(left->machine, right->machine);
+}
+
 static int ppproof_storage_plan_v1_literal_hole_compare(
     const void *left_raw, const void *right_raw) {
     const PPProofLiteralHolePlanV1 *left = left_raw;
@@ -248,6 +260,7 @@ void ppproof_storage_plan_v1_free(PPProofStoragePlanV1 *plan) {
     free(plan->calls);
     free(plan->finite_supports);
     free(plan->indexed_values);
+    free(plan->frame_indexes);
     free(plan->literal_holes);
     memset(plan, 0, sizeof(*plan));
 }
@@ -394,6 +407,56 @@ const PPProofIndexedValuePlanV1 *ppproof_storage_plan_v1_indexed_value(
                    strcmp(plan->indexed_values[low].machine, machine) == 0
                ? &plan->indexed_values[low]
                : NULL;
+}
+
+bool ppproof_indexed_value_plan_v1_admits(
+    const PPProofIndexedValuePlanV1 *plan,
+    const char *operation,
+    uint32_t action_index,
+    const char *machine,
+    const char *header_role,
+    const char *code_role) {
+    return plan && operation && machine && header_role && code_role &&
+           plan->operation && plan->machine && plan->header_role &&
+           plan->code_role &&
+           strcmp(plan->operation, operation) == 0 &&
+           plan->action_index == action_index &&
+           strcmp(plan->machine, machine) == 0 &&
+           strcmp(plan->header_role, header_role) == 0 &&
+           strcmp(plan->code_role, code_role) == 0;
+}
+
+const PPProofFrameIndexPlanV1 *ppproof_storage_plan_v1_frame_index(
+    const PPProofStoragePlanV1 *plan, const char *machine) {
+    uint32_t low = 0u;
+    uint32_t high;
+
+    if (!plan || !machine)
+        return NULL;
+    high = plan->frame_index_len;
+    while (low < high) {
+        uint32_t middle = low + (high - low) / 2u;
+        int compared = strcmp(plan->frame_indexes[middle].machine, machine);
+        if (compared < 0)
+            low = middle + 1u;
+        else
+            high = middle;
+    }
+    return low < plan->frame_index_len &&
+                   strcmp(plan->frame_indexes[low].machine, machine) == 0
+               ? &plan->frame_indexes[low]
+               : NULL;
+}
+
+bool ppproof_frame_index_plan_v1_admits(
+    const PPProofFrameIndexPlanV1 *plan,
+    const char *operation,
+    uint32_t action_index,
+    const char *machine) {
+    return plan && operation && machine && plan->operation && plan->machine &&
+           strcmp(plan->operation, operation) == 0 &&
+           plan->action_index == action_index &&
+           strcmp(plan->machine, machine) == 0;
 }
 
 const PPProofLiteralHolePlanV1 *ppproof_storage_plan_v1_literal_hole(
@@ -553,6 +616,29 @@ static bool ppproof_storage_plan_v1_parse_indexed_value(
     return true;
 }
 
+static bool ppproof_storage_plan_v1_parse_frame_index(
+    const Atom *record, PPProofFrameIndexPlanV1 *indexed,
+    char *error, size_t error_size) {
+    indexed->operation = ppproof_storage_plan_v1_symbol(
+        record->expr.elems[1]);
+    indexed->machine = ppproof_storage_plan_v1_symbol(
+        record->expr.elems[3]);
+    indexed->carrier = ppproof_storage_plan_v1_symbol(
+        record->expr.elems[4]);
+    indexed->validation = ppproof_storage_plan_v1_symbol(
+        record->expr.elems[5]);
+    indexed->region = ppproof_storage_plan_v1_symbol(
+        record->expr.elems[6]);
+    if (!indexed->operation ||
+        !ppproof_storage_plan_v1_u32(
+            record->expr.elems[2], &indexed->action_index) ||
+        !indexed->machine || !indexed->carrier || !indexed->validation ||
+        !indexed->region)
+        return ppproof_storage_plan_v1_fail(
+            error, error_size, "proof frame-index record is malformed");
+    return true;
+}
+
 static bool ppproof_storage_plan_v1_parse_literal_hole(
     const Atom *record, PPProofLiteralHolePlanV1 *program,
     char *error, size_t error_size) {
@@ -628,6 +714,13 @@ static bool ppproof_storage_plan_v1_validate(
             return ppproof_storage_plan_v1_fail(
                 error, error_size,
                 "proof indexed-value plan is duplicated");
+    }
+    for (index = 1u; index < plan->frame_index_len; index++) {
+        if (strcmp(plan->frame_indexes[index - 1u].machine,
+                   plan->frame_indexes[index].machine) == 0)
+            return ppproof_storage_plan_v1_fail(
+                error, error_size,
+                "proof frame-index plan is duplicated");
     }
     for (index = 1u; index < plan->literal_hole_len; index++) {
         if (strcmp(plan->literal_holes[index - 1u].machine,
@@ -720,6 +813,40 @@ static bool ppproof_storage_plan_v1_validate(
                 error, error_size,
                 "proof indexed-value plan lacks its generated call site");
     }
+    for (index = 0u; index < plan->frame_index_len; index++) {
+        const PPProofFrameIndexPlanV1 *indexed =
+            &plan->frame_indexes[index];
+        const PPProofStorageReadV1 *mandatory_read;
+        const PPProofStorageReadV1 *hypothesis_read;
+        uint32_t call_index;
+        bool call_found = false;
+        if (!ppproof_storage_plan_v1_machine(plan, indexed->machine))
+            return ppproof_storage_plan_v1_fail(
+                error, error_size,
+                "proof frame-index plan names an unknown machine");
+        mandatory_read = ppproof_storage_plan_v1_read(
+            plan, indexed->machine, "mandatory-variable-v1");
+        hypothesis_read = ppproof_storage_plan_v1_read(
+            plan, indexed->machine, "ordered-hypothesis-v1");
+        if (!mandatory_read || !hypothesis_read)
+            return ppproof_storage_plan_v1_fail(
+                error, error_size,
+                "proof frame-index plan lacks its generated table reads");
+        for (call_index = 0u; call_index < plan->call_len; call_index++) {
+            const PPProofStorageCallV1 *call = &plan->calls[call_index];
+            if (strcmp(call->operation, indexed->operation) == 0 &&
+                call->action_index == indexed->action_index &&
+                strcmp(call->machine, indexed->machine) == 0 &&
+                strcmp(call->region, indexed->region) == 0) {
+                call_found = true;
+                break;
+            }
+        }
+        if (!call_found)
+            return ppproof_storage_plan_v1_fail(
+                error, error_size,
+                "proof frame-index plan lacks its generated call site");
+    }
     for (index = 0u; index < plan->literal_hole_len; index++) {
         const PPProofLiteralHolePlanV1 *program =
             &plan->literal_holes[index];
@@ -810,6 +937,9 @@ bool ppproof_storage_plan_v1_load(
         case PPPROOF_STORAGE_RECORD_V1_INDEXED_VALUE:
             count = &counts.indexed_values;
             break;
+        case PPPROOF_STORAGE_RECORD_V1_FRAME_INDEX:
+            count = &counts.frame_indexes;
+            break;
         case PPPROOF_STORAGE_RECORD_V1_LITERAL_HOLE:
             count = &counts.literal_holes;
             break;
@@ -853,6 +983,9 @@ bool ppproof_storage_plan_v1_load(
             (void **)&result.indexed_values, counts.indexed_values,
             sizeof(*result.indexed_values), error_buf, error_buf_size) ||
         !ppproof_storage_plan_v1_alloc(
+            (void **)&result.frame_indexes, counts.frame_indexes,
+            sizeof(*result.frame_indexes), error_buf, error_buf_size) ||
+        !ppproof_storage_plan_v1_alloc(
             (void **)&result.literal_holes, counts.literal_holes,
             sizeof(*result.literal_holes), error_buf, error_buf_size))
         goto done;
@@ -863,6 +996,7 @@ bool ppproof_storage_plan_v1_load(
     result.call_len = counts.calls;
     result.finite_support_len = counts.finite_supports;
     result.indexed_value_len = counts.indexed_values;
+    result.frame_index_len = counts.frame_indexes;
     result.literal_hole_len = counts.literal_holes;
     for (index = 0u; index < storage->answers.len; index++) {
         const Atom *record = NULL;
@@ -906,6 +1040,11 @@ bool ppproof_storage_plan_v1_load(
                 record, &result.indexed_values[writes.indexed_values++],
                 error_buf, error_buf_size);
             break;
+        case PPPROOF_STORAGE_RECORD_V1_FRAME_INDEX:
+            parsed = ppproof_storage_plan_v1_parse_frame_index(
+                record, &result.frame_indexes[writes.frame_indexes++],
+                error_buf, error_buf_size);
+            break;
         case PPPROOF_STORAGE_RECORD_V1_LITERAL_HOLE:
             parsed = ppproof_storage_plan_v1_parse_literal_hole(
                 record, &result.literal_holes[writes.literal_holes++],
@@ -934,6 +1073,9 @@ bool ppproof_storage_plan_v1_load(
     qsort(result.indexed_values, result.indexed_value_len,
           sizeof(*result.indexed_values),
           ppproof_storage_plan_v1_indexed_value_compare);
+    qsort(result.frame_indexes, result.frame_index_len,
+          sizeof(*result.frame_indexes),
+          ppproof_storage_plan_v1_frame_index_compare);
     qsort(result.literal_holes, result.literal_hole_len,
           sizeof(*result.literal_holes),
           ppproof_storage_plan_v1_literal_hole_compare);
