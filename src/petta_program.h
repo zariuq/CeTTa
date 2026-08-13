@@ -2,6 +2,7 @@
 #define CETTA_PETTA_PROGRAM_H
 
 #include "atom.h"
+#include "nik_direct_authority.h"
 #include "space.h"
 #include "term_universe.h"
 
@@ -208,23 +209,46 @@ bool petta_program_equation_snapshot(
  */
 bool petta_program_inferred_signatures_current(
     PettaProgram *program, Space *space);
+bool petta_program_inferred_signatures_current_under_authority(
+    PettaProgram *program, Space *space,
+    const CettaNikDirectAuthorityStampV1 *authority);
 bool petta_program_inferred_signature_lookup(
     PettaProgram *program, Space *space,
+    SymbolId head, CettaExprLen arity,
+    Arena *arena, Atom **signature_out);
+bool petta_program_inferred_signature_lookup_under_authority(
+    PettaProgram *program, Space *space,
+    const CettaNikDirectAuthorityStampV1 *authority,
     SymbolId head, CettaExprLen arity,
     Arena *arena, Atom **signature_out);
 bool petta_program_inferred_signatures_lookup(
     PettaProgram *program, Space *space,
     SymbolId head, CettaExprLen arity,
     Arena *arena, Atom ***signatures_out, size_t *count_out);
+bool petta_program_inferred_signatures_lookup_under_authority(
+    PettaProgram *program, Space *space,
+    const CettaNikDirectAuthorityStampV1 *authority,
+    SymbolId head, CettaExprLen arity,
+    Arena *arena, Atom ***signatures_out, size_t *count_out);
 void petta_program_inferred_signatures_reset(
     PettaProgram *program, Space *space);
+void petta_program_inferred_signatures_reset_under_authority(
+    PettaProgram *program, Space *space,
+    const CettaNikDirectAuthorityStampV1 *authority);
 bool petta_program_inferred_signature_put(
     PettaProgram *program, Space *space,
+    SymbolId head, CettaExprLen arity, Atom *signature);
+bool petta_program_inferred_signature_put_under_authority(
+    PettaProgram *program, Space *space,
+    const CettaNikDirectAuthorityStampV1 *authority,
     SymbolId head, CettaExprLen arity, Atom *signature);
 void petta_program_inferred_signature_remove_head(
     PettaProgram *program, Space *space, SymbolId head);
 void petta_program_inferred_signatures_rebase(
     PettaProgram *program, Space *space);
+void petta_program_inferred_signatures_rebase_under_authority(
+    PettaProgram *program, Space *space,
+    const CettaNikDirectAuthorityStampV1 *authority);
 
 /* Explicit type declarations remain visible to the checker across PeTTa
  * module boundaries even when the runtime import surface exports equations
