@@ -14633,10 +14633,19 @@ static bool bind_domain_binder_builder(BindingsBuilder *bb, Atom *domain,
 #define PROFILED_TYPE_FORMATION_CACHE_CAP 4096u
 #define PROFILED_TYPE_CACHE_RESET_STORES 32768u
 
+/* Mutable/policy portion of the live HE profiled-inference authority key.
+ * Authority identity, realization identity, and ABI are fixed by the native
+ * function owning this private cache; repeating those constants in every hot
+ * lookup would add work without improving invalidation.  Space identity and
+ * revision plus the complete profile policy distinguish every retained
+ * judgment that can vary within one binary.  The global epoch conservatively
+ * covers dependencies reached through overlays whose own revision is stable
+ * while their visible base changes. */
 typedef struct {
     Space *space;
     uint64_t instance_id;
     uint64_t revision;
+    uint64_t global_mutation_epoch;
     CettaLanguageId language_id;
     uint32_t profile_id;
     bool dependent_telescope_enabled;
@@ -14837,11 +14846,13 @@ static bool profiled_type_cache_make_key(Space *s, Atom *atom,
         profile_id = (uint32_t)session->profile->id;
     uint64_t instance_id = space_instance_id(s);
     uint64_t revision = space_revision(s);
+    uint64_t global_mutation_epoch = space_global_mutation_epoch();
     bool dependent_telescope_enabled = eval_dependent_telescope_enabled();
     uint32_t atom_h = atom_hash(atom);
     uint32_t h = 2166136261u;
     h = profiled_type_cache_mix_u64(h, instance_id);
     h = profiled_type_cache_mix_u64(h, revision);
+    h = profiled_type_cache_mix_u64(h, global_mutation_epoch);
     h = profiled_type_cache_mix_u32(h, session ? (uint32_t)session->language_id : 0u);
     h = profiled_type_cache_mix_u32(h, profile_id);
     h = profiled_type_cache_mix_u32(h, dependent_telescope_enabled ? 1u : 0u);
@@ -14850,6 +14861,7 @@ static bool profiled_type_cache_make_key(Space *s, Atom *atom,
         .space = s,
         .instance_id = instance_id,
         .revision = revision,
+        .global_mutation_epoch = global_mutation_epoch,
         .language_id = session ? session->language_id : CETTA_LANGUAGE_HE,
         .profile_id = profile_id,
         .dependent_telescope_enabled = dependent_telescope_enabled,
@@ -14864,6 +14876,7 @@ static bool profiled_type_cache_key_matches(const ProfiledTypeCacheKey *lhs,
     return lhs->space == rhs->space &&
            lhs->instance_id == rhs->instance_id &&
            lhs->revision == rhs->revision &&
+           lhs->global_mutation_epoch == rhs->global_mutation_epoch &&
            lhs->language_id == rhs->language_id &&
            lhs->profile_id == rhs->profile_id &&
            lhs->dependent_telescope_enabled == rhs->dependent_telescope_enabled &&
@@ -14892,27 +14905,30 @@ static bool profiled_type_cache_copy_types_from_entry(Arena *a,
     return true;
 }
 
-static bool profiled_type_cache_lookup(Space *s, Arena *a, Atom *atom,
-                                       Atom ***out_types,
-                                       uint32_t *out_count) {
-    ProfiledTypeCacheKey key;
-    if (!profiled_type_cache_make_key(s, atom, &key))
+static bool profiled_type_cache_lookup_key(
+    Arena *a, Atom *atom, const ProfiledTypeCacheKey *key,
+    Atom ***out_types, uint32_t *out_count) {
+    if (!key)
         return false;
     ProfiledTypeListCacheEntry *entry =
-        &g_profiled_type_cache[key.hash % PROFILED_TYPE_CACHE_CAP];
+        &g_profiled_type_cache[key->hash % PROFILED_TYPE_CACHE_CAP];
     if (!entry->occupied ||
-        !profiled_type_cache_key_matches(&entry->key, &key) ||
+        !profiled_type_cache_key_matches(&entry->key, key) ||
         !atom_eq(entry->atom_key, atom)) {
         return false;
     }
     return profiled_type_cache_copy_types_from_entry(a, entry, out_types, out_count);
 }
 
-static void profiled_type_cache_store(Space *s, Atom *atom,
-                                      Atom **types, uint32_t count) {
-    ProfiledTypeCacheKey key;
-    if (!profiled_type_cache_make_key(s, atom, &key))
+static void profiled_type_cache_store_key(
+    Space *s, Atom *atom, const ProfiledTypeCacheKey *admitted_key,
+    Atom **types, uint32_t count) {
+    ProfiledTypeCacheKey current_key;
+    if (!admitted_key ||
+        !profiled_type_cache_make_key(s, atom, &current_key) ||
+        !profiled_type_cache_key_matches(admitted_key, &current_key)) {
         return;
+    }
     for (uint32_t i = 0; i < count; i++) {
         if (!profiled_type_cache_result_stable(types[i]))
             return;
@@ -14921,9 +14937,10 @@ static void profiled_type_cache_store(Space *s, Atom *atom,
         return;
 
     ProfiledTypeListCacheEntry *entry =
-        &g_profiled_type_cache[key.hash % PROFILED_TYPE_CACHE_CAP];
+        &g_profiled_type_cache[
+            admitted_key->hash % PROFILED_TYPE_CACHE_CAP];
     entry->occupied = true;
-    entry->key = key;
+    entry->key = *admitted_key;
     entry->atom_key = atom_deep_copy(&g_profiled_type_cache_arena, atom);
     entry->count = count;
     entry->types = NULL;
@@ -14935,15 +14952,15 @@ static void profiled_type_cache_store(Space *s, Atom *atom,
         entry->types[i] = atom_deep_copy(&g_profiled_type_cache_arena, types[i]);
 }
 
-static bool profiled_type_formation_cache_lookup(Space *s, Atom *ty,
-                                                 bool *out_result) {
-    ProfiledTypeCacheKey key;
-    if (!profiled_type_cache_make_key(s, ty, &key))
+static bool profiled_type_formation_cache_lookup_key(
+    Atom *ty, const ProfiledTypeCacheKey *key, bool *out_result) {
+    if (!key)
         return false;
     ProfiledTypeFormationCacheEntry *entry =
-        &g_profiled_type_formation_cache[key.hash % PROFILED_TYPE_FORMATION_CACHE_CAP];
+        &g_profiled_type_formation_cache[
+            key->hash % PROFILED_TYPE_FORMATION_CACHE_CAP];
     if (!entry->occupied ||
-        !profiled_type_cache_key_matches(&entry->key, &key) ||
+        !profiled_type_cache_key_matches(&entry->key, key) ||
         !atom_eq(entry->atom_key, ty)) {
         return false;
     }
@@ -14951,16 +14968,21 @@ static bool profiled_type_formation_cache_lookup(Space *s, Atom *ty,
     return true;
 }
 
-static void profiled_type_formation_cache_store(Space *s, Atom *ty, bool result) {
-    ProfiledTypeCacheKey key;
-    if (!profiled_type_cache_make_key(s, ty, &key) ||
+static void profiled_type_formation_cache_store_key(
+    Space *s, Atom *ty, const ProfiledTypeCacheKey *admitted_key,
+    bool result) {
+    ProfiledTypeCacheKey current_key;
+    if (!admitted_key ||
+        !profiled_type_cache_make_key(s, ty, &current_key) ||
+        !profiled_type_cache_key_matches(admitted_key, &current_key) ||
         !profiled_type_cache_prepare_store()) {
         return;
     }
     ProfiledTypeFormationCacheEntry *entry =
-        &g_profiled_type_formation_cache[key.hash % PROFILED_TYPE_FORMATION_CACHE_CAP];
+        &g_profiled_type_formation_cache[
+            admitted_key->hash % PROFILED_TYPE_FORMATION_CACHE_CAP];
     entry->occupied = true;
-    entry->key = key;
+    entry->key = *admitted_key;
     entry->atom_key = atom_deep_copy(&g_profiled_type_cache_arena, ty);
     entry->result = result;
 }
@@ -15190,10 +15212,15 @@ static bool type_expr_is_well_formed_profiled(Space *s, Arena *a, Atom *ty) {
     bool result = false;
     if (g_profiled_type_budget)
         return type_expr_is_well_formed_profiled_uncached(s, a, ty);
-    if (profiled_type_formation_cache_lookup(s, ty, &result))
+    ProfiledTypeCacheKey key;
+    bool cacheable = profiled_type_cache_make_key(s, ty, &key);
+    if (cacheable &&
+        profiled_type_formation_cache_lookup_key(ty, &key, &result)) {
         return result;
+    }
     result = type_expr_is_well_formed_profiled_uncached(s, a, ty);
-    profiled_type_formation_cache_store(s, ty, result);
+    if (cacheable)
+        profiled_type_formation_cache_store_key(s, ty, &key, result);
     return result;
 }
 
@@ -15564,13 +15591,24 @@ uint32_t eval_get_atom_types_profiled(Space *s, Arena *a, Atom *atom,
                                       Atom ***out_types) {
     if (g_profiled_type_budget)
         return eval_get_atom_types_profiled_uncached(s, a, atom, out_types);
+    ProfiledTypeCacheKey key;
+    bool cacheable = profiled_type_cache_make_key(s, atom, &key);
     uint32_t cached_count = 0;
-    if (profiled_type_cache_lookup(s, a, atom, out_types, &cached_count))
+    if (cacheable && profiled_type_cache_lookup_key(
+            a, atom, &key, out_types, &cached_count)) {
+        cetta_runtime_stats_inc(
+            CETTA_RUNTIME_COUNTER_HE_PROFILED_TYPE_CACHE_HIT);
         return cached_count;
+    }
+    if (cacheable) {
+        cetta_runtime_stats_inc(
+            CETTA_RUNTIME_COUNTER_HE_PROFILED_TYPE_CACHE_MISS);
+    }
 
     uint32_t count = eval_get_atom_types_profiled_uncached(s, a, atom,
                                                            out_types);
-    profiled_type_cache_store(s, atom, *out_types, count);
+    if (cacheable)
+        profiled_type_cache_store_key(s, atom, &key, *out_types, count);
     return count;
 }
 
@@ -27625,6 +27663,7 @@ _Static_assert(
 
 typedef struct {
     SpaceReadToken read;
+    uint64_t global_mutation_epoch;
     SymbolId head;
     CettaExprLen arity;
     uint64_t packed_requirements;
@@ -27729,6 +27768,7 @@ petta_eval_machine_validate_ready_call(
         return PETTA_MACHINE_BOUNDARY_ACCEPTED;
 
     SpaceReadToken read = space_read_token(space);
+    uint64_t global_mutation_epoch = space_global_mutation_epoch();
     PettaTypecheckBoundaryRequirement stack_plan[
         PETTA_TYPECHECK_BOUNDARY_PACKED_ARITY];
     PettaTypecheckBoundaryRequirement *plan = stack_plan;
@@ -27739,13 +27779,15 @@ petta_eval_machine_validate_ready_call(
     if (arity <= PETTA_TYPECHECK_BOUNDARY_PACKED_ARITY) {
         size_t slot =
             ((size_t)head * 31u + (size_t)arity * 7u +
-             (size_t)read.revision) &
+             (size_t)read.revision +
+             (size_t)global_mutation_epoch * 13u) &
             (PETTA_TYPECHECK_BOUNDARY_CACHE_SLOTS - 1u);
         PettaTypecheckBoundaryCacheEntry *cached =
             &context->analysis_state->boundary_cache[slot];
         if (cached->valid && cached->read.space == read.space &&
             cached->read.instance_id == read.instance_id &&
             cached->read.revision == read.revision &&
+            cached->global_mutation_epoch == global_mutation_epoch &&
             cached->head == head && cached->arity == arity) {
             cetta_runtime_stats_inc(
                 CETTA_RUNTIME_COUNTER_PETTA_TYPECHECK_BOUNDARY_PLAN_CACHE_HIT);
@@ -27774,6 +27816,7 @@ petta_eval_machine_validate_ready_call(
             }
             *cached = (PettaTypecheckBoundaryCacheEntry){
                 .read = read,
+                .global_mutation_epoch = global_mutation_epoch,
                 .head = head,
                 .arity = arity,
                 .packed_requirements = packed,

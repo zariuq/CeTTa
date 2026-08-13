@@ -437,6 +437,8 @@ static const char *const CETTA_RUNTIME_COUNTER_NAMES[CETTA_RUNTIME_COUNTER_COUNT
     "prime-need-region-promoted-outcome",
     "prime-need-region-depth-peak",
     "prime-need-region-reclaimed-bytes",
+    "he-profiled-type-cache-hit",
+    "he-profiled-type-cache-miss",
 };
 
 static int64_t clamp_counter(uint64_t value) {

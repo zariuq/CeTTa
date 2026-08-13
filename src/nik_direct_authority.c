@@ -2,6 +2,18 @@
 
 #include <string.h>
 
+static bool direct_digest_is_sha256(const char *digest) {
+    if (!digest || strlen(digest) != 64u)
+        return false;
+    for (size_t index = 0u; index < 64u; index++) {
+        char character = digest[index];
+        if (!((character >= '0' && character <= '9') ||
+              (character >= 'a' && character <= 'f')))
+            return false;
+    }
+    return true;
+}
+
 bool cetta_nik_direct_authority_v1_is_valid(
     const CettaNikDirectAuthorityV1 *authority) {
     return authority && authority->alias && authority->alias[0] != '\0' &&
@@ -14,6 +26,21 @@ bool cetta_nik_direct_authority_v1_is_valid(
            authority->realization_abi != 0u &&
            authority->realization_abi <=
                CETTA_NIK_DIRECT_AUTHORITY_REALIZATION_ABI_MAX;
+}
+
+bool cetta_nik_direct_source_binding_v1_is_valid(
+    const CettaNikDirectSourceBindingV1 *binding) {
+    return binding &&
+           cetta_nik_direct_authority_v1_is_valid(binding->authority) &&
+           binding->schema_id && binding->schema_id[0] != '\0' &&
+           binding->presentation_id && binding->presentation_id[0] != '\0' &&
+           binding->semantic_scope && binding->semantic_scope[0] != '\0' &&
+           direct_digest_is_sha256(binding->source_sha256) &&
+           direct_digest_is_sha256(binding->package_sha256) &&
+           (binding->coverage ==
+                CETTA_NIK_DIRECT_SOURCE_AUTHORED_FRAGMENT ||
+            binding->coverage ==
+                CETTA_NIK_DIRECT_SOURCE_COMPLETE_PRESENTATION);
 }
 
 bool cetta_nik_direct_authority_v1_stamp(
