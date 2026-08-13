@@ -40,13 +40,13 @@ ENABLE_PRIME_NEED_CLOSURE_CAPTURE ?= 0
 ENABLE_PRIME_EVAL_STACK ?= 1
 ENABLE_LIB_PROLOG ?= auto
 ENABLE_PETTA_TYPECHECK_V2 ?= 1
-PRIME_NEED_ALGEBRA_CHECKS := 91
+PRIME_NEED_ALGEBRA_CHECKS := 98
 PRIME_NEED_CLOSURE_CAPTURE_GATE :=
 PRIME_NEED_CLOSURE_CAPTURE_STATS_GATE :=
 PRIME_EVAL_STACK_GATE :=
 PRIME_EVAL_STACK_STATS_GATE :=
 ifeq ($(ENABLE_PRIME_NEED_CLOSURE_CAPTURE),1)
-PRIME_NEED_ALGEBRA_CHECKS := 99
+PRIME_NEED_ALGEBRA_CHECKS := 106
 PRIME_NEED_CLOSURE_CAPTURE_GATE := test-prime-need-closure-capture
 ifeq ($(ENABLE_RUNTIME_STATS),1)
 PRIME_NEED_CLOSURE_CAPTURE_STATS_GATE := test-prime-need-closure-capture-stats
@@ -8517,7 +8517,7 @@ test-list-lanes: $(BIN)
 bench-list: $(BIN) test-list-lanes
 	@./scripts/bench_list_lanes.py --cetta ./$(BIN)
 
-test: $(BIN) test-manifest-strict test-git-module test-symbolid-guard test-variant-shape-roundtrip test-bindings-lookup-index test-atom-deep-copy-iterative test-abt test-rhometta-payload-map-capacity-c test-space-term-universe-membership test-help-flags test-rhocalc test-he-contract-suite test-he-return-contract-correlation test-closed-stream-fastpath test-parse-depth-guard test-stdlib-growth-memory-regression test-rhometta-macro-audit test-eval-gc-adversarial test-list-lanes test-syn-lanes test-lib-prolog test-petta-libpl test-petta-process-text test-match-decision test-petta-search-machine test-petta-semantics test-petta-corpus-manifest-unit test-petta-chainer-manifest-unit test-gslt-provider-generation-v1 test-gslt-provider-runtime test-prime-nik-v1 test-subzero test-mettazero test-gslt-il test-zerouv test-metta-interact test-mm2-gslt-profile-v1
+test: $(BIN) test-manifest-strict test-git-module test-symbolid-guard test-variant-shape-roundtrip test-bindings-lookup-index test-atom-deep-copy-iterative test-abt test-rhometta-payload-map-capacity-c test-space-term-universe-membership test-help-flags test-rhocalc test-he-contract-suite test-he-return-contract-correlation test-closed-stream-fastpath test-parse-depth-guard test-stdlib-growth-memory-regression test-rhometta-macro-audit test-eval-gc-adversarial test-list-lanes test-syn-lanes test-lib-prolog test-petta-libpl test-petta-process-text test-match-decision test-petta-search-machine test-petta-semantics test-petta-corpus-manifest-unit test-petta-chainer-manifest-unit test-gslt-provider-generation-v1 test-gslt-provider-runtime test-prime-nik-core-v1 test-subzero test-mettazero test-gslt-il test-zerouv test-metta-interact test-mm2-gslt-profile-v1
 	@pass=0; fail=0; skip=0; no_exp=0; \
 	cache_dir="$(GIT_TEST_CACHE_DIR)"; mkdir -p "$$cache_dir"; export CETTA_GIT_MODULE_CACHE_DIR="$$cache_dir"; \
 	for f in tests/test_*.metta tests/spec_*.metta tests/he_*.metta; do \
@@ -10233,6 +10233,7 @@ probe-heavy-diagnostics: $(BIN)
 
 test-correctness-all:
 	@$(MAKE) -s BUILD=$(BUILD_CANON) test
+	@$(MAKE) -s BUILD=$(BUILD_CANON) test-prime-nik-qualification-v1
 	@$(MAKE) -s BUILD=$(BUILD_CANON) test-prime-all
 	@$(MAKE) -s BUILD=$(BUILD_CANON) test-mam-symbolic-battery
 	@$(MAKE) -s BUILD=$(BUILD_CANON) test-mam-held-symbolic
@@ -10953,7 +10954,7 @@ else
 	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 $@
 endif
 
-test-prime: $(BIN) test-prime-coverage test-prime-budget-monotonicity test-prime-package-validation test-prime-internal-graduality test-prime-nik-v1
+test-prime: $(BIN) test-prime-coverage test-prime-budget-monotonicity test-prime-package-validation test-prime-internal-graduality test-prime-nik-core-v1
 	@pass=0; fail=0; \
 	for f in $(PRIME_FAST_TESTS); do \
 		exp="$${f%.metta}.expected"; \
@@ -18213,9 +18214,12 @@ test-prime-nik-megalodon-tactics-package-v1: \
 		--differential "$(abspath $(NIK_RUNTIME_TEST_BIN))" \
 		--positive $(PRIME_NIK_MEGALODON_TACTICS_POSITIVE_V1)
 
-.PHONY: test-prime-nik-v1
-test-prime-nik-v1: test-nik-runtime-v1 test-prime-nik-generation-v1 \
-		test-prime-nik-proof-dag-v1 \
+.PHONY: test-prime-nik-core-v1
+test-prime-nik-core-v1: test-nik-runtime-v1 test-prime-nik-generation-v1 \
+		test-prime-nik-proof-dag-v1
+
+.PHONY: test-prime-nik-qualification-v1
+test-prime-nik-qualification-v1: \
 		test-prime-nik-megalodon-v1 test-prime-nik-megalodon-term-v1 \
 		test-prime-nik-megalodon-polymorphic-v1 \
 		test-prime-nik-megalodon-known-implication-v1 \
@@ -18233,6 +18237,10 @@ test-prime-nik-v1: test-nik-runtime-v1 test-prime-nik-generation-v1 \
 	else \
 		echo "SKIP: Prime NIK Lean export (Mettapedia Lean project unavailable)"; \
 	fi
+
+.PHONY: test-prime-nik-v1
+test-prime-nik-v1: test-prime-nik-core-v1 \
+		test-prime-nik-qualification-v1
 
 $(MM2_GSLT_PROFILE_GENERATED_H) $(MM2_GSLT_PROFILE_GENERATED_C) &: \
 		$(GSLT_SUPPORT_TRANSFORM_GENERATOR_V1) \

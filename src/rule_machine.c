@@ -64,6 +64,14 @@ typedef struct {
     Atom *proof_var;
 } RMAnswerContinuation;
 
+/*
+ * Negative example, retained only as a benchmark and implementation probe.
+ * This rule-program path recognizes one fixed Hilbert BFC presentation: its
+ * vocabulary, axiom form, and inverse-modus-ponens step are not a generic
+ * RuleMachine contract.  New chaining optimizations must instead derive their
+ * behavior from the supplied rule package and must be tested on held-out rule
+ * bases and queries.
+ */
 typedef enum {
     RM_RULE_PROGRAM_AXIOM,
     RM_RULE_PROGRAM_INVERSE_MP,

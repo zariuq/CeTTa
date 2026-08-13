@@ -102,6 +102,19 @@ int main(void) {
     assert(atom_is_symbol(after_reset, "reset-symbol-cache"));
     arena_free(&reset_probe);
 
+    /* Incremental construction fills the final combined allocation directly;
+       finishing under a different arena is rejected. */
+    Atom *builder_draft = atom_expr_builder_begin(&source, 2u);
+    assert(builder_draft != NULL);
+    builder_draft->expr.elems[0] = atom_symbol(&source, "builder");
+    builder_draft->expr.elems[1] = atom_var(&source, "builder-value");
+    assert(atom_expr_builder_finish(&destination, builder_draft) == NULL);
+    Atom *builder_result = atom_expr_builder_finish(&source, builder_draft);
+    assert(builder_result == builder_draft);
+    assert(builder_result->expr.elems == (Atom **)(builder_result + 1));
+    assert(atom_has_vars(builder_result));
+    assert(atom_is_symbol(builder_result->expr.elems[0], "builder"));
+
     payload = atom_expr2(&source, atom_symbol(&source, "payload"),
                          atom_int(&source, 7));
     list = make_deep_shared_list(&source, payload);
@@ -188,6 +201,21 @@ int main(void) {
         atom_int(&nursery, 23));
     Atom *mixed_parent = atom_expr2(
         &destination, atom_symbol(&destination, "mixed"), young_child);
+    uint32_t mixed_min_id = 0u;
+    uint32_t mixed_max_id = 0u;
+    assert(atom_graph_arena_id_bounds(
+        young_parent, &mixed_min_id, &mixed_max_id));
+    assert(mixed_min_id ==
+           (destination.identity < nursery.identity
+                ? destination.identity : nursery.identity));
+    assert(mixed_max_id ==
+           (destination.identity > nursery.identity
+                ? destination.identity : nursery.identity));
+    int external_space_identity = 0;
+    Atom *identity_resource = atom_space(
+        &nursery, &external_space_identity);
+    assert(!atom_graph_arena_id_bounds(
+        identity_resource, &mixed_min_id, &mixed_max_id));
     assert(arena_owns_atom(&destination, old_child));
     assert(!arena_owns_atom(&nursery, old_child));
     assert(arena_owns_atom(&destination, mixed_parent));
@@ -211,6 +239,10 @@ int main(void) {
     assert(arena_owns_atom(
         &destination, closed_mixed_parent->expr.elems[1]));
     assert(atom_eq(closed_mixed_parent, mixed_parent));
+    assert(atom_graph_arena_id_bounds(
+        closed_mixed_parent, &mixed_min_id, &mixed_max_id));
+    assert(mixed_min_id == destination.identity &&
+           mixed_max_id == destination.identity);
     atom_deep_copy_session_free(session);
     arena_free(&nursery);
     assert(atom_is_symbol(
