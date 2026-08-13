@@ -727,20 +727,72 @@ static const CettaPettaMemoControlSpec CETTA_PETTA_MEMO_CONTROLS[] = {
         {"clear-memoize-stats", 0u, 0u},
 };
 
+enum { CETTA_PETTA_MEMO_CONTROL_CACHE_SLOTS = 16 };
+
+typedef struct {
+    SymbolId symbol;
+    CettaPettaMemoControl control;
+} CettaPettaMemoControlCacheSlot;
+
+typedef struct {
+    const SymbolTable *table;
+    uint64_t table_instance;
+    CettaPettaMemoControlCacheSlot
+        slots[CETTA_PETTA_MEMO_CONTROL_CACHE_SLOTS];
+} CettaPettaMemoControlCache;
+
+static _Thread_local CettaPettaMemoControlCache
+    g_petta_memo_control_cache;
+
+static void cetta_library_petta_memo_control_cache_refresh(void) {
+    CettaPettaMemoControlCache cache = {
+        .table = g_symbols,
+        .table_instance = symbol_table_instance_id(g_symbols),
+    };
+    if (g_symbols) {
+        for (size_t index = 0u;
+             index < CETTA_PETTA_MEMO_CONTROL_COUNT; index++) {
+            SymbolId symbol = symbol_intern_cstr(
+                g_symbols, CETTA_PETTA_MEMO_CONTROLS[index].name);
+            size_t slot =
+                ((size_t)symbol * UINT32_C(2654435761)) &
+                (CETTA_PETTA_MEMO_CONTROL_CACHE_SLOTS - 1u);
+            while (cache.slots[slot].symbol != SYMBOL_ID_NONE)
+                slot = (slot + 1u) &
+                    (CETTA_PETTA_MEMO_CONTROL_CACHE_SLOTS - 1u);
+            cache.slots[slot] = (CettaPettaMemoControlCacheSlot){
+                .symbol = symbol,
+                .control = (CettaPettaMemoControl)index,
+            };
+        }
+    }
+    g_petta_memo_control_cache = cache;
+}
+
 static bool cetta_library_petta_memo_control_lookup(
     SymbolId head, CettaPettaMemoControl *control_out) {
     if (head == SYMBOL_ID_NONE || !g_symbols)
         return false;
-    const char *name = symbol_bytes(g_symbols, head);
-    if (!name)
-        return false;
-    for (size_t index = 0u;
-         index < CETTA_PETTA_MEMO_CONTROL_COUNT; index++) {
-        if (strcmp(name, CETTA_PETTA_MEMO_CONTROLS[index].name) == 0) {
+    uint64_t table_instance = symbol_table_instance_id(g_symbols);
+    if (g_petta_memo_control_cache.table != g_symbols ||
+        g_petta_memo_control_cache.table_instance != table_instance) {
+        cetta_library_petta_memo_control_cache_refresh();
+    }
+    size_t slot = ((size_t)head * UINT32_C(2654435761)) &
+        (CETTA_PETTA_MEMO_CONTROL_CACHE_SLOTS - 1u);
+    for (size_t probe = 0u;
+         probe < CETTA_PETTA_MEMO_CONTROL_CACHE_SLOTS; probe++) {
+        CettaPettaMemoControlCacheSlot *candidate =
+            &g_petta_memo_control_cache.slots[slot];
+        if (candidate->symbol == SYMBOL_ID_NONE)
+            return false;
+        if (candidate->symbol == head) {
             if (control_out)
-                *control_out = (CettaPettaMemoControl)index;
+                *control_out = candidate->control;
             return true;
         }
+        slot = (slot + 1u) &
+            (CETTA_PETTA_MEMO_CONTROL_CACHE_SLOTS - 1u);
     }
     return false;
 }

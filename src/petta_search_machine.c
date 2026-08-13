@@ -4569,10 +4569,10 @@ static bool petta_machine_is_rigid_data(
             head == g_builtin_syms.return_text ||
             head == g_builtin_syms.superpose ||
             petta_semantics_boolean_relation_arity(head, NULL) ||
-            petta_symbol_name_is(head, "member") ||
-            petta_symbol_name_is(head, "last") ||
-            petta_symbol_name_is(head, "reverse") ||
-            petta_symbol_name_is(head, "if") ||
+            head == g_builtin_syms.petta_member ||
+            head == g_builtin_syms.petta_last ||
+            head == g_builtin_syms.reverse ||
+            head == g_builtin_syms.if_text ||
             form != PETTA_FORM_NONE ||
             (head != SYMBOL_ID_NONE &&
              space_equations_may_match_known_head(
@@ -4655,12 +4655,12 @@ static bool petta_machine_contains_callable(
             (atom->expr.elems[0]->kind == ATOM_VAR ||
              head == g_builtin_syms.return_text ||
              head == g_builtin_syms.superpose ||
-             petta_symbol_name_is(head, "empty") ||
+             head == g_builtin_syms.empty_form ||
              petta_semantics_boolean_relation_arity(head, NULL) ||
-             petta_symbol_name_is(head, "member") ||
-             petta_symbol_name_is(head, "last") ||
-             petta_symbol_name_is(head, "reverse") ||
-             petta_symbol_name_is(head, "if") ||
+             head == g_builtin_syms.petta_member ||
+             head == g_builtin_syms.petta_last ||
+             head == g_builtin_syms.reverse ||
+             head == g_builtin_syms.if_text ||
              form != PETTA_FORM_NONE ||
              (head != SYMBOL_ID_NONE &&
               space_equations_may_match_known_head(
@@ -4725,12 +4725,12 @@ static bool petta_machine_callable_root(
         ? PETTA_FORM_NONE : petta_semantics_form(head);
     bool callable = head == g_builtin_syms.return_text ||
            head == g_builtin_syms.superpose ||
-           petta_symbol_name_is(head, "empty") ||
+           head == g_builtin_syms.empty_form ||
            petta_semantics_boolean_relation_arity(head, NULL) ||
-           petta_symbol_name_is(head, "member") ||
-           petta_symbol_name_is(head, "last") ||
-           petta_symbol_name_is(head, "reverse") ||
-           petta_symbol_name_is(head, "if") ||
+           head == g_builtin_syms.petta_member ||
+           head == g_builtin_syms.petta_last ||
+           head == g_builtin_syms.reverse ||
+           head == g_builtin_syms.if_text ||
            form != PETTA_FORM_NONE ||
            (head != SYMBOL_ID_NONE &&
             space_equations_may_match_known_head(
@@ -5803,12 +5803,12 @@ static bool petta_machine_type_signature_applies(
 
 static bool petta_machine_type_is_atom_data(const Atom *type) {
     return type && type->kind == ATOM_SYMBOL &&
-           petta_symbol_name_is(type->sym_id, "Atom");
+           type->sym_id == g_builtin_syms.atom;
 }
 
 static bool petta_machine_type_is_unconstrained(const Atom *type) {
     return type && type->kind == ATOM_SYMBOL &&
-           (petta_symbol_name_is(type->sym_id, "%Undefined%") ||
+           (type->sym_id == g_builtin_syms.undefined_type ||
             petta_symbol_name_is(type->sym_id, "_"));
 }
 
@@ -10367,7 +10367,7 @@ static bool petta_machine_typecheck_value_ready(
             &exact, nargs) && exact;
         (void)minimum;
         (void)maximum;
-        if (petta_symbol_name_is(head, "make-list") || reducible) {
+        if (head == g_builtin_syms.petta_make_list || reducible) {
             return false;
         }
         if (head == g_builtin_syms.colon ||
@@ -11600,7 +11600,7 @@ static bool petta_machine_start_ready_match(
               &machine->heap, reference)
         : NULL;
     if (!target && reference->kind == ATOM_SYMBOL &&
-        petta_symbol_name_is(reference->sym_id, "&self")) {
+        reference->sym_id == g_builtin_syms.self) {
         target = machine->space;
     }
 
@@ -11732,7 +11732,7 @@ static bool petta_machine_try_match_existence_observer(
               &machine->heap, reference)
         : NULL;
     if (!target && reference->kind == ATOM_SYMBOL &&
-        petta_symbol_name_is(reference->sym_id, "&self")) {
+        reference->sym_id == g_builtin_syms.self) {
         target = machine->space;
     }
     if (!target)
@@ -12365,7 +12365,7 @@ static bool petta_machine_dispatch_solve(
      * enclosing continuation.
      */
     if (petta_machine_type_obligations_enabled(machine) &&
-        petta_symbol_name_is(head_id, "the") && nargs == 2u) {
+        head_id == g_builtin_syms.petta_the && nargs == 2u) {
         Atom *value = petta_fresh_variable(machine);
         if (!value ||
             !petta_push_unify(
@@ -12390,14 +12390,13 @@ static bool petta_machine_dispatch_solve(
     Atom *contextual_type =
         petta_machine_type_obligation_for_value(machine, expected);
     bool atom_list_context =
-        petta_symbol_name_is(head_id, "make-list") &&
+        head_id == g_builtin_syms.petta_make_list &&
         contextual_type && contextual_type->kind == ATOM_EXPR &&
         contextual_type->expr.len == 2u &&
         petta_symbol_name_is(
             atom_head_symbol_id(contextual_type), "List") &&
         contextual_type->expr.elems[1]->kind == ATOM_SYMBOL &&
-        petta_symbol_name_is(
-            contextual_type->expr.elems[1]->sym_id, "Atom");
+        contextual_type->expr.elems[1]->sym_id == g_builtin_syms.atom;
     if (atom_list_context) {
         if (!cetta_expr_len_mul_fits_size(
                 nargs, sizeof(Atom *))) {
@@ -12605,7 +12604,7 @@ static bool petta_machine_dispatch_solve(
             petta_plan_child(plan, 1u));
     }
 
-    if (petta_symbol_name_is(head_id, "member") && nargs == 2u) {
+    if (head_id == g_builtin_syms.petta_member && nargs == 2u) {
         if (!petta_push_evaluated_expression(
                 machine, expression, expected,
                 PETTA_GOAL_RELATIONAL_MEMBER_READY, 1u,
@@ -12665,9 +12664,9 @@ static bool petta_machine_dispatch_solve(
 
     if ((head_id == g_builtin_syms.car_atom ||
          head_id == g_builtin_syms.cdr_atom ||
-         petta_symbol_name_is(head_id, "last") ||
-         petta_symbol_name_is(head_id, "reverse") ||
-         petta_symbol_name_is(head_id, "msort")) &&
+         head_id == g_builtin_syms.petta_last ||
+         head_id == g_builtin_syms.reverse ||
+         head_id == g_builtin_syms.petta_msort) &&
         nargs == 1u) {
         if (!petta_push_evaluated_expression_planned(
                 machine, expression, expected,
@@ -12702,7 +12701,7 @@ static bool petta_machine_dispatch_solve(
         return true;
     }
 
-    if (petta_symbol_name_is(head_id, "empty") && nargs == 0u)
+    if (head_id == g_builtin_syms.empty_form && nargs == 0u)
         return false;
 
     if (head_id == g_builtin_syms.once && nargs == 1u) {
@@ -12712,7 +12711,7 @@ static bool petta_machine_dispatch_solve(
             failure);
     }
 
-    if (petta_symbol_name_is(head_id, "transaction") &&
+    if (head_id == g_builtin_syms.petta_transaction &&
         nargs == 1u) {
         return petta_machine_start_transaction(
             machine, expression->expr.elems[1], expected,
@@ -12720,7 +12719,7 @@ static bool petta_machine_dispatch_solve(
             failure);
     }
 
-    if (petta_symbol_name_is(head_id, "with_mutex") &&
+    if (head_id == g_builtin_syms.petta_with_mutex &&
         nargs == 2u) {
         return petta_machine_start_mutex(
             machine, expression->expr.elems[1],
@@ -13038,8 +13037,7 @@ static bool petta_machine_dispatch_solve(
             if (!branch || branch->kind != ATOM_EXPR ||
                 branch->expr.len != 2u ||
                 branch->expr.elems[0]->kind != ATOM_SYMBOL ||
-                !petta_symbol_name_is(
-                    branch->expr.elems[0]->sym_id, "Empty")) {
+                branch->expr.elems[0]->sym_id != g_builtin_syms.empty) {
                 continue;
             }
             PettaChoice default_choice = {
@@ -13085,10 +13083,8 @@ static bool petta_machine_dispatch_solve(
         return true;
     }
 
-    bool numeric_min =
-        petta_symbol_name_is(head_id, "min");
-    bool numeric_max =
-        petta_symbol_name_is(head_id, "max");
+    bool numeric_min = head_id == g_builtin_syms.petta_min;
+    bool numeric_max = head_id == g_builtin_syms.petta_max;
     if ((numeric_min || numeric_max) && nargs == 2u) {
         Atom *left = petta_fresh_variable(machine);
         Atom *right = petta_fresh_variable(machine);
@@ -14444,21 +14440,21 @@ static bool petta_machine_dispatch_goal(
         }
         if (!items || items->kind != ATOM_EXPR)
             return false;
-        if (petta_symbol_name_is(operation, "last")) {
+        if (operation == g_builtin_syms.petta_last) {
             return items->expr.len > 0u &&
                    petta_machine_unify(
                        machine,
                        items->expr.elems[items->expr.len - 1u],
                        second);
         }
-        if (petta_symbol_name_is(operation, "msort")) {
+        if (operation == g_builtin_syms.petta_msort) {
             Atom *sorted =
                 petta_semantics_msort(&machine->heap, items);
             return sorted &&
                    petta_machine_unify(
                        machine, sorted, second);
         }
-        if (!petta_symbol_name_is(operation, "reverse"))
+        if (operation != g_builtin_syms.reverse)
             return false;
         Atom **reversed = items->expr.len
             ? arena_alloc(
@@ -14782,7 +14778,7 @@ static bool petta_machine_dispatch_goal(
                 continue;
             Atom *pattern = branch->expr.elems[0];
             if (pattern->kind == ATOM_SYMBOL &&
-                petta_symbol_name_is(pattern->sym_id, "Empty")) {
+                pattern->sym_id == g_builtin_syms.empty) {
                 continue;
             }
             BindingsBuilder *builder =

@@ -1981,6 +1981,12 @@ static Atom *prime_judge(Arena *a, Space *space, Atom *judgment,
 
 static const char *const PRIME_OP_NAMES[] = {"prime-package", "prime-judge"};
 
+bool prime_semantics_is_op_id(SymbolId id) {
+    return id != SYMBOL_ID_NONE &&
+           (id == g_builtin_syms.prime_package ||
+            id == g_builtin_syms.prime_judge);
+}
+
 bool prime_semantics_is_op(const char *name) {
     if (!name) return false;
     for (size_t i = 0; i < sizeof PRIME_OP_NAMES / sizeof PRIME_OP_NAMES[0]; i++)

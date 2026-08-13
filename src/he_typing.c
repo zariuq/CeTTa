@@ -3316,6 +3316,62 @@ static const char *const HE_OP_NAMES[] = {
     "type-forward-step", "type-forward-closure",
 };
 
+#define HE_OP_ID_CACHE_CAP 16u
+
+typedef struct {
+    const SymbolTable *table;
+    uint64_t table_instance_id;
+    SymbolId slots[HE_OP_ID_CACHE_CAP];
+} HeOpIdCache;
+
+static _Thread_local HeOpIdCache g_he_op_id_cache;
+
+static void he_op_id_cache_insert(HeOpIdCache *cache, SymbolId id) {
+    size_t slot = ((size_t)id * UINT32_C(2654435761)) &
+        (HE_OP_ID_CACHE_CAP - 1u);
+    while (cache->slots[slot] != SYMBOL_ID_NONE &&
+           cache->slots[slot] != id) {
+        slot = (slot + 1u) & (HE_OP_ID_CACHE_CAP - 1u);
+    }
+    cache->slots[slot] = id;
+}
+
+static void he_op_id_cache_refresh(void) {
+    HeOpIdCache cache = {
+        .table = g_symbols,
+        .table_instance_id = symbol_table_instance_id(g_symbols),
+    };
+    if (g_symbols) {
+        for (size_t i = 0u;
+             i < sizeof HE_OP_NAMES / sizeof HE_OP_NAMES[0]; i++) {
+            he_op_id_cache_insert(
+                &cache, symbol_intern_cstr(g_symbols, HE_OP_NAMES[i]));
+        }
+    }
+    g_he_op_id_cache = cache;
+}
+
+bool he_typing_is_op_id(SymbolId id) {
+    uint64_t table_instance_id = symbol_table_instance_id(g_symbols);
+    if (g_he_op_id_cache.table != g_symbols ||
+        g_he_op_id_cache.table_instance_id != table_instance_id) {
+        he_op_id_cache_refresh();
+    }
+    if (id == SYMBOL_ID_NONE || !g_he_op_id_cache.table)
+        return false;
+    size_t slot = ((size_t)id * UINT32_C(2654435761)) &
+        (HE_OP_ID_CACHE_CAP - 1u);
+    for (size_t probe = 0u; probe < HE_OP_ID_CACHE_CAP; probe++) {
+        SymbolId candidate = g_he_op_id_cache.slots[slot];
+        if (candidate == SYMBOL_ID_NONE)
+            return false;
+        if (candidate == id)
+            return true;
+        slot = (slot + 1u) & (HE_OP_ID_CACHE_CAP - 1u);
+    }
+    return false;
+}
+
 bool he_typing_is_op(const char *name) {
     if (!name) return false;
     for (size_t i = 0; i < sizeof HE_OP_NAMES / sizeof HE_OP_NAMES[0]; i++)
@@ -3343,9 +3399,9 @@ bool he_typing_op_data_arg(const char *name, uint32_t arg_index) {
 
 Atom *he_typing_dispatch(Arena *a, Atom *head, Atom **args, uint32_t nargs) {
     if (head->kind != ATOM_SYMBOL) return NULL;
+    if (!eval_current_profile_enables_dependent_telescope()) return NULL;
     const char *name = symbol_bytes(g_symbols, head->sym_id);
     if (!he_typing_is_op(name)) return NULL;
-    if (!eval_current_profile_enables_dependent_telescope()) return NULL;
 
     if (strcmp(name, "normalize-type") == 0) {
         if (nargs != 3)

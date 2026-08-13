@@ -49,7 +49,12 @@ typedef struct {
     const PrimeNeedFrame *top;
     uint64_t session_id;
     uint64_t max_storage_key;
+    /* Arena containing `top`; `closure_owner` is non-NULL exactly when the
+     * complete reachable frame path and its owned payloads share one arena.
+     * A NULL closure owner denotes an intentionally mixed-lifetime path: a
+     * reclaimable suffix may reference a longer-lived immutable prefix. */
     Arena *owner;
+    Arena *closure_owner;
 #if CETTA_PRIME_NEED_HEAP_INDEX
     const PrimeNeedHeapIndexNode *heap_index;
     const PrimeNeedHeapIndexNode *lineage_index;
@@ -144,6 +149,18 @@ bool prime_need_snapshot_merge(PrimeNeedSnapshot *dst,
                                const PrimeNeedSnapshot *src);
 bool prime_need_snapshot_promote(Arena *dst,
                                  PrimeNeedSnapshot *snapshot);
+/* Copy only the suffix owned by `forbidden` into `dst`, retaining an older
+ * immutable prefix that already excludes `forbidden`.  The source-owned
+ * suffix must be contiguous.  This is the promotion operation used before a
+ * branch arena is reclaimed. */
+bool prime_need_snapshot_promote_suffix(
+    Arena *dst, const Arena *forbidden, PrimeNeedSnapshot *snapshot);
+/* Transactional-composition form: the caller owns `copy_session` and the
+ * destination rollback boundary, allowing one memoized atom-copy graph to be
+ * shared by the visible answer, bindings, Need heap, and receipt. */
+bool prime_need_snapshot_promote_suffix_with_session(
+    Arena *dst, const Arena *forbidden,
+    AtomDeepCopySession *copy_session, PrimeNeedSnapshot *snapshot);
 bool prime_need_snapshot_excludes_arena(
     const PrimeNeedSnapshot *snapshot, const Arena *forbidden);
 bool prime_need_snapshot_owner_excludes_arena(
@@ -227,6 +244,13 @@ bool prime_need_receipt_compatible(const PrimeNeedReceipt *left,
 bool prime_need_receipt_merge(PrimeNeedReceipt *dst,
                               const PrimeNeedReceipt *src);
 bool prime_need_receipt_promote(Arena *dst, PrimeNeedReceipt *receipt);
+/* Receipt analogue of `prime_need_snapshot_promote_suffix`: copy only nodes
+ * owned by `forbidden`, preserving longer-lived parent DAGs. */
+bool prime_need_receipt_promote_suffix(
+    Arena *dst, const Arena *forbidden, PrimeNeedReceipt *receipt);
+bool prime_need_receipt_promote_suffix_with_session(
+    Arena *dst, const Arena *forbidden,
+    AtomDeepCopySession *copy_session, PrimeNeedReceipt *receipt);
 bool prime_need_receipt_excludes_arena(
     const PrimeNeedReceipt *receipt, const Arena *forbidden);
 bool prime_need_arena_audit_receipt(
@@ -244,12 +268,26 @@ bool prime_need_receipt_observe_source_cell(
     uint64_t need_session_id, uint64_t thunk_id,
     uint64_t source_occurrence_id, uint64_t source_argument_index,
     Atom *outcome, PrimeNeedReceipt *out);
+bool prime_need_receipt_observe_source_cell_branch_local(
+    Arena *owner, const PrimeNeedReceipt *base,
+    uint64_t need_session_id, uint64_t thunk_id,
+    uint64_t source_occurrence_id, uint64_t source_argument_index,
+    Atom *outcome, PrimeNeedReceipt *out);
 bool prime_need_receipt_evaluate_source_cell(
     Arena *owner, const PrimeNeedReceipt *base,
     uint64_t need_session_id, uint64_t thunk_id,
     uint64_t source_occurrence_id, uint64_t source_argument_index,
     Atom *origin, PrimeNeedReceipt *out);
+bool prime_need_receipt_evaluate_source_cell_branch_local(
+    Arena *owner, const PrimeNeedReceipt *base,
+    uint64_t need_session_id, uint64_t thunk_id,
+    uint64_t source_occurrence_id, uint64_t source_argument_index,
+    Atom *origin, PrimeNeedReceipt *out);
 bool prime_need_receipt_inspect_origin(
+    Arena *owner, const PrimeNeedReceipt *base,
+    uint64_t need_session_id, uint64_t thunk_id, Atom *origin_view,
+    PrimeNeedReceipt *out);
+bool prime_need_receipt_inspect_origin_branch_local(
     Arena *owner, const PrimeNeedReceipt *base,
     uint64_t need_session_id, uint64_t thunk_id, Atom *origin_view,
     PrimeNeedReceipt *out);
@@ -267,7 +305,22 @@ bool prime_need_receipt_use_equation_ids(
     Arena *owner, const PrimeNeedReceipt *base,
     uint64_t source_occurrence_id, uint64_t rule_occurrence_id,
     PrimeNeedReceipt *out);
+/* Extend a longer-lived receipt in a branch-local arena.  The base must
+ * outlive `owner`, and the result must be promoted before it escapes that
+ * arena.  This is the receipt analogue of allocating a search continuation
+ * in a reclaimable branch heap. */
+bool prime_need_receipt_use_equation_branch_local(
+    Arena *owner, const PrimeNeedReceipt *base,
+    uint64_t source_occurrence_id, uint64_t rule_occurrence_id,
+    Atom *equation, Atom *result, PrimeNeedReceipt *out);
+bool prime_need_receipt_use_equation_ids_branch_local(
+    Arena *owner, const PrimeNeedReceipt *base,
+    uint64_t source_occurrence_id, uint64_t rule_occurrence_id,
+    PrimeNeedReceipt *out);
 bool prime_need_receipt_resample(
+    Arena *owner, const PrimeNeedReceipt *base, Atom *origin,
+    PrimeNeedReceipt *out);
+bool prime_need_receipt_resample_branch_local(
     Arena *owner, const PrimeNeedReceipt *base, Atom *origin,
     PrimeNeedReceipt *out);
 bool prime_need_receipt_state_value(const PrimeNeedReceipt *receipt,
