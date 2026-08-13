@@ -2,6 +2,7 @@
 #define CETTA_PETTA_TYPECHECK_H
 
 #include "atom.h"
+#include "nik_direct_authority.h"
 #include "petta_analysis.h"
 #include "petta_program.h"
 #include "space.h"
@@ -45,6 +46,11 @@ typedef enum {
     PETTA_TYPECHECK_POLICY_STRICT,
     PETTA_TYPECHECK_POLICY_STRICT_DET,
 } PettaTypecheckPolicy;
+
+/* The authored PeTTa typecheck-v2 judgment and its current native computing
+ * realization.  Ordinary decisions consume only the claim and live state. */
+extern const CettaNikDirectAuthorityV1
+    petta_typecheck_v2_direct_authority_v1;
 
 typedef struct {
     PettaTypecheckVerdict verdict;
@@ -99,6 +105,23 @@ bool petta_typecheck_declaration_block(
     Atom *const *forms, size_t form_count,
     PettaTypecheckPolicy policy, PettaTypecheckBlockResult *result);
 
+/* Qualified replacement path: compute exactly the same declaration judgment
+ * while pinning every retained inferred signature to the named direct NIK
+ * authority realization and policy. */
+bool petta_typecheck_declaration_block_under_authority(
+    const CettaNikDirectAuthorityV1 *authority,
+    PettaProgram *program, Space *space, Registry *registry,
+    Atom *const *forms, size_t form_count,
+    PettaTypecheckPolicy policy, PettaTypecheckBlockResult *result);
+
+/* Qualification route used while the authority-pinned realization runs
+ * beside the legacy path.  The default remains legacy until the complete
+ * parity and performance gates ratify replacement. */
+bool petta_typecheck_declaration_block_selected(
+    PettaProgram *program, Space *space, Registry *registry,
+    Atom *const *forms, size_t form_count,
+    PettaTypecheckPolicy policy, PettaTypecheckBlockResult *result);
+
 typedef enum {
     PETTA_TYPECHECK_MUTATION_ADD = 0,
     PETTA_TYPECHECK_MUTATION_REMOVE,
@@ -111,6 +134,20 @@ bool petta_typecheck_program_mutation(
     Space *target_space, Atom *proposed,
     PettaTypecheckMutation mutation,
     PettaTypecheckPolicy policy, PettaTypecheckBlockResult *result);
+bool petta_typecheck_program_mutation_under_authority(
+    const CettaNikDirectAuthorityV1 *authority,
+    PettaProgram *program, Space *program_space, Registry *registry,
+    Space *target_space, Atom *proposed,
+    PettaTypecheckMutation mutation,
+    PettaTypecheckPolicy policy, PettaTypecheckBlockResult *result);
+bool petta_typecheck_program_mutation_selected(
+    PettaProgram *program, Space *program_space, Registry *registry,
+    Space *target_space, Atom *proposed,
+    PettaTypecheckMutation mutation,
+    PettaTypecheckPolicy policy, PettaTypecheckBlockResult *result);
+
+void petta_typecheck_inferred_signatures_rebase_selected(
+    PettaProgram *program, Space *space, PettaTypecheckPolicy policy);
 
 /* Derive the strongest runtime proviso consumed by any live clause at one
  * direct argument position.  The caller caches against the supplied Space's

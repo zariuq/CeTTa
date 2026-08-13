@@ -2215,7 +2215,7 @@ static MainPettaBlockLoadResult main_petta_check_forms(
     for (int index = 0; index < atom_count; index++)
         forms[index] = term_universe_get_atom(universe, atom_ids[index]);
     PettaTypecheckBlockResult checked;
-    bool judged = petta_typecheck_declaration_block(
+    bool judged = petta_typecheck_declaration_block_selected(
         program, space, registry, forms, (size_t)atom_count,
         typecheck_policy, &checked);
     free(forms);
@@ -2280,8 +2280,14 @@ static MainPettaBlockLoadResult main_petta_load_declaration_block(
         ok = petta_program_note_add(
             program, space, source, plan);
     }
-    if (ok && typecheck)
+    if (ok && typecheck) {
+#if CETTA_BUILD_WITH_PETTA_TYPECHECK_V2
+        petta_typecheck_inferred_signatures_rebase_selected(
+            program, space, typecheck_policy);
+#else
         petta_program_inferred_signatures_rebase(program, space);
+#endif
+    }
     petta_program_declaration_block_free(block);
     return ok ? MAIN_PETTA_BLOCK_LOAD_OK
               : MAIN_PETTA_BLOCK_LOAD_FAILED;
