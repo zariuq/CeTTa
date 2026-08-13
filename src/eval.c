@@ -5,6 +5,7 @@
 #include "search_machine.h"
 #include "grounded.h"
 #include "he_typing.h"
+#include "he_typing_authority.h"
 #include "prime_semantics.h"
 #include "library.h"
 #include "mm2_lower.h"
@@ -17,6 +18,7 @@
 #include "match_decision.h"
 #include "prepared_pure_machine.h"
 #include "prime_need.h"
+#include "prime_typing_publication.h"
 #include "name_key.h"
 #include "stats.h"
 #include "answer_bank.h"
@@ -15948,12 +15950,50 @@ static Atom *prime_need_typecheck_argument(Atom *argument) {
     return prime_need_source_argument(argument, NULL);
 }
 
+static __thread bool g_typed_applicability_config_ready = false;
+static __thread bool g_typed_applicability_enabled = true;
+
+static bool typed_applicability_pruning_enabled(void) {
+    if (!g_typed_applicability_config_ready) {
+        const char *setting = getenv("CETTA_NIK_TYPED_APPLICABILITY");
+        g_typed_applicability_enabled =
+            !setting || !(strcmp(setting, "0") == 0 ||
+                          strcasecmp(setting, "false") == 0 ||
+                          strcasecmp(setting, "off") == 0 ||
+                          strcasecmp(setting, "no") == 0);
+        g_typed_applicability_config_ready = true;
+    }
+    return g_typed_applicability_enabled;
+}
+
+/* Closed, variable-free type pairs admit a direct negative judgment before
+ * allocating a speculative matcher environment.  NONE is the only result
+ * used as a license: dynamic, structural, unknown, and fuel-exhausted cases
+ * all retain the historical matching path. */
+static bool typed_applicability_candidate_is_natively_refuted(
+    Atom *actual, Atom *expected) {
+    if (!typed_applicability_pruning_enabled() ||
+        !actual || !expected || atom_has_vars(actual) ||
+        atom_has_vars(expected) || atom_has_registry_refs(actual) ||
+        atom_has_registry_refs(expected)) {
+        return false;
+    }
+    CettaHeTypingEdge edge =
+        cetta_he_typing_core_direct_service_v1.classify_consistency(
+            actual, expected, 4096u);
+    if (edge != CETTA_HE_EDGE_NONE)
+        return false;
+    cetta_runtime_stats_inc(
+        CETTA_RUNTIME_COUNTER_NIK_TYPED_APPLICABILITY_CANDIDATE_REFUTED);
+    return true;
+}
+
 /* Returns true if at least one complete applicability environment survives.
    Every alternative is retained in dynamically growing storage; callers only
    consume the decision and diagnostic atoms, so no binding array escapes. */
 static bool check_function_applicable(
     Atom *expr, Atom *funcType, Atom *expectedType,
-    Space *s, Arena *a, int fuel,
+    Space *s, Arena *a, int fuel, bool allow_native_refutation,
     ApplicabilityErrors *errors,
     ApplicabilityTypes *applicable_returns) {
 
@@ -16066,6 +16106,11 @@ static bool check_function_applicable(
             search_context_init_owned(&candidate_context, &results.items[r],
                                       NULL);
             for (uint32_t t = 0; t < natypes; t++) {
+                if (allow_native_refutation &&
+                    typed_applicability_candidate_is_natively_refuted(
+                        atypes[t], expected)) {
+                    continue;
+                }
                 ChoicePoint point = search_context_save(&candidate_context);
                 if (match_types_builder(atypes[t], expected,
                                         search_context_builder(&candidate_context))) {
@@ -20678,8 +20723,9 @@ static bool try_dynamic_callable_dispatch(
         Atom *head_type = get_grounded_type(a, head_atom);
         ApplicabilityErrors errors;
         applicability_errors_init(&errors);
-        if (!check_function_applicable(atom, head_type, exp_type, s, a, fuel,
-                                       &errors, NULL)) {
+        if (!check_function_applicable(
+                atom, head_type, exp_type, s, a, fuel, false,
+                &errors, NULL)) {
             for (uint32_t ei = 0; ei < errors.len; ei++)
                 outcome_set_add(os, errors.items[ei], head_env);
             applicability_errors_free(&errors);
@@ -24245,24 +24291,10 @@ static void prime_need_eval_delayed_against_contracts(
         Atom **actual_types = NULL;
         uint32_t actual_count = eval_get_atom_types_profiled(
             s, a, result, &actual_types);
-        bool accepted = false;
-        for (uint32_t ci = 0u; ci < contracts->len && !accepted; ci++) {
-            Atom *expected = contracts->items[ci];
-            if (atom_is_symbol_id(expected, g_builtin_syms.undefined_type) ||
-                atom_is_symbol_id(expected, g_builtin_syms.atom)) {
-                accepted = true;
-                break;
-            }
-            for (uint32_t ai = 0u; ai < actual_count; ai++) {
-                Bindings match_env;
-                bindings_init(&match_env);
-                accepted = match_types(actual_types[ai], expected,
-                                       &match_env);
-                bindings_free(&match_env);
-                if (accepted)
-                    break;
-            }
-        }
+        bool accepted =
+            cetta_prime_typed_publication_direct_service_v1.accepts_any(
+                actual_types, actual_count,
+                contracts->items, contracts->len);
         if (accepted) {
             free(actual_types);
             outcome_set_add_existing_move(outcomes, candidate);
@@ -24552,6 +24584,7 @@ static bool prime_need_try_equation_call_core(
         applicability_errors_init(&candidate_errors);
         if (fresh_type && check_function_applicable(
                 atom, fresh_type, expected_type, s, a, fuel,
+                n_head_types > 1u,
                 &candidate_errors, collected_returns)) {
             has_applicable_function_type = true;
         } else {
@@ -25456,6 +25489,7 @@ handle_dispatch(Space *s, Arena *a, Atom *atom, Atom *etype, int fuel,
                 eval_current_language_id() == CETTA_LANGUAGE_HE;
             if (check_function_applicable(atom, fresh_ft, exp_type,
                                           s, a, fuel,
+                                          n_op_types > 1u,
                                           &errors,
                                           correlate_he_contracts
                                               ? &contracts : NULL)) {
