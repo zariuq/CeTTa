@@ -455,6 +455,16 @@ static const char *const CETTA_RUNTIME_COUNTER_NAMES[CETTA_RUNTIME_COUNTER_COUNT
     "prime-need-carrier-promote-suffix",
     "prime-need-carrier-promoted-suffix-frame",
     "prime-need-carrier-audit",
+    "petta-typed-dispatch-signature-refuted",
+    "nik-typed-applicability-candidate-refuted",
+    "petta-typecheck-declaration-admission-attempt",
+    "petta-typecheck-declaration-admission-accepted",
+    "petta-typecheck-declaration-admission-refuted",
+    "petta-typecheck-declaration-admission-fault",
+    "declared-type-indexed-lookup",
+    "declared-type-indexed-row",
+    "declared-type-full-scan-row",
+    "nik-typed-applicability-candidate-tested",
 };
 
 static int64_t clamp_counter(uint64_t value) {

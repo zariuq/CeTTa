@@ -2214,7 +2214,8 @@ typedef enum {
 static MainPettaBlockLoadResult main_petta_check_forms(
     PettaProgram *program, Space *space, Registry *registry,
     TermUniverse *universe, AtomId *atom_ids, int atom_count,
-    PettaTypecheckPolicy typecheck_policy) {
+    PettaTypecheckPolicy typecheck_policy,
+    bool declaration_admission) {
 #if CETTA_BUILD_WITH_PETTA_TYPECHECK_V2
     if (atom_count <= 0)
         return MAIN_PETTA_BLOCK_LOAD_OK;
@@ -2225,9 +2226,13 @@ static MainPettaBlockLoadResult main_petta_check_forms(
     for (int index = 0; index < atom_count; index++)
         forms[index] = term_universe_get_atom(universe, atom_ids[index]);
     PettaTypecheckBlockResult checked;
-    bool judged = petta_typecheck_declaration_block_selected(
-        program, space, registry, forms, (size_t)atom_count,
-        typecheck_policy, &checked);
+    bool judged = declaration_admission
+        ? petta_typecheck_declaration_admission_selected(
+              program, space, registry, forms, (size_t)atom_count,
+              typecheck_policy, &checked)
+        : petta_typecheck_declaration_block_selected(
+              program, space, registry, forms, (size_t)atom_count,
+              typecheck_policy, &checked);
     free(forms);
     if (!judged) {
         fprintf(
@@ -2252,6 +2257,7 @@ static MainPettaBlockLoadResult main_petta_check_forms(
     (void)atom_ids;
     (void)atom_count;
     (void)typecheck_policy;
+    (void)declaration_admission;
     return MAIN_PETTA_BLOCK_LOAD_OK;
 #endif
 }
@@ -2264,7 +2270,7 @@ static MainPettaBlockLoadResult main_petta_load_declaration_block(
     if (typecheck && atom_count > 0) {
         MainPettaBlockLoadResult checked = main_petta_check_forms(
             program, space, registry, universe, atom_ids, atom_count,
-            typecheck_policy);
+            typecheck_policy, true);
         if (checked != MAIN_PETTA_BLOCK_LOAD_OK)
             return checked;
     }
@@ -3619,7 +3625,7 @@ process_petta_document:
                             main_petta_check_forms(
                                 libraries.petta_program, &space, &registry,
                                 &libraries.term_universe, atom_ids + pi,
-                                exec_width, petta_typecheck_policy);
+                                exec_width, petta_typecheck_policy, false);
                         if (checked != MAIN_PETTA_BLOCK_LOAD_OK) {
                             rc = checked ==
                                     MAIN_PETTA_BLOCK_LOAD_TYPE_REJECTED
@@ -3749,7 +3755,7 @@ process_petta_document:
                 MainPettaBlockLoadResult checked = main_petta_check_forms(
                     libraries.petta_program, &space, &registry,
                     &libraries.term_universe, atom_ids + i, exec_width,
-                    petta_typecheck_policy);
+                    petta_typecheck_policy, false);
                 if (checked != MAIN_PETTA_BLOCK_LOAD_OK) {
                     rc = checked == MAIN_PETTA_BLOCK_LOAD_TYPE_REJECTED
                         ? 2 : 1;

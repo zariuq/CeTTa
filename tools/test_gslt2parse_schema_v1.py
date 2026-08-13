@@ -61,7 +61,7 @@ EXPECTED_PACKAGE_DIGEST = (
     "bd763693062eeaea7e95fe73f036af4e1707fe1f338c25345a622de25d48e7a4"
 )
 EXPECTED_METAMATH_DIGEST = (
-    "1b4c1d1da9de08262cc1c3d18443bb02efde9147f3321e8923af75db05282f57"
+    "8c1b50b54686eed8b6e11ff61160cf17db79d814b933896aca78f76638043b82"
 )
 EXPECTED_TPTP_DIGEST = (
     "4bb4743974e886104667e91cac389784b6e62a267815bb0745272db2a353f104"
@@ -88,7 +88,7 @@ EXPECTED_COMPILER_DIGEST = (
     "0186885115acae44b9e982bc6fc19c236f35fda523e3c94abc1a96c0d4e509a9"
 )
 EXPECTED_PARSER_PACK_COMPILER_DIGEST = (
-    "52969138eb6959175337d2afb72c5cfa6dc43fb25c703f4a0d454fb6fbaf3a03"
+    "493efbe57646f3e566e02e5e112d4243728a389f0b1ad1eb6bb1bd5e0cdfcdb5"
 )
 PROVENANCE_FIELDS = (
     "artifact_id",
@@ -290,6 +290,82 @@ def main() -> int:
         if escaped_digest != raw_digest:
             raise GateFailure("escaped Unicode scalars changed canonical bytes")
         passed += 1
+
+    framed_text = """\
+(gslt-presentation-v1 FramedV1
+  (nik-authority-frame-v1
+    (mode direct-decision)
+    (certificate-policy none)
+    (fiber sample-language)
+    (outcome-algebra (Accepted Rejected)
+      (exclusive)
+      (default Rejected))
+    (native-projection pending)
+    (status AUTHORED_FRAGMENT)
+    (commitments direct-computation certificate-free))
+  (signature (operator probe 1))
+  (equations)
+  (rewrites
+    (rule probe-a
+      (nik-rule-frame-v1
+        (native-projection native-probe)
+        (role calculus))
+      (head (probe a))
+      (body))))
+"""
+    with tempfile.TemporaryDirectory(prefix="gslt2parse-nik-frame-v1-") as raw_temp:
+        temp = Path(raw_temp)
+        framed_path = temp / "framed.metta"
+        framed_path.write_text(framed_text, encoding="utf-8")
+        framed = schema.admit([framed_path])[0]
+        if framed.nik_frame is None or framed.nik_frame.fiber != "sample-language":
+            raise GateFailure("NIK authority frame or language fiber was lost")
+        if framed.rules[0].nik_frame is None:
+            raise GateFailure("NIK rule frame was lost")
+        passed += 1
+
+        canonical_path = temp / "framed-canonical.metta"
+        canonical_path.write_text(schema.canonical_text(framed), encoding="utf-8")
+        if schema.package_digest(schema.admit([canonical_path])) != schema.package_digest(
+            [framed]
+        ):
+            raise GateFailure("NIK frame changed across canonical round-trip")
+        passed += 1
+
+        frame_mutations = {
+            "certificate-on-direct-path": (
+                framed_text.replace(
+                    "(certificate-policy none)", "(certificate-policy trace)"
+                ),
+                "direct-decision authority requires certificate-policy none",
+            ),
+            "missing-language-fiber": (
+                framed_text.replace("    (fiber sample-language)\n", ""),
+                "missing nik-authority-frame-v1 fields: fiber",
+            ),
+            "default-outside-algebra": (
+                framed_text.replace("(default Rejected)", "(default Missing)"),
+                "default outcome is not in the outcome algebra",
+            ),
+            "missing-rule-frame": (
+                framed_text.replace(
+                    "      (nik-rule-frame-v1\n"
+                    "        (native-projection native-probe)\n"
+                    "        (role calculus))\n",
+                    "",
+                ),
+                "malformed rule",
+            ),
+            "unsupported-rule-role": (
+                framed_text.replace("(role calculus)", "(role observation)"),
+                "unsupported NIK rule role observation",
+            ),
+        }
+        for name, (text, needle) in frame_mutations.items():
+            path = temp / f"{name}.metta"
+            path.write_text(text, encoding="utf-8")
+            expect_rejected([path], needle)
+            passed += 1
 
     migrated = migration.migrate(MIGRATION_FIXTURE, name="MigratedTypedToyV1")
     if {(item.name, item.arity) for item in migrated.operators} != {
@@ -505,7 +581,7 @@ def main() -> int:
             raise GateFailure(f"guest-language name in generic tool {path.name}")
     passed += 1
 
-    total = 35
+    total = 42
     if passed != total:
         raise GateFailure(f"gate accounting mismatch: {passed}/{total}")
     print(f"(FiniteHornGSLTV1CanarySummary {total} {passed} 0)")

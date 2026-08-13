@@ -1,4 +1,5 @@
 #include "eval.h"
+#include "generated/petta_typecheck_v2_boundary_core_source_binding_v1.generated.h"
 #include "generated/petta_typecheck_v2_source_binding_v1.generated.h"
 #include "library.h"
 #include "parser.h"
@@ -3342,6 +3343,10 @@ static void test_direct_source_binding_contract(void) {
     assert(strcmp(
         binding->semantic_scope,
         "petta.typecheck-v2.guard-core") == 0);
+    assert(strcmp(binding->mode, "direct-decision") == 0);
+    assert(strcmp(binding->certificate_policy, "none") == 0);
+    assert(strcmp(binding->fiber, "petta") == 0);
+    assert(strcmp(binding->default_outcome, "PTUndetermined") == 0);
     assert(binding->coverage ==
         CETTA_NIK_DIRECT_SOURCE_AUTHORED_FRAGMENT);
     assert(binding->coverage !=
@@ -3363,6 +3368,143 @@ static void test_direct_source_binding_contract(void) {
     invalid = *binding;
     invalid.authority = NULL;
     assert(!cetta_nik_direct_source_binding_v1_is_valid(&invalid));
+    invalid = *binding;
+    invalid.certificate_policy = "trace";
+    assert(!cetta_nik_direct_source_binding_v1_is_valid(&invalid));
+    invalid = *binding;
+    invalid.fiber = "";
+    assert(!cetta_nik_direct_source_binding_v1_is_valid(&invalid));
+
+    const CettaNikDirectSourceBindingV1 *boundary_binding =
+        &petta_typecheck_v2_boundary_core_source_binding_v1;
+    assert(cetta_nik_direct_source_binding_v1_is_valid(
+        boundary_binding));
+    assert(boundary_binding->authority == binding->authority);
+    assert(strcmp(
+        boundary_binding->presentation_id,
+        "petta-typecheck-v2-boundary-core-v1") == 0);
+    assert(strcmp(
+        boundary_binding->semantic_scope,
+        "petta.typecheck-v2.direct-boundary-requirement-core") == 0);
+    assert(strcmp(boundary_binding->mode, "direct-decision") == 0);
+    assert(strcmp(boundary_binding->certificate_policy, "none") == 0);
+    assert(strcmp(boundary_binding->fiber, "petta") == 0);
+    assert(strcmp(boundary_binding->default_outcome, "PTUndetermined") == 0);
+    assert(boundary_binding->coverage ==
+        CETTA_NIK_DIRECT_SOURCE_AUTHORED_FRAGMENT);
+    invalid = *boundary_binding;
+    invalid.presentation_id = "";
+    assert(!cetta_nik_direct_source_binding_v1_is_valid(&invalid));
+}
+
+static void add_boundary_signature(
+    Space *space, Arena *arena, const char *head) {
+    char source[256];
+    int length = snprintf(
+        source, sizeof(source),
+        "(: %s (-[det]-> (List Atom) Atom))", head);
+    assert(length > 0 && (size_t)length < sizeof(source));
+    Atom *signature = parse_one(arena, source);
+    assert(signature);
+    space_add(space, signature);
+}
+
+static PettaTypecheckBoundaryRequirement boundary_requirement_for(
+    PettaProgram *program, Space *space, const char *head) {
+    PettaTypecheckBoundaryRequirement requirement =
+        PETTA_TYPECHECK_BOUNDARY_NONE;
+    SymbolId head_id = symbol_intern_cstr(g_symbols, head);
+    assert(head_id != SYMBOL_ID_NONE);
+    assert(petta_typecheck_call_boundary_requirement(
+        program, space, head_id, 1u, 0u, &requirement));
+    return requirement;
+}
+
+static void test_boundary_requirement_calculus(
+    TermUniverse *universe, Arena *arena) {
+    PettaProgram *program = petta_program_new();
+    assert(program);
+    Space space;
+    space_init_with_universe(&space, universe);
+
+    add_boundary_signature(&space, arena, "boundary-list");
+    add_compiled_program_clause(
+        program, &space, arena,
+        "(= (boundary-list $items) (length $items))");
+    assert(boundary_requirement_for(
+               program, &space, "boundary-list") ==
+           PETTA_TYPECHECK_BOUNDARY_PROPER_LIST);
+
+    add_boundary_signature(&space, arena, "boundary-bool");
+    add_compiled_program_clause(
+        program, &space, arena,
+        "(= (boundary-bool $value) (not $value))");
+    assert(boundary_requirement_for(
+               program, &space, "boundary-bool") ==
+           PETTA_TYPECHECK_BOUNDARY_NONVAR);
+
+    add_compiled_program_clause(
+        program, &space, arena,
+        "(= (boundary-car-open $items) (car-atom $items))");
+    assert(boundary_requirement_for(
+               program, &space, "boundary-car-open") ==
+           PETTA_TYPECHECK_BOUNDARY_NONEMPTY_EXPRESSION);
+
+    add_compiled_program_clause(
+        program, &space, arena,
+        "(= (boundary-list-open $items) (length $items))");
+    assert(boundary_requirement_for(
+               program, &space, "boundary-list-open") ==
+           PETTA_TYPECHECK_BOUNDARY_NONE);
+
+    add_boundary_signature(&space, arena, "boundary-guarded-list");
+    add_compiled_program_clause(
+        program, &space, arena,
+        "(= (boundary-guarded-list $items)"
+        "   (if (is-expr $items) (length $items) fallback))");
+    assert(boundary_requirement_for(
+               program, &space, "boundary-guarded-list") ==
+           PETTA_TYPECHECK_BOUNDARY_NONE);
+
+    add_boundary_signature(&space, arena, "boundary-guarded-car");
+    add_compiled_program_clause(
+        program, &space, arena,
+        "(= (boundary-guarded-car $items)"
+        "   (if (== $items ()) fallback (car-atom $items)))");
+    assert(boundary_requirement_for(
+               program, &space, "boundary-guarded-car") ==
+           PETTA_TYPECHECK_BOUNDARY_NONE);
+
+    add_boundary_signature(&space, arena, "boundary-joined");
+    add_compiled_program_clause(
+        program, &space, arena,
+        "(= (boundary-joined $items)"
+        "   (and $items (length $items)))");
+    assert(boundary_requirement_for(
+               program, &space, "boundary-joined") ==
+           PETTA_TYPECHECK_BOUNDARY_PROPER_LIST);
+
+    add_boundary_signature(&space, arena, "boundary-mutation");
+    add_compiled_program_clause(
+        program, &space, arena,
+        "(= (boundary-mutation $items) unchanged)");
+    assert(boundary_requirement_for(
+               program, &space, "boundary-mutation") ==
+           PETTA_TYPECHECK_BOUNDARY_NONE);
+    Atom *mutation_clause = add_compiled_program_clause(
+        program, &space, arena,
+        "(= (boundary-mutation $items) (length $items))");
+    assert(boundary_requirement_for(
+               program, &space, "boundary-mutation") ==
+           PETTA_TYPECHECK_BOUNDARY_PROPER_LIST);
+    assert(space_remove(&space, mutation_clause));
+    petta_program_note_remove_one(program, &space, mutation_clause);
+    assert(boundary_requirement_for(
+               program, &space, "boundary-mutation") ==
+           PETTA_TYPECHECK_BOUNDARY_NONE);
+
+    space_free(&space);
+    petta_program_free(program);
 }
 
 static void test_inferred_signature_authority_provenance(
@@ -3458,11 +3600,14 @@ static void test_declaration_authority_parity(
     TermUniverse *universe, Arena *arena) {
     PettaProgram *legacy_program = petta_program_new();
     PettaProgram *authority_program = petta_program_new();
-    assert(legacy_program && authority_program);
+    PettaProgram *selected_program = petta_program_new();
+    assert(legacy_program && authority_program && selected_program);
     Space legacy_space;
     Space authority_space;
+    Space selected_space;
     space_init_with_universe(&legacy_space, universe);
     space_init_with_universe(&authority_space, universe);
+    space_init_with_universe(&selected_space, universe);
 
     Atom *positive[] = {
         parse_one(arena, "(: typed-id (-> Number Number))"),
@@ -3508,6 +3653,17 @@ static void test_declaration_authority_parity(
         &legacy_negative, &authority_negative);
     assert(authority_negative.verdict == PETTA_TYPECHECK_REFUTED);
 
+    /* Declaring an admission boundary changes observability only: the direct
+     * negative judgment and diagnostic remain byte-for-byte identical. */
+    PettaTypecheckBlockResult admission_negative;
+    assert(petta_typecheck_declaration_admission_under_authority(
+        &petta_typecheck_v2_direct_authority_v1,
+        authority_program, &authority_space, NULL,
+        negative, 2u, PETTA_TYPECHECK_POLICY_DEFAULT,
+        &admission_negative));
+    assert_typecheck_block_results_equal(
+        &authority_negative, &admission_negative);
+
     CettaNikDirectAuthorityV1 invalid =
         petta_typecheck_v2_direct_authority_v1;
     invalid.realization_identity = 0u;
@@ -3517,9 +3673,46 @@ static void test_declaration_authority_parity(
         positive, 2u, PETTA_TYPECHECK_POLICY_DEFAULT,
         &invalid_result));
     assert(invalid_result.fault == PETTA_TYPECHECK_FAULT_INVALID_ARGUMENT);
+    assert(!petta_typecheck_declaration_admission_under_authority(
+        &invalid, authority_program, &authority_space, NULL,
+        positive, 2u, PETTA_TYPECHECK_POLICY_DEFAULT,
+        &invalid_result));
+    assert(invalid_result.fault == PETTA_TYPECHECK_FAULT_INVALID_ARGUMENT);
 
+    /* The qualified alternative is now the production selection.  An
+     * inferred fact must therefore be visible only under its exact direct
+     * authority and policy, never through the unqualified legacy index. */
+    Atom *selected_forms[] = {
+        parse_one(arena, "(= (selected-id 1) 2)"),
+    };
+    assert(selected_forms[0]);
+    PettaTypecheckBlockResult selected_result;
+    assert(petta_typecheck_declaration_admission_selected(
+        selected_program, &selected_space, NULL,
+        selected_forms, 1u, PETTA_TYPECHECK_POLICY_DEFAULT,
+        &selected_result));
+    assert(selected_result.verdict == PETTA_TYPECHECK_ESTABLISHED);
+    CettaNikDirectAuthorityStampV1 selected_stamp;
+    assert(cetta_nik_direct_authority_v1_stamp(
+        &petta_typecheck_v2_direct_authority_v1,
+        (uint32_t)PETTA_TYPECHECK_POLICY_DEFAULT,
+        &selected_stamp));
+    assert(petta_program_inferred_signatures_current_under_authority(
+        selected_program, &selected_space, &selected_stamp));
+    assert(!petta_program_inferred_signatures_current(
+        selected_program, &selected_space));
+    Atom *selected_head = parse_one(arena, "selected-id");
+    Atom *selected_signature = NULL;
+    assert(selected_head && selected_head->kind == ATOM_SYMBOL);
+    assert(petta_program_inferred_signature_lookup_under_authority(
+        selected_program, &selected_space, &selected_stamp,
+        selected_head->sym_id, 1u, arena, &selected_signature));
+    assert(selected_signature);
+
+    space_free(&selected_space);
     space_free(&authority_space);
     space_free(&legacy_space);
+    petta_program_free(selected_program);
     petta_program_free(authority_program);
     petta_program_free(legacy_program);
 }
@@ -3722,6 +3915,7 @@ int main(void) {
     test_analysis_capability_contract(&space, &answers);
     test_direct_authority_identity_contract();
     test_direct_source_binding_contract();
+    test_boundary_requirement_calculus(&universe, &persistent);
     test_inferred_signature_authority_provenance(
         &universe, &answers);
     test_declaration_authority_parity(&universe, &answers);

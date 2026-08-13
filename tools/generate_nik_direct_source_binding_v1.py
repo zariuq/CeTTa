@@ -58,6 +58,7 @@ def render_source(
     source_digest: str,
     package_digest: str,
     coverage: str,
+    authority_frame: schema.NikAuthorityFrameV1,
 ) -> str:
     coverage_symbol = {
         "fragment": "CETTA_NIK_DIRECT_SOURCE_AUTHORED_FRAGMENT",
@@ -75,6 +76,16 @@ def render_source(
         f"        .source_sha256 = {c_string(source_digest)},\n"
         f"        .package_sha256 = {c_string(package_digest)},\n"
         f"        .coverage = {coverage_symbol},\n"
+        f"        .mode = {c_string(authority_frame.mode)},\n"
+        f"        .certificate_policy = "
+        f"{c_string(authority_frame.certificate_policy)},\n"
+        f"        .fiber = {c_string(authority_frame.fiber)},\n"
+        f"        .default_outcome = "
+        f"{c_string(authority_frame.default_outcome)},\n"
+        f"        .native_projection = "
+        f"{c_string(authority_frame.native_projection)},\n"
+        f"        .presentation_status = "
+        f"{c_string(authority_frame.status)},\n"
         f"    }};\n"
     )
 
@@ -100,6 +111,19 @@ def main(argv: Sequence[str] | None = None) -> int:
         if len(presentations) != 1:
             raise ValueError("exactly one finite-Horn presentation is required")
         presentation = presentations[0]
+        if presentation.nik_frame is None:
+            raise ValueError(
+                "direct NIK source binding requires nik-authority-frame-v1"
+            )
+        expected_statuses = {
+            "fragment": {"AUTHORED_FRAGMENT"},
+            "complete": {"COMPLETE_PRESENTATION", "GENERATED_PROJECTION"},
+        }[args.coverage]
+        if presentation.nik_frame.status not in expected_statuses:
+            raise ValueError(
+                f"coverage {args.coverage} conflicts with authority-frame status "
+                f"{presentation.nik_frame.status}"
+            )
         source_digest = sha256(args.presentation.read_bytes()).hexdigest()
         package_digest = schema.package_digest(presentations)
         generated_header = args.header_output.name
@@ -114,6 +138,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             source_digest=source_digest,
             package_digest=package_digest,
             coverage=args.coverage,
+            authority_frame=presentation.nik_frame,
         )
     except (OSError, ValueError, schema.SchemaError) as error:
         parser.exit(1, f"direct source binding rejected: {error}\n")

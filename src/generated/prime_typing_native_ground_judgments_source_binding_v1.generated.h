@@ -1,0 +1,9 @@
+#ifndef CETTA_GENERATED_PRIME_TYPING_NATIVE_GROUND_JUDGMENTS_SOURCE_BINDING_V1_H
+#define CETTA_GENERATED_PRIME_TYPING_NATIVE_GROUND_JUDGMENTS_SOURCE_BINDING_V1_H
+
+#include "nik_direct_authority.h"
+
+extern const CettaNikDirectSourceBindingV1
+    prime_typing_native_ground_judgments_source_binding_v1;
+
+#endif /* CETTA_GENERATED_PRIME_TYPING_NATIVE_GROUND_JUDGMENTS_SOURCE_BINDING_V1_H */
