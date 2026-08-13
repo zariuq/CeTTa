@@ -5,6 +5,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <stdlib.h>
 
 static unsigned passed;
 static unsigned failed;
@@ -528,6 +529,59 @@ int main(void) {
               binding_is_int(&projected, late_id, 1000),
           "hash-stable projection uses the acyclic variable collector");
     bindings_free(&projected);
+
+    const char *lookup_index_setting =
+        getenv("CETTA_BINDINGS_LOOKUP_INDEX");
+    bool lookup_index_expected =
+        !(lookup_index_setting && lookup_index_setting[0] == '0');
+    Bindings unmarked_projection_source;
+    bindings_init(&unmarked_projection_source);
+    bool unmarked_projection_fixture = build_bindings(
+        &arena, 64u, &unmarked_projection_source);
+#ifdef CETTA_TEST_HOOKS
+    bindings_lookup_index_test_clear(&unmarked_projection_source);
+#endif
+    Atom *unmarked_projection_root = atom_var_with_id(
+        &arena, "unmarked-projection-root", test_id(63u));
+    Atom *unmarked_projection_roots[1] = {
+        unmarked_projection_root,
+    };
+    CHECK(unmarked_projection_fixture &&
+              unmarked_projection_source.lookup_index == NULL &&
+              bindings_project_reachable_with_entry_marks(
+                  &unmarked_projection_source,
+                  unmarked_projection_roots, 1u,
+                  NULL, 0u, &projected) &&
+              projected.len == 1u &&
+              binding_is_int(&projected, test_id(63u), 63) &&
+              (!lookup_index_expected ||
+               unmarked_projection_source.lookup_index != NULL),
+          "zero entry marks preserve the sparse indexed projection path");
+    bindings_free(&projected);
+    bindings_free(&unmarked_projection_source);
+
+    Bindings marked_projection_source;
+    bindings_init(&marked_projection_source);
+    bool marked_projection_fixture = build_bindings(
+        &arena, 64u, &marked_projection_source);
+#ifdef CETTA_TEST_HOOKS
+    bindings_lookup_index_test_clear(&marked_projection_source);
+#endif
+    uint32_t marked_projection_boundary = 64u;
+    CHECK(marked_projection_fixture &&
+              marked_projection_source.lookup_index == NULL &&
+              bindings_project_reachable_with_entry_marks(
+                  &marked_projection_source,
+                  unmarked_projection_roots, 1u,
+                  &marked_projection_boundary, 1u, &projected) &&
+              projected.len == 1u &&
+              marked_projection_boundary == 1u &&
+              marked_projection_source.lookup_index == NULL &&
+              binding_is_int(&projected, test_id(63u), 63),
+          "nonempty entry marks retain exact dense selection-map semantics");
+    bindings_free(&projected);
+    bindings_free(&marked_projection_source);
+
     Atom *cyclic_projection_root = atom_expr_builder_begin(&arena, 2u);
     cyclic_projection_root->expr.elems[0] = cyclic_projection_root;
     cyclic_projection_root->expr.elems[1] = projection_root;

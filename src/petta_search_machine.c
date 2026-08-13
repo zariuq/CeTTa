@@ -305,6 +305,7 @@ typedef struct {
             bool evaluate_result;
             bool translate_result;
             bool count_collection_result;
+            bool compiled_c0_closed_query;
         } clause;
         struct {
             OutcomeSet *outcomes;
@@ -528,6 +529,7 @@ struct PettaMachineImpl {
      */
     Arena heap;
     Arena tenured;
+    CettaGsltGroundDenseWorkspaceV1 compiled_c0_workspace;
     /* Derived occurrence plans are machine-lifetime metadata, not GC atoms. */
     Arena plan_arena;
     SearchContext search;
@@ -579,6 +581,7 @@ struct PettaMachineImpl {
     size_t tenured_major_after;
     uint64_t binding_growth_collect_after;
     bool first_answer_timed;
+    bool compiled_c0_enabled;
     char typecheck_diagnostic[512];
     int typecheck_exit_code;
     PettaMachineStats stats;
@@ -906,6 +909,16 @@ static bool petta_clause_slot_frame_enabled(void) {
             "CETTA_PETTA_CLAUSE_SLOT_FRAME_REFERENCE") == NULL;
     }
     return enabled == 1;
+}
+
+static bool petta_compiled_c0_enabled(void) {
+    static _Thread_local int enabled = -1;
+    if (enabled < 0) {
+        const char *reference = getenv(
+            "CETTA_PETTA_COMPILED_C0_REFERENCE");
+        enabled = !reference || strcmp(reference, "1") != 0;
+    }
+    return enabled != 0;
 }
 
 /* The isolated equation matcher projects rule-variable aliases back onto the
@@ -7477,7 +7490,44 @@ static bool petta_machine_advance_choice(
             bool slot_matched = false;
             size_t match_heap_before =
                 arena_accounted_live_bytes(&machine->heap);
+            if (choice->as.clause.compiled_c0_closed_query &&
+                machine->compiled_c0_enabled &&
+                candidate.compiled_c0 &&
+                !extends && !relational_head) {
+                Atom *compiled_result = NULL;
+                cetta_runtime_stats_inc(
+                    CETTA_RUNTIME_COUNTER_PETTA_COMPILED_C0_EXECUTION_ADMITTED);
+                PettaCompiledClauseC0Status compiled_status =
+                    petta_compiled_clause_c0_apply(
+                        candidate.compiled_c0,
+                        &machine->compiled_c0_workspace,
+                        match_query, &machine->heap,
+                        &compiled_result);
+                if (compiled_status == PETTA_COMPILED_C0_CAPACITY) {
+                    bindings_free(&match.environment);
+                    *failure = PETTA_MACHINE_STEP_CAPACITY;
+                    return false;
+                }
+                if (compiled_status == PETTA_COMPILED_C0_MISMATCH) {
+                    cetta_runtime_stats_inc(
+                        CETTA_RUNTIME_COUNTER_PETTA_COMPILED_C0_EXECUTION_MISMATCH);
+                    bindings_free(&match.environment);
+                    continue;
+                }
+                if (compiled_status == PETTA_COMPILED_C0_MATCH) {
+                    cetta_runtime_stats_inc(
+                        CETTA_RUNTIME_COUNTER_PETTA_COMPILED_C0_EXECUTION_MATCH);
+                    match.result = compiled_result;
+                    match.present = true;
+                    match.result_fully_resolved = true;
+                    slot_matched = true;
+                } else {
+                    cetta_runtime_stats_inc(
+                        CETTA_RUNTIME_COUNTER_PETTA_COMPILED_C0_EXECUTION_FALLBACK);
+                }
+            }
             if (slot_match &&
+                !slot_matched &&
                 !relational_head &&
                 !petta_semantics_contains_cons_constraint(lhs_shape)) {
                 Atom *slot_result = NULL;
@@ -8695,6 +8745,7 @@ static bool petta_machine_start_clause_choice(
             .translate_result = translate_result,
             .count_collection_result =
                 count_collection_result,
+            .compiled_c0_closed_query = !atom_has_vars(query),
         },
     };
     /*
@@ -15501,7 +15552,10 @@ static bool petta_machine_init_internal(
         impl->host = *host;
     petta_machine_heap_arena_init(&impl->heap);
     petta_machine_heap_arena_init(&impl->tenured);
+    cetta_gslt_ground_dense_workspace_init_v1(
+        &impl->compiled_c0_workspace);
     arena_init(&impl->plan_arena);
+    impl->compiled_c0_enabled = petta_compiled_c0_enabled();
     impl->heap_collect_after =
         PETTA_MACHINE_HEAP_WINDOW_BYTES;
     impl->tenured_major_after =
@@ -15512,6 +15566,8 @@ static bool petta_machine_init_internal(
             &impl->search, base_environment, NULL)) {
         arena_free(&impl->heap);
         arena_free(&impl->tenured);
+        cetta_gslt_ground_dense_workspace_free_v1(
+            &impl->compiled_c0_workspace);
         arena_free(&impl->plan_arena);
         if (impl->owns_table_shared)
             petta_table_shared_free(impl->table_shared);
@@ -15789,6 +15845,8 @@ void petta_machine_destroy(PettaMachine *machine) {
     search_context_free(&impl->search);
     arena_free(&impl->heap);
     arena_free(&impl->tenured);
+    cetta_gslt_ground_dense_workspace_free_v1(
+        &impl->compiled_c0_workspace);
     arena_free(&impl->plan_arena);
     if (impl->owns_table_shared)
         petta_table_shared_free(impl->table_shared);

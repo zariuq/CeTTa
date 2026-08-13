@@ -1210,6 +1210,68 @@ static void test_constructor_slot_frame_plans(
     petta_program_free(program);
 }
 
+static void test_program_compiled_clause_c0(
+    TermUniverse *universe, Arena *persistent) {
+    Space space;
+    space_init_with_universe(&space, universe);
+    PettaProgram *program = petta_program_new();
+    assert(program);
+    add_indexed_program_clause(
+        program, &space, persistent,
+        "(= (compiled-c0 pair $x $x) (answer $x))");
+    add_indexed_program_clause(
+        program, &space, persistent,
+        "(= (compiled-c0-local $x) $body-local)");
+
+    SymbolId head = symbol_intern_cstr(g_symbols, "compiled-c0");
+    PettaClauseCandidate *candidates = NULL;
+    size_t candidate_count = 0u;
+    assert(petta_program_clause_snapshot(
+        program, &space, head, &candidates, &candidate_count));
+    assert(candidate_count == 1u);
+    assert(candidates[0].compiled_c0);
+    assert(candidates[0].static_variable_count == 1u);
+
+    CettaGsltGroundDenseWorkspaceV1 workspace;
+    cetta_gslt_ground_dense_workspace_init_v1(&workspace);
+    Arena result_arena;
+    arena_init(&result_arena);
+    Atom *result = NULL;
+    assert(petta_compiled_clause_c0_apply(
+               candidates[0].compiled_c0, &workspace,
+               parse_one(persistent, "(compiled-c0 pair 7 7)"),
+               &result_arena, &result) == PETTA_COMPILED_C0_MATCH);
+    assert(atom_alpha_eq(
+        result, parse_one(persistent, "(answer 7)")));
+    result = NULL;
+    assert(petta_compiled_clause_c0_apply(
+               candidates[0].compiled_c0, &workspace,
+               parse_one(persistent, "(compiled-c0 pair 7 8)"),
+               &result_arena, &result) == PETTA_COMPILED_C0_MISMATCH);
+    assert(!result);
+    assert(petta_compiled_clause_c0_apply(
+               candidates[0].compiled_c0, &workspace,
+               parse_one(persistent, "(compiled-c0 pair $q $q)"),
+               &result_arena, &result) ==
+           PETTA_COMPILED_C0_NOT_APPLICABLE);
+    free(candidates);
+
+    SymbolId local_head =
+        symbol_intern_cstr(g_symbols, "compiled-c0-local");
+    candidates = NULL;
+    candidate_count = 0u;
+    assert(petta_program_clause_snapshot(
+        program, &space, local_head, &candidates, &candidate_count));
+    assert(candidate_count == 1u);
+    assert(!candidates[0].compiled_c0);
+    free(candidates);
+
+    arena_free(&result_arena);
+    cetta_gslt_ground_dense_workspace_free_v1(&workspace);
+    petta_program_free(program);
+    space_free(&space);
+}
+
 static void test_program_head_occurrence_index(
     TermUniverse *universe, Arena *persistent) {
     Space indexed_space;
@@ -3929,6 +3991,8 @@ int main(void) {
     test_constructor_slot_frame_plans(
         &universe, &persistent, &answers);
     test_program_head_occurrence_index(
+        &universe, &persistent);
+    test_program_compiled_clause_c0(
         &universe, &persistent);
     test_program_wide_occurrence_reconciliation(
         &universe, &persistent);
