@@ -41,6 +41,12 @@ typedef struct {
     const char *source_sha256;
     const char *package_sha256;
     CettaNikDirectSourceCoverageV1 coverage;
+    const char *mode;
+    const char *certificate_policy;
+    const char *fiber;
+    const char *default_outcome;
+    const char *native_projection;
+    const char *presentation_status;
 } CettaNikDirectSourceBindingV1;
 
 /* Static provenance for a fact computed under one authority realization and

@@ -4,6 +4,7 @@
 #include "generated/prime_typing_closed_formation_source_binding_v1.generated.h"
 #include "generated/prime_typing_native_ground_judgments_source_binding_v1.generated.h"
 #include "generated/prime_typing_typed_publication_core_source_binding_v1.generated.h"
+#include "gslt_horn_runtime.h"
 #include "he_typing.h"
 #include "library.h"
 #include "match.h"
@@ -57,20 +58,188 @@ static bool expect_direct_typing_status(
     return false;
 }
 
-int main(void) {
+static CettaGsltHornLimits prime_ground_qualification_limits(void) {
+    return (CettaGsltHornLimits){
+        .max_rule_attempts = 100000u,
+        .max_answers = 32u,
+        .max_depth = 128u,
+    };
+}
+
+static int prime_ground_status_index(const Atom *status) {
+    static const char *const names[] = {
+        "PEstablished", "PRefuted", "PUndetermined", "PIncomplete"};
+    for (size_t index = 0u; index < sizeof names / sizeof names[0]; index++)
+        if (atom_is_symbol((Atom *)status, names[index])) return (int)index;
+    return -1;
+}
+
+static bool prime_ground_claim_is_exclusive(
+    const CettaGsltHornProgram *program, Arena *queries, Arena *answers,
+    const char *claim_text, const char *expected_status) {
+    char query_text[512];
+    int query_size = snprintf(
+        query_text, sizeof query_text,
+        "(PrimeJudges %s $status)", claim_text);
+    Atom *query = query_size > 0 && (size_t)query_size < sizeof query_text
+        ? parse_one(queries, query_text) : NULL;
+    CettaGsltHornResult result = {0};
+    char error[1024] = {0};
+    if (!query || !cetta_gslt_horn_query(
+            program, answers, query, prime_ground_qualification_limits(),
+            &result, error, sizeof error)) {
+        fprintf(stderr, "Prime native-ground query failed for %s: %s\n",
+                claim_text, error);
+        cetta_gslt_horn_result_free(&result);
+        return false;
+    }
+    if (result.outcome != CETTA_GSLT_HORN_COMPLETED) {
+        fprintf(stderr, "Prime native-ground query was resource-incomplete: %s\n",
+                claim_text);
+        cetta_gslt_horn_result_free(&result);
+        return false;
+    }
+
+    bool seen[4] = {false, false, false, false};
+    size_t distinct = 0u;
+    for (size_t index = 0u; index < result.answer_count; index++) {
+        Atom *answer = result.answers[index];
+        int status_index =
+            answer && answer->kind == ATOM_EXPR && answer->expr.len == 3u &&
+                    atom_is_symbol(answer->expr.elems[0], "PrimeJudges")
+                ? prime_ground_status_index(answer->expr.elems[2]) : -1;
+        if (status_index < 0) {
+            fprintf(stderr, "Prime native-ground returned a malformed outcome for %s\n",
+                    claim_text);
+            cetta_gslt_horn_result_free(&result);
+            return false;
+        }
+        if (!seen[(size_t)status_index]) {
+            seen[(size_t)status_index] = true;
+            distinct++;
+        }
+    }
+    if (distinct > 1u) {
+        fprintf(stderr, "Prime native-ground derived conflicting outcomes for %s\n",
+                claim_text);
+        cetta_gslt_horn_result_free(&result);
+        return false;
+    }
+    const char *actual_status = distinct == 0u ? "PUndetermined" :
+        (seen[0] ? "PEstablished" :
+         seen[1] ? "PRefuted" :
+         seen[2] ? "PUndetermined" : "PIncomplete");
+    bool expected = expected_status == NULL ||
+                    strcmp(actual_status, expected_status) == 0;
+    if (!expected)
+        fprintf(stderr, "Prime native-ground status for %s was %s, expected %s\n",
+                claim_text, actual_status, expected_status);
+    cetta_gslt_horn_result_free(&result);
+    return expected;
+}
+
+static bool prime_ground_exclusivity_matrix(
+    const CettaGsltHornProgram *program, Arena *queries, Arena *answers) {
+    static const char *const types[] = {
+        "PType", "PDynamic", "PAtom", "PNumber", "PString", "PBool",
+        "(PList PNumber)", "(PArrow PNumber PString)"};
+    static const char *const values[] = {
+        "PVNumber", "PVString", "PVTrue", "PVFalse"};
+    static const char *const conversion_terms[] = {
+        "PNumber", "PString", "PBool", "PDynamic", "PAtom",
+        "(PAdd POne POne)", "PTwo"};
+    char claim[256];
+
+    for (size_t type_index = 0u;
+         type_index < sizeof types / sizeof types[0]; type_index++) {
+        (void)snprintf(claim, sizeof claim, "(PForm %s)", types[type_index]);
+        if (!prime_ground_claim_is_exclusive(
+                program, queries, answers, claim, NULL)) return false;
+        (void)snprintf(claim, sizeof claim, "(PRefine %s)", types[type_index]);
+        if (!prime_ground_claim_is_exclusive(
+                program, queries, answers, claim, NULL)) return false;
+    }
+    for (size_t value_index = 0u;
+         value_index < sizeof values / sizeof values[0]; value_index++) {
+        (void)snprintf(claim, sizeof claim, "(PForm %s)", values[value_index]);
+        if (!prime_ground_claim_is_exclusive(
+                program, queries, answers, claim, NULL)) return false;
+        (void)snprintf(claim, sizeof claim, "(PRefine %s)", values[value_index]);
+        if (!prime_ground_claim_is_exclusive(
+                program, queries, answers, claim, NULL)) return false;
+        (void)snprintf(claim, sizeof claim, "(PSynth %s $type)", values[value_index]);
+        if (!prime_ground_claim_is_exclusive(
+                program, queries, answers, claim, "PEstablished")) return false;
+        for (size_t type_index = 0u;
+             type_index < sizeof types / sizeof types[0]; type_index++) {
+            (void)snprintf(claim, sizeof claim, "(PCheck %s %s)",
+                           values[value_index], types[type_index]);
+            if (!prime_ground_claim_is_exclusive(
+                    program, queries, answers, claim, NULL)) return false;
+            (void)snprintf(claim, sizeof claim, "(PAnalyze %s %s)",
+                           values[value_index], types[type_index]);
+            if (!prime_ground_claim_is_exclusive(
+                    program, queries, answers, claim, NULL)) return false;
+        }
+    }
+    for (size_t left = 0u;
+         left < sizeof conversion_terms / sizeof conversion_terms[0]; left++) {
+        for (size_t right = 0u;
+             right < sizeof conversion_terms / sizeof conversion_terms[0]; right++) {
+            (void)snprintf(claim, sizeof claim, "(PConvert %s %s)",
+                           conversion_terms[left], conversion_terms[right]);
+            if (!prime_ground_claim_is_exclusive(
+                    program, queries, answers, claim, NULL)) return false;
+        }
+    }
+    return true;
+}
+
+static bool prime_ground_synthesis_returns_type(
+    const CettaGsltHornProgram *program, Arena *queries, Arena *answers) {
+    Atom *query = parse_one(
+        queries, "(PrimeJudges (PSynth PVNumber $type) $status)");
+    Atom *expected = parse_one(
+        queries, "(PrimeJudges (PSynth PVNumber PNumber) PEstablished)");
+    CettaGsltHornResult result = {0};
+    char error[1024] = {0};
+    bool ran = query && expected && cetta_gslt_horn_query(
+        program, answers, query, prime_ground_qualification_limits(),
+        &result, error, sizeof error);
+    bool exact = ran && result.outcome == CETTA_GSLT_HORN_COMPLETED &&
+                 result.answer_count == 1u &&
+                 atom_eq(result.answers[0], expected);
+    if (!exact)
+        fprintf(stderr, "Prime synthesis did not return its exact type: %s\n", error);
+    cetta_gslt_horn_result_free(&result);
+    return exact;
+}
+
+int main(int argc, char **argv) {
+    if (argc > 2) {
+        fprintf(stderr, "usage: %s [PRIME_NATIVE_GROUND_LANGDEF]\n", argv[0]);
+        return 2;
+    }
+    const char *native_ground_path = argc == 2 ? argv[1] :
+        "langdef/prime/generated/native_ground_judgments_v1.metta";
     int rc = 1;
     Arena arena;
     Arena scratch;
+    Arena horn_queries;
+    Arena horn_answers;
     TermUniverse universe;
     Space space;
     SymbolTable symbols;
     VarInternTable var_intern;
     CettaLibraryContext libraries;
     bool libraries_ready = false;
+    CettaGsltHornProgram *native_ground_program = NULL;
 
     arena_init(&arena);
     arena_set_runtime_kind(&arena, CETTA_ARENA_RUNTIME_KIND_PERSISTENT);
     arena_init(&scratch);
+    arena_init(&horn_queries);
+    arena_init(&horn_answers);
     arena_set_runtime_kind(&scratch, CETTA_ARENA_RUNTIME_KIND_EVAL);
     term_universe_init(&universe);
     term_universe_set_persistent_arena(&universe, &arena);
@@ -102,6 +271,10 @@ int main(void) {
         strcmp(
             typing_source->semantic_scope,
             "prime.typing.closed-formation") != 0 ||
+        strcmp(typing_source->mode, "direct-decision") != 0 ||
+        strcmp(typing_source->certificate_policy, "none") != 0 ||
+        strcmp(typing_source->fiber, "prime") != 0 ||
+        strcmp(typing_source->default_outcome, "PUndetermined") != 0 ||
         typing_source->coverage !=
             CETTA_NIK_DIRECT_SOURCE_AUTHORED_FRAGMENT) {
         fprintf(stderr, "Prime typing source binding is invalid\n");
@@ -121,9 +294,31 @@ int main(void) {
         native_ground_source->authority != typing_service->authority ||
         strcmp(native_ground_source->semantic_scope,
                "prime.typing.native-ground-judgments") != 0 ||
+        strcmp(native_ground_source->mode, "direct-decision") != 0 ||
+        strcmp(native_ground_source->certificate_policy, "none") != 0 ||
+        strcmp(native_ground_source->fiber, "prime") != 0 ||
+        strcmp(native_ground_source->default_outcome, "PUndetermined") != 0 ||
         native_ground_source->coverage !=
             CETTA_NIK_DIRECT_SOURCE_AUTHORED_FRAGMENT) {
         fprintf(stderr, "Prime native-ground source binding is invalid\n");
+        goto cleanup;
+    }
+
+    const char *native_ground_paths[] = {native_ground_path};
+    char native_ground_error[1024] = {0};
+    if (!cetta_gslt_horn_program_load_paths(
+            native_ground_paths, 1u, &native_ground_program,
+            native_ground_error, sizeof native_ground_error) ||
+        cetta_gslt_horn_program_rule_count(native_ground_program) != 44u ||
+        !prime_ground_synthesis_returns_type(
+            native_ground_program, &horn_queries, &horn_answers) ||
+        !prime_ground_claim_is_exclusive(
+            native_ground_program, &horn_queries, &horn_answers,
+            "(PSynth PVNumber PString)", "PUndetermined") ||
+        !prime_ground_exclusivity_matrix(
+            native_ground_program, &horn_queries, &horn_answers)) {
+        fprintf(stderr, "Prime native-ground langdef qualification failed: %s\n",
+                native_ground_error);
         goto cleanup;
     }
     CettaNikDirectSourceBindingV1 invalid_native_ground_source =
@@ -151,6 +346,10 @@ int main(void) {
         publication_source->authority != publication_service->authority ||
         strcmp(publication_source->semantic_scope,
                "prime.typing.result-contract-publication-core") != 0 ||
+        strcmp(publication_source->mode, "direct-decision") != 0 ||
+        strcmp(publication_source->certificate_policy, "none") != 0 ||
+        strcmp(publication_source->fiber, "prime") != 0 ||
+        strcmp(publication_source->default_outcome, "PUndetermined") != 0 ||
         publication_source->coverage !=
             CETTA_NIK_DIRECT_SOURCE_AUTHORED_FRAGMENT) {
         fprintf(stderr, "Prime typed-publication source binding is invalid\n");
@@ -1389,10 +1588,11 @@ int main(void) {
         goto cleanup;
     }
 
-    puts("PASS: PrimeDefV2 validation and conversion-certificate replay");
+    puts("PASS: PrimeDefV2 validation, native-ground exclusivity, and conversion-certificate replay");
     rc = 0;
 
 cleanup:
+    cetta_gslt_horn_program_free(native_ground_program);
     eval_set_library_context(NULL);
     if (libraries_ready) cetta_library_context_free(&libraries);
     g_var_intern = NULL;
@@ -1402,6 +1602,8 @@ cleanup:
     space_free(&space);
     term_universe_free(&universe);
     arena_free(&scratch);
+    arena_free(&horn_answers);
+    arena_free(&horn_queries);
     arena_free(&arena);
     return rc;
 }

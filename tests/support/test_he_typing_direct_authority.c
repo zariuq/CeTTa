@@ -80,6 +80,10 @@ int main(void) {
         source->presentation_id, "he-typing-consistency-core") == 0);
     assert(strcmp(
         source->semantic_scope, "he.typing.consistency-core") == 0);
+    assert(strcmp(source->mode, "direct-decision") == 0);
+    assert(strcmp(source->certificate_policy, "none") == 0);
+    assert(strcmp(source->fiber, "he") == 0);
+    assert(strcmp(source->default_outcome, "HCheckUndetermined") == 0);
     assert(source->coverage ==
         CETTA_NIK_DIRECT_SOURCE_AUTHORED_FRAGMENT);
 
@@ -95,6 +99,10 @@ int main(void) {
     assert(strcmp(
         profile_source->semantic_scope,
         "he.profiled-type-inference.ground-declaration-application-core") == 0);
+    assert(strcmp(profile_source->mode, "direct-decision") == 0);
+    assert(strcmp(profile_source->certificate_policy, "none") == 0);
+    assert(strcmp(profile_source->fiber, "he") == 0);
+    assert(strcmp(profile_source->default_outcome, "HCheckUndetermined") == 0);
     assert(profile_source->coverage ==
         CETTA_NIK_DIRECT_SOURCE_AUTHORED_FRAGMENT);
 
@@ -112,6 +120,11 @@ int main(void) {
     assert(strcmp(
         closed_ground_source->semantic_scope,
         "he.typing.closed-ground-decision-core") == 0);
+    assert(strcmp(closed_ground_source->mode, "direct-decision") == 0);
+    assert(strcmp(closed_ground_source->certificate_policy, "none") == 0);
+    assert(strcmp(closed_ground_source->fiber, "he") == 0);
+    assert(strcmp(
+        closed_ground_source->default_outcome, "HCheckUndetermined") == 0);
     assert(closed_ground_source->coverage ==
         CETTA_NIK_DIRECT_SOURCE_AUTHORED_FRAGMENT);
 
@@ -126,6 +139,12 @@ int main(void) {
     assert(!cetta_nik_direct_source_binding_v1_is_valid(&invalid_source));
     invalid_source = *closed_ground_source;
     invalid_source.presentation_id = "";
+    assert(!cetta_nik_direct_source_binding_v1_is_valid(&invalid_source));
+    invalid_source = *source;
+    invalid_source.certificate_policy = "trace";
+    assert(!cetta_nik_direct_source_binding_v1_is_valid(&invalid_source));
+    invalid_source = *source;
+    invalid_source.fiber = "";
     assert(!cetta_nik_direct_source_binding_v1_is_valid(&invalid_source));
 
     Atom *number = atom_symbol(&persistent, "Number");
