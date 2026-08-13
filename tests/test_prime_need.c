@@ -19,6 +19,8 @@ static unsigned failures = 0u;
 int main(void) {
     SymbolTable symbols;
     Arena arena;
+    Arena branch_arena;
+    Arena snapshot_branch_arena;
     Arena promoted_arena;
     symbol_table_init(&symbols);
     symbol_table_init_builtins(&symbols, &g_builtin_syms);
@@ -26,6 +28,8 @@ int main(void) {
     g_hashcons = NULL;
     g_var_intern = NULL;
     arena_init(&arena);
+    arena_init(&branch_arena);
+    arena_init(&snapshot_branch_arena);
     arena_init(&promoted_arena);
 
     PrimeNeedSnapshot root;
@@ -52,6 +56,35 @@ int main(void) {
               cell.origin == term && cell.cached == NULL &&
               cell.authority_id != 0u && cell.evaluator_id == 0u,
           "allocation stores an immutable origin and empty cache");
+    Atom *branch_term = atom_symbol(
+        &snapshot_branch_arena, "branch-delayed");
+    PrimeNeedSnapshot branch_thunk;
+    uint64_t branch_thunk_id = 0u;
+    CHECK(prime_need_snapshot_allocate(
+              &snapshot_branch_arena, &thunk, branch_term,
+              &branch_thunk, &branch_thunk_id) &&
+              branch_thunk.owner == &snapshot_branch_arena &&
+              branch_thunk.closure_owner == NULL &&
+              !prime_need_snapshot_excludes_arena(
+                  &branch_thunk, &arena) &&
+              !prime_need_snapshot_excludes_arena(
+                  &branch_thunk, &snapshot_branch_arena),
+          "snapshot branch suffix retains its longer-lived prefix");
+    CHECK(prime_need_snapshot_promote_suffix(
+              &arena, &snapshot_branch_arena, &branch_thunk) &&
+              branch_thunk.owner == &arena &&
+              branch_thunk.closure_owner == &arena &&
+              prime_need_snapshot_excludes_arena(
+                  &branch_thunk, &snapshot_branch_arena),
+          "snapshot suffix promotion closes directly into its stable parent");
+    arena_free(&snapshot_branch_arena);
+    PrimeNeedCellView branch_cell;
+    CHECK(prime_need_snapshot_lookup(
+              &branch_thunk, branch_thunk_id, &branch_cell) &&
+              branch_cell.origin && atom_is_symbol(
+                  branch_cell.origin, "branch-delayed") &&
+              prime_need_snapshot_is_ancestor(&thunk, &branch_thunk),
+          "promoted snapshot survives reclamation of its branch arena");
     PrimeNeedSnapshot promoted_thunk = thunk;
     CHECK(prime_need_snapshot_promote(
               &promoted_arena, &promoted_thunk) &&
@@ -473,6 +506,47 @@ int main(void) {
               !prime_need_receipt_equal(
                   &used_equation_ids, &used_equation),
           "compact equation use keeps causal identity without display payload");
+    PrimeNeedReceipt inherited_owner_equation;
+    CHECK(prime_need_receipt_use_equation_ids(
+              &branch_arena, &receipt_root, source_occurrence, 19u,
+              &inherited_owner_equation) &&
+              inherited_owner_equation.owner == &arena,
+          "ordinary receipt extension inherits the causal base lifetime");
+    PrimeNeedReceipt branch_local_equation;
+    CHECK(prime_need_receipt_use_equation_ids_branch_local(
+              &branch_arena, &receipt_root, source_occurrence, 20u,
+              &branch_local_equation) &&
+              branch_local_equation.owner == &branch_arena &&
+              prime_need_receipt_event_count(&branch_local_equation) == 2u &&
+              !prime_need_receipt_excludes_arena(
+                  &branch_local_equation, &arena) &&
+              !prime_need_receipt_excludes_arena(
+                  &branch_local_equation, &branch_arena),
+          "branch-local extension retains its older base across arenas");
+    PrimeNeedReceipt promoted_branch_local = branch_local_equation;
+    CHECK(prime_need_receipt_promote(
+              &promoted_arena, &promoted_branch_local) &&
+              prime_need_receipt_event_count(&promoted_branch_local) == 2u &&
+              prime_need_receipt_excludes_arena(
+                  &promoted_branch_local, &arena) &&
+              prime_need_receipt_excludes_arena(
+                  &promoted_branch_local, &branch_arena),
+          "promotion closes a branch-local receipt into its destination");
+    PrimeNeedReceipt suffix_promoted_branch_local =
+        branch_local_equation;
+    CHECK(prime_need_receipt_promote_suffix(
+              &arena, &branch_arena,
+              &suffix_promoted_branch_local) &&
+              suffix_promoted_branch_local.owner == &arena &&
+              suffix_promoted_branch_local.top !=
+                  branch_local_equation.top &&
+              prime_need_receipt_event_count(
+                  &suffix_promoted_branch_local) == 2u &&
+              prime_need_receipt_excludes_arena(
+                  &suffix_promoted_branch_local, &branch_arena) &&
+              !prime_need_receipt_excludes_arena(
+                  &suffix_promoted_branch_local, &arena),
+          "receipt suffix promotion retains its stable parent without copying it");
     PrimeNeedReceipt resampled;
     CHECK(prime_need_receipt_resample(
               &arena, &receipt_root, term, &resampled) &&
@@ -706,6 +780,7 @@ int main(void) {
     printf("(PrimeNeedAlgebraSummary %u %u %u)\n",
            checks, checks - failures, failures);
     arena_free(&promoted_arena);
+    arena_free(&branch_arena);
     arena_free(&arena);
     symbol_table_free(&symbols);
     g_symbols = NULL;

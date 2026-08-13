@@ -11,15 +11,13 @@ MUTATIONS = {
     "specializer-reject-callable": (
         """        if (atom->kind == ATOM_SYMBOL &&
             petta_symbol_is_callable(
-                context->space, &context->scratch,
-                atom->sym_id)) {
+                context, atom->sym_id)) {
             return PETTA_RELEVANCE_YES;
         }
 """,
         """        if (atom->kind == ATOM_SYMBOL &&
             petta_symbol_is_callable(
-                context->space, &context->scratch,
-                atom->sym_id)) {
+                context, atom->sym_id)) {
             return PETTA_RELEVANCE_NO;
         }
         """,

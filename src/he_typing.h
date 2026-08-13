@@ -35,6 +35,10 @@ Atom *he_typing_dispatch(Arena *a, Atom *head, Atom **args, uint32_t nargs)
  * Weak: standalone unit-test binaries link grounded.c without he_typing.c, so
  * the symbol resolves to NULL there and the grounded.c hook is skipped. */
 bool he_typing_is_op(const char *name) __attribute__((weak));
+/* Interned-symbol counterpart for evaluator hot paths.  Classification is
+ * identical to he_typing_is_op; it only avoids reparsing a stable symbol name
+ * at every gradual-typing capability probe. */
+bool he_typing_is_op_id(SymbolId id) __attribute__((weak));
 
 /* True when arg_index of the named typing op is a DATA argument that must
  * reach the op unevaluated.  Lives beside the op table so the surface and its
