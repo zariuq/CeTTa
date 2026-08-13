@@ -211,8 +211,8 @@ void *arena_alloc(Arena *a, size_t size);
 char *arena_strdup(Arena *a, const char *s);
 bool  arena_owns_ptr(const Arena *a, const void *ptr);
 bool  arena_owns_atom(const Arena *a, const Atom *atom);
-/* Exact compositional ownership certificate: every arena-owned pointer in
- * the atom graph belongs to `arena`; globally owned immutable nodes are also
+/* Exact compositional ownership predicate: every arena-owned pointer in the
+ * atom graph belongs to `arena`; globally owned immutable nodes are also
  * permitted.  Identity-bearing external resources deliberately fail. */
 bool  atom_graph_is_closed_for_arena(const Arena *arena,
                                      const Atom *atom);

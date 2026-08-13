@@ -907,6 +907,30 @@ static bool petta_clause_slot_frame_enabled(void) {
     return enabled == 1;
 }
 
+/* The isolated equation matcher projects rule-variable aliases back onto the
+ * caller's visible variables before returning.  The direct frame obtains the
+ * same normal form by orienting an unbound variable pair from the fresh rule
+ * slot to the caller variable.  Reject any contrary direct alias here so a
+ * later body traversal can never expose a frame-local name in place of its
+ * caller-visible name.  Ordinary caller bindings to structured rule values
+ * remain valid and are rolled back with the clause choice. */
+static bool petta_clause_slot_aliases_normalized(
+    const Bindings *bindings, uint32_t first_entry,
+    uint32_t epoch) {
+    if (!bindings || first_entry > bindings->len || epoch == 0u)
+        return false;
+    for (uint32_t index = first_entry;
+         index < bindings->len; index++) {
+        const Binding *entry = &bindings->entries[index];
+        if (var_epoch_suffix(entry->var_id) != epoch &&
+            entry->val && entry->val->kind == ATOM_VAR &&
+            var_epoch_suffix(entry->val->var_id) == epoch) {
+            return false;
+        }
+    }
+    return true;
+}
+
 static bool petta_clause_body_activation_enabled(void) {
     static _Thread_local int enabled = -1;
     if (enabled < 0) {
@@ -2226,12 +2250,17 @@ static bool petta_copy_binding_atoms(
         return false;
     if (!bindings->prime_ext)
         return true;
-    return prime_need_snapshot_promote(
-               destination,
-               &bindings->prime_ext->prime_need) &&
-           prime_need_receipt_promote(
-               destination,
-               &bindings->prime_ext->prime_receipt);
+    if (!prime_need_snapshot_promote(
+            destination, &bindings->prime_ext->prime_need) ||
+        !prime_need_branch_state_promote(
+            destination, &bindings->prime_ext->branch_state))
+        return false;
+#if CETTA_BUILD_WITH_PRIME_CAUSAL_RECEIPTS
+    if (!prime_need_receipt_promote(
+            destination, &bindings->prime_ext->receipt))
+        return false;
+#endif
+    return true;
 }
 
 typedef struct {
@@ -3419,10 +3448,14 @@ static PettaClauseSlotMatch petta_machine_clause_slot_match(
         arena_accounted_live_bytes(&machine->heap);
     machine->stats.match_candidate_epoch_views++;
     machine->stats.unification_calls++;
-    bool matched = match_atoms_epoch_builder(
+    bool matched = match_atoms_epoch_builder_rule_local(
         query, lhs, builder, &machine->heap, epoch);
     if (matched && bindings_has_loop(
             (Bindings *)bindings_builder_bindings(builder))) {
+        matched = false;
+    }
+    if (matched && !petta_clause_slot_aliases_normalized(
+            bindings, activation_first_entry, epoch)) {
         matched = false;
     }
     if (!matched) {

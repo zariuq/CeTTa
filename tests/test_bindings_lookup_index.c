@@ -241,15 +241,16 @@ int main(void) {
     uint32_t sparse_plain_mark =
         bindings_builder_save(&sparse_effect_branch);
     PrimeNeedSnapshot sparse_need;
-    PrimeNeedReceipt sparse_receipt;
+    PrimeNeedBranchState sparse_branch_state;
     prime_need_snapshot_init(&sparse_need);
-    prime_need_receipt_init(&sparse_receipt);
+    prime_need_branch_state_init(&sparse_branch_state);
     sparse_effect_fixture =
         sparse_effect_fixture &&
         prime_need_snapshot_begin(&sparse_need) &&
-        prime_need_receipt_begin(&arena, &sparse_receipt);
+        prime_need_branch_state_begin(&arena, &sparse_branch_state);
     bindings_prime_set(
-        &sparse_effect_branch.current, &sparse_need, &sparse_receipt);
+        &sparse_effect_branch.current, &sparse_need, &sparse_branch_state, 0u,
+        NULL);
     sparse_effect_fixture =
         sparse_effect_fixture &&
         bindings_builder_add_id_fresh(
@@ -258,7 +259,8 @@ int main(void) {
         sparse_effect_branch.trail_len == 2u &&
         sparse_effect_branch.prime_trail_len == 1u &&
         sparse_effect_branch.trail[1].prime_state_present;
-    bindings_prime_set(&sparse_effect_branch.current, NULL, NULL);
+    bindings_prime_set(
+        &sparse_effect_branch.current, NULL, NULL, 0u, NULL);
     uint32_t sparse_absent_mark =
         bindings_builder_save(&sparse_effect_branch);
     sparse_effect_fixture =
@@ -279,8 +281,8 @@ int main(void) {
         bindings_prime_present(&sparse_effect_branch.current) &&
         bindings_need_view(&sparse_effect_branch.current)->session_id ==
             sparse_need.session_id &&
-        bindings_receipt_view(&sparse_effect_branch.current)->session_id ==
-            sparse_receipt.session_id &&
+        bindings_branch_state_view(&sparse_effect_branch.current)->session_id ==
+            sparse_branch_state.session_id &&
         sparse_effect_branch.prime_trail_len == 0u;
     bindings_builder_rollback(
         &sparse_effect_branch, sparse_root_mark);
@@ -298,7 +300,8 @@ int main(void) {
     prime_need_snapshot_init(&compact_need);
     bool sparse_compact_fixture =
         prime_need_snapshot_begin(&compact_need);
-    bindings_prime_set(&sparse_compact_branch.current, &compact_need, NULL);
+    bindings_prime_set(
+        &sparse_compact_branch.current, &compact_need, NULL, 0u, NULL);
     Atom *sparse_compact_live = atom_var_with_id(
         &arena, "sparse-compact-live", test_id(6510u));
     sparse_compact_fixture =
@@ -306,7 +309,8 @@ int main(void) {
         bindings_builder_add_var_fresh(
             &sparse_compact_branch, sparse_compact_live,
             atom_int(&arena, 6510));
-    bindings_prime_set(&sparse_compact_branch.current, NULL, NULL);
+    bindings_prime_set(
+        &sparse_compact_branch.current, NULL, NULL, 0u, NULL);
     uint32_t sparse_compact_mark_a =
         bindings_builder_save(&sparse_compact_branch);
     sparse_compact_fixture =
@@ -320,7 +324,8 @@ int main(void) {
         sparse_compact_fixture &&
         prime_need_snapshot_begin(&compact_need_later);
     bindings_prime_set(
-        &sparse_compact_branch.current, &compact_need_later, NULL);
+        &sparse_compact_branch.current, &compact_need_later, NULL, 0u,
+        NULL);
     uint32_t sparse_compact_mark_b =
         bindings_builder_save(&sparse_compact_branch);
     sparse_compact_fixture =
@@ -366,7 +371,7 @@ int main(void) {
     bool sparse_commit_fixture =
         prime_need_snapshot_begin(&committed_need);
     bindings_prime_set(
-        &sparse_commit_branch.current, &committed_need, NULL);
+        &sparse_commit_branch.current, &committed_need, NULL, 0u, NULL);
     sparse_commit_fixture =
         sparse_commit_fixture &&
         bindings_builder_add_id_fresh(
@@ -628,7 +633,7 @@ int main(void) {
               epoch_apply_result->kind == ATOM_GROUNDED &&
               epoch_apply_result->ground.gkind == GV_INT &&
               epoch_apply_result->ground.ival == 77,
-          "acyclic epoch application consumes the substitution certificate");
+          "acyclic epoch application consumes the cached graph summary");
     bindings_free(&epoch_environment);
 
     Atom *activation_outer = atom_var_with_id(
@@ -893,6 +898,114 @@ int main(void) {
         bindings_builder_free(&view_reference);
     bindings_free(&view_base);
 
+    /* A direct clause frame gives standardized rule variables ownership of
+     * otherwise unconstrained aliases.  This is the query-visible normal
+     * form used by the isolated equation matcher, obtained without building
+     * and projecting a temporary environment. */
+    Atom *slot_outer = atom_var_with_id(
+        &arena, "slot-outer", test_id(7450u));
+    Atom *slot_rule = atom_var_with_id(
+        &arena, "slot-rule", test_id(7451u));
+    BindingsBuilder slot_alias;
+    bool slot_alias_ready = bindings_builder_init(&slot_alias, NULL);
+    uint32_t slot_epoch = 61u;
+    bool slot_alias_matched = slot_alias_ready &&
+        match_atoms_epoch_builder_rule_local(
+            slot_outer, slot_rule, &slot_alias, &arena, slot_epoch);
+    CHECK(slot_alias_matched &&
+              bindings_lookup_id(
+                  &slot_alias.current,
+                  var_epoch_id(slot_rule->var_id, slot_epoch)) ==
+                  slot_outer &&
+              bindings_lookup_id(
+                  &slot_alias.current, slot_outer->var_id) == NULL,
+          "clause-frame variable aliases point from rule slots to caller variables");
+    if (slot_alias_ready)
+        bindings_builder_free(&slot_alias);
+
+    Atom *slot_rule_left = atom_var_with_id(
+        &arena, "slot-rule-left", test_id(7452u));
+    Atom *slot_rule_right = atom_var_with_id(
+        &arena, "slot-rule-right", test_id(7453u));
+    Atom *slot_rule_pair = atom_expr3(
+        &arena, atom_symbol(&arena, "SlotPair"),
+        slot_rule_left, slot_rule_right);
+    BindingsBuilder slot_structured;
+    bool slot_structured_ready =
+        bindings_builder_init(&slot_structured, NULL);
+    bool slot_structured_matched = slot_structured_ready &&
+        match_atoms_epoch_builder_rule_local(
+            slot_outer, slot_rule_pair, &slot_structured,
+            &arena, slot_epoch);
+    Atom *slot_structured_value = slot_structured_matched
+        ? bindings_lookup_id(
+              &slot_structured.current, slot_outer->var_id)
+        : NULL;
+    CHECK(slot_structured_value &&
+              slot_structured_value->kind == ATOM_EXPR &&
+              slot_structured_value->expr.len == 3u &&
+              var_epoch_suffix(
+                  slot_structured_value->expr.elems[1]->var_id) ==
+                  slot_epoch &&
+              var_epoch_suffix(
+                  slot_structured_value->expr.elems[2]->var_id) ==
+                  slot_epoch,
+          "clause-frame matching retains a caller's structured rule value");
+    if (slot_structured_ready)
+        bindings_builder_free(&slot_structured);
+
+    Atom *slot_outer_left = atom_var_with_id(
+        &arena, "slot-outer-left", test_id(7454u));
+    Atom *slot_outer_right = atom_var_with_id(
+        &arena, "slot-outer-right", test_id(7455u));
+    Atom *slot_call = atom_expr3(
+        &arena, atom_symbol(&arena, "SlotRepeat"),
+        slot_outer_left, slot_outer_right);
+    Atom *slot_repeated_rule = atom_expr3(
+        &arena, atom_symbol(&arena, "SlotRepeat"),
+        slot_rule, slot_rule);
+    BindingsBuilder slot_repeated;
+    bool slot_repeated_ready = bindings_builder_init(&slot_repeated, NULL);
+    bool slot_repeated_matched = slot_repeated_ready &&
+        match_atoms_epoch_builder_rule_local(
+            slot_call, slot_repeated_rule, &slot_repeated,
+            &arena, slot_epoch);
+    Atom *slot_left_value = slot_repeated_matched
+        ? bindings_apply(
+              &slot_repeated.current, &arena, slot_outer_left)
+        : NULL;
+    Atom *slot_right_value = slot_repeated_matched
+        ? bindings_apply(
+              &slot_repeated.current, &arena, slot_outer_right)
+        : NULL;
+    CHECK(slot_left_value && slot_right_value &&
+              slot_left_value->kind == ATOM_VAR &&
+              slot_right_value->kind == ATOM_VAR &&
+              slot_left_value->var_id == slot_right_value->var_id &&
+              !bindings_has_loop(&slot_repeated.current),
+          "a repeated rule slot constrains distinct caller variables without a cycle");
+    if (slot_repeated_ready)
+        bindings_builder_free(&slot_repeated);
+
+    Atom *slot_wrap = atom_expr2(
+        &arena, atom_symbol(&arena, "SlotWrap"), slot_rule);
+    Atom *slot_cycle_rule = atom_expr3(
+        &arena, atom_symbol(&arena, "SlotCycle"),
+        slot_rule, slot_wrap);
+    Atom *slot_cycle_call = atom_expr3(
+        &arena, atom_symbol(&arena, "SlotCycle"),
+        slot_outer, slot_outer);
+    BindingsBuilder slot_cycle;
+    bool slot_cycle_ready = bindings_builder_init(&slot_cycle, NULL);
+    CHECK(slot_cycle_ready &&
+              match_atoms_epoch_builder_rule_local(
+                  slot_cycle_call, slot_cycle_rule,
+                  &slot_cycle, &arena, slot_epoch) &&
+              bindings_has_loop(&slot_cycle.current),
+          "clause-frame orientation leaves cyclic substitutions visible to the occurs check");
+    if (slot_cycle_ready)
+        bindings_builder_free(&slot_cycle);
+
     uint32_t fresh_before_null = 0u;
     uint32_t fresh_after_null = 0u;
     CHECK(fresh_var_suffix_try(&fresh_before_null) &&
@@ -964,10 +1077,10 @@ int main(void) {
     bindings_init(&cycle);
     CHECK(bindings_add_var(&cycle, cycle_x, cycle_y) &&
               !bindings_has_loop(&cycle),
-          "incremental occurs certificate accepts an acyclic edge");
+          "incremental occurs summary accepts an acyclic edge");
     CHECK(bindings_add_var(&cycle, cycle_y, cycle_payload) &&
               bindings_has_loop(&cycle),
-          "incremental occurs certificate detects a transitive cycle");
+          "incremental occurs summary detects a transitive cycle");
     Atom *cyclic_result = bindings_apply(&cycle, &arena, cycle_x);
     CHECK(cyclic_result == cycle_payload,
           "witnessed cycles retain the terminating active-path guard");
@@ -975,9 +1088,9 @@ int main(void) {
               !bindings_has_loop(&cycle),
           "removing the witnessed edge falls back to the full oracle");
 
-    Atom *acyclic_tail = atom_var(&arena, "apply-certificate-tail");
-    Atom *acyclic_head = atom_var(&arena, "apply-certificate-head");
-    Atom *acyclic_leaf = atom_symbol(&arena, "ApplyCertificateLeaf");
+    Atom *acyclic_tail = atom_var(&arena, "apply-summary-tail");
+    Atom *acyclic_head = atom_var(&arena, "apply-summary-head");
+    Atom *acyclic_leaf = atom_symbol(&arena, "ApplySummaryLeaf");
     Atom *acyclic_pair = atom_expr2(&arena, acyclic_head, acyclic_head);
     Bindings acyclic_apply;
     bindings_init(&acyclic_apply);
@@ -991,7 +1104,7 @@ int main(void) {
               acyclic_result->expr.len == 2u &&
               acyclic_result->expr.elems[0] == acyclic_leaf &&
               acyclic_result->expr.elems[1] == acyclic_leaf,
-          "acyclicity certificate erases only redundant path tracking");
+          "acyclicity summary erases only redundant path tracking");
     bindings_free(&acyclic_apply);
 
     Atom *memo_vars[96];
@@ -1044,7 +1157,7 @@ int main(void) {
 
     BindingsBuilder cycle_branch;
     CHECK(bindings_builder_init(&cycle_branch, &cycle),
-          "cycle rollback branch starts from the acyclic certificate");
+          "cycle rollback branch starts from the acyclic summary");
     uint32_t cycle_mark = bindings_builder_save(&cycle_branch);
     CHECK(bindings_builder_add_var_fresh(
               &cycle_branch, cycle_y, cycle_payload) &&
@@ -1054,7 +1167,7 @@ int main(void) {
     CHECK(!bindings_has_loop(&cycle_branch.current) &&
               bindings_lookup_id(
                   &cycle_branch.current, cycle_y->var_id) == NULL,
-          "rollback restores the prior acyclicity certificate");
+          "rollback restores the prior acyclicity summary");
     bindings_builder_free(&cycle_branch);
     bindings_free(&cycle);
 
@@ -1070,7 +1183,7 @@ int main(void) {
                  bindings_lookup_id(&rewritten, rewritten_old) == NULL &&
                  binding_is_int(&rewritten, rewritten_new, 12);
     CHECK(rewrite_ok,
-          "key rewrites invalidate every derived lookup certificate");
+          "key rewrites invalidate every derived lookup summary");
     rewritten.entries[12u].var_id = variant_shape_slot_id(12u);
     bindings_invalidate_after_key_rewrite(&rewritten);
     CHECK(bindings_contains_private_variant_slots(&rewritten),
@@ -1169,6 +1282,62 @@ int main(void) {
               shared.entries[0].val == promoted_once &&
               shared.entries[1].val == promoted_once,
           "promotion reuses a destination-owned graph");
+
+    Bindings occurrence_left;
+    Bindings occurrence_right;
+    Bindings occurrence_clone;
+    Bindings occurrence_join;
+    bindings_init(&occurrence_left);
+    bindings_init(&occurrence_right);
+    bindings_init(&occurrence_clone);
+    bindings_init(&occurrence_join);
+    CHECK(bindings_refresh_occurrence_token(&occurrence_left) &&
+              bindings_refresh_occurrence_token(&occurrence_right) &&
+              bindings_occurrence_token(&occurrence_left) != 0u &&
+              bindings_occurrence_token(&occurrence_right) != 0u &&
+              bindings_occurrence_token(&occurrence_left) !=
+                  bindings_occurrence_token(&occurrence_right) &&
+              !bindings_eq(&occurrence_left, &occurrence_right),
+          "distinct receipt-free derivations retain distinct occurrences");
+    CHECK(bindings_clone(&occurrence_clone, &occurrence_left) &&
+              bindings_occurrence_token(&occurrence_clone) ==
+                  bindings_occurrence_token(&occurrence_left) &&
+              bindings_eq(&occurrence_clone, &occurrence_left),
+          "cloning preserves one exact occurrence identity");
+    CHECK(bindings_clone_merge(
+              &occurrence_join, &occurrence_left, &occurrence_right) &&
+              bindings_occurrence_token(&occurrence_join) != 0u &&
+              bindings_occurrence_token(&occurrence_join) !=
+                  bindings_occurrence_token(&occurrence_left) &&
+              bindings_occurrence_token(&occurrence_join) !=
+                  bindings_occurrence_token(&occurrence_right),
+          "joining distinct occurrences allocates one fresh union identity");
+    BindingsBuilder occurrence_branch;
+    bool occurrence_branch_ready = bindings_builder_init(
+        &occurrence_branch, &occurrence_left);
+    uint32_t occurrence_mark = occurrence_branch_ready
+        ? bindings_builder_save(&occurrence_branch) : 0u;
+    uint64_t occurrence_left_token =
+        bindings_occurrence_token(&occurrence_left);
+    bool occurrence_rollback_exact = occurrence_branch_ready &&
+        bindings_builder_try_merge(
+            &occurrence_branch, &occurrence_right) &&
+        bindings_occurrence_token(&occurrence_branch.current) !=
+            occurrence_left_token;
+    if (occurrence_rollback_exact) {
+        bindings_builder_rollback(&occurrence_branch, occurrence_mark);
+        occurrence_rollback_exact =
+            bindings_occurrence_token(&occurrence_branch.current) ==
+                occurrence_left_token;
+    }
+    CHECK(occurrence_rollback_exact,
+          "rollback restores the exact pre-branch occurrence identity");
+    if (occurrence_branch_ready)
+        bindings_builder_free(&occurrence_branch);
+    bindings_free(&occurrence_join);
+    bindings_free(&occurrence_clone);
+    bindings_free(&occurrence_right);
+    bindings_free(&occurrence_left);
 
     VarId fresh_id_before_null = VAR_ID_NONE;
     VarId fresh_id_after_null = VAR_ID_NONE;

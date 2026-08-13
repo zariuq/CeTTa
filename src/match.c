@@ -941,16 +941,20 @@ const PrimeNeedSnapshot *bindings_need_view(const Bindings *b) {
                         : &g_prime_occurrence_empty.prime_need;
 }
 
-const PrimeNeedReceipt *bindings_receipt_view(const Bindings *b) {
-    return b->prime_ext ? &b->prime_ext->prime_receipt
-                        : &g_prime_occurrence_empty.prime_receipt;
+const PrimeNeedBranchState *bindings_branch_state_view(const Bindings *b) {
+    return b->prime_ext ? &b->prime_ext->branch_state
+                        : &g_prime_occurrence_empty.branch_state;
 }
 
 static PrimeOccurrence *bindings_prime_ext_materialize(Bindings *b) {
     if (!b->prime_ext) {
         PrimeOccurrence *ext = cetta_malloc(sizeof(PrimeOccurrence));
         prime_need_snapshot_init(&ext->prime_need);
-        prime_need_receipt_init(&ext->prime_receipt);
+        prime_need_branch_state_init(&ext->branch_state);
+        ext->occurrence_token = 0u;
+#if CETTA_BUILD_WITH_PRIME_CAUSAL_RECEIPTS
+        prime_need_receipt_init(&ext->receipt);
+#endif
         b->prime_ext = ext;
     }
     return b->prime_ext;
@@ -960,27 +964,67 @@ PrimeNeedSnapshot *bindings_need_mut(Bindings *b) {
     return &bindings_prime_ext_materialize(b)->prime_need;
 }
 
+PrimeNeedBranchState *bindings_branch_state_mut(Bindings *b) {
+    return &bindings_prime_ext_materialize(b)->branch_state;
+}
+
+#if CETTA_BUILD_WITH_PRIME_CAUSAL_RECEIPTS
+const PrimeNeedReceipt *bindings_receipt_view(const Bindings *b) {
+    return b->prime_ext ? &b->prime_ext->receipt
+                        : &g_prime_occurrence_empty.receipt;
+}
+
 PrimeNeedReceipt *bindings_receipt_mut(Bindings *b) {
-    return &bindings_prime_ext_materialize(b)->prime_receipt;
+    return &bindings_prime_ext_materialize(b)->receipt;
+}
+#endif
+
+uint64_t bindings_occurrence_token(const Bindings *b) {
+    return b && b->prime_ext ? b->prime_ext->occurrence_token : 0u;
+}
+
+bool bindings_refresh_occurrence_token(Bindings *b) {
+    if (!b)
+        return false;
+    uint64_t token = prime_need_fresh_source_occurrence();
+    if (token == 0u)
+        return false;
+    bindings_prime_ext_materialize(b)->occurrence_token = token;
+    return true;
 }
 
 bool bindings_prime_present(const Bindings *b) {
-    return b->prime_ext &&
-           (prime_need_snapshot_present(&b->prime_ext->prime_need) ||
-            prime_need_receipt_present(&b->prime_ext->prime_receipt));
+    if (!b->prime_ext)
+        return false;
+    return prime_need_snapshot_present(&b->prime_ext->prime_need) ||
+           prime_need_branch_state_present(&b->prime_ext->branch_state) ||
+           b->prime_ext->occurrence_token != 0u
+#if CETTA_BUILD_WITH_PRIME_CAUSAL_RECEIPTS
+           || prime_need_receipt_present(&b->prime_ext->receipt)
+#endif
+           ;
 }
 
 /* Reset an existing occurrence to empty without freeing it (kept for reuse to
  * avoid alloc churn on hot Prime merge/rollback paths). */
 static void prime_occurrence_reset(PrimeOccurrence *ext) {
     prime_need_snapshot_init(&ext->prime_need);
-    prime_need_receipt_init(&ext->prime_receipt);
+    prime_need_branch_state_init(&ext->branch_state);
+    ext->occurrence_token = 0u;
+#if CETTA_BUILD_WITH_PRIME_CAUSAL_RECEIPTS
+    prime_need_receipt_init(&ext->receipt);
+#endif
 }
 
 void bindings_prime_assign(Bindings *dst, const Bindings *src) {
     if (src->prime_ext &&
         (prime_need_snapshot_present(&src->prime_ext->prime_need) ||
-         prime_need_receipt_present(&src->prime_ext->prime_receipt))) {
+         prime_need_branch_state_present(&src->prime_ext->branch_state) ||
+         src->prime_ext->occurrence_token != 0u
+#if CETTA_BUILD_WITH_PRIME_CAUSAL_RECEIPTS
+         || prime_need_receipt_present(&src->prime_ext->receipt)
+#endif
+         )) {
         *bindings_prime_ext_materialize(dst) = *src->prime_ext;
     } else if (dst->prime_ext) {
         prime_occurrence_reset(dst->prime_ext);
@@ -988,15 +1032,30 @@ void bindings_prime_assign(Bindings *dst, const Bindings *src) {
 }
 
 void bindings_prime_set(Bindings *dst, const PrimeNeedSnapshot *need,
+                        const PrimeNeedBranchState *branch_state,
+                        uint64_t occurrence_token,
                         const PrimeNeedReceipt *receipt) {
     bool present = (need && prime_need_snapshot_present(need)) ||
-                   (receipt && prime_need_receipt_present(receipt));
+                   (branch_state &&
+                    prime_need_branch_state_present(branch_state)) ||
+                   occurrence_token != 0u;
+#if CETTA_BUILD_WITH_PRIME_CAUSAL_RECEIPTS
+    present = present ||
+              (receipt && prime_need_receipt_present(receipt));
+#else
+    (void)receipt;
+#endif
     if (present) {
         PrimeOccurrence *ext = bindings_prime_ext_materialize(dst);
         if (need) ext->prime_need = *need;
         else prime_need_snapshot_init(&ext->prime_need);
-        if (receipt) ext->prime_receipt = *receipt;
-        else prime_need_receipt_init(&ext->prime_receipt);
+        if (branch_state) ext->branch_state = *branch_state;
+        else prime_need_branch_state_init(&ext->branch_state);
+        ext->occurrence_token = occurrence_token;
+#if CETTA_BUILD_WITH_PRIME_CAUSAL_RECEIPTS
+        if (receipt) ext->receipt = *receipt;
+        else prime_need_receipt_init(&ext->receipt);
+#endif
     } else if (dst->prime_ext) {
         prime_occurrence_reset(dst->prime_ext);
     }
@@ -1157,10 +1216,19 @@ bool bindings_factor_prefix(Bindings *full, const Bindings *base,
                                         bindings_need_view(full)) &&
         prime_need_snapshot_is_ancestor(bindings_need_view(full),
                                         bindings_need_view(base));
-    bool same_receipt =
-        prime_need_receipt_equal(bindings_receipt_view(base),
-                                 bindings_receipt_view(full));
-    if (!same_need || !same_receipt)
+    bool same_branch_state =
+        prime_need_branch_state_equal(bindings_branch_state_view(base),
+                                      bindings_branch_state_view(full));
+    bool same_occurrence =
+        bindings_occurrence_token(base) ==
+        bindings_occurrence_token(full);
+    bool same_receipt = true;
+#if CETTA_BUILD_WITH_PRIME_CAUSAL_RECEIPTS
+    same_receipt = prime_need_receipt_equal(
+        bindings_receipt_view(base), bindings_receipt_view(full));
+#endif
+    if (!same_need || !same_branch_state || !same_receipt ||
+        !same_occurrence)
         bindings_prime_assign(&suffix, full);
 
     uint64_t elided = (uint64_t)base->len + (uint64_t)base->eq_len;
@@ -1264,9 +1332,18 @@ bool bindings_promote_logical_atoms_to_arena(Bindings *bindings,
 bool bindings_promote_atoms_to_arena(Bindings *bindings, Arena *dst) {
     if (!bindings_promote_logical_atoms_to_arena(bindings, dst))
         return false;
-    return !bindings->prime_ext ||
-           (prime_need_snapshot_promote(dst, &bindings->prime_ext->prime_need) &&
-            prime_need_receipt_promote(dst, &bindings->prime_ext->prime_receipt));
+    if (!bindings->prime_ext)
+        return true;
+    if (!prime_need_snapshot_promote(
+            dst, &bindings->prime_ext->prime_need) ||
+        !prime_need_branch_state_promote(
+            dst, &bindings->prime_ext->branch_state))
+        return false;
+#if CETTA_BUILD_WITH_PRIME_CAUSAL_RECEIPTS
+    if (!prime_need_receipt_promote(dst, &bindings->prime_ext->receipt))
+        return false;
+#endif
+    return true;
 }
 
 void bindings_move(Bindings *dst, Bindings *src) {
@@ -1559,18 +1636,48 @@ bool bindings_add_constraint(Bindings *b, Atom *lhs, Atom *rhs) {
     return bindings_add_constraint_internal(b, lhs, rhs, true);
 }
 
+static bool bindings_merged_occurrence_token(
+    const Bindings *dst, const Bindings *src, uint64_t *out) {
+    if (!out)
+        return false;
+    uint64_t left = bindings_occurrence_token(dst);
+    uint64_t right = bindings_occurrence_token(src);
+    if (left == 0u || left == right) {
+        *out = right;
+        return true;
+    }
+    if (right == 0u) {
+        *out = left;
+        return true;
+    }
+    *out = prime_need_fresh_source_occurrence();
+    return *out != 0u;
+}
+
 static bool bindings_try_merge_inplace(Bindings *dst, const Bindings *src) {
     bindings_assert_no_private_variant_slots(dst);
     bindings_assert_no_private_variant_slots(src);
     /* Only touch Prime state (and materialize dst's occurrence) when either
      * side carries any: HE merges stay allocation-free. */
     if (bindings_prime_present(dst) || bindings_prime_present(src)) {
+        uint64_t occurrence_token = 0u;
+        if (!bindings_merged_occurrence_token(
+                dst, src, &occurrence_token))
+            return false;
         if (!prime_need_snapshot_merge(bindings_need_mut(dst),
                                        bindings_need_view(src)))
             return false;
+        if (!prime_need_branch_state_merge(
+                bindings_branch_state_mut(dst),
+                bindings_branch_state_view(src)))
+            return false;
+#if CETTA_BUILD_WITH_PRIME_CAUSAL_RECEIPTS
         if (!prime_need_receipt_merge(bindings_receipt_mut(dst),
                                       bindings_receipt_view(src)))
             return false;
+#endif
+        bindings_prime_ext_materialize(dst)->occurrence_token =
+            occurrence_token;
     }
     uint32_t pending_cap = dst->eq_len + src->eq_len + 1;
     BindingConstraint pending_stack[BINDINGS_TEMP_STACK_CAP];
@@ -1991,11 +2098,10 @@ Atom *bindings_apply_rewrite_vars(Bindings *b, Arena *a, Atom *atom,
     BindingApplyMemo memo;
     bindings_apply_memo_init(&memo, memo_id_stack, memo_val_stack,
                              BINDINGS_MEMO_STACK_CAP);
-    /* `cycle_state` is a derived certificate maintained by every binding
-     * mutation.  Once it proves the substitution graph acyclic, active-path
-     * membership cannot affect the result, so do not build or scan that
-     * transient structure.  Unknown and witnessed-cyclic environments retain
-     * the independent general guard below. */
+    /* Every binding mutation updates the cached `cycle_state` summary.  In an
+     * acyclic graph, active-path membership cannot affect the result, so do
+     * not build or scan that transient structure.  Unknown and witnessed-
+     * cyclic environments retain the independent general guard below. */
     bool track_cycles =
         b->cycle_state != BINDINGS_CYCLE_ACYCLIC ||
         b->legacy_fallback_count != 0u;
@@ -2157,10 +2263,10 @@ static Atom *bindings_apply_epoch_view(Bindings *b, Arena *a, Atom *atom,
     bindings_apply_memo_init(
         &outer_memo, outer_memo_id_stack, outer_memo_val_stack,
                              BINDINGS_MEMO_STACK_CAP);
-    /* The builder maintains an exact acyclicity certificate for the current
+    /* The builder maintains an exact acyclicity summary for the current
      * substitution graph.  Epoch rewriting changes only the input variable
-     * identifier used for the first lookup; every traversed binding edge is
-     * already represented in that certified graph. */
+     * identifier used for the first lookup; the same graph contains every
+     * traversed binding edge. */
     bool track_cycles =
         b->cycle_state != BINDINGS_CYCLE_ACYCLIC ||
         b->legacy_fallback_count != 0u;
@@ -2713,7 +2819,14 @@ void bindings_builder_rollback(BindingsBuilder *bb, uint32_t mark) {
         bindings_prime_set(
             &bb->current,
             prime ? &prime->prime_need : NULL,
-            prime ? &prime->prime_receipt : NULL);
+            prime ? &prime->branch_state : NULL,
+            prime ? prime->occurrence_token : 0u,
+#if CETTA_BUILD_WITH_PRIME_CAUSAL_RECEIPTS
+            prime ? &prime->receipt : NULL
+#else
+            NULL
+#endif
+            );
         bb->prime_trail_len = entry->prime_state_mark;
     }
     if (restored) {
@@ -2916,16 +3029,33 @@ bool bindings_builder_try_merge(BindingsBuilder *bb, const Bindings *src) {
     if (!bindings_builder_snapshot(bb))
         return false;
     if (bindings_prime_present(&bb->current) || bindings_prime_present(src)) {
+        uint64_t occurrence_token = 0u;
+        if (!bindings_merged_occurrence_token(
+                &bb->current, src, &occurrence_token)) {
+            bindings_builder_rollback(bb, mark);
+            return false;
+        }
         if (!prime_need_snapshot_merge(bindings_need_mut(&bb->current),
                                        bindings_need_view(src))) {
             bindings_builder_rollback(bb, mark);
             return false;
         }
-        if (!prime_need_receipt_merge(bindings_receipt_mut(&bb->current),
-                                      bindings_receipt_view(src))) {
+        if (!prime_need_branch_state_merge(
+                bindings_branch_state_mut(&bb->current),
+                bindings_branch_state_view(src))) {
             bindings_builder_rollback(bb, mark);
             return false;
         }
+#if CETTA_BUILD_WITH_PRIME_CAUSAL_RECEIPTS
+        if (!prime_need_receipt_merge(
+                bindings_receipt_mut(&bb->current),
+                bindings_receipt_view(src))) {
+            bindings_builder_rollback(bb, mark);
+            return false;
+        }
+#endif
+        bindings_prime_ext_materialize(&bb->current)->occurrence_token =
+            occurrence_token;
     }
     uint32_t pending_cap = bb->current.eq_len + src->eq_len + 1;
     BindingConstraint pending_stack[BINDINGS_TEMP_STACK_CAP];
@@ -5208,6 +5338,9 @@ static bool match_atoms_epoch_worklist(Atom *left, Atom *right,
                                        Bindings *bindings,
                                        BindingsBuilder *builder,
                                        Arena *a, uint32_t epoch);
+static bool match_atoms_epoch_rule_local_worklist(
+    Atom *left, Atom *right, BindingsBuilder *builder,
+    Arena *a, uint32_t epoch);
 static bool match_atoms_epoch_view_worklist(
     Atom *left, uint32_t left_epoch, uint32_t left_first_entry,
     Atom *right, Bindings *bindings, BindingsBuilder *builder,
@@ -5354,6 +5487,13 @@ bool match_atoms_epoch_builder(Atom *left, Atom *right,
                                BindingsBuilder *bb, Arena *a,
                                uint32_t epoch) {
     return match_atoms_epoch_worklist(left, right, NULL, bb, a, epoch);
+}
+
+bool match_atoms_epoch_builder_rule_local(
+        Atom *left, Atom *right, BindingsBuilder *bb,
+        Arena *a, uint32_t epoch) {
+    return match_atoms_epoch_rule_local_worklist(
+        left, right, bb, a, epoch);
 }
 
 bool match_atoms_epoch_view_builder(
@@ -5515,7 +5655,8 @@ static bool match_atoms_epoch_views_worklist(
         Atom *left, bool left_original, uint32_t left_epoch,
         uint32_t left_first_entry, Atom *right,
         Bindings *bindings, BindingsBuilder *builder,
-        Arena *a, uint32_t right_epoch) {
+        Arena *a, uint32_t right_epoch,
+        bool prefer_right_rule_slot) {
     EpochMatchWorklist work;
     MatchPathSet path;
     Bindings *initial = builder ? &builder->current : bindings;
@@ -5589,6 +5730,17 @@ retry_pair:
                     goto retry_pair;
                 }
                 if (left->var_id == right_id) continue;
+                if (prefer_right_rule_slot && right_original) {
+                    Atom *binding_var =
+                        epoch_var_atom(a, right, right_epoch);
+                    bool added = binding_var && (builder
+                        ? bindings_builder_add_var_fresh(
+                              builder, binding_var, left)
+                        : bindings_add_var(
+                              bindings, binding_var, left));
+                    if (!added) goto fail;
+                    continue;
+                }
                 Atom *value = right_original
                     ? epoch_var_atom(a, right, right_epoch) : right;
                 bool added = value && (builder
@@ -5674,7 +5826,8 @@ static bool match_atoms_epoch_worklist(Atom *left, Atom *right,
                                        BindingsBuilder *builder,
                                        Arena *a, uint32_t epoch) {
     return match_atoms_epoch_views_worklist(
-        left, false, 0u, 0u, right, bindings, builder, a, epoch);
+        left, false, 0u, 0u, right, bindings, builder, a, epoch,
+        false);
 }
 
 static bool match_atoms_epoch_view_worklist(
@@ -5683,7 +5836,14 @@ static bool match_atoms_epoch_view_worklist(
         Arena *a, uint32_t right_epoch) {
     return match_atoms_epoch_views_worklist(
         left, true, left_epoch, left_first_entry,
-        right, bindings, builder, a, right_epoch);
+        right, bindings, builder, a, right_epoch, false);
+}
+
+static bool match_atoms_epoch_rule_local_worklist(
+        Atom *left, Atom *right, BindingsBuilder *builder,
+        Arena *a, uint32_t epoch) {
+    return match_atoms_epoch_views_worklist(
+        left, false, 0u, 0u, right, NULL, builder, a, epoch, true);
 }
 
 typedef struct {
@@ -5881,8 +6041,15 @@ bool bindings_eq(Bindings *a, Bindings *b) {
           prime_need_snapshot_is_ancestor(bindings_need_view(b),
                                           bindings_need_view(a))))
         return false;
+    if (!prime_need_branch_state_equal(bindings_branch_state_view(a),
+                                       bindings_branch_state_view(b)))
+        return false;
+#if CETTA_BUILD_WITH_PRIME_CAUSAL_RECEIPTS
     if (!prime_need_receipt_equal(bindings_receipt_view(a),
                                   bindings_receipt_view(b)))
+        return false;
+#endif
+    if (bindings_occurrence_token(a) != bindings_occurrence_token(b))
         return false;
     if (a->len != b->len) return false;
     if (a->eq_len != b->eq_len) return false;

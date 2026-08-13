@@ -110,7 +110,11 @@ static __thread _Atomic bool *g_hyperpose_thread_unsafe_requested = NULL;
  * environment component, so sibling outcomes own incomparable persistent
  * refinements while HE profiles see the empty identity element. */
 static __thread PrimeNeedSnapshot g_prime_need_active = {0};
+static __thread PrimeNeedBranchState
+    g_prime_need_branch_state_active = {0};
+#if CETTA_BUILD_WITH_PRIME_CAUSAL_RECEIPTS
 static __thread PrimeNeedReceipt g_prime_need_receipt_active = {0};
+#endif
 static __thread const Bindings *g_prime_need_logical_env = NULL;
 static __thread uint64_t g_prime_need_evaluator_id = 0u;
 static _Atomic uint64_t g_prime_need_next_evaluator_id = 1u;
@@ -139,7 +143,10 @@ typedef struct {
     Arena *saved_need_owner;
     Arena *saved_branch_owner;
     PrimeNeedSnapshot saved_need;
+    PrimeNeedBranchState saved_branch_state;
+#if CETTA_BUILD_WITH_PRIME_CAUSAL_RECEIPTS
     PrimeNeedReceipt saved_receipt;
+#endif
     const Bindings *saved_logical_env;
 } PrimeNeedRegionScope;
 
@@ -148,6 +155,14 @@ static __thread Arena *g_prime_need_region_branch_owner = NULL;
 static __thread CettaPrimeNeedAnswerObserver
     g_prime_need_answer_observer = NULL;
 static __thread void *g_prime_need_answer_observer_context = NULL;
+
+static inline bool prime_need_receipt_observer_requested(void) {
+#if CETTA_BUILD_WITH_PRIME_CAUSAL_RECEIPTS
+    return g_prime_need_answer_observer != NULL;
+#else
+    return false;
+#endif
+}
 static __thread uint32_t g_metta_eval_depth = 0u;
 /* A shared host leaf may re-enter the evaluator, but it cannot recursively
  * install a second PeTTa search machine around the same leaf. */
@@ -169,12 +184,16 @@ static void prime_need_observe_top_answer(
     Atom *answer, const Bindings *env) {
     if (!answer || g_metta_eval_depth != 1u ||
         eval_current_language_id() != CETTA_LANGUAGE_PRIME ||
-        !g_prime_need_answer_observer)
+        !prime_need_receipt_observer_requested())
         return;
+#if CETTA_BUILD_WITH_PRIME_CAUSAL_RECEIPTS
     const PrimeNeedReceipt *receipt = env
         ? bindings_receipt_view(env) : &g_prime_need_receipt_active;
     g_prime_need_answer_observer(
         answer, receipt, g_prime_need_answer_observer_context);
+#else
+    (void)env;
+#endif
 }
 
 /* Prime's evaluator forms are cached by SymbolId without adding them to the
@@ -286,22 +305,32 @@ static const PrimeNeedSymbolIds *prime_need_symbols(void) {
 
 typedef struct {
     PrimeNeedSnapshot previous;
+    PrimeNeedBranchState previous_branch_state;
+#if CETTA_BUILD_WITH_PRIME_CAUSAL_RECEIPTS
     PrimeNeedReceipt previous_receipt;
+#endif
     const Bindings *previous_logical_env;
 } PrimeNeedActiveGuard;
 
 static PrimeNeedActiveGuard prime_need_active_enter(const Bindings *env) {
     PrimeNeedActiveGuard guard = {
         .previous = g_prime_need_active,
+        .previous_branch_state = g_prime_need_branch_state_active,
+#if CETTA_BUILD_WITH_PRIME_CAUSAL_RECEIPTS
         .previous_receipt = g_prime_need_receipt_active,
+#endif
         .previous_logical_env = g_prime_need_logical_env,
     };
     if (env) {
         g_prime_need_logical_env = env;
         if (prime_need_snapshot_present(bindings_need_view(env)))
             g_prime_need_active = *bindings_need_view(env);
+        if (prime_need_branch_state_present(bindings_branch_state_view(env)))
+            g_prime_need_branch_state_active = *bindings_branch_state_view(env);
+#if CETTA_BUILD_WITH_PRIME_CAUSAL_RECEIPTS
         if (prime_need_receipt_present(bindings_receipt_view(env)))
             g_prime_need_receipt_active = *bindings_receipt_view(env);
+#endif
     }
     return guard;
 }
@@ -309,7 +338,10 @@ static PrimeNeedActiveGuard prime_need_active_enter(const Bindings *env) {
 static void prime_need_active_leave(PrimeNeedActiveGuard *guard) {
     if (guard) {
         g_prime_need_active = guard->previous;
+        g_prime_need_branch_state_active = guard->previous_branch_state;
+#if CETTA_BUILD_WITH_PRIME_CAUSAL_RECEIPTS
         g_prime_need_receipt_active = guard->previous_receipt;
+#endif
         g_prime_need_logical_env = guard->previous_logical_env;
     }
 }
@@ -397,7 +429,10 @@ static bool prime_need_region_scope_enter(PrimeNeedRegionScope *scope) {
     scope->saved_need_owner = g_prime_need_owner;
     scope->saved_branch_owner = g_prime_need_region_branch_owner;
     scope->saved_need = g_prime_need_active;
+    scope->saved_branch_state = g_prime_need_branch_state_active;
+#if CETTA_BUILD_WITH_PRIME_CAUSAL_RECEIPTS
     scope->saved_receipt = g_prime_need_receipt_active;
+#endif
     scope->saved_logical_env = g_prime_need_logical_env;
     pool->depth++;
     cetta_runtime_stats_update_max(
@@ -416,7 +451,10 @@ static void prime_need_region_scope_leave(PrimeNeedRegionScope *scope) {
     g_prime_need_owner = scope->saved_need_owner;
     g_prime_need_region_branch_owner = scope->saved_branch_owner;
     g_prime_need_active = scope->saved_need;
+    g_prime_need_branch_state_active = scope->saved_branch_state;
+#if CETTA_BUILD_WITH_PRIME_CAUSAL_RECEIPTS
     g_prime_need_receipt_active = scope->saved_receipt;
+#endif
     g_prime_need_logical_env = scope->saved_logical_env;
     size_t live = arena_accounted_live_bytes(&scope->level->arena);
     size_t origin = arena_mark_accounted_live_bytes(scope->level->origin);
@@ -430,9 +468,11 @@ static void prime_need_region_scope_leave(PrimeNeedRegionScope *scope) {
     scope->active = false;
 }
 
+#if CETTA_BUILD_WITH_PRIME_CAUSAL_RECEIPTS
 static bool prime_need_region_receipt_is_branch_local(Arena *owner) {
     return owner && owner == g_prime_need_region_branch_owner;
 }
+#endif
 
 static uint64_t prime_need_fresh_evaluator_id(void) {
     uint64_t id = atomic_fetch_add_explicit(
@@ -1078,54 +1118,86 @@ static StateCell *payload_resolve_state_write(Arena *a, StateCell *cell) {
 
 static bool prime_need_effective_state(
     const Bindings *env, StateCell *cell,
-    PrimeNeedReceipt *out_receipt, Atom **out_value) {
-    if (!cell || !out_receipt || !out_value)
+    PrimeNeedBranchState *out_state, Atom **out_value) {
+    if (!cell || !out_state || !out_value)
         return false;
-    PrimeNeedReceipt receipt;
-    prime_need_receipt_init(&receipt);
+    PrimeNeedBranchState state;
+    prime_need_branch_state_init(&state);
     if (env)
-        receipt = *bindings_receipt_view(env);
-    if (!prime_need_receipt_merge(&receipt,
-                                  &g_prime_need_receipt_active))
+        state = *bindings_branch_state_view(env);
+    if (!prime_need_branch_state_merge(
+            &state, &g_prime_need_branch_state_active))
         return false;
     Atom *value = NULL;
-    if (!prime_need_receipt_state_value(&receipt, cell, &value))
+    if (!prime_need_branch_state_value(&state, cell, &value))
         value = cell->value;
     if (!value)
         return false;
-    *out_receipt = receipt;
+    *out_state = state;
     *out_value = value;
     return true;
 }
 
+#if CETTA_BUILD_WITH_PRIME_CAUSAL_RECEIPTS
+static bool prime_need_record_state_receipt(
+    Arena *a, Bindings *env, StateCell *cell,
+    Atom *before, Atom *after, bool write) {
+    if (!prime_need_receipt_observer_requested())
+        return true;
+    PrimeNeedReceipt base = *bindings_receipt_view(env);
+    if (!prime_need_receipt_merge(&base, &g_prime_need_receipt_active))
+        return false;
+    PrimeNeedReceipt recorded;
+    bool ok = write
+        ? prime_need_receipt_write_state(
+              prime_need_owner(a), &base, cell, before, after, &recorded)
+        : prime_need_receipt_read_state(
+              prime_need_owner(a), &base, cell, after, &recorded);
+    if (!ok)
+        return false;
+    *bindings_receipt_mut(env) = recorded;
+    return true;
+}
+#endif
+
 static bool prime_need_record_state_read(
     Arena *a, Bindings *env, StateCell *cell, Atom *value) {
-    PrimeNeedReceipt base;
+    PrimeNeedBranchState base;
     if (!env || !prime_need_effective_state(
                     env, cell, &base, &value))
         return false;
-    PrimeNeedReceipt observed;
-    if (!prime_need_receipt_read_state(
+    PrimeNeedBranchState observed;
+    if (!prime_need_branch_state_read(
             prime_need_owner(a), &base, cell, value, &observed))
         return false;
-    *bindings_receipt_mut(env) = observed;
+    *bindings_branch_state_mut(env) = observed;
+#if CETTA_BUILD_WITH_PRIME_CAUSAL_RECEIPTS
+    if (!prime_need_record_state_receipt(
+            a, env, cell, NULL, value, false))
+        return false;
+#endif
     return true;
 }
 
 static bool prime_need_record_state_write(
     Arena *a, Bindings *env, StateCell *cell, Atom *after) {
-    PrimeNeedReceipt base;
+    PrimeNeedBranchState base;
     Atom *before = NULL;
     if (!env || !after ||
         !prime_need_effective_state(env, cell, &base, &before))
         return false;
-    PrimeNeedReceipt written;
-    if (!prime_need_receipt_write_state(
+    PrimeNeedBranchState written;
+    if (!prime_need_branch_state_write(
             prime_need_owner(a), &base, cell, before, after, &written))
         return false;
-    *bindings_receipt_mut(env) = written;
+    *bindings_branch_state_mut(env) = written;
+#if CETTA_BUILD_WITH_PRIME_CAUSAL_RECEIPTS
+    if (!prime_need_record_state_receipt(
+            a, env, cell, before, after, true))
+        return false;
+#endif
     cetta_runtime_stats_inc(
-        CETTA_RUNTIME_COUNTER_PRIME_NEED_RECEIPT_STATE_WRITE);
+        CETTA_RUNTIME_COUNTER_PRIME_NEED_BRANCH_STATE_WRITE);
     return true;
 }
 
@@ -2436,11 +2508,18 @@ static bool outcome_region_promote_one_with_session(
             owner, forbidden, session, bindings_need_mut(&dst->env));
     }
     if (promoted && bindings_prime_present(&dst->env)) {
+        promoted = prime_need_branch_state_promote_suffix_with_session(
+            owner, forbidden, session,
+            bindings_branch_state_mut(&dst->env));
+    }
+#if CETTA_BUILD_WITH_PRIME_CAUSAL_RECEIPTS
+    if (promoted && bindings_prime_present(&dst->env)) {
         promoted = prime_need_receipt_promote_suffix_with_session(
             owner, forbidden, session, bindings_receipt_mut(&dst->env));
     }
+#endif
 
-    /* This audit is always on.  The atom closure certificates are exact and
+    /* This audit is always on.  The atom closure predicates are exact and
      * stronger than excluding only `forbidden`: every owned atom pointer is
      * now either in `owner` or globally immutable.  Need and receipt audits
      * walk their complete persistent structures because those may retain a
@@ -2458,9 +2537,15 @@ static bool outcome_region_promote_one_with_session(
     if (promoted && bindings_prime_present(&dst->env)) {
         promoted = prime_need_snapshot_excludes_arena(
                        bindings_need_view(&dst->env), forbidden) &&
-                   prime_need_receipt_excludes_arena(
-                       bindings_receipt_view(&dst->env), forbidden);
+                   prime_need_branch_state_excludes_arena(
+                       bindings_branch_state_view(&dst->env), forbidden);
     }
+#if CETTA_BUILD_WITH_PRIME_CAUSAL_RECEIPTS
+    if (promoted && bindings_prime_present(&dst->env)) {
+        promoted = prime_need_receipt_excludes_arena(
+            bindings_receipt_view(&dst->env), forbidden);
+    }
+#endif
     if (!promoted) {
         outcome_free_fields(dst);
         return false;
@@ -3367,13 +3452,31 @@ static bool bindings_capture_active_need(Bindings *env) {
     /* No active Prime state (pure-HE evaluation): nothing to capture, and the
      * merges below would be no-ops.  Skip them so the outcome env keeps its
      * NULL prime_ext and no per-outcome PrimeOccurrence is allocated. */
-    if (!prime_need_snapshot_present(&g_prime_need_active) &&
-        !prime_need_receipt_present(&g_prime_need_receipt_active))
+    bool operational_present =
+        prime_need_snapshot_present(&g_prime_need_active) ||
+        prime_need_branch_state_present(&g_prime_need_branch_state_active);
+#if CETTA_BUILD_WITH_PRIME_CAUSAL_RECEIPTS
+    bool receipt_present =
+        prime_need_receipt_present(&g_prime_need_receipt_active);
+#else
+    bool receipt_present = false;
+#endif
+    if (!operational_present && !receipt_present)
         return true;
-    return prime_need_snapshot_merge(bindings_need_mut(env),
-                                     &g_prime_need_active) &&
-           prime_need_receipt_merge(bindings_receipt_mut(env),
-                                    &g_prime_need_receipt_active);
+    if (operational_present &&
+        (!prime_need_snapshot_merge(bindings_need_mut(env),
+                                    &g_prime_need_active) ||
+         !prime_need_branch_state_merge(
+             bindings_branch_state_mut(env),
+             &g_prime_need_branch_state_active)))
+        return false;
+#if CETTA_BUILD_WITH_PRIME_CAUSAL_RECEIPTS
+    if (receipt_present &&
+        !prime_need_receipt_merge(
+            bindings_receipt_mut(env), &g_prime_need_receipt_active))
+        return false;
+#endif
+    return true;
 }
 
 static bool prime_capture_dynamic_env(
@@ -3385,10 +3488,16 @@ static bool prime_capture_dynamic_env(
         prime_need_snapshot_present(&g_prime_need_active)) {
         *bindings_need_mut(out) = g_prime_need_active;
     }
+    if (!prime_need_branch_state_present(bindings_branch_state_view(out)) &&
+        prime_need_branch_state_present(&g_prime_need_branch_state_active)) {
+        *bindings_branch_state_mut(out) = g_prime_need_branch_state_active;
+    }
+#if CETTA_BUILD_WITH_PRIME_CAUSAL_RECEIPTS
     if (!prime_need_receipt_present(bindings_receipt_view(out)) &&
         prime_need_receipt_present(&g_prime_need_receipt_active)) {
         *bindings_receipt_mut(out) = g_prime_need_receipt_active;
     }
+#endif
     return true;
 }
 
@@ -3501,12 +3610,22 @@ static void outcome_set_add_observed_data(OutcomeSet *os, Atom *atom) {
         return;
     }
     PrimeNeedSnapshot saved = g_prime_need_active;
+    PrimeNeedBranchState saved_branch_state =
+        g_prime_need_branch_state_active;
+#if CETTA_BUILD_WITH_PRIME_CAUSAL_RECEIPTS
     PrimeNeedReceipt saved_receipt = g_prime_need_receipt_active;
+#endif
     prime_need_snapshot_init(&g_prime_need_active);
+    prime_need_branch_state_init(&g_prime_need_branch_state_active);
+#if CETTA_BUILD_WITH_PRIME_CAUSAL_RECEIPTS
     prime_need_receipt_init(&g_prime_need_receipt_active);
+#endif
     outcome_set_add(os, atom, &empty);
     g_prime_need_active = saved;
+    g_prime_need_branch_state_active = saved_branch_state;
+#if CETTA_BUILD_WITH_PRIME_CAUSAL_RECEIPTS
     g_prime_need_receipt_active = saved_receipt;
+#endif
 }
 
 static void outcome_set_add_unfactored(OutcomeSet *os, Atom *atom,
@@ -3684,15 +3803,12 @@ static void outcome_set_append_promoted(Arena *a, OutcomeSet *dst,
 }
 
 static inline bool bindings_has_value_entries(const Bindings *env) {
-    return env && (env->len > 0 ||
-                   prime_need_snapshot_present(bindings_need_view(env)) ||
-                   prime_need_receipt_present(bindings_receipt_view(env)));
+    return env && (env->len > 0 || bindings_prime_present(env));
 }
 
 static inline bool bindings_has_any_entries(const Bindings *env) {
-    return env && (env->len > 0 || env->eq_len > 0 ||
-                   prime_need_snapshot_present(bindings_need_view(env)) ||
-                   prime_need_receipt_present(bindings_receipt_view(env)));
+    return env &&
+           (env->len > 0 || env->eq_len > 0 || bindings_prime_present(env));
 }
 
 static bool bindings_effective_merge(Bindings *owned,
@@ -11470,9 +11586,15 @@ static bool let_branch_outcomes_are_resettable(const OutcomeSet *os,
             !prime_need_snapshot_owner_excludes_arena(bindings_need_view(&o->env),
                                                       scratch))
             return false;
-        if (prime_need_receipt_present(bindings_receipt_view(&o->env)) &&
-            !prime_need_receipt_excludes_arena(bindings_receipt_view(&o->env), scratch))
+        if (prime_need_branch_state_present(bindings_branch_state_view(&o->env)) &&
+            !prime_need_branch_state_excludes_arena(bindings_branch_state_view(&o->env), scratch))
             return false;
+#if CETTA_BUILD_WITH_PRIME_CAUSAL_RECEIPTS
+        if (prime_need_receipt_present(bindings_receipt_view(&o->env)) &&
+            !prime_need_receipt_excludes_arena(
+                bindings_receipt_view(&o->env), scratch))
+            return false;
+#endif
     }
     return true;
 }
@@ -11546,9 +11668,15 @@ static bool let_direct_branch_visit(Arena *a, Atom *atom,
                                            let_ctx->a) &&
         prime_need_snapshot_owner_excludes_arena(&g_prime_need_active,
                                                  let_ctx->a) &&
-        (!prime_need_receipt_present(&g_prime_need_receipt_active) ||
-         prime_need_receipt_excludes_arena(&g_prime_need_receipt_active,
-                                           let_ctx->a))) {
+        (!prime_need_branch_state_present(&g_prime_need_branch_state_active) ||
+         prime_need_branch_state_excludes_arena(&g_prime_need_branch_state_active,
+                                                let_ctx->a))
+#if CETTA_BUILD_WITH_PRIME_CAUSAL_RECEIPTS
+        && (!prime_need_receipt_present(&g_prime_need_receipt_active) ||
+            prime_need_receipt_excludes_arena(
+                &g_prime_need_receipt_active, let_ctx->a))
+#endif
+        ) {
         /* Re-point each (unit) result to a () allocated in the long-lived
          * persistent arena so the branch's eval-arena scratch — including the
          * arena-allocated unit — becomes fully dead and reclaimable.  When the
@@ -11933,7 +12061,7 @@ static PreparedFoldResult prepared_foldl_single_result(
         accumulator_binder->kind != ATOM_VAR ||
         item_binder->kind != ATOM_VAR ||
         hyperpose_atom_has_thread_local_resource(initial) ||
-        g_prime_need_answer_observer != NULL) {
+        prime_need_receipt_observer_requested()) {
         return PREPARED_FOLD_NOT_APPLICABLE;
     }
     const char *trace = getenv(CETTA_GSLT_MATCH_CHAIN_TRACE_ENV);
@@ -12016,9 +12144,9 @@ static PreparedFoldResult prepared_foldl_single_result(
     bool prime_step_heap_ready = false;
     bool prime_step_scope_active = false;
     PrimeNeedSnapshot prime_step_base;
-    PrimeNeedReceipt prime_step_receipt_base;
+    PrimeNeedBranchState prime_step_branch_state_base;
     PrimeNeedSnapshot saved_prime_need;
-    PrimeNeedReceipt saved_prime_receipt;
+    PrimeNeedBranchState saved_prime_branch_state;
     const Bindings *saved_prime_logical_env = NULL;
     Arena *saved_prime_owner = NULL;
     ArenaMark prime_step_origin = {0};
@@ -12054,16 +12182,16 @@ static PreparedFoldResult prepared_foldl_single_result(
          * reference opaquely; it therefore retains the original world and
          * does not pay to copy it. */
         prime_step_base = g_prime_need_active;
-        prime_step_receipt_base = g_prime_need_receipt_active;
+        prime_step_branch_state_base = g_prime_need_branch_state_active;
         if (!prime_need_snapshot_promote(
                 &prime_step_heap, &prime_step_base) ||
-            !prime_need_receipt_promote(
-                &prime_step_heap, &prime_step_receipt_base)) {
+            !prime_need_branch_state_promote(
+                &prime_step_heap, &prime_step_branch_state_base)) {
             outcome = PREPARED_FOLD_NOT_APPLICABLE;
         } else {
             prime_step_origin = arena_mark(&prime_step_heap);
             saved_prime_need = g_prime_need_active;
-            saved_prime_receipt = g_prime_need_receipt_active;
+            saved_prime_branch_state = g_prime_need_branch_state_active;
             saved_prime_logical_env = g_prime_need_logical_env;
             saved_prime_owner = g_prime_need_owner;
             g_prime_need_owner = &prime_step_heap;
@@ -12081,7 +12209,7 @@ static PreparedFoldResult prepared_foldl_single_result(
         if (prime_step_scope_active) {
             arena_reset(&prime_step_heap, prime_step_origin);
             g_prime_need_active = prime_step_base;
-            g_prime_need_receipt_active = prime_step_receipt_base;
+            g_prime_need_branch_state_active = prime_step_branch_state_base;
             g_prime_need_logical_env = NULL;
             g_prime_need_owner = &prime_step_heap;
         }
@@ -12183,7 +12311,7 @@ static PreparedFoldResult prepared_foldl_single_result(
     }
     if (prime_step_scope_active) {
         g_prime_need_active = saved_prime_need;
-        g_prime_need_receipt_active = saved_prime_receipt;
+        g_prime_need_branch_state_active = saved_prime_branch_state;
         g_prime_need_logical_env = saved_prime_logical_env;
         g_prime_need_owner = saved_prime_owner;
     }
@@ -16267,6 +16395,12 @@ static bool prime_need_record_cell_observation(
     uint64_t thunk_id, Atom *outcome) {
     if (!env || !outcome)
         return false;
+    /* The Need snapshot is the operational source of call-time choice: the
+     * resolved cell and its value are already carried by `env`.  The receipt
+     * copy is evidence for an explicitly installed answer observer only. */
+    if (!prime_need_receipt_observer_requested())
+        return true;
+#if CETTA_BUILD_WITH_PRIME_CAUSAL_RECEIPTS
     PrimeNeedReceipt base = *bindings_receipt_view(env);
     if (!prime_need_receipt_merge(&base, &g_prime_need_receipt_active))
         return false;
@@ -16288,6 +16422,9 @@ static bool prime_need_record_cell_observation(
         return false;
     *bindings_receipt_mut(env) = observed;
     return true;
+#else
+    return true;
+#endif
 }
 
 /* A completed semantic fault is a Need outcome and is memoized exactly like a
@@ -16403,11 +16540,8 @@ static void prime_need_force_active(Space *s, Arena *a, Atom *ref,
 #ifndef CETTA_PRIME_NEED_MUTATION_DYNAMIC_SCOPE
         bindings_free(&lexical_env);
 #endif
-        /* record_cell_observation above materializes empty.prime_ext (the
-         * receipt carried into the published outcome via the copy in
-         * outcome_set_add).  The two sibling callers (main forced loop,
-         * stack resume-force) free their branch_env right after the add;
-         * this cached-value path must free empty the same way. */
+        /* record_cell_observation may materialize empty.prime_ext to carry an
+         * explicitly requested receipt into the published outcome. */
         bindings_free(&empty);
         return;
     }
@@ -16440,26 +16574,10 @@ static void prime_need_force_active(Space *s, Arena *a, Atom *ref,
         return;
     }
 
+#if CETTA_BUILD_WITH_PRIME_CAUSAL_RECEIPTS
     PrimeNeedReceipt before_receipt = g_prime_need_receipt_active;
-    PrimeNeedReceipt producer_receipt;
-    bool producer_recorded =
-        prime_need_region_receipt_is_branch_local(heap_owner)
-            ? prime_need_receipt_evaluate_source_cell_branch_local(
-                  heap_owner, &before_receipt, before.session_id, thunk_id,
-                  cell.source_occurrence_id, cell.source_argument_index,
-                  cell.origin, &producer_receipt)
-            : prime_need_receipt_evaluate_source_cell(
-                  heap_owner, &before_receipt, before.session_id, thunk_id,
-                  cell.source_occurrence_id, cell.source_argument_index,
-                  cell.origin, &producer_receipt);
-    if (!producer_recorded) {
-        outcome_set_add(
-            os,
-            atom_error(a, ref,
-                       atom_symbol(a, "PrimeNeedReceiptUpdateFailed")),
-            &empty);
-        return;
-    }
+    PrimeNeedReceipt producer_receipt = before_receipt;
+#endif
 
 #ifdef CETTA_PRIME_NEED_MUTATION_DYNAMIC_SCOPE
     const Bindings *cell_env = g_prime_need_logical_env;
@@ -16471,13 +16589,17 @@ static void prime_need_force_active(Space *s, Arena *a, Atom *ref,
         return;
     }
     *bindings_need_mut(&lexical_env) = evaluating;
+#if CETTA_BUILD_WITH_PRIME_CAUSAL_RECEIPTS
     *bindings_receipt_mut(&lexical_env) = producer_receipt;
+#endif
     const Bindings *cell_env = &lexical_env;
 #endif
     const Bindings *previous_logical_env = g_prime_need_logical_env;
     g_prime_need_evaluator_id = evaluator_id;
     g_prime_need_active = evaluating;
+#if CETTA_BUILD_WITH_PRIME_CAUSAL_RECEIPTS
     g_prime_need_receipt_active = producer_receipt;
+#endif
 #ifndef CETTA_PRIME_NEED_MUTATION_DYNAMIC_SCOPE
     g_prime_need_logical_env = &lexical_env;
 #endif
@@ -16494,7 +16616,9 @@ static void prime_need_force_active(Space *s, Arena *a, Atom *ref,
             metta_eval_bind(s, a, payload, fuel, &forced);
     }
     g_prime_need_active = before;
+#if CETTA_BUILD_WITH_PRIME_CAUSAL_RECEIPTS
     g_prime_need_receipt_active = before_receipt;
+#endif
     g_prime_need_logical_env = previous_logical_env;
     g_prime_need_evaluator_id = previous_evaluator_id;
 #ifndef CETTA_PRIME_NEED_MUTATION_DYNAMIC_SCOPE
@@ -16580,11 +16704,13 @@ static void prime_need_force_active(Space *s, Arena *a, Atom *ref,
             continue;
         }
         bindings_free(&visible);
+#if CETTA_BUILD_WITH_PRIME_CAUSAL_RECEIPTS
         if (!prime_need_receipt_merge(
                 bindings_receipt_mut(&branch_env), &producer_receipt)) {
             bindings_free(&branch_env);
             continue;
         }
+#endif
         if (prime_need_record_cell_observation(
                 a, &branch_env, before.session_id, thunk_id, value))
             outcome_set_add_move(os, value, &branch_env);
@@ -17799,6 +17925,11 @@ static bool prime_need_record_origin_inspection(
     uint64_t thunk_id, Atom *origin) {
     if (!env || !origin)
         return false;
+    /* Origin inspection is read-only.  Its event belongs to the optional
+     * evidence projection, not to the operational Need state. */
+    if (!prime_need_receipt_observer_requested())
+        return true;
+#if CETTA_BUILD_WITH_PRIME_CAUSAL_RECEIPTS
     PrimeNeedReceipt base = *bindings_receipt_view(env);
     if (!prime_need_receipt_merge(&base, &g_prime_need_receipt_active))
         return false;
@@ -17815,6 +17946,9 @@ static bool prime_need_record_origin_inspection(
         return false;
     *bindings_receipt_mut(env) = observed;
     return true;
+#else
+    return true;
+#endif
 }
 
 typedef enum {
@@ -18554,6 +18688,12 @@ static void prime_need_eval_force(Space *s, Arena *a, Atom *form, int fuel,
             continue;
         }
         if (prime_need_is_resampler(producer)) {
+            /* Resampling always changes exact occurrence identity.  The
+             * scalar is operational; the event is optional evidence. */
+            if (!bindings_refresh_occurrence_token(&branch))
+                continue;
+#if CETTA_BUILD_WITH_PRIME_CAUSAL_RECEIPTS
+            if (prime_need_receipt_observer_requested()) {
             PrimeNeedReceipt base = *bindings_receipt_view(&branch);
             if (!prime_need_receipt_merge(
                     &base, &g_prime_need_receipt_active))
@@ -18573,6 +18713,8 @@ static void prime_need_eval_force(Space *s, Arena *a, Atom *form, int fuel,
              * shape (NULL-ext leak / bare-free double-free) is gone. */
             *bindings_receipt_mut(&branch) = resampled;
             g_prime_need_receipt_active = resampled;
+            }
+#endif
             eval_for_caller(s, a, NULL, producer->expr.elems[1], fuel,
                             &branch, preserve_bindings, os);
             continue;
@@ -23643,8 +23785,8 @@ static bool prime_need_forced_world_push(BindingSet *worlds,
         return false;
     for (CettaCount i = 0u; i < worlds->len; i++) {
         if (bindings_need_view(&worlds->items[i])->top == bindings_need_view(env)->top &&
-            prime_need_receipt_equal(bindings_receipt_view(&worlds->items[i]),
-                                     bindings_receipt_view(env)))
+            prime_need_branch_state_equal(bindings_branch_state_view(&worlds->items[i]),
+                                     bindings_branch_state_view(env)))
             return true;
     }
     Bindings semantic_world;
@@ -23738,38 +23880,48 @@ static bool prime_need_collect_raw_equation_result(
     if (!raw || !result || !raw->raw_results ||
         !bindings_clone_merge(&merged, raw->base_env, bindings))
         return true;
+    PrimeNeedBranchState state = *bindings_branch_state_view(&merged);
+    if (!prime_need_branch_state_merge(
+            &state, &g_prime_need_branch_state_active)) {
+        bindings_free(&merged);
+        return true;
+    }
+    *bindings_branch_state_mut(&merged) = state;
+    bool retain_rule_payload = cetta_gslt_observation_visible(
+        CETTA_GSLT_OBSERVATION_DETERMINATE_RULE_USE,
+        prime_need_receipt_observer_requested());
+#if CETTA_BUILD_WITH_PRIME_CAUSAL_RECEIPTS
     PrimeNeedReceipt base = *bindings_receipt_view(&merged);
-    if (!prime_need_receipt_merge(
-            &base, &g_prime_need_receipt_active)) {
+    if (retain_rule_payload &&
+        !prime_need_receipt_merge(&base, &g_prime_need_receipt_active)) {
         bindings_free(&merged);
         return true;
     }
     PrimeNeedReceipt used;
-    bool retain_rule_payload = cetta_gslt_observation_visible(
-        CETTA_GSLT_OBSERVATION_DETERMINATE_RULE_USE,
-        g_prime_need_answer_observer != NULL);
     Arena *owner = prime_need_owner(raw->arena);
     bool branch_local = prime_need_region_receipt_is_branch_local(owner);
-    bool recorded = retain_rule_payload
-        ? branch_local
+    bool recorded = !retain_rule_payload
+        ? (used = base, true)
+        : branch_local
             ? prime_need_receipt_use_equation_branch_local(
                   owner, &base, raw->source_occurrence_id,
                   raw->rule_occurrence_id, raw->equation, result, &used)
             : prime_need_receipt_use_equation(
                   owner, &base, raw->source_occurrence_id,
-                  raw->rule_occurrence_id, raw->equation, result, &used)
-        : branch_local
-            ? prime_need_receipt_use_equation_ids_branch_local(
-                  owner, &base, raw->source_occurrence_id,
-                  raw->rule_occurrence_id, &used)
-            : prime_need_receipt_use_equation_ids(
-                  owner, &base, raw->source_occurrence_id,
-                  raw->rule_occurrence_id, &used);
+                  raw->rule_occurrence_id, raw->equation, result, &used);
     if (!recorded) {
         bindings_free(&merged);
         return true;
     }
-    *bindings_receipt_mut(&merged) = used;
+    if (retain_rule_payload)
+        *bindings_receipt_mut(&merged) = used;
+#else
+    (void)retain_rule_payload;
+#endif
+    if (!bindings_refresh_occurrence_token(&merged)) {
+        bindings_free(&merged);
+        return true;
+    }
     raw->matched = true;
     outcome_set_add_move(raw->raw_results, result, &merged);
     bindings_free(&merged);
@@ -24356,7 +24508,7 @@ static bool prime_need_try_prepared_equation_tail(
     Atom *result = NULL;
     bool observe_rule_use = cetta_gslt_observation_visible(
         CETTA_GSLT_OBSERVATION_DETERMINATE_RULE_USE,
-        g_prime_need_answer_observer != NULL);
+        prime_need_receipt_observer_requested());
     if (!observe_rule_use) {
         if (fuel < 0) {
             (void)space_prepared_equation_run_register_loop(
@@ -24388,12 +24540,19 @@ static bool prime_need_try_prepared_equation_tail(
     bindings_init(&used_env);
     if (!bindings_clone(&used_env, equation_env))
         return false;
-    PrimeNeedReceipt base = *bindings_receipt_view(&used_env);
-    if (!prime_need_receipt_merge(
-            &base, &g_prime_need_receipt_active)) {
+    PrimeNeedBranchState state = *bindings_branch_state_view(&used_env);
+    if (!prime_need_branch_state_merge(
+            &state, &g_prime_need_branch_state_active)) {
         return false;
     }
+    *bindings_branch_state_mut(&used_env) = state;
+#if CETTA_BUILD_WITH_PRIME_CAUSAL_RECEIPTS
     if (observe_rule_use) {
+        PrimeNeedReceipt base = *bindings_receipt_view(&used_env);
+        if (!prime_need_receipt_merge(
+                &base, &g_prime_need_receipt_active)) {
+            return false;
+        }
         PrimeNeedReceipt used;
         Arena *owner = prime_need_owner(a);
         bool recorded = prime_need_region_receipt_is_branch_local(owner)
@@ -24409,12 +24568,12 @@ static bool prime_need_try_prepared_equation_tail(
             return false;
         }
         *bindings_receipt_mut(&used_env) = used;
-    } else {
-        /* Singleton selection carries no branch-choice information.  The
-         * generated default observation contract therefore permits eliding
-         * its proof payload while retaining every semantic effect receipt. */
-        *bindings_receipt_mut(&used_env) = base;
     }
+#else
+    (void)observe_rule_use;
+#endif
+    if (!bindings_refresh_occurrence_token(&used_env))
+        return false;
 
     __attribute__((cleanup(bindings_free))) Bindings projected;
     bindings_init(&projected);
@@ -24447,7 +24606,7 @@ static PrimeNeedRegionProperty prime_need_equation_region_property(
     Space *space, Atom *call, int fuel) {
     if (!g_prime_need_region_pool || !space || !call || fuel >= 0 ||
         call->kind != ATOM_EXPR || call->expr.len == 0u ||
-        g_prime_need_answer_observer != NULL ||
+        prime_need_receipt_observer_requested() ||
         active_search_table_mode() != CETTA_TABLE_MODE_NONE) {
         return PRIME_NEED_REGION_PROPERTY_UNKNOWN;
     }
@@ -26043,8 +26202,10 @@ typedef struct PrimeEvalStackFrame {
     PrimeNeedCellView cell;
     PrimeNeedSnapshot before;
     PrimeNeedSnapshot evaluating;
+#if CETTA_BUILD_WITH_PRIME_CAUSAL_RECEIPTS
     PrimeNeedReceipt before_receipt;
     PrimeNeedReceipt producer_receipt;
+#endif
     Arena *heap_owner;
     uint64_t previous_evaluator_id;
     uint64_t evaluator_id;
@@ -26334,21 +26495,29 @@ static bool prime_eval_stack_audit_bindings(
             g_prime_eval_stack_driver->arena) ||
         !prime_need_snapshot_owner_excludes_arena(
             bindings_need_view(bindings), &g_eval_gc.survivor) ||
-        (prime_need_receipt_present(bindings_receipt_view(bindings)) &&
-         (!bindings_receipt_view(bindings)->owner ||
-          bindings_receipt_view(bindings)->owner ==
+        (prime_need_branch_state_present(bindings_branch_state_view(bindings)) &&
+         (!bindings_branch_state_view(bindings)->owner ||
+          bindings_branch_state_view(bindings)->owner ==
               g_prime_eval_stack_driver->arena ||
-          bindings_receipt_view(bindings)->owner == &g_eval_gc.survivor)))
+          bindings_branch_state_view(bindings)->owner == &g_eval_gc.survivor)))
         return false;
 #if CETTA_PROVENANCE_ASSERT
-    return prime_need_arena_audit_snapshot(
+    bool valid = prime_need_arena_audit_snapshot(
                eval_audit, bindings_need_view(bindings)) &&
-           prime_need_arena_audit_receipt(
-               eval_audit, bindings_receipt_view(bindings)) &&
+           prime_need_arena_audit_branch_state(
+               eval_audit, bindings_branch_state_view(bindings)) &&
            prime_need_arena_audit_snapshot(
                survivor_audit, bindings_need_view(bindings)) &&
-           prime_need_arena_audit_receipt(
-               survivor_audit, bindings_receipt_view(bindings));
+           prime_need_arena_audit_branch_state(
+               survivor_audit, bindings_branch_state_view(bindings));
+#if CETTA_BUILD_WITH_PRIME_CAUSAL_RECEIPTS
+    valid = valid &&
+        prime_need_arena_audit_receipt(
+            eval_audit, bindings_receipt_view(bindings)) &&
+        prime_need_arena_audit_receipt(
+            survivor_audit, bindings_receipt_view(bindings));
+#endif
+    return valid;
 #else
     (void)eval_audit;
     (void)survivor_audit;
@@ -26356,26 +26525,26 @@ static bool prime_eval_stack_audit_bindings(
 #endif
 }
 
-static bool prime_eval_stack_audit_snapshot_receipt(
+static bool prime_eval_stack_audit_snapshot_carrier(
     PrimeNeedArenaAudit *eval_audit,
     PrimeNeedArenaAudit *survivor_audit,
     const PrimeNeedSnapshot *snapshot,
-    const PrimeNeedReceipt *receipt) {
-    if (!snapshot || !receipt ||
+    const PrimeNeedBranchState *carrier) {
+    if (!snapshot || !carrier ||
         !prime_need_snapshot_owner_excludes_arena(
             snapshot, g_prime_eval_stack_driver->arena) ||
         !prime_need_snapshot_owner_excludes_arena(
             snapshot, &g_eval_gc.survivor) ||
-        (prime_need_receipt_present(receipt) &&
-         (!receipt->owner ||
-          receipt->owner == g_prime_eval_stack_driver->arena ||
-          receipt->owner == &g_eval_gc.survivor)))
+        (prime_need_branch_state_present(carrier) &&
+         (!carrier->owner ||
+          carrier->owner == g_prime_eval_stack_driver->arena ||
+          carrier->owner == &g_eval_gc.survivor)))
         return false;
 #if CETTA_PROVENANCE_ASSERT
     return prime_need_arena_audit_snapshot(eval_audit, snapshot) &&
-           prime_need_arena_audit_receipt(eval_audit, receipt) &&
+           prime_need_arena_audit_branch_state(eval_audit, carrier) &&
            prime_need_arena_audit_snapshot(survivor_audit, snapshot) &&
-           prime_need_arena_audit_receipt(survivor_audit, receipt);
+           prime_need_arena_audit_branch_state(survivor_audit, carrier);
 #else
     (void)eval_audit;
     (void)survivor_audit;
@@ -26420,11 +26589,18 @@ static bool prime_eval_stack_audit_driver(
 #endif
 
     bool valid =
-        prime_eval_stack_audit_snapshot_receipt(
+        prime_eval_stack_audit_snapshot_carrier(
             eval_audit, survivor_audit, &g_prime_need_active,
-            &g_prime_need_receipt_active) &&
+            &g_prime_need_branch_state_active) &&
         prime_eval_stack_audit_outcomes(
             eval_audit, survivor_audit, driver->root_target);
+#if CETTA_BUILD_WITH_PRIME_CAUSAL_RECEIPTS
+    if (valid) {
+        valid = prime_eval_stack_audit_snapshot_carrier(
+            eval_audit, survivor_audit, &g_prime_need_active,
+            &g_prime_need_receipt_active);
+    }
+#endif
 
     if (valid && driver->task_ready) {
         PrimeEvalStackTask *task = &driver->task;
@@ -26459,12 +26635,22 @@ static bool prime_eval_stack_audit_driver(
         valid = frame->heap_owner == g_prime_need_owner &&
             frame->heap_owner != driver->arena &&
             frame->heap_owner != &g_eval_gc.survivor &&
-            prime_eval_stack_audit_snapshot_receipt(
+            prime_eval_stack_audit_snapshot_carrier(
                 eval_audit, survivor_audit, &frame->before,
-                &frame->before_receipt) &&
-            prime_eval_stack_audit_snapshot_receipt(
+#if CETTA_BUILD_WITH_PRIME_CAUSAL_RECEIPTS
+                &frame->before_receipt
+#else
+                &g_prime_need_branch_state_active
+#endif
+                ) &&
+            prime_eval_stack_audit_snapshot_carrier(
                 eval_audit, survivor_audit, &frame->evaluating,
-                &frame->producer_receipt);
+#if CETTA_BUILD_WITH_PRIME_CAUSAL_RECEIPTS
+                &frame->producer_receipt
+#else
+                &g_prime_need_branch_state_active
+#endif
+                );
 #if CETTA_PROVENANCE_ASSERT
         valid =
             valid &&
@@ -26826,7 +27012,9 @@ static bool prime_eval_stack_schedule_force(
     frame->fuel = fuel;
     frame->cell = cell;
     frame->before = g_prime_need_active;
+#if CETTA_BUILD_WITH_PRIME_CAUSAL_RECEIPTS
     frame->before_receipt = g_prime_need_receipt_active;
+#endif
     frame->heap_owner = prime_need_owner(a);
     frame->previous_evaluator_id = g_prime_need_evaluator_id;
     frame->evaluator_id = frame->previous_evaluator_id != 0u
@@ -26854,27 +27042,9 @@ static bool prime_eval_stack_schedule_force(
         prime_eval_stack_frame_free(frame);
         return true;
     }
-    bool producer_recorded =
-        prime_need_region_receipt_is_branch_local(frame->heap_owner)
-            ? prime_need_receipt_evaluate_source_cell_branch_local(
-                  frame->heap_owner, &frame->before_receipt,
-                  frame->before.session_id, thunk_id,
-                  cell.source_occurrence_id, cell.source_argument_index,
-                  cell.origin, &frame->producer_receipt)
-            : prime_need_receipt_evaluate_source_cell(
-                  frame->heap_owner, &frame->before_receipt,
-                  frame->before.session_id, thunk_id,
-                  cell.source_occurrence_id, cell.source_argument_index,
-                  cell.origin, &frame->producer_receipt);
-    if (!producer_recorded) {
-        outcome_set_add(
-            target,
-            atom_error(a, ref,
-                       atom_symbol(a, "PrimeNeedReceiptUpdateFailed")),
-            &empty);
-        prime_eval_stack_frame_free(frame);
-        return true;
-    }
+#if CETTA_BUILD_WITH_PRIME_CAUSAL_RECEIPTS
+    frame->producer_receipt = frame->before_receipt;
+#endif
 
     Bindings evaluating_env;
     if (!prime_need_project_cell_logical_env(
@@ -26884,7 +27054,9 @@ static bool prime_eval_stack_schedule_force(
         return true;
     }
     *bindings_need_mut(&evaluating_env) = frame->evaluating;
+#if CETTA_BUILD_WITH_PRIME_CAUSAL_RECEIPTS
     *bindings_receipt_mut(&evaluating_env) = frame->producer_receipt;
+#endif
     bool applied = false;
     Atom *payload = bindings_apply_body_exact_env(
         a, cell.origin, &evaluating_env, &applied);
@@ -27287,6 +27459,7 @@ static void prime_eval_stack_resume_force(
             continue;
         }
         bindings_free(&visible);
+#if CETTA_BUILD_WITH_PRIME_CAUSAL_RECEIPTS
         if (!prime_need_receipt_merge(
                 bindings_receipt_mut(&branch_env),
                 &frame->producer_receipt)) {
@@ -27295,16 +27468,20 @@ static void prime_eval_stack_resume_force(
             bindings_free(&branch_env);
             continue;
         }
+#endif
         PrimeNeedSnapshot saved_snapshot = g_prime_need_active;
-        PrimeNeedReceipt saved_receipt =
-            g_prime_need_receipt_active;
         g_prime_need_active = frame->before;
+#if CETTA_BUILD_WITH_PRIME_CAUSAL_RECEIPTS
+        PrimeNeedReceipt saved_receipt = g_prime_need_receipt_active;
         g_prime_need_receipt_active = frame->before_receipt;
+#endif
         bool observed = prime_need_record_cell_observation(
             frame->arena, &branch_env, frame->before.session_id,
             frame->thunk_id, value);
         g_prime_need_active = saved_snapshot;
+#if CETTA_BUILD_WITH_PRIME_CAUSAL_RECEIPTS
         g_prime_need_receipt_active = saved_receipt;
+#endif
         if (observed)
             outcome_set_add_move(frame->target, value, &branch_env);
         else
@@ -28018,29 +28195,33 @@ static bool petta_eval_machine_prime_record_clause_use(
         candidate->occurrence.logical_index == UINT64_MAX) {
         return false;
     }
+    bool retain_rule_payload = cetta_gslt_observation_visible(
+        CETTA_GSLT_OBSERVATION_DETERMINATE_RULE_USE,
+        prime_need_receipt_observer_requested());
+#if CETTA_BUILD_WITH_PRIME_CAUSAL_RECEIPTS
     PrimeNeedReceipt base = *bindings_receipt_view(environment);
-    if (!prime_need_receipt_merge(
-            &base, &g_prime_need_receipt_active)) {
+    if (retain_rule_payload &&
+        !prime_need_receipt_merge(&base, &g_prime_need_receipt_active)) {
         return false;
     }
     PrimeNeedReceipt used;
-    bool retain_rule_payload = cetta_gslt_observation_visible(
-        CETTA_GSLT_OBSERVATION_DETERMINATE_RULE_USE,
-        g_prime_need_answer_observer != NULL);
-    bool recorded = retain_rule_payload
-        ? prime_need_receipt_use_equation_branch_local(
+    bool recorded = !retain_rule_payload
+        ? (used = base, true)
+        : prime_need_receipt_use_equation_branch_local(
               owner, &base, call_occurrence,
               (uint64_t)candidate->occurrence.logical_index + 1u,
-              candidate->equation, result, &used)
-        : prime_need_receipt_use_equation_ids_branch_local(
-              owner, &base, call_occurrence,
-              (uint64_t)candidate->occurrence.logical_index + 1u,
-              &used);
+              candidate->equation, result, &used);
     if (!recorded) {
         return false;
     }
-    bindings_prime_set(evidence_delta, NULL, &used);
-    return true;
+    bindings_prime_set(
+        evidence_delta, NULL, NULL, 0u,
+        retain_rule_payload ? &used : NULL);
+#else
+    (void)retain_rule_payload;
+    bindings_prime_set(evidence_delta, NULL, NULL, 0u, NULL);
+#endif
+    return bindings_refresh_occurrence_token(evidence_delta);
 }
 
 static bool petta_eval_machine_prime_clause_result_payload_observed(
@@ -28048,7 +28229,7 @@ static bool petta_eval_machine_prime_clause_result_payload_observed(
     (void)context;
     return cetta_gslt_observation_visible(
         CETTA_GSLT_OBSERVATION_DETERMINATE_RULE_USE,
-        g_prime_need_answer_observer != NULL);
+        prime_need_receipt_observer_requested());
 }
 
 static bool petta_eval_machine_prime_atom_is_episode_value(
@@ -29086,16 +29267,17 @@ static PeTTaNamedArity petta_eval_machine_foreign_named_arity_resolving(
 }
 
 /*
- * Temp-row clause lifecycle for REGISTRY-TOKEN spaces.  On the reference
+ * Temp-row clause lifecycle for native named spaces.  On the reference
  * runtime every space IS a Prolog dynamic predicate, so the chainer's temp
  * machinery asserts a row through the boundary (assertz/2 yields a clause
- * reference) and erases that reference when the query is cleared.  cetta's
- * petta token spaces are native objects and their reads (match, folds,
- * direct views) consult the native store — a boundary assertz aimed at a
- * token space would otherwise land in an unreachable Prolog functor and
- * split the space into two stores.  Route those writes into the native
- * space and hand back a native-backed reference whose erase is a native
- * removal.
+ * reference) and erases that reference when the query is cleared.  CeTTa's
+ * PeTTa locations may be native objects whether their authored name is a
+ * registry token or a plain symbol.  Their reads (match, folds, direct
+ * views) consult the native store, so every boundary assertion whose functor
+ * resolves to such a location must enter that same store.  Otherwise live
+ * and temporary clauses silently form two disjoint predicates.  Route those
+ * writes into the resolved native space and hand back a native-backed
+ * reference whose erase is a native removal.
  */
 typedef struct {
     Space *space;
@@ -29428,8 +29610,7 @@ static bool petta_token_space_boundary_try(
             petta_semantics_form(term->expr.elems[0]->sym_id) !=
                 PETTA_FORM_CONS ||
             !term->expr.elems[1] ||
-            term->expr.elems[1]->kind != ATOM_SYMBOL ||
-            !atom_is_registry_token(term->expr.elems[1])) {
+            term->expr.elems[1]->kind != ATOM_SYMBOL) {
             return false;
         }
         Atom *ref_slot = inner->expr.len == 3u
@@ -30763,7 +30944,7 @@ static bool petta_eval_machine_admits_root(
     SymbolId head = atom_head_symbol_id(expression);
     if (prime_plan) {
         if (fuel >= 0 ||
-            g_prime_need_answer_observer != NULL ||
+            prime_need_receipt_observer_requested() ||
             head == SYMBOL_ID_NONE ||
             !space_equations_may_match_known_head(space, head)) {
             return false;
@@ -31789,7 +31970,7 @@ static Atom *prepared_pure_closed_call_try(
         precheck_reason = "registry reference";
     else if (hyperpose_atom_has_thread_local_resource(call))
         precheck_reason = "thread-local resource";
-    else if (g_prime_need_answer_observer != NULL)
+    else if (prime_need_receipt_observer_requested())
         precheck_reason = "active answer observer";
     if (precheck_reason) {
         prepared_pure_precheck_debug(precheck_reason, call);
@@ -32007,7 +32188,10 @@ static void metta_call_impl(
     __attribute__((cleanup(prime_need_active_leave)))
     PrimeNeedActiveGuard need_guard = {
         .previous = g_prime_need_active,
+        .previous_branch_state = g_prime_need_branch_state_active,
+#if CETTA_BUILD_WITH_PRIME_CAUSAL_RECEIPTS
         .previous_receipt = g_prime_need_receipt_active,
+#endif
         .previous_logical_env = g_prime_need_logical_env,
     };
     __attribute__((cleanup(bindings_builder_free))) BindingsBuilder current_env_builder;
@@ -32052,13 +32236,23 @@ tail_call: ;
         g_prime_need_active = *bindings_need_view(CURRENT_ENV);
     else
         g_prime_need_active = need_guard.previous;
+    if (prime_need_branch_state_present(bindings_branch_state_view(CURRENT_ENV)))
+        g_prime_need_branch_state_active = *bindings_branch_state_view(CURRENT_ENV);
+    else
+        g_prime_need_branch_state_active = need_guard.previous_branch_state;
+#if CETTA_BUILD_WITH_PRIME_CAUSAL_RECEIPTS
     if (prime_need_receipt_present(bindings_receipt_view(CURRENT_ENV)))
         g_prime_need_receipt_active = *bindings_receipt_view(CURRENT_ENV);
     else
         g_prime_need_receipt_active = need_guard.previous_receipt;
+#endif
     if (CURRENT_ENV->len > 0u || CURRENT_ENV->eq_len > 0u ||
         prime_need_snapshot_present(bindings_need_view(CURRENT_ENV)) ||
-        prime_need_receipt_present(bindings_receipt_view(CURRENT_ENV)))
+        prime_need_branch_state_present(bindings_branch_state_view(CURRENT_ENV))
+#if CETTA_BUILD_WITH_PRIME_CAUSAL_RECEIPTS
+        || prime_need_receipt_present(bindings_receipt_view(CURRENT_ENV))
+#endif
+        )
         g_prime_need_logical_env = CURRENT_ENV;
     else
         g_prime_need_logical_env = need_guard.previous_logical_env;
@@ -36505,7 +36699,7 @@ petta_lowered_to_shared_form:
                         continue;
                     if (prime_need_effective_state(
                             &branch, cell, &base, &value)) {
-                        *bindings_receipt_mut(&branch) = base;
+                        *bindings_branch_state_mut(&branch) = base;
                         if (prime_need_record_state_read(
                                 a, &branch, cell, value))
                             outcome_set_add(os, value, &branch);
@@ -37976,7 +38170,11 @@ void eval_top(Space *s, Arena *a, Atom *expr, ResultSet *rs) {
     };
     Arena *prev_fallback_persistent = g_eval_fallback_universe.persistent_arena;
     PrimeNeedSnapshot prev_need = g_prime_need_active;
+    PrimeNeedBranchState prev_branch_state =
+        g_prime_need_branch_state_active;
+#if CETTA_BUILD_WITH_PRIME_CAUSAL_RECEIPTS
     PrimeNeedReceipt prev_receipt = g_prime_need_receipt_active;
+#endif
     const Bindings *prev_need_logical_env = g_prime_need_logical_env;
     Arena *prev_need_owner = g_prime_need_owner;
     PrimeNeedRegionPool *prev_need_region_pool =
@@ -37991,7 +38189,10 @@ void eval_top(Space *s, Arena *a, Atom *expr, ResultSet *rs) {
     g_eval_episode_prepared_pure_cache = &prepared_pure_cache;
     term_universe_set_persistent_arena(&g_eval_fallback_universe, NULL);
     prime_need_snapshot_init(&g_prime_need_active);
+    prime_need_branch_state_init(&g_prime_need_branch_state_active);
+#if CETTA_BUILD_WITH_PRIME_CAUSAL_RECEIPTS
     prime_need_receipt_init(&g_prime_need_receipt_active);
+#endif
     g_prime_need_logical_env = NULL;
     g_prime_need_owner = NULL;
     g_prime_need_region_pool = NULL;
@@ -38008,8 +38209,13 @@ void eval_top(Space *s, Arena *a, Atom *expr, ResultSet *rs) {
             g_prime_need_region_pool = &prime_need_regions;
         }
         (void)prime_need_snapshot_begin(&g_prime_need_active);
-        (void)prime_need_receipt_begin(
-            &prime_need_episode, &g_prime_need_receipt_active);
+        (void)prime_need_branch_state_begin(
+            &prime_need_episode, &g_prime_need_branch_state_active);
+#if CETTA_BUILD_WITH_PRIME_CAUSAL_RECEIPTS
+        if (prime_need_receipt_observer_requested())
+            (void)prime_need_receipt_begin(
+                &prime_need_episode, &g_prime_need_receipt_active);
+#endif
     }
     eval_release_outcome_variant_bank();
     metta_eval(s, a, NULL, expr, current_eval_fuel_limit(), rs);
@@ -38028,7 +38234,10 @@ void eval_top(Space *s, Arena *a, Atom *expr, ResultSet *rs) {
     term_universe_set_persistent_arena(&g_eval_fallback_universe,
                                        prev_fallback_persistent);
     g_prime_need_active = prev_need;
+    g_prime_need_branch_state_active = prev_branch_state;
+#if CETTA_BUILD_WITH_PRIME_CAUSAL_RECEIPTS
     g_prime_need_receipt_active = prev_receipt;
+#endif
     g_prime_need_logical_env = prev_need_logical_env;
     g_prime_need_owner = prev_need_owner;
     if (prime_need_episode_ready)
@@ -38069,7 +38278,11 @@ static void eval_top_with_registry_core(
     };
     Arena *prev_fallback_persistent = g_eval_fallback_universe.persistent_arena;
     PrimeNeedSnapshot prev_need = g_prime_need_active;
+    PrimeNeedBranchState prev_branch_state =
+        g_prime_need_branch_state_active;
+#if CETTA_BUILD_WITH_PRIME_CAUSAL_RECEIPTS
     PrimeNeedReceipt prev_receipt = g_prime_need_receipt_active;
+#endif
     const Bindings *prev_need_logical_env = g_prime_need_logical_env;
     Arena *prev_need_owner = g_prime_need_owner;
     PrimeNeedRegionPool *prev_need_region_pool =
@@ -38091,7 +38304,10 @@ static void eval_top_with_registry_core(
     g_eval_episode_prepared_pure_cache = &prepared_pure_cache;
     term_universe_set_persistent_arena(&g_eval_fallback_universe, persistent);
     prime_need_snapshot_init(&g_prime_need_active);
+    prime_need_branch_state_init(&g_prime_need_branch_state_active);
+#if CETTA_BUILD_WITH_PRIME_CAUSAL_RECEIPTS
     prime_need_receipt_init(&g_prime_need_receipt_active);
+#endif
     g_prime_need_logical_env = NULL;
     g_prime_need_owner = NULL;
     g_prime_need_region_pool = NULL;
@@ -38115,8 +38331,13 @@ static void eval_top_with_registry_core(
             g_prime_need_region_pool = &prime_need_regions;
         }
         (void)prime_need_snapshot_begin(&g_prime_need_active);
-        (void)prime_need_receipt_begin(
-            &prime_need_episode, &g_prime_need_receipt_active);
+        (void)prime_need_branch_state_begin(
+            &prime_need_episode, &g_prime_need_branch_state_active);
+#if CETTA_BUILD_WITH_PRIME_CAUSAL_RECEIPTS
+        if (prime_need_receipt_observer_requested())
+            (void)prime_need_receipt_begin(
+                &prime_need_episode, &g_prime_need_receipt_active);
+#endif
     }
     eval_release_outcome_variant_bank();
     if (outcome)
@@ -38139,7 +38360,10 @@ static void eval_top_with_registry_core(
     term_universe_set_persistent_arena(&g_eval_fallback_universe,
                                        prev_fallback_persistent);
     g_prime_need_active = prev_need;
+    g_prime_need_branch_state_active = prev_branch_state;
+#if CETTA_BUILD_WITH_PRIME_CAUSAL_RECEIPTS
     g_prime_need_receipt_active = prev_receipt;
+#endif
     g_prime_need_logical_env = prev_need_logical_env;
     g_prime_need_owner = prev_need_owner;
     if (prime_need_episode_ready)
