@@ -15956,6 +15956,8 @@ static Atom *prime_need_typecheck_argument(Atom *argument) {
  * all retain the historical matching path. */
 static bool typed_applicability_candidate_is_natively_refuted(
     Atom *actual, Atom *expected) {
+    cetta_runtime_stats_inc(
+        CETTA_RUNTIME_COUNTER_NIK_TYPED_APPLICABILITY_CANDIDATE_TESTED);
     if (!cetta_nik_typed_applicability_pruning_enabled() ||
         !actual || !expected || atom_has_vars(actual) ||
         atom_has_vars(expected) || atom_has_registry_refs(actual) ||

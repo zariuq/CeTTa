@@ -449,6 +449,7 @@ static const char *const CETTA_RUNTIME_COUNTER_NAMES[CETTA_RUNTIME_COUNTER_COUNT
     "declared-type-indexed-lookup",
     "declared-type-indexed-row",
     "declared-type-full-scan-row",
+    "nik-typed-applicability-candidate-tested",
 };
 
 static int64_t clamp_counter(uint64_t value) {

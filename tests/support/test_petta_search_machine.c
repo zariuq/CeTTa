@@ -3263,6 +3263,10 @@ static void test_direct_source_binding_contract(void) {
     assert(strcmp(
         binding->semantic_scope,
         "petta.typecheck-v2.guard-core") == 0);
+    assert(strcmp(binding->mode, "direct-decision") == 0);
+    assert(strcmp(binding->certificate_policy, "none") == 0);
+    assert(strcmp(binding->fiber, "petta") == 0);
+    assert(strcmp(binding->default_outcome, "PTUndetermined") == 0);
     assert(binding->coverage ==
         CETTA_NIK_DIRECT_SOURCE_AUTHORED_FRAGMENT);
     assert(binding->coverage !=
@@ -3284,6 +3288,12 @@ static void test_direct_source_binding_contract(void) {
     invalid = *binding;
     invalid.authority = NULL;
     assert(!cetta_nik_direct_source_binding_v1_is_valid(&invalid));
+    invalid = *binding;
+    invalid.certificate_policy = "trace";
+    assert(!cetta_nik_direct_source_binding_v1_is_valid(&invalid));
+    invalid = *binding;
+    invalid.fiber = "";
+    assert(!cetta_nik_direct_source_binding_v1_is_valid(&invalid));
 
     const CettaNikDirectSourceBindingV1 *boundary_binding =
         &petta_typecheck_v2_boundary_core_source_binding_v1;
@@ -3296,6 +3306,10 @@ static void test_direct_source_binding_contract(void) {
     assert(strcmp(
         boundary_binding->semantic_scope,
         "petta.typecheck-v2.direct-boundary-requirement-core") == 0);
+    assert(strcmp(boundary_binding->mode, "direct-decision") == 0);
+    assert(strcmp(boundary_binding->certificate_policy, "none") == 0);
+    assert(strcmp(boundary_binding->fiber, "petta") == 0);
+    assert(strcmp(boundary_binding->default_outcome, "PTUndetermined") == 0);
     assert(boundary_binding->coverage ==
         CETTA_NIK_DIRECT_SOURCE_AUTHORED_FRAGMENT);
     invalid = *boundary_binding;
