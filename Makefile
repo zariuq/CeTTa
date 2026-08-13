@@ -433,6 +433,7 @@ SRC += src/inference_side_condition_provider.c \
 SRC += \
 	src/generated/he_typing_closed_ground_core_source_binding_v1.generated.c \
 	src/prime_typing_publication.c \
+	src/generated/prime_typing_elaborated_dependent_formation_core_source_binding_v1.generated.c \
 	src/generated/prime_typing_native_ground_judgments_source_binding_v1.generated.c \
 	src/generated/prime_typing_typed_publication_core_source_binding_v1.generated.c
 LANGDEF_COMPILED_CURSOR_RUNTIME_SRC = \
@@ -537,6 +538,10 @@ PRIME_PACKAGE_VALIDATION_TEST_SRC = tests/support/test_prime_package_validation.
 PRIME_PACKAGE_VALIDATION_TEST_OBJ = runtime/bootstrap/test_prime_package_validation.$(BUILD_OBJ_TAG).o
 PRIME_PACKAGE_VALIDATION_TEST_BIN = runtime/test_prime_package_validation-$(BUILD_CANON)
 PRIME_PACKAGE_VALIDATION_TEST_LINK_OBJ = $(FALLBACK_EVAL_TEST_LINK_OBJ)
+PRIME_DEPENDENT_FORMATION_LANGDEF_TEST_SRC = tests/support/test_prime_dependent_formation_langdef.c
+PRIME_DEPENDENT_FORMATION_LANGDEF_TEST_OBJ = runtime/bootstrap/test_prime_dependent_formation_langdef.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o
+PRIME_DEPENDENT_FORMATION_LANGDEF_TEST_BIN = runtime/test_prime_dependent_formation_langdef-$(BUILD_CANON)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),-runtime-stats,)
+PRIME_DEPENDENT_FORMATION_LANGDEF_TEST_LINK_OBJ = $(FALLBACK_EVAL_TEST_LINK_OBJ)
 RUNTIME_NAMED_VAR_TEST_SRC = tests/support/test_runtime_named_var.c
 RUNTIME_NAMED_VAR_TEST_OBJ = runtime/bootstrap/test_runtime_named_var.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o
 RUNTIME_NAMED_VAR_TEST_BIN = runtime/test_runtime_named_var-$(BUILD_CANON)
@@ -3504,6 +3509,7 @@ DEPS = $(OBJ:.o=.d) $(STAGE0_OBJ:.o=.d) \
 	$(HE_COMPILED_READER_BENCH_OBJ:.o=.d) \
 	$(PRIME_DELAYED_AMBIGUITY_TEST_OBJ:.o=.d) \
 	$(PRIME_PACKAGE_VALIDATION_TEST_OBJ:.o=.d) \
+	$(PRIME_DEPENDENT_FORMATION_LANGDEF_TEST_OBJ:.o=.d) \
 	$(RUNTIME_NAMED_VAR_TEST_OBJ:.o=.d) \
 	$(PRIME_READER_AST_ORACLE_OBJ:.o=.d) \
 	$(PAYLOAD_MAP_CAPACITY_TEST_OBJ:.o=.d) \
@@ -3780,6 +3786,17 @@ $(PRIME_PACKAGE_VALIDATION_TEST_BIN): $(PRIME_PACKAGE_VALIDATION_TEST_OBJ) $(PRI
 	mv "$$tmp_out" $@
 
 $(PRIME_PACKAGE_VALIDATION_TEST_OBJ): $(PRIME_PACKAGE_VALIDATION_TEST_SRC) $(BUILD_CONFIG_HEADER)
+	@mkdir -p $(dir $@)
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+
+$(PRIME_DEPENDENT_FORMATION_LANGDEF_TEST_BIN): $(PRIME_DEPENDENT_FORMATION_LANGDEF_TEST_OBJ) $(PRIME_DEPENDENT_FORMATION_LANGDEF_TEST_LINK_OBJ) $(BRIDGE_DEPS)
+	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
+	@tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/test-prime-dependent-formation-langdef.XXXXXX"); \
+	trap 'rm -f "$$tmp_out"' EXIT INT TERM; \
+	$(CC) $(CFLAGS) -o "$$tmp_out" $^ $(LDFLAGS); \
+	mv "$$tmp_out" $@
+
+$(PRIME_DEPENDENT_FORMATION_LANGDEF_TEST_OBJ): $(PRIME_DEPENDENT_FORMATION_LANGDEF_TEST_SRC) $(BUILD_CONFIG_HEADER)
 	@mkdir -p $(dir $@)
 	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
 
@@ -8486,6 +8503,8 @@ clean:
 		runtime/bootstrap/test_prime_delayed_ambiguity.*.d \
 		runtime/test_prime_package_validation-* runtime/bootstrap/test_prime_package_validation.*.o \
 		runtime/bootstrap/test_prime_package_validation.*.d \
+		runtime/test_prime_dependent_formation_langdef-* runtime/bootstrap/test_prime_dependent_formation_langdef.*.o \
+		runtime/bootstrap/test_prime_dependent_formation_langdef.*.d \
 		runtime/test_rhometta_payload_map_capacity-* runtime/bootstrap/test_rhometta_payload_map_capacity.*.o \
 		runtime/bootstrap/test_rhometta_payload_map_capacity.*.d \
 			src/*.runtime-stats.o src/*.runtime-stats.d \
@@ -11076,8 +11095,9 @@ test-prime-budget-monotonicity: $(BIN)
 .PHONY: test-prime-type-langdef-source-binding-v1
 test-prime-type-langdef-source-binding-v1:
 	@python3 tools/gslt2parse_schema_v1.py \
+		--require-nik-authority-frame \
 		langdef/prime/generated/closed_formation_v1.metta >/dev/null
-	@mkdir -p $(BOOTSTRAP_TMPDIR); \
+	@set -eu; mkdir -p $(BOOTSTRAP_TMPDIR); \
 	tmpdir=$$(mktemp -d "$(BOOTSTRAP_TMPDIR)/prime-type-binding.XXXXXX"); \
 	trap 'rm -f "$$tmpdir/binding.h" "$$tmpdir/binding.c" "$$tmpdir/binding-normalized.c"; rmdir "$$tmpdir"' EXIT INT TERM; \
 	python3 tools/generate_nik_direct_source_binding_v1.py \
@@ -11101,10 +11121,11 @@ test-prime-type-langdef-source-binding-v1:
 .PHONY: test-prime-native-ground-langdef-source-binding-v1
 test-prime-native-ground-langdef-source-binding-v1:
 	@python3 tools/gslt2parse_schema_v1.py \
+		--require-nik-authority-frame \
 		langdef/prime/generated/native_ground_judgments_v1.metta >/dev/null
-	@mkdir -p $(BOOTSTRAP_TMPDIR); \
+	@set -eu; mkdir -p $(BOOTSTRAP_TMPDIR); \
 	tmpdir=$$(mktemp -d "$(BOOTSTRAP_TMPDIR)/prime-native-ground-binding.XXXXXX"); \
-	trap 'rm -f "$$tmpdir/binding.h" "$$tmpdir/binding.c"; rmdir "$$tmpdir"' EXIT INT TERM; \
+	trap 'rm -f "$$tmpdir/prime_typing_native_ground_judgments_source_binding_v1.generated.h" "$$tmpdir/prime_typing_native_ground_judgments_source_binding_v1.generated.c"; rmdir "$$tmpdir"' EXIT INT TERM; \
 	python3 tools/generate_nik_direct_source_binding_v1.py \
 		--presentation langdef/prime/generated/native_ground_judgments_v1.metta \
 		--symbol-prefix prime_typing_native_ground_judgments \
@@ -11112,21 +11133,45 @@ test-prime-native-ground-langdef-source-binding-v1:
 		--authority-header prime_semantics.h \
 		--semantic-scope prime.typing.native-ground-judgments \
 		--coverage fragment \
-		--header-output "$$tmpdir/binding.h" \
-		--source-output "$$tmpdir/binding.c"; \
-	cmp -s "$$tmpdir/binding.h" \
+		--header-output "$$tmpdir/prime_typing_native_ground_judgments_source_binding_v1.generated.h" \
+		--source-output "$$tmpdir/prime_typing_native_ground_judgments_source_binding_v1.generated.c"; \
+	cmp -s "$$tmpdir/prime_typing_native_ground_judgments_source_binding_v1.generated.h" \
 		src/generated/prime_typing_native_ground_judgments_source_binding_v1.generated.h; \
-	cmp -s "$$tmpdir/binding.c" \
+	cmp -s "$$tmpdir/prime_typing_native_ground_judgments_source_binding_v1.generated.c" \
 		src/generated/prime_typing_native_ground_judgments_source_binding_v1.generated.c; \
 	echo "PASS: Prime native-ground langdef source binding is valid and deterministic"
+
+.PHONY: test-prime-dependent-formation-langdef-source-binding-v1
+test-prime-dependent-formation-langdef-source-binding-v1:
+	@python3 tools/gslt2parse_schema_v1.py \
+		--require-nik-authority-frame \
+		langdef/prime/generated/elaborated_dependent_formation_core_v1.metta >/dev/null
+	@set -eu; mkdir -p $(BOOTSTRAP_TMPDIR); \
+	tmpdir=$$(mktemp -d "$(BOOTSTRAP_TMPDIR)/prime-dependent-formation-binding.XXXXXX"); \
+	trap 'rm -f "$$tmpdir/prime_typing_elaborated_dependent_formation_core_source_binding_v1.generated.h" "$$tmpdir/prime_typing_elaborated_dependent_formation_core_source_binding_v1.generated.c"; rmdir "$$tmpdir"' EXIT INT TERM; \
+	python3 tools/generate_nik_direct_source_binding_v1.py \
+		--presentation langdef/prime/generated/elaborated_dependent_formation_core_v1.metta \
+		--symbol-prefix prime_typing_elaborated_dependent_formation_core \
+		--authority-symbol cetta_prime_typing_direct_authority_v1 \
+		--authority-header prime_semantics.h \
+		--semantic-scope prime.typing.elaborated-dependent-formation-core \
+		--coverage fragment \
+		--header-output "$$tmpdir/prime_typing_elaborated_dependent_formation_core_source_binding_v1.generated.h" \
+		--source-output "$$tmpdir/prime_typing_elaborated_dependent_formation_core_source_binding_v1.generated.c"; \
+	cmp -s "$$tmpdir/prime_typing_elaborated_dependent_formation_core_source_binding_v1.generated.h" \
+		src/generated/prime_typing_elaborated_dependent_formation_core_source_binding_v1.generated.h; \
+	cmp -s "$$tmpdir/prime_typing_elaborated_dependent_formation_core_source_binding_v1.generated.c" \
+		src/generated/prime_typing_elaborated_dependent_formation_core_source_binding_v1.generated.c; \
+	echo "PASS: Prime dependent-formation langdef source binding is valid and deterministic"
 
 .PHONY: test-prime-typed-publication-langdef-source-binding-v1
 test-prime-typed-publication-langdef-source-binding-v1:
 	@python3 tools/gslt2parse_schema_v1.py \
+		--require-nik-authority-frame \
 		langdef/prime/generated/typed_publication_core_v1.metta >/dev/null
-	@mkdir -p $(BOOTSTRAP_TMPDIR); \
+	@set -eu; mkdir -p $(BOOTSTRAP_TMPDIR); \
 	tmpdir=$$(mktemp -d "$(BOOTSTRAP_TMPDIR)/prime-typed-publication-binding.XXXXXX"); \
-	trap 'rm -f "$$tmpdir/binding.h" "$$tmpdir/binding.c"; rmdir "$$tmpdir"' EXIT INT TERM; \
+	trap 'rm -f "$$tmpdir/prime_typing_typed_publication_core_source_binding_v1.generated.h" "$$tmpdir/prime_typing_typed_publication_core_source_binding_v1.generated.c"; rmdir "$$tmpdir"' EXIT INT TERM; \
 	python3 tools/generate_nik_direct_source_binding_v1.py \
 		--presentation langdef/prime/generated/typed_publication_core_v1.metta \
 		--symbol-prefix prime_typing_typed_publication_core \
@@ -11134,16 +11179,64 @@ test-prime-typed-publication-langdef-source-binding-v1:
 		--authority-header prime_typing_publication.h \
 		--semantic-scope prime.typing.result-contract-publication-core \
 		--coverage fragment \
-		--header-output "$$tmpdir/binding.h" \
-		--source-output "$$tmpdir/binding.c"; \
-	cmp -s "$$tmpdir/binding.h" \
+		--header-output "$$tmpdir/prime_typing_typed_publication_core_source_binding_v1.generated.h" \
+		--source-output "$$tmpdir/prime_typing_typed_publication_core_source_binding_v1.generated.c"; \
+	cmp -s "$$tmpdir/prime_typing_typed_publication_core_source_binding_v1.generated.h" \
 		src/generated/prime_typing_typed_publication_core_source_binding_v1.generated.h; \
-	cmp -s "$$tmpdir/binding.c" \
+	cmp -s "$$tmpdir/prime_typing_typed_publication_core_source_binding_v1.generated.c" \
 		src/generated/prime_typing_typed_publication_core_source_binding_v1.generated.c; \
 	echo "PASS: Prime typed-publication langdef source binding is valid and deterministic"
 
-test-prime-package-validation: $(PRIME_PACKAGE_VALIDATION_TEST_BIN) test-prime-type-langdef-source-binding-v1 test-prime-native-ground-langdef-source-binding-v1 test-prime-typed-publication-langdef-source-binding-v1
+test-prime-package-validation: $(PRIME_PACKAGE_VALIDATION_TEST_BIN) test-prime-type-langdef-source-binding-v1 test-prime-native-ground-langdef-source-binding-v1 test-prime-native-ground-langdef-mutations test-prime-dependent-formation-langdef-v1 test-prime-dependent-formation-langdef-mutations test-prime-typed-publication-langdef-source-binding-v1
 	@"$(PRIME_PACKAGE_VALIDATION_TEST_BIN)"
+
+.PHONY: test-prime-native-ground-langdef-mutations
+test-prime-native-ground-langdef-mutations: $(PRIME_PACKAGE_VALIDATION_TEST_BIN)
+	@set -eu; mkdir -p $(BOOTSTRAP_TMPDIR); \
+	mutation_dir=$$(mktemp -d "$(BOOTSTRAP_TMPDIR)/prime-native-ground-mutations.XXXXXX"); \
+	trap 'rm -f "$$mutation_dir"/*.metta "$$mutation_dir"/*.out; rmdir "$$mutation_dir"' EXIT INT TERM; \
+	mutant="$$mutation_dir/conflicting-form-outcome.metta"; \
+	output="$$mutation_dir/conflicting-form-outcome.out"; \
+	python3 scripts/mutate_prime_native_ground_langdef.py \
+		conflicting-form-outcome \
+		langdef/prime/generated/native_ground_judgments_v1.metta \
+		"$$mutant"; \
+	if "$(PRIME_PACKAGE_VALIDATION_TEST_BIN)" "$$mutant" \
+			>"$$output" 2>&1; then \
+		echo 'FAIL: conflicting Prime native-ground outcome survived'; \
+		exit 1; \
+	fi; \
+	grep -Fq 'derived conflicting outcomes for (PForm PVNumber)' "$$output"; \
+	echo 'PASS: conflicting Prime native-ground outcome is killed by exclusivity'
+
+.PHONY: test-prime-dependent-formation-langdef-v1
+test-prime-dependent-formation-langdef-v1: $(PRIME_DEPENDENT_FORMATION_LANGDEF_TEST_BIN) test-prime-dependent-formation-langdef-source-binding-v1
+	@"$(PRIME_DEPENDENT_FORMATION_LANGDEF_TEST_BIN)" \
+		langdef/prime/generated/elaborated_dependent_formation_core_v1.metta
+
+.PHONY: test-prime-dependent-formation-langdef-mutations
+test-prime-dependent-formation-langdef-mutations: $(PRIME_DEPENDENT_FORMATION_LANGDEF_TEST_BIN)
+	@set -eu; \
+	mutation_dir=$$(mktemp -d "$(BOOTSTRAP_TMPDIR)/prime-dependent-formation-mutations.XXXXXX"); \
+	trap 'rm -f "$$mutation_dir"/*.metta "$$mutation_dir"/*.out; rmdir "$$mutation_dir"' EXIT INT TERM; \
+	for mutation in accept-loose-zero drop-binder-context; do \
+		mutant="$$mutation_dir/$$mutation.metta"; \
+		output="$$mutation_dir/$$mutation.out"; \
+		python3 scripts/mutate_prime_dependent_formation_langdef.py \
+			"$$mutation" \
+			langdef/prime/generated/elaborated_dependent_formation_core_v1.metta \
+			"$$mutant"; \
+		if "$(PRIME_DEPENDENT_FORMATION_LANGDEF_TEST_BIN)" \
+				"$$mutant" >"$$output" 2>&1; then \
+			echo "FAIL: Prime dependent-formation mutation survived: $$mutation"; \
+			exit 1; \
+		fi; \
+	done; \
+	grep -Fq 'negative dependent-formation query has no derivation' \
+		"$$mutation_dir/accept-loose-zero.out"; \
+	grep -Fq 'dependent formation has one complete derivation' \
+		"$$mutation_dir/drop-binder-context.out"; \
+	echo "PASS: loose-index and dropped-context langdef mutations are killed"
 
 test-prime-coverage:
 	@python3 scripts/check_prime_coverage.py
@@ -12842,8 +12935,9 @@ test-petta-match-existence-fusion: $(BIN)
 .PHONY: test-petta-type-langdef-source-binding-v1
 test-petta-type-langdef-source-binding-v1:
 	@python3 tools/gslt2parse_schema_v1.py \
+		--require-nik-authority-frame \
 		langdef/petta/generated/typecheck_v2_guard_v1.metta >/dev/null
-	@mkdir -p $(BOOTSTRAP_TMPDIR); \
+	@set -eu; mkdir -p $(BOOTSTRAP_TMPDIR); \
 	tmpdir=$$(mktemp -d "$(BOOTSTRAP_TMPDIR)/petta-type-binding.XXXXXX"); \
 	trap 'rm -f "$$tmpdir/binding.h" "$$tmpdir/binding.c" "$$tmpdir/binding-normalized.c"; rmdir "$$tmpdir"' EXIT INT TERM; \
 	python3 tools/generate_nik_direct_source_binding_v1.py \
@@ -12867,8 +12961,9 @@ test-petta-type-langdef-source-binding-v1:
 .PHONY: test-petta-boundary-langdef-source-binding-v1
 test-petta-boundary-langdef-source-binding-v1:
 	@python3 tools/gslt2parse_schema_v1.py \
+		--require-nik-authority-frame \
 		langdef/petta/generated/typecheck_v2_boundary_core_v1.metta >/dev/null
-	@mkdir -p $(BOOTSTRAP_TMPDIR); \
+	@set -eu; mkdir -p $(BOOTSTRAP_TMPDIR); \
 	tmpdir=$$(mktemp -d "$(BOOTSTRAP_TMPDIR)/petta-boundary-binding.XXXXXX"); \
 	trap 'rm -f "$$tmpdir/binding.h" "$$tmpdir/binding.c" "$$tmpdir/binding-normalized.c"; rmdir "$$tmpdir"' EXIT INT TERM; \
 	python3 tools/generate_nik_direct_source_binding_v1.py \
@@ -14300,8 +14395,9 @@ test-he-compat-catalog-guards:
 .PHONY: test-he-type-langdef-source-binding-v1
 test-he-type-langdef-source-binding-v1:
 	@python3 tools/gslt2parse_schema_v1.py \
+		--require-nik-authority-frame \
 		langdef/he/generated/typing_consistency_core_v1.metta >/dev/null
-	@mkdir -p $(BOOTSTRAP_TMPDIR); \
+	@set -eu; mkdir -p $(BOOTSTRAP_TMPDIR); \
 	tmpdir=$$(mktemp -d "$(BOOTSTRAP_TMPDIR)/he-type-binding.XXXXXX"); \
 	trap 'rm -f "$$tmpdir/binding.h" "$$tmpdir/binding.c" "$$tmpdir/binding-normalized.c"; rmdir "$$tmpdir"' EXIT INT TERM; \
 	python3 tools/generate_nik_direct_source_binding_v1.py \
@@ -14325,8 +14421,9 @@ test-he-type-langdef-source-binding-v1:
 .PHONY: test-he-profiled-type-langdef-source-binding-v1
 test-he-profiled-type-langdef-source-binding-v1:
 	@python3 tools/gslt2parse_schema_v1.py \
+		--require-nik-authority-frame \
 		langdef/he/generated/profiled_type_inference_core_v1.metta >/dev/null
-	@mkdir -p $(BOOTSTRAP_TMPDIR); \
+	@set -eu; mkdir -p $(BOOTSTRAP_TMPDIR); \
 	tmpdir=$$(mktemp -d "$(BOOTSTRAP_TMPDIR)/he-profiled-type-binding.XXXXXX"); \
 	trap 'rm -f "$$tmpdir/binding.h" "$$tmpdir/binding.c" "$$tmpdir/binding-normalized.c"; rmdir "$$tmpdir"' EXIT INT TERM; \
 	python3 tools/generate_nik_direct_source_binding_v1.py \
@@ -14350,8 +14447,9 @@ test-he-profiled-type-langdef-source-binding-v1:
 .PHONY: test-he-closed-ground-langdef-source-binding-v1
 test-he-closed-ground-langdef-source-binding-v1:
 	@python3 tools/gslt2parse_schema_v1.py \
+		--require-nik-authority-frame \
 		langdef/he/generated/typing_closed_ground_core_v1.metta >/dev/null
-	@mkdir -p $(BOOTSTRAP_TMPDIR); \
+	@set -eu; mkdir -p $(BOOTSTRAP_TMPDIR); \
 	tmpdir=$$(mktemp -d "$(BOOTSTRAP_TMPDIR)/he-closed-ground-binding.XXXXXX"); \
 	trap 'rm -f "$$tmpdir/binding.h" "$$tmpdir/binding.c" "$$tmpdir/binding-normalized.c"; rmdir "$$tmpdir"' EXIT INT TERM; \
 	python3 tools/generate_nik_direct_source_binding_v1.py \
@@ -14428,12 +14526,16 @@ ifeq ($(ENABLE_RUNTIME_STATS),1)
 		"$$control_out"; \
 	grep -Fqx 'runtime-counter nik-typed-applicability-candidate-refuted 0' \
 		"$$control_err"; \
+	grep -Fqx 'runtime-counter nik-typed-applicability-candidate-tested 0' \
+		"$$control_err"; \
 	$(CETTA_BIN_INVOKE) --emit-runtime-stats --lang he \
 		benchmarks/nik/he_typed_dispatch_monomorphic.metta \
 		>"$$monomorphic_out" 2>"$$monomorphic_err"; \
 	cmp -s benchmarks/nik/he_typed_dispatch_monomorphic.expected \
 		"$$monomorphic_out"; \
 	grep -Fqx 'runtime-counter nik-typed-applicability-candidate-refuted 0' \
+		"$$monomorphic_err"; \
+	grep -Fqx 'runtime-counter nik-typed-applicability-candidate-tested 0' \
 		"$$monomorphic_err"; \
 	echo 'PASS: HE direct typing safely eliminates 320000 closed refuted overload candidates'
 else
@@ -20178,17 +20280,35 @@ refresh-he-matrices:
 	@python3 -m json.tool specs/he_runtime_3layer_matrix.json > /dev/null
 	@echo "refreshed HE runtime parity matrices"
 
+.PHONY: test-nik-type-authority-frames-v1
+test-nik-type-authority-frames-v1:
+	@python3 tools/test_nik_type_authority_frames_v1.py
+
+NIK_TYPE_LANGDEFS_V1 = \
+	langdef/he/generated/typing_consistency_core_v1.metta \
+	langdef/he/generated/profiled_type_inference_core_v1.metta \
+	langdef/he/generated/typing_closed_ground_core_v1.metta \
+	langdef/petta/generated/typecheck_v2_guard_v1.metta \
+	langdef/petta/generated/typecheck_v2_boundary_core_v1.metta \
+	langdef/prime/generated/closed_formation_v1.metta \
+	langdef/prime/generated/native_ground_judgments_v1.metta \
+	langdef/prime/generated/elaborated_dependent_formation_core_v1.metta \
+	langdef/prime/generated/typed_publication_core_v1.metta
+
+.PHONY: test-nik-type-langdef-native-parity-v1
+test-nik-type-langdef-native-parity-v1: $(GSLT2PARSE_SCHEMA_V1_NATIVE_BIN)
+	@set -eu; \
+	digest=$$(python3 tools/gslt2parse_schema_v1.py \
+		--require-nik-authority-frame --digest-only \
+		$(NIK_TYPE_LANGDEFS_V1)); \
+	"$(GSLT2PARSE_SCHEMA_V1_NATIVE_BIN)" "$$digest" \
+		$(NIK_TYPE_LANGDEFS_V1)
+
 .PHONY: test-nik-type-langdef-composition-v1
-test-nik-type-langdef-composition-v1:
+test-nik-type-langdef-composition-v1: test-nik-type-authority-frames-v1 test-nik-type-langdef-native-parity-v1
 	@python3 tools/gslt2parse_schema_v1.py \
-		langdef/he/generated/typing_consistency_core_v1.metta \
-		langdef/he/generated/profiled_type_inference_core_v1.metta \
-		langdef/he/generated/typing_closed_ground_core_v1.metta \
-		langdef/petta/generated/typecheck_v2_guard_v1.metta \
-		langdef/petta/generated/typecheck_v2_boundary_core_v1.metta \
-		langdef/prime/generated/closed_formation_v1.metta \
-		langdef/prime/generated/native_ground_judgments_v1.metta \
-		langdef/prime/generated/typed_publication_core_v1.metta \
+		--require-nik-authority-frame \
+		$(NIK_TYPE_LANGDEFS_V1) \
 		>/dev/null
 	@echo "PASS: HE, PeTTa, and Prime type presentations compose"
 
