@@ -3378,11 +3378,14 @@ static void test_declaration_authority_parity(
     TermUniverse *universe, Arena *arena) {
     PettaProgram *legacy_program = petta_program_new();
     PettaProgram *authority_program = petta_program_new();
-    assert(legacy_program && authority_program);
+    PettaProgram *selected_program = petta_program_new();
+    assert(legacy_program && authority_program && selected_program);
     Space legacy_space;
     Space authority_space;
+    Space selected_space;
     space_init_with_universe(&legacy_space, universe);
     space_init_with_universe(&authority_space, universe);
+    space_init_with_universe(&selected_space, universe);
 
     Atom *positive[] = {
         parse_one(arena, "(: typed-id (-> Number Number))"),
@@ -3438,8 +3441,40 @@ static void test_declaration_authority_parity(
         &invalid_result));
     assert(invalid_result.fault == PETTA_TYPECHECK_FAULT_INVALID_ARGUMENT);
 
+    /* The qualified alternative is now the production selection.  An
+     * inferred fact must therefore be visible only under its exact direct
+     * authority and policy, never through the unqualified legacy index. */
+    Atom *selected_forms[] = {
+        parse_one(arena, "(= (selected-id 1) 2)"),
+    };
+    assert(selected_forms[0]);
+    PettaTypecheckBlockResult selected_result;
+    assert(petta_typecheck_declaration_block_selected(
+        selected_program, &selected_space, NULL,
+        selected_forms, 1u, PETTA_TYPECHECK_POLICY_DEFAULT,
+        &selected_result));
+    assert(selected_result.verdict == PETTA_TYPECHECK_ESTABLISHED);
+    CettaNikDirectAuthorityStampV1 selected_stamp;
+    assert(cetta_nik_direct_authority_v1_stamp(
+        &petta_typecheck_v2_direct_authority_v1,
+        (uint32_t)PETTA_TYPECHECK_POLICY_DEFAULT,
+        &selected_stamp));
+    assert(petta_program_inferred_signatures_current_under_authority(
+        selected_program, &selected_space, &selected_stamp));
+    assert(!petta_program_inferred_signatures_current(
+        selected_program, &selected_space));
+    Atom *selected_head = parse_one(arena, "selected-id");
+    Atom *selected_signature = NULL;
+    assert(selected_head && selected_head->kind == ATOM_SYMBOL);
+    assert(petta_program_inferred_signature_lookup_under_authority(
+        selected_program, &selected_space, &selected_stamp,
+        selected_head->sym_id, 1u, arena, &selected_signature));
+    assert(selected_signature);
+
+    space_free(&selected_space);
     space_free(&authority_space);
     space_free(&legacy_space);
+    petta_program_free(selected_program);
     petta_program_free(authority_program);
     petta_program_free(legacy_program);
 }
