@@ -6714,6 +6714,7 @@ typedef enum {
 static bool cetta_library_petta_check_segment(
     CettaLibraryContext *ctx, Space *space, Registry *registry,
     Arena *eval_arena, AtomId *atom_ids, int atom_count,
+    bool declaration_admission,
     CettaPettaDocumentFailure *failure_out, Atom **detail_out) {
 #if CETTA_BUILD_WITH_PETTA_TYPECHECK_V2
     if (!ctx || !ctx->session.profile ||
@@ -6734,13 +6735,17 @@ static bool cetta_library_petta_check_segment(
         forms[index] = term_universe_get_atom(
             space->native.universe, atom_ids[index]);
     PettaTypecheckBlockResult checked;
-    bool judged = petta_typecheck_declaration_block_selected(
-        ctx->petta_program, space, registry,
-        forms, (size_t)atom_count,
-        /* Strictness is a policy of the authored requesting unit.  Imported
-         * units receive baseline typecheck-v2 validation and do not inherit
-         * a caller's --strict/--strict-det lint policy retroactively. */
-        PETTA_TYPECHECK_POLICY_DEFAULT, &checked);
+    PettaTypecheckPolicy policy = PETTA_TYPECHECK_POLICY_DEFAULT;
+    /* Strictness is a policy of the authored requesting unit.  Imported
+     * units receive baseline typecheck-v2 validation and do not inherit
+     * a caller's --strict/--strict-det lint policy retroactively. */
+    bool judged = declaration_admission
+        ? petta_typecheck_declaration_admission_selected(
+              ctx->petta_program, space, registry,
+              forms, (size_t)atom_count, policy, &checked)
+        : petta_typecheck_declaration_block_selected(
+              ctx->petta_program, space, registry,
+              forms, (size_t)atom_count, policy, &checked);
     Atom *source = forms[0];
     free(forms);
     if (judged && checked.verdict != PETTA_TYPECHECK_REFUTED)
@@ -6765,6 +6770,7 @@ static bool cetta_library_petta_check_segment(
     (void)eval_arena;
     (void)atom_ids;
     (void)atom_count;
+    (void)declaration_admission;
     (void)failure_out;
     (void)detail_out;
     return true;
@@ -6832,7 +6838,8 @@ static bool cetta_library_petta_execute_document_ids(
             index + 1 < atom_count) {
             if (!cetta_library_petta_check_segment(
                     ctx, work_space, registry, eval_arena,
-                    atom_ids + index, 2, failure_out, detail_out))
+                    atom_ids + index, 2, false,
+                    failure_out, detail_out))
                 return false;
             cetta_petta_erase_typecheck_marks_document(
                 work_space->native.universe, atom_ids + index, 2);
@@ -6934,6 +6941,7 @@ static bool cetta_library_petta_execute_document_ids(
         if (!cetta_library_petta_check_segment(
                 ctx, work_space, registry, eval_arena,
                 atom_ids + index, block_end - index,
+                true,
                 failure_out, detail_out))
             return false;
         cetta_petta_erase_typecheck_marks_document(

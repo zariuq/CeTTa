@@ -430,12 +430,19 @@ COMPILED_READER_RUNTIME_SRC = \
 PETTA_TYPECHECK_V2_SRC =
 ifeq ($(ENABLE_PETTA_TYPECHECK_V2),1)
 PETTA_TYPECHECK_V2_SRC = src/petta_typecheck.c \
-	src/generated/petta_typecheck_v2_source_binding_v1.generated.c
+	src/generated/petta_typecheck_v2_source_binding_v1.generated.c \
+	src/generated/petta_typecheck_v2_boundary_core_source_binding_v1.generated.c
 endif
-SRC = src/symbol.c src/atom.c src/name_key.c src/atom_blob.c src/abt.c src/parser.c $(COMPILED_READER_RUNTIME_SRC) src/mm2_lower.c src/subst_tree.c src/space.c src/registry_resolver.c src/space_match_backend.c src/match.c src/match_decision.c src/term_canon.c src/variant_shape.c src/variant_instance.c src/answer_bank.c src/table_store.c src/search_machine.c src/petta_program.c src/petta_search_machine.c $(PETTA_TYPECHECK_V2_SRC) src/petta_specializer.c src/rule_machine.c $(LIB_PROLOG_SRC) src/term_universe.c src/stats.c src/parallel_executor.c src/prime_need.c src/petta_semantics.c src/prepared_pure_machine.c src/eval.c src/grounded.c src/he_typing.c src/he_typing_authority.c src/generated/he_typing_consistency_core_source_binding_v1.generated.c src/inference_checker.c src/nik_direct_authority.c src/nik_runtime.c src/prime_semantics.c src/generated/prime_typing_closed_formation_source_binding_v1.generated.c src/text_source.c src/native_handle.c src/native_sha256.c src/mork_space_bridge_runtime.c src/library.c src/langdef_pack.c src/gslt_provider_runtime.c src/gslt_space_fact_provider_v1.c src/gslt_finite_fact_provider_v1.c src/gslt_revisioned_space_provider_v1.c src/gslt_abt_provider_v1.c src/gslt_horn_runtime.c src/gslt_dense_bitset_v1.c src/gslt_compiled_runtime.c src/gslt_indexed_instruction_decoder_v1.c src/gslt_indexed_value_table_v1.c src/gslt_split_indexed_table_v1.c src/gslt_literal_hole_program_v1.c src/gslt_u32_index_v1.c src/gslt_u32_slice_arena_v1.c src/gslt_epoch_slots_v1.c src/gslt_ground_dense_term_v1.c src/gslt_language_runtime.c src/gslt_pure_provider_v1.c src/gslt_support_transform_runtime.c src/generated/prime_nik_authorities_v1.generated.c src/generated/prime_nik_runtime_v1.generated.c src/generated/gslt_il_language_v1.generated.c src/generated/metta_interact_language_v1.generated.c src/generated/mm2_gslt_profile_v1.generated.c src/generated/subzero_language_v1.generated.c src/generated/zero_language_v1.generated.c src/generated/zero_exp_language_v1.generated.c src/generated/zero_emit_language_v1.generated.c src/generated/zero_interact_language_v1.generated.c src/generated/zero_interact_provider_catalog_v1.generated.c src/generated/zerouv_language_v1.generated.c src/he_small_step_pack.c src/lib_parse_native_grammar.c src/lib_parse_inference_native.c experiments/gslt2parse_foundation/native/finite_horn_gslt_v1.c experiments/gslt2parse_foundation/native/finite_horn_ground_term_v1.c experiments/gslt2parse_foundation/native/parser_term_projection_v1.c experiments/gslt2parse_foundation/native/parser_pack_abi_v1.c experiments/gslt2parse_foundation/native/parser_action_bytecode_v1.c experiments/gslt2parse_foundation/native/parser_pack_native_v1.c experiments/gslt2parse_foundation/native/parser_pack_lexical_v1.c experiments/gslt2parse_foundation/native/parser_pack_gll_v1.c experiments/gslt2parse_foundation/native/regular_span_dfa_v1.c experiments/gslt2parse_foundation/native/regular_span_nfa_v1.c $(PYTHON_SRC) src/session.c src/lang.c src/rhocalc_core.c src/rhocalc_syntax.c src/compile.c src/runtime.c src/cetta_stdlib.c native/native_modules.c src/main.c
+SRC = src/symbol.c src/atom.c src/name_key.c src/atom_blob.c src/abt.c src/parser.c $(COMPILED_READER_RUNTIME_SRC) src/mm2_lower.c src/subst_tree.c src/space.c src/registry_resolver.c src/space_match_backend.c src/match.c src/match_decision.c src/term_canon.c src/variant_shape.c src/variant_instance.c src/answer_bank.c src/table_store.c src/search_machine.c src/petta_program.c src/petta_search_machine.c $(PETTA_TYPECHECK_V2_SRC) src/petta_specializer.c src/rule_machine.c $(LIB_PROLOG_SRC) src/term_universe.c src/stats.c src/parallel_executor.c src/prime_need.c src/petta_semantics.c src/prepared_pure_machine.c src/eval.c src/grounded.c src/he_typing.c src/he_typing_authority.c src/generated/he_typing_consistency_core_source_binding_v1.generated.c src/generated/he_profiled_type_inference_core_source_binding_v1.generated.c src/inference_checker.c src/nik_direct_authority.c src/nik_runtime.c src/prime_semantics.c src/generated/prime_typing_closed_formation_source_binding_v1.generated.c src/text_source.c src/native_handle.c src/native_sha256.c src/mork_space_bridge_runtime.c src/library.c src/langdef_pack.c src/gslt_provider_runtime.c src/gslt_space_fact_provider_v1.c src/gslt_finite_fact_provider_v1.c src/gslt_revisioned_space_provider_v1.c src/gslt_abt_provider_v1.c src/gslt_horn_runtime.c src/gslt_dense_bitset_v1.c src/gslt_compiled_runtime.c src/gslt_indexed_instruction_decoder_v1.c src/gslt_indexed_value_table_v1.c src/gslt_split_indexed_table_v1.c src/gslt_literal_hole_program_v1.c src/gslt_u32_index_v1.c src/gslt_u32_slice_arena_v1.c src/gslt_epoch_slots_v1.c src/gslt_ground_dense_term_v1.c src/gslt_language_runtime.c src/gslt_pure_provider_v1.c src/gslt_support_transform_runtime.c src/generated/prime_nik_authorities_v1.generated.c src/generated/prime_nik_runtime_v1.generated.c src/generated/gslt_il_language_v1.generated.c src/generated/metta_interact_language_v1.generated.c src/generated/mm2_gslt_profile_v1.generated.c src/generated/subzero_language_v1.generated.c src/generated/zero_language_v1.generated.c src/generated/zero_exp_language_v1.generated.c src/generated/zero_emit_language_v1.generated.c src/generated/zero_interact_language_v1.generated.c src/generated/zero_interact_provider_catalog_v1.generated.c src/generated/zerouv_language_v1.generated.c src/he_small_step_pack.c src/lib_parse_native_grammar.c src/lib_parse_inference_native.c experiments/gslt2parse_foundation/native/finite_horn_gslt_v1.c experiments/gslt2parse_foundation/native/finite_horn_ground_term_v1.c experiments/gslt2parse_foundation/native/parser_term_projection_v1.c experiments/gslt2parse_foundation/native/parser_pack_abi_v1.c experiments/gslt2parse_foundation/native/parser_action_bytecode_v1.c experiments/gslt2parse_foundation/native/parser_pack_native_v1.c experiments/gslt2parse_foundation/native/parser_pack_lexical_v1.c experiments/gslt2parse_foundation/native/parser_pack_gll_v1.c experiments/gslt2parse_foundation/native/regular_span_dfa_v1.c experiments/gslt2parse_foundation/native/regular_span_nfa_v1.c $(PYTHON_SRC) src/session.c src/lang.c src/rhocalc_core.c src/rhocalc_syntax.c src/compile.c src/runtime.c src/cetta_stdlib.c native/native_modules.c src/main.c
 SRC += src/inference_side_condition_provider.c \
 	src/generated/prime_nik_side_condition_provider_catalog_v1.generated.c \
 	experiments/gslt2parse_foundation/native/parser_pack_glr_v1.c
+SRC += \
+	src/generated/he_typing_closed_ground_core_source_binding_v1.generated.c \
+	src/prime_typing_publication.c \
+	src/generated/prime_typing_elaborated_dependent_formation_core_source_binding_v1.generated.c \
+	src/generated/prime_typing_native_ground_judgments_source_binding_v1.generated.c \
+	src/generated/prime_typing_typed_publication_core_source_binding_v1.generated.c
 LANGDEF_COMPILED_CURSOR_RUNTIME_SRC = \
 	experiments/gslt2parse_foundation/native/finite_horn_answer_stream_v1.c \
 	experiments/gslt2parse_foundation/native/parser_pack_guard_evidence_stream_v1.c \
@@ -538,6 +545,10 @@ PRIME_PACKAGE_VALIDATION_TEST_SRC = tests/support/test_prime_package_validation.
 PRIME_PACKAGE_VALIDATION_TEST_OBJ = runtime/bootstrap/test_prime_package_validation.$(BUILD_OBJ_TAG).o
 PRIME_PACKAGE_VALIDATION_TEST_BIN = runtime/test_prime_package_validation-$(BUILD_CANON)
 PRIME_PACKAGE_VALIDATION_TEST_LINK_OBJ = $(FALLBACK_EVAL_TEST_LINK_OBJ)
+PRIME_DEPENDENT_FORMATION_LANGDEF_TEST_SRC = tests/support/test_prime_dependent_formation_langdef.c
+PRIME_DEPENDENT_FORMATION_LANGDEF_TEST_OBJ = runtime/bootstrap/test_prime_dependent_formation_langdef.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o
+PRIME_DEPENDENT_FORMATION_LANGDEF_TEST_BIN = runtime/test_prime_dependent_formation_langdef-$(BUILD_CANON)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),-runtime-stats,)
+PRIME_DEPENDENT_FORMATION_LANGDEF_TEST_LINK_OBJ = $(FALLBACK_EVAL_TEST_LINK_OBJ)
 RUNTIME_NAMED_VAR_TEST_SRC = tests/support/test_runtime_named_var.c
 RUNTIME_NAMED_VAR_TEST_OBJ = runtime/bootstrap/test_runtime_named_var.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o
 RUNTIME_NAMED_VAR_TEST_BIN = runtime/test_runtime_named_var-$(BUILD_CANON)
@@ -3591,6 +3602,7 @@ DEPS = $(OBJ:.o=.d) $(STAGE0_OBJ:.o=.d) \
 	$(HE_COMPILED_READER_BENCH_OBJ:.o=.d) \
 	$(PRIME_DELAYED_AMBIGUITY_TEST_OBJ:.o=.d) \
 	$(PRIME_PACKAGE_VALIDATION_TEST_OBJ:.o=.d) \
+	$(PRIME_DEPENDENT_FORMATION_LANGDEF_TEST_OBJ:.o=.d) \
 	$(RUNTIME_NAMED_VAR_TEST_OBJ:.o=.d) \
 	$(PRIME_READER_AST_ORACLE_OBJ:.o=.d) \
 	$(PAYLOAD_MAP_CAPACITY_TEST_OBJ:.o=.d) \
@@ -3869,6 +3881,17 @@ $(PRIME_PACKAGE_VALIDATION_TEST_BIN): $(PRIME_PACKAGE_VALIDATION_TEST_OBJ) $(PRI
 	mv "$$tmp_out" $@
 
 $(PRIME_PACKAGE_VALIDATION_TEST_OBJ): $(PRIME_PACKAGE_VALIDATION_TEST_SRC) $(BUILD_CONFIG_HEADER)
+	@mkdir -p $(dir $@)
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+
+$(PRIME_DEPENDENT_FORMATION_LANGDEF_TEST_BIN): $(PRIME_DEPENDENT_FORMATION_LANGDEF_TEST_OBJ) $(PRIME_DEPENDENT_FORMATION_LANGDEF_TEST_LINK_OBJ) $(BRIDGE_DEPS)
+	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
+	@tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/test-prime-dependent-formation-langdef.XXXXXX"); \
+	trap 'rm -f "$$tmp_out"' EXIT INT TERM; \
+	$(CC) $(CFLAGS) -o "$$tmp_out" $^ $(LDFLAGS); \
+	mv "$$tmp_out" $@
+
+$(PRIME_DEPENDENT_FORMATION_LANGDEF_TEST_OBJ): $(PRIME_DEPENDENT_FORMATION_LANGDEF_TEST_SRC) $(BUILD_CONFIG_HEADER)
 	@mkdir -p $(dir $@)
 	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
 
@@ -8575,6 +8598,8 @@ clean:
 		runtime/bootstrap/test_prime_delayed_ambiguity.*.d \
 		runtime/test_prime_package_validation-* runtime/bootstrap/test_prime_package_validation.*.o \
 		runtime/bootstrap/test_prime_package_validation.*.d \
+		runtime/test_prime_dependent_formation_langdef-* runtime/bootstrap/test_prime_dependent_formation_langdef.*.o \
+		runtime/bootstrap/test_prime_dependent_formation_langdef.*.d \
 		runtime/test_rhometta_payload_map_capacity-* runtime/bootstrap/test_rhometta_payload_map_capacity.*.o \
 		runtime/bootstrap/test_rhometta_payload_map_capacity.*.d \
 			src/*.runtime-stats.o src/*.runtime-stats.d \
@@ -11165,8 +11190,9 @@ test-prime-budget-monotonicity: $(BIN)
 .PHONY: test-prime-type-langdef-source-binding-v1
 test-prime-type-langdef-source-binding-v1:
 	@python3 tools/gslt2parse_schema_v1.py \
+		--require-nik-authority-frame \
 		langdef/prime/generated/closed_formation_v1.metta >/dev/null
-	@mkdir -p $(BOOTSTRAP_TMPDIR); \
+	@set -eu; mkdir -p $(BOOTSTRAP_TMPDIR); \
 	tmpdir=$$(mktemp -d "$(BOOTSTRAP_TMPDIR)/prime-type-binding.XXXXXX"); \
 	trap 'rm -f "$$tmpdir/binding.h" "$$tmpdir/binding.c" "$$tmpdir/binding-normalized.c"; rmdir "$$tmpdir"' EXIT INT TERM; \
 	python3 tools/generate_nik_direct_source_binding_v1.py \
@@ -11187,8 +11213,125 @@ test-prime-type-langdef-source-binding-v1:
 	rm -f "$$tmpdir/binding-normalized.c"; \
 	echo "PASS: Prime type langdef source binding is valid and deterministic"
 
-test-prime-package-validation: $(PRIME_PACKAGE_VALIDATION_TEST_BIN) test-prime-type-langdef-source-binding-v1
+.PHONY: test-prime-native-ground-langdef-source-binding-v1
+test-prime-native-ground-langdef-source-binding-v1:
+	@python3 tools/gslt2parse_schema_v1.py \
+		--require-nik-authority-frame \
+		langdef/prime/generated/native_ground_judgments_v1.metta >/dev/null
+	@set -eu; mkdir -p $(BOOTSTRAP_TMPDIR); \
+	tmpdir=$$(mktemp -d "$(BOOTSTRAP_TMPDIR)/prime-native-ground-binding.XXXXXX"); \
+	trap 'rm -f "$$tmpdir/prime_typing_native_ground_judgments_source_binding_v1.generated.h" "$$tmpdir/prime_typing_native_ground_judgments_source_binding_v1.generated.c"; rmdir "$$tmpdir"' EXIT INT TERM; \
+	python3 tools/generate_nik_direct_source_binding_v1.py \
+		--presentation langdef/prime/generated/native_ground_judgments_v1.metta \
+		--symbol-prefix prime_typing_native_ground_judgments \
+		--authority-symbol cetta_prime_typing_direct_authority_v1 \
+		--authority-header prime_semantics.h \
+		--semantic-scope prime.typing.native-ground-judgments \
+		--coverage fragment \
+		--header-output "$$tmpdir/prime_typing_native_ground_judgments_source_binding_v1.generated.h" \
+		--source-output "$$tmpdir/prime_typing_native_ground_judgments_source_binding_v1.generated.c"; \
+	cmp -s "$$tmpdir/prime_typing_native_ground_judgments_source_binding_v1.generated.h" \
+		src/generated/prime_typing_native_ground_judgments_source_binding_v1.generated.h; \
+	cmp -s "$$tmpdir/prime_typing_native_ground_judgments_source_binding_v1.generated.c" \
+		src/generated/prime_typing_native_ground_judgments_source_binding_v1.generated.c; \
+	echo "PASS: Prime native-ground langdef source binding is valid and deterministic"
+
+.PHONY: test-prime-dependent-formation-langdef-source-binding-v1
+test-prime-dependent-formation-langdef-source-binding-v1:
+	@python3 tools/gslt2parse_schema_v1.py \
+		--require-nik-authority-frame \
+		langdef/prime/generated/elaborated_dependent_formation_core_v1.metta >/dev/null
+	@set -eu; mkdir -p $(BOOTSTRAP_TMPDIR); \
+	tmpdir=$$(mktemp -d "$(BOOTSTRAP_TMPDIR)/prime-dependent-formation-binding.XXXXXX"); \
+	trap 'rm -f "$$tmpdir/prime_typing_elaborated_dependent_formation_core_source_binding_v1.generated.h" "$$tmpdir/prime_typing_elaborated_dependent_formation_core_source_binding_v1.generated.c"; rmdir "$$tmpdir"' EXIT INT TERM; \
+	python3 tools/generate_nik_direct_source_binding_v1.py \
+		--presentation langdef/prime/generated/elaborated_dependent_formation_core_v1.metta \
+		--symbol-prefix prime_typing_elaborated_dependent_formation_core \
+		--authority-symbol cetta_prime_typing_direct_authority_v1 \
+		--authority-header prime_semantics.h \
+		--semantic-scope prime.typing.elaborated-dependent-formation-core \
+		--coverage fragment \
+		--header-output "$$tmpdir/prime_typing_elaborated_dependent_formation_core_source_binding_v1.generated.h" \
+		--source-output "$$tmpdir/prime_typing_elaborated_dependent_formation_core_source_binding_v1.generated.c"; \
+	cmp -s "$$tmpdir/prime_typing_elaborated_dependent_formation_core_source_binding_v1.generated.h" \
+		src/generated/prime_typing_elaborated_dependent_formation_core_source_binding_v1.generated.h; \
+	cmp -s "$$tmpdir/prime_typing_elaborated_dependent_formation_core_source_binding_v1.generated.c" \
+		src/generated/prime_typing_elaborated_dependent_formation_core_source_binding_v1.generated.c; \
+	echo "PASS: Prime dependent-formation langdef source binding is valid and deterministic"
+
+.PHONY: test-prime-typed-publication-langdef-source-binding-v1
+test-prime-typed-publication-langdef-source-binding-v1:
+	@python3 tools/gslt2parse_schema_v1.py \
+		--require-nik-authority-frame \
+		langdef/prime/generated/typed_publication_core_v1.metta >/dev/null
+	@set -eu; mkdir -p $(BOOTSTRAP_TMPDIR); \
+	tmpdir=$$(mktemp -d "$(BOOTSTRAP_TMPDIR)/prime-typed-publication-binding.XXXXXX"); \
+	trap 'rm -f "$$tmpdir/prime_typing_typed_publication_core_source_binding_v1.generated.h" "$$tmpdir/prime_typing_typed_publication_core_source_binding_v1.generated.c"; rmdir "$$tmpdir"' EXIT INT TERM; \
+	python3 tools/generate_nik_direct_source_binding_v1.py \
+		--presentation langdef/prime/generated/typed_publication_core_v1.metta \
+		--symbol-prefix prime_typing_typed_publication_core \
+		--authority-symbol cetta_prime_typed_publication_direct_authority_v1 \
+		--authority-header prime_typing_publication.h \
+		--semantic-scope prime.typing.result-contract-publication-core \
+		--coverage fragment \
+		--header-output "$$tmpdir/prime_typing_typed_publication_core_source_binding_v1.generated.h" \
+		--source-output "$$tmpdir/prime_typing_typed_publication_core_source_binding_v1.generated.c"; \
+	cmp -s "$$tmpdir/prime_typing_typed_publication_core_source_binding_v1.generated.h" \
+		src/generated/prime_typing_typed_publication_core_source_binding_v1.generated.h; \
+	cmp -s "$$tmpdir/prime_typing_typed_publication_core_source_binding_v1.generated.c" \
+		src/generated/prime_typing_typed_publication_core_source_binding_v1.generated.c; \
+	echo "PASS: Prime typed-publication langdef source binding is valid and deterministic"
+
+test-prime-package-validation: $(PRIME_PACKAGE_VALIDATION_TEST_BIN) test-prime-type-langdef-source-binding-v1 test-prime-native-ground-langdef-source-binding-v1 test-prime-native-ground-langdef-mutations test-prime-dependent-formation-langdef-v1 test-prime-dependent-formation-langdef-mutations test-prime-typed-publication-langdef-source-binding-v1
 	@"$(PRIME_PACKAGE_VALIDATION_TEST_BIN)"
+
+.PHONY: test-prime-native-ground-langdef-mutations
+test-prime-native-ground-langdef-mutations: $(PRIME_PACKAGE_VALIDATION_TEST_BIN)
+	@set -eu; mkdir -p $(BOOTSTRAP_TMPDIR); \
+	mutation_dir=$$(mktemp -d "$(BOOTSTRAP_TMPDIR)/prime-native-ground-mutations.XXXXXX"); \
+	trap 'rm -f "$$mutation_dir"/*.metta "$$mutation_dir"/*.out; rmdir "$$mutation_dir"' EXIT INT TERM; \
+	mutant="$$mutation_dir/conflicting-form-outcome.metta"; \
+	output="$$mutation_dir/conflicting-form-outcome.out"; \
+	python3 scripts/mutate_prime_native_ground_langdef.py \
+		conflicting-form-outcome \
+		langdef/prime/generated/native_ground_judgments_v1.metta \
+		"$$mutant"; \
+	if "$(PRIME_PACKAGE_VALIDATION_TEST_BIN)" "$$mutant" \
+			>"$$output" 2>&1; then \
+		echo 'FAIL: conflicting Prime native-ground outcome survived'; \
+		exit 1; \
+	fi; \
+	grep -Fq 'derived conflicting outcomes for (PForm PVNumber)' "$$output"; \
+	echo 'PASS: conflicting Prime native-ground outcome is killed by exclusivity'
+
+.PHONY: test-prime-dependent-formation-langdef-v1
+test-prime-dependent-formation-langdef-v1: $(PRIME_DEPENDENT_FORMATION_LANGDEF_TEST_BIN) test-prime-dependent-formation-langdef-source-binding-v1
+	@"$(PRIME_DEPENDENT_FORMATION_LANGDEF_TEST_BIN)" \
+		langdef/prime/generated/elaborated_dependent_formation_core_v1.metta
+
+.PHONY: test-prime-dependent-formation-langdef-mutations
+test-prime-dependent-formation-langdef-mutations: $(PRIME_DEPENDENT_FORMATION_LANGDEF_TEST_BIN)
+	@set -eu; \
+	mutation_dir=$$(mktemp -d "$(BOOTSTRAP_TMPDIR)/prime-dependent-formation-mutations.XXXXXX"); \
+	trap 'rm -f "$$mutation_dir"/*.metta "$$mutation_dir"/*.out; rmdir "$$mutation_dir"' EXIT INT TERM; \
+	for mutation in accept-loose-zero drop-binder-context; do \
+		mutant="$$mutation_dir/$$mutation.metta"; \
+		output="$$mutation_dir/$$mutation.out"; \
+		python3 scripts/mutate_prime_dependent_formation_langdef.py \
+			"$$mutation" \
+			langdef/prime/generated/elaborated_dependent_formation_core_v1.metta \
+			"$$mutant"; \
+		if "$(PRIME_DEPENDENT_FORMATION_LANGDEF_TEST_BIN)" \
+				"$$mutant" >"$$output" 2>&1; then \
+			echo "FAIL: Prime dependent-formation mutation survived: $$mutation"; \
+			exit 1; \
+		fi; \
+	done; \
+	grep -Fq 'negative dependent-formation query has no derivation' \
+		"$$mutation_dir/accept-loose-zero.out"; \
+	grep -Fq 'dependent formation has one complete derivation' \
+		"$$mutation_dir/drop-binder-context.out"; \
+	echo "PASS: loose-index and dropped-context langdef mutations are killed"
 
 test-prime-coverage:
 	@python3 scripts/check_prime_coverage.py
@@ -11284,7 +11427,36 @@ else
 	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 $@
 endif
 
-test-prime: $(BIN) test-prime-coverage test-prime-budget-monotonicity test-prime-package-validation test-prime-internal-graduality test-prime-nik-core-v1
+.PHONY: test-prime-nik-typed-applicability-pruning
+test-prime-nik-typed-applicability-pruning:
+ifeq ($(ENABLE_RUNTIME_STATS),1)
+	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 $(BIN)
+	@set -e; \
+	optimized_out=runtime/prime-nik-typed-applicability.out; \
+	optimized_err=runtime/prime-nik-typed-applicability.err; \
+	reference_out=runtime/prime-nik-typed-applicability-reference.out; \
+	reference_err=runtime/prime-nik-typed-applicability-reference.err; \
+	$(CETTA_BIN_INVOKE) --emit-runtime-stats --lang prime \
+		tests/prime/nik_typed_applicability_pruning.metta \
+		>"$$optimized_out" 2>"$$optimized_err"; \
+	cmp -s tests/prime/nik_typed_applicability_pruning.expected \
+		"$$optimized_out"; \
+	grep -Fqx 'runtime-counter nik-typed-applicability-candidate-refuted 1' \
+		"$$optimized_err"; \
+	CETTA_NIK_TYPED_APPLICABILITY=0 \
+		$(CETTA_BIN_INVOKE) --emit-runtime-stats --lang prime \
+		tests/prime/nik_typed_applicability_pruning.metta \
+		>"$$reference_out" 2>"$$reference_err"; \
+	cmp -s "$$optimized_out" "$$reference_out"; \
+	grep -Fqx 'runtime-counter nik-typed-applicability-candidate-refuted 0' \
+		"$$reference_err"; \
+	echo 'PASS: Prime direct typing prunes only closed refuted overload candidates'
+else
+	@echo 'INFO: Prime typed-applicability control requires runtime stats; re-running with ENABLE_RUNTIME_STATS=1'
+	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 $@
+endif
+
+test-prime: $(BIN) test-prime-coverage test-prime-budget-monotonicity test-prime-package-validation test-prime-internal-graduality test-prime-nik-core-v1 test-prime-nik-typed-applicability-pruning
 	@pass=0; fail=0; \
 	for f in $(PRIME_FAST_TESTS); do \
 		exp="$${f%.metta}.expected"; \
@@ -12859,8 +13031,9 @@ test-petta-match-existence-fusion: $(BIN)
 .PHONY: test-petta-type-langdef-source-binding-v1
 test-petta-type-langdef-source-binding-v1:
 	@python3 tools/gslt2parse_schema_v1.py \
+		--require-nik-authority-frame \
 		langdef/petta/generated/typecheck_v2_guard_v1.metta >/dev/null
-	@mkdir -p $(BOOTSTRAP_TMPDIR); \
+	@set -eu; mkdir -p $(BOOTSTRAP_TMPDIR); \
 	tmpdir=$$(mktemp -d "$(BOOTSTRAP_TMPDIR)/petta-type-binding.XXXXXX"); \
 	trap 'rm -f "$$tmpdir/binding.h" "$$tmpdir/binding.c" "$$tmpdir/binding-normalized.c"; rmdir "$$tmpdir"' EXIT INT TERM; \
 	python3 tools/generate_nik_direct_source_binding_v1.py \
@@ -12880,6 +13053,32 @@ test-petta-type-langdef-source-binding-v1:
 		src/generated/petta_typecheck_v2_source_binding_v1.generated.c; \
 	rm -f "$$tmpdir/binding-normalized.c"; \
 	echo "PASS: PeTTa type langdef source binding is valid and deterministic"
+
+.PHONY: test-petta-boundary-langdef-source-binding-v1
+test-petta-boundary-langdef-source-binding-v1:
+	@python3 tools/gslt2parse_schema_v1.py \
+		--require-nik-authority-frame \
+		langdef/petta/generated/typecheck_v2_boundary_core_v1.metta >/dev/null
+	@set -eu; mkdir -p $(BOOTSTRAP_TMPDIR); \
+	tmpdir=$$(mktemp -d "$(BOOTSTRAP_TMPDIR)/petta-boundary-binding.XXXXXX"); \
+	trap 'rm -f "$$tmpdir/binding.h" "$$tmpdir/binding.c" "$$tmpdir/binding-normalized.c"; rmdir "$$tmpdir"' EXIT INT TERM; \
+	python3 tools/generate_nik_direct_source_binding_v1.py \
+		--presentation langdef/petta/generated/typecheck_v2_boundary_core_v1.metta \
+		--symbol-prefix petta_typecheck_v2_boundary_core \
+		--authority-symbol petta_typecheck_v2_direct_authority_v1 \
+		--authority-header petta_typecheck.h \
+		--semantic-scope petta.typecheck-v2.direct-boundary-requirement-core \
+		--coverage fragment \
+		--header-output "$$tmpdir/binding.h" \
+		--source-output "$$tmpdir/binding.c"; \
+	sed 's#generated/binding.h#generated/petta_typecheck_v2_boundary_core_source_binding_v1.generated.h#' \
+		"$$tmpdir/binding.c" > "$$tmpdir/binding-normalized.c"; \
+	cmp -s "$$tmpdir/binding.h" \
+		src/generated/petta_typecheck_v2_boundary_core_source_binding_v1.generated.h; \
+	cmp -s "$$tmpdir/binding-normalized.c" \
+		src/generated/petta_typecheck_v2_boundary_core_source_binding_v1.generated.c; \
+	rm -f "$$tmpdir/binding-normalized.c"; \
+	echo "PASS: PeTTa residual boundary langdef source binding is valid and deterministic"
 
 .PHONY: test-petta-clause-slot-admission
 test-petta-clause-slot-admission: $(BIN)
@@ -12914,7 +13113,7 @@ test-petta-clause-slot-admission: $(BIN)
 	diff -u "$$extended_reference" "$$extended"; \
 	echo "PASS: PeTTa clause-slot admission preserves query-visible aliases and occurrence identity"
 
-test-petta-search-machine: $(PETTA_SEARCH_MACHINE_TEST_BIN) $(BIN) test-petta-type-langdef-source-binding-v1 test-petta-capability-ledger test-petta-specializer-relevance-filter test-petta-mam-contender-mutations test-petta-extended-query-algebra test-petta-prepared-register-loop test-petta-specialized-pure-call test-petta-memoization test-petta-match-existence-fusion test-petta-clause-slot-admission
+test-petta-search-machine: $(PETTA_SEARCH_MACHINE_TEST_BIN) $(BIN) test-petta-type-langdef-source-binding-v1 test-petta-boundary-langdef-source-binding-v1 test-petta-capability-ledger test-petta-specializer-relevance-filter test-petta-mam-contender-mutations test-petta-extended-query-algebra test-petta-prepared-register-loop test-petta-specialized-pure-call test-petta-memoization test-petta-match-existence-fusion test-petta-clause-slot-admission
 	@./$(PETTA_SEARCH_MACHINE_TEST_BIN)
 	@machine_stats=$$(CETTA_PETTA_MACHINE_STATS=1 \
 		./$(BIN) --lang petta -e '!(+ 1 2)' \
@@ -13804,7 +14003,7 @@ test-petta-semantics: $(BIN) test-petta-multifile
 	echo "PASS: PeTTa relational control, stream bags, list length, parse-as-data, implicit spaces, shared sequencing, named state, alpha uniqueness, metatype and typed-failure policy, library descriptors, and stable term order"
 
 .PHONY: test-petta-corpus-manifest-unit probe-petta-corpus-manifest test-petta-corpus-manifest probe-petta-corpus-differential test-petta-corpus-differential test-petta-corpus-native-core test-petta-native-core-no-libpl
-.PHONY: test-petta-typecheck-v2 test-petta-typecheck-v2-manifest test-petta-typecheck-v2-isolation-stats test-petta-typecheck-v2-omission
+.PHONY: test-petta-typecheck-v2 test-petta-typecheck-v2-manifest test-petta-typecheck-v2-isolation-stats test-petta-typecheck-v2-omission test-petta-nik-admission-boundary-controls test-petta-nik-typed-chaining test-petta-nik-typed-space-query
 test-petta-typecheck-v2-manifest:
 	@test -n "$(PETTA_TYPECHECK_REFERENCE_ROOT)" || \
 		(echo 'set PETTA_TYPECHECK_REFERENCE_ROOT to the pinned Roman checkout' >&2; exit 2)
@@ -13813,7 +14012,7 @@ test-petta-typecheck-v2-manifest:
 		--reference-root "$(PETTA_TYPECHECK_REFERENCE_ROOT)" \
 		--validate-only
 
-test-petta-typecheck-v2: $(BIN) $(PETTA_SEARCH_MACHINE_TEST_BIN) test-petta-typecheck-v2-manifest test-petta-typecheck-v2-isolation-stats test-petta-typecheck-v2-omission
+test-petta-typecheck-v2: $(BIN) $(PETTA_SEARCH_MACHINE_TEST_BIN) test-petta-typecheck-v2-manifest test-petta-typecheck-v2-isolation-stats test-petta-typecheck-v2-omission test-petta-nik-admission-boundary-controls test-petta-nik-typed-chaining test-petta-nik-typed-space-query
 	@./$(PETTA_SEARCH_MACHINE_TEST_BIN)
 	@CETTA_BIN=./$(BIN) scripts/test_petta_typecheck_v2.sh
 	@receipt=$$(mktemp -d runtime/typecheck-v2-acceptance.XXXXXX); \
@@ -13834,6 +14033,8 @@ ifeq ($(ENABLE_RUNTIME_STATS),1)
 	ordinary_err=runtime/typecheck-v2-isolation-ordinary.err; \
 	typed_out=runtime/typecheck-v2-isolation-typed.out; \
 	typed_err=runtime/typecheck-v2-isolation-typed.err; \
+	typed_dispatch_out=runtime/typecheck-v2-typed-dispatch.out; \
+	typed_dispatch_err=runtime/typecheck-v2-typed-dispatch.err; \
 	authority_out=runtime/typecheck-v2-authority-reuse.out; \
 	authority_err=runtime/typecheck-v2-authority-reuse.err; \
 	relocation_out=runtime/typecheck-v2-obligation-relocation.out; \
@@ -13857,6 +14058,14 @@ ifeq ($(ENABLE_RUNTIME_STATS),1)
 	grep -Fqx '1' "$$typed_out"; \
 	grep -Eq '^runtime-counter petta-typecheck-boundary-entry [1-9][0-9]*$$' \
 		"$$typed_err"; \
+	grep -Fqx 'runtime-counter petta-typed-dispatch-signature-refuted 0' \
+		"$$typed_err"; \
+	$(CETTA_BIN_INVOKE) --emit-runtime-stats --lang petta \
+		--profile typecheck-v2 \
+		tests/petta/typecheck_v2_repros/27_overload_mismatch_prunes_branch.metta \
+		>"$$typed_dispatch_out" 2>"$$typed_dispatch_err"; \
+	grep -Eq '^runtime-counter petta-typed-dispatch-signature-refuted [1-9][0-9]*$$' \
+		"$$typed_dispatch_err"; \
 	$(CETTA_BIN_INVOKE) --emit-runtime-stats --lang petta \
 		--profile typecheck-v2 \
 		tests/petta/typecheck_v2_repros/11_stale_obligation_nonconflicting_addition.metta \
@@ -13915,6 +14124,138 @@ ifeq ($(ENABLE_RUNTIME_STATS),1)
 else
 	@echo 'INFO: typecheck-v2 isolation counter requires runtime stats; re-running with ENABLE_RUNTIME_STATS=1'
 	@$(MAKE) BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 $@
+endif
+
+test-petta-nik-admission-boundary-controls:
+ifeq ($(ENABLE_RUNTIME_STATS),1)
+	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 $(BIN)
+	@set -e; \
+	static_out=runtime/petta-nik-static-admission.out; \
+	static_err=runtime/petta-nik-static-admission.err; \
+	gradual_out=runtime/petta-nik-gradual-boundary.out; \
+	gradual_err=runtime/petta-nik-gradual-boundary.err; \
+	$(CETTA_BIN_INVOKE) --emit-runtime-stats --lang petta \
+		--profile typecheck-v2 \
+		benchmarks/nik/petta_static_admission_chain.metta \
+		>"$$static_out" 2>"$$static_err"; \
+	cmp -s benchmarks/nik/petta_static_admission_chain.expected \
+		"$$static_out"; \
+	grep -Fqx 'runtime-counter petta-typecheck-declaration-admission-attempt 1' \
+		"$$static_err"; \
+	grep -Fqx 'runtime-counter petta-typecheck-declaration-admission-accepted 1' \
+		"$$static_err"; \
+	grep -Fqx 'runtime-counter petta-typecheck-declaration-admission-refuted 0' \
+		"$$static_err"; \
+	grep -Fqx 'runtime-counter petta-typecheck-declaration-admission-fault 0' \
+		"$$static_err"; \
+	grep -Fqx 'runtime-counter petta-typecheck-boundary-entry 0' \
+		"$$static_err"; \
+	grep -Fqx 'runtime-counter petta-type-obligation-cache-hit 0' \
+		"$$static_err"; \
+	grep -Fqx 'runtime-counter petta-type-obligation-cache-miss 0' \
+		"$$static_err"; \
+	$(CETTA_BIN_INVOKE) --emit-runtime-stats --lang petta \
+		--profile typecheck-v2 \
+		benchmarks/nik/petta_gradual_boundary_chain.metta \
+		>"$$gradual_out" 2>"$$gradual_err"; \
+	cmp -s "$$static_out" "$$gradual_out"; \
+	grep -Fqx 'runtime-counter petta-typecheck-declaration-admission-attempt 1' \
+		"$$gradual_err"; \
+	grep -Fqx 'runtime-counter petta-typecheck-declaration-admission-accepted 1' \
+		"$$gradual_err"; \
+	grep -Fqx 'runtime-counter petta-typecheck-boundary-entry 1001' \
+		"$$gradual_err"; \
+	grep -Eq '^runtime-counter petta-type-obligation-cache-hit [1-9][0-9]*$$' \
+		"$$gradual_err"; \
+	grep -Eq '^runtime-counter petta-type-obligation-cache-miss [1-9][0-9]*$$' \
+		"$$gradual_err"; \
+	echo 'PASS: one-time PeTTa NIK admission leaves the static interior free while the gradual control pays 1001 boundaries'
+else
+	@echo 'INFO: PeTTa NIK admission controls require runtime stats; re-running with ENABLE_RUNTIME_STATS=1'
+	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 $@
+endif
+
+test-petta-nik-typed-chaining:
+ifeq ($(ENABLE_RUNTIME_STATS),1)
+	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 $(BIN)
+	@set -e; \
+	optimized_out=runtime/petta-nik-typed-chaining.out; \
+	optimized_err=runtime/petta-nik-typed-chaining.err; \
+	reference_out=runtime/petta-nik-typed-chaining-reference.out; \
+	reference_err=runtime/petta-nik-typed-chaining-reference.err; \
+	CETTA_PETTA_SEARCH_MACHINE=1 CETTA_PETTA_MACHINE_STATS=1 \
+		$(CETTA_BIN_INVOKE) --emit-runtime-stats --lang petta \
+		--profile typecheck-v2 \
+		benchmarks/nik/petta_typed_chaining.metta \
+		>"$$optimized_out" 2>"$$optimized_err"; \
+	cmp -s benchmarks/nik/petta_typed_chaining.expected \
+		"$$optimized_out"; \
+	CETTA_PETTA_SEARCH_MACHINE=1 CETTA_PETTA_MACHINE_STATS=1 \
+		CETTA_NIK_TYPED_APPLICABILITY=0 \
+		$(CETTA_BIN_INVOKE) --emit-runtime-stats --lang petta \
+		--profile typecheck-v2 \
+		benchmarks/nik/petta_typed_chaining.metta \
+		>"$$reference_out" 2>"$$reference_err"; \
+	cmp -s "$$optimized_out" "$$reference_out"; \
+	grep -Fqx 'runtime-counter petta-typed-dispatch-signature-refuted 300000' \
+		"$$optimized_err"; \
+	grep -Fqx 'runtime-counter petta-typed-dispatch-signature-refuted 0' \
+		"$$reference_err"; \
+	optimized_transitions=$$(sed -n \
+		's/^PETTA_MACHINE_STATS transitions=\([0-9][0-9]*\) .*/\1/p' \
+		"$$optimized_err"); \
+	reference_transitions=$$(sed -n \
+		's/^PETTA_MACHINE_STATS transitions=\([0-9][0-9]*\) .*/\1/p' \
+		"$$reference_err"); \
+	test -n "$$optimized_transitions"; \
+	test -n "$$reference_transitions"; \
+	test "$$reference_transitions" -ge \
+		$$((optimized_transitions * 3)); \
+	echo "PASS: PeTTa direct typing removes 300000 recursive overload branches ($$optimized_transitions versus $$reference_transitions transitions)"
+else
+	@echo 'INFO: PeTTa typed-chaining control requires runtime stats; re-running with ENABLE_RUNTIME_STATS=1'
+	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 $@
+endif
+
+test-petta-nik-typed-space-query:
+ifeq ($(ENABLE_RUNTIME_STATS),1)
+	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 $(BIN)
+	@set -e; \
+	indexed_out=runtime/petta-nik-typed-space-query.out; \
+	indexed_err=runtime/petta-nik-typed-space-query.err; \
+	scan_out=runtime/petta-nik-typed-space-query-scan.out; \
+	scan_err=runtime/petta-nik-typed-space-query-scan.err; \
+	$(CETTA_BIN_INVOKE) --emit-runtime-stats --lang petta \
+		--profile typecheck-v2 \
+		benchmarks/nik/petta_type_space_query.metta \
+		>"$$indexed_out" 2>"$$indexed_err"; \
+	cmp -s benchmarks/nik/petta_type_space_query.expected \
+		"$$indexed_out"; \
+	CETTA_TYPE_SPACE_INDEX=0 \
+		$(CETTA_BIN_INVOKE) --emit-runtime-stats --lang petta \
+		--profile typecheck-v2 \
+		benchmarks/nik/petta_type_space_query.metta \
+		>"$$scan_out" 2>"$$scan_err"; \
+	cmp -s "$$indexed_out" "$$scan_out"; \
+	grep -Eq '^runtime-counter declared-type-indexed-lookup [1-9][0-9]*$$' \
+		"$$indexed_err"; \
+	grep -Fqx 'runtime-counter declared-type-full-scan-row 0' \
+		"$$indexed_err"; \
+	grep -Fqx 'runtime-counter declared-type-indexed-lookup 0' \
+		"$$scan_err"; \
+	indexed_rows=$$(sed -n \
+		's/^runtime-counter declared-type-indexed-row \([0-9][0-9]*\)$$/\1/p' \
+		"$$indexed_err"); \
+	scan_rows=$$(sed -n \
+		's/^runtime-counter declared-type-full-scan-row \([0-9][0-9]*\)$$/\1/p' \
+		"$$scan_err"); \
+	test -n "$$indexed_rows"; \
+	test -n "$$scan_rows"; \
+	test "$$scan_rows" -gt $$((indexed_rows * 1000)); \
+	echo "PASS: PeTTa typed-space indexing preserves answers while reducing declaration rows by over 1000x ($$indexed_rows versus $$scan_rows)"
+else
+	@echo 'INFO: PeTTa typed-space control requires runtime stats; re-running with ENABLE_RUNTIME_STATS=1'
+	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 $@
 endif
 
 test-petta-typecheck-v2-omission:
@@ -14183,8 +14524,9 @@ test-he-compat-catalog-guards:
 .PHONY: test-he-type-langdef-source-binding-v1
 test-he-type-langdef-source-binding-v1:
 	@python3 tools/gslt2parse_schema_v1.py \
+		--require-nik-authority-frame \
 		langdef/he/generated/typing_consistency_core_v1.metta >/dev/null
-	@mkdir -p $(BOOTSTRAP_TMPDIR); \
+	@set -eu; mkdir -p $(BOOTSTRAP_TMPDIR); \
 	tmpdir=$$(mktemp -d "$(BOOTSTRAP_TMPDIR)/he-type-binding.XXXXXX"); \
 	trap 'rm -f "$$tmpdir/binding.h" "$$tmpdir/binding.c" "$$tmpdir/binding-normalized.c"; rmdir "$$tmpdir"' EXIT INT TERM; \
 	python3 tools/generate_nik_direct_source_binding_v1.py \
@@ -14205,11 +14547,132 @@ test-he-type-langdef-source-binding-v1:
 	rm -f "$$tmpdir/binding-normalized.c"; \
 	echo "PASS: HE type langdef source binding is valid and deterministic"
 
+.PHONY: test-he-profiled-type-langdef-source-binding-v1
+test-he-profiled-type-langdef-source-binding-v1:
+	@python3 tools/gslt2parse_schema_v1.py \
+		--require-nik-authority-frame \
+		langdef/he/generated/profiled_type_inference_core_v1.metta >/dev/null
+	@set -eu; mkdir -p $(BOOTSTRAP_TMPDIR); \
+	tmpdir=$$(mktemp -d "$(BOOTSTRAP_TMPDIR)/he-profiled-type-binding.XXXXXX"); \
+	trap 'rm -f "$$tmpdir/binding.h" "$$tmpdir/binding.c" "$$tmpdir/binding-normalized.c"; rmdir "$$tmpdir"' EXIT INT TERM; \
+	python3 tools/generate_nik_direct_source_binding_v1.py \
+		--presentation langdef/he/generated/profiled_type_inference_core_v1.metta \
+		--symbol-prefix he_profiled_type_inference_core \
+		--authority-symbol cetta_he_profiled_type_inference_direct_authority_v1 \
+		--authority-header he_typing_authority.h \
+		--semantic-scope he.profiled-type-inference.ground-declaration-application-core \
+		--coverage fragment \
+		--header-output "$$tmpdir/binding.h" \
+		--source-output "$$tmpdir/binding.c"; \
+	sed 's#generated/binding.h#generated/he_profiled_type_inference_core_source_binding_v1.generated.h#' \
+		"$$tmpdir/binding.c" > "$$tmpdir/binding-normalized.c"; \
+	cmp -s "$$tmpdir/binding.h" \
+		src/generated/he_profiled_type_inference_core_source_binding_v1.generated.h; \
+	cmp -s "$$tmpdir/binding-normalized.c" \
+		src/generated/he_profiled_type_inference_core_source_binding_v1.generated.c; \
+	rm -f "$$tmpdir/binding-normalized.c"; \
+	echo "PASS: HE profiled type langdef source binding is valid and deterministic"
+
+.PHONY: test-he-closed-ground-langdef-source-binding-v1
+test-he-closed-ground-langdef-source-binding-v1:
+	@python3 tools/gslt2parse_schema_v1.py \
+		--require-nik-authority-frame \
+		langdef/he/generated/typing_closed_ground_core_v1.metta >/dev/null
+	@set -eu; mkdir -p $(BOOTSTRAP_TMPDIR); \
+	tmpdir=$$(mktemp -d "$(BOOTSTRAP_TMPDIR)/he-closed-ground-binding.XXXXXX"); \
+	trap 'rm -f "$$tmpdir/binding.h" "$$tmpdir/binding.c" "$$tmpdir/binding-normalized.c"; rmdir "$$tmpdir"' EXIT INT TERM; \
+	python3 tools/generate_nik_direct_source_binding_v1.py \
+		--presentation langdef/he/generated/typing_closed_ground_core_v1.metta \
+		--symbol-prefix he_typing_closed_ground_core \
+		--authority-symbol cetta_he_typing_core_direct_authority_v1 \
+		--authority-header he_typing_authority.h \
+		--semantic-scope he.typing.closed-ground-decision-core \
+		--coverage fragment \
+		--header-output "$$tmpdir/binding.h" \
+		--source-output "$$tmpdir/binding.c"; \
+	sed 's#generated/binding.h#generated/he_typing_closed_ground_core_source_binding_v1.generated.h#' \
+		"$$tmpdir/binding.c" > "$$tmpdir/binding-normalized.c"; \
+	cmp -s "$$tmpdir/binding.h" \
+		src/generated/he_typing_closed_ground_core_source_binding_v1.generated.h; \
+	cmp -s "$$tmpdir/binding-normalized.c" \
+		src/generated/he_typing_closed_ground_core_source_binding_v1.generated.c; \
+	rm -f "$$tmpdir/binding-normalized.c"; \
+	echo "PASS: HE closed-ground judgment langdef source binding is valid and deterministic"
+
 .PHONY: test-he-typing-direct-authority
-test-he-typing-direct-authority: $(HE_TYPING_DIRECT_TEST_BIN) test-he-type-langdef-source-binding-v1
+test-he-typing-direct-authority: $(HE_TYPING_DIRECT_TEST_BIN) test-he-type-langdef-source-binding-v1 test-he-profiled-type-langdef-source-binding-v1 test-he-closed-ground-langdef-source-binding-v1
 	@./$(HE_TYPING_DIRECT_TEST_BIN)
 
-test-he-contract-suite: $(BIN) test-he-compat-catalog-guards test-he-typing-direct-authority
+.PHONY: test-he-nik-typed-applicability-pruning
+test-he-nik-typed-applicability-pruning:
+ifeq ($(ENABLE_RUNTIME_STATS),1)
+	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 $(BIN)
+	@set -e; \
+	positive_out=runtime/he-nik-typed-applicability-positive.out; \
+	positive_err=runtime/he-nik-typed-applicability-positive.err; \
+	reference_out=runtime/he-nik-typed-applicability-reference.out; \
+	reference_err=runtime/he-nik-typed-applicability-reference.err; \
+	soup_out=runtime/he-nik-typed-applicability-soup.out; \
+	soup_err=runtime/he-nik-typed-applicability-soup.err; \
+	soup_reference_out=runtime/he-nik-typed-applicability-soup-reference.out; \
+	soup_reference_err=runtime/he-nik-typed-applicability-soup-reference.err; \
+	control_out=runtime/he-nik-typed-applicability-control.out; \
+	control_err=runtime/he-nik-typed-applicability-control.err; \
+	monomorphic_out=runtime/he-nik-typed-applicability-monomorphic.out; \
+	monomorphic_err=runtime/he-nik-typed-applicability-monomorphic.err; \
+	$(CETTA_BIN_INVOKE) --emit-runtime-stats --lang he \
+		tests/he/nik_typed_applicability_pruning.metta \
+		>"$$positive_out" 2>"$$positive_err"; \
+	cmp -s tests/he/nik_typed_applicability_pruning.expected \
+		"$$positive_out"; \
+	grep -Eq '^runtime-counter nik-typed-applicability-candidate-refuted [1-9][0-9]*$$' \
+		"$$positive_err"; \
+	CETTA_NIK_TYPED_APPLICABILITY=0 \
+		$(CETTA_BIN_INVOKE) --emit-runtime-stats --lang he \
+		tests/he/nik_typed_applicability_pruning.metta \
+		>"$$reference_out" 2>"$$reference_err"; \
+	cmp -s "$$positive_out" "$$reference_out"; \
+	grep -Fqx 'runtime-counter nik-typed-applicability-candidate-refuted 0' \
+		"$$reference_err"; \
+	$(CETTA_BIN_INVOKE) --emit-runtime-stats --lang he \
+		benchmarks/nik/he_typed_dispatch_soup.metta \
+		>"$$soup_out" 2>"$$soup_err"; \
+	cmp -s benchmarks/nik/he_typed_dispatch_soup.expected \
+		"$$soup_out"; \
+	grep -Fqx 'runtime-counter nik-typed-applicability-candidate-refuted 320000' \
+		"$$soup_err"; \
+	CETTA_NIK_TYPED_APPLICABILITY=0 \
+		$(CETTA_BIN_INVOKE) --emit-runtime-stats --lang he \
+		benchmarks/nik/he_typed_dispatch_soup.metta \
+		>"$$soup_reference_out" 2>"$$soup_reference_err"; \
+	cmp -s "$$soup_out" "$$soup_reference_out"; \
+	grep -Fqx 'runtime-counter nik-typed-applicability-candidate-refuted 0' \
+		"$$soup_reference_err"; \
+	$(CETTA_BIN_INVOKE) --emit-runtime-stats --lang he \
+		tests/he/nik_typed_applicability_monomorphic.metta \
+		>"$$control_out" 2>"$$control_err"; \
+	cmp -s tests/he/nik_typed_applicability_monomorphic.expected \
+		"$$control_out"; \
+	grep -Fqx 'runtime-counter nik-typed-applicability-candidate-refuted 0' \
+		"$$control_err"; \
+	grep -Fqx 'runtime-counter nik-typed-applicability-candidate-tested 0' \
+		"$$control_err"; \
+	$(CETTA_BIN_INVOKE) --emit-runtime-stats --lang he \
+		benchmarks/nik/he_typed_dispatch_monomorphic.metta \
+		>"$$monomorphic_out" 2>"$$monomorphic_err"; \
+	cmp -s benchmarks/nik/he_typed_dispatch_monomorphic.expected \
+		"$$monomorphic_out"; \
+	grep -Fqx 'runtime-counter nik-typed-applicability-candidate-refuted 0' \
+		"$$monomorphic_err"; \
+	grep -Fqx 'runtime-counter nik-typed-applicability-candidate-tested 0' \
+		"$$monomorphic_err"; \
+	echo 'PASS: HE direct typing safely eliminates 320000 closed refuted overload candidates'
+else
+	@echo 'INFO: HE typed-applicability control requires runtime stats; re-running with ENABLE_RUNTIME_STATS=1'
+	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 $@
+endif
+
+test-he-contract-suite: $(BIN) test-he-compat-catalog-guards test-he-typing-direct-authority test-he-nik-typed-applicability-pruning
 	@pass=0; fail=0; \
 	files=($(HE_CONTRACT_GENERATED_DIR)/*.metta); \
 	if [ ! -e "$${files[0]}" ]; then \
@@ -19945,6 +20408,48 @@ refresh-he-matrices:
 	@python3 -m json.tool specs/he_runtime_impl_matrix.json > /dev/null
 	@python3 -m json.tool specs/he_runtime_3layer_matrix.json > /dev/null
 	@echo "refreshed HE runtime parity matrices"
+
+.PHONY: test-nik-type-authority-frames-v1
+test-nik-type-authority-frames-v1:
+	@python3 tools/test_nik_type_authority_frames_v1.py
+
+NIK_TYPE_LANGDEFS_V1 = \
+	langdef/he/generated/typing_consistency_core_v1.metta \
+	langdef/he/generated/profiled_type_inference_core_v1.metta \
+	langdef/he/generated/typing_closed_ground_core_v1.metta \
+	langdef/petta/generated/typecheck_v2_guard_v1.metta \
+	langdef/petta/generated/typecheck_v2_boundary_core_v1.metta \
+	langdef/prime/generated/closed_formation_v1.metta \
+	langdef/prime/generated/native_ground_judgments_v1.metta \
+	langdef/prime/generated/elaborated_dependent_formation_core_v1.metta \
+	langdef/prime/generated/typed_publication_core_v1.metta
+
+.PHONY: test-nik-type-langdef-native-parity-v1
+test-nik-type-langdef-native-parity-v1: $(GSLT2PARSE_SCHEMA_V1_NATIVE_BIN)
+	@set -eu; \
+	digest=$$(python3 tools/gslt2parse_schema_v1.py \
+		--require-nik-authority-frame --digest-only \
+		$(NIK_TYPE_LANGDEFS_V1)); \
+	"$(GSLT2PARSE_SCHEMA_V1_NATIVE_BIN)" "$$digest" \
+		$(NIK_TYPE_LANGDEFS_V1)
+
+.PHONY: test-nik-type-langdef-composition-v1
+test-nik-type-langdef-composition-v1: test-nik-type-authority-frames-v1 test-nik-type-langdef-native-parity-v1
+	@python3 tools/gslt2parse_schema_v1.py \
+		--require-nik-authority-frame \
+		$(NIK_TYPE_LANGDEFS_V1) \
+		>/dev/null
+	@echo "PASS: HE, PeTTa, and Prime type presentations compose"
+
+.PHONY: test-nik-type-info-plumbing-v1
+test-nik-type-info-plumbing-v1: \
+	test-nik-type-langdef-composition-v1 \
+	test-he-contract-suite \
+	test-petta-search-machine \
+	test-petta-typecheck-v2 \
+	test-prime \
+	test-prime-need-algebra
+	@echo "PASS: direct NIK type info-plumbing qualification"
 
 .PHONY: test-gslt2parse-schema-v1 test-gslt2parse-schema-v1-native test-gslt2parse-c-horn-v1-native test-gslt2parse-c-horn-v1-differential test-gslt2parse-parser-action-bytecode-v1 test-gslt2parse-lookahead-semantics-v1 test-gslt2parse-parser-pack-guard-compiler-v1 test-gslt2parse-parser-pack-guard-regular-v1 test-gslt2parse-parser-pack-lr1-v1 test-gslt2parse-parser-pack-guard-plan-he-v1 test-gslt2parse-parser-pack-guard-plan-prime-v1 test-gslt2parse-parser-pack-abi-v1-native test-gslt2parse-parser-pack-abi-v1-matrix test-gslt2parse-parser-term-projection-v1-native test-gslt2parse-parser-atom-projection-v1-native test-gslt2parse-parser-atom-projection-closure-v1 test-gslt2parse-semantic-mask-span-compiler-v1 test-gslt2parse-parser-pack-gll-v1-native test-gslt2parse-parser-pack-gll-v1-matrix test-gslt2parse-regular-span-dfa-v1-native test-gslt2parse-regular-span-dfa-v1-matrix test-term-universe-backend-add-abi bench-space-scale-ladder
 .PHONY: list bench-index FORCE all core python mork main pathmap full profile clean bridge-setup doctor-bridge doctor-gmp test-bigint-no-gmp-fallback test-rational-no-gmp-fallback test test-light test-correctness test-heavy test-heavy-golden list-heavy-diagnostics probe-heavy-diagnostics test-correctness-all test-manifest test-manifest-check test-manifest-sync test-runtime-stats test-runtime-stats-lane test-runtime-stats-metta-suite test-backends test-he-contract-suite refresh-he-contract-tests refresh-he-compat-catalog test-he-compat-semantic-suite probe-he-compat-tier2 probe-he-compat-runnable-corpus test-mork-lane test-mork-lane-core test-mork-basic-pathmap-guard test-mork-runtime-stats-lane test-mork-runtime-stats-isolation test-closed-stream-fastpath test-closed-stream-runtime-stats test-parse-depth-guard test-stdlib-growth-memory-regression test-asan test-asan-main test-asan-mork test-pathmap-lane test-pathmap-lane-body test-pathmap-runtime-stats-lane test-pathmap-runtime-stats-lane-body test-mm2-mork-program-space test-mm2-exec-basic test-mm2-kiss-suite test-mm2-conformance-var-binding test-mm2-conformance-lean-suite test-mm2-sink-suite test-pathmap-bridge-v2 test-pathmap-long-string-regression test-pathmap-match-chain test-mork-lib-pathmap test-mork-open-act test-pretty-vars-flags test-pretty-namespaces-flags test-help-flags test-rhocalc test-lib-parse-oracles test-rhocalc-lib-parse-reference test-lib-parse-shared-cert test-lib-parse-slr-prepared test-lib-parse-gll-utf8-forest test-lib-parse-native-gparse test-lib-parse-generalized-native-integration test-lib-parse-generalized-cli test-lib-parse-generalized test-lib-parse-bounded test-rhocalc-runtime-stats test-variant-shape-roundtrip test-rhometta-payload-map-capacity-c test-space-term-universe-membership test-term-universe-store-abi test-pathmap-backend-primary-destructive-abi test-pathmap-backend-primary-replace-abi test-pathmap-typed-query-abi test-fallback-eval-session test-import-modes bench bench-light bench-correctness bench-performance-light bench-optional-bridge-light bench-capacity bench-heavy bench-prime-light bench-prime-heavy prepare-bio-eqtl-act bench-bio-eqtl-act-modes prepare-bio-1m-act bench-bio-1m-act-attach bench-bio-1m-act-modes test-duplicate-multiplicity-backends oracle-refresh bench-d3 bench-d3-backends bench-d3-nodup bench-d3-nodup-backends probe-d3-nodup probe-d3-nodup-backends probe-fc-native-memory bench-conj-backends bench-conj12-backends bench-dup-conj-backends bench-d4 bench-d4-nodup bench-d4-backends bench-d4-nodup-backends bench-rho-fanout bench-rho-comm-frontier bench-rho-comm-contention bench-rho-pipeline-forward bench-rho-route-synthesis bench-rho-demand-index bench-rho-indexed-demand bench-rho-route-policy bench-rho-certificate-quorum bench-compare-petta bench-mork-add-interface bench-mork-add-interface-timing bench-mork-bridge-add bench-mork-bridge-query bench-mork-bridge-scalar-cursor bench-mork-bridge-space-ops bench-answer-ref-demand bench-space-backend-matrix bench-space-transfer-matrix bench-ffi-friction-light bench-ffi-friction-basic bench-ffi-friction-stress bench-ffi-friction-heavy bench-closed-stream-fastpath bench-weird-audit tail-recursion-check compile-test refresh-he-matrices promote-runtime perf-list perf-show-baselines perf-capacity-tu perf-bench-tu perf-compare-tu probe-epoch-runtime-witness

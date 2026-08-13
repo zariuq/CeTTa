@@ -4,10 +4,10 @@
 #include "petta_semantics.h"
 #include "match.h"
 #include "parser.h"
+#include "stats.h"
 #include "symbol.h"
 
 #include <stdarg.h>
-#include <stdatomic.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -8199,45 +8199,53 @@ bool petta_typecheck_declaration_block_under_authority(
         policy, false, result);
 }
 
-static bool petta_typecheck_direct_authority_candidate_selected(void) {
-    /* Qualification selection is process configuration, not a live semantic
-     * input.  Read it once so source blocks do not repeatedly scan the
-     * environment while the parallel realization is being measured. */
-    static atomic_int cached = ATOMIC_VAR_INIT(-1);
-    int selected = atomic_load_explicit(&cached, memory_order_relaxed);
-    if (selected >= 0)
-        return selected != 0;
-    const char *value = getenv("CETTA_QUALIFY_PETTA_NIK_DIRECT");
-    selected = value && value[0] != '\0' &&
-               strcmp(value, "0") != 0 &&
-               strcmp(value, "false") != 0 &&
-               strcmp(value, "off") != 0;
-    atomic_store_explicit(&cached, selected, memory_order_relaxed);
-    return selected != 0;
-}
-
 bool petta_typecheck_declaration_block_selected(
     PettaProgram *program, Space *space, Registry *registry,
     Atom *const *forms, size_t form_count,
     PettaTypecheckPolicy policy, PettaTypecheckBlockResult *result) {
-    return petta_typecheck_direct_authority_candidate_selected()
-        ? petta_typecheck_declaration_block_under_authority(
-              &petta_typecheck_v2_direct_authority_v1,
-              program, space, registry, forms, form_count,
-              policy, result)
-        : petta_typecheck_declaration_block(
-              program, space, registry, forms, form_count,
-              policy, result);
+    return petta_typecheck_declaration_block_under_authority(
+        &petta_typecheck_v2_direct_authority_v1,
+        program, space, registry, forms, form_count,
+        policy, result);
+}
+
+bool petta_typecheck_declaration_admission_under_authority(
+    const CettaNikDirectAuthorityV1 *authority,
+    PettaProgram *program, Space *space, Registry *registry,
+    Atom *const *forms, size_t form_count,
+    PettaTypecheckPolicy policy, PettaTypecheckBlockResult *result) {
+    cetta_runtime_stats_inc(
+        CETTA_RUNTIME_COUNTER_PETTA_TYPECHECK_DECLARATION_ADMISSION_ATTEMPT);
+    bool judged = petta_typecheck_declaration_block_under_authority(
+        authority, program, space, registry, forms, form_count,
+        policy, result);
+    if (!judged || !result) {
+        cetta_runtime_stats_inc(
+            CETTA_RUNTIME_COUNTER_PETTA_TYPECHECK_DECLARATION_ADMISSION_FAULT);
+    } else if (result->verdict == PETTA_TYPECHECK_REFUTED) {
+        cetta_runtime_stats_inc(
+            CETTA_RUNTIME_COUNTER_PETTA_TYPECHECK_DECLARATION_ADMISSION_REFUTED);
+    } else {
+        cetta_runtime_stats_inc(
+            CETTA_RUNTIME_COUNTER_PETTA_TYPECHECK_DECLARATION_ADMISSION_ACCEPTED);
+    }
+    return judged;
+}
+
+bool petta_typecheck_declaration_admission_selected(
+    PettaProgram *program, Space *space, Registry *registry,
+    Atom *const *forms, size_t form_count,
+    PettaTypecheckPolicy policy, PettaTypecheckBlockResult *result) {
+    return petta_typecheck_declaration_admission_under_authority(
+        &petta_typecheck_v2_direct_authority_v1,
+        program, space, registry, forms, form_count,
+        policy, result);
 }
 
 void petta_typecheck_inferred_signatures_rebase_selected(
     PettaProgram *program, Space *space, PettaTypecheckPolicy policy) {
     if (!program || !space)
         return;
-    if (!petta_typecheck_direct_authority_candidate_selected()) {
-        petta_program_inferred_signatures_rebase(program, space);
-        return;
-    }
     CettaNikDirectAuthorityStampV1 stamp;
     if (cetta_nik_direct_authority_v1_stamp(
             &petta_typecheck_v2_direct_authority_v1,
@@ -8827,14 +8835,10 @@ bool petta_typecheck_program_mutation_selected(
     Space *target_space, Atom *proposed,
     PettaTypecheckMutation mutation,
     PettaTypecheckPolicy policy, PettaTypecheckBlockResult *result) {
-    return petta_typecheck_direct_authority_candidate_selected()
-        ? petta_typecheck_program_mutation_under_authority(
-              &petta_typecheck_v2_direct_authority_v1,
-              program, program_space, registry, target_space,
-              proposed, mutation, policy, result)
-        : petta_typecheck_program_mutation(
-              program, program_space, registry, target_space,
-              proposed, mutation, policy, result);
+    return petta_typecheck_program_mutation_under_authority(
+        &petta_typecheck_v2_direct_authority_v1,
+        program, program_space, registry, target_space,
+        proposed, mutation, policy, result);
 }
 
 Atom *petta_typecheck_error_atom(
