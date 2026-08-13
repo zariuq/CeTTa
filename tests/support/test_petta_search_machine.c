@@ -1,4 +1,5 @@
 #include "eval.h"
+#include "generated/petta_typecheck_v2_boundary_core_source_binding_v1.generated.h"
 #include "generated/petta_typecheck_v2_source_binding_v1.generated.h"
 #include "library.h"
 #include "parser.h"
@@ -3283,6 +3284,133 @@ static void test_direct_source_binding_contract(void) {
     invalid = *binding;
     invalid.authority = NULL;
     assert(!cetta_nik_direct_source_binding_v1_is_valid(&invalid));
+
+    const CettaNikDirectSourceBindingV1 *boundary_binding =
+        &petta_typecheck_v2_boundary_core_source_binding_v1;
+    assert(cetta_nik_direct_source_binding_v1_is_valid(
+        boundary_binding));
+    assert(boundary_binding->authority == binding->authority);
+    assert(strcmp(
+        boundary_binding->presentation_id,
+        "petta-typecheck-v2-boundary-core-v1") == 0);
+    assert(strcmp(
+        boundary_binding->semantic_scope,
+        "petta.typecheck-v2.direct-boundary-requirement-core") == 0);
+    assert(boundary_binding->coverage ==
+        CETTA_NIK_DIRECT_SOURCE_AUTHORED_FRAGMENT);
+    invalid = *boundary_binding;
+    invalid.presentation_id = "";
+    assert(!cetta_nik_direct_source_binding_v1_is_valid(&invalid));
+}
+
+static void add_boundary_signature(
+    Space *space, Arena *arena, const char *head) {
+    char source[256];
+    int length = snprintf(
+        source, sizeof(source),
+        "(: %s (-[det]-> (List Atom) Atom))", head);
+    assert(length > 0 && (size_t)length < sizeof(source));
+    Atom *signature = parse_one(arena, source);
+    assert(signature);
+    space_add(space, signature);
+}
+
+static PettaTypecheckBoundaryRequirement boundary_requirement_for(
+    PettaProgram *program, Space *space, const char *head) {
+    PettaTypecheckBoundaryRequirement requirement =
+        PETTA_TYPECHECK_BOUNDARY_NONE;
+    SymbolId head_id = symbol_intern_cstr(g_symbols, head);
+    assert(head_id != SYMBOL_ID_NONE);
+    assert(petta_typecheck_call_boundary_requirement(
+        program, space, head_id, 1u, 0u, &requirement));
+    return requirement;
+}
+
+static void test_boundary_requirement_calculus(
+    TermUniverse *universe, Arena *arena) {
+    PettaProgram *program = petta_program_new();
+    assert(program);
+    Space space;
+    space_init_with_universe(&space, universe);
+
+    add_boundary_signature(&space, arena, "boundary-list");
+    add_compiled_program_clause(
+        program, &space, arena,
+        "(= (boundary-list $items) (length $items))");
+    assert(boundary_requirement_for(
+               program, &space, "boundary-list") ==
+           PETTA_TYPECHECK_BOUNDARY_PROPER_LIST);
+
+    add_boundary_signature(&space, arena, "boundary-bool");
+    add_compiled_program_clause(
+        program, &space, arena,
+        "(= (boundary-bool $value) (not $value))");
+    assert(boundary_requirement_for(
+               program, &space, "boundary-bool") ==
+           PETTA_TYPECHECK_BOUNDARY_NONVAR);
+
+    add_compiled_program_clause(
+        program, &space, arena,
+        "(= (boundary-car-open $items) (car-atom $items))");
+    assert(boundary_requirement_for(
+               program, &space, "boundary-car-open") ==
+           PETTA_TYPECHECK_BOUNDARY_NONEMPTY_EXPRESSION);
+
+    add_compiled_program_clause(
+        program, &space, arena,
+        "(= (boundary-list-open $items) (length $items))");
+    assert(boundary_requirement_for(
+               program, &space, "boundary-list-open") ==
+           PETTA_TYPECHECK_BOUNDARY_NONE);
+
+    add_boundary_signature(&space, arena, "boundary-guarded-list");
+    add_compiled_program_clause(
+        program, &space, arena,
+        "(= (boundary-guarded-list $items)"
+        "   (if (is-expr $items) (length $items) fallback))");
+    assert(boundary_requirement_for(
+               program, &space, "boundary-guarded-list") ==
+           PETTA_TYPECHECK_BOUNDARY_NONE);
+
+    add_boundary_signature(&space, arena, "boundary-guarded-car");
+    add_compiled_program_clause(
+        program, &space, arena,
+        "(= (boundary-guarded-car $items)"
+        "   (if (== $items ()) fallback (car-atom $items)))");
+    assert(boundary_requirement_for(
+               program, &space, "boundary-guarded-car") ==
+           PETTA_TYPECHECK_BOUNDARY_NONE);
+
+    add_boundary_signature(&space, arena, "boundary-joined");
+    add_compiled_program_clause(
+        program, &space, arena,
+        "(= (boundary-joined $items)"
+        "   (and $items (length $items)))");
+    assert(boundary_requirement_for(
+               program, &space, "boundary-joined") ==
+           PETTA_TYPECHECK_BOUNDARY_PROPER_LIST);
+
+    add_boundary_signature(&space, arena, "boundary-mutation");
+    add_compiled_program_clause(
+        program, &space, arena,
+        "(= (boundary-mutation $items) unchanged)");
+    assert(boundary_requirement_for(
+               program, &space, "boundary-mutation") ==
+           PETTA_TYPECHECK_BOUNDARY_NONE);
+    Atom *mutation_clause = add_compiled_program_clause(
+        program, &space, arena,
+        "(= (boundary-mutation $items) (length $items))");
+    assert(boundary_requirement_for(
+               program, &space, "boundary-mutation") ==
+           PETTA_TYPECHECK_BOUNDARY_PROPER_LIST);
+    assert(space_remove(&space, mutation_clause));
+    petta_program_note_remove_one(program, &space, mutation_clause);
+    assert(boundary_requirement_for(
+               program, &space, "boundary-mutation") ==
+           PETTA_TYPECHECK_BOUNDARY_NONE);
+
+    space_free(&space);
+    petta_program_free(program);
 }
 
 static void test_inferred_signature_authority_provenance(
@@ -3677,6 +3805,7 @@ int main(void) {
     test_analysis_capability_contract(&space, &answers);
     test_direct_authority_identity_contract();
     test_direct_source_binding_contract();
+    test_boundary_requirement_calculus(&universe, &persistent);
     test_inferred_signature_authority_provenance(
         &universe, &answers);
     test_declaration_authority_parity(&universe, &answers);

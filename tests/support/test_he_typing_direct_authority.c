@@ -1,5 +1,6 @@
 #include "eval.h"
 #include "generated/he_profiled_type_inference_core_source_binding_v1.generated.h"
+#include "generated/he_typing_closed_ground_core_source_binding_v1.generated.h"
 #include "generated/he_typing_consistency_core_source_binding_v1.generated.h"
 #include "he_typing_authority.h"
 #include "space.h"
@@ -97,6 +98,23 @@ int main(void) {
     assert(profile_source->coverage ==
         CETTA_NIK_DIRECT_SOURCE_AUTHORED_FRAGMENT);
 
+    const CettaNikDirectSourceBindingV1 *closed_ground_source =
+        &he_typing_closed_ground_core_source_binding_v1;
+    assert(cetta_nik_direct_source_binding_v1_is_valid(
+        closed_ground_source));
+    assert(closed_ground_source->authority == core_service->authority);
+    assert(closed_ground_source->authority != profile_service->authority);
+    assert(strcmp(
+        closed_ground_source->schema_id, "finite-horn-gslt-v1") == 0);
+    assert(strcmp(
+        closed_ground_source->presentation_id,
+        "he-typing-closed-ground-core-v1") == 0);
+    assert(strcmp(
+        closed_ground_source->semantic_scope,
+        "he.typing.closed-ground-decision-core") == 0);
+    assert(closed_ground_source->coverage ==
+        CETTA_NIK_DIRECT_SOURCE_AUTHORED_FRAGMENT);
+
     CettaNikDirectSourceBindingV1 invalid_source = *source;
     invalid_source.semantic_scope = "";
     assert(!cetta_nik_direct_source_binding_v1_is_valid(&invalid_source));
@@ -106,16 +124,76 @@ int main(void) {
     invalid_source = *profile_source;
     invalid_source.coverage = (CettaNikDirectSourceCoverageV1)0;
     assert(!cetta_nik_direct_source_binding_v1_is_valid(&invalid_source));
+    invalid_source = *closed_ground_source;
+    invalid_source.presentation_id = "";
+    assert(!cetta_nik_direct_source_binding_v1_is_valid(&invalid_source));
 
     Atom *number = atom_symbol(&persistent, "Number");
     Atom *string = atom_symbol(&persistent, "String");
-    assert(number && string);
+    Atom *dynamic = atom_symbol(&persistent, "%Undefined%");
+    assert(number && string && dynamic);
     assert(core_service->classify_consistency(number, number, 64u) ==
         CETTA_HE_EDGE_EXACT);
     assert(core_service->classify_consistency(number, string, 64u) ==
         he_typing_classify_consistency(number, string, 64u));
     assert(core_service->classify_consistency(number, string, 64u) ==
         CETTA_HE_EDGE_NONE);
+
+    Atom *list_number = atom_expr2(
+        &persistent, atom_symbol(&persistent, "List"), number);
+    Atom *normalized = NULL;
+    CettaHeTypingBudget direct_budget;
+    he_typing_budget_init(&direct_budget, 0u);
+    assert(core_service->normalize_type(
+               &persistent, &space, list_number,
+               &direct_budget, &normalized) ==
+           CETTA_HE_NORMALIZE_COMPLETE);
+    assert(normalized == list_number);
+    assert(direct_budget.work_steps_observed > 0u);
+
+    Atom *refinement_detail = NULL;
+    he_typing_budget_init_unbounded(&direct_budget);
+    assert(core_service->check_refinement(
+               &persistent, &space, list_number,
+               &direct_budget, &refinement_detail) ==
+           CETTA_HE_REFINEMENT_VALID);
+    assert(refinement_detail == NULL);
+
+    Atom *typing_detail = NULL;
+    CettaHeTypingEdge typing_edge = CETTA_HE_EDGE_NONE;
+    he_typing_budget_init_unbounded(&direct_budget);
+    assert(core_service->check_term(
+               &persistent, &space, atom_int(&persistent, 7), number,
+               &direct_budget, false, &typing_edge, &typing_detail) ==
+           CETTA_HE_CHECK_ESTABLISHED);
+    assert(typing_edge == CETTA_HE_EDGE_EXACT);
+
+    typing_detail = NULL;
+    typing_edge = CETTA_HE_EDGE_UNKNOWN;
+    he_typing_budget_init_unbounded(&direct_budget);
+    assert(core_service->check_term(
+               &persistent, &space, atom_int(&persistent, 7), string,
+               &direct_budget, false, &typing_edge, &typing_detail) ==
+           CETTA_HE_CHECK_REFUTED);
+    assert(typing_edge == CETTA_HE_EDGE_NONE);
+
+    typing_detail = NULL;
+    typing_edge = CETTA_HE_EDGE_NONE;
+    he_typing_budget_init_unbounded(&direct_budget);
+    assert(core_service->check_term(
+               &persistent, &space, atom_int(&persistent, 7), dynamic,
+               &direct_budget, false, &typing_edge, &typing_detail) ==
+           CETTA_HE_CHECK_ESTABLISHED);
+    assert(typing_edge == CETTA_HE_EDGE_DYNAMIC);
+
+    typing_detail = NULL;
+    typing_edge = CETTA_HE_EDGE_NONE;
+    he_typing_budget_init_unbounded(&direct_budget);
+    assert(core_service->check_term(
+               &persistent, &space, atom_int(&persistent, 7), dynamic,
+               &direct_budget, true, &typing_edge, &typing_detail) ==
+           CETTA_HE_CHECK_UNDETERMINED);
+    assert(typing_edge == CETTA_HE_EDGE_DYNAMIC);
 
     Atom **inferred_types = NULL;
     uint32_t inferred_count = profile_service->infer(
@@ -168,31 +246,50 @@ int main(void) {
 
 #if CETTA_BUILD_WITH_RUNTIME_STATS
     Atom *cached_subject = atom_symbol(&persistent, "cached-subject");
+    Atom *cached_number_annotation = atom_expr3(
+        &persistent, atom_symbol(&persistent, ":"),
+        cached_subject, number);
+    Atom *cached_string_annotation = atom_expr3(
+        &persistent, atom_symbol(&persistent, ":"),
+        cached_subject, string);
     assert(cached_subject);
-    space_add(
-        &space,
-        atom_expr3(
-            &persistent, atom_symbol(&persistent, ":"),
-            cached_subject, number));
+    assert(cached_number_annotation && cached_string_annotation);
+    space_add(&space, cached_number_annotation);
+    eval_profiled_type_cache_free_for_current_thread();
     cetta_runtime_stats_reset();
     cetta_runtime_stats_enable();
-    inferred_types = NULL;
-    inferred_count = profile_service->infer(
-        &space, &persistent, cached_subject, &inferred_types);
-    assert(type_list_has_symbol(inferred_types, inferred_count, "Number"));
-    free(inferred_types);
-    inferred_types = NULL;
-    inferred_count = profile_service->infer(
-        &space, &persistent, cached_subject, &inferred_types);
-    assert(type_list_has_symbol(inferred_types, inferred_count, "Number"));
-    free(inferred_types);
+    const uint32_t repeated_queries = 100000u;
+    for (uint32_t query = 0u; query < repeated_queries; query++) {
+        inferred_types = NULL;
+        inferred_count = profile_service->infer(
+            &space, &persistent, cached_subject, &inferred_types);
+        assert(type_list_has_symbol(
+            inferred_types, inferred_count, "Number"));
+        free(inferred_types);
+    }
     CettaRuntimeStats cache_stats;
+    cetta_runtime_stats_snapshot(&cache_stats);
+    assert(cache_stats.counters[
+        CETTA_RUNTIME_COUNTER_HE_PROFILED_TYPE_CACHE_MISS] == 1u);
+    assert(cache_stats.counters[
+        CETTA_RUNTIME_COUNTER_HE_PROFILED_TYPE_CACHE_HIT] ==
+        repeated_queries - 1u);
+
+    assert(space_remove(&space, cached_number_annotation));
+    space_add(&space, cached_string_annotation);
+    inferred_types = NULL;
+    inferred_count = profile_service->infer(
+        &space, &persistent, cached_subject, &inferred_types);
+    assert(!type_list_has_symbol(inferred_types, inferred_count, "Number"));
+    assert(type_list_has_symbol(inferred_types, inferred_count, "String"));
+    free(inferred_types);
     cetta_runtime_stats_snapshot(&cache_stats);
     cetta_runtime_stats_disable();
     assert(cache_stats.counters[
-        CETTA_RUNTIME_COUNTER_HE_PROFILED_TYPE_CACHE_MISS] >= 1u);
+        CETTA_RUNTIME_COUNTER_HE_PROFILED_TYPE_CACHE_MISS] == 2u);
     assert(cache_stats.counters[
-        CETTA_RUNTIME_COUNTER_HE_PROFILED_TYPE_CACHE_HIT] >= 1u);
+        CETTA_RUNTIME_COUNTER_HE_PROFILED_TYPE_CACHE_HIT] ==
+        repeated_queries - 1u);
 #endif
 
     CettaNikDirectAuthorityTokenV1 pure_core_token;
