@@ -2,6 +2,7 @@
 #define CETTA_PETTA_PROGRAM_H
 
 #include "atom.h"
+#include "gslt_ground_dense_term_v1.h"
 #include "nik_direct_authority.h"
 #include "space.h"
 #include "term_universe.h"
@@ -36,14 +37,34 @@ typedef struct PettaPlanNode {
     const struct PettaPlanNode *children;
 } PettaPlanNode;
 
+typedef struct PettaCompiledClauseC0 PettaCompiledClauseC0;
+
 typedef struct {
     Atom *equation;
     const PettaPlanNode *rhs_plan;
+    /* Program-owned, proof-erased derived code for the conservative C0
+     * fragment.  The source equation remains semantic authority. */
+    const PettaCompiledClauseC0 *compiled_c0;
+    uint32_t static_variable_count;
     /* Stable only within the captured Space revision.  The executor treats
      * this as evidence provenance, never as a replacement for the equation
      * or its authoritative matcher. */
     SpaceEquationOccurrenceId occurrence;
 } PettaClauseCandidate;
+
+typedef enum {
+    PETTA_COMPILED_C0_NOT_APPLICABLE = 0,
+    PETTA_COMPILED_C0_MISMATCH,
+    PETTA_COMPILED_C0_MATCH,
+    PETTA_COMPILED_C0_CAPACITY,
+} PettaCompiledClauseC0Status;
+
+/* Execute only the C0 head/body projection.  Selection, revisions,
+ * occurrence identity, choicepoints, and rollback remain machine-owned. */
+PettaCompiledClauseC0Status petta_compiled_clause_c0_apply(
+    const PettaCompiledClauseC0 *compiled,
+    CettaGsltGroundDenseWorkspaceV1 *workspace,
+    Atom *closed_query, Arena *arena, Atom **result_out);
 
 /*
  * A revision-pinned view of one head's declaration-ordered candidates.

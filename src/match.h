@@ -337,6 +337,9 @@ uint32_t fresh_var_suffix(void);
 #ifdef CETTA_TEST_HOOKS
 /* Single-threaded boundary-test hook.  Not present in production builds. */
 void fresh_var_suffix_test_reset(uint64_t next_suffix);
+/* Drop only the derived VarId index so projection-path tests can observe
+ * whether an operation rebuilds it.  Logical bindings are unchanged. */
+void bindings_lookup_index_test_clear(Bindings *bindings);
 #endif
 
 /* Rename all variables in atom: $name → $name#suffix.
