@@ -1901,8 +1901,8 @@ bool cetta_gslt_compiled_query_with_providers_v1(
         uint32_t candidate_count = dispatched
             ? dispatch_count : bucket->rule_count;
         /* Groundness is an immutable property of this dequeued goal.  Once
-         * checked here, the intrinsically ground linear matcher may consume
-         * every descendant without repeating the certificate test. */
+         * decided here, the intrinsically ground linear matcher may consume
+         * every descendant without repeating the test. */
         bool goal_ground = !atom_has_vars(state->goals[0]);
         for (uint32_t candidate = 0u;
              healthy && !stopped && candidate < candidate_count;

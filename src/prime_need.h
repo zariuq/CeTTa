@@ -11,6 +11,10 @@
 #define CETTA_PRIME_NEED_CLOSURE_CAPTURE 0
 #endif
 
+#ifndef CETTA_BUILD_WITH_PRIME_CAUSAL_RECEIPTS
+#define CETTA_BUILD_WITH_PRIME_CAUSAL_RECEIPTS 0
+#endif
+
 /* Prime's call-by-need store is a persistent, branch-local extension order.
  *
  * A snapshot is a finite path of cell updates.  Lookup observes the newest
@@ -99,7 +103,6 @@ typedef enum {
     PRIME_NEED_RECEIPT_READ_STATE,
     PRIME_NEED_RECEIPT_WRITE_STATE,
     PRIME_NEED_RECEIPT_USE_EQUATION,
-    PRIME_NEED_RECEIPT_EVALUATE_CELL,
     PRIME_NEED_RECEIPT_RESAMPLE,
 } PrimeNeedReceiptEventKind;
 
@@ -109,32 +112,46 @@ typedef struct {
     const PrimeNeedReceiptFrame *top;
     uint64_t session_id;
     Arena *owner;
-} PrimeNeedReceipt;
+} PrimeNeedBranchState;
+
+/* A receipt has the same persistent-DAG handle representation as branch
+ * state, but it is a distinct value with a distinct session.  Branch-state
+ * events carry the operational StateCell overlay.  Receipt events are copied
+ * into the separate observer carrier only when causal evidence is enabled and
+ * requested. */
+typedef PrimeNeedBranchState PrimeNeedReceipt;
 
 /* Per-occurrence Prime contract carrier.
  *
- * A Bindings occurrence's Prime state -- the world it evaluated under and the
- * causal support it accumulated -- lives here, referenced from Bindings by an
- * 8-byte pointer that is NULL for pure-HE evaluation.  This keeps the shared
- * Bindings/HE matcher paths free of Prime-only storage: an HE match/collapse
- * row pays one null pointer, not the inlined snapshot+receipt handles.  It is
- * the named home of the Prime per-occurrence contract; today it carries the
- * world (Need snapshot) and causal receipt by value and grows the remaining
- * contract components (multiplicity, fault status, pinned space revision) in
- * place without disturbing the noninterference boundary. */
+ * A Bindings occurrence's operational state lives here, referenced from
+ * Bindings by an 8-byte pointer that is NULL for pure-HE evaluation.  The
+ * Need snapshot implements call-time choice, `branch_state` carries the
+ * transactional StateCell overlay, and `occurrence_token` preserves exact
+ * relational multiplicity.  A receipt-capable build adds a separate evidence
+ * carrier; ordinary builds contain neither its handle nor its events. */
 typedef struct {
     PrimeNeedSnapshot prime_need;
-    PrimeNeedReceipt  prime_receipt;
+    PrimeNeedBranchState branch_state;
+    /* Compact operational identity for one exact relational occurrence.
+     * It preserves duplicate derivations when causal receipt observation is
+     * absent; full rule-use evidence remains in `receipt` only when an
+     * observer requests it. */
+    uint64_t          occurrence_token;
+#if CETTA_BUILD_WITH_PRIME_CAUSAL_RECEIPTS
+    PrimeNeedReceipt  receipt;
+#endif
 } PrimeOccurrence;
 
 typedef struct {
     PrimeNeedReceiptEventKind kind;
     uint64_t event_id;
+#if CETTA_BUILD_WITH_PRIME_CAUSAL_RECEIPTS
     uint64_t need_session_id;
     uint64_t thunk_id;
     uint64_t source_occurrence_id;
     uint64_t source_argument_index;
     uint64_t rule_occurrence_id;
+#endif
     StateCell *state_cell;
     Atom *before;
     Atom *after;
@@ -234,31 +251,115 @@ Atom *prime_need_ref_restrict(Arena *arena, const Atom *atom,
                               const PrimeNeedSnapshot *snapshot,
                               uint32_t rights);
 
-void prime_need_receipt_init(PrimeNeedReceipt *receipt);
-bool prime_need_receipt_begin(Arena *owner, PrimeNeedReceipt *receipt);
-bool prime_need_receipt_present(const PrimeNeedReceipt *receipt);
-bool prime_need_receipt_is_ancestor(const PrimeNeedReceipt *ancestor,
-                                    const PrimeNeedReceipt *descendant);
-bool prime_need_receipt_compatible(const PrimeNeedReceipt *left,
-                                   const PrimeNeedReceipt *right);
-bool prime_need_receipt_merge(PrimeNeedReceipt *dst,
-                              const PrimeNeedReceipt *src);
-bool prime_need_receipt_promote(Arena *dst, PrimeNeedReceipt *receipt);
-/* Receipt analogue of `prime_need_snapshot_promote_suffix`: copy only nodes
- * owned by `forbidden`, preserving longer-lived parent DAGs. */
-bool prime_need_receipt_promote_suffix(
-    Arena *dst, const Arena *forbidden, PrimeNeedReceipt *receipt);
-bool prime_need_receipt_promote_suffix_with_session(
+void prime_need_branch_state_init(PrimeNeedBranchState *state);
+bool prime_need_branch_state_begin(
+    Arena *owner, PrimeNeedBranchState *state);
+bool prime_need_branch_state_present(
+    const PrimeNeedBranchState *state);
+static inline bool prime_need_branch_state_has_events(
+    const PrimeNeedBranchState *state) {
+    return state && state->top != NULL;
+}
+bool prime_need_branch_state_is_ancestor(
+    const PrimeNeedBranchState *ancestor,
+    const PrimeNeedBranchState *descendant);
+bool prime_need_branch_state_compatible(
+    const PrimeNeedBranchState *left,
+    const PrimeNeedBranchState *right);
+bool prime_need_branch_state_merge_nonempty(
+    PrimeNeedBranchState *dst, const PrimeNeedBranchState *src);
+static inline bool prime_need_branch_state_merge(
+    PrimeNeedBranchState *dst, const PrimeNeedBranchState *src) {
+    if (!dst)
+        return false;
+    if (!src || !prime_need_branch_state_present(src))
+        return true;
+    if (!prime_need_branch_state_has_events(src)) {
+        if (!prime_need_branch_state_present(dst)) {
+            *dst = *src;
+            return true;
+        }
+        return dst->session_id == src->session_id;
+    }
+    return prime_need_branch_state_merge_nonempty(dst, src);
+}
+bool prime_need_branch_state_promote(
+    Arena *dst, PrimeNeedBranchState *state);
+bool prime_need_branch_state_promote_suffix(
+    Arena *dst, const Arena *forbidden, PrimeNeedBranchState *state);
+bool prime_need_branch_state_promote_suffix_with_session(
     Arena *dst, const Arena *forbidden,
-    AtomDeepCopySession *copy_session, PrimeNeedReceipt *receipt);
-bool prime_need_receipt_excludes_arena(
-    const PrimeNeedReceipt *receipt, const Arena *forbidden);
-bool prime_need_arena_audit_receipt(
-    PrimeNeedArenaAudit *audit, const PrimeNeedReceipt *receipt);
+    AtomDeepCopySession *copy_session, PrimeNeedBranchState *state);
+bool prime_need_branch_state_excludes_arena(
+    const PrimeNeedBranchState *state, const Arena *forbidden);
+bool prime_need_arena_audit_branch_state(
+    PrimeNeedArenaAudit *audit, const PrimeNeedBranchState *state);
 void prime_need_arena_audit_free(PrimeNeedArenaAudit *audit);
-bool prime_need_receipt_equal(const PrimeNeedReceipt *left,
-                              const PrimeNeedReceipt *right);
+bool prime_need_branch_state_equal(
+    const PrimeNeedBranchState *left,
+    const PrimeNeedBranchState *right);
+bool prime_need_branch_state_read(
+    Arena *owner, const PrimeNeedBranchState *base, StateCell *cell,
+    Atom *value, PrimeNeedBranchState *out);
+bool prime_need_branch_state_write(
+    Arena *owner, const PrimeNeedBranchState *base, StateCell *cell,
+    Atom *before, Atom *after, PrimeNeedBranchState *out);
+bool prime_need_branch_state_value(
+    const PrimeNeedBranchState *state, StateCell *cell, Atom **out_value);
 
+#if CETTA_BUILD_WITH_PRIME_CAUSAL_RECEIPTS
+static inline void prime_need_receipt_init(PrimeNeedReceipt *receipt) {
+    prime_need_branch_state_init(receipt);
+}
+bool prime_need_receipt_begin(Arena *owner, PrimeNeedReceipt *receipt);
+static inline bool prime_need_receipt_present(
+    const PrimeNeedReceipt *receipt) {
+    return prime_need_branch_state_present(receipt);
+}
+static inline bool prime_need_receipt_has_events(
+    const PrimeNeedReceipt *receipt) {
+    return prime_need_branch_state_has_events(receipt);
+}
+static inline bool prime_need_receipt_is_ancestor(
+    const PrimeNeedReceipt *ancestor,
+    const PrimeNeedReceipt *descendant) {
+    return prime_need_branch_state_is_ancestor(ancestor, descendant);
+}
+static inline bool prime_need_receipt_compatible(
+    const PrimeNeedReceipt *left, const PrimeNeedReceipt *right) {
+    return prime_need_branch_state_compatible(left, right);
+}
+static inline bool prime_need_receipt_merge(
+    PrimeNeedReceipt *dst, const PrimeNeedReceipt *src) {
+    return prime_need_branch_state_merge(dst, src);
+}
+static inline bool prime_need_receipt_promote(
+    Arena *dst, PrimeNeedReceipt *receipt) {
+    return prime_need_branch_state_promote(dst, receipt);
+}
+static inline bool prime_need_receipt_promote_suffix(
+    Arena *dst, const Arena *forbidden, PrimeNeedReceipt *receipt) {
+    return prime_need_branch_state_promote_suffix(
+        dst, forbidden, receipt);
+}
+static inline bool prime_need_receipt_promote_suffix_with_session(
+    Arena *dst, const Arena *forbidden,
+    AtomDeepCopySession *copy_session, PrimeNeedReceipt *receipt) {
+    return prime_need_branch_state_promote_suffix_with_session(
+        dst, forbidden, copy_session, receipt);
+}
+static inline bool prime_need_receipt_excludes_arena(
+    const PrimeNeedReceipt *receipt, const Arena *forbidden) {
+    return prime_need_branch_state_excludes_arena(receipt, forbidden);
+}
+static inline bool prime_need_arena_audit_receipt(
+    PrimeNeedArenaAudit *audit, const PrimeNeedReceipt *receipt) {
+    return prime_need_arena_audit_branch_state(audit, receipt);
+}
+static inline bool prime_need_receipt_equal(
+    const PrimeNeedReceipt *left, const PrimeNeedReceipt *right) {
+    return prime_need_branch_state_equal(left, right);
+}
 bool prime_need_receipt_observe_cell(
     Arena *owner, const PrimeNeedReceipt *base,
     uint64_t need_session_id, uint64_t thunk_id, Atom *outcome,
@@ -273,16 +374,6 @@ bool prime_need_receipt_observe_source_cell_branch_local(
     uint64_t need_session_id, uint64_t thunk_id,
     uint64_t source_occurrence_id, uint64_t source_argument_index,
     Atom *outcome, PrimeNeedReceipt *out);
-bool prime_need_receipt_evaluate_source_cell(
-    Arena *owner, const PrimeNeedReceipt *base,
-    uint64_t need_session_id, uint64_t thunk_id,
-    uint64_t source_occurrence_id, uint64_t source_argument_index,
-    Atom *origin, PrimeNeedReceipt *out);
-bool prime_need_receipt_evaluate_source_cell_branch_local(
-    Arena *owner, const PrimeNeedReceipt *base,
-    uint64_t need_session_id, uint64_t thunk_id,
-    uint64_t source_occurrence_id, uint64_t source_argument_index,
-    Atom *origin, PrimeNeedReceipt *out);
 bool prime_need_receipt_inspect_origin(
     Arena *owner, const PrimeNeedReceipt *base,
     uint64_t need_session_id, uint64_t thunk_id, Atom *origin_view,
@@ -329,5 +420,6 @@ size_t prime_need_receipt_event_count(const PrimeNeedReceipt *receipt);
 bool prime_need_receipt_event_at(const PrimeNeedReceipt *receipt,
                                  size_t index,
                                  PrimeNeedReceiptEvent *out_event);
+#endif
 
 #endif /* CETTA_PRIME_NEED_H */

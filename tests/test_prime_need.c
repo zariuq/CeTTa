@@ -466,18 +466,6 @@ int main(void) {
               atom_eq(receipt_event.after, term),
           "inspection receipts identify the cell and disclosed origin");
 
-    PrimeNeedReceipt evaluated_source;
-    CHECK(prime_need_receipt_evaluate_source_cell(
-              &arena, &receipt_root, source_argument.session_id,
-              source_argument_id, source_occurrence, 2u, term,
-              &evaluated_source) &&
-              prime_need_receipt_event_at(
-                  &evaluated_source, 1u, &receipt_event) &&
-              receipt_event.kind == PRIME_NEED_RECEIPT_EVALUATE_CELL &&
-              receipt_event.source_occurrence_id == source_occurrence &&
-              receipt_event.source_argument_index == 2u &&
-              atom_eq(receipt_event.before, term),
-          "producer evaluation records source, position, cell, and origin");
     Atom *equation = atom_expr3(
         &arena, atom_symbol(&arena, "="), term, left_value);
     PrimeNeedReceipt used_equation;

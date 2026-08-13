@@ -2445,9 +2445,9 @@ void petta_specializer_note_mutation(
     SymbolId source = petta_mutated_source_head(atom);
     if (!space || source == SYMBOL_ID_NONE)
         return;
-    /* Any equation or type mutation can make a nested symbol callable, so a
-     * relation-level negative certificate is discarded wholesale.  Ordinary
-     * data additions never reach this path, and the revision key independently
+    /* Any equation or type mutation can make a nested symbol callable, so the
+     * relation-level negative cache is discarded wholesale.  Ordinary data
+     * additions never reach this path, and the revision key independently
      * prevents stale reuse. */
     petta_relation_relevance_cache_clear();
     uint64_t instance = space_instance_id(space);

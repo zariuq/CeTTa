@@ -233,6 +233,7 @@ typedef struct {
     bool allocation_failed;
 } PrimeNeedTracePrinter;
 
+#if CETTA_BUILD_WITH_PRIME_CAUSAL_RECEIPTS
 static uint64_t prime_need_trace_id(
     PrimeNeedTraceId **items, size_t *len, uint64_t raw) {
     if (!items || !len || raw == 0u)
@@ -311,8 +312,6 @@ static const char *prime_need_trace_event_name(
         return "write-state";
     case PRIME_NEED_RECEIPT_USE_EQUATION:
         return "use-equation";
-    case PRIME_NEED_RECEIPT_EVALUATE_CELL:
-        return "evaluate-cell";
     case PRIME_NEED_RECEIPT_RESAMPLE:
         return "resample";
     }
@@ -367,8 +366,7 @@ static void prime_need_trace_answer(
                 trace->allocation_failed = true;
             fprintf(trace->out, " (application %" PRIu64 ")", source_id);
         }
-        if ((event.kind == PRIME_NEED_RECEIPT_OBSERVE_CELL ||
-             event.kind == PRIME_NEED_RECEIPT_EVALUATE_CELL) &&
+        if (event.kind == PRIME_NEED_RECEIPT_OBSERVE_CELL &&
             event.source_occurrence_id != 0u)
             fprintf(trace->out, " (argument %" PRIu64 ")",
                     event.source_argument_index + 1u);
@@ -408,6 +406,14 @@ static void prime_need_trace_answer(
     }
     fputs("))\n", trace->out);
 }
+#else
+static void prime_need_trace_answer(
+    Atom *answer, const PrimeNeedReceipt *receipt, void *context) {
+    (void)answer;
+    (void)receipt;
+    (void)context;
+}
+#endif
 
 static void prime_need_trace_printer_free(PrimeNeedTracePrinter *trace) {
     if (!trace)
@@ -2896,6 +2902,14 @@ int main(int argc, char **argv) {
         free(inline_buf);
         return 2;
     }
+#if !CETTA_BUILD_WITH_PRIME_CAUSAL_RECEIPTS
+    if (emit_prime_need_trace) {
+        fprintf(stderr,
+                "error: --emit-prime-need-trace requires a causal-receipt build\n");
+        free(inline_buf);
+        return 2;
+    }
+#endif
     if (prime_rewrite_frontier && lang->id != CETTA_LANGUAGE_PRIME) {
         fprintf(stderr,
                 "error: --prime-rewrite-frontier requires --lang prime\n");

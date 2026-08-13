@@ -32,24 +32,24 @@ counter() {
 }
 
 if ! grep -qxF '[50]' <<<"$output"; then
-    echo "FAIL: Prime receipt statistics probe returned the wrong answer" >&2
+    echo "FAIL: Prime carrier statistics probe returned the wrong answer" >&2
     exit 1
 fi
 
-queries=$(counter prime-need-receipt-reach-query)
-empty=$(counter prime-need-receipt-reach-empty-target-accept)
-boundary=$(counter prime-need-receipt-reach-boundary-reject)
-self=$(counter prime-need-receipt-reach-self-accept)
-depth=$(counter prime-need-receipt-reach-depth-reject)
-parent=$(counter prime-need-receipt-reach-parent-accept)
-index=$(counter prime-need-receipt-reach-index-accept)
-index_steps=$(counter prime-need-receipt-reach-index-step)
-fallback=$(counter prime-need-receipt-reach-fallback)
-frames=$(counter prime-need-receipt-reach-fallback-frame)
+queries=$(counter prime-need-carrier-reach-query)
+empty=$(counter prime-need-carrier-reach-empty-target-accept)
+boundary=$(counter prime-need-carrier-reach-boundary-reject)
+self=$(counter prime-need-carrier-reach-self-accept)
+depth=$(counter prime-need-carrier-reach-depth-reject)
+parent=$(counter prime-need-carrier-reach-parent-accept)
+index=$(counter prime-need-carrier-reach-index-accept)
+index_steps=$(counter prime-need-carrier-reach-index-step)
+fallback=$(counter prime-need-carrier-reach-fallback)
+frames=$(counter prime-need-carrier-reach-fallback-frame)
 accounted=$((empty + boundary + self + depth + parent + index + fallback))
 
 if ((queries != accounted)); then
-    echo "FAIL: receipt reachability outcomes do not partition queries" >&2
+    echo "FAIL: carrier reachability outcomes do not partition queries" >&2
     exit 1
 fi
 if ((index > 0)); then
@@ -63,4 +63,4 @@ elif ((fallback == 0 || frames <= fallback)); then
 fi
 
 printf '%s\n' \
-    "PrimeReceiptReachStatsSummary PASS queries=${queries} index=${index} index_steps=${index_steps} fallback=${fallback} frames=${frames}"
+    "PrimeCarrierReachStatsSummary PASS queries=${queries} index=${index} index_steps=${index_steps} fallback=${fallback} frames=${frames}"

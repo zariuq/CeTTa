@@ -2341,6 +2341,86 @@ static void test_deterministic_clause_elision(
     petta_machine_destroy(&machine);
 }
 
+static void test_clause_slot_admission_boundary(
+    Space *space, Arena *persistent, Arena *answers) {
+    add_clause(
+        space, persistent,
+        "(= (slot-admission $left $right)"
+        "   (slot-result first $left $right))");
+    add_clause(
+        space, persistent,
+        "(= (slot-admission $left $right)"
+        "   (slot-result second $left $right))");
+
+    /* A closed call is the positive witness for the direct activation-slot
+     * frame: both occurrences use epoch views and preserve bag order. */
+    Atom *closed_query = parse_one(
+        answers, "(slot-admission left-value right-value)");
+    assert(closed_query);
+    PettaMachine machine;
+    assert(petta_machine_init(
+        &machine, space, answers, closed_query, NULL, NULL));
+    const char *closed_expected[] = {
+        "(slot-result first left-value right-value)",
+        "(slot-result second left-value right-value)",
+    };
+    for (size_t index = 0u; index < 2u; index++) {
+        Atom *answer = NULL;
+        Bindings environment;
+        assert(petta_machine_next(
+                   &machine, &answer, &environment) ==
+               PETTA_MACHINE_STEP_ANSWER);
+        assert(atom_alpha_eq(
+            answer, parse_one(answers, closed_expected[index])));
+        bindings_free(&environment);
+    }
+    Atom *answer = NULL;
+    Bindings environment;
+    assert(petta_machine_next(
+               &machine, &answer, &environment) ==
+           PETTA_MACHINE_STEP_EXHAUSTED);
+    bindings_free(&environment);
+    PettaMachineStats stats;
+    assert(petta_machine_stats(&machine, &stats));
+    assert(stats.match_candidate_epoch_views == 2u);
+    petta_machine_destroy(&machine);
+
+    /* An authored open call may be closed by its surrounding environment,
+     * but its variables still carry that continuation's alias identity.
+     * It is the negative witness for direct slot admission and must use the
+     * isolated authoritative matcher while returning the same two answers. */
+    Atom *open_query = parse_one(
+        answers, "(slot-admission $shared $shared)");
+    Atom *shared_value = atom_symbol(answers, "shared-value");
+    assert(open_query && shared_value);
+    assert(open_query->kind == ATOM_EXPR && open_query->expr.len == 3u);
+    Bindings base;
+    bindings_init(&base);
+    assert(bindings_add_var(
+        &base, open_query->expr.elems[1], shared_value));
+    assert(petta_machine_init(
+        &machine, space, answers, open_query, &base, NULL));
+    const char *open_expected[] = {
+        "(slot-result first shared-value shared-value)",
+        "(slot-result second shared-value shared-value)",
+    };
+    for (size_t index = 0u; index < 2u; index++) {
+        answer = NULL;
+        assert(petta_machine_next(
+                   &machine, &answer, &environment) ==
+               PETTA_MACHINE_STEP_ANSWER);
+        assert(atom_alpha_eq(
+            answer, parse_one(answers, open_expected[index])));
+        bindings_free(&environment);
+    }
+    assert(petta_machine_next(
+               &machine, &answer, &environment) ==
+           PETTA_MACHINE_STEP_EXHAUSTED);
+    bindings_free(&environment);
+    petta_machine_destroy(&machine);
+    bindings_free(&base);
+}
+
 static void test_ground_boolean_choice_elision(
     Space *space, Arena *answers) {
     Atom *query = parse_one(
@@ -3680,6 +3760,8 @@ int main(void) {
     test_deep_functional_match_pattern(
         &space, &persistent, &answers);
     test_deterministic_clause_elision(
+        &space, &persistent, &answers);
+    test_clause_slot_admission_boundary(
         &space, &persistent, &answers);
     test_ground_boolean_choice_elision(
         &space, &answers);
