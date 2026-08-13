@@ -224,6 +224,172 @@ int main(void) {
           "rollback restores logical state without erasing or inventing work");
     bindings_builder_take(&branch, &clone);
 
+    CHECK(sizeof(BindingsBuilderTrailEntry) <= 16u,
+          "the hot rollback checkpoint excludes cold Prime payloads");
+    BindingsBuilder sparse_effect_branch;
+    CHECK(bindings_builder_init(&sparse_effect_branch, NULL),
+          "sparse effect trail starts from an empty branch");
+    uint32_t sparse_root_mark =
+        bindings_builder_save(&sparse_effect_branch);
+    bool sparse_effect_fixture =
+        bindings_builder_add_id_fresh(
+            &sparse_effect_branch, test_id(6500u), SYMBOL_ID_NONE,
+            atom_int(&arena, 6500)) &&
+        sparse_effect_branch.trail_len == 1u &&
+        sparse_effect_branch.prime_trail_len == 0u &&
+        !sparse_effect_branch.trail[0].prime_state_present;
+    uint32_t sparse_plain_mark =
+        bindings_builder_save(&sparse_effect_branch);
+    PrimeNeedSnapshot sparse_need;
+    PrimeNeedReceipt sparse_receipt;
+    prime_need_snapshot_init(&sparse_need);
+    prime_need_receipt_init(&sparse_receipt);
+    sparse_effect_fixture =
+        sparse_effect_fixture &&
+        prime_need_snapshot_begin(&sparse_need) &&
+        prime_need_receipt_begin(&arena, &sparse_receipt);
+    bindings_prime_set(
+        &sparse_effect_branch.current, &sparse_need, &sparse_receipt);
+    sparse_effect_fixture =
+        sparse_effect_fixture &&
+        bindings_builder_add_id_fresh(
+            &sparse_effect_branch, test_id(6501u), SYMBOL_ID_NONE,
+            atom_int(&arena, 6501)) &&
+        sparse_effect_branch.trail_len == 2u &&
+        sparse_effect_branch.prime_trail_len == 1u &&
+        sparse_effect_branch.trail[1].prime_state_present;
+    bindings_prime_set(&sparse_effect_branch.current, NULL, NULL);
+    uint32_t sparse_absent_mark =
+        bindings_builder_save(&sparse_effect_branch);
+    sparse_effect_fixture =
+        sparse_effect_fixture &&
+        bindings_builder_add_id_fresh(
+            &sparse_effect_branch, test_id(6502u), SYMBOL_ID_NONE,
+            atom_int(&arena, 6502)) &&
+        sparse_effect_branch.prime_trail_len == 1u &&
+        !sparse_effect_branch.trail[2].prime_state_present;
+    bindings_builder_rollback(
+        &sparse_effect_branch, sparse_absent_mark);
+    bool sparse_absent_restored =
+        !bindings_prime_present(&sparse_effect_branch.current) &&
+        sparse_effect_branch.prime_trail_len == 1u;
+    bindings_builder_rollback(
+        &sparse_effect_branch, sparse_plain_mark);
+    bool sparse_present_restored =
+        bindings_prime_present(&sparse_effect_branch.current) &&
+        bindings_need_view(&sparse_effect_branch.current)->session_id ==
+            sparse_need.session_id &&
+        bindings_receipt_view(&sparse_effect_branch.current)->session_id ==
+            sparse_receipt.session_id &&
+        sparse_effect_branch.prime_trail_len == 0u;
+    bindings_builder_rollback(
+        &sparse_effect_branch, sparse_root_mark);
+    CHECK(sparse_effect_fixture && sparse_absent_restored &&
+              sparse_present_restored &&
+              !bindings_prime_present(&sparse_effect_branch.current) &&
+              sparse_effect_branch.prime_trail_len == 0u,
+          "mixed effect checkpoints restore absent and present states exactly");
+    bindings_builder_free(&sparse_effect_branch);
+
+    BindingsBuilder sparse_compact_branch;
+    CHECK(bindings_builder_init(&sparse_compact_branch, NULL),
+          "sparse effect compaction starts from an empty branch");
+    PrimeNeedSnapshot compact_need;
+    prime_need_snapshot_init(&compact_need);
+    bool sparse_compact_fixture =
+        prime_need_snapshot_begin(&compact_need);
+    bindings_prime_set(&sparse_compact_branch.current, &compact_need, NULL);
+    Atom *sparse_compact_live = atom_var_with_id(
+        &arena, "sparse-compact-live", test_id(6510u));
+    sparse_compact_fixture =
+        sparse_compact_fixture &&
+        bindings_builder_add_var_fresh(
+            &sparse_compact_branch, sparse_compact_live,
+            atom_int(&arena, 6510));
+    bindings_prime_set(&sparse_compact_branch.current, NULL, NULL);
+    uint32_t sparse_compact_mark_a =
+        bindings_builder_save(&sparse_compact_branch);
+    sparse_compact_fixture =
+        sparse_compact_fixture &&
+        bindings_builder_add_id_fresh(
+            &sparse_compact_branch, test_id(6511u), SYMBOL_ID_NONE,
+            atom_int(&arena, 6511));
+    PrimeNeedSnapshot compact_need_later;
+    prime_need_snapshot_init(&compact_need_later);
+    sparse_compact_fixture =
+        sparse_compact_fixture &&
+        prime_need_snapshot_begin(&compact_need_later);
+    bindings_prime_set(
+        &sparse_compact_branch.current, &compact_need_later, NULL);
+    uint32_t sparse_compact_mark_b =
+        bindings_builder_save(&sparse_compact_branch);
+    sparse_compact_fixture =
+        sparse_compact_fixture &&
+        bindings_builder_add_id_fresh(
+            &sparse_compact_branch, test_id(6512u), SYMBOL_ID_NONE,
+            atom_int(&arena, 6512));
+    uint32_t sparse_compact_marks[2] = {
+        sparse_compact_mark_a, sparse_compact_mark_b,
+    };
+    Atom *sparse_compact_roots[1] = {sparse_compact_live};
+    sparse_compact_fixture =
+        sparse_compact_fixture &&
+        bindings_builder_compact_reachable(
+            &sparse_compact_branch,
+            sparse_compact_roots, 1u,
+            sparse_compact_marks, 2u, NULL, NULL) &&
+        sparse_compact_branch.trail_len == 2u &&
+        sparse_compact_branch.prime_trail_len == 1u;
+    bindings_builder_rollback(
+        &sparse_compact_branch, sparse_compact_marks[1]);
+    bool sparse_compact_present =
+        bindings_prime_present(&sparse_compact_branch.current) &&
+        bindings_need_view(&sparse_compact_branch.current)->session_id ==
+            compact_need_later.session_id;
+    bindings_builder_rollback(
+        &sparse_compact_branch, sparse_compact_marks[0]);
+    CHECK(sparse_compact_fixture && sparse_compact_present &&
+              !bindings_prime_present(&sparse_compact_branch.current) &&
+              binding_is_int(
+                  &sparse_compact_branch.current,
+                  sparse_compact_live->var_id, 6510),
+          "compaction remaps mixed sparse effect checkpoints transactionally");
+    bindings_builder_free(&sparse_compact_branch);
+
+    BindingsBuilder sparse_commit_branch;
+    Bindings sparse_committed;
+    bindings_init(&sparse_committed);
+    CHECK(bindings_builder_init(&sparse_commit_branch, NULL),
+          "sparse effect commit starts from an empty branch");
+    PrimeNeedSnapshot committed_need;
+    prime_need_snapshot_init(&committed_need);
+    bool sparse_commit_fixture =
+        prime_need_snapshot_begin(&committed_need);
+    bindings_prime_set(
+        &sparse_commit_branch.current, &committed_need, NULL);
+    sparse_commit_fixture =
+        sparse_commit_fixture &&
+        bindings_builder_add_id_fresh(
+            &sparse_commit_branch, test_id(6520u), SYMBOL_ID_NONE,
+            atom_int(&arena, 6520)) &&
+        sparse_commit_branch.trail_len == 1u &&
+        sparse_commit_branch.prime_trail_len == 1u;
+    bindings_builder_commit(&sparse_commit_branch);
+    CHECK(sparse_commit_fixture &&
+              sparse_commit_branch.trail_len == 0u &&
+              sparse_commit_branch.prime_trail_len == 0u &&
+              bindings_prime_present(&sparse_commit_branch.current) &&
+              bindings_need_view(&sparse_commit_branch.current)->session_id ==
+                  committed_need.session_id,
+          "commit discards both rollback trails without changing current effects");
+    bindings_builder_take(&sparse_commit_branch, &sparse_committed);
+    CHECK(sparse_commit_branch.trail == NULL &&
+              sparse_commit_branch.prime_trail == NULL &&
+              bindings_prime_present(&sparse_committed) &&
+              binding_is_int(&sparse_committed, test_id(6520u), 6520),
+          "take transfers current effects while releasing both rollback trails");
+    bindings_free(&sparse_committed);
+
     BindingsBuilder compacted_branch;
     CHECK(bindings_builder_init(&compacted_branch, NULL),
           "reachable-trail compaction starts from an empty branch");
@@ -450,6 +616,8 @@ int main(void) {
         &arena, "activation-outer-link", test_id(7301u));
     Atom *activation_source = atom_var_with_id(
         &arena, "activation-source", test_id(7302u));
+    Atom *activation_prefix_source = atom_var_with_id(
+        &arena, "activation-prefix-source", test_id(7305u));
     Atom *activation_value = atom_int(&arena, 7303);
     VarId activation_local_id =
         var_epoch_id(activation_source->var_id, 29u);
@@ -462,6 +630,17 @@ int main(void) {
         bindings_add_var(
             &activation_environment,
             activation_outer, activation_outer_link);
+    for (uint32_t filler = 0u;
+         activation_fixture && filler < 40u; filler++) {
+        activation_fixture = bindings_add_id(
+            &activation_environment, test_id(8000u + filler),
+            SYMBOL_ID_NONE, atom_int(&arena, (int64_t)filler));
+    }
+    activation_fixture = activation_fixture &&
+        bindings_add_id(
+            &activation_environment,
+            var_epoch_id(activation_prefix_source->var_id, 29u),
+            activation_prefix_source->sym_id, activation_value);
     uint32_t activation_first_entry = activation_environment.len;
     activation_fixture = activation_fixture &&
         bindings_add_id(
@@ -486,9 +665,212 @@ int main(void) {
     CHECK(!bindings_apply_epoch_since(
               &activation_environment, &arena, activation_source,
               29u, activation_environment.len + 1u) &&
-              activation_environment.len == 3u,
+              activation_environment.len == activation_first_entry + 1u,
           "invalid activation boundary fails without changing bindings");
+    Atom *activation_ground_source = atom_var_with_id(
+        &arena, "activation-ground-source", test_id(7304u));
+    uint32_t activation_ground_first_entry = activation_environment.len;
+    bool activation_ground_fixture = bindings_add_id(
+        &activation_environment,
+        var_epoch_id(activation_ground_source->var_id, 31u),
+        activation_ground_source->sym_id, activation_value);
+    Atom *activation_ground_resolved = NULL;
+    CHECK(activation_ground_fixture &&
+              bindings_resolve_epoch_view_ground(
+                  &activation_environment, activation_ground_source,
+                  31u, activation_ground_first_entry,
+                  &activation_ground_resolved) &&
+              activation_ground_resolved == activation_value,
+          "activation view exposes a directly closed suffix value");
+    Atom *activation_chained_resolved = activation_value;
+    CHECK(bindings_resolve_epoch_view_ground(
+              &activation_environment, activation_source, 29u,
+              activation_first_entry, &activation_chained_resolved) &&
+              activation_chained_resolved == activation_value,
+          "an activation view follows outer variable links to a closed value");
+    Atom *activation_prefix_resolved = activation_value;
+    CHECK(bindings_resolve_epoch_view_ground(
+              &activation_environment, activation_prefix_source, 29u,
+              activation_first_entry, &activation_prefix_resolved) &&
+              activation_prefix_resolved == NULL,
+          "indexed activation lookup excludes an older prefix binding");
+    activation_ground_resolved = activation_value;
+    CHECK(!bindings_resolve_epoch_view_ground(
+              &activation_environment, activation_ground_source, 31u,
+              activation_environment.len + 1u,
+              &activation_ground_resolved) &&
+              activation_ground_resolved == NULL,
+          "an invalid direct-view boundary fails closed");
     bindings_free(&activation_environment);
+
+    /* A parser-style reduction and a rule-machine-style repeated slot both
+     * exercise the generic activation view.  The reference path first
+     * materializes the complete left term; the compiled path resolves only
+     * the nodes demanded by matching. */
+    Atom *view_local = atom_var_with_id(
+        &arena, "view-local", test_id(7400u));
+    Atom *view_outer = atom_var_with_id(
+        &arena, "view-outer", test_id(7401u));
+    Atom *view_candidate = atom_var_with_id(
+        &arena, "view-candidate", test_id(7402u));
+    Atom *view_value = atom_expr2(
+        &arena, atom_symbol(&arena, "ParserNode"),
+        atom_int(&arena, 7403));
+    Atom *view_tail = atom_expr2(
+        &arena, atom_symbol(&arena, "RuleTail"), view_local);
+    Atom *view_left = atom_expr3(
+        &arena, atom_symbol(&arena, "Reduce"),
+        view_local, view_tail);
+    Atom *view_right_tail = atom_expr2(
+        &arena, atom_symbol(&arena, "RuleTail"), view_candidate);
+    Atom *view_right = atom_expr3(
+        &arena, atom_symbol(&arena, "Reduce"),
+        view_candidate, view_right_tail);
+    Bindings view_base;
+    bindings_init(&view_base);
+    bool view_fixture = bindings_add_var(
+        &view_base, view_outer, view_value);
+    uint32_t view_first_entry = view_base.len;
+    view_fixture = view_fixture && bindings_add_id(
+        &view_base, var_epoch_id(view_local->var_id, 37u),
+        view_local->sym_id, view_outer);
+    BindingsBuilder view_reference;
+    BindingsBuilder view_compiled;
+    bool view_reference_ready = bindings_builder_init(
+        &view_reference, &view_base);
+    bool view_compiled_ready = bindings_builder_init(
+        &view_compiled, &view_base);
+    Arena view_reference_arena;
+    Arena view_compiled_arena;
+    arena_init(&view_reference_arena);
+    arena_init(&view_compiled_arena);
+    Atom *view_materialized = view_fixture && view_reference_ready
+        ? bindings_apply_epoch_then_all(
+              &view_reference.current, &view_reference_arena,
+              view_left, 37u, view_first_entry)
+        : NULL;
+    bool view_reference_match = view_materialized &&
+        match_atoms_epoch_builder(
+            view_materialized, view_right, &view_reference,
+            &view_reference_arena, 41u);
+    bool view_compiled_match = view_fixture && view_compiled_ready &&
+        match_atoms_epoch_view_builder(
+            view_left, 37u, view_first_entry, view_right,
+            &view_compiled, &view_compiled_arena, 41u);
+    size_t view_reference_bytes =
+        arena_accounted_live_bytes(&view_reference_arena);
+    size_t view_compiled_bytes =
+        arena_accounted_live_bytes(&view_compiled_arena);
+    CHECK(view_reference_match && view_compiled_match &&
+              bindings_eq(
+                  &view_reference.current, &view_compiled.current),
+          "activation-view matching equals materialize-then-match across repeated slots");
+    CHECK(view_compiled_bytes < view_reference_bytes,
+          "activation-view matching removes complete parser/rule term materialization");
+
+    BindingsBuilder view_open_reference;
+    BindingsBuilder view_open_compiled;
+    Bindings view_open_base;
+    bindings_init(&view_open_base);
+    bool view_open_fixture = bindings_add_id(
+        &view_open_base, var_epoch_id(view_local->var_id, 43u),
+        view_local->sym_id, view_outer);
+    uint32_t view_open_first_entry = 0u;
+    bool view_open_reference_ready = bindings_builder_init(
+        &view_open_reference, &view_open_base);
+    bool view_open_compiled_ready = bindings_builder_init(
+        &view_open_compiled, &view_open_base);
+    Arena view_open_reference_arena;
+    Arena view_open_compiled_arena;
+    arena_init(&view_open_reference_arena);
+    arena_init(&view_open_compiled_arena);
+    Atom *view_open_right = atom_expr3(
+        &arena, atom_symbol(&arena, "Reduce"),
+        atom_int(&arena, 7404),
+        atom_expr2(
+            &arena, atom_symbol(&arena, "RuleTail"),
+            atom_int(&arena, 7404)));
+    Atom *view_open_materialized =
+        view_open_fixture && view_open_reference_ready
+        ? bindings_apply_epoch_then_all(
+              &view_open_reference.current,
+              &view_open_reference_arena, view_left, 43u,
+              view_open_first_entry)
+        : NULL;
+    bool view_open_reference_match = view_open_materialized &&
+        match_atoms_epoch_builder(
+            view_open_materialized, view_open_right,
+            &view_open_reference, &view_open_reference_arena, 47u);
+    bool view_open_compiled_match =
+        view_open_fixture && view_open_compiled_ready &&
+        match_atoms_epoch_view_builder(
+            view_left, 43u, view_open_first_entry, view_open_right,
+            &view_open_compiled, &view_open_compiled_arena, 47u);
+    CHECK(view_open_reference_match && view_open_compiled_match &&
+              bindings_eq(
+                  &view_open_reference.current,
+                  &view_open_compiled.current),
+          "activation view preserves outer-variable binding by the candidate");
+
+    BindingsBuilder view_whole_reference;
+    BindingsBuilder view_whole_compiled;
+    bool view_whole_reference_ready = bindings_builder_init(
+        &view_whole_reference, &view_base);
+    bool view_whole_compiled_ready = bindings_builder_init(
+        &view_whole_compiled, &view_base);
+    Arena view_whole_reference_arena;
+    Arena view_whole_compiled_arena;
+    arena_init(&view_whole_reference_arena);
+    arena_init(&view_whole_compiled_arena);
+    Atom *view_whole_materialized = view_whole_reference_ready
+        ? bindings_apply_epoch_then_all(
+              &view_whole_reference.current,
+              &view_whole_reference_arena, view_left, 37u,
+              view_first_entry)
+        : NULL;
+    bool view_whole_reference_match = view_whole_materialized &&
+        match_atoms_epoch_builder(
+            view_whole_materialized, view_candidate,
+            &view_whole_reference, &view_whole_reference_arena, 53u);
+    bool view_whole_compiled_match = view_whole_compiled_ready &&
+        match_atoms_epoch_view_builder(
+            view_left, 37u, view_first_entry, view_candidate,
+            &view_whole_compiled, &view_whole_compiled_arena, 53u);
+    CHECK(view_whole_reference_match && view_whole_compiled_match &&
+              bindings_eq(
+                  &view_whole_reference.current,
+                  &view_whole_compiled.current),
+          "activation view materializes only a demanded whole-term variable image");
+    uint32_t invalid_view_mark = view_compiled_ready
+        ? bindings_builder_save(&view_compiled) : 0u;
+    CHECK(view_compiled_ready &&
+              !match_atoms_epoch_view_builder(
+                  view_left, 37u, view_compiled.current.len + 1u,
+                  view_right, &view_compiled,
+                  &view_compiled_arena, 59u) &&
+              bindings_builder_save(&view_compiled) == invalid_view_mark,
+          "activation-view matcher rejects an invalid frame boundary without mutation");
+
+    arena_free(&view_whole_compiled_arena);
+    arena_free(&view_whole_reference_arena);
+    if (view_whole_compiled_ready)
+        bindings_builder_free(&view_whole_compiled);
+    if (view_whole_reference_ready)
+        bindings_builder_free(&view_whole_reference);
+    arena_free(&view_open_compiled_arena);
+    arena_free(&view_open_reference_arena);
+    if (view_open_compiled_ready)
+        bindings_builder_free(&view_open_compiled);
+    if (view_open_reference_ready)
+        bindings_builder_free(&view_open_reference);
+    bindings_free(&view_open_base);
+    arena_free(&view_compiled_arena);
+    arena_free(&view_reference_arena);
+    if (view_compiled_ready)
+        bindings_builder_free(&view_compiled);
+    if (view_reference_ready)
+        bindings_builder_free(&view_reference);
+    bindings_free(&view_base);
 
     uint32_t fresh_before_null = 0u;
     uint32_t fresh_after_null = 0u;

@@ -1557,7 +1557,11 @@ static void print_usage(FILE *out) {
 #endif
     fputs("       cetta [--lang rhocalc --profile <strict-core|cost>] [--syntax <mrho|rho>] <file>\n", out);
     fputs("       cetta [--lang <name>] [--import-mode <upstream|relative|ancestor-walk>] <file.metta>\n", out);
+#if CETTA_BUILD_WITH_LANGDEF_DIAGNOSTIC_BACKENDS
     fputs("       cetta --lang <langdef> --langdef-proof-backend <authority|generated-relational-audit-v1|frame-cache-diagnostic-v1> <file>\n", out);
+#else
+    fputs("       cetta --lang <langdef> --langdef-proof-backend <authority|generated-relational-audit-v1> <file>\n", out);
+#endif
     fputs("       note: repeated --lang under --translate means source then target endpoint\n", out);
     fputs("       note: --lang petta consumes consecutive .metta files in order\n", out);
     fputs("       note: other languages run one file; remaining arguments are available through system:args\n", out);
@@ -2530,10 +2534,12 @@ int main(int argc, char **argv) {
             if (strcmp(value, "authority") == 0) {
                 langdef_proof_execution =
                     CETTA_LANGDEF_PROOF_EXECUTION_V1_AUTHORITY;
+#if CETTA_BUILD_WITH_LANGDEF_DIAGNOSTIC_BACKENDS
             } else if (strcmp(
                            value, "frame-cache-diagnostic-v1") == 0) {
                 langdef_proof_execution =
                     CETTA_LANGDEF_PROOF_EXECUTION_V1_FRAME_CACHE_DIAGNOSTIC;
+#endif
             } else if (strcmp(
                            value, "generated-relational-audit-v1") == 0) {
                 langdef_proof_execution =

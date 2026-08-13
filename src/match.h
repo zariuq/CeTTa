@@ -82,11 +82,17 @@ typedef struct {
 typedef struct {
     uint32_t len;
     uint32_t eq_len;
+    /*
+     * Index into BindingsBuilder.prime_trail before this checkpoint's
+     * optional effect snapshot.  The hot logical trail never embeds the
+     * Prime payload: effect-free machines therefore retain only this compact
+     * checkpoint, while effectful machines restore the exact cold snapshot.
+     */
+    uint32_t prime_state_mark;
     uint8_t cycle_state;
     /* Bit set iff the corresponding derived count was nonzero. */
     uint8_t derived_nonzero;
-    PrimeNeedSnapshot prime_need;
-    PrimeNeedReceipt prime_receipt;
+    uint8_t prime_state_present;
 } BindingsBuilderTrailEntry;
 
 typedef struct {
@@ -94,6 +100,9 @@ typedef struct {
     BindingsBuilderTrailEntry *trail;
     uint32_t trail_len;
     uint32_t trail_cap;
+    PrimeOccurrence *prime_trail;
+    uint32_t prime_trail_len;
+    uint32_t prime_trail_cap;
     /*
      * Monotone count of successful logical writes performed by this builder.
      * Rollback restores logical state but deliberately does not erase work
@@ -192,6 +201,14 @@ void      bindings_prime_set(Bindings *dst, const PrimeNeedSnapshot *need,
                              const PrimeNeedReceipt *receipt);
 Atom     *bindings_lookup_id(Bindings *b, VarId var_id);
 Atom     *bindings_lookup_var(Bindings *b, Atom *var);
+/* Resolve one original activation-view variable through the rule-local
+ * binding suffix, then through ordinary outer variable links, without
+ * allocating a substituted term.  A successful call with
+ * `*ground_out == NULL` means the exact closed value is not directly
+ * available and the caller must defer to the general view semantics. */
+bool      bindings_resolve_epoch_view_ground(
+              const Bindings *bindings, const Atom *source_variable,
+              uint32_t epoch, uint32_t first_entry, Atom **ground_out);
 Atom     *binding_variable_atom(Arena *a, const Binding *binding);
 Atom     *bindings_resolve_atom_preview(Bindings *b, Atom *atom);
 bool      bindings_add_id(Bindings *b, VarId var_id, SymbolId spelling, Atom *val);
@@ -242,6 +259,9 @@ void      bindings_builder_free(BindingsBuilder *bb);
 uint32_t  bindings_builder_save(const BindingsBuilder *bb);
 void      bindings_builder_rollback(BindingsBuilder *bb, uint32_t mark);
 void      bindings_builder_commit(BindingsBuilder *bb);
+/* True when either the current state or a rollback checkpoint carries an
+ * optional Prime occurrence. */
+bool      bindings_builder_prime_present(const BindingsBuilder *bb);
 /*
  * Retain only bindings reachable from `roots` while preserving every live
  * rollback state named by `checkpoint_marks`.
@@ -341,6 +361,25 @@ bool match_atoms_epoch(Atom *left, Atom *right, Bindings *b, Arena *a, uint32_t 
 bool match_atoms_epoch_builder(Atom *left, Atom *right,
                                BindingsBuilder *bb, Arena *a,
                                uint32_t epoch);
+/* Match an activation-local source term without first materializing the
+ * complete substituted term.  Variables in `left_original` are interpreted
+ * through `left_epoch` and the binding suffix beginning at
+ * `left_first_entry`; values reached through those bindings retain their
+ * ordinary outer identities.  The right term is standardized through
+ * `right_epoch` exactly as in match_atoms_epoch_builder.
+ *
+ * This is the demand-driven realization of
+ *
+ *   match_atoms_epoch_builder(
+ *       bindings_apply_epoch_then_all(..., left_original, ...),
+ *       right_original, ...)
+ *
+ * and has the same caller-owned save/rollback contract.  Invalid activation
+ * boundaries fail closed. */
+bool match_atoms_epoch_view_builder(
+         Atom *left_original, uint32_t left_epoch,
+         uint32_t left_first_entry, Atom *right_original,
+         BindingsBuilder *bb, Arena *a, uint32_t right_epoch);
 /* Leaf-patch view (env CETTA_LEAF_PATCH_VIEW=1, OFF by default). */
 bool match_leaf_patch_view_enabled(void);
 /* Positional bind for a flat linear pattern (lhs) vs a non-variable-arg query;

@@ -75,6 +75,9 @@ int main(void) {
     expect(cetta_gslt_indexed_instruction_finish_v1(&decoder) ==
                CETTA_GSLT_INDEXED_DECODE_OK_V1,
            "complete proof stream finishes");
+    expect(decoder.consumed_byte_len == 4u &&
+               decoder.emitted_instruction_len == 3u,
+           "proof decoder receipt counts consumed bytes and emitted instructions");
 
     expect(cetta_gslt_indexed_instruction_decoder_init_v1(
                &decoder, &parser) == CETTA_GSLT_INDEXED_DECODE_OK_V1,
@@ -88,6 +91,9 @@ int main(void) {
                event.kind == CETTA_GSLT_INDEXED_INSTRUCTION_USE_V1 &&
                event.index == 12u,
            "parser terminal uses the generated radix");
+    expect(decoder.consumed_byte_len == 2u &&
+               decoder.emitted_instruction_len == 1u,
+           "parser decoder receipt uses the same generic counters");
 
     expect(cetta_gslt_indexed_instruction_decoder_init_v1(
                &decoder, &parser) == CETTA_GSLT_INDEXED_DECODE_OK_V1 &&

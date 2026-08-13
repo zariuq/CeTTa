@@ -1,5 +1,9 @@
 #include "proof_gslt_relational_machine_v1.h"
 
+#include "gslt_indexed_instruction_decoder_v1.h"
+#include "gslt_split_indexed_table_v1.h"
+#include "gslt_u32_index_v1.h"
+
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -25,16 +29,24 @@ typedef struct {
     uint32_t label;
 } PPProofRelationalMachineFrameRowV1;
 
-typedef enum {
-    PPPROOF_RELATIONAL_MACHINE_HEAP_V1_LABEL = 0,
-    PPPROOF_RELATIONAL_MACHINE_HEAP_V1_SAVED = 1
-} PPProofRelationalMachineHeapKindV1;
-
-typedef struct {
-    PPProofRelationalMachineHeapKindV1 kind;
-    uint32_t label;
-    PPProofRelationalMachineStackEntryV1 saved;
-} PPProofRelationalMachineHeapEntryV1;
+static CettaGsltIndexedInstructionPlanV1
+ppproof_relational_machine_v1_indexed_plan(
+    const PPRelationalStateProofMachineV1 *machine) {
+    if (!machine)
+        return (CettaGsltIndexedInstructionPlanV1){0};
+    return (CettaGsltIndexedInstructionPlanV1){
+        .terminal_low = machine->terminal_low,
+        .terminal_high = machine->terminal_high,
+        .continuation_low = machine->continuation_low,
+        .continuation_high = machine->continuation_high,
+        .save_byte = machine->save_byte,
+        .unknown_byte = machine->unknown_byte,
+        .terminal_radix = machine->terminal_radix,
+        .terminal_digit_bias = machine->terminal_digit_bias,
+        .continuation_radix = machine->continuation_radix,
+        .continuation_digit_bias = machine->continuation_digit_bias,
+    };
+}
 
 static void ppproof_relational_machine_v1_set_error(
     char *buf, size_t size, const char *format, ...) {
@@ -242,37 +254,6 @@ ppproof_relational_machine_v1_push_incomplete_claim(
     return PPPROOF_GSLT_RELATIONAL_MACHINE_V1_OK;
 }
 
-static bool ppproof_relational_machine_v1_heap_push(
-    PPProofRelationalMachineHeapEntryV1 **heap,
-    uint32_t *heap_len,
-    uint32_t *heap_cap,
-    PPProofRelationalMachineHeapEntryV1 entry,
-    uint32_t maximum_len) {
-    PPProofRelationalMachineHeapEntryV1 *next;
-    uint32_t next_cap;
-
-    if (!heap || !heap_len || !heap_cap || *heap_len >= maximum_len ||
-        *heap_len == UINT32_MAX)
-        return false;
-    if (*heap_len == *heap_cap) {
-        next_cap = *heap_cap ? *heap_cap * 2u : 32u;
-        if (next_cap < *heap_cap)
-            return false;
-        if (next_cap > maximum_len)
-            next_cap = maximum_len;
-        if (next_cap <= *heap_len ||
-            (size_t)next_cap > SIZE_MAX / sizeof(*next))
-            return false;
-        next = realloc(*heap, (size_t)next_cap * sizeof(*next));
-        if (!next)
-            return false;
-        *heap = next;
-        *heap_cap = next_cap;
-    }
-    (*heap)[(*heap_len)++] = entry;
-    return true;
-}
-
 static bool ppproof_relational_machine_v1_grow(
     void **items, uint32_t *capacity, uint32_t required,
     uint32_t maximum_len, size_t item_size) {
@@ -299,6 +280,37 @@ static bool ppproof_relational_machine_v1_grow(
         return false;
     *items = next;
     *capacity = next_cap;
+    return true;
+}
+
+static bool ppproof_relational_machine_v1_label_push(
+    uint32_t **labels, uint32_t *label_len, uint32_t *label_cap,
+    uint32_t label, uint32_t other_len, uint32_t maximum_len) {
+    if (!labels || !label_len || !label_cap ||
+        other_len > maximum_len || *label_len >= maximum_len - other_len ||
+        *label_len == UINT32_MAX ||
+        !ppproof_relational_machine_v1_grow(
+            (void **)labels, label_cap, *label_len + 1u,
+            maximum_len, sizeof(**labels)))
+        return false;
+    (*labels)[(*label_len)++] = label;
+    return true;
+}
+
+static bool ppproof_relational_machine_v1_saved_push(
+    PPProofRelationalMachineStackEntryV1 **saved,
+    uint32_t *saved_len, uint32_t *saved_cap,
+    PPProofRelationalMachineStackEntryV1 entry,
+    uint32_t prepared_len, uint32_t maximum_len) {
+    if (!saved || !saved_len || !saved_cap ||
+        prepared_len > maximum_len ||
+        *saved_len >= maximum_len - prepared_len ||
+        *saved_len == UINT32_MAX ||
+        !ppproof_relational_machine_v1_grow(
+            (void **)saved, saved_cap, *saved_len + 1u,
+            maximum_len, sizeof(**saved)))
+        return false;
+    (*saved)[(*saved_len)++] = entry;
     return true;
 }
 
@@ -349,23 +361,26 @@ ppproof_relational_machine_v1_preload_frame(
     const PPProofGSLTRelationalAssertionPlanV1 *relational_plan,
     const PPProofRelationalMachineSelectorsV1 *selectors,
     uint32_t authority,
-    PPProofRelationalMachineHeapEntryV1 **heap,
-    uint32_t *heap_len,
-    uint32_t *heap_cap,
+    uint32_t **prepared_labels,
+    uint32_t *prepared_label_len,
+    uint32_t *prepared_label_cap,
     uint32_t maximum_len,
     char *error_buf,
     size_t error_buf_size) {
-    uint32_t *mandatory = NULL;
     uint32_t *binder_counts = NULL;
     uint32_t mandatory_len = 0u;
-    uint32_t mandatory_cap = 0u;
     PPProofRelationalMachineFrameRowV1 *ordered = NULL;
     uint32_t ordered_len = 0u;
     uint32_t ordered_cap = 0u;
     uint64_t cursor = UINT64_MAX;
     PPProofGSLTRelationalMachineV1Result result =
         PPPROOF_GSLT_RELATIONAL_MACHINE_V1_INVALID;
+    CettaGsltU32IndexV1 mandatory_lookup;
+    CettaGsltU32IndexV1 label_index;
     uint32_t index;
+
+    cetta_gslt_u32_index_init_v1(&mandatory_lookup);
+    cetta_gslt_u32_index_init_v1(&label_index);
 
     for (;;) {
         uint32_t row[2];
@@ -379,23 +394,29 @@ ppproof_relational_machine_v1_preload_frame(
             goto done;
         if (!found)
             break;
-        for (index = 0u; index < mandatory_len; index++) {
-            if (mandatory[index] == row[1]) {
-                ppproof_relational_machine_v1_set_error(
-                    error_buf, error_buf_size,
-                    "compressed frame repeats a mandatory variable");
-                goto done;
-            }
-        }
-        if (!ppproof_relational_machine_v1_grow(
-                (void **)&mandatory, &mandatory_cap,
-                mandatory_len + 1u, maximum_len,
-                sizeof(*mandatory))) {
+        CettaGsltU32IndexInsertResultV1 inserted;
+        if (mandatory_len >= maximum_len) {
             result = PPPROOF_GSLT_RELATIONAL_MACHINE_V1_RESOURCE;
             goto done;
         }
-        mandatory[mandatory_len++] = row[1];
+        inserted = cetta_gslt_u32_index_insert_unique_v1(
+            &mandatory_lookup, row[1], mandatory_len);
+        if (inserted == CETTA_GSLT_U32_INDEX_DUPLICATE_V1) {
+            ppproof_relational_machine_v1_set_error(
+                error_buf, error_buf_size,
+                "compressed frame repeats a mandatory variable");
+            goto done;
+        }
+        if (inserted == CETTA_GSLT_U32_INDEX_RESOURCE_V1) {
+            result = PPPROOF_GSLT_RELATIONAL_MACHINE_V1_RESOURCE;
+            goto done;
+        }
+        if (inserted != CETTA_GSLT_U32_INDEX_INSERTED_V1)
+            goto done;
+        mandatory_len++;
     }
+    if (!cetta_gslt_u32_index_validate_v1(&mandatory_lookup))
+        goto done;
     if (mandatory_len != 0u) {
         binder_counts = calloc(mandatory_len, sizeof(*binder_counts));
         if (!binder_counts) {
@@ -451,15 +472,21 @@ ppproof_relational_machine_v1_preload_frame(
             goto done;
         }
         {
-            uint32_t prior;
-            for (prior = 0u; prior < index; prior++) {
-                if (ordered[prior].label == ordered[index].label) {
-                    ppproof_relational_machine_v1_set_error(
-                        error_buf, error_buf_size,
-                        "compressed frame repeats an active hypothesis");
-                    goto done;
-                }
+            CettaGsltU32IndexInsertResultV1 inserted =
+                cetta_gslt_u32_index_insert_unique_v1(
+                    &label_index, ordered[index].label, index);
+            if (inserted == CETTA_GSLT_U32_INDEX_DUPLICATE_V1) {
+                ppproof_relational_machine_v1_set_error(
+                    error_buf, error_buf_size,
+                    "compressed frame repeats an active hypothesis");
+                goto done;
             }
+            if (inserted == CETTA_GSLT_U32_INDEX_RESOURCE_V1) {
+                result = PPPROOF_GSLT_RELATIONAL_MACHINE_V1_RESOURCE;
+                goto done;
+            }
+            if (inserted != CETTA_GSLT_U32_INDEX_INSERTED_V1)
+                goto done;
         }
         if (!store->table_find(
                 store->context,
@@ -476,15 +503,13 @@ ppproof_relational_machine_v1_preload_frame(
                         PPPROOF_GSLT_RELATIONAL_TABLE_V1_FLOATING_VARIABLE],
                     &ordered[index].label, 1u, variable_row, 2u))
                 goto done;
-            for (mandatory_index = 0u;
-                 mandatory_index < mandatory_len; mandatory_index++) {
-                if (mandatory[mandatory_index] == variable_row[1]) {
-                    if (binder_counts[mandatory_index] == UINT32_MAX)
-                        goto done;
-                    binder_counts[mandatory_index]++;
-                    include = true;
-                    break;
-                }
+            if (cetta_gslt_u32_index_find_v1(
+                    &mandatory_lookup, variable_row[1], &mandatory_index)) {
+                if (mandatory_index >= mandatory_len ||
+                    binder_counts[mandatory_index] == UINT32_MAX)
+                    goto done;
+                binder_counts[mandatory_index]++;
+                include = true;
             }
         } else if (kind_row[1] == selectors->essential_kind) {
             include = true;
@@ -494,17 +519,16 @@ ppproof_relational_machine_v1_preload_frame(
                 "compressed frame contains a non-hypothesis label");
             goto done;
         }
-        if (include && !ppproof_relational_machine_v1_heap_push(
-                heap, heap_len, heap_cap,
-                (PPProofRelationalMachineHeapEntryV1){
-                    .kind = PPPROOF_RELATIONAL_MACHINE_HEAP_V1_LABEL,
-                    .label = ordered[index].label,
-                },
+        if (include && !ppproof_relational_machine_v1_label_push(
+                prepared_labels, prepared_label_len,
+                prepared_label_cap, ordered[index].label, 0u,
                 maximum_len)) {
             result = PPPROOF_GSLT_RELATIONAL_MACHINE_V1_RESOURCE;
             goto done;
         }
     }
+    if (!cetta_gslt_u32_index_validate_v1(&label_index))
+        goto done;
     for (index = 0u; index < mandatory_len; index++) {
         if (binder_counts[index] != 1u) {
             ppproof_relational_machine_v1_set_error(
@@ -518,7 +542,8 @@ ppproof_relational_machine_v1_preload_frame(
 done:
     free(ordered);
     free(binder_counts);
-    free(mandatory);
+    cetta_gslt_u32_index_free_v1(&label_index);
+    cetta_gslt_u32_index_free_v1(&mandatory_lookup);
     return result;
 }
 
@@ -1061,6 +1086,8 @@ ppproof_gslt_relational_machine_v1_normal(
         memset(receipt_out, 0, sizeof(*receipt_out));
     ppproof_gslt_relational_context_v1_init(&context);
     ppproof_gslt_sequence_evidence_producer_v1_init(&producer);
+    receipt.execution =
+        PPPROOF_GSLT_RELATIONAL_EXECUTION_V1_LABEL_STREAM;
     if (!input || !receipt_out ||
         !ppproof_relational_machine_v1_slice_valid(input->label) ||
         !input->claim || input->claim_len == 0u ||
@@ -1153,27 +1180,6 @@ done:
     return result;
 }
 
-static bool ppproof_relational_machine_v1_decoder_valid(
-    const PPRelationalStateProofMachineV1 *machine) {
-    return machine && machine->terminal_low <= machine->terminal_high &&
-           machine->continuation_low <= machine->continuation_high &&
-           (machine->terminal_high < machine->continuation_low ||
-            machine->continuation_high < machine->terminal_low) &&
-           !(machine->save_byte >= machine->terminal_low &&
-             machine->save_byte <= machine->terminal_high) &&
-           !(machine->save_byte >= machine->continuation_low &&
-             machine->save_byte <= machine->continuation_high) &&
-           !(machine->unknown_byte >= machine->terminal_low &&
-             machine->unknown_byte <= machine->terminal_high) &&
-           !(machine->unknown_byte >= machine->continuation_low &&
-             machine->unknown_byte <= machine->continuation_high) &&
-           machine->save_byte != machine->unknown_byte &&
-           machine->terminal_radix != 0u &&
-           machine->continuation_radix != 0u &&
-           machine->unknown_policy <=
-               PPRELATIONAL_STACK_PROOF_V1_UNKNOWN_PUSH_CLAIM;
-}
-
 PPProofGSLTRelationalMachineV1Result
 ppproof_gslt_relational_machine_v1_compressed(
     const PPRelationalStoreV1 *store,
@@ -1182,6 +1188,8 @@ ppproof_gslt_relational_machine_v1_compressed(
     const PPProofGSLTPlanV1 *proof_plan,
     const PPProofGSLTSequenceEvidenceABIV1 *evidence_abi,
     const PPProofGSLTRelationalAssertionPlanV1 *relational_plan,
+    const PPProofIndexedValuePlanV1 *indexed_value_plan,
+    const PPProofFrameIndexPlanV1 *frame_index_plan,
     const PPProofGSLTRelationalCompressedInputV1 *input,
     const PPProofGSLTArticleV1Limits *limits,
     PPProofGSLTRelationalMachineV1Receipt *receipt_out,
@@ -1196,9 +1204,12 @@ ppproof_gslt_relational_machine_v1_compressed(
     PPProofRelationalMachineStackEntryV1 *stack = NULL;
     uint32_t stack_len = 0u;
     uint32_t stack_cap = 0u;
-    PPProofRelationalMachineHeapEntryV1 *heap = NULL;
-    uint32_t heap_len = 0u;
-    uint32_t heap_cap = 0u;
+    uint32_t *prepared_labels = NULL;
+    uint32_t prepared_label_len = 0u;
+    uint32_t prepared_label_cap = 0u;
+    PPProofRelationalMachineStackEntryV1 *saved_entries = NULL;
+    uint32_t saved_entry_len = 0u;
+    uint32_t saved_entry_cap = 0u;
     uint32_t authority = 0u;
     uint32_t claim_value = 0u;
     PPProofGSLTTokenSequenceV1 claim;
@@ -1206,7 +1217,8 @@ ppproof_gslt_relational_machine_v1_compressed(
     PPProofGSLTRelationalMachineV1Result result =
         PPPROOF_GSLT_RELATIONAL_MACHINE_V1_INVALID;
     PPProofGSLTArticleV1Result article_result;
-    uint64_t accumulator = 0u;
+    CettaGsltIndexedInstructionDecoderV1 decoder = {0};
+    CettaGsltIndexedInstructionPlanV1 indexed_plan;
     uint32_t decoded_step_len = 0u;
     uint32_t index;
     bool incomplete = false;
@@ -1217,6 +1229,8 @@ ppproof_gslt_relational_machine_v1_compressed(
         memset(receipt_out, 0, sizeof(*receipt_out));
     ppproof_gslt_relational_context_v1_init(&context);
     ppproof_gslt_sequence_evidence_producer_v1_init(&producer);
+    receipt.execution =
+        PPPROOF_GSLT_RELATIONAL_EXECUTION_V1_INDEXED_INSTRUCTION_STREAM;
     if (!effective_limits) {
         default_limits = ppproof_gslt_article_v1_default_limits();
         effective_limits = &default_limits;
@@ -1269,7 +1283,42 @@ ppproof_gslt_relational_machine_v1_compressed(
             error_buf, error_buf_size))
         goto done;
     machine = &state_plan->proof_machines[proof_machine_id];
-    if (!ppproof_relational_machine_v1_decoder_valid(machine)) {
+    if (!indexed_value_plan || !indexed_value_plan->machine ||
+        !indexed_value_plan->carrier || !indexed_value_plan->region ||
+        !machine->name ||
+        strcmp(indexed_value_plan->machine, machine->name) != 0 ||
+        strcmp(indexed_value_plan->carrier,
+               "prepared-indexed-value-table-v1") != 0 ||
+        strcmp(indexed_value_plan->region,
+               "proof-call-region-v1") != 0) {
+        ppproof_relational_machine_v1_set_error(
+            error_buf, error_buf_size,
+            "generated indexed-value plan does not admit the compressed backend");
+        goto done;
+    }
+    if (!frame_index_plan || !frame_index_plan->machine ||
+        !frame_index_plan->carrier || !frame_index_plan->validation ||
+        !frame_index_plan->region || !machine->name ||
+        strcmp(frame_index_plan->machine, machine->name) != 0 ||
+        strcmp(frame_index_plan->carrier,
+               "u32-open-addressed-index-v1") != 0 ||
+        strcmp(frame_index_plan->validation, "duplicate-reject-v1") != 0 ||
+        strcmp(frame_index_plan->region, "proof-call-region-v1") != 0) {
+        ppproof_relational_machine_v1_set_error(
+            error_buf, error_buf_size,
+            "generated frame-index plan does not admit the compressed backend");
+        goto done;
+    }
+    if (machine->unknown_policy >
+        PPRELATIONAL_STACK_PROOF_V1_UNKNOWN_PUSH_CLAIM) {
+        ppproof_relational_machine_v1_set_error(
+            error_buf, error_buf_size,
+            "generated compressed-proof decoder is malformed");
+        goto done;
+    }
+    indexed_plan = ppproof_relational_machine_v1_indexed_plan(machine);
+    if (cetta_gslt_indexed_instruction_decoder_init_v1(
+            &decoder, &indexed_plan) != CETTA_GSLT_INDEXED_DECODE_OK_V1) {
         ppproof_relational_machine_v1_set_error(
             error_buf, error_buf_size,
             "generated compressed-proof decoder is malformed");
@@ -1298,7 +1347,7 @@ ppproof_gslt_relational_machine_v1_compressed(
     }
     result = ppproof_relational_machine_v1_preload_frame(
         store, relational_plan, &selectors, authority,
-        &heap, &heap_len, &heap_cap,
+        &prepared_labels, &prepared_label_len, &prepared_label_cap,
         effective_limits->maximum_article_nodes,
         error_buf, error_buf_size);
     if (result != PPPROOF_GSLT_RELATIONAL_MACHINE_V1_OK) {
@@ -1348,12 +1397,9 @@ ppproof_gslt_relational_machine_v1_compressed(
             result = PPPROOF_GSLT_RELATIONAL_MACHINE_V1_REJECTED;
             goto done;
         }
-        if (!ppproof_relational_machine_v1_heap_push(
-                &heap, &heap_len, &heap_cap,
-                (PPProofRelationalMachineHeapEntryV1){
-                    .kind = PPPROOF_RELATIONAL_MACHINE_HEAP_V1_LABEL,
-                    .label = label,
-                },
+        if (!ppproof_relational_machine_v1_label_push(
+                &prepared_labels, &prepared_label_len,
+                &prepared_label_cap, label, saved_entry_len,
                 effective_limits->maximum_article_nodes)) {
             result = PPPROOF_GSLT_RELATIONAL_MACHINE_V1_RESOURCE;
             goto done;
@@ -1373,49 +1419,81 @@ ppproof_gslt_relational_machine_v1_compressed(
         for (byte_index = 0u;
              byte_index < input->code[index].len; byte_index++) {
             uint8_t byte = input->code[index].bytes[byte_index];
-            if (byte >= machine->terminal_low &&
-                byte <= machine->terminal_high) {
-                uint64_t digit =
-                    (uint64_t)(byte - machine->terminal_low) +
-                    machine->terminal_digit_bias;
-                uint64_t heap_index;
-                if (accumulator >
-                    (UINT64_MAX - digit) / machine->terminal_radix) {
+            CettaGsltIndexedInstructionEventV1 event;
+            CettaGsltIndexedDecodeResultV1 decode_result =
+                cetta_gslt_indexed_instruction_feed_v1(
+                    &decoder, byte, &event);
+
+            if (decode_result != CETTA_GSLT_INDEXED_DECODE_OK_V1) {
+                if (decode_result == CETTA_GSLT_INDEXED_DECODE_OVERFLOW_V1) {
                     ppproof_relational_machine_v1_set_error(
                         error_buf, error_buf_size,
                         "compressed proof index overflows");
                     result = PPPROOF_GSLT_RELATIONAL_MACHINE_V1_REJECTED;
-                    goto done;
+                } else if (decode_result ==
+                           CETTA_GSLT_INDEXED_DECODE_SAVE_INSIDE_INDEX_V1) {
+                    ppproof_relational_machine_v1_set_error(
+                        error_buf, error_buf_size,
+                        "compressed proof save interrupts an open index");
+                    result = PPPROOF_GSLT_RELATIONAL_MACHINE_V1_REJECTED;
+                } else if (decode_result ==
+                           CETTA_GSLT_INDEXED_DECODE_INVALID_BYTE_V1) {
+                    ppproof_relational_machine_v1_set_error(
+                        error_buf, error_buf_size,
+                        decoder.open_index
+                            ? "compressed proof byte interrupts an open index"
+                            : "compressed proof byte is outside the generated decoder");
+                    result = PPPROOF_GSLT_RELATIONAL_MACHINE_V1_REJECTED;
+                } else {
+                    ppproof_relational_machine_v1_set_error(
+                        error_buf, error_buf_size,
+                        "invalid generated compressed-proof decoder state");
+                    result = PPPROOF_GSLT_RELATIONAL_MACHINE_V1_INVALID;
                 }
-                heap_index = machine->terminal_radix * accumulator + digit;
-                accumulator = 0u;
-                if (heap_index >= heap_len) {
+                goto done;
+            }
+            if (event.kind == CETTA_GSLT_INDEXED_INSTRUCTION_USE_V1) {
+                CettaGsltSplitIndexedTableV1 indexed_values = {
+                    .prepared = prepared_labels,
+                    .prepared_len = prepared_label_len,
+                    .prepared_stride = sizeof(*prepared_labels),
+                    .saved = saved_entries,
+                    .saved_len = saved_entry_len,
+                    .saved_stride = sizeof(*saved_entries),
+                };
+                CettaGsltSplitIndexedValueV1 indexed_value;
+                uint32_t applied_label = 0u;
+
+                if (!cetta_gslt_split_indexed_table_get_v1(
+                        &indexed_values, event.index, &indexed_value)) {
                     ppproof_relational_machine_v1_set_error(
                         error_buf, error_buf_size,
                         "compressed proof index is out of range");
                     result = PPPROOF_GSLT_RELATIONAL_MACHINE_V1_REJECTED;
                     goto done;
                 }
-                if (heap[heap_index].kind ==
-                    PPPROOF_RELATIONAL_MACHINE_HEAP_V1_LABEL) {
+                if (indexed_value.kind ==
+                    CETTA_GSLT_SPLIT_INDEXED_VALUE_V1_PREPARED) {
+                    applied_label = *(const uint32_t *)indexed_value.value;
                     result = ppproof_relational_machine_v1_apply_label(
                         store, relational_plan, &context, &producer,
                         &selectors, authority,
                         machine->active_disjoint_table,
-                        heap[heap_index].label,
+                        applied_label,
                         &stack, &stack_len, &stack_cap,
                         error_buf, error_buf_size);
-                } else if (heap[heap_index].kind ==
-                           PPPROOF_RELATIONAL_MACHINE_HEAP_V1_SAVED) {
+                } else if (indexed_value.kind ==
+                           CETTA_GSLT_SPLIT_INDEXED_VALUE_V1_SAVED) {
                     result = ppproof_relational_machine_v1_stack_push(
                                  &stack, &stack_len, &stack_cap,
-                                 heap[heap_index].saved)
+                                 *(const PPProofRelationalMachineStackEntryV1 *)
+                                     indexed_value.value)
                                  ? PPPROOF_GSLT_RELATIONAL_MACHINE_V1_OK
                                  : PPPROOF_GSLT_RELATIONAL_MACHINE_V1_RESOURCE;
                 } else {
                     ppproof_relational_machine_v1_set_error(
                         error_buf, error_buf_size,
-                        "compressed proof heap entry has an invalid kind");
+                        "compressed proof indexed value has an invalid kind");
                     result = PPPROOF_GSLT_RELATIONAL_MACHINE_V1_INVALID;
                 }
                 if (result != PPPROOF_GSLT_RELATIONAL_MACHINE_V1_OK) {
@@ -1427,13 +1505,10 @@ ppproof_gslt_relational_machine_v1_compressed(
                             error_buf, error_buf_size,
                             "compressed proof label application failed "
                             "at decoded step %u (word %u, byte %u, "
-                            "heap index %llu, label id %u, stack %u)",
+                            "indexed value %llu, label id %u, stack %u)",
                             decoded_step_len, index, byte_index,
-                            (unsigned long long)heap_index,
-                            heap[heap_index].kind ==
-                                    PPPROOF_RELATIONAL_MACHINE_HEAP_V1_LABEL
-                                ? heap[heap_index].label
-                                : 0u,
+                            (unsigned long long)event.index,
+                            applied_label,
                             stack_len);
                     goto done;
                 }
@@ -1442,30 +1517,8 @@ ppproof_gslt_relational_machine_v1_compressed(
                     goto done;
                 }
                 decoded_step_len++;
-            } else if (byte >= machine->continuation_low &&
-                       byte <= machine->continuation_high) {
-                uint64_t digit =
-                    (uint64_t)(byte - machine->continuation_low) +
-                    machine->continuation_digit_bias;
-                if (accumulator >
-                    (UINT64_MAX - digit) /
-                        machine->continuation_radix) {
-                    ppproof_relational_machine_v1_set_error(
-                        error_buf, error_buf_size,
-                        "compressed proof index overflows");
-                    result = PPPROOF_GSLT_RELATIONAL_MACHINE_V1_REJECTED;
-                    goto done;
-                }
-                accumulator = machine->continuation_radix * accumulator +
-                              digit;
-            } else if (byte == machine->save_byte) {
-                if (accumulator != 0u) {
-                    ppproof_relational_machine_v1_set_error(
-                        error_buf, error_buf_size,
-                        "compressed proof save interrupts an open index");
-                    result = PPPROOF_GSLT_RELATIONAL_MACHINE_V1_REJECTED;
-                    goto done;
-                }
+            } else if (event.kind ==
+                       CETTA_GSLT_INDEXED_INSTRUCTION_SAVE_V1) {
                 if (stack_len == 0u) {
                     ppproof_relational_machine_v1_set_error(
                         error_buf, error_buf_size,
@@ -1473,19 +1526,16 @@ ppproof_gslt_relational_machine_v1_compressed(
                     result = PPPROOF_GSLT_RELATIONAL_MACHINE_V1_REJECTED;
                     goto done;
                 }
-                if (!ppproof_relational_machine_v1_heap_push(
-                        &heap, &heap_len, &heap_cap,
-                        (PPProofRelationalMachineHeapEntryV1){
-                            .kind =
-                                PPPROOF_RELATIONAL_MACHINE_HEAP_V1_SAVED,
-                            .saved = stack[stack_len - 1u],
-                        },
+                if (!ppproof_relational_machine_v1_saved_push(
+                        &saved_entries, &saved_entry_len,
+                        &saved_entry_cap, stack[stack_len - 1u],
+                        prepared_label_len,
                         effective_limits->maximum_article_nodes)) {
                     result = PPPROOF_GSLT_RELATIONAL_MACHINE_V1_RESOURCE;
                     goto done;
                 }
-            } else if (byte == machine->unknown_byte) {
-                accumulator = 0u;
+            } else if (event.kind ==
+                       CETTA_GSLT_INDEXED_INSTRUCTION_UNKNOWN_V1) {
                 if (machine->unknown_policy !=
                     PPRELATIONAL_STACK_PROOF_V1_UNKNOWN_PUSH_CLAIM) {
                     ppproof_relational_machine_v1_set_error(
@@ -1506,25 +1556,33 @@ ppproof_gslt_relational_machine_v1_compressed(
                 }
                 decoded_step_len++;
                 incomplete = true;
-            } else {
-                ppproof_relational_machine_v1_set_error(
-                    error_buf, error_buf_size,
-                    accumulator != 0u
-                        ? "compressed proof byte interrupts an open index"
-                        : "compressed proof byte is outside the generated decoder");
-                result = PPPROOF_GSLT_RELATIONAL_MACHINE_V1_REJECTED;
-                goto done;
             }
         }
     }
-    if (accumulator != 0u) {
-        ppproof_relational_machine_v1_set_error(
-            error_buf, error_buf_size,
-            "compressed proof ends inside an index");
-        result = PPPROOF_GSLT_RELATIONAL_MACHINE_V1_REJECTED;
-        goto done;
+    {
+        CettaGsltIndexedDecodeResultV1 finish_result =
+            cetta_gslt_indexed_instruction_finish_v1(&decoder);
+        if (finish_result ==
+            CETTA_GSLT_INDEXED_DECODE_OPEN_INDEX_AT_END_V1) {
+            ppproof_relational_machine_v1_set_error(
+                error_buf, error_buf_size,
+                "compressed proof ends inside an index");
+            result = PPPROOF_GSLT_RELATIONAL_MACHINE_V1_REJECTED;
+            goto done;
+        }
+        if (finish_result != CETTA_GSLT_INDEXED_DECODE_OK_V1) {
+            ppproof_relational_machine_v1_set_error(
+                error_buf, error_buf_size,
+                "invalid generated compressed-proof decoder state");
+            result = PPPROOF_GSLT_RELATIONAL_MACHINE_V1_INVALID;
+            goto done;
+        }
     }
     receipt.proof_step_len = decoded_step_len;
+    receipt.decoded_byte_len = decoder.consumed_byte_len;
+    receipt.decoded_instruction_len = decoder.emitted_instruction_len;
+    receipt.prepared_value_len = prepared_label_len;
+    receipt.saved_value_len = saved_entry_len;
     if (incomplete)
         result = ppproof_relational_machine_v1_finish_incomplete(
             &context, &producer, &receipt, error_buf, error_buf_size);
@@ -1552,7 +1610,8 @@ done:
     if (result == PPPROOF_GSLT_RELATIONAL_MACHINE_V1_OK ||
         result == PPPROOF_GSLT_RELATIONAL_MACHINE_V1_INCOMPLETE)
         *receipt_out = receipt;
-    free(heap);
+    free(saved_entries);
+    free(prepared_labels);
     free(stack);
     ppproof_gslt_sequence_evidence_producer_v1_free(&producer);
     ppproof_gslt_relational_context_v1_free(&context);

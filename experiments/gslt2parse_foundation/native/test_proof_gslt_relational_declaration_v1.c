@@ -782,6 +782,8 @@ int main(int argc, char **argv) {
     PPProofGSLTRelationalAssertionPlanV1 bridge;
     PPRelationalStateProgramV1Plan state_plan;
     PPRelationalStateProofMachineV1 proof_machine;
+    PPProofIndexedValuePlanV1 indexed_value_plan;
+    PPProofFrameIndexPlanV1 frame_index_plan;
     PPRelationalStateTableV1 state_tables[
         PPPROOF_GSLT_RELATIONAL_TABLE_V1_LEN];
     FakeStoreV1 fake_store = {0};
@@ -824,6 +826,8 @@ int main(int argc, char **argv) {
     ppproof_gslt_sequence_evidence_producer_v1_init(&producer);
     memset(&state_plan, 0, sizeof(state_plan));
     memset(&proof_machine, 0, sizeof(proof_machine));
+    memset(&indexed_value_plan, 0, sizeof(indexed_value_plan));
+    memset(&frame_index_plan, 0, sizeof(frame_index_plan));
     memset(state_tables, 0, sizeof(state_tables));
     for (index = 0u;
          index < PPPROOF_GSLT_RELATIONAL_TABLE_V1_LEN; index++) {
@@ -870,6 +874,14 @@ int main(int argc, char **argv) {
         }
         state_plan.proof_machines = &proof_machine;
         state_plan.proof_machine_len = 1u;
+        indexed_value_plan.machine = proof_machine.name;
+        indexed_value_plan.carrier =
+            "prepared-indexed-value-table-v1";
+        indexed_value_plan.region = "proof-call-region-v1";
+        frame_index_plan.machine = proof_machine.name;
+        frame_index_plan.carrier = "u32-open-addressed-index-v1";
+        frame_index_plan.validation = "duplicate-reject-v1";
+        frame_index_plan.region = "proof-call-region-v1";
         store = fake_store_interface(&fake_store);
         if (result == PPPROOF_GSLT_ARTICLE_V1_OK)
             result = ppproof_gslt_relational_context_v1_begin(
@@ -1075,6 +1087,7 @@ int main(int argc, char **argv) {
             .step_len = 6u,
         };
         PPProofGSLTRelationalMachineV1Receipt machine_receipt;
+        PPProofGSLTRelationalMachineV1Receipt normal_receipt;
         PPProofGSLTRelationalMachineV1Result machine_result;
 
         machine_result = ppproof_gslt_relational_machine_v1_normal(
@@ -1086,13 +1099,21 @@ int main(int argc, char **argv) {
         check(machine_result == PPPROOF_GSLT_RELATIONAL_MACHINE_V1_OK &&
                   machine_receipt.complete &&
                   machine_receipt.proof_step_len == 6u &&
+                  machine_receipt.execution ==
+                      PPPROOF_GSLT_RELATIONAL_EXECUTION_V1_LABEL_STREAM &&
+                  machine_receipt.decoded_byte_len == 0u &&
+                  machine_receipt.decoded_instruction_len == 0u &&
                   machine_receipt.article.rooted,
               "generic normal machine checks a generated proof article");
+        normal_receipt = machine_receipt;
 
         {
             static const uint8_t compressed_code_bytes[] = "ABABCD";
+            static const uint8_t compressed_saved_code_bytes[] = "ABABCDZ";
+            static const uint8_t compressed_saved_use_bytes[] = "AZBZEFCD";
             static const uint8_t bad_saved_index_bytes[] = "ABABCE";
             static const uint8_t interrupted_index_bytes[] = "UZ";
+            static const uint8_t zero_digit_open_index_bytes[] = "U";
             PPRelationalValueV1Slice compressed_header[3] = {
                 {bind_c_bytes,
                  (uint32_t)(sizeof(bind_c_bytes) - 1u)},
@@ -1117,14 +1138,121 @@ int main(int argc, char **argv) {
             machine_result =
                 ppproof_gslt_relational_machine_v1_compressed(
                     &store, &state_plan, 0u, &proof_plan,
-                    &evidence_abi, &bridge, &compressed_input,
+                    &evidence_abi, &bridge, &indexed_value_plan,
+                    &frame_index_plan,
+                    &compressed_input,
                     NULL, &machine_receipt, error, sizeof(error));
             check(machine_result ==
                       PPPROOF_GSLT_RELATIONAL_MACHINE_V1_OK &&
                       machine_receipt.complete &&
                       machine_receipt.proof_step_len == 6u &&
+                      machine_receipt.execution ==
+                          PPPROOF_GSLT_RELATIONAL_EXECUTION_V1_INDEXED_INSTRUCTION_STREAM &&
+                      machine_receipt.decoded_byte_len == 6u &&
+                      machine_receipt.decoded_instruction_len == 6u &&
+                      machine_receipt.prepared_value_len == 4u &&
+                      machine_receipt.saved_value_len == 0u &&
                       machine_receipt.article.rooted,
                   "compressed machine preloads mandatory hypotheses before its header");
+            check(machine_result ==
+                      PPPROOF_GSLT_RELATIONAL_MACHINE_V1_OK &&
+                      machine_receipt.proof_step_len ==
+                          normal_receipt.proof_step_len &&
+                      machine_receipt.context_premise_len ==
+                          normal_receipt.context_premise_len &&
+                      machine_receipt.article_node_len ==
+                          normal_receipt.article_node_len &&
+                      machine_receipt.complete == normal_receipt.complete &&
+                      machine_receipt.article.checked_node_len ==
+                          normal_receipt.article.checked_node_len &&
+                      machine_receipt.article.materialized_pattern_node_len ==
+                          normal_receipt.article.materialized_pattern_node_len &&
+                      machine_receipt.article.used_capabilities ==
+                          normal_receipt.article.used_capabilities &&
+                      machine_receipt.article.rooted ==
+                          normal_receipt.article.rooted,
+                  "normal and compressed execution produce the same proof receipt");
+
+            compressed_code = (PPRelationalValueV1Slice){
+                compressed_saved_code_bytes,
+                (uint32_t)(sizeof(compressed_saved_code_bytes) - 1u),
+            };
+            machine_result =
+                ppproof_gslt_relational_machine_v1_compressed(
+                    &store, &state_plan, 0u, &proof_plan,
+                    &evidence_abi, &bridge, &indexed_value_plan,
+                    &frame_index_plan,
+                    &compressed_input,
+                    NULL, &machine_receipt, error, sizeof(error));
+            check(machine_result ==
+                      PPPROOF_GSLT_RELATIONAL_MACHINE_V1_OK &&
+                      machine_receipt.complete &&
+                      machine_receipt.proof_step_len == 6u &&
+                      machine_receipt.decoded_byte_len == 7u &&
+                      machine_receipt.decoded_instruction_len == 7u &&
+                      machine_receipt.prepared_value_len == 4u &&
+                      machine_receipt.saved_value_len == 1u,
+                  "compressed save appends outside the prepared dictionary");
+
+            compressed_code = (PPRelationalValueV1Slice){
+                compressed_saved_use_bytes,
+                (uint32_t)(sizeof(compressed_saved_use_bytes) - 1u),
+            };
+            machine_result =
+                ppproof_gslt_relational_machine_v1_compressed(
+                    &store, &state_plan, 0u, &proof_plan,
+                    &evidence_abi, &bridge, &indexed_value_plan,
+                    &frame_index_plan,
+                    &compressed_input, NULL, &machine_receipt,
+                    error, sizeof(error));
+            check(machine_result ==
+                      PPPROOF_GSLT_RELATIONAL_MACHINE_V1_OK &&
+                      machine_receipt.complete &&
+                      machine_receipt.proof_step_len == 6u &&
+                      machine_receipt.decoded_byte_len == 8u &&
+                      machine_receipt.decoded_instruction_len == 8u &&
+                      machine_receipt.prepared_value_len == 4u &&
+                      machine_receipt.saved_value_len == 2u &&
+                      machine_receipt.article.rooted &&
+                      machine_receipt.article.used_capabilities ==
+                          normal_receipt.article.used_capabilities &&
+                      machine_receipt.article.checked_node_len <=
+                          normal_receipt.article.checked_node_len,
+                  "compressed saved-result suffix replays prepared values exactly");
+
+            compressed_code = (PPRelationalValueV1Slice){
+                compressed_code_bytes,
+                (uint32_t)(sizeof(compressed_code_bytes) - 1u),
+            };
+
+            indexed_value_plan.carrier = "unadmitted-indexed-value-v1";
+            machine_result =
+                ppproof_gslt_relational_machine_v1_compressed(
+                    &store, &state_plan, 0u, &proof_plan,
+                    &evidence_abi, &bridge, &indexed_value_plan,
+                    &frame_index_plan,
+                    &compressed_input, NULL, &machine_receipt,
+                    error, sizeof(error));
+            check(machine_result ==
+                      PPPROOF_GSLT_RELATIONAL_MACHINE_V1_INVALID &&
+                      strstr(error, "does not admit") != NULL,
+                  "compressed backend rejects an unadmitted indexed carrier");
+            indexed_value_plan.carrier =
+                "prepared-indexed-value-table-v1";
+
+            frame_index_plan.carrier = "unadmitted-frame-index-v1";
+            machine_result =
+                ppproof_gslt_relational_machine_v1_compressed(
+                    &store, &state_plan, 0u, &proof_plan,
+                    &evidence_abi, &bridge, &indexed_value_plan,
+                    &frame_index_plan,
+                    &compressed_input, NULL, &machine_receipt,
+                    error, sizeof(error));
+            check(machine_result ==
+                      PPPROOF_GSLT_RELATIONAL_MACHINE_V1_INVALID &&
+                      strstr(error, "frame-index plan does not admit") != NULL,
+                  "compressed backend rejects an unadmitted frame index");
+            frame_index_plan.carrier = "u32-open-addressed-index-v1";
 
             {
                 PPProofGSLTArticleV1Limits small_limits =
@@ -1133,7 +1261,9 @@ int main(int argc, char **argv) {
                 machine_result =
                     ppproof_gslt_relational_machine_v1_compressed(
                         &store, &state_plan, 0u, &proof_plan,
-                        &evidence_abi, &bridge, &compressed_input,
+                        &evidence_abi, &bridge, &indexed_value_plan,
+                        &frame_index_plan,
+                        &compressed_input,
                         &small_limits, &machine_receipt,
                         error, sizeof(error));
                 check(machine_result ==
@@ -1151,7 +1281,9 @@ int main(int argc, char **argv) {
             machine_result =
                 ppproof_gslt_relational_machine_v1_compressed(
                     &store, &state_plan, 0u, &proof_plan,
-                    &evidence_abi, &bridge, &compressed_input,
+                    &evidence_abi, &bridge, &indexed_value_plan,
+                    &frame_index_plan,
+                    &compressed_input,
                     NULL, &machine_receipt, error, sizeof(error));
             check(machine_result ==
                       PPPROOF_GSLT_RELATIONAL_MACHINE_V1_REJECTED,
@@ -1164,11 +1296,31 @@ int main(int argc, char **argv) {
             machine_result =
                 ppproof_gslt_relational_machine_v1_compressed(
                     &store, &state_plan, 0u, &proof_plan,
-                    &evidence_abi, &bridge, &compressed_input,
+                    &evidence_abi, &bridge, &indexed_value_plan,
+                    &frame_index_plan,
+                    &compressed_input,
                     NULL, &machine_receipt, error, sizeof(error));
             check(machine_result ==
                       PPPROOF_GSLT_RELATIONAL_MACHINE_V1_REJECTED,
                   "compressed save cannot interrupt a U-Y index");
+
+            compressed_code = (PPRelationalValueV1Slice){
+                zero_digit_open_index_bytes,
+                (uint32_t)(sizeof(zero_digit_open_index_bytes) - 1u),
+            };
+            proof_machine.continuation_digit_bias = 0u;
+            machine_result =
+                ppproof_gslt_relational_machine_v1_compressed(
+                    &store, &state_plan, 0u, &proof_plan,
+                    &evidence_abi, &bridge, &indexed_value_plan,
+                    &frame_index_plan,
+                    &compressed_input,
+                    NULL, &machine_receipt, error, sizeof(error));
+            check(machine_result ==
+                      PPPROOF_GSLT_RELATIONAL_MACHINE_V1_REJECTED &&
+                      strstr(error, "ends inside an index") != NULL,
+                  "zero-valued continuation still leaves an index open");
+            proof_machine.continuation_digit_bias = 1u;
 
             compressed_code = (PPRelationalValueV1Slice){
                 unknown_bytes,
@@ -1177,11 +1329,17 @@ int main(int argc, char **argv) {
             machine_result =
                 ppproof_gslt_relational_machine_v1_compressed(
                     &store, &state_plan, 0u, &proof_plan,
-                    &evidence_abi, &bridge, &compressed_input,
+                    &evidence_abi, &bridge, &indexed_value_plan,
+                    &frame_index_plan,
+                    &compressed_input,
                     NULL, &machine_receipt, error, sizeof(error));
             check(machine_result ==
                       PPPROOF_GSLT_RELATIONAL_MACHINE_V1_INCOMPLETE &&
-                      !machine_receipt.complete,
+                      !machine_receipt.complete &&
+                      machine_receipt.execution ==
+                          PPPROOF_GSLT_RELATIONAL_EXECUTION_V1_INDEXED_INSTRUCTION_STREAM &&
+                      machine_receipt.decoded_byte_len == 1u &&
+                      machine_receipt.decoded_instruction_len == 1u,
                   "compressed unknown is incomplete rather than verified");
         }
 

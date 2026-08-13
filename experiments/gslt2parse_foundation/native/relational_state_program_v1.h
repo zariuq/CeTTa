@@ -229,6 +229,10 @@ typedef enum {
 typedef struct {
     const PPRelationalStoreV1 *store;
     const PPRelationalStateProgramV1Plan *state_plan;
+    const char *operation;
+    uint32_t action_index;
+    const char *header_role;
+    const char *code_role;
     uint32_t proof_machine_id;
     bool compressed;
     PPRelationalValueV1Slice label;

@@ -126,6 +126,7 @@ typedef struct {
     PPOSLFNativeVMLimitsV1 limits;
     PPProofGSLTRelationalRuntimeV1Receipt receipt;
     bool receipt_ready;
+    PPProofGSLTRelationalRuntimeV1Profile profile;
     PPOSLFNativeCapabilitySetV1 pending_capabilities;
     bool pending_capabilities_ready;
     PPProofRuntimePersistentCacheV1 *persistent_cache;
@@ -2528,6 +2529,10 @@ static PPRelationalStateProofV1Result ppproof_runtime_v1_execute(
             !pposlf_native_type_vm_v1_prove_with_uncommitted_capabilities(
                 impl->vm, &capabilities, query, impl->limits, &result))
             goto done;
+        if (impl->profile.query_executions != UINT64_MAX)
+            impl->profile.query_executions++;
+        pposlf_native_vm_stats_v1_accumulate(
+            &impl->profile.stats, &result.stats);
         impl->receipt.outcome_query_attempts++;
         if (compiled_audit_providers &&
             !ppproof_runtime_v1_compiled_audit(
@@ -2660,5 +2665,15 @@ bool ppproof_gslt_relational_runtime_v1_last_receipt(
             impl->receipt.capability_digest))
         return false;
     *receipt_out = impl->receipt;
+    return true;
+}
+
+bool ppproof_gslt_relational_runtime_v1_profile(
+    const PPProofGSLTRelationalRuntimeV1 *runtime,
+    PPProofGSLTRelationalRuntimeV1Profile *profile_out) {
+    const PPProofRuntimeImplV1 *impl;
+    if (!runtime || !profile_out || !(impl = runtime->implementation))
+        return false;
+    *profile_out = impl->profile;
     return true;
 }

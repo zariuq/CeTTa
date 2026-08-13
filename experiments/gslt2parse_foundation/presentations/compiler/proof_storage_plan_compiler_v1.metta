@@ -19,6 +19,7 @@
     (operator proof-machine-id-v1 1)
     (operator proof-machine-table-read-v1 4)
     (operator proof-finite-support-plan-v1 11)
+    (operator proof-frame-index-plan-v1 6)
     (operator proof-indexed-value-plan-v1 7)
     (operator proof-literal-hole-plan-v1 7)
     (operator proof-sequence-evidence-artifact-v1 1)
@@ -555,6 +556,37 @@
               ?save ?unknown
               ?terminal-radix ?terminal-bias
               ?continuation-radix ?continuation-bias ?unknown-policy)))
+        (compile-proof-storage-plan-v1
+          (proof-call-region-plan-v1
+            ?operation ?index ?machine ?owner ?provable
+            proof-call-region-v1 flat-symbol-id-vector-v1
+            proof-verdict-only-v1))))
+
+    ; Frame preparation repeatedly resolves finite symbol identities while
+    ; constructing one proof-call-local dictionary.  The two selected table
+    ; roles and the bounded call region license a dynamically validated
+    ; monotone unique-key index.  Duplicate keys remain refusals: the carrier
+    ; does not silently choose one occurrence.
+    (rule proof-storage-frame-index-v1
+      (head
+        (compile-proof-storage-plan-v1
+          (proof-frame-index-plan-v1
+            ?operation ?index ?machine
+            u32-open-addressed-index-v1 duplicate-reject-v1
+            proof-call-region-v1)))
+      (body
+        (state-action-v1
+          ?operation ?index
+          (state-check-proof-compressed-v1
+            ?machine ?label-role ?formula-role ?header-role ?code-role))
+        (compile-proof-storage-plan-v1
+          (proof-machine-table-read-v1
+            ?machine mandatory-variable-v1
+            ?mandatory-table ?mandatory-lifetime))
+        (compile-proof-storage-plan-v1
+          (proof-machine-table-read-v1
+            ?machine ordered-hypothesis-v1
+            ?hypothesis-table ?hypothesis-lifetime))
         (compile-proof-storage-plan-v1
           (proof-call-region-plan-v1
             ?operation ?index ?machine ?owner ?provable
