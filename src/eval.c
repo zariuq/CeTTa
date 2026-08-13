@@ -1901,6 +1901,17 @@ static uint32_t eval_active_petta_analysis_policy_id(void) {
 }
 #endif
 
+static void eval_petta_typecheck_inferred_signatures_rebase(
+    PettaProgram *program, Space *space) {
+#if CETTA_BUILD_WITH_PETTA_TYPECHECK_V2
+    petta_typecheck_inferred_signatures_rebase_selected(
+        program, space, eval_active_petta_typecheck_policy());
+#else
+    (void)program;
+    (void)space;
+#endif
+}
+
 /* A typecheck-v2 program mutation is judged against the complete live
  * PettaProgram before any Space state or revision is published.  A failure
  * is a normal PeTTa Error value here, so catch can delimit it; only an
@@ -1918,7 +1929,7 @@ static Atom *eval_petta_program_mutation_error(
     PettaProgram *program = g_library_context
         ? g_library_context->petta_program : NULL;
     PettaTypecheckBlockResult checked;
-    bool judged = petta_typecheck_program_mutation(
+    bool judged = petta_typecheck_program_mutation_selected(
         program, g_eval_root_space ? g_eval_root_space : space,
         g_registry, space, atom,
         mutation,
@@ -28079,8 +28090,7 @@ static const char *petta_eval_machine_analysis_reason_name(
 }
 
 static const PettaAnalysisService petta_typecheck_v2_analysis_service = {
-    .provider_identity = UINT64_C(0x74797065636b7632),
-    .provider_abi = 1u,
+    .authority = &petta_typecheck_v2_direct_authority_v1,
     .capabilities = PETTA_MACHINE_ANALYSIS_TYPE_OBLIGATIONS,
     .policy_identity =
         petta_eval_machine_analysis_policy_identity,
@@ -35517,7 +35527,7 @@ petta_lowered_to_shared_form:
         if (petta_program && add_session->profile &&
             add_session->profile->id ==
                 CETTA_PROFILE_PETTA_TYPECHECK_V2) {
-            petta_program_inferred_signatures_rebase(
+            eval_petta_typecheck_inferred_signatures_rebase(
                 petta_program, target);
         }
         outcome_set_add(
@@ -35633,7 +35643,7 @@ petta_lowered_to_shared_form:
             if (petta_program && add_session->profile &&
                 add_session->profile->id ==
                     CETTA_PROFILE_PETTA_TYPECHECK_V2) {
-                petta_program_inferred_signatures_rebase(
+                eval_petta_typecheck_inferred_signatures_rebase(
                     petta_program, target);
             }
         }

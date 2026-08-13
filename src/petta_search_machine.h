@@ -3,6 +3,7 @@
 
 #include "eval.h"
 #include "match_decision.h"
+#include "nik_direct_authority.h"
 #include "petta_analysis.h"
 #include "petta_program.h"
 #include "petta_semantics.h"
@@ -61,19 +62,18 @@ typedef enum {
 /* Exact, provider-defined mutable authority consulted by semantic analyses
  * in addition to the root Space.  The machine compares this vector but does
  * not interpret its components. */
-#define PETTA_MACHINE_AUTHORITY_WORD_CAPACITY 8u
-typedef struct {
-    uint64_t words[PETTA_MACHINE_AUTHORITY_WORD_CAPACITY];
-    uint8_t length;
-} PettaMachineAuthorityToken;
+#define PETTA_MACHINE_AUTHORITY_WORD_CAPACITY \
+    CETTA_NIK_DIRECT_AUTHORITY_TOKEN_WORD_CAPACITY
+typedef CettaNikDirectAuthorityTokenV1 PettaMachineAuthorityToken;
 
-/* Optional language-owned analysis provider.  Provider identity, ABI, and
- * policy are part of every proof receipt before mutable authority words are
- * appended, so two implementations can never reuse one another's evidence.
+/* Optional language-owned analysis provider.  Semantic authority identity,
+ * physical realization identity, revision, ABI, and policy are part of every
+ * admitted-judgment key before mutable authority words are appended.  A new
+ * realization therefore cannot reuse its predecessor's facts until an
+ * explicit qualification step permits that replacement.
  */
 typedef struct {
-    uint64_t provider_identity;
-    uint32_t provider_abi;
+    const CettaNikDirectAuthorityV1 *authority;
     uint32_t capabilities;
     uint32_t (*policy_identity)(void *host_context);
     bool (*mutable_authority_token)(

@@ -636,26 +636,15 @@ static bool petta_machine_authority_token(
     const PettaAnalysisService *analysis = machine->host.analysis;
     if (!analysis)
         return true;
-    if (analysis->provider_identity == 0u ||
-        analysis->provider_abi == 0u) {
-        return false;
-    }
     PettaMachineAuthorityToken mutable = {0};
     if (analysis->mutable_authority_token &&
         !analysis->mutable_authority_token(
             machine->host.context, &mutable)) {
         return false;
     }
-    if (mutable.length > PETTA_MACHINE_AUTHORITY_WORD_CAPACITY - 3u)
-        return false;
-    token->words[0] = analysis->provider_identity;
-    token->words[1] = (uint64_t)analysis->provider_abi;
-    token->words[2] = (uint64_t)petta_machine_analysis_policy(machine);
-    memcpy(
-        &token->words[3], mutable.words,
-        (size_t)mutable.length * sizeof(mutable.words[0]));
-    token->length = (uint8_t)(mutable.length + 3u);
-    return true;
+    return cetta_nik_direct_authority_v1_token(
+        analysis->authority,
+        petta_machine_analysis_policy(machine), &mutable, token);
 }
 
 static bool petta_machine_authority_token_eq(
@@ -665,9 +654,9 @@ static bool petta_machine_authority_token_eq(
         left->length > PETTA_MACHINE_AUTHORITY_WORD_CAPACITY) {
         return false;
     }
-    return memcmp(
-        left->words, right->words,
-        (size_t)left->length * sizeof(left->words[0])) == 0;
+    if (left->length == 0u)
+        return true;
+    return cetta_nik_direct_authority_token_v1_equal(left, right);
 }
 
 static void petta_machine_invalidate_type_obligation_cache(
@@ -15364,8 +15353,8 @@ static bool petta_machine_init_internal(
                  PETTA_MACHINE_ANALYSIS_TYPE_OBLIGATIONS) != 0u;
             if ((analysis->capabilities & ~known_analyses) != 0u ||
                 analysis->capabilities == 0u ||
-                analysis->provider_identity == 0u ||
-                analysis->provider_abi == 0u ||
+                !cetta_nik_direct_authority_v1_is_valid(
+                    analysis->authority) ||
                 !analysis->policy_identity ||
                 !analysis->mutable_authority_token ||
                 (type_obligations &&

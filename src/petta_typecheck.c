@@ -7,9 +7,20 @@
 #include "symbol.h"
 
 #include <stdarg.h>
+#include <stdatomic.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+
+const CettaNikDirectAuthorityV1
+    petta_typecheck_v2_direct_authority_v1 = {
+        .alias = "PETTA-TYPECHECK-V2",
+        .system_id = "petta.typecheck-v2",
+        .authority_identity = UINT64_C(0x7065747461747970),
+        .realization_identity = UINT64_C(0x74797065636b7632),
+        .authority_revision = 1u,
+        .realization_abi = 1u,
+    };
 
 typedef enum {
     PETTA_TYPECHECK_MODE_VALUE = 0,
@@ -885,6 +896,7 @@ typedef struct {
     PettaProgram *program;
     Space *space;
     Registry *registry;
+    const CettaNikDirectAuthorityStampV1 *authority;
     Arena scratch;
     Atom *const *forms;
     size_t form_count;
@@ -934,6 +946,62 @@ typedef struct {
     uint32_t explicit_ascription_depth;
     bool residual_type_guard_required;
 } PettaBlockCheck;
+
+static bool petta_block_inferred_signatures_current(
+    PettaProgram *program, Space *space,
+    const CettaNikDirectAuthorityStampV1 *authority) {
+    return authority
+        ? petta_program_inferred_signatures_current_under_authority(
+              program, space, authority)
+        : petta_program_inferred_signatures_current(program, space);
+}
+
+static bool petta_block_inferred_signature_lookup(
+    PettaBlockCheck *check, SymbolId head, CettaExprLen arity,
+    Atom **signature_out) {
+    return check->authority
+        ? petta_program_inferred_signature_lookup_under_authority(
+              check->program, check->space, check->authority,
+              head, arity, &check->scratch, signature_out)
+        : petta_program_inferred_signature_lookup(
+              check->program, check->space, head, arity,
+              &check->scratch, signature_out);
+}
+
+static bool petta_block_inferred_signatures_lookup(
+    PettaBlockCheck *check, SymbolId head, CettaExprLen arity,
+    Atom ***signatures_out, size_t *count_out) {
+    return check->authority
+        ? petta_program_inferred_signatures_lookup_under_authority(
+              check->program, check->space, check->authority,
+              head, arity, &check->scratch,
+              signatures_out, count_out)
+        : petta_program_inferred_signatures_lookup(
+              check->program, check->space, head, arity,
+              &check->scratch, signatures_out, count_out);
+}
+
+static void petta_block_inferred_signatures_reset(
+    PettaProgram *program, Space *space,
+    const CettaNikDirectAuthorityStampV1 *authority) {
+    if (authority) {
+        petta_program_inferred_signatures_reset_under_authority(
+            program, space, authority);
+    } else {
+        petta_program_inferred_signatures_reset(program, space);
+    }
+}
+
+static bool petta_block_inferred_signature_put(
+    PettaProgram *program, Space *space,
+    const CettaNikDirectAuthorityStampV1 *authority,
+    SymbolId head, CettaExprLen arity, Atom *signature) {
+    return authority
+        ? petta_program_inferred_signature_put_under_authority(
+              program, space, authority, head, arity, signature)
+        : petta_program_inferred_signature_put(
+              program, space, head, arity, signature);
+}
 
 static bool petta_block_fault(
     PettaBlockCheck *check, PettaTypecheckFault fault,
@@ -2417,7 +2485,7 @@ static Atom *petta_block_normalize_value_schema(
 static bool petta_block_validate_effect_arguments(
     PettaBlockCheck *check, Atom *expression,
     Bindings *environment, uint32_t depth);
-static bool petta_block_value_has_proper_list_certificate(
+static bool petta_block_value_is_proven_proper_list(
     PettaBlockCheck *check, Atom *value,
     Bindings *environment, uint32_t depth);
 static bool petta_block_find_signature(
@@ -2900,11 +2968,10 @@ static bool petta_block_infer_named_call(
     Atom **inferred = NULL;
     size_t inferred_count = 0u;
     if (check->program &&
-        !petta_program_inferred_signatures_lookup(
-            check->program, check->space,
-            head_atom->sym_id,
+        !petta_block_inferred_signatures_lookup(
+            check, head_atom->sym_id,
             expression->expr.len - 1u,
-            &check->scratch, &inferred, &inferred_count)) {
+            &inferred, &inferred_count)) {
         return petta_block_fault(
             check, PETTA_TYPECHECK_FAULT_ALLOCATION,
             "could not collect inferred overloads");
@@ -3921,7 +3988,7 @@ static bool petta_block_infer_expr(
             check, expression->expr.elems[1], environment,
             NULL, &source_type, depth + 1u);
         if (!source_inferred &&
-            !petta_block_value_has_proper_list_certificate(
+            !petta_block_value_is_proven_proper_list(
                 check, expression->expr.elems[1], environment,
                 depth + 1u)) {
             check->definite_mismatch = saved_mismatch;
@@ -4216,7 +4283,7 @@ static bool petta_block_infer_expr(
          * is a closed proper list.  Element inference is therefore
          * best-effort.  A proved mismatch or infrastructure fault remains a
          * failure, while an unresolved generator yields List %Undefined%
-         * instead of erasing the list-shape certificate. */
+         * instead of erasing the proved list-shape fact. */
         Atom *element_actual = NULL;
         bool saved_mismatch = check->definite_mismatch;
         check->definite_mismatch = false;
@@ -4584,10 +4651,8 @@ static bool petta_block_find_signature(
     free(types);
     if (!*signature_out && check->program &&
         subject->kind == ATOM_SYMBOL) {
-        (void)petta_program_inferred_signature_lookup(
-            check->program, check->space,
-            subject->sym_id, arity,
-            &check->scratch, signature_out);
+        (void)petta_block_inferred_signature_lookup(
+            check, subject->sym_id, arity, signature_out);
     }
     return *signature_out != NULL;
 }
@@ -5379,7 +5444,7 @@ static bool petta_block_value_manifest_proper_list(
     return true;
 }
 
-static bool petta_block_value_has_proper_list_certificate(
+static bool petta_block_value_is_proven_proper_list(
     PettaBlockCheck *check, Atom *value,
     Bindings *environment, uint32_t depth) {
     if (!check || !value || depth > 128u)
@@ -5401,7 +5466,7 @@ static bool petta_block_value_has_proper_list_certificate(
         return true;
     if (head && strcmp(head, "cons") == 0 &&
         value->expr.len == 3u) {
-        return petta_block_value_has_proper_list_certificate(
+        return petta_block_value_is_proven_proper_list(
             check, value->expr.elems[2], environment,
             depth + 1u);
     }
@@ -5416,7 +5481,7 @@ static bool petta_block_value_has_proper_list_certificate(
             Atom *branch = branches->expr.elems[index];
             if (!branch || branch->kind != ATOM_EXPR ||
                 branch->expr.len != 2u ||
-                !petta_block_value_has_proper_list_certificate(
+                !petta_block_value_is_proven_proper_list(
                     check, branch->expr.elems[1], environment,
                     depth + 1u))
                 return false;
@@ -5425,24 +5490,24 @@ static bool petta_block_value_has_proper_list_certificate(
     }
     if (head && strcmp(head, "if") == 0 &&
         value->expr.len == 4u) {
-        return petta_block_value_has_proper_list_certificate(
+        return petta_block_value_is_proven_proper_list(
                    check, value->expr.elems[2], environment,
                    depth + 1u) &&
-               petta_block_value_has_proper_list_certificate(
+               petta_block_value_is_proven_proper_list(
                    check, value->expr.elems[3], environment,
                    depth + 1u);
     }
     if (head &&
         ((strcmp(head, "let") == 0 || strcmp(head, "chain") == 0) &&
          value->expr.len == 4u)) {
-        return petta_block_value_has_proper_list_certificate(
+        return petta_block_value_is_proven_proper_list(
             check, value->expr.elems[3], environment,
             depth + 1u);
     }
     if (head &&
         ((strcmp(head, "let*") == 0 && value->expr.len == 3u) ||
          (strcmp(head, "progn") == 0 && value->expr.len >= 2u))) {
-        return petta_block_value_has_proper_list_certificate(
+        return petta_block_value_is_proven_proper_list(
             check, value->expr.elems[value->expr.len - 1u],
             environment, depth + 1u);
     }
@@ -5453,7 +5518,7 @@ static bool petta_block_value_has_proper_list_certificate(
          strcmp(head, "subtraction-atom") == 0)) {
         for (CettaExprIndex index = 1u;
              index < value->expr.len; index++) {
-            if (!petta_block_value_has_proper_list_certificate(
+            if (!petta_block_value_is_proven_proper_list(
                     check, value->expr.elems[index], environment,
                     depth + 1u))
                 return false;
@@ -5482,17 +5547,17 @@ static bool petta_block_value_has_proper_list_certificate(
         check, value->expr.elems[0], arity,
         &equation_len);
     bool saw_clause = equation_len > 0u;
-    bool certified = saw_clause;
+    bool proven = saw_clause;
     for (size_t index = 0u; index < equation_len; index++) {
         Atom *form = equations[index];
-        if (!petta_block_value_has_proper_list_certificate(
+        if (!petta_block_value_is_proven_proper_list(
                 check, form->expr.elems[2], environment, depth + 1u)) {
-            certified = false;
+            proven = false;
             break;
         }
     }
     check->proper_list_stack_len--;
-    return certified;
+    return proven;
 }
 
 static bool petta_block_value_manifest_bool(
@@ -5541,9 +5606,9 @@ static bool petta_block_expression_produces_bound_bool(
                    check, expression->expr.elems[3],
                    environment, depth + 1u);
     }
-    /* The certificate is a property of the value a form finally produces, so
-     * it passes through the binding and sequencing forms to the expression in
-     * result position.  Without these the certificate stops at the first
+    /* This direct judgment concerns the value a form finally produces, so it
+     * passes through the binding and sequencing forms to the expression in
+     * result position.  Without these cases the reasoning stops at the first
      * `let*`, looks for clauses of a form that has none, and reports "not
      * provably a bound boolean" for bodies that plainly are one. */
     if (strcmp(head, "if") == 0 && expression->expr.len == 3u) {
@@ -5971,7 +6036,7 @@ static PettaBlockEffect petta_block_call_selection_effect(
                 continue;
             const char *required_name = petta_block_symbol_name(required);
             bool bound = petta_block_head_is(required, "List")
-                ? petta_block_value_has_proper_list_certificate(
+                ? petta_block_value_is_proven_proper_list(
                       check, actual, environment, 0u)
                 : required_name && strcmp(required_name, "Bool") == 0
                     ? petta_block_value_manifest_bool(
@@ -6435,7 +6500,7 @@ static PettaBlockEffect petta_block_expression_effect(
                 check, expression->expr.elems[closure_index],
                 required_closure, environment, depth + 1u);
         PettaBlockEffect list_effect =
-            petta_block_value_has_proper_list_certificate(
+            petta_block_value_is_proven_proper_list(
                 check, expression->expr.elems[1], environment,
                 depth + 1u)
                 ? PETTA_BLOCK_EFFECT_DET
@@ -6486,7 +6551,7 @@ static PettaBlockEffect petta_block_expression_effect(
                 strcmp(head, "subtraction-atom") == 0 ||
                 strcmp(head, "intersection-atom") == 0) &&
                expression->expr.len >= 2u) {
-        intrinsic = petta_block_value_has_proper_list_certificate(
+        intrinsic = petta_block_value_is_proven_proper_list(
                         check, expression->expr.elems[1],
                         environment, depth + 1u)
             ? PETTA_BLOCK_EFFECT_DET : PETTA_BLOCK_EFFECT_NONDET;
@@ -6672,7 +6737,7 @@ static PettaBlockEffect petta_block_expression_effect(
                     &body_environment, NULL, &value_type,
                     depth + 1u) && value_type &&
                 (!petta_block_head_is(value_type, "List") ||
-                 petta_block_value_has_proper_list_certificate(
+                 petta_block_value_is_proven_proper_list(
                      check, expression->expr.elems[2],
                      environment, depth + 1u))) {
                 petta_block_env_note(
@@ -7087,7 +7152,7 @@ static bool petta_block_check_determinism(
                  * exposed by a destructuring head can still be an unbound
                  * value.  Preserve only the structural List guarantee here;
                  * do not promote arbitrary declared fields to groundness
-                 * certificates for cardinality-sensitive builtins. */
+                 * facts for cardinality-sensitive builtins. */
                 continue;
             }
             if (petta_block_tests_variable_boundness(
@@ -7375,10 +7440,9 @@ static bool petta_block_select_clause_signature(
         subject->kind == ATOM_SYMBOL) {
         Atom **inferred = NULL;
         size_t inferred_count = 0u;
-        if (!petta_program_inferred_signatures_lookup(
-                check->program, check->space,
-                subject->sym_id, arity,
-                &check->scratch, &inferred, &inferred_count)) {
+        if (!petta_block_inferred_signatures_lookup(
+                check, subject->sym_id, arity,
+                &inferred, &inferred_count)) {
             free(signatures);
             return petta_block_fault(
                 check, PETTA_TYPECHECK_FAULT_ALLOCATION,
@@ -7862,6 +7926,7 @@ static bool petta_typecheck_block_needs_signature_inference(
 }
 
 static bool petta_typecheck_declaration_block_internal(
+    const CettaNikDirectAuthorityStampV1 *authority,
     PettaProgram *program, Space *space, Registry *registry,
     Atom *const *forms, size_t form_count,
     PettaTypecheckPolicy policy, bool revalidate_live,
@@ -7886,10 +7951,11 @@ static bool petta_typecheck_declaration_block_internal(
         return false;
     }
     bool inferred_current = program &&
-        petta_program_inferred_signatures_current(program, space);
+        petta_block_inferred_signatures_current(
+            program, space, authority);
     /* Revalidating live equations requires the live equations to be in the
      * check.  A late clause is exactly the mutation that can withdraw an
-     * earlier certificate, so skipping the rebuild here lets a stale proof
+     * earlier judgment, so skipping the rebuild here lets a stale result
      * survive the change that refutes it. */
     bool rebuild_inferred = program && (inference_needed || revalidate_live);
     if (program && !inferred_current && !rebuild_inferred) {
@@ -7897,7 +7963,8 @@ static bool petta_typecheck_declaration_block_internal(
          * because the new block is explicitly typed.  Dropping them is
          * conservative; a later genuinely untyped block rebuilds the fixed
          * point from the complete live equation snapshot. */
-        petta_program_inferred_signatures_reset(program, space);
+        petta_block_inferred_signatures_reset(
+            program, space, authority);
     }
     Atom **live_equations = NULL;
     size_t live_equation_count = 0u;
@@ -7937,6 +8004,7 @@ static bool petta_typecheck_declaration_block_internal(
         .program = program,
         .space = space,
         .registry = registry,
+        .authority = authority,
         .forms = rebuild_inferred ? working_forms : forms,
         .form_count = working_form_count,
         .form_check_start = rebuild_inferred
@@ -8032,9 +8100,10 @@ static bool petta_typecheck_declaration_block_internal(
         result->fault == PETTA_TYPECHECK_FAULT_NONE &&
         result->verdict != PETTA_TYPECHECK_REFUTED) {
         if (rebuild_inferred) {
-            petta_program_inferred_signatures_reset(program, space);
-            if (!petta_program_inferred_signatures_current(
-                    program, space)) {
+            petta_block_inferred_signatures_reset(
+                program, space, authority);
+            if (!petta_block_inferred_signatures_current(
+                    program, space, authority)) {
                 petta_block_fault(
                     &check, PETTA_TYPECHECK_FAULT_ALLOCATION,
                     "could not initialize inferred signature index");
@@ -8056,11 +8125,13 @@ static bool petta_typecheck_declaration_block_internal(
             if (!declaration->type ||
                 declaration->type->kind != ATOM_EXPR ||
                 declaration->type->expr.len < 2u ||
-                !petta_program_inferred_signature_put(
-                    program, space, declaration->subject->sym_id,
+                !petta_block_inferred_signature_put(
+                    program, space, authority,
+                    declaration->subject->sym_id,
                     declaration->type->expr.len - 2u,
                     declaration->type)) {
-                petta_program_inferred_signatures_reset(program, space);
+                petta_block_inferred_signatures_reset(
+                    program, space, authority);
                 petta_block_fault(
                     &check, PETTA_TYPECHECK_FAULT_ALLOCATION,
                     "could not retain inferred PeTTa signature");
@@ -8093,8 +8164,87 @@ bool petta_typecheck_declaration_block(
     if (program && !petta_program_enable_analysis(program))
         return false;
     return petta_typecheck_declaration_block_internal(
-        program, space, registry, forms, form_count,
+        NULL, program, space, registry, forms, form_count,
         policy, false, result);
+}
+
+bool petta_typecheck_declaration_block_under_authority(
+    const CettaNikDirectAuthorityV1 *authority,
+    PettaProgram *program, Space *space, Registry *registry,
+    Atom *const *forms, size_t form_count,
+    PettaTypecheckPolicy policy, PettaTypecheckBlockResult *result) {
+    if (!result)
+        return false;
+    CettaNikDirectAuthorityStampV1 stamp;
+    if (!cetta_nik_direct_authority_v1_stamp(
+            authority, (uint32_t)policy, &stamp)) {
+        *result = (PettaTypecheckBlockResult){
+            .verdict = PETTA_TYPECHECK_ESTABLISHED,
+            .fault = PETTA_TYPECHECK_FAULT_INVALID_ARGUMENT,
+        };
+        snprintf(
+            result->diagnostic, sizeof(result->diagnostic),
+            "invalid direct NIK authority for PeTTa declaration checking");
+        return false;
+    }
+    if (program && !petta_program_enable_analysis(program)) {
+        *result = (PettaTypecheckBlockResult){
+            .verdict = PETTA_TYPECHECK_ESTABLISHED,
+            .fault = PETTA_TYPECHECK_FAULT_ALLOCATION,
+        };
+        return false;
+    }
+    return petta_typecheck_declaration_block_internal(
+        &stamp, program, space, registry, forms, form_count,
+        policy, false, result);
+}
+
+static bool petta_typecheck_direct_authority_candidate_selected(void) {
+    /* Qualification selection is process configuration, not a live semantic
+     * input.  Read it once so source blocks do not repeatedly scan the
+     * environment while the parallel realization is being measured. */
+    static atomic_int cached = ATOMIC_VAR_INIT(-1);
+    int selected = atomic_load_explicit(&cached, memory_order_relaxed);
+    if (selected >= 0)
+        return selected != 0;
+    const char *value = getenv("CETTA_QUALIFY_PETTA_NIK_DIRECT");
+    selected = value && value[0] != '\0' &&
+               strcmp(value, "0") != 0 &&
+               strcmp(value, "false") != 0 &&
+               strcmp(value, "off") != 0;
+    atomic_store_explicit(&cached, selected, memory_order_relaxed);
+    return selected != 0;
+}
+
+bool petta_typecheck_declaration_block_selected(
+    PettaProgram *program, Space *space, Registry *registry,
+    Atom *const *forms, size_t form_count,
+    PettaTypecheckPolicy policy, PettaTypecheckBlockResult *result) {
+    return petta_typecheck_direct_authority_candidate_selected()
+        ? petta_typecheck_declaration_block_under_authority(
+              &petta_typecheck_v2_direct_authority_v1,
+              program, space, registry, forms, form_count,
+              policy, result)
+        : petta_typecheck_declaration_block(
+              program, space, registry, forms, form_count,
+              policy, result);
+}
+
+void petta_typecheck_inferred_signatures_rebase_selected(
+    PettaProgram *program, Space *space, PettaTypecheckPolicy policy) {
+    if (!program || !space)
+        return;
+    if (!petta_typecheck_direct_authority_candidate_selected()) {
+        petta_program_inferred_signatures_rebase(program, space);
+        return;
+    }
+    CettaNikDirectAuthorityStampV1 stamp;
+    if (cetta_nik_direct_authority_v1_stamp(
+            &petta_typecheck_v2_direct_authority_v1,
+            (uint32_t)policy, &stamp)) {
+        petta_program_inferred_signatures_rebase_under_authority(
+            program, space, &stamp);
+    }
 }
 
 static bool petta_typecheck_committed_signature(
@@ -8538,7 +8688,8 @@ static bool petta_typecheck_validate_target_row(
     return true;
 }
 
-bool petta_typecheck_program_mutation(
+static bool petta_typecheck_program_mutation_internal(
+    const CettaNikDirectAuthorityStampV1 *authority,
     PettaProgram *program, Space *program_space, Registry *registry,
     Space *target_space, Atom *proposed,
     PettaTypecheckMutation mutation,
@@ -8614,8 +8765,9 @@ bool petta_typecheck_program_mutation(
                 forms[form_count++] = form;
             }
         }
-        bool judged = petta_typecheck_declaration_block(
-            NULL, remaining, registry, forms, form_count, policy, result);
+        bool judged = petta_typecheck_declaration_block_internal(
+            authority, NULL, remaining, registry,
+            forms, form_count, policy, false, result);
         free(forms);
         space_free(remaining);
         free(remaining);
@@ -8630,9 +8782,59 @@ bool petta_typecheck_program_mutation(
     }
     Atom *forms[1] = {proposed};
     bool judged = petta_typecheck_declaration_block_internal(
-        program, program_space, registry,
+        authority, program, program_space, registry,
         forms, 1u, policy, true, result);
     return judged;
+}
+
+bool petta_typecheck_program_mutation(
+    PettaProgram *program, Space *program_space, Registry *registry,
+    Space *target_space, Atom *proposed,
+    PettaTypecheckMutation mutation,
+    PettaTypecheckPolicy policy, PettaTypecheckBlockResult *result) {
+    return petta_typecheck_program_mutation_internal(
+        NULL, program, program_space, registry, target_space,
+        proposed, mutation, policy, result);
+}
+
+bool petta_typecheck_program_mutation_under_authority(
+    const CettaNikDirectAuthorityV1 *authority,
+    PettaProgram *program, Space *program_space, Registry *registry,
+    Space *target_space, Atom *proposed,
+    PettaTypecheckMutation mutation,
+    PettaTypecheckPolicy policy, PettaTypecheckBlockResult *result) {
+    if (!result)
+        return false;
+    CettaNikDirectAuthorityStampV1 stamp;
+    if (!cetta_nik_direct_authority_v1_stamp(
+            authority, (uint32_t)policy, &stamp)) {
+        *result = (PettaTypecheckBlockResult){
+            .verdict = PETTA_TYPECHECK_ESTABLISHED,
+            .fault = PETTA_TYPECHECK_FAULT_INVALID_ARGUMENT,
+        };
+        snprintf(
+            result->diagnostic, sizeof(result->diagnostic),
+            "invalid direct NIK authority for PeTTa mutation checking");
+        return false;
+    }
+    return petta_typecheck_program_mutation_internal(
+        &stamp, program, program_space, registry, target_space,
+        proposed, mutation, policy, result);
+}
+
+bool petta_typecheck_program_mutation_selected(
+    PettaProgram *program, Space *program_space, Registry *registry,
+    Space *target_space, Atom *proposed,
+    PettaTypecheckMutation mutation,
+    PettaTypecheckPolicy policy, PettaTypecheckBlockResult *result) {
+    return petta_typecheck_direct_authority_candidate_selected()
+        ? petta_typecheck_program_mutation_under_authority(
+              &petta_typecheck_v2_direct_authority_v1,
+              program, program_space, registry, target_space,
+              proposed, mutation, policy, result)
+        : petta_typecheck_program_mutation(
+              program, program_space, registry, target_space,
+              proposed, mutation, policy, result);
 }
 
 Atom *petta_typecheck_error_atom(

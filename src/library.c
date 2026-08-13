@@ -6682,7 +6682,7 @@ static bool cetta_library_petta_check_segment(
         forms[index] = term_universe_get_atom(
             space->native.universe, atom_ids[index]);
     PettaTypecheckBlockResult checked;
-    bool judged = petta_typecheck_declaration_block(
+    bool judged = petta_typecheck_declaration_block_selected(
         ctx->petta_program, space, registry,
         forms, (size_t)atom_count,
         /* Strictness is a policy of the authored requesting unit.  Imported
@@ -6937,8 +6937,14 @@ static bool cetta_library_petta_execute_document_ids(
             ctx->session.profile->id ==
                 CETTA_PROFILE_PETTA_TYPECHECK_V2 &&
             ctx->petta_trusted_library_import_depth == 0u) {
+#if CETTA_BUILD_WITH_PETTA_TYPECHECK_V2
+            petta_typecheck_inferred_signatures_rebase_selected(
+                ctx->petta_program, work_space,
+                PETTA_TYPECHECK_POLICY_DEFAULT);
+#else
             petta_program_inferred_signatures_rebase(
                 ctx->petta_program, work_space);
+#endif
         }
         petta_program_declaration_block_free(block);
         index = block_end;

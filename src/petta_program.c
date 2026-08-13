@@ -66,6 +66,8 @@ typedef struct {
     size_t inferred_signature_cap;
     uint64_t inferred_signature_revision;
     bool inferred_signatures_valid;
+    CettaNikDirectAuthorityStampV1 inferred_signature_authority;
+    bool inferred_signature_authority_valid;
     Atom **type_annotations;
     size_t type_annotation_len;
     size_t type_annotation_cap;
@@ -1318,6 +1320,9 @@ static bool petta_program_copy_records(
         destination_analysis->inferred_signature_cap = 0u;
         destination_analysis->inferred_signatures_valid = false;
         destination_analysis->inferred_signature_revision = 0u;
+        destination_analysis->inferred_signature_authority =
+            (CettaNikDirectAuthorityStampV1){0};
+        destination_analysis->inferred_signature_authority_valid = false;
         destination_analysis->type_annotations = annotation_copy;
         destination_analysis->type_annotation_len = annotation_count;
         destination_analysis->type_annotation_cap = annotation_count;
@@ -1755,23 +1760,46 @@ static size_t petta_program_inferred_signature_lower_bound(
     return low;
 }
 
-bool petta_program_inferred_signatures_current(
-    PettaProgram *program, Space *space) {
+static bool petta_program_inferred_signatures_current_internal(
+    PettaProgram *program, Space *space,
+    const CettaNikDirectAuthorityStampV1 *authority) {
     PettaProgramAnalysisSpace *entry =
         petta_program_find_analysis_space(program, space);
-    return entry && entry->inferred_signatures_valid &&
-           entry->inferred_signature_revision ==
-               space_revision(space);
+    if (!entry || !entry->inferred_signatures_valid ||
+        entry->inferred_signature_revision != space_revision(space)) {
+        return false;
+    }
+    if (!authority)
+        return !entry->inferred_signature_authority_valid;
+    return entry->inferred_signature_authority_valid &&
+           cetta_nik_direct_authority_stamp_v1_equal(
+               &entry->inferred_signature_authority, authority);
 }
 
-bool petta_program_inferred_signature_lookup(
+bool petta_program_inferred_signatures_current(
+    PettaProgram *program, Space *space) {
+    return petta_program_inferred_signatures_current_internal(
+        program, space, NULL);
+}
+
+bool petta_program_inferred_signatures_current_under_authority(
     PettaProgram *program, Space *space,
+    const CettaNikDirectAuthorityStampV1 *authority) {
+    return authority &&
+           petta_program_inferred_signatures_current_internal(
+               program, space, authority);
+}
+
+static bool petta_program_inferred_signature_lookup_internal(
+    PettaProgram *program, Space *space,
+    const CettaNikDirectAuthorityStampV1 *authority,
     SymbolId head, CettaExprLen arity,
     Arena *arena, Atom **signature_out) {
     if (signature_out)
         *signature_out = NULL;
     if (!signature_out || !arena || head == SYMBOL_ID_NONE ||
-        !petta_program_inferred_signatures_current(program, space) ||
+        !petta_program_inferred_signatures_current_internal(
+            program, space, authority) ||
         !space->native.universe) {
         return false;
     }
@@ -1791,8 +1819,28 @@ bool petta_program_inferred_signature_lookup(
     return *signature_out != NULL;
 }
 
-bool petta_program_inferred_signatures_lookup(
+bool petta_program_inferred_signature_lookup(
     PettaProgram *program, Space *space,
+    SymbolId head, CettaExprLen arity,
+    Arena *arena, Atom **signature_out) {
+    return petta_program_inferred_signature_lookup_internal(
+        program, space, NULL, head, arity, arena, signature_out);
+}
+
+bool petta_program_inferred_signature_lookup_under_authority(
+    PettaProgram *program, Space *space,
+    const CettaNikDirectAuthorityStampV1 *authority,
+    SymbolId head, CettaExprLen arity,
+    Arena *arena, Atom **signature_out) {
+    return authority &&
+           petta_program_inferred_signature_lookup_internal(
+               program, space, authority, head, arity,
+               arena, signature_out);
+}
+
+static bool petta_program_inferred_signatures_lookup_internal(
+    PettaProgram *program, Space *space,
+    const CettaNikDirectAuthorityStampV1 *authority,
     SymbolId head, CettaExprLen arity,
     Arena *arena, Atom ***signatures_out, size_t *count_out) {
     if (signatures_out)
@@ -1803,7 +1851,8 @@ bool petta_program_inferred_signatures_lookup(
         head == SYMBOL_ID_NONE) {
         return false;
     }
-    if (!petta_program_inferred_signatures_current(program, space) ||
+    if (!petta_program_inferred_signatures_current_internal(
+            program, space, authority) ||
         !space->native.universe) {
         return true;
     }
@@ -1838,8 +1887,29 @@ bool petta_program_inferred_signatures_lookup(
     return true;
 }
 
-void petta_program_inferred_signatures_reset(
-    PettaProgram *program, Space *space) {
+bool petta_program_inferred_signatures_lookup(
+    PettaProgram *program, Space *space,
+    SymbolId head, CettaExprLen arity,
+    Arena *arena, Atom ***signatures_out, size_t *count_out) {
+    return petta_program_inferred_signatures_lookup_internal(
+        program, space, NULL, head, arity, arena,
+        signatures_out, count_out);
+}
+
+bool petta_program_inferred_signatures_lookup_under_authority(
+    PettaProgram *program, Space *space,
+    const CettaNikDirectAuthorityStampV1 *authority,
+    SymbolId head, CettaExprLen arity,
+    Arena *arena, Atom ***signatures_out, size_t *count_out) {
+    return authority &&
+           petta_program_inferred_signatures_lookup_internal(
+               program, space, authority, head, arity, arena,
+               signatures_out, count_out);
+}
+
+static void petta_program_inferred_signatures_reset_internal(
+    PettaProgram *program, Space *space,
+    const CettaNikDirectAuthorityStampV1 *authority) {
     PettaProgramAnalysisSpace *entry =
         petta_program_ensure_analysis_space(program, space);
     if (!entry)
@@ -1847,10 +1917,29 @@ void petta_program_inferred_signatures_reset(
     entry->inferred_signature_len = 0u;
     entry->inferred_signature_revision = space_revision(space);
     entry->inferred_signatures_valid = true;
+    entry->inferred_signature_authority = authority
+        ? *authority : (CettaNikDirectAuthorityStampV1){0};
+    entry->inferred_signature_authority_valid = authority != NULL;
 }
 
-bool petta_program_inferred_signature_put(
+void petta_program_inferred_signatures_reset(
+    PettaProgram *program, Space *space) {
+    petta_program_inferred_signatures_reset_internal(
+        program, space, NULL);
+}
+
+void petta_program_inferred_signatures_reset_under_authority(
     PettaProgram *program, Space *space,
+    const CettaNikDirectAuthorityStampV1 *authority) {
+    if (authority) {
+        petta_program_inferred_signatures_reset_internal(
+            program, space, authority);
+    }
+}
+
+static bool petta_program_inferred_signature_put_internal(
+    PettaProgram *program, Space *space,
+    const CettaNikDirectAuthorityStampV1 *authority,
     SymbolId head, CettaExprLen arity, Atom *signature) {
     if (!program || !space || !space->native.universe ||
         head == SYMBOL_ID_NONE || !signature) {
@@ -1860,6 +1949,11 @@ bool petta_program_inferred_signature_put(
         petta_program_ensure_analysis_space(program, space);
     if (!entry)
         return false;
+    if (entry->inferred_signature_len > 0u &&
+        !petta_program_inferred_signatures_current_internal(
+            program, space, authority)) {
+        return false;
+    }
     AtomId signature_id = term_universe_store_atom_id(
         space->native.universe,
         space->native.universe->persistent_arena,
@@ -1894,7 +1988,26 @@ bool petta_program_inferred_signature_put(
     entry->inferred_signature_len++;
     entry->inferred_signature_revision = space_revision(space);
     entry->inferred_signatures_valid = true;
+    entry->inferred_signature_authority = authority
+        ? *authority : (CettaNikDirectAuthorityStampV1){0};
+    entry->inferred_signature_authority_valid = authority != NULL;
     return true;
+}
+
+bool petta_program_inferred_signature_put(
+    PettaProgram *program, Space *space,
+    SymbolId head, CettaExprLen arity, Atom *signature) {
+    return petta_program_inferred_signature_put_internal(
+        program, space, NULL, head, arity, signature);
+}
+
+bool petta_program_inferred_signature_put_under_authority(
+    PettaProgram *program, Space *space,
+    const CettaNikDirectAuthorityStampV1 *authority,
+    SymbolId head, CettaExprLen arity, Atom *signature) {
+    return authority &&
+           petta_program_inferred_signature_put_internal(
+               program, space, authority, head, arity, signature);
 }
 
 void petta_program_inferred_signature_remove_head(
@@ -1917,13 +2030,35 @@ void petta_program_inferred_signature_remove_head(
     entry->inferred_signature_len = write;
 }
 
-void petta_program_inferred_signatures_rebase(
-    PettaProgram *program, Space *space) {
+static void petta_program_inferred_signatures_rebase_internal(
+    PettaProgram *program, Space *space,
+    const CettaNikDirectAuthorityStampV1 *authority) {
     PettaProgramAnalysisSpace *entry =
         petta_program_find_analysis_space(program, space);
-    if (!entry || !entry->inferred_signatures_valid)
+    if (!entry || !entry->inferred_signatures_valid ||
+        (authority
+             ? !entry->inferred_signature_authority_valid ||
+                   !cetta_nik_direct_authority_stamp_v1_equal(
+                       &entry->inferred_signature_authority, authority)
+             : entry->inferred_signature_authority_valid)) {
         return;
+    }
     entry->inferred_signature_revision = space_revision(space);
+}
+
+void petta_program_inferred_signatures_rebase(
+    PettaProgram *program, Space *space) {
+    petta_program_inferred_signatures_rebase_internal(
+        program, space, NULL);
+}
+
+void petta_program_inferred_signatures_rebase_under_authority(
+    PettaProgram *program, Space *space,
+    const CettaNikDirectAuthorityStampV1 *authority) {
+    if (authority) {
+        petta_program_inferred_signatures_rebase_internal(
+            program, space, authority);
+    }
 }
 
 bool petta_program_type_annotation_snapshot(

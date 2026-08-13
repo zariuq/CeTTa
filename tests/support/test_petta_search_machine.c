@@ -3125,9 +3125,17 @@ static const char *test_analysis_reason_name(
     return petta_typecheck_reason_name(reason);
 }
 
+static const CettaNikDirectAuthorityV1 test_direct_authority = {
+    .alias = "TEST-ANALYSIS",
+    .system_id = "test.analysis",
+    .authority_identity = UINT64_C(0x746573746a756467),
+    .realization_identity = UINT64_C(0x74657374616e6c79),
+    .authority_revision = 1u,
+    .realization_abi = 1u,
+};
+
 static const PettaAnalysisService test_analysis_service = {
-    .provider_identity = UINT64_C(0x74657374616e6c79),
-    .provider_abi = 1u,
+    .authority = &test_direct_authority,
     .capabilities = PETTA_MACHINE_ANALYSIS_TYPE_OBLIGATIONS,
     .policy_identity = test_analysis_policy_identity,
     .mutable_authority_token = test_analysis_authority_token,
@@ -3139,6 +3147,267 @@ static const PettaAnalysisService test_analysis_service = {
     .validate_ready_call = test_analysis_boundary_accept,
 };
 
+static void test_direct_authority_identity_contract(void) {
+    CettaNikDirectAuthorityV1 authority =
+        *test_analysis_service.authority;
+    assert(cetta_nik_direct_authority_v1_is_valid(&authority));
+
+    CettaNikDirectAuthorityStampV1 stamp;
+    assert(cetta_nik_direct_authority_v1_stamp(
+        &authority, 3u, &stamp));
+    CettaNikDirectAuthorityStampV1 same_stamp;
+    assert(cetta_nik_direct_authority_v1_stamp(
+        &authority, 3u, &same_stamp));
+    assert(cetta_nik_direct_authority_stamp_v1_equal(
+        &stamp, &same_stamp));
+    same_stamp.policy_identity++;
+    assert(!cetta_nik_direct_authority_stamp_v1_equal(
+        &stamp, &same_stamp));
+
+    CettaNikDirectAuthorityTokenV1 mutable = {
+        .words = {11u, 12u, 13u, 14u},
+        .length = 4u,
+    };
+    CettaNikDirectAuthorityTokenV1 token;
+    assert(cetta_nik_direct_authority_v1_token(
+        &authority, 3u, &mutable, &token));
+    assert(token.length ==
+        CETTA_NIK_DIRECT_AUTHORITY_TOKEN_BASE_WORDS + mutable.length);
+    assert(token.words[0] == authority.authority_identity);
+    assert(token.words[1] == authority.realization_identity);
+    assert(token.words[2] ==
+        (((uint64_t)authority.authority_revision << 48u) |
+         ((uint64_t)authority.realization_abi << 32u) | 3u));
+    assert(token.words[3] == 11u && token.words[6] == 14u);
+
+    CettaNikDirectAuthorityTokenV1 maximal_mutable = {
+        .words = {21u, 22u, 23u, 24u, 25u},
+        .length = 5u,
+    };
+    CettaNikDirectAuthorityTokenV1 maximal_token;
+    assert(cetta_nik_direct_authority_v1_token(
+        &authority, 3u, &maximal_mutable, &maximal_token));
+    assert(maximal_token.length == PETTA_MACHINE_AUTHORITY_WORD_CAPACITY);
+    assert(maximal_token.words[7] == 25u);
+
+    CettaNikDirectAuthorityTokenV1 same_token;
+    assert(cetta_nik_direct_authority_v1_token(
+        &authority, 3u, &mutable, &same_token));
+    assert(cetta_nik_direct_authority_token_v1_equal(
+        &token, &same_token));
+
+    CettaNikDirectAuthorityV1 replacement = authority;
+    replacement.realization_identity++;
+    CettaNikDirectAuthorityTokenV1 replacement_token;
+    assert(cetta_nik_direct_authority_v1_token(
+        &replacement, 3u, &mutable, &replacement_token));
+    assert(!cetta_nik_direct_authority_token_v1_equal(
+        &token, &replacement_token));
+
+    CettaNikDirectAuthorityV1 revised = authority;
+    revised.authority_revision++;
+    CettaNikDirectAuthorityTokenV1 revised_token;
+    assert(cetta_nik_direct_authority_v1_token(
+        &revised, 3u, &mutable, &revised_token));
+    assert(!cetta_nik_direct_authority_token_v1_equal(
+        &token, &revised_token));
+
+    CettaNikDirectAuthorityTokenV1 oversized = {.length = 6u};
+    CettaNikDirectAuthorityTokenV1 rejected = {
+        .words = {UINT64_MAX},
+        .length = 1u,
+    };
+    assert(!cetta_nik_direct_authority_v1_token(
+        &authority, 3u, &oversized, &rejected));
+    assert(rejected.length == 0u && rejected.words[0] == 0u);
+
+    CettaNikDirectAuthorityV1 invalid = authority;
+    invalid.authority_identity = 0u;
+    assert(!cetta_nik_direct_authority_v1_is_valid(&invalid));
+    invalid = authority;
+    invalid.realization_identity = 0u;
+    assert(!cetta_nik_direct_authority_v1_is_valid(&invalid));
+    invalid = authority;
+    invalid.authority_revision = 0u;
+    assert(!cetta_nik_direct_authority_v1_is_valid(&invalid));
+    invalid = authority;
+    invalid.realization_abi = 0u;
+    assert(!cetta_nik_direct_authority_v1_is_valid(&invalid));
+    invalid = authority;
+    invalid.authority_revision =
+        (uint32_t)CETTA_NIK_DIRECT_AUTHORITY_REVISION_MAX + 1u;
+    assert(!cetta_nik_direct_authority_v1_is_valid(&invalid));
+    invalid = authority;
+    invalid.realization_abi =
+        (uint32_t)CETTA_NIK_DIRECT_AUTHORITY_REALIZATION_ABI_MAX + 1u;
+    assert(!cetta_nik_direct_authority_v1_is_valid(&invalid));
+    invalid = authority;
+    invalid.alias = "";
+    assert(!cetta_nik_direct_authority_v1_is_valid(&invalid));
+    invalid = authority;
+    invalid.system_id = NULL;
+    assert(!cetta_nik_direct_authority_v1_is_valid(&invalid));
+}
+
+static void test_inferred_signature_authority_provenance(
+    TermUniverse *universe, Arena *arena) {
+    PettaProgram *program = petta_program_new();
+    assert(program);
+    assert(petta_program_enable_analysis(program));
+    Space space;
+    space_init_with_universe(&space, universe);
+
+    CettaNikDirectAuthorityStampV1 first;
+    assert(cetta_nik_direct_authority_v1_stamp(
+        &test_direct_authority, 1u, &first));
+    CettaNikDirectAuthorityV1 replacement_authority =
+        test_direct_authority;
+    replacement_authority.realization_identity++;
+    CettaNikDirectAuthorityStampV1 replacement;
+    assert(cetta_nik_direct_authority_v1_stamp(
+        &replacement_authority, 1u, &replacement));
+    CettaNikDirectAuthorityStampV1 other_policy;
+    assert(cetta_nik_direct_authority_v1_stamp(
+        &test_direct_authority, 2u, &other_policy));
+    CettaNikDirectAuthorityV1 revised_authority =
+        test_direct_authority;
+    revised_authority.authority_revision++;
+    CettaNikDirectAuthorityStampV1 revised;
+    assert(cetta_nik_direct_authority_v1_stamp(
+        &revised_authority, 1u, &revised));
+
+    Atom *signature = parse_one(arena, "(-> Number Number)");
+    Atom *head = parse_one(arena, "typed-head");
+    assert(signature && head && head->kind == ATOM_SYMBOL);
+    petta_program_inferred_signatures_reset_under_authority(
+        program, &space, &first);
+    assert(petta_program_inferred_signature_put_under_authority(
+        program, &space, &first, head->sym_id, 1u, signature));
+    assert(petta_program_inferred_signatures_current_under_authority(
+        program, &space, &first));
+    assert(!petta_program_inferred_signatures_current_under_authority(
+        program, &space, &replacement));
+    assert(!petta_program_inferred_signatures_current_under_authority(
+        program, &space, &other_policy));
+    assert(!petta_program_inferred_signatures_current_under_authority(
+        program, &space, &revised));
+    assert(!petta_program_inferred_signatures_current(
+        program, &space));
+
+    Atom *copy = NULL;
+    assert(petta_program_inferred_signature_lookup_under_authority(
+        program, &space, &first, head->sym_id, 1u, arena, &copy));
+    assert(copy && atom_alpha_eq(copy, signature));
+    copy = NULL;
+    assert(!petta_program_inferred_signature_lookup_under_authority(
+        program, &space, &replacement,
+        head->sym_id, 1u, arena, &copy));
+    assert(!copy);
+
+    space_add(&space, parse_one(arena, "authority-mutation"));
+    assert(!petta_program_inferred_signatures_current_under_authority(
+        program, &space, &first));
+    petta_program_inferred_signatures_rebase_under_authority(
+        program, &space, &replacement);
+    assert(!petta_program_inferred_signatures_current_under_authority(
+        program, &space, &first));
+    petta_program_inferred_signatures_rebase_under_authority(
+        program, &space, &first);
+    assert(petta_program_inferred_signatures_current_under_authority(
+        program, &space, &first));
+
+    petta_program_inferred_signatures_reset(program, &space);
+    assert(petta_program_inferred_signature_put(
+        program, &space, head->sym_id, 1u, signature));
+    assert(petta_program_inferred_signatures_current(program, &space));
+    assert(!petta_program_inferred_signatures_current_under_authority(
+        program, &space, &first));
+
+    space_free(&space);
+    petta_program_free(program);
+}
+
+static void assert_typecheck_block_results_equal(
+    const PettaTypecheckBlockResult *left,
+    const PettaTypecheckBlockResult *right) {
+    assert(left && right);
+    assert(left->verdict == right->verdict);
+    assert(left->fault == right->fault);
+    assert(left->declarations_seen == right->declarations_seen);
+    assert(left->equations_checked == right->equations_checked);
+    assert(strcmp(left->diagnostic, right->diagnostic) == 0);
+}
+
+static void test_declaration_authority_parity(
+    TermUniverse *universe, Arena *arena) {
+    PettaProgram *legacy_program = petta_program_new();
+    PettaProgram *authority_program = petta_program_new();
+    assert(legacy_program && authority_program);
+    Space legacy_space;
+    Space authority_space;
+    space_init_with_universe(&legacy_space, universe);
+    space_init_with_universe(&authority_space, universe);
+
+    Atom *positive[] = {
+        parse_one(arena, "(: typed-id (-> Number Number))"),
+        parse_one(arena, "(= (typed-id $x) $x)"),
+    };
+    assert(positive[0] && positive[1]);
+    PettaTypecheckBlockResult legacy_positive;
+    PettaTypecheckBlockResult authority_positive;
+    bool legacy_judged = petta_typecheck_declaration_block(
+        legacy_program, &legacy_space, NULL,
+        positive, 2u, PETTA_TYPECHECK_POLICY_DEFAULT,
+        &legacy_positive);
+    bool authority_judged =
+        petta_typecheck_declaration_block_under_authority(
+            &petta_typecheck_v2_direct_authority_v1,
+            authority_program, &authority_space, NULL,
+            positive, 2u, PETTA_TYPECHECK_POLICY_DEFAULT,
+            &authority_positive);
+    assert(legacy_judged == authority_judged);
+    assert_typecheck_block_results_equal(
+        &legacy_positive, &authority_positive);
+    assert(authority_positive.verdict == PETTA_TYPECHECK_ESTABLISHED);
+
+    Atom *negative[] = {
+        parse_one(arena, "(: typed-bad (-> Number Number))"),
+        parse_one(arena, "(= (typed-bad $x) True)"),
+    };
+    assert(negative[0] && negative[1]);
+    PettaTypecheckBlockResult legacy_negative;
+    PettaTypecheckBlockResult authority_negative;
+    legacy_judged = petta_typecheck_declaration_block(
+        legacy_program, &legacy_space, NULL,
+        negative, 2u, PETTA_TYPECHECK_POLICY_DEFAULT,
+        &legacy_negative);
+    authority_judged =
+        petta_typecheck_declaration_block_under_authority(
+            &petta_typecheck_v2_direct_authority_v1,
+            authority_program, &authority_space, NULL,
+            negative, 2u, PETTA_TYPECHECK_POLICY_DEFAULT,
+            &authority_negative);
+    assert(legacy_judged == authority_judged);
+    assert_typecheck_block_results_equal(
+        &legacy_negative, &authority_negative);
+    assert(authority_negative.verdict == PETTA_TYPECHECK_REFUTED);
+
+    CettaNikDirectAuthorityV1 invalid =
+        petta_typecheck_v2_direct_authority_v1;
+    invalid.realization_identity = 0u;
+    PettaTypecheckBlockResult invalid_result;
+    assert(!petta_typecheck_declaration_block_under_authority(
+        &invalid, authority_program, &authority_space, NULL,
+        positive, 2u, PETTA_TYPECHECK_POLICY_DEFAULT,
+        &invalid_result));
+    assert(invalid_result.fault == PETTA_TYPECHECK_FAULT_INVALID_ARGUMENT);
+
+    space_free(&authority_space);
+    space_free(&legacy_space);
+    petta_program_free(authority_program);
+    petta_program_free(legacy_program);
+}
+
 static void test_analysis_capability_contract(
     Space *space, Arena *answers) {
     Atom *query = parse_one(answers, "1");
@@ -3149,8 +3418,7 @@ static void test_analysis_capability_contract(
     PettaMachineHost callback_without_capability = {
         .context = &authority,
         .analysis = &(const PettaAnalysisService){
-            .provider_identity = UINT64_C(1),
-            .provider_abi = 1u,
+            .authority = &test_direct_authority,
             .capabilities = PETTA_MACHINE_ANALYSIS_NONE,
             .policy_identity = test_analysis_policy_identity,
             .mutable_authority_token = test_analysis_authority_token,
@@ -3164,8 +3432,7 @@ static void test_analysis_capability_contract(
     PettaMachineHost capability_without_boundary = {
         .context = &authority,
         .analysis = &(const PettaAnalysisService){
-            .provider_identity = UINT64_C(1),
-            .provider_abi = 1u,
+            .authority = &test_direct_authority,
             .capabilities = PETTA_MACHINE_ANALYSIS_TYPE_OBLIGATIONS,
             .policy_identity = test_analysis_policy_identity,
             .mutable_authority_token = test_analysis_authority_token,
@@ -3182,8 +3449,6 @@ static void test_analysis_capability_contract(
 
     PettaMachineHost capability_without_authority = {
         .analysis = &(const PettaAnalysisService){
-            .provider_identity = UINT64_C(1),
-            .provider_abi = 1u,
             .capabilities = PETTA_MACHINE_ANALYSIS_TYPE_OBLIGATIONS,
             .policy_identity = test_analysis_policy_identity,
             .judge_value = test_analysis_judge_value,
@@ -3339,6 +3604,10 @@ int main(void) {
     space_init_with_universe(&space, &universe);
 
     test_analysis_capability_contract(&space, &answers);
+    test_direct_authority_identity_contract();
+    test_inferred_signature_authority_provenance(
+        &universe, &answers);
+    test_declaration_authority_parity(&universe, &answers);
     test_analysis_authority_retry(&space, &answers);
     test_relational_obligation_guard_gc(
         &space, &persistent, &answers);
