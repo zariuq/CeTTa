@@ -89,6 +89,33 @@ int main(void) {
     CHECK(again == PETTA_SPECIALIZE_UNCHANGED_RELATION_FILTERED,
           "repeated relation reuses its revision-pinned negative proof");
 
+    /* Reaching the per-call inspection budget is an optimization decline,
+     * even when the relation could specialize a different, smaller call. */
+    Atom *var_bounded = atom_var(&persistent, "bounded");
+    space_add(&space, atom_expr3(
+        &persistent, atom_symbol_id(&persistent, g_builtin_syms.equals),
+        atom_expr2(&persistent, atom_symbol(&persistent, "relevance-bounded"),
+                   var_bounded),
+        atom_expr2(&persistent, var_bounded, atom_int(&persistent, 0))));
+    Atom *bounded_call = atom_expr2(
+        &result, atom_symbol(&result, "relevance-bounded"),
+        wide_first_order_value(&result));
+    out = NULL;
+    PettaSpecializeResult bounded = petta_specializer_prepare_call(
+        &space, NULL, &persistent, &result, bounded_call, &out);
+    CHECK(bounded == PETTA_SPECIALIZE_UNCHANGED_RELEVANCE_BOUNDED,
+          "deep uncertain call declines specialization at its node budget");
+    CHECK(out == bounded_call, "budgeted call stays authoritative");
+
+    Atom *bounded_higher_call = atom_expr2(
+        &result, atom_symbol(&result, "relevance-bounded"),
+        atom_symbol(&result, "+"));
+    out = NULL;
+    PettaSpecializeResult bounded_higher = petta_specializer_prepare_call(
+        &space, NULL, &persistent, &result, bounded_higher_call, &out);
+    CHECK(bounded_higher == PETTA_SPECIALIZE_REWRITTEN,
+          "later small higher-order call remains eligible for specialization");
+
     /* A later equation creates a genuine higher-order route.  Revision
      * invalidation must prevent the prior negative proof from suppressing
      * specialization. */
@@ -111,6 +138,79 @@ int main(void) {
           "new higher-order route invalidates the negative relation proof");
     CHECK(out && out != higher_call,
           "higher-order call receives its specialized relation head");
+
+    /* Negative callable classifications are valid only for the exact
+     * admitted space state.  Making the same symbol callable later must
+     * invalidate the cached negative answer. */
+    Atom *var_cache = atom_var(&persistent, "cache-f");
+    space_add(&space, atom_expr3(
+        &persistent, atom_symbol_id(&persistent, g_builtin_syms.equals),
+        atom_expr2(&persistent, atom_symbol(&persistent, "callable-cache"),
+                   var_cache),
+        atom_expr2(&persistent, var_cache, atom_int(&persistent, 0))));
+    Atom *late_symbol = atom_symbol(&result, "late-callable");
+    Atom *late_call = atom_expr2(
+        &result, atom_symbol(&result, "callable-cache"), late_symbol);
+    out = NULL;
+    PettaSpecializeResult late_before = petta_specializer_prepare_call(
+        &space, NULL, &persistent, &result, late_call, &out);
+    CHECK(late_before == PETTA_SPECIALIZE_UNCHANGED_FILTERED,
+          "unknown symbol receives a cached negative callable result");
+
+    Atom *var_late = atom_var(&persistent, "late-x");
+    Atom *late_equation = atom_expr3(
+        &persistent,
+        atom_symbol_id(&persistent, g_builtin_syms.equals),
+        atom_expr2(&persistent, atom_symbol(&persistent, "late-callable"),
+                   var_late),
+        var_late);
+    space_add(&space, late_equation);
+    petta_specializer_note_mutation(&space, late_equation);
+    out = NULL;
+    PettaSpecializeResult late_after = petta_specializer_prepare_call(
+        &space, NULL, &persistent, &result, late_call, &out);
+    CHECK(late_after == PETTA_SPECIALIZE_REWRITTEN,
+          "space mutation invalidates a cached negative callable result");
+    CHECK(out && out != late_call,
+          "new callable symbol receives its specialized relation head");
+
+    /* Exact named-arity judgments use the same admitted-space generation.
+     * An expression that is not known to be under-applied can become a
+     * specialization value after a larger-arity equation is admitted. */
+    Atom *var_arity = atom_var(&persistent, "arity-f");
+    space_add(&space, atom_expr3(
+        &persistent, atom_symbol_id(&persistent, g_builtin_syms.equals),
+        atom_expr2(&persistent, atom_symbol(&persistent, "arity-cache"),
+                   var_arity),
+        atom_expr2(&persistent, var_arity, atom_int(&persistent, 0))));
+    Atom *nested_late = atom_expr2(
+        &result, atom_symbol(&result, "late-arity"),
+        atom_symbol(&result, "a"));
+    Atom *arity_call = atom_expr2(
+        &result, atom_symbol(&result, "arity-cache"), nested_late);
+    out = NULL;
+    PettaSpecializeResult arity_before = petta_specializer_prepare_call(
+        &space, NULL, &persistent, &result, arity_call, &out);
+    CHECK(arity_before == PETTA_SPECIALIZE_UNCHANGED_FILTERED,
+          "unknown nested arity receives a cached negative judgment");
+
+    Atom *var_arity_x = atom_var(&persistent, "arity-x");
+    Atom *var_arity_y = atom_var(&persistent, "arity-y");
+    Atom *arity_equation = atom_expr3(
+        &persistent,
+        atom_symbol_id(&persistent, g_builtin_syms.equals),
+        atom_expr3(&persistent, atom_symbol(&persistent, "late-arity"),
+                   var_arity_x, var_arity_y),
+        var_arity_x);
+    space_add(&space, arity_equation);
+    petta_specializer_note_mutation(&space, arity_equation);
+    out = NULL;
+    PettaSpecializeResult arity_after = petta_specializer_prepare_call(
+        &space, NULL, &persistent, &result, arity_call, &out);
+    CHECK(arity_after == PETTA_SPECIALIZE_REWRITTEN,
+          "space mutation invalidates a cached negative arity judgment");
+    CHECK(out && out != arity_call,
+          "new under-application receives its specialized relation head");
 
     if (failures == 0u)
         printf("PASS: specializer prepare boundary (%u checks)\n", checks);

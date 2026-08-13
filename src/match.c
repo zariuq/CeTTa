@@ -33,6 +33,7 @@
 #define BINDINGS_LOOKUP_CACHE_MISS UINT32_MAX
 #define BINDINGS_LOOKUP_INDEX_THRESHOLD 16u
 #define FRESHEN_EPOCH_MEMO_INLINE_CAP 64u
+#define VAR_ID_SET_INLINE_CAP 8u
 
 enum {
     BINDINGS_CYCLE_UNKNOWN = 0u,
@@ -82,7 +83,11 @@ typedef struct {
     FreshenEpochMemoSlot *slots;
     size_t cap;
     size_t used;
+    uint64_t inline_occupied;
 } FreshenEpochMemo;
+
+_Static_assert(FRESHEN_EPOCH_MEMO_INLINE_CAP == 64u,
+               "inline memo occupancy mask must cover every slot");
 
 static const uint32_t BINDINGS_POOL_CAPS[BINDINGS_POOL_CLASS_COUNT] = {8, 16, 32, 64};
 static __thread BindingPoolBlock *g_binding_entry_pools[BINDINGS_POOL_CLASS_COUNT];
@@ -1212,6 +1217,31 @@ bool bindings_promote_logical_atoms_with_session(
     return true;
 }
 
+bool bindings_logical_atoms_closed_for_arena(
+    const Bindings *bindings, const Arena *arena) {
+    if (!bindings || !arena)
+        return bindings == NULL;
+    for (uint32_t i = 0u; i < bindings->len; i++) {
+        const Binding *entry = &bindings->entries[i];
+        if ((entry->name_key &&
+             !atom_graph_is_closed_for_arena(arena, entry->name_key)) ||
+            (entry->val &&
+             !atom_graph_is_closed_for_arena(arena, entry->val))) {
+            return false;
+        }
+    }
+    for (uint32_t i = 0u; i < bindings->eq_len; i++) {
+        const BindingConstraint *constraint = &bindings->constraints[i];
+        if ((constraint->lhs &&
+             !atom_graph_is_closed_for_arena(arena, constraint->lhs)) ||
+            (constraint->rhs &&
+             !atom_graph_is_closed_for_arena(arena, constraint->rhs))) {
+            return false;
+        }
+    }
+    return true;
+}
+
 bool bindings_promote_logical_atoms_to_arena(Bindings *bindings,
                                              Arena *dst) {
     if (!bindings || !dst)
@@ -1899,6 +1929,7 @@ static Atom *bindings_apply_seen_with_rewrite(Bindings *b, Arena *a, Atom *atom,
         return result;
     }
     case ATOM_EXPR: {
+        Atom *draft = NULL;
         Atom **new_elems = NULL;
         for (CettaExprIndex i = 0; i < atom->expr.len; i++) {
             Atom *child = atom->expr.elems[i];
@@ -1911,7 +1942,10 @@ static Atom *bindings_apply_seen_with_rewrite(Bindings *b, Arena *a, Atom *atom,
             if (!next)
                 return NULL;
             if (!new_elems && next != atom->expr.elems[i]) {
-                new_elems = arena_alloc(a, sizeof(Atom *) * atom->expr.len);
+                draft = atom_expr_builder_begin(a, atom->expr.len);
+                if (!draft)
+                    return NULL;
+                new_elems = draft->expr.elems;
                 for (CettaExprIndex j = 0; j < i; j++)
                     new_elems[j] = atom->expr.elems[j];
             }
@@ -1919,7 +1953,7 @@ static Atom *bindings_apply_seen_with_rewrite(Bindings *b, Arena *a, Atom *atom,
                 new_elems[i] = next;
         }
         if (!new_elems) return atom;
-        return atom_expr(a, new_elems, atom->expr.len);
+        return atom_expr_builder_finish(a, draft);
     }
     default:
         return atom;
@@ -2036,6 +2070,7 @@ static Atom *bindings_apply_seen_epoch(Bindings *b, Arena *a, Atom *atom,
         return result;
     }
     case ATOM_EXPR: {
+        Atom *draft = NULL;
         Atom **new_elems = NULL;
         for (CettaExprIndex i = 0; i < atom->expr.len; i++) {
             Atom *child = atom->expr.elems[i];
@@ -2046,7 +2081,10 @@ static Atom *bindings_apply_seen_epoch(Bindings *b, Arena *a, Atom *atom,
                       track_cycles, local_memo, outer_memo)
                 : child;
             if (!new_elems && next != atom->expr.elems[i]) {
-                new_elems = arena_alloc(a, sizeof(Atom *) * atom->expr.len);
+                draft = atom_expr_builder_begin(a, atom->expr.len);
+                if (!draft)
+                    return NULL;
+                new_elems = draft->expr.elems;
                 for (uint32_t j = 0; j < i; j++)
                     new_elems[j] = atom->expr.elems[j];
             }
@@ -2054,7 +2092,7 @@ static Atom *bindings_apply_seen_epoch(Bindings *b, Arena *a, Atom *atom,
                 new_elems[i] = next;
         }
         if (!new_elems) return atom;
-        return atom_expr(a, new_elems, atom->expr.len);
+        return atom_expr_builder_finish(a, draft);
     }
     default:
         return atom;
@@ -2130,7 +2168,7 @@ static void freshen_epoch_memo_init(FreshenEpochMemo *memo) {
     memo->slots = memo->inline_slots;
     memo->cap = FRESHEN_EPOCH_MEMO_INLINE_CAP;
     memo->used = 0;
-    freshen_epoch_memo_clear(memo->slots, memo->cap);
+    memo->inline_occupied = 0u;
 }
 
 static void freshen_epoch_memo_free(FreshenEpochMemo *memo) {
@@ -2141,7 +2179,20 @@ static void freshen_epoch_memo_free(FreshenEpochMemo *memo) {
     memo->slots = memo->inline_slots;
     memo->cap = FRESHEN_EPOCH_MEMO_INLINE_CAP;
     memo->used = 0;
-    freshen_epoch_memo_clear(memo->slots, memo->cap);
+    memo->inline_occupied = 0u;
+}
+
+static inline bool freshen_epoch_memo_slot_occupied(
+    const FreshenEpochMemo *memo, size_t pos) {
+    if (memo->slots == memo->inline_slots)
+        return (memo->inline_occupied & (UINT64_C(1) << pos)) != 0u;
+    return memo->slots[pos].src != NULL;
+}
+
+static inline void freshen_epoch_memo_mark_occupied(
+    FreshenEpochMemo *memo, size_t pos) {
+    if (memo->slots == memo->inline_slots)
+        memo->inline_occupied |= UINT64_C(1) << pos;
 }
 
 static size_t freshen_epoch_memo_hash(const Atom *src) {
@@ -2161,7 +2212,7 @@ static Atom *freshen_epoch_memo_lookup(FreshenEpochMemo *memo,
     size_t pos = freshen_epoch_memo_hash(src) & mask;
     for (;;) {
         FreshenEpochMemoSlot *slot = &memo->slots[pos];
-        if (!slot->src)
+        if (!freshen_epoch_memo_slot_occupied(memo, pos))
             return NULL;
         if (slot->src == src)
             return slot->dst;
@@ -2175,16 +2226,23 @@ static bool freshen_epoch_memo_grow(FreshenEpochMemo *memo) {
     size_t old_cap = memo->cap;
     size_t new_cap = old_cap ? old_cap * 2u : FRESHEN_EPOCH_MEMO_INLINE_CAP;
     FreshenEpochMemoSlot *old_slots = memo->slots;
+    bool old_inline = old_slots == memo->inline_slots;
+    uint64_t old_inline_occupied = memo->inline_occupied;
     FreshenEpochMemoSlot *new_slots =
         cetta_malloc(sizeof(FreshenEpochMemoSlot) * new_cap);
     freshen_epoch_memo_clear(new_slots, new_cap);
     memo->slots = new_slots;
     memo->cap = new_cap;
     memo->used = 0;
+    memo->inline_occupied = 0u;
     for (size_t i = 0; i < old_cap; i++) {
+        if (old_inline &&
+            (old_inline_occupied & (UINT64_C(1) << i)) == 0u) {
+            continue;
+        }
         const Atom *src = old_slots[i].src;
         Atom *dst = old_slots[i].dst;
-        if (!src)
+        if (!old_inline && !src)
             continue;
         size_t mask = memo->cap - 1u;
         size_t pos = freshen_epoch_memo_hash(src) & mask;
@@ -2211,9 +2269,10 @@ static bool freshen_epoch_memo_store(FreshenEpochMemo *memo,
     size_t pos = freshen_epoch_memo_hash(src) & mask;
     for (;;) {
         FreshenEpochMemoSlot *slot = &memo->slots[pos];
-        if (!slot->src) {
+        if (!freshen_epoch_memo_slot_occupied(memo, pos)) {
             slot->src = src;
             slot->dst = dst;
+            freshen_epoch_memo_mark_occupied(memo, pos);
             memo->used++;
             return true;
         }
@@ -2240,6 +2299,7 @@ static Atom *atom_freshen_epoch_impl(Arena *a, Atom *atom, uint32_t epoch,
         out = epoch_var_atom(a, atom, epoch);
         break;
     case ATOM_EXPR: {
+        Atom *draft = NULL;
         Atom **new_elems = NULL;
         for (CettaExprIndex i = 0; i < atom->expr.len; i++) {
             Atom *child = atom->expr.elems[i];
@@ -2249,14 +2309,17 @@ static Atom *atom_freshen_epoch_impl(Arena *a, Atom *atom, uint32_t epoch,
             if (!next)
                 return NULL;
             if (!new_elems && next != atom->expr.elems[i]) {
-                new_elems = arena_alloc(a, sizeof(Atom *) * atom->expr.len);
+                draft = atom_expr_builder_begin(a, atom->expr.len);
+                if (!draft)
+                    return NULL;
+                new_elems = draft->expr.elems;
                 for (CettaExprIndex j = 0; j < i; j++)
                     new_elems[j] = atom->expr.elems[j];
             }
             if (new_elems)
                 new_elems[i] = next;
         }
-        out = new_elems ? atom_expr(a, new_elems, atom->expr.len) : atom;
+        out = new_elems ? atom_expr_builder_finish(a, draft) : atom;
         break;
     }
     default:
@@ -2803,6 +2866,7 @@ typedef struct {
 static __thread FreshVarSuffixBlockCache g_fresh_var_suffix_block_cache = {0};
 
 typedef struct {
+    VarId inline_items[VAR_ID_SET_INLINE_CAP];
     VarId *items;
     uint32_t len;
     uint32_t cap;
@@ -2879,16 +2943,17 @@ void fresh_var_suffix_test_reset(uint64_t next_suffix) {
 #endif
 
 static void var_id_set_init(VarIdSet *set) {
-    set->items = NULL;
+    set->items = set->inline_items;
     set->len = 0;
-    set->cap = 0;
+    set->cap = VAR_ID_SET_INLINE_CAP;
 }
 
 static void var_id_set_free(VarIdSet *set) {
-    free(set->items);
-    set->items = NULL;
+    if (set->items != set->inline_items)
+        free(set->items);
+    set->items = set->inline_items;
     set->len = 0;
-    set->cap = 0;
+    set->cap = VAR_ID_SET_INLINE_CAP;
 }
 
 static bool var_id_set_contains(const VarIdSet *set, VarId id) {
@@ -2907,8 +2972,16 @@ static bool var_id_set_add(VarIdSet *set, VarId id) {
         if (next_cap < set->cap ||
             (size_t)next_cap > SIZE_MAX / sizeof(*set->items))
             return false;
-        set->items = cetta_realloc(
-            set->items, sizeof(*set->items) * (size_t)next_cap);
+        if (set->items == set->inline_items) {
+            VarId *items = cetta_malloc(
+                sizeof(*items) * (size_t)next_cap);
+            memcpy(items, set->inline_items,
+                   sizeof(*items) * (size_t)set->len);
+            set->items = items;
+        } else {
+            set->items = cetta_realloc(
+                set->items, sizeof(*set->items) * (size_t)next_cap);
+        }
         set->cap = next_cap;
     }
     set->items[set->len++] = id;
@@ -3044,6 +3117,17 @@ static BindingsReachability bindings_value_reaches_var(
     Bindings *bindings, Atom *value, VarId target) {
     if (!bindings || !value || target == VAR_ID_NONE)
         return BINDINGS_REACHABILITY_UNKNOWN;
+
+    /* The caller maintains an acyclic substitution graph.  Follow its common
+     * variable-only spine directly; no visited set is needed until an
+     * expression introduces branching. */
+    while (value->kind == ATOM_VAR) {
+        if (binding_var_eq(value->var_id, target))
+            return BINDINGS_REACHABILITY_PRESENT;
+        value = bindings_lookup_id(bindings, value->var_id);
+        if (!value)
+            return BINDINGS_REACHABILITY_ABSENT;
+    }
     if (!atom_has_vars(value))
         return BINDINGS_REACHABILITY_ABSENT;
 

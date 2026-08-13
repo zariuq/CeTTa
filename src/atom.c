@@ -2006,12 +2006,92 @@ static uint32_t atom_flags_for_symbol_id(SymbolId sym_id) {
     return flags;
 }
 
-static bool atom_graph_is_closed_for_arena(const Arena *arena,
-                                           const Atom *atom) {
+bool atom_graph_is_closed_for_arena(const Arena *arena,
+                                    const Atom *atom) {
     return arena && atom &&
            (atom->flags & ATOM_FLAG_ARENA_CLOSED) != 0u &&
            (atom->arena_id == 0u ||
             atom->arena_id == arena->identity);
+}
+
+bool atom_graph_arena_id_bounds(const Atom *atom,
+                                uint32_t *min_id,
+                                uint32_t *max_id) {
+    if (!atom || !min_id || !max_id)
+        return false;
+    *min_id = 0u;
+    *max_id = 0u;
+    const Atom *inline_stack[64];
+    const Atom **stack = inline_stack;
+    size_t length = 1u;
+    size_t capacity = sizeof(inline_stack) / sizeof(inline_stack[0]);
+    stack[0] = atom;
+    bool complete = true;
+    while (complete && length > 0u) {
+        const Atom *node = stack[--length];
+        if (!node) {
+            complete = false;
+            break;
+        }
+        if (node->arena_id != 0u) {
+            if (*min_id == 0u || node->arena_id < *min_id)
+                *min_id = node->arena_id;
+            if (node->arena_id > *max_id)
+                *max_id = node->arena_id;
+        }
+        if ((node->flags & ATOM_FLAG_ARENA_CLOSED) != 0u)
+            continue;
+        size_t additions = 0u;
+        if (node->kind == ATOM_EXPR) {
+            additions = node->expr.len;
+        } else if (node->kind == ATOM_VAR && node->name_key) {
+            additions = 1u;
+        } else {
+            /* A non-closed leaf owns or references storage whose lifetime is
+             * not represented by Atom arena identities. */
+            complete = false;
+            break;
+        }
+        if (additions > SIZE_MAX - length) {
+            complete = false;
+            break;
+        }
+        const size_t needed = length + additions;
+        if (needed > capacity) {
+            size_t next_capacity = capacity;
+            while (next_capacity < needed) {
+                if (next_capacity > SIZE_MAX / 2u) {
+                    next_capacity = needed;
+                    break;
+                }
+                next_capacity *= 2u;
+            }
+            if (next_capacity > SIZE_MAX / sizeof(*stack)) {
+                complete = false;
+                break;
+            }
+            if (stack == inline_stack) {
+                const Atom **grown = cetta_malloc(
+                    next_capacity * sizeof(*grown));
+                memcpy((void *)grown, inline_stack,
+                       length * sizeof(*grown));
+                stack = grown;
+            } else {
+                stack = cetta_realloc(
+                    (void *)stack, next_capacity * sizeof(*stack));
+            }
+            capacity = next_capacity;
+        }
+        if (node->kind == ATOM_VAR) {
+            stack[length++] = node->name_key;
+        } else {
+            for (CettaExprIndex i = 0u; i < node->expr.len; i++)
+                stack[length++] = node->expr.elems[i];
+        }
+    }
+    if (stack != inline_stack)
+        free((void *)stack);
+    return complete;
 }
 
 static uint32_t atom_flags_from_children(uint32_t arena_id, Atom **elems,
@@ -2841,6 +2921,39 @@ Atom *atom_expr(Arena *a, Atom **elems, CettaExprLen len) {
     at->expr.elems = elems_bytes ? (Atom **)(at + 1) : NULL;
     if (elems && elems_bytes > 0) memcpy(at->expr.elems, elems, elems_bytes);
     return at;
+}
+
+Atom *atom_expr_builder_begin(Arena *a, CettaExprLen len) {
+    if (!a)
+        return NULL;
+    if (len > 0 && !cetta_expr_len_mul_fits_size(len, sizeof(Atom *)))
+        cetta_oom(SIZE_MAX);
+    size_t elems_bytes = (size_t)len * sizeof(Atom *);
+    if (elems_bytes > SIZE_MAX - sizeof(Atom))
+        cetta_oom(SIZE_MAX);
+    Atom *draft = arena_alloc(a, sizeof(Atom) + elems_bytes);
+    *draft = (Atom){
+        .kind = ATOM_EXPR,
+        .var_id = VAR_ID_NONE,
+        .sym_id = SYMBOL_ID_NONE,
+        .arena_id = a->identity,
+        .expr = {
+            .elems = elems_bytes ? (Atom **)(draft + 1) : NULL,
+            .len = len,
+        },
+    };
+    return draft;
+}
+
+Atom *atom_expr_builder_finish(Arena *a, Atom *draft) {
+    if (!a || !draft || draft->kind != ATOM_EXPR ||
+        draft->arena_id != a->identity)
+        return NULL;
+    draft->flags = atom_flags_from_children(
+        a->identity, draft->expr.elems, draft->expr.len);
+    draft->hash_cache = 0u;
+    Atom *shared = atom_maybe_hashcons(a, draft);
+    return shared ? shared : draft;
 }
 
 Atom *atom_expr_shared(Arena *a, Atom **elems, CettaExprLen len) {
