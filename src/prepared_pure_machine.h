@@ -17,7 +17,7 @@ typedef Atom *(*CettaPreparedPureConstructValue)(
     Arena *arena, Atom **elements, CettaExprLen length);
 typedef bool (*CettaPreparedPureOpaqueValue)(const Atom *value);
 typedef bool (*CettaPreparedPureInterruptPollFn)(void *context);
-/* Map a dialect-owned surface head to a semantic register instruction.
+/* Map a dialect-owned syntax head to a semantic register instruction.
  * The generated common-head table is consulted first; this hook exists for
  * spellings whose meaning differs between compositions. */
 typedef bool (*CettaPreparedPureRegisterViewFn)(

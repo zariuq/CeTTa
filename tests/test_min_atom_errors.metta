@@ -1,3 +1,3 @@
-; HE-backed negative surface for min-atom: empty expression.
+; HE-backed negative syntax for min-atom: empty expression.
 
 !(min-atom ())

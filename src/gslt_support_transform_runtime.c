@@ -130,7 +130,7 @@ static bool declarations_validate_v1(
     for (size_t index = 0u; index < declaration_count; index++) {
         const CettaGsltSupportOperatorDeclV1 *declaration =
             &declarations[index];
-        if (!text_present(declaration->surface_symbol) ||
+        if (!text_present(declaration->syntax_symbol) ||
             !text_present(declaration->operator_id))
             return runtime_error(error, error_size,
                                  "support-transform %s declaration is empty",
@@ -139,12 +139,12 @@ static bool declarations_validate_v1(
             return runtime_error(error, error_size,
                                  "support-transform %s arity is invalid", kind);
         for (size_t prior = 0u; prior < index; prior++) {
-            if (strcmp(declarations[prior].surface_symbol,
-                       declaration->surface_symbol) == 0)
+            if (strcmp(declarations[prior].syntax_symbol,
+                       declaration->syntax_symbol) == 0)
                 return runtime_error(
                     error, error_size,
-                    "support-transform %s surface is declared twice: %s",
-                    kind, declaration->surface_symbol);
+                    "support-transform %s syntax is declared twice: %s",
+                    kind, declaration->syntax_symbol);
         }
     }
     return true;
@@ -459,7 +459,7 @@ static const CettaGsltSupportOperatorDeclV1 *find_declaration_v1(
         if (form->expr.len ==
                 (CettaExprLen)declaration->argument_count + 1u &&
             atom_is_symbol(form->expr.elems[0],
-                           declaration->surface_symbol))
+                           declaration->syntax_symbol))
             return declaration;
     }
     return NULL;

@@ -66,7 +66,7 @@ Atom *abt_close(const AbtSignature *signature, Arena *arena,
 Atom *abt_open(const AbtSignature *signature, Arena *arena,
                Atom *fresh_name, Atom *term);
 
-/* Introduce one surrounding binder in a mixed named/canonical surface.
+/* Introduce one surrounding binder in a mixed named/canonical syntax.
    Existing loose indices are shifted outward while occurrences structurally
    equal to name become the new index zero.  This single traversal is required
    so shifting existing indices and closing the selected name happen under the
@@ -87,7 +87,7 @@ Atom *abt_bind(const AbtSignature *signature, Arena *arena,
    traversals are iterative and reject malformed, reserved-marker, or cyclic
    inputs. */
 Atom *abt_print(const AbtSignature *signature, Arena *arena, Atom *term);
-Atom *abt_parse(const AbtSignature *signature, Arena *arena, Atom *surface);
+Atom *abt_parse(const AbtSignature *signature, Arena *arena, Atom *syntax);
 
 bool abt_scope_check(const AbtSignature *signature, uint64_t initial_depth,
                      Atom *term);
@@ -96,7 +96,7 @@ bool abt_alpha_eq(Atom *left, Atom *right);
 bool abt_is_op(SymbolId id);
 bool abt_op_data_arg(SymbolId id, uint32_t arg_index);
 
-/* Neutral grounded surface used by the differential gate and package
+/* Neutral grounded syntax used by the differential gate and package
    elaborators.  The default-signature introspection form takes the explicit
    data capability AbtDefaultsV1.  None of these operations authorizes a
    checking judgment. */

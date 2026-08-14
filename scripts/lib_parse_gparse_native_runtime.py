@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-"""Retired Python integration surface for lib_parse generalized parsing.
+"""Retired Python integration syntax for lib_parse generalized parsing.
 
 The implementation path is the native MeTTa/C lane: `lib/gparse.metta`,
 `src/lib_parse_native_grammar.c`, and the `test-lib-parse-generalized` gate.

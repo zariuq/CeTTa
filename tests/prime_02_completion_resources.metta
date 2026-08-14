@@ -89,7 +89,7 @@
    (prime-judge &self (Analyze dynamic-term Nat) 1000))
 !(prime-labeled-status CheckDynamic
    (prime-judge &self (Check dynamic-term Nat) 1000))
-; The ordinary surface is genuinely unbounded. This terminating evaluation
+; The ordinary syntax is genuinely unbounded. This terminating evaluation
 ; takes more than 100000 evaluator steps; the explicit bounded form is the
 ; only one that reports resource incompleteness.
 (= (long-default $n)
@@ -139,7 +139,7 @@
 
 ; Nine independent types for each component create 81 structural tuple types
 ; and 81 applicability environments. Both frontiers grow dynamically: neither
-; the ordinary nor explicitly producer-bounded surface truncates them.
+; the ordinary nor explicitly producer-bounded syntax truncates them.
 (: cap-x X0)
 (: cap-x X1)
 (: cap-x X2)

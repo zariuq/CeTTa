@@ -1,4 +1,4 @@
-; Regression for the post-fix WM-PLN hypothesis dedup surface.
+; Regression for the post-fix WM-PLN hypothesis dedup syntax.
 ; Positive example: proof-level route competition can yield many supported-drug
 ; proofs, while unique over the ground supported-key tuples collapses them to
 ; the true hypothesis set.

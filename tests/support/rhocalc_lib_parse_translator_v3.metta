@@ -7,7 +7,7 @@
 ; The production rho <-> mrho translator is the runtime rhocalc syntax path
 ; (`--lang rhocalc --translate`). This file keeps a bounded reference lane for
 ; parser research and differential checks.
-; Surface syntax matches the current runtime surface:
+; Rho syntax matches the current runtime notation:
 ;   @{P}
 ;   N!(P)
 ;   *N
@@ -55,8 +55,8 @@
 (= (rho-send-nil-toks) (mkL (AT LBR ZERO RBR BANG LP ZERO RP)))
 (= (rho-recv-drop-x-toks) (mkL (FOR LP DOLLAR x FROM AT LBR ZERO RBR RP LBR STAR DOLLAR x RBR)))
 (= (rho-recv-drop-y-toks) (mkL (FOR LP DOLLAR y FROM AT LBR ZERO RBR RP LBR STAR DOLLAR y RBR)))
-(= (rho-pure-surface-toks) (mkL (AT LBR ZERO RBR BANG LP ZERO RP BAR FOR LP DOLLAR x FROM AT LBR ZERO RBR RP LBR STAR DOLLAR x RBR)))
-(= (rho-shadowing-surface-toks)
+(= (rho-pure-syntax-toks) (mkL (AT LBR ZERO RBR BANG LP ZERO RP BAR FOR LP DOLLAR x FROM AT LBR ZERO RBR RP LBR STAR DOLLAR x RBR)))
+(= (rho-shadowing-syntax-toks)
    (mkL (
      FOR LP DOLLAR x FROM AT LBR ZERO RBR RP LBR
        FOR LP DOLLAR x FROM DOLLAR x RP LBR STAR DOLLAR x RBR
@@ -71,12 +71,12 @@
 (= (rho-ambig-corpus) (Cons (mkL (x BAR x BAR x)) Nil))
 (= (rho-corpus-files)
    (mkL (
-     "tests/rhocalc/pure_surface.rho"
-     "tests/rhocalc/surface_shadowing.rho"
-     "tests/rhocalc/surface_name_output.rho"
-     "tests/rhocalc/surface_open_name_variable.rho"
-     "tests/rhocalc/surface_quote_inner_binder_restores_scope.rho"
-     "tests/rhocalc/surface_quote_seals_outer_binder.rho"
+     "tests/rhocalc/pure_rho.rho"
+     "tests/rhocalc/rho_shadowing.rho"
+     "tests/rhocalc/rho_name_output.rho"
+     "tests/rhocalc/rho_open_name_variable.rho"
+     "tests/rhocalc/rho_quote_inner_binder_restores_scope.rho"
+     "tests/rhocalc/rho_quote_seals_outer_binder.rho"
      "tests/rhocalc/paper_reflection_name_generation_h4.rho")))
 
 ; --- helpers ---
@@ -582,7 +582,7 @@
            CorpusChecked
            Unchecked)))
 
-; --- canonical AST back to raw named parse tree / surface tokens ---
+; --- canonical AST back to raw named parse tree / syntax tokens ---
 (= (rho-raise-proc $ctx rho:nil)
    (Nd pnil Nil))
 (= (rho-raise-proc $ctx (rho:send $N $P))
@@ -607,25 +607,25 @@
 (= (rho-raise-name $ctx (rho:free $v))
    (Nd nvar (Cons (Lf $v) Nil)))
 
-(= (rho-canon->surface-tree $ast) (rho-raise-proc Nil $ast))
-(= (rho-canon->surface-toks $ast) (lp-print (rho-g) (rho-canon->surface-tree $ast)))
+(= (rho-canon->syntax-tree $ast) (rho-raise-proc Nil $ast))
+(= (rho-canon->syntax-toks $ast) (lp-print (rho-g) (rho-canon->syntax-tree $ast)))
 
-(= (rho-surface-roundtrip $toks)
+(= (rho-syntax-roundtrip $toks)
    (case (rho->canon $toks)
-     (((Ok $ast) (rho-canon->surface-toks $ast))
+     (((Ok $ast) (rho-canon->syntax-toks $ast))
       ($o $o))))
 
-(= (rho-text-surface-roundtrip $text)
+(= (rho-text-syntax-roundtrip $text)
    (case (rho-text->canon $text)
-     (((Ok $ast) (rho-canon->surface-toks $ast))
+     (((Ok $ast) (rho-canon->syntax-toks $ast))
       ($o $o))))
 
-(= (rho-file-surface-roundtrip $path)
+(= (rho-file-syntax-roundtrip $path)
    (case (rho-file->canon $path)
-     (((Ok $ast) (rho-canon->surface-toks $ast))
+     (((Ok $ast) (rho-canon->syntax-toks $ast))
       ($o $o))))
 
 (= (rho-canon-roundtrip $toks)
-   (case (rho-surface-roundtrip $toks)
+   (case (rho-syntax-roundtrip $toks)
      (((Ok $surf) (rho->canon $surf))
       ($o $o))))

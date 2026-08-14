@@ -4,8 +4,8 @@
 (: Nat Type)
 
 (= (canonical-binders:canonical
-      (PrimeVerdict Established (Form $surface)
-        (TelescopeFormation $surface (CanonicalABT $canonical))))
+      (PrimeVerdict Established (Form $syntax)
+        (TelescopeFormation $syntax (CanonicalABT $canonical))))
    $canonical)
 
 (= (canonical-binders:status

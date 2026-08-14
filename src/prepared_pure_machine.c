@@ -1257,8 +1257,8 @@ static bool prepared_pure_intrinsic_program(
     return false;
 }
 
-static bool prepared_pure_builtin_surface(SymbolId head) {
-    return symbol_id_is_builtin_surface(head);
+static bool prepared_pure_builtin_syntax(SymbolId head) {
+    return symbol_id_is_builtin(head);
 }
 
 static bool prepared_pure_context_lookup(
@@ -1630,7 +1630,7 @@ static PreparedPureHeadRole prepared_pure_head_role(
         prepared_pure_intrinsic_program(
             head->sym_id, arity, NULL) ||
         is_grounded_op(head->sym_id) ||
-        prepared_pure_builtin_surface(head->sym_id)) {
+        prepared_pure_builtin_syntax(head->sym_id)) {
         return PREPARED_PURE_HEAD_CALLABLE;
     }
     bool defined = false;
@@ -1972,7 +1972,7 @@ static bool prepared_pure_compile_eval(
         prepared_pure_head_role(program, source);
     if (head_role == PREPARED_PURE_HEAD_CALLABLE)
         return prepared_pure_reject(
-            program, "unsupported evaluator surface", source);
+            program, "unsupported evaluator syntax", source);
     if (head_role == PREPARED_PURE_HEAD_UNKNOWN ||
         expression_view_state ==
             CETTA_PREPARED_PURE_EXPRESSION_DECLINE)

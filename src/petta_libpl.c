@@ -1190,9 +1190,9 @@ static void petta_libpl_probe_arity_facts(
  * holds — its curated stdlib registration list plus explicit
  * import_prolog_function calls — and only then consults
  * current_predicate/1 for the concrete arity.  Mirror the registration
- * side here: the stdlib surface below is metta.pl's register_fun list
+ * side here: the stdlib syntax below is metta.pl's register_fun list
  * verbatim, minus the names cetta's native machine and evaluator own
- * (forms, grounded operations, shared builtin surface), whose engine
+ * (forms, grounded operations, shared builtin syntax), whose engine
  * spellings must never shadow native ownership.  cons is excluded exactly
  * as the reference translator excludes it.  Arities self-populate from
  * current_predicate through the ordinary refresh scan.
@@ -1230,7 +1230,7 @@ static void petta_libpl_register_reference_stdlib(
         "format-time", "library", "exists_file", "library-import!",
         "import_prolog_function", "Predicate", "callPredicate",
         "assertaPredicate", "assertzPredicate", "retractPredicate",
-        "add-translator-rule!", "remove-translator-rule!", "argv",
+        "add-translator-rule!", "remove-translator-rule!",
     };
     if (!runtime || !g_symbols)
         return;
@@ -1244,7 +1244,7 @@ static void petta_libpl_register_reference_stdlib(
         if (symbol == SYMBOL_ID_NONE ||
             petta_semantics_form(symbol) != PETTA_FORM_NONE ||
             is_grounded_op(symbol) ||
-            symbol_id_is_builtin_surface(symbol))
+            symbol_id_is_builtin(symbol))
             continue;
         PettaLibplImport *entry =
             petta_libpl_register_import(runtime, symbol);
@@ -1267,7 +1267,7 @@ static PettaLibplImport *petta_libpl_probe_system_function(
     if (!runtime || head == SYMBOL_ID_NONE)
         return NULL;
     /*
-     * Adapter forms, grounded operations, and shared builtin surface names
+     * Adapter forms, grounded operations, and shared builtin syntax names
      * are owned by the native machine and evaluator: whatever helper
      * predicates the engine module happens to define under the same
      * spelling, resolving them as foreign functions would shadow that
@@ -1277,7 +1277,7 @@ static PettaLibplImport *petta_libpl_probe_system_function(
      */
     if (petta_semantics_form(head) != PETTA_FORM_NONE ||
         is_grounded_op(head) ||
-        symbol_id_is_builtin_surface(head))
+        symbol_id_is_builtin(head))
         return NULL;
     PettaLibplImport *existing =
         petta_libpl_find_import(runtime, head);
@@ -2626,7 +2626,7 @@ CettaLibPrologRuntime *cetta_lib_prolog_runtime_new(void) {
     atomic_init(&runtime->import_admission_saturated, false);
     /*
      * Capability discovery is source-planning metadata, not execution.
-     * Publish the reference PeTTa surface while the language context is
+     * Publish the reference PeTTa syntax while the language context is
      * built, without starting an SWI engine.  This lets the first authored
      * equation receive the same call/data classification as every later
      * equation.  Engine preparation remains lazy and merely fills the

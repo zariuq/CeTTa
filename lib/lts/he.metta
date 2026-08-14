@@ -15,9 +15,9 @@
 ;   lts:he:diamond
 ;   lts:he:step-rules
 ;
-; The one-step surface exposes direct top-level one-step reductions together
+; The one-step interface exposes direct top-level one-step reductions together
 ; with chain/let/let*/case/switch-context progression, and emits quoted
-; successors so the one-step surface remains stable as data instead of being eagerly
+; successors so the one-step interface remains stable as data instead of being eagerly
 ; evaluated again.
 
 (: lts:he:transitions (-> Atom %Undefined%))
@@ -30,13 +30,13 @@
 (: lts:he:step-rules (-> %Undefined%))
 
 (@doc lts:he:transitions
-  (@desc "Meta-level one-step HE surface. This is the unquoted-state front door for lts:he:step-state: it quotes the input once, emits each immediate successor as a quoted MeTTa state, emits zero results on quiescent atoms, and propagates Error outcomes.")
+  (@desc "Meta-level one-step HE interface. This is the unquoted-state front door for lts:he:step-state: it quotes the input once, emits each immediate successor as a quoted MeTTa state, emits zero results on quiescent atoms, and propagates Error outcomes.")
   (@params (
     (@param "MeTTa atom to inspect for one evaluator step")))
   (@return "Zero or more quoted immediate HE successors"))
 
 (@doc lts:he:step-state
-  (@desc "Quoted-state one-step HE surface. This is lts:transitions bound to the raw quoted-state HE successor primitive: it accepts a frozen quoted HE state and emits quoted immediate successors, so repeated stepping composes at the MeTTa surface. Incoming Error atoms are propagated unchanged. Ordinary unquoted atoms are not implicitly frozen or stepped here, so they yield zero results.")
+  (@desc "Quoted-state one-step HE interface. This is lts:transitions bound to the raw quoted-state HE successor primitive: it accepts a frozen quoted HE state and emits quoted immediate successors, so repeated stepping composes at the MeTTa interface. Incoming Error atoms are propagated unchanged. Ordinary unquoted atoms are not implicitly frozen or stepped here, so they yield zero results.")
   (@params (
     (@param "Quoted HE state to inspect for one evaluator step")))
   (@return "Zero or more quoted immediate HE successors"))
@@ -48,7 +48,7 @@
   (@return "Zero or more pairs of quoted HE states"))
 
 (@doc lts:he:is-normal-form
-  (@desc "Checks whether a MeTTa atom has an empty one-step HE surface. This is lts:is-normal-form over lts:he:step-state after quoting the input once.")
+  (@desc "Checks whether a MeTTa atom has an empty one-step HE interface. This is lts:is-normal-form over lts:he:step-state after quoting the input once.")
   (@params (
     (@param "MeTTa atom to inspect")))
   (@return "True when no one-step successor exists, False when at least one successor exists, or Error when evaluation reports Error"))
@@ -74,7 +74,7 @@
   (@return "True when some one-step HE successor satisfies the predicate, False when no successor satisfies it, or Error when evaluation reports Error"))
 
 (@doc lts:he:step-rules
-  (@desc "Reflects the HE small-step rule table as data: language, granularity, source digest, schema version, claim level, the coarse rule inventory, and any rules disabled via CETTA_LANGDEF_DISABLED_RULES. The digest identifies which rule object the lts:he one-step surface is currently driven by. The table describes the authored rule object and deliberately makes no claim about the active profile.")
+  (@desc "Reflects the HE small-step rule table as data: language, granularity, source digest, schema version, claim level, the coarse rule inventory, and any rules disabled via CETTA_LANGDEF_DISABLED_RULES. The digest identifies which rule object the lts:he one-step interface is currently driven by. The table describes the authored rule object and deliberately makes no claim about the active profile.")
   (@params ())
   (@return "A (step-rules ...) expression describing the HE small-step rule table"))
 

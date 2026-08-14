@@ -1,0 +1,1062 @@
+{
+  "candidate_count": 51,
+  "candidates": [
+    {
+      "axis": "source-evaluated-stage-evidence",
+      "class": "administrative-alias-chain-proper-list-selection",
+      "core_status": "mechanism-executable",
+      "core_witnesses": [
+        "v3-binding-resolve-alias",
+        "v3-selection-list"
+      ],
+      "diverges_from_v2": false,
+      "finding": "implementation-defect",
+      "id": "100_let_star_alias_chain_proper_list_selection|strict-det",
+      "migration": null,
+      "native_target": "established",
+      "phase": "static",
+      "source_status": "executable",
+      "v2_expected": {
+        "exit": 0,
+        "verdict": "accept"
+      },
+      "v3_policy_verdict": "accept"
+    },
+    {
+      "axis": "result-cardinality-grading",
+      "class": "administrative-alias-chain-nondet-preservation",
+      "core_status": "mechanism-executable",
+      "core_witnesses": [
+        "v3-binding-resolve-alias",
+        "V3ModeFits"
+      ],
+      "diverges_from_v2": false,
+      "finding": "correspondence-witness",
+      "id": "101_let_star_alias_chain_nondet_bool_reject|strict-det",
+      "migration": null,
+      "native_target": "refuted-cardinality",
+      "phase": "static",
+      "source_status": "executable",
+      "v2_expected": {
+        "exit": 2,
+        "verdict": "reject"
+      },
+      "v3_policy_verdict": "reject"
+    },
+    {
+      "axis": "source-evaluated-stage-evidence",
+      "class": "administrative-alias-chain-length-preservation",
+      "core_status": "mechanism-executable",
+      "core_witnesses": [
+        "v3-binding-resolve-alias",
+        "v3-selection-bool"
+      ],
+      "diverges_from_v2": false,
+      "finding": "correspondence-witness",
+      "id": "102_let_star_three_hop_bool_selection|strict-det",
+      "migration": null,
+      "native_target": "established",
+      "phase": "static",
+      "source_status": "executable",
+      "v2_expected": {
+        "exit": 0,
+        "verdict": "accept"
+      },
+      "v3_policy_verdict": "accept"
+    },
+    {
+      "axis": "source-evaluated-stage-evidence",
+      "class": "administrative-alias-lexical-shadowing",
+      "core_status": "mechanism-executable",
+      "core_witnesses": [
+        "v3-binding-lookup-succ",
+        "v3-selection-bool"
+      ],
+      "diverges_from_v2": false,
+      "finding": "correspondence-witness",
+      "id": "103_let_star_shadowed_alias_nonbool_reject|strict-det",
+      "migration": null,
+      "native_target": "refuted-shape",
+      "phase": "static",
+      "source_status": "executable",
+      "v2_expected": {
+        "exit": 2,
+        "verdict": "reject"
+      },
+      "v3_policy_verdict": "reject"
+    },
+    {
+      "axis": "open-world-unknown-approximation",
+      "class": "all-bottom-inference-withholds-signature",
+      "core_status": "mechanism-executable",
+      "core_witnesses": [
+        "v3-branch-none-none"
+      ],
+      "diverges_from_v2": false,
+      "finding": "correspondence-witness",
+      "id": "104_inferred_if_all_empty_result|strict",
+      "migration": null,
+      "native_target": "undetermined",
+      "phase": "static",
+      "source_status": "executable",
+      "v2_expected": {
+        "exit": 2,
+        "verdict": "reject"
+      },
+      "v3_policy_verdict": "reject"
+    },
+    {
+      "axis": "result-cardinality-grading",
+      "class": "declared-all-bottom-semidet",
+      "core_status": "mechanism-executable",
+      "core_witnesses": [
+        "v3-branch-none-none",
+        "V3ModeFits"
+      ],
+      "diverges_from_v2": false,
+      "finding": "correspondence-witness",
+      "id": "105_declared_if_all_empty_semidet_accept|strict",
+      "migration": null,
+      "native_target": "established",
+      "phase": "static",
+      "source_status": "executable",
+      "v2_expected": {
+        "exit": 0,
+        "verdict": "accept"
+      },
+      "v3_policy_verdict": "accept"
+    },
+    {
+      "axis": "open-world-unknown-approximation",
+      "class": "all-bottom-case-inference-withholds-signature",
+      "core_status": "mechanism-executable",
+      "core_witnesses": [
+        "v3-branch-none-none"
+      ],
+      "diverges_from_v2": false,
+      "finding": "correspondence-witness",
+      "id": "106_inferred_case_all_empty_result|strict",
+      "migration": null,
+      "native_target": "undetermined",
+      "phase": "static",
+      "source_status": "executable",
+      "v2_expected": {
+        "exit": 2,
+        "verdict": "reject"
+      },
+      "v3_policy_verdict": "reject"
+    },
+    {
+      "axis": "result-cardinality-grading",
+      "class": "declared-all-bottom-case-semidet",
+      "core_status": "mechanism-executable",
+      "core_witnesses": [
+        "v3-branch-none-none",
+        "V3ModeFits"
+      ],
+      "diverges_from_v2": false,
+      "finding": "correspondence-witness",
+      "id": "107_declared_case_all_empty_semidet_accept|strict",
+      "migration": null,
+      "native_target": "established",
+      "phase": "static",
+      "source_status": "executable",
+      "v2_expected": {
+        "exit": 0,
+        "verdict": "accept"
+      },
+      "v3_policy_verdict": "accept"
+    },
+    {
+      "axis": "open-world-unknown-approximation",
+      "class": "empty-alternative-set-inference-withholds-signature",
+      "core_status": "mechanism-executable",
+      "core_witnesses": [
+        "v3-all-empty-superpose"
+      ],
+      "diverges_from_v2": false,
+      "finding": "correspondence-witness",
+      "id": "108_inferred_superpose_all_empty_result|strict",
+      "migration": null,
+      "native_target": "undetermined",
+      "phase": "static",
+      "source_status": "executable",
+      "v2_expected": {
+        "exit": 2,
+        "verdict": "reject"
+      },
+      "v3_policy_verdict": "reject"
+    },
+    {
+      "axis": "result-cardinality-grading",
+      "class": "superpose-empty-alternatives-retain-nondet",
+      "core_status": "mechanism-executable",
+      "core_witnesses": [
+        "v3-all-empty-superpose",
+        "V3ModeFits"
+      ],
+      "diverges_from_v2": false,
+      "finding": "correspondence-witness",
+      "id": "109_declared_superpose_all_empty_semidet_accept|strict",
+      "migration": null,
+      "native_target": "refuted-cardinality",
+      "phase": "static",
+      "source_status": "executable",
+      "v2_expected": {
+        "exit": 2,
+        "verdict": "reject"
+      },
+      "v3_policy_verdict": "reject"
+    },
+    {
+      "axis": "result-cardinality-grading",
+      "class": "superpose-empty-alternatives-nondet-accept",
+      "core_status": "mechanism-executable",
+      "core_witnesses": [
+        "v3-all-empty-superpose",
+        "V3ModeFits"
+      ],
+      "diverges_from_v2": false,
+      "finding": "correspondence-witness",
+      "id": "110_declared_superpose_all_empty_nondet_accept|strict",
+      "migration": null,
+      "native_target": "established",
+      "phase": "static",
+      "source_status": "executable",
+      "v2_expected": {
+        "exit": 0,
+        "verdict": "accept"
+      },
+      "v3_policy_verdict": "accept"
+    },
+    {
+      "axis": "source-evaluated-stage-evidence",
+      "class": "quoted-inner-type-form-data",
+      "core_status": "mechanism-executable",
+      "core_witnesses": [
+        "v3-expression-evidence-quote"
+      ],
+      "diverges_from_v2": false,
+      "finding": "implementation-defect",
+      "id": "111_quoted_brand_declared_output_candidate|strict-det",
+      "migration": null,
+      "native_target": "refuted-stage",
+      "phase": "static",
+      "source_status": "executable",
+      "v2_expected": {
+        "exit": 2,
+        "verdict": "reject"
+      },
+      "v3_policy_verdict": "reject"
+    },
+    {
+      "axis": "source-evaluated-stage-evidence",
+      "class": "quoted-inner-type-form-data",
+      "core_status": "mechanism-executable",
+      "core_witnesses": [
+        "v3-expression-evidence-quote"
+      ],
+      "diverges_from_v2": false,
+      "finding": "implementation-defect",
+      "id": "112_quoted_the_declared_output_candidate|strict-det",
+      "migration": null,
+      "native_target": "refuted-stage",
+      "phase": "static",
+      "source_status": "executable",
+      "v2_expected": {
+        "exit": 2,
+        "verdict": "reject"
+      },
+      "v3_policy_verdict": "reject"
+    },
+    {
+      "axis": "source-evaluated-stage-evidence",
+      "class": "quoted-inner-data-form-code",
+      "core_status": "mechanism-executable",
+      "core_witnesses": [
+        "v3-expression-evidence-quoted-product",
+        "v3-consistent-product"
+      ],
+      "diverges_from_v2": false,
+      "finding": "implementation-defect",
+      "id": "113_quoted_data_marker_declared_product_candidate|strict-det",
+      "migration": null,
+      "native_target": "refuted-shape",
+      "phase": "static",
+      "source_status": "executable",
+      "v2_expected": {
+        "exit": 2,
+        "verdict": "reject"
+      },
+      "v3_policy_verdict": "reject"
+    },
+    {
+      "axis": "source-evaluated-stage-evidence",
+      "class": "quoted-inner-data-form-code",
+      "core_status": "mechanism-executable",
+      "core_witnesses": [
+        "v3-expression-evidence-quoted-product",
+        "v3-consistent-product"
+      ],
+      "diverges_from_v2": false,
+      "finding": "implementation-defect",
+      "id": "114_quoted_data_marker_full_code_product_candidate|strict-det",
+      "migration": null,
+      "native_target": "established",
+      "phase": "static",
+      "source_status": "executable",
+      "v2_expected": {
+        "exit": 0,
+        "verdict": "accept"
+      },
+      "v3_policy_verdict": "accept"
+    },
+    {
+      "axis": "source-evaluated-stage-evidence",
+      "class": "dynamic-eval-committed-grade-reject",
+      "core_status": "mechanism-executable",
+      "core_witnesses": [
+        "v3-expression-evidence-eval",
+        "V3ModeFits"
+      ],
+      "diverges_from_v2": true,
+      "finding": "implementation-defect",
+      "id": "115_eval_quoted_brand_reactivates_nominal_assertion_candidate|strict-det",
+      "migration": "Existing source becomes accepted after explicit eval reactivates held evidence; no edit.",
+      "native_target": "established",
+      "phase": "static",
+      "source_status": "executable",
+      "v2_expected": {
+        "exit": 2,
+        "verdict": "reject"
+      },
+      "v3_policy_verdict": "accept"
+    },
+    {
+      "axis": "source-evaluated-stage-evidence",
+      "class": "dynamic-eval-committed-grade-reject",
+      "core_status": "mechanism-executable",
+      "core_witnesses": [
+        "v3-expression-evidence-eval",
+        "V3ModeFits"
+      ],
+      "diverges_from_v2": true,
+      "finding": "implementation-defect",
+      "id": "116_eval_quoted_the_reactivates_ascription_candidate|strict-det",
+      "migration": "Existing source becomes accepted after explicit eval reactivates held evidence; no edit.",
+      "native_target": "established",
+      "phase": "static",
+      "source_status": "executable",
+      "v2_expected": {
+        "exit": 2,
+        "verdict": "reject"
+      },
+      "v3_policy_verdict": "accept"
+    },
+    {
+      "axis": "shape-compatibility",
+      "class": "evaluated-brand-literal-reject",
+      "core_status": "mechanism-executable",
+      "core_witnesses": [
+        "v3-expression-evidence-eval",
+        "V3Consistent"
+      ],
+      "diverges_from_v2": false,
+      "finding": "implementation-defect",
+      "id": "117_eval_quoted_brand_nondet_admission_candidate|strict-det",
+      "migration": null,
+      "native_target": "refuted-shape",
+      "phase": "static",
+      "source_status": "executable",
+      "v2_expected": {
+        "exit": 2,
+        "verdict": "reject"
+      },
+      "v3_policy_verdict": "reject"
+    },
+    {
+      "axis": "result-cardinality-grading",
+      "class": "dynamic-eval-nondet-admission",
+      "core_status": "mechanism-executable",
+      "core_witnesses": [
+        "v3-expression-evidence-eval",
+        "V3ModeFits"
+      ],
+      "diverges_from_v2": false,
+      "finding": "implementation-defect",
+      "id": "118_eval_quoted_literal_nondet_candidate|strict-det",
+      "migration": null,
+      "native_target": "established",
+      "phase": "static",
+      "source_status": "executable",
+      "v2_expected": {
+        "exit": 0,
+        "verdict": "accept"
+      },
+      "v3_policy_verdict": "accept"
+    },
+    {
+      "axis": "result-cardinality-grading",
+      "class": "dynamic-eval-nondet-admission",
+      "core_status": "mechanism-executable",
+      "core_witnesses": [
+        "v3-expression-evidence-eval",
+        "V3ModeFits"
+      ],
+      "diverges_from_v2": false,
+      "finding": "implementation-defect",
+      "id": "119_eval_quoted_the_nondet_candidate|strict-det",
+      "migration": null,
+      "native_target": "established",
+      "phase": "static",
+      "source_status": "executable",
+      "v2_expected": {
+        "exit": 0,
+        "verdict": "accept"
+      },
+      "v3_policy_verdict": "accept"
+    },
+    {
+      "axis": "shape-compatibility",
+      "class": "literal-newtype-introduction-reject",
+      "core_status": "mechanism-executable",
+      "core_witnesses": [
+        "v3-expression-evidence-known",
+        "V3Consistent"
+      ],
+      "diverges_from_v2": true,
+      "finding": "implementation-defect",
+      "id": "120_direct_brand_literal_newtype_candidate|strict-det",
+      "migration": "Existing branded constructor becomes accepted; no edit.",
+      "native_target": "established",
+      "phase": "static",
+      "source_status": "executable",
+      "v2_expected": {
+        "exit": 2,
+        "verdict": "reject"
+      },
+      "v3_policy_verdict": "accept"
+    },
+    {
+      "axis": "source-evaluated-stage-evidence",
+      "class": "nested-structured-selection-evidence-withheld",
+      "core_status": "mechanism-executable",
+      "core_witnesses": [
+        "v3-selection-expression"
+      ],
+      "diverges_from_v2": false,
+      "finding": "correspondence-witness",
+      "id": "121_nested_literal_selector_totality_candidate|strict-det",
+      "migration": null,
+      "native_target": "undetermined",
+      "phase": "static",
+      "source_status": "executable",
+      "v2_expected": {
+        "exit": 2,
+        "verdict": "reject"
+      },
+      "v3_policy_verdict": "reject"
+    },
+    {
+      "axis": "result-cardinality-grading",
+      "class": "open-head-selection-withholds-deterministic-grade",
+      "core_status": "mechanism-executable",
+      "core_witnesses": [
+        "v3-selection-expression"
+      ],
+      "diverges_from_v2": false,
+      "finding": "correspondence-witness",
+      "id": "123_variable_headed_selection_literal_body_candidate|strict-det",
+      "migration": null,
+      "native_target": "undetermined",
+      "phase": "static",
+      "source_status": "executable",
+      "v2_expected": {
+        "exit": 2,
+        "verdict": "reject"
+      },
+      "v3_policy_verdict": "reject"
+    },
+    {
+      "axis": "source-evaluated-stage-evidence",
+      "class": "selection-source-opacity",
+      "core_status": "mechanism-executable",
+      "core_witnesses": [
+        "v3-selection-expression"
+      ],
+      "diverges_from_v2": true,
+      "finding": "implementation-defect",
+      "id": "71_concrete_data_selection_is_deterministic|strict-det",
+      "migration": "Existing source becomes accepted; no edit.",
+      "native_target": "established",
+      "phase": "static",
+      "source_status": "executable",
+      "v2_expected": {
+        "exit": 2,
+        "verdict": "reject"
+      },
+      "v3_policy_verdict": "accept"
+    },
+    {
+      "axis": "source-evaluated-stage-evidence",
+      "class": "selection-source-shape",
+      "core_status": "mechanism-executable",
+      "core_witnesses": [
+        "v3-selection-expression"
+      ],
+      "diverges_from_v2": true,
+      "finding": "implementation-defect",
+      "id": "72_direct_concrete_selection_is_deterministic|strict-det",
+      "migration": "Existing source becomes accepted; no edit.",
+      "native_target": "established",
+      "phase": "static",
+      "source_status": "executable",
+      "v2_expected": {
+        "exit": 2,
+        "verdict": "reject"
+      },
+      "v3_policy_verdict": "accept"
+    },
+    {
+      "axis": "source-evaluated-stage-evidence",
+      "class": "selection-open-expression-domain",
+      "core_status": "mechanism-executable",
+      "core_witnesses": [
+        "v3-selection-expression"
+      ],
+      "diverges_from_v2": false,
+      "finding": "implementation-defect",
+      "id": "73_expression_empty_cons_selection_is_not_total|strict-det",
+      "migration": null,
+      "native_target": "refuted-cardinality",
+      "phase": "static",
+      "source_status": "executable",
+      "v2_expected": {
+        "exit": 2,
+        "verdict": "reject"
+      },
+      "v3_policy_verdict": "reject"
+    },
+    {
+      "axis": "open-world-unknown-approximation",
+      "class": "inferred-output-publication",
+      "core_status": "mechanism-executable",
+      "core_witnesses": [
+        "joinPrecise",
+        "v3-evidence-outcome-established"
+      ],
+      "diverges_from_v2": false,
+      "finding": "implementation-defect",
+      "id": "74_inferred_superpose_result_widens_unknown|default",
+      "migration": null,
+      "native_target": "established",
+      "phase": "static",
+      "source_status": "executable",
+      "v2_expected": {
+        "exit": 0,
+        "verdict": "accept"
+      },
+      "v3_policy_verdict": "accept"
+    },
+    {
+      "axis": "open-world-unknown-approximation",
+      "class": "inferred-output-publication",
+      "core_status": "mechanism-executable",
+      "core_witnesses": [
+        "joinPrecise",
+        "v3-evidence-outcome-established"
+      ],
+      "diverges_from_v2": true,
+      "finding": "implementation-defect",
+      "id": "74_inferred_superpose_result_widens_unknown|strict",
+      "migration": "Existing source becomes accepted by precise union publication; no edit.",
+      "native_target": "established",
+      "phase": "boundary",
+      "source_status": "executable",
+      "v2_expected": {
+        "exit": 2,
+        "verdict": "reject"
+      },
+      "v3_policy_verdict": "accept"
+    },
+    {
+      "axis": "open-world-unknown-approximation",
+      "class": "inferred-output-publication",
+      "core_status": "mechanism-executable",
+      "core_witnesses": [
+        "joinPrecise",
+        "v3-evidence-outcome-established"
+      ],
+      "diverges_from_v2": true,
+      "finding": "implementation-defect",
+      "id": "75_inferred_superpose_unknown_does_not_reject|default",
+      "migration": "Widen the consumer to Number-or-String or add an explicit Number refinement.",
+      "native_target": "refuted-shape",
+      "phase": "static",
+      "source_status": "executable",
+      "v2_expected": {
+        "exit": 0,
+        "verdict": "accept"
+      },
+      "v3_policy_verdict": "reject"
+    },
+    {
+      "axis": "shape-compatibility",
+      "class": "inferred-output-publication",
+      "core_status": "mechanism-executable",
+      "core_witnesses": [
+        "joinPrecise",
+        "v3-evidence-outcome-established"
+      ],
+      "diverges_from_v2": false,
+      "finding": "correspondence-witness",
+      "id": "76_inferred_canonical_list_preserved|strict",
+      "migration": null,
+      "native_target": "established",
+      "phase": "static",
+      "source_status": "executable",
+      "v2_expected": {
+        "exit": 0,
+        "verdict": "accept"
+      },
+      "v3_policy_verdict": "accept"
+    },
+    {
+      "axis": "shape-compatibility",
+      "class": "inferred-output-publication",
+      "core_status": "mechanism-executable",
+      "core_witnesses": [
+        "joinPrecise",
+        "v3-evidence-outcome-established"
+      ],
+      "diverges_from_v2": false,
+      "finding": "correspondence-witness",
+      "id": "77_inferred_canonical_list_rejects_mismatch|strict",
+      "migration": null,
+      "native_target": "refuted-shape",
+      "phase": "static",
+      "source_status": "executable",
+      "v2_expected": {
+        "exit": 2,
+        "verdict": "reject"
+      },
+      "v3_policy_verdict": "reject"
+    },
+    {
+      "axis": "shape-compatibility",
+      "class": "inferred-value-candidate",
+      "core_status": "mechanism-executable",
+      "core_witnesses": [
+        "v3-evidence-outcome-established"
+      ],
+      "diverges_from_v2": false,
+      "finding": "implementation-defect",
+      "id": "78_inferred_canonical_arrow_preserved|strict",
+      "migration": null,
+      "native_target": "established",
+      "phase": "static",
+      "source_status": "executable",
+      "v2_expected": {
+        "exit": 0,
+        "verdict": "accept"
+      },
+      "v3_policy_verdict": "accept"
+    },
+    {
+      "axis": "shape-compatibility",
+      "class": "inferred-value-candidate",
+      "core_status": "mechanism-executable",
+      "core_witnesses": [
+        "v3-evidence-outcome-established"
+      ],
+      "diverges_from_v2": false,
+      "finding": "correspondence-witness",
+      "id": "79_inferred_canonical_arrow_rejects_mismatch|strict",
+      "migration": null,
+      "native_target": "refuted-shape",
+      "phase": "static",
+      "source_status": "executable",
+      "v2_expected": {
+        "exit": 2,
+        "verdict": "reject"
+      },
+      "v3_policy_verdict": "reject"
+    },
+    {
+      "axis": "open-world-unknown-approximation",
+      "class": "inferred-value-candidate",
+      "core_status": "mechanism-executable",
+      "core_witnesses": [
+        "v3-evidence-outcome-established"
+      ],
+      "diverges_from_v2": false,
+      "finding": "implementation-defect",
+      "id": "80_inferred_ambiguous_symbol_widens_unknown|strict",
+      "migration": null,
+      "native_target": "refuted-shape",
+      "phase": "static",
+      "source_status": "executable",
+      "v2_expected": {
+        "exit": 2,
+        "verdict": "reject"
+      },
+      "v3_policy_verdict": "reject"
+    },
+    {
+      "axis": "open-world-unknown-approximation",
+      "class": "inferred-value-candidate",
+      "core_status": "mechanism-executable",
+      "core_witnesses": [
+        "v3-evidence-outcome-established"
+      ],
+      "diverges_from_v2": false,
+      "finding": "correspondence-witness",
+      "id": "81_inferred_untyped_atom_has_no_positive_type|strict",
+      "migration": null,
+      "native_target": "undetermined",
+      "phase": "static",
+      "source_status": "executable",
+      "v2_expected": {
+        "exit": 2,
+        "verdict": "reject"
+      },
+      "v3_policy_verdict": "reject"
+    },
+    {
+      "axis": "open-world-unknown-approximation",
+      "class": "inferred-value-candidate",
+      "core_status": "mechanism-executable",
+      "core_witnesses": [
+        "v3-evidence-outcome-established"
+      ],
+      "diverges_from_v2": false,
+      "finding": "correspondence-witness",
+      "id": "82_inferred_function_is_not_explicit_value_evidence|strict",
+      "migration": null,
+      "native_target": "undetermined",
+      "phase": "static",
+      "source_status": "executable",
+      "v2_expected": {
+        "exit": 2,
+        "verdict": "reject"
+      },
+      "v3_policy_verdict": "reject"
+    },
+    {
+      "axis": "shape-compatibility",
+      "class": "foldall-empty-generator",
+      "core_status": "mechanism-executable",
+      "core_witnesses": [
+        "v3-fold-empty"
+      ],
+      "diverges_from_v2": false,
+      "finding": "correspondence-witness",
+      "id": "84_foldall_empty_returns_initializer|strict-det",
+      "migration": null,
+      "native_target": "established",
+      "phase": "static",
+      "source_status": "executable",
+      "v2_expected": {
+        "exit": 0,
+        "verdict": "accept"
+      },
+      "v3_policy_verdict": "accept"
+    },
+    {
+      "axis": "open-world-unknown-approximation",
+      "class": "foldall-unresolved-generator",
+      "core_status": "mechanism-executable",
+      "core_witnesses": [
+        "v3-evidence-outcome-established"
+      ],
+      "diverges_from_v2": false,
+      "finding": "correspondence-witness",
+      "id": "85_foldall_disguised_empty_reject|strict",
+      "migration": null,
+      "native_target": "refuted-shape",
+      "phase": "static",
+      "source_status": "executable",
+      "v2_expected": {
+        "exit": 2,
+        "verdict": "reject"
+      },
+      "v3_policy_verdict": "reject"
+    },
+    {
+      "axis": "open-world-unknown-approximation",
+      "class": "inferred-conditional-no-result",
+      "core_status": "mechanism-executable",
+      "core_witnesses": [
+        "v3-branch-some-none"
+      ],
+      "diverges_from_v2": true,
+      "finding": "correspondence-witness",
+      "id": "87_inferred_if_empty_result|strict",
+      "migration": "Existing semideterministic source becomes accepted; no edit.",
+      "native_target": "established",
+      "phase": "static",
+      "source_status": "executable",
+      "v2_expected": {
+        "exit": 2,
+        "verdict": "reject"
+      },
+      "v3_policy_verdict": "accept"
+    },
+    {
+      "axis": "source-evaluated-stage-evidence",
+      "class": "conditional-proper-list-selection",
+      "core_status": "mechanism-executable",
+      "core_witnesses": [
+        "v3-conditional-evidence",
+        "v3-selection-list"
+      ],
+      "diverges_from_v2": false,
+      "finding": "implementation-defect",
+      "id": "89_if_nonempty_list_selection|strict-det",
+      "migration": null,
+      "native_target": "established",
+      "phase": "static",
+      "source_status": "executable",
+      "v2_expected": {
+        "exit": 0,
+        "verdict": "accept"
+      },
+      "v3_policy_verdict": "accept"
+    },
+    {
+      "axis": "source-evaluated-stage-evidence",
+      "class": "case-proper-list-selection",
+      "core_status": "mechanism-executable",
+      "core_witnesses": [
+        "v3-branch-some-some",
+        "v3-selection-list"
+      ],
+      "diverges_from_v2": false,
+      "finding": "correspondence-witness",
+      "id": "90_case_proper_list_selection|strict-det",
+      "migration": null,
+      "native_target": "established",
+      "phase": "static",
+      "source_status": "executable",
+      "v2_expected": {
+        "exit": 0,
+        "verdict": "accept"
+      },
+      "v3_policy_verdict": "accept"
+    },
+    {
+      "axis": "source-evaluated-stage-evidence",
+      "class": "identity-binding-proper-list-selection",
+      "core_status": "mechanism-executable",
+      "core_witnesses": [
+        "v3-binding-apply-cons",
+        "v3-selection-list"
+      ],
+      "diverges_from_v2": false,
+      "finding": "implementation-defect",
+      "id": "91_let_bound_proper_list_selection|strict-det",
+      "migration": null,
+      "native_target": "established",
+      "phase": "static",
+      "source_status": "executable",
+      "v2_expected": {
+        "exit": 0,
+        "verdict": "accept"
+      },
+      "v3_policy_verdict": "accept"
+    },
+    {
+      "axis": "source-evaluated-stage-evidence",
+      "class": "identity-binding-nonlist-rejection",
+      "core_status": "mechanism-executable",
+      "core_witnesses": [
+        "v3-binding-apply-cons",
+        "v3-selection-list"
+      ],
+      "diverges_from_v2": false,
+      "finding": "correspondence-witness",
+      "id": "92_let_nonlist_selection_reject|strict-det",
+      "migration": null,
+      "native_target": "refuted-shape",
+      "phase": "static",
+      "source_status": "executable",
+      "v2_expected": {
+        "exit": 2,
+        "verdict": "reject"
+      },
+      "v3_policy_verdict": "reject"
+    },
+    {
+      "axis": "source-evaluated-stage-evidence",
+      "class": "sequential-identity-binding-proper-list-selection",
+      "core_status": "mechanism-executable",
+      "core_witnesses": [
+        "v3-binding-apply-cons",
+        "v3-selection-list"
+      ],
+      "diverges_from_v2": false,
+      "finding": "implementation-defect",
+      "id": "93_let_star_bound_proper_list_selection|strict-det",
+      "migration": null,
+      "native_target": "established",
+      "phase": "static",
+      "source_status": "executable",
+      "v2_expected": {
+        "exit": 0,
+        "verdict": "accept"
+      },
+      "v3_policy_verdict": "accept"
+    },
+    {
+      "axis": "result-cardinality-grading",
+      "class": "chain-pattern-binding-semidet",
+      "core_status": "mechanism-executable",
+      "core_witnesses": [
+        "v3-binding-apply-cons",
+        "V3ModeFits"
+      ],
+      "diverges_from_v2": false,
+      "finding": "specification-intended",
+      "id": "94_chain_identity_proper_list_selection|strict-det",
+      "migration": null,
+      "native_target": "refuted-cardinality",
+      "phase": "static",
+      "source_status": "executable",
+      "v2_expected": {
+        "exit": 2,
+        "verdict": "reject"
+      },
+      "v3_policy_verdict": "reject"
+    },
+    {
+      "axis": "source-evaluated-stage-evidence",
+      "class": "identity-binding-bound-bool-selection",
+      "core_status": "mechanism-executable",
+      "core_witnesses": [
+        "v3-binding-apply-cons",
+        "v3-selection-bool"
+      ],
+      "diverges_from_v2": false,
+      "finding": "implementation-defect",
+      "id": "95_let_bound_bool_selection|strict-det",
+      "migration": null,
+      "native_target": "established",
+      "phase": "static",
+      "source_status": "executable",
+      "v2_expected": {
+        "exit": 0,
+        "verdict": "accept"
+      },
+      "v3_policy_verdict": "accept"
+    },
+    {
+      "axis": "source-evaluated-stage-evidence",
+      "class": "identity-binding-nonbool-rejection",
+      "core_status": "mechanism-executable",
+      "core_witnesses": [
+        "v3-binding-apply-cons",
+        "v3-selection-bool"
+      ],
+      "diverges_from_v2": false,
+      "finding": "correspondence-witness",
+      "id": "96_let_nonbool_bool_selection_reject|strict-det",
+      "migration": null,
+      "native_target": "refuted-shape",
+      "phase": "static",
+      "source_status": "executable",
+      "v2_expected": {
+        "exit": 2,
+        "verdict": "reject"
+      },
+      "v3_policy_verdict": "reject"
+    },
+    {
+      "axis": "source-evaluated-stage-evidence",
+      "class": "sequential-identity-binding-bound-bool-selection",
+      "core_status": "mechanism-executable",
+      "core_witnesses": [
+        "v3-binding-apply-cons",
+        "v3-selection-bool"
+      ],
+      "diverges_from_v2": false,
+      "finding": "implementation-defect",
+      "id": "97_let_star_bound_bool_selection|strict-det",
+      "migration": null,
+      "native_target": "established",
+      "phase": "static",
+      "source_status": "executable",
+      "v2_expected": {
+        "exit": 0,
+        "verdict": "accept"
+      },
+      "v3_policy_verdict": "accept"
+    },
+    {
+      "axis": "source-evaluated-stage-evidence",
+      "class": "administrative-alias-chain-bound-bool-selection",
+      "core_status": "mechanism-executable",
+      "core_witnesses": [
+        "v3-binding-resolve-alias",
+        "v3-selection-bool"
+      ],
+      "diverges_from_v2": false,
+      "finding": "implementation-defect",
+      "id": "98_let_star_alias_chain_bool_selection|strict-det",
+      "migration": null,
+      "native_target": "established",
+      "phase": "static",
+      "source_status": "executable",
+      "v2_expected": {
+        "exit": 0,
+        "verdict": "accept"
+      },
+      "v3_policy_verdict": "accept"
+    },
+    {
+      "axis": "source-evaluated-stage-evidence",
+      "class": "administrative-alias-chain-nonbool-rejection",
+      "core_status": "mechanism-executable",
+      "core_witnesses": [
+        "v3-binding-resolve-alias",
+        "v3-selection-bool"
+      ],
+      "diverges_from_v2": false,
+      "finding": "correspondence-witness",
+      "id": "99_let_star_alias_chain_nonbool_reject|strict-det",
+      "migration": null,
+      "native_target": "refuted-shape",
+      "phase": "static",
+      "source_status": "executable",
+      "v2_expected": {
+        "exit": 2,
+        "verdict": "reject"
+      },
+      "v3_policy_verdict": "reject"
+    },
+    {
+      "axis": "result-cardinality-grading",
+      "class": "once-cardinality-transformer",
+      "core_status": "mechanism-executable",
+      "core_witnesses": [
+        "v3-once-nondet"
+      ],
+      "diverges_from_v2": false,
+      "finding": "correspondence-witness",
+      "id": "examples/determinism.metta|--strict-det",
+      "migration": null,
+      "native_target": "established",
+      "phase": "static",
+      "source_status": "executable",
+      "v2_expected": {
+        "exit": 0,
+        "verdict": "accept"
+      },
+      "v3_policy_verdict": "accept"
+    }
+  ],
+  "class_count": 39,
+  "core_mapped_count": 51,
+  "divergence_count": 8,
+  "schema": "cetta-petta-typecheck-v3-h5-matrix-v1",
+  "source_executable_count": 51
+}

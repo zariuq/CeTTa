@@ -1,6 +1,769 @@
 {
   "cases": [
     {
+      "arguments": [
+        "--strict"
+      ],
+      "classification": {
+        "class": "arrow-mode-compatibility",
+        "phase": "static"
+      },
+      "cohort": "semantic-regression",
+      "expected": {
+        "exit": 0,
+        "verdict": "accept"
+      },
+      "file": "tests/petta/typecheck_v2_repros/45_arrow_det_fits_semidet.metta",
+      "id": "45_arrow_det_fits_semidet|strict",
+      "profile": "typecheck-v2",
+      "source_root": "candidate",
+      "source_sha256": "0e71e23aca6ccfa167ef8c5a2875ffba0499b12cd2814c6a8810f75ec1517250"
+    },
+    {
+      "arguments": [
+        "--strict"
+      ],
+      "classification": {
+        "class": "arrow-mode-compatibility",
+        "phase": "static"
+      },
+      "cohort": "semantic-regression",
+      "expected": {
+        "exit": 0,
+        "verdict": "accept"
+      },
+      "file": "tests/petta/typecheck_v2_repros/46_arrow_semidet_fits_semidet.metta",
+      "id": "46_arrow_semidet_fits_semidet|strict",
+      "profile": "typecheck-v2",
+      "source_root": "candidate",
+      "source_sha256": "ca8764e81de934c6bdaa860d86f3c72e080b0c5641b80603d7e2af3bfbef5429"
+    },
+    {
+      "arguments": [
+        "--strict"
+      ],
+      "classification": {
+        "class": "arrow-mode-compatibility",
+        "phase": "static"
+      },
+      "cohort": "semantic-regression",
+      "expected": {
+        "exit": 0,
+        "verdict": "accept"
+      },
+      "file": "tests/petta/typecheck_v2_repros/47_arrow_nondet_slot_accepts_closure.metta",
+      "id": "47_arrow_nondet_slot_accepts_closure|strict",
+      "profile": "typecheck-v2",
+      "source_root": "candidate",
+      "source_sha256": "b902a911d1a352e33365b3a6658f288f06ba4a5fd3f11081fe83c5020ecbb787"
+    },
+    {
+      "arguments": [
+        "--strict"
+      ],
+      "classification": {
+        "class": "arrow-mode-compatibility",
+        "phase": "static"
+      },
+      "cohort": "semantic-regression",
+      "expected": {
+        "exit": 2,
+        "verdict": "reject"
+      },
+      "file": "tests/petta/typecheck_v2_repros/48_arrow_nondet_rejected_by_det_slot.metta",
+      "id": "48_arrow_nondet_rejected_by_det_slot|strict",
+      "profile": "typecheck-v2",
+      "source_root": "candidate",
+      "source_sha256": "7860a124bd1203a4e24551269f8ad79329b674048686b989136b2be2a7e36107"
+    },
+    {
+      "arguments": [
+        "--strict"
+      ],
+      "classification": {
+        "class": "arrow-structural-compatibility",
+        "phase": "static"
+      },
+      "cohort": "semantic-regression",
+      "expected": {
+        "exit": 2,
+        "verdict": "reject"
+      },
+      "file": "tests/petta/typecheck_v2_repros/49_arrow_component_mismatch.metta",
+      "id": "49_arrow_component_mismatch|strict",
+      "profile": "typecheck-v2",
+      "source_root": "candidate",
+      "source_sha256": "b7c5a4fefad919cfd5795cc9eb6abde54aa89c12ae5b453b1842c5e45e8c9d7a"
+    },
+    {
+      "arguments": [
+        "--strict"
+      ],
+      "classification": {
+        "class": "newtype-required-union-elimination",
+        "phase": "static"
+      },
+      "cohort": "semantic-regression",
+      "expected": {
+        "exit": 0,
+        "verdict": "accept"
+      },
+      "file": "tests/petta/typecheck_v2_repros/50_newtype_actual_fits_required_union.metta",
+      "id": "50_newtype_actual_fits_required_union|strict",
+      "profile": "typecheck-v2",
+      "source_root": "candidate",
+      "source_sha256": "a7fe74ca38b45b6d647f70f2a2b830f362938fe6f821d39416895157328e5e9c"
+    },
+    {
+      "arguments": [
+        "--strict"
+      ],
+      "classification": {
+        "class": "newtype-wildcard-elimination",
+        "phase": "static"
+      },
+      "cohort": "semantic-regression",
+      "expected": {
+        "exit": 0,
+        "verdict": "accept"
+      },
+      "file": "tests/petta/typecheck_v2_repros/51_newtype_actual_fits_wildcard.metta",
+      "id": "51_newtype_actual_fits_wildcard|strict",
+      "profile": "typecheck-v2",
+      "source_root": "candidate",
+      "source_sha256": "016f29ca4f84aa85208517e08921edc701006a0b5c803cfb5731d0c14d2baa16"
+    },
+    {
+      "arguments": [
+        "--strict"
+      ],
+      "classification": {
+        "class": "newtype-representation-elimination",
+        "phase": "static"
+      },
+      "cohort": "semantic-regression",
+      "expected": {
+        "exit": 2,
+        "verdict": "reject"
+      },
+      "file": "tests/petta/typecheck_v2_repros/52_newtype_representation_mismatch.metta",
+      "id": "52_newtype_representation_mismatch|strict",
+      "profile": "typecheck-v2",
+      "source_root": "candidate",
+      "source_sha256": "fbffa20109e70011fc6a27e819e4041b40f9eb9541bbcdb97186c2307242ac39"
+    },
+    {
+      "arguments": [
+        "--strict"
+      ],
+      "classification": {
+        "class": "structural-component-compatibility",
+        "phase": "static"
+      },
+      "cohort": "semantic-regression",
+      "expected": {
+        "exit": 2,
+        "verdict": "reject"
+      },
+      "file": "tests/petta/typecheck_v2_repros/53_structural_component_mismatch.metta",
+      "id": "53_structural_component_mismatch|strict",
+      "profile": "typecheck-v2",
+      "source_root": "candidate",
+      "source_sha256": "7ffd671a414c3f8921992009f4cac4f0e36b7493138d2977634dadf06049fd59"
+    },
+    {
+      "arguments": [
+        "--strict"
+      ],
+      "classification": {
+        "class": "type-variable-union-self-membership",
+        "phase": "static"
+      },
+      "cohort": "semantic-regression",
+      "expected": {
+        "exit": 2,
+        "verdict": "reject"
+      },
+      "file": "tests/petta/typecheck_v2_repros/54_type_variable_actual_union_self.metta",
+      "id": "54_type_variable_actual_union_self|strict",
+      "profile": "typecheck-v2",
+      "source_root": "candidate",
+      "source_sha256": "755861328d81e4f76fe3042ec322bd13143037249670f8cc71b111ffba1de488"
+    },
+    {
+      "arguments": [
+        "--strict"
+      ],
+      "classification": {
+        "class": "type-variable-union-self-membership",
+        "phase": "static"
+      },
+      "cohort": "semantic-regression",
+      "expected": {
+        "exit": 0,
+        "verdict": "accept"
+      },
+      "file": "tests/petta/typecheck_v2_repros/55_type_variable_required_union_self.metta",
+      "id": "55_type_variable_required_union_self|strict",
+      "profile": "typecheck-v2",
+      "source_root": "candidate",
+      "source_sha256": "9c18f0a51a161f452a200999e5148ad542146539b14874d24b7641cac70b4ec4"
+    },
+    {
+      "arguments": [
+        "--strict"
+      ],
+      "classification": {
+        "class": "rational-tree-structural-compatibility",
+        "phase": "static"
+      },
+      "cohort": "semantic-regression",
+      "expected": {
+        "exit": 0,
+        "verdict": "accept"
+      },
+      "file": "tests/petta/typecheck_v2_repros/56_type_variable_actual_occurs_cycle.metta",
+      "id": "56_type_variable_actual_occurs_cycle|strict",
+      "profile": "typecheck-v2",
+      "source_root": "candidate",
+      "source_sha256": "e807e7d3378b182611ae7bba5d1805bf55d8c459b11a9aa749138afbc4376da5"
+    },
+    {
+      "arguments": [
+        "--strict"
+      ],
+      "classification": {
+        "class": "rational-tree-structural-compatibility",
+        "phase": "static"
+      },
+      "cohort": "semantic-regression",
+      "expected": {
+        "exit": 0,
+        "verdict": "accept"
+      },
+      "file": "tests/petta/typecheck_v2_repros/57_type_variable_required_occurs_cycle.metta",
+      "id": "57_type_variable_required_occurs_cycle|strict",
+      "profile": "typecheck-v2",
+      "source_root": "candidate",
+      "source_sha256": "80ce9af0ba53918f9a505a28778f2b128a3e2151625fdf579cc4560ea7a29f91"
+    },
+    {
+      "arguments": [
+        "--strict"
+      ],
+      "classification": {
+        "class": "rational-tree-structural-conflict",
+        "phase": "static"
+      },
+      "cohort": "semantic-regression",
+      "expected": {
+        "exit": 2,
+        "verdict": "reject"
+      },
+      "file": "tests/petta/typecheck_v2_repros/58_type_variable_rational_cycle_conflict.metta",
+      "id": "58_type_variable_rational_cycle_conflict|strict",
+      "profile": "typecheck-v2",
+      "source_root": "candidate",
+      "source_sha256": "9592aae0c9dae8994a4f6e93d3d94d3edec65250c087bdaa817a3e863c5587c7"
+    },
+    {
+      "arguments": [
+        "--strict"
+      ],
+      "classification": {
+        "class": "head-candidate-multiplicity",
+        "phase": "static"
+      },
+      "cohort": "semantic-regression",
+      "expected": {
+        "exit": 0,
+        "verdict": "accept"
+      },
+      "file": "tests/petta/typecheck_v2_repros/59_repeated_head_variable_narrows_union.metta",
+      "id": "59_repeated_head_variable_narrows_union|strict",
+      "profile": "typecheck-v2",
+      "source_root": "candidate",
+      "source_sha256": "6d6f58238fa18c10a450deae86b542642418ccd20cd3746ac0acd525166241a3"
+    },
+    {
+      "arguments": [
+        "--strict"
+      ],
+      "classification": {
+        "class": "head-candidate-multiplicity",
+        "phase": "static"
+      },
+      "cohort": "semantic-regression",
+      "expected": {
+        "exit": 0,
+        "verdict": "accept"
+      },
+      "file": "tests/petta/typecheck_v2_repros/60_repeated_head_variable_disjoint_slots.metta",
+      "id": "60_repeated_head_variable_disjoint_slots|strict",
+      "profile": "typecheck-v2",
+      "source_root": "candidate",
+      "source_sha256": "caaa851245d484f558186e0770b90707ba139db982cb37f674448b60ad0e1346"
+    },
+    {
+      "arguments": [
+        "--strict"
+      ],
+      "classification": {
+        "class": "head-candidate-residual",
+        "phase": "static"
+      },
+      "cohort": "semantic-regression",
+      "expected": {
+        "exit": 2,
+        "verdict": "reject"
+      },
+      "file": "tests/petta/typecheck_v2_repros/61_repeated_head_candidates_used_as_number.metta",
+      "id": "61_repeated_head_candidates_used_as_number|strict",
+      "profile": "typecheck-v2",
+      "source_root": "candidate",
+      "source_sha256": "f7e56f6cf00271ed7b8c01f5ed7a2a957969f5f6830aae6a23dd2f852b611482"
+    },
+    {
+      "arguments": [
+        "--strict"
+      ],
+      "classification": {
+        "class": "head-candidate-open-specialization",
+        "phase": "static"
+      },
+      "cohort": "semantic-regression",
+      "expected": {
+        "exit": 0,
+        "verdict": "accept"
+      },
+      "file": "tests/petta/typecheck_v2_repros/62_repeated_head_open_type_then_number.metta",
+      "id": "62_repeated_head_open_type_then_number|strict",
+      "profile": "typecheck-v2",
+      "source_root": "candidate",
+      "source_sha256": "de4a6b8c89b42fdc989d43a266a9c292eb5a64a35a92c24430d1cdaec01fcf60"
+    },
+    {
+      "arguments": [
+        "--strict"
+      ],
+      "classification": {
+        "class": "head-candidate-order-sensitive-residual",
+        "phase": "static"
+      },
+      "cohort": "semantic-regression",
+      "expected": {
+        "exit": 2,
+        "verdict": "reject"
+      },
+      "file": "tests/petta/typecheck_v2_repros/63_repeated_head_open_type_after_number.metta",
+      "id": "63_repeated_head_open_type_after_number|strict",
+      "profile": "typecheck-v2",
+      "source_root": "candidate",
+      "source_sha256": "0ecd7e0399d6f6f2f17691656b52191b4793886abc22b0a5af259e252a16c5d5"
+    },
+    {
+      "arguments": [
+        "--strict"
+      ],
+      "classification": {
+        "class": "match-pattern-candidate-residual",
+        "finding": "implementation-defect",
+        "phase": "static"
+      },
+      "cohort": "semantic-regression",
+      "expected": {
+        "exit": 2,
+        "verdict": "reject"
+      },
+      "file": "tests/petta/typecheck_v2_repros/64_match_ascription_narrows_known_union.metta",
+      "id": "64_match_ascription_narrows_known_union|strict",
+      "profile": "typecheck-v2",
+      "source_root": "candidate",
+      "source_sha256": "e8d468136b313a09dc1ac551dad7d7118fc16afe9287fc1e07057f1c831a49b6"
+    },
+    {
+      "arguments": [
+        "--strict"
+      ],
+      "classification": {
+        "class": "match-pattern-candidate-residual",
+        "finding": "implementation-defect",
+        "phase": "static"
+      },
+      "cohort": "semantic-regression",
+      "expected": {
+        "exit": 2,
+        "verdict": "reject"
+      },
+      "file": "tests/petta/typecheck_v2_repros/65_match_ascription_widens_known_member.metta",
+      "id": "65_match_ascription_widens_known_member|strict",
+      "profile": "typecheck-v2",
+      "source_root": "candidate",
+      "source_sha256": "ec8ecbc721e8a8acba5399e5c76618a5230264b1d67764287bd9986348aa9c84"
+    },
+    {
+      "arguments": [
+        "--strict"
+      ],
+      "classification": {
+        "class": "match-pattern-candidate-multiplicity",
+        "finding": "implementation-defect",
+        "phase": "static"
+      },
+      "cohort": "semantic-regression",
+      "expected": {
+        "exit": 0,
+        "verdict": "accept"
+      },
+      "file": "tests/petta/typecheck_v2_repros/66_match_ascription_disjoint_from_known_union.metta",
+      "id": "66_match_ascription_disjoint_from_known_union|strict",
+      "profile": "typecheck-v2",
+      "source_root": "candidate",
+      "source_sha256": "470000644a7bf46bc96970cc72a6b8b2bdae1295d807bb607b72cd731b37f3d8"
+    },
+    {
+      "arguments": [
+        "--strict"
+      ],
+      "classification": {
+        "class": "match-pattern-candidate-multiplicity",
+        "finding": "implementation-defect",
+        "phase": "static"
+      },
+      "cohort": "semantic-regression",
+      "expected": {
+        "exit": 0,
+        "verdict": "accept"
+      },
+      "file": "tests/petta/typecheck_v2_repros/67_match_ascription_union_disjoint_from_known_member.metta",
+      "id": "67_match_ascription_union_disjoint_from_known_member|strict",
+      "profile": "typecheck-v2",
+      "source_root": "candidate",
+      "source_sha256": "1a8931d4d3b4ae7a7df8834dbb5c65c26f3349f218c7bacba1dee96404c294da"
+    },
+    {
+      "arguments": [],
+      "classification": {
+        "class": "inferred-parameter-conflict",
+        "disposition": "specification-intended",
+        "finding": "genuine-ambiguity",
+        "phase": "static"
+      },
+      "cohort": "semantic-regression",
+      "expected": {
+        "exit": 0,
+        "verdict": "accept"
+      },
+      "file": "tests/petta/typecheck_v2_repros/68_inferred_parameter_conflicting_uses.metta",
+      "id": "68_inferred_parameter_conflicting_uses|default",
+      "profile": "typecheck-v2",
+      "source_root": "candidate",
+      "source_sha256": "8a1f8bf9c0f482e3bb6dc111b6dc81e5d24c8f58ba3089041f8a4583faeed44a"
+    },
+    {
+      "arguments": [
+        "--strict"
+      ],
+      "classification": {
+        "class": "contextual-lambda-commitment",
+        "finding": "implementation-defect",
+        "phase": "static"
+      },
+      "cohort": "semantic-regression",
+      "expected": {
+        "exit": 2,
+        "verdict": "reject"
+      },
+      "file": "tests/petta/typecheck_v2_repros/69_nondeterministic_lambda_in_committed_list.metta",
+      "id": "69_nondeterministic_lambda_in_committed_list|strict",
+      "profile": "typecheck-v2",
+      "source_root": "candidate",
+      "source_sha256": "7d23fa161f48e07f40340f4368023ef461a86033f3380684a7d6099fb6744285"
+    },
+    {
+      "arguments": [
+        "--strict"
+      ],
+      "classification": {
+        "class": "contextual-lambda-commitment",
+        "finding": "implementation-defect",
+        "phase": "static"
+      },
+      "cohort": "semantic-regression",
+      "expected": {
+        "exit": 0,
+        "verdict": "accept"
+      },
+      "file": "tests/petta/typecheck_v2_repros/70_deterministic_lambda_in_committed_list.metta",
+      "id": "70_deterministic_lambda_in_committed_list|strict",
+      "profile": "typecheck-v2",
+      "source_root": "candidate",
+      "source_sha256": "b5da134f83e3a0d84ec224a9511a3c68737b9444db27d99d4452955b997e6868"
+    },
+    {
+      "arguments": [
+        "--strict-det"
+      ],
+      "classification": {
+        "axis": "source-evaluated-stage-evidence",
+        "class": "selection-source-opacity",
+        "disposition": "native-v3-candidate",
+        "finding": "implementation-defect",
+        "phase": "static"
+      },
+      "cohort": "semantic-regression",
+      "expected": {
+        "exit": 2,
+        "verdict": "reject"
+      },
+      "file": "tests/petta/typecheck_v2_repros/71_concrete_data_selection_is_deterministic.metta",
+      "id": "71_concrete_data_selection_is_deterministic|strict-det",
+      "profile": "typecheck-v2",
+      "source_root": "candidate",
+      "source_sha256": "6fe3af4e1714281f4fba5a80240e0ad326ff50d0b518f015ae291e50eb8464ae"
+    },
+    {
+      "arguments": [
+        "--strict-det"
+      ],
+      "classification": {
+        "axis": "source-evaluated-stage-evidence",
+        "class": "selection-source-shape",
+        "disposition": "native-v3-candidate",
+        "finding": "implementation-defect",
+        "phase": "static"
+      },
+      "cohort": "semantic-regression",
+      "expected": {
+        "exit": 2,
+        "verdict": "reject"
+      },
+      "file": "tests/petta/typecheck_v2_repros/72_direct_concrete_selection_is_deterministic.metta",
+      "id": "72_direct_concrete_selection_is_deterministic|strict-det",
+      "profile": "typecheck-v2",
+      "source_root": "candidate",
+      "source_sha256": "f518af1f6609d82c80e1e3a21fffdad46f0e06f9a0c6f3f37b1ba0187cc42104"
+    },
+    {
+      "arguments": [
+        "--strict-det"
+      ],
+      "classification": {
+        "axis": "source-evaluated-stage-evidence",
+        "class": "selection-open-expression-domain",
+        "disposition": "native-v3-candidate",
+        "finding": "implementation-defect",
+        "phase": "static"
+      },
+      "cohort": "semantic-regression",
+      "expected": {
+        "exit": 2,
+        "verdict": "reject"
+      },
+      "file": "tests/petta/typecheck_v2_repros/73_expression_empty_cons_selection_is_not_total.metta",
+      "id": "73_expression_empty_cons_selection_is_not_total|strict-det",
+      "profile": "typecheck-v2",
+      "source_root": "candidate",
+      "source_sha256": "ce97b16390d155a1708d53cf337130c39662cf044588345dd55fecdab607376b"
+    },
+    {
+      "arguments": [],
+      "classification": {
+        "axis": "open-world-unknown-approximation",
+        "class": "inferred-output-publication",
+        "disposition": "native-v3-candidate",
+        "finding": "implementation-defect",
+        "phase": "static"
+      },
+      "cohort": "semantic-regression",
+      "expected": {
+        "exit": 0,
+        "verdict": "accept"
+      },
+      "file": "tests/petta/typecheck_v2_repros/74_inferred_superpose_result_widens_unknown.metta",
+      "id": "74_inferred_superpose_result_widens_unknown|default",
+      "profile": "typecheck-v2",
+      "source_root": "candidate",
+      "source_sha256": "9018b53d68d3b5f4790213a1f459eaba1c83667d4751043a4333fe20f0a5b54f"
+    },
+    {
+      "arguments": [
+        "--strict"
+      ],
+      "classification": {
+        "axis": "open-world-unknown-approximation",
+        "class": "inferred-output-publication",
+        "disposition": "native-v3-candidate",
+        "finding": "implementation-defect",
+        "phase": "boundary"
+      },
+      "cohort": "semantic-regression",
+      "expected": {
+        "exit": 2,
+        "verdict": "reject"
+      },
+      "file": "tests/petta/typecheck_v2_repros/74_inferred_superpose_result_widens_unknown.metta",
+      "id": "74_inferred_superpose_result_widens_unknown|strict",
+      "profile": "typecheck-v2",
+      "source_root": "candidate",
+      "source_sha256": "9018b53d68d3b5f4790213a1f459eaba1c83667d4751043a4333fe20f0a5b54f"
+    },
+    {
+      "arguments": [],
+      "classification": {
+        "axis": "open-world-unknown-approximation",
+        "class": "inferred-output-publication",
+        "disposition": "native-v3-candidate",
+        "finding": "implementation-defect",
+        "phase": "static"
+      },
+      "cohort": "semantic-regression",
+      "expected": {
+        "exit": 0,
+        "verdict": "accept"
+      },
+      "file": "tests/petta/typecheck_v2_repros/75_inferred_superpose_unknown_does_not_reject.metta",
+      "id": "75_inferred_superpose_unknown_does_not_reject|default",
+      "profile": "typecheck-v2",
+      "source_root": "candidate",
+      "source_sha256": "69d95542a580a09fc3b702dd37b5e3da79c78ef9ba11673075f1adb2e9381ac0"
+    },
+    {
+      "arguments": [
+        "--strict"
+      ],
+      "classification": {
+        "class": "inferred-parameter-conflict",
+        "disposition": "specification-intended",
+        "finding": "genuine-ambiguity",
+        "phase": "boundary"
+      },
+      "cohort": "semantic-regression",
+      "expected": {
+        "exit": 2,
+        "verdict": "reject"
+      },
+      "file": "tests/petta/typecheck_v2_repros/68_inferred_parameter_conflicting_uses.metta",
+      "id": "68_inferred_parameter_conflicting_uses|strict",
+      "profile": "typecheck-v2",
+      "source_root": "candidate",
+      "source_sha256": "8a1f8bf9c0f482e3bb6dc111b6dc81e5d24c8f58ba3089041f8a4583faeed44a"
+    },
+    {
+      "arguments": [
+        "--strict"
+      ],
+      "classification": {
+        "class": "explicit-ascription-overlap",
+        "phase": "static"
+      },
+      "cohort": "semantic-regression",
+      "expected": {
+        "exit": 2,
+        "verdict": "reject"
+      },
+      "file": "tests/petta/typecheck_v2_repros/39_ascription_actual_union_reject.metta",
+      "id": "39_ascription_actual_union_reject|strict",
+      "profile": "typecheck-v2",
+      "source_root": "candidate",
+      "source_sha256": "3fd62463f936faad85fe67e761f60fdd0f8b704c7008f5907ddfed831f90d247"
+    },
+    {
+      "arguments": [
+        "--strict"
+      ],
+      "classification": {
+        "class": "explicit-ascription-overlap",
+        "phase": "static"
+      },
+      "cohort": "semantic-regression",
+      "expected": {
+        "exit": 0,
+        "verdict": "accept"
+      },
+      "file": "tests/petta/typecheck_v2_repros/40_ascription_actual_alias_union.metta",
+      "id": "40_ascription_actual_alias_union|strict",
+      "profile": "typecheck-v2",
+      "source_root": "candidate",
+      "source_sha256": "b7300a24781fdf84a2c31b38e86301c3a830871cb313c06c5c7d427c07bb2b2b"
+    },
+    {
+      "arguments": [
+        "--strict"
+      ],
+      "classification": {
+        "class": "explicit-ascription-overlap",
+        "phase": "static"
+      },
+      "cohort": "semantic-regression",
+      "expected": {
+        "exit": 0,
+        "verdict": "accept"
+      },
+      "file": "tests/petta/typecheck_v2_repros/41_ascription_required_alias_union.metta",
+      "id": "41_ascription_required_alias_union|strict",
+      "profile": "typecheck-v2",
+      "source_root": "candidate",
+      "source_sha256": "844c0b8ffa92d1336de030b4dc600f06df7a5f17dfdbbda3ca518b2d2b844fc8"
+    },
+    {
+      "arguments": [
+        "--strict"
+      ],
+      "classification": {
+        "class": "explicit-ascription-overlap",
+        "phase": "static"
+      },
+      "cohort": "semantic-regression",
+      "expected": {
+        "exit": 2,
+        "verdict": "reject"
+      },
+      "file": "tests/petta/typecheck_v2_repros/42_ascription_required_alias_union_reject.metta",
+      "id": "42_ascription_required_alias_union_reject|strict",
+      "profile": "typecheck-v2",
+      "source_root": "candidate",
+      "source_sha256": "ff215b2ef426091ee5c6a2a2468e85f5e8de26a3cd170c986fb1a7ec77d16767"
+    },
+    {
+      "arguments": [
+        "--strict"
+      ],
+      "classification": {
+        "class": "explicit-ascription-overlap",
+        "phase": "static"
+      },
+      "cohort": "semantic-regression",
+      "expected": {
+        "exit": 0,
+        "verdict": "accept"
+      },
+      "file": "tests/petta/typecheck_v2_repros/43_ascription_reverse_newtype_overlap.metta",
+      "id": "43_ascription_reverse_newtype_overlap|strict",
+      "profile": "typecheck-v2",
+      "source_root": "candidate",
+      "source_sha256": "74329657f82e1f91a0a9d9e8fd1b0db449775d7efca7a234c6cb5c1782623b1c"
+    },
+    {
+      "arguments": [
+        "--strict"
+      ],
+      "classification": {
+        "class": "explicit-ascription-overlap",
+        "phase": "static"
+      },
+      "cohort": "semantic-regression",
+      "expected": {
+        "exit": 2,
+        "verdict": "reject"
+      },
+      "file": "tests/petta/typecheck_v2_repros/44_ascription_disjoint_reject.metta",
+      "id": "44_ascription_disjoint_reject|strict",
+      "profile": "typecheck-v2",
+      "source_root": "candidate",
+      "source_sha256": "7e04f40a3c4033bd6d524a109e71414ecf347d458c186dee61868b10f3b72371"
+    },
+    {
       "arguments": [],
       "classification": {
         "class": "deferred-runtime-classifier",
@@ -910,6 +1673,1062 @@
       "profile": "typecheck-v2",
       "source_root": "candidate",
       "source_sha256": "3b7d1c50760aa84d5c29d8d835a3fe0cdab73871c614375ec10d834d561f0334"
+    },
+    {
+      "arguments": [
+        "--strict"
+      ],
+      "classification": {
+        "axis": "shape-compatibility",
+        "class": "inferred-output-publication",
+        "disposition": "native-v3-candidate",
+        "finding": "correspondence-witness",
+        "phase": "static"
+      },
+      "cohort": "semantic-regression",
+      "expected": {
+        "exit": 0,
+        "verdict": "accept"
+      },
+      "file": "tests/petta/typecheck_v2_repros/76_inferred_canonical_list_preserved.metta",
+      "id": "76_inferred_canonical_list_preserved|strict",
+      "profile": "typecheck-v2",
+      "source_root": "candidate",
+      "source_sha256": "e0765c679ac046b07a37693dff1461571d76b6a6bc3604fdbac891c94589ec51"
+    },
+    {
+      "arguments": [
+        "--strict"
+      ],
+      "classification": {
+        "axis": "shape-compatibility",
+        "class": "inferred-output-publication",
+        "disposition": "native-v3-candidate",
+        "finding": "correspondence-witness",
+        "phase": "static"
+      },
+      "cohort": "semantic-regression",
+      "expected": {
+        "exit": 2,
+        "verdict": "reject"
+      },
+      "file": "tests/petta/typecheck_v2_repros/77_inferred_canonical_list_rejects_mismatch.metta",
+      "id": "77_inferred_canonical_list_rejects_mismatch|strict",
+      "profile": "typecheck-v2",
+      "source_root": "candidate",
+      "source_sha256": "f9a79e9dea05f98e098dc9aade5f41edb56ea3a2b7b5eedcf13ce21d4ba2588b"
+    },
+    {
+      "arguments": [
+        "--strict"
+      ],
+      "classification": {
+        "axis": "shape-compatibility",
+        "class": "inferred-value-candidate",
+        "disposition": "native-v3-candidate",
+        "finding": "implementation-defect",
+        "phase": "static"
+      },
+      "cohort": "semantic-regression",
+      "expected": {
+        "exit": 0,
+        "verdict": "accept"
+      },
+      "file": "tests/petta/typecheck_v2_repros/78_inferred_canonical_arrow_preserved.metta",
+      "id": "78_inferred_canonical_arrow_preserved|strict",
+      "profile": "typecheck-v2",
+      "source_root": "candidate",
+      "source_sha256": "6c28d8a07df66127aac61de09c69b44e6660d256450cc98cf741b94aa2f5527d"
+    },
+    {
+      "arguments": [
+        "--strict"
+      ],
+      "classification": {
+        "axis": "shape-compatibility",
+        "class": "inferred-value-candidate",
+        "disposition": "native-v3-candidate",
+        "finding": "correspondence-witness",
+        "phase": "static"
+      },
+      "cohort": "semantic-regression",
+      "expected": {
+        "exit": 2,
+        "verdict": "reject"
+      },
+      "file": "tests/petta/typecheck_v2_repros/79_inferred_canonical_arrow_rejects_mismatch.metta",
+      "id": "79_inferred_canonical_arrow_rejects_mismatch|strict",
+      "profile": "typecheck-v2",
+      "source_root": "candidate",
+      "source_sha256": "9fe540406a4a5c50fe651e3eb0720bf6af4b899d200249dc6c89591df7a66616"
+    },
+    {
+      "arguments": [
+        "--strict"
+      ],
+      "classification": {
+        "axis": "open-world-unknown-approximation",
+        "class": "inferred-value-candidate",
+        "disposition": "native-v3-candidate",
+        "finding": "implementation-defect",
+        "phase": "static"
+      },
+      "cohort": "semantic-regression",
+      "expected": {
+        "exit": 2,
+        "verdict": "reject"
+      },
+      "file": "tests/petta/typecheck_v2_repros/80_inferred_ambiguous_symbol_widens_unknown.metta",
+      "id": "80_inferred_ambiguous_symbol_widens_unknown|strict",
+      "profile": "typecheck-v2",
+      "source_root": "candidate",
+      "source_sha256": "3b9beebd6f0ac2a167c139894be60a6061582713b535d1e6da96080f830a7b78"
+    },
+    {
+      "arguments": [
+        "--strict"
+      ],
+      "classification": {
+        "axis": "open-world-unknown-approximation",
+        "class": "inferred-value-candidate",
+        "disposition": "native-v3-candidate",
+        "finding": "correspondence-witness",
+        "phase": "static"
+      },
+      "cohort": "semantic-regression",
+      "expected": {
+        "exit": 2,
+        "verdict": "reject"
+      },
+      "file": "tests/petta/typecheck_v2_repros/81_inferred_untyped_atom_has_no_positive_type.metta",
+      "id": "81_inferred_untyped_atom_has_no_positive_type|strict",
+      "profile": "typecheck-v2",
+      "source_root": "candidate",
+      "source_sha256": "cdee0658721cd919b75a0af35569a47229d0fa19e066a80cd2c270ed33035dc9"
+    },
+    {
+      "arguments": [
+        "--strict"
+      ],
+      "classification": {
+        "axis": "open-world-unknown-approximation",
+        "class": "inferred-value-candidate",
+        "disposition": "native-v3-candidate",
+        "finding": "correspondence-witness",
+        "phase": "static"
+      },
+      "cohort": "semantic-regression",
+      "expected": {
+        "exit": 2,
+        "verdict": "reject"
+      },
+      "file": "tests/petta/typecheck_v2_repros/82_inferred_function_is_not_explicit_value_evidence.metta",
+      "id": "82_inferred_function_is_not_explicit_value_evidence|strict",
+      "profile": "typecheck-v2",
+      "source_root": "candidate",
+      "source_sha256": "c72d3eedcc8a7475a9beb413e2147440f86c440eb0a6a48a6c48405706acacfc"
+    },
+    {
+      "arguments": [
+        "--strict-det"
+      ],
+      "classification": {
+        "axis": "result-cardinality-grading",
+        "class": "foldall-determinism",
+        "disposition": "v2-compatibility-only",
+        "finding": "correspondence-witness",
+        "phase": "static"
+      },
+      "cohort": "semantic-regression",
+      "expected": {
+        "exit": 0,
+        "verdict": "accept"
+      },
+      "file": "tests/petta/typecheck_v2_repros/83_foldall_is_deterministic.metta",
+      "id": "83_foldall_is_deterministic|strict-det",
+      "profile": "typecheck-v2",
+      "source_root": "candidate",
+      "source_sha256": "684199aadadb23b0e2c37c141e7110573a09455417a93d159c41c57363dc3919"
+    },
+    {
+      "arguments": [
+        "--strict-det"
+      ],
+      "classification": {
+        "axis": "shape-compatibility",
+        "class": "foldall-empty-generator",
+        "disposition": "native-v3-candidate",
+        "finding": "correspondence-witness",
+        "phase": "static"
+      },
+      "cohort": "semantic-regression",
+      "expected": {
+        "exit": 0,
+        "verdict": "accept"
+      },
+      "file": "tests/petta/typecheck_v2_repros/84_foldall_empty_returns_initializer.metta",
+      "id": "84_foldall_empty_returns_initializer|strict-det",
+      "profile": "typecheck-v2",
+      "source_root": "candidate",
+      "source_sha256": "6ccde274fbb1eecff980fd5034063ce35b0204676d2da46b83e3725f3b652bc6"
+    },
+    {
+      "arguments": [
+        "--strict"
+      ],
+      "classification": {
+        "axis": "open-world-unknown-approximation",
+        "class": "foldall-unresolved-generator",
+        "disposition": "native-v3-candidate",
+        "finding": "correspondence-witness",
+        "phase": "static"
+      },
+      "cohort": "semantic-regression",
+      "expected": {
+        "exit": 2,
+        "verdict": "reject"
+      },
+      "file": "tests/petta/typecheck_v2_repros/85_foldall_disguised_empty_reject.metta",
+      "id": "85_foldall_disguised_empty_reject|strict",
+      "profile": "typecheck-v2",
+      "source_root": "candidate",
+      "source_sha256": "7e59d6613abd59a1069dc7838de324fb819760892988e610344b6c0ccbb32c1e"
+    },
+    {
+      "arguments": [
+        "--strict-det"
+      ],
+      "classification": {
+        "axis": "result-cardinality-grading",
+        "class": "let-bound-cut-overlap",
+        "disposition": "correspondence-witness",
+        "finding": "specification-intended",
+        "phase": "static"
+      },
+      "cohort": "semantic-regression",
+      "expected": {
+        "exit": 0,
+        "verdict": "accept"
+      },
+      "file": "tests/petta/typecheck_v2_repros/86_strictdet_let_cut_overlap.metta",
+      "id": "86_strictdet_let_cut_overlap|strict-det",
+      "profile": "typecheck-v2",
+      "source_root": "candidate",
+      "source_sha256": "76960ecfd64329d239d5948ec4544d09f48c7f75ff3363deb2ccff95f2b89b98"
+    },
+    {
+      "arguments": [
+        "--strict"
+      ],
+      "classification": {
+        "axis": "open-world-unknown-approximation",
+        "class": "inferred-conditional-no-result",
+        "disposition": "native-v3-candidate",
+        "finding": "correspondence-witness",
+        "phase": "static"
+      },
+      "cohort": "semantic-regression",
+      "expected": {
+        "exit": 2,
+        "verdict": "reject"
+      },
+      "file": "tests/petta/typecheck_v2_repros/87_inferred_if_empty_result.metta",
+      "id": "87_inferred_if_empty_result|strict",
+      "profile": "typecheck-v2",
+      "source_root": "candidate",
+      "source_sha256": "babcc4a961d5d25c0afba7a296691b65f69d77f861759f3b922643f80fb35c5e"
+    },
+    {
+      "arguments": [
+        "--strict-det"
+      ],
+      "classification": {
+        "axis": "source-evaluated-stage-evidence",
+        "class": "open-structured-selection-evidence",
+        "disposition": "correspondence-witness",
+        "finding": "specification-intended",
+        "phase": "static"
+      },
+      "cohort": "semantic-regression",
+      "expected": {
+        "exit": 2,
+        "verdict": "reject"
+      },
+      "file": "tests/petta/typecheck_v2_repros/88_structured_actual_selection_totality.metta",
+      "id": "88_structured_actual_selection_totality|strict-det",
+      "profile": "typecheck-v2",
+      "source_root": "candidate",
+      "source_sha256": "a5d63a3525b7026350bf685dd2a8dac0b3627e68ade3d7ceaab811f09f52196a"
+    },
+    {
+      "arguments": [
+        "--strict-det"
+      ],
+      "classification": {
+        "axis": "source-evaluated-stage-evidence",
+        "class": "conditional-proper-list-selection",
+        "disposition": "native-v3-candidate",
+        "finding": "implementation-defect",
+        "phase": "static"
+      },
+      "cohort": "semantic-regression",
+      "expected": {
+        "exit": 0,
+        "verdict": "accept"
+      },
+      "file": "tests/petta/typecheck_v2_repros/89_if_nonempty_list_selection.metta",
+      "id": "89_if_nonempty_list_selection|strict-det",
+      "profile": "typecheck-v2",
+      "source_root": "candidate",
+      "source_sha256": "74a17c6cf86e94369081fa61a95d16d5c60c5b0d1f5224b698ff1ad5d40ea9ca"
+    },
+    {
+      "arguments": [
+        "--strict-det"
+      ],
+      "classification": {
+        "axis": "source-evaluated-stage-evidence",
+        "class": "case-proper-list-selection",
+        "disposition": "native-v3-candidate",
+        "finding": "correspondence-witness",
+        "phase": "static"
+      },
+      "cohort": "semantic-regression",
+      "expected": {
+        "exit": 0,
+        "verdict": "accept"
+      },
+      "file": "tests/petta/typecheck_v2_repros/90_case_proper_list_selection.metta",
+      "id": "90_case_proper_list_selection|strict-det",
+      "profile": "typecheck-v2",
+      "source_root": "candidate",
+      "source_sha256": "b6283a7a5e3a7c05361b926994884656f379bfc7ef919296cf7bc7bfe73c842d"
+    },
+    {
+      "arguments": [
+        "--strict-det"
+      ],
+      "classification": {
+        "axis": "source-evaluated-stage-evidence",
+        "class": "identity-binding-proper-list-selection",
+        "disposition": "native-v3-candidate",
+        "finding": "implementation-defect",
+        "phase": "static"
+      },
+      "cohort": "semantic-regression",
+      "expected": {
+        "exit": 0,
+        "verdict": "accept"
+      },
+      "file": "tests/petta/typecheck_v2_repros/91_let_bound_proper_list_selection.metta",
+      "id": "91_let_bound_proper_list_selection|strict-det",
+      "profile": "typecheck-v2",
+      "source_root": "candidate",
+      "source_sha256": "e5254390a1187c3169916ea0fdfaba187e2589af76ab012eb15603881760a51b"
+    },
+    {
+      "arguments": [
+        "--strict-det"
+      ],
+      "classification": {
+        "axis": "source-evaluated-stage-evidence",
+        "class": "identity-binding-nonlist-rejection",
+        "disposition": "native-v3-candidate",
+        "finding": "correspondence-witness",
+        "phase": "static"
+      },
+      "cohort": "semantic-regression",
+      "expected": {
+        "exit": 2,
+        "verdict": "reject"
+      },
+      "file": "tests/petta/typecheck_v2_repros/92_let_nonlist_selection_reject.metta",
+      "id": "92_let_nonlist_selection_reject|strict-det",
+      "profile": "typecheck-v2",
+      "source_root": "candidate",
+      "source_sha256": "a46c2caf8e26ab920ac02354999022044d1e6ca92a4850ecd5b2953de046463f"
+    },
+    {
+      "arguments": [
+        "--strict-det"
+      ],
+      "classification": {
+        "axis": "source-evaluated-stage-evidence",
+        "class": "sequential-identity-binding-proper-list-selection",
+        "disposition": "native-v3-candidate",
+        "finding": "implementation-defect",
+        "phase": "static"
+      },
+      "cohort": "semantic-regression",
+      "expected": {
+        "exit": 0,
+        "verdict": "accept"
+      },
+      "file": "tests/petta/typecheck_v2_repros/93_let_star_bound_proper_list_selection.metta",
+      "id": "93_let_star_bound_proper_list_selection|strict-det",
+      "profile": "typecheck-v2",
+      "source_root": "candidate",
+      "source_sha256": "763cbd3cb95dbea03af174c1f3e36e17b84dde9bb5cb57246d73cc9e7aea9cca"
+    },
+    {
+      "arguments": [
+        "--strict-det"
+      ],
+      "classification": {
+        "axis": "result-cardinality-grading",
+        "class": "chain-pattern-binding-semidet",
+        "disposition": "native-v3-candidate",
+        "finding": "specification-intended",
+        "phase": "static"
+      },
+      "cohort": "semantic-regression",
+      "expected": {
+        "exit": 2,
+        "verdict": "reject"
+      },
+      "file": "tests/petta/typecheck_v2_repros/94_chain_identity_proper_list_selection.metta",
+      "id": "94_chain_identity_proper_list_selection|strict-det",
+      "profile": "typecheck-v2",
+      "source_root": "candidate",
+      "source_sha256": "1a638d1428e44881d8d3eaf3df620e40da02147ee514828cd4ca45ea852746d0"
+    },
+    {
+      "arguments": [
+        "--strict-det"
+      ],
+      "classification": {
+        "axis": "source-evaluated-stage-evidence",
+        "class": "identity-binding-bound-bool-selection",
+        "disposition": "native-v3-candidate",
+        "finding": "implementation-defect",
+        "phase": "static"
+      },
+      "cohort": "semantic-regression",
+      "expected": {
+        "exit": 0,
+        "verdict": "accept"
+      },
+      "file": "tests/petta/typecheck_v2_repros/95_let_bound_bool_selection.metta",
+      "id": "95_let_bound_bool_selection|strict-det",
+      "profile": "typecheck-v2",
+      "source_root": "candidate",
+      "source_sha256": "3f550eb6d87950b20aa6c7bc35484eb72ab7d76b8ff12f630811b231c65e65e5"
+    },
+    {
+      "arguments": [
+        "--strict-det"
+      ],
+      "classification": {
+        "axis": "source-evaluated-stage-evidence",
+        "class": "identity-binding-nonbool-rejection",
+        "disposition": "native-v3-candidate",
+        "finding": "correspondence-witness",
+        "phase": "static"
+      },
+      "cohort": "semantic-regression",
+      "expected": {
+        "exit": 2,
+        "verdict": "reject"
+      },
+      "file": "tests/petta/typecheck_v2_repros/96_let_nonbool_bool_selection_reject.metta",
+      "id": "96_let_nonbool_bool_selection_reject|strict-det",
+      "profile": "typecheck-v2",
+      "source_root": "candidate",
+      "source_sha256": "f844253badb068401cdab3003948cc9e499fca933282ef17958a1e4c558178ee"
+    },
+    {
+      "arguments": [
+        "--strict-det"
+      ],
+      "classification": {
+        "axis": "source-evaluated-stage-evidence",
+        "class": "sequential-identity-binding-bound-bool-selection",
+        "disposition": "native-v3-candidate",
+        "finding": "implementation-defect",
+        "phase": "static"
+      },
+      "cohort": "semantic-regression",
+      "expected": {
+        "exit": 0,
+        "verdict": "accept"
+      },
+      "file": "tests/petta/typecheck_v2_repros/97_let_star_bound_bool_selection.metta",
+      "id": "97_let_star_bound_bool_selection|strict-det",
+      "profile": "typecheck-v2",
+      "source_root": "candidate",
+      "source_sha256": "9e2c42f7fd41c305df051a15267d33d882a51f11808ad72d382a779e676c7a72"
+    },
+    {
+      "arguments": [
+        "--strict-det"
+      ],
+      "classification": {
+        "axis": "source-evaluated-stage-evidence",
+        "class": "administrative-alias-chain-bound-bool-selection",
+        "disposition": "native-v3-candidate",
+        "finding": "implementation-defect",
+        "phase": "static"
+      },
+      "cohort": "semantic-regression",
+      "expected": {
+        "exit": 0,
+        "verdict": "accept"
+      },
+      "file": "tests/petta/typecheck_v2_repros/98_let_star_alias_chain_bool_selection.metta",
+      "id": "98_let_star_alias_chain_bool_selection|strict-det",
+      "profile": "typecheck-v2",
+      "source_root": "candidate",
+      "source_sha256": "0121d288be33962e3575d1784d910df9172aa237ef47918526226bbb0bccbb2f"
+    },
+    {
+      "arguments": [
+        "--strict-det"
+      ],
+      "classification": {
+        "axis": "source-evaluated-stage-evidence",
+        "class": "administrative-alias-chain-nonbool-rejection",
+        "disposition": "native-v3-candidate",
+        "finding": "correspondence-witness",
+        "phase": "static"
+      },
+      "cohort": "semantic-regression",
+      "expected": {
+        "exit": 2,
+        "verdict": "reject"
+      },
+      "file": "tests/petta/typecheck_v2_repros/99_let_star_alias_chain_nonbool_reject.metta",
+      "id": "99_let_star_alias_chain_nonbool_reject|strict-det",
+      "profile": "typecheck-v2",
+      "source_root": "candidate",
+      "source_sha256": "35760dc4ec105e42cd83170752f59284e553ad7de538bb272246c206820f61b0"
+    },
+    {
+      "arguments": [
+        "--strict-det"
+      ],
+      "classification": {
+        "axis": "source-evaluated-stage-evidence",
+        "class": "administrative-alias-chain-proper-list-selection",
+        "disposition": "native-v3-candidate",
+        "finding": "implementation-defect",
+        "phase": "static"
+      },
+      "cohort": "semantic-regression",
+      "expected": {
+        "exit": 0,
+        "verdict": "accept"
+      },
+      "file": "tests/petta/typecheck_v2_repros/100_let_star_alias_chain_proper_list_selection.metta",
+      "id": "100_let_star_alias_chain_proper_list_selection|strict-det",
+      "profile": "typecheck-v2",
+      "source_root": "candidate",
+      "source_sha256": "373734dfaa7e2b8c170b1a2cdc4abf239a8064b439b688f9cbdfacd285b89d7c"
+    },
+    {
+      "arguments": [
+        "--strict-det"
+      ],
+      "classification": {
+        "axis": "result-cardinality-grading",
+        "class": "administrative-alias-chain-nondet-preservation",
+        "disposition": "native-v3-candidate",
+        "finding": "correspondence-witness",
+        "phase": "static"
+      },
+      "cohort": "semantic-regression",
+      "expected": {
+        "exit": 2,
+        "verdict": "reject"
+      },
+      "file": "tests/petta/typecheck_v2_repros/101_let_star_alias_chain_nondet_bool_reject.metta",
+      "id": "101_let_star_alias_chain_nondet_bool_reject|strict-det",
+      "profile": "typecheck-v2",
+      "source_root": "candidate",
+      "source_sha256": "acf40081e71c23343cfa4338de3057b10d1ecb558c23cf365bbf4637d703f462"
+    },
+    {
+      "arguments": [
+        "--strict-det"
+      ],
+      "classification": {
+        "axis": "source-evaluated-stage-evidence",
+        "class": "administrative-alias-chain-length-preservation",
+        "disposition": "native-v3-candidate",
+        "finding": "correspondence-witness",
+        "phase": "static"
+      },
+      "cohort": "semantic-regression",
+      "expected": {
+        "exit": 0,
+        "verdict": "accept"
+      },
+      "file": "tests/petta/typecheck_v2_repros/102_let_star_three_hop_bool_selection.metta",
+      "id": "102_let_star_three_hop_bool_selection|strict-det",
+      "profile": "typecheck-v2",
+      "source_root": "candidate",
+      "source_sha256": "1819b6ba82a0f056bfa64fbfccd9b83d65b4a1b7415ac4ac3e7f67658b9f95c5"
+    },
+    {
+      "arguments": [
+        "--strict-det"
+      ],
+      "classification": {
+        "axis": "source-evaluated-stage-evidence",
+        "class": "administrative-alias-lexical-shadowing",
+        "disposition": "native-v3-candidate",
+        "finding": "correspondence-witness",
+        "phase": "static"
+      },
+      "cohort": "semantic-regression",
+      "expected": {
+        "exit": 2,
+        "verdict": "reject"
+      },
+      "file": "tests/petta/typecheck_v2_repros/103_let_star_shadowed_alias_nonbool_reject.metta",
+      "id": "103_let_star_shadowed_alias_nonbool_reject|strict-det",
+      "profile": "typecheck-v2",
+      "source_root": "candidate",
+      "source_sha256": "b7c3416555a346d59cb6aeb436261a32be58d46e627355d8bcf38cd4e0797dab"
+    },
+    {
+      "arguments": [
+        "--strict"
+      ],
+      "classification": {
+        "axis": "open-world-unknown-approximation",
+        "class": "all-bottom-inference-withholds-signature",
+        "disposition": "native-v3-candidate",
+        "finding": "correspondence-witness",
+        "phase": "static"
+      },
+      "cohort": "semantic-regression",
+      "expected": {
+        "exit": 2,
+        "verdict": "reject"
+      },
+      "file": "tests/petta/typecheck_v2_repros/104_inferred_if_all_empty_result.metta",
+      "id": "104_inferred_if_all_empty_result|strict",
+      "profile": "typecheck-v2",
+      "source_root": "candidate",
+      "source_sha256": "ec962f5d1399539caf87486f8aa618727c9ab5a1610758371146055cb250cf18"
+    },
+    {
+      "arguments": [
+        "--strict"
+      ],
+      "classification": {
+        "axis": "result-cardinality-grading",
+        "class": "declared-all-bottom-semidet",
+        "disposition": "native-v3-candidate",
+        "finding": "correspondence-witness",
+        "phase": "static"
+      },
+      "cohort": "semantic-regression",
+      "expected": {
+        "exit": 0,
+        "verdict": "accept"
+      },
+      "file": "tests/petta/typecheck_v2_repros/105_declared_if_all_empty_semidet_accept.metta",
+      "id": "105_declared_if_all_empty_semidet_accept|strict",
+      "profile": "typecheck-v2",
+      "source_root": "candidate",
+      "source_sha256": "cddf9f6bd8105649d2aa1b08d89ee969fd8629d509223a195e8960b1a6c94039"
+    },
+    {
+      "arguments": [
+        "--strict"
+      ],
+      "classification": {
+        "axis": "open-world-unknown-approximation",
+        "class": "all-bottom-case-inference-withholds-signature",
+        "disposition": "native-v3-candidate",
+        "finding": "correspondence-witness",
+        "phase": "static"
+      },
+      "cohort": "semantic-regression",
+      "expected": {
+        "exit": 2,
+        "verdict": "reject"
+      },
+      "file": "tests/petta/typecheck_v2_repros/106_inferred_case_all_empty_result.metta",
+      "id": "106_inferred_case_all_empty_result|strict",
+      "profile": "typecheck-v2",
+      "source_root": "candidate",
+      "source_sha256": "004a01259217cf80c349ae5ae3ef8f8ad49d7f79bf1db8598673ba7f0bb5b6bb"
+    },
+    {
+      "arguments": [
+        "--strict"
+      ],
+      "classification": {
+        "axis": "result-cardinality-grading",
+        "class": "declared-all-bottom-case-semidet",
+        "disposition": "native-v3-candidate",
+        "finding": "correspondence-witness",
+        "phase": "static"
+      },
+      "cohort": "semantic-regression",
+      "expected": {
+        "exit": 0,
+        "verdict": "accept"
+      },
+      "file": "tests/petta/typecheck_v2_repros/107_declared_case_all_empty_semidet_accept.metta",
+      "id": "107_declared_case_all_empty_semidet_accept|strict",
+      "profile": "typecheck-v2",
+      "source_root": "candidate",
+      "source_sha256": "9c9c8c0b1d4318ddd0e476bd57905234238f673c533fc7b0fc9b0e3fd3c4b2ed"
+    },
+    {
+      "arguments": [
+        "--strict"
+      ],
+      "classification": {
+        "axis": "open-world-unknown-approximation",
+        "class": "empty-alternative-set-inference-withholds-signature",
+        "disposition": "native-v3-candidate",
+        "finding": "correspondence-witness",
+        "phase": "static"
+      },
+      "cohort": "semantic-regression",
+      "expected": {
+        "exit": 2,
+        "verdict": "reject"
+      },
+      "file": "tests/petta/typecheck_v2_repros/108_inferred_superpose_all_empty_result.metta",
+      "id": "108_inferred_superpose_all_empty_result|strict",
+      "profile": "typecheck-v2",
+      "source_root": "candidate",
+      "source_sha256": "7ebb2a3a3836bd5132dd6bdaa011ca5037400847244d97749ec545f4fbeaf7de"
+    },
+    {
+      "arguments": [
+        "--strict"
+      ],
+      "classification": {
+        "axis": "result-cardinality-grading",
+        "class": "superpose-empty-alternatives-retain-nondet",
+        "disposition": "native-v3-candidate",
+        "finding": "correspondence-witness",
+        "phase": "static"
+      },
+      "cohort": "semantic-regression",
+      "expected": {
+        "exit": 2,
+        "verdict": "reject"
+      },
+      "file": "tests/petta/typecheck_v2_repros/109_declared_superpose_all_empty_semidet_accept.metta",
+      "id": "109_declared_superpose_all_empty_semidet_accept|strict",
+      "profile": "typecheck-v2",
+      "source_root": "candidate",
+      "source_sha256": "a44d024b09fbeb02490b403851f77530c721fbc2f5761d00e48d0912f2789705"
+    },
+    {
+      "arguments": [
+        "--strict"
+      ],
+      "classification": {
+        "axis": "result-cardinality-grading",
+        "class": "superpose-empty-alternatives-nondet-accept",
+        "disposition": "native-v3-candidate",
+        "finding": "correspondence-witness",
+        "phase": "static"
+      },
+      "cohort": "semantic-regression",
+      "expected": {
+        "exit": 0,
+        "verdict": "accept"
+      },
+      "file": "tests/petta/typecheck_v2_repros/110_declared_superpose_all_empty_nondet_accept.metta",
+      "id": "110_declared_superpose_all_empty_nondet_accept|strict",
+      "profile": "typecheck-v2",
+      "source_root": "candidate",
+      "source_sha256": "ce0df12bf6feeb2654e51ac34f204cdd7fd2ae2e92738300721920a25a2972a6"
+    },
+    {
+      "arguments": [
+        "--strict-det"
+      ],
+      "classification": {
+        "axis": "source-evaluated-stage-evidence",
+        "class": "quoted-inner-type-form-data",
+        "disposition": "native-v3-candidate",
+        "finding": "implementation-defect",
+        "phase": "static"
+      },
+      "cohort": "semantic-regression",
+      "expected": {
+        "exit": 2,
+        "verdict": "reject"
+      },
+      "file": "tests/petta/typecheck_v2_repros/111_quoted_brand_declared_output_candidate.metta",
+      "id": "111_quoted_brand_declared_output_candidate|strict-det",
+      "profile": "typecheck-v2",
+      "source_root": "candidate",
+      "source_sha256": "1fd45a458c55420ddddde3236e4f596bf06dec45811dbc9b9c731dd8916305bc"
+    },
+    {
+      "arguments": [
+        "--strict-det"
+      ],
+      "classification": {
+        "axis": "source-evaluated-stage-evidence",
+        "class": "quoted-inner-type-form-data",
+        "disposition": "native-v3-candidate",
+        "finding": "implementation-defect",
+        "phase": "static"
+      },
+      "cohort": "semantic-regression",
+      "expected": {
+        "exit": 2,
+        "verdict": "reject"
+      },
+      "file": "tests/petta/typecheck_v2_repros/112_quoted_the_declared_output_candidate.metta",
+      "id": "112_quoted_the_declared_output_candidate|strict-det",
+      "profile": "typecheck-v2",
+      "source_root": "candidate",
+      "source_sha256": "9a851f0286d9da16042d69ac09c0267d4f1951dc1bb1a618ee39f6d280c41d59"
+    },
+    {
+      "arguments": [
+        "--strict-det"
+      ],
+      "classification": {
+        "axis": "source-evaluated-stage-evidence",
+        "class": "quoted-inner-data-form-code",
+        "disposition": "native-v3-candidate",
+        "finding": "implementation-defect",
+        "phase": "static"
+      },
+      "cohort": "semantic-regression",
+      "expected": {
+        "exit": 2,
+        "verdict": "reject"
+      },
+      "file": "tests/petta/typecheck_v2_repros/113_quoted_data_marker_declared_product_candidate.metta",
+      "id": "113_quoted_data_marker_declared_product_candidate|strict-det",
+      "profile": "typecheck-v2",
+      "source_root": "candidate",
+      "source_sha256": "3bb4c0fcf5a184c2107484be7b52228582ff8bc990c2ea933734343db7ffd893"
+    },
+    {
+      "arguments": [
+        "--strict-det"
+      ],
+      "classification": {
+        "axis": "source-evaluated-stage-evidence",
+        "class": "quoted-inner-data-form-code",
+        "disposition": "native-v3-candidate",
+        "finding": "implementation-defect",
+        "phase": "static"
+      },
+      "cohort": "semantic-regression",
+      "expected": {
+        "exit": 0,
+        "verdict": "accept"
+      },
+      "file": "tests/petta/typecheck_v2_repros/114_quoted_data_marker_full_code_product_candidate.metta",
+      "id": "114_quoted_data_marker_full_code_product_candidate|strict-det",
+      "profile": "typecheck-v2",
+      "source_root": "candidate",
+      "source_sha256": "55cae669cca7f28d0db8a9e5e856963b1eb583bc5f0f2bd4919dbcd96fef49bf"
+    },
+    {
+      "arguments": [
+        "--strict-det"
+      ],
+      "classification": {
+        "axis": "source-evaluated-stage-evidence",
+        "class": "dynamic-eval-committed-grade-reject",
+        "disposition": "native-v3-candidate",
+        "finding": "implementation-defect",
+        "phase": "static"
+      },
+      "cohort": "semantic-regression",
+      "expected": {
+        "exit": 2,
+        "verdict": "reject"
+      },
+      "file": "tests/petta/typecheck_v2_repros/115_eval_quoted_brand_reactivates_nominal_assertion_candidate.metta",
+      "id": "115_eval_quoted_brand_reactivates_nominal_assertion_candidate|strict-det",
+      "profile": "typecheck-v2",
+      "source_root": "candidate",
+      "source_sha256": "708bfd484f9b33d20e5ba72f144d86fb4784a2992160915958f315239dbe8f20"
+    },
+    {
+      "arguments": [
+        "--strict-det"
+      ],
+      "classification": {
+        "axis": "source-evaluated-stage-evidence",
+        "class": "dynamic-eval-committed-grade-reject",
+        "disposition": "native-v3-candidate",
+        "finding": "implementation-defect",
+        "phase": "static"
+      },
+      "cohort": "semantic-regression",
+      "expected": {
+        "exit": 2,
+        "verdict": "reject"
+      },
+      "file": "tests/petta/typecheck_v2_repros/116_eval_quoted_the_reactivates_ascription_candidate.metta",
+      "id": "116_eval_quoted_the_reactivates_ascription_candidate|strict-det",
+      "profile": "typecheck-v2",
+      "source_root": "candidate",
+      "source_sha256": "47b5c7788afc62b04325416258044db2e746df90eddff4b31a63df357a8e2467"
+    },
+    {
+      "arguments": [
+        "--strict-det"
+      ],
+      "classification": {
+        "axis": "shape-compatibility",
+        "class": "evaluated-brand-literal-reject",
+        "disposition": "native-v3-candidate",
+        "finding": "implementation-defect",
+        "phase": "static"
+      },
+      "cohort": "semantic-regression",
+      "expected": {
+        "exit": 2,
+        "verdict": "reject"
+      },
+      "file": "tests/petta/typecheck_v2_repros/117_eval_quoted_brand_nondet_admission_candidate.metta",
+      "id": "117_eval_quoted_brand_nondet_admission_candidate|strict-det",
+      "profile": "typecheck-v2",
+      "source_root": "candidate",
+      "source_sha256": "9ecc173773302d7e2bbecfcf680e7a906eec63d808720de75eafeb0fde893edc"
+    },
+    {
+      "arguments": [
+        "--strict-det"
+      ],
+      "classification": {
+        "axis": "result-cardinality-grading",
+        "class": "dynamic-eval-nondet-admission",
+        "disposition": "native-v3-candidate",
+        "finding": "implementation-defect",
+        "phase": "static"
+      },
+      "cohort": "semantic-regression",
+      "expected": {
+        "exit": 0,
+        "verdict": "accept"
+      },
+      "file": "tests/petta/typecheck_v2_repros/118_eval_quoted_literal_nondet_candidate.metta",
+      "id": "118_eval_quoted_literal_nondet_candidate|strict-det",
+      "profile": "typecheck-v2",
+      "source_root": "candidate",
+      "source_sha256": "0f36a3ace2051a5825bd5b2969260be0c8180c438c2298ef8107a53c5a00914a"
+    },
+    {
+      "arguments": [
+        "--strict-det"
+      ],
+      "classification": {
+        "axis": "result-cardinality-grading",
+        "class": "dynamic-eval-nondet-admission",
+        "disposition": "native-v3-candidate",
+        "finding": "implementation-defect",
+        "phase": "static"
+      },
+      "cohort": "semantic-regression",
+      "expected": {
+        "exit": 0,
+        "verdict": "accept"
+      },
+      "file": "tests/petta/typecheck_v2_repros/119_eval_quoted_the_nondet_candidate.metta",
+      "id": "119_eval_quoted_the_nondet_candidate|strict-det",
+      "profile": "typecheck-v2",
+      "source_root": "candidate",
+      "source_sha256": "5dc5852f6aa0bd75099131206e87e5c562c477e8ad47b78a012f111c9369201a"
+    },
+    {
+      "arguments": [
+        "--strict-det"
+      ],
+      "classification": {
+        "axis": "shape-compatibility",
+        "class": "literal-newtype-introduction-reject",
+        "disposition": "native-v3-candidate",
+        "finding": "implementation-defect",
+        "phase": "static"
+      },
+      "cohort": "semantic-regression",
+      "expected": {
+        "exit": 2,
+        "verdict": "reject"
+      },
+      "file": "tests/petta/typecheck_v2_repros/120_direct_brand_literal_newtype_candidate.metta",
+      "id": "120_direct_brand_literal_newtype_candidate|strict-det",
+      "profile": "typecheck-v2",
+      "source_root": "candidate",
+      "source_sha256": "bfc2eafdbb882dbcdd13803b8cc9762fff6d665b80daab8b1ebdb4926dcc01a0"
+    },
+    {
+      "arguments": [
+        "--strict-det"
+      ],
+      "classification": {
+        "axis": "source-evaluated-stage-evidence",
+        "class": "nested-structured-selection-evidence-withheld",
+        "disposition": "native-v3-candidate",
+        "finding": "correspondence-witness",
+        "phase": "static"
+      },
+      "cohort": "semantic-regression",
+      "expected": {
+        "exit": 2,
+        "verdict": "reject"
+      },
+      "file": "tests/petta/typecheck_v2_repros/121_nested_literal_selector_totality_candidate.metta",
+      "id": "121_nested_literal_selector_totality_candidate|strict-det",
+      "profile": "typecheck-v2",
+      "source_root": "candidate",
+      "source_sha256": "15a5d1d9bfacd227d0eba9d4d04929ec730abcd77167312306a31706a6889cbc"
+    },
+    {
+      "arguments": [
+        "--strict-det"
+      ],
+      "classification": {
+        "axis": "result-cardinality-grading",
+        "class": "open-head-selection-withholds-deterministic-grade",
+        "disposition": "native-v3-candidate",
+        "finding": "correspondence-witness",
+        "phase": "static"
+      },
+      "cohort": "semantic-regression",
+      "expected": {
+        "exit": 2,
+        "verdict": "reject"
+      },
+      "file": "tests/petta/typecheck_v2_repros/123_variable_headed_selection_literal_body_candidate.metta",
+      "id": "123_variable_headed_selection_literal_body_candidate|strict-det",
+      "profile": "typecheck-v2",
+      "source_root": "candidate",
+      "source_sha256": "bf570deefd89237bd328415962803e19e40024736c0ca0e8d257ad44fc6dbd76"
+    },
+    {
+      "arguments": [
+        "--strict-det"
+      ],
+      "classification": {
+        "axis": "result-cardinality-grading",
+        "class": "once-cardinality-transformer",
+        "disposition": "native-v3-candidate",
+        "finding": "correspondence-witness",
+        "phase": "static"
+      },
+      "cohort": "semantic-regression",
+      "expected": {
+        "exit": 0,
+        "verdict": "accept"
+      },
+      "file": "examples/determinism.metta",
+      "id": "examples/determinism.metta|--strict-det",
+      "profile": "typecheck-v2",
+      "source_root": "reference",
+      "source_sha256": "8d1fa88aabfcba738b533798c1bf708648b5556378b25bdb472ee25fd7354815"
     },
     {
       "arguments": [],
@@ -5273,11 +7092,11 @@
     }
   ],
   "counts": {
-    "accept": 123,
-    "reject": 179,
+    "accept": 164,
+    "reject": 225,
     "roman_244": 244,
-    "semantic_regressions": 58,
-    "total": 302
+    "semantic_regressions": 145,
+    "total": 389
   },
   "oracle": {
     "implementation": "Roman SWI-PeTTa typecheck-v2",

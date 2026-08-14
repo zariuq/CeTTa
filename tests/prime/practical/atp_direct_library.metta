@@ -58,7 +58,7 @@
 !(add-atom &cyclic-kb (type-scheme notnot))
 !(assertEqual (unify $x (neg $x) CyclicBindingAccepted CyclicBindingRejected)
               CyclicBindingRejected)
-!(println! (ATPDirectLibrary checkpoint occurs-surface-checked))
+!(println! (ATPDirectLibrary checkpoint occurs-syntax-checked))
 !(assertEqual
    (reify
      (atp:direct:certify

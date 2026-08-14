@@ -121,15 +121,15 @@ int main(void) {
     CHECK(grounded_roundtrip && atom_eq(grounded_source, grounded_roundtrip),
           "bridge decoding preserves numeric, Boolean, rational, and string kinds");
 
-    Atom *float_surface_source = parse_one(
+    Atom *float_syntax_source = parse_one(
         &arena,
         "(values 0.34714285714285714 0.000001 10000000000000000.0 -0.0)");
-    const char *float_surface = cetta_mm2_atom_to_surface_string(
-        &arena, float_surface_source);
-    CHECK(float_surface &&
-              strcmp(float_surface,
+    const char *float_syntax = cetta_mm2_atom_to_syntax_string(
+        &arena, float_syntax_source);
+    CHECK(float_syntax &&
+              strcmp(float_syntax,
                      "(values 0.34714285714285714 1e-6 1e16 -0.0)") == 0,
-          "MM2 f64 surface follows Rust shortest-roundtrip Debug spelling");
+          "MM2 f64 syntax follows Rust shortest-roundtrip Debug spelling");
 
     const uint8_t dangling_varref[] = {3u, 0u};
     Atom *malformed_atom = NULL;
@@ -365,25 +365,25 @@ int main(void) {
     CettaGsltSupportTransformProfileV1 renamed =
         cetta_mm2_gslt_profile_v1;
     const CettaGsltSupportOperatorDeclV1 renamed_sources[] = {
-        {.surface_symbol = "store", .argument_count = 1u,
+        {.syntax_symbol = "store", .argument_count = 1u,
          .operator_id = "support.snapshot-match.v1"},
-        {.surface_symbol = "same", .argument_count = 2u,
+        {.syntax_symbol = "same", .argument_count = 2u,
          .operator_id = "support.equal.v1"},
-        {.surface_symbol = "other", .argument_count = 2u,
+        {.syntax_symbol = "other", .argument_count = 2u,
          .operator_id = "support.not-equal.v1"},
     };
     const CettaGsltSupportOperatorDeclV1 renamed_sinks[] = {
-        {.surface_symbol = "put", .argument_count = 1u,
+        {.syntax_symbol = "put", .argument_count = 1u,
          .operator_id = "support.add.v1"},
-        {.surface_symbol = "drop", .argument_count = 1u,
+        {.syntax_symbol = "drop", .argument_count = 1u,
          .operator_id = "support.remove.v1"},
-        {.surface_symbol = "front", .argument_count = 2u,
+        {.syntax_symbol = "front", .argument_count = 2u,
          .operator_id = "support.head.v1"},
-        {.surface_symbol = "back", .argument_count = 2u,
+        {.syntax_symbol = "back", .argument_count = 2u,
          .operator_id = "support.tail.v1"},
-        {.surface_symbol = "card", .argument_count = 3u,
+        {.syntax_symbol = "card", .argument_count = 3u,
          .operator_id = "support.group-cardinality.v1"},
-        {.surface_symbol = "calculate", .argument_count = 3u,
+        {.syntax_symbol = "calculate", .argument_count = 3u,
          .operator_id = "support.evaluate-project.mm2-pure-f64.v1"},
     };
     renamed.language_name = "renamed";

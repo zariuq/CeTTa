@@ -86,7 +86,7 @@ def emit(
 ; The input alphabet is UTF-8 code units.  No lexical callback, token table,
 ; regex engine, parser root field, or guest-language branch is required by the
 ; evaluator.  Skipping, strings, token boundaries, numeric recognition, the
-; universal-name surface, expressions, and document structure are rules below.
+; universal-name syntax, expressions, and document structure are rules below.
 
 (presentation PrimeSyntaxGSLTV0
   (types
@@ -372,7 +372,7 @@ def emit(
              "(closed-atom ?atom)", "(closed-atoms ?atoms)"),
     ]
 
-    # Universal-name surface.  The rules directly construct the same canonical
+    # Universal-name syntax.  The rules directly construct the same canonical
     # quote/unquote/resolve-name expressions as the native reader.  Structural
     # variables retain their structural key as a distinct reader node.
     if include_universal_names:

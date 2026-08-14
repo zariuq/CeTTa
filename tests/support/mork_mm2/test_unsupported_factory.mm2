@@ -1,0 +1,9 @@
+(seed a)
+
+(exec (0 unknown-source)
+      (I (mystery-source (seed $x)))
+      (, (bad-source $x)))
+
+(exec (0 unknown-sink)
+      (, (seed $x))
+      (O (mystery-sink (bad-sink $x))))

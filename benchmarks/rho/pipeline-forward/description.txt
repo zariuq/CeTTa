@@ -14,7 +14,7 @@ Files:
   evaluation and f1r3node rholang-cli.
 
 The `.mrho` file is CeTTa's strict-core rho concrete syntax; the `.rho` file
-is the surface rho/Rholang spelling used for cross-engine runs.
+is the syntax rho/Rholang spelling used for cross-engine runs.
 
 CeTTa prints the residual process after deterministic reduction;
 rholang-cli prints a deploy-cost summary of roughly 70 bytes. The measured

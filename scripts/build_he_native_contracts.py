@@ -2,9 +2,9 @@
 """Build the dated HE native-contract ledger.
 
 This artifact is a generated test/design ledger, not a runtime feature.  It
-records the first native contracts that tie CeTTa's HE implementation surface to
-the official HE spec snapshot, the lts:he frontier surface, and the current
-profile surface table.
+records the first native contracts that tie CeTTa's HE implementation syntax to
+the official HE spec snapshot, the lts:he frontier syntax, and the current
+profile syntax table.
 """
 
 from __future__ import annotations
@@ -43,16 +43,16 @@ SOURCE_PATHS = {
     "cetta_session": ROOT / "src" / "session.c",
     "cetta_session_header": ROOT / "src" / "session.h",
     "symbol_table": ROOT / "src" / "symbol.h",
-    "stdlib_surface": ROOT / "lib" / "stdlib.metta",
-    "lts_generic_surface": ROOT / "lib" / "lts.metta",
-    "lts_he_surface": ROOT / "lib" / "lts" / "he.metta",
+    "stdlib_syntax": ROOT / "lib" / "stdlib.metta",
+    "lts_generic_syntax": ROOT / "lib" / "lts.metta",
+    "lts_he_syntax": ROOT / "lib" / "lts" / "he.metta",
     "he_compat_catalog": DEFAULT_CATALOG,
     "frontier_regression": ROOT / "tests" / "test_he_frontier_algebra_regression.metta",
     "he_c3_regression": ROOT / "tests" / "he_c3_pln_stv.metta",
     "he_d4_regression": ROOT / "tests" / "he_d4_type_prop.metta",
-    "profile_get_doc_compat_regression": ROOT / "tests" / "support" / "profile_get_doc_compat_surface.metta",
-    "profile_get_doc_formal_regression": ROOT / "tests" / "support" / "profile_get_doc_formal_surface.metta",
-    "profile_get_doc_extended_regression": ROOT / "tests" / "support" / "profile_get_doc_extended_surface.metta",
+    "profile_get_doc_compat_regression": ROOT / "tests" / "support" / "profile_get_doc_compat_syntax.metta",
+    "profile_get_doc_formal_regression": ROOT / "tests" / "support" / "profile_get_doc_formal_syntax.metta",
+    "profile_get_doc_extended_regression": ROOT / "tests" / "support" / "profile_get_doc_extended_syntax.metta",
 }
 
 MASK_PROFILES = {
@@ -129,7 +129,7 @@ def parse_profiles(session_c: str) -> list[dict[str, Any]]:
             {
                 "name": name.group(1),
                 "note": note.group(1) if note else "",
-                "he_compatible_surface": ".he_compatible_surface = true" in body,
+                "he_compatible_builtin": ".he_compatible_builtin = true" in body,
                 "enable_cetta_extensions": ".enable_cetta_extensions = true" in body,
                 "enable_dependent_telescope": ".enable_dependent_telescope = true" in body,
                 "rust_he_compat_semantics": ".rust_he_compat_semantics = true" in body,
@@ -138,9 +138,9 @@ def parse_profiles(session_c: str) -> list[dict[str, Any]]:
     return profiles
 
 
-def parse_surface_policies(session_c: str) -> list[dict[str, Any]]:
+def parse_syntax_policies(session_c: str) -> list[dict[str, Any]]:
     table = re.search(
-        r"static const CettaSurfacePolicy\s+CETTA_SURFACE_POLICIES\[\]\s*=\s*\{(?P<body>.*?)\};",
+        r"static const CettaBuiltinPolicy\s+CETTA_BUILTIN_POLICIES\[\]\s*=\s*\{(?P<body>.*?)\};",
         session_c,
         re.DOTALL,
     )
@@ -151,7 +151,7 @@ def parse_surface_policies(session_c: str) -> list[dict[str, Any]]:
     for name, mask, rationale in entry_pattern.findall(table.group("body")):
         policies.append(
             {
-                "surface": name,
+                "syntax": name,
                 "profile_mask": mask,
                 "profiles": MASK_PROFILES.get(mask, []),
                 "rationale": rationale,
@@ -261,27 +261,27 @@ def result_algebra_contracts() -> list[dict[str, Any]]:
     ]
 
 
-def profile_doc_surface_contracts() -> list[dict[str, Any]]:
+def profile_doc_syntax_contracts() -> list[dict[str, Any]]:
     return [
         {
-            "id": "get-doc-respects-profile-surface",
+            "id": "get-doc-respects-profile-syntax",
             "statement": (
-                "get-doc only returns documentation for surfaces available in "
+                "get-doc only returns documentation for syntax forms available in "
                 "the active formal/extended HE language/profile; public HE "
-                "surfaces remain documented, while extension-only surfaces are "
+                "syntax forms remain documented, while extension-only forms are "
                 "hidden from the formal HE base profile."
             ),
             "implementation_anchors": [
-                "src/session.c:CETTA_SURFACE_POLICIES",
-                "src/eval.c:__cetta_surface-available",
+                "src/session.c:CETTA_BUILTIN_POLICIES",
+                "src/eval.c:__cetta_builtin-available",
                 "lib/stdlib.metta:get-doc",
             ],
             "regression_tests": [
-                "tests/support/profile_get_doc_formal_surface.metta",
-                "tests/support/profile_get_doc_extended_surface.metta",
+                "tests/support/profile_get_doc_formal_syntax.metta",
+                "tests/support/profile_get_doc_extended_syntax.metta",
             ],
             "spec_refs": [
-                "he_metta_official_specs.md:profile/lang surfaces",
+                "he_metta_official_specs.md:profile/lang syntax forms",
             ],
             "status": "implemented-and-regression-tested",
         },
@@ -297,7 +297,7 @@ def profile_doc_surface_contracts() -> list[dict[str, Any]]:
                 "src/eval.c:get-doc Rust compatibility branch",
             ],
             "regression_tests": [
-                "tests/support/profile_get_doc_compat_surface.metta",
+                "tests/support/profile_get_doc_compat_syntax.metta",
             ],
             "spec_refs": [
                 "tests/generated/he_compat/he_compat_cases_2026-06-25.json:he_g1_docs",
@@ -530,8 +530,8 @@ def successor_shape_contracts() -> list[dict[str, Any]]:
         {
             "id": "eval-successor-shape",
             "statement": (
-                "formal HE eval of an unreduced expression surfaces the inner "
-                "expression, while he-compat surfaces Rust HE 0.2.10's wrapped "
+                "formal HE eval of an unreduced expression returns the inner "
+                "expression, while he-compat returns Rust HE 0.2.10's wrapped "
                 "eval expression."
             ),
             "lean_language_def_refs": ["HELanguageDef.mettaHE:MC_Grounded", "HELanguageDef.mettaHE:MC_NoMatch"],
@@ -581,7 +581,7 @@ def successor_shape_contracts() -> list[dict[str, Any]]:
             "statement": (
                 "formal HE reports NoReturn when a function body exits without "
                 "return; he-compat reproduces Rust HE 0.2.10's fresh-result "
-                "surface for the compatibility lane."
+                "syntax for the compatibility lane."
             ),
             "lean_language_def_refs": ["HELanguageDef.mettaHE:Return", "HELanguageDef.mettaHE:R_Done"],
             "oslf_refs": [OSLF_ANCHORS["language_def"]],
@@ -634,17 +634,17 @@ def successor_shape_contracts() -> list[dict[str, Any]]:
 def arity_contracts() -> list[dict[str, Any]]:
     return [
         {
-            "id": "constructor-arity-surface",
+            "id": "constructor-arity-syntax",
             "statement": (
-                "Native surface declarations expose arity and result shape for "
+                "Native syntax declarations expose arity and result shape for "
                 "structural constructors and lts:he helpers; future language "
-                "surfaces should extend this table rather than hard-code arity "
+                "syntax forms should extend this table rather than hard-code arity "
                 "checks per language."
             ),
             "implementation_anchors": [
                 "lib/lts.metta",
                 "lib/lts/he.metta",
-                "src/session.c:CETTA_SURFACE_POLICIES",
+                "src/session.c:CETTA_BUILTIN_POLICIES",
             ],
             "regression_tests": [
                 "tests/generated/he_contract/test_cons_decons.metta",
@@ -655,7 +655,7 @@ def arity_contracts() -> list[dict[str, Any]]:
     ]
 
 
-def profile_surface_contracts() -> list[dict[str, Any]]:
+def profile_syntax_contracts() -> list[dict[str, Any]]:
     return [
         {
             "id": "profile-he-formal-vs-rust-compat-split",
@@ -673,27 +673,27 @@ def profile_surface_contracts() -> list[dict[str, Any]]:
                 "tests/test_eval_grounded.metta",
                 "tests/test_no_return_error.metta",
                 "tests/he_g1_docs.metta",
-                "tests/support/profile_get_doc_compat_surface.metta",
-                "tests/support/profile_get_doc_formal_surface.metta",
+                "tests/support/profile_get_doc_compat_syntax.metta",
+                "tests/support/profile_get_doc_formal_syntax.metta",
             ],
             "status": "implemented-and-regression-tested",
         },
         {
-            "id": "profile-surface-policy-table",
+            "id": "profile-syntax-policy-table",
             "statement": (
-                "Language/profile surface availability is recorded in one "
+                "Language/profile syntax availability is recorded in one "
                 "explicit inventory so future --lang petta and --lang pure "
-                "surfaces can be compared and tested without forking ad hoc "
+                "syntax forms can be compared and tested without forking ad hoc "
                 "checks."
             ),
             "implementation_anchors": [
-                "src/session.c:CETTA_SURFACE_POLICIES",
-                "src/session.c:cetta_surface_available",
-                "src/eval.c:__cetta_surface-available",
+                "src/session.c:CETTA_BUILTIN_POLICIES",
+                "src/session.c:cetta_builtin_available",
+                "src/eval.c:__cetta_builtin-available",
             ],
             "regression_tests": [
-                "tests/support/profile_get_doc_formal_surface.metta",
-                "tests/support/profile_get_doc_extended_surface.metta",
+                "tests/support/profile_get_doc_formal_syntax.metta",
+                "tests/support/profile_get_doc_extended_syntax.metta",
             ],
             "status": "implemented-and-regression-tested",
         },
@@ -852,7 +852,7 @@ def catalog_rule_coverage(catalog_path: Path) -> dict[str, Any]:
         rule_id = str(row.get("id", ""))
         mapped_case_count = int(by_spec_rule.get(rule_id, 0))
         status = str(row.get("status", ""))
-        lane = str(row.get("track_a_relation_lane", "supporting-surface"))
+        lane = str(row.get("track_a_relation_lane", "supporting-syntax"))
         rule_status_counts[status] += 1
         rule_lane_counts[lane] += 1
         mapped_case_count_by_lane[lane] += mapped_case_count
@@ -903,8 +903,8 @@ def load_profile_policy(catalog_path: Path) -> dict[str, Any]:
 
 def build_payload(catalog_path: Path) -> dict[str, Any]:
     session_c = SOURCE_PATHS["cetta_session"].read_text(encoding="utf-8", errors="ignore")
-    lts_generic = SOURCE_PATHS["lts_generic_surface"].read_text(encoding="utf-8", errors="ignore")
-    lts_he = SOURCE_PATHS["lts_he_surface"].read_text(encoding="utf-8", errors="ignore")
+    lts_generic = SOURCE_PATHS["lts_generic_syntax"].read_text(encoding="utf-8", errors="ignore")
+    lts_he = SOURCE_PATHS["lts_he_syntax"].read_text(encoding="utf-8", errors="ignore")
 
     source_paths = dict(SOURCE_PATHS)
     source_paths["he_compat_catalog"] = catalog_path
@@ -926,18 +926,18 @@ def build_payload(catalog_path: Path) -> dict[str, Any]:
         },
         "contracts": {
             "result_algebra": result_algebra_contracts(),
-            "profile_doc_surface": profile_doc_surface_contracts(),
+            "profile_doc_syntax": profile_doc_syntax_contracts(),
             "premise_flow": premise_flow_contracts(),
             "allowed_successor_shape": successor_shape_contracts(),
-            "profile_surface": profile_surface_contracts(),
+            "profile_syntax": profile_syntax_contracts(),
             "module_policy": module_policy_contracts(catalog_path),
-            "arity_surface": {
+            "arity_syntax": {
                 "contracts": arity_contracts(),
                 "lts_declarations": [
                     *parse_lts_declarations(lts_generic, "lts"),
                     *parse_lts_declarations(lts_he, "lts:he"),
                 ],
-                "profile_surface_policies": parse_surface_policies(session_c),
+                "profile_syntax_policies": parse_syntax_policies(session_c),
                 "profiles": parse_profiles(session_c),
             },
         },

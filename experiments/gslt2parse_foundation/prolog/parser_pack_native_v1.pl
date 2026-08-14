@@ -101,16 +101,16 @@ parser_pack_native_parse_compilation_v1(
 'gslt2parse-native-v1'(
     Backend,
     PresentationRoot0,
-    PathsSurface,
-    StartSurface,
-    InputSurface,
-    LimitsSurface,
-    SurfaceOutcome) :-
-    surface_text(PresentationRoot0, PresentationRoot),
-    surface_paths(PathsSurface, RelativePaths),
-    surface_carrier(StartSurface, Start),
-    surface_carrier(InputSurface, Input),
-    surface_limits(LimitsSurface, Limits),
+    PathsSyntax,
+    StartSyntax,
+    InputSyntax,
+    LimitsSyntax,
+    SyntaxOutcome) :-
+    syntax_text(PresentationRoot0, PresentationRoot),
+    syntax_paths(PathsSyntax, RelativePaths),
+    syntax_carrier(StartSyntax, Start),
+    syntax_carrier(InputSyntax, Input),
+    syntax_limits(LimitsSyntax, Limits),
     parser_pack_reference_compile(
         PresentationRoot, RelativePaths, 4096, CompileOutcome),
     ( CompileOutcome = completed(Compilation) ->
@@ -118,7 +118,7 @@ parser_pack_native_parse_compilation_v1(
             Backend, Compilation, Start, Input, Limits, Outcome)
     ; Outcome = CompileOutcome
     ),
-    native_surface(Outcome, SurfaceOutcome).
+    native_syntax(Outcome, SyntaxOutcome).
 
 native_backend(gll).
 native_backend(glr).
@@ -410,41 +410,41 @@ utf8_input_accounting([Codepoint|Codepoints], Offset0,
     Offset is Offset0 + Width,
     utf8_input_accounting(Codepoints, Offset, Offsets, ByteLength).
 
-surface_text(Value, Text) :-
+syntax_text(Value, Text) :-
     ( string(Value) -> Text = Value
     ; atom(Value) -> atom_string(Value, Text)
     ).
 
-surface_paths([paths|RawPaths], Paths) :-
+syntax_paths([paths|RawPaths], Paths) :-
     RawPaths = [_|_],
-    maplist(surface_text, RawPaths, Paths).
+    maplist(syntax_text, RawPaths, Paths).
 
-surface_limits([native_limits, WorkLimit, ReplayDepth, ResultLimit],
+syntax_limits([native_limits, WorkLimit, ReplayDepth, ResultLimit],
                native_limits(WorkLimit, ReplayDepth, ResultLimit)).
 
-surface_carrier(Value, str(Value)) :-
+syntax_carrier(Value, str(Value)) :-
     string(Value), !.
-surface_carrier(Value, int(Value)) :-
+syntax_carrier(Value, int(Value)) :-
     integer(Value), !.
-surface_carrier(Value, sym(Value)) :-
+syntax_carrier(Value, sym(Value)) :-
     atom(Value), !.
-surface_carrier(Values, list(CarrierValues)) :-
+syntax_carrier(Values, list(CarrierValues)) :-
     is_list(Values),
-    maplist(surface_carrier, Values, CarrierValues).
+    maplist(syntax_carrier, Values, CarrierValues).
 
-native_surface(sym(Value), Value) :- !.
-native_surface(int(Value), Value) :- !.
-native_surface(str(Value), Value) :- !.
-native_surface(list(Values), SurfaceValues) :-
+native_syntax(sym(Value), Value) :- !.
+native_syntax(int(Value), Value) :- !.
+native_syntax(str(Value), Value) :- !.
+native_syntax(list(Values), SyntaxValues) :-
     !,
-    maplist(native_surface, Values, SurfaceValues).
-native_surface(Value, Value) :-
+    maplist(native_syntax, Values, SyntaxValues).
+native_syntax(Value, Value) :-
     atomic(Value), !.
-native_surface(Values, [list|SurfaceValues]) :-
+native_syntax(Values, [list|SyntaxValues]) :-
     is_list(Values),
     !,
-    maplist(native_surface, Values, SurfaceValues).
-native_surface(Term, [Functor|SurfaceArguments]) :-
+    maplist(native_syntax, Values, SyntaxValues).
+native_syntax(Term, [Functor|SyntaxArguments]) :-
     compound(Term),
     Term =.. [Functor|Arguments],
-    maplist(native_surface, Arguments, SurfaceArguments).
+    maplist(native_syntax, Arguments, SyntaxArguments).

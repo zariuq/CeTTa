@@ -1,5 +1,5 @@
 ; Query-first MeTTa Zero executable candidate over one reflective occurrence
-; space.  The surface `(zero-query pattern template)` publishes arbitrary
+; space.  The syntax `(zero-query pattern template)` publishes arbitrary
 ; matching.  Evaluation requests `(eval subject)` enumerate that same space,
 ; select ordinary equation atoms, and apply their right sides.
 (gslt-presentation-v1 MettaZeroQueryKernelV1

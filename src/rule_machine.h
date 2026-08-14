@@ -6,7 +6,7 @@
 /*
  * Native realization of the bounded RuleMachineCoreV1 presentation.
  *
- * The public surface consumes and produces ordinary immutable Atoms.  It is
+ * The public interface consumes and produces ordinary immutable Atoms.  It is
  * deliberately not an arbitrary-MeTTa compiler: rm-package/rm-block values
  * are the admitted source fragment, and compiled-artifact/bc-block values are
  * the inspectable artifact ABI.
