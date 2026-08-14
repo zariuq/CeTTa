@@ -51,6 +51,25 @@ typedef enum {
     PETTA_MACHINE_BOUNDARY_FAULT,
 } PettaMachineBoundaryResult;
 
+/* Admission concerns only the ordinary relational control path for a
+ * revision-pinned Space and a known query head/arity.  It does not assert
+ * determinism and never suppresses equation alternatives. */
+typedef enum {
+    PETTA_MACHINE_SPACE_QUERY_DEFER = 0,
+    PETTA_MACHINE_SPACE_QUERY_ADMITTED,
+    PETTA_MACHINE_SPACE_QUERY_INVALIDATED,
+} PettaMachineSpaceQueryAdmission;
+
+/* A narrower judgment than Space-query execution admission: this licenses
+ * bypassing only higher-order call specialization.  Table, translator,
+ * foreign, and ordinary equation dispatch remain independently authoritative
+ * later in the ready-call transition. */
+typedef enum {
+    PETTA_MACHINE_QUERY_SPECIALIZATION_DEFER = 0,
+    PETTA_MACHINE_QUERY_SPECIALIZATION_BYPASS,
+    PETTA_MACHINE_QUERY_SPECIALIZATION_INVALIDATED,
+} PettaMachineQuerySpecializationAdmission;
+
 /* Language-owned analyses are installed explicitly on a machine instance.
  * The machine must not consult ambient profile state to decide whether a
  * semantic analysis participates in evaluation. */
@@ -160,6 +179,20 @@ typedef struct {
     bool (*permit_transition)(void *context);
     PettaMachineHostMode (*classify)(
         void *context, Space *space, Atom *expression);
+    /* Exact mutable authority for deciding whether an expression root is
+     * callable.  A missing token disables reuse of derived callability
+     * judgments; it never makes an unknown host registry look immutable. */
+    bool (*callability_authority_token)(
+        void *context, PettaMachineAuthorityToken *token);
+    PettaMachineQuerySpecializationAdmission
+        (*admit_query_without_specialization)(
+            void *context, Space *space,
+            SymbolId head, Atom *const *arguments,
+            CettaExprLen arity);
+    PettaMachineSpaceQueryAdmission (*admit_space_query)(
+        void *context, Space *space,
+        SymbolId head, Atom *const *arguments,
+        CettaExprLen arity);
     Space *(*resolve_space)(
         void *context, Space *root_space, Arena *arena,
         Atom *reference);
@@ -433,6 +466,21 @@ typedef struct {
     uint64_t binding_apply_calls;
     uint64_t binding_apply_rewrites;
     uint64_t binding_apply_allocated_bytes;
+    uint64_t binding_apply_environment_entries;
+    uint64_t binding_apply_epoch_calls;
+    uint64_t binding_apply_epoch_suffix_entries;
+    uint64_t solve_expression_apply_calls;
+    uint64_t solve_expression_apply_allocated_bytes;
+    uint64_t solve_expression_open_template_admitted_calls;
+    uint64_t solve_expression_open_template_admitted_allocated_bytes;
+    uint64_t solve_expected_apply_calls;
+    uint64_t solve_expected_apply_allocated_bytes;
+    uint64_t solve_expected_open_template_admitted_calls;
+    uint64_t solve_expected_open_template_admitted_allocated_bytes;
+    uint64_t activation_materialization_calls;
+    uint64_t activation_materialization_allocated_bytes;
+    uint64_t activation_open_template_admitted_calls;
+    uint64_t activation_open_template_admitted_allocated_bytes;
     uint64_t constructor_slot_frame_entries;
     uint64_t constructor_slot_frame_direct_unifications;
     uint64_t pure_grounded_slot_frame_entries;
@@ -523,6 +571,8 @@ typedef struct {
     size_t maximum_tenured_live_bytes;
     size_t maximum_heap_live_bytes;
     size_t maximum_binding_entries;
+    size_t maximum_binding_apply_environment_entries;
+    size_t maximum_binding_apply_epoch_suffix_entries;
     size_t maximum_host_environment_entries_forwarded;
     uint64_t active_elapsed_ns;
     uint64_t time_to_first_answer_ns;

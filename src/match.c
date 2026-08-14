@@ -1,5 +1,6 @@
 #include "match.h"
 #include "stats.h"
+#include "term_universe.h"
 #include "variant_shape.h"
 #include <assert.h>
 #include <stdatomic.h>
@@ -68,6 +69,7 @@ struct BindingsLookupIndex {
 };
 
 static __thread int g_bindings_lookup_index_enabled = -1;
+static _Atomic uint64_t g_bindings_builder_instance_counter = 1u;
 
 typedef struct BindingPoolBlock {
     struct BindingPoolBlock *next;
@@ -686,6 +688,17 @@ static BindingsLookupIndex *bindings_lookup_index_sync(Bindings *bindings) {
     return index;
 }
 
+static inline BindingsLookupIndex *bindings_lookup_index_current(
+        Bindings *bindings) {
+    BindingsLookupIndex *index = bindings->lookup_index;
+    if (index && index->synced_len == bindings->len)
+        return index;
+    /* Appends deliberately leave a shared index at its existing prefix.
+     * Synchronizing the suffix only when a lookup needs it avoids a
+     * copy-on-write mutation on every binding write. */
+    return bindings_lookup_index_sync(bindings);
+}
+
 #ifdef CETTA_TEST_HOOKS
 void bindings_lookup_index_test_clear(Bindings *bindings) {
     if (!bindings)
@@ -736,7 +749,7 @@ static int32_t bindings_lookup_index(Bindings *b, VarId var_id) {
             return (int32_t)idx;
         }
     }
-    BindingsLookupIndex *index = bindings_lookup_index_sync(b);
+    BindingsLookupIndex *index = bindings_lookup_index_current(b);
     if (index) {
         uint32_t index_plus_one =
             bindings_lookup_index_find(index, var_id);
@@ -1524,8 +1537,6 @@ static bool bindings_add_inplace_internal(Bindings *b, VarId var_id,
     uint32_t added_index = b->len;
     b->len++;
     bindings_lookup_cache_note(b, var_id, added_index);
-    if (b->lookup_index)
-        (void)bindings_lookup_index_sync(b);
     if (normalize_constraints && !bindings_normalize_constraints(b))
         return false;
     return true;
@@ -2138,6 +2149,201 @@ static Atom *bindings_lookup_id_since(Bindings *b, VarId id,
     return b->entries[(uint32_t)index].val;
 }
 
+void bindings_dense_epoch_frame_init(BindingsDenseEpochFrame *frame) {
+    if (frame)
+        memset(frame, 0, sizeof(*frame));
+}
+
+void bindings_dense_epoch_frame_free(BindingsDenseEpochFrame *frame) {
+    if (!frame)
+        return;
+    free(frame->values);
+    free(frame->slot_stamps);
+    memset(frame, 0, sizeof(*frame));
+}
+
+static void bindings_dense_epoch_frame_begin_generation(
+        BindingsDenseEpochFrame *frame) {
+    if (frame->slot_generation == UINT32_MAX) {
+        if (frame->cap > 0u) {
+            memset(frame->slot_stamps, 0,
+                   sizeof(*frame->slot_stamps) * (size_t)frame->cap);
+        }
+        frame->slot_generation = 1u;
+    } else {
+        frame->slot_generation++;
+        if (frame->slot_generation == 0u)
+            frame->slot_generation = 1u;
+    }
+}
+
+static uint32_t bindings_dense_epoch_frame_lower_bound(
+        const BindingsDenseEpochFrame *frame, VarId source_id) {
+    uint32_t low = 0u;
+    uint32_t high = frame ? frame->len : 0u;
+    while (low < high) {
+        uint32_t middle = low + (high - low) / 2u;
+        if (frame->source_ids[middle] < source_id)
+            low = middle + 1u;
+        else
+            high = middle;
+    }
+    return low;
+}
+
+static bool bindings_dense_epoch_frame_lookup(
+        const BindingsDenseEpochFrame *frame, VarId source_id,
+        Atom **value_out, bool *present_out) {
+    if (value_out)
+        *value_out = NULL;
+    if (present_out)
+        *present_out = false;
+    if (!frame || !value_out || !present_out ||
+        !frame->source_ids || !frame->source_variables ||
+        source_id == VAR_ID_NONE) {
+        return false;
+    }
+    uint32_t index = bindings_dense_epoch_frame_lower_bound(
+        frame, source_id);
+    if (index >= frame->len || frame->source_ids[index] != source_id)
+        return false;
+    *present_out =
+        frame->slot_stamps[index] == frame->slot_generation;
+    *value_out = *present_out ? frame->values[index] : NULL;
+    return true;
+}
+
+static void bindings_dense_epoch_frame_scan(
+        BindingsDenseEpochFrame *frame, const Bindings *bindings,
+        uint32_t begin) {
+    for (uint32_t entry_index = begin;
+         entry_index < bindings->len; entry_index++) {
+        const Binding *entry = &bindings->entries[entry_index];
+        if (var_epoch_suffix(entry->var_id) != frame->epoch)
+            continue;
+        VarId source_id = (VarId)var_base_id(entry->var_id);
+        uint32_t slot = bindings_dense_epoch_frame_lower_bound(
+            frame, source_id);
+        if (slot >= frame->len || frame->source_ids[slot] != source_id)
+            continue;
+        frame->values[slot] = entry->val;
+        frame->slot_stamps[slot] = frame->slot_generation;
+    }
+    frame->scanned_len = bindings->len;
+}
+
+bool bindings_dense_epoch_frame_prepare(
+        BindingsDenseEpochFrame *frame,
+        BindingsBuilder *builder,
+        const VarId *source_ids, Atom *const *source_variables,
+        uint32_t variable_count, uint32_t epoch,
+        uint32_t first_entry) {
+    const Bindings *bindings = builder ? &builder->current : NULL;
+    if (!frame || !builder || !bindings || builder->instance_id == 0u ||
+        epoch == 0u ||
+        builder->growth_count == UINT64_MAX ||
+        builder->rollback_count == UINT64_MAX ||
+        first_entry > bindings->len ||
+        (variable_count > 0u && (!source_ids || !source_variables))) {
+        return false;
+    }
+    for (uint32_t index = 0u; index < variable_count; index++) {
+        Atom *variable = source_variables[index];
+        if (!variable || variable->kind != ATOM_VAR ||
+            variable->var_id != source_ids[index] ||
+            var_epoch_suffix(source_ids[index]) != 0u ||
+            (index > 0u && source_ids[index - 1u] >= source_ids[index])) {
+            return false;
+        }
+    }
+    if (variable_count > frame->cap) {
+        size_t values_width = sizeof(*frame->values);
+        size_t stamps_width = sizeof(*frame->slot_stamps);
+        if ((size_t)variable_count > SIZE_MAX / values_width ||
+            (size_t)variable_count > SIZE_MAX / stamps_width) {
+            return false;
+        }
+        uint32_t old_cap = frame->cap;
+        frame->values = frame->values
+            ? cetta_realloc(
+                  frame->values, values_width * (size_t)variable_count)
+            : cetta_malloc(values_width * (size_t)variable_count);
+        frame->slot_stamps = frame->slot_stamps
+            ? cetta_realloc(
+                  frame->slot_stamps,
+                  stamps_width * (size_t)variable_count)
+            : cetta_malloc(stamps_width * (size_t)variable_count);
+        memset(frame->slot_stamps + old_cap, 0,
+               stamps_width * (size_t)(variable_count - old_cap));
+        frame->cap = variable_count;
+    }
+    frame->builder = builder;
+    frame->builder_instance = builder->instance_id;
+    frame->source_ids = source_ids;
+    frame->source_variables = source_variables;
+    frame->binding_growth = builder->growth_count;
+    frame->binding_rollbacks = builder->rollback_count;
+    frame->len = variable_count;
+    frame->epoch = epoch;
+    frame->first_entry = first_entry;
+    frame->scanned_len = first_entry;
+    bindings_dense_epoch_frame_begin_generation(frame);
+    bindings_dense_epoch_frame_scan(frame, bindings, first_entry);
+    return true;
+}
+
+bool bindings_dense_epoch_frame_refresh(
+        BindingsDenseEpochFrame *frame,
+        BindingsBuilder *builder) {
+    const Bindings *bindings = builder ? &builder->current : NULL;
+    if (!frame || !builder || !bindings ||
+        frame->builder != builder ||
+        frame->builder_instance == 0u ||
+        frame->builder_instance != builder->instance_id ||
+        frame->epoch == 0u || frame->len > frame->cap ||
+        frame->binding_growth == UINT64_MAX ||
+        frame->binding_rollbacks == UINT64_MAX ||
+        builder->growth_count == UINT64_MAX ||
+        builder->rollback_count == UINT64_MAX ||
+        frame->binding_growth > builder->growth_count ||
+        frame->binding_rollbacks != builder->rollback_count ||
+        frame->first_entry > frame->scanned_len ||
+        frame->scanned_len > bindings->len ||
+        (frame->binding_growth == builder->growth_count &&
+         frame->scanned_len != bindings->len) ||
+        (frame->len > 0u &&
+         (!frame->source_ids || !frame->source_variables ||
+          !frame->values || !frame->slot_stamps))) {
+        return false;
+    }
+    bindings_dense_epoch_frame_scan(
+        frame, bindings, frame->scanned_len);
+    frame->binding_growth = builder->growth_count;
+    frame->binding_rollbacks = builder->rollback_count;
+    return true;
+}
+
+static bool bindings_dense_epoch_frame_is_current(
+        const BindingsDenseEpochFrame *frame,
+        const BindingsBuilder *builder) {
+    if (!frame || !builder || frame->builder != builder ||
+        frame->builder_instance == 0u ||
+        frame->builder_instance != builder->instance_id ||
+        frame->epoch == 0u || frame->len > frame->cap ||
+        frame->binding_growth == UINT64_MAX ||
+        frame->binding_rollbacks == UINT64_MAX ||
+        frame->binding_growth != builder->growth_count ||
+        frame->binding_rollbacks != builder->rollback_count ||
+        frame->first_entry > frame->scanned_len ||
+        frame->scanned_len != builder->current.len ||
+        (frame->len > 0u &&
+         (!frame->source_ids || !frame->source_variables ||
+          !frame->values || !frame->slot_stamps))) {
+        return false;
+    }
+    return true;
+}
+
 bool bindings_resolve_epoch_view_ground(
         const Bindings *bindings, const Atom *source_variable,
         uint32_t epoch, uint32_t first_entry, Atom **ground_out) {
@@ -2175,6 +2381,7 @@ static Atom *bindings_apply_seen_epoch(Bindings *b, Arena *a, Atom *atom,
                                        uint32_t epoch, bool original_side,
                                        uint32_t first_entry,
                                        bool resolve_outer,
+                                       const BindingsDenseEpochFrame *frame,
                                        BindingApplySeen *seen,
                                        uint32_t seen_len,
                                        bool track_cycles,
@@ -2199,7 +2406,15 @@ static Atom *bindings_apply_seen_epoch(Bindings *b, Arena *a, Atom *atom,
             bindings_apply_memo_store(memo, lookup_id, result);
             return result;
         }
-        Atom *val = bindings_lookup_id_since(b, lookup_id, lookup_first);
+        Atom *val = NULL;
+        bool dense_present = false;
+        bool dense_known = original_side && frame &&
+            bindings_dense_epoch_frame_lookup(
+                frame, atom->var_id, &val, &dense_present);
+        if (!dense_known)
+            val = bindings_lookup_id_since(b, lookup_id, lookup_first);
+        else if (!dense_present)
+            val = NULL;
         if (!val && outer_lookup)
             val = bindings_lookup_spelling(b, atom->sym_id);
         if (!val) {
@@ -2215,6 +2430,7 @@ static Atom *bindings_apply_seen_epoch(Bindings *b, Arena *a, Atom *atom,
         }
         Atom *result = bindings_apply_seen_epoch(
             b, a, val, epoch, false, first_entry, resolve_outer,
+            frame,
             seen, seen_len + (track_cycles ? 1u : 0u), track_cycles,
             local_memo, outer_memo);
         bindings_apply_memo_store(memo, lookup_id, result);
@@ -2228,7 +2444,7 @@ static Atom *bindings_apply_seen_epoch(Bindings *b, Arena *a, Atom *atom,
             Atom *next = atom_has_vars(child)
                 ? bindings_apply_seen_epoch(
                       b, a, child, epoch, original_side,
-                      first_entry, resolve_outer, seen, seen_len,
+                      first_entry, resolve_outer, frame, seen, seen_len,
                       track_cycles, local_memo, outer_memo)
                 : child;
             if (!new_elems && next != atom->expr.elems[i]) {
@@ -2250,10 +2466,11 @@ static Atom *bindings_apply_seen_epoch(Bindings *b, Arena *a, Atom *atom,
     }
 }
 
-static Atom *bindings_apply_epoch_view(Bindings *b, Arena *a, Atom *atom,
-                                       uint32_t epoch,
-                                       uint32_t first_entry,
-                                       bool resolve_outer) {
+static Atom *bindings_apply_epoch_from(
+        Bindings *b, Arena *a, Atom *atom, uint32_t epoch,
+        uint32_t first_entry, bool resolve_outer,
+        const BindingsDenseEpochFrame *frame, bool original_side,
+        VarId initial_seen_id) {
     if (!b || !a || !atom || first_entry > b->len)
         return NULL;
     VarId seen_stack[BINDINGS_SEEN_STACK_CAP];
@@ -2279,26 +2496,114 @@ static Atom *bindings_apply_epoch_view(Bindings *b, Arena *a, Atom *atom,
     bool track_cycles =
         b->cycle_state != BINDINGS_CYCLE_ACYCLIC ||
         b->legacy_fallback_count != 0u;
+    uint32_t initial_seen_len = 0u;
+    if (track_cycles && initial_seen_id != VAR_ID_NONE) {
+        if (!bindings_apply_seen_reserve(&seen, 0u, 1u)) {
+            bindings_apply_memo_release(&outer_memo);
+            bindings_apply_memo_release(&local_memo);
+            bindings_apply_seen_release(&seen);
+            return NULL;
+        }
+        seen.ids[initial_seen_len++] = initial_seen_id;
+    }
     Atom *result = bindings_apply_seen_epoch(
-        b, a, atom, epoch, true, first_entry, resolve_outer,
-        &seen, 0, track_cycles, &local_memo, &outer_memo);
+        b, a, atom, epoch, original_side, first_entry, resolve_outer,
+        frame,
+        &seen, initial_seen_len, track_cycles,
+        &local_memo, &outer_memo);
     bindings_apply_memo_release(&outer_memo);
     bindings_apply_memo_release(&local_memo);
     bindings_apply_seen_release(&seen);
     return result;
 }
 
+static Atom *bindings_apply_epoch_view(Bindings *b, Arena *a, Atom *atom,
+                                       uint32_t epoch,
+                                       uint32_t first_entry,
+                                       bool resolve_outer,
+                                       const BindingsDenseEpochFrame *frame) {
+    return bindings_apply_epoch_from(
+        b, a, atom, epoch, first_entry, resolve_outer,
+        frame, true, VAR_ID_NONE);
+}
+
 Atom *bindings_apply_epoch_since(Bindings *b, Arena *a, Atom *atom,
                                  uint32_t epoch, uint32_t first_entry) {
     return bindings_apply_epoch_view(
-        b, a, atom, epoch, first_entry, false);
+        b, a, atom, epoch, first_entry, false, NULL);
 }
 
 Atom *bindings_apply_epoch_then_all(Bindings *b, Arena *a, Atom *atom,
                                     uint32_t epoch,
                                     uint32_t first_entry) {
     return bindings_apply_epoch_view(
-        b, a, atom, epoch, first_entry, true);
+        b, a, atom, epoch, first_entry, true, NULL);
+}
+
+Atom *bindings_apply_dense_epoch_frame_then_all(
+        BindingsBuilder *builder, Arena *a, Atom *atom,
+        const BindingsDenseEpochFrame *frame) {
+    if (!bindings_dense_epoch_frame_is_current(frame, builder))
+        return NULL;
+    Bindings *b = &builder->current;
+    return bindings_apply_epoch_view(
+        b, a, atom, frame->epoch, frame->first_entry, true, frame);
+}
+
+Atom *bindings_apply_dense_epoch_frame_slot_then_all(
+        BindingsBuilder *builder, Arena *a,
+        const BindingsDenseEpochFrame *frame,
+        Atom *source_variable, uint32_t slot) {
+    if (!a || !bindings_dense_epoch_frame_is_current(frame, builder) ||
+        slot >= frame->len ||
+        frame->epoch == 0u ||
+        frame->first_entry > builder->current.len ||
+        !source_variable || source_variable->kind != ATOM_VAR ||
+        !frame->source_ids || !frame->source_variables ||
+        !frame->slot_stamps || !frame->values) {
+        return NULL;
+    }
+    Bindings *b = &builder->current;
+    Atom *template_variable = frame->source_variables[slot];
+    VarId source_id = frame->source_ids[slot];
+    if (source_variable->var_id != source_id ||
+        !template_variable || template_variable->kind != ATOM_VAR ||
+        template_variable->var_id != source_id)
+        return NULL;
+    if (frame->slot_stamps[slot] != frame->slot_generation)
+        return epoch_var_atom(a, source_variable, frame->epoch);
+    Atom *value = frame->values[slot];
+    if (!value)
+        return NULL;
+    return bindings_apply_epoch_from(
+        b, a, value, frame->epoch, frame->first_entry, true,
+        frame, false, var_epoch_id(source_id, frame->epoch));
+}
+
+Atom *bindings_resolve_dense_epoch_frame_slot_root(
+        BindingsBuilder *builder, Arena *a,
+        const BindingsDenseEpochFrame *frame,
+        Atom *source_variable, uint32_t slot) {
+    if (!a || !bindings_dense_epoch_frame_is_current(frame, builder) ||
+        slot >= frame->len ||
+        frame->epoch == 0u ||
+        frame->first_entry > builder->current.len ||
+        !source_variable || source_variable->kind != ATOM_VAR ||
+        !frame->source_ids || !frame->source_variables ||
+        !frame->slot_stamps || !frame->values) {
+        return NULL;
+    }
+    Bindings *b = &builder->current;
+    Atom *template_variable = frame->source_variables[slot];
+    VarId source_id = frame->source_ids[slot];
+    if (source_variable->var_id != source_id ||
+        !template_variable || template_variable->kind != ATOM_VAR ||
+        template_variable->var_id != source_id)
+        return NULL;
+    if (frame->slot_stamps[slot] != frame->slot_generation)
+        return epoch_var_atom(a, source_variable, frame->epoch);
+    Atom *value = frame->values[slot];
+    return value ? bindings_resolve_atom_preview(b, value) : NULL;
 }
 
 Atom *bindings_apply_epoch(Bindings *b, Arena *a, Atom *atom,
@@ -2757,8 +3062,29 @@ static void bindings_builder_discard_latest_snapshot(BindingsBuilder *bb) {
     bb->trail_len--;
 }
 
+/* An activation frame may outlive one logical use of a builder.  Address plus
+ * counters is not enough after free/reinit at the same address, so each
+ * builder incarnation receives a never-recycled identity.  Exhaustion merely
+ * disables revision-bound accelerators; generic binding semantics continue. */
+static uint64_t bindings_builder_next_instance_id(void) {
+    uint64_t current = atomic_load_explicit(
+        &g_bindings_builder_instance_counter, memory_order_relaxed);
+    while (current != 0u && current != UINT64_MAX) {
+        uint64_t next = current + 1u;
+        if (atomic_compare_exchange_weak_explicit(
+                &g_bindings_builder_instance_counter, &current, next,
+                memory_order_relaxed, memory_order_relaxed)) {
+            return current;
+        }
+    }
+    return 0u;
+}
+
 bool bindings_builder_init(BindingsBuilder *bb, const Bindings *base) {
+    if (!bb)
+        return false;
     bindings_init(&bb->current);
+    bb->instance_id = bindings_builder_next_instance_id();
     bb->trail = NULL;
     bb->trail_len = 0;
     bb->trail_cap = 0;
@@ -2766,6 +3092,7 @@ bool bindings_builder_init(BindingsBuilder *bb, const Bindings *base) {
     bb->prime_trail_len = 0;
     bb->prime_trail_cap = 0;
     bb->growth_count = 0u;
+    bb->rollback_count = 0u;
     if (!base)
         return true;
     if (!bindings_clone(&bb->current, base)) {
@@ -2777,6 +3104,7 @@ bool bindings_builder_init(BindingsBuilder *bb, const Bindings *base) {
         bb->prime_trail = NULL;
         bb->prime_trail_len = 0;
         bb->prime_trail_cap = 0;
+        bb->instance_id = 0u;
         bindings_free(&bb->current);
         return false;
     }
@@ -2785,6 +3113,7 @@ bool bindings_builder_init(BindingsBuilder *bb, const Bindings *base) {
 
 void bindings_builder_init_owned(BindingsBuilder *bb, Bindings *owned) {
     bb->current = *owned;
+    bb->instance_id = bindings_builder_next_instance_id();
     bb->trail = NULL;
     bb->trail_len = 0;
     bb->trail_cap = 0;
@@ -2792,6 +3121,7 @@ void bindings_builder_init_owned(BindingsBuilder *bb, Bindings *owned) {
     bb->prime_trail_len = 0;
     bb->prime_trail_cap = 0;
     bb->growth_count = 0u;
+    bb->rollback_count = 0u;
     bindings_init(owned);
 }
 
@@ -2805,6 +3135,8 @@ void bindings_builder_free(BindingsBuilder *bb) {
     bb->prime_trail_len = 0;
     bb->prime_trail_cap = 0;
     bb->growth_count = 0u;
+    bb->rollback_count = 0u;
+    bb->instance_id = 0u;
     bindings_free(&bb->current);
 }
 
@@ -2841,6 +3173,8 @@ void bindings_builder_rollback(BindingsBuilder *bb, uint32_t mark) {
     if (restored) {
         bindings_restore_derived_counts(
             &bb->current, restored_derived_nonzero);
+        if (bb->rollback_count != UINT64_MAX)
+            bb->rollback_count++;
     }
     /*
      * The inline cache is only an accelerator and its payload is not
@@ -2860,6 +3194,33 @@ void bindings_builder_commit(BindingsBuilder *bb) {
 bool bindings_builder_prime_present(const BindingsBuilder *bb) {
     return bb &&
         (bindings_prime_present(&bb->current) || bb->prime_trail_len > 0u);
+}
+
+bool bindings_builder_prepare_fresh_entries(
+    BindingsBuilder *bb, uint32_t additional_entries) {
+    uint32_t entry_capacity;
+    uint32_t trail_capacity;
+    uint32_t prime_capacity = 0u;
+
+    if (!bb)
+        return false;
+    if (additional_entries == 0u)
+        return true;
+    if (additional_entries > UINT32_MAX - bb->current.len ||
+        additional_entries > UINT32_MAX - bb->trail_len)
+        return false;
+    entry_capacity = bb->current.len + additional_entries;
+    trail_capacity = bb->trail_len + additional_entries;
+    bool prime_present = bindings_prime_present(&bb->current);
+    if (prime_present) {
+        if (additional_entries > UINT32_MAX - bb->prime_trail_len)
+            return false;
+        prime_capacity = bb->prime_trail_len + additional_entries;
+    }
+    return bindings_reserve_entries(&bb->current, entry_capacity) &&
+        bindings_builder_trail_reserve(bb, trail_capacity) &&
+        (!prime_present ||
+         bindings_builder_prime_trail_reserve(bb, prime_capacity));
 }
 
 static bool bindings_builder_add_constraint_internal(BindingsBuilder *bb,
@@ -2928,8 +3289,6 @@ static bool bindings_builder_add_id_internal(BindingsBuilder *bb, VarId var_id,
     if (bb->growth_count != UINT64_MAX)
         bb->growth_count++;
     bindings_lookup_cache_note(&bb->current, var_id, added_index);
-    if (bb->current.lookup_index)
-        (void)bindings_lookup_index_sync(&bb->current);
     return true;
 }
 
@@ -3122,6 +3481,8 @@ void bindings_builder_take(BindingsBuilder *bb, Bindings *out) {
     bb->prime_trail_len = 0;
     bb->prime_trail_cap = 0;
     bb->growth_count = 0u;
+    bb->rollback_count = 0u;
+    bb->instance_id = 0u;
 }
 
 /* ── Variable renaming (standardization apart) ─────────────────────────── */
@@ -3616,6 +3977,21 @@ static bool bindings_reachable_vars_add_epoch_root(
         return false;
     if (!atom_has_vars(root->atom))
         return true;
+    if (root->variable_support) {
+        CettaTermVariableSupportIterator iterator;
+        cetta_term_variable_support_iterator_init(
+            &iterator, root->variable_support);
+        uint32_t base_id = 0u;
+        while (cetta_term_variable_support_iterator_next(
+                   &iterator, &base_id)) {
+            if (!bindings_reachable_vars_add(
+                    vars, var_epoch_id((VarId)base_id,
+                                       root->epoch))) {
+                return false;
+            }
+        }
+        return true;
+    }
     VarIdSet found;
     var_id_set_init(&found);
     if (!collect_var_ids(root->atom, &found)) {
@@ -3743,7 +4119,7 @@ static bool bindings_project_reachable_sparse(
 
     Bindings *indexed = (Bindings *)src;
     BindingsLookupIndex *lookup =
-        bindings_lookup_index_sync(indexed);
+        bindings_lookup_index_current(indexed);
     if (!lookup)
         return false;
 
@@ -4405,6 +4781,8 @@ bool bindings_builder_compact_reachable_with_epoch_roots_and_entry_marks(
     uint64_t next_logical_items =
         (uint64_t)projected.len + projected.eq_len;
     bindings_replace(&bb->current, &projected);
+    if (bb->rollback_count != UINT64_MAX)
+        bb->rollback_count++;
     free(bb->trail);
     free(bb->prime_trail);
     bb->trail = next_trail;
@@ -5016,6 +5394,14 @@ static bool is_space_value_type(Atom *atom) {
            is_named_symbol(atom->expr.elems[0], "Space");
 }
 
+bool match_types_space_kind_equivalent(Atom *actual, Atom *expected) {
+    return actual && expected &&
+        ((is_named_symbol(actual, "SpaceType") &&
+          is_space_value_type(expected)) ||
+         (is_named_symbol(expected, "SpaceType") &&
+          is_space_value_type(actual)));
+}
+
 typedef struct {
     Atom *left;
     Atom *right;
@@ -5335,8 +5721,7 @@ bool match_types(Atom *actual, Atom *expected, Bindings *b) {
     /* Atom is the expected-side value top. An actual Atom is not evidence for
        an arbitrary concrete expected type. */
     if (atom_is_symbol_id(expected, g_builtin_syms.atom)) return true;
-    if ((is_named_symbol(actual, "SpaceType") && is_space_value_type(expected)) ||
-        (is_named_symbol(expected, "SpaceType") && is_space_value_type(actual))) {
+    if (match_types_space_kind_equivalent(actual, expected)) {
         return true;
     }
     return match_decoded_atoms_worklist(actual, expected, b, NULL, true);
@@ -5344,8 +5729,7 @@ bool match_types(Atom *actual, Atom *expected, Bindings *b) {
 
 bool match_types_builder(Atom *actual, Atom *expected, BindingsBuilder *bb) {
     if (atom_is_symbol_id(expected, g_builtin_syms.atom)) return true;
-    if ((is_named_symbol(actual, "SpaceType") && is_space_value_type(expected)) ||
-        (is_named_symbol(expected, "SpaceType") && is_space_value_type(actual))) {
+    if (match_types_space_kind_equivalent(actual, expected)) {
         return true;
     }
     return match_decoded_atoms_worklist(actual, expected, NULL, bb, true);
@@ -5364,6 +5748,11 @@ static bool match_atoms_epoch_view_worklist(
     Atom *left, uint32_t left_epoch, uint32_t left_first_entry,
     Atom *right, Bindings *bindings, BindingsBuilder *builder,
     Arena *a, uint32_t right_epoch);
+static bool match_atoms_dense_epoch_view_worklist(
+    Atom *left, const BindingsDenseEpochFrame *left_frame,
+    Atom *right, Bindings *bindings, BindingsBuilder *builder,
+    Arena *a, uint32_t right_epoch, bool right_original,
+    bool prefer_right_rule_slot);
 static bool match_atoms_atom_id_epoch_worklist(
     Atom *left, const TermUniverse *candidate_universe, AtomId right_id,
     Bindings *b, Arena *a, uint32_t epoch);
@@ -5524,6 +5913,32 @@ bool match_atoms_epoch_view_builder(
         right_original, NULL, bb, a, right_epoch);
 }
 
+bool match_atoms_dense_epoch_view_builder(
+        Atom *left_original, const BindingsDenseEpochFrame *left_frame,
+        Atom *right_original, BindingsBuilder *bb, Arena *a,
+        uint32_t right_epoch) {
+    return match_atoms_dense_epoch_view_worklist(
+        left_original, left_frame, right_original,
+        NULL, bb, a, right_epoch, true, false);
+}
+
+bool match_atoms_dense_epoch_view_builder_current(
+        Atom *left_original, const BindingsDenseEpochFrame *left_frame,
+        Atom *right, BindingsBuilder *bb, Arena *a) {
+    return match_atoms_dense_epoch_view_worklist(
+        left_original, left_frame, right,
+        NULL, bb, a, 0u, false, false);
+}
+
+bool match_atoms_dense_epoch_view_builder_rule_local(
+        Atom *left_original, const BindingsDenseEpochFrame *left_frame,
+        Atom *right_original, BindingsBuilder *bb, Arena *a,
+        uint32_t right_epoch) {
+    return match_atoms_dense_epoch_view_worklist(
+        left_original, left_frame, right_original,
+        NULL, bb, a, right_epoch, true, true);
+}
+
 bool match_atoms_atom_id_epoch(Atom *left, const TermUniverse *candidate_universe,
                                AtomId right_id, Bindings *b, Arena *a,
                                uint32_t epoch) {
@@ -5671,11 +6086,12 @@ static bool epoch_match_push_exit(EpochMatchWorklist *work, Atom *left,
 }
 
 static bool match_atoms_epoch_views_worklist(
-        Atom *left, bool left_original, uint32_t left_epoch,
-        uint32_t left_first_entry, Atom *right,
-        Bindings *bindings, BindingsBuilder *builder,
-        Arena *a, uint32_t right_epoch,
-        bool prefer_right_rule_slot) {
+    Atom *left, bool left_original, uint32_t left_epoch,
+    uint32_t left_first_entry, Atom *right,
+    Bindings *bindings, BindingsBuilder *builder,
+    Arena *a, uint32_t right_epoch, bool right_original,
+    bool prefer_right_rule_slot,
+    const BindingsDenseEpochFrame *left_frame) {
     EpochMatchWorklist work;
     MatchPathSet path;
     Bindings *initial = builder ? &builder->current : bindings;
@@ -5688,7 +6104,7 @@ static bool match_atoms_epoch_views_worklist(
     work.cap = sizeof work.inline_items / sizeof work.inline_items[0];
     match_path_init(&path);
     if (!epoch_match_push(
-            &work, left, left_original, right, true))
+            &work, left, left_original, right, right_original))
         goto fail;
 
     while (work.len > 0) {
@@ -5714,8 +6130,18 @@ retry_pair:
             if (left_original) {
                 VarId left_id = var_epoch_id(
                     left->var_id, left_epoch);
-                Atom *existing = bindings_lookup_id_since(
-                    current, left_id, left_first_entry);
+                Atom *existing = NULL;
+                bool dense_present = false;
+                bool dense_known = left_frame &&
+                    bindings_dense_epoch_frame_lookup(
+                        left_frame, left->var_id,
+                        &existing, &dense_present);
+                if (!dense_known) {
+                    existing = bindings_lookup_id_since(
+                        current, left_id, left_first_entry);
+                } else if (!dense_present) {
+                    existing = NULL;
+                }
 
                 if (existing) {
                     if (++dereferences > dereference_limit)
@@ -5793,12 +6219,16 @@ retry_pair:
             Atom *binding_var = right_original
                 ? epoch_var_atom(a, right, right_epoch) : right;
             Atom *binding_value = left_original
-                ? bindings_apply_epoch_then_all(
-                    current, a, left, left_epoch, left_first_entry)
+                ? bindings_apply_epoch_view(
+                    current, a, left, left_epoch, left_first_entry,
+                    true, left_frame)
                 : left;
             bool added = binding_var && binding_value && (builder
-                ? bindings_builder_add_var_fresh(
-                    builder, binding_var, binding_value)
+                ? (prefer_right_rule_slot && right_original
+                    ? bindings_builder_add_var_fresh(
+                          builder, binding_var, binding_value)
+                    : bindings_builder_add_var_fresh(
+                          builder, binding_var, binding_value))
                 : bindings_add_var(
                     bindings, binding_var, binding_value));
             if (!added) goto fail;
@@ -5846,7 +6276,7 @@ static bool match_atoms_epoch_worklist(Atom *left, Atom *right,
                                        Arena *a, uint32_t epoch) {
     return match_atoms_epoch_views_worklist(
         left, false, 0u, 0u, right, bindings, builder, a, epoch,
-        false);
+        true, false, NULL);
 }
 
 static bool match_atoms_epoch_view_worklist(
@@ -5855,14 +6285,30 @@ static bool match_atoms_epoch_view_worklist(
         Arena *a, uint32_t right_epoch) {
     return match_atoms_epoch_views_worklist(
         left, true, left_epoch, left_first_entry,
-        right, bindings, builder, a, right_epoch, false);
+        right, bindings, builder, a, right_epoch,
+        true, false, NULL);
+}
+
+static bool match_atoms_dense_epoch_view_worklist(
+        Atom *left, const BindingsDenseEpochFrame *left_frame,
+        Atom *right, Bindings *bindings, BindingsBuilder *builder,
+        Arena *a, uint32_t right_epoch, bool right_original,
+        bool prefer_right_rule_slot) {
+    if (!bindings_dense_epoch_frame_is_current(
+            left_frame, builder))
+        return false;
+    return match_atoms_epoch_views_worklist(
+        left, true, left_frame->epoch, left_frame->first_entry,
+        right, bindings, builder, a, right_epoch,
+        right_original, prefer_right_rule_slot, left_frame);
 }
 
 static bool match_atoms_epoch_rule_local_worklist(
         Atom *left, Atom *right, BindingsBuilder *builder,
         Arena *a, uint32_t epoch) {
     return match_atoms_epoch_views_worklist(
-        left, false, 0u, 0u, right, NULL, builder, a, epoch, true);
+        left, false, 0u, 0u, right, NULL, builder, a, epoch,
+        true, true, NULL);
 }
 
 typedef struct {

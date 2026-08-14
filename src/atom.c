@@ -949,13 +949,67 @@ static bool atom_can_hashcons(const Atom *atom) {
     return atom && (atom->flags & ATOM_FLAG_HASHCONS_ELIGIBLE) != 0;
 }
 
+static uint32_t atom_hash_flags_for_eligible_leaf(void);
+static uint32_t atom_flags_for_grounded_kind(GroundedKind gkind);
+static uint32_t atom_flags_for_symbol_id(SymbolId sym_id);
+static uint32_t atom_flags_from_children(uint32_t arena_id, Atom **elems,
+                                         CettaExprLen len);
+
+/*
+ * A hash-cons entry owns its root allocation but retains expression children
+ * and variable name keys by pointer.  Admit a graph only when every retained
+ * pointer is already globally owned and transitively closed.  Recomputing the
+ * expression summary at the publication identity also prevents a stale or
+ * hand-built root header from laundering an inadmissible graph.
+ */
+static bool atom_hashcons_graph_admitted(const Atom *atom) {
+    if (!atom_can_hashcons(atom))
+        return false;
+    uint32_t expected = 0u;
+    switch (atom->kind) {
+    case ATOM_SYMBOL:
+        expected = atom_flags_for_symbol_id(atom->sym_id);
+        break;
+    case ATOM_VAR:
+        if (atom->var_id == VAR_ID_NONE ||
+            (atom->name_key &&
+             (atom->name_key->arena_id != 0u ||
+              (atom->name_key->flags & ATOM_FLAG_ARENA_CLOSED) == 0u))) {
+            return false;
+        }
+        expected = ATOM_FLAG_HAS_VARS |
+                   atom_hash_flags_for_eligible_leaf() |
+                   (atom_var_id_is_private_variant(atom->var_id)
+                        ? ATOM_FLAG_HAS_PRIVATE_VARIANT_VAR : 0u);
+        break;
+    case ATOM_GROUNDED:
+        expected = atom_flags_for_grounded_kind(atom->ground.gkind);
+        break;
+    case ATOM_EXPR:
+        for (CettaExprIndex i = 0u; i < atom->expr.len; i++) {
+            Atom *child = atom->expr.elems ? atom->expr.elems[i] : NULL;
+            if (!child || child->arena_id != 0u ||
+                (child->flags & ATOM_FLAG_ARENA_CLOSED) == 0u) {
+                return false;
+            }
+        }
+        expected = atom_flags_from_children(
+            0u, atom->expr.elems, atom->expr.len);
+        break;
+    }
+    if ((atom->flags & ~ATOM_FLAG_HASH_VALID) != expected)
+        return false;
+    return (atom->flags & ATOM_FLAG_HASH_VALID) == 0u ||
+           atom->hash_cache == atom_hash_compute((Atom *)atom);
+}
+
 /*
  * atom_hash remains the compact cross-substrate hash contract.  The hash-cons
  * table needs an independent index hash because distinct recursive term
  * families can share that 32-bit value.  Eligible expression children are
- * already immutable global hash-cons entries (enforced by
- * atom_maybe_hashcons), so their pointers are stable canonical ids for the
- * lifetime of this table.  Mixing those ids gives O(arity) lookup without
+ * already immutable global hash-cons entries (enforced at publication) in
+ * this table's ownership domain or an outliving one, so their pointers remain
+ * stable canonical ids.  Mixing those ids gives O(arity) lookup without
  * recursively re-hashing a deep term.  Exact atom_eq remains authoritative.
  */
 static inline uint64_t hashcons_index_mix(uint64_t h, uint64_t value) {
@@ -1161,7 +1215,7 @@ static void hashcons_grow(HashConsTable *hc) {
     free(old_table);
 }
 
-static Atom *hashcons_intern(HashConsTable *hc, Atom *atom);
+static Atom *hashcons_intern_admitted(HashConsTable *hc, Atom *atom);
 
 static Atom *hashcons_alloc_owned(const Atom *atom) {
     Atom *owned = cetta_malloc(sizeof(Atom));
@@ -1194,10 +1248,8 @@ static Atom *hashcons_alloc_owned(const Atom *atom) {
     return owned;
 }
 
-static Atom *hashcons_intern(HashConsTable *hc, Atom *atom) {
+static Atom *hashcons_intern_admitted(HashConsTable *hc, Atom *atom) {
     if (!hc || !atom)
-        return atom;
-    if (!atom_can_hashcons(atom))
         return atom;
     cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_HASHCONS_ATTEMPT);
     Atom *cached = hashcons_leaf_cache_get(hc, atom);
@@ -1224,7 +1276,9 @@ static Atom *hashcons_intern(HashConsTable *hc, Atom *atom) {
 }
 
 Atom *hashcons_get(HashConsTable *hc, Atom *atom) {
-    return hashcons_intern(hc, atom);
+    if (!hc || !atom || !atom_hashcons_graph_admitted(atom))
+        return atom;
+    return hashcons_intern_admitted(hc, atom);
 }
 
 /* ── Variables / cached literal lookups ────────────────────────────────── */
@@ -1939,28 +1993,12 @@ static void arena_symbol_cache_store(
 }
 
 static Atom *atom_maybe_hashcons(Arena *a, const Atom *temp) {
-    if (!a || !a->hashcons || !atom_can_hashcons(temp))
+    if (!a || !a->hashcons || !atom_hashcons_graph_admitted(temp))
         return NULL;
     if (temp->kind == ATOM_GROUNDED &&
         atom_grounded_default_arena_owned(temp->ground.gkind))
         return NULL;
-    /*
-     * A global hash-cons entry owns only its root allocation.  Its child
-     * pointers must therefore already be globally owned; otherwise the table
-     * would retain pointers into a resettable arena.
-     */
-    if (temp->kind == ATOM_VAR && temp->name_key &&
-        temp->name_key->arena_id != 0u)
-        return NULL;
-    if (temp->kind == ATOM_EXPR) {
-        for (CettaExprIndex i = 0u; i < temp->expr.len; i++)
-            if (!temp->expr.elems[i] ||
-                temp->expr.elems[i]->arena_id != 0u ||
-                (temp->expr.elems[i]->flags &
-                 ATOM_FLAG_ARENA_CLOSED) == 0u)
-                return NULL;
-    }
-    return hashcons_get(a->hashcons, (Atom *)temp);
+    return hashcons_intern_admitted(a->hashcons, (Atom *)temp);
 }
 
 static uint32_t atom_hash_flags_for_eligible_leaf(void) {
@@ -1968,8 +2006,7 @@ static uint32_t atom_hash_flags_for_eligible_leaf(void) {
            ATOM_FLAG_ARENA_CLOSED;
 }
 
-static uint32_t atom_flags_for_grounded_kind(GroundedKind gkind) {
-    uint32_t flags = 0u;
+bool atom_grounded_kind_is_term_stable(GroundedKind gkind) {
     switch (gkind) {
     case GV_INT:
     case GV_FLOAT:
@@ -1977,19 +2014,24 @@ static uint32_t atom_flags_for_grounded_kind(GroundedKind gkind) {
     case GV_STRING:
     case GV_BIGINT:
     case GV_RATIONAL:
-        flags = atom_hash_flags_for_eligible_leaf();
-        break;
-    case GV_INTERNAL_TAG:
-        flags = ATOM_FLAG_ARENA_CLOSED;
-        break;
+        return true;
     case GV_SPACE:
     case GV_STATE:
     case GV_CAPTURE:
     case GV_FOREIGN:
     case GV_PRIME_NEED_CAPABILITY:
     case GV_PRIME_CONTEXT:
-        break;
+    case GV_INTERNAL_TAG:
+        return false;
     }
+    return false;
+}
+
+static uint32_t atom_flags_for_grounded_kind(GroundedKind gkind) {
+    uint32_t flags = atom_grounded_kind_is_term_stable(gkind)
+        ? atom_hash_flags_for_eligible_leaf() : 0u;
+    if (gkind == GV_INTERNAL_TAG)
+        flags |= ATOM_FLAG_ARENA_CLOSED;
     if (cetta_gslt_identity_bearing_grounded_kind(gkind))
         flags |= ATOM_FLAG_HAS_IDENTITY_GROUNDED |
                  ATOM_FLAG_HAS_THREAD_LOCAL_RESOURCE;

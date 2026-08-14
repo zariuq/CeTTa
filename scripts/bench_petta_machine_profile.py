@@ -177,6 +177,21 @@ def write_summary_tsv(path: Path, results: dict[str, Any]) -> None:
         "unification_binding_writes",
         "binding_apply_rewrites",
         "binding_apply_allocated_bytes",
+        "binding_apply_environment_entries",
+        "binding_apply_epoch_calls",
+        "binding_apply_epoch_suffix_entries",
+        "solve_expression_apply_calls",
+        "solve_expression_apply_allocated_bytes",
+        "solve_expression_open_template_admitted_calls",
+        "solve_expression_open_template_admitted_allocated_bytes",
+        "solve_expected_apply_calls",
+        "solve_expected_apply_allocated_bytes",
+        "solve_expected_open_template_admitted_calls",
+        "solve_expected_open_template_admitted_allocated_bytes",
+        "activation_materialization_calls",
+        "activation_materialization_allocated_bytes",
+        "activation_open_template_admitted_calls",
+        "activation_open_template_admitted_allocated_bytes",
         "atom_freshen_allocated_bytes",
         "specializer_prepare_calls",
         "specializer_prepare_filtered",
@@ -198,6 +213,8 @@ def write_summary_tsv(path: Path, results: dict[str, Any]) -> None:
         "max_goal_depth",
         "max_choice_depth",
         "max_binding_entries",
+        "max_binding_apply_environment_entries",
+        "max_binding_apply_epoch_suffix_entries",
     )
     rows = ["\t".join(columns)]
     for name, result in results.items():
@@ -256,7 +273,7 @@ def main() -> int:
     parser.add_argument(
         "--clause-body-activation",
         choices=("0", "1"),
-        default="0",
+        default="1",
     )
     parser.add_argument(
         "--paired-baseline",
@@ -293,8 +310,8 @@ def main() -> int:
         "CETTA_TERM_UNIVERSE_SOURCE_ID_MEMO": (
             args.term_universe_source_id_memo
         ),
-        "CETTA_PETTA_CLAUSE_BODY_ACTIVATION": (
-            args.clause_body_activation
+        "CETTA_PETTA_CLAUSE_BODY_ACTIVATION_REFERENCE": (
+            "0" if args.clause_body_activation == "1" else "1"
         ),
     }
     baseline_environment = {
@@ -305,7 +322,7 @@ def main() -> int:
             args.specializer_route_cache
         ),
         "CETTA_TERM_UNIVERSE_SOURCE_ID_MEMO": "0",
-        "CETTA_PETTA_CLAUSE_BODY_ACTIVATION": "0",
+        "CETTA_PETTA_CLAUSE_BODY_ACTIVATION_REFERENCE": "1",
     }
 
     results: dict[str, Any] = {}

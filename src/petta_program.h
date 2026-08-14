@@ -28,24 +28,59 @@ typedef enum {
     PETTA_PLAN_EXEC_RELATION_SLOTS,
 } PettaPlanExecution;
 
+/* Control decisions which are intrinsic to one authored occurrence.  These
+ * tags are compiled program data, so an equation activation does not
+ * repeatedly recover the same decision from its head symbol. */
+typedef enum {
+    PETTA_PLAN_CONTROL_NONE = 0,
+    PETTA_PLAN_CONTROL_IF,
+    PETTA_PLAN_CONTROL_LET,
+    PETTA_PLAN_CONTROL_CHAIN,
+    PETTA_PLAN_CONTROL_LET_STAR,
+} PettaPlanControl;
+
 typedef struct PettaPlanNode {
     PettaPlanRole role;
     PettaPlanExecution execution;
+    PettaPlanControl control;
     bool contains_length_call;
     bool contains_call;
+    /* Every node of an admitted equation RHS inherits this mark.  Open
+     * admission permits a finite LHS/RHS variable inventory and excludes
+     * cons constraints; C0 compilation remains independently restricted to
+     * RHS variables supplied by the LHS and ground-query execution. */
+    bool open_template_admitted;
+    /* An admitted equation occurrence may refer directly to its finite
+     * activation-frame slot.  This is derived program data: source variables
+     * and the exact matcher remain semantic authority. */
+    bool has_equation_variable_slot;
+    uint32_t equation_variable_slot;
     CettaExprLen child_count;
     const struct PettaPlanNode *children;
 } PettaPlanNode;
 
-typedef struct PettaCompiledClauseC0 PettaCompiledClauseC0;
+typedef struct PettaEquationTemplateC0 PettaEquationTemplateC0;
+typedef struct PettaEquationTemplate PettaEquationTemplate;
+
+typedef struct {
+    Atom *lhs;
+    Atom *rhs;
+    uint32_t static_variable_count;
+} PettaEquationActivationLayout;
 
 typedef struct {
     Atom *equation;
     const PettaPlanNode *rhs_plan;
     /* Program-owned, proof-erased derived code for the conservative C0
      * fragment.  The source equation remains semantic authority. */
-    const PettaCompiledClauseC0 *compiled_c0;
-    uint32_t static_variable_count;
+    const PettaEquationTemplateC0 *equation_template_c0;
+    /* Finite variable inventory shared by the LHS matcher and every RHS
+     * source view.  This is the per-equation leaf of the revision-pinned
+     * Space/query executable, not a semantic replacement for the equation. */
+    const PettaEquationTemplate *equation_template;
+    /* Revision-pinned source layout used to activate a relational equation
+     * without rediscovering its sides or copying its complete syntax. */
+    PettaEquationActivationLayout activation_layout;
     /* Stable only within the captured Space revision.  The executor treats
      * this as evidence provenance, never as a replacement for the equation
      * or its authoritative matcher. */
@@ -53,16 +88,26 @@ typedef struct {
 } PettaClauseCandidate;
 
 typedef enum {
-    PETTA_COMPILED_C0_NOT_APPLICABLE = 0,
-    PETTA_COMPILED_C0_MISMATCH,
-    PETTA_COMPILED_C0_MATCH,
-    PETTA_COMPILED_C0_CAPACITY,
-} PettaCompiledClauseC0Status;
+    PETTA_EQUATION_TEMPLATE_C0_NOT_APPLICABLE = 0,
+    PETTA_EQUATION_TEMPLATE_C0_MISMATCH,
+    PETTA_EQUATION_TEMPLATE_C0_MATCH,
+    PETTA_EQUATION_TEMPLATE_C0_CAPACITY,
+} PettaEquationTemplateC0Status;
 
-/* Execute only the C0 head/body projection.  Selection, revisions,
- * occurrence identity, choicepoints, and rollback remain machine-owned. */
-PettaCompiledClauseC0Status petta_compiled_clause_c0_apply(
-    const PettaCompiledClauseC0 *compiled,
+/* Borrow the template's sorted source-variable inventory.  All returned
+ * pointers remain owned by the PettaProgram and are valid for the same
+ * lifetime as the candidate carrying the template. */
+bool petta_equation_template_variable_inventory(
+    const PettaEquationTemplate *template,
+    const VarId **source_ids_out,
+    Atom *const **source_variables_out,
+    uint32_t *variable_count_out);
+
+/* Apply only the conservative C0 equation template: match the LHS and
+ * instantiate the RHS. Selection, revisions, occurrence identity,
+ * choicepoints, and rollback remain machine-owned. */
+PettaEquationTemplateC0Status petta_equation_template_c0_apply(
+    const PettaEquationTemplateC0 *template,
     CettaGsltGroundDenseWorkspaceV1 *workspace,
     Atom *closed_query, Arena *arena, Atom **result_out);
 

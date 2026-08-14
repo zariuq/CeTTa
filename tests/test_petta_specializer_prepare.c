@@ -69,6 +69,28 @@ int main(void) {
         &result, atom_symbol(&result, "relevance-deep"),
         wide_first_order_value(&result));
 
+    CHECK(petta_specializer_relation_execution_admission(
+              &space, plain_call->expr.elems[0]->sym_id) ==
+              PETTA_SPECIALIZER_RELATION_DEFER,
+          "relation-wide admission preserves a possible higher-order route");
+    CHECK(petta_specializer_query_execution_admission(
+              &space, plain_call->expr.elems[0]->sym_id,
+              plain_call->expr.elems + 1u,
+              plain_call->expr.len - 1u) ==
+              PETTA_SPECIALIZER_RELATION_IRRELEVANT,
+          "query-shaped admission rejects an inert argument forest");
+    CHECK(petta_specializer_query_execution_admission(
+              &space, deep_call->expr.elems[0]->sym_id,
+              deep_call->expr.elems + 1u,
+              deep_call->expr.len - 1u) ==
+              PETTA_SPECIALIZER_RELATION_IRRELEVANT,
+          "relation proof admits a query beyond the local node budget");
+    CHECK(petta_specializer_query_execution_admission(
+              &space, plain_call->expr.elems[0]->sym_id,
+              NULL, 1u) ==
+              PETTA_SPECIALIZER_RELATION_DEFER,
+          "missing query arguments fail closed");
+
     Atom *out = NULL;
     PettaSpecializeResult plain = petta_specializer_prepare_call(
         &space, NULL, &persistent, &result, plain_call, &out);
@@ -110,6 +132,12 @@ int main(void) {
     Atom *bounded_higher_call = atom_expr2(
         &result, atom_symbol(&result, "relevance-bounded"),
         atom_symbol(&result, "+"));
+    CHECK(petta_specializer_query_execution_admission(
+              &space, bounded_higher_call->expr.elems[0]->sym_id,
+              bounded_higher_call->expr.elems + 1u,
+              bounded_higher_call->expr.len - 1u) ==
+              PETTA_SPECIALIZER_RELATION_DEFER,
+          "callable argument preserves a productive specialization route");
     out = NULL;
     PettaSpecializeResult bounded_higher = petta_specializer_prepare_call(
         &space, NULL, &persistent, &result, bounded_higher_call, &out);
@@ -151,6 +179,12 @@ int main(void) {
     Atom *late_symbol = atom_symbol(&result, "late-callable");
     Atom *late_call = atom_expr2(
         &result, atom_symbol(&result, "callable-cache"), late_symbol);
+    CHECK(petta_specializer_query_execution_admission(
+              &space, late_call->expr.elems[0]->sym_id,
+              late_call->expr.elems + 1u,
+              late_call->expr.len - 1u) ==
+              PETTA_SPECIALIZER_RELATION_IRRELEVANT,
+          "unknown argument symbol is inert at the admitted revision");
     out = NULL;
     PettaSpecializeResult late_before = petta_specializer_prepare_call(
         &space, NULL, &persistent, &result, late_call, &out);
@@ -166,6 +200,12 @@ int main(void) {
         var_late);
     space_add(&space, late_equation);
     petta_specializer_note_mutation(&space, late_equation);
+    CHECK(petta_specializer_query_execution_admission(
+              &space, late_call->expr.elems[0]->sym_id,
+              late_call->expr.elems + 1u,
+              late_call->expr.len - 1u) ==
+              PETTA_SPECIALIZER_RELATION_DEFER,
+          "space mutation invalidates query-shaped negative admission");
     out = NULL;
     PettaSpecializeResult late_after = petta_specializer_prepare_call(
         &space, NULL, &persistent, &result, late_call, &out);
