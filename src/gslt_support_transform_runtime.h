@@ -16,7 +16,7 @@ typedef enum {
 } CettaGsltSupportUnsupportedPolicyV1;
 
 typedef struct {
-    const char *surface_symbol;
+    const char *syntax_symbol;
     uint32_t argument_count;
     const char *operator_id;
 } CettaGsltSupportOperatorDeclV1;

@@ -101,7 +101,7 @@ def main() -> int:
     add_atom = qapp(qsym("add-atom"), qsym("&self"), emitted_fact)
     let = qapp(qsym("let"), variable, quote, qapp(qsym("quote"), variable))
 
-    for surface, label in (
+    for syntax, label in (
         (match, "classify match"),
         (let, "classify let"),
         (emit, "classify emit"),
@@ -111,7 +111,7 @@ def main() -> int:
         require_one(
             chart,
             sources,
-            f"(zero-classify request {surface} ?classified)",
+            f"(zero-classify request {syntax} ?classified)",
             label,
         )
 

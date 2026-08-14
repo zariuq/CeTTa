@@ -72,8 +72,8 @@ static inline uint64_t symbol_table_instance_id(const SymbolTable *st) {
     X(order, "order") \
     X(native, "native") \
     X(mork_text, "mork") \
-    X(mork_get_atoms_surface, "mork:get-atoms") \
-    X(mork_match_surface, "mork:match") \
+    X(mork_get_atoms_syntax, "mork:get-atoms") \
+    X(mork_match_syntax, "mork:match") \
     X(reverse, "reverse") \
     X(lex, "lex") \
     X(shortlex, "shortlex") \
@@ -263,7 +263,7 @@ static inline uint64_t symbol_table_instance_id(const SymbolTable *st) {
     X(minimal_space_contains_exact, "_minimal-space-contains-exact") \
     X(minimal_space_revision, "_minimal-space-revision") \
     X(collapse_add_next, "_collapse-add-next-atom-from-collapse-bind-result") \
-    X(cetta_surface_available, "__cetta_surface-available") \
+    X(cetta_builtin_available, "__cetta_builtin-available") \
     /* ── Python FFI ── */ \
     X(py_atom, "py-atom") \
     X(py_call, "py-call") \
@@ -415,7 +415,7 @@ static inline uint64_t symbol_table_instance_id(const SymbolTable *st) {
     X(lib_mm2_context_step, "__cetta_lib_mm2_context_step") \
     X(lib_mm2_context_size, "__cetta_lib_mm2_context_size") \
     X(lib_mm2_context_atoms, "__cetta_lib_mm2_context_atoms") \
-    /* ── Bounded RuleMachineCoreV1 compilation surface ── */ \
+    /* ── Bounded RuleMachineCoreV1 compilation syntax ── */ \
     X(compile_rule_package, "compile:rule-package") \
     X(compile_link_rule, "compile:link-rule") \
     X(compile_run, "compile:run") \
@@ -545,10 +545,10 @@ typedef struct {
 extern SymbolTable *g_symbols;
 extern BuiltinSyms g_builtin_syms;
 
-/* Builtin surface symbols occupy the table's initial contiguous interval.
+/* Builtin syntax symbols occupy the table's initial contiguous interval.
  * This distinguishes evaluator syntax from later interned constructor/data
  * heads without spelling the builtin set again in each consumer. */
-bool symbol_id_is_builtin_surface(SymbolId id);
+bool symbol_id_is_builtin(SymbolId id);
 
 void symbol_table_init(SymbolTable *st);
 void symbol_table_free(SymbolTable *st);

@@ -23,7 +23,7 @@
 ; theorems land.
 !(assertEqual
   (lts:he:step-rules)
-  (step-rules HE small-step "fnv1a64:b38899af8133fc21"
+  (step-rules HE small-step "fnv1a64:f2083d161ec2f197"
     (schema 2)
     (rules (HES_GroundedDispatch rule-sound)
            (HES_LeftmostExprCongruence rule-sound-on-fragment)

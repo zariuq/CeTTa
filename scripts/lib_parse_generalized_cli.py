@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-"""Retired CLI for the old Python generalized parser integration surface."""
+"""Retired CLI for the old Python generalized parser integration syntax."""
 
 import sys
 

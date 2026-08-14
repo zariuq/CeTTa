@@ -59,7 +59,7 @@ int main(void) {
         "; c\n(= (f $x) $x)\n!(f 1)\n";
     static const uint8_t variable_document[] = "(a $x $x $_ $_)";
     static const uint8_t number_document[] =
-        "(1 -2 +3 1.2 .5 1e2 1_2_3 True False)";
+        "(1 -2 +3 1.2 .5 1e2 1_2_3 0x1a 1_000 1r2 1.0Inf True False)";
     static const uint8_t string_document[] = "(\"a\\n\\t\\r\" \"a\\q\")";
     static const uint8_t quoted_token_document[] = {
         '(', '"', 'a', '\\', 'q', 'b', '\\', '"', ')'};
@@ -215,22 +215,30 @@ int main(void) {
                 error, sizeof(error));
     expect(&counts,
            len == 1 && ids && tu_kind(&universe, ids[0]) == ATOM_EXPR &&
-               tu_arity(&universe, ids[0]) == 9u,
+               tu_arity(&universe, ids[0]) == 13u,
            "PeTTa numeric/bool projection accepts the authority matrix");
-    if (len == 1 && ids && tu_arity(&universe, ids[0]) == 9u) {
+    if (len == 1 && ids && tu_arity(&universe, ids[0]) == 13u) {
         AtomId dot_five = tu_child(&universe, ids[0], 4u);
         AtomId exponent = tu_child(&universe, ids[0], 5u);
         AtomId underscores = tu_child(&universe, ids[0], 6u);
+        AtomId hexadecimal = tu_child(&universe, ids[0], 7u);
+        AtomId grouped = tu_child(&universe, ids[0], 8u);
+        AtomId rational = tu_child(&universe, ids[0], 9u);
+        AtomId infinity = tu_child(&universe, ids[0], 10u);
         expect(&counts,
                symbol_id_is(&universe, dot_five, ".5") &&
                    tu_kind(&universe, exponent) == ATOM_GROUNDED &&
                    tu_ground_kind(&universe, exponent) == GV_FLOAT &&
                    fabs(tu_float(&universe, exponent) - 100.0) < 1e-12 &&
-                   symbol_id_is(&universe, underscores, "1_2_3"),
-               "PeTTa number projection follows SWI number//1 boundaries");
+                   symbol_id_is(&universe, underscores, "1_2_3") &&
+                   symbol_id_is(&universe, hexadecimal, "0x1a") &&
+                   symbol_id_is(&universe, grouped, "1_000") &&
+                   symbol_id_is(&universe, rational, "1r2") &&
+                   symbol_id_is(&universe, infinity, "1.0Inf"),
+               "PeTTa source numbers follow SWI number//1 rather than atom_number/2");
     } else {
         expect(&counts, false,
-               "PeTTa number projection follows SWI number//1 boundaries");
+               "PeTTa source numbers follow SWI number//1 rather than atom_number/2");
     }
     free(ids);
     ids = NULL;

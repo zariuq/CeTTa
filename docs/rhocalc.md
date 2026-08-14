@@ -3,14 +3,14 @@
 Under `--lang rhocalc` the CeTTa runtime stops being a term rewriter and
 becomes a concurrent process engine. Its unit of work is a *reaction*: a
 rendezvous between a sender and a receiver on a shared channel. This
-document is a guided tour — the calculus, the two text surfaces, the
+document is a guided tour — the calculus, the two text syntaxes, the
 reflective extension that runs MeTTa at a reaction, and the cost profile,
 in which a reaction fires only if it is paid for and a run can emit an
 auditable receipt of every spend. Receipts are deliberately an optional
 observation: the funded transition is the same with or without one.
 
 The implementation lives in `src/rhocalc_core.c` (engine),
-`src/rhocalc_syntax.c` (both text surfaces), `lib/lts/rho.metta` and
+`src/rhocalc_syntax.c` (both text syntaxes), `lib/lts/rho.metta` and
 `lib/lts/rho/cost.metta` (MeTTa API). Runnable showcases live in
 `examples/rho/` and are checked by `make test-rho-examples`.
 
@@ -19,7 +19,7 @@ The implementation lives in `src/rhocalc_core.c` (engine),
 The object language is Meredith and Radestock's reflective higher-order
 rho-calculus. Everything is built from six constructors:
 
-| form            | s-expression (`.mrho`)     | surface (`.rho`)       | reading                          |
+| form            | s-expression (`.mrho`)     | Rholang syntax (`.rho`) | reading                         |
 |-----------------|----------------------------|------------------------|----------------------------------|
 | inert process   | `rho:nil`                  | `0`                    | does nothing                     |
 | parallel        | `(rho:par P Q ...)`        | `P \| Q`               | run side by side                 |
@@ -74,18 +74,18 @@ settles at `0` only because the delivered code actually ran.
 
 ## 2. Running programs
 
-    ./cetta --lang rhocalc program.rho            # Rholang-like surface
-    ./cetta --lang rhocalc program.mrho           # s-expression surface
+    ./cetta --lang rhocalc program.rho            # Rholang-like syntax
+    ./cetta --lang rhocalc program.mrho           # s-expression syntax
     ./cetta --lang rhocalc --profile cost program.rho
     ./cetta --num-threads 8 --lang rhocalc --profile cost program.mrho
 
 The engine reduces the program to quiescence and prints the residual in
-the input surface. `--rho-reduction-limit N` bounds the run (a divergent
+the input syntax. `--rho-reduction-limit N` bounds the run (a divergent
 program reports its limit honestly); `--rho-scheduler canonical|rotating`
 picks the sequential scheduling policy (canonical = always the key-least
 successor, fully deterministic; rotating = cycle the frontier).
-`--syntax mrho|rho` overrides the extension-based surface choice, and the
-same flag set drives surface-to-surface translation between `.rho` and
+`--syntax mrho|rho` overrides the extension-based syntax choice, and the
+same flag set drives syntax-to-syntax translation between `.rho` and
 `.mrho`. `--emit-runtime-stats` prints engine counters (endpoint matches,
 macro-step firings, wave widths, receipt bookkeeping) after the run.
 
@@ -111,7 +111,7 @@ sibling branch.
 
 The `cost` profile accepts a resource-annotated dialect:
 
-| form               | s-expression                      | surface (`.rho`)         | reading                          |
+| form               | s-expression                      | Rholang syntax (`.rho`)  | reading                          |
 |--------------------|-----------------------------------|--------------------------|----------------------------------|
 | signed process     | `(rho:cost:signed P s)`           | `{P}s`                   | P, signed by s                   |
 | purse              | `(rho:cost:purse c stack)`        | `purse c {...}`          | a token store located at c       |
@@ -162,7 +162,7 @@ Each event carries four fields:
    arc — indistinguishable initial occurrences acquire no invented
    identity, and independent reactions get no false edge merely because
    one event id was emitted before the other;
-3. one **funding** record per token spent (purse surface and head
+3. one **funding** record per token spent (purse location and head
    signature);
 4. the raw **consumed signature**.
 
@@ -180,7 +180,7 @@ explicitly-chosen observation of it.
 
 ## 6. Honest budgets
 
-The exhaustive surfaces (`lts:rho:cost:steps`,
+The exhaustive interfaces (`lts:rho:cost:steps`,
 `lts:rho:cost:causal-trace`, `lts:rho:cost:transitions`) never truncate
 silently — funding selection is a genuine exact-cover problem, and a
 demand of ten unit coins over twenty unit purses has C(20,10) = 184,756
@@ -222,7 +222,7 @@ run and a receipt-observed run consume identical resources and reach the
 same residual, and the emitted event order of an observed run is a
 checked linearization of the wave's causal order.
 
-## 8. The MeTTa API surface
+## 8. The MeTTa API
 
 Import `lts:rho` (strict core) or `lts:rho:cost` (accounted). Every
 operation propagates incoming `Error` states unchanged and reports
@@ -244,7 +244,7 @@ Each operation carries a full `@doc` in `lib/lts/rho/cost.metta`.
 
 ## 9. Correctness evidence
 
-* `make test-rhocalc` — the full lane: surface runs (`tests/rhocalc_run/`,
+* `make test-rhocalc` — the full lane: syntax runs (`tests/rhocalc_run/`,
   `tests/rhocalc_cost_run/`), the `.metta` API tests
   (`tests/test_lts_rho_cost_*.metta`), rejection tests, translation
   round-trips, the canonical-selector differential, and the examples.

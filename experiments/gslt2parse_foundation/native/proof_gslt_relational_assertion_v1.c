@@ -2,6 +2,7 @@
 
 #include "finite_horn_answer_stream_v1.h"
 #include "finite_horn_ground_term_v1.h"
+#include "gslt_indexed_instruction_decoder_v1.h"
 
 #include <stdarg.h>
 #include <stdio.h>
@@ -10,6 +11,9 @@
 
 typedef struct {
     FHAnswerStreamV1 answers;
+    PPProofGSLTRelationalTableBindingV1 *table_bindings;
+    uint32_t table_binding_cap;
+    uint8_t *execution_unknown_bytes;
     uint8_t *selector_bytes[PPPROOF_GSLT_RELATIONAL_SELECTOR_V1_LEN];
 } PPProofGSLTRelationalAssertionStorageV1;
 
@@ -28,6 +32,7 @@ static const PPProofGSLTRelationalTableSpecV1
         {"ordered-hypothesis-v1", 3u, 2u},
         {"mandatory-variable-v1", 2u, 2u},
         {"assertion-disjoint-v1", 3u, 3u},
+        {"active-apartness-v1", 2u, 2u},
         {"label-kind-v1", 2u, 1u},
     };
 
@@ -109,6 +114,111 @@ static bool ppproof_relational_v1_u32(
     return true;
 }
 
+static bool ppproof_relational_v1_u8(
+    const Atom *atom, uint8_t *out) {
+    uint32_t value;
+
+    if (!out || !ppproof_relational_v1_u32(atom, &value) ||
+        value > UINT8_MAX)
+        return false;
+    *out = (uint8_t)value;
+    return true;
+}
+
+static bool ppproof_relational_v1_literal(
+    const Atom *atom, uint8_t **bytes_out, size_t *len_out,
+    char *error_buf, size_t error_buf_size) {
+    uint32_t byte_value;
+    uint8_t *bytes;
+
+    if (!bytes_out || !len_out)
+        return false;
+    *bytes_out = NULL;
+    *len_out = 0u;
+    if (ppproof_relational_v1_expr_head(
+            atom, "state-byte-literal-v1", 1u) &&
+        ppproof_relational_v1_u32(atom->expr.elems[1], &byte_value) &&
+        byte_value <= UINT8_MAX) {
+        bytes = malloc(1u);
+        if (!bytes)
+            return false;
+        bytes[0] = (uint8_t)byte_value;
+        *bytes_out = bytes;
+        *len_out = 1u;
+        return true;
+    }
+    if (!ppproof_relational_v1_expr_head(
+            atom, "state-literal-v1", 1u))
+        return false;
+    return fh_ground_term_v1_render(
+        atom->expr.elems[1], bytes_out, len_out,
+        error_buf, error_buf_size);
+}
+
+static PPRelationalStackProofV1UnknownPolicy
+ppproof_relational_v1_unknown_policy(const Atom *atom) {
+    if (atom_is_symbol(
+            (Atom *)atom, "state-proof-unknown-reject-v1"))
+        return PPRELATIONAL_STACK_PROOF_V1_UNKNOWN_REJECT;
+    if (atom_is_symbol(
+            (Atom *)atom, "state-proof-unknown-push-claim-v1"))
+        return PPRELATIONAL_STACK_PROOF_V1_UNKNOWN_PUSH_CLAIM;
+    return (PPRelationalStackProofV1UnknownPolicy)UINT32_MAX;
+}
+
+static CettaGsltIndexedSavePlacementV1
+ppproof_relational_v1_save_placement(const Atom *atom) {
+    if (atom_is_symbol(
+            (Atom *)atom,
+            "state-proof-save-immediately-after-use-v1"))
+        return CETTA_GSLT_INDEXED_SAVE_IMMEDIATELY_AFTER_USE_V1;
+    if (atom_is_symbol((Atom *)atom, "state-proof-save-repeatable-v1"))
+        return CETTA_GSLT_INDEXED_SAVE_REPEATABLE_AFTER_USE_V1;
+    return CETTA_GSLT_INDEXED_SAVE_INVALID_V1;
+}
+
+static CettaGsltHeaderHypothesisPolicyV1
+ppproof_relational_v1_header_hypothesis_policy(const Atom *atom) {
+    if (atom_is_symbol(
+            (Atom *)atom,
+            "state-proof-header-nonmandatory-only-v1"))
+        return CETTA_GSLT_HEADER_HYPOTHESIS_NONMANDATORY_ONLY_V1;
+    if (atom_is_symbol(
+            (Atom *)atom, "state-proof-header-any-active-v1"))
+        return CETTA_GSLT_HEADER_HYPOTHESIS_ANY_ACTIVE_V1;
+    return CETTA_GSLT_HEADER_HYPOTHESIS_INVALID_V1;
+}
+
+static bool ppproof_relational_v1_execution_valid(
+    const PPProofGSLTRelationalExecutionDescriptorV1 *execution) {
+    CettaGsltIndexedInstructionPlanV1 decoder;
+
+    if (!execution || !execution->machine ||
+        !execution->unknown_token.bytes ||
+        execution->unknown_token.len == 0u ||
+        execution->unknown_policy >
+            PPRELATIONAL_STACK_PROOF_V1_UNKNOWN_PUSH_CLAIM ||
+        execution->save_placement == CETTA_GSLT_INDEXED_SAVE_INVALID_V1)
+        return false;
+    if (execution->header_hypothesis_policy ==
+        CETTA_GSLT_HEADER_HYPOTHESIS_INVALID_V1)
+        return false;
+    decoder = (CettaGsltIndexedInstructionPlanV1){
+        .terminal_low = execution->terminal_low,
+        .terminal_high = execution->terminal_high,
+        .continuation_low = execution->continuation_low,
+        .continuation_high = execution->continuation_high,
+        .save_byte = execution->save_byte,
+        .unknown_byte = execution->unknown_byte,
+        .terminal_radix = execution->terminal_radix,
+        .terminal_digit_bias = execution->terminal_digit_bias,
+        .continuation_radix = execution->continuation_radix,
+        .continuation_digit_bias = execution->continuation_digit_bias,
+        .save_placement = execution->save_placement,
+    };
+    return cetta_gslt_indexed_instruction_plan_validate_v1(&decoder);
+}
+
 static int32_t ppproof_relational_v1_table_role(
     PPProofGSLTNameV1 role) {
     uint32_t index;
@@ -183,7 +293,7 @@ void ppproof_gslt_relational_assertion_v1_init(
     memset(plan, 0, sizeof(*plan));
     for (index = 0u; index < PPPROOF_GSLT_RELATIONAL_TABLE_V1_LEN;
          index++)
-        plan->tables[index] = UINT32_MAX;
+        plan->resolved_table_ids[index] = UINT32_MAX;
 }
 
 void ppproof_gslt_relational_assertion_v1_free(
@@ -198,6 +308,8 @@ void ppproof_gslt_relational_assertion_v1_free(
         for (index = 0u;
              index < PPPROOF_GSLT_RELATIONAL_SELECTOR_V1_LEN; index++)
             free(storage->selector_bytes[index]);
+        free(storage->table_bindings);
+        free(storage->execution_unknown_bytes);
         fh_answer_stream_v1_free(&storage->answers);
         free(storage);
     }
@@ -215,6 +327,7 @@ PPProofGSLTArticleV1Result ppproof_gslt_relational_assertion_v1_load(
     PPProofGSLTRelationalAssertionStorageV1 *storage = NULL;
     PPProofGSLTNameV1 artifact_owner = {0};
     bool identity_seen = false;
+    bool execution_seen = false;
     size_t answer_index;
     uint32_t index;
     PPProofGSLTArticleV1Result failure =
@@ -273,6 +386,66 @@ PPProofGSLTArticleV1Result ppproof_gslt_relational_assertion_v1_load(
             continue;
         }
         if (ppproof_relational_v1_expr_head(
+                record, "proof-sequence-relational-execution-v1", 16u)) {
+            PPProofGSLTNameV1 machine;
+            uint8_t *unknown_token = NULL;
+            size_t unknown_token_len = 0u;
+
+            if (execution_seen ||
+                !ppproof_relational_v1_name(record->expr.elems[1], &owner) ||
+                !ppproof_relational_v1_name(record->expr.elems[2], &machine) ||
+                !ppproof_relational_v1_literal(
+                    record->expr.elems[3], &unknown_token,
+                    &unknown_token_len, error_buf, error_buf_size) ||
+                unknown_token_len == 0u || unknown_token_len > UINT32_MAX ||
+                !ppproof_relational_v1_u8(
+                    record->expr.elems[4], &result.execution.terminal_low) ||
+                !ppproof_relational_v1_u8(
+                    record->expr.elems[5], &result.execution.terminal_high) ||
+                !ppproof_relational_v1_u8(
+                    record->expr.elems[6],
+                    &result.execution.continuation_low) ||
+                !ppproof_relational_v1_u8(
+                    record->expr.elems[7],
+                    &result.execution.continuation_high) ||
+                !ppproof_relational_v1_u8(
+                    record->expr.elems[8], &result.execution.save_byte) ||
+                !ppproof_relational_v1_u8(
+                    record->expr.elems[9], &result.execution.unknown_byte) ||
+                !ppproof_relational_v1_u32(
+                    record->expr.elems[10],
+                    &result.execution.terminal_radix) ||
+                !ppproof_relational_v1_u32(
+                    record->expr.elems[11],
+                    &result.execution.terminal_digit_bias) ||
+                !ppproof_relational_v1_u32(
+                    record->expr.elems[12],
+                    &result.execution.continuation_radix) ||
+                !ppproof_relational_v1_u32(
+                    record->expr.elems[13],
+                    &result.execution.continuation_digit_bias)) {
+                free(unknown_token);
+                goto malformed;
+            }
+            result.execution.unknown_policy =
+                ppproof_relational_v1_unknown_policy(
+                    record->expr.elems[14]);
+            result.execution.save_placement =
+                ppproof_relational_v1_save_placement(
+                    record->expr.elems[15]);
+            result.execution.header_hypothesis_policy =
+                ppproof_relational_v1_header_hypothesis_policy(
+                    record->expr.elems[16]);
+            storage->execution_unknown_bytes = unknown_token;
+            result.execution.machine = (const char *)machine.bytes;
+            result.execution.unknown_token = (PPRelationalStateLiteralV1){
+                .bytes = unknown_token,
+                .len = (uint32_t)unknown_token_len,
+            };
+            if (!ppproof_relational_v1_execution_valid(&result.execution))
+                goto malformed;
+            execution_seen = true;
+        } else if (ppproof_relational_v1_expr_head(
                 record, "proof-sequence-relational-table-v1", 5u)) {
             PPProofGSLTNameV1 role;
             PPProofGSLTNameV1 table_name;
@@ -295,7 +468,8 @@ PPProofGSLTArticleV1Result ppproof_gslt_relational_assertion_v1_load(
                 failure = PPPROOF_GSLT_ARTICLE_V1_UNSUPPORTED;
                 goto unknown_role;
             }
-            if (result.tables[(uint32_t)role_index] != UINT32_MAX)
+            if (result.resolved_table_ids[(uint32_t)role_index] !=
+                UINT32_MAX)
                 goto duplicate_role;
             spec = &ppproof_relational_table_specs_v1[
                 (uint32_t)role_index];
@@ -309,8 +483,68 @@ PPProofGSLTArticleV1Result ppproof_gslt_relational_assertion_v1_load(
                 failure = PPPROOF_GSLT_ARTICLE_V1_UNSUPPORTED;
                 goto wrong_shape;
             }
-            result.tables[(uint32_t)role_index] =
+            if (result.table_binding_len == storage->table_binding_cap) {
+                uint32_t next_cap = storage->table_binding_cap == 0u
+                                        ? 8u
+                                        : storage->table_binding_cap * 2u;
+                PPProofGSLTRelationalTableBindingV1 *grown;
+
+                if (next_cap < storage->table_binding_cap ||
+                    (size_t)next_cap > SIZE_MAX / sizeof(*grown)) {
+                    failure = PPPROOF_GSLT_ARTICLE_V1_RESOURCE;
+                    goto failed;
+                }
+                grown = realloc(
+                    storage->table_bindings,
+                    (size_t)next_cap * sizeof(*grown));
+                if (!grown) {
+                    failure = PPPROOF_GSLT_ARTICLE_V1_RESOURCE;
+                    goto failed;
+                }
+                storage->table_bindings = grown;
+                storage->table_binding_cap = next_cap;
+            }
+            storage->table_bindings[result.table_binding_len++] =
+                (PPProofGSLTRelationalTableBindingV1){
+                    .role = (PPProofGSLTRelationalTableRoleV1)role_index,
+                    .table_id = (uint32_t)table_index,
+                };
+            result.table_bindings = storage->table_bindings;
+            result.resolved_table_ids[(uint32_t)role_index] =
                 (uint32_t)table_index;
+        } else if (ppproof_relational_v1_expr_head(
+                       record,
+                       "proof-sequence-relational-table-policy-v1", 3u)) {
+            PPProofGSLTNameV1 role;
+            PPProofGSLTNameV1 presence;
+            int32_t role_index;
+            PPProofGSLTRelationalPresenceV1 decoded_presence;
+
+            if (!ppproof_relational_v1_name(record->expr.elems[1], &owner) ||
+                !ppproof_relational_v1_name(record->expr.elems[2], &role) ||
+                !ppproof_relational_v1_name(
+                    record->expr.elems[3], &presence))
+                goto malformed;
+            role_index = ppproof_relational_v1_table_role(role);
+            if (role_index < 0) {
+                failure = PPPROOF_GSLT_ARTICLE_V1_UNSUPPORTED;
+                goto unknown_role;
+            }
+            if (ppproof_relational_v1_name_is(presence, "required-v1"))
+                decoded_presence =
+                    PPPROOF_GSLT_RELATIONAL_PRESENCE_V1_REQUIRED;
+            else if (ppproof_relational_v1_name_is(
+                         presence, "optional-empty-v1"))
+                decoded_presence =
+                    PPPROOF_GSLT_RELATIONAL_PRESENCE_V1_OPTIONAL_EMPTY;
+            else {
+                failure = PPPROOF_GSLT_ARTICLE_V1_UNSUPPORTED;
+                goto unknown_role;
+            }
+            if (result.table_presence[(uint32_t)role_index] !=
+                PPPROOF_GSLT_RELATIONAL_PRESENCE_V1_INVALID)
+                goto duplicate_role;
+            result.table_presence[(uint32_t)role_index] = decoded_presence;
         } else if (ppproof_relational_v1_expr_head(
                        record,
                        "proof-sequence-relational-selector-v1", 3u)) {
@@ -351,7 +585,7 @@ PPProofGSLTArticleV1Result ppproof_gslt_relational_assertion_v1_load(
                      artifact_owner, owner))
             goto mixed_identity;
     }
-    if (!identity_seen ||
+    if (!identity_seen || !execution_seen ||
         !ppproof_gslt_article_v1_name_equal(
             result.owner, proof_plan->owner) ||
         !ppproof_gslt_article_v1_name_equal(
@@ -363,7 +597,11 @@ PPProofGSLTArticleV1Result ppproof_gslt_relational_assertion_v1_load(
     }
     for (index = 0u; index < PPPROOF_GSLT_RELATIONAL_TABLE_V1_LEN;
          index++) {
-        if (result.tables[index] == UINT32_MAX)
+        if (result.table_presence[index] ==
+            PPPROOF_GSLT_RELATIONAL_PRESENCE_V1_INVALID ||
+            (result.table_presence[index] ==
+                 PPPROOF_GSLT_RELATIONAL_PRESENCE_V1_REQUIRED &&
+             result.resolved_table_ids[index] == UINT32_MAX))
             goto missing_role;
     }
     for (index = 0u;
@@ -414,6 +652,7 @@ failed:
         for (index = 0u;
              index < PPPROOF_GSLT_RELATIONAL_SELECTOR_V1_LEN; index++)
             free(storage->selector_bytes[index]);
+        free(storage->table_bindings);
         fh_answer_stream_v1_free(&storage->answers);
         free(storage);
     }

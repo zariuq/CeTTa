@@ -39,7 +39,7 @@ typedef struct {
 } MorkBuffer;
 
 /*
-Primary storage/query surface:
+Primary storage/query interface:
 
 - mork_space_add_text()/mork_space_remove_text() are UTF-8 transport helpers.
 - mork_space_add_expr_bytes()/mork_space_remove_expr_bytes() accept one stable
@@ -201,7 +201,7 @@ identities.
 */
 MorkBuffer mork_space_dump_contextual_exact_rows(MorkSpace *space);
 
-/* Text binding packet export. Raw-byte query packet surfaces are preferred
+/* Text binding packet export. Raw-byte query packet interfaces are preferred
    for CeTTa integration work. */
 MorkBuffer mork_space_query_bindings(MorkSpace *space, const uint8_t *pattern, size_t len);
 

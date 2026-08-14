@@ -1,4 +1,4 @@
-; HE-backed destructor surface: non-expression input should raise a signature
+; HE-backed destructor syntax: non-expression input should raise a signature
 ; error rather than passing through unreduced.
 
 !(decons-atom a)

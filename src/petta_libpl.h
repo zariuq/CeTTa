@@ -11,7 +11,7 @@ PeTTaNamedArity petta_libpl_named_arity(
 
 /*
  * Monotone identity for the currently published foreign-call capability
- * surface.  Consumers may cache classifications only while this value is
+ * syntax.  Consumers may cache classifications only while this value is
  * unchanged; reading it does not initialize an SWI engine.
  */
 uint64_t petta_libpl_capability_revision(

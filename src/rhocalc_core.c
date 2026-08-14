@@ -21,7 +21,7 @@
  *
  *   cost          Funded reactions.  Processes are signed
  *                 (rho:cost:signed body sig), channels carry purses of
- *                 tokens (rho:cost:purse surface stack), and a COMM fires
+ *                 tokens (rho:cost:purse location stack), and a COMM fires
  *                 only when purses located on its own channel exactly cover
  *                 the consumed signature product — an unfunded reaction is
  *                 disabled, not slowed.  Every firing can emit a causal
@@ -46,7 +46,7 @@
  * receipts are an optional observer on either path: a state-only run and a
  * receipt-observed run consume identical resources.
  *
- * Surfaces: lib/lts/rho/cost.metta and lib/lts/rho.metta (MeTTa API),
+ * Interfaces: lib/lts/rho/cost.metta and lib/lts/rho.metta (MeTTa API),
  * .rho / .mrho text (rhocalc_syntax.c), and the CLI (main.c;
  * `--lang rhocalc [--profile cost] [--num-threads N]`).  Tests live in
  * tests/test_lts_rho_cost_*.metta, tests/rhocalc_run/, and
@@ -4127,7 +4127,7 @@ Atom *rhocalc_quiescent_frontier_expr_with_eval_context(
  *
  * Cost terms extend the process layer with rho:cost:signed (a process body
  * carrying a signature), rho:cost:purse (a token stack located at a channel
- * surface), rho:cost:stack-empty / rho:cost:stack-cons, and signature
+ * location), rho:cost:stack-empty / rho:cost:stack-cons, and signature
  * products rho:cost:sig-mul over ground signature symbols.  Signatures form
  * a free commutative monoid: products are kept as sorted multisets of
  * ground atoms, so signature equality is multiset equality. */
@@ -4151,8 +4151,8 @@ typedef struct {
 
 typedef struct {
     uint32_t component_index;
-    Atom *surface;
-    char *surface_key;
+    Atom *location;
+    char *location_key;
     Atom *sig;
     Atom *rest;
 } RhoCostToken;
@@ -4405,8 +4405,8 @@ static Atom *rhocost_stack_cons(Arena *arena, Atom *sig, Atom *rest) {
     return rho_binary(arena, "rho:cost:stack-cons", sig, rest);
 }
 
-static Atom *rhocost_purse(Arena *arena, Atom *surface, Atom *stack) {
-    return rho_binary(arena, "rho:cost:purse", surface, stack);
+static Atom *rhocost_purse(Arena *arena, Atom *location, Atom *stack) {
+    return rho_binary(arena, "rho:cost:purse", location, stack);
 }
 
 static Atom *rhocost_signed(Arena *arena, Atom *body, Atom *sig) {
@@ -5229,7 +5229,7 @@ static bool rhocost_check_term_rec(Atom *term) {
         return rhocost_check_name(view.args[0]);
     case RHOCOST_TERM_PURSE:
         if (view.nargs != 2) {
-            rho_validation_set("rho:cost:purse expects surface and stack");
+            rho_validation_set("rho:cost:purse expects location and stack");
             return false;
         }
         return rhocost_check_name(view.args[0]) &&
@@ -5266,7 +5266,7 @@ static void rhocost_token_vec_init(RhoCostTokenVec *vec) {
 
 static void rhocost_token_vec_free(RhoCostTokenVec *vec) {
     for (uint32_t i = 0; i < vec->len; i++) {
-        free(vec->items[i].surface_key);
+        free(vec->items[i].location_key);
     }
     free(vec->items);
     vec->items = NULL;
@@ -5276,8 +5276,8 @@ static void rhocost_token_vec_free(RhoCostTokenVec *vec) {
 
 static bool rhocost_token_vec_push(RhoCostTokenVec *vec,
                                    uint32_t component_index,
-                                   Atom *surface,
-                                   char *surface_key,
+                                   Atom *location,
+                                   char *location_key,
                                    Atom *sig,
                                    Atom *rest) {
     if (vec->len == vec->cap) {
@@ -5289,8 +5289,8 @@ static bool rhocost_token_vec_push(RhoCostTokenVec *vec,
         vec->cap = next_cap;
     }
     vec->items[vec->len].component_index = component_index;
-    vec->items[vec->len].surface = surface;
-    vec->items[vec->len].surface_key = surface_key;
+    vec->items[vec->len].location = location;
+    vec->items[vec->len].location_key = location_key;
     vec->items[vec->len].sig = sig;
     vec->items[vec->len].rest = rest;
     vec->len++;
@@ -5729,7 +5729,7 @@ static void rhocost_collect_term_par(Arena *arena, Atom *term, RhoAtomVec *out) 
  *
  * Cost COMM substitutes the sent signed term for the receive binder, with
  * the same capture-avoidance and drop-unquoting discipline as the pure
- * layer, extended through signed bodies and purse surfaces. */
+ * layer, extended through signed bodies and purse locations. */
 
 static bool rhocost_term_has_free_var(Atom *term, VarId var_id);
 
@@ -6276,7 +6276,7 @@ static Atom *rhocost_trace_components_term(
  * outputs of event 0 yields causes (0 0).  Initial components have no
  * producer and contribute no arc: indistinguishable initial occurrences
  * acquire no invented identity.  An event records its fresh run-local id,
- * that cause list, one funding record per consumed purse head (surface and
+ * that cause list, one funding record per consumed purse head (location and
  * head signature), and the raw consumed signature. */
 
 static bool rhocost_step_consumes_component(const RhoCostStep *step,
@@ -6469,7 +6469,7 @@ static bool rhocost_emit_step(Arena *arena,
     extras[0] = body;
     for (uint32_t i = 0; i < chosen_tokens->len; i++) {
         RhoCostToken *token = &tokens->items[chosen_tokens->items[i]];
-        extras[i + 1] = rhocost_purse(arena, token->surface, token->rest);
+        extras[i + 1] = rhocost_purse(arena, token->location, token->rest);
     }
 
     next = rhocost_rebuild_result(arena, components, skip, skip_len,
@@ -6623,11 +6623,11 @@ static bool rhocost_cover_tokens_cursor(Arena *arena,
 }
 
 static bool rhocost_collect_available_tokens(RhoCostTokenVec *tokens,
-                                             const char *surface_key,
+                                             const char *location_key,
                                              RhoIndexVec *available) {
     rhocost_index_vec_init(available);
     for (uint32_t i = 0; i < tokens->len; i++) {
-        if (strcmp(tokens->items[i].surface_key, surface_key) == 0 &&
+        if (strcmp(tokens->items[i].location_key, location_key) == 0 &&
             !rhocost_index_vec_push(available, i)) {
             rhocost_index_vec_free(available);
             return false;
@@ -6673,11 +6673,11 @@ static bool rhocost_collect_candidates_from_components(
             RhoCostTermView stack = rhocost_term_view(view.args[1]);
             if (stack.kind == RHOCOST_TERM_STACK_CONS && stack.nargs == 2 &&
                 rhocost_check_signature(stack.args[0])) {
-                char *surface_key = rhocost_key_name(view.args[0]);
+                char *location_key = rhocost_key_name(view.args[0]);
                 ok = rhocost_token_vec_push(
-                    &tokens, i, view.args[0], surface_key,
+                    &tokens, i, view.args[0], location_key,
                     stack.args[0], stack.args[1]);
-                if (!ok) free(surface_key);
+                if (!ok) free(location_key);
                 continue;
             }
         }
@@ -7095,7 +7095,7 @@ static bool rhocost_parallel_task_funding_valid(
         uint32_t index = task->plan.token_indices[i];
         RhoCostTermView purse = rhocost_term_view(components->items[index]);
         RhoCostTermView stack;
-        char *surface_key;
+        char *location_key;
         if (purse.kind != RHOCOST_TERM_PURSE || purse.nargs != 2u) {
             goto done;
         }
@@ -7103,12 +7103,12 @@ static bool rhocost_parallel_task_funding_valid(
         if (stack.kind != RHOCOST_TERM_STACK_CONS || stack.nargs != 2u) {
             goto done;
         }
-        surface_key = rhocost_key_name(purse.args[0]);
-        if (!surface_key || strcmp(channel_key, surface_key) != 0) {
-            free(surface_key);
+        location_key = rhocost_key_name(purse.args[0]);
+        if (!location_key || strcmp(channel_key, location_key) != 0) {
+            free(location_key);
             goto done;
         }
-        free(surface_key);
+        free(location_key);
         if (!rhocost_collect_signature_atoms(stack.args[0], &funding_atoms)) {
             goto done;
         }
@@ -8014,7 +8014,7 @@ static bool rho_collect_successors(Arena *arena, Atom *proc,
 
 /* ── Public reduction entry points ──────────────────────────────────────────
  *
- * The CLI and library surfaces land here: run a term to quiescence under a
+ * The CLI and library interfaces land here: run a term to quiescence under a
  * runtime profile (scheduler policy, reduction limit, worker count) and a
  * semantic profile (strict-core or cost), sequentially or threaded. */
 

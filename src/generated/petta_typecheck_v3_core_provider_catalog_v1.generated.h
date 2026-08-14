@@ -1,0 +1,8 @@
+#ifndef CETTA_GENERATED_CETTA_PETTA_TYPECHECK_V3_CORE_PROVIDER_CATALOG_V1_H
+#define CETTA_GENERATED_CETTA_PETTA_TYPECHECK_V3_CORE_PROVIDER_CATALOG_V1_H
+
+#include "gslt_provider_runtime.h"
+
+extern const CettaGsltProviderCatalogV1 cetta_petta_typecheck_v3_core_provider_catalog_v1;
+
+#endif /* CETTA_GENERATED_CETTA_PETTA_TYPECHECK_V3_CORE_PROVIDER_CATALOG_V1_H */

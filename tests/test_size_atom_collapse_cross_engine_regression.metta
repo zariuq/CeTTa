@@ -12,7 +12,7 @@
 ; native and pathmap engines to the HE-parity answers.
 ;
 ; The mork engine is not selectable through `(new-space mork)` -- the mork
-; surface is the distinct `(mork:new-space)`/`(mork:*)` family -- so it is out of
+; syntax is the distinct `(mork:new-space)`/`(mork:*)` family -- so it is out of
 ; this selector's scope.
 
 ; ---- native engine ----

@@ -1,0 +1,10 @@
+(ProofTraceCompileCompressedV1
+  (ProofTraceLabelConsV1 input-hx-v1 ProofTraceLabelNilV1)
+  ProofTraceLabelNilV1
+  (ProofTraceCodeConsV1 65
+    (ProofTraceCodeConsV1 90 ProofTraceCodeNilV1))
+  (ProofTraceConsV1
+    (ProofTracePushV1
+      (ProofSequenceConsV1 input-wff-v1
+        (ProofSequenceConsV1 input-a-v1 ProofSequenceNilV1)))
+    (ProofTraceConsV1 ProofTraceSaveV1 ProofTraceNilV1)))

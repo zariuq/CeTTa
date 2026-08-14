@@ -11,7 +11,7 @@ interleaving exploration (forced by CETTA_RHO_NO_MACRO=1).
 A divergence on any program is a soundness violation of the optimization on that
 program -- found without knowing in advance *which* interaction breaks it.  The
 corpus is ADVERSARIAL on purpose: it does not just replay the first bug class.
-It saturates the mutable-resource surface (shared spaces, state cells, identity
+It saturates the mutable-resource syntax (shared spaces, state cells, identity
 allocation) AND hides each effect behind a user-defined equation, because a
 syntactic safety check that only looks at the payload head is defeated exactly
 there.  It also pins NAMED fixtures for the scary classes so they are always

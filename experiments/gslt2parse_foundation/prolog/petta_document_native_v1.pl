@@ -363,26 +363,26 @@ positive_integer(Value) :-
     Input0,
     CompilerDigest0,
     Limits0,
-    SurfaceOutcome) :-
-    surface_atom(SplitterAbi0, SplitterAbi),
-    surface_atom(FormAbi0, FormAbi),
-    surface_atom(GuardNFA0, GuardNFA),
-    surface_atom(GuardEvidence0, GuardEvidence),
-    surface_text(Input0, Input),
-    surface_atom(CompilerDigest0, CompilerDigest),
-    surface_limits(Limits0, Limits),
+    SyntaxOutcome) :-
+    syntax_atom(SplitterAbi0, SplitterAbi),
+    syntax_atom(FormAbi0, FormAbi),
+    syntax_atom(GuardNFA0, GuardNFA),
+    syntax_atom(GuardEvidence0, GuardEvidence),
+    syntax_text(Input0, Input),
+    syntax_atom(CompilerDigest0, CompilerDigest),
+    syntax_limits(Limits0, Limits),
     petta_document_native_parse_v1(
         SplitterAbi, FormAbi, GuardNFA, GuardEvidence,
         Input, CompilerDigest, Limits, Outcome),
-    native_surface(Outcome, SurfaceOutcome).
+    native_syntax(Outcome, SyntaxOutcome).
 
-surface_atom(Value, Value) :- atom(Value), !.
-surface_atom(Value, Atom) :- string(Value), atom_string(Atom, Value).
+syntax_atom(Value, Value) :- atom(Value), !.
+syntax_atom(Value, Atom) :- string(Value), atom_string(Atom, Value).
 
-surface_text(Value, Value) :- string(Value), !.
-surface_text(Value, Text) :- atom(Value), atom_string(Value, Text).
+syntax_text(Value, Value) :- string(Value), !.
+syntax_text(Value, Text) :- atom(Value), atom_string(Value, Text).
 
-surface_limits(
+syntax_limits(
     [ petta_document_limits,
       DFAStates, DFATransitions, ScanWork, ScanTokens,
       WitnessWork, ParseWork, ReplayDepth, ResultLimit ],
@@ -390,19 +390,19 @@ surface_limits(
         DFAStates, DFATransitions, ScanWork, ScanTokens,
         WitnessWork, ParseWork, ReplayDepth, ResultLimit)).
 
-native_surface(sym(Value), Value) :- !.
-native_surface(int(Value), Value) :- !.
-native_surface(str(Value), Value) :- !.
-native_surface(list(Values), SurfaceValues) :-
+native_syntax(sym(Value), Value) :- !.
+native_syntax(int(Value), Value) :- !.
+native_syntax(str(Value), Value) :- !.
+native_syntax(list(Values), SyntaxValues) :-
     !,
-    maplist(native_surface, Values, SurfaceValues).
-native_surface(Value, Value) :-
+    maplist(native_syntax, Values, SyntaxValues).
+native_syntax(Value, Value) :-
     atomic(Value), !.
-native_surface(Values, [list|SurfaceValues]) :-
+native_syntax(Values, [list|SyntaxValues]) :-
     is_list(Values),
     !,
-    maplist(native_surface, Values, SurfaceValues).
-native_surface(Term, [Functor|SurfaceArguments]) :-
+    maplist(native_syntax, Values, SyntaxValues).
+native_syntax(Term, [Functor|SyntaxArguments]) :-
     compound(Term),
     Term =.. [Functor|Arguments],
-    maplist(native_surface, Arguments, SurfaceArguments).
+    maplist(native_syntax, Arguments, SyntaxArguments).

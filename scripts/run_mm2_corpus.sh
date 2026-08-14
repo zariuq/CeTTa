@@ -10,7 +10,7 @@
 # rows whose source checkout is absent are reported as `missing`, not failed.
 #
 # Requires a bridge-enabled binary: build with `make BUILD=mork cetta`.
-# Without it every row reports a bridge error, which the sweep surfaces
+# Without it every row reports a bridge error, which the sweep reveals
 # rather than silently timing.
 #
 #   usage: scripts/run_mm2_corpus.sh [--update]

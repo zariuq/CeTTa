@@ -4,6 +4,7 @@
 #include "match.h"
 #include "petta_semantics.h"
 #include "petta_specializer.h"
+#include "petta_typecheck_census.h"
 #include "stats.h"
 #include "symbol.h"
 #include "term_universe.h"
@@ -1088,15 +1089,25 @@ static bool petta_relational_equation_view_enabled(void) {
  * remain valid and are rolled back with the clause choice. */
 static bool petta_clause_slot_aliases_normalized(
     const Bindings *bindings, uint32_t first_entry,
-    uint32_t epoch) {
+    uint32_t epoch, bool *cross_frame_alias) {
+    if (cross_frame_alias)
+        *cross_frame_alias = false;
     if (!bindings || first_entry > bindings->len || epoch == 0u)
         return false;
     for (uint32_t index = first_entry;
          index < bindings->len; index++) {
         const Binding *entry = &bindings->entries[index];
-        if (var_epoch_suffix(entry->var_id) != epoch &&
+        bool entry_is_rule_local =
+            var_epoch_suffix(entry->var_id) == epoch;
+        bool value_is_rule_local =
             entry->val && entry->val->kind == ATOM_VAR &&
-            var_epoch_suffix(entry->val->var_id) == epoch) {
+            var_epoch_suffix(entry->val->var_id) == epoch;
+        if (entry->val && entry->val->kind == ATOM_VAR &&
+            entry_is_rule_local != value_is_rule_local &&
+            cross_frame_alias) {
+            *cross_frame_alias = true;
+        }
+        if (!entry_is_rule_local && value_is_rule_local) {
             return false;
         }
     }
@@ -3673,6 +3684,18 @@ static PettaClauseSlotMatch petta_machine_clause_slot_match(
             machine, query_template, query_epoch,
             query_first_entry, &query_bindings,
             &query_dense_frame);
+    /* A source/frame pair is only an alternate representation of the query.
+     * If its dense accelerator cannot be prepared, reconstruct the ordinary
+     * query before entering the authoritative matcher. */
+    if (!query_frame && !query && supplied_query_frame) {
+        query = petta_machine_apply_bindings_epoch_then_all(
+            machine, bindings, &machine->heap, query_source,
+            query_epoch, query_first_entry);
+        if (!query) {
+            bindings_builder_rollback(builder, mark);
+            return PETTA_CLAUSE_SLOT_CAPACITY;
+        }
+    }
     bool matched = query_frame
         ? match_atoms_dense_epoch_view_builder_rule_local(
               query_source,
@@ -3685,9 +3708,16 @@ static PettaClauseSlotMatch petta_machine_clause_slot_match(
             (Bindings *)bindings_builder_bindings(builder))) {
         matched = false;
     }
-    if (matched && !petta_clause_slot_aliases_normalized(
-            bindings, activation_first_entry, epoch)) {
-        matched = false;
+    if (matched) {
+        bool cross_frame_alias = false;
+        if (!petta_clause_slot_aliases_normalized(
+                bindings, activation_first_entry, epoch,
+                &cross_frame_alias)) {
+            matched = false;
+        } else if (cross_frame_alias) {
+            CETTA_PETTA_TYPECHECK_CENSUS_HIT(
+                CETTA_PETTA_TYPECHECK_CENSUS_EVENT_CLAUSE_SLOT_ALIAS_PRESERVED);
+        }
     }
     if (!matched) {
         bindings_builder_rollback(builder, mark);
@@ -11615,7 +11645,7 @@ static bool petta_machine_map_atom(
 }
 
 /*
- * PeTTa has two foldl-atom surfaces:
+ * PeTTa has two foldl-atom syntax forms:
  *
  *   (foldl-atom Items Initial AccVar ItemVar Body)
  *   (foldl-atom Items Initial Callable)
@@ -12599,6 +12629,8 @@ static bool petta_machine_prepare_equation_frame(
             continue;
         }
         if (entry->frame.builder == builder &&
+            entry->frame.builder_instance != 0u &&
+            entry->frame.builder_instance == builder->instance_id &&
             entry->frame.binding_growth == builder->growth_count &&
             entry->frame.binding_rollbacks == builder->rollback_count &&
             entry->frame.scanned_len == bindings->len) {
@@ -12607,6 +12639,8 @@ static bool petta_machine_prepare_equation_frame(
             return true;
         }
         if (entry->frame.builder == builder &&
+            entry->frame.builder_instance != 0u &&
+            entry->frame.builder_instance == builder->instance_id &&
             entry->frame.binding_rollbacks == builder->rollback_count &&
             entry->frame.binding_growth < builder->growth_count &&
             entry->frame.scanned_len <= bindings->len &&
@@ -14367,7 +14401,7 @@ static bool petta_machine_dispatch_solve(
     /*
      * SWI's foldl/4 is exposed by PeTTa in function form as
      * `(foldl Callable Items Initial)`.  Normalize it to the native
-     * foldl-atom continuation shape so both surfaces share one relational
+     * foldl-atom continuation shape so both forms share one relational
      * implementation, including step nondeterminism and cut/suspension
      * behavior.
      */

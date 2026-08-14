@@ -410,7 +410,7 @@ static void test_locally_nameless_seams(Arena *arena,
     Atom *closed_y = abt_close(signature, arena, y, y_body);
     check_atom_eq("close accounts for nested binders", closed_x, closed);
     CHECK(abt_alpha_eq(closed_x, closed_y),
-          "alpha-renamed named surfaces close identically");
+          "alpha-renamed named syntax forms close identically");
     check_atom_eq("open inverts close on locally closed body",
                   abt_open(signature, arena, x, closed_x), x_body);
     CHECK(abt_open(signature, arena, x, x_body) == x_body,
@@ -450,7 +450,7 @@ static void test_locally_nameless_seams(Arena *arena,
                   abt_bind(signature, arena, named_x,
                            node2(arena, "App", var(arena, 0), named_x)),
                   node2(arena, "App", var(arena, 1), var(arena, 0)));
-    check_atom_eq("bind preserves a different generated surface name",
+    check_atom_eq("bind preserves a different generated syntax name",
                   abt_bind(signature, arena, named_x,
                            node2(arena, "App", named_y, named_x)),
                   node2(arena, "App", named_y, var(arena, 0)));
@@ -540,70 +540,70 @@ static void test_named_readback(Arena *arena,
     Atom *a0 = atom_symbol(arena, "a0");
     Atom *a1 = atom_symbol(arena, "a1");
     Atom *simple = node2(arena, "Lam", type, var(arena, 0));
-    Atom *simple_surface = node4(
+    Atom *simple_syntax = node4(
         arena, "ABTBind", atom_symbol(arena, "Lam"),
         node1(arena, "Binders", a0), type, a0);
     check_atom_eq("named readback prints a canonical lambda",
-                  abt_print(signature, arena, simple), simple_surface);
+                  abt_print(signature, arena, simple), simple_syntax);
     check_atom_eq("named parsing inverts a canonical lambda readback",
-                  abt_parse(signature, arena, simple_surface), simple);
+                  abt_parse(signature, arena, simple_syntax), simple);
 
     Atom *nested = node2(
         arena, "Lam", type,
         node2(arena, "Lam", type,
               node2(arena, "App", var(arena, 1), var(arena, 0))));
-    Atom *nested_surface = node4(
+    Atom *nested_syntax = node4(
         arena, "ABTBind", atom_symbol(arena, "Lam"),
         node1(arena, "Binders", a0), type,
         node4(arena, "ABTBind", atom_symbol(arena, "Lam"),
               node1(arena, "Binders", a1), type,
               node2(arena, "App", a0, a1)));
     check_atom_eq("named readback converts indices to absolute levels",
-                  abt_print(signature, arena, nested), nested_surface);
+                  abt_print(signature, arena, nested), nested_syntax);
     check_atom_eq("nested named readback round-trips",
-                  abt_parse(signature, arena, nested_surface), nested);
+                  abt_parse(signature, arena, nested_syntax), nested);
 
     Atom *collision = node2(
         arena, "Lam", type, node2(arena, "App", var(arena, 0), a0));
-    Atom *collision_surface = node4(
+    Atom *collision_syntax = node4(
         arena, "ABTBind", atom_symbol(arena, "Lam"),
         node1(arena, "Binders", a1), type,
         node2(arena, "App", a1, a0));
     check_atom_eq("named readback avoids capturing a free generated name",
-                  abt_print(signature, arena, collision), collision_surface);
+                  abt_print(signature, arena, collision), collision_syntax);
     check_atom_eq("capture-free generated names round-trip",
-                  abt_parse(signature, arena, collision_surface), collision);
+                  abt_parse(signature, arena, collision_syntax), collision);
 
     Atom *x = atom_symbol(arena, "x");
     Atom *y = atom_symbol(arena, "y");
-    Atom *alpha_surface = node4(
+    Atom *alpha_syntax = node4(
         arena, "ABTBind", atom_symbol(arena, "Lam"),
         node1(arena, "Binders", x), type, x);
     check_atom_eq("named parsing quotients alpha-renamed binders",
-                  abt_parse(signature, arena, alpha_surface), simple);
-    Atom *shadow_surface = node4(
+                  abt_parse(signature, arena, alpha_syntax), simple);
+    Atom *shadow_syntax = node4(
         arena, "ABTBind", atom_symbol(arena, "Lam"),
         node1(arena, "Binders", x), type,
         node4(arena, "ABTBind", atom_symbol(arena, "Lam"),
               node1(arena, "Binders", y), type,
               node2(arena, "App", x, y)));
     check_atom_eq("named parsing resolves lexical scope innermost-first",
-                  abt_parse(signature, arena, shadow_surface), nested);
+                  abt_parse(signature, arena, shadow_syntax), nested);
 
     Atom *named_x = node1(arena, "quote", atom_string(arena, "arg-1"));
-    Atom *named_surface = node4(
+    Atom *named_syntax = node4(
         arena, "ABTBind", atom_symbol(arena, "Lam"),
         node1(arena, "Binders", named_x), type, named_x);
     check_atom_eq("named parsing accepts quoted-string identities",
-                  abt_parse(signature, arena, named_surface), simple);
+                  abt_parse(signature, arena, named_syntax), simple);
 
     Atom *mm_ph = node1(arena, "quote",
                         node1(arena, "mm-var", atom_string(arena, "ph")));
-    Atom *quoted_surface = node4(
+    Atom *quoted_syntax = node4(
         arena, "ABTBind", atom_symbol(arena, "Lam"),
         node1(arena, "Binders", mm_ph), type, mm_ph);
     check_atom_eq("named parsing accepts quoted structural identities",
-                  abt_parse(signature, arena, quoted_surface), simple);
+                  abt_parse(signature, arena, quoted_syntax), simple);
     Atom *mm_ps = node1(arena, "quote",
                         node1(arena, "mm-var", atom_string(arena, "ps")));
     Atom *quoted_distinct = node4(
@@ -644,31 +644,31 @@ static void test_named_readback(Arena *arena,
     Atom *scoped = node2(
         arena, "ScopedPair", atom_symbol(arena, "payload"),
         node2(arena, "App", var(arena, 1), var(arena, 0)));
-    Atom *scoped_surface = node4(
+    Atom *scoped_syntax = node4(
         arena, "ABTBind", atom_symbol(arena, "ScopedPair"),
         node2(arena, "Binders", a0, a1),
         atom_symbol(arena, "payload"), node2(arena, "App", a0, a1));
     check_atom_eq("named readback preserves arbitrary declared depths",
-                  abt_print(&scoped_signature, arena, scoped), scoped_surface);
+                  abt_print(&scoped_signature, arena, scoped), scoped_syntax);
     check_atom_eq("depth-two named readback round-trips",
-                  abt_parse(&scoped_signature, arena, scoped_surface), scoped);
-    Atom *duplicate_surface = node4(
+                  abt_parse(&scoped_signature, arena, scoped_syntax), scoped);
+    Atom *duplicate_syntax = node4(
         arena, "ABTBind", atom_symbol(arena, "ScopedPair"),
         node2(arena, "Binders", x, x), atom_symbol(arena, "payload"),
         node2(arena, "App", x, x));
-    CHECK(abt_parse(&scoped_signature, arena, duplicate_surface) == NULL,
+    CHECK(abt_parse(&scoped_signature, arena, duplicate_syntax) == NULL,
           "duplicate binders fail closed");
-    Atom *duplicate_quoted_surface = node4(
+    Atom *duplicate_quoted_syntax = node4(
         arena, "ABTBind", atom_symbol(arena, "ScopedPair"),
         node2(arena, "Binders", mm_ph, mm_ph),
         atom_symbol(arena, "payload"), node2(arena, "App", mm_ph, mm_ph));
     CHECK(abt_parse(
-              &scoped_signature, arena, duplicate_quoted_surface) == NULL,
+              &scoped_signature, arena, duplicate_quoted_syntax) == NULL,
           "structurally duplicate quoted binders fail closed");
     abt_signature_free(&scoped_signature);
 
     CHECK(abt_parse(signature, arena, node2(arena, "Lam", type, x)) == NULL,
-          "known binding constructors require an explicit surface binder");
+          "known binding constructors require an explicit syntax binder");
     CHECK(abt_parse(signature, arena, var(arena, 0)) == NULL,
           "named parsing rejects embedded canonical indices");
     Atom *plain = node2(
@@ -744,10 +744,10 @@ static void test_deep_and_cyclic_inputs(Arena *arena,
           "shift traversal is iterative at depth 100000");
     CHECK(abt_alpha_eq(deep, deep_shifted),
           "alpha equality is iterative at depth 100000");
-    Atom *deep_surface = abt_print(signature, arena, deep);
-    CHECK(deep_named_lam_has_depth(deep_surface),
+    Atom *deep_syntax = abt_print(signature, arena, deep);
+    CHECK(deep_named_lam_has_depth(deep_syntax),
           "named readback is iterative at depth 100000");
-    CHECK(abt_alpha_eq(abt_parse(signature, arena, deep_surface), deep),
+    CHECK(abt_alpha_eq(abt_parse(signature, arena, deep_syntax), deep),
           "named parsing is iterative and round-trips at depth 100000");
 
     Atom *cycle = node1(arena, "Loop", atom_symbol(arena, "seed"));

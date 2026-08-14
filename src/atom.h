@@ -511,6 +511,7 @@ void atom_print_petta(Atom *a, FILE *out);
 /* Print into arena-allocated string */
 char *atom_to_string(Arena *a, Atom *atom);
 char *atom_to_parseable_string(Arena *a, Atom *atom);
+char *atom_to_parseable_string_petta(Arena *a, Atom *atom);
 
 /* Deep-copy an atom DAG into a different arena, preserving source pointer
    sharing within one copy episode. */

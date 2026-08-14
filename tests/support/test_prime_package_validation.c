@@ -1280,7 +1280,7 @@ int main(int argc, char **argv) {
     eval_outcome_free(&decons_fault);
 
 #if CETTA_BUILD_WITH_PYTHON
-    /* The symbolic Python convenience surface must preserve its occurrence
+    /* The symbolic Python convenience syntax must preserve its occurrence
        bag in Prime.  In particular, zero and many results cannot be encoded
        as the Empty datum and one tuple-shaped datum. */
     Atom *foreign_zero_expr = parse_one(

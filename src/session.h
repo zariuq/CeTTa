@@ -33,7 +33,8 @@ typedef enum {
     CETTA_PROFILE_ZERO_EXP = 9,
     CETTA_PROFILE_MM2_GSLT = 10,
     CETTA_PROFILE_ZERO_EMIT = 11,
-    CETTA_PROFILE_ZERO_INTERACT = 12
+    CETTA_PROFILE_ZERO_INTERACT = 12,
+    CETTA_PROFILE_PETTA_TYPECHECK_V3 = 13
 } CettaProfileId;
 
 typedef enum {
@@ -64,7 +65,7 @@ typedef struct {
     CettaLanguageId language_id;
     const char *name;
     const char *note;
-    bool he_compatible_surface;
+    bool he_compatible_builtin;
     bool enable_cetta_extensions;
     bool enable_dependent_telescope;
     bool rust_he_compat_semantics;
@@ -216,8 +217,8 @@ typedef struct {
 typedef struct {
     const char *name;
     uint32_t visibility_mask;
-    const char *surface_classification;
-} CettaSurfacePolicy;
+    const char *builtin_classification;
+} CettaBuiltinPolicy;
 
 const CettaProfile *cetta_profile_he_formal(void);
 const CettaProfile *cetta_profile_he_compat(void);
@@ -227,22 +228,24 @@ const CettaProfile *cetta_profile_prime_default(void);
 const CettaProfile *cetta_profile_petta_extended(void);
 #if CETTA_BUILD_WITH_PETTA_TYPECHECK_V2
 const CettaProfile *cetta_profile_petta_typecheck_v2(void);
+const CettaProfile *cetta_profile_petta_typecheck_v3(void);
 #endif
+bool cetta_profile_uses_petta_typing(const CettaProfile *profile);
 bool cetta_language_has_named_profiles(CettaLanguageId language_id);
 bool cetta_profile_is_valid_for_language(CettaLanguageId language_id,
                                          const CettaProfile *profile);
 const CettaProfile *cetta_profile_from_name_for_language(CettaLanguageId language_id,
                                                          const char *name);
 uint32_t cetta_profile_mask(const CettaProfile *profile);
-uint32_t cetta_language_surface_mask(CettaLanguageId language_id,
+uint32_t cetta_language_builtin_mask(CettaLanguageId language_id,
                                      const CettaProfile *profile);
 bool cetta_language_visible_in(CettaLanguageId language_id,
                                const CettaProfile *profile,
                                uint32_t visibility_mask);
 void cetta_profile_print_inventory_for_language(FILE *out,
                                                 CettaLanguageId language_id);
-const CettaSurfacePolicy *cetta_surface_policy_lookup(const char *name);
-bool cetta_language_allows_surface(CettaLanguageId language_id,
+const CettaBuiltinPolicy *cetta_builtin_policy_lookup(const char *name);
+bool cetta_language_allows_builtin(CettaLanguageId language_id,
                                    const CettaProfile *profile,
                                    const char *name);
 bool cetta_language_enables_dependent_telescope(CettaLanguageId language_id,

@@ -29,7 +29,11 @@ bool cetta_gslt_indexed_instruction_plan_validate_v1(
                              plan->continuation_high) &&
            plan->save_byte != plan->unknown_byte &&
            plan->terminal_radix != 0u &&
-           plan->continuation_radix != 0u;
+           plan->continuation_radix != 0u &&
+           (plan->save_placement ==
+                CETTA_GSLT_INDEXED_SAVE_IMMEDIATELY_AFTER_USE_V1 ||
+            plan->save_placement ==
+                CETTA_GSLT_INDEXED_SAVE_REPEATABLE_AFTER_USE_V1);
 }
 
 CettaGsltIndexedDecodeResultV1 cetta_gslt_indexed_instruction_decoder_init_v1(
@@ -80,7 +84,7 @@ CettaGsltIndexedDecodeResultV1 cetta_gslt_indexed_instruction_feed_v1(
         if (result != CETTA_GSLT_INDEXED_DECODE_OK_V1)
             return result;
         decoder->accumulator = 0u;
-        decoder->open_index = false;
+        decoder->phase = CETTA_GSLT_INDEXED_PHASE_JUST_COMPLETED_USE_V1;
         event->kind = CETTA_GSLT_INDEXED_INSTRUCTION_USE_V1;
         event->index = value;
         decoder->emitted_instruction_len++;
@@ -95,19 +99,27 @@ CettaGsltIndexedDecodeResultV1 cetta_gslt_indexed_instruction_feed_v1(
         if (result != CETTA_GSLT_INDEXED_DECODE_OK_V1)
             return result;
         decoder->accumulator = value;
-        decoder->open_index = true;
+        decoder->phase = CETTA_GSLT_INDEXED_PHASE_OPEN_INDEX_V1;
         return CETTA_GSLT_INDEXED_DECODE_OK_V1;
     }
     if (byte == plan->save_byte) {
-        if (decoder->open_index)
+        if (decoder->phase == CETTA_GSLT_INDEXED_PHASE_OPEN_INDEX_V1)
             return CETTA_GSLT_INDEXED_DECODE_SAVE_INSIDE_INDEX_V1;
+        if (decoder->phase !=
+            CETTA_GSLT_INDEXED_PHASE_JUST_COMPLETED_USE_V1)
+            return CETTA_GSLT_INDEXED_DECODE_SAVE_WITHOUT_USE_V1;
         event->kind = CETTA_GSLT_INDEXED_INSTRUCTION_SAVE_V1;
+        if (plan->save_placement ==
+            CETTA_GSLT_INDEXED_SAVE_IMMEDIATELY_AFTER_USE_V1)
+            decoder->phase = CETTA_GSLT_INDEXED_PHASE_BETWEEN_USES_V1;
         decoder->emitted_instruction_len++;
         return CETTA_GSLT_INDEXED_DECODE_OK_V1;
     }
     if (byte == plan->unknown_byte) {
+        if (decoder->phase == CETTA_GSLT_INDEXED_PHASE_OPEN_INDEX_V1)
+            return CETTA_GSLT_INDEXED_DECODE_UNKNOWN_INSIDE_INDEX_V1;
         decoder->accumulator = 0u;
-        decoder->open_index = false;
+        decoder->phase = CETTA_GSLT_INDEXED_PHASE_BETWEEN_USES_V1;
         event->kind = CETTA_GSLT_INDEXED_INSTRUCTION_UNKNOWN_V1;
         decoder->emitted_instruction_len++;
         return CETTA_GSLT_INDEXED_DECODE_OK_V1;
@@ -119,7 +131,7 @@ CettaGsltIndexedDecodeResultV1 cetta_gslt_indexed_instruction_finish_v1(
     const CettaGsltIndexedInstructionDecoderV1 *decoder) {
     if (!decoder || !decoder->ready)
         return CETTA_GSLT_INDEXED_DECODE_INVALID_ARGUMENT_V1;
-    return decoder->open_index
+    return decoder->phase == CETTA_GSLT_INDEXED_PHASE_OPEN_INDEX_V1
         ? CETTA_GSLT_INDEXED_DECODE_OPEN_INDEX_AT_END_V1
         : CETTA_GSLT_INDEXED_DECODE_OK_V1;
 }

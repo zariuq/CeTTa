@@ -200,28 +200,28 @@ def main() -> int:
         site(r2, inspect, task_var, qsym("wrong-revision"), fuel(0)),
     )
 
-    events_surface = qapp(qsym("!"), qapp(qsym("events"), r1, task_alpha))
-    fire_surface = qapp(
+    events_syntax = qapp(qsym("!"), qapp(qsym("events"), r1, task_alpha))
+    fire_syntax = qapp(
         qsym("!"), qapp(qsym("fire"), r1, fuel(1), task_alpha, inspect)
     )
     plan = qapp(
         qsym("then"), inspect,
         qapp(qsym("then"), solve, qsym("end")),
     )
-    run_surface = qapp(
+    run_syntax = qapp(
         qsym("!"), qapp(qsym("run"), r1, fuel(3), task_alpha, plan)
     )
-    for surface, constructor in (
-        (events_surface, "interact-events-request"),
-        (fire_surface, "interact-fire-request"),
-        (run_surface, "interact-run-request"),
+    for syntax, constructor in (
+        (events_syntax, "interact-events-request"),
+        (fire_syntax, "interact-fire-request"),
+        (run_syntax, "interact-run-request"),
     ):
         answers = relation_answers(
             chart,
             sources,
             "interact-classify",
             3,
-            f"(interact-classify request-zero {surface} ?request)",
+            f"(interact-classify request-zero {syntax} ?request)",
         )
         if len(answers) != 1 or not sx.render(answers[0][3]).startswith(
             f"({constructor} "

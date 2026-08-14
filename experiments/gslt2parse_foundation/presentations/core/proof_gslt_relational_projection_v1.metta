@@ -178,6 +178,14 @@
       (body
         (proof-relational-projection-layer-valid-v1 ?owner ?base)
         (source-proof-relational-value-different-v1 ?left ?right)))
+    (rule proof-relational-projection-label-different-v1
+      (head
+        (source-proof-trace-input-label-different-v1
+          (ProofRelationalLabelV1 ?owner ?left)
+          (ProofRelationalLabelV1 ?owner ?right)))
+      (body
+        (proof-relational-projection-layer-valid-v1 ?owner ?base)
+        (source-proof-relational-value-different-v1 ?left ?right)))
 
     (rule proof-relational-projection-request-v1
       (head

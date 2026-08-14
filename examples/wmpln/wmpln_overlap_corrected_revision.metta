@@ -9,7 +9,7 @@
 ; (stv 0.4 0.8), weight=4, so pos=1.6 and neg=2.4.
 
 ; Guarded additive Revision is allowed exactly in the zero-overlap case.  The
-; overlap-corrected merge conservatively extends that guarded surface: when the
+; overlap-corrected merge conservatively extends that guarded syntax: when the
 ; guard allows, corrected revision agrees with raw revision; when the guard
 ; rejects, corrected revision remains available and avoids double-counting.
 (= (GuardedRevisionAllows $stampA $stampB)

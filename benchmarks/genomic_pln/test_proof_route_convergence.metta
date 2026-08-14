@@ -1,7 +1,7 @@
 ; Regression for the restored WM-PLN pathway-mediated routes.
 ; Positive example:
 ; the fixed chainer reaches CRP and GLUL through the shared-pathway transfer
-; route, and the restored support surface includes the CRP treatment path.
+; route, and the restored support syntax includes the CRP treatment path.
 ;
 ; Negative example:
 ; over-admitting those restored hits as if they were direct disease routes.

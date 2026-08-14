@@ -1,4 +1,4 @@
-// Surface rho mirror of the primed diamond scheduler witness.
+// Syntax rho mirror of the primed diamond scheduler witness.
 // A unique seed COMM reveals the H3 diamond after round 1, diverges at
 // reduction limit 2 under canonical vs rotating, then reconverges at reduction limit 3.
 for ($seed <- @{0}) {*$seed} |

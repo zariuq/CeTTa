@@ -27,7 +27,7 @@ ABSTRACT_SYNTAX = (
     / "shared"
     / "rho_abstract_syntax_v1.metta"
 )
-SURFACES = ("rho", "mrho")
+SYNTAXES = ("rho", "mrho")
 
 
 class PlanError(ValueError):
@@ -229,12 +229,12 @@ def projection_sorts(
 
 
 def compile_plan(
-    surface: str,
+    syntax: str,
     runtime_path: Path = RUNTIME_ABI,
     abstract_path: Path = ABSTRACT_SYNTAX,
 ) -> schema.SExpr:
-    if surface not in SURFACES:
-        raise PlanError(f"unknown rho projection surface: {surface}")
+    if syntax not in SYNTAXES:
+        raise PlanError(f"unknown rho projection syntax: {syntax}")
     runtime = schema.parse_presentation(runtime_path)
     abstract = schema.parse_presentation(abstract_path)
     shapes = load_runtime_shapes(runtime)
@@ -245,47 +245,47 @@ def compile_plan(
             f"{sorted(shapes)} != {sorted(abstract_shapes)}"
         )
     document_sort, variable_sort = projection_sorts(abstract_shapes, shapes)
-    surface_rows = [
+    syntax_rows = [
         row
-        for row in facts(runtime, "rho-runtime-projection-surface", 10)
-        if symbol(row[0], "projection surface") == surface
+        for row in facts(runtime, "rho-runtime-projection-syntax", 10)
+        if symbol(row[0], "projection syntax") == syntax
     ]
-    if len(surface_rows) != 1:
-        raise PlanError(f"{surface}: expected exactly one projection-surface fact")
-    row = surface_rows[0]
-    wrappers = decode_list(row[7], f"{surface} text wrappers")
-    variables = decode_list(row[8], f"{surface} variable labels")
+    if len(syntax_rows) != 1:
+        raise PlanError(f"{syntax}: expected exactly one projection-syntax fact")
+    row = syntax_rows[0]
+    wrappers = decode_list(row[7], f"{syntax} text wrappers")
+    variables = decode_list(row[8], f"{syntax} variable labels")
     if not wrappers or not variables:
-        raise PlanError(f"{surface}: empty text-wrapper or variable-label set")
+        raise PlanError(f"{syntax}: empty text-wrapper or variable-label set")
     if len({schema.render(value) for value in wrappers}) != len(wrappers):
-        raise PlanError(f"{surface}: duplicate text wrapper")
+        raise PlanError(f"{syntax}: duplicate text wrapper")
     if len({schema.render(value) for value in variables}) != len(variables):
-        raise PlanError(f"{surface}: duplicate variable label")
-    wrapper_names = {symbol(value, f"{surface} text wrapper") for value in wrappers}
+        raise PlanError(f"{syntax}: duplicate variable label")
+    wrapper_names = {symbol(value, f"{syntax} text wrapper") for value in wrappers}
     variable_names = {
-        symbol(value, f"{surface} variable label") for value in variables
+        symbol(value, f"{syntax} variable label") for value in variables
     }
-    binder_wrapper = symbol(row[9], f"{surface} binder wrapper")
+    binder_wrapper = symbol(row[9], f"{syntax} binder wrapper")
     if not variable_names <= wrapper_names:
-        raise PlanError(f"{surface}: variable label is not a text wrapper")
+        raise PlanError(f"{syntax}: variable label is not a text wrapper")
     if binder_wrapper not in wrapper_names:
-        raise PlanError(f"{surface}: binder label is not a text wrapper")
+        raise PlanError(f"{syntax}: binder label is not a text wrapper")
     if binder_wrapper in variable_names:
-        raise PlanError(f"{surface}: binder label overlaps a variable label")
+        raise PlanError(f"{syntax}: binder label overlaps a variable label")
 
     source_rules: dict[str, schema.SExpr] = {}
-    for raw_surface, raw_constructor, raw_shape in facts(
+    for raw_syntax, raw_constructor, raw_shape in facts(
         runtime, "rho-runtime-projection-rule", 3
     ):
-        if symbol(raw_surface, "projection rule surface") != surface:
+        if symbol(raw_syntax, "projection rule syntax") != syntax:
             continue
         constructor = symbol(raw_constructor, "projection constructor")
         if constructor in source_rules:
-            raise PlanError(f"{surface}: duplicate projection rule {constructor}")
+            raise PlanError(f"{syntax}: duplicate projection rule {constructor}")
         source_rules[constructor] = raw_shape
     if set(source_rules) != set(shapes):
         raise PlanError(
-            f"{surface}: projection/runtime constructor sets differ: "
+            f"{syntax}: projection/runtime constructor sets differ: "
             f"{sorted(source_rules)} != {sorted(shapes)}"
         )
 
@@ -304,7 +304,7 @@ def compile_plan(
                     or target.child_count != 0
                     or abstract_shape.arguments
                 ):
-                    raise PlanError(f"{surface}/{constructor}: symbol shape mismatch")
+                    raise PlanError(f"{syntax}/{constructor}: symbol shape mismatch")
                 compiled = (
                     schema.Symbol("ptp-symbol-rule"),
                     label,
@@ -317,7 +317,7 @@ def compile_plan(
                     or len(abstract_shape.arguments) != 1
                     or abstract_shape.arguments[0].kind != "collection"
                 ):
-                    raise PlanError(f"{surface}/{constructor}: monoid shape mismatch")
+                    raise PlanError(f"{syntax}/{constructor}: monoid shape mismatch")
                 policies = [
                     policy
                     for policy in facts(runtime, "rho-runtime-collection-policy", 4)
@@ -325,7 +325,7 @@ def compile_plan(
                 ]
                 if len(policies) != 1:
                     raise PlanError(
-                        f"{surface}/{constructor}: missing collection policy"
+                        f"{syntax}/{constructor}: missing collection policy"
                     )
                 policy = policies[0]
                 if (
@@ -333,7 +333,7 @@ def compile_plan(
                     or symbol(policy[2], "collection head") != target.head
                 ):
                     raise PlanError(
-                        f"{surface}/{constructor}: collection target mismatch"
+                        f"{syntax}/{constructor}: collection target mismatch"
                     )
                 compiled = (
                     schema.Symbol("ptp-monoid-rule"),
@@ -345,11 +345,11 @@ def compile_plan(
                 )
             else:
                 raise PlanError(
-                    f"{surface}/{constructor}: unknown projection rule shape"
+                    f"{syntax}/{constructor}: unknown projection rule shape"
                 )
         else:
-            items = form(source_shape, f"{surface}/{constructor} source shape")
-            tag = symbol(items[0], f"{surface}/{constructor} source tag")
+            items = form(source_shape, f"{syntax}/{constructor} source shape")
+            tag = symbol(items[0], f"{syntax}/{constructor} source tag")
             if tag == "rho-projection-fixed" and len(items) == 2:
                 if (
                     target.kind != "fixed"
@@ -358,15 +358,15 @@ def compile_plan(
                         for argument in abstract_shape.arguments
                     )
                 ):
-                    raise PlanError(f"{surface}/{constructor}: fixed shape mismatch")
-                indexes = decode_list(items[1], f"{surface}/{constructor} indexes")
+                    raise PlanError(f"{syntax}/{constructor}: fixed shape mismatch")
+                indexes = decode_list(items[1], f"{syntax}/{constructor} indexes")
                 if any(not isinstance(index, int) for index in indexes):
-                    raise PlanError(f"{surface}/{constructor}: noninteger index")
+                    raise PlanError(f"{syntax}/{constructor}: noninteger index")
                 if target.child_count != len(indexes):
-                    raise PlanError(f"{surface}/{constructor}: fixed arity mismatch")
+                    raise PlanError(f"{syntax}/{constructor}: fixed arity mismatch")
                 if sorted(indexes) != list(range(len(indexes))):
                     raise PlanError(
-                        f"{surface}/{constructor}: indexes are not a permutation"
+                        f"{syntax}/{constructor}: indexes are not a permutation"
                     )
                 compiled = (
                     schema.Symbol("ptp-fixed-rule"),
@@ -388,9 +388,9 @@ def compile_plan(
                     or len(abstract_shape.arguments) != 1
                     or abstract_shape.arguments[0].kind != "simple"
                 ):
-                    raise PlanError(f"{surface}/{constructor}: quote shape mismatch")
+                    raise PlanError(f"{syntax}/{constructor}: quote shape mismatch")
                 if not isinstance(items[1], int) or items[1] != 0:
-                    raise PlanError(f"{surface}/{constructor}: quote index changed")
+                    raise PlanError(f"{syntax}/{constructor}: quote index changed")
                 compiled = (
                     schema.Symbol("ptp-quote-rule"),
                     label,
@@ -418,13 +418,13 @@ def compile_plan(
                     or len(abstractions) != 1
                     or abstractions[0].binder_sort is None
                 ):
-                    raise PlanError(f"{surface}/{constructor}: binder shape mismatch")
+                    raise PlanError(f"{syntax}/{constructor}: binder shape mismatch")
                 indexes = list(items[1:])
                 if any(not isinstance(index, int) for index in indexes):
-                    raise PlanError(f"{surface}/{constructor}: noninteger binder index")
+                    raise PlanError(f"{syntax}/{constructor}: noninteger binder index")
                 if sorted(indexes) != [0, 1, 2]:
                     raise PlanError(
-                        f"{surface}/{constructor}: binder indexes are not bijective"
+                        f"{syntax}/{constructor}: binder indexes are not bijective"
                     )
                 compiled = (
                     schema.Symbol("ptp-binder-rule"),
@@ -438,7 +438,7 @@ def compile_plan(
                 )
             else:
                 raise PlanError(
-                    f"{surface}/{constructor}: malformed projection rule shape"
+                    f"{syntax}/{constructor}: malformed projection rule shape"
                 )
         compiled_rules.append(compiled)
 
@@ -461,21 +461,21 @@ def compile_plans(
     abstract_path: Path = ABSTRACT_SYNTAX,
 ) -> dict[str, schema.SExpr]:
     return {
-        surface: compile_plan(surface, runtime_path, abstract_path)
-        for surface in SURFACES
+        syntax: compile_plan(syntax, runtime_path, abstract_path)
+        for syntax in SYNTAXES
     }
 
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--surface", choices=SURFACES, required=True)
+    parser.add_argument("--syntax", choices=SYNTAXES, required=True)
     parser.add_argument("--runtime-abi", type=Path, default=RUNTIME_ABI)
     parser.add_argument("--abstract-syntax", type=Path, default=ABSTRACT_SYNTAX)
     arguments = parser.parse_args()
     print(
         schema.render(
             compile_plan(
-                arguments.surface,
+                arguments.syntax,
                 arguments.runtime_abi,
                 arguments.abstract_syntax,
             )

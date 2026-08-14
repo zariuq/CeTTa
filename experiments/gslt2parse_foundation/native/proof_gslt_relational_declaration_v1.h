@@ -1,6 +1,7 @@
 #ifndef CETTA_GSLT2PARSE_PROOF_GSLT_RELATIONAL_DECLARATION_V1_H
 #define CETTA_GSLT2PARSE_PROOF_GSLT_RELATIONAL_DECLARATION_V1_H
 
+#include "gslt_reusable_buffer_v1.h"
 #include "proof_gslt_relational_assertion_v1.h"
 #include "proof_gslt_sequence_evidence_v1.h"
 #include "relational_store_v1.h"
@@ -48,6 +49,52 @@ typedef struct {
 } PPProofGSLTRelationalActualHypothesisV1;
 
 typedef struct {
+    uint32_t position;
+    uint32_t label;
+} PPProofGSLTRelationalOrderedRowV1;
+
+/* Call-local control headers for declaration and assertion preparation.
+ * Their arrays may be owned by reusable buffers; owns_storage distinguishes a
+ * fallback heap header from a header supplied by an admitted call region. */
+typedef struct {
+    PPProofGSLTRelationalBindingSchemaV1 *bindings;
+    uint32_t binding_cap;
+    PPProofGSLTRelationalEssentialSchemaV1 *essentials;
+    uint32_t essential_cap;
+    PPProofGSLTAssertionDisjointV1 *disjoints;
+    uint32_t disjoint_cap;
+    PPProofGSLTRelationalOrderedHypothesisV1 *ordered;
+    uint32_t ordered_cap;
+    bool owns_arrays;
+    bool owns_storage;
+} PPProofGSLTRelationalDeclarationStorageV1;
+
+typedef struct {
+    PPProofGSLTAssertionBindingV1 *bindings;
+    PPProofGSLTAssertionEssentialV1 *essentials;
+    bool owns_arrays;
+    bool owns_storage;
+} PPProofGSLTRelationalPreparedStorageV1;
+
+/* Scratch carriers supplied by an admitted proof-call workspace.  Both
+ * buffers must hold active leases for the duration of elaboration. */
+typedef struct {
+    CettaGsltReusableBufferV1 *required_binder_ids;
+    CettaGsltReusableBufferV1 *ordered_rows;
+    CettaGsltReusableBufferV1 *binding_schemas;
+    CettaGsltReusableBufferV1 *premise_schemas;
+    CettaGsltReusableBufferV1 *apartness_pairs;
+    CettaGsltReusableBufferV1 *ordered_premises;
+    PPProofGSLTRelationalDeclarationStorageV1 *control;
+} PPProofGSLTRelationalDeclarationWorkspaceV1;
+
+typedef struct {
+    CettaGsltReusableBufferV1 *bindings;
+    CettaGsltReusableBufferV1 *premises;
+    PPProofGSLTRelationalPreparedStorageV1 *control;
+} PPProofGSLTRelationalPreparedWorkspaceV1;
+
+typedef struct {
     PPProofGSLTAssertionDeclarationV1 declaration;
     void *storage;
 } PPProofGSLTRelationalPreparedAssertionV1;
@@ -75,6 +122,22 @@ PPProofGSLTArticleV1Result ppproof_gslt_relational_context_v1_begin(
     const PPProofGSLTArticleV1Limits *limits,
     char *error_buf,
     size_t error_buf_size);
+
+typedef struct {
+    uint64_t store_identity;
+    uint32_t present_mask;
+    uint32_t row_lens[PPPROOF_GSLT_RELATIONAL_TABLE_V1_LEN];
+} PPProofGSLTRelationalDeclarationSnapshotV1;
+
+/* Capture and later revalidate the exact append-only prefixes read while
+ * elaborating declarations.  Prefix immutability plus unchanged lengths
+ * implies unchanged rows.  Optional-empty relations need no snapshot. */
+bool ppproof_gslt_relational_context_v1_declaration_snapshot(
+    const PPProofGSLTRelationalContextV1 *context,
+    PPProofGSLTRelationalDeclarationSnapshotV1 *snapshot_out);
+bool ppproof_gslt_relational_context_v1_declaration_snapshot_matches(
+    const PPProofGSLTRelationalContextV1 *context,
+    const PPProofGSLTRelationalDeclarationSnapshotV1 *snapshot);
 
 PPProofGSLTArticleV1Result ppproof_gslt_relational_context_v1_formula(
     PPProofGSLTRelationalContextV1 *context,
@@ -125,7 +188,6 @@ PPProofGSLTArticleV1Result ppproof_gslt_relational_context_v1_view(
 PPProofGSLTArticleV1Result
 ppproof_gslt_relational_context_v1_evidence_sources(
     PPProofGSLTRelationalContextV1 *context,
-    uint32_t active_apartness_table,
     PPProofGSLTRelationalEvidenceV1 *evidence,
     PPProofGSLTSequenceEvidenceSourcesV1 *sources_out,
     char *error_buf,
@@ -144,6 +206,15 @@ PPProofGSLTArticleV1Result ppproof_gslt_relational_declaration_v1_elaborate(
     char *error_buf,
     size_t error_buf_size);
 
+PPProofGSLTArticleV1Result
+ppproof_gslt_relational_declaration_v1_elaborate_with_workspace(
+    PPProofGSLTRelationalContextV1 *context,
+    uint32_t assertion_value,
+    const PPProofGSLTRelationalDeclarationWorkspaceV1 *workspace,
+    PPProofGSLTRelationalDeclarationV1 *declaration,
+    char *error_buf,
+    size_t error_buf_size);
+
 void ppproof_gslt_relational_prepared_assertion_v1_init(
     PPProofGSLTRelationalPreparedAssertionV1 *prepared);
 
@@ -155,6 +226,16 @@ ppproof_gslt_relational_prepared_assertion_v1_build(
     const PPProofGSLTRelationalDeclarationV1 *schema,
     const PPProofGSLTRelationalActualHypothesisV1 *actuals,
     uint32_t actual_len,
+    PPProofGSLTRelationalPreparedAssertionV1 *prepared,
+    char *error_buf,
+    size_t error_buf_size);
+
+PPProofGSLTArticleV1Result
+ppproof_gslt_relational_prepared_assertion_v1_build_with_workspace(
+    const PPProofGSLTRelationalDeclarationV1 *schema,
+    const PPProofGSLTRelationalActualHypothesisV1 *actuals,
+    uint32_t actual_len,
+    const PPProofGSLTRelationalPreparedWorkspaceV1 *workspace,
     PPProofGSLTRelationalPreparedAssertionV1 *prepared,
     char *error_buf,
     size_t error_buf_size);

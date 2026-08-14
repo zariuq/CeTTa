@@ -24,7 +24,7 @@
     (operator zero-step-request 3))
   (equations)
   (rewrites
-    ; Surface configuration:
+    ; Syntax configuration:
     ;   (zero-step (zero-pending subject continuation))
     ; `zero-halt` completes with the first quiescent value.  A continuation
     ; `(zero-then template next)` substitutes that value for the template's

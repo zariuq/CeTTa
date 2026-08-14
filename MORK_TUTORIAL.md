@@ -24,7 +24,7 @@ So if you are a MeTTa user, the important shift is:
 
 - ordinary CeTTa spaces can be native or PathMap-backed
 - `MorkSpace` gives you **direct access to MORK via MM2** — you write `exec` rules in the MM2 language, step them to fixpoint, and inspect the results
-- the `mork:` surface additionally exposes **explicit PathMap algebra** (`join`, `meet`, `subtract`, `prefix-restrict`) and **trie cursor** operations that ordinary spaces don't surface
+- the `mork:` interface additionally exposes **explicit PathMap algebra** (`join`, `meet`, `subtract`, `prefix-restrict`) and **trie cursor** operations that ordinary spaces don't interface
 
 Further reading:
 
@@ -32,11 +32,11 @@ Further reading:
 - [Data in MORK](https://github.com/trueagi-io/MORK/wiki/Data-in-MORK)
 - [MM2 Structuring Code](https://github.com/ClarkeRemy/MM2_Structuring_Code)
 
-**Build prerequisites:** The `mork:` surface requires specific branches of MORK and PathMap. See the "MORK Bridge Prerequisites" section in `README.md` for exact branch/commit requirements.
+**Build prerequisites:** The `mork:` interface requires specific branches of MORK and PathMap. See the "MORK Bridge Prerequisites" section in `README.md` for exact branch/commit requirements.
 
 **Why use MorkSpace?**
 
-MorkSpace exposes capabilities that ordinary spaces don't surface:
+MorkSpace exposes capabilities that ordinary spaces don't interface:
 
 - **MM2 exec stepping** — write forward-chaining `exec` rules in the MM2 language, step them to fixpoint inside the space
 - **PathMap algebra** — `join`, `meet`, `subtract`, `prefix-restrict` operate directly on the trie
@@ -527,7 +527,7 @@ Negative example:
 
 ## 9. Product Zippers
 
-Walk a stitched multi-factor search surface without materializing a brute-force join. Supports 2, 3, or 4 factors.
+Walk a stitched multi-factor search interface without materializing a brute-force join. Supports 2, 3, or 4 factors.
 
 ```metta
 !(bind! &a (mork:new-space))
@@ -564,7 +564,7 @@ How to read this output:
 - `factor-count = 3` means the product is stitching together three input spaces
 - `focus-factor = 0` means the current frontier is being advanced by the first factor
 - later `focus-factor = 1` means control has moved to the second factor
-- the `path-bytes` here are a virtual product path, not a pretty surface atom
+- the `path-bytes` here are a virtual product path, not a pretty syntax atom
 
 In other words, for product zippers the most important human-facing signals are usually:
 
@@ -974,7 +974,7 @@ The final search uses `superpose` to nondeterministically check all candidates:
 ./cetta --quiet examples/counterexample_loom.metta
 ```
 
-## 14. Current Surface Boundary
+## 14. Current Interface Boundary
 
 The intended mental model is:
 

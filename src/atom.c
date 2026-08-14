@@ -1,9 +1,13 @@
 #define _GNU_SOURCE
 #include "atom.h"
+#include "petta_numeric.h"
 #include "stats.h"
 #include "generated/cetta_execution_contracts.generated.h"
 #include <ctype.h>
 #include <errno.h>
+#include <inttypes.h>
+#include <limits.h>
+#include <locale.h>
 #include <math.h>
 #include <pthread.h>
 #include <stdio.h>
@@ -3632,105 +3636,6 @@ static void atom_print_float(double value, FILE *out) {
         fputs(buf, out);
 }
 
-static bool cetta_float_same_bits(double left, double right) {
-    uint64_t left_bits = 0u;
-    uint64_t right_bits = 0u;
-    memcpy(&left_bits, &left, sizeof(left_bits));
-    memcpy(&right_bits, &right, sizeof(right_bits));
-    return left_bits == right_bits;
-}
-
-/*
- * SWI writes floats using the shortest decimal that reads back to the same
- * binary value, switching to scientific notation outside exponents -4..5.
- * libc's %g ties its notation threshold to the requested precision, so use
- * fixed/scientific candidates explicitly and select the first exact
- * round-trip.  The obligatory decimal point keeps the result a float token.
- */
-static int cetta_format_float_petta(
-    char *buf, size_t size, double value) {
-    if (!buf || size == 0u)
-        return -1;
-    if (isnan(value))
-        return snprintf(buf, size, "NaN");
-    if (isinf(value))
-        return snprintf(
-            buf, size, "%s", signbit(value) ? "-inf" : "inf");
-
-    char scientific[64];
-    int scientific_len = snprintf(
-        scientific, sizeof(scientific), "%.17e", value);
-    if (scientific_len <= 0 ||
-        (size_t)scientific_len >= sizeof(scientific)) {
-        return -1;
-    }
-    const char *exponent_text = strchr(scientific, 'e');
-    if (!exponent_text)
-        return -1;
-    int exponent = atoi(exponent_text + 1);
-    bool use_scientific = exponent < -4 || exponent >= 6;
-    char candidate[128];
-    int chosen = -1;
-
-    if (use_scientific) {
-        for (int fractional = 0; fractional <= 16; fractional++) {
-            int length = snprintf(
-                candidate, sizeof(candidate), "%.*e",
-                fractional, value);
-            if (length <= 0 ||
-                (size_t)length >= sizeof(candidate)) {
-                continue;
-            }
-            char *end = NULL;
-            double parsed = strtod(candidate, &end);
-            if (end && *end == '\0' &&
-                cetta_float_same_bits(parsed, value)) {
-                chosen = length;
-                break;
-            }
-        }
-    } else {
-        for (int fractional = 0; fractional <= 21; fractional++) {
-            int length = snprintf(
-                candidate, sizeof(candidate), "%.*f",
-                fractional, value);
-            if (length <= 0 ||
-                (size_t)length >= sizeof(candidate)) {
-                continue;
-            }
-            char *end = NULL;
-            double parsed = strtod(candidate, &end);
-            if (end && *end == '\0' &&
-                cetta_float_same_bits(parsed, value)) {
-                chosen = length;
-                break;
-            }
-        }
-    }
-    if (chosen < 0) {
-        chosen = snprintf(
-            candidate, sizeof(candidate), "%.17g", value);
-        if (chosen <= 0 ||
-            (size_t)chosen >= sizeof(candidate)) {
-            return -1;
-        }
-    }
-
-    char *exponent_marker = strchr(candidate, 'e');
-    size_t mantissa_len = exponent_marker
-        ? (size_t)(exponent_marker - candidate)
-        : strlen(candidate);
-    bool has_decimal = memchr(candidate, '.', mantissa_len) != NULL;
-    if (has_decimal)
-        return snprintf(buf, size, "%s", candidate);
-    if (exponent_marker) {
-        return snprintf(
-            buf, size, "%.*s.0%s",
-            (int)mantissa_len, candidate, exponent_marker);
-    }
-    return snprintf(buf, size, "%s.0", candidate);
-}
-
 typedef struct {
     VarId variable;
     size_t ordinal;
@@ -3860,6 +3765,208 @@ static void atom_print_stack_push_char(
         });
 }
 
+static pthread_once_t petta_output_locale_once = PTHREAD_ONCE_INIT;
+static locale_t petta_output_locale;
+
+static void petta_output_locale_init(void) {
+    petta_output_locale = newlocale(LC_NUMERIC_MASK, "C", (locale_t)0);
+}
+
+static bool petta_float_same_bits(double left, double right) {
+    uint64_t left_bits = 0u;
+    uint64_t right_bits = 0u;
+    memcpy(&left_bits, &left, sizeof(left_bits));
+    memcpy(&right_bits, &right, sizeof(right_bits));
+    return left_bits == right_bits;
+}
+
+int cetta_petta_number_format_float(
+    char *buffer, size_t size, double value) {
+    if (!buffer || size == 0u)
+        return -1;
+    if (isnan(value))
+        return snprintf(buffer, size, "1.5NaN");
+    if (isinf(value))
+        return snprintf(
+            buffer, size, "%s", signbit(value) ? "-1.0Inf" : "1.0Inf");
+
+    pthread_once(&petta_output_locale_once, petta_output_locale_init);
+    if (!petta_output_locale)
+        return -1;
+    locale_t previous = uselocale(petta_output_locale);
+    char scientific[64];
+    int scientific_length = snprintf(
+        scientific, sizeof(scientific), "%.17e", value);
+    if (scientific_length <= 0 ||
+        (size_t)scientific_length >= sizeof(scientific)) {
+        (void)uselocale(previous);
+        return -1;
+    }
+    const char *exponent_text = strchr(scientific, 'e');
+    if (!exponent_text) {
+        (void)uselocale(previous);
+        return -1;
+    }
+    int exponent = atoi(exponent_text + 1);
+    bool use_scientific = exponent < -4 || exponent >= 5;
+    char candidate[128];
+    int chosen = -1;
+
+    if (use_scientific) {
+        for (int fractional = 0; fractional <= 16; fractional++) {
+            int length = snprintf(
+                candidate, sizeof(candidate), "%.*e", fractional, value);
+            if (length <= 0 || (size_t)length >= sizeof(candidate))
+                continue;
+            char *end = NULL;
+            double parsed = strtod_l(candidate, &end, petta_output_locale);
+            if (end && *end == '\0' &&
+                petta_float_same_bits(parsed, value)) {
+                chosen = length;
+                break;
+            }
+        }
+    } else {
+        for (int fractional = 0; fractional <= 21; fractional++) {
+            int length = snprintf(
+                candidate, sizeof(candidate), "%.*f", fractional, value);
+            if (length <= 0 || (size_t)length >= sizeof(candidate))
+                continue;
+            char *end = NULL;
+            double parsed = strtod_l(candidate, &end, petta_output_locale);
+            if (end && *end == '\0' &&
+                petta_float_same_bits(parsed, value)) {
+                chosen = length;
+                break;
+            }
+        }
+    }
+    if (chosen < 0) {
+        chosen = snprintf(candidate, sizeof(candidate), "%.17g", value);
+        if (chosen <= 0 || (size_t)chosen >= sizeof(candidate)) {
+            (void)uselocale(previous);
+            return -1;
+        }
+    }
+
+    char *exponent_marker = strchr(candidate, 'e');
+    size_t mantissa_length = exponent_marker
+        ? (size_t)(exponent_marker - candidate) : strlen(candidate);
+    bool has_decimal = memchr(candidate, '.', mantissa_length) != NULL;
+    int result;
+    if (has_decimal) {
+        result = snprintf(buffer, size, "%s", candidate);
+    } else if (exponent_marker) {
+        result = snprintf(
+            buffer, size, "%.*s.0%s",
+            (int)mantissa_length, candidate, exponent_marker);
+    } else {
+        result = snprintf(buffer, size, "%s.0", candidate);
+    }
+    (void)uselocale(previous);
+    return result;
+}
+
+bool cetta_petta_number_format_fraction(
+    char *buffer, size_t size, double value, size_t precision) {
+    if (!buffer || size == 0u || !isfinite(value) ||
+        precision >= size || precision > (size_t)INT_MAX ||
+        precision > SIZE_MAX - 4u) {
+        return false;
+    }
+    if (precision == 0u) {
+        buffer[0] = '\0';
+        return true;
+    }
+    pthread_once(&petta_output_locale_once, petta_output_locale_init);
+    if (!petta_output_locale)
+        return false;
+    char *rendered = malloc(precision + 4u);
+    if (!rendered)
+        return false;
+    double integral = 0.0;
+    double fractional = fabs(modf(value, &integral));
+    locale_t previous = uselocale(petta_output_locale);
+    int written = snprintf(
+        rendered, precision + 4u, "%.*f",
+        (int)precision, fractional);
+    (void)uselocale(previous);
+    char *point = strchr(rendered, '.');
+    bool valid = written > 0 && point &&
+        strlen(point + 1u) == precision;
+    if (valid) {
+        memcpy(buffer, point + 1u, precision);
+        buffer[precision] = '\0';
+    }
+    free(rendered);
+    return valid;
+}
+
+bool cetta_petta_number_print(const Atom *atom, FILE *output) {
+    if (!atom || !output || atom->kind != ATOM_GROUNDED)
+        return false;
+    switch (atom->ground.gkind) {
+    case GV_INT:
+        fprintf(output, "%" PRId64, atom->ground.ival);
+        return true;
+    case GV_BIGINT:
+        fputs(atom_bigint_cstr(atom), output);
+        return true;
+    case GV_RATIONAL: {
+        const char *text = atom_rational_cstr(atom);
+        for (; text && *text; text++)
+            fputc(*text == '/' ? 'r' : *text, output);
+        return text != NULL;
+    }
+    case GV_FLOAT: {
+        char buffer[128];
+        int written = cetta_petta_number_format_float(
+            buffer, sizeof(buffer), atom->ground.fval);
+        if (written <= 0)
+            return false;
+        fputs(buffer, output);
+        return true;
+    }
+    default:
+        return false;
+    }
+}
+
+char *cetta_petta_number_to_string(Arena *arena, const Atom *atom) {
+    if (!arena || !atom || atom->kind != ATOM_GROUNDED)
+        return NULL;
+    switch (atom->ground.gkind) {
+    case GV_INT: {
+        char buffer[64];
+        int written = snprintf(
+            buffer, sizeof(buffer), "%" PRId64, atom->ground.ival);
+        return written > 0 && (size_t)written < sizeof(buffer)
+            ? arena_strdup(arena, buffer) : NULL;
+    }
+    case GV_BIGINT:
+        return arena_strdup(arena, atom_bigint_cstr(atom));
+    case GV_RATIONAL: {
+        const char *text = atom_rational_cstr(atom);
+        if (!text)
+            return NULL;
+        char *result = arena_strdup(arena, text);
+        char *separator = strchr(result, '/');
+        if (separator)
+            *separator = 'r';
+        return result;
+    }
+    case GV_FLOAT: {
+        char buffer[128];
+        int written = cetta_petta_number_format_float(
+            buffer, sizeof(buffer), atom->ground.fval);
+        return written > 0 && (size_t)written < sizeof(buffer)
+            ? arena_strdup(arena, buffer) : NULL;
+    }
+    default:
+        return NULL;
+    }
+}
+
 static void atom_print_mode(
     Atom *root, FILE *out, bool petta,
     PettaPrintVariables *variables) {
@@ -3908,18 +4015,24 @@ static void atom_print_mode(
         case GV_INT:    fprintf(out, "%ld", (long)a->ground.ival); break;
         case GV_FLOAT:
             if (petta) {
-                char buf[128];
-                int printed = cetta_format_float_petta(
-                    buf, sizeof(buf), a->ground.fval);
-                if (printed > 0)
-                    fputs(buf, out);
+                (void)cetta_petta_number_print(a, out);
             } else {
                 atom_print_float(a->ground.fval, out);
             }
             break;
         case GV_BOOL:   fputs(a->ground.bval ? "True" : "False", out); break;
-        case GV_BIGINT: fputs(atom_bigint_cstr(a), out); break;
-        case GV_RATIONAL: fputs(atom_rational_cstr(a), out); break;
+        case GV_BIGINT:
+            if (petta)
+                (void)cetta_petta_number_print(a, out);
+            else
+                fputs(atom_bigint_cstr(a), out);
+            break;
+        case GV_RATIONAL:
+            if (petta)
+                (void)cetta_petta_number_print(a, out);
+            else
+                fputs(atom_rational_cstr(a), out);
+            break;
         case GV_STRING: {
             fputc('"', out);
             for (const char *p = a->ground.sval; *p; p++) {
@@ -4003,6 +4116,19 @@ char *atom_to_parseable_string(Arena *a, Atom *atom) {
     char *out = arena_strdup(a, buf ? buf : "");
     free(buf);
     return out;
+}
+
+char *atom_to_parseable_string_petta(Arena *a, Atom *atom) {
+    char *buffer = NULL;
+    size_t length = 0u;
+    FILE *memory = open_memstream(&buffer, &length);
+    if (!memory)
+        return arena_strdup(a, "");
+    atom_print_petta(atom, memory);
+    fclose(memory);
+    char *result = arena_strdup(a, buffer ? buffer : "");
+    free(buffer);
+    return result;
 }
 
 char *atom_to_string(Arena *a, Atom *atom) {

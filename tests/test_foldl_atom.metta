@@ -1,4 +1,4 @@
-; HE-backed fold surface: the public stdlib wrapper returns the final value,
+; HE-backed fold syntax: the public stdlib wrapper returns the final value,
 ; while the explicit-space helper returns the internal return-wrapped step/final
 ; value that HE exposes through _minimal-foldl-atom.
 

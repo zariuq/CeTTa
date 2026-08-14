@@ -4,7 +4,7 @@
 ;
 ; This experiment focuses on ambiguous evidence for ONE property inside a trait:
 ;   casey has two equally confident but differently strong observations for
-;   shows-up-on-time, so PropertyBeliefTopTies should surface BOTH.
+;   shows-up-on-time, so PropertyBeliefTopTies should syntax BOTH.
 ;
 ; It also checks that the new explicit-space reducer path agrees with the
 ; default intensional audit path.

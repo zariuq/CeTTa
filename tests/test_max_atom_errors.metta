@@ -1,3 +1,3 @@
-; HE-backed negative surface for max-atom: empty expression.
+; HE-backed negative syntax for max-atom: empty expression.
 
 !(max-atom ())

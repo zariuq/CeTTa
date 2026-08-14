@@ -3,7 +3,7 @@
 
 ; Public rho LTS specialization over strict-core rho.
 ; This keeps reduction observation out of the rho: object-language namespace
-; while exposing a programmable MeTTa-level frontier surface.
+; while exposing a programmable MeTTa-level frontier interface.
 ;
 ; Import pattern:
 ;   !(import! &self lts:rho)

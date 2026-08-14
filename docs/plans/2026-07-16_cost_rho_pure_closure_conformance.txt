@@ -71,21 +71,21 @@ Located temporal stack S(I, s : S')
   Token stacks were unlocated top-level components selected from one ambient
   pool, and receipts supplied a synthetic site label.
   Replace the operational token component with
-  `rho:cost:purse SURFACE STACK`.  A purse surface is a rho name, not a
+  `rho:cost:purse LOCATION STACK`.  A purse location is a rho name, not a
   signature.  The residual of spending the head of `purse L (s : S')` is
   `purse L S'`, including an inert depleted purse.
 
 Nearness / nominal authority
   Endpoint channel equality is checked, but token selection ignores it.
   Define `near(I,J)` by normalized rho-name equality.  A COMM at L may select
-  only purse occurrences whose surface is name-equivalent to L.  Wrong-site
+  only purse occurrences whose location is name-equivalent to L.  Wrong-site
   matching signatures do not fund; adjacency never grants authority.
 
 Exact funding cover
   The reducer selected distinct unlocated heads whose signature multisets sum
   to the redex demand.  Lean `TokenCover` models the same global pool.
   Make cover proof-relevant and located.  Filter by L before exact multiset
-  coverage.  Preserve every unselected purse and every selected surface.
+  coverage.  Preserve every unselected purse and every selected location.
 
 R1: whole redex, one signature / one head
   Implemented without location.
@@ -124,7 +124,7 @@ Forcing locality
 Causal receipt
   Occurrence-preserving event log, direct causes from consumed produced
   resources, abstract finite pomset, and signature-valued measure exist.
-  Replace the synthetic global contribution by one actual `(surface, head)`
+  Replace the synthetic global contribution by one actual `(location, head)`
   record per selected purse.  The normalized sum must equal the demanded
   signature.  Selected purse tails inherit the event producer.
 
@@ -191,9 +191,9 @@ being sorted or quotiented after emission.
 The differential gate currently enumerates 145 bounded configurations.  It
 covers both whole-redex endpoint orders, all five funded-COMM cases, split and
 combined heads, duplicate equal purses, retained tails, wrong signatures,
-wrong and mixed surfaces, partial covers, nominal quote/drop nearness, quoted
-surfaces, dequotation through COMM, live and quiescent zero-fuel prefixes,
-independent surfaces, repeated equal firing occurrences, collision-shaped
+wrong and mixed locations, partial covers, nominal quote/drop nearness, quoted
+locations, dequotation through COMM, live and quiescent zero-fuel prefixes,
+independent locations, repeated equal firing occurrences, collision-shaped
 signature keys, UTF-8 atoms, and delimiter-bearing atoms.  Every counted case
 must report true executable witnesses for well-formedness, canonical runtime
 configuration, and canonical encoding.  An empty symbol atom is tracked as a

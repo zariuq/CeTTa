@@ -184,6 +184,7 @@ bool ppfirst_order_frame_decoder_v1_cache_admission(
         .finite_support_admitted = decoder->finite_support != NULL,
         .indexed_values_admitted = decoder->indexed_value != NULL,
         .literal_hole_admitted = decoder->literal_hole != NULL,
+        .two_phase_frame_admitted = decoder->two_phase_frame_admitted,
     };
     memcpy(admission_out->native_type_digest,
            decoder->native_type_digest,
@@ -215,26 +216,118 @@ static bool ppfirst_order_frame_decoder_v1_calls(
     const PPProofStorageMachineV1 *machine,
     char *error,
     size_t error_size) {
+    const PPProofIndexedProgramPlanV1 *indexed_program;
     uint32_t index;
     uint32_t matched = 0u;
 
+    indexed_program = ppproof_storage_plan_v1_indexed_program(
+        storage_plan, machine->machine);
     for (index = 0u; index < storage_plan->call_len; index++) {
         const PPProofStorageCallV1 *call = &storage_plan->calls[index];
+        const PPProofWorkspacePlanV1 *workspace;
+        const PPProofTwoPhaseFramePlanV1 *frame;
+        const PPProofLiteralHolePlanV1 *literal;
+        const char *workspace_carrier;
         if (strcmp(call->machine, machine->machine) != 0)
             continue;
         matched++;
         if (strcmp(call->owner, machine->owner) != 0 ||
             strcmp(call->provable, machine->provable) != 0 ||
-            strcmp(call->region, "proof-call-region-v1") != 0 ||
-            strcmp(call->layout, "flat-symbol-id-vector-v1") != 0 ||
-            strcmp(call->observation, "proof-verdict-only-v1") != 0)
+            !ppproof_storage_call_v1_admits_reusable_workspace(
+                call, call->operation, call->action_index,
+                call->machine, "proof-call-region-v1"))
             return ppfirst_order_frame_decoder_v1_fail(
                 error, error_size,
-                "proof call is unsupported by the first-order frame backend");
+                "proof call lacks generated reusable-call admission");
+        workspace_carrier =
+            indexed_program &&
+                    strcmp(indexed_program->operation, call->operation) == 0 &&
+                    indexed_program->action_index == call->action_index
+                ? "indexed-stack-proof-call-workspace-v1"
+                : "stack-proof-call-workspace-v1";
+        workspace = ppproof_storage_plan_v1_workspace(
+            storage_plan, call->operation, call->action_index);
+        if (!ppproof_workspace_plan_v1_admits(
+                workspace, call->operation, call->action_index,
+                call->machine, workspace_carrier,
+                "proof-call-region-v1"))
+            return ppfirst_order_frame_decoder_v1_fail(
+                error, error_size,
+                "proof call lacks generated reusable-workspace admission");
+        frame = ppproof_storage_plan_v1_two_phase_frame(
+            storage_plan, call->operation, call->action_index);
+        literal = ppproof_storage_plan_v1_literal_hole(
+            storage_plan, call->machine);
+        if (!literal ||
+            !ppproof_two_phase_frame_plan_v1_admits(
+                frame, call->operation, call->action_index, call->machine,
+                literal->carrier, call->region))
+            return ppfirst_order_frame_decoder_v1_fail(
+                error, error_size,
+                "proof call lacks generated two-phase-frame admission");
     }
     if (matched == 0u)
         return ppfirst_order_frame_decoder_v1_fail(
             error, error_size, "proof machine has no generated call site");
+    return true;
+}
+
+static bool ppfirst_order_frame_decoder_v1_indexed_program(
+    const PPProofStoragePlanV1 *storage_plan,
+    const PPRelationalStateProofMachineV1 *machine,
+    bool indexed_values_present,
+    char *error,
+    size_t error_size) {
+    const PPProofIndexedProgramPlanV1 *program;
+    const PPProofFrameIndexPlanV1 *frame_index;
+    PPProofIndexedEffectUnknownV1 unknown_effect;
+
+    if (!storage_plan || !machine || !machine->name)
+        return ppfirst_order_frame_decoder_v1_fail(
+            error, error_size,
+            "invalid indexed instruction correspondence request");
+    program = ppproof_storage_plan_v1_indexed_program(
+        storage_plan, machine->name);
+    if (!program)
+        return !indexed_values_present ||
+               ppfirst_order_frame_decoder_v1_fail(
+                   error, error_size,
+                   "indexed values lack a generated instruction plan");
+    if (!indexed_values_present)
+        return ppfirst_order_frame_decoder_v1_fail(
+            error, error_size,
+            "indexed instruction plan lacks its prepared values");
+    unknown_effect =
+        machine->unknown_policy ==
+                PPRELATIONAL_STACK_PROOF_V1_UNKNOWN_PUSH_CLAIM
+            ? PPPROOF_INDEXED_EFFECT_UNKNOWN_V1_USE
+            : PPPROOF_INDEXED_EFFECT_UNKNOWN_V1_REJECT;
+    if (program->terminal_low != machine->terminal_low ||
+        program->terminal_high != machine->terminal_high ||
+        program->continuation_low != machine->continuation_low ||
+        program->continuation_high != machine->continuation_high ||
+        program->save_byte != machine->save_byte ||
+        program->unknown_byte != machine->unknown_byte ||
+        program->terminal_radix != machine->terminal_radix ||
+        program->terminal_digit_bias != machine->terminal_digit_bias ||
+        program->continuation_radix != machine->continuation_radix ||
+        program->continuation_digit_bias !=
+            machine->continuation_digit_bias ||
+        program->unknown_effect != unknown_effect ||
+        program->save_placement != machine->save_placement ||
+        program->header_hypothesis_policy !=
+            machine->header_hypothesis_policy)
+        return ppfirst_order_frame_decoder_v1_fail(
+            error, error_size,
+            "indexed instruction plan disagrees with the generated proof machine");
+    frame_index = ppproof_storage_plan_v1_frame_index(
+        storage_plan, machine->name);
+    if (!ppproof_frame_index_plan_v1_admits(
+            frame_index, program->operation, program->action_index,
+            machine->name, program->region))
+        return ppfirst_order_frame_decoder_v1_fail(
+            error, error_size,
+            "indexed instruction plan lacks its exact frame index");
     return true;
 }
 
@@ -296,7 +389,7 @@ bool ppfirst_order_frame_decoder_v1_admit(
         storage_plan, machine->machine);
     if (indexed_value &&
         (strcmp(indexed_value->carrier,
-                "prepared-indexed-value-table-v1") != 0 ||
+                "prepared-classified-value-table-v1") != 0 ||
          strcmp(indexed_value->region, "proof-call-region-v1") != 0))
         return ppfirst_order_frame_decoder_v1_fail(
             error_buf, error_buf_size,
@@ -344,6 +437,10 @@ bool ppfirst_order_frame_decoder_v1_admit(
           !ppfirst_order_frame_decoder_v1_head_arity(
               native_types, finite_support->variable, 1u,
               error_buf, error_buf_size))) ||
+        !ppfirst_order_frame_decoder_v1_indexed_program(
+            storage_plan,
+            &state_plan->proof_machines[proof_machine_id],
+            indexed_value != NULL, error_buf, error_buf_size) ||
         !ppfirst_order_frame_decoder_v1_calls(
             storage_plan, machine, error_buf, error_buf_size) ||
         !ppfirst_order_frame_decoder_v1_table_dependencies(
@@ -359,6 +456,7 @@ bool ppfirst_order_frame_decoder_v1_admit(
     decoder.finite_support = finite_support;
     decoder.indexed_value = indexed_value;
     decoder.literal_hole = literal_hole;
+    decoder.two_phase_frame_admitted = true;
     decoder.storage_plan = storage_plan;
     memcpy(decoder.native_type_digest, native_types->semantic_digest,
            sizeof(decoder.native_type_digest));

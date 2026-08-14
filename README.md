@@ -3,7 +3,7 @@
 CeTTa is a direct C runtime for [MeTTa](https://metta-lang.dev/). The default
 public lane is the base HE-style evaluator (`--lang he`) with no named profile
 selected. Use `--profile he-extended` when you want the labeled CeTTa
-extension surface.
+extension interface.
 
 ## Requirements
 
@@ -35,7 +35,7 @@ Run a small file:
 ./cetta tests/test_map_filter_atom.metta
 ```
 
-For the full CLI surface, run `./cetta --help`.
+For the full CLI interface, run `./cetta --help`.
 
 Run `./cetta -v` (or `./cetta --version`) to see the exact version and active
 build mode of the binary currently sitting at `./cetta`.
@@ -61,7 +61,7 @@ Bridge-capable modes:
 |------|----------|--------|-------------|
 | `BUILD=main` | `lib_mork` / MM2 bridge + generic `(new-space pathmap)` | yes | recommended bridge daily-driver |
 | `BUILD=full` | compatibility alias of `BUILD=main` | yes | accepted old spelling for the same bridge build |
-| `BUILD=mork` | same bridge surface as `BUILD=main`, without Python | no | recommended smaller no-Python bridge binary |
+| `BUILD=mork` | same bridge interface as `BUILD=main`, without Python | no | recommended smaller no-Python bridge binary |
 | `BUILD=pathmap` | compatibility alias of `BUILD=mork` | no | accepted old spelling for the same no-Python bridge build |
 
 ## Bridge Setup
@@ -164,11 +164,11 @@ make BUILD=main
 ./cetta examples/mork_showcase.metta
 ```
 
-### PathMap counted-space surface
+### PathMap counted-space interface
 
 ```bash
 make BUILD=main
-./cetta --profile he-extended --lang he tests/test_pathmap_counted_space_surface.metta
+./cetta --profile he-extended --lang he tests/test_pathmap_counted_space_interface.metta
 ```
 
 ## Verified Test Commands
@@ -191,7 +191,7 @@ Run the ordinary checked suite for the current build:
 make test
 ```
 
-Run the profile surface suite:
+Run the profile interface suite:
 
 ```bash
 make test-profiles
@@ -320,12 +320,12 @@ The bridge code includes two thin compatibility adapters:
 - Arena-allocated atoms with hash-consing support
 - Multiple space kinds and pluggable space engines
 - SymbolId-based core dispatch instead of pervasive string comparison
-- Runtime counters plus `--profile`-aware surface guards
+- Runtime counters plus `--profile`-aware interface guards
 - Explicit `TermUniverse` / persistent term-store seam
 - Variant tabling infrastructure with shared canonicalization substrate
 - Optional `pathmap` engine for ordinary MeTTa over PathMap
-- Explicit `mork:` helper surface for the MORK/MM2 execution lane
-- Local git-module and module-inventory surfaces
+- Explicit `mork:` helper interface for the MORK/MM2 execution lane
+- Local git-module and module-inventory interfaces
 - Python foreign-module support in the default build
 
 ## Test Status
@@ -429,7 +429,7 @@ purse vend {()} | purse vend {machine : ()} | {0}served | {for ($order <- vend) 
 
 One funded sale fired; the unfunded order is left facing a live endpoint —
 disabled, not slowed. See `docs/rhocalc.md` for the guided tour (calculus,
-surfaces, receipts, honest budgets, threaded waves), `examples/rho/` for
+interfaces, receipts, honest budgets, threaded waves), `examples/rho/` for
 runnable showcases (`make test-rho-examples`), and `make test-rhocalc` for
 the full lane.
 
@@ -442,24 +442,24 @@ Small regression-sized examples:
 ./cetta tests/bench_backchain_heavy_nilbc.metta | tail -1
 ```
 
-Python-facing surface in the default build:
+Python-facing interface in the default build:
 
 ```bash
-./cetta tests/test_py_ops_surface.metta
+./cetta tests/test_py_ops_interface.metta
 ```
 
-Optional MORK-facing surface (requires sibling `MORK` / `PathMap` checkouts):
+Optional MORK-facing interface (requires sibling `MORK` / `PathMap` checkouts):
 
 ```bash
 make BUILD=main
 ./cetta examples/mork_showcase.metta
 ```
 
-Optional counted PathMap space surface:
+Optional counted PathMap space interface:
 
 ```bash
 make BUILD=main
-./cetta --profile he-extended --lang he tests/test_pathmap_counted_space_surface.metta
+./cetta --profile he-extended --lang he tests/test_pathmap_counted_space_interface.metta
 ```
 
 Large genomic benchmark preview:
@@ -492,7 +492,7 @@ Core runtime:
 - `src/term_canon.c`, `src/term_canon.h`: shared variable canonicalization/remap substrate
 - `src/table_store.c`, `src/table_store.h`: variant tabling and staged answer store
 - `src/eval.c`, `src/eval.h`: evaluator
-- `src/grounded.c`: grounded operators and runtime surfaces
+- `src/grounded.c`: grounded operators and runtime interfaces
 - `src/compile.c`: LLVM IR emission
 - `src/mork_space_bridge_runtime.c`, `src/mork_space_bridge_runtime.h`:
   runtime-side bridge glue for the PathMap / MORK bridge lane
@@ -513,19 +513,19 @@ Libraries:
 
 - `lib/stdlib.metta`: main bundled stdlib
 - `lib/lib_pln.metta`: upstream-compatible PeTTa PLN baseline for CeTTa
-- `lib/lib_wmpln.metta`: Lean-aligned wmPLN surface with evidence-backed extensions
-- `lib/mork.metta`: narrow MORK-facing helper surface
+- `lib/lib_wmpln.metta`: Lean-aligned wmPLN interface with evidence-backed extensions
+- `lib/mork.metta`: narrow MORK-facing helper interface
 - `lib/fs.metta`, `lib/system.metta`, `lib/str.metta`, `lib/path.metta`:
-  extension libraries used by the current profile surfaces
+  extension libraries used by the current profile interfaces
 
 Useful workloads:
 
 - `tests/test_tilepuzzle.metta`: full tile BFS benchmark
-- `benchmarks/bench_tilepuzzle_probe.metta`: bounded tile runtime probe (runtime-stats surface)
+- `benchmarks/bench_tilepuzzle_probe.metta`: bounded tile runtime probe (runtime-stats interface)
 - `benchmarks/bench_bio_1M.metta`: 1.4M-atom genomic benchmark
 - `tests/bench_conjunction12_he.metta`: conjunction stress benchmark
 - `tests/bench_matchjoin8_he.metta`: join stress benchmark
-- `tests/test_pathmap_counted_space_surface.metta`: multiset semantics over PathMap
+- `tests/test_pathmap_counted_space_interface.metta`: multiset semantics over PathMap
 - `tests/bench_duplicate_conjunction_he.metta`: duplicate conjunction parity test
 
 ## CLI

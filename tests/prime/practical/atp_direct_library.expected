@@ -3,7 +3,7 @@
 (ATPDirectLibrary checkpoint mp-checked)
 (ATPDirectLibrary checkpoint arity-checked)
 (ATPDirectLibrary checkpoint absence-checked)
-(ATPDirectLibrary checkpoint occurs-surface-checked)
+(ATPDirectLibrary checkpoint occurs-syntax-checked)
 (ATPDirectLibrary summary 5 5 0)
 [()]
 [()]

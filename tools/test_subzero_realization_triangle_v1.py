@@ -154,10 +154,10 @@ def main() -> int:
     )
     if chart_duplicate != [qsym("b"), qsym("b")]:
         raise GateFailure(f"chart changed duplicate occurrences: {chart_duplicate}")
-    surface_duplicate = "(= a b) (= a b) (! a)"
-    horn = cli_results(cetta, "horn-reference", surface_duplicate)
+    syntax_duplicate = "(= a b) (= a b) (! a)"
+    horn = cli_results(cetta, "horn-reference", syntax_duplicate)
     compiled = cli_results(
-        cetta, "compiled-worklist", surface_duplicate
+        cetta, "compiled-worklist", syntax_duplicate
     )
     if horn != "[b, b]" or compiled != horn:
         raise GateFailure(
@@ -179,10 +179,10 @@ def main() -> int:
         raise GateFailure(
             f"chart changed contextual rewriting: {chart_contextual}"
         )
-    surface_contextual = "(= a b) (! (wrap a))"
-    horn = cli_results(cetta, "horn-reference", surface_contextual)
+    syntax_contextual = "(= a b) (! (wrap a))"
+    horn = cli_results(cetta, "horn-reference", syntax_contextual)
     compiled = cli_results(
-        cetta, "compiled-worklist", surface_contextual
+        cetta, "compiled-worklist", syntax_contextual
     )
     if horn != "[(wrap b)]" or compiled != horn:
         raise GateFailure(
@@ -201,10 +201,10 @@ def main() -> int:
         chart_query(repeated),
     ):
         raise GateFailure("chart accepted an inconsistent repeated variable")
-    surface_repeated = "(= ($x $x) same) (! (a b))"
-    horn = cli_results(cetta, "horn-reference", surface_repeated)
+    syntax_repeated = "(= ($x $x) same) (! (a b))"
+    horn = cli_results(cetta, "horn-reference", syntax_repeated)
     compiled = cli_results(
-        cetta, "compiled-worklist", surface_repeated
+        cetta, "compiled-worklist", syntax_repeated
     )
     if horn != "[]" or compiled != horn:
         raise GateFailure(
