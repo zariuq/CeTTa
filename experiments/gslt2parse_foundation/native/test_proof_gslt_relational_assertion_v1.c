@@ -22,11 +22,11 @@ static void check(bool condition, const char *name) {
 int main(int argc, char **argv) {
     static const uint32_t arities[
         PPPROOF_GSLT_RELATIONAL_TABLE_V1_LEN] = {
-            2u, 2u, 2u, 2u, 3u, 2u, 3u, 2u,
+            2u, 2u, 2u, 2u, 3u, 2u, 3u, 2u, 2u,
         };
     static const uint32_t key_arities[
         PPPROOF_GSLT_RELATIONAL_TABLE_V1_LEN] = {
-            1u, 1u, 1u, 2u, 2u, 2u, 3u, 1u,
+            1u, 1u, 1u, 2u, 2u, 2u, 3u, 2u, 1u,
         };
     SymbolTable symbols;
     PPProofGSLTPlanV1 proof_plan;
@@ -39,10 +39,10 @@ int main(int argc, char **argv) {
     char error[512] = {0};
     uint32_t index;
 
-    if (argc != 5 + PPPROOF_GSLT_RELATIONAL_TABLE_V1_LEN) {
+    if (argc != 7 + PPPROOF_GSLT_RELATIONAL_TABLE_V1_LEN) {
         fprintf(stderr,
-                "usage: %s PROOF_PLAN BRIDGE INCOMPLETE OTHER_PLAN"
-                " TABLE...\n",
+                "usage: %s PROOF_PLAN BRIDGE NO_APARTNESS INCOMPLETE OTHER_PLAN"
+                " TABLE... NO_EXECUTION\n",
                 argv[0]);
         return 2;
     }
@@ -53,7 +53,7 @@ int main(int argc, char **argv) {
     memset(tables, 0, sizeof(tables));
     for (index = 0u;
          index < PPPROOF_GSLT_RELATIONAL_TABLE_V1_LEN; index++) {
-        tables[index].name = argv[5u + index];
+        tables[index].name = argv[6u + index];
         tables[index].arity = arities[index];
         tables[index].key_arity = key_arities[index];
     }
@@ -84,13 +84,59 @@ int main(int argc, char **argv) {
               bridge.state_plan_digest[0] != '\0',
           "relational assertion ABI records all three stage identities");
     check(result == PPPROOF_GSLT_ARTICLE_V1_OK &&
-              bridge.tables[
+              bridge.resolved_table_ids[
                   PPPROOF_GSLT_RELATIONAL_TABLE_V1_ORDERED_HYPOTHESIS] ==
                   PPPROOF_GSLT_RELATIONAL_TABLE_V1_ORDERED_HYPOTHESIS &&
+              bridge.table_binding_len ==
+                  PPPROOF_GSLT_RELATIONAL_TABLE_V1_LEN &&
+              bridge.table_presence[
+                  PPPROOF_GSLT_RELATIONAL_TABLE_V1_FORMULA] ==
+                  PPPROOF_GSLT_RELATIONAL_PRESENCE_V1_REQUIRED &&
+              bridge.table_presence[
+                  PPPROOF_GSLT_RELATIONAL_TABLE_V1_ASSERTION_DISJOINT] ==
+                  PPPROOF_GSLT_RELATIONAL_PRESENCE_V1_OPTIONAL_EMPTY &&
+              bridge.table_presence[
+                  PPPROOF_GSLT_RELATIONAL_TABLE_V1_ACTIVE_APARTNESS] ==
+                  PPPROOF_GSLT_RELATIONAL_PRESENCE_V1_OPTIONAL_EMPTY &&
               bridge.selectors[
                   PPPROOF_GSLT_RELATIONAL_SELECTOR_V1_SYMBOL_VARIABLE]
                       .len != 0u,
           "compiled table and selector roles are populated");
+    check(result == PPPROOF_GSLT_ARTICLE_V1_OK &&
+              bridge.execution.machine &&
+              strcmp(bridge.execution.machine,
+                     "mm-stack-proof-machine-v1") == 0 &&
+              bridge.execution.unknown_token.bytes &&
+              bridge.execution.unknown_token.len != 0u &&
+              bridge.execution.terminal_low == 65u &&
+              bridge.execution.terminal_high == 84u &&
+              bridge.execution.continuation_low == 85u &&
+              bridge.execution.continuation_high == 89u &&
+              bridge.execution.save_byte == 90u &&
+              bridge.execution.unknown_byte == 63u &&
+              bridge.execution.terminal_radix == 20u &&
+              bridge.execution.terminal_digit_bias == 0u &&
+              bridge.execution.continuation_radix == 5u &&
+              bridge.execution.continuation_digit_bias == 1u &&
+              bridge.execution.unknown_policy ==
+                  PPRELATIONAL_STACK_PROOF_V1_UNKNOWN_PUSH_CLAIM &&
+              bridge.execution.save_placement ==
+                  CETTA_GSLT_INDEXED_SAVE_IMMEDIATELY_AFTER_USE_V1,
+          "generated execution descriptor owns machine and decoder policy");
+
+    result = ppproof_gslt_relational_assertion_v1_load(
+        &bridge, argv[3], &proof_plan, &state_plan,
+        error, sizeof(error));
+    check(result == PPPROOF_GSLT_ARTICLE_V1_OK &&
+              bridge.table_binding_len + 2u ==
+                  PPPROOF_GSLT_RELATIONAL_TABLE_V1_LEN &&
+              bridge.resolved_table_ids[
+                  PPPROOF_GSLT_RELATIONAL_TABLE_V1_ASSERTION_DISJOINT] ==
+                  UINT32_MAX &&
+              bridge.resolved_table_ids[
+                  PPPROOF_GSLT_RELATIONAL_TABLE_V1_ACTIVE_APARTNESS] ==
+                  UINT32_MAX,
+          "generated relation with no apartness capability loads");
 
     tables[PPPROOF_GSLT_RELATIONAL_TABLE_V1_FORMULA].arity = 3u;
     result = ppproof_gslt_relational_assertion_v1_load(
@@ -101,13 +147,13 @@ int main(int argc, char **argv) {
     tables[PPPROOF_GSLT_RELATIONAL_TABLE_V1_FORMULA].arity = 2u;
 
     result = ppproof_gslt_relational_assertion_v1_load(
-        &bridge, argv[3], &proof_plan, &state_plan,
+        &bridge, argv[4], &proof_plan, &state_plan,
         error, sizeof(error));
     check(result == PPPROOF_GSLT_ARTICLE_V1_INVALID,
           "deleted authored role leaves an incomplete ABI");
 
     result = ppproof_gslt_plan_v1_load(
-        &other_plan, argv[4], NULL, error, sizeof(error));
+        &other_plan, argv[5], NULL, error, sizeof(error));
     check(result == PPPROOF_GSLT_ARTICLE_V1_OK,
           "independent proof plan loads for identity negative");
     if (result == PPPROOF_GSLT_ARTICLE_V1_OK)
@@ -116,6 +162,12 @@ int main(int argc, char **argv) {
             error, sizeof(error));
     check(result == PPPROOF_GSLT_ARTICLE_V1_INVALID,
           "relational ABI refuses a different proof extension");
+
+    result = ppproof_gslt_relational_assertion_v1_load(
+        &bridge, argv[6u + PPPROOF_GSLT_RELATIONAL_TABLE_V1_LEN],
+        &proof_plan, &state_plan, error, sizeof(error));
+    check(result == PPPROOF_GSLT_ARTICLE_V1_INVALID,
+          "deleting generated execution authority fails closed");
 
     ppproof_gslt_relational_assertion_v1_free(&bridge);
     ppproof_gslt_plan_v1_free(&other_plan);

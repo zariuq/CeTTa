@@ -475,6 +475,10 @@ static bool setup(TestStore *store,
         .continuation_radix = 5u,
         .continuation_digit_bias = 1u,
         .unknown_policy = PPRELATIONAL_STACK_PROOF_V1_UNKNOWN_REJECT,
+        .save_placement =
+            CETTA_GSLT_INDEXED_SAVE_IMMEDIATELY_AFTER_USE_V1,
+        .header_hypothesis_policy =
+            CETTA_GSLT_HEADER_HYPOTHESIS_NONMANDATORY_ONLY_V1,
     };
     *admission = (PPRelationalStackProofV1CacheAdmission){
         .label_kind_table = TEST_LABEL_KIND,
@@ -488,6 +492,7 @@ static bool setup(TestStore *store,
         .finite_support_admitted = true,
         .indexed_values_admitted = true,
         .literal_hole_admitted = true,
+        .two_phase_frame_admitted = true,
     };
     memset(admission->native_type_digest, '1', 64u);
     admission->native_type_digest[64] = '\0';
@@ -583,6 +588,31 @@ int main(void) {
                &cache, &store, &machine, &admission,
                error, sizeof(error)),
            error[0] ? error : "admitted cache initialization failed");
+    {
+        PPRelationalStackProofV1CompressedInput repeated_implicit =
+            compressed;
+        PPRelationalValueV1Slice repeated_header =
+            test_slice("GuestBindA");
+        PPRelationalStackProofV1Cache strict_cache = {0};
+        repeated_implicit.header = &repeated_header;
+        repeated_implicit.header_len = 1u;
+        expect(pprelational_stack_proof_v1_cache_init(
+                   &strict_cache, &store, &machine, &admission,
+                   error, sizeof(error)),
+               error[0] ? error
+                        : "strict-header cache initialization failed");
+        uncached = pprelational_stack_proof_v1_compressed(
+            &store, &machine, &repeated_implicit,
+            error, sizeof(error));
+        cached = pprelational_stack_proof_v1_compressed_cached(
+            &store, &machine, &strict_cache, &repeated_implicit,
+            error, sizeof(error));
+        expect(uncached == PPRELATIONAL_STACK_PROOF_V1_REJECTED &&
+                   cached == uncached &&
+                   strstr(error, "implicitly prepared hypothesis") != NULL,
+               "compressed header repeated an implicit hypothesis");
+        pprelational_stack_proof_v1_cache_free(&strict_cache);
+    }
     uncached = pprelational_stack_proof_v1_normal(
         &store, &machine, &normal, error, sizeof(error));
     cached = pprelational_stack_proof_v1_normal_cached(
@@ -709,6 +739,17 @@ int main(void) {
                    &rejected_cache, &store, &machine, &bad,
                    error, sizeof(error)),
                "cache accepted a missing generated scratch-region admission");
+        pprelational_stack_proof_v1_cache_free(&rejected_cache);
+    }
+
+    {
+        PPRelationalStackProofV1CacheAdmission bad = admission;
+        PPRelationalStackProofV1Cache rejected_cache = {0};
+        bad.two_phase_frame_admitted = false;
+        expect(!pprelational_stack_proof_v1_cache_init(
+                   &rejected_cache, &store, &machine, &bad,
+                   error, sizeof(error)),
+               "cache accepted a missing generated two-phase-frame admission");
         pprelational_stack_proof_v1_cache_free(&rejected_cache);
     }
 
@@ -844,9 +885,9 @@ int main(void) {
         cached = pprelational_stack_proof_v1_compressed_cached(
             &store, &incomplete_machine, &incomplete_cache,
             &incomplete_compressed, error, sizeof(error));
-        expect(uncached == PPRELATIONAL_STACK_PROOF_V1_INCOMPLETE &&
+        expect(uncached == PPRELATIONAL_STACK_PROOF_V1_REJECTED &&
                    cached == uncached,
-               "compressed unknown did not discard an open index");
+               "compressed unknown accepted inside an open index");
         incomplete_compressed.code = &incomplete_tail_code;
         uncached = pprelational_stack_proof_v1_compressed(
             &store, &incomplete_machine, &incomplete_compressed,

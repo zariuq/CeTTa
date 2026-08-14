@@ -6,6 +6,7 @@
   (signature
     (operator state-action-v1 3)
     (operator state-final-action-v1 2)
+    (operator state-proof-action-v1 3)
     (operator state-proof-machine-v1 2)
     (operator state-table-v1 4)
   )
@@ -30,6 +31,11 @@
       (body
         (source-state-proof-machine ?machine ?configuration)
         (state-proof-machine-valid ?configuration)))
+
+    (rule compile-relational-state-proof-action-v1
+      (head (state-proof-action-v1 ?machine ?source-kind ?action))
+      (body
+        (source-state-proof-action ?machine ?source-kind ?action)))
 
     (rule compile-relational-state-final-action-v1
       (head (state-final-action-v1 ?index ?action))

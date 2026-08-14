@@ -11,6 +11,7 @@
   (provider source-proof-trace-input-frame-v1 3 "proof-trace.input.frame.v1")
   (provider source-proof-trace-input-incomplete-compressed-code-v1 1 "proof-trace.input.incomplete-compressed-code.v1")
   (provider source-proof-trace-input-incomplete-normal-label-v1 1 "proof-trace.input.incomplete-normal-label.v1")
+  (provider source-proof-trace-input-label-different-v1 2 "proof-trace.input.label-different.v1")
   (provider source-proof-trace-input-push-label-v1 3 "proof-trace.input.push-label.v1")
   (provider source-proof-trace-input-request-v1 2 "proof-trace.input.request.v1")
   (provider source-proof-trace-input-token-different-v1 2 "proof-trace.input.token-different.v1")

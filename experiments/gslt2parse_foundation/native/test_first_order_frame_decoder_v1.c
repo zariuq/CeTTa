@@ -109,8 +109,37 @@ static bool generated_artifact_guest_canary(
                 "generated guest native types have the wrong shape") ||
         !expect(storage.table_len == 9u && storage.machine_len == 1u &&
                     storage.read_len == 9u && storage.sequence_len == 1u &&
-                    storage.call_len == 1u,
+                    storage.call_len == 1u &&
+                    storage.workspace_len == 1u &&
+                    storage.repetition_cache_len == 1u &&
+                    storage.two_phase_frame_len == 1u,
                 "generated guest storage graph has the wrong shape") ||
+        !expect(ppproof_storage_call_v1_admits_reusable_workspace(
+                    ppproof_storage_plan_v1_call(
+                        &storage, "guest-check-v1", 0u),
+                    "guest-check-v1", 0u, "guest-machine-v1",
+                    "proof-call-region-v1"),
+                "generated guest call did not admit reusable storage") ||
+        !expect(ppproof_workspace_plan_v1_admits(
+                    ppproof_storage_plan_v1_workspace(
+                        &storage, "guest-check-v1", 0u),
+                    "guest-check-v1", 0u, "guest-machine-v1",
+                    "stack-proof-call-workspace-v1",
+                    "proof-call-region-v1"),
+                "generated guest call did not select its workspace class") ||
+        !expect(ppproof_repetition_cache_plan_v1_admits(
+                    ppproof_storage_plan_v1_repetition_cache(
+                        &storage, "guest-check-v1", 0u),
+                    "guest-check-v1", 0u, "guest-machine-v1",
+                    "proof-call-region-v1"),
+                "generated guest did not derive the generic repetition policy") ||
+        !expect(!ppproof_workspace_plan_v1_admits(
+                    ppproof_storage_plan_v1_workspace(
+                        &storage, "guest-check-v1", 0u),
+                    "guest-check-v1", 0u, "guest-machine-v1",
+                    "indexed-stack-proof-call-workspace-v1",
+                    "proof-call-region-v1"),
+                "generated guest workspace admitted the wrong machine class") ||
         !expect(ppfirst_order_frame_decoder_v1_admit(
                     &storage,
                     &native_types,
@@ -134,12 +163,23 @@ static bool generated_artifact_guest_canary(
                     sizeof(error)) &&
                     cache_admission.scratch_reuse_admitted &&
                     !cache_admission.indexed_values_admitted &&
-                    cache_admission.literal_hole_admitted,
+                    cache_admission.literal_hole_admitted &&
+                    cache_admission.two_phase_frame_admitted,
                 error[0] ? error
                          : "generated guest did not yield cache admission") ||
         !mutated_admission_canaries(
             &storage, &native_types, &state_plan, 0u, &decoder))
         goto done;
+    {
+        PPProofStorageCallV1 changed = storage.calls[0];
+        changed.observation = "returns-workspace-contents-v1";
+        if (!expect(!ppproof_storage_call_v1_admits_reusable_workspace(
+                        &changed, changed.operation,
+                        changed.action_index, changed.machine,
+                        changed.region),
+                    "observable call-local storage admitted reuse"))
+            goto done;
+    }
     ok = true;
 
 done:
@@ -204,9 +244,21 @@ static bool structurally_renamed_guest_canary(void) {
          "GuestProvable", "proof-call-region-v1",
          "flat-symbol-id-vector-v1", "proof-verdict-only-v1"},
     };
+    static PPProofWorkspacePlanV1 workspaces[] = {
+        {"guest-check", 7u, "guest-machine",
+         "stack-proof-call-workspace-v1", "proof-call-region-v1",
+         "proof-verdict-only-v1"},
+    };
     static PPProofLiteralHolePlanV1 literal_holes[] = {
         {"guest-machine", "GuestProof", "GuestCons", "GuestNil",
          "literal-hole-run-program-v1", "state-run-region-v1",
+         "proof-call-region-v1"},
+    };
+    static PPProofTwoPhaseFramePlanV1 two_phase_frames[] = {
+        {"guest-check", 7u, "guest-machine",
+         "two-phase-frame-machine-v1", "literal-hole-run-program-v1",
+         "literal-head-optional-v1", "epoch-stamped-dense-slots-v1",
+         "unique-dense-binders-v1", "exact-stack-suffix-v1",
          "proof-call-region-v1"},
     };
     static PPOSLFNativeHeadSignatureV1 signatures[] = {
@@ -225,9 +277,14 @@ static bool structurally_renamed_guest_canary(void) {
         .sequence_len = sizeof(sequences) / sizeof(sequences[0]),
         .calls = calls,
         .call_len = sizeof(calls) / sizeof(calls[0]),
+        .workspaces = workspaces,
+        .workspace_len = sizeof(workspaces) / sizeof(workspaces[0]),
         .literal_holes = literal_holes,
         .literal_hole_len =
             sizeof(literal_holes) / sizeof(literal_holes[0]),
+        .two_phase_frames = two_phase_frames,
+        .two_phase_frame_len =
+            sizeof(two_phase_frames) / sizeof(two_phase_frames[0]),
     };
     PPOSLFNativeTypePlanV1 native_types = {
         .head_signatures = signatures,
@@ -265,6 +322,8 @@ static bool structurally_renamed_guest_canary(void) {
         .active_hypothesis_table = 1u,
         .active_disjoint_table = 0u,
         .symbol_kind_table = 8u,
+        .header_hypothesis_policy =
+            CETTA_GSLT_HEADER_HYPOTHESIS_NONMANDATORY_ONLY_V1,
     };
     PPRelationalStateProgramV1Plan state_plan = {
         .tables = state_tables,
@@ -300,6 +359,7 @@ static bool structurally_renamed_guest_canary(void) {
                         state_machine.formula_table &&
                     cache_admission.scratch_reuse_admitted &&
                     cache_admission.literal_hole_admitted &&
+                    cache_admission.two_phase_frame_admitted &&
                     !cache_admission.indexed_values_admitted &&
                     strcmp(cache_admission.native_type_digest,
                            decoder.native_type_digest) == 0 &&
@@ -432,12 +492,117 @@ done:
     return ok;
 }
 
+static bool exact_action_selector_canaries(void) {
+    static uint8_t binder_kind[] = "kind-binder";
+    static uint8_t matching_kind[] = "kind-matching";
+    static uint8_t rule_first_kind[] = "kind-rule-first";
+    static uint8_t rule_second_kind[] = "kind-rule-second";
+    PPRelationalStateTableV1 state_table = {
+        .name = "declaration-kind-table",
+        .arity = 2u,
+        .key_arity = 1u,
+        .lifetime = PPRELATIONAL_STATE_LIFETIME_V1_PERSISTENT,
+    };
+    PPRelationalStateProofMachineV1 state_machine = {
+        .name = "proof-machine",
+        .label_kind_table = 0u,
+        .binder_hypothesis_kind = {
+            binder_kind, sizeof(binder_kind) - 1u },
+        .matching_hypothesis_kind = {
+            matching_kind, sizeof(matching_kind) - 1u },
+        .rule_kind_first = {
+            rule_first_kind, sizeof(rule_first_kind) - 1u },
+        .rule_kind_second = {
+            rule_second_kind, sizeof(rule_second_kind) - 1u },
+    };
+    PPRelationalStateProgramV1Plan state_plan = {
+        .tables = &state_table,
+        .proof_machines = &state_machine,
+        .table_len = 1u,
+        .proof_machine_len = 1u,
+    };
+    PPProofStorageTableV1 storage_table = {
+        .table = "declaration-kind-table",
+        .arity = 2u,
+        .key_arity = 1u,
+        .lifetime = PPPROOF_STORAGE_LIFETIME_V1_PERSISTENT,
+        .region = "state-run-region-v1",
+    };
+    PPProofStorageMachineV1 storage_machine = {
+        .machine = "proof-machine",
+    };
+    PPProofStorageReadV1 read = {
+        .machine = "proof-machine",
+        .role = "label-kind-v1",
+        .table = "declaration-kind-table",
+        .lifetime = PPPROOF_STORAGE_LIFETIME_V1_PERSISTENT,
+    };
+    PPProofPreparedActionCaseV1 cases[4] = {
+        { "proof-machine", "kind-binder",
+          PPPROOF_PREPARED_ACTION_V1_PUSH_DECLARED },
+        { "proof-machine", "kind-matching",
+          PPPROOF_PREPARED_ACTION_V1_PUSH_DECLARED },
+        { "proof-machine", "kind-rule-first",
+          PPPROOF_PREPARED_ACTION_V1_APPLY_FRAME },
+        { "proof-machine", "kind-rule-second",
+          PPPROOF_PREPARED_ACTION_V1_APPLY_FRAME },
+    };
+    PPProofStoragePlanV1 storage_plan = {
+        .tables = &storage_table,
+        .table_len = 1u,
+        .machines = &storage_machine,
+        .machine_len = 1u,
+        .reads = &read,
+        .read_len = 1u,
+        .prepared_action_cases = cases,
+        .prepared_action_case_len = 4u,
+    };
+    const PPProofPreparedActionCaseV1 *admitted_cases = NULL;
+    uint32_t admitted_len = 0u;
+    char error[256] = {0};
+    bool ok = true;
+
+    ok = expect(ppproof_storage_plan_v1_exact_action_selector(
+                    &storage_plan, &state_plan, 0u,
+                    &admitted_cases, &admitted_len,
+                    error, sizeof(error)) &&
+                    admitted_cases == cases && admitted_len == 4u,
+                error[0] ? error
+                         : "exact action selector rejected valid derived facts") &&
+         ok;
+    cases[3].action = PPPROOF_PREPARED_ACTION_V1_PUSH_DECLARED;
+    ok = expect(!ppproof_storage_plan_v1_exact_action_selector(
+                    &storage_plan, &state_plan, 0u,
+                    &admitted_cases, &admitted_len,
+                    error, sizeof(error)),
+                "exact action selector admitted a rule as a push") && ok;
+    cases[3].action = PPPROOF_PREPARED_ACTION_V1_APPLY_FRAME;
+    state_table.lifetime = PPRELATIONAL_STATE_LIFETIME_V1_SCOPED;
+    ok = expect(!ppproof_storage_plan_v1_exact_action_selector(
+                    &storage_plan, &state_plan, 0u,
+                    &admitted_cases, &admitted_len,
+                    error, sizeof(error)),
+                "exact action selector admitted a mutable label table") && ok;
+    state_table.lifetime = PPRELATIONAL_STATE_LIFETIME_V1_PERSISTENT;
+    state_machine.rule_kind_second = state_machine.rule_kind_first;
+    ok = expect(!ppproof_storage_plan_v1_exact_action_selector(
+                    &storage_plan, &state_plan, 0u,
+                    &admitted_cases, &admitted_len,
+                    error, sizeof(error)),
+                "exact action selector admitted aliased source kinds") && ok;
+    return ok;
+}
+
 int main(int argc, char **argv) {
     SymbolTable symbols;
     PPOSLFNativeTypePlanV1 native_types;
     PPProofStoragePlanV1 storage;
     const PPProofIndexedValuePlanV1 *indexed_value;
+    const PPProofIndexedProgramPlanV1 *indexed_program;
     const PPProofFrameIndexPlanV1 *frame_index;
+    const PPProofRepetitionCachePlanV1 *normal_cache;
+    const PPProofRepetitionCachePlanV1 *compressed_cache;
+    PPProofRepetitionCachePlanV1 invalid_cache = {0};
     char error[512] = {0};
     bool ok = true;
 
@@ -456,6 +621,7 @@ int main(int argc, char **argv) {
     g_var_intern = NULL;
     pposlf_native_type_plan_v1_init(&native_types);
     ppproof_storage_plan_v1_init(&storage);
+    ok = exact_action_selector_canaries() && ok;
     if (!pposlf_native_type_plan_v1_load(
             &native_types, argv[1], error, sizeof(error))) {
         fprintf(stderr, "FAIL: native-type load: %s\n", error);
@@ -470,8 +636,18 @@ int main(int argc, char **argv) {
     }
     indexed_value = ppproof_storage_plan_v1_indexed_value(
         &storage, "mm-stack-proof-machine-v1");
+    indexed_program = ppproof_storage_plan_v1_indexed_program(
+        &storage, "mm-stack-proof-machine-v1");
     frame_index = ppproof_storage_plan_v1_frame_index(
         &storage, "mm-stack-proof-machine-v1");
+    normal_cache = ppproof_storage_plan_v1_repetition_cache(
+        &storage, "mm-check-theorem-normal", 14u);
+    compressed_cache = ppproof_storage_plan_v1_repetition_cache(
+        &storage, "mm-check-theorem-compressed", 14u);
+    if (normal_cache) {
+        invalid_cache = *normal_cache;
+        invalid_cache.admission_policy = "retain-first-occurrence-v1";
+    }
     ok = expect(storage.table_len == 19u,
                 "generated storage table count changed") &&
          expect(storage.read_len == 9u,
@@ -480,9 +656,46 @@ int main(int argc, char **argv) {
                     ppproof_storage_plan_v1_finite_support(
                         &storage, "MetamathProofV1") != NULL,
                 "generated finite-support admission is missing") &&
+         expect(storage.repetition_cache_len == 2u &&
+                    normal_cache != NULL && compressed_cache != NULL,
+                "generated repetition-cache licenses are missing") &&
+         expect(ppproof_repetition_cache_plan_v1_admits(
+                    normal_cache, "mm-check-theorem-normal", 14u,
+                    "mm-stack-proof-machine-v1", "proof-call-region-v1") &&
+                    ppproof_repetition_cache_plan_v1_admits(
+                        compressed_cache, "mm-check-theorem-compressed", 14u,
+                        "mm-stack-proof-machine-v1", "proof-call-region-v1"),
+                "generated repetition-cache licenses match their call sites") &&
+         expect(!ppproof_repetition_cache_plan_v1_admits(
+                    normal_cache, "mm-check-theorem-normal", 13u,
+                    "mm-stack-proof-machine-v1", "proof-call-region-v1"),
+                "repetition-cache license rejects another action occurrence") &&
+         expect(!ppproof_repetition_cache_plan_v1_admits(
+                    &invalid_cache, "mm-check-theorem-normal", 14u,
+                    "mm-stack-proof-machine-v1", "proof-call-region-v1"),
+                "repetition-cache license rejects an unrecognized policy") &&
          expect(storage.indexed_value_len == 1u &&
                     indexed_value != NULL,
                 "generated indexed-value admission is missing") &&
+         expect(storage.indexed_program_len == 1u &&
+                    indexed_program != NULL,
+                "generated indexed-program admission is missing") &&
+         expect(ppproof_indexed_program_plan_v1_admits(
+                    indexed_program, "mm-check-theorem-compressed", 14u,
+                    "mm-stack-proof-machine-v1", "mm-proof-step",
+                    "mm-compressed-word", indexed_value->region,
+                    PPPROOF_INDEXED_EFFECT_UNKNOWN_V1_USE,
+                    indexed_program->save_placement,
+                    indexed_program->header_hypothesis_policy),
+                "indexed-program admission matches its generated call site") &&
+         expect(!ppproof_indexed_program_plan_v1_admits(
+                    indexed_program, "mm-check-theorem-compressed", 14u,
+                    "mm-stack-proof-machine-v1", "different-header-v1",
+                    "mm-compressed-word", indexed_value->region,
+                    PPPROOF_INDEXED_EFFECT_UNKNOWN_V1_USE,
+                    indexed_program->save_placement,
+                    indexed_program->header_hypothesis_policy),
+                "indexed-program admission rejects a different header role") &&
          expect(ppproof_indexed_value_plan_v1_admits(
                     indexed_value, "mm-check-theorem-compressed", 14u,
                     "mm-stack-proof-machine-v1", "mm-proof-step",
@@ -502,12 +715,40 @@ int main(int argc, char **argv) {
                 "generated frame-index admission is missing") &&
          expect(ppproof_frame_index_plan_v1_admits(
                     frame_index, "mm-check-theorem-compressed", 14u,
-                    "mm-stack-proof-machine-v1"),
+                    "mm-stack-proof-machine-v1", indexed_value->region),
                 "frame-index admission matches its generated call site") &&
          expect(!ppproof_frame_index_plan_v1_admits(
                     frame_index, "mm-check-theorem-compressed", 13u,
-                    "mm-stack-proof-machine-v1"),
+                    "mm-stack-proof-machine-v1", indexed_value->region),
                 "frame-index admission rejects a different action occurrence") &&
+         expect(!ppproof_frame_index_plan_v1_admits(
+                    frame_index, "mm-check-theorem-compressed", 14u,
+                    "mm-stack-proof-machine-v1", "different-region-v1"),
+                "frame-index admission rejects a different call region") &&
+         expect(!ppproof_frame_index_plan_v1_admits(
+                    &(PPProofFrameIndexPlanV1){
+                        .operation = frame_index->operation,
+                        .action_index = frame_index->action_index,
+                        .machine = frame_index->machine,
+                        .carrier = "unsupported-frame-index-v1",
+                        .validation = frame_index->validation,
+                        .region = frame_index->region,
+                    },
+                    "mm-check-theorem-compressed", 14u,
+                    "mm-stack-proof-machine-v1", indexed_value->region),
+                "frame-index admission rejects an unsupported carrier") &&
+         expect(!ppproof_frame_index_plan_v1_admits(
+                    &(PPProofFrameIndexPlanV1){
+                        .operation = frame_index->operation,
+                        .action_index = frame_index->action_index,
+                        .machine = frame_index->machine,
+                        .carrier = frame_index->carrier,
+                        .validation = "duplicate-choose-first-v1",
+                        .region = frame_index->region,
+                    },
+                    "mm-check-theorem-compressed", 14u,
+                    "mm-stack-proof-machine-v1", indexed_value->region),
+                "frame-index admission rejects a non-unique index policy") &&
          expect(storage.literal_hole_len == 1u &&
                     ppproof_storage_plan_v1_literal_hole(
                         &storage, "mm-stack-proof-machine-v1") != NULL,
