@@ -10,9 +10,12 @@
     (operator compile-proof-storage-plan-v1 1)
     (operator oslf-head-signature-v1 2)
     (operator proof-artifact-v1 1)
+    (operator proof-action-id-v1 2)
     (operator proof-calculus-constructor-v1 3)
     (operator proof-call-id-v1 2)
     (operator proof-call-region-plan-v1 8)
+    (operator proof-workspace-plan-v1 6)
+    (operator proof-repetition-cache-plan-v1 8)
     (operator proof-extension-v1 2)
     (operator proof-judgment-v1 3)
     (operator proof-machine-binding-v1 4)
@@ -20,8 +23,14 @@
     (operator proof-machine-table-read-v1 4)
     (operator proof-finite-support-plan-v1 11)
     (operator proof-frame-index-plan-v1 6)
+    (operator proof-indexed-effect-machine-plan-v1 9)
+    (operator proof-indexed-program-plan-v1 24)
+    (operator proof-prepared-action-case-v1 3)
+    (operator proof-prepared-action-machine-v1 3)
+    (operator proof-prepared-action-valid-v1 1)
     (operator proof-indexed-value-plan-v1 7)
     (operator proof-literal-hole-plan-v1 7)
+    (operator proof-two-phase-frame-plan-v1 10)
     (operator proof-sequence-evidence-artifact-v1 1)
     (operator proof-sequence-evidence-assertion-judgment-role-v1 3)
     (operator proof-sequence-evidence-constructor-role-v1 4)
@@ -48,7 +57,8 @@
     (operator state-check-proof-compressed-v1 5)
     (operator state-check-proof-normal-v1 4)
     (operator state-literal-v1 1)
-    (operator state-proof-decoder-v1 11)
+    (operator state-proof-decoder-v1 13)
+    (operator state-proof-action-v1 3)
     (operator state-proof-kinds-v1 6)
     (operator state-proof-machine-v1 2)
     (operator state-proof-tables-v1 9)
@@ -279,6 +289,47 @@
         (compile-proof-storage-plan-v1
           (proof-machine-table-read-v1
             ?machine mandatory-variable-v1 ?mandatory state-persistent-v1))))
+
+    ; A proof call may use the generic two-phase frame machine when its local
+    ; presentation exposes an exact stack call, a split binder/matching proof
+    ; kind inventory, immutable formula/frame inputs, and an admitted flat
+    ; literal/hole template.  Apartness is intentionally not part of this
+    ; record: a separately generated finite-support plan may refine the base
+    ; machine, while a guest without apartness still admits the same carrier.
+    (rule proof-storage-two-phase-frame-v1
+      (head
+        (compile-proof-storage-plan-v1
+          (proof-two-phase-frame-plan-v1
+            ?operation ?index ?machine
+            two-phase-frame-machine-v1 ?template-carrier
+            literal-head-optional-v1 epoch-stamped-dense-slots-v1
+            unique-dense-binders-v1 exact-stack-suffix-v1 ?region)))
+      (body
+        (compile-proof-storage-plan-v1
+          (proof-call-region-plan-v1
+            ?operation ?index ?machine ?owner ?provable
+            ?region flat-symbol-id-vector-v1 proof-verdict-only-v1))
+        (state-proof-machine-v1
+          ?machine
+          (state-stack-proof-machine-v1
+            ?tables
+            (state-proof-kinds-v1
+              ?binder-kind ?matching-kind ?rule-kind-first ?rule-kind-second
+              ?variable-kind ?unknown-token)
+            ?decoder))
+        (compile-proof-storage-plan-v1
+          (proof-literal-hole-plan-v1
+            ?machine ?owner ?cons ?nil ?template-carrier
+            state-run-region-v1 ?region))
+        (compile-proof-storage-plan-v1
+          (proof-machine-table-read-v1
+            ?machine formula-v1 ?formula state-persistent-v1))
+        (compile-proof-storage-plan-v1
+          (proof-machine-table-read-v1
+            ?machine mandatory-variable-v1 ?mandatory state-persistent-v1))
+        (compile-proof-storage-plan-v1
+          (proof-machine-table-read-v1
+            ?machine ordered-hypothesis-v1 ?hypothesis state-persistent-v1))))
 
     ; A finite support carrier is admitted only for the complete recursive
     ; sequence-apartness fragment.  The evidence roles bind the authored
@@ -530,17 +581,132 @@
           (proof-machine-binding-v1
             ?machine ?owner ?base ?provable))))
 
+    ; Reset-and-reuse is a property of the compiled call machine, not of the
+    ; guest's proof-sequence representation.  A workspace is emitted only
+    ; after the frame compiler has established the exact generic machine shape
+    ; and a call-local execution region.  The runtime may promote repeated
+    ; declarations only after the physical store supplies immutable-prefix
+    ; snapshots for the declaration inputs.  A failed snapshot stays on the
+    ; transient source path, so no invalidation policy is invented and no
+    ; singleton declaration is retained.
+    (rule proof-storage-workspace-normal-v1
+      (head
+        (compile-proof-storage-plan-v1
+          (proof-workspace-plan-v1
+            ?operation ?index ?machine
+            stack-proof-call-workspace-v1 ?region ?observation)))
+      (body
+        (state-action-v1
+          ?operation ?index
+          (state-check-proof-normal-v1
+            ?machine ?label-role ?formula-role ?proof-role))
+        (compile-proof-storage-plan-v1
+          (proof-call-region-plan-v1
+            ?operation ?index ?machine ?owner ?provable
+            ?region ?layout ?observation))
+        (compile-proof-storage-plan-v1
+          (proof-two-phase-frame-plan-v1
+            ?operation ?index ?machine two-phase-frame-machine-v1
+            literal-hole-run-program-v1 literal-head-optional-v1
+            epoch-stamped-dense-slots-v1 unique-dense-binders-v1
+            exact-stack-suffix-v1 ?region))))
+    (rule proof-storage-workspace-compressed-v1
+      (head
+        (compile-proof-storage-plan-v1
+          (proof-workspace-plan-v1
+            ?operation ?index ?machine
+            indexed-stack-proof-call-workspace-v1
+            ?region ?observation)))
+      (body
+        (state-action-v1
+          ?operation ?index
+          (state-check-proof-compressed-v1
+            ?machine ?label-role ?formula-role ?header-role ?code-role))
+        (compile-proof-storage-plan-v1
+          (proof-call-region-plan-v1
+            ?operation ?index ?machine ?owner ?provable
+            ?region ?layout ?observation))
+        (compile-proof-storage-plan-v1
+          (proof-two-phase-frame-plan-v1
+            ?operation ?index ?machine two-phase-frame-machine-v1
+            literal-hole-run-program-v1 literal-head-optional-v1
+            epoch-stamped-dense-slots-v1 unique-dense-binders-v1
+            exact-stack-suffix-v1 ?region))))
+
+    ; The generated plan, rather than workspace existence alone, selects the
+    ; generic repetition policy.  Promotion remains conditional on a live
+    ; immutable-prefix snapshot from the physical store.
+    (rule proof-storage-repetition-cache-v1
+      (head
+        (compile-proof-storage-plan-v1
+          (proof-repetition-cache-plan-v1
+            ?operation ?index ?machine u32-identity-key-v1
+            owned-plan-value-v1 second-occurrence-admission-v1
+            immutable-prefix-snapshot-v1 ?region)))
+      (body
+        (compile-proof-storage-plan-v1
+          (proof-workspace-plan-v1
+            ?operation ?index ?machine ?workspace ?region ?observation))
+        (compile-proof-storage-plan-v1
+          (proof-two-phase-frame-plan-v1
+            ?operation ?index ?machine two-phase-frame-machine-v1
+            ?template-carrier literal-head-optional-v1
+            epoch-stamped-dense-slots-v1 unique-dense-binders-v1
+            exact-stack-suffix-v1 ?region))))
+
     ; A prepared indexed-value table is admitted only when the complete
     ; ordered header and the indexed instruction stream are distinct inputs
-    ; of one bounded proof call, and the machine supplies an explicit numeric
-    ; decoder.  The runtime supplies the table algorithm; this record supplies
-    ; the local property that licenses it.
+    ; of one bounded proof call, the machine supplies an explicit numeric
+    ; decoder, and its finite value classifier is persistent.  The runtime
+    ; may therefore retain each value with its validated classifier result
+    ; rather than re-querying the immutable table on every use.
     (rule proof-storage-indexed-value-table-v1
       (head
         (compile-proof-storage-plan-v1
           (proof-indexed-value-plan-v1
             ?operation ?index ?machine ?header-role ?code-role
-            prepared-indexed-value-table-v1 proof-call-region-v1)))
+            prepared-classified-value-table-v1 ?region)))
+      (body
+        (state-action-v1
+          ?operation ?index
+          (state-check-proof-compressed-v1
+            ?machine ?label-role ?formula-role ?header-role ?code-role))
+        (state-proof-machine-v1
+          ?machine
+          (state-stack-proof-machine-v1
+            ?tables
+            (state-proof-kinds-v1
+              ?binder-kind ?matching-kind ?rule-kind-first ?rule-kind-second
+              ?variable-kind ?unknown-token)
+            (state-proof-decoder-v1
+              ?terminal-low ?terminal-high
+              ?continuation-low ?continuation-high
+              ?save ?unknown
+              ?terminal-radix ?terminal-bias
+              ?continuation-radix ?continuation-bias
+              ?unknown-policy ?save-placement ?header-policy)))
+        (compile-proof-storage-plan-v1
+          (proof-machine-table-read-v1
+            ?machine label-kind-v1 ?classifier state-persistent-v1))
+        (compile-proof-storage-plan-v1
+          (proof-call-region-plan-v1
+            ?operation ?index ?machine ?owner ?provable
+            ?region flat-symbol-id-vector-v1
+            proof-verdict-only-v1))))
+
+    ; A compressed call may fuse its admitted decoder and split indexed-value
+    ; carrier into one streaming effect machine.  The generated record keeps
+    ; the effect algebra explicit: prepared and saved values remain distinct,
+    ; save acts on the current top, and the authored unknown policy is carried
+    ; unchanged.  The runtime implements only this closed generic interface.
+    (rule proof-storage-indexed-effect-machine-v1
+      (head
+        (compile-proof-storage-plan-v1
+          (proof-indexed-effect-machine-plan-v1
+            ?operation ?index ?machine
+            indexed-effect-machine-v1
+            use-prepared-value-v1 use-saved-value-v1 save-top-value-v1
+            ?unknown-policy ?region)))
       (body
         (state-action-v1
           ?operation ?index
@@ -555,12 +721,90 @@
               ?continuation-low ?continuation-high
               ?save ?unknown
               ?terminal-radix ?terminal-bias
-              ?continuation-radix ?continuation-bias ?unknown-policy)))
+              ?continuation-radix ?continuation-bias
+              ?unknown-policy ?save-placement ?header-policy)))
+        (compile-proof-storage-plan-v1
+          (proof-indexed-value-plan-v1
+            ?operation ?index ?machine ?header-role ?code-role
+            prepared-classified-value-table-v1 ?region))
         (compile-proof-storage-plan-v1
           (proof-call-region-plan-v1
             ?operation ?index ?machine ?owner ?provable
-            proof-call-region-v1 flat-symbol-id-vector-v1
-            proof-verdict-only-v1))))
+            ?region flat-symbol-id-vector-v1 proof-verdict-only-v1))))
+
+    ; The public compressed-proof program is a generated product of the
+    ; authored call, decoder, indexed-value, and effect plans.  The runtime
+    ; receives one closed program record rather than reconstructing decoder
+    ; policy or effect selection from guest knowledge.
+    (rule proof-storage-indexed-program-v1
+      (head
+        (compile-proof-storage-plan-v1
+          (proof-indexed-program-plan-v1
+            ?operation ?index ?machine ?header-role ?code-role
+            ?terminal-low ?terminal-high
+            ?continuation-low ?continuation-high
+            ?save ?unknown
+            ?terminal-radix ?terminal-bias
+            ?continuation-radix ?continuation-bias
+            ?unknown-policy ?save-placement ?header-policy
+            prepared-classified-value-table-v1
+            indexed-effect-machine-v1
+            use-prepared-value-v1 use-saved-value-v1 save-top-value-v1
+            ?region)))
+      (body
+        (state-action-v1
+          ?operation ?index
+          (state-check-proof-compressed-v1
+            ?machine ?label-role ?formula-role ?header-role ?code-role))
+        (state-proof-machine-v1
+          ?machine
+          (state-stack-proof-machine-v1
+            ?tables ?kinds
+            (state-proof-decoder-v1
+              ?terminal-low ?terminal-high
+              ?continuation-low ?continuation-high
+              ?save ?unknown
+              ?terminal-radix ?terminal-bias
+              ?continuation-radix ?continuation-bias
+              ?unknown-policy ?save-placement ?header-policy)))
+        (compile-proof-storage-plan-v1
+          (proof-indexed-value-plan-v1
+            ?operation ?index ?machine ?header-role ?code-role
+            prepared-classified-value-table-v1 ?region))
+        (compile-proof-storage-plan-v1
+          (proof-indexed-effect-machine-plan-v1
+            ?operation ?index ?machine
+            indexed-effect-machine-v1
+            use-prepared-value-v1 use-saved-value-v1 save-top-value-v1
+            ?unknown-policy ?region))))
+
+    ; Action selection is a generated finite relation from the guest's
+    ; authored source-kind values to closed generic stack actions.  The
+    ; runtime sees the resulting list as data and does not carry a positional
+    ; inventory of binder/matching/rule roles.
+    (rule proof-storage-prepared-action-push-valid-v1
+      (head
+        (proof-prepared-action-valid-v1 stack-push-declared-v1))
+      (body))
+    (rule proof-storage-prepared-action-apply-valid-v1
+      (head
+        (proof-prepared-action-valid-v1 stack-apply-frame-v1))
+      (body))
+    (rule proof-storage-prepared-action-v1
+      (head
+        (proof-prepared-action-machine-v1
+          ?machine ?source-kind ?action))
+      (body
+        (state-proof-action-v1 ?machine ?source-kind ?action)
+        (proof-prepared-action-valid-v1 ?action)))
+    (rule proof-storage-prepared-action-case-v1
+      (head
+        (compile-proof-storage-plan-v1
+          (proof-prepared-action-case-v1
+            ?machine ?source-role ?action)))
+      (body
+        (proof-prepared-action-machine-v1
+          ?machine ?source-role ?action)))
 
     ; Frame preparation repeatedly resolves finite symbol identities while
     ; constructing one proof-call-local dictionary.  The two selected table
@@ -573,7 +817,7 @@
           (proof-frame-index-plan-v1
             ?operation ?index ?machine
             u32-open-addressed-index-v1 duplicate-reject-v1
-            proof-call-region-v1)))
+            ?region)))
       (body
         (state-action-v1
           ?operation ?index
@@ -590,7 +834,7 @@
         (compile-proof-storage-plan-v1
           (proof-call-region-plan-v1
             ?operation ?index ?machine ?owner ?provable
-            proof-call-region-v1 flat-symbol-id-vector-v1
+            ?region flat-symbol-id-vector-v1
             proof-verdict-only-v1))))
 
     (rule proof-storage-required-table-v1
@@ -626,6 +870,25 @@
         (compile-proof-storage-plan-v1
           (proof-machine-binding-v1
             ?machine ?owner ?base ?provable))))
+
+    (rule proof-storage-required-action-v1
+      (head
+        (proof-storage-required-v1
+          (proof-storage-key-v1
+            proof-action-v1
+            (proof-action-id-v1 ?machine ?source-kind))))
+      (body
+        (state-proof-action-v1 ?machine ?source-kind ?action)))
+    (rule proof-storage-denoted-action-v1
+      (head
+        (proof-storage-denoted-v1
+          (proof-storage-key-v1
+            proof-action-v1
+            (proof-action-id-v1 ?machine ?source-kind))))
+      (body
+        (compile-proof-storage-plan-v1
+          (proof-prepared-action-case-v1
+            ?machine ?source-kind ?action))))
 
     (rule proof-storage-required-sequence-v1
       (head

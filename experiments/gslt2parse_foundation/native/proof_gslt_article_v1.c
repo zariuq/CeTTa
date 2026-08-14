@@ -1,4 +1,5 @@
 #include "proof_gslt_article_v1.h"
+#include "gslt_chronological_builder_v1.h"
 
 #include <stdarg.h>
 #include <stdio.h>
@@ -22,11 +23,6 @@ typedef struct {
     char *error_buf;
     size_t error_buf_size;
 } PPProofGSLTValidationV1;
-
-typedef struct {
-    uint32_t id;
-    PPProofGSLTPatternV1 *goal;
-} PPProofGSLTCheckedEntryV1;
 
 typedef struct {
     const PPProofGSLTPatternV1 *pattern;
@@ -2350,6 +2346,150 @@ static PPProofGSLTArticleV1Result ppproof_gslt_v1_article_rooted(
     return PPPROOF_GSLT_ARTICLE_V1_OK;
 }
 
+typedef struct {
+    const PPProofGSLTPresentationV1 *presentation;
+    const PPProofGSLTArticleNodeV1 *node;
+    uint32_t node_index;
+    const PPProofGSLTArticleV1Limits *limits;
+    PPProofGSLTMaterialBudgetV1 *material_budget;
+    PPProofGSLTGroundValidationCacheV1 *validation_cache;
+    PPProofGSLTArticleV1Result result;
+    char *error_buf;
+    size_t error_buf_size;
+} PPProofGSLTChronologicalApplyContextV1;
+
+static void ppproof_gslt_v1_chronological_discard(
+    void *context, uintptr_t value) {
+    PPProofGSLTPatternV1 *pattern = (PPProofGSLTPatternV1 *)value;
+    (void)context;
+    if (!pattern)
+        return;
+    ppproof_gslt_v1_owned_pattern_clear(pattern);
+    free(pattern);
+}
+
+static bool ppproof_gslt_v1_chronological_equal(
+    void *context, uintptr_t left, uintptr_t right) {
+    const PPProofGSLTChronologicalApplyContextV1 *apply_context = context;
+
+    return apply_context &&
+           ppproof_gslt_v1_pattern_equal_at(
+               (const PPProofGSLTPatternV1 *)left,
+               (const PPProofGSLTPatternV1 *)right, 0u,
+               apply_context->limits->maximum_pattern_depth);
+}
+
+static bool ppproof_gslt_v1_chronological_apply(
+    void *context,
+    uint32_t action,
+    const uintptr_t *inputs,
+    uint32_t input_len,
+    uintptr_t *value_out) {
+    PPProofGSLTChronologicalApplyContextV1 *apply_context = context;
+    const PPProofGSLTArticleNodeV1 *node;
+    const PPProofGSLTRuleSchemaV1 *rule;
+    PPProofGSLTPatternV1 *premises = NULL;
+    PPProofGSLTPatternV1 *conclusion = NULL;
+    bool conditions_hold = false;
+    uint32_t argument_index;
+    uint32_t child_index;
+
+    if (!apply_context || !value_out ||
+        (input_len != 0u && !inputs) ||
+        !(node = apply_context->node) ||
+        action >= apply_context->presentation->rule_len) {
+        if (apply_context)
+            apply_context->result = PPPROOF_GSLT_ARTICLE_V1_INVALID;
+        return false;
+    }
+    rule = &apply_context->presentation->rules[action];
+    if (!ppproof_gslt_article_v1_name_equal(
+            rule->id, node->rule_instance.rule_id) ||
+        rule->formal_len != node->rule_instance.argument_len ||
+        rule->premise_len != input_len) {
+        ppproof_gslt_v1_set_error(
+            apply_context->error_buf, apply_context->error_buf_size,
+            "proof node does not match a rule signature");
+        apply_context->result = PPPROOF_GSLT_ARTICLE_V1_REJECTED;
+        return false;
+    }
+    for (argument_index = 0u;
+         argument_index < rule->formal_len; argument_index++) {
+        apply_context->result = ppproof_gslt_v1_validate_ground_pattern(
+            apply_context->presentation,
+            &node->rule_instance.arguments[argument_index],
+            rule->formals[argument_index].depth, false,
+            apply_context->limits, apply_context->validation_cache,
+            apply_context->error_buf, apply_context->error_buf_size);
+        if (apply_context->result != PPPROOF_GSLT_ARTICLE_V1_OK)
+            return false;
+    }
+    apply_context->result = ppproof_gslt_v1_side_conditions_hold(
+        rule, node->rule_instance.arguments,
+        apply_context->material_budget, &conditions_hold);
+    if (apply_context->result != PPPROOF_GSLT_ARTICLE_V1_OK)
+        return false;
+    if (!conditions_hold) {
+        ppproof_gslt_v1_set_error(
+            apply_context->error_buf, apply_context->error_buf_size,
+            "proof rule side condition is false");
+        apply_context->result = PPPROOF_GSLT_ARTICLE_V1_REJECTED;
+        return false;
+    }
+    apply_context->result = ppproof_gslt_v1_allocate_patterns(
+        apply_context->material_budget, rule->premise_len, &premises);
+    if (apply_context->result != PPPROOF_GSLT_ARTICLE_V1_OK)
+        return false;
+    for (child_index = 0u; child_index < rule->premise_len;
+         child_index++) {
+        apply_context->result = ppproof_gslt_v1_instantiate_pattern(
+            rule, node->rule_instance.arguments,
+            &rule->premises[child_index], 0u,
+            &premises[child_index], apply_context->material_budget, 0u);
+        if (apply_context->result != PPPROOF_GSLT_ARTICLE_V1_OK)
+            goto done;
+    }
+    apply_context->result = ppproof_gslt_v1_allocate_patterns(
+        apply_context->material_budget, 1u, &conclusion);
+    if (apply_context->result != PPPROOF_GSLT_ARTICLE_V1_OK)
+        goto done;
+    apply_context->result = ppproof_gslt_v1_instantiate_pattern(
+        rule, node->rule_instance.arguments, rule->conclusion, 0u,
+        conclusion, apply_context->material_budget, 0u);
+    if (apply_context->result != PPPROOF_GSLT_ARTICLE_V1_OK)
+        goto done;
+    for (child_index = 0u; child_index < input_len; child_index++) {
+        if (!ppproof_gslt_v1_pattern_equal_at(
+                (const PPProofGSLTPatternV1 *)inputs[child_index],
+                &premises[child_index], 0u,
+                apply_context->limits->maximum_pattern_depth)) {
+            ppproof_gslt_v1_set_error(
+                apply_context->error_buf, apply_context->error_buf_size,
+                "proof node %u (id %u, rule %.*s) child %u does not "
+                "establish its ordered premise",
+                apply_context->node_index, node->id,
+                (int)node->rule_instance.rule_id.len,
+                (const char *)node->rule_instance.rule_id.bytes,
+                child_index);
+            apply_context->result = PPPROOF_GSLT_ARTICLE_V1_REJECTED;
+            goto done;
+        }
+    }
+
+done:
+    for (child_index = 0u; child_index < rule->premise_len;
+         child_index++)
+        ppproof_gslt_v1_owned_pattern_clear(&premises[child_index]);
+    free(premises);
+    if (apply_context->result != PPPROOF_GSLT_ARTICLE_V1_OK) {
+        ppproof_gslt_v1_chronological_discard(
+            apply_context, (uintptr_t)conclusion);
+        return false;
+    }
+    *value_out = (uintptr_t)conclusion;
+    return true;
+}
+
 PPProofGSLTArticleV1Result ppproof_gslt_article_v1_check_open(
     const PPProofGSLTPresentationV1 *presentation,
     const PPProofGSLTPatternV1 *context,
@@ -2366,12 +2506,17 @@ PPProofGSLTArticleV1Result ppproof_gslt_article_v1_check_open(
     PPProofGSLTMaterialBudgetV1 material_budget = {0};
     PPProofGSLTGroundValidationCacheV1 validation_cache = {0};
     PPProofGSLTArticleIdIndexV1 id_index = {0};
-    PPProofGSLTCheckedEntryV1 *entries = NULL;
+    CettaGsltChronologicalBuilderV1 builder;
+    CettaGsltChronologicalReceiptV1 chronological_receipt = {0};
+    CettaGsltChronologicalRefV1 *references = NULL;
+    uintptr_t *premise_values = NULL;
+    PPProofGSLTChronologicalApplyContextV1 apply_context = {0};
     PPProofGSLTArticleV1Result result;
     uint32_t used_capabilities = 0u;
-    uint32_t entry_len = 0u;
+    uint32_t reference_cap = 0u;
     uint32_t index = 0u;
 
+    cetta_gslt_chronological_builder_init_v1(&builder);
     if (error_buf && error_buf_size > 0u)
         error_buf[0] = '\0';
     if (receipt_out)
@@ -2398,20 +2543,11 @@ PPProofGSLTArticleV1Result ppproof_gslt_article_v1_check_open(
     }
     if (article->node_len > limits->maximum_article_nodes ||
         !ppproof_gslt_v1_allocation_fits(
-            article->node_len, sizeof(*entries))) {
+            article->node_len, sizeof(*article->nodes))) {
         ppproof_gslt_v1_set_error(
             error_buf, error_buf_size,
             "proof article exceeds its node limit");
-        return PPPROOF_GSLT_ARTICLE_V1_RESOURCE;
-    }
-    result = ppproof_gslt_v1_article_id_index_build(
-        article, &id_index);
-    if (result != PPPROOF_GSLT_ARTICLE_V1_OK) {
-        ppproof_gslt_v1_set_error(
-            error_buf, error_buf_size,
-            result == PPPROOF_GSLT_ARTICLE_V1_REJECTED
-                ? "proof article repeats a node identifier"
-                : "proof article node index exceeds its resource limit");
+        result = PPPROOF_GSLT_ARTICLE_V1_RESOURCE;
         goto done;
     }
     validation_cache.maximum_entries =
@@ -2434,17 +2570,47 @@ PPProofGSLTArticleV1Result ppproof_gslt_article_v1_check_open(
         .used = 0u,
         .maximum_depth = limits->maximum_pattern_depth,
     };
-    entries = calloc(article->node_len, sizeof(*entries));
-    if (!entries)
-        return PPPROOF_GSLT_ARTICLE_V1_RESOURCE;
+    if (!ppproof_gslt_v1_allocation_fits(
+            context_len, sizeof(*premise_values))) {
+        result = PPPROOF_GSLT_ARTICLE_V1_RESOURCE;
+        goto done;
+    }
+    if (context_len > 0u) {
+        premise_values = malloc(
+            (size_t)context_len * sizeof(*premise_values));
+        if (!premise_values) {
+            result = PPPROOF_GSLT_ARTICLE_V1_RESOURCE;
+            goto done;
+        }
+        for (index = 0u; index < context_len; index++)
+            premise_values[index] = (uintptr_t)&context[index];
+    }
+    apply_context = (PPProofGSLTChronologicalApplyContextV1){
+        .presentation = presentation,
+        .limits = limits,
+        .material_budget = &material_budget,
+        .validation_cache = &validation_cache,
+        .result = PPPROOF_GSLT_ARTICLE_V1_OK,
+        .error_buf = error_buf,
+        .error_buf_size = error_buf_size,
+    };
+    if (!cetta_gslt_chronological_builder_begin_v1(
+            &builder, premise_values, context_len,
+            ppproof_gslt_v1_chronological_apply,
+            ppproof_gslt_v1_chronological_equal,
+            ppproof_gslt_v1_chronological_discard,
+            &apply_context)) {
+        result = PPPROOF_GSLT_ARTICLE_V1_RESOURCE;
+        goto done;
+    }
+    free(premise_values);
+    premise_values = NULL;
 
     for (index = 0u; index < article->node_len; index++) {
         const PPProofGSLTArticleNodeV1 *node = &article->nodes[index];
         const PPProofGSLTRuleSchemaV1 *rule;
-        PPProofGSLTPatternV1 *premises = NULL;
-        PPProofGSLTPatternV1 *conclusion = NULL;
-        bool conditions_hold = false;
-        uint32_t argument_index;
+        CettaGsltChronologicalAppendResultV1 append_result;
+        uintptr_t value;
         uint32_t child_index;
 
         if (!ppproof_gslt_v1_array_well_formed(
@@ -2469,127 +2635,105 @@ PPProofGSLTArticleV1Result ppproof_gslt_article_v1_check_open(
             result = PPPROOF_GSLT_ARTICLE_V1_REJECTED;
             goto done;
         }
-        for (argument_index = 0u;
-             argument_index < rule->formal_len; argument_index++) {
-            result = ppproof_gslt_v1_validate_ground_pattern(
-                presentation,
-                &node->rule_instance.arguments[argument_index],
-                rule->formals[argument_index].depth, false, limits,
-                &validation_cache, error_buf, error_buf_size);
-            if (result != PPPROOF_GSLT_ARTICLE_V1_OK)
+        if (node->child_len > reference_cap) {
+            CettaGsltChronologicalRefV1 *grown;
+            if (!ppproof_gslt_v1_allocation_fits(
+                    node->child_len, sizeof(*grown))) {
+                result = PPPROOF_GSLT_ARTICLE_V1_RESOURCE;
                 goto done;
-        }
-        result = ppproof_gslt_v1_side_conditions_hold(
-            rule, node->rule_instance.arguments,
-            &material_budget, &conditions_hold);
-        if (result != PPPROOF_GSLT_ARTICLE_V1_OK)
-            goto done;
-        if (!conditions_hold) {
-            ppproof_gslt_v1_set_error(
-                error_buf, error_buf_size,
-                "proof rule side condition is false");
-            result = PPPROOF_GSLT_ARTICLE_V1_REJECTED;
-            goto done;
-        }
-        result = ppproof_gslt_v1_allocate_patterns(
-            &material_budget, rule->premise_len, &premises);
-        if (result != PPPROOF_GSLT_ARTICLE_V1_OK)
-            goto done;
-        for (child_index = 0u; child_index < rule->premise_len;
-             child_index++) {
-            result = ppproof_gslt_v1_instantiate_pattern(
-                rule, node->rule_instance.arguments,
-                &rule->premises[child_index], 0u,
-                &premises[child_index], &material_budget, 0u);
-            if (result != PPPROOF_GSLT_ARTICLE_V1_OK)
-                break;
-        }
-        if (result == PPPROOF_GSLT_ARTICLE_V1_OK)
-            result = ppproof_gslt_v1_allocate_patterns(
-                &material_budget, 1u, &conclusion);
-        if (result == PPPROOF_GSLT_ARTICLE_V1_OK)
-            result = ppproof_gslt_v1_instantiate_pattern(
-                rule, node->rule_instance.arguments,
-                rule->conclusion, 0u, conclusion,
-                &material_budget, 0u);
-        if (result != PPPROOF_GSLT_ARTICLE_V1_OK) {
-            if (premises) {
-                for (child_index = 0u;
-                     child_index < rule->premise_len; child_index++)
-                    ppproof_gslt_v1_owned_pattern_clear(
-                        &premises[child_index]);
             }
-            free(premises);
-            if (conclusion) {
-                ppproof_gslt_v1_owned_pattern_clear(conclusion);
-                free(conclusion);
+            grown = realloc(
+                references, (size_t)node->child_len * sizeof(*grown));
+            if (!grown) {
+                result = PPPROOF_GSLT_ARTICLE_V1_RESOURCE;
+                goto done;
             }
-            goto done;
+            references = grown;
+            reference_cap = node->child_len;
         }
-
         for (child_index = 0u; child_index < node->child_len;
              child_index++) {
-            const PPProofGSLTPatternV1 *actual = NULL;
-            const PPProofGSLTReferenceV1 *reference =
-                &node->children[child_index];
-
-            if (reference->kind == PPPROOF_GSLT_REFERENCE_V1_PREMISE) {
-                if (reference->index < context_len)
-                    actual = &context[reference->index];
-            } else if (reference->kind ==
-                       PPPROOF_GSLT_REFERENCE_V1_NODE) {
-                uint32_t cited_index;
-                if (ppproof_gslt_v1_article_id_index_find(
-                        &id_index, reference->index, &cited_index) &&
-                    cited_index < index)
-                    actual = entries[cited_index].goal;
-            }
-            if (!actual ||
-                !ppproof_gslt_v1_pattern_equal_at(
-                    actual, &premises[child_index], 0u,
-                    limits->maximum_pattern_depth)) {
+            switch (node->children[child_index].kind) {
+            case PPPROOF_GSLT_REFERENCE_V1_PREMISE:
+                references[child_index].kind =
+                    CETTA_GSLT_CHRONOLOGICAL_PREMISE_REF_V1;
+                break;
+            case PPPROOF_GSLT_REFERENCE_V1_NODE:
+                references[child_index].kind =
+                    CETTA_GSLT_CHRONOLOGICAL_NODE_REF_V1;
+                break;
+            default:
                 ppproof_gslt_v1_set_error(
                     error_buf, error_buf_size,
-                    "proof node %u (id %u, rule %.*s) child %u does not "
-                    "establish its ordered premise",
-                    index, node->id,
-                    (int)node->rule_instance.rule_id.len,
-                    (const char *)node->rule_instance.rule_id.bytes,
-                    child_index);
+                    "proof node has an invalid reference kind");
                 result = PPPROOF_GSLT_ARTICLE_V1_REJECTED;
-                break;
+                goto done;
             }
+            references[child_index].value =
+                node->children[child_index].index;
         }
-        for (child_index = 0u; child_index < rule->premise_len;
-             child_index++)
-            ppproof_gslt_v1_owned_pattern_clear(&premises[child_index]);
-        free(premises);
-        if (result != PPPROOF_GSLT_ARTICLE_V1_OK) {
-            ppproof_gslt_v1_owned_pattern_clear(conclusion);
-            free(conclusion);
-            goto done;
-        }
-        entries[entry_len++] = (PPProofGSLTCheckedEntryV1){
-            .id = node->id,
-            .goal = conclusion,
-        };
-        receipt.checked_node_len++;
-    }
 
-    {
-        uint32_t root_index;
-        if (!ppproof_gslt_v1_article_id_index_find(
-                &id_index, article->root_id, &root_index) ||
-            root_index >= entry_len ||
-            !ppproof_gslt_v1_pattern_equal_at(
-                         entries[root_index].goal, article->target, 0u,
-                         limits->maximum_pattern_depth)) {
+        apply_context.node = node;
+        apply_context.node_index = index;
+        apply_context.result = PPPROOF_GSLT_ARTICLE_V1_OK;
+        append_result = cetta_gslt_chronological_builder_append_v1(
+            &builder, node->id,
+            (uint32_t)(rule - presentation->rules),
+            references, node->child_len, &value);
+        if (append_result == CETTA_GSLT_CHRONOLOGICAL_APPENDED_V1) {
+            receipt.checked_node_len++;
+            continue;
+        }
+        if (append_result == CETTA_GSLT_CHRONOLOGICAL_DUPLICATE_V1) {
             ppproof_gslt_v1_set_error(
                 error_buf, error_buf_size,
-                "proof root does not establish the declared target");
+                "proof article repeats a node identifier");
             result = PPPROOF_GSLT_ARTICLE_V1_REJECTED;
             goto done;
         }
+        if (append_result ==
+            CETTA_GSLT_CHRONOLOGICAL_UNKNOWN_REFERENCE_V1) {
+            ppproof_gslt_v1_set_error(
+                error_buf, error_buf_size,
+                "proof node %u cites an unavailable chronological reference",
+                index);
+            result = PPPROOF_GSLT_ARTICLE_V1_REJECTED;
+            goto done;
+        }
+        if (append_result == CETTA_GSLT_CHRONOLOGICAL_ACTION_REJECTED_V1) {
+            result = apply_context.result;
+            if (result == PPPROOF_GSLT_ARTICLE_V1_OK)
+                result = PPPROOF_GSLT_ARTICLE_V1_INVALID;
+            goto done;
+        }
+        result = append_result == CETTA_GSLT_CHRONOLOGICAL_RESOURCE_V1
+            ? PPPROOF_GSLT_ARTICLE_V1_RESOURCE
+            : PPPROOF_GSLT_ARTICLE_V1_INVALID;
+        goto done;
+    }
+
+    if (!cetta_gslt_chronological_builder_finish_v1(
+            &builder, article->root_id, (uintptr_t)article->target,
+            &chronological_receipt)) {
+        ppproof_gslt_v1_set_error(
+            error_buf, error_buf_size,
+            "proof root does not establish the declared target");
+        result = PPPROOF_GSLT_ARTICLE_V1_REJECTED;
+        goto done;
+    }
+    if (chronological_receipt.node_len != receipt.checked_node_len) {
+        result = PPPROOF_GSLT_ARTICLE_V1_INVALID;
+        goto done;
+    }
+    result = ppproof_gslt_v1_article_id_index_build(
+        article, &id_index);
+    if (result != PPPROOF_GSLT_ARTICLE_V1_OK) {
+        ppproof_gslt_v1_set_error(
+            error_buf, error_buf_size,
+            result == PPPROOF_GSLT_ARTICLE_V1_REJECTED
+                ? "proof article repeats a node identifier"
+                : "proof article node index exceeds its resource limit");
+        goto done;
     }
     result = ppproof_gslt_v1_article_rooted(
         article, &id_index, &receipt.rooted);
@@ -2614,11 +2758,9 @@ done:
             index, material_budget.used);
     }
     receipt.materialized_pattern_node_len = material_budget.used;
-    for (index = 0u; index < entry_len; index++) {
-        ppproof_gslt_v1_owned_pattern_clear(entries[index].goal);
-        free(entries[index].goal);
-    }
-    free(entries);
+    free(references);
+    free(premise_values);
+    cetta_gslt_chronological_builder_free_v1(&builder);
     free(validation_cache.frames);
     free(validation_cache.entries);
     free(id_index.entries);

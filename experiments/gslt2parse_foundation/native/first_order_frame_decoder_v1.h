@@ -19,6 +19,7 @@ typedef struct {
     const PPProofFiniteSupportPlanV1 *finite_support;
     const PPProofIndexedValuePlanV1 *indexed_value;
     const PPProofLiteralHolePlanV1 *literal_hole;
+    bool two_phase_frame_admitted;
     const PPProofStoragePlanV1 *storage_plan;
     char native_type_digest[65];
     char storage_plan_digest[65];

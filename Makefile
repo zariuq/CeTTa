@@ -451,6 +451,14 @@ PETTA_TYPECHECK_CENSUS_SRC = src/petta_typecheck_census.c
 endif
 SRC = src/symbol.c src/atom.c src/name_key.c src/atom_blob.c src/abt.c src/parser.c $(COMPILED_READER_RUNTIME_SRC) src/mm2_lower.c src/subst_tree.c src/space.c src/registry_resolver.c src/space_match_backend.c src/match.c src/match_decision.c src/term_canon.c src/variant_shape.c src/variant_instance.c src/answer_bank.c src/table_store.c src/search_machine.c src/petta_program.c src/petta_type_fact_provider_v1.c src/petta_typecheck_v3_decision_v1.c src/petta_typecheck_v3.c src/generated/petta_typecheck_v3_core_v1.generated.c src/generated/petta_typecheck_v3_core_provider_catalog_v1.generated.c src/petta_search_machine.c $(PETTA_TYPECHECK_V2_SRC) src/petta_specializer.c src/rule_machine.c $(LIB_PROLOG_SRC) src/term_universe.c src/stats.c src/parallel_executor.c src/prime_need.c src/petta_semantics.c src/petta_numeric.c src/petta_runtime.c src/prepared_pure_machine.c src/eval.c src/grounded.c src/he_typing.c src/he_typing_authority.c src/generated/he_typing_consistency_core_source_binding_v1.generated.c src/generated/he_profiled_type_inference_core_source_binding_v1.generated.c src/inference_checker.c src/nik_direct_authority.c src/nik_runtime.c src/prime_semantics.c src/generated/prime_typing_closed_formation_source_binding_v1.generated.c src/text_source.c src/native_handle.c src/native_sha256.c src/mork_space_bridge_runtime.c src/library.c src/langdef_pack.c src/gslt_provider_runtime.c src/gslt_space_fact_provider_v1.c src/gslt_finite_fact_provider_v1.c src/gslt_revisioned_space_provider_v1.c src/gslt_abt_provider_v1.c src/gslt_horn_runtime.c src/gslt_dense_bitset_v1.c src/gslt_compiled_runtime.c src/gslt_indexed_instruction_decoder_v1.c src/gslt_indexed_value_table_v1.c src/gslt_split_indexed_table_v1.c src/gslt_literal_hole_program_v1.c src/gslt_u32_index_v1.c src/gslt_u32_slice_arena_v1.c src/gslt_epoch_slots_v1.c src/gslt_ground_dense_term_v1.c src/gslt_language_runtime.c src/gslt_pure_provider_v1.c src/gslt_support_transform_runtime.c src/generated/prime_nik_authorities_v1.generated.c src/generated/prime_nik_runtime_v1.generated.c src/generated/gslt_il_language_v1.generated.c src/generated/metta_interact_language_v1.generated.c src/generated/mm2_gslt_profile_v1.generated.c src/generated/subzero_language_v1.generated.c src/generated/zero_language_v1.generated.c src/generated/zero_exp_language_v1.generated.c src/generated/zero_emit_language_v1.generated.c src/generated/zero_interact_language_v1.generated.c src/generated/zero_interact_provider_catalog_v1.generated.c src/generated/zerouv_language_v1.generated.c src/he_small_step_pack.c src/lib_parse_native_grammar.c src/lib_parse_inference_native.c experiments/gslt2parse_foundation/native/finite_horn_gslt_v1.c experiments/gslt2parse_foundation/native/finite_horn_ground_term_v1.c experiments/gslt2parse_foundation/native/parser_term_projection_v1.c experiments/gslt2parse_foundation/native/parser_pack_abi_v1.c experiments/gslt2parse_foundation/native/parser_action_bytecode_v1.c experiments/gslt2parse_foundation/native/parser_pack_native_v1.c experiments/gslt2parse_foundation/native/parser_pack_lexical_v1.c experiments/gslt2parse_foundation/native/parser_pack_gll_v1.c experiments/gslt2parse_foundation/native/regular_span_dfa_v1.c experiments/gslt2parse_foundation/native/regular_span_nfa_v1.c $(PYTHON_SRC) src/session.c src/lang.c src/rhocalc_core.c src/rhocalc_syntax.c src/compile.c src/runtime.c src/cetta_stdlib.c native/native_modules.c src/main.c
 SRC += $(PETTA_TYPECHECK_CENSUS_SRC)
+SRC += \
+	src/gslt_rigid_coordinate_dispatch_v1.c \
+	src/gslt_peano_add_specialization_v1.c \
+	src/gslt_classified_value_v1.c \
+	src/gslt_indexed_effect_machine_v1.c \
+	src/gslt_repetition_admission_v1.c \
+	src/gslt_reusable_buffer_v1.c \
+	src/gslt_two_phase_frame_machine_v1.c
 SRC += src/inference_side_condition_provider.c \
 	src/generated/prime_nik_side_condition_provider_catalog_v1.generated.c \
 	experiments/gslt2parse_foundation/native/parser_pack_glr_v1.c
@@ -462,6 +470,7 @@ SRC += \
 	src/generated/prime_typing_open_lambda_pi_core_source_binding_v1.generated.c \
 	src/generated/prime_typing_native_ground_judgments_source_binding_v1.generated.c \
 	src/generated/prime_typing_typed_publication_core_source_binding_v1.generated.c
+SRC += src/gslt_chronological_builder_v1.c
 LANGDEF_COMPILED_CURSOR_RUNTIME_SRC = \
 	experiments/gslt2parse_foundation/native/finite_horn_answer_stream_v1.c \
 	experiments/gslt2parse_foundation/native/parser_pack_guard_evidence_stream_v1.c \
@@ -486,14 +495,11 @@ LANGDEF_COMPILED_CURSOR_RUNTIME_SRC = \
 	experiments/gslt2parse_foundation/native/proof_storage_plan_v1.c \
 	experiments/gslt2parse_foundation/native/relational_stack_proof_v1.c \
 	experiments/gslt2parse_foundation/native/relational_state_program_v1.c \
+	experiments/gslt2parse_foundation/native/first_order_frame_decoder_v1.c \
 	experiments/gslt2parse_foundation/native/parser_atom_projection_v1.c \
 	experiments/gslt2parse_foundation/native/parser_atom_projection_events_v1.c \
 	experiments/gslt2parse_foundation/native/parser_atom_projection_action_v1.c \
 	experiments/gslt2parse_foundation/native/semantic_mask_nfa_v1.c
-ifeq ($(ENABLE_LANGDEF_DIAGNOSTIC_BACKENDS),1)
-LANGDEF_COMPILED_CURSOR_RUNTIME_SRC += \
-	experiments/gslt2parse_foundation/native/first_order_frame_decoder_v1.c
-endif
 SRC += experiments/gslt2parse_foundation/native/parser_pack_abi_stream_v1.c \
 	$(LANGDEF_COMPILED_CURSOR_RUNTIME_SRC) native/langdef_module.c
 ifeq ($(ENABLE_RUNTIME_STATS),1)
@@ -730,6 +736,8 @@ PROOF_GSLT_PLAN_V1_TEST_LINK_OBJ = \
 	src/native_sha256.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o \
 	experiments/gslt2parse_foundation/native/finite_horn_ground_term_v1.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o \
 	$(FINITE_HORN_ANSWER_STREAM_V1_OBJ) \
+	$(GSLT_U32_INDEX_V1_OBJ) \
+	$(GSLT_CHRONOLOGICAL_BUILDER_V1_OBJ) \
 	$(PROOF_GSLT_ARTICLE_V1_OBJ) \
 	$(PROOF_GSLT_PLAN_V1_OBJ)
 PROOF_GSLT_SEQUENCE_EVIDENCE_V1_SRC = experiments/gslt2parse_foundation/native/proof_gslt_sequence_evidence_v1.c
@@ -749,6 +757,7 @@ PROOF_GSLT_RELATIONAL_ASSERTION_V1_TEST_OBJ = runtime/bootstrap/test_proof_gslt_
 PROOF_GSLT_RELATIONAL_ASSERTION_V1_TEST_BIN = runtime/test_proof_gslt_relational_assertion_v1-$(BUILD_OBJ_TAG)
 PROOF_GSLT_RELATIONAL_ASSERTION_V1_TEST_LINK_OBJ = \
 	$(PROOF_GSLT_PLAN_V1_TEST_LINK_OBJ) \
+	$(GSLT_INDEXED_INSTRUCTION_DECODER_V1_OBJ) \
 	$(PROOF_GSLT_RELATIONAL_ASSERTION_V1_OBJ)
 PROOF_GSLT_RELATIONAL_PROJECTION_NATIVE_V1_SRC = experiments/gslt2parse_foundation/native/proof_gslt_relational_projection_v1.c
 PROOF_GSLT_RELATIONAL_PROJECTION_NATIVE_V1_HEADER = experiments/gslt2parse_foundation/native/proof_gslt_relational_projection_v1.h
@@ -774,9 +783,13 @@ PROOF_GSLT_RELATIONAL_DECLARATION_V1_TEST_LINK_OBJ = \
 	$(PROOF_GSLT_RELATIONAL_ASSERTION_V1_OBJ) \
 	$(PROOF_GSLT_RELATIONAL_DECLARATION_V1_OBJ) \
 	$(PROOF_GSLT_RELATIONAL_MACHINE_V1_OBJ) \
+	$(PROOF_STORAGE_PLAN_V1_OBJ) \
 	$(GSLT_INDEXED_INSTRUCTION_DECODER_V1_OBJ) \
+	$(GSLT_INDEXED_EFFECT_MACHINE_V1_OBJ) \
+	$(GSLT_CLASSIFIED_VALUE_V1_OBJ) \
+	$(GSLT_REPETITION_ADMISSION_V1_OBJ) \
+	$(GSLT_REUSABLE_BUFFER_V1_OBJ) \
 	$(GSLT_SPLIT_INDEXED_TABLE_V1_OBJ) \
-	$(GSLT_U32_INDEX_V1_OBJ) \
 	$(RELATIONAL_VALUE_LIST_V1_OBJ)
 RELATIONAL_STACK_PROOF_V1_SRC = experiments/gslt2parse_foundation/native/relational_stack_proof_v1.c
 RELATIONAL_STACK_PROOF_V1_HEADER = experiments/gslt2parse_foundation/native/relational_stack_proof_v1.h
@@ -794,6 +807,36 @@ GSLT_INDEXED_INSTRUCTION_DECODER_V1_OBJ = src/gslt_indexed_instruction_decoder_v
 GSLT_INDEXED_INSTRUCTION_DECODER_V1_TEST_SRC = tests/support/test_gslt_indexed_instruction_decoder_v1.c
 GSLT_INDEXED_INSTRUCTION_DECODER_V1_TEST_OBJ = runtime/bootstrap/test_gslt_indexed_instruction_decoder_v1.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o
 GSLT_INDEXED_INSTRUCTION_DECODER_V1_TEST_BIN = runtime/test_gslt_indexed_instruction_decoder_v1-$(BUILD_OBJ_TAG)
+GSLT_INDEXED_EFFECT_MACHINE_V1_SRC = src/gslt_indexed_effect_machine_v1.c
+GSLT_INDEXED_EFFECT_MACHINE_V1_HEADER = src/gslt_indexed_effect_machine_v1.h
+GSLT_INDEXED_EFFECT_MACHINE_V1_OBJ = src/gslt_indexed_effect_machine_v1.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o
+GSLT_INDEXED_EFFECT_MACHINE_V1_TEST_SRC = tests/support/test_gslt_indexed_effect_machine_v1.c
+GSLT_INDEXED_EFFECT_MACHINE_V1_TEST_OBJ = runtime/bootstrap/test_gslt_indexed_effect_machine_v1.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o
+GSLT_INDEXED_EFFECT_MACHINE_V1_TEST_BIN = runtime/test_gslt_indexed_effect_machine_v1-$(BUILD_OBJ_TAG)
+GSLT_CLASSIFIED_VALUE_V1_SRC = src/gslt_classified_value_v1.c
+GSLT_CLASSIFIED_VALUE_V1_HEADER = src/gslt_classified_value_v1.h
+GSLT_CLASSIFIED_VALUE_V1_OBJ = src/gslt_classified_value_v1.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o
+GSLT_CLASSIFIED_VALUE_V1_TEST_SRC = tests/support/test_gslt_classified_value_v1.c
+GSLT_CLASSIFIED_VALUE_V1_TEST_OBJ = runtime/bootstrap/test_gslt_classified_value_v1.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o
+GSLT_CLASSIFIED_VALUE_V1_TEST_BIN = runtime/test_gslt_classified_value_v1-$(BUILD_OBJ_TAG)
+GSLT_CHRONOLOGICAL_BUILDER_V1_SRC = src/gslt_chronological_builder_v1.c
+GSLT_CHRONOLOGICAL_BUILDER_V1_HEADER = src/gslt_chronological_builder_v1.h
+GSLT_CHRONOLOGICAL_BUILDER_V1_OBJ = src/gslt_chronological_builder_v1.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o
+GSLT_CHRONOLOGICAL_BUILDER_V1_TEST_SRC = tests/support/test_gslt_chronological_builder_v1.c
+GSLT_CHRONOLOGICAL_BUILDER_V1_TEST_OBJ = runtime/bootstrap/test_gslt_chronological_builder_v1.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o
+GSLT_CHRONOLOGICAL_BUILDER_V1_TEST_BIN = runtime/test_gslt_chronological_builder_v1-$(BUILD_OBJ_TAG)
+GSLT_REUSABLE_BUFFER_V1_SRC = src/gslt_reusable_buffer_v1.c
+GSLT_REUSABLE_BUFFER_V1_HEADER = src/gslt_reusable_buffer_v1.h
+GSLT_REUSABLE_BUFFER_V1_OBJ = src/gslt_reusable_buffer_v1.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o
+GSLT_REUSABLE_BUFFER_V1_TEST_SRC = tests/support/test_gslt_reusable_buffer_v1.c
+GSLT_REUSABLE_BUFFER_V1_TEST_OBJ = runtime/bootstrap/test_gslt_reusable_buffer_v1.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o
+GSLT_REUSABLE_BUFFER_V1_TEST_BIN = runtime/test_gslt_reusable_buffer_v1-$(BUILD_OBJ_TAG)
+GSLT_REPETITION_ADMISSION_V1_SRC = src/gslt_repetition_admission_v1.c
+GSLT_REPETITION_ADMISSION_V1_HEADER = src/gslt_repetition_admission_v1.h
+GSLT_REPETITION_ADMISSION_V1_OBJ = src/gslt_repetition_admission_v1.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o
+GSLT_REPETITION_ADMISSION_V1_TEST_SRC = tests/support/test_gslt_repetition_admission_v1.c
+GSLT_REPETITION_ADMISSION_V1_TEST_OBJ = runtime/bootstrap/test_gslt_repetition_admission_v1.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o
+GSLT_REPETITION_ADMISSION_V1_TEST_BIN = runtime/test_gslt_repetition_admission_v1-$(BUILD_OBJ_TAG)
 GSLT_INDEXED_VALUE_TABLE_V1_SRC = src/gslt_indexed_value_table_v1.c
 GSLT_INDEXED_VALUE_TABLE_V1_HEADER = src/gslt_indexed_value_table_v1.h
 GSLT_INDEXED_VALUE_TABLE_V1_OBJ = src/gslt_indexed_value_table_v1.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o
@@ -812,6 +855,12 @@ GSLT_LITERAL_HOLE_PROGRAM_V1_OBJ = src/gslt_literal_hole_program_v1.$(BUILD_OBJ_
 GSLT_LITERAL_HOLE_PROGRAM_V1_TEST_SRC = tests/support/test_gslt_literal_hole_program_v1.c
 GSLT_LITERAL_HOLE_PROGRAM_V1_TEST_OBJ = runtime/bootstrap/test_gslt_literal_hole_program_v1.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o
 GSLT_LITERAL_HOLE_PROGRAM_V1_TEST_BIN = runtime/test_gslt_literal_hole_program_v1-$(BUILD_OBJ_TAG)
+GSLT_TWO_PHASE_FRAME_MACHINE_V1_SRC = src/gslt_two_phase_frame_machine_v1.c
+GSLT_TWO_PHASE_FRAME_MACHINE_V1_HEADER = src/gslt_two_phase_frame_machine_v1.h
+GSLT_TWO_PHASE_FRAME_MACHINE_V1_OBJ = src/gslt_two_phase_frame_machine_v1.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o
+GSLT_TWO_PHASE_FRAME_MACHINE_V1_TEST_SRC = tests/support/test_gslt_two_phase_frame_machine_v1.c
+GSLT_TWO_PHASE_FRAME_MACHINE_V1_TEST_OBJ = runtime/bootstrap/test_gslt_two_phase_frame_machine_v1.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o
+GSLT_TWO_PHASE_FRAME_MACHINE_V1_TEST_BIN = runtime/test_gslt_two_phase_frame_machine_v1-$(BUILD_OBJ_TAG)
 GSLT_U32_INDEX_V1_SRC = src/gslt_u32_index_v1.c
 GSLT_U32_INDEX_V1_HEADER = src/gslt_u32_index_v1.h
 GSLT_U32_INDEX_V1_OBJ = src/gslt_u32_index_v1.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o
@@ -861,6 +910,7 @@ RELATIONAL_STATE_TRANSACTION_V1_TEST_LINK_OBJ = \
 	$(GSLT_INDEXED_INSTRUCTION_DECODER_V1_OBJ) \
 	$(GSLT_INDEXED_VALUE_TABLE_V1_OBJ) \
 	$(GSLT_LITERAL_HOLE_PROGRAM_V1_OBJ) \
+	$(GSLT_TWO_PHASE_FRAME_MACHINE_V1_OBJ) \
 	$(GSLT_U32_INDEX_V1_OBJ) \
 	$(GSLT_U32_SLICE_ARENA_V1_OBJ) \
 	$(GSLT_EPOCH_SLOTS_V1_OBJ) \
@@ -910,6 +960,7 @@ PARSER_PACK_CURSOR_GENERIC_V1_LINK_OBJ = \
 	$(GSLT_INDEXED_INSTRUCTION_DECODER_V1_OBJ) \
 	$(GSLT_INDEXED_VALUE_TABLE_V1_OBJ) \
 	$(GSLT_LITERAL_HOLE_PROGRAM_V1_OBJ) \
+	$(GSLT_TWO_PHASE_FRAME_MACHINE_V1_OBJ) \
 	$(GSLT_U32_INDEX_V1_OBJ) \
 	$(GSLT_U32_SLICE_ARENA_V1_OBJ) \
 	$(GSLT_EPOCH_SLOTS_V1_OBJ) \
@@ -1010,6 +1061,18 @@ OSLF_NATIVE_TYPE_PLAN_V1_OBJ = experiments/gslt2parse_foundation/native/oslf_nat
 OSLF_NATIVE_TYPE_VM_V1_SRC = experiments/gslt2parse_foundation/native/oslf_native_type_vm_v1.c
 OSLF_NATIVE_TYPE_VM_V1_HEADER = experiments/gslt2parse_foundation/native/oslf_native_type_vm_v1.h
 OSLF_NATIVE_TYPE_VM_V1_OBJ = experiments/gslt2parse_foundation/native/oslf_native_type_vm_v1.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o
+GSLT_RIGID_COORDINATE_DISPATCH_V1_SRC = src/gslt_rigid_coordinate_dispatch_v1.c
+GSLT_RIGID_COORDINATE_DISPATCH_V1_HEADER = src/gslt_rigid_coordinate_dispatch_v1.h
+GSLT_RIGID_COORDINATE_DISPATCH_V1_OBJ = src/gslt_rigid_coordinate_dispatch_v1.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o
+GSLT_RIGID_COORDINATE_DISPATCH_V1_TEST_SRC = tests/support/test_gslt_rigid_coordinate_dispatch_v1.c
+GSLT_RIGID_COORDINATE_DISPATCH_V1_TEST_OBJ = runtime/bootstrap/test_gslt_rigid_coordinate_dispatch_v1.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o
+GSLT_RIGID_COORDINATE_DISPATCH_V1_TEST_BIN = runtime/test_gslt_rigid_coordinate_dispatch_v1-$(BUILD_OBJ_TAG)
+GSLT_PEANO_ADD_SPECIALIZATION_V1_SRC = src/gslt_peano_add_specialization_v1.c
+GSLT_PEANO_ADD_SPECIALIZATION_V1_HEADER = src/gslt_peano_add_specialization_v1.h
+GSLT_PEANO_ADD_SPECIALIZATION_V1_OBJ = src/gslt_peano_add_specialization_v1.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o
+GSLT_PEANO_ADD_SPECIALIZATION_V1_TEST_SRC = tests/support/test_gslt_peano_add_specialization_v1.c
+GSLT_PEANO_ADD_SPECIALIZATION_V1_TEST_OBJ = runtime/bootstrap/test_gslt_peano_add_specialization_v1.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o
+GSLT_PEANO_ADD_SPECIALIZATION_V1_TEST_BIN = runtime/test_gslt_peano_add_specialization_v1-$(BUILD_OBJ_TAG)
 OSLF_NATIVE_TYPE_PROGRAM_V1_TEST_SRC = experiments/gslt2parse_foundation/native/test_oslf_native_type_program_v1.c
 OSLF_NATIVE_TYPE_PROGRAM_V1_TEST_OBJ = runtime/bootstrap/test_oslf_native_type_program_v1.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o
 OSLF_NATIVE_TYPE_PROGRAM_V1_TEST_BIN = runtime/test_oslf_native_type_program_v1-$(BUILD_OBJ_TAG)
@@ -1037,6 +1100,8 @@ OSLF_NATIVE_TYPE_VM_V1_TEST_LINK_OBJ = \
 	$(OSLF_NATIVE_TYPE_PLAN_V1_OBJ) \
 	$(GSLT_EPOCH_SLOTS_V1_OBJ) \
 	$(GSLT_GROUND_DENSE_TERM_V1_OBJ) \
+	$(GSLT_RIGID_COORDINATE_DISPATCH_V1_OBJ) \
+	$(GSLT_PEANO_ADD_SPECIALIZATION_V1_OBJ) \
 	$(OSLF_NATIVE_TYPE_VM_V1_OBJ) \
 	$(OSLF_NATIVE_TYPE_VM_V1_MATCH_OBJ) \
 	$(OSLF_NATIVE_TYPE_VM_V1_VARIANT_OBJ) \
@@ -1048,6 +1113,8 @@ PROOF_GSLT_RELATIONAL_RUNTIME_NATIVE_V1_TEST_LINK_OBJ = \
 	$(PARSER_PACK_CURSOR_GENERATED_V1_LINK_OBJ) \
 	$(OSLF_NATIVE_TYPE_PLAN_V1_OBJ) \
 	$(GSLT_GROUND_DENSE_TERM_V1_OBJ) \
+	$(GSLT_RIGID_COORDINATE_DISPATCH_V1_OBJ) \
+	$(GSLT_PEANO_ADD_SPECIALIZATION_V1_OBJ) \
 	$(OSLF_NATIVE_TYPE_VM_V1_OBJ) \
 	$(OSLF_NATIVE_TYPE_VM_V1_MATCH_OBJ) \
 	$(OSLF_NATIVE_TYPE_VM_V1_VARIANT_OBJ) \
@@ -1093,6 +1160,7 @@ RELATIONAL_STACK_PROOF_CACHE_V1_TEST_LINK_OBJ = \
 	$(GSLT_INDEXED_INSTRUCTION_DECODER_V1_OBJ) \
 	$(GSLT_INDEXED_VALUE_TABLE_V1_OBJ) \
 	$(GSLT_LITERAL_HOLE_PROGRAM_V1_OBJ) \
+	$(GSLT_TWO_PHASE_FRAME_MACHINE_V1_OBJ) \
 	$(GSLT_U32_INDEX_V1_OBJ) \
 	$(GSLT_U32_SLICE_ARENA_V1_OBJ) \
 	$(GSLT_EPOCH_SLOTS_V1_OBJ) \
@@ -1512,6 +1580,8 @@ PROOF_GSLT_SEQUENCE_CANARY_V1 = experiments/gslt2parse_foundation/presentations/
 PROOF_GSLT_TRACE_ORDER_CANARY_V1 = experiments/gslt2parse_foundation/presentations/canaries/proof_gslt_trace_order_v1.metta
 PROOF_GSLT_TRACE_CODEC_CANARY_V1 = experiments/gslt2parse_foundation/presentations/canaries/proof_gslt_trace_codec_v1.metta
 PROOF_GSLT_TRACE_INPUT_CANARY_V1 = experiments/gslt2parse_foundation/presentations/canaries/proof_gslt_trace_input_v1.metta
+PREPARED_ACTION_INVENTORY_CANARY_V1 = experiments/gslt2parse_foundation/presentations/canaries/prepared_action_inventory_v1.metta
+PREPARED_ACTION_INVENTORY_ANSWERS_V1 = runtime/bootstrap/prepared-action-inventory-v1.$(BUILD_OBJ_TAG)/answers
 PROOF_GSLT_TRACE_SERVICE_V1 = experiments/gslt2parse_foundation/presentations/core/proof_gslt_trace_service_v1.metta
 PROOF_GSLT_TRACE_EXECUTION_COMPOSITION_V1 = experiments/gslt2parse_foundation/presentations/canaries/proof_gslt_trace_execution_composition_v1.metta
 PROOF_GSLT_TRACE_COMPRESSED_COMPOSITION_CANARY_V1 = experiments/gslt2parse_foundation/presentations/canaries/proof_gslt_trace_compressed_composition_v1.metta
@@ -1525,6 +1595,9 @@ PROOF_GSLT_TRACE_COMPILE_NORMAL_V1 = tests/langdef/metamath/proof_trace_compile_
 PROOF_GSLT_TRACE_COMPILE_COMPRESSED_V1 = tests/langdef/metamath/proof_trace_compile_compressed.query
 PROOF_GSLT_TRACE_COMPILE_CONTINUATION_V1 = tests/langdef/metamath/proof_trace_compile_continuation.query
 PROOF_GSLT_TRACE_COMPILE_OPEN_SAVE_V1 = tests/langdef/metamath/proof_trace_compile_open_save.query
+PROOF_GSLT_TRACE_COMPILE_SINGLE_SAVE_V1 = tests/langdef/metamath/proof_trace_compile_single_save.query
+PROOF_GSLT_TRACE_COMPILE_BARE_SAVE_V1 = tests/langdef/metamath/proof_trace_compile_bare_save.query
+PROOF_GSLT_TRACE_COMPILE_REPEATED_SAVE_V1 = tests/langdef/metamath/proof_trace_compile_repeated_save.query
 PROOF_GSLT_TRACE_COMPILE_UNKNOWN_V1 = tests/langdef/metamath/proof_trace_compile_unknown.query
 PROOF_GSLT_TRACE_COMPILE_ACCEPTED_V1 = tests/langdef/metamath/proof_trace_compile_accepted.query
 PROOF_GSLT_TRACE_INPUT_CONTEXT_V1 = tests/langdef/metamath/proof_trace_input_context.query
@@ -1565,6 +1638,11 @@ PROOF_GSLT_METAMATH_RELATIONAL_PROJECTION_ABI_V1 = $(METAMATH_LANGDEF_GENERATED_
 PROOF_GSLT_METAMATH_RELATIONAL_RUNTIME_ABI_V1 = $(METAMATH_LANGDEF_GENERATED_DIR_V1)/proof_relational_runtime_v1.answers
 PROOF_GSLT_METAMATH_RELATIONAL_DELETE_ROLE_SOURCE_V1 = $(PROOF_GSLT_STAGE_DIR_V1)/metamath-relational-delete-role.metta
 PROOF_GSLT_METAMATH_RELATIONAL_DELETE_ROLE_V1 = $(PROOF_GSLT_STAGE_DIR_V1)/metamath-relational-delete-role.answers
+PROOF_GSLT_METAMATH_RELATIONAL_DELETE_EXECUTION_SOURCE_V1 = $(PROOF_GSLT_STAGE_DIR_V1)/metamath-relational-delete-execution.metta
+PROOF_GSLT_METAMATH_RELATIONAL_DELETE_EXECUTION_V1 = $(PROOF_GSLT_STAGE_DIR_V1)/metamath-relational-delete-execution.answers
+PROOF_GSLT_METAMATH_RELATIONAL_NO_ASSERTION_APARTNESS_SOURCE_V1 = $(PROOF_GSLT_STAGE_DIR_V1)/metamath-relational-no-assertion-apartness.metta
+PROOF_GSLT_METAMATH_RELATIONAL_NO_APARTNESS_SOURCE_V1 = $(PROOF_GSLT_STAGE_DIR_V1)/metamath-relational-no-apartness.metta
+PROOF_GSLT_METAMATH_RELATIONAL_NO_APARTNESS_V1 = $(PROOF_GSLT_STAGE_DIR_V1)/metamath-relational-no-apartness.answers
 TPTP_LANGDEF_MANIFEST_V1 = langdef/tptp/langdef.metta
 TPTP_LANGDEF_SYNTAX_V1 = langdef/tptp/syntax_fof_cnf_v1.metta
 TPTP_LANGDEF_ATP_BRIDGE_V1 = langdef/tptp/atp_bridge_v1.metta
@@ -1607,6 +1685,7 @@ METAMATH_PROOF_SEMANTIC_GSLT_V1 = $(METAMATH_LANGDEF_GENERATED_DIR_V1)/proof_sem
 METAMATH_PROOF_SEMANTIC_EXEC_V1 = $(METAMATH_LANGDEF_GENERATED_DIR_V1)/proof_semantic_exec_v1.metta
 METAMATH_PROOF_SEMANTIC_NTT_V1 = $(METAMATH_LANGDEF_GENERATED_DIR_V1)/proof_semantic_ntt_v1.answers
 METAMATH_PROOF_MACHINE_COMPOSITION_V1 = $(METAMATH_LANGDEF_DIR_V1)/proof_machine_composition_v1.metta
+METAMATH_PROOF_TRACE_POLICY_V1 = $(METAMATH_LANGDEF_DIR_V1)/proof_trace_policy_v1.metta
 METAMATH_PROOF_TRACE_CODEC_V1 = $(METAMATH_LANGDEF_DIR_V1)/proof_trace_codec_v1.metta
 METAMATH_PROOF_MACHINE_NTT_V1 = $(METAMATH_LANGDEF_GENERATED_DIR_V1)/proof_machine_ntt_v1.answers
 METAMATH_PROOF_MACHINE_NTT_V1_SOURCES = \
@@ -1629,6 +1708,7 @@ METAMATH_PROOF_MACHINE_NTT_V1_SOURCES = \
 	$(PROOF_GSLT_RELATIONAL_PROJECTION_COMPILER_V1) \
 	$(PROOF_GSLT_METAMATH_CALCULUS_V1) \
 	$(PROOF_GSLT_METAMATH_RELATIONAL_PROJECTION_V1) \
+	$(METAMATH_PROOF_TRACE_POLICY_V1) \
 	$(METAMATH_PROOF_TRACE_CODEC_V1)
 METAMATH_PROOF_MACHINE_CAPABILITY_CANARY_V1 = experiments/gslt2parse_foundation/presentations/canaries/metamath_proof_machine_capability_v1.metta
 METAMATH_PROOF_MACHINE_CAPABILITY_V1 = runtime/bootstrap/metamath-proof-machine-capability-v1.$(BUILD_OBJ_TAG)/reflection.answers
@@ -1639,6 +1719,7 @@ METAMATH_PROOF_TRACE_NATIVE_PROGRAM_V1_SOURCES = \
 	$(PROOF_GSLT_TRACE_COMPILER_V1) \
 	$(PROOF_GSLT_TRACE_INPUT_V1) \
 	$(PROOF_GSLT_TRACE_INPUT_INTERFACE_V1) \
+	$(METAMATH_PROOF_TRACE_POLICY_V1) \
 	$(METAMATH_PROOF_TRACE_CODEC_V1)
 METAMATH_PROOF_MACHINE_COMPILED_V1_SOURCES = \
 	$(METAMATH_PROOF_TRACE_NATIVE_PROGRAM_V1_SOURCES) \
@@ -1694,6 +1775,7 @@ METAMATH_OCCURRENCE_SPAN_MASK_LINK_PART_V1 = $(METAMATH_OCCURRENCE_SPAN_MASK_STA
 METAMATH_STATE_PART_DIR_V1 = runtime/bootstrap/metamath-state-v1.$(BUILD_OBJ_TAG)
 METAMATH_STATE_TABLE_PART_V1 = $(METAMATH_STATE_PART_DIR_V1)/table.answers
 METAMATH_STATE_PROOF_MACHINE_PART_V1 = $(METAMATH_STATE_PART_DIR_V1)/proof-machine.answers
+METAMATH_STATE_PROOF_ACTION_PART_V1 = $(METAMATH_STATE_PART_DIR_V1)/proof-action.answers
 METAMATH_STATE_ACTION_PART_V1 = $(METAMATH_STATE_PART_DIR_V1)/action.answers
 METAMATH_STATE_FINAL_PART_V1 = $(METAMATH_STATE_PART_DIR_V1)/final.answers
 METAMATH_SYNTAX_CORE_V1 = experiments/gslt2parse_foundation/presentations/core/syntax_core_v1.metta
@@ -1716,6 +1798,7 @@ METAMATH_COGSLT_AUTHORED_RULE_SOURCES_V1 = \
 	$(METAMATH_LEXICAL_PROJECTION_V1) \
 	$(METAMATH_SOURCE_FOLD_V1) \
 	$(METAMATH_SOURCE_STATE_V1) \
+	$(METAMATH_PROOF_TRACE_POLICY_V1) \
 	$(METAMATH_SOURCE_PROOF_V1) \
 	$(PROOF_GSLT_METAMATH_CALCULUS_V1) \
 	$(PROOF_GSLT_METAMATH_RELATIONAL_BRIDGE_V1)
@@ -1782,6 +1865,7 @@ METAMATH_STATE_SOURCES_V1 = \
 	$(METAMATH_SOURCE_FOLD_V1) \
 	$(METAMATH_RELATIONAL_STATE_CORE_V1) \
 	$(METAMATH_SOURCE_STATE_V1) \
+	$(METAMATH_PROOF_TRACE_POLICY_V1) \
 	$(METAMATH_SOURCE_PROOF_V1) \
 	$(METAMATH_RELATIONAL_STATE_COMPILER_V1)
 METAMATH_AUTHORING_COMPOSED_SOURCES_V1 = \
@@ -1794,6 +1878,7 @@ METAMATH_AUTHORING_COMPOSED_SOURCES_V1 = \
 	$(METAMATH_LEXICAL_PROJECTION_V1) \
 	$(METAMATH_SOURCE_FOLD_V1) \
 	$(METAMATH_SOURCE_STATE_V1) \
+	$(METAMATH_PROOF_TRACE_POLICY_V1) \
 	$(METAMATH_SOURCE_PROOF_V1) \
 	$(PROOF_GSLT_ARTICLE_CORE_V1) \
 	$(PROOF_GSLT_ARTICLE_INTERFACE_V1) \
@@ -2363,7 +2448,7 @@ test-bindings-lookup-index: $(BINDINGS_LOOKUP_INDEX_TEST_BIN)
 	@enabled=$$($(call cetta_exec,./$(BINDINGS_LOOKUP_INDEX_TEST_BIN))); \
 	disabled=$$(CETTA_BINDINGS_LOOKUP_INDEX=0 $(call cetta_exec,./$(BINDINGS_LOOKUP_INDEX_TEST_BIN))); \
 	audited=$$(CETTA_BINDINGS_DERIVED_AUDIT=1 $(call cetta_exec,./$(BINDINGS_LOOKUP_INDEX_TEST_BIN))); \
-	expected='(BindingsLookupIndexSummary 82 82 0)'; \
+	expected='(BindingsLookupIndexSummary 91 91 0)'; \
 	printf '%s\n' "$$enabled"; \
 	test "$$enabled" = "$$expected" && test "$$disabled" = "$$expected" && \
 		test "$$audited" = "$$expected"
@@ -3675,6 +3760,8 @@ DEPS = $(OBJ:.o=.d) $(STAGE0_OBJ:.o=.d) \
 	$(RHOCALC_ABT_SUBSTITUTION_TEST_OBJ:.o=.d) \
 	$(OSLF_NATIVE_TYPE_VM_V1_OBJ:.o=.d) \
 	$(OSLF_NATIVE_TYPE_VM_V1_TEST_OBJ:.o=.d) \
+	$(GSLT_RIGID_COORDINATE_DISPATCH_V1_TEST_OBJ:.o=.d) \
+	$(GSLT_PEANO_ADD_SPECIALIZATION_V1_TEST_OBJ:.o=.d) \
 	$(OSLF_NATIVE_TYPE_VM_V1_MATCH_OBJ:.o=.d) \
 	$(OSLF_NATIVE_TYPE_VM_V1_VARIANT_OBJ:.o=.d) \
 	$(OSLF_NATIVE_TYPE_VM_V1_PRIME_NEED_OBJ:.o=.d) \
@@ -4410,6 +4497,27 @@ $(GSLT_INDEXED_INSTRUCTION_DECODER_V1_OBJ): \
 	@mkdir -p $(dir $@)
 	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
 
+$(GSLT_INDEXED_EFFECT_MACHINE_V1_OBJ): \
+		$(GSLT_INDEXED_EFFECT_MACHINE_V1_SRC) \
+		$(GSLT_INDEXED_EFFECT_MACHINE_V1_HEADER) \
+		$(GSLT_INDEXED_INSTRUCTION_DECODER_V1_HEADER) \
+		$(GSLT_SPLIT_INDEXED_TABLE_V1_HEADER) $(BUILD_CONFIG_HEADER)
+	@mkdir -p $(dir $@)
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+
+$(GSLT_CLASSIFIED_VALUE_V1_OBJ): \
+		$(GSLT_CLASSIFIED_VALUE_V1_SRC) \
+		$(GSLT_CLASSIFIED_VALUE_V1_HEADER) $(BUILD_CONFIG_HEADER)
+	@mkdir -p $(dir $@)
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+
+$(GSLT_CHRONOLOGICAL_BUILDER_V1_OBJ): \
+		$(GSLT_CHRONOLOGICAL_BUILDER_V1_SRC) \
+		$(GSLT_CHRONOLOGICAL_BUILDER_V1_HEADER) \
+		$(GSLT_U32_INDEX_V1_HEADER) $(BUILD_CONFIG_HEADER)
+	@mkdir -p $(dir $@)
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+
 $(GSLT_INDEXED_VALUE_TABLE_V1_OBJ): \
 		$(GSLT_INDEXED_VALUE_TABLE_V1_SRC) \
 		$(GSLT_INDEXED_VALUE_TABLE_V1_HEADER) $(BUILD_CONFIG_HEADER)
@@ -4419,6 +4527,15 @@ $(GSLT_INDEXED_VALUE_TABLE_V1_OBJ): \
 $(GSLT_LITERAL_HOLE_PROGRAM_V1_OBJ): \
 		$(GSLT_LITERAL_HOLE_PROGRAM_V1_SRC) \
 		$(GSLT_LITERAL_HOLE_PROGRAM_V1_HEADER) $(BUILD_CONFIG_HEADER)
+	@mkdir -p $(dir $@)
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+
+$(GSLT_TWO_PHASE_FRAME_MACHINE_V1_OBJ): \
+		$(GSLT_TWO_PHASE_FRAME_MACHINE_V1_SRC) \
+		$(GSLT_TWO_PHASE_FRAME_MACHINE_V1_HEADER) \
+		$(GSLT_LITERAL_HOLE_PROGRAM_V1_HEADER) \
+		$(GSLT_U32_SLICE_ARENA_V1_HEADER) \
+		$(GSLT_EPOCH_SLOTS_V1_HEADER) $(BUILD_CONFIG_HEADER)
 	@mkdir -p $(dir $@)
 	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
 
@@ -4447,7 +4564,7 @@ $(GSLT_GROUND_DENSE_TERM_V1_OBJ): \
 	@mkdir -p $(dir $@)
 	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
 
-$(RELATIONAL_STACK_PROOF_V1_OBJ): $(RELATIONAL_STACK_PROOF_V1_SRC) $(RELATIONAL_STACK_PROOF_V1_HEADER) $(RELATIONAL_STORE_V1_HEADER) $(RELATIONAL_VALUE_LIST_V1_HEADER) $(GSLT_DENSE_BITSET_V1_HEADER) $(GSLT_INDEXED_INSTRUCTION_DECODER_V1_HEADER) $(GSLT_INDEXED_VALUE_TABLE_V1_HEADER) $(GSLT_LITERAL_HOLE_PROGRAM_V1_HEADER) $(GSLT_U32_INDEX_V1_HEADER) $(GSLT_U32_SLICE_ARENA_V1_HEADER) $(GSLT_EPOCH_SLOTS_V1_HEADER) $(BUILD_CONFIG_HEADER)
+$(RELATIONAL_STACK_PROOF_V1_OBJ): $(RELATIONAL_STACK_PROOF_V1_SRC) $(RELATIONAL_STACK_PROOF_V1_HEADER) $(RELATIONAL_STORE_V1_HEADER) $(RELATIONAL_VALUE_LIST_V1_HEADER) $(GSLT_DENSE_BITSET_V1_HEADER) $(GSLT_INDEXED_INSTRUCTION_DECODER_V1_HEADER) $(GSLT_INDEXED_VALUE_TABLE_V1_HEADER) $(GSLT_LITERAL_HOLE_PROGRAM_V1_HEADER) $(GSLT_TWO_PHASE_FRAME_MACHINE_V1_HEADER) $(GSLT_U32_INDEX_V1_HEADER) $(GSLT_U32_SLICE_ARENA_V1_HEADER) $(GSLT_EPOCH_SLOTS_V1_HEADER) $(BUILD_CONFIG_HEADER)
 	@mkdir -p $(dir $@)
 	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
 
@@ -4504,8 +4621,10 @@ $(PROOF_GSLT_RELATIONAL_MACHINE_V1_OBJ): \
 		$(PROOF_GSLT_RELATIONAL_DECLARATION_V1_HEADER) \
 		$(PROOF_GSLT_RELATIONAL_ASSERTION_V1_HEADER) \
 		$(PROOF_GSLT_SEQUENCE_EVIDENCE_V1_HEADER) \
-		$(GSLT_INDEXED_INSTRUCTION_DECODER_V1_HEADER) \
-		$(GSLT_SPLIT_INDEXED_TABLE_V1_HEADER) \
+		$(GSLT_CLASSIFIED_VALUE_V1_HEADER) \
+		$(GSLT_INDEXED_EFFECT_MACHINE_V1_HEADER) \
+		$(GSLT_REPETITION_ADMISSION_V1_HEADER) \
+		$(GSLT_REUSABLE_BUFFER_V1_HEADER) \
 		$(GSLT_U32_INDEX_V1_HEADER) \
 		$(PROOF_STORAGE_PLAN_V1_HEADER) \
 		$(RELATIONAL_STATE_PROGRAM_V1_HEADER) \
@@ -4956,6 +5075,8 @@ $(PROOF_GSLT_METAMATH_RELATIONAL_ABI_V1): \
 		$(METAMATH_SOURCE_FOLD_V1) \
 		$(METAMATH_RELATIONAL_STATE_CORE_V1) \
 		$(METAMATH_SOURCE_STATE_V1) \
+		$(METAMATH_PROOF_TRACE_POLICY_V1) \
+		$(METAMATH_SOURCE_PROOF_V1) \
 		$(PROOF_GSLT_RELATIONAL_ASSERTION_CORE_V1) \
 		$(PROOF_GSLT_RELATIONAL_ASSERTION_COMPILER_V1) \
 		$(PROOF_GSLT_METAMATH_CALCULUS_V1) \
@@ -4971,6 +5092,8 @@ $(PROOF_GSLT_METAMATH_RELATIONAL_ABI_V1): \
 		--source $(METAMATH_SOURCE_FOLD_V1) \
 		--source $(METAMATH_RELATIONAL_STATE_CORE_V1) \
 		--source $(METAMATH_SOURCE_STATE_V1) \
+		--source $(METAMATH_PROOF_TRACE_POLICY_V1) \
+		--source $(METAMATH_SOURCE_PROOF_V1) \
 		--source $(PROOF_GSLT_RELATIONAL_ASSERTION_CORE_V1) \
 		--source $(PROOF_GSLT_RELATIONAL_ASSERTION_COMPILER_V1) \
 		--source $(PROOF_GSLT_METAMATH_CALCULUS_V1) \
@@ -5032,6 +5155,7 @@ $(PROOF_GSLT_METAMATH_RELATIONAL_RUNTIME_ABI_V1): \
 		$(PROOF_GSLT_RELATIONAL_RUNTIME_COMPILER_V1) \
 		$(PROOF_GSLT_METAMATH_CALCULUS_V1) \
 		$(PROOF_GSLT_METAMATH_RELATIONAL_PROJECTION_V1) \
+		$(METAMATH_PROOF_TRACE_POLICY_V1) \
 		$(METAMATH_PROOF_TRACE_CODEC_V1) \
 		$(LANGDEF_COMPILER_V1_BIN) $(GSLT2PARSE_CHART_V1_NATIVE_BIN)
 	@mkdir -p $(dir $@)
@@ -5045,6 +5169,7 @@ $(PROOF_GSLT_METAMATH_RELATIONAL_RUNTIME_ABI_V1): \
 		--source $(METAMATH_SOURCE_FOLD_V1) \
 		--source $(METAMATH_RELATIONAL_STATE_CORE_V1) \
 		--source $(METAMATH_SOURCE_STATE_V1) \
+		--source $(METAMATH_PROOF_TRACE_POLICY_V1) \
 		--source $(METAMATH_SOURCE_PROOF_V1) \
 		--source $(PROOF_GSLT_TRACE_SEMANTICS_V1) \
 		--source $(PROOF_GSLT_TRACE_COMPILER_V1) \
@@ -5072,7 +5197,8 @@ $(PROOF_GSLT_METAMATH_RELATIONAL_DELETE_ROLE_V1): \
 		$(METAMATH_OCCURRENCE_FOLD_CORE_V1) \
 		$(METAMATH_SOURCE_FOLD_V1) \
 		$(METAMATH_RELATIONAL_STATE_CORE_V1) \
-		$(METAMATH_SOURCE_STATE_V1) \
+		$(METAMATH_SOURCE_STATE_V1) $(METAMATH_SOURCE_PROOF_V1) \
+		$(METAMATH_PROOF_TRACE_POLICY_V1) \
 		$(PROOF_GSLT_RELATIONAL_ASSERTION_CORE_V1) \
 		$(PROOF_GSLT_RELATIONAL_ASSERTION_COMPILER_V1) \
 		$(PROOF_GSLT_METAMATH_CALCULUS_V1) \
@@ -5088,10 +5214,98 @@ $(PROOF_GSLT_METAMATH_RELATIONAL_DELETE_ROLE_V1): \
 		--source $(METAMATH_SOURCE_FOLD_V1) \
 		--source $(METAMATH_RELATIONAL_STATE_CORE_V1) \
 		--source $(METAMATH_SOURCE_STATE_V1) \
+		--source $(METAMATH_SOURCE_PROOF_V1) \
+		--source $(METAMATH_PROOF_TRACE_POLICY_V1) \
 		--source $(PROOF_GSLT_RELATIONAL_ASSERTION_CORE_V1) \
 		--source $(PROOF_GSLT_RELATIONAL_ASSERTION_COMPILER_V1) \
 		--source $(PROOF_GSLT_METAMATH_CALCULUS_V1) \
 		--source $(PROOF_GSLT_METAMATH_RELATIONAL_DELETE_ROLE_SOURCE_V1) \
+		--query '(proof-sequence-relational-artifact-v1 ?record)' --out $@
+
+$(PROOF_GSLT_METAMATH_RELATIONAL_DELETE_EXECUTION_SOURCE_V1): \
+		$(PROOF_GSLT_RELATIONAL_ASSERTION_CORE_V1) \
+		$(GSLT_RULE_MUTATOR_V1_BIN)
+	@mkdir -p $(dir $@)
+	$(GSLT_RULE_MUTATOR_V1_BIN) mutate \
+		--source $(PROOF_GSLT_RELATIONAL_ASSERTION_CORE_V1) --out $@ \
+		--rule proof-sequence-relational-execution --mode delete
+
+$(PROOF_GSLT_METAMATH_RELATIONAL_DELETE_EXECUTION_V1): \
+		$(PROOF_GSLT_ARTICLE_CORE_V1) \
+		$(PROOF_GSLT_SEQUENCE_RELATIONS_V1) \
+		$(PROOF_GSLT_SEQUENCE_SCHEMA_V1) \
+		$(METAMATH_OCCURRENCE_FOLD_CORE_V1) \
+		$(METAMATH_SOURCE_FOLD_V1) \
+		$(METAMATH_RELATIONAL_STATE_CORE_V1) \
+		$(METAMATH_SOURCE_STATE_V1) $(METAMATH_SOURCE_PROOF_V1) \
+		$(PROOF_GSLT_METAMATH_RELATIONAL_DELETE_EXECUTION_SOURCE_V1) \
+		$(PROOF_GSLT_RELATIONAL_ASSERTION_COMPILER_V1) \
+		$(PROOF_GSLT_METAMATH_CALCULUS_V1) \
+		$(PROOF_GSLT_METAMATH_RELATIONAL_BRIDGE_V1) \
+		$(LANGDEF_COMPILER_V1_BIN) $(GSLT2PARSE_CHART_V1_NATIVE_BIN)
+	@mkdir -p $(dir $@)
+	$(LANGDEF_COMPILER_V1_BIN) answers \
+		--chart $(GSLT2PARSE_CHART_V1_NATIVE_BIN) \
+		--source $(PROOF_GSLT_ARTICLE_CORE_V1) \
+		--source $(PROOF_GSLT_SEQUENCE_RELATIONS_V1) \
+		--source $(PROOF_GSLT_SEQUENCE_SCHEMA_V1) \
+		--source $(METAMATH_OCCURRENCE_FOLD_CORE_V1) \
+		--source $(METAMATH_SOURCE_FOLD_V1) \
+		--source $(METAMATH_RELATIONAL_STATE_CORE_V1) \
+		--source $(METAMATH_SOURCE_STATE_V1) \
+		--source $(METAMATH_SOURCE_PROOF_V1) \
+		--source $(PROOF_GSLT_METAMATH_RELATIONAL_DELETE_EXECUTION_SOURCE_V1) \
+		--source $(PROOF_GSLT_RELATIONAL_ASSERTION_COMPILER_V1) \
+		--source $(PROOF_GSLT_METAMATH_CALCULUS_V1) \
+		--source $(PROOF_GSLT_METAMATH_RELATIONAL_BRIDGE_V1) \
+		--query '(proof-sequence-relational-artifact-v1 ?record)' --out $@
+
+$(PROOF_GSLT_METAMATH_RELATIONAL_NO_ASSERTION_APARTNESS_SOURCE_V1): \
+		$(PROOF_GSLT_METAMATH_RELATIONAL_BRIDGE_V1) \
+		$(GSLT_RULE_MUTATOR_V1_BIN)
+	@mkdir -p $(dir $@)
+	$(GSLT_RULE_MUTATOR_V1_BIN) mutate \
+		--source $(PROOF_GSLT_METAMATH_RELATIONAL_BRIDGE_V1) --out $@ \
+		--rule mm-proof-relational-table-assertion-disjoint --mode delete
+
+$(PROOF_GSLT_METAMATH_RELATIONAL_NO_APARTNESS_SOURCE_V1): \
+		$(PROOF_GSLT_METAMATH_RELATIONAL_NO_ASSERTION_APARTNESS_SOURCE_V1) \
+		$(GSLT_RULE_MUTATOR_V1_BIN)
+	@mkdir -p $(dir $@)
+	$(GSLT_RULE_MUTATOR_V1_BIN) mutate \
+		--source $(PROOF_GSLT_METAMATH_RELATIONAL_NO_ASSERTION_APARTNESS_SOURCE_V1) --out $@ \
+		--rule mm-proof-relational-table-active-apartness --mode delete
+
+$(PROOF_GSLT_METAMATH_RELATIONAL_NO_APARTNESS_V1): \
+		$(PROOF_GSLT_ARTICLE_CORE_V1) \
+		$(PROOF_GSLT_SEQUENCE_RELATIONS_V1) \
+		$(PROOF_GSLT_SEQUENCE_SCHEMA_V1) \
+		$(METAMATH_OCCURRENCE_FOLD_CORE_V1) \
+		$(METAMATH_SOURCE_FOLD_V1) \
+		$(METAMATH_RELATIONAL_STATE_CORE_V1) \
+		$(METAMATH_SOURCE_STATE_V1) $(METAMATH_SOURCE_PROOF_V1) \
+		$(METAMATH_PROOF_TRACE_POLICY_V1) \
+		$(PROOF_GSLT_RELATIONAL_ASSERTION_CORE_V1) \
+		$(PROOF_GSLT_RELATIONAL_ASSERTION_COMPILER_V1) \
+		$(PROOF_GSLT_METAMATH_CALCULUS_V1) \
+		$(PROOF_GSLT_METAMATH_RELATIONAL_NO_APARTNESS_SOURCE_V1) \
+		$(LANGDEF_COMPILER_V1_BIN) $(GSLT2PARSE_CHART_V1_NATIVE_BIN)
+	@mkdir -p $(dir $@)
+	$(LANGDEF_COMPILER_V1_BIN) answers \
+		--chart $(GSLT2PARSE_CHART_V1_NATIVE_BIN) \
+		--source $(PROOF_GSLT_ARTICLE_CORE_V1) \
+		--source $(PROOF_GSLT_SEQUENCE_RELATIONS_V1) \
+		--source $(PROOF_GSLT_SEQUENCE_SCHEMA_V1) \
+		--source $(METAMATH_OCCURRENCE_FOLD_CORE_V1) \
+		--source $(METAMATH_SOURCE_FOLD_V1) \
+		--source $(METAMATH_RELATIONAL_STATE_CORE_V1) \
+		--source $(METAMATH_SOURCE_STATE_V1) \
+		--source $(METAMATH_SOURCE_PROOF_V1) \
+		--source $(METAMATH_PROOF_TRACE_POLICY_V1) \
+		--source $(PROOF_GSLT_RELATIONAL_ASSERTION_CORE_V1) \
+		--source $(PROOF_GSLT_RELATIONAL_ASSERTION_COMPILER_V1) \
+		--source $(PROOF_GSLT_METAMATH_CALCULUS_V1) \
+		--source $(PROOF_GSLT_METAMATH_RELATIONAL_NO_APARTNESS_SOURCE_V1) \
 		--query '(proof-sequence-relational-artifact-v1 ?record)' --out $@
 
 $(PROOF_GSLT_SEQUENCE_DELETE_ABI_ROLE_SOURCE_V1): \
@@ -5378,6 +5592,15 @@ $(METAMATH_STATE_PROOF_MACHINE_PART_V1): $(METAMATH_STATE_SOURCES_V1) \
 		$(foreach source,$(METAMATH_STATE_SOURCES_V1),--source $(source)) \
 		--query '(state-proof-machine-v1 ?machine ?configuration)' --out $@
 
+$(METAMATH_STATE_PROOF_ACTION_PART_V1): $(METAMATH_STATE_SOURCES_V1) \
+		$(LANGDEF_COMPILER_V1_BIN) $(GSLT2PARSE_CHART_V1_NATIVE_BIN)
+	@mkdir -p $(dir $@)
+	$(LANGDEF_COMPILER_V1_BIN) answers \
+		--chart $(GSLT2PARSE_CHART_V1_NATIVE_BIN) \
+		$(foreach source,$(METAMATH_STATE_SOURCES_V1),--source $(source)) \
+		--query '(state-proof-action-v1 ?machine ?source-kind ?action)' \
+		--out $@
+
 $(METAMATH_STATE_FINAL_PART_V1): $(METAMATH_STATE_SOURCES_V1) \
 		$(LANGDEF_COMPILER_V1_BIN) $(GSLT2PARSE_CHART_V1_NATIVE_BIN)
 	@mkdir -p $(dir $@)
@@ -5570,6 +5793,7 @@ $(METAMATH_PROOF_MACHINE_NTT_V1): \
 
 $(METAMATH_PROOF_STORAGE_COMBINED_V1): \
 		$(METAMATH_STATE_PROGRAM_V1) \
+		$(METAMATH_STATE_PROOF_ACTION_PART_V1) \
 		$(PROOF_GSLT_METAMATH_PLAN_V1) \
 		$(PROOF_GSLT_METAMATH_EVIDENCE_ABI_V1) \
 		$(PROOF_GSLT_METAMATH_RELATIONAL_ABI_V1) \
@@ -5682,6 +5906,7 @@ $(METAMATH_LANGDEF_LOCK_V1): \
 		$(PROOF_GSLT_RELATIONAL_PROJECTION_COMPILER_V1) \
 		$(PROOF_GSLT_RELATIONAL_RUNTIME_COMPILER_V1) \
 		$(PROOF_GSLT_METAMATH_RELATIONAL_PROJECTION_V1) \
+		$(METAMATH_PROOF_TRACE_POLICY_V1) \
 		$(METAMATH_PROOF_TRACE_CODEC_V1) \
 		$(METAMATH_PROOF_STORAGE_ANALYSIS_PAYLOAD_V1) \
 		$(METAMATH_PROOF_STORAGE_PLAN_V1) \
@@ -6160,6 +6385,7 @@ test-metamath-cogslt-proof-relational-projection-v1: \
 			--source $(METAMATH_SOURCE_FOLD_V1) \
 			--source $(METAMATH_RELATIONAL_STATE_CORE_V1) \
 			--source $(METAMATH_SOURCE_STATE_V1) \
+			--source $(METAMATH_PROOF_TRACE_POLICY_V1) \
 			--source $(METAMATH_SOURCE_PROOF_V1) \
 			--source $(PROOF_GSLT_TRACE_SEMANTICS_V1) \
 			--source $(PROOF_GSLT_TRACE_COMPILER_V1) \
@@ -6305,12 +6531,16 @@ test-metamath-cogslt-proof-trace-semantics-v1: \
 		$(PROOF_GSLT_TRACE_SAVED_POSITIVE_V1) \
 		$(PROOF_GSLT_TRACE_SAVED_RANGE_V1) \
 		$(PROOF_GSLT_TRACE_COMPILER_V1) \
+		$(METAMATH_PROOF_TRACE_POLICY_V1) \
 		$(METAMATH_PROOF_TRACE_CODEC_V1) \
 		$(PROOF_GSLT_TRACE_CODEC_CANARY_V1) \
 		$(PROOF_GSLT_TRACE_COMPILE_NORMAL_V1) \
 		$(PROOF_GSLT_TRACE_COMPILE_COMPRESSED_V1) \
 		$(PROOF_GSLT_TRACE_COMPILE_CONTINUATION_V1) \
 		$(PROOF_GSLT_TRACE_COMPILE_OPEN_SAVE_V1) \
+		$(PROOF_GSLT_TRACE_COMPILE_SINGLE_SAVE_V1) \
+		$(PROOF_GSLT_TRACE_COMPILE_BARE_SAVE_V1) \
+		$(PROOF_GSLT_TRACE_COMPILE_REPEATED_SAVE_V1) \
 		$(PROOF_GSLT_TRACE_COMPILE_UNKNOWN_V1) \
 		$(PROOF_GSLT_TRACE_COMPILE_ACCEPTED_V1) \
 		$(PROOF_GSLT_TRACE_INPUT_V1) \
@@ -6374,6 +6604,7 @@ test-metamath-cogslt-proof-trace-semantics-v1: \
 		$(METAMATH_PROOF_SEMANTIC_EXEC_V1) \
 		$(PROOF_GSLT_TRACE_SEMANTICS_V1) \
 		$(PROOF_GSLT_TRACE_COMPILER_V1) \
+		$(METAMATH_PROOF_TRACE_POLICY_V1) \
 		$(METAMATH_PROOF_TRACE_CODEC_V1) \
 		$(PROOF_GSLT_TRACE_CODEC_CANARY_V1) \
 		--query-file $(PROOF_GSLT_TRACE_COMPILE_NORMAL_V1) --summary); \
@@ -6382,6 +6613,7 @@ test-metamath-cogslt-proof-trace-semantics-v1: \
 		$(METAMATH_PROOF_SEMANTIC_EXEC_V1) \
 		$(PROOF_GSLT_TRACE_SEMANTICS_V1) \
 		$(PROOF_GSLT_TRACE_COMPILER_V1) \
+		$(METAMATH_PROOF_TRACE_POLICY_V1) \
 		$(METAMATH_PROOF_TRACE_CODEC_V1) \
 		$(PROOF_GSLT_TRACE_CODEC_CANARY_V1) \
 		--query-file $(PROOF_GSLT_TRACE_COMPILE_COMPRESSED_V1) --summary); \
@@ -6390,6 +6622,7 @@ test-metamath-cogslt-proof-trace-semantics-v1: \
 		$(METAMATH_PROOF_SEMANTIC_EXEC_V1) \
 		$(PROOF_GSLT_TRACE_SEMANTICS_V1) \
 		$(PROOF_GSLT_TRACE_COMPILER_V1) \
+		$(METAMATH_PROOF_TRACE_POLICY_V1) \
 		$(METAMATH_PROOF_TRACE_CODEC_V1) \
 		$(PROOF_GSLT_TRACE_CODEC_CANARY_V1) \
 		--query-file $(PROOF_GSLT_TRACE_COMPILE_CONTINUATION_V1) \
@@ -6399,14 +6632,47 @@ test-metamath-cogslt-proof-trace-semantics-v1: \
 		$(METAMATH_PROOF_SEMANTIC_EXEC_V1) \
 		$(PROOF_GSLT_TRACE_SEMANTICS_V1) \
 		$(PROOF_GSLT_TRACE_COMPILER_V1) \
+		$(METAMATH_PROOF_TRACE_POLICY_V1) \
 		$(METAMATH_PROOF_TRACE_CODEC_V1) \
 		$(PROOF_GSLT_TRACE_CODEC_CANARY_V1) \
 		--query-file $(PROOF_GSLT_TRACE_COMPILE_OPEN_SAVE_V1) --summary); \
 	printf '%s\n' "$$open_save" | rg -F -q '"outcome":"NoAnswer"'; \
+	single_save=$$($(GSLT2PARSE_CHART_V1_NATIVE_BIN) \
+		$(METAMATH_PROOF_SEMANTIC_EXEC_V1) \
+		$(PROOF_GSLT_TRACE_SEMANTICS_V1) \
+		$(PROOF_GSLT_TRACE_COMPILER_V1) \
+		$(PROOF_GSLT_TRACE_INPUT_V1) \
+		$(METAMATH_PROOF_TRACE_POLICY_V1) \
+		$(METAMATH_PROOF_TRACE_CODEC_V1) \
+		$(PROOF_GSLT_TRACE_INPUT_CANARY_V1) \
+		$(PROOF_GSLT_TRACE_CODEC_CANARY_V1) \
+		--query-file $(PROOF_GSLT_TRACE_COMPILE_SINGLE_SAVE_V1) --summary); \
+	printf '%s\n' "$$single_save" | rg -F -q '"outcome":"Unique"'; \
+	bare_save=$$($(GSLT2PARSE_CHART_V1_NATIVE_BIN) \
+		$(METAMATH_PROOF_SEMANTIC_EXEC_V1) \
+		$(PROOF_GSLT_TRACE_SEMANTICS_V1) \
+		$(PROOF_GSLT_TRACE_COMPILER_V1) \
+		$(METAMATH_PROOF_TRACE_POLICY_V1) \
+		$(METAMATH_PROOF_TRACE_CODEC_V1) \
+		$(PROOF_GSLT_TRACE_CODEC_CANARY_V1) \
+		--query-file $(PROOF_GSLT_TRACE_COMPILE_BARE_SAVE_V1) --summary); \
+	printf '%s\n' "$$bare_save" | rg -F -q '"outcome":"NoAnswer"'; \
+	repeated_save=$$($(GSLT2PARSE_CHART_V1_NATIVE_BIN) \
+		$(METAMATH_PROOF_SEMANTIC_EXEC_V1) \
+		$(PROOF_GSLT_TRACE_SEMANTICS_V1) \
+		$(PROOF_GSLT_TRACE_COMPILER_V1) \
+		$(PROOF_GSLT_TRACE_INPUT_V1) \
+		$(METAMATH_PROOF_TRACE_POLICY_V1) \
+		$(METAMATH_PROOF_TRACE_CODEC_V1) \
+		$(PROOF_GSLT_TRACE_INPUT_CANARY_V1) \
+		$(PROOF_GSLT_TRACE_CODEC_CANARY_V1) \
+		--query-file $(PROOF_GSLT_TRACE_COMPILE_REPEATED_SAVE_V1) --summary); \
+	printf '%s\n' "$$repeated_save" | rg -F -q '"outcome":"NoAnswer"'; \
 	unknown=$$($(GSLT2PARSE_CHART_V1_NATIVE_BIN) \
 		$(METAMATH_PROOF_SEMANTIC_EXEC_V1) \
 		$(PROOF_GSLT_TRACE_SEMANTICS_V1) \
 		$(PROOF_GSLT_TRACE_COMPILER_V1) \
+		$(METAMATH_PROOF_TRACE_POLICY_V1) \
 		$(METAMATH_PROOF_TRACE_CODEC_V1) \
 		$(PROOF_GSLT_TRACE_CODEC_CANARY_V1) \
 		--query-file $(PROOF_GSLT_TRACE_COMPILE_UNKNOWN_V1) --summary); \
@@ -6415,6 +6681,7 @@ test-metamath-cogslt-proof-trace-semantics-v1: \
 		$(METAMATH_PROOF_SEMANTIC_EXEC_V1) \
 		$(PROOF_GSLT_TRACE_SEMANTICS_V1) \
 		$(PROOF_GSLT_TRACE_COMPILER_V1) \
+		$(METAMATH_PROOF_TRACE_POLICY_V1) \
 		$(METAMATH_PROOF_TRACE_CODEC_V1) \
 		$(PROOF_GSLT_TRACE_CODEC_CANARY_V1) \
 		--query-file $(PROOF_GSLT_TRACE_COMPILE_ACCEPTED_V1) --summary); \
@@ -6424,6 +6691,7 @@ test-metamath-cogslt-proof-trace-semantics-v1: \
 		$(PROOF_GSLT_TRACE_SEMANTICS_V1) \
 		$(PROOF_GSLT_TRACE_COMPILER_V1) \
 		$(PROOF_GSLT_TRACE_INPUT_V1) \
+		$(METAMATH_PROOF_TRACE_POLICY_V1) \
 		$(METAMATH_PROOF_TRACE_CODEC_V1) \
 		$(PROOF_GSLT_TRACE_INPUT_CANARY_V1) \
 		--query-file $(PROOF_GSLT_TRACE_INPUT_CONTEXT_V1) --summary); \
@@ -6433,6 +6701,7 @@ test-metamath-cogslt-proof-trace-semantics-v1: \
 		$(PROOF_GSLT_TRACE_SEMANTICS_V1) \
 		$(PROOF_GSLT_TRACE_COMPILER_V1) \
 		$(PROOF_GSLT_TRACE_INPUT_V1) \
+		$(METAMATH_PROOF_TRACE_POLICY_V1) \
 		$(METAMATH_PROOF_TRACE_CODEC_V1) \
 		$(PROOF_GSLT_TRACE_INPUT_CANARY_V1) \
 		--query-file $(PROOF_GSLT_TRACE_INPUT_FRAME_V1) --summary); \
@@ -6442,6 +6711,7 @@ test-metamath-cogslt-proof-trace-semantics-v1: \
 		$(PROOF_GSLT_TRACE_SEMANTICS_V1) \
 		$(PROOF_GSLT_TRACE_COMPILER_V1) \
 		$(PROOF_GSLT_TRACE_INPUT_V1) \
+		$(METAMATH_PROOF_TRACE_POLICY_V1) \
 		$(METAMATH_PROOF_TRACE_CODEC_V1) \
 		$(PROOF_GSLT_TRACE_INPUT_CANARY_V1) \
 		--query-file $(PROOF_GSLT_TRACE_INPUT_NORMAL_V1) --summary); \
@@ -6451,6 +6721,7 @@ test-metamath-cogslt-proof-trace-semantics-v1: \
 		$(PROOF_GSLT_TRACE_SEMANTICS_V1) \
 		$(PROOF_GSLT_TRACE_COMPILER_V1) \
 		$(PROOF_GSLT_TRACE_INPUT_V1) \
+		$(METAMATH_PROOF_TRACE_POLICY_V1) \
 		$(METAMATH_PROOF_TRACE_CODEC_V1) \
 		$(PROOF_GSLT_TRACE_INPUT_CANARY_V1) \
 		--query-file $(PROOF_GSLT_TRACE_INPUT_COMPRESSED_V1) --summary); \
@@ -6490,6 +6761,7 @@ test-metamath-cogslt-proof-trace-semantics-v1: \
 		$(PROOF_GSLT_TRACE_SEMANTICS_V1) \
 		$(PROOF_GSLT_TRACE_COMPILER_V1) \
 		$(PROOF_GSLT_TRACE_INPUT_V1) \
+		$(METAMATH_PROOF_TRACE_POLICY_V1) \
 		$(METAMATH_PROOF_TRACE_CODEC_V1) \
 		$(PROOF_GSLT_TRACE_COMPRESSED_COMPOSITION_CANARY_V1) \
 		--query-file \
@@ -6502,6 +6774,7 @@ test-metamath-cogslt-proof-trace-semantics-v1: \
 		$(PROOF_GSLT_TRACE_SEMANTICS_V1) \
 		$(PROOF_GSLT_TRACE_COMPILER_V1) \
 		$(PROOF_GSLT_TRACE_INPUT_V1) \
+		$(METAMATH_PROOF_TRACE_POLICY_V1) \
 		$(METAMATH_PROOF_TRACE_CODEC_V1) \
 		$(PROOF_GSLT_TRACE_COMPRESSED_COMPOSITION_CANARY_V1) \
 		--query-file \
@@ -6514,6 +6787,7 @@ test-metamath-cogslt-proof-trace-semantics-v1: \
 		$(PROOF_GSLT_TRACE_SEMANTICS_V1) \
 		$(PROOF_GSLT_TRACE_COMPILER_V1) \
 		$(PROOF_GSLT_TRACE_INPUT_V1) \
+		$(METAMATH_PROOF_TRACE_POLICY_V1) \
 		$(METAMATH_PROOF_TRACE_CODEC_V1) \
 		$(PROOF_GSLT_TRACE_INPUT_CANARY_V1) \
 		--query-file $(PROOF_GSLT_TRACE_INPUT_WRONG_TARGET_V1) \
@@ -6525,6 +6799,7 @@ test-metamath-cogslt-proof-trace-semantics-v1: \
 		$(PROOF_GSLT_TRACE_SEMANTICS_V1) \
 		$(PROOF_GSLT_TRACE_COMPILER_V1) \
 		$(PROOF_GSLT_TRACE_INPUT_V1) \
+		$(METAMATH_PROOF_TRACE_POLICY_V1) \
 		$(METAMATH_PROOF_TRACE_CODEC_V1) \
 		$(PROOF_GSLT_TRACE_INPUT_CANARY_V1) \
 		--query-file $(PROOF_GSLT_TRACE_INPUT_BAD_COUNT_V1) --summary); \
@@ -6572,6 +6847,7 @@ test-metamath-cogslt-proof-trace-semantics-v1: \
 		"$$work/deleted-saved-lookup-zero.metta" \
 		$(PROOF_GSLT_TRACE_COMPILER_V1) \
 		$(PROOF_GSLT_TRACE_INPUT_V1) \
+		$(METAMATH_PROOF_TRACE_POLICY_V1) \
 		$(METAMATH_PROOF_TRACE_CODEC_V1) \
 		$(PROOF_GSLT_TRACE_COMPRESSED_COMPOSITION_CANARY_V1) \
 		--query-file \
@@ -6587,12 +6863,46 @@ test-metamath-cogslt-proof-trace-semantics-v1: \
 		$(METAMATH_PROOF_SEMANTIC_EXEC_V1) \
 		$(PROOF_GSLT_TRACE_SEMANTICS_V1) \
 		"$$work/deleted-continuation.metta" \
+		$(METAMATH_PROOF_TRACE_POLICY_V1) \
 		$(METAMATH_PROOF_TRACE_CODEC_V1) \
 		$(PROOF_GSLT_TRACE_CODEC_CANARY_V1) \
 		--query-file $(PROOF_GSLT_TRACE_COMPILE_CONTINUATION_V1) \
 		--summary); \
 	printf '%s\n' "$$deleted_continuation" | \
 		rg -F -q '"outcome":"NoAnswer"'; \
+	$(GSLT_RULE_MUTATOR_V1_BIN) mutate \
+		--source $(PROOF_GSLT_TRACE_COMPILER_V1) \
+		--out "$$work/falsified-save-phase.metta" \
+		--rule proof-trace-save-phase-immediate-v1 --mode falsify \
+		--replacement \
+		'(ProofTraceSavePhaseTransitionV1 ProofTracePhaseBetweenV1 ProofTracePhaseBetweenV1)'; \
+	falsified_bare_save=$$($(GSLT2PARSE_CHART_V1_NATIVE_BIN) \
+		$(METAMATH_PROOF_SEMANTIC_EXEC_V1) \
+		$(PROOF_GSLT_TRACE_SEMANTICS_V1) \
+		"$$work/falsified-save-phase.metta" \
+		$(METAMATH_PROOF_TRACE_POLICY_V1) \
+		$(METAMATH_PROOF_TRACE_CODEC_V1) \
+		$(PROOF_GSLT_TRACE_CODEC_CANARY_V1) \
+		--query-file $(PROOF_GSLT_TRACE_COMPILE_BARE_SAVE_V1) --summary); \
+	printf '%s\n' "$$falsified_bare_save" | \
+		rg -F -q '"outcome":"Unique"'; \
+	$(GSLT_RULE_MUTATOR_V1_BIN) mutate \
+		--source $(METAMATH_PROOF_TRACE_POLICY_V1) \
+		--out "$$work/repeatable-save-policy.metta" \
+		--rule mm-proof-trace-save-immediately-after-use-v1 \
+		--mode falsify --replacement \
+		'(source-proof-trace-save-placement-v1 state-proof-save-repeatable-v1)'; \
+	repeatable_save=$$($(GSLT2PARSE_CHART_V1_NATIVE_BIN) \
+		$(METAMATH_PROOF_SEMANTIC_EXEC_V1) \
+		$(PROOF_GSLT_TRACE_SEMANTICS_V1) \
+		$(PROOF_GSLT_TRACE_COMPILER_V1) \
+		$(PROOF_GSLT_TRACE_INPUT_V1) \
+		"$$work/repeatable-save-policy.metta" \
+		$(METAMATH_PROOF_TRACE_CODEC_V1) \
+		$(PROOF_GSLT_TRACE_INPUT_CANARY_V1) \
+		$(PROOF_GSLT_TRACE_CODEC_CANARY_V1) \
+		--query-file $(PROOF_GSLT_TRACE_COMPILE_REPEATED_SAVE_V1) --summary); \
+	printf '%s\n' "$$repeatable_save" | rg -F -q '"outcome":"Unique"'; \
 	$(GSLT_RULE_MUTATOR_V1_BIN) mutate \
 		--source $(METAMATH_PROOF_TRACE_CODEC_V1) \
 		--out "$$work/deleted-terminal.metta" \
@@ -6615,6 +6925,7 @@ test-metamath-cogslt-proof-trace-semantics-v1: \
 		$(PROOF_GSLT_TRACE_SEMANTICS_V1) \
 		$(PROOF_GSLT_TRACE_COMPILER_V1) \
 		"$$work/deleted-input-assertion.metta" \
+		$(METAMATH_PROOF_TRACE_POLICY_V1) \
 		$(METAMATH_PROOF_TRACE_CODEC_V1) \
 		$(PROOF_GSLT_TRACE_INPUT_CANARY_V1) \
 		--query-file $(PROOF_GSLT_TRACE_INPUT_NORMAL_V1) --summary); \
@@ -6631,6 +6942,7 @@ test-metamath-cogslt-proof-trace-semantics-v1: \
 		$(PROOF_GSLT_TRACE_SEMANTICS_V1) \
 		$(PROOF_GSLT_TRACE_COMPILER_V1) \
 		$(PROOF_GSLT_TRACE_INPUT_V1) \
+		$(METAMATH_PROOF_TRACE_POLICY_V1) \
 		$(METAMATH_PROOF_TRACE_CODEC_V1) \
 		"$$work/falsified-input-count.metta" \
 		--query-file $(PROOF_GSLT_TRACE_INPUT_NORMAL_V1) --summary); \
@@ -6643,13 +6955,13 @@ test-metamath-cogslt-proof-trace-semantics-v1: \
 	if rg -q 'ProofTokenApartV1|ProofAssertionDisjointV1' \
 		$(PROOF_GSLT_TRACE_ORDER_CANARY_V1) \
 		$(PROOF_GSLT_TRACE_INPUT_CANARY_V1); then exit 1; fi; \
-	test "$$(wc -l <$(METAMATH_PROOF_MACHINE_NTT_V1))" -eq 911; \
+	test "$$(wc -l <$(METAMATH_PROOF_MACHINE_NTT_V1))" -eq 938; \
 	test "$$(rg -c '^\(compile-oslf-native-type-v1 \(oslf-head-signature-v1 ' \
-		$(METAMATH_PROOF_MACHINE_NTT_V1))" -eq 246; \
+		$(METAMATH_PROOF_MACHINE_NTT_V1))" -eq 254; \
 	test "$$(rg -c '^\(compile-oslf-native-type-v1 \(oslf-step-schema-v1 ' \
-		$(METAMATH_PROOF_MACHINE_NTT_V1))" -eq 629; \
+		$(METAMATH_PROOF_MACHINE_NTT_V1))" -eq 647; \
 	test "$$(rg -c '^\(compile-oslf-native-type-v1 \(oslf-external-relation-v1 ' \
-		$(METAMATH_PROOF_MACHINE_NTT_V1))" -eq 24; \
+		$(METAMATH_PROOF_MACHINE_NTT_V1))" -eq 25; \
 	rg -F -q \
 		'(oslf-head-signature-v1 ProofTraceAcceptedV1 (q-succ (q-succ (q-succ q-zero))))' \
 		$(METAMATH_PROOF_MACHINE_NTT_V1); \
@@ -6663,33 +6975,101 @@ test-metamath-cogslt-proof-trace-semantics-v1: \
 		$(METAMATH_PROOF_MACHINE_NTT_V1); \
 	printf '%s\n' '(MetamathProofTraceSemanticsV1Summary 41 41 0)'
 
+$(PREPARED_ACTION_INVENTORY_ANSWERS_V1): \
+		$(PREPARED_ACTION_INVENTORY_CANARY_V1) \
+		$(METAMATH_PROOF_STORAGE_ANALYSIS_PAYLOAD_V1) \
+		$(PROOF_STORAGE_PLAN_COMPILER_V1) \
+		$(LANGDEF_COMPILER_V1_BIN) $(GSLT2PARSE_CHART_V1_NATIVE_BIN)
+	@mkdir -p $(dir $@)
+	$(LANGDEF_COMPILER_V1_BIN) answers \
+		--chart $(GSLT2PARSE_CHART_V1_NATIVE_BIN) \
+		--source $(METAMATH_PROOF_STORAGE_ANALYSIS_PAYLOAD_V1) \
+		--source $(PREPARED_ACTION_INVENTORY_CANARY_V1) \
+		--source $(PROOF_STORAGE_PLAN_COMPILER_V1) \
+		--query '(compile-proof-storage-plan-v1 ?fact)' --out $@
+
 .PHONY: test-metamath-cogslt-proof-storage-plan-v1
 test-metamath-cogslt-proof-storage-plan-v1: \
 		$(METAMATH_PROOF_STORAGE_PLAN_V1) \
 		$(METAMATH_PROOF_STORAGE_REQUIRED_KEYS_V1) \
-		$(METAMATH_PROOF_STORAGE_DENOTED_KEYS_V1)
+		$(METAMATH_PROOF_STORAGE_DENOTED_KEYS_V1) \
+		$(PREPARED_ACTION_INVENTORY_ANSWERS_V1) \
+		$(GSLT_RULE_MUTATOR_V1_BIN)
 	@set -eu; \
 	work=$$(mktemp -d runtime/metamath-proof-storage-plan.XXXXXX); \
 	trap 'rm -rf "$$work"' EXIT INT TERM; \
+	$(GSLT_RULE_MUTATOR_V1_BIN) mutate \
+		--source $(PROOF_STORAGE_PLAN_COMPILER_V1) \
+		--out "$$work/no-repetition-compiler.metta" \
+		--rule proof-storage-repetition-cache-v1 --mode delete; \
+	$(LANGDEF_COMPILER_V1_BIN) answers \
+		--chart $(GSLT2PARSE_CHART_V1_NATIVE_BIN) \
+		--source $(METAMATH_PROOF_STORAGE_ANALYSIS_PAYLOAD_V1) \
+		--source "$$work/no-repetition-compiler.metta" \
+		--query '(compile-proof-storage-plan-v1 ?fact)' \
+		--out "$$work/no-repetition-plan.answers" >/dev/null; \
+	rg -v '^\(compile-proof-storage-plan-v1 \(proof-repetition-cache-plan-v1 ' \
+		$(METAMATH_PROOF_STORAGE_PLAN_V1) \
+		>"$$work/no-repetition-expected.answers"; \
+	cmp "$$work/no-repetition-expected.answers" \
+		"$$work/no-repetition-plan.answers"; \
+	if rg -q '^\(compile-proof-storage-plan-v1 \(proof-repetition-cache-plan-v1 ' \
+		"$$work/no-repetition-plan.answers"; then exit 1; fi; \
 	cmp $(METAMATH_PROOF_STORAGE_REQUIRED_KEYS_V1) \
 		$(METAMATH_PROOF_STORAGE_DENOTED_KEYS_V1); \
+	test "$$(rg -c '^\(compile-proof-storage-plan-v1 \(proof-prepared-action-case-v1 guest-c-machine ' \
+		$(PREPARED_ACTION_INVENTORY_ANSWERS_V1))" -eq 5; \
+	rg -F -x -q \
+		'(compile-proof-storage-plan-v1 (proof-prepared-action-case-v1 guest-c-machine guest-c-freshness-kind stack-apply-frame-v1))' \
+		$(PREPARED_ACTION_INVENTORY_ANSWERS_V1); \
+	sed 's/guest-c-freshness-kind stack-apply-frame-v1/guest-c-freshness-kind unsupported-action-v1/' \
+		$(PREPARED_ACTION_INVENTORY_CANARY_V1) >"$$work/unsupported.metta"; \
+	$(LANGDEF_COMPILER_V1_BIN) answers \
+		--chart $(GSLT2PARSE_CHART_V1_NATIVE_BIN) \
+		--source $(METAMATH_PROOF_STORAGE_ANALYSIS_PAYLOAD_V1) \
+		--source "$$work/unsupported.metta" \
+		--source $(PROOF_STORAGE_PLAN_COMPILER_V1) \
+		--query '(proof-storage-required-v1 ?key)' \
+		--out "$$work/required.answers" >/dev/null; \
+	$(LANGDEF_COMPILER_V1_BIN) answers \
+		--chart $(GSLT2PARSE_CHART_V1_NATIVE_BIN) \
+		--source $(METAMATH_PROOF_STORAGE_ANALYSIS_PAYLOAD_V1) \
+		--source "$$work/unsupported.metta" \
+		--source $(PROOF_STORAGE_PLAN_COMPILER_V1) \
+		--query '(proof-storage-denoted-v1 ?key)' \
+		--out "$$work/denoted.answers" >/dev/null; \
+	if cmp -s "$$work/required.answers" "$$work/denoted.answers"; then \
+		exit 1; \
+	fi; \
 	test "$$(rg -c '^    \(rule answer-fact-' \
-		$(METAMATH_PROOF_STORAGE_ANALYSIS_PAYLOAD_V1))" -eq 332; \
-	test "$$(wc -l <$(METAMATH_PROOF_STORAGE_PLAN_V1))" -eq 36; \
+		$(METAMATH_PROOF_STORAGE_ANALYSIS_PAYLOAD_V1))" -eq 347; \
+	test "$$(wc -l <$(METAMATH_PROOF_STORAGE_PLAN_V1))" -eq 48; \
 	test "$$(rg -c '^\(compile-proof-storage-plan-v1 \(state-table-storage-v1 ' \
 		$(METAMATH_PROOF_STORAGE_PLAN_V1))" -eq 19; \
 	test "$$(rg -c '^\(compile-proof-storage-plan-v1 \(proof-machine-table-read-v1 ' \
 		$(METAMATH_PROOF_STORAGE_PLAN_V1))" -eq 9; \
 	test "$$(rg -c '^\(compile-proof-storage-plan-v1 \(proof-call-region-plan-v1 ' \
 		$(METAMATH_PROOF_STORAGE_PLAN_V1))" -eq 2; \
+	test "$$(rg -c '^\(compile-proof-storage-plan-v1 \(proof-workspace-plan-v1 ' \
+		$(METAMATH_PROOF_STORAGE_PLAN_V1))" -eq 2; \
+	test "$$(rg -c '^\(compile-proof-storage-plan-v1 \(proof-repetition-cache-plan-v1 ' \
+		$(METAMATH_PROOF_STORAGE_PLAN_V1))" -eq 2; \
 	test "$$(rg -c '^\(compile-proof-storage-plan-v1 \(proof-finite-support-plan-v1 ' \
 		$(METAMATH_PROOF_STORAGE_PLAN_V1))" -eq 1; \
 	test "$$(rg -c '^\(compile-proof-storage-plan-v1 \(proof-indexed-value-plan-v1 ' \
 		$(METAMATH_PROOF_STORAGE_PLAN_V1))" -eq 1; \
+	test "$$(rg -c '^\(compile-proof-storage-plan-v1 \(proof-indexed-effect-machine-plan-v1 ' \
+		$(METAMATH_PROOF_STORAGE_PLAN_V1))" -eq 1; \
+	test "$$(rg -c '^\(compile-proof-storage-plan-v1 \(proof-indexed-program-plan-v1 ' \
+		$(METAMATH_PROOF_STORAGE_PLAN_V1))" -eq 1; \
+	test "$$(rg -c '^\(compile-proof-storage-plan-v1 \(proof-prepared-action-case-v1 ' \
+		$(METAMATH_PROOF_STORAGE_PLAN_V1))" -eq 4; \
 	test "$$(rg -c '^\(compile-proof-storage-plan-v1 \(proof-frame-index-plan-v1 ' \
 		$(METAMATH_PROOF_STORAGE_PLAN_V1))" -eq 1; \
 	test "$$(rg -c '^\(compile-proof-storage-plan-v1 \(proof-literal-hole-plan-v1 ' \
 		$(METAMATH_PROOF_STORAGE_PLAN_V1))" -eq 1; \
+	test "$$(rg -c '^\(compile-proof-storage-plan-v1 \(proof-two-phase-frame-plan-v1 ' \
+		$(METAMATH_PROOF_STORAGE_PLAN_V1))" -eq 2; \
 	rg -F -x -q \
 		'(compile-proof-storage-plan-v1 (proof-sequence-layout-v1 MetamathProofV1 MetamathLanguageV1 MetamathProvableV1 ProofSequenceConsV1 ProofSequenceNilV1 flat-symbol-id-vector-v1 proof-call-region-v1))' \
 		$(METAMATH_PROOF_STORAGE_PLAN_V1); \
@@ -6697,16 +7077,52 @@ test-metamath-cogslt-proof-storage-plan-v1: \
 		'(compile-proof-storage-plan-v1 (proof-call-region-plan-v1 mm-check-theorem-normal 14 mm-stack-proof-machine-v1 MetamathProofV1 MetamathProvableV1 proof-call-region-v1 flat-symbol-id-vector-v1 proof-verdict-only-v1))' \
 		$(METAMATH_PROOF_STORAGE_PLAN_V1); \
 	rg -F -x -q \
+		'(compile-proof-storage-plan-v1 (proof-workspace-plan-v1 mm-check-theorem-normal 14 mm-stack-proof-machine-v1 stack-proof-call-workspace-v1 proof-call-region-v1 proof-verdict-only-v1))' \
+		$(METAMATH_PROOF_STORAGE_PLAN_V1); \
+	rg -F -x -q \
+		'(compile-proof-storage-plan-v1 (proof-workspace-plan-v1 mm-check-theorem-compressed 14 mm-stack-proof-machine-v1 indexed-stack-proof-call-workspace-v1 proof-call-region-v1 proof-verdict-only-v1))' \
+		$(METAMATH_PROOF_STORAGE_PLAN_V1); \
+	rg -F -x -q \
+		'(compile-proof-storage-plan-v1 (proof-repetition-cache-plan-v1 mm-check-theorem-normal 14 mm-stack-proof-machine-v1 u32-identity-key-v1 owned-plan-value-v1 second-occurrence-admission-v1 immutable-prefix-snapshot-v1 proof-call-region-v1))' \
+		$(METAMATH_PROOF_STORAGE_PLAN_V1); \
+	rg -F -x -q \
+		'(compile-proof-storage-plan-v1 (proof-repetition-cache-plan-v1 mm-check-theorem-compressed 14 mm-stack-proof-machine-v1 u32-identity-key-v1 owned-plan-value-v1 second-occurrence-admission-v1 immutable-prefix-snapshot-v1 proof-call-region-v1))' \
+		$(METAMATH_PROOF_STORAGE_PLAN_V1); \
+	rg -F -x -q \
 		'(compile-proof-storage-plan-v1 (proof-finite-support-plan-v1 MetamathProofV1 ProofSequenceConsV1 ProofSequenceNilV1 ProofSequenceSupportApartV1 ProofTokenAgainstSequenceV1 ProofTokenPairAllowedV1 ProofTokenApartV1 ProofTokenLiteralV1 ProofTokenVariableV1 finite-dense-bitset-v1 finite-apartness-matrix-v1))' \
 		$(METAMATH_PROOF_STORAGE_PLAN_V1); \
 	rg -F -x -q \
-		'(compile-proof-storage-plan-v1 (proof-indexed-value-plan-v1 mm-check-theorem-compressed 14 mm-stack-proof-machine-v1 mm-proof-step mm-compressed-word prepared-indexed-value-table-v1 proof-call-region-v1))' \
+		'(compile-proof-storage-plan-v1 (proof-indexed-value-plan-v1 mm-check-theorem-compressed 14 mm-stack-proof-machine-v1 mm-proof-step mm-compressed-word prepared-classified-value-table-v1 proof-call-region-v1))' \
+		$(METAMATH_PROOF_STORAGE_PLAN_V1); \
+	rg -F -x -q \
+		'(compile-proof-storage-plan-v1 (proof-indexed-effect-machine-plan-v1 mm-check-theorem-compressed 14 mm-stack-proof-machine-v1 indexed-effect-machine-v1 use-prepared-value-v1 use-saved-value-v1 save-top-value-v1 state-proof-unknown-push-claim-v1 proof-call-region-v1))' \
+		$(METAMATH_PROOF_STORAGE_PLAN_V1); \
+	rg -F -x -q \
+		'(compile-proof-storage-plan-v1 (proof-indexed-program-plan-v1 mm-check-theorem-compressed 14 mm-stack-proof-machine-v1 mm-proof-step mm-compressed-word 65 84 85 89 90 63 20 0 5 1 state-proof-unknown-push-claim-v1 state-proof-save-immediately-after-use-v1 state-proof-header-nonmandatory-only-v1 prepared-classified-value-table-v1 indexed-effect-machine-v1 use-prepared-value-v1 use-saved-value-v1 save-top-value-v1 proof-call-region-v1))' \
+		$(METAMATH_PROOF_STORAGE_PLAN_V1); \
+	rg -F -x -q \
+		'(compile-proof-storage-plan-v1 (proof-prepared-action-case-v1 mm-stack-proof-machine-v1 mm-label-floating stack-push-declared-v1))' \
+		$(METAMATH_PROOF_STORAGE_PLAN_V1); \
+	rg -F -x -q \
+		'(compile-proof-storage-plan-v1 (proof-prepared-action-case-v1 mm-stack-proof-machine-v1 mm-label-essential stack-push-declared-v1))' \
+		$(METAMATH_PROOF_STORAGE_PLAN_V1); \
+	rg -F -x -q \
+		'(compile-proof-storage-plan-v1 (proof-prepared-action-case-v1 mm-stack-proof-machine-v1 mm-label-axiom stack-apply-frame-v1))' \
+		$(METAMATH_PROOF_STORAGE_PLAN_V1); \
+	rg -F -x -q \
+		'(compile-proof-storage-plan-v1 (proof-prepared-action-case-v1 mm-stack-proof-machine-v1 mm-label-theorem stack-apply-frame-v1))' \
 		$(METAMATH_PROOF_STORAGE_PLAN_V1); \
 	rg -F -x -q \
 		'(compile-proof-storage-plan-v1 (proof-frame-index-plan-v1 mm-check-theorem-compressed 14 mm-stack-proof-machine-v1 u32-open-addressed-index-v1 duplicate-reject-v1 proof-call-region-v1))' \
 		$(METAMATH_PROOF_STORAGE_PLAN_V1); \
 	rg -F -x -q \
 		'(compile-proof-storage-plan-v1 (proof-literal-hole-plan-v1 mm-stack-proof-machine-v1 MetamathProofV1 ProofSequenceConsV1 ProofSequenceNilV1 literal-hole-run-program-v1 state-run-region-v1 proof-call-region-v1))' \
+		$(METAMATH_PROOF_STORAGE_PLAN_V1); \
+	rg -F -x -q \
+		'(compile-proof-storage-plan-v1 (proof-two-phase-frame-plan-v1 mm-check-theorem-normal 14 mm-stack-proof-machine-v1 two-phase-frame-machine-v1 literal-hole-run-program-v1 literal-head-optional-v1 epoch-stamped-dense-slots-v1 unique-dense-binders-v1 exact-stack-suffix-v1 proof-call-region-v1))' \
+		$(METAMATH_PROOF_STORAGE_PLAN_V1); \
+	rg -F -x -q \
+		'(compile-proof-storage-plan-v1 (proof-two-phase-frame-plan-v1 mm-check-theorem-compressed 14 mm-stack-proof-machine-v1 two-phase-frame-machine-v1 literal-hole-run-program-v1 literal-head-optional-v1 epoch-stamped-dense-slots-v1 unique-dense-binders-v1 exact-stack-suffix-v1 proof-call-region-v1))' \
 		$(METAMATH_PROOF_STORAGE_PLAN_V1); \
 	sed \
 		'/^(compile-oslf-native-type-v1 (oslf-head-signature-v1 MetamathProvableV1 (q-succ q-zero)))$$/d' \
@@ -6732,11 +7148,15 @@ test-metamath-cogslt-proof-storage-plan-v1: \
 		's/(state-table-v1 mm-state-formula 2 1 state-persistent-v1)/(state-table-v1 mm-state-formula 2 1 state-scoped-v1)/' \
 		$(METAMATH_PROOF_STORAGE_COMBINED_V1) \
 		>"$$work/literal-scoped.answers"; \
+	sed \
+		's/(state-table-v1 mm-state-label-kind 2 1 state-persistent-v1)/(state-table-v1 mm-state-label-kind 2 1 state-scoped-v1)/' \
+		$(METAMATH_PROOF_STORAGE_COMBINED_V1) \
+		>"$$work/classifier-scoped.answers"; \
 	if cmp -s $(METAMATH_PROOF_STORAGE_COMBINED_V1) \
 		"$$work/delete.answers"; then exit 1; fi; \
 	if cmp -s $(METAMATH_PROOF_STORAGE_COMBINED_V1) \
 		"$$work/falsify.answers"; then exit 1; fi; \
-	for lane in delete falsify support-delete indexed-disable frame-key-mutation literal-scoped; do \
+	for lane in delete falsify support-delete indexed-disable frame-key-mutation literal-scoped classifier-scoped; do \
 		$(LANGDEF_COMPILER_V1_BIN) answer-facts \
 			--source "$$work/$$lane.answers" \
 			--out "$$work/$$lane.metta" >/dev/null; \
@@ -6763,7 +7183,8 @@ test-metamath-cogslt-proof-storage-plan-v1: \
 		if [[ "$$lane" == support-delete || \
 			"$$lane" == indexed-disable || \
 			"$$lane" == frame-key-mutation || \
-			"$$lane" == literal-scoped ]]; then \
+			"$$lane" == literal-scoped || \
+			"$$lane" == classifier-scoped ]]; then \
 			cmp "$$work/$$lane-required-keys.answers" \
 				"$$work/$$lane-denoted-keys.answers"; \
 		elif cmp -s "$$work/$$lane-required-keys.answers" \
@@ -6798,9 +7219,17 @@ test-metamath-cogslt-proof-storage-plan-v1: \
 		"$$work/frame-key-mutation-plan.answers"; \
 	if rg -q 'proof-literal-hole-plan-v1' \
 		"$$work/literal-scoped-plan.answers"; then exit 1; fi; \
+	if rg -q 'proof-two-phase-frame-plan-v1' \
+		"$$work/literal-scoped-plan.answers"; then exit 1; fi; \
 	rg -q 'proof-call-region-plan-v1.*mm-check-theorem-normal' \
 		"$$work/literal-scoped-plan.answers"; \
-	printf '%s\n' '(MetamathProofStoragePlanV1Summary 24 24 0)'
+	if rg -q 'proof-indexed-value-plan-v1' \
+		"$$work/classifier-scoped-plan.answers"; then exit 1; fi; \
+	if rg -q 'proof-indexed-program-plan-v1' \
+		"$$work/classifier-scoped-plan.answers"; then exit 1; fi; \
+	rg -q 'proof-call-region-plan-v1.*mm-check-theorem-compressed' \
+		"$$work/classifier-scoped-plan.answers"; \
+	printf '%s\n' '(MetamathProofStoragePlanV1Summary 41 41 0)'
 
 .PHONY: test-metamath-cogslt-load-bearing-mutations-v1
 test-metamath-cogslt-load-bearing-mutations-v1:
@@ -7079,11 +7508,16 @@ test-metamath-cogslt-langdef-v1: $(BIN) \
 		--lock-out "$$lock_dir/generated/langdef_lock_v1.metta" >/dev/null; \
 	selector=$$(basename "$$lock_dir"); \
 	registry_root=$$(dirname "$$lock_dir"); \
+	authority_status=0; \
 	authority_output=$$(CETTA_LANGDEF_ROOT="$$registry_root" \
 		$(CETTA_BIN_INVOKE) --lang "$$selector" \
-		tests/langdef/metamath/positive_theorem_normal_reuse.mm); \
+		tests/langdef/metamath/positive_theorem_normal_reuse.mm \
+		2>&1) || authority_status=$$?; \
+	if [[ "$$authority_status" -eq 0 ]]; then \
+		printf '%s\n' "$$authority_output" >&2; exit 1; \
+	fi; \
 	printf '%s\n' "$$authority_output" | \
-		rg -q '^\(LangDef:RunAccepted MetamathV1 '; \
+		rg -q 'generated state and storage table shapes disagree'; \
 	diagnostic_status=0; \
 	diagnostic_output=$$(CETTA_LANGDEF_ROOT="$$registry_root" \
 		$(METAMATH_COGSLT_DIAGNOSTIC_BIN_INVOKE) --lang "$$selector" \
@@ -7113,11 +7547,16 @@ test-metamath-cogslt-langdef-v1: $(BIN) \
 		--lock-out "$$lock_dir/generated/langdef_lock_v1.metta" >/dev/null; \
 	selector=$$(basename "$$lock_dir"); \
 	registry_root=$$(dirname "$$lock_dir"); \
+	authority_status=0; \
 	authority_output=$$(CETTA_LANGDEF_ROOT="$$registry_root" \
 		$(CETTA_BIN_INVOKE) --lang "$$selector" \
-		tests/langdef/metamath/positive_theorem_normal_reuse.mm); \
+		tests/langdef/metamath/positive_theorem_normal_reuse.mm \
+		2>&1) || authority_status=$$?; \
+	if [[ "$$authority_status" -eq 0 ]]; then \
+		printf '%s\n' "$$authority_output" >&2; exit 1; \
+	fi; \
 	printf '%s\n' "$$authority_output" | \
-		rg -q '^\(LangDef:RunAccepted MetamathV1 '; \
+		rg -q 'finite support plan is unsupported by the frame backend'; \
 	diagnostic_status=0; \
 	diagnostic_output=$$(CETTA_LANGDEF_ROOT="$$registry_root" \
 		$(METAMATH_COGSLT_DIAGNOSTIC_BIN_INVOKE) --lang "$$selector" \
@@ -7156,7 +7595,7 @@ test-metamath-cogslt-langdef-v1: $(BIN) \
 		printf '%s\n' "$$authority_output" >&2; exit 1; \
 	fi; \
 	printf '%s\n' "$$authority_output" | \
-		rg -q 'compressed proof lacks generated indexed-value admission'; \
+		rg -q 'proof indexed-effect-machine plan lacks its admitted inputs'; \
 	diagnostic_status=0; \
 	diagnostic_output=$$(CETTA_LANGDEF_ROOT="$$registry_root" \
 		$(METAMATH_COGSLT_DIAGNOSTIC_BIN_INVOKE) --lang "$$selector" \
@@ -7167,7 +7606,169 @@ test-metamath-cogslt-langdef-v1: $(BIN) \
 		printf '%s\n' "$$diagnostic_output" >&2; exit 1; \
 	fi; \
 	printf '%s\n' "$$diagnostic_output" | \
-		rg -q 'prepared indexed-value table is not admitted'
+		rg -q 'proof indexed-effect-machine plan lacks its admitted inputs'
+	@set -euo pipefail; \
+	lock_dir=$$(mktemp -d langdef/indexed-effect-admission-XXXXXX); \
+	trap 'rm -rf "$$lock_dir"' EXIT INT TERM; \
+	cp -R $(METAMATH_LANGDEF_DIR_V1)/. "$$lock_dir/"; \
+	sed '/proof-indexed-effect-machine-plan-v1/d' \
+		"$$lock_dir/generated/proof_storage_plan_v1.answers" \
+		>"$$lock_dir/generated/proof_storage_plan_v1.answers.mutated"; \
+	mv "$$lock_dir/generated/proof_storage_plan_v1.answers.mutated" \
+		"$$lock_dir/generated/proof_storage_plan_v1.answers"; \
+	if rg -q 'proof-indexed-effect-machine-plan-v1' \
+		"$$lock_dir/generated/proof_storage_plan_v1.answers"; then exit 1; fi; \
+	$(LANGDEF_COMPILER_V1_BIN) seal \
+		--manifest "$$lock_dir/langdef.metta" \
+		--pack "$$lock_dir/generated/normalized_parser_pack_v1.abi" \
+		--compiled-cursor "$$lock_dir/generated/syntax_cursor_fold_v1.generated.so" \
+		--lock-out "$$lock_dir/generated/langdef_lock_v1.metta" >/dev/null; \
+	selector=$$(basename "$$lock_dir"); \
+	registry_root=$$(dirname "$$lock_dir"); \
+	authority_status=0; \
+	authority_output=$$(CETTA_LANGDEF_ROOT="$$registry_root" \
+		$(CETTA_BIN_INVOKE) --lang "$$selector" \
+		tests/langdef/metamath/positive_theorem_compressed_reuse.mm \
+		2>&1) || authority_status=$$?; \
+	if [[ "$$authority_status" -eq 0 ]]; then \
+		printf '%s\n' "$$authority_output" >&2; exit 1; \
+	fi; \
+	printf '%s\n' "$$authority_output" | \
+		rg -q 'proof indexed-program plan disagrees with its generated inputs'
+	@set -euo pipefail; \
+	lock_dir=$$(mktemp -d langdef/indexed-effect-carrier-XXXXXX); \
+	trap 'rm -rf "$$lock_dir"' EXIT INT TERM; \
+	cp -R $(METAMATH_LANGDEF_DIR_V1)/. "$$lock_dir/"; \
+	sed 's/indexed-effect-machine-v1/unsupported-indexed-effect-machine-v1/' \
+		"$$lock_dir/generated/proof_storage_plan_v1.answers" \
+		>"$$lock_dir/generated/proof_storage_plan_v1.answers.mutated"; \
+	mv "$$lock_dir/generated/proof_storage_plan_v1.answers.mutated" \
+		"$$lock_dir/generated/proof_storage_plan_v1.answers"; \
+	rg -Fq 'unsupported-indexed-effect-machine-v1' \
+		"$$lock_dir/generated/proof_storage_plan_v1.answers"; \
+	$(LANGDEF_COMPILER_V1_BIN) seal \
+		--manifest "$$lock_dir/langdef.metta" \
+		--pack "$$lock_dir/generated/normalized_parser_pack_v1.abi" \
+		--compiled-cursor "$$lock_dir/generated/syntax_cursor_fold_v1.generated.so" \
+		--lock-out "$$lock_dir/generated/langdef_lock_v1.metta" >/dev/null; \
+	selector=$$(basename "$$lock_dir"); \
+	registry_root=$$(dirname "$$lock_dir"); \
+	authority_status=0; \
+	authority_output=$$(CETTA_LANGDEF_ROOT="$$registry_root" \
+		$(CETTA_BIN_INVOKE) --lang "$$selector" \
+		tests/langdef/metamath/positive_theorem_compressed_reuse.mm \
+		2>&1) || authority_status=$$?; \
+	if [[ "$$authority_status" -eq 0 ]]; then \
+		printf '%s\n' "$$authority_output" >&2; exit 1; \
+	fi; \
+	printf '%s\n' "$$authority_output" | \
+		rg -q 'proof indexed-effect-machine plan lacks its admitted inputs'
+	@set -euo pipefail; \
+	lock_dir=$$(mktemp -d langdef/indexed-effect-policy-XXXXXX); \
+	trap 'rm -rf "$$lock_dir"' EXIT INT TERM; \
+	cp -R $(METAMATH_LANGDEF_DIR_V1)/. "$$lock_dir/"; \
+	sed 's/state-proof-unknown-push-claim-v1/state-proof-unknown-reject-v1/' \
+		"$$lock_dir/generated/proof_storage_plan_v1.answers" \
+		>"$$lock_dir/generated/proof_storage_plan_v1.answers.mutated"; \
+	mv "$$lock_dir/generated/proof_storage_plan_v1.answers.mutated" \
+		"$$lock_dir/generated/proof_storage_plan_v1.answers"; \
+	rg -Fq 'state-proof-unknown-reject-v1' \
+		"$$lock_dir/generated/proof_storage_plan_v1.answers"; \
+	$(LANGDEF_COMPILER_V1_BIN) seal \
+		--manifest "$$lock_dir/langdef.metta" \
+		--pack "$$lock_dir/generated/normalized_parser_pack_v1.abi" \
+		--compiled-cursor "$$lock_dir/generated/syntax_cursor_fold_v1.generated.so" \
+		--lock-out "$$lock_dir/generated/langdef_lock_v1.metta" >/dev/null; \
+	selector=$$(basename "$$lock_dir"); \
+	registry_root=$$(dirname "$$lock_dir"); \
+	authority_status=0; \
+	authority_output=$$(CETTA_LANGDEF_ROOT="$$registry_root" \
+		$(CETTA_BIN_INVOKE) --lang "$$selector" \
+		tests/langdef/metamath/positive_theorem_compressed_reuse.mm \
+		2>&1) || authority_status=$$?; \
+	if [[ "$$authority_status" -eq 0 ]]; then \
+		printf '%s\n' "$$authority_output" >&2; exit 1; \
+	fi; \
+	printf '%s\n' "$$authority_output" | \
+		rg -q 'indexed instruction plan disagrees with the generated proof machine'
+	@set -euo pipefail; \
+	lock_dir=$$(mktemp -d langdef/indexed-program-admission-XXXXXX); \
+	trap 'rm -rf "$$lock_dir"' EXIT INT TERM; \
+	cp -R $(METAMATH_LANGDEF_DIR_V1)/. "$$lock_dir/"; \
+	sed '/proof-indexed-program-plan-v1/d' \
+		"$$lock_dir/generated/proof_storage_plan_v1.answers" \
+		>"$$lock_dir/generated/proof_storage_plan_v1.answers.mutated"; \
+	mv "$$lock_dir/generated/proof_storage_plan_v1.answers.mutated" \
+		"$$lock_dir/generated/proof_storage_plan_v1.answers"; \
+	$(LANGDEF_COMPILER_V1_BIN) seal \
+		--manifest "$$lock_dir/langdef.metta" \
+		--pack "$$lock_dir/generated/normalized_parser_pack_v1.abi" \
+		--compiled-cursor "$$lock_dir/generated/syntax_cursor_fold_v1.generated.so" \
+		--lock-out "$$lock_dir/generated/langdef_lock_v1.metta" >/dev/null; \
+	selector=$$(basename "$$lock_dir"); \
+	registry_root=$$(dirname "$$lock_dir"); \
+	authority_status=0; \
+	authority_output=$$(CETTA_LANGDEF_ROOT="$$registry_root" \
+		$(CETTA_BIN_INVOKE) --lang "$$selector" \
+		tests/langdef/metamath/positive_theorem_compressed_reuse.mm \
+		2>&1) || authority_status=$$?; \
+	if [[ "$$authority_status" -eq 0 ]]; then \
+		printf '%s\n' "$$authority_output" >&2; exit 1; \
+	fi; \
+	printf '%s\n' "$$authority_output" | \
+		rg -q 'indexed values lack a generated instruction plan'
+	@set -euo pipefail; \
+	lock_dir=$$(mktemp -d langdef/indexed-program-decoder-XXXXXX); \
+	trap 'rm -rf "$$lock_dir"' EXIT INT TERM; \
+	cp -R $(METAMATH_LANGDEF_DIR_V1)/. "$$lock_dir/"; \
+	sed '/proof-indexed-program-plan-v1/ s/ 65 84 / 66 84 /' \
+		"$$lock_dir/generated/proof_storage_plan_v1.answers" \
+		>"$$lock_dir/generated/proof_storage_plan_v1.answers.mutated"; \
+	mv "$$lock_dir/generated/proof_storage_plan_v1.answers.mutated" \
+		"$$lock_dir/generated/proof_storage_plan_v1.answers"; \
+	$(LANGDEF_COMPILER_V1_BIN) seal \
+		--manifest "$$lock_dir/langdef.metta" \
+		--pack "$$lock_dir/generated/normalized_parser_pack_v1.abi" \
+		--compiled-cursor "$$lock_dir/generated/syntax_cursor_fold_v1.generated.so" \
+		--lock-out "$$lock_dir/generated/langdef_lock_v1.metta" >/dev/null; \
+	selector=$$(basename "$$lock_dir"); \
+	registry_root=$$(dirname "$$lock_dir"); \
+	authority_status=0; \
+	authority_output=$$(CETTA_LANGDEF_ROOT="$$registry_root" \
+		$(CETTA_BIN_INVOKE) --lang "$$selector" \
+		tests/langdef/metamath/positive_theorem_compressed_reuse.mm \
+		2>&1) || authority_status=$$?; \
+	if [[ "$$authority_status" -eq 0 ]]; then \
+		printf '%s\n' "$$authority_output" >&2; exit 1; \
+	fi; \
+	printf '%s\n' "$$authority_output" | \
+		rg -q 'indexed instruction plan disagrees with the generated proof machine'
+	@set -euo pipefail; \
+	lock_dir=$$(mktemp -d langdef/indexed-program-action-XXXXXX); \
+	trap 'rm -rf "$$lock_dir"' EXIT INT TERM; \
+	cp -R $(METAMATH_LANGDEF_DIR_V1)/. "$$lock_dir/"; \
+	sed '/proof-prepared-action-case-v1.*mm-label-axiom/ s/stack-apply-frame-v1/stack-push-declared-v1/' \
+		"$$lock_dir/generated/proof_storage_plan_v1.answers" \
+		>"$$lock_dir/generated/proof_storage_plan_v1.answers.mutated"; \
+	mv "$$lock_dir/generated/proof_storage_plan_v1.answers.mutated" \
+		"$$lock_dir/generated/proof_storage_plan_v1.answers"; \
+	$(LANGDEF_COMPILER_V1_BIN) seal \
+		--manifest "$$lock_dir/langdef.metta" \
+		--pack "$$lock_dir/generated/normalized_parser_pack_v1.abi" \
+		--compiled-cursor "$$lock_dir/generated/syntax_cursor_fold_v1.generated.so" \
+		--lock-out "$$lock_dir/generated/langdef_lock_v1.metta" >/dev/null; \
+	selector=$$(basename "$$lock_dir"); \
+	registry_root=$$(dirname "$$lock_dir"); \
+	authority_status=0; \
+	authority_output=$$(CETTA_LANGDEF_ROOT="$$registry_root" \
+		$(CETTA_BIN_INVOKE) --lang "$$selector" \
+		tests/langdef/metamath/positive_theorem_compressed_reuse.mm \
+		2>&1) || authority_status=$$?; \
+	if [[ "$$authority_status" -eq 0 ]]; then \
+		printf '%s\n' "$$authority_output" >&2; exit 1; \
+	fi; \
+	printf '%s\n' "$$authority_output" | \
+		rg -q 'exact action selector assigns the wrong stack action'
 	@set -euo pipefail; \
 	lock_dir=$$(mktemp -d langdef/frame-index-admission-XXXXXX); \
 	trap 'rm -rf "$$lock_dir"' EXIT INT TERM; \
@@ -7195,7 +7796,7 @@ test-metamath-cogslt-langdef-v1: $(BIN) \
 		printf '%s\n' "$$authority_output" >&2; exit 1; \
 	fi; \
 	printf '%s\n' "$$authority_output" | \
-		rg -q 'compressed proof lacks generated frame-index admission'
+		rg -q 'indexed instruction plan lacks its exact frame index'
 	@set -euo pipefail; \
 	lock_dir=$$(mktemp -d langdef/frame-index-carrier-XXXXXX); \
 	trap 'rm -rf "$$lock_dir"' EXIT INT TERM; \
@@ -7223,15 +7824,145 @@ test-metamath-cogslt-langdef-v1: $(BIN) \
 		printf '%s\n' "$$authority_output" >&2; exit 1; \
 	fi; \
 	printf '%s\n' "$$authority_output" | \
-		rg -q 'generated frame-index plan does not admit the compressed backend'
+		rg -q 'indexed instruction plan lacks its exact frame index'
+	@set -euo pipefail; \
+	lock_dir=$$(mktemp -d langdef/two-phase-frame-admission-XXXXXX); \
+	trap 'rm -rf "$$lock_dir"' EXIT INT TERM; \
+	cp -R $(METAMATH_LANGDEF_DIR_V1)/. "$$lock_dir/"; \
+	sed '/proof-two-phase-frame-plan-v1/d' \
+		"$$lock_dir/generated/proof_storage_plan_v1.answers" \
+		>"$$lock_dir/generated/proof_storage_plan_v1.answers.mutated"; \
+	mv "$$lock_dir/generated/proof_storage_plan_v1.answers.mutated" \
+		"$$lock_dir/generated/proof_storage_plan_v1.answers"; \
+	if rg -q 'proof-two-phase-frame-plan-v1' \
+		"$$lock_dir/generated/proof_storage_plan_v1.answers"; then exit 1; fi; \
+	$(LANGDEF_COMPILER_V1_BIN) seal \
+		--manifest "$$lock_dir/langdef.metta" \
+		--pack "$$lock_dir/generated/normalized_parser_pack_v1.abi" \
+		--compiled-cursor "$$lock_dir/generated/syntax_cursor_fold_v1.generated.so" \
+		--lock-out "$$lock_dir/generated/langdef_lock_v1.metta" >/dev/null; \
+	selector=$$(basename "$$lock_dir"); \
+	registry_root=$$(dirname "$$lock_dir"); \
+	authority_status=0; \
+	authority_output=$$(CETTA_LANGDEF_ROOT="$$registry_root" \
+		$(CETTA_BIN_INVOKE) --lang "$$selector" \
+		tests/langdef/metamath/positive_theorem_normal_reuse.mm \
+		2>&1) || authority_status=$$?; \
+	if [[ "$$authority_status" -eq 0 ]]; then \
+		printf '%s\n' "$$authority_output" >&2; exit 1; \
+	fi; \
+	printf '%s\n' "$$authority_output" | \
+		rg -q 'proof workspace lacks its admitted frame plan'; \
+	diagnostic_status=0; \
+	diagnostic_output=$$(CETTA_LANGDEF_ROOT="$$registry_root" \
+		$(METAMATH_COGSLT_DIAGNOSTIC_BIN_INVOKE) --lang "$$selector" \
+		--langdef-proof-backend frame-cache-diagnostic-v1 \
+		tests/langdef/metamath/positive_theorem_normal_reuse.mm \
+		2>&1) || diagnostic_status=$$?; \
+	if [[ "$$diagnostic_status" -eq 0 ]]; then \
+		printf '%s\n' "$$diagnostic_output" >&2; exit 1; \
+	fi; \
+	printf '%s\n' "$$diagnostic_output" | \
+		rg -q 'proof workspace lacks its admitted frame plan'
+	@set -euo pipefail; \
+	lock_dir=$$(mktemp -d langdef/two-phase-frame-carrier-XXXXXX); \
+	trap 'rm -rf "$$lock_dir"' EXIT INT TERM; \
+	cp -R $(METAMATH_LANGDEF_DIR_V1)/. "$$lock_dir/"; \
+	sed 's/two-phase-frame-machine-v1/unsupported-two-phase-frame-machine-v1/' \
+		"$$lock_dir/generated/proof_storage_plan_v1.answers" \
+		>"$$lock_dir/generated/proof_storage_plan_v1.answers.mutated"; \
+	mv "$$lock_dir/generated/proof_storage_plan_v1.answers.mutated" \
+		"$$lock_dir/generated/proof_storage_plan_v1.answers"; \
+	rg -Fq 'unsupported-two-phase-frame-machine-v1' \
+		"$$lock_dir/generated/proof_storage_plan_v1.answers"; \
+	$(LANGDEF_COMPILER_V1_BIN) seal \
+		--manifest "$$lock_dir/langdef.metta" \
+		--pack "$$lock_dir/generated/normalized_parser_pack_v1.abi" \
+		--compiled-cursor "$$lock_dir/generated/syntax_cursor_fold_v1.generated.so" \
+		--lock-out "$$lock_dir/generated/langdef_lock_v1.metta" >/dev/null; \
+	selector=$$(basename "$$lock_dir"); \
+	registry_root=$$(dirname "$$lock_dir"); \
+	authority_status=0; \
+	authority_output=$$(CETTA_LANGDEF_ROOT="$$registry_root" \
+		$(CETTA_BIN_INVOKE) --lang "$$selector" \
+		tests/langdef/metamath/positive_theorem_normal_reuse.mm \
+		2>&1) || authority_status=$$?; \
+	if [[ "$$authority_status" -eq 0 ]]; then \
+		printf '%s\n' "$$authority_output" >&2; exit 1; \
+	fi; \
+	printf '%s\n' "$$authority_output" | \
+		rg -q 'proof workspace lacks its admitted frame plan'
+	@set -euo pipefail; \
+	lock_dir=$$(mktemp -d langdef/reusable-workspace-observation-XXXXXX); \
+	trap 'rm -rf "$$lock_dir"' EXIT INT TERM; \
+	cp -R $(METAMATH_LANGDEF_DIR_V1)/. "$$lock_dir/"; \
+	sed \
+		-e 's/(proof-call-region-plan-v1 mm-check-theorem-normal 14 mm-stack-proof-machine-v1 MetamathProofV1 MetamathProvableV1 proof-call-region-v1 flat-symbol-id-vector-v1 proof-verdict-only-v1)/(proof-call-region-plan-v1 mm-check-theorem-normal 14 mm-stack-proof-machine-v1 MetamathProofV1 MetamathProvableV1 proof-call-region-v1 flat-symbol-id-vector-v1 returns-buffer-reference-v1)/' \
+		-e 's/(proof-workspace-plan-v1 mm-check-theorem-normal 14 mm-stack-proof-machine-v1 stack-proof-call-workspace-v1 proof-call-region-v1 proof-verdict-only-v1)/(proof-workspace-plan-v1 mm-check-theorem-normal 14 mm-stack-proof-machine-v1 stack-proof-call-workspace-v1 proof-call-region-v1 returns-buffer-reference-v1)/' \
+		"$$lock_dir/generated/proof_storage_plan_v1.answers" \
+		>"$$lock_dir/generated/proof_storage_plan_v1.answers.mutated"; \
+	mv "$$lock_dir/generated/proof_storage_plan_v1.answers.mutated" \
+		"$$lock_dir/generated/proof_storage_plan_v1.answers"; \
+	rg -Fq 'returns-buffer-reference-v1' \
+		"$$lock_dir/generated/proof_storage_plan_v1.answers"; \
+	$(LANGDEF_COMPILER_V1_BIN) seal \
+		--manifest "$$lock_dir/langdef.metta" \
+		--pack "$$lock_dir/generated/normalized_parser_pack_v1.abi" \
+		--compiled-cursor "$$lock_dir/generated/syntax_cursor_fold_v1.generated.so" \
+		--lock-out "$$lock_dir/generated/langdef_lock_v1.metta" >/dev/null; \
+	selector=$$(basename "$$lock_dir"); \
+	registry_root=$$(dirname "$$lock_dir"); \
+	authority_status=0; \
+	authority_output=$$(CETTA_LANGDEF_ROOT="$$registry_root" \
+		$(CETTA_BIN_INVOKE) --lang "$$selector" \
+		tests/langdef/metamath/positive_theorem_normal_reuse.mm \
+		2>&1) || authority_status=$$?; \
+	if [[ "$$authority_status" -eq 0 ]]; then \
+		printf '%s\n' "$$authority_output" >&2; exit 1; \
+	fi; \
+	printf '%s\n' "$$authority_output" | \
+		rg -q 'proof call lacks generated reusable-call admission'
+	@set -euo pipefail; \
+	lock_dir=$$(mktemp -d langdef/reusable-workspace-carrier-XXXXXX); \
+	trap 'rm -rf "$$lock_dir"' EXIT INT TERM; \
+	cp -R $(METAMATH_LANGDEF_DIR_V1)/. "$$lock_dir/"; \
+	sed \
+		's/stack-proof-call-workspace-v1/unsupported-call-workspace-v1/' \
+		"$$lock_dir/generated/proof_storage_plan_v1.answers" \
+		>"$$lock_dir/generated/proof_storage_plan_v1.answers.mutated"; \
+	mv "$$lock_dir/generated/proof_storage_plan_v1.answers.mutated" \
+		"$$lock_dir/generated/proof_storage_plan_v1.answers"; \
+	rg -Fq 'unsupported-call-workspace-v1' \
+		"$$lock_dir/generated/proof_storage_plan_v1.answers"; \
+	$(LANGDEF_COMPILER_V1_BIN) seal \
+		--manifest "$$lock_dir/langdef.metta" \
+		--pack "$$lock_dir/generated/normalized_parser_pack_v1.abi" \
+		--compiled-cursor "$$lock_dir/generated/syntax_cursor_fold_v1.generated.so" \
+		--lock-out "$$lock_dir/generated/langdef_lock_v1.metta" >/dev/null; \
+	selector=$$(basename "$$lock_dir"); \
+	registry_root=$$(dirname "$$lock_dir"); \
+	authority_status=0; \
+	authority_output=$$(CETTA_LANGDEF_ROOT="$$registry_root" \
+		$(CETTA_BIN_INVOKE) --lang "$$selector" \
+		tests/langdef/metamath/positive_theorem_normal_reuse.mm \
+		2>&1) || authority_status=$$?; \
+	if [[ "$$authority_status" -eq 0 ]]; then \
+		printf '%s\n' "$$authority_output" >&2; exit 1; \
+	fi; \
+	printf '%s\n' "$$authority_output" | \
+		rg -q 'proof call lacks generated reusable-workspace admission'
 	@set -euo pipefail; \
 	lock_dir=$$(mktemp -d langdef/indexed-value-call-site-XXXXXX); \
 	trap 'rm -rf "$$lock_dir"' EXIT INT TERM; \
 	cp -R $(METAMATH_LANGDEF_DIR_V1)/. "$$lock_dir/"; \
 	sed \
 		-e 's/(proof-call-region-plan-v1 mm-check-theorem-compressed 14 /(proof-call-region-plan-v1 mm-check-theorem-compressed 13 /' \
+		-e 's/(proof-workspace-plan-v1 mm-check-theorem-compressed 14 /(proof-workspace-plan-v1 mm-check-theorem-compressed 13 /' \
 		-e 's/(proof-indexed-value-plan-v1 mm-check-theorem-compressed 14 /(proof-indexed-value-plan-v1 mm-check-theorem-compressed 13 /' \
+		-e 's/(proof-indexed-effect-machine-plan-v1 mm-check-theorem-compressed 14 /(proof-indexed-effect-machine-plan-v1 mm-check-theorem-compressed 13 /' \
+		-e 's/(proof-indexed-program-plan-v1 mm-check-theorem-compressed 14 /(proof-indexed-program-plan-v1 mm-check-theorem-compressed 13 /' \
 		-e 's/(proof-frame-index-plan-v1 mm-check-theorem-compressed 14 /(proof-frame-index-plan-v1 mm-check-theorem-compressed 13 /' \
+		-e 's/(proof-two-phase-frame-plan-v1 mm-check-theorem-compressed 14 /(proof-two-phase-frame-plan-v1 mm-check-theorem-compressed 13 /' \
 		"$$lock_dir/generated/proof_storage_plan_v1.answers" \
 		>"$$lock_dir/generated/proof_storage_plan_v1.answers.mutated"; \
 	mv "$$lock_dir/generated/proof_storage_plan_v1.answers.mutated" \
@@ -7256,7 +7987,7 @@ test-metamath-cogslt-langdef-v1: $(BIN) \
 		printf '%s\n' "$$authority_output" >&2; exit 1; \
 	fi; \
 	printf '%s\n' "$$authority_output" | \
-		rg -q 'indexed-value admission does not match its generated call site'
+		rg -q 'proof repetition-cache plan lacks its generated license'
 	@set -euo pipefail; \
 	status=0; \
 	output=$$($(CETTA_BIN_INVOKE) --lang metamath \
@@ -7266,13 +7997,13 @@ test-metamath-cogslt-langdef-v1: $(BIN) \
 	test "$$status" -ne 0; \
 	printf '%s\n' "$$output" | \
 		rg -q "unknown langdef proof backend 'frame-cache-diagnostic-v1'"
-	@if nm -g $(BIN) | rg -q 'ppfirst_order_frame_decoder_v1_'; then \
-		echo 'public LanguageDef binary links the diagnostic frame decoder'; \
-		exit 1; \
-	fi
+	@nm -g $(BIN) | \
+		rg -q 'ppfirst_order_frame_decoder_v1_admit'
+	@nm -g $(BIN) | \
+		rg -q 'cetta_gslt_two_phase_frame_machine_execute_admitted_v1'
 	@nm -g $(METAMATH_COGSLT_DIAGNOSTIC_BIN_V1) | \
 		rg -q 'ppfirst_order_frame_decoder_v1_admit'
-	@echo '(MetamathCoGSLTLangDefV1Summary 14 14 0)'
+	@echo '(MetamathCoGSLTLangDefV1Summary 17 17 0)'
 
 .PHONY: test-metamath-cogslt-cli-v1 \
 		test-metamath-cogslt-cli-core-v1
@@ -7289,7 +8020,10 @@ test-metamath-cogslt-cli-core-v1: $(BIN) \
 		tests/langdef/metamath/invalid_theorem_compressed_save_after_continuation.mm \
 		tests/langdef/metamath/invalid_theorem_compressed_incomplete_tail.mm \
 		tests/langdef/metamath/invalid_theorem_normal_incomplete_tail.mm \
-		tests/langdef/metamath/positive_theorem_compressed_incomplete_after_continuation.mm
+		tests/langdef/metamath/invalid_theorem_compressed_unknown_after_continuation.mm \
+		tests/langdef/metamath/invalid_theorem_compressed_explicit_mandatory.mm \
+		tests/langdef/metamath/invalid_theorem_compressed_bare_save.mm \
+		tests/langdef/metamath/invalid_theorem_compressed_repeated_save.mm
 	@if [[ "$(ENABLE_PYTHON)" != 0 || "$(LIB_PROLOG_ENABLED)" != 0 ]]; then \
 		echo 'the compiled LanguageDef CLI gate requires the C-only core build'; \
 		exit 1; \
@@ -7321,14 +8055,14 @@ test-metamath-cogslt-cli-core-v1: $(BIN) \
 		tests/langdef/metamath/positive_theorem_compressed_unknown.mm); \
 	printf '%s\n' "$$incomplete_compressed" | rg -q \
 		'^\(LangDef:StageAcceptedIncomplete MetamathV1 '; \
-	incomplete_after_continuation=$$($(CETTA_BIN_INVOKE) --lang metamath \
-		tests/langdef/metamath/positive_theorem_compressed_incomplete_after_continuation.mm); \
-	printf '%s\n' "$$incomplete_after_continuation" | rg -q \
-		'^\(LangDef:StageAcceptedIncomplete MetamathV1 '; \
 	for fixture in \
 		tests/langdef/metamath/invalid_theorem_compressed_save_after_continuation.mm \
 		tests/langdef/metamath/invalid_theorem_compressed_incomplete_tail.mm \
-		tests/langdef/metamath/invalid_theorem_normal_incomplete_tail.mm; do \
+		tests/langdef/metamath/invalid_theorem_normal_incomplete_tail.mm \
+		tests/langdef/metamath/invalid_theorem_compressed_unknown_after_continuation.mm \
+		tests/langdef/metamath/invalid_theorem_compressed_explicit_mandatory.mm \
+		tests/langdef/metamath/invalid_theorem_compressed_bare_save.mm \
+		tests/langdef/metamath/invalid_theorem_compressed_repeated_save.mm; do \
 		status=0; \
 		invalid=$$($(CETTA_BIN_INVOKE) --lang metamath "$$fixture" 2>&1) || \
 			status=$$?; \
@@ -7366,7 +8100,7 @@ test-metamath-cogslt-cli-core-v1: $(BIN) \
 	if rg -ni 'metamath|[.]mm([^[:alnum:]_]|$$)|\$$[cvfeap]([^[:alnum:]_]|$$)' \
 		src/main.c src/library.c src/library.h \
 		native/langdef_module.c native/langdef_module.h; then exit 1; fi; \
-	printf '%s\n' '(MetamathCoGSLTCliV1Summary 16 16 0 renamed-selector 1)'
+	printf '%s\n' '(MetamathCoGSLTCliV1Summary 17 17 0 renamed-selector 1)'
 
 .PHONY: test-metamath-cogslt-lowered-artifact-mutations-v1 \
 		test-metamath-cogslt-lowered-artifact-mutations-core-v1
@@ -16160,6 +16894,7 @@ endif
 .PHONY: test-gslt-execution-contracts
 test-gslt-execution-contracts: $(BIN) $(EXECUTION_CONTRACTS_TEST_BIN) \
 		test-prepared-pure-call-machine
+ifeq ($(ENABLE_PATHMAP_SPACE),1)
 ifeq ($(ENABLE_RUNTIME_STATS),1)
 	@PYTHONDONTWRITEBYTECODE=1 $(EXECUTION_CONTRACTS_GENERATOR) \
 		--cetta ./$(BIN) --check --check-fold-runtime
@@ -16205,6 +16940,9 @@ ifeq ($(ENABLE_RUNTIME_STATS),1)
 else
 	@echo "INFO: execution-contract mechanism witnesses require compile-time runtime stats; re-running with ENABLE_RUNTIME_STATS=1"
 	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 test-gslt-execution-contracts
+endif
+else
+	$(call reexec_pathmap_bridge_or_skip,GSLT execution-contract PathMap witnesses,$@)
 endif
 
 ifeq ($(ENABLE_RUNTIME_STATS),1)
@@ -17566,8 +18304,8 @@ test-cogslt-relational-state-transaction-v1: \
 		$(RELATIONAL_STATE_TRANSACTION_V1_TEST_BIN) \
 		$(RELATIONAL_STATE_TRANSACTION_V1_STATE) \
 		$(RELATIONAL_STATE_TRANSACTION_V1_PERSISTENT_STATE)
-	@test "$$(wc -l <$(RELATIONAL_STATE_TRANSACTION_V1_STATE))" -eq 6
-	@test "$$(wc -l <$(RELATIONAL_STATE_TRANSACTION_V1_PERSISTENT_STATE))" -eq 6
+	@test "$$(wc -l <$(RELATIONAL_STATE_TRANSACTION_V1_STATE))" -eq 11
+	@test "$$(wc -l <$(RELATIONAL_STATE_TRANSACTION_V1_PERSISTENT_STATE))" -eq 11
 	@rg -F -q '(state-table-v1 guest-scratch-v1 1 1 state-transactional-v1)' \
 		$(RELATIONAL_STATE_TRANSACTION_V1_STATE)
 	@rg -F -q '(state-table-v1 guest-scratch-v1 1 1 state-persistent-v1)' \
@@ -17577,7 +18315,7 @@ test-cogslt-relational-state-transaction-v1: \
 	@$(RELATIONAL_STATE_TRANSACTION_V1_TEST_BIN) \
 		$(RELATIONAL_STATE_TRANSACTION_V1_STATE) \
 		$(RELATIONAL_STATE_TRANSACTION_V1_PERSISTENT_STATE)
-	@if rg -ni 'transaction-canary|guest-scratch|guest-output' \
+	@if rg -ni 'transaction-canary|guest-scratch|guest-output|guest-dynamic' \
 		$(RELATIONAL_STATE_PROGRAM_V1_SRC) \
 		$(RELATIONAL_STATE_PROGRAM_V1_HEADER); then \
 		echo 'transaction canary knowledge leaked into the generic runtime'; \
@@ -18076,7 +18814,10 @@ test-cogslt-proof-gslt-relational-runtime-v1: \
 		tests/langdef/metamath/invalid_theorem_compressed_save_after_continuation.mm \
 		tests/langdef/metamath/invalid_theorem_compressed_incomplete_tail.mm \
 		tests/langdef/metamath/invalid_theorem_normal_incomplete_tail.mm \
-		tests/langdef/metamath/positive_theorem_compressed_incomplete_after_continuation.mm
+		tests/langdef/metamath/invalid_theorem_compressed_unknown_after_continuation.mm \
+		tests/langdef/metamath/invalid_theorem_compressed_explicit_mandatory.mm \
+		tests/langdef/metamath/invalid_theorem_compressed_bare_save.mm \
+		tests/langdef/metamath/invalid_theorem_compressed_repeated_save.mm
 	@python3 tools/test_gslt_language_generation_v1.py \
 		--generator $(GSLT_LANGUAGE_GENERATOR_V1) \
 		--manifest $(METAMATH_PROOF_MACHINE_LANGUAGE_V1_MANIFEST) \
@@ -18107,7 +18848,10 @@ test-cogslt-proof-gslt-relational-runtime-v1: \
 		tests/langdef/metamath/invalid_theorem_compressed_save_after_continuation.mm \
 		tests/langdef/metamath/invalid_theorem_compressed_incomplete_tail.mm \
 		tests/langdef/metamath/invalid_theorem_normal_incomplete_tail.mm \
-		tests/langdef/metamath/positive_theorem_compressed_incomplete_after_continuation.mm
+		tests/langdef/metamath/invalid_theorem_compressed_unknown_after_continuation.mm \
+		tests/langdef/metamath/invalid_theorem_compressed_explicit_mandatory.mm \
+		tests/langdef/metamath/invalid_theorem_compressed_bare_save.mm \
+		tests/langdef/metamath/invalid_theorem_compressed_repeated_save.mm
 	@test "$$(rg -c 'proof-relational-runtime-compressed-input-v1' \
 		$(PROOF_GSLT_METAMATH_RELATIONAL_RUNTIME_ABI_V1))" -eq 1
 	@test "$$(rg -c 'proof-relational-runtime-normal-input-v1' \
@@ -18141,7 +18885,10 @@ test-cogslt-proof-gslt-relational-runtime-v1: \
 			tests/langdef/metamath/invalid_theorem_compressed_save_after_continuation.mm \
 			tests/langdef/metamath/invalid_theorem_compressed_incomplete_tail.mm \
 			tests/langdef/metamath/invalid_theorem_normal_incomplete_tail.mm \
-			tests/langdef/metamath/positive_theorem_compressed_incomplete_after_continuation.mm \
+			tests/langdef/metamath/invalid_theorem_compressed_unknown_after_continuation.mm \
+			tests/langdef/metamath/invalid_theorem_compressed_explicit_mandatory.mm \
+			tests/langdef/metamath/invalid_theorem_compressed_bare_save.mm \
+			tests/langdef/metamath/invalid_theorem_compressed_repeated_save.mm \
 			>"$$work/$$mutation.out" 2>"$$work/$$mutation.err"; then \
 			exit 1; \
 		fi; \
@@ -18167,7 +18914,10 @@ test-cogslt-proof-gslt-relational-runtime-v1: \
 		tests/langdef/metamath/invalid_theorem_compressed_save_after_continuation.mm \
 		tests/langdef/metamath/invalid_theorem_compressed_incomplete_tail.mm \
 		tests/langdef/metamath/invalid_theorem_normal_incomplete_tail.mm \
-		tests/langdef/metamath/positive_theorem_compressed_incomplete_after_continuation.mm \
+		tests/langdef/metamath/invalid_theorem_compressed_unknown_after_continuation.mm \
+		tests/langdef/metamath/invalid_theorem_compressed_explicit_mandatory.mm \
+		tests/langdef/metamath/invalid_theorem_compressed_bare_save.mm \
+		tests/langdef/metamath/invalid_theorem_compressed_repeated_save.mm \
 		>"$$work/deleted.out" 2>"$$work/deleted.err"; then \
 		exit 1; \
 	fi; \
@@ -18223,7 +18973,10 @@ test-cogslt-proof-gslt-relational-runtime-v1: \
 			tests/langdef/metamath/invalid_theorem_compressed_save_after_continuation.mm \
 			tests/langdef/metamath/invalid_theorem_compressed_incomplete_tail.mm \
 			tests/langdef/metamath/invalid_theorem_normal_incomplete_tail.mm \
-			tests/langdef/metamath/positive_theorem_compressed_incomplete_after_continuation.mm \
+			tests/langdef/metamath/invalid_theorem_compressed_unknown_after_continuation.mm \
+			tests/langdef/metamath/invalid_theorem_compressed_explicit_mandatory.mm \
+			tests/langdef/metamath/invalid_theorem_compressed_bare_save.mm \
+			tests/langdef/metamath/invalid_theorem_compressed_repeated_save.mm \
 			>"$$work/$$kind.out" 2>"$$work/$$kind.err"; then \
 			exit 1; \
 		fi; \
@@ -18243,6 +18996,8 @@ test-cogslt-proof-gslt-relational-runtime-v1: \
 
 .PHONY: test-cogslt-oslf-native-type-vm-v1
 test-cogslt-oslf-native-type-vm-v1: \
+		test-gslt-rigid-coordinate-dispatch-v1 \
+		test-gslt-peano-add-specialization-v1 \
 		$(OSLF_NATIVE_TYPE_VM_V1_TEST_BIN) \
 		$(GSLT2PARSE_CHART_V1_NATIVE_BIN) \
 		$(METAMATH_PROOF_MACHINE_NTT_V1) \
@@ -18280,6 +19035,67 @@ test-cogslt-oslf-native-type-vm-v1: \
 		$(OSLF_NATIVE_TYPE_VM_V1_SRC) \
 		$(OSLF_NATIVE_TYPE_VM_V1_HEADER); then \
 		echo 'guest-language knowledge leaked into the native OSLF VM'; \
+		exit 1; \
+	fi
+
+$(GSLT_RIGID_COORDINATE_DISPATCH_V1_TEST_OBJ): \
+		$(GSLT_RIGID_COORDINATE_DISPATCH_V1_TEST_SRC) \
+		$(GSLT_RIGID_COORDINATE_DISPATCH_V1_HEADER) $(BUILD_CONFIG_HEADER)
+	@mkdir -p $(dir $@)
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) \
+		-c -o $@ $(GSLT_RIGID_COORDINATE_DISPATCH_V1_TEST_SRC)
+
+$(GSLT_RIGID_COORDINATE_DISPATCH_V1_TEST_BIN): \
+		$(GSLT_RIGID_COORDINATE_DISPATCH_V1_TEST_OBJ) \
+		$(GSLT_RIGID_COORDINATE_DISPATCH_V1_OBJ)
+	@mkdir -p $(dir $@)
+	$(CC) $(CFLAGS) -Wl,--gc-sections -o $@ $^
+
+.PHONY: test-gslt-rigid-coordinate-dispatch-v1
+test-gslt-rigid-coordinate-dispatch-v1: \
+		$(GSLT_RIGID_COORDINATE_DISPATCH_V1_TEST_BIN)
+	@$(GSLT_RIGID_COORDINATE_DISPATCH_V1_TEST_BIN)
+	@if rg -ni 'metamath|megalodon|tptp|set[.]mm|[$$][acdefpv]' \
+		$(GSLT_RIGID_COORDINATE_DISPATCH_V1_SRC) \
+		$(GSLT_RIGID_COORDINATE_DISPATCH_V1_HEADER); then \
+		echo 'guest-language knowledge leaked into rigid-coordinate dispatch'; \
+		exit 1; \
+	fi
+	@if ldd $(GSLT_RIGID_COORDINATE_DISPATCH_V1_TEST_BIN) | \
+		rg -qi 'python|libswipl'; then \
+		echo 'rigid-coordinate dispatch retained a foreign dependency'; \
+		exit 1; \
+	fi
+
+$(GSLT_PEANO_ADD_SPECIALIZATION_V1_TEST_OBJ): \
+		$(GSLT_PEANO_ADD_SPECIALIZATION_V1_TEST_SRC) \
+		$(GSLT_PEANO_ADD_SPECIALIZATION_V1_HEADER) $(BUILD_CONFIG_HEADER)
+	@mkdir -p $(dir $@)
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) \
+		-c -o $@ $(GSLT_PEANO_ADD_SPECIALIZATION_V1_TEST_SRC)
+
+$(GSLT_PEANO_ADD_SPECIALIZATION_V1_TEST_BIN): \
+		$(GSLT_PEANO_ADD_SPECIALIZATION_V1_TEST_OBJ) \
+		$(GSLT_PEANO_ADD_SPECIALIZATION_V1_OBJ) \
+		src/symbol.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o \
+		src/atom.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o
+	@mkdir -p $(dir $@)
+	$(CC) $(CFLAGS) -Wl,--gc-sections -o $@ $^ \
+		$(OSLF_NATIVE_TYPE_VM_V1_LDFLAGS)
+
+.PHONY: test-gslt-peano-add-specialization-v1
+test-gslt-peano-add-specialization-v1: \
+		$(GSLT_PEANO_ADD_SPECIALIZATION_V1_TEST_BIN)
+	@$(GSLT_PEANO_ADD_SPECIALIZATION_V1_TEST_BIN)
+	@if rg -ni 'metamath|megalodon|tptp|set[.]mm|[$$][acdefpv]' \
+		$(GSLT_PEANO_ADD_SPECIALIZATION_V1_SRC) \
+		$(GSLT_PEANO_ADD_SPECIALIZATION_V1_HEADER); then \
+		echo 'guest-language knowledge leaked into unary-fold specialization'; \
+		exit 1; \
+	fi
+	@if ldd $(GSLT_PEANO_ADD_SPECIALIZATION_V1_TEST_BIN) | \
+		rg -qi 'python|libswipl'; then \
+		echo 'unary-fold specialization retained a foreign dependency'; \
 		exit 1; \
 	fi
 	@if ldd $(OSLF_NATIVE_TYPE_VM_V1_TEST_BIN) | \
@@ -18393,6 +19209,132 @@ test-gslt-indexed-instruction-decoder-v1: \
 		exit 1; \
 	fi
 
+$(GSLT_INDEXED_EFFECT_MACHINE_V1_TEST_OBJ): \
+		$(GSLT_INDEXED_EFFECT_MACHINE_V1_TEST_SRC) \
+		$(GSLT_INDEXED_EFFECT_MACHINE_V1_HEADER) \
+		$(GSLT_INDEXED_INSTRUCTION_DECODER_V1_HEADER) \
+		$(GSLT_SPLIT_INDEXED_TABLE_V1_HEADER) $(BUILD_CONFIG_HEADER)
+	@mkdir -p $(dir $@)
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) \
+		-c -o $@ $(GSLT_INDEXED_EFFECT_MACHINE_V1_TEST_SRC)
+
+$(GSLT_INDEXED_EFFECT_MACHINE_V1_TEST_BIN): \
+		$(GSLT_INDEXED_EFFECT_MACHINE_V1_TEST_OBJ) \
+		$(GSLT_INDEXED_EFFECT_MACHINE_V1_OBJ) \
+		$(GSLT_INDEXED_INSTRUCTION_DECODER_V1_OBJ) \
+		$(GSLT_SPLIT_INDEXED_TABLE_V1_OBJ)
+	@mkdir -p $(dir $@)
+	$(CC) $(CFLAGS) -Wl,--gc-sections -o $@ $^ $(LDFLAGS)
+
+.PHONY: test-gslt-indexed-effect-machine-v1
+test-gslt-indexed-effect-machine-v1: \
+		$(GSLT_INDEXED_EFFECT_MACHINE_V1_TEST_BIN)
+	@$(GSLT_INDEXED_EFFECT_MACHINE_V1_TEST_BIN)
+	@if rg -ni 'metamath|megalodon|tptp|compressed[_ -]?proof|mandatory[_ -]?hypothesis' \
+		$(GSLT_INDEXED_EFFECT_MACHINE_V1_SRC) \
+		$(GSLT_INDEXED_EFFECT_MACHINE_V1_HEADER); then \
+		echo 'guest-language knowledge leaked into the indexed effect machine'; \
+		exit 1; \
+	fi
+
+$(GSLT_CLASSIFIED_VALUE_V1_TEST_OBJ): \
+		$(GSLT_CLASSIFIED_VALUE_V1_TEST_SRC) \
+		$(GSLT_CLASSIFIED_VALUE_V1_HEADER) $(BUILD_CONFIG_HEADER)
+	@mkdir -p $(dir $@)
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) \
+		-c -o $@ $(GSLT_CLASSIFIED_VALUE_V1_TEST_SRC)
+
+$(GSLT_CLASSIFIED_VALUE_V1_TEST_BIN): \
+		$(GSLT_CLASSIFIED_VALUE_V1_TEST_OBJ) \
+		$(GSLT_CLASSIFIED_VALUE_V1_OBJ)
+	@mkdir -p $(dir $@)
+	$(CC) $(CFLAGS) -Wl,--gc-sections -o $@ $^ $(LDFLAGS)
+
+.PHONY: test-gslt-classified-value-v1
+test-gslt-classified-value-v1: $(GSLT_CLASSIFIED_VALUE_V1_TEST_BIN)
+	@$(GSLT_CLASSIFIED_VALUE_V1_TEST_BIN)
+	@if rg -ni 'metamath|megalodon|tptp|proof|parser|label|saved' \
+		$(GSLT_CLASSIFIED_VALUE_V1_SRC) \
+		$(GSLT_CLASSIFIED_VALUE_V1_HEADER); then \
+		echo 'guest-language knowledge leaked into the classified value carrier'; \
+		exit 1; \
+	fi
+
+$(GSLT_CHRONOLOGICAL_BUILDER_V1_TEST_OBJ): \
+		$(GSLT_CHRONOLOGICAL_BUILDER_V1_TEST_SRC) \
+		$(GSLT_CHRONOLOGICAL_BUILDER_V1_HEADER) \
+		$(GSLT_U32_INDEX_V1_HEADER) $(BUILD_CONFIG_HEADER)
+	@mkdir -p $(dir $@)
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) \
+		-c -o $@ $(GSLT_CHRONOLOGICAL_BUILDER_V1_TEST_SRC)
+
+$(GSLT_CHRONOLOGICAL_BUILDER_V1_TEST_BIN): \
+		$(GSLT_CHRONOLOGICAL_BUILDER_V1_TEST_OBJ) \
+		$(GSLT_CHRONOLOGICAL_BUILDER_V1_OBJ) \
+		$(GSLT_U32_INDEX_V1_OBJ)
+	@mkdir -p $(dir $@)
+	$(CC) $(CFLAGS) -Wl,--gc-sections -o $@ $^ $(LDFLAGS)
+
+.PHONY: test-gslt-chronological-builder-v1
+test-gslt-chronological-builder-v1: \
+		$(GSLT_CHRONOLOGICAL_BUILDER_V1_TEST_BIN)
+	@$(GSLT_CHRONOLOGICAL_BUILDER_V1_TEST_BIN)
+	@if rg -ni 'metamath|megalodon|tptp|proof|parser|label|saved' \
+		$(GSLT_CHRONOLOGICAL_BUILDER_V1_SRC) \
+		$(GSLT_CHRONOLOGICAL_BUILDER_V1_HEADER); then \
+		echo 'guest-language knowledge leaked into the chronological builder'; \
+		exit 1; \
+	fi
+
+$(GSLT_REUSABLE_BUFFER_V1_TEST_OBJ): \
+		$(GSLT_REUSABLE_BUFFER_V1_TEST_SRC) \
+		$(GSLT_REUSABLE_BUFFER_V1_HEADER) $(BUILD_CONFIG_HEADER)
+	@mkdir -p $(dir $@)
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) \
+		-c -o $@ $(GSLT_REUSABLE_BUFFER_V1_TEST_SRC)
+
+$(GSLT_REUSABLE_BUFFER_V1_TEST_BIN): \
+		$(GSLT_REUSABLE_BUFFER_V1_TEST_OBJ) \
+		$(GSLT_REUSABLE_BUFFER_V1_OBJ)
+	@mkdir -p $(dir $@)
+	$(CC) $(CFLAGS) -Wl,--gc-sections -o $@ $^ $(LDFLAGS)
+
+.PHONY: test-gslt-reusable-buffer-v1
+test-gslt-reusable-buffer-v1: $(GSLT_REUSABLE_BUFFER_V1_TEST_BIN)
+	@$(GSLT_REUSABLE_BUFFER_V1_TEST_BIN)
+	@if rg -ni 'metamath|megalodon|tptp|proof|parser|label|saved' \
+		$(GSLT_REUSABLE_BUFFER_V1_SRC) \
+		$(GSLT_REUSABLE_BUFFER_V1_HEADER); then \
+		echo 'guest-language knowledge leaked into the reusable buffer'; \
+		exit 1; \
+	fi
+
+$(GSLT_REPETITION_ADMISSION_V1_TEST_OBJ): \
+		$(GSLT_REPETITION_ADMISSION_V1_TEST_SRC) \
+		$(GSLT_REPETITION_ADMISSION_V1_HEADER) \
+		$(GSLT_U32_INDEX_V1_HEADER) $(BUILD_CONFIG_HEADER)
+	@mkdir -p $(dir $@)
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) \
+		-c -o $@ $(GSLT_REPETITION_ADMISSION_V1_TEST_SRC)
+
+$(GSLT_REPETITION_ADMISSION_V1_TEST_BIN): \
+		$(GSLT_REPETITION_ADMISSION_V1_TEST_OBJ) \
+		$(GSLT_REPETITION_ADMISSION_V1_OBJ) \
+		$(GSLT_U32_INDEX_V1_OBJ)
+	@mkdir -p $(dir $@)
+	$(CC) $(CFLAGS) -Wl,--gc-sections -o $@ $^ $(LDFLAGS)
+
+.PHONY: test-gslt-repetition-admission-v1
+test-gslt-repetition-admission-v1: \
+		$(GSLT_REPETITION_ADMISSION_V1_TEST_BIN)
+	@$(GSLT_REPETITION_ADMISSION_V1_TEST_BIN)
+	@if rg -ni 'metamath|megalodon|tptp|proof|parser|label|saved' \
+		$(GSLT_REPETITION_ADMISSION_V1_SRC) \
+		$(GSLT_REPETITION_ADMISSION_V1_HEADER); then \
+		echo 'guest-language knowledge leaked into repetition admission'; \
+		exit 1; \
+	fi
+
 $(GSLT_INDEXED_VALUE_TABLE_V1_TEST_OBJ): \
 		$(GSLT_INDEXED_VALUE_TABLE_V1_TEST_SRC) \
 		$(GSLT_INDEXED_VALUE_TABLE_V1_HEADER) $(BUILD_CONFIG_HEADER)
@@ -18460,6 +19402,36 @@ test-gslt-literal-hole-program-v1: \
 		$(GSLT_LITERAL_HOLE_PROGRAM_V1_SRC) \
 		$(GSLT_LITERAL_HOLE_PROGRAM_V1_HEADER); then \
 		echo 'guest-language knowledge leaked into the literal/hole program'; \
+		exit 1; \
+	fi
+
+$(GSLT_TWO_PHASE_FRAME_MACHINE_V1_TEST_OBJ): \
+		$(GSLT_TWO_PHASE_FRAME_MACHINE_V1_TEST_SRC) \
+		$(GSLT_TWO_PHASE_FRAME_MACHINE_V1_HEADER) \
+		$(GSLT_LITERAL_HOLE_PROGRAM_V1_HEADER) \
+		$(GSLT_U32_SLICE_ARENA_V1_HEADER) \
+		$(GSLT_EPOCH_SLOTS_V1_HEADER) $(BUILD_CONFIG_HEADER)
+	@mkdir -p $(dir $@)
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) \
+		-c -o $@ $(GSLT_TWO_PHASE_FRAME_MACHINE_V1_TEST_SRC)
+
+$(GSLT_TWO_PHASE_FRAME_MACHINE_V1_TEST_BIN): \
+		$(GSLT_TWO_PHASE_FRAME_MACHINE_V1_TEST_OBJ) \
+		$(GSLT_TWO_PHASE_FRAME_MACHINE_V1_OBJ) \
+		$(GSLT_LITERAL_HOLE_PROGRAM_V1_OBJ) \
+		$(GSLT_U32_SLICE_ARENA_V1_OBJ) \
+		$(GSLT_EPOCH_SLOTS_V1_OBJ)
+	@mkdir -p $(dir $@)
+	$(CC) $(CFLAGS) -Wl,--gc-sections -o $@ $^ $(LDFLAGS)
+
+.PHONY: test-gslt-two-phase-frame-machine-v1
+test-gslt-two-phase-frame-machine-v1: \
+		$(GSLT_TWO_PHASE_FRAME_MACHINE_V1_TEST_BIN)
+	@$(GSLT_TWO_PHASE_FRAME_MACHINE_V1_TEST_BIN)
+	@if rg -ni 'metamath|megalodon|tptp|set\.mm' \
+		$(GSLT_TWO_PHASE_FRAME_MACHINE_V1_SRC) \
+		$(GSLT_TWO_PHASE_FRAME_MACHINE_V1_HEADER); then \
+		echo 'guest-language knowledge leaked into the two-phase frame machine'; \
 		exit 1; \
 	fi
 
@@ -18572,9 +19544,15 @@ $(RELATIONAL_STACK_PROOF_CACHE_V1_TEST_BIN): \
 test-cogslt-relational-stack-proof-cache-v1: \
 		test-gslt-dense-bitset-v1 \
 		test-gslt-indexed-instruction-decoder-v1 \
+		test-gslt-indexed-effect-machine-v1 \
+		test-gslt-classified-value-v1 \
+		test-gslt-chronological-builder-v1 \
+		test-gslt-reusable-buffer-v1 \
+		test-gslt-repetition-admission-v1 \
 		test-gslt-indexed-value-table-v1 \
 		test-gslt-split-indexed-table-v1 \
 		test-gslt-literal-hole-program-v1 \
+		test-gslt-two-phase-frame-machine-v1 \
 		test-gslt-u32-index-v1 \
 		test-gslt-u32-slice-arena-v1 \
 		test-gslt-epoch-slots-v1 \
@@ -18586,6 +19564,12 @@ test-cogslt-relational-stack-proof-cache-v1: \
 		$(RELATIONAL_STACK_PROOF_V1_HEADER) \
 		$(GSLT_INDEXED_INSTRUCTION_DECODER_V1_SRC) \
 		$(GSLT_INDEXED_INSTRUCTION_DECODER_V1_HEADER) \
+		$(GSLT_INDEXED_EFFECT_MACHINE_V1_SRC) \
+		$(GSLT_INDEXED_EFFECT_MACHINE_V1_HEADER) \
+		$(GSLT_CLASSIFIED_VALUE_V1_SRC) \
+		$(GSLT_CLASSIFIED_VALUE_V1_HEADER) \
+		$(GSLT_CHRONOLOGICAL_BUILDER_V1_SRC) \
+		$(GSLT_CHRONOLOGICAL_BUILDER_V1_HEADER) \
 		$(GSLT_INDEXED_VALUE_TABLE_V1_SRC) \
 		$(GSLT_INDEXED_VALUE_TABLE_V1_HEADER) \
 		$(GSLT_LITERAL_HOLE_PROGRAM_V1_SRC) \
@@ -18605,12 +19589,18 @@ test-cogslt-relational-stack-proof-cache-v1: \
 # The article checker executes only compiled structural proof presentations.
 $(PROOF_GSLT_ARTICLE_V1_TEST_BIN): \
 		$(BUILD_CONFIG_HEADER) \
+		$(GSLT_U32_INDEX_V1_SRC) \
+		$(GSLT_U32_INDEX_V1_HEADER) \
+		$(GSLT_CHRONOLOGICAL_BUILDER_V1_SRC) \
+		$(GSLT_CHRONOLOGICAL_BUILDER_V1_HEADER) \
 		$(PROOF_GSLT_ARTICLE_V1_SRC) \
 		$(PROOF_GSLT_ARTICLE_V1_HEADER) \
 		$(PROOF_GSLT_ARTICLE_V1_TEST_SRC)
 	@mkdir -p runtime
 	$(CC) $(CPPFLAGS) $(CFLAGS) \
 		-I$(GSLT2PARSE_SCHEMA_V1_NATIVE_DIR) -o $@ \
+		$(GSLT_U32_INDEX_V1_SRC) \
+		$(GSLT_CHRONOLOGICAL_BUILDER_V1_SRC) \
 		$(PROOF_GSLT_ARTICLE_V1_SRC) \
 		$(PROOF_GSLT_ARTICLE_V1_TEST_SRC)
 
@@ -18724,7 +19714,9 @@ test-cogslt-proof-stage-v1: \
 		$(PROOF_GSLT_METAMATH_PLAN_V1) \
 		$(PROOF_GSLT_METAMATH_EVIDENCE_ABI_V1) \
 		$(PROOF_GSLT_METAMATH_RELATIONAL_ABI_V1) \
+		$(PROOF_GSLT_METAMATH_RELATIONAL_NO_APARTNESS_V1) \
 		$(PROOF_GSLT_METAMATH_RELATIONAL_DELETE_ROLE_V1) \
+		$(PROOF_GSLT_METAMATH_RELATIONAL_DELETE_EXECUTION_V1) \
 		$(PROOF_GSLT_SEQUENCE_DELETE_ABI_ROLE_V1) \
 		$(PROOF_GSLT_PROP_DELETE_MP_ANSWERS_V1) \
 		$(PROOF_GSLT_SEQUENCE_DELETE_APART_ANSWERS_V1) \
@@ -18770,6 +19762,7 @@ test-cogslt-proof-stage-v1: \
 	@$(PROOF_GSLT_RELATIONAL_ASSERTION_V1_TEST_BIN) \
 		$(PROOF_GSLT_METAMATH_PLAN_V1) \
 		$(PROOF_GSLT_METAMATH_RELATIONAL_ABI_V1) \
+		$(PROOF_GSLT_METAMATH_RELATIONAL_NO_APARTNESS_V1) \
 		$(PROOF_GSLT_METAMATH_RELATIONAL_DELETE_ROLE_V1) \
 		$(PROOF_GSLT_SEQUENCE_ANSWERS_V1) \
 		mm-state-symbol-kind \
@@ -18779,11 +19772,14 @@ test-cogslt-proof-stage-v1: \
 		mm-state-assertion-ordered-hypothesis \
 		mm-state-assertion-mandatory-variable \
 		mm-state-assertion-disjoint-variable \
-		mm-state-label-kind
+		mm-state-disjoint-variable \
+		mm-state-label-kind \
+		$(PROOF_GSLT_METAMATH_RELATIONAL_DELETE_EXECUTION_V1)
 	@$(PROOF_GSLT_RELATIONAL_DECLARATION_V1_TEST_BIN) \
 		$(PROOF_GSLT_METAMATH_PLAN_V1) \
 		$(PROOF_GSLT_METAMATH_EVIDENCE_ABI_V1) \
 		$(PROOF_GSLT_METAMATH_RELATIONAL_ABI_V1) \
+		$(PROOF_GSLT_METAMATH_RELATIONAL_NO_APARTNESS_V1) \
 		mm-state-symbol-kind \
 		mm-state-formula \
 		mm-state-floating-variable \
@@ -18791,6 +19787,7 @@ test-cogslt-proof-stage-v1: \
 		mm-state-assertion-ordered-hypothesis \
 		mm-state-assertion-mandatory-variable \
 		mm-state-assertion-disjoint-variable \
+		mm-state-disjoint-variable \
 		mm-state-label-kind
 	@if rg -ni '\b(he|petta|metta|rho|mrho|rhocalc|hyperon)\b|metamath|megalodon|tptp|cetta[-_ ]?prime|set\.mm' \
 		$(PROOF_GSLT_ARTICLE_CORE_V1) \
@@ -19130,12 +20127,15 @@ test-metamath-cogslt-proof-trace-compiled-v1: \
 	@$(PROOF_TRACE_COMPILED_RUNTIME_V1_TEST_BIN) \
 		$(PROOF_GSLT_TRACE_INPUT_CANARY_V1) \
 		$(PROOF_GSLT_TRACE_COMPRESSED_COMPOSITION_CANARY_V1) \
-		tests/langdef/metamath/proof_trace_service_normal.query \
-		tests/langdef/metamath/proof_trace_service_wrong_target.query \
-		tests/langdef/metamath/proof_trace_service_compressed.query \
-		tests/langdef/metamath/proof_trace_service_compressed_range.query \
-		tests/langdef/metamath/proof_trace_service_incomplete_normal.query \
-		tests/langdef/metamath/proof_trace_service_unknown_not_verified.query
+		accept tests/langdef/metamath/proof_trace_service_normal.query \
+		reject tests/langdef/metamath/proof_trace_service_wrong_target.query \
+		accept tests/langdef/metamath/proof_trace_service_compressed.query \
+		reject tests/langdef/metamath/proof_trace_service_compressed_range.query \
+		accept tests/langdef/metamath/proof_trace_service_incomplete_normal.query \
+		reject tests/langdef/metamath/proof_trace_service_unknown_not_verified.query \
+		raw-accept $(PROOF_GSLT_TRACE_COMPILE_SINGLE_SAVE_V1) \
+		raw-reject $(PROOF_GSLT_TRACE_COMPILE_BARE_SAVE_V1) \
+		raw-reject $(PROOF_GSLT_TRACE_COMPILE_REPEATED_SAVE_V1)
 
 $(GSLT_ABT_PROVIDER_V1_TEST_BIN): \
 		tests/support/test_gslt_abt_provider_v1.c \

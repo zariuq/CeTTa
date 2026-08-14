@@ -19,5 +19,6 @@
   (source "../../experiments/gslt2parse_foundation/presentations/compiler/proof_gslt_relational_projection_compiler_v1.metta")
   (source "proof_calculus_v1.metta")
   (source "proof_relational_projection_v1.metta")
+  (source "proof_trace_policy_v1.metta")
   (source "proof_trace_codec_v1.metta")
 )

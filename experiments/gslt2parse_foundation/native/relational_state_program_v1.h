@@ -7,6 +7,7 @@
 #include <stdio.h>
 
 #include "parser_occurrence_fold_v1.h"
+#include "gslt_header_hypothesis_policy_v1.h"
 #include "parser_occurrence_source_resolver_v1.h"
 #include "relational_store_v1.h"
 #include "relational_stack_proof_v1.h"
@@ -110,6 +111,8 @@ typedef struct {
     uint32_t continuation_radix;
     uint32_t continuation_digit_bias;
     PPRelationalStackProofV1UnknownPolicy unknown_policy;
+    CettaGsltIndexedSavePlacementV1 save_placement;
+    CettaGsltHeaderHypothesisPolicyV1 header_hypothesis_policy;
 } PPRelationalStateProofMachineV1;
 
 typedef struct {

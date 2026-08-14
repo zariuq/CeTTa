@@ -3,6 +3,7 @@
 #include "gslt_indexed_instruction_decoder_v1.h"
 #include "gslt_indexed_value_table_v1.h"
 #include "gslt_literal_hole_program_v1.h"
+#include "gslt_two_phase_frame_machine_v1.h"
 #include "gslt_dense_bitset_v1.h"
 #include "gslt_epoch_slots_v1.h"
 #include "gslt_u32_index_v1.h"
@@ -49,21 +50,9 @@ typedef struct {
 
 typedef CettaGsltLiteralHeadProgramV1 PPProofV1Template;
 
-typedef struct {
-    uint32_t stack_offset;
-    uint32_t slot;
-    uint32_t type_head;
-} PPProofV1BindInstruction;
-
-typedef struct {
-    uint32_t stack_offset;
-    PPProofV1Template pattern;
-} PPProofV1MatchInstruction;
-
-typedef struct {
-    uint32_t left_slot;
-    uint32_t right_slot;
-} PPProofV1DenseDisjoint;
+typedef CettaGsltTwoPhaseBindV1 PPProofV1BindInstruction;
+typedef CettaGsltTwoPhaseMatchV1 PPProofV1MatchInstruction;
+typedef CettaGsltTwoPhaseApartV1 PPProofV1DenseDisjoint;
 
 typedef struct {
     uint32_t assertion;
@@ -76,6 +65,7 @@ typedef struct {
     PPProofV1DenseDisjoint *disjoints;
     uint32_t disjoint_len;
     PPProofV1Template conclusion;
+    CettaGsltTwoPhaseFrameAdmissionV1 program_admission;
     uint64_t template_cell_len;
     uint64_t template_part_len;
     uint64_t template_head_len;
@@ -343,13 +333,6 @@ static const PPProofV1Formula *ppproof_v1_dense_substitution_get_const(
         : NULL;
 }
 
-static PPProofV1Formula *ppproof_v1_dense_substitution_set(
-    PPProofV1DenseSubstitutions *substitutions, uint32_t slot) {
-    return substitutions
-        ? cetta_gslt_epoch_slots_set_v1(&substitutions->slots, slot)
-        : NULL;
-}
-
 static void ppproof_v1_formula_arena_free(
     PPProofV1FormulaArena *arena) {
     cetta_gslt_u32_slice_arena_free_v1(arena);
@@ -523,6 +506,7 @@ static CettaGsltIndexedInstructionPlanV1 ppproof_v1_indexed_plan(
     plan.terminal_digit_bias = machine->terminal_digit_bias;
     plan.continuation_radix = machine->continuation_radix;
     plan.continuation_digit_bias = machine->continuation_digit_bias;
+    plan.save_placement = machine->save_placement;
     return plan;
 }
 
@@ -581,7 +565,15 @@ bool pprelational_stack_proof_v1_machine_validate(
         machine->rule_kind_first == machine->rule_kind_second ||
         !cetta_gslt_indexed_instruction_plan_validate_v1(&indexed_plan) ||
         machine->unknown_policy >
-            PPRELATIONAL_STACK_PROOF_V1_UNKNOWN_PUSH_CLAIM) {
+            PPRELATIONAL_STACK_PROOF_V1_UNKNOWN_PUSH_CLAIM ||
+        (machine->save_placement !=
+             CETTA_GSLT_INDEXED_SAVE_IMMEDIATELY_AFTER_USE_V1 &&
+         machine->save_placement !=
+             CETTA_GSLT_INDEXED_SAVE_REPEATABLE_AFTER_USE_V1) ||
+        (machine->header_hypothesis_policy !=
+             CETTA_GSLT_HEADER_HYPOTHESIS_NONMANDATORY_ONLY_V1 &&
+         machine->header_hypothesis_policy !=
+             CETTA_GSLT_HEADER_HYPOTHESIS_ANY_ACTIVE_V1)) {
         ppproof_v1_set_error(error_buf, error_buf_size,
                              "invalid relational proof decoder");
         return false;
@@ -618,6 +610,7 @@ static bool ppproof_v1_admission_matches(
                machine->assertion_disjoint_table &&
            admission->symbol_kind_table == machine->symbol_kind_table &&
            admission->scratch_reuse_admitted &&
+           admission->two_phase_frame_admitted &&
            ppproof_v1_digest_valid(admission->native_type_digest) &&
            ppproof_v1_digest_valid(admission->storage_plan_digest);
 }
@@ -670,7 +663,10 @@ static bool ppproof_v1_machine_equal(
            left->continuation_radix == right->continuation_radix &&
            left->continuation_digit_bias ==
                right->continuation_digit_bias &&
-           left->unknown_policy == right->unknown_policy;
+           left->unknown_policy == right->unknown_policy &&
+           left->save_placement == right->save_placement &&
+           left->header_hypothesis_policy ==
+               right->header_hypothesis_policy;
 }
 
 bool pprelational_stack_proof_v1_cache_init(
@@ -1002,6 +998,19 @@ static PPRelationalStackProofV1Result ppproof_v1_frame_push(
         return PPRELATIONAL_STACK_PROOF_V1_RESOURCE;
     frame->items[frame->len++] = hypothesis;
     return PPRELATIONAL_STACK_PROOF_V1_OK;
+}
+
+static bool ppproof_v1_frame_contains_label(
+    const PPProofV1Frame *frame, uint32_t label) {
+    uint32_t index;
+
+    if (!frame)
+        return false;
+    for (index = 0u; index < frame->len; index++) {
+        if (frame->items[index].label == label)
+            return true;
+    }
+    return false;
 }
 
 static PPRelationalStackProofV1Result ppproof_v1_build_frame(
@@ -1355,6 +1364,27 @@ ppproof_v1_compile_frame_from_source(
     compiled.template_part_len += compiled.conclusion.residual.part_len;
     compiled.template_head_len +=
         compiled.conclusion.has_head ? 1u : 0u;
+    {
+        CettaGsltTwoPhaseFrameProgramV1 program = {
+            .binds = compiled.binds,
+            .bind_len = compiled.bind_len,
+            .matches = compiled.matches,
+            .match_len = compiled.match_len,
+            .apart = compiled.disjoints,
+            .apart_len = compiled.disjoint_len,
+            .conclusion = &compiled.conclusion,
+            .stack_arity = compiled.instruction_len,
+            .slot_len = compiled.slot_len,
+        };
+        if (!cetta_gslt_two_phase_frame_program_admit_v1(
+                &program, &compiled.program_admission)) {
+            ppproof_v1_set_error(
+                error_buf, error_buf_size,
+                "compiled two-phase frame fails generic admission");
+            result = PPRELATIONAL_STACK_PROOF_V1_INVALID;
+            goto done;
+        }
+    }
     *compiled_out = compiled;
     memset(&compiled, 0, sizeof(compiled));
 
@@ -1951,79 +1981,6 @@ static PPRelationalStackProofV1Result ppproof_v1_check_disjoint(
     return PPRELATIONAL_STACK_PROOF_V1_OK;
 }
 
-typedef struct {
-    const PPProofV1DenseSubstitutions *substitutions;
-    const PPProofV1FormulaArena *arena;
-} PPProofV1TemplateEnvironment;
-
-static bool ppproof_v1_template_hole_lookup(
-    void *context, uint32_t hole,
-    const uint32_t **items_out, uint32_t *len_out) {
-    const PPProofV1TemplateEnvironment *environment = context;
-    const PPProofV1Formula *image;
-
-    if (!environment || !environment->substitutions ||
-        !environment->arena || !items_out || !len_out ||
-        !(image = ppproof_v1_dense_substitution_get_const(
-              environment->substitutions, hole)) ||
-        image->offset > environment->arena->len ||
-        image->len > environment->arena->len - image->offset)
-        return false;
-    *items_out = image->len != 0u
-                     ? &environment->arena->items[image->offset]
-                     : NULL;
-    *len_out = image->len;
-    return true;
-}
-
-static bool ppproof_v1_template_matches(
-    const PPProofV1Template *template,
-    const PPProofV1DenseSubstitutions *substitutions,
-    const PPProofV1FormulaArena *arena, PPProofV1Formula actual) {
-    const uint32_t *actual_items =
-        ppproof_v1_formula_items(arena, actual);
-    PPProofV1TemplateEnvironment environment = {
-        substitutions, arena,
-    };
-
-    if (!template || !substitutions || !actual_items)
-        return false;
-    return cetta_gslt_literal_head_program_match_v1(
-        template, ppproof_v1_template_hole_lookup, &environment,
-        actual_items, actual.len);
-}
-
-static PPRelationalStackProofV1Result ppproof_v1_template_instantiate(
-    const PPProofV1Template *template,
-    const PPProofV1DenseSubstitutions *substitutions,
-    PPProofV1FormulaArena *arena, PPProofV1Formula *formula_out) {
-    uint32_t result_len = 0u;
-    uint32_t offset;
-    PPProofV1TemplateEnvironment environment = {
-        substitutions, arena,
-    };
-
-    if (!template || !substitutions || !arena || !formula_out)
-        return PPRELATIONAL_STACK_PROOF_V1_INVALID;
-    if (!cetta_gslt_literal_head_program_measure_v1(
-            template, ppproof_v1_template_hole_lookup, &environment,
-            &result_len))
-        return PPRELATIONAL_STACK_PROOF_V1_INVALID;
-    if (result_len == 0u ||
-        !ppproof_v1_formula_arena_reserve(
-            arena, result_len, &offset))
-        return result_len == 0u
-                   ? PPRELATIONAL_STACK_PROOF_V1_INVALID
-                   : PPRELATIONAL_STACK_PROOF_V1_RESOURCE;
-    environment.arena = arena;
-    if (!cetta_gslt_literal_head_program_write_v1(
-            template, ppproof_v1_template_hole_lookup, &environment,
-            &arena->items[offset], result_len))
-        return PPRELATIONAL_STACK_PROOF_V1_INVALID;
-    *formula_out = (PPProofV1Formula){offset, result_len};
-    return PPRELATIONAL_STACK_PROOF_V1_OK;
-}
-
 static PPRelationalStackProofV1Result
 ppproof_v1_check_compiled_disjoint(
     const PPRelationalStoreV1 *store,
@@ -2118,6 +2075,46 @@ ppproof_v1_check_compiled_disjoint(
     return PPRELATIONAL_STACK_PROOF_V1_OK;
 }
 
+typedef struct {
+    const PPRelationalStoreV1 *store;
+    const PPRelationalStackProofV1Machine *machine;
+    PPProofV1DenseSubstitutions *substitutions;
+    const PPProofV1FormulaArena *arena;
+    PPProofV1FiniteSupportContext *finite_support;
+    char *error_buf;
+    size_t error_buf_size;
+} PPProofV1TwoPhaseApartContext;
+
+static CettaGsltTwoPhaseFrameResultV1
+ppproof_v1_two_phase_apart(
+    void *raw_context,
+    uint32_t left_slot, const uint32_t *left, uint32_t left_len,
+    uint32_t right_slot, const uint32_t *right, uint32_t right_len) {
+    PPProofV1TwoPhaseApartContext *context = raw_context;
+    PPProofV1DenseDisjoint pair = {left_slot, right_slot};
+    PPProofV1CompiledFrame frame = {
+        .disjoints = &pair,
+        .disjoint_len = 1u,
+    };
+    PPRelationalStackProofV1Result result;
+
+    if (!context || (left_len != 0u && !left) ||
+        (right_len != 0u && !right))
+        return CETTA_GSLT_TWO_PHASE_FRAME_INVALID_V1;
+    result = ppproof_v1_check_compiled_disjoint(
+        context->store, context->machine, &frame,
+        context->substitutions, context->arena,
+        context->finite_support,
+        context->error_buf, context->error_buf_size);
+    if (result == PPRELATIONAL_STACK_PROOF_V1_OK)
+        return CETTA_GSLT_TWO_PHASE_FRAME_OK_V1;
+    if (result == PPRELATIONAL_STACK_PROOF_V1_REJECTED)
+        return CETTA_GSLT_TWO_PHASE_FRAME_REJECTED_V1;
+    if (result == PPRELATIONAL_STACK_PROOF_V1_RESOURCE)
+        return CETTA_GSLT_TWO_PHASE_FRAME_RESOURCE_V1;
+    return CETTA_GSLT_TWO_PHASE_FRAME_INVALID_V1;
+}
+
 static PPRelationalStackProofV1Result ppproof_v1_apply_compiled_rule(
     const PPRelationalStoreV1 *store,
     const PPRelationalStackProofV1Machine *machine,
@@ -2126,11 +2123,11 @@ static PPRelationalStackProofV1Result ppproof_v1_apply_compiled_rule(
     PPProofV1FiniteSupportContext *finite_support,
     PPProofV1FormulaArena *arena, PPProofV1FormulaStack *stack,
     char *error_buf, size_t error_buf_size) {
+    PPProofV1TwoPhaseApartContext apart_context;
+    CettaGsltTwoPhaseFrameAlgebraV1 algebra;
+    CettaGsltTwoPhaseFrameResultV1 executed;
     PPProofV1Formula result_formula = {0};
-    uint32_t base;
-    uint32_t index;
-    PPRelationalStackProofV1Result result =
-        PPRELATIONAL_STACK_PROOF_V1_OK;
+    uint32_t base = 0u;
 
     if (!frame || !substitutions || stack->len < frame->instruction_len) {
         ppproof_v1_set_error(error_buf, error_buf_size,
@@ -2145,48 +2142,35 @@ static PPRelationalStackProofV1Result ppproof_v1_apply_compiled_rule(
                 ? finite_support->matrix_width
                 : 0u))
         return PPRELATIONAL_STACK_PROOF_V1_RESOURCE;
-    base = stack->len - frame->instruction_len;
-    for (index = 0u; index < frame->bind_len; index++) {
-        const PPProofV1BindInstruction *instruction =
-            &frame->binds[index];
-        PPProofV1Formula actual;
-        PPProofV1Formula *image;
-        const uint32_t *actual_items;
-        actual = stack->items[base + instruction->stack_offset];
-        actual_items = ppproof_v1_formula_items(arena, actual);
-        if (!actual_items || actual.len == 0u ||
-            actual_items[0] != instruction->type_head) {
+    apart_context = (PPProofV1TwoPhaseApartContext){
+        .store = store,
+        .machine = machine,
+        .substitutions = substitutions,
+        .arena = arena,
+        .finite_support = finite_support,
+        .error_buf = error_buf,
+        .error_buf_size = error_buf_size,
+    };
+    algebra = (CettaGsltTwoPhaseFrameAlgebraV1){
+        .context = &apart_context,
+        .check_apart = ppproof_v1_two_phase_apart,
+    };
+    executed = cetta_gslt_two_phase_frame_machine_execute_admitted_v1(
+        &frame->program_admission,
+        frame->disjoint_len != 0u ? &algebra : NULL,
+        &substitutions->slots, arena, stack->items, stack->len,
+        &base, &result_formula);
+    if (executed == CETTA_GSLT_TWO_PHASE_FRAME_REJECTED_V1) {
+        if (error_buf && error_buf_size != 0u && error_buf[0] == '\0')
             ppproof_v1_set_error(
                 error_buf, error_buf_size,
-                "proof binder does not match its declared type");
-            return PPRELATIONAL_STACK_PROOF_V1_REJECTED;
-        }
-        image = ppproof_v1_dense_substitution_set(
-            substitutions, instruction->slot);
-        if (!image)
-            return PPRELATIONAL_STACK_PROOF_V1_INVALID;
-        *image = (PPProofV1Formula){actual.offset + 1u, actual.len - 1u};
+                "compiled two-phase frame rejected its stack suffix");
+        return PPRELATIONAL_STACK_PROOF_V1_REJECTED;
     }
-    for (index = 0u; index < frame->match_len; index++) {
-        const PPProofV1MatchInstruction *instruction =
-            &frame->matches[index];
-        if (!ppproof_v1_template_matches(
-                &instruction->pattern, substitutions, arena,
-                stack->items[base + instruction->stack_offset])) {
-            ppproof_v1_set_error(error_buf, error_buf_size,
-                                 "proof hypothesis mismatch");
-            return PPRELATIONAL_STACK_PROOF_V1_REJECTED;
-        }
-    }
-    result = ppproof_v1_check_compiled_disjoint(
-        store, machine, frame, substitutions, arena, finite_support,
-        error_buf, error_buf_size);
-    if (result != PPRELATIONAL_STACK_PROOF_V1_OK)
-        return result;
-    result = ppproof_v1_template_instantiate(
-        &frame->conclusion, substitutions, arena, &result_formula);
-    if (result != PPRELATIONAL_STACK_PROOF_V1_OK)
-        return result;
+    if (executed == CETTA_GSLT_TWO_PHASE_FRAME_RESOURCE_V1)
+        return PPRELATIONAL_STACK_PROOF_V1_RESOURCE;
+    if (executed != CETTA_GSLT_TWO_PHASE_FRAME_OK_V1)
+        return PPRELATIONAL_STACK_PROOF_V1_INVALID;
     stack->len = base;
     return ppproof_v1_formula_stack_push(stack, result_formula)
                ? PPRELATIONAL_STACK_PROOF_V1_OK
@@ -2681,6 +2665,15 @@ static PPRelationalStackProofV1Result ppproof_v1_compressed(
         uint32_t header_label = 0u;
         result = ppproof_v1_intern_slice(
             store, input->header[index], &header_label);
+        if (result == PPRELATIONAL_STACK_PROOF_V1_OK &&
+            machine->header_hypothesis_policy ==
+                CETTA_GSLT_HEADER_HYPOTHESIS_NONMANDATORY_ONLY_V1 &&
+            ppproof_v1_frame_contains_label(&frame, header_label)) {
+            ppproof_v1_set_error(
+                error_buf, error_buf_size,
+                "compressed header repeats an implicitly prepared hypothesis");
+            result = PPRELATIONAL_STACK_PROOF_V1_REJECTED;
+        }
         if (result == PPRELATIONAL_STACK_PROOF_V1_OK)
             result = ppproof_v1_heap_add_label(
                 store, machine, header_label, &arena, &heap,
@@ -2715,10 +2708,23 @@ static PPRelationalStackProofV1Result ppproof_v1_compressed(
                         error_buf, error_buf_size,
                         "compressed proof save interrupts an open index");
                 else if (decode_result ==
+                         CETTA_GSLT_INDEXED_DECODE_SAVE_WITHOUT_USE_V1)
+                    ppproof_v1_set_error(
+                        error_buf, error_buf_size,
+                        "compressed proof save does not follow a completed index");
+                else if (decode_result ==
+                         CETTA_GSLT_INDEXED_DECODE_UNKNOWN_INSIDE_INDEX_V1)
+                    ppproof_v1_set_error(
+                        error_buf, error_buf_size,
+                        "compressed proof unknown interrupts an open index");
+                else if (decode_result ==
                          CETTA_GSLT_INDEXED_DECODE_INVALID_BYTE_V1)
                     ppproof_v1_set_error(
                         error_buf, error_buf_size,
-                        "compressed proof byte is outside the generated decoder");
+                        decoder.phase ==
+                            CETTA_GSLT_INDEXED_PHASE_OPEN_INDEX_V1
+                            ? "compressed proof byte interrupts an open index"
+                            : "compressed proof byte is outside the generated decoder");
                 else {
                     result = PPRELATIONAL_STACK_PROOF_V1_INVALID;
                     ppproof_v1_set_error(
