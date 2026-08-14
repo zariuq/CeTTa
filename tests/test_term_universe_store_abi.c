@@ -1,6 +1,7 @@
 #define _POSIX_C_SOURCE 200809L
 
 #include <assert.h>
+#include <pthread.h>
 #include <signal.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -1257,6 +1258,170 @@ static void test_source_arena_id_memo_contract(void) {
     arena_free(&persistent);
 }
 
+typedef struct {
+    TermUniverse *universe;
+    AtomId id;
+    pthread_barrier_t *barrier;
+    const CettaTermVariableSupport *observed;
+    bool ok;
+} VariableSupportRaceArg;
+
+static void *variable_support_race_worker(void *opaque) {
+    VariableSupportRaceArg *arg = opaque;
+    int barrier_status = pthread_barrier_wait(arg->barrier);
+    assert(barrier_status == 0 || barrier_status == PTHREAD_BARRIER_SERIAL_THREAD);
+    arg->ok = term_universe_variable_support(
+        arg->universe, arg->id, &arg->observed);
+    return NULL;
+}
+
+static void assert_variable_support_ids(
+    const CettaTermVariableSupport *support,
+    const uint32_t *expected, size_t expected_len) {
+    assert(support != NULL);
+    assert(support->count == expected_len);
+    CettaTermVariableSupportIterator iterator;
+    cetta_term_variable_support_iterator_init(&iterator, support);
+    uint32_t actual = 0u;
+    for (size_t i = 0u; i < expected_len; i++) {
+        assert(cetta_term_variable_support_iterator_next(
+            &iterator, &actual));
+        assert(actual == expected[i]);
+    }
+    assert(!cetta_term_variable_support_iterator_next(
+        &iterator, &actual));
+}
+
+static void test_intrinsic_variable_support_contract(void) {
+    Arena persistent;
+    Arena scratch;
+    TermUniverse universe;
+    arena_init(&persistent);
+    arena_init(&scratch);
+    term_universe_init(&universe);
+    term_universe_set_persistent_arena(&universe, &persistent);
+
+    SymbolId tuple_sym =
+        symbol_intern_cstr(g_symbols, "support-contract-tuple");
+    SymbolId var_sym =
+        symbol_intern_cstr(g_symbols, "support-contract-var");
+    Atom *dense_items[4] = {
+        atom_symbol_id(&scratch, tuple_sym),
+        atom_var_with_spelling(&scratch, var_sym, 2u),
+        atom_var_with_spelling(&scratch, var_sym, 5u),
+        atom_var_with_spelling(&scratch, var_sym, 2u),
+    };
+    Atom *dense_atom = atom_expr(&scratch, dense_items, 4u);
+    AtomId dense_id =
+        term_universe_store_atom_id(&universe, NULL, dense_atom);
+    assert(dense_id != CETTA_ATOM_ID_NONE);
+    const CettaTermVariableSupport *dense_support = NULL;
+    assert(term_universe_variable_support(
+        &universe, dense_id, &dense_support));
+    const uint32_t dense_expected[2] = {2u, 5u};
+    assert(dense_support->representation ==
+           CETTA_TERM_VARIABLE_SUPPORT_DENSE64);
+    assert_variable_support_ids(
+        dense_support, dense_expected, 2u);
+
+    Atom *sparse_items[3] = {
+        atom_symbol_id(&scratch, tuple_sym),
+        atom_var_with_spelling(&scratch, var_sym, 1u),
+        atom_var_with_spelling(&scratch, var_sym, 1000u),
+    };
+    AtomId sparse_id = term_universe_store_atom_id(
+        &universe, NULL, atom_expr(&scratch, sparse_items, 3u));
+    assert(sparse_id != CETTA_ATOM_ID_NONE);
+    const CettaTermVariableSupport *sparse_support = NULL;
+    assert(term_universe_variable_support(
+        &universe, sparse_id, &sparse_support));
+    const uint32_t sparse_expected[2] = {1u, 1000u};
+    assert(sparse_support->representation ==
+           CETTA_TERM_VARIABLE_SUPPORT_SPARSE32);
+    assert_variable_support_ids(
+        sparse_support, sparse_expected, 2u);
+
+    AtomId ground_id = term_universe_store_atom_id(
+        &universe, NULL, atom_symbol(&scratch, "support-ground"));
+    const CettaTermVariableSupport *ground_support = dense_support;
+    assert(term_universe_variable_support(
+        &universe, ground_id, &ground_support));
+    assert(ground_support == NULL);
+
+    Space left_space;
+    Space right_space;
+    space_init_with_universe(&left_space, &universe);
+    space_init_with_universe(&right_space, &universe);
+    Atom *canonical_dense =
+        term_universe_get_atom(&universe, dense_id);
+    assert(canonical_dense != NULL);
+    assert(space_admit_atom(&left_space, NULL, canonical_dense));
+    assert(space_admit_atom(&right_space, NULL, canonical_dense));
+    space_add(&left_space, atom_symbol(&scratch, "left-revision-bump"));
+    space_add(&right_space, atom_symbol(&scratch, "right-revision-bump-a"));
+    space_add(&right_space, atom_symbol(&scratch, "right-revision-bump-b"));
+    assert(space_revision(&left_space) != space_revision(&right_space));
+    assert(space_get_atom_id_at(&left_space, 0u) == dense_id);
+    assert(space_get_atom_id_at(&right_space, 0u) == dense_id);
+    const CettaTermVariableSupport *left_support = NULL;
+    const CettaTermVariableSupport *right_support = NULL;
+    assert(term_universe_variable_support(
+        &universe, space_get_atom_id_at(&left_space, 0u),
+        &left_support));
+    assert(term_universe_variable_support(
+        &universe, space_get_atom_id_at(&right_space, 0u),
+        &right_support));
+    assert(left_support == dense_support);
+    assert(right_support == dense_support);
+
+    assert(term_universe_migrate_store_format(
+        &universe, TERM_UNIVERSE_STORE_FORMAT_WIDE64_V1));
+    const CettaTermVariableSupport *migrated_support = NULL;
+    assert(term_universe_variable_support(
+        &universe, dense_id, &migrated_support));
+    assert(migrated_support == dense_support);
+
+    Atom *race_items[3] = {
+        atom_symbol_id(&scratch, tuple_sym),
+        atom_var_with_spelling(&scratch, var_sym, 17u),
+        atom_var_with_spelling(&scratch, var_sym, 91u),
+    };
+    AtomId race_id = term_universe_store_atom_id(
+        &universe, NULL, atom_expr(&scratch, race_items, 3u));
+    assert(race_id != CETTA_ATOM_ID_NONE);
+    enum { RACE_THREADS = 8 };
+    pthread_barrier_t barrier;
+    assert(pthread_barrier_init(&barrier, NULL, RACE_THREADS) == 0);
+    pthread_t threads[RACE_THREADS];
+    VariableSupportRaceArg args[RACE_THREADS] = {0};
+    for (size_t i = 0u; i < RACE_THREADS; i++) {
+        args[i] = (VariableSupportRaceArg){
+            .universe = &universe,
+            .id = race_id,
+            .barrier = &barrier,
+        };
+        assert(pthread_create(
+            &threads[i], NULL, variable_support_race_worker,
+            &args[i]) == 0);
+    }
+    for (size_t i = 0u; i < RACE_THREADS; i++) {
+        assert(pthread_join(threads[i], NULL) == 0);
+        assert(args[i].ok);
+        assert(args[i].observed != NULL);
+        assert(args[i].observed == args[0].observed);
+    }
+    assert(pthread_barrier_destroy(&barrier) == 0);
+    const uint32_t race_expected[2] = {17u, 91u};
+    assert_variable_support_ids(
+        args[0].observed, race_expected, 2u);
+
+    space_free(&right_space);
+    space_free(&left_space);
+    term_universe_free(&universe);
+    arena_free(&scratch);
+    arena_free(&persistent);
+}
+
 int main(void) {
     SymbolTable symbols;
     VarInternTable var_intern;
@@ -1282,6 +1447,7 @@ int main(void) {
     test_structural_slot_hash_collision_family();
     test_hashcons_structural_slot_collision_family();
     test_source_arena_id_memo_contract();
+    test_intrinsic_variable_support_contract();
     arena_init(&persistent);
     arena_init(&scratch);
     term_universe_init(&universe);

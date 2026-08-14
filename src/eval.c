@@ -28743,7 +28743,6 @@ static void petta_eval_machine_advance_semantic_authority(
             ? 1u : context->semantic_authority_epoch + 1u;
 }
 
-#if CETTA_BUILD_WITH_PETTA_TYPECHECK_V2
 static bool petta_eval_machine_semantic_authority_token(
     void *opaque, PettaMachineAuthorityToken *token) {
     PettaEvalMachineContext *context = opaque;
@@ -28767,6 +28766,7 @@ static bool petta_eval_machine_semantic_authority_token(
     return true;
 }
 
+#if CETTA_BUILD_WITH_PETTA_TYPECHECK_V2
 static uint32_t petta_eval_machine_analysis_policy_identity(
     void *opaque) {
     (void)opaque;
@@ -30473,6 +30473,82 @@ static PettaMachineHostMode petta_eval_machine_classify_host(
     return PETTA_MACHINE_HOST_NONE;
 }
 
+static PettaMachineSpaceQueryAdmission
+petta_eval_machine_admit_space_query(
+        void *context, Space *space,
+        SymbolId head, Atom *const *arguments,
+        CettaExprLen arity) {
+    PettaEvalMachineContext *eval_context = context;
+    if (!eval_context || !space || head == SYMBOL_ID_NONE ||
+        eval_context->transaction ||
+        !eval_context->library_context ||
+        !eval_context->library_context->petta_program ||
+        petta_program_head_is_intrinsic(head)) {
+        return PETTA_MACHINE_SPACE_QUERY_DEFER;
+    }
+
+    CettaLibraryContext *library =
+        eval_context->library_context;
+    if (cetta_library_petta_translator_rule_contains(
+            library, head) ||
+        cetta_library_petta_tabled_relation_contains(
+            library, head, arity) ||
+        cetta_library_petta_memo_contains(
+            library, head, arity) ||
+        cetta_library_petta_memo_control_named_arity(
+            library, head, arity).known ||
+        petta_libpl_named_arity_including_resolved(
+            library->lib_prolog, head, arity).known ||
+        space_head_has_arrow_signature(space, head, arity)) {
+        return PETTA_MACHINE_SPACE_QUERY_DEFER;
+    }
+
+    CettaExprLen minimum = 0u;
+    CettaExprLen maximum = 0u;
+    bool exact = false;
+    if (!space_equation_head_arity_bounds(
+            space, head, &minimum, &maximum, &exact, arity) ||
+        !exact || minimum != arity || maximum != arity) {
+        return PETTA_MACHINE_SPACE_QUERY_DEFER;
+    }
+
+    PettaSpecializerRelationAdmission specialization =
+        petta_specializer_query_execution_admission(
+            space, head, arguments, arity);
+    if (specialization ==
+            PETTA_SPECIALIZER_RELATION_INVALIDATED) {
+        return PETTA_MACHINE_SPACE_QUERY_INVALIDATED;
+    }
+    return specialization ==
+               PETTA_SPECIALIZER_RELATION_IRRELEVANT
+        ? PETTA_MACHINE_SPACE_QUERY_ADMITTED
+        : PETTA_MACHINE_SPACE_QUERY_DEFER;
+}
+
+static PettaMachineQuerySpecializationAdmission
+petta_eval_machine_admit_query_without_specialization(
+        void *context, Space *space,
+        SymbolId head, Atom *const *arguments,
+        CettaExprLen arity) {
+    PettaEvalMachineContext *eval_context = context;
+    if (!eval_context || !space || head == SYMBOL_ID_NONE ||
+        eval_context->transaction ||
+        !eval_context->library_context ||
+        !eval_context->library_context->petta_program ||
+        petta_program_head_is_intrinsic(head)) {
+        return PETTA_MACHINE_QUERY_SPECIALIZATION_DEFER;
+    }
+    PettaSpecializerRelationAdmission admission =
+        petta_specializer_query_execution_admission(
+            space, head, arguments, arity);
+    if (admission == PETTA_SPECIALIZER_RELATION_INVALIDATED) {
+        return PETTA_MACHINE_QUERY_SPECIALIZATION_INVALIDATED;
+    }
+    return admission == PETTA_SPECIALIZER_RELATION_IRRELEVANT
+        ? PETTA_MACHINE_QUERY_SPECIALIZATION_BYPASS
+        : PETTA_MACHINE_QUERY_SPECIALIZATION_DEFER;
+}
+
 static bool petta_eval_machine_resolve_value_reference(
     void *context, Arena *arena, Atom *reference,
     Atom **resolved) {
@@ -31229,6 +31305,12 @@ static bool petta_eval_machine_try(
         .reify_head = g_builtin_syms.reify,
         .permit_transition = petta_eval_machine_permit_transition,
         .classify = petta_eval_machine_classify_host,
+        .callability_authority_token =
+            petta_eval_machine_semantic_authority_token,
+        .admit_query_without_specialization =
+            petta_eval_machine_admit_query_without_specialization,
+        .admit_space_query =
+            petta_eval_machine_admit_space_query,
         .resolve_space = petta_eval_machine_resolve_space,
         .resolve_value_reference =
             petta_eval_machine_resolve_value_reference,
@@ -31446,6 +31528,21 @@ static bool petta_eval_machine_try(
                 " binding_apply_calls=%" PRIu64
                 " binding_apply_rewrites=%" PRIu64
                 " binding_apply_allocated_bytes=%" PRIu64
+                " binding_apply_environment_entries=%" PRIu64
+                " binding_apply_epoch_calls=%" PRIu64
+                " binding_apply_epoch_suffix_entries=%" PRIu64
+                " solve_expression_apply_calls=%" PRIu64
+                " solve_expression_apply_allocated_bytes=%" PRIu64
+                " solve_expression_open_template_admitted_calls=%" PRIu64
+                " solve_expression_open_template_admitted_allocated_bytes=%" PRIu64
+                " solve_expected_apply_calls=%" PRIu64
+                " solve_expected_apply_allocated_bytes=%" PRIu64
+                " solve_expected_open_template_admitted_calls=%" PRIu64
+                " solve_expected_open_template_admitted_allocated_bytes=%" PRIu64
+                " activation_materialization_calls=%" PRIu64
+                " activation_materialization_allocated_bytes=%" PRIu64
+                " activation_open_template_admitted_calls=%" PRIu64
+                " activation_open_template_admitted_allocated_bytes=%" PRIu64
                 " constructor_slot_frame_entries=%" PRIu64
                 " constructor_slot_frame_direct_unifications=%" PRIu64
                 " pure_grounded_slot_frame_entries=%" PRIu64
@@ -31536,6 +31633,8 @@ static bool petta_eval_machine_try(
                 " max_tenured_live_bytes=%zu"
                 " max_heap_live_bytes=%zu"
                 " max_binding_entries=%zu"
+                " max_binding_apply_environment_entries=%zu"
+                " max_binding_apply_epoch_suffix_entries=%zu"
                 " max_host_env_entries_forwarded=%zu"
                 " active_elapsed_ns=%" PRIu64
                 " time_to_first_answer_ns=%" PRIu64
@@ -31593,6 +31692,21 @@ static bool petta_eval_machine_try(
                 stats.binding_apply_calls,
                 stats.binding_apply_rewrites,
                 stats.binding_apply_allocated_bytes,
+                stats.binding_apply_environment_entries,
+                stats.binding_apply_epoch_calls,
+                stats.binding_apply_epoch_suffix_entries,
+                stats.solve_expression_apply_calls,
+                stats.solve_expression_apply_allocated_bytes,
+                stats.solve_expression_open_template_admitted_calls,
+                stats.solve_expression_open_template_admitted_allocated_bytes,
+                stats.solve_expected_apply_calls,
+                stats.solve_expected_apply_allocated_bytes,
+                stats.solve_expected_open_template_admitted_calls,
+                stats.solve_expected_open_template_admitted_allocated_bytes,
+                stats.activation_materialization_calls,
+                stats.activation_materialization_allocated_bytes,
+                stats.activation_open_template_admitted_calls,
+                stats.activation_open_template_admitted_allocated_bytes,
                 stats.constructor_slot_frame_entries,
                 stats.constructor_slot_frame_direct_unifications,
                 stats.pure_grounded_slot_frame_entries,
@@ -31683,6 +31797,8 @@ static bool petta_eval_machine_try(
                 stats.maximum_tenured_live_bytes,
                 stats.maximum_heap_live_bytes,
                 stats.maximum_binding_entries,
+                stats.maximum_binding_apply_environment_entries,
+                stats.maximum_binding_apply_epoch_suffix_entries,
                 stats.maximum_host_environment_entries_forwarded,
                 stats.active_elapsed_ns,
                 stats.time_to_first_answer_ns,

@@ -17,6 +17,12 @@
 #define CETTA_TERM_HDR_DATA_MASK 0x7fffffffu
 #define CETTA_TERM_UNIVERSE_COPY_MEMO_INLINE_CAP 64u
 #define CETTA_TERM_UNIVERSE_SOURCE_MEMO_CAP (1u << 16)
+#define CETTA_TERM_VARIABLE_SUPPORT_BLOCK_SIZE 64u
+
+typedef struct CettaTermVariableSupportBlock {
+    _Atomic(CettaTermVariableSupport *)
+        slots[CETTA_TERM_VARIABLE_SUPPORT_BLOCK_SIZE];
+} CettaTermVariableSupportBlock;
 
 static _Atomic uint64_t g_term_universe_next_instance_id = 1u;
 
@@ -674,6 +680,12 @@ bool term_universe_atom_is_stable(Atom *atom) {
     uint32_t cap = 0;
     bool stable = false;
 
+    /* The compositional leaf summary answers this for immutable atoms built
+     * through the ordinary constructors.  The traversal remains authoritative
+     * when that positive proof was not established. */
+    if (atom && (atom->flags & ATOM_FLAG_TERM_STABLE) != 0u)
+        return true;
+
 #define PUSH_STABLE_ATOM(candidate) do { \
     if (len == cap) { \
         uint32_t next_cap = cap ? cap * 2u : 64u; \
@@ -697,23 +709,8 @@ bool term_universe_atom_is_stable(Atom *atom) {
         case ATOM_VAR:
             break;
         case ATOM_GROUNDED:
-            switch (cur->ground.gkind) {
-            case GV_INT:
-            case GV_FLOAT:
-            case GV_BOOL:
-            case GV_STRING:
-            case GV_BIGINT:
-            case GV_RATIONAL:
-                break;
-            case GV_SPACE:
-            case GV_STATE:
-            case GV_CAPTURE:
-            case GV_FOREIGN:
-            case GV_PRIME_NEED_CAPABILITY:
-            case GV_PRIME_CONTEXT:
-            case GV_INTERNAL_TAG:
+            if (!atom_grounded_kind_is_term_stable(cur->ground.gkind))
                 goto done;
-            }
             break;
         case ATOM_EXPR:
             for (CettaExprIndex i = 0; i < cur->expr.len; i++)
@@ -736,6 +733,25 @@ static void term_universe_clear_storage(TermUniverse *universe) {
                                          universe->store_format)
                                          ? universe->store_format
                                          : TERM_UNIVERSE_STORE_FORMAT_COMPACT32_V1;
+    for (size_t block_index = 0u;
+         block_index < universe->variable_support_block_cap;
+         block_index++) {
+        CettaTermVariableSupportBlock *block =
+            universe->variable_support_blocks
+                ? atomic_load_explicit(
+                      &universe->variable_support_blocks[block_index],
+                      memory_order_relaxed)
+                : NULL;
+        if (!block)
+            continue;
+        for (size_t slot = 0u;
+             slot < CETTA_TERM_VARIABLE_SUPPORT_BLOCK_SIZE; slot++) {
+            free(atomic_load_explicit(
+                &block->slots[slot], memory_order_relaxed));
+        }
+        free(block);
+    }
+    free(universe->variable_support_blocks);
     free(universe->blob_pool);
     free(universe->entries);
     free(universe->intern_slots);
@@ -746,6 +762,8 @@ static void term_universe_clear_storage(TermUniverse *universe) {
     universe->entries = NULL;
     universe->len = 0;
     universe->cap = 0;
+    universe->variable_support_blocks = NULL;
+    universe->variable_support_block_cap = 0u;
     universe->intern_slots = NULL;
     universe->intern_mask = 0;
     universe->intern_used = 0;
@@ -782,6 +800,8 @@ bool term_universe_init_with_store_format(TermUniverse *universe,
     universe->entries = NULL;
     universe->len = 0;
     universe->cap = 0;
+    universe->variable_support_blocks = NULL;
+    universe->variable_support_block_cap = 0u;
     universe->intern_slots = NULL;
     universe->intern_mask = 0;
     universe->intern_used = 0;
@@ -1156,9 +1176,35 @@ static bool term_universe_reserve_entries(TermUniverse *universe,
                                      sizeof(TermEntry), &next_cap)) {
         return false;
     }
+    size_t next_block_cap =
+        (next_cap + CETTA_TERM_VARIABLE_SUPPORT_BLOCK_SIZE - 1u) /
+        CETTA_TERM_VARIABLE_SUPPORT_BLOCK_SIZE;
+    _Atomic(CettaTermVariableSupportBlock *) *next_blocks =
+        cetta_malloc(sizeof(*next_blocks) * next_block_cap);
+    if (!next_blocks) {
+        term_universe_set_error(universe,
+                                TERM_UNIVERSE_ERROR_ALLOCATION_FAILED);
+        return false;
+    }
+    for (size_t i = 0u;
+         i < universe->variable_support_block_cap; i++) {
+        CettaTermVariableSupportBlock *block =
+            universe->variable_support_blocks
+            ? atomic_load_explicit(
+                  &universe->variable_support_blocks[i],
+                  memory_order_relaxed)
+            : NULL;
+        atomic_init(&next_blocks[i], block);
+    }
+    for (size_t i = universe->variable_support_block_cap;
+         i < next_block_cap; i++) {
+        atomic_init(&next_blocks[i], NULL);
+    }
+
     TermEntry *next =
         cetta_realloc(universe->entries, sizeof(TermEntry) * next_cap);
     if (!next) {
+        free(next_blocks);
         term_universe_set_error(universe,
                                 TERM_UNIVERSE_ERROR_ALLOCATION_FAILED);
         return false;
@@ -1169,6 +1215,9 @@ static bool term_universe_reserve_entries(TermUniverse *universe,
         universe->entries[i].byte_len = 0;
         universe->entries[i].decoded_cache = NULL;
     }
+    free(universe->variable_support_blocks);
+    universe->variable_support_blocks = next_blocks;
+    universe->variable_support_block_cap = next_block_cap;
     universe->cap = next_cap;
     return true;
 }
@@ -2212,6 +2261,198 @@ bool tu_has_vars(const TermUniverse *universe, AtomId id) {
         return term_universe_hdr_has_vars(hdr);
     const TermEntry *entry = term_universe_entry(universe, id);
     return entry && atom_has_vars(entry->decoded_cache);
+}
+
+static int term_variable_base_id_compare(const void *left,
+                                         const void *right) {
+    uint32_t a = *(const uint32_t *)left;
+    uint32_t b = *(const uint32_t *)right;
+    return (a > b) - (a < b);
+}
+
+static bool term_universe_variable_support_build(
+    const TermUniverse *universe, AtomId root,
+    CettaTermVariableSupport **out) {
+    AtomId *work = NULL;
+    size_t work_len = 0u;
+    size_t work_cap = 0u;
+    uint32_t *base_ids = NULL;
+    size_t base_len = 0u;
+    size_t base_cap = 0u;
+    *out = NULL;
+
+#define PUSH_VARIABLE_SUPPORT_ATOM(atom_id_)                                \
+    do {                                                                    \
+        if (work_len == work_cap) {                                         \
+            size_t next_cap = work_cap ? work_cap * 2u : 16u;               \
+            if (next_cap < work_cap ||                                      \
+                next_cap > SIZE_MAX / sizeof(*work)) {                      \
+                goto fail;                                                  \
+            }                                                               \
+            work = cetta_realloc(work, next_cap * sizeof(*work));           \
+            if (!work)                                                      \
+                goto fail;                                                  \
+            work_cap = next_cap;                                            \
+        }                                                                   \
+        work[work_len++] = (atom_id_);                                      \
+    } while (0)
+
+    PUSH_VARIABLE_SUPPORT_ATOM(root);
+    while (work_len > 0u) {
+        AtomId id = work[--work_len];
+        const CettaTermHdr *hdr = tu_hdr(universe, id);
+        if (!hdr)
+            goto fail;
+        switch ((AtomKind)hdr->tag) {
+        case ATOM_VAR:
+            if (base_len == base_cap) {
+                size_t next_cap = base_cap ? base_cap * 2u : 8u;
+                if (next_cap < base_cap ||
+                    next_cap > SIZE_MAX / sizeof(*base_ids)) {
+                    goto fail;
+                }
+                base_ids = cetta_realloc(
+                    base_ids, next_cap * sizeof(*base_ids));
+                if (!base_ids)
+                    goto fail;
+                base_cap = next_cap;
+            }
+            base_ids[base_len++] = var_base_id(tu_var_id(universe, id));
+            break;
+        case ATOM_EXPR: {
+            CettaExprLen arity = tu_arity(universe, id);
+            for (CettaExprIndex i = 0u; i < arity; i++) {
+                AtomId child = tu_child(universe, id, i);
+                if (child == CETTA_ATOM_ID_NONE)
+                    goto fail;
+                if (tu_has_vars(universe, child))
+                    PUSH_VARIABLE_SUPPORT_ATOM(child);
+            }
+            break;
+        }
+        case ATOM_SYMBOL:
+        case ATOM_GROUNDED:
+            break;
+        }
+    }
+    free(work);
+    work = NULL;
+    if (base_len == 0u) {
+        free(base_ids);
+        return true;
+    }
+
+    qsort(base_ids, base_len, sizeof(*base_ids),
+          term_variable_base_id_compare);
+    size_t unique_len = 1u;
+    for (size_t i = 1u; i < base_len; i++) {
+        if (base_ids[i] != base_ids[unique_len - 1u])
+            base_ids[unique_len++] = base_ids[i];
+    }
+    if (unique_len > UINT32_MAX)
+        goto fail;
+
+    uint64_t spread =
+        (uint64_t)base_ids[unique_len - 1u] - (uint64_t)base_ids[0];
+    bool dense = spread < 64u;
+    size_t sparse_bytes = dense ? 0u : unique_len * sizeof(*base_ids);
+    if (sparse_bytes > SIZE_MAX - sizeof(CettaTermVariableSupport))
+        goto fail;
+    CettaTermVariableSupport *support =
+        cetta_malloc(sizeof(*support) + sparse_bytes);
+    if (!support)
+        goto fail;
+    support->count = (uint32_t)unique_len;
+    support->first_base_id = base_ids[0];
+    support->representation = dense
+        ? CETTA_TERM_VARIABLE_SUPPORT_DENSE64
+        : CETTA_TERM_VARIABLE_SUPPORT_SPARSE32;
+    support->dense_mask = 0u;
+    if (dense) {
+        for (size_t i = 0u; i < unique_len; i++) {
+            uint32_t offset = base_ids[i] - support->first_base_id;
+            support->dense_mask |= UINT64_C(1) << offset;
+        }
+    } else {
+        memcpy(support->sparse_base_ids, base_ids, sparse_bytes);
+    }
+    free(base_ids);
+    *out = support;
+    return true;
+
+fail:
+    free(work);
+    free(base_ids);
+    return false;
+#undef PUSH_VARIABLE_SUPPORT_ATOM
+}
+
+bool term_universe_variable_support(
+    TermUniverse *universe, AtomId id,
+    const CettaTermVariableSupport **out) {
+    size_t physical_index = 0u;
+    if (!universe || !out ||
+        !term_universe_atom_id_to_physical_index(
+            universe, id, &physical_index) ||
+        physical_index >= universe->len ||
+        !universe->variable_support_blocks) {
+        return false;
+    }
+    *out = NULL;
+    if (!tu_has_vars(universe, id))
+        return true;
+
+    size_t block_index =
+        physical_index / CETTA_TERM_VARIABLE_SUPPORT_BLOCK_SIZE;
+    size_t slot_index =
+        physical_index % CETTA_TERM_VARIABLE_SUPPORT_BLOCK_SIZE;
+    if (block_index >= universe->variable_support_block_cap)
+        return false;
+    CettaTermVariableSupportBlock *block = atomic_load_explicit(
+        &universe->variable_support_blocks[block_index],
+        memory_order_acquire);
+    if (!block) {
+        CettaTermVariableSupportBlock *candidate =
+            cetta_malloc(sizeof(*candidate));
+        if (!candidate)
+            return false;
+        for (size_t i = 0u;
+             i < CETTA_TERM_VARIABLE_SUPPORT_BLOCK_SIZE; i++) {
+            atomic_init(&candidate->slots[i], NULL);
+        }
+        CettaTermVariableSupportBlock *expected_block = NULL;
+        if (!atomic_compare_exchange_strong_explicit(
+                &universe->variable_support_blocks[block_index],
+                &expected_block, candidate, memory_order_release,
+                memory_order_acquire)) {
+            free(candidate);
+            block = expected_block;
+        } else {
+            block = candidate;
+        }
+    }
+    CettaTermVariableSupport *cached = atomic_load_explicit(
+        &block->slots[slot_index], memory_order_acquire);
+    if (cached) {
+        *out = cached;
+        return true;
+    }
+
+    CettaTermVariableSupport *computed = NULL;
+    if (!term_universe_variable_support_build(
+            universe, id, &computed) || !computed) {
+        return false;
+    }
+    CettaTermVariableSupport *expected = NULL;
+    if (!atomic_compare_exchange_strong_explicit(
+            &block->slots[slot_index],
+            &expected, computed, memory_order_release,
+            memory_order_acquire)) {
+        free(computed);
+        computed = expected;
+    }
+    *out = computed;
+    return true;
 }
 
 AtomId tu_intern_symbol(TermUniverse *universe, SymbolId sym_id) {

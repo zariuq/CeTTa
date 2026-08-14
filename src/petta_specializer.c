@@ -1193,6 +1193,30 @@ petta_relation_specialization_relevance(
     return PETTA_RELATION_RELEVANCE_IRRELEVANT;
 }
 
+PettaSpecializerRelationAdmission
+petta_specializer_relation_execution_admission(
+        Space *space, SymbolId source) {
+    if (!space || source == SYMBOL_ID_NONE)
+        return PETTA_SPECIALIZER_RELATION_DEFER;
+    PettaSpecializerContext context = {
+        .space = space,
+        .semantic_cache = petta_semantic_cache_prepare(space),
+    };
+    arena_init(&context.scratch);
+    arena_set_runtime_kind(
+        &context.scratch, CETTA_ARENA_RUNTIME_KIND_SCRATCH);
+    arena_set_hashcons(&context.scratch, NULL);
+    PettaRelationRelevance relevance =
+        petta_relation_specialization_relevance(
+            &context, source);
+    arena_free(&context.scratch);
+    if (context.invalidated)
+        return PETTA_SPECIALIZER_RELATION_INVALIDATED;
+    return relevance == PETTA_RELATION_RELEVANCE_IRRELEVANT
+        ? PETTA_SPECIALIZER_RELATION_IRRELEVANT
+        : PETTA_SPECIALIZER_RELATION_DEFER;
+}
+
 static Atom *petta_specializable_value(
     PettaSpecializerContext *context, Arena *arena,
     Atom *atom) {
@@ -1248,8 +1272,9 @@ typedef enum {
 } PettaRelevanceResult;
 
 static PettaRelevanceResult
-petta_call_may_supply_specializable_value(
-    PettaSpecializerContext *context, Atom *call) {
+petta_query_arguments_may_supply_specializable_value(
+    PettaSpecializerContext *context,
+    Atom *const *arguments, CettaExprLen arity) {
     enum {
         PETTA_RELEVANCE_STACK_CAPACITY = 128,
         PETTA_RELEVANCE_NODE_LIMIT = 64,
@@ -1257,17 +1282,15 @@ petta_call_may_supply_specializable_value(
     Atom *stack[PETTA_RELEVANCE_STACK_CAPACITY];
     size_t length = 0u;
     size_t visited = 0u;
-    if (!context || !call || call->kind != ATOM_EXPR ||
-        call->expr.len == 0u) {
+    if (!context || (arity > 0u && !arguments)) {
         return PETTA_RELEVANCE_YES;
     }
-    if ((size_t)(call->expr.len - 1u) >
+    if ((size_t)arity >
         PETTA_RELEVANCE_STACK_CAPACITY) {
         return PETTA_RELEVANCE_YES;
     }
-    for (CettaExprIndex index = 1u;
-         index < call->expr.len; index++) {
-        stack[length++] = call->expr.elems[index];
+    for (CettaExprIndex index = 0u; index < arity; index++) {
+        stack[length++] = arguments[index];
     }
 
     while (length > 0u) {
@@ -1303,6 +1326,57 @@ petta_call_may_supply_specializable_value(
         }
     }
     return PETTA_RELEVANCE_NO;
+}
+
+static PettaRelevanceResult
+petta_call_may_supply_specializable_value(
+    PettaSpecializerContext *context, Atom *call) {
+    if (!call || call->kind != ATOM_EXPR ||
+        call->expr.len == 0u) {
+        return PETTA_RELEVANCE_YES;
+    }
+    return petta_query_arguments_may_supply_specializable_value(
+        context, call->expr.elems + 1u,
+        call->expr.len - 1u);
+}
+
+PettaSpecializerRelationAdmission
+petta_specializer_query_execution_admission(
+        Space *space, SymbolId source,
+        Atom *const *arguments, CettaExprLen arity) {
+    if (!space || source == SYMBOL_ID_NONE ||
+        (arity > 0u && !arguments)) {
+        return PETTA_SPECIALIZER_RELATION_DEFER;
+    }
+    PettaSpecializerContext context = {
+        .space = space,
+        .semantic_cache = petta_semantic_cache_prepare(space),
+    };
+    arena_init(&context.scratch);
+    arena_set_runtime_kind(
+        &context.scratch, CETTA_ARENA_RUNTIME_KIND_SCRATCH);
+    arena_set_hashcons(&context.scratch, NULL);
+
+    PettaRelevanceResult query_relevance =
+        petta_query_arguments_may_supply_specializable_value(
+            &context, arguments, arity);
+    PettaRelationRelevance relation_relevance =
+        PETTA_RELATION_RELEVANCE_UNKNOWN;
+    if (query_relevance != PETTA_RELEVANCE_NO) {
+        relation_relevance =
+            petta_relation_specialization_relevance(
+                &context, source);
+    }
+    arena_free(&context.scratch);
+
+    if (context.invalidated)
+        return PETTA_SPECIALIZER_RELATION_INVALIDATED;
+    if (query_relevance == PETTA_RELEVANCE_NO ||
+        relation_relevance ==
+            PETTA_RELATION_RELEVANCE_IRRELEVANT) {
+        return PETTA_SPECIALIZER_RELATION_IRRELEVANT;
+    }
+    return PETTA_SPECIALIZER_RELATION_DEFER;
 }
 
 static bool petta_collect_source_equations(

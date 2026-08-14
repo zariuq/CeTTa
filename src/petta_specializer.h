@@ -35,6 +35,16 @@ typedef enum {
     PETTA_SPECIALIZE_CAPACITY,
 } PettaSpecializeResult;
 
+/* A relation-level proof that no ready call of the named source can select
+ * a higher-order specialization.  This is weaker than determinism and does
+ * not select an equation: it licenses the ordinary Space/query executable
+ * to bypass only the per-call specialization probe. */
+typedef enum {
+    PETTA_SPECIALIZER_RELATION_DEFER = 0,
+    PETTA_SPECIALIZER_RELATION_IRRELEVANT,
+    PETTA_SPECIALIZER_RELATION_INVALIDATED,
+} PettaSpecializerRelationAdmission;
+
 typedef struct PettaSpecializerPatternNode
     PettaSpecializerPatternNode;
 
@@ -49,6 +59,15 @@ PettaSpecializeResult petta_specializer_prepare_call(
     Space *space, PettaProgram *program,
     Arena *persistent_arena, Arena *result_arena,
     Atom *call, Atom **out_call);
+
+PettaSpecializerRelationAdmission
+petta_specializer_relation_execution_admission(
+    Space *space, SymbolId source);
+
+PettaSpecializerRelationAdmission
+petta_specializer_query_execution_admission(
+    Space *space, SymbolId source,
+    Atom *const *arguments, CettaExprLen arity);
 
 /*
  * Equation and function-type mutations invalidate every specialization

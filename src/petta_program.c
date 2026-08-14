@@ -14,15 +14,23 @@
 typedef struct {
     Atom *equation;
     const PettaPlanNode *plan;
-    const PettaCompiledClauseC0 *compiled_c0;
+    const PettaEquationTemplateC0 *equation_template_c0;
+    const PettaEquationTemplate *equation_template;
     uint32_t static_variable_count;
     SymbolId head;
 } PettaProgramClause;
 
-struct PettaCompiledClauseC0 {
-    CettaGsltGroundDenseTermProgramV1 head;
-    CettaGsltGroundDenseTermProgramV1 body;
-    uint32_t static_variable_count;
+struct PettaEquationTemplateC0 {
+    CettaGsltGroundDenseTermProgramV1 lhs;
+    CettaGsltGroundDenseTermProgramV1 rhs;
+};
+
+struct PettaEquationTemplate {
+    Atom *lhs;
+    Atom *rhs;
+    VarId *source_ids;
+    Atom **source_variables;
+    uint32_t variable_count;
 };
 
 typedef struct {
@@ -112,9 +120,9 @@ typedef struct {
 
 struct PettaProgram {
     Arena plans;
-    PettaCompiledClauseC0 **compiled_c0;
-    size_t compiled_c0_len;
-    size_t compiled_c0_cap;
+    PettaEquationTemplateC0 **equation_template_c0;
+    size_t equation_template_c0_len;
+    size_t equation_template_c0_cap;
     PettaProgramSpace *spaces;
     size_t space_len;
     size_t space_cap;
@@ -152,7 +160,7 @@ static bool petta_program_reserve(
     return true;
 }
 
-#define PETTA_COMPILED_C0_MAX_VARIABLE_SPAN 65536u
+#define PETTA_EQUATION_TEMPLATE_C0_MAX_VARIABLE_SPAN 65536u
 
 typedef struct {
     Atom **items;
@@ -162,6 +170,7 @@ typedef struct {
 
 typedef struct {
     VarId *items;
+    Atom **variables;
     size_t len;
     size_t cap;
 } PettaProgramVarSet;
@@ -181,22 +190,43 @@ static size_t petta_program_var_lower_bound(
 }
 
 static bool petta_program_var_insert(
-    PettaProgramVarSet *variables, VarId id) {
-    if (!variables || id == VAR_ID_NONE)
+    PettaProgramVarSet *variables, Atom *variable) {
+    if (!variables || !variable || variable->kind != ATOM_VAR ||
+        variable->var_id == VAR_ID_NONE)
         return false;
+    VarId id = variable->var_id;
     size_t index = petta_program_var_lower_bound(variables, id);
     if (index < variables->len && variables->items[index] == id)
         return true;
-    if (!petta_program_reserve(
-            (void **)&variables->items, &variables->cap,
-            variables->len + 1u, sizeof(*variables->items))) {
-        return false;
+    if (variables->len == variables->cap) {
+        size_t next_cap = variables->cap ? variables->cap * 2u : 8u;
+        if (next_cap <= variables->cap ||
+            next_cap > SIZE_MAX / sizeof(*variables->items) ||
+            next_cap > SIZE_MAX / sizeof(*variables->variables)) {
+            return false;
+        }
+        variables->items = variables->items
+            ? cetta_realloc(
+                  variables->items,
+                  sizeof(*variables->items) * next_cap)
+            : cetta_malloc(sizeof(*variables->items) * next_cap);
+        variables->variables = variables->variables
+            ? cetta_realloc(
+                  variables->variables,
+                  sizeof(*variables->variables) * next_cap)
+            : cetta_malloc(sizeof(*variables->variables) * next_cap);
+        variables->cap = next_cap;
     }
     memmove(
         variables->items + index + 1u,
         variables->items + index,
         sizeof(*variables->items) * (variables->len - index));
+    memmove(
+        variables->variables + index + 1u,
+        variables->variables + index,
+        sizeof(*variables->variables) * (variables->len - index));
     variables->items[index] = id;
+    variables->variables[index] = variable;
     variables->len++;
     return true;
 }
@@ -220,7 +250,7 @@ static bool petta_program_collect_variables(
         }
         if (atom->kind == ATOM_VAR) {
             ok = petta_program_var_insert(
-                variables, atom->var_id);
+                variables, atom);
             continue;
         }
         if (atom->kind != ATOM_EXPR)
@@ -262,111 +292,360 @@ static bool petta_program_variables_contained(
     return true;
 }
 
-static void petta_compiled_clause_c0_free(
-    PettaCompiledClauseC0 *compiled) {
-    if (!compiled)
-        return;
-    cetta_gslt_ground_dense_term_program_free_v1(&compiled->head);
-    cetta_gslt_ground_dense_term_program_free_v1(&compiled->body);
-    free(compiled);
+static bool petta_program_variable_union_count(
+    const PettaProgramVarSet *left,
+    const PettaProgramVarSet *right,
+    uint32_t *count_out) {
+    if (count_out)
+        *count_out = 0u;
+    if (!left || !right || !count_out)
+        return false;
+    size_t left_index = 0u;
+    size_t right_index = 0u;
+    uint64_t count = 0u;
+    while (left_index < left->len || right_index < right->len) {
+        if (right_index >= right->len ||
+            (left_index < left->len &&
+             left->items[left_index] < right->items[right_index])) {
+            left_index++;
+        } else if (left_index >= left->len ||
+                   right->items[right_index] < left->items[left_index]) {
+            right_index++;
+        } else {
+            left_index++;
+            right_index++;
+        }
+        if (++count > UINT32_MAX)
+            return false;
+    }
+    *count_out = (uint32_t)count;
+    return true;
 }
 
-static PettaCompiledClauseC0 *petta_program_compile_clause_c0(
+static const PettaEquationTemplate *petta_program_compile_equation_template(
+        PettaProgram *program, Atom *lhs, Atom *rhs,
+        const PettaProgramVarSet *lhs_variables,
+        const PettaProgramVarSet *rhs_variables,
+        uint32_t variable_count) {
+    if (!program || !lhs || !rhs || !lhs_variables || !rhs_variables)
+        return NULL;
+    PettaEquationTemplate *template = arena_alloc(
+        &program->plans, sizeof(*template));
+    if (!template)
+        return NULL;
+    *template = (PettaEquationTemplate){
+        .lhs = lhs,
+        .rhs = rhs,
+        .variable_count = variable_count,
+    };
+    if (variable_count == 0u)
+        return template;
+    template->source_ids = arena_alloc(
+        &program->plans,
+        sizeof(*template->source_ids) * (size_t)variable_count);
+    template->source_variables = arena_alloc(
+        &program->plans,
+        sizeof(*template->source_variables) * (size_t)variable_count);
+    if (!template->source_ids || !template->source_variables)
+        return NULL;
+
+    size_t lhs_index = 0u;
+    size_t rhs_index = 0u;
+    uint32_t write = 0u;
+    while (lhs_index < lhs_variables->len ||
+           rhs_index < rhs_variables->len) {
+        bool take_lhs = rhs_index >= rhs_variables->len ||
+            (lhs_index < lhs_variables->len &&
+             lhs_variables->items[lhs_index] <=
+                 rhs_variables->items[rhs_index]);
+        VarId id;
+        Atom *variable;
+        if (take_lhs) {
+            id = lhs_variables->items[lhs_index];
+            variable = lhs_variables->variables[lhs_index++];
+            if (rhs_index < rhs_variables->len &&
+                rhs_variables->items[rhs_index] == id) {
+                rhs_index++;
+            }
+        } else {
+            id = rhs_variables->items[rhs_index];
+            variable = rhs_variables->variables[rhs_index++];
+        }
+        if (write >= variable_count || !variable ||
+            variable->kind != ATOM_VAR || variable->var_id != id) {
+            return NULL;
+        }
+        template->source_ids[write] = id;
+        template->source_variables[write] = variable;
+        write++;
+    }
+    return write == variable_count ? template : NULL;
+}
+
+typedef struct {
+    Atom *atom;
+    PettaPlanNode *plan;
+} PettaEquationSlotWorkItem;
+
+static bool petta_equation_template_find_variable_slot(
+        const PettaEquationTemplate *template, VarId id,
+        uint32_t *slot_out) {
+    if (slot_out)
+        *slot_out = 0u;
+    if (!template || !slot_out || id == VAR_ID_NONE)
+        return false;
+    uint32_t low = 0u;
+    uint32_t high = template->variable_count;
+    while (low < high) {
+        uint32_t middle = low + (high - low) / 2u;
+        if (template->source_ids[middle] < id)
+            low = middle + 1u;
+        else
+            high = middle;
+    }
+    if (low >= template->variable_count ||
+        template->source_ids[low] != id) {
+        return false;
+    }
+    *slot_out = low;
+    return true;
+}
+
+static bool petta_plan_assign_equation_variable_slots(
+        Atom *root, const PettaPlanNode *root_plan,
+        const PettaEquationTemplate *template) {
+    if (!root || !root_plan || !template)
+        return false;
+    PettaEquationSlotWorkItem *work = NULL;
+    size_t work_len = 0u;
+    size_t work_cap = 0u;
+    if (!petta_program_reserve(
+            (void **)&work, &work_cap, 1u, sizeof(*work))) {
+        return false;
+    }
+    work[work_len++] = (PettaEquationSlotWorkItem){
+        .atom = root,
+        .plan = (PettaPlanNode *)root_plan,
+    };
+    bool ok = true;
+    while (work_len > 0u && ok) {
+        PettaEquationSlotWorkItem item = work[--work_len];
+        if (!item.atom || !item.plan) {
+            ok = false;
+            break;
+        }
+        if (item.atom->kind == ATOM_VAR) {
+            uint32_t slot = 0u;
+            ok = petta_equation_template_find_variable_slot(
+                template, item.atom->var_id, &slot);
+            if (ok) {
+                item.plan->has_equation_variable_slot = true;
+                item.plan->equation_variable_slot = slot;
+            }
+            continue;
+        }
+        if (item.atom->kind != ATOM_EXPR) {
+            if (item.plan->child_count != 0u)
+                ok = false;
+            continue;
+        }
+        if (item.plan->child_count != item.atom->expr.len ||
+            (item.atom->expr.len != 0u &&
+             (!item.atom->expr.elems || !item.plan->children)) ||
+            (size_t)item.atom->expr.len > SIZE_MAX - work_len ||
+            !petta_program_reserve(
+                (void **)&work, &work_cap,
+                work_len + (size_t)item.atom->expr.len,
+                sizeof(*work))) {
+            ok = false;
+            break;
+        }
+        for (CettaExprIndex index = item.atom->expr.len;
+             index > 0u; index--) {
+            CettaExprIndex child = index - 1u;
+            work[work_len++] = (PettaEquationSlotWorkItem){
+                .atom = item.atom->expr.elems[child],
+                .plan = (PettaPlanNode *)&item.plan->children[child],
+            };
+        }
+    }
+    free(work);
+    return ok;
+}
+
+static void petta_equation_template_c0_free(
+    PettaEquationTemplateC0 *template) {
+    if (!template)
+        return;
+    cetta_gslt_ground_dense_term_program_free_v1(&template->lhs);
+    cetta_gslt_ground_dense_term_program_free_v1(&template->rhs);
+    free(template);
+}
+
+static PettaEquationTemplateC0 *petta_program_compile_equation_template_c0(
     PettaProgram *program, Atom *lhs, Atom *rhs,
-    SymbolId head) {
-    if (!program || !lhs || !rhs || head == SYMBOL_ID_NONE)
+    SymbolId root_symbol, uint32_t *static_variable_count_out,
+    bool *open_template_admitted_out,
+    const PettaEquationTemplate **equation_template_out) {
+    if (static_variable_count_out)
+        *static_variable_count_out = 0u;
+    if (open_template_admitted_out)
+        *open_template_admitted_out = false;
+    if (equation_template_out)
+        *equation_template_out = NULL;
+    if (!program || !lhs || !rhs || root_symbol == SYMBOL_ID_NONE ||
+        !static_variable_count_out || !open_template_admitted_out ||
+        !equation_template_out)
         return NULL;
     cetta_runtime_stats_inc(
-        CETTA_RUNTIME_COUNTER_PETTA_COMPILED_C0_ADMISSION_ATTEMPT);
-    PettaProgramVarSet head_variables = {0};
-    PettaProgramVarSet body_variables = {0};
+        CETTA_RUNTIME_COUNTER_PETTA_EQUATION_TEMPLATE_C0_ADMISSION_ATTEMPT);
+    PettaProgramVarSet lhs_variables = {0};
+    PettaProgramVarSet rhs_variables = {0};
+    bool variables_collected =
+        petta_program_collect_variables(lhs, &lhs_variables) &&
+        petta_program_collect_variables(rhs, &rhs_variables) &&
+        petta_program_variable_union_count(
+            &lhs_variables, &rhs_variables,
+            static_variable_count_out);
+    bool open_admitted =
+        variables_collected &&
+        !petta_semantics_contains_cons_constraint(lhs);
+    size_t union_variables =
+        (size_t)*static_variable_count_out;
+    VarId union_first_variable = 1u;
+    VarId union_last_variable = 0u;
+    if (open_admitted && union_variables != 0u) {
+        bool lhs_nonempty = lhs_variables.len != 0u;
+        bool rhs_nonempty = rhs_variables.len != 0u;
+        union_first_variable = lhs_nonempty && rhs_nonempty
+            ? (lhs_variables.items[0] < rhs_variables.items[0]
+                   ? lhs_variables.items[0] : rhs_variables.items[0])
+            : lhs_nonempty
+                ? lhs_variables.items[0] : rhs_variables.items[0];
+        VarId lhs_last = lhs_nonempty
+            ? lhs_variables.items[lhs_variables.len - 1u] : 0u;
+        VarId rhs_last = rhs_nonempty
+            ? rhs_variables.items[rhs_variables.len - 1u] : 0u;
+        union_last_variable = lhs_last > rhs_last
+            ? lhs_last : rhs_last;
+        uint64_t union_span =
+            union_last_variable - union_first_variable + 1u;
+        open_admitted =
+            union_span <= PETTA_EQUATION_TEMPLATE_C0_MAX_VARIABLE_SPAN;
+    }
+    *open_template_admitted_out = open_admitted;
+    if (open_admitted) {
+        *equation_template_out = petta_program_compile_equation_template(
+            program, lhs, rhs, &lhs_variables, &rhs_variables,
+            *static_variable_count_out);
+    }
     bool admitted =
-        !petta_semantics_contains_cons_constraint(lhs) &&
-        petta_program_collect_variables(lhs, &head_variables) &&
-        petta_program_collect_variables(rhs, &body_variables) &&
+        open_admitted &&
         petta_program_variables_contained(
-            &body_variables, &head_variables) &&
-        head_variables.len <= UINT32_MAX;
+            &rhs_variables, &lhs_variables) &&
+        lhs_variables.len <= UINT32_MAX;
     VarId first_variable = 1u;
     uint32_t variable_width = 0u;
-    if (admitted && head_variables.len != 0u) {
-        first_variable = head_variables.items[0];
+    if (admitted && lhs_variables.len != 0u) {
+        first_variable = lhs_variables.items[0];
         VarId last_variable =
-            head_variables.items[head_variables.len - 1u];
+            lhs_variables.items[lhs_variables.len - 1u];
         uint64_t span = last_variable - first_variable + 1u;
-        admitted = span <= PETTA_COMPILED_C0_MAX_VARIABLE_SPAN;
+        admitted = span <= PETTA_EQUATION_TEMPLATE_C0_MAX_VARIABLE_SPAN;
         if (admitted)
             variable_width = (uint32_t)span;
     }
-    PettaCompiledClauseC0 *compiled = admitted
-        ? calloc(1u, sizeof(*compiled)) : NULL;
-    if (compiled) {
+    PettaEquationTemplateC0 *template = admitted
+        ? calloc(1u, sizeof(*template)) : NULL;
+    if (template) {
         cetta_gslt_ground_dense_term_program_init_v1(
-            &compiled->head);
+            &template->lhs);
         cetta_gslt_ground_dense_term_program_init_v1(
-            &compiled->body);
+            &template->rhs);
         admitted =
             cetta_gslt_ground_dense_term_compile_v1(
-                &compiled->head, lhs, first_variable,
+                &template->lhs, lhs, first_variable,
                 variable_width, NULL, 0u) &&
             cetta_gslt_ground_dense_term_compile_v1(
-                &compiled->body, rhs, first_variable,
+                &template->rhs, rhs, first_variable,
                 variable_width, NULL, 0u);
-        compiled->static_variable_count =
-            (uint32_t)head_variables.len;
     }
-    free(head_variables.items);
-    free(body_variables.items);
-    if (!admitted || !compiled ||
+    free(lhs_variables.items);
+    free(lhs_variables.variables);
+    free(rhs_variables.items);
+    free(rhs_variables.variables);
+    if (!admitted || !template ||
         !petta_program_reserve(
-            (void **)&program->compiled_c0,
-            &program->compiled_c0_cap,
-            program->compiled_c0_len + 1u,
-            sizeof(*program->compiled_c0))) {
-        petta_compiled_clause_c0_free(compiled);
+            (void **)&program->equation_template_c0,
+            &program->equation_template_c0_cap,
+            program->equation_template_c0_len + 1u,
+            sizeof(*program->equation_template_c0))) {
+        petta_equation_template_c0_free(template);
         cetta_runtime_stats_inc(
-            CETTA_RUNTIME_COUNTER_PETTA_COMPILED_C0_ARTIFACT_DECLINED);
+            CETTA_RUNTIME_COUNTER_PETTA_EQUATION_TEMPLATE_C0_ARTIFACT_DECLINED);
         return NULL;
     }
-    program->compiled_c0[program->compiled_c0_len++] = compiled;
+    program->equation_template_c0[program->equation_template_c0_len++] = template;
     cetta_runtime_stats_inc(
-        CETTA_RUNTIME_COUNTER_PETTA_COMPILED_C0_ARTIFACT_BUILT);
-    return compiled;
+        CETTA_RUNTIME_COUNTER_PETTA_EQUATION_TEMPLATE_C0_ARTIFACT_BUILT);
+    return template;
 }
 
-PettaCompiledClauseC0Status petta_compiled_clause_c0_apply(
-    const PettaCompiledClauseC0 *compiled,
+PettaEquationTemplateC0Status petta_equation_template_c0_apply(
+    const PettaEquationTemplateC0 *template,
     CettaGsltGroundDenseWorkspaceV1 *workspace,
     Atom *closed_query, Arena *arena, Atom **result_out) {
     if (result_out)
         *result_out = NULL;
-    if (!compiled || !workspace || !closed_query || !arena ||
+    if (!template || !workspace || !closed_query || !arena ||
         !result_out || atom_has_vars(closed_query)) {
-        return PETTA_COMPILED_C0_NOT_APPLICABLE;
+        return PETTA_EQUATION_TEMPLATE_C0_NOT_APPLICABLE;
     }
     CettaGsltGroundDenseStatusV1 matched =
         cetta_gslt_ground_dense_term_match_v1(
-            workspace, &compiled->head, closed_query, NULL);
+            workspace, &template->lhs, closed_query, NULL);
     if (matched == CETTA_GSLT_GROUND_DENSE_RESOURCE_V1)
-        return PETTA_COMPILED_C0_CAPACITY;
+        return PETTA_EQUATION_TEMPLATE_C0_CAPACITY;
     if (matched == CETTA_GSLT_GROUND_DENSE_MISMATCH_V1) {
         cetta_gslt_ground_dense_workspace_discard_match_v1(workspace);
-        return PETTA_COMPILED_C0_MISMATCH;
+        return PETTA_EQUATION_TEMPLATE_C0_MISMATCH;
     }
     if (matched != CETTA_GSLT_GROUND_DENSE_OK_V1) {
         cetta_gslt_ground_dense_workspace_discard_match_v1(workspace);
-        return PETTA_COMPILED_C0_NOT_APPLICABLE;
+        return PETTA_EQUATION_TEMPLATE_C0_NOT_APPLICABLE;
     }
     CettaGsltGroundDenseStatusV1 instantiated =
         cetta_gslt_ground_dense_term_instantiate_v1(
-            workspace, &compiled->body, arena, result_out, NULL);
+            workspace, &template->rhs, arena, result_out, NULL);
     cetta_gslt_ground_dense_workspace_discard_match_v1(workspace);
     if (instantiated == CETTA_GSLT_GROUND_DENSE_OK_V1)
-        return PETTA_COMPILED_C0_MATCH;
+        return PETTA_EQUATION_TEMPLATE_C0_MATCH;
     *result_out = NULL;
     return instantiated == CETTA_GSLT_GROUND_DENSE_RESOURCE_V1
-        ? PETTA_COMPILED_C0_CAPACITY
-        : PETTA_COMPILED_C0_NOT_APPLICABLE;
+        ? PETTA_EQUATION_TEMPLATE_C0_CAPACITY
+        : PETTA_EQUATION_TEMPLATE_C0_NOT_APPLICABLE;
+}
+
+bool petta_equation_template_variable_inventory(
+        const PettaEquationTemplate *template,
+        const VarId **source_ids_out,
+        Atom *const **source_variables_out,
+        uint32_t *variable_count_out) {
+    if (source_ids_out)
+        *source_ids_out = NULL;
+    if (source_variables_out)
+        *source_variables_out = NULL;
+    if (variable_count_out)
+        *variable_count_out = 0u;
+    if (!template || !source_ids_out || !source_variables_out ||
+        !variable_count_out) {
+        return false;
+    }
+    *source_ids_out = template->source_ids;
+    *source_variables_out = template->source_variables;
+    *variable_count_out = template->variable_count;
+    return template->variable_count == 0u ||
+        (template->source_ids && template->source_variables);
 }
 
 static bool petta_program_type_is_exclusive_kind(const Atom *type) {
@@ -716,6 +995,16 @@ static bool petta_equation_view(
     return true;
 }
 
+static PettaEquationActivationLayout petta_equation_activation_layout(
+    Atom *equation, uint32_t static_variable_count) {
+    PettaEquationActivationLayout layout = {0};
+    if (petta_equation_view(
+            equation, &layout.lhs, &layout.rhs, NULL)) {
+        layout.static_variable_count = static_variable_count;
+    }
+    return layout;
+}
+
 bool petta_program_is_equation(Atom *atom) {
     return petta_equation_view(
         atom, NULL, NULL, NULL);
@@ -876,6 +1165,41 @@ static bool petta_plan_finish_features(
     return ok;
 }
 
+static bool petta_plan_mark_open_template_admitted(
+    const PettaPlanNode *root) {
+    if (!root)
+        return true;
+    PettaPlanNode **work = NULL;
+    size_t work_len = 0u;
+    size_t work_cap = 0u;
+    if (!petta_program_reserve(
+            (void **)&work, &work_cap, 1u, sizeof(*work))) {
+        return false;
+    }
+    work[work_len++] = (PettaPlanNode *)root;
+    bool ok = true;
+    while (work_len > 0u && ok) {
+        PettaPlanNode *node = work[--work_len];
+        if (!node || !cetta_expr_len_fits_size(node->child_count) ||
+            (size_t)node->child_count > SIZE_MAX - work_len ||
+            !petta_program_reserve(
+                (void **)&work, &work_cap,
+                work_len + (size_t)node->child_count,
+                sizeof(*work))) {
+            ok = false;
+            break;
+        }
+        node->open_template_admitted = true;
+        for (CettaExprIndex index = 0u;
+             index < node->child_count; index++) {
+            work[work_len++] =
+                (PettaPlanNode *)&node->children[index];
+        }
+    }
+    free(work);
+    return ok;
+}
+
 static const PettaPlanNode *petta_plan_build(
     PettaProgram *program, const PettaHeadSet *heads, Atom *root) {
     if (!program || !root)
@@ -918,9 +1242,18 @@ static const PettaPlanNode *petta_plan_build(
         Atom *head_atom = atom->expr.elems[0];
         if (head_atom->kind == ATOM_SYMBOL) {
             SymbolId head = head_atom->sym_id;
+            PeTTaForm form = petta_semantics_form(head);
             node->contains_length_call =
-                petta_semantics_form(head) ==
-                    PETTA_FORM_LENGTH;
+                form == PETTA_FORM_LENGTH;
+            node->control = form == PETTA_FORM_IF
+                ? PETTA_PLAN_CONTROL_IF
+                : form == PETTA_FORM_LET
+                    ? PETTA_PLAN_CONTROL_LET
+                    : form == PETTA_FORM_CHAIN
+                        ? PETTA_PLAN_CONTROL_CHAIN
+                        : head == g_builtin_syms.let_star
+                            ? PETTA_PLAN_CONTROL_LET_STAR
+                            : PETTA_PLAN_CONTROL_NONE;
             bool constructor_slot_frame =
                 atom->expr.len > 1u &&
                 (head == g_builtin_syms.colon ||
@@ -938,8 +1271,7 @@ static const PettaPlanNode *petta_plan_build(
                 : grounded_op_is_type_pure(head)
                     ? PETTA_PLAN_EXEC_PURE_GROUNDED_SLOTS
                     : node->role == PETTA_PLAN_STATIC_CALL &&
-                              petta_semantics_form(head) ==
-                                  PETTA_FORM_NONE
+                              form == PETTA_FORM_NONE
                         ? PETTA_PLAN_EXEC_RELATION_SLOTS
                         : PETTA_PLAN_EXEC_GENERIC;
         } else {
@@ -1173,10 +1505,10 @@ void petta_program_free(PettaProgram *program) {
     }
     petta_program_analysis_state_free(program->analysis);
     for (size_t index = 0u;
-         index < program->compiled_c0_len; index++) {
-        petta_compiled_clause_c0_free(program->compiled_c0[index]);
+         index < program->equation_template_c0_len; index++) {
+        petta_equation_template_c0_free(program->equation_template_c0[index]);
     }
-    free(program->compiled_c0);
+    free(program->equation_template_c0);
     free(program->predeclared_heads.items);
     free(program->spaces);
     arena_free(&program->plans);
@@ -1338,17 +1670,33 @@ bool petta_program_note_add(
             sizeof(*entry->clauses))) {
         return false;
     }
-    PettaCompiledClauseC0 *compiled_c0 =
-        petta_program_compile_clause_c0(
-            program, lhs, rhs, head);
+    uint32_t static_variable_count = 0u;
+    bool open_template_admitted = false;
+    const PettaEquationTemplate *equation_template = NULL;
+    PettaEquationTemplateC0 *equation_template_c0 =
+        petta_program_compile_equation_template_c0(
+            program, lhs, rhs, head,
+            &static_variable_count,
+            &open_template_admitted,
+            &equation_template);
+    if (equation_template && plan &&
+        !petta_plan_assign_equation_variable_slots(
+            atom, plan, equation_template)) {
+        return false;
+    }
+    if (open_template_admitted &&
+        !petta_plan_mark_open_template_admitted(
+            petta_plan_child(plan, 2u))) {
+        return false;
+    }
     size_t record_index = entry->clause_len++;
     entry->clauses[record_index] =
         (PettaProgramClause){
             .equation = atom,
             .plan = plan,
-            .compiled_c0 = compiled_c0,
-            .static_variable_count = compiled_c0
-                ? compiled_c0->static_variable_count : 0u,
+            .equation_template_c0 = equation_template_c0,
+            .equation_template = equation_template,
+            .static_variable_count = static_variable_count,
             .head = head,
         };
     if (!entry->head_index_dirty &&
@@ -1877,9 +2225,14 @@ bool petta_program_clause_snapshot_lease_profiled(
                 .equation = actual[matched].equation,
                 .rhs_plan =
                     petta_plan_child(record->plan, 2u),
-                .compiled_c0 = record->compiled_c0,
-                .static_variable_count =
-                    record->static_variable_count,
+                .equation_template_c0 =
+                    record->equation_template_c0,
+                .equation_template =
+                    record->equation_template,
+                .activation_layout =
+                    petta_equation_activation_layout(
+                        actual[matched].equation,
+                        record->static_variable_count),
                 .occurrence = actual[matched].occurrence,
             };
         }
@@ -1899,6 +2252,9 @@ bool petta_program_clause_snapshot_lease_profiled(
         }
         items[length++] = (PettaClauseCandidate){
             .equation = actual[index].equation,
+            .activation_layout =
+                petta_equation_activation_layout(
+                    actual[index].equation, 0u),
             .occurrence = actual[index].occurrence,
         };
     }

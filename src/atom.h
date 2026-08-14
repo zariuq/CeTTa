@@ -87,6 +87,13 @@ typedef enum {
 #define ATOM_FLAG_HAS_IDENTITY_GROUNDED 0x80u
 #define ATOM_FLAG_HAS_THREAD_LOCAL_RESOURCE 0x100u
 /*
+ * Constructor-built atoms establish term-retention stability under the same
+ * leaf and child-fold judgment as structural-hash stability.  Keep the
+ * semantic name explicit for callers; split the bits before either judgment
+ * is widened.  The summary assumes expression children remain immutable.
+ */
+#define ATOM_FLAG_TERM_STABLE ATOM_FLAG_HASH_STABLE
+/*
  * VariantShape reserves this VarId prefix for its runtime-private slots.
  * Keeping the namespace test beside VarId lets immutable atoms summarize the
  * property compositionally instead of rescanning an arbitrarily deep value at
@@ -247,8 +254,17 @@ struct HashConsTable {
 
 void hashcons_init(HashConsTable *hc);
 void hashcons_free(HashConsTable *hc);
-/* Return shared atom if identical one exists, otherwise insert and return */
+/*
+ * Return a shared atom if an identical one exists, otherwise insert it.
+ * Expressions and variable name keys are published only when their retained
+ * pointers already have global, closed ownership; inadmissible atoms are
+ * returned unchanged.  With multiple hash-cons tables, retained children must
+ * belong to the same ownership domain or to one that outlives this table.
+ */
 Atom *hashcons_get(HashConsTable *hc, Atom *atom);
+
+/* Stable value-grounded leaves admitted by the term-retention summary. */
+bool atom_grounded_kind_is_term_stable(GroundedKind kind);
 
 /* Global hash-cons table */
 extern HashConsTable *g_hashcons;
