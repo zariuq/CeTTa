@@ -141,6 +141,15 @@ int main(void) {
         expect_true(
             !cetta_gslt_ground_dense_term_is_linear_v1(&parser_head),
             "repeated parser slot is recognized as nonlinear");
+        {
+            uint32_t offset = UINT32_MAX;
+            expect_true(
+                cetta_gslt_ground_dense_term_first_binding_offset_v1(
+                    &parser_head, 101u, &offset) && offset == 0u &&
+                cetta_gslt_ground_dense_term_first_binding_offset_v1(
+                    &parser_head, 102u, &offset) && offset == 1u,
+                "a nonlinear pattern exposes exact first-binding coordinates");
+        }
         parser_nodes =
             cetta_gslt_ground_dense_term_node_count_v1(&parser_head);
         expect_true(
@@ -302,6 +311,17 @@ int main(void) {
                 &rewrite_head, head, 201u, 2u, error, sizeof(error)) &&
                 cetta_gslt_ground_dense_term_is_linear_v1(&rewrite_head),
             error[0] ? error : "linear rewrite-shaped head compiles");
+        {
+            uint32_t offset = UINT32_MAX;
+            expect_true(
+                cetta_gslt_ground_dense_term_first_binding_offset_v1(
+                    &rewrite_head, 201u, &offset) && offset == 0u,
+                "a linear producer exposes its exact binding coordinate");
+            expect_true(
+                !cetta_gslt_ground_dense_term_first_binding_offset_v1(
+                    &rewrite_head, 202u, &offset),
+                "a variable absent from the producer has no coordinate");
+        }
         error[0] = '\0';
         expect_true(
             cetta_gslt_ground_dense_term_compile_v1(

@@ -29,6 +29,8 @@ CettaGsltU32IndexInsertResultV1 cetta_gslt_u32_index_insert_unique_v1(
     CettaGsltU32IndexV1 *index, uint32_t key, uint32_t value);
 bool cetta_gslt_u32_index_find_v1(
     const CettaGsltU32IndexV1 *index, uint32_t key, uint32_t *value_out);
+bool cetta_gslt_u32_index_shape_valid_v1(
+    const CettaGsltU32IndexV1 *index);
 bool cetta_gslt_u32_index_validate_v1(const CettaGsltU32IndexV1 *index);
 
 #endif

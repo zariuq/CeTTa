@@ -37,7 +37,7 @@ void cetta_gslt_u32_index_reset_v1(CettaGsltU32IndexV1 *index) {
     index->len = 0u;
 }
 
-static bool cetta_gslt_u32_index_shape_valid_v1(
+bool cetta_gslt_u32_index_shape_valid_v1(
     const CettaGsltU32IndexV1 *index) {
     if (!index)
         return false;
