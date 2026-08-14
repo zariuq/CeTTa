@@ -20,8 +20,8 @@ COUNTERS = (
     "unavailable-path",
     "invalidation",
     "exact-attempt",
-    "whole-clause-freshen",
-    "whole-clause-freshen-bytes",
+    "whole-equation-freshen",
+    "whole-equation-freshen-bytes",
 )
 
 
@@ -88,21 +88,21 @@ def check_lane(lane: str, linear: dict[str, int],
             "exact attempts exceeded conservative survivors")
     require(deep["exact-attempt"] <= linear["exact-attempt"],
             "deep selection increased authoritative matching")
-    require(deep["whole-clause-freshen"] <= deep["exact-attempt"],
-            "whole-clause freshening preceded candidate admission")
-    require(linear["whole-clause-freshen"] <= linear["exact-attempt"],
-            "linear whole-clause freshening exceeded exact attempts")
+    require(deep["whole-equation-freshen"] <= deep["exact-attempt"],
+            "whole-equation freshening preceded candidate admission")
+    require(linear["whole-equation-freshen"] <= linear["exact-attempt"],
+            "linear whole-equation freshening exceeded exact attempts")
     for mode, stats in (("linear", linear), ("deep", deep)):
-        calls = stats["whole-clause-freshen"]
-        fresh_bytes = stats["whole-clause-freshen-bytes"]
+        calls = stats["whole-equation-freshen"]
+        fresh_bytes = stats["whole-equation-freshen-bytes"]
         require((calls == 0) == (fresh_bytes == 0),
                 f"{mode} freshen call/byte counters disagree")
     if lane == "petta":
-        require(deep["whole-clause-freshen"] > 0,
+        require(deep["whole-equation-freshen"] > 0,
                 "PeTTa fixture did not exercise freshen-late")
     else:
-        require(deep["whole-clause-freshen"] == 0,
-                f"{lane} unexpectedly copied whole clauses")
+        require(deep["whole-equation-freshen"] == 0,
+                f"{lane} unexpectedly copied whole equations")
     if lane == "prime":
         for mode, stats in (("linear", linear), ("deep", deep)):
             require(stats["compile"] < stats["run"],

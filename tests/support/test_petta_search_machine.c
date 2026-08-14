@@ -972,6 +972,97 @@ static Atom *add_compiled_program_clause(
     return stored;
 }
 
+static bool test_program_equation_snapshot_lease(
+    void *context, Space *space, SymbolId head,
+    PettaClauseSnapshotLease *lease,
+    PettaClauseSnapshotStats *stats) {
+    return context && petta_program_clause_snapshot_lease_profiled(
+        context, space, head, lease, stats);
+}
+
+static void test_alpha_reconciled_slot_authority(
+    TermUniverse *universe, Arena *persistent, Arena *answers) {
+    Space space;
+    space_init_with_universe(&space, universe);
+    PettaProgram *program = petta_program_new();
+    assert(program);
+
+    Atom *catalog_equation = add_compiled_program_clause(
+        program, &space, persistent,
+        "(= (alpha-slot $x $y) (- $x $y))");
+    assert(catalog_equation->kind == ATOM_EXPR &&
+           catalog_equation->expr.len == 3u);
+    Atom *catalog_lhs = catalog_equation->expr.elems[1];
+    Atom *catalog_rhs = catalog_equation->expr.elems[2];
+    assert(catalog_lhs && catalog_lhs->kind == ATOM_EXPR &&
+           catalog_lhs->expr.len == 3u &&
+           catalog_rhs && catalog_rhs->kind == ATOM_EXPR &&
+           catalog_rhs->expr.len == 3u);
+    Atom *x = catalog_lhs->expr.elems[1];
+    Atom *y = catalog_lhs->expr.elems[2];
+    assert(x && x->kind == ATOM_VAR && y && y->kind == ATOM_VAR);
+    assert(space_remove(&space, catalog_equation));
+    Atom *live_lhs = atom_expr3(
+        persistent, catalog_lhs->expr.elems[0], y, x);
+    Atom *live_rhs = atom_expr3(
+        persistent, catalog_rhs->expr.elems[0], y, x);
+    Atom *live_source = atom_expr3(
+        persistent, catalog_equation->expr.elems[0],
+        live_lhs, live_rhs);
+    assert(live_source);
+    space_add(&space, live_source);
+    Atom *live_equation = space_get_at64(&space, 0u);
+    assert(live_equation);
+    assert(!atom_eq(catalog_equation, live_equation));
+    assert(atom_alpha_eq(catalog_equation, live_equation));
+
+    SymbolId head = symbol_intern_cstr(g_symbols, "alpha-slot");
+    PettaClauseSnapshotLease lease = {0};
+    PettaClauseSnapshotStats snapshot_stats;
+    assert(petta_program_clause_snapshot_lease_profiled(
+        program, &space, head, &lease, &snapshot_stats));
+    assert(lease.len == 1u);
+    assert(lease.items[0].equation == live_equation);
+    assert(lease.items[0].equation_template);
+    assert(snapshot_stats.alpha_equality_checks == 1u);
+    petta_program_clause_snapshot_lease_release(&lease);
+
+    Atom *query = parse_one(persistent, "(alpha-slot 10 3)");
+    const PettaPlanNode *query_plan =
+        petta_program_plan_current(program, query);
+    assert(query && query_plan);
+    PettaMachineHost host = {
+        .context = program,
+        .clause_snapshot_lease = test_program_equation_snapshot_lease,
+        .measure_stats = true,
+    };
+    PettaMachine machine;
+    assert(petta_machine_init_with_plan(
+        &machine, &space, answers, query, query_plan, NULL, &host));
+    Atom *answer = NULL;
+    Bindings environment;
+    bindings_init(&environment);
+    assert(petta_machine_next(
+               &machine, &answer, &environment) ==
+           PETTA_MACHINE_STEP_ANSWER);
+    assert(atom_alpha_eq(answer, parse_one(answers, "7")));
+    bindings_free(&environment);
+    PettaMachineStats machine_stats;
+    assert(petta_machine_stats(&machine, &machine_stats));
+    assert(machine_stats.pure_grounded_slot_frame_entries == 1u);
+    assert(
+        machine_stats.pure_grounded_slot_frame_direct_dispatches == 1u);
+    assert(machine_stats.activation_materialization_calls == 0u);
+    assert(petta_machine_next(
+               &machine, &answer, &environment) ==
+           PETTA_MACHINE_STEP_EXHAUSTED);
+    bindings_free(&environment);
+    petta_machine_destroy(&machine);
+
+    petta_program_free(program);
+    space_free(&space);
+}
+
 static void test_constructor_slot_frame_plans(
     TermUniverse *universe, Arena *persistent, Arena *answers) {
     PettaProgram *program = petta_program_new();
@@ -983,10 +1074,27 @@ static void test_constructor_slot_frame_plans(
         petta_program_plan_current(program, ascription);
     assert(ascription_plan);
     assert(ascription_plan->role == PETTA_PLAN_DATA);
+    assert(ascription_plan->control == PETTA_PLAN_CONTROL_NONE);
     assert(
         ascription_plan->execution ==
         PETTA_PLAN_EXEC_CONSTRUCTOR_SLOTS);
     assert(!ascription_plan->contains_call);
+
+    Atom *if_control = parse_one(
+        persistent, "(if True yes no)");
+    const PettaPlanNode *if_control_plan =
+        petta_program_plan_current(program, if_control);
+    assert(if_control_plan);
+    assert(if_control_plan->control == PETTA_PLAN_CONTROL_IF);
+
+    Atom *let_star_control = parse_one(
+        persistent, "(let* () ready)");
+    const PettaPlanNode *let_star_control_plan =
+        petta_program_plan_current(program, let_star_control);
+    assert(let_star_control_plan);
+    assert(
+        let_star_control_plan->control ==
+        PETTA_PLAN_CONTROL_LET_STAR);
 
     Atom *dependent_arrow = parse_one(
         persistent, "(-> (: $value Number) Result)");
@@ -1071,6 +1179,7 @@ static void test_constructor_slot_frame_plans(
         petta_program_plan_current(program, relation_call);
     assert(relation_plan);
     assert(relation_plan->role == PETTA_PLAN_STATIC_CALL);
+    assert(relation_plan->control == PETTA_PLAN_CONTROL_NONE);
     assert(
         relation_plan->execution ==
         PETTA_PLAN_EXEC_RELATION_SLOTS);
@@ -1210,7 +1319,7 @@ static void test_constructor_slot_frame_plans(
     petta_program_free(program);
 }
 
-static void test_program_compiled_clause_c0(
+static void test_program_equation_template_c0(
     TermUniverse *universe, Arena *persistent) {
     Space space;
     space_init_with_universe(&space, universe);
@@ -1218,52 +1327,54 @@ static void test_program_compiled_clause_c0(
     assert(program);
     add_indexed_program_clause(
         program, &space, persistent,
-        "(= (compiled-c0 pair $x $x) (answer $x))");
+        "(= (equation-template-c0 pair $x $x) (answer $x))");
     add_indexed_program_clause(
         program, &space, persistent,
-        "(= (compiled-c0-local $x) $body-local)");
+        "(= (equation-template-c0-local $x) $rhs-local)");
 
-    SymbolId head = symbol_intern_cstr(g_symbols, "compiled-c0");
+    SymbolId head = symbol_intern_cstr(g_symbols, "equation-template-c0");
     PettaClauseCandidate *candidates = NULL;
     size_t candidate_count = 0u;
     assert(petta_program_clause_snapshot(
         program, &space, head, &candidates, &candidate_count));
     assert(candidate_count == 1u);
-    assert(candidates[0].compiled_c0);
-    assert(candidates[0].static_variable_count == 1u);
+    assert(candidates[0].equation_template_c0);
+    assert(candidates[0].activation_layout.lhs);
+    assert(candidates[0].activation_layout.rhs);
+    assert(candidates[0].activation_layout.static_variable_count == 1u);
 
     CettaGsltGroundDenseWorkspaceV1 workspace;
     cetta_gslt_ground_dense_workspace_init_v1(&workspace);
     Arena result_arena;
     arena_init(&result_arena);
     Atom *result = NULL;
-    assert(petta_compiled_clause_c0_apply(
-               candidates[0].compiled_c0, &workspace,
-               parse_one(persistent, "(compiled-c0 pair 7 7)"),
-               &result_arena, &result) == PETTA_COMPILED_C0_MATCH);
+    assert(petta_equation_template_c0_apply(
+               candidates[0].equation_template_c0, &workspace,
+               parse_one(persistent, "(equation-template-c0 pair 7 7)"),
+               &result_arena, &result) == PETTA_EQUATION_TEMPLATE_C0_MATCH);
     assert(atom_alpha_eq(
         result, parse_one(persistent, "(answer 7)")));
     result = NULL;
-    assert(petta_compiled_clause_c0_apply(
-               candidates[0].compiled_c0, &workspace,
-               parse_one(persistent, "(compiled-c0 pair 7 8)"),
-               &result_arena, &result) == PETTA_COMPILED_C0_MISMATCH);
+    assert(petta_equation_template_c0_apply(
+               candidates[0].equation_template_c0, &workspace,
+               parse_one(persistent, "(equation-template-c0 pair 7 8)"),
+               &result_arena, &result) == PETTA_EQUATION_TEMPLATE_C0_MISMATCH);
     assert(!result);
-    assert(petta_compiled_clause_c0_apply(
-               candidates[0].compiled_c0, &workspace,
-               parse_one(persistent, "(compiled-c0 pair $q $q)"),
+    assert(petta_equation_template_c0_apply(
+               candidates[0].equation_template_c0, &workspace,
+               parse_one(persistent, "(equation-template-c0 pair $q $q)"),
                &result_arena, &result) ==
-           PETTA_COMPILED_C0_NOT_APPLICABLE);
+           PETTA_EQUATION_TEMPLATE_C0_NOT_APPLICABLE);
     free(candidates);
 
     SymbolId local_head =
-        symbol_intern_cstr(g_symbols, "compiled-c0-local");
+        symbol_intern_cstr(g_symbols, "equation-template-c0-local");
     candidates = NULL;
     candidate_count = 0u;
     assert(petta_program_clause_snapshot(
         program, &space, local_head, &candidates, &candidate_count));
     assert(candidate_count == 1u);
-    assert(!candidates[0].compiled_c0);
+    assert(!candidates[0].equation_template_c0);
     free(candidates);
 
     arena_free(&result_arena);
@@ -3990,9 +4101,11 @@ int main(void) {
 
     test_constructor_slot_frame_plans(
         &universe, &persistent, &answers);
+    test_alpha_reconciled_slot_authority(
+        &universe, &persistent, &answers);
     test_program_head_occurrence_index(
         &universe, &persistent);
-    test_program_compiled_clause_c0(
+    test_program_equation_template_c0(
         &universe, &persistent);
     test_program_wide_occurrence_reconciliation(
         &universe, &persistent);

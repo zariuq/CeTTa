@@ -96,6 +96,11 @@ typedef struct {
 
 typedef struct {
     Bindings current;
+    /* Assigned for each successful initialization.  Revision-bound
+     * accelerators retain this identity so a freed and reinitialized builder
+     * at the same address cannot be mistaken for its predecessor.  Zero
+     * disables such accelerators while ordinary bindings remain usable. */
+    uint64_t instance_id;
     BindingsBuilderTrailEntry *trail;
     uint32_t trail_len;
     uint32_t trail_cap;
@@ -108,6 +113,13 @@ typedef struct {
      * already performed; collectors use this as a scheduling clock.
      */
     uint64_t growth_count;
+    /*
+     * Monotone count of destructive logical restores.  `growth_count`
+     * distinguishes every successful append, while this counter prevents a
+     * cache from confusing a state before and after rollback at the same
+     * growth value.
+     */
+    uint64_t rollback_count;
 } BindingsBuilder;
 
 typedef Atom *(*BindingsRewriteVarFn)(Arena *a, Atom *var, void *ctx);
@@ -136,14 +148,58 @@ bool      bindings_project_reachable_with_entry_marks(
               const Bindings *src, Atom *const *roots,
               size_t root_count, uint32_t *entry_marks,
               size_t entry_mark_count, Bindings *dst);
+struct CettaTermVariableSupport;
+
 /* A persistent source term can name a fresh activation namespace without
  * first being copied into that namespace.  Each epoch root contributes the
  * variables of `atom`, rewritten through `epoch`, to the same reachability
- * closure as ordinary materialized roots. */
+ * closure as ordinary materialized roots.  When present, `variable_support`
+ * is the immutable structural summary owned by the term's universe; a NULL
+ * summary retains the exact traversal fallback. */
 typedef struct {
     Atom *atom;
     uint32_t epoch;
+    const struct CettaTermVariableSupport *variable_support;
 } BindingsEpochRoot;
+
+/*
+ * Dense view of one finite, immutable source-variable inventory under a
+ * fresh activation epoch.  The inventory arrays are borrowed from compiled
+ * source metadata; values are rebuilt from the authoritative binding suffix
+ * whenever the view is prepared.  Missing slots remain genuine unbound
+ * epoch variables, never mismatches.
+ */
+typedef struct {
+    BindingsBuilder *builder;
+    uint64_t builder_instance;
+    const VarId *source_ids;
+    Atom *const *source_variables;
+    Atom **values;
+    uint32_t *slot_stamps;
+    uint64_t binding_growth;
+    uint64_t binding_rollbacks;
+    uint32_t len;
+    uint32_t cap;
+    uint32_t slot_generation;
+    uint32_t epoch;
+    uint32_t first_entry;
+    uint32_t scanned_len;
+} BindingsDenseEpochFrame;
+
+void      bindings_dense_epoch_frame_init(BindingsDenseEpochFrame *frame);
+void      bindings_dense_epoch_frame_free(BindingsDenseEpochFrame *frame);
+bool      bindings_dense_epoch_frame_prepare(
+              BindingsDenseEpochFrame *frame,
+              BindingsBuilder *builder,
+              const VarId *source_ids, Atom *const *source_variables,
+              uint32_t variable_count, uint32_t epoch,
+              uint32_t first_entry);
+/* Extend a prepared frame across an append-only suffix of the same live
+ * builder.  The frame owns the exact growth/rollback revision established by
+ * prepare; any rollback, replacement, or builder change is rejected. */
+bool      bindings_dense_epoch_frame_refresh(
+              BindingsDenseEpochFrame *frame,
+              BindingsBuilder *builder);
 bool      bindings_project_reachable_with_epoch_roots(
               const Bindings *src, Atom *const *roots,
               size_t root_count, const BindingsEpochRoot *epoch_roots,
@@ -254,6 +310,26 @@ Atom     *bindings_apply_epoch_since(Bindings *b, Arena *a, Atom *atom,
 Atom     *bindings_apply_epoch_then_all(Bindings *b, Arena *a, Atom *atom,
                                         uint32_t epoch,
                                         uint32_t first_entry);
+/* Dense-frame realization of bindings_apply_epoch_then_all.  It has the
+ * same result and ownership contract; the finite activation inventory avoids
+ * repeated hash/index lookup for source-local variables. */
+Atom     *bindings_apply_dense_epoch_frame_then_all(
+              BindingsBuilder *builder, Arena *a, Atom *atom,
+              const BindingsDenseEpochFrame *frame);
+/* Resolve one compiler-known source occurrence by its dense slot.  This is
+ * extensionally the same as applying the corresponding source variable
+ * through bindings_apply_dense_epoch_frame_then_all, without searching the
+ * inventory for an identifier already decided at admission. */
+Atom     *bindings_apply_dense_epoch_frame_slot_then_all(
+              BindingsBuilder *builder, Arena *a,
+              const BindingsDenseEpochFrame *frame,
+              Atom *source_variable, uint32_t slot);
+/* Resolve only the root of a compiler-known slot.  Nested structure remains
+ * paired with the live environment for an exact downstream consumer. */
+Atom     *bindings_resolve_dense_epoch_frame_slot_root(
+              BindingsBuilder *builder, Arena *a,
+              const BindingsDenseEpochFrame *frame,
+              Atom *source_variable, uint32_t slot);
 Atom     *atom_freshen_epoch(Arena *a, Atom *atom, uint32_t epoch);
 Atom     *bindings_to_atom(Arena *a, const Bindings *b);
 bool      bindings_from_atom(Atom *atom, Bindings *out);
@@ -270,6 +346,10 @@ void      bindings_builder_commit(BindingsBuilder *bb);
 /* True when either the current state or a rollback checkpoint carries an
  * optional Prime occurrence. */
 bool      bindings_builder_prime_present(const BindingsBuilder *bb);
+/* Reserve storage for a known upper bound of fresh logical entries without
+ * changing the current bindings or trail. */
+bool      bindings_builder_prepare_fresh_entries(
+              BindingsBuilder *bb, uint32_t additional_entries);
 /*
  * Retain only bindings reachable from `roots` while preserving every live
  * rollback state named by `checkpoint_marks`.
@@ -366,6 +446,10 @@ Atom *rename_vars_only(Arena *a, Atom *atom, Atom *listed_spec);
    On failure, returns false. */
 bool match_atoms(Atom *left, Atom *right, Bindings *b);
 bool match_atoms_builder(Atom *left, Atom *right, BindingsBuilder *bb);
+/* HE's SpaceType and the value-level (Space T) presentation denote the same
+ * argument kind for type applicability.  Keep this exceptional equivalence
+ * shared by the complete matcher and any conservative prefilter. */
+bool match_types_space_kind_equivalent(Atom *actual, Atom *expected);
 bool match_atoms_epoch(Atom *left, Atom *right, Bindings *b, Arena *a, uint32_t epoch);
 /* Epoch-aware matcher over an existing trail-backed environment.  The caller
  * owns the save/rollback boundary when failure must be transactional. */
@@ -398,6 +482,24 @@ bool match_atoms_epoch_view_builder(
          Atom *left_original, uint32_t left_epoch,
          uint32_t left_first_entry, Atom *right_original,
          BindingsBuilder *bb, Arena *a, uint32_t right_epoch);
+/* Exact matcher for the same activation view when its finite source-variable
+ * inventory has already been resolved into dense slots. */
+bool match_atoms_dense_epoch_view_builder(
+         Atom *left_original, const BindingsDenseEpochFrame *left_frame,
+         Atom *right_original, BindingsBuilder *bb, Arena *a,
+         uint32_t right_epoch);
+/* Match the same dense activation view against an ordinary live term.  The
+ * right operand keeps its current variable identities instead of receiving
+ * a fresh epoch.  This is the allocation-free form of applying the frame to
+ * the left source and then invoking match_atoms_builder. */
+bool match_atoms_dense_epoch_view_builder_current(
+         Atom *left_original, const BindingsDenseEpochFrame *left_frame,
+         Atom *right, BindingsBuilder *bb, Arena *a);
+/* The same dense left view with right-side rule-slot orientation. */
+bool match_atoms_dense_epoch_view_builder_rule_local(
+         Atom *left_original, const BindingsDenseEpochFrame *left_frame,
+         Atom *right_original, BindingsBuilder *bb, Arena *a,
+         uint32_t right_epoch);
 /* Leaf-patch view (env CETTA_LEAF_PATCH_VIEW=1, OFF by default). */
 bool match_leaf_patch_view_enabled(void);
 /* Positional bind for a flat linear pattern (lhs) vs a non-variable-arg query;

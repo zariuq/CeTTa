@@ -2299,7 +2299,7 @@ test-bindings-lookup-index: $(BINDINGS_LOOKUP_INDEX_TEST_BIN)
 	@enabled=$$($(call cetta_exec,./$(BINDINGS_LOOKUP_INDEX_TEST_BIN))); \
 	disabled=$$(CETTA_BINDINGS_LOOKUP_INDEX=0 $(call cetta_exec,./$(BINDINGS_LOOKUP_INDEX_TEST_BIN))); \
 	audited=$$(CETTA_BINDINGS_DERIVED_AUDIT=1 $(call cetta_exec,./$(BINDINGS_LOOKUP_INDEX_TEST_BIN))); \
-	expected='(BindingsLookupIndexSummary 82 82 0)'; \
+	expected='(BindingsLookupIndexSummary 107 107 0)'; \
 	printf '%s\n' "$$enabled"; \
 	test "$$enabled" = "$$expected" && test "$$disabled" = "$$expected" && \
 		test "$$audited" = "$$expected"
@@ -12886,12 +12886,14 @@ test-petta-mam-contender-mutations: $(BIN)
 	specializer_out=$$(mktemp runtime/petta-specializer-mutation.out.XXXXXX); \
 	specializer_err=$$(mktemp runtime/petta-specializer-mutation.err.XXXXXX); \
 	trap 'rm -f "$$specializer_out" "$$specializer_err"' EXIT INT TERM; \
+	set +e; \
 	CETTA_PETTA_SEARCH_MACHINE=1 CETTA_PETTA_MACHINE_STATS=1 \
 		CETTA_PETTA_SPECIALIZER_RELEVANCE_FILTER=1 \
 		"$$mutation_dir/cetta-specializer-reject-callable" --lang petta \
 		tests/petta/search_machine_specializer_route_cache.metta \
 		>"$$specializer_out" 2>"$$specializer_err"; \
 	specializer_rc=$$?; \
+	set -e; \
 	if [ "$$specializer_rc" -eq 0 ] && diff -q \
 			tests/petta/search_machine_specializer_route_cache.expected \
 			"$$specializer_out" >/dev/null; then \
@@ -13113,43 +13115,76 @@ test-petta-clause-slot-admission: $(BIN)
 	diff -u "$$extended_reference" "$$extended"; \
 	echo "PASS: PeTTa clause-slot admission preserves query-visible aliases and occurrence identity"
 
-.PHONY: test-petta-compiled-c0
-test-petta-compiled-c0: $(BIN)
+.PHONY: test-petta-equation-template-c0 test-petta-relational-equation-view
+test-petta-equation-template-c0: $(BIN)
 	@set -eu; \
-	optimized=$$(mktemp runtime/petta-compiled-c0-optimized.XXXXXX); \
-	reference=$$(mktemp runtime/petta-compiled-c0-reference.XXXXXX); \
-	logical_optimized=$$(mktemp runtime/petta-compiled-c0-logical-optimized.XXXXXX); \
-	logical_reference=$$(mktemp runtime/petta-compiled-c0-logical-reference.XXXXXX); \
+	optimized=$$(mktemp runtime/petta-equation-template-c0-optimized.XXXXXX); \
+	reference=$$(mktemp runtime/petta-equation-template-c0-reference.XXXXXX); \
+	logical_optimized=$$(mktemp runtime/petta-equation-template-c0-logical-optimized.XXXXXX); \
+	logical_reference=$$(mktemp runtime/petta-equation-template-c0-logical-reference.XXXXXX); \
 	trap 'rm -f "$$optimized" "$$reference" "$$logical_optimized" "$$logical_reference"' EXIT INT TERM; \
 	CETTA_PETTA_SEARCH_MACHINE=1 \
-		CETTA_PETTA_COMPILED_C0_REFERENCE=0 \
+		CETTA_PETTA_EQUATION_TEMPLATE_C0_REFERENCE=0 \
 		./$(BIN) --lang petta \
-		tests/petta/search_machine_compiled_c0.metta \
+		tests/petta/search_machine_equation_template_c0.metta \
 		>"$$optimized"; \
 	CETTA_PETTA_SEARCH_MACHINE=1 \
-		CETTA_PETTA_COMPILED_C0_REFERENCE=1 \
+		CETTA_PETTA_EQUATION_TEMPLATE_C0_REFERENCE=1 \
 		./$(BIN) --lang petta \
-		tests/petta/search_machine_compiled_c0.metta \
+		tests/petta/search_machine_equation_template_c0.metta \
 		>"$$reference"; \
-	diff -u tests/petta/search_machine_compiled_c0.expected \
+	diff -u tests/petta/search_machine_equation_template_c0.expected \
 		"$$optimized"; \
 	diff -u "$$reference" "$$optimized"; \
 	CETTA_PETTA_SEARCH_MACHINE=1 \
-		CETTA_PETTA_COMPILED_C0_REFERENCE=0 \
+		CETTA_PETTA_EQUATION_TEMPLATE_C0_REFERENCE=0 \
 		./$(BIN) --lang petta \
 		tests/petta/search_machine_logical_update_relations.metta \
 		>"$$logical_optimized"; \
 	CETTA_PETTA_SEARCH_MACHINE=1 \
-		CETTA_PETTA_COMPILED_C0_REFERENCE=1 \
+		CETTA_PETTA_EQUATION_TEMPLATE_C0_REFERENCE=1 \
 		./$(BIN) --lang petta \
 		tests/petta/search_machine_logical_update_relations.metta \
 		>"$$logical_reference"; \
 	diff -u tests/petta/search_machine_logical_update_relations.expected \
 		"$$logical_optimized"; \
 	diff -u "$$logical_reference" "$$logical_optimized"; \
-	echo "PASS: PeTTa C0 compilation preserves exact ordered occurrences and fallback"
+	echo "PASS: PeTTa C0 equation templates preserve exact ordered occurrences and fallback"
 
-test-petta-search-machine: $(PETTA_SEARCH_MACHINE_TEST_BIN) $(BIN) test-petta-type-langdef-source-binding-v1 test-petta-boundary-langdef-source-binding-v1 test-petta-capability-ledger test-petta-specializer-relevance-filter test-petta-mam-contender-mutations test-petta-extended-query-algebra test-petta-prepared-register-loop test-petta-specialized-pure-call test-petta-memoization test-petta-match-existence-fusion test-petta-clause-slot-admission test-petta-compiled-c0
+test-petta-relational-equation-view: $(BIN)
+	@set -eu; \
+	optimized=$$(mktemp runtime/petta-relational-equation-view-optimized.XXXXXX); \
+	reference=$$(mktemp runtime/petta-relational-equation-view-reference.XXXXXX); \
+	extended=$$(mktemp runtime/petta-relational-equation-view-extended.XXXXXX); \
+	extended_reference=$$(mktemp runtime/petta-relational-equation-view-extended-reference.XXXXXX); \
+	trap 'rm -f "$$optimized" "$$reference" "$$extended" "$$extended_reference"' EXIT INT TERM; \
+	CETTA_PETTA_SEARCH_MACHINE=1 \
+		./$(BIN) --lang petta \
+		tests/petta/search_machine_relational_equation_view.metta \
+		>"$$optimized"; \
+	CETTA_PETTA_SEARCH_MACHINE=1 \
+		CETTA_PETTA_RELATIONAL_EQUATION_VIEW_REFERENCE=1 \
+		./$(BIN) --lang petta \
+		tests/petta/search_machine_relational_equation_view.metta \
+		>"$$reference"; \
+	diff -u tests/petta/search_machine_relational_equation_view.expected \
+		"$$optimized"; \
+	diff -u "$$reference" "$$optimized"; \
+	CETTA_PETTA_SEARCH_MACHINE=1 \
+		./$(BIN) --lang petta --profile extended \
+		tests/petta/search_machine_relational_equation_view.metta \
+		>"$$extended"; \
+	CETTA_PETTA_SEARCH_MACHINE=1 \
+		CETTA_PETTA_RELATIONAL_EQUATION_VIEW_REFERENCE=1 \
+		./$(BIN) --lang petta --profile extended \
+		tests/petta/search_machine_relational_equation_view.metta \
+		>"$$extended_reference"; \
+	diff -u tests/petta/search_machine_relational_equation_view.expected \
+		"$$extended"; \
+	diff -u "$$extended_reference" "$$extended"; \
+	echo "PASS: PeTTa relational equation views preserve activation identity, arity decline, and exact results"
+
+test-petta-search-machine: $(PETTA_SEARCH_MACHINE_TEST_BIN) $(BIN) test-petta-type-langdef-source-binding-v1 test-petta-boundary-langdef-source-binding-v1 test-petta-capability-ledger test-petta-specializer-relevance-filter test-petta-mam-contender-mutations test-petta-extended-query-algebra test-petta-prepared-register-loop test-petta-specialized-pure-call test-petta-memoization test-petta-match-existence-fusion test-petta-clause-slot-admission test-petta-equation-template-c0 test-petta-relational-equation-view
 	@./$(PETTA_SEARCH_MACHINE_TEST_BIN)
 	@machine_stats=$$(CETTA_PETTA_MACHINE_STATS=1 \
 		./$(BIN) --lang petta -e '!(+ 1 2)' \

@@ -3,6 +3,7 @@
 
 #include "atom.h"
 #include <stddef.h>
+#include <stdatomic.h>
 #include <stdint.h>
 #include <string.h>
 
@@ -53,6 +54,67 @@ typedef enum {
 typedef struct TermUniverse TermUniverse;
 
 typedef enum {
+    CETTA_TERM_VARIABLE_SUPPORT_DENSE64 = 1,
+    CETTA_TERM_VARIABLE_SUPPORT_SPARSE32 = 2,
+} CettaTermVariableSupportRepresentation;
+
+/* Immutable variable support derived only from an interned term's syntax.
+ * Dense terms use a base-relative bitmap; unusually wide supports use the
+ * sorted flexible array.  The object is owned by its TermUniverse and remains
+ * valid until that universe's storage is reset or freed. */
+typedef struct CettaTermVariableSupport {
+    uint32_t count;
+    uint32_t first_base_id;
+    CettaTermVariableSupportRepresentation representation;
+    uint64_t dense_mask;
+    uint32_t sparse_base_ids[];
+} CettaTermVariableSupport;
+
+struct CettaTermVariableSupportBlock;
+
+typedef struct {
+    const CettaTermVariableSupport *support;
+    uint64_t dense_remaining;
+    uint32_t sparse_index;
+} CettaTermVariableSupportIterator;
+
+static inline void cetta_term_variable_support_iterator_init(
+    CettaTermVariableSupportIterator *iterator,
+    const CettaTermVariableSupport *support) {
+    if (!iterator)
+        return;
+    iterator->support = support;
+    iterator->dense_remaining =
+        support && support->representation ==
+                       CETTA_TERM_VARIABLE_SUPPORT_DENSE64
+            ? support->dense_mask
+            : 0u;
+    iterator->sparse_index = 0u;
+}
+
+static inline bool cetta_term_variable_support_iterator_next(
+    CettaTermVariableSupportIterator *iterator,
+    uint32_t *base_id) {
+    if (!iterator || !base_id || !iterator->support)
+        return false;
+    if (iterator->support->representation ==
+        CETTA_TERM_VARIABLE_SUPPORT_DENSE64) {
+        if (iterator->dense_remaining == 0u)
+            return false;
+        uint32_t offset =
+            (uint32_t)__builtin_ctzll(iterator->dense_remaining);
+        iterator->dense_remaining &= iterator->dense_remaining - 1u;
+        *base_id = iterator->support->first_base_id + offset;
+        return true;
+    }
+    if (iterator->sparse_index >= iterator->support->count)
+        return false;
+    *base_id = iterator->support
+                   ->sparse_base_ids[iterator->sparse_index++];
+    return true;
+}
+
+typedef enum {
     CETTA_VAR_SPELLING_SYMBOL = 0,
     CETTA_VAR_SPELLING_NAME_KEY = 1,
 } CettaVarSpellingKind;
@@ -78,6 +140,9 @@ struct TermUniverse {
     size_t blob_len, blob_cap;
     struct TermEntry *entries;
     size_t len, cap;
+    _Atomic(struct CettaTermVariableSupportBlock *)
+        *variable_support_blocks;
+    size_t variable_support_block_cap;
     uint8_t *intern_slots;
     size_t intern_mask;
     size_t intern_used;
@@ -244,6 +309,13 @@ AtomId term_universe_store_atom_id_from_source_arena(
     Atom *src);
 bool term_universe_source_id_memo_enabled(void);
 AtomId term_universe_lookup_atom_id(const TermUniverse *universe, Atom *src);
+/* Return the write-once support summary for `id`.  A ground term succeeds
+ * with `*out == NULL`.  Concurrent first demand is safe while TermUniverse
+ * storage is otherwise stable; mutation of the universe remains externally
+ * synchronized like every other TermUniverse operation. */
+bool term_universe_variable_support(
+    TermUniverse *universe, AtomId id,
+    const CettaTermVariableSupport **out);
 bool term_universe_atom_id_eq(const TermUniverse *universe, AtomId id,
                               Atom *src);
 Atom *term_universe_get_atom(const TermUniverse *universe, AtomId id);

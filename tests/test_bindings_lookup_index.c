@@ -1,11 +1,14 @@
 #include "atom.h"
 #include "match.h"
+#include "term_universe.h"
 #include "variant_shape.h"
 
+#include <math.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
 static unsigned passed;
 static unsigned failed;
@@ -47,6 +50,186 @@ static bool binding_is_int(Bindings *bindings, VarId id, int64_t expected) {
            value->ground.ival == expected;
 }
 
+static void test_term_stability_summary(Arena *arena) {
+    static const bool expected[GV_INTERNAL_TAG + 1u] = {
+        [GV_INT] = true,
+        [GV_FLOAT] = true,
+        [GV_BOOL] = true,
+        [GV_STRING] = true,
+        [GV_BIGINT] = true,
+        [GV_RATIONAL] = true,
+    };
+    bool classification_exact = true;
+    for (unsigned raw = 0u; raw <= (unsigned)GV_INTERNAL_TAG; raw++) {
+        GroundedKind kind = (GroundedKind)raw;
+        Atom probe = {0};
+        probe.kind = ATOM_GROUNDED;
+        probe.ground.gkind = kind;
+        if (atom_grounded_kind_is_term_stable(kind) != expected[raw] ||
+            term_universe_atom_is_stable(&probe) != expected[raw])
+            classification_exact = false;
+    }
+    CHECK(classification_exact,
+          "term stability classifies every grounded kind exactly");
+
+    Atom *stable = atom_expr2(
+        arena, atom_symbol(arena, "StableSummary"), atom_int(arena, 37));
+    StateCell state_cell = {0};
+    Atom *unstable = atom_expr2(
+        arena, atom_symbol(arena, "UnstableSummary"),
+        atom_state(arena, &state_cell));
+    Atom *empty = atom_expr(arena, NULL, 0u);
+    Atom *incomplete = atom_expr_builder_begin(arena, 2u);
+    incomplete->expr.elems[0] = atom_symbol(arena, "IncompleteSummary");
+    incomplete->expr.elems[1] = NULL;
+    incomplete = atom_expr_builder_finish(arena, incomplete);
+    Atom *contextual = atom_expr2(
+        arena, atom_symbol_id(arena, g_builtin_syms.native_handle),
+        atom_string(arena, "resource"));
+    bool propagation_exact = stable && unstable && empty && incomplete &&
+        contextual &&
+        (stable->flags & ATOM_FLAG_TERM_STABLE) != 0u &&
+        term_universe_atom_is_stable(stable) &&
+        (unstable->flags & ATOM_FLAG_TERM_STABLE) == 0u &&
+        !term_universe_atom_is_stable(unstable) &&
+        (empty->flags & ATOM_FLAG_TERM_STABLE) != 0u &&
+        term_universe_atom_is_stable(empty) &&
+        (incomplete->flags & ATOM_FLAG_TERM_STABLE) == 0u &&
+        !term_universe_atom_is_stable(incomplete) &&
+        (contextual->flags & ATOM_FLAG_TERM_STABLE) != 0u &&
+        (contextual->flags & ATOM_FLAG_HASHCONS_ELIGIBLE) == 0u &&
+        term_universe_atom_is_stable(contextual);
+    CHECK(propagation_exact,
+          "term stability composes and unstable children poison parents");
+}
+
+static void test_epoch_identity_and_publication(Arena *ordinary_arena) {
+    HashConsTable hashcons;
+    hashcons_init(&hashcons);
+    Arena shared_arena;
+    arena_init(&shared_arena);
+    arena_set_hashcons(&shared_arena, &hashcons);
+
+    Atom *head = atom_symbol(&shared_arena, "IdentityProbe");
+    Atom *nan_left = hashcons_get(
+        &hashcons, atom_float(&shared_arena, NAN));
+    Atom *nan_right = hashcons_get(
+        &hashcons, atom_float(&shared_arena, NAN));
+    Atom *shared_nan = atom_expr2(&shared_arena, head, nan_left);
+    Atom *distinct_nan = atom_expr2(&shared_arena, head, nan_right);
+    Atom *local_expression = atom_expr2(
+        ordinary_arena, atom_symbol(ordinary_arena, "LocalPublication"),
+        atom_int(ordinary_arena, 31));
+    Atom *declined_publication = hashcons_get(
+        &hashcons, local_expression);
+    CHECK(local_expression && local_expression->arena_id != 0u &&
+              declined_publication == local_expression,
+          "hash-cons publication declines arena-local expression children");
+    Atom *global_int_41 = hashcons_get(
+        &hashcons, atom_int(&shared_arena, 41));
+    Atom *global_int_43 = hashcons_get(
+        &hashcons, atom_int(&shared_arena, 43));
+    Atom *publishable = atom_expr2(
+        ordinary_arena, head, global_int_41);
+    Atom *published = hashcons_get(&hashcons, publishable);
+    CHECK(publishable && published && published != publishable &&
+              published->arena_id == 0u,
+          "hash-cons publication admits expressions with global children");
+
+    Atom malformed_var = {
+        .kind = ATOM_VAR,
+        .flags = ATOM_FLAG_HASH_STABLE |
+                 ATOM_FLAG_HASHCONS_ELIGIBLE |
+                 ATOM_FLAG_ARENA_CLOSED,
+        .var_id = test_id(7990u),
+        .sym_id = head->sym_id,
+        .arena_id = ordinary_arena->identity,
+    };
+    CHECK(hashcons_get(&hashcons, &malformed_var) == &malformed_var,
+          "hash-cons publication rejects a variable without HAS_VARS");
+
+    StateCell malformed_state_cell = {0};
+    Atom malformed_state = *atom_int(ordinary_arena, 47);
+    malformed_state.ground.gkind = GV_STATE;
+    malformed_state.ground.ptr = &malformed_state_cell;
+    CHECK(hashcons_get(&hashcons, &malformed_state) == &malformed_state,
+          "hash-cons publication rejects stale value flags on a state");
+
+    Atom *stale_hash = atom_expr2(
+        ordinary_arena, head, global_int_41);
+    (void)atom_hash(stale_hash);
+    stale_hash->expr.elems[1] = global_int_43;
+    CHECK(hashcons_get(&hashcons, stale_hash) == stale_hash,
+          "hash-cons publication rejects a stale structural hash");
+    BindingsBuilder values;
+    bool values_ready = bindings_builder_init(&values, NULL);
+    uint32_t values_mark = values_ready
+        ? bindings_builder_save(&values) : 0u;
+    bool shared_nan_matches = values_ready && shared_nan &&
+        shared_nan->arena_id == 0u &&
+        (shared_nan->flags & ATOM_FLAG_HASHCONS_ELIGIBLE) != 0u &&
+        !atom_has_vars(shared_nan) &&
+        match_atoms_epoch_view_builder(
+            shared_nan, 11u, 0u, shared_nan,
+            &values, &shared_arena, 13u) &&
+        bindings_builder_save(&values) == values_mark;
+    bool distinct_nan_fails = values_ready && distinct_nan &&
+        nan_left != nan_right &&
+        !match_atoms_epoch_view_builder(
+            shared_nan, 11u, 0u, distinct_nan,
+            &values, &shared_arena, 13u) &&
+        bindings_builder_save(&values) == values_mark;
+    CHECK(shared_nan_matches,
+          "global identity settles a shared variable-free NaN term");
+    CHECK(distinct_nan_fails,
+          "epoch-view matching does not equate distinct NaN terms");
+    if (values_ready)
+        bindings_builder_free(&values);
+
+    Atom *epoch_var = atom_var_with_id(
+        &shared_arena, "epoch-identity", test_id(7991u));
+    Atom *epoch_term = atom_expr2(&shared_arena, head, epoch_var);
+    BindingsBuilder epochs;
+    bool epochs_ready = bindings_builder_init(&epochs, NULL);
+    bool epochs_match = epochs_ready && epoch_term &&
+        match_atoms_epoch_view_builder(
+            epoch_term, 17u, 0u, epoch_term,
+            &epochs, &shared_arena, 19u);
+    Atom *epoch_value = epochs_match
+        ? bindings_lookup_id(
+              &epochs.current,
+              var_epoch_id(epoch_var->var_id, 17u))
+        : NULL;
+    CHECK(epochs_match &&
+              epochs.current.len == 1u &&
+              epoch_value && epoch_value->kind == ATOM_VAR &&
+              epoch_value->var_id == var_epoch_id(epoch_var->var_id, 19u),
+          "shared variable-bearing terms preserve distinct activation epochs");
+    if (epochs_ready)
+        bindings_builder_free(&epochs);
+
+    Atom *cycle = atom_expr2(
+        ordinary_arena, atom_symbol(ordinary_arena, "IdentityCycle"),
+        atom_symbol(ordinary_arena, "seed"));
+    if (cycle)
+        cycle->expr.elems[1] = cycle;
+    BindingsBuilder cyclic;
+    bool cyclic_ready = bindings_builder_init(&cyclic, NULL);
+    uint32_t cyclic_mark = cyclic_ready
+        ? bindings_builder_save(&cyclic) : 0u;
+    CHECK(cyclic_ready && cycle && cycle->arena_id != 0u &&
+              !match_atoms_epoch_view_builder(
+                  cycle, 23u, 0u, cycle,
+                  &cyclic, ordinary_arena, 29u) &&
+              bindings_builder_save(&cyclic) == cyclic_mark,
+          "epoch-view matching preserves fail-closed cyclic rejection");
+    if (cyclic_ready)
+        bindings_builder_free(&cyclic);
+
+    arena_free(&shared_arena);
+    hashcons_free(&hashcons);
+}
+
 int main(void) {
     SymbolTable symbols;
     symbol_table_init(&symbols);
@@ -59,6 +242,9 @@ int main(void) {
 
     Arena arena;
     arena_init(&arena);
+
+    test_term_stability_summary(&arena);
+    test_epoch_identity_and_publication(&arena);
 
     Bindings base;
     CHECK(build_bindings(&arena, 64u, &base),
@@ -186,6 +372,43 @@ int main(void) {
     Bindings clone;
     CHECK(bindings_clone(&clone, &base),
           "clone preserves indexed lookup");
+
+    BindingsBuilder prepared;
+    bool prepared_initialized =
+        bindings_builder_init(&prepared, NULL);
+    uint64_t prepared_growth = prepared_initialized
+        ? prepared.growth_count : 0u;
+    CHECK(prepared_initialized &&
+              bindings_builder_prepare_fresh_entries(
+                  &prepared, 20u) &&
+              prepared.current.cap >= 20u &&
+              prepared.trail_cap >= 20u &&
+              prepared.current.len == 0u &&
+              prepared.trail_len == 0u &&
+              prepared.growth_count == prepared_growth,
+          "fresh-entry preparation changes capacity but not logical state");
+    Binding *prepared_entries = prepared_initialized
+        ? prepared.current.entries : NULL;
+    BindingsBuilderTrailEntry *prepared_trail = prepared_initialized
+        ? prepared.trail : NULL;
+    bool prepared_without_growth = prepared_initialized;
+    for (uint32_t index = 0u;
+         prepared_without_growth && index < 20u; index++) {
+        prepared_without_growth = bindings_builder_add_id_fresh(
+            &prepared, test_id(3000u + index), SYMBOL_ID_NONE,
+            atom_int(&arena, (int64_t)index));
+    }
+    CHECK(prepared_without_growth &&
+              prepared.current.entries == prepared_entries &&
+              prepared.trail == prepared_trail &&
+              prepared.current.len == 20u &&
+              prepared.trail_len == 20u,
+          "prepared activation entries avoid geometric storage growth");
+    CHECK(!bindings_builder_prepare_fresh_entries(NULL, 1u),
+          "fresh-entry preparation rejects a missing builder");
+    if (prepared_initialized)
+        bindings_builder_free(&prepared);
+
     BindingsBuilder branch;
     bindings_builder_init_owned(&branch, &clone);
     uint32_t root_mark = bindings_builder_save(&branch);
@@ -207,22 +430,30 @@ int main(void) {
     bool branch_visible =
         binding_is_int(&branch.current, branch_a, 2000) &&
         binding_is_int(&branch.current, branch_b, 2001);
+    uint64_t rollback_before = branch.rollback_count;
     bindings_builder_rollback(&branch, branch_mark);
     bool inner_rolled_back =
         binding_is_int(&branch.current, branch_a, 2000) &&
-        bindings_lookup_id(&branch.current, branch_b) == NULL;
+        bindings_lookup_id(&branch.current, branch_b) == NULL &&
+        branch.rollback_count == rollback_before + 1u;
+    bindings_builder_rollback(&branch, root_mark);
+    uint64_t rollback_after_restore = branch.rollback_count;
     bindings_builder_rollback(&branch, root_mark);
     bool root_rolled_back =
         bindings_lookup_id(&branch.current, branch_a) == NULL &&
         bindings_lookup_id(&branch.current, branch_b) == NULL &&
+        bindings_lookup_id(&base, branch_a) == NULL &&
+        bindings_lookup_id(&base, branch_b) == NULL &&
         binding_is_int(&branch.current, late_id, 1000) &&
         branch.current.legacy_fallback_count == 0u &&
         branch.current.private_entry_count == 0u &&
         branch.current.private_constraint_count == 0u &&
-        branch.growth_count == growth_after_first + 1u;
+        branch.growth_count == growth_after_first + 1u &&
+        rollback_after_restore == rollback_before + 2u &&
+        branch.rollback_count == rollback_after_restore;
     CHECK(branch_added && duplicate_no_growth && branch_visible &&
               inner_rolled_back && root_rolled_back,
-          "rollback restores logical state without erasing or inventing work");
+          "write and restore revisions distinguish rollback ABA exactly");
     bindings_builder_take(&branch, &clone);
 
     CHECK(sizeof(BindingsBuilderTrailEntry) <= 16u,
@@ -645,6 +876,83 @@ int main(void) {
           "epoch roots retain a lazy activation namespace and its transitive closure");
     bindings_free(&epoch_projected);
 
+    Arena support_arena;
+    TermUniverse support_universe;
+    arena_init(&support_arena);
+    term_universe_init(&support_universe);
+    term_universe_set_persistent_arena(
+        &support_universe, &support_arena);
+    AtomId epoch_local_atom_id = term_universe_store_atom_id(
+        &support_universe, NULL, epoch_local);
+    Atom *canonical_epoch_local = term_universe_get_atom(
+        &support_universe, epoch_local_atom_id);
+    const CettaTermVariableSupport *epoch_support = NULL;
+    BindingsEpochRoot summarized_epoch_root = {
+        .atom = canonical_epoch_local,
+        .epoch = 17u,
+    };
+    bool support_ready =
+        epoch_local_atom_id != CETTA_ATOM_ID_NONE &&
+        canonical_epoch_local != NULL &&
+        canonical_epoch_local->kind == ATOM_VAR &&
+        term_universe_variable_support(
+            &support_universe, epoch_local_atom_id,
+            &epoch_support) &&
+        epoch_support != NULL;
+    summarized_epoch_root.variable_support = epoch_support;
+    BindingsEpochRoot traversed_epoch_root = {
+        .atom = canonical_epoch_local,
+        .epoch = 17u,
+    };
+    VarId canonical_epoch_id = support_ready
+        ? var_epoch_id(canonical_epoch_local->var_id, 17u)
+        : VAR_ID_NONE;
+    Bindings canonical_epoch_environment;
+    bindings_init(&canonical_epoch_environment);
+    bool canonical_epoch_fixture =
+        support_ready &&
+        bindings_add_id(
+            &canonical_epoch_environment, test_id(7199u),
+            SYMBOL_ID_NONE, atom_int(&arena, -1)) &&
+        bindings_add_id(
+            &canonical_epoch_environment, canonical_epoch_id,
+            canonical_epoch_local->sym_id, epoch_outer) &&
+        bindings_add_id(
+            &canonical_epoch_environment, epoch_outer->var_id,
+            epoch_outer->sym_id, atom_int(&arena, 77)) &&
+        bindings_add_id(
+            &canonical_epoch_environment, test_id(7202u),
+            SYMBOL_ID_NONE, atom_int(&arena, -2));
+    uint32_t traversed_epoch_marks[3] = {1u, 2u, 4u};
+    uint32_t summarized_epoch_marks[3] = {1u, 2u, 4u};
+    Bindings traversed_epoch_projected;
+    Bindings summarized_epoch_projected;
+    bindings_init(&traversed_epoch_projected);
+    bindings_init(&summarized_epoch_projected);
+    CHECK(canonical_epoch_fixture &&
+              bindings_project_reachable_with_epoch_roots_and_entry_marks(
+                  &canonical_epoch_environment, NULL, 0u,
+                  &traversed_epoch_root, 1u,
+                  traversed_epoch_marks, 3u,
+                  &traversed_epoch_projected) &&
+              bindings_project_reachable_with_epoch_roots_and_entry_marks(
+                  &canonical_epoch_environment, NULL, 0u,
+                  &summarized_epoch_root, 1u,
+                  summarized_epoch_marks, 3u,
+                  &summarized_epoch_projected) &&
+              bindings_eq(
+                  &traversed_epoch_projected,
+                  &summarized_epoch_projected) &&
+              memcmp(traversed_epoch_marks,
+                     summarized_epoch_marks,
+                     sizeof(traversed_epoch_marks)) == 0,
+          "intrinsic variable support is extensionally equal to epoch-root traversal");
+    bindings_free(&traversed_epoch_projected);
+    bindings_free(&summarized_epoch_projected);
+    bindings_free(&canonical_epoch_environment);
+    term_universe_free(&support_universe);
+    arena_free(&support_arena);
+
     BindingsBuilder epoch_branch = {0};
     bool epoch_branch_initialized =
         bindings_builder_init(&epoch_branch, &epoch_environment);
@@ -782,6 +1090,354 @@ int main(void) {
               activation_ground_resolved == NULL,
           "an invalid direct-view boundary fails closed");
     bindings_free(&activation_environment);
+
+    Atom *dense_left = atom_var(&arena, "dense-left");
+    Atom *dense_right = atom_var(&arena, "dense-right");
+    Atom *dense_open = atom_var(&arena, "dense-open");
+    Atom *dense_outer = atom_var(&arena, "dense-outer");
+    Atom *dense_candidate = atom_var(&arena, "dense-candidate");
+    Atom *dense_value = atom_expr2(
+        &arena, atom_symbol(&arena, "DenseValue"),
+        atom_int(&arena, 7500));
+    Atom *dense_source = atom_expr3(
+        &arena, atom_symbol(&arena, "DenseCall"), dense_left,
+        atom_expr2(
+            &arena, atom_symbol(&arena, "DenseTail"), dense_right));
+    Atom *dense_query = atom_expr3(
+        &arena, atom_symbol(&arena, "DenseCall"), dense_candidate,
+        atom_expr2(
+            &arena, atom_symbol(&arena, "DenseTail"), dense_candidate));
+    VarId dense_ids[3] = {
+        dense_left->var_id,
+        dense_right->var_id,
+        dense_open->var_id,
+    };
+    Atom *dense_variables[3] = {
+        dense_left,
+        dense_right,
+        dense_open,
+    };
+    for (uint32_t left_index = 0u; left_index < 3u; left_index++) {
+        for (uint32_t right_index = left_index + 1u;
+             right_index < 3u; right_index++) {
+            if (dense_ids[right_index] >= dense_ids[left_index])
+                continue;
+            VarId id_swap = dense_ids[left_index];
+            dense_ids[left_index] = dense_ids[right_index];
+            dense_ids[right_index] = id_swap;
+            Atom *variable_swap = dense_variables[left_index];
+            dense_variables[left_index] = dense_variables[right_index];
+            dense_variables[right_index] = variable_swap;
+        }
+    }
+    uint32_t dense_left_slot = UINT32_MAX;
+    uint32_t dense_open_slot = UINT32_MAX;
+    for (uint32_t index = 0u; index < 3u; index++) {
+        if (dense_ids[index] == dense_left->var_id)
+            dense_left_slot = index;
+        if (dense_ids[index] == dense_open->var_id)
+            dense_open_slot = index;
+    }
+    Bindings dense_environment;
+    bindings_init(&dense_environment);
+    bool dense_fixture =
+        bindings_add_var(
+            &dense_environment, dense_outer, dense_value);
+    uint32_t dense_first_entry = dense_environment.len;
+    dense_fixture = dense_fixture &&
+        bindings_add_id(
+            &dense_environment,
+            var_epoch_id(dense_left->var_id, 67u),
+            dense_left->sym_id, dense_outer) &&
+        bindings_add_id(
+            &dense_environment,
+            var_epoch_id(dense_right->var_id, 67u),
+            dense_right->sym_id, dense_value);
+    BindingsBuilder dense_frame_builder;
+    bool dense_frame_ready = dense_fixture && bindings_builder_init(
+        &dense_frame_builder, &dense_environment);
+    BindingsDenseEpochFrame dense_frame;
+    bindings_dense_epoch_frame_init(&dense_frame);
+    bool dense_prepared = dense_frame_ready &&
+        bindings_dense_epoch_frame_prepare(
+            &dense_frame, &dense_frame_builder,
+            dense_ids, dense_variables, 3u, 67u,
+            dense_first_entry);
+    Atom *dense_reference = dense_prepared
+        ? bindings_apply_epoch_then_all(
+              &dense_frame_builder.current, &arena, dense_source,
+              67u, dense_first_entry)
+        : NULL;
+    Atom *dense_compiled = dense_prepared
+        ? bindings_apply_dense_epoch_frame_then_all(
+              &dense_frame_builder, &arena, dense_source,
+              &dense_frame)
+        : NULL;
+    CHECK(dense_reference && dense_compiled &&
+              atom_eq(dense_reference, dense_compiled),
+          "dense activation application equals the authoritative epoch view");
+    Atom *dense_slot_value = dense_prepared &&
+            dense_left_slot != UINT32_MAX
+        ? bindings_apply_dense_epoch_frame_slot_then_all(
+              &dense_frame_builder, &arena, &dense_frame,
+              dense_left,
+              dense_left_slot)
+        : NULL;
+    Atom *dense_slot_open = dense_prepared &&
+            dense_open_slot != UINT32_MAX
+        ? bindings_apply_dense_epoch_frame_slot_then_all(
+              &dense_frame_builder, &arena, &dense_frame,
+              dense_open,
+              dense_open_slot)
+        : NULL;
+    Atom *dense_slot_root = dense_prepared &&
+            dense_left_slot != UINT32_MAX
+        ? bindings_resolve_dense_epoch_frame_slot_root(
+              &dense_frame_builder, &arena, &dense_frame,
+              dense_left,
+              dense_left_slot)
+        : NULL;
+    CHECK(dense_slot_value == dense_value && dense_slot_open &&
+              dense_slot_open->kind == ATOM_VAR &&
+              dense_slot_open->var_id ==
+                  var_epoch_id(dense_open->var_id, 67u) &&
+              dense_slot_root == dense_value,
+          "compiler-known activation slots resolve bound and open values exactly");
+
+    Atom *dense_mismatched_slot = dense_prepared &&
+            dense_left_slot != UINT32_MAX
+        ? bindings_resolve_dense_epoch_frame_slot_root(
+              &dense_frame_builder, &arena, &dense_frame,
+              dense_right, dense_left_slot)
+        : NULL;
+    CHECK(!dense_mismatched_slot,
+          "a compiled slot declines when it names a different source variable");
+
+    BindingsBuilder dense_reference_builder;
+    BindingsBuilder dense_compiled_builder;
+    bool dense_reference_ready = bindings_builder_init(
+        &dense_reference_builder, &dense_environment);
+    bool dense_compiled_ready = bindings_builder_init(
+        &dense_compiled_builder, &dense_environment);
+    Arena dense_reference_arena;
+    Arena dense_compiled_arena;
+    arena_init(&dense_reference_arena);
+    arena_init(&dense_compiled_arena);
+    BindingsDenseEpochFrame dense_match_frame;
+    bindings_dense_epoch_frame_init(&dense_match_frame);
+    bool dense_match_prepared = dense_compiled_ready &&
+        bindings_dense_epoch_frame_prepare(
+            &dense_match_frame, &dense_compiled_builder,
+            dense_ids, dense_variables, 3u, 67u,
+            dense_first_entry);
+    Atom *dense_materialized = dense_reference_ready
+        ? bindings_apply_epoch_then_all(
+              &dense_reference_builder.current,
+              &dense_reference_arena, dense_source,
+              67u, dense_first_entry)
+        : NULL;
+    bool dense_reference_match = dense_materialized &&
+        match_atoms_epoch_builder(
+            dense_materialized, dense_query,
+            &dense_reference_builder, &dense_reference_arena, 71u);
+    bool dense_compiled_match = dense_match_prepared &&
+        match_atoms_dense_epoch_view_builder(
+            dense_source, &dense_match_frame, dense_query,
+            &dense_compiled_builder, &dense_compiled_arena, 71u);
+    CHECK(dense_reference_match && dense_compiled_match &&
+              bindings_eq(
+                  &dense_reference_builder.current,
+                  &dense_compiled_builder.current),
+          "dense activation matching equals materialize-then-match");
+
+    uint32_t dense_refresh_mark = dense_frame_ready
+        ? bindings_builder_save(&dense_frame_builder) : 0u;
+    Atom *dense_open_value = atom_int(&arena, 7501);
+    bool dense_refreshed = dense_frame_ready && dense_prepared &&
+        bindings_builder_add_id_fresh(
+            &dense_frame_builder,
+            var_epoch_id(dense_open->var_id, 67u),
+            dense_open->sym_id, dense_open_value) &&
+        bindings_dense_epoch_frame_refresh(
+            &dense_frame, &dense_frame_builder);
+    Atom *dense_refreshed_slot = dense_refreshed &&
+            dense_open_slot != UINT32_MAX
+        ? bindings_apply_dense_epoch_frame_slot_then_all(
+              &dense_frame_builder, &arena,
+              &dense_frame, dense_open, dense_open_slot)
+        : NULL;
+    CHECK(dense_refreshed &&
+              dense_frame.scanned_len ==
+                  dense_frame_builder.current.len &&
+              dense_refreshed_slot == dense_open_value,
+          "dense activation refresh scans only an appended binding suffix");
+
+    uint64_t dense_refresh_rollbacks = dense_frame_ready
+        ? dense_frame_builder.rollback_count : 0u;
+    if (dense_frame_ready) {
+        bindings_builder_rollback(
+            &dense_frame_builder, dense_refresh_mark);
+    }
+    Atom *dense_replacement_value = atom_int(&arena, 7502);
+    bool dense_replaced_same_length = dense_frame_ready &&
+        bindings_builder_add_id_fresh(
+            &dense_frame_builder,
+            var_epoch_id(dense_open->var_id, 67u),
+            dense_open->sym_id, dense_replacement_value) &&
+        dense_frame_builder.current.len == dense_frame.scanned_len;
+    Atom *dense_stale_consumer = dense_replaced_same_length
+        ? bindings_resolve_dense_epoch_frame_slot_root(
+              &dense_frame_builder, &arena, &dense_frame,
+              dense_open, dense_open_slot)
+        : NULL;
+    bool dense_aba_rejected = dense_replaced_same_length &&
+        !dense_stale_consumer &&
+        dense_frame_builder.rollback_count ==
+            dense_refresh_rollbacks + 1u &&
+        !bindings_dense_epoch_frame_refresh(
+            &dense_frame, &dense_frame_builder);
+    bool dense_replacement_rebuilt = dense_aba_rejected &&
+        bindings_dense_epoch_frame_prepare(
+            &dense_frame, &dense_frame_builder,
+            dense_ids, dense_variables, 3u, 67u,
+            dense_first_entry);
+    Atom *dense_replacement_slot = dense_replacement_rebuilt &&
+            dense_open_slot != UINT32_MAX
+        ? bindings_apply_dense_epoch_frame_slot_then_all(
+              &dense_frame_builder, &arena,
+              &dense_frame, dense_open, dense_open_slot)
+        : NULL;
+    CHECK(dense_replacement_slot == dense_replacement_value,
+          "equal-length rollback and reappend rejects a stale dense frame");
+
+    if (dense_frame_ready) {
+        bindings_builder_rollback(
+            &dense_frame_builder, dense_refresh_mark);
+    }
+    bool dense_shrink_rejected = dense_frame_ready &&
+        !bindings_dense_epoch_frame_refresh(
+            &dense_frame, &dense_frame_builder);
+    bool dense_rebuilt = dense_shrink_rejected &&
+        bindings_dense_epoch_frame_prepare(
+            &dense_frame, &dense_frame_builder,
+            dense_ids, dense_variables, 3u, 67u,
+            dense_first_entry);
+    Atom *dense_rebuilt_open = dense_rebuilt &&
+            dense_open_slot != UINT32_MAX
+        ? bindings_apply_dense_epoch_frame_slot_then_all(
+              &dense_frame_builder, &arena,
+              &dense_frame, dense_open, dense_open_slot)
+        : NULL;
+    CHECK(dense_rebuilt && dense_rebuilt_open &&
+              dense_rebuilt_open->kind == ATOM_VAR &&
+              dense_rebuilt_open->var_id ==
+                  var_epoch_id(dense_open->var_id, 67u),
+          "rollback rejects append refresh and a rebuild clears stale slots");
+
+    dense_frame.slot_generation = UINT32_MAX;
+    bool dense_generation_wrapped = dense_frame_ready &&
+        bindings_dense_epoch_frame_prepare(
+            &dense_frame, &dense_frame_builder,
+            dense_ids, dense_variables, 3u, 67u,
+            dense_first_entry);
+    Atom *dense_wrapped_open = dense_generation_wrapped &&
+            dense_open_slot != UINT32_MAX
+        ? bindings_apply_dense_epoch_frame_slot_then_all(
+              &dense_frame_builder, &arena,
+              &dense_frame, dense_open, dense_open_slot)
+        : NULL;
+    CHECK(dense_generation_wrapped &&
+              dense_frame.slot_generation == 1u &&
+              dense_wrapped_open &&
+              dense_wrapped_open->kind == ATOM_VAR &&
+              dense_wrapped_open->var_id ==
+                  var_epoch_id(dense_open->var_id, 67u),
+          "dense slot generation wrap clears every stale presence stamp");
+
+    BindingsDenseEpochFrame dense_saturated_frame;
+    bindings_dense_epoch_frame_init(&dense_saturated_frame);
+    uint64_t dense_saved_growth = dense_frame_builder.growth_count;
+    uint64_t dense_saved_rollbacks = dense_frame_builder.rollback_count;
+    dense_frame_builder.growth_count = UINT64_MAX;
+    dense_frame_builder.rollback_count = UINT64_MAX;
+    bool dense_saturation_declined =
+        !bindings_dense_epoch_frame_prepare(
+            &dense_saturated_frame, &dense_frame_builder,
+            dense_ids, dense_variables, 3u, 67u,
+            dense_first_entry);
+    Atom *dense_saturation_reference = bindings_apply_epoch_then_all(
+        &dense_frame_builder.current, &arena, dense_source,
+        67u, dense_first_entry);
+    CHECK(dense_saturation_declined && dense_saturation_reference &&
+              atom_eq(dense_saturation_reference, dense_reference),
+          "saturated frame revisions decline to authoritative application");
+    dense_frame_builder.growth_count = dense_saved_growth;
+    dense_frame_builder.rollback_count = dense_saved_rollbacks;
+    bindings_dense_epoch_frame_free(&dense_saturated_frame);
+
+    VarId dense_unsorted_ids[2] = {
+        dense_ids[1], dense_ids[0],
+    };
+    Atom *dense_unsorted_variables[2] = {
+        dense_variables[1], dense_variables[0],
+    };
+    BindingsDenseEpochFrame dense_invalid_frame;
+    bindings_dense_epoch_frame_init(&dense_invalid_frame);
+    CHECK(dense_frame_ready &&
+              !bindings_dense_epoch_frame_prepare(
+                  &dense_invalid_frame, &dense_frame_builder,
+                  dense_unsorted_ids, dense_unsorted_variables,
+                  2u, 67u, dense_first_entry),
+          "dense activation admission rejects an unsorted variable inventory");
+    bindings_dense_epoch_frame_free(&dense_invalid_frame);
+
+    /* A frame is tied to one builder incarnation, not merely its stack
+     * address.  Reinitializing the same object with matching counts must not
+     * revive cached values from the former environment. */
+    BindingsBuilder dense_reinit_builder;
+    BindingsDenseEpochFrame dense_reinit_frame;
+    bindings_dense_epoch_frame_init(&dense_reinit_frame);
+    bool dense_reinit_ready = bindings_builder_init(
+        &dense_reinit_builder, &dense_environment);
+    bool dense_reinit_prepared = dense_reinit_ready &&
+        bindings_dense_epoch_frame_prepare(
+            &dense_reinit_frame, &dense_reinit_builder,
+            dense_ids, dense_variables, 3u, 67u,
+            dense_first_entry);
+    uint64_t dense_old_instance = dense_reinit_builder.instance_id;
+    if (dense_reinit_ready)
+        bindings_builder_free(&dense_reinit_builder);
+    bool dense_same_address_reinit = bindings_builder_init(
+        &dense_reinit_builder, &dense_environment);
+    Atom *dense_reinit_stale_slot =
+        dense_reinit_prepared && dense_same_address_reinit &&
+        dense_left_slot != UINT32_MAX
+        ? bindings_resolve_dense_epoch_frame_slot_root(
+              &dense_reinit_builder, &arena, &dense_reinit_frame,
+              dense_left, dense_left_slot)
+        : NULL;
+    CHECK(dense_reinit_prepared && dense_same_address_reinit &&
+              dense_reinit_builder.instance_id != 0u &&
+              dense_reinit_builder.instance_id != dense_old_instance &&
+              !bindings_dense_epoch_frame_refresh(
+                  &dense_reinit_frame, &dense_reinit_builder) &&
+              !dense_reinit_stale_slot,
+          "dense frames reject a same-address builder reincarnation");
+    bindings_dense_epoch_frame_free(&dense_reinit_frame);
+    if (dense_same_address_reinit)
+        bindings_builder_free(&dense_reinit_builder);
+
+    bindings_dense_epoch_frame_free(&dense_match_frame);
+    arena_free(&dense_compiled_arena);
+    arena_free(&dense_reference_arena);
+    if (dense_compiled_ready)
+        bindings_builder_free(&dense_compiled_builder);
+    if (dense_reference_ready)
+        bindings_builder_free(&dense_reference_builder);
+    bindings_dense_epoch_frame_free(&dense_frame);
+    if (dense_frame_ready)
+        bindings_builder_free(&dense_frame_builder);
+    bindings_free(&dense_environment);
 
     /* A parser-style reduction and a rule-machine-style repeated slot both
      * exercise the generic activation view.  The reference path first

@@ -1275,7 +1275,11 @@ static CettaMatchDecisionSelectState match_decision_select_query(
                 best_path = path_index;
                 selected_pivot = true;
             }
-            if (accepted == 0u)
+            /* The lane-owned verifier checks every survivor against the
+             * complete structural pattern.  Once a path leaves at most one
+             * candidate, later paths cannot reduce matcher work: the verifier
+             * already distinguishes that survivor from the empty set. */
+            if (accepted <= 1u)
                 break;
         }
     }

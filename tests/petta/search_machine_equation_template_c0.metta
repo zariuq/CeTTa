@@ -1,5 +1,5 @@
-; Ground calls in C0 use admission-time head/body programs.  The reference
-; matcher remains authoritative for every declined call.
+; Ground calls in C0 use admission-time LHS matching and RHS instantiation
+; templates. The reference matcher remains authoritative for every decline.
 (= (c0-repeat $same $same) (repeat $same))
 (= (c0-nested (pair $left (box $right)) $left)
    (nested $right))
@@ -12,7 +12,7 @@
 (= (c0-duplicate $value) (duplicate $value))
 (= (c0-duplicate $value) (duplicate $value))
 
-; A body-local variable is outside C0 and must retain reference semantics.
+; An RHS-local variable is outside C0 and must retain reference semantics.
 (= (c0-local $value) (local $fresh))
 
 ; An open caller-visible alias is outside C0 even when its clause has a

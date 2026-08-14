@@ -3,6 +3,7 @@
 #include "generated/he_typing_closed_ground_core_source_binding_v1.generated.h"
 #include "generated/he_typing_consistency_core_source_binding_v1.generated.h"
 #include "he_typing_authority.h"
+#include "match.h"
 #include "space.h"
 #include "stats.h"
 #include "symbol.h"
@@ -157,6 +158,18 @@ int main(void) {
         he_typing_classify_consistency(number, string, 64u));
     assert(core_service->classify_consistency(number, string, 64u) ==
         CETTA_HE_EDGE_NONE);
+    Atom *space_kind = atom_symbol(&persistent, "SpaceType");
+    Atom *space_value_type = atom_expr2(
+        &persistent, atom_symbol(&persistent, "Space"),
+        atom_symbol(&persistent, "Atom"));
+    Bindings space_match;
+    bindings_init(&space_match);
+    assert(match_types(space_value_type, space_kind, &space_match));
+    assert(space_match.len == 0u);
+    assert(core_service->classify_consistency(
+               space_value_type, space_kind, 64u) ==
+           CETTA_HE_EDGE_STRUCTURAL);
+    bindings_free(&space_match);
 
     Atom *list_number = atom_expr2(
         &persistent, atom_symbol(&persistent, "List"), number);

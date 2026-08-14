@@ -244,6 +244,12 @@ static HeEdge consistency(Atom *actual, Atom *expected, uint64_t *fuel) {
 
     if (type_eq(actual, expected)) return HE_EXACT;
 
+    /* This is an authored HE type equivalence, not structural equality.  It
+     * must be visible here because a NONE edge licenses applicability pruning;
+     * the prefilter may never refute a pair accepted by match_types. */
+    if (match_types_space_kind_equivalent(actual, expected))
+        return HE_STRUCT;
+
     /* arrow congruence: consistent iff domains and codomains are, the edge
      * combining the child tags (edge_combine: a dynamic child keeps the whole
      * edge dynamic; top/meta children keep their reason visible). */
