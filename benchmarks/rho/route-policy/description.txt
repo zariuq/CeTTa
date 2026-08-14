@@ -22,7 +22,7 @@ Files:
   f1r3node rholang-cli.
 
 The generated `.mrho` file is CeTTa's strict-core rho concrete syntax; the
-generated `.rho` file is the surface rho/Rholang spelling used for
+generated `.rho` file is the syntax rho/Rholang spelling used for
 cross-engine runs.
 
 Use ROUTE_POLICY=trusted or ROUTE_POLICY=backup to select the allowed edge tag.

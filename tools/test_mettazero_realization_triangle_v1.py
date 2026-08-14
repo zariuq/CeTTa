@@ -315,13 +315,13 @@ def main() -> int:
     )
     program = source_program(qsym("fact"), qsym("fact"), equation)
 
-    query_surface = qapp(qsym("zero-query"), qsym("fact"), qsym("hit"))
+    query_syntax = qapp(qsym("zero-query"), qsym("fact"), qsym("hit"))
     classified_query = relation_answers(
         chart,
         sources,
         "zero-classify",
         3,
-        f"(zero-classify request-zero {query_surface} ?request)",
+        f"(zero-classify request-zero {query_syntax} ?request)",
     )
     if len(classified_query) != 1:
         raise GateFailure("query request classification changed")
@@ -356,13 +356,13 @@ def main() -> int:
     )
 
     subject = qapp(qsym("f"), qsym("a"))
-    evaluate_surface = qapp(qsym("eval"), subject)
+    evaluate_syntax = qapp(qsym("eval"), subject)
     classified_evaluate = relation_answers(
         chart,
         sources,
         "zero-classify",
         3,
-        f"(zero-classify request-one {evaluate_surface} ?request)",
+        f"(zero-classify request-one {evaluate_syntax} ?request)",
     )
     if len(classified_evaluate) != 1:
         raise GateFailure("evaluation request classification changed")
@@ -377,14 +377,14 @@ def main() -> int:
         raise GateFailure(f"chart changed query-derived evaluation: {evaluated}")
     require_cli_pair(cetta, "(= (f $x) (g $x)) (eval (f a))", "[(g a)]")
 
-    reify_evaluate_surface = qapp(qsym("reify"), evaluate_surface)
+    reify_evaluate_syntax = qapp(qsym("reify"), evaluate_syntax)
     classified_reify_evaluate = relation_answers(
         chart,
         sources,
         "zero-classify",
         3,
         f"(zero-classify request-reify-evaluate "
-        f"{reify_evaluate_surface} ?request)",
+        f"{reify_evaluate_syntax} ?request)",
     )
     if len(classified_reify_evaluate) != 1:
         raise GateFailure("evaluation reification classification changed")
@@ -405,14 +405,14 @@ def main() -> int:
         "[((g a))]",
     )
 
-    reify_query_surface = qapp(qsym("reify"), query_surface)
+    reify_query_syntax = qapp(qsym("reify"), query_syntax)
     classified_reify_query = relation_answers(
         chart,
         sources,
         "zero-classify",
         3,
         f"(zero-classify request-reify-query "
-        f"{reify_query_surface} ?request)",
+        f"{reify_query_syntax} ?request)",
     )
     if len(classified_reify_query) != 1:
         raise GateFailure("query reification classification changed")
@@ -497,7 +497,7 @@ def main() -> int:
 
     runner_subject = qsym("a")
     runner_continuation = qsym("zero-halt")
-    runner_surface = qapp(
+    runner_syntax = qapp(
         qsym("zero-step"),
         qapp(qsym("zero-pending"), runner_subject, runner_continuation),
     )
@@ -506,7 +506,7 @@ def main() -> int:
         runner_sources,
         "zero-classify",
         3,
-        f"(zero-classify request-runner {runner_surface} ?request)",
+        f"(zero-classify request-runner {runner_syntax} ?request)",
     )
     if len(classified_runner) != 1:
         raise GateFailure("semantic runner classification changed")

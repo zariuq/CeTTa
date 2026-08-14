@@ -1,11 +1,11 @@
-TRACK A — NTT-IN-IMPLEMENTATION CHARTER: lts MODAL SURFACE (Rung 2) + ONE CONFORMANCE SLICE (A2)
+TRACK A — NTT-IN-IMPLEMENTATION CHARTER: lts MODAL SYNTAX (Rung 2) + ONE CONFORMANCE SLICE (A2)
 ================================================================================================
 Date: 2026-06-09
 Scope owner: Codex (implementation).  Charter/spec: analyst.
 Status: ready to hand off.
 
 This charter scopes the next concrete step of the OSLF/NTT integration. It is
-deliberately narrow. It adds a reflective modal surface to the existing lts
+deliberately narrow. It adds a reflective modal syntax to the existing lts
 library and pins ONE conformance slice in the reduction-relation vocabulary that
 NTT is defined over. It does NOT touch the C kernel, does NOT introduce trace
 emission, and does NOT begin the proof-kernel / he-prime / DTT work.
@@ -63,7 +63,7 @@ lts:is-can-step IS diamond(TRUE-pred). The new operators GENERALIZE the two
 quiescence checks the library already ships. These two equalities are the first
 regression anchors (Section 6).
 
-Computation is purely a .metta library surface over the existing frontier — NO C,
+Computation is purely a .metta library syntax over the existing frontier — NO C,
 NO new primitive. Collapse the frontier, apply phi to each successor, and fold:
 
   Reference sketch (lib/lts.metta), matching the Error/quiescence contract that
@@ -89,7 +89,7 @@ NO new primitive. Collapse the frontier, apply phi to each successor, and fold:
                (if $acc True ($phi $q)))))))           ; OR-fold
 
   HE specialization (lib/lts/he.metta), exactly mirroring how the existing HE
-  surface binds to lts:he:step-state + quote:
+  syntax binds to lts:he:step-state + quote:
 
     (: lts:he:box     (-> Atom Atom Bool))   ; phi, state
     (: lts:he:diamond (-> Atom Atom Bool))
@@ -130,7 +130,7 @@ decidability.
 4. THE CONFORMANCE SLICE (A2) — DONE THE TESTING WAY, NOT BY TRACE
 ------------------------------------------------------------------
 Goal: express ONE slice's conformance in the reduction-relation vocabulary NTT
-consumes, WITHOUT introducing any trace/certificate surface.
+consumes, WITHOUT introducing any trace/certificate syntax.
 
   Slice: minimal.eval + result.empty-zero  (this is where the Rung-1 fix lives,
          so the slice certifies the fix already shipped).
@@ -146,8 +146,8 @@ consumes, WITHOUT introducing any trace/certificate surface.
           special.eq-definition, result.empty-zero, result.error-shape,
           nondet.visible-bag
         NOT reduction edges (spatial / policy lane — keep OUT of the diamond/box span):
-          surface.module-import, surface.module-inventory, surface.native-space,
-          profile.surface-policy
+          syntax.module-import, syntax.module-inventory, syntax.native-space,
+          profile.syntax-policy
   (c) Check, BY TEST (bag-equal), that the Lean OSLF diamond over those rules
       (langDiamondUsing) agrees with lts:he:transitions / lts:he:diamond on the
       slice's catalog cases.
@@ -160,11 +160,11 @@ consumes, WITHOUT introducing any trace/certificate surface.
 
 5. NON-GOALS / HARD FENCES
 --------------------------
-  - NO trace or certificate surface. The flag
-      no_runtime_trace_or_certificate_surface: True
+  - NO trace or certificate syntax. The flag
+      no_runtime_trace_or_certificate_syntax: True
     in the generated catalog and the gate at
       scripts/check_he_compat_semantic_suite.py
-    that raises "catalog must explicitly forbid runtime trace/certificate surface"
+    that raises "catalog must explicitly forbid runtime trace/certificate syntax"
     STAY IN PLACE. box/diamond are reflection over the live reduction relation,
     which is categorically different from emit-trace-and-replay. Conformance is
     TESTING (bag-equal); the spec is what gets proven about. This is the ITP
@@ -178,7 +178,7 @@ consumes, WITHOUT introducing any trace/certificate surface.
     exploring it).
   - NO Track B. No proof-kernel slice, no he-prime DTT, no NatRec iota, no Fin/Vec
     indexed families, no "promote witness to theorem anchor." A outranks B.
-  - NO module/import "contract" redesign. The surface.* / profile.* rule-IDs are
+  - NO module/import "contract" redesign. The syntax.* / profile.* rule-IDs are
     spatial/policy, not reduction edges; they stay in the policy lane. The spatial
     half of spatial-behavioral types has no referent in this term-rewrite fragment
     yet (it lands when the atomspace / MORK / PathMap layer is typed — a later
@@ -191,7 +191,7 @@ consumes, WITHOUT introducing any trace/certificate surface.
       lts:he:box / lts:he:diamond in lib/lts/he.metta (HE), each with a type
       signature and an @doc that states the Error/quiescence contract and the
       mixed-Error decision from Section 2.
-  G2. Self-tests pass (these tie the new surface to the existing one):
+  G2. Self-tests pass (these tie the new syntax to the existing one):
         box(const-false)    == is-normal-form        [box(FALSE) = normal form]
         diamond(const-true) == is-can-step           [diamond(TRUE) = can-step]
         box(const-true)     == True   (on non-Error states)
@@ -200,10 +200,10 @@ consumes, WITHOUT introducing any trace/certificate surface.
           box(phi) == (not (diamond(not-phi)))       [box phi = not diamond not phi]
         (De Morgan is the runtime witness of the Galois law langGalois already
          proves on the spec side in TypeSynthesis.lean.)
-  G3. tests/test_lts_surface.metta and tests/test_lts_he_surface.metta extended
+  G3. tests/test_lts_syntax.metta and tests/test_lts_he_syntax.metta extended
       with the above; both green.
   G4. The he-compat semantic suite and test-profiles remain green (no regression),
-      AND the no_runtime_trace_or_certificate_surface gate still passes.
+      AND the no_runtime_trace_or_certificate_syntax gate still passes.
   G5. git diff --stat touches ONLY: lib/lts.metta, lib/lts/he.metta, the two
       test_lts_* files (+ the catalog re-key files IF A2 is done in the same pass).
       No src/*.c changes.

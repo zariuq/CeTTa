@@ -1,9 +1,9 @@
 ; Authored finite-Horn presentation of Prime's post-name-resolution dependent
 ; formation core.  `PrimeTeleBind` represents one already-resolved telescope
 ; binder; bound occurrences use structural Peano indices.  The native Prime
-; elaborator separately lowers named surface binders to integer `idx` atoms.
+; elaborator separately lowers named syntax binders to integer `idx` atoms.
 ; `PrimeCanonicalForm` is therefore an internal canonical judgment, not a
-; claim that canonical `Pi`/`idx` syntax is accepted as a surface `Form`.
+; claim that canonical `Pi`/`idx` syntax is accepted as a syntax `Form`.
 ;
 ; This is deliberately a fragment.  It covers primitive and declared type
 ; names, scoped indices, Pi formation, and telescope lowering.  It does not

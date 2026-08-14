@@ -1,5 +1,5 @@
 ; Regression: full depth-3 forward-chaining outcome count on a PathMap-backed
-; space should match the long-standing native depth-3 witness surface.
+; space should match the long-standing native depth-3 witness syntax.
 ;
 ; This keeps the first serious FC lane separate from the BC/WAM-style tests so
 ; we can measure and reason about the divergence honestly.

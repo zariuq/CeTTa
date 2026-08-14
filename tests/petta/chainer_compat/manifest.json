@@ -1,7 +1,7 @@
 {
   "schema": "cetta.petta-chainer-compat.v1",
   "chainer": {
-    "revision": "2f45e50dbcd55efe5e2817650eb8f2ea70eb15b3",
+    "revision": "b0e24f9b9d7106ccabf51917f1703abf3ab8c570",
     "subtree": "pettachainer/metta"
   },
   "petta": {

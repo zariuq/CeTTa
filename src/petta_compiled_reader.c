@@ -2,9 +2,9 @@
 
 #include "generated/petta_reader_direct_v1.generated.h"
 #include "gslt_direct_reader_v1.h"
+#include "petta_numeric.h"
 #include "symbol.h"
 
-#include <errno.h>
 #include <limits.h>
 #include <stdarg.h>
 #include <stdio.h>
@@ -49,51 +49,6 @@ static bool petta_projection_begin_form(void *raw) {
     return true;
 }
 
-static bool petta_ascii_number_shape(
-    const uint8_t *bytes, size_t len, bool *floating) {
-    size_t index = 0u;
-    bool has_fraction = false;
-    bool has_exponent = false;
-    if (!bytes || len == 0u || !floating)
-        return false;
-    if (bytes[index] == (uint8_t)'+' || bytes[index] == (uint8_t)'-') {
-        index++;
-        if (index == len)
-            return false;
-    }
-    if (bytes[index] < (uint8_t)'0' || bytes[index] > (uint8_t)'9')
-        return false;
-    while (index < len && bytes[index] >= (uint8_t)'0' &&
-           bytes[index] <= (uint8_t)'9')
-        index++;
-    if (index < len && bytes[index] == (uint8_t)'.') {
-        has_fraction = true;
-        index++;
-        if (index == len || bytes[index] < (uint8_t)'0' ||
-            bytes[index] > (uint8_t)'9')
-            return false;
-        while (index < len && bytes[index] >= (uint8_t)'0' &&
-               bytes[index] <= (uint8_t)'9')
-            index++;
-    }
-    if (index < len &&
-        (bytes[index] == (uint8_t)'e' || bytes[index] == (uint8_t)'E')) {
-        has_exponent = true;
-        index++;
-        if (index < len &&
-            (bytes[index] == (uint8_t)'+' || bytes[index] == (uint8_t)'-'))
-            index++;
-        if (index == len || bytes[index] < (uint8_t)'0' ||
-            bytes[index] > (uint8_t)'9')
-            return false;
-        while (index < len && bytes[index] >= (uint8_t)'0' &&
-               bytes[index] <= (uint8_t)'9')
-            index++;
-    }
-    *floating = has_fraction || has_exponent;
-    return index == len;
-}
-
 static char *petta_projection_cstr(
     const uint8_t *bytes, size_t len) {
     char *text;
@@ -111,7 +66,6 @@ static char *petta_projection_cstr(
 static AtomId petta_projection_token_bytes(
     void *raw, const uint8_t *bytes, size_t len) {
     PeTTaProjectionContextV1 *context = raw;
-    bool floating = false;
     if (!context || !context->form_active || !context->universe ||
         len == 0u || (len > 0u && !bytes))
         return CETTA_ATOM_ID_NONE;
@@ -125,26 +79,11 @@ static AtomId petta_projection_token_bytes(
             context->universe,
             symbol_intern_cstr(g_symbols, "false"));
     }
-    if (!memchr(bytes, '\0', len) &&
-        petta_ascii_number_shape(bytes, len, &floating)) {
-        char *text = petta_projection_cstr(bytes, len);
-        AtomId number = CETTA_ATOM_ID_NONE;
-        if (!text)
-            return CETTA_ATOM_ID_NONE;
-        if (floating) {
-            char *end = NULL;
-            double value;
-            errno = 0;
-            value = strtod(text, &end);
-            if (end == text + len && errno == 0)
-                number = tu_intern_float(context->universe, value);
-        } else {
-            number = tu_intern_bigint(context->universe, text);
-        }
-        free(text);
-        if (number != CETTA_ATOM_ID_NONE)
-            return number;
-    }
+    AtomId number = cetta_petta_number_parse_id(
+        context->universe, bytes, len,
+        CETTA_PETTA_NUMBER_SOURCE_TOKEN);
+    if (number != CETTA_ATOM_ID_NONE)
+        return number;
     if (len > UINT32_MAX)
         return CETTA_ATOM_ID_NONE;
     return tu_intern_symbol(

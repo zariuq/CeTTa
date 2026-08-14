@@ -5009,6 +5009,8 @@ static bool is_named_symbol(Atom *atom, const char *name) {
     return atom_is_symbol(atom, name);
 }
 
+bool type_match_uses_space_class_bridge(Atom *actual, Atom *expected);
+
 static bool is_space_value_type(Atom *atom) {
     return atom &&
            atom->kind == ATOM_EXPR &&
@@ -5331,12 +5333,23 @@ fail:
     return false;
 }
 
+/* The public SpaceType name and a concrete (Space discipline) value type
+ * inhabit one runtime space class.  Negative type decisions must consult
+ * this positive relation: it is not derivable from structural consistency
+ * alone. */
+bool type_match_uses_space_class_bridge(Atom *actual, Atom *expected) {
+    return
+        (is_named_symbol(actual, "SpaceType") &&
+         is_space_value_type(expected)) ||
+        (is_named_symbol(expected, "SpaceType") &&
+         is_space_value_type(actual));
+}
+
 bool match_types(Atom *actual, Atom *expected, Bindings *b) {
     /* Atom is the expected-side value top. An actual Atom is not evidence for
        an arbitrary concrete expected type. */
     if (atom_is_symbol_id(expected, g_builtin_syms.atom)) return true;
-    if ((is_named_symbol(actual, "SpaceType") && is_space_value_type(expected)) ||
-        (is_named_symbol(expected, "SpaceType") && is_space_value_type(actual))) {
+    if (type_match_uses_space_class_bridge(actual, expected)) {
         return true;
     }
     return match_decoded_atoms_worklist(actual, expected, b, NULL, true);
@@ -5344,8 +5357,7 @@ bool match_types(Atom *actual, Atom *expected, Bindings *b) {
 
 bool match_types_builder(Atom *actual, Atom *expected, BindingsBuilder *bb) {
     if (atom_is_symbol_id(expected, g_builtin_syms.atom)) return true;
-    if ((is_named_symbol(actual, "SpaceType") && is_space_value_type(expected)) ||
-        (is_named_symbol(expected, "SpaceType") && is_space_value_type(actual))) {
+    if (type_match_uses_space_class_bridge(actual, expected)) {
         return true;
     }
     return match_decoded_atoms_worklist(actual, expected, NULL, bb, true);

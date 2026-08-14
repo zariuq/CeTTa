@@ -22,8 +22,8 @@ Each event has:
 * a nonempty finite collection of funding contributions;
 * a raw spend equal to the multiset sum of those contributions.
 
-A funding contribution is a pair of an opaque funding-surface identity and a
-raw signature multiset.  Funding surfaces and signatures are different types.
+A funding contribution is a pair of an opaque funding-location identity and a
+raw signature multiset.  Funding locations and signatures are different types.
 The runtime emits one contribution for every selected located purse head, so a
 split cover retains several contributions without aggregating occurrences.
 
@@ -39,7 +39,7 @@ in the free commutative monoid of cost signatures.  Effort-object balances,
 quantale totals, and future numerical readings are folds of this measure.
 
 
-CeTTa surface and encoding
+CeTTa syntax and encoding
 ==========================
 
 `lib/lts/rho/cost.metta` exposes:
@@ -58,7 +58,7 @@ Each event has the form:
   (lts:rho:cost:event
     EVENT-ID
     (CAUSE-ID ...)
-    ((lts:rho:cost:funding FUNDING-SURFACE RAW-CONTRIBUTION) ...)
+    ((lts:rho:cost:funding FUNDING-LOCATION RAW-CONTRIBUTION) ...)
     RAW-SPEND)
 
 The ordered event sequence is a presentation of the pomset, not the primary
@@ -113,7 +113,7 @@ from one stack is therefore serialized even when the funded processes are
 otherwise unrelated.
 
 Withdrawals from one purse lineage are ordered, while purses at independent
-surfaces do not acquire a false causal edge from emission order.  A future
+locations do not acquire a false causal edge from emission order.  A future
 change from stacks to token multisets would be a separate semantic decision and
 would require token-occurrence provenance.
 
@@ -170,7 +170,7 @@ The CeTTa fixtures pin:
 * a produced split-endpoint COMM, including both endpoint arcs and its purse-tail arc;
 * two independent firings with no false edge from emission order;
 * two equal-spend firings preserved as distinct events;
-* actual opaque funding surfaces, including split covers;
+* actual opaque funding locations, including split covers;
 * quiescent and malformed cost-term inputs;
 * zero-fuel and search-exhaustion separation;
 * a 20-purse, 10-head combinatorial cover without eager materialization.

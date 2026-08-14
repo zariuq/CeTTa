@@ -4,6 +4,7 @@
 #include "match.h"
 #include "petta_semantics.h"
 #include "petta_specializer.h"
+#include "petta_typecheck_census.h"
 #include "stats.h"
 #include "symbol.h"
 #include "variant_shape.h"
@@ -930,15 +931,25 @@ static bool petta_compiled_c0_enabled(void) {
  * remain valid and are rolled back with the clause choice. */
 static bool petta_clause_slot_aliases_normalized(
     const Bindings *bindings, uint32_t first_entry,
-    uint32_t epoch) {
+    uint32_t epoch, bool *cross_frame_alias) {
+    if (cross_frame_alias)
+        *cross_frame_alias = false;
     if (!bindings || first_entry > bindings->len || epoch == 0u)
         return false;
     for (uint32_t index = first_entry;
          index < bindings->len; index++) {
         const Binding *entry = &bindings->entries[index];
-        if (var_epoch_suffix(entry->var_id) != epoch &&
+        bool entry_is_rule_local =
+            var_epoch_suffix(entry->var_id) == epoch;
+        bool value_is_rule_local =
             entry->val && entry->val->kind == ATOM_VAR &&
-            var_epoch_suffix(entry->val->var_id) == epoch) {
+            var_epoch_suffix(entry->val->var_id) == epoch;
+        if (entry->val && entry->val->kind == ATOM_VAR &&
+            entry_is_rule_local != value_is_rule_local &&
+            cross_frame_alias) {
+            *cross_frame_alias = true;
+        }
+        if (!entry_is_rule_local && value_is_rule_local) {
             return false;
         }
     }
@@ -3468,9 +3479,16 @@ static PettaClauseSlotMatch petta_machine_clause_slot_match(
             (Bindings *)bindings_builder_bindings(builder))) {
         matched = false;
     }
-    if (matched && !petta_clause_slot_aliases_normalized(
-            bindings, activation_first_entry, epoch)) {
-        matched = false;
+    if (matched) {
+        bool cross_frame_alias = false;
+        if (!petta_clause_slot_aliases_normalized(
+                bindings, activation_first_entry, epoch,
+                &cross_frame_alias)) {
+            matched = false;
+        } else if (cross_frame_alias) {
+            CETTA_PETTA_TYPECHECK_CENSUS_HIT(
+                CETTA_PETTA_TYPECHECK_CENSUS_EVENT_CLAUSE_SLOT_ALIAS_PRESERVED);
+        }
     }
     if (!matched) {
         bindings_builder_rollback(builder, mark);
@@ -10980,7 +10998,7 @@ static bool petta_machine_map_atom(
 }
 
 /*
- * PeTTa has two foldl-atom surfaces:
+ * PeTTa has two foldl-atom syntax forms:
  *
  *   (foldl-atom Items Initial AccVar ItemVar Body)
  *   (foldl-atom Items Initial Callable)
@@ -12976,7 +12994,7 @@ static bool petta_machine_dispatch_solve(
     /*
      * SWI's foldl/4 is exposed by PeTTa in function form as
      * `(foldl Callable Items Initial)`.  Normalize it to the native
-     * foldl-atom continuation shape so both surfaces share one relational
+     * foldl-atom continuation shape so both forms share one relational
      * implementation, including step nondeterminism and cut/suspension
      * behavior.
      */

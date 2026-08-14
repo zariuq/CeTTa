@@ -3,7 +3,7 @@
 
 The public fresh reader and alternate literal/shared readers are compared
 through their complete evaluators.  This checks that their identity partitions
-survive parsing, rewriting, evaluation, quotation, typing syntax, result
+survive parsing, rewriting, evaluation, quotation, typing interfaces, result
 projection, and grounded references.
 """
 

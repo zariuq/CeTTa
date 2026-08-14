@@ -24,24 +24,24 @@ CETTA_PRESENTATION_ROOT = $(CETTA_ROOT)/experiments/gslt2parse_foundation/presen
 .PHONY: all
 all: $(FOREIGN_LIBRARY) $(PIPELINE_FOREIGN_LIBRARY)
 
-.PHONY: test test-prolog test-surface
-test: test-prolog test-surface
+.PHONY: test test-prolog test-syntax
+test: test-prolog test-syntax
 
 test-prolog: all
 	cd $(PETTA_EXPERIMENT_DIR) && \
 		swipl --stack_limit=8g -q -s test_parser_pack_native_v1.pl -- \
 		$(CETTA_PRESENTATION_ROOT)
 
-test-surface: all
+test-syntax: all
 	@raw=$$(cd $(PETTA_ROOT) && \
 		./run.sh \
-			experiments/gslt2parse_foundation/test_parser_pack_native_surface_v1.metta \
+			experiments/gslt2parse_foundation/test_parser_pack_native_syntax_v1.metta \
 			$(CETTA_PRESENTATION_ROOT) --silent 2>&1); \
 	status=$$?; \
 	result=$$(printf '%s\n' "$$raw" | rg '^(true|completed|unsupported)$$'); \
 	expected=$$(printf 'true\ncompleted\nunsupported'); \
 	if [ "$$status" -eq 0 ] && [ "$$result" = "$$expected" ]; then \
-		echo '(ParserPackNativePeTTaSurfaceV1Summary 1 1 0)'; \
+		echo '(ParserPackNativePeTTaSyntaxV1Summary 1 1 0)'; \
 	else \
 		printf '%s\n' "$$raw"; \
 		exit 1; \

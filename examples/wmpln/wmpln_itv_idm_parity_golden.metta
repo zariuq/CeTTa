@@ -1,4 +1,4 @@
-; Golden parity checks for the Lean ITV/IDM surface.
+; Golden parity checks for the Lean ITV/IDM syntax.
 ; These mirror theorem-level arithmetic plus the typed bridge/provenance
 ; discipline, without claiming a full credal-set runtime in CeTTa.
 

@@ -2409,6 +2409,27 @@ static SymbolId petta_mutated_source_head(Atom *atom) {
     return SYMBOL_ID_NONE;
 }
 
+static void petta_record_release_owned(
+    PettaSpecializationRecord *record) {
+    if (!record)
+        return;
+    for (size_t artifact = 0u;
+         artifact < record->artifact_len; artifact++) {
+        petta_pattern_free(record->artifacts[artifact].pattern);
+    }
+    for (size_t selector = 0u;
+         selector < record->selector_len; selector++) {
+        free(record->selectors[selector].path);
+    }
+    free(record->selectors);
+    free(record->artifacts);
+    record->selectors = NULL;
+    record->selector_len = 0u;
+    record->artifacts = NULL;
+    record->artifact_len = 0u;
+    record->artifact_cap = 0u;
+}
+
 static void petta_remove_record_at(size_t index) {
     PettaSpecializationRecord *record =
         &g_petta_specializations.items[index];
@@ -2422,17 +2443,7 @@ static void petta_remove_record_at(size_t index) {
                 record->artifacts[artifact - 1u].atom);
         }
     }
-    for (size_t artifact = 0u;
-         artifact < record->artifact_len; artifact++) {
-        petta_pattern_free(
-            record->artifacts[artifact].pattern);
-    }
-    for (size_t selector = 0u;
-         selector < record->selector_len; selector++) {
-        free(record->selectors[selector].path);
-    }
-    free(record->selectors);
-    free(record->artifacts);
+    petta_record_release_owned(record);
     g_petta_specializations.items[index] =
         g_petta_specializations.items[
             g_petta_specializations.len - 1u];
@@ -2620,15 +2631,8 @@ petta_specializer_pattern_child(
 void petta_specializer_reset_thread(void) {
     for (size_t index = 0u;
          index < g_petta_specializations.len; index++) {
-        for (size_t artifact = 0u;
-             artifact <
-                 g_petta_specializations.items[index].artifact_len;
-             artifact++) {
-            petta_pattern_free(
-                g_petta_specializations.items[index]
-                    .artifacts[artifact].pattern);
-        }
-        free(g_petta_specializations.items[index].artifacts);
+        petta_record_release_owned(
+            &g_petta_specializations.items[index]);
     }
     free(g_petta_specializations.items);
     memset(

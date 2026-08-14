@@ -25,7 +25,7 @@ Files:
   f1r3node rholang-cli.
 
 The generated `.mrho` file is CeTTa's strict-core rho concrete syntax; the
-generated `.rho` file is the surface rho/Rholang spelling used for
+generated `.rho` file is the syntax rho/Rholang spelling used for
 cross-engine runs.
 
 Use CERT_STATUS=valid or CERT_STATUS=stale to select which certificates are

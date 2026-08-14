@@ -106,7 +106,7 @@ static bool petta_form_cache_insert(
         }
         /*
          * Preserve the first branch of the declarative dispatch below if
-         * two surface spellings happen to intern to the same SymbolId.
+         * two syntax spellings happen to intern to the same SymbolId.
          */
         if (entry->symbol == symbol)
             return true;

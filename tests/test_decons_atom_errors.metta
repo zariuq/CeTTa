@@ -1,4 +1,4 @@
-; HE-backed destructor surface: empty expression should raise a signature
+; HE-backed destructor syntax: empty expression should raise a signature
 ; error rather than passing through unreduced.
 
 !(decons-atom ())

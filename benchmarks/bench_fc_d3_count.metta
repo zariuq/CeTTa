@@ -1,5 +1,5 @@
 ; Depth-3 propositional forward chaining with a final count result only.
-; This keeps the measurement surface focused on theorem count rather than
+; This keeps the measurement syntax focused on theorem count rather than
 ; top-level unit outputs from the individual mutation steps.
 
 (= (depth) 3)

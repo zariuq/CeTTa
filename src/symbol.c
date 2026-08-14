@@ -240,7 +240,7 @@ uint32_t symbol_len(const SymbolTable *st, SymbolId id) {
     return entry ? entry->len : 0;
 }
 
-bool symbol_id_is_builtin_surface(SymbolId id) {
+bool symbol_id_is_builtin(SymbolId id) {
     return id != SYMBOL_ID_NONE &&
            (id <= g_builtin_syms.native_handle ||
             id == g_builtin_syms.empty_form);

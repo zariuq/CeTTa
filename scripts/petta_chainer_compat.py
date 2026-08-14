@@ -125,7 +125,11 @@ def write_materialized_file(root: Path, relative: PurePosixPath, payload: bytes)
 
 
 def materialize_sources(
-    root: Path, manifest: dict, chainer_repo: Path, petta_repo: Path
+    root: Path,
+    manifest: dict,
+    chainer_repo: Path,
+    petta_repo: Path,
+    chainer_working_tree: bool = False,
 ) -> None:
     chainer_revision = manifest["chainer"]["revision"]
     subtree = manifest["chainer"]["subtree"].rstrip("/")
@@ -135,8 +139,13 @@ def materialize_sources(
         fail(f"pinned Chainer subtree is empty or malformed: {subtree}")
     for path in paths:
         relative = checked_relative_path(path[len(prefix) :], "Chainer member")
+        payload = (
+            (chainer_repo / path).read_bytes()
+            if chainer_working_tree
+            else git_file(chainer_repo, chainer_revision, path)
+        )
         write_materialized_file(
-            root, relative, git_file(chainer_repo, chainer_revision, path)
+            root, relative, payload
         )
 
     petta_revision = manifest["petta"]["revision"]
@@ -271,9 +280,12 @@ def main() -> int:
     )
     parser.add_argument("--out", default="runtime/petta-chainer-compat")
     parser.add_argument(
-        "--profile", choices=("extended", "typecheck-v2"), default="extended"
+        "--profile",
+        choices=("extended", "typecheck-v2", "typecheck-v3"),
+        default="extended",
     )
     parser.add_argument("--reference", action="store_true")
+    parser.add_argument("--chainer-working-tree", action="store_true")
     arguments = parser.parse_args()
 
     repo_root = Path(__file__).resolve().parents[1]
@@ -295,6 +307,16 @@ def main() -> int:
     require_commit(
         chainer_repo, manifest["chainer"]["revision"], "PeTTaChainer"
     )
+    chainer_head = run_git(
+        chainer_repo, "rev-parse", "HEAD", text=True
+    ).strip()
+    if arguments.chainer_working_tree and (
+        chainer_head != manifest["chainer"]["revision"]
+    ):
+        fail(
+            "PeTTaChainer working tree HEAD is "
+            f"{chainer_head}, expected {manifest['chainer']['revision']}"
+        )
     require_commit(petta_repo, manifest["petta"]["revision"], "PeTTa")
     if arguments.reference:
         require_reference_checkout(petta_repo, manifest["petta"]["revision"])
@@ -307,7 +329,13 @@ def main() -> int:
         prefix=".pettachainer-image-", dir=output_root
     ) as temporary:
         image = Path(temporary)
-        materialize_sources(image, manifest, chainer_repo, petta_repo)
+        materialize_sources(
+            image,
+            manifest,
+            chainer_repo,
+            petta_repo,
+            chainer_working_tree=arguments.chainer_working_tree,
+        )
         for example in manifest["examples"]:
             source = image.joinpath(
                 *checked_relative_path(example["path"], "example path").parts
@@ -392,8 +420,21 @@ def main() -> int:
         "chainer_revision": manifest["chainer"]["revision"],
         "petta_revision": manifest["petta"]["revision"],
         "profile": arguments.profile,
+        "chainer_source": (
+            "working-tree" if arguments.chainer_working_tree else "commit"
+        ),
         "results": results,
     }
+    if arguments.chainer_working_tree:
+        patch = run_git(
+            chainer_repo,
+            "diff",
+            "--binary",
+            "HEAD",
+            "--",
+            manifest["chainer"]["subtree"],
+        )
+        summary["chainer_working_tree_diff_sha256"] = sha256_bytes(patch)
     (output_root / "summary.json").write_text(
         json.dumps(summary, indent=2, sort_keys=True) + "\n", encoding="utf-8"
     )

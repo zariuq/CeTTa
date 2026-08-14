@@ -4,7 +4,7 @@ Date: 2026-06-09
 Status
 ======
 
-The rebuild is now LIVE in the active tree as the Rhometta surface:
+The rebuild is now LIVE in the active tree as the Rhometta syntax:
 
 - `/home/aimama/aihub/hyperon/cetta-rho-threading/lib/rhometta.metta`
 - `/home/aimama/aihub/hyperon/cetta-rho-threading/src/rhocalc_core.c`
@@ -28,7 +28,7 @@ Current verification snapshot:
 - the matching `mork` sanitizer runs also pass
 
 This note is now a LIVE design/requirements brief for the transactional
-Rhometta surface, not just a record of the earlier purge.
+Rhometta syntax, not just a record of the earlier purge.
 
 
 Current branch health
@@ -39,7 +39,7 @@ The active tree has a passing transactional Rhometta lane in both `core` and
 
 Important current witnesses:
 
-- `/home/aimama/aihub/hyperon/cetta-rho-threading/tests/test_rhometta_lib_surface.metta`
+- `/home/aimama/aihub/hyperon/cetta-rho-threading/tests/test_rhometta_lib_syntax.metta`
 - `/home/aimama/aihub/hyperon/cetta-rho-threading/tests/test_rhometta_threaded_differential.metta`
 - `/home/aimama/aihub/hyperon/cetta-rho-threading/tests/test_rhometta_threaded_runtime_stats.metta`
 - `/home/aimama/aihub/hyperon/cetta-rho-threading/tests/test_rhometta_isolation_oracle.metta`
@@ -48,7 +48,7 @@ Important current witnesses:
 These cover:
 
 - single-result, multi-result, zero-result, and fault-localized deferred COMM
-- sequential/threaded parity on the active Rhometta surface
+- sequential/threaded parity on the active Rhometta syntax
 - sibling isolation and shared-state non-mutation for content-reached spaces
   and state cells
 - explicit owned-result escape for mutated local resources
@@ -61,10 +61,10 @@ track.
 Current engine state
 ====================
 
-The live engine exposes Rhometta as a library surface backed by the existing
+The live engine exposes Rhometta as a library syntax backed by the existing
 reducer stack:
 
-- Rhometta library surface:
+- Rhometta library syntax:
   `/home/aimama/aihub/hyperon/cetta-rho-threading/lib/rhometta.metta`
 
 - COMM seam:
@@ -103,7 +103,7 @@ The live rhocalc semantic profiles are still:
 - cost
 
 There is no second MeTTa-over-rho execution profile.  Rhometta is the active
-library surface on top of the existing rhocalc engine.
+library syntax on top of the existing rhocalc engine.
 
 
 Hard rebuild constraints
@@ -191,7 +191,7 @@ question.
 
 1. COMM-time deferred payload results.
 
-   The Rhometta theorem surface should continue to characterize one-step and
+   The Rhometta theorem syntax should continue to characterize one-step and
    quiescent outcomes of deferred COMM in terms of the existing rhocalc engine.
 
 2. Transactional payload contract, not suppression semantics.
@@ -242,9 +242,9 @@ layer:
 - `metta-private-session`
 - `metta-reflection-loader`
 
-The old draft surface notes remain available only as historical scratch:
+The old draft syntax notes remain available only as historical scratch:
 
-- `/home/aimama/aihub/hyperon/cetta-rho-threading/benchmarks/rho/metta-eval-bridge-drafts/bridge_surface.txt`
+- `/home/aimama/aihub/hyperon/cetta-rho-threading/benchmarks/rho/metta-eval-bridge-drafts/bridge_syntax.txt`
 
 They should not be mistaken for the target API.
 
@@ -277,7 +277,7 @@ Questions for external design review
 Non-goals
 =========
 
-- Reintroducing a separate MeTTa-over-rho library runtime surface
+- Reintroducing a separate MeTTa-over-rho library runtime syntax
 - Reintroducing a shadow reducer stack
 - Driving execution through a MeTTa frontier loop
 - Building a temporary simplified design that is structurally different from

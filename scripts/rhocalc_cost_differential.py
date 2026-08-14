@@ -69,20 +69,20 @@ def term_par(parts: list[Wire]) -> Wire:
     return node("term-par", [parts[0], term_par(parts[1:])])
 
 
-def send(surface: Wire, payload: Wire) -> Wire:
-    return node("send", [surface, payload])
+def send(syntax: Wire, payload: Wire) -> Wire:
+    return node("send", [syntax, payload])
 
 
-def recv(surface: Wire, body: Wire) -> Wire:
-    return node("recv", [surface, body])
+def recv(syntax: Wire, body: Wire) -> Wire:
+    return node("recv", [syntax, body])
 
 
 def signed(proc: Wire, spend: Wire) -> Wire:
     return node("signed", [proc, spend])
 
 
-def purse(surface: Wire, stack: list[Wire]) -> Wire:
-    return node("purse", [surface, node("stack", stack)])
+def purse(syntax: Wire, stack: list[Wire]) -> Wire:
+    return node("purse", [syntax, node("stack", stack)])
 
 
 def drop(name: Wire) -> Wire:
@@ -449,16 +449,16 @@ UTF8_PAIR = signature("é", "λ")
 DELIMITER_PAIR = signature("a,b", "a:bc")
 
 
-def whole_redex(surface: Wire, demand: Wire, order: str = "recv-send",
+def whole_redex(syntax: Wire, demand: Wire, order: str = "recv-send",
                  body: Wire = DONE) -> Wire:
-    endpoints = [recv(surface, body), send(surface, PAYLOAD)]
+    endpoints = [recv(syntax, body), send(syntax, PAYLOAD)]
     if order == "send-recv":
         endpoints.reverse()
     return signed(proc_par(endpoints), demand)
 
 
-def split_redex(surface: Wire, recv_sig: Wire, send_sig: Wire) -> list[Wire]:
-    return [signed(recv(surface, DONE), recv_sig), signed(send(surface, PAYLOAD), send_sig)]
+def split_redex(syntax: Wire, recv_sig: Wire, send_sig: Wire) -> list[Wire]:
+    return [signed(recv(syntax, DONE), recv_sig), signed(send(syntax, PAYLOAD), send_sig)]
 
 
 def make_cases() -> list[Case]:
@@ -488,7 +488,7 @@ def make_cases() -> list[Case]:
                  whole_redex(PAY, A),
                  purse(node("quote", [drop(PAY)]), [A]),
              ])),
-        Case("quoted-alpha-surface", 1,
+        Case("quoted-alpha-syntax", 1,
              term_par([
                  whole_redex(
                      node("quote", [signed(recv(BASE, drop(bvar(0))), SEAL)]),
@@ -504,7 +504,7 @@ def make_cases() -> list[Case]:
              term_par([whole_redex(PAY, A), purse(PAY, [A])])),
         Case("hard-no-cover-search-exhausted", 1,
              term_par([whole_redex(PAY, A)]), 1),
-        Case("two-independent-surfaces", 2,
+        Case("two-independent-locations", 2,
              term_par([
                  whole_redex(PAY, A), purse(PAY, [A]),
                  whole_redex(WRONG, B), purse(WRONG, [B]),

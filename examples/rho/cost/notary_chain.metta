@@ -11,7 +11,7 @@
 ;   - a cause list: the ids of the events that PRODUCED the exact
 ;     occurrences this event consumed (repetitions kept -- consuming a
 ;     continuation and a purse tail both produced by event 0 yields (0 0)),
-;   - one funding record per token spent (purse surface, head signature),
+;   - one funding record per token spent (purse location, head signature),
 ;   - the raw consumed signature.
 ; The cause lists below chain 0 <- 1 <- 2: the receipt IS the provenance
 ; audit trail.  Totals, prices, and depths are computed from it afterward;

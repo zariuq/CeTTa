@@ -5,7 +5,7 @@
 !(chain (+ 1 2) 3 chain-positive)
 !(chain (+ 1 2) 4 chain-negative-must-not-appear)
 
-; Surface variables and exact bag multiplicity survive the relation.
+; Syntax variables and exact bag multiplicity survive the relation.
 !(let $x 4 (+ $x 1))
 !(let (superpose (1 1 2)) (superpose (1 2)) hit)
 

@@ -1,4 +1,4 @@
-; HE-backed positive surface for the grounded math.rs operators.
+; HE-backed positive syntax for the grounded math.rs operators.
 
 !(pow-math 2 3)
 !(pow-math 5.5 2.3)

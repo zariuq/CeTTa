@@ -436,4 +436,8 @@ bool bindings_has_loop(const Bindings *b);
 bool match_types(Atom *actual, Atom *expected, Bindings *b);
 bool match_types_builder(Atom *actual, Atom *expected, BindingsBuilder *bb);
 
+/* SpaceType and concrete (Space discipline) value types form one runtime
+ * space class; negative-decision paths must not refute across it. */
+bool type_match_uses_space_class_bridge(Atom *actual, Atom *expected);
+
 #endif /* CETTA_MATCH_H */

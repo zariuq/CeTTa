@@ -46,7 +46,7 @@
              False
              (abtc:unique $tail)))))
 
-; The selected surface domain keeps the two stages explicit:
+; The selected syntax domain keeps the two stages explicit:
 ;   * a bare symbol is a human binder name;
 ;   * (quote closed-expression) is an explicit structural name.
 ; Canonical (idx Nat), malformed nonnumeric idx forms, unquoted compound terms,
@@ -303,8 +303,8 @@
           ((ABTCOracleFree $free) $free)))
        $atom))
 
-(= (abtc:oracle-parse $surface $environment)
-   (case $surface
+(= (abtc:oracle-parse $syntax $environment)
+   (case $syntax
      (((ABTBind Lam (Binders $binder) $domain $body)
        (Lam
          (abtc:oracle-parse $domain $environment)

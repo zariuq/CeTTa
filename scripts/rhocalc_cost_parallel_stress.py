@@ -119,13 +119,13 @@ def canonical_unique_label_receipt(events: list[Wire]) -> tuple[tuple[str, ...],
     return labels, edges
 
 
-def unique_reactions(count: int, *, shared_surface: bool) -> Wire:
+def unique_reactions(count: int, *, shared_syntax: bool) -> Wire:
     parts: list[Wire] = []
     for index in range(count):
-        surface = PAY if shared_surface else signature(f"surface-{index}")
+        syntax = PAY if shared_syntax else signature(f"syntax-{index}")
         spend = signature(f"spend-{index}")
         done = signed(proc_nil(), signature(f"done-{index}"))
-        parts.extend([whole_redex(surface, spend, body=done), purse(surface, [spend])])
+        parts.extend([whole_redex(syntax, spend, body=done), purse(syntax, [spend])])
     return term_par(parts)
 
 
@@ -142,17 +142,17 @@ def compare_unique_case(bin_path: str, term: Wire, count: int) -> None:
         raise AssertionError("threaded and sequential causal receipts are not isomorphic")
 
 
-def independent_surfaces(bin_path: str) -> None:
-    compare_unique_case(bin_path, unique_reactions(24, shared_surface=False), 24)
+def independent_locations(bin_path: str) -> None:
+    compare_unique_case(bin_path, unique_reactions(24, shared_syntax=False), 24)
 
 
-def same_surface_disjoint_occurrences(bin_path: str) -> None:
-    term = unique_reactions(20, shared_surface=True)
+def same_syntax_disjoint_occurrences(bin_path: str) -> None:
+    term = unique_reactions(20, shared_syntax=True)
     threaded = run_prefix(bin_path, term, threads=4, fuel=21)
     if threaded.status != "quiescent" or len(threaded.events) != 20:
-        raise AssertionError("same-surface disjoint reactions did not all fire")
+        raise AssertionError("same-syntax disjoint reactions did not all fire")
     if any(event_causes(event) for event in threaded.events):
-        raise AssertionError("same surface introduced false causality between disjoint purses")
+        raise AssertionError("same syntax introduced false causality between disjoint purses")
     compare_unique_case(bin_path, term, 20)
 
 
@@ -177,7 +177,7 @@ def one_purse_serializes(bin_path: str) -> None:
 
 
 def budget_monotonicity(bin_path: str) -> None:
-    term = unique_reactions(6, shared_surface=False)
+    term = unique_reactions(6, shared_syntax=False)
     budgets = [0, 1, 2, 4, 8, 16, 32, 64, 128, 10_000]
     runs = [
         run_prefix(bin_path, term, threads=4, fuel=7, search_fuel=budget)
@@ -223,7 +223,7 @@ def randomized_independent(bin_path: str, repeat: int) -> None:
         count = rng.randint(2, 12)
         compare_unique_case(
             bin_path,
-            unique_reactions(count, shared_surface=rng.choice([False, True])),
+            unique_reactions(count, shared_syntax=rng.choice([False, True])),
             count,
         )
 
@@ -237,8 +237,8 @@ def main(argv: list[str]) -> int:
         parser.error("--repeat must be positive")
 
     checks = [
-        ("independent-surfaces", lambda: independent_surfaces(args.bin_path)),
-        ("same-surface-disjoint-occurrences", lambda: same_surface_disjoint_occurrences(args.bin_path)),
+        ("independent-locations", lambda: independent_locations(args.bin_path)),
+        ("same-syntax-disjoint-occurrences", lambda: same_syntax_disjoint_occurrences(args.bin_path)),
         ("one-purse-serialization", lambda: one_purse_serializes(args.bin_path)),
         ("search-budget-monotonicity", lambda: budget_monotonicity(args.bin_path)),
         ("large-cover-laziness", lambda: large_cover_is_lazy(args.bin_path)),

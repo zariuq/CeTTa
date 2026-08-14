@@ -355,7 +355,7 @@ static int mm2_normalize_scientific_token(char *out, size_t out_size,
 /* MORK's f64_to_string is Rust `format!("{:?}", value)`: shortest exact
    decimal, at least one fractional digit in fixed notation, and scientific
    notation outside [1e-4, 1e16). Keep this local to the MM2 boundary. */
-static int mm2_format_float_surface_v1(char *out, size_t out_size,
+static int mm2_format_float_syntax_v1(char *out, size_t out_size,
                                        double value) {
     if (!out || out_size == 0u)
         return -1;
@@ -407,17 +407,17 @@ static int mm2_format_float_surface_v1(char *out, size_t out_size,
     return snprintf(out, out_size, "%s.0", candidate);
 }
 
-static Atom *mm2_surface_float_tokens(Arena *a, Atom *atom,
+static Atom *mm2_syntax_float_tokens(Arena *a, Atom *atom,
                                       const char **out_error) {
     if (!a || !atom)
         return atom;
     if (atom->kind == ATOM_GROUNDED && atom->ground.gkind == GV_FLOAT) {
         char token[128];
-        int length = mm2_format_float_surface_v1(
+        int length = mm2_format_float_syntax_v1(
             token, sizeof(token), atom->ground.fval);
         if (length <= 0 || (size_t)length >= sizeof(token)) {
             if (out_error)
-                *out_error = "failed to format exact MM2 f64 surface token";
+                *out_error = "failed to format exact MM2 f64 syntax token";
             return NULL;
         }
         return atom_symbol(a, token);
@@ -427,7 +427,7 @@ static Atom *mm2_surface_float_tokens(Arena *a, Atom *atom,
 
     Atom **children = arena_alloc(a, sizeof(Atom *) * atom->expr.len);
     for (CettaExprIndex index = 0u; index < atom->expr.len; index++) {
-        children[index] = mm2_surface_float_tokens(
+        children[index] = mm2_syntax_float_tokens(
             a, atom->expr.elems[index], out_error);
         if (!children[index])
             return NULL;
@@ -435,11 +435,11 @@ static Atom *mm2_surface_float_tokens(Arena *a, Atom *atom,
     return atom_expr(a, children, atom->expr.len);
 }
 
-char *cetta_mm2_atom_to_surface_string(Arena *a, Atom *atom) {
+char *cetta_mm2_atom_to_syntax_string(Arena *a, Atom *atom) {
     Atom *raised = cetta_mm2_raise_atom(a, atom);
     const char *ignored_error = NULL;
-    Atom *surface = mm2_surface_float_tokens(a, raised, &ignored_error);
-    return surface ? atom_to_string(a, surface) : arena_strdup(a, "");
+    Atom *syntax = mm2_syntax_float_tokens(a, raised, &ignored_error);
+    return syntax ? atom_to_string(a, syntax) : arena_strdup(a, "");
 }
 
 typedef struct {
@@ -694,7 +694,7 @@ static bool bridge_emit_float_token(BridgeExprBuf *buf,
                                     BridgeExprWire wire,
                                     const char **out_error) {
     char tmp[128];
-    int len = mm2_format_float_surface_v1(tmp, sizeof(tmp), value);
+    int len = mm2_format_float_syntax_v1(tmp, sizeof(tmp), value);
     if (len <= 0 || (size_t)len >= sizeof(tmp)) {
         if (out_error)
             *out_error = "failed to format MORK bridge float token";
@@ -1475,11 +1475,11 @@ Atom *cetta_mm2_alpha_canonicalize_atom(Arena *a, Atom *atom,
     return ok ? canonical : NULL;
 }
 
-Atom *cetta_mm2_canonical_surface_atom(Arena *a, Atom *atom,
+Atom *cetta_mm2_canonical_syntax_atom(Arena *a, Atom *atom,
                                        const char **out_error) {
     Atom *canonical = cetta_mm2_alpha_canonicalize_atom(
         a, atom, out_error);
     return canonical
-        ? mm2_surface_float_tokens(a, canonical, out_error)
+        ? mm2_syntax_float_tokens(a, canonical, out_error)
         : NULL;
 }

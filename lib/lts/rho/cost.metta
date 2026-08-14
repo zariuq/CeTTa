@@ -45,7 +45,7 @@
   (@return "Zero or more lts:rho:cost:step records"))
 
 (@doc lts:rho:cost:causal-trace
-  (@desc "Runs one terminating pure cost-rho path and returns a causal funding receipt together with its final state. The funded operational transition is authoritative; this receipt is its checked observation. With one configured worker, firings follow the canonical sequential path. With multiple configured workers, compatible firings claim disjoint endpoint and purse occurrences and execute in concurrent waves; the emitted event order is a checked linearization, not a canonical schedule. Each lts:rho:cost:event has a fresh run-local EventId, earlier producer EventIds for consumed components produced during this run, nonempty lts:rho:cost:funding records carrying the selected purse surfaces and head signatures, and the raw consumed signature. Repeated cause IDs are retained, while indistinguishable initial source occurrences acquire no stable wire identity. Use lts:rho:cost:causal-prefix when termination is not known.")
+  (@desc "Runs one terminating pure cost-rho path and returns a causal funding receipt together with its final state. The funded operational transition is authoritative; this receipt is its checked observation. With one configured worker, firings follow the canonical sequential path. With multiple configured workers, compatible firings claim disjoint endpoint and purse occurrences and execute in concurrent waves; the emitted event order is a checked linearization, not a canonical schedule. Each lts:rho:cost:event has a fresh run-local EventId, earlier producer EventIds for consumed components produced during this run, nonempty lts:rho:cost:funding records carrying the selected purse locations and head signatures, and the raw consumed signature. Repeated cause IDs are retained, while indistinguishable initial source occurrences acquire no stable wire identity. Use lts:rho:cost:causal-prefix when termination is not known.")
   (@params (
     (@param "Well-formed pure rhocalc cost-profile term")))
   (@return "(lts:rho:cost:receipt (<ordered event records>) <final cost-profile state>) or Error on malformed input"))
@@ -77,7 +77,7 @@
   (@return "True when the accounted one-step frontier is empty, False when at least one step exists, or Error on malformed input"))
 
 (@doc lts:rho:cost:is-can-step
-  (@desc "Checks whether a cost-profile rhocalc state has at least one transition through the exhaustive accounted frontier. This surface retains exhaustive-frontier semantics and may enumerate a combinatorial exact-cover family; use lts:rho:cost:causal-prefix for a bounded first-witness check. Incoming Error states are propagated unchanged. Malformed non-Error input is reported as Error.")
+  (@desc "Checks whether a cost-profile rhocalc state has at least one transition through the exhaustive accounted frontier. This interface retains exhaustive-frontier semantics and may enumerate a combinatorial exact-cover family; use lts:rho:cost:causal-prefix for a bounded first-witness check. Incoming Error states are propagated unchanged. Malformed non-Error input is reported as Error.")
   (@params (
     (@param "Cost-profile rhocalc state to inspect")))
   (@return "True when at least one step exists, False when quiescent, or Error on malformed input"))

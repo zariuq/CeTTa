@@ -272,7 +272,7 @@ VALIDATION PLAN STATUS:
        chain/congruence theorems are FRAGMENT-RESTRICTED; Zar must rule
        whether they flip to plain "rule-sound" (domain documented in
        provenance) or a distinct level (recommended:
-       "rule-sound-on-fragment" — the surface itself then distinguishes
+       "rule-sound-on-fragment" — the syntax itself then distinguishes
        unconditional from fragment certification; digest invariant
        either way).  let/let*/case/switch remain on the stdlib-sugar
        mountain (their official semantics are MinimalMeTTa-instruction

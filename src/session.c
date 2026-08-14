@@ -8,7 +8,7 @@ static const CettaProfile CETTA_PROFILE_HE_FORMAL_VALUE = {
     .language_id = CETTA_LANGUAGE_HE,
     .name = "he",
     .note = "Formal/spec-faithful HE base for OSLF/NTT/DTT work.",
-    .he_compatible_surface = true,
+    .he_compatible_builtin = true,
     .enable_cetta_extensions = false,
     .enable_dependent_telescope = false,
     .rust_he_compat_semantics = false,
@@ -19,7 +19,7 @@ static const CettaProfile CETTA_PROFILE_HE_COMPAT_VALUE = {
     .language_id = CETTA_LANGUAGE_HE,
     .name = "he-compat",
     .note = "Rust Hyperon Experimental HE 0.2.10 compatibility lane.",
-    .he_compatible_surface = true,
+    .he_compatible_builtin = true,
     .enable_cetta_extensions = false,
     .enable_dependent_telescope = false,
     .rust_he_compat_semantics = true,
@@ -29,8 +29,8 @@ static const CettaProfile CETTA_PROFILE_HE_EXTENDED_VALUE = {
     .id = CETTA_PROFILE_HE_EXTENDED,
     .language_id = CETTA_LANGUAGE_HE,
     .name = "he-extended",
-    .note = "HE-compatible surface plus labeled CeTTa extensions.",
-    .he_compatible_surface = true,
+    .note = "HE-compatible syntax plus labeled CeTTa extensions.",
+    .he_compatible_builtin = true,
     .enable_cetta_extensions = true,
     .enable_dependent_telescope = false,
     .rust_he_compat_semantics = false,
@@ -41,7 +41,7 @@ static const CettaProfile CETTA_PROFILE_HE_PRIME_VALUE = {
     .language_id = CETTA_LANGUAGE_HE,
     .name = "he-prime",
     .note = "HE typing with explicit dependent binders, checked type-level computation, and typed inhabitation search.",
-    .he_compatible_surface = false,
+    .he_compatible_builtin = false,
     .enable_cetta_extensions = true,
     .enable_dependent_telescope = true,
     .rust_he_compat_semantics = false,
@@ -52,7 +52,7 @@ static const CettaProfile CETTA_PROFILE_PRIME_DEFAULT_VALUE = {
     .language_id = CETTA_LANGUAGE_PRIME,
     .name = "prime-default",
     .note = "Built-in policy for the MeTTa-Prime semantic package.",
-    .he_compatible_surface = false,
+    .he_compatible_builtin = false,
     .enable_cetta_extensions = true,
     .enable_dependent_telescope = true,
     .rust_he_compat_semantics = false,
@@ -63,7 +63,7 @@ static const CettaProfile CETTA_PROFILE_PETTA_EXTENDED_VALUE = {
     .language_id = CETTA_LANGUAGE_PETTA,
     .name = "extended",
     .note = "PeTTa semantics plus labeled shared CeTTa extensions.",
-    .he_compatible_surface = false,
+    .he_compatible_builtin = false,
     .enable_cetta_extensions = true,
     .enable_dependent_telescope = false,
     .rust_he_compat_semantics = false,
@@ -75,7 +75,18 @@ static const CettaProfile CETTA_PROFILE_PETTA_TYPECHECK_V2_VALUE = {
     .language_id = CETTA_LANGUAGE_PETTA,
     .name = "typecheck-v2",
     .note = "PeTTa with native Roman-compatible residual type checking.",
-    .he_compatible_surface = false,
+    .he_compatible_builtin = false,
+    .enable_cetta_extensions = true,
+    .enable_dependent_telescope = false,
+    .rust_he_compat_semantics = false,
+};
+
+static const CettaProfile CETTA_PROFILE_PETTA_TYPECHECK_V3_VALUE = {
+    .id = CETTA_PROFILE_PETTA_TYPECHECK_V3,
+    .language_id = CETTA_LANGUAGE_PETTA,
+    .name = "typecheck-v3",
+    .note = "PeTTa with native v3 judgments and coherent typecheck-v2 delegation.",
+    .he_compatible_builtin = false,
     .enable_cetta_extensions = true,
     .enable_dependent_telescope = false,
     .rust_he_compat_semantics = false,
@@ -87,7 +98,7 @@ static const CettaProfile CETTA_PROFILE_RHOCALC_STRICT_CORE_VALUE = {
     .language_id = CETTA_LANGUAGE_RHOCALC,
     .name = "strict-core",
     .note = "Strict-core rho-calculus without cost-layer extensions.",
-    .he_compatible_surface = false,
+    .he_compatible_builtin = false,
     .enable_cetta_extensions = false,
     .enable_dependent_telescope = false,
     .rust_he_compat_semantics = false,
@@ -98,7 +109,7 @@ static const CettaProfile CETTA_PROFILE_RHOCALC_COST_VALUE = {
     .language_id = CETTA_LANGUAGE_RHOCALC,
     .name = "cost",
     .note = "Meredith cost-accounted rho extension (ground-signature token-gated slice).",
-    .he_compatible_surface = false,
+    .he_compatible_builtin = false,
     .enable_cetta_extensions = false,
     .enable_dependent_telescope = false,
     .rust_he_compat_semantics = false,
@@ -109,7 +120,7 @@ static const CettaProfile CETTA_PROFILE_ZERO_EXP_VALUE = {
     .language_id = CETTA_LANGUAGE_ZERO,
     .name = "exp",
     .note = "Experimental authored semantic work and continuation layer.",
-    .he_compatible_surface = false,
+    .he_compatible_builtin = false,
     .enable_cetta_extensions = false,
     .enable_dependent_telescope = false,
     .rust_he_compat_semantics = false,
@@ -120,7 +131,7 @@ static const CettaProfile CETTA_PROFILE_ZERO_EMIT_VALUE = {
     .language_id = CETTA_LANGUAGE_ZERO,
     .name = "emit",
     .note = "Experimental revision-threaded match/let/eval/emit profile; add-atom is the persistent-emission compatibility spelling.",
-    .he_compatible_surface = false,
+    .he_compatible_builtin = false,
     .enable_cetta_extensions = false,
     .enable_dependent_telescope = false,
     .rust_he_compat_semantics = false,
@@ -131,7 +142,7 @@ static const CettaProfile CETTA_PROFILE_ZERO_INTERACT_VALUE = {
     .language_id = CETTA_LANGUAGE_ZERO,
     .name = "interact",
     .note = "Experimental match/let/eval/emit profile over authenticated immutable space revisions; add-atom is an emit alias.",
-    .he_compatible_surface = false,
+    .he_compatible_builtin = false,
     .enable_cetta_extensions = false,
     .enable_dependent_telescope = false,
     .rust_he_compat_semantics = false,
@@ -142,13 +153,13 @@ static const CettaProfile CETTA_PROFILE_MM2_GSLT_VALUE = {
     .language_id = CETTA_LANGUAGE_MM2,
     .name = "gslt",
     .note = "Authored strict support-transform GSLT with open-world directives and exact fuel.",
-    .he_compatible_surface = false,
+    .he_compatible_builtin = false,
     .enable_cetta_extensions = false,
     .enable_dependent_telescope = false,
     .rust_he_compat_semantics = false,
 };
 
-static const CettaSurfacePolicy CETTA_SURFACE_POLICIES[] = {
+static const CettaBuiltinPolicy CETTA_BUILTIN_POLICIES[] = {
     {"_minimal-foldl-atom", CETTA_PROFILE_MASK_ALL, "compat_alias"},
     {"foldl-atom-in-space", CETTA_PROFILE_MASK_HE_EXTENDED_PLUS, "clean_primary_extension"},
     {"foldl-atom", CETTA_PROFILE_MASK_ALL, "compat_alias"},
@@ -160,17 +171,17 @@ static const CettaSurfacePolicy CETTA_SURFACE_POLICIES[] = {
     {"module-inventory!", CETTA_PROFILE_MASK_HE_EXTENDED_PLUS, "clean_primary_extension"},
     {"runtime-stats!", CETTA_PROFILE_MASK_HE_EXTENDED_PLUS, "clean_primary_extension"},
     {"reset-runtime-stats!", CETTA_PROFILE_MASK_HE_EXTENDED_PLUS, "clean_primary_extension"},
-    {"register-module!", CETTA_PROFILE_MASK_ALL, "keep_he_public_surface"},
-    {"git-module!", CETTA_PROFILE_MASK_ALL, "keep_he_public_surface"},
-    {"import!", CETTA_PROFILE_MASK_ALL, "keep_he_public_surface"},
-    {"include", CETTA_PROFILE_MASK_ALL, "keep_he_public_surface"},
+    {"register-module!", CETTA_PROFILE_MASK_ALL, "keep_he_public_builtin"},
+    {"git-module!", CETTA_PROFILE_MASK_ALL, "keep_he_public_builtin"},
+    {"import!", CETTA_PROFILE_MASK_ALL, "keep_he_public_builtin"},
+    {"include", CETTA_PROFILE_MASK_ALL, "keep_he_public_builtin"},
     {"include-space-target", CETTA_PROFILE_MASK_HE_NON_COMPAT, "clean_primary_extension"},
-    {"mod-space!", CETTA_PROFILE_MASK_ALL, "keep_he_public_surface"},
-    {"print-mods!", CETTA_PROFILE_MASK_ALL, "keep_he_public_surface"},
-    {"capture", CETTA_PROFILE_MASK_ALL, "keep_he_public_surface"},
-    {"quote", CETTA_PROFILE_MASK_ALL, "keep_he_public_surface"},
-    {"unquote", CETTA_PROFILE_MASK_ALL, "keep_he_public_surface"},
-    {"sealed", CETTA_PROFILE_MASK_ALL, "keep_he_public_surface"},
+    {"mod-space!", CETTA_PROFILE_MASK_ALL, "keep_he_public_builtin"},
+    {"print-mods!", CETTA_PROFILE_MASK_ALL, "keep_he_public_builtin"},
+    {"capture", CETTA_PROFILE_MASK_ALL, "keep_he_public_builtin"},
+    {"quote", CETTA_PROFILE_MASK_ALL, "keep_he_public_builtin"},
+    {"unquote", CETTA_PROFILE_MASK_ALL, "keep_he_public_builtin"},
+    {"sealed", CETTA_PROFILE_MASK_ALL, "keep_he_public_builtin"},
     {"collect", CETTA_PROFILE_MASK_HE_EXTENDED_PLUS, "compat_alias"},
     {"fold", CETTA_PROFILE_MASK_HE_EXTENDED_PLUS, "clean_primary_extension"},
     {"fold-by-key", CETTA_PROFILE_MASK_HE_EXTENDED_PLUS, "clean_primary_extension"},
@@ -178,7 +189,7 @@ static const CettaSurfacePolicy CETTA_SURFACE_POLICIES[] = {
     {"select", CETTA_PROFILE_MASK_HE_EXTENDED_PLUS, "clean_primary_extension"},
     {"hyperpose", CETTA_PROFILE_MASK_HE_EXTENDED_PLUS, "clean_primary_extension"},
     {"once", CETTA_PROFILE_MASK_HE_EXTENDED_PLUS, "compat_alias"},
-    {"singleton-visible-witness", CETTA_PROFILE_MASK_ALL, "translator_compat_surface"},
+    {"singleton-visible-witness", CETTA_PROFILE_MASK_ALL, "translator_compat_builtin"},
     {"search-policy", CETTA_PROFILE_MASK_HE_EXTENDED_PLUS, "clean_primary_extension"},
     {"new-space-kind", CETTA_PROFILE_MASK_HE_EXTENDED_PLUS, "clean_primary_extension"},
     {"with-space-snapshot", CETTA_PROFILE_MASK_HE_NON_COMPAT, "clean_primary_extension"},
@@ -251,7 +262,7 @@ static bool cetta_eval_option_store(CettaEvaluatorOptions *options,
     return true;
 }
 
-static uint32_t cetta_language_base_surface_mask(CettaLanguageId language_id) {
+static uint32_t cetta_language_base_builtin_mask(CettaLanguageId language_id) {
     switch (language_id) {
     case CETTA_LANGUAGE_HE:
         return CETTA_PROFILE_MASK_HE_FORMAL;
@@ -312,7 +323,22 @@ const CettaProfile *cetta_profile_petta_extended(void) {
 const CettaProfile *cetta_profile_petta_typecheck_v2(void) {
     return &CETTA_PROFILE_PETTA_TYPECHECK_V2_VALUE;
 }
+
+const CettaProfile *cetta_profile_petta_typecheck_v3(void) {
+    return &CETTA_PROFILE_PETTA_TYPECHECK_V3_VALUE;
+}
 #endif
+
+bool cetta_profile_uses_petta_typing(const CettaProfile *profile) {
+    if (!profile)
+        return false;
+#if CETTA_BUILD_WITH_PETTA_TYPECHECK_V2
+    return profile->id == CETTA_PROFILE_PETTA_TYPECHECK_V2 ||
+        profile->id == CETTA_PROFILE_PETTA_TYPECHECK_V3;
+#else
+    return false;
+#endif
+}
 
 bool cetta_language_has_named_profiles(CettaLanguageId language_id) {
     return language_id == CETTA_LANGUAGE_HE ||
@@ -358,6 +384,10 @@ const CettaProfile *cetta_profile_from_name_for_language(CettaLanguageId languag
     }
     if (language_id == CETTA_LANGUAGE_PETTA) {
 #if CETTA_BUILD_WITH_PETTA_TYPECHECK_V2
+        if (cetta_profile_name_matches(
+                name, &CETTA_PROFILE_PETTA_TYPECHECK_V3_VALUE)) {
+            return &CETTA_PROFILE_PETTA_TYPECHECK_V3_VALUE;
+        }
         if (cetta_profile_name_matches(
                 name, &CETTA_PROFILE_PETTA_TYPECHECK_V2_VALUE)) {
             return &CETTA_PROFILE_PETTA_TYPECHECK_V2_VALUE;
@@ -410,6 +440,7 @@ uint32_t cetta_profile_mask(const CettaProfile *profile) {
     case CETTA_PROFILE_MM2_GSLT:
         return CETTA_PROFILE_MASK_ALL;
     case CETTA_PROFILE_PETTA_TYPECHECK_V2:
+    case CETTA_PROFILE_PETTA_TYPECHECK_V3:
 #if CETTA_BUILD_WITH_PETTA_TYPECHECK_V2
         return CETTA_PROFILE_MASK_ALL;
 #else
@@ -419,18 +450,18 @@ uint32_t cetta_profile_mask(const CettaProfile *profile) {
     return 0;
 }
 
-uint32_t cetta_language_surface_mask(CettaLanguageId language_id,
+uint32_t cetta_language_builtin_mask(CettaLanguageId language_id,
                                      const CettaProfile *profile) {
     if (profile && cetta_profile_is_valid_for_language(language_id, profile)) {
         return cetta_profile_mask(profile);
     }
-    return cetta_language_base_surface_mask(language_id);
+    return cetta_language_base_builtin_mask(language_id);
 }
 
 bool cetta_language_visible_in(CettaLanguageId language_id,
                                const CettaProfile *profile,
                                uint32_t visibility_mask) {
-    return (cetta_language_surface_mask(language_id, profile) & visibility_mask) != 0;
+    return (cetta_language_builtin_mask(language_id, profile) & visibility_mask) != 0;
 }
 
 void cetta_profile_print_inventory_for_language(FILE *out,
@@ -469,6 +500,9 @@ void cetta_profile_print_inventory_for_language(FILE *out,
         fprintf(out, "%s\t%s\n",
                 CETTA_PROFILE_PETTA_TYPECHECK_V2_VALUE.name,
                 CETTA_PROFILE_PETTA_TYPECHECK_V2_VALUE.note);
+        fprintf(out, "%s\t%s\n",
+                CETTA_PROFILE_PETTA_TYPECHECK_V3_VALUE.name,
+                CETTA_PROFILE_PETTA_TYPECHECK_V3_VALUE.note);
 #endif
         return;
     }
@@ -491,21 +525,21 @@ void cetta_profile_print_inventory_for_language(FILE *out,
     }
 }
 
-const CettaSurfacePolicy *cetta_surface_policy_lookup(const char *name) {
+const CettaBuiltinPolicy *cetta_builtin_policy_lookup(const char *name) {
     if (!name) return NULL;
-    size_t count = sizeof(CETTA_SURFACE_POLICIES) / sizeof(CETTA_SURFACE_POLICIES[0]);
+    size_t count = sizeof(CETTA_BUILTIN_POLICIES) / sizeof(CETTA_BUILTIN_POLICIES[0]);
     for (size_t i = 0; i < count; i++) {
-        if (strcmp(CETTA_SURFACE_POLICIES[i].name, name) == 0) {
-            return &CETTA_SURFACE_POLICIES[i];
+        if (strcmp(CETTA_BUILTIN_POLICIES[i].name, name) == 0) {
+            return &CETTA_BUILTIN_POLICIES[i];
         }
     }
     return NULL;
 }
 
-bool cetta_language_allows_surface(CettaLanguageId language_id,
+bool cetta_language_allows_builtin(CettaLanguageId language_id,
                                    const CettaProfile *profile,
                                    const char *name) {
-    const CettaSurfacePolicy *policy = cetta_surface_policy_lookup(name);
+    const CettaBuiltinPolicy *policy = cetta_builtin_policy_lookup(name);
     if (!policy) return true;
     return cetta_language_visible_in(language_id, profile, policy->visibility_mask);
 }

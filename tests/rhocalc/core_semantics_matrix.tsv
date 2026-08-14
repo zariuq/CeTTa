@@ -1,7 +1,7 @@
 area	clause	fixture	expectation	source
 syntax	nil/core_comm	core_comm.mrho	0 participates in COMM through send/recv result	Meredith-Radestock 2005 section 2 grammar
-syntax	send_payload_process	pure_surface.rho	N!(P) uses a process payload, not a quoted-name payload	Meredith-Radestock 2005 lift/output grammar
-syntax	reject_quote_as_payload	reject_quoted_payload.rho	.rho rejects N!(@{P}) when payload position expects P	local surface discipline matching lift/output
+syntax	send_payload_process	pure_rho.rho	N!(P) uses a process payload, not a quoted-name payload	Meredith-Radestock 2005 lift/output grammar
+syntax	reject_quote_as_payload	reject_quoted_payload.rho	.rho rejects N!(@{P}) when payload position expects P	local syntax discipline matching lift/output
 syntax	reject_send_continuation	reject_send_continuation.mrho	strict-core rho:send rejects a continuation slot and remains asynchronous	Meredith-Radestock 2005 lift/output grammar
 strict-boundary	reject_fresh	reject_fresh.mrho	fresh/new is not in strict core	Meredith-Radestock 2005 core grammar
 strict-boundary	reject_join	reject_join.mrho	joined receive is not in strict core	Meredith-Radestock 2005 core grammar
@@ -14,9 +14,9 @@ mrho-elaboration	shadow_same_spelling	mrho_shadow_same_spelling.mrho	nested same
 mrho-elaboration	free_name_same_spelling_binder	mrho_free_name_same_spelling_binder.mrho	free names remain distinct from same-spelling receive binders	Chargueraud 2012 locally nameless representation; Pitts 2023 locally nameless sets
 mrho-elaboration	quote_seals_outer_scope	mrho_quote_seals_outer_binder.mrho	literal quote clears the surrounding mrho binder stack	Meredith-Radestock 2005 quote/substitution boundary; Flatt 2016 scope metadata
 mrho-elaboration	quote_inner_binder_restores_scope	mrho_quote_inner_binder_restores_scope.mrho	binders inside literal quote do not overwrite outer mrho bindings	Meredith-Radestock 2005 quote/substitution boundary; Flatt 2016 scope metadata
-surface	quote_inner_binder_restores_scope	surface_quote_inner_binder_restores_scope.rho	binders inside literal quote do not overwrite outer surface bindings	Meredith-Radestock 2005 quote/substitution boundary
+syntax	quote_inner_binder_restores_scope	rho_quote_inner_binder_restores_scope.rho	binders inside literal quote do not overwrite outer syntax bindings	Meredith-Radestock 2005 quote/substitution boundary
 printer	alpha_mrho	translate_mrho_alpha_to_mrho.expected	mrho printer renames binders whose spelling would capture a free name on reparse	Chargueraud 2012 locally nameless representation; Flatt 2016 scope metadata
-printer	alpha_surface	translate_mrho_alpha_to_rho.expected	rho surface printer renames binders whose spelling would capture a free name on reparse	Chargueraud 2012 locally nameless representation; Flatt 2016 scope metadata
+printer	alpha_syntax	translate_mrho_alpha_to_rho.expected	rho syntax printer renames binders whose spelling would capture a free name on reparse	Chargueraud 2012 locally nameless representation; Flatt 2016 scope metadata
 printer	shadow_roundtrip	translate_rho_shadow_to_mrho.expected	rho-to-mrho translation exposes nested same-spelling binders with alpha-safe display names	standard alpha-conversion discipline
 structural-congruence	par_zero	channel_eq_par_zero_h2.mrho	@{P | 0} matches @{P}	Meredith-Radestock 2005 structural congruence
 structural-congruence	par_comm	channel_eq_par_comm_h2.mrho	@{P | Q} matches @{Q | P}	Meredith-Radestock 2005 structural congruence
@@ -39,9 +39,9 @@ comm	diamond	multistep_diamond_h3_setup.mrho	independent redexes produce both on
 reflection	self_recreation	paper_divergence_self_recreates_h4.mrho	self-recreation is expressible without primitive replication	Meredith-Radestock 2005 replication discussion
 reflection	input_guarded_unfold	paper_input_guarded_replication_unfold_h4.mrho	input-guarded replication unfolds through reflection	Meredith-Radestock 2005 replication discussion
 scheduler	primed_diamond	rotating_scheduler_primed_diamond.mrho	a unique seed COMM can expose a later canonical-vs-rotating split and eventual reconvergence	operational control choice over the same one-step relation image
-scheduler	primed_diamond_surface	rotating_scheduler_primed_diamond.rho	surface rho preserves the primed-diamond scheduler split/reconvergence witness	operational control choice over the same one-step relation image
-surface	reflection_name_generation	paper_reflection_name_generation_h4.rho	surface rho preserves reflection-driven name generation through one COMM	Meredith-Radestock 2005 reflection via quote/drop
-surface	input_guarded_unfold	paper_input_guarded_replication_unfold_h4.rho	surface rho preserves input-guarded unfolding through one COMM	Meredith-Radestock 2005 replication discussion
-surface	rotating_witness	rotating_scheduler_persistent_branch.rho	surface rho preserves the recreating-vs-one-shot scheduler witness shape	operational control choice over the same one-step relation image
-surface	open_name	surface_open_name_variable.rho	explicit $x is accepted as an open surface name	local surface syntax for full core
-surface	quote_scope	surface_quote_seals_outer_binder.rho	@{...} parses outside the current surface binder scope	Meredith-Radestock 2005 quote/substitution boundary
+scheduler	primed_diamond_syntax	rotating_scheduler_primed_diamond.rho	syntax rho preserves the primed-diamond scheduler split/reconvergence witness	operational control choice over the same one-step relation image
+syntax	reflection_name_generation	paper_reflection_name_generation_h4.rho	syntax rho preserves reflection-driven name generation through one COMM	Meredith-Radestock 2005 reflection via quote/drop
+syntax	input_guarded_unfold	paper_input_guarded_replication_unfold_h4.rho	syntax rho preserves input-guarded unfolding through one COMM	Meredith-Radestock 2005 replication discussion
+syntax	rotating_witness	rotating_scheduler_persistent_branch.rho	syntax rho preserves the recreating-vs-one-shot scheduler witness shape	operational control choice over the same one-step relation image
+syntax	open_name	rho_open_name_variable.rho	explicit $x is accepted as an open syntax name	local syntax syntax for full core
+syntax	quote_scope	rho_quote_seals_outer_binder.rho	@{...} parses outside the current syntax binder scope	Meredith-Radestock 2005 quote/substitution boundary

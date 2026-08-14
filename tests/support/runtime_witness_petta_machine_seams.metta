@@ -1,5 +1,5 @@
 ; Bounded PeTTa witnesses which separate tail-call, collapse, and growing
-; persistent-queue costs without changing the language surface under test.
+; persistent-queue costs without changing the language syntax under test.
 
 !(import! &self runtime_witness_petta_lib_datastructures)
 !(import! &self system)

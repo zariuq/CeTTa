@@ -58,7 +58,7 @@
   (remove-atom &p3 (edge $x $y)))
 !(assertEqualToResult (count-atoms &p3) (0))
 
-; The explicit comma surface materializes its bindings before evaluating the
+; The explicit comma syntax materializes its bindings before evaluating the
 ; body.  Opening provenance must survive that observation boundary so removal
 ; still names the stored occurrence, rather than an alpha-equivalent pattern.
 !(bind! &p4 (new-space pathmap))
