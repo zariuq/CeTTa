@@ -14,7 +14,7 @@
     (gparse:repo-path "tests/support/rhocalc_lib_parse_translator_v3.metta")
     rho-g
     proc
-    (rho-lex-file->toks "tests/rhocalc/surface_shadowing.rho"))
+    (rho-lex-file->toks "tests/rhocalc/rho_shadowing.rho"))
   (Unique))
 
 !(assertEqualToResult
@@ -23,7 +23,7 @@
       (gparse:repo-path "tests/support/rhocalc_lib_parse_translator_v3.metta")
       rho-g
       proc
-      (rho-lex-file->toks "tests/rhocalc/surface_shadowing.rho")))
+      (rho-lex-file->toks "tests/rhocalc/rho_shadowing.rho")))
   (Unique))
 
 !(assertEqualToResult
@@ -31,7 +31,7 @@
     (gparse:repo-path "tests/support/rhocalc_lib_parse_translator_v3.metta")
     rho-g
     proc
-    (rho-lex-file->toks "tests/rhocalc/surface_name_output.rho"))
+    (rho-lex-file->toks "tests/rhocalc/rho_name_output.rho"))
   (Unique))
 
 !(assertEqualToResult
@@ -40,7 +40,7 @@
       (gparse:repo-path "tests/support/rhocalc_lib_parse_translator_v3.metta")
       rho-g
       proc
-      (rho-lex-file->toks "tests/rhocalc/surface_name_output.rho")))
+      (rho-lex-file->toks "tests/rhocalc/rho_name_output.rho")))
   (Unique))
 
 !(assertEqualToResult
@@ -48,7 +48,7 @@
     (gparse:repo-path "tests/support/rhocalc_lib_parse_translator_v3.metta")
     rho-g
     proc
-    (rho-lex-file->toks "tests/rhocalc/surface_open_name_variable.rho"))
+    (rho-lex-file->toks "tests/rhocalc/rho_open_name_variable.rho"))
   (Unique))
 
 !(assertEqualToResult
@@ -57,7 +57,7 @@
       (gparse:repo-path "tests/support/rhocalc_lib_parse_translator_v3.metta")
       rho-g
       proc
-      (rho-lex-file->toks "tests/rhocalc/surface_open_name_variable.rho")))
+      (rho-lex-file->toks "tests/rhocalc/rho_open_name_variable.rho")))
   (Unique))
 
 !(assertEqualToResult
@@ -65,7 +65,7 @@
     (gparse:repo-path "tests/support/rhocalc_lib_parse_translator_v3.metta")
     rho-g
     proc
-    (rho-lex-file->toks "tests/rhocalc/surface_quote_seals_outer_binder.rho"))
+    (rho-lex-file->toks "tests/rhocalc/rho_quote_seals_outer_binder.rho"))
   (Unique))
 
 !(assertEqualToResult
@@ -74,7 +74,7 @@
       (gparse:repo-path "tests/support/rhocalc_lib_parse_translator_v3.metta")
       rho-g
       proc
-      (rho-lex-file->toks "tests/rhocalc/surface_quote_seals_outer_binder.rho")))
+      (rho-lex-file->toks "tests/rhocalc/rho_quote_seals_outer_binder.rho")))
   (Unique))
 
 !(assertEqualToResult

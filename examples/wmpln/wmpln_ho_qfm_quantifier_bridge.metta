@@ -2,7 +2,7 @@
 
 ; Runnable shadows for the HO-WM-PLN QFM / fuzzy-quantifier bridge.
 ;
-; These examples mirror the Lean theorem surface in
+; These examples mirror the Lean theorem syntax in
 ; PLNHigherOrderHOLQuantifierBridge.lean and PLNHigherOrderHOLDefinableCuts.lean:
 ; - HOL predicates are consumed through the existing satisfying-set/QFM layer,
 ; - crisp ForAll at ε=0, PCL=1 is ordinary universal truth,

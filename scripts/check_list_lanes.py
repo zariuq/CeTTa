@@ -48,7 +48,7 @@ def require_equal(label: str, actual: str, expected: str) -> None:
         )
 
 
-def check_surface(cetta: Path, fixture: str) -> int:
+def check_syntax(cetta: Path, fixture: str) -> int:
     source = ROOT / "tests" / f"{fixture}.metta"
     expected = (ROOT / "tests" / f"{fixture}.expected").read_text().rstrip("\n")
     outputs = {lane: run(cetta, lane, str(source)) for lane in ("he", "prime")}
@@ -359,8 +359,8 @@ def main() -> int:
 
     try:
         checks = 0
-        checks += check_surface(cetta, "test_list_surface")
-        checks += check_surface(cetta, "test_clist_surface")
+        checks += check_syntax(cetta, "test_list_syntax")
+        checks += check_syntax(cetta, "test_clist_syntax")
         checks += check_domains(cetta)
         checks += check_generated_model(cetta)
         checks += check_scale(cetta)

@@ -1,4 +1,4 @@
-; he-compat mirrors Rust HE's libm domain surface for legacy *-math builtins.
+; he-compat mirrors Rust HE's libm domain syntax for legacy *-math builtins.
 
 !(sqrt-math -4)
 !(asin-math 2)

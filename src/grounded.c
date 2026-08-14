@@ -8,6 +8,7 @@
 #include "match.h"
 #include "native_sha256.h"
 #include "parser.h"
+#include "petta_numeric.h"
 #include "space.h"
 #if CETTA_BUILD_WITH_GMP
 #include <gmp.h>
@@ -276,7 +277,7 @@ static bool petta_repra_render(
             case GV_FLOAT:
             case GV_BIGINT:
             case GV_RATIONAL: {
-                char *rendered = atom_to_parseable_string(arena, atom);
+                char *rendered = cetta_petta_number_to_string(arena, atom);
                 if (!rendered) {
                     ok = false;
                     break;
@@ -1335,6 +1336,11 @@ static Atom *grounded_repr(Arena *a, Atom *head, Atom **args, uint32_t nargs) {
         if (text)
             return atom_string(a, text);
     }
+    if (eval_current_language_id &&
+        eval_current_language_id() == CETTA_LANGUAGE_PETTA) {
+        return atom_string(
+            a, atom_to_parseable_string_petta(a, args[0]));
+    }
     return atom_string(a, atom_to_parseable_string(a, args[0]));
 }
 
@@ -1348,7 +1354,10 @@ static Atom *grounded_repra(
     Atom *result = atom_symbol(
         a, exact && rendered.buf
             ? rendered.buf
-            : atom_to_parseable_string(a, args[0]));
+            : (eval_current_language_id &&
+                       eval_current_language_id() == CETTA_LANGUAGE_PETTA
+                   ? atom_to_parseable_string_petta(a, args[0])
+                   : atom_to_parseable_string(a, args[0])));
     sb_free(&rendered);
     return result;
 }
@@ -1374,7 +1383,7 @@ static Atom *grounded_sha256(Arena *a, Atom *head, Atom **args,
     return g_hashcons ? hashcons_get(g_hashcons, result) : result;
 }
 
-/* Text parsing deliberately has two surfaces:
+/* Text parsing deliberately has two syntax forms:
    - parse is strict: the string must contain exactly one atom, with only
      whitespace/comments around it. This is the safer PeTTa-style default.
    - parse-first is stream-like: it returns the first parsed atom and ignores

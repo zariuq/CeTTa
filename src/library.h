@@ -86,6 +86,8 @@ struct PettaMachineTable;
 struct CettaPettaTokenSpaceClauseRegistry;
 
 struct CettaNikRuntimeV1;
+struct CettaPettaTypecheckV3;
+struct CettaPettaRuntimeState;
 
 typedef struct CettaLibraryContext {
     CettaEvalSession session;
@@ -96,6 +98,7 @@ typedef struct CettaLibraryContext {
     uint32_t active_mask;
     char root_dir[4096];
     char working_dir[PATH_MAX];
+    char script_path[PATH_MAX];
     char script_dir[PATH_MAX];
     char import_dirs[CETTA_MAX_IMPORT_DIR_DEPTH][PATH_MAX];
     uint32_t import_dir_len;
@@ -131,7 +134,9 @@ typedef struct CettaLibraryContext {
     CettaPettaMemoState petta_memo;
     struct PettaMachineTable *petta_shared_table;
     bool prime_relational_plan_enabled;
+    struct CettaPettaRuntimeState *petta_runtime;
     PettaProgram *petta_program;
+    struct CettaPettaTypecheckV3 *petta_typecheck_v3;
     struct CettaPettaTokenSpaceClauseRegistry *
         petta_token_space_clause_registry;
     CettaLibPrologRuntime *lib_prolog;

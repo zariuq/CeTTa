@@ -644,7 +644,7 @@ static bool abt_key_admitted(const AbtSignature *signature, Atom *name) {
     return abt_scope_check(signature, 0u, name);
 }
 
-static bool abt_surface_binder_name(Atom *name) {
+static bool abt_syntax_binder_name(Atom *name) {
     if (name && name->kind == ATOM_SYMBOL) return true;
     if (abt_is_quote_form(name))
         return abt_closed_stable_graph(name);
@@ -1419,7 +1419,7 @@ static bool abt_parse_binders(Atom *names, uint32_t count) {
         return false;
     for (uint32_t i = 0u; i < count; i++) {
         Atom *name = names->expr.elems[i + 1u];
-        if (!abt_surface_binder_name(name)) return false;
+        if (!abt_syntax_binder_name(name)) return false;
         if (CETTA_ABT_MUTATION == 22) continue;
         for (uint32_t j = 0u; j < i; j++)
             if (atom_eq(names->expr.elems[j + 1u], name))
@@ -1428,8 +1428,8 @@ static bool abt_parse_binders(Atom *names, uint32_t count) {
     return true;
 }
 
-Atom *abt_parse(const AbtSignature *signature, Arena *arena, Atom *surface) {
-    if (!signature || !arena || !surface) return NULL;
+Atom *abt_parse(const AbtSignature *signature, Arena *arena, Atom *syntax) {
+    if (!signature || !arena || !syntax) return NULL;
     Atom *result = NULL;
     AbtParseStack stack;
     AbtActiveSet active;
@@ -1438,7 +1438,7 @@ Atom *abt_parse(const AbtSignature *signature, Arena *arena, Atom *surface) {
     abt_active_init(&active);
     abt_name_env_init(&env);
     if (!abt_parse_stack_push(&stack, (AbtParseTask){
-            ABT_PARSE_VISIT, surface, &result, NULL, NULL, 0u, 0u}))
+            ABT_PARSE_VISIT, syntax, &result, NULL, NULL, 0u, 0u}))
         goto fail;
 
     while (stack.len > 0u) {
@@ -1475,7 +1475,7 @@ Atom *abt_parse(const AbtSignature *signature, Arena *arena, Atom *surface) {
         }
 
         Atom *current = task.term;
-        if (abt_surface_binder_name(current)) {
+        if (abt_syntax_binder_name(current)) {
             AbtNameBinding *binding = abt_name_env_lookup(&env, current);
             if (!binding) {
                 if (current->kind == ATOM_SYMBOL ||

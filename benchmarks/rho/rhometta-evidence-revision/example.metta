@@ -35,7 +35,7 @@
        (rho:quote rho:nil)
        (rho:quote (rho:send (chan (- $n 1)) rho:nil))))
 
-; readable surface: round for display, name the two numbers, drop the rho:val carrier.
+; readable syntax: round for display, name the two numbers, drop the rho:val carrier.
 (= (round3 $x) (/ (round-math (* $x 1000)) 1000))
 (= (sc (stv $s $c)) (strength (round3 $s) confidence (round3 $c)))
 (= (rev-of (rho:val $x)) $x)

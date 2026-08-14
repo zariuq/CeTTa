@@ -1,0 +1,9 @@
+#ifndef CETTA_GENERATED_PRIME_TYPING_OPEN_LAMBDA_PI_CORE_SOURCE_BINDING_V1_H
+#define CETTA_GENERATED_PRIME_TYPING_OPEN_LAMBDA_PI_CORE_SOURCE_BINDING_V1_H
+
+#include "nik_direct_authority.h"
+
+extern const CettaNikDirectSourceBindingV1
+    prime_typing_open_lambda_pi_core_source_binding_v1;
+
+#endif /* CETTA_GENERATED_PRIME_TYPING_OPEN_LAMBDA_PI_CORE_SOURCE_BINDING_V1_H */

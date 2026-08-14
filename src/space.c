@@ -2347,7 +2347,7 @@ static bool space_effect_scan_rhs(
             has_control = space_generated_fold_control(
                 head->sym_id, current->expr.len - 1u, &control);
             bool grounded = is_grounded_op(head->sym_id);
-            bool builtin = symbol_id_is_builtin_surface(head->sym_id);
+            bool builtin = symbol_id_is_builtin(head->sym_id);
             bool defined = space_equations_may_match_known_head(
                 graph->space, head->sym_id);
             CettaGsltQueryEffect direct =

@@ -6,6 +6,7 @@
 #include "parser.h"
 #include "stats.h"
 #include "symbol.h"
+#include "petta_typecheck_census.h"
 
 #include <stdarg.h>
 #include <stdio.h>
@@ -83,28 +84,93 @@ static bool petta_type_head_is(const Atom *atom, const char *name) {
            petta_type_symbol_is(atom->expr.elems[0], name);
 }
 
-static bool petta_type_arrow_symbol_name(const char *name) {
+static PettaAnalysisArrowMode petta_type_arrow_mode(const char *name) {
     if (!name)
-        return false;
+        return PETTA_ANALYSIS_ARROW_MODE_INVALID;
     size_t length = strlen(name);
-    return strcmp(name, "->") == 0 ||
-           strcmp(name, "-[det]->") == 0 ||
-           strcmp(name, "-[deterministic]->") == 0 ||
-           strcmp(name, "-[semidet]->") == 0 ||
-           strcmp(name, "-[semideterministic]->") == 0 ||
-           strcmp(name, "-[nondet]->") == 0 ||
-           strcmp(name, "-[nondeterministic]->") == 0 ||
-           (strncmp(name, "-[$", 3u) == 0 && length > 5u &&
-            strcmp(name + length - 3u, "]->") == 0);
+    if (strcmp(name, "->") == 0)
+        return PETTA_ANALYSIS_ARROW_MODE_PLAIN;
+    if (strcmp(name, "-[det]->") == 0 ||
+        strcmp(name, "-[deterministic]->") == 0) {
+        return PETTA_ANALYSIS_ARROW_MODE_DETERMINISTIC;
+    }
+    if (strcmp(name, "-[semidet]->") == 0 ||
+        strcmp(name, "-[semideterministic]->") == 0) {
+        return PETTA_ANALYSIS_ARROW_MODE_SEMIDETERMINISTIC;
+    }
+    if (strcmp(name, "-[nondet]->") == 0 ||
+        strcmp(name, "-[nondeterministic]->") == 0) {
+        return PETTA_ANALYSIS_ARROW_MODE_NONDETERMINISTIC;
+    }
+    if (strncmp(name, "-[$", 3u) == 0 && length > 5u &&
+        strcmp(name + length - 3u, "]->") == 0) {
+        return PETTA_ANALYSIS_ARROW_MODE_EFFECT;
+    }
+    return PETTA_ANALYSIS_ARROW_MODE_INVALID;
+}
+
+static bool petta_type_arrow_symbol_name(const char *name) {
+    return petta_type_arrow_mode(name) != PETTA_ANALYSIS_ARROW_MODE_INVALID;
+}
+
+static bool petta_type_arrow_mode_fits(
+    const char *actual, const char *required) {
+    PettaAnalysisArrowMode actual_mode = petta_type_arrow_mode(actual);
+    PettaAnalysisArrowMode required_mode = petta_type_arrow_mode(required);
+    if (required_mode == PETTA_ANALYSIS_ARROW_MODE_PLAIN) {
+        CETTA_PETTA_TYPECHECK_CENSUS_HIT(
+            CETTA_PETTA_TYPECHECK_CENSUS_EVENT_ARROW_MODE_PLAIN_ACCEPT);
+        return petta_analysis_arrow_mode_fits(actual_mode, required_mode);
+    }
+    if (required_mode == PETTA_ANALYSIS_ARROW_MODE_NONDETERMINISTIC) {
+        CETTA_PETTA_TYPECHECK_CENSUS_HIT(
+            CETTA_PETTA_TYPECHECK_CENSUS_EVENT_ARROW_MODE_NONDET_ACCEPT);
+        return petta_analysis_arrow_mode_fits(actual_mode, required_mode);
+    }
+    if (required_mode == PETTA_ANALYSIS_ARROW_MODE_EFFECT) {
+        CETTA_PETTA_TYPECHECK_CENSUS_HIT(
+            CETTA_PETTA_TYPECHECK_CENSUS_EVENT_ARROW_MODE_EFFECT_ACCEPT);
+        return petta_analysis_arrow_mode_fits(actual_mode, required_mode);
+    }
+    if (required_mode == PETTA_ANALYSIS_ARROW_MODE_DETERMINISTIC) {
+        if (petta_analysis_arrow_mode_fits(actual_mode, required_mode)) {
+            CETTA_PETTA_TYPECHECK_CENSUS_HIT(
+                CETTA_PETTA_TYPECHECK_CENSUS_EVENT_ARROW_MODE_DET_EXACT);
+            return true;
+        }
+        CETTA_PETTA_TYPECHECK_CENSUS_HIT(
+            CETTA_PETTA_TYPECHECK_CENSUS_EVENT_ARROW_MODE_REJECT);
+        return false;
+    }
+    if (required_mode == PETTA_ANALYSIS_ARROW_MODE_SEMIDETERMINISTIC) {
+        if (actual_mode == PETTA_ANALYSIS_ARROW_MODE_DETERMINISTIC) {
+            CETTA_PETTA_TYPECHECK_CENSUS_HIT(
+                CETTA_PETTA_TYPECHECK_CENSUS_EVENT_ARROW_MODE_DET_TO_SEMIDET);
+            return true;
+        }
+        if (petta_analysis_arrow_mode_fits(actual_mode, required_mode)) {
+            CETTA_PETTA_TYPECHECK_CENSUS_HIT(
+                CETTA_PETTA_TYPECHECK_CENSUS_EVENT_ARROW_MODE_SEMIDET_EXACT);
+            return true;
+        }
+    }
+    CETTA_PETTA_TYPECHECK_CENSUS_HIT(
+        CETTA_PETTA_TYPECHECK_CENSUS_EVENT_ARROW_MODE_REJECT);
+    return false;
+}
+
+static const char *petta_type_arrow_mode_name(const Atom *type) {
+    if (!type || type->kind != ATOM_EXPR || type->expr.len < 2u ||
+        type->expr.elems[0]->kind != ATOM_SYMBOL || !g_symbols) {
+        return NULL;
+    }
+    const char *name = symbol_bytes(
+        g_symbols, type->expr.elems[0]->sym_id);
+    return petta_type_arrow_symbol_name(name) ? name : NULL;
 }
 
 static bool petta_type_is_arrow(const Atom *type) {
-    if (!type || type->kind != ATOM_EXPR || type->expr.len < 2u ||
-        type->expr.elems[0]->kind != ATOM_SYMBOL || !g_symbols) {
-        return false;
-    }
-    return petta_type_arrow_symbol_name(
-        symbol_bytes(g_symbols, type->expr.elems[0]->sym_id));
+    return petta_type_arrow_mode_name(type) != NULL;
 }
 
 static bool petta_type_is_wildcard(const Atom *type) {
@@ -182,34 +248,6 @@ static PettaTypeMemoEntry *petta_memo_entry(
         }
         slot = (slot + 1u) & (context->memo_cap - 1u);
     }
-}
-
-static PettaTypecheckVerdict petta_all_pair(
-    PettaTypecheckVerdict current, PettaTypecheckVerdict next) {
-    if (current == PETTA_TYPECHECK_REFUTED ||
-        next == PETTA_TYPECHECK_REFUTED)
-        return PETTA_TYPECHECK_REFUTED;
-    if (current == PETTA_TYPECHECK_INCOMPLETE ||
-        next == PETTA_TYPECHECK_INCOMPLETE)
-        return PETTA_TYPECHECK_INCOMPLETE;
-    if (current == PETTA_TYPECHECK_UNDETERMINED ||
-        next == PETTA_TYPECHECK_UNDETERMINED)
-        return PETTA_TYPECHECK_UNDETERMINED;
-    return PETTA_TYPECHECK_ESTABLISHED;
-}
-
-static PettaTypecheckVerdict petta_any_pair(
-    PettaTypecheckVerdict current, PettaTypecheckVerdict next) {
-    if (current == PETTA_TYPECHECK_ESTABLISHED ||
-        next == PETTA_TYPECHECK_ESTABLISHED)
-        return PETTA_TYPECHECK_ESTABLISHED;
-    if (current == PETTA_TYPECHECK_INCOMPLETE ||
-        next == PETTA_TYPECHECK_INCOMPLETE)
-        return PETTA_TYPECHECK_INCOMPLETE;
-    if (current == PETTA_TYPECHECK_UNDETERMINED ||
-        next == PETTA_TYPECHECK_UNDETERMINED)
-        return PETTA_TYPECHECK_UNDETERMINED;
-    return PETTA_TYPECHECK_REFUTED;
 }
 
 static PettaDeclInfo petta_decl_info(
@@ -364,7 +402,7 @@ static PettaTypecheckVerdict petta_check_declared_value_types(
             actual = actual->expr.elems[actual->expr.len - 1u];
         }
         considered = true;
-        aggregate = petta_any_pair(
+        aggregate = petta_analysis_verdict_any(
             aggregate, petta_check_types(context, actual, required));
         if (aggregate == PETTA_TYPECHECK_ESTABLISHED)
             break;
@@ -399,6 +437,23 @@ static PettaTypecheckVerdict petta_check_type_body(
     if (actual_decl.kind == PETTA_DECL_NEWTYPE ||
         required_decl.kind == PETTA_DECL_NEWTYPE) {
         if (actual_decl.kind == PETTA_DECL_NEWTYPE &&
+            petta_type_head_is(required, "|")) {
+            CETTA_PETTA_TYPECHECK_CENSUS_HIT(
+                CETTA_PETTA_TYPECHECK_CENSUS_EVENT_NEWTYPE_ACTUAL_REQUIRED_UNION);
+            PettaTypecheckVerdict aggregate = PETTA_TYPECHECK_REFUTED;
+            for (CettaExprIndex index = 1u;
+                 index < required->expr.len; index++) {
+                aggregate = petta_analysis_verdict_any(
+                    aggregate,
+                    petta_check_types(
+                        context, actual,
+                        required->expr.elems[index]));
+                if (aggregate == PETTA_TYPECHECK_ESTABLISHED)
+                    break;
+            }
+            return aggregate;
+        }
+        if (actual_decl.kind == PETTA_DECL_NEWTYPE &&
             required_decl.kind == PETTA_DECL_NEWTYPE) {
             context->reason = actual->kind == ATOM_SYMBOL &&
                                       required->kind == ATOM_SYMBOL &&
@@ -415,7 +470,7 @@ static PettaTypecheckVerdict petta_check_type_body(
                     PETTA_TYPECHECK_ESTABLISHED;
                 for (CettaExprIndex index = 1u;
                      index < actual->expr.len; index++) {
-                    aggregate = petta_all_pair(
+                    aggregate = petta_analysis_verdict_all(
                         aggregate,
                         petta_check_types(
                             context, actual->expr.elems[index], required));
@@ -450,7 +505,7 @@ static PettaTypecheckVerdict petta_check_type_body(
     if (petta_type_head_is(actual, "|")) {
         PettaTypecheckVerdict aggregate = PETTA_TYPECHECK_ESTABLISHED;
         for (CettaExprIndex index = 1u; index < actual->expr.len; index++) {
-            aggregate = petta_all_pair(
+            aggregate = petta_analysis_verdict_all(
                 aggregate,
                 petta_check_types(
                     context, actual->expr.elems[index], required));
@@ -461,12 +516,49 @@ static PettaTypecheckVerdict petta_check_type_body(
         PettaTypecheckVerdict aggregate = PETTA_TYPECHECK_REFUTED;
         for (CettaExprIndex index = 1u;
              index < required->expr.len; index++) {
-            aggregate = petta_any_pair(
+            aggregate = petta_analysis_verdict_any(
                 aggregate,
                 petta_check_types(
                     context, actual, required->expr.elems[index]));
             if (aggregate == PETTA_TYPECHECK_ESTABLISHED)
                 break;
+        }
+        return aggregate;
+    }
+
+    const char *actual_arrow_mode = petta_type_arrow_mode_name(actual);
+    const char *required_arrow_mode = petta_type_arrow_mode_name(required);
+    if (actual_arrow_mode || required_arrow_mode) {
+        if (!actual_arrow_mode || !required_arrow_mode ||
+            actual->expr.len != required->expr.len) {
+            CETTA_PETTA_TYPECHECK_CENSUS_HIT(
+                CETTA_PETTA_TYPECHECK_CENSUS_EVENT_ARROW_SHAPE_REJECT);
+            context->reason = PETTA_TYPECHECK_REASON_MISMATCH;
+            return PETTA_TYPECHECK_REFUTED;
+        }
+        if (!petta_type_arrow_mode_fits(
+                actual_arrow_mode, required_arrow_mode)) {
+            context->reason = PETTA_TYPECHECK_REASON_MISMATCH;
+            return PETTA_TYPECHECK_REFUTED;
+        }
+        PettaTypecheckVerdict aggregate = PETTA_TYPECHECK_ESTABLISHED;
+        for (CettaExprIndex index = 1u;
+             index < actual->expr.len; index++) {
+            aggregate = petta_analysis_verdict_all(
+                aggregate,
+                petta_check_types(
+                    context, actual->expr.elems[index],
+                    required->expr.elems[index]));
+            if (aggregate == PETTA_TYPECHECK_REFUTED) {
+                CETTA_PETTA_TYPECHECK_CENSUS_HIT(
+                    CETTA_PETTA_TYPECHECK_CENSUS_EVENT_ARROW_COMPONENT_REJECT);
+                break;
+            }
+        }
+        if (aggregate == PETTA_TYPECHECK_ESTABLISHED) {
+            CETTA_PETTA_TYPECHECK_CENSUS_HIT(
+                CETTA_PETTA_TYPECHECK_CENSUS_EVENT_ARROW_COMPATIBLE);
+            context->reason = PETTA_TYPECHECK_REASON_STRUCTURAL;
         }
         return aggregate;
     }
@@ -490,7 +582,7 @@ static PettaTypecheckVerdict petta_check_type_body(
     }
     PettaTypecheckVerdict aggregate = PETTA_TYPECHECK_ESTABLISHED;
     for (CettaExprIndex index = 1u; index < actual->expr.len; index++) {
-        aggregate = petta_all_pair(
+        aggregate = petta_analysis_verdict_all(
             aggregate,
             petta_check_types(
                 context, actual->expr.elems[index],
@@ -555,7 +647,7 @@ static PettaTypecheckVerdict petta_check_required_list(
             context->reason = PETTA_TYPECHECK_REASON_OPEN_VALUE;
             return PETTA_TYPECHECK_UNDETERMINED;
         }
-        aggregate = petta_all_pair(
+        aggregate = petta_analysis_verdict_all(
             aggregate,
             petta_check_value(context, item, element_type));
         if (aggregate == PETTA_TYPECHECK_REFUTED)
@@ -635,7 +727,7 @@ static PettaTypecheckVerdict petta_check_value_body(
         PettaTypecheckVerdict aggregate = PETTA_TYPECHECK_REFUTED;
         for (CettaExprIndex index = 1u;
              index < required->expr.len; index++) {
-            aggregate = petta_any_pair(
+            aggregate = petta_analysis_verdict_any(
                 aggregate,
                 petta_check_value(
                     context, value, required->expr.elems[index]));
@@ -698,7 +790,7 @@ static PettaTypecheckVerdict petta_check_value_body(
         PettaTypecheckVerdict aggregate = PETTA_TYPECHECK_ESTABLISHED;
         for (CettaExprIndex index = 0u;
              index < required->expr.len; index++) {
-            aggregate = petta_all_pair(
+            aggregate = petta_analysis_verdict_all(
                 aggregate,
                 petta_check_value(
                     context, value->expr.elems[index],
@@ -945,6 +1037,7 @@ typedef struct {
     bool inferring_signature;
     uint32_t explicit_ascription_depth;
     bool residual_type_guard_required;
+    bool committed_effect_evidence_withheld;
 } PettaBlockCheck;
 
 static bool petta_block_inferred_signatures_current(
@@ -1371,28 +1464,6 @@ static bool petta_block_arrow_head(
     return arrow;
 }
 
-static bool petta_block_mode_fits(
-    const char *actual, const char *required) {
-    if (!actual || !required)
-        return false;
-    if (strcmp(required, "->") == 0 ||
-        strcmp(required, "-[nondet]->") == 0 ||
-        strcmp(required, "-[nondeterministic]->") == 0 ||
-        strncmp(required, "-[$", 3u) == 0)
-        return true;
-    bool actual_det = strcmp(actual, "-[det]->") == 0 ||
-                      strcmp(actual, "-[deterministic]->") == 0;
-    bool actual_semidet = strcmp(actual, "-[semidet]->") == 0 ||
-                          strcmp(actual, "-[semideterministic]->") == 0;
-    if (strcmp(required, "-[det]->") == 0 ||
-        strcmp(required, "-[deterministic]->") == 0)
-        return actual_det;
-    if (strcmp(required, "-[semidet]->") == 0 ||
-        strcmp(required, "-[semideterministic]->") == 0)
-        return actual_det || actual_semidet;
-    return strcmp(actual, required) == 0;
-}
-
 static bool petta_block_wildcard(const Atom *type) {
     const char *name = petta_block_symbol_name(type);
     return name &&
@@ -1601,6 +1672,47 @@ static bool petta_block_runtime_type_candidate(
     return false;
 }
 
+/* Roman's value_single_type asks whether a symbol has exactly one explicit
+ * value candidate.  Function declarations participate as first-class arrow
+ * values; choosing a non-arrow merely because one exists would turn an
+ * ambiguous symbol into false positive evidence. */
+static Atom *petta_block_unique_explicit_value_candidate_type(
+    PettaBlockCheck *check, Atom *value, bool *ambiguous_out) {
+    if (ambiguous_out)
+        *ambiguous_out = false;
+    if (!check || !value || value->kind != ATOM_SYMBOL)
+        return NULL;
+    Atom *found = NULL;
+    const PettaBlockDeclarationBucket *bucket =
+        petta_block_declaration_bucket_const(check, value);
+    for (size_t index = bucket ? bucket->first : PETTA_DECL_INDEX_NONE;
+         index != PETTA_DECL_INDEX_NONE;
+         index = check->declarations[index].next_same_subject) {
+        PettaBlockDeclaration *declaration = &check->declarations[index];
+        if (declaration->inferred) {
+            CETTA_PETTA_TYPECHECK_CENSUS_HIT(
+                CETTA_PETTA_TYPECHECK_CENSUS_EVENT_INFERENCE_INFERRED_VALUE_CANDIDATE_IGNORED);
+            continue;
+        }
+        if (!found) {
+            found = declaration->type;
+            continue;
+        }
+        if (!atom_alpha_eq(found, declaration->type)) {
+            if (ambiguous_out)
+                *ambiguous_out = true;
+            CETTA_PETTA_TYPECHECK_CENSUS_HIT(
+                CETTA_PETTA_TYPECHECK_CENSUS_EVENT_INFERENCE_VALUE_CANDIDATE_AMBIGUOUS);
+            return NULL;
+        }
+    }
+    if (found) {
+        CETTA_PETTA_TYPECHECK_CENSUS_HIT(
+            CETTA_PETTA_TYPECHECK_CENSUS_EVENT_INFERENCE_VALUE_CANDIDATE_SINGLETON);
+    }
+    return found;
+}
+
 static Atom *petta_block_declared_value_type(
     PettaBlockCheck *check, Atom *value) {
     if (!check || !value || value->kind != ATOM_SYMBOL)
@@ -1641,6 +1753,8 @@ static bool petta_block_type_compatible_depth(
 static bool petta_block_type_all_actual_union(
     PettaBlockCheck *check, Atom *actual, Atom *required,
     Bindings *bindings, uint32_t depth) {
+    CETTA_PETTA_TYPECHECK_CENSUS_HIT(
+        CETTA_PETTA_TYPECHECK_CENSUS_EVENT_ACTUAL_UNION_ALL);
     /* Roman's actual-union law is universal through SOFT compatibility.
      * Every member must fit, but the witness substitution of one alternative
      * must not constrain another alternative: one runtime result inhabits one
@@ -1660,15 +1774,22 @@ static bool petta_block_type_all_actual_union(
             check, actual->expr.elems[index], required,
             &trial, depth + 1u);
         bindings_free(&trial);
-        if (!compatible)
+        if (!compatible) {
+            CETTA_PETTA_TYPECHECK_CENSUS_HIT(
+                CETTA_PETTA_TYPECHECK_CENSUS_EVENT_ACTUAL_UNION_MEMBER_REJECT);
             return false;
+        }
     }
+    CETTA_PETTA_TYPECHECK_CENSUS_HIT(
+        CETTA_PETTA_TYPECHECK_CENSUS_EVENT_ACTUAL_UNION_ALL_ACCEPT);
     return true;
 }
 
 static bool petta_block_type_any_required_union(
     PettaBlockCheck *check, Atom *actual, Atom *required,
     Bindings *bindings, uint32_t depth) {
+    CETTA_PETTA_TYPECHECK_CENSUS_HIT(
+        CETTA_PETTA_TYPECHECK_CENSUS_EVENT_REQUIRED_UNION_ANY);
     for (CettaExprIndex index = 1u; index < required->expr.len; index++) {
         Bindings trial;
         if (!bindings_clone(&trial, bindings))
@@ -1680,10 +1801,14 @@ static bool petta_block_type_any_required_union(
                 &trial, depth + 1u)) {
             bindings_replace(bindings, &trial);
             bindings_free(&trial);
+            CETTA_PETTA_TYPECHECK_CENSUS_HIT(
+                CETTA_PETTA_TYPECHECK_CENSUS_EVENT_REQUIRED_UNION_MEMBER_ACCEPT);
             return true;
         }
         bindings_free(&trial);
     }
+    CETTA_PETTA_TYPECHECK_CENSUS_HIT(
+        CETTA_PETTA_TYPECHECK_CENSUS_EVENT_REQUIRED_UNION_NONE_ACCEPT);
     return false;
 }
 
@@ -1707,12 +1832,16 @@ static bool petta_block_type_may_overlap(
     Atom *actual_alias = petta_block_decl_representation(
         check, actual, "Alias");
     if (actual_alias) {
+        CETTA_PETTA_TYPECHECK_CENSUS_HIT(
+            CETTA_PETTA_TYPECHECK_CENSUS_EVENT_ASCRIPTION_ALIAS_LEFT);
         return petta_block_type_may_overlap(
             check, actual_alias, ascribed, bindings, depth + 1u);
     }
     Atom *ascribed_alias = petta_block_decl_representation(
         check, ascribed, "Alias");
     if (ascribed_alias) {
+        CETTA_PETTA_TYPECHECK_CENSUS_HIT(
+            CETTA_PETTA_TYPECHECK_CENSUS_EVENT_ASCRIPTION_ALIAS_RIGHT);
         return petta_block_type_may_overlap(
             check, actual, ascribed_alias, bindings, depth + 1u);
     }
@@ -1735,9 +1864,14 @@ static bool petta_block_type_may_overlap(
             if (overlaps)
                 bindings_replace(bindings, &trial);
             bindings_free(&trial);
-            if (overlaps)
+            if (overlaps) {
+                CETTA_PETTA_TYPECHECK_CENSUS_HIT(
+                    CETTA_PETTA_TYPECHECK_CENSUS_EVENT_ASCRIPTION_ACTUAL_UNION_ACCEPT);
                 return true;
+            }
         }
+        CETTA_PETTA_TYPECHECK_CENSUS_HIT(
+            CETTA_PETTA_TYPECHECK_CENSUS_EVENT_ASCRIPTION_ACTUAL_UNION_REJECT);
         return false;
     }
     if (petta_block_head_is(ascribed, "|") &&
@@ -1758,9 +1892,14 @@ static bool petta_block_type_may_overlap(
             if (overlaps)
                 bindings_replace(bindings, &trial);
             bindings_free(&trial);
-            if (overlaps)
+            if (overlaps) {
+                CETTA_PETTA_TYPECHECK_CENSUS_HIT(
+                    CETTA_PETTA_TYPECHECK_CENSUS_EVENT_ASCRIPTION_REQUIRED_UNION_ACCEPT);
                 return true;
+            }
         }
+        CETTA_PETTA_TYPECHECK_CENSUS_HIT(
+            CETTA_PETTA_TYPECHECK_CENSUS_EVENT_ASCRIPTION_REQUIRED_UNION_REJECT);
         return false;
     }
 
@@ -1779,6 +1918,8 @@ static bool petta_block_type_may_overlap(
             check, actual, ascribed, &forward, depth + 1u)) {
         bindings_replace(bindings, &forward);
         bindings_free(&forward);
+        CETTA_PETTA_TYPECHECK_CENSUS_HIT(
+            CETTA_PETTA_TYPECHECK_CENSUS_EVENT_ASCRIPTION_FORWARD_ACCEPT);
         return true;
     }
     bindings_free(&forward);
@@ -1796,6 +1937,13 @@ static bool petta_block_type_may_overlap(
     if (overlaps)
         bindings_replace(bindings, &reverse);
     bindings_free(&reverse);
+    if (overlaps) {
+        CETTA_PETTA_TYPECHECK_CENSUS_HIT(
+            CETTA_PETTA_TYPECHECK_CENSUS_EVENT_ASCRIPTION_REVERSE_ACCEPT);
+    } else {
+        CETTA_PETTA_TYPECHECK_CENSUS_HIT(
+            CETTA_PETTA_TYPECHECK_CENSUS_EVENT_ASCRIPTION_NO_OVERLAP);
+    }
     return overlaps;
 }
 
@@ -1819,8 +1967,17 @@ static bool petta_block_type_compatible_depth(
             Atom *member = petta_block_resolve_binding(
                 bindings, required->expr.elems[index]);
             if (member && member->kind == ATOM_VAR &&
-                member->var_id == actual->var_id)
+                member->var_id == actual->var_id) {
+                CETTA_PETTA_TYPECHECK_CENSUS_HIT(
+                    CETTA_PETTA_TYPECHECK_CENSUS_EVENT_TYPE_VAR_ACTUAL_UNION_SELF);
+                /* Roman's soft compatibility accepts this self-membership,
+                 * but the open required union still needs a residual guard.
+                 * Strict modes reject that boundary rather than treating the
+                 * rational-tree witness as closed static evidence. */
+                petta_block_note_residual_guard(
+                    check, required, "type-variable-union-self");
                 return true;
+            }
         }
     }
     if (required->kind == ATOM_VAR &&
@@ -1831,18 +1988,35 @@ static bool petta_block_type_compatible_depth(
             Atom *member = petta_block_resolve_binding(
                 bindings, actual->expr.elems[index]);
             if (member && member->kind == ATOM_VAR &&
-                member->var_id == required->var_id)
+                member->var_id == required->var_id) {
+                CETTA_PETTA_TYPECHECK_CENSUS_HIT(
+                    CETTA_PETTA_TYPECHECK_CENSUS_EVENT_TYPE_VAR_REQUIRED_UNION_SELF);
                 return true;
+            }
         }
     }
     if (actual->kind == ATOM_VAR) {
         if (required->kind == ATOM_VAR &&
-            actual->var_id == required->var_id)
+            actual->var_id == required->var_id) {
+            CETTA_PETTA_TYPECHECK_CENSUS_HIT(
+                CETTA_PETTA_TYPECHECK_CENSUS_EVENT_TYPE_VAR_IDENTITY);
             return true;
-        return bindings_add_var_acyclic(bindings, actual, required);
+        }
+        bool bound = bindings_add_var_acyclic(bindings, actual, required);
+        CETTA_PETTA_TYPECHECK_CENSUS_HIT(
+            bound
+                ? CETTA_PETTA_TYPECHECK_CENSUS_EVENT_TYPE_VAR_ACTUAL_BIND_ACCEPT
+                : CETTA_PETTA_TYPECHECK_CENSUS_EVENT_TYPE_VAR_ACTUAL_BIND_REJECT);
+        return bound;
     }
-    if (required->kind == ATOM_VAR)
-        return bindings_add_var_acyclic(bindings, required, actual);
+    if (required->kind == ATOM_VAR) {
+        bool bound = bindings_add_var_acyclic(bindings, required, actual);
+        CETTA_PETTA_TYPECHECK_CENSUS_HIT(
+            bound
+                ? CETTA_PETTA_TYPECHECK_CENSUS_EVENT_TYPE_VAR_REQUIRED_BIND_ACCEPT
+                : CETTA_PETTA_TYPECHECK_CENSUS_EVENT_TYPE_VAR_REQUIRED_BIND_REJECT);
+        return bound;
+    }
 
     Atom *actual_newtype = petta_block_decl_representation(
         check, actual, "Newtype");
@@ -1850,37 +2024,75 @@ static bool petta_block_type_compatible_depth(
         check, required, "Newtype");
     if (actual_newtype || required_newtype) {
         if (actual_newtype && petta_block_head_is(required, "|")) {
+            CETTA_PETTA_TYPECHECK_CENSUS_HIT(
+                CETTA_PETTA_TYPECHECK_CENSUS_EVENT_NEWTYPE_ACTUAL_REQUIRED_UNION);
             return petta_block_type_any_required_union(
                 check, actual, required, bindings, depth);
         }
-        if (actual_newtype && required_newtype)
-            return atom_eq(actual, required);
+        if (actual_newtype && required_newtype) {
+            bool identical = atom_eq(actual, required);
+            CETTA_PETTA_TYPECHECK_CENSUS_HIT(
+                identical
+                    ? CETTA_PETTA_TYPECHECK_CENSUS_EVENT_NEWTYPE_IDENTITY_ACCEPT
+                    : CETTA_PETTA_TYPECHECK_CENSUS_EVENT_NEWTYPE_DISTINCT_REJECT);
+            return identical;
+        }
         if (required_newtype) {
-            if (petta_block_head_is(actual, "|"))
+            if (petta_block_head_is(actual, "|")) {
+                CETTA_PETTA_TYPECHECK_CENSUS_HIT(
+                    CETTA_PETTA_TYPECHECK_CENSUS_EVENT_NEWTYPE_ACTUAL_UNION_REQUIRED);
                 return petta_block_type_all_actual_union(
                     check, actual, required, bindings, depth);
+            }
+            CETTA_PETTA_TYPECHECK_CENSUS_HIT(
+                CETTA_PETTA_TYPECHECK_CENSUS_EVENT_NEWTYPE_REQUIRED_REJECT);
             return false;
         }
-        if (petta_block_wildcard(required))
+        if (petta_block_wildcard(required)) {
+            CETTA_PETTA_TYPECHECK_CENSUS_HIT(
+                CETTA_PETTA_TYPECHECK_CENSUS_EVENT_NEWTYPE_ACTUAL_WILDCARD_ACCEPT);
             return true;
-        if (!actual_newtype || petta_block_wildcard(actual_newtype))
+        }
+        if (!actual_newtype || petta_block_wildcard(actual_newtype)) {
+            CETTA_PETTA_TYPECHECK_CENSUS_HIT(
+                CETTA_PETTA_TYPECHECK_CENSUS_EVENT_NEWTYPE_WILDCARD_REPRESENTATION_REJECT);
             return false;
-        return petta_block_type_compatible_depth(
+        }
+        bool representation_fits = petta_block_type_compatible_depth(
             check, actual_newtype, required, bindings, depth + 1u);
+        CETTA_PETTA_TYPECHECK_CENSUS_HIT(
+            representation_fits
+                ? CETTA_PETTA_TYPECHECK_CENSUS_EVENT_NEWTYPE_REPRESENTATION_ACCEPT
+                : CETTA_PETTA_TYPECHECK_CENSUS_EVENT_NEWTYPE_REPRESENTATION_REJECT);
+        return representation_fits;
     }
 
     Atom *actual_alias = petta_block_decl_representation(
         check, actual, "Alias");
     Atom *required_alias = petta_block_decl_representation(
         check, required, "Alias");
-    if (actual_alias)
+    if (actual_alias) {
+        CETTA_PETTA_TYPECHECK_CENSUS_HIT(
+            CETTA_PETTA_TYPECHECK_CENSUS_EVENT_ACTUAL_ALIAS_EXPAND);
         return petta_block_type_compatible_depth(
             check, actual_alias, required, bindings, depth + 1u);
-    if (required_alias)
+    }
+    if (required_alias) {
+        CETTA_PETTA_TYPECHECK_CENSUS_HIT(
+            CETTA_PETTA_TYPECHECK_CENSUS_EVENT_REQUIRED_ALIAS_EXPAND);
         return petta_block_type_compatible_depth(
             check, actual, required_alias, bindings, depth + 1u);
-    if (petta_block_wildcard(actual) || petta_block_wildcard(required))
+    }
+    if (petta_block_wildcard(actual)) {
+        CETTA_PETTA_TYPECHECK_CENSUS_HIT(
+            CETTA_PETTA_TYPECHECK_CENSUS_EVENT_WILDCARD_ACTUAL_ACCEPT);
         return true;
+    }
+    if (petta_block_wildcard(required)) {
+        CETTA_PETTA_TYPECHECK_CENSUS_HIT(
+            CETTA_PETTA_TYPECHECK_CENSUS_EVENT_WILDCARD_REQUIRED_ACCEPT);
+        return true;
+    }
     if (petta_block_head_is(actual, "|"))
         return petta_block_type_all_actual_union(
             check, actual, required, bindings, depth);
@@ -1894,42 +2106,394 @@ static bool petta_block_type_compatible_depth(
     bool required_arrow = petta_block_arrow_head(required, &required_mode);
     if (actual_arrow || required_arrow) {
         if (!actual_arrow || !required_arrow ||
-            actual->expr.len != required->expr.len ||
-            !petta_block_mode_fits(actual_mode, required_mode))
+            actual->expr.len != required->expr.len) {
+            CETTA_PETTA_TYPECHECK_CENSUS_HIT(
+                CETTA_PETTA_TYPECHECK_CENSUS_EVENT_ARROW_SHAPE_REJECT);
+            return false;
+        }
+        if (!petta_type_arrow_mode_fits(actual_mode, required_mode))
             return false;
         for (CettaExprIndex index = 1u;
              index < actual->expr.len; index++) {
             if (!petta_block_type_compatible_depth(
                     check, actual->expr.elems[index],
                     required->expr.elems[index], bindings,
-                    depth + 1u))
+                    depth + 1u)) {
+                CETTA_PETTA_TYPECHECK_CENSUS_HIT(
+                    CETTA_PETTA_TYPECHECK_CENSUS_EVENT_ARROW_COMPONENT_REJECT);
                 return false;
+            }
         }
+        CETTA_PETTA_TYPECHECK_CENSUS_HIT(
+            CETTA_PETTA_TYPECHECK_CENSUS_EVENT_ARROW_COMPATIBLE);
         return true;
     }
 
-    if (actual->kind != required->kind)
+    if (actual->kind != required->kind) {
+        CETTA_PETTA_TYPECHECK_CENSUS_HIT(
+            CETTA_PETTA_TYPECHECK_CENSUS_EVENT_STRUCTURAL_KIND_REJECT);
         return false;
-    if (actual->kind != ATOM_EXPR)
-        return atom_eq(actual, required);
-    if (actual->expr.len != required->expr.len)
+    }
+    if (actual->kind != ATOM_EXPR) {
+        bool identical = atom_eq(actual, required);
+        CETTA_PETTA_TYPECHECK_CENSUS_HIT(
+            identical
+                ? CETTA_PETTA_TYPECHECK_CENSUS_EVENT_STRUCTURAL_ATOM_EXACT
+                : CETTA_PETTA_TYPECHECK_CENSUS_EVENT_STRUCTURAL_ATOM_REJECT);
+        return identical;
+    }
+    if (actual->expr.len != required->expr.len) {
+        CETTA_PETTA_TYPECHECK_CENSUS_HIT(
+            CETTA_PETTA_TYPECHECK_CENSUS_EVENT_STRUCTURAL_ARITY_REJECT);
         return false;
+    }
     for (CettaExprIndex index = 0u;
          index < actual->expr.len; index++) {
         if (!petta_block_type_compatible_depth(
                 check, actual->expr.elems[index],
                 required->expr.elems[index], bindings,
-                depth + 1u))
+                depth + 1u)) {
+            CETTA_PETTA_TYPECHECK_CENSUS_HIT(
+                CETTA_PETTA_TYPECHECK_CENSUS_EVENT_STRUCTURAL_COMPONENT_REJECT);
             return false;
+        }
     }
+    CETTA_PETTA_TYPECHECK_CENSUS_HIT(
+        CETTA_PETTA_TYPECHECK_CENSUS_EVENT_STRUCTURAL_COMPATIBLE);
     return true;
 }
 
 static bool petta_block_type_compatible(
     PettaBlockCheck *check, Atom *actual, Atom *required,
+    Bindings *bindings);
+
+typedef struct {
+    VarId variable;
+    Atom *value;
+} PettaRationalTypeBinding;
+
+typedef struct {
+    Atom *left;
+    Atom *right;
+} PettaRationalTypePair;
+
+typedef struct {
+    PettaBlockCheck *check;
+    const Bindings *base;
+    PettaRationalTypeBinding *bindings;
+    size_t binding_len;
+    size_t binding_cap;
+    PettaRationalTypePair *pending;
+    size_t pending_len;
+    size_t pending_cap;
+    PettaRationalTypePair *seen;
+    size_t seen_len;
+    size_t seen_cap;
+    bool saw_cycle;
+    bool faulted;
+} PettaRationalTypeReplay;
+
+static Atom *petta_rational_type_lookup(
+    const PettaRationalTypeReplay *replay, VarId variable) {
+    for (size_t index = replay->binding_len; index > 0u; index--) {
+        if (replay->bindings[index - 1u].variable == variable)
+            return replay->bindings[index - 1u].value;
+    }
+    if (replay->base) {
+        for (uint32_t index = replay->base->len; index > 0u; index--) {
+            if (replay->base->entries[index - 1u].var_id == variable)
+                return replay->base->entries[index - 1u].val;
+        }
+    }
+    return NULL;
+}
+
+static Atom *petta_rational_type_dereference(
+    PettaRationalTypeReplay *replay, Atom *type) {
+    size_t remaining = replay->binding_len +
+        (replay->base ? replay->base->len : 0u) + 1u;
+    while (type && type->kind == ATOM_VAR && remaining-- > 0u) {
+        Atom *next = petta_rational_type_lookup(replay, type->var_id);
+        if (!next || (next->kind == ATOM_VAR &&
+                      next->var_id == type->var_id)) {
+            return type;
+        }
+        type = next;
+    }
+    if (type && type->kind == ATOM_VAR)
+        replay->saw_cycle = true;
+    return type;
+}
+
+static bool petta_rational_type_push_pair(
+    PettaRationalTypeReplay *replay, Atom *left, Atom *right) {
+    if (!petta_block_reserve(
+            (void **)&replay->pending, &replay->pending_cap,
+            replay->pending_len + 1u, sizeof(*replay->pending))) {
+        replay->faulted = true;
+        return petta_block_fault(
+            replay->check, PETTA_TYPECHECK_FAULT_ALLOCATION,
+            "could not grow rational type replay worklist");
+    }
+    replay->pending[replay->pending_len++] =
+        (PettaRationalTypePair){.left = left, .right = right};
+    return true;
+}
+
+static bool petta_rational_type_seen_pair(
+    const PettaRationalTypeReplay *replay, Atom *left, Atom *right) {
+    for (size_t index = 0u; index < replay->seen_len; index++) {
+        PettaRationalTypePair pair = replay->seen[index];
+        if ((pair.left == left && pair.right == right) ||
+            (pair.left == right && pair.right == left)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+static bool petta_rational_type_note_pair(
+    PettaRationalTypeReplay *replay, Atom *left, Atom *right) {
+    if (!petta_block_reserve(
+            (void **)&replay->seen, &replay->seen_cap,
+            replay->seen_len + 1u, sizeof(*replay->seen))) {
+        replay->faulted = true;
+        return petta_block_fault(
+            replay->check, PETTA_TYPECHECK_FAULT_ALLOCATION,
+            "could not grow rational type replay memo");
+    }
+    replay->seen[replay->seen_len++] =
+        (PettaRationalTypePair){.left = left, .right = right};
+    return true;
+}
+
+static int petta_rational_type_reaches_variable(
+    PettaRationalTypeReplay *replay, Atom *value, VarId target) {
+    Atom **pending = NULL;
+    size_t pending_len = 0u;
+    size_t pending_cap = 0u;
+    VarId *seen = NULL;
+    size_t seen_len = 0u;
+    size_t seen_cap = 0u;
+    if (!petta_block_reserve(
+            (void **)&pending, &pending_cap, 1u, sizeof(*pending))) {
+        goto fault;
+    }
+    pending[pending_len++] = value;
+    while (pending_len > 0u) {
+        Atom *current = pending[--pending_len];
+        if (!current)
+            continue;
+        if (current->kind == ATOM_VAR) {
+            if (current->var_id == target) {
+                free(seen);
+                free(pending);
+                return 1;
+            }
+            bool prior = false;
+            for (size_t index = 0u; index < seen_len; index++) {
+                if (seen[index] == current->var_id) {
+                    prior = true;
+                    break;
+                }
+            }
+            if (prior)
+                continue;
+            if (!petta_block_reserve(
+                    (void **)&seen, &seen_cap,
+                    seen_len + 1u, sizeof(*seen))) {
+                goto fault;
+            }
+            seen[seen_len++] = current->var_id;
+            Atom *next = petta_rational_type_lookup(
+                replay, current->var_id);
+            if (next) {
+                if (!petta_block_reserve(
+                        (void **)&pending, &pending_cap,
+                        pending_len + 1u, sizeof(*pending))) {
+                    goto fault;
+                }
+                pending[pending_len++] = next;
+            }
+            continue;
+        }
+        if (current->kind != ATOM_EXPR)
+            continue;
+        if (!petta_block_reserve(
+                (void **)&pending, &pending_cap,
+                pending_len + current->expr.len,
+                sizeof(*pending))) {
+            goto fault;
+        }
+        for (CettaExprIndex index = 0u;
+             index < current->expr.len; index++) {
+            pending[pending_len++] = current->expr.elems[index];
+        }
+    }
+    free(seen);
+    free(pending);
+    return 0;
+
+fault:
+    free(seen);
+    free(pending);
+    replay->faulted = true;
+    petta_block_fault(
+        replay->check, PETTA_TYPECHECK_FAULT_ALLOCATION,
+        "could not inspect rational type occurrence");
+    return -1;
+}
+
+static bool petta_rational_type_bind(
+    PettaRationalTypeReplay *replay, Atom *variable, Atom *value) {
+    int reaches = petta_rational_type_reaches_variable(
+        replay, value, variable->var_id);
+    if (reaches < 0)
+        return false;
+    if (reaches > 0)
+        replay->saw_cycle = true;
+    if (!petta_block_reserve(
+            (void **)&replay->bindings, &replay->binding_cap,
+            replay->binding_len + 1u, sizeof(*replay->bindings))) {
+        replay->faulted = true;
+        return petta_block_fault(
+            replay->check, PETTA_TYPECHECK_FAULT_ALLOCATION,
+            "could not grow rational type substitution");
+    }
+    replay->bindings[replay->binding_len++] =
+        (PettaRationalTypeBinding){
+            .variable = variable->var_id,
+            .value = value,
+        };
+    return true;
+}
+
+static bool petta_rational_type_node_allowed(
+    PettaRationalTypeReplay *replay, Atom *type) {
+    if (!type)
+        return false;
+    if (type->kind == ATOM_VAR)
+        return true;
+    if (petta_block_wildcard(type) ||
+        petta_block_head_is(type, "|") ||
+        petta_block_arrow_head(type, NULL)) {
+        return false;
+    }
+    if (type->kind == ATOM_SYMBOL &&
+        (petta_block_decl_representation(
+             replay->check, type, "Alias") ||
+         petta_block_decl_representation(
+             replay->check, type, "Newtype"))) {
+        return false;
+    }
+    return true;
+}
+
+static bool petta_block_rational_structural_cycle_compatible(
+    PettaBlockCheck *check, Atom *actual, Atom *required,
+    const Bindings *base) {
+    if (!check || !actual || !required ||
+        (!atom_has_vars(actual) && !atom_has_vars(required))) {
+        return false;
+    }
+    PettaRationalTypeReplay replay = {
+        .check = check,
+        .base = base,
+    };
+    bool compatible = petta_rational_type_push_pair(
+        &replay, actual, required);
+    while (compatible && replay.pending_len > 0u) {
+        PettaRationalTypePair pair =
+            replay.pending[--replay.pending_len];
+        Atom *left = petta_rational_type_dereference(
+            &replay, pair.left);
+        Atom *right = petta_rational_type_dereference(
+            &replay, pair.right);
+        if (!left || !right) {
+            compatible = false;
+            break;
+        }
+        if (left == right || atom_eq(left, right))
+            continue;
+        if (!petta_rational_type_node_allowed(&replay, left) ||
+            !petta_rational_type_node_allowed(&replay, right)) {
+            compatible = false;
+            break;
+        }
+        if (petta_rational_type_seen_pair(&replay, left, right))
+            continue;
+        if (!petta_rational_type_note_pair(&replay, left, right)) {
+            compatible = false;
+            break;
+        }
+        if (left->kind == ATOM_VAR) {
+            compatible = petta_rational_type_bind(
+                &replay, left, right);
+            continue;
+        }
+        if (right->kind == ATOM_VAR) {
+            compatible = petta_rational_type_bind(
+                &replay, right, left);
+            continue;
+        }
+        if (left->kind != right->kind) {
+            compatible = false;
+            break;
+        }
+        if (left->kind != ATOM_EXPR) {
+            compatible = false;
+            break;
+        }
+        if (left->expr.len != right->expr.len) {
+            compatible = false;
+            break;
+        }
+        for (CettaExprIndex index = left->expr.len;
+             index > 0u; index--) {
+            CettaExprIndex child = index - 1u;
+            if (!petta_rational_type_push_pair(
+                    &replay, left->expr.elems[child],
+                    right->expr.elems[child])) {
+                compatible = false;
+                break;
+            }
+        }
+    }
+    bool accepted = compatible && replay.saw_cycle && !replay.faulted;
+    if (replay.saw_cycle && !replay.faulted) {
+        CETTA_PETTA_TYPECHECK_CENSUS_HIT(
+            accepted
+                ? CETTA_PETTA_TYPECHECK_CENSUS_EVENT_RATIONAL_STRUCTURAL_CYCLE_ACCEPT
+                : CETTA_PETTA_TYPECHECK_CENSUS_EVENT_RATIONAL_STRUCTURAL_CYCLE_REJECT);
+    }
+    free(replay.seen);
+    free(replay.pending);
+    free(replay.bindings);
+    return accepted;
+}
+
+static bool petta_block_type_compatible(
+    PettaBlockCheck *check, Atom *actual, Atom *required,
     Bindings *bindings) {
-    return petta_block_type_compatible_depth(
-        check, actual, required, bindings, 0u);
+    Bindings trial;
+    bindings_init(&trial);
+    if (!bindings_clone(&trial, bindings)) {
+        bindings_free(&trial);
+        return petta_block_fault(
+            check, PETTA_TYPECHECK_FAULT_ALLOCATION,
+            "could not clone type compatibility environment");
+    }
+    bool compatible = petta_block_type_compatible_depth(
+        check, actual, required, &trial, 0u);
+    if (compatible)
+        bindings_replace(bindings, &trial);
+    bindings_free(&trial);
+    if (compatible ||
+        check->result->fault != PETTA_TYPECHECK_FAULT_NONE) {
+        return compatible;
+    }
+    return petta_block_rational_structural_cycle_compatible(
+        check, actual, required, bindings);
 }
 
 static Atom *petta_block_literal_type(
@@ -1956,54 +2520,26 @@ static Atom *petta_block_apply_type_bindings(
         ? bindings_apply(bindings, &check->scratch, type) : type;
 }
 
-/* Union compatibility is existential over members, not structural equality:
- * a slot declared (| A B) accepts a value already established at A.  The
- * plain structural test is tried first and is what settles the ordinary
- * case; this is only the union fallback. */
-static bool petta_block_types_unify_modulo_union(
-    Atom *left, Atom *right, uint32_t depth) {
-    if (!left || !right || depth > 128u)
-        return false;
-    Bindings compatibility;
-    bindings_init(&compatibility);
-    bool same = match_types(left, right, &compatibility);
-    bindings_free(&compatibility);
-    if (same)
-        return true;
-    if (petta_block_head_is(left, "|") && left->expr.len > 1u) {
-        for (CettaExprIndex index = 1u; index < left->expr.len; index++) {
-            if (petta_block_types_unify_modulo_union(
-                    left->expr.elems[index], right, depth + 1u))
-                return true;
-        }
-    }
-    if (petta_block_head_is(right, "|") && right->expr.len > 1u) {
-        for (CettaExprIndex index = 1u; index < right->expr.len; index++) {
-            if (petta_block_types_unify_modulo_union(
-                    left, right->expr.elems[index], depth + 1u))
-                return true;
-        }
-    }
-    return false;
-}
-
-static bool petta_block_env_note(
+/* Non-pattern inference sites establish a variable exactly once.  Pattern
+ * contexts use petta_block_env_note_pattern below, which owns Roman's
+ * candidate accumulation semantics. */
+static bool petta_block_env_note_fresh(
     Bindings *environment, Atom *variable, Atom *type) {
-    Atom *known = bindings_lookup_var(environment, variable);
-    if (!known)
-        return bindings_add_var_acyclic(environment, variable, type);
-    /* The established type is kept on success: a wider slot permits more,
-     * it does not know more.  Reporting a conflict here instead aborts the
-     * whole pattern binding, so every other variable in the pattern silently
-     * loses its type too. */
-    return petta_block_types_unify_modulo_union(known, type, 0u);
+    if (bindings_lookup_var(environment, variable))
+        return false;
+    return bindings_add_var_acyclic(environment, variable, type);
 }
 
-/* Pattern matching refines a slot by intersection; it is not the ordinary
- * value-to-required compatibility judgment.  In particular, a variable
- * already known to be Number may match a field whose declared slot is
- * (| Number Brand), and a variable known only as that union narrows to Number
- * after the same-variable constraint. */
+/* Roman's pattern attributes accumulate candidate evidence rather than
+ * intersecting repeated occurrences.  This applies uniformly to clause-head,
+ * let/case, and typed match patterns.  A second variant-equal candidate adds
+ * nothing.  A singleton open candidate specializes in place when the next
+ * occurrence supplies its witness.  Every other distinct second candidate
+ * makes the term variable non-singleton: it may still describe an unreachable
+ * pattern, but it cannot be consumed later as though either candidate had
+ * been established.  %Undefined% is the existing PeTTa-v2 representation of
+ * that unresolved candidate multiplicity; strict boundaries turn its later
+ * use into a residual guard. */
 static bool petta_block_env_note_pattern(
     PettaBlockCheck *check, Bindings *environment,
     Atom *variable, Atom *type) {
@@ -2011,31 +2547,57 @@ static bool petta_block_env_note_pattern(
     if (!known)
         return bindings_add_var_acyclic(environment, variable, type);
 
-    Bindings compatibility;
-    bindings_init(&compatibility);
-    bool known_fits_slot = petta_block_type_compatible(
-        check, known, type, &compatibility);
-    bindings_free(&compatibility);
-    if (known_fits_slot)
+    Atom *resolved_known = petta_block_resolve_binding(environment, known);
+    Atom *resolved_type = petta_block_resolve_binding(environment, type);
+    if (resolved_known && resolved_type &&
+        atom_alpha_eq(resolved_known, resolved_type)) {
+        CETTA_PETTA_TYPECHECK_CENSUS_HIT(
+            CETTA_PETTA_TYPECHECK_CENSUS_EVENT_PATTERN_CANDIDATE_VARIANT_REPEAT);
         return true;
+    }
 
-    bindings_init(&compatibility);
-    bool slot_fits_known = petta_block_type_compatible(
-        check, type, known, &compatibility);
-    bindings_free(&compatibility);
-    if (!slot_fits_known)
-        return false;
+    if (resolved_known && resolved_known->kind == ATOM_VAR) {
+        Bindings specialization;
+        bindings_init(&specialization);
+        if (!bindings_clone(&specialization, environment) ||
+            !bindings_add_var(
+                &specialization, resolved_known, resolved_type)) {
+            bindings_free(&specialization);
+            return petta_block_fault(
+                check, PETTA_TYPECHECK_FAULT_ALLOCATION,
+                "could not specialize an open pattern candidate");
+        }
+        if (!bindings_has_loop(&specialization)) {
+            bindings_replace(environment, &specialization);
+            bindings_free(&specialization);
+            CETTA_PETTA_TYPECHECK_CENSUS_HIT(
+                CETTA_PETTA_TYPECHECK_CENSUS_EVENT_PATTERN_CANDIDATE_OPEN_SPECIALIZE);
+            return true;
+        }
+        bindings_free(&specialization);
+    }
+
+    Atom *unknown = atom_symbol(&check->scratch, "%Undefined%");
+    if (!unknown) {
+        return petta_block_fault(
+            check, PETTA_TYPECHECK_FAULT_ALLOCATION,
+            "could not represent multiple pattern candidates");
+    }
 
     for (uint32_t index = environment->len; index > 0u; index--) {
         Binding *entry = &environment->entries[index - 1u];
         if (!entry->legacy_name_fallback &&
             entry->var_id == variable->var_id) {
-            entry->val = type;
+            entry->val = unknown;
             bindings_invalidate_after_key_rewrite(environment);
+            CETTA_PETTA_TYPECHECK_CENSUS_HIT(
+                CETTA_PETTA_TYPECHECK_CENSUS_EVENT_PATTERN_CANDIDATE_AMBIGUOUS);
             return true;
         }
     }
-    return false;
+    return petta_block_fault(
+        check, PETTA_TYPECHECK_FAULT_MALFORMED_TYPE,
+        "repeated pattern candidate environment is malformed");
 }
 
 static Atom *petta_block_structural_type(
@@ -2452,7 +3014,7 @@ static bool petta_block_bind_pattern(
                 Atom *unknown = atom_symbol(
                     &check->scratch, "%Undefined%");
                 if (!unknown ||
-                    !petta_block_env_note(environment, field, unknown))
+                    !petta_block_env_note_fresh(environment, field, unknown))
                     return false;
             }
         }
@@ -2519,6 +3081,57 @@ static bool petta_block_deferred_form(const char *head) {
             return true;
     }
     return false;
+}
+
+/* An administrative identity binding returns its producer without changing
+ * either its shape or its cardinality.  Besides `let x value x`, a `let*`
+ * chain may only forward a variable through prior variable bindings.  Keep
+ * this recognizer deliberately narrow: ordinary binding bodies and
+ * non-variable patterns may add computation or fail. */
+static Atom *petta_block_identity_binding_value(Atom *expression) {
+    if (!expression || expression->kind != ATOM_EXPR ||
+        expression->expr.len == 0u)
+        return NULL;
+    const char *head = petta_block_symbol_name(expression->expr.elems[0]);
+    if (head && strcmp(head, "let") == 0 && expression->expr.len == 4u &&
+        expression->expr.elems[1]->kind == ATOM_VAR &&
+        atom_eq(expression->expr.elems[1], expression->expr.elems[3])) {
+        return expression->expr.elems[2];
+    }
+    if (!head || strcmp(head, "let*") != 0 || expression->expr.len != 3u)
+        return NULL;
+    Atom *bindings = expression->expr.elems[1];
+    Atom *current = expression->expr.elems[2];
+    if (!bindings || bindings->kind != ATOM_EXPR || bindings->expr.len == 0u ||
+        !current || current->kind != ATOM_VAR)
+        return NULL;
+    for (CettaExprIndex index = 0u; index < bindings->expr.len; index++) {
+        Atom *binding = bindings->expr.elems[index];
+        if (!binding || binding->kind != ATOM_EXPR || binding->expr.len != 2u ||
+            binding->expr.elems[0]->kind != ATOM_VAR) {
+            return NULL;
+        }
+    }
+    CettaExprIndex prior_count = bindings->expr.len;
+    bool followed_binding = false;
+    while (prior_count > 0u) {
+        bool found = false;
+        for (CettaExprIndex index = prior_count; index > 0u; index--) {
+            Atom *binding = bindings->expr.elems[index - 1u];
+            if (!atom_eq(binding->expr.elems[0], current))
+                continue;
+            current = binding->expr.elems[1];
+            prior_count = index - 1u;
+            followed_binding = true;
+            found = true;
+            break;
+        }
+        if (!found || !current)
+            return followed_binding ? current : NULL;
+        if (current->kind != ATOM_VAR)
+            return current;
+    }
+    return followed_binding ? current : NULL;
 }
 
 /*
@@ -3468,6 +4081,10 @@ static bool petta_block_infer_alternatives(
         known = known && actual != NULL;
     }
     if (actual_out) {
+        CETTA_PETTA_TYPECHECK_CENSUS_HIT_IF(
+            !expected && check->inferring_signature &&
+                count > 0u && type_count == 0u,
+            CETTA_PETTA_TYPECHECK_CENSUS_EVENT_INFERENCE_EMPTY_ALTERNATIVE_SET_UNPUBLISHED);
         *actual_out = expected ? expected
             : (known && type_count > 0u
                 ? petta_block_join_actual_types(
@@ -3497,58 +4114,13 @@ static Atom *petta_block_quoted_type(
     }
     if (value->kind != ATOM_EXPR)
         return NULL;
-    if (value->expr.len > 0u) {
-        const char *head = petta_block_symbol_name(value->expr.elems[0]);
-        if (head && value->expr.len == 3u &&
-            (strcmp(head, "brand") == 0 || strcmp(head, "the") == 0)) {
-            Atom *ascribed = value->expr.elems[1];
-            Atom *payload_type = petta_block_quoted_type(
-                check, value->expr.elems[2], environment, depth + 1u);
-            if (!payload_type)
-                return NULL;
-            Bindings trial;
-            bindings_init(&trial);
-            if (!bindings_clone(&trial, environment)) {
-                bindings_free(&trial);
-                return NULL;
-            }
-            bool valid = false;
-            if (strcmp(head, "brand") == 0) {
-                Atom *representation = petta_block_decl_representation(
-                    check, ascribed, "Newtype");
-                valid = representation && petta_block_type_compatible(
-                    check, payload_type, representation, &trial);
-            } else {
-                valid = petta_block_type_may_overlap(
-                    check, payload_type, ascribed, &trial, depth + 1u);
-            }
-            bindings_free(&trial);
-            return valid ? ascribed : NULL;
-        }
-    }
     if (value->expr.len == 0u) {
         Atom *unknown = atom_symbol(&check->scratch, "%Undefined%");
         return petta_block_unary_type(check, "List", unknown);
     }
-    const char *quoted_head =
-        petta_block_symbol_name(value->expr.elems[0]);
-    /* Ascription is erased before the quotation reaches the runtime, so a
-     * quoted (brand T x) or (the T x) field contributes the single type T.
-     * Reading it structurally instead turns one branded field into a
-     * three-field product and the enclosing quotation stops matching its
-     * declared shape. */
-    if (quoted_head && value->expr.len == 3u &&
-        (strcmp(quoted_head, "brand") == 0 ||
-         strcmp(quoted_head, "the") == 0)) {
-        Atom *payload = petta_block_quoted_type(
-            check, value->expr.elems[2], environment, depth + 1u);
-        return payload ? value->expr.elems[1] : NULL;
-    }
-    /* `data` marks an explicit structural product; the marker itself is not
-     * one of the fields. */
-    CettaExprIndex first = quoted_head && value->expr.len >= 2u &&
-                           strcmp(quoted_head, "data") == 0
-        ? 1u : 0u;
+    /* Quotation holds every inner form as data.  Inner type and data forms
+     * therefore cannot establish facts about the enclosing runtime value. */
+    CettaExprIndex first = 0u;
     CettaExprLen field_count =
         (CettaExprLen)(value->expr.len - first);
     Atom **fields = cetta_malloc(
@@ -3684,7 +4256,8 @@ static bool petta_block_infer_expr(
         Atom *known = bindings_lookup_var(environment, expression);
         if (!known && expected) {
             petta_block_note_residual_guard(check, expected, "unbound-variable");
-            if (!petta_block_env_note(environment, expression, expected))
+            if (!petta_block_env_note_fresh(
+                    environment, expression, expected))
                 return false;
             known = expected;
         } else if (known && expected) {
@@ -3715,6 +4288,8 @@ static bool petta_block_infer_expr(
                     if (!petta_block_note_inference_taint(
                             check, expression->var_id))
                         return false;
+                    CETTA_PETTA_TYPECHECK_CENSUS_HIT(
+                        CETTA_PETTA_TYPECHECK_CENSUS_EVENT_INFERENCE_PARAMETER_TAINT);
                     petta_block_note_residual_guard(
                         check, expected, "tainted-inference-parameter");
                     if (actual_out)
@@ -3865,7 +4440,16 @@ static bool petta_block_infer_expr(
                                       actual_out);
             }
         }
-        Atom *actual = petta_block_declared_value_type(check, expression);
+        Atom *actual = NULL;
+        if (check->inferring_signature && !expected) {
+            bool ambiguous = false;
+            actual = petta_block_unique_explicit_value_candidate_type(
+                check, expression, &ambiguous);
+            if (ambiguous)
+                actual = atom_symbol(&check->scratch, "%Undefined%");
+        }
+        if (!actual)
+            actual = petta_block_declared_value_type(check, expression);
         if (!actual)
             actual = atom_symbol(&check->scratch, "Atom");
         return petta_block_check_expected(
@@ -4025,10 +4609,18 @@ static bool petta_block_infer_expr(
              strcmp(expected_mode, "-[deterministic]->") == 0 ||
              strcmp(expected_mode, "-[semidet]->") == 0 ||
              strcmp(expected_mode, "-[semideterministic]->") == 0);
-        if (committed && petta_block_contains_nondeterministic_form(
-                             expression->expr.elems[2], 0u)) {
-            check->definite_mismatch = true;
-            return false;
+        if (committed) {
+            bool nondeterministic =
+                petta_block_contains_nondeterministic_form(
+                    expression->expr.elems[2], 0u);
+            CETTA_PETTA_TYPECHECK_CENSUS_HIT(
+                nondeterministic
+                    ? CETTA_PETTA_TYPECHECK_CENSUS_EVENT_CONTEXTUAL_LAMBDA_COMMITMENT_REJECT
+                    : CETTA_PETTA_TYPECHECK_CENSUS_EVENT_CONTEXTUAL_LAMBDA_COMMITMENT_ACCEPT);
+            if (nondeterministic) {
+                check->definite_mismatch = true;
+                return false;
+            }
         }
         if (actual_out)
             *actual_out = expected;
@@ -4073,6 +4665,16 @@ static bool petta_block_infer_expr(
             check, ascribed, "Newtype");
         if (!representation)
             return false;
+        /* v2 refuses direct primitive-literal nominal construction. Preserve
+         * that historical compatibility boundary here; computed and variable
+         * payloads retain the ordinary representation check below. */
+        if (petta_block_literal_type(
+                check, expression->expr.elems[2])) {
+            CETTA_PETTA_TYPECHECK_CENSUS_HIT(
+                CETTA_PETTA_TYPECHECK_CENSUS_EVENT_NEWTYPE_LITERAL_BRAND_REJECT);
+            check->definite_mismatch = true;
+            return false;
+        }
         Atom *ignored = NULL;
         if (!petta_block_infer_expr(
                 check, expression->expr.elems[2], environment,
@@ -4122,6 +4724,10 @@ static bool petta_block_infer_expr(
             expression->expr.elems[2], 0u);
         bool right_bottom = petta_block_expression_is_bottom(
             expression->expr.elems[3], 0u);
+        if (left_bottom != right_bottom) {
+            CETTA_PETTA_TYPECHECK_CENSUS_HIT(
+                CETTA_PETTA_TYPECHECK_CENSUS_EVENT_CONDITIONAL_NO_RESULT_BRANCH);
+        }
         if (ok && !expected && !left_bottom && !right_bottom) {
             Bindings join;
             bindings_init(&join);
@@ -4137,8 +4743,23 @@ static bool petta_block_infer_expr(
                 environment,
                 left_bottom && !right_bottom ? &right_env : &left_env);
             if (actual_out) {
-                *actual_out = expected ? expected
-                    : (left_bottom ? right : left);
+                CETTA_PETTA_TYPECHECK_CENSUS_HIT_IF(
+                    !expected && check->inferring_signature &&
+                        left_bottom && right_bottom,
+                    CETTA_PETTA_TYPECHECK_CENSUS_EVENT_INFERENCE_ALL_BOTTOM_UNPUBLISHED);
+                if (!expected && check->inferring_signature &&
+                    left_bottom != right_bottom) {
+                    /* The historical v2 inference store does not publish a
+                     * result type learned only after erasing a no-result
+                     * conditional branch.  A declared result remains a
+                     * valid check; this affects inference only. */
+                    CETTA_PETTA_TYPECHECK_CENSUS_HIT(
+                        CETTA_PETTA_TYPECHECK_CENSUS_EVENT_INFERENCE_BOTTOM_BRANCH_UNPUBLISHED);
+                    *actual_out = NULL;
+                } else {
+                    *actual_out = expected ? expected
+                        : (left_bottom ? right : left);
+                }
             }
         }
         bindings_free(&left_env);
@@ -4160,6 +4781,15 @@ static bool petta_block_infer_expr(
     if (head && strcmp(head, "quote") == 0 &&
         expression->expr.len == 2u) {
         Atom *quoted = expression->expr.elems[1];
+        CETTA_PETTA_TYPECHECK_CENSUS_HIT_IF(
+            quoted && quoted->kind == ATOM_EXPR && quoted->expr.len == 3u &&
+                (petta_block_head_is(quoted, "brand") ||
+                 petta_block_head_is(quoted, "the")),
+            CETTA_PETTA_TYPECHECK_CENSUS_EVENT_QUOTED_INNER_TYPE_FORM_HELD);
+        CETTA_PETTA_TYPECHECK_CENSUS_HIT_IF(
+            quoted && quoted->kind == ATOM_EXPR && quoted->expr.len >= 1u &&
+                petta_block_head_is(quoted, "data"),
+            CETTA_PETTA_TYPECHECK_CENSUS_EVENT_QUOTED_INNER_DATA_FORM_HELD);
         if (petta_block_head_is(expected, "List") &&
             expected->expr.len == 2u && quoted->kind == ATOM_EXPR) {
             /* A quoted expression is runtime data.  In PeTTa's list-backed
@@ -4224,6 +4854,13 @@ static bool petta_block_infer_expr(
         return petta_block_infer_expr(
             check, expression->expr.elems[expression->expr.len - 1u],
             environment, expected, actual_out, depth + 1u);
+    }
+    Atom *identity_value = expected
+        ? petta_block_identity_binding_value(expression) : NULL;
+    if (identity_value) {
+        return petta_block_infer_expr(
+            check, identity_value, environment,
+            expected, actual_out, depth + 1u);
     }
     if (head && strcmp(head, "let*") == 0 &&
         expression->expr.len == 3u) {
@@ -4296,12 +4933,21 @@ static bool petta_block_infer_expr(
             (element_mismatch ||
              (check->result &&
               check->result->fault != PETTA_TYPECHECK_FAULT_NONE))) {
+            if (element_mismatch) {
+                CETTA_PETTA_TYPECHECK_CENSUS_HIT(
+                    CETTA_PETTA_TYPECHECK_CENSUS_EVENT_COLLAPSE_ELEMENT_CONFLICT);
+            }
             return false;
         }
-        if (!element_actual)
+        if (!element_actual) {
+            CETTA_PETTA_TYPECHECK_CENSUS_HIT(
+                CETTA_PETTA_TYPECHECK_CENSUS_EVENT_COLLAPSE_UNKNOWN_ELEMENT);
             element_actual = atom_symbol(&check->scratch, "%Undefined%");
+        }
         Atom *actual = petta_block_unary_type(
             check, "List", element_actual);
+        CETTA_PETTA_TYPECHECK_CENSUS_HIT(
+            CETTA_PETTA_TYPECHECK_CENSUS_EVENT_COLLAPSE_RESULT_LIST_SHAPE);
         return actual && petta_block_check_expected(
                              check, actual, expected, actual_out);
     }
@@ -4315,6 +4961,8 @@ static bool petta_block_infer_expr(
         expression->expr.len == 4u) {
         Atom *accumulator = expression->expr.elems[1];
         if (petta_block_head_is(expression->expr.elems[2], "empty")) {
+            CETTA_PETTA_TYPECHECK_CENSUS_HIT(
+                CETTA_PETTA_TYPECHECK_CENSUS_EVENT_FOLDALL_EMPTY_RETURNS_INITIALIZER);
             return petta_block_infer_expr(
                 check, expression->expr.elems[3], environment,
                 expected, actual_out, depth + 1u);
@@ -4328,8 +4976,11 @@ static bool petta_block_infer_expr(
                     check, expression->expr.elems[2], environment,
                     NULL, &element_type, depth + 1u);
                 if (element_type)
-                    (void)petta_block_env_note(
+                    (void)petta_block_env_note_fresh(
                         environment, element, element_type);
+                else
+                    CETTA_PETTA_TYPECHECK_CENSUS_HIT(
+                        CETTA_PETTA_TYPECHECK_CENSUS_EVENT_FOLDALL_GENERATOR_ELEMENT_UNKNOWN);
             }
             Atom *call_parts[3] = {
                 accumulator, expression->expr.elems[3], element,
@@ -4441,6 +5092,10 @@ static bool petta_block_infer_expr(
             known = known && branch_type != NULL;
         }
         if (actual_out) {
+            CETTA_PETTA_TYPECHECK_CENSUS_HIT_IF(
+                !expected && check->inferring_signature &&
+                    petta_block_expression_is_bottom(expression, 0u),
+                CETTA_PETTA_TYPECHECK_CENSUS_EVENT_INFERENCE_ALL_BOTTOM_CASE_UNPUBLISHED);
             *actual_out = expected ? expected
                 : (known && type_count > 0u
                     ? petta_block_join_actual_types(
@@ -4471,8 +5126,8 @@ static bool petta_block_infer_expr(
         } else if (petta_block_head_is(pattern, ":") &&
                    pattern->expr.len == 3u &&
                    pattern->expr.elems[1]->kind == ATOM_VAR) {
-            pattern_ok = petta_block_env_note(
-                &branch, pattern->expr.elems[1],
+            pattern_ok = petta_block_env_note_pattern(
+                check, &branch, pattern->expr.elems[1],
                 pattern->expr.elems[2]);
         } else {
             pattern_ok = petta_block_note_dynamic_pattern_vars(
@@ -4590,7 +5245,7 @@ static bool petta_block_infer_expr(
             return true;
         if (check->definite_mismatch)
             return false;
-        /* PeTTa uses the same parenthesized surface form for a call and for
+        /* PeTTa uses the same parenthesized notation for a call and for
          * list data.  Once no signature applies, an enclosing List contract
          * supplies the missing interpretation; check every field as data
          * instead of inventing a call for the symbolic first element. */
@@ -4720,6 +5375,12 @@ static bool petta_block_expression_fragment_supported(
     }
     if (strcmp(head, "=") == 0)
         return expression->expr.len == 3u;
+    if (strcmp(head, "|->") == 0 && expression->expr.len == 3u) {
+        /* Lambda parameters are binder syntax, not evaluator calls.  The
+         * body is the executable part whose supported fragment matters. */
+        return petta_block_expression_fragment_supported(
+            check, expression->expr.elems[2], depth + 1u);
+    }
     if ((strcmp(head, "let") == 0 || strcmp(head, "chain") == 0) &&
         expression->expr.len == 4u) {
         return petta_block_expression_fragment_supported(
@@ -4887,7 +5548,7 @@ static bool petta_block_seed_pattern_variables(
         Atom *unknown = atom_var_with_id(
             &check->scratch, "inferred-type", fresh_var_id());
         return unknown &&
-               petta_block_env_note(environment, pattern, unknown);
+               petta_block_env_note_fresh(environment, pattern, unknown);
     }
     if (pattern->kind != ATOM_EXPR)
         return true;
@@ -4917,6 +5578,34 @@ static Atom *petta_block_inferred_parameter_type(
     if (!type)
         return atom_symbol(&check->scratch, "%Undefined%");
     return petta_block_apply_type_bindings(check, environment, type);
+}
+
+/* Roman's inferred signatures publish positive knowledge only.  Atomic
+ * types, proper-list structure, and closed arrows are stable evidence;
+ * every other inferred output shape is widened to the unknown marker.  In
+ * particular, an internal union produced while checking alternatives is not
+ * itself a persistent inferred contract. */
+static Atom *petta_block_normalize_inferred_output(
+    PettaBlockCheck *check, Atom *type, uint32_t depth) {
+    if (!check || !type || depth > 2048u)
+        return NULL;
+    if (type->kind == ATOM_VAR)
+        return atom_symbol(&check->scratch, "%Undefined%");
+    if (type->kind == ATOM_SYMBOL)
+        return type;
+    if (type->kind != ATOM_EXPR || atom_has_vars(type))
+        return atom_symbol(&check->scratch, "%Undefined%");
+    if (petta_block_head_is(type, "List") && type->expr.len == 2u) {
+        Atom *element = petta_block_normalize_inferred_output(
+            check, type->expr.elems[1], depth + 1u);
+        return element
+            ? petta_block_unary_type(check, "List", element) : NULL;
+    }
+    if (petta_block_arrow_head(type, NULL))
+        return type;
+    CETTA_PETTA_TYPECHECK_CENSUS_HIT(
+        CETTA_PETTA_TYPECHECK_CENSUS_EVENT_INFERENCE_OUTPUT_SHAPE_WIDENS_UNKNOWN);
+    return atom_symbol(&check->scratch, "%Undefined%");
 }
 
 static bool petta_block_signature_has_information(Atom *signature) {
@@ -5000,6 +5689,11 @@ static Atom *petta_block_infer_equation_signature(
     }
     output = petta_block_apply_type_bindings(
         check, &environment, output);
+    output = petta_block_normalize_inferred_output(check, output, 0u);
+    if (!output) {
+        bindings_free(&environment);
+        return NULL;
+    }
     Atom **elements = cetta_malloc(
         sizeof(*elements) * (size_t)(arity + 2u));
     if (!elements) {
@@ -5022,8 +5716,7 @@ static Atom *petta_block_infer_equation_signature(
         : NULL;
     free(elements);
     bindings_free(&environment);
-    return petta_block_signature_has_information(signature)
-        ? signature : NULL;
+    return petta_block_signature_has_information(signature) ? signature : NULL;
 }
 
 static bool petta_block_infer_signatures(PettaBlockCheck *check) {
@@ -5121,22 +5814,16 @@ static bool petta_block_check_exec_payloads(
     return true;
 }
 
-typedef enum {
-    PETTA_BLOCK_EFFECT_DET = 0,
-    PETTA_BLOCK_EFFECT_SEMIDET,
-    PETTA_BLOCK_EFFECT_NONDET,
-    PETTA_BLOCK_EFFECT_UNKNOWN,
-} PettaBlockEffect;
+typedef PettaAnalysisCardinality PettaBlockEffect;
+
+#define PETTA_BLOCK_EFFECT_DET PETTA_ANALYSIS_CARDINALITY_DETERMINISTIC
+#define PETTA_BLOCK_EFFECT_SEMIDET PETTA_ANALYSIS_CARDINALITY_SEMIDETERMINISTIC
+#define PETTA_BLOCK_EFFECT_NONDET PETTA_ANALYSIS_CARDINALITY_NONDETERMINISTIC
+#define PETTA_BLOCK_EFFECT_UNKNOWN PETTA_ANALYSIS_CARDINALITY_UNDETERMINED
 
 static PettaBlockEffect petta_block_effect_join(
     PettaBlockEffect left, PettaBlockEffect right) {
-    if (left == PETTA_BLOCK_EFFECT_NONDET ||
-        right == PETTA_BLOCK_EFFECT_NONDET)
-        return PETTA_BLOCK_EFFECT_NONDET;
-    if (left == PETTA_BLOCK_EFFECT_UNKNOWN ||
-        right == PETTA_BLOCK_EFFECT_UNKNOWN)
-        return PETTA_BLOCK_EFFECT_UNKNOWN;
-    return left > right ? left : right;
+    return petta_analysis_cardinality_join(left, right);
 }
 
 static bool petta_block_name_in(
@@ -5296,15 +5983,6 @@ static bool petta_block_signature_contains_plain_arrow(
             return true;
     }
     return false;
-}
-
-static bool petta_block_environment_type_is(
-    Bindings *environment, Atom *value, const char *name) {
-    if (!environment || !value || value->kind != ATOM_VAR)
-        return false;
-    Atom *type = bindings_lookup_var(environment, value);
-    const char *actual = petta_block_symbol_name(type);
-    return actual && strcmp(actual, name) == 0;
 }
 
 static bool petta_block_type_is_nominal(
@@ -5497,6 +6175,10 @@ static bool petta_block_value_is_proven_proper_list(
                    check, value->expr.elems[3], environment,
                    depth + 1u);
     }
+    Atom *identity_value = petta_block_identity_binding_value(value);
+    if (identity_value)
+        return petta_block_value_is_proven_proper_list(
+            check, identity_value, environment, depth + 1u);
     if (head &&
         ((strcmp(head, "let") == 0 || strcmp(head, "chain") == 0) &&
          value->expr.len == 4u)) {
@@ -5576,6 +6258,11 @@ static bool petta_block_expression_produces_bound_bool(
     const char *head = petta_block_symbol_name(expression->expr.elems[0]);
     if (!head)
         return false;
+    Atom *identity_value = petta_block_identity_binding_value(expression);
+    if (identity_value) {
+        return petta_block_expression_produces_bound_bool(
+            check, identity_value, environment, depth + 1u);
+    }
     static const char *const bound_bool_builtins[] = {
         "<", "<=", ">", ">=", "=", "==", "!=", "=?",
         "=alpha", "=@=", "is-var", "is-ground", "is-expr",
@@ -5718,8 +6405,80 @@ static bool petta_block_pattern_total_for_type(
 static bool petta_block_position_has_variable_clause(
     PettaBlockCheck *check, Atom *head,
     CettaExprLen arity, CettaExprIndex position);
-static Atom *petta_block_selection_value(
-    PettaBlockCheck *check, Atom *value);
+
+typedef enum {
+    PETTA_BLOCK_SELECTION_SOURCE_OTHER = 0,
+    PETTA_BLOCK_SELECTION_SOURCE_NONEMPTY_LIST,
+    PETTA_BLOCK_SELECTION_SOURCE_OPAQUE,
+} PettaBlockSelectionSourceShape;
+
+/*
+ * Clause selection is a judgment about the value reaching the callee, not
+ * about arbitrary source syntax.  The v2 oracle exposes only the outer
+ * empty/nonempty list shape of an ordinary data expression; compiler forms
+ * and callable expressions publish no selector shape without a separate
+ * output certificate.  Keep this policy at the selection boundary so the
+ * structural matcher remains available to stronger, certificate-bearing
+ * profiles.
+ */
+static PettaBlockSelectionSourceShape
+petta_block_selection_source_shape(
+    PettaBlockCheck *check, Atom *actual, Bindings *environment) {
+    if (!check || !actual || actual->kind != ATOM_EXPR ||
+        actual->expr.len == 0u)
+        return PETTA_BLOCK_SELECTION_SOURCE_OTHER;
+    Atom *head = actual->expr.elems[0];
+    const char *head_name = petta_block_symbol_name(head);
+    if ((head_name && strcmp(head_name, "data") == 0) ||
+        (head->kind == ATOM_SYMBOL &&
+         petta_block_head_is_callable(
+             check, head, actual->expr.len - 1u))) {
+        return PETTA_BLOCK_SELECTION_SOURCE_OPAQUE;
+    }
+    if (petta_block_value_manifest_proper_list(
+            check, actual, environment, true))
+        return PETTA_BLOCK_SELECTION_SOURCE_NONEMPTY_LIST;
+    return PETTA_BLOCK_SELECTION_SOURCE_OTHER;
+}
+
+typedef enum {
+    PETTA_BLOCK_SELECTION_PATTERN_POSSIBLE = 0,
+    PETTA_BLOCK_SELECTION_PATTERN_IMPOSSIBLE,
+    PETTA_BLOCK_SELECTION_PATTERN_SOURCE_UNKNOWN,
+} PettaBlockSelectionPatternStatus;
+
+static PettaBlockSelectionPatternStatus
+petta_block_selection_pattern_source_status(
+    PettaBlockCheck *check, Atom *pattern, Atom *actual,
+    Bindings *environment) {
+    if (pattern && pattern->kind == ATOM_VAR)
+        return PETTA_BLOCK_SELECTION_PATTERN_POSSIBLE;
+    PettaBlockSelectionSourceShape shape =
+        petta_block_selection_source_shape(
+            check, actual, environment);
+    if (shape == PETTA_BLOCK_SELECTION_SOURCE_OPAQUE)
+        return PETTA_BLOCK_SELECTION_PATTERN_SOURCE_UNKNOWN;
+    if (shape != PETTA_BLOCK_SELECTION_SOURCE_NONEMPTY_LIST)
+        return PETTA_BLOCK_SELECTION_PATTERN_POSSIBLE;
+    return ((petta_block_head_is(pattern, "cons") ||
+             petta_block_head_is(pattern, "cons-atom")) &&
+            pattern->expr.len == 3u)
+        ? PETTA_BLOCK_SELECTION_PATTERN_POSSIBLE
+        : PETTA_BLOCK_SELECTION_PATTERN_IMPOSSIBLE;
+}
+
+static bool petta_block_selection_requires_value_evidence(Atom *actual) {
+    if (!actual)
+        return false;
+    if (actual->kind == ATOM_VAR)
+        return true;
+    if (actual->kind != ATOM_EXPR || actual->expr.len == 0u)
+        return false;
+    const char *head = petta_block_symbol_name(actual->expr.elems[0]);
+    return head &&
+        ((strcmp(head, "if") == 0 && actual->expr.len == 4u) ||
+         petta_block_deferred_form(head));
+}
 
 static bool petta_block_pattern_total_for_actual(
     Atom *pattern, Atom *actual, uint32_t depth) {
@@ -5752,29 +6511,6 @@ static PettaBlockEffect petta_block_inferred_call_effect(
     SymbolId head_id = call->expr.elems[0]->kind == ATOM_SYMBOL
         ? call->expr.elems[0]->sym_id : 0u;
     CettaExprLen arity = call->expr.len - 1u;
-    Atom *selection_call = call;
-    bool normalized = false;
-    for (CettaExprIndex index = 1u; index < call->expr.len; index++) {
-        if (petta_block_head_is(call->expr.elems[index], "data")) {
-            normalized = true;
-            break;
-        }
-    }
-    if (normalized) {
-        Atom **elements = cetta_malloc(
-            sizeof(*elements) * (size_t)call->expr.len);
-        elements[0] = call->expr.elems[0];
-        for (CettaExprIndex index = 1u;
-             index < call->expr.len; index++) {
-            elements[index] = petta_block_selection_value(
-                check, call->expr.elems[index]);
-        }
-        selection_call = atom_expr(
-            &check->scratch, elements, call->expr.len);
-        free(elements);
-        if (!selection_call)
-            return PETTA_BLOCK_EFFECT_UNKNOWN;
-    }
     for (size_t index = 0u; index < check->effect_stack_len; index++) {
         if (check->effect_stack[index].head == head_id &&
             check->effect_stack[index].arity == arity)
@@ -5792,6 +6528,7 @@ static PettaBlockEffect petta_block_inferred_call_effect(
     bool guaranteed = false;
     PettaBlockEffect candidate_effect = PETTA_BLOCK_EFFECT_DET;
     bool pairwise_disjoint = true;
+    bool source_selection_unknown = false;
     size_t equation_len = 0u;
     Atom *const *equations = petta_block_equations(
         check, call->expr.elems[0], arity, &equation_len);
@@ -5800,11 +6537,36 @@ static PettaBlockEffect petta_block_inferred_call_effect(
     for (size_t index = 0u; index < equation_len; index++) {
         Atom *form = equations[index];
         Atom *lhs = form->expr.elems[1];
+        bool source_shape_may_match = true;
+        bool source_shape_unknown = false;
+        for (CettaExprIndex argument = 1u;
+             argument < call->expr.len; argument++) {
+            PettaBlockSelectionPatternStatus source_status =
+                petta_block_selection_pattern_source_status(
+                    check, lhs->expr.elems[argument],
+                    call->expr.elems[argument], environment);
+            if (source_status ==
+                PETTA_BLOCK_SELECTION_PATTERN_IMPOSSIBLE) {
+                source_shape_may_match = false;
+                CETTA_PETTA_TYPECHECK_CENSUS_HIT(
+                    CETTA_PETTA_TYPECHECK_CENSUS_EVENT_SELECTION_SOURCE_LIST_SHAPE_ONLY);
+                break;
+            }
+            if (source_status ==
+                PETTA_BLOCK_SELECTION_PATTERN_SOURCE_UNKNOWN)
+                source_shape_unknown = true;
+        }
+        if (!source_shape_may_match)
+            continue;
+        if (source_shape_unknown) {
+            source_selection_unknown = true;
+            continue;
+        }
         uint32_t epoch = (uint32_t)fresh_var_id();
         Atom *fresh_form = atom_freshen_epoch(
             &check->scratch, form, epoch);
         Atom *fresh_call = atom_freshen_epoch(
-            &check->scratch, selection_call,
+            &check->scratch, call,
             (uint32_t)fresh_var_id());
         if (!fresh_form || !fresh_call)
             goto done;
@@ -5826,10 +6588,10 @@ static PettaBlockEffect petta_block_inferred_call_effect(
         matched_lhs[candidates++] = lhs;
         guaranteed = true;
         for (CettaExprIndex argument = 1u;
-             argument < selection_call->expr.len; argument++) {
+             argument < call->expr.len; argument++) {
             if (!petta_block_pattern_total_for_actual(
                     lhs->expr.elems[argument],
-                    selection_call->expr.elems[argument], 0u)) {
+                    call->expr.elems[argument], 0u)) {
                 guaranteed = false;
                 break;
             }
@@ -5842,11 +6604,18 @@ static PettaBlockEffect petta_block_inferred_call_effect(
                                   check, body, environment,
                                   depth + 1u));
     }
+    if (source_selection_unknown) {
+        CETTA_PETTA_TYPECHECK_CENSUS_HIT(
+            CETTA_PETTA_TYPECHECK_CENSUS_EVENT_SELECTION_SOURCE_OPAQUE);
+        check->committed_effect_evidence_withheld = true;
+        result = PETTA_BLOCK_EFFECT_UNKNOWN;
+        goto done;
+    }
     if (candidates == 0u) {
         result = PETTA_BLOCK_EFFECT_SEMIDET;
         for (CettaExprIndex argument = 1u;
-             argument < selection_call->expr.len; argument++) {
-            Atom *actual = selection_call->expr.elems[argument];
+             argument < call->expr.len; argument++) {
+            Atom *actual = call->expr.elems[argument];
             if (!actual || actual->kind != ATOM_EXPR ||
                 actual->expr.len == 0u ||
                 actual->expr.elems[0]->kind != ATOM_SYMBOL)
@@ -5866,16 +6635,16 @@ static PettaBlockEffect petta_block_inferred_call_effect(
     if (candidates > 1u) {
         bool selection_total = pairwise_disjoint;
         for (CettaExprIndex argument = 1u;
-             selection_total && argument < selection_call->expr.len;
+             selection_total && argument < call->expr.len;
              argument++) {
-            Atom *actual = selection_call->expr.elems[argument];
+            Atom *actual = call->expr.elems[argument];
             if (!atom_has_vars(actual))
                 continue;
             Atom *type = actual->kind == ATOM_VAR && environment
                 ? bindings_lookup_var(environment, actual) : NULL;
             if (!type || !petta_block_position_proven_exhaustive(
-                             check, selection_call->expr.elems[0],
-                             selection_call->expr.len - 1u,
+                             check, call->expr.elems[0],
+                             call->expr.len - 1u,
                              argument - 1u, type))
                 selection_total = false;
         }
@@ -5884,6 +6653,8 @@ static PettaBlockEffect petta_block_inferred_call_effect(
         goto done;
     }
     if (!guaranteed) {
+        CETTA_PETTA_TYPECHECK_CENSUS_HIT(
+            CETTA_PETTA_TYPECHECK_CENSUS_EVENT_SELECTION_PATTERN_NOT_TOTAL);
         if (candidate_effect == PETTA_BLOCK_EFFECT_NONDET)
             result = PETTA_BLOCK_EFFECT_NONDET;
         else if (candidate_effect == PETTA_BLOCK_EFFECT_UNKNOWN)
@@ -5969,15 +6740,6 @@ static PettaBlockEffect petta_block_closure_value_effect(
     return PETTA_BLOCK_EFFECT_UNKNOWN;
 }
 
-static Atom *petta_block_selection_value(
-    PettaBlockCheck *check, Atom *value) {
-    if (!check || !petta_block_head_is(value, "data"))
-        return value;
-    CettaExprLen length = value->expr.len - 1u;
-    return atom_expr(
-        &check->scratch, value->expr.elems + 1u, length);
-}
-
 static PettaBlockEffect petta_block_call_selection_effect(
     PettaBlockCheck *check, Atom *call, Atom *signature,
     Bindings *environment) {
@@ -5995,15 +6757,7 @@ static PettaBlockEffect petta_block_call_selection_effect(
     for (CettaExprIndex index = 1u;
          index < call->expr.len; index++) {
         Atom *actual = call->expr.elems[index];
-        const char *actual_head = actual && actual->kind == ATOM_EXPR &&
-                actual->expr.len > 0u
-            ? petta_block_symbol_name(actual->expr.elems[0]) : NULL;
-        if (actual && (actual->kind == ATOM_VAR ||
-                       (actual_head &&
-                        (petta_block_deferred_form(actual_head) ||
-                         petta_block_head_is_callable(
-                             check, actual->expr.elems[0],
-                             actual->expr.len - 1u))))) {
+        if (petta_block_selection_requires_value_evidence(actual)) {
             abstract_selection = true;
             break;
         }
@@ -6024,11 +6778,8 @@ static PettaBlockEffect petta_block_call_selection_effect(
         for (CettaExprIndex index = 1u;
              index < call->expr.len; index++) {
             Atom *actual = call->expr.elems[index];
-            const char *actual_head = actual &&
-                    actual->kind == ATOM_EXPR && actual->expr.len > 0u
-                ? petta_block_symbol_name(actual->expr.elems[0]) : NULL;
             if (!atom_has_vars(actual) &&
-                !(actual_head && petta_block_deferred_form(actual_head)))
+                !petta_block_selection_requires_value_evidence(actual))
                 continue;
             Atom *required = signature->expr.elems[index];
             if (petta_block_position_has_variable_clause(
@@ -6041,43 +6792,79 @@ static PettaBlockEffect petta_block_call_selection_effect(
                 : required_name && strcmp(required_name, "Bool") == 0
                     ? petta_block_value_manifest_bool(
                           check, actual, environment, 0u)
-                    : required_name &&
-                              strcmp(required_name, "Expression") == 0 &&
-                              petta_block_environment_type_is(
-                                  environment, actual, "Expression");
+                    : false;
             bool exhaustive = petta_block_position_proven_exhaustive(
                 check, call->expr.elems[0], arity,
                 index - 1u, required);
+            if (petta_block_head_is(actual, "if") &&
+                actual->expr.len == 4u &&
+                petta_block_head_is(required, "List") &&
+                bound && exhaustive) {
+                CETTA_PETTA_TYPECHECK_CENSUS_HIT(
+                    CETTA_PETTA_TYPECHECK_CENSUS_EVENT_SELECTION_CONDITIONAL_LIST_TOTAL);
+            }
+            if (petta_block_head_is(actual, "case") &&
+                actual->expr.len == 3u &&
+                petta_block_head_is(required, "List") &&
+                bound && exhaustive) {
+                CETTA_PETTA_TYPECHECK_CENSUS_HIT(
+                    CETTA_PETTA_TYPECHECK_CENSUS_EVENT_SELECTION_CASE_LIST_TOTAL);
+            }
+            if (petta_block_identity_binding_value(actual) &&
+                petta_block_head_is(required, "List") &&
+                bound && exhaustive) {
+                CETTA_PETTA_TYPECHECK_CENSUS_HIT(
+                    CETTA_PETTA_TYPECHECK_CENSUS_EVENT_SELECTION_IDENTITY_BINDING_LIST_TOTAL);
+            }
+            if (petta_block_identity_binding_value(actual) &&
+                required_name && strcmp(required_name, "Bool") == 0 &&
+                bound && exhaustive) {
+                CETTA_PETTA_TYPECHECK_CENSUS_HIT(
+                    CETTA_PETTA_TYPECHECK_CENSUS_EVENT_SELECTION_IDENTITY_BINDING_BOOL_TOTAL);
+            }
             if (!bound || !exhaustive)
                 return PETTA_BLOCK_EFFECT_NONDET;
         }
         return PETTA_BLOCK_EFFECT_DET;
     }
-    Atom **normalized_elements = cetta_malloc(
-        sizeof(*normalized_elements) * (size_t)call->expr.len);
-    normalized_elements[0] = call->expr.elems[0];
-    for (CettaExprIndex index = 1u;
-         index < call->expr.len; index++) {
-        normalized_elements[index] = petta_block_selection_value(
-            check, call->expr.elems[index]);
-    }
-    Atom *normalized_call = atom_expr(
-        &check->scratch, normalized_elements, call->expr.len);
-    free(normalized_elements);
-    if (!normalized_call)
-        return PETTA_BLOCK_EFFECT_UNKNOWN;
-
     Atom **matched_lhs = cetta_malloc(
         sizeof(*matched_lhs) * equation_len);
     size_t candidates = 0u;
     bool guaranteed = false;
     bool pairwise_disjoint = true;
+    bool source_selection_unknown = false;
     for (size_t index = 0u; index < equation_len; index++) {
         Atom *equation = equations[index];
+        Atom *lhs = equation->expr.elems[1];
+        bool source_shape_may_match = true;
+        bool source_shape_unknown = false;
+        for (CettaExprIndex argument = 1u;
+             argument < call->expr.len; argument++) {
+            PettaBlockSelectionPatternStatus source_status =
+                petta_block_selection_pattern_source_status(
+                    check, lhs->expr.elems[argument],
+                    call->expr.elems[argument], environment);
+            if (source_status ==
+                PETTA_BLOCK_SELECTION_PATTERN_IMPOSSIBLE) {
+                source_shape_may_match = false;
+                CETTA_PETTA_TYPECHECK_CENSUS_HIT(
+                    CETTA_PETTA_TYPECHECK_CENSUS_EVENT_SELECTION_SOURCE_LIST_SHAPE_ONLY);
+                break;
+            }
+            if (source_status ==
+                PETTA_BLOCK_SELECTION_PATTERN_SOURCE_UNKNOWN)
+                source_shape_unknown = true;
+        }
+        if (!source_shape_may_match)
+            continue;
+        if (source_shape_unknown) {
+            source_selection_unknown = true;
+            continue;
+        }
         Atom *fresh_equation = atom_freshen_epoch(
             &check->scratch, equation, (uint32_t)fresh_var_id());
         Atom *fresh_call = atom_freshen_epoch(
-            &check->scratch, normalized_call,
+            &check->scratch, call,
             (uint32_t)fresh_var_id());
         if (!fresh_equation || !fresh_call) {
             free(matched_lhs);
@@ -6090,7 +6877,6 @@ static PettaBlockEffect petta_block_call_selection_effect(
         bindings_free(&bindings);
         if (!matches)
             continue;
-        Atom *lhs = equation->expr.elems[1];
         for (size_t prior = 0u; prior < candidates; prior++) {
             if (petta_block_clause_heads_overlap(
                     check, matched_lhs[prior], lhs)) {
@@ -6101,32 +6887,43 @@ static PettaBlockEffect petta_block_call_selection_effect(
         matched_lhs[candidates++] = lhs;
         guaranteed = true;
         for (CettaExprIndex argument = 1u;
-             argument < normalized_call->expr.len; argument++) {
+             argument < call->expr.len; argument++) {
             if (!petta_block_pattern_total_for_actual(
                     lhs->expr.elems[argument],
-                    normalized_call->expr.elems[argument], 0u)) {
+                    call->expr.elems[argument], 0u)) {
                 guaranteed = false;
                 break;
             }
         }
     }
     free(matched_lhs);
+    if (source_selection_unknown) {
+        CETTA_PETTA_TYPECHECK_CENSUS_HIT(
+            CETTA_PETTA_TYPECHECK_CENSUS_EVENT_SELECTION_SOURCE_OPAQUE);
+        check->committed_effect_evidence_withheld = true;
+        return PETTA_BLOCK_EFFECT_UNKNOWN;
+    }
     if (candidates == 0u)
         return PETTA_BLOCK_EFFECT_SEMIDET;
-    if (candidates == 1u)
+    if (candidates == 1u) {
+        if (!guaranteed) {
+            CETTA_PETTA_TYPECHECK_CENSUS_HIT(
+                CETTA_PETTA_TYPECHECK_CENSUS_EVENT_SELECTION_PATTERN_NOT_TOTAL);
+        }
         return guaranteed
             ? PETTA_BLOCK_EFFECT_DET : PETTA_BLOCK_EFFECT_SEMIDET;
+    }
     bool selection_total = pairwise_disjoint;
     for (CettaExprIndex argument = 1u;
-         selection_total && argument < normalized_call->expr.len;
+         selection_total && argument < call->expr.len;
          argument++) {
-        Atom *actual = normalized_call->expr.elems[argument];
+        Atom *actual = call->expr.elems[argument];
         if (!atom_has_vars(actual))
             continue;
         Atom *type = actual->kind == ATOM_VAR && environment
             ? bindings_lookup_var(environment, actual) : NULL;
         if (!type || !petta_block_position_proven_exhaustive(
-                         check, normalized_call->expr.elems[0], arity,
+                         check, call->expr.elems[0], arity,
                          argument - 1u, type))
             selection_total = false;
     }
@@ -6160,16 +6957,6 @@ static bool petta_block_pattern_covers_nonempty_list(
           petta_block_pattern_total_for_type(
               pattern->expr.elems[1],
               list_type->expr.elems[1], 0u)));
-}
-
-static bool petta_block_pattern_covers_nonempty_expression(
-    Atom *pattern) {
-    return pattern &&
-        (pattern->kind == ATOM_VAR ||
-         (petta_block_head_is(pattern, "cons") &&
-          pattern->expr.len == 3u &&
-          pattern->expr.elems[1]->kind == ATOM_VAR &&
-          pattern->expr.elems[2]->kind == ATOM_VAR));
 }
 
 static bool petta_block_pattern_can_match_nonempty_list(Atom *pattern) {
@@ -6403,12 +7190,34 @@ static PettaBlockEffect petta_block_expression_effect(
     }
     if (!head)
         return PETTA_BLOCK_EFFECT_UNKNOWN;
-    if (strcmp(head, "foldall") == 0 && expression->expr.len == 4u)
+    if (strcmp(head, "eval") == 0 && expression->expr.len == 2u) {
+        /* `eval` transfers data into the evaluator.  Even when its operand
+         * is written as a quote, v2 does not promote the contained source
+         * expression into a cardinality certificate for a committed caller. */
+        CETTA_PETTA_TYPECHECK_CENSUS_HIT(
+            CETTA_PETTA_TYPECHECK_CENSUS_EVENT_EVAL_DYNAMIC_EFFECT_UNKNOWN);
+        check->committed_effect_evidence_withheld = true;
+        return PETTA_BLOCK_EFFECT_UNKNOWN;
+    }
+    if (strcmp(head, "foldall") == 0 && expression->expr.len == 4u) {
+        CETTA_PETTA_TYPECHECK_CENSUS_HIT(
+            CETTA_PETTA_TYPECHECK_CENSUS_EVENT_EXPRESSION_EFFECT_FOLDALL);
         return PETTA_BLOCK_EFFECT_DET;
+    }
     if (strcmp(head, "once") == 0 && expression->expr.len == 2u) {
         PettaBlockEffect inner = petta_block_expression_effect(
             check, expression->expr.elems[1], environment,
             depth + 1u);
+        if (inner == PETTA_BLOCK_EFFECT_DET) {
+            CETTA_PETTA_TYPECHECK_CENSUS_HIT(
+                CETTA_PETTA_TYPECHECK_CENSUS_EVENT_EXPRESSION_EFFECT_ONCE_DET);
+        } else if (inner == PETTA_BLOCK_EFFECT_SEMIDET) {
+            CETTA_PETTA_TYPECHECK_CENSUS_HIT(
+                CETTA_PETTA_TYPECHECK_CENSUS_EVENT_EXPRESSION_EFFECT_ONCE_SEMIDET);
+        } else if (inner == PETTA_BLOCK_EFFECT_NONDET) {
+            CETTA_PETTA_TYPECHECK_CENSUS_HIT(
+                CETTA_PETTA_TYPECHECK_CENSUS_EVENT_EXPRESSION_EFFECT_ONCE_NONDET);
+        }
         return inner == PETTA_BLOCK_EFFECT_NONDET
             ? PETTA_BLOCK_EFFECT_SEMIDET : inner;
     }
@@ -6452,6 +7261,10 @@ static PettaBlockEffect petta_block_expression_effect(
             effect, petta_block_expression_effect(
                         check, expression->expr.elems[2],
                         &body, depth + 1u));
+        CETTA_PETTA_TYPECHECK_CENSUS_HIT_IF(
+            petta_block_identity_binding_value(expression) &&
+                effect == PETTA_BLOCK_EFFECT_NONDET,
+            CETTA_PETTA_TYPECHECK_CENSUS_EVENT_ADMINISTRATIVE_ALIAS_NONDET_PRESERVED);
         bindings_free(&body);
         return effect;
     }
@@ -6517,8 +7330,12 @@ static PettaBlockEffect petta_block_expression_effect(
         intrinsic = PETTA_BLOCK_EFFECT_SEMIDET;
     else if (petta_block_name_in(
                  head, fixed_nondet,
-                 sizeof(fixed_nondet) / sizeof(fixed_nondet[0])))
+                 sizeof(fixed_nondet) / sizeof(fixed_nondet[0]))) {
+        CETTA_PETTA_TYPECHECK_CENSUS_HIT_IF(
+            strcmp(head, "superpose") == 0,
+            CETTA_PETTA_TYPECHECK_CENSUS_EVENT_EXPRESSION_EFFECT_SUPERPOSE_NONDET);
         return PETTA_BLOCK_EFFECT_NONDET;
+    }
     else if ((strcmp(head, "add-atom") == 0 ||
               strcmp(head, "remove-atom") == 0) &&
              expression->expr.len == 3u) {
@@ -6578,8 +7395,11 @@ static PettaBlockEffect petta_block_expression_effect(
         intrinsic = manifest
             ? PETTA_BLOCK_EFFECT_DET : PETTA_BLOCK_EFFECT_NONDET;
     }
-    else if (strcmp(head, "collapse") == 0)
+    else if (strcmp(head, "collapse") == 0) {
+        CETTA_PETTA_TYPECHECK_CENSUS_HIT(
+            CETTA_PETTA_TYPECHECK_CENSUS_EVENT_EXPRESSION_EFFECT_COLLAPSE);
         return PETTA_BLOCK_EFFECT_DET;
+    }
     else if (strcmp(head, "if") == 0 && expression->expr.len == 4u)
         intrinsic = PETTA_BLOCK_EFFECT_DET;
     else if (strcmp(head, "if") == 0 && expression->expr.len == 3u)
@@ -6640,7 +7460,7 @@ static PettaBlockEffect petta_block_expression_effect(
             Atom *expression_type = atom_symbol(
                 &check->scratch, "Expression");
             then_cloned = expression_type &&
-                petta_block_env_note(
+                petta_block_env_note_fresh(
                     &then_environment, condition->expr.elems[1],
                     expression_type);
         }
@@ -6740,8 +7560,8 @@ static PettaBlockEffect petta_block_expression_effect(
                  petta_block_value_is_proven_proper_list(
                      check, expression->expr.elems[2],
                      environment, depth + 1u))) {
-                petta_block_env_note(
-                    &body_environment, expression->expr.elems[1],
+                petta_block_env_note_pattern(
+                    check, &body_environment, expression->expr.elems[1],
                     value_type);
             }
             check->definite_mismatch = saved_mismatch;
@@ -6785,17 +7605,24 @@ static bool petta_block_body_commits(Atom *body) {
         return false;
     if (body->expr.len == 1u &&
         petta_block_symbol_name(body->expr.elems[0]) &&
-        strcmp(petta_block_symbol_name(body->expr.elems[0]), "cut") == 0)
+        strcmp(petta_block_symbol_name(body->expr.elems[0]), "cut") == 0) {
+        CETTA_PETTA_TYPECHECK_CENSUS_HIT(
+            CETTA_PETTA_TYPECHECK_CENSUS_EVENT_CONTEXTUAL_DIRECT_CUT_COMMIT_ACCEPT);
         return true;
+    }
     if (body->expr.len == 4u &&
         petta_block_symbol_name(body->expr.elems[0]) &&
         strcmp(petta_block_symbol_name(body->expr.elems[0]), "let") == 0) {
         Atom *value = body->expr.elems[2];
-        return value && value->kind == ATOM_EXPR &&
-               value->expr.len == 1u &&
-               petta_block_symbol_name(value->expr.elems[0]) &&
-               strcmp(petta_block_symbol_name(
-                          value->expr.elems[0]), "cut") == 0;
+        if (value && value->kind == ATOM_EXPR &&
+            value->expr.len == 1u &&
+            petta_block_symbol_name(value->expr.elems[0]) &&
+            strcmp(petta_block_symbol_name(
+                       value->expr.elems[0]), "cut") == 0) {
+            CETTA_PETTA_TYPECHECK_CENSUS_HIT(
+                CETTA_PETTA_TYPECHECK_CENSUS_EVENT_CONTEXTUAL_LET_CUT_COMMIT_ACCEPT);
+            return true;
+        }
     }
     return false;
 }
@@ -6935,8 +7762,7 @@ static bool petta_block_position_proven_exhaustive(
                                 check, head, arity, position, "false");
         return covers_true && covers_false;
     }
-    if (petta_block_head_is(type, "List") ||
-        (type_name && strcmp(type_name, "Expression") == 0)) {
+    if (petta_block_head_is(type, "List")) {
         bool empty = false;
         bool nonempty = false;
         size_t equation_len = 0u;
@@ -6949,11 +7775,7 @@ static bool petta_block_position_proven_exhaustive(
                     (pattern->kind == ATOM_EXPR &&
                      pattern->expr.len == 0u);
             nonempty = nonempty ||
-                (petta_block_head_is(type, "List")
-                    ? petta_block_pattern_covers_nonempty_list(
-                          pattern, type)
-                    : petta_block_pattern_covers_nonempty_expression(
-                          pattern));
+                petta_block_pattern_covers_nonempty_list(pattern, type);
         }
         return empty && nonempty;
     }
@@ -7175,6 +7997,9 @@ static bool petta_block_check_determinism(
                 break;
             }
         }
+        bool saved_committed_effect_evidence_withheld =
+            check->committed_effect_evidence_withheld;
+        check->committed_effect_evidence_withheld = false;
         PettaBlockEffect actual = environment_ok
             ? (petta_block_validate_effect_arguments(
                    check, body, &effect_environment, 0u)
@@ -7182,11 +8007,22 @@ static bool petta_block_check_determinism(
                          check, body, &effect_environment, 0u)
                    : PETTA_BLOCK_EFFECT_UNKNOWN)
             : PETTA_BLOCK_EFFECT_UNKNOWN;
+        bool committed_effect_evidence_withheld =
+            check->committed_effect_evidence_withheld;
+        check->committed_effect_evidence_withheld =
+            saved_committed_effect_evidence_withheld;
         bindings_free(&effect_environment);
         if (check->result->verdict == PETTA_TYPECHECK_REFUTED)
             return false;
-        if (actual == PETTA_BLOCK_EFFECT_UNKNOWN && !conditional_effect)
-            continue;
+        if (actual == PETTA_BLOCK_EFFECT_UNKNOWN && !conditional_effect &&
+            committed_effect_evidence_withheld) {
+            CETTA_PETTA_TYPECHECK_CENSUS_HIT(
+                CETTA_PETTA_TYPECHECK_CENSUS_EVENT_COMMITTED_EFFECT_UNKNOWN_REJECT);
+            return petta_block_fail(
+                check, "body cardinality is unproven for committed declaration %s/%u",
+                petta_block_symbol_name(lhs->expr.elems[0]),
+                (unsigned)arity);
+        }
         bool effect_ok = actual == PETTA_BLOCK_EFFECT_UNKNOWN ||
             (promised == PETTA_BLOCK_EFFECT_DET
                 ? actual == PETTA_BLOCK_EFFECT_DET
@@ -8286,48 +9122,6 @@ static bool petta_typecheck_boundary_is_variable(
     return atom && atom->kind == ATOM_VAR && atom->var_id == variable;
 }
 
-static PettaTypecheckBoundaryRequirement
-petta_typecheck_boundary_requirement_join(
-    PettaTypecheckBoundaryRequirement left,
-    PettaTypecheckBoundaryRequirement right) {
-    return left > right ? left : right;
-}
-
-typedef uint8_t PettaTypecheckBoundaryFacts;
-
-enum {
-    PETTA_TYPECHECK_BOUNDARY_FACT_NONE = 0u,
-    PETTA_TYPECHECK_BOUNDARY_FACT_NONVAR = 1u << 0,
-    PETTA_TYPECHECK_BOUNDARY_FACT_PROPER_LIST = 1u << 1,
-    PETTA_TYPECHECK_BOUNDARY_FACT_NONEMPTY_EXPRESSION = 1u << 2,
-};
-
-static PettaTypecheckBoundaryFacts
-petta_typecheck_boundary_facts_join(
-    PettaTypecheckBoundaryFacts left,
-    PettaTypecheckBoundaryFacts right) {
-    return (PettaTypecheckBoundaryFacts)(left | right);
-}
-
-static bool petta_typecheck_boundary_facts_satisfy(
-    PettaTypecheckBoundaryFacts facts,
-    PettaTypecheckBoundaryRequirement requirement) {
-    if (requirement == PETTA_TYPECHECK_BOUNDARY_NONE)
-        return true;
-    if (requirement == PETTA_TYPECHECK_BOUNDARY_NONVAR) {
-        return (facts & (PETTA_TYPECHECK_BOUNDARY_FACT_NONVAR |
-                         PETTA_TYPECHECK_BOUNDARY_FACT_PROPER_LIST)) != 0u;
-    }
-    if (requirement == PETTA_TYPECHECK_BOUNDARY_PROPER_LIST) {
-        return (facts & (PETTA_TYPECHECK_BOUNDARY_FACT_PROPER_LIST |
-                         PETTA_TYPECHECK_BOUNDARY_FACT_NONEMPTY_EXPRESSION)) != 0u;
-    }
-    if (requirement == PETTA_TYPECHECK_BOUNDARY_NONEMPTY_EXPRESSION) {
-        return (facts & PETTA_TYPECHECK_BOUNDARY_FACT_NONEMPTY_EXPRESSION) != 0u;
-    }
-    return false;
-}
-
 /* Derive only facts that are logically forced by one boolean observation.
  * The result is intentionally incomplete: an unrecognized guard contributes
  * no fact, so the committed boundary remains conservative. */
@@ -8388,7 +9182,7 @@ petta_typecheck_condition_facts(
             PETTA_TYPECHECK_BOUNDARY_FACT_NONE;
         for (CettaExprIndex index = 1u;
              index < condition->expr.len; index++) {
-            facts = petta_typecheck_boundary_facts_join(
+            facts = petta_analysis_boundary_facts_join(
                 facts,
                 petta_typecheck_condition_facts(
                     condition->expr.elems[index], variable,
@@ -8401,7 +9195,7 @@ petta_typecheck_condition_facts(
             PETTA_TYPECHECK_BOUNDARY_FACT_NONE;
         for (CettaExprIndex index = 1u;
              index < condition->expr.len; index++) {
-            facts = petta_typecheck_boundary_facts_join(
+            facts = petta_analysis_boundary_facts_join(
                 facts,
                 petta_typecheck_condition_facts(
                     condition->expr.elems[index], variable,
@@ -8439,27 +9233,27 @@ petta_typecheck_expression_boundary_requirement_with_facts(
     if (head && strcmp(head, "if") == 0 &&
         (expression->expr.len == 3u || expression->expr.len == 4u)) {
         Atom *condition = expression->expr.elems[1];
-        requirement = petta_typecheck_boundary_requirement_join(
+        requirement = petta_analysis_boundary_requirement_join(
             requirement,
             petta_typecheck_expression_boundary_requirement_with_facts(
                 condition, variable, facts, depth + 1u));
         PettaTypecheckBoundaryFacts true_facts =
-            petta_typecheck_boundary_facts_join(
+            petta_analysis_boundary_facts_join(
                 facts,
                 petta_typecheck_condition_facts(
                     condition, variable, true, depth + 1u));
-        requirement = petta_typecheck_boundary_requirement_join(
+        requirement = petta_analysis_boundary_requirement_join(
             requirement,
             petta_typecheck_expression_boundary_requirement_with_facts(
                 expression->expr.elems[2], variable,
                 true_facts, depth + 1u));
         if (expression->expr.len == 4u) {
             PettaTypecheckBoundaryFacts false_facts =
-                petta_typecheck_boundary_facts_join(
+                petta_analysis_boundary_facts_join(
                     facts,
                     petta_typecheck_condition_facts(
                         condition, variable, false, depth + 1u));
-            requirement = petta_typecheck_boundary_requirement_join(
+            requirement = petta_analysis_boundary_requirement_join(
                 requirement,
                 petta_typecheck_expression_boundary_requirement_with_facts(
                     expression->expr.elems[3], variable,
@@ -8474,7 +9268,7 @@ petta_typecheck_expression_boundary_requirement_with_facts(
             expression->expr.len == 2u &&
             petta_typecheck_boundary_is_variable(
                 expression->expr.elems[1], variable) &&
-            !petta_typecheck_boundary_facts_satisfy(
+            !petta_analysis_boundary_facts_satisfy(
                 facts, PETTA_TYPECHECK_BOUNDARY_NONEMPTY_EXPRESSION)) {
             requirement = PETTA_TYPECHECK_BOUNDARY_NONEMPTY_EXPRESSION;
         }
@@ -8489,7 +9283,7 @@ petta_typecheck_expression_boundary_requirement_with_facts(
                  index < expression->expr.len; index++) {
                 if (petta_typecheck_boundary_is_variable(
                         expression->expr.elems[index], variable) &&
-                    !petta_typecheck_boundary_facts_satisfy(
+                    !petta_analysis_boundary_facts_satisfy(
                         facts, PETTA_TYPECHECK_BOUNDARY_NONVAR)) {
                     requirement = PETTA_TYPECHECK_BOUNDARY_NONVAR;
                 }
@@ -8521,7 +9315,7 @@ petta_typecheck_expression_boundary_requirement_with_facts(
         if (proper_position < expression->expr.len &&
             petta_typecheck_boundary_is_variable(
                 expression->expr.elems[proper_position], variable) &&
-            !petta_typecheck_boundary_facts_satisfy(
+            !petta_analysis_boundary_facts_satisfy(
                 facts, PETTA_TYPECHECK_BOUNDARY_PROPER_LIST)) {
             requirement = PETTA_TYPECHECK_BOUNDARY_PROPER_LIST;
         }
@@ -8529,7 +9323,7 @@ petta_typecheck_expression_boundary_requirement_with_facts(
 
     for (CettaExprIndex index = 0u;
          index < expression->expr.len; index++) {
-        requirement = petta_typecheck_boundary_requirement_join(
+        requirement = petta_analysis_boundary_requirement_join(
             requirement,
             petta_typecheck_expression_boundary_requirement_with_facts(
                 expression->expr.elems[index], variable,
@@ -8602,7 +9396,7 @@ bool petta_typecheck_call_boundary_plan(
             if (!parameter || parameter->kind != ATOM_VAR)
                 continue;
             requirements[position] =
-                petta_typecheck_boundary_requirement_join(
+                petta_analysis_boundary_requirement_join(
                     requirements[position],
                     petta_typecheck_expression_boundary_requirement(
                         rhs, parameter->var_id, 0u));

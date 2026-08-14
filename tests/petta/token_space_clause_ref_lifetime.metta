@@ -44,7 +44,7 @@
          (match &owned_order_space (ordered $value) $value))))
 
 ; A plain PeTTa location is also native after its first add.  Temporary rows
-; asserted through the Prolog-compatible clause-reference surface must join
+; asserted through the Prolog-compatible clause-reference syntax must join
 ; that same store, remain visible to match, and erase only their occurrence.
 (= (plain_named_space_ref_roundtrip)
    (let*
@@ -79,7 +79,7 @@
 
 ; Native ownership is decided by successful space resolution.  A legacy
 ; Prolog predicate of the same spelling stays on the explicit callPredicate
-; surface; once the native space exists, boundary assertions join the native
+; syntax; once the native space exists, boundary assertions join the native
 ; live row rather than silently extending the legacy predicate.
 (= (plain_name_collision_precedence)
    (let*

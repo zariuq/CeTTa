@@ -63,6 +63,11 @@
           (ProofSequenceConsV1 input-wff-v1
             (ProofSequenceConsV1 input-dummy-v1 ProofSequenceNilV1))))
       (body))
+    (rule proof-trace-input-canary-identity-different-hx-v1
+      (head
+        (source-proof-trace-input-label-different-v1
+          input-identity-v1 input-hx-v1))
+      (body))
 
     (rule proof-trace-input-canary-assertion-v1
       (head

@@ -247,7 +247,7 @@ static HeEdge consistency(Atom *actual, Atom *expected, uint64_t *fuel) {
     /* This is an authored HE type equivalence, not structural equality.  It
      * must be visible here because a NONE edge licenses applicability pruning;
      * the prefilter may never refute a pair accepted by match_types. */
-    if (match_types_space_kind_equivalent(actual, expected))
+    if (type_match_uses_space_class_bridge(actual, expected))
         return HE_STRUCT;
 
     /* arrow congruence: consistent iff domains and codomains are, the edge
@@ -3386,7 +3386,7 @@ bool he_typing_is_op(const char *name) {
 }
 
 /* Which argument positions arrive as DATA (unevaluated) for each typing op.
- * Kept beside HE_OP_NAMES so the op surface and its argument policy cannot
+ * Kept beside HE_OP_NAMES so the op syntax and its argument policy cannot
  * drift apart; the evaluator consults this instead of naming ops itself. */
 bool he_typing_op_data_arg(const char *name, uint32_t arg_index) {
     if (!name) return false;

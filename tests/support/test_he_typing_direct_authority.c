@@ -22,6 +22,51 @@ static bool type_list_has_symbol(
     return false;
 }
 
+static bool type_list_matches_symbols(
+    Atom **types, uint32_t count, const char *const *names,
+    uint32_t expected_count) {
+    if (count != expected_count)
+        return false;
+    for (uint32_t index = 0u; index < count; index++) {
+        if (!atom_is_symbol(types[index], names[index]))
+            return false;
+    }
+    return true;
+}
+
+static bool type_list_is_drawn_from(
+    Atom **types, uint32_t count, const char *const *names,
+    uint32_t name_count) {
+    for (uint32_t index = 0u; index < count; index++) {
+        bool found = false;
+        for (uint32_t candidate = 0u; candidate < name_count; candidate++) {
+            if (atom_is_symbol(types[index], names[candidate])) {
+                found = true;
+                break;
+            }
+        }
+        if (!found)
+            return false;
+    }
+    return true;
+}
+
+static CettaTypeInferenceBudget inference_budget(uint32_t type_capacity) {
+    return (CettaTypeInferenceBudget){
+        .steps_limited = false,
+        .steps_remaining = 0u,
+        .steps_spent = 0u,
+        .work_steps_observed = 0u,
+        .type_capacity = type_capacity,
+        .max_depth_observed = 0u,
+        .complete = true,
+        .type_capacity_exhausted = false,
+        .evaluator_stack_exhausted = false,
+        .evaluator_capacity_exhausted = false,
+        .allow_marked_user_type_functions = true,
+    };
+}
+
 int main(void) {
     Arena persistent;
     TermUniverse universe;
@@ -70,6 +115,72 @@ int main(void) {
         eval_get_atom_types_structural_profiled);
     assert(profile_service->infer_structural_budgeted ==
         eval_get_atom_types_structural_profiled_budgeted);
+
+    assert(cetta_he_inference_contracts_v1_are_valid());
+    static const char *const inference_names[] = {
+        "eval_get_atom_types_profiled",
+        "eval_get_atom_types_profiled_transient",
+        "eval_get_atom_types_profiled_budgeted",
+        "eval_get_atom_types_structural_profiled",
+        "eval_get_atom_types_structural_profiled_budgeted",
+    };
+    for (unsigned index = 0u; index < CETTA_HE_INFERENCE_API_V1_COUNT;
+         index++) {
+        const CettaHeCollectionContractV1 *contract =
+            cetta_he_inference_contract_v1((CettaHeInferenceApiV1)index);
+        assert(contract);
+        assert((unsigned)contract->api == index);
+        assert(strcmp(contract->name, inference_names[index]) == 0);
+        assert(contract->order_semantic);
+        assert(contract->multiplicity_semantic);
+    }
+    assert(cetta_he_inference_contract_v1(
+               CETTA_HE_INFERENCE_API_V1_COUNT) == NULL);
+
+    assert(!cetta_he_check_status_is_budget_sensitive(
+        CETTA_HE_CHECK_ESTABLISHED));
+    assert(!cetta_he_check_status_is_budget_sensitive(
+        CETTA_HE_CHECK_REFUTED));
+    assert(!cetta_he_check_status_is_budget_sensitive(
+        CETTA_HE_CHECK_UNDETERMINED));
+    assert(cetta_he_check_status_is_budget_sensitive(
+        CETTA_HE_CHECK_INCOMPLETE));
+    assert(!cetta_he_normalize_status_is_exhaustion(
+        CETTA_HE_NORMALIZE_COMPLETE));
+    assert(cetta_he_normalize_status_is_exhaustion(
+        CETTA_HE_NORMALIZE_RESOURCE));
+    assert(cetta_he_normalize_status_is_exhaustion(
+        CETTA_HE_NORMALIZE_DEPTH));
+    assert(!cetta_he_normalize_status_is_exhaustion(
+        CETTA_HE_NORMALIZE_AMBIGUOUS));
+    assert(!cetta_he_normalize_status_is_exhaustion(
+        CETTA_HE_NORMALIZE_NO_RESULT));
+    assert(!cetta_he_normalize_status_is_exhaustion(
+        CETTA_HE_NORMALIZE_INADMISSIBLE));
+    assert(!cetta_he_normalize_status_is_exhaustion(
+        CETTA_HE_NORMALIZE_PROVISIONAL));
+
+    assert(cetta_he_search_strategy_contracts_v1_are_valid());
+    static const char *const search_names[] = {
+        "search-inhabitants",
+        "search-first-inhabitant",
+        "type-forward-step",
+        "type-forward-closure",
+    };
+    for (unsigned index = 0u; index < CETTA_HE_SEARCH_STRATEGY_V1_COUNT;
+         index++) {
+        const CettaHeSearchStrategyContractV1 *contract =
+            cetta_he_search_strategy_contract_v1(
+                (CettaHeSearchStrategyApiV1)index);
+        assert(contract);
+        assert((unsigned)contract->api == index);
+        assert(strcmp(contract->name, search_names[index]) == 0);
+        assert(!contract->exhaustion_may_reject);
+        assert(contract->exhaustive_empty_may_reject ==
+               (index == CETTA_HE_SEARCH_FIRST_INHABITANT_V1));
+    }
+    assert(cetta_he_search_strategy_contract_v1(
+               CETTA_HE_SEARCH_STRATEGY_V1_COUNT) == NULL);
 
     const CettaNikDirectSourceBindingV1 *source =
         &he_typing_consistency_core_source_binding_v1;
@@ -166,9 +277,17 @@ int main(void) {
     bindings_init(&space_match);
     assert(match_types(space_value_type, space_kind, &space_match));
     assert(space_match.len == 0u);
+    assert(match_types(space_kind, space_value_type, &space_match));
+    assert(space_match.len == 0u);
     assert(core_service->classify_consistency(
                space_value_type, space_kind, 64u) ==
            CETTA_HE_EDGE_STRUCTURAL);
+    assert(core_service->classify_consistency(
+               space_kind, space_value_type, 64u) ==
+           CETTA_HE_EDGE_STRUCTURAL);
+    Atom *space_lookalike = atom_symbol(&persistent, "SpaceTypo");
+    assert(!type_match_uses_space_class_bridge(
+        space_value_type, space_lookalike));
     bindings_free(&space_match);
 
     Atom *list_number = atom_expr2(
@@ -276,6 +395,151 @@ int main(void) {
     assert(!type_list_has_symbol(inferred_types, inferred_count, "Number"));
     free(inferred_types);
 
+    /* The five list-valued operations are sequence/bag APIs.  Direct
+       annotations and inferred result types retain logical order and repeated
+       occurrences; the budgeted forms may return only a sound prefix (or the
+       empty prefix) and must lower `complete` when capacity prevents the full
+       sequence. */
+    Atom *type_one = atom_symbol(&persistent, "ContractTypeOne");
+    Atom *type_two = atom_symbol(&persistent, "ContractTypeTwo");
+    Atom *contract_subject = atom_symbol(&persistent, "contract-subject");
+    assert(type_one && type_two && contract_subject);
+    space_add(&space, atom_expr3(
+        &persistent, atom_symbol(&persistent, ":"), contract_subject,
+        type_one));
+    space_add(&space, atom_expr3(
+        &persistent, atom_symbol(&persistent, ":"), contract_subject,
+        type_two));
+    space_add(&space, atom_expr3(
+        &persistent, atom_symbol(&persistent, ":"), contract_subject,
+        type_one));
+    static const char *const direct_sequence[] = {
+        "ContractTypeOne", "ContractTypeTwo", "ContractTypeOne",
+    };
+
+    inferred_types = NULL;
+    inferred_count = profile_service->infer(
+        &space, &persistent, contract_subject, &inferred_types);
+    assert(type_list_matches_symbols(
+        inferred_types, inferred_count, direct_sequence, 3u));
+    free(inferred_types);
+
+    /* The second call is served by the profiled memo and must preserve the
+       same ordered multiplicity. */
+    inferred_types = NULL;
+    inferred_count = profile_service->infer(
+        &space, &persistent, contract_subject, &inferred_types);
+    assert(type_list_matches_symbols(
+        inferred_types, inferred_count, direct_sequence, 3u));
+    free(inferred_types);
+
+    inferred_types = NULL;
+    inferred_count = profile_service->infer_transient(
+        &space, &persistent, contract_subject, &inferred_types);
+    assert(type_list_matches_symbols(
+        inferred_types, inferred_count, direct_sequence, 3u));
+    free(inferred_types);
+
+    CettaTypeInferenceBudget complete_inference = inference_budget(3u);
+    inferred_types = NULL;
+    inferred_count = profile_service->infer_budgeted(
+        &space, &persistent, contract_subject, &inferred_types,
+        &complete_inference);
+    assert(complete_inference.complete);
+    assert(!complete_inference.type_capacity_exhausted);
+    assert(type_list_matches_symbols(
+        inferred_types, inferred_count, direct_sequence, 3u));
+    free(inferred_types);
+
+    CettaTypeInferenceBudget partial_inference = inference_budget(2u);
+    inferred_types = NULL;
+    inferred_count = profile_service->infer_budgeted(
+        &space, &persistent, contract_subject, &inferred_types,
+        &partial_inference);
+    assert(!partial_inference.complete);
+    assert(partial_inference.type_capacity_exhausted);
+    assert(type_list_is_drawn_from(
+        inferred_types, inferred_count, direct_sequence, 3u));
+    free(inferred_types);
+
+    Atom *reverse_subject = atom_symbol(&persistent, "reverse-subject");
+    assert(reverse_subject);
+    space_add(&space, atom_expr3(
+        &persistent, atom_symbol(&persistent, ":"), reverse_subject,
+        type_two));
+    space_add(&space, atom_expr3(
+        &persistent, atom_symbol(&persistent, ":"), reverse_subject,
+        type_one));
+    static const char *const reverse_sequence[] = {
+        "ContractTypeTwo", "ContractTypeOne",
+    };
+    inferred_types = NULL;
+    inferred_count = profile_service->infer_transient(
+        &space, &persistent, reverse_subject, &inferred_types);
+    assert(type_list_matches_symbols(
+        inferred_types, inferred_count, reverse_sequence, 2u));
+    free(inferred_types);
+
+    Atom *argument_type = atom_symbol(&persistent, "ContractArgument");
+    Atom *contract_argument = atom_symbol(&persistent, "contract-argument");
+    Atom *contract_operator = atom_symbol(&persistent, "contract-operator");
+    assert(argument_type && contract_argument && contract_operator);
+    space_add(&space, atom_expr3(
+        &persistent, atom_symbol(&persistent, ":"), contract_argument,
+        argument_type));
+    space_add(&space, atom_expr3(
+        &persistent, atom_symbol(&persistent, ":"), contract_operator,
+        atom_expr3(&persistent, atom_symbol(&persistent, "->"),
+                   argument_type, type_one)));
+    space_add(&space, atom_expr3(
+        &persistent, atom_symbol(&persistent, ":"), contract_operator,
+        atom_expr3(&persistent, atom_symbol(&persistent, "->"),
+                   argument_type, type_two)));
+    space_add(&space, atom_expr3(
+        &persistent, atom_symbol(&persistent, ":"), contract_operator,
+        atom_expr3(&persistent, atom_symbol(&persistent, "->"),
+                   argument_type, type_one)));
+    Atom *contract_application = atom_expr2(
+        &persistent, contract_operator, contract_argument);
+    inferred_types = NULL;
+    inferred_count = profile_service->infer_structural(
+        &space, &persistent, contract_application, &inferred_types);
+    assert(type_list_matches_symbols(
+        inferred_types, inferred_count, direct_sequence, 3u));
+    free(inferred_types);
+
+    CettaTypeInferenceBudget structural_budget = inference_budget(3u);
+    inferred_types = NULL;
+    inferred_count = profile_service->infer_structural_budgeted(
+        &space, &persistent, contract_application, &inferred_types,
+        &structural_budget);
+    assert(structural_budget.complete);
+    assert(!structural_budget.type_capacity_exhausted);
+    assert(type_list_matches_symbols(
+        inferred_types, inferred_count, direct_sequence, 3u));
+    free(inferred_types);
+
+    /* Capacity exhaustion is an incomplete judgment, never a refutation. */
+    typing_detail = NULL;
+    typing_edge = CETTA_HE_EDGE_NONE;
+    he_typing_budget_init_unbounded(&direct_budget);
+    direct_budget.type_capacity = 2u;
+    assert(core_service->check_term(
+               &persistent, &space, contract_subject, type_one,
+               &direct_budget, false, &typing_edge, &typing_detail) ==
+           CETTA_HE_CHECK_INCOMPLETE);
+    assert(direct_budget.type_capacity_exhausted);
+
+    typing_detail = NULL;
+    typing_edge = CETTA_HE_EDGE_NONE;
+    he_typing_budget_init_unbounded(&direct_budget);
+    direct_budget.type_capacity = 3u;
+    assert(core_service->check_term(
+               &persistent, &space, contract_subject, type_one,
+               &direct_budget, false, &typing_edge, &typing_detail) ==
+           CETTA_HE_CHECK_ESTABLISHED);
+    assert(!direct_budget.type_capacity_exhausted);
+
 #if CETTA_BUILD_WITH_RUNTIME_STATS
     Atom *cached_subject = atom_symbol(&persistent, "cached-subject");
     Atom *cached_number_annotation = atom_expr3(
@@ -322,6 +586,36 @@ int main(void) {
     assert(cache_stats.counters[
         CETTA_RUNTIME_COUNTER_HE_PROFILED_TYPE_CACHE_HIT] ==
         repeated_queries - 1u);
+
+    /* The four other APIs are deliberately transient. */
+    cetta_runtime_stats_reset();
+    cetta_runtime_stats_enable();
+    inferred_types = NULL;
+    inferred_count = profile_service->infer_transient(
+        &space, &persistent, cached_subject, &inferred_types);
+    free(inferred_types);
+    inferred_types = NULL;
+    inferred_count = profile_service->infer_structural(
+        &space, &persistent, cached_subject, &inferred_types);
+    free(inferred_types);
+    CettaTypeInferenceBudget transient_budget = inference_budget(0u);
+    inferred_types = NULL;
+    inferred_count = profile_service->infer_budgeted(
+        &space, &persistent, cached_subject, &inferred_types,
+        &transient_budget);
+    free(inferred_types);
+    transient_budget = inference_budget(0u);
+    inferred_types = NULL;
+    inferred_count = profile_service->infer_structural_budgeted(
+        &space, &persistent, cached_subject, &inferred_types,
+        &transient_budget);
+    free(inferred_types);
+    cetta_runtime_stats_snapshot(&cache_stats);
+    cetta_runtime_stats_disable();
+    assert(cache_stats.counters[
+        CETTA_RUNTIME_COUNTER_HE_PROFILED_TYPE_CACHE_MISS] == 0u);
+    assert(cache_stats.counters[
+        CETTA_RUNTIME_COUNTER_HE_PROFILED_TYPE_CACHE_HIT] == 0u);
 #endif
 
     CettaNikDirectAuthorityTokenV1 pure_core_token;
@@ -420,6 +714,6 @@ int main(void) {
     term_universe_free(&universe);
     arena_free(&persistent);
 
-    puts("PASS: HE core typing and live profiled inference are certificate-free direct NIK authorities");
+    puts("PASS: HE outcomes and five list-inference contracts are live certificate-free NIK authorities");
     return 0;
 }

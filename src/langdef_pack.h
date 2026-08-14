@@ -6,13 +6,13 @@
  * evaluator so that covered rule classes are reachable only through the pack.
  *
  * Slice 1 is hand-authored but generator-shaped: every field here is exactly
- * what a future --compile-langdef tool would emit (rule IDs, profile surface,
+ * what a future --compile-langdef tool would emit (rule IDs, profile syntax,
  * provenance links to the fine instruction-machine rules, source digest,
  * disabled mask, claim level).  The pack is data the runtime consults; the
  * native C implementations remain the leaf functions of each rule.
  *
  * Granularity note: rules here describe the coarse user-visible one-step relation
- * (one observable surface rewrite), not the fine interpreter state machine.
+ * (one observable rewrite), not the fine interpreter state machine.
  * Provenance strings name the fine rules that justify each coarse rule.
  */
 
@@ -44,7 +44,7 @@ typedef enum {
 typedef struct {
     const char *name;       /* stable coarse rule ID, e.g. "HES_GroundedDispatch" */
     CettaLangdefRuleId rule_id;
-    const char *profiles;   /* authored profile surface for this rule */
+    const char *profiles;   /* authored profile syntax for this rule */
     const char *provenance; /* fine-machine rules justifying this coarse rule */
     const char *claim;      /* per-rule epistemic level: "bag-tested-adequate"
                              * (tested against legacy path and oracle bags),

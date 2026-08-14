@@ -1,4 +1,4 @@
-; Prime's named chain surface lowers to the same canonical unary-binder form
+; Prime's named chain syntax lowers to the same canonical unary-binder form
 ; used by the neutral ABT waist.  The body is instantiated once per producer
 ; result; multiplicity and sequential refinement are both observable.
 

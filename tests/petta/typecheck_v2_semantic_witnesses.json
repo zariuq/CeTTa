@@ -1,0 +1,833 @@
+{
+  "axis_interactions": [
+    {
+      "axes": [
+        "open-world-unknown-approximation",
+        "result-cardinality-grading"
+      ],
+      "case": "87_inferred_if_empty_result|strict",
+      "events": [
+        "conditional-no-result-branch",
+        "inference-bottom-branch-unpublished"
+      ]
+    },
+    {
+      "axes": [
+        "open-world-unknown-approximation",
+        "shape-compatibility"
+      ],
+      "case": "68_inferred_parameter_conflicting_uses|default",
+      "events": [
+        "inference-parameter-taint",
+        "structural-atom-exact"
+      ]
+    },
+    {
+      "axes": [
+        "open-world-unknown-approximation",
+        "source-evaluated-stage-evidence"
+      ],
+      "case": "71_concrete_data_selection_is_deterministic|strict-det",
+      "events": [
+        "wildcard-actual-accept",
+        "selection-source-opaque"
+      ]
+    },
+    {
+      "axes": [
+        "result-cardinality-grading",
+        "shape-compatibility"
+      ],
+      "case": "45_arrow_det_fits_semidet|strict",
+      "events": [
+        "arrow-mode-det-exact",
+        "arrow-compatible"
+      ]
+    },
+    {
+      "axes": [
+        "result-cardinality-grading",
+        "source-evaluated-stage-evidence"
+      ],
+      "case": "71_concrete_data_selection_is_deterministic|strict-det",
+      "events": [
+        "committed-effect-unknown-reject",
+        "selection-source-opaque"
+      ]
+    },
+    {
+      "axes": [
+        "shape-compatibility",
+        "source-evaluated-stage-evidence"
+      ],
+      "case": "72_direct_concrete_selection_is_deterministic|strict-det",
+      "events": [
+        "structural-atom-exact",
+        "selection-source-list-shape-only"
+      ]
+    }
+  ],
+  "schema": "cetta-petta-typecheck-v2-census-witnesses-v2",
+  "witnesses": {
+    "actual-alias-expand": {
+      "axis": "shape-compatibility",
+      "case": "23_first_declared_kind_wins|default",
+      "kind": "rule",
+      "mapping": "consistent-alias-left",
+      "origin": "petta_block_type_compatible_depth",
+      "scope": "oracle"
+    },
+    "actual-union-all": {
+      "axis": "shape-compatibility",
+      "case": "74_inferred_superpose_result_widens_unknown|default",
+      "kind": "rule",
+      "mapping": "consistent-union-left",
+      "origin": "petta_block_type_all_actual_union",
+      "scope": "oracle"
+    },
+    "actual-union-all-accept": {
+      "axis": "shape-compatibility",
+      "case": "74_inferred_superpose_result_widens_unknown|default",
+      "kind": "rule",
+      "mapping": "consistent-union-left",
+      "origin": "petta_block_type_all_actual_union",
+      "scope": "oracle"
+    },
+    "actual-union-member-reject": {
+      "axis": "shape-compatibility",
+      "case": "examples/fail_strictdet_case_fallthrough_incomplete.metta|--strict-det",
+      "kind": "mechanism",
+      "mapping": "actual-union-universal-rejection",
+      "origin": "petta_block_type_all_actual_union",
+      "scope": "oracle"
+    },
+    "administrative-alias-nondet-preserved": {
+      "axis": "result-cardinality-grading",
+      "case": "101_let_star_alias_chain_nondet_bool_reject|strict-det",
+      "kind": "mechanism",
+      "mapping": "administrative-alias-nondeterminism-preservation",
+      "origin": "petta_block_expression_effect",
+      "scope": "oracle"
+    },
+    "arrow-compatible": {
+      "axis": "shape-compatibility",
+      "case": "46_arrow_semidet_fits_semidet|strict",
+      "kind": "rule",
+      "mapping": "consistent-arrow",
+      "origin": "petta_block_type_compatible_depth",
+      "scope": "oracle"
+    },
+    "arrow-component-reject": {
+      "axis": "shape-compatibility",
+      "case": "49_arrow_component_mismatch|strict",
+      "kind": "mechanism",
+      "mapping": "arrow-component-incompatibility",
+      "origin": "petta_block_type_compatible_depth",
+      "scope": "oracle"
+    },
+    "arrow-mode-det-exact": {
+      "axis": "result-cardinality-grading",
+      "case": "45_arrow_det_fits_semidet|strict",
+      "kind": "rule",
+      "mapping": "mode-fits-det-det",
+      "origin": "petta_type_arrow_mode_fits",
+      "scope": "oracle"
+    },
+    "arrow-mode-det-to-semidet": {
+      "axis": "result-cardinality-grading",
+      "case": "45_arrow_det_fits_semidet|strict",
+      "kind": "rule",
+      "mapping": "mode-fits-det-semidet",
+      "origin": "petta_type_arrow_mode_fits",
+      "scope": "oracle"
+    },
+    "arrow-mode-effect-accept": {
+      "axis": "result-cardinality-grading",
+      "case": "73_expression_empty_cons_selection_is_not_total|strict-det",
+      "kind": "rule",
+      "mapping": "mode-fits-effect",
+      "origin": "petta_type_arrow_mode_fits",
+      "scope": "oracle"
+    },
+    "arrow-mode-nondet-accept": {
+      "axis": "result-cardinality-grading",
+      "case": "47_arrow_nondet_slot_accepts_closure|strict",
+      "kind": "rule",
+      "mapping": "mode-fits-nondet",
+      "origin": "petta_type_arrow_mode_fits",
+      "scope": "oracle"
+    },
+    "arrow-mode-plain-accept": {
+      "axis": "result-cardinality-grading",
+      "case": "78_inferred_canonical_arrow_preserved|strict",
+      "kind": "rule",
+      "mapping": "mode-fits-plain",
+      "origin": "petta_type_arrow_mode_fits",
+      "scope": "oracle"
+    },
+    "arrow-mode-reject": {
+      "axis": "result-cardinality-grading",
+      "case": "48_arrow_nondet_rejected_by_det_slot|strict",
+      "kind": "mechanism",
+      "mapping": "arrow-mode-incompatibility",
+      "origin": "petta_type_arrow_mode_fits",
+      "scope": "oracle"
+    },
+    "arrow-mode-semidet-exact": {
+      "axis": "result-cardinality-grading",
+      "case": "46_arrow_semidet_fits_semidet|strict",
+      "kind": "rule",
+      "mapping": "mode-fits-semidet-semidet",
+      "origin": "petta_type_arrow_mode_fits",
+      "scope": "oracle"
+    },
+    "arrow-shape-reject": {
+      "axis": "shape-compatibility",
+      "case": "examples/fail_strictdet_inferred_fresh_fallback.metta|--strict-det",
+      "kind": "mechanism",
+      "mapping": "arrow-shape-incompatibility",
+      "origin": "petta_block_type_compatible_depth",
+      "scope": "oracle"
+    },
+    "ascription-actual-union-accept": {
+      "axis": "shape-compatibility",
+      "case": "40_ascription_actual_alias_union|strict",
+      "kind": "rule",
+      "mapping": "overlap-union-left",
+      "origin": "petta_block_type_may_overlap",
+      "scope": "oracle"
+    },
+    "ascription-actual-union-reject": {
+      "axis": "shape-compatibility",
+      "case": "39_ascription_actual_union_reject|strict",
+      "kind": "mechanism",
+      "mapping": "overlap-union-left-exhausted",
+      "origin": "petta_block_type_may_overlap",
+      "scope": "oracle"
+    },
+    "ascription-alias-left": {
+      "axis": "shape-compatibility",
+      "case": "40_ascription_actual_alias_union|strict",
+      "kind": "rule",
+      "mapping": "overlap-alias-left",
+      "origin": "petta_block_type_may_overlap",
+      "scope": "oracle"
+    },
+    "ascription-alias-right": {
+      "axis": "shape-compatibility",
+      "case": "42_ascription_required_alias_union_reject|strict",
+      "kind": "rule",
+      "mapping": "overlap-alias-right",
+      "origin": "petta_block_type_may_overlap",
+      "scope": "oracle"
+    },
+    "ascription-forward-accept": {
+      "axis": "shape-compatibility",
+      "case": "02-stale-obligation-conflicting-type-addition",
+      "kind": "rule",
+      "mapping": "overlap-forward",
+      "origin": "petta_block_type_may_overlap",
+      "scope": "oracle"
+    },
+    "ascription-no-overlap": {
+      "axis": "shape-compatibility",
+      "case": "44_ascription_disjoint_reject|strict",
+      "kind": "mechanism",
+      "mapping": "explicit-ascription-disjointness",
+      "origin": "petta_block_type_may_overlap",
+      "scope": "oracle"
+    },
+    "ascription-required-union-accept": {
+      "axis": "shape-compatibility",
+      "case": "41_ascription_required_alias_union|strict",
+      "kind": "rule",
+      "mapping": "overlap-union-right",
+      "origin": "petta_block_type_may_overlap",
+      "scope": "oracle"
+    },
+    "ascription-required-union-reject": {
+      "axis": "shape-compatibility",
+      "case": "42_ascription_required_alias_union_reject|strict",
+      "kind": "mechanism",
+      "mapping": "overlap-union-right-exhausted",
+      "origin": "petta_block_type_may_overlap",
+      "scope": "oracle"
+    },
+    "ascription-reverse-accept": {
+      "axis": "shape-compatibility",
+      "case": "43_ascription_reverse_newtype_overlap|strict",
+      "kind": "rule",
+      "mapping": "overlap-reverse",
+      "origin": "petta_block_type_may_overlap",
+      "scope": "oracle"
+    },
+    "clause-slot-alias-preserved": {
+      "axis": "source-evaluated-stage-evidence",
+      "case": "examples/strictdet_lib_patrick.metta|--strict-det",
+      "kind": "mechanism",
+      "mapping": "caller-visible-substitution-preservation",
+      "origin": "petta_machine_clause_slot_match",
+      "scope": "mechanism"
+    },
+    "collapse-element-conflict": {
+      "axis": "shape-compatibility",
+      "case": "examples/fail_collapse_mixed_list.metta|default",
+      "kind": "mechanism",
+      "mapping": "collapse-proved-element-conflict",
+      "origin": "petta_block_infer_expr",
+      "scope": "oracle"
+    },
+    "collapse-result-list-shape": {
+      "axis": "shape-compatibility",
+      "case": "76_inferred_canonical_list_preserved|strict",
+      "kind": "rule",
+      "mapping": "expression-result-type-collapse",
+      "origin": "petta_block_infer_expr",
+      "scope": "oracle"
+    },
+    "collapse-unknown-element": {
+      "axis": "open-world-unknown-approximation",
+      "case": "examples/strictdet_let_typed_list_selection.metta|--strict-det",
+      "kind": "mechanism",
+      "mapping": "collapse-retains-list-shape-with-unknown-element",
+      "origin": "petta_block_infer_expr",
+      "scope": "oracle"
+    },
+    "committed-effect-unknown-reject": {
+      "axis": "result-cardinality-grading",
+      "case": "71_concrete_data_selection_is_deterministic|strict-det",
+      "kind": "mechanism",
+      "mapping": "committed-effect-requires-positive-evidence",
+      "origin": "petta_block_check_determinism",
+      "scope": "oracle"
+    },
+    "contextual-lambda-commitment-accept": {
+      "axis": "result-cardinality-grading",
+      "case": "70_deterministic_lambda_in_committed_list|strict",
+      "kind": "mechanism",
+      "mapping": "committed-lambda-determinism-preservation",
+      "origin": "petta_block_infer_expr",
+      "scope": "oracle"
+    },
+    "contextual-direct-cut-commit-accept": {
+      "axis": "result-cardinality-grading",
+      "case": "examples/strictdet_let_value_cut.metta|--strict-det",
+      "kind": "mechanism",
+      "mapping": "committed-direct-cut-overlap",
+      "origin": "petta_block_body_commits",
+      "scope": "oracle"
+    },
+    "contextual-lambda-commitment-reject": {
+      "axis": "result-cardinality-grading",
+      "case": "69_nondeterministic_lambda_in_committed_list|strict",
+      "kind": "mechanism",
+      "mapping": "committed-lambda-nondeterminism-rejection",
+      "origin": "petta_block_infer_expr",
+      "scope": "oracle"
+    },
+    "contextual-let-cut-commit-accept": {
+      "axis": "result-cardinality-grading",
+      "case": "86_strictdet_let_cut_overlap|strict-det",
+      "kind": "mechanism",
+      "mapping": "committed-let-cut-overlap",
+      "origin": "petta_block_body_commits",
+      "scope": "oracle"
+    },
+    "conditional-no-result-branch": {
+      "axis": "result-cardinality-grading",
+      "case": "87_inferred_if_empty_result|strict",
+      "kind": "mechanism",
+      "mapping": "conditional-no-result-branch",
+      "origin": "petta_block_infer_expr",
+      "scope": "oracle"
+    },
+    "expression-effect-collapse": {
+      "axis": "result-cardinality-grading",
+      "case": "examples/fail_strictdet_collapse_proper_list.metta|--strict-det",
+      "kind": "rule",
+      "mapping": "expression-effect-collapse",
+      "origin": "petta_block_expression_effect",
+      "scope": "oracle"
+    },
+    "expression-effect-foldall": {
+      "axis": "result-cardinality-grading",
+      "case": "83_foldall_is_deterministic|strict-det",
+      "kind": "rule",
+      "mapping": "expression-effect-foldall",
+      "origin": "petta_block_expression_effect",
+      "scope": "oracle"
+    },
+    "expression-effect-once-det": {
+      "axis": "result-cardinality-grading",
+      "case": "examples/determinism.metta|--strict-det",
+      "kind": "rule",
+      "mapping": "expression-effect-once-det",
+      "origin": "petta_block_expression_effect",
+      "scope": "oracle"
+    },
+    "expression-effect-once-nondet": {
+      "axis": "result-cardinality-grading",
+      "case": "examples/determinism.metta|--strict-det",
+      "kind": "rule",
+      "mapping": "expression-effect-once-nondet",
+      "origin": "petta_block_expression_effect",
+      "scope": "oracle"
+    },
+    "expression-effect-superpose-nondet": {
+      "axis": "result-cardinality-grading",
+      "case": "109_declared_superpose_all_empty_semidet_accept|strict",
+      "kind": "mechanism",
+      "mapping": "superpose-operator-preserves-nondeterministic-grade",
+      "origin": "petta_block_expression_effect",
+      "scope": "oracle"
+    },
+    "expression-effect-once-semidet": {
+      "axis": "result-cardinality-grading",
+      "case": "examples/fail_det_once_semidet.metta|default",
+      "kind": "rule",
+      "mapping": "expression-effect-once-semidet",
+      "origin": "petta_block_expression_effect",
+      "scope": "oracle"
+    },
+    "foldall-empty-returns-initializer": {
+      "axis": "shape-compatibility",
+      "case": "84_foldall_empty_returns_initializer|strict-det",
+      "kind": "rule",
+      "mapping": "expression-result-type-foldall-empty",
+      "origin": "petta_block_infer_expr",
+      "scope": "oracle"
+    },
+    "foldall-generator-element-unknown": {
+      "axis": "open-world-unknown-approximation",
+      "case": "85_foldall_disguised_empty_reject|strict",
+      "kind": "mechanism",
+      "mapping": "foldall-unproven-generator-element",
+      "origin": "petta_block_infer_expr",
+      "scope": "oracle"
+    },
+    "inference-bottom-branch-unpublished": {
+      "axis": "open-world-unknown-approximation",
+      "case": "87_inferred_if_empty_result|strict",
+      "kind": "mechanism",
+      "mapping": "inferred-bottom-branch-withholds-output-evidence",
+      "origin": "petta_block_infer_expr",
+      "scope": "oracle"
+    },
+    "inference-all-bottom-unpublished": {
+      "axis": "open-world-unknown-approximation",
+      "case": "104_inferred_if_all_empty_result|strict",
+      "kind": "mechanism",
+      "mapping": "inferred-all-bottom-withholds-output-evidence",
+      "origin": "petta_block_infer_expr",
+      "scope": "oracle"
+    },
+    "inference-all-bottom-case-unpublished": {
+      "axis": "open-world-unknown-approximation",
+      "case": "106_inferred_case_all_empty_result|strict",
+      "kind": "mechanism",
+      "mapping": "inferred-all-bottom-withholds-output-evidence",
+      "origin": "petta_block_infer_expr",
+      "scope": "oracle"
+    },
+    "inference-empty-alternative-set-unpublished": {
+      "axis": "open-world-unknown-approximation",
+      "case": "108_inferred_superpose_all_empty_result|strict",
+      "kind": "mechanism",
+      "mapping": "inferred-empty-alternative-set-withholds-output-evidence",
+      "origin": "petta_block_infer_alternatives",
+      "scope": "oracle"
+    },
+    "inference-inferred-value-candidate-ignored": {
+      "axis": "open-world-unknown-approximation",
+      "case": "82_inferred_function_is_not_explicit_value_evidence|strict",
+      "kind": "mechanism",
+      "mapping": "inferred-function-is-not-explicit-value-evidence",
+      "origin": "petta_block_unique_explicit_value_candidate_type",
+      "scope": "oracle"
+    },
+    "inference-output-shape-widens-unknown": {
+      "axis": "open-world-unknown-approximation",
+      "case": "74_inferred_superpose_result_widens_unknown|strict",
+      "kind": "mechanism",
+      "mapping": "inferred-output-publication-normalization",
+      "origin": "petta_block_normalize_inferred_output",
+      "scope": "oracle"
+    },
+    "inference-parameter-taint": {
+      "axis": "open-world-unknown-approximation",
+      "case": "68_inferred_parameter_conflicting_uses|default",
+      "kind": "mechanism",
+      "mapping": "inferred-parameter-conflict-widens-unknown",
+      "origin": "petta_block_infer_expr",
+      "scope": "oracle"
+    },
+    "inference-value-candidate-ambiguous": {
+      "axis": "open-world-unknown-approximation",
+      "case": "80_inferred_ambiguous_symbol_widens_unknown|strict",
+      "kind": "mechanism",
+      "mapping": "inferred-value-candidate-ambiguity-widens-unknown",
+      "origin": "petta_block_unique_explicit_value_candidate_type",
+      "scope": "oracle"
+    },
+    "inference-value-candidate-singleton": {
+      "axis": "shape-compatibility",
+      "case": "78_inferred_canonical_arrow_preserved|strict",
+      "kind": "mechanism",
+      "mapping": "inferred-value-candidate-singleton",
+      "origin": "petta_block_unique_explicit_value_candidate_type",
+      "scope": "oracle"
+    },
+    "newtype-actual-required-union": {
+      "axis": "shape-compatibility",
+      "case": "50_newtype_actual_fits_required_union|strict",
+      "kind": "rule",
+      "mapping": "consistent-union-right",
+      "origin": "petta_block_type_compatible_depth",
+      "scope": "oracle"
+    },
+    "newtype-actual-union-required": {
+      "axis": "shape-compatibility",
+      "case": "examples/fail_strictdet_case_fallthrough_incomplete.metta|--strict-det",
+      "kind": "rule",
+      "mapping": "consistent-union-left",
+      "origin": "petta_block_type_compatible_depth",
+      "scope": "oracle"
+    },
+    "newtype-actual-wildcard-accept": {
+      "axis": "open-world-unknown-approximation",
+      "case": "51_newtype_actual_fits_wildcard|strict",
+      "kind": "rule",
+      "mapping": "consistent-dyn-right",
+      "origin": "petta_block_type_compatible_depth",
+      "scope": "oracle"
+    },
+    "newtype-distinct-reject": {
+      "axis": "shape-compatibility",
+      "case": "examples/fail_newtype_role_mismatch.metta|default",
+      "kind": "mechanism",
+      "mapping": "newtype-nominal-distinctness",
+      "origin": "petta_block_type_compatible_depth",
+      "scope": "oracle"
+    },
+    "newtype-identity-accept": {
+      "axis": "shape-compatibility",
+      "case": "19_builtin_predicate_guarded_newtype|default",
+      "kind": "rule",
+      "mapping": "consistent-refl",
+      "origin": "petta_block_type_compatible_depth",
+      "scope": "oracle"
+    },
+    "newtype-literal-brand-reject": {
+      "axis": "shape-compatibility",
+      "case": "120_direct_brand_literal_newtype_candidate|strict-det",
+      "kind": "mechanism",
+      "mapping": "literal-newtype-introduction-withheld",
+      "origin": "petta_block_infer_expr",
+      "scope": "oracle"
+    },
+    "newtype-representation-accept": {
+      "axis": "shape-compatibility",
+      "case": "43_ascription_reverse_newtype_overlap|strict",
+      "kind": "rule",
+      "mapping": "consistent-newtype-representation",
+      "origin": "petta_block_type_compatible_depth",
+      "scope": "oracle"
+    },
+    "newtype-representation-reject": {
+      "axis": "shape-compatibility",
+      "case": "52_newtype_representation_mismatch|strict",
+      "kind": "mechanism",
+      "mapping": "newtype-representation-incompatibility",
+      "origin": "petta_block_type_compatible_depth",
+      "scope": "oracle"
+    },
+    "newtype-required-reject": {
+      "axis": "shape-compatibility",
+      "case": "43_ascription_reverse_newtype_overlap|strict",
+      "kind": "mechanism",
+      "mapping": "newtype-introduction-requires-brand",
+      "origin": "petta_block_type_compatible_depth",
+      "scope": "oracle"
+    },
+    "newtype-wildcard-representation-reject": {
+      "axis": "open-world-unknown-approximation",
+      "case": "examples/fail_newtype_wildcard_leak.metta|default",
+      "kind": "mechanism",
+      "mapping": "newtype-wildcard-representation-non-vacuity",
+      "origin": "petta_block_type_compatible_depth",
+      "scope": "oracle"
+    },
+    "pattern-candidate-ambiguous": {
+      "axis": "shape-compatibility",
+      "case": "59_repeated_head_variable_narrows_union|strict",
+      "kind": "mechanism",
+      "mapping": "pattern-candidate-multiplicity-preservation",
+      "origin": "petta_block_env_note_pattern",
+      "scope": "oracle"
+    },
+    "pattern-candidate-open-specialize": {
+      "axis": "shape-compatibility",
+      "case": "62_repeated_head_open_type_then_number|strict",
+      "kind": "mechanism",
+      "mapping": "pattern-candidate-singleton-open-specialization",
+      "origin": "petta_block_env_note_pattern",
+      "scope": "oracle"
+    },
+    "pattern-candidate-variant-repeat": {
+      "axis": "shape-compatibility",
+      "case": "examples/fail_strict_newtype_pattern_literal.metta|--strict",
+      "kind": "mechanism",
+      "mapping": "pattern-candidate-variant-deduplication",
+      "origin": "petta_block_env_note_pattern",
+      "scope": "oracle"
+    },
+    "rational-structural-cycle-accept": {
+      "axis": "shape-compatibility",
+      "case": "56_type_variable_actual_occurs_cycle|strict",
+      "kind": "mechanism",
+      "mapping": "rational-tree-structural-compatibility",
+      "origin": "petta_block_rational_structural_cycle_compatible",
+      "scope": "oracle"
+    },
+    "rational-structural-cycle-reject": {
+      "axis": "shape-compatibility",
+      "case": "58_type_variable_rational_cycle_conflict|strict",
+      "kind": "mechanism",
+      "mapping": "rational-tree-structural-conflict",
+      "origin": "petta_block_rational_structural_cycle_compatible",
+      "scope": "oracle"
+    },
+    "required-alias-expand": {
+      "axis": "shape-compatibility",
+      "case": "40_ascription_actual_alias_union|strict",
+      "kind": "rule",
+      "mapping": "consistent-alias-right",
+      "origin": "petta_block_type_compatible_depth",
+      "scope": "oracle"
+    },
+    "required-union-any": {
+      "axis": "shape-compatibility",
+      "case": "39_ascription_actual_union_reject|strict",
+      "kind": "rule",
+      "mapping": "consistent-union-right",
+      "origin": "petta_block_type_any_required_union",
+      "scope": "oracle"
+    },
+    "required-union-member-accept": {
+      "axis": "shape-compatibility",
+      "case": "39_ascription_actual_union_reject|strict",
+      "kind": "rule",
+      "mapping": "consistent-union-right",
+      "origin": "petta_block_type_any_required_union",
+      "scope": "oracle"
+    },
+    "required-union-none-accept": {
+      "axis": "shape-compatibility",
+      "case": "examples/fail_strict_brand_expectation_field.metta|--strict",
+      "kind": "mechanism",
+      "mapping": "required-union-existential-rejection",
+      "origin": "petta_block_type_any_required_union",
+      "scope": "oracle"
+    },
+    "quoted-inner-type-form-held": {
+      "axis": "source-evaluated-stage-evidence",
+      "case": "111_quoted_brand_declared_output_candidate|strict-det",
+      "kind": "mechanism",
+      "mapping": "quotation-keeps-inner-type-form-as-data",
+      "origin": "petta_block_infer_expr",
+      "scope": "oracle"
+    },
+    "quoted-inner-data-form-held": {
+      "axis": "source-evaluated-stage-evidence",
+      "case": "113_quoted_data_marker_declared_product_candidate|strict-det",
+      "kind": "mechanism",
+      "mapping": "quotation-keeps-inner-data-form-as-data",
+      "origin": "petta_block_infer_expr",
+      "scope": "oracle"
+    },
+    "eval-dynamic-effect-unknown": {
+      "axis": "source-evaluated-stage-evidence",
+      "case": "116_eval_quoted_the_reactivates_ascription_candidate|strict-det",
+      "kind": "mechanism",
+      "mapping": "evaluation-withholds-cardinality-evidence",
+      "origin": "petta_block_expression_effect",
+      "scope": "oracle"
+    },
+    "selection-source-list-shape-only": {
+      "axis": "source-evaluated-stage-evidence",
+      "case": "72_direct_concrete_selection_is_deterministic|strict-det",
+      "kind": "mechanism",
+      "mapping": "selection-data-expression-publishes-only-list-shape",
+      "origin": "petta_block_inferred_call_effect",
+      "scope": "oracle"
+    },
+    "selection-conditional-list-total": {
+      "axis": "source-evaluated-stage-evidence",
+      "case": "89_if_nonempty_list_selection|strict-det",
+      "kind": "mechanism",
+      "mapping": "selection-conditional-proper-list-evidence",
+      "origin": "petta_block_call_selection_effect",
+      "scope": "oracle"
+    },
+    "selection-case-list-total": {
+      "axis": "source-evaluated-stage-evidence",
+      "case": "90_case_proper_list_selection|strict-det",
+      "kind": "mechanism",
+      "mapping": "selection-case-proper-list-evidence",
+      "origin": "petta_block_call_selection_effect",
+      "scope": "oracle"
+    },
+    "selection-identity-binding-list-total": {
+      "axis": "source-evaluated-stage-evidence",
+      "case": "91_let_bound_proper_list_selection|strict-det",
+      "kind": "mechanism",
+      "mapping": "selection-identity-binding-proper-list-evidence",
+      "origin": "petta_block_call_selection_effect",
+      "scope": "oracle"
+    },
+    "selection-identity-binding-bool-total": {
+      "axis": "source-evaluated-stage-evidence",
+      "case": "95_let_bound_bool_selection|strict-det",
+      "kind": "mechanism",
+      "mapping": "selection-identity-binding-bound-bool-evidence",
+      "origin": "petta_block_call_selection_effect",
+      "scope": "oracle"
+    },
+    "selection-pattern-not-total": {
+      "axis": "result-cardinality-grading",
+      "case": "examples/fail_strictdet_selection_single_possible.metta|--strict-det",
+      "kind": "mechanism",
+      "mapping": "selection-partial-pattern-withholds-deterministic-grade",
+      "origin": "petta_block_inferred_call_effect",
+      "scope": "oracle"
+    },
+    "selection-source-opaque": {
+      "axis": "source-evaluated-stage-evidence",
+      "case": "71_concrete_data_selection_is_deterministic|strict-det",
+      "kind": "mechanism",
+      "mapping": "selection-evaluated-source-has-no-shape-evidence",
+      "origin": "petta_block_inferred_call_effect",
+      "scope": "oracle"
+    },
+    "structural-arity-reject": {
+      "axis": "shape-compatibility",
+      "case": "examples/strictdet_if_union_subtraction_variable_head.metta|--strict-det",
+      "kind": "mechanism",
+      "mapping": "structural-arity-incompatibility",
+      "origin": "petta_block_type_compatible_depth",
+      "scope": "oracle"
+    },
+    "structural-atom-exact": {
+      "axis": "shape-compatibility",
+      "case": "09_declared_callable_number|default",
+      "kind": "mechanism",
+      "mapping": "structural-atom-identity",
+      "origin": "petta_block_type_compatible_depth",
+      "scope": "oracle"
+    },
+    "structural-atom-reject": {
+      "axis": "shape-compatibility",
+      "case": "10_declared_callable_mismatch|default",
+      "kind": "mechanism",
+      "mapping": "structural-atom-incompatibility",
+      "origin": "petta_block_type_compatible_depth",
+      "scope": "oracle"
+    },
+    "structural-compatible": {
+      "axis": "shape-compatibility",
+      "case": "31_contextual_cons_list|strict",
+      "kind": "mechanism",
+      "mapping": "structural-recursive-compatibility",
+      "origin": "petta_block_type_compatible_depth",
+      "scope": "oracle"
+    },
+    "structural-component-reject": {
+      "axis": "shape-compatibility",
+      "case": "53_structural_component_mismatch|strict",
+      "kind": "mechanism",
+      "mapping": "structural-component-incompatibility",
+      "origin": "petta_block_type_compatible_depth",
+      "scope": "oracle"
+    },
+    "structural-kind-reject": {
+      "axis": "shape-compatibility",
+      "case": "03-unsupported-equation-rhs-number",
+      "kind": "mechanism",
+      "mapping": "structural-kind-incompatibility",
+      "origin": "petta_block_type_compatible_depth",
+      "scope": "oracle"
+    },
+    "type-var-actual-bind-accept": {
+      "axis": "shape-compatibility",
+      "case": "82_inferred_function_is_not_explicit_value_evidence|strict",
+      "kind": "mechanism",
+      "mapping": "type-variable-substitution",
+      "origin": "petta_block_type_compatible_depth",
+      "scope": "oracle"
+    },
+    "type-var-actual-bind-reject": {
+      "axis": "shape-compatibility",
+      "case": "58_type_variable_rational_cycle_conflict|strict",
+      "kind": "mechanism",
+      "mapping": "acyclic-bind-deferred-to-rational-replay",
+      "origin": "petta_block_type_compatible_depth",
+      "scope": "oracle"
+    },
+    "type-var-actual-union-self": {
+      "axis": "shape-compatibility",
+      "case": "54_type_variable_actual_union_self|strict",
+      "kind": "mechanism",
+      "mapping": "type-variable-union-self-membership",
+      "origin": "petta_block_type_compatible_depth",
+      "scope": "oracle"
+    },
+    "type-var-identity": {
+      "axis": "shape-compatibility",
+      "case": "examples/types.metta|semantic-regression",
+      "kind": "mechanism",
+      "mapping": "type-variable-identity",
+      "origin": "petta_block_type_compatible_depth",
+      "scope": "oracle"
+    },
+    "type-var-required-bind-accept": {
+      "axis": "shape-compatibility",
+      "case": "36_deferred_runtime_classifier_sibling_retry|default",
+      "kind": "mechanism",
+      "mapping": "type-variable-substitution",
+      "origin": "petta_block_type_compatible_depth",
+      "scope": "oracle"
+    },
+    "type-var-required-bind-reject": {
+      "axis": "shape-compatibility",
+      "case": "57_type_variable_required_occurs_cycle|strict",
+      "kind": "mechanism",
+      "mapping": "acyclic-bind-deferred-to-rational-replay",
+      "origin": "petta_block_type_compatible_depth",
+      "scope": "oracle"
+    },
+    "type-var-required-union-self": {
+      "axis": "shape-compatibility",
+      "case": "55_type_variable_required_union_self|strict",
+      "kind": "mechanism",
+      "mapping": "type-variable-union-self-membership",
+      "origin": "petta_block_type_compatible_depth",
+      "scope": "oracle"
+    },
+    "wildcard-actual-accept": {
+      "axis": "open-world-unknown-approximation",
+      "case": "02-stale-obligation-conflicting-type-addition",
+      "kind": "mechanism",
+      "mapping": "dynamic-actual-compatibility",
+      "origin": "petta_block_type_compatible_depth",
+      "scope": "oracle"
+    },
+    "wildcard-required-accept": {
+      "axis": "open-world-unknown-approximation",
+      "case": "04-unsupported-equation-rhs-expression",
+      "kind": "mechanism",
+      "mapping": "dynamic-required-compatibility",
+      "origin": "petta_block_type_compatible_depth",
+      "scope": "oracle"
+    }
+  }
+}

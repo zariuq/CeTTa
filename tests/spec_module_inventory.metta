@@ -1,5 +1,5 @@
 ; CeTTa extension: programmatic module inventory as a queryable space, following
-; HE's own note that print-mods! should eventually become a space-like surface.
+; HE's own note that print-mods! should eventually become a space-like syntax.
 !(register-module! support/import_pkg)
 !(bind! &m (mod-space! import_pkg:moduleA))
 !(bind! &mods (module-inventory!))

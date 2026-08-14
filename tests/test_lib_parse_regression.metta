@@ -91,7 +91,7 @@
 !(assertEqual (lp-admit BADGRAM) (Rejected bad-grammar))
 !(assertEqual (lp-admit (Cons BAD Nil)) (Rejected bad-grammar))
 !(assertEqual (lp-admit (mkGram ((Prod p wff ((Tm X)))(Prod p wff ((Tm Y)))))) (Rejected dup-label))
-!(assertEqual (lp-admit (mkGram ((Prod p wff ((Tm X)))(Prod q wff ((Tm X)))))) (Rejected dup-surface))
+!(assertEqual (lp-admit (mkGram ((Prod p wff ((Tm X)))(Prod q wff ((Tm X)))))) (Rejected dup-key))
 !(assertEqual (lp-admit (mkGram ((VarD x term)(VarD x term)))) (Rejected dup-var))
 !(assertEqual (lp-admit (mkGram ((Prod p wff ((Hl undef)))))) (Rejected undeclared-hole))
 !(assertEqual (lp-admit (mkGram ((VarD x term)(Prod lam term ((Tm LAM)(HlB term undef)(Tm DOT)(Hl term)))))) (Rejected undeclared-hole))

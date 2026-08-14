@@ -1,5 +1,5 @@
 ; ZeroUV keeps the query-derived one-step relation untotalized and makes
-; repeated control explicit.  The surface experiments are:
+; repeated control explicit.  The syntax experiments are:
 ;
 ;   (! (step subject))
 ;   (! (reach fuel subject))
@@ -59,7 +59,7 @@
     (operator zerouv-step-request 2))
   (equations)
   (rewrites
-    ; Surface classification is intentionally specific.  Unknown commands do
+    ; Syntax classification is intentionally specific.  Unknown commands do
     ; not fall through to evaluation as an accidental second language.
     (rule zerouv-classify-step
       (head

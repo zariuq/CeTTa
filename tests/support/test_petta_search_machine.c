@@ -848,6 +848,8 @@ static void test_native_residual_typecheck(
     add_clause(space, persistent, "(: numeric-value (| Number Number))");
     add_clause(space, persistent,
                "(: callable-value (-> Number Number))");
+    add_clause(space, persistent,
+               "(: det-callable-value (-[det]-> Number Number))");
 
     expect_value_type(space, scratch, "1", "Number",
                       PETTA_TYPECHECK_ESTABLISHED);
@@ -901,6 +903,11 @@ static void test_native_residual_typecheck(
         parse_one(scratch, "(-> Number Number)"),
         &callable_hooks, &arrow_result));
     assert(arrow_result.verdict == PETTA_TYPECHECK_ESTABLISHED);
+    assert(petta_typecheck_value(
+        space, scratch, parse_one(scratch, "det-callable-value"),
+        parse_one(scratch, "(-> Number Number)"),
+        &callable_hooks, &arrow_result));
+    assert(arrow_result.verdict == PETTA_TYPECHECK_ESTABLISHED);
     callable = false;
     assert(petta_typecheck_value(
         space, scratch, parse_one(scratch, "callable-value"),
@@ -928,8 +935,51 @@ static void test_native_residual_typecheck(
                               PETTA_TYPECHECK_REFUTED);
     expect_type_compatibility(space, scratch, "%Undefined%", "NominalA",
                               PETTA_TYPECHECK_REFUTED);
+    expect_type_compatibility(space, scratch, "NominalA", "%Undefined%",
+                              PETTA_TYPECHECK_ESTABLISHED);
+    expect_type_compatibility(space, scratch, "NominalA", "Number",
+                              PETTA_TYPECHECK_REFUTED);
+    expect_type_compatibility(space, scratch, "ScoreBrand", "Number",
+                              PETTA_TYPECHECK_ESTABLISHED);
+    expect_type_compatibility(space, scratch, "ScoreBrand", "String",
+                              PETTA_TYPECHECK_REFUTED);
+    expect_type_compatibility(space, scratch, "Number", "ScoreBrand",
+                              PETTA_TYPECHECK_REFUTED);
+    expect_type_compatibility(
+        space, scratch, "ScoreBrand", "(| String ScoreBrand)",
+        PETTA_TYPECHECK_ESTABLISHED);
     expect_type_compatibility(space, scratch, "AliasCycleA", "Number",
                               PETTA_TYPECHECK_UNDETERMINED);
+    expect_type_compatibility(
+        space, scratch,
+        "(-[det]-> Number Number)",
+        "(-[semidet]-> Number Number)",
+        PETTA_TYPECHECK_ESTABLISHED);
+    expect_type_compatibility(
+        space, scratch,
+        "(-[semidet]-> Number Number)",
+        "(-[det]-> Number Number)",
+        PETTA_TYPECHECK_REFUTED);
+    expect_type_compatibility(
+        space, scratch,
+        "(-[nondet]-> Number Number)",
+        "(-> Number Number)",
+        PETTA_TYPECHECK_ESTABLISHED);
+    expect_type_compatibility(
+        space, scratch,
+        "(-[det]-> Number Number)",
+        "(-[nondet]-> Number Number)",
+        PETTA_TYPECHECK_ESTABLISHED);
+    expect_type_compatibility(
+        space, scratch,
+        "(-[det]-> Number Number)",
+        "(-[$effect]-> Number Number)",
+        PETTA_TYPECHECK_ESTABLISHED);
+    expect_type_compatibility(
+        space, scratch,
+        "(-[det]-> Number String)",
+        "(-[det]-> Number Number)",
+        PETTA_TYPECHECK_REFUTED);
 
     PettaTypecheckResult malformed;
     assert(!petta_typecheck_value(
@@ -1024,6 +1074,36 @@ static void test_alpha_reconciled_slot_authority(
     assert(lease.len == 1u);
     assert(lease.items[0].equation == live_equation);
     assert(lease.items[0].equation_template);
+    assert(lease.items[0].rhs_plan);
+    Atom *leased_rhs = lease.items[0].equation->expr.elems[2];
+    assert(leased_rhs && leased_rhs->kind == ATOM_EXPR &&
+           leased_rhs->expr.len == 3u);
+    const VarId *template_source_ids = NULL;
+    Atom *const *template_source_variables = NULL;
+    uint32_t template_variable_count = 0u;
+    assert(petta_equation_template_variable_inventory(
+        lease.items[0].equation_template,
+        &template_source_ids, &template_source_variables,
+        &template_variable_count));
+    const PettaPlanNode *live_rhs_first_plan =
+        petta_plan_child(lease.items[0].rhs_plan, 1u);
+    const PettaPlanNode *live_rhs_second_plan =
+        petta_plan_child(lease.items[0].rhs_plan, 2u);
+    assert(live_rhs_first_plan &&
+           live_rhs_first_plan->has_equation_variable_slot &&
+           live_rhs_first_plan->equation_variable_slot <
+               template_variable_count);
+    assert(live_rhs_second_plan &&
+           live_rhs_second_plan->has_equation_variable_slot &&
+           live_rhs_second_plan->equation_variable_slot <
+               template_variable_count);
+    assert(template_source_ids[
+               live_rhs_first_plan->equation_variable_slot] !=
+           leased_rhs->expr.elems[1]->var_id);
+    assert(template_source_ids[
+               live_rhs_second_plan->equation_variable_slot] !=
+           leased_rhs->expr.elems[2]->var_id);
+    (void)template_source_variables;
     assert(snapshot_stats.alpha_equality_checks == 1u);
     petta_program_clause_snapshot_lease_release(&lease);
 

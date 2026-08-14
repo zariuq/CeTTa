@@ -58,6 +58,11 @@
         (oslf-external-relation-decl-v1
           source-proof-trace-input-incomplete-normal-label-v1 1))
       (body))
+    (rule proof-trace-input-interface-label-different-v1
+      (head
+        (oslf-external-relation-decl-v1
+          source-proof-trace-input-label-different-v1 2))
+      (body))
     (rule proof-trace-input-interface-push-label-v1
       (head
         (oslf-external-relation-decl-v1

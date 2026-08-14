@@ -1,12 +1,12 @@
 !(import! &self rho)
 !(import! &self lts)
 
-; Rhometta surface over the real rhocalc reducer.
+; Rhometta interface over the real rhocalc reducer.
 ;
 ; Import pattern:
 ;   !(import! &self rhometta)
 ;
-; This library keeps the user-facing surface in MeTTa while delegating actual
+; This library keeps the user-facing interface in MeTTa while delegating actual
 ; reduction and one-step successor construction to the native rhocalc engine.
 
 (: rhometta:transitions (-> Atom %Undefined%))
@@ -29,7 +29,7 @@
   (@return "One or more quiescent Rhometta residuals"))
 
 (@doc rhometta:eval
-  (@desc "Builds an explicit deferred Rhometta payload without eagerly evaluating the enclosed MeTTa term at the surface.")
+  (@desc "Builds an explicit deferred Rhometta payload without eagerly evaluating the enclosed MeTTa term at the interface.")
   (@params (
     (@param "MeTTa term to defer until COMM time")))
   (@return "Explicit rho:eval-payload wrapper carrying quoted syntax"))

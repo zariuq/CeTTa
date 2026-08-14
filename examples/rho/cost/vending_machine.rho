@@ -1,6 +1,6 @@
 // A funded vending machine: reactions that are not paid for do not fire.
 //
-// Cost-profile surface:
+// Cost-profile syntax:
 //   {P}sig                 a process P signed by `sig`
 //   purse c {s : ()}       a purse on channel c holding one token signed `s`
 //   purse c {s : s : ()}   the same purse with two stacked tokens

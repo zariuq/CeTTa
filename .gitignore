@@ -59,6 +59,14 @@
 # Compiled objects, deps, and caches — all build flavors, all subdirs
 *.o
 *.d
+*.gcno
+*.gcda
+*.gcov
+*.a
+*.so
 __pycache__/
 *.pyc
 /cetta-*
+
+# Local NIK diagnostics
+/.nik-*

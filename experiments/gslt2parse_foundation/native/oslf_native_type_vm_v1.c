@@ -3,6 +3,8 @@
 #include "finite_horn_answer_stream_v1.h"
 #include "finite_horn_ground_term_v1.h"
 #include "gslt_ground_dense_term_v1.h"
+#include "gslt_peano_add_specialization_v1.h"
+#include "gslt_rigid_coordinate_dispatch_v1.h"
 #include "match.h"
 #include "native_sha256.h"
 
@@ -34,6 +36,9 @@ typedef struct {
     uint32_t external_relation;
     bool has_exact_group;
     bool has_external_relation;
+    bool has_compiled_relation;
+    uint32_t compiled_relation;
+    CettaGsltRigidCoordinateIndexV1 rigid_index;
 } PPOSLFNativeApplicationDispatchV1;
 
 static uint64_t pposlf_native_stats_add_sat_v1(
@@ -69,6 +74,13 @@ void pposlf_native_vm_stats_v1_accumulate(
     PPOSLF_NATIVE_STATS_SUM_V1(positional_linear_rule_matches);
     PPOSLF_NATIVE_STATS_SUM_V1(positional_linear_rule_fallbacks);
     PPOSLF_NATIVE_STATS_SUM_V1(deferred_epoch_goal_materializations);
+    PPOSLF_NATIVE_STATS_SUM_V1(epoch_goal_materializations_not_admitted);
+    PPOSLF_NATIVE_STATS_SUM_V1(
+        epoch_goal_materializations_not_range_restricted);
+    PPOSLF_NATIVE_STATS_SUM_V1(
+        epoch_goal_materializations_consumer_unsafe);
+    PPOSLF_NATIVE_STATS_SUM_V1(epoch_goal_materializations_stale);
+    PPOSLF_NATIVE_STATS_SUM_V1(non_epoch_goal_materialization_attempts);
     PPOSLF_NATIVE_STATS_SUM_V1(activation_view_goal_admissions);
     PPOSLF_NATIVE_STATS_SUM_V1(activation_view_rule_attempts);
     PPOSLF_NATIVE_STATS_SUM_V1(activation_view_rule_matches);
@@ -77,6 +89,11 @@ void pposlf_native_vm_stats_v1_accumulate(
     PPOSLF_NATIVE_STATS_SUM_V1(structural_shape_guard_rejections);
     PPOSLF_NATIVE_STATS_SUM_V1(structural_shape_guard_unknowns);
     PPOSLF_NATIVE_STATS_SUM_V1(compiled_application_dispatches);
+    PPOSLF_NATIVE_STATS_SUM_V1(rigid_coordinate_dispatches);
+    PPOSLF_NATIVE_STATS_SUM_V1(rigid_coordinate_rejections);
+    PPOSLF_NATIVE_STATS_SUM_V1(compiled_relation_dispatches);
+    PPOSLF_NATIVE_STATS_SUM_V1(compiled_relation_matches);
+    PPOSLF_NATIVE_STATS_SUM_V1(compiled_relation_deferrals);
     PPOSLF_NATIVE_STATS_SUM_V1(indexed_candidate_visits);
     PPOSLF_NATIVE_STATS_SUM_V1(full_scan_candidate_visits);
     PPOSLF_NATIVE_STATS_SUM_V1(external_row_candidate_visits);
@@ -130,6 +147,9 @@ typedef struct {
     uint32_t application_dispatch_len;
     uint32_t variable_group;
     bool has_variable_group;
+    CettaGsltPeanoAddPlanV1 *compiled_relations;
+    uint32_t compiled_relation_len;
+    CettaGsltRigidCoordinateScratchV1 rigid_scratch;
     Arena program_arena;
     char program_digest[65];
     char empty_capability_digest[65];
@@ -184,6 +204,11 @@ typedef struct {
 } PPOSLFNativeQuotedApplicationFrameV1;
 
 typedef struct PPOSLFNativePendingGoalV1 PPOSLFNativePendingGoalV1;
+enum {
+    PPOSLF_NATIVE_ACTIVATION_VIEW_ADMITTED_V1 = 0u,
+    PPOSLF_NATIVE_ACTIVATION_VIEW_OPEN_PRODUCER_V1 = 1u,
+    PPOSLF_NATIVE_ACTIVATION_VIEW_UNSAFE_CONSUMER_V1 = 2u,
+};
 struct PPOSLFNativePendingGoalV1 {
     Atom *goal;
     uint32_t depth;
@@ -191,6 +216,7 @@ struct PPOSLFNativePendingGoalV1 {
     uint32_t activation_first_entry;
     bool epoch_original;
     bool activation_view_admitted;
+    uint8_t activation_view_refusal_reason;
     PPOSLFNativePendingGoalV1 *next;
 };
 
@@ -250,6 +276,9 @@ typedef struct {
     bool has_variable;
     bool has_external;
     bool used_compiled_application;
+    const CettaGsltPeanoAddPlanV1 *compiled_relation;
+    uint32_t compiled_relation_index;
+    const CettaGsltRigidCoordinateIndexV1 *rigid_index;
 } PPOSLFNativeGoalDispatchV1;
 
 static void pposlf_native_type_vm_v1_set_error(
@@ -646,7 +675,15 @@ static void pposlf_native_type_vm_v1_impl_free(
                 &rule->ground_dense_head);
         }
     }
+    if (impl->application_dispatch) {
+        for (uint32_t index = 0u;
+             index < impl->application_dispatch_len; index++)
+            cetta_gslt_rigid_coordinate_index_free_v1(
+                &impl->application_dispatch[index].rigid_index);
+    }
+    cetta_gslt_rigid_coordinate_scratch_free_v1(&impl->rigid_scratch);
     arena_free(&impl->program_arena);
+    free(impl->compiled_relations);
     free(impl->application_dispatch);
     free(impl->rules);
     free(impl);
@@ -2206,6 +2243,146 @@ static bool pposlf_native_type_vm_v1_build_application_dispatch(
     return true;
 }
 
+static bool pposlf_native_type_vm_v1_build_compiled_relations(
+    PPOSLFNativeTypeVMImplV1 *impl,
+    char *error_buf, size_t error_buf_size) {
+    const PPOSLFNativeTypePlanV1 *plan;
+
+    if (!impl || !(plan = impl->plan))
+        return false;
+    /* A variable-headed rule participates in every application group.  Until
+     * its source-order cost is included in the certificate, retain the
+     * ordinary machine rather than silently changing limit semantics. */
+    if (impl->has_variable_group)
+        return true;
+    impl->compiled_relations = calloc(
+        impl->application_dispatch_len
+            ? impl->application_dispatch_len : 1u,
+        sizeof(*impl->compiled_relations));
+    if (!impl->compiled_relations) {
+        pposlf_native_type_vm_v1_set_error(
+            error_buf, error_buf_size,
+            "cannot allocate native NTT compiled-relation plans");
+        return false;
+    }
+    for (uint32_t index = 0u;
+         index < impl->application_dispatch_len; index++) {
+        PPOSLFNativeApplicationDispatchV1 *entry =
+            &impl->application_dispatch[index];
+        const PPOSLFNativeHeadGroupV1 *group;
+        uint32_t first_step;
+        uint32_t second_step;
+        const PPOSLFNativeCompiledRuleV1 *first;
+        const PPOSLFNativeCompiledRuleV1 *second;
+        CettaGsltHornRuleViewV1 first_view;
+        CettaGsltHornRuleViewV1 second_view;
+        CettaGsltPeanoAddPlanV1 admitted;
+
+        if (!entry->has_exact_group || entry->arity != 3u ||
+            entry->exact_group >= plan->head_group_len)
+            continue;
+        group = &plan->head_groups[entry->exact_group];
+        if (group->step_len != 2u ||
+            group->step_begin > plan->head_step_index_len ||
+            group->step_len >
+                plan->head_step_index_len - group->step_begin)
+            continue;
+        first_step = plan->head_step_indices[group->step_begin];
+        second_step = plan->head_step_indices[group->step_begin + 1u];
+        if (first_step >= impl->rule_len || second_step >= impl->rule_len)
+            continue;
+        first = &impl->rules[first_step];
+        second = &impl->rules[second_step];
+        first_view = (CettaGsltHornRuleViewV1){
+            .head = first->head,
+            .body = first->body,
+            .body_len = first->body_len,
+            .step_index = first_step,
+        };
+        second_view = (CettaGsltHornRuleViewV1){
+            .head = second->head,
+            .body = second->body,
+            .body_len = second->body_len,
+            .step_index = second_step,
+        };
+        if (!cetta_gslt_peano_add_plan_recognize_v1(
+                &first_view, &second_view, &admitted))
+            continue;
+        if (admitted.relation != entry->symbol) {
+            pposlf_native_type_vm_v1_set_error(
+                error_buf, error_buf_size,
+                "compiled relation disagrees with native NTT dispatch");
+            return false;
+        }
+        entry->has_compiled_relation = true;
+        entry->compiled_relation = impl->compiled_relation_len;
+        impl->compiled_relations[impl->compiled_relation_len++] = admitted;
+    }
+    return true;
+}
+
+typedef struct {
+    const PPOSLFNativeTypeVMImplV1 *impl;
+    const PPOSLFNativeHeadGroupV1 *group;
+} PPOSLFNativeRigidBuildV1;
+
+static bool pposlf_native_type_vm_v1_rigid_rule_key_at(
+    void *context, uint32_t occurrence, uint32_t coordinate,
+    CettaGsltRigidKeyV1 *key_out) {
+    const PPOSLFNativeRigidBuildV1 *build = context;
+    const PPOSLFNativeTypePlanV1 *plan;
+    uint32_t step;
+    Atom *head;
+
+    if (!build || !build->impl || !(plan = build->impl->plan) ||
+        !build->group || occurrence >= build->group->step_len ||
+        build->group->step_begin > plan->head_step_index_len ||
+        occurrence >= plan->head_step_index_len - build->group->step_begin)
+        return false;
+    step = plan->head_step_indices[
+        build->group->step_begin + occurrence];
+    if (step >= build->impl->rule_len ||
+        !(head = build->impl->rules[step].head) ||
+        head->kind != ATOM_EXPR || !head->expr.elems ||
+        head->expr.len == 0u || coordinate >= head->expr.len - 1u)
+        return false;
+    return cetta_gslt_rigid_key_from_atom_v1(
+        head->expr.elems[coordinate + 1u], key_out);
+}
+
+static bool pposlf_native_type_vm_v1_build_rigid_dispatch(
+    PPOSLFNativeTypeVMImplV1 *impl,
+    char *error_buf, size_t error_buf_size) {
+    if (!impl || !impl->plan)
+        return false;
+    cetta_gslt_rigid_coordinate_scratch_init_v1(&impl->rigid_scratch);
+    for (uint32_t index = 0u;
+         index < impl->application_dispatch_len; index++) {
+        PPOSLFNativeApplicationDispatchV1 *entry =
+            &impl->application_dispatch[index];
+
+        cetta_gslt_rigid_coordinate_index_init_v1(&entry->rigid_index);
+        if (!entry->has_exact_group)
+            continue;
+        const PPOSLFNativeHeadGroupV1 *group =
+            &impl->plan->head_groups[entry->exact_group];
+        PPOSLFNativeRigidBuildV1 build = {
+            .impl = impl,
+            .group = group,
+        };
+        if (!cetta_gslt_rigid_coordinate_index_build_v1(
+                &entry->rigid_index, &impl->rigid_scratch,
+                entry->arity, group->step_len,
+                pposlf_native_type_vm_v1_rigid_rule_key_at, &build)) {
+            pposlf_native_type_vm_v1_set_error(
+                error_buf, error_buf_size,
+                "cannot compile native NTT rigid-coordinate dispatch");
+            return false;
+        }
+    }
+    return true;
+}
+
 static PPOSLFNativeTypeVMImplV1 *pposlf_native_type_vm_v1_build(
     const PPOSLFNativeTypePlanV1 *plan,
     char *error_buf,
@@ -2362,6 +2539,12 @@ static PPOSLFNativeTypeVMImplV1 *pposlf_native_type_vm_v1_build(
             }
         }
     }
+    if (!pposlf_native_type_vm_v1_build_compiled_relations(
+            impl, error_buf, error_buf_size))
+        goto fail;
+    if (!pposlf_native_type_vm_v1_build_rigid_dispatch(
+            impl, error_buf, error_buf_size))
+        goto fail;
     free(state);
     free(compiled);
     return impl;
@@ -2523,6 +2706,14 @@ static bool pposlf_native_type_vm_v1_goal_dispatch(
         dispatch.external_relation = entry->external_relation;
         dispatch.has_variable = impl->has_variable_group;
         dispatch.variable_group = impl->variable_group;
+        if (entry->has_compiled_relation &&
+            entry->compiled_relation < impl->compiled_relation_len) {
+            dispatch.compiled_relation =
+                &impl->compiled_relations[entry->compiled_relation];
+            dispatch.compiled_relation_index =
+                dispatch.compiled_relation->zero_step_index;
+        }
+        dispatch.rigid_index = &entry->rigid_index;
         dispatch.used_compiled_application = true;
         *dispatch_out = dispatch;
         return true;
@@ -2555,12 +2746,22 @@ static bool pposlf_native_type_vm_v1_next_candidate(
     bool has_exact,
     uint32_t variable_group,
     bool has_variable,
+    const uint32_t *rigid_positions,
+    uint32_t rigid_position_count,
+    bool rigid_dispatched,
     uint32_t *exact_offset,
+    uint32_t *exact_source_offset,
     uint32_t *variable_offset,
     uint32_t *full_offset,
+    uint32_t *rigid_rejections_out,
     uint32_t *step_out) {
     uint32_t exact_step = UINT32_MAX;
     uint32_t variable_step = UINT32_MAX;
+    uint32_t selected_exact_position = UINT32_MAX;
+    uint32_t selected_step = UINT32_MAX;
+
+    if (rigid_rejections_out)
+        *rigid_rejections_out = 0u;
 
     if (full_scan) {
         if (*full_offset >= plan->step_schema_len)
@@ -2571,9 +2772,15 @@ static bool pposlf_native_type_vm_v1_next_candidate(
     if (has_exact) {
         const PPOSLFNativeHeadGroupV1 *group =
             &plan->head_groups[exact_group];
-        if (*exact_offset < group->step_len)
+        if (rigid_dispatched) {
+            if (*exact_offset < rigid_position_count)
+                selected_exact_position = rigid_positions[*exact_offset];
+        } else if (*exact_offset < group->step_len) {
+            selected_exact_position = *exact_offset;
+        }
+        if (selected_exact_position < group->step_len)
             exact_step = plan->head_step_indices[
-                group->step_begin + *exact_offset];
+                group->step_begin + selected_exact_position];
     }
     if (has_variable) {
         const PPOSLFNativeHeadGroupV1 *group =
@@ -2582,13 +2789,34 @@ static bool pposlf_native_type_vm_v1_next_candidate(
             variable_step = plan->head_step_indices[
                 group->step_begin + *variable_offset];
     }
-    if (exact_step == UINT32_MAX && variable_step == UINT32_MAX)
+    selected_step = exact_step <= variable_step ? exact_step : variable_step;
+    if (rigid_dispatched && has_exact) {
+        const PPOSLFNativeHeadGroupV1 *group =
+            &plan->head_groups[exact_group];
+        while (*exact_source_offset < group->step_len) {
+            uint32_t source_position = *exact_source_offset;
+            uint32_t source_step = plan->head_step_indices[
+                group->step_begin + source_position];
+
+            if (source_position == selected_exact_position ||
+                source_step >= selected_step)
+                break;
+            (*exact_source_offset)++;
+            if (rigid_rejections_out &&
+                *rigid_rejections_out != UINT32_MAX)
+                (*rigid_rejections_out)++;
+        }
+    }
+    if (selected_step == UINT32_MAX)
         return false;
+    *step_out = selected_step;
     if (exact_step <= variable_step) {
-        *step_out = exact_step;
         (*exact_offset)++;
+        if (rigid_dispatched)
+            *exact_source_offset = selected_exact_position + 1u;
+        else
+            *exact_source_offset = *exact_offset;
     } else {
-        *step_out = variable_step;
         (*variable_offset)++;
     }
     return true;
@@ -2979,8 +3207,11 @@ typedef struct {
     uint32_t exact_group;
     uint32_t variable_group;
     uint32_t exact_offset;
+    uint32_t exact_source_offset;
     uint32_t variable_offset;
     uint32_t full_offset;
+    const uint32_t *rigid_positions;
+    uint32_t rigid_position_count;
     uint32_t external_relation;
     uint32_t external_offset;
     uint32_t external_end;
@@ -2995,7 +3226,42 @@ typedef struct {
     bool waiting_child;
     bool saw_resource;
     bool goal_is_activation_view;
+    bool rigid_dispatched;
 } PPOSLFNativeSearchFrameV1;
+
+static void pposlf_native_type_vm_v1_prepare_rigid_dispatch(
+    PPOSLFNativeSearchV1 *search,
+    PPOSLFNativeSearchFrameV1 *frame,
+    const CettaGsltRigidCoordinateIndexV1 *index) {
+    Atom *coordinate;
+    Atom *resolved = NULL;
+    CettaGsltRigidKeyV1 key;
+
+    if (!search || !frame || !index || !index->admitted ||
+        !frame->has_exact || !frame->goal ||
+        frame->goal->kind != ATOM_EXPR || !frame->goal->expr.elems ||
+        frame->goal->expr.len == 0u ||
+        index->coordinate >= frame->goal->expr.len - 1u)
+        return;
+    coordinate = frame->goal->expr.elems[index->coordinate + 1u];
+    if (coordinate && coordinate->kind == ATOM_VAR &&
+        frame->goal_is_activation_view) {
+        if (!bindings_resolve_epoch_view_ground(
+                bindings_builder_bindings(&search->bindings),
+                coordinate, frame->goals->epoch,
+                frame->goals->activation_first_entry, &resolved) ||
+            !resolved)
+            return;
+        coordinate = resolved;
+    }
+    if (!cetta_gslt_rigid_key_from_atom_v1(coordinate, &key) ||
+        !cetta_gslt_rigid_coordinate_index_positions_v1(
+            index, &key, &frame->rigid_positions,
+            &frame->rigid_position_count))
+        return;
+    frame->rigid_dispatched = true;
+    search->stats.rigid_coordinate_dispatches++;
+}
 
 /* Refine a relation-wide capability range only after a concrete goal exists.
  * Activation views intentionally postpone this work: exact canonical keys and
@@ -3071,8 +3337,7 @@ static bool pposlf_native_type_vm_v1_materialize_activation_view(
     search->stats.activation_view_fallback_materializations++;
     goal = bindings_apply_epoch_then_all(
         (Bindings *)bindings_builder_bindings(&search->bindings),
-        &search->scratch, frame->goals->goal,
-        frame->goals->epoch,
+        &search->scratch, frame->goals->goal, frame->goals->epoch,
         frame->goals->activation_first_entry);
     after = arena_accounted_live_bytes(&search->scratch);
     if (after > before)
@@ -3849,6 +4114,35 @@ static bool pposlf_native_type_vm_v1_push_failure_debt(
     return true;
 }
 
+static bool pposlf_native_type_vm_v1_charge_rigid_rejections(
+    PPOSLFNativeSearchV1 *search,
+    PPOSLFNativeSearchFrameV1 *frame,
+    uint32_t candidate_count) {
+    uint64_t available;
+    uint64_t charged;
+
+    if (!search || !frame)
+        return false;
+    if (candidate_count == 0u)
+        return true;
+    available = search->stats.rule_attempts <
+            search->limits.maximum_rule_attempts
+        ? search->limits.maximum_rule_attempts -
+              search->stats.rule_attempts
+        : 0u;
+    charged = candidate_count < available ? candidate_count : available;
+    search->stats.rule_attempts += charged;
+    search->stats.structural_shape_guard_attempts += charged;
+    search->stats.structural_shape_guard_rejections += charged;
+    search->stats.rigid_coordinate_rejections += charged;
+    search->stats.indexed_candidate_visits += charged;
+    if (charged != candidate_count) {
+        frame->saw_resource = true;
+        return false;
+    }
+    return true;
+}
+
 static void pposlf_native_type_vm_v1_charge_failure_debt(
     PPOSLFNativeSearchV1 *search,
     PPOSLFNativeSearchFrameV1 *frame) {
@@ -4044,6 +4338,32 @@ done:
     return result;
 }
 
+typedef struct {
+    const Bindings *bindings;
+    uint32_t epoch;
+    uint32_t first_entry;
+} PPOSLFNativeDenseActivationResolverV1;
+
+static CettaGsltGroundDenseStatusV1
+pposlf_native_type_vm_v1_resolve_dense_activation_variable(
+        void *context, Atom *source_variable, Atom **target_out) {
+    const PPOSLFNativeDenseActivationResolverV1 *resolver = context;
+
+    if (!resolver || !source_variable || !target_out)
+        return CETTA_GSLT_GROUND_DENSE_INVALID_V1;
+    if (!bindings_resolve_epoch_view_ground(
+            resolver->bindings, source_variable, resolver->epoch,
+            resolver->first_entry, target_out))
+        return CETTA_GSLT_GROUND_DENSE_INVALID_V1;
+    return *target_out
+        ? CETTA_GSLT_GROUND_DENSE_OK_V1
+        : CETTA_GSLT_GROUND_DENSE_DEFER_V1;
+}
+
+static void pposlf_native_type_vm_v1_add_ground_dense_stats(
+    PPOSLFNativeSearchV1 *search,
+    const CettaGsltGroundDenseStatsV1 *stats);
+
 /*
  * A continuation is tail-deterministic when no later generated rule can
  * unify with the current goal and no later extensional row is available.
@@ -4053,12 +4373,14 @@ done:
  * this classification solely from its generated plan and term shapes.
  */
 static bool pposlf_native_type_vm_v1_generated_tail_deterministic(
-    const PPOSLFNativeTypeVMImplV1 *vm,
+    PPOSLFNativeSearchV1 *search,
     const PPOSLFNativeSearchFrameV1 *frame,
     bool *raw_tail_out,
     uint32_t *rejected_candidate_count_out) {
+    const PPOSLFNativeTypeVMImplV1 *vm;
     const PPOSLFNativeTypePlanV1 *plan;
     uint32_t exact_offset;
+    uint32_t exact_source_offset;
     uint32_t variable_offset;
     uint32_t full_offset;
     uint32_t candidate;
@@ -4068,23 +4390,68 @@ static bool pposlf_native_type_vm_v1_generated_tail_deterministic(
         *raw_tail_out = false;
     if (rejected_candidate_count_out)
         *rejected_candidate_count_out = 0u;
-    if (!vm || !(plan = vm->plan) || !frame ||
+    if (!search || !(vm = search->vm) || !(plan = vm->plan) || !frame ||
         frame->external_offset < frame->external_end)
         return false;
     exact_offset = frame->exact_offset;
+    exact_source_offset = frame->exact_source_offset;
     variable_offset = frame->variable_offset;
     full_offset = frame->full_offset;
-    while (pposlf_native_type_vm_v1_next_candidate(
-               plan, frame->full_scan,
-               frame->exact_group, frame->has_exact,
-               frame->variable_group, frame->has_variable,
-               &exact_offset, &variable_offset, &full_offset,
-               &candidate)) {
+    for (;;) {
         PPOSLFNativeShapeCompatibilityV1 compatibility;
+        uint32_t rigid_rejections = 0u;
+        bool has_candidate = pposlf_native_type_vm_v1_next_candidate(
+            plan, frame->full_scan,
+            frame->exact_group, frame->has_exact,
+            frame->variable_group, frame->has_variable,
+            frame->rigid_positions, frame->rigid_position_count,
+            frame->rigid_dispatched,
+            &exact_offset, &exact_source_offset,
+            &variable_offset, &full_offset,
+            &rigid_rejections, &candidate);
+
+        if (rigid_rejections > 0u) {
+            saw_candidate = true;
+            if (rejected_candidate_count_out) {
+                uint32_t available = UINT32_MAX -
+                    *rejected_candidate_count_out;
+                *rejected_candidate_count_out +=
+                    rigid_rejections < available
+                        ? rigid_rejections : available;
+            }
+        }
+        if (!has_candidate)
+            break;
 
         saw_candidate = true;
         if (candidate >= vm->rule_len)
             return false;
+        if (frame->goal_is_activation_view &&
+            vm->rules[candidate].ground_dense_ready) {
+            PPOSLFNativeDenseActivationResolverV1 resolver = {
+                .bindings = bindings_builder_bindings(&search->bindings),
+                .epoch = frame->goals->epoch,
+                .first_entry = frame->goals->activation_first_entry,
+            };
+            CettaGsltGroundDenseStatsV1 stats = {0};
+            CettaGsltGroundDenseStatusV1 status =
+                cetta_gslt_ground_dense_term_match_view_v1(
+                    &search->ground_dense_workspace,
+                    &vm->rules[candidate].ground_dense_head,
+                    frame->goals->goal,
+                    pposlf_native_type_vm_v1_resolve_dense_activation_variable,
+                    &resolver, &stats);
+
+            pposlf_native_type_vm_v1_add_ground_dense_stats(search, &stats);
+            cetta_gslt_ground_dense_workspace_discard_match_v1(
+                &search->ground_dense_workspace);
+            if (status == CETTA_GSLT_GROUND_DENSE_MISMATCH_V1) {
+                if (rejected_candidate_count_out)
+                    (*rejected_candidate_count_out)++;
+                continue;
+            }
+            return false;
+        }
         compatibility =
             pposlf_native_type_vm_v1_structural_shape_compatibility(
                 vm->rules[candidate].head, frame->goal);
@@ -4096,32 +4463,6 @@ static bool pposlf_native_type_vm_v1_generated_tail_deterministic(
     if (raw_tail_out)
         *raw_tail_out = !saw_candidate;
     return true;
-}
-
-/* A raw tail has no later generated candidate and no extensional row.  This
- * fact is read entirely from the compiled cursors, so it is independent of
- * whether the current goal is materialized or retained as an activation
- * view. */
-static bool pposlf_native_type_vm_v1_generated_raw_tail(
-    const PPOSLFNativeTypeVMImplV1 *vm,
-    const PPOSLFNativeSearchFrameV1 *frame) {
-    const PPOSLFNativeTypePlanV1 *plan;
-    uint32_t exact_offset;
-    uint32_t variable_offset;
-    uint32_t full_offset;
-    uint32_t candidate;
-
-    if (!vm || !(plan = vm->plan) || !frame ||
-        frame->external_offset < frame->external_end)
-        return false;
-    exact_offset = frame->exact_offset;
-    variable_offset = frame->variable_offset;
-    full_offset = frame->full_offset;
-    return !pposlf_native_type_vm_v1_next_candidate(
-        plan, frame->full_scan,
-        frame->exact_group, frame->has_exact,
-        frame->variable_group, frame->has_variable,
-        &exact_offset, &variable_offset, &full_offset, &candidate);
 }
 
 static void pposlf_native_type_vm_v1_add_ground_dense_stats(
@@ -4147,24 +4488,103 @@ static void pposlf_native_type_vm_v1_add_ground_dense_stats(
         stats->view_deferrals;
 }
 
-typedef struct {
-    const Bindings *bindings;
-    uint32_t epoch;
-    uint32_t first_entry;
-} PPOSLFNativeDenseActivationResolverV1;
+typedef enum {
+    PPOSLF_NATIVE_COMPILED_RELATION_DEFER_V1,
+    PPOSLF_NATIVE_COMPILED_RELATION_MATCH_V1,
+    PPOSLF_NATIVE_COMPILED_RELATION_RESOURCE_V1,
+} PPOSLFNativeCompiledRelationResultV1;
 
-static CettaGsltGroundDenseStatusV1
-pposlf_native_type_vm_v1_resolve_dense_activation_variable(
-        void *context, Atom *source_variable, Atom **target_out) {
-    const PPOSLFNativeDenseActivationResolverV1 *resolver = context;
+static PPOSLFNativeCompiledRelationResultV1
+pposlf_native_type_vm_v1_try_compiled_relation(
+    PPOSLFNativeSearchV1 *search,
+    PPOSLFNativeSearchFrameV1 *frame,
+    const CettaGsltPeanoAddPlanV1 *plan,
+    uint32_t plan_index) {
+    uint64_t available;
+    uint32_t maximum_successors;
+    uint32_t successor_count = 0u;
+    uint64_t logical_rule_attempts;
+    uint64_t logical_rule_matches;
+    uint64_t logical_maximum_goal_depth;
+    Atom *result = NULL;
+    size_t binding_mark;
+    uint32_t proof_mark;
+    ArenaMark arena_mark_value;
+    CettaGsltPeanoAddResultV1 evaluated;
 
-    if (!resolver || !bindings_resolve_epoch_view_ground(
-            resolver->bindings, source_variable, resolver->epoch,
-            resolver->first_entry, target_out))
-        return CETTA_GSLT_GROUND_DENSE_INVALID_V1;
-    return *target_out
-        ? CETTA_GSLT_GROUND_DENSE_OK_V1
-        : CETTA_GSLT_GROUND_DENSE_DEFER_V1;
+    if (!search || !frame || !plan || !plan->admitted ||
+        frame->goal_is_activation_view || !frame->goal ||
+        frame->goal->kind != ATOM_EXPR || !frame->goal->expr.elems ||
+        frame->goal->expr.len != 4u)
+        return PPOSLF_NATIVE_COMPILED_RELATION_DEFER_V1;
+    search->stats.compiled_relation_dispatches++;
+    available = search->stats.rule_attempts <
+            search->limits.maximum_rule_attempts
+        ? search->limits.maximum_rule_attempts -
+              search->stats.rule_attempts
+        : 0u;
+    if (!cetta_gslt_peano_add_successor_budget_v1(
+            plan, available, &maximum_successors)) {
+        search->stats.compiled_relation_deferrals++;
+        return PPOSLF_NATIVE_COMPILED_RELATION_DEFER_V1;
+    }
+    binding_mark = bindings_builder_save(&search->bindings);
+    proof_mark = search->proof_event_len;
+    arena_mark_value = arena_mark(&search->scratch);
+    evaluated = cetta_gslt_peano_add_evaluate_v1(
+        &search->scratch, plan,
+        frame->goal->expr.elems[1], frame->goal->expr.elems[2],
+        maximum_successors, &successor_count, &result);
+    if (evaluated != CETTA_GSLT_PEANO_ADD_OK_V1) {
+        bindings_builder_rollback(&search->bindings, binding_mark);
+        arena_reset(&search->scratch, arena_mark_value);
+        search->proof_event_len = proof_mark;
+        search->stats.compiled_relation_deferrals++;
+        return PPOSLF_NATIVE_COMPILED_RELATION_DEFER_V1;
+    }
+    logical_maximum_goal_depth =
+        (uint64_t)frame->goals->depth + successor_count;
+    if (logical_maximum_goal_depth >
+            search->limits.maximum_goal_depth) {
+        bindings_builder_rollback(&search->bindings, binding_mark);
+        arena_reset(&search->scratch, arena_mark_value);
+        search->proof_event_len = proof_mark;
+        search->stats.compiled_relation_deferrals++;
+        return PPOSLF_NATIVE_COMPILED_RELATION_DEFER_V1;
+    }
+    cetta_gslt_peano_add_source_cost_v1(
+        plan, successor_count,
+        &logical_rule_attempts, &logical_rule_matches);
+    if (logical_rule_attempts > available || !result ||
+        !match_atoms_builder(
+            frame->goal->expr.elems[3], result, &search->bindings) ||
+        bindings_has_loop(
+            bindings_builder_bindings(&search->bindings))) {
+        bindings_builder_rollback(&search->bindings, binding_mark);
+        arena_reset(&search->scratch, arena_mark_value);
+        search->proof_event_len = proof_mark;
+        search->stats.compiled_relation_deferrals++;
+        return PPOSLF_NATIVE_COMPILED_RELATION_DEFER_V1;
+    }
+    if (!pposlf_native_type_vm_v1_push_proof_event(
+            search, PPOSLF_NATIVE_VM_PROOF_COMPILED_RELATION_V1,
+            plan_index)) {
+        bindings_builder_rollback(&search->bindings, binding_mark);
+        arena_reset(&search->scratch, arena_mark_value);
+        search->proof_event_len = proof_mark;
+        return PPOSLF_NATIVE_COMPILED_RELATION_RESOURCE_V1;
+    }
+    search->stats.rule_attempts += logical_rule_attempts;
+    search->stats.rule_matches += logical_rule_matches;
+    search->stats.indexed_candidate_visits += logical_rule_attempts;
+    search->stats.goals_entered = pposlf_native_stats_add_sat_v1(
+        search->stats.goals_entered, successor_count);
+    if (search->stats.maximum_goal_depth <
+            logical_maximum_goal_depth)
+        search->stats.maximum_goal_depth =
+            (uint32_t)logical_maximum_goal_depth;
+    search->stats.compiled_relation_matches++;
+    return PPOSLF_NATIVE_COMPILED_RELATION_MATCH_V1;
 }
 
 static PPOSLFNativeSearchOutcomeV1 pposlf_native_type_vm_v1_search(
@@ -4238,6 +4658,21 @@ static PPOSLFNativeSearchOutcomeV1 pposlf_native_type_vm_v1_search(
                 search->stats.activation_view_goal_admissions++;
             } else if (frame->goals->epoch_original) {
                 search->stats.deferred_epoch_goal_materializations++;
+                if (frame->goals->activation_view_admitted) {
+                    search->stats.epoch_goal_materializations_stale++;
+                } else {
+                    search->stats
+                        .epoch_goal_materializations_not_admitted++;
+                    if (frame->goals->activation_view_refusal_reason ==
+                        PPOSLF_NATIVE_ACTIVATION_VIEW_OPEN_PRODUCER_V1) {
+                        search->stats
+                            .epoch_goal_materializations_not_range_restricted++;
+                    } else if (frame->goals->activation_view_refusal_reason ==
+                        PPOSLF_NATIVE_ACTIVATION_VIEW_UNSAFE_CONSUMER_V1) {
+                        search->stats
+                            .epoch_goal_materializations_consumer_unsafe++;
+                    }
+                }
                 frame->goal = bindings_apply_epoch_then_all(
                     (Bindings *)bindings_builder_bindings(
                         &search->bindings),
@@ -4245,8 +4680,17 @@ static PPOSLFNativeSearchOutcomeV1 pposlf_native_type_vm_v1_search(
                     frame->goals->epoch,
                     frame->goals->activation_first_entry);
             } else {
+                const Bindings *bindings =
+                    bindings_builder_bindings(&search->bindings);
+
+                if (bindings && bindings->len > 0u &&
+                    frame->goals->goal &&
+                    atom_has_vars(frame->goals->goal)) {
+                    search->stats
+                        .non_epoch_goal_materialization_attempts++;
+                }
                 frame->goal = bindings_apply_if_vars(
-                    bindings_builder_bindings(&search->bindings),
+                    bindings,
                     &search->scratch, frame->goals->goal);
             }
             materialize_after =
@@ -4268,6 +4712,8 @@ static PPOSLFNativeSearchOutcomeV1 pposlf_native_type_vm_v1_search(
             frame->exact_group = dispatch.exact_group;
             frame->has_variable = dispatch.has_variable;
             frame->variable_group = dispatch.variable_group;
+            pposlf_native_type_vm_v1_prepare_rigid_dispatch(
+                search, frame, dispatch.rigid_index);
             if (search->capabilities && dispatch.has_external &&
                 dispatch.external_relation <
                     search->capabilities->external_relation_len) {
@@ -4287,6 +4733,41 @@ static PPOSLFNativeSearchOutcomeV1 pposlf_native_type_vm_v1_search(
                 arena_mark(&search->scratch);
             frame->stage = PPOSLF_NATIVE_SEARCH_GENERATED_V1;
             frame->initialized = true;
+            if (dispatch.compiled_relation) {
+                PPOSLFNativeCompiledRelationResultV1 compiled_result;
+
+                frame->candidate_binding_mark =
+                    bindings_builder_save(&search->bindings);
+                frame->proof_mark = search->proof_event_len;
+                compiled_result =
+                    pposlf_native_type_vm_v1_try_compiled_relation(
+                        search, frame, dispatch.compiled_relation,
+                        dispatch.compiled_relation_index);
+                if (compiled_result ==
+                    PPOSLF_NATIVE_COMPILED_RELATION_MATCH_V1) {
+                    if (!frame->goals->next) {
+                        outcome = PPOSLF_NATIVE_SEARCH_PROVED_V1;
+                        break;
+                    }
+                    frame->waiting_child = true;
+                    if (!pposlf_native_type_vm_v1_push_search_frame(
+                            &frames, &frame_len, &frame_cap,
+                            frame->goals->next,
+                            search->failure_debt_len)) {
+                        frame = &frames[frame_len - 1u];
+                        pposlf_native_type_vm_v1_rollback_search_branch(
+                            search, frame);
+                        frame->saw_resource = true;
+                    }
+                    if (frame_len >
+                        search->stats.maximum_search_frame_depth)
+                        search->stats.maximum_search_frame_depth = frame_len;
+                    continue;
+                }
+                if (compiled_result ==
+                    PPOSLF_NATIVE_COMPILED_RELATION_RESOURCE_V1)
+                    frame->saw_resource = true;
+            }
         }
 
         if (frame->stage == PPOSLF_NATIVE_SEARCH_GENERATED_V1) {
@@ -4300,6 +4781,7 @@ static PPOSLFNativeSearchOutcomeV1 pposlf_native_type_vm_v1_search(
             bool expansion_failed = false;
             bool tail_deterministic = false;
             uint32_t rejected_tail_candidates = 0u;
+            uint32_t rigid_rejections = 0u;
             CettaGsltGroundDenseStatusV1 ground_dense_status =
                 CETTA_GSLT_GROUND_DENSE_INVALID_V1;
             CettaGsltGroundDenseStatsV1 ground_dense_stats = {0};
@@ -4309,12 +4791,22 @@ static PPOSLFNativeSearchOutcomeV1 pposlf_native_type_vm_v1_search(
             size_t expansion_before;
             size_t expansion_after;
 
-            if (!pposlf_native_type_vm_v1_next_candidate(
+            bool has_candidate = pposlf_native_type_vm_v1_next_candidate(
                     plan, frame->full_scan,
                     frame->exact_group, frame->has_exact,
                     frame->variable_group, frame->has_variable,
-                    &frame->exact_offset, &frame->variable_offset,
-                    &frame->full_offset, &candidate)) {
+                    frame->rigid_positions,
+                    frame->rigid_position_count,
+                    frame->rigid_dispatched,
+                    &frame->exact_offset, &frame->exact_source_offset,
+                    &frame->variable_offset, &frame->full_offset,
+                    &rigid_rejections, &candidate);
+            if (!pposlf_native_type_vm_v1_charge_rigid_rejections(
+                    search, frame, rigid_rejections)) {
+                frame->stage = PPOSLF_NATIVE_SEARCH_EXTERNAL_V1;
+                continue;
+            }
+            if (!has_candidate) {
                 frame->stage = PPOSLF_NATIVE_SEARCH_EXTERNAL_V1;
                 continue;
             }
@@ -4331,16 +4823,6 @@ static PPOSLFNativeSearchOutcomeV1 pposlf_native_type_vm_v1_search(
                 search->stats.indexed_candidate_visits++;
             search->stats.rule_attempts++;
             rule = &search->vm->rules[candidate];
-            if (frame->goal_is_activation_view &&
-                rule->ground_dense_ready &&
-                !pposlf_native_type_vm_v1_generated_raw_tail(
-                    search->vm, frame) &&
-                !pposlf_native_type_vm_v1_materialize_activation_view(
-                    search, frame)) {
-                frame->saw_resource = true;
-                frame->stage = PPOSLF_NATIVE_SEARCH_EXTERNAL_V1;
-                continue;
-            }
             search->stats.structural_shape_guard_attempts++;
             shape_compatibility =
                 pposlf_native_type_vm_v1_structural_shape_compatibility(
@@ -4541,6 +5023,12 @@ static PPOSLFNativeSearchOutcomeV1 pposlf_native_type_vm_v1_search(
                     .activation_view_admitted =
                         !ground_pattern &&
                         rule->body_activation_view_admitted[body - 1u],
+                    .activation_view_refusal_reason = ground_pattern ||
+                            rule->body_activation_view_admitted[body - 1u]
+                        ? PPOSLF_NATIVE_ACTIVATION_VIEW_ADMITTED_V1
+                        : !rule->body_variables_in_head
+                            ? PPOSLF_NATIVE_ACTIVATION_VIEW_OPEN_PRODUCER_V1
+                            : PPOSLF_NATIVE_ACTIVATION_VIEW_UNSAFE_CONSUMER_V1,
                     .next = expanded,
                 };
                 expanded = item;
@@ -4572,7 +5060,7 @@ static PPOSLFNativeSearchOutcomeV1 pposlf_native_type_vm_v1_search(
 
                 shape_proven_tail =
                     pposlf_native_type_vm_v1_generated_tail_deterministic(
-                        search->vm, frame, &raw_tail,
+                        search, frame, &raw_tail,
                         &rejected_tail_candidates);
                 if (shape_proven_tail)
                     search->stats

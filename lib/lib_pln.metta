@@ -1,4 +1,4 @@
-; CeTTa compatibility shim for the upstream hyperon/PLN lib_pln surface.
+; CeTTa compatibility shim for the upstream hyperon/PLN lib_pln interface.
 ; Source semantics were checked through the PeTTa -> HE translator; this file
 ; keeps the upstream rule set while normalizing local imports.
 !(import! &self math)

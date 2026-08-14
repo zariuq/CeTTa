@@ -237,7 +237,7 @@ BROAD_MODULE_RESOLUTION_NOTES: dict[str, dict[str, Any]] = {
         "spec_refs": [
             "he_metta_official_specs.md:94 module hierarchy is acknowledged, but local-path import syntax and cycle semantics are not pinned"
         ],
-        "rule_ids": ["surface.module-import"],
+        "rule_ids": ["syntax.module-import"],
     },
     "tests/test_import_fresh_name_conformance.metta": {
         "note": (
@@ -249,7 +249,7 @@ BROAD_MODULE_RESOLUTION_NOTES: dict[str, dict[str, Any]] = {
         "spec_refs": [
             "he_metta_official_specs.md:94 atom-by-atom effects are specified, but local-path import spaces are not pinned"
         ],
-        "rule_ids": ["surface.module-import", "surface.atomspace-assertions"],
+        "rule_ids": ["syntax.module-import", "syntax.atomspace-assertions"],
     },
     "tests/test_import_nested_depth.metta": {
         "note": (
@@ -259,7 +259,7 @@ BROAD_MODULE_RESOLUTION_NOTES: dict[str, dict[str, Any]] = {
         "spec_refs": [
             "he_metta_official_specs.md:94 module hierarchy is acknowledged, but nested local-path import resolution is not pinned"
         ],
-        "rule_ids": ["surface.module-import"],
+        "rule_ids": ["syntax.module-import"],
     },
     "tests/test_import_parse_failure.metta": {
         "note": (
@@ -271,7 +271,7 @@ BROAD_MODULE_RESOLUTION_NOTES: dict[str, dict[str, Any]] = {
             "he_metta_official_specs.md:80-82 Error atoms are specified, but local-path import parse-failure shape is not pinned",
             "he_metta_official_specs.md:94 module hierarchy is acknowledged, but local-path import syntax is not pinned",
         ],
-        "rule_ids": ["surface.module-import", "result.error-shape"],
+        "rule_ids": ["syntax.module-import", "result.error-shape"],
     },
     "tests/test_import_registered_nested_parent.metta": {
         "note": (
@@ -282,7 +282,7 @@ BROAD_MODULE_RESOLUTION_NOTES: dict[str, dict[str, Any]] = {
         "spec_refs": [
             "he_metta_official_specs.md:94 module hierarchy is acknowledged, but registered nested import resolution is not pinned"
         ],
-        "rule_ids": ["surface.module-import"],
+        "rule_ids": ["syntax.module-import"],
     },
     "tests/test_import_transaction.metta": {
         "note": (
@@ -294,7 +294,7 @@ BROAD_MODULE_RESOLUTION_NOTES: dict[str, dict[str, Any]] = {
             "he_metta_official_specs.md:80-82 Error atoms are specified, but import transaction failure shape is not pinned",
             "he_metta_official_specs.md:94 atom-by-atom effects are specified, but local-path import transaction semantics are not pinned",
         ],
-        "rule_ids": ["surface.module-import", "result.error-shape"],
+        "rule_ids": ["syntax.module-import", "result.error-shape"],
     },
 }
 
@@ -311,9 +311,9 @@ BROAD_MODULE_INVENTORY_NOTES: dict[str, dict[str, Any]] = {
             "he_metta_official_specs.md:94 module hierarchy is acknowledged, but module inventory/print-mods contents are not pinned"
         ],
         "rule_ids": [
-            "surface.module-import",
-            "surface.module-inventory",
-            "profile.surface-policy",
+            "syntax.module-import",
+            "syntax.module-inventory",
+            "profile.syntax-policy",
         ],
     },
 }
@@ -324,10 +324,10 @@ BROAD_LOCAL_LIBRARY_IMPORT_PATHS = {
     "tests/test_checkpoint_group_extract_cross_form_regression.metta",
     "tests/test_closed_stream_fastpath.metta",
     "tests/test_he_frontier_algebra_regression.metta",
-    "tests/test_list_surface.metta",
-    "tests/test_lts_he_surface.metta",
-    "tests/test_lts_surface.metta",
-    "tests/test_math_lib_surface.metta",
+    "tests/test_list_syntax.metta",
+    "tests/test_lts_he_syntax.metta",
+    "tests/test_lts_syntax.metta",
+    "tests/test_math_lib_syntax.metta",
     "tests/test_math_namespace_docs.metta",
     "tests/test_string_escapes.metta",
 }
@@ -386,30 +386,30 @@ OSLF_ANCHORS = {
 }
 
 TRACK_A_RULE_LANES = {
-    "surface.eval-bang": "supporting-surface",
-    "surface.atomspace-assertions": "supporting-surface",
+    "syntax.eval-bang": "supporting-syntax",
+    "syntax.atomspace-assertions": "supporting-syntax",
     "special.eq-definition": "reduction-span",
     "special.type-assignment": "reduction-span",
     "special.function-type": "reduction-span",
     "result.empty-zero": "reduction-span",
     "result.error-shape": "reduction-span",
     "minimal.eval": "reduction-span",
-    "minimal.evalc-context-space": "supporting-surface",
+    "minimal.evalc-context-space": "supporting-syntax",
     "minimal.chain": "reduction-span",
-    "minimal.match": "supporting-surface",
-    "minimal.unify": "supporting-surface",
+    "minimal.match": "supporting-syntax",
+    "minimal.unify": "supporting-syntax",
     "minimal.collapse-superpose": "reduction-span",
-    "minimal.cons-decons": "supporting-surface",
+    "minimal.cons-decons": "supporting-syntax",
     "minimal.function-return": "reduction-span",
-    "eval.applicative-arguments": "supporting-surface",
-    "eval.grounded-dispatch": "supporting-surface",
+    "eval.applicative-arguments": "supporting-syntax",
+    "eval.grounded-dispatch": "supporting-syntax",
     "nondet.visible-bag": "reduction-span",
-    "profile.docs": "supporting-surface",
-    "profile.surface-policy": "spatial-policy",
-    "surface.module-import": "spatial-policy",
-    "surface.module-inventory": "spatial-policy",
-    "surface.native-space": "spatial-policy",
-    "grounded.numeric-exact": "supporting-surface",
+    "profile.docs": "supporting-syntax",
+    "profile.syntax-policy": "spatial-policy",
+    "syntax.module-import": "spatial-policy",
+    "syntax.module-inventory": "spatial-policy",
+    "syntax.native-space": "spatial-policy",
+    "grounded.numeric-exact": "supporting-syntax",
 }
 
 TRACK_A_LANE_NOTES = {
@@ -418,7 +418,7 @@ TRACK_A_LANE_NOTES = {
         "it is intended to line up with LanguageDef/langReduces/langDiamond-style "
         "reasoning rather than with runtime policy or host environment."
     ),
-    "supporting-surface": (
+    "supporting-syntax": (
         "This capacity supports the evaluator/runtime story but is not currently "
         "promoted as one of the core reduction-span edges in the Track A A2 slice."
     ),
@@ -466,13 +466,13 @@ A2_AUTHORITY_NOTES = {
         "constructor and the M_Empty / MC_Superpose_Empty / MC_Match_Empty "
         "LanguageDef rules pin the no-visible-result behavior, while the catalog "
         "and runtime contracts keep the visible bag/LTS consequences honest. "
-        "This is a reduction-span rule in Track A, not a host-policy surface."
+        "This is a reduction-span rule in Track A, not a host-policy syntax."
     ),
 }
 
 SPEC_RULE_CAPACITIES: list[dict[str, Any]] = [
     {
-        "id": "surface.eval-bang",
+        "id": "syntax.eval-bang",
         "title": "Top-level ! evaluation",
         "official_spec_refs": [
             "he_metta_official_specs.md:Interpretation - atoms prefixed by ! are evaluated",
@@ -483,14 +483,14 @@ SPEC_RULE_CAPACITIES: list[dict[str, Any]] = [
         "status": "covered",
     },
     {
-        "id": "surface.atomspace-assertions",
+        "id": "syntax.atomspace-assertions",
         "title": "Atomspace declarations and assertion-style programs",
         "official_spec_refs": [
             "he_metta_official_specs.md:Interpretation - non-! atoms are added to the atomspace",
         ],
         "lean_language_def_refs": ["HELanguageDef.mettaHE:Space", "MC_Equation"],
         "oslf_refs": [OSLF_ANCHORS["language_def"]],
-        "native_contract_ids": ["profile-surface-policy-table"],
+        "native_contract_ids": ["profile-syntax-policy-table"],
         "status": "partial",
     },
     {
@@ -650,7 +650,7 @@ SPEC_RULE_CAPACITIES: list[dict[str, Any]] = [
         ],
         "lean_language_def_refs": ["HELanguageDef.mettaHE:ExprCons", "HELanguageDef.mettaHE:ExprNil"],
         "oslf_refs": [OSLF_ANCHORS["language_def"]],
-        "native_contract_ids": ["constructor-arity-surface"],
+        "native_contract_ids": ["constructor-arity-syntax"],
         "status": "covered",
     },
     {
@@ -709,69 +709,69 @@ SPEC_RULE_CAPACITIES: list[dict[str, Any]] = [
     },
     {
         "id": "profile.docs",
-        "title": "Profile-aware documentation surface",
-        "official_spec_refs": ["he_metta_official_specs.md:profile/lang surfaces"],
+        "title": "Profile-aware documentation syntax",
+        "official_spec_refs": ["he_metta_official_specs.md:profile/lang syntax forms"],
         "lean_language_def_refs": [],
         "oslf_refs": [],
         "native_contract_ids": [
-            "get-doc-respects-profile-surface",
+            "get-doc-respects-profile-syntax",
             "he-compat-reproduces-rust-get-doc-arity",
         ],
         "status": "covered",
     },
     {
-        "id": "profile.surface-policy",
-        "title": "Language/profile surface availability",
-        "official_spec_refs": ["he_metta_official_specs.md:profile/lang surfaces"],
+        "id": "profile.syntax-policy",
+        "title": "Language/profile syntax availability",
+        "official_spec_refs": ["he_metta_official_specs.md:profile/lang syntax forms"],
         "lean_language_def_refs": [],
         "alignment_note": (
             "Current HELanguageDef models core HE evaluation rules, not the "
-            "CeTTa profile/lang surface inventory. This rule is tracked by "
+            "CeTTa profile/lang syntax inventory. This rule is tracked by "
             "runtime policy tables plus OSLF-facing profile evidence."
         ),
         "oslf_refs": [OSLF_ANCHORS["language_def"]],
-        "native_contract_ids": ["profile-surface-policy-table"],
+        "native_contract_ids": ["profile-syntax-policy-table"],
         "status": "partial",
     },
     {
-        "id": "surface.module-import",
+        "id": "syntax.module-import",
         "title": "Module import/include resolution",
-        "official_spec_refs": ["he_metta_official_specs.md:module/import surfaces"],
+        "official_spec_refs": ["he_metta_official_specs.md:module/import syntax forms"],
         "lean_language_def_refs": [],
         "alignment_note": (
-            "Module/import resolution is currently a runtime/meta-surface, not "
+            "Module/import resolution is currently a runtime/meta-syntax, not "
             "a first-class HELanguageDef rule family. The rule index keeps it "
-            "visible as a formal-he policy surface and a he-compat boundary."
+            "visible as a formal-he policy syntax and a he-compat boundary."
         ),
         "oslf_refs": [],
         "native_contract_ids": [
-            "profile-surface-policy-table",
+            "profile-syntax-policy-table",
             "module-import-policy-evidence-shape",
         ],
         "status": "partial",
     },
     {
-        "id": "surface.module-inventory",
+        "id": "syntax.module-inventory",
         "title": "Module inventory and visible module tree",
-        "official_spec_refs": ["he_metta_official_specs.md:profile/lang module surfaces"],
+        "official_spec_refs": ["he_metta_official_specs.md:profile/lang module syntax forms"],
         "lean_language_def_refs": [],
         "alignment_note": (
             "Visible module inventory is not represented in the current "
             "HELanguageDef rewrite relation. It remains a policy/documentation "
-            "surface until we model module visibility at the LanguageDef/space "
+            "syntax until we model module visibility at the LanguageDef/space "
             "layer."
         ),
         "oslf_refs": [],
         "native_contract_ids": [
-            "profile-surface-policy-table",
+            "profile-syntax-policy-table",
             "module-inventory-policy-evidence-shape",
         ],
         "status": "open",
     },
     {
-        "id": "surface.native-space",
+        "id": "syntax.native-space",
         "title": "Native space operations and space-kind extensions",
-        "official_spec_refs": ["he_metta_official_specs.md:space operation surfaces"],
+        "official_spec_refs": ["he_metta_official_specs.md:space operation syntax forms"],
         "lean_language_def_refs": ["HELanguageDef.mettaHE:Space", "HELanguageDef.mettaHE:State"],
         "oslf_refs": [OSLF_ANCHORS["language_def"], OSLF_ANCHORS["type_synthesis"]],
         "native_contract_ids": ["context-space-successor-shape"],
@@ -780,7 +780,7 @@ SPEC_RULE_CAPACITIES: list[dict[str, Any]] = [
     {
         "id": "grounded.numeric-exact",
         "title": "Grounded numeric and exact-rational extensions",
-        "official_spec_refs": ["he_metta_official_specs.md:grounded arithmetic surfaces"],
+        "official_spec_refs": ["he_metta_official_specs.md:grounded arithmetic syntax forms"],
         "lean_language_def_refs": ["HELanguageDef.mettaHE:MC_Grounded"],
         "oslf_refs": [OSLF_ANCHORS["premise_reduction"]],
         "native_contract_ids": ["grounded-dispatch-successor-shape"],
@@ -897,7 +897,7 @@ def capacity_by_id() -> dict[str, dict[str, Any]]:
 
 
 def track_a_rule_lane(rule_id: str) -> str:
-    return TRACK_A_RULE_LANES.get(rule_id, "supporting-surface")
+    return TRACK_A_RULE_LANES.get(rule_id, "supporting-syntax")
 
 
 def validate_track_a_rule_lanes() -> None:
@@ -971,12 +971,12 @@ def infer_spec_rule_ids(row: dict[str, Any]) -> list[str]:
     refs = " ".join(str(ref).lower() for ref in row.get("spec_refs", []))
     source_excerpt = case_source_excerpt(ROOT / path) if path else ""
 
-    ids = {"surface.eval-bang", "nondet.visible-bag"}
+    ids = {"syntax.eval-bang", "nondet.visible-bag"}
     ids.update(CASE_RULE_OVERRIDES.get(path, []))
 
     text = " ".join([path, case_id, feature, source_kind, refs]).lower()
     if "assert" in text:
-        ids.add("surface.atomspace-assertions")
+        ids.add("syntax.atomspace-assertions")
         ids.add("result.error-shape")
     if "case" in text or "switch" in text:
         ids.add("eval.applicative-arguments")
@@ -1008,10 +1008,10 @@ def infer_spec_rule_ids(row: dict[str, Any]) -> list[str]:
         ids.add("minimal.evalc-context-space")
     if "doc" in text or "help" in text:
         ids.add("profile.docs")
-    if "profile" in text or "surface" in text or "compat" in text or "extended" in text:
-        ids.add("profile.surface-policy")
+    if "profile" in text or "syntax" in text or "compat" in text or "extended" in text:
+        ids.add("profile.syntax-policy")
     if "import" in text or "include" in text or "module" in text:
-        ids.add("surface.module-import")
+        ids.add("syntax.module-import")
     if (
         "module-inventory" in text
         or "module_inventory" in text
@@ -1020,7 +1020,7 @@ def infer_spec_rule_ids(row: dict[str, Any]) -> list[str]:
         or "print-mods" in source_excerpt
         or "print_mods" in source_excerpt
     ):
-        ids.add("surface.module-inventory")
+        ids.add("syntax.module-inventory")
     if any(
         token in text or token in source_excerpt
         for token in [
@@ -1037,7 +1037,7 @@ def infer_spec_rule_ids(row: dict[str, Any]) -> list[str]:
             "stack_space",
         ]
     ):
-        ids.add("surface.native-space")
+        ids.add("syntax.native-space")
     if "rational" in text or "bigint" in text or "numeric" in text or "min" in text or "max" in text:
         ids.add("grounded.numeric-exact")
     if "equation" in text or "rewrite" in text or "symbols" in text or "direct" in text:
@@ -1065,7 +1065,7 @@ def enrich_case_with_rule_map(row: dict[str, Any]) -> dict[str, Any]:
         lean_authority_refs.update(str(x) for x in cap.get("lean_authority_refs", []))
         oslf_refs.update(str(x) for x in cap.get("oslf_refs", []))
         native_contract_ids.update(str(x) for x in cap.get("native_contract_ids", []))
-        rule_lanes.add(str(cap.get("track_a_relation_lane", "supporting-surface")))
+        rule_lanes.add(str(cap.get("track_a_relation_lane", "supporting-syntax")))
 
     row["spec_rule_ids"] = rule_ids
     row["official_spec_rule_refs"] = sorted(refs)
@@ -1333,7 +1333,7 @@ BROAD_CATEGORY_DETAILS: dict[str, dict[str, str]] = {
         "kind": "mostly-formal-or-he-extended-extension",
         "recommended_action": (
             "Keep as formal-he/he-extended/local-library evidence unless Rust HE "
-            "gains the module/import surface."
+            "gains the module/import syntax."
         ),
     },
     "module-resolution-diff": {
@@ -1346,7 +1346,7 @@ BROAD_CATEGORY_DETAILS: dict[str, dict[str, str]] = {
         ),
     },
     "module-inventory-environment-diff": {
-        "kind": "environment-surface-gap",
+        "kind": "environment-syntax-gap",
         "recommended_action": "Do not treat as core semantics until module inventory policy is pinned.",
     },
     "native-space-extension": {
@@ -1492,16 +1492,16 @@ def broad_rule_ids(row: dict[str, Any], category: str) -> list[str]:
     }
     ids = set(infer_spec_rule_ids(pseudo))
     if category in {"local-library-or-import-extension", "module-resolution-diff"}:
-        ids.add("surface.module-import")
+        ids.add("syntax.module-import")
         if category == "module-resolution-diff":
             module_note = BROAD_MODULE_RESOLUTION_NOTES.get(str(row.get("path", "")), {})
             ids.update(module_note.get("rule_ids", []))
     elif category == "module-inventory-environment-diff":
-        ids.update(["surface.module-import", "surface.module-inventory", "profile.surface-policy"])
+        ids.update(["syntax.module-import", "syntax.module-inventory", "profile.syntax-policy"])
         inventory_note = BROAD_MODULE_INVENTORY_NOTES.get(str(row.get("path", "")), {})
         ids.update(inventory_note.get("rule_ids", []))
     elif category == "native-space-extension":
-        ids.add("surface.native-space")
+        ids.add("syntax.native-space")
     elif category == "grounded-numeric-extension":
         ids.update(["grounded.numeric-exact", "eval.grounded-dispatch"])
     elif category == "nondet-order-or-collapse-shape":
@@ -1510,7 +1510,7 @@ def broad_rule_ids(row: dict[str, Any], category: str) -> list[str]:
         drift = BROAD_RUST_DRIFT_NOTES.get(str(row.get("path", "")), {})
         ids.update(drift.get("rule_ids", []))
     elif category == "cetta-timeout":
-        ids.update(["surface.eval-bang", "nondet.visible-bag"])
+        ids.update(["syntax.eval-bang", "nondet.visible-bag"])
     known = capacity_by_id()
     return sorted(rule_id for rule_id in ids if rule_id in known)
 
@@ -1741,8 +1741,8 @@ def main() -> int:
     payload = {
         "schema_version": 1,
         "catalog_date": CATALOG_DATE,
-        "subject": "CeTTa HE-compatible runtime surface",
-        "no_runtime_trace_or_certificate_surface": True,
+        "subject": "CeTTa HE-compatible runtime syntax",
+        "no_runtime_trace_or_certificate_syntax": True,
         "semantic_indexing": {
             "unit": "official-spec rule/capacity",
             "status": (
@@ -1757,7 +1757,7 @@ def main() -> int:
                     "rule capacities intended to line up with LanguageDef/langReduces/"
                     "langDiamond-style reasoning."
                 ),
-                "supporting-surface": (
+                "supporting-syntax": (
                     "Evaluator/runtime support capacities that inform the object-language "
                     "story but are not part of the current core reduction-span slice."
                 ),
@@ -1780,14 +1780,14 @@ def main() -> int:
                     "OSLF/NTT/DTT work. This is the default --lang he path and "
                     "is also available explicitly as --profile he."
                 ),
-                "eval_surface_sentence": (
+                "eval_syntax_sentence": (
                     "When the eval instruction reaches a non-reducible expression E, "
                     "the user-visible formal-HE result is E itself."
                 ),
-                "doc_surface_sentence": (
+                "doc_syntax_sentence": (
                     "get-doc and help! follow the documented stdlib documentation "
-                    "surface for the active language/profile; extension-only "
-                    "documented surfaces are hidden. Rust HE 0.2.10 get-doc "
+                    "syntax for the active language/profile; extension-only "
+                    "documented syntax forms are hidden. Rust HE 0.2.10 get-doc "
                     "arity failures are reproduced only by he-compat."
                 ),
             },
@@ -1795,7 +1795,7 @@ def main() -> int:
                 "scope": (
                     "Literal compatibility catalog for upstream Hyperon Experimental "
                     "HE 0.2.10. This lane intentionally reproduces observed Rust HE "
-                    "surface quirks; formal/spec-faithful behavior belongs to --lang "
+                    "syntax quirks; formal/spec-faithful behavior belongs to --lang "
                     "he / --profile he."
                 ),
             },

@@ -3,7 +3,7 @@
 ; Executable mirrors of the Lean didactic witnesses in
 ; Mettapedia/Logic/PLNDidacticWitnesses.lean.
 ;
-; These are arithmetic canaries: Lean proves the theorem surface, while this
+; These are arithmetic canaries: Lean proves the theorem syntax, while this
 ; file checks that the same numbers are visible in the CeTTa HE-extended layer.
 
 (= (strength-haldane $pos $neg)

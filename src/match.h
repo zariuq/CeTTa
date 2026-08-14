@@ -58,8 +58,9 @@ typedef struct {
     uint32_t private_constraint_count;
     /*
      * Derived VarId -> newest-entry accelerator.  `entries` remains the
-     * semantic authority: clones may share this immutable index, while the
-     * first append or rollback detaches it copy-on-write.
+     * semantic authority: clones may share its immutable synchronized prefix.
+     * Appends remain in an authoritative lazy suffix until an uncached lookup
+     * needs to extend the index; rollback truncates only the indexed prefix.
      */
     BindingsLookupIndex *lookup_index;
     /* Prime per-occurrence state -- the Need world (orthogonal to logical
@@ -123,6 +124,8 @@ typedef struct {
 } BindingsBuilder;
 
 typedef Atom *(*BindingsRewriteVarFn)(Arena *a, Atom *var, void *ctx);
+typedef bool (*BindingsEpochCoordinateFn)(
+    void *context, VarId source_variable, uint32_t *offset_out);
 
 void      bindings_init(Bindings *b);
 void      bindings_free(Bindings *b);
@@ -273,6 +276,16 @@ Atom     *bindings_lookup_var(Bindings *b, Atom *var);
 bool      bindings_resolve_epoch_view_ground(
               const Bindings *bindings, const Atom *source_variable,
               uint32_t epoch, uint32_t first_entry, Atom **ground_out);
+/*
+ * Resolve through a certified rule-local suffix coordinate.  The coordinate
+ * is accepted only when the authoritative entry at first_entry + offset has
+ * the exact epoch-qualified variable identity.  A false result asks the
+ * caller to use the ordinary lookup; no approximation is returned.
+ */
+bool      bindings_resolve_epoch_view_ground_at(
+              const Bindings *bindings, const Atom *source_variable,
+              uint32_t epoch, uint32_t first_entry, uint32_t offset,
+              Atom **ground_out);
 Atom     *binding_variable_atom(Arena *a, const Binding *binding);
 Atom     *bindings_resolve_atom_preview(Bindings *b, Atom *atom);
 bool      bindings_add_id(Bindings *b, VarId var_id, SymbolId spelling, Atom *val);
@@ -330,6 +343,15 @@ Atom     *bindings_resolve_dense_epoch_frame_slot_root(
               BindingsBuilder *builder, Arena *a,
               const BindingsDenseEpochFrame *frame,
               Atom *source_variable, uint32_t slot);
+/* Apply the same activation substitution while consulting an optional
+ * certified source-variable -> suffix-offset map before ordinary identity
+ * lookup.  Every coordinate is checked against the authoritative binding
+ * entry; a mismatch falls back and is counted rather than changing meaning. */
+Atom     *bindings_apply_epoch_then_all_coordinates(
+              Bindings *b, Arena *a, Atom *atom, uint32_t epoch,
+              uint32_t first_entry, BindingsEpochCoordinateFn coordinate,
+              void *coordinate_context, uint64_t *coordinate_hits,
+              uint64_t *coordinate_fallbacks);
 Atom     *atom_freshen_epoch(Arena *a, Atom *atom, uint32_t epoch);
 Atom     *bindings_to_atom(Arena *a, const Bindings *b);
 bool      bindings_from_atom(Atom *atom, Bindings *out);
@@ -420,6 +442,10 @@ void fresh_var_suffix_test_reset(uint64_t next_suffix);
 /* Drop only the derived VarId index so projection-path tests can observe
  * whether an operation rebuilds it.  Logical bindings are unchanged. */
 void bindings_lookup_index_test_clear(Bindings *bindings);
+/* Observe the derived index prefix certificate without exposing its
+ * production representation.  Returns false when no index is present. */
+bool bindings_lookup_index_test_synced_len(const Bindings *bindings,
+                                           uint32_t *synced_len_out);
 #endif
 
 /* Rename all variables in atom: $name → $name#suffix.
@@ -446,10 +472,6 @@ Atom *rename_vars_only(Arena *a, Atom *atom, Atom *listed_spec);
    On failure, returns false. */
 bool match_atoms(Atom *left, Atom *right, Bindings *b);
 bool match_atoms_builder(Atom *left, Atom *right, BindingsBuilder *bb);
-/* HE's SpaceType and the value-level (Space T) presentation denote the same
- * argument kind for type applicability.  Keep this exceptional equivalence
- * shared by the complete matcher and any conservative prefilter. */
-bool match_types_space_kind_equivalent(Atom *actual, Atom *expected);
 bool match_atoms_epoch(Atom *left, Atom *right, Bindings *b, Arena *a, uint32_t epoch);
 /* Epoch-aware matcher over an existing trail-backed environment.  The caller
  * owns the save/rollback boundary when failure must be transactional. */
@@ -537,5 +559,9 @@ bool bindings_has_loop(const Bindings *b);
    gradual at any depth on either side; Atom is top only on the expected side. */
 bool match_types(Atom *actual, Atom *expected, Bindings *b);
 bool match_types_builder(Atom *actual, Atom *expected, BindingsBuilder *bb);
+
+/* SpaceType and concrete (Space discipline) value types form one runtime
+ * space class; negative-decision paths must not refute across it. */
+bool type_match_uses_space_class_bridge(Atom *actual, Atom *expected);
 
 #endif /* CETTA_MATCH_H */

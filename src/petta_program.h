@@ -317,7 +317,7 @@ void petta_program_inferred_signatures_rebase_under_authority(
     const CettaNikDirectAuthorityStampV1 *authority);
 
 /* Explicit type declarations remain visible to the checker across PeTTa
- * module boundaries even when the runtime import surface exports equations
+ * module boundaries even when the runtime module interface exports equations
  * without copying transitive annotation atoms into the caller's Space.
  * Returned types are fresh copies owned by `arena`; the caller owns only the
  * pointer array. */

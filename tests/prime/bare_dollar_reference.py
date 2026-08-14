@@ -36,7 +36,7 @@ class FreeVariable:
 
 @dataclass(frozen=True)
 class Quoted:
-    surface: "Surface"
+    syntax: "Syntax"
 
 
 @dataclass(frozen=True)
@@ -68,25 +68,25 @@ class Constant:
 
 
 @dataclass(frozen=True)
-class PairSurface:
-    left: "Surface"
-    right: "Surface"
+class PairSyntax:
+    left: "Syntax"
+    right: "Syntax"
 
 
 @dataclass(frozen=True)
-class LetSurface:
-    pattern: "Surface"
-    source: "Surface"
-    body: "Surface"
+class LetSyntax:
+    pattern: "Syntax"
+    source: "Syntax"
+    body: "Syntax"
 
 
 @dataclass(frozen=True)
-class QuoteSurface:
-    body: "Surface"
+class QuoteSyntax:
+    body: "Syntax"
 
 
-Surface: TypeAlias = (
-    Dollar | Named | StructuralNamed | Constant | PairSurface | LetSurface | QuoteSurface
+Syntax: TypeAlias = (
+    Dollar | Named | StructuralNamed | Constant | PairSyntax | LetSyntax | QuoteSyntax
 )
 
 
@@ -116,7 +116,7 @@ class CoreLet:
 
 @dataclass(frozen=True)
 class CoreQuote:
-    surface: Surface
+    syntax: Syntax
 
 
 Core: TypeAlias = CoreVariable | CoreConstant | CorePair | CoreLet | CoreQuote
@@ -160,60 +160,60 @@ class Elaborator:
 
     def pattern(
         self,
-        surface: Surface,
+        syntax: Syntax,
         anonymous_scope: tuple[int, ...],
     ) -> Core:
-        if isinstance(surface, Dollar):
+        if isinstance(syntax, Dollar):
             # A nested dollar in a structured pattern is still a discard slot.
             # Root-binder introduction is handled by the surrounding let.
             if self.policy is Policy.ROOT_BINDER:
                 return CoreVariable(self.fresh(), None)
             return self.dollar(anonymous_scope)
-        if isinstance(surface, PairSurface):
+        if isinstance(syntax, PairSyntax):
             return CorePair(
-                self.pattern(surface.left, anonymous_scope),
-                self.pattern(surface.right, anonymous_scope),
+                self.pattern(syntax.left, anonymous_scope),
+                self.pattern(syntax.right, anonymous_scope),
             )
-        return self.term(surface, anonymous_scope)
+        return self.term(syntax, anonymous_scope)
 
     def term(
         self,
-        surface: Surface,
+        syntax: Syntax,
         anonymous_scope: tuple[int, ...] = (),
     ) -> Core:
-        if isinstance(surface, Dollar):
+        if isinstance(syntax, Dollar):
             return self.dollar(anonymous_scope)
-        if isinstance(surface, Named):
+        if isinstance(syntax, Named):
             return CoreVariable(
-                self.named_identity("named", surface.name), surface.name
+                self.named_identity("named", syntax.name), syntax.name
             )
-        if isinstance(surface, StructuralNamed):
+        if isinstance(syntax, StructuralNamed):
             return CoreVariable(
-                self.named_identity("structural", surface.key), repr(surface.key)
+                self.named_identity("structural", syntax.key), repr(syntax.key)
             )
-        if isinstance(surface, Constant):
-            return CoreConstant(surface.value)
-        if isinstance(surface, PairSurface):
+        if isinstance(syntax, Constant):
+            return CoreConstant(syntax.value)
+        if isinstance(syntax, PairSyntax):
             return CorePair(
-                self.term(surface.left, anonymous_scope),
-                self.term(surface.right, anonymous_scope),
+                self.term(syntax.left, anonymous_scope),
+                self.term(syntax.right, anonymous_scope),
             )
-        if isinstance(surface, QuoteSurface):
+        if isinstance(syntax, QuoteSyntax):
             # Quotation is a hard elaboration boundary.
-            return CoreQuote(surface.body)
-        if isinstance(surface, LetSurface):
-            source = self.term(surface.source, anonymous_scope)
+            return CoreQuote(syntax.body)
+        if isinstance(syntax, LetSyntax):
+            source = self.term(syntax.source, anonymous_scope)
             if self.policy is Policy.ROOT_BINDER and isinstance(
-                surface.pattern, Dollar
+                syntax.pattern, Dollar
             ):
                 identity = self.fresh()
                 pattern = CoreVariable(identity, None)
-                body = self.term(surface.body, anonymous_scope + (identity,))
+                body = self.term(syntax.body, anonymous_scope + (identity,))
             else:
-                pattern = self.pattern(surface.pattern, anonymous_scope)
-                body = self.term(surface.body, anonymous_scope)
+                pattern = self.pattern(syntax.pattern, anonymous_scope)
+                body = self.term(syntax.body, anonymous_scope)
             return CoreLet(pattern, source, body)
-        raise TypeError(f"unsupported surface term: {surface!r}")
+        raise TypeError(f"unsupported syntax term: {syntax!r}")
 
 
 Bindings: TypeAlias = dict[int, Value]
@@ -246,7 +246,7 @@ def evaluate(core: Core, bindings: Bindings | None = None) -> Value:
             evaluate(core.left, environment), evaluate(core.right, environment)
         )
     if isinstance(core, CoreQuote):
-        return Quoted(core.surface)
+        return Quoted(core.syntax)
     if isinstance(core, CoreLet):
         source = evaluate(core.source, environment)
         extended = dict(environment)
@@ -256,8 +256,8 @@ def evaluate(core: Core, bindings: Bindings | None = None) -> Value:
     raise TypeError(f"unsupported core term: {core!r}")
 
 
-def elaborate_and_evaluate(policy: Policy, surface: Surface) -> Value:
-    return evaluate(Elaborator(policy).term(surface))
+def elaborate_and_evaluate(policy: Policy, syntax: Syntax) -> Value:
+    return evaluate(Elaborator(policy).term(syntax))
 
 
 def projected_named_bindings(core: Core, bindings: Bindings) -> dict[str, Value]:

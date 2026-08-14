@@ -1000,7 +1000,7 @@ def run_petta_native(
     return row
 
 
-def run_petta_native_surface(
+def run_petta_native_syntax(
     petta_root: Path,
     splitter_abi: Path,
     form_abi: Path,
@@ -1012,7 +1012,7 @@ def run_petta_native_surface(
         petta_root
         / "experiments"
         / "gslt2parse_foundation"
-        / "test_petta_document_native_surface_v1.metta"
+        / "test_petta_document_native_syntax_v1.metta"
     )
     completed = subprocess.run(
         [
@@ -1041,7 +1041,7 @@ def run_petta_native_surface(
     ]
     if completed.returncode != 0 or values != ["completed"]:
         raise GateFailure(
-            "PeTTa document MeTTa surface failed: " + completed.stdout.strip()
+            "PeTTa document MeTTa syntax failed: " + completed.stdout.strip()
         )
 
 
@@ -1374,7 +1374,7 @@ def main() -> int:
             expect_success=False,
         )
         prepared_mutations += 2
-        run_petta_native_surface(
+        run_petta_native_syntax(
             petta_root,
             splitter_abi,
             form_abi,
@@ -1382,7 +1382,7 @@ def main() -> int:
             evidence,
             compiler_digest,
         )
-        reflective_surface_agreements = 1
+        reflective_syntax_agreements = 1
 
         for case_index, case in enumerate(CASES):
             input_path = directory / f"document-{case_index}.input"
@@ -2055,7 +2055,7 @@ def main() -> int:
     print(
         f"(PeTTaDocumentNativePeTTaV1Summary {len(CASES)} "
         f"{reflective_document_agreements} {reflective_form_agreements} "
-        f"{reflective_host_agreements} {reflective_surface_agreements} "
+        f"{reflective_host_agreements} {reflective_syntax_agreements} "
         f"{mutations} {reflective_digest} 0)"
     )
     print(

@@ -93,7 +93,7 @@
 (: undefined-doc-function-type (-> Expression Type))
 (: get-doc-params (-> Expression Atom Expression (Expression Atom)))
 (: get-doc-atom (-> SpaceType Atom %Undefined%))
-(: __cetta_surface-available (-> Atom Bool))
+(: __cetta_builtin-available (-> Atom Bool))
 (: help! (-> Atom (->)))
 (: help! (-> (->)))
 (: help-space! (-> SpaceType (->)))
@@ -201,7 +201,7 @@
   (@return "Collected expression of surviving result occurrences"))
 
 (@doc hyperpose
-  (@desc "HE-extended nondeterministic branch surface with the same pure result frontier as superpose. Reify and the HE compatibility spelling collapse expose the active traversal without promising a semantic result order. For syntactically eligible static branch lists, (pragma! num-threads N) or --num-threads N with N greater than 1 enables OS-threaded branch execution for once/select 1 and collection. Branches that depend on named registry handles, nonportable grounded values, or external/global runtime surfaces stay on the sequential fallback. Ordinary visible effects such as println! remain user responsibility.")
+  (@desc "HE-extended nondeterministic branch interface with the same pure result frontier as superpose. Reify and the HE compatibility spelling collapse expose the active traversal without promising a semantic result order. For syntactically eligible static branch lists, (pragma! num-threads N) or --num-threads N with N greater than 1 enables OS-threaded branch execution for once/select 1 and collection. Branches that depend on named registry handles, nonportable grounded values, or external/global runtime interfaces stay on the sequential fallback. Ordinary visible effects such as println! remain user responsibility.")
   (@params (
     (@param "Expression containing branch expressions")))
   (@return "Nondeterministic branch results"))
@@ -250,14 +250,14 @@
   (@return "Opaque policy atom consumed by select, fold, fold-by-key, collect, or once"))
 
 (@doc pragma!
-  (@desc "Session-local evaluator/configuration surface. Pragma keys select optional modes or limits for the active evaluation session; they do not redefine the core language/profile semantics of spaces or queries. For example, (pragma! search-table-mode variant) enables the current variant-table memoization mode for repeated search in this session, while other backends or future language surfaces may realize the same user-visible behavior differently.")
+  (@desc "Session-local evaluator/configuration interface. Pragma keys select optional modes or limits for the active evaluation session; they do not redefine the core language/profile semantics of spaces or queries. For example, (pragma! search-table-mode variant) enables the current variant-table memoization mode for repeated search in this session, while other backends or future language interfaces may realize the same user-visible behavior differently.")
   (@params (
     (@param "Pragma key as a Symbol")
     (@param "Requested mode, limit, or payload for that key")))
   (@return "Unit when the pragma is accepted, or the original pragma form when the active language/profile leaves that key uninterpreted"))
 
 (@doc with-space-snapshot
-  (@desc "CeTTa / HE-extended snapshot-binding surface. Binds a frozen copy of a space to the first parameter while evaluating the body, so reads see the snapshot while writes can still target the live space explicitly.")
+  (@desc "CeTTa / HE-extended snapshot-binding interface. Binds a frozen copy of a space to the first parameter while evaluating the body, so reads see the snapshot while writes can still target the live space explicitly.")
   (@params (
     (@param "Binder or pattern that receives the snapshot space")
     (@param "Live source space to snapshot")
@@ -271,14 +271,14 @@
   (@return "Fresh space value"))
 
 (@doc space-set-backend!
-  (@desc "Preferred compact spelling for the low-level backend mutation surface.")
+  (@desc "Preferred compact spelling for the low-level backend mutation interface.")
   (@params (
     (@param "Space to mutate")
     (@param "Backend symbol such as native, pathmap, or the diagnostic lane native-candidate-exact")))
   (@return "Unit on success"))
 
 (@doc space-set-match-backend!
-  (@desc "Legacy longer spelling for the low-level backend mutation surface. This remains available for compatibility, but new code should prefer space-set-backend!. The MORK lane is no longer reachable here: use lib/mork.metta for explicit MORK handles instead.")
+  (@desc "Legacy longer spelling for the low-level backend mutation interface. This remains available for compatibility, but new code should prefer space-set-backend!. The MORK lane is no longer reachable here: use lib/mork.metta for explicit MORK handles instead.")
   (@params (
     (@param "Space to mutate")
     (@param "Backend symbol such as native, pathmap, or the diagnostic lane native-candidate-exact")))
@@ -288,7 +288,7 @@
   (space-set-backend! $space $backend))
 
 (@doc space-len
-  (@desc "Returns the current number of stored items in a space. Unlike count-atoms, this is an explicit structured-space surface.")
+  (@desc "Returns the current number of stored items in a space. Unlike count-atoms, this is an explicit structured-space interface.")
   (@params (
     (@param "Space to inspect")))
   (@return "Current item count as a Number"))
@@ -333,7 +333,7 @@
   (@return "Unit on success"))
 
 (@doc step!
-  (@desc "Low-level stepping surface. The one-argument form performs one step. The two-argument form performs up to the given non-negative step count. Ordinary native/pathmap spaces report NoStepSemantics. Explicit MORK workflows should use mork:step! from lib/mork.metta by default; if you enable (pragma! mork-space-sugar allow), overlapping generic space operations elaborate onto explicit MorkSpace helpers instead of introducing a separate generic MORK space kind.")
+  (@desc "Low-level stepping interface. The one-argument form performs one step. The two-argument form performs up to the given non-negative step count. Ordinary native/pathmap spaces report NoStepSemantics. Explicit MORK workflows should use mork:step! from lib/mork.metta by default; if you enable (pragma! mork-space-sugar allow), overlapping generic space operations elaborate onto explicit MorkSpace helpers instead of introducing a separate generic MORK space kind.")
   (@params (
     (@param "Target space")
     (@param "Optional non-negative step count")))
@@ -346,14 +346,14 @@
   (@return "Unit on success, or an Error value on failure"))
 
 (@doc import!
-  (@desc "Loads a module into &self or a fresh &name. CeTTa keeps imports transactional when materializing into existing spaces; fresh compiled .act imports may stay attached as compiled PathMap spaces instead of reparsing. Raw .mm2 files are not imported through the generic CeTTa surface: import! rejects .mm2 specs, while explicit MorkSpace workflows use include with sugar enabled or the direct mork:include! helper. Loader failures can surface ModuleImportCycle, ModuleParseFailed, or a module-format-specific load error.")
+  (@desc "Loads a module into &self or a fresh &name. CeTTa keeps imports transactional when materializing into existing spaces; fresh compiled .act imports may stay attached as compiled PathMap spaces instead of reparsing. Raw .mm2 files are not imported through the generic CeTTa module syntax: import! rejects .mm2 specs, while explicit MorkSpace workflows use include with sugar enabled or the direct mork:include! helper. Loader failures can report ModuleImportCycle, ModuleParseFailed, or a module-format-specific load error.")
   (@params (
     (@param "Destination space reference: &self or a fresh &name")
     (@param "Module spec or path to import")))
   (@return "Unit on success, or an Error value on failure"))
 
 (@doc get-type
-  (@desc "Returns the type notation of the input atom. CeTTa first consults visible type annotations, grounded builtin type surfaces, and operator-driven function-type inference; if no type can be found, the result is %Undefined%.")
+  (@desc "Returns the type notation of the input atom. CeTTa first consults visible type annotations, grounded builtin type declarations, and operator-driven function-type inference; if no type can be found, the result is %Undefined%.")
   (@params (
     (@param "Atom to inspect")))
   (@return "Type notation for the input atom, or %Undefined% when no type is known"))
@@ -442,7 +442,7 @@
     (chain (eval (noeval $atom)) $var
       (return $templ))))
 
-; Public fold wrapper: CeTTa keeps the HE surface by calling the compatibility
+; Public fold wrapper: CeTTa keeps the HE interface by calling the compatibility
 ; alias `_minimal-foldl-atom`, while `foldl-atom-in-space` remains the clearer
 ; explicit-space extension name over the same grounded engine.
 (= (foldl-atom $list $init $a $b $op)
@@ -537,7 +537,7 @@
         (return $or)))))
 
 ; Small public stdlib wrappers that HE exposes over existing tuple/nondeterministic
-; primitives. These are lightweight compatibility surfaces rather than new engines.
+; primitives. These are lightweight compatibility interfaces rather than new engines.
 ; Prime intercepts the nullary (empty) form as computation zero before this
 ; HE-compatible sentinel equation is considered.
 (= (empty) Empty)
@@ -607,7 +607,7 @@
 
 (= (get-doc $atom)
   (function
-    (case (__cetta_surface-available $atom)
+    (case (__cetta_builtin-available $atom)
       ((False (return Empty))
        (True
          (case (context-space)
@@ -617,7 +617,7 @@
                  ($doc (return $doc))))))))))))
 
 (= (get-doc $space $atom)
-  (if (__cetta_surface-available $atom)
+  (if (__cetta_builtin-available $atom)
     (let $meta-type (get-metatype $atom)
       (case $meta-type (
         (Expression (get-doc-atom $space $atom))

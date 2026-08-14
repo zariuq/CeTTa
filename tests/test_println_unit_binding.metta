@@ -1,4 +1,4 @@
-; HE-backed runtime surface: println! returns unit, so binding against ()
+; HE-backed runtime syntax: println! returns unit, so binding against ()
 ; should continue through let*.
 
 !(let* (

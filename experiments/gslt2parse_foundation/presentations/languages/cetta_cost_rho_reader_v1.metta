@@ -1,4 +1,4 @@
-; CeTTa cost-profile rho concrete syntax. It reuses the strict surface's
+; CeTTa cost-profile rho concrete syntax. It reuses the strict syntax's
 ; scanner and identifiers, while its term, process, signature, and stack
 ; categories remain distinct.
 (gslt-presentation-v1 CeTTaCostRhoReaderSyntaxV1

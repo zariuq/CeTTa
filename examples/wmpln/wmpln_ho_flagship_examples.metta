@@ -1,6 +1,6 @@
 !(import! &self ../../lib/lib_wmpln)
 
-; Flagship executable shadows for the HO-WM-PLN theorem surfaces.
+; Flagship executable shadows for the HO-WM-PLN theorem interfaces.
 ;
 ; These examples mirror the Lean results around:
 ; - width zero iff a classical-Henkin theory decides the represented formula,

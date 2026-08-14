@@ -1,8 +1,8 @@
 {
   "generated_on": "2026-03-26",
-  "scope": "HE runtime/backend design choices already present in CeTTa, classified as compatibility aliases, primary public surfaces, or CeTTa-only extensions.",
+  "scope": "HE runtime/backend design choices already present in CeTTa, classified as compatibility aliases, primary public interfaces, or CeTTa-only extensions.",
   "policy": {
-    "compatibility_rule": "Preserve HE-observable behavior for confirmed public/runtime surfaces.",
+    "compatibility_rule": "Preserve HE-observable behavior for confirmed public/runtime interfaces.",
     "design_rule": "Do not copy awkward HE backend layering when a cleaner CeTTa internal or public API preserves the same behavior.",
     "extension_rule": "CeTTa-only APIs are acceptable when they are labeled explicitly and kept out of the HE-core compatibility claim."
   },
@@ -18,12 +18,12 @@
   ],
   "entries": [
     {
-      "surface": "_minimal-foldl-atom",
+      "builtin": "_minimal-foldl-atom",
       "he_role": "grounded helper token used by HE stdlib foldl-atom",
       "cetta_status": "implemented",
       "classification": "compat_alias",
       "recommended_primary_api": "foldl-atom-in-space",
-      "recommended_public_he_surface": "foldl-atom",
+      "recommended_public_he_builtin": "foldl-atom",
       "keep_compat_name": true,
       "reasoning": "HE stdlib calls _minimal-foldl-atom directly, so CeTTa must keep the name for compatibility. The underscore helper name is backend-shaped, not a good primary API. CeTTa should keep one shared fold-in-space engine underneath, expose foldl-atom-in-space as the clearer explicit-space API, and retain _minimal-foldl-atom as a strict alias.",
       "quorum": {
@@ -54,12 +54,12 @@
       ]
     },
     {
-      "surface": "foldl-atom-in-space",
+      "builtin": "foldl-atom-in-space",
       "he_role": "not present in HE; CeTTa-only clearer explicit-space fold API",
       "cetta_status": "implemented",
       "classification": "clean_primary_extension",
       "recommended_primary_api": "foldl-atom-in-space",
-      "recommended_public_he_surface": "foldl-atom",
+      "recommended_public_he_builtin": "foldl-atom",
       "keep_compat_name": true,
       "reasoning": "This is the cleaner API that HE's backend helper was implicitly trying to express. It should remain a labeled CeTTa extension, not part of the HE-core claim. The existence of this extension lets CeTTa improve the public API without changing HE-observable foldl-atom behavior.",
       "quorum": {
@@ -88,14 +88,14 @@
       ]
     },
     {
-      "surface": "foldl-atom",
-      "he_role": "documented HE stdlib public surface",
+      "builtin": "foldl-atom",
+      "he_role": "documented HE stdlib public interface",
       "cetta_status": "implemented",
-      "classification": "keep_he_public_surface",
+      "classification": "keep_he_public_builtin",
       "recommended_primary_api": "foldl-atom",
-      "recommended_public_he_surface": "foldl-atom",
+      "recommended_public_he_builtin": "foldl-atom",
       "keep_compat_name": true,
-      "reasoning": "foldl-atom is the real user-facing HE API and should remain the primary compatibility surface. CeTTa is free to implement it via foldl-atom-in-space instead of HE's helper layering because the observable behavior is the compatibility target, not the backend wiring.",
+      "reasoning": "foldl-atom is the real user-facing HE API and should remain the primary compatibility interface. CeTTa is free to implement it via foldl-atom-in-space instead of HE's helper layering because the observable behavior is the compatibility target, not the backend wiring.",
       "quorum": {
         "compatibility": [
           "Chad Brown",
@@ -114,15 +114,15 @@
       ]
     },
     {
-      "surface": "capture",
+      "builtin": "capture",
       "he_role": "grounded context-dependent runtime token that captures the current space/settings",
       "cetta_status": "implemented",
-      "classification": "keep_he_public_surface",
+      "classification": "keep_he_public_builtin",
       "recommended_primary_api": "capture",
-      "recommended_public_he_surface": "capture",
+      "recommended_public_he_builtin": "capture",
       "keep_compat_name": true,
       "future_candidate_extension": "capture-in-space",
-      "reasoning": "capture is a real HE public/runtime surface, so CeTTa should keep it. The backend should be cleaner than HE's token-registration shape: a first-class captured callable is the right implementation. A future explicit-space capture-in-space API may be desirable, but it should wait until the HE/CeTTa cross-space behavior is oracle-backed.",
+      "reasoning": "capture is a real HE public/runtime interface, so CeTTa should keep it. The backend should be cleaner than HE's token-registration shape: a first-class captured callable is the right implementation. A future explicit-space capture-in-space API may be desirable, but it should wait until the HE/CeTTa cross-space behavior is oracle-backed.",
       "quorum": {
         "compatibility": [
           "Chad Brown",
@@ -151,12 +151,12 @@
       ]
     },
     {
-      "surface": "quote",
-      "he_role": "documented HE stdlib public surface, expressed there through a NotReducible backend trick",
+      "builtin": "quote",
+      "he_role": "documented HE stdlib public interface, expressed there through a NotReducible backend trick",
       "cetta_status": "implemented",
-      "classification": "keep_he_public_surface",
+      "classification": "keep_he_public_builtin",
       "recommended_primary_api": "quote",
-      "recommended_public_he_surface": "quote",
+      "recommended_public_he_builtin": "quote",
       "keep_compat_name": true,
       "reasoning": "The public behavior is essential, but HE's stdlib-level NotReducible encoding is backend-shaped and awkward. CeTTa should keep quote as the public API while implementing it directly in the evaluator so syntax is preserved cleanly and predictably. unquote can remain a stdlib equation on top.",
       "quorum": {
@@ -180,14 +180,14 @@
       ]
     },
     {
-      "surface": "unquote",
-      "he_role": "documented HE stdlib public surface layered as an equation over quote",
+      "builtin": "unquote",
+      "he_role": "documented HE stdlib public interface layered as an equation over quote",
       "cetta_status": "implemented",
-      "classification": "keep_he_public_surface",
+      "classification": "keep_he_public_builtin",
       "recommended_primary_api": "unquote",
-      "recommended_public_he_surface": "unquote",
+      "recommended_public_he_builtin": "unquote",
       "keep_compat_name": true,
-      "reasoning": "unquote is part of the public HE-facing metaprogramming surface and should remain visible as such. Unlike quote, it does not need evaluator special casing in CeTTa; keeping it as a stdlib equation over the cleaner quote implementation is the right abstraction split.",
+      "reasoning": "unquote is part of the public HE-facing metaprogramming interface and should remain visible as such. Unlike quote, it does not need evaluator special casing in CeTTa; keeping it as a stdlib equation over the cleaner quote implementation is the right abstraction split.",
       "quorum": {
         "compatibility": [
           "Chad Brown",
@@ -207,14 +207,14 @@
       ]
     },
     {
-      "surface": "sealed",
+      "builtin": "sealed",
       "he_role": "grounded alpha-freshening helper used by HE stdlib metaprogramming",
       "cetta_status": "implemented",
-      "classification": "keep_he_public_surface",
+      "classification": "keep_he_public_builtin",
       "recommended_primary_api": "sealed",
-      "recommended_public_he_surface": "sealed",
+      "recommended_public_he_builtin": "sealed",
       "keep_compat_name": true,
-      "reasoning": "sealed is already a good public name, so the improvement belongs in the backend. CeTTa should implement it via a reusable rename-vars-except helper rather than duplicating HE's exact internals. This keeps the public metaprogramming surface compatible while improving reuse for future C-based MeTTa dialects.",
+      "reasoning": "sealed is already a good public name, so the improvement belongs in the backend. CeTTa should implement it via a reusable rename-vars-except helper rather than duplicating HE's exact internals. This keeps the public metaprogramming interface compatible while improving reuse for future C-based MeTTa dialects.",
       "quorum": {
         "compatibility": [
           "Chad Brown",
@@ -242,12 +242,12 @@
       ]
     },
     {
-      "surface": "count-atoms",
+      "builtin": "count-atoms",
       "he_role": "not present in current HE docs, runtime sources, or Lean HE spec stack",
       "cetta_status": "implemented",
       "classification": "extension_only",
       "recommended_primary_api": "count-atoms",
-      "recommended_public_he_surface": null,
+      "recommended_public_he_builtin": null,
       "keep_compat_name": true,
       "reasoning": "count-atoms is a useful CeTTa extension for large-space benchmarks, but it is not part of the HE-compatible core. It should remain available, clearly labeled as an extension, and kept out of HE parity claims. It cannot be replaced cleanly by pure MeTTa without materializing the whole space.",
       "quorum": {
@@ -268,14 +268,14 @@
       ]
     },
     {
-      "surface": "include / mod-space! / print-mods!",
-      "he_role": "public HE module/admin surface with doc-vs-impl awkwardness around include return values",
+      "builtin": "include / mod-space! / print-mods!",
+      "he_role": "public HE module/admin interface with doc-vs-impl awkwardness around include return values",
       "cetta_status": "implemented",
-      "classification": "keep_he_public_surface",
+      "classification": "keep_he_public_builtin",
       "recommended_primary_api": "include / mod-space! / print-mods!",
-      "recommended_public_he_surface": "include / mod-space! / print-mods!",
+      "recommended_public_he_builtin": "include / mod-space! / print-mods!",
       "keep_compat_name": true,
-      "reasoning": "CeTTa should preserve these public HE names, but it should route them through the same typed module-spec/import-plan and loaded-module inventory seam rather than special-casing each op in the evaluator. For include specifically, the HE stdlib docs promise Unit while the current Rust implementation returns the last inline sub-eval; CeTTa follows the documented Unit-returning surface and records the mismatch explicitly.",
+      "reasoning": "CeTTa should preserve these public HE names, but it should route them through the same typed module-spec/import-plan and loaded-module inventory seam rather than special-casing each op in the evaluator. For include specifically, the HE stdlib docs promise Unit while the current Rust implementation returns the last inline sub-eval; CeTTa follows the documented Unit-returning interface and records the mismatch explicitly.",
       "quorum": {
         "compatibility": [
           "Chad Brown",
@@ -311,12 +311,12 @@
       ]
     },
     {
-      "surface": "register-module! / import!",
-      "he_role": "public HE module-loading surface",
+      "builtin": "register-module! / import!",
+      "he_role": "public HE module-loading interface",
       "cetta_status": "implemented",
-      "classification": "keep_he_public_surface",
+      "classification": "keep_he_public_builtin",
       "recommended_primary_api": "register-module! / import!",
-      "recommended_public_he_surface": "register-module! / import!",
+      "recommended_public_he_builtin": "register-module! / import!",
       "keep_compat_name": true,
       "reasoning": "CeTTa should preserve the HE-facing module API, but it should not copy backend string parsing and split internal/public load paths. The cleaner design is a typed module-spec -> import-plan -> transactional execution pipeline, with typed mount inventory underneath future admin heads.",
       "quorum": {
@@ -349,12 +349,12 @@
       ]
     },
     {
-      "surface": "module-inventory!",
+      "builtin": "module-inventory!",
       "he_role": "CeTTa programmatic admin extension motivated by HE's own print-mods! note",
       "cetta_status": "implemented",
       "classification": "clean_primary_extension",
       "recommended_primary_api": "module-inventory!",
-      "recommended_public_he_surface": "print-mods!",
+      "recommended_public_he_builtin": "print-mods!",
       "keep_compat_name": false,
       "reasoning": "HE's print-mods! implementation explicitly says the current stdout dump is a temporary stop-gap and that a special kind of Space would be better for programmatic access. CeTTa should keep print-mods! for HE compatibility, but the better primary admin abstraction is a queryable module inventory space backed by the typed provider/mount/loaded-module seam.",
       "quorum": {
@@ -386,12 +386,12 @@
       ]
     },
     {
-      "surface": "git-module!",
-      "he_role": "public HE remote-module/package surface",
+      "builtin": "git-module!",
+      "he_role": "public HE remote-module/package interface",
       "cetta_status": "implemented",
-      "classification": "keep_he_public_surface",
+      "classification": "keep_he_public_builtin",
       "recommended_primary_api": "provider-backed git-module!",
-      "recommended_public_he_surface": "git-module!",
+      "recommended_public_he_builtin": "git-module!",
       "keep_compat_name": true,
       "reasoning": "CeTTa now preserves the public HE git-module! name, but it lands it on the typed provider seam instead of copying HE's current coupling to environment caches, implicit catalog state, and RunContext hacks. The implementation now uses the system git CLI to clone an explicit local cache entry and soft-refresh it on later use, matching HE's TryFetchLatest-style behavior on the validated local file:// case. The provider contract exposes explicit locator-kind and revision-policy descriptors, so future branch/tag/catalog providers have a clean landing zone. This keeps the abstraction clean and extensible while honestly leaving libgit2-shaped failure text and HE's broader catalog/environment coupling as future compatibility work.",
       "quorum": {

@@ -65,7 +65,7 @@
 
 ; =====================================================================================
 ; (2) MeTTa CORE  (self-hosting / dogfooding)
-; The uniform S-expression surface: symbol | variable | () | ( items ).
+; The uniform S-expression syntax: symbol | variable | () | ( items ).
 ;   Expr  -> SYM | VAR | ( ) | ( Items )
 ;   Items -> Expr | Expr Items
 ; =====================================================================================
@@ -128,7 +128,7 @@
   )))
 
 ; =====================================================================================
-; (4) Megalodon CORE  (higher-order Tarski-Grothendieck set theory surface)
+; (4) Megalodon CORE  (higher-order Tarski-Grothendieck set theory syntax)
 ; Source: real .mg corpus (Mettapedia/megalodon/*.mg), how-to-megalodon.md, and
 ; Curriculum/Notation/04_megalodon_hotg_concrete_syntax.metta; upstream pinned at
 ; repos/itp-curriculum-sources/megalodon_ai4reason. Binders forall/exists (`,`) and fun

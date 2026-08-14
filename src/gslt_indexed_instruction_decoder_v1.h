@@ -4,6 +4,12 @@
 #include <stdbool.h>
 #include <stdint.h>
 
+typedef enum {
+    CETTA_GSLT_INDEXED_SAVE_INVALID_V1 = 0,
+    CETTA_GSLT_INDEXED_SAVE_IMMEDIATELY_AFTER_USE_V1 = 1,
+    CETTA_GSLT_INDEXED_SAVE_REPEATABLE_AFTER_USE_V1 = 2
+} CettaGsltIndexedSavePlacementV1;
+
 typedef struct {
     uint8_t terminal_low;
     uint8_t terminal_high;
@@ -15,6 +21,7 @@ typedef struct {
     uint32_t terminal_digit_bias;
     uint32_t continuation_radix;
     uint32_t continuation_digit_bias;
+    CettaGsltIndexedSavePlacementV1 save_placement;
 } CettaGsltIndexedInstructionPlanV1;
 
 typedef enum {
@@ -36,15 +43,23 @@ typedef enum {
     CETTA_GSLT_INDEXED_DECODE_OVERFLOW_V1 = 3,
     CETTA_GSLT_INDEXED_DECODE_SAVE_INSIDE_INDEX_V1 = 4,
     CETTA_GSLT_INDEXED_DECODE_OPEN_INDEX_AT_END_V1 = 5,
-    CETTA_GSLT_INDEXED_DECODE_INVALID_ARGUMENT_V1 = 6
+    CETTA_GSLT_INDEXED_DECODE_INVALID_ARGUMENT_V1 = 6,
+    CETTA_GSLT_INDEXED_DECODE_SAVE_WITHOUT_USE_V1 = 7,
+    CETTA_GSLT_INDEXED_DECODE_UNKNOWN_INSIDE_INDEX_V1 = 8
 } CettaGsltIndexedDecodeResultV1;
+
+typedef enum {
+    CETTA_GSLT_INDEXED_PHASE_BETWEEN_USES_V1 = 0,
+    CETTA_GSLT_INDEXED_PHASE_OPEN_INDEX_V1 = 1,
+    CETTA_GSLT_INDEXED_PHASE_JUST_COMPLETED_USE_V1 = 2
+} CettaGsltIndexedDecoderPhaseV1;
 
 typedef struct {
     CettaGsltIndexedInstructionPlanV1 plan;
     uint64_t accumulator;
     uint64_t consumed_byte_len;
     uint64_t emitted_instruction_len;
-    bool open_index;
+    CettaGsltIndexedDecoderPhaseV1 phase;
     bool ready;
 } CettaGsltIndexedInstructionDecoderV1;
 

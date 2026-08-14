@@ -26,6 +26,8 @@ static CettaGsltIndexedInstructionPlanV1 proof_dag_plan(void) {
         .terminal_digit_bias = 0u,
         .continuation_radix = 5u,
         .continuation_digit_bias = 1u,
+        .save_placement =
+            CETTA_GSLT_INDEXED_SAVE_IMMEDIATELY_AFTER_USE_V1,
     };
 }
 
@@ -41,6 +43,8 @@ static CettaGsltIndexedInstructionPlanV1 parser_index_plan(void) {
         .terminal_digit_bias = 0u,
         .continuation_radix = 10u,
         .continuation_digit_bias = 0u,
+        .save_placement =
+            CETTA_GSLT_INDEXED_SAVE_IMMEDIATELY_AFTER_USE_V1,
     };
 }
 
@@ -108,6 +112,45 @@ int main(void) {
                CETTA_GSLT_INDEXED_DECODE_SAVE_INSIDE_INDEX_V1,
            "save cannot interrupt an open parser index");
 
+    expect(cetta_gslt_indexed_instruction_decoder_init_v1(
+               &decoder, &proof) == CETTA_GSLT_INDEXED_DECODE_OK_V1 &&
+               cetta_gslt_indexed_instruction_feed_v1(
+                   &decoder, 65u, &event) ==
+                   CETTA_GSLT_INDEXED_DECODE_OK_V1 &&
+               cetta_gslt_indexed_instruction_feed_v1(
+                   &decoder, 90u, &event) ==
+                   CETTA_GSLT_INDEXED_DECODE_OK_V1 &&
+               cetta_gslt_indexed_instruction_feed_v1(
+                   &decoder, 90u, &event) ==
+                   CETTA_GSLT_INDEXED_DECODE_SAVE_WITHOUT_USE_V1,
+           "a save consumes its immediately-preceding use");
+
+    expect(cetta_gslt_indexed_instruction_decoder_init_v1(
+               &decoder, &proof) == CETTA_GSLT_INDEXED_DECODE_OK_V1 &&
+               cetta_gslt_indexed_instruction_feed_v1(
+                   &decoder, 85u, &event) ==
+                   CETTA_GSLT_INDEXED_DECODE_OK_V1 &&
+               cetta_gslt_indexed_instruction_feed_v1(
+                   &decoder, 63u, &event) ==
+                   CETTA_GSLT_INDEXED_DECODE_UNKNOWN_INSIDE_INDEX_V1,
+           "unknown cannot terminate an open index");
+
+    proof.save_placement =
+        CETTA_GSLT_INDEXED_SAVE_REPEATABLE_AFTER_USE_V1;
+    expect(cetta_gslt_indexed_instruction_decoder_init_v1(
+               &decoder, &proof) == CETTA_GSLT_INDEXED_DECODE_OK_V1 &&
+               cetta_gslt_indexed_instruction_feed_v1(
+                   &decoder, 65u, &event) ==
+                   CETTA_GSLT_INDEXED_DECODE_OK_V1 &&
+               cetta_gslt_indexed_instruction_feed_v1(
+                   &decoder, 90u, &event) ==
+                   CETTA_GSLT_INDEXED_DECODE_OK_V1 &&
+               cetta_gslt_indexed_instruction_feed_v1(
+                   &decoder, 90u, &event) ==
+                   CETTA_GSLT_INDEXED_DECODE_OK_V1,
+           "repeatable-save policy is explicit generated data");
+    proof = proof_dag_plan();
+
     invalid.continuation_low = 9u;
     expect(cetta_gslt_indexed_instruction_decoder_init_v1(
                &decoder, &invalid) ==
@@ -118,7 +161,7 @@ int main(void) {
                &decoder, &parser) == CETTA_GSLT_INDEXED_DECODE_OK_V1,
            "parser plan reinitializes after rejection");
     decoder.accumulator = UINT64_MAX;
-    decoder.open_index = true;
+    decoder.phase = CETTA_GSLT_INDEXED_PHASE_OPEN_INDEX_V1;
     result = cetta_gslt_indexed_instruction_feed_v1(
         &decoder, 11u, &event);
     expect(result == CETTA_GSLT_INDEXED_DECODE_OVERFLOW_V1,

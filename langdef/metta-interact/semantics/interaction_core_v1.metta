@@ -9,7 +9,7 @@
 ; the internal evidence; the public event retains everything except the
 ; substitution environment.
 ;
-; Surface requests:
+; Syntax requests:
 ;   (! (events revision source))
 ;   (! (fire revision budget source site-name))
 ;
