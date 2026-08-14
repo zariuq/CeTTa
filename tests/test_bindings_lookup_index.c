@@ -47,6 +47,22 @@ static bool binding_is_int(Bindings *bindings, VarId id, int64_t expected) {
            value->ground.ival == expected;
 }
 
+typedef struct {
+    VarId variable;
+    uint32_t offset;
+} TestEpochCoordinate;
+
+static bool test_epoch_coordinate(
+        void *context, VarId source_variable, uint32_t *offset_out) {
+    const TestEpochCoordinate *coordinate = context;
+
+    if (!coordinate || !offset_out ||
+        source_variable != coordinate->variable)
+        return false;
+    *offset_out = coordinate->offset;
+    return true;
+}
+
 int main(void) {
     SymbolTable symbols;
     symbol_table_init(&symbols);
@@ -59,6 +75,11 @@ int main(void) {
 
     Arena arena;
     arena_init(&arena);
+
+    const char *lookup_index_setting =
+        getenv("CETTA_BINDINGS_LOOKUP_INDEX");
+    bool lookup_index_expected =
+        !(lookup_index_setting && lookup_index_setting[0] == '0');
 
     Bindings base;
     CHECK(build_bindings(&arena, 64u, &base),
@@ -224,6 +245,57 @@ int main(void) {
               inner_rolled_back && root_rolled_back,
           "rollback restores logical state without erasing or inventing work");
     bindings_builder_take(&branch, &clone);
+
+#ifdef CETTA_TEST_HOOKS
+    Bindings lazy_index_base;
+    CHECK(build_bindings(&arena, 64u, &lazy_index_base) &&
+              binding_is_int(&lazy_index_base, test_id(0u), 0),
+          "demand-synchronized index fixture starts fully indexed");
+    uint32_t lazy_synced_len = UINT32_MAX;
+    bool lazy_initially_synced =
+        bindings_lookup_index_test_synced_len(
+            &lazy_index_base, &lazy_synced_len) &&
+        lazy_synced_len == lazy_index_base.len;
+    BindingsBuilder lazy_index_branch;
+    bindings_builder_init_owned(&lazy_index_branch, &lazy_index_base);
+    uint32_t lazy_index_mark = bindings_builder_save(&lazy_index_branch);
+    VarId lazy_index_id = test_id(6400u);
+    bool lazy_append_lags =
+        bindings_builder_add_id_fresh(
+            &lazy_index_branch, lazy_index_id, SYMBOL_ID_NONE,
+            atom_int(&arena, 6400)) &&
+        bindings_lookup_index_test_synced_len(
+            &lazy_index_branch.current, &lazy_synced_len) &&
+        lazy_synced_len + 1u == lazy_index_branch.current.len;
+    bindings_builder_rollback(&lazy_index_branch, lazy_index_mark);
+    bool unobserved_rollback_restores =
+        bindings_lookup_index_test_synced_len(
+            &lazy_index_branch.current, &lazy_synced_len) &&
+        lazy_synced_len == lazy_index_branch.current.len &&
+        bindings_lookup_id(
+            &lazy_index_branch.current, lazy_index_id) == NULL;
+    CHECK(!lookup_index_expected ||
+              (lazy_initially_synced && lazy_append_lags &&
+               unobserved_rollback_restores),
+          "unobserved append and suffix rollback avoid derived index work");
+
+    lazy_index_mark = bindings_builder_save(&lazy_index_branch);
+    bool observed_append_synchronizes =
+        bindings_builder_add_id_fresh(
+            &lazy_index_branch, lazy_index_id, SYMBOL_ID_NONE,
+            atom_int(&arena, 6400)) &&
+        bindings_lookup_index_test_synced_len(
+            &lazy_index_branch.current, &lazy_synced_len) &&
+        lazy_synced_len + 1u == lazy_index_branch.current.len &&
+        binding_is_int(&lazy_index_branch.current, lazy_index_id, 6400) &&
+        bindings_lookup_index_test_synced_len(
+            &lazy_index_branch.current, &lazy_synced_len) &&
+        lazy_synced_len == lazy_index_branch.current.len;
+    CHECK(!lookup_index_expected || observed_append_synchronizes,
+          "first lookup synchronizes the complete authoritative prefix");
+    bindings_builder_rollback(&lazy_index_branch, lazy_index_mark);
+    bindings_builder_free(&lazy_index_branch);
+#endif
 
     CHECK(sizeof(BindingsBuilderTrailEntry) <= 16u,
           "the hot rollback checkpoint excludes cold Prime payloads");
@@ -530,10 +602,6 @@ int main(void) {
           "hash-stable projection uses the acyclic variable collector");
     bindings_free(&projected);
 
-    const char *lookup_index_setting =
-        getenv("CETTA_BINDINGS_LOOKUP_INDEX");
-    bool lookup_index_expected =
-        !(lookup_index_setting && lookup_index_setting[0] == '0');
     Bindings unmarked_projection_source;
     bindings_init(&unmarked_projection_source);
     bool unmarked_projection_fixture = build_bindings(
@@ -768,6 +836,49 @@ int main(void) {
               activation_first_entry, &activation_chained_resolved) &&
               activation_chained_resolved == activation_value,
           "an activation view follows outer variable links to a closed value");
+    activation_chained_resolved = NULL;
+    CHECK(bindings_resolve_epoch_view_ground_at(
+              &activation_environment, activation_source, 29u,
+              activation_first_entry, 0u,
+              &activation_chained_resolved) &&
+              activation_chained_resolved == activation_value,
+          "a certified suffix coordinate resolves the same chained value");
+    activation_chained_resolved = activation_value;
+    CHECK(!bindings_resolve_epoch_view_ground_at(
+              &activation_environment, activation_source, 29u,
+              activation_first_entry, 1u,
+              &activation_chained_resolved) &&
+              activation_chained_resolved == NULL,
+          "a mismatched suffix coordinate fails closed for ordinary lookup");
+    TestEpochCoordinate activation_coordinate = {
+        .variable = activation_source->var_id,
+        .offset = 0u,
+    };
+    uint64_t activation_coordinate_hits = 0u;
+    uint64_t activation_coordinate_fallbacks = 0u;
+    Atom *activation_coordinate_result =
+        bindings_apply_epoch_then_all_coordinates(
+            &activation_environment, &arena, activation_source, 29u,
+            activation_first_entry, test_epoch_coordinate,
+            &activation_coordinate, &activation_coordinate_hits,
+            &activation_coordinate_fallbacks);
+    CHECK(activation_coordinate_result == activation_fused &&
+              activation_coordinate_hits == 1u &&
+              activation_coordinate_fallbacks == 0u,
+          "an exact epoch coordinate preserves whole-term materialization");
+    activation_coordinate.offset = 1u;
+    activation_coordinate_hits = 0u;
+    activation_coordinate_fallbacks = 0u;
+    activation_coordinate_result =
+        bindings_apply_epoch_then_all_coordinates(
+            &activation_environment, &arena, activation_source, 29u,
+            activation_first_entry, test_epoch_coordinate,
+            &activation_coordinate, &activation_coordinate_hits,
+            &activation_coordinate_fallbacks);
+    CHECK(activation_coordinate_result == activation_fused &&
+              activation_coordinate_hits == 0u &&
+              activation_coordinate_fallbacks == 1u,
+          "a stale epoch coordinate falls back to authoritative lookup");
     Atom *activation_prefix_resolved = activation_value;
     CHECK(bindings_resolve_epoch_view_ground(
               &activation_environment, activation_prefix_source, 29u,
@@ -930,6 +1041,142 @@ int main(void) {
                   &view_compiled_arena, 59u) &&
               bindings_builder_save(&view_compiled) == invalid_view_mark,
           "activation-view matcher rejects an invalid frame boundary without mutation");
+
+    /* Open activation matching is a branch transaction.  A repeated local
+     * variable can acquire a binding before a later occurrence disagrees;
+     * both the materialized reference and the direct view must reject, and
+     * the caller's rollback must restore the exact entry state. */
+    Atom *view_fail_left = atom_expr3(
+        &arena, atom_symbol(&arena, "OpenPair"),
+        view_local, view_local);
+    Atom *view_fail_right = atom_expr3(
+        &arena, atom_symbol(&arena, "OpenPair"),
+        atom_int(&arena, 7405), atom_int(&arena, 7406));
+    BindingsBuilder view_fail_reference;
+    BindingsBuilder view_fail_compiled;
+    bool view_fail_reference_ready = bindings_builder_init(
+        &view_fail_reference, NULL);
+    bool view_fail_compiled_ready = bindings_builder_init(
+        &view_fail_compiled, NULL);
+    Arena view_fail_reference_arena;
+    Arena view_fail_compiled_arena;
+    arena_init(&view_fail_reference_arena);
+    arena_init(&view_fail_compiled_arena);
+    uint32_t view_fail_reference_mark = view_fail_reference_ready
+        ? bindings_builder_save(&view_fail_reference) : 0u;
+    uint32_t view_fail_compiled_mark = view_fail_compiled_ready
+        ? bindings_builder_save(&view_fail_compiled) : 0u;
+    ArenaMark view_fail_reference_arena_mark =
+        arena_mark(&view_fail_reference_arena);
+    ArenaMark view_fail_compiled_arena_mark =
+        arena_mark(&view_fail_compiled_arena);
+    Atom *view_fail_materialized = view_fail_reference_ready
+        ? bindings_apply_epoch_then_all(
+              &view_fail_reference.current, &view_fail_reference_arena,
+              view_fail_left, 61u, 0u)
+        : NULL;
+    bool view_fail_reference_match = view_fail_materialized &&
+        match_atoms_epoch_builder(
+            view_fail_materialized, view_fail_right,
+            &view_fail_reference, &view_fail_reference_arena, 67u);
+    bool view_fail_compiled_match = view_fail_compiled_ready &&
+        match_atoms_epoch_view_builder(
+            view_fail_left, 61u, 0u, view_fail_right,
+            &view_fail_compiled, &view_fail_compiled_arena, 67u);
+    if (view_fail_reference_ready) {
+        bindings_builder_rollback(
+            &view_fail_reference, view_fail_reference_mark);
+        arena_reset(
+            &view_fail_reference_arena,
+            view_fail_reference_arena_mark);
+    }
+    if (view_fail_compiled_ready) {
+        bindings_builder_rollback(
+            &view_fail_compiled, view_fail_compiled_mark);
+        arena_reset(
+            &view_fail_compiled_arena,
+            view_fail_compiled_arena_mark);
+    }
+    CHECK(!view_fail_reference_match && !view_fail_compiled_match &&
+              view_fail_reference_ready && view_fail_compiled_ready &&
+              bindings_eq(
+                  &view_fail_reference.current,
+                  &view_fail_compiled.current) &&
+              view_fail_reference.current.len == 0u,
+          "open activation mismatch rejects and transactionally restores both paths");
+
+    /* A successful bidirectional walk may expose a cyclic substitution.  The
+     * production branch rejects that result before publication, then rolls
+     * back.  Exercise the same boundary on the direct and materialized paths. */
+    Atom *view_cycle_candidate = atom_var_with_id(
+        &arena, "view-cycle-candidate", test_id(7407u));
+    Atom *view_cycle_left = atom_expr3(
+        &arena, atom_symbol(&arena, "OpenCycle"),
+        view_local, view_local);
+    Atom *view_cycle_right = atom_expr3(
+        &arena, atom_symbol(&arena, "OpenCycle"),
+        atom_expr2(
+            &arena, atom_symbol(&arena, "Wrap"),
+            view_cycle_candidate),
+        view_cycle_candidate);
+    BindingsBuilder view_cycle_reference;
+    BindingsBuilder view_cycle_compiled;
+    bool view_cycle_reference_ready = bindings_builder_init(
+        &view_cycle_reference, NULL);
+    bool view_cycle_compiled_ready = bindings_builder_init(
+        &view_cycle_compiled, NULL);
+    Arena view_cycle_reference_arena;
+    Arena view_cycle_compiled_arena;
+    arena_init(&view_cycle_reference_arena);
+    arena_init(&view_cycle_compiled_arena);
+    uint32_t view_cycle_reference_mark = view_cycle_reference_ready
+        ? bindings_builder_save(&view_cycle_reference) : 0u;
+    uint32_t view_cycle_compiled_mark = view_cycle_compiled_ready
+        ? bindings_builder_save(&view_cycle_compiled) : 0u;
+    Atom *view_cycle_materialized = view_cycle_reference_ready
+        ? bindings_apply_epoch_then_all(
+              &view_cycle_reference.current,
+              &view_cycle_reference_arena,
+              view_cycle_left, 71u, 0u)
+        : NULL;
+    bool view_cycle_reference_match = view_cycle_materialized &&
+        match_atoms_epoch_builder(
+            view_cycle_materialized, view_cycle_right,
+            &view_cycle_reference, &view_cycle_reference_arena, 73u);
+    bool view_cycle_compiled_match = view_cycle_compiled_ready &&
+        match_atoms_epoch_view_builder(
+            view_cycle_left, 71u, 0u, view_cycle_right,
+            &view_cycle_compiled, &view_cycle_compiled_arena, 73u);
+    bool view_cycle_reference_loop = view_cycle_reference_ready &&
+        bindings_has_loop(&view_cycle_reference.current);
+    bool view_cycle_compiled_loop = view_cycle_compiled_ready &&
+        bindings_has_loop(&view_cycle_compiled.current);
+    if (view_cycle_reference_ready)
+        bindings_builder_rollback(
+            &view_cycle_reference, view_cycle_reference_mark);
+    if (view_cycle_compiled_ready)
+        bindings_builder_rollback(
+            &view_cycle_compiled, view_cycle_compiled_mark);
+    CHECK(view_cycle_reference_match && view_cycle_compiled_match &&
+              view_cycle_reference_loop && view_cycle_compiled_loop &&
+              bindings_eq(
+                  &view_cycle_reference.current,
+                  &view_cycle_compiled.current) &&
+              view_cycle_reference.current.len == 0u,
+          "open activation cycle is detected and rolled back before publication");
+
+    arena_free(&view_cycle_compiled_arena);
+    arena_free(&view_cycle_reference_arena);
+    if (view_cycle_compiled_ready)
+        bindings_builder_free(&view_cycle_compiled);
+    if (view_cycle_reference_ready)
+        bindings_builder_free(&view_cycle_reference);
+    arena_free(&view_fail_compiled_arena);
+    arena_free(&view_fail_reference_arena);
+    if (view_fail_compiled_ready)
+        bindings_builder_free(&view_fail_compiled);
+    if (view_fail_reference_ready)
+        bindings_builder_free(&view_fail_reference);
 
     arena_free(&view_whole_compiled_arena);
     arena_free(&view_whole_reference_arena);

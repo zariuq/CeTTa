@@ -2061,6 +2061,47 @@ static bool ppproof_runtime_v1_input_byte_rows(
     return true;
 }
 
+static bool ppproof_runtime_v1_append_exact_distinct_rows(
+    const PPProofRuntimeImplV1 *impl,
+    const PPRelationalStoreV1 *store,
+    PPProofRuntimeRowsV1 *rows,
+    uint32_t left_value,
+    uint32_t right_value,
+    char *error_buf,
+    size_t error_buf_size) {
+    bool equal = false;
+    uint32_t descriptor_index;
+
+    if (!ppproof_runtime_v1_store_values_equal(
+            store, left_value, right_value, &equal))
+        return ppproof_runtime_v1_fail(
+            error_buf, error_buf_size,
+            "generated header admission could not compare state values");
+    if (equal)
+        return true;
+    for (descriptor_index = 0u;
+         descriptor_index < impl->distinct_pair_len;
+         descriptor_index++) {
+        const PPProofRuntimeDistinctPairsV1 *pairs =
+            &impl->distinct_pairs[descriptor_index];
+        Atom *left = ppproof_runtime_v1_value(
+            impl, store, rows, left_value);
+        Atom *right = ppproof_runtime_v1_value(
+            impl, store, rows, right_value);
+        if (!left || !right ||
+            !ppproof_runtime_v1_rows_append(
+                rows, ppproof_runtime_v1_binary(
+                    &rows->arena, pairs->relation, left, right)) ||
+            !ppproof_runtime_v1_rows_append(
+                rows, ppproof_runtime_v1_binary(
+                    &rows->arena, pairs->relation, right, left)))
+            return ppproof_runtime_v1_fail(
+                error_buf, error_buf_size,
+                "generated header admission exhausted exact disequality rows");
+    }
+    return true;
+}
+
 static Atom *ppproof_runtime_v1_initial_label_list(
     const PPProofRuntimeImplV1 *impl,
     const PPRelationalStateProofV1Request *request,
@@ -2137,6 +2178,19 @@ static Atom *ppproof_runtime_v1_initial_label_list(
                   &rows->arena, impl->compressed_label_wrapper,
                   owner, label)))
             goto malformed;
+        for (index = 0u; index < request->proof_len; index++) {
+            uint32_t explicit_value = 0u;
+            if (!store->value_intern(
+                    store->context,
+                    request->proof[index].bytes,
+                    request->proof[index].len,
+                    &explicit_value) ||
+                !ppproof_runtime_v1_append_exact_distinct_rows(
+                    impl, store, rows,
+                    values[impl->compressed_initial_value_column],
+                    explicit_value, error_buf, error_buf_size))
+                goto malformed;
+        }
         seen++;
     } while (found);
     if (seen != initial_len)
@@ -2194,11 +2248,94 @@ ppproof_runtime_v1_outcome_query(
     return NULL;
 }
 
+static CettaGsltIndexedInstructionPlanV1
+ppproof_runtime_v1_instruction_plan(
+    const PPRelationalStateProofMachineV1 *machine) {
+    if (!machine)
+        return (CettaGsltIndexedInstructionPlanV1){0};
+    return (CettaGsltIndexedInstructionPlanV1){
+        .terminal_low = machine->terminal_low,
+        .terminal_high = machine->terminal_high,
+        .continuation_low = machine->continuation_low,
+        .continuation_high = machine->continuation_high,
+        .save_byte = machine->save_byte,
+        .unknown_byte = machine->unknown_byte,
+        .terminal_radix = machine->terminal_radix,
+        .terminal_digit_bias = machine->terminal_digit_bias,
+        .continuation_radix = machine->continuation_radix,
+        .continuation_digit_bias = machine->continuation_digit_bias,
+        .save_placement = machine->save_placement,
+    };
+}
+
+/*
+ * Compressed bytes are an indexed-instruction wire language.  Reject a
+ * malformed stream before relational proof search, while threading one
+ * decoder state across lexical chunks.  The generated proof-machine record
+ * supplies the complete alphabet and save-placement policy.
+ */
+static CettaGsltIndexedDecodeResultV1
+ppproof_runtime_v1_check_instruction_stream(
+    const PPRelationalStateProofV1Request *request,
+    uint64_t *instruction_len_out) {
+    CettaGsltIndexedInstructionDecoderV1 decoder = {0};
+    CettaGsltIndexedInstructionPlanV1 plan;
+    CettaGsltIndexedDecodeResultV1 result;
+    uint64_t instruction_len = 0u;
+
+    if (instruction_len_out)
+        *instruction_len_out = 0u;
+    if (!request || !request->compressed || !request->state_plan ||
+        request->proof_machine_id >= request->state_plan->proof_machine_len)
+        return CETTA_GSLT_INDEXED_DECODE_INVALID_ARGUMENT_V1;
+    plan = ppproof_runtime_v1_instruction_plan(
+        &request->state_plan->proof_machines[request->proof_machine_id]);
+    result = cetta_gslt_indexed_instruction_decoder_init_v1(
+        &decoder, &plan);
+    if (result != CETTA_GSLT_INDEXED_DECODE_OK_V1)
+        return result;
+    for (uint32_t chunk = 0u; chunk < request->code_len; chunk++) {
+        if (!request->code[chunk].bytes || request->code[chunk].len == 0u)
+            return CETTA_GSLT_INDEXED_DECODE_INVALID_ARGUMENT_V1;
+        for (uint32_t index = 0u;
+             index < request->code[chunk].len; index++) {
+            CettaGsltIndexedInstructionEventV1 event;
+
+            result = cetta_gslt_indexed_instruction_feed_v1(
+                &decoder, request->code[chunk].bytes[index], &event);
+            if (result != CETTA_GSLT_INDEXED_DECODE_OK_V1)
+                return result;
+            if (event.kind != CETTA_GSLT_INDEXED_INSTRUCTION_NONE_V1) {
+                if (instruction_len == UINT64_MAX)
+                    return CETTA_GSLT_INDEXED_DECODE_OVERFLOW_V1;
+                instruction_len++;
+                if (instruction_len_out)
+                    *instruction_len_out = instruction_len;
+            }
+        }
+    }
+    result = cetta_gslt_indexed_instruction_finish_v1(&decoder);
+    if (result == CETTA_GSLT_INDEXED_DECODE_OK_V1 && instruction_len_out)
+        *instruction_len_out = instruction_len;
+    return result;
+}
+
+static bool ppproof_runtime_v1_instruction_input_rejected(
+    CettaGsltIndexedDecodeResultV1 result) {
+    return result == CETTA_GSLT_INDEXED_DECODE_INVALID_BYTE_V1 ||
+        result == CETTA_GSLT_INDEXED_DECODE_OVERFLOW_V1 ||
+        result == CETTA_GSLT_INDEXED_DECODE_SAVE_INSIDE_INDEX_V1 ||
+        result == CETTA_GSLT_INDEXED_DECODE_OPEN_INDEX_AT_END_V1 ||
+        result == CETTA_GSLT_INDEXED_DECODE_SAVE_WITHOUT_USE_V1 ||
+        result == CETTA_GSLT_INDEXED_DECODE_UNKNOWN_INSIDE_INDEX_V1;
+}
+
 static bool ppproof_runtime_v1_compiled_audit(
     PPProofRuntimeImplV1 *impl,
     const CettaGsltProviderRegistryV1 *providers,
     Atom *query,
     PPOSLFNativeVMOutcomeV1 primary_outcome,
+    const PPOSLFNativeVMStatsV1 *primary_stats,
     char *error_buf,
     size_t error_buf_size) {
     Arena output;
@@ -2345,8 +2482,12 @@ static bool ppproof_runtime_v1_compiled_audit(
         return ppproof_runtime_v1_fail(
             error_buf, error_buf_size,
             "generated proof realizations disagree on %s: primary=%u "
-            "compiled=%u answers=%zu attempts=%llu",
+            "primary-attempts=%llu primary-depth=%u compiled=%u "
+            "answers=%zu attempts=%llu",
             query_name, (unsigned)primary_outcome,
+            (unsigned long long)(primary_stats
+                ? primary_stats->rule_attempts : 0u),
+            primary_stats ? primary_stats->maximum_goal_depth : 0u,
             (unsigned)compiled_outcome, compiled_answer_count,
             (unsigned long long)compiled_rule_attempts);
     }
@@ -2383,6 +2524,7 @@ static PPRelationalStateProofV1Result ppproof_runtime_v1_execute(
     uint32_t candidate_len;
     uint32_t priority;
     uint32_t index;
+    bool instruction_decoder_rejected = false;
     bool ok = false;
 
     if (error_buf && error_buf_size > 0u)
@@ -2390,6 +2532,7 @@ static PPRelationalStateProofV1Result ppproof_runtime_v1_execute(
     if (!impl || !request || !request->store ||
         !pprelational_store_v1_valid(request->store) ||
         request->state_plan != impl->state_plan ||
+        request->proof_machine_id >= request->state_plan->proof_machine_len ||
         !request->label.bytes ||
         request->label.len == 0u || !request->claim ||
         request->claim_len == 0u ||
@@ -2495,6 +2638,30 @@ static PPRelationalStateProofV1Result ppproof_runtime_v1_execute(
             rows.rows, rows.row_len,
             error_buf, error_buf_size))
         goto done;
+    if (request->compressed) {
+        CettaGsltIndexedDecodeResultV1 decode_result =
+            ppproof_runtime_v1_check_instruction_stream(
+                request, &impl->receipt.decoded_instruction_len);
+
+        impl->receipt.instruction_decoder_checked = true;
+        impl->receipt.instruction_decode_result = decode_result;
+        if (decode_result != CETTA_GSLT_INDEXED_DECODE_OK_V1) {
+            if (!ppproof_runtime_v1_instruction_input_rejected(
+                    decode_result)) {
+                (void)ppproof_runtime_v1_fail(
+                    error_buf, error_buf_size,
+                    "generated indexed-instruction decoder is invalid: %u",
+                    (unsigned)decode_result);
+                goto done;
+            }
+            instruction_decoder_rejected = true;
+            result.outcome = PPOSLF_NATIVE_VM_NO_PROOF_V1;
+            memcpy(result.program_digest,
+                   impl->native_plan->semantic_digest,
+                   sizeof(result.program_digest));
+            goto seal_result;
+        }
+    }
     if (impl->compiled_audit_language) {
         CettaGsltFiniteFactSpanV1 spans[2] = {
             {
@@ -2539,18 +2706,22 @@ static PPRelationalStateProofV1Result ppproof_runtime_v1_execute(
                 impl,
                 cetta_gslt_finite_fact_provider_set_registry_v1(
                     compiled_audit_providers),
-                query, result.outcome, error_buf, error_buf_size))
+                query, result.outcome, &result.stats,
+                error_buf, error_buf_size))
             goto done;
         if (result.outcome != PPOSLF_NATIVE_VM_NO_PROOF_V1)
             break;
     }
-    if (!candidate || priority >= candidate_len)
+seal_result:
+    if (!instruction_decoder_rejected &&
+        (!candidate || priority >= candidate_len))
         candidate = ppproof_runtime_v1_outcome_query(
             impl, input, candidate_len - 1u);
     impl->receipt.outcome = result.outcome;
     impl->receipt.proof_result = PPRELATIONAL_STATE_PROOF_V1_REJECTED;
-    impl->receipt.outcome_query_priority = candidate
-        ? candidate->priority : UINT32_MAX;
+    impl->receipt.outcome_query_priority =
+        instruction_decoder_rejected || !candidate
+            ? UINT32_MAX : candidate->priority;
     impl->receipt.stats = result.stats;
     if (impl->persistent_cache->rows.row_len > UINT32_MAX - rows.row_len ||
         impl->persistent_cache->rows.constructor_chain_requests >
@@ -2577,9 +2748,19 @@ static PPRelationalStateProofV1Result ppproof_runtime_v1_execute(
         else if (result.proof_events[index].kind ==
                  PPOSLF_NATIVE_VM_PROOF_EXTERNAL_ROW_V1)
             impl->receipt.external_event_len++;
+        else if (result.proof_events[index].kind ==
+                 PPOSLF_NATIVE_VM_PROOF_COMPILED_RELATION_V1)
+            impl->receipt.compiled_relation_event_len++;
     }
     impl->receipt_ready = true;
-    if (result.outcome == PPOSLF_NATIVE_VM_PROVED_V1 && candidate) {
+    if (instruction_decoder_rejected) {
+        (void)ppproof_runtime_v1_fail(
+            error_buf, error_buf_size,
+            "generated indexed-instruction decoder rejected compressed "
+            "input: %u",
+            (unsigned)impl->receipt.instruction_decode_result);
+        outcome = PPRELATIONAL_STATE_PROOF_V1_REJECTED;
+    } else if (result.outcome == PPOSLF_NATIVE_VM_PROVED_V1 && candidate) {
         outcome = candidate->result;
         impl->receipt.proof_result = outcome;
     }

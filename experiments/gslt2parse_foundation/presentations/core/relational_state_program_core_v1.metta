@@ -17,8 +17,10 @@
     (operator source-state-operation 1)
     (operator source-state-operation-role 2)
     (operator source-state-proof-decoder-number 1)
+    (operator source-state-proof-action 3)
     (operator source-state-proof-machine 2)
     (operator source-state-proof-unknown-policy 1)
+    (operator source-state-proof-header-hypothesis-policy 1)
     (operator source-state-table 4)
     (operator source-state-table-shape 2)
     (operator source-state-write-policy 1)
@@ -46,7 +48,7 @@
     (operator state-role-list-v1 2)
     (operator state-operation-operand-valid 2)
     (operator state-operation-row-valid 3)
-    (operator state-proof-decoder-v1 11)
+    (operator state-proof-decoder-v1 13)
     (operator state-proof-kinds-v1 6)
     (operator state-proof-machine-valid 1)
     (operator state-proof-tables-v1 9)
@@ -517,7 +519,7 @@
               ?save-byte ?unknown-byte
               ?terminal-radix ?terminal-bias
               ?continuation-radix ?continuation-bias
-              ?unknown-policy))))
+              ?unknown-policy ?save-placement ?header-policy))))
       (body
         (source-state-table ?label-kind-table 2 1 ?label-kind-life)
         (source-state-lifetime ?label-kind-life)
@@ -553,7 +555,9 @@
         (source-state-proof-decoder-number ?terminal-bias)
         (source-state-proof-decoder-number ?continuation-radix)
         (source-state-proof-decoder-number ?continuation-bias)
-        (source-state-proof-unknown-policy ?unknown-policy)))
+        (source-state-proof-unknown-policy ?unknown-policy)
+        (source-state-literal ?save-placement)
+        (source-state-proof-header-hypothesis-policy ?header-policy)))
 
     (rule state-action-valid-check-proof-normal
       (head

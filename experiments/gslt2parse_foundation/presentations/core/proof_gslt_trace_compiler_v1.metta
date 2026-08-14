@@ -11,12 +11,15 @@
     (operator ProofTraceCompileCompressedV1 4)
     (operator ProofTraceCompileDictionaryV1 3)
     (operator ProofTraceCompileInstructionListV1 2)
+    (operator ProofTraceHeaderAdmittedV1 2)
+    (operator ProofTraceHeaderAllDifferentFromV1 2)
+    (operator ProofTraceHeaderListsDisjointV1 2)
     (operator ProofTraceCompileNormalAcceptedV1 3)
     (operator ProofTraceCompileNormalIncompleteAcceptedV1 3)
     (operator ProofTraceCompileNormalStatusV1 4)
     (operator ProofTraceCompileNormalV1 2)
     (operator ProofTraceDecodeV1 4)
-    (operator ProofTraceDecodeStatusV1 6)
+    (operator ProofTraceDecodeStatusV1 7)
     (operator ProofTraceDictionaryResolveV1 3)
     (operator ProofTraceInstructionConsV1 2)
     (operator ProofTraceInstructionListAppendV1 3)
@@ -26,14 +29,17 @@
     (operator ProofTraceNatMulAddV1 4)
     (operator ProofTraceNatMulV1 3)
     (operator ProofTraceNatSuccV1 1)
+    (operator ProofTraceSavePhaseTransitionV1 2)
     (operator source-proof-trace-continuation-code-v1 3)
     (operator source-proof-trace-accept-incomplete-compressed-byte-v1 1)
     (operator source-proof-trace-accept-incomplete-normal-byte-v1 1)
     (operator source-proof-trace-input-incomplete-compressed-code-v1 1)
     (operator source-proof-trace-input-incomplete-normal-label-v1 1)
+    (operator source-proof-trace-input-label-different-v1 2)
     (operator source-proof-trace-label-instruction-v1 2)
     (operator source-proof-trace-nat-alias-v1 2)
     (operator source-proof-trace-save-code-v1 1)
+    (operator source-proof-trace-save-placement-v1 1)
     (operator source-proof-trace-terminal-code-v1 3)
   )
   (equations)
@@ -115,11 +121,41 @@
       (body
         (source-proof-trace-label-instruction-v1 ?label ?instruction)
         (ProofTraceCompileInstructionListV1 ?labels ?instructions)))
+    (rule proof-trace-header-all-different-nil-v1
+      (head
+        (ProofTraceHeaderAllDifferentFromV1
+          ?label ProofTraceLabelNilV1))
+      (body))
+    (rule proof-trace-header-all-different-cons-v1
+      (head
+        (ProofTraceHeaderAllDifferentFromV1
+          ?label (ProofTraceLabelConsV1 ?head ?tail)))
+      (body
+        (source-proof-trace-input-label-different-v1 ?label ?head)
+        (ProofTraceHeaderAllDifferentFromV1 ?label ?tail)))
+    (rule proof-trace-header-lists-disjoint-nil-v1
+      (head
+        (ProofTraceHeaderListsDisjointV1
+          ?initial ProofTraceLabelNilV1))
+      (body))
+    (rule proof-trace-header-lists-disjoint-cons-v1
+      (head
+        (ProofTraceHeaderListsDisjointV1
+          ?initial (ProofTraceLabelConsV1 ?label ?explicit)))
+      (body
+        (ProofTraceHeaderAllDifferentFromV1 ?label ?initial)
+        (ProofTraceHeaderListsDisjointV1 ?initial ?explicit)))
+    (rule proof-trace-header-admitted-v1
+      (head
+        (ProofTraceHeaderAdmittedV1 ?initial ?explicit))
+      (body
+        (ProofTraceHeaderListsDisjointV1 ?initial ?explicit)))
     (rule proof-trace-compile-dictionary-v1
       (head
         (ProofTraceCompileDictionaryV1
           ?initial-labels ?explicit-labels ?dictionary))
       (body
+        (ProofTraceHeaderAdmittedV1 ?initial-labels ?explicit-labels)
         (ProofTraceCompileInstructionListV1
           ?initial-labels ?initial-instructions)
         (ProofTraceCompileInstructionListV1
@@ -157,12 +193,21 @@
           ?dictionary ?codes ?accumulator ?trace))
       (body
         (ProofTraceDecodeStatusV1
-          ?dictionary ?codes ?accumulator ProofTraceNoTargetV1
+          ?dictionary ?codes ?accumulator ProofTracePhaseBetweenV1
+          ProofTraceNoTargetV1
           ProofTraceStatusCompleteV1 ?trace)))
-    (rule proof-trace-decode-status-nil-v1
+    (rule proof-trace-decode-status-nil-between-v1
       (head
         (ProofTraceDecodeStatusV1
           ?dictionary ProofTraceCodeNilV1 ProofTraceNatZeroV1
+          ProofTracePhaseBetweenV1
+          ?target ProofTraceStatusCompleteV1 ProofTraceNilV1))
+      (body))
+    (rule proof-trace-decode-status-nil-completed-v1
+      (head
+        (ProofTraceDecodeStatusV1
+          ?dictionary ProofTraceCodeNilV1 ProofTraceNatZeroV1
+          ProofTracePhaseJustCompletedV1
           ?target ProofTraceStatusCompleteV1 ProofTraceNilV1))
       (body))
     (rule proof-trace-decode-status-terminal-v1
@@ -170,7 +215,7 @@
         (ProofTraceDecodeStatusV1
           ?dictionary
           (ProofTraceCodeConsV1 ?code ?codes)
-          ?accumulator ?target ?status
+          ?accumulator ?phase ?target ?status
           (ProofTraceConsV1 ?instruction ?trace)))
       (body
         (source-proof-trace-terminal-code-v1 ?code ?digit ?radix)
@@ -182,13 +227,14 @@
           ?number ?dictionary ?instruction)
         (ProofTraceDecodeStatusV1
           ?dictionary ?codes ProofTraceNatZeroV1
+          ProofTracePhaseJustCompletedV1
           ?target ?status ?trace)))
     (rule proof-trace-decode-status-continuation-v1
       (head
         (ProofTraceDecodeStatusV1
           ?dictionary
           (ProofTraceCodeConsV1 ?code ?codes)
-          ?accumulator ?target ?status ?trace))
+          ?accumulator ?phase ?target ?status ?trace))
       (body
         (source-proof-trace-continuation-code-v1 ?code ?digit ?radix)
         (ProofTraceNatCanonicalV1 ?digit ?canonical-digit)
@@ -198,30 +244,63 @@
           ?next-accumulator)
         (ProofTraceDecodeStatusV1
           ?dictionary ?codes ?next-accumulator
+          ProofTracePhaseOpenIndexV1
           ?target ?status ?trace)))
+    (rule proof-trace-save-phase-immediate-v1
+      (head
+        (ProofTraceSavePhaseTransitionV1
+          ProofTracePhaseJustCompletedV1 ProofTracePhaseBetweenV1))
+      (body
+        (source-proof-trace-save-placement-v1
+          state-proof-save-immediately-after-use-v1)))
+    (rule proof-trace-save-phase-repeatable-v1
+      (head
+        (ProofTraceSavePhaseTransitionV1
+          ProofTracePhaseJustCompletedV1 ProofTracePhaseJustCompletedV1))
+      (body
+        (source-proof-trace-save-placement-v1
+          state-proof-save-repeatable-v1)))
     (rule proof-trace-decode-status-save-v1
       (head
         (ProofTraceDecodeStatusV1
           ?dictionary
           (ProofTraceCodeConsV1 ?code ?codes)
-          ProofTraceNatZeroV1 ?target ?status
+          ProofTraceNatZeroV1 ?phase ?target ?status
           (ProofTraceConsV1 ProofTraceSaveV1 ?trace)))
       (body
         (source-proof-trace-save-code-v1 ?code)
+        (ProofTraceSavePhaseTransitionV1 ?phase ?next-phase)
         (ProofTraceDecodeStatusV1
           ?dictionary ?codes ProofTraceNatZeroV1
+          ?next-phase
           ?target ?status ?trace)))
-    (rule proof-trace-decode-status-incomplete-v1
+    (rule proof-trace-decode-status-incomplete-between-v1
       (head
         (ProofTraceDecodeStatusV1
           ?dictionary
           (ProofTraceCodeConsV1 ?code ?codes)
-          ?accumulator ?target ProofTraceStatusIncompleteV1
+          ProofTraceNatZeroV1 ProofTracePhaseBetweenV1
+          ?target ProofTraceStatusIncompleteV1
           (ProofTraceConsV1 (ProofTraceIncompleteStepV1 ?target) ?trace)))
       (body
         (source-proof-trace-input-incomplete-compressed-code-v1 ?code)
         (ProofTraceDecodeStatusV1
           ?dictionary ?codes ProofTraceNatZeroV1
+          ProofTracePhaseBetweenV1
+          ?target ?tail-status ?trace)))
+    (rule proof-trace-decode-status-incomplete-completed-v1
+      (head
+        (ProofTraceDecodeStatusV1
+          ?dictionary
+          (ProofTraceCodeConsV1 ?code ?codes)
+          ProofTraceNatZeroV1 ProofTracePhaseJustCompletedV1
+          ?target ProofTraceStatusIncompleteV1
+          (ProofTraceConsV1 (ProofTraceIncompleteStepV1 ?target) ?trace)))
+      (body
+        (source-proof-trace-input-incomplete-compressed-code-v1 ?code)
+        (ProofTraceDecodeStatusV1
+          ?dictionary ?codes ProofTraceNatZeroV1
+          ProofTracePhaseBetweenV1
           ?target ?tail-status ?trace)))
 
     (rule proof-trace-compile-normal-v1
@@ -299,7 +378,8 @@
         (ProofTraceCompileDictionaryV1
           ?initial-labels ?explicit-labels ?dictionary)
         (ProofTraceDecodeStatusV1
-          ?dictionary ?codes ProofTraceNatZeroV1 ?target
+          ?dictionary ?codes ProofTraceNatZeroV1
+          ProofTracePhaseBetweenV1 ?target
           ProofTraceStatusIncompleteV1 ?trace)
         (ProofTraceAcceptedV1 ?context ?trace ?target)))
   ))

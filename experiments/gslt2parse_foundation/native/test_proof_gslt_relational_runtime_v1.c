@@ -82,7 +82,8 @@ static bool run_database(
     const PPRelationalStateProgramV1Plan *state,
     PPProofGSLTRelationalRuntimeV1 *proof_runtime,
     PPRelationalStateProofV1Result expected_result,
-    uint32_t expected_result_count) {
+    uint32_t expected_result_count,
+    bool expected_decoder_rejection) {
     uint8_t *bytes = NULL;
     size_t byte_len = 0u;
     PPRelationalStateProgramV1Run state_run;
@@ -128,15 +129,43 @@ static bool run_database(
         UINT64_C(100000000), &fold_receipt, error, sizeof(error));
     receipt_available = ppproof_gslt_relational_runtime_v1_last_receipt(
         proof_runtime, &proof_receipt);
-    if (!expect(ppproof_gslt_relational_runtime_v1_profile(
-                    proof_runtime, &profile_after) &&
-                    receipt_available &&
-                    profile_after.query_executions >=
-                        profile_before.query_executions &&
-                    profile_after.query_executions -
-                            profile_before.query_executions >=
-                        proof_receipt.outcome_query_attempts,
-                "generated query profile did not count the final request"))
+    bool profile_available =
+        ppproof_gslt_relational_runtime_v1_profile(
+            proof_runtime, &profile_after);
+    bool query_profile_consistent =
+        expected_decoder_rejection
+            ? profile_available && receipt_available &&
+                profile_after.query_executions ==
+                    profile_before.query_executions &&
+                proof_receipt.instruction_decoder_checked &&
+                proof_receipt.instruction_decode_result !=
+                    CETTA_GSLT_INDEXED_DECODE_OK_V1 &&
+                proof_receipt.outcome_query_attempts == 0u
+            : profile_available && receipt_available &&
+                profile_after.query_executions >=
+                    profile_before.query_executions &&
+                profile_after.query_executions -
+                        profile_before.query_executions >=
+                    proof_receipt.outcome_query_attempts;
+    if (!query_profile_consistent) {
+        fprintf(stderr,
+                "generated query profile diagnostic: path=%s "
+                "before=%llu after=%llu "
+                "receipt=%u available=%u receipt-available=%u "
+                "executed=%u error=%s\n",
+                path,
+                (unsigned long long)profile_before.query_executions,
+                (unsigned long long)profile_after.query_executions,
+                proof_receipt.outcome_query_attempts,
+                profile_available ? 1u : 0u,
+                receipt_available ? 1u : 0u,
+                executed ? 1u : 0u,
+                error[0] ? error : "<none>");
+    }
+    if (!expect(query_profile_consistent,
+                expected_decoder_rejection
+                    ? "wire decoder rejection unexpectedly entered proof search"
+                    : "generated query profile did not count the final request"))
         goto done;
     if (expected_result_count > 1u &&
         !expect(profile_after.query_executions -
@@ -313,6 +342,26 @@ static bool run_database(
                         proof_receipt.compiled_worklist_state_bytes_peak,
                     proof_receipt.compiled_maximum_goal_depth);
     } else {
+        bool negative_evidence_ok = expected_decoder_rejection
+            ? proof_receipt.instruction_decoder_checked &&
+                proof_receipt.instruction_decode_result !=
+                    CETTA_GSLT_INDEXED_DECODE_OK_V1 &&
+                proof_receipt.outcome_query_attempts == 0u &&
+                proof_receipt.compiled_audit_attempts == 0u &&
+                proof_receipt.compiled_audit_agreements == 0u
+            : proof_receipt.compiled_audit_attempts ==
+                    proof_receipt.outcome_query_attempts &&
+                proof_receipt.compiled_audit_agreements ==
+                    proof_receipt.compiled_audit_attempts &&
+                proof_receipt.compiled_rule_attempts > 0u &&
+                proof_receipt.compiled_constructor_guided_attempts > 0u &&
+                proof_receipt.compiled_constructor_nodes_elided > 0u &&
+                proof_receipt
+                    .compiled_variable_slot_clear_bytes_elided > 0u &&
+                proof_receipt.compiled_worklist_states_created > 0u &&
+                proof_receipt.compiled_worklist_states_reclaimed ==
+                    proof_receipt.compiled_worklist_states_created;
+
         ok = expect(!executed && !state_run.receipt.committed,
                     "invalid raw proof transaction unexpectedly committed") &&
              expect(state_run.receipt.failure ==
@@ -326,20 +375,10 @@ static bool run_database(
              expect(proof_receipt.proof_result ==
                         PPRELATIONAL_STATE_PROOF_V1_REJECTED,
                     "negative raw proof selected a non-rejection outcome") &&
-             expect(proof_receipt.compiled_audit_attempts ==
-                        proof_receipt.outcome_query_attempts &&
-                        proof_receipt.compiled_audit_agreements ==
-                        proof_receipt.compiled_audit_attempts &&
-                        proof_receipt.compiled_rule_attempts > 0u &&
-                        proof_receipt.compiled_constructor_guided_attempts >
-                            0u &&
-                        proof_receipt.compiled_constructor_nodes_elided > 0u &&
-                        proof_receipt
-                            .compiled_variable_slot_clear_bytes_elided > 0u &&
-                        proof_receipt.compiled_worklist_states_created > 0u &&
-                        proof_receipt.compiled_worklist_states_reclaimed ==
-                            proof_receipt.compiled_worklist_states_created,
-                    "compiled proof audit disagreed on a negative outcome") &&
+             expect(negative_evidence_ok,
+                    expected_decoder_rejection
+                        ? "wire decoder rejection emitted inconsistent evidence"
+                        : "compiled proof audit disagreed on a negative outcome") &&
              expect(proof_receipt.capability_digest[0] != '\0',
                     "negative proof receipt omitted its forced commitment");
     }
@@ -367,7 +406,7 @@ int main(int argc, char **argv) {
     bool initialized;
     bool ok = false;
 
-    if (argc != 14) {
+    if (argc != 17) {
         fprintf(stderr,
                 "usage: %s PROVIDER NTT POSITIVE-MM NEGATIVE-MM "
                 "POSITIVE-COMPRESSED-MM NEGATIVE-COMPRESSED-MM "
@@ -375,7 +414,10 @@ int main(int argc, char **argv) {
                 "PERSISTENT-EXTENSION-MM OPEN-SAVE-MM "
                 "INCOMPLETE-COMPRESSED-TAIL-MM "
                 "INCOMPLETE-NORMAL-TAIL-MM "
-                "OPEN-INCOMPLETE-COMPRESSED-MM\n",
+                "OPEN-INCOMPLETE-COMPRESSED-MM "
+                "EXPLICIT-MANDATORY-COMPRESSED-MM "
+                "BARE-SAVE-COMPRESSED-MM "
+                "REPEATED-SAVE-COMPRESSED-MM\n",
                 argv[0]);
         return 2;
     }
@@ -443,37 +485,46 @@ int main(int argc, char **argv) {
         goto done;
     ok = run_database(argv[3], &program, &fold, &span_mask, &state,
                       &proof_runtime, PPRELATIONAL_STATE_PROOF_V1_VERIFIED,
-                      1u) &&
+                      1u, false) &&
          run_database(argv[4], &program, &fold, &span_mask, &state,
                       &proof_runtime, PPRELATIONAL_STATE_PROOF_V1_REJECTED,
-                      0u) &&
+                      0u, false) &&
          run_database(argv[5], &program, &fold, &span_mask, &state,
                       &proof_runtime, PPRELATIONAL_STATE_PROOF_V1_VERIFIED,
-                      1u) &&
+                      1u, false) &&
          run_database(argv[6], &program, &fold, &span_mask, &state,
                       &proof_runtime, PPRELATIONAL_STATE_PROOF_V1_REJECTED,
-                      0u) &&
+                      0u, false) &&
          run_database(argv[7], &program, &fold, &span_mask, &state,
                       &proof_runtime, PPRELATIONAL_STATE_PROOF_V1_INCOMPLETE,
-                      1u) &&
+                      1u, false) &&
          run_database(argv[8], &program, &fold, &span_mask, &state,
                       &proof_runtime, PPRELATIONAL_STATE_PROOF_V1_INCOMPLETE,
-                      1u) &&
+                      1u, false) &&
          run_database(argv[9], &program, &fold, &span_mask, &state,
                       &proof_runtime, PPRELATIONAL_STATE_PROOF_V1_VERIFIED,
-                      2u) &&
+                      2u, false) &&
          run_database(argv[10], &program, &fold, &span_mask, &state,
                       &proof_runtime, PPRELATIONAL_STATE_PROOF_V1_REJECTED,
-                      0u) &&
+                      0u, true) &&
          run_database(argv[11], &program, &fold, &span_mask, &state,
                       &proof_runtime, PPRELATIONAL_STATE_PROOF_V1_REJECTED,
-                      0u) &&
+                      0u, false) &&
          run_database(argv[12], &program, &fold, &span_mask, &state,
                       &proof_runtime, PPRELATIONAL_STATE_PROOF_V1_REJECTED,
-                      0u) &&
+                      0u, false) &&
          run_database(argv[13], &program, &fold, &span_mask, &state,
-                      &proof_runtime, PPRELATIONAL_STATE_PROOF_V1_INCOMPLETE,
-                      1u) &&
+                      &proof_runtime, PPRELATIONAL_STATE_PROOF_V1_REJECTED,
+                      0u, true) &&
+         run_database(argv[14], &program, &fold, &span_mask, &state,
+                      &proof_runtime, PPRELATIONAL_STATE_PROOF_V1_REJECTED,
+                      0u, false) &&
+         run_database(argv[15], &program, &fold, &span_mask, &state,
+                      &proof_runtime, PPRELATIONAL_STATE_PROOF_V1_REJECTED,
+                      0u, true) &&
+         run_database(argv[16], &program, &fold, &span_mask, &state,
+                      &proof_runtime, PPRELATIONAL_STATE_PROOF_V1_REJECTED,
+                      0u, true) &&
          expect(constructor_sharing_observed,
                 "generated constructor-chain sharing was not exercised");
 

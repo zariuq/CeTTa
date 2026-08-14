@@ -10,5 +10,6 @@
   (source "../core/proof_gslt_trace_compiler_v1.metta")
   (source "../core/proof_gslt_trace_input_v1.metta")
   (source "../core/proof_gslt_trace_input_interface_v1.metta")
+  (source "../../../../langdef/metamath/proof_trace_policy_v1.metta")
   (source "../../../../langdef/metamath/proof_trace_codec_v1.metta")
 )

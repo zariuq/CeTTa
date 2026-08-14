@@ -202,11 +202,21 @@ typedef struct {
     void *implementation;
 } PPProofGSLTSequenceEvidenceProducerV1;
 
+typedef struct {
+    size_t arena_reserved_bytes;
+    uint32_t node_capacity;
+    uint32_t canonical_cache_capacity;
+} PPProofGSLTSequenceEvidenceWorkspaceStatsV1;
+
 void ppproof_gslt_sequence_evidence_producer_v1_init(
     PPProofGSLTSequenceEvidenceProducerV1 *producer);
 
 void ppproof_gslt_sequence_evidence_producer_v1_free(
     PPProofGSLTSequenceEvidenceProducerV1 *producer);
+
+bool ppproof_gslt_sequence_evidence_producer_v1_workspace_stats(
+    const PPProofGSLTSequenceEvidenceProducerV1 *producer,
+    PPProofGSLTSequenceEvidenceWorkspaceStatsV1 *stats_out);
 
 PPProofGSLTArticleV1Result
 ppproof_gslt_sequence_evidence_producer_v1_begin(
@@ -219,7 +229,9 @@ ppproof_gslt_sequence_evidence_producer_v1_begin(
 
 /*
  * Inputs and their token patterns must remain alive until the producer is
- * freed.  The returned term, goal, and article-node storage are producer-owned.
+ * begun again or freed.  Beginning an existing producer resets its logical
+ * contents while retaining its private workspace.  Returned terms, goals,
+ * and article-node storage are producer-owned.
  */
 PPProofGSLTArticleV1Result
 ppproof_gslt_sequence_evidence_producer_v1_instantiate(

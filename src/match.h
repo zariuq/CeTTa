@@ -111,6 +111,8 @@ typedef struct {
 } BindingsBuilder;
 
 typedef Atom *(*BindingsRewriteVarFn)(Arena *a, Atom *var, void *ctx);
+typedef bool (*BindingsEpochCoordinateFn)(
+    void *context, VarId source_variable, uint32_t *offset_out);
 
 void      bindings_init(Bindings *b);
 void      bindings_free(Bindings *b);
@@ -217,6 +219,16 @@ Atom     *bindings_lookup_var(Bindings *b, Atom *var);
 bool      bindings_resolve_epoch_view_ground(
               const Bindings *bindings, const Atom *source_variable,
               uint32_t epoch, uint32_t first_entry, Atom **ground_out);
+/*
+ * Resolve through a certified rule-local suffix coordinate.  The coordinate
+ * is accepted only when the authoritative entry at first_entry + offset has
+ * the exact epoch-qualified variable identity.  A false result asks the
+ * caller to use the ordinary lookup; no approximation is returned.
+ */
+bool      bindings_resolve_epoch_view_ground_at(
+              const Bindings *bindings, const Atom *source_variable,
+              uint32_t epoch, uint32_t first_entry, uint32_t offset,
+              Atom **ground_out);
 Atom     *binding_variable_atom(Arena *a, const Binding *binding);
 Atom     *bindings_resolve_atom_preview(Bindings *b, Atom *atom);
 bool      bindings_add_id(Bindings *b, VarId var_id, SymbolId spelling, Atom *val);
@@ -254,6 +266,15 @@ Atom     *bindings_apply_epoch_since(Bindings *b, Arena *a, Atom *atom,
 Atom     *bindings_apply_epoch_then_all(Bindings *b, Arena *a, Atom *atom,
                                         uint32_t epoch,
                                         uint32_t first_entry);
+/* Apply the same activation substitution while consulting an optional
+ * certified source-variable -> suffix-offset map before ordinary identity
+ * lookup.  Every coordinate is checked against the authoritative binding
+ * entry; a mismatch falls back and is counted rather than changing meaning. */
+Atom     *bindings_apply_epoch_then_all_coordinates(
+              Bindings *b, Arena *a, Atom *atom, uint32_t epoch,
+              uint32_t first_entry, BindingsEpochCoordinateFn coordinate,
+              void *coordinate_context, uint64_t *coordinate_hits,
+              uint64_t *coordinate_fallbacks);
 Atom     *atom_freshen_epoch(Arena *a, Atom *atom, uint32_t epoch);
 Atom     *bindings_to_atom(Arena *a, const Bindings *b);
 bool      bindings_from_atom(Atom *atom, Bindings *out);
@@ -340,6 +361,10 @@ void fresh_var_suffix_test_reset(uint64_t next_suffix);
 /* Drop only the derived VarId index so projection-path tests can observe
  * whether an operation rebuilds it.  Logical bindings are unchanged. */
 void bindings_lookup_index_test_clear(Bindings *bindings);
+/* Observe the derived index prefix certificate without exposing its
+ * production representation.  Returns false when no index is present. */
+bool bindings_lookup_index_test_synced_len(const Bindings *bindings,
+                                           uint32_t *synced_len_out);
 #endif
 
 /* Rename all variables in atom: $name → $name#suffix.

@@ -31,8 +31,14 @@ static bool exercise_stats_accumulation(void) {
     const PPOSLFNativeVMStatsV1 sample = {
         .goals_entered = 2u,
         .rule_attempts = 3u,
+        .deferred_epoch_goal_materializations = 77u,
         .activation_view_rule_attempts = 13u,
         .activation_view_fallback_materializations = 17u,
+        .epoch_goal_materializations_not_admitted = 29u,
+        .epoch_goal_materializations_not_range_restricted = 11u,
+        .epoch_goal_materializations_consumer_unsafe = 18u,
+        .epoch_goal_materializations_stale = 31u,
+        .non_epoch_goal_materialization_attempts = 37u,
         .ground_dense_view_nodes = 19u,
         .ground_dense_ground_body_reuses = 23u,
         .body_expansion_arena_bytes = 5u,
@@ -48,6 +54,17 @@ static bool exercise_stats_accumulation(void) {
                       aggregate.activation_view_rule_attempts == 13u &&
                       aggregate.activation_view_fallback_materializations ==
                           17u &&
+                      aggregate.deferred_epoch_goal_materializations == 77u &&
+                      aggregate.epoch_goal_materializations_not_admitted ==
+                          29u &&
+                      aggregate
+                          .epoch_goal_materializations_not_range_restricted ==
+                          11u &&
+                      aggregate.epoch_goal_materializations_consumer_unsafe ==
+                          18u &&
+                      aggregate.epoch_goal_materializations_stale == 31u &&
+                      aggregate.non_epoch_goal_materialization_attempts ==
+                          37u &&
                       aggregate.ground_dense_view_nodes == 19u &&
                       aggregate.ground_dense_ground_body_reuses == 23u &&
                       aggregate.body_expansion_arena_bytes == 5u &&
@@ -76,6 +93,19 @@ static Atom *binary(
     };
 
     return atom_expr(arena, elements, 3u);
+}
+
+static Atom *ternary(
+    Arena *arena, const char *head,
+    Atom *first, Atom *second, Atom *third) {
+    Atom *elements[4] = {
+        atom_symbol(arena, head),
+        first,
+        second,
+        third,
+    };
+
+    return atom_expr(arena, elements, 4u);
 }
 
 static bool exercise_positional_linear_builder_view(void) {
@@ -176,17 +206,32 @@ static bool result_contains_event_kind(
     return false;
 }
 
+static bool expect_materialization_partition(
+    const PPOSLFNativeVMStatsV1 *stats) {
+    return expect(
+        stats && stats->deferred_epoch_goal_materializations ==
+            stats->epoch_goal_materializations_not_admitted +
+            stats->epoch_goal_materializations_stale +
+            stats->activation_view_fallback_materializations &&
+            stats->epoch_goal_materializations_not_admitted ==
+                stats->epoch_goal_materializations_not_range_restricted +
+                stats->epoch_goal_materializations_consumer_unsafe,
+        "deferred epoch materializations escaped their cause partition");
+}
+
 static bool prepare_program(
     const char *path,
     uint32_t expected_steps,
     PPOSLFNativeTypePlanV1 *plan,
     PPOSLFNativeTypeVMV1 *vm) {
     char error[512] = {0};
+    bool loaded;
 
     pposlf_native_type_plan_v1_init(plan);
     pposlf_native_type_vm_v1_init(vm);
-    return expect(pposlf_native_type_plan_v1_load(
-                      plan, path, error, sizeof(error)),
+    loaded = pposlf_native_type_plan_v1_load(
+        plan, path, error, sizeof(error));
+    return expect(loaded,
                   error[0] ? error : "native NTT plan did not load") &&
            expect(plan->step_schema_len == expected_steps,
                   "native NTT step count changed") &&
@@ -216,13 +261,44 @@ static bool prove_expect(
     bool executed = pposlf_native_type_vm_v1_prove(
         vm, query, limits, result);
 
+    if (executed && result->outcome != expected) {
+        fprintf(stderr,
+                "proof outcome=%u expected=%u goals=%llu attempts=%llu "
+                "matches=%llu view-goals=%llu "
+                "view-attempts=%llu view-matches=%llu "
+                "materializations=%llu unsafe=%llu stale=%llu "
+                "tail-reuses=%llu tail-proven=%llu tail-raw=%llu\n",
+                (unsigned)result->outcome, (unsigned)expected,
+                (unsigned long long)result->stats.goals_entered,
+                (unsigned long long)result->stats.rule_attempts,
+                (unsigned long long)result->stats.rule_matches,
+                (unsigned long long)
+                    result->stats.activation_view_goal_admissions,
+                (unsigned long long)
+                    result->stats.activation_view_rule_attempts,
+                (unsigned long long)
+                    result->stats.activation_view_rule_matches,
+                (unsigned long long)
+                    result->stats.deferred_epoch_goal_materializations,
+                (unsigned long long)
+                    result->stats.epoch_goal_materializations_consumer_unsafe,
+                (unsigned long long)
+                    result->stats.epoch_goal_materializations_stale,
+                (unsigned long long)
+                    result->stats.generated_tail_frame_reuses,
+                (unsigned long long)
+                    result->stats.generated_tail_deterministic_continuations,
+                (unsigned long long)result->stats
+                    .generated_raw_tail_deterministic_continuations);
+    }
     return expect(executed, "native NTT proof request was invalid") &&
            expect(result->outcome == expected, message) &&
            expect(result->capability_digest_ready,
                   "closed native NTT proof omitted its input commitment") &&
            expect((expected == PPOSLF_NATIVE_VM_PROVED_V1) ==
                       (result->proof_event_len > 0u),
-                  "native NTT proof receipt disagrees with its verdict");
+                  "native NTT proof receipt disagrees with its verdict") &&
+           expect_materialization_partition(&result->stats);
 }
 
 static bool prove_with_capabilities_expect(
@@ -259,7 +335,8 @@ static bool prove_with_capabilities_expect(
                   "certified capability proof omitted its input commitment") &&
            expect((expected == PPOSLF_NATIVE_VM_PROVED_V1) ==
                       (result->proof_event_len > 0u),
-                  "capability proof receipt disagrees with its verdict");
+                  "capability proof receipt disagrees with its verdict") &&
+           expect_materialization_partition(&result->stats);
 }
 
 static bool exercise_canary(
@@ -302,6 +379,9 @@ static bool exercise_canary(
     uint32_t tail_live_end = 0u;
     uint32_t retained_head;
     uint32_t retained_index;
+    uint32_t cyclic_head;
+    uint32_t cyclic_edge;
+    uint32_t retained_edge;
     char error[512] = {0};
     bool ok = false;
 
@@ -414,11 +494,35 @@ static bool exercise_canary(
             PPOSLF_NATIVE_VM_PROVED_V1, &result,
             "non-raw activation-view choice did not prove"))
         goto done;
+    if (!(result.stats.activation_view_goal_admissions > 0u &&
+          result.stats.activation_view_fallback_materializations == 0u &&
+          result.stats.generated_tail_frame_reuses > 0u &&
+          result.stats.rigid_coordinate_dispatches > 0u &&
+          result.stats.rigid_coordinate_rejections > 0u)) {
+        fprintf(stderr,
+                "activation-choice stats: admissions=%llu attempts=%llu "
+                "matches=%llu materializations=%llu tail-reuses=%llu "
+                "rigid-dispatches=%llu rigid-rejections=%llu\n",
+                (unsigned long long)result.stats
+                    .activation_view_goal_admissions,
+                (unsigned long long)result.stats
+                    .activation_view_rule_attempts,
+                (unsigned long long)result.stats
+                    .activation_view_rule_matches,
+                (unsigned long long)result.stats
+                    .activation_view_fallback_materializations,
+                (unsigned long long)result.stats
+                    .generated_tail_frame_reuses,
+                (unsigned long long)result.stats.rigid_coordinate_dispatches,
+                (unsigned long long)result.stats.rigid_coordinate_rejections);
+    }
     ok = expect(result.stats.activation_view_goal_admissions > 0u &&
                     result.stats
-                        .activation_view_fallback_materializations > 0u &&
-                    result.stats.generated_tail_frame_reuses > 0u,
-                "a non-raw activation view did not force once before tail reuse") &&
+                        .activation_view_fallback_materializations == 0u &&
+                    result.stats.generated_tail_frame_reuses > 0u &&
+                    result.stats.rigid_coordinate_dispatches > 0u &&
+                    result.stats.rigid_coordinate_rejections > 0u,
+                "a non-raw activation view did not traverse alternatives directly") &&
          ok;
     pposlf_native_vm_result_v1_free(&result);
     if (!prove_expect(
@@ -692,6 +796,22 @@ static bool exercise_canary(
                     error[0] != '\0',
                 "native VM accepted a duplicated generated index") && ok;
     full_plan.head_step_indices[0] = retained_index;
+    cyclic_head = full_plan.step_schemas[0].head;
+    if (!expect(cyclic_head < full_plan.term_len &&
+                    full_plan.terms[cyclic_head].kind ==
+                        PPOSLF_NATIVE_TERM_APPLICATION_V1 &&
+                    full_plan.terms[cyclic_head].edge_len > 0u,
+                "native VM canary has no reachable application edge"))
+        goto done;
+    cyclic_edge = full_plan.terms[cyclic_head].edge_begin;
+    retained_edge = full_plan.term_edges[cyclic_edge];
+    full_plan.term_edges[cyclic_edge] = cyclic_head;
+    error[0] = '\0';
+    ok = expect(!pposlf_native_type_vm_v1_prepare(
+                    &full_vm, &full_plan, error, sizeof(error)) &&
+                    error[0] != '\0',
+                "native VM accepted a cyclic compiled term") && ok;
+    full_plan.term_edges[cyclic_edge] = retained_edge;
     pposlf_native_vm_result_v1_free(&result);
     if (!prove_expect(
             &full_vm, root_to_leaf, ample,
@@ -969,11 +1089,18 @@ static bool exercise_open_program(
                     result.stats
                         .ground_dense_expression_materializations == 0u,
                 "non-range-restricted rule entered the dense ground machine") &&
-         expect(result.stats.deferred_epoch_goal_materializations > 0u &&
+         expect(result.stats.deferred_epoch_goal_materializations ==
+                        result.stats.epoch_goal_materializations_not_admitted &&
                     result.stats.activation_view_goal_admissions == 0u &&
+                    result.stats.activation_view_fallback_materializations ==
+                        0u &&
                     result.stats
-                        .activation_view_fallback_materializations == 0u,
-                "non-range-restricted body bypassed activation-view admission") &&
+                        .epoch_goal_materializations_not_range_restricted ==
+                        result.stats.deferred_epoch_goal_materializations &&
+                    result.stats
+                        .epoch_goal_materializations_consumer_unsafe == 0u &&
+                    result.stats.epoch_goal_materializations_stale == 0u,
+                "non-range-restricted body entered activation-view admission") &&
          ok;
     pposlf_native_vm_result_v1_free(&result);
 
@@ -1285,16 +1412,31 @@ static bool exercise_trace_program(
     Atom *negative_labels;
     Atom *positive_query;
     Atom *negative_query;
+    Atom *trace_zero;
+    Atom *trace_one;
+    Atom *trace_two;
+    Atom *trace_three;
+    Atom *add_query;
     char full_capability_digest[65] = {0};
     char error[512] = {0};
     bool ok = false;
 
-    if (!prepare_program(program_path, 162u, &plan, &vm))
+    if (!prepare_program(program_path, 173u, &plan, &vm))
         return false;
     pposlf_native_capability_set_v1_init(&capabilities);
     pposlf_native_capability_set_v1_init(&deleted);
     pposlf_native_vm_result_v1_init(&result);
     arena_init(&query_arena);
+    trace_zero = atom_symbol(&query_arena, "ProofTraceNatZeroV1");
+    trace_one = unary(
+        &query_arena, "ProofTraceNatSuccV1", trace_zero);
+    trace_two = unary(
+        &query_arena, "ProofTraceNatSuccV1", trace_one);
+    trace_three = unary(
+        &query_arena, "ProofTraceNatSuccV1", trace_two);
+    add_query = ternary(
+        &query_arena, "ProofTraceNatAddV1",
+        trace_two, trace_one, trace_three);
     label_nil = atom_symbol(&query_arena, "ProofTraceLabelNilV1");
     positive_labels = binary(
         &query_arena, "ProofTraceLabelConsV1",
@@ -1312,8 +1454,51 @@ static bool exercise_trace_program(
         &query_arena, "ProofTraceInputVerifyNormalV1",
         atom_symbol(&query_arena, "input-request-v1"), negative_labels);
 
-    if (!expect(plan.external_relation_len == 15u &&
-                    plan.open_head_len == 15u,
+    if (!expect(trace_zero && trace_one && trace_two && trace_three &&
+                    add_query,
+                "compiled-relation integration fixture allocation failed") ||
+        !prove_expect(
+            &vm, add_query, limits,
+            PPOSLF_NATIVE_VM_PROVED_V1, &result,
+            "recognized unary addition did not prove") ||
+        !expect(result.proof_event_len == 1u &&
+                    result.proof_events[0].kind ==
+                        PPOSLF_NATIVE_VM_PROOF_COMPILED_RELATION_V1 &&
+                    result.stats.compiled_relation_dispatches == 1u &&
+                    result.stats.compiled_relation_matches == 1u &&
+                    result.stats.rule_attempts == 4u &&
+                    result.stats.rule_matches == 3u,
+                "compiled relation lost its receipt or source cost"))
+        goto done;
+    pposlf_native_vm_result_v1_free(&result);
+    if (!prove_expect(
+            &vm, add_query,
+            (PPOSLFNativeVMLimitsV1){
+                .maximum_rule_attempts = 3u,
+                .maximum_goal_depth = limits.maximum_goal_depth,
+            },
+            PPOSLF_NATIVE_VM_RESOURCE_EXHAUSTED_V1, &result,
+            "compiled relation changed the exact rule-attempt limit") ||
+        !expect(result.stats.compiled_relation_deferrals > 0u,
+                "insufficient compiled-relation budget did not fail closed"))
+        goto done;
+    pposlf_native_vm_result_v1_free(&result);
+    if (!prove_expect(
+            &vm, add_query,
+            (PPOSLFNativeVMLimitsV1){
+                .maximum_rule_attempts = limits.maximum_rule_attempts,
+                .maximum_goal_depth = 1u,
+            },
+            PPOSLF_NATIVE_VM_RESOURCE_EXHAUSTED_V1, &result,
+            "compiled relation changed the exact logical-depth limit") ||
+        !expect(result.stats.compiled_relation_deferrals > 0u &&
+                    result.stats.maximum_goal_depth == 2u,
+                "logical-depth refusal did not preserve source evidence"))
+        goto done;
+    pposlf_native_vm_result_v1_free(&result);
+
+    if (!expect(plan.external_relation_len == 16u &&
+                    plan.open_head_len == 16u,
                 "proof-trace extensional inventory changed") ||
         !prove_expect(
             &vm, positive_query, limits,
@@ -1406,7 +1591,7 @@ static bool exercise_full_proof_machine(
     char error[512] = {0};
     bool ok = false;
 
-    if (!prepare_program(program_path, 629u, &plan, &vm))
+    if (!prepare_program(program_path, 647u, &plan, &vm))
         return false;
     pposlf_native_capability_set_v1_init(&capabilities);
     pposlf_native_capability_set_v1_init(&deleted);
@@ -1440,7 +1625,7 @@ static bool exercise_full_proof_machine(
         &query_arena, "ProofTraceInputVerifyNormalV1", request,
         negative_labels);
 
-    if (!expect(plan.external_relation_len == 24u &&
+    if (!expect(plan.external_relation_len == 25u &&
                     plan.open_head_len == 14u,
                 "complete proof-machine extensional inventory changed") ||
         !prove_expect(
@@ -1532,8 +1717,8 @@ int main(int argc, char **argv) {
 
     ok = exercise_stats_accumulation() &&
          exercise_positional_linear_builder_view() &&
-         prepare_large_program(argv[1], 629u) &&
-         prepare_large_program(argv[2], 969u) &&
+         prepare_large_program(argv[1], 647u) &&
+         prepare_large_program(argv[2], 989u) &&
          exercise_canary(argv[3], argv[4]) &&
          exercise_search_hashcons_isolation(argv[3]) &&
          exercise_open_program(argv[5], argv[6]) &&

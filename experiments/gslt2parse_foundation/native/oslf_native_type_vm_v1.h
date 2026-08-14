@@ -46,6 +46,11 @@ typedef struct {
     uint64_t positional_linear_rule_matches;
     uint64_t positional_linear_rule_fallbacks;
     uint64_t deferred_epoch_goal_materializations;
+    uint64_t epoch_goal_materializations_not_admitted;
+    uint64_t epoch_goal_materializations_not_range_restricted;
+    uint64_t epoch_goal_materializations_consumer_unsafe;
+    uint64_t epoch_goal_materializations_stale;
+    uint64_t non_epoch_goal_materialization_attempts;
     uint64_t activation_view_goal_admissions;
     uint64_t activation_view_rule_attempts;
     uint64_t activation_view_rule_matches;
@@ -54,6 +59,11 @@ typedef struct {
     uint64_t structural_shape_guard_rejections;
     uint64_t structural_shape_guard_unknowns;
     uint64_t compiled_application_dispatches;
+    uint64_t rigid_coordinate_dispatches;
+    uint64_t rigid_coordinate_rejections;
+    uint64_t compiled_relation_dispatches;
+    uint64_t compiled_relation_matches;
+    uint64_t compiled_relation_deferrals;
     uint64_t indexed_candidate_visits;
     uint64_t full_scan_candidate_visits;
     uint64_t external_row_candidate_visits;
@@ -102,13 +112,16 @@ void pposlf_native_vm_stats_v1_accumulate(
 /*
  * Generated-step indices address the canonical step_schema vector of
  * program_digest.  External-row indices address the canonical row vector of
- * capability_digest.  Events are emitted in preorder and therefore form a
+ * capability_digest.  A compiled-relation index is the canonical step_schema
+ * coordinate of its base clause; replay re-recognizes the fold from the same
+ * digest-bound program.  Events are emitted in preorder and therefore form a
  * replayable finite proof tree when paired with generated rule arities;
- * external rows are leaves.
+ * external rows and admitted compiled relations are leaves.
  */
 typedef enum {
     PPOSLF_NATIVE_VM_PROOF_GENERATED_STEP_V1,
     PPOSLF_NATIVE_VM_PROOF_EXTERNAL_ROW_V1,
+    PPOSLF_NATIVE_VM_PROOF_COMPILED_RELATION_V1,
 } PPOSLFNativeVMProofEventKindV1;
 
 typedef struct {

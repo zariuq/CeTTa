@@ -208,8 +208,11 @@ static bool answer_bags_equal(const CettaGsltHornResult *left,
 
 static void check_query(const CettaGsltLanguage *source,
                         const CettaGsltLanguage *compiled,
+                        const CettaGsltHornProgram *source_program,
+                        const CettaGsltCompiledProgram *compiled_program,
                         const CettaGsltProviderRegistryV1 *providers,
-                        const char *path, bool expected_answer) {
+                        const char *path, bool admitted_entry,
+                        bool expected_answer) {
     Arena query_arena;
     Arena source_output;
     Arena compiled_output;
@@ -228,18 +231,27 @@ static void check_query(const CettaGsltLanguage *source,
     arena_init(&compiled_output);
     Atom *query = parse_query_file(&query_arena, path);
     CHECK(query != NULL, "proof-trace fixture contains one query");
-    bool source_ok = query &&
-        cetta_gslt_language_query_with_providers_v1(
+    bool source_ok = false;
+    bool compiled_ok = false;
+    if (query && admitted_entry) {
+        source_ok = cetta_gslt_language_query_with_providers_v1(
             source, CETTA_GSLT_REALIZATION_HORN_REFERENCE,
             &cetta_metamath_proof_trace_provider_catalog_v1, providers,
             &source_output, query, limits, &source_result,
             source_error, sizeof(source_error));
-    bool compiled_ok = query &&
-        cetta_gslt_language_query_with_providers_v1(
+        compiled_ok = cetta_gslt_language_query_with_providers_v1(
             compiled, CETTA_GSLT_REALIZATION_COMPILED_WORKLIST,
             &cetta_metamath_proof_trace_provider_catalog_v1, providers,
             &compiled_output, query, limits, &compiled_result,
             compiled_error, sizeof(compiled_error));
+    } else if (query) {
+        source_ok = cetta_gslt_horn_query_with_providers_v1(
+            source_program, providers, &source_output, query, limits,
+            &source_result, source_error, sizeof(source_error));
+        compiled_ok = cetta_gslt_compiled_query_with_providers_v1(
+            compiled_program, providers, &compiled_output, query, limits,
+            &compiled_result, compiled_error, sizeof(compiled_error));
+    }
     CHECK(source_ok && compiled_ok,
           "source and compiled proof-trace machines both execute");
     if (!source_ok && source_error[0] != '\0')
@@ -313,12 +325,10 @@ static void check_query(const CettaGsltLanguage *source,
 }
 
 int main(int argc, char **argv) {
-    if (argc != 9) {
+    if (argc < 5 || ((argc - 3) % 2) != 0) {
         fprintf(stderr,
                 "usage: %s NORMAL_FACTS COMPRESSED_FACTS "
-                "POSITIVE_NORMAL NEGATIVE_NORMAL "
-                "POSITIVE_COMPRESSED NEGATIVE_COMPRESSED "
-                "POSITIVE_INCOMPLETE NEGATIVE_INCOMPLETE\n",
+                "(accept|reject|raw-accept|raw-reject QUERY)+\n",
                 argv[0]);
         return 2;
     }
@@ -405,10 +415,22 @@ int main(int argc, char **argv) {
     if (source_language && compiled_language && provider_set) {
         const CettaGsltProviderRegistryV1 *providers =
             cetta_gslt_finite_fact_provider_set_registry_v1(provider_set);
-        for (int index = 3; index < argc; index++)
-            check_query(source_language, compiled_language, providers,
-                        argv[index],
-                        index == 3 || index == 5 || index == 7);
+        for (int index = 3; index < argc; index += 2) {
+            bool admitted_entry = strncmp(argv[index], "raw-", 4u) != 0;
+            const char *expectation = admitted_entry
+                ? argv[index] : argv[index] + 4;
+            bool expected_answer = strcmp(expectation, "accept") == 0;
+            if (!expected_answer && strcmp(expectation, "reject") != 0) {
+                fprintf(stderr, "unknown proof-trace expectation: %s\n",
+                        argv[index]);
+                failures++;
+                break;
+            }
+            check_query(source_language, compiled_language,
+                        source_program, compiled_program, providers,
+                        argv[index + 1],
+                        admitted_entry, expected_answer);
+        }
         CHECK(compiled_rule_attempts <= source_rule_attempts,
               "compiled proof-trace execution does no more rule work");
         CHECK(source_rule_matches == compiled_rule_matches,

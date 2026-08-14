@@ -402,6 +402,8 @@ static bool ppstate_v1_parse_proof_machine(
     uint32_t decoder_values[10];
     uint32_t index;
     const char *policy;
+    const char *save_placement;
+    const char *header_hypothesis_policy;
 
     if (!out ||
         !ppstate_v1_expr_head(term, "state-stack-proof-machine-v1", 3u))
@@ -411,7 +413,7 @@ static bool ppstate_v1_parse_proof_machine(
     decoder = term->expr.elems[3];
     if (!ppstate_v1_expr_head(tables, "state-proof-tables-v1", 9u) ||
         !ppstate_v1_expr_head(kinds, "state-proof-kinds-v1", 6u) ||
-        !ppstate_v1_expr_head(decoder, "state-proof-decoder-v1", 11u))
+        !ppstate_v1_expr_head(decoder, "state-proof-decoder-v1", 13u))
         return false;
     for (index = 0u; index < PPSTATE_V1_PROOF_TABLE_LEN; index++) {
         const char *name = ppstate_v1_symbol(tables->expr.elems[index + 1u]);
@@ -437,7 +439,11 @@ static bool ppstate_v1_parse_proof_machine(
             return false;
     }
     policy = ppstate_v1_symbol(decoder->expr.elems[11]);
-    if (!policy || decoder_values[0] > UINT8_MAX ||
+    save_placement = ppstate_v1_symbol(decoder->expr.elems[12]);
+    header_hypothesis_policy =
+        ppstate_v1_symbol(decoder->expr.elems[13]);
+    if (!policy || !save_placement || !header_hypothesis_policy ||
+        decoder_values[0] > UINT8_MAX ||
         decoder_values[1] > UINT8_MAX || decoder_values[2] > UINT8_MAX ||
         decoder_values[3] > UINT8_MAX || decoder_values[4] > UINT8_MAX ||
         decoder_values[5] > UINT8_MAX)
@@ -458,6 +464,28 @@ static bool ppstate_v1_parse_proof_machine(
     } else if (strcmp(policy, "state-proof-unknown-push-claim-v1") == 0) {
         out->machine.unknown_policy =
             PPRELATIONAL_STACK_PROOF_V1_UNKNOWN_PUSH_CLAIM;
+    } else {
+        return false;
+    }
+    if (strcmp(save_placement,
+               "state-proof-save-immediately-after-use-v1") == 0) {
+        out->machine.save_placement =
+            CETTA_GSLT_INDEXED_SAVE_IMMEDIATELY_AFTER_USE_V1;
+    } else if (strcmp(save_placement,
+                      "state-proof-save-repeatable-v1") == 0) {
+        out->machine.save_placement =
+            CETTA_GSLT_INDEXED_SAVE_REPEATABLE_AFTER_USE_V1;
+    } else {
+        return false;
+    }
+    if (strcmp(header_hypothesis_policy,
+               "state-proof-header-nonmandatory-only-v1") == 0) {
+        out->machine.header_hypothesis_policy =
+            CETTA_GSLT_HEADER_HYPOTHESIS_NONMANDATORY_ONLY_V1;
+    } else if (strcmp(header_hypothesis_policy,
+                      "state-proof-header-any-active-v1") == 0) {
+        out->machine.header_hypothesis_policy =
+            CETTA_GSLT_HEADER_HYPOTHESIS_ANY_ACTIVE_V1;
     } else {
         return false;
     }
@@ -926,6 +954,7 @@ static void ppstate_v1_sha_proof_machine(
     ppstate_v1_sha_u32(sha, machine->continuation_radix);
     ppstate_v1_sha_u32(sha, machine->continuation_digit_bias);
     ppstate_v1_sha_u32(sha, (uint32_t)machine->unknown_policy);
+    ppstate_v1_sha_u32(sha, (uint32_t)machine->save_placement);
 }
 
 static bool ppstate_v1_plan_digest(
@@ -1369,7 +1398,15 @@ static bool ppstate_v1_proof_machine_validate_plan(
            machine->terminal_radix > 0u &&
            machine->continuation_radix > 0u &&
            machine->unknown_policy <=
-               PPRELATIONAL_STACK_PROOF_V1_UNKNOWN_PUSH_CLAIM;
+               PPRELATIONAL_STACK_PROOF_V1_UNKNOWN_PUSH_CLAIM &&
+           (machine->save_placement ==
+                CETTA_GSLT_INDEXED_SAVE_IMMEDIATELY_AFTER_USE_V1 ||
+            machine->save_placement ==
+                CETTA_GSLT_INDEXED_SAVE_REPEATABLE_AFTER_USE_V1) &&
+           (machine->header_hypothesis_policy ==
+                CETTA_GSLT_HEADER_HYPOTHESIS_NONMANDATORY_ONLY_V1 ||
+            machine->header_hypothesis_policy ==
+                CETTA_GSLT_HEADER_HYPOTHESIS_ANY_ACTIVE_V1);
 }
 
 bool pprelational_state_program_v1_plan_validate(
@@ -1894,6 +1931,12 @@ typedef struct {
     uint32_t values[PPRELATIONAL_STATE_PROGRAM_V1_MAX_ARITY];
 } PPRelationalStateRowV1;
 
+typedef struct {
+    uint32_t operand_ids[PPRELATIONAL_STATE_PROGRAM_V1_MAX_ARITY];
+    uint32_t condition_operand_ids[
+        PPRELATIONAL_STATE_PROGRAM_V1_MAX_ARITY];
+} PPRelationalStatePreparedActionV1;
+
 typedef enum {
     PPSTATE_V1_COMPACT_COLUMN_FIXED = 0,
     PPSTATE_V1_COMPACT_COLUMN_SOURCE = 1,
@@ -1941,7 +1984,12 @@ typedef struct {
     uint32_t value_cap;
     uint32_t *value_buckets;
     uint32_t value_bucket_len;
+    uint32_t *prepared_step_value_ids;
+    uint32_t prepared_step_value_len;
+    uint32_t prepared_step_value_cap;
     PPRelationalStateTableStateV1 *tables;
+    PPRelationalStatePreparedActionV1 *prepared_actions;
+    PPRelationalStatePreparedActionV1 *prepared_final_actions;
     PPRelationalStackProofV1Machine *proof_machines;
     PPRelationalStackProofV1Cache *proof_frame_caches;
     uint32_t *scope_lengths;
@@ -2094,6 +2142,93 @@ static bool ppstate_v1_value_intern(PPRelationalStateRunImplV1 *impl,
         slot = (slot + 1u) & (impl->value_bucket_len - 1u);
     impl->value_buckets[slot] = impl->value_len + 1u;
     *out = impl->value_len++;
+    return true;
+}
+
+static bool ppstate_v1_prepare_operand_ids(
+    PPRelationalStateRunImplV1 *impl,
+    const PPRelationalStateOperandV1 *operands, uint32_t operand_len,
+    uint32_t ids[PPRELATIONAL_STATE_PROGRAM_V1_MAX_ARITY]) {
+    uint32_t index;
+
+    if (!impl || (!operands && operand_len != 0u) ||
+        operand_len > PPRELATIONAL_STATE_PROGRAM_V1_MAX_ARITY || !ids)
+        return false;
+    for (index = 0u;
+         index < PPRELATIONAL_STATE_PROGRAM_V1_MAX_ARITY; index++)
+        ids[index] = UINT32_MAX;
+    for (index = 0u; index < operand_len; index++) {
+        if (operands[index].kind !=
+            PPRELATIONAL_STATE_OPERAND_V1_LITERAL)
+            continue;
+        if (!ppstate_v1_value_intern(
+                impl, operands[index].literal,
+                operands[index].literal_len, &ids[index]))
+            return false;
+    }
+    return true;
+}
+
+static bool ppstate_v1_prepare_action_array(
+    PPRelationalStateRunImplV1 *impl,
+    const PPRelationalStateActionV1 *actions, uint32_t action_len,
+    PPRelationalStatePreparedActionV1 **prepared_out) {
+    PPRelationalStatePreparedActionV1 *prepared;
+    uint32_t index;
+
+    if (!impl || !prepared_out || (!actions && action_len != 0u))
+        return false;
+    *prepared_out = NULL;
+    if (action_len == 0u)
+        return true;
+    if (!ppstate_v1_array_fits(action_len, sizeof(*prepared)) ||
+        !(prepared = calloc(action_len, sizeof(*prepared))))
+        return false;
+    for (index = 0u; index < action_len; index++) {
+        if (!ppstate_v1_prepare_operand_ids(
+                impl, actions[index].operands,
+                actions[index].operand_len,
+                prepared[index].operand_ids) ||
+            !ppstate_v1_prepare_operand_ids(
+                impl, actions[index].condition_operands,
+                actions[index].condition_operand_len,
+                prepared[index].condition_operand_ids)) {
+            free(prepared);
+            return false;
+        }
+    }
+    *prepared_out = prepared;
+    return true;
+}
+
+static bool ppstate_v1_prepare_actions(
+    PPRelationalStateRunImplV1 *impl) {
+    if (!impl || !impl->plan)
+        return false;
+    return ppstate_v1_prepare_action_array(
+               impl, impl->plan->actions, impl->plan->action_len,
+               &impl->prepared_actions) &&
+           ppstate_v1_prepare_action_array(
+               impl, impl->plan->final_actions,
+               impl->plan->final_action_len,
+               &impl->prepared_final_actions);
+}
+
+static bool ppstate_v1_prepare_step_values(
+    PPRelationalStateRunImplV1 *impl,
+    const PPOccurrenceFoldV1Step *step) {
+    if (!impl || !step || (step->value_len != 0u && !step->values) ||
+        !ppstate_v1_grow_raw(
+            (void **)&impl->prepared_step_value_ids,
+            &impl->prepared_step_value_cap, step->value_len,
+            sizeof(*impl->prepared_step_value_ids)))
+        return false;
+    impl->prepared_step_value_len = step->value_len;
+    if (step->value_len != 0u) {
+        memset(impl->prepared_step_value_ids, 0xff,
+               (size_t)step->value_len *
+                   sizeof(*impl->prepared_step_value_ids));
+    }
     return true;
 }
 
@@ -2741,6 +2876,8 @@ static bool ppstate_v1_proof_machine_runtime_init(
         .continuation_radix = source->continuation_radix,
         .continuation_digit_bias = source->continuation_digit_bias,
         .unknown_policy = source->unknown_policy,
+        .save_placement = source->save_placement,
+        .header_hypothesis_policy = source->header_hypothesis_policy,
     };
     if (!ppstate_v1_value_intern(
             impl, source->binder_hypothesis_kind.bytes,
@@ -2960,9 +3097,135 @@ static bool ppstate_v1_operand_bytes(
     return false;
 }
 
+static bool ppstate_v1_occurrence_operand_index(
+    const PPRelationalStateOperandV1 *operand,
+    const PPOccurrenceFoldV1Step *step,
+    const PPOccurrenceFoldV1Value *input,
+    bool *recognized_out, uint32_t *index_out) {
+    uint32_t index;
+    uint32_t matched = 0u;
+
+    if (!operand || !recognized_out || !index_out)
+        return false;
+    *recognized_out = false;
+    if (operand->kind == PPRELATIONAL_STATE_OPERAND_V1_INPUT) {
+        if (!step || !input)
+            return false;
+        for (index = 0u; index < step->value_len; index++) {
+            if (&step->values[index] != input)
+                continue;
+            *recognized_out = true;
+            *index_out = index;
+            return true;
+        }
+        return false;
+    }
+    if (operand->kind != PPRELATIONAL_STATE_OPERAND_V1_ROLE_AT)
+        return true;
+    if (!step)
+        return false;
+    for (index = 0u; index < step->value_len; index++) {
+        if (step->values[index].role_id != operand->role_id)
+            continue;
+        if (matched++ != operand->input_index)
+            continue;
+        *recognized_out = true;
+        *index_out = index;
+        return true;
+    }
+    return false;
+}
+
+/* Prepared literals, occurrence values, and source columns already name
+ * values in this run's canonical table.  Preserve those identities instead
+ * of lowering them to bytes and immediately looking them up again. */
+static bool ppstate_v1_operand_canonical_value_id(
+    PPRelationalStateRunImplV1 *impl,
+    const PPRelationalStateOperandV1 *operand,
+    uint32_t prepared_id,
+    const PPOccurrenceFoldV1Step *step,
+    const PPOccurrenceFoldV1Value *input,
+    bool intern_missing,
+    const PPRelationalStateRowV1 *source_row,
+    uint32_t source_arity,
+    bool *direct_out,
+    bool *absent_out,
+    uint32_t *value_id_out) {
+    bool occurrence_operand;
+    uint32_t occurrence_index;
+    uint32_t value_id;
+
+    if (!operand || !direct_out || !absent_out || !value_id_out)
+        return false;
+    *direct_out = false;
+    *absent_out = false;
+    if (prepared_id != UINT32_MAX) {
+        if (!impl ||
+            operand->kind != PPRELATIONAL_STATE_OPERAND_V1_LITERAL ||
+            prepared_id >= impl->value_len)
+            return false;
+        *direct_out = true;
+        *value_id_out = prepared_id;
+        return true;
+    }
+    if (!ppstate_v1_occurrence_operand_index(
+            operand, step, input, &occurrence_operand,
+            &occurrence_index))
+        return false;
+    if (occurrence_operand) {
+        const PPOccurrenceFoldV1Value *value;
+        int32_t found;
+        uint64_t hash;
+        if (!impl || occurrence_index >= impl->prepared_step_value_len ||
+            occurrence_index >= step->value_len)
+            return false;
+        value_id = impl->prepared_step_value_ids[occurrence_index];
+        if (value_id != UINT32_MAX) {
+            if (value_id >= impl->value_len)
+                return false;
+            *direct_out = true;
+            *value_id_out = value_id;
+            return true;
+        }
+        value = &step->values[occurrence_index];
+        if (value->byte_len > UINT32_MAX)
+            return false;
+        hash = ppstate_v1_hash_bytes(
+            value->bytes, (uint32_t)value->byte_len);
+        found = ppstate_v1_value_find(
+            impl, value->bytes, (uint32_t)value->byte_len, hash);
+        if (found < 0 && intern_missing) {
+            if (!ppstate_v1_value_intern(
+                    impl, value->bytes, (uint32_t)value->byte_len,
+                    &value_id))
+                return false;
+        } else if (found < 0) {
+            *absent_out = true;
+            return true;
+        } else {
+            value_id = (uint32_t)found;
+        }
+        impl->prepared_step_value_ids[occurrence_index] = value_id;
+        *direct_out = true;
+        *value_id_out = value_id;
+        return true;
+    }
+    if (operand->kind != PPRELATIONAL_STATE_OPERAND_V1_SOURCE_COLUMN)
+        return true;
+    if (!impl || !source_row || operand->input_index >= source_arity)
+        return false;
+    value_id = source_row->values[operand->input_index];
+    if (value_id >= impl->value_len)
+        return false;
+    *direct_out = true;
+    *value_id_out = value_id;
+    return true;
+}
+
 static PPRelationalStateInsertV1 ppstate_v1_row_intern_values(
     PPRelationalStateRunImplV1 *impl,
     const PPRelationalStateOperandV1 *operands,
+    const uint32_t *prepared_ids,
     uint32_t operand_len,
     const PPOccurrenceFoldV1Step *step,
     const PPOccurrenceFoldV1Value *input,
@@ -2974,9 +3237,25 @@ static PPRelationalStateInsertV1 ppstate_v1_row_intern_values(
 
     memset(row, 0, sizeof(*row));
     for (index = 0u; index < operand_len; index++) {
+        bool direct;
+        bool absent;
+        uint32_t value_id;
         const uint8_t *bytes;
         uint32_t len;
         uint8_t *owned;
+        uint32_t prepared_id = prepared_ids
+                                   ? prepared_ids[index]
+                                   : UINT32_MAX;
+        if (!ppstate_v1_operand_canonical_value_id(
+                impl, &operands[index], prepared_id,
+                step, input, true,
+                source_row, source_arity,
+                &direct, &absent, &value_id) || absent)
+            return PPRELATIONAL_STATE_INSERT_V1_CONSTRAINT;
+        if (direct) {
+            row->values[index] = value_id;
+            continue;
+        }
         if (!ppstate_v1_operand_bytes(
                 impl, &operands[index], step, input,
                 source_row, source_arity, source_row_index,
@@ -2996,11 +3275,13 @@ static PPRelationalStateInsertV1 ppstate_v1_row_intern_values(
 static PPRelationalStateInsertV1 ppstate_v1_row_intern(
     PPRelationalStateRunImplV1 *impl,
     const PPRelationalStateActionV1 *action,
+    const PPRelationalStatePreparedActionV1 *prepared,
     const PPOccurrenceFoldV1Step *step,
     const PPOccurrenceFoldV1Value *input,
     PPRelationalStateRowV1 *row) {
     return ppstate_v1_row_intern_values(
-        impl, action->operands, action->operand_len,
+        impl, action->operands,
+        prepared ? prepared->operand_ids : NULL, action->operand_len,
         step, input, NULL, 0u, UINT32_MAX, UINT32_MAX, row);
 }
 
@@ -3136,6 +3417,7 @@ static void ppstate_v1_compact_layouts_init(
 static PPRelationalStateInsertV1 ppstate_v1_compact_copy(
     PPRelationalStateRunImplV1 *impl,
     const PPRelationalStateActionV1 *action,
+    const PPRelationalStatePreparedActionV1 *prepared,
     const PPOccurrenceFoldV1Step *step, uint32_t *matched_out) {
     PPRelationalStateTableStateV1 *target_state;
     const PPRelationalStateTableStateV1 *source_state;
@@ -3181,21 +3463,33 @@ static PPRelationalStateInsertV1 ppstate_v1_compact_copy(
             run.column_kinds[target_column] =
                 PPSTATE_V1_COMPACT_COLUMN_ROW_INDEX;
         } else {
-            const uint8_t *bytes;
-            uint32_t len;
-            uint8_t *owned;
             run.column_kinds[target_column] =
                 PPSTATE_V1_COMPACT_COLUMN_FIXED;
-            if (!ppstate_v1_operand_bytes(
-                    impl, operand, step, NULL, NULL, 0u, UINT32_MAX,
-                    UINT32_MAX, &bytes, &len, &owned))
-                return PPRELATIONAL_STATE_INSERT_V1_CONSTRAINT;
-            if (!ppstate_v1_value_intern(
-                    impl, bytes, len, &run.fixed_values[target_column])) {
+            if (prepared &&
+                prepared->operand_ids[target_column] != UINT32_MAX) {
+                uint32_t value_id =
+                    prepared->operand_ids[target_column];
+                if (operand->kind !=
+                        PPRELATIONAL_STATE_OPERAND_V1_LITERAL ||
+                    value_id >= impl->value_len)
+                    return PPRELATIONAL_STATE_INSERT_V1_CONSTRAINT;
+                run.fixed_values[target_column] = value_id;
+            } else {
+                const uint8_t *bytes;
+                uint32_t len;
+                uint8_t *owned;
+                if (!ppstate_v1_operand_bytes(
+                        impl, operand, step, NULL, NULL, 0u,
+                        UINT32_MAX, UINT32_MAX, &bytes, &len, &owned))
+                    return PPRELATIONAL_STATE_INSERT_V1_CONSTRAINT;
+                if (!ppstate_v1_value_intern(
+                        impl, bytes, len,
+                        &run.fixed_values[target_column])) {
+                    free(owned);
+                    return PPRELATIONAL_STATE_INSERT_V1_RESOURCE;
+                }
                 free(owned);
-                return PPRELATIONAL_STATE_INSERT_V1_RESOURCE;
             }
-            free(owned);
         }
     }
     if (run.column_kinds[0] != PPSTATE_V1_COMPACT_COLUMN_FIXED)
@@ -3215,7 +3509,9 @@ static PPRelationalStateInsertV1 ppstate_v1_compact_copy(
             PPRelationalStateRowV1 retained;
             PPRelationalStateInsertV1 evaluated =
                 ppstate_v1_row_intern_values(
-                    impl, action->operands, action->operand_len, step,
+                    impl, action->operands,
+                    prepared ? prepared->operand_ids : NULL,
+                    action->operand_len, step,
                     NULL, &source_state->rows[source_row],
                     source_table->arity, source_row, UINT32_MAX,
                     &candidate);
@@ -3294,9 +3590,10 @@ static PPRelationalStateInsertV1 ppstate_v1_compact_copy(
 }
 
 static PPRelationalStateQueryV1 ppstate_v1_row_query_values(
-    const PPRelationalStateRunImplV1 *impl,
+    PPRelationalStateRunImplV1 *impl,
     uint32_t table_id,
     const PPRelationalStateOperandV1 *operands,
+    const uint32_t *prepared_ids,
     uint32_t operand_len,
     const PPOccurrenceFoldV1Step *step,
     const PPOccurrenceFoldV1Value *input,
@@ -3314,10 +3611,28 @@ static PPRelationalStateQueryV1 ppstate_v1_row_query_values(
     int32_t found;
 
     for (index = 0u; index < operand_len; index++) {
+        bool direct;
+        bool absent;
+        uint32_t value_id;
         const uint8_t *bytes;
         uint32_t len;
         uint8_t *owned;
         uint64_t hash;
+        uint32_t prepared_id = prepared_ids
+                                   ? prepared_ids[index]
+                                   : UINT32_MAX;
+        if (!ppstate_v1_operand_canonical_value_id(
+                impl, &operands[index], prepared_id,
+                step, input, false,
+                source_row, source_arity,
+                &direct, &absent, &value_id))
+            return PPRELATIONAL_STATE_QUERY_V1_INVALID;
+        if (absent)
+            return PPRELATIONAL_STATE_QUERY_V1_ABSENT;
+        if (direct) {
+            row.values[index] = value_id;
+            continue;
+        }
         if (!ppstate_v1_operand_bytes(
                 impl, &operands[index], step, input, source_row,
                 source_arity, source_row_index, source_match_index,
@@ -3340,13 +3655,15 @@ static PPRelationalStateQueryV1 ppstate_v1_row_query_values(
 }
 
 static PPRelationalStateQueryV1 ppstate_v1_row_query(
-    const PPRelationalStateRunImplV1 *impl,
+    PPRelationalStateRunImplV1 *impl,
     const PPRelationalStateActionV1 *action,
+    const PPRelationalStatePreparedActionV1 *prepared,
     const PPOccurrenceFoldV1Step *step,
     const PPOccurrenceFoldV1Value *input,
     bool exact) {
     return ppstate_v1_row_query_values(
         impl, action->table_id, action->operands,
+        prepared ? prepared->operand_ids : NULL,
         action->operand_len, step, input, NULL, 0u, UINT32_MAX,
         UINT32_MAX, exact);
 }
@@ -3354,6 +3671,7 @@ static PPRelationalStateQueryV1 ppstate_v1_row_query(
 static PPRelationalStateInsertV1 ppstate_v1_insert_input(
     PPRelationalStateRunImplV1 *impl,
     const PPRelationalStateActionV1 *action,
+    const PPRelationalStatePreparedActionV1 *prepared,
     const PPOccurrenceFoldV1Step *step,
     const PPOccurrenceFoldV1Value *input) {
     PPRelationalStateRowV1 row = {{0u, 0u}};
@@ -3362,7 +3680,7 @@ static PPRelationalStateInsertV1 ppstate_v1_insert_input(
     const PPRelationalStateTableV1 *table =
         &impl->plan->tables[action->table_id];
     PPRelationalStateInsertV1 evaluated = ppstate_v1_row_intern(
-        impl, action, step, input, &row);
+        impl, action, prepared, step, input, &row);
     if (evaluated != PPRELATIONAL_STATE_INSERT_V1_OK)
         return evaluated;
     return ppstate_v1_table_insert(
@@ -3370,12 +3688,13 @@ static PPRelationalStateInsertV1 ppstate_v1_insert_input(
 }
 
 static bool ppstate_v1_require_input(
-    const PPRelationalStateRunImplV1 *impl,
+    PPRelationalStateRunImplV1 *impl,
     const PPRelationalStateActionV1 *action,
+    const PPRelationalStatePreparedActionV1 *prepared,
     const PPOccurrenceFoldV1Step *step,
     const PPOccurrenceFoldV1Value *input) {
     return ppstate_v1_row_query(
-               impl, action, step, input, true) ==
+               impl, action, prepared, step, input, true) ==
            PPRELATIONAL_STATE_QUERY_V1_MATCH;
 }
 
@@ -3670,6 +3989,7 @@ static bool ppstate_v1_execute_action(
     PPRelationalStateProgramV1Run *run,
     PPRelationalStateRunImplV1 *impl,
     const PPRelationalStateActionV1 *action,
+    const PPRelationalStatePreparedActionV1 *prepared,
     uint32_t action_index,
     const PPOccurrenceFoldV1Step *step,
     char *error_buf, size_t error_buf_size) {
@@ -3721,7 +4041,8 @@ static bool ppstate_v1_execute_action(
             {
                 PPRelationalStateInsertV1 inserted =
                     ppstate_v1_insert_input(
-                        impl, action, step, &step->values[index]);
+                        impl, action, prepared, step,
+                        &step->values[index]);
                 if (inserted == PPRELATIONAL_STATE_INSERT_V1_OK)
                     continue;
                 ppstate_v1_failure_set(
@@ -3766,7 +4087,8 @@ static bool ppstate_v1_execute_action(
                 continue;
             matched++;
             if (!ppstate_v1_require_input(
-                    impl, action, step, &step->values[index])) {
+                    impl, action, prepared, step,
+                    &step->values[index])) {
                 ppstate_v1_failure_set(
                     run, PPRELATIONAL_STATE_FAILURE_V1_REJECTED);
                 ppstate_v1_set_error(
@@ -3805,7 +4127,8 @@ static bool ppstate_v1_execute_action(
                 continue;
             matched++;
             query = ppstate_v1_row_query(
-                impl, action, step, &step->values[index], false);
+                impl, action, prepared, step,
+                &step->values[index], false);
             if (query == PPRELATIONAL_STATE_QUERY_V1_INVALID) {
                 ppstate_v1_failure_set(
                     run, PPRELATIONAL_STATE_FAILURE_V1_INVALID);
@@ -3852,7 +4175,7 @@ static bool ppstate_v1_execute_action(
             bool absent = action->kind ==
                 PPRELATIONAL_STATE_ACTION_V1_REQUIRE_ROW_KEY_ABSENT;
             PPRelationalStateQueryV1 query = ppstate_v1_row_query(
-                impl, action, step, NULL, !absent);
+                impl, action, prepared, step, NULL, !absent);
             if (query == PPRELATIONAL_STATE_QUERY_V1_INVALID) {
                 ppstate_v1_failure_set(
                     run, PPRELATIONAL_STATE_FAILURE_V1_INVALID);
@@ -3892,7 +4215,7 @@ static bool ppstate_v1_execute_action(
         {
             PPRelationalStateRowV1 row = {{0u, 0u}};
             PPRelationalStateInsertV1 inserted = ppstate_v1_row_intern(
-                impl, action, step, NULL, &row);
+                impl, action, prepared, step, NULL, &row);
             if (inserted == PPRELATIONAL_STATE_INSERT_V1_OK) {
                 inserted = ppstate_v1_table_insert(
                     &impl->tables[action->table_id],
@@ -3942,6 +4265,7 @@ static bool ppstate_v1_execute_action(
             query = ppstate_v1_row_query_values(
                 impl, action->condition_table_id,
                 action->condition_operands,
+                prepared ? prepared->condition_operand_ids : NULL,
                 action->condition_operand_len, step, input, NULL, 0u,
                 UINT32_MAX, UINT32_MAX, true);
             if (query == PPRELATIONAL_STATE_QUERY_V1_ABSENT)
@@ -3955,7 +4279,7 @@ static bool ppstate_v1_execute_action(
                 return false;
             }
             inserted = ppstate_v1_row_intern(
-                impl, action, step, input, &row);
+                impl, action, prepared, step, input, &row);
             if (inserted == PPRELATIONAL_STATE_INSERT_V1_OK) {
                 inserted = ppstate_v1_table_insert(
                     &impl->tables[action->table_id],
@@ -4004,7 +4328,7 @@ static bool ppstate_v1_execute_action(
             if (impl->tables[action->table_id].compact_eligible) {
                 PPRelationalStateInsertV1 inserted =
                     ppstate_v1_compact_copy(
-                        impl, action, step, &matched);
+                        impl, action, prepared, step, &matched);
                 if (inserted != PPRELATIONAL_STATE_INSERT_V1_OK) {
                     ppstate_v1_failure_set(
                         run,
@@ -4032,7 +4356,9 @@ static bool ppstate_v1_execute_action(
                 PPRelationalStateRowV1 row = {{0u}};
                 PPRelationalStateInsertV1 inserted =
                     ppstate_v1_row_intern_values(
-                        impl, action->operands, action->operand_len,
+                        impl, action->operands,
+                        prepared ? prepared->operand_ids : NULL,
+                        action->operand_len,
                         step, NULL, &source_state->rows[index],
                         source_table->arity, index, UINT32_MAX, &row);
                 if (inserted == PPRELATIONAL_STATE_INSERT_V1_OK) {
@@ -4093,6 +4419,7 @@ ppstate_v1_copy_complete:
                     ppstate_v1_row_query_values(
                         impl, action->condition_table_id,
                         action->condition_operands,
+                        prepared ? prepared->condition_operand_ids : NULL,
                         action->condition_operand_len, step, NULL,
                         source_row, source_table->arity, index,
                         accepted, true);
@@ -4109,7 +4436,9 @@ ppstate_v1_copy_complete:
                     return false;
                 }
                 inserted = ppstate_v1_row_intern_values(
-                    impl, action->operands, action->operand_len,
+                    impl, action->operands,
+                    prepared ? prepared->operand_ids : NULL,
+                    action->operand_len,
                     step, NULL, source_row, source_table->arity,
                     index, accepted, &row);
                 if (inserted == PPRELATIONAL_STATE_INSERT_V1_OK) {
@@ -4306,6 +4635,13 @@ static bool ppstate_v1_backend_apply(void *context,
                              "occurrence has no generated state program");
         return false;
     }
+    if (!ppstate_v1_prepare_step_values(impl, step)) {
+        ppstate_v1_failure_set(
+            run, PPRELATIONAL_STATE_FAILURE_V1_RESOURCE);
+        ppstate_v1_set_error(error_buf, error_buf_size,
+                             "state occurrence preparation failed");
+        return false;
+    }
     if (!ppstate_v1_transaction_clear(impl)) {
         ppstate_v1_failure_set(
             run, PPRELATIONAL_STATE_FAILURE_V1_RESOURCE);
@@ -4314,10 +4650,12 @@ static bool ppstate_v1_backend_apply(void *context,
         return false;
     }
     for (index = 0u; index < program->action_len; index++) {
+        uint32_t action_index = program->action_begin + index;
         if (!ppstate_v1_execute_action(
                 run, impl,
-                &impl->plan->actions[program->action_begin + index],
-                index, step, error_buf, error_buf_size))
+                &impl->plan->actions[action_index],
+                &impl->prepared_actions[action_index], index, step,
+                error_buf, error_buf_size))
             return false;
     }
     if (!ppstate_v1_transaction_clear(impl)) {
@@ -4431,8 +4769,8 @@ static bool ppstate_v1_backend_commit(void *context, char *error_buf,
     }
     for (index = 0u; index < impl->plan->final_action_len; index++) {
         if (!ppstate_v1_execute_action(
-                run, impl, &impl->plan->final_actions[index], UINT32_MAX,
-                NULL,
+                run, impl, &impl->plan->final_actions[index],
+                &impl->prepared_final_actions[index], UINT32_MAX, NULL,
                 error_buf, error_buf_size))
             return false;
     }
@@ -4545,6 +4883,12 @@ static bool ppstate_v1_run_init(
         impl->proof_backend_ready = true;
     }
     run->implementation = impl;
+    if (!ppstate_v1_prepare_actions(impl)) {
+        ppstate_v1_set_error(error_buf, error_buf_size,
+                             "state action preparation failed");
+        pprelational_state_program_v1_run_free(run);
+        return false;
+    }
     if (!impl->proof_backend_ready && plan->proof_machine_len > 0u) {
         impl->proof_machines = calloc(
             plan->proof_machine_len, sizeof(*impl->proof_machines));
@@ -4661,7 +5005,10 @@ void pprelational_state_program_v1_run_free(
         }
         free(impl->values);
         free(impl->value_buckets);
+        free(impl->prepared_step_value_ids);
         free(impl->tables);
+        free(impl->prepared_actions);
+        free(impl->prepared_final_actions);
         free(impl->proof_machines);
         free(impl->proof_frame_caches);
         free(impl->scope_lengths);
@@ -4945,7 +5292,11 @@ static void ppstate_v1_c_emit_proof_machine(
         "    result.proof_machines[UINT32_C(%u)].continuation_radix = UINT32_C(%u);\n"
         "    result.proof_machines[UINT32_C(%u)].continuation_digit_bias = UINT32_C(%u);\n"
         "    result.proof_machines[UINT32_C(%u)].unknown_policy = "
-        "(PPRelationalStackProofV1UnknownPolicy)%u;\n",
+        "(PPRelationalStackProofV1UnknownPolicy)%u;\n"
+        "    result.proof_machines[UINT32_C(%u)].save_placement = "
+        "(CettaGsltIndexedSavePlacementV1)%u;\n"
+        "    result.proof_machines[UINT32_C(%u)].header_hypothesis_policy = "
+        "(CettaGsltHeaderHypothesisPolicyV1)%u;\n",
         index, (unsigned int)machine->terminal_low,
         index, (unsigned int)machine->terminal_high,
         index, (unsigned int)machine->continuation_low,
@@ -4956,7 +5307,9 @@ static void ppstate_v1_c_emit_proof_machine(
         index, machine->terminal_digit_bias,
         index, machine->continuation_radix,
         index, machine->continuation_digit_bias,
-        index, (unsigned int)machine->unknown_policy);
+        index, (unsigned int)machine->unknown_policy,
+        index, (unsigned int)machine->save_placement,
+        index, (unsigned int)machine->header_hypothesis_policy);
 }
 
 bool pprelational_state_program_v1_emit_c(
