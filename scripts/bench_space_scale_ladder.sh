@@ -29,7 +29,7 @@ MAX_TIME_EXPONENT=1.50
 MAX_RSS_EXPONENT=1.25
 RUNTIME_DIR="${CETTA_SCALE_RUNTIME_DIR:-$ROOT/runtime/bench_space_scale_ladder}"
 
-# This is the complete qualification surface.  Do not make it environment
+# This is the complete qualification set.  Do not make it environment
 # configurable: narrowing a required case list must not turn absence into a
 # passing main-readiness result.  mork-load-act is the live MORK backend after
 # ACT population; mork-open-act remains separate because it uses the opened ACT
