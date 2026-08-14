@@ -1,5 +1,5 @@
 ; generated finite-Horn facts from a canonical answer stream
-(gslt-presentation-v1 GeneratedAnswerFactsV1_7efcc50bc95a879a5a1a8165b0ec4e692d93eb3b521a801503bffbb37bf3d13f
+(gslt-presentation-v1 GeneratedAnswerFactsV1_481eae6a41e5a57c8d9230c691a2dbc1cfce82726cd19bf610a3eb376795b8de
   (signature
     (operator compile-oslf-native-type-v1 1)
     (operator oslf-carrier-v1 1)
@@ -44,8 +44,10 @@
     (operator proof-sequence-evidence-judgment-role-v1 3)
     (operator proof-sequence-evidence-rule-role-v1 3)
     (operator proof-sequence-relational-artifact-v1 1)
+    (operator proof-sequence-relational-execution-v1 16)
     (operator proof-sequence-relational-identity-v1 2)
     (operator proof-sequence-relational-selector-v1 3)
+    (operator proof-sequence-relational-table-policy-v1 3)
     (operator proof-sequence-relational-table-v1 5)
     (operator proof-succ-v1 1)
     (operator q-app 2)
@@ -65,7 +67,8 @@
     (operator state-insert-row-v1 3)
     (operator state-insert-unordered-pairs-v1 3)
     (operator state-literal-v1 1)
-    (operator state-proof-decoder-v1 11)
+    (operator state-proof-action-v1 3)
+    (operator state-proof-decoder-v1 13)
     (operator state-proof-kinds-v1 6)
     (operator state-proof-machine-v1 2)
     (operator state-proof-tables-v1 9)
@@ -726,6 +729,9 @@
     (rule answer-fact-575b6d6dde49bec4140a912b81927c34a7e478dd53becb41eaf50aebec533c41
       (head (proof-sequence-evidence-artifact-v1 (proof-sequence-evidence-rule-role-v1 MetamathProofV1 token-against-nil-v1 proof-token-against-sequence-nil-v1)))
       (body))
+    (rule answer-fact-50b1811732c281eea8005e4633ba4fcf6d208aae7f1df1e86752de6e7d7965f5
+      (head (proof-sequence-relational-artifact-v1 (proof-sequence-relational-execution-v1 MetamathProofV1 mm-stack-proof-machine-v1 (state-byte-literal-v1 63) 65 84 85 89 90 63 20 0 5 1 state-proof-unknown-push-claim-v1 state-proof-save-immediately-after-use-v1 state-proof-header-nonmandatory-only-v1)))
+      (body))
     (rule answer-fact-67d08f434e0f16c9c22eb3c84e56aa1ca2628e6ec712cc4ed1cc06fe8185711c
       (head (proof-sequence-relational-artifact-v1 (proof-sequence-relational-identity-v1 MetamathProofV1 MetamathLanguageV1)))
       (body))
@@ -740,6 +746,36 @@
       (body))
     (rule answer-fact-fa274ebc952aefbe947a10de57ae1905fa2fb3d4c443dbe7ee619630a3d8fb42
       (head (proof-sequence-relational-artifact-v1 (proof-sequence-relational-selector-v1 MetamathProofV1 symbol-variable-v1 mm-symbol-variable)))
+      (body))
+    (rule answer-fact-d65c40981252b61947b830f4ebad1e2c863229e50743d59a23461ccf37e5611c
+      (head (proof-sequence-relational-artifact-v1 (proof-sequence-relational-table-policy-v1 MetamathProofV1 active-apartness-v1 optional-empty-v1)))
+      (body))
+    (rule answer-fact-7880900bbcd0e9857bcdc3646ba3aa48f3db2d7dc81de015dacba4d60352d554
+      (head (proof-sequence-relational-artifact-v1 (proof-sequence-relational-table-policy-v1 MetamathProofV1 assertion-active-hypothesis-v1 required-v1)))
+      (body))
+    (rule answer-fact-0cc24aa474b6cf400344c96db4f32314b5b596782a69b2fb08057c136314cfac
+      (head (proof-sequence-relational-artifact-v1 (proof-sequence-relational-table-policy-v1 MetamathProofV1 assertion-disjoint-v1 optional-empty-v1)))
+      (body))
+    (rule answer-fact-7ca015e0633947447d4bc8eaa43bfc396a422347e2414dfc0960b64d323fe341
+      (head (proof-sequence-relational-artifact-v1 (proof-sequence-relational-table-policy-v1 MetamathProofV1 floating-variable-v1 required-v1)))
+      (body))
+    (rule answer-fact-90fe3cd2706e1beb22b5fea409330550bcca43e2945b9ad9f652929f8a850ad9
+      (head (proof-sequence-relational-artifact-v1 (proof-sequence-relational-table-policy-v1 MetamathProofV1 formula-v1 required-v1)))
+      (body))
+    (rule answer-fact-4cdc7556d4fadd79c5d4cf5b726cf49a84713c0f20278c7b8b0fb9cb6048f7b9
+      (head (proof-sequence-relational-artifact-v1 (proof-sequence-relational-table-policy-v1 MetamathProofV1 label-kind-v1 required-v1)))
+      (body))
+    (rule answer-fact-a3f0651fcd33f2efee727b35ce41c35b764e39ff5e1f02837ea664d5a132d5a6
+      (head (proof-sequence-relational-artifact-v1 (proof-sequence-relational-table-policy-v1 MetamathProofV1 mandatory-variable-v1 required-v1)))
+      (body))
+    (rule answer-fact-213b94f95e25b418ccef5a07271a2a9bb5a3293e68dd74e9b9be1b0146881f5f
+      (head (proof-sequence-relational-artifact-v1 (proof-sequence-relational-table-policy-v1 MetamathProofV1 ordered-hypothesis-v1 required-v1)))
+      (body))
+    (rule answer-fact-f93e48ec935064f0feabcd6f888d8db01c3658b44b7139ab26a6d675a7eb031d
+      (head (proof-sequence-relational-artifact-v1 (proof-sequence-relational-table-policy-v1 MetamathProofV1 symbol-kind-v1 required-v1)))
+      (body))
+    (rule answer-fact-36b3eac5bb922ac8bafd149c58a9c514209837dd6df3c29ad433f8e7b79f8a33
+      (head (proof-sequence-relational-artifact-v1 (proof-sequence-relational-table-v1 MetamathProofV1 active-apartness-v1 mm-state-disjoint-variable 2 2)))
       (body))
     (rule answer-fact-b3651b94f988ba26013d66c550ed87e788f82c7681adf88f3898030e64747da3
       (head (proof-sequence-relational-artifact-v1 (proof-sequence-relational-table-v1 MetamathProofV1 assertion-active-hypothesis-v1 mm-state-assertion-active-hypothesis 2 2)))
@@ -1020,8 +1056,20 @@
     (rule answer-fact-50e277d8344a223899cb589309a218842134535d4fdae0be198b610ae1c245eb
       (head (state-action-v1 mm-resolve-include 0 (state-resolve-source-v1 mm-include-path state-skip-completed-source-v1 state-skip-active-source-v1)))
       (body))
-    (rule answer-fact-039ebbef4f163ac9b303cb89b318e52f0a9001fd0d7519edb56741746099d6fe
-      (head (state-proof-machine-v1 mm-stack-proof-machine-v1 (state-stack-proof-machine-v1 (state-proof-tables-v1 mm-state-label-kind mm-state-formula mm-state-floating-variable mm-state-assertion-mandatory-variable mm-state-assertion-ordered-hypothesis mm-state-assertion-disjoint-variable mm-state-active-hypothesis mm-state-disjoint-variable mm-state-symbol-kind) (state-proof-kinds-v1 (state-literal-v1 mm-label-floating) (state-literal-v1 mm-label-essential) (state-literal-v1 mm-label-axiom) (state-literal-v1 mm-label-theorem) (state-literal-v1 mm-symbol-variable) (state-byte-literal-v1 63)) (state-proof-decoder-v1 65 84 85 89 90 63 20 0 5 1 state-proof-unknown-push-claim-v1))))
+    (rule answer-fact-bc055ad4cbb61beffb33939d058cafc50418223f827a4e11d34fcc46db101f71
+      (head (state-proof-action-v1 mm-stack-proof-machine-v1 mm-label-axiom stack-apply-frame-v1))
+      (body))
+    (rule answer-fact-071589fde187547ac7b650914cc741a0c14dcf3210454d41ef1d988e4b2b9182
+      (head (state-proof-action-v1 mm-stack-proof-machine-v1 mm-label-essential stack-push-declared-v1))
+      (body))
+    (rule answer-fact-8090a23cbf2055efbf1a5ba394c091ccd92c485e7916929b0877bdbb98ec6060
+      (head (state-proof-action-v1 mm-stack-proof-machine-v1 mm-label-floating stack-push-declared-v1))
+      (body))
+    (rule answer-fact-fceea71e53c74ed8e72ef1452e008a86733d13f4eb8515603ef08fbee6bf19e5
+      (head (state-proof-action-v1 mm-stack-proof-machine-v1 mm-label-theorem stack-apply-frame-v1))
+      (body))
+    (rule answer-fact-aa6a021681fb1b75dc0570038272ce88ef120e1473c5d1e6fe6a9cda5feb446b
+      (head (state-proof-machine-v1 mm-stack-proof-machine-v1 (state-stack-proof-machine-v1 (state-proof-tables-v1 mm-state-label-kind mm-state-formula mm-state-floating-variable mm-state-assertion-mandatory-variable mm-state-assertion-ordered-hypothesis mm-state-assertion-disjoint-variable mm-state-active-hypothesis mm-state-disjoint-variable mm-state-symbol-kind) (state-proof-kinds-v1 (state-literal-v1 mm-label-floating) (state-literal-v1 mm-label-essential) (state-literal-v1 mm-label-axiom) (state-literal-v1 mm-label-theorem) (state-literal-v1 mm-symbol-variable) (state-byte-literal-v1 63)) (state-proof-decoder-v1 65 84 85 89 90 63 20 0 5 1 state-proof-unknown-push-claim-v1 state-proof-save-immediately-after-use-v1 state-proof-header-nonmandatory-only-v1))))
       (body))
     (rule answer-fact-b2abdda4c5b5b4f7dfe328013f133e310d07a2aa27cc0de8746d2641be9ece99
       (head (state-table-v1 mm-state-active-essential-variable 1 1 state-scoped-v1))

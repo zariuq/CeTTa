@@ -5,8 +5,10 @@
 (gslt-presentation-v1 ProofGSLTRelationalAssertionCompilerV1
   (signature
     (operator proof-sequence-relational-artifact-v1 1)
+    (operator proof-sequence-relational-execution-v1 16)
     (operator proof-sequence-relational-identity-v1 2)
     (operator proof-sequence-relational-selector-v1 3)
+    (operator proof-sequence-relational-table-policy-v1 3)
     (operator proof-sequence-relational-table-v1 5)
   )
   (equations)
@@ -18,6 +20,27 @@
       (body
         (proof-sequence-relational-layer-valid ?owner ?base)))
 
+    (rule compile-proof-sequence-relational-execution-v1
+      (head
+        (proof-sequence-relational-artifact-v1
+          (proof-sequence-relational-execution-v1
+            ?owner ?machine ?unknown-token
+            ?terminal-low ?terminal-high
+            ?continuation-low ?continuation-high
+            ?save-byte ?unknown-byte
+            ?terminal-radix ?terminal-bias
+            ?continuation-radix ?continuation-bias
+            ?unknown-policy ?save-placement ?header-policy)))
+      (body
+        (proof-sequence-relational-execution-valid
+          ?owner ?machine ?unknown-token
+          ?terminal-low ?terminal-high
+          ?continuation-low ?continuation-high
+          ?save-byte ?unknown-byte
+          ?terminal-radix ?terminal-bias
+          ?continuation-radix ?continuation-bias
+          ?unknown-policy ?save-placement ?header-policy)))
+
     (rule compile-proof-sequence-relational-table-v1
       (head
         (proof-sequence-relational-artifact-v1
@@ -26,6 +49,15 @@
       (body
         (proof-sequence-relational-table-role-valid
           ?owner ?role ?table ?arity ?key-arity)))
+
+    (rule compile-proof-sequence-relational-table-policy-v1
+      (head
+        (proof-sequence-relational-artifact-v1
+          (proof-sequence-relational-table-policy-v1
+            ?owner ?role ?presence)))
+      (body
+        (proof-sequence-relational-table-policy-valid
+          ?owner ?role ?presence)))
 
     (rule compile-proof-sequence-relational-selector-v1
       (head

@@ -5,6 +5,8 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include "gslt_header_hypothesis_policy_v1.h"
+#include "gslt_indexed_instruction_decoder_v1.h"
 #include "relational_store_v1.h"
 #include "relational_value_list_v1.h"
 
@@ -48,6 +50,8 @@ typedef struct {
     uint32_t continuation_radix;
     uint32_t continuation_digit_bias;
     PPRelationalStackProofV1UnknownPolicy unknown_policy;
+    CettaGsltIndexedSavePlacementV1 save_placement;
+    CettaGsltHeaderHypothesisPolicyV1 header_hypothesis_policy;
 } PPRelationalStackProofV1Machine;
 
 typedef struct {
@@ -95,6 +99,10 @@ typedef struct {
     /* Derived from a flat literal-or-slot template whose literal runs are
      * immutable for the lifetime of the compiled frame. */
     bool literal_hole_admitted;
+    /* Derived for every call site from a generated split bind/match frame
+     * plan.  The cache cannot execute its generic frame program without this
+     * explicit admission. */
+    bool two_phase_frame_admitted;
     char native_type_digest[65];
     char storage_plan_digest[65];
 } PPRelationalStackProofV1CacheAdmission;

@@ -15,9 +15,13 @@ typedef struct {
     PPOSLFNativeVMStatsV1 stats;
     uint32_t outcome_query_priority;
     uint32_t outcome_query_attempts;
+    bool instruction_decoder_checked;
+    CettaGsltIndexedDecodeResultV1 instruction_decode_result;
+    uint64_t decoded_instruction_len;
     uint32_t capability_row_len;
     uint32_t generated_event_len;
     uint32_t external_event_len;
+    uint32_t compiled_relation_event_len;
     uint32_t compiled_audit_attempts;
     uint32_t compiled_audit_agreements;
     uint64_t compiled_rule_attempts;

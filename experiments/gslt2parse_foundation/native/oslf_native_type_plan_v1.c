@@ -1016,30 +1016,73 @@ static bool pposlf_native_type_plan_v1_count_variables(
     uint32_t root,
     uint32_t variable_count,
     uint32_t *counts) {
-    const PPOSLFNativeTermV1 *term;
+    typedef struct {
+        uint32_t term;
+        uint32_t next_child;
+    } PPOSLFNativeVariableCountFrameV1;
+    PPOSLFNativeVariableCountFrameV1 *stack = NULL;
+    bool *active = NULL;
+    size_t stack_len = 0u;
+    bool ok = false;
 
     if (!plan || !counts || root >= plan->term_len)
         return false;
-    term = &plan->terms[root];
-    if (term->kind == PPOSLF_NATIVE_TERM_VARIABLE_V1) {
-        if (term->variable >= variable_count ||
-            counts[term->variable] == UINT32_MAX)
-            return false;
-        counts[term->variable]++;
-        return true;
-    }
-    if (term->kind != PPOSLF_NATIVE_TERM_APPLICATION_V1)
-        return true;
-    if (term->edge_begin > plan->term_edge_len ||
-        term->edge_len > plan->term_edge_len - term->edge_begin)
+    if ((size_t)plan->term_len > SIZE_MAX / sizeof(*stack) ||
+        (size_t)plan->term_len > SIZE_MAX / sizeof(*active))
         return false;
-    for (uint32_t child = 0u; child < term->edge_len; child++) {
-        if (!pposlf_native_type_plan_v1_count_variables(
-                plan, plan->term_edges[term->edge_begin + child],
-                variable_count, counts))
-            return false;
+    stack = malloc((size_t)plan->term_len * sizeof(*stack));
+    active = calloc((size_t)plan->term_len, sizeof(*active));
+    if (!stack || !active)
+        goto done;
+    stack[stack_len++] = (PPOSLFNativeVariableCountFrameV1){
+        .term = root,
+        .next_child = 0u,
+    };
+    active[root] = true;
+    while (stack_len > 0u) {
+        PPOSLFNativeVariableCountFrameV1 *frame =
+            &stack[stack_len - 1u];
+        const PPOSLFNativeTermV1 *term = &plan->terms[frame->term];
+
+        if (term->kind == PPOSLF_NATIVE_TERM_VARIABLE_V1) {
+            if (term->variable >= variable_count ||
+                counts[term->variable] == UINT32_MAX)
+                goto done;
+            counts[term->variable]++;
+            active[frame->term] = false;
+            stack_len--;
+            continue;
+        }
+        if (term->kind != PPOSLF_NATIVE_TERM_APPLICATION_V1) {
+            active[frame->term] = false;
+            stack_len--;
+            continue;
+        }
+        if (term->edge_begin > plan->term_edge_len ||
+            term->edge_len > plan->term_edge_len - term->edge_begin)
+            goto done;
+        if (frame->next_child >= term->edge_len) {
+            active[frame->term] = false;
+            stack_len--;
+            continue;
+        }
+        uint32_t child = plan->term_edges[
+            term->edge_begin + frame->next_child++];
+        if (child >= plan->term_len || active[child] ||
+            stack_len >= plan->term_len)
+            goto done;
+        stack[stack_len++] = (PPOSLFNativeVariableCountFrameV1){
+            .term = child,
+            .next_child = 0u,
+        };
+        active[child] = true;
     }
-    return true;
+    ok = true;
+
+done:
+    free(active);
+    free(stack);
+    return ok;
 }
 
 bool pposlf_native_type_plan_v1_step_flow(

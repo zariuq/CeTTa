@@ -28340,7 +28340,7 @@ static uint8_t *metamath_syntax_cursor_fold_v1_state_bytes_dup(const uint8_t *by
     return copy;
 }
 
-const char *metamath_syntax_cursor_fold_v1_state_program_plan_digest(void) { return "556adc45fed5f3f84bc125ab4d9a9576635a8feda311ae0858507bf08902671c"; }
+const char *metamath_syntax_cursor_fold_v1_state_program_plan_digest(void) { return "85ca8461be77b467fe047559ca7a6f3390cf49fe980b2af7e94ebfff1f875695"; }
 
 bool metamath_syntax_cursor_fold_v1_state_program_plan_init(
     const PPOccurrenceFoldV1Plan *occurrence_plan,
@@ -28497,6 +28497,8 @@ bool metamath_syntax_cursor_fold_v1_state_program_plan_init(
     result.proof_machines[UINT32_C(0)].continuation_radix = UINT32_C(5);
     result.proof_machines[UINT32_C(0)].continuation_digit_bias = UINT32_C(1);
     result.proof_machines[UINT32_C(0)].unknown_policy = (PPRelationalStackProofV1UnknownPolicy)1;
+    result.proof_machines[UINT32_C(0)].save_placement = (CettaGsltIndexedSavePlacementV1)1;
+    result.proof_machines[UINT32_C(0)].header_hypothesis_policy = (CettaGsltHeaderHypothesisPolicyV1)1;
     result.actions[UINT32_C(0)] = (PPRelationalStateActionV1){
         .kind = (PPRelationalStateActionKindV1)9,
         .operation_id = UINT32_C(0),
@@ -30767,8 +30769,8 @@ bool metamath_syntax_cursor_fold_v1_state_program_plan_init(
     result.operations[UINT32_C(10)] = (PPRelationalStateOperationV1){ UINT32_C(83), UINT32_C(1) };
     result.operations[UINT32_C(11)] = (PPRelationalStateOperationV1){ UINT32_C(84), UINT32_C(1) };
     memcpy(result.occurrence_fold_plan_digest, "a7aff9464f2c6e1b8044e7f5010fd2fbdc48843d7d19a1da7699737df2d9c5c0", 65u);
-    memcpy(result.compiler_answer_digest, "4392de0c3dfd289a4228e1e41632bc23c3efea77daf67ec15f7af36a036eb9b2", 65u);
-    memcpy(result.plan_digest, "556adc45fed5f3f84bc125ab4d9a9576635a8feda311ae0858507bf08902671c", 65u);
+    memcpy(result.compiler_answer_digest, "43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76", 65u);
+    memcpy(result.plan_digest, "85ca8461be77b467fe047559ca7a6f3390cf49fe980b2af7e94ebfff1f875695", 65u);
     if (!pprelational_state_program_v1_plan_validate(
             occurrence_plan, &result, error_buf, error_buf_size)) goto fail;
     pprelational_state_program_v1_plan_free(out);

@@ -3,7 +3,8 @@
 ; radix, and policy consumed by the generic stack-proof executor.
 
 (gslt-presentation-v1 MetamathSourceProofV1
-  (signature)
+  (signature
+    (operator source-proof-trace-save-placement-v1 1))
   (equations)
   (rewrites
     (rule mm-proof-literal-theorem
@@ -44,6 +45,16 @@
         (source-state-proof-unknown-policy
           state-proof-unknown-push-claim-v1))
       (body))
+    (rule mm-proof-save-immediately-after-use
+      (head
+        (source-state-literal ?save-placement))
+      (body
+        (source-proof-trace-save-placement-v1 ?save-placement)))
+    (rule mm-proof-header-nonmandatory-only
+      (head
+        (source-state-proof-header-hypothesis-policy
+          state-proof-header-nonmandatory-only-v1))
+      (body))
 
     (rule mm-proof-machine
       (head
@@ -69,7 +80,41 @@
               (state-byte-literal-v1 63))
             (state-proof-decoder-v1
               65 84 85 89 90 63 20 0 5 1
-              state-proof-unknown-push-claim-v1))))
+              state-proof-unknown-push-claim-v1
+              state-proof-save-immediately-after-use-v1
+              state-proof-header-nonmandatory-only-v1))))
+      (body))
+
+    ; The proof presentation owns the finite classification relation.  These
+    ; guest source kinds are lowered to closed generic stack actions; the
+    ; compiler and runtime do not reconstruct this list positionally.
+    (rule mm-proof-action-floating
+      (head
+        (source-state-proof-action
+          mm-stack-proof-machine-v1
+          mm-label-floating
+          stack-push-declared-v1))
+      (body))
+    (rule mm-proof-action-essential
+      (head
+        (source-state-proof-action
+          mm-stack-proof-machine-v1
+          mm-label-essential
+          stack-push-declared-v1))
+      (body))
+    (rule mm-proof-action-axiom
+      (head
+        (source-state-proof-action
+          mm-stack-proof-machine-v1
+          mm-label-axiom
+          stack-apply-frame-v1))
+      (body))
+    (rule mm-proof-action-theorem
+      (head
+        (source-state-proof-action
+          mm-stack-proof-machine-v1
+          mm-label-theorem
+          stack-apply-frame-v1))
       (body))
 
     (rule mm-proof-normal-label-not-symbol

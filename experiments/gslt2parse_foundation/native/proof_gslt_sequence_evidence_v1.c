@@ -742,7 +742,17 @@ static void *ppproof_sequence_v1_producer_alloc(
         byte_len > chunk->capacity - aligned_used) {
         size_t capacity = byte_len > minimum_chunk_size
             ? byte_len : minimum_chunk_size;
-        PPProofGSLTSequenceArenaChunkV1 *next;
+        PPProofGSLTSequenceArenaChunkV1 *next =
+            chunk ? chunk->next : impl->arena_first;
+
+        while (next && next->capacity < byte_len)
+            next = next->next;
+        if (next) {
+            impl->arena_current = next;
+            chunk = next;
+            aligned_used = 0u;
+            goto allocate;
+        }
 
         if (capacity > SIZE_MAX - sizeof(*next)) {
             ppproof_sequence_v1_build_fail(
@@ -760,14 +770,19 @@ static void *ppproof_sequence_v1_producer_alloc(
         next->next = NULL;
         next->used = 0u;
         next->capacity = capacity;
-        if (chunk)
-            chunk->next = next;
-        else
+        if (chunk) {
+            PPProofGSLTSequenceArenaChunkV1 *tail = chunk;
+            while (tail->next)
+                tail = tail->next;
+            tail->next = next;
+        } else {
             impl->arena_first = next;
+        }
         impl->arena_current = next;
         chunk = next;
         aligned_used = 0u;
     }
+allocate:
     allocation = chunk->bytes + aligned_used;
     memset(allocation, 0, byte_len);
     chunk->used = aligned_used + byte_len;
@@ -2184,6 +2199,53 @@ void ppproof_gslt_sequence_evidence_producer_v1_free(
     memset(producer, 0, sizeof(*producer));
 }
 
+bool ppproof_gslt_sequence_evidence_producer_v1_workspace_stats(
+    const PPProofGSLTSequenceEvidenceProducerV1 *producer,
+    PPProofGSLTSequenceEvidenceWorkspaceStatsV1 *stats_out) {
+    const PPProofGSLTSequenceEvidenceProducerImplV1 *impl;
+    const PPProofGSLTSequenceArenaChunkV1 *chunk;
+    size_t arena_reserved = 0u;
+
+    if (!producer || !stats_out || !(impl = producer->implementation))
+        return false;
+    for (chunk = impl->arena_first; chunk; chunk = chunk->next) {
+        if (arena_reserved > SIZE_MAX - chunk->capacity)
+            arena_reserved = SIZE_MAX;
+        else
+            arena_reserved += chunk->capacity;
+    }
+    *stats_out = (PPProofGSLTSequenceEvidenceWorkspaceStatsV1){
+        .arena_reserved_bytes = arena_reserved,
+        .node_capacity = impl->node_cap,
+        .canonical_cache_capacity = impl->sequence_cons_cache_cap,
+    };
+    return true;
+}
+
+static void ppproof_sequence_v1_reset_workspace(
+    PPProofGSLTSequenceEvidenceProducerImplV1 *impl,
+    const PPProofGSLTSequenceEvidenceABIV1 *abi,
+    uint32_t first_node_id,
+    const PPProofGSLTArticleV1Limits *limits) {
+    PPProofGSLTSequenceArenaChunkV1 *chunk;
+
+    for (chunk = impl->arena_first; chunk; chunk = chunk->next)
+        chunk->used = 0u;
+    impl->abi = abi;
+    impl->node_len = 0u;
+    impl->first_node_id = first_node_id;
+    impl->arena_current = impl->arena_first;
+    impl->pattern_len = 0u;
+    impl->sequence_nil_term = NULL;
+    if (impl->sequence_cons_cache_cap != 0u) {
+        memset(impl->sequence_cons_cache, 0,
+               (size_t)impl->sequence_cons_cache_cap *
+                   sizeof(*impl->sequence_cons_cache));
+    }
+    impl->sequence_cons_cache_len = 0u;
+    impl->limits = *limits;
+}
+
 PPProofGSLTArticleV1Result
 ppproof_gslt_sequence_evidence_producer_v1_begin(
     PPProofGSLTSequenceEvidenceProducerV1 *producer,
@@ -2216,18 +2278,21 @@ ppproof_gslt_sequence_evidence_producer_v1_begin(
             "sequence evidence producer limits are malformed");
         return PPPROOF_GSLT_ARTICLE_V1_INVALID;
     }
-    impl = calloc(1u, sizeof(*impl));
+    impl = producer->implementation;
     if (!impl) {
-        ppproof_sequence_v1_set_error(
-            error_buf, error_buf_size,
-            "sequence evidence producer allocation failed");
-        return PPPROOF_GSLT_ARTICLE_V1_RESOURCE;
+        impl = calloc(1u, sizeof(*impl));
+        if (!impl) {
+            ppproof_sequence_v1_set_error(
+                error_buf, error_buf_size,
+                "sequence evidence producer allocation failed");
+            return PPPROOF_GSLT_ARTICLE_V1_RESOURCE;
+        }
+        producer->implementation = impl;
     }
-    impl->abi = abi;
-    impl->first_node_id = first_node_id;
-    impl->limits = *limits;
-    ppproof_gslt_sequence_evidence_producer_v1_free(producer);
-    producer->implementation = impl;
+    ppproof_sequence_v1_reset_workspace(
+        impl, abi, first_node_id, limits);
+    producer->nodes = NULL;
+    producer->node_len = 0u;
     return PPPROOF_GSLT_ARTICLE_V1_OK;
 }
 
