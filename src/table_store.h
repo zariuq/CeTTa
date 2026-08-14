@@ -9,7 +9,7 @@
  * TableStore is one optional memoization substrate beside SearchContext.
  *
  * The authoritative user-visible semantics remain the active language/profile
- * surface plus the public Space API (`new-space`, `match`, `add-atom`,
+ * syntax plus the public Space API (`new-space`, `match`, `add-atom`,
  * `remove-atom`, revision-observable mutation, and any explicit pragma/mode
  * selected by the caller). This header does not define a backend-wide or
  * language-wide law; it only states the current invariants for the explicit
@@ -31,7 +31,7 @@
  *   - Replaying answers from an older revision because the variant shape still
  *     matches, silently hiding a mutation boundary in this implementation.
  *
- * Future backends, future `--lang` surfaces, or future explicit table modes
+ * Future backends, future `--lang` syntax forms, or future explicit table modes
  * may use different internal keys, invalidation schemes, or replay machinery
  * so long as they preserve the higher-level exposed semantics.
  */

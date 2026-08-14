@@ -11,7 +11,7 @@
   (mork:size &live)
   (2))
 
-; Canonical MORK-specific surface: ACT attach / dump / load.
+; Canonical MORK-specific syntax: ACT attach / dump / load.
 !(assertEqual
   (mork:dump! &live "../runtime/test_mork_kiss_examples.act")
   ())

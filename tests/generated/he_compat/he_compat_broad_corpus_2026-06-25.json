@@ -6074,12 +6074,12 @@
         "lane": "test",
         "lang": "he",
         "notes": "-",
-        "path": "tests/spec_translation_delete_space_surface.metta",
+        "path": "tests/spec_translation_delete_space_syntax.metta",
         "profile": "he-extended",
         "space_engine": "native",
         "syntax": "metta"
       },
-      "path": "tests/spec_translation_delete_space_surface.metta",
+      "path": "tests/spec_translation_delete_space_syntax.metta",
       "upstream": {
         "bytes": 43,
         "head": "[()]\n[()]\n[delete-space-returned]\n[doomed]\n",
@@ -6183,12 +6183,12 @@
         "lane": "test",
         "lang": "he",
         "notes": "-",
-        "path": "tests/spec_translation_empty_space_ignored_result_surface.metta",
+        "path": "tests/spec_translation_empty_space_ignored_result_syntax.metta",
         "profile": "he-extended",
         "space_engine": "native",
         "syntax": "metta"
       },
-      "path": "tests/spec_translation_empty_space_ignored_result_surface.metta",
+      "path": "tests/spec_translation_empty_space_ignored_result_syntax.metta",
       "upstream": {
         "bytes": 40,
         "head": "[()]\n[()]\n[()]\n[empty-space-cleared]\n[]\n",
@@ -6296,12 +6296,12 @@
         "lane": "test",
         "lang": "he",
         "notes": "-",
-        "path": "tests/spec_translation_empty_space_surface.metta",
+        "path": "tests/spec_translation_empty_space_syntax.metta",
         "profile": "he-extended",
         "space_engine": "native",
         "syntax": "metta"
       },
-      "path": "tests/spec_translation_empty_space_surface.metta",
+      "path": "tests/spec_translation_empty_space_syntax.metta",
       "upstream": {
         "bytes": 28,
         "head": "[()]\n[()]\n[()]\n[(() ())]\n[]\n",
@@ -6427,12 +6427,12 @@
         "lane": "test",
         "lang": "he",
         "notes": "-",
-        "path": "tests/spec_translation_named_space_surface.metta",
+        "path": "tests/spec_translation_named_space_syntax.metta",
         "profile": "he-extended",
         "space_engine": "native",
         "syntax": "metta"
       },
-      "path": "tests/spec_translation_named_space_surface.metta",
+      "path": "tests/spec_translation_named_space_syntax.metta",
       "upstream": {
         "bytes": 44,
         "head": "[()]\n[()]\n[()]\n[a, b]\n[()]\n[(probe-item b)]\n",
@@ -6531,12 +6531,12 @@
         "lane": "test",
         "lang": "he",
         "notes": "-",
-        "path": "tests/spec_translation_new_space_function_surface.metta",
+        "path": "tests/spec_translation_new_space_function_syntax.metta",
         "profile": "he-extended",
         "space_engine": "native",
         "syntax": "metta"
       },
-      "path": "tests/spec_translation_new_space_function_surface.metta",
+      "path": "tests/spec_translation_new_space_function_syntax.metta",
       "upstream": {
         "bytes": 23,
         "head": "[(token b), (token a)]\n",
@@ -6626,12 +6626,12 @@
         "lane": "test",
         "lang": "he",
         "notes": "-",
-        "path": "tests/spec_translation_self_space_surface.metta",
+        "path": "tests/spec_translation_self_space_syntax.metta",
         "profile": "he-extended",
         "space_engine": "native",
         "syntax": "metta"
       },
-      "path": "tests/spec_translation_self_space_surface.metta",
+      "path": "tests/spec_translation_self_space_syntax.metta",
       "upstream": {
         "bytes": 38,
         "head": "[()]\n[()]\n[(a b), (b c)]\n[()]\n[(b c)]\n",
@@ -6813,12 +6813,12 @@
         "lane": "test",
         "lang": "he",
         "notes": "-",
-        "path": "tests/spec_translation_state_builtin_surface.metta",
+        "path": "tests/spec_translation_state_builtin_syntax.metta",
         "profile": "he-extended",
         "space_engine": "native",
         "syntax": "metta"
       },
-      "path": "tests/spec_translation_state_builtin_surface.metta",
+      "path": "tests/spec_translation_state_builtin_syntax.metta",
       "upstream": {
         "bytes": 25,
         "head": "[()]\n[0]\n[(State 1)]\n[1]\n",
@@ -6936,12 +6936,12 @@
         "lane": "test",
         "lang": "he",
         "notes": "-",
-        "path": "tests/spec_translation_state_via_space_surface.metta",
+        "path": "tests/spec_translation_state_via_space_syntax.metta",
         "profile": "he-extended",
         "space_engine": "native",
         "syntax": "metta"
       },
-      "path": "tests/spec_translation_state_via_space_surface.metta",
+      "path": "tests/spec_translation_state_via_space_syntax.metta",
       "upstream": {
         "bytes": 28,
         "head": "[()]\n[()]\n[0]\n[()]\n[()]\n[1]\n",
@@ -7032,12 +7032,12 @@
         "lane": "test",
         "lang": "he",
         "notes": "-",
-        "path": "tests/spec_translation_unknown_space_surface.metta",
+        "path": "tests/spec_translation_unknown_space_syntax.metta",
         "profile": "he-extended",
         "space_engine": "native",
         "syntax": "metta"
       },
-      "path": "tests/spec_translation_unknown_space_surface.metta",
+      "path": "tests/spec_translation_unknown_space_syntax.metta",
       "upstream": {
         "bytes": 71,
         "head": "[(Error (get-atoms &fresh) get-atoms expects a space as its argument)]\n",
@@ -8946,12 +8946,12 @@
         "lane": "test",
         "lang": "he",
         "notes": "-",
-        "path": "tests/test_call_native_surface.metta",
+        "path": "tests/test_call_native_syntax.metta",
         "profile": "he-extended",
         "space_engine": "native",
         "syntax": "metta"
       },
-      "path": "tests/test_call_native_surface.metta",
+      "path": "tests/test_call_native_syntax.metta",
       "upstream": {
         "bytes": 96,
         "head": "[(Error (call-native + (1 2)) expected: (call-native func args), found: (call-native + (1 2)))]\n",
@@ -10148,12 +10148,12 @@
         "lane": "test",
         "lang": "he",
         "notes": "-",
-        "path": "tests/test_clist_surface.metta",
+        "path": "tests/test_clist_syntax.metta",
         "profile": "he-extended",
         "space_engine": "native",
         "syntax": "metta"
       },
-      "path": "tests/test_clist_surface.metta",
+      "path": "tests/test_clist_syntax.metta",
       "upstream": {
         "bytes": 93,
         "head": "[(Error (import! ModuleSpace(GroundingSpace-top) clist) Failed to resolve module top:clist)]\n",
@@ -13660,12 +13660,12 @@
         "lane": "test",
         "lang": "he",
         "notes": "-",
-        "path": "tests/test_filter_atom_function_surface.metta",
+        "path": "tests/test_filter_atom_function_syntax.metta",
         "profile": "he-extended",
         "space_engine": "native",
         "syntax": "metta"
       },
-      "path": "tests/test_filter_atom_function_surface.metta",
+      "path": "tests/test_filter_atom_function_syntax.metta",
       "upstream": {
         "bytes": 281,
         "head": "[(Error (assertEqual (filter-atom (1 2 3 4 5) filterfun) (4 5)) \"\\nExpected: [(4 5)]\\nGot: [(Error (filter-atom (1 2 3 4 5) filterfun) IncorrectNumberOfArguments)]\\nMissed results: (4 5)\\nExcessive results: (Error (filter-atom (1 2 3 4 5) filterfun) IncorrectNumberOfArguments)\")]\n",
@@ -14885,12 +14885,12 @@
         "lane": "test",
         "lang": "he",
         "notes": "-",
-        "path": "tests/test_fs_surface.metta",
+        "path": "tests/test_fs_syntax.metta",
         "profile": "he-extended",
         "space_engine": "native",
         "syntax": "metta"
       },
-      "path": "tests/test_fs_surface.metta",
+      "path": "tests/test_fs_syntax.metta",
       "upstream": {
         "bytes": 87,
         "head": "[(Error (import! ModuleSpace(GroundingSpace-top) fs) Failed to resolve module top:fs)]\n",
@@ -19528,12 +19528,12 @@
         "lane": "test",
         "lang": "he",
         "notes": "-",
-        "path": "tests/test_he_compat_surface_regressions.metta",
+        "path": "tests/test_he_compat_syntax_regressions.metta",
         "profile": "he-extended",
         "space_engine": "native",
         "syntax": "metta"
       },
-      "path": "tests/test_he_compat_surface_regressions.metta",
+      "path": "tests/test_he_compat_syntax_regressions.metta",
       "upstream": {
         "bytes": 50,
         "head": "[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n",
@@ -20675,12 +20675,12 @@
         "lane": "test",
         "lang": "he",
         "notes": "-",
-        "path": "tests/test_if_once_witness_surface.metta",
+        "path": "tests/test_if_once_witness_syntax.metta",
         "profile": "he-extended",
         "space_engine": "native",
         "syntax": "metta"
       },
-      "path": "tests/test_if_once_witness_surface.metta",
+      "path": "tests/test_if_once_witness_syntax.metta",
       "upstream": {
         "bytes": 245,
         "head": "[(Error (assertEqual (if (once (myf $M)) $M) (a b)) \"\\nExpected: [(a b)]\\nGot: [(Error (if (once (myf $M)) $M) IncorrectNumberOfArguments)]\\nMissed results: (a b)\\nExcessive results: (Error (if (once (myf $M)) $M) IncorrectNumberOfArguments)\")]\n",
@@ -24708,12 +24708,12 @@
         "lane": "test",
         "lang": "he",
         "notes": "-",
-        "path": "tests/test_list_surface.metta",
+        "path": "tests/test_list_syntax.metta",
         "profile": "he-extended",
         "space_engine": "native",
         "syntax": "metta"
       },
-      "path": "tests/test_list_surface.metta",
+      "path": "tests/test_list_syntax.metta",
       "upstream": {
         "bytes": 91,
         "head": "[(Error (import! ModuleSpace(GroundingSpace-top) list) Failed to resolve module top:list)]\n",
@@ -25440,12 +25440,12 @@
         "lane": "test",
         "lang": "he",
         "notes": "-",
-        "path": "tests/test_lts_he_surface.metta",
+        "path": "tests/test_lts_he_syntax.metta",
         "profile": "he-extended",
         "space_engine": "native",
         "syntax": "metta"
       },
-      "path": "tests/test_lts_he_surface.metta",
+      "path": "tests/test_lts_he_syntax.metta",
       "upstream": {
         "bytes": 92,
         "head": "[(Error (import! ModuleSpace(GroundingSpace-top) lts:he) Failed to resolve module top:lts)]\n",
@@ -25599,12 +25599,12 @@
         "lane": "test",
         "lang": "he",
         "notes": "-",
-        "path": "tests/test_lts_mi_surface.metta",
+        "path": "tests/test_lts_mi_syntax.metta",
         "profile": "he-extended",
         "space_engine": "native",
         "syntax": "metta"
       },
-      "path": "tests/test_lts_mi_surface.metta",
+      "path": "tests/test_lts_mi_syntax.metta",
       "upstream": {
         "bytes": 89,
         "head": "[(Error (import! ModuleSpace(GroundingSpace-top) lts) Failed to resolve module top:lts)]\n",
@@ -26172,12 +26172,12 @@
         "lane": "test",
         "lang": "he",
         "notes": "-",
-        "path": "tests/test_lts_rho_cost_surface.metta",
+        "path": "tests/test_lts_rho_cost_location.metta",
         "profile": "he-extended",
         "space_engine": "native",
         "syntax": "metta"
       },
-      "path": "tests/test_lts_rho_cost_surface.metta",
+      "path": "tests/test_lts_rho_cost_location.metta",
       "upstream": {
         "bytes": 98,
         "head": "[(Error (import! ModuleSpace(GroundingSpace-top) lts:rho:cost) Failed to resolve module top:lts)]\n",
@@ -26592,12 +26592,12 @@
         "lane": "test",
         "lang": "he",
         "notes": "-",
-        "path": "tests/test_lts_rho_surface.metta",
+        "path": "tests/test_lts_rho_syntax.metta",
         "profile": "he-extended",
         "space_engine": "native",
         "syntax": "metta"
       },
-      "path": "tests/test_lts_rho_surface.metta",
+      "path": "tests/test_lts_rho_syntax.metta",
       "upstream": {
         "bytes": 93,
         "head": "[(Error (import! ModuleSpace(GroundingSpace-top) lts:rho) Failed to resolve module top:lts)]\n",
@@ -26940,12 +26940,12 @@
         "lane": "test",
         "lang": "he",
         "notes": "-",
-        "path": "tests/test_lts_surface.metta",
+        "path": "tests/test_lts_syntax.metta",
         "profile": "he-extended",
         "space_engine": "native",
         "syntax": "metta"
       },
-      "path": "tests/test_lts_surface.metta",
+      "path": "tests/test_lts_syntax.metta",
       "upstream": {
         "bytes": 89,
         "head": "[(Error (import! ModuleSpace(GroundingSpace-top) lts) Failed to resolve module top:lts)]\n",
@@ -28978,12 +28978,12 @@
         "lane": "test",
         "lang": "he",
         "notes": "-",
-        "path": "tests/test_math_lib_surface.metta",
+        "path": "tests/test_math_lib_syntax.metta",
         "profile": "he-extended",
         "space_engine": "native",
         "syntax": "metta"
       },
-      "path": "tests/test_math_lib_surface.metta",
+      "path": "tests/test_math_lib_syntax.metta",
       "upstream": {
         "bytes": 91,
         "head": "[(Error (import! ModuleSpace(GroundingSpace-top) math) Failed to resolve module top:math)]\n",
@@ -31486,12 +31486,12 @@
         "lane": "test",
         "lang": "he",
         "notes": "-",
-        "path": "tests/test_path_surface.metta",
+        "path": "tests/test_path_syntax.metta",
         "profile": "he-extended",
         "space_engine": "native",
         "syntax": "metta"
       },
-      "path": "tests/test_path_surface.metta",
+      "path": "tests/test_path_syntax.metta",
       "upstream": {
         "bytes": 91,
         "head": "[(Error (import! ModuleSpace(GroundingSpace-top) path) Failed to resolve module top:path)]\n",
@@ -32117,13 +32117,13 @@
     {
       "cetta": {
         "bytes": 90,
-        "head": "[(quote (namespace-surface mork:open-act runtime:test-module $mork:space $runtime:item))]\n",
+        "head": "[(quote (namespace-syntax mork:open-act runtime:test-module $mork:space $runtime:item))]\n",
         "observations": [
           {
             "kind": "result-bag",
             "value": [
               [
-                "(quote (namespace-surface mork:open-act runtime:test-module $mork:space $runtime:item))",
+                "(quote (namespace-syntax mork:open-act runtime:test-module $mork:space $runtime:item))",
                 1
               ]
             ]
@@ -32140,21 +32140,21 @@
         "lane": "test",
         "lang": "he",
         "notes": "-",
-        "path": "tests/test_pretty_namespaces_surface.metta",
+        "path": "tests/test_pretty_namespaces_syntax.metta",
         "profile": "he-extended",
         "space_engine": "native",
         "syntax": "metta"
       },
-      "path": "tests/test_pretty_namespaces_surface.metta",
+      "path": "tests/test_pretty_namespaces_syntax.metta",
       "upstream": {
         "bytes": 90,
-        "head": "[(quote (namespace-surface mork:open-act runtime:test-module $mork:space $runtime:item))]\n",
+        "head": "[(quote (namespace-syntax mork:open-act runtime:test-module $mork:space $runtime:item))]\n",
         "observations": [
           {
             "kind": "result-bag",
             "value": [
               [
-                "(quote (namespace-surface mork:open-act runtime:test-module $mork:space $runtime:item))",
+                "(quote (namespace-syntax mork:open-act runtime:test-module $mork:space $runtime:item))",
                 1
               ]
             ]
@@ -32191,12 +32191,12 @@
         "lane": "test-backend-dedicated",
         "lang": "he",
         "notes": "dedicated backend or bridge golden regression",
-        "path": "tests/test_pretty_vars_surface.metta",
+        "path": "tests/test_pretty_vars_syntax.metta",
         "profile": "he-extended",
         "space_engine": "native",
         "syntax": "metta"
       },
-      "path": "tests/test_pretty_vars_surface.metta",
+      "path": "tests/test_pretty_vars_syntax.metta",
       "upstream": {
         "bytes": 66,
         "head": "[(\u2192 (\u2192 (\u00ac $\ud835\udf11#23) (\u00ac $\ud835\udf13#24)) (\u2192 $\ud835\udf13#24 $\ud835\udf11#23))]\n",
@@ -32559,12 +32559,12 @@
         "lane": "test",
         "lang": "he",
         "notes": "-",
-        "path": "tests/test_println_surface.metta",
+        "path": "tests/test_println_syntax.metta",
         "profile": "he-extended",
         "space_engine": "native",
         "syntax": "metta"
       },
-      "path": "tests/test_println_surface.metta",
+      "path": "tests/test_println_syntax.metta",
       "upstream": {
         "bytes": 11,
         "head": "hello\n[ok]\n",
@@ -32964,12 +32964,12 @@
         "lane": "test",
         "lang": "he",
         "notes": "-",
-        "path": "tests/test_range_repeat_atom_surface.metta",
+        "path": "tests/test_range_repeat_atom_syntax.metta",
         "profile": "he-extended",
         "space_engine": "native",
         "syntax": "metta"
       },
-      "path": "tests/test_range_repeat_atom_surface.metta",
+      "path": "tests/test_range_repeat_atom_syntax.metta",
       "upstream": {
         "bytes": 166,
         "head": "[(Error (assertEqual (range-atom 5) (0 1 2 3 4)) \"\\nExpected: [(0 1 2 3 4)]\\nGot: [(range-atom 5)]\\nMissed results: (0 1 2 3 4)\\nExcessive results: (range-atom 5)\")]\n",
@@ -34609,12 +34609,12 @@
         "lane": "test",
         "lang": "he",
         "notes": "-",
-        "path": "tests/test_repr_parse_surface.metta",
+        "path": "tests/test_repr_parse_syntax.metta",
         "profile": "he-extended",
         "space_engine": "native",
         "syntax": "metta"
       },
-      "path": "tests/test_repr_parse_surface.metta",
+      "path": "tests/test_repr_parse_syntax.metta",
       "upstream": {
         "bytes": 320,
         "head": "[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[(* 2 21)]\n[()]\n[()]\n[()]\n[()]\n[(Error (assertEqualToResult (parse \"A B\") ((Error (parse \"A B\") ParseFailed))) \"\\nExpected: [(Error (parse \\\"A B\\\") ParseFailed)]\\nGot: [A]\\nMissed results: (Error (parse \\\"A B\\\") ParseFailed)\\nExcessive results: A\")]\n",
@@ -34912,12 +34912,12 @@
         "lane": "test",
         "lang": "he",
         "notes": "-",
-        "path": "tests/test_rho_lib_hygiene_surface.metta",
+        "path": "tests/test_rho_lib_hygiene_syntax.metta",
         "profile": "he-extended",
         "space_engine": "native",
         "syntax": "metta"
       },
-      "path": "tests/test_rho_lib_hygiene_surface.metta",
+      "path": "tests/test_rho_lib_hygiene_syntax.metta",
       "upstream": {
         "bytes": 89,
         "head": "[(Error (import! ModuleSpace(GroundingSpace-top) rho) Failed to resolve module top:rho)]\n",
@@ -35080,12 +35080,12 @@
         "lane": "test",
         "lang": "he",
         "notes": "-",
-        "path": "tests/test_rho_lib_surface.metta",
+        "path": "tests/test_rho_lib_syntax.metta",
         "profile": "he-extended",
         "space_engine": "native",
         "syntax": "metta"
       },
-      "path": "tests/test_rho_lib_surface.metta",
+      "path": "tests/test_rho_lib_syntax.metta",
       "upstream": {
         "bytes": 89,
         "head": "[(Error (import! ModuleSpace(GroundingSpace-top) rho) Failed to resolve module top:rho)]\n",
@@ -36318,12 +36318,12 @@
         "lane": "test",
         "lang": "he",
         "notes": "-",
-        "path": "tests/test_rhometta_lib_surface.metta",
+        "path": "tests/test_rhometta_lib_syntax.metta",
         "profile": "he-extended",
         "space_engine": "native",
         "syntax": "metta"
       },
-      "path": "tests/test_rhometta_lib_surface.metta",
+      "path": "tests/test_rhometta_lib_syntax.metta",
       "upstream": {
         "bytes": 99,
         "head": "[(Error (import! ModuleSpace(GroundingSpace-top) rhometta) Failed to resolve module top:rhometta)]\n",
@@ -37647,12 +37647,12 @@
         "lane": "test",
         "lang": "he",
         "notes": "-",
-        "path": "tests/test_runtime_surface_docs.metta",
+        "path": "tests/test_runtime_builtin_docs.metta",
         "profile": "he-extended",
         "space_engine": "native",
         "syntax": "metta"
       },
-      "path": "tests/test_runtime_surface_docs.metta",
+      "path": "tests/test_runtime_builtin_docs.metta",
       "upstream": {
         "bytes": 55,
         "head": "[(Error (get-doc pragma!) IncorrectNumberOfArguments)]\n",
@@ -38808,12 +38808,12 @@
         "lane": "test",
         "lang": "he",
         "notes": "-",
-        "path": "tests/test_size_surface.metta",
+        "path": "tests/test_size_syntax.metta",
         "profile": "he-extended",
         "space_engine": "native",
         "syntax": "metta"
       },
-      "path": "tests/test_size_surface.metta",
+      "path": "tests/test_size_syntax.metta",
       "upstream": {
         "bytes": 121,
         "head": "[(Error (assertEqual (size ()) 0) \"\\nExpected: [0]\\nGot: [(size ())]\\nMissed results: 0\\nExcessive results: (size ())\")]\n",
@@ -40497,12 +40497,12 @@
         "lane": "test",
         "lang": "he",
         "notes": "-",
-        "path": "tests/test_str_surface.metta",
+        "path": "tests/test_str_syntax.metta",
         "profile": "he-extended",
         "space_engine": "native",
         "syntax": "metta"
       },
-      "path": "tests/test_str_surface.metta",
+      "path": "tests/test_str_syntax.metta",
       "upstream": {
         "bytes": 89,
         "head": "[(Error (import! ModuleSpace(GroundingSpace-top) str) Failed to resolve module top:str)]\n",
@@ -42500,12 +42500,12 @@
         "lane": "test",
         "lang": "he",
         "notes": "-",
-        "path": "tests/test_system_surface.metta",
+        "path": "tests/test_system_syntax.metta",
         "profile": "he-extended",
         "space_engine": "native",
         "syntax": "metta"
       },
-      "path": "tests/test_system_surface.metta",
+      "path": "tests/test_system_syntax.metta",
       "upstream": {
         "bytes": 95,
         "head": "[(Error (import! ModuleSpace(GroundingSpace-top) system) Failed to resolve module top:system)]\n",
@@ -43440,12 +43440,12 @@
         "lane": "test",
         "lang": "he",
         "notes": "-",
-        "path": "tests/test_trace_surface.metta",
+        "path": "tests/test_trace_syntax.metta",
         "profile": "he-extended",
         "space_engine": "native",
         "syntax": "metta"
       },
-      "path": "tests/test_trace_surface.metta",
+      "path": "tests/test_trace_syntax.metta",
       "upstream": {
         "bytes": 22,
         "head": "[42]\n[ok]\n\"msg\"\n(A B)\n",

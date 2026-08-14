@@ -18,7 +18,7 @@ static void test_query_head_rows(void) {
     rows++; \
     if (strcmp(#head, "match") == 0) saw_match = true; \
     if (strcmp(#head, "get_atoms") == 0) saw_get_atoms = true; \
-    if (strcmp(#head, "mork_match_surface") == 0) saw_mork_match = true; \
+    if (strcmp(#head, "mork_match_syntax") == 0) saw_mork_match = true; \
     if (strcmp(#head, "get_type") == 0) saw_get_type = true; \
     if (strcmp(#head, "get_type_space") == 0) saw_get_type_space = true; \
 } while (0);

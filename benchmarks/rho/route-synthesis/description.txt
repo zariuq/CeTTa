@@ -19,7 +19,7 @@ Files:
   f1r3node rholang-cli.
 
 The generated `.mrho` file is CeTTa's strict-core rho concrete syntax; the
-generated `.rho` file is the surface rho/Rholang spelling used for
+generated `.rho` file is the syntax rho/Rholang spelling used for
 cross-engine runs.
 
 The default ladder starts at 32/48/64 now that the evaluator visible-variable

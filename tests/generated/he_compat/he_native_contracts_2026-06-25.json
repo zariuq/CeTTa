@@ -142,7 +142,7 @@
         "regression_tests": [
           "tests/test_eval_grounded.metta"
         ],
-        "statement": "formal HE eval of an unreduced expression surfaces the inner expression, while he-compat surfaces Rust HE 0.2.10's wrapped eval expression.",
+        "statement": "formal HE eval of an unreduced expression returns the inner expression, while he-compat returns Rust HE 0.2.10's wrapped eval expression.",
         "status": "implemented-and-regression-tested"
       },
       {
@@ -199,7 +199,7 @@
         "regression_tests": [
           "tests/test_no_return_error.metta"
         ],
-        "statement": "formal HE reports NoReturn when a function body exits without return; he-compat reproduces Rust HE 0.2.10's fresh-result surface for the compatibility lane.",
+        "statement": "formal HE reports NoReturn when a function body exits without return; he-compat reproduces Rust HE 0.2.10's fresh-result syntax for the compatibility lane.",
         "status": "implemented-and-regression-tested"
       },
       {
@@ -258,20 +258,20 @@
         "status": "implemented-and-regression-tested"
       }
     ],
-    "arity_surface": {
+    "arity_syntax": {
       "contracts": [
         {
-          "id": "constructor-arity-surface",
+          "id": "constructor-arity-syntax",
           "implementation_anchors": [
             "lib/lts.metta",
             "lib/lts/he.metta",
-            "src/session.c:CETTA_SURFACE_POLICIES"
+            "src/session.c:CETTA_BUILTIN_POLICIES"
           ],
           "regression_tests": [
             "tests/generated/he_contract/test_cons_decons.metta",
             "tests/test_he_frontier_algebra_regression.metta"
           ],
-          "statement": "Native surface declarations expose arity and result shape for structural constructors and lts:he helpers; future language surfaces should extend this table rather than hard-code arity checks per language.",
+          "statement": "Native syntax declarations expose arity and result shape for structural constructors and lts:he helpers; future language syntax forms should extend this table rather than hard-code arity checks per language.",
           "status": "implemented-and-regression-tested"
         }
       ],
@@ -411,7 +411,7 @@
           "return_type": "%Undefined%"
         }
       ],
-      "profile_surface_policies": [
+      "profile_syntax_policies": [
         {
           "profile_mask": "CETTA_PROFILE_MASK_ALL",
           "profiles": [
@@ -421,7 +421,7 @@
             "he-prime"
           ],
           "rationale": "compat_alias",
-          "surface": "_minimal-foldl-atom"
+          "syntax": "_minimal-foldl-atom"
         },
         {
           "profile_mask": "CETTA_PROFILE_MASK_HE_EXTENDED_PLUS",
@@ -430,7 +430,7 @@
             "he-prime"
           ],
           "rationale": "clean_primary_extension",
-          "surface": "foldl-atom-in-space"
+          "syntax": "foldl-atom-in-space"
         },
         {
           "profile_mask": "CETTA_PROFILE_MASK_ALL",
@@ -441,7 +441,7 @@
             "he-prime"
           ],
           "rationale": "compat_alias",
-          "surface": "foldl-atom"
+          "syntax": "foldl-atom"
         },
         {
           "profile_mask": "CETTA_PROFILE_MASK_ALL",
@@ -452,7 +452,7 @@
             "he-prime"
           ],
           "rationale": "compat_alias",
-          "surface": "filter-atom"
+          "syntax": "filter-atom"
         },
         {
           "profile_mask": "CETTA_PROFILE_MASK_HE_NON_COMPAT",
@@ -462,7 +462,7 @@
             "he-prime"
           ],
           "rationale": "clean_primary_extension",
-          "surface": "range-atom"
+          "syntax": "range-atom"
         },
         {
           "profile_mask": "CETTA_PROFILE_MASK_HE_NON_COMPAT",
@@ -472,7 +472,7 @@
             "he-prime"
           ],
           "rationale": "clean_primary_extension",
-          "surface": "repeat-atom"
+          "syntax": "repeat-atom"
         },
         {
           "profile_mask": "CETTA_PROFILE_MASK_HE_NON_COMPAT",
@@ -482,7 +482,7 @@
             "he-prime"
           ],
           "rationale": "clean_primary_extension",
-          "surface": "add-atom-nodup"
+          "syntax": "add-atom-nodup"
         },
         {
           "profile_mask": "CETTA_PROFILE_MASK_HE_EXTENDED_PLUS",
@@ -491,7 +491,7 @@
             "he-prime"
           ],
           "rationale": "extension_only",
-          "surface": "count-atoms"
+          "syntax": "count-atoms"
         },
         {
           "profile_mask": "CETTA_PROFILE_MASK_HE_EXTENDED_PLUS",
@@ -500,7 +500,7 @@
             "he-prime"
           ],
           "rationale": "clean_primary_extension",
-          "surface": "module-inventory!"
+          "syntax": "module-inventory!"
         },
         {
           "profile_mask": "CETTA_PROFILE_MASK_HE_EXTENDED_PLUS",
@@ -509,7 +509,7 @@
             "he-prime"
           ],
           "rationale": "clean_primary_extension",
-          "surface": "runtime-stats!"
+          "syntax": "runtime-stats!"
         },
         {
           "profile_mask": "CETTA_PROFILE_MASK_HE_EXTENDED_PLUS",
@@ -518,7 +518,7 @@
             "he-prime"
           ],
           "rationale": "clean_primary_extension",
-          "surface": "reset-runtime-stats!"
+          "syntax": "reset-runtime-stats!"
         },
         {
           "profile_mask": "CETTA_PROFILE_MASK_ALL",
@@ -528,8 +528,8 @@
             "he-extended",
             "he-prime"
           ],
-          "rationale": "keep_he_public_surface",
-          "surface": "register-module!"
+          "rationale": "keep_he_public_builtin",
+          "syntax": "register-module!"
         },
         {
           "profile_mask": "CETTA_PROFILE_MASK_ALL",
@@ -539,8 +539,8 @@
             "he-extended",
             "he-prime"
           ],
-          "rationale": "keep_he_public_surface",
-          "surface": "git-module!"
+          "rationale": "keep_he_public_builtin",
+          "syntax": "git-module!"
         },
         {
           "profile_mask": "CETTA_PROFILE_MASK_ALL",
@@ -550,8 +550,8 @@
             "he-extended",
             "he-prime"
           ],
-          "rationale": "keep_he_public_surface",
-          "surface": "import!"
+          "rationale": "keep_he_public_builtin",
+          "syntax": "import!"
         },
         {
           "profile_mask": "CETTA_PROFILE_MASK_ALL",
@@ -561,8 +561,8 @@
             "he-extended",
             "he-prime"
           ],
-          "rationale": "keep_he_public_surface",
-          "surface": "include"
+          "rationale": "keep_he_public_builtin",
+          "syntax": "include"
         },
         {
           "profile_mask": "CETTA_PROFILE_MASK_HE_NON_COMPAT",
@@ -572,7 +572,7 @@
             "he-prime"
           ],
           "rationale": "clean_primary_extension",
-          "surface": "include-space-target"
+          "syntax": "include-space-target"
         },
         {
           "profile_mask": "CETTA_PROFILE_MASK_ALL",
@@ -582,8 +582,8 @@
             "he-extended",
             "he-prime"
           ],
-          "rationale": "keep_he_public_surface",
-          "surface": "mod-space!"
+          "rationale": "keep_he_public_builtin",
+          "syntax": "mod-space!"
         },
         {
           "profile_mask": "CETTA_PROFILE_MASK_ALL",
@@ -593,8 +593,8 @@
             "he-extended",
             "he-prime"
           ],
-          "rationale": "keep_he_public_surface",
-          "surface": "print-mods!"
+          "rationale": "keep_he_public_builtin",
+          "syntax": "print-mods!"
         },
         {
           "profile_mask": "CETTA_PROFILE_MASK_ALL",
@@ -604,8 +604,8 @@
             "he-extended",
             "he-prime"
           ],
-          "rationale": "keep_he_public_surface",
-          "surface": "capture"
+          "rationale": "keep_he_public_builtin",
+          "syntax": "capture"
         },
         {
           "profile_mask": "CETTA_PROFILE_MASK_ALL",
@@ -615,8 +615,8 @@
             "he-extended",
             "he-prime"
           ],
-          "rationale": "keep_he_public_surface",
-          "surface": "quote"
+          "rationale": "keep_he_public_builtin",
+          "syntax": "quote"
         },
         {
           "profile_mask": "CETTA_PROFILE_MASK_ALL",
@@ -626,8 +626,8 @@
             "he-extended",
             "he-prime"
           ],
-          "rationale": "keep_he_public_surface",
-          "surface": "unquote"
+          "rationale": "keep_he_public_builtin",
+          "syntax": "unquote"
         },
         {
           "profile_mask": "CETTA_PROFILE_MASK_ALL",
@@ -637,8 +637,8 @@
             "he-extended",
             "he-prime"
           ],
-          "rationale": "keep_he_public_surface",
-          "surface": "sealed"
+          "rationale": "keep_he_public_builtin",
+          "syntax": "sealed"
         },
         {
           "profile_mask": "CETTA_PROFILE_MASK_HE_EXTENDED_PLUS",
@@ -647,7 +647,7 @@
             "he-prime"
           ],
           "rationale": "compat_alias",
-          "surface": "collect"
+          "syntax": "collect"
         },
         {
           "profile_mask": "CETTA_PROFILE_MASK_HE_EXTENDED_PLUS",
@@ -656,7 +656,7 @@
             "he-prime"
           ],
           "rationale": "clean_primary_extension",
-          "surface": "fold"
+          "syntax": "fold"
         },
         {
           "profile_mask": "CETTA_PROFILE_MASK_HE_EXTENDED_PLUS",
@@ -665,7 +665,7 @@
             "he-prime"
           ],
           "rationale": "clean_primary_extension",
-          "surface": "fold-by-key"
+          "syntax": "fold-by-key"
         },
         {
           "profile_mask": "CETTA_PROFILE_MASK_HE_EXTENDED_PLUS",
@@ -674,7 +674,7 @@
             "he-prime"
           ],
           "rationale": "compat_alias",
-          "surface": "reduce"
+          "syntax": "reduce"
         },
         {
           "profile_mask": "CETTA_PROFILE_MASK_HE_EXTENDED_PLUS",
@@ -683,7 +683,7 @@
             "he-prime"
           ],
           "rationale": "clean_primary_extension",
-          "surface": "select"
+          "syntax": "select"
         },
         {
           "profile_mask": "CETTA_PROFILE_MASK_HE_EXTENDED_PLUS",
@@ -692,7 +692,7 @@
             "he-prime"
           ],
           "rationale": "clean_primary_extension",
-          "surface": "hyperpose"
+          "syntax": "hyperpose"
         },
         {
           "profile_mask": "CETTA_PROFILE_MASK_HE_EXTENDED_PLUS",
@@ -701,7 +701,7 @@
             "he-prime"
           ],
           "rationale": "compat_alias",
-          "surface": "once"
+          "syntax": "once"
         },
         {
           "profile_mask": "CETTA_PROFILE_MASK_ALL",
@@ -711,8 +711,8 @@
             "he-extended",
             "he-prime"
           ],
-          "rationale": "translator_compat_surface",
-          "surface": "singleton-visible-witness"
+          "rationale": "translator_compat_builtin",
+          "syntax": "singleton-visible-witness"
         },
         {
           "profile_mask": "CETTA_PROFILE_MASK_HE_EXTENDED_PLUS",
@@ -721,7 +721,7 @@
             "he-prime"
           ],
           "rationale": "clean_primary_extension",
-          "surface": "search-policy"
+          "syntax": "search-policy"
         },
         {
           "profile_mask": "CETTA_PROFILE_MASK_HE_EXTENDED_PLUS",
@@ -730,7 +730,7 @@
             "he-prime"
           ],
           "rationale": "clean_primary_extension",
-          "surface": "new-space-kind"
+          "syntax": "new-space-kind"
         },
         {
           "profile_mask": "CETTA_PROFILE_MASK_HE_NON_COMPAT",
@@ -740,7 +740,7 @@
             "he-prime"
           ],
           "rationale": "clean_primary_extension",
-          "surface": "with-space-snapshot"
+          "syntax": "with-space-snapshot"
         },
         {
           "profile_mask": "CETTA_PROFILE_MASK_HE_EXTENDED_PLUS",
@@ -749,7 +749,7 @@
             "he-prime"
           ],
           "rationale": "clean_primary_extension",
-          "surface": "space-set-backend!"
+          "syntax": "space-set-backend!"
         },
         {
           "profile_mask": "CETTA_PROFILE_MASK_HE_EXTENDED_PLUS",
@@ -758,7 +758,7 @@
             "he-prime"
           ],
           "rationale": "compat_alias",
-          "surface": "space-set-match-backend!"
+          "syntax": "space-set-match-backend!"
         },
         {
           "profile_mask": "CETTA_PROFILE_MASK_HE_EXTENDED_PLUS",
@@ -767,7 +767,7 @@
             "he-prime"
           ],
           "rationale": "clean_primary_extension",
-          "surface": "size"
+          "syntax": "size"
         },
         {
           "profile_mask": "CETTA_PROFILE_MASK_HE_EXTENDED_PLUS",
@@ -776,7 +776,7 @@
             "he-prime"
           ],
           "rationale": "clean_primary_extension",
-          "surface": "space-len"
+          "syntax": "space-len"
         },
         {
           "profile_mask": "CETTA_PROFILE_MASK_HE_EXTENDED_PLUS",
@@ -785,7 +785,7 @@
             "he-prime"
           ],
           "rationale": "clean_primary_extension",
-          "surface": "space-push"
+          "syntax": "space-push"
         },
         {
           "profile_mask": "CETTA_PROFILE_MASK_HE_EXTENDED_PLUS",
@@ -794,7 +794,7 @@
             "he-prime"
           ],
           "rationale": "clean_primary_extension",
-          "surface": "space-peek"
+          "syntax": "space-peek"
         },
         {
           "profile_mask": "CETTA_PROFILE_MASK_HE_EXTENDED_PLUS",
@@ -803,7 +803,7 @@
             "he-prime"
           ],
           "rationale": "clean_primary_extension",
-          "surface": "space-pop"
+          "syntax": "space-pop"
         },
         {
           "profile_mask": "CETTA_PROFILE_MASK_HE_EXTENDED_PLUS",
@@ -812,7 +812,7 @@
             "he-prime"
           ],
           "rationale": "clean_primary_extension",
-          "surface": "space-get"
+          "syntax": "space-get"
         },
         {
           "profile_mask": "CETTA_PROFILE_MASK_HE_EXTENDED_PLUS",
@@ -821,7 +821,7 @@
             "he-prime"
           ],
           "rationale": "clean_primary_extension",
-          "surface": "space-truncate"
+          "syntax": "space-truncate"
         },
         {
           "profile_mask": "CETTA_PROFILE_MASK_HE_EXTENDED_PLUS",
@@ -830,14 +830,14 @@
             "he-prime"
           ],
           "rationale": "clean_primary_extension",
-          "surface": "step!"
+          "syntax": "step!"
         }
       ],
       "profiles": [
         {
           "enable_cetta_extensions": false,
           "enable_dependent_telescope": false,
-          "he_compatible_surface": true,
+          "he_compatible_builtin": true,
           "name": "he",
           "note": "Formal/spec-faithful HE base for OSLF/NTT/DTT work.",
           "rust_he_compat_semantics": false
@@ -845,7 +845,7 @@
         {
           "enable_cetta_extensions": false,
           "enable_dependent_telescope": false,
-          "he_compatible_surface": true,
+          "he_compatible_builtin": true,
           "name": "he-compat",
           "note": "Rust Hyperon Experimental HE 0.2.10 compatibility lane.",
           "rust_he_compat_semantics": true
@@ -853,23 +853,47 @@
         {
           "enable_cetta_extensions": true,
           "enable_dependent_telescope": false,
-          "he_compatible_surface": true,
+          "he_compatible_builtin": true,
           "name": "he-extended",
-          "note": "HE-compatible surface plus labeled CeTTa extensions.",
+          "note": "HE-compatible syntax plus labeled CeTTa extensions.",
           "rust_he_compat_semantics": false
         },
         {
           "enable_cetta_extensions": true,
           "enable_dependent_telescope": true,
-          "he_compatible_surface": false,
+          "he_compatible_builtin": false,
           "name": "he-prime",
-          "note": "Binder-aware dependent telescope elaboration atop he-extended.",
+          "note": "HE typing with explicit dependent binders, checked type-level computation, and typed inhabitation search.",
+          "rust_he_compat_semantics": false
+        },
+        {
+          "enable_cetta_extensions": true,
+          "enable_dependent_telescope": true,
+          "he_compatible_builtin": false,
+          "name": "prime-default",
+          "note": "Built-in policy for the MeTTa-Prime semantic package.",
+          "rust_he_compat_semantics": false
+        },
+        {
+          "enable_cetta_extensions": true,
+          "enable_dependent_telescope": false,
+          "he_compatible_builtin": false,
+          "name": "extended",
+          "note": "PeTTa semantics plus labeled shared CeTTa extensions.",
+          "rust_he_compat_semantics": false
+        },
+        {
+          "enable_cetta_extensions": true,
+          "enable_dependent_telescope": false,
+          "he_compatible_builtin": false,
+          "name": "typecheck-v2",
+          "note": "PeTTa with native Roman-compatible residual type checking.",
           "rust_he_compat_semantics": false
         },
         {
           "enable_cetta_extensions": false,
           "enable_dependent_telescope": false,
-          "he_compatible_surface": false,
+          "he_compatible_builtin": false,
           "name": "strict-core",
           "note": "Strict-core rho-calculus without cost-layer extensions.",
           "rust_he_compat_semantics": false
@@ -877,9 +901,41 @@
         {
           "enable_cetta_extensions": false,
           "enable_dependent_telescope": false,
-          "he_compatible_surface": false,
+          "he_compatible_builtin": false,
           "name": "cost",
           "note": "Meredith cost-accounted rho extension (ground-signature token-gated slice).",
+          "rust_he_compat_semantics": false
+        },
+        {
+          "enable_cetta_extensions": false,
+          "enable_dependent_telescope": false,
+          "he_compatible_builtin": false,
+          "name": "exp",
+          "note": "Experimental authored semantic work and continuation layer.",
+          "rust_he_compat_semantics": false
+        },
+        {
+          "enable_cetta_extensions": false,
+          "enable_dependent_telescope": false,
+          "he_compatible_builtin": false,
+          "name": "emit",
+          "note": "Experimental revision-threaded match/let/eval/emit profile; add-atom is the persistent-emission compatibility spelling.",
+          "rust_he_compat_semantics": false
+        },
+        {
+          "enable_cetta_extensions": false,
+          "enable_dependent_telescope": false,
+          "he_compatible_builtin": false,
+          "name": "interact",
+          "note": "Experimental match/let/eval/emit profile over authenticated immutable space revisions; add-atom is an emit alias.",
+          "rust_he_compat_semantics": false
+        },
+        {
+          "enable_cetta_extensions": false,
+          "enable_dependent_telescope": false,
+          "he_compatible_builtin": false,
+          "name": "gslt",
+          "note": "Authored strict support-transform GSLT with open-world directives and exact fuel.",
           "rust_he_compat_semantics": false
         }
       ]
@@ -1029,22 +1085,22 @@
         "status": "implemented-and-regression-tested"
       }
     ],
-    "profile_doc_surface": [
+    "profile_doc_syntax": [
       {
-        "id": "get-doc-respects-profile-surface",
+        "id": "get-doc-respects-profile-syntax",
         "implementation_anchors": [
-          "src/session.c:CETTA_SURFACE_POLICIES",
-          "src/eval.c:__cetta_surface-available",
+          "src/session.c:CETTA_BUILTIN_POLICIES",
+          "src/eval.c:__cetta_builtin-available",
           "lib/stdlib.metta:get-doc"
         ],
         "regression_tests": [
-          "tests/support/profile_get_doc_formal_surface.metta",
-          "tests/support/profile_get_doc_extended_surface.metta"
+          "tests/support/profile_get_doc_formal_syntax.metta",
+          "tests/support/profile_get_doc_extended_syntax.metta"
         ],
         "spec_refs": [
-          "he_metta_official_specs.md:profile/lang surfaces"
+          "he_metta_official_specs.md:profile/lang syntax forms"
         ],
-        "statement": "get-doc only returns documentation for surfaces available in the active formal/extended HE language/profile; public HE surfaces remain documented, while extension-only surfaces are hidden from the formal HE base profile.",
+        "statement": "get-doc only returns documentation for syntax forms available in the active formal/extended HE language/profile; public HE syntax forms remain documented, while extension-only forms are hidden from the formal HE base profile.",
         "status": "implemented-and-regression-tested"
       },
       {
@@ -1054,7 +1110,7 @@
           "src/eval.c:get-doc Rust compatibility branch"
         ],
         "regression_tests": [
-          "tests/support/profile_get_doc_compat_surface.metta"
+          "tests/support/profile_get_doc_compat_syntax.metta"
         ],
         "spec_refs": [
           "tests/generated/he_compat/he_compat_cases_2026-06-25.json:he_g1_docs"
@@ -1063,7 +1119,7 @@
         "status": "implemented-and-regression-tested"
       }
     ],
-    "profile_surface": [
+    "profile_syntax": [
       {
         "id": "profile-he-formal-vs-rust-compat-split",
         "implementation_anchors": [
@@ -1075,24 +1131,24 @@
           "tests/test_eval_grounded.metta",
           "tests/test_no_return_error.metta",
           "tests/he_g1_docs.metta",
-          "tests/support/profile_get_doc_compat_surface.metta",
-          "tests/support/profile_get_doc_formal_surface.metta"
+          "tests/support/profile_get_doc_compat_syntax.metta",
+          "tests/support/profile_get_doc_formal_syntax.metta"
         ],
         "statement": "--profile he is the formal/spec-faithful HE lane used by OSLF/NTT/DTT work; --profile he-compat is the literal Rust HE 0.2.10 compatibility lane.",
         "status": "implemented-and-regression-tested"
       },
       {
-        "id": "profile-surface-policy-table",
+        "id": "profile-syntax-policy-table",
         "implementation_anchors": [
-          "src/session.c:CETTA_SURFACE_POLICIES",
-          "src/session.c:cetta_surface_available",
-          "src/eval.c:__cetta_surface-available"
+          "src/session.c:CETTA_BUILTIN_POLICIES",
+          "src/session.c:cetta_builtin_available",
+          "src/eval.c:__cetta_builtin-available"
         ],
         "regression_tests": [
-          "tests/support/profile_get_doc_formal_surface.metta",
-          "tests/support/profile_get_doc_extended_surface.metta"
+          "tests/support/profile_get_doc_formal_syntax.metta",
+          "tests/support/profile_get_doc_extended_syntax.metta"
         ],
-        "statement": "Language/profile surface availability is recorded in one explicit inventory so future --lang petta and --lang pure surfaces can be compared and tested without forking ad hoc checks.",
+        "statement": "Language/profile syntax availability is recorded in one explicit inventory so future --lang petta and --lang pure syntax forms can be compared and tested without forking ad hoc checks.",
         "status": "implemented-and-regression-tested"
       }
     ],
@@ -1165,79 +1221,79 @@
   "kind": "he-native-contract-ledger",
   "profile_policy": {
     "formal_he": {
-      "doc_surface_sentence": "get-doc and help! follow the documented stdlib documentation surface for the active language/profile; extension-only documented surfaces are hidden. Rust HE 0.2.10 get-doc arity failures are reproduced only by he-compat.",
-      "eval_surface_sentence": "When the eval instruction reaches a non-reducible expression E, the user-visible formal-HE result is E itself.",
+      "doc_syntax_sentence": "get-doc and help! follow the documented stdlib documentation syntax for the active language/profile; extension-only documented syntax forms are hidden. Rust HE 0.2.10 get-doc arity failures are reproduced only by he-compat.",
+      "eval_syntax_sentence": "When the eval instruction reaches a non-reducible expression E, the user-visible formal-HE result is E itself.",
       "scope": "Spec-faithful HE interpretation used as the formal base for OSLF/NTT/DTT work. This is the default --lang he path and is also available explicitly as --profile he."
     },
     "he_compat": {
-      "scope": "Literal compatibility catalog for upstream Hyperon Experimental HE 0.2.10. This lane intentionally reproduces observed Rust HE surface quirks; formal/spec-faithful behavior belongs to --lang he / --profile he."
+      "scope": "Literal compatibility catalog for upstream Hyperon Experimental HE 0.2.10. This lane intentionally reproduces observed Rust HE syntax quirks; formal/spec-faithful behavior belongs to --lang he / --profile he."
     }
   },
   "provenance": {
     "cetta_cli": {
-      "bytes": 70230,
+      "bytes": 155686,
       "exists": true,
-      "path": "hyperon/CeTTa/src/main.c",
-      "sha256": "67276cdfc56ffda812a2991b6f55e1706b487584cc4f3ea03625323166d981d9"
+      "path": "hyperon/cetta-prime-nik-20260811/src/main.c",
+      "sha256": "adf7e54e793a643c3521ded50c87e5243910ae9146dc4aada38b9ee3380af69d"
     },
     "cetta_eval": {
-      "bytes": 643455,
+      "bytes": 1506300,
       "exists": true,
-      "path": "hyperon/CeTTa/src/eval.c",
-      "sha256": "18893116d878e1c3a271543af5c3547ffcd33d06caf2f5c9b6f538767f28aed2"
+      "path": "hyperon/cetta-prime-nik-20260811/src/eval.c",
+      "sha256": "6a5ce5f70cbf55f95fd284322ebf1830eee9025cd4c9b3d9011013a811b3ce0a"
     },
     "cetta_library": {
-      "bytes": 282108,
+      "bytes": 354666,
       "exists": true,
-      "path": "hyperon/CeTTa/src/library.c",
-      "sha256": "272a84710719c06cdafe777db64a20b46bd56dc873dcd4ada310f651c1f57775"
+      "path": "hyperon/cetta-prime-nik-20260811/src/library.c",
+      "sha256": "0771a8f77a95e0ec763b53ff11425f681805b9b81100e7c808194531367eacd2"
     },
     "cetta_session": {
-      "bytes": 25322,
+      "bytes": 32690,
       "exists": true,
-      "path": "hyperon/CeTTa/src/session.c",
-      "sha256": "ce98f763a595bc658322c17b429d3f3da631355ced526fc8fdee4ab7790df318"
+      "path": "hyperon/cetta-prime-nik-20260811/src/session.c",
+      "sha256": "86b0359661f444ae1c18d6277f0a7b9d8dee01750a8afdfaaabe417f762b4fec"
     },
     "cetta_session_header": {
-      "bytes": 10951,
+      "bytes": 11907,
       "exists": true,
-      "path": "hyperon/CeTTa/src/session.h",
-      "sha256": "55c02108b8a74c6e16070780319f954e38a4012356f994b831d4f5987888f2da"
+      "path": "hyperon/cetta-prime-nik-20260811/src/session.h",
+      "sha256": "fe4ef261daa27dfd7812ab55cc74df37466c44fda455f50f5b4e9c991b4c2b2f"
     },
     "frontier_regression": {
       "bytes": 1418,
       "exists": true,
-      "path": "hyperon/CeTTa/tests/test_he_frontier_algebra_regression.metta",
+      "path": "hyperon/cetta-prime-nik-20260811/tests/test_he_frontier_algebra_regression.metta",
       "sha256": "8a38eaf83d983d9d6ba98289e5f35010c72ec7580b6050c0f7aecab19903af84"
     },
     "he_c3_regression": {
       "bytes": 2708,
       "exists": true,
-      "path": "hyperon/CeTTa/tests/he_c3_pln_stv.metta",
+      "path": "hyperon/cetta-prime-nik-20260811/tests/he_c3_pln_stv.metta",
       "sha256": "fb1d38e28591e53bb017e810f83ea27ad6df96d13fa711db7be3c1f80363614f"
     },
     "he_compat_catalog": {
-      "bytes": 254126,
+      "bytes": 253903,
       "exists": true,
-      "path": "hyperon/CeTTa/tests/generated/he_compat/he_compat_cases_2026-06-25.json",
-      "sha256": "989d9336302f99005362c8e95c2d740d685edbaa680a96c589f70c9f9c4e464f"
+      "path": "hyperon/cetta-prime-nik-20260811/tests/generated/he_compat/he_compat_cases_2026-06-25.json",
+      "sha256": "071047388b92cd2a396c986022f40bf4f649870f411a520f10953dd6c58888c9"
     },
     "he_d4_regression": {
       "bytes": 5571,
       "exists": true,
-      "path": "hyperon/CeTTa/tests/he_d4_type_prop.metta",
+      "path": "hyperon/cetta-prime-nik-20260811/tests/he_d4_type_prop.metta",
       "sha256": "142acb1deebd51a2e4917bd0cdab856380a63119f4c71bf43247350d82190b82"
     },
-    "lts_generic_surface": {
-      "bytes": 4908,
+    "lts_generic_syntax": {
+      "bytes": 4899,
       "exists": true,
-      "path": "hyperon/CeTTa/lib/lts.metta",
-      "sha256": "bb927f4452a26cfda6cbd4495af7de37af7c3443b6e1345dd0ac464401548b22"
+      "path": "hyperon/cetta-prime-nik-20260811/lib/lts.metta",
+      "sha256": "77ad457c4647efbf8040639bd680239d1096e1ea127a71b02bb8e6c3a9840dbb"
     },
-    "lts_he_surface": {
+    "lts_he_syntax": {
       "bytes": 5447,
       "exists": true,
-      "path": "hyperon/CeTTa/lib/lts/he.metta",
+      "path": "hyperon/cetta-prime-nik-20260811/lib/lts/he.metta",
       "sha256": "5f2369d57c05e0217f983b451bc5e9bbd9ebe8fd5324f1db69a38f8b24a1f9a1"
     },
     "official_he_spec_snapshot": {
@@ -1249,44 +1305,44 @@
     "profile_get_doc_compat_regression": {
       "bytes": 19,
       "exists": true,
-      "path": "hyperon/CeTTa/tests/support/profile_get_doc_compat_surface.metta",
+      "path": "hyperon/cetta-prime-nik-20260811/tests/support/profile_get_doc_compat_syntax.metta",
       "sha256": "1167679e96616407e4718435bb5d0f2c22d6ada8930b5554576f2750b9e1222d"
     },
     "profile_get_doc_extended_regression": {
       "bytes": 97,
       "exists": true,
-      "path": "hyperon/CeTTa/tests/support/profile_get_doc_extended_surface.metta",
+      "path": "hyperon/cetta-prime-nik-20260811/tests/support/profile_get_doc_extended_syntax.metta",
       "sha256": "b6fdc759e4a8178d553c7e29e6916b7a3ba04d988136c7cffda40be6af5683c2"
     },
     "profile_get_doc_formal_regression": {
       "bytes": 86,
       "exists": true,
-      "path": "hyperon/CeTTa/tests/support/profile_get_doc_formal_surface.metta",
+      "path": "hyperon/cetta-prime-nik-20260811/tests/support/profile_get_doc_formal_syntax.metta",
       "sha256": "82f701363be5066f366ba0102d77abf64f88d4923a36e2e56fc0dd4fff7c2009"
     },
-    "stdlib_surface": {
-      "bytes": 34880,
+    "stdlib_syntax": {
+      "bytes": 37377,
       "exists": true,
-      "path": "hyperon/CeTTa/lib/stdlib.metta",
-      "sha256": "ebcbe072a426bd07739ccbd101bd05addea75f8a5f0485c7e982dac4c96eed50"
+      "path": "hyperon/cetta-prime-nik-20260811/lib/stdlib.metta",
+      "sha256": "c916cc97888c1f7b2a6bb0184e036e4c49bfd80b057c6435eaf6eb54002b293c"
     },
     "symbol_table": {
-      "bytes": 18677,
+      "bytes": 24933,
       "exists": true,
-      "path": "hyperon/CeTTa/src/symbol.h",
-      "sha256": "05ec106476be52fce546649f04d04f0dd707e43f239a9e7442d1cc90c3985e3c"
+      "path": "hyperon/cetta-prime-nik-20260811/src/symbol.h",
+      "sha256": "23aa2030218e9bee8ee849d1b16321fb20533992e2164a33f00501b4de3afc67"
     }
   },
   "repositories": {
     "algorithms": {
       "dirty": true,
-      "head": "f909190387f8784bcfa04e0353c5e1e6a2d14677",
+      "head": "daf32e24230242a0144243555453fb8da2497053",
       "path": "Mettapedia/lean/algorithms"
     },
     "cetta": {
       "dirty": true,
-      "head": "253eed14b84b383ce7e4ff85a5bbcc1059fb4ba4",
-      "path": "hyperon/CeTTa"
+      "head": "7b41b65cc6a0ddb540b58e0416516e630e23f029",
+      "path": "hyperon/cetta-prime-nik-20260811"
     },
     "hyperon_experimental": {
       "dirty": false,
@@ -1295,7 +1351,7 @@
     },
     "mettapedia": {
       "dirty": true,
-      "head": "f909190387f8784bcfa04e0353c5e1e6a2d14677",
+      "head": "daf32e24230242a0144243555453fb8da2497053",
       "path": "Mettapedia/lean/mettapedia"
     }
   },
@@ -1319,21 +1375,21 @@
       "special.eq-definition": 13,
       "special.function-type": 12,
       "special.type-assignment": 12,
-      "surface.atomspace-assertions": 9,
-      "surface.eval-bang": 67,
-      "surface.module-import": 2,
-      "surface.native-space": 2
+      "syntax.atomspace-assertions": 9,
+      "syntax.eval-bang": 67,
+      "syntax.module-import": 2,
+      "syntax.native-space": 2
     },
     "by_track_a_relation_lane": {
       "reduction-span": 67,
       "spatial-policy": 4,
-      "supporting-surface": 67
+      "supporting-syntax": 67
     },
     "capacity_rows": [
       {
         "alignment_note": "",
         "authority_note": "",
-        "id": "surface.eval-bang",
+        "id": "syntax.eval-bang",
         "lean_authority_refs": [],
         "lean_language_def_refs": [
           "HELanguageDef.mettaHE:Metta",
@@ -1349,12 +1405,12 @@
         ],
         "status": "covered",
         "title": "Top-level ! evaluation",
-        "track_a_relation_lane": "supporting-surface"
+        "track_a_relation_lane": "supporting-syntax"
       },
       {
         "alignment_note": "",
         "authority_note": "",
-        "id": "surface.atomspace-assertions",
+        "id": "syntax.atomspace-assertions",
         "lean_authority_refs": [],
         "lean_language_def_refs": [
           "HELanguageDef.mettaHE:Space",
@@ -1362,14 +1418,14 @@
         ],
         "mapped_case_count": 9,
         "native_contract_ids": [
-          "profile-surface-policy-table"
+          "profile-syntax-policy-table"
         ],
         "oslf_refs": [
           "Mettapedia/lean/mettapedia/Mettapedia/Languages/MeTTa/HE/HELanguageDef.lean:mettaHE"
         ],
         "status": "partial",
         "title": "Atomspace declarations and assertion-style programs",
-        "track_a_relation_lane": "supporting-surface"
+        "track_a_relation_lane": "supporting-syntax"
       },
       {
         "alignment_note": "",
@@ -1440,7 +1496,7 @@
       },
       {
         "alignment_note": "",
-        "authority_note": "Current A2 authority is likewise layered: EvalSpec's empty_or_error constructor and the M_Empty / MC_Superpose_Empty / MC_Match_Empty LanguageDef rules pin the no-visible-result behavior, while the catalog and runtime contracts keep the visible bag/LTS consequences honest. This is a reduction-span rule in Track A, not a host-policy surface.",
+        "authority_note": "Current A2 authority is likewise layered: EvalSpec's empty_or_error constructor and the M_Empty / MC_Superpose_Empty / MC_Match_Empty LanguageDef rules pin the no-visible-result behavior, while the catalog and runtime contracts keep the visible bag/LTS consequences honest. This is a reduction-span rule in Track A, not a host-policy syntax.",
         "id": "result.empty-zero",
         "lean_authority_refs": [
           "EvalSpec.EvalAtom.empty_or_error",
@@ -1545,7 +1601,7 @@
         ],
         "status": "partial",
         "title": "evalc and context-space",
-        "track_a_relation_lane": "supporting-surface"
+        "track_a_relation_lane": "supporting-syntax"
       },
       {
         "alignment_note": "",
@@ -1589,7 +1645,7 @@
         ],
         "status": "covered",
         "title": "match against the active space",
-        "track_a_relation_lane": "supporting-surface"
+        "track_a_relation_lane": "supporting-syntax"
       },
       {
         "alignment_note": "",
@@ -1611,7 +1667,7 @@
         ],
         "status": "covered",
         "title": "local unify success/failure branches",
-        "track_a_relation_lane": "supporting-surface"
+        "track_a_relation_lane": "supporting-syntax"
       },
       {
         "alignment_note": "",
@@ -1647,14 +1703,14 @@
         ],
         "mapped_case_count": 1,
         "native_contract_ids": [
-          "constructor-arity-surface"
+          "constructor-arity-syntax"
         ],
         "oslf_refs": [
           "Mettapedia/lean/mettapedia/Mettapedia/Languages/MeTTa/HE/HELanguageDef.lean:mettaHE"
         ],
         "status": "covered",
         "title": "cons/decons atom structure",
-        "track_a_relation_lane": "supporting-surface"
+        "track_a_relation_lane": "supporting-syntax"
       },
       {
         "alignment_note": "",
@@ -1699,7 +1755,7 @@
         ],
         "status": "covered",
         "title": "Applicative argument evaluation",
-        "track_a_relation_lane": "supporting-surface"
+        "track_a_relation_lane": "supporting-syntax"
       },
       {
         "alignment_note": "",
@@ -1718,7 +1774,7 @@
         ],
         "status": "covered",
         "title": "Grounded dispatch and native results",
-        "track_a_relation_lane": "supporting-surface"
+        "track_a_relation_lane": "supporting-syntax"
       },
       {
         "alignment_note": "",
@@ -1750,40 +1806,40 @@
         "lean_language_def_refs": [],
         "mapped_case_count": 1,
         "native_contract_ids": [
-          "get-doc-respects-profile-surface",
+          "get-doc-respects-profile-syntax",
           "he-compat-reproduces-rust-get-doc-arity"
         ],
         "oslf_refs": [],
         "status": "covered",
-        "title": "Profile-aware documentation surface",
-        "track_a_relation_lane": "supporting-surface"
+        "title": "Profile-aware documentation syntax",
+        "track_a_relation_lane": "supporting-syntax"
       },
       {
-        "alignment_note": "Current HELanguageDef models core HE evaluation rules, not the CeTTa profile/lang surface inventory. This rule is tracked by runtime policy tables plus OSLF-facing profile evidence.",
+        "alignment_note": "Current HELanguageDef models core HE evaluation rules, not the CeTTa profile/lang syntax inventory. This rule is tracked by runtime policy tables plus OSLF-facing profile evidence.",
         "authority_note": "",
-        "id": "profile.surface-policy",
+        "id": "profile.syntax-policy",
         "lean_authority_refs": [],
         "lean_language_def_refs": [],
         "mapped_case_count": 0,
         "native_contract_ids": [
-          "profile-surface-policy-table"
+          "profile-syntax-policy-table"
         ],
         "oslf_refs": [
           "Mettapedia/lean/mettapedia/Mettapedia/Languages/MeTTa/HE/HELanguageDef.lean:mettaHE"
         ],
         "status": "partial",
-        "title": "Language/profile surface availability",
+        "title": "Language/profile syntax availability",
         "track_a_relation_lane": "spatial-policy"
       },
       {
-        "alignment_note": "Module/import resolution is currently a runtime/meta-surface, not a first-class HELanguageDef rule family. The rule index keeps it visible as a formal-he policy surface and a he-compat boundary.",
+        "alignment_note": "Module/import resolution is currently a runtime/meta-syntax, not a first-class HELanguageDef rule family. The rule index keeps it visible as a formal-he policy syntax and a he-compat boundary.",
         "authority_note": "",
-        "id": "surface.module-import",
+        "id": "syntax.module-import",
         "lean_authority_refs": [],
         "lean_language_def_refs": [],
         "mapped_case_count": 2,
         "native_contract_ids": [
-          "profile-surface-policy-table",
+          "profile-syntax-policy-table",
           "module-import-policy-evidence-shape"
         ],
         "oslf_refs": [],
@@ -1792,14 +1848,14 @@
         "track_a_relation_lane": "spatial-policy"
       },
       {
-        "alignment_note": "Visible module inventory is not represented in the current HELanguageDef rewrite relation. It remains a policy/documentation surface until we model module visibility at the LanguageDef/space layer.",
+        "alignment_note": "Visible module inventory is not represented in the current HELanguageDef rewrite relation. It remains a policy/documentation syntax until we model module visibility at the LanguageDef/space layer.",
         "authority_note": "",
-        "id": "surface.module-inventory",
+        "id": "syntax.module-inventory",
         "lean_authority_refs": [],
         "lean_language_def_refs": [],
         "mapped_case_count": 0,
         "native_contract_ids": [
-          "profile-surface-policy-table",
+          "profile-syntax-policy-table",
           "module-inventory-policy-evidence-shape"
         ],
         "oslf_refs": [],
@@ -1810,7 +1866,7 @@
       {
         "alignment_note": "",
         "authority_note": "",
-        "id": "surface.native-space",
+        "id": "syntax.native-space",
         "lean_authority_refs": [],
         "lean_language_def_refs": [
           "HELanguageDef.mettaHE:Space",
@@ -1845,7 +1901,7 @@
         ],
         "status": "partial",
         "title": "Grounded numeric and exact-rational extensions",
-        "track_a_relation_lane": "supporting-surface"
+        "track_a_relation_lane": "supporting-syntax"
       }
     ],
     "case_count": 67,
@@ -1856,12 +1912,12 @@
     "mapped_case_count_by_lane": {
       "reduction-span": 143,
       "spatial-policy": 4,
-      "supporting-surface": 116
+      "supporting-syntax": 116
     },
     "rule_lane_counts": {
       "reduction-span": 10,
       "spatial-policy": 4,
-      "supporting-surface": 10
+      "supporting-syntax": 10
     },
     "rule_status_counts": {
       "covered": 15,
@@ -1870,8 +1926,8 @@
     },
     "total_spec_rule_capacity_count": 24,
     "uncovered_spec_rule_capacities": [
-      "profile.surface-policy",
-      "surface.module-inventory"
+      "profile.syntax-policy",
+      "syntax.module-inventory"
     ]
   },
   "schema_version": 1,

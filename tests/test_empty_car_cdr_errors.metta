@@ -1,4 +1,4 @@
-; HE-backed destructor surface: empty and non-expression inputs should error,
+; HE-backed destructor syntax: empty and non-expression inputs should error,
 ; not silently return Empty or ().
 
 !(assertEqualToResult

@@ -1,0 +1,2155 @@
+{
+  "census": {
+    "axes": {
+      "open-world-unknown-approximation": {
+        "event_count": 14,
+        "mechanism_event_count": 13,
+        "mechanism_mappings": [
+          "collapse-retains-list-shape-with-unknown-element",
+          "dynamic-actual-compatibility",
+          "dynamic-required-compatibility",
+          "foldall-unproven-generator-element",
+          "inferred-all-bottom-withholds-output-evidence",
+          "inferred-bottom-branch-withholds-output-evidence",
+          "inferred-empty-alternative-set-withholds-output-evidence",
+          "inferred-function-is-not-explicit-value-evidence",
+          "inferred-output-publication-normalization",
+          "inferred-parameter-conflict-widens-unknown",
+          "inferred-value-candidate-ambiguity-widens-unknown",
+          "newtype-wildcard-representation-non-vacuity"
+        ],
+        "rule_event_count": 1,
+        "rule_mappings": [
+          "consistent-dyn-right"
+        ]
+      },
+      "result-cardinality-grading": {
+        "event_count": 21,
+        "mechanism_event_count": 10,
+        "mechanism_mappings": [
+          "administrative-alias-nondeterminism-preservation",
+          "arrow-mode-incompatibility",
+          "committed-direct-cut-overlap",
+          "committed-effect-requires-positive-evidence",
+          "committed-lambda-determinism-preservation",
+          "committed-lambda-nondeterminism-rejection",
+          "committed-let-cut-overlap",
+          "conditional-no-result-branch",
+          "selection-partial-pattern-withholds-deterministic-grade",
+          "superpose-operator-preserves-nondeterministic-grade"
+        ],
+        "rule_event_count": 11,
+        "rule_mappings": [
+          "expression-effect-collapse",
+          "expression-effect-foldall",
+          "expression-effect-once-det",
+          "expression-effect-once-nondet",
+          "expression-effect-once-semidet",
+          "mode-fits-det-det",
+          "mode-fits-det-semidet",
+          "mode-fits-effect",
+          "mode-fits-nondet",
+          "mode-fits-plain",
+          "mode-fits-semidet-semidet"
+        ]
+      },
+      "shape-compatibility": {
+        "event_count": 50,
+        "mechanism_event_count": 31,
+        "mechanism_mappings": [
+          "actual-union-universal-rejection",
+          "acyclic-bind-deferred-to-rational-replay",
+          "arrow-component-incompatibility",
+          "arrow-shape-incompatibility",
+          "collapse-proved-element-conflict",
+          "explicit-ascription-disjointness",
+          "inferred-value-candidate-singleton",
+          "literal-newtype-introduction-withheld",
+          "newtype-introduction-requires-brand",
+          "newtype-nominal-distinctness",
+          "newtype-representation-incompatibility",
+          "overlap-union-left-exhausted",
+          "overlap-union-right-exhausted",
+          "pattern-candidate-multiplicity-preservation",
+          "pattern-candidate-singleton-open-specialization",
+          "pattern-candidate-variant-deduplication",
+          "rational-tree-structural-compatibility",
+          "rational-tree-structural-conflict",
+          "required-union-existential-rejection",
+          "structural-arity-incompatibility",
+          "structural-atom-identity",
+          "structural-atom-incompatibility",
+          "structural-component-incompatibility",
+          "structural-kind-incompatibility",
+          "structural-recursive-compatibility",
+          "type-variable-identity",
+          "type-variable-substitution",
+          "type-variable-union-self-membership"
+        ],
+        "rule_event_count": 19,
+        "rule_mappings": [
+          "consistent-alias-left",
+          "consistent-alias-right",
+          "consistent-arrow",
+          "consistent-newtype-representation",
+          "consistent-refl",
+          "consistent-union-left",
+          "consistent-union-right",
+          "expression-result-type-collapse",
+          "expression-result-type-foldall-empty",
+          "overlap-alias-left",
+          "overlap-alias-right",
+          "overlap-forward",
+          "overlap-reverse",
+          "overlap-union-left",
+          "overlap-union-right"
+        ]
+      },
+      "source-evaluated-stage-evidence": {
+        "event_count": 10,
+        "mechanism_event_count": 10,
+        "mechanism_mappings": [
+          "caller-visible-substitution-preservation",
+          "evaluation-withholds-cardinality-evidence",
+          "quotation-keeps-inner-data-form-as-data",
+          "quotation-keeps-inner-type-form-as-data",
+          "selection-case-proper-list-evidence",
+          "selection-conditional-proper-list-evidence",
+          "selection-data-expression-publishes-only-list-shape",
+          "selection-evaluated-source-has-no-shape-evidence",
+          "selection-identity-binding-bound-bool-evidence",
+          "selection-identity-binding-proper-list-evidence"
+        ],
+        "rule_event_count": 0,
+        "rule_mappings": []
+      }
+    },
+    "axis_interactions": [
+      {
+        "axes": [
+          "open-world-unknown-approximation",
+          "result-cardinality-grading"
+        ],
+        "case": "87_inferred_if_empty_result|strict",
+        "events": [
+          "conditional-no-result-branch",
+          "inference-bottom-branch-unpublished"
+        ]
+      },
+      {
+        "axes": [
+          "open-world-unknown-approximation",
+          "shape-compatibility"
+        ],
+        "case": "68_inferred_parameter_conflicting_uses|default",
+        "events": [
+          "inference-parameter-taint",
+          "structural-atom-exact"
+        ]
+      },
+      {
+        "axes": [
+          "open-world-unknown-approximation",
+          "source-evaluated-stage-evidence"
+        ],
+        "case": "71_concrete_data_selection_is_deterministic|strict-det",
+        "events": [
+          "selection-source-opaque",
+          "wildcard-actual-accept"
+        ]
+      },
+      {
+        "axes": [
+          "result-cardinality-grading",
+          "shape-compatibility"
+        ],
+        "case": "45_arrow_det_fits_semidet|strict",
+        "events": [
+          "arrow-compatible",
+          "arrow-mode-det-exact"
+        ]
+      },
+      {
+        "axes": [
+          "result-cardinality-grading",
+          "source-evaluated-stage-evidence"
+        ],
+        "case": "71_concrete_data_selection_is_deterministic|strict-det",
+        "events": [
+          "committed-effect-unknown-reject",
+          "selection-source-opaque"
+        ]
+      },
+      {
+        "axes": [
+          "shape-compatibility",
+          "source-evaluated-stage-evidence"
+        ],
+        "case": "72_direct_concrete_selection_is_deterministic|strict-det",
+        "events": [
+          "selection-source-list-shape-only",
+          "structural-atom-exact"
+        ]
+      }
+    ],
+    "event_count": 95,
+    "mechanism_scope_event_count": 1,
+    "oracle_event_count": 94
+  },
+  "inputs": {
+    "acceptance_manifest_canonical_sha256": "7b0277015dbe6e8c188c839311f7041b1d547137839689fc8a036ac2a8397558",
+    "witness_ledger_canonical_sha256": "6f08b71c2f5124b9259fe0c0549892f11034e0c74043ae5dc86af8983084db44"
+  },
+  "native_v3_intake": {
+    "by_axis": {
+      "open-world-unknown-approximation": [
+        "104_inferred_if_all_empty_result|strict",
+        "106_inferred_case_all_empty_result|strict",
+        "108_inferred_superpose_all_empty_result|strict",
+        "74_inferred_superpose_result_widens_unknown|default",
+        "74_inferred_superpose_result_widens_unknown|strict",
+        "75_inferred_superpose_unknown_does_not_reject|default",
+        "80_inferred_ambiguous_symbol_widens_unknown|strict",
+        "81_inferred_untyped_atom_has_no_positive_type|strict",
+        "82_inferred_function_is_not_explicit_value_evidence|strict",
+        "85_foldall_disguised_empty_reject|strict",
+        "87_inferred_if_empty_result|strict"
+      ],
+      "result-cardinality-grading": [
+        "101_let_star_alias_chain_nondet_bool_reject|strict-det",
+        "105_declared_if_all_empty_semidet_accept|strict",
+        "107_declared_case_all_empty_semidet_accept|strict",
+        "109_declared_superpose_all_empty_semidet_accept|strict",
+        "110_declared_superpose_all_empty_nondet_accept|strict",
+        "118_eval_quoted_literal_nondet_candidate|strict-det",
+        "119_eval_quoted_the_nondet_candidate|strict-det",
+        "123_variable_headed_selection_literal_body_candidate|strict-det",
+        "94_chain_identity_proper_list_selection|strict-det",
+        "examples/determinism.metta|--strict-det"
+      ],
+      "shape-compatibility": [
+        "117_eval_quoted_brand_nondet_admission_candidate|strict-det",
+        "120_direct_brand_literal_newtype_candidate|strict-det",
+        "76_inferred_canonical_list_preserved|strict",
+        "77_inferred_canonical_list_rejects_mismatch|strict",
+        "78_inferred_canonical_arrow_preserved|strict",
+        "79_inferred_canonical_arrow_rejects_mismatch|strict",
+        "84_foldall_empty_returns_initializer|strict-det"
+      ],
+      "source-evaluated-stage-evidence": [
+        "100_let_star_alias_chain_proper_list_selection|strict-det",
+        "102_let_star_three_hop_bool_selection|strict-det",
+        "103_let_star_shadowed_alias_nonbool_reject|strict-det",
+        "111_quoted_brand_declared_output_candidate|strict-det",
+        "112_quoted_the_declared_output_candidate|strict-det",
+        "113_quoted_data_marker_declared_product_candidate|strict-det",
+        "114_quoted_data_marker_full_code_product_candidate|strict-det",
+        "115_eval_quoted_brand_reactivates_nominal_assertion_candidate|strict-det",
+        "116_eval_quoted_the_reactivates_ascription_candidate|strict-det",
+        "121_nested_literal_selector_totality_candidate|strict-det",
+        "71_concrete_data_selection_is_deterministic|strict-det",
+        "72_direct_concrete_selection_is_deterministic|strict-det",
+        "73_expression_empty_cons_selection_is_not_total|strict-det",
+        "89_if_nonempty_list_selection|strict-det",
+        "90_case_proper_list_selection|strict-det",
+        "91_let_bound_proper_list_selection|strict-det",
+        "92_let_nonlist_selection_reject|strict-det",
+        "93_let_star_bound_proper_list_selection|strict-det",
+        "95_let_bound_bool_selection|strict-det",
+        "96_let_nonbool_bool_selection_reject|strict-det",
+        "97_let_star_bound_bool_selection|strict-det",
+        "98_let_star_alias_chain_bool_selection|strict-det",
+        "99_let_star_alias_chain_nonbool_reject|strict-det"
+      ]
+    },
+    "candidate_count": 51,
+    "candidates": [
+      {
+        "axis": "source-evaluated-stage-evidence",
+        "class": "administrative-alias-chain-proper-list-selection",
+        "finding": "implementation-defect",
+        "id": "100_let_star_alias_chain_proper_list_selection|strict-det",
+        "phase": "static",
+        "v2_expected": {
+          "exit": 0,
+          "verdict": "accept"
+        }
+      },
+      {
+        "axis": "result-cardinality-grading",
+        "class": "administrative-alias-chain-nondet-preservation",
+        "finding": "correspondence-witness",
+        "id": "101_let_star_alias_chain_nondet_bool_reject|strict-det",
+        "phase": "static",
+        "v2_expected": {
+          "exit": 2,
+          "verdict": "reject"
+        }
+      },
+      {
+        "axis": "source-evaluated-stage-evidence",
+        "class": "administrative-alias-chain-length-preservation",
+        "finding": "correspondence-witness",
+        "id": "102_let_star_three_hop_bool_selection|strict-det",
+        "phase": "static",
+        "v2_expected": {
+          "exit": 0,
+          "verdict": "accept"
+        }
+      },
+      {
+        "axis": "source-evaluated-stage-evidence",
+        "class": "administrative-alias-lexical-shadowing",
+        "finding": "correspondence-witness",
+        "id": "103_let_star_shadowed_alias_nonbool_reject|strict-det",
+        "phase": "static",
+        "v2_expected": {
+          "exit": 2,
+          "verdict": "reject"
+        }
+      },
+      {
+        "axis": "open-world-unknown-approximation",
+        "class": "all-bottom-inference-withholds-signature",
+        "finding": "correspondence-witness",
+        "id": "104_inferred_if_all_empty_result|strict",
+        "phase": "static",
+        "v2_expected": {
+          "exit": 2,
+          "verdict": "reject"
+        }
+      },
+      {
+        "axis": "result-cardinality-grading",
+        "class": "declared-all-bottom-semidet",
+        "finding": "correspondence-witness",
+        "id": "105_declared_if_all_empty_semidet_accept|strict",
+        "phase": "static",
+        "v2_expected": {
+          "exit": 0,
+          "verdict": "accept"
+        }
+      },
+      {
+        "axis": "open-world-unknown-approximation",
+        "class": "all-bottom-case-inference-withholds-signature",
+        "finding": "correspondence-witness",
+        "id": "106_inferred_case_all_empty_result|strict",
+        "phase": "static",
+        "v2_expected": {
+          "exit": 2,
+          "verdict": "reject"
+        }
+      },
+      {
+        "axis": "result-cardinality-grading",
+        "class": "declared-all-bottom-case-semidet",
+        "finding": "correspondence-witness",
+        "id": "107_declared_case_all_empty_semidet_accept|strict",
+        "phase": "static",
+        "v2_expected": {
+          "exit": 0,
+          "verdict": "accept"
+        }
+      },
+      {
+        "axis": "open-world-unknown-approximation",
+        "class": "empty-alternative-set-inference-withholds-signature",
+        "finding": "correspondence-witness",
+        "id": "108_inferred_superpose_all_empty_result|strict",
+        "phase": "static",
+        "v2_expected": {
+          "exit": 2,
+          "verdict": "reject"
+        }
+      },
+      {
+        "axis": "result-cardinality-grading",
+        "class": "superpose-empty-alternatives-retain-nondet",
+        "finding": "correspondence-witness",
+        "id": "109_declared_superpose_all_empty_semidet_accept|strict",
+        "phase": "static",
+        "v2_expected": {
+          "exit": 2,
+          "verdict": "reject"
+        }
+      },
+      {
+        "axis": "result-cardinality-grading",
+        "class": "superpose-empty-alternatives-nondet-accept",
+        "finding": "correspondence-witness",
+        "id": "110_declared_superpose_all_empty_nondet_accept|strict",
+        "phase": "static",
+        "v2_expected": {
+          "exit": 0,
+          "verdict": "accept"
+        }
+      },
+      {
+        "axis": "source-evaluated-stage-evidence",
+        "class": "quoted-inner-type-form-data",
+        "finding": "implementation-defect",
+        "id": "111_quoted_brand_declared_output_candidate|strict-det",
+        "phase": "static",
+        "v2_expected": {
+          "exit": 2,
+          "verdict": "reject"
+        }
+      },
+      {
+        "axis": "source-evaluated-stage-evidence",
+        "class": "quoted-inner-type-form-data",
+        "finding": "implementation-defect",
+        "id": "112_quoted_the_declared_output_candidate|strict-det",
+        "phase": "static",
+        "v2_expected": {
+          "exit": 2,
+          "verdict": "reject"
+        }
+      },
+      {
+        "axis": "source-evaluated-stage-evidence",
+        "class": "quoted-inner-data-form-code",
+        "finding": "implementation-defect",
+        "id": "113_quoted_data_marker_declared_product_candidate|strict-det",
+        "phase": "static",
+        "v2_expected": {
+          "exit": 2,
+          "verdict": "reject"
+        }
+      },
+      {
+        "axis": "source-evaluated-stage-evidence",
+        "class": "quoted-inner-data-form-code",
+        "finding": "implementation-defect",
+        "id": "114_quoted_data_marker_full_code_product_candidate|strict-det",
+        "phase": "static",
+        "v2_expected": {
+          "exit": 0,
+          "verdict": "accept"
+        }
+      },
+      {
+        "axis": "source-evaluated-stage-evidence",
+        "class": "dynamic-eval-committed-grade-reject",
+        "finding": "implementation-defect",
+        "id": "115_eval_quoted_brand_reactivates_nominal_assertion_candidate|strict-det",
+        "phase": "static",
+        "v2_expected": {
+          "exit": 2,
+          "verdict": "reject"
+        }
+      },
+      {
+        "axis": "source-evaluated-stage-evidence",
+        "class": "dynamic-eval-committed-grade-reject",
+        "finding": "implementation-defect",
+        "id": "116_eval_quoted_the_reactivates_ascription_candidate|strict-det",
+        "phase": "static",
+        "v2_expected": {
+          "exit": 2,
+          "verdict": "reject"
+        }
+      },
+      {
+        "axis": "shape-compatibility",
+        "class": "evaluated-brand-literal-reject",
+        "finding": "implementation-defect",
+        "id": "117_eval_quoted_brand_nondet_admission_candidate|strict-det",
+        "phase": "static",
+        "v2_expected": {
+          "exit": 2,
+          "verdict": "reject"
+        }
+      },
+      {
+        "axis": "result-cardinality-grading",
+        "class": "dynamic-eval-nondet-admission",
+        "finding": "implementation-defect",
+        "id": "118_eval_quoted_literal_nondet_candidate|strict-det",
+        "phase": "static",
+        "v2_expected": {
+          "exit": 0,
+          "verdict": "accept"
+        }
+      },
+      {
+        "axis": "result-cardinality-grading",
+        "class": "dynamic-eval-nondet-admission",
+        "finding": "implementation-defect",
+        "id": "119_eval_quoted_the_nondet_candidate|strict-det",
+        "phase": "static",
+        "v2_expected": {
+          "exit": 0,
+          "verdict": "accept"
+        }
+      },
+      {
+        "axis": "shape-compatibility",
+        "class": "literal-newtype-introduction-reject",
+        "finding": "implementation-defect",
+        "id": "120_direct_brand_literal_newtype_candidate|strict-det",
+        "phase": "static",
+        "v2_expected": {
+          "exit": 2,
+          "verdict": "reject"
+        }
+      },
+      {
+        "axis": "source-evaluated-stage-evidence",
+        "class": "nested-structured-selection-evidence-withheld",
+        "finding": "correspondence-witness",
+        "id": "121_nested_literal_selector_totality_candidate|strict-det",
+        "phase": "static",
+        "v2_expected": {
+          "exit": 2,
+          "verdict": "reject"
+        }
+      },
+      {
+        "axis": "result-cardinality-grading",
+        "class": "open-head-selection-withholds-deterministic-grade",
+        "finding": "correspondence-witness",
+        "id": "123_variable_headed_selection_literal_body_candidate|strict-det",
+        "phase": "static",
+        "v2_expected": {
+          "exit": 2,
+          "verdict": "reject"
+        }
+      },
+      {
+        "axis": "source-evaluated-stage-evidence",
+        "class": "selection-source-opacity",
+        "finding": "implementation-defect",
+        "id": "71_concrete_data_selection_is_deterministic|strict-det",
+        "phase": "static",
+        "v2_expected": {
+          "exit": 2,
+          "verdict": "reject"
+        }
+      },
+      {
+        "axis": "source-evaluated-stage-evidence",
+        "class": "selection-source-shape",
+        "finding": "implementation-defect",
+        "id": "72_direct_concrete_selection_is_deterministic|strict-det",
+        "phase": "static",
+        "v2_expected": {
+          "exit": 2,
+          "verdict": "reject"
+        }
+      },
+      {
+        "axis": "source-evaluated-stage-evidence",
+        "class": "selection-open-expression-domain",
+        "finding": "implementation-defect",
+        "id": "73_expression_empty_cons_selection_is_not_total|strict-det",
+        "phase": "static",
+        "v2_expected": {
+          "exit": 2,
+          "verdict": "reject"
+        }
+      },
+      {
+        "axis": "open-world-unknown-approximation",
+        "class": "inferred-output-publication",
+        "finding": "implementation-defect",
+        "id": "74_inferred_superpose_result_widens_unknown|default",
+        "phase": "static",
+        "v2_expected": {
+          "exit": 0,
+          "verdict": "accept"
+        }
+      },
+      {
+        "axis": "open-world-unknown-approximation",
+        "class": "inferred-output-publication",
+        "finding": "implementation-defect",
+        "id": "74_inferred_superpose_result_widens_unknown|strict",
+        "phase": "boundary",
+        "v2_expected": {
+          "exit": 2,
+          "verdict": "reject"
+        }
+      },
+      {
+        "axis": "open-world-unknown-approximation",
+        "class": "inferred-output-publication",
+        "finding": "implementation-defect",
+        "id": "75_inferred_superpose_unknown_does_not_reject|default",
+        "phase": "static",
+        "v2_expected": {
+          "exit": 0,
+          "verdict": "accept"
+        }
+      },
+      {
+        "axis": "shape-compatibility",
+        "class": "inferred-output-publication",
+        "finding": "correspondence-witness",
+        "id": "76_inferred_canonical_list_preserved|strict",
+        "phase": "static",
+        "v2_expected": {
+          "exit": 0,
+          "verdict": "accept"
+        }
+      },
+      {
+        "axis": "shape-compatibility",
+        "class": "inferred-output-publication",
+        "finding": "correspondence-witness",
+        "id": "77_inferred_canonical_list_rejects_mismatch|strict",
+        "phase": "static",
+        "v2_expected": {
+          "exit": 2,
+          "verdict": "reject"
+        }
+      },
+      {
+        "axis": "shape-compatibility",
+        "class": "inferred-value-candidate",
+        "finding": "implementation-defect",
+        "id": "78_inferred_canonical_arrow_preserved|strict",
+        "phase": "static",
+        "v2_expected": {
+          "exit": 0,
+          "verdict": "accept"
+        }
+      },
+      {
+        "axis": "shape-compatibility",
+        "class": "inferred-value-candidate",
+        "finding": "correspondence-witness",
+        "id": "79_inferred_canonical_arrow_rejects_mismatch|strict",
+        "phase": "static",
+        "v2_expected": {
+          "exit": 2,
+          "verdict": "reject"
+        }
+      },
+      {
+        "axis": "open-world-unknown-approximation",
+        "class": "inferred-value-candidate",
+        "finding": "implementation-defect",
+        "id": "80_inferred_ambiguous_symbol_widens_unknown|strict",
+        "phase": "static",
+        "v2_expected": {
+          "exit": 2,
+          "verdict": "reject"
+        }
+      },
+      {
+        "axis": "open-world-unknown-approximation",
+        "class": "inferred-value-candidate",
+        "finding": "correspondence-witness",
+        "id": "81_inferred_untyped_atom_has_no_positive_type|strict",
+        "phase": "static",
+        "v2_expected": {
+          "exit": 2,
+          "verdict": "reject"
+        }
+      },
+      {
+        "axis": "open-world-unknown-approximation",
+        "class": "inferred-value-candidate",
+        "finding": "correspondence-witness",
+        "id": "82_inferred_function_is_not_explicit_value_evidence|strict",
+        "phase": "static",
+        "v2_expected": {
+          "exit": 2,
+          "verdict": "reject"
+        }
+      },
+      {
+        "axis": "shape-compatibility",
+        "class": "foldall-empty-generator",
+        "finding": "correspondence-witness",
+        "id": "84_foldall_empty_returns_initializer|strict-det",
+        "phase": "static",
+        "v2_expected": {
+          "exit": 0,
+          "verdict": "accept"
+        }
+      },
+      {
+        "axis": "open-world-unknown-approximation",
+        "class": "foldall-unresolved-generator",
+        "finding": "correspondence-witness",
+        "id": "85_foldall_disguised_empty_reject|strict",
+        "phase": "static",
+        "v2_expected": {
+          "exit": 2,
+          "verdict": "reject"
+        }
+      },
+      {
+        "axis": "open-world-unknown-approximation",
+        "class": "inferred-conditional-no-result",
+        "finding": "correspondence-witness",
+        "id": "87_inferred_if_empty_result|strict",
+        "phase": "static",
+        "v2_expected": {
+          "exit": 2,
+          "verdict": "reject"
+        }
+      },
+      {
+        "axis": "source-evaluated-stage-evidence",
+        "class": "conditional-proper-list-selection",
+        "finding": "implementation-defect",
+        "id": "89_if_nonempty_list_selection|strict-det",
+        "phase": "static",
+        "v2_expected": {
+          "exit": 0,
+          "verdict": "accept"
+        }
+      },
+      {
+        "axis": "source-evaluated-stage-evidence",
+        "class": "case-proper-list-selection",
+        "finding": "correspondence-witness",
+        "id": "90_case_proper_list_selection|strict-det",
+        "phase": "static",
+        "v2_expected": {
+          "exit": 0,
+          "verdict": "accept"
+        }
+      },
+      {
+        "axis": "source-evaluated-stage-evidence",
+        "class": "identity-binding-proper-list-selection",
+        "finding": "implementation-defect",
+        "id": "91_let_bound_proper_list_selection|strict-det",
+        "phase": "static",
+        "v2_expected": {
+          "exit": 0,
+          "verdict": "accept"
+        }
+      },
+      {
+        "axis": "source-evaluated-stage-evidence",
+        "class": "identity-binding-nonlist-rejection",
+        "finding": "correspondence-witness",
+        "id": "92_let_nonlist_selection_reject|strict-det",
+        "phase": "static",
+        "v2_expected": {
+          "exit": 2,
+          "verdict": "reject"
+        }
+      },
+      {
+        "axis": "source-evaluated-stage-evidence",
+        "class": "sequential-identity-binding-proper-list-selection",
+        "finding": "implementation-defect",
+        "id": "93_let_star_bound_proper_list_selection|strict-det",
+        "phase": "static",
+        "v2_expected": {
+          "exit": 0,
+          "verdict": "accept"
+        }
+      },
+      {
+        "axis": "result-cardinality-grading",
+        "class": "chain-pattern-binding-semidet",
+        "finding": "specification-intended",
+        "id": "94_chain_identity_proper_list_selection|strict-det",
+        "phase": "static",
+        "v2_expected": {
+          "exit": 2,
+          "verdict": "reject"
+        }
+      },
+      {
+        "axis": "source-evaluated-stage-evidence",
+        "class": "identity-binding-bound-bool-selection",
+        "finding": "implementation-defect",
+        "id": "95_let_bound_bool_selection|strict-det",
+        "phase": "static",
+        "v2_expected": {
+          "exit": 0,
+          "verdict": "accept"
+        }
+      },
+      {
+        "axis": "source-evaluated-stage-evidence",
+        "class": "identity-binding-nonbool-rejection",
+        "finding": "correspondence-witness",
+        "id": "96_let_nonbool_bool_selection_reject|strict-det",
+        "phase": "static",
+        "v2_expected": {
+          "exit": 2,
+          "verdict": "reject"
+        }
+      },
+      {
+        "axis": "source-evaluated-stage-evidence",
+        "class": "sequential-identity-binding-bound-bool-selection",
+        "finding": "implementation-defect",
+        "id": "97_let_star_bound_bool_selection|strict-det",
+        "phase": "static",
+        "v2_expected": {
+          "exit": 0,
+          "verdict": "accept"
+        }
+      },
+      {
+        "axis": "source-evaluated-stage-evidence",
+        "class": "administrative-alias-chain-bound-bool-selection",
+        "finding": "implementation-defect",
+        "id": "98_let_star_alias_chain_bool_selection|strict-det",
+        "phase": "static",
+        "v2_expected": {
+          "exit": 0,
+          "verdict": "accept"
+        }
+      },
+      {
+        "axis": "source-evaluated-stage-evidence",
+        "class": "administrative-alias-chain-nonbool-rejection",
+        "finding": "correspondence-witness",
+        "id": "99_let_star_alias_chain_nonbool_reject|strict-det",
+        "phase": "static",
+        "v2_expected": {
+          "exit": 2,
+          "verdict": "reject"
+        }
+      },
+      {
+        "axis": "result-cardinality-grading",
+        "class": "once-cardinality-transformer",
+        "finding": "correspondence-witness",
+        "id": "examples/determinism.metta|--strict-det",
+        "phase": "static",
+        "v2_expected": {
+          "exit": 0,
+          "verdict": "accept"
+        }
+      }
+    ],
+    "finding_counts": {
+      "correspondence-witness": 25,
+      "implementation-defect": 25,
+      "specification-intended": 1
+    },
+    "phase_counts": {
+      "boundary": 1,
+      "static": 50
+    },
+    "scope_note": "This is an intake inventory for a future native checker, not a claim that the axes are independent or that v2 behavior is already reimplemented."
+  },
+  "presentations": [
+    {
+      "authority_frame": {
+        "certificate_policy": "none",
+        "default_outcome": "PTUndetermined",
+        "fiber": "petta",
+        "mode": "direct-decision",
+        "native_projection": "pending",
+        "status": "AUTHORED_FRAGMENT"
+      },
+      "name": "petta-typecheck-v2-guard",
+      "provider_requirements": [
+        {
+          "arity": 2,
+          "consumer_rules": [
+            "consistent-alias-left",
+            "consistent-alias-right",
+            "consistent-newtype-representation",
+            "dm-alias-formal",
+            "dm-newtype-formal",
+            "overlap-alias-left",
+            "overlap-alias-right",
+            "sc-alias-formal",
+            "sc-alias-sort",
+            "sc-newtype-formal",
+            "sc-newtype-sort"
+          ],
+          "relation": "EnvDeclared"
+        },
+        {
+          "arity": 2,
+          "consumer_rules": [
+            "dm-applied-head",
+            "dm-declared-symbol"
+          ],
+          "relation": "EnvDeclaredList"
+        },
+        {
+          "arity": 1,
+          "consumer_rules": [
+            "dynamic-may-flow-nominal"
+          ],
+          "relation": "EnvNonNewtype"
+        },
+        {
+          "arity": 2,
+          "consumer_rules": [
+            "expression-effect-known"
+          ],
+          "relation": "KnownExpressionEffect"
+        },
+        {
+          "arity": 2,
+          "consumer_rules": [
+            "expression-result-type-known"
+          ],
+          "relation": "KnownExpressionResultType"
+        }
+      ],
+      "rule_count": 116,
+      "rules": [
+        {
+          "head_arity": 2,
+          "head_relation": "ArgListLenDiffers",
+          "name": "ald-cons-rec",
+          "native_projection": "native-arity-classification",
+          "role": "calculus"
+        },
+        {
+          "head_arity": 2,
+          "head_relation": "ArgListLenDiffers",
+          "name": "ald-cons-zero",
+          "native_projection": "native-arity-classification",
+          "role": "calculus"
+        },
+        {
+          "head_arity": 2,
+          "head_relation": "ArgListLenDiffers",
+          "name": "ald-nil-succ",
+          "native_projection": "native-arity-classification",
+          "role": "calculus"
+        },
+        {
+          "head_arity": 2,
+          "head_relation": "ArgListLen",
+          "name": "all-cons",
+          "native_projection": "native-arity-classification",
+          "role": "calculus"
+        },
+        {
+          "head_arity": 2,
+          "head_relation": "ArgListLen",
+          "name": "all-nil",
+          "native_projection": "native-arity-classification",
+          "role": "calculus"
+        },
+        {
+          "head_arity": 2,
+          "head_relation": "BaseSortOf",
+          "name": "base-sort-false",
+          "native_projection": "native-base-sort-classification",
+          "role": "calculus"
+        },
+        {
+          "head_arity": 2,
+          "head_relation": "BaseSortOf",
+          "name": "base-sort-num",
+          "native_projection": "native-base-sort-classification",
+          "role": "calculus"
+        },
+        {
+          "head_arity": 2,
+          "head_relation": "BaseSortOf",
+          "name": "base-sort-str",
+          "native_projection": "native-base-sort-classification",
+          "role": "calculus"
+        },
+        {
+          "head_arity": 2,
+          "head_relation": "BaseSortOf",
+          "name": "base-sort-true",
+          "native_projection": "native-base-sort-classification",
+          "role": "calculus"
+        },
+        {
+          "head_arity": 2,
+          "head_relation": "BoundnessRefuted",
+          "name": "br-det-bool",
+          "native_projection": "native-boundness-refutation",
+          "role": "calculus"
+        },
+        {
+          "head_arity": 2,
+          "head_relation": "BoundnessRefuted",
+          "name": "br-det-num",
+          "native_projection": "native-boundness-refutation",
+          "role": "calculus"
+        },
+        {
+          "head_arity": 2,
+          "head_relation": "BoundnessRefuted",
+          "name": "br-det-str",
+          "native_projection": "native-boundness-refutation",
+          "role": "calculus"
+        },
+        {
+          "head_arity": 2,
+          "head_relation": "BoundnessRefuted",
+          "name": "br-semidet-bool",
+          "native_projection": "native-boundness-refutation",
+          "role": "calculus"
+        },
+        {
+          "head_arity": 2,
+          "head_relation": "BoundnessRefuted",
+          "name": "br-semidet-num",
+          "native_projection": "native-boundness-refutation",
+          "role": "calculus"
+        },
+        {
+          "head_arity": 2,
+          "head_relation": "BoundnessRefuted",
+          "name": "br-semidet-str",
+          "native_projection": "native-boundness-refutation",
+          "role": "calculus"
+        },
+        {
+          "head_arity": 3,
+          "head_relation": "ConflictsAll",
+          "name": "ca-cons",
+          "native_projection": "native-disjointness",
+          "role": "calculus"
+        },
+        {
+          "head_arity": 3,
+          "head_relation": "ConflictsAll",
+          "name": "ca-nil",
+          "native_projection": "native-disjointness",
+          "role": "calculus"
+        },
+        {
+          "head_arity": 3,
+          "head_relation": "ConflictsAllL",
+          "name": "cal-cons",
+          "native_projection": "native-disjointness",
+          "role": "calculus"
+        },
+        {
+          "head_arity": 3,
+          "head_relation": "ConflictsAllL",
+          "name": "cal-nil",
+          "native_projection": "native-disjointness",
+          "role": "calculus"
+        },
+        {
+          "head_arity": 1,
+          "head_relation": "ConcreteNewtypeRepresentation",
+          "name": "concrete-newtype-representation-arrow",
+          "native_projection": "native-type-compatibility",
+          "role": "calculus"
+        },
+        {
+          "head_arity": 1,
+          "head_relation": "ConcreteNewtypeRepresentation",
+          "name": "concrete-newtype-representation-bool",
+          "native_projection": "native-type-compatibility",
+          "role": "calculus"
+        },
+        {
+          "head_arity": 1,
+          "head_relation": "ConcreteNewtypeRepresentation",
+          "name": "concrete-newtype-representation-brand",
+          "native_projection": "native-type-compatibility",
+          "role": "calculus"
+        },
+        {
+          "head_arity": 1,
+          "head_relation": "ConcreteNewtypeRepresentation",
+          "name": "concrete-newtype-representation-ctor",
+          "native_projection": "native-type-compatibility",
+          "role": "calculus"
+        },
+        {
+          "head_arity": 1,
+          "head_relation": "ConcreteNewtypeRepresentation",
+          "name": "concrete-newtype-representation-list",
+          "native_projection": "native-type-compatibility",
+          "role": "calculus"
+        },
+        {
+          "head_arity": 1,
+          "head_relation": "ConcreteNewtypeRepresentation",
+          "name": "concrete-newtype-representation-nominal",
+          "native_projection": "native-type-compatibility",
+          "role": "calculus"
+        },
+        {
+          "head_arity": 1,
+          "head_relation": "ConcreteNewtypeRepresentation",
+          "name": "concrete-newtype-representation-num",
+          "native_projection": "native-type-compatibility",
+          "role": "calculus"
+        },
+        {
+          "head_arity": 1,
+          "head_relation": "ConcreteNewtypeRepresentation",
+          "name": "concrete-newtype-representation-str",
+          "native_projection": "native-type-compatibility",
+          "role": "calculus"
+        },
+        {
+          "head_arity": 1,
+          "head_relation": "ConcreteNewtypeRepresentation",
+          "name": "concrete-newtype-representation-union",
+          "native_projection": "native-type-compatibility",
+          "role": "calculus"
+        },
+        {
+          "head_arity": 3,
+          "head_relation": "Consistent",
+          "name": "consistent-alias-left",
+          "native_projection": "native-type-compatibility",
+          "role": "calculus"
+        },
+        {
+          "head_arity": 3,
+          "head_relation": "Consistent",
+          "name": "consistent-alias-right",
+          "native_projection": "native-type-compatibility",
+          "role": "calculus"
+        },
+        {
+          "head_arity": 2,
+          "head_relation": "ConsistentAllActual",
+          "name": "consistent-all-actual-cons",
+          "native_projection": "native-type-compatibility",
+          "role": "calculus"
+        },
+        {
+          "head_arity": 2,
+          "head_relation": "ConsistentAllActual",
+          "name": "consistent-all-actual-nil",
+          "native_projection": "native-type-compatibility",
+          "role": "calculus"
+        },
+        {
+          "head_arity": 3,
+          "head_relation": "Consistent",
+          "name": "consistent-arrow",
+          "native_projection": "native-type-compatibility",
+          "role": "calculus"
+        },
+        {
+          "head_arity": 3,
+          "head_relation": "Consistent",
+          "name": "consistent-brand",
+          "native_projection": "native-type-compatibility",
+          "role": "calculus"
+        },
+        {
+          "head_arity": 3,
+          "head_relation": "Consistent",
+          "name": "consistent-dyn-left",
+          "native_projection": "native-type-compatibility",
+          "role": "calculus"
+        },
+        {
+          "head_arity": 3,
+          "head_relation": "Consistent",
+          "name": "consistent-dyn-right",
+          "native_projection": "native-type-compatibility",
+          "role": "calculus"
+        },
+        {
+          "head_arity": 2,
+          "head_relation": "ConsistentList",
+          "name": "consistent-list-cons",
+          "native_projection": "native-type-compatibility",
+          "role": "calculus"
+        },
+        {
+          "head_arity": 2,
+          "head_relation": "ConsistentList",
+          "name": "consistent-list-nil",
+          "native_projection": "native-type-compatibility",
+          "role": "calculus"
+        },
+        {
+          "head_arity": 3,
+          "head_relation": "Consistent",
+          "name": "consistent-newtype-representation",
+          "native_projection": "native-type-compatibility",
+          "role": "calculus"
+        },
+        {
+          "head_arity": 3,
+          "head_relation": "Consistent",
+          "name": "consistent-refl",
+          "native_projection": "native-type-compatibility",
+          "role": "calculus"
+        },
+        {
+          "head_arity": 3,
+          "head_relation": "Consistent",
+          "name": "consistent-union-left",
+          "native_projection": "native-type-compatibility",
+          "role": "calculus"
+        },
+        {
+          "head_arity": 3,
+          "head_relation": "Consistent",
+          "name": "consistent-union-right",
+          "native_projection": "native-type-compatibility",
+          "role": "calculus"
+        },
+        {
+          "head_arity": 3,
+          "head_relation": "DeclaredConflictRest",
+          "name": "dcr-cons",
+          "native_projection": "native-definite-mismatch",
+          "role": "calculus"
+        },
+        {
+          "head_arity": 3,
+          "head_relation": "DeclaredConflictRest",
+          "name": "dcr-nil",
+          "native_projection": "native-definite-mismatch",
+          "role": "calculus"
+        },
+        {
+          "head_arity": 3,
+          "head_relation": "DeclaredConflictSome",
+          "name": "dcs-cons",
+          "native_projection": "native-definite-mismatch",
+          "role": "calculus"
+        },
+        {
+          "head_arity": 3,
+          "head_relation": "DefiniteMismatch",
+          "name": "dm-alias-formal",
+          "native_projection": "native-definite-mismatch",
+          "role": "calculus"
+        },
+        {
+          "head_arity": 3,
+          "head_relation": "DefiniteMismatch",
+          "name": "dm-applied-head",
+          "native_projection": "native-definite-mismatch",
+          "role": "calculus"
+        },
+        {
+          "head_arity": 3,
+          "head_relation": "DefiniteMismatch",
+          "name": "dm-base",
+          "native_projection": "native-definite-mismatch",
+          "role": "calculus"
+        },
+        {
+          "head_arity": 3,
+          "head_relation": "DefiniteMismatch",
+          "name": "dm-ctor",
+          "native_projection": "native-definite-mismatch",
+          "role": "calculus"
+        },
+        {
+          "head_arity": 3,
+          "head_relation": "DefiniteMismatch",
+          "name": "dm-declared-symbol",
+          "native_projection": "native-definite-mismatch",
+          "role": "calculus"
+        },
+        {
+          "head_arity": 3,
+          "head_relation": "DefiniteMismatch",
+          "name": "dm-list-here",
+          "native_projection": "native-definite-mismatch",
+          "role": "calculus"
+        },
+        {
+          "head_arity": 3,
+          "head_relation": "DefiniteMismatch",
+          "name": "dm-list-literal",
+          "native_projection": "native-definite-mismatch",
+          "role": "calculus"
+        },
+        {
+          "head_arity": 3,
+          "head_relation": "DefiniteMismatch",
+          "name": "dm-list-there",
+          "native_projection": "native-definite-mismatch",
+          "role": "calculus"
+        },
+        {
+          "head_arity": 3,
+          "head_relation": "DefiniteMismatch",
+          "name": "dm-newtype-formal",
+          "native_projection": "native-definite-mismatch",
+          "role": "calculus"
+        },
+        {
+          "head_arity": 3,
+          "head_relation": "DefiniteMismatch",
+          "name": "dm-union",
+          "native_projection": "native-definite-mismatch",
+          "role": "calculus"
+        },
+        {
+          "head_arity": 1,
+          "head_relation": "DynamicMayFlowTo",
+          "name": "dynamic-may-flow-arrow",
+          "native_projection": "native-type-compatibility",
+          "role": "calculus"
+        },
+        {
+          "head_arity": 1,
+          "head_relation": "DynamicMayFlowTo",
+          "name": "dynamic-may-flow-bool",
+          "native_projection": "native-type-compatibility",
+          "role": "calculus"
+        },
+        {
+          "head_arity": 1,
+          "head_relation": "DynamicMayFlowTo",
+          "name": "dynamic-may-flow-brand",
+          "native_projection": "native-type-compatibility",
+          "role": "calculus"
+        },
+        {
+          "head_arity": 1,
+          "head_relation": "DynamicMayFlowTo",
+          "name": "dynamic-may-flow-ctor",
+          "native_projection": "native-type-compatibility",
+          "role": "calculus"
+        },
+        {
+          "head_arity": 1,
+          "head_relation": "DynamicMayFlowTo",
+          "name": "dynamic-may-flow-list",
+          "native_projection": "native-type-compatibility",
+          "role": "calculus"
+        },
+        {
+          "head_arity": 1,
+          "head_relation": "DynamicMayFlowTo",
+          "name": "dynamic-may-flow-nominal",
+          "native_projection": "native-type-compatibility",
+          "role": "calculus"
+        },
+        {
+          "head_arity": 1,
+          "head_relation": "DynamicMayFlowTo",
+          "name": "dynamic-may-flow-num",
+          "native_projection": "native-type-compatibility",
+          "role": "calculus"
+        },
+        {
+          "head_arity": 1,
+          "head_relation": "DynamicMayFlowTo",
+          "name": "dynamic-may-flow-str",
+          "native_projection": "native-type-compatibility",
+          "role": "calculus"
+        },
+        {
+          "head_arity": 1,
+          "head_relation": "DynamicMayFlowTo",
+          "name": "dynamic-may-flow-union",
+          "native_projection": "native-type-compatibility",
+          "role": "calculus"
+        },
+        {
+          "head_arity": 2,
+          "head_relation": "ExpressionEffect",
+          "name": "expression-effect-collapse",
+          "native_projection": "native-result-cardinality-grading",
+          "role": "calculus"
+        },
+        {
+          "head_arity": 2,
+          "head_relation": "ExpressionEffect",
+          "name": "expression-effect-foldall",
+          "native_projection": "native-result-cardinality-grading",
+          "role": "calculus"
+        },
+        {
+          "head_arity": 2,
+          "head_relation": "ExpressionEffect",
+          "name": "expression-effect-known",
+          "native_projection": "native-result-cardinality-grading",
+          "role": "calculus"
+        },
+        {
+          "head_arity": 2,
+          "head_relation": "ExpressionEffect",
+          "name": "expression-effect-once-det",
+          "native_projection": "native-result-cardinality-grading",
+          "role": "calculus"
+        },
+        {
+          "head_arity": 2,
+          "head_relation": "ExpressionEffect",
+          "name": "expression-effect-once-nondet",
+          "native_projection": "native-result-cardinality-grading",
+          "role": "calculus"
+        },
+        {
+          "head_arity": 2,
+          "head_relation": "ExpressionEffect",
+          "name": "expression-effect-once-semidet",
+          "native_projection": "native-result-cardinality-grading",
+          "role": "calculus"
+        },
+        {
+          "head_arity": 2,
+          "head_relation": "ExpressionResultType",
+          "name": "expression-result-type-collapse",
+          "native_projection": "native-collection-result-typing",
+          "role": "calculus"
+        },
+        {
+          "head_arity": 2,
+          "head_relation": "ExpressionResultType",
+          "name": "expression-result-type-foldall-empty",
+          "native_projection": "native-collection-result-typing",
+          "role": "calculus"
+        },
+        {
+          "head_arity": 2,
+          "head_relation": "ExpressionResultType",
+          "name": "expression-result-type-known",
+          "native_projection": "native-collection-result-typing",
+          "role": "calculus"
+        },
+        {
+          "head_arity": 2,
+          "head_relation": "GuardPasses",
+          "name": "guard-passes",
+          "native_projection": "native-guard-checking",
+          "role": "calculus"
+        },
+        {
+          "head_arity": 2,
+          "head_relation": "ValueHasType",
+          "name": "has-type-brand",
+          "native_projection": "native-value-typing",
+          "role": "calculus"
+        },
+        {
+          "head_arity": 2,
+          "head_relation": "ValueHasType",
+          "name": "has-type-cons-list",
+          "native_projection": "native-value-typing",
+          "role": "calculus"
+        },
+        {
+          "head_arity": 2,
+          "head_relation": "ValueHasType",
+          "name": "has-type-false",
+          "native_projection": "native-value-typing",
+          "role": "calculus"
+        },
+        {
+          "head_arity": 2,
+          "head_relation": "ValueHasType",
+          "name": "has-type-nil-list",
+          "native_projection": "native-value-typing",
+          "role": "calculus"
+        },
+        {
+          "head_arity": 2,
+          "head_relation": "ValueHasType",
+          "name": "has-type-num",
+          "native_projection": "native-value-typing",
+          "role": "calculus"
+        },
+        {
+          "head_arity": 2,
+          "head_relation": "ValueHasType",
+          "name": "has-type-str",
+          "native_projection": "native-value-typing",
+          "role": "calculus"
+        },
+        {
+          "head_arity": 2,
+          "head_relation": "ValueHasType",
+          "name": "has-type-true",
+          "native_projection": "native-value-typing",
+          "role": "calculus"
+        },
+        {
+          "head_arity": 2,
+          "head_relation": "ValueHasType",
+          "name": "has-type-union",
+          "native_projection": "native-value-typing",
+          "role": "calculus"
+        },
+        {
+          "head_arity": 2,
+          "head_relation": "ValueHasType",
+          "name": "has-type-wildcard",
+          "native_projection": "native-value-typing",
+          "role": "calculus"
+        },
+        {
+          "head_arity": 4,
+          "head_relation": "HeadConflictRest",
+          "name": "hcr-cons",
+          "native_projection": "native-definite-mismatch",
+          "role": "calculus"
+        },
+        {
+          "head_arity": 4,
+          "head_relation": "HeadConflictRest",
+          "name": "hcr-nil",
+          "native_projection": "native-definite-mismatch",
+          "role": "calculus"
+        },
+        {
+          "head_arity": 4,
+          "head_relation": "HeadConflictRest",
+          "name": "hcr-skip",
+          "native_projection": "native-definite-mismatch",
+          "role": "calculus"
+        },
+        {
+          "head_arity": 4,
+          "head_relation": "HeadConflictSome",
+          "name": "hcs-here",
+          "native_projection": "native-definite-mismatch",
+          "role": "calculus"
+        },
+        {
+          "head_arity": 4,
+          "head_relation": "HeadConflictSome",
+          "name": "hcs-skip",
+          "native_projection": "native-definite-mismatch",
+          "role": "calculus"
+        },
+        {
+          "head_arity": 3,
+          "head_relation": "MismatchAll",
+          "name": "ma-cons",
+          "native_projection": "native-definite-mismatch",
+          "role": "calculus"
+        },
+        {
+          "head_arity": 3,
+          "head_relation": "MismatchAll",
+          "name": "ma-nil",
+          "native_projection": "native-definite-mismatch",
+          "role": "calculus"
+        },
+        {
+          "head_arity": 2,
+          "head_relation": "ModeFits",
+          "name": "mode-fits-det-det",
+          "native_projection": "native-arrow-mode-order",
+          "role": "calculus"
+        },
+        {
+          "head_arity": 2,
+          "head_relation": "ModeFits",
+          "name": "mode-fits-det-semidet",
+          "native_projection": "native-arrow-mode-order",
+          "role": "calculus"
+        },
+        {
+          "head_arity": 2,
+          "head_relation": "ModeFits",
+          "name": "mode-fits-effect",
+          "native_projection": "native-arrow-mode-order",
+          "role": "calculus"
+        },
+        {
+          "head_arity": 2,
+          "head_relation": "ModeFits",
+          "name": "mode-fits-nondet",
+          "native_projection": "native-arrow-mode-order",
+          "role": "calculus"
+        },
+        {
+          "head_arity": 2,
+          "head_relation": "ModeFits",
+          "name": "mode-fits-plain",
+          "native_projection": "native-arrow-mode-order",
+          "role": "calculus"
+        },
+        {
+          "head_arity": 2,
+          "head_relation": "ModeFits",
+          "name": "mode-fits-semidet-semidet",
+          "native_projection": "native-arrow-mode-order",
+          "role": "calculus"
+        },
+        {
+          "head_arity": 3,
+          "head_relation": "MayOverlap",
+          "name": "overlap-alias-left",
+          "native_projection": "native-explicit-ascription",
+          "role": "calculus"
+        },
+        {
+          "head_arity": 3,
+          "head_relation": "MayOverlap",
+          "name": "overlap-alias-right",
+          "native_projection": "native-explicit-ascription",
+          "role": "calculus"
+        },
+        {
+          "head_arity": 3,
+          "head_relation": "MayOverlap",
+          "name": "overlap-forward",
+          "native_projection": "native-explicit-ascription",
+          "role": "calculus"
+        },
+        {
+          "head_arity": 3,
+          "head_relation": "MayOverlap",
+          "name": "overlap-reverse",
+          "native_projection": "native-explicit-ascription",
+          "role": "calculus"
+        },
+        {
+          "head_arity": 3,
+          "head_relation": "MayOverlap",
+          "name": "overlap-union-left",
+          "native_projection": "native-explicit-ascription",
+          "role": "calculus"
+        },
+        {
+          "head_arity": 3,
+          "head_relation": "MayOverlap",
+          "name": "overlap-union-right",
+          "native_projection": "native-explicit-ascription",
+          "role": "calculus"
+        },
+        {
+          "head_arity": 3,
+          "head_relation": "SortConflicts",
+          "name": "sc-alias-formal",
+          "native_projection": "native-disjointness",
+          "role": "calculus"
+        },
+        {
+          "head_arity": 3,
+          "head_relation": "SortConflicts",
+          "name": "sc-alias-sort",
+          "native_projection": "native-disjointness",
+          "role": "calculus"
+        },
+        {
+          "head_arity": 3,
+          "head_relation": "SortConflicts",
+          "name": "sc-bool-num",
+          "native_projection": "native-disjointness",
+          "role": "calculus"
+        },
+        {
+          "head_arity": 3,
+          "head_relation": "SortConflicts",
+          "name": "sc-bool-str",
+          "native_projection": "native-disjointness",
+          "role": "calculus"
+        },
+        {
+          "head_arity": 3,
+          "head_relation": "SortConflicts",
+          "name": "sc-newtype-formal",
+          "native_projection": "native-disjointness",
+          "role": "calculus"
+        },
+        {
+          "head_arity": 3,
+          "head_relation": "SortConflicts",
+          "name": "sc-newtype-sort",
+          "native_projection": "native-disjointness",
+          "role": "calculus"
+        },
+        {
+          "head_arity": 3,
+          "head_relation": "SortConflicts",
+          "name": "sc-num-bool",
+          "native_projection": "native-disjointness",
+          "role": "calculus"
+        },
+        {
+          "head_arity": 3,
+          "head_relation": "SortConflicts",
+          "name": "sc-num-str",
+          "native_projection": "native-disjointness",
+          "role": "calculus"
+        },
+        {
+          "head_arity": 3,
+          "head_relation": "SortConflicts",
+          "name": "sc-str-bool",
+          "native_projection": "native-disjointness",
+          "role": "calculus"
+        },
+        {
+          "head_arity": 3,
+          "head_relation": "SortConflicts",
+          "name": "sc-str-num",
+          "native_projection": "native-disjointness",
+          "role": "calculus"
+        },
+        {
+          "head_arity": 3,
+          "head_relation": "SortConflicts",
+          "name": "sc-union-left",
+          "native_projection": "native-disjointness",
+          "role": "calculus"
+        },
+        {
+          "head_arity": 3,
+          "head_relation": "SortConflicts",
+          "name": "sc-union-right",
+          "native_projection": "native-disjointness",
+          "role": "calculus"
+        },
+        {
+          "head_arity": 2,
+          "head_relation": "UnionMember",
+          "name": "union-member-here",
+          "native_projection": "native-union-membership",
+          "role": "calculus"
+        },
+        {
+          "head_arity": 2,
+          "head_relation": "UnionMember",
+          "name": "union-member-there",
+          "native_projection": "native-union-membership",
+          "role": "calculus"
+        }
+      ],
+      "source_sha256": "b127c2be1c82bdad66d1d55fcceb59a8a6d12335082eada21a18d358750296f7"
+    },
+    {
+      "authority_frame": {
+        "certificate_policy": "none",
+        "default_outcome": "PTUndetermined",
+        "fiber": "petta",
+        "mode": "direct-decision",
+        "native_projection": "pending",
+        "status": "AUTHORED_FRAGMENT"
+      },
+      "name": "petta-typecheck-v2-boundary-core-v1",
+      "provider_requirements": [],
+      "rule_count": 60,
+      "rules": [
+        {
+          "head_arity": 2,
+          "head_relation": "PBBoundaryVisible",
+          "name": "petta-boundary-committed-none",
+          "native_projection": "native-boundary-visibility",
+          "role": "calculus"
+        },
+        {
+          "head_arity": 2,
+          "head_relation": "PBBoundaryVisible",
+          "name": "petta-boundary-committed-nonempty-expression",
+          "native_projection": "native-boundary-visibility",
+          "role": "calculus"
+        },
+        {
+          "head_arity": 2,
+          "head_relation": "PBBoundaryVisible",
+          "name": "petta-boundary-committed-nonvar",
+          "native_projection": "native-boundary-visibility",
+          "role": "calculus"
+        },
+        {
+          "head_arity": 2,
+          "head_relation": "PBBoundaryVisible",
+          "name": "petta-boundary-committed-proper-list",
+          "native_projection": "native-boundary-visibility",
+          "role": "calculus"
+        },
+        {
+          "head_arity": 3,
+          "head_relation": "PBConsumerRequirement",
+          "name": "petta-boundary-consumer-alpha-unique-atom",
+          "native_projection": "native-consumer-requirement",
+          "role": "calculus"
+        },
+        {
+          "head_arity": 3,
+          "head_relation": "PBConsumerRequirement",
+          "name": "petta-boundary-consumer-and-left",
+          "native_projection": "native-consumer-requirement",
+          "role": "calculus"
+        },
+        {
+          "head_arity": 3,
+          "head_relation": "PBConsumerRequirement",
+          "name": "petta-boundary-consumer-and-right",
+          "native_projection": "native-consumer-requirement",
+          "role": "calculus"
+        },
+        {
+          "head_arity": 3,
+          "head_relation": "PBConsumerRequirement",
+          "name": "petta-boundary-consumer-append",
+          "native_projection": "native-consumer-requirement",
+          "role": "calculus"
+        },
+        {
+          "head_arity": 3,
+          "head_relation": "PBConsumerRequirement",
+          "name": "petta-boundary-consumer-car-atom",
+          "native_projection": "native-consumer-requirement",
+          "role": "calculus"
+        },
+        {
+          "head_arity": 3,
+          "head_relation": "PBConsumerRequirement",
+          "name": "petta-boundary-consumer-cdr-atom",
+          "native_projection": "native-consumer-requirement",
+          "role": "calculus"
+        },
+        {
+          "head_arity": 3,
+          "head_relation": "PBConsumerRequirement",
+          "name": "petta-boundary-consumer-exclude-item",
+          "native_projection": "native-consumer-requirement",
+          "role": "calculus"
+        },
+        {
+          "head_arity": 3,
+          "head_relation": "PBConsumerRequirement",
+          "name": "petta-boundary-consumer-fold-flat",
+          "native_projection": "native-consumer-requirement",
+          "role": "calculus"
+        },
+        {
+          "head_arity": 3,
+          "head_relation": "PBConsumerRequirement",
+          "name": "petta-boundary-consumer-fold-nested",
+          "native_projection": "native-consumer-requirement",
+          "role": "calculus"
+        },
+        {
+          "head_arity": 3,
+          "head_relation": "PBConsumerRequirement",
+          "name": "petta-boundary-consumer-foldl-atom",
+          "native_projection": "native-consumer-requirement",
+          "role": "calculus"
+        },
+        {
+          "head_arity": 3,
+          "head_relation": "PBConsumerRequirement",
+          "name": "petta-boundary-consumer-foldr-flat",
+          "native_projection": "native-consumer-requirement",
+          "role": "calculus"
+        },
+        {
+          "head_arity": 3,
+          "head_relation": "PBConsumerRequirement",
+          "name": "petta-boundary-consumer-implies-left",
+          "native_projection": "native-consumer-requirement",
+          "role": "calculus"
+        },
+        {
+          "head_arity": 3,
+          "head_relation": "PBConsumerRequirement",
+          "name": "petta-boundary-consumer-implies-right",
+          "native_projection": "native-consumer-requirement",
+          "role": "calculus"
+        },
+        {
+          "head_arity": 3,
+          "head_relation": "PBConsumerRequirement",
+          "name": "petta-boundary-consumer-intersection-atom",
+          "native_projection": "native-consumer-requirement",
+          "role": "calculus"
+        },
+        {
+          "head_arity": 3,
+          "head_relation": "PBConsumerRequirement",
+          "name": "petta-boundary-consumer-last",
+          "native_projection": "native-consumer-requirement",
+          "role": "calculus"
+        },
+        {
+          "head_arity": 3,
+          "head_relation": "PBConsumerRequirement",
+          "name": "petta-boundary-consumer-length",
+          "native_projection": "native-consumer-requirement",
+          "role": "calculus"
+        },
+        {
+          "head_arity": 3,
+          "head_relation": "PBConsumerRequirement",
+          "name": "petta-boundary-consumer-map-atom",
+          "native_projection": "native-consumer-requirement",
+          "role": "calculus"
+        },
+        {
+          "head_arity": 3,
+          "head_relation": "PBConsumerRequirement",
+          "name": "petta-boundary-consumer-map-flat",
+          "native_projection": "native-consumer-requirement",
+          "role": "calculus"
+        },
+        {
+          "head_arity": 3,
+          "head_relation": "PBConsumerRequirement",
+          "name": "petta-boundary-consumer-map-nested",
+          "native_projection": "native-consumer-requirement",
+          "role": "calculus"
+        },
+        {
+          "head_arity": 3,
+          "head_relation": "PBConsumerRequirement",
+          "name": "petta-boundary-consumer-max-atom",
+          "native_projection": "native-consumer-requirement",
+          "role": "calculus"
+        },
+        {
+          "head_arity": 3,
+          "head_relation": "PBConsumerRequirement",
+          "name": "petta-boundary-consumer-min-atom",
+          "native_projection": "native-consumer-requirement",
+          "role": "calculus"
+        },
+        {
+          "head_arity": 3,
+          "head_relation": "PBConsumerRequirement",
+          "name": "petta-boundary-consumer-not",
+          "native_projection": "native-consumer-requirement",
+          "role": "calculus"
+        },
+        {
+          "head_arity": 3,
+          "head_relation": "PBConsumerRequirement",
+          "name": "petta-boundary-consumer-or-left",
+          "native_projection": "native-consumer-requirement",
+          "role": "calculus"
+        },
+        {
+          "head_arity": 3,
+          "head_relation": "PBConsumerRequirement",
+          "name": "petta-boundary-consumer-or-right",
+          "native_projection": "native-consumer-requirement",
+          "role": "calculus"
+        },
+        {
+          "head_arity": 3,
+          "head_relation": "PBConsumerRequirement",
+          "name": "petta-boundary-consumer-reverse",
+          "native_projection": "native-consumer-requirement",
+          "role": "calculus"
+        },
+        {
+          "head_arity": 3,
+          "head_relation": "PBConsumerRequirement",
+          "name": "petta-boundary-consumer-size-atom",
+          "native_projection": "native-consumer-requirement",
+          "role": "calculus"
+        },
+        {
+          "head_arity": 3,
+          "head_relation": "PBConsumerRequirement",
+          "name": "petta-boundary-consumer-subtraction-atom",
+          "native_projection": "native-consumer-requirement",
+          "role": "calculus"
+        },
+        {
+          "head_arity": 3,
+          "head_relation": "PBConsumerRequirement",
+          "name": "petta-boundary-consumer-union-atom",
+          "native_projection": "native-consumer-requirement",
+          "role": "calculus"
+        },
+        {
+          "head_arity": 3,
+          "head_relation": "PBConsumerRequirement",
+          "name": "petta-boundary-consumer-xor-left",
+          "native_projection": "native-consumer-requirement",
+          "role": "calculus"
+        },
+        {
+          "head_arity": 3,
+          "head_relation": "PBConsumerRequirement",
+          "name": "petta-boundary-consumer-xor-right",
+          "native_projection": "native-consumer-requirement",
+          "role": "calculus"
+        },
+        {
+          "head_arity": 2,
+          "head_relation": "PBGuardProvides",
+          "name": "petta-boundary-guard-cons-match-nonempty",
+          "native_projection": "native-guard-proviso",
+          "role": "calculus"
+        },
+        {
+          "head_arity": 2,
+          "head_relation": "PBGuardProvides",
+          "name": "petta-boundary-guard-cons-match-nonvar",
+          "native_projection": "native-guard-proviso",
+          "role": "calculus"
+        },
+        {
+          "head_arity": 2,
+          "head_relation": "PBGuardProvides",
+          "name": "petta-boundary-guard-is-expression-nonvar",
+          "native_projection": "native-guard-proviso",
+          "role": "calculus"
+        },
+        {
+          "head_arity": 2,
+          "head_relation": "PBGuardProvides",
+          "name": "petta-boundary-guard-is-expression-proper-list",
+          "native_projection": "native-guard-proviso",
+          "role": "calculus"
+        },
+        {
+          "head_arity": 2,
+          "head_relation": "PBGuardProvides",
+          "name": "petta-boundary-guard-not-empty-nonempty",
+          "native_projection": "native-guard-proviso",
+          "role": "calculus"
+        },
+        {
+          "head_arity": 2,
+          "head_relation": "PBGuardProvides",
+          "name": "petta-boundary-guard-not-empty-nonvar",
+          "native_projection": "native-guard-proviso",
+          "role": "calculus"
+        },
+        {
+          "head_arity": 2,
+          "head_relation": "PBGuardProvides",
+          "name": "petta-boundary-guard-not-empty-proper-list",
+          "native_projection": "native-guard-proviso",
+          "role": "calculus"
+        },
+        {
+          "head_arity": 2,
+          "head_relation": "PBGuardProvides",
+          "name": "petta-boundary-guard-not-variable",
+          "native_projection": "native-guard-proviso",
+          "role": "calculus"
+        },
+        {
+          "head_arity": 3,
+          "head_relation": "PBBoundaryJoin",
+          "name": "petta-boundary-join-none-none",
+          "native_projection": "native-boundary-join",
+          "role": "calculus"
+        },
+        {
+          "head_arity": 3,
+          "head_relation": "PBBoundaryJoin",
+          "name": "petta-boundary-join-none-nonempty-expression",
+          "native_projection": "native-boundary-join",
+          "role": "calculus"
+        },
+        {
+          "head_arity": 3,
+          "head_relation": "PBBoundaryJoin",
+          "name": "petta-boundary-join-none-nonvar",
+          "native_projection": "native-boundary-join",
+          "role": "calculus"
+        },
+        {
+          "head_arity": 3,
+          "head_relation": "PBBoundaryJoin",
+          "name": "petta-boundary-join-none-proper-list",
+          "native_projection": "native-boundary-join",
+          "role": "calculus"
+        },
+        {
+          "head_arity": 3,
+          "head_relation": "PBBoundaryJoin",
+          "name": "petta-boundary-join-nonempty-expression-none",
+          "native_projection": "native-boundary-join",
+          "role": "calculus"
+        },
+        {
+          "head_arity": 3,
+          "head_relation": "PBBoundaryJoin",
+          "name": "petta-boundary-join-nonempty-expression-nonempty-expression",
+          "native_projection": "native-boundary-join",
+          "role": "calculus"
+        },
+        {
+          "head_arity": 3,
+          "head_relation": "PBBoundaryJoin",
+          "name": "petta-boundary-join-nonempty-expression-nonvar",
+          "native_projection": "native-boundary-join",
+          "role": "calculus"
+        },
+        {
+          "head_arity": 3,
+          "head_relation": "PBBoundaryJoin",
+          "name": "petta-boundary-join-nonempty-expression-proper-list",
+          "native_projection": "native-boundary-join",
+          "role": "calculus"
+        },
+        {
+          "head_arity": 3,
+          "head_relation": "PBBoundaryJoin",
+          "name": "petta-boundary-join-nonvar-none",
+          "native_projection": "native-boundary-join",
+          "role": "calculus"
+        },
+        {
+          "head_arity": 3,
+          "head_relation": "PBBoundaryJoin",
+          "name": "petta-boundary-join-nonvar-nonempty-expression",
+          "native_projection": "native-boundary-join",
+          "role": "calculus"
+        },
+        {
+          "head_arity": 3,
+          "head_relation": "PBBoundaryJoin",
+          "name": "petta-boundary-join-nonvar-nonvar",
+          "native_projection": "native-boundary-join",
+          "role": "calculus"
+        },
+        {
+          "head_arity": 3,
+          "head_relation": "PBBoundaryJoin",
+          "name": "petta-boundary-join-nonvar-proper-list",
+          "native_projection": "native-boundary-join",
+          "role": "calculus"
+        },
+        {
+          "head_arity": 3,
+          "head_relation": "PBBoundaryJoin",
+          "name": "petta-boundary-join-proper-list-none",
+          "native_projection": "native-boundary-join",
+          "role": "calculus"
+        },
+        {
+          "head_arity": 3,
+          "head_relation": "PBBoundaryJoin",
+          "name": "petta-boundary-join-proper-list-nonempty-expression",
+          "native_projection": "native-boundary-join",
+          "role": "calculus"
+        },
+        {
+          "head_arity": 3,
+          "head_relation": "PBBoundaryJoin",
+          "name": "petta-boundary-join-proper-list-nonvar",
+          "native_projection": "native-boundary-join",
+          "role": "calculus"
+        },
+        {
+          "head_arity": 3,
+          "head_relation": "PBBoundaryJoin",
+          "name": "petta-boundary-join-proper-list-proper-list",
+          "native_projection": "native-boundary-join",
+          "role": "calculus"
+        },
+        {
+          "head_arity": 2,
+          "head_relation": "PBBoundaryVisible",
+          "name": "petta-boundary-open-none",
+          "native_projection": "native-boundary-visibility",
+          "role": "calculus"
+        },
+        {
+          "head_arity": 2,
+          "head_relation": "PBBoundaryVisible",
+          "name": "petta-boundary-open-nonempty-expression",
+          "native_projection": "native-boundary-visibility",
+          "role": "calculus"
+        }
+      ],
+      "source_sha256": "e7f22df1f71b1161838333dd3d14b53ffb8218f151ca667b9d2f4f260b6de62b"
+    }
+  ],
+  "schema": "cetta-petta-typecheck-v3-intake-v1",
+  "scope_note": "This artifact identifies the authored finite-Horn rules, their required providers, and the v3 candidate intake. It is not an executable typecheck-v3 or a completeness claim for either checker."
+}

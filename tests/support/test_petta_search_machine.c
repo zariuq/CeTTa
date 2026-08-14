@@ -848,6 +848,8 @@ static void test_native_residual_typecheck(
     add_clause(space, persistent, "(: numeric-value (| Number Number))");
     add_clause(space, persistent,
                "(: callable-value (-> Number Number))");
+    add_clause(space, persistent,
+               "(: det-callable-value (-[det]-> Number Number))");
 
     expect_value_type(space, scratch, "1", "Number",
                       PETTA_TYPECHECK_ESTABLISHED);
@@ -901,6 +903,11 @@ static void test_native_residual_typecheck(
         parse_one(scratch, "(-> Number Number)"),
         &callable_hooks, &arrow_result));
     assert(arrow_result.verdict == PETTA_TYPECHECK_ESTABLISHED);
+    assert(petta_typecheck_value(
+        space, scratch, parse_one(scratch, "det-callable-value"),
+        parse_one(scratch, "(-> Number Number)"),
+        &callable_hooks, &arrow_result));
+    assert(arrow_result.verdict == PETTA_TYPECHECK_ESTABLISHED);
     callable = false;
     assert(petta_typecheck_value(
         space, scratch, parse_one(scratch, "callable-value"),
@@ -928,8 +935,51 @@ static void test_native_residual_typecheck(
                               PETTA_TYPECHECK_REFUTED);
     expect_type_compatibility(space, scratch, "%Undefined%", "NominalA",
                               PETTA_TYPECHECK_REFUTED);
+    expect_type_compatibility(space, scratch, "NominalA", "%Undefined%",
+                              PETTA_TYPECHECK_ESTABLISHED);
+    expect_type_compatibility(space, scratch, "NominalA", "Number",
+                              PETTA_TYPECHECK_REFUTED);
+    expect_type_compatibility(space, scratch, "ScoreBrand", "Number",
+                              PETTA_TYPECHECK_ESTABLISHED);
+    expect_type_compatibility(space, scratch, "ScoreBrand", "String",
+                              PETTA_TYPECHECK_REFUTED);
+    expect_type_compatibility(space, scratch, "Number", "ScoreBrand",
+                              PETTA_TYPECHECK_REFUTED);
+    expect_type_compatibility(
+        space, scratch, "ScoreBrand", "(| String ScoreBrand)",
+        PETTA_TYPECHECK_ESTABLISHED);
     expect_type_compatibility(space, scratch, "AliasCycleA", "Number",
                               PETTA_TYPECHECK_UNDETERMINED);
+    expect_type_compatibility(
+        space, scratch,
+        "(-[det]-> Number Number)",
+        "(-[semidet]-> Number Number)",
+        PETTA_TYPECHECK_ESTABLISHED);
+    expect_type_compatibility(
+        space, scratch,
+        "(-[semidet]-> Number Number)",
+        "(-[det]-> Number Number)",
+        PETTA_TYPECHECK_REFUTED);
+    expect_type_compatibility(
+        space, scratch,
+        "(-[nondet]-> Number Number)",
+        "(-> Number Number)",
+        PETTA_TYPECHECK_ESTABLISHED);
+    expect_type_compatibility(
+        space, scratch,
+        "(-[det]-> Number Number)",
+        "(-[nondet]-> Number Number)",
+        PETTA_TYPECHECK_ESTABLISHED);
+    expect_type_compatibility(
+        space, scratch,
+        "(-[det]-> Number Number)",
+        "(-[$effect]-> Number Number)",
+        PETTA_TYPECHECK_ESTABLISHED);
+    expect_type_compatibility(
+        space, scratch,
+        "(-[det]-> Number String)",
+        "(-[det]-> Number Number)",
+        PETTA_TYPECHECK_REFUTED);
 
     PettaTypecheckResult malformed;
     assert(!petta_typecheck_value(

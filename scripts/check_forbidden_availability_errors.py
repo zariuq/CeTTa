@@ -27,11 +27,11 @@ SKIP_SUFFIXES = {
 }
 
 FORBIDDEN = [
-    re.compile(r"profile_surface_error"),
+    re.compile(r"profile_syntax_error"),
     re.compile(r"SearchPolicyLaneUnavailable"),
     re.compile(r"search_policy_reason_unavailable"),
-    re.compile(r"profile-surface-rust-gap"),
-    re.compile(r"surface .*unavailable", re.IGNORECASE),
+    re.compile(r"profile-syntax-rust-gap"),
+    re.compile(r"syntax .*unavailable", re.IGNORECASE),
     re.compile(r"unavailable in profile", re.IGNORECASE),
     re.compile(r"unavailable in language", re.IGNORECASE),
 ]

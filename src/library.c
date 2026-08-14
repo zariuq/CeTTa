@@ -8,7 +8,9 @@
 #include "nik_runtime.h"
 #include "parser.h"
 #include "petta_search_machine.h"
+#include "petta_runtime.h"
 #include "petta_typecheck.h"
+#include "petta_typecheck_v3.h"
 #include "rhocalc_core.h"
 #include "rhocalc_syntax.h"
 #include "rule_machine.h"
@@ -330,6 +332,7 @@ void cetta_library_context_init_for_language_profile(CettaLibraryContext *ctx,
     if (!getcwd(ctx->working_dir, sizeof(ctx->working_dir))) {
         ctx->working_dir[0] = '\0';
     }
+    ctx->script_path[0] = '\0';
     ctx->script_dir[0] = '\0';
     ctx->import_dir_len = 0;
     ctx->module_mount_len = 0;
@@ -369,14 +372,21 @@ void cetta_library_context_init_for_language_profile(CettaLibraryContext *ctx,
     ctx->prime_relational_plan_enabled =
         language_id == CETTA_LANGUAGE_PRIME &&
         getenv("CETTA_PRIME_RELATIONAL_PLAN_REFERENCE") == NULL;
+    ctx->petta_runtime = language_id == CETTA_LANGUAGE_PETTA
+        ? cetta_petta_runtime_state_new() : NULL;
     bool needs_occurrence_program =
         language_id == CETTA_LANGUAGE_PETTA ||
         ctx->prime_relational_plan_enabled;
     ctx->petta_program = needs_occurrence_program
         ? petta_program_new() : NULL;
-    if (ctx->petta_program && profile &&
-        profile->id == CETTA_PROFILE_PETTA_TYPECHECK_V2) {
+    if (ctx->petta_program && cetta_profile_uses_petta_typing(profile)) {
         (void)petta_program_enable_analysis(ctx->petta_program);
+    }
+    ctx->petta_typecheck_v3 = NULL;
+    if (profile && profile->id == CETTA_PROFILE_PETTA_TYPECHECK_V3) {
+        char error[256] = {0};
+        ctx->petta_typecheck_v3 =
+            cetta_petta_typecheck_v3_create(error, sizeof error);
     }
     ctx->petta_token_space_clause_registry =
         language_id == CETTA_LANGUAGE_PETTA
@@ -433,7 +443,11 @@ void cetta_library_context_free(CettaLibraryContext *ctx) {
     ctx->petta_shared_table = NULL;
     petta_program_free(ctx->petta_program);
     ctx->petta_program = NULL;
+    cetta_petta_typecheck_v3_free(ctx->petta_typecheck_v3);
+    ctx->petta_typecheck_v3 = NULL;
     ctx->prime_relational_plan_enabled = false;
+    cetta_petta_runtime_state_free(ctx->petta_runtime);
+    ctx->petta_runtime = NULL;
     cetta_petta_token_space_clause_registry_free(
         ctx->petta_token_space_clause_registry);
     ctx->petta_token_space_clause_registry = NULL;
@@ -1095,8 +1109,10 @@ static void copy_parent_dir(char *dst, size_t dst_sz, const char *path) {
 void cetta_library_context_set_script_path(CettaLibraryContext *ctx, const char *filename) {
     char resolved[PATH_MAX];
 
+    ctx->script_path[0] = '\0';
     ctx->script_dir[0] = '\0';
     if (!filename) return;
+    snprintf(ctx->script_path, sizeof(ctx->script_path), "%s", filename);
     if (!realpath(filename, resolved)) return;
     copy_parent_dir(ctx->script_dir, sizeof(ctx->script_dir), resolved);
     if (ctx->lib_prolog && ctx->script_dir[0] != '\0') {
@@ -2287,7 +2303,7 @@ static bool resolve_import_plan(CettaLibraryContext *ctx, const CettaModuleSpec 
     case CETTA_MODULE_SPEC_MODULE_NAME: {
         /*
          * Plain PeTTa imports are source-relative.  Package lookup is an
-         * explicit, separate surface: `(library member)`.  Searching CeTTa's
+         * explicit, separate syntax: `(library member)`.  Searching CeTTa's
          * stdlib or registered mounts for a bare PeTTa name would turn an
          * upstream failed import into a different program and can duplicate
          * every clause when the same file was also imported by path.
@@ -2607,13 +2623,13 @@ static Atom *library_atoms_from_text(Arena *a, const uint8_t *bytes, size_t len,
     return library_atoms_from_text_impl(a, bytes, len, call, true);
 }
 
-static char *library_mm2_surface_text(Arena *a, Atom *atom) {
+static char *library_mm2_syntax_text(Arena *a, Atom *atom) {
     if (atom && atom->kind == ATOM_EXPR && atom->expr.len == 2 &&
         atom->expr.elems[0]->kind == ATOM_SYMBOL &&
         atom_is_symbol_id(atom->expr.elems[0], g_builtin_syms.quote)) {
         atom = atom->expr.elems[1];
     }
-    return cetta_mm2_atom_to_surface_string(a, atom);
+    return cetta_mm2_atom_to_syntax_string(a, atom);
 }
 
 static Atom *library_unquote_atom(Atom *atom) {
@@ -4358,7 +4374,7 @@ static bool library_mork_atoms_visit_row(Atom *atom, void *ctx) {
     return library_mork_atom_rows_push((LibraryMorkAtomRows *)ctx, atom);
 }
 
-static Atom *mork_space_surface_native(CettaLibraryContext *ctx,
+static Atom *mork_space_syntax_native(CettaLibraryContext *ctx,
                                        Arena *a, Atom *head, Atom **args,
                                        uint32_t nargs, SymbolId which) {
     CettaMorkSpaceResource *target = NULL;
@@ -4778,7 +4794,7 @@ static Atom *mork_space_surface_native(CettaLibraryContext *ctx,
     }
 
     return atom_error(a, library_call_expr(a, head, args, nargs),
-                      atom_string(a, "unknown mork surface helper"));
+                      atom_string(a, "unknown mork syntax helper"));
 }
 
 static Atom *mork_space_include_native(CettaLibraryContext *ctx, Arena *a,
@@ -6050,7 +6066,7 @@ static Atom *cetta_library_dispatch_mork(CettaLibraryContext *ctx, Arena *a,
         head_id == g_builtin_syms.lib_mork_space_size ||
         head_id == g_builtin_syms.lib_mork_space_count_atoms ||
         head_id == g_builtin_syms.lib_mork_space_match) {
-        return mork_space_surface_native(ctx, a, head, args, nargs, head_id);
+        return mork_space_syntax_native(ctx, a, head, args, nargs, head_id);
     }
     if (head_id == g_builtin_syms.lib_mork_join ||
         head_id == g_builtin_syms.lib_mork_meet ||
@@ -6317,7 +6333,7 @@ static Atom *mm2_program_add_native(CettaLibraryContext *ctx, Arena *a,
         return library_signature_error(a, head, args, nargs,
                                        "expected mork-program handle as first argument");
     }
-    text = library_mm2_surface_text(a, args[1]);
+    text = library_mm2_syntax_text(a, args[1]);
     if (!cetta_mork_bridge_program_add_sexpr(program, (const uint8_t *)text,
                                              strlen(text), NULL)) {
         return library_mm2_bridge_error(a, head, args, nargs,
@@ -6369,16 +6385,16 @@ static Atom *mm2_load_file_native(CettaLibraryContext *ctx, Arena *a,
     }
 
     for (int i = 0; i < n; i++) {
-        char *surface = cetta_mm2_atom_to_surface_string(&parse_arena, atoms[i]);
+        char *syntax = cetta_mm2_atom_to_syntax_string(&parse_arena, atoms[i]);
         bool ok;
         if (cetta_mm2_atom_is_exec_rule(atoms[i])) {
             ok = cetta_mork_bridge_program_add_sexpr(program,
-                                                     (const uint8_t *)surface,
-                                                     strlen(surface), NULL);
+                                                     (const uint8_t *)syntax,
+                                                     strlen(syntax), NULL);
         } else {
             ok = cetta_mork_bridge_context_add_sexpr(context,
-                                                     (const uint8_t *)surface,
-                                                     strlen(surface), NULL);
+                                                     (const uint8_t *)syntax,
+                                                     strlen(syntax), NULL);
         }
         if (!ok) {
             error = library_mm2_bridge_error(
@@ -6524,7 +6540,7 @@ static Atom *mm2_context_add_like_native(CettaLibraryContext *ctx, Arena *a,
         return library_signature_error(a, head, args, nargs,
                                        "expected mork-context handle as first argument");
     }
-    text = library_mm2_surface_text(a, args[1]);
+    text = library_mm2_syntax_text(a, args[1]);
     if (remove_mode) {
         ok = cetta_mork_bridge_context_remove_sexpr(context, (const uint8_t *)text,
                                                     strlen(text), NULL);
@@ -6718,7 +6734,7 @@ static bool cetta_library_petta_check_segment(
     CettaPettaDocumentFailure *failure_out, Atom **detail_out) {
 #if CETTA_BUILD_WITH_PETTA_TYPECHECK_V2
     if (!ctx || !ctx->session.profile ||
-        ctx->session.profile->id != CETTA_PROFILE_PETTA_TYPECHECK_V2 ||
+        !cetta_profile_uses_petta_typing(ctx->session.profile) ||
         ctx->petta_trusted_library_import_depth > 0u)
         return true;
     if (!space || !space->native.universe || !eval_arena ||
@@ -6734,21 +6750,33 @@ static bool cetta_library_petta_check_segment(
     for (int index = 0; index < atom_count; index++)
         forms[index] = term_universe_get_atom(
             space->native.universe, atom_ids[index]);
-    PettaTypecheckBlockResult checked;
     PettaTypecheckPolicy policy = PETTA_TYPECHECK_POLICY_DEFAULT;
     /* Strictness is a policy of the authored requesting unit.  Imported
      * units receive baseline typecheck-v2 validation and do not inherit
      * a caller's --strict/--strict-det lint policy retroactively. */
-    bool judged = declaration_admission
-        ? petta_typecheck_declaration_admission_selected(
-              ctx->petta_program, space, registry,
-              forms, (size_t)atom_count, policy, &checked)
-        : petta_typecheck_declaration_block_selected(
-              ctx->petta_program, space, registry,
-              forms, (size_t)atom_count, policy, &checked);
+    bool use_v3 = ctx->session.profile->id ==
+        CETTA_PROFILE_PETTA_TYPECHECK_V3;
+    PettaTypecheckBlockResult checked = {0};
+    CettaPettaTypecheckV3CompatibilityResult checked_v3 = {0};
+    bool judged = use_v3
+        ? cetta_petta_typecheck_v3_compatibility_block(
+              ctx->petta_typecheck_v3, ctx->petta_program, space, registry,
+              forms, (size_t)atom_count, policy, declaration_admission,
+              &checked_v3)
+        : declaration_admission
+            ? petta_typecheck_declaration_admission_selected(
+                  ctx->petta_program, space, registry,
+                  forms, (size_t)atom_count, policy, &checked)
+            : petta_typecheck_declaration_block_selected(
+                  ctx->petta_program, space, registry,
+                  forms, (size_t)atom_count, policy, &checked);
+    PettaTypecheckVerdict verdict = use_v3
+        ? checked_v3.verdict : checked.verdict;
+    const char *diagnostic = use_v3
+        ? checked_v3.diagnostic : checked.diagnostic;
     Atom *source = forms[0];
     free(forms);
-    if (judged && checked.verdict != PETTA_TYPECHECK_REFUTED)
+    if (judged && verdict != PETTA_TYPECHECK_REFUTED)
         return true;
     if (failure_out)
         *failure_out = CETTA_PETTA_DOCUMENT_EVAL_FAILED;
@@ -6756,8 +6784,8 @@ static bool cetta_library_petta_check_segment(
         *detail_out = petta_typecheck_error_atom(
             eval_arena, source,
             judged ? 2 : 1,
-            checked.diagnostic[0]
-                ? checked.diagnostic
+            diagnostic[0]
+                ? diagnostic
                 : judged
                     ? "imported declaration block rejected"
                     : "imported declaration analysis failed");
@@ -6993,9 +7021,8 @@ static bool cetta_library_petta_execute_document_ids(
                 return false;
             }
         }
-        if (ctx->petta_program && ctx->session.profile &&
-            ctx->session.profile->id ==
-                CETTA_PROFILE_PETTA_TYPECHECK_V2 &&
+        if (ctx->petta_program &&
+            cetta_profile_uses_petta_typing(ctx->session.profile) &&
             ctx->petta_trusted_library_import_depth == 0u) {
 #if CETTA_BUILD_WITH_PETTA_TYPECHECK_V2
             petta_typecheck_inferred_signatures_rebase_selected(

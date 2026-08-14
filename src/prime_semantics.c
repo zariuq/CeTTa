@@ -15,6 +15,7 @@
 #include "he_typing_authority.h"
 #include "library.h"
 #include "nik_runtime.h"
+#include "prime_lambda_pi.h"
 #include "space.h"
 #include "symbol.h"
 
@@ -294,6 +295,35 @@ static void prime_resource_phase_end(PrimeResourceLedger *ledger,
     if (!ledger->typing.steps_limited) return;
     uint64_t after = ledger->typing.work_steps_observed;
     if (after > before) ledger->phase_spent[phase] += after - before;
+}
+
+static CettaPrimeLambdaPiBudget prime_lambda_pi_budget(
+    const PrimeResourceLedger *ledger) {
+    CettaPrimeLambdaPiBudget budget;
+    cetta_prime_lambda_pi_budget_init(
+        &budget, ledger->typing.steps_limited,
+        ledger->typing.steps_limited ? ledger->typing.steps_remaining : 0u);
+    return budget;
+}
+
+static void prime_account_lambda_pi(
+    PrimeResourceLedger *ledger, PrimeResourcePhase phase,
+    const CettaPrimeLambdaPiBudget *budget) {
+    if (!ledger || !budget || !ledger->typing.steps_limited) return;
+    ledger->typing.steps_remaining = budget->remaining;
+    ledger->typing.steps_spent = prime_u64_add_sat(
+        ledger->typing.steps_spent, budget->spent);
+    ledger->typing.work_steps_observed = prime_u64_add_sat(
+        ledger->typing.work_steps_observed, budget->spent);
+    ledger->phase_spent[phase] = prime_u64_add_sat(
+        ledger->phase_spent[phase], budget->spent);
+}
+
+static Atom *prime_lambda_pi_reason(
+    Arena *arena, const CettaPrimeLambdaPiResult *result,
+    const char *fallback) {
+    return prime_expr1(
+        arena, result && result->reason ? result->reason : fallback);
 }
 
 static Atom *prime_resource_ledger_atom(Arena *a,
@@ -1071,7 +1101,7 @@ static Atom *prime_canonical_idx(Arena *a, uint64_t index) {
         a, atom_symbol(a, "idx"), atom_int(a, (int64_t)index));
 }
 
-/* Lower the named Prime telescope surface to the neutral canonical ABT waist.
+/* Lower the named Prime telescope syntax to the neutral canonical ABT waist.
  * This is an elaboration mechanism, not a typing decision: callers must first
  * establish formation, and checked packages must still replay any judgment
  * made about the result.  A scoped level table makes name lookup constant-time;
@@ -1097,17 +1127,17 @@ static Atom *prime_canonicalize_type_rec(Arena *a,
             ? arena_alloc(a, sizeof(*domains) * (size_t)arity) : NULL;
         size_t scope_mark = scope->frame_len;
         for (CettaExprIndex i = 0; i < arity; i++) {
-            Atom *surface_domain = type->expr.elems[i + 1u];
+            Atom *syntax_domain = type->expr.elems[i + 1u];
             Atom *binder = NULL;
-            if (surface_domain->kind == ATOM_EXPR &&
-                surface_domain->expr.len == 3u &&
-                atom_is_symbol_id(surface_domain->expr.elems[0],
+            if (syntax_domain->kind == ATOM_EXPR &&
+                syntax_domain->expr.len == 3u &&
+                atom_is_symbol_id(syntax_domain->expr.elems[0],
                                   g_builtin_syms.colon)) {
-                binder = surface_domain->expr.elems[1];
+                binder = syntax_domain->expr.elems[1];
                 if (binder->kind != ATOM_VAR) return NULL;
-                surface_domain = surface_domain->expr.elems[2];
+                syntax_domain = syntax_domain->expr.elems[2];
             }
-            domains[i] = prime_canonicalize_type_rec(a, scope, surface_domain);
+            domains[i] = prime_canonicalize_type_rec(a, scope, syntax_domain);
             if (!domains[i] || !prime_canonical_scope_push(scope, binder)) {
                 prime_canonical_scope_pop_to(scope, scope_mark);
                 return NULL;
@@ -1280,6 +1310,28 @@ static PrimeFormStatus prime_form_type(Space *space, Arena *a, Atom *type,
 
 static Atom *prime_synth(Space *space, Arena *a, Atom *judgment, Atom *term,
                          PrimeResourceLedger *ledger) {
+    if (cetta_prime_lambda_pi_unwrap_scoped(term, NULL, NULL)) {
+        CettaPrimeLambdaPiBudget budget = prime_lambda_pi_budget(ledger);
+        CettaPrimeLambdaPiResult result = cetta_prime_lambda_pi_synth(
+            a, term, &budget);
+        prime_account_lambda_pi(
+            ledger, PRIME_RESOURCE_SYNTHESIS, &budget);
+        if (result.status == CETTA_PRIME_LP_ESTABLISHED) {
+            return prime_established(
+                a, judgment,
+                prime_expr2(a, "PrimeLambdaPiSynthesis", result.type));
+        }
+        if (result.status == CETTA_PRIME_LP_INCOMPLETE) {
+            return prime_incomplete(
+                a, judgment,
+                prime_lambda_pi_reason(
+                    a, &result, "lambda-pi-synthesis-incomplete"));
+        }
+        return prime_refuted(
+            a, judgment,
+            prime_lambda_pi_reason(
+                a, &result, "lambda-pi-synthesis-refuted"));
+    }
     Atom **types = NULL;
     bool complete = true;
     uint32_t count = prime_infer_types(
@@ -1328,6 +1380,32 @@ static Atom *prime_check_or_analyze(Space *space, Arena *a, Atom *judgment,
                                     Atom *term, Atom *expected,
                                     PrimeResourceLedger *ledger,
                                     bool require_exact_or_structural) {
+    if (cetta_prime_lambda_pi_unwrap_scoped(term, NULL, NULL)) {
+        CettaPrimeLambdaPiBudget budget = prime_lambda_pi_budget(ledger);
+        CettaPrimeLambdaPiResult result = cetta_prime_lambda_pi_check(
+            a, term, expected, &budget);
+        prime_account_lambda_pi(
+            ledger, PRIME_RESOURCE_CHECKING, &budget);
+        if (result.status == CETTA_PRIME_LP_ESTABLISHED) {
+            return prime_established(
+                a, judgment,
+                prime_expr2(
+                    a, require_exact_or_structural
+                           ? "PrimeLambdaPiChecked"
+                           : "PrimeLambdaPiAnalyzed",
+                    expected));
+        }
+        if (result.status == CETTA_PRIME_LP_INCOMPLETE) {
+            return prime_incomplete(
+                a, judgment,
+                prime_lambda_pi_reason(
+                    a, &result, "lambda-pi-checking-incomplete"));
+        }
+        return prime_refuted(
+            a, judgment,
+            prime_lambda_pi_reason(
+                a, &result, "lambda-pi-checking-refuted"));
+    }
     Atom *formation_detail = NULL;
     PrimeFormStatus formation = prime_form_type(
         space, a, expected, ledger, &formation_detail, NULL);
@@ -1457,6 +1535,36 @@ bool prime_semantics_replay_conversion_certificate(
 static Atom *prime_convert(Space *space, Arena *a, Atom *judgment,
                            Atom *left, Atom *right,
                            PrimeResourceLedger *ledger) {
+    bool left_scoped = cetta_prime_lambda_pi_unwrap_scoped(
+        left, NULL, NULL);
+    bool right_scoped = cetta_prime_lambda_pi_unwrap_scoped(
+        right, NULL, NULL);
+    if (left_scoped || right_scoped) {
+        if (!left_scoped || !right_scoped) {
+            return prime_refuted(
+                a, judgment,
+                prime_expr1(a, "mixed-lambda-pi-conversion"));
+        }
+        CettaPrimeLambdaPiBudget budget = prime_lambda_pi_budget(ledger);
+        CettaPrimeLambdaPiResult result = cetta_prime_lambda_pi_convert(
+            a, left, right, &budget);
+        prime_account_lambda_pi(
+            ledger, PRIME_RESOURCE_NORMALIZATION, &budget);
+        if (result.status == CETTA_PRIME_LP_ESTABLISHED) {
+            return prime_established(
+                a, judgment, prime_expr1(a, "PrimeLambdaPiBetaEtaEqual"));
+        }
+        if (result.status == CETTA_PRIME_LP_INCOMPLETE) {
+            return prime_incomplete(
+                a, judgment,
+                prime_lambda_pi_reason(
+                    a, &result, "lambda-pi-conversion-incomplete"));
+        }
+        return prime_refuted(
+            a, judgment,
+            prime_lambda_pi_reason(
+                a, &result, "lambda-pi-conversion-refuted"));
+    }
     Atom *left_nf = left;
     Atom *right_nf = right;
     uint64_t phase_before = prime_resource_phase_begin(ledger);

@@ -1,12 +1,12 @@
-; Strict-core rho surface.
+; Strict-core rho interface.
 ; Canonical terms use the rho: namespace. Dotted rho. spelling is reader
 ; sugar for the same symbols.
 ;
-; Importing rho only provides constructor-level surface vocabulary for building
+; Importing rho only provides constructor-level interface vocabulary for building
 ; strict-core rho terms in MeTTa.
 ;
 ; It does not validate constructor arity or well-formedness at import time:
-; malformed rho constructor shapes remain inert surface syntax here. Structural
+; malformed rho constructor shapes remain inert syntax here. Structural
 ; validation belongs to rhocalc execution and the lts:rho / lts:rho:cost
 ; frontiers, not to lib/rho. The dotted rho. reader sugar does not bypass this:
 ; malformed dotted constructor forms remain the same inert syntax too.

@@ -1,5 +1,5 @@
 ; Explicit ATP library umbrella.  Importing this module enables proof-search
-; producers without adding their policy vocabulary to the Prime core surface.
+; producers without adding their policy vocabulary to the Prime core interface.
 !(import! &self ./atp/direct)
 !(import! &self ./atp/indexed)
 !(import! &self ./atp/resolution)

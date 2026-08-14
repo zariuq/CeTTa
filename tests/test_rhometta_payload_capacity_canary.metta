@@ -56,7 +56,7 @@
 !(assertEqualToResult (collapse (rhometta:run (ov 65))) (((rho:val (rho:quote (rho:val done))))))
 
 ; -- REDIRECT CANARY (branchy writes to 65 registry-bound spaces) -----------
-; This is the surface-level redirect test: the registry must keep all 65 bound
+; This is the syntax-level redirect test: the registry must keep all 65 bound
 ; spaces, the payload must be able to create >64 per-payload space redirects,
 ; and sibling isolation must still prevent those branchy writes from escaping.
 !(bind! &cap-space-01 (new-space))

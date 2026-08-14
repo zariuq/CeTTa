@@ -1,0 +1,8 @@
+#ifndef CETTA_GENERATED_CETTA_PETTA_TYPECHECK_V3_CORE_V1_H
+#define CETTA_GENERATED_CETTA_PETTA_TYPECHECK_V3_CORE_V1_H
+
+#include "gslt_language_runtime.h"
+
+extern const CettaGsltEmbeddedLanguageV1 cetta_petta_typecheck_v3_core_v1;
+
+#endif /* CETTA_GENERATED_CETTA_PETTA_TYPECHECK_V3_CORE_V1_H */

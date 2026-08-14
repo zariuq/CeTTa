@@ -2,7 +2,7 @@
 
 ; Runnable shadow for the ProbHOL / planner / regime-mixture overlay boundary.
 ;
-; This mirrors the Lean theorem surfaces in:
+; This mirrors the Lean theorem interfaces in:
 ; - PLNProbHOLPlannerBridge.lean
 ; - PLNProbHOLPlannerBridgeRegression.lean
 ; - PLNRegimeMixtureBenchmarkBridge.lean

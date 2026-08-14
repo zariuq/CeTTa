@@ -1,4 +1,4 @@
-; CeTTa MORK-facing helper surface.
+; CeTTa MORK-facing helper interface.
 ; Intentionally explicit and honest: MorkSpace is its own public value kind,
 ; not an ordinary generic MeTTa SpaceType. Use the mork: namespace for
 ; explicit MORK construction, querying, mutation, algebra, and cursor work.
@@ -112,14 +112,14 @@
   (@return "Fresh MorkSpace handle"))
 
 (@doc mork:add-atom
-  (@desc "Adds one atom to an explicit MorkSpace through the namespaced MORK surface.")
+  (@desc "Adds one atom to an explicit MorkSpace through the namespaced MORK interface.")
   (@params (
     (@param "Explicit MorkSpace handle")
     (@param "Atom to add")))
   (@return "Unit on success"))
 
 (@doc mork:match
-  (@desc "Explicit MORK query surface over MorkSpace.")
+  (@desc "Explicit MORK query interface over MorkSpace.")
   (@params (
     (@param "Explicit MorkSpace handle")
     (@param "Query pattern")
@@ -133,19 +133,19 @@
   (@return "Fresh cloned MorkSpace"))
 
 (@doc mork:get-atoms
-  (@desc "Explicit enumeration surface for MorkSpace. Returns the current atom fan-out without pretending the value is an ordinary generic CeTTa space.")
+  (@desc "Explicit enumeration interface for MorkSpace. Returns the current atom fan-out without pretending the value is an ordinary generic CeTTa space.")
   (@params (
     (@param "Explicit MorkSpace handle")))
   (@return "Superposed atoms currently visible in the space"))
 
 (@doc mork:size
-  (@desc "Explicit size/count surface for MorkSpace. Reports the current unique structural support size, not duplicate-aware ACT logical copy counts.")
+  (@desc "Explicit size/count interface for MorkSpace. Reports the current unique structural support size, not duplicate-aware ACT logical copy counts.")
   (@params (
     (@param "Explicit MorkSpace handle")))
   (@return "Current unique structural support count"))
 
 (@doc mork:step!
-  (@desc "Explicit MORK execution surface. Advances an unordered MorkSpace and returns the number of steps actually performed. Attached compiled ACT spaces materialize into live storage before stepping.")
+  (@desc "Explicit MORK execution interface. Advances an unordered MorkSpace and returns the number of steps actually performed. Attached compiled ACT spaces materialize into live storage before stepping.")
   (@params (
     (@param "MorkSpace to advance")
     (@param "Optional non-negative step limit")))
@@ -214,7 +214,7 @@
   (@return "Expression of byte numbers in 0..255"))
 
 (@doc mork:zipper
-  (@desc "Creates a direct read-only zipper snapshot over a MorkSpace. This is the first machine-close PathMap cursor surface: movement is explicit, values are inspected by local shape, and structural maps or rooted focus snapshots are materialized only when asked. The returned handle is an opaque typed native resource: wrong cursor-kind calls and use-after-close fail as ordinary errors instead of being coerced across families.")
+  (@desc "Creates a direct read-only zipper snapshot over a MorkSpace. This is the first machine-close PathMap cursor interface: movement is explicit, values are inspected by local shape, and structural maps or rooted focus snapshots are materialized only when asked. The returned handle is an opaque typed native resource: wrong cursor-kind calls and use-after-close fail as ordinary errors instead of being coerced across families.")
   (@params (
     (@param "MorkSpace handle")))
   (@return "Native mork-cursor handle"))

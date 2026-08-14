@@ -9,7 +9,7 @@
 !(test (prepared-specialized-loop (+ 1) 10000) 50015000)
 
 ; `%` denotes floor modulo in PeTTa, following the pinned SWI-PeTTa
-; composition.  Test the grounded surface and the generated register program
+; composition.  Test the grounded syntax and the generated register program
 ; on the sign cases which distinguish modulo from truncating remainder.
 !(% -17 5)
 !(% 17 -5)

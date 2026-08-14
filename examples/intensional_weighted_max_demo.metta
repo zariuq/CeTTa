@@ -116,7 +116,7 @@
 !(println! "  - alice's $covered has all four properties --- full evidence.")
 !(println! "  - bob's $missing includes asks-for-clarification --- a property")
 !(println! "    the concept demands but we have NO observation for.  An")
-!(println! "    honest agent would surface this rather than silently treat")
+!(println! "    honest agent would report this rather than silently treat")
 !(println! "    'not seen' as 'not satisfied'.")
 !(println! "  - the merged confidence reflects accumulated observations,")
 !(println! "    discounted by stamp-overlap (if any).  For independent")

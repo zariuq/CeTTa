@@ -26,7 +26,7 @@ pub enum SupportProviderKind {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct NativeSupportProvider {
     pub kind: SupportProviderKind,
-    pub native_surface: String,
+    pub native_interface: String,
     pub argument_count: u8,
 }
 
@@ -42,8 +42,8 @@ impl PhysicalProviderRegistry {
         provider: NativeSupportProvider,
     ) -> Result<(), String> {
         let operator_id = operator_id.into();
-        if operator_id.is_empty() || provider.native_surface.is_empty() {
-            return Err("support provider identity and surface must be nonempty".to_string());
+        if operator_id.is_empty() || provider.native_interface.is_empty() {
+            return Err("support provider identity and interface must be nonempty".to_string());
         }
         if self.providers.insert(operator_id.clone(), provider).is_some() {
             return Err(format!("support provider is registered twice: {operator_id}"));
@@ -53,7 +53,7 @@ impl PhysicalProviderRegistry {
 
     pub fn mork_native() -> Self {
         let mut registry = Self::default();
-        for (operator_id, kind, surface, argument_count) in [
+        for (operator_id, kind, interface, argument_count) in [
             (
                 "support.snapshot-match.v1",
                 SupportProviderKind::SnapshotMatch,
@@ -114,7 +114,7 @@ impl PhysicalProviderRegistry {
                     operator_id,
                     NativeSupportProvider {
                         kind,
-                        native_surface: surface.to_string(),
+                        native_interface: interface.to_string(),
                         argument_count,
                     },
                 )
@@ -130,7 +130,7 @@ impl PhysicalProviderRegistry {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct SupportOperatorDeclaration {
-    pub surface: String,
+    pub interface: String,
     pub argument_count: u8,
     pub operator_id: String,
 }
@@ -209,7 +209,7 @@ impl<'a> PacketReader<'a> {
         let mut declarations = Vec::with_capacity(count);
         for _ in 0..count {
             declarations.push(SupportOperatorDeclaration {
-                surface: self.text()?,
+                interface: self.text()?,
                 argument_count: self.u8()?,
                 operator_id: self.text()?,
             });
@@ -229,7 +229,7 @@ fn declarations_are_unique(declarations: &[SupportOperatorDeclaration]) -> bool 
     declarations.iter().enumerate().all(|(index, declaration)| {
         declarations[..index]
             .iter()
-            .all(|prior| prior.surface != declaration.surface)
+            .all(|prior| prior.interface != declaration.interface)
     })
 }
 
@@ -299,7 +299,7 @@ impl SupportTransformProfile {
             return Err("physical profile requests an unsupported policy".to_string());
         }
         if !declarations_are_unique(&self.sources) || !declarations_are_unique(&self.sinks) {
-            return Err("physical profile repeats a source or sink surface".to_string());
+            return Err("physical profile repeats a source or sink interface".to_string());
         }
         Ok(())
     }
@@ -604,12 +604,12 @@ impl SupportTransformExecutor {
         let declaration = declarations
             .iter()
             .find(|declaration| {
-                declaration.surface == head
+                declaration.interface == head
                     && usize::from(declaration.argument_count) + 1 == arguments.len()
             })
             .ok_or(())?;
         let provider = self.providers.get(&declaration.operator_id).ok_or(())?;
-        if provider.native_surface != declaration.surface
+        if provider.native_interface != declaration.interface
             || provider.argument_count != declaration.argument_count
         {
             return Err(());
@@ -838,8 +838,8 @@ mod tests {
             ("!=", 2, "support.not-equal.v1"),
         ];
         packet.extend_from_slice(&(sources.len() as u16).to_be_bytes());
-        for (surface, arity, operator) in sources {
-            text(&mut packet, surface);
+        for (interface, arity, operator) in sources {
+            text(&mut packet, interface);
             packet.push(arity);
             text(&mut packet, operator);
         }
@@ -856,8 +856,8 @@ mod tests {
             ),
         ];
         packet.extend_from_slice(&(sinks.len() as u16).to_be_bytes());
-        for (surface, arity, operator) in sinks {
-            text(&mut packet, surface);
+        for (interface, arity, operator) in sinks {
+            text(&mut packet, interface);
             packet.push(arity);
             text(&mut packet, operator);
         }

@@ -16,7 +16,7 @@
     "src/parser.c",
     "src/compile.c",
     "lib/stdlib.metta",
-    "specs/runtime_surface_audit.json"
+    "specs/runtime_interface_audit.json"
   ],
   "summary": {
     "total_heads": 69,
@@ -282,7 +282,7 @@
       "he_module": "core.rs",
       "tier": "grounded",
       "cetta_status": "covered",
-      "cetta_notes": "CeTTa covers the documented directives (`type-check auto`, `interpreter bare-minimal`, `max-stack-depth` with non-negative validation), wrong-arity and key-type errors, and HE's generic symbol-key setting surface outside bare-minimal. The implementation now routes these through a session-local evaluator-options seam rather than evaluator globals, which is a cleaner base for future dialect/DSL settings. Remaining divergence is intentionally documented rather than treated as compatibility debt: exact host-runtime-specific `StackOverflow` surfacing under low stack limits is an engineering policy question, not core language debt.",
+      "cetta_notes": "CeTTa covers the documented directives (`type-check auto`, `interpreter bare-minimal`, `max-stack-depth` with non-negative validation), wrong-arity and key-type errors, and HE's generic symbol-key setting interface outside bare-minimal. The implementation now routes these through a session-local evaluator-options seam rather than evaluator globals, which is a cleaner base for future dialect/DSL settings. Remaining divergence is intentionally documented rather than treated as compatibility debt: exact host-runtime-specific `StackOverflow` surfacing under low stack limits is an engineering policy question, not core language debt.",
       "cetta_layers": [
         "eval.c"
       ]
@@ -604,7 +604,7 @@
       "he_module": "module.rs",
       "tier": "grounded",
       "cetta_status": "covered",
-      "cetta_notes": "Positive path covered plus dedicated import-surface wrong-arity regressions.",
+      "cetta_notes": "Positive path covered plus dedicated import-interface wrong-arity regressions.",
       "cetta_layers": [
         "eval.c"
       ]
@@ -654,7 +654,7 @@
       "he_module": "package.rs",
       "tier": "grounded",
       "cetta_status": "covered",
-      "cetta_notes": "Positive path covered plus dedicated import-surface wrong-arity regressions.",
+      "cetta_notes": "Positive path covered plus dedicated import-interface wrong-arity regressions.",
       "cetta_layers": [
         "eval.c"
       ]

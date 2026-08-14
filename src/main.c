@@ -18,6 +18,7 @@
 #include "generated/zerouv_language_v1.generated.h"
 #include "petta_compiled_reader.h"
 #include "petta_typecheck.h"
+#include "petta_typecheck_v3.h"
 #include "lib_prolog.h"
 #include "prime_compiled_reader.h"
 #include "space.h"
@@ -873,7 +874,7 @@ static bool mm2_print_alpha_canonical_atoms(Arena *arena,
         ? cetta_malloc(sizeof(Atom *) * atom_count)
         : NULL;
     for (size_t index = 0u; index < atom_count; index++) {
-        canonical[index] = cetta_mm2_canonical_surface_atom(
+        canonical[index] = cetta_mm2_canonical_syntax_atom(
             arena, atoms[index], out_error);
         if (!canonical[index]) {
             free(canonical);
@@ -912,8 +913,8 @@ static int run_mm2_program_via_mork(Arena *arena, Atom **atoms, int n,
     }
 
     for (int i = 0; i < n; i++) {
-        char *surface = cetta_mm2_atom_to_surface_string(arena, atoms[i]);
-        bool ok = cetta_mork_bridge_space_add_text(space, surface, &ignored);
+        char *syntax = cetta_mm2_atom_to_syntax_string(arena, atoms[i]);
+        bool ok = cetta_mork_bridge_space_add_text(space, syntax, &ignored);
         if (!ok) {
             fprintf(stderr, "error: MM2 runtime could not load atom into live space: %s\n",
                     cetta_mork_bridge_last_error());
@@ -986,10 +987,10 @@ static int run_mm2_program_via_gslt(
         bool has_work = false;
         int physical_rc = 0;
         for (int index = 0; index < n; index++) {
-            char *surface = cetta_mm2_atom_to_surface_string(
+            char *syntax = cetta_mm2_atom_to_syntax_string(
                 arena, atoms[index]);
             if (!cetta_mork_bridge_space_add_text(
-                    space, surface, &ignored)) {
+                    space, syntax, &ignored)) {
                 fprintf(stderr,
                         "error: MM2 GSLT physical load failed: %s\n",
                         cetta_mork_bridge_last_error());
@@ -1038,9 +1039,9 @@ static int run_mm2_program_via_gslt(
                 goto physical_done;
             }
             for (uint64_t row = 0u; row < dump_rows; row++) {
-                Atom *surface = cetta_mm2_canonical_surface_atom(
+                Atom *syntax = cetta_mm2_canonical_syntax_atom(
                     arena, observed[(size_t)row], &decode_error);
-                if (!surface) {
+                if (!syntax) {
                     fprintf(stderr,
                             "error: MM2 GSLT physical observation could not "
                             "be projected: %s\n",
@@ -1049,7 +1050,7 @@ static int run_mm2_program_via_gslt(
                     physical_rc = 1;
                     goto physical_done;
                 }
-                atom_print(surface, stdout);
+                atom_print(syntax, stdout);
                 fputc('\n', stdout);
             }
             free(observed);
@@ -1560,6 +1561,7 @@ static void print_usage(FILE *out) {
     fputs("       cetta --lang prime <file.metta>\n", out);
 #if CETTA_BUILD_WITH_PETTA_TYPECHECK_V2
     fputs("       cetta --lang petta --profile typecheck-v2 [--strict|--strict-det] <file.metta>\n", out);
+    fputs("       cetta --lang petta --profile typecheck-v3 [--strict|--strict-det] <file.metta>\n", out);
 #endif
     fputs("       cetta [--lang rhocalc --profile <strict-core|cost>] [--syntax <mrho|rho>] <file>\n", out);
     fputs("       cetta [--lang <name>] [--import-mode <upstream|relative|ancestor-walk>] <file.metta>\n", out);
@@ -2212,7 +2214,7 @@ typedef enum {
 } MainPettaBlockLoadResult;
 
 static MainPettaBlockLoadResult main_petta_check_forms(
-    PettaProgram *program, Space *space, Registry *registry,
+    CettaLibraryContext *libraries, Space *space, Registry *registry,
     TermUniverse *universe, AtomId *atom_ids, int atom_count,
     PettaTypecheckPolicy typecheck_policy,
     bool declaration_admission) {
@@ -2225,32 +2227,46 @@ static MainPettaBlockLoadResult main_petta_check_forms(
         return MAIN_PETTA_BLOCK_LOAD_FAILED;
     for (int index = 0; index < atom_count; index++)
         forms[index] = term_universe_get_atom(universe, atom_ids[index]);
-    PettaTypecheckBlockResult checked;
-    bool judged = declaration_admission
-        ? petta_typecheck_declaration_admission_selected(
-              program, space, registry, forms, (size_t)atom_count,
-              typecheck_policy, &checked)
-        : petta_typecheck_declaration_block_selected(
-              program, space, registry, forms, (size_t)atom_count,
-              typecheck_policy, &checked);
+    bool use_v3 = libraries && libraries->session.profile &&
+        libraries->session.profile->id == CETTA_PROFILE_PETTA_TYPECHECK_V3;
+    PettaTypecheckBlockResult checked = {0};
+    CettaPettaTypecheckV3CompatibilityResult checked_v3 = {0};
+    bool judged = use_v3
+        ? cetta_petta_typecheck_v3_compatibility_block(
+              libraries->petta_typecheck_v3, libraries->petta_program,
+              space, registry, forms, (size_t)atom_count,
+              typecheck_policy, declaration_admission, &checked_v3)
+        : declaration_admission
+            ? petta_typecheck_declaration_admission_selected(
+                  libraries ? libraries->petta_program : NULL,
+                  space, registry, forms, (size_t)atom_count,
+                  typecheck_policy, &checked)
+            : petta_typecheck_declaration_block_selected(
+                  libraries ? libraries->petta_program : NULL,
+                  space, registry, forms, (size_t)atom_count,
+                  typecheck_policy, &checked);
+    PettaTypecheckVerdict verdict = use_v3
+        ? checked_v3.verdict : checked.verdict;
+    const char *diagnostic = use_v3
+        ? checked_v3.diagnostic : checked.diagnostic;
     free(forms);
     if (!judged) {
         fprintf(
             stderr, "PeTTa typechecker fault: %s\n",
-            checked.diagnostic[0]
-                ? checked.diagnostic : "declaration analysis failed");
+            diagnostic[0]
+                ? diagnostic : "declaration analysis failed");
         return MAIN_PETTA_BLOCK_LOAD_FAILED;
     }
-    if (checked.verdict == PETTA_TYPECHECK_REFUTED) {
+    if (verdict == PETTA_TYPECHECK_REFUTED) {
         fprintf(
             stderr, "PeTTa type error: %s\n",
-            checked.diagnostic[0]
-                ? checked.diagnostic : "declaration block rejected");
+            diagnostic[0]
+                ? diagnostic : "declaration block rejected");
         return MAIN_PETTA_BLOCK_LOAD_TYPE_REJECTED;
     }
     return MAIN_PETTA_BLOCK_LOAD_OK;
 #else
-    (void)program;
+    (void)libraries;
     (void)space;
     (void)registry;
     (void)universe;
@@ -2263,13 +2279,13 @@ static MainPettaBlockLoadResult main_petta_check_forms(
 }
 
 static MainPettaBlockLoadResult main_petta_load_declaration_block(
-    PettaProgram *program, Space *space, Registry *registry,
+    CettaLibraryContext *libraries, Space *space, Registry *registry,
     TermUniverse *universe, AtomId *atom_ids,
     int atom_count, bool typecheck,
     PettaTypecheckPolicy typecheck_policy) {
     if (typecheck && atom_count > 0) {
         MainPettaBlockLoadResult checked = main_petta_check_forms(
-            program, space, registry, universe, atom_ids, atom_count,
+            libraries, space, registry, universe, atom_ids, atom_count,
             typecheck_policy, true);
         if (checked != MAIN_PETTA_BLOCK_LOAD_OK)
             return checked;
@@ -2278,7 +2294,8 @@ static MainPettaBlockLoadResult main_petta_load_declaration_block(
         universe, atom_ids, atom_count);
     PettaDeclarationBlock *block =
         petta_program_declaration_block_new(
-            program, universe, atom_ids, atom_count);
+            libraries ? libraries->petta_program : NULL,
+            universe, atom_ids, atom_count);
     if (!block)
         return MAIN_PETTA_BLOCK_LOAD_FAILED;
     bool ok = true;
@@ -2294,14 +2311,17 @@ static MainPettaBlockLoadResult main_petta_load_declaration_block(
         }
         space_add_atom_id(space, atom_ids[index]);
         ok = petta_program_note_add(
-            program, space, source, plan);
+            libraries ? libraries->petta_program : NULL,
+            space, source, plan);
     }
     if (ok && typecheck) {
 #if CETTA_BUILD_WITH_PETTA_TYPECHECK_V2
         petta_typecheck_inferred_signatures_rebase_selected(
-            program, space, typecheck_policy);
+            libraries ? libraries->petta_program : NULL,
+            space, typecheck_policy);
 #else
-        petta_program_inferred_signatures_rebase(program, space);
+        petta_program_inferred_signatures_rebase(
+            libraries ? libraries->petta_program : NULL, space);
 #endif
     }
     petta_program_declaration_block_free(block);
@@ -2884,12 +2904,12 @@ int main(int argc, char **argv) {
     }
 
     if ((petta_strict || petta_strict_det) &&
-        (lang->id != CETTA_LANGUAGE_PETTA || !profile ||
-         profile->id != CETTA_PROFILE_PETTA_TYPECHECK_V2)) {
+        (lang->id != CETTA_LANGUAGE_PETTA ||
+         !cetta_profile_uses_petta_typing(profile))) {
         fprintf(
             stderr,
 #if CETTA_BUILD_WITH_PETTA_TYPECHECK_V2
-            "error: --strict and --strict-det require --lang petta --profile typecheck-v2\n");
+            "error: --strict and --strict-det require --lang petta with a typecheck profile\n");
 #else
             "error: --strict and --strict-det are not valid for the selected language profile\n");
 #endif
@@ -3198,8 +3218,7 @@ int main(int argc, char **argv) {
     cetta_library_context_set_exec_path(&libraries, argv[0]);
     cetta_library_context_set_script_path(&libraries, script_path);
     cetta_library_context_set_cli_args(&libraries, argc, argv, script_arg_start);
-    if (profile &&
-        profile->id == CETTA_PROFILE_PETTA_TYPECHECK_V2) {
+    if (cetta_profile_uses_petta_typing(profile)) {
         const char *policy_name = petta_typecheck_policy ==
                 PETTA_TYPECHECK_POLICY_STRICT_DET
             ? "strict-det"
@@ -3620,10 +3639,10 @@ process_petta_document:
                         &libraries.term_universe, atom_ids,
                         n, pi, NULL, &exec_width)) {
                     if (profile &&
-                        profile->id == CETTA_PROFILE_PETTA_TYPECHECK_V2) {
+                        cetta_profile_uses_petta_typing(profile)) {
                         MainPettaBlockLoadResult checked =
                             main_petta_check_forms(
-                                libraries.petta_program, &space, &registry,
+                                &libraries, &space, &registry,
                                 &libraries.term_universe, atom_ids + pi,
                                 exec_width, petta_typecheck_policy, false);
                         if (checked != MAIN_PETTA_BLOCK_LOAD_OK) {
@@ -3645,12 +3664,10 @@ process_petta_document:
                 }
                 MainPettaBlockLoadResult loaded =
                     main_petta_load_declaration_block(
-                        libraries.petta_program, &space, &registry,
+                        &libraries, &space, &registry,
                         &libraries.term_universe, atom_ids + pi,
                         block_end - pi,
-                        profile &&
-                            profile->id ==
-                                CETTA_PROFILE_PETTA_TYPECHECK_V2,
+                        cetta_profile_uses_petta_typing(profile),
                         petta_typecheck_policy);
                 if (loaded != MAIN_PETTA_BLOCK_LOAD_OK) {
                     if (loaded == MAIN_PETTA_BLOCK_LOAD_FAILED) {
@@ -3738,7 +3755,7 @@ process_petta_document:
             }
 
             /* Otherwise: add to space */
-            /* MM2 lowering still owns this mutable surface. */
+            /* MM2 lowering still owns this mutable syntax. */
             space_add(&space, at);
             i++;
             continue;
@@ -3751,9 +3768,9 @@ process_petta_document:
                 &libraries.term_universe, atom_ids, n, i,
                 &payload_id, &exec_width)) {
             if (lang->id == CETTA_LANGUAGE_PETTA && profile &&
-                profile->id == CETTA_PROFILE_PETTA_TYPECHECK_V2) {
+                cetta_profile_uses_petta_typing(profile)) {
                 MainPettaBlockLoadResult checked = main_petta_check_forms(
-                    libraries.petta_program, &space, &registry,
+                    &libraries, &space, &registry,
                     &libraries.term_universe, atom_ids + i, exec_width,
                     petta_typecheck_policy, false);
                 if (checked != MAIN_PETTA_BLOCK_LOAD_OK) {
@@ -3914,12 +3931,10 @@ process_petta_document:
             }
             MainPettaBlockLoadResult loaded =
                 main_petta_load_declaration_block(
-                    libraries.petta_program, &space, &registry,
+                    &libraries, &space, &registry,
                     &libraries.term_universe, atom_ids + i,
                     block_end - i,
-                    profile &&
-                        profile->id ==
-                            CETTA_PROFILE_PETTA_TYPECHECK_V2,
+                    cetta_profile_uses_petta_typing(profile),
                     petta_typecheck_policy);
             if (loaded != MAIN_PETTA_BLOCK_LOAD_OK) {
                 if (loaded == MAIN_PETTA_BLOCK_LOAD_FAILED) {

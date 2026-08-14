@@ -3380,7 +3380,7 @@ bool he_typing_is_op(const char *name) {
 }
 
 /* Which argument positions arrive as DATA (unevaluated) for each typing op.
- * Kept beside HE_OP_NAMES so the op surface and its argument policy cannot
+ * Kept beside HE_OP_NAMES so the op syntax and its argument policy cannot
  * drift apart; the evaluator consults this instead of naming ops itself. */
 bool he_typing_op_data_arg(const char *name, uint32_t arg_index) {
     if (!name) return false;

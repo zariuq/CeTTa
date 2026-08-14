@@ -237,7 +237,7 @@ def collect_node_labels(term: schema.SExpr, labels: set[str]) -> None:
 
 def check_concrete_actions(
     presentation_path: Path,
-    surface: str,
+    syntax: str,
     shapes: dict[str, RuntimeShape],
 ) -> None:
     strict = schema.parse_presentation(presentation_path)
@@ -250,14 +250,14 @@ def check_concrete_actions(
     used_abstract_constructors = labels & abstract_constructors
     if used_abstract_constructors != abstract_constructors:
         raise GateFailure(
-            f"strict {surface} actions do not cover the abstract signature exactly: "
+            f"strict {syntax} actions do not cover the abstract signature exactly: "
             f"{sorted(used_abstract_constructors)} != {sorted(abstract_constructors)}"
         )
     runtime_heads = {shape.head for shape in shapes.values()}
     leaked_runtime_heads = labels & runtime_heads
     if leaked_runtime_heads:
         raise GateFailure(
-            f"strict {surface} presentation bypasses the abstract/runtime ABI: "
+            f"strict {syntax} presentation bypasses the abstract/runtime ABI: "
             f"{sorted(leaked_runtime_heads)}"
         )
 

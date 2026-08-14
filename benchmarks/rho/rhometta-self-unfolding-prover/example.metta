@@ -73,7 +73,7 @@
 ; A primitive returns a leaf (inert data -> rho:val).  A compound returns the
 ; cells for its subgoals (live rho process -> reduced further).  Several rules
 ; => several results => the COMM forks into the may-set.  expand is evaluated
-; only AT COMM TIME (rhometta:eval defers it), never eagerly at the surface.
+; only AT COMM TIME (rhometta:eval defers it), never eagerly at the syntax.
 (= (expand $g $b)
    (if (is-prim $g)
        (leaf (prim-name $g))

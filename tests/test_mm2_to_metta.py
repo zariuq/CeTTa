@@ -161,7 +161,7 @@ class TranslatorGate(unittest.TestCase):
                 path = Path(row["path"].replace("$AIHUB", str(aihub)))
                 yield row["name"], path
 
-    def test_mm2_surface_alpha_normalization(self) -> None:
+    def test_mm2_syntax_alpha_normalization(self) -> None:
         authored = translator.parse(
             "(u $r $s $r $s) (u $r (v $s $r) $s)")
         printed = translator.parse(
@@ -170,17 +170,17 @@ class TranslatorGate(unittest.TestCase):
             translator.canonical_mm2_support(authored),
             translator.canonical_mm2_support(printed))
 
-    def test_mm2_surface_alpha_normalization_preserves_coreference(self) -> None:
+    def test_mm2_syntax_alpha_normalization_preserves_coreference(self) -> None:
         repeated = translator.parse("(u $r $s $r $s)")
         crossed = translator.parse("(u $r $s $s $r)")
         self.assertNotEqual(
             translator.canonical_mm2_support(repeated),
             translator.canonical_mm2_support(crossed))
 
-    def test_mm2_surface_reference_without_binder_is_a_symbol(self) -> None:
+    def test_mm2_syntax_reference_without_binder_is_a_symbol(self) -> None:
         literal = translator.parse("(u _1)")[0]
         self.assertEqual(
-            translator.alpha_normalize_mork_surface(literal), literal)
+            translator.alpha_normalize_mork_syntax(literal), literal)
 
     def test_mm2_support_observation_is_order_and_duplicate_insensitive(self) -> None:
         left = translator.parse("(p $x $x) (q a) (q a)")

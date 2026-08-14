@@ -1,6 +1,6 @@
 ; mork showcase — cursor and substrate inspection
 ; ================================================
-; This demo exercises the machine-close PathMap/MORK surface:
+; This demo exercises the machine-close PathMap/MORK syntax:
 ; creating MorkSpaces, querying them, inspecting encoded byte paths,
 ; navigating with zippers, and composing views with overlay/product.
 ;

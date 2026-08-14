@@ -2,7 +2,7 @@
 
 ; Runnable shadow for exact-denominator fractional QFM/Sugeno rational cuts.
 ;
-; Lean surface:
+; Lean syntax:
 ;   predicateFuzzyForAllCountingCardinalityThresholdCut_*
 ;   predicateFuzzyThereExistsCountingCardinalityThresholdCut_*
 ;   predicateSugenoCountingCardinalityThresholdCut_*
@@ -82,7 +82,7 @@
    (<= $k (crisp-hit-count4 $a $b $c $d)))
 
 ; Main profile: 1,1,1,0 has hits=3 and misses=1.
-; The exact-denominator threshold k=3 is accepted by all three surfaces.
+; The exact-denominator threshold k=3 is accepted by all three encodings.
 !(assertEqual (crisp-hit-count4 1.0 1.0 1.0 0.0) 3)
 !(assertEqual (crisp-miss-count4 1.0 1.0 1.0 0.0) 1)
 !(assertEqual (approx (qfm-forall-score4 0.0 1.0 1.0 1.0 0.0) 0.75) True)

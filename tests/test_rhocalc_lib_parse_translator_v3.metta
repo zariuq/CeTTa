@@ -20,14 +20,14 @@
   (Ok (rho:drop (rho:free z))))
 
 !(assertEqual
-  (rho->canon (rho-pure-surface-toks))
+  (rho->canon (rho-pure-syntax-toks))
   (Ok
     (rho:par
       (rho:send (rho:quote rho:nil) rho:nil)
       (rho:recv-db (rho:quote rho:nil) (rho:drop (rho:bound 0))))))
 
 !(assertEqual
-  (rho->canon (rho-shadowing-surface-toks))
+  (rho->canon (rho-shadowing-syntax-toks))
   (Ok
     (rho:par
       (rho:recv-db
@@ -40,11 +40,11 @@
         (rho:send (rho:quote rho:nil) rho:nil)))))
 
 !(assertEqual
-  (rho-canon->surface-toks (rho:recv-db (rho:quote rho:nil) (rho:drop (rho:bound 0))))
+  (rho-canon->syntax-toks (rho:recv-db (rho:quote rho:nil) (rho:drop (rho:bound 0))))
   (Ok (mkL (FOR LP DOLLAR x FROM AT LBR ZERO RBR RP LBR STAR DOLLAR x RBR))))
 
 !(assertEqual
-  (rho-canon->surface-toks (rho:send (rho:quote rho:nil) rho:nil))
+  (rho-canon->syntax-toks (rho:send (rho:quote rho:nil) rho:nil))
   (Ok (mkL (AT LBR ZERO RBR BANG LP ZERO RP))))
 
 !(assertEqual
@@ -61,22 +61,22 @@
 
 !(assertEqual
   (rho-lex-string->toks "@{0}!(0) | for ($x <- @{0}) {*$x}")
-  (rho-pure-surface-toks))
+  (rho-pure-syntax-toks))
 
 !(assertEqual
   (rho-text->canon "@{0}!(0) | for ($x <- @{0}) {*$x}")
-  (rho->canon (rho-pure-surface-toks)))
+  (rho->canon (rho-pure-syntax-toks)))
 
 !(assertEqual
-  (rho-file->canon "tests/rhocalc/pure_surface.rho")
-  (rho->canon (rho-pure-surface-toks)))
+  (rho-file->canon "tests/rhocalc/pure_rho.rho")
+  (rho->canon (rho-pure-syntax-toks)))
 
 !(assertEqual
   (rho-canon->mrho-text (rho:send (rho:quote rho:nil) rho:nil))
   "(rho:send (rho:quote rho:nil) rho:nil)")
 
 !(assertEqual
-  (rho-file->mrho-text "tests/rhocalc/pure_surface.rho")
+  (rho-file->mrho-text "tests/rhocalc/pure_rho.rho")
   "(rho:par (rho:send (rho:quote rho:nil) rho:nil) (rho:recv (rho:quote rho:nil) $x (rho:drop $x)))")
 
 !(assertEqual (fresh-name-text 9) "x_rho3")
@@ -113,19 +113,19 @@
      ($o $o))))
 
 !(assertEqual
-  (rho-file->canon "tests/rhocalc/surface_shadowing.rho")
-  (rho->canon (rho-shadowing-surface-toks)))
+  (rho-file->canon "tests/rhocalc/rho_shadowing.rho")
+  (rho->canon (rho-shadowing-syntax-toks)))
 
 !(assertEqual
-  (rho-file->canon "tests/rhocalc/surface_quote_inner_binder_restores_scope.rho")
+  (rho-file->canon "tests/rhocalc/rho_quote_inner_binder_restores_scope.rho")
   (rho-text->canon "for ($x <- @{0}) {@{for ($y <- @{0}) {*$y}}!(0) | $x!(0)} | @{0}!(@{0}!(0))"))
 
 !(assertEqual
-  (rho-file->canon "tests/rhocalc/surface_open_name_variable.rho")
+  (rho-file->canon "tests/rhocalc/rho_open_name_variable.rho")
   (Ok (rho:send (rho:free x) rho:nil)))
 
 !(assertEqual
-  (rho-file->canon "tests/rhocalc/surface_name_output.rho")
+  (rho-file->canon "tests/rhocalc/rho_name_output.rho")
   (Ok
     (rho:par
       (rho:send
@@ -136,7 +136,7 @@
         (rho:drop (rho:bound 0))))))
 
 !(assertEqual
-  (rho-file->canon "tests/rhocalc/surface_quote_seals_outer_binder.rho")
+  (rho-file->canon "tests/rhocalc/rho_quote_seals_outer_binder.rho")
   (Ok
     (rho:par
       (rho:recv-db
@@ -160,16 +160,16 @@
         (rho:send (rho:quote rho:nil) rho:nil)))))
 
 !(assertEqual
-  (rho-file-surface-roundtrip "tests/rhocalc/pure_surface.rho")
-  (rho-surface-roundtrip (rho-pure-surface-toks)))
+  (rho-file-syntax-roundtrip "tests/rhocalc/pure_rho.rho")
+  (rho-syntax-roundtrip (rho-pure-syntax-toks)))
 
 !(assertEqual
-  (rho-file-surface-roundtrip "tests/rhocalc/surface_shadowing.rho")
-  (rho-surface-roundtrip (rho-shadowing-surface-toks)))
+  (rho-file-syntax-roundtrip "tests/rhocalc/rho_shadowing.rho")
+  (rho-syntax-roundtrip (rho-shadowing-syntax-toks)))
 
 !(assertEqual
-  (rho-file-surface-roundtrip "tests/rhocalc/surface_name_output.rho")
-  (rho-text-surface-roundtrip "@{0}!(*@{0}) | for ($x <- @{0}) {*$x}"))
+  (rho-file-syntax-roundtrip "tests/rhocalc/rho_name_output.rho")
+  (rho-text-syntax-roundtrip "@{0}!(*@{0}) | for ($x <- @{0}) {*$x}"))
 
 !(assertEqual
   (rho-lex-string "@{0}?")
@@ -224,8 +224,8 @@
   (rho->canon (rho-recv-drop-x-toks)))
 
 !(assertEqual
-  (rho-canon-roundtrip (rho-shadowing-surface-toks))
-  (rho->canon (rho-shadowing-surface-toks)))
+  (rho-canon-roundtrip (rho-shadowing-syntax-toks))
+  (rho->canon (rho-shadowing-syntax-toks)))
 
 !(assertEqual
   (lp-parse-cert
@@ -254,7 +254,7 @@
   False)
 
 !(assertEqual
-  (rho-surface-roundtrip (rho-bad-toks))
+  (rho-syntax-roundtrip (rho-bad-toks))
   (Rejected noparse))
 
 !(assertEqual

@@ -96,14 +96,14 @@ A1. Contention + chaining fixtures in the differential audit
 
 A2. Lean-bridge fixture catch-up (schema agreed with B7 — see Sync)
     Files: tests/rhocalc_run_lean_bridge.tsv,
-           tests/support/rhometta_lean_bridge_surface.metta
+           tests/support/rhometta_lean_bridge_syntax.metta
     Add rows (same TSV schema: name, fixture, expected_count, mode,
     expected-file-or-expr, lean_file, theorem):
       - rhometta-run-state-local      : eval:state-local payload (local
                                         change-state! visible in result, shared
-                                        cell unchanged) — surface already exists
-                                        in tests/test_rhometta_lib_surface.metta:28,
-                                        mirror it into the bridge surface.
+                                        cell unchanged) — syntax already exists
+                                        in tests/test_rhometta_lib_syntax.metta:28,
+                                        mirror it into the bridge syntax.
       - rhometta-run-owned-space      : payload returns its mutated space as an
                                         owned result; expected: owned export
                                         usable post-run, original space unchanged.
@@ -459,7 +459,7 @@ HANDOFFS (append-only; dated; consumed by the other lane then marked consumed)
       model layer (payload outcome sets are fixed data on skeletons) — they are instance-hood
       obligations for the operational bridge (B7), exactly as the table's "model-structural" rows
       say. The owned-export renaming obligation VANISHES at this layer (exports are data merged by
-      bag union); it resurfaces only at B7 where fresh identity generation is operational.
+      bag union); it reappears only at B7 where fresh identity generation is operational.
 
 [2026-06-13, lane A → lane B]  A4 PARTIAL-MATCHING MACRO LANDED on the C side.
   Files:

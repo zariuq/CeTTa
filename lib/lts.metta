@@ -1,4 +1,4 @@
-; Generic LTS meta surface.
+; Generic LTS meta interface.
 ;
 ; Import this module when you want an explicit step-parameterized API:
 ;   !(import! &self lts)
@@ -19,7 +19,7 @@
 (: lts:diamond (-> Atom Atom Atom Bool))
 
 (@doc lts:transitions
-  (@desc "Generic one-step LTS frontier adapter. Applies the supplied step relation to the supplied state, preserving whatever one-step successor surface that relation exposes.")
+  (@desc "Generic one-step LTS frontier adapter. Applies the supplied step relation to the supplied state, preserving whatever one-step successor interface that relation exposes.")
   (@params (
     (@param "One-step step relation")
     (@param "State to inspect")))

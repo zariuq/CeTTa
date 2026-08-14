@@ -1,4 +1,4 @@
-; HE-backed positive surface: `sealed` is a pure alpha-freshening helper.
+; HE-backed positive syntax: `sealed` is a pure alpha-freshening helper.
 ; It must preserve syntax, freshen non-ignored variables consistently, and
 ; support the locally scoped-variable pattern used by HE stdlib helpers.
 

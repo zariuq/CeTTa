@@ -4,7 +4,7 @@
 ; variables during discovery, and every complementary-literal step uses the
 ; runtime's ordinary occurs-checked unify.  It deliberately does not define a
 ; second first-order unifier.  External proof interchange remains on the
-; explicit-substitution replay surface in resolution.metta.
+; explicit-substitution replay interface in resolution.metta.
 ;
 ; The public result is either a replayable resolution proof tree or an honest
 ; bounded-incomplete result.  Search order, set of support, age/weight choice,

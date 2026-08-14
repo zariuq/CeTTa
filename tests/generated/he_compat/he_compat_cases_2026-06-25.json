@@ -65,13 +65,13 @@
       ],
       "spec_rule_ids": [
         "nondet.visible-bag",
-        "surface.eval-bang"
+        "syntax.eval-bang"
       ],
       "tier": 0,
       "tier_name": "tier0-core-anchor",
       "track_a_relation_lanes": [
         "reduction-span",
-        "supporting-surface"
+        "supporting-syntax"
       ],
       "upstream_oracle": {
         "baseline": "Mettapedia/lean/mettapedia/scripts/conformance/he_io_baseline_hyperon_0.2.10.json",
@@ -172,13 +172,13 @@
         "minimal.eval",
         "nondet.visible-bag",
         "special.eq-definition",
-        "surface.eval-bang"
+        "syntax.eval-bang"
       ],
       "tier": 0,
       "tier_name": "tier0-core-anchor",
       "track_a_relation_lanes": [
         "reduction-span",
-        "supporting-surface"
+        "supporting-syntax"
       ],
       "upstream_oracle": {
         "baseline": "Mettapedia/lean/mettapedia/scripts/conformance/he_io_baseline_hyperon_0.2.10.json",
@@ -239,7 +239,7 @@
         "he_metta_official_specs.md:Interpretation - atoms prefixed by ! are evaluated",
         "he_metta_official_specs.md:Minimal MeTTa instructions - collapse-bind/superpose-bind",
         "he_metta_official_specs.md:Minimal MeTTa result collection",
-        "he_metta_official_specs.md:grounded arithmetic surfaces"
+        "he_metta_official_specs.md:grounded arithmetic syntax forms"
       ],
       "oslf_refs": [
         "Mettapedia/lean/mettapedia/Mettapedia/Languages/MeTTa/HE/HELanguageDef.lean:mettaHE",
@@ -258,13 +258,13 @@
         "grounded.numeric-exact",
         "minimal.collapse-superpose",
         "nondet.visible-bag",
-        "surface.eval-bang"
+        "syntax.eval-bang"
       ],
       "tier": 0,
       "tier_name": "tier0-core-anchor",
       "track_a_relation_lanes": [
         "reduction-span",
-        "supporting-surface"
+        "supporting-syntax"
       ],
       "upstream_oracle": {
         "baseline": "Mettapedia/lean/mettapedia/scripts/conformance/he_io_baseline_hyperon_0.2.10.json",
@@ -338,13 +338,13 @@
       "spec_rule_ids": [
         "minimal.match",
         "nondet.visible-bag",
-        "surface.eval-bang"
+        "syntax.eval-bang"
       ],
       "tier": 0,
       "tier_name": "tier0-core-anchor",
       "track_a_relation_lanes": [
         "reduction-span",
-        "supporting-surface"
+        "supporting-syntax"
       ],
       "upstream_oracle": {
         "baseline": "Mettapedia/lean/mettapedia/scripts/conformance/he_io_baseline_hyperon_0.2.10.json",
@@ -445,13 +445,13 @@
         "minimal.eval",
         "nondet.visible-bag",
         "special.eq-definition",
-        "surface.eval-bang"
+        "syntax.eval-bang"
       ],
       "tier": 0,
       "tier_name": "tier0-core-anchor",
       "track_a_relation_lanes": [
         "reduction-span",
-        "supporting-surface"
+        "supporting-syntax"
       ],
       "upstream_oracle": {
         "baseline": "Mettapedia/lean/mettapedia/scripts/conformance/he_io_baseline_hyperon_0.2.10.json",
@@ -543,13 +543,13 @@
         "minimal.eval",
         "nondet.visible-bag",
         "special.eq-definition",
-        "surface.eval-bang"
+        "syntax.eval-bang"
       ],
       "tier": 0,
       "tier_name": "tier0-core-anchor",
       "track_a_relation_lanes": [
         "reduction-span",
-        "supporting-surface"
+        "supporting-syntax"
       ],
       "upstream_oracle": {
         "baseline": "Mettapedia/lean/mettapedia/scripts/conformance/he_io_baseline_hyperon_0.2.10.json",
@@ -602,7 +602,7 @@
         "error-successor-shape",
         "lts-diamond-frontier-shape",
         "profile-he-formal-vs-rust-compat-split",
-        "profile-surface-policy-table"
+        "profile-syntax-policy-table"
       ],
       "notes": "Oracle-backed Mettapedia fixture; CeTTa gate reruns the local counterpart.",
       "official_spec_rule_refs": [
@@ -626,14 +626,14 @@
       "spec_rule_ids": [
         "nondet.visible-bag",
         "result.error-shape",
-        "surface.atomspace-assertions",
-        "surface.eval-bang"
+        "syntax.atomspace-assertions",
+        "syntax.eval-bang"
       ],
       "tier": 1,
       "tier_name": "tier1-extension-target",
       "track_a_relation_lanes": [
         "reduction-span",
-        "supporting-surface"
+        "supporting-syntax"
       ],
       "upstream_oracle": {
         "baseline": "Mettapedia/lean/mettapedia/scripts/conformance/he_io_baseline_hyperon_0.2.10.json",
@@ -686,7 +686,7 @@
         "error-successor-shape",
         "lts-diamond-frontier-shape",
         "profile-he-formal-vs-rust-compat-split",
-        "profile-surface-policy-table"
+        "profile-syntax-policy-table"
       ],
       "notes": "Oracle-backed Mettapedia fixture; CeTTa gate reruns the local counterpart.",
       "official_spec_rule_refs": [
@@ -710,14 +710,14 @@
       "spec_rule_ids": [
         "nondet.visible-bag",
         "result.error-shape",
-        "surface.atomspace-assertions",
-        "surface.eval-bang"
+        "syntax.atomspace-assertions",
+        "syntax.eval-bang"
       ],
       "tier": 1,
       "tier_name": "tier1-extension-target",
       "track_a_relation_lanes": [
         "reduction-span",
-        "supporting-surface"
+        "supporting-syntax"
       ],
       "upstream_oracle": {
         "baseline": "Mettapedia/lean/mettapedia/scripts/conformance/he_io_baseline_hyperon_0.2.10.json",
@@ -770,7 +770,7 @@
         "error-successor-shape",
         "lts-diamond-frontier-shape",
         "profile-he-formal-vs-rust-compat-split",
-        "profile-surface-policy-table"
+        "profile-syntax-policy-table"
       ],
       "notes": "Oracle-backed Mettapedia fixture; CeTTa gate reruns the local counterpart.",
       "official_spec_rule_refs": [
@@ -794,14 +794,14 @@
       "spec_rule_ids": [
         "nondet.visible-bag",
         "result.error-shape",
-        "surface.atomspace-assertions",
-        "surface.eval-bang"
+        "syntax.atomspace-assertions",
+        "syntax.eval-bang"
       ],
       "tier": 1,
       "tier_name": "tier1-extension-target",
       "track_a_relation_lanes": [
         "reduction-span",
-        "supporting-surface"
+        "supporting-syntax"
       ],
       "upstream_oracle": {
         "baseline": "Mettapedia/lean/mettapedia/scripts/conformance/he_io_baseline_hyperon_0.2.10.json",
@@ -854,7 +854,7 @@
         "error-successor-shape",
         "lts-diamond-frontier-shape",
         "profile-he-formal-vs-rust-compat-split",
-        "profile-surface-policy-table"
+        "profile-syntax-policy-table"
       ],
       "notes": "Oracle-backed Mettapedia fixture; CeTTa gate reruns the local counterpart.",
       "official_spec_rule_refs": [
@@ -878,14 +878,14 @@
       "spec_rule_ids": [
         "nondet.visible-bag",
         "result.error-shape",
-        "surface.atomspace-assertions",
-        "surface.eval-bang"
+        "syntax.atomspace-assertions",
+        "syntax.eval-bang"
       ],
       "tier": 1,
       "tier_name": "tier1-extension-target",
       "track_a_relation_lanes": [
         "reduction-span",
-        "supporting-surface"
+        "supporting-syntax"
       ],
       "upstream_oracle": {
         "baseline": "Mettapedia/lean/mettapedia/scripts/conformance/he_io_baseline_hyperon_0.2.10.json",
@@ -938,7 +938,7 @@
         "error-successor-shape",
         "lts-diamond-frontier-shape",
         "profile-he-formal-vs-rust-compat-split",
-        "profile-surface-policy-table"
+        "profile-syntax-policy-table"
       ],
       "notes": "Oracle-backed Mettapedia fixture; CeTTa gate reruns the local counterpart.",
       "official_spec_rule_refs": [
@@ -962,14 +962,14 @@
       "spec_rule_ids": [
         "nondet.visible-bag",
         "result.error-shape",
-        "surface.atomspace-assertions",
-        "surface.eval-bang"
+        "syntax.atomspace-assertions",
+        "syntax.eval-bang"
       ],
       "tier": 1,
       "tier_name": "tier1-extension-target",
       "track_a_relation_lanes": [
         "reduction-span",
-        "supporting-surface"
+        "supporting-syntax"
       ],
       "upstream_oracle": {
         "baseline": "Mettapedia/lean/mettapedia/scripts/conformance/he_io_baseline_hyperon_0.2.10.json",
@@ -1023,7 +1023,7 @@
         "lts-diamond-frontier-shape",
         "module-import-policy-evidence-shape",
         "profile-he-formal-vs-rust-compat-split",
-        "profile-surface-policy-table"
+        "profile-syntax-policy-table"
       ],
       "notes": "Oracle-backed Mettapedia fixture; CeTTa gate reruns the local counterpart.",
       "official_spec_rule_refs": [
@@ -1031,7 +1031,7 @@
         "he_metta_official_specs.md:Interpretation - non-! atoms are added to the atomspace",
         "he_metta_official_specs.md:Minimal MeTTa result collection",
         "he_metta_official_specs.md:Special function results - Error",
-        "he_metta_official_specs.md:module/import surfaces"
+        "he_metta_official_specs.md:module/import syntax forms"
       ],
       "oslf_refs": [
         "Mettapedia/lean/mettapedia/Mettapedia/Languages/MeTTa/HE/HELanguageDef.lean:mettaHE",
@@ -1048,16 +1048,16 @@
       "spec_rule_ids": [
         "nondet.visible-bag",
         "result.error-shape",
-        "surface.atomspace-assertions",
-        "surface.eval-bang",
-        "surface.module-import"
+        "syntax.atomspace-assertions",
+        "syntax.eval-bang",
+        "syntax.module-import"
       ],
       "tier": 1,
       "tier_name": "tier1-extension-target",
       "track_a_relation_lanes": [
         "reduction-span",
         "spatial-policy",
-        "supporting-surface"
+        "supporting-syntax"
       ],
       "upstream_oracle": {
         "baseline": "Mettapedia/lean/mettapedia/scripts/conformance/he_io_baseline_hyperon_0.2.10.json",
@@ -1111,7 +1111,7 @@
         "lts-diamond-frontier-shape",
         "module-import-policy-evidence-shape",
         "profile-he-formal-vs-rust-compat-split",
-        "profile-surface-policy-table"
+        "profile-syntax-policy-table"
       ],
       "notes": "Oracle-backed Mettapedia fixture; CeTTa gate reruns the local counterpart.",
       "official_spec_rule_refs": [
@@ -1119,7 +1119,7 @@
         "he_metta_official_specs.md:Interpretation - non-! atoms are added to the atomspace",
         "he_metta_official_specs.md:Minimal MeTTa result collection",
         "he_metta_official_specs.md:Special function results - Error",
-        "he_metta_official_specs.md:module/import surfaces"
+        "he_metta_official_specs.md:module/import syntax forms"
       ],
       "oslf_refs": [
         "Mettapedia/lean/mettapedia/Mettapedia/Languages/MeTTa/HE/HELanguageDef.lean:mettaHE",
@@ -1136,16 +1136,16 @@
       "spec_rule_ids": [
         "nondet.visible-bag",
         "result.error-shape",
-        "surface.atomspace-assertions",
-        "surface.eval-bang",
-        "surface.module-import"
+        "syntax.atomspace-assertions",
+        "syntax.eval-bang",
+        "syntax.module-import"
       ],
       "tier": 1,
       "tier_name": "tier1-extension-target",
       "track_a_relation_lanes": [
         "reduction-span",
         "spatial-policy",
-        "supporting-surface"
+        "supporting-syntax"
       ],
       "upstream_oracle": {
         "baseline": "Mettapedia/lean/mettapedia/scripts/conformance/he_io_baseline_hyperon_0.2.10.json",
@@ -1200,7 +1200,7 @@
         "function-return-successor-shape",
         "lts-diamond-frontier-shape",
         "profile-he-formal-vs-rust-compat-split",
-        "profile-surface-policy-table"
+        "profile-syntax-policy-table"
       ],
       "notes": "Oracle-backed Mettapedia fixture; CeTTa gate reruns the local counterpart.",
       "official_spec_rule_refs": [
@@ -1226,14 +1226,14 @@
         "minimal.function-return",
         "nondet.visible-bag",
         "result.error-shape",
-        "surface.atomspace-assertions",
-        "surface.eval-bang"
+        "syntax.atomspace-assertions",
+        "syntax.eval-bang"
       ],
       "tier": 1,
       "tier_name": "tier1-extension-target",
       "track_a_relation_lanes": [
         "reduction-span",
-        "supporting-surface"
+        "supporting-syntax"
       ],
       "upstream_oracle": {
         "baseline": "Mettapedia/lean/mettapedia/scripts/conformance/he_io_baseline_hyperon_0.2.10.json",
@@ -1327,13 +1327,13 @@
         "eval.applicative-arguments",
         "nondet.visible-bag",
         "result.empty-zero",
-        "surface.eval-bang"
+        "syntax.eval-bang"
       ],
       "tier": 1,
       "tier_name": "tier1-extension-target",
       "track_a_relation_lanes": [
         "reduction-span",
-        "supporting-surface"
+        "supporting-syntax"
       ],
       "upstream_oracle": {
         "baseline": "Mettapedia/lean/mettapedia/scripts/conformance/he_io_baseline_hyperon_0.2.10.json",
@@ -1432,13 +1432,13 @@
         "minimal.eval",
         "nondet.visible-bag",
         "special.eq-definition",
-        "surface.eval-bang"
+        "syntax.eval-bang"
       ],
       "tier": 1,
       "tier_name": "tier1-extension-target",
       "track_a_relation_lanes": [
         "reduction-span",
-        "supporting-surface"
+        "supporting-syntax"
       ],
       "upstream_oracle": {
         "baseline": "Mettapedia/lean/mettapedia/scripts/conformance/he_io_baseline_hyperon_0.2.10.json",
@@ -1510,13 +1510,13 @@
       "spec_rule_ids": [
         "minimal.collapse-superpose",
         "nondet.visible-bag",
-        "surface.eval-bang"
+        "syntax.eval-bang"
       ],
       "tier": 1,
       "tier_name": "tier1-extension-target",
       "track_a_relation_lanes": [
         "reduction-span",
-        "supporting-surface"
+        "supporting-syntax"
       ],
       "upstream_oracle": {
         "baseline": "Mettapedia/lean/mettapedia/scripts/conformance/he_io_baseline_hyperon_0.2.10.json",
@@ -1582,13 +1582,13 @@
       ],
       "spec_rule_ids": [
         "nondet.visible-bag",
-        "surface.eval-bang"
+        "syntax.eval-bang"
       ],
       "tier": 1,
       "tier_name": "tier1-extension-target",
       "track_a_relation_lanes": [
         "reduction-span",
-        "supporting-surface"
+        "supporting-syntax"
       ],
       "upstream_oracle": {
         "baseline": "Mettapedia/lean/mettapedia/scripts/conformance/he_io_baseline_hyperon_0.2.10.json",
@@ -1654,13 +1654,13 @@
       ],
       "spec_rule_ids": [
         "nondet.visible-bag",
-        "surface.eval-bang"
+        "syntax.eval-bang"
       ],
       "tier": 1,
       "tier_name": "tier1-extension-target",
       "track_a_relation_lanes": [
         "reduction-span",
-        "supporting-surface"
+        "supporting-syntax"
       ],
       "upstream_oracle": {
         "baseline": "Mettapedia/lean/mettapedia/scripts/conformance/he_io_baseline_hyperon_0.2.10.json",
@@ -1730,7 +1730,7 @@
         "he_metta_official_specs.md:Minimal MeTTa instructions - match",
         "he_metta_official_specs.md:Minimal MeTTa result collection",
         "he_metta_official_specs.md:Special expressions - =",
-        "he_metta_official_specs.md:grounded arithmetic surfaces"
+        "he_metta_official_specs.md:grounded arithmetic syntax forms"
       ],
       "oslf_refs": [
         "Mettapedia/lean/mettapedia/Mettapedia/Languages/MeTTa/HE/HELanguageDef.lean:mettaHE",
@@ -1751,13 +1751,13 @@
         "minimal.match",
         "nondet.visible-bag",
         "special.eq-definition",
-        "surface.eval-bang"
+        "syntax.eval-bang"
       ],
       "tier": 1,
       "tier_name": "tier1-extension-target",
       "track_a_relation_lanes": [
         "reduction-span",
-        "supporting-surface"
+        "supporting-syntax"
       ],
       "upstream_oracle": {
         "baseline": "Mettapedia/lean/mettapedia/scripts/conformance/he_io_baseline_hyperon_0.2.10.json",
@@ -1827,7 +1827,7 @@
         "he_metta_official_specs.md:Minimal MeTTa instructions - match",
         "he_metta_official_specs.md:Minimal MeTTa result collection",
         "he_metta_official_specs.md:Special expressions - =",
-        "he_metta_official_specs.md:grounded arithmetic surfaces"
+        "he_metta_official_specs.md:grounded arithmetic syntax forms"
       ],
       "oslf_refs": [
         "Mettapedia/lean/mettapedia/Mettapedia/Languages/MeTTa/HE/HELanguageDef.lean:mettaHE",
@@ -1848,13 +1848,13 @@
         "minimal.match",
         "nondet.visible-bag",
         "special.eq-definition",
-        "surface.eval-bang"
+        "syntax.eval-bang"
       ],
       "tier": 1,
       "tier_name": "tier1-extension-target",
       "track_a_relation_lanes": [
         "reduction-span",
-        "supporting-surface"
+        "supporting-syntax"
       ],
       "upstream_oracle": {
         "baseline": "Mettapedia/lean/mettapedia/scripts/conformance/he_io_baseline_hyperon_0.2.10.json",
@@ -1917,7 +1917,7 @@
         "he_metta_official_specs.md:Minimal MeTTa result collection",
         "he_metta_official_specs.md:Special expressions - ->",
         "he_metta_official_specs.md:Special expressions - :",
-        "he_metta_official_specs.md:grounded arithmetic surfaces"
+        "he_metta_official_specs.md:grounded arithmetic syntax forms"
       ],
       "oslf_refs": [
         "Mettapedia/lean/mettapedia/Mettapedia/Languages/MeTTa/HE/HELanguageDef.lean:mettaHE",
@@ -1937,13 +1937,13 @@
         "nondet.visible-bag",
         "special.function-type",
         "special.type-assignment",
-        "surface.eval-bang"
+        "syntax.eval-bang"
       ],
       "tier": 1,
       "tier_name": "tier1-extension-target",
       "track_a_relation_lanes": [
         "reduction-span",
-        "supporting-surface"
+        "supporting-syntax"
       ],
       "upstream_oracle": {
         "baseline": "Mettapedia/lean/mettapedia/scripts/conformance/he_io_baseline_hyperon_0.2.10.json",
@@ -2019,7 +2019,7 @@
         "he_metta_official_specs.md:Special expressions - ->",
         "he_metta_official_specs.md:Special expressions - :",
         "he_metta_official_specs.md:Special function results - Empty",
-        "he_metta_official_specs.md:grounded arithmetic surfaces"
+        "he_metta_official_specs.md:grounded arithmetic syntax forms"
       ],
       "oslf_refs": [
         "Mettapedia/lean/mettapedia/Mettapedia/Languages/MeTTa/HE/HELanguageDef.lean:mettaHE",
@@ -2042,13 +2042,13 @@
         "result.empty-zero",
         "special.function-type",
         "special.type-assignment",
-        "surface.eval-bang"
+        "syntax.eval-bang"
       ],
       "tier": 1,
       "tier_name": "tier1-extension-target",
       "track_a_relation_lanes": [
         "reduction-span",
-        "supporting-surface"
+        "supporting-syntax"
       ],
       "upstream_oracle": {
         "baseline": "Mettapedia/lean/mettapedia/scripts/conformance/he_io_baseline_hyperon_0.2.10.json",
@@ -2098,7 +2098,7 @@
         "error-successor-shape",
         "lts-diamond-frontier-shape",
         "profile-he-formal-vs-rust-compat-split",
-        "profile-surface-policy-table"
+        "profile-syntax-policy-table"
       ],
       "notes": "Assertion-style HE contract case; sync path is repaired. Direct CeTTa/upstream HE exact-output probe agreed.",
       "official_spec_rule_refs": [
@@ -2122,14 +2122,14 @@
       "spec_rule_ids": [
         "nondet.visible-bag",
         "result.error-shape",
-        "surface.atomspace-assertions",
-        "surface.eval-bang"
+        "syntax.atomspace-assertions",
+        "syntax.eval-bang"
       ],
       "tier": 2,
       "tier_name": "tier2-contract-assertion-corpus",
       "track_a_relation_lanes": [
         "reduction-span",
-        "supporting-surface"
+        "supporting-syntax"
       ],
       "upstream_oracle": {
         "engine": "Hyperon Experimental metta",
@@ -2201,13 +2201,13 @@
       "spec_rule_ids": [
         "eval.applicative-arguments",
         "nondet.visible-bag",
-        "surface.eval-bang"
+        "syntax.eval-bang"
       ],
       "tier": 2,
       "tier_name": "tier2-contract-assertion-corpus",
       "track_a_relation_lanes": [
         "reduction-span",
-        "supporting-surface"
+        "supporting-syntax"
       ],
       "upstream_oracle": {
         "engine": "Hyperon Experimental metta",
@@ -2248,7 +2248,7 @@
         "R_Done"
       ],
       "native_contract_ids": [
-        "constructor-arity-surface",
+        "constructor-arity-syntax",
         "empty-zero-visible-result-bag",
         "lts-diamond-frontier-shape",
         "profile-he-formal-vs-rust-compat-split"
@@ -2274,13 +2274,13 @@
       "spec_rule_ids": [
         "minimal.cons-decons",
         "nondet.visible-bag",
-        "surface.eval-bang"
+        "syntax.eval-bang"
       ],
       "tier": 2,
       "tier_name": "tier2-contract-assertion-corpus",
       "track_a_relation_lanes": [
         "reduction-span",
-        "supporting-surface"
+        "supporting-syntax"
       ],
       "upstream_oracle": {
         "engine": "Hyperon Experimental metta",
@@ -2366,13 +2366,13 @@
         "minimal.eval",
         "nondet.visible-bag",
         "special.eq-definition",
-        "surface.eval-bang"
+        "syntax.eval-bang"
       ],
       "tier": 2,
       "tier_name": "tier2-contract-assertion-corpus",
       "track_a_relation_lanes": [
         "reduction-span",
-        "supporting-surface"
+        "supporting-syntax"
       ],
       "upstream_oracle": {
         "engine": "Hyperon Experimental metta",
@@ -2438,13 +2438,13 @@
       "spec_rule_ids": [
         "minimal.function-return",
         "nondet.visible-bag",
-        "surface.eval-bang"
+        "syntax.eval-bang"
       ],
       "tier": 2,
       "tier_name": "tier2-contract-assertion-corpus",
       "track_a_relation_lanes": [
         "reduction-span",
-        "supporting-surface"
+        "supporting-syntax"
       ],
       "upstream_oracle": {
         "engine": "Hyperon Experimental metta",
@@ -2512,13 +2512,13 @@
       "spec_rule_ids": [
         "minimal.match",
         "nondet.visible-bag",
-        "surface.eval-bang"
+        "syntax.eval-bang"
       ],
       "tier": 2,
       "tier_name": "tier2-contract-assertion-corpus",
       "track_a_relation_lanes": [
         "reduction-span",
-        "supporting-surface"
+        "supporting-syntax"
       ],
       "upstream_oracle": {
         "engine": "Hyperon Experimental metta",
@@ -2586,13 +2586,13 @@
       "spec_rule_ids": [
         "minimal.collapse-superpose",
         "nondet.visible-bag",
-        "surface.eval-bang"
+        "syntax.eval-bang"
       ],
       "tier": 2,
       "tier_name": "tier2-contract-assertion-corpus",
       "track_a_relation_lanes": [
         "reduction-span",
-        "supporting-surface"
+        "supporting-syntax"
       ],
       "upstream_oracle": {
         "engine": "Hyperon Experimental metta",
@@ -2661,13 +2661,13 @@
       "spec_rule_ids": [
         "minimal.unify",
         "nondet.visible-bag",
-        "surface.eval-bang"
+        "syntax.eval-bang"
       ],
       "tier": 2,
       "tier_name": "tier2-contract-assertion-corpus",
       "track_a_relation_lanes": [
         "reduction-span",
-        "supporting-surface"
+        "supporting-syntax"
       ],
       "upstream_oracle": {
         "engine": "Hyperon Experimental metta",
@@ -2733,13 +2733,13 @@
       "spec_rule_ids": [
         "nondet.visible-bag",
         "special.eq-definition",
-        "surface.eval-bang"
+        "syntax.eval-bang"
       ],
       "tier": 2,
       "tier_name": "tier2-historical-he-example",
       "track_a_relation_lanes": [
         "reduction-span",
-        "supporting-surface"
+        "supporting-syntax"
       ],
       "upstream_oracle": {
         "engine": "Hyperon Experimental metta",
@@ -2808,13 +2808,13 @@
       "spec_rule_ids": [
         "eval.applicative-arguments",
         "nondet.visible-bag",
-        "surface.eval-bang"
+        "syntax.eval-bang"
       ],
       "tier": 2,
       "tier_name": "tier2-historical-he-example",
       "track_a_relation_lanes": [
         "reduction-span",
-        "supporting-surface"
+        "supporting-syntax"
       ],
       "upstream_oracle": {
         "engine": "Hyperon Experimental metta",
@@ -2879,13 +2879,13 @@
       "spec_rule_ids": [
         "minimal.match",
         "nondet.visible-bag",
-        "surface.eval-bang"
+        "syntax.eval-bang"
       ],
       "tier": 2,
       "tier_name": "tier2-historical-he-example",
       "track_a_relation_lanes": [
         "reduction-span",
-        "supporting-surface"
+        "supporting-syntax"
       ],
       "upstream_oracle": {
         "engine": "Hyperon Experimental metta",
@@ -2950,13 +2950,13 @@
       "spec_rule_ids": [
         "minimal.chain",
         "nondet.visible-bag",
-        "surface.eval-bang"
+        "syntax.eval-bang"
       ],
       "tier": 2,
       "tier_name": "tier2-historical-he-example",
       "track_a_relation_lanes": [
         "reduction-span",
-        "supporting-surface"
+        "supporting-syntax"
       ],
       "upstream_oracle": {
         "engine": "Hyperon Experimental metta",
@@ -3021,13 +3021,13 @@
       "spec_rule_ids": [
         "minimal.chain",
         "nondet.visible-bag",
-        "surface.eval-bang"
+        "syntax.eval-bang"
       ],
       "tier": 2,
       "tier_name": "tier2-historical-he-example",
       "track_a_relation_lanes": [
         "reduction-span",
-        "supporting-surface"
+        "supporting-syntax"
       ],
       "upstream_oracle": {
         "engine": "Hyperon Experimental metta",
@@ -3092,13 +3092,13 @@
       "spec_rule_ids": [
         "minimal.chain",
         "nondet.visible-bag",
-        "surface.eval-bang"
+        "syntax.eval-bang"
       ],
       "tier": 2,
       "tier_name": "tier2-historical-he-example",
       "track_a_relation_lanes": [
         "reduction-span",
-        "supporting-surface"
+        "supporting-syntax"
       ],
       "upstream_oracle": {
         "engine": "Hyperon Experimental metta",
@@ -3164,13 +3164,13 @@
       "spec_rule_ids": [
         "nondet.visible-bag",
         "special.eq-definition",
-        "surface.eval-bang"
+        "syntax.eval-bang"
       ],
       "tier": 2,
       "tier_name": "tier2-historical-he-example",
       "track_a_relation_lanes": [
         "reduction-span",
-        "supporting-surface"
+        "supporting-syntax"
       ],
       "upstream_oracle": {
         "engine": "Hyperon Experimental metta",
@@ -3235,13 +3235,13 @@
       "spec_rule_ids": [
         "minimal.collapse-superpose",
         "nondet.visible-bag",
-        "surface.eval-bang"
+        "syntax.eval-bang"
       ],
       "tier": 2,
       "tier_name": "tier2-historical-he-example",
       "track_a_relation_lanes": [
         "reduction-span",
-        "supporting-surface"
+        "supporting-syntax"
       ],
       "upstream_oracle": {
         "engine": "Hyperon Experimental metta",
@@ -3313,13 +3313,13 @@
         "nondet.visible-bag",
         "special.function-type",
         "special.type-assignment",
-        "surface.eval-bang"
+        "syntax.eval-bang"
       ],
       "tier": 2,
       "tier_name": "tier2-historical-he-example",
       "track_a_relation_lanes": [
         "reduction-span",
-        "supporting-surface"
+        "supporting-syntax"
       ],
       "upstream_oracle": {
         "engine": "Hyperon Experimental metta",
@@ -3383,13 +3383,13 @@
       "spec_rule_ids": [
         "eval.grounded-dispatch",
         "nondet.visible-bag",
-        "surface.eval-bang"
+        "syntax.eval-bang"
       ],
       "tier": 2,
       "tier_name": "tier2-historical-he-example",
       "track_a_relation_lanes": [
         "reduction-span",
-        "supporting-surface"
+        "supporting-syntax"
       ],
       "upstream_oracle": {
         "engine": "Hyperon Experimental metta",
@@ -3453,13 +3453,13 @@
       "spec_rule_ids": [
         "minimal.evalc-context-space",
         "nondet.visible-bag",
-        "surface.eval-bang"
+        "syntax.eval-bang"
       ],
       "tier": 2,
       "tier_name": "tier2-historical-he-example",
       "track_a_relation_lanes": [
         "reduction-span",
-        "supporting-surface"
+        "supporting-syntax"
       ],
       "upstream_oracle": {
         "engine": "Hyperon Experimental metta",
@@ -3561,13 +3561,13 @@
         "nondet.visible-bag",
         "result.empty-zero",
         "special.eq-definition",
-        "surface.eval-bang"
+        "syntax.eval-bang"
       ],
       "tier": 2,
       "tier_name": "tier2-historical-he-example",
       "track_a_relation_lanes": [
         "reduction-span",
-        "supporting-surface"
+        "supporting-syntax"
       ],
       "upstream_oracle": {
         "engine": "Hyperon Experimental metta",
@@ -3639,13 +3639,13 @@
         "nondet.visible-bag",
         "special.function-type",
         "special.type-assignment",
-        "surface.eval-bang"
+        "syntax.eval-bang"
       ],
       "tier": 2,
       "tier_name": "tier2-historical-he-example",
       "track_a_relation_lanes": [
         "reduction-span",
-        "supporting-surface"
+        "supporting-syntax"
       ],
       "upstream_oracle": {
         "engine": "Hyperon Experimental metta",
@@ -3704,13 +3704,13 @@
       "spec_refs": [],
       "spec_rule_ids": [
         "nondet.visible-bag",
-        "surface.eval-bang"
+        "syntax.eval-bang"
       ],
       "tier": 2,
       "tier_name": "tier2-historical-he-example",
       "track_a_relation_lanes": [
         "reduction-span",
-        "supporting-surface"
+        "supporting-syntax"
       ],
       "upstream_oracle": {
         "engine": "Hyperon Experimental metta",
@@ -3782,13 +3782,13 @@
         "nondet.visible-bag",
         "special.function-type",
         "special.type-assignment",
-        "surface.eval-bang"
+        "syntax.eval-bang"
       ],
       "tier": 2,
       "tier_name": "tier2-historical-he-example",
       "track_a_relation_lanes": [
         "reduction-span",
-        "supporting-surface"
+        "supporting-syntax"
       ],
       "upstream_oracle": {
         "engine": "Hyperon Experimental metta",
@@ -3888,13 +3888,13 @@
         "special.eq-definition",
         "special.function-type",
         "special.type-assignment",
-        "surface.eval-bang"
+        "syntax.eval-bang"
       ],
       "tier": 2,
       "tier_name": "tier2-historical-he-example",
       "track_a_relation_lanes": [
         "reduction-span",
-        "supporting-surface"
+        "supporting-syntax"
       ],
       "upstream_oracle": {
         "engine": "Hyperon Experimental metta",
@@ -3966,13 +3966,13 @@
         "nondet.visible-bag",
         "special.function-type",
         "special.type-assignment",
-        "surface.eval-bang"
+        "syntax.eval-bang"
       ],
       "tier": 2,
       "tier_name": "tier2-historical-he-example",
       "track_a_relation_lanes": [
         "reduction-span",
-        "supporting-surface"
+        "supporting-syntax"
       ],
       "upstream_oracle": {
         "engine": "Hyperon Experimental metta",
@@ -4021,7 +4021,7 @@
       "official_spec_rule_refs": [
         "he_metta_official_specs.md:Interpretation - atoms prefixed by ! are evaluated",
         "he_metta_official_specs.md:Minimal MeTTa result collection",
-        "he_metta_official_specs.md:space operation surfaces"
+        "he_metta_official_specs.md:space operation syntax forms"
       ],
       "oslf_refs": [
         "Mettapedia/lean/mettapedia/Mettapedia/Languages/MeTTa/HE/HELanguageDef.lean:mettaHE",
@@ -4035,15 +4035,15 @@
       "spec_refs": [],
       "spec_rule_ids": [
         "nondet.visible-bag",
-        "surface.eval-bang",
-        "surface.native-space"
+        "syntax.eval-bang",
+        "syntax.native-space"
       ],
       "tier": 2,
       "tier_name": "tier2-historical-he-example",
       "track_a_relation_lanes": [
         "reduction-span",
         "spatial-policy",
-        "supporting-surface"
+        "supporting-syntax"
       ],
       "upstream_oracle": {
         "engine": "Hyperon Experimental metta",
@@ -4102,13 +4102,13 @@
       "spec_refs": [],
       "spec_rule_ids": [
         "nondet.visible-bag",
-        "surface.eval-bang"
+        "syntax.eval-bang"
       ],
       "tier": 2,
       "tier_name": "tier2-historical-he-example",
       "track_a_relation_lanes": [
         "reduction-span",
-        "supporting-surface"
+        "supporting-syntax"
       ],
       "upstream_oracle": {
         "engine": "Hyperon Experimental metta",
@@ -4173,13 +4173,13 @@
       "spec_rule_ids": [
         "minimal.match",
         "nondet.visible-bag",
-        "surface.eval-bang"
+        "syntax.eval-bang"
       ],
       "tier": 2,
       "tier_name": "tier2-historical-he-example",
       "track_a_relation_lanes": [
         "reduction-span",
-        "supporting-surface"
+        "supporting-syntax"
       ],
       "upstream_oracle": {
         "engine": "Hyperon Experimental metta",
@@ -4223,7 +4223,7 @@
       "native_contract_ids": [
         "empty-zero-visible-result-bag",
         "error-successor-shape",
-        "get-doc-respects-profile-surface",
+        "get-doc-respects-profile-syntax",
         "he-compat-reproduces-rust-get-doc-arity",
         "lts-diamond-frontier-shape",
         "profile-he-formal-vs-rust-compat-split"
@@ -4233,7 +4233,7 @@
         "he_metta_official_specs.md:Interpretation - atoms prefixed by ! are evaluated",
         "he_metta_official_specs.md:Minimal MeTTa result collection",
         "he_metta_official_specs.md:Special function results - Error",
-        "he_metta_official_specs.md:profile/lang surfaces"
+        "he_metta_official_specs.md:profile/lang syntax forms"
       ],
       "oslf_refs": [
         "Mettapedia/lean/mettapedia/Mettapedia/Languages/MeTTa/HE/HELanguageDef.lean:mettaHE",
@@ -4249,13 +4249,13 @@
         "nondet.visible-bag",
         "profile.docs",
         "result.error-shape",
-        "surface.eval-bang"
+        "syntax.eval-bang"
       ],
       "tier": 2,
       "tier_name": "tier2-historical-he-example",
       "track_a_relation_lanes": [
         "reduction-span",
-        "supporting-surface"
+        "supporting-syntax"
       ],
       "upstream_oracle": {
         "engine": "Hyperon Experimental metta",
@@ -4335,13 +4335,13 @@
         "result.error-shape",
         "special.function-type",
         "special.type-assignment",
-        "surface.eval-bang"
+        "syntax.eval-bang"
       ],
       "tier": 2,
       "tier_name": "tier2-spec-referenced-test",
       "track_a_relation_lanes": [
         "reduction-span",
-        "supporting-surface"
+        "supporting-syntax"
       ],
       "upstream_oracle": {
         "engine": "Hyperon Experimental metta",
@@ -4398,7 +4398,7 @@
         "he_metta_official_specs.md:Minimal MeTTa instructions - chain",
         "he_metta_official_specs.md:Minimal MeTTa instructions - collapse-bind/superpose-bind",
         "he_metta_official_specs.md:Minimal MeTTa result collection",
-        "he_metta_official_specs.md:grounded arithmetic surfaces"
+        "he_metta_official_specs.md:grounded arithmetic syntax forms"
       ],
       "oslf_refs": [
         "Mettapedia/lean/mettapedia/Mettapedia/Languages/MeTTa/HE/HELanguageDef.lean:mettaHE",
@@ -4418,13 +4418,13 @@
         "minimal.chain",
         "minimal.collapse-superpose",
         "nondet.visible-bag",
-        "surface.eval-bang"
+        "syntax.eval-bang"
       ],
       "tier": 2,
       "tier_name": "tier2-spec-referenced-test",
       "track_a_relation_lanes": [
         "reduction-span",
-        "supporting-surface"
+        "supporting-syntax"
       ],
       "upstream_oracle": {
         "engine": "Hyperon Experimental metta",
@@ -4476,7 +4476,7 @@
         "he_metta_official_specs.md:Interpretation - atoms prefixed by ! are evaluated",
         "he_metta_official_specs.md:Minimal MeTTa instructions - evalc/context-space",
         "he_metta_official_specs.md:Minimal MeTTa result collection",
-        "he_metta_official_specs.md:grounded arithmetic surfaces"
+        "he_metta_official_specs.md:grounded arithmetic syntax forms"
       ],
       "oslf_refs": [
         "Mettapedia/lean/mettapedia/Mettapedia/Languages/MeTTa/HE/HELanguageDef.lean:mettaHE",
@@ -4495,13 +4495,13 @@
         "grounded.numeric-exact",
         "minimal.evalc-context-space",
         "nondet.visible-bag",
-        "surface.eval-bang"
+        "syntax.eval-bang"
       ],
       "tier": 2,
       "tier_name": "tier2-spec-referenced-test",
       "track_a_relation_lanes": [
         "reduction-span",
-        "supporting-surface"
+        "supporting-syntax"
       ],
       "upstream_oracle": {
         "engine": "Hyperon Experimental metta",
@@ -4564,7 +4564,7 @@
         "he_metta_official_specs.md:Interpretation - atoms prefixed by ! are evaluated",
         "he_metta_official_specs.md:Minimal MeTTa result collection",
         "he_metta_official_specs.md:Special function results - Empty",
-        "he_metta_official_specs.md:grounded arithmetic surfaces"
+        "he_metta_official_specs.md:grounded arithmetic syntax forms"
       ],
       "oslf_refs": [
         "Mettapedia/lean/mettapedia/Mettapedia/Languages/MeTTa/HE/HELanguageDef.lean:mettaHE",
@@ -4585,13 +4585,13 @@
         "grounded.numeric-exact",
         "nondet.visible-bag",
         "result.empty-zero",
-        "surface.eval-bang"
+        "syntax.eval-bang"
       ],
       "tier": 2,
       "tier_name": "tier2-spec-referenced-test",
       "track_a_relation_lanes": [
         "reduction-span",
-        "supporting-surface"
+        "supporting-syntax"
       ],
       "upstream_oracle": {
         "engine": "Hyperon Experimental metta",
@@ -4660,7 +4660,7 @@
         "he_metta_official_specs.md:Minimal MeTTa instructions - eval",
         "he_metta_official_specs.md:Minimal MeTTa result collection",
         "he_metta_official_specs.md:Special expressions - =",
-        "he_metta_official_specs.md:grounded arithmetic surfaces"
+        "he_metta_official_specs.md:grounded arithmetic syntax forms"
       ],
       "oslf_refs": [
         "Mettapedia/lean/mettapedia/Mettapedia/Languages/MeTTa/HE/HELanguageDef.lean:mettaHE",
@@ -4682,13 +4682,13 @@
         "minimal.eval",
         "nondet.visible-bag",
         "special.eq-definition",
-        "surface.eval-bang"
+        "syntax.eval-bang"
       ],
       "tier": 2,
       "tier_name": "tier2-spec-referenced-test",
       "track_a_relation_lanes": [
         "reduction-span",
-        "supporting-surface"
+        "supporting-syntax"
       ],
       "upstream_oracle": {
         "engine": "Hyperon Experimental metta",
@@ -4758,7 +4758,7 @@
         "he_metta_official_specs.md:Minimal MeTTa instructions - evalc/context-space",
         "he_metta_official_specs.md:Minimal MeTTa result collection",
         "he_metta_official_specs.md:Special expressions - =",
-        "he_metta_official_specs.md:space operation surfaces"
+        "he_metta_official_specs.md:space operation syntax forms"
       ],
       "oslf_refs": [
         "Mettapedia/lean/mettapedia/Mettapedia/Languages/MeTTa/HE/HELanguageDef.lean:mettaHE",
@@ -4779,15 +4779,15 @@
         "minimal.evalc-context-space",
         "nondet.visible-bag",
         "special.eq-definition",
-        "surface.eval-bang",
-        "surface.native-space"
+        "syntax.eval-bang",
+        "syntax.native-space"
       ],
       "tier": 2,
       "tier_name": "tier2-spec-referenced-test",
       "track_a_relation_lanes": [
         "reduction-span",
         "spatial-policy",
-        "supporting-surface"
+        "supporting-syntax"
       ],
       "upstream_oracle": {
         "engine": "Hyperon Experimental metta",
@@ -4853,13 +4853,13 @@
       "spec_rule_ids": [
         "eval.grounded-dispatch",
         "nondet.visible-bag",
-        "surface.eval-bang"
+        "syntax.eval-bang"
       ],
       "tier": 2,
       "tier_name": "tier2-spec-referenced-test",
       "track_a_relation_lanes": [
         "reduction-span",
-        "supporting-surface"
+        "supporting-syntax"
       ],
       "upstream_oracle": {
         "engine": "Hyperon Experimental metta",
@@ -4937,13 +4937,13 @@
         "nondet.visible-bag",
         "special.function-type",
         "special.type-assignment",
-        "surface.eval-bang"
+        "syntax.eval-bang"
       ],
       "tier": 2,
       "tier_name": "tier2-spec-referenced-test",
       "track_a_relation_lanes": [
         "reduction-span",
-        "supporting-surface"
+        "supporting-syntax"
       ],
       "upstream_oracle": {
         "engine": "Hyperon Experimental metta",
@@ -5010,13 +5010,13 @@
       "spec_rule_ids": [
         "minimal.match",
         "nondet.visible-bag",
-        "surface.eval-bang"
+        "syntax.eval-bang"
       ],
       "tier": 2,
       "tier_name": "tier2-spec-referenced-test",
       "track_a_relation_lanes": [
         "reduction-span",
-        "supporting-surface"
+        "supporting-syntax"
       ],
       "upstream_oracle": {
         "engine": "Hyperon Experimental metta",
@@ -5090,13 +5090,13 @@
         "nondet.visible-bag",
         "special.function-type",
         "special.type-assignment",
-        "surface.eval-bang"
+        "syntax.eval-bang"
       ],
       "tier": 2,
       "tier_name": "tier2-spec-referenced-test",
       "track_a_relation_lanes": [
         "reduction-span",
-        "supporting-surface"
+        "supporting-syntax"
       ],
       "upstream_oracle": {
         "engine": "Hyperon Experimental metta",
@@ -5153,7 +5153,7 @@
         "he_metta_official_specs.md:Minimal MeTTa instructions - function/return",
         "he_metta_official_specs.md:Minimal MeTTa result collection",
         "he_metta_official_specs.md:Special function results - Error",
-        "he_metta_official_specs.md:grounded arithmetic surfaces"
+        "he_metta_official_specs.md:grounded arithmetic syntax forms"
       ],
       "oslf_refs": [
         "Mettapedia/lean/mettapedia/Mettapedia/Languages/MeTTa/HE/HELanguageDef.lean:mettaHE",
@@ -5173,13 +5173,13 @@
         "minimal.function-return",
         "nondet.visible-bag",
         "result.error-shape",
-        "surface.eval-bang"
+        "syntax.eval-bang"
       ],
       "tier": 2,
       "tier_name": "tier2-spec-referenced-test",
       "track_a_relation_lanes": [
         "reduction-span",
-        "supporting-surface"
+        "supporting-syntax"
       ],
       "upstream_oracle": {
         "engine": "Hyperon Experimental metta",
@@ -5242,7 +5242,7 @@
         "he_metta_official_specs.md:Minimal MeTTa result collection",
         "he_metta_official_specs.md:Special expressions - ->",
         "he_metta_official_specs.md:Special expressions - :",
-        "he_metta_official_specs.md:grounded arithmetic surfaces"
+        "he_metta_official_specs.md:grounded arithmetic syntax forms"
       ],
       "oslf_refs": [
         "Mettapedia/lean/mettapedia/Mettapedia/Languages/MeTTa/HE/HELanguageDef.lean:mettaHE",
@@ -5263,13 +5263,13 @@
         "nondet.visible-bag",
         "special.function-type",
         "special.type-assignment",
-        "surface.eval-bang"
+        "syntax.eval-bang"
       ],
       "tier": 2,
       "tier_name": "tier2-spec-referenced-test",
       "track_a_relation_lanes": [
         "reduction-span",
-        "supporting-surface"
+        "supporting-syntax"
       ],
       "upstream_oracle": {
         "engine": "Hyperon Experimental metta",
@@ -5335,13 +5335,13 @@
       "spec_rule_ids": [
         "eval.grounded-dispatch",
         "nondet.visible-bag",
-        "surface.eval-bang"
+        "syntax.eval-bang"
       ],
       "tier": 2,
       "tier_name": "tier2-spec-referenced-test",
       "track_a_relation_lanes": [
         "reduction-span",
-        "supporting-surface"
+        "supporting-syntax"
       ],
       "upstream_oracle": {
         "engine": "Hyperon Experimental metta",
@@ -5415,13 +5415,13 @@
         "nondet.visible-bag",
         "special.function-type",
         "special.type-assignment",
-        "surface.eval-bang"
+        "syntax.eval-bang"
       ],
       "tier": 2,
       "tier_name": "tier2-spec-referenced-test",
       "track_a_relation_lanes": [
         "reduction-span",
-        "supporting-surface"
+        "supporting-syntax"
       ],
       "upstream_oracle": {
         "engine": "Hyperon Experimental metta",
@@ -5469,7 +5469,7 @@
       "official_spec_rule_refs": [
         "he_metta_official_specs.md:Interpretation - atoms prefixed by ! are evaluated",
         "he_metta_official_specs.md:Minimal MeTTa result collection",
-        "he_metta_official_specs.md:grounded arithmetic surfaces"
+        "he_metta_official_specs.md:grounded arithmetic syntax forms"
       ],
       "oslf_refs": [
         "Mettapedia/lean/mettapedia/Mettapedia/Languages/MeTTa/HE/HELanguageDef.lean:mettaHE",
@@ -5487,13 +5487,13 @@
       "spec_rule_ids": [
         "grounded.numeric-exact",
         "nondet.visible-bag",
-        "surface.eval-bang"
+        "syntax.eval-bang"
       ],
       "tier": 2,
       "tier_name": "tier2-spec-referenced-test",
       "track_a_relation_lanes": [
         "reduction-span",
-        "supporting-surface"
+        "supporting-syntax"
       ],
       "upstream_oracle": {
         "engine": "Hyperon Experimental metta",
@@ -5514,19 +5514,19 @@
     "he-prime-only",
     "needs-triage"
   ],
-  "no_runtime_trace_or_certificate_surface": true,
+  "no_runtime_trace_or_certificate_syntax": true,
   "oracle_versions": {
     "lean_executable": "simpleMeTTa he-run (algorithms repo)",
     "upstream_hyperon_experimental": "metta-0.2.10"
   },
   "profile_policy": {
     "formal_he": {
-      "doc_surface_sentence": "get-doc and help! follow the documented stdlib documentation surface for the active language/profile; extension-only documented surfaces are hidden. Rust HE 0.2.10 get-doc arity failures are reproduced only by he-compat.",
-      "eval_surface_sentence": "When the eval instruction reaches a non-reducible expression E, the user-visible formal-HE result is E itself.",
+      "doc_syntax_sentence": "get-doc and help! follow the documented stdlib documentation syntax for the active language/profile; extension-only documented syntax forms are hidden. Rust HE 0.2.10 get-doc arity failures are reproduced only by he-compat.",
+      "eval_syntax_sentence": "When the eval instruction reaches a non-reducible expression E, the user-visible formal-HE result is E itself.",
       "scope": "Spec-faithful HE interpretation used as the formal base for OSLF/NTT/DTT work. This is the default --lang he path and is also available explicitly as --profile he."
     },
     "he_compat": {
-      "scope": "Literal compatibility catalog for upstream Hyperon Experimental HE 0.2.10. This lane intentionally reproduces observed Rust HE surface quirks; formal/spec-faithful behavior belongs to --lang he / --profile he."
+      "scope": "Literal compatibility catalog for upstream Hyperon Experimental HE 0.2.10. This lane intentionally reproduces observed Rust HE syntax quirks; formal/spec-faithful behavior belongs to --lang he / --profile he."
     }
   },
   "repositories": {
@@ -5562,13 +5562,13 @@
     "track_a_relation_lanes": {
       "reduction-span": "Current Track A / NTT-relevant reduction edges. These are the rule capacities intended to line up with LanguageDef/langReduces/langDiamond-style reasoning.",
       "spatial-policy": "Spatial/policy/meta capacities intentionally kept out of the current reduction span. These remain visible in the catalog so policy/evidence does not masquerade as runtime semantics.",
-      "supporting-surface": "Evaluator/runtime support capacities that inform the object-language story but are not part of the current core reduction-span slice."
+      "supporting-syntax": "Evaluator/runtime support capacities that inform the object-language story but are not part of the current core reduction-span slice."
     },
     "unit": "official-spec rule/capacity"
   },
   "spec_rule_capacities": [
     {
-      "id": "surface.eval-bang",
+      "id": "syntax.eval-bang",
       "lean_language_def_refs": [
         "HELanguageDef.mettaHE:Metta",
         "M_Expression"
@@ -5586,16 +5586,16 @@
       "status": "covered",
       "title": "Top-level ! evaluation",
       "track_a_lane_note": "This capacity supports the evaluator/runtime story but is not currently promoted as one of the core reduction-span edges in the Track A A2 slice.",
-      "track_a_relation_lane": "supporting-surface"
+      "track_a_relation_lane": "supporting-syntax"
     },
     {
-      "id": "surface.atomspace-assertions",
+      "id": "syntax.atomspace-assertions",
       "lean_language_def_refs": [
         "HELanguageDef.mettaHE:Space",
         "MC_Equation"
       ],
       "native_contract_ids": [
-        "profile-surface-policy-table"
+        "profile-syntax-policy-table"
       ],
       "official_spec_refs": [
         "he_metta_official_specs.md:Interpretation - non-! atoms are added to the atomspace"
@@ -5606,7 +5606,7 @@
       "status": "partial",
       "title": "Atomspace declarations and assertion-style programs",
       "track_a_lane_note": "This capacity supports the evaluator/runtime story but is not currently promoted as one of the core reduction-span edges in the Track A A2 slice.",
-      "track_a_relation_lane": "supporting-surface"
+      "track_a_relation_lane": "supporting-syntax"
     },
     {
       "id": "special.eq-definition",
@@ -5676,7 +5676,7 @@
       "track_a_relation_lane": "reduction-span"
     },
     {
-      "authority_note": "Current A2 authority is likewise layered: EvalSpec's empty_or_error constructor and the M_Empty / MC_Superpose_Empty / MC_Match_Empty LanguageDef rules pin the no-visible-result behavior, while the catalog and runtime contracts keep the visible bag/LTS consequences honest. This is a reduction-span rule in Track A, not a host-policy surface.",
+      "authority_note": "Current A2 authority is likewise layered: EvalSpec's empty_or_error constructor and the M_Empty / MC_Superpose_Empty / MC_Match_Empty LanguageDef rules pin the no-visible-result behavior, while the catalog and runtime contracts keep the visible bag/LTS consequences honest. This is a reduction-span rule in Track A, not a host-policy syntax.",
       "id": "result.empty-zero",
       "lean_authority_refs": [
         "EvalSpec.EvalAtom.empty_or_error",
@@ -5787,7 +5787,7 @@
       "status": "partial",
       "title": "evalc and context-space",
       "track_a_lane_note": "This capacity supports the evaluator/runtime story but is not currently promoted as one of the core reduction-span edges in the Track A A2 slice.",
-      "track_a_relation_lane": "supporting-surface"
+      "track_a_relation_lane": "supporting-syntax"
     },
     {
       "id": "minimal.chain",
@@ -5831,7 +5831,7 @@
       "status": "covered",
       "title": "match against the active space",
       "track_a_lane_note": "This capacity supports the evaluator/runtime story but is not currently promoted as one of the core reduction-span edges in the Track A A2 slice.",
-      "track_a_relation_lane": "supporting-surface"
+      "track_a_relation_lane": "supporting-syntax"
     },
     {
       "id": "minimal.unify",
@@ -5853,7 +5853,7 @@
       "status": "covered",
       "title": "local unify success/failure branches",
       "track_a_lane_note": "This capacity supports the evaluator/runtime story but is not currently promoted as one of the core reduction-span edges in the Track A A2 slice.",
-      "track_a_relation_lane": "supporting-surface"
+      "track_a_relation_lane": "supporting-syntax"
     },
     {
       "id": "minimal.collapse-superpose",
@@ -5885,7 +5885,7 @@
         "HELanguageDef.mettaHE:ExprNil"
       ],
       "native_contract_ids": [
-        "constructor-arity-surface"
+        "constructor-arity-syntax"
       ],
       "official_spec_refs": [
         "he_metta_official_specs.md:Minimal MeTTa instructions - cons-atom/decons-atom"
@@ -5896,7 +5896,7 @@
       "status": "covered",
       "title": "cons/decons atom structure",
       "track_a_lane_note": "This capacity supports the evaluator/runtime story but is not currently promoted as one of the core reduction-span edges in the Track A A2 slice.",
-      "track_a_relation_lane": "supporting-surface"
+      "track_a_relation_lane": "supporting-syntax"
     },
     {
       "id": "minimal.function-return",
@@ -5941,7 +5941,7 @@
       "status": "covered",
       "title": "Applicative argument evaluation",
       "track_a_lane_note": "This capacity supports the evaluator/runtime story but is not currently promoted as one of the core reduction-span edges in the Track A A2 slice.",
-      "track_a_relation_lane": "supporting-surface"
+      "track_a_relation_lane": "supporting-syntax"
     },
     {
       "id": "eval.grounded-dispatch",
@@ -5960,7 +5960,7 @@
       "status": "covered",
       "title": "Grounded dispatch and native results",
       "track_a_lane_note": "This capacity supports the evaluator/runtime story but is not currently promoted as one of the core reduction-span edges in the Track A A2 slice.",
-      "track_a_relation_lane": "supporting-surface"
+      "track_a_relation_lane": "supporting-syntax"
     },
     {
       "id": "nondet.visible-bag",
@@ -5988,46 +5988,46 @@
       "id": "profile.docs",
       "lean_language_def_refs": [],
       "native_contract_ids": [
-        "get-doc-respects-profile-surface",
+        "get-doc-respects-profile-syntax",
         "he-compat-reproduces-rust-get-doc-arity"
       ],
       "official_spec_refs": [
-        "he_metta_official_specs.md:profile/lang surfaces"
+        "he_metta_official_specs.md:profile/lang syntax forms"
       ],
       "oslf_refs": [],
       "status": "covered",
-      "title": "Profile-aware documentation surface",
+      "title": "Profile-aware documentation syntax",
       "track_a_lane_note": "This capacity supports the evaluator/runtime story but is not currently promoted as one of the core reduction-span edges in the Track A A2 slice.",
-      "track_a_relation_lane": "supporting-surface"
+      "track_a_relation_lane": "supporting-syntax"
     },
     {
-      "alignment_note": "Current HELanguageDef models core HE evaluation rules, not the CeTTa profile/lang surface inventory. This rule is tracked by runtime policy tables plus OSLF-facing profile evidence.",
-      "id": "profile.surface-policy",
+      "alignment_note": "Current HELanguageDef models core HE evaluation rules, not the CeTTa profile/lang syntax inventory. This rule is tracked by runtime policy tables plus OSLF-facing profile evidence.",
+      "id": "profile.syntax-policy",
       "lean_language_def_refs": [],
       "native_contract_ids": [
-        "profile-surface-policy-table"
+        "profile-syntax-policy-table"
       ],
       "official_spec_refs": [
-        "he_metta_official_specs.md:profile/lang surfaces"
+        "he_metta_official_specs.md:profile/lang syntax forms"
       ],
       "oslf_refs": [
         "Mettapedia/lean/mettapedia/Mettapedia/Languages/MeTTa/HE/HELanguageDef.lean:mettaHE"
       ],
       "status": "partial",
-      "title": "Language/profile surface availability",
+      "title": "Language/profile syntax availability",
       "track_a_lane_note": "This capacity stays in the spatial/policy/meta lane for now. It is visible in the catalog on purpose, but it is not part of the current reduction-span slice consumed by Track A modal reasoning.",
       "track_a_relation_lane": "spatial-policy"
     },
     {
-      "alignment_note": "Module/import resolution is currently a runtime/meta-surface, not a first-class HELanguageDef rule family. The rule index keeps it visible as a formal-he policy surface and a he-compat boundary.",
-      "id": "surface.module-import",
+      "alignment_note": "Module/import resolution is currently a runtime/meta-syntax, not a first-class HELanguageDef rule family. The rule index keeps it visible as a formal-he policy syntax and a he-compat boundary.",
+      "id": "syntax.module-import",
       "lean_language_def_refs": [],
       "native_contract_ids": [
-        "profile-surface-policy-table",
+        "profile-syntax-policy-table",
         "module-import-policy-evidence-shape"
       ],
       "official_spec_refs": [
-        "he_metta_official_specs.md:module/import surfaces"
+        "he_metta_official_specs.md:module/import syntax forms"
       ],
       "oslf_refs": [],
       "status": "partial",
@@ -6036,15 +6036,15 @@
       "track_a_relation_lane": "spatial-policy"
     },
     {
-      "alignment_note": "Visible module inventory is not represented in the current HELanguageDef rewrite relation. It remains a policy/documentation surface until we model module visibility at the LanguageDef/space layer.",
-      "id": "surface.module-inventory",
+      "alignment_note": "Visible module inventory is not represented in the current HELanguageDef rewrite relation. It remains a policy/documentation syntax until we model module visibility at the LanguageDef/space layer.",
+      "id": "syntax.module-inventory",
       "lean_language_def_refs": [],
       "native_contract_ids": [
-        "profile-surface-policy-table",
+        "profile-syntax-policy-table",
         "module-inventory-policy-evidence-shape"
       ],
       "official_spec_refs": [
-        "he_metta_official_specs.md:profile/lang module surfaces"
+        "he_metta_official_specs.md:profile/lang module syntax forms"
       ],
       "oslf_refs": [],
       "status": "open",
@@ -6053,7 +6053,7 @@
       "track_a_relation_lane": "spatial-policy"
     },
     {
-      "id": "surface.native-space",
+      "id": "syntax.native-space",
       "lean_language_def_refs": [
         "HELanguageDef.mettaHE:Space",
         "HELanguageDef.mettaHE:State"
@@ -6062,7 +6062,7 @@
         "context-space-successor-shape"
       ],
       "official_spec_refs": [
-        "he_metta_official_specs.md:space operation surfaces"
+        "he_metta_official_specs.md:space operation syntax forms"
       ],
       "oslf_refs": [
         "Mettapedia/lean/mettapedia/Mettapedia/Languages/MeTTa/HE/HELanguageDef.lean:mettaHE",
@@ -6082,7 +6082,7 @@
         "grounded-dispatch-successor-shape"
       ],
       "official_spec_refs": [
-        "he_metta_official_specs.md:grounded arithmetic surfaces"
+        "he_metta_official_specs.md:grounded arithmetic syntax forms"
       ],
       "oslf_refs": [
         "Mettapedia/lean/mettapedia/Mettapedia/OSLF/MeTTaIL/DeclReducesWithPremises.lean"
@@ -6090,10 +6090,10 @@
       "status": "partial",
       "title": "Grounded numeric and exact-rational extensions",
       "track_a_lane_note": "This capacity supports the evaluator/runtime story but is not currently promoted as one of the core reduction-span edges in the Track A A2 slice.",
-      "track_a_relation_lane": "supporting-surface"
+      "track_a_relation_lane": "supporting-syntax"
     }
   ],
-  "subject": "CeTTa HE-compatible runtime surface",
+  "subject": "CeTTa HE-compatible runtime syntax",
   "summary": {
     "by_classification": {
       "agree": 67
@@ -6123,10 +6123,10 @@
       "special.eq-definition": 13,
       "special.function-type": 12,
       "special.type-assignment": 12,
-      "surface.atomspace-assertions": 9,
-      "surface.eval-bang": 67,
-      "surface.module-import": 2,
-      "surface.native-space": 2
+      "syntax.atomspace-assertions": 9,
+      "syntax.eval-bang": 67,
+      "syntax.module-import": 2,
+      "syntax.native-space": 2
     },
     "by_tier": {
       "0": 6,
@@ -6136,7 +6136,7 @@
     "by_track_a_relation_lane": {
       "reduction-span": 67,
       "spatial-policy": 4,
-      "supporting-surface": 67
+      "supporting-syntax": 67
     },
     "covered_spec_rule_capacity_count": 22,
     "mapped_case_count": 67,

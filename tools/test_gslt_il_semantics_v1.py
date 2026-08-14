@@ -187,13 +187,13 @@ def main() -> int:
     source = program(*rows)
 
     located_ready = in_space(space_0, ready)
-    surface = request(located_ready)
+    syntax = request(located_ready)
     classified = relation_answers(
         chart,
         semantics,
         "gslt-il-classify",
         3,
-        f"(gslt-il-classify request-zero {surface} ?request)",
+        f"(gslt-il-classify request-zero {syntax} ?request)",
     )
     expected_request = (
         f"(gslt-il-step-request request-zero {located_ready})"
@@ -203,12 +203,12 @@ def main() -> int:
         [(expected_request,)],
         "step request classification",
     )
-    unknown_surface = qapp(qsym("unknown-request"), located_ready)
+    unknown_syntax = qapp(qsym("unknown-request"), located_ready)
     require_equal(
         chart_answers(
             chart,
             semantics,
-            f"(gslt-il-classify request-zero {unknown_surface} ?request)",
+            f"(gslt-il-classify request-zero {unknown_syntax} ?request)",
         ),
         [],
         "unknown request inertness",

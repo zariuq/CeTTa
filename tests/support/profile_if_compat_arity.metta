@@ -1,3 +1,3 @@
-; he-compat mirrors Rust HE's three-argument if surface.
+; he-compat mirrors Rust HE's three-argument if syntax.
 
 !(if True ok)

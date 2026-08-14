@@ -2,7 +2,7 @@
 
 ; Runnable shadow for exact-denominator counting-capacity rational cuts.
 ;
-; Lean surface:
+; Lean syntax:
 ;   FuzzyCapacity.countingCapacity_ge_nat_div_iff_card_ge_of_card_eq
 ;   FuzzyCapacity.nat_div_le_one_sub_countingCapacity_iff_card_add_le_of_card_eq
 ;   predicateCountingCapacityCardinalityBandCut
@@ -105,7 +105,7 @@
 !(assertEqual (approx (counting-score4 2) (/ 2 2.0)) False)
 
 ; Proper all-HOL band / strict-capacity readout:
-; Lean surface:
+; Lean syntax:
 ;   FuzzyCapacity.countingCapacity_pos_and_lt_one_iff_proper_cardinality_of_card_eq
 ;   predicateCountingCapacityExistsAndExistsNotBandCut_ge_iff_countingCapacity_pos_and_lt_one
 ;

@@ -55,7 +55,7 @@ AUTHORITIES = (
         "petta",
         ("PTEstablished", "PTRefuted", "PTUndetermined", "PTIncomplete"),
         "PTUndetermined",
-        72,
+        116,
     ),
     ExpectedAuthority(
         ROOT / "langdef/petta/generated/typecheck_v2_boundary_core_v1.metta",

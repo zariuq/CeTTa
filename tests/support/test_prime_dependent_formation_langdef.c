@@ -33,7 +33,7 @@ typedef struct {
     const char *signature;
     const char *telescope;
     const char *model_canonical;
-    const char *surface;
+    const char *syntax;
     const char *native_canonical;
 } PositiveCase;
 
@@ -41,7 +41,7 @@ typedef struct {
     const char *label;
     const char *signature;
     const char *telescope;
-    const char *surface;
+    const char *syntax;
     const char *native_status;
     bool native_canonicalizes;
 } NegativeCase;
@@ -115,9 +115,9 @@ static Atom *model_canonical_to_native(Arena *arena, const Atom *model) {
 }
 
 static bool direct_form_has_status(
-    Arena *arena, Space *space, Atom *surface, const char *status) {
-    Atom *judgment = surface
-        ? atom_expr2(arena, atom_symbol(arena, "Form"), surface)
+    Arena *arena, Space *space, Atom *syntax, const char *status) {
+    Atom *judgment = syntax
+        ? atom_expr2(arena, atom_symbol(arena, "Form"), syntax)
         : NULL;
     Atom *verdict = judgment
         ? cetta_prime_typing_direct_service_v1.judge(
@@ -129,7 +129,7 @@ static bool direct_form_has_status(
                    atom_is_symbol(verdict->expr.elems[1], status);
     if (!matches) {
         fprintf(stderr, "Prime Form status for ");
-        atom_print(surface, stderr);
+        atom_print(syntax, stderr);
         fprintf(stderr, " was ");
         atom_print(verdict, stderr);
         fprintf(stderr, "; expected %s\n", status);
@@ -169,13 +169,13 @@ static void check_positive(
     CHECK(model_output && atom_eq(model_output, expected_model),
           "Horn derivation returns the expected canonical model term");
 
-    Atom *surface = parse_one(native, test->surface);
+    Atom *syntax = parse_one(native, test->syntax);
     Atom *expected_native = parse_one(native, test->native_canonical);
-    Atom *native_output = surface
-        ? prime_semantics_canonicalize_type(native, surface) : NULL;
+    Atom *native_output = syntax
+        ? prime_semantics_canonicalize_type(native, syntax) : NULL;
     Atom *translated_model = model_output
         ? model_canonical_to_native(native, model_output) : NULL;
-    CHECK(surface && expected_native && native_output && translated_model,
+    CHECK(syntax && expected_native && native_output && translated_model,
           "positive parity fixture constructs both realizations");
     CHECK(native_output && expected_native &&
               atom_eq(native_output, expected_native),
@@ -184,8 +184,8 @@ static void check_positive(
               atom_eq(native_output, translated_model),
           "authored Horn and direct C elaboration agree exactly");
     CHECK(direct_form_has_status(
-              native, space, surface, "Established"),
-          "direct Prime authority establishes the surface type");
+              native, space, syntax, "Established"),
+          "direct Prime authority establishes the syntax type");
     cetta_gslt_horn_result_free(&result);
 }
 
@@ -214,13 +214,13 @@ static void check_negative(
               result.answer_count == 0u,
           "negative dependent-formation query has no derivation");
 
-    Atom *surface = parse_one(native, test->surface);
-    Atom *canonical = surface
-        ? prime_semantics_canonicalize_type(native, surface) : NULL;
+    Atom *syntax = parse_one(native, test->syntax);
+    Atom *canonical = syntax
+        ? prime_semantics_canonicalize_type(native, syntax) : NULL;
     CHECK((canonical != NULL) == test->native_canonicalizes,
           "native syntactic canonicalization matches the declared boundary");
     CHECK(direct_form_has_status(
-              native, space, surface, test->native_status),
+              native, space, syntax, test->native_status),
           "direct Prime authority preserves the negative status");
     cetta_gslt_horn_result_free(&result);
 }
@@ -343,7 +343,7 @@ int main(int argc, char **argv) {
             .telescope =
                 "(PrimeTeleBind Type (PrimeTeleDone (idx PrimeZero)))",
             .model_canonical = "(Pi Type (idx PrimeZero))",
-            .surface = "(-> (: $x Type) $x)",
+            .syntax = "(-> (: $x Type) $x)",
             .native_canonical = "(Pi Type (idx 0))",
         },
         {
@@ -356,7 +356,7 @@ int main(int argc, char **argv) {
             .model_canonical =
                 "(Pi Type (Pi (idx PrimeZero) "
                 "  (idx (PrimeSucc PrimeZero))))",
-            .surface = "(-> (: $x Type) (: $y $x) $x)",
+            .syntax = "(-> (: $x Type) (: $y $x) $x)",
             .native_canonical = "(Pi Type (Pi (idx 0) (idx 1)))",
         },
         {
@@ -368,7 +368,7 @@ int main(int argc, char **argv) {
                 "  (PrimeTeleDone (PrimeNamed Nat)))",
             .model_canonical =
                 "(Pi (PrimeNamed Nat) (PrimeNamed Nat))",
-            .surface = "(-> Nat Nat)",
+            .syntax = "(-> Nat Nat)",
             .native_canonical = "(Pi Nat Nat)",
         },
     };
@@ -385,14 +385,14 @@ int main(int argc, char **argv) {
         ? prime_semantics_canonicalize_type(&native, alpha_y) : NULL;
     CHECK(alpha_x_canonical && alpha_y_canonical &&
               atom_eq(alpha_x_canonical, alpha_y_canonical),
-          "surface alpha-renaming erases to one model telescope");
+          "syntax alpha-renaming erases to one model telescope");
 
     const NegativeCase negative[] = {
         {
             .label = "loose index has no derivation",
             .signature = "PrimeSigNil",
             .telescope = "(PrimeTeleDone (idx PrimeZero))",
-            .surface = "(idx 0)",
+            .syntax = "(idx 0)",
             .native_status = "Undetermined",
             .native_canonicalizes = false,
         },
@@ -402,7 +402,7 @@ int main(int argc, char **argv) {
             .telescope =
                 "(PrimeTeleBind Type "
                 "  (PrimeTeleDone (idx (PrimeSucc PrimeZero))))",
-            .surface = "(-> (: $x Type) $outside)",
+            .syntax = "(-> (: $x Type) $outside)",
             .native_status = "Undetermined",
             .native_canonicalizes = false,
         },
@@ -410,7 +410,7 @@ int main(int argc, char **argv) {
             .label = "undeclared type name has no derivation",
             .signature = "PrimeSigNil",
             .telescope = "(PrimeTeleDone (PrimeNamed Ghost))",
-            .surface = "Ghost",
+            .syntax = "Ghost",
             .native_status = "Undetermined",
             .native_canonicalizes = true,
         },
@@ -418,7 +418,7 @@ int main(int argc, char **argv) {
             .label = "universe application remains outside the fragment",
             .signature = "PrimeSigNil",
             .telescope = "(PrimeTeleDone (Type Level))",
-            .surface = "(Type Level)",
+            .syntax = "(Type Level)",
             .native_status = "Undetermined",
             .native_canonicalizes = true,
         },

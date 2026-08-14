@@ -279,9 +279,9 @@
               (table-feature-witness-joint WITNESS-ONLY-COUNTEREXAMPLE-TABLE))
             False)))
 
-; Pattern-coded Chapter-12 source surface:
+; Pattern-coded Chapter-12 source syntax:
 ; concrete OSLF-style pattern names select the same finite-table source
-; concepts.  The classifier is intentionally visible so the source surface is
+; concepts.  The classifier is intentionally visible so the source syntax is
 ; not just an abstract MembershipConcept table.
 (= (chapter12-pattern-concept CHAPTER12-FEATURE-PATTERN) FEATURE)
 (= (chapter12-pattern-concept CHAPTER12-WITNESS-PATTERN) WITNESS)
@@ -302,7 +302,7 @@
        (== (chapter12-pattern-concept CHAPTER12-FEATURE-PATTERN)
            (chapter12-pattern-concept CHAPTER12-WITNESS-PATTERN)))))
 
-; Rich role-pattern Chapter-12 source surface:
+; Rich role-pattern Chapter-12 source syntax:
 ; the role wrapper carries the source concept channel while the payload remains
 ; available for richer OSLF syntax.  These are hand-derived shadows of
 ; chapter12RichPatternConcept_* and the RichPatternCoded* profiles in Lean.
