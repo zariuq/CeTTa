@@ -133,11 +133,11 @@ Budget register `eos`
 Signature monoid `(Sig, *, 1)`
   Ground symbols and normalized `rho:cost:sig-mul`; sorting preserves repeats.
   `CostSig G := Multiset G`; `+` represents signature product.
-  Exact spatial carrier correspondence, modulo surface encoding and the
+  Exact spatial carrier correspondence, modulo syntax encoding and the
   runtime's nonempty-public-signature restriction.
 
 Signed term `t_chi`
-  `rho:cost:signed body signature` and surface `{ body } signature`.
+  `rho:cost:signed body signature` and syntax form `{ body } signature`.
   `CostTerm.signed : CostProc G -> CostSig G -> CostTerm G`.
   Direct constructor correspondence.
 
@@ -155,7 +155,7 @@ Located purse `Stack(I, S)`
   MISSING location: every top-level stack is placed in one global candidate
   pool and selected only by signature coverage.
   `CostStack` and `TokenCover` intentionally match that unlocated runtime.
-  A paper-level located purse must later add a surface/channel index.  A
+  A paper-level located purse must later add a location/channel index.  A
   signature is not silently treated as a location.
 
 Token cover / funding acceptance
@@ -511,7 +511,7 @@ the raw signature multiset.  Concrete economic weights remain policy inputs.
 
 D4. Located purse representation -- SUPERSEDED BY PURE-CLOSURE TRANCHE
 
-Every event carries opaque funding-surface identifiers.  The scout's ambient
+Every event carries opaque funding-location identifiers.  The scout's ambient
 placeholder has since been replaced by nominally located purses and exact
 per-head funding contributions.  Ownership and mobility remain gated on
 spaces-as-channels.
@@ -520,7 +520,7 @@ D5. Firing receipt richness -- RESOLVED
 
 The dedicated traced machine emits stable occurrence IDs, consumption causes,
 funding contributions, and raw spend before state-frontier deduplication.  The
-ordinary step surface remains compatible.
+ordinary step interface remains compatible.
 
 D6. Normalization cost -- REQUIRES MEASUREMENT, NOT A SEMANTIC CHANGE
 

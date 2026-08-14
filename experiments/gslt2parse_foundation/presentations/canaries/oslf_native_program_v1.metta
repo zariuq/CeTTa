@@ -94,11 +94,11 @@
     (rule canary-view-choice-middle-v1
       (head (canary-view-choice-middle-v1 ?item))
       (body (canary-view-choice-v1 witness ?item)))
-    (rule canary-view-choice-live-v1
-      (head (canary-view-choice-v1 witness ?item))
-      (body (canary-view-choice-done-v1 ?item)))
     (rule canary-view-choice-dead-v1
       (head (canary-view-choice-v1 other ?item))
+      (body (canary-view-choice-done-v1 ?item)))
+    (rule canary-view-choice-live-v1
+      (head (canary-view-choice-v1 witness ?item))
       (body (canary-view-choice-done-v1 ?item)))
     (rule canary-view-choice-done-v1
       (head (canary-view-choice-done-v1 ?item))

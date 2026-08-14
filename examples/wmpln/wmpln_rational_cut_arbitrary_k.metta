@@ -2,7 +2,7 @@
 
 ; Runnable shadow for the arbitrary-k base-counting rational-cut capstone.
 ;
-; Lean surface:
+; Lean syntax:
 ;   predicateFuzzyForAllCountingAtLeastNBaseCut_width_eq_zero_iff_decides
 ;   predicateFuzzyThereExistsCountingAtLeastNBaseCut_width_eq_zero_iff_decides
 ;   predicateCountingCapacityAtLeastNBaseCut_width_eq_zero_iff_decides
@@ -91,7 +91,7 @@
 
 ; Positive arbitrary-k case:
 ; profile 1,1,1,0,1 has hits=4 and misses=1.
-; k=4 gives threshold 4/5, so all three numeric surfaces accept exactly on the
+; k=4 gives threshold 4/5, so all three numeric encodings accept exactly on the
 ; constructed HOL cardinality event "at least 4 witnesses".
 !(assertEqual (crisp-hit-count5 1.0 1.0 1.0 0.0 1.0) 4)
 !(assertEqual (crisp-miss-count5 1.0 1.0 1.0 0.0 1.0) 1)
@@ -107,7 +107,7 @@
 
 ; Negative one-step-above case:
 ; the same profile has only four hits, so k=5 accepts only if all five objects
-; satisfy P.  The numeric threshold is 1.0, and all three surfaces reject.
+; satisfy P.  The numeric threshold is 1.0, and all three encodings reject.
 !(assertEqual (approx (threshold5 5) 1.0) True)
 !(assertEqual (qfm-forall-atleastN-cut5 5 1.0 1.0 1.0 0.0 1.0) False)
 !(assertEqual (qfm-there-exists-atleastN-cut5 5 1.0 1.0 1.0 0.0 1.0) False)

@@ -91,6 +91,16 @@
           (ProofSequenceConsV1 compressed-wff-v1
             (ProofSequenceConsV1 compressed-ps-v1 ProofSequenceNilV1))))
       (body))
+    (rule compressed-canary-wi-different-wph-v1
+      (head
+        (source-proof-trace-input-label-different-v1
+          compressed-wi-v1 compressed-wph-v1))
+      (body))
+    (rule compressed-canary-wi-different-wps-v1
+      (head
+        (source-proof-trace-input-label-different-v1
+          compressed-wi-v1 compressed-wps-v1))
+      (body))
 
     (rule compressed-canary-assertion-v1
       (head

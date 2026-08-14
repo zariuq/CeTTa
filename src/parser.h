@@ -118,7 +118,7 @@ const char *parser_canonicalize_namespace_token(Arena *a, const char *tok);
 bool parser_set_rational_literals_enabled(bool enabled);
 bool parser_rational_literals_enabled(void);
 
-/* Prime's reflective surface: @e, *n, and structurally named $@e variables.
+/* Prime's reflective syntax: @e, *n, and structurally named $@e variables.
    Other language profiles retain their own reader. */
 bool parser_set_universal_name_syntax_enabled(bool enabled);
 bool parser_universal_name_syntax_enabled(void);

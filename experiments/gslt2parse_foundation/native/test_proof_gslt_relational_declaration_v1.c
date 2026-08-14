@@ -21,17 +21,14 @@ typedef struct {
     uint32_t row_cap;
 } FakeTableV1;
 
-enum {
-    TEST_ACTIVE_APARTNESS_TABLE =
-        PPPROOF_GSLT_RELATIONAL_TABLE_V1_LEN,
-    TEST_TABLE_LEN
-};
+enum { TEST_TABLE_LEN = PPPROOF_GSLT_RELATIONAL_TABLE_V1_LEN };
 
 typedef struct {
     FakeValueV1 *values;
     uint32_t value_len;
     uint32_t value_cap;
     FakeTableV1 tables[TEST_TABLE_LEN];
+    bool reject_immutable_snapshot;
 } FakeStoreV1;
 
 static uint32_t passed;
@@ -227,7 +224,7 @@ static bool fake_table_immutable_prefix(
     void *context, uint32_t table_id, uint32_t *row_len_out) {
     FakeStoreV1 *store = context;
 
-    if (!store || !row_len_out ||
+    if (!store || store->reject_immutable_snapshot || !row_len_out ||
         table_id >= TEST_TABLE_LEN)
         return false;
     *row_len_out = store->tables[table_id].row_len;
@@ -349,20 +346,21 @@ static bool setup_machine_rows(
 
     memset(machine, 0, sizeof(*machine));
     machine->name = "CanaryProofMachineV1";
-    machine->label_kind_table = bridge->tables[
+    machine->label_kind_table = bridge->resolved_table_ids[
         PPPROOF_GSLT_RELATIONAL_TABLE_V1_LABEL_KIND];
-    machine->formula_table = bridge->tables[
+    machine->formula_table = bridge->resolved_table_ids[
         PPPROOF_GSLT_RELATIONAL_TABLE_V1_FORMULA];
-    machine->binder_variable_table = bridge->tables[
+    machine->binder_variable_table = bridge->resolved_table_ids[
         PPPROOF_GSLT_RELATIONAL_TABLE_V1_FLOATING_VARIABLE];
-    machine->mandatory_variable_table = bridge->tables[
+    machine->mandatory_variable_table = bridge->resolved_table_ids[
         PPPROOF_GSLT_RELATIONAL_TABLE_V1_MANDATORY_VARIABLE];
-    machine->assertion_hypothesis_table = bridge->tables[
+    machine->assertion_hypothesis_table = bridge->resolved_table_ids[
         PPPROOF_GSLT_RELATIONAL_TABLE_V1_ORDERED_HYPOTHESIS];
-    machine->assertion_disjoint_table = bridge->tables[
+    machine->assertion_disjoint_table = bridge->resolved_table_ids[
         PPPROOF_GSLT_RELATIONAL_TABLE_V1_ASSERTION_DISJOINT];
-    machine->active_disjoint_table = TEST_ACTIVE_APARTNESS_TABLE;
-    machine->symbol_kind_table = bridge->tables[
+    machine->active_disjoint_table = bridge->resolved_table_ids[
+        PPPROOF_GSLT_RELATIONAL_TABLE_V1_ACTIVE_APARTNESS];
+    machine->symbol_kind_table = bridge->resolved_table_ids[
         PPPROOF_GSLT_RELATIONAL_TABLE_V1_SYMBOL_KIND];
     machine->binder_hypothesis_kind = (PPRelationalStateLiteralV1){
         .bytes = (uint8_t *)bridge->selectors[
@@ -406,6 +404,10 @@ static bool setup_machine_rows(
     machine->continuation_digit_bias = 1u;
     machine->unknown_policy =
         PPRELATIONAL_STACK_PROOF_V1_UNKNOWN_PUSH_CLAIM;
+    machine->save_placement =
+        CETTA_GSLT_INDEXED_SAVE_IMMEDIATELY_AFTER_USE_V1;
+    machine->header_hypothesis_policy =
+        CETTA_GSLT_HEADER_HYPOTHESIS_NONMANDATORY_ONLY_V1;
 
     if (!fake_text(store, "CanaryType", &typecode) ||
         !fake_text(store, "CanaryLiteral", &literal) ||
@@ -459,52 +461,52 @@ static bool setup_machine_rows(
                   actual_rule, rule_kind, NULL) ||
         !add_pair(
             store,
-            bridge->tables[
+            bridge->resolved_table_ids[
                 PPPROOF_GSLT_RELATIONAL_TABLE_V1_MANDATORY_VARIABLE],
             actual_rule, variable_a, NULL) ||
         !add_pair(
             store,
-            bridge->tables[
+            bridge->resolved_table_ids[
                 PPPROOF_GSLT_RELATIONAL_TABLE_V1_MANDATORY_VARIABLE],
             actual_rule, variable_c, NULL) ||
         !add_pair(
             store,
-            bridge->tables[
+            bridge->resolved_table_ids[
                 PPPROOF_GSLT_RELATIONAL_TABLE_V1_ASSERTION_ACTIVE_HYPOTHESIS],
             claim, bind_z, NULL) ||
         !add_pair(
             store,
-            bridge->tables[
+            bridge->resolved_table_ids[
                 PPPROOF_GSLT_RELATIONAL_TABLE_V1_ASSERTION_ACTIVE_HYPOTHESIS],
             claim, bind_a, NULL) ||
         !add_pair(
             store,
-            bridge->tables[
+            bridge->resolved_table_ids[
                 PPPROOF_GSLT_RELATIONAL_TABLE_V1_ASSERTION_ACTIVE_HYPOTHESIS],
             claim, bind_c, claim_bind_c_row_out) ||
         !add_triple(
             store,
-            bridge->tables[
+            bridge->resolved_table_ids[
                 PPPROOF_GSLT_RELATIONAL_TABLE_V1_ORDERED_HYPOTHESIS],
             actual_rule, position_10, bind_a, NULL) ||
         !add_triple(
             store,
-            bridge->tables[
+            bridge->resolved_table_ids[
                 PPPROOF_GSLT_RELATIONAL_TABLE_V1_ORDERED_HYPOTHESIS],
             actual_rule, position_20, bind_c, NULL) ||
         !add_triple(
             store,
-            bridge->tables[
+            bridge->resolved_table_ids[
                 PPPROOF_GSLT_RELATIONAL_TABLE_V1_ORDERED_HYPOTHESIS],
             claim, position_10, bind_z, NULL) ||
         !add_triple(
             store,
-            bridge->tables[
+            bridge->resolved_table_ids[
                 PPPROOF_GSLT_RELATIONAL_TABLE_V1_ORDERED_HYPOTHESIS],
             claim, position_20, bind_a, NULL) ||
         !add_triple(
             store,
-            bridge->tables[
+            bridge->resolved_table_ids[
                 PPPROOF_GSLT_RELATIONAL_TABLE_V1_ORDERED_HYPOTHESIS],
             claim, position_30, bind_c, NULL))
         return false;
@@ -533,21 +535,19 @@ static bool setup_store(
 
     static const uint32_t arities[
         PPPROOF_GSLT_RELATIONAL_TABLE_V1_LEN] = {
-            2u, 2u, 2u, 2u, 3u, 2u, 3u, 2u,
+            2u, 2u, 2u, 2u, 3u, 2u, 3u, 2u, 2u,
         };
     static const uint32_t key_arities[
         PPPROOF_GSLT_RELATIONAL_TABLE_V1_LEN] = {
-            1u, 1u, 1u, 2u, 2u, 2u, 3u, 1u,
+            1u, 1u, 1u, 2u, 2u, 2u, 3u, 2u, 1u,
         };
 
     for (index = 0u;
          index < PPPROOF_GSLT_RELATIONAL_TABLE_V1_LEN; index++) {
-        uint32_t table = bridge->tables[index];
+        uint32_t table = bridge->resolved_table_ids[index];
         store->tables[table].arity = arities[index];
         store->tables[table].key_arity = key_arities[index];
     }
-    store->tables[TEST_ACTIVE_APARTNESS_TABLE].arity = 2u;
-    store->tables[TEST_ACTIVE_APARTNESS_TABLE].key_arity = 2u;
     for (index = 0u;
          index < PPPROOF_GSLT_RELATIONAL_SELECTOR_V1_LEN; index++) {
         if (!fake_value_intern(
@@ -576,50 +576,50 @@ static bool setup_store(
         !fake_text(store, "15", &position_15))
         return false;
 
-    if (!add_pair(store, bridge->tables[
+    if (!add_pair(store, bridge->resolved_table_ids[
                        PPPROOF_GSLT_RELATIONAL_TABLE_V1_SYMBOL_KIND],
                   tc, selectors[
                           PPPROOF_GSLT_RELATIONAL_SELECTOR_V1_SYMBOL_LITERAL],
                   NULL) ||
-        !add_pair(store, bridge->tables[
+        !add_pair(store, bridge->resolved_table_ids[
                        PPPROOF_GSLT_RELATIONAL_TABLE_V1_SYMBOL_KIND],
                   literal, selectors[
                                PPPROOF_GSLT_RELATIONAL_SELECTOR_V1_SYMBOL_LITERAL],
                   NULL) ||
-        !add_pair(store, bridge->tables[
+        !add_pair(store, bridge->resolved_table_ids[
                        PPPROOF_GSLT_RELATIONAL_TABLE_V1_SYMBOL_KIND],
                   x, selectors[
                          PPPROOF_GSLT_RELATIONAL_SELECTOR_V1_SYMBOL_VARIABLE],
                   formal_x_kind_row_out) ||
-        !add_pair(store, bridge->tables[
+        !add_pair(store, bridge->resolved_table_ids[
                        PPPROOF_GSLT_RELATIONAL_TABLE_V1_SYMBOL_KIND],
                   y, selectors[
                          PPPROOF_GSLT_RELATIONAL_SELECTOR_V1_SYMBOL_VARIABLE],
                   NULL) ||
-        !add_pair(store, bridge->tables[
+        !add_pair(store, bridge->resolved_table_ids[
                        PPPROOF_GSLT_RELATIONAL_TABLE_V1_SYMBOL_KIND],
                   z, selectors[
                          PPPROOF_GSLT_RELATIONAL_SELECTOR_V1_SYMBOL_VARIABLE],
                   NULL) ||
-        !add_pair(store, bridge->tables[
+        !add_pair(store, bridge->resolved_table_ids[
                        PPPROOF_GSLT_RELATIONAL_TABLE_V1_SYMBOL_KIND],
                   a, selectors[
                          PPPROOF_GSLT_RELATIONAL_SELECTOR_V1_SYMBOL_VARIABLE],
                   NULL) ||
-        !add_pair(store, bridge->tables[
+        !add_pair(store, bridge->resolved_table_ids[
                        PPPROOF_GSLT_RELATIONAL_TABLE_V1_SYMBOL_KIND],
                   c, selectors[
                          PPPROOF_GSLT_RELATIONAL_SELECTOR_V1_SYMBOL_VARIABLE],
                   NULL))
         return false;
 
-    if (!add_pair(store, bridge->tables[
+    if (!add_pair(store, bridge->resolved_table_ids[
                        PPPROOF_GSLT_RELATIONAL_TABLE_V1_FLOATING_VARIABLE],
                   bind_x, x, NULL) ||
-        !add_pair(store, bridge->tables[
+        !add_pair(store, bridge->resolved_table_ids[
                        PPPROOF_GSLT_RELATIONAL_TABLE_V1_FLOATING_VARIABLE],
                   bind_y, y, NULL) ||
-        !add_pair(store, bridge->tables[
+        !add_pair(store, bridge->resolved_table_ids[
                        PPPROOF_GSLT_RELATIONAL_TABLE_V1_FLOATING_VARIABLE],
                   bind_z, z, NULL))
         return false;
@@ -645,77 +645,78 @@ static bool setup_store(
     if (!fake_formula(store, items, 3u, &formula_rule))
         return false;
 
-    if (!add_pair(store, bridge->tables[
+    if (!add_pair(store, bridge->resolved_table_ids[
                        PPPROOF_GSLT_RELATIONAL_TABLE_V1_FORMULA],
                   bind_x, formula_bind_x, NULL) ||
-        !add_pair(store, bridge->tables[
+        !add_pair(store, bridge->resolved_table_ids[
                        PPPROOF_GSLT_RELATIONAL_TABLE_V1_FORMULA],
                   bind_y, formula_bind_y, NULL) ||
-        !add_pair(store, bridge->tables[
+        !add_pair(store, bridge->resolved_table_ids[
                        PPPROOF_GSLT_RELATIONAL_TABLE_V1_FORMULA],
                   bind_z, formula_bind_z, NULL) ||
-        !add_pair(store, bridge->tables[
+        !add_pair(store, bridge->resolved_table_ids[
                        PPPROOF_GSLT_RELATIONAL_TABLE_V1_FORMULA],
                   essential, formula_essential, NULL) ||
-        !add_pair(store, bridge->tables[
+        !add_pair(store, bridge->resolved_table_ids[
                        PPPROOF_GSLT_RELATIONAL_TABLE_V1_FORMULA],
                   rule, formula_rule, NULL))
         return false;
 
-    if (!add_pair(store, bridge->tables[
+    if (!add_pair(store, bridge->resolved_table_ids[
                        PPPROOF_GSLT_RELATIONAL_TABLE_V1_LABEL_KIND],
                   bind_x, selectors[
                               PPPROOF_GSLT_RELATIONAL_SELECTOR_V1_HYPOTHESIS_FLOATING],
                   NULL) ||
-        !add_pair(store, bridge->tables[
+        !add_pair(store, bridge->resolved_table_ids[
                        PPPROOF_GSLT_RELATIONAL_TABLE_V1_LABEL_KIND],
                   bind_y, selectors[
                               PPPROOF_GSLT_RELATIONAL_SELECTOR_V1_HYPOTHESIS_FLOATING],
                   NULL) ||
-        !add_pair(store, bridge->tables[
+        !add_pair(store, bridge->resolved_table_ids[
                        PPPROOF_GSLT_RELATIONAL_TABLE_V1_LABEL_KIND],
                   bind_z, selectors[
                               PPPROOF_GSLT_RELATIONAL_SELECTOR_V1_HYPOTHESIS_FLOATING],
                   NULL) ||
-        !add_pair(store, bridge->tables[
+        !add_pair(store, bridge->resolved_table_ids[
                        PPPROOF_GSLT_RELATIONAL_TABLE_V1_LABEL_KIND],
                   essential, selectors[
                                  PPPROOF_GSLT_RELATIONAL_SELECTOR_V1_HYPOTHESIS_ESSENTIAL],
                   NULL))
         return false;
 
-    if (!add_pair(store, bridge->tables[
+    if (!add_pair(store, bridge->resolved_table_ids[
                        PPPROOF_GSLT_RELATIONAL_TABLE_V1_MANDATORY_VARIABLE],
                   rule, x, NULL) ||
-        !add_pair(store, bridge->tables[
+        !add_pair(store, bridge->resolved_table_ids[
                        PPPROOF_GSLT_RELATIONAL_TABLE_V1_MANDATORY_VARIABLE],
                   rule, y, NULL) ||
-        !add_pair(store, bridge->tables[
+        !add_pair(store, bridge->resolved_table_ids[
                        PPPROOF_GSLT_RELATIONAL_TABLE_V1_MANDATORY_VARIABLE],
                   claim, a, NULL))
         return false;
 
-    if (!add_triple(store, bridge->tables[
+    if (!add_triple(store, bridge->resolved_table_ids[
                          PPPROOF_GSLT_RELATIONAL_TABLE_V1_ORDERED_HYPOTHESIS],
                     rule, position_30, essential, NULL) ||
-        !add_triple(store, bridge->tables[
+        !add_triple(store, bridge->resolved_table_ids[
                          PPPROOF_GSLT_RELATIONAL_TABLE_V1_ORDERED_HYPOTHESIS],
                     rule, position_10, bind_z, NULL) ||
-        !add_triple(store, bridge->tables[
+        !add_triple(store, bridge->resolved_table_ids[
                          PPPROOF_GSLT_RELATIONAL_TABLE_V1_ORDERED_HYPOTHESIS],
                     rule, position_20, bind_y, ordered_y_row_out) ||
-        !add_triple(store, bridge->tables[
+        !add_triple(store, bridge->resolved_table_ids[
                          PPPROOF_GSLT_RELATIONAL_TABLE_V1_ORDERED_HYPOTHESIS],
                     rule, position_15, bind_x, NULL))
         return false;
 
-    if (!add_triple(store, bridge->tables[
+    if (!add_triple(store, bridge->resolved_table_ids[
                          PPPROOF_GSLT_RELATIONAL_TABLE_V1_ASSERTION_DISJOINT],
                     rule, x, y, NULL) ||
-        !add_triple(store, bridge->tables[
+        !add_triple(store, bridge->resolved_table_ids[
                          PPPROOF_GSLT_RELATIONAL_TABLE_V1_ASSERTION_DISJOINT],
                     rule, x, z, NULL) ||
-        !add_pair(store, TEST_ACTIVE_APARTNESS_TABLE,
+        !add_pair(store, bridge->resolved_table_ids[
+                            PPPROOF_GSLT_RELATIONAL_TABLE_V1_ACTIVE_APARTNESS],
                   a, c, active_apartness_row_out))
         return false;
 
@@ -737,6 +738,94 @@ static bool setup_store(
     *stored_variable_out = a;
     *dummy_variable_out = c;
     return true;
+}
+
+static bool setup_repeated_identity(
+    FakeStoreV1 *store,
+    const PPProofGSLTRelationalAssertionPlanV1 *bridge) {
+    uint32_t literal_selector;
+    uint32_t essential_selector;
+    uint32_t rule_selector;
+    uint32_t type;
+    uint32_t literal;
+    uint32_t essential;
+    uint32_t rule;
+    uint32_t claim;
+    uint32_t position;
+    uint32_t formula;
+    uint32_t items[2];
+
+    if (!store || !bridge ||
+        !fake_value_intern(
+            store,
+            bridge->selectors[
+                PPPROOF_GSLT_RELATIONAL_SELECTOR_V1_SYMBOL_LITERAL].bytes,
+            bridge->selectors[
+                PPPROOF_GSLT_RELATIONAL_SELECTOR_V1_SYMBOL_LITERAL].len,
+            &literal_selector) ||
+        !fake_value_intern(
+            store,
+            bridge->selectors[
+                PPPROOF_GSLT_RELATIONAL_SELECTOR_V1_HYPOTHESIS_ESSENTIAL]
+                .bytes,
+            bridge->selectors[
+                PPPROOF_GSLT_RELATIONAL_SELECTOR_V1_HYPOTHESIS_ESSENTIAL]
+                .len,
+            &essential_selector) ||
+        !fake_text(store, "CanaryRuleFirstV1", &rule_selector) ||
+        !fake_text(store, "CanaryIdentityType", &type) ||
+        !fake_text(store, "CanaryIdentityLiteral", &literal) ||
+        !fake_text(store, "CanaryIdentityEssential", &essential) ||
+        !fake_text(store, "CanaryIdentityRule", &rule) ||
+        !fake_text(store, "CanaryIdentityClaim", &claim) ||
+        !fake_text(store, "10", &position))
+        return false;
+
+    items[0] = type;
+    items[1] = literal;
+    if (!fake_formula(store, items, 2u, &formula))
+        return false;
+
+    return add_pair(
+               store,
+               bridge->resolved_table_ids[
+                   PPPROOF_GSLT_RELATIONAL_TABLE_V1_SYMBOL_KIND],
+               type, literal_selector, NULL) &&
+           add_pair(
+               store,
+               bridge->resolved_table_ids[
+                   PPPROOF_GSLT_RELATIONAL_TABLE_V1_SYMBOL_KIND],
+               literal, literal_selector, NULL) &&
+           add_pair(
+               store,
+               bridge->resolved_table_ids[
+                   PPPROOF_GSLT_RELATIONAL_TABLE_V1_FORMULA],
+               essential, formula, NULL) &&
+           add_pair(
+               store,
+               bridge->resolved_table_ids[
+                   PPPROOF_GSLT_RELATIONAL_TABLE_V1_FORMULA],
+               rule, formula, NULL) &&
+           add_pair(
+               store,
+               bridge->resolved_table_ids[
+                   PPPROOF_GSLT_RELATIONAL_TABLE_V1_LABEL_KIND],
+               essential, essential_selector, NULL) &&
+           add_pair(
+               store,
+               bridge->resolved_table_ids[
+                   PPPROOF_GSLT_RELATIONAL_TABLE_V1_LABEL_KIND],
+               rule, rule_selector, NULL) &&
+           add_pair(
+               store,
+               bridge->resolved_table_ids[
+                   PPPROOF_GSLT_RELATIONAL_TABLE_V1_ASSERTION_ACTIVE_HYPOTHESIS],
+               claim, essential, NULL) &&
+           add_triple(
+               store,
+               bridge->resolved_table_ids[
+                   PPPROOF_GSLT_RELATIONAL_TABLE_V1_ORDERED_HYPOTHESIS],
+               rule, position, essential, NULL);
 }
 
 static PPProofGSLTArticleV1Result check_application(
@@ -770,11 +859,11 @@ static PPProofGSLTArticleV1Result check_application(
 int main(int argc, char **argv) {
     static const uint32_t arities[
         PPPROOF_GSLT_RELATIONAL_TABLE_V1_LEN] = {
-            2u, 2u, 2u, 2u, 3u, 2u, 3u, 2u,
+            2u, 2u, 2u, 2u, 3u, 2u, 3u, 2u, 2u,
         };
     static const uint32_t key_arities[
         PPPROOF_GSLT_RELATIONAL_TABLE_V1_LEN] = {
-            1u, 1u, 1u, 2u, 2u, 2u, 3u, 1u,
+            1u, 1u, 1u, 2u, 2u, 2u, 3u, 2u, 1u,
         };
     SymbolTable symbols;
     PPProofGSLTPlanV1 proof_plan;
@@ -782,7 +871,9 @@ int main(int argc, char **argv) {
     PPProofGSLTRelationalAssertionPlanV1 bridge;
     PPRelationalStateProgramV1Plan state_plan;
     PPRelationalStateProofMachineV1 proof_machine;
-    PPProofIndexedValuePlanV1 indexed_value_plan;
+    PPProofIndexedProgramPlanV1 indexed_program_plan;
+    PPProofPreparedActionCaseV1 action_cases[5];
+    PPProofPreparedActionCaseV1 small_action_cases[2];
     PPProofFrameIndexPlanV1 frame_index_plan;
     PPRelationalStateTableV1 state_tables[
         PPPROOF_GSLT_RELATIONAL_TABLE_V1_LEN];
@@ -811,9 +902,9 @@ int main(int argc, char **argv) {
     uint32_t index;
     char error[512] = {0};
 
-    if (argc != 4 + PPPROOF_GSLT_RELATIONAL_TABLE_V1_LEN) {
+    if (argc != 5 + PPPROOF_GSLT_RELATIONAL_TABLE_V1_LEN) {
         fprintf(stderr,
-                "usage: %s PROOF_PLAN EVIDENCE_ABI BRIDGE TABLE...\n",
+                "usage: %s PROOF_PLAN EVIDENCE_ABI BRIDGE NO_APARTNESS TABLE...\n",
                 argv[0]);
         return 2;
     }
@@ -826,12 +917,12 @@ int main(int argc, char **argv) {
     ppproof_gslt_sequence_evidence_producer_v1_init(&producer);
     memset(&state_plan, 0, sizeof(state_plan));
     memset(&proof_machine, 0, sizeof(proof_machine));
-    memset(&indexed_value_plan, 0, sizeof(indexed_value_plan));
+    memset(&indexed_program_plan, 0, sizeof(indexed_program_plan));
     memset(&frame_index_plan, 0, sizeof(frame_index_plan));
     memset(state_tables, 0, sizeof(state_tables));
     for (index = 0u;
          index < PPPROOF_GSLT_RELATIONAL_TABLE_V1_LEN; index++) {
-        state_tables[index].name = argv[4u + index];
+        state_tables[index].name = argv[5u + index];
         state_tables[index].arity = arities[index];
         state_tables[index].key_arity = key_arities[index];
     }
@@ -867,18 +958,151 @@ int main(int argc, char **argv) {
             &fake_store, &bridge, &rule, &claim, formula_values,
             &active_apartness_row, &formal_x_kind_row,
             &ordered_y_row, &stored_variable, &dummy_variable)) {
-        if (!setup_machine_rows(
+        if (!setup_repeated_identity(&fake_store, &bridge) ||
+            !setup_machine_rows(
                 &fake_store, &bridge, &proof_machine, rule, claim,
                 &claim_bind_c_row)) {
             result = PPPROOF_GSLT_ARTICLE_V1_INVALID;
         }
         state_plan.proof_machines = &proof_machine;
         state_plan.proof_machine_len = 1u;
-        indexed_value_plan.machine = proof_machine.name;
-        indexed_value_plan.carrier =
-            "prepared-indexed-value-table-v1";
-        indexed_value_plan.region = "proof-call-region-v1";
-        frame_index_plan.machine = proof_machine.name;
+        indexed_program_plan.operation = "fixture-operation-v1";
+        indexed_program_plan.action_index = 0u;
+        indexed_program_plan.machine = bridge.execution.machine;
+        indexed_program_plan.header_role = "fixture-header-v1";
+        indexed_program_plan.code_role = "fixture-code-v1";
+        indexed_program_plan.terminal_low = proof_machine.terminal_low;
+        indexed_program_plan.terminal_high = proof_machine.terminal_high;
+        indexed_program_plan.continuation_low =
+            proof_machine.continuation_low;
+        indexed_program_plan.continuation_high =
+            proof_machine.continuation_high;
+        indexed_program_plan.save_byte = proof_machine.save_byte;
+        indexed_program_plan.unknown_byte = proof_machine.unknown_byte;
+        indexed_program_plan.terminal_radix = proof_machine.terminal_radix;
+        indexed_program_plan.terminal_digit_bias =
+            proof_machine.terminal_digit_bias;
+        indexed_program_plan.continuation_radix =
+            proof_machine.continuation_radix;
+        indexed_program_plan.continuation_digit_bias =
+            proof_machine.continuation_digit_bias;
+        indexed_program_plan.save_placement = proof_machine.save_placement;
+        indexed_program_plan.header_hypothesis_policy =
+            proof_machine.header_hypothesis_policy;
+        action_cases[0] = (PPProofPreparedActionCaseV1){
+            bridge.execution.machine,
+            "mm-label-floating",
+            PPPROOF_PREPARED_ACTION_V1_PUSH_DECLARED,
+        };
+        action_cases[1] = (PPProofPreparedActionCaseV1){
+            bridge.execution.machine,
+            "mm-label-essential",
+            PPPROOF_PREPARED_ACTION_V1_PUSH_DECLARED,
+        };
+        action_cases[2] = (PPProofPreparedActionCaseV1){
+            bridge.execution.machine,
+            "CanaryRuleFirstV1",
+            PPPROOF_PREPARED_ACTION_V1_APPLY_FRAME,
+        };
+        action_cases[3] = (PPProofPreparedActionCaseV1){
+            bridge.execution.machine,
+            "CanaryRuleSecondV1",
+            PPPROOF_PREPARED_ACTION_V1_APPLY_FRAME,
+        };
+        action_cases[4] = (PPProofPreparedActionCaseV1){
+            bridge.execution.machine,
+            "CanaryAdditionalKindV1",
+            PPPROOF_PREPARED_ACTION_V1_APPLY_FRAME,
+        };
+        small_action_cases[0] = action_cases[0];
+        small_action_cases[1] = action_cases[2];
+        indexed_program_plan.action_cases = action_cases;
+        indexed_program_plan.action_case_len = 5u;
+        indexed_program_plan.indexed_carrier =
+            "prepared-classified-value-table-v1";
+        indexed_program_plan.effect_carrier = "indexed-effect-machine-v1";
+        indexed_program_plan.prepared_effect = "use-prepared-value-v1";
+        indexed_program_plan.saved_effect = "use-saved-value-v1";
+        indexed_program_plan.save_effect = "save-top-value-v1";
+        indexed_program_plan.unknown_effect =
+            PPPROOF_INDEXED_EFFECT_UNKNOWN_V1_USE;
+        indexed_program_plan.region = "proof-call-region-v1";
+        check(ppproof_indexed_program_plan_v1_admits(
+                  &indexed_program_plan, indexed_program_plan.operation,
+                  indexed_program_plan.action_index, bridge.execution.machine,
+                  indexed_program_plan.header_role,
+                  indexed_program_plan.code_role,
+                  indexed_program_plan.region,
+                  PPPROOF_INDEXED_EFFECT_UNKNOWN_V1_USE,
+                  indexed_program_plan.save_placement,
+                  indexed_program_plan.header_hypothesis_policy),
+              "indexed-program admission follows the generated call region");
+        check(!ppproof_indexed_program_plan_v1_admits(
+                  &indexed_program_plan, indexed_program_plan.operation,
+                  indexed_program_plan.action_index, bridge.execution.machine,
+                  indexed_program_plan.header_role,
+                  indexed_program_plan.code_role,
+                  indexed_program_plan.region,
+                  PPPROOF_INDEXED_EFFECT_UNKNOWN_V1_USE,
+                  indexed_program_plan.save_placement ==
+                          CETTA_GSLT_INDEXED_SAVE_IMMEDIATELY_AFTER_USE_V1
+                      ? CETTA_GSLT_INDEXED_SAVE_REPEATABLE_AFTER_USE_V1
+                      : CETTA_GSLT_INDEXED_SAVE_IMMEDIATELY_AFTER_USE_V1,
+                  indexed_program_plan.header_hypothesis_policy),
+              "indexed-program admission rejects a different generated save policy");
+        check(!ppproof_indexed_program_plan_v1_admits(
+                  &indexed_program_plan, indexed_program_plan.operation,
+                  indexed_program_plan.action_index, bridge.execution.machine,
+                  indexed_program_plan.header_role,
+                  indexed_program_plan.code_role,
+                  "different-generated-region-v1",
+                  PPPROOF_INDEXED_EFFECT_UNKNOWN_V1_USE,
+                  indexed_program_plan.save_placement,
+                  indexed_program_plan.header_hypothesis_policy),
+              "indexed-program admission rejects a different generated region");
+        action_cases[2].action =
+            PPPROOF_PREPARED_ACTION_V1_INVALID;
+        check(!ppproof_indexed_program_plan_v1_admits(
+                  &indexed_program_plan, indexed_program_plan.operation,
+                  indexed_program_plan.action_index, bridge.execution.machine,
+                  indexed_program_plan.header_role,
+                  indexed_program_plan.code_role,
+                  indexed_program_plan.region,
+                  PPPROOF_INDEXED_EFFECT_UNKNOWN_V1_USE,
+                  indexed_program_plan.save_placement,
+                  indexed_program_plan.header_hypothesis_policy),
+              "indexed-program admission rejects an invalid generated action");
+        action_cases[2].action =
+            PPPROOF_PREPARED_ACTION_V1_APPLY_FRAME;
+        action_cases[3].source_kind = action_cases[2].source_kind;
+        check(!ppproof_indexed_program_plan_v1_admits(
+                  &indexed_program_plan, indexed_program_plan.operation,
+                  indexed_program_plan.action_index, bridge.execution.machine,
+                  indexed_program_plan.header_role,
+                  indexed_program_plan.code_role,
+                  indexed_program_plan.region,
+                  PPPROOF_INDEXED_EFFECT_UNKNOWN_V1_USE,
+                  indexed_program_plan.save_placement,
+                  indexed_program_plan.header_hypothesis_policy),
+              "indexed-program admission rejects a duplicate generated source kind");
+        action_cases[3].source_kind = "CanaryRuleSecondV1";
+        indexed_program_plan.action_cases = small_action_cases;
+        indexed_program_plan.action_case_len = 2u;
+        check(ppproof_indexed_program_plan_v1_admits(
+                  &indexed_program_plan, indexed_program_plan.operation,
+                  indexed_program_plan.action_index, bridge.execution.machine,
+                  indexed_program_plan.header_role,
+                  indexed_program_plan.code_role,
+                  indexed_program_plan.region,
+                  PPPROOF_INDEXED_EFFECT_UNKNOWN_V1_USE,
+                  indexed_program_plan.save_placement,
+                  indexed_program_plan.header_hypothesis_policy),
+              "indexed-program admission is independent of action inventory size");
+        indexed_program_plan.action_cases = action_cases;
+        indexed_program_plan.action_case_len = 5u;
+        frame_index_plan.operation = indexed_program_plan.operation;
+        frame_index_plan.action_index = indexed_program_plan.action_index;
+        frame_index_plan.machine = bridge.execution.machine;
         frame_index_plan.carrier = "u32-open-addressed-index-v1";
         frame_index_plan.validation = "duplicate-reject-v1";
         frame_index_plan.region = "proof-call-region-v1";
@@ -893,10 +1117,33 @@ int main(int argc, char **argv) {
     check(result == PPPROOF_GSLT_ARTICLE_V1_OK,
           "generic relational declaration context starts");
     {
+        PPProofGSLTRelationalDeclarationSnapshotV1 snapshot;
+        uint32_t formula_table = bridge.resolved_table_ids[
+            PPPROOF_GSLT_RELATIONAL_TABLE_V1_FORMULA];
+        uint32_t saved_formula_len = fake_store.tables[formula_table].row_len;
+
+        check(result == PPPROOF_GSLT_ARTICLE_V1_OK &&
+                  ppproof_gslt_relational_context_v1_declaration_snapshot(
+                      &context, &snapshot) &&
+                  ppproof_gslt_relational_context_v1_declaration_snapshot_matches(
+                      &context, &snapshot),
+          "declaration inputs admit a live immutable-prefix snapshot");
+        fake_store.tables[formula_table].row_len++;
+        check(!ppproof_gslt_relational_context_v1_declaration_snapshot_matches(
+                  &context, &snapshot),
+              "declaration snapshot rejects an appended input row");
+        fake_store.tables[formula_table].row_len = saved_formula_len;
+        fake_store.reject_immutable_snapshot = true;
+        check(!ppproof_gslt_relational_context_v1_declaration_snapshot_matches(
+                  &context, &snapshot),
+              "declaration caching rejects a store without immutable-prefix evidence");
+        fake_store.reject_immutable_snapshot = false;
+    }
+    {
         uint32_t stored_key[2] = {claim, stored_variable};
         uint32_t dummy_key[2] = {claim, dummy_variable};
         uint32_t row[2];
-        uint32_t table = bridge.tables[
+        uint32_t table = bridge.resolved_table_ids[
             PPPROOF_GSLT_RELATIONAL_TABLE_V1_MANDATORY_VARIABLE];
 
         check(result == PPPROOF_GSLT_ARTICLE_V1_OK &&
@@ -905,6 +1152,101 @@ int main(int argc, char **argv) {
                   !fake_table_find(
                       &fake_store, table, dummy_key, 2u, row, 2u),
               "stored frame excludes the proof-local dummy variable");
+    }
+    {
+        CettaGsltReusableBufferV1 required_binders = {0};
+        CettaGsltReusableBufferV1 ordered_rows = {0};
+        CettaGsltReusableBufferV1 binding_schemas = {0};
+        CettaGsltReusableBufferV1 premise_schemas = {0};
+        CettaGsltReusableBufferV1 apartness_pairs = {0};
+        CettaGsltReusableBufferV1 ordered_premises = {0};
+        PPProofGSLTRelationalDeclarationWorkspaceV1 workspace = {
+            .required_binder_ids = &required_binders,
+            .ordered_rows = &ordered_rows,
+            .binding_schemas = &binding_schemas,
+            .premise_schemas = &premise_schemas,
+            .apartness_pairs = &apartness_pairs,
+            .ordered_premises = &ordered_premises,
+        };
+        PPProofGSLTRelationalDeclarationWorkspaceV1 partial_workspace = {
+            .required_binder_ids = &required_binders,
+        };
+        PPProofGSLTRelationalDeclarationV1 workspace_schema;
+        PPProofGSLTArticleV1Result workspace_result;
+        bool workspace_ready =
+            cetta_gslt_reusable_buffer_init_v1(
+                &required_binders, sizeof(uint32_t)) &&
+            cetta_gslt_reusable_buffer_init_v1(
+                &ordered_rows,
+                sizeof(PPProofGSLTRelationalOrderedRowV1)) &&
+            cetta_gslt_reusable_buffer_init_v1(
+                &binding_schemas,
+                sizeof(PPProofGSLTRelationalBindingSchemaV1)) &&
+            cetta_gslt_reusable_buffer_init_v1(
+                &premise_schemas,
+                sizeof(PPProofGSLTRelationalEssentialSchemaV1)) &&
+            cetta_gslt_reusable_buffer_init_v1(
+                &apartness_pairs,
+                sizeof(PPProofGSLTAssertionDisjointV1)) &&
+            cetta_gslt_reusable_buffer_init_v1(
+                &ordered_premises,
+                sizeof(PPProofGSLTRelationalOrderedHypothesisV1)) &&
+            cetta_gslt_reusable_buffer_acquire_v1(&required_binders) ==
+                CETTA_GSLT_REUSABLE_BUFFER_OK_V1 &&
+            cetta_gslt_reusable_buffer_acquire_v1(&ordered_rows) ==
+                CETTA_GSLT_REUSABLE_BUFFER_OK_V1 &&
+            cetta_gslt_reusable_buffer_acquire_v1(&binding_schemas) ==
+                CETTA_GSLT_REUSABLE_BUFFER_OK_V1 &&
+            cetta_gslt_reusable_buffer_acquire_v1(&premise_schemas) ==
+                CETTA_GSLT_REUSABLE_BUFFER_OK_V1 &&
+            cetta_gslt_reusable_buffer_acquire_v1(&apartness_pairs) ==
+                CETTA_GSLT_REUSABLE_BUFFER_OK_V1 &&
+            cetta_gslt_reusable_buffer_acquire_v1(&ordered_premises) ==
+                CETTA_GSLT_REUSABLE_BUFFER_OK_V1;
+
+        ppproof_gslt_relational_declaration_v1_init(&workspace_schema);
+        workspace_result = workspace_ready
+            ? ppproof_gslt_relational_declaration_v1_elaborate_with_workspace(
+                  &context, rule, &workspace, &workspace_schema,
+                  error, sizeof(error))
+            : PPPROOF_GSLT_ARTICLE_V1_RESOURCE;
+        check(workspace_result == PPPROOF_GSLT_ARTICLE_V1_OK &&
+                  workspace_schema.binding_len == 2u &&
+                  workspace_schema.ordered_len == 3u &&
+                  required_binders.capacity >= 2u &&
+                  ordered_rows.capacity >= 3u &&
+                  binding_schemas.capacity >= 2u &&
+                  premise_schemas.capacity >= 1u &&
+                  apartness_pairs.capacity >= 1u &&
+                  ordered_premises.capacity >= 3u,
+              "admitted declaration scratch preserves the elaborated frame");
+        ppproof_gslt_relational_declaration_v1_free(&workspace_schema);
+        workspace_result = workspace_ready
+            ? ppproof_gslt_relational_declaration_v1_elaborate_with_workspace(
+                  &context, rule, &partial_workspace, &workspace_schema,
+                  error, sizeof(error))
+            : PPPROOF_GSLT_ARTICLE_V1_RESOURCE;
+        check(workspace_result == PPPROOF_GSLT_ARTICLE_V1_INVALID,
+              "partial declaration scratch fails closed");
+        if (ordered_premises.active)
+            (void)cetta_gslt_reusable_buffer_release_v1(
+                &ordered_premises);
+        if (apartness_pairs.active)
+            (void)cetta_gslt_reusable_buffer_release_v1(&apartness_pairs);
+        if (premise_schemas.active)
+            (void)cetta_gslt_reusable_buffer_release_v1(&premise_schemas);
+        if (binding_schemas.active)
+            (void)cetta_gslt_reusable_buffer_release_v1(&binding_schemas);
+        if (ordered_rows.active)
+            (void)cetta_gslt_reusable_buffer_release_v1(&ordered_rows);
+        if (required_binders.active)
+            (void)cetta_gslt_reusable_buffer_release_v1(&required_binders);
+        cetta_gslt_reusable_buffer_free_v1(&ordered_rows);
+        cetta_gslt_reusable_buffer_free_v1(&required_binders);
+        cetta_gslt_reusable_buffer_free_v1(&ordered_premises);
+        cetta_gslt_reusable_buffer_free_v1(&apartness_pairs);
+        cetta_gslt_reusable_buffer_free_v1(&premise_schemas);
+        cetta_gslt_reusable_buffer_free_v1(&binding_schemas);
     }
     if (result == PPPROOF_GSLT_ARTICLE_V1_OK)
         result = ppproof_gslt_relational_declaration_v1_elaborate(
@@ -936,6 +1278,62 @@ int main(int argc, char **argv) {
                     &context, actuals[index].formula,
                     &actuals[index].proof, error, sizeof(error));
     }
+    {
+        CettaGsltReusableBufferV1 prepared_bindings = {0};
+        CettaGsltReusableBufferV1 prepared_premises = {0};
+        PPProofGSLTRelationalPreparedWorkspaceV1 workspace = {
+            .bindings = &prepared_bindings,
+            .premises = &prepared_premises,
+        };
+        PPProofGSLTRelationalPreparedWorkspaceV1 partial_workspace = {
+            .bindings = &prepared_bindings,
+        };
+        PPProofGSLTRelationalPreparedAssertionV1 workspace_prepared;
+        PPProofGSLTArticleV1Result workspace_result;
+        bool workspace_ready =
+            cetta_gslt_reusable_buffer_init_v1(
+                &prepared_bindings,
+                sizeof(PPProofGSLTAssertionBindingV1)) &&
+            cetta_gslt_reusable_buffer_init_v1(
+                &prepared_premises,
+                sizeof(PPProofGSLTAssertionEssentialV1)) &&
+            cetta_gslt_reusable_buffer_acquire_v1(&prepared_bindings) ==
+                CETTA_GSLT_REUSABLE_BUFFER_OK_V1 &&
+            cetta_gslt_reusable_buffer_acquire_v1(&prepared_premises) ==
+                CETTA_GSLT_REUSABLE_BUFFER_OK_V1;
+
+        ppproof_gslt_relational_prepared_assertion_v1_init(
+            &workspace_prepared);
+        workspace_result =
+            result == PPPROOF_GSLT_ARTICLE_V1_OK && workspace_ready
+                ? ppproof_gslt_relational_prepared_assertion_v1_build_with_workspace(
+                      &schema, actuals, 3u, &workspace,
+                      &workspace_prepared, error, sizeof(error))
+                : PPPROOF_GSLT_ARTICLE_V1_RESOURCE;
+        check(workspace_result == PPPROOF_GSLT_ARTICLE_V1_OK &&
+                  workspace_prepared.declaration.binding_len == 2u &&
+                  workspace_prepared.declaration.essential_len == 1u &&
+                  prepared_bindings.capacity >= 2u &&
+                  prepared_premises.capacity >= 1u,
+              "admitted preparation scratch preserves the assertion input");
+        ppproof_gslt_relational_prepared_assertion_v1_free(
+            &workspace_prepared);
+        workspace_result = workspace_ready
+            ? ppproof_gslt_relational_prepared_assertion_v1_build_with_workspace(
+                  &schema, actuals, 3u, &partial_workspace,
+                  &workspace_prepared, error, sizeof(error))
+            : PPPROOF_GSLT_ARTICLE_V1_RESOURCE;
+        check(workspace_result == PPPROOF_GSLT_ARTICLE_V1_INVALID,
+              "partial preparation scratch fails closed");
+        if (prepared_premises.active)
+            (void)cetta_gslt_reusable_buffer_release_v1(
+                &prepared_premises);
+        if (prepared_bindings.active)
+            (void)cetta_gslt_reusable_buffer_release_v1(
+                &prepared_bindings);
+        cetta_gslt_reusable_buffer_free_v1(&prepared_premises);
+        cetta_gslt_reusable_buffer_free_v1(&prepared_bindings);
+    }
     if (result == PPPROOF_GSLT_ARTICLE_V1_OK)
         result = ppproof_gslt_relational_prepared_assertion_v1_build(
             &schema, actuals, 3u, &prepared, error, sizeof(error));
@@ -947,8 +1345,7 @@ int main(int argc, char **argv) {
             &context, &declaration_reference, error, sizeof(error));
     if (result == PPPROOF_GSLT_ARTICLE_V1_OK)
         result = ppproof_gslt_relational_context_v1_evidence_sources(
-            &context, proof_machine.active_disjoint_table,
-            &relational_evidence, &sources,
+            &context, &relational_evidence, &sources,
             error, sizeof(error));
     if (result == PPPROOF_GSLT_ARTICLE_V1_OK)
         result = ppproof_gslt_sequence_evidence_producer_v1_begin(
@@ -1002,7 +1399,7 @@ int main(int argc, char **argv) {
 
     {
         FakeTableV1 *symbol_table = &fake_store.tables[
-            bridge.tables[PPPROOF_GSLT_RELATIONAL_TABLE_V1_SYMBOL_KIND]];
+            bridge.resolved_table_ids[PPPROOF_GSLT_RELATIONAL_TABLE_V1_SYMBOL_KIND]];
         uint32_t *kind_row = symbol_table->rows +
             (size_t)formal_x_kind_row * symbol_table->arity;
         uint32_t saved_kind = kind_row[1];
@@ -1028,7 +1425,7 @@ int main(int argc, char **argv) {
 
     {
         FakeTableV1 *ordered_table = &fake_store.tables[
-            bridge.tables[
+            bridge.resolved_table_ids[
                 PPPROOF_GSLT_RELATIONAL_TABLE_V1_ORDERED_HYPOTHESIS]];
         uint32_t *row = ordered_table->rows +
             (size_t)ordered_y_row * ordered_table->arity;
@@ -1089,10 +1486,19 @@ int main(int argc, char **argv) {
         PPProofGSLTRelationalMachineV1Receipt machine_receipt;
         PPProofGSLTRelationalMachineV1Receipt normal_receipt;
         PPProofGSLTRelationalMachineV1Result machine_result;
+        PPProofGSLTRelationalMachineV1Workspace workspace = {0};
+        bool workspace_ready =
+            ppproof_gslt_relational_machine_v1_workspace_init(&workspace) &&
+            ppproof_gslt_relational_machine_v1_workspace_set_repetition_policy(
+                &workspace,
+                CETTA_GSLT_REPETITION_POLICY_SECOND_OCCURRENCE_V1);
+
+        check(workspace_ready,
+              "generic proof workspace initializes without guest data");
 
         machine_result = ppproof_gslt_relational_machine_v1_normal(
-            &store, &state_plan, 0u, &proof_plan, &evidence_abi,
-            &bridge, &machine_input, NULL, &machine_receipt,
+            &store, &state_plan, &proof_plan, &evidence_abi,
+            &bridge, action_cases, 4u, &machine_input, NULL, &machine_receipt,
             error, sizeof(error));
         if (machine_result != PPPROOF_GSLT_RELATIONAL_MACHINE_V1_OK)
             fprintf(stderr, "normal machine diagnostic: %s\n", error);
@@ -1101,11 +1507,176 @@ int main(int argc, char **argv) {
                   machine_receipt.proof_step_len == 6u &&
                   machine_receipt.execution ==
                       PPPROOF_GSLT_RELATIONAL_EXECUTION_V1_LABEL_STREAM &&
+                  machine_receipt.workspace_action_index_capacity == 0u &&
                   machine_receipt.decoded_byte_len == 0u &&
                   machine_receipt.decoded_instruction_len == 0u &&
                   machine_receipt.article.rooted,
               "generic normal machine checks a generated proof article");
         normal_receipt = machine_receipt;
+        {
+            PPRelationalStateProofMachineV1 saved_proof_machine =
+                proof_machine;
+            proof_machine.name = NULL;
+            proof_machine.formula_table = UINT32_MAX;
+            proof_machine.active_disjoint_table = UINT32_MAX;
+            proof_machine.unknown_token.bytes = NULL;
+            proof_machine.unknown_token.len = 0u;
+            proof_machine.unknown_policy =
+                (PPRelationalStackProofV1UnknownPolicy)UINT32_MAX;
+            proof_machine.terminal_low = 0u;
+            proof_machine.terminal_high = 0u;
+            proof_machine.continuation_low = 0u;
+            proof_machine.continuation_high = 0u;
+            proof_machine.save_byte = 0u;
+            proof_machine.unknown_byte = 0u;
+            proof_machine.terminal_radix = 0u;
+            proof_machine.continuation_radix = 0u;
+            machine_result = ppproof_gslt_relational_machine_v1_normal(
+                &store, &state_plan, &proof_plan, &evidence_abi,
+                &bridge, action_cases, 4u, &machine_input, NULL,
+                &machine_receipt, error, sizeof(error));
+            check(machine_result ==
+                      PPPROOF_GSLT_RELATIONAL_MACHINE_V1_OK,
+                  "generated relational descriptor owns public execution and tables");
+            proof_machine = saved_proof_machine;
+        }
+        if (workspace_ready) {
+            machine_result =
+                ppproof_gslt_relational_machine_v1_normal_with_workspace(
+                    &store, &state_plan, &proof_plan, &evidence_abi,
+                    &bridge, action_cases, 4u, &workspace,
+                    &machine_input, NULL,
+                    &machine_receipt, error, sizeof(error));
+            check(machine_result ==
+                      PPPROOF_GSLT_RELATIONAL_MACHINE_V1_OK &&
+                      machine_receipt.workspace_used &&
+                      !machine_receipt.workspace_reused &&
+                      machine_receipt.workspace_stack_capacity >= 1u &&
+                      machine_receipt.workspace_action_index_capacity >= 4u &&
+                      machine_receipt.workspace_actual_capacity >= 1u &&
+                      machine_receipt.workspace_required_binder_capacity >=
+                          1u &&
+                      machine_receipt.workspace_ordered_row_capacity >= 1u &&
+                      machine_receipt.workspace_binding_schema_capacity >=
+                          1u &&
+                      machine_receipt.workspace_premise_schema_capacity >=
+                          1u &&
+                      machine_receipt.workspace_apartness_capacity >= 1u &&
+                      machine_receipt.workspace_ordered_premise_capacity >=
+                          1u &&
+                      machine_receipt.workspace_prepared_binding_capacity >=
+                          1u &&
+                      machine_receipt.workspace_prepared_premise_capacity >=
+                          1u &&
+                      machine_receipt.workspace_declaration_cache_capacity ==
+                          0u &&
+                      machine_receipt.declaration_cache_hit_len == 0u &&
+                      machine_receipt.declaration_cache_miss_len == 2u &&
+                      machine_receipt.declaration_cache_promotion_len == 0u &&
+                      !machine_receipt.declaration_cache_snapshot_rejected &&
+                      machine_receipt.workspace_call_control_count == 2u &&
+                      machine_receipt.workspace_evidence_arena_capacity >=
+                          64u * 1024u &&
+                      machine_receipt.workspace_evidence_node_capacity >=
+                          1u &&
+                      machine_receipt.workspace_evidence_cache_capacity >=
+                          1u &&
+                      machine_receipt.article.checked_node_len ==
+                          normal_receipt.article.checked_node_len,
+                  "first admitted proof call retains a generic workspace");
+            machine_result =
+                ppproof_gslt_relational_machine_v1_normal_with_workspace(
+                    &store, &state_plan, &proof_plan, &evidence_abi,
+                    &bridge, action_cases, 4u, &workspace,
+                    &machine_input, NULL,
+                    &machine_receipt, error, sizeof(error));
+            check(machine_result ==
+                      PPPROOF_GSLT_RELATIONAL_MACHINE_V1_OK &&
+                      machine_receipt.workspace_used &&
+                      machine_receipt.workspace_reused &&
+                      machine_receipt.article.checked_node_len ==
+                          normal_receipt.article.checked_node_len,
+                  "second admitted proof call reuses the reset workspace");
+
+            {
+                static const uint8_t identity_label_bytes[] =
+                    "CanaryIdentityClaim";
+                static const uint8_t identity_type_bytes[] =
+                    "CanaryIdentityType";
+                static const uint8_t identity_literal_bytes[] =
+                    "CanaryIdentityLiteral";
+                static const uint8_t identity_essential_bytes[] =
+                    "CanaryIdentityEssential";
+                static const uint8_t identity_rule_bytes[] =
+                    "CanaryIdentityRule";
+                PPRelationalValueV1Slice identity_claim[2] = {
+                    {identity_type_bytes,
+                     (uint32_t)(sizeof(identity_type_bytes) - 1u)},
+                    {identity_literal_bytes,
+                     (uint32_t)(sizeof(identity_literal_bytes) - 1u)},
+                };
+                PPRelationalValueV1Slice identity_steps[4] = {
+                    {identity_essential_bytes,
+                     (uint32_t)(sizeof(identity_essential_bytes) - 1u)},
+                    {identity_rule_bytes,
+                     (uint32_t)(sizeof(identity_rule_bytes) - 1u)},
+                    {identity_rule_bytes,
+                     (uint32_t)(sizeof(identity_rule_bytes) - 1u)},
+                    {identity_rule_bytes,
+                     (uint32_t)(sizeof(identity_rule_bytes) - 1u)},
+                };
+                PPProofGSLTRelationalNormalInputV1 identity_input = {
+                    .label = {
+                        identity_label_bytes,
+                        (uint32_t)(sizeof(identity_label_bytes) - 1u)},
+                    .claim = identity_claim,
+                    .claim_len = 2u,
+                    .steps = identity_steps,
+                    .step_len = 4u,
+                };
+                const CettaGsltRepetitionCostModelV1 cost_model = {
+                    1u, 100u, 2u, 20u, 10u
+                };
+                uint64_t cached_cost = 0u;
+                uint64_t fresh_cost = 0u;
+
+                machine_result =
+                    ppproof_gslt_relational_machine_v1_normal_with_workspace(
+                        &store, &state_plan, &proof_plan, &evidence_abi,
+                        &bridge, action_cases, 4u, &workspace,
+                        &identity_input, NULL, &machine_receipt,
+                        error, sizeof(error));
+                if (machine_result !=
+                    PPPROOF_GSLT_RELATIONAL_MACHINE_V1_OK)
+                    fprintf(stderr,
+                            "repetition cache diagnostic: %s\n", error);
+                check(machine_result ==
+                          PPPROOF_GSLT_RELATIONAL_MACHINE_V1_OK &&
+                          machine_receipt.complete &&
+                          machine_receipt.proof_step_len == 4u &&
+                          machine_receipt.workspace_used &&
+                          machine_receipt.workspace_reused &&
+                          machine_receipt
+                                  .workspace_declaration_cache_capacity >=
+                              1u &&
+                          machine_receipt.declaration_cache_hit_len == 1u &&
+                          machine_receipt.declaration_cache_miss_len == 2u &&
+                          machine_receipt
+                                  .declaration_cache_promotion_len == 1u &&
+                          !machine_receipt
+                               .declaration_cache_snapshot_rejected &&
+                          machine_receipt.article.rooted,
+                      "public proof machine admits promotion then cache hit");
+                check(machine_result ==
+                          PPPROOF_GSLT_RELATIONAL_MACHINE_V1_OK &&
+                          ppproof_gslt_relational_machine_v1_receipt_repetition_cost_qualify(
+                              &machine_receipt, &cost_model,
+                              &cached_cost, &fresh_cost) ==
+                              CETTA_GSLT_REPETITION_COST_PROFITABLE_V1 &&
+                          cached_cost == 235u && fresh_cost == 300u,
+                      "public receipt feeds the generic cost qualifier");
+            }
+        }
 
         {
             static const uint8_t compressed_code_bytes[] = "ABABCD";
@@ -1113,10 +1684,17 @@ int main(int argc, char **argv) {
             static const uint8_t compressed_saved_use_bytes[] = "AZBZEFCD";
             static const uint8_t bad_saved_index_bytes[] = "ABABCE";
             static const uint8_t interrupted_index_bytes[] = "UZ";
-            static const uint8_t zero_digit_open_index_bytes[] = "U";
+            static const uint8_t open_index_at_end_bytes[] = "U";
             PPRelationalValueV1Slice compressed_header[3] = {
                 {bind_c_bytes,
                  (uint32_t)(sizeof(bind_c_bytes) - 1u)},
+                {actual_rule_bytes,
+                 (uint32_t)(sizeof(actual_rule_bytes) - 1u)},
+                {rule_bytes, (uint32_t)(sizeof(rule_bytes) - 1u)},
+            };
+            PPRelationalValueV1Slice repeated_mandatory_header[3] = {
+                {bind_a_bytes,
+                 (uint32_t)(sizeof(bind_a_bytes) - 1u)},
                 {actual_rule_bytes,
                  (uint32_t)(sizeof(actual_rule_bytes) - 1u)},
                 {rule_bytes, (uint32_t)(sizeof(rule_bytes) - 1u)},
@@ -1134,12 +1712,12 @@ int main(int argc, char **argv) {
                 .code = &compressed_code,
                 .code_len = 1u,
             };
-
             machine_result =
-                ppproof_gslt_relational_machine_v1_compressed(
-                    &store, &state_plan, 0u, &proof_plan,
-                    &evidence_abi, &bridge, &indexed_value_plan,
+                ppproof_gslt_relational_machine_v1_compressed_with_workspace(
+                    &store, &state_plan, &proof_plan,
+                    &evidence_abi, &bridge, &indexed_program_plan,
                     &frame_index_plan,
+                    workspace_ready ? &workspace : NULL,
                     &compressed_input,
                     NULL, &machine_receipt, error, sizeof(error));
             check(machine_result ==
@@ -1151,7 +1729,33 @@ int main(int argc, char **argv) {
                       machine_receipt.decoded_byte_len == 6u &&
                       machine_receipt.decoded_instruction_len == 6u &&
                       machine_receipt.prepared_value_len == 4u &&
+                      machine_receipt.prepared_classification_len == 4u &&
+                      machine_receipt.prepared_classification_use_len == 6u &&
                       machine_receipt.saved_value_len == 0u &&
+                      (!workspace_ready ||
+                       (machine_receipt.workspace_used &&
+                        machine_receipt.workspace_reused &&
+                        machine_receipt.workspace_prepared_capacity >= 4u &&
+                        machine_receipt.workspace_action_index_capacity >= 4u &&
+                        machine_receipt.workspace_actual_capacity >= 1u &&
+                        machine_receipt.workspace_required_binder_capacity >=
+                            1u &&
+                        machine_receipt.workspace_ordered_row_capacity >=
+                            1u &&
+                        machine_receipt.workspace_binder_count_capacity >=
+                            1u &&
+                        machine_receipt.declaration_cache_hit_len == 0u &&
+                        machine_receipt.declaration_cache_miss_len == 2u &&
+                        machine_receipt.declaration_cache_promotion_len == 0u &&
+                        !machine_receipt
+                             .declaration_cache_snapshot_rejected &&
+                        machine_receipt.workspace_call_control_count == 2u &&
+                        machine_receipt
+                                .workspace_required_binder_index_capacity >=
+                            16u &&
+                        machine_receipt
+                                .workspace_premise_label_index_capacity >=
+                            16u)) &&
                       machine_receipt.article.rooted,
                   "compressed machine preloads mandatory hypotheses before its header");
             check(machine_result ==
@@ -1173,14 +1777,30 @@ int main(int argc, char **argv) {
                           normal_receipt.article.rooted,
                   "normal and compressed execution produce the same proof receipt");
 
+            compressed_input.header = repeated_mandatory_header;
+            machine_result =
+                ppproof_gslt_relational_machine_v1_compressed(
+                    &store, &state_plan, &proof_plan,
+                    &evidence_abi, &bridge, &indexed_program_plan,
+                    &frame_index_plan, &compressed_input, NULL,
+                    &machine_receipt, error, sizeof(error));
+            check(machine_result ==
+                      PPPROOF_GSLT_RELATIONAL_MACHINE_V1_REJECTED &&
+                      strstr(
+                          error,
+                          "compressed header repeats an implicitly prepared hypothesis") !=
+                          NULL,
+                  "strict generated header policy rejects a repeated mandatory hypothesis");
+            compressed_input.header = compressed_header;
+
             compressed_code = (PPRelationalValueV1Slice){
                 compressed_saved_code_bytes,
                 (uint32_t)(sizeof(compressed_saved_code_bytes) - 1u),
             };
             machine_result =
                 ppproof_gslt_relational_machine_v1_compressed(
-                    &store, &state_plan, 0u, &proof_plan,
-                    &evidence_abi, &bridge, &indexed_value_plan,
+                    &store, &state_plan, &proof_plan,
+                    &evidence_abi, &bridge, &indexed_program_plan,
                     &frame_index_plan,
                     &compressed_input,
                     NULL, &machine_receipt, error, sizeof(error));
@@ -1200,8 +1820,8 @@ int main(int argc, char **argv) {
             };
             machine_result =
                 ppproof_gslt_relational_machine_v1_compressed(
-                    &store, &state_plan, 0u, &proof_plan,
-                    &evidence_abi, &bridge, &indexed_value_plan,
+                    &store, &state_plan, &proof_plan,
+                    &evidence_abi, &bridge, &indexed_program_plan,
                     &frame_index_plan,
                     &compressed_input, NULL, &machine_receipt,
                     error, sizeof(error));
@@ -1225,11 +1845,12 @@ int main(int argc, char **argv) {
                 (uint32_t)(sizeof(compressed_code_bytes) - 1u),
             };
 
-            indexed_value_plan.carrier = "unadmitted-indexed-value-v1";
+            indexed_program_plan.indexed_carrier =
+                "unadmitted-indexed-value-v1";
             machine_result =
                 ppproof_gslt_relational_machine_v1_compressed(
-                    &store, &state_plan, 0u, &proof_plan,
-                    &evidence_abi, &bridge, &indexed_value_plan,
+                    &store, &state_plan, &proof_plan,
+                    &evidence_abi, &bridge, &indexed_program_plan,
                     &frame_index_plan,
                     &compressed_input, NULL, &machine_receipt,
                     error, sizeof(error));
@@ -1237,14 +1858,31 @@ int main(int argc, char **argv) {
                       PPPROOF_GSLT_RELATIONAL_MACHINE_V1_INVALID &&
                       strstr(error, "does not admit") != NULL,
                   "compressed backend rejects an unadmitted indexed carrier");
-            indexed_value_plan.carrier =
-                "prepared-indexed-value-table-v1";
+            indexed_program_plan.indexed_carrier =
+                "prepared-classified-value-table-v1";
+
+            indexed_program_plan.effect_carrier =
+                "unadmitted-indexed-effect-machine-v1";
+            machine_result =
+                ppproof_gslt_relational_machine_v1_compressed(
+                    &store, &state_plan, &proof_plan,
+                    &evidence_abi, &bridge, &indexed_program_plan,
+                    &frame_index_plan,
+                    &compressed_input, NULL, &machine_receipt,
+                    error, sizeof(error));
+            check(machine_result ==
+                      PPPROOF_GSLT_RELATIONAL_MACHINE_V1_INVALID &&
+                      strstr(error, "indexed-program plan does not admit") !=
+                          NULL,
+                  "compressed backend rejects an unadmitted effect machine");
+            indexed_program_plan.effect_carrier =
+                "indexed-effect-machine-v1";
 
             frame_index_plan.carrier = "unadmitted-frame-index-v1";
             machine_result =
                 ppproof_gslt_relational_machine_v1_compressed(
-                    &store, &state_plan, 0u, &proof_plan,
-                    &evidence_abi, &bridge, &indexed_value_plan,
+                    &store, &state_plan, &proof_plan,
+                    &evidence_abi, &bridge, &indexed_program_plan,
                     &frame_index_plan,
                     &compressed_input, NULL, &machine_receipt,
                     error, sizeof(error));
@@ -1260,8 +1898,8 @@ int main(int argc, char **argv) {
                 small_limits.maximum_article_nodes = 16u;
                 machine_result =
                     ppproof_gslt_relational_machine_v1_compressed(
-                        &store, &state_plan, 0u, &proof_plan,
-                        &evidence_abi, &bridge, &indexed_value_plan,
+                        &store, &state_plan, &proof_plan,
+                        &evidence_abi, &bridge, &indexed_program_plan,
                         &frame_index_plan,
                         &compressed_input,
                         &small_limits, &machine_receipt,
@@ -1280,8 +1918,8 @@ int main(int argc, char **argv) {
             };
             machine_result =
                 ppproof_gslt_relational_machine_v1_compressed(
-                    &store, &state_plan, 0u, &proof_plan,
-                    &evidence_abi, &bridge, &indexed_value_plan,
+                    &store, &state_plan, &proof_plan,
+                    &evidence_abi, &bridge, &indexed_program_plan,
                     &frame_index_plan,
                     &compressed_input,
                     NULL, &machine_receipt, error, sizeof(error));
@@ -1295,8 +1933,8 @@ int main(int argc, char **argv) {
             };
             machine_result =
                 ppproof_gslt_relational_machine_v1_compressed(
-                    &store, &state_plan, 0u, &proof_plan,
-                    &evidence_abi, &bridge, &indexed_value_plan,
+                    &store, &state_plan, &proof_plan,
+                    &evidence_abi, &bridge, &indexed_program_plan,
                     &frame_index_plan,
                     &compressed_input,
                     NULL, &machine_receipt, error, sizeof(error));
@@ -1305,22 +1943,20 @@ int main(int argc, char **argv) {
                   "compressed save cannot interrupt a U-Y index");
 
             compressed_code = (PPRelationalValueV1Slice){
-                zero_digit_open_index_bytes,
-                (uint32_t)(sizeof(zero_digit_open_index_bytes) - 1u),
+                open_index_at_end_bytes,
+                (uint32_t)(sizeof(open_index_at_end_bytes) - 1u),
             };
-            proof_machine.continuation_digit_bias = 0u;
             machine_result =
                 ppproof_gslt_relational_machine_v1_compressed(
-                    &store, &state_plan, 0u, &proof_plan,
-                    &evidence_abi, &bridge, &indexed_value_plan,
+                    &store, &state_plan, &proof_plan,
+                    &evidence_abi, &bridge, &indexed_program_plan,
                     &frame_index_plan,
                     &compressed_input,
                     NULL, &machine_receipt, error, sizeof(error));
             check(machine_result ==
                       PPPROOF_GSLT_RELATIONAL_MACHINE_V1_REJECTED &&
                       strstr(error, "ends inside an index") != NULL,
-                  "zero-valued continuation still leaves an index open");
-            proof_machine.continuation_digit_bias = 1u;
+                  "a continuation at end still leaves an index open");
 
             compressed_code = (PPRelationalValueV1Slice){
                 unknown_bytes,
@@ -1328,8 +1964,8 @@ int main(int argc, char **argv) {
             };
             machine_result =
                 ppproof_gslt_relational_machine_v1_compressed(
-                    &store, &state_plan, 0u, &proof_plan,
-                    &evidence_abi, &bridge, &indexed_value_plan,
+                    &store, &state_plan, &proof_plan,
+                    &evidence_abi, &bridge, &indexed_program_plan,
                     &frame_index_plan,
                     &compressed_input,
                     NULL, &machine_receipt, error, sizeof(error));
@@ -1352,8 +1988,9 @@ int main(int argc, char **argv) {
             };
             machine_input.claim = bad_claim;
             machine_result = ppproof_gslt_relational_machine_v1_normal(
-                &store, &state_plan, 0u, &proof_plan, &evidence_abi,
-                &bridge, &machine_input, NULL, &machine_receipt,
+                &store, &state_plan, &proof_plan, &evidence_abi,
+                &bridge, action_cases, 4u, &machine_input, NULL,
+                &machine_receipt,
                 error, sizeof(error));
             check(machine_result ==
                       PPPROOF_GSLT_RELATIONAL_MACHINE_V1_REJECTED,
@@ -1363,15 +2000,16 @@ int main(int argc, char **argv) {
 
         {
             FakeTableV1 *active_table = &fake_store.tables[
-                bridge.tables[
+                bridge.resolved_table_ids[
                     PPPROOF_GSLT_RELATIONAL_TABLE_V1_ASSERTION_ACTIVE_HYPOTHESIS]];
             uint32_t *row = active_table->rows +
                 (size_t)claim_bind_c_row * active_table->arity;
             uint32_t saved_label = row[1];
             row[1] = rule;
             machine_result = ppproof_gslt_relational_machine_v1_normal(
-                &store, &state_plan, 0u, &proof_plan, &evidence_abi,
-                &bridge, &machine_input, NULL, &machine_receipt,
+                &store, &state_plan, &proof_plan, &evidence_abi,
+                &bridge, action_cases, 4u, &machine_input, NULL,
+                &machine_receipt,
                 error, sizeof(error));
             check(machine_result ==
                       PPPROOF_GSLT_RELATIONAL_MACHINE_V1_REJECTED,
@@ -1385,8 +2023,9 @@ int main(int argc, char **argv) {
             machine_input.steps = &future_step;
             machine_input.step_len = 1u;
             machine_result = ppproof_gslt_relational_machine_v1_normal(
-                &store, &state_plan, 0u, &proof_plan, &evidence_abi,
-                &bridge, &machine_input, NULL, &machine_receipt,
+                &store, &state_plan, &proof_plan, &evidence_abi,
+                &bridge, action_cases, 4u, &machine_input, NULL,
+                &machine_receipt,
                 error, sizeof(error));
             check(machine_result ==
                       PPPROOF_GSLT_RELATIONAL_MACHINE_V1_REJECTED,
@@ -1399,8 +2038,9 @@ int main(int argc, char **argv) {
             machine_input.steps = &unknown_step;
             machine_input.step_len = 1u;
             machine_result = ppproof_gslt_relational_machine_v1_normal(
-                &store, &state_plan, 0u, &proof_plan, &evidence_abi,
-                &bridge, &machine_input, NULL, &machine_receipt,
+                &store, &state_plan, &proof_plan, &evidence_abi,
+                &bridge, action_cases, 4u, &machine_input, NULL,
+                &machine_receipt,
                 error, sizeof(error));
             check(machine_result ==
                       PPPROOF_GSLT_RELATIONAL_MACHINE_V1_INCOMPLETE &&
@@ -1415,14 +2055,56 @@ int main(int argc, char **argv) {
             state_plan.plan_digest[0] =
                 saved_digest_byte == '2' ? '3' : '2';
             machine_result = ppproof_gslt_relational_machine_v1_normal(
-                &store, &state_plan, 0u, &proof_plan, &evidence_abi,
-                &bridge, &machine_input, NULL, &machine_receipt,
+                &store, &state_plan, &proof_plan, &evidence_abi,
+                &bridge, action_cases, 4u, &machine_input, NULL,
+                &machine_receipt,
                 error, sizeof(error));
             check(machine_result ==
                       PPPROOF_GSLT_RELATIONAL_MACHINE_V1_INVALID,
                   "composition digest mismatch fails closed");
             state_plan.plan_digest[0] = saved_digest_byte;
         }
+        if (workspace_ready)
+            ppproof_gslt_relational_machine_v1_workspace_free(&workspace);
+    }
+
+    {
+        PPProofGSLTRelationalAssertionPlanV1 no_apartness_bridge;
+        PPProofGSLTRelationalContextV1 no_apartness_context;
+        PPProofGSLTRelationalEvidenceV1 no_apartness_evidence;
+        PPProofGSLTSequenceEvidenceSourcesV1 no_apartness_sources;
+
+        ppproof_gslt_relational_assertion_v1_init(&no_apartness_bridge);
+        ppproof_gslt_relational_context_v1_init(&no_apartness_context);
+        result = ppproof_gslt_relational_assertion_v1_load(
+            &no_apartness_bridge, argv[4], &proof_plan, &state_plan,
+            error, sizeof(error));
+        if (result == PPPROOF_GSLT_ARTICLE_V1_OK)
+            result = ppproof_gslt_relational_context_v1_begin(
+                &no_apartness_context, &store, &no_apartness_bridge,
+                &evidence_abi, NULL, error, sizeof(error));
+        if (result == PPPROOF_GSLT_ARTICLE_V1_OK)
+            result = ppproof_gslt_relational_context_v1_evidence_sources(
+                &no_apartness_context, &no_apartness_evidence,
+                &no_apartness_sources, error, sizeof(error));
+        if (result != PPPROOF_GSLT_ARTICLE_V1_OK ||
+            no_apartness_bridge.table_binding_len + 2u !=
+                PPPROOF_GSLT_RELATIONAL_TABLE_V1_LEN ||
+            no_apartness_evidence.active_apartness_table != UINT32_MAX) {
+            fprintf(
+                stderr,
+                "no-apartness diagnostic: result=%d bindings=%u "
+                "apartness=%u error=%s\n",
+                (int)result, no_apartness_bridge.table_binding_len,
+                no_apartness_evidence.active_apartness_table, error);
+        }
+        check(result == PPPROOF_GSLT_ARTICLE_V1_OK &&
+                  no_apartness_bridge.table_binding_len + 2u ==
+                      PPPROOF_GSLT_RELATIONAL_TABLE_V1_LEN &&
+                  no_apartness_evidence.active_apartness_table == UINT32_MAX,
+              "variable capability inventory executes without apartness relations");
+        ppproof_gslt_relational_context_v1_free(&no_apartness_context);
+        ppproof_gslt_relational_assertion_v1_free(&no_apartness_bridge);
     }
 
     ppproof_gslt_sequence_evidence_producer_v1_free(&producer);

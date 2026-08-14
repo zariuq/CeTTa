@@ -1,4 +1,4 @@
-; HE-backed negative surface: sealed reports IncorrectNumberOfArguments on
+; HE-backed negative syntax: sealed reports IncorrectNumberOfArguments on
 ; wrong arity.
 
 !(assertEqualToResult (sealed) ((Error (sealed) IncorrectNumberOfArguments)))

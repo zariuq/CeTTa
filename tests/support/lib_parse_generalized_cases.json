@@ -53,36 +53,36 @@
       "adapter": "rho",
       "cases": [
         {
-          "name": "pure-surface",
-          "source": {"kind": "path", "value": "tests/rhocalc/pure_surface.rho"},
+          "name": "pure-syntax",
+          "source": {"kind": "path", "value": "tests/rhocalc/pure_rho.rho"},
           "expect": "Unique",
           "check_cert": true,
           "timeout_sec": 30
         },
         {
-          "name": "surface-shadowing",
-          "source": {"kind": "path", "value": "tests/rhocalc/surface_shadowing.rho"},
+          "name": "syntax-shadowing",
+          "source": {"kind": "path", "value": "tests/rhocalc/rho_shadowing.rho"},
           "expect": "Unique",
           "check_cert": true,
           "timeout_sec": 30
         },
         {
-          "name": "surface-name-output",
-          "source": {"kind": "path", "value": "tests/rhocalc/surface_name_output.rho"},
+          "name": "syntax-name-output",
+          "source": {"kind": "path", "value": "tests/rhocalc/rho_name_output.rho"},
           "expect": "Unique",
           "check_cert": true,
           "timeout_sec": 30
         },
         {
-          "name": "surface-open-name-variable",
-          "source": {"kind": "path", "value": "tests/rhocalc/surface_open_name_variable.rho"},
+          "name": "syntax-open-name-variable",
+          "source": {"kind": "path", "value": "tests/rhocalc/rho_open_name_variable.rho"},
           "expect": "Unique",
           "check_cert": true,
           "timeout_sec": 30
         },
         {
-          "name": "surface-quote-seals-outer-binder",
-          "source": {"kind": "path", "value": "tests/rhocalc/surface_quote_seals_outer_binder.rho"},
+          "name": "syntax-quote-seals-outer-binder",
+          "source": {"kind": "path", "value": "tests/rhocalc/rho_quote_seals_outer_binder.rho"},
           "expect": "Unique",
           "check_cert": true,
           "timeout_sec": 30

@@ -138,7 +138,7 @@ NO_EXPECT_CLASSIFICATION = {
     ),
     "tests/test_pathmap_backend_primary_destructive_regression.metta": (
         "probe",
-        "pathmap destructive surface diagnostic",
+        "pathmap destructive syntax diagnostic",
     ),
     "tests/test_print_nondet_probe.metta": (
         "probe",
@@ -250,7 +250,7 @@ SPECIAL_INVENTORY_ROWS = {
             "native",
             "test-profiles",
             "diagnostic",
-            "base HE rejects an extended surface without a profile",
+            "base HE rejects an extended syntax without a profile",
         ),
     ],
 }
@@ -467,8 +467,8 @@ def generated_row(repo: Path, test_path: str, sets: dict[str, set[str]]) -> Mani
     if test_path in sets["BACKEND_DEDICATED_TESTS"]:
         stem = Path(test_path).stem
         bridgeish = "mork" in stem or "mm2" in stem or stem in {
-            "test_new_space_mork_surface",
-            "test_step_space_surface",
+            "test_new_space_mork_syntax",
+            "test_step_space_syntax",
         }
         runtime_stats = "runtime_stats" in stem or "runtime-stats" in stem
         build = "runtime-stats" if runtime_stats else ("mork" if bridgeish else "main")

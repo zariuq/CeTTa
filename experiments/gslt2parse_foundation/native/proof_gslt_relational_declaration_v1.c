@@ -55,27 +55,6 @@ typedef struct {
     uint32_t materialized_pattern_len;
 } PPProofRelationalContextImplV1;
 
-typedef struct {
-    PPProofGSLTRelationalBindingSchemaV1 *bindings;
-    uint32_t binding_cap;
-    PPProofGSLTRelationalEssentialSchemaV1 *essentials;
-    uint32_t essential_cap;
-    PPProofGSLTAssertionDisjointV1 *disjoints;
-    uint32_t disjoint_cap;
-    PPProofGSLTRelationalOrderedHypothesisV1 *ordered;
-    uint32_t ordered_cap;
-} PPProofRelationalDeclarationStorageV1;
-
-typedef struct {
-    PPProofGSLTAssertionBindingV1 *bindings;
-    PPProofGSLTAssertionEssentialV1 *essentials;
-} PPProofRelationalPreparedStorageV1;
-
-typedef struct {
-    uint32_t position;
-    uint32_t label;
-} PPProofRelationalOrderedRowV1;
-
 static void ppproof_relational_declaration_v1_set_error(
     char *buf, size_t size, const char *format, ...) {
     va_list arguments;
@@ -251,7 +230,7 @@ static bool ppproof_relational_context_v1_table_shape(
     if (!impl || role >= PPPROOF_GSLT_RELATIONAL_TABLE_V1_LEN ||
         !impl->store.table_shape(
             impl->store.context,
-            impl->relational_plan->tables[role],
+            impl->relational_plan->resolved_table_ids[role],
             &actual_arity, &actual_key_arity, &row_len) ||
         actual_arity != arity || actual_key_arity != key_arity)
         return false;
@@ -270,7 +249,7 @@ static bool ppproof_relational_context_v1_find(
     return impl && role < PPPROOF_GSLT_RELATIONAL_TABLE_V1_LEN &&
            impl->store.table_find(
                impl->store.context,
-               impl->relational_plan->tables[role],
+               impl->relational_plan->resolved_table_ids[role],
                key, key_len, row, row_capacity);
 }
 
@@ -509,11 +488,11 @@ PPProofGSLTArticleV1Result ppproof_gslt_relational_context_v1_begin(
     uint32_t index;
     static const uint32_t arities[
         PPPROOF_GSLT_RELATIONAL_TABLE_V1_LEN] = {
-            2u, 2u, 2u, 2u, 3u, 2u, 3u, 2u,
+            2u, 2u, 2u, 2u, 3u, 2u, 3u, 2u, 2u,
         };
     static const uint32_t key_arities[
         PPPROOF_GSLT_RELATIONAL_TABLE_V1_LEN] = {
-            1u, 1u, 1u, 2u, 2u, 2u, 3u, 1u,
+            1u, 1u, 1u, 2u, 2u, 2u, 3u, 2u, 1u,
         };
 
     if (error_buf && error_buf_size != 0u)
@@ -551,6 +530,10 @@ PPProofGSLTArticleV1Result ppproof_gslt_relational_context_v1_begin(
     impl->limits = *limits;
     for (index = 0u;
          index < PPPROOF_GSLT_RELATIONAL_TABLE_V1_LEN; index++) {
+        if (relational_plan->resolved_table_ids[index] == UINT32_MAX &&
+            relational_plan->table_presence[index] ==
+                PPPROOF_GSLT_RELATIONAL_PRESENCE_V1_OPTIONAL_EMPTY)
+            continue;
         if (!ppproof_relational_context_v1_table_shape(
                 impl, (PPProofGSLTRelationalTableRoleV1)index,
                 arities[index], key_arities[index], NULL)) {
@@ -590,6 +573,68 @@ PPProofGSLTArticleV1Result ppproof_gslt_relational_context_v1_begin(
     ppproof_gslt_relational_context_v1_free(context);
     context->implementation = impl;
     return PPPROOF_GSLT_ARTICLE_V1_OK;
+}
+
+bool ppproof_gslt_relational_context_v1_declaration_snapshot(
+    const PPProofGSLTRelationalContextV1 *context,
+    PPProofGSLTRelationalDeclarationSnapshotV1 *snapshot_out) {
+    static const PPProofGSLTRelationalTableRoleV1 roles[] = {
+        PPPROOF_GSLT_RELATIONAL_TABLE_V1_SYMBOL_KIND,
+        PPPROOF_GSLT_RELATIONAL_TABLE_V1_FORMULA,
+        PPPROOF_GSLT_RELATIONAL_TABLE_V1_FLOATING_VARIABLE,
+        PPPROOF_GSLT_RELATIONAL_TABLE_V1_ORDERED_HYPOTHESIS,
+        PPPROOF_GSLT_RELATIONAL_TABLE_V1_MANDATORY_VARIABLE,
+        PPPROOF_GSLT_RELATIONAL_TABLE_V1_ASSERTION_DISJOINT,
+        PPPROOF_GSLT_RELATIONAL_TABLE_V1_LABEL_KIND,
+    };
+    const PPProofRelationalContextImplV1 *impl;
+    size_t index;
+
+    PPProofGSLTRelationalDeclarationSnapshotV1 snapshot = {0};
+
+    if (!context || !snapshot_out || !(impl = context->implementation) ||
+        impl->store.identity == 0u)
+        return false;
+    snapshot.store_identity = impl->store.identity;
+    for (index = 0u; index < sizeof(roles) / sizeof(roles[0]); index++) {
+        PPProofGSLTRelationalTableRoleV1 role = roles[index];
+        uint32_t table_id = impl->relational_plan->resolved_table_ids[role];
+        uint32_t stable_len = 0u;
+        uint32_t arity = 0u;
+        uint32_t key_arity = 0u;
+        uint32_t row_len = 0u;
+
+        if (table_id == UINT32_MAX &&
+            impl->relational_plan->table_presence[role] ==
+                PPPROOF_GSLT_RELATIONAL_PRESENCE_V1_OPTIONAL_EMPTY)
+            continue;
+        if (table_id == UINT32_MAX ||
+            !impl->store.table_immutable_prefix(
+                impl->store.context, table_id, &stable_len) ||
+            !impl->store.table_shape(
+                impl->store.context, table_id,
+                &arity, &key_arity, &row_len) ||
+            stable_len != row_len)
+            return false;
+        snapshot.present_mask |= UINT32_C(1) << (uint32_t)role;
+        snapshot.row_lens[role] = stable_len;
+    }
+    *snapshot_out = snapshot;
+    return true;
+}
+
+bool ppproof_gslt_relational_context_v1_declaration_snapshot_matches(
+    const PPProofGSLTRelationalContextV1 *context,
+    const PPProofGSLTRelationalDeclarationSnapshotV1 *snapshot) {
+    PPProofGSLTRelationalDeclarationSnapshotV1 current;
+
+    return snapshot &&
+           ppproof_gslt_relational_context_v1_declaration_snapshot(
+               context, &current) &&
+           current.store_identity == snapshot->store_identity &&
+           current.present_mask == snapshot->present_mask &&
+           memcmp(current.row_lens, snapshot->row_lens,
+                  sizeof(current.row_lens)) == 0;
 }
 
 PPProofGSLTArticleV1Result ppproof_gslt_relational_context_v1_formula(
@@ -836,7 +881,8 @@ static bool ppproof_relational_context_v1_relation_evidence(
         };
         uint32_t row[2];
 
-        if (!left->variable || !right->variable)
+        if (!left->variable || !right->variable ||
+            evidence->active_apartness_table == UINT32_MAX)
             return false;
         if (!impl->store.table_find(
                 impl->store.context, evidence->active_apartness_table,
@@ -909,7 +955,6 @@ static bool ppproof_relational_context_v1_apart(
 PPProofGSLTArticleV1Result
 ppproof_gslt_relational_context_v1_evidence_sources(
     PPProofGSLTRelationalContextV1 *context,
-    uint32_t active_apartness_table,
     PPProofGSLTRelationalEvidenceV1 *evidence,
     PPProofGSLTSequenceEvidenceSourcesV1 *sources_out,
     char *error_buf,
@@ -925,24 +970,28 @@ ppproof_gslt_relational_context_v1_evidence_sources(
     }
     {
         PPProofRelationalContextImplV1 *impl = context->implementation;
+        uint32_t active_apartness_table =
+            impl->relational_plan->resolved_table_ids[
+                PPPROOF_GSLT_RELATIONAL_TABLE_V1_ACTIVE_APARTNESS];
         uint32_t arity = 0u;
         uint32_t key_arity = 0u;
         uint32_t row_len = 0u;
 
-        if (!impl->store.table_shape(
+        if (active_apartness_table != UINT32_MAX &&
+            (!impl->store.table_shape(
                 impl->store.context, active_apartness_table,
                 &arity, &key_arity, &row_len) ||
-            arity != 2u || key_arity != 2u) {
+             arity != 2u || key_arity != 2u)) {
             ppproof_relational_declaration_v1_set_error(
                 error_buf, error_buf_size,
                 "active apartness source has an incompatible shape");
             return PPPROOF_GSLT_ARTICLE_V1_INVALID;
         }
+        *evidence = (PPProofGSLTRelationalEvidenceV1){
+            .context = context,
+            .active_apartness_table = active_apartness_table,
+        };
     }
-    *evidence = (PPProofGSLTRelationalEvidenceV1){
-        .context = context,
-        .active_apartness_table = active_apartness_table,
-    };
     *sources_out = (PPProofGSLTSequenceEvidenceSourcesV1){
         .context = evidence,
         .different = ppproof_relational_context_v1_different,
@@ -960,10 +1009,19 @@ static bool ppproof_relational_declaration_v1_prefix_next(
     uint32_t *row,
     uint32_t row_capacity,
     bool *found_out) {
-    return impl && cursor && row && found_out &&
+    if (!impl || !cursor || !row || !found_out ||
+        role >= PPPROOF_GSLT_RELATIONAL_TABLE_V1_LEN)
+        return false;
+    if (impl->relational_plan->resolved_table_ids[role] == UINT32_MAX &&
+        impl->relational_plan->table_presence[role] ==
+            PPPROOF_GSLT_RELATIONAL_PRESENCE_V1_OPTIONAL_EMPTY) {
+        *found_out = false;
+        return true;
+    }
+    return
            impl->store.table_prefix_next(
                impl->store.context,
-               impl->relational_plan->tables[role],
+               impl->relational_plan->resolved_table_ids[role],
                &prefix, 1u, column_mask,
                cursor, row, row_capacity, found_out);
 }
@@ -980,8 +1038,8 @@ static bool ppproof_relational_declaration_v1_contains(
 
 static int ppproof_relational_declaration_v1_order_compare(
     const void *left_argument, const void *right_argument) {
-    const PPProofRelationalOrderedRowV1 *left = left_argument;
-    const PPProofRelationalOrderedRowV1 *right = right_argument;
+    const PPProofGSLTRelationalOrderedRowV1 *left = left_argument;
+    const PPProofGSLTRelationalOrderedRowV1 *right = right_argument;
     if (left->position < right->position)
         return -1;
     if (left->position > right->position)
@@ -1003,40 +1061,48 @@ void ppproof_gslt_relational_declaration_v1_init(
 
 void ppproof_gslt_relational_declaration_v1_free(
     PPProofGSLTRelationalDeclarationV1 *declaration) {
-    PPProofRelationalDeclarationStorageV1 *storage;
+    PPProofGSLTRelationalDeclarationStorageV1 *storage;
 
     if (!declaration)
         return;
     storage = declaration->storage;
     if (storage) {
-        free(storage->bindings);
-        free(storage->essentials);
-        free(storage->disjoints);
-        free(storage->ordered);
-        free(storage);
+        if (storage->owns_arrays) {
+            free(storage->bindings);
+            free(storage->essentials);
+            free(storage->disjoints);
+            free(storage->ordered);
+        }
+        if (storage->owns_storage)
+            free(storage);
+        else
+            memset(storage, 0, sizeof(*storage));
     }
     memset(declaration, 0, sizeof(*declaration));
 }
 
-PPProofGSLTArticleV1Result ppproof_gslt_relational_declaration_v1_elaborate(
+PPProofGSLTArticleV1Result
+ppproof_gslt_relational_declaration_v1_elaborate_with_workspace(
     PPProofGSLTRelationalContextV1 *context,
     uint32_t assertion_value,
+    const PPProofGSLTRelationalDeclarationWorkspaceV1 *workspace,
     PPProofGSLTRelationalDeclarationV1 *declaration,
     char *error_buf,
     size_t error_buf_size) {
     PPProofRelationalContextImplV1 *impl;
     PPProofGSLTRelationalDeclarationV1 result;
-    PPProofRelationalDeclarationStorageV1 *storage = NULL;
+    PPProofGSLTRelationalDeclarationStorageV1 *storage = NULL;
     uint32_t *mandatory = NULL;
     uint32_t mandatory_len = 0u;
     uint32_t mandatory_cap = 0u;
-    PPProofRelationalOrderedRowV1 *ordered_rows = NULL;
+    PPProofGSLTRelationalOrderedRowV1 *ordered_rows = NULL;
     uint32_t ordered_row_len = 0u;
     uint32_t ordered_row_cap = 0u;
     uint64_t cursor = UINT64_MAX;
     uint32_t index;
     PPProofGSLTArticleV1Result failure =
         PPPROOF_GSLT_ARTICLE_V1_INVALID;
+    bool reuse_scratch = false;
 
     ppproof_gslt_relational_declaration_v1_init(&result);
     if (error_buf && error_buf_size != 0u)
@@ -1047,10 +1113,57 @@ PPProofGSLTArticleV1Result ppproof_gslt_relational_declaration_v1_elaborate(
             "invalid relational declaration elaboration request");
         return PPPROOF_GSLT_ARTICLE_V1_INVALID;
     }
-    storage = calloc(1u, sizeof(*storage));
-    if (!storage)
-        return PPPROOF_GSLT_ARTICLE_V1_RESOURCE;
+    if (workspace) {
+        if (!workspace->required_binder_ids || !workspace->ordered_rows ||
+            !workspace->binding_schemas || !workspace->premise_schemas ||
+            !workspace->apartness_pairs || !workspace->ordered_premises ||
+            !workspace->required_binder_ids->active ||
+            !workspace->ordered_rows->active ||
+            !workspace->binding_schemas->active ||
+            !workspace->premise_schemas->active ||
+            !workspace->apartness_pairs->active ||
+            !workspace->ordered_premises->active ||
+            workspace->required_binder_ids->element_size !=
+                sizeof(*mandatory) ||
+            workspace->ordered_rows->element_size != sizeof(*ordered_rows) ||
+            workspace->binding_schemas->element_size !=
+                sizeof(*storage->bindings) ||
+            workspace->premise_schemas->element_size !=
+                sizeof(*storage->essentials) ||
+            workspace->apartness_pairs->element_size !=
+                sizeof(*storage->disjoints) ||
+            workspace->ordered_premises->element_size !=
+                sizeof(*storage->ordered) ||
+            !cetta_gslt_reusable_buffer_truncate_v1(
+                workspace->required_binder_ids, 0u) ||
+            !cetta_gslt_reusable_buffer_truncate_v1(
+                workspace->ordered_rows, 0u) ||
+            !cetta_gslt_reusable_buffer_truncate_v1(
+                workspace->binding_schemas, 0u) ||
+            !cetta_gslt_reusable_buffer_truncate_v1(
+                workspace->premise_schemas, 0u) ||
+            !cetta_gslt_reusable_buffer_truncate_v1(
+                workspace->apartness_pairs, 0u) ||
+            !cetta_gslt_reusable_buffer_truncate_v1(
+                workspace->ordered_premises, 0u)) {
+            ppproof_relational_declaration_v1_set_error(
+                error_buf, error_buf_size,
+                "invalid relational declaration workspace");
+            return PPPROOF_GSLT_ARTICLE_V1_INVALID;
+        }
+        reuse_scratch = true;
+    }
+    if (workspace && workspace->control) {
+        storage = workspace->control;
+        memset(storage, 0, sizeof(*storage));
+    } else {
+        storage = calloc(1u, sizeof(*storage));
+        if (!storage)
+            return PPPROOF_GSLT_ARTICLE_V1_RESOURCE;
+        storage->owns_storage = true;
+    }
     result.assertion_value = assertion_value;
+    storage->owns_arrays = !reuse_scratch;
 
     for (;;) {
         uint32_t row[2];
@@ -1067,14 +1180,30 @@ PPProofGSLTArticleV1Result ppproof_gslt_relational_declaration_v1_elaborate(
                 mandatory, mandatory_len, row[1]))
             goto malformed;
         if (mandatory_len >=
-                impl->limits.maximum_materialized_pattern_nodes ||
-            !ppproof_relational_declaration_v1_grow(
-                (void **)&mandatory, &mandatory_cap,
-                mandatory_len + 1u, sizeof(*mandatory))) {
+            impl->limits.maximum_materialized_pattern_nodes) {
             failure = PPPROOF_GSLT_ARTICLE_V1_RESOURCE;
             goto failed;
         }
-        mandatory[mandatory_len++] = row[1];
+        if (reuse_scratch) {
+            if (cetta_gslt_reusable_buffer_push_v1(
+                    workspace->required_binder_ids, &row[1],
+                    impl->limits.maximum_materialized_pattern_nodes) !=
+                CETTA_GSLT_REUSABLE_BUFFER_OK_V1) {
+                failure = PPPROOF_GSLT_ARTICLE_V1_RESOURCE;
+                goto failed;
+            }
+            mandatory = workspace->required_binder_ids->items;
+            mandatory_len = workspace->required_binder_ids->len;
+            mandatory_cap = workspace->required_binder_ids->capacity;
+        } else {
+            if (!ppproof_relational_declaration_v1_grow(
+                    (void **)&mandatory, &mandatory_cap,
+                    mandatory_len + 1u, sizeof(*mandatory))) {
+                failure = PPPROOF_GSLT_ARTICLE_V1_RESOURCE;
+                goto failed;
+            }
+            mandatory[mandatory_len++] = row[1];
+        }
     }
 
     cursor = UINT64_MAX;
@@ -1095,15 +1224,34 @@ PPProofGSLTArticleV1Result ppproof_gslt_relational_declaration_v1_elaborate(
                 &impl->store, row[1], &position))
             goto malformed;
         if (ordered_row_len >=
-                impl->limits.maximum_materialized_pattern_nodes ||
-            !ppproof_relational_declaration_v1_grow(
-                (void **)&ordered_rows, &ordered_row_cap,
-                ordered_row_len + 1u, sizeof(*ordered_rows))) {
+            impl->limits.maximum_materialized_pattern_nodes) {
             failure = PPPROOF_GSLT_ARTICLE_V1_RESOURCE;
             goto failed;
         }
-        ordered_rows[ordered_row_len++] =
-            (PPProofRelationalOrderedRowV1){position, row[2]};
+        if (reuse_scratch) {
+            PPProofGSLTRelationalOrderedRowV1 ordered_row = {
+                position, row[2]
+            };
+            if (cetta_gslt_reusable_buffer_push_v1(
+                    workspace->ordered_rows, &ordered_row,
+                    impl->limits.maximum_materialized_pattern_nodes) !=
+                CETTA_GSLT_REUSABLE_BUFFER_OK_V1) {
+                failure = PPPROOF_GSLT_ARTICLE_V1_RESOURCE;
+                goto failed;
+            }
+            ordered_rows = workspace->ordered_rows->items;
+            ordered_row_len = workspace->ordered_rows->len;
+            ordered_row_cap = workspace->ordered_rows->capacity;
+        } else {
+            if (!ppproof_relational_declaration_v1_grow(
+                    (void **)&ordered_rows, &ordered_row_cap,
+                    ordered_row_len + 1u, sizeof(*ordered_rows))) {
+                failure = PPPROOF_GSLT_ARTICLE_V1_RESOURCE;
+                goto failed;
+            }
+            ordered_rows[ordered_row_len++] =
+                (PPProofGSLTRelationalOrderedRowV1){position, row[2]};
+        }
     }
     qsort(ordered_rows, ordered_row_len,
           sizeof(*ordered_rows),
@@ -1168,20 +1316,35 @@ PPProofGSLTArticleV1Result ppproof_gslt_relational_declaration_v1_elaborate(
                 if (storage->bindings[binding_index].variable == variable)
                     goto malformed;
             }
-            if (!ppproof_relational_declaration_v1_grow(
-                    (void **)&storage->bindings,
-                    &storage->binding_cap,
-                    result.binding_len + 1u,
-                    sizeof(*storage->bindings))) {
-                failure = PPPROOF_GSLT_ARTICLE_V1_RESOURCE;
-                goto failed;
-            }
-            storage->bindings[result.binding_len] =
-                (PPProofGSLTRelationalBindingSchemaV1){
+            {
+                PPProofGSLTRelationalBindingSchemaV1 binding = {
                     .variable = variable,
                     .typecode = typecode,
                     .hypothesis_value = label,
                 };
+                if (reuse_scratch) {
+                    if (cetta_gslt_reusable_buffer_push_v1(
+                            workspace->binding_schemas, &binding,
+                            impl->limits.maximum_materialized_pattern_nodes) !=
+                        CETTA_GSLT_REUSABLE_BUFFER_OK_V1) {
+                        failure = PPPROOF_GSLT_ARTICLE_V1_RESOURCE;
+                        goto failed;
+                    }
+                    storage->bindings = workspace->binding_schemas->items;
+                    storage->binding_cap =
+                        workspace->binding_schemas->capacity;
+                } else {
+                    if (!ppproof_relational_declaration_v1_grow(
+                            (void **)&storage->bindings,
+                            &storage->binding_cap,
+                            result.binding_len + 1u,
+                            sizeof(*storage->bindings))) {
+                        failure = PPPROOF_GSLT_ARTICLE_V1_RESOURCE;
+                        goto failed;
+                    }
+                    storage->bindings[result.binding_len] = binding;
+                }
+            }
             ordered = (PPProofGSLTRelationalOrderedHypothesisV1){
                 .kind = PPPROOF_GSLT_RELATIONAL_HYPOTHESIS_V1_BINDING,
                 .schema_index = result.binding_len++,
@@ -1206,19 +1369,34 @@ PPProofGSLTArticleV1Result ppproof_gslt_relational_declaration_v1_elaborate(
             }
             if (formula.token_len == 0u)
                 goto malformed;
-            if (!ppproof_relational_declaration_v1_grow(
-                    (void **)&storage->essentials,
-                    &storage->essential_cap,
-                    result.essential_len + 1u,
-                    sizeof(*storage->essentials))) {
-                failure = PPPROOF_GSLT_ARTICLE_V1_RESOURCE;
-                goto failed;
-            }
-            storage->essentials[result.essential_len] =
-                (PPProofGSLTRelationalEssentialSchemaV1){
+            {
+                PPProofGSLTRelationalEssentialSchemaV1 premise = {
                     .template_sequence = formula,
                     .hypothesis_value = label,
                 };
+                if (reuse_scratch) {
+                    if (cetta_gslt_reusable_buffer_push_v1(
+                            workspace->premise_schemas, &premise,
+                            impl->limits.maximum_materialized_pattern_nodes) !=
+                        CETTA_GSLT_REUSABLE_BUFFER_OK_V1) {
+                        failure = PPPROOF_GSLT_ARTICLE_V1_RESOURCE;
+                        goto failed;
+                    }
+                    storage->essentials = workspace->premise_schemas->items;
+                    storage->essential_cap =
+                        workspace->premise_schemas->capacity;
+                } else {
+                    if (!ppproof_relational_declaration_v1_grow(
+                            (void **)&storage->essentials,
+                            &storage->essential_cap,
+                            result.essential_len + 1u,
+                            sizeof(*storage->essentials))) {
+                        failure = PPPROOF_GSLT_ARTICLE_V1_RESOURCE;
+                        goto failed;
+                    }
+                    storage->essentials[result.essential_len] = premise;
+                }
+            }
             ordered = (PPProofGSLTRelationalOrderedHypothesisV1){
                 .kind = PPPROOF_GSLT_RELATIONAL_HYPOTHESIS_V1_ESSENTIAL,
                 .schema_index = result.essential_len++,
@@ -1227,14 +1405,27 @@ PPProofGSLTArticleV1Result ppproof_gslt_relational_declaration_v1_elaborate(
         } else {
             goto malformed;
         }
-        if (!ppproof_relational_declaration_v1_grow(
-                (void **)&storage->ordered, &storage->ordered_cap,
-                result.ordered_len + 1u,
-                sizeof(*storage->ordered))) {
-            failure = PPPROOF_GSLT_ARTICLE_V1_RESOURCE;
-            goto failed;
+        if (reuse_scratch) {
+            if (cetta_gslt_reusable_buffer_push_v1(
+                    workspace->ordered_premises, &ordered,
+                    impl->limits.maximum_materialized_pattern_nodes) !=
+                CETTA_GSLT_REUSABLE_BUFFER_OK_V1) {
+                failure = PPPROOF_GSLT_ARTICLE_V1_RESOURCE;
+                goto failed;
+            }
+            storage->ordered = workspace->ordered_premises->items;
+            storage->ordered_cap = workspace->ordered_premises->capacity;
+        } else {
+            if (!ppproof_relational_declaration_v1_grow(
+                    (void **)&storage->ordered, &storage->ordered_cap,
+                    result.ordered_len + 1u,
+                    sizeof(*storage->ordered))) {
+                failure = PPPROOF_GSLT_ARTICLE_V1_RESOURCE;
+                goto failed;
+            }
+            storage->ordered[result.ordered_len] = ordered;
         }
-        storage->ordered[result.ordered_len++] = ordered;
+        result.ordered_len++;
     }
 
     if (result.binding_len != mandatory_len)
@@ -1322,16 +1513,32 @@ PPProofGSLTArticleV1Result ppproof_gslt_relational_declaration_v1_elaborate(
                 (existing->left == right && existing->right == left))
                 goto malformed;
         }
-        if (!ppproof_relational_declaration_v1_grow(
-                (void **)&storage->disjoints,
-                &storage->disjoint_cap,
-                result.disjoint_len + 1u,
-                sizeof(*storage->disjoints))) {
-            failure = PPPROOF_GSLT_ARTICLE_V1_RESOURCE;
-            goto failed;
+        {
+            PPProofGSLTAssertionDisjointV1 apartness = {left, right};
+            if (reuse_scratch) {
+                if (cetta_gslt_reusable_buffer_push_v1(
+                        workspace->apartness_pairs, &apartness,
+                        impl->limits.maximum_materialized_pattern_nodes) !=
+                    CETTA_GSLT_REUSABLE_BUFFER_OK_V1) {
+                    failure = PPPROOF_GSLT_ARTICLE_V1_RESOURCE;
+                    goto failed;
+                }
+                storage->disjoints = workspace->apartness_pairs->items;
+                storage->disjoint_cap =
+                    workspace->apartness_pairs->capacity;
+            } else {
+                if (!ppproof_relational_declaration_v1_grow(
+                        (void **)&storage->disjoints,
+                        &storage->disjoint_cap,
+                        result.disjoint_len + 1u,
+                        sizeof(*storage->disjoints))) {
+                    failure = PPPROOF_GSLT_ARTICLE_V1_RESOURCE;
+                    goto failed;
+                }
+                storage->disjoints[result.disjoint_len] = apartness;
+            }
         }
-        storage->disjoints[result.disjoint_len++] =
-            (PPProofGSLTAssertionDisjointV1){left, right};
+        result.disjoint_len++;
     }
 
     result.bindings = storage->bindings;
@@ -1339,8 +1546,10 @@ PPProofGSLTArticleV1Result ppproof_gslt_relational_declaration_v1_elaborate(
     result.disjoints = storage->disjoints;
     result.ordered = storage->ordered;
     result.storage = storage;
-    free(mandatory);
-    free(ordered_rows);
+    if (!reuse_scratch) {
+        free(mandatory);
+        free(ordered_rows);
+    }
     ppproof_gslt_relational_declaration_v1_free(declaration);
     *declaration = result;
     return PPPROOF_GSLT_ARTICLE_V1_OK;
@@ -1350,16 +1559,34 @@ malformed:
         error_buf, error_buf_size,
         "relational assertion rows do not elaborate coherently");
 failed:
-    free(mandatory);
-    free(ordered_rows);
+    if (!reuse_scratch) {
+        free(mandatory);
+        free(ordered_rows);
+    }
     if (storage) {
-        free(storage->bindings);
-        free(storage->essentials);
-        free(storage->disjoints);
-        free(storage->ordered);
-        free(storage);
+        if (storage->owns_arrays) {
+            free(storage->bindings);
+            free(storage->essentials);
+            free(storage->disjoints);
+            free(storage->ordered);
+        }
+        if (storage->owns_storage)
+            free(storage);
+        else
+            memset(storage, 0, sizeof(*storage));
     }
     return failure;
+}
+
+PPProofGSLTArticleV1Result ppproof_gslt_relational_declaration_v1_elaborate(
+    PPProofGSLTRelationalContextV1 *context,
+    uint32_t assertion_value,
+    PPProofGSLTRelationalDeclarationV1 *declaration,
+    char *error_buf,
+    size_t error_buf_size) {
+    return ppproof_gslt_relational_declaration_v1_elaborate_with_workspace(
+        context, assertion_value, NULL, declaration,
+        error_buf, error_buf_size);
 }
 
 void ppproof_gslt_relational_prepared_assertion_v1_init(
@@ -1370,30 +1597,37 @@ void ppproof_gslt_relational_prepared_assertion_v1_init(
 
 void ppproof_gslt_relational_prepared_assertion_v1_free(
     PPProofGSLTRelationalPreparedAssertionV1 *prepared) {
-    PPProofRelationalPreparedStorageV1 *storage;
+    PPProofGSLTRelationalPreparedStorageV1 *storage;
 
     if (!prepared)
         return;
     storage = prepared->storage;
     if (storage) {
-        free(storage->bindings);
-        free(storage->essentials);
-        free(storage);
+        if (storage->owns_arrays) {
+            free(storage->bindings);
+            free(storage->essentials);
+        }
+        if (storage->owns_storage)
+            free(storage);
+        else
+            memset(storage, 0, sizeof(*storage));
     }
     memset(prepared, 0, sizeof(*prepared));
 }
 
 PPProofGSLTArticleV1Result
-ppproof_gslt_relational_prepared_assertion_v1_build(
+ppproof_gslt_relational_prepared_assertion_v1_build_with_workspace(
     const PPProofGSLTRelationalDeclarationV1 *schema,
     const PPProofGSLTRelationalActualHypothesisV1 *actuals,
     uint32_t actual_len,
+    const PPProofGSLTRelationalPreparedWorkspaceV1 *workspace,
     PPProofGSLTRelationalPreparedAssertionV1 *prepared,
     char *error_buf,
     size_t error_buf_size) {
     PPProofGSLTRelationalPreparedAssertionV1 result;
-    PPProofRelationalPreparedStorageV1 *storage;
+    PPProofGSLTRelationalPreparedStorageV1 *storage;
     uint32_t index;
+    bool reuse_scratch = false;
 
     ppproof_gslt_relational_prepared_assertion_v1_init(&result);
     if (error_buf && error_buf_size != 0u)
@@ -1406,26 +1640,75 @@ ppproof_gslt_relational_prepared_assertion_v1_build(
             "invalid relational assertion preparation request");
         return PPPROOF_GSLT_ARTICLE_V1_INVALID;
     }
-    storage = calloc(1u, sizeof(*storage));
-    if (!storage)
-        return PPPROOF_GSLT_ARTICLE_V1_RESOURCE;
+    if (workspace) {
+        if (!workspace->bindings || !workspace->premises ||
+            !workspace->bindings->active || !workspace->premises->active ||
+            workspace->bindings->element_size !=
+                sizeof(PPProofGSLTAssertionBindingV1) ||
+            workspace->premises->element_size !=
+                sizeof(PPProofGSLTAssertionEssentialV1) ||
+            !cetta_gslt_reusable_buffer_truncate_v1(
+                workspace->bindings, 0u) ||
+            !cetta_gslt_reusable_buffer_truncate_v1(
+                workspace->premises, 0u)) {
+            ppproof_relational_declaration_v1_set_error(
+                error_buf, error_buf_size,
+                "invalid relational assertion preparation workspace");
+            return PPPROOF_GSLT_ARTICLE_V1_INVALID;
+        }
+        reuse_scratch = true;
+    }
+    if (workspace && workspace->control) {
+        storage = workspace->control;
+        memset(storage, 0, sizeof(*storage));
+    } else {
+        storage = calloc(1u, sizeof(*storage));
+        if (!storage)
+            return PPPROOF_GSLT_ARTICLE_V1_RESOURCE;
+        storage->owns_storage = true;
+    }
+    storage->owns_arrays = !reuse_scratch;
     if (schema->binding_len != 0u) {
-        if ((size_t)schema->binding_len >
-            SIZE_MAX / sizeof(*storage->bindings))
-            goto resource;
-        storage->bindings = calloc(
-            schema->binding_len, sizeof(*storage->bindings));
-        if (!storage->bindings)
-            goto resource;
+        if (reuse_scratch) {
+            PPProofGSLTAssertionBindingV1 empty = {0};
+            for (index = 0u; index < schema->binding_len; index++) {
+                if (cetta_gslt_reusable_buffer_push_v1(
+                        workspace->bindings, &empty,
+                        schema->binding_len) !=
+                    CETTA_GSLT_REUSABLE_BUFFER_OK_V1)
+                    goto resource;
+            }
+            storage->bindings = workspace->bindings->items;
+        } else {
+            if ((size_t)schema->binding_len >
+                SIZE_MAX / sizeof(*storage->bindings))
+                goto resource;
+            storage->bindings = calloc(
+                schema->binding_len, sizeof(*storage->bindings));
+            if (!storage->bindings)
+                goto resource;
+        }
     }
     if (schema->essential_len != 0u) {
-        if ((size_t)schema->essential_len >
-            SIZE_MAX / sizeof(*storage->essentials))
-            goto resource;
-        storage->essentials = calloc(
-            schema->essential_len, sizeof(*storage->essentials));
-        if (!storage->essentials)
-            goto resource;
+        if (reuse_scratch) {
+            PPProofGSLTAssertionEssentialV1 empty = {0};
+            for (index = 0u; index < schema->essential_len; index++) {
+                if (cetta_gslt_reusable_buffer_push_v1(
+                        workspace->premises, &empty,
+                        schema->essential_len) !=
+                    CETTA_GSLT_REUSABLE_BUFFER_OK_V1)
+                    goto resource;
+            }
+            storage->essentials = workspace->premises->items;
+        } else {
+            if ((size_t)schema->essential_len >
+                SIZE_MAX / sizeof(*storage->essentials))
+                goto resource;
+            storage->essentials = calloc(
+                schema->essential_len, sizeof(*storage->essentials));
+            if (!storage->essentials)
+                goto resource;
+        }
     }
     for (index = 0u; index < actual_len; index++) {
         const PPProofGSLTRelationalOrderedHypothesisV1 *ordered =
@@ -1491,14 +1774,37 @@ malformed:
     ppproof_relational_declaration_v1_set_error(
         error_buf, error_buf_size,
         "actual hypotheses do not match the relational declaration");
-    free(storage->bindings);
-    free(storage->essentials);
-    free(storage);
+    if (storage->owns_arrays) {
+        free(storage->bindings);
+        free(storage->essentials);
+    }
+    if (storage->owns_storage)
+        free(storage);
+    else
+        memset(storage, 0, sizeof(*storage));
     return PPPROOF_GSLT_ARTICLE_V1_REJECTED;
 
 resource:
-    free(storage->bindings);
-    free(storage->essentials);
-    free(storage);
+    if (storage->owns_arrays) {
+        free(storage->bindings);
+        free(storage->essentials);
+    }
+    if (storage->owns_storage)
+        free(storage);
+    else
+        memset(storage, 0, sizeof(*storage));
     return PPPROOF_GSLT_ARTICLE_V1_RESOURCE;
+}
+
+PPProofGSLTArticleV1Result
+ppproof_gslt_relational_prepared_assertion_v1_build(
+    const PPProofGSLTRelationalDeclarationV1 *schema,
+    const PPProofGSLTRelationalActualHypothesisV1 *actuals,
+    uint32_t actual_len,
+    PPProofGSLTRelationalPreparedAssertionV1 *prepared,
+    char *error_buf,
+    size_t error_buf_size) {
+    return ppproof_gslt_relational_prepared_assertion_v1_build_with_workspace(
+        schema, actuals, actual_len, NULL, prepared,
+        error_buf, error_buf_size);
 }

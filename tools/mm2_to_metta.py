@@ -182,8 +182,8 @@ def mork_encoded_key(term: SExpr) -> bytes:
 _MORK_VARIABLE_REFERENCE = re.compile(r"_([1-9][0-9]*)\Z")
 
 
-def alpha_normalize_mork_surface(term: SExpr) -> SExpr:
-    """Canonicalize variables in one MM2 surface expression.
+def alpha_normalize_mork_syntax(term: SExpr) -> SExpr:
+    """Canonicalize variables in one MM2 syntax expression.
 
     Authored MM2 commonly spells a variable introduction ``$name`` and later
     occurrences with the same name.  MORK's printer instead emits ``$`` for
@@ -225,7 +225,7 @@ def alpha_normalize_mork_surface(term: SExpr) -> SExpr:
 def canonical_mm2_support(forms: Sequence[SExpr]) -> tuple[bytes, ...]:
     """Return the order-free, alpha-invariant support observation of forms."""
     return tuple(sorted({
-        unparse(alpha_normalize_mork_surface(form)).encode("utf-8")
+        unparse(alpha_normalize_mork_syntax(form)).encode("utf-8")
         for form in forms
     }))
 

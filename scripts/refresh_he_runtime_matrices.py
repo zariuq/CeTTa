@@ -5,7 +5,7 @@ This script keeps the CeTTa parity bookkeeping honest by:
 1. extracting the HE grounded/user-callable runtime heads from the current
    hyperon-experimental Rust stdlib sources;
 2. recomputing CeTTa layer detection from eval.c / grounded.c / stdlib.metta;
-3. folding in the focused runtime_surface_audit coverage statuses when present;
+3. folding in the focused runtime_syntax_audit coverage statuses when present;
 4. rewriting both specs/he_runtime_impl_matrix.json and
    specs/he_runtime_3layer_matrix.json.
 
@@ -31,7 +31,7 @@ SPECS = ROOT / "specs"
 
 IMPL_MATRIX_PATH = SPECS / "he_runtime_impl_matrix.json"
 THREELAYER_MATRIX_PATH = SPECS / "he_runtime_3layer_matrix.json"
-AUDIT_PATH = SPECS / "runtime_surface_audit.json"
+AUDIT_PATH = SPECS / "runtime_syntax_audit.json"
 
 EVAL_PATH = ROOT / "src" / "eval.c"
 GROUNDED_PATH = ROOT / "src" / "grounded.c"

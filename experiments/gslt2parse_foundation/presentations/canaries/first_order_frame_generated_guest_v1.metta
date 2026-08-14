@@ -28,11 +28,12 @@
     (operator source-state-proof-decoder-number 1)
     (operator source-state-proof-machine 2)
     (operator source-state-proof-unknown-policy 1)
+    (operator source-state-proof-header-hypothesis-policy 1)
     (operator source-state-table 4)
     (operator state-byte-literal-v1 1)
     (operator state-check-proof-normal-v1 4)
     (operator state-literal-v1 1)
-    (operator state-proof-decoder-v1 11)
+    (operator state-proof-decoder-v1 13)
     (operator state-proof-kinds-v1 6)
     (operator state-proof-tables-v1 9)
     (operator state-stack-proof-machine-v1 3)
@@ -89,6 +90,14 @@
     (rule generated-guest-literal-04
       (head (source-state-literal guest-k04-v1))
       (body))
+    (rule generated-guest-save-placement
+      (head (source-state-literal state-proof-save-repeatable-v1))
+      (body))
+    (rule generated-guest-header-policy
+      (head
+        (source-state-proof-header-hypothesis-policy
+          state-proof-header-any-active-v1))
+      (body))
 
     (rule generated-guest-decoder-number-00
       (head (source-state-proof-decoder-number 0))
@@ -144,7 +153,9 @@
               (state-byte-literal-v1 63))
             (state-proof-decoder-v1
               65 84 85 89 90 63 20 0 5 1
-              state-proof-unknown-push-claim-v1))))
+              state-proof-unknown-push-claim-v1
+              state-proof-save-repeatable-v1
+              state-proof-header-any-active-v1))))
       (body))
 
     (rule generated-guest-operation

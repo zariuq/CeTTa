@@ -1,4 +1,4 @@
-; Query-surface companions for provenance-sensitive PLN use.
+; Query-interface companions for provenance-sensitive PLN use.
 ; These helpers do not replace PLN.Query. They expose:
 ;   - full matching candidate audits,
 ;   - all top-confidence ties,

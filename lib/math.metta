@@ -1,4 +1,4 @@
-; CeTTa math helper surface.
+; CeTTa math helper interface.
 ; Canonical namespace is math:, and dotted math. is accepted as reader sugar
 ; and optional display sugar in CLI result output.
 ; Intentionally conservative: this layer only exposes math operations that are
@@ -68,26 +68,26 @@
   (@return "Remainder from floor division"))
 
 (@doc math:pow
-  (@desc "Namespaced wrapper over CeTTa's grounded pow-math surface.")
+  (@desc "Namespaced wrapper over CeTTa's grounded pow-math interface.")
   (@params (
     (@param "Base")
     (@param "Exponent")))
   (@return "Exponentiation result as a Number"))
 
 (@doc math:sqrt
-  (@desc "Namespaced wrapper over CeTTa's grounded sqrt-math surface.")
+  (@desc "Namespaced wrapper over CeTTa's grounded sqrt-math interface.")
   (@params (
     (@param "Input real number")))
   (@return "Square root as a Number when the input is within the real domain"))
 
 (@doc math:abs
-  (@desc "Namespaced wrapper over CeTTa's grounded abs-math surface.")
+  (@desc "Namespaced wrapper over CeTTa's grounded abs-math interface.")
   (@params (
     (@param "Input number")))
   (@return "Absolute value"))
 
 (@doc math:log
-  (@desc "Namespaced wrapper over CeTTa's grounded log-math surface.")
+  (@desc "Namespaced wrapper over CeTTa's grounded log-math interface.")
   (@params (
     (@param "Logarithm base")
     (@param "Input value")))

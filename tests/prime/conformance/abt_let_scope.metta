@@ -1,5 +1,5 @@
 ; Prime lowers each let pattern to stable positional slots and its body to
-; unary ABT scopes.  Across sequential relational forms, reusing one surface
+; unary ABT scopes.  Across sequential relational forms, reusing one syntax
 ; variable refines the established binding instead of introducing a shadow.
 
 (= (prime-let-duplicate) (pair a b))

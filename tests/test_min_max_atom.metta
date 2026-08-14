@@ -1,5 +1,5 @@
 ; HE-backed grounded atom ops: min-atom and max-atom compute over expression
-; contents and keep float output surface.
+; contents and keep float output syntax.
 
 !(min-atom (5 4 5.5))
 (= (nums) (5 4 5.5))

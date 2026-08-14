@@ -1,4 +1,4 @@
-; HE-backed capture surface:
+; HE-backed capture syntax:
 ; - direct application evaluates in the captured context
 ; - bare capture is a first-class callable value
 ; - let-bound capture keeps its argument lazy

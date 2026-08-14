@@ -53,7 +53,7 @@ cetta_ensure_build_mode() {
     local root="$1"
     local bin="$2"
     local required="$3"
-    local reason="${4:-requested benchmark surface}"
+    local reason="${4:-requested benchmark syntax}"
     local required_canon=""
     local mode=""
     required_canon="$(cetta_canonical_build_mode "$required")"

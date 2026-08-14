@@ -39,7 +39,7 @@ bool cetta_foreign_call(CettaForeignRuntime *rt,
                         Atom **error_out);
 
 /* Exact occurrence-valued dispatch for the symbolic Python convenience
- * surfaces.  `true` means the head was recognized; `results` then contains
+ * syntax forms.  `true` means the head was recognized; `results` then contains
  * zero, one, or many occurrences, including an Error occurrence on an
  * operational failure.  No Empty sentinel or tuple encoding is introduced. */
 bool cetta_foreign_dispatch_native_results(CettaForeignRuntime *rt,

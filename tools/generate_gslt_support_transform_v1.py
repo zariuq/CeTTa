@@ -18,7 +18,7 @@ class ProfileError(RuntimeError):
 
 @dataclass(frozen=True)
 class OperatorDecl:
-    surface_symbol: str
+    syntax_symbol: str
     argument_count: int
     operator_id: str
 
@@ -69,7 +69,7 @@ def operator_entries(
     value: tuple[sx.SExpr, ...], context: str, expected_tag: str
 ) -> tuple[OperatorDecl, ...]:
     entries: list[OperatorDecl] = []
-    surfaces: set[str] = set()
+    syntaxes: set[str] = set()
     for offset, raw in enumerate(value, start=1):
         item = field(raw, f"{context} item {offset}")
         if len(item) != 4:
@@ -78,17 +78,17 @@ def operator_entries(
             raise ProfileError(
                 f"{context} item {offset}: expected {expected_tag}"
             )
-        surface = symbol(item[1], f"{context} item {offset} surface")
-        if surface in surfaces:
-            raise ProfileError(f"{context}: duplicate surface {surface}")
+        syntax = symbol(item[1], f"{context} item {offset} syntax")
+        if syntax in syntaxes:
+            raise ProfileError(f"{context}: duplicate syntax {syntax}")
         argument_count = item[2]
         if not isinstance(argument_count, int) or not 0 <= argument_count <= 63:
             raise ProfileError(
                 f"{context} item {offset}: argument count must be 0..63"
             )
         operator_id = symbol(item[3], f"{context} item {offset} operator")
-        surfaces.add(surface)
-        entries.append(OperatorDecl(surface, argument_count, operator_id))
+        syntaxes.add(syntax)
+        entries.append(OperatorDecl(syntax, argument_count, operator_id))
     if not entries:
         raise ProfileError(f"{context}: expected at least one declaration")
     return tuple(entries)
@@ -181,7 +181,7 @@ def parse_profile(path: Path) -> Profile:
     def compat(tag: str) -> tuple[str, str]:
         value = fields[tag]
         if len(value) != 3:
-            raise ProfileError(f"{tag}: expected surface and operator")
+            raise ProfileError(f"{tag}: expected syntax and operator")
         return symbol(value[1], tag), symbol(value[2], tag)
 
     compat_input_symbol, compat_input_operator = compat("input-compat")
@@ -256,7 +256,7 @@ def physical_profile_packet(
             raise ProfileError("physical profile has too many declarations")
         packet.extend(struct.pack(">H", len(declarations)))
         for declaration in declarations:
-            add_text(declaration.surface_symbol)
+            add_text(declaration.syntax_symbol)
             packet.append(declaration.argument_count)
             add_text(declaration.operator_id)
 
@@ -279,7 +279,7 @@ def c_declarations(
 ) -> str:
     entries = "\n".join(
         "    {"
-        f".surface_symbol = {c_string(declaration.surface_symbol)}, "
+        f".syntax_symbol = {c_string(declaration.syntax_symbol)}, "
         f".argument_count = {declaration.argument_count}u, "
         f".operator_id = {c_string(declaration.operator_id)}"
         "},"

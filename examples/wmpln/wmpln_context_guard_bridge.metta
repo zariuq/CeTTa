@@ -4,7 +4,7 @@
 ;
 ; A context-complete, side-checked rule may extract evidence from the active
 ; state.  A context-missing or side-missing rule is blocked rather than
-; manufacturing a surface value.
+; manufacturing a syntax value.
 
 (= (guarded-extract $hasContext $evidence)
    (if $hasContext $evidence Blocked))

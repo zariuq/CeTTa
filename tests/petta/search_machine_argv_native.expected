@@ -1,0 +1,31 @@
+is (), should (). ✅ 
+is (), should (). ✅ 
+is (), should (). ✅ 
+'tests/petta/search_machine_argv_native.metta'
+0
+7
+3.5
+1.0e+05
+26
+''
+ 7
+5
+abc
+-26
+5
+15
+1000
+1r2
+'.5'
+255
+97
+1r2
+1.0Inf
+-1.0Inf
+1.5NaN
+1.5NaN
+'+1.5NaN'
+'1r0'
+true
+true
+true

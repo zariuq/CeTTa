@@ -13,8 +13,16 @@
     (operator TTCons 2)
     (operator TUnion 1)
     (operator TArrow 3)
+    (operator MEffect 1)
     (operator TBrand 2)
     (operator TList 1)
+    (operator ECollapse 1)
+    (operator EFoldall 3)
+    (operator EOnce 1)
+    (operator ExpressionEffect 2)
+    (operator KnownExpressionEffect 2)
+    (operator ExpressionResultType 2)
+    (operator KnownExpressionResultType 2)
     (operator VCons 2)
     (operator FS 1)
     (operator DCons 2)
@@ -27,6 +35,11 @@
     (operator VApp 2)
     (operator Consistent 3)
     (operator ConsistentList 2)
+    (operator ConsistentAllActual 2)
+    (operator DynamicMayFlowTo 1)
+    (operator ConcreteNewtypeRepresentation 1)
+    (operator ModeFits 2)
+    (operator MayOverlap 3)
     (operator UnionMember 2)
     (operator ValueHasType 2)
     (operator GuardPasses 2)
@@ -45,6 +58,7 @@
     (operator BoundnessRefuted 2)
     (operator EnvDeclared 2)
     (operator EnvDeclaredList 2)
+    (operator EnvNonNewtype 1)
   )
   (equations)
   (rewrites
@@ -55,11 +69,47 @@
     (rule consistent-dyn-left
       (nik-rule-frame-v1
         (native-projection native-type-compatibility)
-        (role calculus)) (head (Consistent TUndefined ?t EdgeDynamic)) (body))
+        (role calculus)) (head (Consistent TUndefined ?t EdgeDynamic)) (body (DynamicMayFlowTo ?t)))
     (rule consistent-dyn-right
       (nik-rule-frame-v1
         (native-projection native-type-compatibility)
         (role calculus)) (head (Consistent ?t TUndefined EdgeDynamic)) (body))
+    (rule dynamic-may-flow-num
+      (nik-rule-frame-v1
+        (native-projection native-type-compatibility)
+        (role calculus)) (head (DynamicMayFlowTo TNum)) (body))
+    (rule dynamic-may-flow-str
+      (nik-rule-frame-v1
+        (native-projection native-type-compatibility)
+        (role calculus)) (head (DynamicMayFlowTo TStr)) (body))
+    (rule dynamic-may-flow-bool
+      (nik-rule-frame-v1
+        (native-projection native-type-compatibility)
+        (role calculus)) (head (DynamicMayFlowTo TBool)) (body))
+    (rule dynamic-may-flow-union
+      (nik-rule-frame-v1
+        (native-projection native-type-compatibility)
+        (role calculus)) (head (DynamicMayFlowTo (TUnion ?ms))) (body))
+    (rule dynamic-may-flow-arrow
+      (nik-rule-frame-v1
+        (native-projection native-type-compatibility)
+        (role calculus)) (head (DynamicMayFlowTo (TArrow ?mode ?as ?r))) (body))
+    (rule dynamic-may-flow-brand
+      (nik-rule-frame-v1
+        (native-projection native-type-compatibility)
+        (role calculus)) (head (DynamicMayFlowTo (TBrand ?n ?r))) (body))
+    (rule dynamic-may-flow-list
+      (nik-rule-frame-v1
+        (native-projection native-type-compatibility)
+        (role calculus)) (head (DynamicMayFlowTo (TList ?t))) (body))
+    (rule dynamic-may-flow-ctor
+      (nik-rule-frame-v1
+        (native-projection native-type-compatibility)
+        (role calculus)) (head (DynamicMayFlowTo (TCtor ?n ?k))) (body))
+    (rule dynamic-may-flow-nominal
+      (nik-rule-frame-v1
+        (native-projection native-type-compatibility)
+        (role calculus)) (head (DynamicMayFlowTo (TNominal ?n))) (body (EnvNonNewtype ?n)))
     (rule consistent-union-right
       (nik-rule-frame-v1
         (native-projection native-type-compatibility)
@@ -67,15 +117,173 @@
     (rule consistent-union-left
       (nik-rule-frame-v1
         (native-projection native-type-compatibility)
-        (role calculus)) (head (Consistent (TUnion ?ms) ?b EdgeStructural)) (body (UnionMember ?m ?ms) (Consistent ?m ?b ?e)))
+        (role calculus)) (head (Consistent (TUnion ?ms) ?b EdgeStructural)) (body (ConsistentAllActual ?ms ?b)))
+    (rule consistent-all-actual-nil
+      (nik-rule-frame-v1
+        (native-projection native-type-compatibility)
+        (role calculus)) (head (ConsistentAllActual TTNil ?b)) (body))
+    (rule consistent-all-actual-cons
+      (nik-rule-frame-v1
+        (native-projection native-type-compatibility)
+        (role calculus)) (head (ConsistentAllActual (TTCons ?m ?ms) ?b)) (body (Consistent ?m ?b ?e) (ConsistentAllActual ?ms ?b)))
+    (rule consistent-alias-left
+      (nik-rule-frame-v1
+        (native-projection native-type-compatibility)
+        (role calculus)) (head (Consistent (TNominal ?n) ?b EdgeStructural)) (body (EnvDeclared ?n (TAlias ?r)) (Consistent ?r ?b ?e)))
+    (rule consistent-alias-right
+      (nik-rule-frame-v1
+        (native-projection native-type-compatibility)
+        (role calculus)) (head (Consistent ?a (TNominal ?n) EdgeStructural)) (body (EnvDeclared ?n (TAlias ?r)) (Consistent ?a ?r ?e)))
+    (rule concrete-newtype-representation-num
+      (nik-rule-frame-v1
+        (native-projection native-type-compatibility)
+        (role calculus)) (head (ConcreteNewtypeRepresentation TNum)) (body))
+    (rule concrete-newtype-representation-str
+      (nik-rule-frame-v1
+        (native-projection native-type-compatibility)
+        (role calculus)) (head (ConcreteNewtypeRepresentation TStr)) (body))
+    (rule concrete-newtype-representation-bool
+      (nik-rule-frame-v1
+        (native-projection native-type-compatibility)
+        (role calculus)) (head (ConcreteNewtypeRepresentation TBool)) (body))
+    (rule concrete-newtype-representation-union
+      (nik-rule-frame-v1
+        (native-projection native-type-compatibility)
+        (role calculus)) (head (ConcreteNewtypeRepresentation (TUnion ?ms))) (body))
+    (rule concrete-newtype-representation-arrow
+      (nik-rule-frame-v1
+        (native-projection native-type-compatibility)
+        (role calculus)) (head (ConcreteNewtypeRepresentation (TArrow ?mode ?as ?r))) (body))
+    (rule concrete-newtype-representation-brand
+      (nik-rule-frame-v1
+        (native-projection native-type-compatibility)
+        (role calculus)) (head (ConcreteNewtypeRepresentation (TBrand ?n ?r))) (body))
+    (rule concrete-newtype-representation-list
+      (nik-rule-frame-v1
+        (native-projection native-type-compatibility)
+        (role calculus)) (head (ConcreteNewtypeRepresentation (TList ?t))) (body))
+    (rule concrete-newtype-representation-ctor
+      (nik-rule-frame-v1
+        (native-projection native-type-compatibility)
+        (role calculus)) (head (ConcreteNewtypeRepresentation (TCtor ?n ?k))) (body))
+    (rule concrete-newtype-representation-nominal
+      (nik-rule-frame-v1
+        (native-projection native-type-compatibility)
+        (role calculus)) (head (ConcreteNewtypeRepresentation (TNominal ?n))) (body))
+    (rule consistent-newtype-representation
+      (nik-rule-frame-v1
+        (native-projection native-type-compatibility)
+        (role calculus)) (head (Consistent (TNominal ?n) ?b EdgeStructural)) (body (EnvDeclared ?n (TNewtype ?r)) (ConcreteNewtypeRepresentation ?r) (Consistent ?r ?b ?e)))
+    (rule overlap-alias-left
+      (nik-rule-frame-v1
+        (native-projection native-explicit-ascription)
+        (role calculus)) (head (MayOverlap (TNominal ?n) ?b OverlapAliasLeft)) (body (EnvDeclared ?n (TAlias ?r)) (MayOverlap ?r ?b ?e)))
+    (rule overlap-alias-right
+      (nik-rule-frame-v1
+        (native-projection native-explicit-ascription)
+        (role calculus)) (head (MayOverlap ?a (TNominal ?n) OverlapAliasRight)) (body (EnvDeclared ?n (TAlias ?r)) (MayOverlap ?a ?r ?e)))
+    (rule overlap-union-left
+      (nik-rule-frame-v1
+        (native-projection native-explicit-ascription)
+        (role calculus)) (head (MayOverlap (TUnion ?ms) ?b OverlapUnionLeft)) (body (UnionMember ?m ?ms) (MayOverlap ?m ?b ?e)))
+    (rule overlap-union-right
+      (nik-rule-frame-v1
+        (native-projection native-explicit-ascription)
+        (role calculus)) (head (MayOverlap ?a (TUnion ?ms) OverlapUnionRight)) (body (UnionMember ?m ?ms) (MayOverlap ?a ?m ?e)))
+    (rule overlap-forward
+      (nik-rule-frame-v1
+        (native-projection native-explicit-ascription)
+        (role calculus)) (head (MayOverlap ?a ?b OverlapForward)) (body (Consistent ?a ?b ?e)))
+    (rule overlap-reverse
+      (nik-rule-frame-v1
+        (native-projection native-explicit-ascription)
+        (role calculus)) (head (MayOverlap ?a ?b OverlapReverse)) (body (Consistent ?b ?a ?e)))
     (rule consistent-brand
       (nik-rule-frame-v1
         (native-projection native-type-compatibility)
         (role calculus)) (head (Consistent (TBrand ?n ?r) (TBrand ?n ?s) EdgeExact)) (body))
+    (rule mode-fits-plain
+      (nik-rule-frame-v1
+        (native-projection native-arrow-mode-order)
+        (role calculus)) (head (ModeFits ?actual MPlain)) (body))
+    (rule mode-fits-nondet
+      (nik-rule-frame-v1
+        (native-projection native-arrow-mode-order)
+        (role calculus)) (head (ModeFits ?actual MNondet)) (body))
+    (rule mode-fits-effect
+      (nik-rule-frame-v1
+        (native-projection native-arrow-mode-order)
+        (role calculus)) (head (ModeFits ?actual (MEffect ?effect))) (body))
+    (rule mode-fits-det-det
+      (nik-rule-frame-v1
+        (native-projection native-arrow-mode-order)
+        (role calculus)) (head (ModeFits MDet MDet)) (body))
+    (rule mode-fits-det-semidet
+      (nik-rule-frame-v1
+        (native-projection native-arrow-mode-order)
+        (role calculus)) (head (ModeFits MDet MSemidet)) (body))
+    (rule mode-fits-semidet-semidet
+      (nik-rule-frame-v1
+        (native-projection native-arrow-mode-order)
+        (role calculus)) (head (ModeFits MSemidet MSemidet)) (body))
+    (rule expression-effect-foldall
+      (nik-rule-frame-v1
+        (native-projection native-result-cardinality-grading)
+        (role calculus))
+      (head (ExpressionEffect
+        (EFoldall ?accumulator ?generator ?initial) MDet)) (body))
+    (rule expression-effect-collapse
+      (nik-rule-frame-v1
+        (native-projection native-result-cardinality-grading)
+        (role calculus))
+      (head (ExpressionEffect (ECollapse ?expression) MDet)) (body))
+    (rule expression-effect-known
+      (nik-rule-frame-v1
+        (native-projection native-result-cardinality-grading)
+        (role calculus))
+      (head (ExpressionEffect ?expression ?mode))
+      (body (KnownExpressionEffect ?expression ?mode)))
+    (rule expression-result-type-known
+      (nik-rule-frame-v1
+        (native-projection native-collection-result-typing)
+        (role calculus))
+      (head (ExpressionResultType ?expression ?type))
+      (body (KnownExpressionResultType ?expression ?type)))
+    (rule expression-result-type-collapse
+      (nik-rule-frame-v1
+        (native-projection native-collection-result-typing)
+        (role calculus))
+      (head (ExpressionResultType (ECollapse ?expression) (TList ?type)))
+      (body (ExpressionResultType ?expression ?type)))
+    (rule expression-result-type-foldall-empty
+      (nik-rule-frame-v1
+        (native-projection native-collection-result-typing)
+        (role calculus))
+      (head (ExpressionResultType
+        (EFoldall ?accumulator EEmpty ?initial) ?type))
+      (body (ExpressionResultType ?initial ?type)))
+    (rule expression-effect-once-det
+      (nik-rule-frame-v1
+        (native-projection native-result-cardinality-grading)
+        (role calculus))
+      (head (ExpressionEffect (EOnce ?expression) MDet))
+      (body (ExpressionEffect ?expression MDet)))
+    (rule expression-effect-once-semidet
+      (nik-rule-frame-v1
+        (native-projection native-result-cardinality-grading)
+        (role calculus))
+      (head (ExpressionEffect (EOnce ?expression) MSemidet))
+      (body (ExpressionEffect ?expression MSemidet)))
+    (rule expression-effect-once-nondet
+      (nik-rule-frame-v1
+        (native-projection native-result-cardinality-grading)
+        (role calculus))
+      (head (ExpressionEffect (EOnce ?expression) MSemidet))
+      (body (ExpressionEffect ?expression MNondet)))
     (rule consistent-arrow
       (nik-rule-frame-v1
         (native-projection native-type-compatibility)
-        (role calculus)) (head (Consistent (TArrow ?m ?as ?r) (TArrow ?m ?bs ?s) EdgeStructural)) (body (ConsistentList ?as ?bs) (Consistent ?r ?s ?e)))
+        (role calculus)) (head (Consistent (TArrow ?actual-mode ?as ?r) (TArrow ?required-mode ?bs ?s) EdgeStructural)) (body (ModeFits ?actual-mode ?required-mode) (ConsistentList ?as ?bs) (Consistent ?r ?s ?e)))
     (rule consistent-list-nil
       (nik-rule-frame-v1
         (native-projection native-type-compatibility)

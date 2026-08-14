@@ -12,7 +12,7 @@
     },
     {
       "id": "pure_control",
-      "note": "Effect-free control or rewrite surface.",
+      "note": "Effect-free control or rewrite interface.",
       "memo_policy": "stable_cache_safe",
       "scheduler_policy": "reorder_safe"
     },
@@ -60,7 +60,7 @@
     },
     {
       "id": "metadata_query",
-      "note": "Documentation or metadata lookup surface.",
+      "note": "Documentation or metadata lookup interface.",
       "memo_policy": "stable_cache_safe",
       "scheduler_policy": "reorder_safe"
     },

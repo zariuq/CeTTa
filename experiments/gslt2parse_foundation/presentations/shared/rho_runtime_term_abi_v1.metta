@@ -5,7 +5,7 @@
     (operator rho-runtime-abi 1)
     (operator rho-runtime-shape 5)
     (operator rho-runtime-collection-policy 4)
-    (operator rho-runtime-projection-surface 10)
+    (operator rho-runtime-projection-syntax 10)
     (operator rho-runtime-projection-rule 3)
     (operator rho-projection-cons 2)
     (operator rho-projection-fixed 1)
@@ -38,9 +38,9 @@
       (head (rho-runtime-collection-policy PPar hash-bag rho:par rho:nil))
       (body))
 
-    (rule rho-runtime-projection-surface-rho
+    (rule rho-runtime-projection-syntax-rho
       (head
-        (rho-runtime-projection-surface
+        (rho-runtime-projection-syntax
           rho node document pair cons nil cp
           (rho-projection-cons identifier
             (rho-projection-cons variable
@@ -50,9 +50,9 @@
             (rho-projection-cons bare-name rho-projection-nil))
           binder))
       (body))
-    (rule rho-runtime-projection-surface-mrho
+    (rule rho-runtime-projection-syntax-mrho
       (head
-        (rho-runtime-projection-surface
+        (rho-runtime-projection-syntax
           mrho node document pair cons nil cp
           (rho-projection-cons variable
             (rho-projection-cons binder rho-projection-nil))

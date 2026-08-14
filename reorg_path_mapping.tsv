@@ -26,7 +26,7 @@ tests/test_tilepuzzle.metta	benchmarks/test_tilepuzzle.metta
 tests/test_tilepuzzle.expected	benchmarks/test_tilepuzzle.expected
 tests/test_tilepuzzle_pathmap.metta	benchmarks/test_tilepuzzle_pathmap.metta
 perf/baseline_records.tsv	benchmarks/baseline_records.tsv
-perf/mork_bridge_ffi_surface_catalog.tsv	benchmarks/mork_bridge_ffi_surface_catalog.tsv
+perf/mork_bridge_ffi_interface_catalog.tsv	benchmarks/mork_bridge_ffi_interface_catalog.tsv
 perf/paper_claims_9237afd.tsv	benchmarks/paper_claims_9237afd.tsv
 perf/paper_claims_reconciliation_9237afd.tsv	benchmarks/paper_claims_reconciliation_9237afd.tsv
 perf/space_interop_case_catalog.tsv	benchmarks/space_interop_case_catalog.tsv

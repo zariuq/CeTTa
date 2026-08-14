@@ -1,4 +1,4 @@
-;; Row 11 — BC/FC frontier step for the HE-family execution surface.
+;; Row 11 — BC/FC frontier step for the HE-family execution syntax.
 ;;
 ;; This is deliberately one proof-frontier expansion.  It is not recursive
 ;; closure disguised as a chainer.  The sibling .zero.metta file has identical

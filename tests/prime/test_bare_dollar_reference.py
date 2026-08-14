@@ -8,13 +8,13 @@ from bare_dollar_reference import (
     Dollar,
     Elaborator,
     FreeVariable,
-    LetSurface,
+    LetSyntax,
     Named,
     NoMatch,
-    PairSurface,
+    PairSyntax,
     PairValue,
     Policy,
-    QuoteSurface,
+    QuoteSyntax,
     Quoted,
     Reference,
     StructuralNamed,
@@ -59,7 +59,7 @@ def main() -> int:
     unequal = PairValue(Symbol("a"), Symbol("b"))
     multi_ignore: dict[str, bool] = {}
     for policy in Policy:
-        pattern = Elaborator(policy).term(PairSurface(Dollar(), Dollar()))
+        pattern = Elaborator(policy).term(PairSyntax(Dollar(), Dollar()))
         multi_ignore[policy.value] = match(pattern, unequal, {})
     require(multi_ignore == {
         "literal": False,
@@ -70,7 +70,7 @@ def main() -> int:
     checks += 4
 
     reference = Reference("workspace")
-    bind_then_use = LetSurface(Dollar(), Constant(reference), Dollar())
+    bind_then_use = LetSyntax(Dollar(), Constant(reference), Dollar())
     binder_results = {
         policy.value: elaborate_and_evaluate(policy, bind_then_use)
         for policy in Policy
@@ -85,8 +85,8 @@ def main() -> int:
             "root-binder contender did not pass the grounded reference")
     checks += 4
 
-    structured_pattern = LetSurface(
-        PairSurface(Dollar(), Dollar()),
+    structured_pattern = LetSyntax(
+        PairSyntax(Dollar(), Dollar()),
         Constant(unequal),
         Constant(Symbol("accepted")),
     )
@@ -106,11 +106,11 @@ def main() -> int:
     )
     checks += 3
 
-    nested = LetSurface(
+    nested = LetSyntax(
         Dollar(),
         Constant(Symbol("outer")),
-        PairSurface(
-            LetSurface(Dollar(), Constant(Symbol("inner")), Dollar()),
+        PairSyntax(
+            LetSyntax(Dollar(), Constant(Symbol("inner")), Dollar()),
             Dollar(),
         ),
     )
@@ -121,8 +121,8 @@ def main() -> int:
     )
     checks += 1
 
-    quoted = LetSurface(
-        Dollar(), Constant(reference), QuoteSurface(Dollar())
+    quoted = LetSyntax(
+        Dollar(), Constant(reference), QuoteSyntax(Dollar())
     )
     require(
         elaborate_and_evaluate(Policy.ROOT_BINDER, quoted) == Quoted(Dollar()),
@@ -131,7 +131,7 @@ def main() -> int:
     checks += 1
 
     for variable in (Named("space"), StructuralNamed(("space", "workspace"))):
-        named_program = LetSurface(variable, Constant(reference), variable)
+        named_program = LetSyntax(variable, Constant(reference), variable)
         for policy in Policy:
             require(
                 elaborate_and_evaluate(policy, named_program) == reference,
@@ -139,8 +139,8 @@ def main() -> int:
             )
             checks += 1
 
-    repeated_named = LetSurface(
-        PairSurface(Named("x"), Named("x")),
+    repeated_named = LetSyntax(
+        PairSyntax(Named("x"), Named("x")),
         Constant(unequal),
         Constant(Symbol("impossible")),
     )

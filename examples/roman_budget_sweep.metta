@@ -21,7 +21,7 @@
 ;
 ; What this shows: how quickly the engine reaches "complete" vs "merged"
 ; answers.  Useful for setting realistic budgets in production inference.
-; Also surfaces whether the engine is monotonic (does growing budget only
+; Also reveals whether the engine is monotonic (does growing budget only
 ; add information?) or whether it can OVERSHOOT (revising the revised
 ; answer with already-counted evidence and degrading confidence?).
 ;

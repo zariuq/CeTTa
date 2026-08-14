@@ -52,6 +52,12 @@
           MetamathProofV1 assertion-disjoint-v1
           mm-state-assertion-disjoint-variable))
       (body))
+    (rule mm-proof-relational-table-active-apartness
+      (head
+        (source-proof-sequence-relational-table-role
+          MetamathProofV1 active-apartness-v1
+          mm-state-disjoint-variable))
+      (body))
     (rule mm-proof-relational-table-label-kind
       (head
         (source-proof-sequence-relational-table-role

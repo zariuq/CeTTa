@@ -57,7 +57,7 @@ Raw MM2 itself is still one live space with facts and execs together. The
 program/context split here is therefore an implementation boundary, not MM2's
 intended long-term public model.
 
-Primary CeTTa bridge surface:
+Primary CeTTa bridge syntax:
 
 - cetta_mork_bridge_space_add_expr_bytes()/remove_expr_bytes() accept one
   stable bridge expr-byte span directly and bypass UTF-8 parsing on the

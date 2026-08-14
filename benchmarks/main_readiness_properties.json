@@ -93,7 +93,7 @@
     },
     {
       "id": "space.transfer.in-memory",
-      "implementation_path": "space-surface/materialized-copy",
+      "implementation_path": "space-syntax/materialized-copy",
       "source_anchors": [
         {"path": "src/space.c", "symbol": "void space_add(Space *s, Atom *atom) {", "expected_occurrences": 1},
         {"path": "src/library.c", "symbol": "static Atom *cetta_library_dispatch_mork(", "expected_occurrences": 1},

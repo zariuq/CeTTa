@@ -1,4 +1,4 @@
-; Scalar relations shared by the native strict-rho and cost-rho surfaces.
+; Scalar relations shared by the native strict-rho and cost-rho syntaxes.
 ; Input is decoded to Unicode scalars. Identifiers deliberately remain ASCII,
 ; matching the native reader, while comment bodies may contain any scalar.
 (gslt-presentation-v1 CeTTaRhoScalarClassesV1

@@ -16,8 +16,9 @@
  *
  * Constraint: every op is inert outside dependent-telescope profiles, so HE and
  * he-compat default typing behavior is untouched.
- * Constraint: verdicts are three-valued (accept / reject / unknown); unknown
- * propagates and is never conflated with reject or with a proven-empty type set.
+ * Constraint: checks are four-valued (established / refuted / undetermined /
+ * incomplete).  Undetermined and resource-incomplete both propagate and are
+ * never conflated with refutation or with a proven-empty type set.
  */
 #ifndef CETTA_HE_TYPING_H
 #define CETTA_HE_TYPING_H
@@ -41,7 +42,7 @@ bool he_typing_is_op(const char *name) __attribute__((weak));
 bool he_typing_is_op_id(SymbolId id) __attribute__((weak));
 
 /* True when arg_index of the named typing op is a DATA argument that must
- * reach the op unevaluated.  Lives beside the op table so the surface and its
+ * reach the op unevaluated.  Lives beside the op table so the syntax and its
  * argument policy stay in one place.  Weak for the same standalone-binary
  * reason as above. */
 bool he_typing_op_data_arg(const char *name, uint32_t arg_index)

@@ -4,7 +4,7 @@
 #include "atom.h"
 #include "term_universe.h"
 
-/* Lower raw MM2 surface forms into inert internal IR before ordinary HE
+/* Lower raw MM2 syntax forms into inert internal IR before ordinary HE
    evaluation sees them. The lowering happens in-place on the parsed top-level
    atom array; returned atoms live in the provided arena. */
 void cetta_mm2_lower_atoms(Arena *a, Atom **atoms, int n);
@@ -12,19 +12,19 @@ void cetta_mm2_lower_atoms(Arena *a, Atom **atoms, int n);
 /* MM2 program rules are the atoms that belong in the executable program lane. */
 bool cetta_mm2_atom_is_exec_rule(Atom *atom);
 
-/* MM2 files are raw surface syntax, not HE scripts. */
+/* MM2 files are raw syntax syntax, not HE scripts. */
 bool cetta_mm2_atoms_have_top_level_eval(Atom **atoms, int n);
 
-/* Raise one raw or lowered MM2 atom back to executable MM2 surface syntax.
+/* Raise one raw or lowered MM2 atom back to executable MM2 syntax syntax.
    This is the inverse bridge used by the MORK runtime seam: lowered IR and
-   already-surface MM2 terms both round-trip through one honest serializer. */
+   already-syntax MM2 terms both round-trip through one honest serializer. */
 Atom *cetta_mm2_raise_atom(Arena *a, Atom *atom);
 
-/* Render one raw or lowered MM2 atom as surface MM2 S-expression text. */
-char *cetta_mm2_atom_to_surface_string(Arena *a, Atom *atom);
+/* Render one raw or lowered MM2 atom as syntax MM2 S-expression text. */
+char *cetta_mm2_atom_to_syntax_string(Arena *a, Atom *atom);
 
 /* Encode one raw or lowered MM2 atom as stable MORK bridge expr bytes.
-   This keeps the CeTTa<->MORK mutation boundary below UTF-8 surface text while
+   This keeps the CeTTa<->MORK mutation boundary below UTF-8 syntax text while
    preserving the same raised/MM2-visible term shape as the text path.
 
    Object-binder ABTs cross this boundary only after scope admission in closed
@@ -117,11 +117,11 @@ bool cetta_mm2_bridge_expr_packet_to_atom(Arena *a,
 Atom *cetta_mm2_alpha_canonicalize_atom(Arena *a, Atom *atom,
                                         const char **out_error);
 
-/* Project one atom to MM2's observable surface representation. Variables are
+/* Project one atom to MM2's observable syntax representation. Variables are
    alpha-canonicalized and f64 tokens use the shortest round-tripping spelling
    selected by Rust's Debug contract. The latter is part of MORK's pure-sink
    behavior, not CeTTa's language-independent grounded-value printer. */
-Atom *cetta_mm2_canonical_surface_atom(Arena *a, Atom *atom,
+Atom *cetta_mm2_canonical_syntax_atom(Arena *a, Atom *atom,
                                        const char **out_error);
 
 #endif /* CETTA_MM2_LOWER_H */

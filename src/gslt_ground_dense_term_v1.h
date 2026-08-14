@@ -72,6 +72,16 @@ uint32_t cetta_gslt_ground_dense_term_node_count_v1(
     const CettaGsltGroundDenseTermProgramV1 *program);
 bool cetta_gslt_ground_dense_term_is_linear_v1(
     const CettaGsltGroundDenseTermProgramV1 *program);
+/*
+ * Return the left-to-right depth-first first-occurrence coordinate of one
+ * source variable.  This is the append order used by the generic structural
+ * matcher when pattern variables are fresh; repeated occurrences reuse their
+ * first binding.  Missing variables fail closed.
+ */
+bool cetta_gslt_ground_dense_term_first_binding_offset_v1(
+    const CettaGsltGroundDenseTermProgramV1 *program,
+    VarId source_variable,
+    uint32_t *offset_out);
 
 void cetta_gslt_ground_dense_workspace_init_v1(
     CettaGsltGroundDenseWorkspaceV1 *workspace);

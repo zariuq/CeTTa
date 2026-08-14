@@ -274,7 +274,7 @@
 (= (finite-table-total $neither $witnessOnly $featureOnly $both)
    (+ $neither (+ $witnessOnly (+ $featureOnly $both))))
 
-; ASSOC/log-ratio source surface for the same finite table:
+; ASSOC/log-ratio source syntax for the same finite table:
 ;   strength = joint / featureSupport
 ;   prior    = witnessSupport / total
 ; so the log-ratio argument strength/prior has integer numerator
@@ -1327,7 +1327,7 @@
   (formed-concept-table-ve-witness-eq-feature-witness 1 1)
   False)
 ; The ASSOC ratio readout is not a substitute for the subset theorem: this
-; witness-only table still has a 3/2 ratio surface while pair-subset is false.
+; witness-only table still has a 3/2 ratio syntax while pair-subset is false.
 !(assertEqual
   (formed-concept-table-assoc-ratio-numer 1 1 0 1)
   3)

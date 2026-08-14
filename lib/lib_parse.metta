@@ -411,7 +411,7 @@
    (if (not (all-distinct (prod-labels $g))) (Rejected dup-label)
    (if (not (all-distinct (var-labels $g)))  (Rejected dup-var)
    (if (not (holes-ok $g (decl-nts $g)))     (Rejected undeclared-hole)
-   (if (not (all-distinct (prod-keys $g)))   (Rejected dup-surface)
+   (if (not (all-distinct (prod-keys $g)))   (Rejected dup-key)
        Admitted))))))
 ; NOTE: Admitted does NOT assert unambiguity — that is a separate obligation (see lp-parse/Ambiguous).
 

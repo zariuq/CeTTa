@@ -1,4 +1,4 @@
-; Generic runtime surface for compiled compositional GSLT language definitions.
+; Generic runtime interface for compiled compositional GSLT language definitions.
 ; A manifest selects only generated artifacts and their digest lock.  All
 ; language-specific syntax and transformations remain data below langdef/.
 
@@ -44,7 +44,7 @@
        (((return $result) (return $result))
         ($result (return $result))))))
 
-; The native syntax-import surface is retained as an explicit diagnostic seam.
+; The native syntax-import interface is retained as an explicit diagnostic seam.
 ; Language users normally call langdef:import-file, whose generated entry
 ; transforms syntax before anything is published.
 (= (langdef:import-syntax-file $handle $path)

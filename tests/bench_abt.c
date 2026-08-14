@@ -125,8 +125,8 @@ int main(void) {
     Atom *printable = atom_expr3(
         &inputs, atom_symbol(&inputs, "Lam"), atom_symbol(&inputs, "A"),
         canonical);
-    Atom *surface = abt_print(&signature, &inputs, printable);
-    assert(surface);
+    Atom *syntax = abt_print(&signature, &inputs, printable);
+    assert(syntax);
     Atom *symbol_name = atom_symbol(&inputs, "x");
     Atom *tagged_name = atom_expr2(
         &inputs, atom_symbol(&inputs, "Free"), atom_string(&inputs, "x"));
@@ -165,7 +165,7 @@ int main(void) {
     for (uint32_t i = 0; i < ABT_BENCH_REPEATS; i++) {
         ArenaMark mark = arena_mark(&scratch);
         uint64_t start = monotonic_ns();
-        Atom *result = abt_parse(&signature, &scratch, surface);
+        Atom *result = abt_parse(&signature, &scratch, syntax);
         parse_ns[i] = monotonic_ns() - start;
         assert(result && abt_alpha_eq(result, printable));
         arena_reset(&scratch, mark);

@@ -1,4 +1,4 @@
-; Builtin state surface with the change-state! result discarded.
+; Builtin state syntax with the change-state! result discarded.
 ;
 ; Positive example:
 ; - sequential state update followed by observation of get-state.

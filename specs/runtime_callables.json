@@ -6,25 +6,25 @@
   "profiles": [
     {
       "id": "he-compat",
-      "note": "HE-compatible public/runtime surface."
+      "note": "HE-compatible public/runtime interface."
     },
     {
       "id": "he-extended",
-      "note": "HE-compatible surface plus explicitly labeled CeTTa extensions and clearer primary APIs."
+      "note": "HE-compatible interface plus explicitly labeled CeTTa extensions and clearer primary APIs."
     }
   ],
-  "surface_classifications": {
-    "keep_he_public_surface": "Confirmed HE public/runtime surface that CeTTa should preserve.",
+  "builtin_classifications": {
+    "keep_he_public_builtin": "Confirmed HE public/runtime interface that CeTTa should preserve.",
     "compat_alias": "Compatibility-only alias kept for HE-facing code while a cleaner CeTTa primary API exists.",
     "clean_primary_extension": "CeTTa-preferred API that intentionally improves on HE's backend-facing naming or layering.",
-    "extension_only": "Useful CeTTa-only surface kept outside the HE-core compatibility claim."
+    "extension_only": "Useful CeTTa-only interface kept outside the HE-core compatibility claim."
   },
   "field_notes": {
-    "surface_layer": "Where the observable surface is implemented: evaluator, grounded_runtime, stdlib, or extension_runtime.",
-    "profile_visibility": "Profiles in which the surface should be reported as available.",
+    "interface_layer": "Where the observable interface is implemented: evaluator, grounded_runtime, stdlib, or extension_runtime.",
+    "profile_visibility": "Profiles in which the interface should be reported as available.",
     "spec_source": "Primary source of truth for the intended behavior.",
     "oracle_status": "How firmly the current behavior is backed by HE docs/CLI/spec evidence.",
-    "compile_lowering_policy": "Current compiler-lowering guardrail for this surface."
+    "compile_lowering_policy": "Current compiler-lowering guardrail for this interface."
   },
   "bundles": [
     {
@@ -307,13 +307,13 @@
           "compiletime_callable": false,
           "callable_kind": "native_special",
           "effect_class": "pure_control",
-          "surface_layer": "evaluator",
-          "surface_classification": "keep_he_public_surface",
+          "interface_layer": "evaluator",
+          "builtin_classification": "keep_he_public_builtin",
           "profile_visibility": ["he-compat", "he-extended"],
-          "spec_source": "he_stdlib_public_surface",
+          "spec_source": "he_stdlib_public_builtin",
           "oracle_status": "he_doc_and_cli_backed",
           "compile_lowering_policy": "no_direct_lowering",
-          "note": "Preserves syntax without evaluating its argument. CeTTa keeps the public HE surface but implements it directly in the evaluator instead of copying HE's backend trick."
+          "note": "Preserves syntax without evaluating its argument. CeTTa keeps the public HE interface but implements it directly in the evaluator instead of copying HE's backend trick."
         },
         {
           "name": "unquote",
@@ -322,10 +322,10 @@
           "compiletime_callable": false,
           "callable_kind": "stdlib_equation",
           "effect_class": "pure_control",
-          "surface_layer": "stdlib",
-          "surface_classification": "keep_he_public_surface",
+          "interface_layer": "stdlib",
+          "builtin_classification": "keep_he_public_builtin",
           "profile_visibility": ["he-compat", "he-extended"],
-          "spec_source": "he_stdlib_public_surface",
+          "spec_source": "he_stdlib_public_builtin",
           "oracle_status": "he_doc_and_cli_backed",
           "compile_lowering_policy": "no_direct_lowering",
           "note": "Public HE stdlib wrapper layered on quote."
@@ -409,8 +409,8 @@
           "compiletime_callable": false,
           "callable_kind": "native_special",
           "effect_class": "dynamic_eval",
-          "surface_layer": "grounded_runtime",
-          "surface_classification": "compat_alias",
+          "interface_layer": "grounded_runtime",
+          "builtin_classification": "compat_alias",
           "alias_of": "foldl-atom-in-space",
           "profile_visibility": ["he-compat", "he-extended"],
           "spec_source": "he_runtime_impl",
@@ -425,8 +425,8 @@
           "compiletime_callable": false,
           "callable_kind": "native_special",
           "effect_class": "dynamic_eval",
-          "surface_layer": "extension_runtime",
-          "surface_classification": "clean_primary_extension",
+          "interface_layer": "extension_runtime",
+          "builtin_classification": "clean_primary_extension",
           "profile_visibility": ["he-extended"],
           "spec_source": "cetta_backend_choice_audit",
           "oracle_status": "cetta_extension_equivalence_backed",
@@ -440,13 +440,13 @@
           "compiletime_callable": false,
           "callable_kind": "stdlib_equation",
           "effect_class": "dynamic_eval",
-          "surface_layer": "stdlib",
-          "surface_classification": "keep_he_public_surface",
+          "interface_layer": "stdlib",
+          "builtin_classification": "keep_he_public_builtin",
           "profile_visibility": ["he-compat", "he-extended"],
-          "spec_source": "he_stdlib_public_surface",
+          "spec_source": "he_stdlib_public_builtin",
           "oracle_status": "he_doc_and_cli_backed",
           "compile_lowering_policy": "no_direct_lowering",
-          "note": "Public HE stdlib fold surface implemented in CeTTa via foldl-atom-in-space."
+          "note": "Public HE stdlib fold interface implemented in CeTTa via foldl-atom-in-space."
         },
         {
           "name": "count-atoms",
@@ -455,13 +455,13 @@
           "compiletime_callable": false,
           "callable_kind": "native_effect",
           "effect_class": "space_read",
-          "surface_layer": "extension_runtime",
-          "surface_classification": "extension_only",
+          "interface_layer": "extension_runtime",
+          "builtin_classification": "extension_only",
           "profile_visibility": ["he-extended"],
-          "spec_source": "cetta_extension_surface",
+          "spec_source": "cetta_extension_interface",
           "oracle_status": "not_in_he_stack",
           "compile_lowering_policy": "extension_only_no_he_lowering",
-          "note": "CeTTa extension: counts stored atoms without materializing them. Useful for large-space benchmarks; not part of the HE-compatible core surface."
+          "note": "CeTTa extension: counts stored atoms without materializing them. Useful for large-space benchmarks; not part of the HE-compatible core interface."
         },
         {
           "name": "new-state",
@@ -497,13 +497,13 @@
           "compiletime_callable": false,
           "callable_kind": "dynamic_import",
           "effect_class": "import_effect",
-          "surface_layer": "evaluator",
-          "surface_classification": "keep_he_public_surface",
+          "interface_layer": "evaluator",
+          "builtin_classification": "keep_he_public_builtin",
           "profile_visibility": ["he-compat", "he-extended"],
           "spec_source": "he_runtime_impl",
           "oracle_status": "he_cli_backed",
           "compile_lowering_policy": "never_lower",
-          "note": "Registers an HE-style module root. CeTTa keeps the public surface but stores typed mounts instead of backend-parallel arrays."
+          "note": "Registers an HE-style module root. CeTTa keeps the public interface but stores typed mounts instead of backend-parallel arrays."
         },
         {
           "name": "git-module!",
@@ -512,10 +512,10 @@
           "compiletime_callable": false,
           "callable_kind": "dynamic_import",
           "effect_class": "import_effect",
-          "surface_layer": "evaluator",
-          "surface_classification": "keep_he_public_surface",
+          "interface_layer": "evaluator",
+          "builtin_classification": "keep_he_public_builtin",
           "profile_visibility": ["he-compat", "he-extended"],
-          "spec_source": "he_stdlib_public_surface",
+          "spec_source": "he_stdlib_public_builtin",
           "oracle_status": "he_doc_and_partial_cli_backed",
           "compile_lowering_policy": "never_lower",
           "note": "Provider-backed git remote registration. CeTTa preserves the HE public name while routing it through the typed git-remote provider seam, using the system git CLI to clone an explicit local cache entry and then soft-refresh it on later use, matching HE's TryFetchLatest-style cache behavior on the validated local file:// fixture. The backend exposes explicit locator-kind and revision-policy descriptors so future branch/tag/catalog providers can extend the seam cleanly. Remaining divergence is documented as a deliberate steelmanned design choice rather than compatibility debt: clone-failure diagnostics are CLI-shaped rather than libgit2-shaped, and CeTTa does not copy HE's broader catalog/environment coupling."
@@ -527,8 +527,8 @@
           "compiletime_callable": false,
           "callable_kind": "dynamic_import",
           "effect_class": "import_effect",
-          "surface_layer": "evaluator",
-          "surface_classification": "keep_he_public_surface",
+          "interface_layer": "evaluator",
+          "builtin_classification": "keep_he_public_builtin",
           "profile_visibility": ["he-compat", "he-extended"],
           "spec_source": "he_runtime_impl",
           "oracle_status": "he_cli_backed",
@@ -542,13 +542,13 @@
           "compiletime_callable": false,
           "callable_kind": "dynamic_import",
           "effect_class": "import_effect",
-          "surface_layer": "evaluator",
-          "surface_classification": "keep_he_public_surface",
+          "interface_layer": "evaluator",
+          "builtin_classification": "keep_he_public_builtin",
           "profile_visibility": ["he-compat", "he-extended"],
-          "spec_source": "he_stdlib_public_surface",
+          "spec_source": "he_stdlib_public_builtin",
           "oracle_status": "he_cli_with_doc_mismatch_note",
           "compile_lowering_policy": "never_lower",
-          "note": "Includes a module into &self through the same typed module-spec/import-plan path as import!. CeTTa follows the documented Unit-returning surface."
+          "note": "Includes a module into &self through the same typed module-spec/import-plan path as import!. CeTTa follows the documented Unit-returning interface."
         },
         {
           "name": "mod-space!",
@@ -557,8 +557,8 @@
           "compiletime_callable": false,
           "callable_kind": "dynamic_import",
           "effect_class": "import_effect",
-          "surface_layer": "evaluator",
-          "surface_classification": "keep_he_public_surface",
+          "interface_layer": "evaluator",
+          "builtin_classification": "keep_he_public_builtin",
           "profile_visibility": ["he-compat", "he-extended"],
           "spec_source": "he_runtime_impl",
           "oracle_status": "he_doc_and_cli_backed",
@@ -572,10 +572,10 @@
           "compiletime_callable": false,
           "callable_kind": "native_effect",
           "effect_class": "metadata_query",
-          "surface_layer": "evaluator",
-          "surface_classification": "keep_he_public_surface",
+          "interface_layer": "evaluator",
+          "builtin_classification": "keep_he_public_builtin",
           "profile_visibility": ["he-compat", "he-extended"],
-          "spec_source": "he_stdlib_public_surface",
+          "spec_source": "he_stdlib_public_builtin",
           "oracle_status": "he_doc_and_cli_backed",
           "compile_lowering_policy": "never_lower",
           "note": "Prints the currently loaded module inventory and returns Unit."
@@ -587,8 +587,8 @@
           "compiletime_callable": false,
           "callable_kind": "native_effect",
           "effect_class": "metadata_query",
-          "surface_layer": "evaluator",
-          "surface_classification": "clean_primary_extension",
+          "interface_layer": "evaluator",
+          "builtin_classification": "clean_primary_extension",
           "profile_visibility": ["he-extended"],
           "spec_source": "cetta_extension",
           "oracle_status": "local_spec_backed",
@@ -602,7 +602,7 @@
           "compiletime_callable": false,
           "callable_kind": "native_effect",
           "effect_class": "runtime_toggle",
-          "note": "Adjusts session-local evaluator settings. CeTTa covers the documented directives (`type-check auto`, `interpreter bare-minimal`, `max-stack-depth` with non-negative validation) plus HE's observed generic symbol-key setting surface, and now routes them through a typed evaluator-options seam suitable for future dialect/DSL settings. Remaining divergence is documented as a deliberate steelmanned design choice rather than compatibility debt: exact host-runtime StackOverflow surfacing under low limits is treated as an engineering policy question."
+          "note": "Adjusts session-local evaluator settings. CeTTa covers the documented directives (`type-check auto`, `interpreter bare-minimal`, `max-stack-depth` with non-negative validation) plus HE's observed generic symbol-key setting interface, and now routes them through a typed evaluator-options seam suitable for future dialect/DSL settings. Remaining divergence is documented as a deliberate steelmanned design choice rather than compatibility debt: exact host-runtime StackOverflow surfacing under low limits is treated as an engineering policy question."
         },
         {
           "name": "nop",
@@ -620,13 +620,13 @@
           "compiletime_callable": false,
           "callable_kind": "native_special",
           "effect_class": "dynamic_eval",
-          "surface_layer": "grounded_runtime",
-          "surface_classification": "keep_he_public_surface",
+          "interface_layer": "grounded_runtime",
+          "builtin_classification": "keep_he_public_builtin",
           "profile_visibility": ["he-compat", "he-extended"],
           "spec_source": "he_runtime_impl",
           "oracle_status": "he_cli_backed",
           "compile_lowering_policy": "no_direct_lowering",
-          "note": "Context-sensitive captured callable value. CeTTa preserves the HE surface while using a first-class closure representation internally."
+          "note": "Context-sensitive captured callable value. CeTTa preserves the HE interface while using a first-class closure representation internally."
         },
         {
           "name": "sealed",
@@ -635,10 +635,10 @@
           "compiletime_callable": false,
           "callable_kind": "native_special",
           "effect_class": "pure_control",
-          "surface_layer": "grounded_runtime",
-          "surface_classification": "keep_he_public_surface",
+          "interface_layer": "grounded_runtime",
+          "builtin_classification": "keep_he_public_builtin",
           "profile_visibility": ["he-compat", "he-extended"],
-          "spec_source": "he_stdlib_public_surface",
+          "spec_source": "he_stdlib_public_builtin",
           "oracle_status": "he_doc_and_cli_backed",
           "compile_lowering_policy": "no_direct_lowering",
           "note": "Pure alpha-freshening helper used by HE stdlib metaprogramming."
@@ -659,7 +659,7 @@
           "compiletime_callable": false,
           "callable_kind": "native_metadata",
           "effect_class": "metadata_query",
-          "note": "Documentation lookup surface implemented through the stdlib metadata helpers; CeTTa intentionally keeps the working surface even though current HE still has oracle-side docs bugs."
+          "note": "Documentation lookup interface implemented through the stdlib metadata helpers; CeTTa intentionally keeps the working interface even though current HE still has oracle-side docs bugs."
         },
         {
           "name": "assert",

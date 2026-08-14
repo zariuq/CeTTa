@@ -155,8 +155,8 @@ static Atom *rho_cost_stack_cons(Arena *arena, Atom *sig, Atom *rest) {
     return rho_binary(arena, "rho:cost:stack-cons", sig, rest);
 }
 
-static Atom *rho_cost_purse(Arena *arena, Atom *surface, Atom *stack) {
-    return rho_binary(arena, "rho:cost:purse", surface, stack);
+static Atom *rho_cost_purse(Arena *arena, Atom *location, Atom *stack) {
+    return rho_binary(arena, "rho:cost:purse", location, stack);
 }
 
 static bool rho_expr_head_named(Atom *atom, const char *name) {
@@ -877,11 +877,11 @@ static Atom *rc_parse_term_atom(RhoParser *parser) {
         return rho_cost_nil(parser->arena);
     }
     if (rp_consume_keyword(parser, "purse")) {
-        Atom *surface = rc_parse_name(parser);
+        Atom *location = rc_parse_name(parser);
         Atom *stack;
-        if (!surface) return NULL;
+        if (!location) return NULL;
         if (!rp_consume_char(parser, '{')) {
-            rp_error(parser, "expected '{' after purse surface");
+            rp_error(parser, "expected '{' after purse location");
             return NULL;
         }
         stack = rc_parse_stack(parser);
@@ -890,7 +890,7 @@ static Atom *rc_parse_term_atom(RhoParser *parser) {
             rp_error(parser, "expected '}' after purse stack");
             return NULL;
         }
-        return rho_cost_purse(parser->arena, surface, stack);
+        return rho_cost_purse(parser->arena, location, stack);
     }
     if (rp_consume_char(parser, '*')) {
         Atom *name = rc_parse_name(parser);
@@ -1413,11 +1413,11 @@ static void rho_print_ctx_free(RhoPrintCtx *ctx) {
 }
 
 static void rho_print_mrho_atom(RhoPrintCtx *ctx, Atom *atom, FILE *out);
-static void rho_print_surface_signature(RhoPrintCtx *ctx, Atom *atom, FILE *out);
-static void rho_print_surface_name(RhoPrintCtx *ctx, Atom *atom, FILE *out);
-static void rho_print_surface_proc(RhoPrintCtx *ctx, Atom *atom, FILE *out);
-static void rho_print_surface_stack(RhoPrintCtx *ctx, Atom *atom, FILE *out);
-static void rho_print_surface_term(RhoPrintCtx *ctx, Atom *atom, FILE *out);
+static void rho_print_syntax_signature(RhoPrintCtx *ctx, Atom *atom, FILE *out);
+static void rho_print_syntax_name(RhoPrintCtx *ctx, Atom *atom, FILE *out);
+static void rho_print_syntax_proc(RhoPrintCtx *ctx, Atom *atom, FILE *out);
+static void rho_print_syntax_stack(RhoPrintCtx *ctx, Atom *atom, FILE *out);
+static void rho_print_syntax_term(RhoPrintCtx *ctx, Atom *atom, FILE *out);
 
 static bool rho_cost_stack_empty_atom(Atom *atom) {
     return atom_is_symbol(atom, "rho:cost:stack-empty");
@@ -1431,7 +1431,7 @@ static bool rho_cost_term_atom(Atom *atom) {
     return rhocalc_is_cost_term_atom(atom);
 }
 
-static void rho_print_surface_signature(RhoPrintCtx *ctx, Atom *atom, FILE *out) {
+static void rho_print_syntax_signature(RhoPrintCtx *ctx, Atom *atom, FILE *out) {
     (void)ctx;
     if (atom && atom->kind == ATOM_SYMBOL) {
         atom_print(atom, out);
@@ -1440,7 +1440,7 @@ static void rho_print_surface_signature(RhoPrintCtx *ctx, Atom *atom, FILE *out)
     if (rho_expr_head_named(atom, "rho:cost:sig-mul")) {
         for (uint32_t i = 1; i < atom->expr.len; i++) {
             if (i > 1) fputs(" * ", out);
-            rho_print_surface_signature(ctx, atom->expr.elems[i], out);
+            rho_print_syntax_signature(ctx, atom->expr.elems[i], out);
         }
         return;
     }
@@ -1506,7 +1506,7 @@ static void rho_print_mrho_atom(RhoPrintCtx *ctx, Atom *atom, FILE *out) {
     rho_print_mrho_expr(ctx, atom, out);
 }
 
-static void rho_print_surface_name(RhoPrintCtx *ctx, Atom *atom, FILE *out) {
+static void rho_print_syntax_name(RhoPrintCtx *ctx, Atom *atom, FILE *out) {
     if (atom->kind == ATOM_VAR) {
         rho_print_mrho_var(ctx, atom, out);
         return;
@@ -1518,9 +1518,9 @@ static void rho_print_surface_name(RhoPrintCtx *ctx, Atom *atom, FILE *out) {
         inner.binding_cap = 0;
         fputs("@{", out);
         if (rho_cost_term_atom(atom->expr.elems[1])) {
-            rho_print_surface_term(&inner, atom->expr.elems[1], out);
+            rho_print_syntax_term(&inner, atom->expr.elems[1], out);
         } else {
-            rho_print_surface_proc(&inner, atom->expr.elems[1], out);
+            rho_print_syntax_proc(&inner, atom->expr.elems[1], out);
         }
         ctx->fresh_counter = inner.fresh_counter;
         if (inner.failed) ctx->failed = true;
@@ -1530,62 +1530,62 @@ static void rho_print_surface_name(RhoPrintCtx *ctx, Atom *atom, FILE *out) {
         return;
     }
     if (rho_cost_signature_atom(atom)) {
-        rho_print_surface_signature(ctx, atom, out);
+        rho_print_syntax_signature(ctx, atom, out);
         return;
     }
     rho_print_mrho_atom(ctx, atom, out);
 }
 
-static void rho_print_surface_term(RhoPrintCtx *ctx, Atom *atom, FILE *out) {
+static void rho_print_syntax_term(RhoPrintCtx *ctx, Atom *atom, FILE *out) {
     if (atom_is_symbol(atom, "rho:cost:nil")) {
         fputs("()", out);
         return;
     }
     if (rho_expr_head_named(atom, "rho:drop") && atom->expr.len == 2) {
         fputc('*', out);
-        rho_print_surface_name(ctx, atom->expr.elems[1], out);
+        rho_print_syntax_name(ctx, atom->expr.elems[1], out);
         return;
     }
     if (rho_expr_head_named(atom, "rho:cost:purse") && atom->expr.len == 3) {
         fputs("purse ", out);
-        rho_print_surface_name(ctx, atom->expr.elems[1], out);
+        rho_print_syntax_name(ctx, atom->expr.elems[1], out);
         fputs(" {", out);
-        rho_print_surface_stack(ctx, atom->expr.elems[2], out);
+        rho_print_syntax_stack(ctx, atom->expr.elems[2], out);
         fputc('}', out);
         return;
     }
     if (rho_expr_head_named(atom, "rho:cost:signed") && atom->expr.len == 3) {
         fputc('{', out);
-        rho_print_surface_proc(ctx, atom->expr.elems[1], out);
+        rho_print_syntax_proc(ctx, atom->expr.elems[1], out);
         fputc('}', out);
-        rho_print_surface_signature(ctx, atom->expr.elems[2], out);
+        rho_print_syntax_signature(ctx, atom->expr.elems[2], out);
         return;
     }
     if (rho_expr_head_named(atom, "rho:cost:par")) {
         for (uint32_t i = 1; i < atom->expr.len; i++) {
             if (i > 1) fputs(" | ", out);
-            rho_print_surface_term(ctx, atom->expr.elems[i], out);
+            rho_print_syntax_term(ctx, atom->expr.elems[i], out);
         }
         return;
     }
     rho_print_mrho_atom(ctx, atom, out);
 }
 
-static void rho_print_surface_stack(RhoPrintCtx *ctx, Atom *atom, FILE *out) {
+static void rho_print_syntax_stack(RhoPrintCtx *ctx, Atom *atom, FILE *out) {
     if (rho_cost_stack_empty_atom(atom)) {
         fputs("()", out);
         return;
     }
     if (rho_expr_head_named(atom, "rho:cost:stack-cons") && atom->expr.len == 3) {
-        rho_print_surface_signature(ctx, atom->expr.elems[1], out);
+        rho_print_syntax_signature(ctx, atom->expr.elems[1], out);
         fputs(" : ", out);
-        rho_print_surface_stack(ctx, atom->expr.elems[2], out);
+        rho_print_syntax_stack(ctx, atom->expr.elems[2], out);
         return;
     }
     rho_print_mrho_atom(ctx, atom, out);
 }
 
-static void rho_print_surface_proc(RhoPrintCtx *ctx, Atom *atom, FILE *out) {
+static void rho_print_syntax_proc(RhoPrintCtx *ctx, Atom *atom, FILE *out) {
     if (atom_is_symbol(atom, "rho:nil")) {
         fputs("0", out);
         return;
@@ -1594,18 +1594,18 @@ static void rho_print_surface_proc(RhoPrintCtx *ctx, Atom *atom, FILE *out) {
         fputc('{', out);
         for (uint32_t i = 1; i < atom->expr.len; i++) {
             if (i > 1) fputs(" | ", out);
-            rho_print_surface_proc(ctx, atom->expr.elems[i], out);
+            rho_print_syntax_proc(ctx, atom->expr.elems[i], out);
         }
         fputc('}', out);
         return;
     }
     if (rho_expr_head_named(atom, "rho:send") && atom->expr.len == 3) {
-        rho_print_surface_name(ctx, atom->expr.elems[1], out);
+        rho_print_syntax_name(ctx, atom->expr.elems[1], out);
         fputs("!(", out);
         if (rho_cost_term_atom(atom->expr.elems[2])) {
-            rho_print_surface_term(ctx, atom->expr.elems[2], out);
+            rho_print_syntax_term(ctx, atom->expr.elems[2], out);
         } else {
-            rho_print_surface_proc(ctx, atom->expr.elems[2], out);
+            rho_print_syntax_proc(ctx, atom->expr.elems[2], out);
         }
         fputs(")", out);
         return;
@@ -1621,12 +1621,12 @@ static void rho_print_surface_proc(RhoPrintCtx *ctx, Atom *atom, FILE *out) {
             fputs(binder_name, out);
         }
         fputs(" <- ", out);
-        rho_print_surface_name(ctx, atom->expr.elems[1], out);
+        rho_print_syntax_name(ctx, atom->expr.elems[1], out);
         fputs(") {", out);
         if (rho_cost_term_atom(atom->expr.elems[3])) {
-            rho_print_surface_term(ctx, atom->expr.elems[3], out);
+            rho_print_syntax_term(ctx, atom->expr.elems[3], out);
         } else {
-            rho_print_surface_proc(ctx, atom->expr.elems[3], out);
+            rho_print_syntax_proc(ctx, atom->expr.elems[3], out);
         }
         rho_print_binding_pop(ctx, mark);
         fputc('}', out);
@@ -1634,7 +1634,7 @@ static void rho_print_surface_proc(RhoPrintCtx *ctx, Atom *atom, FILE *out) {
     }
     if (rho_expr_head_named(atom, "rho:drop") && atom->expr.len == 2) {
         fputc('*', out);
-        rho_print_surface_name(ctx, atom->expr.elems[1], out);
+        rho_print_syntax_name(ctx, atom->expr.elems[1], out);
         return;
     }
     rho_print_mrho_atom(ctx, atom, out);
@@ -1652,9 +1652,9 @@ void rhocalc_print_atom_syntax(Atom *atom, CettaSyntaxId syntax, FILE *out) {
     }
     if (syntax == CETTA_SYNTAX_RHO) {
         if (rho_cost_term_atom(atom)) {
-            rho_print_surface_term(&ctx, atom, out);
+            rho_print_syntax_term(&ctx, atom, out);
         } else {
-            rho_print_surface_proc(&ctx, atom, out);
+            rho_print_syntax_proc(&ctx, atom, out);
         }
     } else {
         rho_print_mrho_atom(&ctx, atom, out);

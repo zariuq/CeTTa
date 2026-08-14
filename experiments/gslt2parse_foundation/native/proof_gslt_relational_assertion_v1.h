@@ -12,8 +12,9 @@ typedef enum {
     PPPROOF_GSLT_RELATIONAL_TABLE_V1_ORDERED_HYPOTHESIS = 4,
     PPPROOF_GSLT_RELATIONAL_TABLE_V1_MANDATORY_VARIABLE = 5,
     PPPROOF_GSLT_RELATIONAL_TABLE_V1_ASSERTION_DISJOINT = 6,
-    PPPROOF_GSLT_RELATIONAL_TABLE_V1_LABEL_KIND = 7,
-    PPPROOF_GSLT_RELATIONAL_TABLE_V1_LEN = 8
+    PPPROOF_GSLT_RELATIONAL_TABLE_V1_ACTIVE_APARTNESS = 7,
+    PPPROOF_GSLT_RELATIONAL_TABLE_V1_LABEL_KIND = 8,
+    PPPROOF_GSLT_RELATIONAL_TABLE_V1_LEN = 9
 } PPProofGSLTRelationalTableRoleV1;
 
 typedef enum {
@@ -30,9 +31,43 @@ typedef struct {
 } PPProofGSLTRelationalSelectorV1;
 
 typedef struct {
+    PPProofGSLTRelationalTableRoleV1 role;
+    uint32_t table_id;
+} PPProofGSLTRelationalTableBindingV1;
+
+typedef enum {
+    PPPROOF_GSLT_RELATIONAL_PRESENCE_V1_INVALID = 0,
+    PPPROOF_GSLT_RELATIONAL_PRESENCE_V1_REQUIRED = 1,
+    PPPROOF_GSLT_RELATIONAL_PRESENCE_V1_OPTIONAL_EMPTY = 2
+} PPProofGSLTRelationalPresenceV1;
+
+typedef struct {
+    const char *machine;
+    PPRelationalStateLiteralV1 unknown_token;
+    uint8_t terminal_low;
+    uint8_t terminal_high;
+    uint8_t continuation_low;
+    uint8_t continuation_high;
+    uint8_t save_byte;
+    uint8_t unknown_byte;
+    uint32_t terminal_radix;
+    uint32_t terminal_digit_bias;
+    uint32_t continuation_radix;
+    uint32_t continuation_digit_bias;
+    PPRelationalStackProofV1UnknownPolicy unknown_policy;
+    CettaGsltIndexedSavePlacementV1 save_placement;
+    CettaGsltHeaderHypothesisPolicyV1 header_hypothesis_policy;
+} PPProofGSLTRelationalExecutionDescriptorV1;
+
+typedef struct {
     PPProofGSLTNameV1 owner;
     PPProofGSLTNameV1 base;
-    uint32_t tables[PPPROOF_GSLT_RELATIONAL_TABLE_V1_LEN];
+    const PPProofGSLTRelationalTableBindingV1 *table_bindings;
+    uint32_t table_binding_len;
+    uint32_t resolved_table_ids[PPPROOF_GSLT_RELATIONAL_TABLE_V1_LEN];
+    PPProofGSLTRelationalPresenceV1
+        table_presence[PPPROOF_GSLT_RELATIONAL_TABLE_V1_LEN];
+    PPProofGSLTRelationalExecutionDescriptorV1 execution;
     PPProofGSLTRelationalSelectorV1
         selectors[PPPROOF_GSLT_RELATIONAL_SELECTOR_V1_LEN];
     char proof_plan_digest[65];

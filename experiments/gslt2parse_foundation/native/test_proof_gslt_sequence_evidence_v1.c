@@ -255,6 +255,36 @@ static void check_evidence_producer(
               receipt.checked_node_len == producer.node_len &&
               receipt.rooted,
           "generic article checker accepts produced instantiation evidence");
+    {
+        PPProofGSLTSequenceEvidenceWorkspaceStatsV1 before = {0};
+        PPProofGSLTSequenceEvidenceWorkspaceStatsV1 after = {0};
+        bool measured =
+            ppproof_gslt_sequence_evidence_producer_v1_workspace_stats(
+                &producer, &before);
+
+        result = ppproof_gslt_sequence_evidence_producer_v1_begin(
+            &producer, abi, 0u, NULL, error, sizeof(error));
+        if (result == PPPROOF_GSLT_ARTICLE_V1_OK)
+            result = ppproof_gslt_sequence_evidence_producer_v1_instantiate(
+                &producer,
+                (PPProofGSLTTokenSequenceV1){template_tokens, 3u},
+                environment, &sources, &result_sequence, &proof,
+                error, sizeof(error));
+        if (result == PPPROOF_GSLT_ARTICLE_V1_OK)
+            result = check_produced_article(
+                plan, context, 7u, &producer, proof, &receipt,
+                error, sizeof(error));
+        measured = measured &&
+            ppproof_gslt_sequence_evidence_producer_v1_workspace_stats(
+                &producer, &after);
+        check(result == PPPROOF_GSLT_ARTICLE_V1_OK && measured &&
+                  receipt.rooted &&
+                  after.arena_reserved_bytes == before.arena_reserved_bytes &&
+                  after.node_capacity == before.node_capacity &&
+                  after.canonical_cache_capacity ==
+                      before.canonical_cache_capacity,
+              "reset producer reuses its private region without changing evidence");
+    }
     ppproof_gslt_sequence_evidence_producer_v1_free(&producer);
 
     left_tokens[0] = &tokens[3];

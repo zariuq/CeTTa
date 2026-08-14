@@ -108,7 +108,7 @@ Conjunction query:
 3. Build the Cartesian product of candidate choices.
 4. Locally unify the chosen factors.
 5. Multiply factor counts for each successful witness tuple.
-6. Sum multiplicities for identical projected bindings if the surface consumer
+6. Sum multiplicities for identical projected bindings if the interface consumer
    wants bag projection rather than witness rows.
 
 Single Source of Truth Mapping

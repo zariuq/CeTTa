@@ -1,5 +1,5 @@
 ; he-prime DTT tutorial ladder.
-; These are small tutorial-style exercises translated into MeTTa surface forms.
+; These are small tutorial-style exercises translated into MeTTa syntax forms.
 
 ; EXERCISE: Bool and Nat are ordinary indexed-family foundations.
 (: TutBool Type)
@@ -86,21 +86,21 @@
   (get-type (TutRead TutBob TutDoc TutAliceDocCap))
   ())
 
-; PUREKERNEL-ALIGNED EXERCISE: this surface Unit recursor mirrors the current
-; PureKernel Unit.rec iota witness without adding a runtime trace surface.
+; PUREKERNEL-ALIGNED EXERCISE: this syntax Unit recursor mirrors the current
+; PureKernel Unit.rec iota witness without adding a runtime trace syntax.
 (: TutUnit Type)
 (: TutUnitCtor TutUnit)
-(: TutUnitRecSurface (-> (: $R Type) $R TutUnit $R))
-(= (TutUnitRecSurface $R $base TutUnitCtor) $base)
+(: TutUnitRecSyntax (-> (: $R Type) $R TutUnit $R))
+(= (TutUnitRecSyntax $R $base TutUnitCtor) $base)
 
 !(assertEqual
-  (get-type (TutUnitRecSurface TutUnit TutUnitCtor TutUnitCtor))
+  (get-type (TutUnitRecSyntax TutUnit TutUnitCtor TutUnitCtor))
   TutUnit)
 !(assertEqual
-  (TutUnitRecSurface TutUnit TutUnitCtor TutUnitCtor)
+  (TutUnitRecSyntax TutUnit TutUnitCtor TutUnitCtor)
   TutUnitCtor)
 !(assertEqualToResult
-  (get-type (TutUnitRecSurface TutUnit TutTrue TutUnitCtor))
+  (get-type (TutUnitRecSyntax TutUnit TutTrue TutUnitCtor))
   ())
 
 ; OPEN EXERCISE: recursors/eliminators are the next tutorial fork. The current
@@ -115,23 +115,23 @@
   (get-type TutNatRec)
   (-> (: $P (-> TutNat Type)) ($P TutZ) (: $step (-> (: $n TutNat) ($P $n) ($P (TutS $n)))) (: $n TutNat) ($P $n)))
 
-; RUNTIME SURFACE: ordinary MeTTa equations can run a non-dependent Nat
+; RUNTIME SYNTAX: ordinary MeTTa equations can run a non-dependent Nat
 ; recursor-shaped program today. This is design pressure for the real kernel
 ; recursor, not the trusted kernel primitive itself.
-(: TutNatRecSurface (-> $t (-> TutNat $t $t) TutNat $t))
+(: TutNatRecSyntax (-> $t (-> TutNat $t $t) TutNat $t))
 (: TutNatRecStepS (-> TutNat TutNat TutNat))
 (: TutBadNatRecStep (-> TutBool TutNat TutNat))
 (= (TutNatRecStepS $n $acc) (TutS $acc))
-(= (TutNatRecSurface $z $step TutZ) $z)
-(= (TutNatRecSurface $z $step (TutS $n))
-   ($step $n (TutNatRecSurface $z $step $n)))
+(= (TutNatRecSyntax $z $step TutZ) $z)
+(= (TutNatRecSyntax $z $step (TutS $n))
+   ($step $n (TutNatRecSyntax $z $step $n)))
 
 !(assertEqual
-  (get-type (TutNatRecSurface TutZ TutNatRecStepS (TutS TutZ)))
+  (get-type (TutNatRecSyntax TutZ TutNatRecStepS (TutS TutZ)))
   TutNat)
 !(assertEqual
-  (TutNatRecSurface TutZ TutNatRecStepS (TutS (TutS TutZ)))
+  (TutNatRecSyntax TutZ TutNatRecStepS (TutS (TutS TutZ)))
   (TutS (TutS TutZ)))
 !(assertEqualToResult
-  (get-type (TutNatRecSurface TutZ TutBadNatRecStep (TutS TutZ)))
+  (get-type (TutNatRecSyntax TutZ TutBadNatRecStep (TutS TutZ)))
   ())

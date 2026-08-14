@@ -274,7 +274,7 @@ generic_purity_gate :-
     forall(
         member(Guest, [metamath, megalodon, tptp, prime]),
         require(\+ sub_atom(Lower, _, _, _, Guest),
-                generic_native_surface_names_guest(Path, Guest))).
+                generic_native_syntax_names_guest(Path, Guest))).
 
 require(Condition, Label) :-
     ( call(Condition) -> true

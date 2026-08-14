@@ -185,14 +185,14 @@ def observe(
 def classified(
     chart: Path,
     sources: tuple[Path, ...],
-    surface: str,
+    syntax: str,
 ) -> list[tuple[sx.SExpr, ...]]:
     return relation_answers(
         chart,
         sources,
         "zerouv-classify",
         3,
-        f"(zerouv-classify request-zero {surface} ?request)",
+        f"(zerouv-classify request-zero {syntax} ?request)",
     )
 
 
@@ -248,26 +248,26 @@ def main() -> int:
         qapp(qsym("accept"), toggle, on),
     )
 
-    step_surface = qapp(qsym("!"), qapp(qsym("step"), a))
-    reach_surface = qapp(qsym("!"), qapp(qsym("reach"), fuel(2), a))
-    seek_surface = qapp(
+    step_syntax = qapp(qsym("!"), qapp(qsym("step"), a))
+    reach_syntax = qapp(qsym("!"), qapp(qsym("reach"), fuel(2), a))
+    seek_syntax = qapp(
         qsym("!"), qapp(qsym("seek"), fuel(2), c, a)
     )
-    follow_surface = qapp(
+    follow_syntax = qapp(
         qsym("!"), qapp(qsym("follow"), walk, cold, fuel(2), a)
     )
     cycle = path(off, on, off)
-    recur_surface = qapp(
+    recur_syntax = qapp(
         qsym("!"), qapp(qsym("recur"), toggle, cycle, on)
     )
-    for surface, constructor in (
-        (step_surface, "zerouv-step-request"),
-        (reach_surface, "zerouv-reach-request"),
-        (seek_surface, "zerouv-seek-request"),
-        (follow_surface, "zerouv-follow-request"),
-        (recur_surface, "zerouv-cycle-request"),
+    for syntax, constructor in (
+        (step_syntax, "zerouv-step-request"),
+        (reach_syntax, "zerouv-reach-request"),
+        (seek_syntax, "zerouv-seek-request"),
+        (follow_syntax, "zerouv-follow-request"),
+        (recur_syntax, "zerouv-cycle-request"),
     ):
-        answers = classified(chart, sources, surface)
+        answers = classified(chart, sources, syntax)
         if len(answers) != 1 or sx.render(answers[0][3]).split(" ", 1)[0] != (
             f"({constructor}"
         ):

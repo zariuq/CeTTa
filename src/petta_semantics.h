@@ -185,7 +185,7 @@ bool petta_semantics_match_cons_constraint(
 /*
  * HE stdlib equations reused by PeTTa are lowered to private value-binding
  * control heads.  This keeps their implementation-level sequencing distinct
- * from PeTTa's relational surface `let` and `chain`.
+ * from PeTTa's relational syntax `let` and `chain`.
  */
 Atom *petta_semantics_lower_shared_atom(Arena *arena, Atom *atom);
 bool petta_semantics_is_value_let(SymbolId head);

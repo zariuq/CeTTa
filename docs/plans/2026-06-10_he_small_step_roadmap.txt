@@ -24,7 +24,7 @@ retired vocabulary — internal-only where already committed):
                            EquationMatch, Eval, Chain, Let, LetStar, Case,
                            Switch, SwitchMinimal; structural: QuoteQuiescent,
                            ReturnQuiescent, EmptyQuiescent, ErrorQuiescent
-  granularity      "small-step" (user-visible surface steps)
+  granularity      "small-step" (user-visible syntax steps)
                    vs the fine mettaHE instruction machine
                    vs big-step evaluation
   Lean relation    HESmallStep, HECanSmallStep, heSmallStepSpan,
@@ -125,7 +125,7 @@ NEXT — CORRESPONDENCE, REMAINING FIVE RULES (updated 2026-06-11)
 THEN — FINE-MACHINE COLLAPSE (mettaHE)
   What: the delimited-observation theorem connecting the coarse relation
   to the fine mettaHE instruction machine (one coarse step = a fine run
-  stopping at the first observable surface rewrite).  Complements the
+  stopping at the first observable syntax rewrite).  Complements the
   absorption route: absorption certifies against the declarative spec;
   the collapse certifies against the instruction machine.
 
@@ -143,7 +143,7 @@ THEN — PER-PROFILE RULE TABLES
   table (fail-closed: a profile with no table refuses, never silently
   borrows another's rules), and step-rules can then honestly report the
   active profile's table.  A separate, properly-named introspection
-  surface for "what profile am I running in" can ride along here.
+  syntax for "what profile am I running in" can ride along here.
   Done when: profile differences are table rows, not scattered if(profile)
   branches.
 
@@ -155,7 +155,7 @@ FINALLY — EVALUATOR UNIFICATION
   hand-authored table — not generation.
   Done when: no reduction rule exists in two hand-maintained copies.
 
-STANDING FENCES (all milestones): no runtime trace/certificate surface;
+STANDING FENCES (all milestones): no runtime trace/certificate syntax;
 result bags never deduplicated for speed (support-quotient only inside
 box/diamond); claim levels never overstate (bag-tested-adequate until the
 correspondence theorem lands); unknown symbols stay inert in every

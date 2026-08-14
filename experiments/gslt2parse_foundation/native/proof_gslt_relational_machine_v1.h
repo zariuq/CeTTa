@@ -1,6 +1,7 @@
 #ifndef CETTA_GSLT2PARSE_PROOF_GSLT_RELATIONAL_MACHINE_V1_H
 #define CETTA_GSLT2PARSE_PROOF_GSLT_RELATIONAL_MACHINE_V1_H
 
+#include "gslt_repetition_admission_v1.h"
 #include "proof_gslt_relational_declaration_v1.h"
 #include "proof_storage_plan_v1.h"
 #include "relational_value_list_v1.h"
@@ -38,6 +39,13 @@ typedef enum {
     PPPROOF_GSLT_RELATIONAL_EXECUTION_V1_INDEXED_INSTRUCTION_STREAM = 2
 } PPProofGSLTRelationalExecutionV1;
 
+/* Opaque storage retained across proof calls.  The proof-call storage plan
+ * decides whether a public call may supply this workspace; the proof machine
+ * remains semantically complete when the pointer is NULL or already leased. */
+typedef struct {
+    void *impl;
+} PPProofGSLTRelationalMachineV1Workspace;
+
 typedef struct {
     uint32_t proof_step_len;
     uint32_t context_premise_len;
@@ -45,20 +53,86 @@ typedef struct {
     uint64_t decoded_byte_len;
     uint64_t decoded_instruction_len;
     uint32_t prepared_value_len;
+    uint32_t prepared_classification_len;
+    uint64_t prepared_classification_use_len;
     uint32_t saved_value_len;
+    uint32_t workspace_stack_capacity;
+    uint32_t workspace_prepared_capacity;
+    uint32_t workspace_saved_capacity;
+    uint32_t workspace_action_index_capacity;
+    uint32_t workspace_actual_capacity;
+    uint32_t workspace_required_binder_capacity;
+    uint32_t workspace_ordered_row_capacity;
+    uint32_t workspace_binder_count_capacity;
+    uint32_t workspace_required_binder_index_capacity;
+    uint32_t workspace_premise_label_index_capacity;
+    uint32_t workspace_binding_schema_capacity;
+    uint32_t workspace_premise_schema_capacity;
+    uint32_t workspace_apartness_capacity;
+    uint32_t workspace_ordered_premise_capacity;
+    uint32_t workspace_prepared_binding_capacity;
+    uint32_t workspace_prepared_premise_capacity;
+    uint32_t workspace_declaration_cache_capacity;
+    uint32_t workspace_call_control_count;
+    uint64_t workspace_evidence_arena_capacity;
+    uint32_t workspace_evidence_node_capacity;
+    uint32_t workspace_evidence_cache_capacity;
+    uint64_t declaration_cache_hit_len;
+    uint64_t declaration_cache_miss_len;
+    uint32_t declaration_cache_promotion_len;
+    bool declaration_cache_snapshot_rejected;
     PPProofGSLTArticleV1Receipt article;
     PPProofGSLTRelationalExecutionV1 execution;
+    bool workspace_used;
+    bool workspace_reused;
     bool complete;
 } PPProofGSLTRelationalMachineV1Receipt;
+
+/* Map the public machine's measured repetition counters into the generic cost
+ * qualifier.  A rejected source snapshot is outside the admitted cost model
+ * and therefore fails closed. */
+CettaGsltRepetitionCostQualificationV1
+ppproof_gslt_relational_machine_v1_receipt_repetition_cost_qualify(
+    const PPProofGSLTRelationalMachineV1Receipt *receipt,
+    const CettaGsltRepetitionCostModelV1 *model,
+    uint64_t *cached_cost_out,
+    uint64_t *fresh_cost_out);
+
+bool ppproof_gslt_relational_machine_v1_workspace_init(
+    PPProofGSLTRelationalMachineV1Workspace *workspace);
+
+bool ppproof_gslt_relational_machine_v1_workspace_set_repetition_policy(
+    PPProofGSLTRelationalMachineV1Workspace *workspace,
+    CettaGsltRepetitionPolicyV1 policy);
+
+void ppproof_gslt_relational_machine_v1_workspace_free(
+    PPProofGSLTRelationalMachineV1Workspace *workspace);
 
 PPProofGSLTRelationalMachineV1Result
 ppproof_gslt_relational_machine_v1_normal(
     const PPRelationalStoreV1 *store,
     const PPRelationalStateProgramV1Plan *state_plan,
-    uint32_t proof_machine_id,
     const PPProofGSLTPlanV1 *proof_plan,
     const PPProofGSLTSequenceEvidenceABIV1 *evidence_abi,
     const PPProofGSLTRelationalAssertionPlanV1 *relational_plan,
+    const PPProofPreparedActionCaseV1 *action_cases,
+    uint32_t action_case_len,
+    const PPProofGSLTRelationalNormalInputV1 *input,
+    const PPProofGSLTArticleV1Limits *limits,
+    PPProofGSLTRelationalMachineV1Receipt *receipt_out,
+    char *error_buf,
+    size_t error_buf_size);
+
+PPProofGSLTRelationalMachineV1Result
+ppproof_gslt_relational_machine_v1_normal_with_workspace(
+    const PPRelationalStoreV1 *store,
+    const PPRelationalStateProgramV1Plan *state_plan,
+    const PPProofGSLTPlanV1 *proof_plan,
+    const PPProofGSLTSequenceEvidenceABIV1 *evidence_abi,
+    const PPProofGSLTRelationalAssertionPlanV1 *relational_plan,
+    const PPProofPreparedActionCaseV1 *action_cases,
+    uint32_t action_case_len,
+    PPProofGSLTRelationalMachineV1Workspace *workspace,
     const PPProofGSLTRelationalNormalInputV1 *input,
     const PPProofGSLTArticleV1Limits *limits,
     PPProofGSLTRelationalMachineV1Receipt *receipt_out,
@@ -69,12 +143,27 @@ PPProofGSLTRelationalMachineV1Result
 ppproof_gslt_relational_machine_v1_compressed(
     const PPRelationalStoreV1 *store,
     const PPRelationalStateProgramV1Plan *state_plan,
-    uint32_t proof_machine_id,
     const PPProofGSLTPlanV1 *proof_plan,
     const PPProofGSLTSequenceEvidenceABIV1 *evidence_abi,
     const PPProofGSLTRelationalAssertionPlanV1 *relational_plan,
-    const PPProofIndexedValuePlanV1 *indexed_value_plan,
+    const PPProofIndexedProgramPlanV1 *indexed_program_plan,
     const PPProofFrameIndexPlanV1 *frame_index_plan,
+    const PPProofGSLTRelationalCompressedInputV1 *input,
+    const PPProofGSLTArticleV1Limits *limits,
+    PPProofGSLTRelationalMachineV1Receipt *receipt_out,
+    char *error_buf,
+    size_t error_buf_size);
+
+PPProofGSLTRelationalMachineV1Result
+ppproof_gslt_relational_machine_v1_compressed_with_workspace(
+    const PPRelationalStoreV1 *store,
+    const PPRelationalStateProgramV1Plan *state_plan,
+    const PPProofGSLTPlanV1 *proof_plan,
+    const PPProofGSLTSequenceEvidenceABIV1 *evidence_abi,
+    const PPProofGSLTRelationalAssertionPlanV1 *relational_plan,
+    const PPProofIndexedProgramPlanV1 *indexed_program_plan,
+    const PPProofFrameIndexPlanV1 *frame_index_plan,
+    PPProofGSLTRelationalMachineV1Workspace *workspace,
     const PPProofGSLTRelationalCompressedInputV1 *input,
     const PPProofGSLTArticleV1Limits *limits,
     PPProofGSLTRelationalMachineV1Receipt *receipt_out,
