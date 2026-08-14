@@ -61,7 +61,7 @@ Full `make test` passes.
 - `showcase/` — `nil_pln_core.metta` (a derived encoding of Nil's PLN constructor types — not
   an unchanged execution of his source tree) + `nil_pln_dtt_exact_demo.metta`.
 - `he_typing_findings/` — the exploration reports that led here (historical, kept as-is; their
-  vocabulary predates the current public surface).
+  vocabulary predates the current public interface).
 
 ## Honest boundary
 - Executable evidence, not theoremhood: the final proof check re-uses this same C

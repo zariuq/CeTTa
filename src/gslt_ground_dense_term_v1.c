@@ -33,6 +33,8 @@ typedef struct {
     uint32_t root;
     uint32_t maximum_edge_len;
     uint32_t variable_width;
+    uint32_t *first_binding_offsets;
+    uint32_t first_binding_count;
     VarId first_variable;
     bool variable_linear;
 } CettaGsltGroundDenseTermProgramImplV1;
@@ -107,6 +109,7 @@ static void cetta_gslt_ground_dense_term_program_impl_free_v1(
         return;
     free(impl->nodes);
     free(impl->edges);
+    free(impl->first_binding_offsets);
     free(impl);
 }
 
@@ -197,12 +200,17 @@ static bool cetta_gslt_ground_dense_compile_impl_v1(
 
     if (impl->variable_width != 0u) {
         seen = calloc(impl->variable_width, sizeof(*seen));
-        if (!seen) {
+        impl->first_binding_offsets = malloc(
+            (size_t)impl->variable_width *
+            sizeof(*impl->first_binding_offsets));
+        if (!seen || !impl->first_binding_offsets) {
             cetta_gslt_ground_dense_set_error_v1(
                 error_buf, error_buf_size,
                 "cannot allocate dense variable admission state");
             goto done;
         }
+        for (uint32_t slot = 0u; slot < impl->variable_width; slot++)
+            impl->first_binding_offsets[slot] = UINT32_MAX;
     }
     if (!cetta_gslt_ground_dense_reserve_v1(
             (void **)&stack, &stack_cap, 1u, sizeof(*stack))) {
@@ -246,8 +254,12 @@ static bool cetta_gslt_ground_dense_compile_impl_v1(
                     goto done;
                 }
                 slot = (uint32_t)offset;
-                if (seen[slot] != 0u)
+                if (seen[slot] != 0u) {
                     impl->variable_linear = false;
+                } else {
+                    impl->first_binding_offsets[slot] =
+                        impl->first_binding_count++;
+                }
                 seen[slot] = 1u;
                 node = (CettaGsltGroundDenseNodeV1){
                     .kind = CETTA_GSLT_GROUND_DENSE_SLOT_NODE_V1,
@@ -420,6 +432,25 @@ bool cetta_gslt_ground_dense_term_is_linear_v1(
     const CettaGsltGroundDenseTermProgramImplV1 *impl =
         program ? program->impl : NULL;
     return impl && impl->variable_linear;
+}
+
+bool cetta_gslt_ground_dense_term_first_binding_offset_v1(
+        const CettaGsltGroundDenseTermProgramV1 *program,
+        VarId source_variable, uint32_t *offset_out) {
+    const CettaGsltGroundDenseTermProgramImplV1 *impl =
+        program ? program->impl : NULL;
+    uint64_t slot;
+
+    if (!impl || !offset_out ||
+        source_variable < impl->first_variable)
+        return false;
+    slot = source_variable - impl->first_variable;
+    if (slot >= impl->variable_width ||
+        !impl->first_binding_offsets ||
+        impl->first_binding_offsets[slot] == UINT32_MAX)
+        return false;
+    *offset_out = impl->first_binding_offsets[slot];
+    return true;
 }
 
 void cetta_gslt_ground_dense_workspace_init_v1(

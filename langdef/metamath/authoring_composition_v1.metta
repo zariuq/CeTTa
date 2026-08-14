@@ -9,6 +9,7 @@
   (source "lexical_projection_v1.metta")
   (source "source_fold_v1.metta")
   (source "state_v1.metta")
+  (source "proof_trace_policy_v1.metta")
   (source "proof_v1.metta")
   (source "../../experiments/gslt2parse_foundation/presentations/core/proof_gslt_article_core_v1.metta")
   (source "../../experiments/gslt2parse_foundation/presentations/core/proof_gslt_article_interface_v1.metta")

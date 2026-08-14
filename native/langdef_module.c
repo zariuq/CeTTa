@@ -16,9 +16,7 @@
 #define CETTA_LANGDEF_COMPILED_CURSOR_RUNTIME 1
 #include "native/langdef_compiled_cursor_v1.h"
 #include "parser_occurrence_file_resolver_v1.h"
-#if CETTA_BUILD_WITH_LANGDEF_DIAGNOSTIC_BACKENDS
 #include "first_order_frame_decoder_v1.h"
-#endif
 #include "oslf_native_type_plan_v1.h"
 #include "oslf_native_type_vm_v1.h"
 #include "proof_gslt_plan_v1.h"
@@ -76,11 +74,12 @@ typedef struct {
     PPOSLFNativeTypeVMV1 proof_machine_vm;
     PPProofGSLTRelationalRuntimeV1 proof_generated_runtime;
     PPProofStoragePlanV1 proof_storage_plan;
-#if CETTA_BUILD_WITH_LANGDEF_DIAGNOSTIC_BACKENDS
+    PPProofGSLTRelationalMachineV1Workspace proof_workspace;
+    const PPProofPreparedActionCaseV1 *proof_exact_action_cases;
+    uint32_t proof_exact_action_case_len;
     PPFirstOrderFrameDecoderV1 *proof_frame_decoders;
     PPRelationalStackProofV1CacheAdmission *proof_frame_cache_admissions;
     uint32_t proof_frame_decoder_len;
-#endif
     bool compiled_program_ready;
     bool compiled_fold_ready;
     bool compiled_span_mask_ready;
@@ -93,10 +92,9 @@ typedef struct {
     bool proof_machine_vm_ready;
     bool proof_generated_runtime_ready;
     bool proof_storage_plan_ready;
-#if CETTA_BUILD_WITH_LANGDEF_DIAGNOSTIC_BACKENDS
+    bool proof_workspace_ready;
     bool proof_frame_decoders_ready;
     bool proof_frame_cache_admissions_ready;
-#endif
     bool proof_extension_ready;
 #endif
 } CettaLangDefV1;
@@ -592,6 +590,17 @@ static void langdef_resource_free(void *raw_resource) {
                 "tail-reuses=%llu collections=%llu goal-roots=%llu "
                 "view-goals=%llu view-attempts=%llu "
                 "view-matches=%llu view-fallbacks=%llu "
+                "ground-attempts=%llu ground-matches=%llu "
+                "linear-attempts=%llu linear-fallbacks=%llu "
+                "epoch-materializations=%llu "
+                "epoch-not-admitted=%llu epoch-stale=%llu "
+                "epoch-open-producer=%llu epoch-unsafe-consumer=%llu "
+                "non-epoch-materialization-attempts=%llu "
+                "shape-attempts=%llu shape-rejections=%llu "
+                "rigid-dispatches=%llu rigid-rejections=%llu "
+                "indexed-visits=%llu full-scan-visits=%llu "
+                "raw-tail=%llu proven-tail=%llu "
+                "deferred-shape=%llu "
                 "binding-collections=%llu binding-roots=%llu "
                 "binding-items-discarded=%llu trail-discarded=%llu "
                 "copied=%llu reclaimed=%llu materialize=%llu "
@@ -600,6 +609,9 @@ static void langdef_resource_free(void *raw_resource) {
                 "dense-materializations=%llu dense-reused=%llu "
                 "dense-view-nodes=%llu dense-view-resolutions=%llu "
                 "dense-view-deferrals=%llu "
+                "compiled-relation-dispatches=%llu "
+                "compiled-relation-matches=%llu "
+                "compiled-relation-deferrals=%llu "
                 "max-frames=%u max-goal-depth=%u\n",
                 (unsigned long long)profile.query_executions,
                 (unsigned long long)profile.stats.goals_entered,
@@ -617,6 +629,45 @@ static void langdef_resource_free(void *raw_resource) {
                     profile.stats.activation_view_rule_matches,
                 (unsigned long long)
                     profile.stats.activation_view_fallback_materializations,
+                (unsigned long long)
+                    profile.stats.ground_pattern_rule_attempts,
+                (unsigned long long)
+                    profile.stats.ground_pattern_rule_matches,
+                (unsigned long long)
+                    profile.stats.positional_linear_rule_attempts,
+                (unsigned long long)
+                    profile.stats.positional_linear_rule_fallbacks,
+                (unsigned long long)
+                    profile.stats.deferred_epoch_goal_materializations,
+                (unsigned long long)
+                    profile.stats.epoch_goal_materializations_not_admitted,
+                (unsigned long long)
+                    profile.stats.epoch_goal_materializations_stale,
+                (unsigned long long)
+                    profile.stats
+                        .epoch_goal_materializations_not_range_restricted,
+                (unsigned long long)
+                    profile.stats.epoch_goal_materializations_consumer_unsafe,
+                (unsigned long long)
+                    profile.stats.non_epoch_goal_materialization_attempts,
+                (unsigned long long)
+                    profile.stats.structural_shape_guard_attempts,
+                (unsigned long long)
+                    profile.stats.structural_shape_guard_rejections,
+                (unsigned long long)
+                    profile.stats.rigid_coordinate_dispatches,
+                (unsigned long long)
+                    profile.stats.rigid_coordinate_rejections,
+                (unsigned long long)
+                    profile.stats.indexed_candidate_visits,
+                (unsigned long long)
+                    profile.stats.full_scan_candidate_visits,
+                (unsigned long long)
+                    profile.stats.generated_raw_tail_deterministic_continuations,
+                (unsigned long long)
+                    profile.stats.generated_tail_deterministic_continuations,
+                (unsigned long long)
+                    profile.stats.deferred_shape_guard_attempts,
                 (unsigned long long)profile.stats.deterministic_binding_collections,
                 (unsigned long long)profile.stats.deterministic_binding_roots_scanned,
                 (unsigned long long)profile.stats.deterministic_binding_items_discarded,
@@ -639,6 +690,12 @@ static void langdef_resource_free(void *raw_resource) {
                     profile.stats.ground_dense_view_variable_resolutions,
                 (unsigned long long)
                     profile.stats.ground_dense_view_deferrals,
+                (unsigned long long)
+                    profile.stats.compiled_relation_dispatches,
+                (unsigned long long)
+                    profile.stats.compiled_relation_matches,
+                (unsigned long long)
+                    profile.stats.compiled_relation_deferrals,
                 profile.stats.maximum_search_frame_depth,
                 profile.stats.maximum_goal_depth);
         }
@@ -650,12 +707,13 @@ static void langdef_resource_free(void *raw_resource) {
     if (resource->proof_machine_native_types_ready)
         pposlf_native_type_plan_v1_free(
             &resource->proof_machine_native_types);
-#if CETTA_BUILD_WITH_LANGDEF_DIAGNOSTIC_BACKENDS
     if (resource->proof_frame_cache_admissions_ready)
         free(resource->proof_frame_cache_admissions);
     if (resource->proof_frame_decoders_ready)
         free(resource->proof_frame_decoders);
-#endif
+    if (resource->proof_workspace_ready)
+        ppproof_gslt_relational_machine_v1_workspace_free(
+            &resource->proof_workspace);
     if (resource->proof_storage_plan_ready)
         ppproof_storage_plan_v1_free(&resource->proof_storage_plan);
     if (resource->proof_native_types_ready)
@@ -837,6 +895,8 @@ static bool langdef_proof_extension_load(
     int32_t machine_native_types_index;
     int32_t generated_runtime_index;
     int32_t storage_plan_index;
+    uint32_t proof_machine_index;
+    uint32_t exact_action_machine_matches = 0u;
 
     if (!resource || !manifest)
         return langdef_set_error(error, error_size,
@@ -926,6 +986,39 @@ static bool langdef_proof_extension_load(
             return langdef_set_error(
                 error, error_size,
                 "native frame plan and compiled state name different machines");
+        for (proof_machine_index = 0u;
+             proof_machine_index <
+                 resource->compiled_state.proof_machine_len;
+             proof_machine_index++) {
+            const PPProofPreparedActionCaseV1 *action_cases = NULL;
+            uint32_t action_case_len = 0u;
+            if (!ppproof_storage_plan_v1_exact_action_selector(
+                    &resource->proof_storage_plan,
+                    &resource->compiled_state, proof_machine_index,
+                    &action_cases, &action_case_len,
+                    error, error_size))
+                return false;
+            if (resource->proof_relational.execution.machine &&
+                resource->compiled_state.proof_machines[
+                    proof_machine_index].name &&
+                strcmp(resource->proof_relational.execution.machine,
+                       resource->compiled_state.proof_machines[
+                           proof_machine_index].name) == 0) {
+                if (exact_action_machine_matches != 0u)
+                    return langdef_set_error(
+                        error, error_size,
+                        "proof runtime names more than one exact action selector");
+                resource->proof_exact_action_cases = action_cases;
+                resource->proof_exact_action_case_len = action_case_len;
+                exact_action_machine_matches++;
+            }
+        }
+        if (exact_action_machine_matches != 1u ||
+            !resource->proof_exact_action_cases ||
+            resource->proof_exact_action_case_len == 0u)
+            return langdef_set_error(
+                error, error_size,
+                "proof runtime lacks its admitted exact action selector");
     }
     if (machine_native_types_index >= 0) {
         resource->proof_machine_native_types_path = langdef_text_dup(
@@ -938,6 +1031,23 @@ static bool langdef_proof_extension_load(
                 error, error_size,
                 "cannot retain generated proof runtime artifact paths");
     }
+    if (!ppproof_gslt_relational_machine_v1_workspace_init(
+            &resource->proof_workspace))
+        return langdef_set_error(
+            error, error_size,
+            "cannot initialize proof-call workspace");
+    if (resource->proof_storage_plan_ready &&
+        resource->proof_storage_plan.repetition_cache_len != 0u &&
+        !ppproof_gslt_relational_machine_v1_workspace_set_repetition_policy(
+            &resource->proof_workspace,
+            CETTA_GSLT_REPETITION_POLICY_SECOND_OCCURRENCE_V1)) {
+        ppproof_gslt_relational_machine_v1_workspace_free(
+            &resource->proof_workspace);
+        return langdef_set_error(
+            error, error_size,
+            "cannot apply generated proof repetition-cache policy");
+    }
+    resource->proof_workspace_ready = true;
     resource->proof_extension_ready = true;
     return true;
 }
@@ -1014,7 +1124,6 @@ done:
     return ok;
 }
 
-#if CETTA_BUILD_WITH_LANGDEF_DIAGNOSTIC_BACKENDS
 static bool langdef_proof_frame_prepare(
     CettaLangDefV1 *resource, char *error, size_t error_size) {
     PPFirstOrderFrameDecoderV1 *decoders = NULL;
@@ -1028,7 +1137,7 @@ static bool langdef_proof_frame_prepare(
         !resource->proof_storage_plan_ready)
         return langdef_set_error(
             error, error_size,
-            "diagnostic frame-cache backend lacks generated analysis");
+            "direct frame machine lacks generated analysis");
     machine_len = resource->compiled_state.proof_machine_len;
     if (resource->proof_frame_decoders_ready ||
         resource->proof_frame_cache_admissions_ready) {
@@ -1037,7 +1146,7 @@ static bool langdef_proof_frame_prepare(
             resource->proof_frame_decoder_len != machine_len)
             return langdef_set_error(
                 error, error_size,
-                "diagnostic frame-cache backend has inconsistent admission");
+                "direct frame machine has inconsistent admission");
         return true;
     }
     decoders = calloc(
@@ -1047,7 +1156,7 @@ static bool langdef_proof_frame_prepare(
     if (!decoders || !admissions) {
         langdef_set_error(
             error, error_size,
-            "cannot allocate diagnostic frame-cache admission");
+            "cannot allocate direct frame-machine admission");
         goto done;
     }
     for (machine_index = 0u; machine_index < machine_len; machine_index++) {
@@ -1079,7 +1188,6 @@ done:
     free(decoders);
     return ok;
 }
-#endif
 #endif
 
 static CettaLangDefV1 *langdef_load_resource(const char *manifest_argument,
@@ -1677,6 +1785,7 @@ static PPRelationalStateProofV1Result langdef_proof_extension_execute(
     PPProofGSLTRelationalMachineV1Receipt receipt;
     PPProofGSLTRelationalMachineV1Result result;
     PPProofGSLTArticleV1Limits limits;
+    PPProofGSLTRelationalMachineV1Workspace *workspace = NULL;
 
     if (!resource || !resource->proof_extension_ready || !request ||
         !request->store || !request->state_plan) {
@@ -1685,9 +1794,52 @@ static PPRelationalStateProofV1Result langdef_proof_extension_execute(
         return PPRELATIONAL_STATE_PROOF_V1_INVALID;
     }
     limits = ppproof_gslt_article_v1_default_limits();
+    if (resource->proof_storage_plan_ready &&
+        resource->proof_workspace_ready && request->operation &&
+        resource->proof_relational.execution.machine) {
+        const PPProofStorageCallV1 *call =
+            ppproof_storage_plan_v1_call(
+                &resource->proof_storage_plan, request->operation,
+                request->action_index);
+        if (call) {
+            const PPProofWorkspacePlanV1 *workspace_plan =
+                ppproof_storage_plan_v1_workspace(
+                    &resource->proof_storage_plan, request->operation,
+                    request->action_index);
+            const PPProofRepetitionCachePlanV1 *repetition_cache_plan =
+                ppproof_storage_plan_v1_repetition_cache(
+                    &resource->proof_storage_plan, request->operation,
+                    request->action_index);
+            const char *machine =
+                resource->proof_relational.execution.machine;
+            const char *workspace_carrier =
+                request->compressed
+                    ? "indexed-stack-proof-call-workspace-v1"
+                    : "stack-proof-call-workspace-v1";
+            if (!ppproof_storage_call_v1_admits_reusable_workspace(
+                    call, request->operation, request->action_index,
+                    machine, "proof-call-region-v1") ||
+                !ppproof_workspace_plan_v1_admits(
+                    workspace_plan, request->operation,
+                    request->action_index, machine, workspace_carrier,
+                    "proof-call-region-v1") ||
+                (resource->proof_storage_plan.repetition_cache_len != 0u &&
+                 !ppproof_repetition_cache_plan_v1_admits(
+                     repetition_cache_plan, request->operation,
+                     request->action_index, machine,
+                     "proof-call-region-v1"))) {
+                langdef_set_error(
+                    error_buf, error_buf_size,
+                    "proof workspace realization does not match its generated call site");
+                return PPRELATIONAL_STATE_PROOF_V1_INVALID;
+            }
+            workspace = &resource->proof_workspace;
+        }
+    }
     if (request->compressed) {
-        const PPProofIndexedValuePlanV1 *indexed_value_plan;
+        const PPProofIndexedProgramPlanV1 *indexed_program_plan;
         const PPProofFrameIndexPlanV1 *frame_index_plan;
+        PPProofIndexedEffectUnknownV1 indexed_unknown;
         const char *machine;
         PPProofGSLTRelationalCompressedInputV1 input = {
             .label = request->label,
@@ -1699,30 +1851,23 @@ static PPRelationalStateProofV1Result langdef_proof_extension_execute(
             .code_len = request->code_len,
         };
         if (!resource->proof_storage_plan_ready ||
-            request->proof_machine_id >=
-                request->state_plan->proof_machine_len ||
-            !request->state_plan->proof_machines ||
-            !request->state_plan->proof_machines[
-                request->proof_machine_id].name) {
+            !resource->proof_relational.execution.machine) {
             langdef_set_error(
                 error_buf, error_buf_size,
                 "compressed proof lacks generated indexed-value admission");
             return PPRELATIONAL_STATE_PROOF_V1_INVALID;
         }
-        indexed_value_plan = ppproof_storage_plan_v1_indexed_value(
+        indexed_program_plan = ppproof_storage_plan_v1_indexed_program(
             &resource->proof_storage_plan,
-            request->state_plan->proof_machines[
-                request->proof_machine_id].name);
+            resource->proof_relational.execution.machine);
         frame_index_plan = ppproof_storage_plan_v1_frame_index(
             &resource->proof_storage_plan,
-            request->state_plan->proof_machines[
-                request->proof_machine_id].name);
-        machine = request->state_plan->proof_machines[
-            request->proof_machine_id].name;
-        if (!indexed_value_plan) {
+            resource->proof_relational.execution.machine);
+        machine = resource->proof_relational.execution.machine;
+        if (!indexed_program_plan) {
             langdef_set_error(
                 error_buf, error_buf_size,
-                "compressed proof lacks generated indexed-value admission");
+                "compressed proof lacks generated indexed-program admission");
             return PPRELATIONAL_STATE_PROOF_V1_INVALID;
         }
         if (!frame_index_plan) {
@@ -1731,28 +1876,39 @@ static PPRelationalStateProofV1Result langdef_proof_extension_execute(
                 "compressed proof lacks generated frame-index admission");
             return PPRELATIONAL_STATE_PROOF_V1_INVALID;
         }
-        if (!ppproof_indexed_value_plan_v1_admits(
-                indexed_value_plan, request->operation,
+        indexed_unknown =
+            resource->proof_relational.execution.unknown_policy ==
+                                  PPRELATIONAL_STACK_PROOF_V1_UNKNOWN_PUSH_CLAIM
+                              ? PPPROOF_INDEXED_EFFECT_UNKNOWN_V1_USE
+                              : PPPROOF_INDEXED_EFFECT_UNKNOWN_V1_REJECT;
+        if (!ppproof_indexed_program_plan_v1_admits(
+                indexed_program_plan, request->operation,
                 request->action_index, machine,
-                request->header_role, request->code_role)) {
+                request->header_role, request->code_role,
+                indexed_program_plan->region, indexed_unknown,
+                resource->proof_relational.execution.save_placement,
+                resource->proof_relational.execution
+                    .header_hypothesis_policy)) {
             langdef_set_error(
                 error_buf, error_buf_size,
-                "compressed proof indexed-value admission does not match its generated call site");
+                "compressed proof indexed-program admission does not match its generated call site");
             return PPRELATIONAL_STATE_PROOF_V1_INVALID;
         }
         if (!ppproof_frame_index_plan_v1_admits(
                 frame_index_plan, request->operation,
-                request->action_index, machine)) {
+                request->action_index, machine,
+                indexed_program_plan->region)) {
             langdef_set_error(
                 error_buf, error_buf_size,
                 "compressed proof frame-index admission does not match its generated call site");
             return PPRELATIONAL_STATE_PROOF_V1_INVALID;
         }
-        result = ppproof_gslt_relational_machine_v1_compressed(
-            request->store, request->state_plan,
-            request->proof_machine_id, &resource->proof_plan,
+        result =
+            ppproof_gslt_relational_machine_v1_compressed_with_workspace(
+            request->store, request->state_plan, &resource->proof_plan,
             &resource->proof_evidence, &resource->proof_relational,
-            indexed_value_plan, frame_index_plan, &input, &limits, &receipt,
+            indexed_program_plan, frame_index_plan,
+            workspace, &input, &limits, &receipt,
             error_buf, error_buf_size);
     } else {
         PPProofGSLTRelationalNormalInputV1 input = {
@@ -1762,11 +1918,22 @@ static PPRelationalStateProofV1Result langdef_proof_extension_execute(
             .steps = request->proof,
             .step_len = request->proof_len,
         };
-        result = ppproof_gslt_relational_machine_v1_normal(
-            request->store, request->state_plan,
-            request->proof_machine_id, &resource->proof_plan,
+        if (!resource->proof_storage_plan_ready ||
+            !resource->proof_relational.execution.machine ||
+            !resource->proof_exact_action_cases ||
+            resource->proof_exact_action_case_len == 0u) {
+            langdef_set_error(
+                error_buf, error_buf_size,
+                "normal proof lacks generated action admission");
+            return PPRELATIONAL_STATE_PROOF_V1_INVALID;
+        }
+        result = ppproof_gslt_relational_machine_v1_normal_with_workspace(
+            request->store, request->state_plan, &resource->proof_plan,
             &resource->proof_evidence, &resource->proof_relational,
-            &input, &limits, &receipt, error_buf, error_buf_size);
+            resource->proof_exact_action_cases,
+            resource->proof_exact_action_case_len, workspace,
+            &input, &limits, &receipt,
+            error_buf, error_buf_size);
     }
     switch (result) {
     case PPPROOF_GSLT_RELATIONAL_MACHINE_V1_OK:
@@ -1826,6 +1993,7 @@ static Atom *langdef_parse_compiled_bytes(
         materialize_values
             ? PPRELATIONAL_STATE_OBSERVATION_V1_EXACT_RECEIPT
             : PPRELATIONAL_STATE_OBSERVATION_V1_COUNTERS_ONLY;
+    bool use_direct_frame_machine = false;
 
     ppoccurrence_file_resolver_v1_init(&source_resolver);
 
@@ -1857,6 +2025,21 @@ static Atom *langdef_parse_compiled_bytes(
             error[0] ? error
                      : "generated relational proof backend preparation failed");
         goto done;
+    }
+    if (execute_state && proof_execution ==
+            CETTA_LANGDEF_PROOF_EXECUTION_V1_AUTHORITY &&
+        langdef->proof_extension_ready &&
+        langdef->proof_native_types_ready &&
+        langdef->proof_storage_plan_ready) {
+        if (!langdef_proof_frame_prepare(
+                langdef, error, sizeof(error))) {
+            result = langdef_error(
+                arena, source,
+                error[0] ? error
+                         : "direct frame-machine admission failed");
+            goto done;
+        }
+        use_direct_frame_machine = true;
     }
 
     if (execute_state && langdef->compiled_state_ready) {
@@ -1890,7 +2073,8 @@ static Atom *langdef_parse_compiled_bytes(
         }
         if (proof_execution ==
             CETTA_LANGDEF_PROOF_EXECUTION_V1_AUTHORITY &&
-            langdef->proof_extension_ready) {
+            langdef->proof_extension_ready &&
+            !use_direct_frame_machine) {
             proof_backend.context = langdef;
             proof_backend.execute = langdef_proof_extension_execute;
         }
@@ -1912,8 +2096,8 @@ static Atom *langdef_parse_compiled_bytes(
             goto done;
         }
         bool state_initialized;
-        if (proof_execution ==
-            CETTA_LANGDEF_PROOF_EXECUTION_V1_FRAME_CACHE_DIAGNOSTIC) {
+        if (use_direct_frame_machine || proof_execution ==
+                CETTA_LANGDEF_PROOF_EXECUTION_V1_FRAME_CACHE_DIAGNOSTIC) {
             state_initialized =
                 pprelational_state_program_v1_run_init_with_frame_cache(
                   &state_run, &langdef->compiled_fold,
@@ -1929,15 +2113,28 @@ static Atom *langdef_parse_compiled_bytes(
         bool state_initialized;
 #endif
         {
-            state_initialized =
-                pprelational_state_program_v1_run_init_with_proof_backend(
-                  &state_run, &langdef->compiled_fold,
-                  &langdef->compiled_state,
-                  source_path ? &source_resolver_interface : NULL,
-                  source_path ? &nested_backend : NULL,
-                  proof_backend.execute ? &proof_backend : NULL,
-                  state_observation,
-                  error, sizeof(error));
+            if (use_direct_frame_machine) {
+                state_initialized =
+                    pprelational_state_program_v1_run_init_with_frame_cache(
+                      &state_run, &langdef->compiled_fold,
+                      &langdef->compiled_state,
+                      source_path ? &source_resolver_interface : NULL,
+                      source_path ? &nested_backend : NULL,
+                      langdef->proof_frame_cache_admissions,
+                      langdef->proof_frame_decoder_len,
+                      state_observation,
+                      error, sizeof(error));
+            } else {
+                state_initialized =
+                    pprelational_state_program_v1_run_init_with_proof_backend(
+                      &state_run, &langdef->compiled_fold,
+                      &langdef->compiled_state,
+                      source_path ? &source_resolver_interface : NULL,
+                      source_path ? &nested_backend : NULL,
+                      proof_backend.execute ? &proof_backend : NULL,
+                      state_observation,
+                      error, sizeof(error));
+            }
         }
         if (!state_initialized) {
             result = langdef_error(

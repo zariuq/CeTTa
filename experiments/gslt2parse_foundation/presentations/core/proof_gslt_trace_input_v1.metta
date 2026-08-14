@@ -20,6 +20,7 @@
     (operator source-proof-trace-input-current-apart-v1 2)
     (operator source-proof-trace-input-frame-count-v1 2)
     (operator source-proof-trace-input-frame-v1 3)
+    (operator source-proof-trace-input-label-different-v1 2)
     (operator source-proof-trace-input-push-label-v1 3)
     (operator source-proof-trace-input-request-v1 2)
     (operator source-proof-trace-input-token-different-v1 2)

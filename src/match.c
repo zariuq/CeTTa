@@ -693,6 +693,14 @@ void bindings_lookup_index_test_clear(Bindings *bindings) {
     bindings_lookup_index_release(bindings->lookup_index);
     bindings->lookup_index = NULL;
 }
+
+bool bindings_lookup_index_test_synced_len(const Bindings *bindings,
+                                           uint32_t *synced_len_out) {
+    if (!bindings || !bindings->lookup_index || !synced_len_out)
+        return false;
+    *synced_len_out = bindings->lookup_index->synced_len;
+    return true;
+}
 #endif
 
 static inline void bindings_lookup_cache_reset(Bindings *b) {
@@ -722,6 +730,12 @@ static inline void bindings_lookup_cache_note(Bindings *b, VarId var_id,
 
 static int32_t bindings_lookup_index(Bindings *b, VarId var_id) {
     cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_BINDINGS_LOOKUP);
+    /* A present derived index must denote the complete logical environment
+     * before any lookup observes it, including a lookup-cache hit.  This is
+     * the demand point promised by the append/rollback effect contract. */
+    BindingsLookupIndex *index = b->lookup_index;
+    if (index && index->synced_len != b->len)
+        index = bindings_lookup_index_sync(b);
     for (uint32_t i = 0; i < b->lookup_cache_count; i++) {
         uint32_t idx = b->lookup_cache_indices[i];
         if (binding_var_eq(b->lookup_cache_ids[i], var_id) &&
@@ -736,7 +750,13 @@ static int32_t bindings_lookup_index(Bindings *b, VarId var_id) {
             return (int32_t)idx;
         }
     }
-    BindingsLookupIndex *index = bindings_lookup_index_sync(b);
+    /* `synced_len` is the executable certificate that the derived index
+     * denotes the complete logical environment.  Fresh append and suffix
+     * rollback are the only length-changing operations; both update or
+     * invalidate this certificate.  Keep the already-current lookup path
+     * local and pay synchronization only after such a change. */
+    if (!index)
+        index = bindings_lookup_index_sync(b);
     if (index) {
         uint32_t index_plus_one =
             bindings_lookup_index_find(index, var_id);
@@ -2138,22 +2158,14 @@ static Atom *bindings_lookup_id_since(Bindings *b, VarId id,
     return b->entries[(uint32_t)index].val;
 }
 
-bool bindings_resolve_epoch_view_ground(
-        const Bindings *bindings, const Atom *source_variable,
-        uint32_t epoch, uint32_t first_entry, Atom **ground_out) {
-    Atom *value;
+static bool bindings_resolve_ground_value(
+        const Bindings *bindings, Atom *value, Atom **ground_out) {
     size_t dereferences = 0u;
     size_t dereference_limit;
 
-    if (ground_out)
-        *ground_out = NULL;
-    if (!bindings || !source_variable || !ground_out ||
-        source_variable->kind != ATOM_VAR ||
-        first_entry > bindings->len)
+    if (!bindings || !ground_out)
         return false;
-    value = bindings_lookup_id_since(
-        (Bindings *)bindings,
-        var_epoch_id(source_variable->var_id, epoch), first_entry);
+    *ground_out = NULL;
     dereference_limit = bindings_dereference_limit(bindings);
     while (value && value->kind == ATOM_VAR) {
         Atom *next;
@@ -2171,10 +2183,57 @@ bool bindings_resolve_epoch_view_ground(
     return true;
 }
 
+bool bindings_resolve_epoch_view_ground(
+        const Bindings *bindings, const Atom *source_variable,
+        uint32_t epoch, uint32_t first_entry, Atom **ground_out) {
+    Atom *value;
+
+    if (ground_out)
+        *ground_out = NULL;
+    if (!bindings || !source_variable || !ground_out ||
+        source_variable->kind != ATOM_VAR ||
+        first_entry > bindings->len)
+        return false;
+    value = bindings_lookup_id_since(
+        (Bindings *)bindings,
+        var_epoch_id(source_variable->var_id, epoch), first_entry);
+    return bindings_resolve_ground_value(bindings, value, ground_out);
+}
+
+bool bindings_resolve_epoch_view_ground_at(
+        const Bindings *bindings, const Atom *source_variable,
+        uint32_t epoch, uint32_t first_entry, uint32_t offset,
+        Atom **ground_out) {
+    uint32_t index;
+    VarId expected;
+    const Binding *entry;
+
+    if (ground_out)
+        *ground_out = NULL;
+    if (!bindings || !source_variable || !ground_out ||
+        source_variable->kind != ATOM_VAR ||
+        first_entry > bindings->len ||
+        offset > UINT32_MAX - first_entry)
+        return false;
+    index = first_entry + offset;
+    if (index >= bindings->len)
+        return false;
+    expected = var_epoch_id(source_variable->var_id, epoch);
+    entry = &bindings->entries[index];
+    if (entry->legacy_name_fallback || entry->var_id != expected)
+        return false;
+    return bindings_resolve_ground_value(
+        bindings, entry->val, ground_out);
+}
+
 static Atom *bindings_apply_seen_epoch(Bindings *b, Arena *a, Atom *atom,
                                        uint32_t epoch, bool original_side,
                                        uint32_t first_entry,
                                        bool resolve_outer,
+                                       BindingsEpochCoordinateFn coordinate,
+                                       void *coordinate_context,
+                                       uint64_t *coordinate_hits,
+                                       uint64_t *coordinate_fallbacks,
                                        BindingApplySeen *seen,
                                        uint32_t seen_len,
                                        bool track_cycles,
@@ -2199,7 +2258,30 @@ static Atom *bindings_apply_seen_epoch(Bindings *b, Arena *a, Atom *atom,
             bindings_apply_memo_store(memo, lookup_id, result);
             return result;
         }
-        Atom *val = bindings_lookup_id_since(b, lookup_id, lookup_first);
+        Atom *val = NULL;
+        if (original_side && coordinate) {
+            uint32_t offset;
+
+            if (coordinate(
+                    coordinate_context, atom->var_id, &offset)) {
+                if (offset <= UINT32_MAX - first_entry) {
+                    uint32_t index = first_entry + offset;
+                    if (index < b->len &&
+                        !b->entries[index].legacy_name_fallback &&
+                        b->entries[index].var_id == lookup_id) {
+                        val = b->entries[index].val;
+                        if (coordinate_hits &&
+                            *coordinate_hits != UINT64_MAX)
+                            (*coordinate_hits)++;
+                    }
+                }
+                if (!val && coordinate_fallbacks &&
+                    *coordinate_fallbacks != UINT64_MAX)
+                    (*coordinate_fallbacks)++;
+            }
+        }
+        if (!val)
+            val = bindings_lookup_id_since(b, lookup_id, lookup_first);
         if (!val && outer_lookup)
             val = bindings_lookup_spelling(b, atom->sym_id);
         if (!val) {
@@ -2215,6 +2297,8 @@ static Atom *bindings_apply_seen_epoch(Bindings *b, Arena *a, Atom *atom,
         }
         Atom *result = bindings_apply_seen_epoch(
             b, a, val, epoch, false, first_entry, resolve_outer,
+            coordinate, coordinate_context,
+            coordinate_hits, coordinate_fallbacks,
             seen, seen_len + (track_cycles ? 1u : 0u), track_cycles,
             local_memo, outer_memo);
         bindings_apply_memo_store(memo, lookup_id, result);
@@ -2228,7 +2312,10 @@ static Atom *bindings_apply_seen_epoch(Bindings *b, Arena *a, Atom *atom,
             Atom *next = atom_has_vars(child)
                 ? bindings_apply_seen_epoch(
                       b, a, child, epoch, original_side,
-                      first_entry, resolve_outer, seen, seen_len,
+                      first_entry, resolve_outer,
+                      coordinate, coordinate_context,
+                      coordinate_hits, coordinate_fallbacks,
+                      seen, seen_len,
                       track_cycles, local_memo, outer_memo)
                 : child;
             if (!new_elems && next != atom->expr.elems[i]) {
@@ -2253,7 +2340,11 @@ static Atom *bindings_apply_seen_epoch(Bindings *b, Arena *a, Atom *atom,
 static Atom *bindings_apply_epoch_view(Bindings *b, Arena *a, Atom *atom,
                                        uint32_t epoch,
                                        uint32_t first_entry,
-                                       bool resolve_outer) {
+                                       bool resolve_outer,
+                                       BindingsEpochCoordinateFn coordinate,
+                                       void *coordinate_context,
+                                       uint64_t *coordinate_hits,
+                                       uint64_t *coordinate_fallbacks) {
     if (!b || !a || !atom || first_entry > b->len)
         return NULL;
     VarId seen_stack[BINDINGS_SEEN_STACK_CAP];
@@ -2281,6 +2372,8 @@ static Atom *bindings_apply_epoch_view(Bindings *b, Arena *a, Atom *atom,
         b->legacy_fallback_count != 0u;
     Atom *result = bindings_apply_seen_epoch(
         b, a, atom, epoch, true, first_entry, resolve_outer,
+        coordinate, coordinate_context,
+        coordinate_hits, coordinate_fallbacks,
         &seen, 0, track_cycles, &local_memo, &outer_memo);
     bindings_apply_memo_release(&outer_memo);
     bindings_apply_memo_release(&local_memo);
@@ -2291,14 +2384,27 @@ static Atom *bindings_apply_epoch_view(Bindings *b, Arena *a, Atom *atom,
 Atom *bindings_apply_epoch_since(Bindings *b, Arena *a, Atom *atom,
                                  uint32_t epoch, uint32_t first_entry) {
     return bindings_apply_epoch_view(
-        b, a, atom, epoch, first_entry, false);
+        b, a, atom, epoch, first_entry, false,
+        NULL, NULL, NULL, NULL);
 }
 
 Atom *bindings_apply_epoch_then_all(Bindings *b, Arena *a, Atom *atom,
                                     uint32_t epoch,
                                     uint32_t first_entry) {
     return bindings_apply_epoch_view(
-        b, a, atom, epoch, first_entry, true);
+        b, a, atom, epoch, first_entry, true,
+        NULL, NULL, NULL, NULL);
+}
+
+Atom *bindings_apply_epoch_then_all_coordinates(
+        Bindings *b, Arena *a, Atom *atom, uint32_t epoch,
+        uint32_t first_entry, BindingsEpochCoordinateFn coordinate,
+        void *coordinate_context, uint64_t *coordinate_hits,
+        uint64_t *coordinate_fallbacks) {
+    return bindings_apply_epoch_view(
+        b, a, atom, epoch, first_entry, true,
+        coordinate, coordinate_context,
+        coordinate_hits, coordinate_fallbacks);
 }
 
 Atom *bindings_apply_epoch(Bindings *b, Arena *a, Atom *atom,
@@ -2928,8 +3034,10 @@ static bool bindings_builder_add_id_internal(BindingsBuilder *bb, VarId var_id,
     if (bb->growth_count != UINT64_MAX)
         bb->growth_count++;
     bindings_lookup_cache_note(&bb->current, var_id, added_index);
-    if (bb->current.lookup_index)
-        (void)bindings_lookup_index_sync(&bb->current);
+    /* Entries are authoritative and the index records its synchronized
+     * prefix.  Leave a speculative fresh append lazy: the first lookup that
+     * actually observes it extends the index, while rollback of an unobserved
+     * candidate pays no derived-maintenance cost. */
     return true;
 }
 
