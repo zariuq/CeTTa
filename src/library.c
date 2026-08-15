@@ -2460,6 +2460,34 @@ static bool git_cache_root(CettaLibraryContext *ctx, char *out, size_t out_sz,
     return true;
 }
 
+static void drain_subprocess_output(
+    int fd, char *output, size_t output_size) {
+    char discard[4096];
+    size_t used = 0u;
+    if (output && output_size > 0u)
+        output[0] = '\0';
+
+    for (;;) {
+        char *destination = discard;
+        size_t capacity = sizeof(discard);
+        if (output && output_size > used + 1u) {
+            destination = output + used;
+            capacity = output_size - used - 1u;
+        }
+        ssize_t got = read(fd, destination, capacity);
+        if (got > 0) {
+            if (destination != discard)
+                used += (size_t)got;
+            continue;
+        }
+        if (got < 0 && errno == EINTR)
+            continue;
+        break;
+    }
+    if (output && output_size > 0u)
+        output[used] = '\0';
+}
+
 static bool run_git_clone(const char *url, const char *dst,
                           char *errbuf, size_t errbuf_sz) {
     int pipefd[2];
@@ -2493,16 +2521,8 @@ static bool run_git_clone(const char *url, const char *dst,
     }
 
     close(pipefd[1]);
-    if (errbuf_sz > 0) errbuf[0] = '\0';
-    size_t used = 0;
-    ssize_t got = 0;
-    while ((got = read(pipefd[0], errbuf + used,
-                       errbuf_sz > used + 1 ? errbuf_sz - used - 1 : 0)) > 0) {
-        used += (size_t)got;
-        if (errbuf_sz <= used + 1) break;
-    }
+    drain_subprocess_output(pipefd[0], errbuf, errbuf_sz);
     close(pipefd[0]);
-    if (errbuf_sz > 0) errbuf[used] = '\0';
 
     int status = 0;
     if (waitpid(pid, &status, 0) < 0) {
@@ -2559,21 +2579,8 @@ static bool run_petta_build_command(const char *repo_path,
     }
 
     close(pipefd[1]);
-    if (errbuf_sz > 0)
-        errbuf[0] = '\0';
-    size_t used = 0u;
-    ssize_t got;
-    while ((got = read(
-                pipefd[0], errbuf + used,
-                errbuf_sz > used + 1u
-                    ? errbuf_sz - used - 1u : 0u)) > 0) {
-        used += (size_t)got;
-        if (errbuf_sz <= used + 1u)
-            break;
-    }
+    drain_subprocess_output(pipefd[0], errbuf, errbuf_sz);
     close(pipefd[0]);
-    if (errbuf_sz > 0)
-        errbuf[used] = '\0';
 
     int status = 0;
     if (waitpid(pid, &status, 0) < 0) {
@@ -2944,16 +2951,8 @@ static bool run_git_try_fetch_latest(const char *repo_path,
     }
 
     close(pipefd[1]);
-    if (errbuf_sz > 0) errbuf[0] = '\0';
-    size_t used = 0;
-    ssize_t got = 0;
-    while ((got = read(pipefd[0], errbuf + used,
-                       errbuf_sz > used + 1 ? errbuf_sz - used - 1 : 0)) > 0) {
-        used += (size_t)got;
-        if (errbuf_sz <= used + 1) break;
-    }
+    drain_subprocess_output(pipefd[0], errbuf, errbuf_sz);
     close(pipefd[0]);
-    if (errbuf_sz > 0) errbuf[used] = '\0';
 
     int status = 0;
     if (waitpid(pid, &status, 0) < 0) {
@@ -2993,16 +2992,8 @@ static bool run_git_try_fetch_latest(const char *repo_path,
     }
 
     close(pipefd[1]);
-    if (errbuf_sz > 0) errbuf[0] = '\0';
-    used = 0;
-    got = 0;
-    while ((got = read(pipefd[0], errbuf + used,
-                       errbuf_sz > used + 1 ? errbuf_sz - used - 1 : 0)) > 0) {
-        used += (size_t)got;
-        if (errbuf_sz <= used + 1) break;
-    }
+    drain_subprocess_output(pipefd[0], errbuf, errbuf_sz);
     close(pipefd[0]);
-    if (errbuf_sz > 0) errbuf[used] = '\0';
 
     status = 0;
     if (waitpid(pid, &status, 0) < 0) {
