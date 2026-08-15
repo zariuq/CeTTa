@@ -19854,6 +19854,31 @@ static void eval_for_caller(Space *s, Arena *a, Atom *type, Atom *atom, int fuel
     outcome_set_free(&inner);
 }
 
+bool eval_petta_from_lib_prolog(
+    Arena *arena, Atom *expression, ResultSet *results) {
+    if (!arena || !expression || !results ||
+        eval_current_language_id() != CETTA_LANGUAGE_PETTA ||
+        !g_eval_root_space || !g_library_context) {
+        return false;
+    }
+    result_set_init(results);
+    OutcomeSet outcomes;
+    outcome_set_init_with_owner(&outcomes, arena);
+    Bindings empty;
+    bindings_init(&empty);
+    eval_for_caller(
+        g_eval_root_space, arena, NULL, expression,
+        eval_current_effective_fuel_limit(), &empty, false, &outcomes);
+    bindings_free(&empty);
+    for (CettaCount index = 0u; index < outcomes.len; index++) {
+        Atom *value = outcome_atom_materialize(arena, &outcomes.items[index]);
+        if (value && !atom_is_legacy_empty_sentinel(value))
+            result_set_add(results, value);
+    }
+    outcome_set_free(&outcomes);
+    return true;
+}
+
 static void eval_direct_outcomes(Space *s, Arena *a, Atom *type, Atom *atom, int fuel,
                                  OutcomeSet *os) {
     Bindings empty;
@@ -33746,6 +33771,49 @@ prime_need_strict_argument_ready:
             outcome_set_add(
                 os, petta_semantics_boolean_value(a, answer),
                 CURRENT_ENV);
+            return;
+        }
+
+        /*
+         * The relational machine owns the usual eval/reduce path above.  If
+         * it declines a dynamically constructed term, preserve PeTTa's
+         * two-stage contract here: first compute the term, then run that term
+         * as an expression.  Treating eval as an identity at this boundary
+         * makes (eval (sread "(+ 1 2)")) stop at syntax instead of 3.
+         */
+        if (petta_form == PETTA_FORM_EVAL ||
+            petta_form == PETTA_FORM_REDUCE) {
+            if (nargs != 1u) {
+                outcome_set_add(os, atom, &_empty);
+                return;
+            }
+            Atom *source = bindings_apply_if_vars(
+                CURRENT_ENV, a, expr_arg(atom, 0u));
+            OutcomeSet terms;
+            outcome_set_init(&terms);
+            metta_eval_bind(s, a, source, fuel, &terms);
+            for (CettaCount index = 0u; index < terms.len; index++) {
+                Atom *value = outcome_atom_materialize(
+                    a, &terms.items[index]);
+                if (!value)
+                    continue;
+                Bindings branch_outer_owned;
+                const Bindings *branch_outer = CURRENT_ENV;
+                if (!branch_outer_env_begin(
+                        &branch_outer_owned, &branch_outer,
+                        CURRENT_ENV, &terms.items[index].env)) {
+                    continue;
+                }
+                Bindings empty;
+                bindings_init(&empty);
+                eval_for_current_caller(
+                    s, a, NULL, value, fuel, &empty, branch_outer,
+                    preserve_bindings, os);
+                bindings_free(&empty);
+                branch_outer_env_finish(
+                    &branch_outer_owned, branch_outer);
+            }
+            outcome_set_free(&terms);
             return;
         }
 

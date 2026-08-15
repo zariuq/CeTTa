@@ -144,6 +144,7 @@ static PL_engine_t g_petta_libpl_worker_engine;
 static _Atomic uint64_t g_petta_libpl_runtime_counter = 1u;
 static _Thread_local Arena *g_petta_libpl_active_arena;
 static _Thread_local CettaLibPrologRuntime *g_petta_libpl_active_runtime;
+static _Thread_local uint32_t g_petta_libpl_enter_depth;
 
 /*
  * Opaque Prolog terms (clause references from assertz/2, stream handles,
@@ -174,7 +175,110 @@ typedef struct {
     const char *name;
     size_t function_arity;
     pl_function_t implementation;
+    bool nondeterministic;
 } PettaLibplStandardBridge;
+
+static bool petta_libpl_to_term(
+    Atom *atom, term_t output,
+    PettaLibplVarMap *variables, uint32_t depth);
+static Atom *petta_libpl_from_term(
+    Arena *arena, term_t term,
+    PettaLibplVarMap *variables,
+    PettaLibplBackVarMap *unknown,
+    uint32_t depth);
+
+typedef struct {
+    ResultSet results;
+    CettaCount next;
+} PettaLibplEvalState;
+
+static void petta_libpl_eval_state_free(PettaLibplEvalState *state) {
+    if (!state)
+        return;
+    result_set_free(&state->results);
+    free(state);
+}
+
+static foreign_t petta_libpl_standard_eval(
+    term_t arguments, int supplied_arity,
+    control_t control) {
+    if (!arguments || supplied_arity != 2)
+        return false;
+    int phase = PL_foreign_control(control);
+    PettaLibplEvalState *state = NULL;
+    if (phase == PL_PRUNED) {
+        petta_libpl_eval_state_free(
+            PL_foreign_context_address(control));
+        return true;
+    }
+    if (phase == PL_REDO) {
+        state = PL_foreign_context_address(control);
+    } else if (phase == PL_FIRST_CALL) {
+        if (!g_petta_libpl_active_arena)
+            return false;
+        PettaLibplVarMap variables = {0};
+        PettaLibplBackVarMap unknown = {0};
+        Atom *expression = petta_libpl_from_term(
+            g_petta_libpl_active_arena, arguments,
+            &variables, &unknown, 0u);
+        free(variables.items);
+        free(unknown.items);
+        if (!expression)
+            return false;
+        state = cetta_malloc(sizeof(*state));
+        memset(state, 0, sizeof(*state));
+        if (!eval_petta_from_lib_prolog(
+                g_petta_libpl_active_arena,
+                expression, &state->results)) {
+            free(state);
+            return false;
+        }
+    } else {
+        return false;
+    }
+
+    while (state && state->next < state->results.len) {
+        Atom *answer = state->results.items[state->next++];
+        term_t encoded = PL_new_term_ref();
+        PettaLibplVarMap variables = {0};
+        bool matched = encoded &&
+            petta_libpl_to_term(answer, encoded, &variables, 0u) &&
+            PL_unify(arguments + 1u, encoded);
+        free(variables.items);
+        if (!matched)
+            continue;
+        if (state->next < state->results.len)
+            PL_retry_address(state);
+        petta_libpl_eval_state_free(state);
+        return true;
+    }
+    petta_libpl_eval_state_free(state);
+    return false;
+}
+
+static foreign_t petta_libpl_standard_swrite(
+    term_t arguments, int supplied_arity,
+    control_t control) {
+    (void)control;
+    if (!arguments || supplied_arity != 2 ||
+        !g_petta_libpl_active_arena) {
+        return false;
+    }
+    PettaLibplVarMap variables = {0};
+    PettaLibplBackVarMap unknown = {0};
+    Atom *value = petta_libpl_from_term(
+        g_petta_libpl_active_arena, arguments,
+        &variables, &unknown, 0u);
+    free(variables.items);
+    free(unknown.items);
+    if (!value)
+        return false;
+    char *rendered = atom_to_parseable_string(
+        g_petta_libpl_active_arena, value);
+    return rendered &&
+        PL_unify_string_nchars(
+            arguments + 1u, strlen(rendered), rendered);
+}
 
 /*
  * The embedded engine does not load PeTTa's metta.pl.  Standard predicates
@@ -191,6 +295,19 @@ static bool petta_libpl_install_standard_bridges(
             .implementation =
                 (pl_function_t)petta_libpl_standard_not_identical,
         },
+        {
+            .name = "eval",
+            .function_arity = 1u,
+            .implementation =
+                (pl_function_t)petta_libpl_standard_eval,
+            .nondeterministic = true,
+        },
+        {
+            .name = "swrite",
+            .function_arity = 1u,
+            .implementation =
+                (pl_function_t)petta_libpl_standard_swrite,
+        },
     };
     if (!runtime || !runtime->module_name)
         return false;
@@ -201,7 +318,10 @@ static bool petta_libpl_install_standard_bridges(
             !PL_register_foreign_in_module(
                 runtime->module_name, bridge->name,
                 (int)(bridge->function_arity + 1u),
-                bridge->implementation, PL_FA_VARARGS)) {
+                bridge->implementation,
+                PL_FA_VARARGS |
+                    (bridge->nondeterministic
+                        ? PL_FA_NONDETERMINISTIC : 0))) {
             return false;
         }
     }
@@ -650,7 +770,15 @@ static void petta_libpl_global_init(void) {
 static bool petta_libpl_enter(bool *claimed) {
     if (claimed)
         *claimed = false;
-    if (!claimed ||
+    if (!claimed)
+        return false;
+    if (g_petta_libpl_enter_depth > 0u) {
+        if (g_petta_libpl_enter_depth == UINT32_MAX)
+            return false;
+        g_petta_libpl_enter_depth++;
+        return true;
+    }
+    if (
         pthread_once(
             &g_petta_libpl_once,
             petta_libpl_global_init) != 0 ||
@@ -700,10 +828,18 @@ static bool petta_libpl_enter(bool *claimed) {
             CETTA_RUNTIME_COUNTER_LIB_PROLOG_ENGINE_CLAIM);
         *claimed = true;
     }
+    g_petta_libpl_enter_depth = 1u;
     return true;
 }
 
 static void petta_libpl_leave(bool claimed) {
+    if (g_petta_libpl_enter_depth == 0u) {
+        fputs("fatal: unbalanced libpl boundary leave\n", stderr);
+        abort();
+    }
+    g_petta_libpl_enter_depth--;
+    if (g_petta_libpl_enter_depth > 0u)
+        return;
     if (claimed) {
         if (PL_set_engine(NULL, NULL) != PL_ENGINE_SET) {
             fputs(
@@ -2761,6 +2897,15 @@ CettaLibPrologReadToken cetta_lib_prolog_read_token(
     CettaLibPrologReadToken token = {0};
     if (!runtime)
         return token;
+    /* A foreign predicate may re-enter the PeTTa evaluator while this thread
+     * already owns the adapter boundary.  The owning thread can read its
+     * context-private revision directly; trying to lock again deadlocks on
+     * equation-backed nested calls. */
+    if (g_petta_libpl_enter_depth > 0u) {
+        token.instance_id = runtime->instance_id;
+        token.revision = runtime->revision;
+        return token;
+    }
     if (pthread_mutex_lock(&g_petta_libpl_lock) != 0)
         return token;
     token.instance_id = runtime->instance_id;
