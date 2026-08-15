@@ -26,6 +26,77 @@ static Atom *parse_one(Arena *arena, const char *source) {
     return result;
 }
 
+static void test_plain_scalar_truth_dispatch(Arena *arena) {
+    Atom *one = atom_int(arena, 1);
+    Atom *two = atom_int(arena, 2);
+    Atom *two_float = atom_float(arena, 2.0);
+    Atom *true_value = atom_bool(arena, true);
+    Atom *false_value = atom_bool(arena, false);
+    Atom *structural_equal = atom_symbol_id(arena, g_builtin_syms.op_eq);
+    Atom *boolean_not = atom_symbol_id(arena, g_builtin_syms.op_not);
+    Atom *boolean_and = atom_symbol_id(arena, g_builtin_syms.op_and);
+    Atom *boolean_or = atom_symbol_id(arena, g_builtin_syms.op_or);
+    Atom *boolean_xor = atom_symbol_id(arena, g_builtin_syms.op_xor);
+    Atom *less_than = atom_symbol_id(arena, g_builtin_syms.op_lt);
+    Atom *greater_than = atom_symbol_id(arena, g_builtin_syms.op_gt);
+    Atom *less_equal = atom_symbol_id(arena, g_builtin_syms.op_le);
+    Atom *greater_equal = atom_symbol_id(arena, g_builtin_syms.op_ge);
+    Atom *numeric_equal = atom_symbol_id(arena, g_builtin_syms.numeric_eq);
+    Atom *addition = atom_symbol_id(arena, g_builtin_syms.op_plus);
+    Atom *lookalike = atom_symbol(arena, "plain-scalar-lookalike");
+    Atom *abt_alpha_equal =
+        atom_symbol_id(arena, g_builtin_syms.abt_alpha_eq);
+    Atom *unary[1] = {true_value};
+    struct ScalarTruthCase {
+        Atom *head;
+        Atom *left;
+        Atom *right;
+        bool expected;
+    } cases[] = {
+        {structural_equal, one, one, true},
+        {structural_equal, one, two_float, false},
+        {boolean_and, true_value, false_value, false},
+        {boolean_or, true_value, false_value, true},
+        {boolean_xor, true_value, true_value, false},
+        {less_than, one, two, true},
+        {greater_than, one, two, false},
+        {less_equal, two, two_float, true},
+        {greater_equal, two, one, true},
+        {numeric_equal, two, two_float, true},
+    };
+    size_t live_before = arena_accounted_live_bytes(arena);
+    uint64_t epoch_before = arena->reset_epoch;
+
+    bool truth = false;
+    assert(grounded_try_plain_scalar_truth(
+        boolean_not, unary, 1u, &truth));
+    assert(!truth);
+    for (size_t index = 0u;
+         index < sizeof(cases) / sizeof(cases[0]); index++) {
+        Atom *binary[2] = {cases[index].left, cases[index].right};
+        assert(grounded_try_plain_scalar_truth(
+            cases[index].head, binary, 2u, &truth));
+        assert(truth == cases[index].expected);
+    }
+    assert(arena_accounted_live_bytes(arena) == live_before);
+    assert(arena->reset_epoch == epoch_before);
+
+    Atom *binary[2] = {one, two};
+    assert(!grounded_try_plain_scalar_truth(
+        addition, binary, 2u, &truth));
+    assert(!grounded_try_plain_scalar_truth(
+        lookalike, binary, 2u, &truth));
+    assert(!grounded_try_plain_scalar_truth(
+        abt_alpha_equal, binary, 2u, &truth));
+    assert(!grounded_try_plain_scalar_truth(
+        less_than, unary, 1u, &truth));
+    binary[0] = true_value;
+    assert(!grounded_try_plain_scalar_truth(
+        numeric_equal, binary, 2u, &truth));
+
+    puts("PASS: allocation-free scalar truth dispatch is exact and bounded");
+}
+
 static void assert_type_pure_symbol_facts(void) {
 #define ASSERT_TYPE_PURE_SYMBOL(field) do { \
     SymbolId id = g_builtin_syms.field; \
@@ -4725,6 +4796,7 @@ int main(void) {
     test_semantic_form_facts();
     space_init_with_universe(&space, &universe);
 
+    test_plain_scalar_truth_dispatch(&answers);
     test_analysis_capability_contract(&space, &answers);
     test_direct_authority_identity_contract();
     test_direct_source_binding_contract();
