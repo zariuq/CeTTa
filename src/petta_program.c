@@ -1001,6 +1001,9 @@ static PettaEquationActivationLayout petta_equation_activation_layout(
     if (petta_equation_view(
             equation, &layout.lhs, &layout.rhs, NULL)) {
         layout.static_variable_count = static_variable_count;
+        layout.lhs_contains_cons_constraint_valid = true;
+        layout.lhs_contains_cons_constraint =
+            petta_semantics_contains_cons_constraint(layout.lhs);
     }
     return layout;
 }
@@ -1132,7 +1135,8 @@ static bool petta_plan_finish_features(
             }
             if (node->execution ==
                     PETTA_PLAN_EXEC_RELATION_SLOTS &&
-                descendant_contains_call) {
+                descendant_contains_call &&
+                !node->relation_head_admitted) {
                 node->execution = PETTA_PLAN_EXEC_GENERIC;
             }
             continue;
@@ -1258,10 +1262,12 @@ static const PettaPlanNode *petta_plan_build(
                 atom->expr.len > 1u &&
                 (head == g_builtin_syms.colon ||
                  head == g_builtin_syms.arrow);
+            node->relation_head_admitted =
+                petta_head_contains(heads, head);
             node->role = constructor_slot_frame
                 ? PETTA_PLAN_DATA
                 : petta_program_head_is_intrinsic(head) ||
-                  petta_head_contains(heads, head) ||
+                  node->relation_head_admitted ||
                   cetta_petta_source_head_resolves_in_engine(
                       head, atom->expr.len - 1u)
                       ? PETTA_PLAN_STATIC_CALL

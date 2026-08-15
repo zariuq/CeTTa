@@ -51,6 +51,38 @@ static uint64_t test_intern_probe_tail_limit(uint64_t lookups) {
     return limit;
 }
 
+static void test_arena_accounting_saturation_contract(void) {
+    Arena arena = {0};
+    ArenaMark mark = {0};
+
+    assert(arena_accounted_live_bytes(NULL) == 0u);
+    arena.live_bytes = 11u;
+    arena.external_bytes = 7u;
+    arena.symbol_cache_bytes = 5u;
+    assert(arena_accounted_live_bytes(&arena) == 23u);
+    arena.live_bytes = SIZE_MAX - 3u;
+    arena.external_bytes = 4u;
+    arena.symbol_cache_bytes = 0u;
+    assert(arena_accounted_live_bytes(&arena) == SIZE_MAX);
+    arena.live_bytes = SIZE_MAX - 7u;
+    arena.external_bytes = 4u;
+    arena.symbol_cache_bytes = 5u;
+    assert(arena_accounted_live_bytes(&arena) == SIZE_MAX);
+
+    mark.live_bytes = 13u;
+    mark.external_bytes = 3u;
+    mark.symbol_cache_bytes = 2u;
+    assert(arena_mark_accounted_live_bytes(mark) == 18u);
+    mark.live_bytes = SIZE_MAX - 1u;
+    mark.external_bytes = 2u;
+    mark.symbol_cache_bytes = 0u;
+    assert(arena_mark_accounted_live_bytes(mark) == SIZE_MAX);
+    mark.live_bytes = SIZE_MAX - 4u;
+    mark.external_bytes = 2u;
+    mark.symbol_cache_bytes = 3u;
+    assert(arena_mark_accounted_live_bytes(mark) == SIZE_MAX);
+}
+
 static void assert_bigint_fact_atom(Atom *atom) {
     assert(atom != NULL);
     assert(atom->kind == ATOM_EXPR);
@@ -1432,6 +1464,7 @@ int main(void) {
     init_test_symbols(&symbols);
     var_intern_init(&var_intern);
     g_var_intern = &var_intern;
+    test_arena_accounting_saturation_contract();
     test_store_format_contract();
     test_structural_variable_name_store_contract();
     test_store_format_migration_contract();

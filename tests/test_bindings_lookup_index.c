@@ -1374,6 +1374,87 @@ int main(void) {
     CHECK(dense_reference && dense_compiled &&
               atom_eq(dense_reference, dense_compiled),
           "dense activation application equals the authoritative epoch view");
+
+    Atom *dense_coord_a = atom_var_with_id(
+        &arena, "dense-coord-a", UINT64_C(7600));
+    Atom *dense_coord_b = atom_var_with_id(
+        &arena, "dense-coord-b", UINT64_C(7601));
+    Atom *dense_coord_c = atom_var_with_id(
+        &arena, "dense-coord-c", UINT64_C(7602));
+    VarId dense_contiguous_ids[3] = {
+        dense_coord_a->var_id,
+        dense_coord_b->var_id,
+        dense_coord_c->var_id,
+    };
+    Atom *dense_contiguous_variables[3] = {
+        dense_coord_a, dense_coord_b, dense_coord_c,
+    };
+    VarId dense_sparse_ids[2] = {
+        dense_coord_a->var_id,
+        dense_coord_c->var_id,
+    };
+    Atom *dense_sparse_variables[2] = {
+        dense_coord_a, dense_coord_c,
+    };
+    BindingsDenseEpochFrame dense_coordinate_frame;
+    bindings_dense_epoch_frame_init(&dense_coordinate_frame);
+    bool dense_contiguous_prepared = dense_frame_ready &&
+        bindings_dense_epoch_frame_prepare(
+            &dense_coordinate_frame, &dense_frame_builder,
+            dense_contiguous_ids, dense_contiguous_variables,
+            3u, 67u, dense_first_entry);
+    bool dense_contiguous_recognized = dense_contiguous_prepared &&
+        dense_coordinate_frame.source_ids_contiguous &&
+        dense_coordinate_frame.source_first_id == dense_coord_a->var_id;
+    Atom *dense_coordinate_source = atom_expr3(
+        &arena, atom_symbol(&arena, "DenseCoordinates"),
+        dense_coord_a, dense_coord_c);
+    Atom *dense_contiguous_value = dense_contiguous_recognized
+        ? bindings_apply_dense_epoch_frame_then_all(
+              &dense_frame_builder, &arena,
+              dense_coordinate_source, &dense_coordinate_frame)
+        : NULL;
+    Atom *dense_contiguous_reference = dense_contiguous_recognized
+        ? bindings_apply_epoch_then_all(
+              &dense_frame_builder.current, &arena,
+              dense_coordinate_source, 67u, dense_first_entry)
+        : NULL;
+    bool dense_sparse_prepared = dense_frame_ready &&
+        bindings_dense_epoch_frame_prepare(
+            &dense_coordinate_frame, &dense_frame_builder,
+            dense_sparse_ids, dense_sparse_variables,
+            2u, 67u, dense_first_entry);
+    Atom *dense_below = atom_var_with_id(
+        &arena, "dense-coord-below", UINT64_C(7599));
+    Atom *dense_above = atom_var_with_id(
+        &arena, "dense-coord-above", UINT64_C(7603));
+    Atom *dense_sparse_source = atom_expr3(
+        &arena, atom_symbol(&arena, "DenseSparseCoordinates"),
+        atom_expr3(
+            &arena, atom_symbol(&arena, "DenseSparseMembers"),
+            dense_coord_a, dense_coord_c),
+        atom_expr3(
+            &arena, atom_symbol(&arena, "DenseSparseBounds"),
+            dense_below, dense_above));
+    Atom *dense_sparse_value = dense_sparse_prepared
+        ? bindings_apply_dense_epoch_frame_then_all(
+              &dense_frame_builder, &arena,
+              dense_sparse_source, &dense_coordinate_frame)
+        : NULL;
+    Atom *dense_sparse_reference = dense_sparse_prepared
+        ? bindings_apply_epoch_then_all(
+              &dense_frame_builder.current, &arena,
+              dense_sparse_source, 67u, dense_first_entry)
+        : NULL;
+    CHECK(dense_contiguous_recognized && dense_sparse_prepared &&
+              dense_contiguous_value && dense_contiguous_reference &&
+              atom_eq(
+                  dense_contiguous_value, dense_contiguous_reference) &&
+              !dense_coordinate_frame.source_ids_contiguous &&
+              dense_sparse_value && dense_sparse_reference &&
+              atom_eq(dense_sparse_value, dense_sparse_reference),
+          "dense frames recognize contiguous coordinates and retain sparse fallback");
+    bindings_dense_epoch_frame_free(&dense_coordinate_frame);
     Atom *dense_slot_value = dense_prepared &&
             dense_left_slot != UINT32_MAX
         ? bindings_apply_dense_epoch_frame_slot_then_all(

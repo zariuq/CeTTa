@@ -72,6 +72,39 @@ typedef struct {
     bool smaller;
 } PeTTaNamedArity;
 
+/* A table-incarnation-identified snapshot of PeTTa's cons head identities.
+ * Classifications are exact only while `petta_semantics_cons_shape_facts_current`
+ * holds.  Conservative discriminators must treat a stale snapshot as unknown. */
+typedef struct {
+    const SymbolTable *symbol_table;
+    uint64_t symbol_table_instance_id;
+    SymbolId cons;
+    SymbolId open_cons;
+} PeTTaConsShapeFacts;
+
+bool petta_semantics_cons_shape_facts(PeTTaConsShapeFacts *facts);
+bool petta_semantics_cons_shape_facts_current(
+    const PeTTaConsShapeFacts *facts);
+
+static inline bool petta_semantics_facts_is_open_cons_value(
+    const PeTTaConsShapeFacts *facts, const Atom *atom) {
+    return facts && facts->open_cons != SYMBOL_ID_NONE && atom &&
+           atom->kind == ATOM_EXPR && atom->expr.len == 3u &&
+           atom->expr.elems[0] &&
+           atom->expr.elems[0]->kind == ATOM_SYMBOL &&
+           atom->expr.elems[0]->sym_id == facts->open_cons;
+}
+
+static inline bool petta_semantics_facts_is_cons_constraint(
+    const PeTTaConsShapeFacts *facts, const Atom *atom) {
+    return petta_semantics_facts_is_open_cons_value(facts, atom) ||
+           (facts && facts->cons != SYMBOL_ID_NONE && atom &&
+            atom->kind == ATOM_EXPR && atom->expr.len == 3u &&
+            atom->expr.elems[0] &&
+            atom->expr.elems[0]->kind == ATOM_SYMBOL &&
+            atom->expr.elems[0]->sym_id == facts->cons);
+}
+
 PeTTaForm petta_semantics_form(SymbolId head);
 PeTTaNamedArity petta_semantics_named_arity(
     struct Space *space, Arena *scratch, Atom *head,

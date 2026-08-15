@@ -13,6 +13,7 @@ typedef uint32_t SymbolId;
 
 enum {
     CETTA_SYMBOL_FLAG_STATIC_GROUNDED_OP = 1u << 0,
+    CETTA_SYMBOL_FLAG_TYPE_PURE_GROUNDED_OP = 1u << 1,
 };
 
 typedef struct {
@@ -535,6 +536,70 @@ static inline uint64_t symbol_table_instance_id(const SymbolTable *st) {
     X(index_atom) \
     X(range_atom) \
     X(repeat_atom)
+
+/* Builtin grounded operations whose result type is a pure function of their
+   argument atoms.  Compile this effect/type license into SymbolEntry flags
+   during builtin initialization, before the table is exposed, so admission
+   paths do not repeatedly reclassify opcodes. */
+#define CETTA_TYPE_PURE_GROUNDED_SYMBOL_FIELDS(X) \
+    X(abt_default_signatures) \
+    X(abt_signature_admitted) \
+    X(abt_shift) \
+    X(abt_subst) \
+    X(abt_close) \
+    X(abt_open) \
+    X(abt_bind) \
+    X(abt_print) \
+    X(abt_parse) \
+    X(abt_scope_check) \
+    X(abt_alpha_eq) \
+    X(op_plus) \
+    X(op_minus) \
+    X(op_mul) \
+    X(op_div) \
+    X(op_floor_div) \
+    X(op_mod) \
+    X(op_lt) \
+    X(op_gt) \
+    X(op_le) \
+    X(op_ge) \
+    X(op_eq) \
+    X(numeric_eq) \
+    X(alpha_eq) \
+    X(if_equal) \
+    X(repr) \
+    X(op_and) \
+    X(op_or) \
+    X(op_not) \
+    X(op_xor) \
+    X(sha256) \
+    X(max_atom) \
+    X(min_atom) \
+    X(pow_math) \
+    X(sqrt_math) \
+    X(abs_math) \
+    X(log_math) \
+    X(trunc_math) \
+    X(ceil_math) \
+    X(floor_math) \
+    X(round_math) \
+    X(sin_math) \
+    X(asin_math) \
+    X(cos_math) \
+    X(acos_math) \
+    X(tan_math) \
+    X(atan_math) \
+    X(isnan_math) \
+    X(isinf_math) \
+    X(car_atom) \
+    X(cdr_atom) \
+    X(size_atom) \
+    X(index_atom) \
+    X(range_atom) \
+    X(repeat_atom) \
+    X(unique_atom) \
+    X(intersection_atom) \
+    X(subtraction_atom)
 
 typedef struct {
 #define CETTA_BUILTIN_SYMBOL_FIELD(field, text) SymbolId field;

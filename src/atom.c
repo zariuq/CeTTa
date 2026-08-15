@@ -749,19 +749,8 @@ void arena_set_runtime_kind(Arena *a, CettaArenaRuntimeKind kind) {
     arena_runtime_note_usage(a);
 }
 
-size_t arena_accounted_live_bytes(const Arena *a) {
-    if (!a)
-        return 0u;
-    return size_add_saturating(
-        size_add_saturating(a->live_bytes, a->external_bytes),
-        a->symbol_cache_bytes);
-}
-
-size_t arena_mark_accounted_live_bytes(ArenaMark mark) {
-    return size_add_saturating(
-        size_add_saturating(mark.live_bytes, mark.external_bytes),
-        mark.symbol_cache_bytes);
-}
+extern inline size_t arena_accounted_live_bytes(const Arena *a);
+extern inline size_t arena_mark_accounted_live_bytes(ArenaMark mark);
 
 void arena_account_external_bytes(Arena *a, size_t size) {
     if (!a || size == 0u)
@@ -1385,21 +1374,11 @@ void fresh_var_id_test_reset(uint64_t next_base) {
 }
 #endif
 
-uint32_t var_base_id(VarId id) {
-    return (uint32_t)(id & 0xFFFFFFFFu);
-}
-
-uint32_t var_epoch_suffix(VarId id) {
-    return (uint32_t)(id >> 32);
-}
-
-VarId var_epoch_id(VarId id, uint32_t epoch) {
-    uint32_t base = var_base_id(id);
-    if (base == 0) {
-        base = (uint32_t)fresh_var_id();
-    }
-    return ((VarId)epoch << 32) | (VarId)base;
-}
+/* Keep externally linkable definitions for already-compiled callers while
+ * source users receive the identical inline definitions from atom.h. */
+extern inline uint32_t var_base_id(VarId id);
+extern inline uint32_t var_epoch_suffix(VarId id);
+extern inline VarId var_epoch_id(VarId id, uint32_t epoch);
 
 void var_intern_init(VarInternTable *t) {
     if (!t) return;
