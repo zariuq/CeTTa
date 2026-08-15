@@ -4319,12 +4319,17 @@ static bool petta_machine_schedule_named_state(
         barrier, petta_plan_child(plan, 1u));
 }
 
-static bool petta_machine_boolean(
-    PettaMachineImpl *machine, bool value, Atom *expected) {
-    Atom *boolean = machine->host.boolean_value
+static Atom *petta_machine_boolean_value(
+    PettaMachineImpl *machine, bool value) {
+    return machine->host.boolean_value
         ? machine->host.boolean_value(
               machine->host.context, &machine->heap, value)
         : petta_semantics_boolean_value(&machine->heap, value);
+}
+
+static bool petta_machine_boolean(
+    PettaMachineImpl *machine, bool value, Atom *expected) {
+    Atom *boolean = petta_machine_boolean_value(machine, value);
     return boolean && petta_machine_unify(machine, boolean, expected);
 }
 
@@ -12947,14 +12952,21 @@ static bool petta_machine_try_activation_pure_grounded(
             argument && !atom_has_vars(argument) &&
             !petta_semantics_value_contains_observable_open_cons(
                 argument);
-        if (ready)
+        if (ready) {
             arguments[index] = argument;
+        }
     }
     if (!ready)
         return false;
-    Atom *direct = grounded_dispatch(
-        &machine->heap, goal->first->expr.elems[0],
-        arguments, (uint32_t)nargs);
+    bool truth = false;
+    bool scalar_truth = grounded_try_plain_scalar_truth(
+        goal->first->expr.elems[0], arguments,
+        (uint32_t)nargs, &truth);
+    Atom *direct = scalar_truth
+        ? petta_machine_boolean_value(machine, truth)
+        : grounded_dispatch(
+              &machine->heap, goal->first->expr.elems[0],
+              arguments, (uint32_t)nargs);
     if (!direct)
         return false;
     *handled_out = true;
@@ -12962,14 +12974,9 @@ static bool petta_machine_try_activation_pure_grounded(
     if (atom_is_empty(direct))
         return false;
     machine->stats.pure_grounded_slot_frame_direct_dispatches++;
-    bool truth = false;
-    if (petta_semantics_truth_value(direct, &truth)) {
-        direct = machine->host.boolean_value
-            ? machine->host.boolean_value(
-                  machine->host.context,
-                  &machine->heap, truth)
-            : petta_semantics_boolean_value(
-                  &machine->heap, truth);
+    if (!scalar_truth &&
+        petta_semantics_truth_value(direct, &truth)) {
+        direct = petta_machine_boolean_value(machine, truth);
     }
     return direct && petta_machine_unify(
         machine, direct, goal->second);
@@ -13731,22 +13738,23 @@ static bool petta_machine_dispatch_solve(
         }
         if (ready) {
             machine->stats.pure_grounded_slot_frame_entries++;
-            Atom *direct = grounded_dispatch(
-                &machine->heap, goal->first->expr.elems[0],
-                arguments, (uint32_t)nargs);
+            bool truth = false;
+            bool scalar_truth = grounded_try_plain_scalar_truth(
+                goal->first->expr.elems[0], arguments,
+                (uint32_t)nargs, &truth);
+            Atom *direct = scalar_truth
+                ? petta_machine_boolean_value(machine, truth)
+                : grounded_dispatch(
+                      &machine->heap, goal->first->expr.elems[0],
+                      arguments, (uint32_t)nargs);
             if (direct) {
                 if (atom_is_empty(direct))
                     return false;
                 machine->stats
                     .pure_grounded_slot_frame_direct_dispatches++;
-                bool truth = false;
-                if (petta_semantics_truth_value(direct, &truth)) {
-                    direct = machine->host.boolean_value
-                        ? machine->host.boolean_value(
-                              machine->host.context,
-                              &machine->heap, truth)
-                        : petta_semantics_boolean_value(
-                              &machine->heap, truth);
+                if (!scalar_truth &&
+                    petta_semantics_truth_value(direct, &truth)) {
+                    direct = petta_machine_boolean_value(machine, truth);
                 }
                 return direct && petta_machine_unify(
                     machine, direct, goal->second);
