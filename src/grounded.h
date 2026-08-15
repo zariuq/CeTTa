@@ -8,6 +8,13 @@
    Otherwise returns NULL (not a grounded op). */
 Atom *grounded_dispatch(Arena *a, Atom *head, Atom **args, uint32_t nargs);
 
+/* Evaluate the allocation-free scalar subset of truth-valued grounded
+ * operations.  True means `truth_out` is the exact result; false means the
+ * caller must use grounded_dispatch, which remains authoritative for every
+ * unsupported operator, payload, arity, or dialect-specific override. */
+bool grounded_try_plain_scalar_truth(Atom *head, Atom **args,
+                                     uint32_t nargs, bool *truth_out);
+
 /* Check if a symbol is a known grounded op head (by SymbolId). */
 bool is_grounded_op(SymbolId id);
 

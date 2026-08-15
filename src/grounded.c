@@ -1221,6 +1221,127 @@ static bool get_bool_arg(Atom *a, bool *out) {
     return false;
 }
 
+static bool grounded_is_plain_scalar(const Atom *atom) {
+    return atom && atom->kind == ATOM_GROUNDED &&
+           (atom->ground.gkind == GV_INT ||
+            atom->ground.gkind == GV_FLOAT ||
+            atom->ground.gkind == GV_BOOL);
+}
+
+static bool grounded_is_plain_number(const Atom *atom) {
+    return atom && atom->kind == ATOM_GROUNDED &&
+           (atom->ground.gkind == GV_INT ||
+            atom->ground.gkind == GV_FLOAT);
+}
+
+static bool grounded_plain_scalar_truth_common(
+        SymbolId head_id, Atom **args, uint32_t nargs,
+        bool *truth_out) {
+    if (!truth_out || (nargs > 0u && !args))
+        return false;
+
+    if (head_id == g_builtin_syms.op_eq) {
+        if (nargs != 2u || !grounded_is_plain_scalar(args[0]) ||
+            !grounded_is_plain_scalar(args[1])) {
+            return false;
+        }
+        *truth_out = atom_eq(args[0], args[1]);
+        return true;
+    }
+
+    if (head_id == g_builtin_syms.op_not) {
+        if (nargs != 1u || !args[0] || args[0]->kind != ATOM_GROUNDED ||
+            args[0]->ground.gkind != GV_BOOL) {
+            return false;
+        }
+        *truth_out = !args[0]->ground.bval;
+        return true;
+    }
+    if ((head_id == g_builtin_syms.op_and ||
+         head_id == g_builtin_syms.op_or ||
+         head_id == g_builtin_syms.op_xor) &&
+        nargs == 2u) {
+        if (!args[0] || !args[1] ||
+            args[0]->kind != ATOM_GROUNDED ||
+            args[1]->kind != ATOM_GROUNDED ||
+            args[0]->ground.gkind != GV_BOOL ||
+            args[1]->ground.gkind != GV_BOOL) {
+            return false;
+        }
+        bool left = args[0]->ground.bval;
+        bool right = args[1]->ground.bval;
+        *truth_out = head_id == g_builtin_syms.op_and
+            ? left && right
+            : head_id == g_builtin_syms.op_or
+                ? left || right
+                : left != right;
+        return true;
+    }
+
+    bool numeric_truth =
+        head_id == g_builtin_syms.op_lt ||
+        head_id == g_builtin_syms.op_gt ||
+        head_id == g_builtin_syms.op_le ||
+        head_id == g_builtin_syms.op_ge ||
+        head_id == g_builtin_syms.numeric_eq;
+    if (!numeric_truth || nargs != 2u ||
+        !grounded_is_plain_number(args[0]) ||
+        !grounded_is_plain_number(args[1])) {
+        return false;
+    }
+
+    bool floating = args[0]->ground.gkind == GV_FLOAT ||
+                    args[1]->ground.gkind == GV_FLOAT;
+    if (!floating) {
+        int64_t left = args[0]->ground.ival;
+        int64_t right = args[1]->ground.ival;
+        *truth_out = head_id == g_builtin_syms.op_lt
+            ? left < right
+            : head_id == g_builtin_syms.op_gt
+                ? left > right
+                : head_id == g_builtin_syms.op_le
+                    ? left <= right
+                    : head_id == g_builtin_syms.op_ge
+                        ? left >= right
+                        : left == right;
+        return true;
+    }
+
+    double left = args[0]->ground.gkind == GV_FLOAT
+        ? args[0]->ground.fval
+        : (double)args[0]->ground.ival;
+    double right = args[1]->ground.gkind == GV_FLOAT
+        ? args[1]->ground.fval
+        : (double)args[1]->ground.ival;
+    *truth_out = head_id == g_builtin_syms.op_lt
+        ? left < right
+        : head_id == g_builtin_syms.op_gt
+            ? left > right
+            : head_id == g_builtin_syms.op_le
+                ? left <= right
+                : head_id == g_builtin_syms.op_ge
+                    ? left >= right
+                    : left == right;
+    return true;
+}
+
+bool grounded_try_plain_scalar_truth(
+        Atom *head, Atom **args, uint32_t nargs, bool *truth_out) {
+    if (!head || head->kind != ATOM_SYMBOL || !truth_out)
+        return false;
+    SymbolId head_id = head->sym_id;
+    /* grounded_dispatch gives guest operators first refusal.  Mirror that
+     * precedence and decline whenever a dialect owns this spelling. */
+    if (abt_is_op(head_id) ||
+        (prime_semantics_is_op_id &&
+         prime_semantics_is_op_id(head_id)) ||
+        (he_typing_is_op_id && he_typing_is_op_id(head_id))) {
+        return false;
+    }
+    return grounded_plain_scalar_truth_common(
+        head_id, args, nargs, truth_out);
+}
+
 static Atom *grounded_bool_bad_arg(Arena *a, Atom *head, Atom **args, uint32_t nargs,
                                    int bad_idx, Atom *actual) {
     return grounded_bad_arg_type(a, head, args, nargs, bad_idx, atom_symbol(a, "Bool"), actual);
@@ -1600,6 +1721,12 @@ Atom *grounded_dispatch(Arena *a, Atom *head, Atom **args, uint32_t nargs) {
         if (he) return he;
     }
     SymbolId head_id = head->sym_id;
+
+    bool scalar_truth = false;
+    if (grounded_plain_scalar_truth_common(
+            head_id, args, nargs, &scalar_truth)) {
+        return scalar_truth ? atom_true(a) : atom_false(a);
+    }
 
     if (head_id == g_builtin_syms.println_bang) {
         if (nargs != 1)
