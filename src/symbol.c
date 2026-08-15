@@ -286,6 +286,14 @@ void symbol_table_init_builtins(SymbolTable *st, BuiltinSyms *builtins) {
     CETTA_STATIC_GROUNDED_SYMBOL_FIELDS(CETTA_MARK_STATIC_GROUNDED)
 #undef CETTA_MARK_STATIC_GROUNDED
 
+#define CETTA_MARK_TYPE_PURE_GROUNDED(field) \
+    symbol_table_add_flags( \
+        st, builtins->field, \
+        CETTA_SYMBOL_FLAG_TYPE_PURE_GROUNDED_OP);
+    CETTA_TYPE_PURE_GROUNDED_SYMBOL_FIELDS(
+        CETTA_MARK_TYPE_PURE_GROUNDED)
+#undef CETTA_MARK_TYPE_PURE_GROUNDED
+
     /* The library ABI reserves this prefix for native grounded operators.
        Mark builtins eagerly; later dynamically interned ABI names retain the
        name-based fallback in is_grounded_op. */

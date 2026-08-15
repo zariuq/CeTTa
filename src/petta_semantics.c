@@ -10,18 +10,27 @@
 #include <stdlib.h>
 #include <string.h>
 
-#define PETTA_FORM_CACHE_CAP 128u
+#define PETTA_FORM_DENSE_CAP 4096u
+#define PETTA_FORM_OVERFLOW_CAP 128u
+
+_Static_assert(PETTA_FORM_CHAIN <= UINT8_MAX,
+               "PeTTa semantic forms must fit in the dense fact byte");
+_Static_assert(
+    (PETTA_FORM_OVERFLOW_CAP & (PETTA_FORM_OVERFLOW_CAP - 1u)) == 0u,
+    "PeTTa semantic-form overflow capacity must be a power of two");
 
 typedef struct {
     SymbolId symbol;
     PeTTaForm form;
-} PeTTaFormCacheSlot;
+} PeTTaFormOverflowSlot;
 
 typedef struct {
     const SymbolTable *table;
     uint64_t table_instance_id;
-    PeTTaFormCacheSlot form_cache[PETTA_FORM_CACHE_CAP];
-    bool form_cache_complete;
+    uint8_t form_by_symbol[PETTA_FORM_DENSE_CAP];
+    PeTTaFormOverflowSlot form_overflow[PETTA_FORM_OVERFLOW_CAP];
+    bool form_by_symbol_ready;
+    bool cons_shape_facts_ready;
     SymbolId true_text;
     SymbolId false_text;
     SymbolId test;
@@ -87,144 +96,167 @@ typedef struct {
 
 static _Thread_local PeTTaSymbolIds g_petta_symbol_ids;
 
-static bool petta_form_cache_insert(
+static bool petta_form_overflow_insert(
     PeTTaSymbolIds *ids, SymbolId symbol, PeTTaForm form) {
-    if (!ids || symbol == SYMBOL_ID_NONE ||
-        form == PETTA_FORM_NONE) {
-        return true;
-    }
     uint32_t slot =
         ((uint32_t)symbol * UINT32_C(2654435761)) &
-        (PETTA_FORM_CACHE_CAP - 1u);
+        (PETTA_FORM_OVERFLOW_CAP - 1u);
     for (uint32_t probe = 0u;
-         probe < PETTA_FORM_CACHE_CAP; probe++) {
-        PeTTaFormCacheSlot *entry = &ids->form_cache[slot];
+         probe < PETTA_FORM_OVERFLOW_CAP; probe++) {
+        PeTTaFormOverflowSlot *entry = &ids->form_overflow[slot];
         if (entry->form == PETTA_FORM_NONE) {
             entry->symbol = symbol;
             entry->form = form;
             return true;
         }
-        /*
-         * Preserve the first branch of the declarative dispatch below if
-         * two syntax spellings happen to intern to the same SymbolId.
-         */
         if (entry->symbol == symbol)
             return true;
-        slot = (slot + 1u) & (PETTA_FORM_CACHE_CAP - 1u);
+        slot = (slot + 1u) & (PETTA_FORM_OVERFLOW_CAP - 1u);
     }
     return false;
 }
 
-static PeTTaForm petta_form_cache_lookup(
+static PeTTaForm petta_form_overflow_lookup(
     const PeTTaSymbolIds *ids, SymbolId symbol) {
     uint32_t slot =
         ((uint32_t)symbol * UINT32_C(2654435761)) &
-        (PETTA_FORM_CACHE_CAP - 1u);
+        (PETTA_FORM_OVERFLOW_CAP - 1u);
     for (uint32_t probe = 0u;
-         probe < PETTA_FORM_CACHE_CAP; probe++) {
-        const PeTTaFormCacheSlot *entry =
-            &ids->form_cache[slot];
+         probe < PETTA_FORM_OVERFLOW_CAP; probe++) {
+        const PeTTaFormOverflowSlot *entry =
+            &ids->form_overflow[slot];
         if (entry->form == PETTA_FORM_NONE)
             return PETTA_FORM_NONE;
         if (entry->symbol == symbol)
             return entry->form;
-        slot = (slot + 1u) & (PETTA_FORM_CACHE_CAP - 1u);
+        slot = (slot + 1u) & (PETTA_FORM_OVERFLOW_CAP - 1u);
     }
     return PETTA_FORM_NONE;
 }
 
-static bool petta_form_cache_build(PeTTaSymbolIds *ids) {
-#define PETTA_CACHE_FORM(symbol, form)                         \
-    do {                                                       \
-        if (!petta_form_cache_insert(ids, (symbol), (form)))   \
-            return false;                                      \
+#define PETTA_SEMANTIC_FORM_ROWS(X)                                      \
+    X(ids->test, PETTA_FORM_TEST);                                       \
+    X(g_builtin_syms.if_text, PETTA_FORM_IF);                            \
+    X(ids->progn, PETTA_FORM_PROGN);                                     \
+    X(ids->prog1, PETTA_FORM_PROG1);                                     \
+    X(ids->foldall, PETTA_FORM_FOLDALL);                                 \
+    X(ids->forall, PETTA_FORM_FORALL);                                   \
+    X(ids->maplist, PETTA_FORM_MAPLIST);                                 \
+    X(g_builtin_syms.map_atom, PETTA_FORM_MAP_ATOM);                     \
+    X(ids->foldl, PETTA_FORM_FOLDL);                                     \
+    X(ids->id, PETTA_FORM_ID);                                           \
+    X(ids->append, PETTA_FORM_APPEND);                                   \
+    X(ids->cons, PETTA_FORM_CONS);                                       \
+    X(ids->int_add, PETTA_FORM_INT_ADD);                                 \
+    X(ids->stream_unique, PETTA_FORM_STREAM_UNIQUE);                     \
+    X(ids->stream_union, PETTA_FORM_STREAM_UNION);                       \
+    X(ids->stream_intersection, PETTA_FORM_STREAM_INTERSECTION);         \
+    X(ids->stream_subtraction, PETTA_FORM_STREAM_SUBTRACTION);           \
+    X(ids->length, PETTA_FORM_LENGTH);                                   \
+    X(ids->msort, PETTA_FORM_MSORT);                                     \
+    X(ids->sort_atom, PETTA_FORM_MSORT);                                 \
+    X(ids->first_from_pair, PETTA_FORM_FIRST_FROM_PAIR);                 \
+    X(ids->first, PETTA_FORM_FIRST_FROM_PAIR);                           \
+    X(ids->second_from_pair, PETTA_FORM_SECOND_FROM_PAIR);               \
+    X(ids->is_var, PETTA_FORM_IS_VAR);                                   \
+    X(ids->is_ground, PETTA_FORM_IS_GROUND);                             \
+    X(ids->is_expr, PETTA_FORM_IS_EXPR);                                 \
+    X(ids->is_space, PETTA_FORM_IS_SPACE);                               \
+    X(ids->is_member, PETTA_FORM_IS_MEMBER);                             \
+    X(ids->is_alpha_member, PETTA_FORM_IS_ALPHA_MEMBER);                 \
+    X(ids->alpha_unique_atom, PETTA_FORM_ALPHA_UNIQUE);                  \
+    X(ids->list_to_set, PETTA_FORM_LIST_TO_SET);                         \
+    X(ids->exclude_item, PETTA_FORM_EXCLUDE_ITEM);                       \
+    X(ids->repra, PETTA_FORM_REPRA);                                     \
+    X(ids->sread, PETTA_FORM_SREAD);                                     \
+    X(g_builtin_syms.bind_bang, PETTA_FORM_BIND_STATE);                  \
+    X(g_builtin_syms.get_state, PETTA_FORM_GET_STATE);                   \
+    X(g_builtin_syms.change_state_bang, PETTA_FORM_CHANGE_STATE);        \
+    X(g_builtin_syms.new_state, PETTA_FORM_NEW_STATE);                   \
+    X(ids->call, PETTA_FORM_CALL);                                       \
+    X(ids->eval, PETTA_FORM_EVAL);                                       \
+    X(g_builtin_syms.reduce, PETTA_FORM_REDUCE);                         \
+    X(ids->predicate, PETTA_FORM_PREDICATE);                             \
+    X(ids->translate_predicate, PETTA_FORM_TRANSLATE_PREDICATE);         \
+    X(ids->import_prolog_function, PETTA_FORM_IMPORT_PROLOG_FUNCTION);   \
+    X(ids->process_metta_string, PETTA_FORM_PROCESS_METTA_STRING);       \
+    X(ids->call_predicate, PETTA_FORM_CALL_PREDICATE);                   \
+    X(ids->asserta_predicate, PETTA_FORM_ASSERTA_PREDICATE);             \
+    X(ids->assertz_predicate, PETTA_FORM_ASSERTZ_PREDICATE);             \
+    X(ids->retract_predicate, PETTA_FORM_RETRACT_PREDICATE);             \
+    X(ids->tabled, PETTA_FORM_TABLED);                                   \
+    X(ids->add_translator_rule, PETTA_FORM_ADD_TRANSLATOR_RULE);         \
+    X(ids->remove_translator_rule, PETTA_FORM_REMOVE_TRANSLATOR_RULE);   \
+    X(ids->cut, PETTA_FORM_CUT);                                         \
+    X(ids->catch_text, PETTA_FORM_CATCH);                                \
+    X(ids->lambda, PETTA_FORM_LAMBDA);                                   \
+    X(g_builtin_syms.let, PETTA_FORM_LET);                               \
+    X(g_builtin_syms.chain, PETTA_FORM_CHAIN)
+
+static bool petta_form_dense_build(PeTTaSymbolIds *ids) {
+    bool ready = true;
+#define PETTA_DENSE_FORM(symbol_expression, semantic_form)               \
+    do {                                                                 \
+        SymbolId symbol = (symbol_expression);                           \
+        if (symbol == SYMBOL_ID_NONE) {                                  \
+            ready = false;                                               \
+        } else if (symbol < PETTA_FORM_DENSE_CAP &&                      \
+                   ids->form_by_symbol[symbol] == PETTA_FORM_NONE) {     \
+            ids->form_by_symbol[symbol] = (uint8_t)(semantic_form);      \
+        } else if (symbol >= PETTA_FORM_DENSE_CAP &&                     \
+                   !petta_form_overflow_insert(                          \
+                       ids, symbol, (semantic_form))) {                  \
+            ready = false;                                               \
+        }                                                                \
     } while (0)
-    PETTA_CACHE_FORM(ids->test, PETTA_FORM_TEST);
-    PETTA_CACHE_FORM(g_builtin_syms.if_text, PETTA_FORM_IF);
-    PETTA_CACHE_FORM(ids->progn, PETTA_FORM_PROGN);
-    PETTA_CACHE_FORM(ids->prog1, PETTA_FORM_PROG1);
-    PETTA_CACHE_FORM(ids->foldall, PETTA_FORM_FOLDALL);
-    PETTA_CACHE_FORM(ids->forall, PETTA_FORM_FORALL);
-    PETTA_CACHE_FORM(ids->maplist, PETTA_FORM_MAPLIST);
-    PETTA_CACHE_FORM(g_builtin_syms.map_atom, PETTA_FORM_MAP_ATOM);
-    PETTA_CACHE_FORM(ids->foldl, PETTA_FORM_FOLDL);
-    PETTA_CACHE_FORM(ids->id, PETTA_FORM_ID);
-    PETTA_CACHE_FORM(ids->append, PETTA_FORM_APPEND);
-    PETTA_CACHE_FORM(ids->cons, PETTA_FORM_CONS);
-    PETTA_CACHE_FORM(ids->int_add, PETTA_FORM_INT_ADD);
-    PETTA_CACHE_FORM(ids->stream_unique, PETTA_FORM_STREAM_UNIQUE);
-    PETTA_CACHE_FORM(ids->stream_union, PETTA_FORM_STREAM_UNION);
-    PETTA_CACHE_FORM(
-        ids->stream_intersection,
-        PETTA_FORM_STREAM_INTERSECTION);
-    PETTA_CACHE_FORM(
-        ids->stream_subtraction,
-        PETTA_FORM_STREAM_SUBTRACTION);
-    PETTA_CACHE_FORM(ids->length, PETTA_FORM_LENGTH);
-    PETTA_CACHE_FORM(ids->msort, PETTA_FORM_MSORT);
-    PETTA_CACHE_FORM(ids->sort_atom, PETTA_FORM_MSORT);
-    PETTA_CACHE_FORM(
-        ids->first_from_pair, PETTA_FORM_FIRST_FROM_PAIR);
-    PETTA_CACHE_FORM(ids->first, PETTA_FORM_FIRST_FROM_PAIR);
-    PETTA_CACHE_FORM(
-        ids->second_from_pair, PETTA_FORM_SECOND_FROM_PAIR);
-    PETTA_CACHE_FORM(ids->is_var, PETTA_FORM_IS_VAR);
-    PETTA_CACHE_FORM(ids->is_ground, PETTA_FORM_IS_GROUND);
-    PETTA_CACHE_FORM(ids->is_expr, PETTA_FORM_IS_EXPR);
-    PETTA_CACHE_FORM(ids->is_space, PETTA_FORM_IS_SPACE);
-    PETTA_CACHE_FORM(ids->is_member, PETTA_FORM_IS_MEMBER);
-    PETTA_CACHE_FORM(
-        ids->is_alpha_member, PETTA_FORM_IS_ALPHA_MEMBER);
-    PETTA_CACHE_FORM(
-        ids->alpha_unique_atom, PETTA_FORM_ALPHA_UNIQUE);
-    PETTA_CACHE_FORM(ids->list_to_set, PETTA_FORM_LIST_TO_SET);
-    PETTA_CACHE_FORM(ids->exclude_item, PETTA_FORM_EXCLUDE_ITEM);
-    PETTA_CACHE_FORM(ids->repra, PETTA_FORM_REPRA);
-    PETTA_CACHE_FORM(ids->sread, PETTA_FORM_SREAD);
-    PETTA_CACHE_FORM(
-        g_builtin_syms.bind_bang, PETTA_FORM_BIND_STATE);
-    PETTA_CACHE_FORM(
-        g_builtin_syms.get_state, PETTA_FORM_GET_STATE);
-    PETTA_CACHE_FORM(
-        g_builtin_syms.change_state_bang,
-        PETTA_FORM_CHANGE_STATE);
-    PETTA_CACHE_FORM(
-        g_builtin_syms.new_state, PETTA_FORM_NEW_STATE);
-    PETTA_CACHE_FORM(ids->call, PETTA_FORM_CALL);
-    PETTA_CACHE_FORM(ids->eval, PETTA_FORM_EVAL);
-    PETTA_CACHE_FORM(g_builtin_syms.reduce, PETTA_FORM_REDUCE);
-    PETTA_CACHE_FORM(ids->predicate, PETTA_FORM_PREDICATE);
-    PETTA_CACHE_FORM(
-        ids->translate_predicate,
-        PETTA_FORM_TRANSLATE_PREDICATE);
-    PETTA_CACHE_FORM(
-        ids->import_prolog_function,
-        PETTA_FORM_IMPORT_PROLOG_FUNCTION);
-    PETTA_CACHE_FORM(
-        ids->process_metta_string,
-        PETTA_FORM_PROCESS_METTA_STRING);
-    PETTA_CACHE_FORM(
-        ids->call_predicate, PETTA_FORM_CALL_PREDICATE);
-    PETTA_CACHE_FORM(
-        ids->asserta_predicate, PETTA_FORM_ASSERTA_PREDICATE);
-    PETTA_CACHE_FORM(
-        ids->assertz_predicate, PETTA_FORM_ASSERTZ_PREDICATE);
-    PETTA_CACHE_FORM(
-        ids->retract_predicate, PETTA_FORM_RETRACT_PREDICATE);
-    PETTA_CACHE_FORM(ids->tabled, PETTA_FORM_TABLED);
-    PETTA_CACHE_FORM(
-        ids->add_translator_rule,
-        PETTA_FORM_ADD_TRANSLATOR_RULE);
-    PETTA_CACHE_FORM(
-        ids->remove_translator_rule,
-        PETTA_FORM_REMOVE_TRANSLATOR_RULE);
-    PETTA_CACHE_FORM(ids->cut, PETTA_FORM_CUT);
-    PETTA_CACHE_FORM(ids->catch_text, PETTA_FORM_CATCH);
-    PETTA_CACHE_FORM(ids->lambda, PETTA_FORM_LAMBDA);
-    PETTA_CACHE_FORM(g_builtin_syms.let, PETTA_FORM_LET);
-    PETTA_CACHE_FORM(g_builtin_syms.chain, PETTA_FORM_CHAIN);
-#undef PETTA_CACHE_FORM
-    return true;
+    PETTA_SEMANTIC_FORM_ROWS(PETTA_DENSE_FORM);
+#undef PETTA_DENSE_FORM
+    return ready;
+}
+
+static PeTTaForm petta_form_lookup_ids(
+    const PeTTaSymbolIds *ids, SymbolId head) {
+    if (head == SYMBOL_ID_NONE || !ids || !ids->table)
+        return PETTA_FORM_NONE;
+    if (ids->form_by_symbol_ready) {
+        return head < PETTA_FORM_DENSE_CAP
+            ? (PeTTaForm)ids->form_by_symbol[head]
+            : petta_form_overflow_lookup(ids, head);
+    }
+#define PETTA_MATCH_FORM(symbol_expression, semantic_form)               \
+    do {                                                                 \
+        if (head == (symbol_expression))                                 \
+            return (semantic_form);                                      \
+    } while (0)
+    PETTA_SEMANTIC_FORM_ROWS(PETTA_MATCH_FORM);
+#undef PETTA_MATCH_FORM
+    return PETTA_FORM_NONE;
+}
+
+static bool petta_cons_shape_facts_ready(
+    const PeTTaSymbolIds *ids) {
+    SymbolId cons_preimage = SYMBOL_ID_NONE;
+    uint32_t cons_preimage_count = 0u;
+#define PETTA_CAPTURE_CONS_PREIMAGE(symbol_expression, semantic_form)    \
+    do {                                                                 \
+        if ((semantic_form) == PETTA_FORM_CONS) {                        \
+            SymbolId symbol = (symbol_expression);                       \
+            if (symbol != SYMBOL_ID_NONE &&                              \
+                symbol != cons_preimage &&                               \
+                petta_form_lookup_ids(ids, symbol) ==                    \
+                    PETTA_FORM_CONS) {                                   \
+                cons_preimage = symbol;                                  \
+                cons_preimage_count++;                                   \
+            }                                                            \
+        }                                                                \
+    } while (0)
+    PETTA_SEMANTIC_FORM_ROWS(PETTA_CAPTURE_CONS_PREIMAGE);
+#undef PETTA_CAPTURE_CONS_PREIMAGE
+    return ids && ids->table && ids->table_instance_id != 0u &&
+           ids->cons != SYMBOL_ID_NONE &&
+           ids->open_cons != SYMBOL_ID_NONE &&
+           cons_preimage_count == 1u &&
+           cons_preimage == ids->cons;
 }
 
 static const PeTTaSymbolIds *petta_symbol_ids_refresh(void) {
@@ -318,7 +350,9 @@ static const PeTTaSymbolIds *petta_symbol_ids_refresh(void) {
         ids.open_cons =
             symbol_intern_cstr(g_symbols, "PeTTa.OpenConsV1");
     }
-    ids.form_cache_complete = petta_form_cache_build(&ids);
+    ids.form_by_symbol_ready = petta_form_dense_build(&ids);
+    ids.cons_shape_facts_ready =
+        petta_cons_shape_facts_ready(&ids);
     g_petta_symbol_ids = ids;
     return &g_petta_symbol_ids;
 }
@@ -339,123 +373,32 @@ static inline const PeTTaSymbolIds *petta_symbol_ids(void) {
     return petta_symbol_ids_refresh();
 }
 
-PeTTaForm petta_semantics_form(SymbolId head) {
+bool petta_semantics_cons_shape_facts(PeTTaConsShapeFacts *facts) {
+    if (!facts)
+        return false;
     const PeTTaSymbolIds *ids = petta_symbol_ids();
-    if (head == SYMBOL_ID_NONE || !ids->table)
-        return PETTA_FORM_NONE;
-    if (ids->form_cache_complete)
-        return petta_form_cache_lookup(ids, head);
-    if (head == ids->test)
-        return PETTA_FORM_TEST;
-    if (head == g_builtin_syms.if_text)
-        return PETTA_FORM_IF;
-    if (head == ids->progn)
-        return PETTA_FORM_PROGN;
-    if (head == ids->prog1)
-        return PETTA_FORM_PROG1;
-    if (head == ids->foldall)
-        return PETTA_FORM_FOLDALL;
-    if (head == ids->forall)
-        return PETTA_FORM_FORALL;
-    if (head == ids->maplist)
-        return PETTA_FORM_MAPLIST;
-    if (head == g_builtin_syms.map_atom)
-        return PETTA_FORM_MAP_ATOM;
-    if (head == ids->foldl)
-        return PETTA_FORM_FOLDL;
-    if (head == ids->id)
-        return PETTA_FORM_ID;
-    if (head == ids->append)
-        return PETTA_FORM_APPEND;
-    if (head == ids->cons)
-        return PETTA_FORM_CONS;
-    if (head == ids->int_add)
-        return PETTA_FORM_INT_ADD;
-    if (head == ids->stream_unique)
-        return PETTA_FORM_STREAM_UNIQUE;
-    if (head == ids->stream_union)
-        return PETTA_FORM_STREAM_UNION;
-    if (head == ids->stream_intersection)
-        return PETTA_FORM_STREAM_INTERSECTION;
-    if (head == ids->stream_subtraction)
-        return PETTA_FORM_STREAM_SUBTRACTION;
-    if (head == ids->length)
-        return PETTA_FORM_LENGTH;
-    if (head == ids->msort || head == ids->sort_atom)
-        return PETTA_FORM_MSORT;
-    if (head == ids->first_from_pair || head == ids->first)
-        return PETTA_FORM_FIRST_FROM_PAIR;
-    if (head == ids->second_from_pair)
-        return PETTA_FORM_SECOND_FROM_PAIR;
-    if (head == ids->is_var)
-        return PETTA_FORM_IS_VAR;
-    if (head == ids->is_ground)
-        return PETTA_FORM_IS_GROUND;
-    if (head == ids->is_expr)
-        return PETTA_FORM_IS_EXPR;
-    if (head == ids->is_space)
-        return PETTA_FORM_IS_SPACE;
-    if (head == ids->is_member)
-        return PETTA_FORM_IS_MEMBER;
-    if (head == ids->is_alpha_member)
-        return PETTA_FORM_IS_ALPHA_MEMBER;
-    if (head == ids->alpha_unique_atom)
-        return PETTA_FORM_ALPHA_UNIQUE;
-    if (head == ids->list_to_set)
-        return PETTA_FORM_LIST_TO_SET;
-    if (head == ids->exclude_item)
-        return PETTA_FORM_EXCLUDE_ITEM;
-    if (head == ids->repra)
-        return PETTA_FORM_REPRA;
-    if (head == ids->sread)
-        return PETTA_FORM_SREAD;
-    if (head == g_builtin_syms.bind_bang)
-        return PETTA_FORM_BIND_STATE;
-    if (head == g_builtin_syms.get_state)
-        return PETTA_FORM_GET_STATE;
-    if (head == g_builtin_syms.change_state_bang)
-        return PETTA_FORM_CHANGE_STATE;
-    if (head == g_builtin_syms.new_state)
-        return PETTA_FORM_NEW_STATE;
-    if (head == ids->call)
-        return PETTA_FORM_CALL;
-    if (head == ids->eval)
-        return PETTA_FORM_EVAL;
-    if (head == g_builtin_syms.reduce)
-        return PETTA_FORM_REDUCE;
-    if (head == ids->predicate)
-        return PETTA_FORM_PREDICATE;
-    if (head == ids->translate_predicate)
-        return PETTA_FORM_TRANSLATE_PREDICATE;
-    if (head == ids->import_prolog_function)
-        return PETTA_FORM_IMPORT_PROLOG_FUNCTION;
-    if (head == ids->process_metta_string)
-        return PETTA_FORM_PROCESS_METTA_STRING;
-    if (head == ids->call_predicate)
-        return PETTA_FORM_CALL_PREDICATE;
-    if (head == ids->asserta_predicate)
-        return PETTA_FORM_ASSERTA_PREDICATE;
-    if (head == ids->assertz_predicate)
-        return PETTA_FORM_ASSERTZ_PREDICATE;
-    if (head == ids->retract_predicate)
-        return PETTA_FORM_RETRACT_PREDICATE;
-    if (head == ids->tabled)
-        return PETTA_FORM_TABLED;
-    if (head == ids->add_translator_rule)
-        return PETTA_FORM_ADD_TRANSLATOR_RULE;
-    if (head == ids->remove_translator_rule)
-        return PETTA_FORM_REMOVE_TRANSLATOR_RULE;
-    if (head == ids->cut)
-        return PETTA_FORM_CUT;
-    if (head == ids->catch_text)
-        return PETTA_FORM_CATCH;
-    if (head == ids->lambda)
-        return PETTA_FORM_LAMBDA;
-    if (head == g_builtin_syms.let)
-        return PETTA_FORM_LET;
-    if (head == g_builtin_syms.chain)
-        return PETTA_FORM_CHAIN;
-    return PETTA_FORM_NONE;
+    *facts = (PeTTaConsShapeFacts){
+        .symbol_table = ids->table,
+        .symbol_table_instance_id = ids->table_instance_id,
+        .cons = ids->cons,
+        .open_cons = ids->open_cons,
+    };
+    return ids->form_by_symbol_ready
+        ? ids->cons_shape_facts_ready
+        : petta_cons_shape_facts_ready(ids);
+}
+
+bool petta_semantics_cons_shape_facts_current(
+    const PeTTaConsShapeFacts *facts) {
+    return facts && facts->symbol_table &&
+           facts->symbol_table == g_symbols &&
+           facts->symbol_table_instance_id != 0u &&
+           facts->symbol_table_instance_id ==
+               symbol_table_instance_id(g_symbols);
+}
+
+PeTTaForm petta_semantics_form(SymbolId head) {
+    return petta_form_lookup_ids(petta_symbol_ids(), head);
 }
 
 PeTTaNamedArity petta_semantics_named_arity(
@@ -1039,6 +982,9 @@ bool petta_semantics_cons_pattern_may_match(
     const Atom *pattern, const Atom *value) {
     if (!pattern || !value)
         return true;
+    PeTTaConsShapeFacts facts;
+    if (!petta_semantics_cons_shape_facts(&facts))
+        return true;
 
     PeTTaConsShapePair *pairs = NULL;
     size_t length = 0u;
@@ -1058,15 +1004,17 @@ bool petta_semantics_cons_pattern_may_match(
             continue;
         }
 
-        if (petta_semantics_is_cons_constraint(pattern)) {
-            if (petta_semantics_is_cons_constraint(value))
+        if (petta_semantics_facts_is_cons_constraint(
+                &facts, pattern)) {
+            if (petta_semantics_facts_is_cons_constraint(
+                    &facts, value))
                 continue;
             if (value->kind == ATOM_EXPR &&
                 value->expr.len > 0u) {
                 continue;
             }
             free(pairs);
-            return false;
+            return !petta_semantics_cons_shape_facts_current(&facts);
         }
 
         /*

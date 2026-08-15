@@ -45,6 +45,10 @@ typedef struct PettaPlanNode {
     PettaPlanControl control;
     bool contains_length_call;
     bool contains_call;
+    /* Positive program-snapshot evidence that this occurrence's symbol head
+     * names a Space relation.  Intrinsics and engine-known names remain
+     * callable without acquiring this execution license. */
+    bool relation_head_admitted;
     /* Every node of an admitted equation RHS inherits this mark.  Open
      * admission permits a finite LHS/RHS variable inventory and excludes
      * cons constraints; C0 compilation remains independently restricted to
@@ -66,6 +70,9 @@ typedef struct {
     Atom *lhs;
     Atom *rhs;
     uint32_t static_variable_count;
+    /* An invalid derived fact is unknown and requires exact recomputation. */
+    bool lhs_contains_cons_constraint_valid;
+    bool lhs_contains_cons_constraint;
 } PettaEquationActivationLayout;
 
 typedef struct {

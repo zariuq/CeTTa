@@ -18,11 +18,67 @@ struct CettaPettaRuntimeState {
     pthread_mutex_t random_mutex;
     bool random_mutex_ready;
     uint64_t random_state;
+    const SymbolTable *symbol_table;
+    uint64_t symbol_table_instance;
+    SymbolId argv;
+    SymbolId current_time;
+    SymbolId format_time;
+    SymbolId random_int;
+    SymbolId random_float;
+    SymbolId rng_marker;
+    bool symbol_facts_ready;
 };
 
-static bool petta_runtime_head_is(SymbolId head, const char *name) {
-    return g_symbols && head != SYMBOL_ID_NONE &&
-           symbol_eq_cstr(g_symbols, head, name);
+typedef enum {
+    PETTA_RUNTIME_OP_NONE = 0,
+    PETTA_RUNTIME_OP_ARGV,
+    PETTA_RUNTIME_OP_CURRENT_TIME,
+    PETTA_RUNTIME_OP_FORMAT_TIME,
+    PETTA_RUNTIME_OP_RANDOM_INT,
+    PETTA_RUNTIME_OP_RANDOM_FLOAT,
+} PettaRuntimeOp;
+
+static PettaRuntimeOp petta_runtime_op_by_spelling(SymbolId head) {
+    if (g_symbols && head != SYMBOL_ID_NONE) {
+        if (symbol_eq_cstr(g_symbols, head, "argv"))
+            return PETTA_RUNTIME_OP_ARGV;
+        if (symbol_eq_cstr(g_symbols, head, "current-time"))
+            return PETTA_RUNTIME_OP_CURRENT_TIME;
+        if (symbol_eq_cstr(g_symbols, head, "format-time"))
+            return PETTA_RUNTIME_OP_FORMAT_TIME;
+        if (symbol_eq_cstr(g_symbols, head, "random-int"))
+            return PETTA_RUNTIME_OP_RANDOM_INT;
+        if (symbol_eq_cstr(g_symbols, head, "random-float"))
+            return PETTA_RUNTIME_OP_RANDOM_FLOAT;
+    }
+    return PETTA_RUNTIME_OP_NONE;
+}
+
+static bool petta_runtime_symbol_facts_current(
+    const struct CettaPettaRuntimeState *state) {
+    return state && state->symbol_facts_ready && g_symbols &&
+           state->symbol_table == g_symbols &&
+           state->symbol_table_instance ==
+               symbol_table_instance_id(g_symbols);
+}
+
+static PettaRuntimeOp petta_runtime_op(
+    const CettaLibraryContext *context, SymbolId head) {
+    const struct CettaPettaRuntimeState *state =
+        context ? context->petta_runtime : NULL;
+    if (!petta_runtime_symbol_facts_current(state))
+        return petta_runtime_op_by_spelling(head);
+    if (head == state->argv)
+        return PETTA_RUNTIME_OP_ARGV;
+    if (head == state->current_time)
+        return PETTA_RUNTIME_OP_CURRENT_TIME;
+    if (head == state->format_time)
+        return PETTA_RUNTIME_OP_FORMAT_TIME;
+    if (head == state->random_int)
+        return PETTA_RUNTIME_OP_RANDOM_INT;
+    if (head == state->random_float)
+        return PETTA_RUNTIME_OP_RANDOM_FLOAT;
+    return PETTA_RUNTIME_OP_NONE;
 }
 
 static uint64_t petta_runtime_mix64(uint64_t value) {
@@ -67,6 +123,27 @@ struct CettaPettaRuntimeState *cetta_petta_runtime_state_new(void) {
         return NULL;
     }
     state->random_state = petta_runtime_initial_seed(state);
+    state->symbol_table = g_symbols;
+    state->symbol_table_instance = symbol_table_instance_id(g_symbols);
+    if (g_symbols && state->symbol_table_instance != 0u) {
+        state->argv = symbol_intern_cstr(g_symbols, "argv");
+        state->current_time = symbol_intern_cstr(
+            g_symbols, "current-time");
+        state->format_time = symbol_intern_cstr(
+            g_symbols, "format-time");
+        state->random_int = symbol_intern_cstr(
+            g_symbols, "random-int");
+        state->random_float = symbol_intern_cstr(
+            g_symbols, "random-float");
+        state->rng_marker = symbol_intern_cstr(g_symbols, "&rng");
+        state->symbol_facts_ready =
+            state->argv != SYMBOL_ID_NONE &&
+            state->current_time != SYMBOL_ID_NONE &&
+            state->format_time != SYMBOL_ID_NONE &&
+            state->random_int != SYMBOL_ID_NONE &&
+            state->random_float != SYMBOL_ID_NONE &&
+            state->rng_marker != SYMBOL_ID_NONE;
+    }
     return state;
 }
 
@@ -97,9 +174,15 @@ static uint64_t petta_runtime_random_bounded(
     }
 }
 
-static bool petta_runtime_is_rng_marker(const Atom *atom) {
-    return atom && atom->kind == ATOM_SYMBOL &&
-           symbol_eq_cstr(g_symbols, atom->sym_id, "&rng");
+static bool petta_runtime_is_rng_marker(
+    const CettaLibraryContext *context, const Atom *atom) {
+    if (!atom || atom->kind != ATOM_SYMBOL)
+        return false;
+    const struct CettaPettaRuntimeState *state =
+        context ? context->petta_runtime : NULL;
+    if (petta_runtime_symbol_facts_current(state))
+        return atom->sym_id == state->rng_marker;
+    return symbol_eq_cstr(g_symbols, atom->sym_id, "&rng");
 }
 
 static bool petta_runtime_int64(const Atom *atom, int64_t *value) {
@@ -293,24 +376,25 @@ static PeTTaNamedArity petta_runtime_arity(
     return (PeTTaNamedArity){
         .known = true,
         .exact = supplied >= minimum && supplied <= maximum,
-        .larger = supplied > maximum,
-        .smaller = supplied < minimum,
+        .larger = supplied < maximum,
+        .smaller = supplied > minimum,
     };
 }
 
 PeTTaNamedArity cetta_petta_runtime_named_arity(
     const CettaLibraryContext *context,
     SymbolId head, CettaExprLen supplied) {
-    (void)context;
-    if (petta_runtime_head_is(head, "argv") ||
-        petta_runtime_head_is(head, "format-time")) {
+    switch (petta_runtime_op(context, head)) {
+    case PETTA_RUNTIME_OP_ARGV:
+    case PETTA_RUNTIME_OP_FORMAT_TIME:
         return petta_runtime_arity(supplied, 1u, 1u);
-    }
-    if (petta_runtime_head_is(head, "current-time"))
+    case PETTA_RUNTIME_OP_CURRENT_TIME:
         return petta_runtime_arity(supplied, 0u, 0u);
-    if (petta_runtime_head_is(head, "random-int") ||
-        petta_runtime_head_is(head, "random-float")) {
+    case PETTA_RUNTIME_OP_RANDOM_INT:
+    case PETTA_RUNTIME_OP_RANDOM_FLOAT:
         return petta_runtime_arity(supplied, 2u, 3u);
+    case PETTA_RUNTIME_OP_NONE:
+        return (PeTTaNamedArity){0};
     }
     return (PeTTaNamedArity){0};
 }
@@ -381,7 +465,8 @@ static bool petta_runtime_random_int(
     CettaExprIndex start = 1u;
     CettaExprLen arguments = expression->expr.len - 1u;
     if (arguments == 3u) {
-        if (!petta_runtime_is_rng_marker(expression->expr.elems[1]))
+        if (!petta_runtime_is_rng_marker(
+                context, expression->expr.elems[1]))
             return true;
         start++;
     } else if (arguments != 2u) {
@@ -414,7 +499,8 @@ static bool petta_runtime_random_float(
     CettaExprIndex start = 1u;
     CettaExprLen arguments = expression->expr.len - 1u;
     if (arguments == 3u) {
-        if (!petta_runtime_is_rng_marker(expression->expr.elems[1]))
+        if (!petta_runtime_is_rng_marker(
+                context, expression->expr.elems[1]))
             return true;
         start++;
     } else if (arguments != 2u) {
@@ -457,29 +543,28 @@ bool cetta_petta_runtime_call(
         return false;
     }
     SymbolId head = expression->expr.elems[0]->sym_id;
-    if (petta_runtime_head_is(head, "argv")) {
+    switch (petta_runtime_op(context, head)) {
+    case PETTA_RUNTIME_OP_ARGV:
         *recognized = true;
         return petta_runtime_argv(context, arena, expression, result);
-    }
-    if (petta_runtime_head_is(head, "current-time")) {
+    case PETTA_RUNTIME_OP_CURRENT_TIME:
         *recognized = true;
         return expression->expr.len == 1u
             ? petta_runtime_current_time(arena, result) : true;
-    }
-    if (petta_runtime_head_is(head, "format-time")) {
+    case PETTA_RUNTIME_OP_FORMAT_TIME:
         *recognized = true;
         return petta_runtime_format_time(
             arena, expression, result, recognized);
-    }
-    if (petta_runtime_head_is(head, "random-int")) {
+    case PETTA_RUNTIME_OP_RANDOM_INT:
         *recognized = true;
         return petta_runtime_random_int(
             context, arena, expression, result, recognized);
-    }
-    if (petta_runtime_head_is(head, "random-float")) {
+    case PETTA_RUNTIME_OP_RANDOM_FLOAT:
         *recognized = true;
         return petta_runtime_random_float(
             context, arena, expression, result, recognized);
+    case PETTA_RUNTIME_OP_NONE:
+        return false;
     }
     return false;
 }

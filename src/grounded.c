@@ -623,45 +623,8 @@ classified:
    mutable space state), and every __cetta_lib_ op (semantics not audited).
    Everything here is a pure function of its argument atoms. */
 bool grounded_op_is_type_pure(SymbolId id) {
-    if (id == SYMBOL_ID_NONE) return false;
-    if (abt_is_op(id)) return true;
-    return id == g_builtin_syms.op_plus || id == g_builtin_syms.op_minus ||
-           id == g_builtin_syms.op_mul || id == g_builtin_syms.op_div ||
-           id == g_builtin_syms.op_floor_div || id == g_builtin_syms.op_mod ||
-           id == g_builtin_syms.op_lt ||
-           id == g_builtin_syms.op_gt || id == g_builtin_syms.op_le ||
-           id == g_builtin_syms.op_ge || id == g_builtin_syms.op_eq ||
-           id == g_builtin_syms.numeric_eq ||
-           id == g_builtin_syms.alpha_eq ||
-           id == g_builtin_syms.if_equal ||
-           id == g_builtin_syms.repr ||
-           id == g_builtin_syms.op_and || id == g_builtin_syms.op_or ||
-           id == g_builtin_syms.op_not || id == g_builtin_syms.op_xor ||
-           id == g_builtin_syms.sha256 ||
-           id == g_builtin_syms.max_atom ||
-           id == g_builtin_syms.min_atom ||
-           id == g_builtin_syms.pow_math ||
-           id == g_builtin_syms.sqrt_math ||
-           id == g_builtin_syms.abs_math ||
-           id == g_builtin_syms.log_math ||
-           id == g_builtin_syms.trunc_math ||
-           id == g_builtin_syms.ceil_math ||
-           id == g_builtin_syms.floor_math ||
-           id == g_builtin_syms.round_math ||
-           id == g_builtin_syms.sin_math ||
-           id == g_builtin_syms.asin_math ||
-           id == g_builtin_syms.cos_math ||
-           id == g_builtin_syms.acos_math ||
-           id == g_builtin_syms.tan_math ||
-           id == g_builtin_syms.atan_math ||
-           id == g_builtin_syms.isnan_math ||
-           id == g_builtin_syms.isinf_math ||
-           id == g_builtin_syms.car_atom || id == g_builtin_syms.cdr_atom ||
-           id == g_builtin_syms.size_atom || id == g_builtin_syms.index_atom ||
-           id == g_builtin_syms.range_atom || id == g_builtin_syms.repeat_atom ||
-           id == g_builtin_syms.unique_atom ||
-           id == g_builtin_syms.intersection_atom ||
-           id == g_builtin_syms.subtraction_atom;
+    return (symbol_flags(g_symbols, id) &
+            CETTA_SYMBOL_FLAG_TYPE_PURE_GROUNDED_OP) != 0u;
 }
 
 /* ── Numeric arg extraction (int or float, promote to double) ──────────── */

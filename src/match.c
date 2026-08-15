@@ -418,12 +418,12 @@ static void bindings_temp_constraints_release(BindingConstraint *constraints,
 static Atom *bindings_lookup_spelling(Bindings *b, SymbolId spelling);
 
 static size_t bindings_var_id_hash(VarId id) {
+    /* Fold packed epoch/base structure through a bijective 64-bit mix before
+     * the power-of-two tables select their low address bits. */
     uint64_t x = (uint64_t)id;
-    x ^= x >> 30;
-    x *= UINT64_C(0xbf58476d1ce4e5b9);
-    x ^= x >> 27;
-    x *= UINT64_C(0x94d049bb133111eb);
-    x ^= x >> 31;
+    x ^= x >> 24;
+    x *= UINT64_C(0xff51afd7ed558ccd);
+    x ^= x >> 29;
     return (size_t)x;
 }
 
@@ -741,22 +741,7 @@ static inline void bindings_lookup_cache_note(Bindings *b, VarId var_id,
     }
 }
 
-static int32_t bindings_lookup_index(Bindings *b, VarId var_id) {
-    cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_BINDINGS_LOOKUP);
-    for (uint32_t i = 0; i < b->lookup_cache_count; i++) {
-        uint32_t idx = b->lookup_cache_indices[i];
-        if (binding_var_eq(b->lookup_cache_ids[i], var_id) &&
-            idx == BINDINGS_LOOKUP_CACHE_MISS) {
-            cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_BINDINGS_LOOKUP_CACHE_HIT);
-            return -1;
-        }
-        if (idx < b->len &&
-            binding_var_eq(b->lookup_cache_ids[i], var_id) &&
-            binding_var_eq(b->entries[idx].var_id, var_id)) {
-            cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_BINDINGS_LOOKUP_CACHE_HIT);
-            return (int32_t)idx;
-        }
-    }
+static int32_t bindings_lookup_index_slow(Bindings *b, VarId var_id) {
     BindingsLookupIndex *index = bindings_lookup_index_current(b);
     if (index) {
         uint32_t index_plus_one =
@@ -791,6 +776,27 @@ static int32_t bindings_lookup_index(Bindings *b, VarId var_id) {
     bindings_lookup_cache_note(b, var_id, BINDINGS_LOOKUP_CACHE_MISS);
     cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_BINDINGS_LOOKUP_CACHE_MISS);
     return -1;
+}
+
+static inline int32_t bindings_lookup_index(Bindings *b, VarId var_id) {
+    cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_BINDINGS_LOOKUP);
+    for (uint32_t i = 0; i < b->lookup_cache_count; i++) {
+        uint32_t idx = b->lookup_cache_indices[i];
+        if (binding_var_eq(b->lookup_cache_ids[i], var_id) &&
+            idx == BINDINGS_LOOKUP_CACHE_MISS) {
+            cetta_runtime_stats_inc(
+                CETTA_RUNTIME_COUNTER_BINDINGS_LOOKUP_CACHE_HIT);
+            return -1;
+        }
+        if (idx < b->len &&
+            binding_var_eq(b->lookup_cache_ids[i], var_id) &&
+            binding_var_eq(b->entries[idx].var_id, var_id)) {
+            cetta_runtime_stats_inc(
+                CETTA_RUNTIME_COUNTER_BINDINGS_LOOKUP_CACHE_HIT);
+            return (int32_t)idx;
+        }
+    }
+    return bindings_lookup_index_slow(b, var_id);
 }
 
 static size_t bindings_dereference_limit(const Bindings *bindings);
@@ -2185,10 +2191,22 @@ static void bindings_dense_epoch_frame_begin_generation(
     }
 }
 
-static uint32_t bindings_dense_epoch_frame_lower_bound(
-        const BindingsDenseEpochFrame *frame, VarId source_id) {
+static bool bindings_dense_epoch_frame_find_slot(
+        const BindingsDenseEpochFrame *frame, VarId source_id,
+        uint32_t *slot_out) {
+    if (!frame || !slot_out)
+        return false;
+    if (frame->source_ids_contiguous) {
+        if (source_id < frame->source_first_id)
+            return false;
+        uint64_t offset = source_id - frame->source_first_id;
+        if (offset >= frame->len)
+            return false;
+        *slot_out = (uint32_t)offset;
+        return true;
+    }
     uint32_t low = 0u;
-    uint32_t high = frame ? frame->len : 0u;
+    uint32_t high = frame->len;
     while (low < high) {
         uint32_t middle = low + (high - low) / 2u;
         if (frame->source_ids[middle] < source_id)
@@ -2196,7 +2214,10 @@ static uint32_t bindings_dense_epoch_frame_lower_bound(
         else
             high = middle;
     }
-    return low;
+    if (low >= frame->len || frame->source_ids[low] != source_id)
+        return false;
+    *slot_out = low;
+    return true;
 }
 
 static bool bindings_dense_epoch_frame_lookup(
@@ -2211,9 +2232,9 @@ static bool bindings_dense_epoch_frame_lookup(
         source_id == VAR_ID_NONE) {
         return false;
     }
-    uint32_t index = bindings_dense_epoch_frame_lower_bound(
-        frame, source_id);
-    if (index >= frame->len || frame->source_ids[index] != source_id)
+    uint32_t index;
+    if (!bindings_dense_epoch_frame_find_slot(
+            frame, source_id, &index))
         return false;
     *present_out =
         frame->slot_stamps[index] == frame->slot_generation;
@@ -2224,15 +2245,33 @@ static bool bindings_dense_epoch_frame_lookup(
 static void bindings_dense_epoch_frame_scan(
         BindingsDenseEpochFrame *frame, const Bindings *bindings,
         uint32_t begin) {
+    if (frame->source_ids_contiguous) {
+        for (uint32_t entry_index = begin;
+             entry_index < bindings->len; entry_index++) {
+            const Binding *entry = &bindings->entries[entry_index];
+            if (var_epoch_suffix(entry->var_id) != frame->epoch)
+                continue;
+            VarId source_id = (VarId)var_base_id(entry->var_id);
+            if (source_id < frame->source_first_id)
+                continue;
+            uint64_t offset = source_id - frame->source_first_id;
+            if (offset >= frame->len)
+                continue;
+            frame->values[offset] = entry->val;
+            frame->slot_stamps[offset] = frame->slot_generation;
+        }
+        frame->scanned_len = bindings->len;
+        return;
+    }
     for (uint32_t entry_index = begin;
          entry_index < bindings->len; entry_index++) {
         const Binding *entry = &bindings->entries[entry_index];
         if (var_epoch_suffix(entry->var_id) != frame->epoch)
             continue;
         VarId source_id = (VarId)var_base_id(entry->var_id);
-        uint32_t slot = bindings_dense_epoch_frame_lower_bound(
-            frame, source_id);
-        if (slot >= frame->len || frame->source_ids[slot] != source_id)
+        uint32_t slot;
+        if (!bindings_dense_epoch_frame_find_slot(
+                frame, source_id, &slot))
             continue;
         frame->values[slot] = entry->val;
         frame->slot_stamps[slot] = frame->slot_generation;
@@ -2255,6 +2294,7 @@ bool bindings_dense_epoch_frame_prepare(
         (variable_count > 0u && (!source_ids || !source_variables))) {
         return false;
     }
+    bool source_ids_contiguous = variable_count > 0u;
     for (uint32_t index = 0u; index < variable_count; index++) {
         Atom *variable = source_variables[index];
         if (!variable || variable->kind != ATOM_VAR ||
@@ -2262,6 +2302,10 @@ bool bindings_dense_epoch_frame_prepare(
             var_epoch_suffix(source_ids[index]) != 0u ||
             (index > 0u && source_ids[index - 1u] >= source_ids[index])) {
             return false;
+        }
+        if (index > 0u &&
+            source_ids[index] != source_ids[index - 1u] + UINT64_C(1)) {
+            source_ids_contiguous = false;
         }
     }
     if (variable_count > frame->cap) {
@@ -2292,6 +2336,9 @@ bool bindings_dense_epoch_frame_prepare(
     frame->binding_growth = builder->growth_count;
     frame->binding_rollbacks = builder->rollback_count;
     frame->len = variable_count;
+    frame->source_first_id = variable_count > 0u
+        ? source_ids[0] : VAR_ID_NONE;
+    frame->source_ids_contiguous = source_ids_contiguous;
     frame->epoch = epoch;
     frame->first_entry = first_entry;
     frame->scanned_len = first_entry;
