@@ -1,10 +1,12 @@
 #include "eval.h"
 #include "generated/petta_typecheck_v2_boundary_core_source_binding_v1.generated.h"
 #include "generated/petta_typecheck_v2_source_binding_v1.generated.h"
+#include "grounded.h"
 #include "library.h"
 #include "parser.h"
 #include "match.h"
 #include "petta_program.h"
+#include "petta_runtime.h"
 #include "petta_search_machine.h"
 #include "petta_semantics.h"
 #include "petta_typecheck.h"
@@ -12,6 +14,7 @@
 #include "variant_shape.h"
 
 #include <assert.h>
+#include <pthread.h>
 #include <stdio.h>
 #include <stdlib.h>
 
@@ -21,6 +24,306 @@ static Atom *parse_one(Arena *arena, const char *source) {
     Atom *result = count == 1 && forms ? forms[0] : NULL;
     free(forms);
     return result;
+}
+
+static void assert_type_pure_symbol_facts(void) {
+#define ASSERT_TYPE_PURE_SYMBOL(field) do { \
+    SymbolId id = g_builtin_syms.field; \
+    assert(id != SYMBOL_ID_NONE); \
+    assert((symbol_flags(g_symbols, id) & \
+            CETTA_SYMBOL_FLAG_TYPE_PURE_GROUNDED_OP) != 0u); \
+    assert(grounded_op_is_type_pure(id)); \
+} while (0);
+    CETTA_TYPE_PURE_GROUNDED_SYMBOL_FIELDS(
+        ASSERT_TYPE_PURE_SYMBOL)
+#undef ASSERT_TYPE_PURE_SYMBOL
+
+    assert(!grounded_op_is_type_pure(g_builtin_syms.add_atom));
+    assert(!grounded_op_is_type_pure(g_builtin_syms.println_bang));
+    assert(!grounded_op_is_type_pure(g_builtin_syms.size));
+    assert(!grounded_op_is_type_pure(g_builtin_syms.parse));
+    SymbolId lookalike = symbol_intern_cstr(
+        g_symbols, "type-pure-grounded-lookalike");
+    assert(lookalike != SYMBOL_ID_NONE);
+    assert(!grounded_op_is_type_pure(lookalike));
+    SymbolId dynamic_library = symbol_intern_cstr(
+        g_symbols, "__cetta_lib_type_pure_negative");
+    assert(dynamic_library != SYMBOL_ID_NONE);
+    assert(is_grounded_op(dynamic_library));
+    assert(!grounded_op_is_type_pure(dynamic_library));
+}
+
+static void test_native_runtime_named_arity(void) {
+    typedef struct {
+        const char *name;
+        CettaExprLen minimum;
+        CettaExprLen maximum;
+    } ArityCase;
+    static const ArityCase cases[] = {
+        {"argv", 1u, 1u},
+        {"current-time", 0u, 0u},
+        {"format-time", 1u, 1u},
+        {"random-int", 2u, 3u},
+        {"random-float", 2u, 3u},
+    };
+
+    SymbolTable *original_symbols = g_symbols;
+    BuiltinSyms original_builtins = g_builtin_syms;
+    CettaLibraryContext context = {0};
+    context.petta_runtime = cetta_petta_runtime_state_new();
+    assert(context.petta_runtime);
+    for (size_t index = 0u;
+         index < sizeof(cases) / sizeof(cases[0]); index++) {
+        SymbolId head = symbol_intern_cstr(g_symbols, cases[index].name);
+        assert(head != SYMBOL_ID_NONE);
+        for (CettaExprLen supplied = 0u;
+             supplied <= cases[index].maximum + 1u; supplied++) {
+            PeTTaNamedArity arity = cetta_petta_runtime_named_arity(
+                &context, head, supplied);
+            assert(arity.known);
+            assert(arity.exact ==
+                   (supplied >= cases[index].minimum &&
+                    supplied <= cases[index].maximum));
+            assert(arity.larger == (supplied < cases[index].maximum));
+            assert(arity.smaller == (supplied > cases[index].minimum));
+        }
+    }
+
+    SymbolId lookalike = symbol_intern_cstr(g_symbols, "random-int-almost");
+    PeTTaNamedArity unknown = cetta_petta_runtime_named_arity(
+        &context, lookalike, 2u);
+    assert(!unknown.known && !unknown.exact &&
+           !unknown.larger && !unknown.smaller);
+
+    /* Reinitializing a table at the same address may reuse SymbolIds for
+     * different spellings.  Cached facts must be rejected by generation,
+     * while exact spelling classification remains authoritative. */
+    SymbolTable replacement;
+    symbol_table_init(&replacement);
+    symbol_table_init_builtins(&replacement, &g_builtin_syms);
+    g_symbols = &replacement;
+    assert_type_pure_symbol_facts();
+    CettaLibraryContext reincarnated_context = {0};
+    reincarnated_context.petta_runtime =
+        cetta_petta_runtime_state_new();
+    assert(reincarnated_context.petta_runtime);
+    SymbolId first_argv = symbol_intern_cstr(g_symbols, "argv");
+
+    symbol_table_free(&replacement);
+    symbol_table_init(&replacement);
+    symbol_table_init_builtins(&replacement, &g_builtin_syms);
+    assert_type_pure_symbol_facts();
+    SymbolId displaced = symbol_intern_cstr(
+        g_symbols, "not-argv-in-the-new-table");
+    SymbolId replacement_argv = symbol_intern_cstr(g_symbols, "argv");
+    assert(displaced == first_argv);
+    assert(replacement_argv != displaced);
+    unknown = cetta_petta_runtime_named_arity(
+        &reincarnated_context, displaced, 1u);
+    assert(!unknown.known);
+    PeTTaNamedArity replacement_arity =
+        cetta_petta_runtime_named_arity(
+            &reincarnated_context, replacement_argv, 1u);
+    assert(replacement_arity.known && replacement_arity.exact);
+    g_symbols = original_symbols;
+    g_builtin_syms = original_builtins;
+    symbol_table_free(&replacement);
+    cetta_petta_runtime_state_free(
+        reincarnated_context.petta_runtime);
+    reincarnated_context.petta_runtime = NULL;
+    cetta_petta_runtime_state_free(context.petta_runtime);
+    context.petta_runtime = NULL;
+    puts("PASS: native PeTTa runtime named arity facts");
+}
+
+typedef struct {
+    const char *spelling;
+    PeTTaForm form;
+} PettaSemanticFormCase;
+
+static const PettaSemanticFormCase petta_semantic_form_cases[] = {
+    {"test", PETTA_FORM_TEST},
+    {"if", PETTA_FORM_IF},
+    {"progn", PETTA_FORM_PROGN},
+    {"prog1", PETTA_FORM_PROG1},
+    {"foldall", PETTA_FORM_FOLDALL},
+    {"forall", PETTA_FORM_FORALL},
+    {"maplist", PETTA_FORM_MAPLIST},
+    {"map-atom", PETTA_FORM_MAP_ATOM},
+    {"foldl", PETTA_FORM_FOLDL},
+    {"id", PETTA_FORM_ID},
+    {"append", PETTA_FORM_APPEND},
+    {"cons", PETTA_FORM_CONS},
+    {"#+", PETTA_FORM_INT_ADD},
+    {"unique", PETTA_FORM_STREAM_UNIQUE},
+    {"union", PETTA_FORM_STREAM_UNION},
+    {"intersection", PETTA_FORM_STREAM_INTERSECTION},
+    {"subtraction", PETTA_FORM_STREAM_SUBTRACTION},
+    {"length", PETTA_FORM_LENGTH},
+    {"msort", PETTA_FORM_MSORT},
+    {"sort-atom", PETTA_FORM_MSORT},
+    {"first-from-pair", PETTA_FORM_FIRST_FROM_PAIR},
+    {"first", PETTA_FORM_FIRST_FROM_PAIR},
+    {"second-from-pair", PETTA_FORM_SECOND_FROM_PAIR},
+    {"is-var", PETTA_FORM_IS_VAR},
+    {"is-ground", PETTA_FORM_IS_GROUND},
+    {"is-expr", PETTA_FORM_IS_EXPR},
+    {"is-space", PETTA_FORM_IS_SPACE},
+    {"is-member", PETTA_FORM_IS_MEMBER},
+    {"is-alpha-member", PETTA_FORM_IS_ALPHA_MEMBER},
+    {"alpha-unique-atom", PETTA_FORM_ALPHA_UNIQUE},
+    {"list_to_set", PETTA_FORM_LIST_TO_SET},
+    {"exclude-item", PETTA_FORM_EXCLUDE_ITEM},
+    {"repra", PETTA_FORM_REPRA},
+    {"sread", PETTA_FORM_SREAD},
+    {"bind!", PETTA_FORM_BIND_STATE},
+    {"get-state", PETTA_FORM_GET_STATE},
+    {"change-state!", PETTA_FORM_CHANGE_STATE},
+    {"new-state", PETTA_FORM_NEW_STATE},
+    {"call", PETTA_FORM_CALL},
+    {"eval", PETTA_FORM_EVAL},
+    {"reduce", PETTA_FORM_REDUCE},
+    {"Predicate", PETTA_FORM_PREDICATE},
+    {"translatePredicate", PETTA_FORM_TRANSLATE_PREDICATE},
+    {"import_prolog_function", PETTA_FORM_IMPORT_PROLOG_FUNCTION},
+    {"process_metta_string", PETTA_FORM_PROCESS_METTA_STRING},
+    {"callPredicate", PETTA_FORM_CALL_PREDICATE},
+    {"assertaPredicate", PETTA_FORM_ASSERTA_PREDICATE},
+    {"assertzPredicate", PETTA_FORM_ASSERTZ_PREDICATE},
+    {"retractPredicate", PETTA_FORM_RETRACT_PREDICATE},
+    {"tabled", PETTA_FORM_TABLED},
+    {"add-translator-rule!", PETTA_FORM_ADD_TRANSLATOR_RULE},
+    {"remove-translator-rule!", PETTA_FORM_REMOVE_TRANSLATOR_RULE},
+    {"cut", PETTA_FORM_CUT},
+    {"catch", PETTA_FORM_CATCH},
+    {"|->", PETTA_FORM_LAMBDA},
+    {"let", PETTA_FORM_LET},
+    {"chain", PETTA_FORM_CHAIN},
+};
+
+static void *test_semantic_form_thread(void *unused) {
+    (void)unused;
+    for (size_t index = 0u;
+         index < sizeof(petta_semantic_form_cases) /
+                     sizeof(petta_semantic_form_cases[0]); index++) {
+        SymbolId symbol = symbol_intern_cstr(
+            g_symbols, petta_semantic_form_cases[index].spelling);
+        assert(petta_semantics_form(symbol) ==
+               petta_semantic_form_cases[index].form);
+    }
+    return NULL;
+}
+
+static void test_semantic_form_facts(void) {
+    test_semantic_form_thread(NULL);
+    PeTTaConsShapeFacts original_cons_facts;
+    assert(petta_semantics_cons_shape_facts(&original_cons_facts));
+    assert(petta_semantics_cons_shape_facts_current(
+        &original_cons_facts));
+    SymbolId lookalike = symbol_intern_cstr(
+        g_symbols, "process_metta_string-almost");
+    assert(petta_semantics_form(lookalike) == PETTA_FORM_NONE);
+
+    pthread_t readers[3];
+    for (size_t index = 0u; index < 3u; index++)
+        assert(pthread_create(
+                   &readers[index], NULL,
+                   test_semantic_form_thread, NULL) == 0);
+    for (size_t index = 0u; index < 3u; index++)
+        assert(pthread_join(readers[index], NULL) == 0);
+
+    SymbolTable *original_symbols = g_symbols;
+    BuiltinSyms original_builtins = g_builtin_syms;
+    SymbolTable replacement;
+    symbol_table_init(&replacement);
+    g_symbols = &replacement;
+    assert(!petta_semantics_cons_shape_facts_current(
+        &original_cons_facts));
+    symbol_table_init_builtins(&replacement, &g_builtin_syms);
+    SymbolId replacement_if = g_builtin_syms.if_text;
+    SymbolId replacement_map_atom = g_builtin_syms.map_atom;
+    g_builtin_syms.map_atom = SYMBOL_ID_NONE;
+    PeTTaConsShapeFacts partial_cons_facts;
+    assert(petta_semantics_cons_shape_facts(&partial_cons_facts));
+    g_builtin_syms.if_text = partial_cons_facts.cons;
+    assert(petta_semantics_form(partial_cons_facts.cons) ==
+           PETTA_FORM_IF);
+    PeTTaConsShapeFacts shadowed_cons_facts;
+    assert(!petta_semantics_cons_shape_facts(
+        &shadowed_cons_facts));
+    g_builtin_syms.if_text = replacement_if;
+    g_builtin_syms.map_atom = replacement_map_atom;
+    assert(petta_semantics_cons_shape_facts(
+        &partial_cons_facts));
+    SymbolId first_progn = symbol_intern_cstr(g_symbols, "progn");
+    assert(petta_semantics_form(first_progn) == PETTA_FORM_PROGN);
+    PeTTaConsShapeFacts replacement_cons_facts;
+    assert(petta_semantics_cons_shape_facts(&replacement_cons_facts));
+    assert(petta_semantics_cons_shape_facts_current(
+        &replacement_cons_facts));
+
+    char name[64];
+    SymbolId grown_unknown = SYMBOL_ID_NONE;
+    for (uint32_t index = 0u; index < 4096u; index++) {
+        int length = snprintf(
+            name, sizeof(name), "semantic-form-growth-%u", index);
+        assert(length > 0 && (size_t)length < sizeof(name));
+        grown_unknown = symbol_intern_cstr(g_symbols, name);
+        assert(grown_unknown != SYMBOL_ID_NONE);
+    }
+    assert(petta_semantics_form(first_progn) == PETTA_FORM_PROGN);
+    assert(petta_semantics_form(grown_unknown) == PETTA_FORM_NONE);
+    assert(petta_semantics_cons_shape_facts_current(
+        &replacement_cons_facts));
+
+    symbol_table_free(&replacement);
+    symbol_table_init(&replacement);
+    assert(!petta_semantics_cons_shape_facts_current(
+        &replacement_cons_facts));
+    symbol_table_init_builtins(&replacement, &g_builtin_syms);
+    for (uint32_t index = 0u; index < 4096u; index++) {
+        int length = snprintf(
+            name, sizeof(name), "semantic-form-padding-%u", index);
+        assert(length > 0 && (size_t)length < sizeof(name));
+        assert(symbol_intern_cstr(g_symbols, name) != SYMBOL_ID_NONE);
+    }
+    SymbolId replacement_progn = symbol_intern_cstr(g_symbols, "progn");
+    assert(replacement_progn != first_progn);
+    assert(replacement_progn >= 4096u);
+    assert(petta_semantics_form(first_progn) == PETTA_FORM_NONE);
+    assert(petta_semantics_form(replacement_progn) == PETTA_FORM_PROGN);
+    test_semantic_form_thread(NULL);
+    PeTTaConsShapeFacts high_cons_facts;
+    assert(petta_semantics_cons_shape_facts(&high_cons_facts));
+    assert(high_cons_facts.cons >= 4096u);
+    assert(high_cons_facts.open_cons >= 4096u);
+    Arena high_fact_arena;
+    arena_init(&high_fact_arena);
+    Atom *high_item = atom_symbol(&high_fact_arena, "high-item");
+    Atom *high_tail = atom_unit(&high_fact_arena);
+    Atom *high_cons = atom_expr3(
+        &high_fact_arena,
+        atom_symbol_id(&high_fact_arena, high_cons_facts.cons),
+        high_item, high_tail);
+    Atom *high_open_cons = atom_expr3(
+        &high_fact_arena,
+        atom_symbol_id(&high_fact_arena, high_cons_facts.open_cons),
+        high_item, high_tail);
+    assert(high_item && high_tail && high_cons && high_open_cons);
+    assert(petta_semantics_facts_is_cons_constraint(
+        &high_cons_facts, high_cons));
+    assert(petta_semantics_facts_is_open_cons_value(
+        &high_cons_facts, high_open_cons));
+    arena_free(&high_fact_arena);
+
+    symbol_table_free(&replacement);
+    g_symbols = original_symbols;
+    g_builtin_syms = original_builtins;
+    SymbolId restored_progn = symbol_intern_cstr(g_symbols, "progn");
+    assert(petta_semantics_form(restored_progn) == PETTA_FORM_PROGN);
+    assert(petta_semantics_cons_shape_facts_current(
+        &original_cons_facts));
+    puts("PASS: PeTTa semantic-form facts, growth, and reincarnation");
 }
 
 static void add_clause(
@@ -260,7 +563,10 @@ static void test_deep_cons_semantics(Arena *arena) {
         arena, item, open_tail);
     Atom *observable_open = petta_semantics_materialize_value(
         arena, open_cons);
+    Atom *cons_lookalike = atom_expr3(
+        arena, atom_symbol(arena, "cons-almost"), item, tail);
     assert(open_tail && open_cons && observable_open);
+    assert(cons_lookalike);
     assert(!petta_semantics_is_open_cons_value(observable_open));
     assert(observable_open->kind == ATOM_EXPR);
     assert(observable_open->expr.len == 3u);
@@ -271,6 +577,43 @@ static void test_deep_cons_semantics(Arena *arena) {
     assert(observable_open->expr.elems[2]->kind == ATOM_VAR);
     assert(observable_open->expr.elems[2]->var_id ==
            open_tail->var_id);
+
+    PeTTaConsShapeFacts cons_facts;
+    assert(petta_semantics_cons_shape_facts(&cons_facts));
+    assert(petta_semantics_cons_shape_facts_current(&cons_facts));
+    assert(petta_semantics_facts_is_open_cons_value(
+        &cons_facts, open_cons));
+    assert(!petta_semantics_facts_is_open_cons_value(
+        &cons_facts, observable_open));
+    assert(petta_semantics_facts_is_cons_constraint(
+        &cons_facts, open_cons));
+    assert(petta_semantics_facts_is_cons_constraint(
+        &cons_facts, observable_open));
+    assert(!petta_semantics_facts_is_cons_constraint(
+        &cons_facts, cons_lookalike));
+    Atom *cons_head = atom_symbol_id(arena, cons_facts.cons);
+    Atom *open_cons_head = atom_symbol_id(arena, cons_facts.open_cons);
+    Atom *short_cons = atom_expr2(arena, cons_head, item);
+    Atom *short_open_cons = atom_expr2(arena, open_cons_head, item);
+    Atom *long_cons_elements[] = {cons_head, item, tail, item};
+    Atom *long_open_cons_elements[] = {open_cons_head, item, tail, item};
+    Atom *long_cons = atom_expr(arena, long_cons_elements, 4u);
+    Atom *long_open_cons = atom_expr(
+        arena, long_open_cons_elements, 4u);
+    Atom *nonsymbol_head = atom_expr3(
+        arena, atom_unit(arena), item, tail);
+    assert(short_cons && short_open_cons && long_cons &&
+           long_open_cons && nonsymbol_head);
+    assert(!petta_semantics_facts_is_cons_constraint(
+        &cons_facts, short_cons));
+    assert(!petta_semantics_facts_is_open_cons_value(
+        &cons_facts, short_open_cons));
+    assert(!petta_semantics_facts_is_cons_constraint(
+        &cons_facts, long_cons));
+    assert(!petta_semantics_facts_is_open_cons_value(
+        &cons_facts, long_open_cons));
+    assert(!petta_semantics_facts_is_cons_constraint(
+        &cons_facts, nonsymbol_head));
 
     assert(petta_semantics_contains_cons_constraint(deep_cons));
     assert(!petta_semantics_contains_cons_constraint(deep_scalar));
@@ -1030,6 +1373,106 @@ static bool test_program_equation_snapshot_lease(
         context, space, head, lease, stats);
 }
 
+typedef struct {
+    PettaProgram *program;
+    bool replaced_cons_fact_with_unknown;
+} TestUnknownConsFactContext;
+
+static bool test_unknown_cons_fact_snapshot_lease(
+    void *context, Space *space, SymbolId head,
+    PettaClauseSnapshotLease *lease,
+    PettaClauseSnapshotStats *stats) {
+    TestUnknownConsFactContext *test = context;
+    PettaClauseSnapshotLease source = {0};
+    if (!test || !lease ||
+        !petta_program_clause_snapshot_lease_profiled(
+            test->program, space, head, &source, stats))
+        return false;
+    if (source.len > SIZE_MAX / sizeof(*source.items)) {
+        petta_program_clause_snapshot_lease_release(&source);
+        return false;
+    }
+    PettaClauseCandidate *items = source.len
+        ? malloc(source.len * sizeof(*items))
+        : NULL;
+    if (source.len && !items) {
+        petta_program_clause_snapshot_lease_release(&source);
+        return false;
+    }
+    if (source.len)
+        memcpy(items, source.items, source.len * sizeof(*items));
+    size_t len = source.len;
+    petta_program_clause_snapshot_lease_release(&source);
+    for (size_t index = 0u; index < len; index++) {
+        if (!items[index].activation_layout.
+                lhs_contains_cons_constraint_valid ||
+            !items[index].activation_layout.
+                lhs_contains_cons_constraint)
+            continue;
+        assert(items[index].equation &&
+               items[index].equation->kind == ATOM_EXPR &&
+               items[index].equation->expr.len == 3u);
+        assert(items[index].activation_layout.lhs ==
+               items[index].equation->expr.elems[1]);
+        items[index].activation_layout.
+            lhs_contains_cons_constraint_valid = false;
+        items[index].activation_layout.
+            lhs_contains_cons_constraint = false;
+        test->replaced_cons_fact_with_unknown = true;
+    }
+    lease->items = items;
+    lease->len = len;
+    lease->owned_items = items;
+    return true;
+}
+
+static void test_unknown_cons_fact_falls_back(
+    TermUniverse *universe, Arena *persistent, Arena *answers) {
+    Space space;
+    space_init_with_universe(&space, universe);
+    PettaProgram *program = petta_program_new();
+    assert(program);
+    add_compiled_program_clause(
+        program, &space, persistent,
+        "(= (unknown-cons-fact (cons $head $tail)) shape-nonempty)");
+    Atom *query = parse_one(answers, "(unknown-cons-fact (item))");
+    const PettaPlanNode *query_plan =
+        petta_program_plan_current(program, query);
+    assert(query && query_plan);
+
+    TestUnknownConsFactContext context = {
+        .program = program,
+    };
+    PettaMachineHost host = {
+        .context = &context,
+        .clause_snapshot_lease = test_unknown_cons_fact_snapshot_lease,
+        .measure_stats = true,
+    };
+    PettaMachine machine;
+    assert(petta_machine_init_with_plan(
+        &machine, &space, answers, query, query_plan, NULL, &host));
+    Atom *answer = NULL;
+    Bindings environment;
+    bindings_init(&environment);
+    assert(petta_machine_next(
+               &machine, &answer, &environment) ==
+           PETTA_MACHINE_STEP_ANSWER);
+    assert(context.replaced_cons_fact_with_unknown);
+    assert(atom_alpha_eq(
+        answer, atom_symbol(answers, "shape-nonempty")));
+    bindings_free(&environment);
+    PettaMachineStats stats;
+    assert(petta_machine_stats(&machine, &stats));
+    assert(stats.match_candidate_epoch_views == 0u);
+    assert(petta_machine_next(
+               &machine, &answer, &environment) ==
+           PETTA_MACHINE_STEP_EXHAUSTED);
+    bindings_free(&environment);
+    petta_machine_destroy(&machine);
+    petta_program_free(program);
+    space_free(&space);
+}
+
 static void test_alpha_reconciled_slot_authority(
     TermUniverse *universe, Arena *persistent, Arena *answers) {
     Space space;
@@ -1273,7 +1716,52 @@ static void test_constructor_slot_frame_plans(
     assert(active_relation_plan->contains_call);
     assert(
         active_relation_plan->execution ==
+        PETTA_PLAN_EXEC_RELATION_SLOTS);
+    assert(active_relation_plan->relation_head_admitted);
+
+    Atom *active_intrinsic_call = parse_one(
+        persistent, "(call (+ 1 2))");
+    const PettaPlanNode *active_intrinsic_plan =
+        petta_program_plan_current(program, active_intrinsic_call);
+    assert(active_intrinsic_plan);
+    assert(active_intrinsic_plan->contains_call);
+    assert(!active_intrinsic_plan->relation_head_admitted);
+    assert(
+        active_intrinsic_plan->execution ==
         PETTA_PLAN_EXEC_GENERIC);
+
+    add_compiled_program_clause(
+        program, &execution_space, persistent,
+        "(= (active-relation-frame $value) "
+        "   (slot-relation (+ 1 2)))");
+    Atom *activation_relation_query = parse_one(
+        persistent,
+        "(active-relation-frame $activation-relation-input)");
+    const PettaPlanNode *activation_relation_query_plan =
+        petta_program_plan_current(
+            program, activation_relation_query);
+    assert(activation_relation_query_plan);
+
+    add_compiled_program_clause(
+        program, &execution_space, persistent,
+        "(= (active-pure-frame $value) "
+        "   (+ (+ 1 1) 2))");
+    Atom *activation_pure_query = parse_one(
+        persistent,
+        "(active-pure-frame $activation-pure-input)");
+    const PettaPlanNode *activation_pure_query_plan =
+        petta_program_plan_current(program, activation_pure_query);
+    assert(activation_pure_query_plan);
+
+    add_compiled_program_clause(
+        program, &execution_space, persistent,
+        "(= (active-partial-frame $value) (+ (+ 1 1)))");
+    Atom *activation_partial_query = parse_one(
+        persistent,
+        "(active-partial-frame $activation-partial-input)");
+    const PettaPlanNode *activation_partial_query_plan =
+        petta_program_plan_current(program, activation_partial_query);
+    assert(activation_partial_query_plan);
 
     PettaMachine machine;
     assert(petta_machine_init_with_plan(
@@ -1292,6 +1780,71 @@ static void test_constructor_slot_frame_plans(
     assert(stats.constructor_slot_frame_entries == 1u);
     assert(
         stats.constructor_slot_frame_direct_unifications == 1u);
+    assert(petta_machine_next(
+               &machine, &answer, &environment) ==
+           PETTA_MACHINE_STEP_EXHAUSTED);
+    bindings_free(&environment);
+    petta_machine_destroy(&machine);
+
+    PettaMachineHost activation_host = {
+        .context = program,
+        .clause_snapshot_lease =
+            test_program_equation_snapshot_lease,
+        .measure_stats = true,
+    };
+    assert(petta_machine_init_with_plan(
+        &machine, &execution_space, answers,
+        activation_relation_query,
+        activation_relation_query_plan, NULL,
+        &activation_host));
+    bindings_init(&environment);
+    assert(petta_machine_next(
+               &machine, &answer, &environment) ==
+           PETTA_MACHINE_STEP_ANSWER);
+    assert(atom_alpha_eq(answer, parse_one(answers, "3")));
+    bindings_free(&environment);
+    assert(petta_machine_stats(&machine, &stats));
+    assert(stats.relation_slot_frame_entries == 2u);
+    assert(stats.activation_materialization_calls == 0u);
+    assert(petta_machine_next(
+               &machine, &answer, &environment) ==
+           PETTA_MACHINE_STEP_EXHAUSTED);
+    bindings_free(&environment);
+    petta_machine_destroy(&machine);
+
+    assert(petta_machine_init_with_plan(
+        &machine, &execution_space, answers,
+        activation_pure_query,
+        activation_pure_query_plan, NULL,
+        &activation_host));
+    bindings_init(&environment);
+    assert(petta_machine_next(
+               &machine, &answer, &environment) ==
+           PETTA_MACHINE_STEP_ANSWER);
+    assert(atom_alpha_eq(answer, parse_one(answers, "4")));
+    bindings_free(&environment);
+    assert(petta_machine_stats(&machine, &stats));
+    assert(stats.activation_materialization_calls == 0u);
+    assert(petta_machine_next(
+               &machine, &answer, &environment) ==
+           PETTA_MACHINE_STEP_EXHAUSTED);
+    bindings_free(&environment);
+    petta_machine_destroy(&machine);
+
+    assert(petta_machine_init_with_plan(
+        &machine, &execution_space, answers,
+        activation_partial_query,
+        activation_partial_query_plan, NULL,
+        &activation_host));
+    bindings_init(&environment);
+    assert(petta_machine_next(
+               &machine, &answer, &environment) ==
+           PETTA_MACHINE_STEP_ANSWER);
+    assert(atom_alpha_eq(
+        answer, parse_one(answers, "(partial + (2))")));
+    bindings_free(&environment);
+    assert(petta_machine_stats(&machine, &stats));
+    assert(stats.activation_materialization_calls == 1u);
     assert(petta_machine_next(
                &machine, &answer, &environment) ==
            PETTA_MACHINE_STEP_EXHAUSTED);
@@ -1422,6 +1975,9 @@ static void test_program_equation_template_c0(
     assert(candidates[0].activation_layout.lhs);
     assert(candidates[0].activation_layout.rhs);
     assert(candidates[0].activation_layout.static_variable_count == 1u);
+    assert(candidates[0].activation_layout.
+               lhs_contains_cons_constraint_valid);
+    assert(!candidates[0].activation_layout.lhs_contains_cons_constraint);
 
     CettaGsltGroundDenseWorkspaceV1 workspace;
     cetta_gslt_ground_dense_workspace_init_v1(&workspace);
@@ -4163,6 +4719,10 @@ int main(void) {
     var_intern_init(&variables);
     g_symbols = &symbols;
     g_var_intern = &variables;
+    assert_type_pure_symbol_facts();
+    puts("PASS: type-pure grounded symbol facts");
+    test_native_runtime_named_arity();
+    test_semantic_form_facts();
     space_init_with_universe(&space, &universe);
 
     test_analysis_capability_contract(&space, &answers);
@@ -4180,6 +4740,8 @@ int main(void) {
         &space, &persistent, &answers);
 
     test_constructor_slot_frame_plans(
+        &universe, &persistent, &answers);
+    test_unknown_cons_fact_falls_back(
         &universe, &persistent, &answers);
     test_alpha_reconciled_slot_authority(
         &universe, &persistent, &answers);

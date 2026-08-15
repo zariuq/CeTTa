@@ -184,6 +184,8 @@ typedef struct {
     uint32_t len;
     uint32_t cap;
     uint32_t slot_generation;
+    VarId source_first_id;
+    bool source_ids_contiguous;
     uint32_t epoch;
     uint32_t first_entry;
     uint32_t scanned_len;

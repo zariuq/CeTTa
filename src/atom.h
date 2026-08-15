@@ -209,8 +209,32 @@ void  arena_free(Arena *a);
 void  arena_reserve(Arena *a, size_t size);
 void  arena_set_hashcons(Arena *a, HashConsTable *hc);
 void  arena_set_runtime_kind(Arena *a, CettaArenaRuntimeKind kind);
-size_t arena_accounted_live_bytes(const Arena *a);
-size_t arena_mark_accounted_live_bytes(ArenaMark mark);
+
+/* Allocation policy consults these aggregates at every machine transition.
+ * Keep the overflow behavior visible to the compiler while atom.c retains
+ * external definitions for binary callers. */
+inline size_t arena_accounted_live_bytes(const Arena *a) {
+    if (!a)
+        return 0u;
+    size_t live = a->live_bytes;
+    if (live > SIZE_MAX - a->external_bytes)
+        return SIZE_MAX;
+    live += a->external_bytes;
+    if (live > SIZE_MAX - a->symbol_cache_bytes)
+        return SIZE_MAX;
+    return live + a->symbol_cache_bytes;
+}
+
+inline size_t arena_mark_accounted_live_bytes(ArenaMark mark) {
+    size_t live = mark.live_bytes;
+    if (live > SIZE_MAX - mark.external_bytes)
+        return SIZE_MAX;
+    live += mark.external_bytes;
+    if (live > SIZE_MAX - mark.symbol_cache_bytes)
+        return SIZE_MAX;
+    return live + mark.symbol_cache_bytes;
+}
+
 void  arena_account_external_bytes(Arena *a, size_t size);
 ArenaMark arena_mark(const Arena *a);
 void  arena_reset(Arena *a, ArenaMark mark);
@@ -289,9 +313,25 @@ void    var_intern_free(VarInternTable *t);
 VarId   var_intern(VarInternTable *t, SymbolId spelling);
 bool    fresh_var_id_try(VarId *id_out);
 VarId   fresh_var_id(void);
-VarId   var_epoch_id(VarId id, uint32_t epoch);
-uint32_t var_base_id(VarId id);
-uint32_t var_epoch_suffix(VarId id);
+
+/* VarId packs the stable source identity in the low word and an activation
+ * epoch in the high word.  These accessors are inline because matching and
+ * substitution consult the coordinate at every variable edge; atom.c emits
+ * external definitions as well for binary callers. */
+inline uint32_t var_base_id(VarId id) {
+    return (uint32_t)(id & UINT32_MAX);
+}
+
+inline uint32_t var_epoch_suffix(VarId id) {
+    return (uint32_t)(id >> 32);
+}
+
+inline VarId var_epoch_id(VarId id, uint32_t epoch) {
+    uint32_t base = var_base_id(id);
+    if (base == 0u)
+        base = (uint32_t)fresh_var_id();
+    return ((VarId)epoch << 32) | (VarId)base;
+}
 
 #ifdef CETTA_TEST_HOOKS
 /* Single-threaded boundary hook; production builds cannot reset identity. */
