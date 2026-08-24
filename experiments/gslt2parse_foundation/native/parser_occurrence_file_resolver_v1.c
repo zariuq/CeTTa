@@ -17,6 +17,7 @@ typedef struct {
     PPOccurrenceFileResolverV1 *owner;
     const PPGuardedLexCursorV1Program *program;
     const PPOccurrenceFoldV1Plan *occurrence_plan;
+    const PPSourceResolutionControlV1Plan *control_plan;
     PPOccurrenceFileResolverV1Source *sources;
     uint32_t source_len;
     uint32_t source_cap;
@@ -272,6 +273,80 @@ static uint64_t ppofr_v1_work_limit(
            (uint64_t)byte_len * impl->work_per_byte;
 }
 
+static PPOccurrenceSourceResolutionV1 ppofr_v1_control_outcome(
+    PPSourceControlOutcomeV1 outcome) {
+    switch (outcome) {
+    case PPSOURCE_CONTROL_OUTCOME_V1_ACCEPTED:
+        return PPOCCURRENCE_SOURCE_RESOLUTION_V1_ACCEPTED;
+    case PPSOURCE_CONTROL_OUTCOME_V1_REFUSED:
+        return PPOCCURRENCE_SOURCE_RESOLUTION_V1_REJECTED;
+    case PPSOURCE_CONTROL_OUTCOME_V1_RESOURCE:
+        return PPOCCURRENCE_SOURCE_RESOLUTION_V1_RESOURCE;
+    case PPSOURCE_CONTROL_OUTCOME_V1_INVALID:
+    default:
+        return PPOCCURRENCE_SOURCE_RESOLUTION_V1_INVALID;
+    }
+}
+
+static bool ppofr_v1_control_decide(
+    const PPOccurrenceFileResolverV1Impl *impl,
+    PPSourceControlProbeV1 probe,
+    bool skip_completed_sources,
+    bool reject_active_source_cycles,
+    PPSourceControlDecisionV1 *decision_out,
+    char *error_buf,
+    size_t error_buf_size) {
+    return impl && impl->control_plan &&
+        ppsource_resolution_control_v1_decide(
+            impl->control_plan, probe,
+            skip_completed_sources, reject_active_source_cycles,
+            decision_out, error_buf, error_buf_size);
+}
+
+static bool ppofr_v1_control_finish(
+    const PPOccurrenceFileResolverV1Impl *impl,
+    PPSourceControlDecisionV1 decision,
+    PPSourceControlChildV1 child,
+    PPOccurrenceSourceResolutionV1 *result_out,
+    char *error_buf,
+    size_t error_buf_size) {
+    PPSourceControlOutcomeV1 outcome;
+
+    if (!impl || !result_out || !impl->control_plan ||
+        !ppsource_resolution_control_v1_finish(
+            impl->control_plan, decision, child, &outcome,
+            error_buf, error_buf_size)) {
+        return false;
+    }
+    *result_out = ppofr_v1_control_outcome(outcome);
+    return true;
+}
+
+static bool ppofr_v1_control_terminal(
+    const PPOccurrenceFileResolverV1Impl *impl,
+    PPSourceControlProbeV1 probe,
+    bool skip_completed_sources,
+    bool reject_active_source_cycles,
+    PPOccurrenceSourceResolutionV1 *result_out,
+    PPSourceControlDecisionV1 *decision_out,
+    char *error_buf,
+    size_t error_buf_size) {
+    PPSourceControlDecisionV1 decision;
+
+    if (!ppofr_v1_control_decide(
+            impl, probe, skip_completed_sources,
+            reject_active_source_cycles, &decision,
+            error_buf, error_buf_size) ||
+        !ppofr_v1_control_finish(
+            impl, decision, PPSOURCE_CONTROL_CHILD_V1_NONE,
+            result_out, error_buf, error_buf_size)) {
+        return false;
+    }
+    if (decision_out)
+        *decision_out = decision;
+    return true;
+}
+
 static PPOccurrenceSourceResolutionV1 ppofr_v1_resolve(
     void *context,
     const PPOccurrenceFoldV1Value *source_path,
@@ -292,6 +367,8 @@ static PPOccurrenceSourceResolutionV1 ppofr_v1_resolve(
     bool run_ok;
     PPOccurrenceSourceResolutionV1 result =
         PPOCCURRENCE_SOURCE_RESOLUTION_V1_INVALID;
+    PPSourceControlDecisionV1 fresh_decision =
+        PPSOURCE_CONTROL_DECISION_V1_INVALID;
 
     if (!impl || !impl->owner || !source_path ||
         !nested_backend || !nested_backend->apply ||
@@ -308,10 +385,20 @@ static PPOccurrenceSourceResolutionV1 ppofr_v1_resolve(
     candidate = ppofr_v1_join_parent(
         parent, source_path->bytes, source_path->byte_len);
     if (!candidate || !(canonical = realpath(candidate, NULL))) {
+        if (impl->control_plan) {
+            if (!ppofr_v1_control_terminal(
+                    impl, PPSOURCE_CONTROL_PROBE_V1_MISSING,
+                    skip_completed_sources,
+                    reject_active_source_cycles, &result, NULL,
+                    error_buf, error_buf_size)) {
+                goto done;
+            }
+        } else {
+            result = PPOCCURRENCE_SOURCE_RESOLUTION_V1_REJECTED;
+        }
         ppofr_v1_set_error(
             error_buf, error_buf_size,
             "cannot resolve or read an included source");
-        result = PPOCCURRENCE_SOURCE_RESOLUTION_V1_REJECTED;
         goto done;
     }
     seen_id = ppofr_v1_find_source(impl, canonical);
@@ -319,8 +406,38 @@ static PPOccurrenceSourceResolutionV1 ppofr_v1_resolve(
         bool active = ppofr_v1_source_is_active(
             impl, (uint32_t)seen_id);
 
-        if ((active && reject_active_source_cycles) ||
-            (!active && !skip_completed_sources)) {
+        if (impl->control_plan) {
+            PPSourceControlDecisionV1 decision;
+
+            if (!ppofr_v1_control_terminal(
+                    impl,
+                    active ? PPSOURCE_CONTROL_PROBE_V1_ACTIVE
+                           : PPSOURCE_CONTROL_PROBE_V1_COMPLETED,
+                    skip_completed_sources,
+                    reject_active_source_cycles, &result, &decision,
+                    error_buf, error_buf_size)) {
+                goto done;
+            }
+            if (result != PPOCCURRENCE_SOURCE_RESOLUTION_V1_ACCEPTED) {
+                ppofr_v1_set_error(
+                    error_buf, error_buf_size,
+                    active
+                        ? "an active source-resolution cycle was refused"
+                        : "a repeated completed source was refused");
+                goto done;
+            }
+            if ((active &&
+                 decision != PPSOURCE_CONTROL_DECISION_V1_SKIP_ACTIVE) ||
+                (!active && decision !=
+                    PPSOURCE_CONTROL_DECISION_V1_SKIP_COMPLETED)) {
+                ppofr_v1_set_error(
+                    error_buf, error_buf_size,
+                    "source-resolution control accepted an invalid skip decision");
+                result = PPOCCURRENCE_SOURCE_RESOLUTION_V1_INVALID;
+                goto done;
+            }
+        } else if ((active && reject_active_source_cycles) ||
+                   (!active && !skip_completed_sources)) {
             ppofr_v1_set_error(
                 error_buf, error_buf_size,
                 active
@@ -338,17 +455,48 @@ static PPOccurrenceSourceResolutionV1 ppofr_v1_resolve(
         goto done;
     }
     if (impl->stack_len >= impl->depth_limit) {
+        if (impl->control_plan &&
+            !ppofr_v1_control_terminal(
+                impl, PPSOURCE_CONTROL_PROBE_V1_RESOURCE,
+                skip_completed_sources,
+                reject_active_source_cycles, &result, NULL,
+                error_buf, error_buf_size)) {
+            goto done;
+        }
         ppofr_v1_set_error(
             error_buf, error_buf_size,
             "source-resolution depth resource limit exceeded");
-        result = PPOCCURRENCE_SOURCE_RESOLUTION_V1_RESOURCE;
+        if (!impl->control_plan)
+            result = PPOCCURRENCE_SOURCE_RESOLUTION_V1_RESOURCE;
+        goto done;
+    }
+    if (impl->control_plan &&
+        (!ppofr_v1_control_decide(
+             impl, PPSOURCE_CONTROL_PROBE_V1_FRESH,
+             skip_completed_sources, reject_active_source_cycles,
+             &fresh_decision, error_buf, error_buf_size) ||
+         fresh_decision !=
+             PPSOURCE_CONTROL_DECISION_V1_EXPAND_FRESH)) {
+        ppofr_v1_set_error(
+            error_buf, error_buf_size,
+            "source-resolution control did not authorize fresh expansion");
+        result = PPOCCURRENCE_SOURCE_RESOLUTION_V1_INVALID;
         goto done;
     }
     if (!ppofr_v1_read_file(canonical, &bytes, &byte_len)) {
+        if (impl->control_plan &&
+            !ppofr_v1_control_terminal(
+                impl, PPSOURCE_CONTROL_PROBE_V1_MISSING,
+                skip_completed_sources,
+                reject_active_source_cycles, &result, NULL,
+                error_buf, error_buf_size)) {
+            goto done;
+        }
         ppofr_v1_set_error(
             error_buf, error_buf_size,
             "cannot read an included source");
-        result = PPOCCURRENCE_SOURCE_RESOLUTION_V1_REJECTED;
+        if (!impl->control_plan)
+            result = PPOCCURRENCE_SOURCE_RESOLUTION_V1_REJECTED;
         goto done;
     }
     if (!ppofr_v1_grow(
@@ -357,10 +505,19 @@ static PPOccurrenceSourceResolutionV1 ppofr_v1_resolve(
         !ppofr_v1_grow(
             (void **)&impl->stack, &impl->stack_cap,
             impl->stack_len + 1u, sizeof(*impl->stack))) {
+        if (impl->control_plan &&
+            !ppofr_v1_control_terminal(
+                impl, PPSOURCE_CONTROL_PROBE_V1_RESOURCE,
+                skip_completed_sources,
+                reject_active_source_cycles, &result, NULL,
+                error_buf, error_buf_size)) {
+            goto done;
+        }
         ppofr_v1_set_error(
             error_buf, error_buf_size,
             "cannot allocate source-resolution state");
-        result = PPOCCURRENCE_SOURCE_RESOLUTION_V1_RESOURCE;
+        if (!impl->control_plan)
+            result = PPOCCURRENCE_SOURCE_RESOLUTION_V1_RESOURCE;
         goto done;
     }
     source_id = impl->source_len++;
@@ -379,6 +536,32 @@ static PPOccurrenceSourceResolutionV1 ppofr_v1_resolve(
         impl->observation, ppofr_v1_work_limit(impl, byte_len),
         &receipt, error_buf, error_buf_size);
     impl->stack_len--;
+    if (impl->control_plan) {
+        PPSourceControlChildV1 child =
+            !run_ok
+                ? PPSOURCE_CONTROL_CHILD_V1_INVALID
+                : receipt.parser_receipt.outcome ==
+                      PPGUARDED_LEX_CURSOR_V1_WORK_LIMIT
+                      ? PPSOURCE_CONTROL_CHILD_V1_RESOURCE
+                      : receipt.parser_receipt.outcome !=
+                                PPGUARDED_LEX_CURSOR_V1_ACCEPTED ||
+                            !receipt.committed
+                            ? PPSOURCE_CONTROL_CHILD_V1_REFUSED
+                            : PPSOURCE_CONTROL_CHILD_V1_ACCEPTED;
+
+        if (!ppofr_v1_control_finish(
+                impl, fresh_decision, child, &result,
+                error_buf, error_buf_size)) {
+            goto done;
+        }
+        if (result != PPOCCURRENCE_SOURCE_RESOLUTION_V1_ACCEPTED &&
+            error_buf && error_buf_size > 0u && error_buf[0] == '\0') {
+            ppofr_v1_set_error(
+                error_buf, error_buf_size,
+                "included source did not produce an accepted authored outcome");
+        }
+        goto done;
+    }
     if (!run_ok ||
         receipt.parser_receipt.outcome !=
             PPGUARDED_LEX_CURSOR_V1_ACCEPTED ||
@@ -426,6 +609,23 @@ static bool ppofr_v1_digest(
     return true;
 }
 
+static bool ppofr_v1_current(
+    void *context,
+    uint32_t *source_id_out,
+    char *error_buf,
+    size_t error_buf_size) {
+    const PPOccurrenceFileResolverV1Impl *impl = context;
+
+    if (!impl || !source_id_out || impl->stack_len == 0u) {
+        ppofr_v1_set_error(
+            error_buf, error_buf_size,
+            "source resolver has no active source");
+        return false;
+    }
+    *source_id_out = impl->stack[impl->stack_len - 1u];
+    return true;
+}
+
 void ppoccurrence_file_resolver_v1_init(
     PPOccurrenceFileResolverV1 *resolver) {
     if (resolver)
@@ -450,10 +650,11 @@ void ppoccurrence_file_resolver_v1_free(
     memset(resolver, 0, sizeof(*resolver));
 }
 
-bool ppoccurrence_file_resolver_v1_configure(
+static bool ppofr_v1_configure(
     PPOccurrenceFileResolverV1 *resolver,
     const PPGuardedLexCursorV1Program *program,
     const PPOccurrenceFoldV1Plan *occurrence_plan,
+    const PPSourceResolutionControlV1Plan *control_plan,
     const char *root_path,
     const uint8_t *root_bytes,
     size_t root_byte_len,
@@ -476,6 +677,9 @@ bool ppoccurrence_file_resolver_v1_configure(
         depth_limit == 0u ||
         !ppoccurrence_fold_v1_plan_validate_program(
             program, occurrence_plan, error_buf, error_buf_size) ||
+        (control_plan &&
+         !ppsource_resolution_control_v1_plan_validate(
+             control_plan, error_buf, error_buf_size)) ||
         !(canonical = realpath(root_path, NULL))) {
         if (error_buf && error_buf_size > 0u &&
             error_buf[0] == '\0') {
@@ -502,6 +706,7 @@ bool ppoccurrence_file_resolver_v1_configure(
     impl->owner = resolver;
     impl->program = program;
     impl->occurrence_plan = occurrence_plan;
+    impl->control_plan = control_plan;
     impl->observation = observation;
     impl->minimum_work_limit = minimum_work_limit;
     impl->work_per_byte = work_per_byte;
@@ -515,6 +720,11 @@ bool ppoccurrence_file_resolver_v1_configure(
     ppofr_v1_sha_bytes(
         &impl->source_trace,
         (const uint8_t *)domain, sizeof(domain) - 1u);
+    if (control_plan) {
+        ppofr_v1_sha_bytes(
+            &impl->source_trace,
+            (const uint8_t *)control_plan->plan_digest, 64u);
+    }
     ppofr_v1_trace_root(impl, root_bytes, root_byte_len);
     resolver->implementation = impl;
     resolver->source_len = 1u;
@@ -532,6 +742,53 @@ done:
     return ok;
 }
 
+bool ppoccurrence_file_resolver_v1_configure(
+    PPOccurrenceFileResolverV1 *resolver,
+    const PPGuardedLexCursorV1Program *program,
+    const PPOccurrenceFoldV1Plan *occurrence_plan,
+    const char *root_path,
+    const uint8_t *root_bytes,
+    size_t root_byte_len,
+    PPGuardedLexCursorV1Observation observation,
+    uint64_t minimum_work_limit,
+    uint64_t work_per_byte,
+    uint32_t depth_limit,
+    char *error_buf,
+    size_t error_buf_size) {
+    return ppofr_v1_configure(
+        resolver, program, occurrence_plan, NULL,
+        root_path, root_bytes, root_byte_len, observation,
+        minimum_work_limit, work_per_byte, depth_limit,
+        error_buf, error_buf_size);
+}
+
+bool ppoccurrence_file_resolver_v1_configure_controlled(
+    PPOccurrenceFileResolverV1 *resolver,
+    const PPGuardedLexCursorV1Program *program,
+    const PPOccurrenceFoldV1Plan *occurrence_plan,
+    const PPSourceResolutionControlV1Plan *control_plan,
+    const char *root_path,
+    const uint8_t *root_bytes,
+    size_t root_byte_len,
+    PPGuardedLexCursorV1Observation observation,
+    uint64_t minimum_work_limit,
+    uint64_t work_per_byte,
+    uint32_t depth_limit,
+    char *error_buf,
+    size_t error_buf_size) {
+    if (!control_plan) {
+        ppofr_v1_set_error(
+            error_buf, error_buf_size,
+            "controlled source resolver requires an authored control plan");
+        return false;
+    }
+    return ppofr_v1_configure(
+        resolver, program, occurrence_plan, control_plan,
+        root_path, root_bytes, root_byte_len, observation,
+        minimum_work_limit, work_per_byte, depth_limit,
+        error_buf, error_buf_size);
+}
+
 PPOccurrenceSourceResolverV1
 ppoccurrence_file_resolver_v1_interface(
     PPOccurrenceFileResolverV1 *resolver) {
@@ -539,5 +796,6 @@ ppoccurrence_file_resolver_v1_interface(
         .context = resolver ? resolver->implementation : NULL,
         .resolve = ppofr_v1_resolve,
         .digest = ppofr_v1_digest,
+        .current = ppofr_v1_current,
     };
 }

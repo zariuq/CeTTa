@@ -28,10 +28,19 @@ typedef bool (*PPOccurrenceSourceResolverV1DigestFn)(
     char *error_buf,
     size_t error_buf_size);
 
+typedef bool (*PPOccurrenceSourceResolverV1CurrentFn)(
+    void *context,
+    uint32_t *source_id_out,
+    char *error_buf,
+    size_t error_buf_size);
+
 typedef struct {
     void *context;
     PPOccurrenceSourceResolverV1ResolveFn resolve;
     PPOccurrenceSourceResolverV1DigestFn digest;
+    /* Optional for state-only consumers; required by source-positioned
+     * occurrence composition. */
+    PPOccurrenceSourceResolverV1CurrentFn current;
 } PPOccurrenceSourceResolverV1;
 
 #endif

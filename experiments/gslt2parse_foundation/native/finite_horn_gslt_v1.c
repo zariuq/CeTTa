@@ -55,6 +55,10 @@ typedef struct {
     char *source;
 } Presentation;
 
+static int compare_rule_pointer(const void *left, const void *right);
+static int compare_presentation_pointer(const void *left,
+                                        const void *right);
+
 struct FHGSLTPackage {
     Presentation *presentations;
     size_t presentation_count;
@@ -965,15 +969,6 @@ static bool parse_presentation(const FHGSLTInput *input,
                              "%s: malformed rule body",
                              input->source);
         }
-        for (size_t prior = 0u; prior < presentation->rule_count; prior++) {
-            if (text_equal(presentation->rules[prior].name, name)) {
-                presentation_destroy(presentation);
-                return set_error(error,
-                                 error_cap,
-                                 "%s: duplicate rule name",
-                                 input->source);
-            }
-        }
         RuleDecl declaration = {
             .name = name,
             .head = head->items[1],
@@ -987,6 +982,45 @@ static bool parse_presentation(const FHGSLTInput *input,
             presentation_destroy(presentation);
             return false;
         }
+    }
+    if (presentation->rule_count > 1u) {
+        RuleDecl **sorted_rules;
+        if (presentation->rule_count > SIZE_MAX / sizeof(*sorted_rules)) {
+            presentation_destroy(presentation);
+            return set_error(error,
+                             error_cap,
+                             "%s: rule inventory is too large",
+                             input->source);
+        }
+        sorted_rules = malloc(
+            presentation->rule_count * sizeof(*sorted_rules));
+        if (sorted_rules == NULL) {
+            presentation_destroy(presentation);
+            return set_error(error,
+                             error_cap,
+                             "%s: out of memory validating rule names",
+                             input->source);
+        }
+        for (size_t index = 0u;
+             index < presentation->rule_count; index++)
+            sorted_rules[index] = &presentation->rules[index];
+        qsort(sorted_rules,
+              presentation->rule_count,
+              sizeof(*sorted_rules),
+              compare_rule_pointer);
+        for (size_t index = 1u;
+             index < presentation->rule_count; index++) {
+            if (text_equal(sorted_rules[index - 1u]->name,
+                           sorted_rules[index]->name)) {
+                free(sorted_rules);
+                presentation_destroy(presentation);
+                return set_error(error,
+                                 error_cap,
+                                 "%s: duplicate rule name",
+                                 input->source);
+            }
+        }
+        free(sorted_rules);
     }
     return true;
 }
@@ -1066,32 +1100,95 @@ static bool validate_term(const FHGSLTPackage *package,
 static bool validate_package(FHGSLTPackage *package,
                              char *error,
                              size_t error_cap) {
+    Presentation **sorted_presentations = NULL;
+    RuleDecl **sorted_rules = NULL;
+    size_t total_rules = 0u;
+    bool ok = false;
+
+    if (package->presentation_count > 1u) {
+        if (package->presentation_count >
+            SIZE_MAX / sizeof(*sorted_presentations)) {
+            set_error(error, error_cap,
+                      "presentation inventory is too large");
+            goto done;
+        }
+        sorted_presentations = malloc(
+            package->presentation_count * sizeof(*sorted_presentations));
+        if (sorted_presentations == NULL) {
+            set_error(error, error_cap,
+                      "out of memory validating presentation names");
+            goto done;
+        }
+        for (size_t index = 0u;
+             index < package->presentation_count; index++)
+            sorted_presentations[index] = &package->presentations[index];
+        qsort(sorted_presentations,
+              package->presentation_count,
+              sizeof(*sorted_presentations),
+              compare_presentation_pointer);
+        for (size_t index = 1u;
+             index < package->presentation_count; index++) {
+            if (text_equal(sorted_presentations[index - 1u]->name,
+                           sorted_presentations[index]->name)) {
+                set_error(error, error_cap,
+                          "duplicate presentation name");
+                goto done;
+            }
+        }
+    }
+
+    for (size_t p = 0u; p < package->presentation_count; p++) {
+        if (package->presentations[p].rule_count >
+            SIZE_MAX - total_rules) {
+            set_error(error, error_cap,
+                      "composed rule inventory is too large");
+            goto done;
+        }
+        total_rules += package->presentations[p].rule_count;
+    }
+    if (total_rules > 1u) {
+        if (total_rules > SIZE_MAX / sizeof(*sorted_rules)) {
+            set_error(error, error_cap,
+                      "composed rule inventory is too large");
+            goto done;
+        }
+        sorted_rules = malloc(total_rules * sizeof(*sorted_rules));
+        if (sorted_rules == NULL) {
+            set_error(error, error_cap,
+                      "out of memory validating composed rule names");
+            goto done;
+        }
+        size_t write = 0u;
+        for (size_t p = 0u; p < package->presentation_count; p++) {
+            Presentation *presentation = &package->presentations[p];
+            for (size_t r = 0u; r < presentation->rule_count; r++)
+                sorted_rules[write++] = &presentation->rules[r];
+        }
+        qsort(sorted_rules,
+              total_rules,
+              sizeof(*sorted_rules),
+              compare_rule_pointer);
+        for (size_t index = 1u; index < total_rules; index++) {
+            if (text_equal(sorted_rules[index - 1u]->name,
+                           sorted_rules[index]->name)) {
+                set_error(error, error_cap,
+                          "duplicate composed rule name");
+                goto done;
+            }
+        }
+    }
+
     for (size_t p = 0u; p < package->presentation_count; p++) {
         Presentation *presentation = &package->presentations[p];
-        for (size_t prior = 0u; prior < p; prior++) {
-            if (text_equal(package->presentations[prior].name,
-                           presentation->name))
-                return set_error(error,
-                                 error_cap,
-                                 "duplicate presentation name");
-        }
         for (size_t r = 0u; r < presentation->rule_count; r++) {
             RuleDecl *rule = &presentation->rules[r];
-            for (size_t pp = 0u; pp <= p; pp++) {
-                Presentation *other = &package->presentations[pp];
-                size_t limit = pp == p ? r : other->rule_count;
-                for (size_t rr = 0u; rr < limit; rr++) {
-                    if (text_equal(other->rules[rr].name, rule->name))
-                        return set_error(error,
-                                         error_cap,
-                                         "duplicate composed rule name");
-                }
+            if (rule->head->kind != NODE_LIST) {
+                set_error(error,
+                          error_cap,
+                          "%s: rule head must be an application",
+                          presentation->source);
+                goto done;
             }
-            if (rule->head->kind != NODE_LIST)
-                return set_error(error,
-                                 error_cap,
-                                 "%s: rule head must be an application",
-                                 presentation->source);
             if (!validate_term(package,
                                presentation,
                                rule,
@@ -1099,13 +1196,15 @@ static bool validate_package(FHGSLTPackage *package,
                                0u,
                                error,
                                error_cap))
-                return false;
+                goto done;
             for (size_t b = 0u; b < rule->body_count; b++) {
-                if (rule->body[b]->kind != NODE_LIST)
-                    return set_error(error,
-                                     error_cap,
-                                     "%s: rule body must contain applications",
-                                     presentation->source);
+                if (rule->body[b]->kind != NODE_LIST) {
+                    set_error(error,
+                              error_cap,
+                              "%s: rule body must contain applications",
+                              presentation->source);
+                    goto done;
+                }
                 if (!validate_term(package,
                                    presentation,
                                    rule,
@@ -1113,11 +1212,16 @@ static bool validate_package(FHGSLTPackage *package,
                                    0u,
                                    error,
                                    error_cap))
-                    return false;
+                    goto done;
             }
         }
     }
-    return true;
+    ok = true;
+
+done:
+    free(sorted_presentations);
+    free(sorted_rules);
+    return ok;
 }
 
 bool fhgslt_package_from_inputs(const FHGSLTInput *inputs,
@@ -1267,6 +1371,222 @@ size_t fhgslt_package_rule_count(const FHGSLTPackage *package) {
     return count;
 }
 
+typedef struct {
+    Text name;
+    size_t head_occurrence_count;
+    size_t body_occurrence_count;
+    size_t body_goal_count;
+    size_t last_body_goal;
+} VariableUseV1;
+
+typedef struct {
+    VariableUseV1 *items;
+    size_t len;
+    size_t cap;
+} VariableUseTableV1;
+
+static bool shape_increment_v1(size_t *value,
+                               char *error,
+                               size_t error_cap) {
+    if (*value == SIZE_MAX)
+        return set_error(error, error_cap,
+                         "finite-Horn structural count overflow");
+    (*value)++;
+    return true;
+}
+
+static VariableUseV1 *variable_use_v1(
+    VariableUseTableV1 *table,
+    Text name,
+    char *error,
+    size_t error_cap) {
+    for (size_t index = 0u; index < table->len; index++) {
+        if (text_equal(table->items[index].name, name))
+            return &table->items[index];
+    }
+    if (table->len == table->cap) {
+        size_t next = table->cap == 0u ? 8u : table->cap * 2u;
+        if (next < table->cap ||
+            next > SIZE_MAX / sizeof(*table->items)) {
+            set_error(error, error_cap,
+                      "finite-Horn variable-use table is too large");
+            return NULL;
+        }
+        VariableUseV1 *grown = (VariableUseV1 *)realloc(
+            table->items, next * sizeof(*table->items));
+        if (grown == NULL) {
+            set_error(error, error_cap,
+                      "out of memory inspecting finite-Horn variables");
+            return NULL;
+        }
+        table->items = grown;
+        table->cap = next;
+    }
+    VariableUseV1 *use = &table->items[table->len++];
+    memset(use, 0, sizeof(*use));
+    use->name = name;
+    return use;
+}
+
+static bool collect_variable_uses_v1(
+    const Node *node,
+    bool in_head,
+    size_t body_goal,
+    size_t depth,
+    VariableUseTableV1 *uses,
+    char *error,
+    size_t error_cap) {
+    if (depth > FHGSLT_MAX_DEPTH)
+        return set_error(error, error_cap,
+                         "term nesting exceeds %u during shape inspection",
+                         FHGSLT_MAX_DEPTH);
+    if (node->kind == NODE_VARIABLE) {
+        VariableUseV1 *use = variable_use_v1(
+            uses, node_text(node), error, error_cap);
+        if (use == NULL)
+            return false;
+        if (in_head) {
+            return shape_increment_v1(
+                &use->head_occurrence_count, error, error_cap);
+        }
+        if (!shape_increment_v1(
+                &use->body_occurrence_count, error, error_cap))
+            return false;
+        if (use->last_body_goal != body_goal) {
+            use->last_body_goal = body_goal;
+            if (!shape_increment_v1(
+                    &use->body_goal_count, error, error_cap))
+                return false;
+        }
+        return true;
+    }
+    if (node->kind != NODE_LIST)
+        return true;
+    for (size_t index = 0u; index < node->item_count; index++) {
+        if (!collect_variable_uses_v1(
+                node->items[index], in_head, body_goal, depth + 1u,
+                uses, error, error_cap))
+            return false;
+    }
+    return true;
+}
+
+static bool rule_is_direct_recursive_v1(const RuleDecl *rule) {
+    const Node *head_operator = rule->head->items[0];
+    size_t head_arity = rule->head->item_count - 1u;
+    for (size_t index = 0u; index < rule->body_count; index++) {
+        const Node *goal = rule->body[index];
+        if (goal->item_count - 1u == head_arity &&
+            text_equal(node_text(goal->items[0]),
+                       node_text(head_operator)))
+            return true;
+    }
+    return false;
+}
+
+bool fhgslt_package_structural_shape_v1(
+    const FHGSLTPackage *package,
+    FHGSLTStructuralShapeV1 *out,
+    char *error,
+    size_t error_cap) {
+    if (package == NULL || out == NULL)
+        return set_error(error, error_cap,
+                         "structural-shape input is null");
+    memset(out, 0, sizeof(*out));
+    FHGSLTStructuralShapeV1 shape = {0};
+    for (size_t presentation_index = 0u;
+         presentation_index < package->presentation_count;
+         presentation_index++) {
+        const Presentation *presentation =
+            &package->presentations[presentation_index];
+        for (size_t rule_index = 0u;
+             rule_index < presentation->rule_count;
+             rule_index++) {
+            const RuleDecl *rule = &presentation->rules[rule_index];
+            VariableUseTableV1 uses = {0};
+            bool ok =
+                shape_increment_v1(&shape.rule_count, error, error_cap) &&
+                collect_variable_uses_v1(
+                    rule->head, true, 0u, 0u, &uses,
+                    error, error_cap);
+            for (size_t body_index = 0u;
+                 ok && body_index < rule->body_count;
+                 body_index++) {
+                ok = collect_variable_uses_v1(
+                    rule->body[body_index], false, body_index + 1u, 0u,
+                    &uses, error, error_cap);
+            }
+            if (!ok) {
+                free(uses.items);
+                return false;
+            }
+
+            if (rule->body_count == 0u) {
+                ok = shape_increment_v1(
+                    &shape.fact_rule_count, error, error_cap);
+            } else {
+                ok = shape_increment_v1(
+                    &shape.implication_rule_count, error, error_cap);
+            }
+            if (rule->body_count > SIZE_MAX - shape.body_goal_count) {
+                free(uses.items);
+                return set_error(error, error_cap,
+                                 "finite-Horn body-goal count overflow");
+            }
+            shape.body_goal_count += rule->body_count;
+            if (rule->body_count > shape.maximum_body_goal_count)
+                shape.maximum_body_goal_count = rule->body_count;
+            if (ok && rule->body_count > 1u)
+                ok = shape_increment_v1(
+                    &shape.multi_body_rule_count, error, error_cap);
+
+            bool left_linear = true;
+            bool cross_goal_join = false;
+            bool body_only_variable = false;
+            bool head_only_variable = false;
+            for (size_t index = 0u; index < uses.len; index++) {
+                const VariableUseV1 *use = &uses.items[index];
+                if (use->head_occurrence_count > 1u)
+                    left_linear = false;
+                if (use->body_goal_count > 1u)
+                    cross_goal_join = true;
+                if (use->head_occurrence_count == 0u &&
+                    use->body_occurrence_count > 0u)
+                    body_only_variable = true;
+                if (use->head_occurrence_count > 0u &&
+                    use->body_occurrence_count == 0u)
+                    head_only_variable = true;
+            }
+            if (ok)
+                ok = shape_increment_v1(
+                    left_linear
+                        ? &shape.left_linear_head_rule_count
+                        : &shape.nonlinear_head_rule_count,
+                    error, error_cap);
+            if (ok && cross_goal_join)
+                ok = shape_increment_v1(
+                    &shape.cross_goal_join_rule_count, error, error_cap);
+            if (ok && body_only_variable)
+                ok = shape_increment_v1(
+                    &shape.body_only_variable_rule_count,
+                    error, error_cap);
+            if (ok && head_only_variable)
+                ok = shape_increment_v1(
+                    &shape.head_only_variable_rule_count,
+                    error, error_cap);
+            if (ok && rule_is_direct_recursive_v1(rule))
+                ok = shape_increment_v1(
+                    &shape.direct_recursive_rule_count,
+                    error, error_cap);
+            free(uses.items);
+            if (!ok)
+                return false;
+        }
+    }
+    *out = shape;
+    return true;
+}
+
 bool fhgslt_package_declares_operator(const FHGSLTPackage *package,
                                       const char *name,
                                       size_t arity) {
@@ -1331,13 +1651,15 @@ static bool render_string(ByteBuffer *buffer, Text text) {
     return buffer_byte(buffer, (uint8_t)'"');
 }
 
-static bool render_node(ByteBuffer *buffer, const Node *node) {
+static bool render_node_with_variable_marker(ByteBuffer *buffer,
+                                             const Node *node,
+                                             uint8_t variable_marker) {
     switch (node->kind) {
     case NODE_SYMBOL:
     case NODE_INTEGER:
         return buffer_append(buffer, node->text, node->text_len);
     case NODE_VARIABLE:
-        return buffer_byte(buffer, (uint8_t)'?') &&
+        return buffer_byte(buffer, variable_marker) &&
                buffer_append(buffer, node->text, node->text_len);
     case NODE_STRING:
         return render_string(buffer, node_text(node));
@@ -1347,12 +1669,17 @@ static bool render_node(ByteBuffer *buffer, const Node *node) {
         for (size_t index = 0u; index < node->item_count; index++) {
             if (index > 0u && !buffer_byte(buffer, (uint8_t)' '))
                 return false;
-            if (!render_node(buffer, node->items[index]))
+            if (!render_node_with_variable_marker(
+                    buffer, node->items[index], variable_marker))
                 return false;
         }
         return buffer_byte(buffer, (uint8_t)')');
     }
     return false;
+}
+
+static bool render_node(ByteBuffer *buffer, const Node *node) {
+    return render_node_with_variable_marker(buffer, node, (uint8_t)'?');
 }
 
 static int compare_operator_pointer(const void *left, const void *right) {
@@ -1723,13 +2050,32 @@ bool fhgslt_package_digest(const FHGSLTPackage *package,
     return true;
 }
 
-bool fhgslt_package_reflected_presentation(const FHGSLTPackage *package,
-                                           uint8_t **out,
-                                           size_t *out_len,
-                                           char *error,
-                                           size_t error_cap) {
+static bool render_horn_clause_ir_rule_v1(ByteBuffer *buffer,
+                                          const RuleDecl *rule) {
+    bool ok = buffer_literal(buffer, "(HornClauseV1 ") &&
+              render_node_with_variable_marker(
+                  buffer, rule->head, (uint8_t)'$') &&
+              buffer_byte(buffer, (uint8_t)' ');
+    for (size_t index = 0u; ok && index < rule->body_count; index++) {
+        ok = buffer_literal(buffer, "(HornBodyConsV1 ") &&
+             render_node_with_variable_marker(
+                 buffer, rule->body[index], (uint8_t)'$') &&
+             buffer_byte(buffer, (uint8_t)' ');
+    }
+    ok = ok && buffer_literal(buffer, "HornBodyNilV1");
+    for (size_t index = 0u; ok && index < rule->body_count; index++)
+        ok = buffer_byte(buffer, (uint8_t)')');
+    return ok && buffer_literal(buffer, ")\n");
+}
+
+bool fhgslt_package_horn_clause_ir_v1(const FHGSLTPackage *package,
+                                      uint8_t **out,
+                                      size_t *out_len,
+                                      char *error,
+                                      size_t error_cap) {
     if (package == NULL || out == NULL || out_len == NULL)
-        return set_error(error, error_cap, "invalid reflection request");
+        return set_error(error, error_cap,
+                         "invalid finite-Horn clause IR render request");
     *out = NULL;
     *out_len = 0u;
 
@@ -1742,11 +2088,144 @@ bool fhgslt_package_reflected_presentation(const FHGSLTPackage *package,
     if (presentations == NULL)
         return set_error(error,
                          error_cap,
-                         "out of memory sorting reflected presentations");
+                         "out of memory sorting finite-Horn presentations");
     for (size_t index = 0u; index < package->presentation_count; index++)
         presentations[index] = &package->presentations[index];
     qsort(presentations,
           package->presentation_count,
+          sizeof(*presentations),
+          compare_presentation_pointer);
+
+    ByteBuffer buffer = {0};
+    bool ok = buffer_literal(
+        &buffer, "(HornClauseV1 (FiniteHornPackageDigestV1 sha256-") &&
+              buffer_literal(&buffer, digest) &&
+              buffer_literal(&buffer, ") HornBodyNilV1)\n");
+    for (size_t presentation_index = 0u;
+         ok && presentation_index < package->presentation_count;
+         presentation_index++) {
+        Presentation *presentation = presentations[presentation_index];
+        RuleDecl **rules = NULL;
+        if (presentation->rule_count > 0u) {
+            rules = (RuleDecl **)malloc(
+                presentation->rule_count * sizeof(*rules));
+            if (rules == NULL) {
+                ok = false;
+                break;
+            }
+            for (size_t rule_index = 0u;
+                 rule_index < presentation->rule_count;
+                 rule_index++)
+                rules[rule_index] = &presentation->rules[rule_index];
+            qsort(rules,
+                  presentation->rule_count,
+                  sizeof(*rules),
+                  compare_rule_pointer);
+        }
+        for (size_t rule_index = 0u;
+             ok && rule_index < presentation->rule_count;
+             rule_index++)
+            ok = render_horn_clause_ir_rule_v1(&buffer, rules[rule_index]);
+        free(rules);
+    }
+    free(presentations);
+    if (!ok) {
+        buffer_destroy(&buffer);
+        return set_error(error,
+                         error_cap,
+                         "out of memory rendering finite-Horn clause IR");
+    }
+    *out = buffer.bytes;
+    *out_len = buffer.len;
+    return true;
+}
+
+static bool presentation_source_selected(
+    const Presentation *presentation,
+    const char *const *sources,
+    size_t source_count) {
+    if (source_count == 0u)
+        return true;
+    for (size_t index = 0u; index < source_count; index++) {
+        if (strcmp(presentation->source, sources[index]) == 0)
+            return true;
+    }
+    return false;
+}
+
+static bool package_reflected_presentation_selected(
+    const FHGSLTPackage *package,
+    const char *const *sources,
+    size_t source_count,
+    uint8_t **out,
+    size_t *out_len,
+    size_t *operator_count,
+    size_t *rule_count,
+    char *error,
+    size_t error_cap) {
+    if (package == NULL || out == NULL || out_len == NULL)
+        return set_error(error, error_cap, "invalid reflection request");
+    if (source_count > 0u && sources == NULL)
+        return set_error(error, error_cap,
+                         "selected reflection omits its source table");
+    *out = NULL;
+    *out_len = 0u;
+    if (operator_count != NULL)
+        *operator_count = 0u;
+    if (rule_count != NULL)
+        *rule_count = 0u;
+
+    for (size_t source_index = 0u;
+         source_index < source_count;
+         source_index++) {
+        bool found = false;
+        if (sources[source_index] == NULL)
+            return set_error(error, error_cap,
+                             "selected reflection contains a null source");
+        for (size_t presentation_index = 0u;
+             presentation_index < package->presentation_count;
+             presentation_index++) {
+            if (strcmp(package->presentations[presentation_index].source,
+                       sources[source_index]) == 0) {
+                found = true;
+                break;
+            }
+        }
+        if (!found)
+            return set_error(error, error_cap,
+                             "selected reflection source is outside the package: %s",
+                             sources[source_index]);
+    }
+
+    char digest[65];
+    if (!fhgslt_package_digest(package, digest, error, error_cap))
+        return false;
+
+    size_t selected_presentation_count = 0u;
+    for (size_t index = 0u; index < package->presentation_count; index++) {
+        if (presentation_source_selected(&package->presentations[index],
+                                         sources,
+                                         source_count))
+            selected_presentation_count++;
+    }
+    if (selected_presentation_count == 0u)
+        return set_error(error, error_cap,
+                         "selected reflection contains no presentation");
+    Presentation **presentations = (Presentation **)malloc(
+        selected_presentation_count * sizeof(*presentations));
+    if (presentations == NULL)
+        return set_error(error,
+                         error_cap,
+                         "out of memory sorting reflected presentations");
+    size_t selected_index = 0u;
+    for (size_t index = 0u; index < package->presentation_count; index++) {
+        if (presentation_source_selected(&package->presentations[index],
+                                         sources,
+                                         source_count))
+            presentations[selected_index++] = &package->presentations[index];
+    }
+    qsort(presentations,
+          selected_presentation_count,
           sizeof(*presentations),
           compare_presentation_pointer);
 
@@ -1759,7 +2238,7 @@ bool fhgslt_package_reflected_presentation(const FHGSLTPackage *package,
     size_t reflected_operator_index = 0u;
     size_t reflected_index = 0u;
     for (size_t presentation_index = 0u;
-         ok && presentation_index < package->presentation_count;
+         ok && presentation_index < selected_presentation_count;
          presentation_index++) {
         Presentation *presentation = presentations[presentation_index];
         OperatorDecl **operators = NULL;
@@ -1862,5 +2341,35 @@ bool fhgslt_package_reflected_presentation(const FHGSLTPackage *package,
     buffer.len--;
     *out = buffer.bytes;
     *out_len = buffer.len;
+    if (operator_count != NULL)
+        *operator_count = reflected_operator_index;
+    if (rule_count != NULL)
+        *rule_count = reflected_index;
     return true;
+}
+
+bool fhgslt_package_reflected_presentation(const FHGSLTPackage *package,
+                                           uint8_t **out,
+                                           size_t *out_len,
+                                           char *error,
+                                           size_t error_cap) {
+    return package_reflected_presentation_selected(
+        package, NULL, 0u, out, out_len, NULL, NULL, error, error_cap);
+}
+
+bool fhgslt_package_reflected_sources(const FHGSLTPackage *package,
+                                      const char *const *sources,
+                                      size_t source_count,
+                                      uint8_t **out,
+                                      size_t *out_len,
+                                      size_t *operator_count,
+                                      size_t *rule_count,
+                                      char *error,
+                                      size_t error_cap) {
+    if (source_count == 0u)
+        return set_error(error, error_cap,
+                         "selected reflection requires a source");
+    return package_reflected_presentation_selected(
+        package, sources, source_count, out, out_len,
+        operator_count, rule_count, error, error_cap);
 }

@@ -1,0 +1,3 @@
+provable sort wff;
+term truth: wff;
+axiom ax_truth: $ truth $;

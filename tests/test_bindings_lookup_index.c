@@ -230,6 +230,51 @@ static void test_epoch_identity_and_publication(Arena *ordinary_arena) {
     hashcons_free(&hashcons);
 }
 
+static void test_incremental_occurs_large_frontier(Arena *arena) {
+    enum { frontier_length = 512u };
+    Atom *variables[frontier_length + 1u];
+    Atom *node_head = atom_symbol(arena, "OccursFrontierNode");
+    bool ready = node_head != NULL;
+    for (uint32_t index = 0u;
+         ready && index <= frontier_length; index++) {
+        variables[index] = atom_var_with_id(
+            arena, "occurs-frontier", test_id(8000u + index));
+        ready = variables[index] != NULL;
+    }
+
+    BindingsBuilder builder;
+    bool builder_ready = ready &&
+        bindings_builder_init(&builder, NULL);
+    ready = builder_ready;
+    for (uint32_t index = 0u;
+         ready && index < frontier_length; index++) {
+        Atom *next = atom_expr2(
+            arena, node_head, variables[index + 1u]);
+        ready = next && bindings_builder_add_var_fresh(
+            &builder, variables[index], next);
+    }
+    CHECK(ready && builder.current.len == frontier_length &&
+              !bindings_has_loop(&builder.current),
+          "large incremental occurs frontier remains acyclic");
+
+    uint32_t cycle_mark = ready
+        ? bindings_builder_save(&builder) : 0u;
+    bool closing_cycle = ready &&
+        bindings_builder_add_var_fresh(
+            &builder, variables[frontier_length], variables[0]) &&
+        bindings_has_loop(&builder.current);
+    CHECK(closing_cycle,
+          "large incremental occurs frontier detects its closing cycle");
+    if (ready) {
+        bindings_builder_rollback(&builder, cycle_mark);
+        CHECK(builder.current.len == frontier_length &&
+                  !bindings_has_loop(&builder.current),
+              "large occurs-check rollback restores the acyclic frontier");
+    }
+    if (builder_ready)
+        bindings_builder_free(&builder);
+}
+
 typedef struct {
     VarId variable;
     uint32_t offset;
@@ -270,6 +315,7 @@ int main(void) {
 
     test_term_stability_summary(&arena);
     test_epoch_identity_and_publication(&arena);
+    test_incremental_occurs_large_frontier(&arena);
     const char *lookup_index_setting =
         getenv("CETTA_BINDINGS_LOOKUP_INDEX");
     bool lookup_index_expected =
@@ -846,6 +892,21 @@ int main(void) {
               projected.len == 1u &&
               binding_is_int(&projected, late_id, 1000),
           "hash-stable projection uses the acyclic variable collector");
+    bindings_free(&projected);
+
+    Atom *stable_dag_head = atom_symbol(&arena, "StableProjectionDag");
+    Atom *stable_dag_root = projection_root;
+    for (uint32_t depth = 0u; depth < 64u; depth++)
+        stable_dag_root = atom_expr3(
+            &arena, stable_dag_head, stable_dag_root, stable_dag_root);
+    Atom *stable_dag_roots[1] = {stable_dag_root};
+    CHECK(stable_dag_root &&
+              (stable_dag_root->flags & ATOM_FLAG_HASH_STABLE) != 0u &&
+              bindings_project_reachable(
+                  &base, stable_dag_roots, 1u, &projected) &&
+              projected.len == 1u &&
+              binding_is_int(&projected, late_id, 1000),
+          "hash-stable projection visits a shared variable DAG linearly");
     bindings_free(&projected);
 
     Bindings unmarked_projection_source;

@@ -62,6 +62,7 @@ tests/prime/conformance/type_judgments.metta	prime	metta		any	native	test-prime	
 tests/prime/conformance/typed_equality.metta	prime	metta		any	native	test-prime	golden	Prime normative golden regression
 tests/prime/conformance/unbounded_search.metta	prime	metta		any	native	test-prime	golden	Prime normative golden regression
 tests/prime/first_class_contexts.metta	prime	metta		any	native	test-prime	golden	Prime normative golden regression
+tests/prime/native_hyp_path.metta	prime	metta		any	native	test-prime	golden	Prime normative golden regression
 tests/prime/need_application.metta	prime	metta		any	native	test-prime	golden	Prime normative golden regression
 tests/prime/need_demand_modes.metta	prime	metta		any	native	test-prime	golden	Prime normative golden regression
 tests/prime/need_explicit_control.metta	prime	metta		any	native	test-prime	golden	Prime normative golden regression
@@ -263,6 +264,7 @@ tests/test_gparse_native_metamath_defs_theorem_length_ladder.metta	he	metta	he-e
 tests/test_gparse_native_metamath_frontier.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_gparse_native_metamath_plus_weq_variant_matrix.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_gparse_native_rho_mrho_text.metta	he	metta	he-extended	main	native	test	golden	-
+tests/test_gparse_native_runtime_grammar_shared.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_gparse_native_slr_parse_shared.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_gparse_native_slr_summary.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_hash_space.metta	he	metta	he-extended	main	native	test	golden	-

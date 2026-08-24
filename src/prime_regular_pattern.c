@@ -308,7 +308,7 @@ static Atom *regular_term_pattern_pi(
     return regular_term_pattern_application(arena, constructor, arguments, 2u);
 }
 
-/* Numeric universe notation is surface sugar for the ordinary inductive
+/* Numeric universe notation is syntax sugar for the ordinary inductive
  * level language.  Keeping this as Pattern structure avoids adding a
  * grounded-literal escape hatch to the shared inference carrier. */
 static CettaPrimeRegularTermElaborationV1

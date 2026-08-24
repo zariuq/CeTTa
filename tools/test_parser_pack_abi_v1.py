@@ -111,7 +111,7 @@ CASES = {
             "shared/lookahead_core_v1.metta",
             "../../../langdef/metamath/syntax_v1.metta",
         ),
-        "summary": (270, 375, 645, 1),
+        "summary": (441, 375, 816, 1),
     },
     "megalodon": {
         "start": "mg-document",

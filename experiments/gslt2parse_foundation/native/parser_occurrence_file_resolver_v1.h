@@ -6,6 +6,7 @@
 #include <stdint.h>
 
 #include "parser_occurrence_source_resolver_v1.h"
+#include "parser_source_resolution_control_v1.h"
 
 /*
  * File-system realization of the generic source-resolution capability.
@@ -35,6 +36,24 @@ bool ppoccurrence_file_resolver_v1_configure(
     PPOccurrenceFileResolverV1 *resolver,
     const PPGuardedLexCursorV1Program *program,
     const PPOccurrenceFoldV1Plan *occurrence_plan,
+    const char *root_path,
+    const uint8_t *root_bytes,
+    size_t root_byte_len,
+    PPGuardedLexCursorV1Observation observation,
+    uint64_t minimum_work_limit,
+    uint64_t work_per_byte,
+    uint32_t depth_limit,
+    char *error_buf,
+    size_t error_buf_size);
+
+/* Authoritative source-composition entry point.  Host probing and recursive
+ * parsing remain capabilities; every language decision is read from the
+ * generated source-resolution control plan. */
+bool ppoccurrence_file_resolver_v1_configure_controlled(
+    PPOccurrenceFileResolverV1 *resolver,
+    const PPGuardedLexCursorV1Program *program,
+    const PPOccurrenceFoldV1Plan *occurrence_plan,
+    const PPSourceResolutionControlV1Plan *control_plan,
     const char *root_path,
     const uint8_t *root_bytes,
     size_t root_byte_len,

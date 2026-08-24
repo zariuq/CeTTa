@@ -32,6 +32,15 @@
        (((return $result) (return $result))
         ($result (return $result))))))
 
+; Parse a source graph into immutable constructor data for a generated target
+; program.  Includes are expanded by the authored source-control plan; no
+; source occurrence is installed as executable target code.
+(= (langdef:parse-occurrence-stream-file $handle $path)
+   (function
+     (case (__cetta_lib_langdef_parse_occurrence_stream_file $handle $path)
+       (((return $result) (return $result))
+        ($result (return $result))))))
+
 (= (langdef:prepare-import-file $handle $path)
    (function
      (case (__cetta_lib_langdef_prepare_import_file $handle $path)

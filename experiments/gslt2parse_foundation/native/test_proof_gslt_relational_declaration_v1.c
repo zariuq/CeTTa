@@ -1313,6 +1313,12 @@ int main(int argc, char **argv) {
         check(workspace_result == PPPROOF_GSLT_ARTICLE_V1_OK &&
                   workspace_prepared.declaration.binding_len == 2u &&
                   workspace_prepared.declaration.essential_len == 1u &&
+                  workspace_prepared.declaration.essentials[0]
+                          .actual_sequence.tokens ==
+                      actuals[2].formula.tokens &&
+                  workspace_prepared.declaration.essentials[0]
+                          .actual_sequence.token_len ==
+                      actuals[2].formula.token_len &&
                   prepared_bindings.capacity >= 2u &&
                   prepared_premises.capacity >= 1u,
               "admitted preparation scratch preserves the assertion input");

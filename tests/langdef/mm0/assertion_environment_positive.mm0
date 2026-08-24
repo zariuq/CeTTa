@@ -1,0 +1,8 @@
+strict provable sort wff;
+
+term truth: wff;
+term imp: wff > wff > wff;
+
+axiom ax_truth: $ truth $;
+axiom ax_imp (ph ps: wff) (hph: $ ph $): $ imp ph ps $;
+theorem th_arrow (ph: wff): $ ph $ > $ ph $;

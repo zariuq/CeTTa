@@ -1,0 +1,24 @@
+(ProofTraceInputNormalEvidenceV1
+  input-request-v1
+  (ProofTraceLabelConsV1 input-hx-v1
+    (ProofTraceLabelConsV1 input-identity-v1 ProofTraceLabelNilV1))
+  (ProofSequenceConsV1 input-wff-v1
+    (ProofSequenceConsV1 input-a-v1 ProofSequenceNilV1))
+  (ProofTraceConsV1
+    (ProofTracePushV1
+      (ProofSequenceConsV1 input-wff-v1
+        (ProofSequenceConsV1 input-a-v1 ProofSequenceNilV1)))
+    (ProofTraceConsV1
+      (ProofTraceApplyV1
+        (ProofAssertionV1
+          (ProofAssertionListConsV1
+            (ProofAssertionVariableV1 input-x-v1 input-wff-v1)
+            ProofAssertionListNilV1)
+          ProofAssertionListNilV1
+          input-wff-v1
+          (ProofSequenceConsV1 input-x-v1 ProofSequenceNilV1)
+          ProofAssertionListNilV1)
+        (ProofTraceFrameConsV1
+          (ProofTraceFrameVariableV1 input-x-v1 input-wff-v1)
+          ProofTraceFrameNilV1))
+      ProofTraceNilV1)))

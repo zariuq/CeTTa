@@ -57,6 +57,7 @@ static bool rhocalc_semantic_profile_parse_supported(
     switch (profile) {
     case RHOCALC_SEMANTIC_PROFILE_STRICT_CORE:
     case RHOCALC_SEMANTIC_PROFILE_COST:
+    case RHOCALC_SEMANTIC_PROFILE_RHOMETTA:
         return true;
     }
     snprintf(g_rhocalc_parse_error, sizeof(g_rhocalc_parse_error),
@@ -1168,6 +1169,10 @@ int rhocalc_parse_text(const char *text,
     if (!rhocalc_semantic_profile_parse_supported(semantic_profile)) {
         return -1;
     }
+    if (syntax == CETTA_SYNTAX_METTA &&
+        semantic_profile == RHOCALC_SEMANTIC_PROFILE_RHOMETTA) {
+        return parse_metta_text(text, arena, out_atoms);
+    }
     if (syntax == CETTA_SYNTAX_METTA) syntax = CETTA_SYNTAX_MRHO;
     if (syntax == CETTA_SYNTAX_MRHO) {
         int n;
@@ -1196,6 +1201,10 @@ int rhocalc_parse_file(const char *path,
     rho_parse_clear_error();
     if (!rhocalc_semantic_profile_parse_supported(semantic_profile)) {
         return -1;
+    }
+    if (syntax == CETTA_SYNTAX_METTA &&
+        semantic_profile == RHOCALC_SEMANTIC_PROFILE_RHOMETTA) {
+        return parse_metta_file(path, arena, out_atoms);
     }
     if (syntax == CETTA_SYNTAX_METTA) syntax = CETTA_SYNTAX_MRHO;
     if (syntax == CETTA_SYNTAX_MRHO) {

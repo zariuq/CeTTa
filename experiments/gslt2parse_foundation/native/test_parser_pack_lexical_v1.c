@@ -331,6 +331,8 @@ static void test_guard_relation_contract(TestCounts *counts,
     PPGuardRelationV1 borrowed_relation;
     PPGuardRelationV1 wrong_owner_relation;
     PPGuardRelationV1 expiring_relation;
+    HashConsTable active_hashcons;
+    HashConsTable *saved_hashcons = g_hashcons;
     Arena wrong_owner;
     Arena expiring_owner;
     const Arena *borrowed_owners[1] = {arena};
@@ -360,6 +362,8 @@ static void test_guard_relation_contract(TestCounts *counts,
     uint32_t index;
     char error[512] = {0};
 
+    hashcons_init(&active_hashcons);
+    g_hashcons = &active_hashcons;
     ppguard_relation_v1_init(&relation);
     ppguard_relation_v1_init(&reordered_relation);
     ppguard_relation_v1_init(&mutated_relation);
@@ -367,6 +371,7 @@ static void test_guard_relation_contract(TestCounts *counts,
     ppguard_relation_v1_init(&borrowed_relation);
     ppguard_relation_v1_init(&wrong_owner_relation);
     ppguard_relation_v1_init(&expiring_relation);
+    g_hashcons = saved_hashcons;
     arena_init(&wrong_owner);
     arena_init(&expiring_owner);
     if (out_digest)
@@ -420,8 +425,15 @@ static void test_guard_relation_contract(TestCounts *counts,
                 relation.terminal_ids[2] == 8u &&
                 relation.witness_values[0] != base_value &&
                 atom_eq(relation.witness_values[0], base_value) &&
+                arena_owns_ptr(
+                    &relation.arena, relation.witness_values[0]) &&
+                arena_owns_ptr(
+                    &relation.arena, relation.evidence[0].value) &&
+                arena_owns_ptr(
+                    &relation.arena, relation.evidence[0].proof) &&
                 relation.lattice.source_pass_count == 1u,
-            "guard relation owns base witnesses and canonicalizes duplicates");
+            "guard relation owns roots despite ambient hash-consing and "
+            "canonicalizes duplicates");
     error[0] = '\0';
     REQUIRE(counts,
             ppguard_relation_v1_build_borrowed_atoms(
@@ -661,6 +673,7 @@ done:
     ppguard_relation_v1_free(&relation);
     arena_free(&expiring_owner);
     arena_free(&wrong_owner);
+    hashcons_free(&active_hashcons);
 }
 
 static void test_zero_width_semantic_witnesses(

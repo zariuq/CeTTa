@@ -212,8 +212,8 @@ static bool validate_structural_canary(const char *path) {
     if (!expect(pposlf_native_type_plan_v1_load(
                     &plan, path, error, sizeof(error)),
                 error[0] ? error : "structural native-program canary failed") ||
-        !expect(plan.head_signature_len == 6u &&
-                    plan.step_schema_len == 9u,
+        !expect(plan.head_signature_len == 25u &&
+                    plan.step_schema_len == 30u,
                 "structural native-program inventory changed") ||
         !expect(plan.external_relation_len == 0u,
                 "closed structural canary acquired an interface") ||
@@ -363,15 +363,15 @@ int main(int argc, char **argv) {
     g_hashcons = NULL;
     g_var_intern = NULL;
 
-    ok = load_expected(argv[1], 246u, 629u, 24u, 14u) &&
-         load_expected(argv[2], 171u, 969u, 8u, 7u) &&
+    ok = load_expected(argv[1], 254u, 647u, 25u, 14u) &&
+         load_expected(argv[2], 177u, 989u, 8u, 7u) &&
          validate_structural_canary(argv[3]) &&
          expect_rejected(argv[4]) &&
          expect_rejected(argv[5]) &&
          expect_rejected(argv[6]) &&
          transactional_rejection(argv[3], argv[4]) &&
          deletion_changes_program(argv[3], argv[7]) &&
-         load_expected(argv[8], 4u, 3u, 1u, 1u) &&
+         load_expected(argv[8], 5u, 4u, 1u, 1u) &&
          expect_rejected_with(
              argv[9], "lacks an authored extensional interface") &&
          expect_rejected_with(

@@ -1,0 +1,3 @@
+sort wff;
+term unary: wff > wff;
+infixl unary: $ + $ prec 20;

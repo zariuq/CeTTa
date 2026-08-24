@@ -1381,6 +1381,8 @@ rhocalc_semantic_profile_for_endpoint(const CettaCliEndpoint *endpoint) {
     switch (endpoint->profile->id) {
     case CETTA_PROFILE_RHOCALC_COST:
         return RHOCALC_SEMANTIC_PROFILE_COST;
+    case CETTA_PROFILE_RHOCALC_RHOMETTA:
+        return RHOCALC_SEMANTIC_PROFILE_RHOMETTA;
     case CETTA_PROFILE_RHOCALC_STRICT_CORE:
     default:
         return RHOCALC_SEMANTIC_PROFILE_STRICT_CORE;
@@ -1401,11 +1403,33 @@ static bool rho_scheduler_policy_from_name(const char *name,
     return false;
 }
 
+static bool main_rhometta_form_named(Atom *atom, const char *name,
+                                     uint32_t arity) {
+    return atom && atom->kind == ATOM_EXPR &&
+           atom->expr.len == arity + 1u &&
+           atom->expr.elems[0]->kind == ATOM_SYMBOL &&
+           strcmp(atom_name_cstr(atom->expr.elems[0]), name) == 0;
+}
+
+static bool main_rhometta_print_eval_results(const ResultSet *results,
+                                             CettaSyntaxId syntax,
+                                             FILE *out) {
+    if (!results || !out) return false;
+    for (uint32_t index = 0u; index < results->len; index++) {
+        rhocalc_print_atom_syntax(results->items[index], syntax, out);
+        fputc('\n', out);
+    }
+    return fflush(out) == 0;
+}
+
 static int run_rhocalc_cli(const char *filename,
                            const char *inline_text,
                            RhocalcSemanticProfileId semantic_profile,
                            CettaSyntaxId syntax,
-                           const RhoRuntimeProfile *profile) {
+                           const RhoRuntimeProfile *profile,
+                           int argc,
+                           char **argv,
+                           int script_arg_start) {
     int rc = 0;
     int n = 0;
     Atom **atoms = NULL;
@@ -1413,6 +1437,14 @@ static int run_rhocalc_cli(const char *filename,
     SymbolTable symbol_table;
     VarInternTable var_intern_table;
     HashConsTable hashcons_table;
+    CettaLibraryContext libraries;
+    Space space;
+    Registry registry;
+    RhocalcEvalContext eval_context = {0};
+    const RhocalcEvalContext *eval_context_ptr = NULL;
+    bool libraries_initialized = false;
+    bool space_initialized = false;
+    bool registry_initialized = false;
 
     arena_init(&arena);
     symbol_table_init(&symbol_table);
@@ -1423,6 +1455,33 @@ static int run_rhocalc_cli(const char *filename,
     g_var_intern = &var_intern_table;
     g_hashcons = &hashcons_table;
     arena_set_hashcons(&arena, &hashcons_table);
+
+    if (semantic_profile == RHOCALC_SEMANTIC_PROFILE_RHOMETTA) {
+        cetta_library_context_init_for_language_profile(
+            &libraries, CETTA_LANGUAGE_RHOCALC, NULL);
+        libraries_initialized = true;
+        if (argv && argc > 0)
+            cetta_library_context_set_exec_path(&libraries, argv[0]);
+        cetta_library_context_set_script_path(
+            &libraries, filename ? filename : "<expr>");
+        cetta_library_context_set_cli_args(
+            &libraries, argc, argv, script_arg_start);
+        term_universe_set_persistent_arena(&libraries.term_universe, &arena);
+        eval_set_library_context(&libraries);
+        space_init_with_universe(&space, &libraries.term_universe);
+        space_initialized = true;
+        registry_init(&registry);
+        registry_initialized = true;
+        Atom *self_value = atom_space(&arena, &space);
+        registry_bind_id(&registry, g_builtin_syms.self, self_value);
+        eval_context = (RhocalcEvalContext){
+            .space = &space,
+            .registry = &registry,
+            .persistent_arena = &arena,
+            .library_context = &libraries,
+        };
+        eval_context_ptr = &eval_context;
+    }
 
     n = inline_text
         ? rhocalc_parse_text(inline_text, semantic_profile, syntax, &arena, &atoms)
@@ -1438,10 +1497,66 @@ static int run_rhocalc_cli(const char *filename,
     }
 
     for (int i = 0; i < n; i++) {
+        Atom *process = atoms[i];
+        ResultSet evaluated = {0};
+        bool evaluated_process = false;
+        bool observe_values = false;
+
+        if (semantic_profile == RHOCALC_SEMANTIC_PROFILE_RHOMETTA &&
+            atom_is_symbol_id(process, g_builtin_syms.bang) && i + 1 < n) {
+            result_set_init(&evaluated);
+            eval_top_with_registry(
+                &space, &arena, &arena, &registry, atoms[++i], &evaluated);
+            if (!main_rhometta_print_eval_results(
+                    &evaluated, syntax, stdout) ||
+                result_set_has_error(&evaluated)) {
+                if (!result_set_has_error(&evaluated)) {
+                    fputs("error: could not write rhometta command result\n",
+                          stderr);
+                }
+                result_set_free(&evaluated);
+                rc = 1;
+                goto done;
+            }
+            result_set_free(&evaluated);
+            continue;
+        }
+        if (semantic_profile == RHOCALC_SEMANTIC_PROFILE_RHOMETTA &&
+            main_rhometta_form_named(process, "=", 2u)) {
+            space_add(&space, process);
+            continue;
+        }
+        if (semantic_profile == RHOCALC_SEMANTIC_PROFILE_RHOMETTA &&
+            (main_rhometta_form_named(process, "rhometta:run", 1u) ||
+             main_rhometta_form_named(
+                 process, "rhometta:run-values", 1u))) {
+            observe_values = main_rhometta_form_named(
+                process, "rhometta:run-values", 1u);
+            result_set_init(&evaluated);
+            eval_top_with_registry(
+                &space, &arena, &arena, &registry,
+                process->expr.elems[1], &evaluated);
+            if (evaluated.len == 0u || result_set_has_error(&evaluated)) {
+                fputs("error: rhometta:run did not elaborate a process\n",
+                      stderr);
+                (void)main_rhometta_print_eval_results(
+                    &evaluated, syntax, stderr);
+                result_set_free(&evaluated);
+                rc = 1;
+                goto done;
+            }
+            evaluated_process = true;
+        }
+
+        uint32_t process_count = evaluated_process ? evaluated.len : 1u;
+        for (uint32_t process_index = 0u;
+             process_index < process_count; process_index++) {
+            Atom *candidate = evaluated_process
+                ? evaluated.items[process_index] : process;
         RhoReductionResult reduction = {0};
-        if (!rhocalc_reduce_to_quiescence_with_semantic_profile(&arena, atoms[i],
-                                                                semantic_profile,
-                                                                profile, &reduction)) {
+        if (!rhocalc_reduce_to_quiescence_with_semantic_profile_and_eval_context(
+                &arena, candidate, semantic_profile, profile,
+                eval_context_ptr, &reduction)) {
             const char *detail = rhocalc_last_validation_error();
             if (semantic_profile == RHOCALC_SEMANTIC_PROFILE_STRICT_CORE) {
                 fprintf(stderr, "error: invalid rhocalc core process");
@@ -1452,9 +1567,20 @@ static int run_rhocalc_cli(const char *filename,
             if (detail) fprintf(stderr, ": %s", detail);
             fputc('\n', stderr);
             rc = 1;
+            if (evaluated_process) result_set_free(&evaluated);
             goto done;
         }
-        rhocalc_print_atom_syntax(reduction.residual, syntax, stdout);
+        Atom *observed = observe_values
+            ? rhocalc_observe_top_level_values(&arena, reduction.residual)
+            : reduction.residual;
+        if (!observed) {
+            fputs("error: could not observe rhometta residual values\n",
+                  stderr);
+            rc = 1;
+            if (evaluated_process) result_set_free(&evaluated);
+            goto done;
+        }
+        rhocalc_print_atom_syntax(observed, syntax, stdout);
         fputc('\n', stdout);
         if (reduction.status == RHOCALC_REDUCTION_LIMIT_EXHAUSTED) {
             fflush(stdout);
@@ -1463,12 +1589,26 @@ static int run_rhocalc_cli(const char *filename,
                     reduction.reductions_taken,
                     reduction.reductions_taken == 1 ? "reduction" : "reductions");
             rc = CETTA_RHOCALC_EXIT_REDUCTION_LIMIT_EXHAUSTED;
+            if (evaluated_process) result_set_free(&evaluated);
             goto done;
         }
+        }
+        if (evaluated_process) result_set_free(&evaluated);
     }
 
 done:
     free(atoms);
+    if (registry_initialized) {
+        eval_cleanup_owned_new_spaces(&registry, &space);
+        registry_free(&registry);
+    }
+    if (libraries_initialized) {
+        eval_set_library_context(NULL);
+        cetta_library_context_free(&libraries);
+    }
+    if (space_initialized) {
+        space_free(&space);
+    }
     g_hashcons = NULL;
     g_var_intern = NULL;
     g_symbols = NULL;
@@ -1563,7 +1703,7 @@ static void print_usage(FILE *out) {
     fputs("       cetta --lang petta --profile typecheck-v2 [--strict|--strict-det] <file.metta>\n", out);
     fputs("       cetta --lang petta --profile typecheck-v3 [--strict|--strict-det] <file.metta>\n", out);
 #endif
-    fputs("       cetta [--lang rhocalc --profile <strict-core|cost>] [--syntax <mrho|rho>] <file>\n", out);
+    fputs("       cetta [--lang rhocalc --profile <strict-core|cost|rhometta>] [--syntax <metta|mrho|rho>] <file>\n", out);
     fputs("       cetta [--lang <name>] [--import-mode <upstream|relative|ancestor-walk>] <file.metta>\n", out);
 #if CETTA_BUILD_WITH_LANGDEF_DIAGNOSTIC_BACKENDS
     fputs("       cetta --lang <langdef> --langdef-proof-backend <authority|generated-relational-audit-v1|frame-cache-diagnostic-v1> <file>\n", out);
@@ -3038,8 +3178,9 @@ int main(int argc, char **argv) {
             cetta_runtime_stats_reset();
             cetta_runtime_stats_enable();
         }
-        int rho_rc = run_rhocalc_cli(filename, inline_text, semantic_profile,
-                                     syntax, &rho_profile);
+        int rho_rc = run_rhocalc_cli(
+            filename, inline_text, semantic_profile, syntax, &rho_profile,
+            argc, argv, script_arg_start);
         if (emit_runtime_stats) {
             CettaRuntimeStats stats;
             cetta_runtime_stats_snapshot(&stats);

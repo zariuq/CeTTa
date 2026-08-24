@@ -704,9 +704,46 @@ static void test_deep_cons_semantics(Arena *arena) {
     bindings_builder_free(&builder);
 }
 
+typedef struct {
+    SymbolId head;
+    Atom *value;
+    size_t calls;
+} SharedDagAnswerHost;
+
+static PettaMachineHostMode shared_dag_answer_classify(
+    void *context, Space *space, Atom *expression) {
+    (void)space;
+    SharedDagAnswerHost *host = context;
+    return host && expression && expression->kind == ATOM_EXPR &&
+                   expression->expr.len == 1u &&
+                   atom_is_symbol_id(expression->expr.elems[0], host->head)
+        ? PETTA_MACHINE_HOST_READY_APPLICATION
+        : PETTA_MACHINE_HOST_NONE;
+}
+
+static bool shared_dag_answer_evaluate(
+    void *context, Space *space, Arena *arena, Atom *expression,
+    const Bindings *environment, OutcomeSet *outcomes) {
+    (void)space;
+    (void)arena;
+    (void)expression;
+    (void)environment;
+    SharedDagAnswerHost *host = context;
+    if (!host || !host->value || !outcomes)
+        return false;
+    Bindings empty;
+    bindings_init(&empty);
+    outcome_set_add(outcomes, host->value, &empty);
+    host->calls++;
+    return true;
+}
+
 static void test_answer_materialization_boundaries(
     Space *space, Arena *persistent, Arena *answers) {
-    enum { DEEP_FINITE_DEPTH = 4096 };
+    enum {
+        DEEP_FINITE_DEPTH = 4096,
+        SHARED_DAG_DEPTH = 128,
+    };
     add_clause(
         space, persistent,
         "(= (answer-materialization-open) (cons a $tail))");
@@ -731,6 +768,70 @@ static void test_answer_materialization_boundaries(
         answer->expr.elems[1],
         symbol_intern_cstr(g_symbols, "a")));
     assert(answer->expr.elems[2]->kind == ATOM_VAR);
+    bindings_free(&environment);
+    assert(petta_machine_next(
+               &machine, &answer, &environment) ==
+           PETTA_MACHINE_STEP_EXHAUSTED);
+    bindings_free(&environment);
+    petta_machine_destroy(&machine);
+
+    /*
+     * Answer normalization is a graph transformation, not a tree
+     * expansion.  Each level below shares its child in both positions, and
+     * the private open-cons leaf forces an observable rewrite at the answer
+     * boundary.  A materializer without source-identity memoization builds
+     * two independent images at the first parent and fails the pointer-
+     * sharing assertion; recursively expanding all occurrences is
+     * exponential in SHARED_DAG_DEPTH.
+     */
+    Atom *dag_item = atom_symbol(
+        persistent, "answer-materialization-dag-item");
+    Atom *dag_leaf = petta_semantics_open_cons_value(
+        persistent, dag_item, atom_unit(persistent));
+    Atom *dag_head = atom_symbol(
+        persistent, "answer-materialization-dag-node");
+    Atom *dag = dag_leaf;
+    for (size_t depth = 0u; depth < SHARED_DAG_DEPTH; depth++) {
+        dag = atom_expr3(persistent, dag_head, dag, dag);
+        assert(dag);
+    }
+    SharedDagAnswerHost shared_dag = {
+        .head = symbol_intern_cstr(
+            g_symbols, "answer-materialization-shared-dag-host"),
+        .value = dag,
+    };
+    PettaMachineHost shared_dag_host = {
+        .context = &shared_dag,
+        .classify = shared_dag_answer_classify,
+        .evaluate = shared_dag_answer_evaluate,
+    };
+    assert(dag_item && dag_leaf && dag_head);
+    assert(shared_dag.head != SYMBOL_ID_NONE);
+
+    query = parse_one(
+        answers, "(answer-materialization-shared-dag-host)");
+    assert(query);
+    size_t answer_bytes_before =
+        arena_accounted_live_bytes(answers);
+    assert(petta_machine_init(
+        &machine, space, answers, query, NULL, &shared_dag_host));
+    assert(petta_machine_next(
+               &machine, &answer, &environment) ==
+           PETTA_MACHINE_STEP_ANSWER);
+    assert(shared_dag.calls == 1u);
+    Atom *dag_cursor = answer;
+    for (size_t depth = 0u; depth < SHARED_DAG_DEPTH; depth++) {
+        assert(dag_cursor && dag_cursor->kind == ATOM_EXPR);
+        assert(dag_cursor->expr.len == 3u);
+        assert(atom_alpha_eq(dag_cursor->expr.elems[0], dag_head));
+        assert(dag_cursor->expr.elems[1] == dag_cursor->expr.elems[2]);
+        dag_cursor = dag_cursor->expr.elems[1];
+    }
+    assert(dag_cursor && dag_cursor->kind == ATOM_EXPR);
+    assert(dag_cursor->expr.len == 1u);
+    assert(atom_alpha_eq(dag_cursor->expr.elems[0], dag_item));
+    assert(arena_accounted_live_bytes(answers) - answer_bytes_before <
+           1024u * 1024u);
     bindings_free(&environment);
     assert(petta_machine_next(
                &machine, &answer, &environment) ==
@@ -1790,6 +1891,31 @@ static void test_constructor_slot_frame_plans(
         PETTA_PLAN_EXEC_RELATION_SLOTS);
     assert(active_relation_plan->relation_head_admitted);
 
+    Atom *nested_active_relation_call = parse_one(
+        persistent, "(slot-relation (Box (+ 1 2)))");
+    const PettaPlanNode *nested_active_relation_plan =
+        petta_program_plan_current(
+            program, nested_active_relation_call);
+    assert(nested_active_relation_plan);
+    assert(nested_active_relation_plan->contains_call);
+    assert(
+        nested_active_relation_plan->children[1u].role ==
+        PETTA_PLAN_DATA);
+    assert(
+        nested_active_relation_plan->children[1u]
+            .children[1u].role == PETTA_PLAN_STATIC_CALL);
+
+    add_compiled_program_clause(
+        program, &execution_space, persistent,
+        "(= (value-subtree-frame $payload) "
+        "   (slot-relation (Box $payload)))");
+    Atom *value_subtree_query = parse_one(
+        persistent,
+        "(value-subtree-frame $value-subtree-input)");
+    const PettaPlanNode *value_subtree_query_plan =
+        petta_program_plan_current(program, value_subtree_query);
+    assert(value_subtree_query && value_subtree_query_plan);
+
     Atom *active_intrinsic_call = parse_one(
         persistent, "(call (+ 1 2))");
     const PettaPlanNode *active_intrinsic_plan =
@@ -1834,6 +1960,12 @@ static void test_constructor_slot_frame_plans(
         petta_program_plan_current(program, activation_partial_query);
     assert(activation_partial_query_plan);
 
+    PettaMachineHost activation_host = {
+        .context = program,
+        .clause_snapshot_lease =
+            test_program_equation_snapshot_lease,
+        .measure_stats = true,
+    };
     PettaMachine machine;
     assert(petta_machine_init_with_plan(
         &machine, &execution_space, answers,
@@ -1857,12 +1989,33 @@ static void test_constructor_slot_frame_plans(
     bindings_free(&environment);
     petta_machine_destroy(&machine);
 
-    PettaMachineHost activation_host = {
-        .context = program,
-        .clause_snapshot_lease =
-            test_program_equation_snapshot_lease,
-        .measure_stats = true,
-    };
+    Bindings value_subtree_environment;
+    bindings_init(&value_subtree_environment);
+    assert(bindings_add_var(
+        &value_subtree_environment,
+        value_subtree_query->expr.elems[1],
+        parse_one(persistent, "(+ 1 2)")));
+    assert(petta_machine_init_with_plan(
+        &machine, &execution_space, answers,
+        value_subtree_query, value_subtree_query_plan,
+        &value_subtree_environment, &activation_host));
+    bindings_init(&environment);
+    assert(petta_machine_next(
+               &machine, &answer, &environment) ==
+           PETTA_MACHINE_STEP_ANSWER);
+    assert(atom_alpha_eq(
+        answer, parse_one(answers, "(Box 3)")));
+    bindings_free(&environment);
+    assert(petta_machine_stats(&machine, &stats));
+    assert(stats.relation_slot_frame_entries == 2u);
+    assert(stats.activation_materialization_calls == 0u);
+    assert(petta_machine_next(
+               &machine, &answer, &environment) ==
+           PETTA_MACHINE_STEP_EXHAUSTED);
+    bindings_free(&environment);
+    petta_machine_destroy(&machine);
+    bindings_free(&value_subtree_environment);
+
     assert(petta_machine_init_with_plan(
         &machine, &execution_space, answers,
         activation_relation_query,
@@ -1877,6 +2030,25 @@ static void test_constructor_slot_frame_plans(
     assert(petta_machine_stats(&machine, &stats));
     assert(stats.relation_slot_frame_entries == 2u);
     assert(stats.activation_materialization_calls == 0u);
+    assert(petta_machine_next(
+               &machine, &answer, &environment) ==
+           PETTA_MACHINE_STEP_EXHAUSTED);
+    bindings_free(&environment);
+    petta_machine_destroy(&machine);
+
+    assert(petta_machine_init_with_plan(
+        &machine, &execution_space, answers,
+        nested_active_relation_call,
+        nested_active_relation_plan, NULL, NULL));
+    bindings_init(&environment);
+    assert(petta_machine_next(
+               &machine, &answer, &environment) ==
+           PETTA_MACHINE_STEP_ANSWER);
+    assert(atom_alpha_eq(
+        answer, parse_one(answers, "(Box 3)")));
+    bindings_free(&environment);
+    assert(petta_machine_stats(&machine, &stats));
+    assert(stats.relation_slot_frame_entries == 0u);
     assert(petta_machine_next(
                &machine, &answer, &environment) ==
            PETTA_MACHINE_STEP_EXHAUSTED);
@@ -3686,7 +3858,7 @@ static void test_choice_binding_compaction(
         "(= (choose-drain $items) fallback)");
 
     enum {
-        ITEM_COUNT = 4096,
+        ITEM_COUNT = 32768,
         BOUNDED_BINDING_COLLECTION_WINDOW = 4096,
     };
     Atom **items = cetta_malloc(
@@ -3720,6 +3892,10 @@ static void test_choice_binding_compaction(
     assert(stats.choice_binding_collections > 0u);
     assert(stats.choice_binding_items_discarded > 0u);
     assert(stats.choice_trail_entries_discarded > 0u);
+    assert(stats.choice_nursery_evacuations > 0u);
+    assert(stats.choice_nursery_goal_roots_scanned > 0u);
+    assert(stats.choice_nursery_bytes_evacuated > 0u);
+    assert(stats.choice_nursery_bytes_reclaimed > 0u);
     assert(
         stats.maximum_binding_entries <=
         (size_t)ITEM_COUNT * 2u +

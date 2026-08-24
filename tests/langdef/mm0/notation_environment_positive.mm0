@@ -1,0 +1,7 @@
+sort wff;
+term neg: wff > wff;
+term imp: wff > wff > wff;
+term app: wff > wff;
+prefix neg: $ ~ $ prec 50;
+infixr imp: $ -> $ prec 20;
+prefix app: $ @ $ prec max;

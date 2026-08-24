@@ -1,0 +1,3 @@
+sort set;
+sort wff;
+term bad (ph: wff x): wff;

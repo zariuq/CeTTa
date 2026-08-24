@@ -17,15 +17,19 @@ int main(void) {
     g_var_intern = NULL;
     arena_init(&arena);
 
-    bool ok = rhocalc_abt_substitution_correspondence_selftest(&arena);
+    bool abt_ok = rhocalc_abt_substitution_correspondence_selftest(&arena);
+    bool text_key_ok =
+        rhocalc_atom_text_key_correspondence_selftest(&arena);
+    unsigned passed = (abt_ok ? 1u : 0u) + (text_key_ok ? 1u : 0u);
 
     arena_free(&arena);
     symbol_table_free(&symbols);
     g_symbols = NULL;
 
-    printf("(RhoABTSubstitutionSummary 1 %u %u)\n",
-           ok ? 1u : 0u, ok ? 0u : 1u);
-    if (!ok) return 1;
+    printf("(RhoCoreCorrespondenceSummary 2 %u %u)\n",
+           passed, 2u - passed);
+    if (!abt_ok || !text_key_ok) return 1;
     puts("PASS: nameful rho substitution agrees with canonical ABT substitution");
+    puts("PASS: direct rho payload keys agree with ordinary atom rendering");
     return 0;
 }
