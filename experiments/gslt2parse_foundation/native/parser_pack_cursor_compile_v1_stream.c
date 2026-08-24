@@ -3,6 +3,7 @@
 #include "finite_horn_answer_stream_v1.h"
 #include "parser_occurrence_fold_v1.h"
 #include "parser_occurrence_span_mask_v1.h"
+#include "parser_source_resolution_control_v1.h"
 #include "parser_pack_abi_stream_v1.h"
 #include "parser_pack_cursor_c_emitter_v1.h"
 #include "parser_pack_guard_evidence_stream_v1.h"
@@ -34,6 +35,8 @@ typedef struct {
     const char *occurrence_span_mask_answers;
     const char *occurrence_span_mask_compiler_digest;
     const char *state_answers;
+    const char *source_control_answers;
+    const char *source_control_compiler_digest;
     const char *output_c;
     const char *identifier_prefix;
 } PPCursorCompileV1Options;
@@ -96,6 +99,12 @@ static bool read_options(int argc, char **argv,
             slot = &options->occurrence_span_mask_compiler_digest;
         else if (strcmp(option, "--state-answers") == 0)
             slot = &options->state_answers;
+        else if (strcmp(option, "--source-control-answers") == 0)
+            slot = &options->source_control_answers;
+        else if (strcmp(
+                     option,
+                     "--source-control-compiler-digest") == 0)
+            slot = &options->source_control_compiler_digest;
         else if (strcmp(option, "--out-c") == 0)
             slot = &options->output_c;
         else if (strcmp(option, "--prefix") == 0)
@@ -123,6 +132,12 @@ static bool read_options(int argc, char **argv,
             error, error_size,
             "cursor compiler occurrence span-mask options are incomplete");
     }
+    if ((options->source_control_answers != NULL) !=
+        (options->source_control_compiler_digest != NULL)) {
+        return set_error(
+            error, error_size,
+            "cursor compiler source-control options are incomplete");
+    }
     return true;
 }
 
@@ -131,6 +146,7 @@ static bool emit_atomic(
     const PPOccurrenceFoldV1Plan *fold_plan,
     const PPOccurrenceSpanMaskV1Plan *span_mask_plan,
     const PPRelationalStateProgramV1Plan *state_plan,
+    const PPSourceResolutionControlV1Plan *source_control_plan,
     const char *output_path, const char *identifier_prefix,
     char *error, size_t error_size) {
     char temporary[PATH_MAX] = {0};
@@ -177,6 +193,11 @@ static bool emit_atomic(
             fold_plan, state_plan, stream, identifier_prefix,
             error, error_size);
     }
+    if (emitted && source_control_plan) {
+        emitted = ppsource_resolution_control_v1_emit_c(
+            source_control_plan, stream, identifier_prefix,
+            error, error_size);
+    }
     if (!emitted || fflush(stream) != 0 || fsync(fileno(stream)) != 0 ||
         fclose(stream) != 0) {
         stream = NULL;
@@ -220,6 +241,7 @@ static bool compile_cursor(const PPCursorCompileV1Options *options,
     FHAnswerStreamV1 fold_answers;
     FHAnswerStreamV1 span_mask_answers;
     FHAnswerStreamV1 state_answers;
+    FHAnswerStreamV1 source_control_answers;
     RSNFAV1Plan lexical_nfa;
     RSNFAV1Plan guard_nfa;
     PPLexV1Plan lexical_plan;
@@ -232,6 +254,7 @@ static bool compile_cursor(const PPCursorCompileV1Options *options,
     PPOccurrenceFoldV1Plan fold_plan;
     PPOccurrenceSpanMaskV1Plan span_mask_plan;
     PPRelationalStateProgramV1Plan state_plan;
+    PPSourceResolutionControlV1Plan source_control_plan;
     bool ok = false;
 
     ppabi_v1_wire_init(&pack_wire);
@@ -243,6 +266,7 @@ static bool compile_cursor(const PPCursorCompileV1Options *options,
     fh_answer_stream_v1_init(&fold_answers);
     fh_answer_stream_v1_init(&span_mask_answers);
     fh_answer_stream_v1_init(&state_answers);
+    fh_answer_stream_v1_init(&source_control_answers);
     rsnfa_v1_plan_init(&lexical_nfa);
     rsnfa_v1_plan_init(&guard_nfa);
     pplex_v1_plan_init(&lexical_plan);
@@ -254,6 +278,7 @@ static bool compile_cursor(const PPCursorCompileV1Options *options,
     ppoccurrence_fold_v1_plan_init(&fold_plan);
     ppoccurrence_span_mask_v1_plan_init(&span_mask_plan);
     pprelational_state_program_v1_plan_init(&state_plan);
+    ppsource_resolution_control_v1_plan_init(&source_control_plan);
 
     if (!ppabi_v1_wire_read(
             &pack_wire, options->abi, error, error_size) ||
@@ -385,10 +410,27 @@ static bool compile_cursor(const PPCursorCompileV1Options *options,
              &fold_plan, &state_plan, error, error_size))) {
         goto done;
     }
+    if (options->source_control_answers &&
+        (!fh_answer_stream_v1_read(
+             &source_control_answers,
+             options->source_control_answers,
+             error, error_size) ||
+         !ppsource_resolution_control_v1_plan_build(
+             source_control_answers.terms,
+             source_control_answers.len,
+             options->source_control_compiler_digest,
+             source_control_answers.digest,
+             &source_control_plan, error, error_size) ||
+         !ppsource_resolution_control_v1_plan_validate(
+             &source_control_plan, error, error_size))) {
+        goto done;
+    }
     if (!emit_atomic(&program, &fold_plan,
                      options->occurrence_span_mask_answers
                          ? &span_mask_plan : NULL,
                      options->state_answers ? &state_plan : NULL,
+                     options->source_control_answers
+                         ? &source_control_plan : NULL,
                      options->output_c,
                      options->identifier_prefix,
                      error, error_size)) {
@@ -410,6 +452,9 @@ static bool compile_cursor(const PPCursorCompileV1Options *options,
     if (options->state_answers)
         printf("relational-state-plan-digest\t%s\n",
                state_plan.plan_digest);
+    if (options->source_control_answers)
+        printf("source-resolution-control-plan-digest\t%s\n",
+               source_control_plan.plan_digest);
     printf("terminals\t%u\n", program.terminal_len);
     printf("value-programs\t%u\n", program.value_program_len);
     printf("fold-transitions\t%u\n", fold_plan.transition_len);
@@ -431,6 +476,7 @@ done:
     fh_answer_stream_v1_free(&fold_answers);
     fh_answer_stream_v1_free(&span_mask_answers);
     fh_answer_stream_v1_free(&state_answers);
+    fh_answer_stream_v1_free(&source_control_answers);
     fh_answer_stream_v1_free(&action_answers);
     fh_answer_stream_v1_free(&guarded_answers);
     fh_answer_stream_v1_free(&guard_answers);
@@ -452,6 +498,8 @@ static void usage(const char *program) {
         "[--occurrence-span-mask-answers FILE "
         "--occurrence-span-mask-compiler-digest SHA256] "
         "[--state-answers FILE] "
+        "[--source-control-answers FILE "
+        "--source-control-compiler-digest SHA256] "
         "--out-c FILE --prefix NAME\n",
         program);
 }

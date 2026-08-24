@@ -95,6 +95,8 @@ void ppoccurrence_fold_v1_plan_free(PPOccurrenceFoldV1Plan *plan);
  *   (occurrence-fold-token-v1 TAG ROLE)
  *   (occurrence-fold-token-v3
  *      TAG ROLE NODE SOURCE-PRODUCTION-LABEL VALUE-PRODUCTION-LABEL)
+ *   (occurrence-fold-token-v4
+ *      TAG ROLE NODE AUTHORED-VALUE-PRODUCTION-LABEL)
  *   (occurrence-fold-shift-v1 ROLE OPERATION)
  *   (occurrence-fold-production-v1 LABEL NODE OPERATION CONTRACT)
  *
@@ -102,8 +104,10 @@ void ppoccurrence_fold_v1_plan_free(PPOccurrenceFoldV1Plan *plan);
  * TAG is matched through the independently compiled lexical plan.  The
  * semantic token record additionally proves that VALUE-PRODUCTION-LABEL is
  * the unique normalized production whose certified source fiber contains
- * SOURCE-PRODUCTION-LABEL.  The supplied answer-set digest is recomputed
- * before any dense IDs are assigned.
+ * SOURCE-PRODUCTION-LABEL.  The v4 record instead binds a guarded pack's
+ * exact authored value production without passing through transparent
+ * normalization.  The supplied answer-set digest is recomputed before any
+ * dense IDs are assigned.
  * `out` must have been initialized with ppoccurrence_fold_v1_plan_init.
  */
 bool ppoccurrence_fold_v1_plan_build(
@@ -180,6 +184,10 @@ typedef enum {
 
 typedef struct {
     PPOccurrenceFoldV1StepKind kind;
+    /* Dense identity in a recursively composed source graph.  Ordinary
+     * single-source folds use source 0.  A source-composition backend may
+     * replace it before forwarding the step. */
+    uint32_t source_id;
     uint32_t operation_id;
     uint32_t node_id;
     uint32_t production_index;
@@ -239,6 +247,108 @@ void ppoccurrence_fold_v1_trace_init(
 
 PPOccurrenceFoldV1Backend ppoccurrence_fold_v1_trace_backend(
     PPOccurrenceFoldV1Trace *trace);
+
+/*
+ * A target-neutral, source-bound answer stream for the ordered semantic
+ * occurrences selected by an occurrence-fold plan.  Records are staged in a
+ * private stream and become readable only after the parser transaction
+ * commits.  Exact source bytes are hex encoded; authored operation, node, and
+ * role identities remain symbolic.
+ *
+ * The public record forms are:
+ *
+ *   (ParserOccurrenceStreamV1
+ *      PLAN-DIGEST SOURCE-DIGEST STEP-LEN VALUE-LEN UNIQUE-VALUE-LEN)
+ *   (ParserOccurrenceV1
+ *      INDEX KIND OPERATION NODE PRODUCTION-LABEL
+ *      LEFT-SCALAR RIGHT-SCALAR LEFT-BYTE RIGHT-BYTE VALUES)
+ *   (ParserOccurrenceValueV1
+ *      ROLE VALUE-ID SOURCE-INDEX
+ *      LEFT-SCALAR RIGHT-SCALAR LEFT-BYTE RIGHT-BYTE
+ *      (SourceBytesHexV1 HEX))
+ *
+ * VALUES is built from ParserOccurrenceValuesConsV1 and
+ * ParserOccurrenceValuesNilV1.  Shift occurrences use
+ * ParserOccurrenceNoNodeV1 and ParserOccurrenceNoProductionV1.
+ *
+ * Empty repetitions are semantically different from absent roles.  The V3
+ * and V4 forms therefore append EMPTY-ROLES to each occurrence.  It is a
+ * canonical list built from ParserOccurrenceEmptyRolesConsV1 and
+ * ParserOccurrenceEmptyRolesNilV1 and names the roles admitted with zero
+ * values by the authored fold contract.
+ *
+ * A single-source stream with explicit empty roles is published as:
+ *
+ *   (ParserOccurrenceStreamV3
+ *      PLAN-DIGEST SOURCE-DIGEST STEP-LEN VALUE-LEN UNIQUE-VALUE-LEN)
+ *   (ParserOccurrenceV3
+ *      INDEX KIND OPERATION NODE PRODUCTION-LABEL
+ *      LEFT-SCALAR RIGHT-SCALAR LEFT-BYTE RIGHT-BYTE VALUES EMPTY-ROLES)
+ *
+ * A recursively composed stream is published as:
+ *
+ *   (ParserOccurrenceStreamV4
+ *      PLAN-DIGEST SOURCE-PROGRAM-DIGEST SOURCE-DAG-DIGEST STEP-LEN VALUE-LEN
+ *      UNIQUE-VALUE-LEN SOURCE-LEN)
+ *   (ParserOccurrenceV4
+ *      INDEX SOURCE-ID KIND OPERATION NODE PRODUCTION-LABEL
+ *      LEFT-SCALAR RIGHT-SCALAR LEFT-BYTE RIGHT-BYTE VALUES EMPTY-ROLES)
+ */
+typedef struct {
+    const PPOccurrenceFoldV1Plan *plan;
+    FILE *staging;
+    void *implementation;
+    uint32_t step_len;
+    uint32_t value_len;
+    uint32_t unique_value_len;
+    uint32_t source_len;
+    uint32_t maximum_source_id;
+    bool active;
+    bool committed;
+    bool aborted;
+    bool source_graph;
+    bool source_graph_identity_ready;
+    char source_program_digest[65];
+    char source_digest[65];
+} PPOccurrenceFoldV1AnswerStream;
+
+bool ppoccurrence_fold_v1_answer_stream_init(
+    PPOccurrenceFoldV1AnswerStream *stream,
+    const PPOccurrenceFoldV1Plan *plan,
+    const uint8_t *source_bytes,
+    size_t source_byte_len,
+    char *error_buf,
+    size_t error_buf_size);
+
+bool ppoccurrence_fold_v1_answer_stream_init_source_graph(
+    PPOccurrenceFoldV1AnswerStream *stream,
+    const PPOccurrenceFoldV1Plan *plan,
+    const uint8_t *root_source_bytes,
+    size_t root_source_byte_len,
+    char *error_buf,
+    size_t error_buf_size);
+
+/* Bind a committed recursively composed stream to the resolver's final
+ * source-DAG identity before publication. */
+bool ppoccurrence_fold_v1_answer_stream_bind_source_graph(
+    PPOccurrenceFoldV1AnswerStream *stream,
+    const char source_program_digest[65],
+    const char source_dag_digest[65],
+    uint32_t source_len,
+    char *error_buf,
+    size_t error_buf_size);
+
+void ppoccurrence_fold_v1_answer_stream_free(
+    PPOccurrenceFoldV1AnswerStream *stream);
+
+PPOccurrenceFoldV1Backend ppoccurrence_fold_v1_answer_stream_backend(
+    PPOccurrenceFoldV1AnswerStream *stream);
+
+bool ppoccurrence_fold_v1_answer_stream_write(
+    PPOccurrenceFoldV1AnswerStream *stream,
+    FILE *output,
+    char *error_buf,
+    size_t error_buf_size);
 
 typedef struct {
     PPGuardedLexCursorV1Receipt parser_receipt;

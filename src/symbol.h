@@ -307,7 +307,9 @@ static inline uint64_t symbol_table_instance_id(const SymbolTable *st) {
     X(lib_gparse_inference_dag_presentation, "__cetta_lib_gparse_inference_dag_presentation") \
     X(lib_gparse_inference_dag_proof, "__cetta_lib_gparse_inference_dag_proof") \
     X(lib_rhometta_run, "__cetta_lib_rhometta_run") \
+    X(lib_rhometta_run_canonical, "__cetta_lib_rhometta_run_canonical") \
     X(lib_rhometta_transitions, "__cetta_lib_rhometta_transitions") \
+    X(lib_rhometta_values, "__cetta_lib_rhometta_values") \
     X(lib_mork_space_new, "__cetta_lib_mork_space_new") \
     X(lib_mork_space_include, "__cetta_lib_mork_space_include") \
     X(lib_mork_space_open_act, "__cetta_lib_mork_space_open_act") \

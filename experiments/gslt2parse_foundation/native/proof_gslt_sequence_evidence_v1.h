@@ -148,6 +148,7 @@ typedef struct {
 
 typedef struct {
     PPProofGSLTTokenSequenceV1 template_sequence;
+    PPProofGSLTTokenSequenceV1 actual_sequence;
     PPProofGSLTReferenceV1 actual_proof;
 } PPProofGSLTAssertionEssentialV1;
 
@@ -204,6 +205,7 @@ typedef struct {
 
 typedef struct {
     size_t arena_reserved_bytes;
+    size_t arena_used_bytes;
     uint32_t node_capacity;
     uint32_t canonical_cache_capacity;
 } PPProofGSLTSequenceEvidenceWorkspaceStatsV1;
@@ -238,6 +240,18 @@ ppproof_gslt_sequence_evidence_producer_v1_instantiate(
     PPProofGSLTSequenceEvidenceProducerV1 *producer,
     PPProofGSLTTokenSequenceV1 source,
     PPProofGSLTSequenceEnvironmentV1 environment,
+    const PPProofGSLTSequenceEvidenceSourcesV1 *sources,
+    PPProofGSLTMaterializedSequenceV1 *result_out,
+    PPProofGSLTSequenceProofV1 *proof_out,
+    char *error_buf,
+    size_t error_buf_size);
+
+PPProofGSLTArticleV1Result
+ppproof_gslt_sequence_evidence_producer_v1_instantiate_expected(
+    PPProofGSLTSequenceEvidenceProducerV1 *producer,
+    PPProofGSLTTokenSequenceV1 source,
+    PPProofGSLTSequenceEnvironmentV1 environment,
+    PPProofGSLTTokenSequenceV1 expected,
     const PPProofGSLTSequenceEvidenceSourcesV1 *sources,
     PPProofGSLTMaterializedSequenceV1 *result_out,
     PPProofGSLTSequenceProofV1 *proof_out,

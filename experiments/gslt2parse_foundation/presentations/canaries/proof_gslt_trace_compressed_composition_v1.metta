@@ -34,6 +34,46 @@
         (source-proof-trace-input-token-different-v1
           compressed-ps-v1 compressed-ph-v1))
       (body))
+    (rule compressed-canary-compare-wff-v1
+      (head
+        (source-proof-trace-input-token-compare-v1
+          compressed-wff-v1 compressed-wff-v1 ProofTokenEqualV1))
+      (body))
+    (rule compressed-canary-compare-left-v1
+      (head
+        (source-proof-trace-input-token-compare-v1
+          compressed-left-v1 compressed-left-v1 ProofTokenEqualV1))
+      (body))
+    (rule compressed-canary-compare-arrow-v1
+      (head
+        (source-proof-trace-input-token-compare-v1
+          compressed-arrow-v1 compressed-arrow-v1 ProofTokenEqualV1))
+      (body))
+    (rule compressed-canary-compare-right-v1
+      (head
+        (source-proof-trace-input-token-compare-v1
+          compressed-right-v1 compressed-right-v1 ProofTokenEqualV1))
+      (body))
+    (rule compressed-canary-compare-ph-v1
+      (head
+        (source-proof-trace-input-token-compare-v1
+          compressed-ph-v1 compressed-ph-v1 ProofTokenEqualV1))
+      (body))
+    (rule compressed-canary-compare-ps-v1
+      (head
+        (source-proof-trace-input-token-compare-v1
+          compressed-ps-v1 compressed-ps-v1 ProofTokenEqualV1))
+      (body))
+    (rule compressed-canary-compare-ph-ps-v1
+      (head
+        (source-proof-trace-input-token-compare-v1
+          compressed-ph-v1 compressed-ps-v1 ProofTokenUnequalV1))
+      (body))
+    (rule compressed-canary-compare-ps-ph-v1
+      (head
+        (source-proof-trace-input-token-compare-v1
+          compressed-ps-v1 compressed-ph-v1 ProofTokenUnequalV1))
+      (body))
 
     (rule compressed-canary-request-v1
       (head
@@ -101,6 +141,19 @@
         (source-proof-trace-input-label-different-v1
           compressed-wi-v1 compressed-wps-v1))
       (body))
+    (rule compressed-canary-push-instruction-v1
+      (head
+        (source-proof-trace-label-instruction-v1
+          ?label (ProofTracePushV1 ?formula)))
+      (body
+        (source-proof-trace-input-push-label-v1
+          compressed-request-v1 ?label ?formula)))
+    (rule compressed-canary-apply-instruction-v1
+      (head
+        (source-proof-trace-label-instruction-v1
+          ?label (ProofTraceApplyV1 ?assertion ?frame)))
+      (body
+        (ProofTraceInputAssertionV1 ?label ?assertion ?frame)))
 
     (rule compressed-canary-assertion-v1
       (head

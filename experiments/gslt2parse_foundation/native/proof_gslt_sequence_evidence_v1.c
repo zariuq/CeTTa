@@ -1413,6 +1413,136 @@ static bool ppproof_sequence_v1_append(
     return true;
 }
 
+static bool ppproof_sequence_v1_material_slice(
+    PPProofGSLTSequenceBuildV1 *build,
+    const PPProofGSLTSequenceMaterialV1 *source,
+    uint32_t offset,
+    PPProofGSLTSequenceMaterialV1 *out) {
+    uint32_t remaining;
+
+    if (!source || !source->suffixes || !out ||
+        offset > source->sequence.token_len) {
+        ppproof_sequence_v1_build_fail(
+            build, PPPROOF_GSLT_ARTICLE_V1_INVALID,
+            "sequence evidence requested a malformed material slice");
+        return false;
+    }
+    remaining = source->sequence.token_len - offset;
+    *out = (PPProofGSLTSequenceMaterialV1){
+        .sequence = {
+            .term = source->suffixes[offset],
+            .tokens = remaining != 0u
+                          ? source->sequence.tokens + offset
+                          : NULL,
+            .token_len = remaining,
+        },
+        .suffixes = source->suffixes + offset,
+    };
+    return true;
+}
+
+static bool ppproof_sequence_v1_tokens_equal_at(
+    PPProofGSLTTokenSequenceV1 source,
+    uint32_t offset,
+    PPProofGSLTTokenSequenceV1 expected) {
+    uint32_t index;
+
+    if (offset > source.token_len ||
+        expected.token_len > source.token_len - offset)
+        return false;
+    for (index = 0u; index < expected.token_len; index++) {
+        if (source.tokens[offset + index] != expected.tokens[index])
+            return false;
+    }
+    return true;
+}
+
+static bool ppproof_sequence_v1_append_expected(
+    PPProofGSLTSequenceBuildV1 *build,
+    const PPProofGSLTSequenceMaterialV1 *left,
+    const PPProofGSLTSequenceMaterialV1 *right,
+    const PPProofGSLTSequenceMaterialV1 *result,
+    PPProofGSLTSequenceProofV1 *proof_out) {
+    PPProofGSLTSequenceEvidenceProducerImplV1 *impl = build->impl;
+    PPProofGSLTReferenceV1 evidence;
+    PPProofGSLTReferenceV1 child;
+    const PPProofGSLTPatternV1 *arguments[4];
+    uint32_t total;
+    uint32_t cursor;
+
+    if (!left || !right || !result || !proof_out) {
+        ppproof_sequence_v1_build_fail(
+            build, PPPROOF_GSLT_ARTICLE_V1_INVALID,
+            "sequence evidence received a malformed expected append");
+        return false;
+    }
+    if (left->sequence.token_len >
+        UINT32_MAX - right->sequence.token_len) {
+        ppproof_sequence_v1_build_fail(
+            build, PPPROOF_GSLT_ARTICLE_V1_RESOURCE,
+            "sequence evidence expected append overflows");
+        return false;
+    }
+    total = left->sequence.token_len + right->sequence.token_len;
+    if (result->sequence.token_len != total ||
+        !ppproof_sequence_v1_tokens_equal_at(
+            (PPProofGSLTTokenSequenceV1){
+                result->sequence.tokens,
+                result->sequence.token_len,
+            },
+            0u,
+            (PPProofGSLTTokenSequenceV1){
+                left->sequence.tokens,
+                left->sequence.token_len,
+            }) ||
+        !ppproof_sequence_v1_tokens_equal_at(
+            (PPProofGSLTTokenSequenceV1){
+                result->sequence.tokens,
+                result->sequence.token_len,
+            },
+            left->sequence.token_len,
+            (PPProofGSLTTokenSequenceV1){
+                right->sequence.tokens,
+                right->sequence.token_len,
+            })) {
+        ppproof_sequence_v1_build_fail(
+            build, PPPROOF_GSLT_ARTICLE_V1_REJECTED,
+            "sequence evidence expected append does not match the premise");
+        return false;
+    }
+
+    arguments[0] = right->sequence.term;
+    if (!ppproof_sequence_v1_add_node(
+            build,
+            impl->abi->rules[
+                PPPROOF_GSLT_SEQUENCE_RULE_V1_APPEND_NIL],
+            arguments, 1u, NULL, 0u, &evidence))
+        return false;
+    cursor = left->sequence.token_len;
+    while (cursor > 0u) {
+        cursor--;
+        arguments[0] = left->sequence.tokens[cursor]->term;
+        arguments[1] = left->suffixes[cursor + 1u];
+        arguments[2] = right->sequence.term;
+        arguments[3] = result->suffixes[cursor + 1u];
+        child = evidence;
+        if (!ppproof_sequence_v1_add_node(
+                build,
+                impl->abi->rules[
+                    PPPROOF_GSLT_SEQUENCE_RULE_V1_APPEND_CONS],
+                arguments, 4u, &child, 1u, &evidence))
+            return false;
+    }
+    arguments[0] = left->sequence.term;
+    arguments[1] = right->sequence.term;
+    arguments[2] = result->sequence.term;
+    return ppproof_sequence_v1_goal(
+        build,
+        impl->abi->judgments[
+            PPPROOF_GSLT_SEQUENCE_JUDGMENT_V1_APPEND],
+        arguments, 3u, evidence, proof_out);
+}
+
 static int32_t ppproof_sequence_v1_find_binding(
     PPProofGSLTSequenceEnvironmentV1 environment,
     const PPProofGSLTSequenceTokenV1 *key) {
@@ -1612,6 +1742,158 @@ static bool ppproof_sequence_v1_instantiate_build(
         }
         current_tokens = next_tokens;
         current_material = next_material;
+    }
+    arguments[0] = source_material.sequence.term;
+    arguments[1] = environment_material.suffixes[0];
+    arguments[2] = current_material.sequence.term;
+    if (!ppproof_sequence_v1_goal(
+            build,
+            impl->abi->judgments[
+                PPPROOF_GSLT_SEQUENCE_JUDGMENT_V1_INSTANTIATE],
+            arguments, 3u, current_evidence, proof_out))
+        return false;
+    *result_out = current_material.sequence;
+    return true;
+}
+
+static bool ppproof_sequence_v1_instantiate_expected_build(
+    PPProofGSLTSequenceBuildV1 *build,
+    PPProofGSLTTokenSequenceV1 source,
+    PPProofGSLTSequenceEnvironmentV1 environment,
+    PPProofGSLTTokenSequenceV1 expected,
+    const PPProofGSLTSequenceEvidenceSourcesV1 *sources,
+    PPProofGSLTMaterializedSequenceV1 *result_out,
+    PPProofGSLTSequenceProofV1 *proof_out) {
+    PPProofGSLTSequenceEvidenceProducerImplV1 *impl = build->impl;
+    PPProofGSLTSequenceMaterialV1 source_material;
+    PPProofGSLTEnvironmentMaterialV1 environment_material;
+    PPProofGSLTSequenceMaterialV1 expected_material;
+    PPProofGSLTSequenceMaterialV1 current_material;
+    PPProofGSLTReferenceV1 current_evidence;
+    const PPProofGSLTPatternV1 *arguments[6];
+    uint32_t source_cursor;
+    uint32_t expected_cursor;
+
+    if (!sources ||
+        !ppproof_sequence_v1_materialize_sequence(
+            build, source, &source_material) ||
+        !ppproof_sequence_v1_materialize_environment(
+            build, environment, &environment_material) ||
+        !ppproof_sequence_v1_materialize_sequence(
+            build, expected, &expected_material) ||
+        !ppproof_sequence_v1_material_slice(
+            build, &expected_material, expected.token_len,
+            &current_material))
+        return false;
+    arguments[0] = environment_material.suffixes[0];
+    if (!ppproof_sequence_v1_add_node(
+            build,
+            impl->abi->rules[
+                PPPROOF_GSLT_SEQUENCE_RULE_V1_INSTANTIATE_NIL],
+            arguments, 1u, NULL, 0u, &current_evidence))
+        return false;
+
+    source_cursor = source.token_len;
+    expected_cursor = expected.token_len;
+    while (source_cursor > 0u) {
+        const PPProofGSLTSequenceTokenV1 *token;
+        PPProofGSLTSequenceMaterialV1 next_material;
+        PPProofGSLTReferenceV1 children[4];
+
+        source_cursor--;
+        token = source.tokens[source_cursor];
+        if (token->literal) {
+            if (expected_cursor == 0u ||
+                expected.tokens[expected_cursor - 1u] != token) {
+                ppproof_sequence_v1_build_fail(
+                    build, PPPROOF_GSLT_ARTICLE_V1_REJECTED,
+                    "literal instantiation does not match the premise");
+                return false;
+            }
+            expected_cursor--;
+            if (!ppproof_sequence_v1_material_slice(
+                    build, &expected_material, expected_cursor,
+                    &next_material))
+                return false;
+            arguments[0] = token->term;
+            arguments[1] = source_material.suffixes[source_cursor + 1u];
+            arguments[2] = environment_material.suffixes[0];
+            arguments[3] = current_material.sequence.term;
+            children[0] = token->literal_evidence;
+            children[1] = current_evidence;
+            if (!ppproof_sequence_v1_add_node(
+                    build,
+                    impl->abi->rules[
+                        PPPROOF_GSLT_SEQUENCE_RULE_V1_INSTANTIATE_LITERAL],
+                    arguments, 4u, children, 2u,
+                    &current_evidence))
+                return false;
+        } else {
+            PPProofGSLTSequenceProofV1 lookup_proof;
+            PPProofGSLTSequenceProofV1 append_proof;
+            PPProofGSLTSequenceMaterialV1 image_material;
+            PPProofGSLTTokenSequenceV1 image;
+            int32_t binding = ppproof_sequence_v1_find_binding(
+                environment, token);
+            uint32_t next_cursor;
+
+            if (binding < 0) {
+                ppproof_sequence_v1_build_fail(
+                    build, PPPROOF_GSLT_ARTICLE_V1_REJECTED,
+                    "sequence evidence cannot find a substitution binding");
+                return false;
+            }
+            image = environment.bindings[(uint32_t)binding].image;
+            if (image.token_len > expected_cursor) {
+                ppproof_sequence_v1_build_fail(
+                    build, PPPROOF_GSLT_ARTICLE_V1_REJECTED,
+                    "variable instantiation is longer than the premise");
+                return false;
+            }
+            next_cursor = expected_cursor - image.token_len;
+            if (!ppproof_sequence_v1_tokens_equal_at(
+                    expected, next_cursor, image)) {
+                ppproof_sequence_v1_build_fail(
+                    build, PPPROOF_GSLT_ARTICLE_V1_REJECTED,
+                    "variable instantiation does not match the premise");
+                return false;
+            }
+            if (!ppproof_sequence_v1_lookup(
+                    build, environment, &environment_material,
+                    token, sources, &lookup_proof, &image_material) ||
+                !ppproof_sequence_v1_material_slice(
+                    build, &expected_material, next_cursor,
+                    &next_material) ||
+                !ppproof_sequence_v1_append_expected(
+                    build, &image_material, &current_material,
+                    &next_material, &append_proof))
+                return false;
+            arguments[0] = token->term;
+            arguments[1] = source_material.suffixes[source_cursor + 1u];
+            arguments[2] = environment_material.suffixes[0];
+            arguments[3] = image_material.sequence.term;
+            arguments[4] = current_material.sequence.term;
+            arguments[5] = next_material.sequence.term;
+            children[0] = token->variable_evidence;
+            children[1] = lookup_proof.evidence;
+            children[2] = current_evidence;
+            children[3] = append_proof.evidence;
+            if (!ppproof_sequence_v1_add_node(
+                    build,
+                    impl->abi->rules[
+                        PPPROOF_GSLT_SEQUENCE_RULE_V1_INSTANTIATE_VARIABLE],
+                    arguments, 6u, children, 4u,
+                    &current_evidence))
+                return false;
+            expected_cursor = next_cursor;
+        }
+        current_material = next_material;
+    }
+    if (expected_cursor != 0u) {
+        ppproof_sequence_v1_build_fail(
+            build, PPPROOF_GSLT_ARTICLE_V1_REJECTED,
+            "instantiation does not consume the complete premise");
+        return false;
     }
     arguments[0] = source_material.sequence.term;
     arguments[1] = environment_material.suffixes[0];
@@ -1854,7 +2136,9 @@ static bool ppproof_sequence_v1_apply_assertion_build(
     }
     for (cursor = 0u; cursor < declaration->essential_len; cursor++) {
         if (!ppproof_sequence_v1_sequence_valid(
-                declaration->essentials[cursor].template_sequence)) {
+                declaration->essentials[cursor].template_sequence) ||
+            !ppproof_sequence_v1_sequence_valid(
+                declaration->essentials[cursor].actual_sequence)) {
             ppproof_sequence_v1_build_fail(
                 build, PPPROOF_GSLT_ARTICLE_V1_INVALID,
                 "assertion evidence contains a malformed essential");
@@ -1969,8 +2253,9 @@ static bool ppproof_sequence_v1_apply_assertion_build(
         essential = &declaration->essentials[cursor];
         if (!ppproof_sequence_v1_materialize_sequence(
                 build, essential->template_sequence, &template_material) ||
-            !ppproof_sequence_v1_instantiate_build(
-                build, essential->template_sequence, environment, sources,
+            !ppproof_sequence_v1_instantiate_expected_build(
+                build, essential->template_sequence, environment,
+                essential->actual_sequence, sources,
                 &actual, &instantiation))
             return false;
         item_arguments[0] = template_material.sequence.term;
@@ -2205,6 +2490,7 @@ bool ppproof_gslt_sequence_evidence_producer_v1_workspace_stats(
     const PPProofGSLTSequenceEvidenceProducerImplV1 *impl;
     const PPProofGSLTSequenceArenaChunkV1 *chunk;
     size_t arena_reserved = 0u;
+    size_t arena_used = 0u;
 
     if (!producer || !stats_out || !(impl = producer->implementation))
         return false;
@@ -2213,9 +2499,14 @@ bool ppproof_gslt_sequence_evidence_producer_v1_workspace_stats(
             arena_reserved = SIZE_MAX;
         else
             arena_reserved += chunk->capacity;
+        if (arena_used > SIZE_MAX - chunk->used)
+            arena_used = SIZE_MAX;
+        else
+            arena_used += chunk->used;
     }
     *stats_out = (PPProofGSLTSequenceEvidenceWorkspaceStatsV1){
         .arena_reserved_bytes = arena_reserved,
+        .arena_used_bytes = arena_used,
         .node_capacity = impl->node_cap,
         .canonical_cache_capacity = impl->sequence_cons_cache_cap,
     };
@@ -2338,6 +2629,52 @@ ppproof_gslt_sequence_evidence_producer_v1_instantiate(
     };
     if (!ppproof_sequence_v1_instantiate_build(
             &build, source, environment, sources,
+            result_out, proof_out)) {
+        ppproof_sequence_v1_rollback(impl, checkpoint);
+        ppproof_sequence_v1_publish_nodes(producer);
+        return build.result == PPPROOF_GSLT_ARTICLE_V1_OK
+                   ? PPPROOF_GSLT_ARTICLE_V1_INVALID
+                   : build.result;
+    }
+    ppproof_sequence_v1_publish_nodes(producer);
+    return PPPROOF_GSLT_ARTICLE_V1_OK;
+}
+
+PPProofGSLTArticleV1Result
+ppproof_gslt_sequence_evidence_producer_v1_instantiate_expected(
+    PPProofGSLTSequenceEvidenceProducerV1 *producer,
+    PPProofGSLTTokenSequenceV1 source,
+    PPProofGSLTSequenceEnvironmentV1 environment,
+    PPProofGSLTTokenSequenceV1 expected,
+    const PPProofGSLTSequenceEvidenceSourcesV1 *sources,
+    PPProofGSLTMaterializedSequenceV1 *result_out,
+    PPProofGSLTSequenceProofV1 *proof_out,
+    char *error_buf,
+    size_t error_buf_size) {
+    PPProofGSLTSequenceEvidenceProducerImplV1 *impl;
+    PPProofGSLTSequenceCheckpointV1 checkpoint;
+    PPProofGSLTSequenceBuildV1 build;
+
+    if (error_buf && error_buf_size != 0u)
+        error_buf[0] = '\0';
+    if (!producer || !(impl = producer->implementation) ||
+        !result_out || !proof_out) {
+        ppproof_sequence_v1_set_error(
+            error_buf, error_buf_size,
+            "invalid expected instantiation evidence request");
+        return PPPROOF_GSLT_ARTICLE_V1_INVALID;
+    }
+    memset(result_out, 0, sizeof(*result_out));
+    memset(proof_out, 0, sizeof(*proof_out));
+    checkpoint = ppproof_sequence_v1_checkpoint(impl);
+    build = (PPProofGSLTSequenceBuildV1){
+        .impl = impl,
+        .error_buf = error_buf,
+        .error_buf_size = error_buf_size,
+        .result = PPPROOF_GSLT_ARTICLE_V1_OK,
+    };
+    if (!ppproof_sequence_v1_instantiate_expected_build(
+            &build, source, environment, expected, sources,
             result_out, proof_out)) {
         ppproof_sequence_v1_rollback(impl, checkpoint);
         ppproof_sequence_v1_publish_nodes(producer);

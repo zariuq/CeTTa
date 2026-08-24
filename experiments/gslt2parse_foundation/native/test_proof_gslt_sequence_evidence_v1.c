@@ -148,6 +148,7 @@ static void check_evidence_producer(
     const PPProofGSLTSequenceTokenV1 *template_tokens[3];
     const PPProofGSLTSequenceTokenV1 *image_a_tokens[1];
     const PPProofGSLTSequenceTokenV1 *image_c_tokens[1];
+    const PPProofGSLTSequenceTokenV1 *expected_tokens[3];
     const PPProofGSLTSequenceTokenV1 *left_tokens[1];
     const PPProofGSLTSequenceTokenV1 *right_tokens[1];
     PPProofGSLTSequenceBindingV1 bindings[2];
@@ -212,6 +213,9 @@ static void check_evidence_producer(
     template_tokens[2] = &tokens[2];
     image_a_tokens[0] = &tokens[3];
     image_c_tokens[0] = &tokens[4];
+    expected_tokens[0] = &tokens[0];
+    expected_tokens[1] = &tokens[3];
+    expected_tokens[2] = &tokens[4];
     bindings[0] = (PPProofGSLTSequenceBindingV1){
         .key = &tokens[1],
         .image = {image_a_tokens, 1u},
@@ -284,6 +288,70 @@ static void check_evidence_producer(
                   after.canonical_cache_capacity ==
                       before.canonical_cache_capacity,
               "reset producer reuses its private region without changing evidence");
+    }
+    {
+        PPProofGSLTSequenceEvidenceWorkspaceStatsV1
+            materialized_baseline = {0};
+        PPProofGSLTSequenceEvidenceWorkspaceStatsV1 materialized = {0};
+        PPProofGSLTSequenceEvidenceWorkspaceStatsV1 fused_baseline = {0};
+        PPProofGSLTSequenceEvidenceWorkspaceStatsV1 fused = {0};
+        bool measured;
+
+        result = ppproof_gslt_sequence_evidence_producer_v1_begin(
+            &producer, abi, 0u, NULL, error, sizeof(error));
+        measured = result == PPPROOF_GSLT_ARTICLE_V1_OK &&
+            ppproof_gslt_sequence_evidence_producer_v1_workspace_stats(
+                &producer, &materialized_baseline);
+        if (result == PPPROOF_GSLT_ARTICLE_V1_OK)
+            result = ppproof_gslt_sequence_evidence_producer_v1_instantiate(
+                &producer,
+                (PPProofGSLTTokenSequenceV1){template_tokens, 3u},
+                environment, &sources, &result_sequence, &proof,
+                error, sizeof(error));
+        measured = measured && result == PPPROOF_GSLT_ARTICLE_V1_OK &&
+            ppproof_gslt_sequence_evidence_producer_v1_workspace_stats(
+                &producer, &materialized);
+        result = ppproof_gslt_sequence_evidence_producer_v1_begin(
+            &producer, abi, 0u, NULL, error, sizeof(error));
+        measured = measured && result == PPPROOF_GSLT_ARTICLE_V1_OK &&
+            ppproof_gslt_sequence_evidence_producer_v1_workspace_stats(
+                &producer, &fused_baseline);
+        if (result == PPPROOF_GSLT_ARTICLE_V1_OK)
+            result =
+                ppproof_gslt_sequence_evidence_producer_v1_instantiate_expected(
+                    &producer,
+                    (PPProofGSLTTokenSequenceV1){template_tokens, 3u},
+                    environment,
+                    (PPProofGSLTTokenSequenceV1){expected_tokens, 3u},
+                    &sources, &result_sequence, &proof,
+                    error, sizeof(error));
+        if (result == PPPROOF_GSLT_ARTICLE_V1_OK)
+            result = check_produced_article(
+                plan, context, 7u, &producer, proof, &receipt,
+                error, sizeof(error));
+        measured = measured &&
+            ppproof_gslt_sequence_evidence_producer_v1_workspace_stats(
+                &producer, &fused);
+        check(result == PPPROOF_GSLT_ARTICLE_V1_OK && measured &&
+                  receipt.rooted &&
+                  result_sequence.token_len == 3u &&
+                  result_sequence.tokens[0] == expected_tokens[0] &&
+                  result_sequence.tokens[1] == expected_tokens[1] &&
+                  result_sequence.tokens[2] == expected_tokens[2],
+              "expected instantiation produces the same checked evidence");
+        check(measured &&
+                  materialized.arena_used_bytes >=
+                      materialized_baseline.arena_used_bytes &&
+                  fused.arena_used_bytes >= fused_baseline.arena_used_bytes &&
+                  fused.arena_used_bytes - fused_baseline.arena_used_bytes <
+                      materialized.arena_used_bytes -
+                          materialized_baseline.arena_used_bytes,
+              "expected instantiation uses less evidence-region storage");
+        if (measured)
+            printf("(ProofGSLTExpectedInstantiationStorageV1 %zu %zu)\n",
+                   materialized.arena_used_bytes -
+                       materialized_baseline.arena_used_bytes,
+                   fused.arena_used_bytes - fused_baseline.arena_used_bytes);
     }
     ppproof_gslt_sequence_evidence_producer_v1_free(&producer);
 
@@ -413,6 +481,8 @@ static void check_evidence_producer(
         const PPProofGSLTPatternV1 *sequence_items[3][2];
         const PPProofGSLTPatternV1 *sequence_term;
         const PPProofGSLTSequenceTokenV1 *essential_tokens[2];
+        const PPProofGSLTSequenceTokenV1 *actual_essential_tokens[2];
+        const PPProofGSLTSequenceTokenV1 *wrong_essential_tokens[2];
         PPProofGSLTAssertionBindingV1 assertion_bindings[2];
         PPProofGSLTAssertionEssentialV1 assertion_essentials[1];
         PPProofGSLTAssertionDisjointV1 assertion_disjoints[1];
@@ -459,8 +529,13 @@ static void check_evidence_producer(
         };
         essential_tokens[0] = &tokens[1];
         essential_tokens[1] = &tokens[2];
+        actual_essential_tokens[0] = &tokens[3];
+        actual_essential_tokens[1] = &tokens[4];
+        wrong_essential_tokens[0] = &tokens[4];
+        wrong_essential_tokens[1] = &tokens[3];
         assertion_essentials[0] = (PPProofGSLTAssertionEssentialV1){
             .template_sequence = {essential_tokens, 2u},
+            .actual_sequence = {actual_essential_tokens, 2u},
             .actual_proof = {
                 PPPROOF_GSLT_REFERENCE_V1_PREMISE, 9u},
         };
@@ -508,6 +583,19 @@ static void check_evidence_producer(
         }
         check(result == PPPROOF_GSLT_ARTICLE_V1_REJECTED,
               "falsifying the declaration makes the same article fail");
+        ppproof_gslt_sequence_evidence_producer_v1_free(&producer);
+
+        assertion_essentials[0].actual_sequence =
+            (PPProofGSLTTokenSequenceV1){wrong_essential_tokens, 2u};
+        ppproof_gslt_sequence_evidence_producer_v1_init(&producer);
+        result = ppproof_gslt_sequence_evidence_producer_v1_begin(
+            &producer, abi, 0u, NULL, error, sizeof(error));
+        if (result == PPPROOF_GSLT_ARTICLE_V1_OK)
+            result = ppproof_gslt_sequence_evidence_producer_v1_apply_assertion(
+                &producer, &declaration, 10u, &sources, &application,
+                error, sizeof(error));
+        check(result == PPPROOF_GSLT_ARTICLE_V1_REJECTED,
+              "fused assertion instantiation rejects a mismatched premise");
         ppproof_gslt_sequence_evidence_producer_v1_free(&producer);
     }
 

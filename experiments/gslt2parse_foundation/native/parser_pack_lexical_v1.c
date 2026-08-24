@@ -364,6 +364,7 @@ void pplex_v1_witness_table_init(PPLexV1WitnessTable *table) {
         return;
     memset(table, 0, sizeof(*table));
     arena_init(&table->arena);
+    arena_set_hashcons(&table->arena, NULL);
     table->outcome = PPLEX_V1_WITNESS_COMPLETED;
 }
 

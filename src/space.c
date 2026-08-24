@@ -703,22 +703,104 @@ static SymbolId eq_head_symbol_id(const Space *s, AtomId lhs_id) {
     return tu_head_sym(s->native.universe, lhs_id);
 }
 
+static uint32_t eq_head_set_hash(SymbolId head) {
+    uint32_t mixed = (uint32_t)head;
+    mixed ^= mixed >> 16;
+    mixed *= 0x7feb352du;
+    mixed ^= mixed >> 15;
+    mixed *= 0x846ca68bu;
+    mixed ^= mixed >> 16;
+    return mixed;
+}
+
+static void eq_head_set_init(EqHeadSet *set) {
+    set->slots = NULL;
+    set->len = 0u;
+    set->cap = 0u;
+}
+
+static void eq_head_set_free(EqHeadSet *set) {
+    free(set->slots);
+    eq_head_set_init(set);
+}
+
+static bool eq_head_set_contains(const EqHeadSet *set, SymbolId head) {
+    if (!set || !set->slots || set->cap == 0u || head == SYMBOL_ID_NONE)
+        return false;
+    CettaIndex mask = set->cap - 1u;
+    CettaIndex slot = (CettaIndex)eq_head_set_hash(head) & mask;
+    for (;;) {
+        SymbolId present = set->slots[slot];
+        if (present == SYMBOL_ID_NONE)
+            return false;
+        if (present == head)
+            return true;
+        slot = (slot + 1u) & mask;
+    }
+}
+
+static void eq_head_set_insert_raw(EqHeadSet *set, SymbolId head) {
+    CettaIndex mask = set->cap - 1u;
+    CettaIndex slot = (CettaIndex)eq_head_set_hash(head) & mask;
+    while (set->slots[slot] != SYMBOL_ID_NONE &&
+           set->slots[slot] != head) {
+        slot = (slot + 1u) & mask;
+    }
+    if (set->slots[slot] == head)
+        return;
+    set->slots[slot] = head;
+    set->len++;
+}
+
+static void eq_head_set_reserve(EqHeadSet *set, CettaIndex capacity) {
+    CettaIndex new_cap = set->cap ? set->cap : 16u;
+    while (new_cap < capacity)
+        new_cap *= 2u;
+    if (new_cap == set->cap)
+        return;
+
+    SymbolId *old_slots = set->slots;
+    CettaIndex old_cap = set->cap;
+    set->slots = cetta_malloc(sizeof(*set->slots) * new_cap);
+    set->cap = new_cap;
+    set->len = 0u;
+    for (CettaIndex i = 0u; i < new_cap; i++)
+        set->slots[i] = SYMBOL_ID_NONE;
+    for (CettaIndex i = 0u; i < old_cap; i++) {
+        if (old_slots[i] != SYMBOL_ID_NONE)
+            eq_head_set_insert_raw(set, old_slots[i]);
+    }
+    free(old_slots);
+}
+
+static void eq_head_set_add(EqHeadSet *set, SymbolId head) {
+    if (!set || head == SYMBOL_ID_NONE || eq_head_set_contains(set, head))
+        return;
+    /* Keep linear-probing occupancy below 3/4. */
+    if (set->cap == 0u || (set->len + 1u) * 4u >= set->cap * 3u)
+        eq_head_set_reserve(set, set->cap ? set->cap * 2u : 16u);
+    eq_head_set_insert_raw(set, head);
+}
+
 static void eq_index_init(EqIndex *idx) {
     for (uint32_t i = 0; i < EQ_INDEX_BUCKETS; i++)
         eq_bucket_init(&idx->buckets[i]);
     eq_bucket_init(&idx->wildcard);
+    eq_head_set_init(&idx->heads);
 }
 
 static void eq_index_free(EqIndex *idx) {
     for (uint32_t i = 0; i < EQ_INDEX_BUCKETS; i++)
         eq_bucket_free(&idx->buckets[i]);
     eq_bucket_free(&idx->wildcard);
+    eq_head_set_free(&idx->heads);
 }
 
 static void eq_index_add(EqIndex *idx, Atom *lhs, CettaIndex atom_idx,
                          AtomId equation_id) {
     SymbolId head = eq_head_symbol(lhs);
     if (head != SYMBOL_ID_NONE) {
+        eq_head_set_add(&idx->heads, head);
         eq_bucket_add(&idx->buckets[symbol_hash(head)], lhs, atom_idx,
                       equation_id);
     } else {
@@ -730,6 +812,7 @@ static void eq_index_add_id(EqIndex *idx, const Space *s, AtomId lhs_id,
                             CettaIndex atom_idx, AtomId equation_id) {
     SymbolId head = eq_head_symbol_id(s, lhs_id);
     if (head != SYMBOL_ID_NONE) {
+        eq_head_set_add(&idx->heads, head);
         eq_bucket_add_id(&idx->buckets[symbol_hash(head)], s, lhs_id, atom_idx,
                          equation_id);
     } else {
@@ -2177,18 +2260,29 @@ SpaceEquationCursorStep space_equation_cursor_next(
 
 /* ── Revision-pinned execution-contract analysis ──────────────────────── */
 
-#define SPACE_EFFECT_CACHE_SLOTS 64u
-
 typedef struct {
-    SpaceReadToken read;
     SymbolId head;
     CettaGsltQueryEffect effect;
     bool defined;
-    bool valid;
+    bool occupied;
 } SpaceEffectCacheEntry;
 
-static _Thread_local SpaceEffectCacheEntry
-    g_space_effect_cache[SPACE_EFFECT_CACHE_SLOTS];
+typedef struct {
+    SpaceReadToken read;
+    SpaceEffectCacheEntry *entries;
+    size_t len;
+    size_t cap;
+    bool occupied;
+} SpaceEffectCacheShard;
+
+#define SPACE_EFFECT_CACHE_SHARDS 8u
+
+typedef struct {
+    SpaceEffectCacheShard shards[SPACE_EFFECT_CACHE_SHARDS];
+    size_t next_victim;
+} SpaceEffectCache;
+
+static _Thread_local SpaceEffectCache g_space_effect_cache;
 
 typedef struct {
     SymbolId head;
@@ -2233,21 +2327,176 @@ static bool space_generated_fold_control(
     return false;
 }
 
-static size_t space_effect_cache_slot(const Space *space, SymbolId head) {
-    uint64_t key = space_instance_id(space) ^
-        ((uint64_t)head * UINT64_C(11400714819323198485));
-    return (size_t)(key & (SPACE_EFFECT_CACHE_SLOTS - 1u));
+static uint64_t space_effect_cache_hash(SymbolId head) {
+    uint64_t key = (uint64_t)head * UINT64_C(0x9e3779b97f4a7c15);
+    key ^= key >> 30u;
+    key *= UINT64_C(0xbf58476d1ce4e5b9);
+    key ^= key >> 27u;
+    key *= UINT64_C(0x94d049bb133111eb);
+    return key ^ (key >> 31u);
+}
+
+static bool space_effect_cache_rehash(
+    SpaceEffectCacheShard *shard, size_t requested_cap) {
+    SpaceEffectCacheEntry *old_entries = shard->entries;
+    size_t old_cap = shard->cap;
+    size_t next = 128u;
+    while (next < requested_cap) {
+        if (next > SIZE_MAX / 2u)
+            return false;
+        next *= 2u;
+    }
+    if (next > SIZE_MAX / sizeof(*old_entries))
+        return false;
+    SpaceEffectCacheEntry *entries = calloc(next, sizeof(*entries));
+    if (!entries)
+        return false;
+
+    shard->entries = entries;
+    shard->len = 0u;
+    shard->cap = next;
+    for (size_t index = 0u; index < old_cap; index++) {
+        SpaceEffectCacheEntry entry = old_entries[index];
+        if (!entry.occupied)
+            continue;
+        size_t slot = (size_t)space_effect_cache_hash(entry.head) &
+            (next - 1u);
+        while (entries[slot].occupied)
+            slot = (slot + 1u) & (next - 1u);
+        entries[slot] = entry;
+        shard->len++;
+    }
+    free(old_entries);
+    return true;
+}
+
+static SpaceEffectCacheShard *space_effect_cache_shard(
+    Space *space, bool create) {
+    SpaceReadToken read = space_read_token(space);
+    SpaceEffectCacheShard *reusable = NULL;
+    for (size_t index = 0u;
+         index < SPACE_EFFECT_CACHE_SHARDS; index++) {
+        SpaceEffectCacheShard *shard =
+            &g_space_effect_cache.shards[index];
+        if (shard->occupied && shard->read.space == space &&
+            shard->read.instance_id == read.instance_id &&
+            shard->read.revision == read.revision &&
+            space_read_token_matches_live_space(shard->read, space)) {
+            return shard;
+        }
+        if (!reusable &&
+            ((!shard->occupied && shard->read.space == space &&
+              shard->read.instance_id == read.instance_id) ||
+             (!shard->occupied && shard->read.space == NULL))) {
+            reusable = shard;
+        }
+        if (shard->occupied && shard->read.space == space &&
+            shard->read.instance_id == read.instance_id) {
+            reusable = shard;
+        }
+    }
+    if (!create)
+        return NULL;
+
+    if (!reusable) {
+        for (size_t index = 0u;
+             index < SPACE_EFFECT_CACHE_SHARDS; index++) {
+            if (!g_space_effect_cache.shards[index].occupied) {
+                reusable = &g_space_effect_cache.shards[index];
+                break;
+            }
+        }
+    }
+    if (!reusable) {
+        reusable = &g_space_effect_cache.shards[
+            g_space_effect_cache.next_victim];
+        g_space_effect_cache.next_victim =
+            (g_space_effect_cache.next_victim + 1u) %
+            SPACE_EFFECT_CACHE_SHARDS;
+    }
+    if (reusable->entries && reusable->cap > 0u) {
+        memset(reusable->entries, 0,
+               reusable->cap * sizeof(*reusable->entries));
+    }
+    reusable->read = read;
+    reusable->len = 0u;
+    reusable->occupied = true;
+    return reusable;
+}
+
+static const SpaceEffectCacheEntry *space_effect_cache_lookup(
+    Space *space, SymbolId head) {
+    SpaceEffectCacheShard *shard =
+        space_effect_cache_shard(space, false);
+    if (!shard || !shard->entries || shard->cap == 0u)
+        return NULL;
+    size_t slot = (size_t)space_effect_cache_hash(head) &
+        (shard->cap - 1u);
+    for (;;) {
+        SpaceEffectCacheEntry *entry = &shard->entries[slot];
+        if (!entry->occupied)
+            return NULL;
+        if (entry->head == head)
+            return entry;
+        slot = (slot + 1u) & (shard->cap - 1u);
+    }
+}
+
+static void space_effect_cache_store(
+    Space *space, SymbolId head, CettaGsltQueryEffect effect,
+    bool defined) {
+    if (!space || head == SYMBOL_ID_NONE)
+        return;
+    SpaceEffectCacheShard *shard =
+        space_effect_cache_shard(space, true);
+    if (!shard)
+        return;
+    if (shard->cap == 0u || (shard->len + 1u) * 4u >=
+            shard->cap * 3u) {
+        size_t requested = shard->cap == 0u
+            ? 128u
+            : shard->cap * 2u;
+        if (requested < shard->cap ||
+            !space_effect_cache_rehash(shard, requested)) {
+            return;
+        }
+    }
+
+    size_t slot = (size_t)space_effect_cache_hash(head) &
+        (shard->cap - 1u);
+    for (;;) {
+        SpaceEffectCacheEntry *entry = &shard->entries[slot];
+        if (!entry->occupied) {
+            *entry = (SpaceEffectCacheEntry){
+                .head = head,
+                .effect = effect,
+                .defined = defined,
+                .occupied = true,
+            };
+            shard->len++;
+            return;
+        }
+        if (entry->head == head) {
+            entry->effect = effect;
+            entry->defined = defined;
+            return;
+        }
+        slot = (slot + 1u) & (shard->cap - 1u);
+    }
 }
 
 void space_execution_analysis_note_mutation(Space *space) {
     if (!space)
         return;
     uint64_t instance = space_instance_id(space);
-    for (size_t i = 0u; i < SPACE_EFFECT_CACHE_SLOTS; i++) {
-        SpaceEffectCacheEntry *entry = &g_space_effect_cache[i];
-        if (entry->valid && entry->read.space == space &&
-            entry->read.instance_id == instance) {
-            memset(entry, 0, sizeof(*entry));
+    for (size_t index = 0u;
+         index < SPACE_EFFECT_CACHE_SHARDS; index++) {
+        SpaceEffectCacheShard *shard =
+            &g_space_effect_cache.shards[index];
+        if (shard->occupied && shard->read.space == space &&
+            shard->read.instance_id == instance) {
+            shard->occupied = false;
+            shard->len = 0u;
         }
     }
 }
@@ -2495,22 +2744,17 @@ CettaGsltQueryEffect space_query_effect_for_head(
     if (is_grounded_op(head))
         return CETTA_GSLT_QUERY_EFFECT_INERT_SYMBOL;
 
-    size_t slot_index = space_effect_cache_slot(space, head);
-    SpaceEffectCacheEntry *slot =
-        &g_space_effect_cache[slot_index];
-    if (slot->valid && slot->head == head &&
-        space_read_token_matches_live_space(slot->read, space)) {
+    const SpaceEffectCacheEntry *cached =
+        space_effect_cache_lookup(space, head);
+    if (cached) {
         if (out_defined)
-            *out_defined = slot->defined;
-        return slot->effect;
+            *out_defined = cached->defined;
+        return cached->effect;
     }
     if (!space_equations_may_match_known_head(space, head)) {
-        slot->read = space_read_token(space);
-        slot->head = head;
-        slot->effect = CETTA_GSLT_QUERY_EFFECT_INERT_SYMBOL;
-        slot->defined = false;
-        slot->valid = true;
-        return slot->effect;
+        space_effect_cache_store(
+            space, head, CETTA_GSLT_QUERY_EFFECT_INERT_SYMBOL, false);
+        return CETTA_GSLT_QUERY_EFFECT_INERT_SYMBOL;
     }
 
     SpaceEffectGraph graph = {
@@ -2527,15 +2771,9 @@ CettaGsltQueryEffect space_query_effect_for_head(
     CettaGsltQueryEffect result = graph.nodes[root_index].effect;
     bool defined = graph.nodes[root_index].defined;
     for (size_t i = 0u; i < graph.len; i++) {
-        size_t cache_index = space_effect_cache_slot(
-            space, graph.nodes[i].head);
-        SpaceEffectCacheEntry *entry =
-            &g_space_effect_cache[cache_index];
-        entry->read = graph.read;
-        entry->head = graph.nodes[i].head;
-        entry->effect = graph.nodes[i].effect;
-        entry->defined = graph.nodes[i].defined;
-        entry->valid = true;
+        space_effect_cache_store(
+            space, graph.nodes[i].head, graph.nodes[i].effect,
+            graph.nodes[i].defined);
     }
     if (out_defined)
         *out_defined = defined;
@@ -7010,30 +7248,7 @@ bool space_equations_may_match_known_head(Space *s, SymbolId head) {
     ensure_eq_index(s);
     if (s->native.eq_idx.wildcard.len > 0)
         return true;
-    EqBucket *bucket = &s->native.eq_idx.buckets[symbol_hash(head)];
-    if (bucket->len == 0)
-        return false;
-    if (!bucket->mixed_heads)
-        return bucket->head == head;
-
-    for (CettaIndex i = 0; i < bucket->len; i++) {
-        AtomId equation_id = space_indexed_occurrence_atom_id(
-            s, bucket->atom_indices, bucket->atom_ids, i);
-        AtomId lhs_id = CETTA_ATOM_ID_NONE;
-        AtomId rhs_id = CETTA_ATOM_ID_NONE;
-        if (space_equation_child_ids_at_id(s, equation_id, &lhs_id, &rhs_id)) {
-            if (eq_head_symbol_id(s, lhs_id) == head)
-                return true;
-            continue;
-        }
-        Atom *lhs = NULL;
-        Atom *rhs = NULL;
-        if (space_equation_children_at_id(s, equation_id, &lhs, &rhs) &&
-            eq_head_symbol(lhs) == head) {
-            return true;
-        }
-    }
-    return false;
+    return eq_head_set_contains(&s->native.eq_idx.heads, head);
 }
 
 static void space_equation_note_head_arity(

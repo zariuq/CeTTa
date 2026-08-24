@@ -1,0 +1,44 @@
+(StateStepV1
+  TransitionPackageV1
+  (StateV1
+    TransitionPackageV1
+    (NatSuccV1 NatZeroV1)
+    (NatSuccV1 NatZeroV1)
+    (TablesConsV1
+      (TableV1
+        TransitionTableV1
+        (EntriesConsV1
+          (EntryV1
+            NatZeroV1
+            (RowConsV1 NatZeroV1 RowNilV1)
+            NatZeroV1)
+          (EntriesConsV1
+            (EntryV1
+              (NatSuccV1 NatZeroV1)
+              (RowConsV1 (NatSuccV1 NatZeroV1) RowNilV1)
+              (NatSuccV1 NatZeroV1))
+            EntriesNilV1)))
+      TablesNilV1))
+  TransitionGoodOccurrenceV1
+  StatePopScopeV1
+  AcceptedV1
+  (StateV1
+    TransitionPackageV1
+    NatZeroV1
+    (NatSuccV1 NatZeroV1)
+    (TablesConsV1
+      (TableV1
+        TransitionTableV1
+        (EntriesConsV1
+          (EntryV1
+            NatZeroV1
+            (RowConsV1 NatZeroV1 RowNilV1)
+            NatZeroV1)
+          (EntriesConsV1
+            (EntryV1
+              (NatSuccV1 NatZeroV1)
+              (RowConsV1 (NatSuccV1 NatZeroV1) RowNilV1)
+              (NatSuccV1 NatZeroV1))
+            EntriesNilV1)))
+      TablesNilV1))
+  ?history)

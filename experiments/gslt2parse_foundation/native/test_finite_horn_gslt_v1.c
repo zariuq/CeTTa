@@ -314,6 +314,100 @@ static bool local_canaries(size_t *passed) {
     free(reflected);
     (*passed)++;
 
+    const char *selected_sources[] = {"leaf"};
+    size_t selected_operator_count = 0u;
+    size_t selected_rule_count = 0u;
+    if (!fhgslt_package_reflected_sources(
+            package,
+            selected_sources,
+            1u,
+            &reflected,
+            &reflected_len,
+            &selected_operator_count,
+            &selected_rule_count,
+            error,
+            sizeof(error)) ||
+        selected_operator_count != 0u || selected_rule_count != 1u ||
+        count_bytes(reflected, reflected_len,
+                    "(head (source-rule (q-sym Leaf) ") != 1u ||
+        count_bytes(reflected, reflected_len,
+                    "(head (source-rule (q-sym Core) ") != 0u ||
+        count_bytes(reflected, reflected_len,
+                    "(head (source-operator ") != 0u) {
+        fprintf(stderr, "selected composition reflection changed: %s\n", error);
+        free(reflected);
+        fhgslt_package_free(package);
+        return false;
+    }
+    free(reflected);
+    (*passed)++;
+
+    const char *missing_selected_sources[] = {"missing"};
+    error[0] = '\0';
+    if (fhgslt_package_reflected_sources(
+            package,
+            missing_selected_sources,
+            1u,
+            &reflected,
+            &reflected_len,
+            &selected_operator_count,
+            &selected_rule_count,
+            error,
+            sizeof(error)) ||
+        error[0] == '\0') {
+        fprintf(stderr, "unknown selected reflection source was admitted\n");
+        free(reflected);
+        fhgslt_package_free(package);
+        return false;
+    }
+    (*passed)++;
+
+    uint8_t *horn_clause_ir = NULL;
+    size_t horn_clause_ir_len = 0u;
+    uint8_t *reversed_horn_clause_ir = NULL;
+    size_t reversed_horn_clause_ir_len = 0u;
+    FHGSLTPackage *reversed_package = NULL;
+    if (!fhgslt_package_horn_clause_ir_v1(
+            package, &horn_clause_ir, &horn_clause_ir_len,
+            error, sizeof(error)) ||
+        !load_strings(reversed_texts,
+                      reversed_sources,
+                      2u,
+                      &reversed_package,
+                      error) ||
+        !fhgslt_package_horn_clause_ir_v1(
+            reversed_package,
+            &reversed_horn_clause_ir,
+            &reversed_horn_clause_ir_len,
+            error,
+            sizeof(error)) ||
+        horn_clause_ir_len != reversed_horn_clause_ir_len ||
+        memcmp(horn_clause_ir,
+               reversed_horn_clause_ir,
+               horn_clause_ir_len) != 0 ||
+        count_bytes(horn_clause_ir,
+                    horn_clause_ir_len,
+                    "(HornClauseV1 (FiniteHornPackageDigestV1 sha256-") != 1u ||
+        count_bytes(horn_clause_ir,
+                    horn_clause_ir_len,
+                    "(HornClauseV1 (p $x) HornBodyNilV1)") != 1u ||
+        count_bytes(
+            horn_clause_ir,
+            horn_clause_ir_len,
+            "(HornClauseV1 (q left right) (HornBodyConsV1 "
+            "(p \"λ😀\") HornBodyNilV1))") != 1u) {
+        fprintf(stderr, "canonical finite-Horn clause IR changed: %s\n", error);
+        free(reversed_horn_clause_ir);
+        free(horn_clause_ir);
+        fhgslt_package_free(reversed_package);
+        fhgslt_package_free(package);
+        return false;
+    }
+    free(reversed_horn_clause_ir);
+    free(horn_clause_ir);
+    fhgslt_package_free(reversed_package);
+    (*passed)++;
+
     const char core_without_rule[] =
         "(gslt-presentation-v1 Core "
         "(signature (operator p 1) (operator q 2)) "
@@ -332,6 +426,73 @@ static bool local_canaries(size_t *passed) {
     }
     (*passed)++;
     fhgslt_package_free(package);
+
+    const char structural_shape[] =
+        "(gslt-presentation-v1 StructuralShapeV1 "
+        "(signature (operator fact 1) (operator same 2) "
+        "(operator join 2) (operator source 1) "
+        "(operator recursive 1)) (equations) (rewrites "
+        "(rule shape-fact (head (fact a)) (body)) "
+        "(rule shape-nonlinear (head (same ?x ?x)) "
+        "(body (source ?x))) "
+        "(rule shape-join (head (join ?x ?z)) "
+        "(body (source ?x) (same ?x ?z))) "
+        "(rule shape-body-only (head (join ?x ?z)) "
+        "(body (source ?x) (source ?y))) "
+        "(rule shape-head-only (head (same ?x ?y)) "
+        "(body (source ?x))) "
+        "(rule shape-recursive (head (recursive ?x)) "
+        "(body (recursive ?x)))))";
+    const char *shape_texts[] = {structural_shape};
+    const char *shape_sources[] = {"structural-shape"};
+    FHGSLTPackage *shape_package = NULL;
+    FHGSLTStructuralShapeV1 shape = {0};
+    error[0] = '\0';
+    if (!load_strings(shape_texts, shape_sources, 1u,
+                      &shape_package, error) ||
+        !fhgslt_package_structural_shape_v1(
+            shape_package, &shape, error, sizeof(error)) ||
+        shape.rule_count != 6u ||
+        shape.fact_rule_count != 1u ||
+        shape.implication_rule_count != 5u ||
+        shape.body_goal_count != 7u ||
+        shape.maximum_body_goal_count != 2u ||
+        shape.left_linear_head_rule_count != 5u ||
+        shape.nonlinear_head_rule_count != 1u ||
+        shape.multi_body_rule_count != 2u ||
+        shape.cross_goal_join_rule_count != 1u ||
+        shape.body_only_variable_rule_count != 1u ||
+        shape.head_only_variable_rule_count != 2u ||
+        shape.direct_recursive_rule_count != 1u) {
+        fprintf(stderr,
+                "finite-Horn structural shape changed: "
+                "%zu %zu %zu %zu %zu %zu %zu %zu %zu %zu %zu %zu: %s\n",
+                shape.rule_count,
+                shape.fact_rule_count,
+                shape.implication_rule_count,
+                shape.body_goal_count,
+                shape.maximum_body_goal_count,
+                shape.left_linear_head_rule_count,
+                shape.nonlinear_head_rule_count,
+                shape.multi_body_rule_count,
+                shape.cross_goal_join_rule_count,
+                shape.body_only_variable_rule_count,
+                shape.head_only_variable_rule_count,
+                shape.direct_recursive_rule_count,
+                error);
+        fhgslt_package_free(shape_package);
+        return false;
+    }
+    fhgslt_package_free(shape_package);
+    error[0] = '\0';
+    if (fhgslt_package_structural_shape_v1(
+            NULL, &shape, error, sizeof(error)) ||
+        error[0] == '\0') {
+        fprintf(stderr,
+                "null structural-shape input was not rejected\n");
+        return false;
+    }
+    (*passed)++;
 
     const char raw_unicode[] =
         "(gslt-presentation-v1 Unicode (signature (operator p 1)) "
@@ -709,7 +870,7 @@ int main(int argc, char **argv) {
     size_t passed = 0u;
     if (!local_canaries(&passed) || !external_package(argc, argv, &passed))
         return 1;
-    size_t expected = argc == 1 ? 30u : 31u;
+    size_t expected = argc == 1 ? 34u : 35u;
     if (passed != expected) {
         fprintf(stderr,
                 "canary accounting mismatch: expected %zu, got %zu\n",

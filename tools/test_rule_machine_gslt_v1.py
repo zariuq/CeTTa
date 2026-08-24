@@ -197,8 +197,32 @@ def check_rule_program_generation(
             raise GateFailure("missing RuleMachineProgram semantic rule did not fail generation")
 
 
+def check_cetta_golden(cetta: Path, source: Path) -> None:
+    expected_path = source.with_suffix(".expected")
+    completed = subprocess.run(
+        [str(cetta), "--lang", "prime", str(source)],
+        cwd=source.parents[2],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    if completed.returncode != 0:
+        raise GateFailure(
+            f"CeTTa RuleMachine execution failed ({completed.returncode}):\n"
+            f"stdout:\n{completed.stdout}\nstderr:\n{completed.stderr}"
+        )
+    actual = completed.stdout.splitlines()
+    expected = expected_path.read_text(encoding="utf-8").splitlines()
+    if actual != expected:
+        raise GateFailure(
+            f"CeTTa RuleMachine golden changed: got {len(actual)} lines, "
+            f"expected {len(expected)}"
+        )
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
+    parser.add_argument("--cetta", type=Path, required=True)
     parser.add_argument("--chart", type=Path, required=True)
     parser.add_argument("--nil-root", type=Path, required=True)
     parser.add_argument("--root", type=Path, default=Path(__file__).resolve().parents[1])
@@ -217,6 +241,7 @@ def main() -> int:
 
     check_regeneration(args.root, args.nil_root, sumo, runtime_generated)
     check_rule_program_generation(args.root, core, rule_program, rule_program_generated)
+    check_cetta_golden(args.cetta, runtime_generated)
     for guest in (bfc, synthesis, sumo):
         sx.admit([core, guest])
     sx.admit([core, rule_program, bfc])
@@ -365,7 +390,7 @@ def main() -> int:
         if required not in rendered_sumo:
             raise GateFailure(f"SUMO proof lost {required}")
 
-    print("(RuleMachineGSLTV1Summary 16 16 0)")
+    print("(RuleMachineGSLTV1Summary 17 17 0)")
     return 0
 
 

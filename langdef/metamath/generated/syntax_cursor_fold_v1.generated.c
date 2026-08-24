@@ -30779,3 +30779,58 @@ fail:
     pprelational_state_program_v1_plan_free(&result);
     return false;
 }
+
+/* Generated from SourceResolutionControlCoreV1. */
+#include "parser_source_resolution_control_v1.h"
+
+const char *metamath_syntax_cursor_fold_v1_source_resolution_control_plan_digest(void) { return "a71a6d628e416d17a3b04459de3c8181ab890ed7953764601ac6f5b47906c875"; }
+
+bool metamath_syntax_cursor_fold_v1_source_resolution_control_plan_init(
+    PPSourceResolutionControlV1Plan *out,
+    char *error_buf, size_t error_buf_size) {
+    PPSourceResolutionControlV1Plan result;
+    if (!out) return false;
+    ppsource_resolution_control_v1_plan_init(&result);
+    result.decisions[UINT32_C(0)] = UINT8_C(0);
+    result.decisions[UINT32_C(1)] = UINT8_C(0);
+    result.decisions[UINT32_C(2)] = UINT8_C(0);
+    result.decisions[UINT32_C(3)] = UINT8_C(0);
+    result.decisions[UINT32_C(4)] = UINT8_C(3);
+    result.decisions[UINT32_C(5)] = UINT8_C(3);
+    result.decisions[UINT32_C(6)] = UINT8_C(1);
+    result.decisions[UINT32_C(7)] = UINT8_C(1);
+    result.decisions[UINT32_C(8)] = UINT8_C(2);
+    result.decisions[UINT32_C(9)] = UINT8_C(4);
+    result.decisions[UINT32_C(10)] = UINT8_C(2);
+    result.decisions[UINT32_C(11)] = UINT8_C(4);
+    result.decisions[UINT32_C(12)] = UINT8_C(5);
+    result.decisions[UINT32_C(13)] = UINT8_C(5);
+    result.decisions[UINT32_C(14)] = UINT8_C(5);
+    result.decisions[UINT32_C(15)] = UINT8_C(5);
+    result.decisions[UINT32_C(16)] = UINT8_C(6);
+    result.decisions[UINT32_C(17)] = UINT8_C(6);
+    result.decisions[UINT32_C(18)] = UINT8_C(6);
+    result.decisions[UINT32_C(19)] = UINT8_C(6);
+    result.decisions[UINT32_C(20)] = UINT8_C(7);
+    result.decisions[UINT32_C(21)] = UINT8_C(7);
+    result.decisions[UINT32_C(22)] = UINT8_C(7);
+    result.decisions[UINT32_C(23)] = UINT8_C(7);
+    result.outcomes[UINT32_C(0)] = UINT8_C(0);
+    result.outcomes[UINT32_C(1)] = UINT8_C(1);
+    result.outcomes[UINT32_C(2)] = UINT8_C(2);
+    result.outcomes[UINT32_C(3)] = UINT8_C(3);
+    result.outcomes[UINT32_C(9)] = UINT8_C(0);
+    result.outcomes[UINT32_C(14)] = UINT8_C(0);
+    result.outcomes[UINT32_C(19)] = UINT8_C(1);
+    result.outcomes[UINT32_C(24)] = UINT8_C(1);
+    result.outcomes[UINT32_C(29)] = UINT8_C(1);
+    result.outcomes[UINT32_C(34)] = UINT8_C(2);
+    result.outcomes[UINT32_C(39)] = UINT8_C(3);
+    memcpy(result.compiler_digest, "5c2178301231758cf6bde2404c6da4a55779bf517b470fd8abdb3c9a9fe76456", 65u);
+    memcpy(result.answer_set_digest, "12fa29098f5d2300292291ecb16a7f246adc7047674272a200de76804eb49849", 65u);
+    memcpy(result.plan_digest, "a71a6d628e416d17a3b04459de3c8181ab890ed7953764601ac6f5b47906c875", 65u);
+    if (!ppsource_resolution_control_v1_plan_validate(
+            &result, error_buf, error_buf_size)) return false;
+    *out = result;
+    return true;
+}

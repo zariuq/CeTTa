@@ -1,0 +1,2 @@
+sort wff;
+prefix missing: $ ~ $ prec 50;
