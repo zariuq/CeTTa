@@ -1,0 +1,142 @@
+{
+  "schema": "cetta-prime-chaining-readiness-v1",
+  "source": {
+    "project": "ngeiswei/chaining",
+    "revision": "bc9beb2672953e07971b3abecc1fe67651ecddc4",
+    "files": {
+      "experimental/curried-chaining/curried-chainer.metta": "e2b3c1132bede217773bcad0cff25f7ccde2b137a7dbca135cd2512f6e109386",
+      "experimental/backward-via-forward/bfc-xp.mm2": "b53b6079a03241f39fe7d8750b77247ce959a73c95dc55cc2b419d83df3ce5b1",
+      "experimental/synthesis/SynthesizeTest.metta": "ba3279cfbdd737c67b4118cd734c0f69e0dfcb87c0b4035a082c0d658d78ac3e",
+      "experimental/sumo/john-carry-flower/john-carry-flower.kif.metta": "a8df9448de199882f944e1010de42d5641a5ccf8829d1c6963fcd262f85007db",
+      "experimental/sumo/rule-base.metta": "9e6f4df984188e023400af78227132178996cfd0f38c4a8f3398fc085719ab55"
+    }
+  },
+  "performance_lanes": [
+    {
+      "name": "curried-chaining",
+      "status": "qualified",
+      "strongest_route": "native-compiled-rule-artifact",
+      "source_identity": "experimental/curried-chaining/curried-chainer.metta",
+      "presentation": "experiments/gslt2parse_foundation/presentations/languages/curried_chaining_rule_package_v1.metta",
+      "fixture": "tests/prime/nil_rule_machine_guests.generated.metta",
+      "coverage": [
+        "source-and-bytecode-proof-occurrence-equality",
+        "authored-curried-proof-reconstruction",
+        "positive-A-B-C",
+        "negative-D",
+        "honest-no-replay-decline"
+      ]
+    },
+    {
+      "name": "hilbert-backward-via-forward",
+      "status": "qualified",
+      "strongest_route": "native-no-replay-rule-program",
+      "source_identity": "experimental/backward-via-forward/bfc-xp.mm2",
+      "presentation": "experiments/gslt2parse_foundation/presentations/languages/nil_bfc_rule_package_v1.metta",
+      "fixture": "tests/prime/nil_rule_machine_guests.generated.metta",
+      "coverage": [
+        "source-and-bytecode-proof-occurrence-equality",
+        "native-and-bytecode-rule-program-equality",
+        "two-jarr-proof-occurrences",
+        "revision-currentness"
+      ]
+    },
+    {
+      "name": "typed-synthesis",
+      "status": "qualified",
+      "strongest_route": "native-compiled-rule-artifact",
+      "source_identity": "experimental/synthesis/SynthesizeTest.metta",
+      "presentation": "experiments/gslt2parse_foundation/presentations/languages/nil_typed_synthesis_rule_package_v1.metta",
+      "fixture": "tests/prime/nil_rule_machine_guests.generated.metta",
+      "coverage": [
+        "source-and-bytecode-proof-occurrence-equality",
+        "composition",
+        "blackbird-extension",
+        "revision-currentness"
+      ]
+    },
+    {
+      "name": "sumo-john-carry-flower",
+      "status": "qualified",
+      "strongest_route": "native-compiled-rule-artifact",
+      "source_identity": "experimental/sumo/john-carry-flower/john-carry-flower.kif.metta",
+      "presentation": "experiments/gslt2parse_foundation/presentations/languages/nil_sumo_john_carry_flower_v1.metta",
+      "fixture": "tests/prime/nil_rule_machine_guests.generated.metta",
+      "coverage": [
+        "source-and-bytecode-proof-occurrence-equality",
+        "depth-three-negative",
+        "depth-four-positive",
+        "full-proof-tree"
+      ]
+    },
+    {
+      "name": "prime-indexed-chaining",
+      "status": "qualified",
+      "strongest_route": "prime-indexed-proof-construction",
+      "fixture": "examples/prime/chaining_prime_readiness.metta",
+      "coverage": [
+        "dependent-type-checking",
+        "typed-forward-and-backward-bounded-search",
+        "typed-hypothesis-learning",
+        "exact-candidate-bag-conservation",
+        "retained-intermediate-witnesses",
+        "same-endpoint-proof-multiplicity",
+        "checked-middle-sort-obstruction"
+      ],
+      "counts": {
+        "raw_length_three_candidates": 64,
+        "typed_length_three_candidates": 1,
+        "refuted_candidates": 63,
+        "forward_occurrences_through_length_three": 13,
+        "target_occurrences": 2
+      }
+    }
+  ],
+  "intent_coverage": [
+    {
+      "capability": "curried-backward-and-forward-modes",
+      "status": "qualified",
+      "evidence": "curried-chaining and prime-indexed-chaining lanes"
+    },
+    {
+      "capability": "dependent-typed-proof-construction",
+      "status": "qualified",
+      "evidence": "prime-indexed-chaining lane"
+    },
+    {
+      "capability": "typed-program-synthesis",
+      "status": "qualified",
+      "evidence": "typed-synthesis and prime-indexed-chaining lanes"
+    },
+    {
+      "capability": "large-authored-knowledge-base",
+      "status": "qualified",
+      "evidence": "sumo-john-carry-flower lane"
+    },
+    {
+      "capability": "proof-tree-type-annotations",
+      "status": "partial",
+      "evidence": "Prime programs carry indices and evidence, but the source proof-tree article is not yet translated"
+    },
+    {
+      "capability": "iterative-intermediate-knowledge-storage",
+      "status": "partial",
+      "evidence": "typed iteration is native; source working-memory publication and reuse remain"
+    },
+    {
+      "capability": "user-programmable-inference-control",
+      "status": "pending",
+      "evidence": "context updaters and continuation predicates remain to be hosted as typed capabilities"
+    },
+    {
+      "capability": "polyward-partially-grounded-query-control",
+      "status": "partial",
+      "evidence": "typed bounded forward and backward path modes exist; the complete authored polyward surface remains"
+    },
+    {
+      "capability": "probabilistic-and-pln-chaining",
+      "status": "pending",
+      "evidence": "proof occurrence bags are retained; the authored truth-value and inference-control calculus remains"
+    }
+  ]
+}

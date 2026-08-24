@@ -1,0 +1,3746 @@
+{
+  "schema": "cetta-prime-hopper-table1-v1",
+  "source": {
+    "project": "Ermine516/HOpper",
+    "revision": "2283c3f947fc2eb81d5d931fb6f23f03b544a53b"
+  },
+  "tasks": [
+    {
+      "name": "dropK",
+      "group": "learning-first-order",
+      "variants": {
+        "fo": {
+          "path": "FO",
+          "files": {
+            "bias.pl": "81c7e1ee347e5ad2ba4fcd77a3dddc8687eb25ed84dbbc5f52476d6d7c6c98f2",
+            "bk.pl": "2ac812b428f14918ec03283a3a0beaeb4cc3c17206d94ebc40cbe7abfe69b1bf",
+            "exs.pl": "97d13c3f8a6a7b78235498294f112e964457857a680276b19d955be097b6cae2"
+          },
+          "target": {
+            "predicate": "f",
+            "arity": 3,
+            "types": [
+              "integer",
+              "list",
+              "list"
+            ],
+            "directions": [
+              "in",
+              "in",
+              "out"
+            ]
+          },
+          "examples": {
+            "positive": 3,
+            "negative": 2
+          },
+          "higher_order": [],
+          "best_program": {
+            "label": "BEST PROG 106:",
+            "clauses": [
+              "f(A,B,C):-zero(A),eqs(B,C).",
+              "f(A,B,C):-tail(B,D),pred(A,E),f(E,D,C)."
+            ],
+            "metrics": {
+              "precision": "1.00",
+              "recall": "1.00",
+              "tp": 3,
+              "fn": 0,
+              "tn": 2,
+              "fp": 0
+            }
+          }
+        },
+        "ho": {
+          "path": "HO",
+          "files": {
+            "bias.pl": "380314f680a5e2dd178f4eb398f3342b9b5d44998f60ef31635d0ae13d896120",
+            "bk.pl": "1892c32112813900756e998977a085515a56e03947f05876cc94bb4216a29a4c",
+            "exs.pl": "97d13c3f8a6a7b78235498294f112e964457857a680276b19d955be097b6cae2"
+          },
+          "target": {
+            "predicate": "f",
+            "arity": 3,
+            "types": [
+              "integer",
+              "list",
+              "list"
+            ],
+            "directions": [
+              "in",
+              "in",
+              "out"
+            ]
+          },
+          "examples": {
+            "positive": 3,
+            "negative": 2
+          },
+          "higher_order": [
+            {
+              "name": "ite",
+              "argument_arities": [
+                2
+              ],
+              "ordinary_arguments": 3,
+              "instances": 1
+            }
+          ],
+          "best_program": {
+            "label": "BEST PROG 2:",
+            "clauses": [
+              "f(A,B,C):-ite_a(B,A,C).",
+              "ite_p_a(A,B):-tail(A,B)."
+            ],
+            "metrics": {
+              "precision": "1.00",
+              "recall": "1.00",
+              "tp": 3,
+              "fn": 0,
+              "tn": 2,
+              "fp": 0
+            }
+          }
+        },
+        "ho-opt": {
+          "path": "HO OPT",
+          "files": {
+            "bias.pl": "8c7b681a43d35a10f9e5c4d9271301a9a5c3a1fcb09f29609037cca77aa1e273",
+            "bk.pl": "cfd9e024a03feef08436761127c702676b495d5cd1cdbb99f2e41c7c652b9490",
+            "exs.pl": "97d13c3f8a6a7b78235498294f112e964457857a680276b19d955be097b6cae2"
+          },
+          "target": {
+            "predicate": "f",
+            "arity": 3,
+            "types": [
+              "integer",
+              "list",
+              "list"
+            ],
+            "directions": [
+              "in",
+              "in",
+              "out"
+            ]
+          },
+          "examples": {
+            "positive": 3,
+            "negative": 2
+          },
+          "higher_order": [
+            {
+              "name": "ite",
+              "argument_arities": [
+                2
+              ],
+              "ordinary_arguments": 3,
+              "instances": 1
+            }
+          ],
+          "best_program": {
+            "label": "BEST PROG 2:",
+            "clauses": [
+              "f(A,B,C):-ite_a(B,A,C).",
+              "ite_p_a(A,B):-tail(A,B)."
+            ],
+            "metrics": {
+              "precision": "1.00",
+              "recall": "1.00",
+              "tp": 3,
+              "fn": 0,
+              "tn": 2,
+              "fp": 0
+            }
+          }
+        },
+        "meta": {
+          "path": "Meta",
+          "files": {
+            "HO.pl": "e526f2727c12b5a135336d104f3344b7c91b819cae66d46a76c6e7a0799d3909"
+          }
+        }
+      },
+      "conversion": {
+        "status": "qualified",
+        "coverage": "authored-ho-best-program-and-all-ho-example-occurrences",
+        "source_variant": "ho",
+        "fixture": "examples/prime/hopper_table1_first_order_ground_truth.metta",
+        "cases": {
+          "source_positive": 3,
+          "source_negative": 2,
+          "derived": 3,
+          "not_derived": 2,
+          "proof_occurrences": 3,
+          "label_disagreements": 0
+        }
+      }
+    },
+    {
+      "name": "allEven",
+      "group": "learning-first-order",
+      "variants": {
+        "fo": {
+          "path": "FO",
+          "files": {
+            "bias.pl": "3c91a546a33fb785bb572aeca4082a69e5a68143397ba7450e8c16aef5d73de6",
+            "bk.pl": "c0128e1c1dd4c2e15ae245da690887ee40783160cbbcc4e4fd3b2c5887bfc3d2",
+            "exs.pl": "489bbbe70677153906f65abee7c5c7352bfed6517a65119e9235b964feebc870"
+          },
+          "target": {
+            "predicate": "f",
+            "arity": 1,
+            "types": [
+              "list"
+            ],
+            "directions": [
+              "in"
+            ]
+          },
+          "examples": {
+            "positive": 1,
+            "negative": 1
+          },
+          "higher_order": [],
+          "best_program": {
+            "label": "BEST PROG 40:",
+            "clauses": [
+              "f(A):-empty(A).",
+              "f(A):-head(A,B),even(B),tail(A,C),f(C)."
+            ],
+            "metrics": {
+              "precision": "1.00",
+              "recall": "1.00",
+              "tp": 1,
+              "fn": 0,
+              "tn": 1,
+              "fp": 0
+            }
+          }
+        },
+        "ho": {
+          "path": "HO",
+          "files": {
+            "bias.pl": "509955b7a263eed28bb7f4cae276ad41fb2ecc14a19d698146a67f4222ddf19d",
+            "bk.pl": "92d3e71e82c14f6f9731bd962c2aa495b6f6edae7163d525ef1a424f8fa24b3c",
+            "exs.pl": "489bbbe70677153906f65abee7c5c7352bfed6517a65119e9235b964feebc870"
+          },
+          "target": {
+            "predicate": "f",
+            "arity": 1,
+            "types": [
+              "list"
+            ],
+            "directions": [
+              "in"
+            ]
+          },
+          "examples": {
+            "positive": 1,
+            "negative": 1
+          },
+          "higher_order": [
+            {
+              "name": "all",
+              "argument_arities": [
+                1
+              ],
+              "ordinary_arguments": 1,
+              "instances": 1
+            }
+          ],
+          "best_program": {
+            "label": "BEST PROG 5:",
+            "clauses": [
+              "f(A):-all_a(A).",
+              "all_p_a(A):-even(A)."
+            ],
+            "metrics": {
+              "precision": "1.00",
+              "recall": "1.00",
+              "tp": 1,
+              "fn": 0,
+              "tn": 1,
+              "fp": 0
+            }
+          }
+        },
+        "ho-opt": {
+          "path": "HO OPT",
+          "files": {
+            "bias.pl": "ae0e9745a95d593c292393d0ee446968ad55f3e14fbf556e7e6bb274f17054a4",
+            "bk.pl": "92d3e71e82c14f6f9731bd962c2aa495b6f6edae7163d525ef1a424f8fa24b3c",
+            "exs.pl": "489bbbe70677153906f65abee7c5c7352bfed6517a65119e9235b964feebc870"
+          },
+          "target": {
+            "predicate": "f",
+            "arity": 1,
+            "types": [
+              "list"
+            ],
+            "directions": [
+              "in"
+            ]
+          },
+          "examples": {
+            "positive": 1,
+            "negative": 1
+          },
+          "higher_order": [
+            {
+              "name": "all",
+              "argument_arities": [
+                1
+              ],
+              "ordinary_arguments": 1,
+              "instances": 1
+            }
+          ],
+          "best_program": {
+            "label": "BEST PROG 5:",
+            "clauses": [
+              "f(A):-all_a(A).",
+              "all_p_a(A):-even(A)."
+            ],
+            "metrics": {
+              "precision": "1.00",
+              "recall": "1.00",
+              "tp": 1,
+              "fn": 0,
+              "tn": 1,
+              "fp": 0
+            }
+          }
+        },
+        "meta": {
+          "path": "Meta",
+          "files": {
+            "HO.pl": "01ef9409034942653e63e05767d683401ef95915f2eaa5b032198403f88ee25e"
+          }
+        }
+      },
+      "conversion": {
+        "status": "qualified",
+        "coverage": "authored-ho-best-program-and-all-ho-example-occurrences",
+        "source_variant": "ho",
+        "fixture": "examples/prime/hopper_table1_first_order_ground_truth.metta",
+        "cases": {
+          "source_positive": 1,
+          "source_negative": 1,
+          "derived": 1,
+          "not_derived": 1,
+          "proof_occurrences": 1,
+          "label_disagreements": 0
+        }
+      }
+    },
+    {
+      "name": "findDup",
+      "group": "learning-first-order",
+      "variants": {
+        "fo": {
+          "path": "FO",
+          "files": {
+            "bias.pl": "03c72914f1aff111953376a9931eca0fd9d71397f9d5b37491885bc4e09e7809",
+            "bk.pl": "a4d2529399f1e6c002b77a7c42f1d6be157d6ad5fbe5a2288e0b983412aec66d",
+            "exs.pl": "5b825d3f8824ad9ad4feacdbcf0ea6144e17bdb302024f69ddf2f23171fea591"
+          },
+          "target": {
+            "predicate": "f",
+            "arity": 2,
+            "types": [
+              "list",
+              "element"
+            ],
+            "directions": [
+              "in",
+              "in"
+            ]
+          },
+          "examples": {
+            "positive": 3,
+            "negative": 2
+          },
+          "higher_order": [],
+          "best_program": {
+            "label": "BEST PROG 185:",
+            "clauses": [
+              "f(A,B):-tail(A,C),member(B,C),head(A,B).",
+              "f(A,B):-tail(A,C),f(C,B)."
+            ],
+            "metrics": {
+              "precision": "1.00",
+              "recall": "1.00",
+              "tp": 3,
+              "fn": 0,
+              "tn": 2,
+              "fp": 0
+            }
+          }
+        },
+        "ho": {
+          "path": "HO",
+          "files": {
+            "bias.pl": "16ab3360052962808b772fbe2584d30eb6fefd507799ef9cd3e36b8825737222",
+            "bk.pl": "8185c3a4983306763d07d431df6a1e6fda9f84848a5edd0ca29d3cfe130859f1",
+            "exs.pl": "5b825d3f8824ad9ad4feacdbcf0ea6144e17bdb302024f69ddf2f23171fea591"
+          },
+          "target": {
+            "predicate": "f",
+            "arity": 2,
+            "types": [
+              "list",
+              "element"
+            ],
+            "directions": [
+              "in",
+              "out"
+            ]
+          },
+          "examples": {
+            "positive": 3,
+            "negative": 2
+          },
+          "higher_order": [
+            {
+              "name": "caselist",
+              "argument_arities": [
+                1,
+                3
+              ],
+              "ordinary_arguments": 2,
+              "instances": 1
+            }
+          ],
+          "best_program": {
+            "label": "BEST PROG 82:",
+            "clauses": [
+              "caselist_q_a(A,B,C):-caselist_a(B,C).",
+              "caselist_q_a(A,B,C):-member(C,B),eq(C,A).",
+              "caselist_p_a(A):-e(B),member(A,B).",
+              "f(A,B):-caselist_a(A,B)."
+            ],
+            "metrics": {
+              "precision": "1.00",
+              "recall": "1.00",
+              "tp": 2,
+              "fn": 0,
+              "tn": 2,
+              "fp": 0
+            }
+          }
+        },
+        "ho-opt": {
+          "path": "HO  OPT",
+          "files": {
+            "bias.pl": "811e4c156743d05873a2c09f939299b0dc28ee486bf8eed7815c161a86f17a74",
+            "bk.pl": "8185c3a4983306763d07d431df6a1e6fda9f84848a5edd0ca29d3cfe130859f1",
+            "exs.pl": "5b825d3f8824ad9ad4feacdbcf0ea6144e17bdb302024f69ddf2f23171fea591"
+          },
+          "target": {
+            "predicate": "f",
+            "arity": 2,
+            "types": [
+              "list",
+              "element"
+            ],
+            "directions": [
+              "in",
+              "out"
+            ]
+          },
+          "examples": {
+            "positive": 3,
+            "negative": 2
+          },
+          "higher_order": [
+            {
+              "name": "caselist",
+              "argument_arities": [
+                1,
+                3
+              ],
+              "ordinary_arguments": 2,
+              "instances": 1
+            }
+          ],
+          "best_program": {
+            "label": "BEST PROG 82:",
+            "clauses": [
+              "caselist_q_a(A,B,C):-caselist_a(B,C).",
+              "caselist_q_a(A,B,C):-member(C,B),eq(C,A).",
+              "caselist_p_a(A):-empty(B),member(A,B).",
+              "f(A,B):-caselist_a(A,B)."
+            ],
+            "metrics": {
+              "precision": "1.00",
+              "recall": "1.00",
+              "tp": 2,
+              "fn": 0,
+              "tn": 2,
+              "fp": 0
+            }
+          }
+        },
+        "meta": {
+          "path": "Meta",
+          "files": {
+            "HO.pl": "a239be2585770d532a79d1dd7aa469c899c9db93d7b35c593e837e09036d2690"
+          }
+        }
+      },
+      "conversion": {
+        "status": "qualified",
+        "coverage": "authored-ho-best-program-and-all-ho-example-occurrences",
+        "source_variant": "ho",
+        "fixture": "examples/prime/hopper_table1_first_order_ground_truth.metta",
+        "cases": {
+          "source_positive": 3,
+          "source_negative": 2,
+          "derived": 3,
+          "not_derived": 2,
+          "proof_occurrences": 3,
+          "label_disagreements": 0
+        }
+      }
+    },
+    {
+      "name": "length",
+      "group": "learning-first-order",
+      "variants": {
+        "fo": {
+          "path": "FO",
+          "files": {
+            "bias.pl": "76244a69a1e67476e0509c85f28fd57e47181f4d21b93cb2e321325a334dee8a",
+            "bk.pl": "e1fb4f4b7e06c7520351c42e1be56d1ee9fdc3a252f987f638f2e5a105eaf3ff",
+            "exs.pl": "bef2c0868f6aa64fc18b66e47b89323d36bbcf2f1f6c54959c009038d55a911a"
+          },
+          "target": {
+            "predicate": "f",
+            "arity": 2,
+            "types": [
+              "list",
+              "integer"
+            ],
+            "directions": [
+              "in",
+              "out"
+            ]
+          },
+          "examples": {
+            "positive": 4,
+            "negative": 3
+          },
+          "higher_order": [],
+          "best_program": null
+        },
+        "ho": {
+          "path": "HO",
+          "files": {
+            "bias.pl": "f915b781e9f75f85e0449935244721b9eb251543e78126424ee374b09e58f976",
+            "bk.pl": "d96b68ae4e3c01a85d6687a467e4b89505b7153cd4f0cf20b058ebc50c39fc7d",
+            "exs.pl": "bef2c0868f6aa64fc18b66e47b89323d36bbcf2f1f6c54959c009038d55a911a"
+          },
+          "target": {
+            "predicate": "f",
+            "arity": 2,
+            "types": [
+              "list",
+              "integer"
+            ],
+            "directions": [
+              "in",
+              "out"
+            ]
+          },
+          "examples": {
+            "positive": 4,
+            "negative": 3
+          },
+          "higher_order": [
+            {
+              "name": "fold",
+              "argument_arities": [
+                3
+              ],
+              "ordinary_arguments": 3,
+              "instances": 1
+            }
+          ],
+          "best_program": {
+            "label": "BEST PROG 24:",
+            "clauses": [
+              "fold_p_a(A,B,C):-suc(A,C).",
+              "f(A,B):-zero(C),fold_a(C,A,B)."
+            ],
+            "metrics": {
+              "precision": "1.00",
+              "recall": "1.00",
+              "tp": 4,
+              "fn": 0,
+              "tn": 3,
+              "fp": 0
+            }
+          }
+        },
+        "ho-opt": {
+          "path": "HO OPT",
+          "files": {
+            "bias.pl": "1b293df17ccb4d34cd443b7a4b0ff32eff0a17937ad65b9535192da310ad4857",
+            "bk.pl": "d96b68ae4e3c01a85d6687a467e4b89505b7153cd4f0cf20b058ebc50c39fc7d",
+            "exs.pl": "bef2c0868f6aa64fc18b66e47b89323d36bbcf2f1f6c54959c009038d55a911a"
+          },
+          "target": {
+            "predicate": "f",
+            "arity": 2,
+            "types": [
+              "list",
+              "integer"
+            ],
+            "directions": [
+              "in",
+              "out"
+            ]
+          },
+          "examples": {
+            "positive": 4,
+            "negative": 3
+          },
+          "higher_order": [
+            {
+              "name": "fold",
+              "argument_arities": [
+                3
+              ],
+              "ordinary_arguments": 3,
+              "instances": 1
+            }
+          ],
+          "best_program": {
+            "label": "BEST PROG 24:",
+            "clauses": [
+              "fold_p_a(A,B,C):-suc(A,C).",
+              "f(A,B):-zero(C),fold_a(C,A,B)."
+            ],
+            "metrics": {
+              "precision": "1.00",
+              "recall": "1.00",
+              "tp": 4,
+              "fn": 0,
+              "tn": 3,
+              "fp": 0
+            }
+          }
+        },
+        "meta": {
+          "path": "Meta",
+          "files": {
+            "HO.pl": "b5b95284e3e2d249ba078dee8424b95590ad9fd12c0796428dad4eeb9c8237ca"
+          }
+        }
+      },
+      "conversion": {
+        "status": "qualified",
+        "coverage": "authored-ho-best-program-and-all-ho-example-occurrences",
+        "source_variant": "ho",
+        "fixture": "examples/prime/hopper_table1_first_order_ground_truth.metta",
+        "cases": {
+          "source_positive": 4,
+          "source_negative": 3,
+          "derived": 4,
+          "not_derived": 3,
+          "proof_occurrences": 4,
+          "label_disagreements": 0
+        }
+      }
+    },
+    {
+      "name": "member",
+      "group": "learning-first-order",
+      "variants": {
+        "fo": {
+          "path": "FO",
+          "files": {
+            "bias.pl": "f1a0afb8d4f11c2b5ab6543175fe90fa8ff3ac590a89316c0ffacb6135d46167",
+            "bk.pl": "f736bb461283d96de67d4b32aa7de4afcff6b5232ef7d1a5256ecfdcccc7f03e",
+            "exs.pl": "0e6b7cf4ce9c7d9af9f12b356682effdc0cffe2863b907d96c4ca005dac8a672"
+          },
+          "target": {
+            "predicate": "f",
+            "arity": 2,
+            "types": [
+              "list",
+              "element"
+            ],
+            "directions": [
+              "in",
+              "in"
+            ]
+          },
+          "examples": {
+            "positive": 4,
+            "negative": 3
+          },
+          "higher_order": [],
+          "best_program": null
+        },
+        "ho": {
+          "path": "HO",
+          "files": {
+            "bias.pl": "565fd9fafc603fa66332c277c16202634143f8b8afdafed6b669767721a705a2",
+            "bk.pl": "89c9ffd0bad23e1579530be82b8be2cf0004f40180aaf48b65b1cb03a1607bfa",
+            "exs.pl": "0e6b7cf4ce9c7d9af9f12b356682effdc0cffe2863b907d96c4ca005dac8a672"
+          },
+          "target": {
+            "predicate": "f",
+            "arity": 2,
+            "types": [
+              "list",
+              "element"
+            ],
+            "directions": [
+              "in",
+              "in"
+            ]
+          },
+          "examples": {
+            "positive": 4,
+            "negative": 3
+          },
+          "higher_order": [
+            {
+              "name": "any",
+              "argument_arities": [
+                2
+              ],
+              "ordinary_arguments": 2,
+              "instances": 1
+            }
+          ],
+          "best_program": {
+            "label": "BEST PROG 13:",
+            "clauses": [
+              "any_p_a(A,B):-head(A,B).",
+              "f(A,B):-any_a(A,B)."
+            ],
+            "metrics": {
+              "precision": "1.00",
+              "recall": "1.00",
+              "tp": 4,
+              "fn": 0,
+              "tn": 3,
+              "fp": 0
+            }
+          }
+        },
+        "ho-opt": {
+          "path": "HO OPT",
+          "files": {
+            "bias.pl": "2b1a9962c19e8651d1a1b4bc23da5c08d268e6bb13daad4316df04ced34557e1",
+            "bk.pl": "89c9ffd0bad23e1579530be82b8be2cf0004f40180aaf48b65b1cb03a1607bfa",
+            "exs.pl": "0e6b7cf4ce9c7d9af9f12b356682effdc0cffe2863b907d96c4ca005dac8a672"
+          },
+          "target": {
+            "predicate": "f",
+            "arity": 2,
+            "types": [
+              "list",
+              "element"
+            ],
+            "directions": [
+              "in",
+              "in"
+            ]
+          },
+          "examples": {
+            "positive": 4,
+            "negative": 3
+          },
+          "higher_order": [
+            {
+              "name": "any",
+              "argument_arities": [
+                2
+              ],
+              "ordinary_arguments": 2,
+              "instances": 1
+            }
+          ],
+          "best_program": {
+            "label": "BEST PROG 13:",
+            "clauses": [
+              "any_p_a(A,B):-head(A,B).",
+              "f(A,B):-any_a(A,B)."
+            ],
+            "metrics": {
+              "precision": "1.00",
+              "recall": "1.00",
+              "tp": 4,
+              "fn": 0,
+              "tn": 3,
+              "fp": 0
+            }
+          }
+        },
+        "meta": {
+          "path": "Meta",
+          "files": {
+            "HO.pl": "8a19419e63b3a37253e36cd849df14c307ec37632525ad43100d2e0f0cae819e"
+          }
+        }
+      },
+      "conversion": {
+        "status": "qualified",
+        "coverage": "authored-ho-best-program-and-all-ho-example-occurrences",
+        "source_variant": "ho",
+        "fixture": "examples/prime/hopper_table1_first_order_ground_truth.metta",
+        "cases": {
+          "source_positive": 4,
+          "source_negative": 3,
+          "derived": 4,
+          "not_derived": 3,
+          "proof_occurrences": 4,
+          "label_disagreements": 0
+        }
+      }
+    },
+    {
+      "name": "sorted",
+      "group": "learning-first-order",
+      "variants": {
+        "fo": {
+          "path": "FO",
+          "files": {
+            "bias.pl": "d15ea40d90cdda5d338902bcef69a364e84e5bff6714ab97fd2152865c2b3293",
+            "bk.pl": "1f25a0e5f31cde092704e4c670e05e3a8b8b3b830a621fb6e686c0e0724e13f1",
+            "exs.pl": "0149e5047c40a6b76731a8aaa283bddfcbe5129b2337cf5a4cf6615145ff1c89"
+          },
+          "target": {
+            "predicate": "f",
+            "arity": 1,
+            "types": [
+              "list"
+            ],
+            "directions": [
+              "in"
+            ]
+          },
+          "examples": {
+            "positive": 10,
+            "negative": 10
+          },
+          "higher_order": [],
+          "best_program": null
+        },
+        "ho": {
+          "path": "HO",
+          "files": {
+            "bias.pl": "96e9e23505fddb08ff8afa47051b5d0776883577948cd8def39fe101ea39144c",
+            "bk.pl": "19b519ee2e943e7dbdd7bc778e864a18264a25a5600e209521143295142f4b09",
+            "exs.pl": "990fa6e7dcce991889a7f3a2ef570126a579b06cf989d6b241c5153ab57d6cc7"
+          },
+          "target": {
+            "predicate": "f",
+            "arity": 1,
+            "types": [
+              "list"
+            ],
+            "directions": [
+              "in"
+            ]
+          },
+          "examples": {
+            "positive": 10,
+            "negative": 12
+          },
+          "higher_order": [
+            {
+              "name": "fold",
+              "argument_arities": [
+                3
+              ],
+              "ordinary_arguments": 3,
+              "instances": 1
+            }
+          ],
+          "best_program": {
+            "label": "BEST PROG 94:",
+            "clauses": [
+              "fold_p_a(A,B,C):-suc(B,C),geq(C,A).",
+              "f(A):-zero(C),fold_a(C,A,B)."
+            ],
+            "metrics": {
+              "precision": "1.00",
+              "recall": "1.00",
+              "tp": 10,
+              "fn": 0,
+              "tn": 12,
+              "fp": 0
+            }
+          }
+        },
+        "ho-opt": {
+          "path": "HO OPT",
+          "files": {
+            "bias.pl": "43c388936ef7b51474aa05aa37e1af61459f4dd40387f0cd5816414d15716dfc",
+            "bk.pl": "19b519ee2e943e7dbdd7bc778e864a18264a25a5600e209521143295142f4b09",
+            "exs.pl": "990fa6e7dcce991889a7f3a2ef570126a579b06cf989d6b241c5153ab57d6cc7"
+          },
+          "target": {
+            "predicate": "f",
+            "arity": 1,
+            "types": [
+              "list"
+            ],
+            "directions": [
+              "in"
+            ]
+          },
+          "examples": {
+            "positive": 10,
+            "negative": 12
+          },
+          "higher_order": [
+            {
+              "name": "fold",
+              "argument_arities": [
+                3
+              ],
+              "ordinary_arguments": 3,
+              "instances": 1
+            }
+          ],
+          "best_program": {
+            "label": "BEST PROG 94:",
+            "clauses": [
+              "fold_p_a(A,B,C):-suc(B,C),geq(C,A).",
+              "f(A):-zero(C),fold_a(C,A,B)."
+            ],
+            "metrics": {
+              "precision": "1.00",
+              "recall": "1.00",
+              "tp": 10,
+              "fn": 0,
+              "tn": 12,
+              "fp": 0
+            }
+          }
+        },
+        "meta": {
+          "path": "Meta",
+          "files": {
+            "HO.pl": "8a8c177c940e7a505c0f1a8bf2b9dc7c135caefeda98211dc8f4f2114c42a954"
+          }
+        }
+      },
+    "conversion": {
+      "status": "qualified-with-recorded-source-erratum",
+      "coverage": "authored-ho-best-program-and-all-ho-example-occurrences",
+      "source_variant": "ho",
+      "fixture": "examples/prime/hopper_table1_first_order_ground_truth.metta",
+      "cases": {
+        "source_positive": 10,
+        "source_negative": 12,
+        "derived": 11,
+        "not_derived": 11,
+        "proof_occurrences": 11,
+        "label_disagreements": 1
+      },
+      "source_disagreement": {
+        "source_variant": "ho",
+        "source_polarity": "negative",
+        "source_term": "f([0,0,0,0])",
+        "derived_proof_occurrences": 1
+      },
+      "source_erratum": {
+        "kind": "published-best-program-confusion-matrix-disagrees-with-examples",
+        "reported": {
+          "tp": 10,
+          "fn": 0,
+          "tn": 12,
+          "fp": 0
+        },
+        "computed": {
+          "tp": 10,
+          "fn": 0,
+          "tn": 11,
+          "fp": 1
+        }
+      }
+    }
+    },
+    {
+      "name": "reverse",
+      "group": "learning-first-order",
+      "variants": {
+        "fo": {
+          "path": "FO",
+          "files": {
+            "bias.pl": "f0538125610c4cac1e7206bb6c177b18f356c3cd3fb2e6999222a15ca853fb61",
+            "bk.pl": "f0ce7b7d9f38702b6424cdcd82f246517de498b2783e78df93ed7689a2d9463f",
+            "exs.pl": "483f98f0d7bc4841f198d4c94ec98df3e14babea2070b4f6f76f3b02ea91742c"
+          },
+          "target": {
+            "predicate": "f",
+            "arity": 2,
+            "types": [
+              "list",
+              "list"
+            ],
+            "directions": [
+              "in",
+              "out"
+            ]
+          },
+          "examples": {
+            "positive": 4,
+            "negative": 5
+          },
+          "higher_order": [],
+          "best_program": null
+        },
+        "ho": {
+          "path": "HO",
+          "files": {
+            "bias.pl": "547ced7a87ec15c43bef3045a1d60524d84f0479beb6c5a2a6dda0ba78f6d8d1",
+            "bk.pl": "8f52a912946c0129a024117da7f9eb7be2b3c9cd66220e16744ee8baa3165109",
+            "exs.pl": "483f98f0d7bc4841f198d4c94ec98df3e14babea2070b4f6f76f3b02ea91742c"
+          },
+          "target": {
+            "predicate": "f",
+            "arity": 2,
+            "types": [
+              "list",
+              "list"
+            ],
+            "directions": [
+              "in",
+              "out"
+            ]
+          },
+          "examples": {
+            "positive": 4,
+            "negative": 5
+          },
+          "higher_order": [
+            {
+              "name": "fold",
+              "argument_arities": [
+                3
+              ],
+              "ordinary_arguments": 3,
+              "instances": 1
+            }
+          ],
+          "best_program": {
+            "label": "BEST PROG 108:",
+            "clauses": [
+              "fold_p_a(A,B,C):-head(C,B),tail(C,A).",
+              "f(A,B):-empty(C),fold_a(C,A,B)."
+            ],
+            "metrics": {
+              "precision": "1.00",
+              "recall": "1.00",
+              "tp": 4,
+              "fn": 0,
+              "tn": 5,
+              "fp": 0
+            }
+          }
+        },
+        "ho-opt": {
+          "path": "HO OPT",
+          "files": {
+            "bias.pl": "e142825dce3e688e58c231c500b3c1591725d936dc6d55701a829dd6d3b8bb36",
+            "bk.pl": "8f52a912946c0129a024117da7f9eb7be2b3c9cd66220e16744ee8baa3165109",
+            "exs.pl": "483f98f0d7bc4841f198d4c94ec98df3e14babea2070b4f6f76f3b02ea91742c"
+          },
+          "target": {
+            "predicate": "f",
+            "arity": 2,
+            "types": [
+              "list",
+              "list"
+            ],
+            "directions": [
+              "in",
+              "out"
+            ]
+          },
+          "examples": {
+            "positive": 4,
+            "negative": 5
+          },
+          "higher_order": [
+            {
+              "name": "fold",
+              "argument_arities": [
+                3
+              ],
+              "ordinary_arguments": 3,
+              "instances": 1
+            }
+          ],
+          "best_program": {
+            "label": "BEST PROG 108:",
+            "clauses": [
+              "fold_p_a(A,B,C):-head(C,B),tail(C,A).",
+              "f(A,B):-empty(C),fold_a(C,A,B)."
+            ],
+            "metrics": {
+              "precision": "1.00",
+              "recall": "1.00",
+              "tp": 4,
+              "fn": 0,
+              "tn": 5,
+              "fp": 0
+            }
+          }
+        },
+        "meta": {
+          "path": "Meta",
+          "files": {
+            "HO.pl": "15ed5c99460b2432034dc3dde3ff66f007e5167dcdd3baabf0911030ed081c07"
+          }
+        }
+      },
+      "conversion": {
+        "status": "qualified",
+        "coverage": "authored-ho-best-program-and-all-ho-example-occurrences",
+        "source_variant": "ho",
+        "fixture": "examples/prime/hopper_table1_first_order_ground_truth.metta",
+        "cases": {
+          "source_positive": 4,
+          "source_negative": 5,
+          "derived": 4,
+          "not_derived": 5,
+          "proof_occurrences": 4,
+          "label_disagreements": 0
+        }
+      }
+    },
+    {
+      "name": "dropLast",
+      "group": "learning-higher-order",
+      "variants": {
+        "fo": {
+          "path": "FO",
+          "files": {
+            "bias.pl": "22327cfd7a59d6900b947801f225b2b34335eb2428f3b5210171cf3ab8e960d1",
+            "bk.pl": "bf51061820a004f33dde80bd44ea183f6524f59acb82ced25d185f463b238ba7",
+            "exs.pl": "b1f0f5ffa69ee75d31dd15a185b71d74fb5a0f2ccc5e638dc520684febe166d9"
+          },
+          "target": {
+            "predicate": "f",
+            "arity": 2,
+            "types": [
+              "dlist",
+              "dlist"
+            ],
+            "directions": [
+              "in",
+              "out"
+            ]
+          },
+          "examples": {
+            "positive": 2,
+            "negative": 2
+          },
+          "higher_order": [],
+          "best_program": null
+        },
+        "ho": {
+          "path": "HO",
+          "files": {
+            "bias.pl": "6f22126773af06acac41537be85faa54497f80f2a3e0a4a751bc3046335212ad",
+            "bk.pl": "4a2aadc04665ab2095cee70d60c8ee4b0deae5dc7747e4f533029e75023ee54a",
+            "exs.pl": "b1f0f5ffa69ee75d31dd15a185b71d74fb5a0f2ccc5e638dc520684febe166d9"
+          },
+          "target": {
+            "predicate": "f",
+            "arity": 2,
+            "types": [
+              "list",
+              "list"
+            ],
+            "directions": [
+              "in",
+              "out"
+            ]
+          },
+          "examples": {
+            "positive": 2,
+            "negative": 2
+          },
+          "higher_order": [
+            {
+              "name": "map",
+              "argument_arities": [
+                2
+              ],
+              "ordinary_arguments": 2,
+              "instances": 1
+            }
+          ],
+          "best_program": {
+            "label": "BEST PROG 320:",
+            "clauses": [
+              "f(A,B):-map(map_p_a,A,B).",
+              "map_p_a(A,B):-reverse(A,C),tail(C,D),reverse(D,B)."
+            ],
+            "metrics": {
+              "precision": "1.00",
+              "recall": "1.00",
+              "tp": 2,
+              "fn": 0,
+              "tn": 2,
+              "fp": 0
+            }
+          }
+        },
+        "ho-opt": {
+          "path": "HO OPT",
+          "files": {
+            "bias.pl": "4ecabd6323cdb2a50a8101596599284bc13e1373776c48c2521937f802627c46",
+            "bk.pl": "6c6e5062a5be9c496fdac70d5b9dd9cb67d3c219947750aed56f81c732d25b65",
+            "exs.pl": "b1f0f5ffa69ee75d31dd15a185b71d74fb5a0f2ccc5e638dc520684febe166d9"
+          },
+          "target": {
+            "predicate": "f",
+            "arity": 2,
+            "types": [
+              "list",
+              "list"
+            ],
+            "directions": [
+              "in",
+              "out"
+            ]
+          },
+          "examples": {
+            "positive": 2,
+            "negative": 2
+          },
+          "higher_order": [
+            {
+              "name": "map",
+              "argument_arities": [
+                2
+              ],
+              "ordinary_arguments": 2,
+              "instances": 1
+            }
+          ],
+          "best_program": {
+            "label": "BEST PROG 320:",
+            "clauses": [
+              "f(A,B):-map(map_p_a,A,B).",
+              "map_p_a(A,B):-reverse(A,C),tail(C,D),reverse(D,B)."
+            ],
+            "metrics": {
+              "precision": "1.00",
+              "recall": "1.00",
+              "tp": 2,
+              "fn": 0,
+              "tn": 2,
+              "fp": 0
+            }
+          }
+        },
+        "meta": {
+          "path": "Meta",
+          "files": {
+            "HO.pl": "bebbd9c5f7ead86cd9217ee0d007c53e6807aaed673106f715ff4236db606928"
+          }
+        }
+      },
+      "conversion": {
+        "status": "qualified",
+        "coverage": "authored-ho-best-program-and-all-ho-example-occurrences-with-map-rel",
+        "source_variant": "ho",
+        "fixture": "examples/prime/hopper_table1_higher_order_ground_truth.metta",
+        "cases": {
+          "source_positive": 2,
+          "source_negative": 2,
+          "derived": 2,
+          "not_derived": 2,
+          "proof_occurrences": 2,
+          "label_disagreements": 0
+        },
+        "variant_comparison": {
+          "examples": "fo-ho-ho-opt-identical",
+          "program": "ho-ho-opt-identical;fo-has-no-authored-best-program",
+          "target": "ho-ho-opt-list;fo-dlist"
+        }
+      }
+    },
+    {
+      "name": "encryption",
+      "group": "learning-higher-order",
+      "variants": {
+        "fo": {
+          "path": "FO",
+          "files": {
+            "bias.pl": "5593748adb50b781dc6ff3dfe177a147e5daa4848e546f37e52f4d7e30c8e3d0",
+            "bk.pl": "2bed0d712c14e161e0a2dfca6a8394839f7cef611ae8974b6cb0503d79a953b9",
+            "exs.pl": "9f4716fbbb4ebe5c4c9a18cae953d501f3d74eeac0ea2c47e07519330fe550ab"
+          },
+          "target": {
+            "predicate": "f",
+            "arity": 2,
+            "types": [
+              "list",
+              "list"
+            ],
+            "directions": [
+              "in",
+              "out"
+            ]
+          },
+          "examples": {
+            "positive": 28,
+            "negative": 13
+          },
+          "higher_order": [],
+          "best_program": {
+            "label": "BEST PROG 88:",
+            "clauses": [
+              "f(A,B):-map_a(A,B).",
+              "map_p_a(A,B):-char_to_int(A,E),my_pred(E,D),my_pred(D,C),int_to_char(C,B)."
+            ],
+            "metrics": {
+              "precision": "1.00",
+              "recall": "1.00",
+              "tp": 28,
+              "fn": 0,
+              "tn": 13,
+              "fp": 0
+            }
+          }
+        },
+        "ho": {
+          "path": "HO",
+          "files": {
+            "bias.pl": "fd920f526660d275d164cfc285c4771e367bf00b6937dfbde97ace7618bb25d1",
+            "bk.pl": "e2197872b79f9a117e027024aa0bb83b120fb389a3540fa0d9e6168518594cee",
+            "exs.pl": "9f4716fbbb4ebe5c4c9a18cae953d501f3d74eeac0ea2c47e07519330fe550ab"
+          },
+          "target": {
+            "predicate": "f",
+            "arity": 2,
+            "types": [
+              "list",
+              "list"
+            ],
+            "directions": [
+              "in",
+              "out"
+            ]
+          },
+          "examples": {
+            "positive": 28,
+            "negative": 13
+          },
+          "higher_order": [
+            {
+              "name": "map",
+              "argument_arities": [
+                2
+              ],
+              "ordinary_arguments": 2,
+              "instances": 1
+            }
+          ],
+          "best_program": {
+            "label": "BEST PROG 88:",
+            "clauses": [
+              "f(A,B):-map_a(A,B).",
+              "map_p_a(A,B):-char_to_int(A,E),my_pred(E,D),my_pred(D,C),int_to_char(C,B)."
+            ],
+            "metrics": {
+              "precision": "1.00",
+              "recall": "1.00",
+              "tp": 28,
+              "fn": 0,
+              "tn": 13,
+              "fp": 0
+            }
+          }
+        },
+        "ho-opt": {
+          "path": "HO OPT",
+          "files": {
+            "bias.pl": "825fbcfff8840fe924635bc154aaa30c35471ad2a9408be75cbdc66ef3cce592",
+            "bk.pl": "a35cd00c1ff3f2e4586ba06f38306097b0e86c4d81372fa45af35581961e4cd8",
+            "exs.pl": "9f4716fbbb4ebe5c4c9a18cae953d501f3d74eeac0ea2c47e07519330fe550ab"
+          },
+          "target": {
+            "predicate": "f",
+            "arity": 2,
+            "types": [
+              "list",
+              "list"
+            ],
+            "directions": [
+              "in",
+              "out"
+            ]
+          },
+          "examples": {
+            "positive": 28,
+            "negative": 13
+          },
+          "higher_order": [
+            {
+              "name": "map",
+              "argument_arities": [
+                2
+              ],
+              "ordinary_arguments": 2,
+              "instances": 1
+            }
+          ],
+          "best_program": {
+            "label": "BEST PROG 88:",
+            "clauses": [
+              "f(A,B):-map_a(A,B).",
+              "map_p_a(A,B):-char_to_int(A,E),my_pred(E,D),my_pred(D,C),int_to_char(C,B)."
+            ],
+            "metrics": {
+              "precision": "1.00",
+              "recall": "1.00",
+              "tp": 28,
+              "fn": 0,
+              "tn": 13,
+              "fp": 0
+            }
+          }
+        },
+        "meta": {
+          "path": "Meta",
+          "files": {
+            "HO.pl": "63e9376a02c8c512027d66a64f69761c7eb9c9a1eb0bdb297253d43bc5e86bbc"
+          }
+        }
+      },
+      "conversion": {
+        "status": "qualified",
+        "coverage": "authored-ho-best-program-and-all-ho-example-occurrences-with-map-rel",
+        "source_variant": "ho",
+        "fixture": "examples/prime/hopper_table1_higher_order_ground_truth.metta",
+        "cases": {
+          "source_positive": 28,
+          "source_negative": 13,
+          "derived": 28,
+          "not_derived": 13,
+          "proof_occurrences": 28,
+          "label_disagreements": 0
+        },
+        "variant_comparison": {
+          "examples": "fo-ho-ho-opt-identical",
+          "program": "fo-ho-ho-opt-identical",
+          "target": "fo-ho-ho-opt-list"
+        },
+        "native_learning": {
+          "status": "qualified",
+          "coverage": "typed-path-learning-and-all-ho-examples-with-map-rel",
+          "source_variant": "ho",
+          "fixture": "examples/prime/hopper_encryption_native_learning.metta",
+          "hypothesis_space": {
+            "path_length": 4,
+            "primitive_declarations": 3,
+            "raw_candidates": 81,
+            "typed_candidates": 2,
+            "example_consistent": 1
+          },
+          "cases": {
+            "source_positive": 28,
+            "source_negative": 13,
+            "label_disagreements": 0
+          }
+        }
+      }
+    },
+    {
+      "name": "repeatN",
+      "group": "additional",
+      "variants": {
+        "fo": {
+          "path": "FO",
+          "files": {
+            "bias.pl": "8542a93d89f4bb518f93a84ed6336aab420f36832cf32dd91dd484d846a5d1c5",
+            "bk.pl": "8eca47fe8d2f30788cb6ae643de60b44238a5de2e82415a4e49d5c6b03e07c66",
+            "exs.pl": "58eda36903b51d28ec97685d235aea7abd6fced162a1a96e4e401502b90f7fb9"
+          },
+          "target": {
+            "predicate": "f",
+            "arity": 3,
+            "types": [
+              "list",
+              "integer",
+              "list"
+            ],
+            "directions": [
+              "in",
+              "in",
+              "out"
+            ]
+          },
+          "examples": {
+            "positive": 7,
+            "negative": 2
+          },
+          "higher_order": [],
+          "best_program": null
+        },
+        "ho": {
+          "path": "HO",
+          "files": {
+            "bias.pl": "c231989e578d720c7ce89d1818f27096135c4dd2f13398e2d0dad5704ebd4d49",
+            "bk.pl": "c768644215c9fc4861100a068039a84370b303b9f33c62a7e2196a7a95b3b8c2",
+            "exs.pl": "5b6ca5b3981770385d9ffc021a98827346d72da6eb3ef0686e79677ab72a99a9"
+          },
+          "target": {
+            "predicate": "f",
+            "arity": 3,
+            "types": [
+              "list",
+              "integer",
+              "list"
+            ],
+            "directions": [
+              "in",
+              "in",
+              "out"
+            ]
+          },
+          "examples": {
+            "positive": 7,
+            "negative": 2
+          },
+          "higher_order": [
+            {
+              "name": "ite",
+              "argument_arities": [
+                2
+              ],
+              "ordinary_arguments": 3,
+              "instances": 1
+            },
+            {
+              "name": "ite",
+              "argument_arities": [
+                3
+              ],
+              "ordinary_arguments": 4,
+              "instances": 1
+            }
+          ],
+          "best_program": {
+            "label": "BEST PROG 8:",
+            "clauses": [
+              "f(A,B,C):-empty(D),ite_a(D,B,C,A).",
+              "ite_p_a(A,B,C):-app(A,C,B)."
+            ],
+            "metrics": {
+              "precision": "1.00",
+              "recall": "1.00",
+              "tp": 5,
+              "fn": 0,
+              "tn": 1,
+              "fp": 0
+            }
+          }
+        },
+        "ho-opt": {
+          "path": "HO OPT",
+          "files": {
+            "bias.pl": "ca8deaf7d7a6b933240c2c3cc9a0943128e76ca154e6606a06cc6f19b5fa71aa",
+            "bk.pl": "c768644215c9fc4861100a068039a84370b303b9f33c62a7e2196a7a95b3b8c2",
+            "exs.pl": "5b6ca5b3981770385d9ffc021a98827346d72da6eb3ef0686e79677ab72a99a9"
+          },
+          "target": {
+            "predicate": "f",
+            "arity": 3,
+            "types": [
+              "list",
+              "integer",
+              "list"
+            ],
+            "directions": [
+              "in",
+              "in",
+              "out"
+            ]
+          },
+          "examples": {
+            "positive": 7,
+            "negative": 2
+          },
+          "higher_order": [
+            {
+              "name": "ite",
+              "argument_arities": [
+                2
+              ],
+              "ordinary_arguments": 3,
+              "instances": 1
+            },
+            {
+              "name": "ite",
+              "argument_arities": [
+                3
+              ],
+              "ordinary_arguments": 4,
+              "instances": 1
+            }
+          ],
+          "best_program": {
+            "label": "BEST PROG 8:",
+            "clauses": [
+              "f(A,B,C):-empty(D),ite_a(D,B,C,A).",
+              "ite_p_a(A,B,C):-app(A,C,B)."
+            ],
+            "metrics": {
+              "precision": "1.00",
+              "recall": "1.00",
+              "tp": 5,
+              "fn": 0,
+              "tn": 1,
+              "fp": 0
+            }
+          }
+        },
+        "meta": {
+          "path": "Meta",
+          "files": {
+            "HO.pl": "71f76327a3ec70018a80a96e32d331acb234cd5a417ea7c382a0467146d7b97a"
+          }
+        }
+      },
+      "conversion": {
+        "status": "qualified",
+        "coverage": "authored-ho-best-program-and-all-ho-example-occurrences-with-proof-relevant-indexed-recursion",
+        "source_variant": "ho",
+        "fixture": "examples/prime/hopper_table1_relational_recursion_ground_truth.metta",
+        "cases": {
+          "source_positive": 7,
+          "source_negative": 2,
+          "derived": 7,
+          "not_derived": 2,
+          "proof_occurrences": 7,
+          "label_disagreements": 0
+        },
+        "variant_comparison": {
+          "examples": "fo-ho-ho-opt-semantic-identical;physical-source-format-differs",
+          "program": "ho-ho-opt-identical;fo-has-no-authored-best-program",
+          "target": "fo-ho-ho-opt-identical"
+        }
+      }
+    },
+    {
+      "name": "rotateN",
+      "group": "additional",
+      "variants": {
+        "fo": {
+          "path": "FO",
+          "files": {
+            "bias.pl": "6a8510c6f7e4b88e0649f461b699068f409716062840b8ed74e39d9e7af44565",
+            "bk.pl": "e868234c2959a5def7cfcc9a3a6c7e14b4674614be5363fcace30a35327db4f2",
+            "exs.pl": "d5069da45dc7cb66b77b096130a2d0a365ba6c360421e96f0a5493eec9c0d5b2"
+          },
+          "target": {
+            "predicate": "f",
+            "arity": 3,
+            "types": [
+              "integer",
+              "list",
+              "list"
+            ],
+            "directions": [
+              "in",
+              "in",
+              "out"
+            ]
+          },
+          "examples": {
+            "positive": 6,
+            "negative": 2
+          },
+          "higher_order": [],
+          "best_program": null
+        },
+        "ho": {
+          "path": "HO",
+          "files": {
+            "bias.pl": "f44f443f772d480e08e03dccad672b56c600b9e87831d3fbe7dfdf8adf14ac90",
+            "bk.pl": "5dcd073cba14455fff11b624966fb6cb41590f6b96efed9a56f4c15a832ba095",
+            "exs.pl": "d5069da45dc7cb66b77b096130a2d0a365ba6c360421e96f0a5493eec9c0d5b2"
+          },
+          "target": {
+            "predicate": "f",
+            "arity": 3,
+            "types": [
+              "integer",
+              "list",
+              "list"
+            ],
+            "directions": [
+              "in",
+              "in",
+              "out"
+            ]
+          },
+          "examples": {
+            "positive": 6,
+            "negative": 2
+          },
+          "higher_order": [
+            {
+              "name": "ite",
+              "argument_arities": [
+                2
+              ],
+              "ordinary_arguments": 3,
+              "instances": 1
+            }
+          ],
+          "best_program": {
+            "label": "BEST PROG 526:",
+            "clauses": [
+              "f(A,B,C):-ite_a(B,A,C).",
+              "ite_p_a(A,B):-tail(A,C),head(A,D),app(C,D,B)."
+            ],
+            "metrics": {
+              "precision": "1.00",
+              "recall": "1.00",
+              "tp": 6,
+              "fn": 0,
+              "tn": 2,
+              "fp": 0
+            }
+          }
+        },
+        "ho-opt": {
+          "path": "HO OPT",
+          "files": {
+            "bias.pl": "52e2b9f987dc1d9a80c83a99d837eee4cf666f1ddeb95613e2f5e0ca992bf74d",
+            "bk.pl": "5dcd073cba14455fff11b624966fb6cb41590f6b96efed9a56f4c15a832ba095",
+            "exs.pl": "d5069da45dc7cb66b77b096130a2d0a365ba6c360421e96f0a5493eec9c0d5b2"
+          },
+          "target": {
+            "predicate": "f",
+            "arity": 3,
+            "types": [
+              "integer",
+              "list",
+              "list"
+            ],
+            "directions": [
+              "in",
+              "in",
+              "out"
+            ]
+          },
+          "examples": {
+            "positive": 6,
+            "negative": 2
+          },
+          "higher_order": [
+            {
+              "name": "ite",
+              "argument_arities": [
+                2
+              ],
+              "ordinary_arguments": 3,
+              "instances": 1
+            }
+          ],
+          "best_program": {
+            "label": "BEST PROG 526:",
+            "clauses": [
+              "f(A,B,C):-ite_a(B,A,C).",
+              "ite_p_a(A,B):-tail(A,C),head(A,D),app(C,D,B)."
+            ],
+            "metrics": {
+              "precision": "1.00",
+              "recall": "1.00",
+              "tp": 6,
+              "fn": 0,
+              "tn": 2,
+              "fp": 0
+            }
+          }
+        },
+        "meta": {
+          "path": "Meta",
+          "files": {
+            "HO.pl": "a6b132e1c82bbe27e70905bc7aad6b642699748be97a6aa8b10cdd1e06ad2c1a"
+          }
+        }
+      },
+      "conversion": {
+        "status": "qualified",
+        "coverage": "authored-ho-best-program-and-all-ho-example-occurrences-with-typed-iteration",
+        "source_variant": "ho",
+        "fixture": "examples/prime/hopper_table1_additional_iterative_ground_truth.metta",
+        "cases": {
+          "source_positive": 6,
+          "source_negative": 2,
+          "derived": 6,
+          "not_derived": 2,
+          "proof_occurrences": 6,
+          "label_disagreements": 0
+        },
+        "variant_comparison": {
+          "examples": "fo-ho-ho-opt-identical",
+          "program": "ho-ho-opt-identical;fo-has-no-authored-best-program",
+          "target": "fo-ho-ho-opt-identical"
+        }
+      }
+    },
+    {
+      "name": "allSeqN",
+      "group": "additional",
+      "variants": {
+        "fo": {
+          "path": "FO",
+          "files": {
+            "bias.pl": "f757b736a0257a33334b08203b55dfb1b2da7a7382a5f2a49c08e2aafb6e95e4",
+            "bk.pl": "059ded0901edcdd079b49d5052a6d08735e6506e07d59974dc9a0ea88c2f3063",
+            "exs.pl": "87936ed89ec632cff8e7ccd8dafe0f67cc36f16c502dc0daab22b6be16615c25"
+          },
+          "target": {
+            "predicate": "f",
+            "arity": 2,
+            "types": [
+              "element",
+              "list"
+            ],
+            "directions": [
+              "in",
+              "out"
+            ]
+          },
+          "examples": {
+            "positive": 5,
+            "negative": 3
+          },
+          "higher_order": [
+            {
+              "name": "h",
+              "argument_arities": [
+                3
+              ],
+              "ordinary_arguments": 3,
+              "instances": 1
+            },
+            {
+              "name": "g",
+              "argument_arities": [
+                2
+              ],
+              "ordinary_arguments": 2,
+              "instances": 1
+            }
+          ],
+          "best_program": {
+            "label": "BEST PROG 1:",
+            "clauses": [
+              "f(A,B):-zero(C),h_a(C,A,D),g_a(D,B).",
+              "g_p_a(A,B):-empty(A),empty(B).",
+              "g_p_a(A,B):-head(A,C),tail(A,F),zero(E),h_p_a(E,C,D),g_p_a(F,G),tail2(B,G),head2(B,D).",
+              "h_p_a(A,B,C):-zero(B),empty(C).",
+              "h_p_a(A,B,C):-pred(B,D),suc(A,E),less0(B),h_p_a(E,D,F),tail2(C,F),head(C,E)."
+            ],
+            "metrics": null
+          }
+        },
+        "ho": {
+          "path": "HO",
+          "files": {
+            "bias.pl": "6d54a952659fd074179419a67716a9935397b58654c740c1d00bfbaabbdb08b4",
+            "bk.pl": "5ad27077acfd73b6842c853d6ea778375537c1c58d30ded8771ce32ba5fecc6c",
+            "exs.pl": "87936ed89ec632cff8e7ccd8dafe0f67cc36f16c502dc0daab22b6be16615c25"
+          },
+          "target": {
+            "predicate": "f",
+            "arity": 2,
+            "types": [
+              "element",
+              "list"
+            ],
+            "directions": [
+              "in",
+              "out"
+            ]
+          },
+          "examples": {
+            "positive": 5,
+            "negative": 3
+          },
+          "higher_order": [
+            {
+              "name": "map",
+              "argument_arities": [
+                2
+              ],
+              "ordinary_arguments": 2,
+              "instances": 1
+            },
+            {
+              "name": "ite",
+              "argument_arities": [
+                2
+              ],
+              "ordinary_arguments": 3,
+              "instances": 1
+            }
+          ],
+          "best_program": {
+            "label": "BEST PROG 1750:",
+            "clauses": [
+              "ite_p_a(A,B):-suc(A,B).",
+              "f(A,B):-zero(C),ite_a(C,A,D),map_a(D,B).",
+              "map_p_a(A,B):-zero(C),ite_a(C,A,B)."
+            ],
+            "metrics": {
+              "precision": "1.00",
+              "recall": "1.00",
+              "tp": 5,
+              "fn": 0,
+              "tn": 3,
+              "fp": 0
+            }
+          }
+        },
+        "ho-opt": {
+          "path": "HO OPT",
+          "files": {
+            "bias.pl": "f29ee36294ba712e909f6e005abf9271d59361c406c875c82c862f2e256e09f8",
+            "bk.pl": "c7bbc321e6bd5321c1d27a2fc58cbf39bd1683a38fbb6a6c6834e1d5871dfc7a",
+            "exs.pl": "87936ed89ec632cff8e7ccd8dafe0f67cc36f16c502dc0daab22b6be16615c25"
+          },
+          "target": {
+            "predicate": "f",
+            "arity": 2,
+            "types": [
+              "element",
+              "list"
+            ],
+            "directions": [
+              "in",
+              "out"
+            ]
+          },
+          "examples": {
+            "positive": 5,
+            "negative": 3
+          },
+          "higher_order": [
+            {
+              "name": "map",
+              "argument_arities": [
+                2
+              ],
+              "ordinary_arguments": 2,
+              "instances": 1
+            },
+            {
+              "name": "ite",
+              "argument_arities": [
+                2
+              ],
+              "ordinary_arguments": 3,
+              "instances": 1
+            }
+          ],
+          "best_program": {
+            "label": "BEST PROG 1750:",
+            "clauses": [
+              "ite_p_a(A,B):-suc(A,B).",
+              "f(A,B):-zero(C),ite_a(C,A,D),map_a(D,B).",
+              "map_p_a(A,B):-zero(C),ite_a(C,A,B)."
+            ],
+            "metrics": {
+              "precision": "1.00",
+              "recall": "1.00",
+              "tp": 5,
+              "fn": 0,
+              "tn": 3,
+              "fp": 0
+            }
+          }
+        },
+        "meta": {
+          "path": "Meta",
+          "files": {
+            "HO.pl": "068dbe1088452d3e972e9334308979685a0d7bf06db26b04acde84d35944d7f7"
+          }
+        }
+      },
+      "conversion": {
+        "status": "qualified",
+        "coverage": "authored-ho-best-program-and-all-ho-example-occurrences-with-proof-relevant-indexed-recursion",
+        "source_variant": "ho",
+        "fixture": "examples/prime/hopper_table1_relational_recursion_ground_truth.metta",
+        "cases": {
+          "source_positive": 5,
+          "source_negative": 3,
+          "derived": 5,
+          "not_derived": 3,
+          "proof_occurrences": 5,
+          "label_disagreements": 0
+        },
+        "variant_comparison": {
+          "examples": "fo-ho-ho-opt-identical",
+          "program": "ho-ho-opt-identical;fo-authored-different",
+          "target": "fo-ho-ho-opt-identical"
+        }
+      }
+    },
+    {
+      "name": "dropLastK",
+      "group": "additional",
+      "variants": {
+        "fo": {
+          "path": "FO",
+          "files": {
+            "bias.pl": "b9ce248303661a50bab0eaf30548075b80c7dfdbcdab23656b5272022c931f24",
+            "bk.pl": "f95246351f294fc8ede10aed79d381cd9abdaa6cf32ddf412695a5339b052f10",
+            "exs.pl": "ad6023121c81c51bcc6461aa4c590a290f53f6d0c4c2d7dbf31dbd94a7e07f3d"
+          },
+          "target": {
+            "predicate": "f",
+            "arity": 3,
+            "types": [
+              "integer",
+              "dlist",
+              "dlist"
+            ],
+            "directions": [
+              "in",
+              "in",
+              "out"
+            ]
+          },
+          "examples": {
+            "positive": 5,
+            "negative": 3
+          },
+          "higher_order": [
+            {
+              "name": "g",
+              "argument_arities": [
+                2
+              ],
+              "ordinary_arguments": 2,
+              "instances": 1
+            }
+          ],
+          "best_program": null
+        },
+        "ho": {
+          "path": "HO",
+          "files": {
+            "bias.pl": "43523149ed6afebea39f0ae98e8e11ae8193b5a5de1b537a5e8fc0dd424fab72",
+            "bk.pl": "e8f4ba0bb1782a4038d81096424f576beba239fd0b4d30597af32a2c2c15d408",
+            "exs.pl": "ad6023121c81c51bcc6461aa4c590a290f53f6d0c4c2d7dbf31dbd94a7e07f3d"
+          },
+          "target": {
+            "predicate": "f",
+            "arity": 3,
+            "types": [
+              "integer",
+              "dlist",
+              "dlist"
+            ],
+            "directions": [
+              "in",
+              "in",
+              "out"
+            ]
+          },
+          "examples": {
+            "positive": 5,
+            "negative": 3
+          },
+          "higher_order": [
+            {
+              "name": "map",
+              "argument_arities": [
+                2
+              ],
+              "ordinary_arguments": 2,
+              "instances": 1
+            }
+          ],
+          "best_program": {
+            "label": "BEST PROG 5505:",
+            "clauses": [
+              "f(A,B,C):-eqs(C,B),z(A).",
+              "f(A,B,C):-pred(A,E),map(map_p_a,B,D),f(E,D,C).",
+              "map_p_a(A,B):-reverse(A,D),tail(D,C),reverse(C,B)."
+            ],
+            "metrics": {
+              "precision": "1.00",
+              "recall": "1.00",
+              "tp": 5,
+              "fn": 0,
+              "tn": 3,
+              "fp": 0
+            }
+          }
+        },
+        "ho-opt": {
+          "path": "HO OPT",
+          "files": {
+            "bias.pl": "ef833e254d5e1f6df455080da809413d92447f9a1c15aa933a528c11a51451ca",
+            "bk.pl": "e8f4ba0bb1782a4038d81096424f576beba239fd0b4d30597af32a2c2c15d408",
+            "exs.pl": "ad6023121c81c51bcc6461aa4c590a290f53f6d0c4c2d7dbf31dbd94a7e07f3d"
+          },
+          "target": {
+            "predicate": "f",
+            "arity": 3,
+            "types": [
+              "integer",
+              "dlist",
+              "dlist"
+            ],
+            "directions": [
+              "in",
+              "in",
+              "out"
+            ]
+          },
+          "examples": {
+            "positive": 5,
+            "negative": 3
+          },
+          "higher_order": [
+            {
+              "name": "map",
+              "argument_arities": [
+                2
+              ],
+              "ordinary_arguments": 2,
+              "instances": 1
+            }
+          ],
+          "best_program": {
+            "label": "BEST PROG 5505:",
+            "clauses": [
+              "f(A,B,C):-eqs(C,B),z(A).",
+              "f(A,B,C):-pred(A,E),map(map_p_a,B,D),f(E,D,C).",
+              "map_p_a(A,B):-reverse(A,D),tail(D,C),reverse(C,B)."
+            ],
+            "metrics": {
+              "precision": "1.00",
+              "recall": "1.00",
+              "tp": 5,
+              "fn": 0,
+              "tn": 3,
+              "fp": 0
+            }
+          }
+        },
+        "meta": {
+          "path": "Meta",
+          "files": {
+            "HO.pl": "1f75e6f265f6428682e094863ac42485d7342b24137b4640a5b81153355caa81"
+          }
+        }
+      },
+      "conversion": {
+        "status": "qualified",
+        "coverage": "authored-ho-best-program-and-all-ho-example-occurrences-with-typed-iteration",
+        "source_variant": "ho",
+        "fixture": "examples/prime/hopper_table1_additional_iterative_ground_truth.metta",
+        "cases": {
+          "source_positive": 5,
+          "source_negative": 3,
+          "derived": 5,
+          "not_derived": 3,
+          "proof_occurrences": 5,
+          "label_disagreements": 0
+        },
+        "variant_comparison": {
+          "examples": "fo-ho-ho-opt-identical",
+          "program": "ho-ho-opt-identical;fo-has-no-authored-best-program",
+          "target": "fo-ho-ho-opt-identical"
+        }
+      }
+    },
+    {
+      "name": "firstHalf",
+      "group": "additional",
+      "variants": {
+        "fo": {
+          "path": "FO",
+          "files": {
+            "bias.pl": "d654c35d1adfc1a8c308a7178e2c05d49de0d55e673d26e3cdaf7b0fd0905403",
+            "bk.pl": "f5500935db6e79afdda10a7556e5b86fbdff21d8f715efb5cb4fe2c9f8432f97",
+            "exs.pl": "3ba1d4f391e88919baaf4fa35b87140bf99b863cb44d49f0565371d30c8f5ed0"
+          },
+          "target": {
+            "predicate": "f",
+            "arity": 2,
+            "types": [
+              "list",
+              "list"
+            ],
+            "directions": [
+              "in",
+              "out"
+            ]
+          },
+          "examples": {
+            "positive": 8,
+            "negative": 2
+          },
+          "higher_order": [
+            {
+              "name": "g",
+              "argument_arities": [
+                3
+              ],
+              "ordinary_arguments": 3,
+              "instances": 1
+            }
+          ],
+          "best_program": null
+        },
+        "ho": {
+          "path": "HO",
+          "files": {
+            "bias.pl": "dadae129ad27eea01ecc6d90d582aef4f813dc74ce3358de2520c9ac8c122b13",
+            "bk.pl": "f5d35cc4aefb18450849ebe277f47cab08bc410b853b52a97837f84ab722945f",
+            "exs.pl": "3ba1d4f391e88919baaf4fa35b87140bf99b863cb44d49f0565371d30c8f5ed0"
+          },
+          "target": {
+            "predicate": "f",
+            "arity": 2,
+            "types": [
+              "list",
+              "list"
+            ],
+            "directions": [
+              "in",
+              "out"
+            ]
+          },
+          "examples": {
+            "positive": 8,
+            "negative": 2
+          },
+          "higher_order": [
+            {
+              "name": "ite",
+              "argument_arities": [
+                2,
+                3
+              ],
+              "ordinary_arguments": 3,
+              "instances": 1
+            }
+          ],
+          "best_program": {
+            "label": "BEST PROG 47:",
+            "clauses": [
+              "ite_p_a(A,B):-pred(A,C),pred(C,B).",
+              "ite_q_a(A,B,C):-head(A,B),tail(A,C).",
+              "f(A,B):-len(A,C),ite_a(A,C,B)."
+            ],
+            "metrics": {
+              "precision": "1.00",
+              "recall": "1.00",
+              "tp": 8,
+              "fn": 0,
+              "tn": 2,
+              "fp": 0
+            }
+          }
+        },
+        "ho-opt": {
+          "path": "HO OPT",
+          "files": {
+            "bias.pl": "cee4ea8c80c9767e722f70a4fe7a5888c29f9d2b4dfde3c6a9a197b180eecd43",
+            "bk.pl": "bc92e6bf06954864f539ebb271f6184dea29cfc191197a39619a4370180bde90",
+            "exs.pl": "3ba1d4f391e88919baaf4fa35b87140bf99b863cb44d49f0565371d30c8f5ed0"
+          },
+          "target": {
+            "predicate": "f",
+            "arity": 2,
+            "types": [
+              "list",
+              "list"
+            ],
+            "directions": [
+              "in",
+              "out"
+            ]
+          },
+          "examples": {
+            "positive": 8,
+            "negative": 2
+          },
+          "higher_order": [
+            {
+              "name": "ite",
+              "argument_arities": [
+                2,
+                3
+              ],
+              "ordinary_arguments": 3,
+              "instances": 1
+            }
+          ],
+          "best_program": {
+            "label": "BEST PROG 47:",
+            "clauses": [
+              "ite_p_a(A,B):-pred(A,C),pred(C,B).",
+              "ite_q_a(A,B,C):-head(A,B),tail(A,C).",
+              "f(A,B):-len(A,C),ite_a(A,C,B)."
+            ],
+            "metrics": {
+              "precision": "1.00",
+              "recall": "1.00",
+              "tp": 8,
+              "fn": 0,
+              "tn": 2,
+              "fp": 0
+            }
+          }
+        },
+        "meta": {
+          "path": "Meta",
+          "files": {
+            "HO.pl": "34172d8613bad06c1d0fe722a54452631b57dfcaf8a88ec98b331f5114e0ce4c"
+          }
+        }
+      },
+      "conversion": {
+        "status": "qualified",
+        "coverage": "authored-ho-best-program-and-all-ho-example-occurrences-with-proof-relevant-indexed-recursion",
+        "source_variant": "ho",
+        "fixture": "examples/prime/hopper_table1_relational_recursion_ground_truth.metta",
+        "cases": {
+          "source_positive": 8,
+          "source_negative": 2,
+          "derived": 8,
+          "not_derived": 2,
+          "proof_occurrences": 8,
+          "label_disagreements": 0
+        },
+        "variant_comparison": {
+          "examples": "fo-ho-ho-opt-identical",
+          "program": "ho-ho-opt-identical;fo-has-no-authored-best-program",
+          "target": "fo-ho-ho-opt-identical"
+        }
+      }
+    },
+    {
+      "name": "lastHalf",
+      "group": "additional",
+      "variants": {
+        "fo": {
+          "path": "FO",
+          "files": {
+            "bias.pl": "2118ff6192ebbff579ebff8f457f0ba445b7b2a5eef98c4055ef043899fea0ec",
+            "bk.pl": "431e9e801d5d1913e765d8907bfd51978fdeab70f328ffc7221b960f3616bf6d",
+            "exs.pl": "9abee0bfa6cb7d793b1f2a19e6792cd86693f326f10f5b182c129fe555e75119"
+          },
+          "target": {
+            "predicate": "f",
+            "arity": 2,
+            "types": [
+              "list",
+              "list"
+            ],
+            "directions": [
+              "in",
+              "out"
+            ]
+          },
+          "examples": {
+            "positive": 8,
+            "negative": 6
+          },
+          "higher_order": [],
+          "best_program": {
+            "label": "BEST PROG 1831:",
+            "clauses": [
+              "f(A,B):-empty(B),empty(A).",
+              "f(A,B):-tail(A,B),empty(B).",
+              "f(A,B):-front(A,C),last(A,F),tail(C,E),f(E,D),app(D,F,B)."
+            ],
+            "metrics": {
+              "precision": "1.00",
+              "recall": "1.00",
+              "tp": 8,
+              "fn": 0,
+              "tn": 6,
+              "fp": 0
+            }
+          }
+        },
+        "ho": {
+          "path": "HO",
+          "files": {
+            "bias.pl": "7391de3a65fdd834639b369174dce759ba6248202678f0303f23456ff877f74f",
+            "bk.pl": "0eaf806f6212aabd78b53e54bfdd897ab5bb3f5a5dcde7ada06b9b0d020fb2e8",
+            "exs.pl": "9abee0bfa6cb7d793b1f2a19e6792cd86693f326f10f5b182c129fe555e75119"
+          },
+          "target": {
+            "predicate": "f",
+            "arity": 2,
+            "types": [
+              "list",
+              "list"
+            ],
+            "directions": [
+              "in",
+              "out"
+            ]
+          },
+          "examples": {
+            "positive": 8,
+            "negative": 6
+          },
+          "higher_order": [
+            {
+              "name": "caselist",
+              "argument_arities": [
+                1,
+                2,
+                3
+              ],
+              "ordinary_arguments": 2,
+              "instances": 1
+            }
+          ],
+          "best_program": {
+            "label": "BEST PROG 3262: Optimal Case",
+            "clauses": [
+              "caselist_r_a(A,B,C):-front(B,E),caselist_a(E,D),app(D,A,C).",
+              "caselist_p_a(A):-empty(A).",
+              "f(A,B):-reverse(A,C),caselist_a(C,B).",
+              "caselist_q_a(A,B):-any(A),empty(B)."
+            ],
+            "metrics": {
+              "precision": "1.00",
+              "recall": "1.00",
+              "tp": 8,
+              "fn": 0,
+              "tn": 6,
+              "fp": 0
+            }
+          }
+        },
+        "ho-opt": {
+          "path": "HO OPT",
+          "files": {
+            "bias.pl": "a66122a2f4fdf1f87c3bfd5ca7c3e27f16602c4f7a4bdd4785b97c8eae8891a5",
+            "bk.pl": "0eaf806f6212aabd78b53e54bfdd897ab5bb3f5a5dcde7ada06b9b0d020fb2e8",
+            "exs.pl": "9abee0bfa6cb7d793b1f2a19e6792cd86693f326f10f5b182c129fe555e75119"
+          },
+          "target": {
+            "predicate": "f",
+            "arity": 2,
+            "types": [
+              "list",
+              "list"
+            ],
+            "directions": [
+              "in",
+              "out"
+            ]
+          },
+          "examples": {
+            "positive": 8,
+            "negative": 6
+          },
+          "higher_order": [
+            {
+              "name": "caselist",
+              "argument_arities": [
+                1,
+                2,
+                3
+              ],
+              "ordinary_arguments": 2,
+              "instances": 1
+            }
+          ],
+          "best_program": {
+            "label": "BEST PROG 3262: Optimal Case",
+            "clauses": [
+              "caselist_r_a(A,B,C):-front(B,E),caselist_a(E,D),app(D,A,C).",
+              "caselist_p_a(A):-empty(A).",
+              "f(A,B):-reverse(A,C),caselist_a(C,B).",
+              "caselist_q_a(A,B):-any(A),empty(B)."
+            ],
+            "metrics": {
+              "precision": "1.00",
+              "recall": "1.00",
+              "tp": 8,
+              "fn": 0,
+              "tn": 6,
+              "fp": 0
+            }
+          }
+        },
+        "meta": {
+          "path": "Meta",
+          "files": {
+            "HO.pl": "2a9755e49af16d40dd71459d202832bcf4a77aee2648d816a7482ebe7ef602f1"
+          }
+        }
+      },
+      "conversion": {
+        "status": "qualified",
+        "coverage": "authored-ho-best-program-and-all-ho-example-occurrences-with-typed-structural-list-evidence",
+        "source_variant": "ho",
+        "fixture": "examples/prime/hopper_table1_structural_list_ground_truth.metta",
+        "cases": {
+          "source_positive": 8,
+          "source_negative": 6,
+          "derived": 8,
+          "not_derived": 6,
+          "proof_occurrences": 8,
+          "label_disagreements": 0
+        },
+        "variant_comparison": {
+          "examples": "fo-ho-ho-opt-identical",
+          "program": "ho-ho-opt-identical;fo-authored-different",
+          "target": "fo-ho-ho-opt-identical"
+        }
+      }
+    },
+    {
+      "name": "of1And2",
+      "group": "additional",
+      "variants": {
+        "fo": {
+          "path": "FO",
+          "files": {
+            "bias.pl": "4ff8c9b79bb70543d99a7387af0a74674c01288ecdc2066b70a59df51ed875c4",
+            "bk.pl": "b1fd14b24461a3ed4c935b5814f83a2932e21a75993f488d4c6c2807272d8a23",
+            "exs.pl": "391c4b8d328947072c34c7fcb9a7a6d8b51fbdfc912a93cd79c18ccfd699689c"
+          },
+          "target": {
+            "predicate": "f",
+            "arity": 1,
+            "types": [
+              "list"
+            ],
+            "directions": [
+              "in"
+            ]
+          },
+          "examples": {
+            "positive": 4,
+            "negative": 6
+          },
+          "higher_order": [],
+          "best_program": null
+        },
+        "ho": {
+          "path": "HO",
+          "files": {
+            "bias.pl": "11680272d9b6183db5fab42558e29d3604f88d5d271c4d19392e0c7d5fcf1183",
+            "bk.pl": "8f209f7c1745c7e3f43d1979c62549c1d4e69f01e7204d27ee7ec66497ed7f4f",
+            "exs.pl": "391c4b8d328947072c34c7fcb9a7a6d8b51fbdfc912a93cd79c18ccfd699689c"
+          },
+          "target": {
+            "predicate": "f",
+            "arity": 1,
+            "types": [
+              "list"
+            ],
+            "directions": [
+              "in"
+            ]
+          },
+          "examples": {
+            "positive": 4,
+            "negative": 6
+          },
+          "higher_order": [
+            {
+              "name": "try",
+              "argument_arities": [
+                1,
+                1
+              ],
+              "ordinary_arguments": 1,
+              "instances": 1
+            }
+          ],
+          "best_program": {
+            "label": "BEST PROG 1597:",
+            "clauses": [
+              "f(A):-empty(A).",
+              "try_q_a(A):-zero(B),suc(B,C),suc(C,A).",
+              "f(A):-cons(A,C,B),try_a(C),f(B).",
+              "try_p_a(A):-zero(B),suc(B,A)."
+            ],
+            "metrics": {
+              "precision": "1.00",
+              "recall": "1.00",
+              "tp": 4,
+              "fn": 0,
+              "tn": 6,
+              "fp": 0
+            }
+          }
+        },
+        "ho-opt": {
+          "path": "HO OPT",
+          "files": {
+            "bias.pl": "1e6017c1aee3adb1f2d16ecbd9b0254ef8ff40576164de5a7597eb3d652c6db1",
+            "bk.pl": "8f209f7c1745c7e3f43d1979c62549c1d4e69f01e7204d27ee7ec66497ed7f4f",
+            "exs.pl": "391c4b8d328947072c34c7fcb9a7a6d8b51fbdfc912a93cd79c18ccfd699689c"
+          },
+          "target": {
+            "predicate": "f",
+            "arity": 1,
+            "types": [
+              "list"
+            ],
+            "directions": [
+              "in"
+            ]
+          },
+          "examples": {
+            "positive": 4,
+            "negative": 6
+          },
+          "higher_order": [
+            {
+              "name": "try",
+              "argument_arities": [
+                1,
+                1
+              ],
+              "ordinary_arguments": 1,
+              "instances": 1
+            }
+          ],
+          "best_program": {
+            "label": "BEST PROG 1597:",
+            "clauses": [
+              "f(A):-empty(A).",
+              "try_q_a(A):-zero(B),suc(B,C),suc(C,A).",
+              "f(A):-cons(A,C,B),try_a(C),f(B).",
+              "try_p_a(A):-zero(B),suc(B,A)."
+            ],
+            "metrics": {
+              "precision": "1.00",
+              "recall": "1.00",
+              "tp": 4,
+              "fn": 0,
+              "tn": 6,
+              "fp": 0
+            }
+          }
+        },
+        "meta": {
+          "path": "Meta",
+          "files": {
+            "HO.pl": "51cfce9395b5d1d5d50510c205b69c97baaa246f2f1d2ff7ee17712937a27c1e"
+          }
+        }
+      },
+      "conversion": {
+        "status": "qualified",
+        "coverage": "authored-ho-best-program-and-all-ho-example-occurrences-with-typed-structural-list-evidence",
+        "source_variant": "ho",
+        "fixture": "examples/prime/hopper_table1_structural_list_ground_truth.metta",
+        "cases": {
+          "source_positive": 4,
+          "source_negative": 6,
+          "derived": 4,
+          "not_derived": 6,
+          "proof_occurrences": 4,
+          "label_disagreements": 0
+        },
+        "variant_comparison": {
+          "examples": "fo-ho-ho-opt-identical",
+          "program": "ho-ho-opt-identical;fo-has-no-authored-best-program",
+          "target": "fo-ho-ho-opt-identical"
+        }
+      }
+    },
+    {
+      "name": "isPalindrome",
+      "group": "additional",
+      "variants": {
+        "fo": {
+          "path": "FO",
+          "files": {
+            "bias.pl": "00a6ef75a0e2b1c199227d1204d3d8aa230d6ed7b2235c7d4fb9b0e65e00a9ee",
+            "bk.pl": "9bee695f6c343583fa00cbecfdddaf2c71b2977b3742d43fd06278d50c6c5d26",
+            "exs.pl": "fb5660caebc6307a23134ad16b2b4d60094e1ba4ddedfe4658fa3d86d55435f4"
+          },
+          "target": {
+            "predicate": "f",
+            "arity": 1,
+            "types": [
+              "list"
+            ],
+            "directions": [
+              "in"
+            ]
+          },
+          "examples": {
+            "positive": 11,
+            "negative": 2
+          },
+          "higher_order": [],
+          "best_program": null
+        },
+        "ho": {
+          "path": "HO",
+          "files": {
+            "bias.pl": "884f74e4cfb5cef334d7125d89fa7fba4e183b1aa17654e9c8049ba9791051f1",
+            "bk.pl": "4259a8f2889684ecc5e8ca78508a6e932b461eb96e79e8309662e8424ffad3d7",
+            "exs.pl": "fb5660caebc6307a23134ad16b2b4d60094e1ba4ddedfe4658fa3d86d55435f4"
+          },
+          "target": {
+            "predicate": "f",
+            "arity": 1,
+            "types": [
+              "list"
+            ],
+            "directions": [
+              "in"
+            ]
+          },
+          "examples": {
+            "positive": 11,
+            "negative": 2
+          },
+          "higher_order": [
+            {
+              "name": "condlist",
+              "argument_arities": [
+                2
+              ],
+              "ordinary_arguments": 1,
+              "instances": 1
+            }
+          ],
+          "best_program": {
+            "label": "BEST PROG 1416:",
+            "clauses": [
+              "condlist_p_a(A,B):-any(A),empty(B).",
+              "condlist_p_a(A,B):-last(B,A),front(B,C),condlist_a(C).",
+              "f(A):-condlist_a(A)."
+            ],
+            "metrics": {
+              "precision": "1.00",
+              "recall": "1.00",
+              "tp": 11,
+              "fn": 0,
+              "tn": 2,
+              "fp": 0
+            }
+          }
+        },
+        "ho-opt": {
+          "path": "HO OPT",
+          "files": {
+            "bias.pl": "ecc78562d0dac1bd614d848210f0a1f50c136a46b1119cd1fdeae51cf8246d17",
+            "bk.pl": "1e1d57c15a5b0a4b90dbcf10f379824fe8f2acafa4238f3f4337532a2518000d",
+            "exs.pl": "fb5660caebc6307a23134ad16b2b4d60094e1ba4ddedfe4658fa3d86d55435f4"
+          },
+          "target": {
+            "predicate": "f",
+            "arity": 1,
+            "types": [
+              "list"
+            ],
+            "directions": [
+              "in"
+            ]
+          },
+          "examples": {
+            "positive": 11,
+            "negative": 2
+          },
+          "higher_order": [
+            {
+              "name": "condlist",
+              "argument_arities": [
+                2
+              ],
+              "ordinary_arguments": 1,
+              "instances": 1
+            }
+          ],
+          "best_program": {
+            "label": "BEST PROG 1416:",
+            "clauses": [
+              "condlist_p_a(A,B):-any(A),empty(B).",
+              "condlist_p_a(A,B):-last(B,A),front(B,C),condlist_a(C).",
+              "f(A):-condlist_a(A)."
+            ],
+            "metrics": {
+              "precision": "1.00",
+              "recall": "1.00",
+              "tp": 11,
+              "fn": 0,
+              "tn": 2,
+              "fp": 0
+            }
+          }
+        },
+        "meta": {
+          "path": "Meta",
+          "files": {
+            "HO.pl": "9e69ce7f612c0d311697e1a6335d6540f4ceb7ec14970e1e1a68ed38d84844a1"
+          }
+        }
+      },
+      "conversion": {
+        "status": "qualified",
+        "coverage": "authored-ho-best-program-and-all-ho-example-occurrences-with-typed-structural-list-evidence",
+        "source_variant": "ho",
+        "fixture": "examples/prime/hopper_table1_structural_list_ground_truth.metta",
+        "cases": {
+          "source_positive": 11,
+          "source_negative": 2,
+          "derived": 11,
+          "not_derived": 2,
+          "proof_occurrences": 11,
+          "label_disagreements": 0
+        },
+        "variant_comparison": {
+          "examples": "fo-ho-ho-opt-identical",
+          "program": "ho-ho-opt-identical;fo-has-no-authored-best-program",
+          "target": "fo-ho-ho-opt-identical"
+        }
+      }
+    },
+    {
+      "name": "depth",
+      "group": "additional",
+      "variants": {
+        "fo": {
+          "path": "FO",
+          "files": {
+            "bias.pl": "5d0584a43dbc9515b2d7574f82012ec741451e25194eb544a02c8c6ddd269b02",
+            "bk.pl": "42cc232a10709446aa69d1d42b2824aa24d88dfdd026db42d1adc831a7c88540",
+            "exs.pl": "167acd9c20c5c83333df6328fb9238554192bf16abe818ea850eaff1dbca0e4b"
+          },
+          "target": {
+            "predicate": "f",
+            "arity": 2,
+            "types": [
+              "tree",
+              "element"
+            ],
+            "directions": [
+              "in",
+              "out"
+            ]
+          },
+          "examples": {
+            "positive": 7,
+            "negative": 4
+          },
+          "higher_order": [
+            {
+              "name": "g",
+              "argument_arities": [
+                3
+              ],
+              "ordinary_arguments": 3,
+              "instances": 1
+            }
+          ],
+          "best_program": null
+        },
+        "ho": {
+          "path": "HO",
+          "files": {
+            "bias.pl": "8400393f4c6b052b6e1e6ad63a05dfec16e23437f770e47fd6605e53d3119495",
+            "bk.pl": "5c23781bd845ec7d1881bb7b1faa6d37b681e35b25a01622579c14cea62d4416",
+            "exs.pl": "167acd9c20c5c83333df6328fb9238554192bf16abe818ea850eaff1dbca0e4b"
+          },
+          "target": {
+            "predicate": "f",
+            "arity": 2,
+            "types": [
+              "tree",
+              "element"
+            ],
+            "directions": [
+              "in",
+              "out"
+            ]
+          },
+          "examples": {
+            "positive": 7,
+            "negative": 4
+          },
+          "higher_order": [
+            {
+              "name": "fold",
+              "argument_arities": [
+                3
+              ],
+              "ordinary_arguments": 3,
+              "instances": 1
+            }
+          ],
+          "best_program": {
+            "label": "BEST PROG 721:",
+            "clauses": [
+              "fold_p_a(A,B,C):-f(B,D),max(D,A,C).",
+              "f(A,B):-children(A,C),zero(E),fold_a(E,C,D),suc(D,B)."
+            ],
+            "metrics": {
+              "precision": "1.00",
+              "recall": "1.00",
+              "tp": 7,
+              "fn": 0,
+              "tn": 4,
+              "fp": 0
+            }
+          }
+        },
+        "ho-opt": {
+          "path": "HO OPT",
+          "files": {
+            "bias.pl": "a69f9f2b393142f8a24962f8c93e539dc8a3ab55d52292a5ecc911d45dc87bfb",
+            "bk.pl": "101d75d56e89d340d11dcaf78054c7ff4b55ef75877acbbe9b54531f463a266f",
+            "exs.pl": "167acd9c20c5c83333df6328fb9238554192bf16abe818ea850eaff1dbca0e4b"
+          },
+          "target": {
+            "predicate": "f",
+            "arity": 2,
+            "types": [
+              "tree",
+              "element"
+            ],
+            "directions": [
+              "in",
+              "out"
+            ]
+          },
+          "examples": {
+            "positive": 7,
+            "negative": 4
+          },
+          "higher_order": [
+            {
+              "name": "fold",
+              "argument_arities": [
+                3
+              ],
+              "ordinary_arguments": 3,
+              "instances": 1
+            }
+          ],
+          "best_program": {
+            "label": "BEST PROG 721:",
+            "clauses": [
+              "fold_p_a(A,B,C):-f(B,D),max(D,A,C).",
+              "f(A,B):-children(A,C),zero(E),fold_a(E,C,D),suc(D,B)."
+            ],
+            "metrics": {
+              "precision": "1.00",
+              "recall": "1.00",
+              "tp": 7,
+              "fn": 0,
+              "tn": 4,
+              "fp": 0
+            }
+          }
+        },
+        "meta": {
+          "path": "Meta",
+          "files": {
+            "HO.pl": "a345383ad544d97952944c39f98e9757f326c7b0820da3a5a6c9d73c383c943a"
+          }
+        }
+      },
+      "conversion": {
+        "status": "qualified",
+        "coverage": "authored-ho-best-program-and-all-ho-example-occurrences-with-proof-relevant-tree-relations-over-checked-raw-boundary",
+        "source_variant": "ho",
+        "fixture": "examples/prime/hopper_table1_tree_relations_ground_truth.metta",
+        "cases": {
+          "source_positive": 7,
+          "source_negative": 4,
+          "derived": 7,
+          "not_derived": 4,
+          "proof_occurrences": 7,
+          "label_disagreements": 0
+        },
+        "variant_comparison": {
+          "examples": "fo-ho-ho-opt-identical",
+          "program": "ho-ho-opt-identical;fo-has-no-authored-best-program",
+          "target": "fo-ho-ho-opt-identical"
+        }
+      }
+    },
+    {
+      "name": "isBranch",
+      "group": "additional",
+      "variants": {
+        "fo": {
+          "path": "FO",
+          "files": {
+            "bias.pl": "1ed70195d898484ec22ff3c1703b35cfb6b9ac1e891fc8d62dfa79c9805f9550",
+            "bk.pl": "bb4083a01220df7da43ede571953331ba0a4cddbb5d6e9d6f5b057bb27d1e08b",
+            "exs.pl": "e2f3f447b7e218ec9ab4610291399936d5b3771169aa5e91573c0110d3774110"
+          },
+          "target": {
+            "predicate": "f",
+            "arity": 2,
+            "types": [
+              "tree",
+              "list"
+            ],
+            "directions": [
+              "in",
+              "in"
+            ]
+          },
+          "examples": {
+            "positive": 42,
+            "negative": 5
+          },
+          "higher_order": [
+            {
+              "name": "g",
+              "argument_arities": [
+                2
+              ],
+              "ordinary_arguments": 2,
+              "instances": 1
+            }
+          ],
+          "best_program": null
+        },
+        "ho": {
+          "path": "HO",
+          "files": {
+            "bias.pl": "8f733254cf7aab514308d2a8a5be309c3d1baeff231eb1d1091a544c9cb0818c",
+            "bk.pl": "dfd6ea28c776a5609440130650c9eab2d7073077a67fa2b4d1a45fac22045b48",
+            "exs.pl": "e2f3f447b7e218ec9ab4610291399936d5b3771169aa5e91573c0110d3774110"
+          },
+          "target": {
+            "predicate": "f",
+            "arity": 2,
+            "types": [
+              "tree",
+              "list"
+            ],
+            "directions": [
+              "in",
+              "in"
+            ]
+          },
+          "examples": {
+            "positive": 42,
+            "negative": 5
+          },
+          "higher_order": [
+            {
+              "name": "any",
+              "argument_arities": [
+                2
+              ],
+              "ordinary_arguments": 2,
+              "instances": 1
+            },
+            {
+              "name": "casetree",
+              "argument_arities": [
+                2,
+                3
+              ],
+              "ordinary_arguments": 2,
+              "instances": 1
+            }
+          ],
+          "best_program": {
+            "label": "BEST PROG 3142:",
+            "clauses": [
+              "casetree_p_a(A,B):-tail(B,C),empty(C),head(B,A).",
+              "any_p_a(A,B):-tail(B,C),casetree_a(A,C).",
+              "casetree_q_a(A,B,C):-head(C,A),any_a(B,C).",
+              "f(A,B):-casetree_a(A,B)."
+            ],
+            "metrics": {
+              "precision": "1.00",
+              "recall": "1.00",
+              "tp": 42,
+              "fn": 0,
+              "tn": 5,
+              "fp": 0
+            }
+          }
+        },
+        "ho-opt": {
+          "path": "HO OPT",
+          "files": {
+            "bias.pl": "479f6c9dd0623645bd644cbf19dd1b4025f5d7d0d9b9e32e3cd905e338423e64",
+            "bk.pl": "9f10180f447dc47248bd61d842bd1ef9d1d034723e7ed8d37fdf4c384cb69180",
+            "exs.pl": "e2f3f447b7e218ec9ab4610291399936d5b3771169aa5e91573c0110d3774110"
+          },
+          "target": {
+            "predicate": "f",
+            "arity": 2,
+            "types": [
+              "tree",
+              "list"
+            ],
+            "directions": [
+              "in",
+              "in"
+            ]
+          },
+          "examples": {
+            "positive": 42,
+            "negative": 5
+          },
+          "higher_order": [
+            {
+              "name": "any",
+              "argument_arities": [
+                2
+              ],
+              "ordinary_arguments": 2,
+              "instances": 1
+            },
+            {
+              "name": "casetree",
+              "argument_arities": [
+                2,
+                3
+              ],
+              "ordinary_arguments": 2,
+              "instances": 1
+            }
+          ],
+          "best_program": {
+            "label": "BEST PROG 3142:",
+            "clauses": [
+              "casetree_p_a(A,B):-tail(B,C),empty(C),head(B,A).",
+              "any_p_a(A,B):-tail(B,C),casetree_a(A,C).",
+              "casetree_q_a(A,B,C):-head(C,A),any_a(B,C).",
+              "f(A,B):-casetree_a(A,B)."
+            ],
+            "metrics": {
+              "precision": "1.00",
+              "recall": "1.00",
+              "tp": 42,
+              "fn": 0,
+              "tn": 5,
+              "fp": 0
+            }
+          }
+        },
+        "meta": {
+          "path": "Meta",
+          "files": {
+            "HO.pl": "008def88e5b9b1aeced0cc2d561ad85ad849c6684e7f46764e79a3757baf3b57"
+          }
+        }
+      },
+      "conversion": {
+        "status": "qualified",
+        "coverage": "authored-ho-best-program-and-all-ho-example-occurrences-with-proof-relevant-tree-relations-over-checked-raw-boundary",
+        "source_variant": "ho",
+        "fixture": "examples/prime/hopper_table1_tree_relations_ground_truth.metta",
+        "cases": {
+          "source_positive": 42,
+          "source_negative": 5,
+          "derived": 42,
+          "not_derived": 5,
+          "proof_occurrences": 50,
+          "label_disagreements": 0
+        },
+        "variant_comparison": {
+          "examples": "fo-ho-ho-opt-identical",
+          "program": "ho-ho-opt-identical;fo-has-no-authored-best-program",
+          "target": "fo-ho-ho-opt-identical"
+        }
+      }
+    },
+    {
+      "name": "isSubTree",
+      "group": "additional",
+      "variants": {
+        "fo": {
+          "path": "FO",
+          "files": {
+            "bias.pl": "8bb9be52764c4d265ce96fc11adee44f7a249fdd545c5d2bf3242966a27bd9f3",
+            "bk.pl": "89dad9c87ff2e14cedd722cb39fb53ae0b84058d4b00a104b34488ca5e452f5e",
+            "exs.pl": "f66f04fb39a71776c617233e76989bd12d941836e6c0af6786a324fead360a76"
+          },
+          "target": {
+            "predicate": "f",
+            "arity": 2,
+            "types": [
+              "tree",
+              "tree"
+            ],
+            "directions": [
+              "in",
+              "in"
+            ]
+          },
+          "examples": {
+            "positive": 7,
+            "negative": 2
+          },
+          "higher_order": [
+            {
+              "name": "g",
+              "argument_arities": [
+                2
+              ],
+              "ordinary_arguments": 2,
+              "instances": 1
+            }
+          ],
+          "best_program": {
+            "label": "BEST PROG 2166:",
+            "clauses": [
+              "g_p_a(A,B):-children(B,A).",
+              "g_p_a(A,B):-head(A,B).",
+              "g_p_a(A,B):-tail(A,C),g_a(C,B).",
+              "f(A,B):-children(A,C),g_p_a(C,B)."
+            ],
+            "metrics": {
+              "precision": "1.00",
+              "recall": "1.00",
+              "tp": 7,
+              "fn": 0,
+              "tn": 2,
+              "fp": 0
+            }
+          }
+        },
+        "ho": {
+          "path": "HO",
+          "files": {
+            "bias.pl": "07b59ecc5cc64a2032e3fd9abc2b211cc576fb2792b5da111b9d34064d7b9294",
+            "bk.pl": "57278ed046e9a0ceadf5c606e7e591cfe0890b4e371b7487133ed7dfb4a8ed4b",
+            "exs.pl": "f66f04fb39a71776c617233e76989bd12d941836e6c0af6786a324fead360a76"
+          },
+          "target": {
+            "predicate": "f",
+            "arity": 2,
+            "types": [
+              "tree",
+              "tree"
+            ],
+            "directions": [
+              "in",
+              "in"
+            ]
+          },
+          "examples": {
+            "positive": 7,
+            "negative": 2
+          },
+          "higher_order": [
+            {
+              "name": "any",
+              "argument_arities": [
+                2
+              ],
+              "ordinary_arguments": 2,
+              "instances": 1
+            }
+          ],
+          "best_program": {
+            "label": "BEST PROG 132:",
+            "clauses": [
+              "f(A,B):-eq(A,B).",
+              "f(A,B):-children(A,C),any_a(C,B).",
+              "any_p_a(A,B):-f(A,B)."
+            ],
+            "metrics": {
+              "precision": "1.00",
+              "recall": "1.00",
+              "tp": 7,
+              "fn": 0,
+              "tn": 2,
+              "fp": 0
+            }
+          }
+        },
+        "ho-opt": {
+          "path": "HO OPT",
+          "files": {
+            "bias.pl": "c8ed63446627ed9f781441ee2c7791a172cd3198a044cd6fb7ad4d0849f31c4f",
+            "bk.pl": "57278ed046e9a0ceadf5c606e7e591cfe0890b4e371b7487133ed7dfb4a8ed4b",
+            "exs.pl": "f66f04fb39a71776c617233e76989bd12d941836e6c0af6786a324fead360a76"
+          },
+          "target": {
+            "predicate": "f",
+            "arity": 2,
+            "types": [
+              "tree",
+              "tree"
+            ],
+            "directions": [
+              "in",
+              "in"
+            ]
+          },
+          "examples": {
+            "positive": 7,
+            "negative": 2
+          },
+          "higher_order": [
+            {
+              "name": "any",
+              "argument_arities": [
+                2
+              ],
+              "ordinary_arguments": 2,
+              "instances": 1
+            }
+          ],
+          "best_program": {
+            "label": "BEST PROG 132:",
+            "clauses": [
+              "f(A,B):-eqs(A,B).",
+              "f(A,B):-children(A,C),any_a(C,B).",
+              "any_p_a(A,B):-f(A,B)."
+            ],
+            "metrics": {
+              "precision": "1.00",
+              "recall": "1.00",
+              "tp": 7,
+              "fn": 0,
+              "tn": 2,
+              "fp": 0
+            }
+          }
+        },
+        "meta": {
+          "path": "Meta",
+          "files": {
+            "HO.pl": "9f71c6fb4cb001aebfd8305235b858f730035ce21dfd1b4a72691ccf5e8f5a5c"
+          }
+        }
+      },
+      "conversion": {
+        "status": "qualified",
+        "coverage": "authored-ho-best-program-and-all-ho-example-occurrences-with-proof-relevant-tree-relations-over-checked-raw-boundary",
+        "source_variant": "ho",
+        "fixture": "examples/prime/hopper_table1_tree_relations_ground_truth.metta",
+        "cases": {
+          "source_positive": 7,
+          "source_negative": 2,
+          "derived": 7,
+          "not_derived": 2,
+          "proof_occurrences": 7,
+          "label_disagreements": 0
+        },
+        "variant_comparison": {
+          "examples": "fo-ho-ho-opt-identical",
+          "program": "ho-uses-eq;ho-opt-uses-eqs;fo-authored-different",
+          "target": "fo-ho-ho-opt-identical"
+        }
+      }
+    },
+    {
+      "name": "addN",
+      "group": "additional",
+      "variants": {
+        "fo": {
+          "path": "FO",
+          "files": {
+            "bias.pl": "0af84b0308a7ea06ab155502ce4e8a3b66ec928c4addf8346b9fb3f278c5eb58",
+            "bk.pl": "7e942193f99a8b6234b0bf38a8fe0b3247f37411dc8cf02225ed1ab148a8653f",
+            "exs.pl": "504fc87caddae4568ed88741460c5bf5394bdcbe7bea5f6126f15a39054af16e"
+          },
+          "target": {
+            "predicate": "f",
+            "arity": 3,
+            "types": [
+              "integer",
+              "list",
+              "list"
+            ],
+            "directions": [
+              "in",
+              "in",
+              "out"
+            ]
+          },
+          "examples": {
+            "positive": 4,
+            "negative": 3
+          },
+          "higher_order": [
+            {
+              "name": "g",
+              "argument_arities": [
+                2
+              ],
+              "ordinary_arguments": 2,
+              "instances": 1
+            }
+          ],
+          "best_program": null
+        },
+        "ho": {
+          "path": "HO",
+          "files": {
+            "bias.pl": "40c0974ca7a54cae9158e6eaf185e72b23425c59d099dd7d966b1c9bc16cdd32",
+            "bk.pl": "c32018f1c92233d3e5a018f172a91a369f310d08ace6cb5ac06f9742277271a0",
+            "exs.pl": "504fc87caddae4568ed88741460c5bf5394bdcbe7bea5f6126f15a39054af16e"
+          },
+          "target": {
+            "predicate": "f",
+            "arity": 3,
+            "types": [
+              "integer",
+              "list",
+              "list"
+            ],
+            "directions": [
+              "in",
+              "in",
+              "out"
+            ]
+          },
+          "examples": {
+            "positive": 4,
+            "negative": 3
+          },
+          "higher_order": [
+            {
+              "name": "map",
+              "argument_arities": [
+                2
+              ],
+              "ordinary_arguments": 2,
+              "instances": 1
+            },
+            {
+              "name": "caseint",
+              "argument_arities": [
+                2,
+                3
+              ],
+              "ordinary_arguments": 3,
+              "instances": 1
+            }
+          ],
+          "best_program": {
+            "label": "BEST PROG 356:",
+            "clauses": [
+              "map_p_a(A,B):-suc(A,B).",
+              "caseint_q_a(A,B,C):-map_a(B,D),caseint_a(A,D,C).",
+              "f(A,B,C):-caseint_a(A,B,C).",
+              "caseint_p_a(A,B):-eq(A,B)."
+            ],
+            "metrics": {
+              "precision": "1.00",
+              "recall": "1.00",
+              "tp": 4,
+              "fn": 0,
+              "tn": 3,
+              "fp": 0
+            }
+          }
+        },
+        "ho-opt": {
+          "path": "HO OPT",
+          "files": {
+            "bias.pl": "864abfafa43cb142e43d943f4cd69c999ef7f51e9b05ea3e85574384910096a4",
+            "bk.pl": "7f65f13584ffcd84384d911256df83f3f4c6274d7d17ccfab9e1439b33172390",
+            "exs.pl": "504fc87caddae4568ed88741460c5bf5394bdcbe7bea5f6126f15a39054af16e"
+          },
+          "target": {
+            "predicate": "f",
+            "arity": 3,
+            "types": [
+              "integer",
+              "list",
+              "list"
+            ],
+            "directions": [
+              "in",
+              "in",
+              "out"
+            ]
+          },
+          "examples": {
+            "positive": 4,
+            "negative": 3
+          },
+          "higher_order": [
+            {
+              "name": "map",
+              "argument_arities": [
+                2
+              ],
+              "ordinary_arguments": 2,
+              "instances": 1
+            },
+            {
+              "name": "caseint",
+              "argument_arities": [
+                2,
+                3
+              ],
+              "ordinary_arguments": 3,
+              "instances": 1
+            }
+          ],
+          "best_program": {
+            "label": "BEST PROG 356:",
+            "clauses": [
+              "map_p_a(A,B):-suc(A,B).",
+              "caseint_q_a(A,B,C):-map_a(B,D),caseint_a(A,D,C).",
+              "f(A,B,C):-caseint_a(A,B,C).",
+              "caseint_p_a(A,B):-eqs(A,B)."
+            ],
+            "metrics": {
+              "precision": "1.00",
+              "recall": "1.00",
+              "tp": 4,
+              "fn": 0,
+              "tn": 3,
+              "fp": 0
+            }
+          }
+        },
+        "meta": {
+          "path": "Meta",
+          "files": {
+            "HO.pl": "783d91f1936a4736df9058f79442a40acc5921b3b9f58a19ed891da3319cbbb9"
+          }
+        }
+      },
+      "conversion": {
+        "status": "qualified",
+        "coverage": "authored-ho-best-program-and-all-ho-example-occurrences-with-typed-iteration",
+        "source_variant": "ho",
+        "fixture": "examples/prime/hopper_table1_additional_iterative_ground_truth.metta",
+        "cases": {
+          "source_positive": 4,
+          "source_negative": 3,
+          "derived": 4,
+          "not_derived": 3,
+          "proof_occurrences": 4,
+          "label_disagreements": 0
+        },
+        "variant_comparison": {
+          "examples": "fo-ho-ho-opt-identical",
+          "program": "ho-uses-eq;ho-opt-uses-eqs;fo-has-no-authored-best-program",
+          "target": "fo-ho-ho-opt-identical"
+        }
+      }
+    },
+    {
+      "name": "mulFromSuc",
+      "group": "additional",
+      "variants": {
+        "fo": {
+          "path": "FO",
+          "files": {
+            "bias.pl": "586798ddc74c2597a105138f78f9e605ce804b2fe56198885ddaa27b499c4316",
+            "bk.pl": "c7b324f6ed583fec89a52306d293bb9afea3fed7f01054465e720b26e21e61c2",
+            "exs.pl": "4c6a841b964532be320bc431a3a8b34d9653a46f50d9a75ec15346ea920ce7b6"
+          },
+          "target": {
+            "predicate": "f",
+            "arity": 3,
+            "types": [
+              "integer",
+              "integer",
+              "integer"
+            ],
+            "directions": [
+              "in",
+              "in",
+              "out"
+            ]
+          },
+          "examples": {
+            "positive": 10,
+            "negative": 6
+          },
+          "higher_order": [
+            {
+              "name": "g",
+              "argument_arities": [
+                4
+              ],
+              "ordinary_arguments": 4,
+              "instances": 1
+            },
+            {
+              "name": "h",
+              "argument_arities": [
+                3
+              ],
+              "ordinary_arguments": 3,
+              "instances": 1
+            }
+          ],
+          "best_program": null
+        },
+        "ho": {
+          "path": "HO",
+          "files": {
+            "bias.pl": "956ad943d0830fb4398290f73be07c6895f90802100b8e68a39cde57c2b3b67b",
+            "bk.pl": "2dc4e8d1e3b2281f7c5913f82e632f011bc2f5687c79163e44150b376ce7a831",
+            "exs.pl": "4c6a841b964532be320bc431a3a8b34d9653a46f50d9a75ec15346ea920ce7b6"
+          },
+          "target": {
+            "predicate": "f",
+            "arity": 3,
+            "types": [
+              "integer",
+              "integer",
+              "integer"
+            ],
+            "directions": [
+              "in",
+              "in",
+              "out"
+            ]
+          },
+          "examples": {
+            "positive": 10,
+            "negative": 6
+          },
+          "higher_order": [
+            {
+              "name": "ite",
+              "argument_arities": [
+                2
+              ],
+              "ordinary_arguments": 3,
+              "instances": 1
+            },
+            {
+              "name": "ite",
+              "argument_arities": [
+                3
+              ],
+              "ordinary_arguments": 4,
+              "instances": 1
+            }
+          ],
+          "best_program": {
+            "label": "BEST PROG 156: With Starter type",
+            "clauses": [
+              "ite_p_a(A,B,C):-ite_a(A,C,B).",
+              "f(A,B,C):-zero(D),ite_a(D,A,C,B).",
+              "ite_p_a(A,B):-suc(A,B)."
+            ],
+            "metrics": {
+              "precision": "1.00",
+              "recall": "1.00",
+              "tp": 10,
+              "fn": 0,
+              "tn": 6,
+              "fp": 0
+            }
+          }
+        },
+        "ho-opt": {
+          "path": "HO OPT",
+          "files": {
+            "bias.pl": "c1e1f221e5a547bed3c2bb721d3b26732bf8c25673602104d0409085eaa9ea35",
+            "bk.pl": "2dc4e8d1e3b2281f7c5913f82e632f011bc2f5687c79163e44150b376ce7a831",
+            "exs.pl": "4c6a841b964532be320bc431a3a8b34d9653a46f50d9a75ec15346ea920ce7b6"
+          },
+          "target": {
+            "predicate": "f",
+            "arity": 3,
+            "types": [
+              "integer",
+              "integer",
+              "integer"
+            ],
+            "directions": [
+              "in",
+              "in",
+              "out"
+            ]
+          },
+          "examples": {
+            "positive": 10,
+            "negative": 6
+          },
+          "higher_order": [
+            {
+              "name": "ite",
+              "argument_arities": [
+                2
+              ],
+              "ordinary_arguments": 3,
+              "instances": 1
+            },
+            {
+              "name": "ite",
+              "argument_arities": [
+                3
+              ],
+              "ordinary_arguments": 4,
+              "instances": 1
+            }
+          ],
+          "best_program": {
+            "label": "BEST PROG 156: With Starter type",
+            "clauses": [
+              "ite_p_a(A,B,C):-ite_a(A,C,B).",
+              "f(A,B,C):-zero(D),ite_a(D,A,C,B).",
+              "ite_p_a(A,B):-suc(A,B)."
+            ],
+            "metrics": {
+              "precision": "1.00",
+              "recall": "1.00",
+              "tp": 10,
+              "fn": 0,
+              "tn": 6,
+              "fp": 0
+            }
+          }
+        },
+        "meta": {
+          "path": "Meta",
+          "files": {
+            "HO.pl": "a7ff3111ebc6e8ea5069e7eea2921afc3578b32a6ba124b0a4f33c934168823f"
+          }
+        }
+      },
+      "conversion": {
+        "status": "qualified",
+        "coverage": "authored-ho-best-program-and-all-ho-example-occurrences-with-proof-relevant-indexed-recursion",
+        "source_variant": "ho",
+        "fixture": "examples/prime/hopper_table1_relational_recursion_ground_truth.metta",
+        "cases": {
+          "source_positive": 10,
+          "source_negative": 6,
+          "derived": 10,
+          "not_derived": 6,
+          "proof_occurrences": 10,
+          "label_disagreements": 0
+        },
+        "variant_comparison": {
+          "examples": "fo-ho-ho-opt-identical",
+          "program": "fo-ho-ho-opt-identical",
+          "target": "fo-ho-ho-opt-identical"
+        }
+      }
+    }
+  ]
+}

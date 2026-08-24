@@ -723,29 +723,11 @@ def check_catalog(
     raise SystemExit("MEGALODON-TERM authority is absent")
 
 
-def require_receipt(
-    output: str, *, accepted: bool, native_status: str
-) -> None:
-    fragments = (
-        "(Agreement not-run)",
-        f"(NativeReplay {native_status} {'True' if accepted else 'False'} ",
-        "(HornReference not-run False 0)",
-        "(CompiledWorklist not-run False 0)",
-        "(Outcome accepted)" if accepted else "(Outcome rejected)",
-    )
-    missing = [fragment for fragment in fragments if fragment not in output]
-    if missing:
-        receipt_start = output.rfind("(NIKReceiptV1")
-        evidence = output[receipt_start:] if receipt_start >= 0 else output
-        raise SystemExit(
-            "CeTTa receipt lacks " + ", ".join(missing) + ":\n" + evidence
-        )
-
-
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--megalodon", type=Path, required=True)
     parser.add_argument("--cetta", type=Path, required=True)
+    parser.add_argument("--differential", type=Path, required=True)
     parser.add_argument("--catalog", type=Path, required=True)
     parser.add_argument("--positive", type=Path, required=True)
     parser.add_argument("--lean-witness", type=Path, required=True)
@@ -776,18 +758,20 @@ def main() -> int:
     validity = compile_declaration_validity(checked.stdout)
     valid_declarations = poly.run_cetta(args.cetta, validity[0], validity[1])
     invalid_declarations = poly.run_cetta(args.cetta, validity[2], validity[3])
-    require_receipt(accepted, accepted=True, native_status="ok")
-    require_receipt(
-        rejected, accepted=False, native_status="final-mismatch"
-    )
-    require_receipt(
-        valid_declarations, accepted=True, native_status="ok"
-    )
-    require_receipt(
-        invalid_declarations,
-        accepted=False,
-        native_status="premise-mismatch",
-    )
+    poly.require_public_result(accepted, accepted=True)
+    poly.require_public_result(rejected, accepted=False)
+    poly.require_public_result(valid_declarations, accepted=True)
+    poly.require_public_result(invalid_declarations, accepted=False)
+    for goal, article, accepted_result, native_status in (
+        (compiled[0], compiled[1], True, "ok"),
+        (compiled[2], compiled[1], False, "final-mismatch"),
+        (validity[0], validity[1], True, "ok"),
+        (validity[2], validity[3], False, "premise-mismatch"),
+    ):
+        poly.require_differential(
+            args.differential, goal, article,
+            accepted=accepted_result, native_status=native_status,
+        )
     print(
         "(NikMegalodonDefinitionV1Summary parameters=1 definitions=1 "
         "delta=1 beta=1 paths=2 declarations-valid=1 invalid-body-rejected=1 "

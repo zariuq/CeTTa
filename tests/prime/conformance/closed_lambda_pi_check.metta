@@ -1,0 +1,12 @@
+(= (closed-lp-identity) (lam x x))
+
+!(type:check (lam x x) (-> u0 u0))
+!(type:check (lam x x) u0)
+!(type:analyze (lam x x) (-> u0 u0))
+!(type:analyze (lam x x) u0)
+!(type:check u0 u1)
+!(type:check u1 u1)
+!(type:check (idx 0) u0)
+!(type:check 7 Number)
+!(type:may (closed-lp-identity) (-> u0 u0))
+!(type:must (closed-lp-identity) (-> u0 u0))

@@ -1,0 +1,7 @@
+[True]
+[(type:eq (lam x Foo) (lam x Foo))]
+[(type:eq (-> (x : Foo) u0) (-> (y : Foo) u0))]
+[(type:eq (idx 0) (idx 0))]
+[True]
+[(type:of Foo)]
+[(type:check Foo Foo)]

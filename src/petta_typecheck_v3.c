@@ -441,15 +441,15 @@ static void v3_copy_text(char *target, size_t target_size, const char *text) {
 }
 
 static PettaAnalysisVerdict v3_analysis_verdict(
-    CettaPettaV3EvidenceOutcomeV1 outcome) {
+    CettaNikOutcomeV1 outcome) {
     switch (outcome) {
-    case CETTA_PETTA_V3_EVIDENCE_ESTABLISHED:
+    case CETTA_NIK_OUTCOME_ESTABLISHED:
         return PETTA_ANALYSIS_ESTABLISHED;
-    case CETTA_PETTA_V3_EVIDENCE_REFUTED:
+    case CETTA_NIK_OUTCOME_REFUTED:
         return PETTA_ANALYSIS_REFUTED;
-    case CETTA_PETTA_V3_EVIDENCE_UNDETERMINED:
+    case CETTA_NIK_OUTCOME_OUTSIDE_FRAGMENT:
         return PETTA_ANALYSIS_UNDETERMINED;
-    case CETTA_PETTA_V3_EVIDENCE_INCOMPLETE:
+    case CETTA_NIK_OUTCOME_INCOMPLETE:
         return PETTA_ANALYSIS_INCOMPLETE;
     }
     return PETTA_ANALYSIS_INCOMPLETE;

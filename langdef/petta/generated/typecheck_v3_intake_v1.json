@@ -839,14 +839,6 @@
   },
   "presentations": [
     {
-      "authority_frame": {
-        "certificate_policy": "none",
-        "default_outcome": "PTUndetermined",
-        "fiber": "petta",
-        "mode": "direct-decision",
-        "native_projection": "pending",
-        "status": "AUTHORED_FRAGMENT"
-      },
       "name": "petta-typecheck-v2-guard",
       "provider_requirements": [
         {
@@ -901,827 +893,587 @@
         {
           "head_arity": 2,
           "head_relation": "ArgListLenDiffers",
-          "name": "ald-cons-rec",
-          "native_projection": "native-arity-classification",
-          "role": "calculus"
+          "name": "ald-cons-rec"
         },
         {
           "head_arity": 2,
           "head_relation": "ArgListLenDiffers",
-          "name": "ald-cons-zero",
-          "native_projection": "native-arity-classification",
-          "role": "calculus"
+          "name": "ald-cons-zero"
         },
         {
           "head_arity": 2,
           "head_relation": "ArgListLenDiffers",
-          "name": "ald-nil-succ",
-          "native_projection": "native-arity-classification",
-          "role": "calculus"
+          "name": "ald-nil-succ"
         },
         {
           "head_arity": 2,
           "head_relation": "ArgListLen",
-          "name": "all-cons",
-          "native_projection": "native-arity-classification",
-          "role": "calculus"
+          "name": "all-cons"
         },
         {
           "head_arity": 2,
           "head_relation": "ArgListLen",
-          "name": "all-nil",
-          "native_projection": "native-arity-classification",
-          "role": "calculus"
+          "name": "all-nil"
         },
         {
           "head_arity": 2,
           "head_relation": "BaseSortOf",
-          "name": "base-sort-false",
-          "native_projection": "native-base-sort-classification",
-          "role": "calculus"
+          "name": "base-sort-false"
         },
         {
           "head_arity": 2,
           "head_relation": "BaseSortOf",
-          "name": "base-sort-num",
-          "native_projection": "native-base-sort-classification",
-          "role": "calculus"
+          "name": "base-sort-num"
         },
         {
           "head_arity": 2,
           "head_relation": "BaseSortOf",
-          "name": "base-sort-str",
-          "native_projection": "native-base-sort-classification",
-          "role": "calculus"
+          "name": "base-sort-str"
         },
         {
           "head_arity": 2,
           "head_relation": "BaseSortOf",
-          "name": "base-sort-true",
-          "native_projection": "native-base-sort-classification",
-          "role": "calculus"
+          "name": "base-sort-true"
         },
         {
           "head_arity": 2,
           "head_relation": "BoundnessRefuted",
-          "name": "br-det-bool",
-          "native_projection": "native-boundness-refutation",
-          "role": "calculus"
+          "name": "br-det-bool"
         },
         {
           "head_arity": 2,
           "head_relation": "BoundnessRefuted",
-          "name": "br-det-num",
-          "native_projection": "native-boundness-refutation",
-          "role": "calculus"
+          "name": "br-det-num"
         },
         {
           "head_arity": 2,
           "head_relation": "BoundnessRefuted",
-          "name": "br-det-str",
-          "native_projection": "native-boundness-refutation",
-          "role": "calculus"
+          "name": "br-det-str"
         },
         {
           "head_arity": 2,
           "head_relation": "BoundnessRefuted",
-          "name": "br-semidet-bool",
-          "native_projection": "native-boundness-refutation",
-          "role": "calculus"
+          "name": "br-semidet-bool"
         },
         {
           "head_arity": 2,
           "head_relation": "BoundnessRefuted",
-          "name": "br-semidet-num",
-          "native_projection": "native-boundness-refutation",
-          "role": "calculus"
+          "name": "br-semidet-num"
         },
         {
           "head_arity": 2,
           "head_relation": "BoundnessRefuted",
-          "name": "br-semidet-str",
-          "native_projection": "native-boundness-refutation",
-          "role": "calculus"
+          "name": "br-semidet-str"
         },
         {
           "head_arity": 3,
           "head_relation": "ConflictsAll",
-          "name": "ca-cons",
-          "native_projection": "native-disjointness",
-          "role": "calculus"
+          "name": "ca-cons"
         },
         {
           "head_arity": 3,
           "head_relation": "ConflictsAll",
-          "name": "ca-nil",
-          "native_projection": "native-disjointness",
-          "role": "calculus"
+          "name": "ca-nil"
         },
         {
           "head_arity": 3,
           "head_relation": "ConflictsAllL",
-          "name": "cal-cons",
-          "native_projection": "native-disjointness",
-          "role": "calculus"
+          "name": "cal-cons"
         },
         {
           "head_arity": 3,
           "head_relation": "ConflictsAllL",
-          "name": "cal-nil",
-          "native_projection": "native-disjointness",
-          "role": "calculus"
+          "name": "cal-nil"
         },
         {
           "head_arity": 1,
           "head_relation": "ConcreteNewtypeRepresentation",
-          "name": "concrete-newtype-representation-arrow",
-          "native_projection": "native-type-compatibility",
-          "role": "calculus"
+          "name": "concrete-newtype-representation-arrow"
         },
         {
           "head_arity": 1,
           "head_relation": "ConcreteNewtypeRepresentation",
-          "name": "concrete-newtype-representation-bool",
-          "native_projection": "native-type-compatibility",
-          "role": "calculus"
+          "name": "concrete-newtype-representation-bool"
         },
         {
           "head_arity": 1,
           "head_relation": "ConcreteNewtypeRepresentation",
-          "name": "concrete-newtype-representation-brand",
-          "native_projection": "native-type-compatibility",
-          "role": "calculus"
+          "name": "concrete-newtype-representation-brand"
         },
         {
           "head_arity": 1,
           "head_relation": "ConcreteNewtypeRepresentation",
-          "name": "concrete-newtype-representation-ctor",
-          "native_projection": "native-type-compatibility",
-          "role": "calculus"
+          "name": "concrete-newtype-representation-ctor"
         },
         {
           "head_arity": 1,
           "head_relation": "ConcreteNewtypeRepresentation",
-          "name": "concrete-newtype-representation-list",
-          "native_projection": "native-type-compatibility",
-          "role": "calculus"
+          "name": "concrete-newtype-representation-list"
         },
         {
           "head_arity": 1,
           "head_relation": "ConcreteNewtypeRepresentation",
-          "name": "concrete-newtype-representation-nominal",
-          "native_projection": "native-type-compatibility",
-          "role": "calculus"
+          "name": "concrete-newtype-representation-nominal"
         },
         {
           "head_arity": 1,
           "head_relation": "ConcreteNewtypeRepresentation",
-          "name": "concrete-newtype-representation-num",
-          "native_projection": "native-type-compatibility",
-          "role": "calculus"
+          "name": "concrete-newtype-representation-num"
         },
         {
           "head_arity": 1,
           "head_relation": "ConcreteNewtypeRepresentation",
-          "name": "concrete-newtype-representation-str",
-          "native_projection": "native-type-compatibility",
-          "role": "calculus"
+          "name": "concrete-newtype-representation-str"
         },
         {
           "head_arity": 1,
           "head_relation": "ConcreteNewtypeRepresentation",
-          "name": "concrete-newtype-representation-union",
-          "native_projection": "native-type-compatibility",
-          "role": "calculus"
+          "name": "concrete-newtype-representation-union"
         },
         {
           "head_arity": 3,
           "head_relation": "Consistent",
-          "name": "consistent-alias-left",
-          "native_projection": "native-type-compatibility",
-          "role": "calculus"
+          "name": "consistent-alias-left"
         },
         {
           "head_arity": 3,
           "head_relation": "Consistent",
-          "name": "consistent-alias-right",
-          "native_projection": "native-type-compatibility",
-          "role": "calculus"
+          "name": "consistent-alias-right"
         },
         {
           "head_arity": 2,
           "head_relation": "ConsistentAllActual",
-          "name": "consistent-all-actual-cons",
-          "native_projection": "native-type-compatibility",
-          "role": "calculus"
+          "name": "consistent-all-actual-cons"
         },
         {
           "head_arity": 2,
           "head_relation": "ConsistentAllActual",
-          "name": "consistent-all-actual-nil",
-          "native_projection": "native-type-compatibility",
-          "role": "calculus"
+          "name": "consistent-all-actual-nil"
         },
         {
           "head_arity": 3,
           "head_relation": "Consistent",
-          "name": "consistent-arrow",
-          "native_projection": "native-type-compatibility",
-          "role": "calculus"
+          "name": "consistent-arrow"
         },
         {
           "head_arity": 3,
           "head_relation": "Consistent",
-          "name": "consistent-brand",
-          "native_projection": "native-type-compatibility",
-          "role": "calculus"
+          "name": "consistent-brand"
         },
         {
           "head_arity": 3,
           "head_relation": "Consistent",
-          "name": "consistent-dyn-left",
-          "native_projection": "native-type-compatibility",
-          "role": "calculus"
+          "name": "consistent-dyn-left"
         },
         {
           "head_arity": 3,
           "head_relation": "Consistent",
-          "name": "consistent-dyn-right",
-          "native_projection": "native-type-compatibility",
-          "role": "calculus"
+          "name": "consistent-dyn-right"
         },
         {
           "head_arity": 2,
           "head_relation": "ConsistentList",
-          "name": "consistent-list-cons",
-          "native_projection": "native-type-compatibility",
-          "role": "calculus"
+          "name": "consistent-list-cons"
         },
         {
           "head_arity": 2,
           "head_relation": "ConsistentList",
-          "name": "consistent-list-nil",
-          "native_projection": "native-type-compatibility",
-          "role": "calculus"
+          "name": "consistent-list-nil"
         },
         {
           "head_arity": 3,
           "head_relation": "Consistent",
-          "name": "consistent-newtype-representation",
-          "native_projection": "native-type-compatibility",
-          "role": "calculus"
+          "name": "consistent-newtype-representation"
         },
         {
           "head_arity": 3,
           "head_relation": "Consistent",
-          "name": "consistent-refl",
-          "native_projection": "native-type-compatibility",
-          "role": "calculus"
+          "name": "consistent-refl"
         },
         {
           "head_arity": 3,
           "head_relation": "Consistent",
-          "name": "consistent-union-left",
-          "native_projection": "native-type-compatibility",
-          "role": "calculus"
+          "name": "consistent-union-left"
         },
         {
           "head_arity": 3,
           "head_relation": "Consistent",
-          "name": "consistent-union-right",
-          "native_projection": "native-type-compatibility",
-          "role": "calculus"
+          "name": "consistent-union-right"
         },
         {
           "head_arity": 3,
           "head_relation": "DeclaredConflictRest",
-          "name": "dcr-cons",
-          "native_projection": "native-definite-mismatch",
-          "role": "calculus"
+          "name": "dcr-cons"
         },
         {
           "head_arity": 3,
           "head_relation": "DeclaredConflictRest",
-          "name": "dcr-nil",
-          "native_projection": "native-definite-mismatch",
-          "role": "calculus"
+          "name": "dcr-nil"
         },
         {
           "head_arity": 3,
           "head_relation": "DeclaredConflictSome",
-          "name": "dcs-cons",
-          "native_projection": "native-definite-mismatch",
-          "role": "calculus"
+          "name": "dcs-cons"
         },
         {
           "head_arity": 3,
           "head_relation": "DefiniteMismatch",
-          "name": "dm-alias-formal",
-          "native_projection": "native-definite-mismatch",
-          "role": "calculus"
+          "name": "dm-alias-formal"
         },
         {
           "head_arity": 3,
           "head_relation": "DefiniteMismatch",
-          "name": "dm-applied-head",
-          "native_projection": "native-definite-mismatch",
-          "role": "calculus"
+          "name": "dm-applied-head"
         },
         {
           "head_arity": 3,
           "head_relation": "DefiniteMismatch",
-          "name": "dm-base",
-          "native_projection": "native-definite-mismatch",
-          "role": "calculus"
+          "name": "dm-base"
         },
         {
           "head_arity": 3,
           "head_relation": "DefiniteMismatch",
-          "name": "dm-ctor",
-          "native_projection": "native-definite-mismatch",
-          "role": "calculus"
+          "name": "dm-ctor"
         },
         {
           "head_arity": 3,
           "head_relation": "DefiniteMismatch",
-          "name": "dm-declared-symbol",
-          "native_projection": "native-definite-mismatch",
-          "role": "calculus"
+          "name": "dm-declared-symbol"
         },
         {
           "head_arity": 3,
           "head_relation": "DefiniteMismatch",
-          "name": "dm-list-here",
-          "native_projection": "native-definite-mismatch",
-          "role": "calculus"
+          "name": "dm-list-here"
         },
         {
           "head_arity": 3,
           "head_relation": "DefiniteMismatch",
-          "name": "dm-list-literal",
-          "native_projection": "native-definite-mismatch",
-          "role": "calculus"
+          "name": "dm-list-literal"
         },
         {
           "head_arity": 3,
           "head_relation": "DefiniteMismatch",
-          "name": "dm-list-there",
-          "native_projection": "native-definite-mismatch",
-          "role": "calculus"
+          "name": "dm-list-there"
         },
         {
           "head_arity": 3,
           "head_relation": "DefiniteMismatch",
-          "name": "dm-newtype-formal",
-          "native_projection": "native-definite-mismatch",
-          "role": "calculus"
+          "name": "dm-newtype-formal"
         },
         {
           "head_arity": 3,
           "head_relation": "DefiniteMismatch",
-          "name": "dm-union",
-          "native_projection": "native-definite-mismatch",
-          "role": "calculus"
+          "name": "dm-union"
         },
         {
           "head_arity": 1,
           "head_relation": "DynamicMayFlowTo",
-          "name": "dynamic-may-flow-arrow",
-          "native_projection": "native-type-compatibility",
-          "role": "calculus"
+          "name": "dynamic-may-flow-arrow"
         },
         {
           "head_arity": 1,
           "head_relation": "DynamicMayFlowTo",
-          "name": "dynamic-may-flow-bool",
-          "native_projection": "native-type-compatibility",
-          "role": "calculus"
+          "name": "dynamic-may-flow-bool"
         },
         {
           "head_arity": 1,
           "head_relation": "DynamicMayFlowTo",
-          "name": "dynamic-may-flow-brand",
-          "native_projection": "native-type-compatibility",
-          "role": "calculus"
+          "name": "dynamic-may-flow-brand"
         },
         {
           "head_arity": 1,
           "head_relation": "DynamicMayFlowTo",
-          "name": "dynamic-may-flow-ctor",
-          "native_projection": "native-type-compatibility",
-          "role": "calculus"
+          "name": "dynamic-may-flow-ctor"
         },
         {
           "head_arity": 1,
           "head_relation": "DynamicMayFlowTo",
-          "name": "dynamic-may-flow-list",
-          "native_projection": "native-type-compatibility",
-          "role": "calculus"
+          "name": "dynamic-may-flow-list"
         },
         {
           "head_arity": 1,
           "head_relation": "DynamicMayFlowTo",
-          "name": "dynamic-may-flow-nominal",
-          "native_projection": "native-type-compatibility",
-          "role": "calculus"
+          "name": "dynamic-may-flow-nominal"
         },
         {
           "head_arity": 1,
           "head_relation": "DynamicMayFlowTo",
-          "name": "dynamic-may-flow-num",
-          "native_projection": "native-type-compatibility",
-          "role": "calculus"
+          "name": "dynamic-may-flow-num"
         },
         {
           "head_arity": 1,
           "head_relation": "DynamicMayFlowTo",
-          "name": "dynamic-may-flow-str",
-          "native_projection": "native-type-compatibility",
-          "role": "calculus"
+          "name": "dynamic-may-flow-str"
         },
         {
           "head_arity": 1,
           "head_relation": "DynamicMayFlowTo",
-          "name": "dynamic-may-flow-union",
-          "native_projection": "native-type-compatibility",
-          "role": "calculus"
+          "name": "dynamic-may-flow-union"
         },
         {
           "head_arity": 2,
           "head_relation": "ExpressionEffect",
-          "name": "expression-effect-collapse",
-          "native_projection": "native-result-cardinality-grading",
-          "role": "calculus"
+          "name": "expression-effect-collapse"
         },
         {
           "head_arity": 2,
           "head_relation": "ExpressionEffect",
-          "name": "expression-effect-foldall",
-          "native_projection": "native-result-cardinality-grading",
-          "role": "calculus"
+          "name": "expression-effect-foldall"
         },
         {
           "head_arity": 2,
           "head_relation": "ExpressionEffect",
-          "name": "expression-effect-known",
-          "native_projection": "native-result-cardinality-grading",
-          "role": "calculus"
+          "name": "expression-effect-known"
         },
         {
           "head_arity": 2,
           "head_relation": "ExpressionEffect",
-          "name": "expression-effect-once-det",
-          "native_projection": "native-result-cardinality-grading",
-          "role": "calculus"
+          "name": "expression-effect-once-det"
         },
         {
           "head_arity": 2,
           "head_relation": "ExpressionEffect",
-          "name": "expression-effect-once-nondet",
-          "native_projection": "native-result-cardinality-grading",
-          "role": "calculus"
+          "name": "expression-effect-once-nondet"
         },
         {
           "head_arity": 2,
           "head_relation": "ExpressionEffect",
-          "name": "expression-effect-once-semidet",
-          "native_projection": "native-result-cardinality-grading",
-          "role": "calculus"
+          "name": "expression-effect-once-semidet"
         },
         {
           "head_arity": 2,
           "head_relation": "ExpressionResultType",
-          "name": "expression-result-type-collapse",
-          "native_projection": "native-collection-result-typing",
-          "role": "calculus"
+          "name": "expression-result-type-collapse"
         },
         {
           "head_arity": 2,
           "head_relation": "ExpressionResultType",
-          "name": "expression-result-type-foldall-empty",
-          "native_projection": "native-collection-result-typing",
-          "role": "calculus"
+          "name": "expression-result-type-foldall-empty"
         },
         {
           "head_arity": 2,
           "head_relation": "ExpressionResultType",
-          "name": "expression-result-type-known",
-          "native_projection": "native-collection-result-typing",
-          "role": "calculus"
+          "name": "expression-result-type-known"
         },
         {
           "head_arity": 2,
           "head_relation": "GuardPasses",
-          "name": "guard-passes",
-          "native_projection": "native-guard-checking",
-          "role": "calculus"
+          "name": "guard-passes"
         },
         {
           "head_arity": 2,
           "head_relation": "ValueHasType",
-          "name": "has-type-brand",
-          "native_projection": "native-value-typing",
-          "role": "calculus"
+          "name": "has-type-brand"
         },
         {
           "head_arity": 2,
           "head_relation": "ValueHasType",
-          "name": "has-type-cons-list",
-          "native_projection": "native-value-typing",
-          "role": "calculus"
+          "name": "has-type-cons-list"
         },
         {
           "head_arity": 2,
           "head_relation": "ValueHasType",
-          "name": "has-type-false",
-          "native_projection": "native-value-typing",
-          "role": "calculus"
+          "name": "has-type-false"
         },
         {
           "head_arity": 2,
           "head_relation": "ValueHasType",
-          "name": "has-type-nil-list",
-          "native_projection": "native-value-typing",
-          "role": "calculus"
+          "name": "has-type-nil-list"
         },
         {
           "head_arity": 2,
           "head_relation": "ValueHasType",
-          "name": "has-type-num",
-          "native_projection": "native-value-typing",
-          "role": "calculus"
+          "name": "has-type-num"
         },
         {
           "head_arity": 2,
           "head_relation": "ValueHasType",
-          "name": "has-type-str",
-          "native_projection": "native-value-typing",
-          "role": "calculus"
+          "name": "has-type-str"
         },
         {
           "head_arity": 2,
           "head_relation": "ValueHasType",
-          "name": "has-type-true",
-          "native_projection": "native-value-typing",
-          "role": "calculus"
+          "name": "has-type-true"
         },
         {
           "head_arity": 2,
           "head_relation": "ValueHasType",
-          "name": "has-type-union",
-          "native_projection": "native-value-typing",
-          "role": "calculus"
+          "name": "has-type-union"
         },
         {
           "head_arity": 2,
           "head_relation": "ValueHasType",
-          "name": "has-type-wildcard",
-          "native_projection": "native-value-typing",
-          "role": "calculus"
+          "name": "has-type-wildcard"
         },
         {
           "head_arity": 4,
           "head_relation": "HeadConflictRest",
-          "name": "hcr-cons",
-          "native_projection": "native-definite-mismatch",
-          "role": "calculus"
+          "name": "hcr-cons"
         },
         {
           "head_arity": 4,
           "head_relation": "HeadConflictRest",
-          "name": "hcr-nil",
-          "native_projection": "native-definite-mismatch",
-          "role": "calculus"
+          "name": "hcr-nil"
         },
         {
           "head_arity": 4,
           "head_relation": "HeadConflictRest",
-          "name": "hcr-skip",
-          "native_projection": "native-definite-mismatch",
-          "role": "calculus"
+          "name": "hcr-skip"
         },
         {
           "head_arity": 4,
           "head_relation": "HeadConflictSome",
-          "name": "hcs-here",
-          "native_projection": "native-definite-mismatch",
-          "role": "calculus"
+          "name": "hcs-here"
         },
         {
           "head_arity": 4,
           "head_relation": "HeadConflictSome",
-          "name": "hcs-skip",
-          "native_projection": "native-definite-mismatch",
-          "role": "calculus"
+          "name": "hcs-skip"
         },
         {
           "head_arity": 3,
           "head_relation": "MismatchAll",
-          "name": "ma-cons",
-          "native_projection": "native-definite-mismatch",
-          "role": "calculus"
+          "name": "ma-cons"
         },
         {
           "head_arity": 3,
           "head_relation": "MismatchAll",
-          "name": "ma-nil",
-          "native_projection": "native-definite-mismatch",
-          "role": "calculus"
+          "name": "ma-nil"
         },
         {
           "head_arity": 2,
           "head_relation": "ModeFits",
-          "name": "mode-fits-det-det",
-          "native_projection": "native-arrow-mode-order",
-          "role": "calculus"
+          "name": "mode-fits-det-det"
         },
         {
           "head_arity": 2,
           "head_relation": "ModeFits",
-          "name": "mode-fits-det-semidet",
-          "native_projection": "native-arrow-mode-order",
-          "role": "calculus"
+          "name": "mode-fits-det-semidet"
         },
         {
           "head_arity": 2,
           "head_relation": "ModeFits",
-          "name": "mode-fits-effect",
-          "native_projection": "native-arrow-mode-order",
-          "role": "calculus"
+          "name": "mode-fits-effect"
         },
         {
           "head_arity": 2,
           "head_relation": "ModeFits",
-          "name": "mode-fits-nondet",
-          "native_projection": "native-arrow-mode-order",
-          "role": "calculus"
+          "name": "mode-fits-nondet"
         },
         {
           "head_arity": 2,
           "head_relation": "ModeFits",
-          "name": "mode-fits-plain",
-          "native_projection": "native-arrow-mode-order",
-          "role": "calculus"
+          "name": "mode-fits-plain"
         },
         {
           "head_arity": 2,
           "head_relation": "ModeFits",
-          "name": "mode-fits-semidet-semidet",
-          "native_projection": "native-arrow-mode-order",
-          "role": "calculus"
+          "name": "mode-fits-semidet-semidet"
         },
         {
           "head_arity": 3,
           "head_relation": "MayOverlap",
-          "name": "overlap-alias-left",
-          "native_projection": "native-explicit-ascription",
-          "role": "calculus"
+          "name": "overlap-alias-left"
         },
         {
           "head_arity": 3,
           "head_relation": "MayOverlap",
-          "name": "overlap-alias-right",
-          "native_projection": "native-explicit-ascription",
-          "role": "calculus"
+          "name": "overlap-alias-right"
         },
         {
           "head_arity": 3,
           "head_relation": "MayOverlap",
-          "name": "overlap-forward",
-          "native_projection": "native-explicit-ascription",
-          "role": "calculus"
+          "name": "overlap-forward"
         },
         {
           "head_arity": 3,
           "head_relation": "MayOverlap",
-          "name": "overlap-reverse",
-          "native_projection": "native-explicit-ascription",
-          "role": "calculus"
+          "name": "overlap-reverse"
         },
         {
           "head_arity": 3,
           "head_relation": "MayOverlap",
-          "name": "overlap-union-left",
-          "native_projection": "native-explicit-ascription",
-          "role": "calculus"
+          "name": "overlap-union-left"
         },
         {
           "head_arity": 3,
           "head_relation": "MayOverlap",
-          "name": "overlap-union-right",
-          "native_projection": "native-explicit-ascription",
-          "role": "calculus"
+          "name": "overlap-union-right"
         },
         {
           "head_arity": 3,
           "head_relation": "SortConflicts",
-          "name": "sc-alias-formal",
-          "native_projection": "native-disjointness",
-          "role": "calculus"
+          "name": "sc-alias-formal"
         },
         {
           "head_arity": 3,
           "head_relation": "SortConflicts",
-          "name": "sc-alias-sort",
-          "native_projection": "native-disjointness",
-          "role": "calculus"
+          "name": "sc-alias-sort"
         },
         {
           "head_arity": 3,
           "head_relation": "SortConflicts",
-          "name": "sc-bool-num",
-          "native_projection": "native-disjointness",
-          "role": "calculus"
+          "name": "sc-bool-num"
         },
         {
           "head_arity": 3,
           "head_relation": "SortConflicts",
-          "name": "sc-bool-str",
-          "native_projection": "native-disjointness",
-          "role": "calculus"
+          "name": "sc-bool-str"
         },
         {
           "head_arity": 3,
           "head_relation": "SortConflicts",
-          "name": "sc-newtype-formal",
-          "native_projection": "native-disjointness",
-          "role": "calculus"
+          "name": "sc-newtype-formal"
         },
         {
           "head_arity": 3,
           "head_relation": "SortConflicts",
-          "name": "sc-newtype-sort",
-          "native_projection": "native-disjointness",
-          "role": "calculus"
+          "name": "sc-newtype-sort"
         },
         {
           "head_arity": 3,
           "head_relation": "SortConflicts",
-          "name": "sc-num-bool",
-          "native_projection": "native-disjointness",
-          "role": "calculus"
+          "name": "sc-num-bool"
         },
         {
           "head_arity": 3,
           "head_relation": "SortConflicts",
-          "name": "sc-num-str",
-          "native_projection": "native-disjointness",
-          "role": "calculus"
+          "name": "sc-num-str"
         },
         {
           "head_arity": 3,
           "head_relation": "SortConflicts",
-          "name": "sc-str-bool",
-          "native_projection": "native-disjointness",
-          "role": "calculus"
+          "name": "sc-str-bool"
         },
         {
           "head_arity": 3,
           "head_relation": "SortConflicts",
-          "name": "sc-str-num",
-          "native_projection": "native-disjointness",
-          "role": "calculus"
+          "name": "sc-str-num"
         },
         {
           "head_arity": 3,
           "head_relation": "SortConflicts",
-          "name": "sc-union-left",
-          "native_projection": "native-disjointness",
-          "role": "calculus"
+          "name": "sc-union-left"
         },
         {
           "head_arity": 3,
           "head_relation": "SortConflicts",
-          "name": "sc-union-right",
-          "native_projection": "native-disjointness",
-          "role": "calculus"
+          "name": "sc-union-right"
         },
         {
           "head_arity": 2,
           "head_relation": "UnionMember",
-          "name": "union-member-here",
-          "native_projection": "native-union-membership",
-          "role": "calculus"
+          "name": "union-member-here"
         },
         {
           "head_arity": 2,
           "head_relation": "UnionMember",
-          "name": "union-member-there",
-          "native_projection": "native-union-membership",
-          "role": "calculus"
+          "name": "union-member-there"
         }
       ],
-      "source_sha256": "b127c2be1c82bdad66d1d55fcceb59a8a6d12335082eada21a18d358750296f7"
+      "source_sha256": "bf5adfefbb9f410b4b61a65d7fdc437c442996154e5638683dd973da78e755b6"
     },
     {
-      "authority_frame": {
-        "certificate_policy": "none",
-        "default_outcome": "PTUndetermined",
-        "fiber": "petta",
-        "mode": "direct-decision",
-        "native_projection": "pending",
-        "status": "AUTHORED_FRAGMENT"
-      },
       "name": "petta-typecheck-v2-boundary-core-v1",
       "provider_requirements": [],
       "rule_count": 60,
@@ -1729,425 +1481,305 @@
         {
           "head_arity": 2,
           "head_relation": "PBBoundaryVisible",
-          "name": "petta-boundary-committed-none",
-          "native_projection": "native-boundary-visibility",
-          "role": "calculus"
+          "name": "petta-boundary-committed-none"
         },
         {
           "head_arity": 2,
           "head_relation": "PBBoundaryVisible",
-          "name": "petta-boundary-committed-nonempty-expression",
-          "native_projection": "native-boundary-visibility",
-          "role": "calculus"
+          "name": "petta-boundary-committed-nonempty-expression"
         },
         {
           "head_arity": 2,
           "head_relation": "PBBoundaryVisible",
-          "name": "petta-boundary-committed-nonvar",
-          "native_projection": "native-boundary-visibility",
-          "role": "calculus"
+          "name": "petta-boundary-committed-nonvar"
         },
         {
           "head_arity": 2,
           "head_relation": "PBBoundaryVisible",
-          "name": "petta-boundary-committed-proper-list",
-          "native_projection": "native-boundary-visibility",
-          "role": "calculus"
+          "name": "petta-boundary-committed-proper-list"
         },
         {
           "head_arity": 3,
           "head_relation": "PBConsumerRequirement",
-          "name": "petta-boundary-consumer-alpha-unique-atom",
-          "native_projection": "native-consumer-requirement",
-          "role": "calculus"
+          "name": "petta-boundary-consumer-alpha-unique-atom"
         },
         {
           "head_arity": 3,
           "head_relation": "PBConsumerRequirement",
-          "name": "petta-boundary-consumer-and-left",
-          "native_projection": "native-consumer-requirement",
-          "role": "calculus"
+          "name": "petta-boundary-consumer-and-left"
         },
         {
           "head_arity": 3,
           "head_relation": "PBConsumerRequirement",
-          "name": "petta-boundary-consumer-and-right",
-          "native_projection": "native-consumer-requirement",
-          "role": "calculus"
+          "name": "petta-boundary-consumer-and-right"
         },
         {
           "head_arity": 3,
           "head_relation": "PBConsumerRequirement",
-          "name": "petta-boundary-consumer-append",
-          "native_projection": "native-consumer-requirement",
-          "role": "calculus"
+          "name": "petta-boundary-consumer-append"
         },
         {
           "head_arity": 3,
           "head_relation": "PBConsumerRequirement",
-          "name": "petta-boundary-consumer-car-atom",
-          "native_projection": "native-consumer-requirement",
-          "role": "calculus"
+          "name": "petta-boundary-consumer-car-atom"
         },
         {
           "head_arity": 3,
           "head_relation": "PBConsumerRequirement",
-          "name": "petta-boundary-consumer-cdr-atom",
-          "native_projection": "native-consumer-requirement",
-          "role": "calculus"
+          "name": "petta-boundary-consumer-cdr-atom"
         },
         {
           "head_arity": 3,
           "head_relation": "PBConsumerRequirement",
-          "name": "petta-boundary-consumer-exclude-item",
-          "native_projection": "native-consumer-requirement",
-          "role": "calculus"
+          "name": "petta-boundary-consumer-exclude-item"
         },
         {
           "head_arity": 3,
           "head_relation": "PBConsumerRequirement",
-          "name": "petta-boundary-consumer-fold-flat",
-          "native_projection": "native-consumer-requirement",
-          "role": "calculus"
+          "name": "petta-boundary-consumer-fold-flat"
         },
         {
           "head_arity": 3,
           "head_relation": "PBConsumerRequirement",
-          "name": "petta-boundary-consumer-fold-nested",
-          "native_projection": "native-consumer-requirement",
-          "role": "calculus"
+          "name": "petta-boundary-consumer-fold-nested"
         },
         {
           "head_arity": 3,
           "head_relation": "PBConsumerRequirement",
-          "name": "petta-boundary-consumer-foldl-atom",
-          "native_projection": "native-consumer-requirement",
-          "role": "calculus"
+          "name": "petta-boundary-consumer-foldl-atom"
         },
         {
           "head_arity": 3,
           "head_relation": "PBConsumerRequirement",
-          "name": "petta-boundary-consumer-foldr-flat",
-          "native_projection": "native-consumer-requirement",
-          "role": "calculus"
+          "name": "petta-boundary-consumer-foldr-flat"
         },
         {
           "head_arity": 3,
           "head_relation": "PBConsumerRequirement",
-          "name": "petta-boundary-consumer-implies-left",
-          "native_projection": "native-consumer-requirement",
-          "role": "calculus"
+          "name": "petta-boundary-consumer-implies-left"
         },
         {
           "head_arity": 3,
           "head_relation": "PBConsumerRequirement",
-          "name": "petta-boundary-consumer-implies-right",
-          "native_projection": "native-consumer-requirement",
-          "role": "calculus"
+          "name": "petta-boundary-consumer-implies-right"
         },
         {
           "head_arity": 3,
           "head_relation": "PBConsumerRequirement",
-          "name": "petta-boundary-consumer-intersection-atom",
-          "native_projection": "native-consumer-requirement",
-          "role": "calculus"
+          "name": "petta-boundary-consumer-intersection-atom"
         },
         {
           "head_arity": 3,
           "head_relation": "PBConsumerRequirement",
-          "name": "petta-boundary-consumer-last",
-          "native_projection": "native-consumer-requirement",
-          "role": "calculus"
+          "name": "petta-boundary-consumer-last"
         },
         {
           "head_arity": 3,
           "head_relation": "PBConsumerRequirement",
-          "name": "petta-boundary-consumer-length",
-          "native_projection": "native-consumer-requirement",
-          "role": "calculus"
+          "name": "petta-boundary-consumer-length"
         },
         {
           "head_arity": 3,
           "head_relation": "PBConsumerRequirement",
-          "name": "petta-boundary-consumer-map-atom",
-          "native_projection": "native-consumer-requirement",
-          "role": "calculus"
+          "name": "petta-boundary-consumer-map-atom"
         },
         {
           "head_arity": 3,
           "head_relation": "PBConsumerRequirement",
-          "name": "petta-boundary-consumer-map-flat",
-          "native_projection": "native-consumer-requirement",
-          "role": "calculus"
+          "name": "petta-boundary-consumer-map-flat"
         },
         {
           "head_arity": 3,
           "head_relation": "PBConsumerRequirement",
-          "name": "petta-boundary-consumer-map-nested",
-          "native_projection": "native-consumer-requirement",
-          "role": "calculus"
+          "name": "petta-boundary-consumer-map-nested"
         },
         {
           "head_arity": 3,
           "head_relation": "PBConsumerRequirement",
-          "name": "petta-boundary-consumer-max-atom",
-          "native_projection": "native-consumer-requirement",
-          "role": "calculus"
+          "name": "petta-boundary-consumer-max-atom"
         },
         {
           "head_arity": 3,
           "head_relation": "PBConsumerRequirement",
-          "name": "petta-boundary-consumer-min-atom",
-          "native_projection": "native-consumer-requirement",
-          "role": "calculus"
+          "name": "petta-boundary-consumer-min-atom"
         },
         {
           "head_arity": 3,
           "head_relation": "PBConsumerRequirement",
-          "name": "petta-boundary-consumer-not",
-          "native_projection": "native-consumer-requirement",
-          "role": "calculus"
+          "name": "petta-boundary-consumer-not"
         },
         {
           "head_arity": 3,
           "head_relation": "PBConsumerRequirement",
-          "name": "petta-boundary-consumer-or-left",
-          "native_projection": "native-consumer-requirement",
-          "role": "calculus"
+          "name": "petta-boundary-consumer-or-left"
         },
         {
           "head_arity": 3,
           "head_relation": "PBConsumerRequirement",
-          "name": "petta-boundary-consumer-or-right",
-          "native_projection": "native-consumer-requirement",
-          "role": "calculus"
+          "name": "petta-boundary-consumer-or-right"
         },
         {
           "head_arity": 3,
           "head_relation": "PBConsumerRequirement",
-          "name": "petta-boundary-consumer-reverse",
-          "native_projection": "native-consumer-requirement",
-          "role": "calculus"
+          "name": "petta-boundary-consumer-reverse"
         },
         {
           "head_arity": 3,
           "head_relation": "PBConsumerRequirement",
-          "name": "petta-boundary-consumer-size-atom",
-          "native_projection": "native-consumer-requirement",
-          "role": "calculus"
+          "name": "petta-boundary-consumer-size-atom"
         },
         {
           "head_arity": 3,
           "head_relation": "PBConsumerRequirement",
-          "name": "petta-boundary-consumer-subtraction-atom",
-          "native_projection": "native-consumer-requirement",
-          "role": "calculus"
+          "name": "petta-boundary-consumer-subtraction-atom"
         },
         {
           "head_arity": 3,
           "head_relation": "PBConsumerRequirement",
-          "name": "petta-boundary-consumer-union-atom",
-          "native_projection": "native-consumer-requirement",
-          "role": "calculus"
+          "name": "petta-boundary-consumer-union-atom"
         },
         {
           "head_arity": 3,
           "head_relation": "PBConsumerRequirement",
-          "name": "petta-boundary-consumer-xor-left",
-          "native_projection": "native-consumer-requirement",
-          "role": "calculus"
+          "name": "petta-boundary-consumer-xor-left"
         },
         {
           "head_arity": 3,
           "head_relation": "PBConsumerRequirement",
-          "name": "petta-boundary-consumer-xor-right",
-          "native_projection": "native-consumer-requirement",
-          "role": "calculus"
+          "name": "petta-boundary-consumer-xor-right"
         },
         {
           "head_arity": 2,
           "head_relation": "PBGuardProvides",
-          "name": "petta-boundary-guard-cons-match-nonempty",
-          "native_projection": "native-guard-proviso",
-          "role": "calculus"
+          "name": "petta-boundary-guard-cons-match-nonempty"
         },
         {
           "head_arity": 2,
           "head_relation": "PBGuardProvides",
-          "name": "petta-boundary-guard-cons-match-nonvar",
-          "native_projection": "native-guard-proviso",
-          "role": "calculus"
+          "name": "petta-boundary-guard-cons-match-nonvar"
         },
         {
           "head_arity": 2,
           "head_relation": "PBGuardProvides",
-          "name": "petta-boundary-guard-is-expression-nonvar",
-          "native_projection": "native-guard-proviso",
-          "role": "calculus"
+          "name": "petta-boundary-guard-is-expression-nonvar"
         },
         {
           "head_arity": 2,
           "head_relation": "PBGuardProvides",
-          "name": "petta-boundary-guard-is-expression-proper-list",
-          "native_projection": "native-guard-proviso",
-          "role": "calculus"
+          "name": "petta-boundary-guard-is-expression-proper-list"
         },
         {
           "head_arity": 2,
           "head_relation": "PBGuardProvides",
-          "name": "petta-boundary-guard-not-empty-nonempty",
-          "native_projection": "native-guard-proviso",
-          "role": "calculus"
+          "name": "petta-boundary-guard-not-empty-nonempty"
         },
         {
           "head_arity": 2,
           "head_relation": "PBGuardProvides",
-          "name": "petta-boundary-guard-not-empty-nonvar",
-          "native_projection": "native-guard-proviso",
-          "role": "calculus"
+          "name": "petta-boundary-guard-not-empty-nonvar"
         },
         {
           "head_arity": 2,
           "head_relation": "PBGuardProvides",
-          "name": "petta-boundary-guard-not-empty-proper-list",
-          "native_projection": "native-guard-proviso",
-          "role": "calculus"
+          "name": "petta-boundary-guard-not-empty-proper-list"
         },
         {
           "head_arity": 2,
           "head_relation": "PBGuardProvides",
-          "name": "petta-boundary-guard-not-variable",
-          "native_projection": "native-guard-proviso",
-          "role": "calculus"
+          "name": "petta-boundary-guard-not-variable"
         },
         {
           "head_arity": 3,
           "head_relation": "PBBoundaryJoin",
-          "name": "petta-boundary-join-none-none",
-          "native_projection": "native-boundary-join",
-          "role": "calculus"
+          "name": "petta-boundary-join-none-none"
         },
         {
           "head_arity": 3,
           "head_relation": "PBBoundaryJoin",
-          "name": "petta-boundary-join-none-nonempty-expression",
-          "native_projection": "native-boundary-join",
-          "role": "calculus"
+          "name": "petta-boundary-join-none-nonempty-expression"
         },
         {
           "head_arity": 3,
           "head_relation": "PBBoundaryJoin",
-          "name": "petta-boundary-join-none-nonvar",
-          "native_projection": "native-boundary-join",
-          "role": "calculus"
+          "name": "petta-boundary-join-none-nonvar"
         },
         {
           "head_arity": 3,
           "head_relation": "PBBoundaryJoin",
-          "name": "petta-boundary-join-none-proper-list",
-          "native_projection": "native-boundary-join",
-          "role": "calculus"
+          "name": "petta-boundary-join-none-proper-list"
         },
         {
           "head_arity": 3,
           "head_relation": "PBBoundaryJoin",
-          "name": "petta-boundary-join-nonempty-expression-none",
-          "native_projection": "native-boundary-join",
-          "role": "calculus"
+          "name": "petta-boundary-join-nonempty-expression-none"
         },
         {
           "head_arity": 3,
           "head_relation": "PBBoundaryJoin",
-          "name": "petta-boundary-join-nonempty-expression-nonempty-expression",
-          "native_projection": "native-boundary-join",
-          "role": "calculus"
+          "name": "petta-boundary-join-nonempty-expression-nonempty-expression"
         },
         {
           "head_arity": 3,
           "head_relation": "PBBoundaryJoin",
-          "name": "petta-boundary-join-nonempty-expression-nonvar",
-          "native_projection": "native-boundary-join",
-          "role": "calculus"
+          "name": "petta-boundary-join-nonempty-expression-nonvar"
         },
         {
           "head_arity": 3,
           "head_relation": "PBBoundaryJoin",
-          "name": "petta-boundary-join-nonempty-expression-proper-list",
-          "native_projection": "native-boundary-join",
-          "role": "calculus"
+          "name": "petta-boundary-join-nonempty-expression-proper-list"
         },
         {
           "head_arity": 3,
           "head_relation": "PBBoundaryJoin",
-          "name": "petta-boundary-join-nonvar-none",
-          "native_projection": "native-boundary-join",
-          "role": "calculus"
+          "name": "petta-boundary-join-nonvar-none"
         },
         {
           "head_arity": 3,
           "head_relation": "PBBoundaryJoin",
-          "name": "petta-boundary-join-nonvar-nonempty-expression",
-          "native_projection": "native-boundary-join",
-          "role": "calculus"
+          "name": "petta-boundary-join-nonvar-nonempty-expression"
         },
         {
           "head_arity": 3,
           "head_relation": "PBBoundaryJoin",
-          "name": "petta-boundary-join-nonvar-nonvar",
-          "native_projection": "native-boundary-join",
-          "role": "calculus"
+          "name": "petta-boundary-join-nonvar-nonvar"
         },
         {
           "head_arity": 3,
           "head_relation": "PBBoundaryJoin",
-          "name": "petta-boundary-join-nonvar-proper-list",
-          "native_projection": "native-boundary-join",
-          "role": "calculus"
+          "name": "petta-boundary-join-nonvar-proper-list"
         },
         {
           "head_arity": 3,
           "head_relation": "PBBoundaryJoin",
-          "name": "petta-boundary-join-proper-list-none",
-          "native_projection": "native-boundary-join",
-          "role": "calculus"
+          "name": "petta-boundary-join-proper-list-none"
         },
         {
           "head_arity": 3,
           "head_relation": "PBBoundaryJoin",
-          "name": "petta-boundary-join-proper-list-nonempty-expression",
-          "native_projection": "native-boundary-join",
-          "role": "calculus"
+          "name": "petta-boundary-join-proper-list-nonempty-expression"
         },
         {
           "head_arity": 3,
           "head_relation": "PBBoundaryJoin",
-          "name": "petta-boundary-join-proper-list-nonvar",
-          "native_projection": "native-boundary-join",
-          "role": "calculus"
+          "name": "petta-boundary-join-proper-list-nonvar"
         },
         {
           "head_arity": 3,
           "head_relation": "PBBoundaryJoin",
-          "name": "petta-boundary-join-proper-list-proper-list",
-          "native_projection": "native-boundary-join",
-          "role": "calculus"
+          "name": "petta-boundary-join-proper-list-proper-list"
         },
         {
           "head_arity": 2,
           "head_relation": "PBBoundaryVisible",
-          "name": "petta-boundary-open-none",
-          "native_projection": "native-boundary-visibility",
-          "role": "calculus"
+          "name": "petta-boundary-open-none"
         },
         {
           "head_arity": 2,
           "head_relation": "PBBoundaryVisible",
-          "name": "petta-boundary-open-nonempty-expression",
-          "native_projection": "native-boundary-visibility",
-          "role": "calculus"
+          "name": "petta-boundary-open-nonempty-expression"
         }
       ],
-      "source_sha256": "e7f22df1f71b1161838333dd3d14b53ffb8218f151ca667b9d2f4f260b6de62b"
+      "source_sha256": "7e1ea071c949dfc4faac8e0a5b8cdf2110b07d847cd4fa1f5355a06bc7829146"
     }
   ],
   "schema": "cetta-petta-typecheck-v3-intake-v1",

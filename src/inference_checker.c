@@ -1188,6 +1188,7 @@ CettaInferenceStatus cetta_inference_checker_add_rule(
     uint64_t unused;
     size_t next_count;
     CettaInferenceStatus status;
+    const bool version_one = checker && checker->wire_version == 1u;
 
     if (out)
         *out = CETTA_INFERENCE_RULE_HANDLE_NONE;
@@ -1196,7 +1197,9 @@ CettaInferenceStatus cetta_inference_checker_add_rule(
         return inference_error(CETTA_INFERENCE_INVALID_PRESENTATION,
                                error_buf, error_buf_size,
                                "checker output or symbol table is unavailable");
-    if (!atom_expr_tag(rule_atom, "GRule", 5) ||
+    if (!(version_one
+              ? atom_expr_tag(rule_atom, "GRuleV1", 6)
+              : atom_expr_tag(rule_atom, "GRule", 5)) ||
         !atom_string_value(rule_atom->expr.elems[1], &id) || !*id)
         return inference_error(CETTA_INFERENCE_INVALID_PRESENTATION,
                                error_buf, error_buf_size,

@@ -7,10 +7,6 @@
 (: Truth Bool)
 (: q Query)
 
-(= (budget-observation $label $budget
-      (PrimeVerdict $status $judgment $evidence))
-   (BudgetObservation $label $budget $status))
-
 (= (choose) Z)
 (= (choose) Truth)
 (= (only) Z)
@@ -21,100 +17,98 @@
    (superpose (Z (delayed-value 600))))
 
 ; Each label is sampled at increasing caller-declared producer budgets. The
-; external checker enforces that once a determinate status appears, every later
-; sample preserves it. Finite structural judgments remain independent of this
-; control; partial producers exercise refinement in both polarities.
-!(budget-observation OpenExpected 1
-   (prime-judge &self (Check Z $Expected) 1))
-!(budget-observation OpenExpected 8
-   (prime-judge &self (Check Z $Expected) 8))
-!(budget-observation OpenExpected 64
-   (prime-judge &self (Check Z $Expected) 64))
-!(budget-observation OpenExpected 256
-   (prime-judge &self (Check Z $Expected) 256))
+; checker below observes the public three-way contract: True and False are
+; determinate, while an uninterpreted type: expression is Unsettled. Direct C
+; tests separately distinguish open-world abstention from resource exhaustion.
 
-!(budget-observation FormNat 1
-   (prime-judge &self (Form Nat) 1))
-!(budget-observation FormNat 8
-   (prime-judge &self (Form Nat) 8))
-!(budget-observation FormNat 64
-   (prime-judge &self (Form Nat) 64))
-!(budget-observation FormNat 256
-   (prime-judge &self (Form Nat) 256))
+!(let $result (type:check Z $Expected 1)
+   (BudgetObservation OpenExpected 1 $result))
+!(let $result (type:check Z $Expected 8)
+   (BudgetObservation OpenExpected 8 $result))
+!(let $result (type:check Z $Expected 64)
+   (BudgetObservation OpenExpected 64 $result))
+!(let $result (type:check Z $Expected 256)
+   (BudgetObservation OpenExpected 256 $result))
 
-!(budget-observation SynthZ 1
-   (prime-judge &self (Synth Z) 1))
-!(budget-observation SynthZ 8
-   (prime-judge &self (Synth Z) 8))
-!(budget-observation SynthZ 64
-   (prime-judge &self (Synth Z) 64))
-!(budget-observation SynthZ 256
-   (prime-judge &self (Synth Z) 256))
+!(let $result (type:formed Nat 1)
+   (BudgetObservation FormNat 1 $result))
+!(let $result (type:formed Nat 8)
+   (BudgetObservation FormNat 8 $result))
+!(let $result (type:formed Nat 64)
+   (BudgetObservation FormNat 64 $result))
+!(let $result (type:formed Nat 256)
+   (BudgetObservation FormNat 256 $result))
 
-!(budget-observation CheckZ 1
-   (prime-judge &self (Check Z Nat) 1))
-!(budget-observation CheckZ 8
-   (prime-judge &self (Check Z Nat) 8))
-!(budget-observation CheckZ 64
-   (prime-judge &self (Check Z Nat) 64))
-!(budget-observation CheckZ 256
-   (prime-judge &self (Check Z Nat) 256))
+!(let $result (type:of Z 1)
+   (BudgetObservation SynthZ 1 $result))
+!(let $result (type:of Z 8)
+   (BudgetObservation SynthZ 8 $result))
+!(let $result (type:of Z 64)
+   (BudgetObservation SynthZ 64 $result))
+!(let $result (type:of Z 256)
+   (BudgetObservation SynthZ 256 $result))
 
-!(budget-observation RejectTruth 1
-   (prime-judge &self (Check Truth Nat) 1))
-!(budget-observation RejectTruth 8
-   (prime-judge &self (Check Truth Nat) 8))
-!(budget-observation RejectTruth 64
-   (prime-judge &self (Check Truth Nat) 64))
-!(budget-observation RejectTruth 256
-   (prime-judge &self (Check Truth Nat) 256))
+!(let $result (type:check Z Nat 1)
+   (BudgetObservation CheckZ 1 $result))
+!(let $result (type:check Z Nat 8)
+   (BudgetObservation CheckZ 8 $result))
+!(let $result (type:check Z Nat 64)
+   (BudgetObservation CheckZ 64 $result))
+!(let $result (type:check Z Nat 256)
+   (BudgetObservation CheckZ 256 $result))
 
-!(budget-observation RefineNat 1
-   (prime-judge &self (Refine Nat) 1))
-!(budget-observation RefineNat 8
-   (prime-judge &self (Refine Nat) 8))
-!(budget-observation RefineNat 64
-   (prime-judge &self (Refine Nat) 64))
-!(budget-observation RefineNat 256
-   (prime-judge &self (Refine Nat) 256))
+!(let $result (type:check Truth Nat 1)
+   (BudgetObservation RejectTruth 1 $result))
+!(let $result (type:check Truth Nat 8)
+   (BudgetObservation RejectTruth 8 $result))
+!(let $result (type:check Truth Nat 64)
+   (BudgetObservation RejectTruth 64 $result))
+!(let $result (type:check Truth Nat 256)
+   (BudgetObservation RejectTruth 256 $result))
 
-!(budget-observation MayOnly 1
-   (prime-judge &self (May (PrimeEvaluate (only)) Nat) 1))
-!(budget-observation MayOnly 8
-   (prime-judge &self (May (PrimeEvaluate (only)) Nat) 8))
-!(budget-observation MayOnly 64
-   (prime-judge &self (May (PrimeEvaluate (only)) Nat) 64))
-!(budget-observation MayOnly 256
-   (prime-judge &self (May (PrimeEvaluate (only)) Nat) 256))
+!(let $result (type:refine Nat 1)
+   (BudgetObservation RefineNat 1 $result))
+!(let $result (type:refine Nat 8)
+   (BudgetObservation RefineNat 8 $result))
+!(let $result (type:refine Nat 64)
+   (BudgetObservation RefineNat 64 $result))
+!(let $result (type:refine Nat 256)
+   (BudgetObservation RefineNat 256 $result))
 
-!(budget-observation MustChoose 1
-   (prime-judge &self (Must (PrimeEvaluate (choose)) Nat) 1))
-!(budget-observation MustChoose 8
-   (prime-judge &self (Must (PrimeEvaluate (choose)) Nat) 8))
-!(budget-observation MustChoose 64
-   (prime-judge &self (Must (PrimeEvaluate (choose)) Nat) 64))
-!(budget-observation MustChoose 256
-   (prime-judge &self (Must (PrimeEvaluate (choose)) Nat) 256))
+!(let $result (type:may (only) Nat 1)
+   (BudgetObservation MayOnly 1 $result))
+!(let $result (type:may (only) Nat 8)
+   (BudgetObservation MayOnly 8 $result))
+!(let $result (type:may (only) Nat 64)
+   (BudgetObservation MayOnly 64 $result))
+!(let $result (type:may (only) Nat 256)
+   (BudgetObservation MayOnly 256 $result))
 
-!(budget-observation ConvertArithmetic 1
-   (prime-judge &self (Convert (+ 1 1) 2) 1))
-!(budget-observation ConvertArithmetic 8
-   (prime-judge &self (Convert (+ 1 1) 2) 8))
-!(budget-observation ConvertArithmetic 64
-   (prime-judge &self (Convert (+ 1 1) 2) 64))
-!(budget-observation ConvertArithmetic 256
-   (prime-judge &self (Convert (+ 1 1) 2) 256))
+!(let $result (type:must (choose) Nat 1)
+   (BudgetObservation MustChoose 1 $result))
+!(let $result (type:must (choose) Nat 8)
+   (BudgetObservation MustChoose 8 $result))
+!(let $result (type:must (choose) Nat 64)
+   (BudgetObservation MustChoose 64 $result))
+!(let $result (type:must (choose) Nat 256)
+   (BudgetObservation MustChoose 256 $result))
 
-; This family refines from resource-incomplete to a witnessed counterexample.
-!(budget-observation DelayedCounterexample 100
-   (prime-judge &self
-     (Must (PrimeEvaluate (delayed-answer)) Nat) 100))
-!(budget-observation DelayedCounterexample 520
-   (prime-judge &self
-     (Must (PrimeEvaluate (delayed-answer)) Nat) 520))
-!(budget-observation DelayedCounterexample 2000
-   (prime-judge &self
-     (Must (PrimeEvaluate (delayed-answer)) Nat) 2000))
-!(budget-observation DelayedCounterexample 20000
-   (prime-judge &self
-     (Must (PrimeEvaluate (delayed-answer)) Nat) 20000))
+!(let $result (type:eq (+ 1 1) 2 1)
+   (BudgetObservation ConvertArithmetic 1 $result))
+!(let $result (type:eq (+ 1 1) 2 8)
+   (BudgetObservation ConvertArithmetic 8 $result))
+!(let $result (type:eq (+ 1 1) 2 64)
+   (BudgetObservation ConvertArithmetic 64 $result))
+!(let $result (type:eq (+ 1 1) 2 256)
+   (BudgetObservation ConvertArithmetic 256 $result))
+
+; This family refines from an inert resource-bound result to a witnessed
+; counterexample as the explicit producer budget increases.
+!(let $result (type:must (delayed-answer) Nat 100)
+   (BudgetObservation DelayedCounterexample 100 $result))
+!(let $result (type:must (delayed-answer) Nat 520)
+   (BudgetObservation DelayedCounterexample 520 $result))
+!(let $result (type:must (delayed-answer) Nat 2000)
+   (BudgetObservation DelayedCounterexample 2000 $result))
+!(let $result (type:must (delayed-answer) Nat 20000)
+   (BudgetObservation DelayedCounterexample 20000 $result))

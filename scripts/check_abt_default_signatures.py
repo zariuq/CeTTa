@@ -21,7 +21,12 @@ PROBES = f"""
    True)
 !(println! {SUMMARY})
 """
-MUTATION_MARKER = "(BindPi domain codomain)"
+MUTATION_MARKER = """(AbtSignature Pi
+       (Fields domain codomain)
+       (BindPi domain codomain))"""
+MUTATION_REPLACEMENT = """(AbtSignature Pi
+       (Fields domain codomain)
+       Bind0)"""
 
 
 def run_source(binary: Path, source: str, language_args: list[str]) -> str:
@@ -93,7 +98,7 @@ def main() -> int:
 
     if source.count(MUTATION_MARKER) != 1:
         raise RuntimeError("default-signature mutation marker drifted")
-    mutant = source.replace(MUTATION_MARKER, "Bind0")
+    mutant = source.replace(MUTATION_MARKER, MUTATION_REPLACEMENT)
     mutant_output = run_source(
         binary, mutant + PROBES, ["--lang", "prime"]
     )

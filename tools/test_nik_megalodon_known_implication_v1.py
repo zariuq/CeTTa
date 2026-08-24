@@ -248,6 +248,7 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--megalodon", type=Path, required=True)
     parser.add_argument("--cetta", type=Path, required=True)
+    parser.add_argument("--differential", type=Path, required=True)
     parser.add_argument("--positive", type=Path, required=True)
     parser.add_argument("--lean-witness", type=Path, required=True)
     args = parser.parse_args()
@@ -264,10 +265,14 @@ def main() -> int:
         raise SystemExit("checked Megalodon document differs from Lean NIK witness")
     accepted = poly.run_cetta(args.cetta, *compiled[:2])
     rejected = poly.run_cetta(args.cetta, compiled[2], compiled[1])
-    if "Established" not in accepted or "Refuted" not in rejected:
-        raise SystemExit(
-            f"unexpected CeTTa results:\naccepted: {accepted}\nrejected: {rejected}"
-        )
+    poly.require_public_result(accepted, accepted=True)
+    poly.require_public_result(rejected, accepted=False)
+    poly.require_differential(
+        args.differential, *compiled[:2], accepted=True,
+    )
+    poly.require_differential(
+        args.differential, compiled[2], compiled[1], accepted=False,
+    )
     print(
         "(NikMegalodonKnownImpV1Summary theorems=2 known=1 "
         "proof-application=1 megalodon-checked=1 lean-exact=1 cetta=1)"

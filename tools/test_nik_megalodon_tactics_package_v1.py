@@ -427,20 +427,13 @@ def compile_theorem(
     return label, declared, goal, article
 
 
-def require_receipt(
-    output: str, *, accepted: bool, native_status: str,
-) -> None:
-    definitions.require_receipt(
-        output, accepted=accepted, native_status=native_status
-    )
-
-
 def require_differential(
     differential: Path,
     goal: sx.SExpr,
     article: sx.SExpr,
     *,
     accepted: bool,
+    native_status: str,
 ) -> None:
     request = (
         "(NIKDifferentialV1 MEGALODON-TERM "
@@ -458,6 +451,7 @@ def require_differential(
     fragments = (
         f"(Outcome {'accepted' if accepted else 'rejected'})",
         "(Agreement True)",
+        f"(NativeStatus {native_status})",
         f"(Native {expected} ",
         f"(HornReference {expected} ",
         f"(CompiledWorklist {expected} ",
@@ -484,13 +478,12 @@ def check_both(
     compilation = proof_dag.compile_shared_article(goal, article)
     raw_bytes = len(sx.render(article).encode("utf-8"))
     shared_bytes = len(sx.render(compilation.article).encode("utf-8"))
-    receipt = poly.run_cetta(cetta, goal, compilation.article)
-    require_receipt(
-        receipt, accepted=accepted, native_status=native_status
-    )
+    public_result = poly.run_cetta(cetta, goal, compilation.article)
+    poly.require_public_result(public_result, accepted=accepted)
     totals.add(compilation, raw_bytes, shared_bytes)
     require_differential(
-        differential, goal, article, accepted=accepted
+        differential, goal, article,
+        accepted=accepted, native_status=native_status,
     )
 
 

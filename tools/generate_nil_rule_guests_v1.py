@@ -13,6 +13,7 @@ import gslt2parse_schema_v1 as sx
 
 
 PINNED_SHA256 = {
+    "curried": "e2b3c1132bede217773bcad0cff25f7ccde2b137a7dbca135cd2512f6e109386",
     "bfc": "b53b6079a03241f39fe7d8750b77247ce959a73c95dc55cc2b419d83df3ce5b1",
     "synthesis": "ba3279cfbdd737c67b4118cd734c0f69e0dfcb87c0b4035a082c0d658d78ac3e",
     "sumo_kb": "a8df9448de199882f944e1010de42d5641a5ccf8829d1c6963fcd262f85007db",
@@ -156,6 +157,111 @@ def declarations_from_rule_base(text: str, source_name: str) -> list[Block]:
             )
         )
     return blocks
+
+
+def require_form(forms: list[sx.SExpr], text: str, source: str, label: str) -> None:
+    wanted = one_form(text, f"expected {label}")
+    if wanted not in forms:
+        raise GuestError(f"{source}: missing semantic witness {label}")
+
+
+def curried_chaining_blocks(text: str) -> list[Block]:
+    """Extract the authored facts and curried Modus Ponens rule."""
+    source = "curried-chainer.metta"
+    forms = parse_source(text, source)
+    declarations: dict[str, sx.SExpr] = {}
+    for raw in forms:
+        if not isinstance(raw, tuple) or len(raw) != 3:
+            continue
+        if not isinstance(raw[0], sx.Symbol) or raw[0].text != "add-atom":
+            continue
+        if not isinstance(raw[1], sx.Symbol) or raw[1].text != "&kb":
+            continue
+        declaration = as_tuple(raw[2], f"{source}: add-atom declaration")
+        if len(declaration) != 3 or symbol(declaration[0], source) != ":":
+            raise GuestError(f"{source}: malformed add-atom declaration")
+        name = symbol(declaration[1], f"{source}: declaration name")
+        if name in declarations:
+            raise GuestError(f"{source}: duplicate declaration {name}")
+        declarations[name] = declaration[2]
+
+    expected = {"a", "ab", "bc", "ModusPonens"}
+    if set(declarations) != expected:
+        raise GuestError(
+            f"{source}: expected declarations {sorted(expected)}, "
+            f"got {sorted(declarations)}"
+        )
+    require_form(
+        forms,
+        "(assertEqual (bc &kb (fromNumber 3) (: $prf C)) "
+        "(: ((ModusPonens bc) ((ModusPonens ab) a)) C))",
+        source,
+        "depth-three backward proof of C",
+    )
+    require_form(
+        forms,
+        "(assertEqualToResult (fc &kb (fromNumber 3) (: a A)) "
+        "((: a A) (: ((ModusPonens ab) a) B) "
+        "(: ((ModusPonens bc) ((ModusPonens ab) a)) C)))",
+        source,
+        "depth-three forward occurrences from a",
+    )
+
+    mp_type = as_tuple(declarations["ModusPonens"], f"{source}: ModusPonens")
+    expected_mp = one_form(
+        "(-> (→ $p $q) (-> $p $q))", "expected curried Modus Ponens type"
+    )
+    if mp_type != expected_mp:
+        raise GuestError(f"{source}: ModusPonens declaration changed")
+    if declarations["a"] != sx.Symbol("A"):
+        raise GuestError(f"{source}: axiom a changed")
+    expected_ab = one_form("(→ A B)", "expected ab theorem")
+    expected_bc = one_form("(→ B C)", "expected bc theorem")
+    if declarations["ab"] != expected_ab or declarations["bc"] != expected_bc:
+        raise GuestError(f"{source}: implication facts changed")
+
+    p = sx.Variable("p")
+    q = sx.Variable("q")
+    implication_proof = sx.Variable("implicationProof")
+    premise_proof = sx.Variable("premiseProof")
+    implication = sx.Symbol("→")
+    return [
+        Block(
+            "a",
+            f"{source}:a",
+            (sx.Symbol("rm-proof-atom"), sx.Symbol("a")),
+            sx.Symbol("rm-nil"),
+            sx.Symbol("A"),
+        ),
+        Block(
+            "ab",
+            f"{source}:ab",
+            (sx.Symbol("rm-proof-atom"), sx.Symbol("ab")),
+            sx.Symbol("rm-nil"),
+            expected_ab,
+        ),
+        Block(
+            "bc",
+            f"{source}:bc",
+            (sx.Symbol("rm-proof-atom"), sx.Symbol("bc")),
+            sx.Symbol("rm-nil"),
+            expected_bc,
+        ),
+        Block(
+            "modus-ponens",
+            f"{source}:ModusPonens",
+            (
+                sx.Symbol("rm-proof-app"),
+                sx.Symbol("ModusPonens"),
+                cons([implication_proof, premise_proof]),
+            ),
+            premise_list(
+                [implication_proof, premise_proof],
+                [(implication, p, q), p],
+            ),
+            q,
+        ),
+    ]
 
 
 def sumo_blocks(kb_text: str, rules_text: str) -> list[Block]:
@@ -385,20 +491,22 @@ def artifact_term(guest: str, blocks: list[Block]) -> sx.SExpr:
     return artifact
 
 
-def render_sumo_presentation(blocks: list[Block]) -> str:
-    guest = "nil-sumo-john-carry-flower"
+def render_guest_presentation(
+    blocks: list[Block], *, guest: str, presentation: str, rule_prefix: str,
+    provenance: str,
+) -> str:
     rules: list[sx.SExpr] = []
     for block in blocks:
         rules.append(
             rule_form(
-                f"nil-sumo-{block.identifier}",
+                f"{rule_prefix}-{block.identifier}",
                 (sx.Symbol("source-block"), sx.Symbol(guest), block.term()),
                 [],
             )
         )
     rules.append(
         rule_form(
-            "nil-sumo-r0",
+            f"{rule_prefix}-r0",
             (
                 sx.Symbol("guest-revision"),
                 sx.Symbol(guest),
@@ -418,13 +526,33 @@ def render_sumo_presentation(blocks: list[Block]) -> str:
     )
     rewrites = "\n".join(f"    {sx.render(rule)}" for rule in rules)
     return (
-        "; Generated from identity-pinned Nil/SUMO sources.\n"
-        "(gslt-presentation-v1 NilSUMOJohnCarryFlowerV1\n"
+        f"; Generated from {provenance}.\n"
+        f"(gslt-presentation-v1 {presentation}\n"
         "  (signature\n"
         f"{signature})\n"
         "  (equations)\n"
         "  (rewrites\n"
         f"{rewrites}))\n"
+    )
+
+
+def render_sumo_presentation(blocks: list[Block]) -> str:
+    return render_guest_presentation(
+        blocks,
+        guest="nil-sumo-john-carry-flower",
+        presentation="NilSUMOJohnCarryFlowerV1",
+        rule_prefix="nil-sumo",
+        provenance="identity-pinned Nil/SUMO sources",
+    )
+
+
+def render_curried_presentation(blocks: list[Block]) -> str:
+    return render_guest_presentation(
+        blocks,
+        guest="curried-chaining",
+        presentation="CurriedChainingRulePackageV1",
+        rule_prefix="curried-chaining",
+        provenance="the identity-pinned curried chaining source",
     )
 
 
@@ -451,14 +579,16 @@ def package(blocks: list[Block]) -> sx.SExpr:
 
 
 def render_runtime_fixture(
-    bfc: list[Block], synthesis_r0: list[Block], blackbird: Block,
-    sumo: list[Block],
+    curried: list[Block], bfc: list[Block], synthesis_r0: list[Block],
+    blackbird: Block, sumo: list[Block],
 ) -> str:
     definitions = [
+        equation("chain-curried-package", package(curried)),
         equation("nil-bfc-package", package(bfc)),
         equation("nil-synthesis-r0-package", package(synthesis_r0)),
         equation("nil-synthesis-blackbird-block", blackbird.term()),
         equation("nil-sumo-package", package(sumo)),
+        "(= (chain-curried-artifact) (compile:rule-package chain-curried-r0 (chain-curried-package)))",
         "(= (nil-bfc-special-block) (rm-block special-theorem runtime:add-special (rm-proof-atom special-proof) rm-nil special-theorem))",
         "(= (nil-bfc-artifact) (compile:rule-package bfc-r0 (nil-bfc-package)))",
         "(= (nil-bfc-rule-program) (compile:rule-program (nil-bfc-artifact)))",
@@ -469,6 +599,12 @@ def render_runtime_fixture(
         "(= (nil-sumo-artifact) (compile:rule-package sumo-r0 (nil-sumo-package)))",
     ]
     queries = [
+        "!(compile:artifact-info (chain-curried-artifact))",
+        "!(compile:run (chain-curried-artifact) 0 1000 10 A)",
+        "!(compile:run (chain-curried-artifact) 2 1000 10 B)",
+        "!(compile:run (chain-curried-artifact) 3 1000 10 C)",
+        "!(compile:run (chain-curried-artifact) 3 1000 10 D)",
+        "!(compile:rule-program (chain-curried-artifact))",
         "!(compile:artifact-info (nil-bfc-artifact))",
         "!(compile:run (nil-bfc-artifact) 0 1000 100 (imp a (imp b a)))",
         "!(compile:rule-program-info (nil-bfc-rule-program))",
@@ -505,26 +641,31 @@ def write_if_changed(path: Path, text: str) -> None:
 
 def main() -> int:
     parser = argparse.ArgumentParser()
+    parser.add_argument("--curried", type=Path, required=True)
     parser.add_argument("--bfc", type=Path, required=True)
     parser.add_argument("--synthesis", type=Path, required=True)
     parser.add_argument("--sumo-kb", type=Path, required=True)
     parser.add_argument("--sumo-rules", type=Path, required=True)
     parser.add_argument("--out", type=Path, required=True)
+    parser.add_argument("--curried-out", type=Path, required=True)
     parser.add_argument("--runtime-out", type=Path)
     args = parser.parse_args()
 
+    curried_text = pinned_text(args.curried, "curried")
     bfc_text = pinned_text(args.bfc, "bfc")
     synthesis_text = pinned_text(args.synthesis, "synthesis")
     kb_text = pinned_text(args.sumo_kb, "sumo_kb")
     rules_text = pinned_text(args.sumo_rules, "sumo_rules")
+    curried = curried_chaining_blocks(curried_text)
     bfc = bfc_blocks(bfc_text)
     synthesis_r0, blackbird = synthesis_declarations(synthesis_text)
     sumo = sumo_blocks(kb_text, rules_text)
+    write_if_changed(args.curried_out, render_curried_presentation(curried))
     write_if_changed(args.out, render_sumo_presentation(sumo))
     if args.runtime_out:
         write_if_changed(
             args.runtime_out,
-            render_runtime_fixture(bfc, synthesis_r0, blackbird, sumo),
+            render_runtime_fixture(curried, bfc, synthesis_r0, blackbird, sumo),
         )
     return 0
 

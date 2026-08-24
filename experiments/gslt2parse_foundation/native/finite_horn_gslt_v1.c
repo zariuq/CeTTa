@@ -40,7 +40,6 @@ typedef struct {
 
 typedef struct {
     Text name;
-    Node *nik_frame;
     Node *head;
     Node **body;
     size_t body_count;
@@ -48,7 +47,6 @@ typedef struct {
 
 typedef struct {
     Text name;
-    Node *nik_frame;
     OperatorDecl *operators;
     size_t operator_count;
     RuleDecl *rules;
@@ -742,228 +740,6 @@ static bool require_symbol(const Node *node,
     return true;
 }
 
-static bool node_symbol_is_one_of(const Node *node,
-                                  const char *const *values,
-                                  size_t value_count) {
-    if (node == NULL || node->kind != NODE_SYMBOL)
-        return false;
-    for (size_t index = 0u; index < value_count; index++)
-        if (node_is_symbol(node, values[index]))
-            return true;
-    return false;
-}
-
-static Node *named_list_field(Node *container, const char *name) {
-    if (container == NULL || container->kind != NODE_LIST)
-        return NULL;
-    for (size_t index = 1u; index < container->item_count; index++) {
-        Node *field = container->items[index];
-        if (field->kind == NODE_LIST && field->item_count > 0u &&
-            node_is_symbol(field->items[0], name))
-            return field;
-    }
-    return NULL;
-}
-
-static bool validate_distinct_symbol_tail(const Node *field,
-                                          size_t minimum,
-                                          const char *source,
-                                          const char *context,
-                                          char *error,
-                                          size_t error_cap) {
-    if (field == NULL || field->kind != NODE_LIST ||
-        field->item_count < minimum + 1u)
-        return set_error(error,
-                         error_cap,
-                         "%s: %s requires at least %zu symbols",
-                         source,
-                         context,
-                         minimum);
-    for (size_t index = 1u; index < field->item_count; index++) {
-        if (field->items[index]->kind != NODE_SYMBOL ||
-            field->items[index]->text_len == 0u)
-            return set_error(error,
-                             error_cap,
-                             "%s: %s members must be symbols",
-                             source,
-                             context);
-        for (size_t prior = 1u; prior < index; prior++)
-            if (text_equal(node_text(field->items[prior]),
-                           node_text(field->items[index])))
-                return set_error(error,
-                                 error_cap,
-                                 "%s: %s contains duplicate symbols",
-                                 source,
-                                 context);
-    }
-    return true;
-}
-
-static bool validate_nik_authority_frame(Node *frame,
-                                         const char *source,
-                                         char *error,
-                                         size_t error_cap) {
-    static const char *const allowed_fields[] = {
-        "mode", "certificate-policy", "fiber", "outcome-algebra",
-        "native-projection", "status", "commitments"};
-    static const char *const modes[] = {
-        "direct-decision", "native-proof", "admitted-operation",
-        "boundary-certificate"};
-    static const char *const projection_statuses[] = {
-        "pending", "qualified", "derived"};
-    static const char *const presentation_statuses[] = {
-        "AUTHORED_FRAGMENT", "COMPLETE_PRESENTATION",
-        "GENERATED_PROJECTION"};
-    if (frame == NULL || frame->kind != NODE_LIST ||
-        frame->item_count != 8u ||
-        !node_is_symbol(frame->items[0], "nik-authority-frame-v1"))
-        return set_error(error,
-                         error_cap,
-                         "%s: malformed nik-authority-frame-v1",
-                         source);
-
-    for (size_t index = 1u; index < frame->item_count; index++) {
-        Node *field = frame->items[index];
-        if (field->kind != NODE_LIST || field->item_count == 0u ||
-            field->items[0]->kind != NODE_SYMBOL ||
-            !node_symbol_is_one_of(field->items[0], allowed_fields, 7u))
-            return set_error(error,
-                             error_cap,
-                             "%s: unknown nik-authority-frame-v1 field",
-                             source);
-        for (size_t prior = 1u; prior < index; prior++) {
-            Node *old = frame->items[prior];
-            if (old->kind == NODE_LIST && old->item_count > 0u &&
-                text_equal(node_text(old->items[0]),
-                           node_text(field->items[0])))
-                return set_error(error,
-                                 error_cap,
-                                 "%s: duplicate nik-authority-frame-v1 field",
-                                 source);
-        }
-    }
-    Node *mode = named_list_field(frame, "mode");
-    Node *certificate = named_list_field(frame, "certificate-policy");
-    Node *fiber = named_list_field(frame, "fiber");
-    Node *outcome = named_list_field(frame, "outcome-algebra");
-    Node *projection = named_list_field(frame, "native-projection");
-    Node *status = named_list_field(frame, "status");
-    Node *commitments = named_list_field(frame, "commitments");
-    if (mode == NULL || certificate == NULL || fiber == NULL || outcome == NULL ||
-        projection == NULL || status == NULL || commitments == NULL)
-        return set_error(error,
-                         error_cap,
-                         "%s: missing nik-authority-frame-v1 field",
-                         source);
-    if (mode->item_count != 2u ||
-        !node_symbol_is_one_of(mode->items[1], modes, 4u))
-        return set_error(error,
-                         error_cap,
-                         "%s: unsupported NIK authority mode",
-                         source);
-    if (certificate->item_count != 2u ||
-        certificate->items[1]->kind != NODE_SYMBOL)
-        return set_error(error,
-                         error_cap,
-                         "%s: malformed certificate-policy",
-                         source);
-    if (fiber->item_count != 2u || fiber->items[1]->kind != NODE_SYMBOL ||
-        fiber->items[1]->text_len == 0u)
-        return set_error(error,
-                         error_cap,
-                         "%s: malformed language fiber",
-                         source);
-    if (node_is_symbol(mode->items[1], "direct-decision") &&
-        !node_is_symbol(certificate->items[1], "none"))
-        return set_error(
-            error,
-            error_cap,
-            "%s: direct-decision authority requires certificate-policy none",
-            source);
-    if (outcome->item_count != 4u ||
-        outcome->items[1]->kind != NODE_LIST ||
-        !validate_distinct_symbol_tail(outcome->items[1], 1u, source,
-                                       "outcome algebra", error, error_cap) ||
-        outcome->items[1]->item_count < 2u ||
-        outcome->items[2]->kind != NODE_LIST ||
-        outcome->items[2]->item_count != 1u ||
-        !node_is_symbol(outcome->items[2]->items[0], "exclusive") ||
-        outcome->items[3]->kind != NODE_LIST ||
-        outcome->items[3]->item_count != 2u ||
-        !node_is_symbol(outcome->items[3]->items[0], "default") ||
-        outcome->items[3]->items[1]->kind != NODE_SYMBOL)
-        return set_error(error,
-                         error_cap,
-                         "%s: malformed outcome-algebra",
-                         source);
-    bool default_member = false;
-    for (size_t index = 0u; index < outcome->items[1]->item_count; index++)
-        if (text_equal(node_text(outcome->items[1]->items[index]),
-                       node_text(outcome->items[3]->items[1])))
-            default_member = true;
-    if (!default_member)
-        return set_error(error,
-                         error_cap,
-                         "%s: default outcome is not in the outcome algebra",
-                         source);
-    if (projection->item_count != 2u ||
-        !node_symbol_is_one_of(projection->items[1], projection_statuses, 3u))
-        return set_error(error,
-                         error_cap,
-                         "%s: unsupported native-projection status",
-                         source);
-    if (status->item_count != 2u ||
-        !node_symbol_is_one_of(status->items[1], presentation_statuses, 3u))
-        return set_error(error,
-                         error_cap,
-                         "%s: unsupported NIK presentation status",
-                         source);
-    return validate_distinct_symbol_tail(commitments, 0u, source,
-                                         "authority commitments", error,
-                                         error_cap);
-}
-
-static bool validate_nik_rule_frame(Node *frame,
-                                    const char *source,
-                                    char *error,
-                                    size_t error_cap) {
-    static const char *const roles[] = {"calculus", "calibration"};
-    if (frame == NULL || frame->kind != NODE_LIST ||
-        frame->item_count != 3u ||
-        !node_is_symbol(frame->items[0], "nik-rule-frame-v1"))
-        return set_error(error,
-                         error_cap,
-                         "%s: malformed nik-rule-frame-v1",
-                         source);
-    Node *projection = named_list_field(frame, "native-projection");
-    Node *role = named_list_field(frame, "role");
-    if (projection == NULL || role == NULL ||
-        projection->item_count != 2u ||
-        projection->items[1]->kind != NODE_SYMBOL ||
-        projection->items[1]->text_len == 0u ||
-        role->item_count != 2u ||
-        !node_symbol_is_one_of(role->items[1], roles, 2u))
-        return set_error(error,
-                         error_cap,
-                         "%s: malformed nik-rule-frame-v1 fields",
-                         source);
-    if (text_equal(node_text(frame->items[1]->items[0]),
-                   node_text(frame->items[2]->items[0])))
-        return set_error(error,
-                         error_cap,
-                         "%s: duplicate nik-rule-frame-v1 field",
-                         source);
-    if (!(node_is_symbol(frame->items[1]->items[0], "native-projection") ||
-          node_is_symbol(frame->items[1]->items[0], "role")) ||
-        !(node_is_symbol(frame->items[2]->items[0], "native-projection") ||
-          node_is_symbol(frame->items[2]->items[0], "role")))
-        return set_error(error,
-                         error_cap,
-                         "%s: unknown nik-rule-frame-v1 field",
-                         source);
-    return true;
-}
-
 static bool positive_size(const Node *node, size_t *out) {
     if (node == NULL || node->kind != NODE_INTEGER || node->text_len == 0u ||
         node->text[0] == (uint8_t)'-' ||
@@ -1065,7 +841,6 @@ static bool parse_presentation(const FHGSLTInput *input,
     Node *signature = NULL;
     Node *equations = NULL;
     Node *rewrites = NULL;
-    Node *nik_frame = NULL;
     for (size_t index = 2u; index < root->item_count; index++) {
         Node *field = root->items[index];
         if (field->kind != NODE_LIST || field->item_count == 0u ||
@@ -1083,8 +858,6 @@ static bool parse_presentation(const FHGSLTInput *input,
             slot = &equations;
         else if (node_is_symbol(field->items[0], "rewrites"))
             slot = &rewrites;
-        else if (node_is_symbol(field->items[0], "nik-authority-frame-v1"))
-            slot = &nik_frame;
         else {
             presentation_destroy(presentation);
             return set_error(error,
@@ -1108,14 +881,6 @@ static bool parse_presentation(const FHGSLTInput *input,
                          "%s: missing presentation field",
                          input->source);
     }
-    if (nik_frame != NULL &&
-        !validate_nik_authority_frame(
-            nik_frame, input->source, error, error_cap)) {
-        presentation_destroy(presentation);
-        return false;
-    }
-    presentation->nik_frame = nik_frame;
-
     for (size_t index = 1u; index < signature->item_count; index++) {
         Node *raw = signature->items[index];
         Text name;
@@ -1168,8 +933,7 @@ static bool parse_presentation(const FHGSLTInput *input,
     for (size_t index = 1u; index < rewrites->item_count; index++) {
         Node *raw = rewrites->items[index];
         Text name;
-        size_t expected_items = nik_frame != NULL ? 5u : 4u;
-        if (raw->kind != NODE_LIST || raw->item_count != expected_items ||
+        if (raw->kind != NODE_LIST || raw->item_count != 4u ||
             !node_is_symbol(raw->items[0], "rule") ||
             !require_symbol(raw->items[1],
                             &name,
@@ -1183,17 +947,8 @@ static bool parse_presentation(const FHGSLTInput *input,
                              "%s: malformed rule",
                              input->source);
         }
-        Node *rule_frame = nik_frame != NULL ? raw->items[2] : NULL;
-        size_t head_index = nik_frame != NULL ? 3u : 2u;
-        size_t body_index = nik_frame != NULL ? 4u : 3u;
-        if (rule_frame != NULL &&
-            !validate_nik_rule_frame(
-                rule_frame, input->source, error, error_cap)) {
-            presentation_destroy(presentation);
-            return false;
-        }
-        Node *head = raw->items[head_index];
-        Node *body = raw->items[body_index];
+        Node *head = raw->items[2];
+        Node *body = raw->items[3];
         if (head->kind != NODE_LIST || head->item_count != 2u ||
             !node_is_symbol(head->items[0], "head")) {
             presentation_destroy(presentation);
@@ -1221,7 +976,6 @@ static bool parse_presentation(const FHGSLTInput *input,
         }
         RuleDecl declaration = {
             .name = name,
-            .nik_frame = rule_frame,
             .head = head->items[1],
             .body = body->items + 1u,
             .body_count = body->item_count - 1u,
@@ -1814,37 +1568,6 @@ static bool append_text(ByteBuffer *buffer, Text text) {
     return buffer_append(buffer, text.bytes, text.len);
 }
 
-static bool render_nik_frame_fields(ByteBuffer *buffer,
-                                    Node *frame,
-                                    const char *tag,
-                                    const char *const *fields,
-                                    size_t field_count) {
-    if (!buffer_byte(buffer, (uint8_t)'(') ||
-        !buffer_literal(buffer, tag))
-        return false;
-    for (size_t index = 0u; index < field_count; index++) {
-        Node *field = named_list_field(frame, fields[index]);
-        if (field == NULL || !buffer_byte(buffer, (uint8_t)' ') ||
-            !render_node(buffer, field))
-            return false;
-    }
-    return buffer_byte(buffer, (uint8_t)')');
-}
-
-static bool render_nik_authority_frame(ByteBuffer *buffer, Node *frame) {
-    static const char *const fields[] = {
-        "mode", "certificate-policy", "fiber", "outcome-algebra",
-        "native-projection", "status", "commitments"};
-    return render_nik_frame_fields(
-        buffer, frame, "nik-authority-frame-v1", fields, 7u);
-}
-
-static bool render_nik_rule_frame(ByteBuffer *buffer, Node *frame) {
-    static const char *const fields[] = {"native-projection", "role"};
-    return render_nik_frame_fields(
-        buffer, frame, "nik-rule-frame-v1", fields, 2u);
-}
-
 static bool canonical_presentation(const Presentation *presentation,
                                    ByteBuffer *buffer,
                                    char *error,
@@ -1881,9 +1604,6 @@ static bool canonical_presentation(const Presentation *presentation,
 
     bool ok = buffer_literal(buffer, "(gslt-presentation-v1 ") &&
               append_text(buffer, presentation->name);
-    if (ok && presentation->nik_frame != NULL)
-        ok = buffer_byte(buffer, (uint8_t)' ') &&
-             render_nik_authority_frame(buffer, presentation->nik_frame);
     ok = ok && buffer_literal(buffer, " (signature");
     for (size_t index = 0u; ok && index < presentation->operator_count; index++) {
         char arity[32];
@@ -1900,9 +1620,6 @@ static bool canonical_presentation(const Presentation *presentation,
         RuleDecl *rule = rules[index];
         ok = buffer_literal(buffer, " (rule ") &&
              append_text(buffer, rule->name);
-        if (ok && rule->nik_frame != NULL)
-            ok = buffer_byte(buffer, (uint8_t)' ') &&
-                 render_nik_rule_frame(buffer, rule->nik_frame);
         ok = ok && buffer_literal(buffer, " (head ") &&
              render_node(buffer, rule->head) &&
              buffer_literal(buffer, ") (body");

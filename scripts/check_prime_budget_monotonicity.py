@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Check Prime verdict stability over increasing explicit producer budgets."""
+"""Check public Prime type-result stability over increasing producer budgets."""
 
 from __future__ import annotations
 
@@ -12,9 +12,19 @@ import sys
 
 OBSERVATION = re.compile(
     r"^\[\(BudgetObservation ([^ ]+) ([0-9]+) "
-    r"(Established|Refuted|Undetermined|Incomplete)\)\]$"
+    r"(.+)\)\]$"
 )
 DETERMINATE = {"Established", "Refuted"}
+
+
+def public_status(label: str, result: str) -> str:
+    if result == "True":
+        return "Established"
+    if result == "False":
+        return "Refuted"
+    if label == "SynthZ" and result == "Nat":
+        return "Established"
+    return "Unsettled"
 
 
 def validate(groups: dict[str, list[tuple[int, str]]]) -> list[str]:
@@ -41,10 +51,10 @@ def validate(groups: dict[str, list[tuple[int, str]]]) -> list[str]:
 
 def self_test() -> None:
     positive = {
-        "establish": [(1, "Incomplete"), (2, "Established"),
+        "establish": [(1, "Unsettled"), (2, "Established"),
                        (4, "Established")],
-        "refute": [(1, "Undetermined"), (2, "Refuted"), (4, "Refuted")],
-        "open": [(1, "Incomplete"), (2, "Undetermined")],
+        "refute": [(1, "Unsettled"), (2, "Refuted"), (4, "Refuted")],
+        "open": [(1, "Unsettled"), (2, "Unsettled")],
     }
     if validate(positive):
         raise RuntimeError("monotonicity validator rejected its positive control")
@@ -79,8 +89,8 @@ def main() -> int:
         if not match:
             unexpected.append(line)
             continue
-        label, budget, status = match.groups()
-        groups[label].append((int(budget), status))
+        label, budget, result = match.groups()
+        groups[label].append((int(budget), public_status(label, result)))
 
     required = {
         "OpenExpected", "FormNat", "SynthZ", "CheckZ", "RejectTruth", "RefineNat",
@@ -96,12 +106,12 @@ def main() -> int:
         errors.append(f"unexpected output: {unexpected!r}")
 
     statuses = {status for samples in groups.values() for _, status in samples}
-    if not {"Established", "Refuted", "Undetermined", "Incomplete"} <= statuses:
-        errors.append(f"not all four statuses were exercised: {sorted(statuses)}")
+    if not {"Established", "Refuted", "Unsettled"} <= statuses:
+        errors.append(f"not all three public outcomes were exercised: {sorted(statuses)}")
     delayed = [status for _, status in groups.get("DelayedCounterexample", [])]
-    if "Incomplete" not in delayed or "Refuted" not in delayed:
+    if "Unsettled" not in delayed or "Refuted" not in delayed:
         errors.append(
-            "delayed counterexample did not exercise incomplete-to-refuted"
+            "delayed counterexample did not exercise unsettled-to-refuted"
         )
 
     if errors:
@@ -109,7 +119,7 @@ def main() -> int:
             print(f"FAIL: {error}", file=sys.stderr)
         return 1
     print(
-        "PASS: Prime budget monotonicity "
+        "PASS: public Prime type-result budget monotonicity "
         f"({len(groups)} judgment families, "
         f"{sum(len(samples) for samples in groups.values())} observations)"
     )

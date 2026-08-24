@@ -923,6 +923,95 @@ static Atom *rm_link_block(Arena *arena, Atom *head, Atom **args,
     return result;
 }
 
+static Atom *rm_link_package(Arena *arena, Atom *head, Atom **args,
+                             uint32_t nargs) {
+    if (nargs != 3 || !args[1] || args[1]->kind != ATOM_SYMBOL ||
+        !args[2] || args[2]->kind != ATOM_EXPR ||
+        args[2]->expr.len < 1 ||
+        !rm_is_symbol(args[2]->expr.elems[0], "rm-package")) {
+        return rm_error(arena, head, args, nargs,
+                        "ExpectedArtifactRevisionAndRuleMachinePackage");
+    }
+
+    Atom *old_revision = NULL;
+    Atom *old_delta = NULL;
+    Atom *old_chain = NULL;
+    if (!rm_parse_artifact(args[0], &old_revision, &old_delta, &old_chain))
+        return rm_error(arena, head, args, nargs,
+                        "MalformedCompiledArtifact");
+    if (atom_eq(old_revision, args[1]))
+        return rm_error(arena, head, args, nargs,
+                        "RevisionIdentityMustAdvance");
+
+    RMAtomVec old_blocks = {0};
+    if (!rm_collect_chain(old_chain, &old_blocks)) {
+        rm_vec_free(&old_blocks);
+        return rm_error(arena, head, args, nargs,
+                        "MalformedCompiledArtifactChain");
+    }
+    if (!rm_delta_matches_count(old_delta, old_blocks.len)) {
+        rm_vec_free(&old_blocks);
+        return rm_error(arena, head, args, nargs,
+                        "MalformedCompiledArtifactDelta");
+    }
+
+    uint32_t new_count = (uint32_t)args[2]->expr.len - 1u;
+    if (new_count > RM_MAX_ARTIFACT_BLOCKS - old_blocks.len) {
+        rm_vec_free(&old_blocks);
+        return rm_error(arena, head, args, nargs,
+                        "RuleMachineArtifactBlockLimit");
+    }
+
+    /* Validate the whole delta before constructing any published link. */
+    for (uint32_t index = 0; index < new_count; index++) {
+        RMSourceBlock source;
+        if (!rm_parse_source_block(
+                args[2]->expr.elems[index + 1u], &source)) {
+            rm_vec_free(&old_blocks);
+            return rm_error(arena, head, args, nargs,
+                            "MalformedRuleMachineBlock");
+        }
+        if (rm_has_block_id(&old_blocks, source.id)) {
+            rm_vec_free(&old_blocks);
+            return rm_error(arena, head, args, nargs,
+                            "DuplicateRuleMachineBlockId");
+        }
+        for (uint32_t earlier = 0; earlier < index; earlier++) {
+            RMSourceBlock previous;
+            if (!rm_parse_source_block(
+                    args[2]->expr.elems[earlier + 1u], &previous) ||
+                atom_eq(previous.id, source.id)) {
+                rm_vec_free(&old_blocks);
+                return rm_error(arena, head, args, nargs,
+                                "DuplicateRuleMachineBlockId");
+            }
+        }
+    }
+
+    Atom *chain = old_chain;
+    for (uint32_t index = 0; index < new_count; index++) {
+        RMSourceBlock source;
+        if (!rm_parse_source_block(
+                args[2]->expr.elems[index + 1u], &source)) {
+            rm_vec_free(&old_blocks);
+            return rm_error(arena, head, args, nargs,
+                            "MalformedRuleMachineBlock");
+        }
+        Atom *link_items[] = {
+            atom_symbol(arena, "bc-artifact-link"),
+            chain,
+            rm_compile_block(arena, &source),
+        };
+        chain = rm_expr(arena, 3, link_items);
+    }
+
+    Atom *result = rm_artifact(
+        arena, args[1],
+        rm_delta(arena, new_count, new_count, old_blocks.len), chain);
+    rm_vec_free(&old_blocks);
+    return result;
+}
+
 static Atom *rm_link_rule_program_block(Arena *arena, Atom *head, Atom **args,
                                         uint32_t nargs) {
     if (nargs != 3 || !args[1] || args[1]->kind != ATOM_SYMBOL)
@@ -1639,6 +1728,8 @@ Atom *cetta_rule_machine_dispatch(Arena *arena, Atom *head,
         return rm_compile_package(arena, head, args, nargs);
     if (strcmp(name, "compile:link-rule") == 0)
         return rm_link_block(arena, head, args, nargs);
+    if (strcmp(name, "compile:link-package") == 0)
+        return rm_link_package(arena, head, args, nargs);
     if (strcmp(name, "compile:run") == 0)
         return rm_run_artifact(arena, head, args, nargs);
     if (strcmp(name, "compile:artifact-info") == 0)

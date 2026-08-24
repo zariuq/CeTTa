@@ -25,6 +25,7 @@
 
 #include <stdint.h>
 #include "atom.h"
+#include "nik_direct_authority.h"
 
 /* Returns NULL when head is not a typing op or the active profile does not
  * enable dependent telescopes; otherwise returns a verdict atom. */
@@ -67,13 +68,6 @@ typedef enum {
     CETTA_HE_EDGE_META_STAGING,
     CETTA_HE_EDGE_UNKNOWN
 } CettaHeTypingEdge;
-
-typedef enum {
-    CETTA_HE_CHECK_ESTABLISHED = 0,
-    CETTA_HE_CHECK_REFUTED,
-    CETTA_HE_CHECK_UNDETERMINED,
-    CETTA_HE_CHECK_INCOMPLETE
-} CettaHeCheckStatus;
 
 typedef enum {
     CETTA_HE_NORMALIZE_COMPLETE = 0,
@@ -135,11 +129,11 @@ CettaHeRefinementStatus he_typing_check_refinement_status(
 CettaHeRefinementStatus he_typing_check_refinement_status_budgeted(
     Arena *a, Space *space, Atom *type, CettaHeTypingBudget *budget,
     Atom **detail_out);
-CettaHeCheckStatus he_typing_check_term_status(
+CettaNikOutcomeV1 he_typing_check_term_outcome(
     Arena *a, Space *space, Atom *term, Atom *expected, uint64_t fuel,
     bool require_exact_or_structural, CettaHeTypingEdge *edge_out,
     Atom **detail_out);
-CettaHeCheckStatus he_typing_check_term_status_budgeted(
+CettaNikOutcomeV1 he_typing_check_term_outcome_budgeted(
     Arena *a, Space *space, Atom *term, Atom *expected,
     CettaHeTypingBudget *budget, bool require_exact_or_structural,
     CettaHeTypingEdge *edge_out, Atom **detail_out);

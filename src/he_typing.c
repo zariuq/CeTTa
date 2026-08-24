@@ -1059,14 +1059,14 @@ static bool infer_shared_types_budgeted_mode(
     return inference.complete;
 }
 
-/* ── success-typing check (three-valued) ───────────────────────────────── */
+/* ── success-typing check (shared four-outcome authority waist) ────────── */
 
 static Atom *edge_atom(Arena *a, HeEdge e) { return he_sym(a, edge_name(e)); }
 
 /* Closed checking treats variables as rigid.  Scheme variables are freshened
  * into elaboration variables only at an explicitly marked rule-use boundary;
  * that separate path returns its substitution in the search answer. */
-static CettaHeCheckStatus classify_type_mode(
+static CettaNikOutcomeV1 classify_type_mode(
     Arena *a, Space *space, Atom *term, Atom *expected, uint64_t *fuel_io,
     bool ledger_mode, bool structural, bool require_exact_or_structural,
     HeEdge *edge_out, Atom **detail_out, uint32_t *max_depth_observed,
@@ -1087,8 +1087,8 @@ static CettaHeCheckStatus classify_type_mode(
         if (detail_out)
             *detail_out = he_reason(a, "expected-type-normalization-incomplete");
         CLASSIFY_RETURN(ens == HE_NORM_RESOURCE || ens == HE_NORM_DEPTH
-                            ? CETTA_HE_CHECK_INCOMPLETE
-                            : CETTA_HE_CHECK_UNDETERMINED);
+                            ? CETTA_NIK_OUTCOME_INCOMPLETE
+                            : CETTA_NIK_OUTCOME_OUTSIDE_FRAGMENT);
     }
     Atom *refinement_detail = NULL;
     HeTypeValidity ev = check_type_refinements(a, space, expected, &fuel,
@@ -1098,21 +1098,21 @@ static CettaHeCheckStatus classify_type_mode(
         if (detail_out)
             *detail_out = refinement_detail
                 ? refinement_detail : he_reason(a, "invalid-expected-type");
-        CLASSIFY_RETURN(CETTA_HE_CHECK_REFUTED);
+        CLASSIFY_RETURN(CETTA_NIK_OUTCOME_REFUTED);
     }
     if (ev == HE_TYPE_VALIDATION_UNKNOWN) {
         if (detail_out)
             *detail_out = refinement_detail
                 ? refinement_detail
                 : he_reason(a, "expected-type-refinement-unknown");
-        CLASSIFY_RETURN(CETTA_HE_CHECK_UNDETERMINED);
+        CLASSIFY_RETURN(CETTA_NIK_OUTCOME_OUTSIDE_FRAGMENT);
     }
     if (ev == HE_TYPE_VALIDATION_INCOMPLETE) {
         if (detail_out)
             *detail_out = refinement_detail
                 ? refinement_detail
                 : he_reason(a, "expected-type-refinement-incomplete");
-        CLASSIFY_RETURN(CETTA_HE_CHECK_INCOMPLETE);
+        CLASSIFY_RETURN(CETTA_NIK_OUTCOME_INCOMPLETE);
     }
 
     HeTypeSet ts;
@@ -1130,12 +1130,12 @@ static CettaHeCheckStatus classify_type_mode(
     }
     if (!ok) {
         if (detail_out) *detail_out = he_reason(a, "type-inference-exhausted");
-        CLASSIFY_RETURN(CETTA_HE_CHECK_INCOMPLETE);
+        CLASSIFY_RETURN(CETTA_NIK_OUTCOME_INCOMPLETE);
     }
     if (ts.overflow) {
         if (type_capacity_exhausted) *type_capacity_exhausted = true;
         if (detail_out) *detail_out = he_reason(a, "type-set-capacity");
-        CLASSIFY_RETURN(CETTA_HE_CHECK_INCOMPLETE);
+        CLASSIFY_RETURN(CETTA_NIK_OUTCOME_INCOMPLETE);
     }
     HeEdge best = HE_NONE;
     bool saw_unknown = false;
@@ -1175,29 +1175,29 @@ static CettaHeCheckStatus classify_type_mode(
             if (detail_out)
                 *detail_out = he_reason2(
                     a, "non-exact-or-structural-consistency", edge_detail);
-            CLASSIFY_RETURN(CETTA_HE_CHECK_UNDETERMINED);
+            CLASSIFY_RETURN(CETTA_NIK_OUTCOME_OUTSIDE_FRAGMENT);
         }
         if (detail_out) *detail_out = edge_detail;
-        CLASSIFY_RETURN(CETTA_HE_CHECK_ESTABLISHED);
+        CLASSIFY_RETURN(CETTA_NIK_OUTCOME_ESTABLISHED);
     }
     if (saw_incomplete) {
         if (detail_out) *detail_out = he_reason(a, "typing-resource-incomplete");
-        CLASSIFY_RETURN(CETTA_HE_CHECK_INCOMPLETE);
+        CLASSIFY_RETURN(CETTA_NIK_OUTCOME_INCOMPLETE);
     }
     if (!inference_complete) {
         if (detail_out)
             *detail_out = he_reason(a, "type-inference-resource-incomplete");
-        CLASSIFY_RETURN(CETTA_HE_CHECK_INCOMPLETE);
+        CLASSIFY_RETURN(CETTA_NIK_OUTCOME_INCOMPLETE);
     }
     if (saw_unknown) {
         if (detail_out) *detail_out = he_reason(a, "consistency-exhausted");
-        CLASSIFY_RETURN(CETTA_HE_CHECK_UNDETERMINED);
+        CLASSIFY_RETURN(CETTA_NIK_OUTCOME_OUTSIDE_FRAGMENT);
     }
     Atom **reasons = arena_alloc(a, sizeof(Atom *) * (ts.count + 1));
     reasons[0] = he_sym(a, "no-consistent-type");
     for (uint32_t i = 0; i < ts.count; i++) reasons[i + 1] = ts.items[i];
     if (detail_out) *detail_out = atom_expr(a, reasons, ts.count + 1);
-    CLASSIFY_RETURN(CETTA_HE_CHECK_REFUTED);
+    CLASSIFY_RETURN(CETTA_NIK_OUTCOME_REFUTED);
 }
 #undef CLASSIFY_RETURN
 
@@ -1206,13 +1206,13 @@ static Atom *check_type_mode(Arena *a, Space *space, Atom *term,
     HeEdge edge = HE_NONE;
     Atom *detail = NULL;
     uint64_t remaining = fuel;
-    CettaHeCheckStatus status = classify_type_mode(
+    CettaNikOutcomeV1 status = classify_type_mode(
         a, space, term, expected, &remaining, false, structural, false, &edge,
         &detail, NULL, NULL);
     (void)edge;
-    if (status == CETTA_HE_CHECK_ESTABLISHED)
+    if (status == CETTA_NIK_OUTCOME_ESTABLISHED)
         return he_accept(a, detail ? detail : he_reason(a, "established"));
-    if (status == CETTA_HE_CHECK_REFUTED)
+    if (status == CETTA_NIK_OUTCOME_REFUTED)
         return he_reject(a, detail ? detail : he_reason(a, "refuted"));
     return he_unknown(a, detail ? detail : he_reason(a, "undetermined"));
 }
@@ -1222,30 +1222,30 @@ static Atom *check_type(Arena *a, Space *space, Atom *term, Atom *expected,
     return check_type_mode(a, space, term, expected, fuel, false);
 }
 
-CettaHeCheckStatus he_typing_check_term_status(
+CettaNikOutcomeV1 he_typing_check_term_outcome(
     Arena *a, Space *space, Atom *term, Atom *expected, uint64_t fuel,
     bool require_exact_or_structural, CettaHeTypingEdge *edge_out,
     Atom **detail_out) {
     HeEdge edge = HE_NONE;
     uint64_t remaining = fuel;
-    CettaHeCheckStatus status = classify_type_mode(
+    CettaNikOutcomeV1 status = classify_type_mode(
         a, space, term, expected, &remaining, false, false,
         require_exact_or_structural, &edge, detail_out, NULL, NULL);
     if (edge_out) *edge_out = public_edge(edge);
     return status;
 }
 
-CettaHeCheckStatus he_typing_check_term_status_budgeted(
+CettaNikOutcomeV1 he_typing_check_term_outcome_budgeted(
     Arena *a, Space *space, Atom *term, Atom *expected,
     CettaHeTypingBudget *budget, bool require_exact_or_structural,
     CettaHeTypingEdge *edge_out, Atom **detail_out) {
-    if (!budget) return CETTA_HE_CHECK_INCOMPLETE;
+    if (!budget) return CETTA_NIK_OUTCOME_INCOMPLETE;
     CettaHeTypingBudget *parent_budget = g_active_typing_budget;
     g_active_typing_budget = budget;
     HeEdge edge = HE_NONE;
     uint32_t *max_depth_observed = budget->steps_limited
         ? &budget->max_depth_observed : NULL;
-    CettaHeCheckStatus status = classify_type_mode(
+    CettaNikOutcomeV1 status = classify_type_mode(
         a, space, term, expected, &budget->steps_remaining, true, false,
         require_exact_or_structural, &edge, detail_out,
         max_depth_observed, &budget->type_capacity_exhausted);

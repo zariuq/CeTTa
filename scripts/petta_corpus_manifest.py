@@ -563,8 +563,15 @@ def run_bounded_process(
         process.stdout.close()
         process.stderr.close()
 
+    exit_code = process.returncode if process.returncode is not None else 1
+    if (timed_out or output_limited) and exit_code == 0:
+        # The resource contract dominates a child that happened to exit just
+        # before supervision could terminate it.  Scheduling must not turn a
+        # timeout or truncated capture into successful completion.
+        exit_code = 1
+
     return (
-        process.returncode if process.returncode is not None else 1,
+        exit_code,
         stdout.decode("utf-8", errors="replace"),
         stderr.decode("utf-8", errors="replace"),
         timed_out,

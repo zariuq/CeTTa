@@ -20,6 +20,59 @@ typedef struct {
     uint32_t realization_abi;
 } CettaNikDirectAuthorityV1;
 
+/* Semantic result of one authority demand.  Positive derivations, checked
+ * obstructions, fragment boundaries, and bounded search are distinct
+ * constructors: there is no representable "established outside fragment"
+ * or "refuted because the budget ended" state.  The constructor payload is
+ * authority-specific and lives in the enclosing typed receipt. */
+typedef enum {
+    CETTA_NIK_OUTCOME_ESTABLISHED = 0,
+    CETTA_NIK_OUTCOME_REFUTED,
+    CETTA_NIK_OUTCOME_OUTSIDE_FRAGMENT,
+    CETTA_NIK_OUTCOME_INCOMPLETE,
+} CettaNikOutcomeV1;
+
+/* Infrastructure failure is not a semantic outcome.  It travels in the
+ * outer result channel and therefore cannot be read as Undetermined or enter
+ * either semantic refinement order. */
+typedef enum {
+    CETTA_NIK_ENGINE_FAULT_UNAVAILABLE = 1,
+} CettaNikEngineFaultV1;
+
+typedef enum {
+    CETTA_NIK_RESULT_OUTCOME = 0,
+    CETTA_NIK_RESULT_ENGINE_FAULT,
+} CettaNikResultKindV1;
+
+typedef struct {
+    CettaNikResultKindV1 kind;
+    union {
+        CettaNikOutcomeV1 outcome;
+        CettaNikEngineFaultV1 fault;
+    } value;
+} CettaNikResultV1;
+
+/* Human/tool compatibility readout of semantic outcomes only.  Engine
+ * faults have no status readout. */
+typedef enum {
+    CETTA_NIK_STATUS_ESTABLISHED = 0,
+    CETTA_NIK_STATUS_REFUTED,
+    CETTA_NIK_STATUS_UNDETERMINED,
+    CETTA_NIK_STATUS_INCOMPLETE,
+} CettaNikStatusV1;
+
+bool cetta_nik_outcome_v1_is_valid(CettaNikOutcomeV1 outcome);
+
+bool cetta_nik_result_v1_is_valid(CettaNikResultV1 result);
+
+CettaNikResultV1 cetta_nik_result_v1_outcome(CettaNikOutcomeV1 outcome);
+
+CettaNikResultV1 cetta_nik_result_v1_engine_fault(
+    CettaNikEngineFaultV1 fault);
+
+bool cetta_nik_outcome_v1_status(
+    CettaNikOutcomeV1 outcome, CettaNikStatusV1 *status_out);
+
 /* How much of a direct authority is described by one authored source.
  * Fragment bindings are qualification inputs only: they must never be used
  * to claim complete source/native correspondence or to license a fast path
@@ -30,9 +83,10 @@ typedef enum {
 } CettaNikDirectSourceCoverageV1;
 
 /* Build/admission metadata connecting an independently authored language
- * presentation to a native direct authority.  The runtime does not execute
- * this source and hot-path stamps/tokens do not carry these strings.  A valid
- * binding states provenance and coverage, not an adequacy proof. */
+ * presentation to a native direct authority.  The binding retains only
+ * identity, provenance, and coverage.  Mode, outcome, and realization policy
+ * belong to the authority/admission layer and cannot be inferred from parser
+ * data or read from this receipt. */
 typedef struct {
     const CettaNikDirectAuthorityV1 *authority;
     const char *schema_id;
@@ -41,12 +95,6 @@ typedef struct {
     const char *source_sha256;
     const char *package_sha256;
     CettaNikDirectSourceCoverageV1 coverage;
-    const char *mode;
-    const char *certificate_policy;
-    const char *fiber;
-    const char *default_outcome;
-    const char *native_projection;
-    const char *presentation_status;
 } CettaNikDirectSourceBindingV1;
 
 /* Static provenance for a fact computed under one authority realization and
@@ -94,6 +142,15 @@ bool cetta_nik_direct_authority_v1_token(
     const CettaNikDirectAuthorityV1 *authority,
     uint32_t policy_identity,
     const CettaNikDirectAuthorityTokenV1 *mutable_suffix,
+    CettaNikDirectAuthorityTokenV1 *token);
+
+/* Use one exact content digest as the language-owned mutable suffix of a
+ * direct-authority token.  This is only identity/currentness data: parsing a
+ * digest does not admit a realization or confer a semantic verdict. */
+bool cetta_nik_direct_authority_v1_token_from_sha256(
+    const CettaNikDirectAuthorityV1 *authority,
+    const char digest[65],
+    uint32_t policy_identity,
     CettaNikDirectAuthorityTokenV1 *token);
 
 bool cetta_nik_direct_authority_token_v1_equal(

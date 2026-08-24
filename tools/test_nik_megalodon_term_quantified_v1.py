@@ -7,6 +7,7 @@ import argparse
 from pathlib import Path
 import re
 import subprocess
+import tempfile
 from typing import TypeAlias
 
 import gslt2parse_schema_v1 as sx
@@ -650,8 +651,8 @@ def check_catalog(catalog: Path) -> None:
 
 def run_cetta(cetta: Path, goal: sx.SExpr, article: sx.SExpr) -> str:
     expression = (
-        "!(prime-judge &self (Check MEGALODON-TERM "
-        + sx.render(goal) + " " + sx.render(article) + "))"
+        "!(nik:check MEGALODON-TERM "
+        + sx.render(goal) + " " + sx.render(article) + ")"
     )
     result = subprocess.run(
         [str(cetta.resolve()), "--lang", "prime", "-e", expression],
@@ -662,10 +663,56 @@ def run_cetta(cetta: Path, goal: sx.SExpr, article: sx.SExpr) -> str:
     return result.stdout
 
 
+def require_public_result(output: str, *, accepted: bool) -> None:
+    expected = "[True]" if accepted else "[False]"
+    if output.strip() != expected:
+        raise SystemExit(
+            f"CeTTa nik:check returned {output.strip()!r}, expected {expected}"
+        )
+
+
+def require_differential(
+    differential: Path,
+    goal: sx.SExpr,
+    article: sx.SExpr,
+    *,
+    accepted: bool,
+) -> None:
+    request = (
+        "(NIKDifferentialV1 MEGALODON-TERM "
+        + sx.render(goal) + " " + sx.render(article) + ")"
+    )
+    with tempfile.TemporaryDirectory(prefix="cetta-nik-differential-") as directory:
+        request_path = Path(directory) / "request.metta"
+        request_path.write_text(request + "\n", encoding="utf-8")
+        result = subprocess.run(
+            [str(differential.resolve()), "--differential-file", str(request_path)],
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+    expected = "True" if accepted else "False"
+    fragments = (
+        f"(Outcome {'accepted' if accepted else 'rejected'})",
+        "(Agreement True)",
+        f"(Native {expected} ",
+        f"(HornReference {expected} ",
+        f"(CompiledWorklist {expected} ",
+    )
+    missing = [fragment for fragment in fragments if fragment not in result.stdout]
+    if result.returncode != 0 or missing:
+        raise SystemExit(
+            "CeTTa NIK C differential qualification failed"
+            + ("; missing " + ", ".join(missing) if missing else "")
+            + ":\n" + result.stdout + result.stderr
+        )
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--megalodon", type=Path, required=True)
     parser.add_argument("--cetta", type=Path, required=True)
+    parser.add_argument("--differential", type=Path, required=True)
     parser.add_argument("--catalog", type=Path, required=True)
     parser.add_argument("--positive", type=Path, required=True)
     parser.add_argument("--lean-witness", type=Path, required=True)
@@ -690,27 +737,19 @@ def main() -> int:
         )
     check_catalog(args.catalog)
     accepted = run_cetta(args.cetta, compiled[0], compiled[1])
-    if (
-        "PrimeVerdict Established" not in accepted
-        or "(Agreement not-run)" not in accepted
-        or "(HornReference not-run False 0)" not in accepted
-        or "(CompiledWorklist not-run False 0)" not in accepted
-        or "(Outcome accepted)" not in accepted
-    ):
-        raise SystemExit("CeTTa did not establish the term article:\n" + accepted)
+    require_public_result(accepted, accepted=True)
+    require_differential(
+        args.differential, compiled[0], compiled[1], accepted=True,
+    )
     wrong_goal = app(
         "MTermProves", encode_signature([]), encode_type_context([]),
         encode_proof_context([]), app("MTmNamed", app("PName")),
     )
     rejected = run_cetta(args.cetta, wrong_goal, compiled[1])
-    if (
-        "PrimeVerdict Refuted" not in rejected
-        or "(Agreement not-run)" not in rejected
-        or "(HornReference not-run False 0)" not in rejected
-        or "(CompiledWorklist not-run False 0)" not in rejected
-        or "(Outcome rejected)" not in rejected
-    ):
-        raise SystemExit("CeTTa did not reject the wrong term goal:\n" + rejected)
+    require_public_result(rejected, accepted=False)
+    require_differential(
+        args.differential, wrong_goal, compiled[1], accepted=False,
+    )
 
     print(
         "(NikMegalodonTermV1Summary accepted=1 pfg-to-lean-exact=1 "
