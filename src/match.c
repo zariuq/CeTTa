@@ -35,6 +35,7 @@
 #define BINDINGS_LOOKUP_INDEX_THRESHOLD 16u
 #define FRESHEN_EPOCH_MEMO_INLINE_CAP 64u
 #define VAR_ID_SET_INLINE_CAP 8u
+#define VAR_ID_SET_HASH_THRESHOLD 16u
 
 enum {
     BINDINGS_CYCLE_UNKNOWN = 0u,
@@ -3695,6 +3696,8 @@ typedef struct {
     VarId *items;
     uint32_t len;
     uint32_t cap;
+    VarId *slots;
+    size_t slot_cap;
 } VarIdSet;
 
 typedef struct {
@@ -3771,17 +3774,83 @@ static void var_id_set_init(VarIdSet *set) {
     set->items = set->inline_items;
     set->len = 0;
     set->cap = VAR_ID_SET_INLINE_CAP;
+    set->slots = NULL;
+    set->slot_cap = 0u;
 }
 
 static void var_id_set_free(VarIdSet *set) {
     if (set->items != set->inline_items)
         free(set->items);
+    free(set->slots);
     set->items = set->inline_items;
     set->len = 0;
     set->cap = VAR_ID_SET_INLINE_CAP;
+    set->slots = NULL;
+    set->slot_cap = 0u;
+}
+
+static bool var_id_set_hash_insert(
+        VarId *slots, size_t slot_cap, VarId id) {
+    if (!slots || slot_cap == 0u ||
+        (slot_cap & (slot_cap - 1u)) != 0u ||
+        id == VAR_ID_NONE) {
+        return false;
+    }
+    size_t slot = bindings_var_id_hash(id) & (slot_cap - 1u);
+    for (size_t probes = 0u; probes < slot_cap; probes++) {
+        if (slots[slot] == VAR_ID_NONE || slots[slot] == id) {
+            slots[slot] = id;
+            return true;
+        }
+        slot = (slot + 1u) & (slot_cap - 1u);
+    }
+    return false;
+}
+
+static bool var_id_set_rehash(
+        VarIdSet *set, size_t requested_items) {
+    if (!set || requested_items > SIZE_MAX / 2u)
+        return false;
+    size_t required = requested_items * 2u;
+    size_t slot_cap = 32u;
+    while (slot_cap < required) {
+        if (slot_cap > SIZE_MAX / 2u)
+            return false;
+        slot_cap *= 2u;
+    }
+    if (slot_cap > SIZE_MAX / sizeof(*set->slots))
+        return false;
+    VarId *slots = cetta_malloc(slot_cap * sizeof(*slots));
+    memset(slots, 0, slot_cap * sizeof(*slots));
+    for (uint32_t index = 0u; index < set->len; index++) {
+        if (!var_id_set_hash_insert(
+                slots, slot_cap, set->items[index])) {
+            free(slots);
+            return false;
+        }
+    }
+    free(set->slots);
+    set->slots = slots;
+    set->slot_cap = slot_cap;
+    return true;
 }
 
 static bool var_id_set_contains(const VarIdSet *set, VarId id) {
+    if (!set || id == VAR_ID_NONE)
+        return false;
+    if (set->slots) {
+        size_t slot =
+            bindings_var_id_hash(id) & (set->slot_cap - 1u);
+        for (size_t probes = 0u;
+             probes < set->slot_cap; probes++) {
+            if (set->slots[slot] == VAR_ID_NONE)
+                return false;
+            if (set->slots[slot] == id)
+                return true;
+            slot = (slot + 1u) & (set->slot_cap - 1u);
+        }
+        return false;
+    }
     for (uint32_t i = 0; i < set->len; i++) {
         if (set->items[i] == id)
             return true;
@@ -3790,8 +3859,18 @@ static bool var_id_set_contains(const VarIdSet *set, VarId id) {
 }
 
 static bool var_id_set_add(VarIdSet *set, VarId id) {
+    if (!set || id == VAR_ID_NONE)
+        return false;
     if (var_id_set_contains(set, id))
         return true;
+    if (set->len == UINT32_MAX)
+        return false;
+    size_t next_len = (size_t)set->len + 1u;
+    if (next_len >= VAR_ID_SET_HASH_THRESHOLD &&
+        (!set->slots || next_len > set->slot_cap / 2u) &&
+        !var_id_set_rehash(set, next_len)) {
+        return false;
+    }
     if (set->len >= set->cap) {
         uint32_t next_cap = set->cap ? set->cap * 2u : 8u;
         if (next_cap < set->cap ||
@@ -3810,6 +3889,11 @@ static bool var_id_set_add(VarIdSet *set, VarId id) {
         set->cap = next_cap;
     }
     set->items[set->len++] = id;
+    if (set->slots &&
+        !var_id_set_hash_insert(set->slots, set->slot_cap, id)) {
+        set->len--;
+        return false;
+    }
     return true;
 }
 
@@ -3870,10 +3954,13 @@ static Atom g_rename_walk_complete;
 
 /* Hash-stable atoms are immutable published graphs assembled only from
  * hash-stable children. They cannot acquire a back edge after publication,
- * so variable collection needs neither active/complete states nor a memo. */
+ * so a completed-node memo is sufficient: it preserves linear traversal of
+ * shared DAGs without the active/complete cycle protocol used below. */
 static bool collect_var_ids_hash_stable(Atom *root, VarIdSet *set) {
     RenameWalkStack stack;
+    FreshenEpochMemo visited;
     rename_walk_stack_init(&stack);
+    freshen_epoch_memo_init(&visited);
     if (!rename_walk_stack_push(
             &stack, (RenameWalkTask){RENAME_WALK_ENTER, root}))
         goto fail;
@@ -3883,6 +3970,11 @@ static bool collect_var_ids_hash_stable(Atom *root, VarIdSet *set) {
             goto fail;
         if (!atom_has_vars(atom))
             continue;
+        if (freshen_epoch_memo_lookup(&visited, atom))
+            continue;
+        if (!freshen_epoch_memo_store(
+                &visited, atom, &g_rename_walk_complete))
+            goto fail;
         if (atom->kind == ATOM_VAR) {
             if (!var_id_set_add(set, atom->var_id))
                 goto fail;
@@ -3898,10 +3990,12 @@ static bool collect_var_ids_hash_stable(Atom *root, VarIdSet *set) {
                 goto fail;
         }
     }
+    freshen_epoch_memo_free(&visited);
     rename_walk_stack_free(&stack);
     return true;
 
 fail:
+    freshen_epoch_memo_free(&visited);
     rename_walk_stack_free(&stack);
     return false;
 }
@@ -5590,34 +5684,36 @@ static bool is_space_value_type(Atom *atom) {
 typedef struct {
     Atom *left;
     Atom *right;
+    uint32_t previous;
     uint8_t tagged;
-    bool active;
-} MatchPathSlot;
+} MatchPathEntry;
 
 #define MATCH_PATH_INLINE_CAP 16u
+#define MATCH_PATH_BUCKET_INLINE_CAP 32u
 
 typedef struct {
-    MatchPathSlot inline_slots[MATCH_PATH_INLINE_CAP];
-    MatchPathSlot *slots;
-    size_t cap;
-    size_t active;
-    size_t tombstones;
+    MatchPathEntry inline_entries[MATCH_PATH_INLINE_CAP];
+    MatchPathEntry *entries;
+    size_t len;
+    size_t entry_cap;
+    uint32_t inline_buckets[MATCH_PATH_BUCKET_INLINE_CAP];
+    uint32_t *buckets;
+    size_t bucket_cap;
 } MatchPathSet;
 
-static void match_path_clear(MatchPathSlot *slots, size_t cap) {
-    memset(slots, 0, sizeof(*slots) * cap);
-}
-
 static void match_path_init(MatchPathSet *path) {
-    path->slots = path->inline_slots;
-    path->cap = MATCH_PATH_INLINE_CAP;
-    path->active = 0;
-    path->tombstones = 0;
-    match_path_clear(path->slots, path->cap);
+    path->entries = path->inline_entries;
+    path->len = 0u;
+    path->entry_cap = MATCH_PATH_INLINE_CAP;
+    path->buckets = path->inline_buckets;
+    path->bucket_cap = MATCH_PATH_BUCKET_INLINE_CAP;
+    memset(path->buckets, 0,
+           sizeof(*path->buckets) * path->bucket_cap);
 }
 
 static void match_path_free(MatchPathSet *path) {
-    if (path->slots != path->inline_slots) free(path->slots);
+    if (path->entries != path->inline_entries) free(path->entries);
+    if (path->buckets != path->inline_buckets) free(path->buckets);
 }
 
 static size_t match_path_hash(Atom *left, Atom *right, uint8_t tagged) {
@@ -5631,98 +5727,97 @@ static size_t match_path_hash(Atom *left, Atom *right, uint8_t tagged) {
     return (size_t)x;
 }
 
-static bool match_path_rehash(MatchPathSet *path, size_t new_cap) {
-    if (new_cap < MATCH_PATH_INLINE_CAP ||
-        new_cap > SIZE_MAX / sizeof(*path->slots))
+static bool match_path_reserve_entries(MatchPathSet *path) {
+    if (path->len < path->entry_cap)
+        return true;
+    if (path->entry_cap > SIZE_MAX / 2u)
         return false;
-    size_t old_cap = path->cap;
-    MatchPathSlot *old_slots = path->slots;
-    MatchPathSlot *new_slots = cetta_malloc(
-        sizeof(*new_slots) * new_cap);
-    match_path_clear(new_slots, new_cap);
-    path->slots = new_slots;
-    path->cap = new_cap;
-    size_t old_active = path->active;
-    path->active = 0;
-    path->tombstones = 0;
-    for (size_t i = 0; i < old_cap; i++) {
-        MatchPathSlot *old = &old_slots[i];
-        if (!old->left || !old->active) continue;
-        size_t mask = path->cap - 1u;
-        size_t pos = match_path_hash(
-            old->left, old->right, old->tagged) & mask;
-        while (path->slots[pos].left)
-            pos = (pos + 1u) & mask;
-        MatchPathSlot *next = &path->slots[pos];
-        *next = *old;
-        path->active++;
-    }
-    assert(path->active == old_active);
-    if (old_slots != path->inline_slots) free(old_slots);
+    size_t new_cap = path->entry_cap * 2u;
+    if (new_cap > SIZE_MAX / sizeof(*path->entries))
+        return false;
+    MatchPathEntry *next = cetta_malloc(
+        sizeof(*next) * new_cap);
+    memcpy(next, path->entries,
+           sizeof(*next) * path->len);
+    if (path->entries != path->inline_entries)
+        free(path->entries);
+    path->entries = next;
+    path->entry_cap = new_cap;
     return true;
 }
 
-/* Return false exactly when this structural comparison recurs on its active
-   DFS path. Inactive entries remain as reusable hash slots, so shared finite
-   subterms do not count as cycles. */
+static bool match_path_grow_buckets(MatchPathSet *path) {
+    if (path->bucket_cap > SIZE_MAX / 2u)
+        return false;
+    size_t new_cap = path->bucket_cap * 2u;
+    if (new_cap > SIZE_MAX / sizeof(*path->buckets) ||
+        path->len > UINT32_MAX)
+        return false;
+    uint32_t *next = cetta_malloc(sizeof(*next) * new_cap);
+    memset(next, 0, sizeof(*next) * new_cap);
+    size_t mask = new_cap - 1u;
+    for (size_t i = 0u; i < path->len; i++) {
+        MatchPathEntry *entry = &path->entries[i];
+        size_t bucket = match_path_hash(
+            entry->left, entry->right, entry->tagged) & mask;
+        entry->previous = next[bucket];
+        next[bucket] = (uint32_t)i + 1u;
+    }
+    if (path->buckets != path->inline_buckets)
+        free(path->buckets);
+    path->buckets = next;
+    path->bucket_cap = new_cap;
+    return true;
+}
+
+/* Enter and leave are strictly nested by both structural matcher worklists.
+ * Store exactly that active ancestry: the bucket head is the newest active
+ * entry with its hash, and each entry links to the preceding active entry in
+ * the same bucket.  Shared finite DAG nodes may therefore re-enter after their
+ * sibling path leaves, while a genuine active-path recurrence still fails. */
 static bool match_path_enter(MatchPathSet *path, Atom *left, Atom *right,
                              uint8_t tagged) {
-    size_t occupied = path->active + path->tombstones;
-    if ((occupied + 1u) * 4u >= path->cap * 3u) {
-        size_t live_after = path->active + 1u;
-        size_t new_cap = path->cap;
-        if (live_after * 4u >= path->cap * 3u) {
-            if (path->cap > SIZE_MAX / 2u) return false;
-            new_cap = path->cap * 2u;
-        }
-        if (!match_path_rehash(path, new_cap)) return false;
+    if (!match_path_reserve_entries(path))
+        return false;
+    if ((path->len + 1u) * 4u >= path->bucket_cap * 3u &&
+        !match_path_grow_buckets(path))
+        return false;
+    size_t bucket = match_path_hash(left, right, tagged) &
+        (path->bucket_cap - 1u);
+    uint32_t cursor = path->buckets[bucket];
+    while (cursor != 0u) {
+        MatchPathEntry *entry = &path->entries[cursor - 1u];
+        if (entry->left == left && entry->right == right &&
+            entry->tagged == tagged)
+            return false;
+        cursor = entry->previous;
     }
-
-    size_t mask = path->cap - 1u;
-    size_t pos = match_path_hash(left, right, tagged) & mask;
-    MatchPathSlot *first_tombstone = NULL;
-    MatchPathSlot *slot = NULL;
-    for (;;) {
-        MatchPathSlot *candidate = &path->slots[pos];
-        if (!candidate->left) {
-            slot = first_tombstone ? first_tombstone : candidate;
-            break;
-        }
-        if (candidate->left == left && candidate->right == right &&
-            candidate->tagged == tagged) {
-            if (candidate->active) return false;
-            slot = candidate;
-            break;
-        }
-        if (!candidate->active && !first_tombstone)
-            first_tombstone = candidate;
-        pos = (pos + 1u) & mask;
-    }
-    if (slot->left) path->tombstones--;
-    slot->left = left;
-    slot->right = right;
-    slot->tagged = tagged;
-    slot->active = true;
-    path->active++;
+    if (path->len >= UINT32_MAX)
+        return false;
+    MatchPathEntry *entry = &path->entries[path->len];
+    *entry = (MatchPathEntry){
+        .left = left,
+        .right = right,
+        .previous = path->buckets[bucket],
+        .tagged = tagged,
+    };
+    path->buckets[bucket] = (uint32_t)path->len + 1u;
+    path->len++;
     return true;
 }
 
 static void match_path_leave(MatchPathSet *path, Atom *left, Atom *right,
                              uint8_t tagged) {
-    size_t mask = path->cap - 1u;
-    size_t pos = match_path_hash(left, right, tagged) & mask;
-    for (;;) {
-        MatchPathSlot *slot = &path->slots[pos];
-        assert(slot->left);
-        if (slot->active && slot->left == left && slot->right == right &&
-            slot->tagged == tagged) {
-            slot->active = false;
-            path->active--;
-            path->tombstones++;
-            return;
-        }
-        pos = (pos + 1u) & mask;
-    }
+    assert(path->len > 0u);
+    size_t index = path->len - 1u;
+    MatchPathEntry *entry = &path->entries[index];
+    assert(entry->left == left && entry->right == right &&
+           entry->tagged == tagged);
+    size_t bucket = match_path_hash(left, right, tagged) &
+        (path->bucket_cap - 1u);
+    assert(path->buckets[bucket] == (uint32_t)index + 1u);
+    path->buckets[bucket] = entry->previous;
+    path->len = index;
 }
 
 typedef enum {

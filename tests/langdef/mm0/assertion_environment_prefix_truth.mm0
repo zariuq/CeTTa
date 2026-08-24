@@ -1,0 +1,2 @@
+strict provable sort wff;
+term truth: wff;

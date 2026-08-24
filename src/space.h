@@ -76,8 +76,18 @@ typedef struct {
 } EqBucket;
 
 typedef struct {
+    /* Open-addressed exact membership set for named equation heads.
+     * Bucket collisions in the pattern index must not turn a callable-head
+     * existence check into a scan and decode of every colliding equation. */
+    SymbolId *slots;
+    CettaIndex len;
+    CettaIndex cap;
+} EqHeadSet;
+
+typedef struct {
     EqBucket buckets[EQ_INDEX_BUCKETS];
     EqBucket wildcard; /* equations with variable/expression LHS head */
+    EqHeadSet heads;
 } EqIndex;
 
 /* ── Type Annotation Index (: atom type) → fast lookup ─────────────────── */

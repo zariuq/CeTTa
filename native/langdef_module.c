@@ -15,7 +15,11 @@
 #if !defined(CETTA_LANGDEF_ARTIFACT_ONLY) && !defined(CETTA_NO_STDLIB)
 #define CETTA_LANGDEF_COMPILED_CURSOR_RUNTIME 1
 #include "native/langdef_compiled_cursor_v1.h"
+#include "finite_horn_answer_stream_v1.h"
+#include "parser_pack_guard_evidence_stream_v1.h"
+#include "parser_pack_guarded_lexical_exec_v1.h"
 #include "parser_occurrence_file_resolver_v1.h"
+#include "parser_occurrence_source_composition_v1.h"
 #include "first_order_frame_decoder_v1.h"
 #include "oslf_native_type_plan_v1.h"
 #include "oslf_native_type_vm_v1.h"
@@ -66,6 +70,17 @@ typedef struct {
     PPOccurrenceFoldV1Plan compiled_fold;
     PPOccurrenceSpanMaskV1Plan compiled_span_mask;
     PPRelationalStateProgramV1Plan compiled_state;
+    PPSourceResolutionControlV1Plan compiled_source_control;
+    FHAnswerStreamV1 parser_lexical_answers;
+    FHAnswerStreamV1 parser_guard_answers;
+    FHAnswerStreamV1 parser_guarded_answers;
+    RSNFAV1Plan parser_lexical_nfa;
+    RSNFAV1Plan parser_guard_nfa;
+    PPLexV1Plan parser_lexical_plan;
+    PPGuardEvidenceWireV1 parser_guard_evidence;
+    PPGuardPlanV1 parser_guard_plan;
+    PPGuardedLexV1Plan parser_guarded_plan;
+    PPGuardedLexExecV1Plan parser_guarded_exec;
     PPProofGSLTPlanV1 proof_plan;
     PPProofGSLTSequenceEvidenceABIV1 proof_evidence;
     PPProofGSLTRelationalAssertionPlanV1 proof_relational;
@@ -84,6 +99,9 @@ typedef struct {
     bool compiled_fold_ready;
     bool compiled_span_mask_ready;
     bool compiled_state_ready;
+    bool compiled_source_control_ready;
+    bool parser_guarded_exec_initialized;
+    bool parser_guarded_exec_ready;
     bool proof_plan_ready;
     bool proof_evidence_ready;
     bool proof_relational_ready;
@@ -307,6 +325,7 @@ bool cetta_langdef_manifest_parse(Atom *root, CettaLangDefManifestV1 *out,
                                   char *error, size_t error_size) {
     CettaExprIndex index;
     memset(out, 0, sizeof(*out));
+    out->parser_pack_expected_closed = true;
     if (!root || root->kind != ATOM_EXPR || root->expr.len < 2u ||
         !atom_is_symbol(root->expr.elems[0], "gslt-langdef-v1")) {
         return langdef_set_error(error, error_size,
@@ -331,6 +350,20 @@ bool cetta_langdef_manifest_parse(Atom *root, CettaLangDefManifestV1 *out,
                 return langdef_set_error(error, error_size,
                                          "manifest has invalid parser-pack");
             out->pack_relative = value;
+        } else if (cetta_langdef_expr_head(
+                       field, "parser-pack-closure", 1u)) {
+            Atom *closure = field->expr.elems[1];
+            if (out->parser_pack_closure_set || !closure ||
+                closure->kind != ATOM_SYMBOL ||
+                !(value = atom_name_cstr(closure)) ||
+                (strcmp(value, "closed") != 0 &&
+                 strcmp(value, "partial") != 0))
+                return langdef_set_error(
+                    error, error_size,
+                    "manifest has invalid parser-pack-closure");
+            out->parser_pack_expected_closed =
+                strcmp(value, "closed") == 0;
+            out->parser_pack_closure_set = true;
         } else if (cetta_langdef_expr_head(field, "lock", 1u)) {
             if (out->lock_relative ||
                 !cetta_langdef_text_arg(field->expr.elems[1], &value))
@@ -726,6 +759,22 @@ static void langdef_resource_free(void *raw_resource) {
             &resource->proof_evidence);
     if (resource->proof_plan_ready)
         ppproof_gslt_plan_v1_free(&resource->proof_plan);
+    if (resource->parser_guarded_exec_initialized) {
+        ppguarded_lex_exec_v1_plan_free(
+            &resource->parser_guarded_exec);
+        ppguarded_lex_v1_plan_free(&resource->parser_guarded_plan);
+        ppguard_plan_v1_free(&resource->parser_guard_plan);
+        ppguard_evidence_wire_v1_free(
+            &resource->parser_guard_evidence);
+        pplex_v1_plan_free(&resource->parser_lexical_plan);
+        rsnfa_v1_plan_free(&resource->parser_guard_nfa);
+        rsnfa_v1_plan_free(&resource->parser_lexical_nfa);
+        fh_answer_stream_v1_free(
+            &resource->parser_guarded_answers);
+        fh_answer_stream_v1_free(&resource->parser_guard_answers);
+        fh_answer_stream_v1_free(
+            &resource->parser_lexical_answers);
+    }
     if (resource->compiled_state_ready)
         pprelational_state_program_v1_plan_free(&resource->compiled_state);
     if (resource->compiled_span_mask_ready)
@@ -761,6 +810,7 @@ static bool langdef_compiled_cursor_load(CettaLangDefV1 *resource,
     const char *descriptor_fold_digest;
     const char *descriptor_span_mask_digest = NULL;
     const char *descriptor_state_digest = NULL;
+    const char *descriptor_source_control_digest = NULL;
     const char *dynamic_error;
 
     if (!resource || !path)
@@ -793,7 +843,9 @@ static bool langdef_compiled_cursor_load(CettaLangDefV1 *resource,
         ((resource->compiled_cursor->occurrence_span_mask_init == NULL) !=
          (resource->compiled_cursor->occurrence_span_mask_digest == NULL)) ||
         ((resource->compiled_cursor->relational_state_init == NULL) !=
-         (resource->compiled_cursor->relational_state_digest == NULL)))
+         (resource->compiled_cursor->relational_state_digest == NULL)) ||
+        ((resource->compiled_cursor->source_control_init == NULL) !=
+         (resource->compiled_cursor->source_control_digest == NULL)))
         return langdef_set_error(error, error_size,
                                  "compiled cursor has an invalid descriptor");
 
@@ -867,6 +919,25 @@ static bool langdef_compiled_cursor_load(CettaLangDefV1 *resource,
                 error, error_size,
                 "compiled state program disagrees with its fold plan");
     }
+    if (resource->compiled_cursor->source_control_init) {
+        ppsource_resolution_control_v1_plan_init(
+            &resource->compiled_source_control);
+        resource->compiled_source_control_ready = true;
+        if (!resource->compiled_cursor->source_control_init(
+                &resource->compiled_source_control, error, error_size))
+            return false;
+        descriptor_source_control_digest =
+            resource->compiled_cursor->source_control_digest();
+        if (!descriptor_source_control_digest ||
+            strcmp(descriptor_source_control_digest,
+                   resource->compiled_source_control.plan_digest) != 0 ||
+            !ppsource_resolution_control_v1_plan_validate(
+                &resource->compiled_source_control, error, error_size)) {
+            return langdef_set_error(
+                error, error_size,
+                "compiled source control disagrees with its generated plan");
+        }
+    }
     return true;
 }
 
@@ -880,6 +951,166 @@ static int32_t langdef_extension_artifact_find(
             return (int32_t)index;
     }
     return -1;
+}
+
+static PPGuardedLexExecV1Limits langdef_guarded_parser_limits(void) {
+    return (PPGuardedLexExecV1Limits){
+        .dfa_state_limit = UINT32_C(65536),
+        .dfa_transition_limit = UINT32_C(2000000),
+        .scan_work_limit = UINT64_C(20000000),
+        .scan_token_limit = UINT32_C(2000000),
+        .witness_work_limit = UINT32_C(10000000),
+        .parse_work_limit = UINT32_C(50000000),
+        .replay_depth = LANGDEF_DEFAULT_REPLAY_DEPTH,
+        .result_limit = UINT32_C(1000000),
+    };
+}
+
+static bool langdef_guarded_parser_extension_load(
+    CettaLangDefV1 *resource,
+    const CettaLangDefManifestV1 *manifest,
+    const char artifact_paths[][PATH_MAX],
+    char *error, size_t error_size) {
+    PPGuardPlanV1ProvenanceInput provenance;
+    PPGuardedLexExecV1Limits limits;
+    char regular_compiler_digest[65];
+    char guarded_compiler_digest[65];
+    int32_t lexical_index;
+    int32_t guard_index;
+    int32_t evidence_index;
+    int32_t guarded_index;
+    int32_t regular_compiler_index;
+    int32_t guarded_compiler_index;
+
+    lexical_index = langdef_extension_artifact_find(
+        manifest, "parser-lexical-nfa-v1");
+    guard_index = langdef_extension_artifact_find(
+        manifest, "parser-guard-nfa-v1");
+    evidence_index = langdef_extension_artifact_find(
+        manifest, "parser-positive-guard-evidence-v1");
+    guarded_index = langdef_extension_artifact_find(
+        manifest, "parser-guarded-nfa-v1");
+    regular_compiler_index = langdef_extension_artifact_find(
+        manifest, "parser-regular-span-compiler-v1");
+    guarded_compiler_index = langdef_extension_artifact_find(
+        manifest, "parser-guarded-span-compiler-v1");
+
+    if (lexical_index < 0 && guard_index < 0 && evidence_index < 0 &&
+        guarded_index < 0 && regular_compiler_index < 0 &&
+        guarded_compiler_index < 0) {
+        if (!manifest->parser_pack_expected_closed)
+            return langdef_set_error(
+                error, error_size,
+                "partial parser pack lacks a guarded execution bundle");
+        return true;
+    }
+    if (manifest->parser_pack_expected_closed || lexical_index < 0 ||
+        guard_index < 0 || evidence_index < 0 || guarded_index < 0 ||
+        regular_compiler_index < 0 || guarded_compiler_index < 0) {
+        return langdef_set_error(
+            error, error_size,
+            "langdef declares an incomplete guarded parser bundle");
+    }
+
+    fh_answer_stream_v1_init(&resource->parser_lexical_answers);
+    fh_answer_stream_v1_init(&resource->parser_guard_answers);
+    fh_answer_stream_v1_init(&resource->parser_guarded_answers);
+    rsnfa_v1_plan_init(&resource->parser_lexical_nfa);
+    rsnfa_v1_plan_init(&resource->parser_guard_nfa);
+    pplex_v1_plan_init(&resource->parser_lexical_plan);
+    ppguard_evidence_wire_v1_init(&resource->parser_guard_evidence);
+    ppguard_plan_v1_init(&resource->parser_guard_plan);
+    ppguarded_lex_v1_plan_init(&resource->parser_guarded_plan);
+    ppguarded_lex_exec_v1_plan_init(&resource->parser_guarded_exec);
+    resource->parser_guarded_exec_initialized = true;
+
+    if (!cetta_langdef_sha256_file(
+            artifact_paths[regular_compiler_index],
+            regular_compiler_digest, error, error_size) ||
+        !cetta_langdef_sha256_file(
+            artifact_paths[guarded_compiler_index],
+            guarded_compiler_digest, error, error_size) ||
+        !fh_answer_stream_v1_read(
+            &resource->parser_lexical_answers,
+            artifact_paths[lexical_index],
+            error, error_size) ||
+        resource->parser_lexical_answers.len == 0u ||
+        resource->parser_lexical_answers.len > UINT32_MAX ||
+        !rsnfa_v1_plan_load(
+            &resource->pack, resource->parser_lexical_answers.terms,
+            resource->parser_lexical_answers.len,
+            &resource->parser_lexical_nfa, error, error_size) ||
+        !pplex_v1_plan_build(
+            &resource->pack, resource->parser_lexical_nfa.tags,
+            resource->parser_lexical_nfa.nfa.tag_len,
+            regular_compiler_digest,
+            resource->parser_lexical_answers.digest,
+            &resource->parser_lexical_plan,
+            error, error_size) ||
+        !fh_answer_stream_v1_read(
+            &resource->parser_guard_answers,
+            artifact_paths[guard_index],
+            error, error_size) ||
+        resource->parser_guard_answers.len == 0u ||
+        resource->parser_guard_answers.len > UINT32_MAX ||
+        !rsnfa_v1_plan_load(
+            &resource->pack, resource->parser_guard_answers.terms,
+            resource->parser_guard_answers.len,
+            &resource->parser_guard_nfa, error, error_size) ||
+        !ppguard_evidence_wire_v1_read(
+            &resource->parser_guard_evidence,
+            artifact_paths[evidence_index],
+            error, error_size) ||
+        !fh_answer_stream_v1_read(
+            &resource->parser_guarded_answers,
+            artifact_paths[guarded_index],
+            error, error_size)) {
+        return false;
+    }
+    provenance = (PPGuardPlanV1ProvenanceInput){
+        .source_digest = resource->parser_guard_evidence.source_digest,
+        .pre_reflection_digest =
+            resource->parser_guard_evidence.pre_reflection_digest,
+        .environment_digest =
+            resource->parser_guard_evidence.environment_digest,
+        .answer_set_digest =
+            resource->parser_guard_evidence.answer_set_digest,
+        .regular_compiler_digest = regular_compiler_digest,
+        .guard_nfa_answer_digest =
+            resource->parser_guard_answers.digest,
+        .guard_nfa_tags = resource->parser_guard_nfa.tags,
+        .guard_nfa_tag_len = resource->parser_guard_nfa.nfa.tag_len,
+        .derivations = resource->parser_guard_evidence.derivations,
+        .derivation_len =
+            resource->parser_guard_evidence.derivation_len,
+    };
+    limits = langdef_guarded_parser_limits();
+    if (!ppguard_plan_v1_build(
+            &resource->pack, &resource->parser_lexical_plan,
+            &provenance, &resource->parser_guard_plan,
+            error, error_size) ||
+        !ppguarded_lex_v1_plan_build(
+            &resource->pack, &resource->parser_lexical_plan,
+            &resource->parser_guard_plan,
+            resource->parser_guarded_answers.terms,
+            resource->parser_guarded_answers.len,
+            guarded_compiler_digest,
+            resource->parser_guarded_answers.digest,
+            &resource->parser_guarded_plan,
+            error, error_size) ||
+        !ppguarded_lex_exec_v1_plan_build(
+            &resource->pack, resource->wire.start,
+            &resource->parser_lexical_plan,
+            &resource->parser_guard_plan,
+            &resource->parser_guarded_plan,
+            &resource->parser_lexical_nfa,
+            &resource->parser_guard_nfa, &limits,
+            &resource->parser_guarded_exec,
+            error, error_size)) {
+        return false;
+    }
+    resource->parser_guarded_exec_ready = true;
+    return true;
 }
 
 static bool langdef_proof_extension_load(
@@ -1399,6 +1630,8 @@ static CettaLangDefV1 *langdef_load_resource(const char *manifest_argument,
         goto fail;
     }
     if (!atom_eq(resource->wire.start, manifest.start) ||
+        resource->wire.expected_closed !=
+            manifest.parser_pack_expected_closed ||
         strcmp(resource->pack.source_digest, lock.source_digest) != 0 ||
         strcmp(resource->pack.compiler_digest, lock.compiler_digest) != 0 ||
         strcmp(resource->pack.environment_digest,
@@ -1409,6 +1642,10 @@ static CettaLangDefV1 *langdef_load_resource(const char *manifest_argument,
         goto fail;
     }
 #ifdef CETTA_LANGDEF_COMPILED_CURSOR_RUNTIME
+    if (!langdef_guarded_parser_extension_load(
+            resource, &manifest, extension_artifact_paths,
+            error, error_size))
+        goto fail;
     if (manifest.compiled_cursor_relative != NULL &&
         !langdef_compiled_cursor_load(
             resource, compiled_cursor_path, error, error_size))
@@ -1689,6 +1926,397 @@ static void langdef_compiled_fold_abort(void *raw) {
         return;
     fold->value_len = 0u;
     fold->committed = false;
+}
+
+typedef struct {
+    uint32_t role_id;
+    uint8_t *bytes;
+    size_t byte_len;
+} CettaLangDefRuntimeValueV1;
+
+typedef struct {
+    uint32_t source_id;
+    uint32_t operation_id;
+    uint32_t production_index;
+    uint32_t left_scalar;
+    uint32_t right_scalar;
+    uint32_t left_byte;
+    uint32_t right_byte;
+    CettaLangDefRuntimeValueV1 *values;
+    uint32_t value_len;
+} CettaLangDefRuntimeOccurrenceV1;
+
+typedef struct {
+    const PPOccurrenceFoldV1Plan *plan;
+    CettaLangDefRuntimeOccurrenceV1 *occurrences;
+    uint32_t occurrence_len;
+    uint32_t occurrence_cap;
+    bool committed;
+} CettaLangDefRuntimeOccurrenceCollectorV1;
+
+static void langdef_runtime_occurrence_collector_clear(
+    CettaLangDefRuntimeOccurrenceCollectorV1 *collector) {
+    uint32_t occurrence_index;
+    if (!collector)
+        return;
+    for (occurrence_index = 0u;
+         occurrence_index < collector->occurrence_len;
+         occurrence_index++) {
+        CettaLangDefRuntimeOccurrenceV1 *occurrence =
+            &collector->occurrences[occurrence_index];
+        uint32_t value_index;
+        for (value_index = 0u;
+             value_index < occurrence->value_len;
+             value_index++) {
+            free(occurrence->values[value_index].bytes);
+        }
+        free(occurrence->values);
+    }
+    free(collector->occurrences);
+    collector->occurrences = NULL;
+    collector->occurrence_len = 0u;
+    collector->occurrence_cap = 0u;
+    collector->committed = false;
+}
+
+static bool langdef_runtime_occurrence_apply(
+    void *raw,
+    const PPOccurrenceFoldV1Step *step,
+    char *error_buf,
+    size_t error_buf_size) {
+    CettaLangDefRuntimeOccurrenceCollectorV1 *collector = raw;
+    CettaLangDefRuntimeOccurrenceV1 staged = {0};
+    uint32_t value_index;
+
+    if (!collector || !collector->plan || !step || collector->committed ||
+        step->operation_id >= collector->plan->operation_len) {
+        return langdef_set_error(
+            error_buf, error_buf_size,
+            "runtime occurrence collector received an invalid step");
+    }
+    if (step->value_len > 0u) {
+        staged.values = calloc(step->value_len, sizeof(*staged.values));
+        if (!staged.values) {
+            return langdef_set_error(
+                error_buf, error_buf_size,
+                "cannot allocate runtime occurrence values");
+        }
+    }
+    staged.source_id = step->source_id;
+    staged.operation_id = step->operation_id;
+    staged.production_index = step->production_index;
+    staged.left_scalar = step->left_scalar;
+    staged.right_scalar = step->right_scalar;
+    staged.left_byte = step->left_byte;
+    staged.right_byte = step->right_byte;
+    staged.value_len = step->value_len;
+    for (value_index = 0u; value_index < step->value_len; value_index++) {
+        const PPOccurrenceFoldV1Value *source = &step->values[value_index];
+        CettaLangDefRuntimeValueV1 *target = &staged.values[value_index];
+        if (source->role_id >= collector->plan->role_len ||
+            source->byte_len > UINT32_MAX) {
+            langdef_set_error(
+                error_buf, error_buf_size,
+                "runtime occurrence value exceeds its admitted domain");
+            goto fail;
+        }
+        target->role_id = source->role_id;
+        target->byte_len = source->byte_len;
+        if (source->byte_len > 0u) {
+            target->bytes = malloc(source->byte_len);
+            if (!target->bytes) {
+                langdef_set_error(
+                    error_buf, error_buf_size,
+                    "cannot copy a runtime occurrence value");
+                goto fail;
+            }
+            memcpy(target->bytes, source->bytes, source->byte_len);
+        }
+    }
+    if (collector->occurrence_len == collector->occurrence_cap) {
+        uint32_t next_cap = collector->occurrence_cap
+            ? collector->occurrence_cap * 2u : 64u;
+        CettaLangDefRuntimeOccurrenceV1 *next;
+        if (next_cap <= collector->occurrence_cap) {
+            langdef_set_error(
+                error_buf, error_buf_size,
+                "runtime occurrence stream is too large");
+            goto fail;
+        }
+        next = realloc(
+            collector->occurrences, sizeof(*next) * next_cap);
+        if (!next) {
+            langdef_set_error(
+                error_buf, error_buf_size,
+                "cannot grow the runtime occurrence stream");
+            goto fail;
+        }
+        collector->occurrences = next;
+        collector->occurrence_cap = next_cap;
+    }
+    collector->occurrences[collector->occurrence_len++] = staged;
+    return true;
+
+fail:
+    for (value_index = 0u; value_index < staged.value_len; value_index++)
+        free(staged.values[value_index].bytes);
+    free(staged.values);
+    return false;
+}
+
+static bool langdef_runtime_occurrence_commit(
+    void *raw, char *error_buf, size_t error_buf_size) {
+    CettaLangDefRuntimeOccurrenceCollectorV1 *collector = raw;
+    if (!collector || collector->committed) {
+        return langdef_set_error(
+            error_buf, error_buf_size,
+            "runtime occurrence collector cannot commit");
+    }
+    collector->committed = true;
+    return true;
+}
+
+static void langdef_runtime_occurrence_abort(void *raw) {
+    langdef_runtime_occurrence_collector_clear(raw);
+}
+
+static bool langdef_runtime_role_admitted(
+    const PPOccurrenceFoldV1Plan *plan,
+    const CettaLangDefRuntimeOccurrenceV1 *occurrence,
+    uint32_t role_id) {
+    uint32_t binding_index;
+    const PPOccurrenceFoldV1ProductionBinding *binding;
+    const PPOccurrenceFoldV1Contract *contract;
+    uint32_t transition_index;
+
+    if (!plan || !occurrence ||
+        occurrence->production_index >= plan->cursor_production_len)
+        return false;
+    binding_index =
+        plan->production_binding_by_index[occurrence->production_index];
+    if (binding_index == UINT32_MAX || binding_index >= plan->production_len)
+        return false;
+    binding = &plan->productions[binding_index];
+    if (binding->contract_index >= plan->contract_len)
+        return false;
+    contract = &plan->contracts[binding->contract_index];
+    for (transition_index = 0u;
+         transition_index < contract->transition_len;
+         transition_index++) {
+        const PPOccurrenceFoldV1Transition *transition =
+            &plan->transitions[
+                contract->transition_begin + transition_index];
+        if (transition->kind == PPOCCURRENCE_FOLD_V1_TRANSITION_ROLE &&
+            transition->role_id == role_id)
+            return true;
+    }
+    return false;
+}
+
+static Atom *langdef_runtime_byte_values(
+    Arena *arena, const uint8_t *bytes, size_t len) {
+    Atom *result = atom_symbol(arena, "ByteValuesNilV1");
+    while (len > 0u) {
+        Atom *arguments[2];
+        len--;
+        arguments[0] = atom_int(arena, bytes[len]);
+        arguments[1] = result;
+        result = langdef_expr(arena, "ByteValuesConsV1", arguments, 2u);
+    }
+    return result;
+}
+
+static Atom *langdef_runtime_values_tree(
+    Arena *arena, Atom *const *values, uint32_t begin, uint32_t end) {
+    Atom *arguments[2];
+    uint32_t middle;
+    if (begin == end)
+        return atom_symbol(arena, "ValuesTreeEmptyV1");
+    if (end - begin == 1u) {
+        arguments[0] = values[begin];
+        return langdef_expr(arena, "ValuesTreeLeafV1", arguments, 1u);
+    }
+    middle = begin + (end - begin) / 2u;
+    arguments[0] = langdef_runtime_values_tree(
+        arena, values, begin, middle);
+    arguments[1] = langdef_runtime_values_tree(
+        arena, values, middle, end);
+    return langdef_expr(arena, "ValuesTreeNodeV1", arguments, 2u);
+}
+
+static Atom *langdef_runtime_values_sequence(
+    Arena *arena, Atom *const *values, uint32_t len) {
+    Atom *arguments[2];
+    arguments[0] = langdef_runtime_values_tree(arena, values, 0u, len);
+    arguments[1] = atom_symbol(arena, "ValuesTreeStackNilV1");
+    return langdef_expr(arena, "ValuesSequenceV1", arguments, 2u);
+}
+
+static Atom *langdef_runtime_digest_atom(Arena *arena, const char *digest) {
+    char identity[72];
+    if (!digest)
+        return NULL;
+    if (strncmp(digest, "sha256-", 7u) == 0)
+        return atom_symbol(arena, digest);
+    if (strlen(digest) != 64u)
+        return NULL;
+    snprintf(identity, sizeof(identity), "sha256-%s", digest);
+    return atom_symbol(arena, identity);
+}
+
+static Atom *langdef_runtime_roles(
+    Arena *arena,
+    const PPOccurrenceFoldV1Plan *plan,
+    const CettaLangDefRuntimeOccurrenceV1 *occurrence) {
+    Atom *roles = atom_symbol(arena, "StateRuntimeRolesNilV1");
+    uint32_t role_id;
+    for (role_id = plan->role_len; role_id > 0u; role_id--) {
+        uint32_t selected_role = role_id - 1u;
+        uint32_t count = 0u;
+        uint32_t value_index;
+        Atom **values;
+        Atom *value_sequence;
+        Atom *arguments[4];
+        bool admitted = langdef_runtime_role_admitted(
+            plan, occurrence, selected_role);
+        for (value_index = 0u;
+             value_index < occurrence->value_len;
+             value_index++) {
+            if (occurrence->values[value_index].role_id == selected_role)
+                count++;
+        }
+        if (!admitted && count == 0u)
+            continue;
+        values = count ? malloc(sizeof(*values) * count) : NULL;
+        if (count && !values) {
+            free(values);
+            return NULL;
+        }
+        count = 0u;
+        for (value_index = 0u;
+             value_index < occurrence->value_len;
+             value_index++) {
+            const CettaLangDefRuntimeValueV1 *value =
+                &occurrence->values[value_index];
+            Atom *source_arguments[2];
+            Atom *runtime_source_value;
+            Atom *state_source_arguments[1];
+            SymbolId symbol;
+            if (value->role_id != selected_role)
+                continue;
+            symbol = symbol_intern_bytes(
+                g_symbols, value->bytes, (uint32_t)value->byte_len);
+            source_arguments[0] = atom_symbol_id(arena, symbol);
+            source_arguments[1] = langdef_runtime_byte_values(
+                arena, value->bytes, value->byte_len);
+            runtime_source_value = langdef_expr(
+                arena, "StateRuntimeSourceValueV1",
+                source_arguments, 2u);
+            state_source_arguments[0] = runtime_source_value;
+            values[count] = langdef_expr(
+                arena, "StateSourceValueV1",
+                state_source_arguments, 1u);
+            count++;
+        }
+        value_sequence = langdef_runtime_values_sequence(
+            arena, values, count);
+        arguments[0] = atom_symbol(arena, plan->roles[selected_role]);
+        arguments[1] = value_sequence;
+        arguments[2] = value_sequence;
+        arguments[3] = roles;
+        roles = langdef_expr(
+            arena, "StateRuntimeRolesConsV1", arguments, 4u);
+        free(values);
+    }
+    return roles;
+}
+
+static Atom *langdef_runtime_occurrence_stream(
+    CettaLangDefV1 *langdef,
+    CettaLangDefRuntimeOccurrenceCollectorV1 *collector,
+    const char *source_digest,
+    Arena *arena) {
+    Atom *stream_identity_arguments[3];
+    Atom *stream_identity;
+    Atom *package_arguments[1];
+    Atom *package;
+    Atom *tail = atom_symbol(arena, "StateOccurrenceLastTailV1");
+    Atom *first = atom_symbol(arena, "StateRuntimeOccurrenceEmptyV1");
+    uint32_t index;
+
+    package_arguments[0] = langdef_runtime_digest_atom(
+        arena, langdef->compiled_state.compiler_answer_digest);
+    if (!package_arguments[0])
+        return NULL;
+    package = langdef_expr(
+        arena, "StateProgramDigestV1", package_arguments, 1u);
+    stream_identity_arguments[0] = langdef_runtime_digest_atom(
+        arena, langdef->compiled_fold.plan_digest);
+    stream_identity_arguments[1] = langdef_runtime_digest_atom(
+        arena, source_digest);
+    if (!stream_identity_arguments[0] || !stream_identity_arguments[1])
+        return NULL;
+    stream_identity_arguments[2] = package;
+    stream_identity = langdef_expr(
+        arena, "StateOccurrenceStreamIdentityV1",
+        stream_identity_arguments, 3u);
+
+    for (index = collector->occurrence_len; index > 0u; index--) {
+        const CettaLangDefRuntimeOccurrenceV1 *occurrence =
+            &collector->occurrences[index - 1u];
+        const char *operation_name = ppoccurrence_fold_v1_operation_name(
+            &langdef->compiled_fold, occurrence->operation_id);
+        Atom *identity_arguments[2];
+        Atom *source_identity_arguments[2];
+        Atom *position_arguments[5];
+        Atom *occurrence_arguments[5];
+        Atom *roles;
+        Atom *current;
+        if (!operation_name)
+            return NULL;
+        identity_arguments[0] = stream_identity;
+        identity_arguments[1] = atom_int(arena, index - 1u);
+        source_identity_arguments[0] = langdef_runtime_digest_atom(
+            arena, source_digest);
+        if (!source_identity_arguments[0])
+            return NULL;
+        source_identity_arguments[1] = atom_int(
+            arena, occurrence->source_id);
+        position_arguments[0] = langdef_expr(
+            arena, "SourceIdentityV1", source_identity_arguments, 2u);
+        position_arguments[1] = atom_int(arena, occurrence->left_scalar);
+        position_arguments[2] = atom_int(arena, occurrence->right_scalar);
+        position_arguments[3] = atom_int(arena, occurrence->left_byte);
+        position_arguments[4] = atom_int(arena, occurrence->right_byte);
+        roles = langdef_runtime_roles(
+            arena, &langdef->compiled_fold, occurrence);
+        if (!roles)
+            return NULL;
+        occurrence_arguments[0] = langdef_expr(
+            arena, "StateOccurrenceIdentityV1",
+            identity_arguments, 2u);
+        occurrence_arguments[1] = atom_symbol(arena, operation_name);
+        occurrence_arguments[2] = langdef_expr(
+            arena, "SourcePositionV1", position_arguments, 5u);
+        occurrence_arguments[3] = roles;
+        occurrence_arguments[4] = tail;
+        current = langdef_expr(
+            arena, "StateRuntimeOccurrenceV1",
+            occurrence_arguments, 5u);
+        first = current;
+        {
+            Atom *next_arguments[1] = {current};
+            tail = langdef_expr(
+                arena, "StateOccurrenceNextTailV1",
+                next_arguments, 1u);
+        }
+    }
+    {
+        Atom *stream_arguments[3] = {package, stream_identity, first};
+        return langdef_expr(
+            arena, "StateRuntimeOccurrenceStreamV1",
+            stream_arguments, 3u);
+    }
 }
 
 typedef struct {
@@ -2268,6 +2896,147 @@ done:
     free(fold.values);
     return result;
 }
+
+static Atom *langdef_parse_runtime_occurrence_bytes(
+    CettaLangDefV1 *langdef,
+    const uint8_t *bytes,
+    size_t len,
+    const char *source_path,
+    Arena *arena,
+    Atom *source) {
+    CettaLangDefRuntimeOccurrenceCollectorV1 collector = {
+        .plan = &langdef->compiled_fold,
+    };
+    PPOccurrenceFoldV1Backend collector_backend = {
+        .context = &collector,
+        .apply = langdef_runtime_occurrence_apply,
+        .commit = langdef_runtime_occurrence_commit,
+        .abort = langdef_runtime_occurrence_abort,
+    };
+    PPOccurrenceFileResolverV1 resolver;
+    PPOccurrenceSourceResolverV1 resolver_interface = {0};
+    PPOccurrenceSourceCompositionV1 composition = {0};
+    PPOccurrenceFoldV1Backend backend = {0};
+    PPOccurrenceFoldV1Receipt receipt = {0};
+    Atom *result = NULL;
+    char error[512] = {0};
+    bool configured = false;
+    bool composition_ready = false;
+    bool fold_ok;
+
+    if (!langdef || (!bytes && len != 0u) || !source_path || !arena ||
+        !langdef->compiled_program_ready ||
+        !langdef->compiled_fold_ready ||
+        !langdef->compiled_state_ready ||
+        !langdef->compiled_source_control_ready) {
+        return langdef_error(
+            arena, source,
+            "runtime occurrence parsing requires a fully compiled source package");
+    }
+    ppoccurrence_file_resolver_v1_init(&resolver);
+    configured = ppoccurrence_file_resolver_v1_configure_controlled(
+        &resolver,
+        &langdef->compiled_program,
+        &langdef->compiled_fold,
+        &langdef->compiled_source_control,
+        source_path,
+        bytes,
+        len,
+        PPGUARDED_LEX_CURSOR_V1_EXACT_TRACE,
+        LANGDEF_MINIMUM_WORK_LIMIT,
+        LANGDEF_WORK_PER_SOURCE_BYTE,
+        LANGDEF_DEFAULT_INCLUDE_DEPTH,
+        error,
+        sizeof(error));
+    if (!configured) {
+        result = langdef_error(
+            arena, source,
+            error[0] ? error : "runtime source resolver initialization failed");
+        goto done;
+    }
+    resolver_interface = ppoccurrence_file_resolver_v1_interface(&resolver);
+    composition_ready = ppoccurrence_source_composition_v1_init(
+        &composition,
+        &langdef->compiled_fold,
+        &langdef->compiled_state,
+        &resolver_interface,
+        &collector_backend,
+        error,
+        sizeof(error));
+    if (!composition_ready) {
+        result = langdef_error(
+            arena, source,
+            error[0] ? error : "runtime source composition initialization failed");
+        goto done;
+    }
+    backend = ppoccurrence_source_composition_v1_backend(&composition);
+    fold_ok = langdef->compiled_span_mask_ready
+        ? ppoccurrence_fold_v1_run_bytes_with_span_mask_prevalidated(
+              &langdef->compiled_program,
+              &langdef->compiled_fold,
+              &langdef->compiled_span_mask,
+              bytes,
+              len,
+              &backend,
+              PPGUARDED_LEX_CURSOR_V1_EXACT_TRACE,
+              langdef_source_work_limit(len),
+              &receipt,
+              error,
+              sizeof(error))
+        : ppoccurrence_fold_v1_run_bytes_prevalidated(
+              &langdef->compiled_program,
+              &langdef->compiled_fold,
+              bytes,
+              len,
+              &backend,
+              PPGUARDED_LEX_CURSOR_V1_EXACT_TRACE,
+              langdef_source_work_limit(len),
+              &receipt,
+              error,
+              sizeof(error));
+    if (!fold_ok || receipt.parser_receipt.outcome !=
+            PPGUARDED_LEX_CURSOR_V1_ACCEPTED ||
+        !receipt.committed || !composition.committed ||
+        !collector.committed) {
+        Atom *arguments[3];
+        const char *head = receipt.parser_receipt.outcome ==
+                PPGUARDED_LEX_CURSOR_V1_WORK_LIMIT
+            ? "LangDef:OccurrenceStreamIncomplete"
+            : "LangDef:OccurrenceStreamRejected";
+        arguments[0] = atom_symbol(arena, langdef->name);
+        arguments[1] = atom_string(arena, langdef->pack.pack_digest);
+        arguments[2] = atom_string(
+            arena, error[0] ? error : "source parsing did not accept");
+        result = langdef_expr(arena, head, arguments, 3u);
+        goto done;
+    }
+    {
+        Atom *stream = langdef_runtime_occurrence_stream(
+            langdef, &collector, composition.source_digest, arena);
+        Atom *arguments[5];
+        if (!stream) {
+            result = langdef_error(
+                arena, source,
+                "runtime occurrence stream construction failed");
+            goto done;
+        }
+        arguments[0] = atom_symbol(arena, langdef->name);
+        arguments[1] = atom_string(arena, langdef->pack.pack_digest);
+        arguments[2] = atom_string(
+            arena, langdef->compiled_state.plan_digest);
+        arguments[3] = atom_symbol(arena, composition.source_digest);
+        arguments[4] = stream;
+        result = langdef_expr(
+            arena, "LangDef:OccurrenceStreamAccepted", arguments, 5u);
+    }
+
+done:
+    if (composition_ready && composition.active)
+        backend.abort(backend.context);
+    ppoccurrence_file_resolver_v1_free(&resolver);
+    langdef_runtime_occurrence_collector_clear(&collector);
+    return result;
+}
 #endif
 
 static Atom *langdef_expected(Arena *arena, const CettaLangDefV1 *langdef,
@@ -2297,6 +3066,10 @@ static Atom *langdef_parse_bytes(CettaLangDefV1 *langdef,
                                  bool materialize_values,
                                  Atom ***values_out, uint32_t *value_len_out) {
     PPNativeV1Result parsed;
+#ifdef CETTA_LANGDEF_COMPILED_CURSOR_RUNTIME
+    PPGuardedLexExecV1Result guarded;
+#endif
+    PPNativeV1Result *parsed_result = &parsed;
     Atom **values = NULL;
     char error[512] = {0};
     Atom *result = NULL;
@@ -2320,6 +3093,27 @@ static Atom *langdef_parse_bytes(CettaLangDefV1 *langdef,
     (void)source_path;
 
     ppnative_v1_result_init(&parsed);
+#ifdef CETTA_LANGDEF_COMPILED_CURSOR_RUNTIME
+    ppguarded_lex_exec_v1_result_init(&guarded);
+    if (langdef->parser_guarded_exec_ready) {
+        PPGuardedLexExecV1Limits limits =
+            langdef_guarded_parser_limits();
+        if (!ppguarded_lex_exec_v1_run_bytes(
+                &langdef->pack, langdef->wire.start,
+                &langdef->parser_lexical_plan,
+                &langdef->parser_guard_plan,
+                &langdef->parser_guarded_plan,
+                &langdef->parser_guarded_exec,
+                bytes, len, &limits, &guarded,
+                error, sizeof(error))) {
+            result = langdef_error(
+                arena, source,
+                error[0] ? error : "guarded langdef parser failed");
+            goto done;
+        }
+        parsed_result = &guarded.gll;
+    } else
+#endif
     if (!ppgll_v1_parse(&langdef->pack, langdef->wire.start,
                         bytes, len, langdef_source_work_limit_u32(len),
                         LANGDEF_DEFAULT_REPLAY_DEPTH,
@@ -2329,22 +3123,23 @@ static Atom *langdef_parse_bytes(CettaLangDefV1 *langdef,
                                error[0] ? error : "langdef parser failed");
         goto done;
     }
-    if (parsed.outcome != PPNATIVE_V1_COMPLETED) {
+    if (parsed_result->outcome != PPNATIVE_V1_COMPLETED) {
         Atom *arguments[4] = {
             atom_symbol(arena, langdef->name),
             atom_string(arena, langdef->pack.pack_digest),
-            atom_int(arena, parsed.outcome),
-            atom_string(arena, parsed.detail),
+            atom_int(arena, parsed_result->outcome),
+            atom_string(arena, parsed_result->detail),
         };
         result = langdef_expr(arena, "LangDef:ParseIncomplete", arguments, 4u);
         goto done;
     }
-    if (!parsed.accepted) {
-        Atom *expected = langdef_expected(arena, langdef, &parsed.forest);
+    if (!parsed_result->accepted) {
+        Atom *expected = langdef_expected(
+            arena, langdef, &parsed_result->forest);
         Atom *arguments[4] = {
             atom_symbol(arena, langdef->name),
             atom_string(arena, langdef->pack.pack_digest),
-            atom_int(arena, parsed.forest.farthest_byte),
+            atom_int(arena, parsed_result->forest.farthest_byte),
             expected,
         };
         if (!expected) {
@@ -2359,20 +3154,22 @@ static Atom *langdef_parse_bytes(CettaLangDefV1 *langdef,
         Atom *arguments[3] = {
             atom_symbol(arena, langdef->name),
             atom_string(arena, langdef->pack.pack_digest),
-            atom_int(arena, parsed.semantic_result_len),
+            atom_int(arena, parsed_result->semantic_result_len),
         };
         result = langdef_expr(
             arena, "LangDef:RunAccepted", arguments, 3u);
         if (value_len_out)
-            *value_len_out = parsed.semantic_result_len;
+            *value_len_out = parsed_result->semantic_result_len;
         goto done;
     }
-    if (parsed.semantic_result_len > 0u)
+    if (parsed_result->semantic_result_len > 0u)
         values = arena_alloc(arena,
-                             sizeof(*values) * parsed.semantic_result_len);
-    for (index = 0u; index < parsed.semantic_result_len; index++) {
+                             sizeof(*values) *
+                                 parsed_result->semantic_result_len);
+    for (index = 0u; index < parsed_result->semantic_result_len; index++) {
         Atom *value;
-        if (!langdef_result_value(parsed.semantic_results[index], &value)) {
+        if (!langdef_result_value(
+                parsed_result->semantic_results[index], &value)) {
             result = langdef_error(arena, source,
                                    "compiled parser returned an open result");
             goto done;
@@ -2385,7 +3182,8 @@ static Atom *langdef_parse_bytes(CettaLangDefV1 *langdef,
         }
     }
     {
-        Atom *value_list = atom_expr(arena, values, parsed.semantic_result_len);
+        Atom *value_list = atom_expr(
+            arena, values, parsed_result->semantic_result_len);
         Atom *arguments[3] = {
             atom_symbol(arena, langdef->name),
             atom_string(arena, langdef->pack.pack_digest),
@@ -2396,9 +3194,12 @@ static Atom *langdef_parse_bytes(CettaLangDefV1 *langdef,
     if (values_out)
         *values_out = values;
     if (value_len_out)
-        *value_len_out = parsed.semantic_result_len;
+        *value_len_out = parsed_result->semantic_result_len;
 
 done:
+#ifdef CETTA_LANGDEF_COMPILED_CURSOR_RUNTIME
+    ppguarded_lex_exec_v1_result_free(&guarded);
+#endif
     ppnative_v1_result_free(&parsed);
     return result;
 }
@@ -2737,6 +3538,40 @@ Atom *cetta_langdef_module_dispatch(CettaLibraryContext *ctx,
         return parsed && !atom_is_error(parsed)
             ? langdef_return(arena, parsed)
             : parsed;
+    }
+
+    if (atom_is_symbol(
+            head, "__cetta_lib_langdef_parse_occurrence_stream_file")) {
+#ifdef CETTA_LANGDEF_COMPILED_CURSOR_RUNTIME
+        CettaLangDefV1 *resource;
+        const char *source_path;
+        uint8_t *bytes = NULL;
+        size_t len = 0u;
+        Atom *parsed;
+        if (nargs != 2u ||
+            !(resource = langdef_handle_resource(ctx, args[0])) ||
+            !cetta_langdef_text_arg(args[1], &source_path)) {
+            return langdef_error(
+                arena, head,
+                "langdef:parse-occurrence-stream-file expects a live handle and source path");
+        }
+        if (!cetta_langdef_slurp(
+                source_path, &bytes, &len, error, sizeof(error))) {
+            return langdef_error(
+                arena, head,
+                error[0] ? error : "cannot read source file");
+        }
+        parsed = langdef_parse_runtime_occurrence_bytes(
+            resource, bytes, len, source_path, arena, head);
+        free(bytes);
+        return parsed && !atom_is_error(parsed)
+            ? langdef_return(arena, parsed)
+            : parsed;
+#else
+        return langdef_error(
+            arena, head,
+            "runtime occurrence parsing is absent from this build");
+#endif
     }
 
     if (atom_is_symbol(head, "__cetta_lib_langdef_prepare_import_file")) {

@@ -29,7 +29,7 @@ static bool regular_expr(Atom *atom, const char *head, CettaExprIndex len) {
 }
 
 /* Internal occurrence of a global declaration.  Universe arguments are
- * explicit here even though the authored surface elides them.  This keeps a
+ * explicit here even though the authored syntax elides them.  This keeps a
  * constant's global identity separate from each fresh polymorphic use. */
 static bool regular_decl_const_shape(
     Atom *term, Atom **name_out, size_t *level_count_out) {
@@ -280,7 +280,7 @@ void cetta_prime_regular_kernel_budget_init(
 }
 
 /* `Sort` and `Level*` are the declaration-free internal tower wire.  They are
- * not CeTTa surface spellings: the authored language elaborator owns that
+ * not CeTTa source spellings: the authored language elaborator owns that
  * interface.  U1 remains the canonical spelling of the embedded legacy
  * marker, namely sort zero. */
 static bool regular_level_natural(Atom *atom, uint64_t *value_out) {

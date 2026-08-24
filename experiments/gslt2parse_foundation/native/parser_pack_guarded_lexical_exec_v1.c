@@ -8094,6 +8094,7 @@ static void ppguarded_lex_exec_v1_witness_init(
         return;
     memset(table, 0, sizeof(*table));
     arena_init(&table->arena);
+    arena_set_hashcons(&table->arena, NULL);
     table->outcome = PPLEX_V1_WITNESS_COMPLETED;
 }
 
@@ -8154,6 +8155,38 @@ void ppguarded_lex_exec_v1_result_free(
     free(result->ordinary_tokens);
     rsdfa_v1_scan_result_free(&result->scan);
     memset(result, 0, sizeof(*result));
+}
+
+static bool ppguarded_lex_exec_v1_rebind_projected_owners(
+    PPGuardRelationV1 *relation,
+    const Arena *ordinary_witness_owner,
+    const Arena *guarded_witness_owner,
+    const Arena *guard_relation_owner) {
+    if (!relation ||
+        relation->atom_storage != PPGUARD_RELATION_V1_ATOMS_BORROWED ||
+        relation->borrowed_atom_owner_len != 3u ||
+        !relation->borrowed_atom_owners) {
+        return false;
+    }
+    relation->borrowed_atom_owners[0] = ordinary_witness_owner;
+    relation->borrowed_atom_owners[1] = guarded_witness_owner;
+    relation->borrowed_atom_owners[2] = guard_relation_owner;
+    return true;
+}
+
+static bool ppguarded_lex_exec_v1_rebind_result_owners(
+    PPGuardedLexExecV1Result *result) {
+    return result &&
+        ppguarded_lex_exec_v1_rebind_projected_owners(
+            &result->gll_projected_relation,
+            &result->ordinary_gll_witness.arena,
+            &result->guarded_gll_witness.arena,
+            &result->gll_relation.arena) &&
+        ppguarded_lex_exec_v1_rebind_projected_owners(
+            &result->glr_projected_relation,
+            &result->ordinary_glr_witness.arena,
+            &result->guarded_glr_witness.arena,
+            &result->glr_relation.arena);
 }
 
 static bool ppguarded_lex_exec_v1_expr_head(
@@ -9163,6 +9196,19 @@ static bool ppguarded_lex_exec_v1_run_impl(
     ppguarded_lex_exec_v1_result_free(out);
     *out = result;
     memset(&result, 0, sizeof(result));
+    if (!ppguarded_lex_exec_v1_rebind_result_owners(out) ||
+        !ppguard_relation_v1_validate(
+            &out->gll_projected_relation, error_buf, error_buf_size) ||
+        !ppguard_relation_v1_validate(
+            &out->glr_projected_relation, error_buf, error_buf_size)) {
+        ppguarded_lex_exec_v1_result_free(out);
+        if (error_buf && error_buf_size > 0u && error_buf[0] == '\0') {
+            ppguarded_lex_exec_v1_set_error(
+                error_buf, error_buf_size,
+                "guarded lexical result retained stale Atom owners");
+        }
+        goto done;
+    }
     ok = true;
 
 done:

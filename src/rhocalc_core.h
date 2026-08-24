@@ -16,7 +16,8 @@ typedef enum {
 
 typedef enum {
     RHOCALC_SEMANTIC_PROFILE_STRICT_CORE = 0,
-    RHOCALC_SEMANTIC_PROFILE_COST = 1
+    RHOCALC_SEMANTIC_PROFILE_COST = 1,
+    RHOCALC_SEMANTIC_PROFILE_RHOMETTA = 2
 } RhocalcSemanticProfileId;
 
 typedef struct {
@@ -87,9 +88,14 @@ bool rhocalc_reduce_to_quiescence_with_profile(Arena *arena, Atom *proc,
 bool rhocalc_reduce_to_quiescence(Arena *arena, Atom *proc,
                                   uint32_t reduction_limit, RhoReductionResult *out);
 
+/* Project the payloads of top-level inert rho:val components from a residual.
+ * The returned expression preserves their occurrence order. */
+Atom *rhocalc_observe_top_level_values(Arena *arena, Atom *residual);
+
 #ifdef CETTA_TEST_HOOKS
 bool rhocalc_payload_map_capacity_selftest(void);
 bool rhocalc_abt_substitution_correspondence_selftest(Arena *arena);
+bool rhocalc_atom_text_key_correspondence_selftest(Arena *arena);
 #endif
 
 #endif /* CETTA_RHOCALC_CORE_H */

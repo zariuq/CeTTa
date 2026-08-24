@@ -6,6 +6,8 @@
 (gslt-presentation-v1 ProofGSLTSequenceRelationsV1
   (signature
     (operator source-proof-sequence-layer 2)
+    (operator source-proof-sequence-functional-layer 2)
+    (operator source-proof-sequence-relational-layer 2)
     (operator source-proof-sequence-constructor-role 4)
     (operator source-proof-sequence-judgment-role 3)
     (operator source-proof-sequence-rule-role 3)
@@ -43,6 +45,30 @@
       (body
         (source-proof-sequence-layer ?owner ?base)
         (source-proof-extension ?owner ?base)))
+    (rule proof-sequence-calculus-token-literal-class
+      (head
+        (source-proof-calculus-constructor
+          ?owner ProofTokenLiteralClassV1 proof-zero-v1))
+      (body
+        (source-proof-sequence-functional-layer ?owner ?base)))
+    (rule proof-sequence-calculus-token-variable-class
+      (head
+        (source-proof-calculus-constructor
+          ?owner ProofTokenVariableClassV1 proof-zero-v1))
+      (body
+        (source-proof-sequence-functional-layer ?owner ?base)))
+    (rule proof-sequence-calculus-token-equal
+      (head
+        (source-proof-calculus-constructor
+          ?owner ProofTokenEqualV1 proof-zero-v1))
+      (body
+        (source-proof-sequence-functional-layer ?owner ?base)))
+    (rule proof-sequence-calculus-token-unequal
+      (head
+        (source-proof-calculus-constructor
+          ?owner ProofTokenUnequalV1 proof-zero-v1))
+      (body
+        (source-proof-sequence-functional-layer ?owner ?base)))
 
     (rule proof-sequence-judgment-append
       (head
@@ -65,6 +91,37 @@
           (proof-succ-v1
             (proof-succ-v1 (proof-succ-v1 proof-zero-v1)))))
       (body (source-proof-sequence-layer ?owner ?base)))
+    (rule proof-sequence-judgment-lookup-compared
+      (head
+        (source-proof-judgment
+          ?owner ProofEnvironmentLookupComparedV1
+          (proof-succ-v1
+            (proof-succ-v1
+              (proof-succ-v1
+                (proof-succ-v1 (proof-succ-v1 proof-zero-v1)))))))
+      (body (source-proof-sequence-functional-layer ?owner ?base)))
+    (rule proof-sequence-judgment-instantiate-class
+      (head
+        (source-proof-judgment
+          ?owner ProofSequenceInstantiateClassV1
+          (proof-succ-v1
+            (proof-succ-v1
+              (proof-succ-v1
+                (proof-succ-v1 (proof-succ-v1 proof-zero-v1)))))))
+      (body (source-proof-sequence-functional-layer ?owner ?base)))
+    (rule proof-sequence-judgment-token-class
+      (head
+        (source-proof-judgment
+          ?owner ProofTokenClassV1
+          (proof-succ-v1 (proof-succ-v1 proof-zero-v1))))
+      (body (source-proof-sequence-functional-layer ?owner ?base)))
+    (rule proof-sequence-judgment-token-compare
+      (head
+        (source-proof-judgment
+          ?owner ProofTokenCompareV1
+          (proof-succ-v1
+            (proof-succ-v1 (proof-succ-v1 proof-zero-v1)))))
+      (body (source-proof-sequence-functional-layer ?owner ?base)))
     (rule proof-sequence-judgment-token-literal
       (head
         (source-proof-judgment
@@ -190,7 +247,7 @@
                 (proof-list-cons-v1
                   (proof-fvar-v1 Value) proof-list-nil-v1))))
           proof-list-nil-v1))
-      (body (source-proof-sequence-layer ?owner ?base)))
+      (body (source-proof-sequence-relational-layer ?owner ?base)))
     (rule proof-sequence-rule-lookup-tail
       (head
         (source-proof-rule
@@ -235,7 +292,121 @@
                 (proof-list-cons-v1
                   (proof-fvar-v1 Value) proof-list-nil-v1))))
           proof-list-nil-v1))
-      (body (source-proof-sequence-layer ?owner ?base)))
+      (body (source-proof-sequence-relational-layer ?owner ?base)))
+
+    (rule proof-sequence-rule-lookup-cons-functional
+      (head
+        (source-proof-rule
+          ?owner proof-environment-lookup-cons-v1
+          (proof-list-cons-v1
+            (proof-formal-v1 HeadKey proof-zero-v1)
+            (proof-list-cons-v1
+              (proof-formal-v1 HeadValue proof-zero-v1)
+              (proof-list-cons-v1
+                (proof-formal-v1 Tail proof-zero-v1)
+                (proof-list-cons-v1
+                  (proof-formal-v1 Key proof-zero-v1)
+                  (proof-list-cons-v1
+                    (proof-formal-v1 Comparison proof-zero-v1)
+                    (proof-list-cons-v1
+                      (proof-formal-v1 Value proof-zero-v1)
+                      proof-list-nil-v1))))))
+          (proof-list-cons-v1
+            (proof-apply-v1 ProofTokenCompareV1
+              (proof-list-cons-v1
+                (proof-fvar-v1 HeadKey)
+                (proof-list-cons-v1
+                  (proof-fvar-v1 Key)
+                  (proof-list-cons-v1
+                    (proof-fvar-v1 Comparison) proof-list-nil-v1))))
+            (proof-list-cons-v1
+              (proof-apply-v1 ProofEnvironmentLookupComparedV1
+                (proof-list-cons-v1
+                  (proof-fvar-v1 Comparison)
+                  (proof-list-cons-v1
+                    (proof-fvar-v1 HeadValue)
+                    (proof-list-cons-v1
+                      (proof-fvar-v1 Tail)
+                      (proof-list-cons-v1
+                        (proof-fvar-v1 Key)
+                        (proof-list-cons-v1
+                          (proof-fvar-v1 Value) proof-list-nil-v1))))))
+              proof-list-nil-v1))
+          (proof-apply-v1 ProofEnvironmentLookupV1
+            (proof-list-cons-v1
+              (proof-apply-v1 ProofEnvironmentConsV1
+                (proof-list-cons-v1
+                  (proof-fvar-v1 HeadKey)
+                  (proof-list-cons-v1
+                    (proof-fvar-v1 HeadValue)
+                    (proof-list-cons-v1
+                      (proof-fvar-v1 Tail) proof-list-nil-v1))))
+              (proof-list-cons-v1
+                (proof-fvar-v1 Key)
+                (proof-list-cons-v1
+                  (proof-fvar-v1 Value) proof-list-nil-v1))))
+          proof-list-nil-v1))
+      (body (source-proof-sequence-functional-layer ?owner ?base)))
+    (rule proof-sequence-rule-lookup-compared-equal-functional
+      (head
+        (source-proof-rule
+          ?owner proof-environment-lookup-compared-equal-v1
+          (proof-list-cons-v1
+            (proof-formal-v1 HeadValue proof-zero-v1)
+            (proof-list-cons-v1
+              (proof-formal-v1 Tail proof-zero-v1)
+              (proof-list-cons-v1
+                (proof-formal-v1 Key proof-zero-v1)
+                proof-list-nil-v1)))
+          proof-list-nil-v1
+          (proof-apply-v1 ProofEnvironmentLookupComparedV1
+            (proof-list-cons-v1
+              (proof-apply-v1 ProofTokenEqualV1 proof-list-nil-v1)
+              (proof-list-cons-v1
+                (proof-fvar-v1 HeadValue)
+                (proof-list-cons-v1
+                  (proof-fvar-v1 Tail)
+                  (proof-list-cons-v1
+                    (proof-fvar-v1 Key)
+                    (proof-list-cons-v1
+                      (proof-fvar-v1 HeadValue) proof-list-nil-v1))))))
+          proof-list-nil-v1))
+      (body (source-proof-sequence-functional-layer ?owner ?base)))
+    (rule proof-sequence-rule-lookup-compared-unequal-functional
+      (head
+        (source-proof-rule
+          ?owner proof-environment-lookup-compared-unequal-v1
+          (proof-list-cons-v1
+            (proof-formal-v1 HeadValue proof-zero-v1)
+            (proof-list-cons-v1
+              (proof-formal-v1 Tail proof-zero-v1)
+              (proof-list-cons-v1
+                (proof-formal-v1 Key proof-zero-v1)
+                (proof-list-cons-v1
+                  (proof-formal-v1 Value proof-zero-v1)
+                  proof-list-nil-v1))))
+          (proof-list-cons-v1
+            (proof-apply-v1 ProofEnvironmentLookupV1
+              (proof-list-cons-v1
+                (proof-fvar-v1 Tail)
+                (proof-list-cons-v1
+                  (proof-fvar-v1 Key)
+                  (proof-list-cons-v1
+                    (proof-fvar-v1 Value) proof-list-nil-v1))))
+            proof-list-nil-v1)
+          (proof-apply-v1 ProofEnvironmentLookupComparedV1
+            (proof-list-cons-v1
+              (proof-apply-v1 ProofTokenUnequalV1 proof-list-nil-v1)
+              (proof-list-cons-v1
+                (proof-fvar-v1 HeadValue)
+                (proof-list-cons-v1
+                  (proof-fvar-v1 Tail)
+                  (proof-list-cons-v1
+                    (proof-fvar-v1 Key)
+                    (proof-list-cons-v1
+                      (proof-fvar-v1 Value) proof-list-nil-v1))))))
+          proof-list-nil-v1))
+      (body (source-proof-sequence-functional-layer ?owner ?base)))
 
     (rule proof-sequence-rule-instantiate-nil
       (head
@@ -298,7 +469,7 @@
                         (proof-fvar-v1 OutTail) proof-list-nil-v1)))
                   proof-list-nil-v1))))
           proof-list-nil-v1))
-      (body (source-proof-sequence-layer ?owner ?base)))
+      (body (source-proof-sequence-relational-layer ?owner ?base)))
     (rule proof-sequence-rule-instantiate-variable
       (head
         (source-proof-rule
@@ -357,7 +528,150 @@
                 (proof-list-cons-v1
                   (proof-fvar-v1 Out) proof-list-nil-v1))))
           proof-list-nil-v1))
-      (body (source-proof-sequence-layer ?owner ?base)))
+      (body (source-proof-sequence-relational-layer ?owner ?base)))
+
+    (rule proof-sequence-rule-instantiate-cons-functional
+      (head
+        (source-proof-rule
+          ?owner proof-sequence-instantiate-cons-v1
+          (proof-list-cons-v1
+            (proof-formal-v1 Head proof-zero-v1)
+            (proof-list-cons-v1
+              (proof-formal-v1 Tail proof-zero-v1)
+              (proof-list-cons-v1
+                (proof-formal-v1 Environment proof-zero-v1)
+                (proof-list-cons-v1
+                  (proof-formal-v1 Class proof-zero-v1)
+                  (proof-list-cons-v1
+                    (proof-formal-v1 Out proof-zero-v1)
+                    proof-list-nil-v1)))))
+          (proof-list-cons-v1
+            (proof-apply-v1 ProofTokenClassV1
+              (proof-list-cons-v1
+                (proof-fvar-v1 Head)
+                (proof-list-cons-v1
+                  (proof-fvar-v1 Class) proof-list-nil-v1)))
+            (proof-list-cons-v1
+              (proof-apply-v1 ProofSequenceInstantiateClassV1
+                (proof-list-cons-v1
+                  (proof-fvar-v1 Class)
+                  (proof-list-cons-v1
+                    (proof-fvar-v1 Head)
+                    (proof-list-cons-v1
+                      (proof-fvar-v1 Tail)
+                      (proof-list-cons-v1
+                        (proof-fvar-v1 Environment)
+                        (proof-list-cons-v1
+                          (proof-fvar-v1 Out) proof-list-nil-v1))))))
+              proof-list-nil-v1))
+          (proof-apply-v1 ProofSequenceInstantiateV1
+            (proof-list-cons-v1
+              (proof-apply-v1 ProofSequenceConsV1
+                (proof-list-cons-v1
+                  (proof-fvar-v1 Head)
+                  (proof-list-cons-v1
+                    (proof-fvar-v1 Tail) proof-list-nil-v1)))
+              (proof-list-cons-v1
+                (proof-fvar-v1 Environment)
+                (proof-list-cons-v1
+                  (proof-fvar-v1 Out) proof-list-nil-v1))))
+          proof-list-nil-v1))
+      (body (source-proof-sequence-functional-layer ?owner ?base)))
+    (rule proof-sequence-rule-instantiate-class-literal-functional
+      (head
+        (source-proof-rule
+          ?owner proof-sequence-instantiate-class-literal-v1
+          (proof-list-cons-v1
+            (proof-formal-v1 Head proof-zero-v1)
+            (proof-list-cons-v1
+              (proof-formal-v1 Tail proof-zero-v1)
+              (proof-list-cons-v1
+                (proof-formal-v1 Environment proof-zero-v1)
+                (proof-list-cons-v1
+                  (proof-formal-v1 OutTail proof-zero-v1)
+                  proof-list-nil-v1))))
+          (proof-list-cons-v1
+            (proof-apply-v1 ProofSequenceInstantiateV1
+              (proof-list-cons-v1
+                (proof-fvar-v1 Tail)
+                (proof-list-cons-v1
+                  (proof-fvar-v1 Environment)
+                  (proof-list-cons-v1
+                    (proof-fvar-v1 OutTail) proof-list-nil-v1))))
+            proof-list-nil-v1)
+          (proof-apply-v1 ProofSequenceInstantiateClassV1
+            (proof-list-cons-v1
+              (proof-apply-v1 ProofTokenLiteralClassV1 proof-list-nil-v1)
+              (proof-list-cons-v1
+                (proof-fvar-v1 Head)
+                (proof-list-cons-v1
+                  (proof-fvar-v1 Tail)
+                  (proof-list-cons-v1
+                    (proof-fvar-v1 Environment)
+                    (proof-list-cons-v1
+                      (proof-apply-v1 ProofSequenceConsV1
+                        (proof-list-cons-v1
+                          (proof-fvar-v1 Head)
+                          (proof-list-cons-v1
+                            (proof-fvar-v1 OutTail) proof-list-nil-v1)))
+                      proof-list-nil-v1))))))
+          proof-list-nil-v1))
+      (body (source-proof-sequence-functional-layer ?owner ?base)))
+    (rule proof-sequence-rule-instantiate-class-variable-functional
+      (head
+        (source-proof-rule
+          ?owner proof-sequence-instantiate-class-variable-v1
+          (proof-list-cons-v1
+            (proof-formal-v1 Hole proof-zero-v1)
+            (proof-list-cons-v1
+              (proof-formal-v1 Tail proof-zero-v1)
+              (proof-list-cons-v1
+                (proof-formal-v1 Environment proof-zero-v1)
+                (proof-list-cons-v1
+                  (proof-formal-v1 Image proof-zero-v1)
+                  (proof-list-cons-v1
+                    (proof-formal-v1 OutTail proof-zero-v1)
+                    (proof-list-cons-v1
+                      (proof-formal-v1 Out proof-zero-v1)
+                      proof-list-nil-v1))))))
+          (proof-list-cons-v1
+            (proof-apply-v1 ProofEnvironmentLookupV1
+              (proof-list-cons-v1
+                (proof-fvar-v1 Environment)
+                (proof-list-cons-v1
+                  (proof-fvar-v1 Hole)
+                  (proof-list-cons-v1
+                    (proof-fvar-v1 Image) proof-list-nil-v1))))
+            (proof-list-cons-v1
+              (proof-apply-v1 ProofSequenceInstantiateV1
+                (proof-list-cons-v1
+                  (proof-fvar-v1 Tail)
+                  (proof-list-cons-v1
+                    (proof-fvar-v1 Environment)
+                    (proof-list-cons-v1
+                      (proof-fvar-v1 OutTail) proof-list-nil-v1))))
+              (proof-list-cons-v1
+                (proof-apply-v1 ProofSequenceAppendV1
+                  (proof-list-cons-v1
+                    (proof-fvar-v1 Image)
+                    (proof-list-cons-v1
+                      (proof-fvar-v1 OutTail)
+                      (proof-list-cons-v1
+                        (proof-fvar-v1 Out) proof-list-nil-v1))))
+                proof-list-nil-v1)))
+          (proof-apply-v1 ProofSequenceInstantiateClassV1
+            (proof-list-cons-v1
+              (proof-apply-v1 ProofTokenVariableClassV1 proof-list-nil-v1)
+              (proof-list-cons-v1
+                (proof-fvar-v1 Hole)
+                (proof-list-cons-v1
+                  (proof-fvar-v1 Tail)
+                  (proof-list-cons-v1
+                    (proof-fvar-v1 Environment)
+                    (proof-list-cons-v1
+                      (proof-fvar-v1 Out) proof-list-nil-v1))))))
+          proof-list-nil-v1))
+      (body (source-proof-sequence-functional-layer ?owner ?base)))
 
     (rule proof-sequence-rule-pair-left-literal
       (head
@@ -559,6 +873,26 @@
         (source-proof-sequence-constructor-role
           ?owner ?base environment-cons-v1 ProofEnvironmentConsV1))
       (body (source-proof-sequence-layer ?owner ?base)))
+    (rule proof-sequence-role-constructor-token-literal-class
+      (head
+        (source-proof-sequence-constructor-role
+          ?owner ?base token-literal-class-v1 ProofTokenLiteralClassV1))
+      (body (source-proof-sequence-functional-layer ?owner ?base)))
+    (rule proof-sequence-role-constructor-token-variable-class
+      (head
+        (source-proof-sequence-constructor-role
+          ?owner ?base token-variable-class-v1 ProofTokenVariableClassV1))
+      (body (source-proof-sequence-functional-layer ?owner ?base)))
+    (rule proof-sequence-role-constructor-token-equal
+      (head
+        (source-proof-sequence-constructor-role
+          ?owner ?base token-equal-v1 ProofTokenEqualV1))
+      (body (source-proof-sequence-functional-layer ?owner ?base)))
+    (rule proof-sequence-role-constructor-token-unequal
+      (head
+        (source-proof-sequence-constructor-role
+          ?owner ?base token-unequal-v1 ProofTokenUnequalV1))
+      (body (source-proof-sequence-functional-layer ?owner ?base)))
 
     (rule proof-sequence-role-judgment-append
       (head
@@ -575,6 +909,26 @@
         (source-proof-sequence-judgment-role
           ?owner instantiate-v1 ProofSequenceInstantiateV1))
       (body (source-proof-sequence-layer ?owner ?base)))
+    (rule proof-sequence-role-judgment-lookup-compared
+      (head
+        (source-proof-sequence-judgment-role
+          ?owner lookup-compared-v1 ProofEnvironmentLookupComparedV1))
+      (body (source-proof-sequence-functional-layer ?owner ?base)))
+    (rule proof-sequence-role-judgment-instantiate-class
+      (head
+        (source-proof-sequence-judgment-role
+          ?owner instantiate-class-v1 ProofSequenceInstantiateClassV1))
+      (body (source-proof-sequence-functional-layer ?owner ?base)))
+    (rule proof-sequence-role-judgment-token-class
+      (head
+        (source-proof-sequence-judgment-role
+          ?owner token-class-v1 ProofTokenClassV1))
+      (body (source-proof-sequence-functional-layer ?owner ?base)))
+    (rule proof-sequence-role-judgment-token-compare
+      (head
+        (source-proof-sequence-judgment-role
+          ?owner token-compare-v1 ProofTokenCompareV1))
+      (body (source-proof-sequence-functional-layer ?owner ?base)))
     (rule proof-sequence-role-judgment-literal
       (head
         (source-proof-sequence-judgment-role
@@ -626,12 +980,29 @@
       (head
         (source-proof-sequence-rule-role
           ?owner lookup-head-v1 proof-environment-lookup-head-v1))
-      (body (source-proof-sequence-layer ?owner ?base)))
+      (body (source-proof-sequence-relational-layer ?owner ?base)))
     (rule proof-sequence-role-rule-lookup-tail
       (head
         (source-proof-sequence-rule-role
           ?owner lookup-tail-v1 proof-environment-lookup-tail-v1))
-      (body (source-proof-sequence-layer ?owner ?base)))
+      (body (source-proof-sequence-relational-layer ?owner ?base)))
+    (rule proof-sequence-role-rule-lookup-cons
+      (head
+        (source-proof-sequence-rule-role
+          ?owner lookup-cons-v1 proof-environment-lookup-cons-v1))
+      (body (source-proof-sequence-functional-layer ?owner ?base)))
+    (rule proof-sequence-role-rule-lookup-compared-equal
+      (head
+        (source-proof-sequence-rule-role
+          ?owner lookup-compared-equal-v1
+          proof-environment-lookup-compared-equal-v1))
+      (body (source-proof-sequence-functional-layer ?owner ?base)))
+    (rule proof-sequence-role-rule-lookup-compared-unequal
+      (head
+        (source-proof-sequence-rule-role
+          ?owner lookup-compared-unequal-v1
+          proof-environment-lookup-compared-unequal-v1))
+      (body (source-proof-sequence-functional-layer ?owner ?base)))
     (rule proof-sequence-role-rule-instantiate-nil
       (head
         (source-proof-sequence-rule-role
@@ -642,13 +1013,30 @@
         (source-proof-sequence-rule-role
           ?owner instantiate-literal-v1
           proof-sequence-instantiate-literal-v1))
-      (body (source-proof-sequence-layer ?owner ?base)))
+      (body (source-proof-sequence-relational-layer ?owner ?base)))
     (rule proof-sequence-role-rule-instantiate-variable
       (head
         (source-proof-sequence-rule-role
           ?owner instantiate-variable-v1
           proof-sequence-instantiate-variable-v1))
-      (body (source-proof-sequence-layer ?owner ?base)))
+      (body (source-proof-sequence-relational-layer ?owner ?base)))
+    (rule proof-sequence-role-rule-instantiate-cons
+      (head
+        (source-proof-sequence-rule-role
+          ?owner instantiate-cons-v1 proof-sequence-instantiate-cons-v1))
+      (body (source-proof-sequence-functional-layer ?owner ?base)))
+    (rule proof-sequence-role-rule-instantiate-class-literal
+      (head
+        (source-proof-sequence-rule-role
+          ?owner instantiate-class-literal-v1
+          proof-sequence-instantiate-class-literal-v1))
+      (body (source-proof-sequence-functional-layer ?owner ?base)))
+    (rule proof-sequence-role-rule-instantiate-class-variable
+      (head
+        (source-proof-sequence-rule-role
+          ?owner instantiate-class-variable-v1
+          proof-sequence-instantiate-class-variable-v1))
+      (body (source-proof-sequence-functional-layer ?owner ?base)))
     (rule proof-sequence-role-rule-pair-left-literal
       (head
         (source-proof-sequence-rule-role

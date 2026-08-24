@@ -1,0 +1,11 @@
+(ProofTraceInputNormalEvidenceV1
+  input-request-v1
+  (ProofTraceLabelConsV1 input-hx-v1
+    (ProofTraceLabelConsV1 input-identity-v1 ProofTraceLabelNilV1))
+  (ProofSequenceConsV1 input-wff-v1
+    (ProofSequenceConsV1 input-a-v1 ProofSequenceNilV1))
+  (ProofTraceConsV1
+    (ProofTracePushV1
+      (ProofSequenceConsV1 input-wff-v1
+        (ProofSequenceConsV1 input-a-v1 ProofSequenceNilV1)))
+    ProofTraceNilV1))

@@ -2,7 +2,7 @@
 ; WISH SYNTAX — specification artifact (NOT runnable today)
 ; ============================================================================
 ;
-; The proposed graded where-clause surface for a native --lang prime engine,
+; The proposed graded where-clause syntax for a native --lang prime engine,
 ; against which the in-language engine of 03_graded_engine_in_language.metta
 ; is the semantics definition and files 01–02 are the manual approximations.
 ; Design tenets already ratified/proved:

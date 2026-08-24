@@ -1,0 +1,4 @@
+provable sort wff;
+term truth: wff;
+axiom duplicate: $ truth $;
+theorem duplicate: $ truth $;

@@ -6,8 +6,48 @@
   (signature)
   (equations)
   (rewrites
+    (rule proof-trace-input-canary-variable-class-v1
+      (head
+        (source-proof-trace-input-token-class-v1
+          input-x-v1 ProofTokenVariableClassV1))
+      (body))
+    (rule proof-trace-input-canary-token-equal-x-v1
+      (head
+        (source-proof-trace-input-token-compare-v1
+          input-x-v1 input-x-v1 ProofTokenEqualV1))
+      (body))
+    (rule proof-trace-input-canary-token-equal-wff-v1
+      (head
+        (source-proof-trace-input-token-compare-v1
+          input-wff-v1 input-wff-v1 ProofTokenEqualV1))
+      (body))
+    (rule proof-trace-input-canary-token-equal-a-v1
+      (head
+        (source-proof-trace-input-token-compare-v1
+          input-a-v1 input-a-v1 ProofTokenEqualV1))
+      (body))
+    (rule proof-trace-input-canary-token-equal-dummy-v1
+      (head
+        (source-proof-trace-input-token-compare-v1
+          input-dummy-v1 input-dummy-v1 ProofTokenEqualV1))
+      (body))
+    (rule proof-trace-input-canary-token-unequal-a-dummy-v1
+      (head
+        (source-proof-trace-input-token-compare-v1
+          input-a-v1 input-dummy-v1 ProofTokenUnequalV1))
+      (body))
+    (rule proof-trace-input-canary-token-unequal-dummy-a-v1
+      (head
+        (source-proof-trace-input-token-compare-v1
+          input-dummy-v1 input-a-v1 ProofTokenUnequalV1))
+      (body))
     (rule proof-trace-input-canary-variable-v1
       (head (source-proof-trace-input-token-variable-v1 input-x-v1))
+      (body))
+    (rule proof-trace-input-canary-token-different-a-dummy-v1
+      (head
+        (source-proof-trace-input-token-different-v1
+          input-a-v1 input-dummy-v1))
       (body))
     (rule proof-trace-input-canary-incomplete-normal-v1
       (head
@@ -17,6 +57,11 @@
     (rule proof-trace-input-canary-incomplete-compressed-v1
       (head
         (source-proof-trace-input-incomplete-compressed-code-v1 63))
+      (body))
+    (rule proof-trace-input-canary-incomplete-code-class-v1
+      (head
+        (source-proof-trace-code-class-v1
+          63 ProofTraceIncompleteCodeV1))
       (body))
 
     (rule proof-trace-input-canary-request-v1
@@ -92,4 +137,21 @@
         (source-proof-trace-input-apartness-count-v1
           input-identity-v1 ProofTraceNatZeroV1))
       (body))
+
+    ; This guest decides how its labels become trace instructions.  The
+    ; neutral input layer only assembles the supplied rows and declarations.
+    (rule proof-trace-input-canary-push-instruction-v1
+      (head
+        (source-proof-trace-label-instruction-v1
+          ?label (ProofTracePushV1 ?formula)))
+      (body
+        (source-proof-trace-input-request-v1 ?request ?target)
+        (source-proof-trace-input-push-label-v1
+          ?request ?label ?formula)))
+    (rule proof-trace-input-canary-apply-instruction-v1
+      (head
+        (source-proof-trace-label-instruction-v1
+          ?label (ProofTraceApplyV1 ?assertion ?frame)))
+      (body
+        (ProofTraceInputAssertionV1 ?label ?assertion ?frame)))
   ))

@@ -111,7 +111,7 @@
 ; The same three-step derivation, elaborated from the occurrence tree into
 ; ordinary Prime constructor applications, inhabits its exact indexed goal.
 ; The generic C ingress independently checks the dynamically produced
-; occurrence.  This literal witness keeps the surface qualification readable.
+; occurrence.  This literal witness keeps the source qualification readable.
 !(type:check
   (length-proof:step
     (list:cons element e3

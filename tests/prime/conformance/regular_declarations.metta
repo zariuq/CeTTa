@@ -99,7 +99,7 @@
 !(type:check &decl-level-poly (poly-id u1) (-> u0 u0))
 
 ; Polymorphic declarations may depend on other polymorphic declarations.
-; This is the public, lowercase Prime surface used by the native typed-flow
+; This is the public, lowercase Prime syntax used by the native typed-flow
 ; client: `hyp` and its rules remain authored language declarations, while
 ; dependent application constructs their indexed judgments.  `sort-code`
 ; inhabits an explicit tower universe: legacy `u0` is a ground type and is
