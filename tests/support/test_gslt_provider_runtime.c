@@ -630,6 +630,38 @@ static void exercise_finite_fact_provider(
               cetta_gslt_finite_fact_provider_set_row_count_v1(set) == 3u,
           label);
 
+    CettaGsltFiniteFactRelationViewV1 relation_view = {0};
+    CHECK(set &&
+              cetta_gslt_finite_fact_provider_set_relation_count_v1(set) ==
+                  cetta_gslt_provider_canary_catalog_v1.requirement_count,
+          "finite provider exposes its validated relation count");
+    CHECK(set &&
+              cetta_gslt_finite_fact_provider_set_relation_view_v1(
+                  set, 0u, &relation_view) &&
+              relation_view.requirement ==
+                  &cetta_gslt_provider_canary_catalog_v1.requirements[0] &&
+              strcmp(relation_view.requirement->relation,
+                     "provider-external") == 0 &&
+              strcmp(relation_view.requirement->semantic_id,
+                     "canary.completed-bag.v1") == 0 &&
+              relation_view.requirement->arity == 2u &&
+              relation_view.row_count == 3u &&
+              relation_view.rows[0] == rows[0] &&
+              relation_view.rows[1] == rows[1] &&
+              relation_view.rows[2] == rows[2],
+          "finite provider exposes each validated relation and ordered rows");
+    CHECK(set &&
+              !cetta_gslt_finite_fact_provider_set_relation_view_v1(
+                  set,
+                  cetta_gslt_finite_fact_provider_set_relation_count_v1(set),
+                  &relation_view) &&
+              !relation_view.requirement && !relation_view.rows &&
+              relation_view.row_count == 0u,
+          "finite provider rejects an out-of-range relation view");
+    CHECK(!cetta_gslt_finite_fact_provider_set_relation_view_v1(
+              set, 0u, NULL),
+          "finite provider rejects an absent relation-view destination");
+
     CettaGsltLanguage *language = NULL;
     memset(error, 0, sizeof(error));
     bool ok = set && cetta_gslt_language_load_embedded_for_realization(

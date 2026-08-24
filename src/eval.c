@@ -26449,7 +26449,7 @@ static Atom *prime_public_applied_call(
 static Atom *prime_public_splice_type_operand(
     Arena *arena, Atom *operand) {
     if (!operand || operand->kind != ATOM_EXPR || operand->expr.len != 2u ||
-        !atom_is_symbol(operand->expr.elems[0], "unquote")) {
+        !atom_is_symbol_id(operand->expr.elems[0], g_builtin_syms.unquote)) {
         return operand;
     }
     Atom *quoted = operand->expr.elems[1];
@@ -28463,6 +28463,8 @@ typedef struct {
     int fuel;
     bool data_ops;
     bool typecheck_ops;
+    uint64_t diagnostic_transition_limit;
+    uint64_t diagnostic_transitions_permitted;
     PettaEvalTransaction *transaction;
     uint64_t semantic_authority_epoch;
     CettaLibraryContext *library_context;
@@ -29683,10 +29685,32 @@ static void petta_eval_machine_transaction_rollback(
 }
 
 static bool petta_eval_machine_permit_transition(void *context) {
-    (void)context;
-    return !eval_process_exit_requested() &&
-           !eval_cancel_check() &&
-           eval_completion_step();
+    PettaEvalMachineContext *eval_context = context;
+    if (eval_process_exit_requested() || eval_cancel_check() ||
+        !eval_completion_step()) {
+        return false;
+    }
+    if (!eval_context ||
+        eval_context->diagnostic_transition_limit == 0u) {
+        return true;
+    }
+    if (eval_context->diagnostic_transitions_permitted >=
+        eval_context->diagnostic_transition_limit) {
+        return false;
+    }
+    eval_context->diagnostic_transitions_permitted++;
+    return true;
+}
+
+static uint64_t petta_eval_machine_diagnostic_transition_limit(void) {
+    const char *value = getenv("CETTA_PETTA_MACHINE_TRANSITION_LIMIT");
+    if (!value || value[0] == '\0')
+        return 0u;
+    char *end = NULL;
+    unsigned long long parsed = strtoull(value, &end, 10);
+    if (!end || *end != '\0' || parsed == 0u)
+        return 0u;
+    return parsed > UINT64_MAX ? UINT64_MAX : (uint64_t)parsed;
 }
 
 static bool petta_eval_machine_translator_rule_contains(
@@ -29799,12 +29823,25 @@ static bool petta_eval_machine_tabled_relation_admissible(
     void *context, Space *space,
     SymbolId head, CettaExprLen arity) {
     PettaEvalMachineContext *eval_context = context;
-    return eval_context && !eval_context->transaction &&
-           eval_context->library_context &&
-           eval_context->library_context->petta_program &&
-           petta_program_relation_table_safe(
-               eval_context->library_context->petta_program,
-               space, head, arity);
+    bool context_admitted = eval_context &&
+        !eval_context->transaction &&
+        eval_context->library_context &&
+        eval_context->library_context->petta_program;
+    bool relation_admitted = context_admitted &&
+        petta_program_relation_table_safe(
+            eval_context->library_context->petta_program,
+            space, head, arity);
+    if (getenv("CETTA_PETTA_TABLE_SAFETY_TRACE")) {
+        fprintf(
+            stderr,
+            "[petta-table-admission] head=%s arity=%u "
+            "context=%u transaction=%u admitted=%u\n",
+            symbol_bytes(g_symbols, head), (unsigned)arity,
+            context_admitted ? 1u : 0u,
+            eval_context && eval_context->transaction ? 1u : 0u,
+            relation_admitted ? 1u : 0u);
+    }
+    return relation_admitted;
 }
 
 static bool petta_eval_machine_tabled_relation_set(
@@ -31024,7 +31061,8 @@ static PettaMachineHostMode petta_eval_machine_classify_host(
     if ((head->kind == ATOM_SYMBOL &&
          (is_grounded_op(head->sym_id) ||
           grounded_op_is_type_pure(head->sym_id))) ||
-        is_petta_runtime_callable(head) ||
+        (head->kind != ATOM_SYMBOL &&
+         is_petta_runtime_callable(head)) ||
         is_capture_closure(head) ||
         (head->kind == ATOM_GROUNDED &&
          head->ground.gkind == GV_FOREIGN)) {
@@ -31903,6 +31941,8 @@ static bool petta_eval_machine_try(
         .data_ops = cetta_petta_profile_admits_typecheck_ops(),
         .typecheck_ops =
             cetta_petta_profile_admits_native_typecheck_v2(),
+        .diagnostic_transition_limit =
+            petta_eval_machine_diagnostic_transition_limit(),
         .semantic_authority_epoch = 1u,
         .library_context = g_library_context,
         .prepared_pure_cache = {
@@ -32242,6 +32282,11 @@ static bool petta_eval_machine_try(
                 " choice_binding_collections=%" PRIu64
                 " choice_binding_items_discarded=%" PRIu64
                 " choice_trail_entries_discarded=%" PRIu64
+                " choice_nursery_evacuations=%" PRIu64
+                " choice_nursery_evacuation_elapsed_ns=%" PRIu64
+                " choice_nursery_goal_roots_scanned=%" PRIu64
+                " choice_nursery_bytes_evacuated=%" PRIu64
+                " choice_nursery_bytes_reclaimed=%" PRIu64
                 " choice_heap_resets=%" PRIu64
                 " choice_heap_bytes_reclaimed=%" PRIu64
                 " table_lookups=%" PRIu64
@@ -32406,6 +32451,11 @@ static bool petta_eval_machine_try(
                 stats.choice_binding_collections,
                 stats.choice_binding_items_discarded,
                 stats.choice_trail_entries_discarded,
+                stats.choice_nursery_evacuations,
+                stats.choice_nursery_evacuation_elapsed_ns,
+                stats.choice_nursery_goal_roots_scanned,
+                stats.choice_nursery_bytes_evacuated,
+                stats.choice_nursery_bytes_reclaimed,
                 stats.choice_heap_resets,
                 stats.choice_heap_bytes_reclaimed,
                 stats.table_lookups,

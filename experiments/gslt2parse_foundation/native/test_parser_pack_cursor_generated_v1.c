@@ -5,8 +5,10 @@
 #include "indexed_inference_state_v1.h"
 #include "parser_occurrence_file_resolver_v1.h"
 #include "parser_occurrence_fold_v1.h"
+#include "parser_occurrence_source_composition_v1.h"
 #include "parser_occurrence_span_mask_v1.h"
 #include "parser_pack_guarded_lexical_exec_v1.h"
+#include "relational_state_program_v1.h"
 
 #include "symbol.h"
 
@@ -32,6 +34,14 @@
 #define PP_CURSOR_GENERATED_HAS_OCCURRENCE_SPAN_MASK 0
 #endif
 
+#ifndef PP_CURSOR_GENERATED_HAS_STATE_PROGRAM
+#define PP_CURSOR_GENERATED_HAS_STATE_PROGRAM 0
+#endif
+
+#ifndef PP_CURSOR_GENERATED_HAS_SOURCE_CONTROL
+#define PP_CURSOR_GENERATED_HAS_SOURCE_CONTROL 0
+#endif
+
 #if PP_CURSOR_GENERATED_HAS_OCCURRENCE_SPAN_MASK && \
     !PP_CURSOR_GENERATED_HAS_OCCURRENCE_FOLD
 #error "generated occurrence-span mask requires an occurrence fold"
@@ -40,6 +50,16 @@
 #if PP_CURSOR_GENERATED_HAS_INDEXED_CHECKER_EFFECTS && \
     !PP_CURSOR_GENERATED_HAS_OCCURRENCE_FOLD
 #error "generated indexed-checker effects require an occurrence fold"
+#endif
+
+#if PP_CURSOR_GENERATED_HAS_STATE_PROGRAM && \
+    !PP_CURSOR_GENERATED_HAS_OCCURRENCE_FOLD
+#error "generated state program requires an occurrence fold"
+#endif
+
+#if PP_CURSOR_GENERATED_HAS_SOURCE_CONTROL && \
+    !PP_CURSOR_GENERATED_HAS_OCCURRENCE_FOLD
+#error "generated source control requires an occurrence fold"
 #endif
 
 #define PP_CURSOR_JOIN_RAW(left, right) left##right
@@ -70,6 +90,21 @@
 #define PP_CURSOR_GENERATED_CHECKER_EFFECT_DIGEST \
     PP_CURSOR_JOIN(PP_CURSOR_GENERATED_PREFIX, \
                    _indexed_checker_effect_plan_digest)
+#endif
+#if PP_CURSOR_GENERATED_HAS_STATE_PROGRAM
+#define PP_CURSOR_GENERATED_STATE_INIT \
+    PP_CURSOR_JOIN(PP_CURSOR_GENERATED_PREFIX, _state_program_plan_init)
+#define PP_CURSOR_GENERATED_STATE_DIGEST \
+    PP_CURSOR_JOIN(PP_CURSOR_GENERATED_PREFIX, \
+                   _state_program_plan_digest)
+#endif
+#if PP_CURSOR_GENERATED_HAS_SOURCE_CONTROL
+#define PP_CURSOR_GENERATED_SOURCE_CONTROL_INIT \
+    PP_CURSOR_JOIN(PP_CURSOR_GENERATED_PREFIX, \
+                   _source_resolution_control_plan_init)
+#define PP_CURSOR_GENERATED_SOURCE_CONTROL_DIGEST \
+    PP_CURSOR_JOIN(PP_CURSOR_GENERATED_PREFIX, \
+                   _source_resolution_control_plan_digest)
 #endif
 
 extern bool PP_CURSOR_GENERATED_INIT(
@@ -102,6 +137,21 @@ extern bool PP_CURSOR_GENERATED_CHECKER_EFFECT_INIT(
     char *error_buf,
     size_t error_buf_size);
 extern const char *PP_CURSOR_GENERATED_CHECKER_EFFECT_DIGEST(void);
+#endif
+#if PP_CURSOR_GENERATED_HAS_STATE_PROGRAM
+extern bool PP_CURSOR_GENERATED_STATE_INIT(
+    const PPOccurrenceFoldV1Plan *occurrence_plan,
+    PPRelationalStateProgramV1Plan *out,
+    char *error_buf,
+    size_t error_buf_size);
+extern const char *PP_CURSOR_GENERATED_STATE_DIGEST(void);
+#endif
+#if PP_CURSOR_GENERATED_HAS_SOURCE_CONTROL
+extern bool PP_CURSOR_GENERATED_SOURCE_CONTROL_INIT(
+    PPSourceResolutionControlV1Plan *out,
+    char *error_buf,
+    size_t error_buf_size);
+extern const char *PP_CURSOR_GENERATED_SOURCE_CONTROL_DIGEST(void);
 #endif
 
 #if PP_CURSOR_GENERATED_HAS_INDEXED_CHECKER_EFFECTS
@@ -341,11 +391,23 @@ int main(int argc, char **argv) {
     PPOccurrenceFoldV1Plan occurrence_fold_plan;
     PPOccurrenceFoldV1Receipt occurrence_fold_receipt = {0};
     PPOccurrenceFoldV1Trace occurrence_fold_trace;
+    PPOccurrenceFoldV1AnswerStream occurrence_answer_stream;
+    bool occurrence_answer_stream_initialized = false;
     uint32_t occurrence_fold_mutation_killed = 0u;
 #endif
 #if PP_CURSOR_GENERATED_HAS_OCCURRENCE_SPAN_MASK
     PPOccurrenceSpanMaskV1Plan occurrence_span_mask_plan;
     uint32_t occurrence_span_mask_mutation_killed = 0u;
+#endif
+#if PP_CURSOR_GENERATED_HAS_STATE_PROGRAM
+    PPRelationalStateProgramV1Plan state_program_plan;
+    PPOccurrenceFileResolverV1 source_composition_resolver;
+    PPOccurrenceSourceResolverV1 source_composition_resolver_interface;
+    PPOccurrenceSourceCompositionV1 source_composition;
+    bool source_composition_initialized = false;
+#endif
+#if PP_CURSOR_GENERATED_HAS_SOURCE_CONTROL
+    PPSourceResolutionControlV1Plan source_control_plan;
 #endif
 #if PP_CURSOR_GENERATED_HAS_INDEXED_CHECKER_EFFECTS
     PPIndexedCheckerEffectV1Plan indexed_checker_effect_plan;
@@ -372,6 +434,8 @@ int main(int argc, char **argv) {
     bool recognition_only = false;
     bool events_only = false;
     bool occurrence_fold_mode = false;
+    bool occurrence_answers_mode = false;
+    bool source_occurrence_answers_mode = false;
     bool verdict_exit = false;
     bool suppress_semantic_render = false;
     bool ok = false;
@@ -397,12 +461,26 @@ int main(int argc, char **argv) {
         recognition_only = true;
         occurrence_fold_mode = true;
         work_limit = UINT64_MAX;
+    } else if (argc == 3 &&
+               strcmp(argv[2], "--occurrence-answers") == 0) {
+        recognition_only = true;
+        occurrence_fold_mode = true;
+        occurrence_answers_mode = true;
+        work_limit = UINT64_MAX;
+    } else if (argc == 3 &&
+               strcmp(argv[2], "--source-occurrence-answers") == 0) {
+        recognition_only = true;
+        occurrence_fold_mode = true;
+        occurrence_answers_mode = true;
+        source_occurrence_answers_mode = true;
+        work_limit = UINT64_MAX;
     } else if (argc != 2) {
         fprintf(
             stderr,
             "usage: generated-cursor-test INPUT "
             "[--recognition-only | --recognition-verdict | "
-            "--semantic-full | --events | --occurrence-fold]\n");
+            "--semantic-full | --events | --occurrence-fold | "
+            "--occurrence-answers | --source-occurrence-answers]\n");
         return 1;
     }
     symbol_table_init(&symbols);
@@ -419,6 +497,17 @@ int main(int argc, char **argv) {
 #if PP_CURSOR_GENERATED_HAS_OCCURRENCE_SPAN_MASK
     ppoccurrence_span_mask_v1_plan_init(
         &occurrence_span_mask_plan);
+#endif
+#if PP_CURSOR_GENERATED_HAS_STATE_PROGRAM
+    pprelational_state_program_v1_plan_init(&state_program_plan);
+    ppoccurrence_file_resolver_v1_init(&source_composition_resolver);
+    memset(
+        &source_composition_resolver_interface, 0,
+        sizeof(source_composition_resolver_interface));
+    memset(&source_composition, 0, sizeof(source_composition));
+#endif
+#if PP_CURSOR_GENERATED_HAS_SOURCE_CONTROL
+    ppsource_resolution_control_v1_plan_init(&source_control_plan);
 #endif
 #if PP_CURSOR_GENERATED_HAS_INDEXED_CHECKER_EFFECTS
     ppindexed_checker_effect_v1_plan_init(
@@ -503,42 +592,134 @@ int main(int argc, char **argv) {
         goto done;
     }
 #endif
+#if PP_CURSOR_GENERATED_HAS_STATE_PROGRAM
+    stage = "state-program-plan";
+    if (source_occurrence_answers_mode &&
+        (!PP_CURSOR_GENERATED_STATE_INIT(
+             &occurrence_fold_plan, &state_program_plan,
+             error, sizeof(error)) ||
+         strcmp(
+             PP_CURSOR_GENERATED_STATE_DIGEST(),
+             state_program_plan.plan_digest) != 0)) {
+        goto done;
+    }
+#else
+    if (source_occurrence_answers_mode) {
+        (void)snprintf(
+            error, sizeof(error),
+            "generated cursor has no state-derived source plan");
+        goto done;
+    }
+#endif
+#if PP_CURSOR_GENERATED_HAS_SOURCE_CONTROL
+    stage = "source-resolution-control-plan";
+    if (source_occurrence_answers_mode &&
+        (!PP_CURSOR_GENERATED_SOURCE_CONTROL_INIT(
+             &source_control_plan, error, sizeof(error)) ||
+         strcmp(
+             PP_CURSOR_GENERATED_SOURCE_CONTROL_DIGEST(),
+             source_control_plan.plan_digest) != 0)) {
+        goto done;
+    }
+#else
+    if (source_occurrence_answers_mode) {
+        (void)snprintf(
+            error, sizeof(error),
+            "generated cursor has no authored source-control plan");
+        goto done;
+    }
+#endif
     if (occurrence_fold_mode) {
         stage = "occurrence-fold-execution";
 #if PP_CURSOR_GENERATED_HAS_OCCURRENCE_FOLD
         PPOccurrenceFoldV1Backend backend;
 
-#if PP_CURSOR_GENERATED_HAS_INDEXED_CHECKER_EFFECTS
-        if (!ppoccurrence_file_resolver_v1_configure(
-                &source_resolver,
-                &program, &occurrence_fold_plan,
-                argv[1], input, input_len,
-                PPGUARDED_LEX_CURSOR_V1_EXACT_TRACE,
-                work_limit, UINT64_C(0), UINT32_C(4096),
-                error, sizeof(error))) {
-            goto done;
-        }
-        source_resolver_interface =
-            ppoccurrence_file_resolver_v1_interface(
-                &source_resolver);
-        if (!ppindexed_inference_v1_fold_init(
-                &indexed_inference_fold,
-                &program, &occurrence_fold_plan,
-                &indexed_checker_effect_plan,
-                &source_resolver_interface,
-                &indexed_inference_state,
-                error, sizeof(error))) {
-            goto done;
-        }
-        indexed_inference_fold_initialized = true;
-        backend = ppindexed_inference_v1_fold_backend(
-            &indexed_inference_fold);
+        if (occurrence_answers_mode) {
+            if (source_occurrence_answers_mode) {
+#if PP_CURSOR_GENERATED_HAS_STATE_PROGRAM
+                PPOccurrenceFoldV1Backend answer_backend;
+
+                if (!ppoccurrence_fold_v1_answer_stream_init_source_graph(
+                        &occurrence_answer_stream,
+                        &occurrence_fold_plan, input, input_len,
+                        error, sizeof(error)) ||
+                    !ppoccurrence_file_resolver_v1_configure_controlled(
+                        &source_composition_resolver,
+                        &program, &occurrence_fold_plan,
+#if PP_CURSOR_GENERATED_HAS_SOURCE_CONTROL
+                        &source_control_plan,
 #else
-        ppoccurrence_fold_v1_trace_init(
-            &occurrence_fold_trace, &occurrence_fold_plan);
-        backend = ppoccurrence_fold_v1_trace_backend(
-            &occurrence_fold_trace);
+                        NULL,
 #endif
+                        argv[1], input, input_len,
+                        PPGUARDED_LEX_CURSOR_V1_EXACT_TRACE,
+                        work_limit, UINT64_C(0), UINT32_C(4096),
+                        error, sizeof(error))) {
+                    goto done;
+                }
+                occurrence_answer_stream_initialized = true;
+                source_composition_resolver_interface =
+                    ppoccurrence_file_resolver_v1_interface(
+                        &source_composition_resolver);
+                answer_backend =
+                    ppoccurrence_fold_v1_answer_stream_backend(
+                        &occurrence_answer_stream);
+                if (!ppoccurrence_source_composition_v1_init(
+                        &source_composition,
+                        &occurrence_fold_plan, &state_program_plan,
+                        &source_composition_resolver_interface,
+                        &answer_backend, error, sizeof(error))) {
+                    goto done;
+                }
+                source_composition_initialized = true;
+                backend = ppoccurrence_source_composition_v1_backend(
+                    &source_composition);
+#else
+                goto done;
+#endif
+            } else if (!ppoccurrence_fold_v1_answer_stream_init(
+                           &occurrence_answer_stream,
+                           &occurrence_fold_plan, input, input_len,
+                           error, sizeof(error))) {
+                goto done;
+            } else {
+                occurrence_answer_stream_initialized = true;
+                backend = ppoccurrence_fold_v1_answer_stream_backend(
+                    &occurrence_answer_stream);
+            }
+        } else {
+#if PP_CURSOR_GENERATED_HAS_INDEXED_CHECKER_EFFECTS
+            if (!ppoccurrence_file_resolver_v1_configure(
+                    &source_resolver,
+                    &program, &occurrence_fold_plan,
+                    argv[1], input, input_len,
+                    PPGUARDED_LEX_CURSOR_V1_EXACT_TRACE,
+                    work_limit, UINT64_C(0), UINT32_C(4096),
+                    error, sizeof(error))) {
+                goto done;
+            }
+            source_resolver_interface =
+                ppoccurrence_file_resolver_v1_interface(
+                    &source_resolver);
+            if (!ppindexed_inference_v1_fold_init(
+                    &indexed_inference_fold,
+                    &program, &occurrence_fold_plan,
+                    &indexed_checker_effect_plan,
+                    &source_resolver_interface,
+                    &indexed_inference_state,
+                    error, sizeof(error))) {
+                goto done;
+            }
+            indexed_inference_fold_initialized = true;
+            backend = ppindexed_inference_v1_fold_backend(
+                &indexed_inference_fold);
+#else
+            ppoccurrence_fold_v1_trace_init(
+                &occurrence_fold_trace, &occurrence_fold_plan);
+            backend = ppoccurrence_fold_v1_trace_backend(
+                &occurrence_fold_trace);
+#endif
+        }
 #if PP_CURSOR_GENERATED_HAS_OCCURRENCE_SPAN_MASK
         if (!ppoccurrence_fold_v1_run_bytes_with_span_mask(
                 &program, &occurrence_fold_plan,
@@ -558,19 +739,21 @@ int main(int argc, char **argv) {
         }
 #endif
 #if PP_CURSOR_GENERATED_HAS_INDEXED_CHECKER_EFFECTS
-        occurrence_fold_trace =
-            indexed_inference_fold.occurrence_trace;
-        indexed_inference_summary_built =
-            indexed_inference_fold.receipt.committed &&
-            ppindexed_inference_v1_state_summary(
-                &indexed_inference_state,
-                &indexed_inference_summary);
-        if (indexed_inference_fold.receipt.committed &&
-            !indexed_inference_summary_built) {
-            (void)snprintf(
-                error, sizeof(error),
-                "committed indexed inference state has no summary");
-            goto done;
+        if (!occurrence_answers_mode) {
+            occurrence_fold_trace =
+                indexed_inference_fold.occurrence_trace;
+            indexed_inference_summary_built =
+                indexed_inference_fold.receipt.committed &&
+                ppindexed_inference_v1_state_summary(
+                    &indexed_inference_state,
+                    &indexed_inference_summary);
+            if (indexed_inference_fold.receipt.committed &&
+                !indexed_inference_summary_built) {
+                (void)snprintf(
+                    error, sizeof(error),
+                    "committed indexed inference state has no summary");
+                goto done;
+            }
         }
 #endif
         receipt = occurrence_fold_receipt.parser_receipt;
@@ -689,6 +872,33 @@ int main(int argc, char **argv) {
                    &program, input, input_len, work_limit,
                    &receipt, error, sizeof(error))) {
         goto done;
+    }
+    if (occurrence_answers_mode) {
+#if PP_CURSOR_GENERATED_HAS_OCCURRENCE_FOLD
+        stage = "occurrence-answer-publication";
+#if PP_CURSOR_GENERATED_HAS_STATE_PROGRAM
+        if (source_occurrence_answers_mode &&
+            (!source_composition_initialized ||
+             !source_composition.committed ||
+             !ppoccurrence_fold_v1_answer_stream_bind_source_graph(
+                 &occurrence_answer_stream,
+                 source_composition.state_plan->compiler_answer_digest,
+                 source_composition.source_digest,
+                 source_composition_resolver.source_len,
+                 error, sizeof(error)))) {
+            goto done;
+        }
+#endif
+        if (!ppoccurrence_fold_v1_answer_stream_write(
+                &occurrence_answer_stream, stdout,
+                error, sizeof(error))) {
+            goto done;
+        }
+        ok = true;
+        goto done;
+#else
+        goto done;
+#endif
     }
     for (terminal_index = 0u;
          terminal_index < program.terminal_len;
@@ -1011,11 +1221,19 @@ done:
     ppguarded_lex_cursor_v1_semantic_result_free(&result);
     ppguarded_lex_cursor_v1_dispatch_index_free(&dispatch_index);
 #if PP_CURSOR_GENERATED_HAS_OCCURRENCE_FOLD
+    if (occurrence_answer_stream_initialized)
+        ppoccurrence_fold_v1_answer_stream_free(
+            &occurrence_answer_stream);
     ppoccurrence_fold_v1_plan_free(&occurrence_fold_plan);
 #endif
 #if PP_CURSOR_GENERATED_HAS_OCCURRENCE_SPAN_MASK
     ppoccurrence_span_mask_v1_plan_free(
         &occurrence_span_mask_plan);
+#endif
+#if PP_CURSOR_GENERATED_HAS_STATE_PROGRAM
+    ppoccurrence_file_resolver_v1_free(
+        &source_composition_resolver);
+    pprelational_state_program_v1_plan_free(&state_program_plan);
 #endif
 #if PP_CURSOR_GENERATED_HAS_INDEXED_CHECKER_EFFECTS
     if (indexed_inference_fold_initialized)

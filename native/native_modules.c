@@ -611,6 +611,36 @@ maybe_glr_class:
     }
 
 maybe_glr_shared:
+    if (atom_is_symbol(head, "__cetta_lib_gparse_glr_parse_list_shared")) {
+        Atom *parsed;
+
+        if (nargs != 3 || !native_symbol_arg(a, args[1], &start_nt)) {
+            return native_module_error(
+                a, head,
+                "__cetta_lib_gparse_glr_parse_list_shared expects grammar, start, and tokens");
+        }
+        cetta_lp_native_grammar_init(&grammar);
+        error_buf[0] = '\0';
+        if (!cetta_lp_native_grammar_load_list(&grammar, args[0],
+                                               error_buf,
+                                               sizeof(error_buf))) {
+            cetta_lp_native_grammar_free(&grammar);
+            return native_module_error(
+                a, head,
+                error_buf[0] ? error_buf
+                             : "gparse runtime grammar load failed");
+        }
+        parsed = cetta_lp_native_glr_parse_shared(
+            &grammar, start_nt, args[2], a, error_buf, sizeof(error_buf));
+        cetta_lp_native_grammar_free(&grammar);
+        if (!parsed) {
+            return native_module_error(
+                a, head,
+                error_buf[0] ? error_buf
+                             : "gparse GLR runtime-grammar parse failed");
+        }
+        return parsed;
+    }
     if (!atom_is_symbol(head, "__cetta_lib_gparse_glr_parse_shared"))
         goto maybe_glr_forest_summary;
     if (nargs != 4 ||
@@ -766,6 +796,36 @@ maybe_glr_forest_data:
     }
 
 maybe_gll_shared:
+    if (atom_is_symbol(head, "__cetta_lib_gparse_gll_parse_list_shared")) {
+        Atom *parsed;
+
+        if (nargs != 3 || !native_symbol_arg(a, args[1], &start_nt)) {
+            return native_module_error(
+                a, head,
+                "__cetta_lib_gparse_gll_parse_list_shared expects grammar, start, and tokens");
+        }
+        cetta_lp_native_grammar_init(&grammar);
+        error_buf[0] = '\0';
+        if (!cetta_lp_native_grammar_load_list(&grammar, args[0],
+                                               error_buf,
+                                               sizeof(error_buf))) {
+            cetta_lp_native_grammar_free(&grammar);
+            return native_module_error(
+                a, head,
+                error_buf[0] ? error_buf
+                             : "gparse runtime grammar load failed");
+        }
+        parsed = cetta_lp_native_gll_parse_shared(
+            &grammar, start_nt, args[2], a, error_buf, sizeof(error_buf));
+        cetta_lp_native_grammar_free(&grammar);
+        if (!parsed) {
+            return native_module_error(
+                a, head,
+                error_buf[0] ? error_buf
+                             : "gparse GLL runtime-grammar parse failed");
+        }
+        return parsed;
+    }
     if (!atom_is_symbol(head, "__cetta_lib_gparse_gll_parse_shared"))
         goto maybe_gll_recognize;
     if (nargs != 4 ||

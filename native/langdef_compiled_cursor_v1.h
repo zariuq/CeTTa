@@ -4,13 +4,14 @@
 #include "parser_occurrence_fold_v1.h"
 #include "parser_occurrence_span_mask_v1.h"
 #include "parser_pack_guarded_lexical_exec_v1.h"
+#include "parser_source_resolution_control_v1.h"
 #include "relational_state_program_v1.h"
 
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
 
-#define CETTA_LANGDEF_COMPILED_CURSOR_V1_ABI UINT32_C(6)
+#define CETTA_LANGDEF_COMPILED_CURSOR_V1_ABI UINT32_C(7)
 #define CETTA_LANGDEF_COMPILED_CURSOR_V1_SYMBOL \
     "cetta_langdef_compiled_cursor_v1"
 
@@ -40,6 +41,11 @@ typedef bool (*CettaLangDefCompiledOccurrenceSpanMaskInitV1)(
     char *error_buf,
     size_t error_buf_size);
 
+typedef bool (*CettaLangDefCompiledSourceControlInitV1)(
+    PPSourceResolutionControlV1Plan *out,
+    char *error_buf,
+    size_t error_buf_size);
+
 typedef struct {
     uint32_t abi_version;
     CettaLangDefCompiledProgramInitV1 program_init;
@@ -50,6 +56,8 @@ typedef struct {
     CettaLangDefCompiledDigestV1 occurrence_span_mask_digest;
     CettaLangDefCompiledStateInitV1 relational_state_init;
     CettaLangDefCompiledDigestV1 relational_state_digest;
+    CettaLangDefCompiledSourceControlInitV1 source_control_init;
+    CettaLangDefCompiledDigestV1 source_control_digest;
 } CettaLangDefCompiledCursorV1;
 
 typedef const CettaLangDefCompiledCursorV1 *

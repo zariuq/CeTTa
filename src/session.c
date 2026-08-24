@@ -115,6 +115,17 @@ static const CettaProfile CETTA_PROFILE_RHOCALC_COST_VALUE = {
     .rust_he_compat_semantics = false,
 };
 
+static const CettaProfile CETTA_PROFILE_RHOCALC_RHOMETTA_VALUE = {
+    .id = CETTA_PROFILE_RHOCALC_RHOMETTA,
+    .language_id = CETTA_LANGUAGE_RHOCALC,
+    .name = "rhometta",
+    .note = "Rho-calculus with inert MeTTa values and transactional COMM-time payload evaluation.",
+    .he_compatible_builtin = false,
+    .enable_cetta_extensions = true,
+    .enable_dependent_telescope = false,
+    .rust_he_compat_semantics = false,
+};
+
 static const CettaProfile CETTA_PROFILE_ZERO_EXP_VALUE = {
     .id = CETTA_PROFILE_ZERO_EXP,
     .language_id = CETTA_LANGUAGE_ZERO,
@@ -381,6 +392,9 @@ const CettaProfile *cetta_profile_from_name_for_language(CettaLanguageId languag
         if (cetta_profile_name_matches(name, &CETTA_PROFILE_RHOCALC_COST_VALUE)) {
             return &CETTA_PROFILE_RHOCALC_COST_VALUE;
         }
+        if (cetta_profile_name_matches(name, &CETTA_PROFILE_RHOCALC_RHOMETTA_VALUE)) {
+            return &CETTA_PROFILE_RHOCALC_RHOMETTA_VALUE;
+        }
     }
     if (language_id == CETTA_LANGUAGE_PETTA) {
 #if CETTA_BUILD_WITH_PETTA_TYPECHECK_V2
@@ -433,6 +447,7 @@ uint32_t cetta_profile_mask(const CettaProfile *profile) {
         return CETTA_PROFILE_MASK_HE_PRIME;
     case CETTA_PROFILE_RHOCALC_STRICT_CORE:
     case CETTA_PROFILE_RHOCALC_COST:
+    case CETTA_PROFILE_RHOCALC_RHOMETTA:
     case CETTA_PROFILE_PETTA_EXTENDED:
     case CETTA_PROFILE_ZERO_EXP:
     case CETTA_PROFILE_ZERO_EMIT:
@@ -490,6 +505,9 @@ void cetta_profile_print_inventory_for_language(FILE *out,
         fprintf(out, "%s\t%s\n",
                 CETTA_PROFILE_RHOCALC_COST_VALUE.name,
                 CETTA_PROFILE_RHOCALC_COST_VALUE.note);
+        fprintf(out, "%s\t%s\n",
+                CETTA_PROFILE_RHOCALC_RHOMETTA_VALUE.name,
+                CETTA_PROFILE_RHOCALC_RHOMETTA_VALUE.note);
         return;
     }
     if (language_id == CETTA_LANGUAGE_PETTA) {

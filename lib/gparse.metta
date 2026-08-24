@@ -77,6 +77,15 @@
      (case (__cetta_lib_gparse_glr_parse_shared $path $def $start $toks)
        (($result (return $result))))))
 
+; Runtime grammars use the same Prod/VarD/LexD Cons/Nil representation as
+; lib_parse.  This arity keeps live grammar state as ordinary parser input;
+; no source file or generated definition is required.
+(= (gparse:glr-parse-shared $grammar $start $toks)
+   (function
+     (case (__cetta_lib_gparse_glr_parse_list_shared
+             $grammar $start $toks)
+       (($result (return $result))))))
+
 (= (gparse:glr-forest-summary $path $def $start $toks)
    (function
      (case (__cetta_lib_gparse_glr_forest_summary $path $def $start $toks)
@@ -100,6 +109,12 @@
 (= (gparse:gll-parse-shared $path $def $start $toks)
    (function
      (case (__cetta_lib_gparse_gll_parse_shared $path $def $start $toks)
+       (($result (return $result))))))
+
+(= (gparse:gll-parse-shared $grammar $start $toks)
+   (function
+     (case (__cetta_lib_gparse_gll_parse_list_shared
+             $grammar $start $toks)
        (($result (return $result))))))
 
 (= (gparse:gll-forest-summary $path $def $start $toks)

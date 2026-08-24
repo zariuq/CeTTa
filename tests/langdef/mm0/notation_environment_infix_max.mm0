@@ -1,0 +1,3 @@
+sort wff;
+term binary: wff > wff > wff;
+infixl binary: $ + $ prec max;

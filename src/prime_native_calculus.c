@@ -648,7 +648,7 @@ static CettaPrimeNativeExecutionV1 prime_native_observe(
     return result;
 }
 
-static bool prime_native_surface_lambda(Atom *term, Atom **body_out) {
+static bool prime_native_authored_lambda(Atom *term, Atom **body_out) {
     if (body_out) *body_out = NULL;
     if (!term || !body_out || term->kind != ATOM_EXPR ||
         term->expr.len != 3u ||
@@ -669,7 +669,7 @@ static bool prime_native_maybe_map_application(Atom *application) {
     }
     Atom *body = application->expr.elems[0];
     for (size_t binder = 0u; binder < 4u; binder++)
-        if (!prime_native_surface_lambda(body, &body)) return false;
+        if (!prime_native_authored_lambda(body, &body)) return false;
     return true;
 }
 
@@ -1128,7 +1128,7 @@ typedef enum {
 } PrimeNativeDeclarationMatchV1;
 
 /* Primitive vocabularies are ordinary curried Prime families, while authored
- * declarations use convenient n-ary surface syntax.  Accept both views at
+ * declarations use convenient n-ary source syntax.  Accept both views at
  * this boundary and require exactly two family indices. */
 static bool prime_native_binary_application_view(
     Atom *term, Atom **head_out, Atom **left_out, Atom **right_out) {

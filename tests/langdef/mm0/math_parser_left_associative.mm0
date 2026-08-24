@@ -1,0 +1,3 @@
+sort wff;
+term and: wff > wff > wff;
+infixl and: $ & $ prec 30;

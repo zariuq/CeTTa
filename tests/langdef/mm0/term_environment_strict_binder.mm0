@@ -1,0 +1,3 @@
+strict sort atom;
+sort result;
+term bind {x: atom}: result;

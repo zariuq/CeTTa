@@ -21,4 +21,30 @@
       (head
         (oslf-external-relation-decl-v1 source-proof-capability 2))
       (body))
+    (rule proof-article-interface-conversion-v1
+      (head
+        (oslf-external-relation-decl-v1 source-proof-conversion 3))
+      (body))
+    (rule proof-article-interface-extension-v1
+      (head
+        (oslf-external-relation-decl-v1 source-proof-extension 2))
+      (body))
+    (rule proof-article-interface-judgment-v1
+      (head
+        (oslf-external-relation-decl-v1 source-proof-judgment 3))
+      (body))
+    (rule proof-article-interface-rule-v1
+      (head
+        (oslf-external-relation-decl-v1 source-proof-rule 6))
+      (body))
+    (rule proof-article-interface-sequence-functional-layer-v1
+      (head
+        (oslf-external-relation-decl-v1
+          source-proof-sequence-functional-layer 2))
+      (body))
+    (rule proof-article-interface-sequence-relational-layer-v1
+      (head
+        (oslf-external-relation-decl-v1
+          source-proof-sequence-relational-layer 2))
+      (body))
   ))

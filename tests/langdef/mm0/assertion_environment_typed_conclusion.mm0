@@ -1,0 +1,2 @@
+provable sort wff;
+axiom typed_conclusion: wff;

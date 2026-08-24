@@ -131,7 +131,7 @@
     {
       "capability": "polyward-partially-grounded-query-control",
       "status": "partial",
-      "evidence": "typed bounded forward and backward path modes exist; the complete authored polyward surface remains"
+      "evidence": "typed bounded forward and backward path modes exist; the complete authored polyward behavior remains"
     },
     {
       "capability": "probabilistic-and-pln-chaining",
