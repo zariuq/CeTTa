@@ -1,0 +1,298 @@
+{
+  "schema": "cetta-prime-popper-synthesis-v1",
+  "source": {
+    "project": "logic-and-learning-lab/Popper",
+    "revision": "5c608d3ec87e4975866042fe326e9a317277e021"
+  },
+  "tasks": [
+    {
+      "name": "synthesis-alleven",
+      "files": {
+        "bias.pl": "04e9787495c4c72acdac76705615823cf27d65126c27d5f1d6ac84e7ffdf0ce5",
+        "bk.pl": "6d187af528bd1f4d36c60954bb5ac7f921e70e0d0460b23c1475505f90557722",
+        "exs.pl": "7168d4f00cffd690546cdbcc2a23571e411e989dffac091122c289d727812368"
+      },
+      "recursive": true,
+      "target": {
+        "predicate": "f",
+        "arity": 1,
+        "types": ["list"],
+        "directions": ["in"]
+      },
+      "examples": {"positive": 4, "negative": 5},
+      "reference_clauses": [
+        "f(V0):- empty(V0).",
+        "f(V0):- tail(V0,V2),head(V0,V1),even(V1),f(V2)."
+      ],
+      "conversion": {
+        "status": "qualified",
+        "coverage": "authored-reference-program-and-all-source-examples-with-structural-unbounded-parity-and-proof-relevant-decrement-recursion",
+        "fixture": "examples/prime/popper_synthesis_recursive_arithmetic_ground_truth.metta",
+        "cases": {
+          "source_positive": 4,
+          "source_negative": 5,
+          "derived": 4,
+          "not_derived": 5,
+          "proof_occurrences": 4,
+          "label_disagreements": 0
+        }
+      }
+    },
+    {
+      "name": "synthesis-contains",
+      "files": {
+        "bias.pl": "95050838286d3ce39e31a6c1b207a7a06b3d7cf634184cba7bea76289096b4f4",
+        "bk.pl": "508fe8d0bb4ee35fc7f317cc955f1229beeea9815d7b28b154ab1b7cea6443dc",
+        "exs.pl": "4730e68c1c140295e3071007d1dabccc14a9dd199a915af3c4a7ddba6ac4b66d"
+      },
+      "recursive": true,
+      "target": {
+        "predicate": "f",
+        "arity": 1,
+        "types": ["list"],
+        "directions": ["in"]
+      },
+      "examples": {"positive": 20, "negative": 20},
+      "reference_clauses": [
+        "f(V0):- head(V0,V1),c_6(V1).",
+        "f(V0):- head(V0,V1),c_9(V1).",
+        "f(V0):- tail(V0,V1),f(V1)."
+      ],
+      "conversion": {
+        "status": "qualified",
+        "coverage": "authored-reference-program-and-reachable-background-over-snapshot-numerals",
+        "fixture": "examples/prime/popper_synthesis_contains_ground_truth.metta"
+      }
+    },
+    {
+      "name": "synthesis-dropk",
+      "files": {
+        "bias.pl": "b19ac960e44935837a1a2fdd54b52ef3acef74be0043584e7a56183f76b9e512",
+        "bk.pl": "9ba8241551feac98ef8e606cec7b602107a386eff680e511c94a40f0f0733857",
+        "exs.pl": "563f16cac4456d66ea2885e53f722535819f8f9fe4a517c46357058af8a57ddf"
+      },
+      "recursive": true,
+      "target": {
+        "predicate": "f",
+        "arity": 3,
+        "types": ["list", "element", "list"],
+        "directions": ["in", "in", "out"]
+      },
+      "examples": {"positive": 10, "negative": 10},
+      "reference_clauses": [
+        "f(V0,V1,V2):- tail(V0,V2),one(V1).",
+        "f(V0,V1,V2):- decrement(V1,V4),f(V0,V4,V3),tail(V3,V2)."
+      ],
+      "conversion": {
+        "status": "qualified",
+        "coverage": "authored-reference-program-and-all-source-examples-with-structural-unbounded-parity-and-proof-relevant-decrement-recursion",
+        "fixture": "examples/prime/popper_synthesis_recursive_arithmetic_ground_truth.metta",
+        "cases": {
+          "source_positive": 10,
+          "source_negative": 10,
+          "derived": 10,
+          "not_derived": 10,
+          "proof_occurrences": 10,
+          "label_disagreements": 0
+        }
+      }
+    },
+    {
+      "name": "synthesis-droplast",
+      "files": {
+        "bias.pl": "5c2e402553a073514a55286265cccf937602f21e60740853136479ac3976d875",
+        "bk.pl": "32a1a41e61cfa3fbecfe605828a1d5b489eb87ff41c78c9a05cf111f39593f20",
+        "exs.pl": "f724d76455f288e6524d5050e145f1895db92b6f75b77ee123a7d41b71433ed8"
+      },
+      "recursive": true,
+      "target": {
+        "predicate": "f",
+        "arity": 2,
+        "types": ["list", "list"],
+        "directions": ["in", "out"]
+      },
+      "examples": {"positive": 10, "negative": 11},
+      "reference_clauses": [
+        "f(V0,V1):- empty(V1),tail(V0,V1).",
+        "f(V0,V1):- head(V0,V3),tail(V0,V4),f(V4,V2),append_(V3,V2,V1)."
+      ],
+            "conversion": {
+                "status": "qualified",
+                "coverage": "authored-program-and-structural-background-over-snapshot-numerals",
+                "fixture": "examples/prime/popper_synthesis_droplast_ground_truth.metta"
+      }
+    },
+    {
+      "name": "synthesis-filter",
+      "files": {
+        "bias.pl": "5dded3ecce672170067181d8c6d5c648a3360b5ccefd9925a5e7f2e8dd48a750",
+        "bk.pl": "5b5ca157afc6b0accf7f3e451e39b1f4c7d799304191846b8ec8d07f0de99d5b",
+        "exs.pl": "a62b958fdb6a625afbb745aea9b8185efe03fd1c2bad4eceb62eb66b7f28c0ed"
+      },
+      "recursive": true,
+      "target": {
+        "predicate": "f",
+        "arity": 2,
+        "types": ["list", "list"],
+        "directions": ["in", "out"]
+      },
+      "examples": {"positive": 5, "negative": 5},
+      "reference_clauses": [
+        "f(V0,V1):- empty(V0),empty(V1).",
+        "f(V0,V1):- head(V0,V3),odd(V3),tail(V0,V2),f(V2,V1).",
+        "f(V0,V1):- tail(V0,V2),head(V0,V3),even(V3),f(V2,V4),prepend(V3,V4,V1)."
+      ],
+      "conversion": {
+        "status": "qualified",
+        "coverage": "authored-program-and-background",
+        "fixture": "examples/prime/popper_synthesis_filter_ground_truth.metta"
+      }
+    },
+    {
+      "name": "synthesis-finddupl",
+      "files": {
+        "bias.pl": "c8190331a770d21bb067a34c52077530afadb5649bef0bb19b1d8ed8093c5704",
+        "bk.pl": "c2c391564743a159cf60483322cd87327bb9f32f041b6e754fb982c1c266fd25",
+        "exs.pl": "5dc11265c74fcd6b18081035b4504d91d4b489e1b95bc49f07a1129e3e3a9101"
+      },
+      "recursive": true,
+      "target": {
+        "predicate": "f",
+        "arity": 2,
+        "types": ["list", "element"],
+        "directions": ["in", "out"]
+      },
+      "examples": {"positive": 10, "negative": 11},
+      "reference_clauses": [
+        "f(V0,V1):- tail(V0,V2),element(V2,V1),head(V0,V1).",
+        "f(V0,V1):- tail(V0,V2),f(V2,V1)."
+      ],
+            "conversion": {
+                "status": "qualified",
+                "coverage": "authored-program-and-proof-relevant-structural-background-over-snapshot-numerals",
+                "fixture": "examples/prime/popper_synthesis_finddupl_ground_truth.metta"
+      }
+    },
+    {
+      "name": "synthesis-length",
+      "files": {
+        "bias.pl": "47b140c5a05128921ba1d6527b44ac09ecb2f9a82ad9ef0e7a3a0469448a2c94",
+        "bk.pl": "ccd924be3546104bd81abd974737ea3df3e56e409ffd2efe3fdf8dec27c8df97",
+        "exs.pl": "a7fb2b1a45daa3d912095fd19105f184e517dc78e4fe1a8b07c806dcddf27245"
+      },
+      "recursive": true,
+      "target": {
+        "predicate": "f",
+        "arity": 2,
+        "types": ["list", "integer"],
+        "directions": ["in", "out"]
+      },
+      "examples": {"positive": 6, "negative": 3},
+      "reference_clauses": [
+        "f(V0,V1):- zero(V1),empty(V0).",
+        "f(V0,V1):- tail(V0,V3),f(V3,V2),succ(V2,V1)."
+      ],
+      "conversion": {
+        "status": "qualified",
+        "coverage": "authored-program-and-background",
+        "fixture": "examples/prime/popper_synthesis_length_ground_truth.metta"
+      }
+    },
+    {
+      "name": "synthesis-next",
+      "files": {
+        "bias.pl": "db620e2f0072241463098f24438e85e860b3d20842c228788dd0ac88f42aa7bc",
+        "bk.pl": "7ac8eb6bc75fec943a499a16785a3c689c4d7aef5606a769195746841dfd67e4",
+        "exs.pl": "3db69b6936526865a02227c49014f94d49c4a3e649ebe15002234d4e5441c87f"
+      },
+      "recursive": true,
+      "target": {
+        "predicate": "next_list",
+        "arity": 2,
+        "types": ["list", "element"],
+        "directions": ["in", "out"]
+      },
+      "examples": {"positive": 7, "negative": 4},
+      "reference_clauses": [],
+      "conversion": {
+        "status": "qualified",
+        "coverage": "learned-program-and-authored-background",
+        "fixture": "examples/prime/popper_synthesis_next_learned.metta",
+        "learner": {
+          "system": "Popper 5.0.0",
+          "score": {
+            "precision": 1.0,
+            "recall": 1.0,
+            "true_positive": 7,
+            "false_negative": 0,
+            "true_negative": 4,
+            "false_positive": 0,
+            "size": 8
+          },
+          "clauses": [
+            "next_list(A,B):- head(A,X),x(X),tail(A,T),head(T,B).",
+            "next_list(A,B):- tail(A,T),next_list(T,B)."
+          ]
+        }
+      }
+    },
+    {
+      "name": "synthesis-reverse",
+      "files": {
+        "bias.pl": "2ddb25e2862d050cf813d9bf639569b1f8c79f576f8bea5bfc620fbc6c926dd5",
+        "bk.pl": "159f4ed83c43ee83bba5816691f16dbaec34f2a259e1795834285a25f73edaaf",
+        "exs.pl": "483f98f0d7bc4841f198d4c94ec98df3e14babea2070b4f6f76f3b02ea91742c"
+      },
+      "recursive": true,
+      "target": {
+        "predicate": "f",
+        "arity": 2,
+        "types": ["list", "list"],
+        "directions": ["in", "out"]
+      },
+      "examples": {"positive": 4, "negative": 5},
+      "reference_clauses": [
+        "f(V0,V1):- empty(V1),empty(V0).",
+        "f(V0,V1):- head(V0,V4),tail(V0,V3),f(V3,V2),my_append(V2,V4,V1)."
+      ],
+      "conversion": {
+        "status": "qualified",
+        "coverage": "authored-program-and-background",
+        "fixture": "examples/prime/popper_synthesis_reverse_ground_truth.metta"
+      }
+    },
+    {
+      "name": "synthesis-sorted",
+      "files": {
+        "bias.pl": "b4f5fd682a24f624ef553b851b5c3451ce9653f0cd7cde5e1c6fbae8e4617fd4",
+        "bk.pl": "e04ce6ffac16d9b703248b38c550d76e0bd5c6697384fe4ad25b54780b7e4f37",
+        "exs.pl": "0149e5047c40a6b76731a8aaa283bddfcbe5129b2337cf5a4cf6615145ff1c89"
+      },
+      "recursive": true,
+      "target": {
+        "predicate": "f",
+        "arity": 1,
+        "types": ["list"],
+        "directions": ["in"]
+      },
+      "examples": {"positive": 10, "negative": 10},
+      "reference_clauses": [
+        "f(V0):- tail(V0,V2),tail(V2,V1),empty(V1).",
+        "f(V0):- head(V0,V2),tail(V0,V1),head(V1,V3),geq(V3,V2),f(V1)."
+      ],
+      "conversion": {
+        "status": "qualified",
+        "coverage": "authored-reference-program-and-all-source-examples-over-the-exact-reachable-image-of-the-extensional-geq-table",
+        "fixture": "examples/prime/popper_synthesis_sorted_ground_truth.metta",
+        "cases": {
+          "source_positive": 10,
+          "source_negative": 10,
+          "derived": 10,
+          "not_derived": 10,
+          "proof_occurrences": 10,
+          "label_disagreements": 0
+        }
+      }
+    }
+  ]
+}

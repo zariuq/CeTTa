@@ -51,10 +51,6 @@ def presentation_inventory(
     consumer_rules: dict[tuple[str, int], set[str]] = collections.defaultdict(set)
     rules: list[dict[str, object]] = []
     for rule in presentation.rules:
-        if rule.nik_frame is None:
-            raise GenerationError(
-                f"{presentation.name}: rule {rule.name} lacks a NIK frame"
-            )
         head_relation, head_arity = relation_key(
             rule.head, f"{presentation.name}: rule {rule.name} head"
         )
@@ -69,8 +65,6 @@ def presentation_inventory(
             "name": rule.name,
             "head_relation": head_relation,
             "head_arity": head_arity,
-            "native_projection": rule.nik_frame.native_projection,
-            "role": rule.nik_frame.role,
         })
     providers = [
         {
@@ -80,20 +74,9 @@ def presentation_inventory(
         }
         for relation, arity in sorted(set(consumer_rules) - head_relations)
     ]
-    frame = presentation.nik_frame
-    if frame is None:
-        raise GenerationError(f"{presentation.name}: lacks a NIK authority frame")
     return {
         "name": presentation.name,
         "source_sha256": sha256_file(presentation.source),
-        "authority_frame": {
-            "mode": frame.mode,
-            "certificate_policy": frame.certificate_policy,
-            "fiber": frame.fiber,
-            "default_outcome": frame.default_outcome,
-            "native_projection": frame.native_projection,
-            "status": frame.status,
-        },
         "rule_count": len(rules),
         "rules": sorted(rules, key=lambda rule: str(rule["name"])),
         "provider_requirements": providers,

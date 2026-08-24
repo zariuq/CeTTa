@@ -8,18 +8,9 @@
 
 !(prime-grad:twice 21)
 !(reify (prime-grad:choose))
-!(prime-judge &self
-   (Must (PrimeEvaluate (prime-grad:choose)) Number))
-!(prime-judge &self
-   (May (PrimeAnswers Complete
-          (PrimeFailure branch-fault)
-          (PrimeValue 7))
-        Number))
-!(prime-judge &self
-   (Must (PrimeAnswers Complete
-           (PrimeFailure branch-fault)
-           (PrimeValue 7))
-         Number))
+!(type:must (prime-grad:choose) Number)
+!(type:may (prime-grad:choose) Number)
+!(type:must (prime-grad:choose) Number)
 
 !(bind! &prime-grad:state (new-space))
 !(add-atom &prime-grad:state (seen alpha))

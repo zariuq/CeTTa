@@ -1,0 +1,7 @@
+[()]
+[(map-rel:edge (carol) (map-rel:cons-proof alice carol (hyp:chain-proof bob (hyp:primitive-proof mother-symbol mother-alice-bob) (hyp:primitive-proof father-symbol father-bob-carol)) (map-rel:nil-proof))), (map-rel:edge (carol) (map-rel:cons-proof alice carol (hyp:chain-proof eve (hyp:primitive-proof mother-symbol mother-alice-eve) (hyp:primitive-proof father-symbol father-eve-carol)) (map-rel:nil-proof)))]
+[(MIL:BenchV1 (Name native-list-map-rel) (Mode (native-hyp (relator list) (candidate-bag exact) (proof-relevant True) (checker-provenance runtime-stats))) (CandidatesGenerated 9) (CandidatesChecked 9) (Established 4) (Refuted 5) (Undetermined 0) (Incomplete 0) (SafeFrontier 4) (ExampleChecked 4) (ExampleConsistent 1) (CountConserved True) (TraceConserved True) (TypedProducerEqualsSafeFrontier True))]
+[(quote (hyp:chain sort-code primitive-vocabulary person-sort person-sort person-sort (hyp:primitive sort-code primitive-vocabulary person-sort person-sort mother-symbol) (hyp:primitive sort-code primitive-vocabulary person-sort person-sort father-symbol)))]
+[True]
+[((map-rel:edge (carol) (map-rel:cons-proof alice carol (hyp:chain-proof bob (hyp:primitive-proof mother-symbol mother-alice-bob) (hyp:primitive-proof father-symbol father-bob-carol)) (map-rel:nil-proof))) (map-rel:edge (carol) (map-rel:cons-proof alice carol (hyp:chain-proof eve (hyp:primitive-proof mother-symbol mother-alice-eve) (hyp:primitive-proof father-symbol father-eve-carol)) (map-rel:nil-proof))))]
+[4]

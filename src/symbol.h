@@ -177,7 +177,7 @@ static inline uint64_t symbol_table_instance_id(const SymbolTable *st) {
     X(get_type, "get-type") \
     X(get_type_space, "get-type-space") \
     X(prime_package, "prime-package") \
-    X(prime_judge, "prime-judge") \
+    X(nik_colon_check, "nik:check") \
     X(assertEqual, "assertEqual") \
     X(assertEqualToResult, "assertEqualToResult") \
     X(assertEqualMsg, "assertEqualMsg") \
@@ -439,7 +439,18 @@ static inline uint64_t symbol_table_instance_id(const SymbolTable *st) {
     X(petta_transaction, "transaction") \
     X(petta_with_mutex, "with_mutex") \
     X(petta_min, "min") \
-    X(petta_max, "max")
+    X(petta_max, "max") \
+    X(type_colon_of, "type:of") \
+    X(type_colon_check, "type:check") \
+    X(type_colon_analyze, "type:analyze") \
+    X(type_colon_eq, "type:eq") \
+    X(type_colon_formed, "type:formed") \
+    X(type_colon_refine, "type:refine") \
+    X(type_colon_may, "type:may") \
+    X(type_colon_must, "type:must") \
+    X(type_colon_theorem, "type:theorem") \
+    X(type_colon_prove, "type:prove") \
+    X(compile_link_package, "compile:link-package")
 
 /* Builtins whose grounded-operation capability is independent of language
    and profile.  symbol_table_init_builtins compiles this declaration into
@@ -462,6 +473,7 @@ static inline uint64_t symbol_table_instance_id(const SymbolTable *st) {
     X(mork_remove_atom) \
     X(compile_rule_package) \
     X(compile_link_rule) \
+    X(compile_link_package) \
     X(compile_run) \
     X(compile_artifact_info) \
     X(compile_rule_program) \

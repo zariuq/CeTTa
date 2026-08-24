@@ -333,15 +333,15 @@ static V3UniqueDecision v3_run_unique(
 }
 
 static const char *v3_seam_outcome_name(
-    CettaPettaV3EvidenceOutcomeV1 outcome) {
+    CettaNikOutcomeV1 outcome) {
     switch (outcome) {
-    case CETTA_PETTA_V3_EVIDENCE_ESTABLISHED:
+    case CETTA_NIK_OUTCOME_ESTABLISHED:
         return "V3Established";
-    case CETTA_PETTA_V3_EVIDENCE_REFUTED:
+    case CETTA_NIK_OUTCOME_REFUTED:
         return "V3Refuted";
-    case CETTA_PETTA_V3_EVIDENCE_UNDETERMINED:
+    case CETTA_NIK_OUTCOME_OUTSIDE_FRAGMENT:
         return "V3Undetermined";
-    case CETTA_PETTA_V3_EVIDENCE_INCOMPLETE:
+    case CETTA_NIK_OUTCOME_INCOMPLETE:
         return "V3Incomplete";
     }
     return NULL;
@@ -390,7 +390,7 @@ static bool v3_classify_evidence_seam(
     arena_init(&scratch);
     Atom *exactness = atom_symbol(&scratch, "V3No");
     CettaGsltHornOutcome search_outcome = CETTA_GSLT_HORN_FAULT;
-    if (decision->outcome == CETTA_PETTA_V3_EVIDENCE_ESTABLISHED && typed) {
+    if (decision->outcome == CETTA_NIK_OUTCOME_ESTABLISHED && typed) {
         Atom *pair = v3_expr2(&scratch, "V3Union", actual, expected);
         Atom *exact_variable = atom_var(&scratch, "v3-seam-exactness");
         Atom *exact_query = pair && exact_variable
@@ -2519,7 +2519,7 @@ bool cetta_petta_typecheck_v3_decide_evidence_v1(
     const Atom *result_type = evidence->expr.elems[2];
     const Atom *card = evidence->expr.elems[3];
     if (v3_symbol_is(result_type, "V3UnknownResult")) {
-        decision->outcome = CETTA_PETTA_V3_EVIDENCE_UNDETERMINED;
+        decision->outcome = CETTA_NIK_OUTCOME_OUTSIDE_FRAGMENT;
         decision->relation = "v3-evidence-outcome-undetermined";
         return v3_classify_evidence_seam(
             program, providers, evidence, expected, demand, limits,
@@ -2541,16 +2541,16 @@ bool cetta_petta_typecheck_v3_decide_evidence_v1(
         }
         decision->search_outcome = search_outcome;
         if (cardinality == V3_GROUND_INCOMPLETE) {
-            decision->outcome = CETTA_PETTA_V3_EVIDENCE_INCOMPLETE;
+            decision->outcome = CETTA_NIK_OUTCOME_INCOMPLETE;
             decision->relation = "V3ModeFits";
         } else if (cardinality == V3_GROUND_NO) {
-            decision->outcome = CETTA_PETTA_V3_EVIDENCE_REFUTED;
+            decision->outcome = CETTA_NIK_OUTCOME_REFUTED;
             decision->boundary = CETTA_PETTA_V3_BOUNDARY_CARDINALITY;
             decision->relation = "V3ModeFits";
             decision->actual = card;
             decision->required = demand;
         } else {
-            decision->outcome = CETTA_PETTA_V3_EVIDENCE_ESTABLISHED;
+            decision->outcome = CETTA_NIK_OUTCOME_ESTABLISHED;
             decision->relation = "v3-evidence-outcome-empty-established";
         }
         arena_free(&scratch);
@@ -2568,7 +2568,7 @@ bool cetta_petta_typecheck_v3_decide_evidence_v1(
     const Atom *actual = result_type->expr.elems[1];
     if (atom_has_vars((Atom *)actual) || atom_has_vars((Atom *)expected) ||
         atom_has_vars((Atom *)card) || atom_has_vars((Atom *)demand)) {
-        decision->outcome = CETTA_PETTA_V3_EVIDENCE_UNDETERMINED;
+        decision->outcome = CETTA_NIK_OUTCOME_OUTSIDE_FRAGMENT;
         decision->relation = "v3-evidence-outcome-undetermined";
         return v3_classify_evidence_seam(
             program, providers, evidence, expected, demand, limits,
@@ -2588,7 +2588,7 @@ bool cetta_petta_typecheck_v3_decide_evidence_v1(
         return false;
     }
     if (shape == V3_GROUND_INCOMPLETE) {
-        decision->outcome = CETTA_PETTA_V3_EVIDENCE_INCOMPLETE;
+        decision->outcome = CETTA_NIK_OUTCOME_INCOMPLETE;
         decision->relation = "V3Consistent";
         decision->search_outcome = search_outcome;
         arena_free(&scratch);
@@ -2597,7 +2597,7 @@ bool cetta_petta_typecheck_v3_decide_evidence_v1(
             decision, error, error_size);
     }
     if (shape == V3_GROUND_NO) {
-        decision->outcome = CETTA_PETTA_V3_EVIDENCE_REFUTED;
+        decision->outcome = CETTA_NIK_OUTCOME_REFUTED;
         decision->boundary = CETTA_PETTA_V3_BOUNDARY_SHAPE;
         decision->relation = "V3Consistent";
         decision->actual = actual;
@@ -2620,7 +2620,7 @@ bool cetta_petta_typecheck_v3_decide_evidence_v1(
         return false;
     }
     if (cardinality == V3_GROUND_INCOMPLETE) {
-        decision->outcome = CETTA_PETTA_V3_EVIDENCE_INCOMPLETE;
+        decision->outcome = CETTA_NIK_OUTCOME_INCOMPLETE;
         decision->relation = "V3ModeFits";
         decision->search_outcome = search_outcome;
         arena_free(&scratch);
@@ -2629,7 +2629,7 @@ bool cetta_petta_typecheck_v3_decide_evidence_v1(
             decision, error, error_size);
     }
     if (cardinality == V3_GROUND_NO) {
-        decision->outcome = CETTA_PETTA_V3_EVIDENCE_REFUTED;
+        decision->outcome = CETTA_NIK_OUTCOME_REFUTED;
         decision->boundary = CETTA_PETTA_V3_BOUNDARY_CARDINALITY;
         decision->relation = "V3ModeFits";
         decision->actual = card;
@@ -2640,7 +2640,7 @@ bool cetta_petta_typecheck_v3_decide_evidence_v1(
             program, providers, evidence, expected, demand, limits,
             decision, error, error_size);
     }
-    decision->outcome = CETTA_PETTA_V3_EVIDENCE_ESTABLISHED;
+    decision->outcome = CETTA_NIK_OUTCOME_ESTABLISHED;
     decision->relation = "v3-evidence-outcome-established";
     decision->search_outcome = search_outcome;
     arena_free(&scratch);
@@ -2704,7 +2704,7 @@ static bool v3_decide_definition_internal_v1(
         return false;
     }
     if (evidence_result == V3_UNIQUE_INCOMPLETE) {
-        decision->outcome = CETTA_PETTA_V3_EVIDENCE_INCOMPLETE;
+        decision->outcome = CETTA_NIK_OUTCOME_INCOMPLETE;
         decision->relation = "V3ExpressionEvidence";
         decision->search_outcome = search_outcome;
         arena_free(&scratch);
@@ -2729,7 +2729,7 @@ static bool v3_decide_definition_internal_v1(
         return false;
     }
     if (declarations == V3_UNIQUE_INCOMPLETE) {
-        decision->outcome = CETTA_PETTA_V3_EVIDENCE_INCOMPLETE;
+        decision->outcome = CETTA_NIK_OUTCOME_INCOMPLETE;
         decision->relation = "EnvDeclaredList";
         decision->search_outcome = search_outcome;
         arena_free(&scratch);
@@ -2738,7 +2738,7 @@ static bool v3_decide_definition_internal_v1(
     if (declarations != V3_UNIQUE_ONE ||
         !v3_head_is(declarations_answer, "EnvDeclaredList") ||
         declarations_answer->expr.len != 3u) {
-        decision->outcome = CETTA_PETTA_V3_EVIDENCE_UNDETERMINED;
+        decision->outcome = CETTA_NIK_OUTCOME_OUTSIDE_FRAGMENT;
         decision->relation = "V3ExpressionEvidence";
         arena_free(&scratch);
         return true;
@@ -2748,7 +2748,7 @@ static bool v3_decide_definition_internal_v1(
         !v3_symbol_is(list->expr.elems[2], "DNil") ||
         !v3_head_is(list->expr.elems[1], "Decl") ||
         list->expr.elems[1]->expr.len != 3u) {
-        decision->outcome = CETTA_PETTA_V3_EVIDENCE_UNDETERMINED;
+        decision->outcome = CETTA_NIK_OUTCOME_OUTSIDE_FRAGMENT;
         decision->relation = "EnvDeclaredList";
         arena_free(&scratch);
         return true;
@@ -2766,7 +2766,7 @@ static bool v3_decide_definition_internal_v1(
         return false;
     }
     if (elaboration == V3_UNIQUE_INCOMPLETE) {
-        decision->outcome = CETTA_PETTA_V3_EVIDENCE_INCOMPLETE;
+        decision->outcome = CETTA_NIK_OUTCOME_INCOMPLETE;
         decision->relation = "V3ElaborateType";
         decision->search_outcome = search_outcome;
         arena_free(&scratch);
@@ -2775,7 +2775,7 @@ static bool v3_decide_definition_internal_v1(
     if (elaboration != V3_UNIQUE_ONE ||
         !v3_head_is(elaboration_answer, "V3ElaborateType") ||
         elaboration_answer->expr.len != 3u) {
-        decision->outcome = CETTA_PETTA_V3_EVIDENCE_UNDETERMINED;
+        decision->outcome = CETTA_NIK_OUTCOME_OUTSIDE_FRAGMENT;
         decision->relation = "V3ElaborateType";
         arena_free(&scratch);
         return true;
@@ -2783,7 +2783,7 @@ static bool v3_decide_definition_internal_v1(
     const Atom *signature = elaboration_answer->expr.elems[2];
     if (!v3_head_is(signature, "V3Arrow") ||
         signature->expr.len != 4u) {
-        decision->outcome = CETTA_PETTA_V3_EVIDENCE_UNDETERMINED;
+        decision->outcome = CETTA_NIK_OUTCOME_OUTSIDE_FRAGMENT;
         decision->relation = "V3ElaborateType";
         arena_free(&scratch);
         return true;
@@ -2796,7 +2796,7 @@ static bool v3_decide_definition_internal_v1(
         for (CettaExprIndex index = 1u; index < lhs->expr.len; index++) {
             if (!v3_head_is(domains, "V3ArgsCons") ||
                 domains->expr.len != 3u) {
-                decision->outcome = CETTA_PETTA_V3_EVIDENCE_REFUTED;
+                decision->outcome = CETTA_NIK_OUTCOME_REFUTED;
                 decision->boundary = CETTA_PETTA_V3_BOUNDARY_SHAPE;
                 decision->relation = "V3PatternArity";
                 arena_free(&scratch);
@@ -2812,7 +2812,7 @@ static bool v3_decide_definition_internal_v1(
                 return false;
             }
             if (admission.status == V3_PATTERN_INCOMPLETE) {
-                decision->outcome = CETTA_PETTA_V3_EVIDENCE_INCOMPLETE;
+                decision->outcome = CETTA_NIK_OUTCOME_INCOMPLETE;
                 decision->relation = admission.relation;
                 decision->search_outcome = admission.search_outcome;
                 arena_free(&scratch);
@@ -2822,7 +2822,7 @@ static bool v3_decide_definition_internal_v1(
                 /* A statically impossible head contributes no successful
                    rewrite.  It does not refute the program: coverage and
                    exhaustiveness are judgments over the whole relation. */
-                decision->outcome = CETTA_PETTA_V3_EVIDENCE_ESTABLISHED;
+                decision->outcome = CETTA_NIK_OUTCOME_ESTABLISHED;
                 decision->boundary = CETTA_PETTA_V3_BOUNDARY_NONE;
                 decision->relation = "v3-pattern-empty-clause";
                 decision->search_outcome = admission.search_outcome;
@@ -2832,7 +2832,7 @@ static bool v3_decide_definition_internal_v1(
             domains = domains->expr.elems[2];
         }
         if (!v3_symbol_is(domains, "V3ArgsNil")) {
-            decision->outcome = CETTA_PETTA_V3_EVIDENCE_REFUTED;
+            decision->outcome = CETTA_NIK_OUTCOME_REFUTED;
             decision->boundary = CETTA_PETTA_V3_BOUNDARY_SHAPE;
             decision->relation = "V3PatternArity";
             arena_free(&scratch);
@@ -2864,7 +2864,7 @@ static bool v3_decide_definition_internal_v1(
                 return false;
             }
             if (fold_result == V3_UNIQUE_INCOMPLETE) {
-                decision->outcome = CETTA_PETTA_V3_EVIDENCE_INCOMPLETE;
+                decision->outcome = CETTA_NIK_OUTCOME_INCOMPLETE;
                 decision->relation = "V3FoldEmptyEvidence";
                 decision->search_outcome = search_outcome;
                 arena_free(&scratch);
@@ -2886,14 +2886,14 @@ static bool v3_decide_definition_internal_v1(
             return false;
         }
         if (compiled.status == V3_SOURCE_INCOMPLETE) {
-            decision->outcome = CETTA_PETTA_V3_EVIDENCE_INCOMPLETE;
+            decision->outcome = CETTA_NIK_OUTCOME_INCOMPLETE;
             decision->relation = compiled.relation;
             decision->search_outcome = compiled.search_outcome;
             arena_free(&scratch);
             return true;
         }
         if (compiled.status == V3_SOURCE_SHAPE_CONFLICT) {
-            decision->outcome = CETTA_PETTA_V3_EVIDENCE_REFUTED;
+            decision->outcome = CETTA_NIK_OUTCOME_REFUTED;
             decision->boundary = CETTA_PETTA_V3_BOUNDARY_SHAPE;
             decision->relation = compiled.relation;
             decision->search_outcome = compiled.search_outcome;
@@ -2904,14 +2904,14 @@ static bool v3_decide_definition_internal_v1(
             evidence = compiled.evidence;
     }
     if (!evidence) {
-        decision->outcome = CETTA_PETTA_V3_EVIDENCE_UNDETERMINED;
+        decision->outcome = CETTA_NIK_OUTCOME_OUTSIDE_FRAGMENT;
         decision->relation = "V3ExpressionEvidence";
         arena_free(&scratch);
         return true;
     }
 
     if (v3_head_is(evidence, "V3HeldEvidence")) {
-        decision->outcome = CETTA_PETTA_V3_EVIDENCE_REFUTED;
+        decision->outcome = CETTA_NIK_OUTCOME_REFUTED;
         decision->boundary = CETTA_PETTA_V3_BOUNDARY_STAGE;
         decision->relation = "V3ExpressionEvidence";
         decision->search_outcome = search_outcome;
@@ -2960,7 +2960,7 @@ bool cetta_petta_typecheck_v3_decide_equation_v1(
     if (!subject) {
         if (decision)
             *decision = (CettaPettaV3EvidenceDecisionV1){
-                .outcome = CETTA_PETTA_V3_EVIDENCE_UNDETERMINED,
+                .outcome = CETTA_NIK_OUTCOME_OUTSIDE_FRAGMENT,
             };
         if (decision)
             decision->relation = "V3DefinitionHead";

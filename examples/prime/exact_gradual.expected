@@ -1,4 +1,4 @@
-[(ExactPositive Established)]
-[(ExactNegative Refuted)]
-[(GradualAnalyze Established)]
-[(GradualCheck Undetermined)]
+[True]
+[False]
+[True]
+[(type:check unknown Nat)]

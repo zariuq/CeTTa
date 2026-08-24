@@ -2,7 +2,6 @@
 (: CorrNat Type)
 (: CorrZ CorrNat)
 (= (corr:omega) (corr:omega))
-(= (corr:status (PrimeVerdict $status $_judgment $_evidence)) $status)
 
 !(App (Lam T (idx 0)) (superpose (A B)))
 !(App (Lam T (Pair (idx 0) (idx 0))) (superpose (A A B)))
@@ -29,9 +28,6 @@
 
 ; Both routes report the same incomplete observation for a demanded diverging
 ; producer under the same explicit budget.
-!(corr:status
-   (prime-judge &self
-     (Must (PrimeEvaluate
-             (App (Lam CorrNat (idx 0)) (corr:omega)))
-           CorrNat)
-     40))
+!(case (type:must
+         (App (Lam CorrNat (idx 0)) (corr:omega)) CorrNat 40)
+   ((True Established) (False Refuted) ($other Incomplete)))

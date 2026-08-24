@@ -145,7 +145,7 @@ static void check_evidence_decision(
     const char *expected_text,
     const char *demand_text,
     CettaGsltHornLimits limits,
-    CettaPettaV3EvidenceOutcomeV1 expected_outcome,
+    CettaNikOutcomeV1 expected_outcome,
     CettaPettaV3EvidenceBoundaryV1 expected_boundary,
     CettaPettaV3SeamKindV1 expected_seam,
     bool expected_license,
@@ -183,7 +183,7 @@ static void check_named_definition_file(
     const CettaGsltProviderCatalogV1 *catalog,
     const char *path,
     const char *definition_name,
-    CettaPettaV3EvidenceOutcomeV1 expected_outcome,
+    CettaNikOutcomeV1 expected_outcome,
     CettaPettaV3EvidenceBoundaryV1 expected_boundary,
     const char *label) {
     Arena source;
@@ -267,7 +267,7 @@ static void check_definition_file(
     const CettaGsltHornProgram *program,
     const CettaGsltProviderCatalogV1 *catalog,
     const char *path,
-    CettaPettaV3EvidenceOutcomeV1 expected_outcome,
+    CettaNikOutcomeV1 expected_outcome,
     CettaPettaV3EvidenceBoundaryV1 expected_boundary,
     const char *label) {
     check_named_definition_file(
@@ -584,7 +584,7 @@ int main(int argc, char **argv) {
         "  (V3TypedResult (V3Prim V3Num)) V3Det "
         "  (V3Facts V3No V3No V3No))",
         "(V3Prim V3Num)", "(V3Grade V3Det)", qualification_limits(),
-        CETTA_PETTA_V3_EVIDENCE_ESTABLISHED,
+        CETTA_NIK_OUTCOME_ESTABLISHED,
         CETTA_PETTA_V3_BOUNDARY_NONE,
         CETTA_PETTA_V3_SEAM_EXACT, true,
         "v3-evidence-outcome-established",
@@ -595,7 +595,7 @@ int main(int argc, char **argv) {
         "  (V3TypedResult (V3Prim V3Num)) V3Det "
         "  (V3Facts V3No V3No V3No))",
         "(V3Prim V3Str)", "(V3Grade V3Det)", qualification_limits(),
-        CETTA_PETTA_V3_EVIDENCE_REFUTED,
+        CETTA_NIK_OUTCOME_REFUTED,
         CETTA_PETTA_V3_BOUNDARY_SHAPE,
         CETTA_PETTA_V3_SEAM_CONFLICT, false, "V3Consistent",
         "native shape refutation names its evidence boundary");
@@ -605,7 +605,7 @@ int main(int argc, char **argv) {
         "  (V3TypedResult (V3Prim V3Num)) V3Nondet "
         "  (V3Facts V3No V3No V3No))",
         "(V3Prim V3Num)", "(V3Grade V3Det)", qualification_limits(),
-        CETTA_PETTA_V3_EVIDENCE_REFUTED,
+        CETTA_NIK_OUTCOME_REFUTED,
         CETTA_PETTA_V3_BOUNDARY_CARDINALITY,
         CETTA_PETTA_V3_SEAM_CONFLICT, false, "V3ModeFits",
         "native grade refutation names its evidence boundary");
@@ -614,7 +614,7 @@ int main(int argc, char **argv) {
         "(V3RuntimeEvidence V3StageEvaluated V3UnknownResult V3Semidet "
         "  (V3Facts V3No V3No V3No))",
         "(V3Prim V3Num)", "(V3Grade V3Semidet)", qualification_limits(),
-        CETTA_PETTA_V3_EVIDENCE_UNDETERMINED,
+        CETTA_NIK_OUTCOME_OUTSIDE_FRAGMENT,
         CETTA_PETTA_V3_BOUNDARY_NONE,
         CETTA_PETTA_V3_SEAM_GRADUAL, false,
         "v3-evidence-outcome-undetermined",
@@ -624,7 +624,7 @@ int main(int argc, char **argv) {
         "(V3RuntimeEvidence V3StageEvaluated V3EmptyResult V3Semidet "
         "  (V3Facts V3No V3No V3No))",
         "(V3Prim V3Num)", "(V3Grade V3Semidet)", qualification_limits(),
-        CETTA_PETTA_V3_EVIDENCE_ESTABLISHED,
+        CETTA_NIK_OUTCOME_ESTABLISHED,
         CETTA_PETTA_V3_BOUNDARY_NONE,
         CETTA_PETTA_V3_SEAM_GRADUAL, false,
         "v3-evidence-outcome-empty-established",
@@ -634,7 +634,7 @@ int main(int argc, char **argv) {
         "(V3RuntimeEvidence V3StageEvaluated V3EmptyResult V3Nondet "
         "  (V3Facts V3No V3No V3No))",
         "(V3Prim V3Num)", "(V3Grade V3Semidet)", qualification_limits(),
-        CETTA_PETTA_V3_EVIDENCE_REFUTED,
+        CETTA_NIK_OUTCOME_REFUTED,
         CETTA_PETTA_V3_BOUNDARY_CARDINALITY,
         CETTA_PETTA_V3_SEAM_CONFLICT, false, "V3ModeFits",
         "empty evidence still respects its nondeterministic grade");
@@ -647,7 +647,7 @@ int main(int argc, char **argv) {
         (CettaGsltHornLimits){
             .max_rule_attempts = 1u, .max_answers = 16u, .max_depth = 256u,
         },
-        CETTA_PETTA_V3_EVIDENCE_INCOMPLETE,
+        CETTA_NIK_OUTCOME_INCOMPLETE,
         CETTA_PETTA_V3_BOUNDARY_NONE,
         CETTA_PETTA_V3_SEAM_GRADUAL, false, "V3Consistent",
         "native decision maps search exhaustion to incomplete");
@@ -655,478 +655,478 @@ int main(int argc, char **argv) {
     check_definition_file(
         program, catalog,
         "tests/petta/typecheck_v2_repros/111_quoted_brand_declared_output_candidate.metta",
-        CETTA_PETTA_V3_EVIDENCE_REFUTED,
+        CETTA_NIK_OUTCOME_REFUTED,
         CETTA_PETTA_V3_BOUNDARY_STAGE,
         "H5 111 rejects held nominal code at the stage boundary");
     check_definition_file(
         program, catalog,
         "tests/petta/typecheck_v2_repros/112_quoted_the_declared_output_candidate.metta",
-        CETTA_PETTA_V3_EVIDENCE_REFUTED,
+        CETTA_NIK_OUTCOME_REFUTED,
         CETTA_PETTA_V3_BOUNDARY_STAGE,
         "H5 112 rejects held ascription code at the stage boundary");
     check_definition_file(
         program, catalog,
         "tests/petta/typecheck_v2_repros/113_quoted_data_marker_declared_product_candidate.metta",
-        CETTA_PETTA_V3_EVIDENCE_REFUTED,
+        CETTA_NIK_OUTCOME_REFUTED,
         CETTA_PETTA_V3_BOUNDARY_SHAPE,
         "H5 113 rejects a quoted data product that omits the held head");
     check_definition_file(
         program, catalog,
         "tests/petta/typecheck_v2_repros/114_quoted_data_marker_full_code_product_candidate.metta",
-        CETTA_PETTA_V3_EVIDENCE_ESTABLISHED,
+        CETTA_NIK_OUTCOME_ESTABLISHED,
         CETTA_PETTA_V3_BOUNDARY_NONE,
         "H5 114 accepts the complete quoted data code product");
     check_definition_file(
         program, catalog,
         "tests/petta/typecheck_v2_repros/115_eval_quoted_brand_reactivates_nominal_assertion_candidate.metta",
-        CETTA_PETTA_V3_EVIDENCE_ESTABLISHED,
+        CETTA_NIK_OUTCOME_ESTABLISHED,
         CETTA_PETTA_V3_BOUNDARY_NONE,
         "H5 115 accepts eval-reactivated nominal evidence");
     check_definition_file(
         program, catalog,
         "tests/petta/typecheck_v2_repros/116_eval_quoted_the_reactivates_ascription_candidate.metta",
-        CETTA_PETTA_V3_EVIDENCE_ESTABLISHED,
+        CETTA_NIK_OUTCOME_ESTABLISHED,
         CETTA_PETTA_V3_BOUNDARY_NONE,
         "H5 116 accepts eval-reactivated ascription evidence");
     check_definition_file(
         program, catalog,
         "tests/petta/typecheck_v2_repros/117_eval_quoted_brand_nondet_admission_candidate.metta",
-        CETTA_PETTA_V3_EVIDENCE_REFUTED,
+        CETTA_NIK_OUTCOME_REFUTED,
         CETTA_PETTA_V3_BOUNDARY_SHAPE,
         "H5 117 rejects nominal evidence promised as its representation");
     check_definition_file(
         program, catalog,
         "tests/petta/typecheck_v2_repros/118_eval_quoted_literal_nondet_candidate.metta",
-        CETTA_PETTA_V3_EVIDENCE_ESTABLISHED,
+        CETTA_NIK_OUTCOME_ESTABLISHED,
         CETTA_PETTA_V3_BOUNDARY_NONE,
         "H5 118 accepts evaluated literal evidence under nondet demand");
     check_definition_file(
         program, catalog,
         "tests/petta/typecheck_v2_repros/119_eval_quoted_the_nondet_candidate.metta",
-        CETTA_PETTA_V3_EVIDENCE_ESTABLISHED,
+        CETTA_NIK_OUTCOME_ESTABLISHED,
         CETTA_PETTA_V3_BOUNDARY_NONE,
         "H5 119 accepts evaluated ascription under nondet demand");
     check_definition_file(
         program, catalog,
         "tests/petta/typecheck_v2_repros/120_direct_brand_literal_newtype_candidate.metta",
-        CETTA_PETTA_V3_EVIDENCE_ESTABLISHED,
+        CETTA_NIK_OUTCOME_ESTABLISHED,
         CETTA_PETTA_V3_BOUNDARY_NONE,
         "H5 120 accepts direct branded newtype construction");
     check_definition_file(
         program, catalog,
         "tests/petta/typecheck_v2_repros/109_declared_superpose_all_empty_semidet_accept.metta",
-        CETTA_PETTA_V3_EVIDENCE_REFUTED,
+        CETTA_NIK_OUTCOME_REFUTED,
         CETTA_PETTA_V3_BOUNDARY_CARDINALITY,
         "H5 109 retains nondeterministic grade for empty superposition");
     check_definition_file(
         program, catalog,
         "tests/petta/typecheck_v2_repros/110_declared_superpose_all_empty_nondet_accept.metta",
-        CETTA_PETTA_V3_EVIDENCE_ESTABLISHED,
+        CETTA_NIK_OUTCOME_ESTABLISHED,
         CETTA_PETTA_V3_BOUNDARY_NONE,
         "H5 110 accepts empty superposition under nondet demand");
     check_definition_file(
         program, catalog,
         "tests/petta/typecheck_v2_repros/104_inferred_if_all_empty_result.metta",
-        CETTA_PETTA_V3_EVIDENCE_UNDETERMINED,
+        CETTA_NIK_OUTCOME_OUTSIDE_FRAGMENT,
         CETTA_PETTA_V3_BOUNDARY_NONE,
         "H5 104 withholds a signature for an inferred empty conditional");
     check_definition_file(
         program, catalog,
         "tests/petta/typecheck_v2_repros/105_declared_if_all_empty_semidet_accept.metta",
-        CETTA_PETTA_V3_EVIDENCE_ESTABLISHED,
+        CETTA_NIK_OUTCOME_ESTABLISHED,
         CETTA_PETTA_V3_BOUNDARY_NONE,
         "H5 105 establishes a declared semidet empty conditional");
     check_definition_file(
         program, catalog,
         "tests/petta/typecheck_v2_repros/106_inferred_case_all_empty_result.metta",
-        CETTA_PETTA_V3_EVIDENCE_UNDETERMINED,
+        CETTA_NIK_OUTCOME_OUTSIDE_FRAGMENT,
         CETTA_PETTA_V3_BOUNDARY_NONE,
         "H5 106 withholds a signature for an inferred empty case");
     check_definition_file(
         program, catalog,
         "tests/petta/typecheck_v2_repros/107_declared_case_all_empty_semidet_accept.metta",
-        CETTA_PETTA_V3_EVIDENCE_ESTABLISHED,
+        CETTA_NIK_OUTCOME_ESTABLISHED,
         CETTA_PETTA_V3_BOUNDARY_NONE,
         "H5 107 establishes a declared semidet empty case");
     check_definition_file(
         program, catalog,
         "tests/petta/typecheck_v2_repros/108_inferred_superpose_all_empty_result.metta",
-        CETTA_PETTA_V3_EVIDENCE_UNDETERMINED,
+        CETTA_NIK_OUTCOME_OUTSIDE_FRAGMENT,
         CETTA_PETTA_V3_BOUNDARY_NONE,
         "H5 108 withholds a signature for an inferred empty superposition");
     check_definition_file(
         program, catalog,
         "tests/petta/typecheck_v2_repros/84_foldall_empty_returns_initializer.metta",
-        CETTA_PETTA_V3_EVIDENCE_ESTABLISHED,
+        CETTA_NIK_OUTCOME_ESTABLISHED,
         CETTA_PETTA_V3_BOUNDARY_NONE,
         "H5 84 preserves the initializer type for an empty fold");
     check_named_definition_file(
         program, catalog,
         "tests/petta/typecheck_v2_repros/85_foldall_disguised_empty_reject.metta",
         "bad-fold",
-        CETTA_PETTA_V3_EVIDENCE_REFUTED,
+        CETTA_NIK_OUTCOME_REFUTED,
         CETTA_PETTA_V3_BOUNDARY_SHAPE,
         "H5 85 rejects an empty fold whose initializer violates the result type");
     check_definition_file(
         program, catalog,
         "tests/petta/typecheck_v2_repros/81_inferred_untyped_atom_has_no_positive_type.metta",
-        CETTA_PETTA_V3_EVIDENCE_UNDETERMINED,
+        CETTA_NIK_OUTCOME_OUTSIDE_FRAGMENT,
         CETTA_PETTA_V3_BOUNDARY_NONE,
         "H5 81 does not manufacture positive evidence for an untyped atom");
     check_named_definition_file(
         program, catalog,
         "tests/petta/typecheck_v2_repros/39_ascription_actual_union_reject.metta",
-        "use-bool", CETTA_PETTA_V3_EVIDENCE_REFUTED,
+        "use-bool", CETTA_NIK_OUTCOME_REFUTED,
         CETTA_PETTA_V3_BOUNDARY_SHAPE,
         "v3 rejects an ascription disjoint from every actual union member");
     check_named_definition_file(
         program, catalog,
         "tests/petta/typecheck_v2_repros/40_ascription_actual_alias_union.metta",
-        "use-number", CETTA_PETTA_V3_EVIDENCE_ESTABLISHED,
+        "use-number", CETTA_NIK_OUTCOME_ESTABLISHED,
         CETTA_PETTA_V3_BOUNDARY_NONE,
         "v3 narrows a transparent actual alias union existentially");
     check_named_definition_file(
         program, catalog,
         "tests/petta/typecheck_v2_repros/41_ascription_required_alias_union.metta",
-        "use-target", CETTA_PETTA_V3_EVIDENCE_ESTABLISHED,
+        "use-target", CETTA_NIK_OUTCOME_ESTABLISHED,
         CETTA_PETTA_V3_BOUNDARY_NONE,
         "v3 narrows into a transparent required alias union");
     check_named_definition_file(
         program, catalog,
         "tests/petta/typecheck_v2_repros/42_ascription_required_alias_union_reject.metta",
-        "use-target", CETTA_PETTA_V3_EVIDENCE_REFUTED,
+        "use-target", CETTA_NIK_OUTCOME_REFUTED,
         CETTA_PETTA_V3_BOUNDARY_SHAPE,
         "v3 rejects a required alias union with no overlap witness");
     check_named_definition_file(
         program, catalog,
         "tests/petta/typecheck_v2_repros/43_ascription_reverse_newtype_overlap.metta",
-        "use-count", CETTA_PETTA_V3_EVIDENCE_ESTABLISHED,
+        "use-count", CETTA_NIK_OUTCOME_ESTABLISHED,
         CETTA_PETTA_V3_BOUNDARY_NONE,
         "v3 admits a runtime check through one nominal representation");
     check_named_definition_file(
         program, catalog,
         "tests/petta/typecheck_v2_repros/44_ascription_disjoint_reject.metta",
-        "use-string", CETTA_PETTA_V3_EVIDENCE_REFUTED,
+        "use-string", CETTA_NIK_OUTCOME_REFUTED,
         CETTA_PETTA_V3_BOUNDARY_SHAPE,
         "v3 rejects an ascription between disjoint primitive types");
     check_definition_file(
         program, catalog,
         "tests/petta/typecheck_v2_repros/60_repeated_head_variable_disjoint_slots.metta",
-        CETTA_PETTA_V3_EVIDENCE_ESTABLISHED,
+        CETTA_NIK_OUTCOME_ESTABLISHED,
         CETTA_PETTA_V3_BOUNDARY_NONE,
         "v3 treats a contradictory repeated head variable as an empty clause");
     check_named_definition_file(
         program, catalog,
         "tests/petta/typecheck_v2_repros/82_inferred_function_is_not_explicit_value_evidence.metta",
         "choose-increment",
-        CETTA_PETTA_V3_EVIDENCE_UNDETERMINED,
+        CETTA_NIK_OUTCOME_OUTSIDE_FRAGMENT,
         CETTA_PETTA_V3_BOUNDARY_NONE,
         "H5 82 does not publish an inferred function as an explicit value");
     check_named_definition_file(
         program, catalog,
         "tests/petta/typecheck_v2_repros/89_if_nonempty_list_selection.metta",
-        "if-list-caller", CETTA_PETTA_V3_EVIDENCE_ESTABLISHED,
+        "if-list-caller", CETTA_NIK_OUTCOME_ESTABLISHED,
         CETTA_PETTA_V3_BOUNDARY_NONE,
         "H5 89 retains proper-list evidence through a conditional");
     check_named_definition_file(
         program, catalog,
         "tests/petta/typecheck_v2_repros/90_case_proper_list_selection.metta",
-        "case-list-caller", CETTA_PETTA_V3_EVIDENCE_ESTABLISHED,
+        "case-list-caller", CETTA_NIK_OUTCOME_ESTABLISHED,
         CETTA_PETTA_V3_BOUNDARY_NONE,
         "H5 90 retains proper-list evidence through case branches");
     check_named_definition_file(
         program, catalog,
         "tests/petta/typecheck_v2_repros/91_let_bound_proper_list_selection.metta",
-        "let-list-caller", CETTA_PETTA_V3_EVIDENCE_ESTABLISHED,
+        "let-list-caller", CETTA_NIK_OUTCOME_ESTABLISHED,
         CETTA_PETTA_V3_BOUNDARY_NONE,
         "H5 91 transports proper-list evidence through let");
     check_named_definition_file(
         program, catalog,
         "tests/petta/typecheck_v2_repros/92_let_nonlist_selection_reject.metta",
-        "let-nonlist-caller", CETTA_PETTA_V3_EVIDENCE_REFUTED,
+        "let-nonlist-caller", CETTA_NIK_OUTCOME_REFUTED,
         CETTA_PETTA_V3_BOUNDARY_SHAPE,
         "H5 92 rejects scalar evidence at a list selector");
     check_named_definition_file(
         program, catalog,
         "tests/petta/typecheck_v2_repros/93_let_star_bound_proper_list_selection.metta",
-        "let-star-list-caller", CETTA_PETTA_V3_EVIDENCE_ESTABLISHED,
+        "let-star-list-caller", CETTA_NIK_OUTCOME_ESTABLISHED,
         CETTA_PETTA_V3_BOUNDARY_NONE,
         "H5 93 transports proper-list evidence through let-star");
     check_named_definition_file(
         program, catalog,
         "tests/petta/typecheck_v2_repros/94_chain_identity_proper_list_selection.metta",
-        "chain-list-caller", CETTA_PETTA_V3_EVIDENCE_REFUTED,
+        "chain-list-caller", CETTA_NIK_OUTCOME_REFUTED,
         CETTA_PETTA_V3_BOUNDARY_CARDINALITY,
         "H5 94 retains the semideterministic chain boundary");
     check_named_definition_file(
         program, catalog,
         "tests/petta/typecheck_v2_repros/95_let_bound_bool_selection.metta",
-        "let-bool-caller", CETTA_PETTA_V3_EVIDENCE_ESTABLISHED,
+        "let-bool-caller", CETTA_NIK_OUTCOME_ESTABLISHED,
         CETTA_PETTA_V3_BOUNDARY_NONE,
         "H5 95 transports Boolean evidence through let");
     check_named_definition_file(
         program, catalog,
         "tests/petta/typecheck_v2_repros/96_let_nonbool_bool_selection_reject.metta",
-        "let-nonbool-caller", CETTA_PETTA_V3_EVIDENCE_REFUTED,
+        "let-nonbool-caller", CETTA_NIK_OUTCOME_REFUTED,
         CETTA_PETTA_V3_BOUNDARY_SHAPE,
         "H5 96 rejects numeric evidence at a Boolean selector");
     check_named_definition_file(
         program, catalog,
         "tests/petta/typecheck_v2_repros/97_let_star_bound_bool_selection.metta",
-        "let-star-bool-caller", CETTA_PETTA_V3_EVIDENCE_ESTABLISHED,
+        "let-star-bool-caller", CETTA_NIK_OUTCOME_ESTABLISHED,
         CETTA_PETTA_V3_BOUNDARY_NONE,
         "H5 97 transports Boolean evidence through let-star");
     check_named_definition_file(
         program, catalog,
         "tests/petta/typecheck_v2_repros/98_let_star_alias_chain_bool_selection.metta",
         "let-star-alias-chain-caller",
-        CETTA_PETTA_V3_EVIDENCE_ESTABLISHED,
+        CETTA_NIK_OUTCOME_ESTABLISHED,
         CETTA_PETTA_V3_BOUNDARY_NONE,
         "H5 98 preserves Boolean evidence through an alias chain");
     check_named_definition_file(
         program, catalog,
         "tests/petta/typecheck_v2_repros/99_let_star_alias_chain_nonbool_reject.metta",
         "let-star-alias-chain-nonbool-caller",
-        CETTA_PETTA_V3_EVIDENCE_REFUTED,
+        CETTA_NIK_OUTCOME_REFUTED,
         CETTA_PETTA_V3_BOUNDARY_SHAPE,
         "H5 99 preserves non-Boolean evidence through an alias chain");
     check_named_definition_file(
         program, catalog,
         "tests/petta/typecheck_v2_repros/100_let_star_alias_chain_proper_list_selection.metta",
         "let-star-list-alias-chain-caller",
-        CETTA_PETTA_V3_EVIDENCE_ESTABLISHED,
+        CETTA_NIK_OUTCOME_ESTABLISHED,
         CETTA_PETTA_V3_BOUNDARY_NONE,
         "H5 100 preserves proper-list evidence through an alias chain");
     check_named_definition_file(
         program, catalog,
         "tests/petta/typecheck_v2_repros/101_let_star_alias_chain_nondet_bool_reject.metta",
         "let-star-alias-chain-nondet-caller",
-        CETTA_PETTA_V3_EVIDENCE_REFUTED,
+        CETTA_NIK_OUTCOME_REFUTED,
         CETTA_PETTA_V3_BOUNDARY_CARDINALITY,
         "H5 101 preserves nondeterminism through an alias chain");
     check_named_definition_file(
         program, catalog,
         "tests/petta/typecheck_v2_repros/102_let_star_three_hop_bool_selection.metta",
         "let-star-three-hop-caller",
-        CETTA_PETTA_V3_EVIDENCE_ESTABLISHED,
+        CETTA_NIK_OUTCOME_ESTABLISHED,
         CETTA_PETTA_V3_BOUNDARY_NONE,
         "H5 102 preserves Boolean evidence through three aliases");
     check_named_definition_file(
         program, catalog,
         "tests/petta/typecheck_v2_repros/103_let_star_shadowed_alias_nonbool_reject.metta",
         "let-star-shadowed-alias-caller",
-        CETTA_PETTA_V3_EVIDENCE_REFUTED,
+        CETTA_NIK_OUTCOME_REFUTED,
         CETTA_PETTA_V3_BOUNDARY_SHAPE,
         "H5 103 respects lexical shadowing in alias evidence");
     check_named_definition_file(
         program, catalog,
         "tests/petta/typecheck_v2_repros/71_concrete_data_selection_is_deterministic.metta",
-        "concrete-data-selector", CETTA_PETTA_V3_EVIDENCE_ESTABLISHED,
+        "concrete-data-selector", CETTA_NIK_OUTCOME_ESTABLISHED,
         CETTA_PETTA_V3_BOUNDARY_NONE,
         "H5 71 proves concrete inert-data selection total");
     check_named_definition_file(
         program, catalog,
         "tests/petta/typecheck_v2_repros/72_direct_concrete_selection_is_deterministic.metta",
-        "direct-concrete-selector", CETTA_PETTA_V3_EVIDENCE_ESTABLISHED,
+        "direct-concrete-selector", CETTA_NIK_OUTCOME_ESTABLISHED,
         CETTA_PETTA_V3_BOUNDARY_NONE,
         "H5 72 proves direct concrete selection total");
     check_named_definition_file(
         program, catalog,
         "tests/petta/typecheck_v2_repros/73_expression_empty_cons_selection_is_not_total.metta",
-        "expression-shape-caller", CETTA_PETTA_V3_EVIDENCE_REFUTED,
+        "expression-shape-caller", CETTA_NIK_OUTCOME_REFUTED,
         CETTA_PETTA_V3_BOUNDARY_CARDINALITY,
         "H5 73 rejects an open expression selector without total coverage");
     check_named_definition_file(
         program, catalog,
         "tests/petta/typecheck_v2_repros/74_inferred_superpose_result_widens_unknown.metta",
-        "use-mixed", CETTA_PETTA_V3_EVIDENCE_ESTABLISHED,
+        "use-mixed", CETTA_NIK_OUTCOME_ESTABLISHED,
         CETTA_PETTA_V3_BOUNDARY_NONE,
         "H5 74 publishes a precise heterogeneous inferred result");
     check_named_definition_file(
         program, catalog,
         "tests/petta/typecheck_v2_repros/75_inferred_superpose_unknown_does_not_reject.metta",
-        "use-mixed-as-number", CETTA_PETTA_V3_EVIDENCE_REFUTED,
+        "use-mixed-as-number", CETTA_NIK_OUTCOME_REFUTED,
         CETTA_PETTA_V3_BOUNDARY_SHAPE,
         "H5 75 rejects a precise heterogeneous result at Number");
     check_named_definition_file(
         program, catalog,
         "tests/petta/typecheck_v2_repros/76_inferred_canonical_list_preserved.metta",
-        "use-collected-numbers", CETTA_PETTA_V3_EVIDENCE_ESTABLISHED,
+        "use-collected-numbers", CETTA_NIK_OUTCOME_ESTABLISHED,
         CETTA_PETTA_V3_BOUNDARY_NONE,
         "H5 76 publishes canonical inferred list evidence");
     check_named_definition_file(
         program, catalog,
         "tests/petta/typecheck_v2_repros/77_inferred_canonical_list_rejects_mismatch.metta",
-        "misuse-collected-numbers", CETTA_PETTA_V3_EVIDENCE_REFUTED,
+        "misuse-collected-numbers", CETTA_NIK_OUTCOME_REFUTED,
         CETTA_PETTA_V3_BOUNDARY_SHAPE,
         "H5 77 retains inferred list element shape");
     check_named_definition_file(
         program, catalog,
         "tests/petta/typecheck_v2_repros/78_inferred_canonical_arrow_preserved.metta",
-        "use-increment", CETTA_PETTA_V3_EVIDENCE_ESTABLISHED,
+        "use-increment", CETTA_NIK_OUTCOME_ESTABLISHED,
         CETTA_PETTA_V3_BOUNDARY_NONE,
         "H5 78 publishes an explicitly typed first-class arrow");
     check_named_definition_file(
         program, catalog,
         "tests/petta/typecheck_v2_repros/79_inferred_canonical_arrow_rejects_mismatch.metta",
-        "misuse-increment", CETTA_PETTA_V3_EVIDENCE_REFUTED,
+        "misuse-increment", CETTA_NIK_OUTCOME_REFUTED,
         CETTA_PETTA_V3_BOUNDARY_SHAPE,
         "H5 79 retains inferred arrow component shape");
     check_named_definition_file(
         program, catalog,
         "tests/petta/typecheck_v2_repros/80_inferred_ambiguous_symbol_widens_unknown.metta",
-        "use-dual", CETTA_PETTA_V3_EVIDENCE_REFUTED,
+        "use-dual", CETTA_NIK_OUTCOME_REFUTED,
         CETTA_PETTA_V3_BOUNDARY_SHAPE,
         "H5 80 retains ambiguity as a precise union");
     check_named_definition_file(
         program, catalog,
         "tests/petta/typecheck_v2_repros/87_inferred_if_empty_result.metta",
-        "use-maybe", CETTA_PETTA_V3_EVIDENCE_ESTABLISHED,
+        "use-maybe", CETTA_NIK_OUTCOME_ESTABLISHED,
         CETTA_PETTA_V3_BOUNDARY_NONE,
         "H5 87 publishes a semideterministic surviving branch");
     check_named_definition_file(
         program, catalog,
         "tests/petta/typecheck_v2_repros/121_nested_literal_selector_totality_candidate.metta",
-        "fixed-cell-caller", CETTA_PETTA_V3_EVIDENCE_UNDETERMINED,
+        "fixed-cell-caller", CETTA_NIK_OUTCOME_OUTSIDE_FRAGMENT,
         CETTA_PETTA_V3_BOUNDARY_NONE,
         "H5 121 withholds totality across a caller-bound nested literal");
     check_named_definition_file(
         program, catalog,
         "tests/petta/typecheck_v2_repros/123_variable_headed_selection_literal_body_candidate.metta",
-        "dynamic-head-caller", CETTA_PETTA_V3_EVIDENCE_UNDETERMINED,
+        "dynamic-head-caller", CETTA_NIK_OUTCOME_OUTSIDE_FRAGMENT,
         CETTA_PETTA_V3_BOUNDARY_NONE,
         "H5 123 withholds totality across a variable-headed selection");
     check_named_definition_file(
         program, catalog,
         "tests/petta/typecheck_v3_once_cardinality.metta",
-        "choose-once", CETTA_PETTA_V3_EVIDENCE_ESTABLISHED,
+        "choose-once", CETTA_NIK_OUTCOME_ESTABLISHED,
         CETTA_PETTA_V3_BOUNDARY_NONE,
         "H5 determinism accepts once-nondet at semidet");
     check_named_definition_file(
         program, catalog,
         "tests/petta/typecheck_v3_once_cardinality.metta",
-        "choose-once-too-strong", CETTA_PETTA_V3_EVIDENCE_REFUTED,
+        "choose-once-too-strong", CETTA_NIK_OUTCOME_REFUTED,
         CETTA_PETTA_V3_BOUNDARY_CARDINALITY,
         "once never manufactures deterministic totality");
     check_named_definition_file(
         program, catalog,
         "tests/petta/typecheck_v3_once_cardinality.metta",
-        "bump-once", CETTA_PETTA_V3_EVIDENCE_ESTABLISHED,
+        "bump-once", CETTA_NIK_OUTCOME_ESTABLISHED,
         CETTA_PETTA_V3_BOUNDARY_NONE,
         "once preserves an already deterministic grade");
     check_named_definition_file(
         program, catalog,
         "tests/petta/typecheck_v2_repros/31_contextual_cons_list.metta",
-        "last-number", CETTA_PETTA_V3_EVIDENCE_ESTABLISHED,
+        "last-number", CETTA_NIK_OUTCOME_ESTABLISHED,
         CETTA_PETTA_V3_BOUNDARY_NONE,
         "an open typed list tail preserves constructor evidence");
     check_named_definition_file(
         program, catalog,
         "tests/petta/typecheck_v2_repros/32_contextual_cons_tail_mismatch.metta",
-        "prepend-number", CETTA_PETTA_V3_EVIDENCE_REFUTED,
+        "prepend-number", CETTA_NIK_OUTCOME_REFUTED,
         CETTA_PETTA_V3_BOUNDARY_SHAPE,
         "a non-list tail is a replayable constructor conflict");
     check_named_definition_file(
         program, catalog,
         "tests/petta/typecheck_v3_open_list_construction.metta",
-        "empty-numbers", CETTA_PETTA_V3_EVIDENCE_ESTABLISHED,
+        "empty-numbers", CETTA_NIK_OUTCOME_ESTABLISHED,
         CETTA_PETTA_V3_BOUNDARY_NONE,
         "the empty list is a deterministic gradual list value");
     check_named_definition_file(
         program, catalog,
         "tests/petta/typecheck_v3_open_list_construction.metta",
-        "preserve-open-tail", CETTA_PETTA_V3_EVIDENCE_ESTABLISHED,
+        "preserve-open-tail", CETTA_NIK_OUTCOME_ESTABLISHED,
         CETTA_PETTA_V3_BOUNDARY_NONE,
         "a typed open tail preserves deterministic list construction");
     check_named_definition_file(
         program, catalog,
         "tests/petta/typecheck_v3_open_list_construction.metta",
-        "reject-nonlist-tail", CETTA_PETTA_V3_EVIDENCE_REFUTED,
+        "reject-nonlist-tail", CETTA_NIK_OUTCOME_REFUTED,
         CETTA_PETTA_V3_BOUNDARY_SHAPE,
         "a scalar tail cannot masquerade as a list");
     check_named_definition_file(
         program, catalog,
         "tests/petta/typecheck_v3_guarded_expression_selection.metta",
-        "guarded-expression-head", CETTA_PETTA_V3_EVIDENCE_ESTABLISHED,
+        "guarded-expression-head", CETTA_NIK_OUTCOME_ESTABLISHED,
         CETTA_PETTA_V3_BOUNDARY_NONE,
         "is-expr supplies branch-local total selection evidence");
     check_named_definition_file(
         program, catalog,
         "tests/petta/typecheck_v3_guarded_expression_selection.metta",
-        "unguarded-expression-head", CETTA_PETTA_V3_EVIDENCE_REFUTED,
+        "unguarded-expression-head", CETTA_NIK_OUTCOME_REFUTED,
         CETTA_PETTA_V3_BOUNDARY_CARDINALITY,
         "an unguarded head selection remains semideterministic");
     check_named_definition_file(
         program, catalog,
         "tests/petta/typecheck_v3_effect_instantiation.metta",
-        "use-deterministic-effect", CETTA_PETTA_V3_EVIDENCE_REFUTED,
+        "use-deterministic-effect", CETTA_NIK_OUTCOME_REFUTED,
         CETTA_PETTA_V3_BOUNDARY_CARDINALITY,
         "a direct effect grade alone cannot prove combinator coverage");
     check_named_definition_file(
         program, catalog,
         "tests/petta/typecheck_v3_effect_instantiation.metta",
         "use-semideterministic-effect",
-        CETTA_PETTA_V3_EVIDENCE_REFUTED,
+        CETTA_NIK_OUTCOME_REFUTED,
         CETTA_PETTA_V3_BOUNDARY_CARDINALITY,
         "a direct semideterministic grade still lacks coverage evidence");
     check_named_definition_file(
         program, catalog,
         "tests/petta/typecheck_v3_effect_instantiation.metta",
-        "use-conservative-effect", CETTA_PETTA_V3_EVIDENCE_ESTABLISHED,
+        "use-conservative-effect", CETTA_NIK_OUTCOME_ESTABLISHED,
         CETTA_PETTA_V3_BOUNDARY_NONE,
         "an unresolved named effect remains executable as nondeterministic");
     check_named_definition_file(
         program, catalog,
         "tests/petta/typecheck_v3_effect_instantiation.metta",
-        "reject-effect-overclaim", CETTA_PETTA_V3_EVIDENCE_REFUTED,
+        "reject-effect-overclaim", CETTA_NIK_OUTCOME_REFUTED,
         CETTA_PETTA_V3_BOUNDARY_CARDINALITY,
         "a semideterministic closure cannot satisfy a deterministic promise");
     check_named_definition_file(
         program, catalog,
         "tests/petta/typecheck_v3_case_pattern_bindings.metta",
-        "case-number", CETTA_PETTA_V3_EVIDENCE_ESTABLISHED,
+        "case-number", CETTA_NIK_OUTCOME_ESTABLISHED,
         CETTA_PETTA_V3_BOUNDARY_NONE,
         "a constructor pattern types its branch-local payload");
     check_named_definition_file(
         program, catalog,
         "tests/petta/typecheck_v3_case_pattern_bindings.metta",
-        "reject-case-string", CETTA_PETTA_V3_EVIDENCE_REFUTED,
+        "reject-case-string", CETTA_NIK_OUTCOME_REFUTED,
         CETTA_PETTA_V3_BOUNDARY_SHAPE,
         "a typed constructor payload cannot masquerade as a string");
     check_named_definition_file(
         program, catalog,
         "tests/petta/typecheck_v3_case_pattern_bindings.metta",
-        "union-list-tail", CETTA_PETTA_V3_EVIDENCE_ESTABLISHED,
+        "union-list-tail", CETTA_NIK_OUTCOME_ESTABLISHED,
         CETTA_PETTA_V3_BOUNDARY_NONE,
         "a unique list alternative types its case-pattern tail");
     check_named_definition_file(
         program, catalog,
         "tests/petta/typecheck_v3_case_pattern_bindings.metta",
-        "reject-union-list-head-string", CETTA_PETTA_V3_EVIDENCE_REFUTED,
+        "reject-union-list-head-string", CETTA_NIK_OUTCOME_REFUTED,
         CETTA_PETTA_V3_BOUNDARY_SHAPE,
         "union narrowing exposes an incompatible list element");
     check_named_definition_file(
         program, catalog,
         "tests/petta/typecheck_v3_quoted_argument.metta",
-        "build-runtime-rule", CETTA_PETTA_V3_EVIDENCE_ESTABLISHED,
+        "build-runtime-rule", CETTA_NIK_OUTCOME_ESTABLISHED,
         CETTA_PETTA_V3_BOUNDARY_NONE,
         "constructing quoted Atom data does not execute its latent effect");
     check_named_definition_file(
         program, catalog,
         "tests/petta/typecheck_v3_quoted_argument.metta",
-        "build-inert-rule", CETTA_PETTA_V3_EVIDENCE_ESTABLISHED,
+        "build-inert-rule", CETTA_NIK_OUTCOME_ESTABLISHED,
         CETTA_PETTA_V3_BOUNDARY_NONE,
         "constructing inert expression data is deterministic");
     check_named_definition_file(
         program, catalog,
         "tests/petta/typecheck_v3_quoted_argument.metta",
-        "reject-nondet-brand", CETTA_PETTA_V3_EVIDENCE_REFUTED,
+        "reject-nondet-brand", CETTA_NIK_OUTCOME_REFUTED,
         CETTA_PETTA_V3_BOUNDARY_CARDINALITY,
         "nominal construction preserves payload multiplicity");
     check_named_definition_file(
         program, catalog,
         "tests/petta/typecheck_v3_quoted_argument.metta",
-        "build-fresh-pair", CETTA_PETTA_V3_EVIDENCE_ESTABLISHED,
+        "build-fresh-pair", CETTA_NIK_OUTCOME_ESTABLISHED,
         CETTA_PETTA_V3_BOUNDARY_NONE,
         "a fresh logic variable is a gradual executable value");
 

@@ -11,9 +11,45 @@
      (AbtSignature Pi
        (Fields domain codomain)
        (BindPi domain codomain))
+     (AbtSignature Sigma
+       (Fields domain codomain)
+       (BindPi domain codomain))
      (AbtSignature Lam
        (Fields domain body)
        (Bind1 body))
+     (AbtSignature Lam
+       (Fields body)
+       (Bind1 body))
+     (AbtSignature Pair
+       (Fields first second)
+       Bind0)
+     (AbtSignature Fst
+       (Fields pair)
+       Bind0)
+     (AbtSignature Snd
+       (Fields pair)
+       Bind0)
+     (AbtSignature Id
+       (Fields carrier left right)
+       Bind0)
+     (AbtSignature Refl
+       (Fields value)
+       Bind0)
+     (AbtSignature Sort
+       (Fields level)
+       Bind0)
+     (AbtSignature LevelConst
+       (Fields value)
+       Bind0)
+     (AbtSignature LevelParam
+       (Fields parameter)
+       Bind0)
+     (AbtSignature LevelSucc
+       (Fields level)
+       Bind0)
+     (AbtSignature LevelMax
+       (Fields left right)
+       Bind0)
      (AbtSignature ABTChainV1
        (Fields source body)
        (Bind1 body))

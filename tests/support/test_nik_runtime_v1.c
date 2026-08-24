@@ -179,9 +179,10 @@ static int run_differential_file(const char *path) {
         receipt.reference_accepted == receipt.compiled_accepted;
     printf(
         "(NikDifferentialV1 (Outcome %s) (Agreement %s) "
-        "(Native %s %llu) (HornReference %s %llu) "
+        "(NativeStatus %s) (Native %s %llu) (HornReference %s %llu) "
         "(CompiledWorklist %s %llu))\n",
         cetta_nik_outcome_name(outcome), agreement ? "True" : "False",
+        cetta_inference_status_name(receipt.native_status),
         receipt.native_accepted ? "True" : "False",
         (unsigned long long)receipt.native_nodes,
         receipt.reference_accepted ? "True" : "False",

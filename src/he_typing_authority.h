@@ -18,7 +18,7 @@ typedef struct {
     CettaHeRefinementStatus (*check_refinement)(
         Arena *arena, Space *space, Atom *type,
         CettaHeTypingBudget *budget, Atom **detail_out);
-    CettaHeCheckStatus (*check_term)(
+    CettaNikOutcomeV1 (*check_term)(
         Arena *arena, Space *space, Atom *term, Atom *expected,
         CettaHeTypingBudget *budget, bool require_exact_or_structural,
         CettaHeTypingEdge *edge_out, Atom **detail_out);
@@ -91,7 +91,7 @@ const CettaHeCollectionContractV1 *cetta_he_inference_contract_v1(
 
 /* The budget-stability partition mirrored from OutcomeListContracts.  Only an
  * incomplete check and resource/depth normalization are budget-sensitive. */
-bool cetta_he_check_status_is_budget_sensitive(CettaHeCheckStatus status);
+bool cetta_he_outcome_is_budget_sensitive(CettaNikOutcomeV1 status);
 bool cetta_he_normalize_status_is_exhaustion(CettaHeNormalizeStatus status);
 
 /* Ordered mirror of the four live HE search operations.  This inventory keeps

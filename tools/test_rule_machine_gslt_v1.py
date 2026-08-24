@@ -84,16 +84,63 @@ def occurrence(result: dict[str, object]) -> str:
     return sx.render(observed)
 
 
+def decode_list(term: sx.SExpr) -> list[sx.SExpr]:
+    items: list[sx.SExpr] = []
+    while isinstance(term, tuple):
+        if (
+            len(term) != 3
+            or not isinstance(term[0], sx.Symbol)
+            or term[0].text != "rm-cons"
+        ):
+            raise GateFailure(f"malformed proof argument list: {sx.render(term)}")
+        items.append(term[1])
+        term = term[2]
+    if not isinstance(term, sx.Symbol) or term.text != "rm-nil":
+        raise GateFailure(f"open proof argument list: {sx.render(term)}")
+    return items
+
+
+def curried_source_proof(result: dict[str, object]) -> str:
+    rendered = occurrence(result)
+    parsed = sx.parse_sexprs(rendered, source="curried proof occurrence")
+    if len(parsed) != 1 or not isinstance(parsed[0], tuple):
+        raise GateFailure(f"malformed curried proof occurrence: {rendered}")
+    occurrence_term = parsed[0]
+    if len(occurrence_term) != 2:
+        raise GateFailure(f"malformed curried proof occurrence: {rendered}")
+
+    def translate(term: sx.SExpr) -> sx.SExpr:
+        if not isinstance(term, tuple) or not term or not isinstance(term[0], sx.Symbol):
+            raise GateFailure(f"unsupported internal proof: {sx.render(term)}")
+        if term[0].text == "rm-proof-atom" and len(term) == 2:
+            return term[1]
+        if term[0].text == "rm-proof-app" and len(term) == 3:
+            value: sx.SExpr = term[1]
+            for argument in decode_list(term[2]):
+                value = (value, translate(argument))
+            return value
+        raise GateFailure(f"unsupported internal proof: {sx.render(term)}")
+
+    return sx.render(translate(occurrence_term[1]))
+
+
 def check_regeneration(
-    root: Path, nil_root: Path, generated: Path, runtime_generated: Path,
+    root: Path, nil_root: Path, generated: Path, curried_generated: Path,
+    runtime_generated: Path,
 ) -> None:
     generator = root / "tools" / "generate_nil_rule_guests_v1.py"
     with tempfile.TemporaryDirectory(prefix="nil-rule-guests-v1-") as raw:
         candidate = Path(raw) / generated.name
+        curried_candidate = Path(raw) / curried_generated.name
         runtime_candidate = Path(raw) / runtime_generated.name
         command = [
             sys.executable,
             str(generator),
+            "--curried",
+            str(
+                nil_root
+                / "experimental/curried-chaining/curried-chainer.metta"
+            ),
             "--bfc",
             str(nil_root / "experimental/backward-via-forward/bfc-xp.mm2"),
             "--synthesis",
@@ -107,6 +154,8 @@ def check_regeneration(
             str(nil_root / "experimental/sumo/rule-base.metta"),
             "--out",
             str(candidate),
+            "--curried-out",
+            str(curried_candidate),
             "--runtime-out",
             str(runtime_candidate),
         ]
@@ -117,6 +166,8 @@ def check_regeneration(
             )
         if candidate.read_bytes() != generated.read_bytes():
             raise GateFailure("identity-pinned SUMO guest is stale")
+        if curried_candidate.read_bytes() != curried_generated.read_bytes():
+            raise GateFailure("identity-pinned curried-chaining guest is stale")
         if runtime_candidate.read_bytes() != runtime_generated.read_bytes():
             raise GateFailure("identity-pinned native guest fixture is stale")
 
@@ -208,6 +259,7 @@ def main() -> int:
     core = presentations / "core/rule_machine_core_v1.metta"
     rule_program = presentations / "specializations/rule_machine_hilbert_bfc_program_v1.metta"
     bfc = presentations / "languages/nil_bfc_rule_package_v1.metta"
+    curried = presentations / "languages/curried_chaining_rule_package_v1.metta"
     synthesis = presentations / "languages/nil_typed_synthesis_rule_package_v1.metta"
     sumo = presentations / "languages/nil_sumo_john_carry_flower_v1.metta"
     runtime_generated = args.root / "tests/prime/nil_rule_machine_guests.generated.metta"
@@ -215,11 +267,65 @@ def main() -> int:
         args.root / "src/generated/rule_machine_program_v1.generated.h"
     )
 
-    check_regeneration(args.root, args.nil_root, sumo, runtime_generated)
+    check_regeneration(
+        args.root, args.nil_root, sumo, curried, runtime_generated
+    )
     check_rule_program_generation(args.root, core, rule_program, rule_program_generated)
-    for guest in (bfc, synthesis, sumo):
+    for guest in (curried, bfc, synthesis, sumo):
         sx.admit([core, guest])
     sx.admit([core, rule_program, bfc])
+
+    curried_b_source = query(
+        args.chart,
+        core,
+        curried,
+        "(guest-observe proof-occurrence-bag curried-chaining r0 "
+        "(nat-s (nat-s nat-z)) B ?occurrence)",
+    )
+    curried_b_bytecode = query(
+        args.chart,
+        core,
+        curried,
+        "(guest-bc-observe proof-occurrence-bag curried-chaining r0 "
+        "(nat-s (nat-s nat-z)) B ?occurrence)",
+    )
+    expect_outcome(curried_b_source, "Unique", 1)
+    expect_outcome(curried_b_bytecode, "Unique", 1)
+    if occurrence(curried_b_source) != occurrence(curried_b_bytecode):
+        raise GateFailure("curried B source/bytecode proof differs")
+    if curried_source_proof(curried_b_source) != "((ModusPonens ab) a)":
+        raise GateFailure("curried B proof no longer reconstructs the authored proof")
+
+    curried_c_source = query(
+        args.chart,
+        core,
+        curried,
+        "(guest-observe proof-occurrence-bag curried-chaining r0 "
+        "(nat-s (nat-s (nat-s nat-z))) C ?occurrence)",
+    )
+    curried_c_bytecode = query(
+        args.chart,
+        core,
+        curried,
+        "(guest-bc-observe proof-occurrence-bag curried-chaining r0 "
+        "(nat-s (nat-s (nat-s nat-z))) C ?occurrence)",
+    )
+    expect_outcome(curried_c_source, "Unique", 1)
+    expect_outcome(curried_c_bytecode, "Unique", 1)
+    if occurrence(curried_c_source) != occurrence(curried_c_bytecode):
+        raise GateFailure("curried C source/bytecode proof differs")
+    expected_curried_c = "((ModusPonens bc) ((ModusPonens ab) a))"
+    if curried_source_proof(curried_c_source) != expected_curried_c:
+        raise GateFailure("curried C proof no longer reconstructs the authored proof")
+
+    curried_negative = query(
+        args.chart,
+        core,
+        curried,
+        "(guest-observe proof-occurrence-bag curried-chaining r0 "
+        "(nat-s (nat-s (nat-s nat-z))) D ?occurrence)",
+    )
+    expect_outcome(curried_negative, "NoAnswer", 0)
 
     compiled_bfc = query(
         args.chart,
@@ -365,7 +471,7 @@ def main() -> int:
         if required not in rendered_sumo:
             raise GateFailure(f"SUMO proof lost {required}")
 
-    print("(RuleMachineGSLTV1Summary 16 16 0)")
+    print("(RuleMachineGSLTV1Summary 21 21 0)")
     return 0
 
 

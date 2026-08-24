@@ -1,0 +1,12 @@
+!(type:eq u0 u0)
+!(type:eq u0 (-> u0 u0))
+!(type:eq (-> (x : u0) u0) (-> (y : u0) u0))
+!(type:eq (sigma (x : u0) u0) (sigma (y : u0) u0))
+!(type:eq u0 (lam x x))
+!(type:eq u1 u1)
+; Ill-typed operands are outside typed conversion, not negative evidence.
+!(type:eq u1 u0)
+!(type:eq (idx 0) (idx 0))
+!(type:eq (u0 u0) (u0 u0))
+!(type:eq 7 7)
+!(type:eq 7 8)

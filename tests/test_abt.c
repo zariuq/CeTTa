@@ -15,7 +15,7 @@
 
 enum {
     ABT_DEEP_TERM_DEPTH = CETTA_ABT_MUTATION == 0 ? 100000 : 1000,
-    ABT_EXPECTED_CHECKS = 114,
+    ABT_EXPECTED_CHECKS = 116,
 };
 
 static unsigned failures = 0;
@@ -143,6 +143,10 @@ static void test_signature_admission(Arena *arena) {
         &signature, symbol_intern_cstr(g_symbols, "Pi"), 2u);
     const AbtSignatureEntry *lam = abt_signature_lookup(
         &signature, symbol_intern_cstr(g_symbols, "Lam"), 2u);
+    const AbtSignatureEntry *intrinsic_lam = abt_signature_lookup(
+        &signature, symbol_intern_cstr(g_symbols, "Lam"), 1u);
+    const AbtSignatureEntry *sigma = abt_signature_lookup(
+        &signature, symbol_intern_cstr(g_symbols, "Sigma"), 2u);
     const AbtSignatureEntry *app = abt_signature_lookup(
         &signature, symbol_intern_cstr(g_symbols, "App"), 2u);
     const AbtSignatureEntry *chain = abt_signature_lookup(
@@ -157,6 +161,10 @@ static void test_signature_admission(Arena *arena) {
           "Pi codomain binds once");
     CHECK(lam && lam->depths[0] == 0u && lam->depths[1] == 1u,
           "Lam body binds once");
+    CHECK(intrinsic_lam && intrinsic_lam->depths[0] == 1u,
+          "intrinsic Lam body binds once");
+    CHECK(sigma && sigma->depths[0] == 0u && sigma->depths[1] == 1u,
+          "Sigma codomain binds once");
     CHECK(app && app->depths[0] == 0u && app->depths[1] == 0u,
           "App fields do not bind");
     CHECK(chain && chain->depths[0] == 0u && chain->depths[1] == 1u,

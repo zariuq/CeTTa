@@ -1794,8 +1794,18 @@ static void main_add_he_prime_typing_op_decls(Space *space, Arena *arena) {
 static void main_add_prime_semantic_op_decls(Space *space, Arena *arena) {
     static const struct { const char *name; const char *sig; } ops[] = {
         {"prime-package", "u"},
-        {"prime-judge", "uA"},
-        {"prime-judge", "uAN"},
+        {"type:of", "A"},
+        {"type:check", "AA"},
+        {"type:analyze", "AA"},
+        {"type:eq", "AA"},
+        {"type:formed", "A"},
+        {"type:refine", "A"},
+        {"type:may", "AA"},
+        {"type:must", "AA"},
+        {"type:theorem", "AAA"},
+        {"type:prove", "AAA"},
+        {"nik:check", "AAA"},
+        {"nik:check", "AAAN"},
     };
     for (size_t i = 0; i < sizeof ops / sizeof ops[0]; i++) {
         const char *sig = ops[i].sig;

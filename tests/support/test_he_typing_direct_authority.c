@@ -98,7 +98,7 @@ int main(void) {
     assert(core_service->check_refinement ==
         he_typing_check_refinement_status_budgeted);
     assert(core_service->check_term ==
-        he_typing_check_term_status_budgeted);
+        he_typing_check_term_outcome_budgeted);
 
     const CettaHeProfiledTypeInferenceDirectServiceV1 *profile_service =
         &cetta_he_profiled_type_inference_direct_service_v1;
@@ -137,14 +137,14 @@ int main(void) {
     assert(cetta_he_inference_contract_v1(
                CETTA_HE_INFERENCE_API_V1_COUNT) == NULL);
 
-    assert(!cetta_he_check_status_is_budget_sensitive(
-        CETTA_HE_CHECK_ESTABLISHED));
-    assert(!cetta_he_check_status_is_budget_sensitive(
-        CETTA_HE_CHECK_REFUTED));
-    assert(!cetta_he_check_status_is_budget_sensitive(
-        CETTA_HE_CHECK_UNDETERMINED));
-    assert(cetta_he_check_status_is_budget_sensitive(
-        CETTA_HE_CHECK_INCOMPLETE));
+    assert(!cetta_he_outcome_is_budget_sensitive(
+        CETTA_NIK_OUTCOME_ESTABLISHED));
+    assert(!cetta_he_outcome_is_budget_sensitive(
+        CETTA_NIK_OUTCOME_REFUTED));
+    assert(!cetta_he_outcome_is_budget_sensitive(
+        CETTA_NIK_OUTCOME_OUTSIDE_FRAGMENT));
+    assert(cetta_he_outcome_is_budget_sensitive(
+        CETTA_NIK_OUTCOME_INCOMPLETE));
     assert(!cetta_he_normalize_status_is_exhaustion(
         CETTA_HE_NORMALIZE_COMPLETE));
     assert(cetta_he_normalize_status_is_exhaustion(
@@ -192,10 +192,6 @@ int main(void) {
         source->presentation_id, "he-typing-consistency-core") == 0);
     assert(strcmp(
         source->semantic_scope, "he.typing.consistency-core") == 0);
-    assert(strcmp(source->mode, "direct-decision") == 0);
-    assert(strcmp(source->certificate_policy, "none") == 0);
-    assert(strcmp(source->fiber, "he") == 0);
-    assert(strcmp(source->default_outcome, "HCheckUndetermined") == 0);
     assert(source->coverage ==
         CETTA_NIK_DIRECT_SOURCE_AUTHORED_FRAGMENT);
 
@@ -211,10 +207,6 @@ int main(void) {
     assert(strcmp(
         profile_source->semantic_scope,
         "he.profiled-type-inference.ground-declaration-application-core") == 0);
-    assert(strcmp(profile_source->mode, "direct-decision") == 0);
-    assert(strcmp(profile_source->certificate_policy, "none") == 0);
-    assert(strcmp(profile_source->fiber, "he") == 0);
-    assert(strcmp(profile_source->default_outcome, "HCheckUndetermined") == 0);
     assert(profile_source->coverage ==
         CETTA_NIK_DIRECT_SOURCE_AUTHORED_FRAGMENT);
 
@@ -232,11 +224,6 @@ int main(void) {
     assert(strcmp(
         closed_ground_source->semantic_scope,
         "he.typing.closed-ground-decision-core") == 0);
-    assert(strcmp(closed_ground_source->mode, "direct-decision") == 0);
-    assert(strcmp(closed_ground_source->certificate_policy, "none") == 0);
-    assert(strcmp(closed_ground_source->fiber, "he") == 0);
-    assert(strcmp(
-        closed_ground_source->default_outcome, "HCheckUndetermined") == 0);
     assert(closed_ground_source->coverage ==
         CETTA_NIK_DIRECT_SOURCE_AUTHORED_FRAGMENT);
 
@@ -253,10 +240,10 @@ int main(void) {
     invalid_source.presentation_id = "";
     assert(!cetta_nik_direct_source_binding_v1_is_valid(&invalid_source));
     invalid_source = *source;
-    invalid_source.certificate_policy = "trace";
+    invalid_source.source_sha256 = "short";
     assert(!cetta_nik_direct_source_binding_v1_is_valid(&invalid_source));
     invalid_source = *source;
-    invalid_source.fiber = "";
+    invalid_source.package_sha256 = "short";
     assert(!cetta_nik_direct_source_binding_v1_is_valid(&invalid_source));
 
     Atom *number = atom_symbol(&persistent, "Number");
@@ -316,7 +303,7 @@ int main(void) {
     assert(core_service->check_term(
                &persistent, &space, atom_int(&persistent, 7), number,
                &direct_budget, false, &typing_edge, &typing_detail) ==
-           CETTA_HE_CHECK_ESTABLISHED);
+           CETTA_NIK_OUTCOME_ESTABLISHED);
     assert(typing_edge == CETTA_HE_EDGE_EXACT);
 
     typing_detail = NULL;
@@ -325,7 +312,7 @@ int main(void) {
     assert(core_service->check_term(
                &persistent, &space, atom_int(&persistent, 7), string,
                &direct_budget, false, &typing_edge, &typing_detail) ==
-           CETTA_HE_CHECK_REFUTED);
+           CETTA_NIK_OUTCOME_REFUTED);
     assert(typing_edge == CETTA_HE_EDGE_NONE);
 
     typing_detail = NULL;
@@ -334,7 +321,7 @@ int main(void) {
     assert(core_service->check_term(
                &persistent, &space, atom_int(&persistent, 7), dynamic,
                &direct_budget, false, &typing_edge, &typing_detail) ==
-           CETTA_HE_CHECK_ESTABLISHED);
+           CETTA_NIK_OUTCOME_ESTABLISHED);
     assert(typing_edge == CETTA_HE_EDGE_DYNAMIC);
 
     typing_detail = NULL;
@@ -343,7 +330,7 @@ int main(void) {
     assert(core_service->check_term(
                &persistent, &space, atom_int(&persistent, 7), dynamic,
                &direct_budget, true, &typing_edge, &typing_detail) ==
-           CETTA_HE_CHECK_UNDETERMINED);
+           CETTA_NIK_OUTCOME_OUTSIDE_FRAGMENT);
     assert(typing_edge == CETTA_HE_EDGE_DYNAMIC);
 
     Atom **inferred_types = NULL;
@@ -527,7 +514,7 @@ int main(void) {
     assert(core_service->check_term(
                &persistent, &space, contract_subject, type_one,
                &direct_budget, false, &typing_edge, &typing_detail) ==
-           CETTA_HE_CHECK_INCOMPLETE);
+           CETTA_NIK_OUTCOME_INCOMPLETE);
     assert(direct_budget.type_capacity_exhausted);
 
     typing_detail = NULL;
@@ -537,7 +524,7 @@ int main(void) {
     assert(core_service->check_term(
                &persistent, &space, contract_subject, type_one,
                &direct_budget, false, &typing_edge, &typing_detail) ==
-           CETTA_HE_CHECK_ESTABLISHED);
+           CETTA_NIK_OUTCOME_ESTABLISHED);
     assert(!direct_budget.type_capacity_exhausted);
 
 #if CETTA_BUILD_WITH_RUNTIME_STATS

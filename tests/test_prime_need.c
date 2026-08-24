@@ -422,6 +422,7 @@ int main(void) {
           "promotion preserves exact closure captures");
 #endif
 
+#if CETTA_BUILD_WITH_PRIME_CAUSAL_RECEIPTS
     PrimeNeedReceipt receipt_root;
     prime_need_receipt_init(&receipt_root);
     CHECK(!prime_need_receipt_present(&receipt_root),
@@ -718,6 +719,7 @@ int main(void) {
               &promoted_arena, &promoted_receipt) &&
               promoted_receipt.top == same_owner_top,
           "same-owner promotion preserves the persistent receipt DAG");
+#endif
 
     Atom *context_x = atom_symbol(&arena, "x");
     Atom *context_y = atom_symbol(&arena, "y");
