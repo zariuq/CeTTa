@@ -16,6 +16,11 @@
         (source-proof-sequence-layer
           SequenceProofV1 SequenceLanguageV1))
       (body))
+    (rule sequence-canary-relational-layer
+      (head
+        (source-proof-sequence-relational-layer
+          SequenceProofV1 SequenceLanguageV1))
+      (body))
     (rule sequence-canary-assertion-layer
       (head
         (source-proof-sequence-assertion-layer

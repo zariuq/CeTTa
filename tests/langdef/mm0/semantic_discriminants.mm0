@@ -1,0 +1,9 @@
+provable sort wff;
+term wi: wff > wff > wff;
+
+axiom ax_id: $ wi $;
+theorem th_id: $ wi $;
+
+prefix wi: $ ~ $ prec max;
+infixl wi: $ + $ prec 10;
+infixr wi: $ -> $ prec 20;

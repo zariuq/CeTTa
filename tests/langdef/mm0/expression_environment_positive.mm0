@@ -1,0 +1,7 @@
+sort set;
+strict provable sort wff;
+sort raw;
+
+term imp: wff > wff > wff;
+term all {x: set} (ph: wff x): wff;
+term rawc: raw;

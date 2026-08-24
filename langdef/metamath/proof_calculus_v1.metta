@@ -16,6 +16,11 @@
         (source-proof-sequence-layer
           MetamathProofV1 MetamathLanguageV1))
       (body))
+    (rule mm-proof-calculus-sequence-relational-layer
+      (head
+        (source-proof-sequence-relational-layer
+          MetamathProofV1 MetamathLanguageV1))
+      (body))
     (rule mm-proof-calculus-assertion-layer
       (head
         (source-proof-sequence-assertion-layer

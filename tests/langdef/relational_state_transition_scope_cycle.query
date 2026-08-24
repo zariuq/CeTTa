@@ -1,0 +1,52 @@
+(RunActionsV1
+  TransitionPackageV1
+  TransitionGoodOccurrenceV1
+  (StateV1 TransitionPackageV1 NatZeroV1 NatZeroV1 TablesNilV1)
+  (ActionsConsV1
+    (StateRequireDepthV1 NatZeroV1)
+    (ActionsConsV1
+      StatePushScopeV1
+      (ActionsConsV1
+        (StateRequireDepthV1 (NatSuccV1 NatZeroV1))
+        (ActionsConsV1
+          StateNoopV1
+          (ActionsConsV1
+            StatePopScopeV1
+            (ActionsConsV1
+              (StateRequireDepthV1 NatZeroV1)
+              ActionsNilV1))))))
+  AcceptedV1
+  (StateV1 TransitionPackageV1 NatZeroV1 NatZeroV1 TablesNilV1)
+  (HistoryConsV1
+    (EnteredActionV1
+      (StateRequireDepthV1 NatZeroV1)
+      TransitionGoodPositionV1)
+    (HistoryConsV1
+      (CheckedDepthV1 NatZeroV1)
+      (HistoryConsV1
+        (EnteredActionV1 StatePushScopeV1 TransitionGoodPositionV1)
+        (HistoryConsV1
+          (PushedScopeV1 (NatSuccV1 NatZeroV1))
+          (HistoryConsV1
+            (EnteredActionV1
+              (StateRequireDepthV1 (NatSuccV1 NatZeroV1))
+              TransitionGoodPositionV1)
+            (HistoryConsV1
+              (CheckedDepthV1 (NatSuccV1 NatZeroV1))
+              (HistoryConsV1
+                (EnteredActionV1 StateNoopV1 TransitionGoodPositionV1)
+                (HistoryConsV1
+                  (CompletedActionV1 StateNoopV1)
+                  (HistoryConsV1
+                    (EnteredActionV1
+                      StatePopScopeV1 TransitionGoodPositionV1)
+                    (HistoryConsV1
+                      (PoppedScopeV1
+                        (NatSuccV1 NatZeroV1) NatZeroV1)
+                      (HistoryConsV1
+                        (EnteredActionV1
+                          (StateRequireDepthV1 NatZeroV1)
+                          TransitionGoodPositionV1)
+                        (HistoryConsV1
+                          (CheckedDepthV1 NatZeroV1)
+                          HistoryNilV1)))))))))))))

@@ -3242,6 +3242,20 @@ PettaRelationSafety petta_program_relation_safety(
     if (!safe)
         safety = PETTA_RELATION_SAFETY_UNSAFE;
 
+    if (getenv("CETTA_PETTA_TABLE_SAFETY_TRACE")) {
+        const char *classification =
+            safety == PETTA_RELATION_SAFETY_STATIC
+                ? "static"
+                : safety == PETTA_RELATION_SAFETY_GUARDED_DYNAMIC
+                    ? "guarded-dynamic"
+                    : "unsafe";
+        fprintf(
+            stderr,
+            "[petta-table-safety] head=%s arity=%u safety=%s\n",
+            symbol_bytes(g_symbols, head), (unsigned)arity,
+            classification);
+    }
+
     *cached = (PettaTableSafetyCacheEntry){
         .space = space,
         .instance_id = instance_id,

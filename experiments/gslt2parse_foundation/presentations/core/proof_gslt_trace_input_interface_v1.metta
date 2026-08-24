@@ -38,6 +38,11 @@
         (oslf-external-relation-decl-v1
           source-proof-trace-input-current-apart-v1 2))
       (body))
+    (rule proof-trace-input-interface-current-apart-decision-v1
+      (head
+        (oslf-external-relation-decl-v1
+          source-proof-trace-input-current-apart-decision-v1 3))
+      (body))
     (rule proof-trace-input-interface-frame-count-v1
       (head
         (oslf-external-relation-decl-v1
@@ -77,6 +82,16 @@
       (head
         (oslf-external-relation-decl-v1
           source-proof-trace-input-token-different-v1 2))
+      (body))
+    (rule proof-trace-input-interface-token-class-v1
+      (head
+        (oslf-external-relation-decl-v1
+          source-proof-trace-input-token-class-v1 2))
+      (body))
+    (rule proof-trace-input-interface-token-compare-v1
+      (head
+        (oslf-external-relation-decl-v1
+          source-proof-trace-input-token-compare-v1 3))
       (body))
     (rule proof-trace-input-interface-token-literal-v1
       (head

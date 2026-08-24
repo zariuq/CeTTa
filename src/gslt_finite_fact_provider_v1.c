@@ -546,6 +546,30 @@ size_t cetta_gslt_finite_fact_provider_set_row_count_v1(
     return set ? set->row_count : 0u;
 }
 
+size_t cetta_gslt_finite_fact_provider_set_relation_count_v1(
+    const CettaGsltFiniteFactProviderSetV1 *set) {
+    return set ? set->registry.provider_count : 0u;
+}
+
+bool cetta_gslt_finite_fact_provider_set_relation_view_v1(
+    const CettaGsltFiniteFactProviderSetV1 *set,
+    size_t relation_index,
+    CettaGsltFiniteFactRelationViewV1 *view) {
+    if (!view)
+        return false;
+    *view = (CettaGsltFiniteFactRelationViewV1){0};
+    if (!set || relation_index >= set->registry.provider_count)
+        return false;
+    const CettaGsltFiniteFactRelationV1 *relation =
+        &set->relations[relation_index];
+    *view = (CettaGsltFiniteFactRelationViewV1){
+        .requirement = relation->requirement,
+        .rows = relation->rows,
+        .row_count = relation->row_count,
+    };
+    return true;
+}
+
 void cetta_gslt_finite_fact_provider_set_stats_v1(
     const CettaGsltFiniteFactProviderSetV1 *set,
     CettaGsltFiniteFactProviderStatsV1 *stats) {

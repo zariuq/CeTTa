@@ -1725,41 +1725,35 @@ int main(int argc, char **argv) {
     size_t reflected_text_len = 0u;
     size_t reflected_rule_count = 0u;
     if (nreflect_pres > 0) {
-        FHGSLTPackage *reflection_source = NULL;
-        if (!fhgslt_package_from_paths(reflect_pres,
-                                       (size_t)nreflect_pres,
-                                       &reflection_source,
-                                       schema_error,
-                                       sizeof schema_error) ||
-            !fhgslt_package_reflected_presentation(reflection_source,
-                                                   &reflected_text,
-                                                   &reflected_text_len,
-                                                   schema_error,
-                                                   sizeof schema_error)) {
+        size_t reflected_source_rules = 0u;
+        size_t reflected_source_operators = 0u;
+        if (!fhgslt_package_reflected_sources(
+                checked_package,
+                reflect_pres,
+                (size_t)nreflect_pres,
+                &reflected_text,
+                &reflected_text_len,
+                &reflected_source_operators,
+                &reflected_source_rules,
+                schema_error,
+                sizeof schema_error)) {
             printf("{\"outcome\":\"MalformedPresentation\","
                    "\"reason\":\"%s\"}\n",
                    schema_error[0] ? schema_error :
                        "finite-Horn reflection rejection");
-            fhgslt_package_free(reflection_source);
             fhgslt_package_free(checked_package);
             return 0;
         }
-        size_t reflected_source_rules =
-            fhgslt_package_rule_count(reflection_source);
-        size_t reflected_source_operators =
-            fhgslt_package_operator_count(reflection_source);
         if (reflected_source_rules >
             SIZE_MAX - reflected_source_operators) {
             printf("{\"outcome\":\"MalformedPresentation\","
                    "\"reason\":\"reflected declaration count overflow\"}\n");
-            fhgslt_package_free(reflection_source);
             fhgslt_package_free(checked_package);
             free(reflected_text);
             return 0;
         }
         reflected_rule_count =
             reflected_source_rules + reflected_source_operators;
-        fhgslt_package_free(reflection_source);
     }
 
     idmap_init(&goal_map, 4096);

@@ -3,6 +3,8 @@
 
 #include "native/langdef_module.h"
 #include "native/langdef_metta_equation_compiler_v1.h"
+#include "native/gslt_petta_direct_v1.h"
+#include "native/gslt_rhometta_direct_v1.h"
 
 #include "finite_horn_gslt_v1.h"
 #include "finite_horn_answer_stream_v1.h"
@@ -347,6 +349,7 @@ static bool run_exporter(const char *compiler_root,
                          const char *exporter,
                          const char *presentation_root,
                          const char *start_name,
+                         const char *expected_closure,
                          char *const *relative_sources,
                          uint32_t source_len,
                          const char *output_path_value,
@@ -388,7 +391,7 @@ static bool run_exporter(const char *compiler_root,
     arguments[4] = (char *)"--";
     arguments[5] = (char *)presentation_root;
     arguments[6] = (char *)start_name;
-    arguments[7] = (char *)"closed";
+    arguments[7] = (char *)expected_closure;
     for (uint32_t index = 0u; index < source_len; index++)
         arguments[8u + index] = relative_sources[index];
     arguments[8u + source_len] = NULL;
@@ -729,11 +732,15 @@ static bool compile_parser_pack(const char *manifest_argument,
              error, error_size)))
         goto done;
     if (!run_exporter(compiler_root, exporter, presentation_root,
-                      start_name, relative_sources, manifest.source_len,
+                      start_name,
+                      manifest.parser_pack_expected_closed
+                          ? "closed" : "partial",
+                      relative_sources, manifest.source_len,
                       pack_path, error, error_size) ||
         !ppabi_v1_wire_read(&wire, pack_path, error, error_size) ||
         !ppabi_v1_wire_load_pack(&wire, &pack, error, error_size) ||
-        !wire.expected_closed || !atom_eq(wire.start, manifest.start) ||
+        wire.expected_closed != manifest.parser_pack_expected_closed ||
+        !atom_eq(wire.start, manifest.start) ||
         !cetta_langdef_sha256_file(manifest_path, manifest_digest,
                                    error, error_size) ||
         !cetta_langdef_sha256_file(pack_path, pack_file_digest,
@@ -869,7 +876,8 @@ static bool seal_langdef(const char *manifest_argument,
         goto done;
     if (!ppabi_v1_wire_read(&wire, pack_path, error, error_size) ||
         !ppabi_v1_wire_load_pack(&wire, &pack, error, error_size) ||
-        !wire.expected_closed || !atom_eq(wire.start, manifest.start) ||
+        wire.expected_closed != manifest.parser_pack_expected_closed ||
+        !atom_eq(wire.start, manifest.start) ||
         !cetta_langdef_sha256_file(
             manifest_path, manifest_digest, error, error_size) ||
         !cetta_langdef_sha256_file(
@@ -928,6 +936,68 @@ static bool write_atomic(const char *path, const uint8_t *bytes, size_t len,
     return true;
 }
 
+static bool read_file_bytes_v1(const char *path,
+                               uint8_t **out,
+                               size_t *out_len,
+                               char *error,
+                               size_t error_size) {
+    FILE *file = NULL;
+    uint8_t *bytes = NULL;
+    size_t len = 0u;
+    size_t cap = 0u;
+    bool ok = false;
+    if (!path || !out || !out_len)
+        return set_error(error, error_size, "invalid file-read request");
+    *out = NULL;
+    *out_len = 0u;
+    file = fopen(path, "rb");
+    if (!file)
+        return set_error(error, error_size,
+                         "cannot open %s: %s", path, strerror(errno));
+    for (;;) {
+        if (len == cap) {
+            size_t next = cap == 0u ? 16384u : cap * 2u;
+            if (next < cap) {
+                set_error(error, error_size, "%s is too large", path);
+                goto done;
+            }
+            uint8_t *grown = realloc(bytes, next);
+            if (!grown) {
+                set_error(error, error_size,
+                          "out of memory reading %s", path);
+                goto done;
+            }
+            bytes = grown;
+            cap = next;
+        }
+        size_t amount = fread(bytes + len, 1u, cap - len, file);
+        len += amount;
+        if (amount == 0u) {
+            if (ferror(file)) {
+                set_error(error, error_size,
+                          "cannot read %s: %s", path, strerror(errno));
+                goto done;
+            }
+            break;
+        }
+    }
+    *out = bytes;
+    *out_len = len;
+    bytes = NULL;
+    ok = true;
+
+done:
+    if (fclose(file) != 0 && ok) {
+        free(*out);
+        *out = NULL;
+        *out_len = 0u;
+        ok = set_error(error, error_size,
+                       "cannot close %s: %s", path, strerror(errno));
+    }
+    free(bytes);
+    return ok;
+}
+
 typedef struct {
     char *text;
     size_t len;
@@ -937,6 +1007,7 @@ typedef struct {
     char *name;
     size_t name_len;
     CettaExprLen arity;
+    SymbolId symbol_id;
 } LangDefOperatorV1;
 
 typedef struct {
@@ -1340,6 +1411,18 @@ static bool langdef_operator_collect(
             size_t name_len = 0u;
             LangDefOperatorV1 *next;
             size_t next_cap;
+            SymbolId symbol_id = term->expr.elems[0]->sym_id;
+            CettaExprLen arity = term->expr.len - 1u;
+            bool already_collected = false;
+            for (size_t index = 0u; index < *operator_len; index++) {
+                if ((*operators)[index].symbol_id == symbol_id &&
+                    (*operators)[index].arity == arity) {
+                    already_collected = true;
+                    break;
+                }
+            }
+            if (already_collected)
+                goto push_arguments;
             if (!fh_ground_term_v1_render(
                     term->expr.elems[0], &name, &name_len,
                     error, error_size))
@@ -1367,9 +1450,11 @@ static bool langdef_operator_collect(
             (*operators)[(*operator_len)++] = (LangDefOperatorV1){
                 .name = (char *)name,
                 .name_len = name_len,
-                .arity = term->expr.len - 1u,
+                .arity = arity,
+                .symbol_id = symbol_id,
             };
         }
+push_arguments:
         for (CettaExprIndex index = 1u;
              index < term->expr.len; index++)
             PUSH_TERM(term->expr.elems[index]);
@@ -2656,6 +2741,819 @@ done:
     return ok;
 }
 
+static bool direct_sources_from_composition_v1(
+    const char *composition_path, Arena *arena,
+    char resolved[CETTA_LANGDEF_MAX_SOURCES][PATH_MAX],
+    const char **sources, size_t *source_count,
+    const char *command, char *error, size_t error_size) {
+    Atom *root = cetta_langdef_read_single_form(
+        composition_path, arena, error, error_size);
+    bool saw_name = false;
+    if (!root || root->kind != ATOM_EXPR || root->expr.len < 3u ||
+        !atom_is_symbol(root->expr.elems[0], "gslt-composition-v1"))
+        return set_error(error, error_size,
+                         "%s composition is malformed", command);
+    *source_count = 0u;
+    for (CettaExprIndex index = 1u; index < root->expr.len; index++) {
+        Atom *field = root->expr.elems[index];
+        const char *value = NULL;
+        if (cetta_langdef_expr_head(field, "name", 1u)) {
+            if (saw_name ||
+                !cetta_langdef_text_arg(field->expr.elems[1], &value) ||
+                value[0] == '\0')
+                return set_error(
+                    error, error_size,
+                    "%s composition has an invalid name", command);
+            saw_name = true;
+        } else if (cetta_langdef_expr_head(field, "source", 1u)) {
+            if (*source_count >= CETTA_LANGDEF_MAX_SOURCES ||
+                !cetta_langdef_text_arg(field->expr.elems[1], &value) ||
+                value[0] == '\0' ||
+                !output_path(composition_path, value,
+                             resolved[*source_count], error, error_size))
+                return false;
+            for (size_t prior = 0u; prior < *source_count; prior++) {
+                if (strcmp(resolved[prior], resolved[*source_count]) == 0)
+                    return set_error(
+                        error, error_size,
+                        "%s composition repeats a source", command);
+            }
+            sources[*source_count] = resolved[*source_count];
+            (*source_count)++;
+        } else {
+            return set_error(
+                error, error_size,
+                "%s composition has an unknown field", command);
+        }
+    }
+    if (!saw_name || *source_count == 0u)
+        return set_error(
+            error, error_size,
+            "%s composition requires a name and sources", command);
+    return true;
+}
+
+static bool compile_petta_direct_command_v1(
+    int argc, char **argv, size_t *rule_count,
+    char source_digest[65], char artifact_digest[65],
+    char *error, size_t error_size) {
+    const char *sources[CETTA_LANGDEF_MAX_SOURCES];
+    size_t source_count = 0u;
+    const char *composition = NULL;
+    const char *epilogue = NULL;
+    const char *output = NULL;
+    const char *entry_modes[CETTA_LANGDEF_MAX_SOURCES];
+    size_t entry_mode_count = 0u;
+    bool closed_entry_residual = false;
+    char resolved_sources[CETTA_LANGDEF_MAX_SOURCES][PATH_MAX];
+    Atom *presentations[CETTA_LANGDEF_MAX_SOURCES];
+    Arena arena;
+    uint8_t *program = NULL;
+    size_t program_len = 0u;
+    uint8_t *epilogue_bytes = NULL;
+    size_t epilogue_len = 0u;
+    bool ok = false;
+
+    arena_init(&arena);
+    for (int index = 2; index < argc; index++) {
+        const char *option = argv[index];
+        const char *value;
+        if (index + 1 >= argc) {
+            set_error(error, error_size,
+                      "petta-direct option lacks a value");
+            goto done;
+        }
+        value = argv[++index];
+        if (strcmp(option, "--source") == 0) {
+            if (source_count >= CETTA_LANGDEF_MAX_SOURCES) {
+                set_error(error, error_size,
+                          "petta-direct has too many sources");
+                goto done;
+            }
+            sources[source_count++] = value;
+        } else if (strcmp(option, "--composition") == 0 &&
+                   composition == NULL) {
+            composition = value;
+        } else if (strcmp(option, "--epilogue") == 0 &&
+                   epilogue == NULL) {
+            epilogue = value;
+        } else if (strcmp(option, "--entry-mode") == 0) {
+            if (closed_entry_residual) {
+                set_error(error, error_size,
+                          "petta-direct cannot mix open and closed entry modes");
+                goto done;
+            }
+            if (entry_mode_count >= CETTA_LANGDEF_MAX_SOURCES) {
+                set_error(error, error_size,
+                          "petta-direct has too many entry modes");
+                goto done;
+            }
+            entry_modes[entry_mode_count++] = value;
+        } else if (strcmp(option, "--closed-entry-mode") == 0) {
+            if (entry_mode_count > 0u && !closed_entry_residual) {
+                set_error(error, error_size,
+                          "petta-direct cannot mix open and closed entry modes");
+                goto done;
+            }
+            closed_entry_residual = true;
+            if (entry_mode_count >= CETTA_LANGDEF_MAX_SOURCES) {
+                set_error(error, error_size,
+                          "petta-direct has too many entry modes");
+                goto done;
+            }
+            entry_modes[entry_mode_count++] = value;
+        } else if (strcmp(option, "--out") == 0 && output == NULL) {
+            output = value;
+        } else {
+            set_error(error, error_size,
+                      "invalid or repeated petta-direct option");
+            goto done;
+        }
+    }
+    if ((source_count == 0u) == (composition == NULL) || output == NULL) {
+        set_error(error, error_size,
+                  "petta-direct requires exactly one source list or composition and an output");
+        goto done;
+    }
+    if (composition != NULL &&
+        !direct_sources_from_composition_v1(
+            composition, &arena, resolved_sources, sources, &source_count,
+            "petta-direct", error, error_size))
+        goto done;
+    for (size_t index = 0u; index < source_count; index++) {
+        presentations[index] = cetta_langdef_read_single_form(
+            sources[index], &arena, error, error_size);
+        if (presentations[index] == NULL)
+            goto done;
+    }
+    if (!(closed_entry_residual
+              ? cetta_gslt_petta_direct_closed_v1(
+                    presentations, source_count,
+                    entry_modes, entry_mode_count, &program, &program_len,
+                    rule_count, source_digest, error, error_size)
+              : cetta_gslt_petta_direct_selected_v1(
+                    presentations, source_count,
+                    entry_modes, entry_mode_count, &program, &program_len,
+                    rule_count, source_digest, error, error_size)))
+        goto done;
+    if (epilogue != NULL) {
+        uint8_t *combined;
+        if (!read_file_bytes_v1(
+                epilogue, &epilogue_bytes, &epilogue_len,
+                error, error_size))
+            goto done;
+        if (program_len > SIZE_MAX - 1u ||
+            program_len + 1u > SIZE_MAX - epilogue_len) {
+            set_error(error, error_size,
+                      "petta-direct program is too large");
+            goto done;
+        }
+        combined = realloc(program, program_len + 1u + epilogue_len);
+        if (combined == NULL) {
+            set_error(error, error_size,
+                      "out of memory appending petta-direct epilogue");
+            goto done;
+        }
+        program = combined;
+        program[program_len++] = '\n';
+        if (epilogue_len > 0u) {
+            memcpy(program + program_len, epilogue_bytes, epilogue_len);
+            program_len += epilogue_len;
+        }
+    }
+    cetta_native_sha256_hex(program, program_len, artifact_digest);
+    ok = write_atomic(output, program, program_len, error, error_size);
+
+done:
+    free(epilogue_bytes);
+    free(program);
+    arena_free(&arena);
+    return ok;
+}
+
+static bool compile_rhometta_direct_command_v1(
+    int argc, char **argv, size_t *rule_count, size_t *relation_count,
+    char source_digest[65], char artifact_digest[65],
+    char *error, size_t error_size) {
+    const char *sources[CETTA_LANGDEF_MAX_SOURCES];
+    size_t source_count = 0u;
+    const char *targets[CETTA_LANGDEF_MAX_SOURCES];
+    size_t target_count = 0u;
+    const char *composition = NULL;
+    const char *epilogue = NULL;
+    const char *output = NULL;
+    const char *entry_rules[CETTA_LANGDEF_MAX_SOURCES];
+    size_t entry_rule_count = 0u;
+    char resolved_sources[CETTA_LANGDEF_MAX_SOURCES][PATH_MAX];
+    Atom *presentations[CETTA_LANGDEF_MAX_SOURCES];
+    FHGSLTPackage *target_package = NULL;
+    char target_package_digest[65] = {0};
+    Arena arena;
+    uint8_t *program = NULL;
+    size_t program_len = 0u;
+    uint8_t *epilogue_bytes = NULL;
+    size_t epilogue_len = 0u;
+    bool ok = false;
+
+    arena_init(&arena);
+    for (int index = 2; index < argc; index++) {
+        const char *option = argv[index];
+        const char *value;
+        if (index + 1 >= argc) {
+            set_error(error, error_size,
+                      "rhometta-direct option lacks a value");
+            goto done;
+        }
+        value = argv[++index];
+        if (strcmp(option, "--source") == 0) {
+            if (source_count >= CETTA_LANGDEF_MAX_SOURCES) {
+                set_error(error, error_size,
+                          "rhometta-direct has too many sources");
+                goto done;
+            }
+            sources[source_count++] = value;
+        } else if (strcmp(option, "--target") == 0) {
+            if (target_count >= CETTA_LANGDEF_MAX_SOURCES) {
+                set_error(error, error_size,
+                          "rhometta-direct has too many target presentations");
+                goto done;
+            }
+            targets[target_count++] = value;
+        } else if (strcmp(option, "--composition") == 0 &&
+                   composition == NULL) {
+            composition = value;
+        } else if (strcmp(option, "--epilogue") == 0 &&
+                   epilogue == NULL) {
+            epilogue = value;
+        } else if (strcmp(option, "--entry-rule") == 0) {
+            if (entry_rule_count >= CETTA_LANGDEF_MAX_SOURCES) {
+                set_error(error, error_size,
+                          "rhometta-direct has too many entry rules");
+                goto done;
+            }
+            entry_rules[entry_rule_count++] = value;
+        } else if (strcmp(option, "--out") == 0 && output == NULL) {
+            output = value;
+        } else {
+            set_error(error, error_size,
+                      "invalid or repeated rhometta-direct option");
+            goto done;
+        }
+    }
+    if ((source_count == 0u) == (composition == NULL) ||
+        target_count == 0u || output == NULL) {
+        set_error(
+            error, error_size,
+            "rhometta-direct requires exactly one source list or composition, a target package, and an output");
+        goto done;
+    }
+    if (!fhgslt_package_from_paths(
+            targets, target_count, &target_package, error, error_size) ||
+        !fhgslt_package_digest(
+            target_package, target_package_digest, error, error_size))
+        goto done;
+    if (strcmp(target_package_digest,
+               CETTA_GSLT_RHOMETTA_TARGET_PACKAGE_DIGEST_V1) != 0) {
+        set_error(
+            error, error_size,
+            "rhometta-direct target package digest mismatch: expected %s, got %s",
+            CETTA_GSLT_RHOMETTA_TARGET_PACKAGE_DIGEST_V1,
+            target_package_digest);
+        goto done;
+    }
+    if (composition != NULL &&
+        !direct_sources_from_composition_v1(
+            composition, &arena, resolved_sources, sources, &source_count,
+            "rhometta-direct", error, error_size))
+        goto done;
+    for (size_t index = 0u; index < source_count; index++) {
+        presentations[index] = cetta_langdef_read_single_form(
+            sources[index], &arena, error, error_size);
+        if (presentations[index] == NULL)
+            goto done;
+    }
+    if (!cetta_gslt_rhometta_direct_selected_v1(
+            presentations, source_count, target_package_digest,
+            entry_rules, entry_rule_count,
+            &program, &program_len,
+            rule_count, relation_count, source_digest,
+            error, error_size))
+        goto done;
+    if (epilogue != NULL) {
+        uint8_t *combined;
+        if (!read_file_bytes_v1(
+                epilogue, &epilogue_bytes, &epilogue_len,
+                error, error_size))
+            goto done;
+        if (program_len > SIZE_MAX - 1u ||
+            program_len + 1u > SIZE_MAX - epilogue_len) {
+            set_error(error, error_size,
+                      "rhometta-direct program is too large");
+            goto done;
+        }
+        combined = realloc(program, program_len + 1u + epilogue_len);
+        if (combined == NULL) {
+            set_error(error, error_size,
+                      "out of memory appending rhometta-direct epilogue");
+            goto done;
+        }
+        program = combined;
+        program[program_len++] = '\n';
+        if (epilogue_len > 0u) {
+            memcpy(program + program_len, epilogue_bytes, epilogue_len);
+            program_len += epilogue_len;
+        }
+    }
+    cetta_native_sha256_hex(program, program_len, artifact_digest);
+    ok = write_atomic(output, program, program_len, error, error_size);
+
+done:
+    fhgslt_package_free(target_package);
+    free(epilogue_bytes);
+    free(program);
+    arena_free(&arena);
+    return ok;
+}
+
+static bool finite_horn_oracle_shape_command_v1(
+    int argc, char **argv,
+    FHGSLTStructuralShapeV1 *shape,
+    char package_digest[65],
+    char *error, size_t error_size) {
+    const char *sources[CETTA_LANGDEF_MAX_SOURCES];
+    size_t source_len = 0u;
+    FHGSLTPackage *package = NULL;
+    bool ok = false;
+
+    for (int index = 2; index < argc; index++) {
+        const char *option = argv[index];
+        if (index + 1 >= argc) {
+            set_error(error, error_size,
+                      "oracle-horn-shape option lacks a value");
+            goto done;
+        }
+        const char *value = argv[++index];
+        if (strcmp(option, "--source") != 0) {
+            set_error(error, error_size,
+                      "invalid oracle-horn-shape option");
+            goto done;
+        }
+        if (source_len >= CETTA_LANGDEF_MAX_SOURCES) {
+            set_error(error, error_size,
+                      "oracle-horn-shape has too many sources");
+            goto done;
+        }
+        sources[source_len++] = value;
+    }
+    if (source_len == 0u) {
+        set_error(error, error_size,
+                  "oracle-horn-shape requires at least one source");
+        goto done;
+    }
+    if (!fhgslt_package_from_paths(sources, source_len, &package,
+                                   error, error_size) ||
+        !fhgslt_package_digest(package, package_digest,
+                               error, error_size) ||
+        !fhgslt_package_structural_shape_v1(
+            package, shape, error, error_size))
+        goto done;
+    ok = true;
+
+done:
+    fhgslt_package_free(package);
+    return ok;
+}
+
+static bool assemble_petta_horn_program_v1(
+    const uint8_t *runtime_bytes, size_t runtime_len,
+    const uint8_t *clauses, size_t clause_len,
+    const uint8_t *epilogue_bytes, size_t epilogue_len,
+    bool has_epilogue,
+    uint8_t **out, size_t *out_len,
+    char *error, size_t error_size) {
+    if (!out || !out_len ||
+        (!runtime_bytes && runtime_len != 0u) ||
+        (!clauses && clause_len != 0u) ||
+        (!epilogue_bytes && epilogue_len != 0u) ||
+        (!has_epilogue && epilogue_len != 0u))
+        return set_error(error, error_size,
+                         "invalid PeTTa Horn program assembly request");
+    *out = NULL;
+    *out_len = 0u;
+
+    size_t separator_len = runtime_len > 0u &&
+                           runtime_bytes[runtime_len - 1u] == (uint8_t)'\n'
+                               ? 1u : 2u;
+    size_t epilogue_separator_len = has_epilogue ? 1u : 0u;
+    if (runtime_len > SIZE_MAX - separator_len ||
+        runtime_len + separator_len > SIZE_MAX - clause_len ||
+        runtime_len + separator_len + clause_len >
+            SIZE_MAX - epilogue_separator_len ||
+        runtime_len + separator_len + clause_len +
+            epilogue_separator_len > SIZE_MAX - epilogue_len)
+        return set_error(error, error_size,
+                         "generated PeTTa Horn program is too large");
+
+    size_t program_len = runtime_len + separator_len + clause_len +
+                         epilogue_separator_len + epilogue_len;
+    uint8_t *program = malloc(program_len ? program_len : 1u);
+    if (!program)
+        return set_error(error, error_size,
+                         "out of memory constructing PeTTa Horn program");
+
+    size_t offset = 0u;
+    if (runtime_len > 0u) {
+        memcpy(program, runtime_bytes, runtime_len);
+        offset = runtime_len;
+    }
+    if (separator_len == 2u)
+        program[offset++] = (uint8_t)'\n';
+    program[offset++] = (uint8_t)'\n';
+    if (clause_len > 0u) {
+        memcpy(program + offset, clauses, clause_len);
+        offset += clause_len;
+    }
+    if (has_epilogue) {
+        program[offset++] = (uint8_t)'\n';
+        if (epilogue_len > 0u) {
+            memcpy(program + offset, epilogue_bytes, epilogue_len);
+            offset += epilogue_len;
+        }
+    }
+    if (offset != program_len) {
+        free(program);
+        return set_error(error, error_size,
+                         "generated PeTTa Horn program length changed");
+    }
+    *out = program;
+    *out_len = program_len;
+    return true;
+}
+
+/* Independent audit projection only.  Direct target compilation must not
+ * route source or runtime inputs through this Horn encoding. */
+static bool compile_petta_horn_oracle_command_v1(
+    int argc, char **argv, size_t *rule_len,
+    char package_digest[65], char artifact_digest[65],
+    char *error, size_t error_size) {
+    const char *sources[CETTA_LANGDEF_MAX_SOURCES];
+    size_t source_len = 0u;
+    const char *runtime = NULL;
+    const char *epilogue = NULL;
+    const char *output = NULL;
+    const char *receipt_output = NULL;
+    FHGSLTPackage *package = NULL;
+    uint8_t *runtime_bytes = NULL;
+    size_t runtime_len = 0u;
+    uint8_t *clauses = NULL;
+    size_t clause_len = 0u;
+    uint8_t *epilogue_bytes = NULL;
+    size_t epilogue_len = 0u;
+    uint8_t *program = NULL;
+    size_t program_len = 0u;
+    char runtime_digest[65];
+    char epilogue_digest[65] = {0};
+    bool ok = false;
+
+    for (int index = 2; index < argc; index++) {
+        const char *option = argv[index];
+        const char *value;
+        if (index + 1 >= argc) {
+            set_error(error, error_size,
+                      "oracle-petta-horn option lacks a value");
+            goto done;
+        }
+        value = argv[++index];
+        if (strcmp(option, "--source") == 0) {
+            if (source_len >= CETTA_LANGDEF_MAX_SOURCES) {
+                set_error(error, error_size,
+                          "oracle-petta-horn has too many sources");
+                goto done;
+            }
+            sources[source_len++] = value;
+        } else if (strcmp(option, "--runtime") == 0 && !runtime) {
+            runtime = value;
+        } else if (strcmp(option, "--epilogue") == 0 && !epilogue) {
+            epilogue = value;
+        } else if (strcmp(option, "--out") == 0 && !output) {
+            output = value;
+        } else if (strcmp(option, "--receipt-out") == 0 &&
+                   !receipt_output) {
+            receipt_output = value;
+        } else {
+            set_error(error, error_size,
+                      "invalid or repeated oracle-petta-horn option");
+            goto done;
+        }
+    }
+    if (source_len == 0u || !runtime || !output || !receipt_output) {
+        set_error(error, error_size,
+                  "oracle-petta-horn omits a required input");
+        goto done;
+    }
+    if (!fhgslt_package_from_paths(sources, source_len, &package,
+                                   error, error_size) ||
+        !fhgslt_package_digest(package, package_digest,
+                               error, error_size) ||
+        !fhgslt_package_horn_clause_ir_v1(
+            package, &clauses, &clause_len, error, error_size) ||
+        !read_file_bytes_v1(runtime, &runtime_bytes, &runtime_len,
+                            error, error_size))
+        goto done;
+    if (epilogue &&
+        !read_file_bytes_v1(epilogue, &epilogue_bytes, &epilogue_len,
+                            error, error_size))
+        goto done;
+    cetta_native_sha256_hex(runtime_bytes, runtime_len, runtime_digest);
+    if (epilogue)
+        cetta_native_sha256_hex(
+            epilogue_bytes, epilogue_len, epilogue_digest);
+    if (!assemble_petta_horn_program_v1(
+            runtime_bytes, runtime_len,
+            clauses, clause_len,
+            epilogue_bytes, epilogue_len,
+            epilogue != NULL,
+            &program, &program_len,
+            error, error_size))
+        goto done;
+    cetta_native_sha256_hex(program, program_len, artifact_digest);
+    if (!write_atomic(output, program, program_len, error, error_size))
+        goto done;
+    *rule_len = fhgslt_package_rule_count(package);
+    {
+        char receipt[768];
+        int receipt_len;
+        if (epilogue) {
+            receipt_len = snprintf(
+                receipt, sizeof(receipt),
+                "(petta-horn-receipt-v1\n"
+                "  (source-package-sha256 \"%s\")\n"
+                "  (runtime-sha256 \"%s\")\n"
+                "  (epilogue-sha256 \"%s\")\n"
+                "  (artifact-sha256 \"%s\"))\n",
+                package_digest, runtime_digest,
+                epilogue_digest, artifact_digest);
+        } else {
+            receipt_len = snprintf(
+                receipt, sizeof(receipt),
+                "(petta-horn-receipt-v1\n"
+                "  (source-package-sha256 \"%s\")\n"
+                "  (runtime-sha256 \"%s\")\n"
+                "  (artifact-sha256 \"%s\"))\n",
+                package_digest, runtime_digest, artifact_digest);
+        }
+        if (receipt_len < 0 || (size_t)receipt_len >= sizeof(receipt) ||
+            !write_atomic(receipt_output,
+                          (const uint8_t *)receipt,
+                          (size_t)receipt_len,
+                          error,
+                          error_size))
+            goto done;
+    }
+    ok = true;
+
+done:
+    free(program);
+    free(epilogue_bytes);
+    free(clauses);
+    free(runtime_bytes);
+    fhgslt_package_free(package);
+    return ok;
+}
+
+typedef struct {
+    const char *source_package_digest;
+    const char *runtime_digest;
+    const char *epilogue_digest;
+    const char *artifact_digest;
+} PeTTaHornReceiptV1;
+
+static bool lowercase_sha256_v1(const char *text) {
+    if (!text || strlen(text) != 64u)
+        return false;
+    for (size_t index = 0u; index < 64u; index++) {
+        if (!((text[index] >= '0' && text[index] <= '9') ||
+              (text[index] >= 'a' && text[index] <= 'f')))
+            return false;
+    }
+    return true;
+}
+
+static bool petta_horn_receipt_digest_v1(
+    Atom *field, const char *name, const char **slot,
+    char *error, size_t error_size) {
+    const char *digest = NULL;
+    if (*slot || !cetta_langdef_expr_head(field, name, 1u) ||
+        !cetta_langdef_text_arg(field->expr.elems[1], &digest) ||
+        !lowercase_sha256_v1(digest))
+        return set_error(error, error_size,
+                         "PeTTa Horn receipt has an invalid %s", name);
+    *slot = digest;
+    return true;
+}
+
+static bool petta_horn_receipt_parse_v1(
+    Atom *root, PeTTaHornReceiptV1 *receipt,
+    char *error, size_t error_size) {
+    memset(receipt, 0, sizeof(*receipt));
+    if (!root || root->kind != ATOM_EXPR || root->expr.len < 4u ||
+        root->expr.len > 5u ||
+        !atom_is_symbol(root->expr.elems[0], "petta-horn-receipt-v1"))
+        return set_error(error, error_size,
+                         "receipt root must be petta-horn-receipt-v1");
+    for (CettaExprIndex index = 1u; index < root->expr.len; index++) {
+        Atom *field = root->expr.elems[index];
+        if (cetta_langdef_expr_head(field,
+                                    "source-package-sha256", 1u)) {
+            if (!petta_horn_receipt_digest_v1(
+                    field, "source-package-sha256",
+                    &receipt->source_package_digest,
+                    error, error_size))
+                return false;
+        } else if (cetta_langdef_expr_head(field, "runtime-sha256", 1u)) {
+            if (!petta_horn_receipt_digest_v1(
+                    field, "runtime-sha256", &receipt->runtime_digest,
+                    error, error_size))
+                return false;
+        } else if (cetta_langdef_expr_head(field, "epilogue-sha256", 1u)) {
+            if (!petta_horn_receipt_digest_v1(
+                    field, "epilogue-sha256", &receipt->epilogue_digest,
+                    error, error_size))
+                return false;
+        } else if (cetta_langdef_expr_head(field, "artifact-sha256", 1u)) {
+            if (!petta_horn_receipt_digest_v1(
+                    field, "artifact-sha256", &receipt->artifact_digest,
+                    error, error_size))
+                return false;
+        } else {
+            return set_error(error, error_size,
+                             "PeTTa Horn receipt has an unknown field");
+        }
+    }
+    if (!receipt->source_package_digest || !receipt->runtime_digest ||
+        !receipt->artifact_digest)
+        return set_error(error, error_size,
+                         "PeTTa Horn receipt omits a required digest");
+    return true;
+}
+
+static bool bytes_contain_v1(const uint8_t *bytes,
+                             size_t len,
+                             const uint8_t *needle,
+                             size_t needle_len) {
+    if (needle_len == 0u)
+        return true;
+    if (!bytes || !needle || needle_len > len)
+        return false;
+    for (size_t offset = 0u; offset <= len - needle_len; offset++) {
+        if (memcmp(bytes + offset, needle, needle_len) == 0)
+            return true;
+    }
+    return false;
+}
+
+/* Validate an artifact produced by the optional Horn oracle above. */
+static bool check_petta_horn_oracle_command_v1(
+    int argc, char **argv, size_t *rule_len, char artifact_digest[65],
+    char *error, size_t error_size) {
+    const char *sources[CETTA_LANGDEF_MAX_SOURCES];
+    size_t source_len = 0u;
+    const char *runtime = NULL;
+    const char *epilogue = NULL;
+    const char *program = NULL;
+    const char *receipt_path = NULL;
+    FHGSLTPackage *package = NULL;
+    char package_digest[65];
+    char runtime_digest[65];
+    char epilogue_digest[65] = {0};
+    Arena arena;
+    PeTTaHornReceiptV1 receipt;
+    uint8_t *runtime_bytes = NULL;
+    size_t runtime_len = 0u;
+    uint8_t *clauses = NULL;
+    size_t clause_len = 0u;
+    uint8_t *epilogue_bytes = NULL;
+    size_t epilogue_len = 0u;
+    uint8_t *program_bytes = NULL;
+    size_t program_len = 0u;
+    uint8_t *expected_program = NULL;
+    size_t expected_program_len = 0u;
+    bool ok = false;
+
+    arena_init(&arena);
+    for (int index = 2; index < argc; index++) {
+        const char *option = argv[index];
+        const char *value;
+        if (index + 1 >= argc) {
+            set_error(error, error_size,
+                      "oracle-petta-horn-check option lacks a value");
+            goto done;
+        }
+        value = argv[++index];
+        if (strcmp(option, "--source") == 0) {
+            if (source_len >= CETTA_LANGDEF_MAX_SOURCES) {
+                set_error(error, error_size,
+                          "oracle-petta-horn-check has too many sources");
+                goto done;
+            }
+            sources[source_len++] = value;
+        } else if (strcmp(option, "--runtime") == 0 && !runtime) {
+            runtime = value;
+        } else if (strcmp(option, "--epilogue") == 0 && !epilogue) {
+            epilogue = value;
+        } else if (strcmp(option, "--program") == 0 && !program) {
+            program = value;
+        } else if (strcmp(option, "--receipt") == 0 && !receipt_path) {
+            receipt_path = value;
+        } else {
+            set_error(error, error_size,
+                      "invalid or repeated oracle-petta-horn-check option");
+            goto done;
+        }
+    }
+    if (source_len == 0u || !runtime || !program || !receipt_path) {
+        set_error(error, error_size,
+                  "oracle-petta-horn-check omits a required input");
+        goto done;
+    }
+    Atom *root = cetta_langdef_read_single_form(
+        receipt_path, &arena, error, error_size);
+    if (!root ||
+        !petta_horn_receipt_parse_v1(root, &receipt, error, error_size) ||
+        !fhgslt_package_from_paths(sources, source_len, &package,
+                                   error, error_size) ||
+        !fhgslt_package_digest(package, package_digest,
+                               error, error_size) ||
+        !fhgslt_package_horn_clause_ir_v1(
+            package, &clauses, &clause_len, error, error_size) ||
+        !read_file_bytes_v1(runtime, &runtime_bytes, &runtime_len,
+                            error, error_size) ||
+        (epilogue &&
+         !read_file_bytes_v1(epilogue, &epilogue_bytes, &epilogue_len,
+                             error, error_size)) ||
+        !read_file_bytes_v1(program, &program_bytes, &program_len,
+                            error, error_size) ||
+        !assemble_petta_horn_program_v1(
+            runtime_bytes, runtime_len,
+            clauses, clause_len,
+            epilogue_bytes, epilogue_len,
+            epilogue != NULL,
+            &expected_program, &expected_program_len,
+            error, error_size))
+        goto done;
+    cetta_native_sha256_hex(runtime_bytes, runtime_len, runtime_digest);
+    if (epilogue)
+        cetta_native_sha256_hex(
+            epilogue_bytes, epilogue_len, epilogue_digest);
+    cetta_native_sha256_hex(program_bytes, program_len, artifact_digest);
+    if (strcmp(receipt.source_package_digest, package_digest) != 0 ||
+        strcmp(receipt.runtime_digest, runtime_digest) != 0 ||
+        strcmp(receipt.artifact_digest, artifact_digest) != 0 ||
+        (epilogue &&
+         (!receipt.epilogue_digest ||
+          strcmp(receipt.epilogue_digest, epilogue_digest) != 0)) ||
+        (!epilogue && receipt.epilogue_digest)) {
+        set_error(error, error_size,
+                  "PeTTa Horn program disagrees with its source-bound receipt");
+        goto done;
+    }
+    if (program_len != expected_program_len ||
+        (program_len > 0u &&
+         memcmp(program_bytes, expected_program, program_len) != 0)) {
+        set_error(
+            error, error_size,
+            "PeTTa Horn program is not the canonical rendering of its declared inputs");
+        goto done;
+    }
+    char identity[192];
+    int identity_len = snprintf(
+        identity, sizeof(identity),
+        "(HornClauseV1 (FiniteHornPackageDigestV1 sha256-%s) "
+        "HornBodyNilV1)",
+        package_digest);
+    if (identity_len < 0 || (size_t)identity_len >= sizeof(identity) ||
+        !bytes_contain_v1(program_bytes,
+                          program_len,
+                          (const uint8_t *)identity,
+                          (size_t)identity_len)) {
+        set_error(error, error_size,
+                  "PeTTa Horn program omits its admitted source identity");
+        goto done;
+    }
+    *rule_len = fhgslt_package_rule_count(package);
+    ok = true;
+
+done:
+    free(expected_program);
+    free(program_bytes);
+    free(epilogue_bytes);
+    free(clauses);
+    free(runtime_bytes);
+    fhgslt_package_free(package);
+    arena_free(&arena);
+    return ok;
+}
+
 static const char *option_value(int argc, char **argv, const char *name) {
     for (int index = 2; index + 1 < argc; index++) {
         if (strcmp(argv[index], name) == 0)
@@ -3391,6 +4289,1921 @@ done:
     return ok;
 }
 
+static bool select_answer_stream_command(
+    int argc, char **argv, size_t *answer_len, char answer_digest[65],
+    char *error, size_t error_size) {
+    const char *source = NULL;
+    const char *head = NULL;
+    const char *output = NULL;
+    LangDefCanonicalAnswerV1 *answers = NULL;
+    size_t answers_len = 0u;
+    size_t answers_cap = 0u;
+    size_t payload_len = 0u;
+    uint8_t *payload = NULL;
+    FHAnswerStreamV1 stream;
+    FHAnswerStreamV1 published;
+    bool ok = false;
+
+    fh_answer_stream_v1_init(&stream);
+    fh_answer_stream_v1_init(&published);
+    for (int index = 2; index < argc; index++) {
+        const char *option = argv[index];
+        const char *value;
+        if (index + 1 >= argc) {
+            set_error(error, error_size,
+                      "select-answers option lacks a value");
+            goto done;
+        }
+        value = argv[++index];
+        if (strcmp(option, "--source") == 0 && !source)
+            source = value;
+        else if (strcmp(option, "--head") == 0 && !head)
+            head = value;
+        else if (strcmp(option, "--out") == 0 && !output)
+            output = value;
+        else {
+            set_error(error, error_size,
+                      "invalid or repeated select-answers option");
+            goto done;
+        }
+    }
+    if (!source || !head || head[0] == '\0' || !output) {
+        set_error(error, error_size,
+                  "select-answers omits a required input");
+        goto done;
+    }
+    if (!fh_answer_stream_v1_read(&stream, source, error, error_size))
+        goto done;
+    for (size_t index = 0u; index < stream.len; index++) {
+        Atom *record = stream.terms[index];
+        uint8_t *canonical = NULL;
+        size_t canonical_len = 0u;
+        if (!record || record->kind != ATOM_EXPR ||
+            record->expr.len == 0u ||
+            !atom_is_symbol(record->expr.elems[0], head))
+            continue;
+        if (!fh_ground_term_v1_render(
+                record, &canonical, &canonical_len,
+                error, error_size) ||
+            !canonical_answer_push(
+                &answers, &answers_len, &answers_cap,
+                (char *)canonical, canonical_len,
+                error, error_size)) {
+            free(canonical);
+            goto done;
+        }
+    }
+    if (answers_len == 0u) {
+        set_error(error, error_size,
+                  "select-answers found no matching records");
+        goto done;
+    }
+    qsort(answers, answers_len, sizeof(*answers), canonical_answer_compare);
+    for (size_t index = 0u; index < answers_len; index++) {
+        if ((index > 0u &&
+             strcmp(answers[index - 1u].text,
+                    answers[index].text) == 0) ||
+            answers[index].len > SIZE_MAX - payload_len - 1u) {
+            set_error(error, error_size,
+                      index > 0u &&
+                      strcmp(answers[index - 1u].text,
+                             answers[index].text) == 0
+                          ? "selected answer records are not unique"
+                          : "selected answer stream is too large");
+            goto done;
+        }
+        payload_len += answers[index].len + 1u;
+    }
+    payload = malloc(payload_len ? payload_len : 1u);
+    if (!payload) {
+        set_error(error, error_size,
+                  "out of memory selecting answer stream");
+        goto done;
+    }
+    {
+        size_t offset = 0u;
+        for (size_t index = 0u; index < answers_len; index++) {
+            memcpy(payload + offset, answers[index].text,
+                   answers[index].len);
+            offset += answers[index].len;
+            payload[offset++] = (uint8_t)'\n';
+        }
+    }
+    if (!write_atomic(output, payload, payload_len, error, error_size) ||
+        !fh_answer_stream_v1_read(
+            &published, output, error, error_size) ||
+        published.len != answers_len) {
+        if (error && error[0] == '\0')
+            set_error(error, error_size,
+                      "selected answer stream changed during publication");
+        goto done;
+    }
+    *answer_len = published.len;
+    memcpy(answer_digest, published.digest, 65u);
+    ok = true;
+
+done:
+    for (size_t index = 0u; index < answers_len; index++)
+        free(answers[index].text);
+    free(answers);
+    free(payload);
+    fh_answer_stream_v1_free(&published);
+    fh_answer_stream_v1_free(&stream);
+    return ok;
+}
+
+typedef struct {
+    uint32_t *values;
+    size_t len;
+    size_t cap;
+} StateTransitionNumeralsV1;
+
+typedef struct {
+    char *operation;
+    size_t operation_len;
+    uint32_t index;
+} StateTransitionActionIndexV1;
+
+typedef struct {
+    StateTransitionActionIndexV1 *values;
+    size_t len;
+    size_t cap;
+} StateTransitionActionsV1;
+
+static int state_transition_u32_compare(const void *left,
+                                        const void *right) {
+    uint32_t lhs = *(const uint32_t *)left;
+    uint32_t rhs = *(const uint32_t *)right;
+    return lhs < rhs ? -1 : lhs > rhs;
+}
+
+static int state_transition_action_compare(const void *left,
+                                           const void *right) {
+    const StateTransitionActionIndexV1 *lhs = left;
+    const StateTransitionActionIndexV1 *rhs = right;
+    int operation = strcmp(lhs->operation, rhs->operation);
+    if (operation != 0)
+        return operation;
+    return lhs->index < rhs->index ? -1 : lhs->index > rhs->index;
+}
+
+static bool state_transition_action_push(
+    StateTransitionActionsV1 *actions, char *operation,
+    size_t operation_len, uint32_t index,
+    char *error, size_t error_size) {
+    StateTransitionActionIndexV1 *next;
+    size_t next_cap;
+    if (actions->len >= actions->cap) {
+        next_cap = actions->cap ? actions->cap * 2u : 32u;
+        if (next_cap < actions->cap ||
+            next_cap > SIZE_MAX / sizeof(*actions->values))
+            return set_error(error, error_size,
+                             "state-transition action inventory is too large");
+        next = realloc(actions->values,
+                       next_cap * sizeof(*actions->values));
+        if (!next)
+            return set_error(error, error_size,
+                             "out of memory collecting state-transition actions");
+        actions->values = next;
+        actions->cap = next_cap;
+    }
+    actions->values[actions->len++] =
+        (StateTransitionActionIndexV1){operation, operation_len, index};
+    return true;
+}
+
+static bool state_transition_numeral_push(
+    StateTransitionNumeralsV1 *numerals, uint32_t value,
+    char *error, size_t error_size) {
+    uint32_t *next;
+    size_t next_cap;
+    if (numerals->len < numerals->cap) {
+        numerals->values[numerals->len++] = value;
+        return true;
+    }
+    next_cap = numerals->cap ? numerals->cap * 2u : 32u;
+    if (next_cap < numerals->cap ||
+        next_cap > SIZE_MAX / sizeof(*numerals->values))
+        return set_error(error, error_size,
+                         "state-transition numeral set is too large");
+    next = realloc(numerals->values,
+                   next_cap * sizeof(*numerals->values));
+    if (!next)
+        return set_error(error, error_size,
+                         "out of memory collecting state-transition numerals");
+    numerals->values = next;
+    numerals->cap = next_cap;
+    numerals->values[numerals->len++] = value;
+    return true;
+}
+
+static bool state_transition_symbol_u32(const Atom *term,
+                                        uint32_t *value_out) {
+    const char *text;
+    char canonical[32];
+    char *end = NULL;
+    unsigned long value;
+    int written;
+    if (!term || !value_out)
+        return false;
+    if (term->kind == ATOM_GROUNDED && term->ground.gkind == GV_INT &&
+        term->ground.ival >= 0 &&
+        (uint64_t)term->ground.ival <= UINT32_MAX) {
+        *value_out = (uint32_t)term->ground.ival;
+        return true;
+    }
+    if (term->kind != ATOM_SYMBOL)
+        return false;
+    text = atom_name_cstr((Atom *)term);
+    if (!text || text[0] == '\0')
+        return false;
+    errno = 0;
+    value = strtoul(text, &end, 10);
+    if (errno != 0 || !end || *end != '\0' || value > UINT32_MAX)
+        return false;
+    written = snprintf(canonical, sizeof(canonical), "%lu", value);
+    if (written < 0 || (size_t)written >= sizeof(canonical) ||
+        strcmp(canonical, text) != 0)
+        return false;
+    *value_out = (uint32_t)value;
+    return true;
+}
+
+static bool state_transition_collect_numerals(
+    const Atom *term, StateTransitionNumeralsV1 *numerals,
+    uint32_t depth, char *error, size_t error_size) {
+    uint32_t value;
+    if (!term || depth > 4096u)
+        return set_error(error, error_size,
+                         "state-transition action term is too deep");
+    if (term->kind == ATOM_SYMBOL) {
+        if (!state_transition_symbol_u32(term, &value))
+            return true;
+        return state_transition_numeral_push(
+            numerals, value, error, error_size);
+    }
+    if (term->kind == ATOM_GROUNDED) {
+        if (!state_transition_symbol_u32(term, &value))
+            return set_error(error, error_size,
+                             "state-transition action contains a non-u32 grounded value");
+        return state_transition_numeral_push(
+            numerals, value, error, error_size);
+    }
+    if (term->kind != ATOM_EXPR)
+        return set_error(error, error_size,
+                         "state-transition action is not first-order");
+    for (CettaExprIndex index = 0u; index < term->expr.len; index++) {
+        if (!state_transition_collect_numerals(
+                term->expr.elems[index], numerals, depth + 1u,
+                error, error_size))
+            return false;
+    }
+    return true;
+}
+
+static char *state_transition_peano(uint32_t value,
+                                    char *error, size_t error_size) {
+    static const char successor[] = "(NatSuccV1 ";
+    static const char zero[] = "NatZeroV1";
+    size_t successor_len = sizeof(successor) - 1u;
+    size_t zero_len = sizeof(zero) - 1u;
+    size_t length;
+    size_t offset = 0u;
+    char *text;
+    if ((size_t)value > (SIZE_MAX - zero_len - 1u) /
+                            (successor_len + 1u)) {
+        set_error(error, error_size,
+                  "state-transition Peano numeral is too large");
+        return NULL;
+    }
+    length = (size_t)value * (successor_len + 1u) + zero_len;
+    text = malloc(length + 1u);
+    if (!text) {
+        set_error(error, error_size,
+                  "out of memory reifying state-transition numeral");
+        return NULL;
+    }
+    for (uint32_t index = 0u; index < value; index++) {
+        memcpy(text + offset, successor, successor_len);
+        offset += successor_len;
+    }
+    memcpy(text + offset, zero, zero_len);
+    offset += zero_len;
+    for (uint32_t index = 0u; index < value; index++)
+        text[offset++] = ')';
+    text[offset] = '\0';
+    return text;
+}
+
+static bool state_transition_answer_pushf(
+    LangDefCanonicalAnswerV1 **answers, size_t *len, size_t *cap,
+    char *error, size_t error_size, const char *format, ...) {
+    va_list arguments;
+    va_list copied;
+    int needed;
+    char *text;
+    va_start(arguments, format);
+    va_copy(copied, arguments);
+    needed = vsnprintf(NULL, 0u, format, arguments);
+    va_end(arguments);
+    if (needed < 0) {
+        va_end(copied);
+        return set_error(error, error_size,
+                         "cannot format state-transition binding");
+    }
+    text = malloc((size_t)needed + 1u);
+    if (!text) {
+        va_end(copied);
+        return set_error(error, error_size,
+                         "out of memory formatting state-transition binding");
+    }
+    if (vsnprintf(text, (size_t)needed + 1u, format, copied) != needed) {
+        va_end(copied);
+        free(text);
+        return set_error(error, error_size,
+                         "state-transition binding changed while formatting");
+    }
+    va_end(copied);
+    if (!canonical_answer_push(
+            answers, len, cap, text, (size_t)needed,
+            error, error_size)) {
+        free(text);
+        return false;
+    }
+    return true;
+}
+
+static bool state_transition_bindings_command(
+    int argc, char **argv, size_t *answer_len, char answer_digest[65],
+    char *error, size_t error_size) {
+    const char *source = NULL;
+    const char *output = NULL;
+    LangDefCanonicalAnswerV1 *tables = NULL;
+    size_t table_len = 0u;
+    size_t table_cap = 0u;
+    LangDefCanonicalAnswerV1 *answers = NULL;
+    size_t answers_len = 0u;
+    size_t answers_cap = 0u;
+    StateTransitionNumeralsV1 numerals = {0};
+    StateTransitionActionsV1 actions = {0};
+    StateTransitionNumeralsV1 final_actions = {0};
+    FHAnswerStreamV1 stream;
+    FHAnswerStreamV1 published;
+    uint8_t *payload = NULL;
+    size_t payload_len = 0u;
+    char package[128];
+    bool ok = false;
+
+    fh_answer_stream_v1_init(&stream);
+    fh_answer_stream_v1_init(&published);
+    for (int index = 2; index < argc; index++) {
+        const char *option = argv[index];
+        const char *value;
+        if (index + 1 >= argc) {
+            set_error(error, error_size,
+                      "state-transition-bindings option lacks a value");
+            goto done;
+        }
+        value = argv[++index];
+        if (strcmp(option, "--source") == 0 && !source)
+            source = value;
+        else if (strcmp(option, "--out") == 0 && !output)
+            output = value;
+        else {
+            set_error(error, error_size,
+                      "invalid or repeated state-transition-bindings option");
+            goto done;
+        }
+    }
+    if (!source || !output) {
+        set_error(error, error_size,
+                  "state-transition-bindings omits a required input");
+        goto done;
+    }
+    if (!fh_answer_stream_v1_read(&stream, source, error, error_size))
+        goto done;
+    {
+        int written = snprintf(
+            package, sizeof(package),
+            "(StateProgramDigestV1 sha256-%s)", stream.digest);
+        if (written < 0 || (size_t)written >= sizeof(package)) {
+            set_error(error, error_size,
+                      "state-transition package identity is too large");
+            goto done;
+        }
+    }
+    for (size_t index = 0u; index < stream.len; index++) {
+        Atom *record = stream.terms[index];
+        if (!record || record->kind != ATOM_EXPR ||
+            record->expr.len == 0u)
+            continue;
+        if (atom_is_symbol(record->expr.elems[0], "state-table-v1")) {
+            uint8_t *canonical = NULL;
+            size_t canonical_len = 0u;
+            if (record->expr.len != 5u ||
+                record->expr.elems[1]->kind != ATOM_SYMBOL) {
+                set_error(error, error_size,
+                          "state-transition table record %zu has the wrong shape",
+                          index + 1u);
+                goto done;
+            }
+            if (!fh_ground_term_v1_render(
+                    record->expr.elems[1], &canonical, &canonical_len,
+                    error, error_size) ||
+                !canonical_answer_push(
+                    &tables, &table_len, &table_cap,
+                    (char *)canonical, canonical_len,
+                    error, error_size)) {
+                free(canonical);
+                goto done;
+            }
+            if (!state_transition_collect_numerals(
+                    record->expr.elems[2], &numerals, 0u,
+                    error, error_size) ||
+                !state_transition_collect_numerals(
+                    record->expr.elems[3], &numerals, 0u,
+                    error, error_size))
+                goto done;
+        } else if (atom_is_symbol(record->expr.elems[0],
+                                  "state-action-v1")) {
+            uint8_t *operation = NULL;
+            size_t operation_len = 0u;
+            uint32_t action_index;
+            if (record->expr.len != 4u) {
+                set_error(error, error_size,
+                          "state-transition action record %zu has the wrong shape",
+                          index + 1u);
+                goto done;
+            }
+            if (!fh_ground_term_v1_render(
+                    record->expr.elems[1], &operation, &operation_len,
+                    error, error_size) ||
+                !state_transition_symbol_u32(
+                    record->expr.elems[2], &action_index)) {
+                free(operation);
+                if (error && error[0] == '\0')
+                    set_error(error, error_size,
+                              "state-transition action record %zu has a non-u32 index",
+                              index + 1u);
+                goto done;
+            }
+            if (!state_transition_action_push(
+                    &actions, (char *)operation, operation_len,
+                    action_index, error, error_size)) {
+                free(operation);
+                goto done;
+            }
+            if (!state_transition_collect_numerals(
+                    record->expr.elems[3], &numerals, 0u,
+                    error, error_size))
+                goto done;
+        } else if (atom_is_symbol(record->expr.elems[0],
+                                  "state-final-action-v1")) {
+            uint32_t action_index;
+            if (record->expr.len != 3u) {
+                set_error(error, error_size,
+                          "state-transition final-action record %zu has the wrong shape",
+                          index + 1u);
+                goto done;
+            }
+            if (!state_transition_symbol_u32(
+                    record->expr.elems[1], &action_index) ||
+                !state_transition_numeral_push(
+                    &final_actions, action_index, error, error_size)) {
+                if (error && error[0] == '\0')
+                    set_error(error, error_size,
+                              "state-transition final-action record %zu has a non-u32 index",
+                              index + 1u);
+                goto done;
+            }
+            if (!state_transition_collect_numerals(
+                    record->expr.elems[2], &numerals, 0u,
+                    error, error_size))
+                goto done;
+        }
+    }
+    if (table_len == 0u) {
+        set_error(error, error_size,
+                  "state-transition program declares no tables");
+        goto done;
+    }
+    qsort(tables, table_len, sizeof(*tables), canonical_answer_compare);
+    for (size_t index = 1u; index < table_len; index++) {
+        if (strcmp(tables[index - 1u].text, tables[index].text) == 0) {
+            set_error(error, error_size,
+                      "state-transition table identities are not unique");
+            goto done;
+        }
+    }
+    qsort(numerals.values, numerals.len,
+          sizeof(*numerals.values), state_transition_u32_compare);
+    qsort(actions.values, actions.len,
+          sizeof(*actions.values), state_transition_action_compare);
+    qsort(final_actions.values, final_actions.len,
+          sizeof(*final_actions.values), state_transition_u32_compare);
+    if (!state_transition_answer_pushf(
+            &answers, &answers_len, &answers_cap, error, error_size,
+            "(StateTransitionPackageV1 %s)", package))
+        goto done;
+    for (size_t index = 0u; index < table_len; index++) {
+        char *peano;
+        char *next_peano = NULL;
+        if (index > UINT32_MAX) {
+            set_error(error, error_size,
+                      "state-transition table inventory is too large");
+            goto done;
+        }
+        peano = state_transition_peano(
+            (uint32_t)index, error, error_size);
+        if (!peano ||
+            !state_transition_answer_pushf(
+                &answers, &answers_len, &answers_cap, error, error_size,
+                "(StateDenseIdentityV1 %s StateTableKindV1 %s %s)",
+                package, tables[index].text, peano)) {
+            free(peano);
+            goto done;
+        }
+        if (index == 0u &&
+            !state_transition_answer_pushf(
+                &answers, &answers_len, &answers_cap,
+                error, error_size,
+                "(StateTableFirstV1 %s %s)", package, peano)) {
+            free(peano);
+            goto done;
+        }
+        if (index + 1u < table_len) {
+            if (index + 1u > UINT32_MAX) {
+                free(peano);
+                set_error(error, error_size,
+                          "state-transition table inventory is too large");
+                goto done;
+            }
+            next_peano = state_transition_peano(
+                (uint32_t)(index + 1u), error, error_size);
+            if (!next_peano ||
+                !state_transition_answer_pushf(
+                    &answers, &answers_len, &answers_cap,
+                    error, error_size,
+                    "(StateTableNextV1 %s %s %s)",
+                    package, peano, next_peano)) {
+                free(next_peano);
+                free(peano);
+                goto done;
+            }
+            free(next_peano);
+        } else if (!state_transition_answer_pushf(
+                       &answers, &answers_len, &answers_cap,
+                       error, error_size,
+                       "(StateTableLastV1 %s %s)", package, peano)) {
+            free(peano);
+            goto done;
+        }
+        free(peano);
+    }
+    for (size_t index = 0u; index < numerals.len; index++) {
+        char *peano;
+        if (index > 0u &&
+            numerals.values[index - 1u] == numerals.values[index])
+            continue;
+        peano = state_transition_peano(
+            numerals.values[index], error, error_size);
+        if (!peano ||
+            !state_transition_answer_pushf(
+                &answers, &answers_len, &answers_cap, error, error_size,
+                "(StateNatBindingV1 %s %" PRIu32 " %s)",
+                package, numerals.values[index], peano)) {
+            free(peano);
+            goto done;
+        }
+        free(peano);
+    }
+    for (size_t first = 0u; first < actions.len;) {
+        size_t last = first + 1u;
+        while (last < actions.len &&
+               strcmp(actions.values[first].operation,
+                      actions.values[last].operation) == 0)
+            last++;
+        for (size_t index = first; index < last; index++) {
+            size_t expected = index - first;
+            if (expected > UINT32_MAX ||
+                actions.values[index].index != (uint32_t)expected) {
+                set_error(
+                    error, error_size,
+                    "state-transition operation %s has non-dense action index %" PRIu32,
+                    actions.values[first].operation,
+                    actions.values[index].index);
+                goto done;
+            }
+        }
+        if (!state_transition_answer_pushf(
+                &answers, &answers_len, &answers_cap, error, error_size,
+                "(StateActionFirstV1 %s %s 0)",
+                package, actions.values[first].operation))
+            goto done;
+        for (size_t index = first; index + 1u < last; index++) {
+            if (!state_transition_answer_pushf(
+                    &answers, &answers_len, &answers_cap,
+                    error, error_size,
+                    "(StateActionNextV1 %s %s %" PRIu32 " %" PRIu32 ")",
+                    package, actions.values[first].operation,
+                    actions.values[index].index,
+                    actions.values[index + 1u].index))
+                goto done;
+        }
+        if (!state_transition_answer_pushf(
+                &answers, &answers_len, &answers_cap, error, error_size,
+                "(StateActionLastV1 %s %s %" PRIu32 ")",
+                package, actions.values[first].operation,
+                actions.values[last - 1u].index))
+            goto done;
+        first = last;
+    }
+    for (size_t index = 0u; index < final_actions.len; index++) {
+        if (index > UINT32_MAX ||
+            final_actions.values[index] != (uint32_t)index) {
+            set_error(
+                error, error_size,
+                "state-transition final actions have non-dense index %" PRIu32,
+                final_actions.values[index]);
+            goto done;
+        }
+    }
+    if (final_actions.len > 0u) {
+        if (!state_transition_answer_pushf(
+                &answers, &answers_len, &answers_cap, error, error_size,
+                "(StateFinalActionFirstV1 %s 0)", package))
+            goto done;
+        for (size_t index = 0u; index + 1u < final_actions.len; index++) {
+            if (!state_transition_answer_pushf(
+                    &answers, &answers_len, &answers_cap,
+                    error, error_size,
+                    "(StateFinalActionNextV1 %s %" PRIu32 " %" PRIu32 ")",
+                    package, final_actions.values[index],
+                    final_actions.values[index + 1u]))
+                goto done;
+        }
+        if (!state_transition_answer_pushf(
+                &answers, &answers_len, &answers_cap, error, error_size,
+                "(StateFinalActionLastV1 %s %" PRIu32 ")",
+                package, final_actions.values[final_actions.len - 1u]))
+            goto done;
+    }
+    qsort(answers, answers_len, sizeof(*answers), canonical_answer_compare);
+    for (size_t index = 0u; index < answers_len; index++) {
+        if (answers[index].len > SIZE_MAX - payload_len - 1u) {
+            set_error(error, error_size,
+                      "state-transition binding stream is too large");
+            goto done;
+        }
+        payload_len += answers[index].len + 1u;
+    }
+    payload = malloc(payload_len ? payload_len : 1u);
+    if (!payload) {
+        set_error(error, error_size,
+                  "out of memory publishing state-transition bindings");
+        goto done;
+    }
+    {
+        size_t offset = 0u;
+        for (size_t index = 0u; index < answers_len; index++) {
+            memcpy(payload + offset, answers[index].text,
+                   answers[index].len);
+            offset += answers[index].len;
+            payload[offset++] = (uint8_t)'\n';
+        }
+    }
+    if (!write_atomic(output, payload, payload_len, error, error_size) ||
+        !fh_answer_stream_v1_read(
+            &published, output, error, error_size) ||
+        published.len != answers_len) {
+        if (error && error[0] == '\0')
+            set_error(error, error_size,
+                      "state-transition bindings changed during publication");
+        goto done;
+    }
+    *answer_len = published.len;
+    memcpy(answer_digest, published.digest, 65u);
+    ok = true;
+
+done:
+    for (size_t index = 0u; index < table_len; index++)
+        free(tables[index].text);
+    for (size_t index = 0u; index < answers_len; index++)
+        free(answers[index].text);
+    free(tables);
+    free(answers);
+    free(numerals.values);
+    for (size_t index = 0u; index < actions.len; index++)
+        free(actions.values[index].operation);
+    free(actions.values);
+    free(final_actions.values);
+    free(payload);
+    fh_answer_stream_v1_free(&published);
+    fh_answer_stream_v1_free(&stream);
+    return ok;
+}
+
+typedef struct {
+    const char *role;
+    uint32_t value_id;
+    const char *bytes_hex;
+} StateOccurrenceValueV1;
+
+typedef struct {
+    char *operation;
+    char *role;
+    uint32_t index;
+} StateOccurrenceRoleListRequestV1;
+
+typedef struct {
+    StateOccurrenceRoleListRequestV1 *values;
+    size_t len;
+    size_t cap;
+} StateOccurrenceRoleListRequestsV1;
+
+typedef struct {
+    uint32_t *values;
+    size_t len;
+} StateOccurrenceListIdentityV1;
+
+typedef struct {
+    StateOccurrenceListIdentityV1 *values;
+    size_t len;
+    size_t cap;
+} StateOccurrenceListIdentitiesV1;
+
+typedef struct {
+    const char **values;
+    size_t len;
+    size_t cap;
+} StateOccurrenceEmptyRolesV1;
+
+static int state_occurrence_text_pointer_compare_v1(
+    const void *left, const void *right) {
+    const char *const *left_text = left;
+    const char *const *right_text = right;
+    return strcmp(*left_text, *right_text);
+}
+
+static char *state_occurrence_render_v1(
+    const Atom *term, char *error, size_t error_size) {
+    uint8_t *text = NULL;
+    size_t text_len = 0u;
+    if (!fh_ground_term_v1_render(
+            term, &text, &text_len, error, error_size))
+        return NULL;
+    return (char *)text;
+}
+
+static bool state_occurrence_collect_literals_v1(
+    const Atom *term, LangDefCanonicalAnswerV1 **literals,
+    size_t *literal_len, size_t *literal_cap, uint32_t depth,
+    char *error, size_t error_size) {
+    if (!term || depth > 4096u)
+        return set_error(error, error_size,
+                         "state occurrence literal term is too deep");
+    if (term->kind != ATOM_EXPR)
+        return true;
+    if (term->expr.len == 2u &&
+        atom_is_symbol(term->expr.elems[0], "state-literal-v1")) {
+        char *literal = state_occurrence_render_v1(
+            term->expr.elems[1], error, error_size);
+        size_t literal_size;
+        if (!literal)
+            return false;
+        literal_size = strlen(literal);
+        for (size_t index = 0u; index < *literal_len; index++) {
+            if (strcmp((*literals)[index].text, literal) == 0) {
+                free(literal);
+                return true;
+            }
+        }
+        if (!canonical_answer_push(
+                literals, literal_len, literal_cap,
+                literal, literal_size, error, error_size)) {
+            free(literal);
+            return false;
+        }
+        return true;
+    }
+    for (CettaExprIndex index = 0u; index < term->expr.len; index++) {
+        if (!state_occurrence_collect_literals_v1(
+                term->expr.elems[index], literals,
+                literal_len, literal_cap, depth + 1u,
+                error, error_size))
+            return false;
+    }
+    return true;
+}
+
+static bool state_occurrence_request_push_v1(
+    StateOccurrenceRoleListRequestsV1 *requests,
+    const char *operation, const char *role, uint32_t index,
+    char *error, size_t error_size) {
+    StateOccurrenceRoleListRequestV1 *next;
+    size_t next_cap;
+    for (size_t prior = 0u; prior < requests->len; prior++) {
+        if (requests->values[prior].index == index &&
+            strcmp(requests->values[prior].operation, operation) == 0 &&
+            strcmp(requests->values[prior].role, role) == 0)
+            return true;
+    }
+    if (requests->len == requests->cap) {
+        next_cap = requests->cap ? requests->cap * 2u : 16u;
+        if (next_cap < requests->cap ||
+            next_cap > SIZE_MAX / sizeof(*requests->values))
+            return set_error(error, error_size,
+                             "state occurrence role-list inventory is too large");
+        next = realloc(requests->values, next_cap * sizeof(*next));
+        if (!next)
+            return set_error(error, error_size,
+                             "out of memory collecting state occurrence role lists");
+        requests->values = next;
+        requests->cap = next_cap;
+    }
+    requests->values[requests->len].operation = strdup(operation);
+    requests->values[requests->len].role = strdup(role);
+    requests->values[requests->len].index = index;
+    if (!requests->values[requests->len].operation ||
+        !requests->values[requests->len].role) {
+        free(requests->values[requests->len].operation);
+        free(requests->values[requests->len].role);
+        return set_error(error, error_size,
+                         "out of memory recording state occurrence role list");
+    }
+    requests->len++;
+    return true;
+}
+
+static bool state_occurrence_collect_requests_v1(
+    const Atom *term, const char *operation,
+    StateOccurrenceRoleListRequestsV1 *requests, uint32_t depth,
+    char *error, size_t error_size) {
+    if (!term || depth > 4096u)
+        return set_error(error, error_size,
+                         "state occurrence role-list term is too deep");
+    if (term->kind != ATOM_EXPR)
+        return true;
+    if (term->expr.len == 3u &&
+        atom_is_symbol(term->expr.elems[0], "state-role-list-v1")) {
+        char *role;
+        uint32_t index;
+        bool ok;
+        if (!state_transition_symbol_u32(term->expr.elems[2], &index))
+            return set_error(error, error_size,
+                             "state occurrence role-list index is not a u32");
+        role = state_occurrence_render_v1(
+            term->expr.elems[1], error, error_size);
+        if (!role)
+            return false;
+        ok = state_occurrence_request_push_v1(
+            requests, operation, role, index, error, error_size);
+        free(role);
+        return ok;
+    }
+    for (CettaExprIndex index = 0u; index < term->expr.len; index++) {
+        if (!state_occurrence_collect_requests_v1(
+                term->expr.elems[index], operation, requests,
+                depth + 1u, error, error_size))
+            return false;
+    }
+    return true;
+}
+
+static bool state_occurrence_parse_values_v1(
+    const Atom *list, StateOccurrenceValueV1 **values,
+    size_t *value_len, size_t *value_cap,
+    char **bytes_by_id, bool *seen_id, uint32_t unique_value_len,
+    char *error, size_t error_size) {
+    const Atom *cursor = list;
+    uint32_t depth = 0u;
+    while (!atom_is_symbol((Atom *)cursor,
+                           "ParserOccurrenceValuesNilV1")) {
+        Atom *value;
+        Atom *bytes;
+        StateOccurrenceValueV1 *next;
+        size_t next_cap;
+        uint32_t value_id;
+        uint32_t ignored;
+        const char *role;
+        const char *hex;
+        if (!cursor || cursor->kind != ATOM_EXPR ||
+            cursor->expr.len != 3u ||
+            !atom_is_symbol(cursor->expr.elems[0],
+                            "ParserOccurrenceValuesConsV1") ||
+            !(value = cursor->expr.elems[1]) ||
+            value->kind != ATOM_EXPR || value->expr.len != 9u ||
+            !atom_is_symbol(value->expr.elems[0],
+                            "ParserOccurrenceValueV1") ||
+            value->expr.elems[1]->kind != ATOM_SYMBOL ||
+            !state_transition_symbol_u32(value->expr.elems[2], &value_id) ||
+            value_id >= unique_value_len) {
+            return set_error(error, error_size,
+                             "parser occurrence has a malformed value list");
+        }
+        for (CettaExprIndex field = 3u; field <= 7u; field++) {
+            if (!state_transition_symbol_u32(
+                    value->expr.elems[field], &ignored))
+                return set_error(error, error_size,
+                                 "parser occurrence value has a non-u32 coordinate");
+        }
+        bytes = value->expr.elems[8];
+        if (!bytes || bytes->kind != ATOM_EXPR || bytes->expr.len != 2u ||
+            !atom_is_symbol(bytes->expr.elems[0], "SourceBytesHexV1") ||
+            bytes->expr.elems[1]->kind != ATOM_SYMBOL)
+            return set_error(error, error_size,
+                             "parser occurrence value has malformed source bytes");
+        role = atom_name_cstr(value->expr.elems[1]);
+        hex = atom_name_cstr(bytes->expr.elems[1]);
+        if (strncmp(hex, "hex-", 4u) != 0)
+            return set_error(error, error_size,
+                             "parser occurrence value lacks canonical hex bytes");
+        if (seen_id[value_id] &&
+            strcmp(bytes_by_id[value_id], hex) != 0)
+            return set_error(error, error_size,
+                             "parser occurrence value id maps to different bytes");
+        if (!seen_id[value_id]) {
+            bytes_by_id[value_id] = strdup(hex);
+            if (!bytes_by_id[value_id])
+                return set_error(error, error_size,
+                                 "out of memory validating occurrence interning");
+            seen_id[value_id] = true;
+        }
+        if (*value_len == *value_cap) {
+            next_cap = *value_cap ? *value_cap * 2u : 16u;
+            if (next_cap < *value_cap ||
+                next_cap > SIZE_MAX / sizeof(**values))
+                return set_error(error, error_size,
+                                 "parser occurrence value list is too large");
+            next = realloc(*values, next_cap * sizeof(*next));
+            if (!next)
+                return set_error(error, error_size,
+                                 "out of memory collecting parser occurrence values");
+            *values = next;
+            *value_cap = next_cap;
+        }
+        (*values)[*value_len] = (StateOccurrenceValueV1){
+            .role = role,
+            .value_id = value_id,
+            .bytes_hex = hex,
+        };
+        (*value_len)++;
+        cursor = cursor->expr.elems[2];
+        if (++depth > 16u * 1024u * 1024u)
+            return set_error(error, error_size,
+                             "parser occurrence value list is too deep");
+    }
+    return true;
+}
+
+static bool state_occurrence_parse_empty_roles_v1(
+    const Atom *list, StateOccurrenceEmptyRolesV1 *roles,
+    char *error, size_t error_size) {
+    const Atom *cursor = list;
+    uint32_t depth = 0u;
+    while (!atom_is_symbol(
+               (Atom *)cursor, "ParserOccurrenceEmptyRolesNilV1")) {
+        const char *role;
+        const char **next;
+        size_t next_cap;
+        if (!cursor || cursor->kind != ATOM_EXPR ||
+            cursor->expr.len != 3u ||
+            !atom_is_symbol(
+                cursor->expr.elems[0],
+                "ParserOccurrenceEmptyRolesConsV1") ||
+            cursor->expr.elems[1]->kind != ATOM_SYMBOL) {
+            return set_error(
+                error, error_size,
+                "parser occurrence has malformed empty roles");
+        }
+        role = atom_name_cstr(cursor->expr.elems[1]);
+        for (size_t index = 0u; index < roles->len; index++) {
+            if (strcmp(roles->values[index], role) == 0) {
+                return set_error(
+                    error, error_size,
+                    "parser occurrence repeats an empty role");
+            }
+        }
+        if (roles->len == roles->cap) {
+            next_cap = roles->cap ? roles->cap * 2u : 4u;
+            if (next_cap < roles->cap ||
+                next_cap > SIZE_MAX / sizeof(*roles->values)) {
+                return set_error(
+                    error, error_size,
+                    "parser occurrence empty-role inventory is too large");
+            }
+            next = realloc(roles->values, next_cap * sizeof(*next));
+            if (!next) {
+                return set_error(
+                    error, error_size,
+                    "out of memory collecting parser occurrence empty roles");
+            }
+            roles->values = next;
+            roles->cap = next_cap;
+        }
+        roles->values[roles->len++] = role;
+        cursor = cursor->expr.elems[2];
+        if (++depth > 16u * 1024u * 1024u) {
+            return set_error(
+                error, error_size,
+                "parser occurrence empty-role list is too deep");
+        }
+    }
+    return true;
+}
+
+static bool state_occurrence_value_tree_v1(
+    FILE *output, const uint32_t *values, size_t begin, size_t end) {
+    size_t length = end - begin;
+    size_t middle;
+    if (length == 0u)
+        return fputs("ValuesTreeEmptyV1", output) >= 0;
+    if (length == 1u)
+        return fprintf(
+            output, "(ValuesTreeLeafV1 (StateSourceValueV1 %" PRIu32 "))",
+            values[begin]) >= 0;
+    middle = begin + length / 2u;
+    return fputs("(ValuesTreeNodeV1 ", output) >= 0 &&
+           state_occurrence_value_tree_v1(output, values, begin, middle) &&
+           fputc(' ', output) != EOF &&
+           state_occurrence_value_tree_v1(output, values, middle, end) &&
+           fputc(')', output) != EOF;
+}
+
+static char *state_occurrence_value_list_text_v1(
+    const uint32_t *values, size_t value_len,
+    char *error, size_t error_size) {
+    char *text = NULL;
+    size_t text_len = 0u;
+    FILE *output = open_memstream(&text, &text_len);
+    if (!output) {
+        set_error(error, error_size,
+                  "cannot allocate state occurrence value-list renderer");
+        return NULL;
+    }
+    if (fputs("(ValuesSequenceV1 ", output) < 0 ||
+        !state_occurrence_value_tree_v1(
+            output, values, 0u, value_len) ||
+        fputs(" ValuesTreeStackNilV1)", output) < 0)
+        goto failed;
+    if (fclose(output) != 0) {
+        free(text);
+        set_error(error, error_size,
+                  "cannot finish state occurrence value-list rendering");
+        return NULL;
+    }
+    return text;
+
+failed:
+    (void)fclose(output);
+    free(text);
+    if (!error || error[0] == '\0')
+        set_error(error, error_size,
+                  "cannot render state occurrence value list");
+    return NULL;
+}
+
+static int state_occurrence_hex_digit_v1(char digit) {
+    if (digit >= '0' && digit <= '9')
+        return digit - '0';
+    if (digit >= 'a' && digit <= 'f')
+        return digit - 'a' + 10;
+    return -1;
+}
+
+static char *state_occurrence_byte_list_text_v1(
+    const char *hex, char *error, size_t error_size) {
+    char *text = NULL;
+    size_t text_len = 0u;
+    size_t hex_len;
+    size_t byte_len;
+    FILE *output;
+    if (!hex || strncmp(hex, "hex-", 4u) != 0) {
+        set_error(error, error_size,
+                  "state occurrence source bytes lack canonical hex prefix");
+        return NULL;
+    }
+    hex += 4u;
+    hex_len = strlen(hex);
+    if ((hex_len & 1u) != 0u) {
+        set_error(error, error_size,
+                  "state occurrence source bytes have odd-length hex");
+        return NULL;
+    }
+    byte_len = hex_len / 2u;
+    output = open_memstream(&text, &text_len);
+    if (!output) {
+        set_error(error, error_size,
+                  "cannot allocate state occurrence byte-list renderer");
+        return NULL;
+    }
+    for (size_t index = 0u; index < byte_len; index++) {
+        int high = state_occurrence_hex_digit_v1(hex[index * 2u]);
+        int low = state_occurrence_hex_digit_v1(hex[index * 2u + 1u]);
+        if (high < 0 || low < 0 ||
+            fprintf(output, "(ByteValuesConsV1 %u ",
+                    (unsigned)((high << 4) | low)) < 0)
+            goto failed;
+    }
+    if (fputs("ByteValuesNilV1", output) < 0)
+        goto failed;
+    for (size_t index = 0u; index < byte_len; index++) {
+        if (fputc(')', output) == EOF)
+            goto failed;
+    }
+    if (fclose(output) != 0) {
+        free(text);
+        set_error(error, error_size,
+                  "cannot finish state occurrence byte-list rendering");
+        return NULL;
+    }
+    return text;
+
+failed:
+    (void)fclose(output);
+    free(text);
+    if (!error || error[0] == '\0')
+        set_error(error, error_size,
+                  "cannot render state occurrence byte list");
+    return NULL;
+}
+
+static bool state_occurrence_list_identity_v1(
+    StateOccurrenceListIdentitiesV1 *identities,
+    const StateOccurrenceValueV1 *values, size_t value_len,
+    const char *role, bool allow_empty, uint32_t *identity_out,
+    char *error, size_t error_size) {
+    uint32_t *sequence = NULL;
+    size_t sequence_len = 0u;
+    size_t offset = 0u;
+    StateOccurrenceListIdentityV1 *next;
+    size_t next_cap;
+    for (size_t index = 0u; index < value_len; index++) {
+        if (strcmp(values[index].role, role) == 0)
+            sequence_len++;
+    }
+    if (sequence_len == 0u && !allow_empty)
+        return set_error(error, error_size,
+                         "state operation requests an absent occurrence role list");
+    if (sequence_len > SIZE_MAX / sizeof(*sequence))
+        return set_error(error, error_size,
+                         "state occurrence role list is too large");
+    if (sequence_len > 0u)
+        sequence = malloc(sequence_len * sizeof(*sequence));
+    if (sequence_len > 0u && !sequence)
+        return set_error(error, error_size,
+                         "out of memory interning state occurrence role list");
+    for (size_t index = 0u; index < value_len; index++) {
+        if (strcmp(values[index].role, role) == 0)
+            sequence[offset++] = values[index].value_id;
+    }
+    for (size_t index = 0u; index < identities->len; index++) {
+        if (identities->values[index].len == sequence_len &&
+            (sequence_len == 0u ||
+             memcmp(identities->values[index].values, sequence,
+                    sequence_len * sizeof(*sequence)) == 0)) {
+            free(sequence);
+            if (index > UINT32_MAX)
+                return set_error(error, error_size,
+                                 "state occurrence list identity is too large");
+            *identity_out = (uint32_t)index;
+            return true;
+        }
+    }
+    if (identities->len == identities->cap) {
+        next_cap = identities->cap ? identities->cap * 2u : 16u;
+        if (next_cap < identities->cap ||
+            next_cap > SIZE_MAX / sizeof(*identities->values)) {
+            free(sequence);
+            return set_error(error, error_size,
+                             "state occurrence list identity inventory is too large");
+        }
+        next = realloc(identities->values, next_cap * sizeof(*next));
+        if (!next) {
+            free(sequence);
+            return set_error(error, error_size,
+                             "out of memory growing state occurrence list identities");
+        }
+        identities->values = next;
+        identities->cap = next_cap;
+    }
+    if (identities->len > UINT32_MAX) {
+        free(sequence);
+        return set_error(error, error_size,
+                         "state occurrence list identity is too large");
+    }
+    *identity_out = (uint32_t)identities->len;
+    identities->values[identities->len++] =
+        (StateOccurrenceListIdentityV1){sequence, sequence_len};
+    return true;
+}
+
+/* Reify a captured occurrence stream for differential inspection.  Runtime
+ * source files belong on the parser-to-constructor path, not this command. */
+static bool state_occurrence_projection_oracle_command_v1(
+    int argc, char **argv, size_t *answer_len, char answer_digest[65],
+    char *error, size_t error_size) {
+    const char *occurrence_source = NULL;
+    const char *state_source = NULL;
+    const char *output = NULL;
+    FHAnswerStreamV1 occurrences;
+    FHAnswerStreamV1 state_program;
+    FHAnswerStreamV1 published;
+    Atom *header = NULL;
+    Atom **ordered = NULL;
+    uint32_t step_len = 0u;
+    uint32_t expected_value_len = 0u;
+    uint32_t unique_value_len = 0u;
+    uint32_t source_len = 1u;
+    uint32_t observed_value_len = 0u;
+    char **bytes_by_id = NULL;
+    char **sorted_bytes = NULL;
+    bool *seen_id = NULL;
+    LangDefCanonicalAnswerV1 *literals = NULL;
+    size_t literal_len = 0u;
+    size_t literal_cap = 0u;
+    StateOccurrenceRoleListRequestsV1 requests = {0};
+    StateOccurrenceListIdentitiesV1 list_identities = {0};
+    LangDefCanonicalAnswerV1 *answers = NULL;
+    size_t answers_len = 0u;
+    size_t answers_cap = 0u;
+    uint8_t *payload = NULL;
+    size_t payload_len = 0u;
+    char *plan_digest = NULL;
+    char *source_program_digest = NULL;
+    char *source_digest = NULL;
+    char package[128];
+    char *stream = NULL;
+    bool source_graph = false;
+    bool explicit_empty_roles = false;
+    bool ok = false;
+
+    fh_answer_stream_v1_init(&occurrences);
+    fh_answer_stream_v1_init(&state_program);
+    fh_answer_stream_v1_init(&published);
+    for (int index = 2; index < argc; index++) {
+        const char *option = argv[index];
+        const char *value;
+        if (index + 1 >= argc) {
+            set_error(error, error_size,
+                      "state-occurrence-projection-oracle option lacks a value");
+            goto done;
+        }
+        value = argv[++index];
+        if (strcmp(option, "--occurrences") == 0 && !occurrence_source)
+            occurrence_source = value;
+        else if (strcmp(option, "--state-program") == 0 && !state_source)
+            state_source = value;
+        else if (strcmp(option, "--out") == 0 && !output)
+            output = value;
+        else {
+            set_error(error, error_size,
+                      "invalid or repeated state-occurrence-projection-oracle option");
+            goto done;
+        }
+    }
+    if (!occurrence_source || !state_source || !output) {
+        set_error(error, error_size,
+                  "state-occurrence-projection-oracle requires occurrences, state program, and output");
+        goto done;
+    }
+    if (!fh_answer_stream_v1_read(
+            &occurrences, occurrence_source, error, error_size) ||
+        !fh_answer_stream_v1_read(
+            &state_program, state_source, error, error_size))
+        goto done;
+    for (size_t index = 0u; index < occurrences.len; index++) {
+        Atom *record = occurrences.terms[index];
+        bool v1 = record && record->kind == ATOM_EXPR &&
+            record->expr.len == 6u &&
+            atom_is_symbol(record->expr.elems[0],
+                           "ParserOccurrenceStreamV1");
+        bool v2 = record && record->kind == ATOM_EXPR &&
+            record->expr.len == 8u &&
+            atom_is_symbol(record->expr.elems[0],
+                           "ParserOccurrenceStreamV2");
+        bool v3 = record && record->kind == ATOM_EXPR &&
+            record->expr.len == 6u &&
+            atom_is_symbol(record->expr.elems[0],
+                           "ParserOccurrenceStreamV3");
+        bool v4 = record && record->kind == ATOM_EXPR &&
+            record->expr.len == 8u &&
+            atom_is_symbol(record->expr.elems[0],
+                           "ParserOccurrenceStreamV4");
+        if (v1 || v2 || v3 || v4) {
+            if (header) {
+                set_error(error, error_size,
+                          "parser occurrence stream repeats its header");
+                goto done;
+            }
+            header = record;
+            source_graph = v2 || v4;
+            explicit_empty_roles = v3 || v4;
+        }
+    }
+    if (!header ||
+        !state_transition_symbol_u32(
+            header->expr.elems[source_graph ? 4u : 3u], &step_len) ||
+        !state_transition_symbol_u32(
+            header->expr.elems[source_graph ? 5u : 4u],
+            &expected_value_len) ||
+        !state_transition_symbol_u32(
+            header->expr.elems[source_graph ? 6u : 5u],
+            &unique_value_len) ||
+        (source_graph &&
+         (!state_transition_symbol_u32(
+              header->expr.elems[7], &source_len) ||
+          source_len == 0u))) {
+        set_error(error, error_size,
+                  "parser occurrence stream has a malformed header");
+        goto done;
+    }
+    ordered = calloc(step_len ? step_len : 1u, sizeof(*ordered));
+    bytes_by_id = calloc(
+        unique_value_len ? unique_value_len : 1u, sizeof(*bytes_by_id));
+    seen_id = calloc(
+        unique_value_len ? unique_value_len : 1u, sizeof(*seen_id));
+    if (!ordered || !bytes_by_id || !seen_id) {
+        set_error(error, error_size,
+                  "out of memory indexing parser occurrence stream");
+        goto done;
+    }
+    for (size_t index = 0u; index < occurrences.len; index++) {
+        Atom *record = occurrences.terms[index];
+        uint32_t occurrence_index;
+        if (record == header)
+            continue;
+        bool expected_record = record && record->kind == ATOM_EXPR &&
+            ((source_graph && explicit_empty_roles &&
+              record->expr.len == 13u &&
+              atom_is_symbol(record->expr.elems[0],
+                             "ParserOccurrenceV4")) ||
+             (source_graph && !explicit_empty_roles &&
+              record->expr.len == 12u &&
+              atom_is_symbol(record->expr.elems[0],
+                             "ParserOccurrenceV2")) ||
+             (!source_graph && explicit_empty_roles &&
+              record->expr.len == 12u &&
+              atom_is_symbol(record->expr.elems[0],
+                             "ParserOccurrenceV3")) ||
+             (!source_graph && !explicit_empty_roles &&
+              record->expr.len == 11u &&
+              atom_is_symbol(record->expr.elems[0],
+                             "ParserOccurrenceV1")));
+        if (!expected_record ||
+            !state_transition_symbol_u32(
+                record->expr.elems[1], &occurrence_index) ||
+            occurrence_index >= step_len || ordered[occurrence_index]) {
+            set_error(error, error_size,
+                      "parser occurrence stream has a malformed or repeated occurrence");
+            goto done;
+        }
+        ordered[occurrence_index] = record;
+    }
+    for (uint32_t index = 0u; index < step_len; index++) {
+        if (!ordered[index]) {
+            set_error(error, error_size,
+                      "parser occurrence stream indices are not dense");
+            goto done;
+        }
+    }
+    for (size_t index = 0u; index < state_program.len; index++) {
+        Atom *record = state_program.terms[index];
+        if (!state_occurrence_collect_literals_v1(
+                record, &literals, &literal_len, &literal_cap,
+                0u, error, error_size))
+            goto done;
+        if (record && record->kind == ATOM_EXPR && record->expr.len == 4u &&
+            atom_is_symbol(record->expr.elems[0], "state-action-v1")) {
+            char *operation = state_occurrence_render_v1(
+                record->expr.elems[1], error, error_size);
+            if (!operation ||
+                !state_occurrence_collect_requests_v1(
+                    record->expr.elems[3], operation, &requests,
+                    0u, error, error_size)) {
+                free(operation);
+                goto done;
+            }
+            free(operation);
+        }
+    }
+    qsort(literals, literal_len, sizeof(*literals), canonical_answer_compare);
+    plan_digest = state_occurrence_render_v1(
+        header->expr.elems[1], error, error_size);
+    if (source_graph) {
+        char expected[72];
+        int written;
+
+        source_program_digest = state_occurrence_render_v1(
+            header->expr.elems[2], error, error_size);
+        written = snprintf(
+            expected, sizeof(expected), "sha256-%s", state_program.digest);
+        if (!source_program_digest || written < 0 ||
+            (size_t)written >= sizeof(expected) ||
+            strcmp(source_program_digest, expected) != 0) {
+            set_error(error, error_size,
+                      "source composition and state program digests disagree");
+            goto done;
+        }
+    }
+    source_digest = state_occurrence_render_v1(
+        header->expr.elems[source_graph ? 3u : 2u], error, error_size);
+    if (!plan_digest || !source_digest)
+        goto done;
+    {
+        int written = snprintf(
+            package, sizeof(package),
+            "(StateProgramDigestV1 sha256-%s)", state_program.digest);
+        int stream_len;
+        if (written < 0 || (size_t)written >= sizeof(package)) {
+            set_error(error, error_size,
+                      "state occurrence package identity is too large");
+            goto done;
+        }
+        stream_len = snprintf(
+            NULL, 0u, "(StateOccurrenceStreamIdentityV1 %s %s %s)",
+            plan_digest, source_digest, package);
+        if (stream_len < 0) {
+            set_error(error, error_size,
+                      "cannot format state occurrence stream identity");
+            goto done;
+        }
+        stream = malloc((size_t)stream_len + 1u);
+        if (!stream || snprintf(
+                stream, (size_t)stream_len + 1u,
+                "(StateOccurrenceStreamIdentityV1 %s %s %s)",
+                plan_digest, source_digest, package) != stream_len) {
+            set_error(error, error_size,
+                      "out of memory formatting state occurrence stream identity");
+            goto done;
+        }
+    }
+    if (!state_transition_answer_pushf(
+            &answers, &answers_len, &answers_cap, error, error_size,
+            "(StateOccurrenceProgramV1 %s %s)", stream, package))
+        goto done;
+    if (step_len == 0u) {
+        if (!state_transition_answer_pushf(
+                &answers, &answers_len, &answers_cap, error, error_size,
+                "(StateOccurrenceEmptyV1 %s)", stream) ||
+            !state_transition_answer_pushf(
+                &answers, &answers_len, &answers_cap, error, error_size,
+                "(StateOccurrenceShapeV1 %s "
+                "StateOccurrenceEmptyShapeV1)", stream))
+            goto done;
+    }
+    for (size_t index = 0u; index < literal_len; index++) {
+        if (!state_transition_answer_pushf(
+                &answers, &answers_len, &answers_cap, error, error_size,
+                "(StreamLiteralValueV1 %s %s (StateLiteralValueV1 %s))",
+                stream, literals[index].text, literals[index].text)) {
+            goto done;
+        }
+    }
+    for (uint32_t index = 0u; index < step_len; index++) {
+        Atom *record = ordered[index];
+        StateOccurrenceValueV1 *values = NULL;
+        StateOccurrenceEmptyRolesV1 empty_roles = {0};
+        size_t value_len = 0u;
+        size_t value_cap = 0u;
+        char *operation = NULL;
+        char *occurrence = NULL;
+        char *source_identity = NULL;
+        uint32_t source_id = 0u;
+        uint32_t coordinates[4];
+        CettaExprIndex kind_field = source_graph ? 3u : 2u;
+        CettaExprIndex operation_field = source_graph ? 4u : 3u;
+        CettaExprIndex coordinate_field = source_graph ? 7u : 6u;
+        CettaExprIndex values_field = source_graph ? 11u : 10u;
+        if ((source_graph &&
+             (!state_transition_symbol_u32(
+                  record->expr.elems[2], &source_id) ||
+              source_id >= source_len)) ||
+            record->expr.elems[operation_field]->kind != ATOM_SYMBOL ||
+            record->expr.elems[kind_field]->kind != ATOM_SYMBOL ||
+            (!atom_is_symbol(record->expr.elems[kind_field],
+                             "ParserOccurrenceReduceV1") &&
+             !atom_is_symbol(record->expr.elems[kind_field],
+                             "ParserOccurrenceShiftV1"))) {
+            set_error(error, error_size,
+                      "parser occurrence has an invalid kind or operation");
+            goto occurrence_done;
+        }
+        for (size_t coordinate = 0u; coordinate < 4u; coordinate++) {
+            if (!state_transition_symbol_u32(
+                    record->expr.elems[coordinate_field + coordinate],
+                    &coordinates[coordinate])) {
+                set_error(error, error_size,
+                          "parser occurrence has a non-u32 source position");
+                goto occurrence_done;
+            }
+        }
+        if (!state_occurrence_parse_values_v1(
+                record->expr.elems[values_field],
+                &values, &value_len, &value_cap,
+                bytes_by_id, seen_id, unique_value_len,
+                error, error_size))
+            goto occurrence_done;
+        if (explicit_empty_roles &&
+            !state_occurrence_parse_empty_roles_v1(
+                record->expr.elems[values_field + 1u],
+                &empty_roles, error, error_size)) {
+            goto occurrence_done;
+        }
+        for (size_t empty_index = 0u;
+             empty_index < empty_roles.len; empty_index++) {
+            for (size_t value_index = 0u;
+                 value_index < value_len; value_index++) {
+                if (strcmp(
+                        empty_roles.values[empty_index],
+                        values[value_index].role) == 0) {
+                    set_error(
+                        error, error_size,
+                        "parser occurrence role is both empty and populated");
+                    goto occurrence_done;
+                }
+            }
+        }
+        if (value_len > UINT32_MAX - observed_value_len) {
+            set_error(error, error_size,
+                      "parser occurrence value inventory is too large");
+            goto occurrence_done;
+        }
+        observed_value_len += (uint32_t)value_len;
+        operation = state_occurrence_render_v1(
+            record->expr.elems[operation_field], error, error_size);
+        if (!operation)
+            goto occurrence_done;
+        if (source_graph) {
+            int needed = snprintf(
+                NULL, 0u, "(SourceIdentityV1 %s %" PRIu32 ")",
+                source_digest, source_id);
+            if (needed < 0) {
+                set_error(error, error_size,
+                          "cannot format occurrence source identity");
+                goto occurrence_done;
+            }
+            source_identity = malloc((size_t)needed + 1u);
+            if (!source_identity || snprintf(
+                    source_identity, (size_t)needed + 1u,
+                    "(SourceIdentityV1 %s %" PRIu32 ")",
+                    source_digest, source_id) != needed) {
+                set_error(error, error_size,
+                          "out of memory formatting occurrence source identity");
+                goto occurrence_done;
+            }
+        } else {
+            source_identity = strdup(source_digest);
+            if (!source_identity) {
+                set_error(error, error_size,
+                          "out of memory copying occurrence source identity");
+                goto occurrence_done;
+            }
+        }
+        {
+            int needed = snprintf(
+                NULL, 0u, "(StateOccurrenceIdentityV1 %s %" PRIu32 ")",
+                stream, index);
+            if (needed < 0) {
+                set_error(error, error_size,
+                          "cannot format state occurrence identity");
+                goto occurrence_done;
+            }
+            occurrence = malloc((size_t)needed + 1u);
+            if (!occurrence || snprintf(
+                    occurrence, (size_t)needed + 1u,
+                    "(StateOccurrenceIdentityV1 %s %" PRIu32 ")",
+                    stream, index) != needed) {
+                set_error(error, error_size,
+                          "out of memory formatting state occurrence identity");
+                goto occurrence_done;
+            }
+        }
+        if (!state_transition_answer_pushf(
+                &answers, &answers_len, &answers_cap, error, error_size,
+                "(OccurrenceStreamOfV1 %s %s)", occurrence, stream) ||
+            !state_transition_answer_pushf(
+                &answers, &answers_len, &answers_cap, error, error_size,
+                "(StateOccurrenceOperationV1 %s %s)",
+                occurrence, operation) ||
+            !state_transition_answer_pushf(
+                &answers, &answers_len, &answers_cap, error, error_size,
+                "(OccurrencePositionV1 %s "
+                "(SourcePositionV1 %s %" PRIu32 " %" PRIu32
+                " %" PRIu32 " %" PRIu32 "))",
+                occurrence, source_identity,
+                coordinates[0], coordinates[1],
+                coordinates[2], coordinates[3]))
+            goto occurrence_done;
+        if (index == 0u) {
+            if (!state_transition_answer_pushf(
+                    &answers, &answers_len, &answers_cap, error, error_size,
+                    "(StateOccurrenceFirstV1 %s %s)", stream, occurrence) ||
+                !state_transition_answer_pushf(
+                    &answers, &answers_len, &answers_cap, error, error_size,
+                    "(StateOccurrenceShapeV1 %s "
+                    "(StateOccurrenceNonemptyShapeV1 %s))",
+                    stream, occurrence))
+                goto occurrence_done;
+        }
+        if (index + 1u < step_len) {
+            if (!state_transition_answer_pushf(
+                    &answers, &answers_len, &answers_cap, error, error_size,
+                    "(StateOccurrenceNextV1 %s %s "
+                    "(StateOccurrenceIdentityV1 %s %" PRIu32 "))",
+                    stream, occurrence, stream, index + 1u) ||
+                !state_transition_answer_pushf(
+                    &answers, &answers_len, &answers_cap, error, error_size,
+                    "(StateOccurrenceTailV1 %s %s "
+                    "(StateOccurrenceNextTailV1 "
+                    "(StateOccurrenceIdentityV1 %s %" PRIu32 ")))",
+                    stream, occurrence, stream, index + 1u))
+                goto occurrence_done;
+        } else {
+            if (!state_transition_answer_pushf(
+                    &answers, &answers_len, &answers_cap,
+                    error, error_size,
+                    "(StateOccurrenceLastV1 %s %s)",
+                    stream, occurrence) ||
+                !state_transition_answer_pushf(
+                    &answers, &answers_len, &answers_cap,
+                    error, error_size,
+                    "(StateOccurrenceTailV1 %s %s "
+                    "StateOccurrenceLastTailV1)",
+                    stream, occurrence))
+                goto occurrence_done;
+        }
+        for (size_t value_index = 0u; value_index < value_len; value_index++) {
+            uint32_t list_identity;
+            bool seen_role = false;
+            for (size_t prior = 0u; prior < value_index; prior++) {
+                if (strcmp(values[prior].role, values[value_index].role) == 0) {
+                    seen_role = true;
+                    break;
+                }
+            }
+            if (seen_role)
+                continue;
+            if (!state_occurrence_list_identity_v1(
+                    &list_identities, values, value_len,
+                    values[value_index].role, false, &list_identity,
+                    error, error_size) ||
+                !state_transition_answer_pushf(
+                    &answers, &answers_len, &answers_cap,
+                    error, error_size,
+                    "(OccurrenceRoleValuesV1 %s %s "
+                    "(StateValueSequenceV1 %s %" PRIu32 "))",
+                    occurrence, values[value_index].role,
+                    stream, list_identity) ||
+                !state_transition_answer_pushf(
+                    &answers, &answers_len, &answers_cap,
+                    error, error_size,
+                    "(OccurrenceRoleSymbolsV1 %s %s "
+                    "(StateSymbolSequenceV1 %s %s))",
+                    occurrence, values[value_index].role,
+                    occurrence, values[value_index].role) ||
+                !state_transition_answer_pushf(
+                    &answers, &answers_len, &answers_cap,
+                    error, error_size,
+                    "(InterningInjectiveOnV1 "
+                    "(StateSymbolSequenceV1 %s %s) "
+                    "(StateValueSequenceV1 %s %" PRIu32 "))",
+                    occurrence, values[value_index].role,
+                    stream, list_identity)) {
+                goto occurrence_done;
+            }
+        }
+        for (size_t empty_index = 0u;
+             empty_index < empty_roles.len; empty_index++) {
+            uint32_t list_identity;
+            const char *role = empty_roles.values[empty_index];
+            if (!state_occurrence_list_identity_v1(
+                    &list_identities, values, value_len,
+                    role, true, &list_identity,
+                    error, error_size) ||
+                !state_transition_answer_pushf(
+                    &answers, &answers_len, &answers_cap,
+                    error, error_size,
+                    "(OccurrenceRoleValuesV1 %s %s "
+                    "(StateValueSequenceV1 %s %" PRIu32 "))",
+                    occurrence, role, stream, list_identity) ||
+                !state_transition_answer_pushf(
+                    &answers, &answers_len, &answers_cap,
+                    error, error_size,
+                    "(OccurrenceRoleSymbolsV1 %s %s "
+                    "(StateSymbolSequenceV1 %s %s))",
+                    occurrence, role, occurrence, role) ||
+                !state_transition_answer_pushf(
+                    &answers, &answers_len, &answers_cap,
+                    error, error_size,
+                    "(InterningInjectiveOnV1 "
+                    "(StateSymbolSequenceV1 %s %s) "
+                    "(StateValueSequenceV1 %s %" PRIu32 "))",
+                    occurrence, role, stream, list_identity)) {
+                goto occurrence_done;
+            }
+        }
+        for (size_t request = 0u; request < requests.len; request++) {
+            uint32_t list_identity;
+            char *index_peano;
+            if (strcmp(requests.values[request].operation, operation) != 0)
+                continue;
+            if (!state_occurrence_list_identity_v1(
+                    &list_identities, values, value_len,
+                    requests.values[request].role, false, &list_identity,
+                    error, error_size))
+                goto occurrence_done;
+            index_peano = state_transition_peano(
+                requests.values[request].index, error, error_size);
+            if (!index_peano ||
+                !state_transition_answer_pushf(
+                    &answers, &answers_len, &answers_cap,
+                    error, error_size,
+                    "(OccurrenceRoleListValueV1 %s %s %s "
+                    "(StateListValueV1 %" PRIu32 "))",
+                    occurrence, requests.values[request].role,
+                    index_peano, list_identity)) {
+                free(index_peano);
+                goto occurrence_done;
+            }
+            free(index_peano);
+        }
+        free(source_identity);
+        free(occurrence);
+        free(operation);
+        free(values);
+        free(empty_roles.values);
+        continue;
+
+occurrence_done:
+        free(source_identity);
+        free(occurrence);
+        free(operation);
+        free(values);
+        free(empty_roles.values);
+        goto done;
+    }
+    if (observed_value_len != expected_value_len) {
+        set_error(error, error_size,
+                  "parser occurrence value count disagrees with its header");
+        goto done;
+    }
+    for (uint32_t index = 0u; index < unique_value_len; index++) {
+        if (!seen_id[index]) {
+            set_error(error, error_size,
+                      "parser occurrence value ids are not dense");
+            goto done;
+        }
+    }
+    if (unique_value_len > SIZE_MAX / sizeof(*sorted_bytes)) {
+        set_error(error, error_size,
+                  "parser occurrence value inventory is too large to validate");
+        goto done;
+    }
+    sorted_bytes = malloc(
+        (unique_value_len ? unique_value_len : 1u) * sizeof(*sorted_bytes));
+    if (!sorted_bytes) {
+        set_error(error, error_size,
+                  "out of memory validating occurrence value injectivity");
+        goto done;
+    }
+    for (uint32_t index = 0u; index < unique_value_len; index++)
+        sorted_bytes[index] = bytes_by_id[index];
+    qsort(sorted_bytes, unique_value_len, sizeof(*sorted_bytes),
+          state_occurrence_text_pointer_compare_v1);
+    for (uint32_t index = 1u; index < unique_value_len; index++) {
+        if (strcmp(sorted_bytes[index - 1u], sorted_bytes[index]) == 0) {
+            set_error(error, error_size,
+                      "distinct parser occurrence value ids map to equal bytes");
+            goto done;
+        }
+    }
+    for (uint32_t index = 0u; index < unique_value_len; index++) {
+        char *byte_list = state_occurrence_byte_list_text_v1(
+            bytes_by_id[index], error, error_size);
+        if (!byte_list ||
+            !state_transition_answer_pushf(
+                &answers, &answers_len, &answers_cap,
+                error, error_size,
+                "(StreamValueBytesV1 %s (StateSourceValueV1 %" PRIu32 ") %s)",
+                stream, index, byte_list)) {
+            free(byte_list);
+            goto done;
+        }
+        free(byte_list);
+    }
+    for (size_t index = 0u; index < list_identities.len; index++) {
+        char *value_list;
+        if (index > UINT32_MAX) {
+            set_error(error, error_size,
+                      "state occurrence list inventory is too large");
+            goto done;
+        }
+        value_list = state_occurrence_value_list_text_v1(
+            list_identities.values[index].values,
+            list_identities.values[index].len,
+            error, error_size);
+        if (!value_list ||
+            !state_transition_answer_pushf(
+                &answers, &answers_len, &answers_cap,
+                error, error_size,
+                "(ValueSequenceRealizationV1 "
+                "(StateValueSequenceV1 %s %" PRIu32 ") %s)",
+                stream, (uint32_t)index, value_list) ||
+            !state_transition_answer_pushf(
+                &answers, &answers_len, &answers_cap,
+                error, error_size,
+                "(StreamListValueV1 %s (StateListValueV1 %" PRIu32 ") "
+                "(StateValueSequenceV1 %s %" PRIu32 "))",
+                stream, (uint32_t)index, stream, (uint32_t)index)) {
+            free(value_list);
+            goto done;
+        }
+        free(value_list);
+    }
+    qsort(answers, answers_len, sizeof(*answers), canonical_answer_compare);
+    {
+        size_t unique_len = 0u;
+        for (size_t index = 0u; index < answers_len; index++) {
+            if (unique_len > 0u &&
+                strcmp(answers[unique_len - 1u].text,
+                       answers[index].text) == 0) {
+                free(answers[index].text);
+                continue;
+            }
+            if (unique_len != index)
+                answers[unique_len] = answers[index];
+            unique_len++;
+        }
+        answers_len = unique_len;
+    }
+    for (size_t index = 0u; index < answers_len; index++) {
+        if (answers[index].len > SIZE_MAX - payload_len - 1u) {
+            set_error(error, error_size,
+                      "state occurrence answer stream is too large");
+            goto done;
+        }
+        payload_len += answers[index].len + 1u;
+    }
+    payload = malloc(payload_len ? payload_len : 1u);
+    if (!payload) {
+        set_error(error, error_size,
+                  "out of memory publishing state occurrences");
+        goto done;
+    }
+    {
+        size_t offset = 0u;
+        for (size_t index = 0u; index < answers_len; index++) {
+            memcpy(payload + offset, answers[index].text, answers[index].len);
+            offset += answers[index].len;
+            payload[offset++] = (uint8_t)'\n';
+        }
+    }
+    if (!write_atomic(output, payload, payload_len, error, error_size) ||
+        !fh_answer_stream_v1_read(
+            &published, output, error, error_size) ||
+        published.len != answers_len) {
+        if (error && error[0] == '\0')
+            set_error(error, error_size,
+                      "state occurrence stream changed during publication");
+        goto done;
+    }
+    *answer_len = published.len;
+    memcpy(answer_digest, published.digest, 65u);
+    ok = true;
+
+done:
+    for (uint32_t index = 0u; index < unique_value_len; index++)
+        free(bytes_by_id ? bytes_by_id[index] : NULL);
+    for (size_t index = 0u; index < literal_len; index++)
+        free(literals[index].text);
+    for (size_t index = 0u; index < requests.len; index++) {
+        free(requests.values[index].operation);
+        free(requests.values[index].role);
+    }
+    for (size_t index = 0u; index < list_identities.len; index++)
+        free(list_identities.values[index].values);
+    for (size_t index = 0u; index < answers_len; index++)
+        free(answers[index].text);
+    free(plan_digest);
+    free(source_program_digest);
+    free(source_digest);
+    free(stream);
+    free(ordered);
+    free(bytes_by_id);
+    free(sorted_bytes);
+    free(seen_id);
+    free(literals);
+    free(requests.values);
+    free(list_identities.values);
+    free(answers);
+    free(payload);
+    fh_answer_stream_v1_free(&published);
+    fh_answer_stream_v1_free(&state_program);
+    fh_answer_stream_v1_free(&occurrences);
+    return ok;
+}
+
 static bool empty_answer_stream_command(
     int argc, char **argv, size_t *answer_len, char answer_digest[65],
     char *error, size_t error_size) {
@@ -3482,6 +6295,13 @@ static void usage(const char *program) {
     fprintf(stderr,
             "usage:\n"
             "  %s equations --source FILE --out FILE\n"
+            "  %s petta-direct (--source FILE... | --composition FILE) "
+            "[--entry-mode RELATION:BITS... | "
+            "--closed-entry-mode RELATION:BITS...] "
+            "[--epilogue FILE] --out FILE\n"
+            "  %s rhometta-direct (--source FILE... | --composition FILE) "
+            "--target PRESENTATION... "
+            "[--entry-rule NAME...] [--epilogue FILE] --out FILE\n"
             "  %s answers --chart FILE --source FILE... "
             "[--reflect-source FILE...] --query TERM --out FILE\n"
             "  %s oslf-ntt --composition FILE --chart FILE "
@@ -3497,6 +6317,15 @@ static void usage(const char *program) {
             "  %s merge-answers --source FILE... --out FILE\n"
             "  %s project-answers --source FILE --head SYMBOL "
             "--arg INDEX --out FILE\n"
+            "  %s select-answers --source FILE --head SYMBOL --out FILE\n"
+            "  %s state-transition-bindings --source FILE --out FILE\n"
+            "  %s state-occurrence-projection-oracle --occurrences FILE "
+            "--state-program FILE --out FILE\n"
+            "  %s oracle-horn-shape --source FILE...\n"
+            "  %s oracle-petta-horn --runtime FILE --source FILE... "
+            "[--epilogue FILE] --out FILE --receipt-out FILE\n"
+            "  %s oracle-petta-horn-check --runtime FILE --source FILE... "
+            "[--epilogue FILE] --program FILE --receipt FILE\n"
             "  %s empty-answers --out FILE\n"
             "  %s empty-guard-evidence --abi FILE --out FILE\n"
             "  %s parser-pack --manifest FILE --compiler-root DIR "
@@ -3506,19 +6335,27 @@ static void usage(const char *program) {
             "  %s validate --manifest FILE\n",
             program, program, program, program, program, program, program,
             program, program, program, program, program, program, program,
-            program);
+            program, program, program, program, program, program, program,
+            program, program);
 }
 
 int main(int argc, char **argv) {
     SymbolTable symbols;
     char error[4096] = {0};
     bool ok = false;
-    bool answers_command = false;
+    bool finite_horn_answers_command = false;
+    bool answer_stream_command = false;
+    bool select_answers_command = false;
     bool oslf_ntt_command = false;
     bool transparent_inline_command = false;
     bool pack_facts_command = false;
     bool answer_facts_command = false;
     bool semantic_gslt_command = false;
+    bool petta_direct_command = false;
+    bool rhometta_direct_command = false;
+    bool horn_shape_command = false;
+    bool petta_horn_command = false;
+    bool petta_horn_check_command = false;
     size_t answer_len = 0u;
     char answer_digest[65] = {0};
     uint32_t composition_source_len = 0u;
@@ -3528,6 +6365,18 @@ int main(int argc, char **argv) {
     size_t semantic_operator_count = 0u;
     size_t semantic_rule_count = 0u;
     char semantic_gslt_digest[65] = {0};
+    size_t petta_direct_rule_count = 0u;
+    char petta_direct_source_digest[65] = {0};
+    char petta_direct_artifact_digest[65] = {0};
+    size_t rhometta_direct_rule_count = 0u;
+    size_t rhometta_direct_relation_count = 0u;
+    char rhometta_direct_source_digest[65] = {0};
+    char rhometta_direct_artifact_digest[65] = {0};
+    FHGSLTStructuralShapeV1 horn_shape = {0};
+    char horn_shape_package_digest[65] = {0};
+    size_t petta_horn_rule_len = 0u;
+    char petta_horn_package_digest[65] = {0};
+    char petta_horn_artifact_digest[65] = {0};
 
     if (argc < 2) {
         usage(argv[0]);
@@ -3544,8 +6393,22 @@ int main(int argc, char **argv) {
         const char *output = option_value(argc, argv, "--out");
         if (source != NULL && output != NULL)
             ok = compile_equations(source, output, error, sizeof(error));
+    } else if (strcmp(argv[1], "petta-direct") == 0) {
+        petta_direct_command = true;
+        ok = compile_petta_direct_command_v1(
+            argc, argv, &petta_direct_rule_count,
+            petta_direct_source_digest, petta_direct_artifact_digest,
+            error, sizeof(error));
+    } else if (strcmp(argv[1], "rhometta-direct") == 0) {
+        rhometta_direct_command = true;
+        ok = compile_rhometta_direct_command_v1(
+            argc, argv, &rhometta_direct_rule_count,
+            &rhometta_direct_relation_count,
+            rhometta_direct_source_digest,
+            rhometta_direct_artifact_digest,
+            error, sizeof(error));
     } else if (strcmp(argv[1], "answers") == 0) {
-        answers_command = true;
+        finite_horn_answers_command = true;
         ok = compile_answers_command(
             argc, argv, &answer_len, answer_digest,
             error, sizeof(error));
@@ -3555,7 +6418,7 @@ int main(int argc, char **argv) {
             argc, argv, &composition_source_len,
             &answer_len, answer_digest, error, sizeof(error));
     } else if (strcmp(argv[1], "lexical-answers") == 0) {
-        answers_command = true;
+        finite_horn_answers_command = true;
         ok = compile_lexical_answers_command(
             argc, argv, &answer_len, answer_digest,
             error, sizeof(error));
@@ -3579,17 +6442,48 @@ int main(int argc, char **argv) {
             argc, argv, &semantic_operator_count, &semantic_rule_count,
             semantic_gslt_digest, error, sizeof(error));
     } else if (strcmp(argv[1], "merge-answers") == 0) {
-        answers_command = true;
+        answer_stream_command = true;
         ok = merge_answer_streams_command(
             argc, argv, &answer_len, answer_digest,
             error, sizeof(error));
     } else if (strcmp(argv[1], "project-answers") == 0) {
-        answers_command = true;
+        answer_stream_command = true;
         ok = project_answer_stream_command(
             argc, argv, &answer_len, answer_digest,
             error, sizeof(error));
+    } else if (strcmp(argv[1], "select-answers") == 0) {
+        select_answers_command = true;
+        ok = select_answer_stream_command(
+            argc, argv, &answer_len, answer_digest,
+            error, sizeof(error));
+    } else if (strcmp(argv[1], "state-transition-bindings") == 0) {
+        answer_stream_command = true;
+        ok = state_transition_bindings_command(
+            argc, argv, &answer_len, answer_digest,
+            error, sizeof(error));
+    } else if (strcmp(argv[1], "state-occurrence-projection-oracle") == 0) {
+        answer_stream_command = true;
+        ok = state_occurrence_projection_oracle_command_v1(
+            argc, argv, &answer_len, answer_digest,
+            error, sizeof(error));
+    } else if (strcmp(argv[1], "oracle-horn-shape") == 0) {
+        horn_shape_command = true;
+        ok = finite_horn_oracle_shape_command_v1(
+            argc, argv, &horn_shape, horn_shape_package_digest,
+            error, sizeof(error));
+    } else if (strcmp(argv[1], "oracle-petta-horn") == 0) {
+        petta_horn_command = true;
+        ok = compile_petta_horn_oracle_command_v1(
+            argc, argv, &petta_horn_rule_len,
+            petta_horn_package_digest, petta_horn_artifact_digest,
+            error, sizeof(error));
+    } else if (strcmp(argv[1], "oracle-petta-horn-check") == 0) {
+        petta_horn_check_command = true;
+        ok = check_petta_horn_oracle_command_v1(
+            argc, argv, &petta_horn_rule_len,
+            petta_horn_artifact_digest, error, sizeof(error));
     } else if (strcmp(argv[1], "empty-answers") == 0) {
-        answers_command = true;
+        answer_stream_command = true;
         ok = empty_answer_stream_command(
             argc, argv, &answer_len, answer_digest,
             error, sizeof(error));
@@ -3634,8 +6528,14 @@ int main(int argc, char **argv) {
     else if (oslf_ntt_command)
         printf("(OSLFNativeTypeV1Summary %u %zu %s)\n",
                composition_source_len, answer_len, answer_digest);
-    else if (answers_command)
+    else if (select_answers_command)
+        printf("(SelectedAnswerStreamV1Summary %zu %s)\n",
+               answer_len, answer_digest);
+    else if (finite_horn_answers_command)
         printf("(FiniteHornAnswerStreamV1Summary %zu %s)\n",
+               answer_len, answer_digest);
+    else if (answer_stream_command)
+        printf("(AnswerStreamV1Summary %zu %s)\n",
                answer_len, answer_digest);
     else if (transparent_inline_command)
         printf("(ParserPackTransparentInlineNativeV1Summary "
@@ -3657,6 +6557,41 @@ int main(int argc, char **argv) {
         printf("(SemanticGSLTV1Summary %zu %zu %s)\n",
                semantic_operator_count, semantic_rule_count,
                semantic_gslt_digest);
+    else if (petta_direct_command)
+        printf("(GSLTDirectPeTTaV1Summary %zu %s %s)\n",
+               petta_direct_rule_count,
+               petta_direct_source_digest,
+               petta_direct_artifact_digest);
+    else if (rhometta_direct_command)
+        printf("(GSLTDirectRhoMettaV1Summary %zu %zu %s %s)\n",
+               rhometta_direct_rule_count,
+               rhometta_direct_relation_count,
+               rhometta_direct_source_digest,
+               rhometta_direct_artifact_digest);
+    else if (horn_shape_command)
+        printf("(FiniteHornStructuralShapeV1Summary "
+               "%zu %zu %zu %zu %zu %zu %zu %zu %zu %zu %zu %zu %s)\n",
+               horn_shape.rule_count,
+               horn_shape.fact_rule_count,
+               horn_shape.implication_rule_count,
+               horn_shape.body_goal_count,
+               horn_shape.maximum_body_goal_count,
+               horn_shape.left_linear_head_rule_count,
+               horn_shape.nonlinear_head_rule_count,
+               horn_shape.multi_body_rule_count,
+               horn_shape.cross_goal_join_rule_count,
+               horn_shape.body_only_variable_rule_count,
+               horn_shape.head_only_variable_rule_count,
+               horn_shape.direct_recursive_rule_count,
+               horn_shape_package_digest);
+    else if (petta_horn_command)
+        printf("(PeTTaHornProgramV1Summary %zu %s %s)\n",
+               petta_horn_rule_len,
+               petta_horn_package_digest,
+               petta_horn_artifact_digest);
+    else if (petta_horn_check_command)
+        printf("(PeTTaHornAdmissionV1Summary %zu %s)\n",
+               petta_horn_rule_len, petta_horn_artifact_digest);
 
 done:
     symbol_table_free(&symbols);

@@ -1515,7 +1515,7 @@ static bool prepared_pure_add_node(
     return true;
 }
 
-static bool prepared_pure_head_index(
+static bool prepared_pure_head_index_admitted(
     CettaPreparedPureProgram *program, SymbolId head,
     uint32_t *index_out) {
     if (!program || head == SYMBOL_ID_NONE || !index_out)
@@ -1530,18 +1530,32 @@ static bool prepared_pure_head_index(
         !prepared_pure_head_buckets_rebuild(
             program, program->head_len + 1u))
         return false;
-    bool defined = false;
-    if (space_query_effect_for_head(
-            program->space, head, &defined) != CETTA_GSLT_QUERY_EFFECT_PURE ||
-        !defined || !space_read_token_is_current(program->read)) {
-        return prepared_pure_reject(
-            program, "user head is not revision-pinned pure", NULL);
-    }
+    if (!space_read_token_is_current(program->read))
+        return false;
     *index_out = (uint32_t)program->head_len;
     program->heads[program->head_len++] = (PreparedPureHead){
         .head = head,
     };
     return prepared_pure_head_bucket_insert(program, *index_out);
+}
+
+static bool prepared_pure_head_index(
+    CettaPreparedPureProgram *program, SymbolId head,
+    uint32_t *index_out) {
+    if (!program || head == SYMBOL_ID_NONE || !index_out)
+        return false;
+    if (prepared_pure_head_bucket_lookup(program, head, index_out))
+        return true;
+    bool defined = false;
+    if (space_query_effect_for_head(
+            program->space, head, &defined) !=
+            CETTA_GSLT_QUERY_EFFECT_PURE ||
+        !defined || !space_read_token_is_current(program->read)) {
+        return prepared_pure_reject(
+            program, "user head is not revision-pinned pure", NULL);
+    }
+    return prepared_pure_head_index_admitted(
+        program, head, index_out);
 }
 
 static bool prepared_pure_compile_template(
@@ -1945,7 +1959,8 @@ static bool prepared_pure_compile_eval(
             return prepared_pure_reject(
                 program, "call policy is unsupported", source);
         uint32_t head_index = 0u;
-        if (!prepared_pure_head_index(program, head, &head_index))
+        if (!prepared_pure_head_index_admitted(
+                program, head, &head_index))
             return false;
         uint32_t *children = NULL;
         bool eager_arguments =
@@ -3940,7 +3955,8 @@ static bool prepared_pure_compile_closed_entry_call(
 
     *admitted = true;
     uint32_t head_index = 0u;
-    if (!prepared_pure_head_index(program, head, &head_index))
+    if (!prepared_pure_head_index_admitted(
+            program, head, &head_index))
         return false;
 
     uint32_t *children = NULL;
