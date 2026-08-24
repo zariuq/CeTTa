@@ -3080,6 +3080,16 @@ bench-prime-heavy: $(BIN)
 	fi
 	@$(CETTA_BIN_INVOKE) --lang prime benchmarks/prime/bench_typed_search_capacity.metta
 
+.PHONY: bench-term-sharing test-term-sharing-stress
+bench-term-sharing: test-term-sharing-stress
+
+test-term-sharing-stress: $(BIN)
+ifeq ($(ENABLE_RUNTIME_STATS),1)
+	@CETTA_BIN="$(CETTA_SCRIPT_BIN)" ./scripts/bench_term_sharing.sh quick
+else
+	@$(MAKE) BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 test-term-sharing-stress
+endif
+
 test-symbolid-guard:
 	@./scripts/check_symbolid_guards.sh
 
@@ -17541,6 +17551,7 @@ test-runtime-stats-lane-body:
 	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 test-petta-prepared-program-cache-stats
 	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 test-petta-prepared-collection-pull-stats
 	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 test-petta-libpl-runtime-stats
+	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 test-term-sharing-stress
 	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 test-runtime-stats-metta-suite
 	@if [ "$(MORK_BUILD_HAS_BRIDGE)" = "1" ] || [ -n "$(CETTA_MORK_SPACE_BRIDGE_LIB)" ]; then \
 		$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 test-mork-runtime-stats-lane-body; \
