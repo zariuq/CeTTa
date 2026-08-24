@@ -12,13 +12,6 @@
 (: use-witness
    (-> (: $p Fact) (: $w (WitnessOf $p)) (Checked $p)))
 
-(= (show-status $label
-      (PrimeVerdict $status $judgment $evidence))
-   ($label $status))
-
-!(show-status DependentCodomain
-   (prime-judge &self (Check (remember fact) (WitnessOf fact))))
-!(show-status MatchingWitness
-   (prime-judge &self (Check (use-witness fact fact-witness) (Checked fact))))
-!(show-status MismatchedWitness
-   (prime-judge &self (Check (use-witness fact other-witness) (Checked fact))))
+!(type:check (remember fact) (WitnessOf fact))
+!(type:check (use-witness fact fact-witness) (Checked fact))
+!(type:check (use-witness fact other-witness) (Checked fact))

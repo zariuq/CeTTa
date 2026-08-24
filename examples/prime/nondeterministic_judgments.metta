@@ -10,16 +10,7 @@
 (= (choose) Truth)
 (= (only) Z)
 
-(= (show-status $label
-      (PrimeVerdict $status $judgment $evidence))
-   ($label $status))
-
-!(show-status MayWitness
-   (prime-judge &self (May (PrimeEvaluate (choose)) Nat)))
-!(show-status MustCounterexample
-   (prime-judge &self (Must (PrimeEvaluate (choose)) Nat)))
-!(show-status MustAll
-   (prime-judge &self (Must (PrimeEvaluate (only)) Nat)))
-!(show-status MustEmpty
-   (prime-judge &self
-     (Must (PrimeEvaluate (superpose ())) Nat)))
+!(type:may (choose) Nat)
+!(type:must (choose) Nat)
+!(type:must (only) Nat)
+!(type:must (superpose ()) Nat)

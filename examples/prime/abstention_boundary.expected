@@ -1,0 +1,8 @@
+[True]
+[False]
+[False]
+[False]
+[(type:check (lam (p q h x) (h x)) (-> (p q : u0) (h : (-> p q)) (x : p) q))]
+[False]
+[False]
+[(u 1)]

@@ -42,13 +42,23 @@ tests/prime/conformance/abt_let_scope.metta	prime	metta		any	native	test-prime	g
 tests/prime/conformance/abt_sealed_boundary.metta	prime	metta		any	native	test-prime	golden	Prime derived ABT sealed-boundary evidence regression
 tests/prime/conformance/canonical_binders.metta	prime	metta		any	native	test-prime	golden	Prime derived canonical-binder evidence regression
 tests/prime/conformance/cell_lexical_refinement.metta	prime	metta		any	native	test-prime	golden	Prime normative golden regression
+tests/prime/conformance/closed_lambda_pi_check.metta	prime	metta		any	native	test-prime	golden	Prime normative golden regression
+tests/prime/conformance/closed_lambda_pi_convert.metta	prime	metta		any	native	test-prime	golden	Prime normative golden regression
+tests/prime/conformance/closed_lambda_pi_form.metta	prime	metta		any	native	test-prime	golden	Prime normative golden regression
+tests/prime/conformance/closed_lambda_pi_refine_boundary.metta	prime	metta		any	native	test-prime	golden	Prime normative golden regression
+tests/prime/conformance/closed_lambda_pi_synth.metta	prime	metta		any	native	test-prime	golden	Prime normative golden regression
 tests/prime/conformance/empty_observation.metta	prime	metta		any	native	test-prime	golden	Prime normative golden regression
 tests/prime/conformance/language_identity.metta	prime	metta		any	native	test-profiles	property	Prime language-identity side of the independently versioned lane boundary
 tests/prime/conformance/language_identity.metta	he	metta	he-prime	main	native	test-profiles	property	HE-prime inert-syntax side of the independently versioned lane boundary
 tests/prime/conformance/occurs_check.metta	prime	metta		any	native	test-prime	golden	Prime normative golden regression
 tests/prime/conformance/open_lambda_pi.metta	prime	metta		any	native	test-prime	golden	Prime normative golden regression
+tests/prime/conformance/regular_binders.metta	prime	metta		any	native	test-prime	golden	Prime normative golden regression
+tests/prime/conformance/regular_declarations.metta	prime	metta		any	native	test-prime	golden	Prime normative golden regression
+tests/prime/conformance/regular_kernel_constructors.metta	prime	metta		any	native	test-prime	golden	Prime normative golden regression
 tests/prime/conformance/resource_policy.metta	prime	metta		any	native	test-prime	golden	Prime normative golden regression
+tests/prime/conformance/scoped_regular_authority_routing.metta	prime	metta		any	native	test-prime	golden	Prime normative golden regression
 tests/prime/conformance/syntax_algebra.metta	prime	metta		any	native	test-prime	golden	Prime normative golden regression
+tests/prime/conformance/type_judgments.metta	prime	metta		any	native	test-prime	golden	Prime normative golden regression
 tests/prime/conformance/typed_equality.metta	prime	metta		any	native	test-prime	golden	Prime normative golden regression
 tests/prime/conformance/unbounded_search.metta	prime	metta		any	native	test-prime	golden	Prime normative golden regression
 tests/prime/first_class_contexts.metta	prime	metta		any	native	test-prime	golden	Prime normative golden regression
@@ -77,6 +87,7 @@ tests/prime/prepared_pure_control_cache.metta	prime	metta		any	native	test-prime
 tests/prime/prepared_pure_shared_decision.metta	prime	metta		any	native	test-prime	golden	Prime normative golden regression
 tests/prime/rule_machine_compile.metta	prime	metta		any	native	test-prime	golden	Prime normative golden regression
 tests/prime/rule_machine_duplicate_id.metta	prime	metta		any	native	test-prime	golden	Prime normative golden regression
+tests/prime/rule_machine_link_package_duplicate.metta	prime	metta		any	native	test-prime	golden	Prime normative golden regression
 tests/prime/rule_machine_malformed_artifact_delta.metta	prime	metta		any	native	test-prime	golden	Prime normative golden regression
 tests/prime/rule_machine_malformed_program.metta	prime	metta		any	native	test-prime	golden	Prime normative golden regression
 tests/prime/rule_machine_revision_identity.metta	prime	metta		any	native	test-prime	golden	Prime normative golden regression

@@ -1,0 +1,322 @@
+{
+  "schema": "cetta-prime-iggp-native-target-fibre-evidence-v1",
+  "source": {
+    "base_episode_evidence": "benchmarks/prime/ilp/iggp_episode_evidence.json",
+    "base_episode_evidence_sha256": "9b0fb3361a66e0517371f4d861361caf5ab914c0684191fe64bc74e4f473b96b",
+    "presentation_digest": "a7e21987b3a6c75fbceca4501730915dec370631fc93369bf07ac3dd4c225f0a",
+    "native_contract": "gdl-stratified-target-v1/GdlStratifiedEpisodesV2"
+  },
+  "summary": {
+    "tasks": 200,
+    "base_established_tasks": 119,
+    "base_contradiction_tasks": 1,
+    "base_outside_tasks": 80,
+    "target_fibre_established_tasks": 8,
+    "target_fibre_refuted_tasks": 0,
+    "target_fibre_outside_tasks": 72,
+    "effective_established_tasks": 127,
+    "effective_contradiction_tasks": 1,
+    "effective_refuted_tasks": 0,
+    "effective_outside_tasks": 72
+  },
+  "games": {
+    "asylum": {
+      "target_outcomes": {
+        "goal": {
+          "outcome": "Established",
+          "metrics": {
+            "tasks": 1,
+            "states": 496,
+            "episodes": 496,
+            "source_forms": 381,
+            "selected_forms": 34,
+            "reachable_relations": 3,
+            "external_relations": 1,
+            "static_facts": 0,
+            "omitted_static_facts": 1413,
+            "fact_occurrences": 992,
+            "omitted_fact_occurrences": 32315,
+            "typing_proofs": 992,
+            "supports": 18352,
+            "emitted_supports": 18352,
+            "proof_edges": 18352,
+            "reference_episodes": 496
+          }
+        },
+        "legal": {
+          "outcome": "OutsideFragment",
+          "reason": "source has no coherent greatest rule-variable typing witness"
+        },
+        "next": {
+          "outcome": "Established",
+          "metrics": {
+            "tasks": 1,
+            "states": 500,
+            "episodes": 500,
+            "source_forms": 381,
+            "selected_forms": 119,
+            "reachable_relations": 6,
+            "external_relations": 2,
+            "static_facts": 0,
+            "omitted_static_facts": 1413,
+            "fact_occurrences": 34569,
+            "omitted_fact_occurrences": 0,
+            "typing_proofs": 50148,
+            "supports": 148971,
+            "emitted_supports": 148971,
+            "proof_edges": 179969,
+            "reference_episodes": 500
+          }
+        },
+        "terminal": {
+          "outcome": "Established",
+          "metrics": {
+            "tasks": 1,
+            "states": 496,
+            "episodes": 496,
+            "source_forms": 381,
+            "selected_forms": 2,
+            "reachable_relations": 2,
+            "external_relations": 1,
+            "static_facts": 0,
+            "omitted_static_facts": 1413,
+            "fact_occurrences": 5,
+            "omitted_fact_occurrences": 33302,
+            "typing_proofs": 5,
+            "supports": 10,
+            "emitted_supports": 10,
+            "proof_edges": 10,
+            "reference_episodes": 496
+          }
+        }
+      }
+    },
+    "battle_of_numbers": {
+      "target_outcomes": {
+        "goal": {
+          "outcome": "OutsideFragment",
+          "reason": "('gdl:source-occurrence', '42', '146', '150'): negation operand is not one relational atom"
+        },
+        "legal": {
+          "outcome": "Established",
+          "metrics": {
+            "tasks": 1,
+            "states": 3145,
+            "episodes": 3145,
+            "source_forms": 150,
+            "selected_forms": 51,
+            "reachable_relations": 15,
+            "external_relations": 1,
+            "static_facts": 0,
+            "omitted_static_facts": 750,
+            "fact_occurrences": 30063,
+            "omitted_fact_occurrences": 9435,
+            "typing_proofs": 30063,
+            "supports": 1418206,
+            "emitted_supports": 40016,
+            "proof_edges": 1437774,
+            "reference_episodes": 32
+          }
+        },
+        "next": {
+          "outcome": "OutsideFragment",
+          "reason": "source has no coherent greatest rule-variable typing witness"
+        },
+        "terminal": {
+          "outcome": "Established",
+          "metrics": {
+            "tasks": 1,
+            "states": 3145,
+            "episodes": 3145,
+            "source_forms": 150,
+            "selected_forms": 51,
+            "reachable_relations": 15,
+            "external_relations": 1,
+            "static_facts": 0,
+            "omitted_static_facts": 750,
+            "fact_occurrences": 30067,
+            "omitted_fact_occurrences": 9431,
+            "typing_proofs": 30067,
+            "supports": 1392452,
+            "emitted_supports": 14256,
+            "proof_edges": 1412023,
+            "reference_episodes": 32
+          }
+        }
+      }
+    },
+    "coins": {
+      "uniform_outcome": {
+        "outcome": "OutsideFragment",
+        "reason": "mixed GDL/foreign source requires another admitted route"
+      }
+    },
+    "dont_touch": {
+      "uniform_outcome": {
+        "outcome": "OutsideFragment",
+        "reason": "mixed GDL/foreign source requires another admitted route"
+      }
+    },
+    "farming": {
+      "target_outcomes": {
+        "goal": {
+          "outcome": "Established",
+          "metrics": {
+            "tasks": 1,
+            "states": 7847,
+            "episodes": 7847,
+            "source_forms": 202,
+            "selected_forms": 1,
+            "reachable_relations": 2,
+            "external_relations": 1,
+            "static_facts": 0,
+            "omitted_static_facts": 189,
+            "fact_occurrences": 15694,
+            "omitted_fact_occurrences": 103881,
+            "typing_proofs": 15694,
+            "supports": 31388,
+            "emitted_supports": 15758,
+            "proof_edges": 31388,
+            "reference_episodes": 32
+          }
+        },
+        "legal": {
+          "outcome": "Established",
+          "metrics": {
+            "tasks": 1,
+            "states": 7847,
+            "episodes": 7847,
+            "source_forms": 202,
+            "selected_forms": 17,
+            "reachable_relations": 4,
+            "external_relations": 1,
+            "static_facts": 0,
+            "omitted_static_facts": 189,
+            "fact_occurrences": 17544,
+            "omitted_fact_occurrences": 102031,
+            "typing_proofs": 17544,
+            "supports": 144281,
+            "emitted_supports": 79918,
+            "proof_edges": 144281,
+            "reference_episodes": 32
+          }
+        },
+        "next": {
+          "outcome": "Established",
+          "metrics": {
+            "tasks": 1,
+            "states": 7950,
+            "episodes": 7950,
+            "source_forms": 202,
+            "selected_forms": 152,
+            "reachable_relations": 19,
+            "external_relations": 2,
+            "static_facts": 0,
+            "omitted_static_facts": 189,
+            "fact_occurrences": 129696,
+            "omitted_fact_occurrences": 6850,
+            "typing_proofs": 129696,
+            "supports": 1136909,
+            "emitted_supports": 124983,
+            "proof_edges": 1137233,
+            "reference_episodes": 32
+          }
+        },
+        "terminal": {
+          "outcome": "OutsideFragment",
+          "reason": "source has no coherent greatest rule-variable typing witness"
+        }
+      }
+    },
+    "fizzbuzz": {
+      "uniform_outcome": {
+        "outcome": "OutsideFragment",
+        "reason": "mixed GDL/foreign source requires another admitted route"
+      }
+    },
+    "freeforall": {
+      "uniform_outcome": {
+        "outcome": "OutsideFragment",
+        "reason": "mixed GDL/foreign source requires another admitted route"
+      }
+    },
+    "gt_attrition": {
+      "uniform_outcome": {
+        "outcome": "OutsideFragment",
+        "reason": "mixed GDL/foreign source requires another admitted route"
+      }
+    },
+    "gt_centipede": {
+      "uniform_outcome": {
+        "outcome": "OutsideFragment",
+        "reason": "mixed GDL/foreign source requires another admitted route"
+      }
+    },
+    "gt_ultimatum": {
+      "uniform_outcome": {
+        "outcome": "OutsideFragment",
+        "reason": "mixed GDL/foreign source requires another admitted route"
+      }
+    },
+    "horseshoe": {
+      "uniform_outcome": {
+        "outcome": "OutsideFragment",
+        "reason": "mixed GDL/foreign source requires another admitted route"
+      }
+    },
+    "hunter": {
+      "uniform_outcome": {
+        "outcome": "OutsideFragment",
+        "reason": "mixed GDL/foreign source requires another admitted route"
+      }
+    },
+    "knights_tour": {
+      "uniform_outcome": {
+        "outcome": "OutsideFragment",
+        "reason": "mixed GDL/foreign source requires another admitted route"
+      }
+    },
+    "leafy": {
+      "uniform_outcome": {
+        "outcome": "OutsideFragment",
+        "reason": "mixed GDL/foreign source requires another admitted route"
+      }
+    },
+    "lightboard": {
+      "uniform_outcome": {
+        "outcome": "OutsideFragment",
+        "reason": "mixed GDL/foreign source requires another admitted route"
+      }
+    },
+    "rainbow": {
+      "uniform_outcome": {
+        "outcome": "OutsideFragment",
+        "reason": "mixed GDL/foreign source requires another admitted route"
+      }
+    },
+    "sukoshi": {
+      "uniform_outcome": {
+        "outcome": "OutsideFragment",
+        "reason": "mixed GDL/foreign source requires another admitted route"
+      }
+    },
+    "tictactoe": {
+      "uniform_outcome": {
+        "outcome": "OutsideFragment",
+        "reason": "mixed GDL/foreign source requires another admitted route"
+      }
+    },
+    "tiger_vs_dogs": {
+      "uniform_outcome": {
+        "outcome": "OutsideFragment",
+        "reason": "mixed GDL/foreign source requires another admitted route"
+      }
+    },
+    "walkabout": {
+      "uniform_outcome": {
+        "outcome": "OutsideFragment",
+        "reason": "mixed GDL/foreign source requires another admitted route"
+      }
+    }
+  }
+}

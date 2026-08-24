@@ -19,7 +19,7 @@ const CettaHeTypingCoreDirectServiceV1
         .classify_consistency = he_typing_classify_consistency,
         .normalize_type = he_typing_normalize_type_status_budgeted,
         .check_refinement = he_typing_check_refinement_status_budgeted,
-        .check_term = he_typing_check_term_status_budgeted,
+        .check_term = he_typing_check_term_outcome_budgeted,
     };
 
 bool cetta_he_typing_core_direct_service_v1_is_valid(
@@ -61,9 +61,9 @@ bool cetta_he_profiled_type_inference_direct_service_v1_is_valid(
            service->infer_structural_budgeted;
 }
 
-_Static_assert(CETTA_HE_CHECK_ESTABLISHED == 0,
+_Static_assert(CETTA_NIK_OUTCOME_ESTABLISHED == 0,
                "HE check outcome order must match the Lean inventory");
-_Static_assert(CETTA_HE_CHECK_INCOMPLETE == 3,
+_Static_assert(CETTA_NIK_OUTCOME_INCOMPLETE == 3,
                "HE check outcome count must match the Lean inventory");
 _Static_assert(CETTA_HE_NORMALIZE_COMPLETE == 0,
                "HE normalization order must match the Lean inventory");
@@ -141,8 +141,8 @@ bool cetta_he_inference_contracts_v1_are_valid(void) {
     return true;
 }
 
-bool cetta_he_check_status_is_budget_sensitive(CettaHeCheckStatus status) {
-    return status == CETTA_HE_CHECK_INCOMPLETE;
+bool cetta_he_outcome_is_budget_sensitive(CettaNikOutcomeV1 status) {
+    return status == CETTA_NIK_OUTCOME_INCOMPLETE;
 }
 
 bool cetta_he_normalize_status_is_exhaustion(

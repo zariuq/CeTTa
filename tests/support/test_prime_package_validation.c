@@ -58,6 +58,40 @@ static bool expect_direct_typing_status(
     return false;
 }
 
+static bool atom_tree_has_symbol(const Atom *atom, const char *name) {
+    if (!atom || !name) return false;
+    if (atom->kind == ATOM_SYMBOL)
+        return atom_is_symbol((Atom *)atom, name);
+    if (atom->kind != ATOM_EXPR) return false;
+    for (CettaExprIndex i = 0u; i < atom->expr.len; i++)
+        if (atom_tree_has_symbol(atom->expr.elems[i], name)) return true;
+    return false;
+}
+
+static bool expect_direct_typing_status_and_evidence_symbol(
+    Arena *arena, Space *space,
+    const CettaPrimeTypingDirectServiceV1 *service,
+    const char *claim_text, bool steps_limited, uint64_t steps,
+    const char *expected_status, const char *evidence_symbol) {
+    Atom *claim = parse_one(arena, claim_text);
+    Atom *verdict = claim
+        ? service->judge(arena, space, claim, steps_limited, steps)
+        : NULL;
+    if (verdict && verdict->kind == ATOM_EXPR &&
+        verdict->expr.len == 4u &&
+        atom_is_symbol(verdict->expr.elems[0], "PrimeVerdict") &&
+        atom_is_symbol(verdict->expr.elems[1], expected_status) &&
+        atom_tree_has_symbol(verdict->expr.elems[3], evidence_symbol)) {
+        return true;
+    }
+    fprintf(stderr, "Prime direct typing evidence mismatch for %s: ",
+            claim_text);
+    atom_print(verdict, stderr);
+    fprintf(stderr, " (expected %s carrying %s)\n",
+            expected_status, evidence_symbol);
+    return false;
+}
+
 static CettaGsltHornLimits prime_ground_qualification_limits(void) {
     return (CettaGsltHornLimits){
         .max_rule_attempts = 100000u,
@@ -258,9 +292,7 @@ int main(int argc, char **argv) {
         &cetta_prime_typing_direct_service_v1;
     if (!cetta_prime_typing_direct_service_v1_is_valid(typing_service) ||
         typing_service->authority !=
-            &cetta_prime_typing_direct_authority_v1 ||
-        typing_service->he_typing_core_backend !=
-            &cetta_he_typing_core_direct_service_v1) {
+            &cetta_prime_typing_direct_authority_v1) {
         fprintf(stderr, "Prime direct typing authority is invalid\n");
         goto cleanup;
     }
@@ -271,10 +303,6 @@ int main(int argc, char **argv) {
         strcmp(
             typing_source->semantic_scope,
             "prime.typing.closed-formation") != 0 ||
-        strcmp(typing_source->mode, "direct-decision") != 0 ||
-        strcmp(typing_source->certificate_policy, "none") != 0 ||
-        strcmp(typing_source->fiber, "prime") != 0 ||
-        strcmp(typing_source->default_outcome, "PUndetermined") != 0 ||
         typing_source->coverage !=
             CETTA_NIK_DIRECT_SOURCE_AUTHORED_FRAGMENT) {
         fprintf(stderr, "Prime typing source binding is invalid\n");
@@ -294,10 +322,6 @@ int main(int argc, char **argv) {
         native_ground_source->authority != typing_service->authority ||
         strcmp(native_ground_source->semantic_scope,
                "prime.typing.native-ground-judgments") != 0 ||
-        strcmp(native_ground_source->mode, "direct-decision") != 0 ||
-        strcmp(native_ground_source->certificate_policy, "none") != 0 ||
-        strcmp(native_ground_source->fiber, "prime") != 0 ||
-        strcmp(native_ground_source->default_outcome, "PUndetermined") != 0 ||
         native_ground_source->coverage !=
             CETTA_NIK_DIRECT_SOURCE_AUTHORED_FRAGMENT) {
         fprintf(stderr, "Prime native-ground source binding is invalid\n");
@@ -346,10 +370,6 @@ int main(int argc, char **argv) {
         publication_source->authority != publication_service->authority ||
         strcmp(publication_source->semantic_scope,
                "prime.typing.result-contract-publication-core") != 0 ||
-        strcmp(publication_source->mode, "direct-decision") != 0 ||
-        strcmp(publication_source->certificate_policy, "none") != 0 ||
-        strcmp(publication_source->fiber, "prime") != 0 ||
-        strcmp(publication_source->default_outcome, "PUndetermined") != 0 ||
         publication_source->coverage !=
             CETTA_NIK_DIRECT_SOURCE_AUTHORED_FRAGMENT) {
         fprintf(stderr, "Prime typed-publication source binding is invalid\n");
@@ -395,45 +415,69 @@ int main(int argc, char **argv) {
 
     if (!expect_direct_typing_status(
             &scratch, &space, typing_service,
-            "(Form Number)", "Established") ||
+            "(type:formed Number)", "Established") ||
         !expect_direct_typing_status(
             &scratch, &space, typing_service,
-            "(Form 7)", "Refuted") ||
+            "(type:formed 7)", "Refuted") ||
         !expect_direct_typing_status(
             &scratch, &space, typing_service,
-            "(Synth 7)", "Established") ||
+            "(type:of 7)", "Established") ||
         !expect_direct_typing_status(
             &scratch, &space, typing_service,
-            "(Check 7 Number)", "Established") ||
+            "(type:check 7 Number)", "Established") ||
         !expect_direct_typing_status(
             &scratch, &space, typing_service,
-            "(Check 7 String)", "Refuted") ||
+            "(type:check 7 String)", "Refuted") ||
         !expect_direct_typing_status(
             &scratch, &space, typing_service,
-            "(Analyze 7 %Undefined%)", "Established") ||
+            "(type:analyze 7 %Undefined%)", "Established") ||
         !expect_direct_typing_status(
             &scratch, &space, typing_service,
-            "(Check 7 %Undefined%)", "Undetermined") ||
+            "(type:check 7 %Undefined%)", "Undetermined") ||
         !expect_direct_typing_status(
             &scratch, &space, typing_service,
-            "(Convert (+ 1 1) 2)", "Established") ||
+            "(type:check 7 $Expected)", "Undetermined") ||
         !expect_direct_typing_status(
             &scratch, &space, typing_service,
-            "(Convert Number String)", "Refuted") ||
+            "(type:eq (+ 1 1) 2)", "Established") ||
         !expect_direct_typing_status(
             &scratch, &space, typing_service,
-            "(Refine Number)", "Established")) {
+            "(type:eq Number String)", "Refuted") ||
+        !expect_direct_typing_status(
+            &scratch, &space, typing_service,
+            "(type:refine Number)", "Established")) {
         goto cleanup;
     }
-    Atom *native_form = parse_one(&scratch, "(Form Number)");
+    if (!expect_direct_typing_status_and_evidence_symbol(
+            &scratch, &space, typing_service,
+            "(type:formed Number)", true, 1u,
+            "Established", "ResourceLedgerV1") ||
+        !expect_direct_typing_status_and_evidence_symbol(
+            &scratch, &space, typing_service,
+            "(type:may (PrimeAnswers Complete (PrimeValue 7)) Number)",
+            true, 1000u, "Established", "ResourceLedgerV1") ||
+        !expect_direct_typing_status_and_evidence_symbol(
+            &scratch, &space, typing_service,
+            "(type:must (PrimeAnswers Complete (PrimeFailure branch-fault) "
+            "(PrimeValue 7)) Number)",
+            true, 1000u, "Incomplete", "uncertified-producer-complete") ||
+        !expect_direct_typing_status_and_evidence_symbol(
+            &scratch, &space, typing_service,
+            "(type:must (PrimeAnswers (Incomplete producer-cutoff) "
+            "(PrimeValue 7)) Number)",
+            true, 1000u, "Incomplete", "producer-cutoff") ||
+        !expect_direct_typing_status_and_evidence_symbol(
+            &scratch, &space, typing_service,
+            "(type:must (PrimeAnswers Complete (PrimeValue 7) "
+            "(PrimeValue \"not-a-number\")) Number)",
+            true, 1000u, "Refuted", "MustCounterexample")) {
+        goto cleanup;
+    }
+    Atom *native_form = parse_one(&scratch, "(type:formed Number)");
     Atom *external_check = parse_one(
-        &scratch, "(Check EXTERNAL-AUTHORITY goal proof)");
-    Atom *evaluation_claim = parse_one(
-        &scratch, "(May (PrimeAnswers Complete) Number)");
+        &scratch, "(nik:check EXTERNAL-AUTHORITY goal proof)");
     if (typing_service->judge(
             &scratch, &space, external_check, false, 0u) ||
-        typing_service->judge(
-            &scratch, &space, evaluation_claim, false, 0u) ||
         typing_service->judge(
             &scratch, &space, native_form, true, 0u)) {
         fprintf(stderr,
@@ -448,10 +492,10 @@ int main(int argc, char **argv) {
         goto cleanup;
     }
     invalid_typing_service = *typing_service;
-    invalid_typing_service.he_typing_core_backend = NULL;
+    invalid_typing_service.authority = NULL;
     if (cetta_prime_typing_direct_service_v1_is_valid(
             &invalid_typing_service)) {
-        fprintf(stderr, "Prime accepted a missing HE typing backend\n");
+        fprintf(stderr, "Prime accepted a missing direct authority\n");
         goto cleanup;
     }
 
@@ -486,12 +530,12 @@ int main(int argc, char **argv) {
 
     Atom *package = prime_semantics_package_atom(&arena);
     if (!package || !prime_semantics_validate_package(package)) {
-        fprintf(stderr, "valid PrimeDefV2 package was rejected\n");
+        fprintf(stderr, "valid PrimeDefV3 package was rejected\n");
         goto cleanup;
     }
 
     Atom *bad_root = copy_expr_with(
-        &arena, package, 0, atom_symbol(&arena, "BrokenPrimeDefV2"));
+        &arena, package, 0, atom_symbol(&arena, "BrokenPrimeDefV3"));
     if (!bad_root || prime_semantics_validate_package(bad_root)) {
         fprintf(stderr, "broken PrimeDef root was accepted\n");
         goto cleanup;
@@ -565,19 +609,14 @@ int main(int argc, char **argv) {
     Atom *dtt_proof = parse_one(&scratch, dtt->positive_proof_metta);
     Atom *other_proof = parse_one(
         &scratch, cetta_prime_nik_authorities_v1[1].positive_proof_metta);
-    Atom *prime_judge_head = atom_symbol(&scratch, "prime-judge");
     Atom *dtt_judgment = atom_expr(
         &scratch,
-        (Atom *[]){atom_symbol(&scratch, "Check"),
+        (Atom *[]){atom_symbol(&scratch, "nik:check"),
                    atom_symbol(&scratch, dtt->alias),
                    dtt_goal, dtt_proof},
         4u);
-    Atom *judge_args[2] = {
-        atom_space(&scratch, &space),
-        dtt_judgment,
-    };
-    Atom *established = prime_semantics_dispatch(
-        &scratch, prime_judge_head, judge_args, 2u);
+    Atom *established = prime_semantics_check_nik_direct(
+        &scratch, &space, dtt_judgment, false, 0u);
     if (!established || established->kind != ATOM_EXPR ||
         established->expr.len < 2u ||
         !atom_is_symbol(established->expr.elems[0], "PrimeVerdict") ||
@@ -608,13 +647,12 @@ int main(int argc, char **argv) {
         5u);
     Atom *dag_judgment = atom_expr(
         &scratch,
-        (Atom *[]){atom_symbol(&scratch, "Check"),
+        (Atom *[]){atom_symbol(&scratch, "nik:check"),
                    atom_symbol(&scratch, dtt->alias),
                    dtt_goal, dtt_dag_proof},
         4u);
-    judge_args[1] = dag_judgment;
-    Atom *dag_established = prime_semantics_dispatch(
-        &scratch, prime_judge_head, judge_args, 2u);
+    Atom *dag_established = prime_semantics_check_nik_direct(
+        &scratch, &space, dag_judgment, false, 0u);
     if (!dag_established || dag_established->kind != ATOM_EXPR ||
         dag_established->expr.len < 2u ||
         !atom_is_symbol(dag_established->expr.elems[0], "PrimeVerdict") ||
@@ -626,13 +664,12 @@ int main(int argc, char **argv) {
     }
     Atom *wrong_dtt_judgment = atom_expr(
         &scratch,
-        (Atom *[]){atom_symbol(&scratch, "Check"),
+        (Atom *[]){atom_symbol(&scratch, "nik:check"),
                    atom_symbol(&scratch, dtt->alias),
                    dtt_goal, other_proof},
         4u);
-    judge_args[1] = wrong_dtt_judgment;
-    Atom *refuted = prime_semantics_dispatch(
-        &scratch, prime_judge_head, judge_args, 2u);
+    Atom *refuted = prime_semantics_check_nik_direct(
+        &scratch, &space, wrong_dtt_judgment, false, 0u);
     if (!refuted || refuted->kind != ATOM_EXPR ||
         refuted->expr.len < 2u ||
         !atom_is_symbol(refuted->expr.elems[0], "PrimeVerdict") ||
@@ -1588,7 +1625,7 @@ int main(int argc, char **argv) {
         goto cleanup;
     }
 
-    puts("PASS: PrimeDefV2 validation, native-ground exclusivity, and conversion-certificate replay");
+    puts("PASS: PrimeDefV3 validation, native-ground exclusivity, and conversion-certificate replay");
     rc = 0;
 
 cleanup:

@@ -1,18 +1,7 @@
-; Stable open lambda-Pi intake: synthesis, checking, beta-eta conversion,
-; and a decisive negative scope witness through the public Prime judgment.
-!(prime-judge &self
-  (Synth (PrimeScoped PrimeCtxNil (Lam U0 (idx 0)))))
-!(prime-judge &self
-  (Check (PrimeScoped PrimeCtxNil (Lam U0 (idx 0))) (Pi U0 U0)))
-!(prime-judge &self
-  (Convert
-    (PrimeScoped (PrimeCtxCons U0 PrimeCtxNil)
-      (App (Lam U0 (idx 0)) (idx 0)))
-    (PrimeScoped (PrimeCtxCons U0 PrimeCtxNil) (idx 0))))
-!(prime-judge &self
-  (Convert
-    (PrimeScoped (PrimeCtxCons (Pi U0 U0) PrimeCtxNil)
-      (Lam U0 (App (idx 1) (idx 0))))
-    (PrimeScoped (PrimeCtxCons (Pi U0 U0) PrimeCtxNil) (idx 0))))
-!(prime-judge &self
-  (Synth (PrimeScoped PrimeCtxNil (idx 0))))
+; Stable authored intake. Exact open-context beta/eta correspondence remains
+; in the regular-kernel C test, where the intrinsic context is explicit.
+!(type:of u0)
+!(type:check (lam x x) (-> u0 u0))
+!(type:eq (-> (x : u0) u0) (-> (y : u0) u0))
+!(type:eq Foo Foo)
+!(type:of (idx 0))

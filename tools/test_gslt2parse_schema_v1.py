@@ -79,7 +79,7 @@ EXPECTED_CETTA_COST_RHO_READER_DIGEST = (
     "50f114715b1b8ed1850c80e7b5ed2c8b6d96c731260567286475dc224380216c"
 )
 EXPECTED_CETTA_RHO_ABSTRACT_DIGEST = (
-    "ee90a8366ce08bd38cc04a92ffb81d633031e1f95aa646db87b8fe3e8c708563"
+    "2055fabd3cbf7915384030a7b126d2604e98e42f4eb7efeb71943093f3cbadbd"
 )
 EXPECTED_CETTA_RHO_MRHO_READER_DIGEST = (
     "5042f6651530edd7a0d8dd397e6fd21ebca21b1ab8693bbd9c1efd99fd2c4895"
@@ -193,7 +193,7 @@ def main() -> int:
 
     without_definition = schema.admit([CORE, WITHOUT_DEFINITION])
     if schema.package_digest(without_definition) == digest:
-        raise GateFailure("authority-rule deletion did not change the package digest")
+        raise GateFailure("rule deletion did not change the package digest")
     passed += 1
 
     mutations = {
@@ -290,82 +290,6 @@ def main() -> int:
         if escaped_digest != raw_digest:
             raise GateFailure("escaped Unicode scalars changed canonical bytes")
         passed += 1
-
-    framed_text = """\
-(gslt-presentation-v1 FramedV1
-  (nik-authority-frame-v1
-    (mode direct-decision)
-    (certificate-policy none)
-    (fiber sample-language)
-    (outcome-algebra (Accepted Rejected)
-      (exclusive)
-      (default Rejected))
-    (native-projection pending)
-    (status AUTHORED_FRAGMENT)
-    (commitments direct-computation certificate-free))
-  (signature (operator probe 1))
-  (equations)
-  (rewrites
-    (rule probe-a
-      (nik-rule-frame-v1
-        (native-projection native-probe)
-        (role calculus))
-      (head (probe a))
-      (body))))
-"""
-    with tempfile.TemporaryDirectory(prefix="gslt2parse-nik-frame-v1-") as raw_temp:
-        temp = Path(raw_temp)
-        framed_path = temp / "framed.metta"
-        framed_path.write_text(framed_text, encoding="utf-8")
-        framed = schema.admit([framed_path])[0]
-        if framed.nik_frame is None or framed.nik_frame.fiber != "sample-language":
-            raise GateFailure("NIK authority frame or language fiber was lost")
-        if framed.rules[0].nik_frame is None:
-            raise GateFailure("NIK rule frame was lost")
-        passed += 1
-
-        canonical_path = temp / "framed-canonical.metta"
-        canonical_path.write_text(schema.canonical_text(framed), encoding="utf-8")
-        if schema.package_digest(schema.admit([canonical_path])) != schema.package_digest(
-            [framed]
-        ):
-            raise GateFailure("NIK frame changed across canonical round-trip")
-        passed += 1
-
-        frame_mutations = {
-            "certificate-on-direct-path": (
-                framed_text.replace(
-                    "(certificate-policy none)", "(certificate-policy trace)"
-                ),
-                "direct-decision authority requires certificate-policy none",
-            ),
-            "missing-language-fiber": (
-                framed_text.replace("    (fiber sample-language)\n", ""),
-                "missing nik-authority-frame-v1 fields: fiber",
-            ),
-            "default-outside-algebra": (
-                framed_text.replace("(default Rejected)", "(default Missing)"),
-                "default outcome is not in the outcome algebra",
-            ),
-            "missing-rule-frame": (
-                framed_text.replace(
-                    "      (nik-rule-frame-v1\n"
-                    "        (native-projection native-probe)\n"
-                    "        (role calculus))\n",
-                    "",
-                ),
-                "malformed rule",
-            ),
-            "unsupported-rule-role": (
-                framed_text.replace("(role calculus)", "(role observation)"),
-                "unsupported NIK rule role observation",
-            ),
-        }
-        for name, (text, needle) in frame_mutations.items():
-            path = temp / f"{name}.metta"
-            path.write_text(text, encoding="utf-8")
-            expect_rejected([path], needle)
-            passed += 1
 
     migrated = migration.migrate(MIGRATION_FIXTURE, name="MigratedTypedToyV1")
     if {(item.name, item.arity) for item in migrated.operators} != {
@@ -581,7 +505,7 @@ def main() -> int:
             raise GateFailure(f"guest-language name in generic tool {path.name}")
     passed += 1
 
-    total = 42
+    total = 35
     if passed != total:
         raise GateFailure(f"gate accounting mismatch: {passed}/{total}")
     print(f"(FiniteHornGSLTV1CanarySummary {total} {passed} 0)")

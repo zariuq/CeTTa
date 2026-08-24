@@ -117,7 +117,7 @@ static Atom *model_canonical_to_native(Arena *arena, const Atom *model) {
 static bool direct_form_has_status(
     Arena *arena, Space *space, Atom *syntax, const char *status) {
     Atom *judgment = syntax
-        ? atom_expr2(arena, atom_symbol(arena, "Form"), syntax)
+        ? atom_expr2(arena, atom_symbol(arena, "type:formed"), syntax)
         : NULL;
     Atom *verdict = judgment
         ? cetta_prime_typing_direct_service_v1.judge(
@@ -128,7 +128,7 @@ static bool direct_form_has_status(
                    atom_is_symbol(verdict->expr.elems[0], "PrimeVerdict") &&
                    atom_is_symbol(verdict->expr.elems[1], status);
     if (!matches) {
-        fprintf(stderr, "Prime Form status for ");
+        fprintf(stderr, "Prime type:formed status for ");
         atom_print(syntax, stderr);
         fprintf(stderr, " was ");
         atom_print(verdict, stderr);
@@ -295,10 +295,6 @@ int main(int argc, char **argv) {
                      "prime-elaborated-dependent-formation-core-v1") == 0 &&
               strcmp(binding->semantic_scope,
                      "prime.typing.elaborated-dependent-formation-core") == 0 &&
-              strcmp(binding->mode, "direct-decision") == 0 &&
-              strcmp(binding->certificate_policy, "none") == 0 &&
-              strcmp(binding->fiber, "prime") == 0 &&
-              strcmp(binding->default_outcome, "PUndetermined") == 0 &&
               binding->coverage ==
                   CETTA_NIK_DIRECT_SOURCE_AUTHORED_FRAGMENT,
           "dependent formation source is a valid authored fragment binding");
@@ -307,13 +303,13 @@ int main(int argc, char **argv) {
     CHECK(!cetta_nik_direct_source_binding_v1_is_valid(&invalid_binding),
           "dependent formation binding rejects an invalid coverage grade");
     invalid_binding = *binding;
-    invalid_binding.certificate_policy = "trace";
+    invalid_binding.source_sha256 = "short";
     CHECK(!cetta_nik_direct_source_binding_v1_is_valid(&invalid_binding),
-          "dependent formation binding rejects certificates on a direct path");
+          "dependent formation binding rejects a malformed source digest");
     invalid_binding = *binding;
-    invalid_binding.fiber = "";
+    invalid_binding.semantic_scope = "";
     CHECK(!cetta_nik_direct_source_binding_v1_is_valid(&invalid_binding),
-          "dependent formation binding requires a language fiber");
+          "dependent formation binding requires a semantic scope");
     CHECK(cetta_prime_typing_direct_service_v1.judge ==
               prime_semantics_judge_typing_direct,
           "production formation remains the direct certificate-free judge");

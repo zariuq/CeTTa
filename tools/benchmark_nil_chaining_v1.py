@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Cross-engine benchmark for three Nil chaining workloads.
+"""Cross-engine benchmark for source-grounded chaining workloads.
 
 Engines: SWI PeTTa, CeTTa PeTTa (extended profile), integrated RuleMachine
 (bytecode + native for BFC; compiled-artifact runner for synthesis/SUMO),
@@ -27,13 +27,15 @@ FIXTURES = ROOT / "experiments/gslt2parse_foundation/migration_fixtures/nil_chai
 GUESTS = ROOT / "tests/prime/nil_rule_machine_guests.generated.metta"
 
 SOURCE_IDENTITIES = {
-    "/home/aimama/aihub/repos/ngeiswei-chaining-run/experimental/backward-via-forward/bfc-xp.mm2":
+    "experimental/curried-chaining/curried-chainer.metta":
+        "e2b3c1132bede217773bcad0cff25f7ccde2b137a7dbca135cd2512f6e109386",
+    "experimental/backward-via-forward/bfc-xp.mm2":
         "b53b6079a03241f39fe7d8750b77247ce959a73c95dc55cc2b419d83df3ce5b1",
-    "/home/aimama/aihub/repos/ngeiswei-chaining-run/experimental/synthesis/SynthesizeTest.metta":
+    "experimental/synthesis/SynthesizeTest.metta":
         "ba3279cfbdd737c67b4118cd734c0f69e0dfcb87c0b4035a082c0d658d78ac3e",
-    "/home/aimama/aihub/repos/ngeiswei-chaining-run/experimental/sumo/john-carry-flower/john-carry-flower.kif.metta":
+    "experimental/sumo/john-carry-flower/john-carry-flower.kif.metta":
         "a8df9448de199882f944e1010de42d5641a5ccf8829d1c6963fcd262f85007db",
-    "/home/aimama/aihub/repos/ngeiswei-chaining-run/experimental/sumo/rule-base.metta":
+    "experimental/sumo/rule-base.metta":
         "9e6f4df984188e023400af78227132178996cfd0f38c4a8f3398fc085719ab55",
 }
 
@@ -47,6 +49,8 @@ PETTA_FIXTURES = {
 }
 
 RM_SEARCH = {
+    "curried_c_artifact":
+        "(compile:run (chain-curried-artifact) 3 1000 10 C)",
     "hilbert_jarr13_bytecode":
         "(compile:rule-program-run (nil-bfc-rule-program) 13 1000000 10 (imp (imp (imp p q) r) (imp q r)))",
     "hilbert_jarr13_native":
@@ -60,13 +64,16 @@ RM_SEARCH = {
 def sha256(path: str) -> str:
     return hashlib.sha256(pathlib.Path(path).read_bytes()).hexdigest()
 
-def verify_identities() -> dict:
+def verify_identities(source_root: pathlib.Path) -> dict:
     out = {}
-    for path, expected in SOURCE_IDENTITIES.items():
-        actual = sha256(path)
+    for relative, expected in SOURCE_IDENTITIES.items():
+        actual = sha256(str(source_root / relative))
         if actual != expected:
-            raise SystemExit(f"IDENTITY MISMATCH: {path}\n  expected {expected}\n  actual   {actual}")
-        out[path] = actual
+            raise SystemExit(
+                f"IDENTITY MISMATCH: {relative}\n"
+                f"  expected {expected}\n  actual   {actual}"
+            )
+        out[relative] = actual
     for name, _, _ladder in PETTA_FIXTURES.values():
         out[str(FIXTURES / name)] = sha256(str(FIXTURES / name))
     return out
@@ -189,15 +196,26 @@ def mork_lane(mork, samples):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--cetta", default=str(ROOT / "cetta"))
-    ap.add_argument("--swi-petta", default="/home/aimama/aihub/hyperon/PeTTa/run.sh")  # invoked via bash (no shebang)
-    ap.add_argument("--mork", default="/home/aimama/aihub/hyperon/MORK/target/release/mork")
+    ap.add_argument(
+        "--swi-petta",
+        default=str((ROOT / "../PeTTa/run.sh").resolve()),
+    )  # invoked via bash (no shebang)
+    ap.add_argument(
+        "--mork",
+        default=str((ROOT / "../MORK/target/release/mork").resolve()),
+    )
+    ap.add_argument(
+        "--source-root",
+        type=pathlib.Path,
+        default=(ROOT / "../../repos/ngeiswei-chaining-run").resolve(),
+    )
     ap.add_argument("--samples", type=int, default=9)
     ap.add_argument("--batches", type=int, nargs="+", default=[1, 11, 101, 501])
     ap.add_argument("--out", default=str(FIXTURES / "results"))
     args = ap.parse_args()
 
-    results = {"schema": "cetta.nil-chaining-crossbench.v1",
-               "identities": verify_identities(),
+    results = {"schema": "cetta.chaining-crossbench.v2",
+               "identities": verify_identities(args.source_root),
                "cetta_binary_sha256": sha256(args.cetta),
                "samples_per_cell": args.samples, "batches": args.batches,
                "lanes": {}}
@@ -222,7 +240,7 @@ def main():
 
     outdir = pathlib.Path(args.out); outdir.mkdir(exist_ok=True)
     stamp = time.strftime("%Y%m%dT%H%M%S")
-    outfile = outdir / f"nil_chaining_crossbench_{stamp}.json"
+    outfile = outdir / f"chaining_crossbench_{stamp}.json"
     outfile.write_text(json.dumps(results, indent=1))
     print(json.dumps({k: {kk: vv for kk, vv in v.items() if kk in
                           ("per_query_ms_slope", "median_ms", "internal_search_median_ms")}

@@ -259,6 +259,9 @@ PY_CFLAGS =
 PY_LDFLAGS =
 PY_RPATH =
 PYTHON_SRC = src/foreign_stub.c
+PYTHON_CONFIG_ID = disabled
+PYTHON_VERSION =
+PYTHON_LIBDIR =
 LIB_PROLOG_PKG_AVAILABLE := $(shell pkg-config --exists swipl 2>/dev/null && printf '%s' 1 || printf '%s' 0)
 LIB_PROLOG_ENABLED := 0
 ifeq ($(ENABLE_LIB_PROLOG),auto)
@@ -272,11 +275,20 @@ $(error ENABLE_LIB_PROLOG=1 requires the swipl pkg-config package)
 endif
 LIB_PROLOG_CFLAGS := $(shell pkg-config --cflags swipl)
 LIB_PROLOG_LDFLAGS := $(shell pkg-config --libs swipl)
-LIB_PROLOG_RPATH := -Wl,-rpath,$(shell pkg-config --variable=libdir swipl)
+LIB_PROLOG_LIBDIR := $(strip $(shell pkg-config --variable=libdir swipl))
+LIB_PROLOG_RPATH := -Wl,-rpath,$(LIB_PROLOG_LIBDIR)
+LIB_PROLOG_VERSION := $(strip $(shell pkg-config --modversion swipl))
+LIB_PROLOG_CONFIG_ID := $(strip $(shell { \
+	printf '%s\n' "$(LIB_PROLOG_CFLAGS)" "$(LIB_PROLOG_LDFLAGS)"; \
+	printf '%s\n' "$(LIB_PROLOG_LIBDIR)" "$(LIB_PROLOG_VERSION)"; \
+	} | sha256sum | cut -c1-16))
 LIB_PROLOG_SRC := src/petta_libpl.c
 else
 LIB_PROLOG_CFLAGS :=
 LIB_PROLOG_LDFLAGS :=
+LIB_PROLOG_LIBDIR :=
+LIB_PROLOG_VERSION :=
+LIB_PROLOG_CONFIG_ID := disabled
 LIB_PROLOG_RPATH :=
 LIB_PROLOG_SRC := src/petta_libpl_stub.c
 endif
@@ -288,13 +300,33 @@ GMP_CFLAGS =
 GMP_LDFLAGS =
 endif
 ifeq ($(ENABLE_PYTHON),1)
-PYTHON_CONFIG := $(strip $(shell command -v python3-config 2>/dev/null))
-ifeq ($(PYTHON_CONFIG),)
-$(error BUILD=$(BUILD_CANON) requires python3-config)
+PYTHON_CONFIG ?= python3-config
+PYTHON_CONFIG_PATH := $(strip $(shell command -v "$(PYTHON_CONFIG)" 2>/dev/null))
+ifeq ($(PYTHON_CONFIG_PATH),)
+$(error BUILD=$(BUILD_CANON) cannot resolve PYTHON_CONFIG=$(PYTHON_CONFIG))
 endif
-PY_CFLAGS = $(shell python3-config --includes)
-PY_LDFLAGS = $(shell python3-config --embed --ldflags)
-PY_RPATH = -Wl,-rpath,$(shell python3 -c 'import sysconfig; print(sysconfig.get_config_var("LIBDIR") or "")')
+PYTHON_EXECUTABLE ?= $(patsubst %-config,%,$(PYTHON_CONFIG_PATH))
+PYTHON_EXECUTABLE_PATH := $(strip $(shell command -v "$(PYTHON_EXECUTABLE)" 2>/dev/null))
+ifeq ($(PYTHON_EXECUTABLE_PATH),)
+$(error BUILD=$(BUILD_CANON) cannot resolve PYTHON_EXECUTABLE=$(PYTHON_EXECUTABLE))
+endif
+PY_CFLAGS := $(shell "$(PYTHON_CONFIG_PATH)" --includes)
+PY_LDFLAGS := $(shell "$(PYTHON_CONFIG_PATH)" --embed --ldflags)
+PYTHON_LIBDIR := $(strip $(shell "$(PYTHON_EXECUTABLE_PATH)" -c 'import sysconfig; print(sysconfig.get_config_var("LIBDIR") or "")'))
+PYTHON_VERSION := $(strip $(shell "$(PYTHON_EXECUTABLE_PATH)" -c 'import sysconfig; print(sysconfig.get_config_var("VERSION") or "")'))
+ifeq ($(PYTHON_LIBDIR),)
+$(error PYTHON_EXECUTABLE=$(PYTHON_EXECUTABLE_PATH) has no LIBDIR)
+endif
+ifeq ($(PYTHON_VERSION),)
+$(error PYTHON_EXECUTABLE=$(PYTHON_EXECUTABLE_PATH) has no VERSION)
+endif
+PY_RPATH := -Wl,-rpath,$(PYTHON_LIBDIR)
+PYTHON_CONFIG_ID := $(strip $(shell { \
+	printf '%s\n' "$(PYTHON_CONFIG_PATH)" "$(PYTHON_EXECUTABLE_PATH)"; \
+	"$(PYTHON_CONFIG_PATH)" --includes; \
+	"$(PYTHON_CONFIG_PATH)" --embed --ldflags; \
+	printf '%s\n' "$(PYTHON_LIBDIR)" "$(PYTHON_VERSION)"; \
+} | sha256sum | cut -c1-16))
 PYTHON_SRC = src/foreign.c
 endif
 empty :=
@@ -334,6 +366,10 @@ BUILD_OBJ_TAG := $(BUILD_OBJ_TAG).prime-eval-stack
 endif
 ifeq ($(LIB_PROLOG_ENABLED),1)
 BUILD_OBJ_TAG := $(BUILD_OBJ_TAG).lib-prolog
+BUILD_OBJ_TAG := $(BUILD_OBJ_TAG).swipl-config-$(LIB_PROLOG_CONFIG_ID)
+endif
+ifeq ($(ENABLE_PYTHON),1)
+BUILD_OBJ_TAG := $(BUILD_OBJ_TAG).python-config-$(PYTHON_CONFIG_ID)
 endif
 ifeq ($(ENABLE_PETTA_TYPECHECK_V2),0)
 BUILD_OBJ_TAG := $(BUILD_OBJ_TAG).no-petta-typecheck-v2
@@ -449,7 +485,7 @@ endif
 ifeq ($(ENABLE_PETTA_TYPECHECK_CENSUS),1)
 PETTA_TYPECHECK_CENSUS_SRC = src/petta_typecheck_census.c
 endif
-SRC = src/symbol.c src/atom.c src/name_key.c src/atom_blob.c src/abt.c src/parser.c $(COMPILED_READER_RUNTIME_SRC) src/mm2_lower.c src/subst_tree.c src/space.c src/registry_resolver.c src/space_match_backend.c src/match.c src/match_decision.c src/term_canon.c src/variant_shape.c src/variant_instance.c src/answer_bank.c src/table_store.c src/search_machine.c src/petta_program.c src/petta_type_fact_provider_v1.c src/petta_typecheck_v3_decision_v1.c src/petta_typecheck_v3.c src/generated/petta_typecheck_v3_core_v1.generated.c src/generated/petta_typecheck_v3_core_provider_catalog_v1.generated.c src/petta_search_machine.c $(PETTA_TYPECHECK_V2_SRC) src/petta_specializer.c src/rule_machine.c $(LIB_PROLOG_SRC) src/term_universe.c src/stats.c src/parallel_executor.c src/prime_need.c src/petta_semantics.c src/petta_numeric.c src/petta_runtime.c src/prepared_pure_machine.c src/eval.c src/grounded.c src/he_typing.c src/he_typing_authority.c src/generated/he_typing_consistency_core_source_binding_v1.generated.c src/generated/he_profiled_type_inference_core_source_binding_v1.generated.c src/inference_checker.c src/nik_direct_authority.c src/nik_runtime.c src/prime_semantics.c src/generated/prime_typing_closed_formation_source_binding_v1.generated.c src/text_source.c src/native_handle.c src/native_sha256.c src/mork_space_bridge_runtime.c src/library.c src/langdef_pack.c src/gslt_provider_runtime.c src/gslt_space_fact_provider_v1.c src/gslt_finite_fact_provider_v1.c src/gslt_revisioned_space_provider_v1.c src/gslt_abt_provider_v1.c src/gslt_horn_runtime.c src/gslt_dense_bitset_v1.c src/gslt_compiled_runtime.c src/gslt_indexed_instruction_decoder_v1.c src/gslt_indexed_value_table_v1.c src/gslt_split_indexed_table_v1.c src/gslt_literal_hole_program_v1.c src/gslt_u32_index_v1.c src/gslt_u32_slice_arena_v1.c src/gslt_epoch_slots_v1.c src/gslt_ground_dense_term_v1.c src/gslt_language_runtime.c src/gslt_pure_provider_v1.c src/gslt_support_transform_runtime.c src/generated/prime_nik_authorities_v1.generated.c src/generated/prime_nik_runtime_v1.generated.c src/generated/gslt_il_language_v1.generated.c src/generated/metta_interact_language_v1.generated.c src/generated/mm2_gslt_profile_v1.generated.c src/generated/subzero_language_v1.generated.c src/generated/zero_language_v1.generated.c src/generated/zero_exp_language_v1.generated.c src/generated/zero_emit_language_v1.generated.c src/generated/zero_interact_language_v1.generated.c src/generated/zero_interact_provider_catalog_v1.generated.c src/generated/zerouv_language_v1.generated.c src/he_small_step_pack.c src/lib_parse_native_grammar.c src/lib_parse_inference_native.c experiments/gslt2parse_foundation/native/finite_horn_gslt_v1.c experiments/gslt2parse_foundation/native/finite_horn_ground_term_v1.c experiments/gslt2parse_foundation/native/parser_term_projection_v1.c experiments/gslt2parse_foundation/native/parser_pack_abi_v1.c experiments/gslt2parse_foundation/native/parser_action_bytecode_v1.c experiments/gslt2parse_foundation/native/parser_pack_native_v1.c experiments/gslt2parse_foundation/native/parser_pack_lexical_v1.c experiments/gslt2parse_foundation/native/parser_pack_gll_v1.c experiments/gslt2parse_foundation/native/regular_span_dfa_v1.c experiments/gslt2parse_foundation/native/regular_span_nfa_v1.c $(PYTHON_SRC) src/session.c src/lang.c src/rhocalc_core.c src/rhocalc_syntax.c src/compile.c src/runtime.c src/cetta_stdlib.c native/native_modules.c src/main.c
+SRC = src/symbol.c src/atom.c src/name_key.c src/atom_blob.c src/abt.c src/parser.c $(COMPILED_READER_RUNTIME_SRC) src/mm2_lower.c src/subst_tree.c src/space.c src/registry_resolver.c src/space_match_backend.c src/match.c src/match_decision.c src/term_canon.c src/variant_shape.c src/variant_instance.c src/answer_bank.c src/table_store.c src/search_machine.c src/petta_program.c src/petta_type_fact_provider_v1.c src/petta_typecheck_v3_decision_v1.c src/petta_typecheck_v3.c src/generated/petta_typecheck_v3_core_v1.generated.c src/generated/petta_typecheck_v3_core_provider_catalog_v1.generated.c src/petta_search_machine.c $(PETTA_TYPECHECK_V2_SRC) src/petta_specializer.c src/rule_machine.c $(LIB_PROLOG_SRC) src/term_universe.c src/stats.c src/parallel_executor.c src/prime_need.c src/petta_semantics.c src/petta_numeric.c src/petta_runtime.c src/prepared_pure_machine.c src/eval.c src/grounded.c src/he_typing.c src/he_typing_authority.c src/generated/he_typing_consistency_core_source_binding_v1.generated.c src/generated/he_profiled_type_inference_core_source_binding_v1.generated.c src/inference_checker.c src/nik_direct_authority.c src/nik_native_calculus_selection.c src/nik_runtime.c src/prime_semantics.c src/generated/prime_typing_closed_formation_source_binding_v1.generated.c src/text_source.c src/native_handle.c src/native_sha256.c src/mork_space_bridge_runtime.c src/library.c src/langdef_pack.c src/gslt_provider_runtime.c src/gslt_space_fact_provider_v1.c src/gslt_finite_fact_provider_v1.c src/gslt_revisioned_space_provider_v1.c src/gslt_abt_provider_v1.c src/gslt_horn_runtime.c src/gslt_dense_bitset_v1.c src/gslt_compiled_runtime.c src/gslt_indexed_instruction_decoder_v1.c src/gslt_indexed_value_table_v1.c src/gslt_split_indexed_table_v1.c src/gslt_literal_hole_program_v1.c src/gslt_u32_index_v1.c src/gslt_u32_slice_arena_v1.c src/gslt_epoch_slots_v1.c src/gslt_ground_dense_term_v1.c src/gslt_language_runtime.c src/gslt_pure_provider_v1.c src/gslt_support_transform_runtime.c src/generated/prime_nik_authorities_v1.generated.c src/generated/prime_nik_runtime_v1.generated.c src/generated/gslt_il_language_v1.generated.c src/generated/metta_interact_language_v1.generated.c src/generated/mm2_gslt_profile_v1.generated.c src/generated/subzero_language_v1.generated.c src/generated/zero_language_v1.generated.c src/generated/zero_exp_language_v1.generated.c src/generated/zero_emit_language_v1.generated.c src/generated/zero_interact_language_v1.generated.c src/generated/zero_interact_provider_catalog_v1.generated.c src/generated/zerouv_language_v1.generated.c src/he_small_step_pack.c src/lib_parse_native_grammar.c src/lib_parse_inference_native.c experiments/gslt2parse_foundation/native/finite_horn_gslt_v1.c experiments/gslt2parse_foundation/native/finite_horn_ground_term_v1.c experiments/gslt2parse_foundation/native/parser_term_projection_v1.c experiments/gslt2parse_foundation/native/parser_pack_abi_v1.c experiments/gslt2parse_foundation/native/parser_action_bytecode_v1.c experiments/gslt2parse_foundation/native/parser_pack_native_v1.c experiments/gslt2parse_foundation/native/parser_pack_lexical_v1.c experiments/gslt2parse_foundation/native/parser_pack_gll_v1.c experiments/gslt2parse_foundation/native/regular_span_dfa_v1.c experiments/gslt2parse_foundation/native/regular_span_nfa_v1.c $(PYTHON_SRC) src/session.c src/lang.c src/rhocalc_core.c src/rhocalc_syntax.c src/compile.c src/runtime.c src/cetta_stdlib.c native/native_modules.c src/main.c
 SRC += $(PETTA_TYPECHECK_CENSUS_SRC)
 SRC += \
 	src/gslt_rigid_coordinate_dispatch_v1.c \
@@ -464,10 +500,33 @@ SRC += src/inference_side_condition_provider.c \
 	experiments/gslt2parse_foundation/native/parser_pack_glr_v1.c
 SRC += \
 	src/generated/he_typing_closed_ground_core_source_binding_v1.generated.c \
-	src/prime_lambda_pi.c \
+	src/prime_level.c \
+	src/prime_regular_kernel.c \
+	src/prime_regular_kernel_admission.c \
+	src/prime_typed_flow.c \
+	src/prime_typed_flow_boundary.c \
+	src/prime_rule_machine_ingress.c \
+	src/prime_native_calculus.c \
+	src/gdl_source_presentation.c \
+	src/gdl_finite_herbrand.c \
+	src/gdl_stratified_model.c \
+	src/gdl_stratification.c \
+	src/gdl_type_of_native.c \
+	src/gdl_positive_horn_native.c \
+	src/gdl_positive_horn_host.c \
+	src/gdl_type_of_host.c \
+	src/prime_typed_hyp.c \
+	src/prime_typed_list.c \
+	src/prime_typed_list_relations.c \
+	src/prime_typed_iteration.c \
+	src/prime_typed_list_relator.c \
+	src/prime_typed_finite_relation.c \
+	src/prime_typed_relation.c \
+	src/prime_regular_pattern.c \
 	src/prime_typing_publication.c \
 	src/generated/prime_typing_elaborated_dependent_formation_core_source_binding_v1.generated.c \
 	src/generated/prime_typing_open_lambda_pi_core_source_binding_v1.generated.c \
+	src/generated/prime_typing_open_regular_kernel_source_binding_v1.generated.c \
 	src/generated/prime_typing_native_ground_judgments_source_binding_v1.generated.c \
 	src/generated/prime_typing_typed_publication_core_source_binding_v1.generated.c
 SRC += src/gslt_chronological_builder_v1.c
@@ -614,10 +673,94 @@ PRIME_DEPENDENT_FORMATION_LANGDEF_TEST_SRC = tests/support/test_prime_dependent_
 PRIME_DEPENDENT_FORMATION_LANGDEF_TEST_OBJ = runtime/bootstrap/test_prime_dependent_formation_langdef.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o
 PRIME_DEPENDENT_FORMATION_LANGDEF_TEST_BIN = runtime/test_prime_dependent_formation_langdef-$(BUILD_CANON)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),-runtime-stats,)
 PRIME_DEPENDENT_FORMATION_LANGDEF_TEST_LINK_OBJ = $(FALLBACK_EVAL_TEST_LINK_OBJ)
-PRIME_LAMBDA_PI_TEST_SRC = tests/support/test_prime_lambda_pi.c
-PRIME_LAMBDA_PI_TEST_OBJ = runtime/bootstrap/test_prime_lambda_pi.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o
-PRIME_LAMBDA_PI_TEST_BIN = runtime/test_prime_lambda_pi-$(BUILD_CANON)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),-runtime-stats,)
-PRIME_LAMBDA_PI_TEST_LINK_OBJ = $(FALLBACK_EVAL_TEST_LINK_OBJ)
+PRIME_REGULAR_KERNEL_TEST_SRC = tests/support/test_prime_regular_kernel.c
+PRIME_REGULAR_KERNEL_TEST_OBJ = runtime/bootstrap/test_prime_regular_kernel.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o
+PRIME_REGULAR_KERNEL_TEST_BIN = runtime/test_prime_regular_kernel-$(BUILD_CANON)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),-runtime-stats,)
+PRIME_REGULAR_KERNEL_TEST_LINK_OBJ = $(FALLBACK_EVAL_TEST_LINK_OBJ)
+PRIME_LEVEL_TEST_SRC = tests/support/test_prime_level.c
+PRIME_LEVEL_TEST_OBJ = runtime/bootstrap/test_prime_level.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o
+PRIME_LEVEL_TEST_BIN = runtime/test_prime_level-$(BUILD_CANON)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),-runtime-stats,)
+PRIME_LEVEL_TEST_LINK_OBJ = $(FALLBACK_EVAL_TEST_LINK_OBJ)
+PRIME_TYPED_FLOW_TEST_SRC = tests/support/test_prime_typed_flow.c
+PRIME_TYPED_FLOW_TEST_OBJ = runtime/bootstrap/test_prime_typed_flow.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o
+PRIME_TYPED_FLOW_TEST_BIN = runtime/test_prime_typed_flow-$(BUILD_CANON)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),-runtime-stats,)
+PRIME_TYPED_FLOW_TEST_LINK_OBJ = $(FALLBACK_EVAL_TEST_LINK_OBJ)
+PRIME_HOPPER_FOLD_NATIVE_TEST_SRC = tests/support/test_prime_hopper_fold_native.c
+PRIME_HOPPER_FOLD_NATIVE_TEST_OBJ = runtime/bootstrap/test_prime_hopper_fold_native.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o
+PRIME_HOPPER_FOLD_NATIVE_TEST_BIN = runtime/test_prime_hopper_fold_native-$(BUILD_CANON)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),-runtime-stats,)
+PRIME_HOPPER_FOLD_NATIVE_TEST_LINK_OBJ = $(FALLBACK_EVAL_TEST_LINK_OBJ)
+PRIME_HOPPER_BRANCHING_NATIVE_TEST_SRC = tests/support/test_prime_hopper_branching_native.c
+PRIME_HOPPER_BRANCHING_NATIVE_TEST_OBJ = runtime/bootstrap/test_prime_hopper_branching_native.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o
+PRIME_HOPPER_BRANCHING_NATIVE_TEST_BIN = runtime/test_prime_hopper_branching_native-$(BUILD_CANON)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),-runtime-stats,)
+PRIME_HOPPER_BRANCHING_NATIVE_TEST_LINK_OBJ = $(FALLBACK_EVAL_TEST_LINK_OBJ)
+PRIME_IGGP_TYPE_OF_INFERENCE_TEST_SRC = tests/support/test_prime_iggp_type_of_inference.c
+PRIME_IGGP_TYPE_OF_INFERENCE_TEST_OBJ = runtime/bootstrap/test_prime_iggp_type_of_inference.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o
+PRIME_IGGP_TYPE_OF_INFERENCE_TEST_BIN = runtime/test_prime_iggp_type_of_inference-$(BUILD_CANON)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),-runtime-stats,)
+PRIME_GDL_POSITIVE_HORN_NATIVE_TEST_SRC = tests/support/test_gdl_positive_horn_native.c
+PRIME_GDL_POSITIVE_HORN_NATIVE_TEST_OBJ = runtime/bootstrap/test_gdl_positive_horn_native.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o
+PRIME_GDL_POSITIVE_HORN_NATIVE_TEST_BIN = runtime/test_gdl_positive_horn_native-$(BUILD_CANON)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),-runtime-stats,)
+PRIME_GDL_POSITIVE_HORN_NATIVE_QUALIFIER_SRC = tests/support/qualify_gdl_positive_horn_native.c
+PRIME_GDL_POSITIVE_HORN_NATIVE_QUALIFIER_OBJ = runtime/bootstrap/qualify_gdl_positive_horn_native.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o
+PRIME_GDL_POSITIVE_HORN_NATIVE_QUALIFIER_BIN = runtime/qualify_gdl_positive_horn_native-$(BUILD_CANON)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),-runtime-stats,)
+PRIME_GDL_STRATIFICATION_QUALIFIER_SRC = tests/support/qualify_gdl_stratification.c
+PRIME_GDL_STRATIFICATION_QUALIFIER_OBJ = runtime/bootstrap/qualify_gdl_stratification.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o
+PRIME_GDL_STRATIFICATION_QUALIFIER_BIN = runtime/qualify_gdl_stratification-$(BUILD_CANON)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),-runtime-stats,)
+PRIME_GDL_STRATIFIED_MODEL_QUALIFIER_SRC = tests/support/qualify_gdl_stratified_model.c
+PRIME_GDL_STRATIFIED_MODEL_QUALIFIER_OBJ = runtime/bootstrap/qualify_gdl_stratified_model.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o
+PRIME_GDL_STRATIFIED_MODEL_QUALIFIER_BIN = runtime/qualify_gdl_stratified_model-$(BUILD_CANON)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),-runtime-stats,)
+PRIME_GDL_STRATIFIED_EPISODE_QUALIFIER_SRC = tests/support/qualify_gdl_stratified_episode.c
+PRIME_GDL_STRATIFIED_EPISODE_QUALIFIER_OBJ = runtime/bootstrap/qualify_gdl_stratified_episode.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o
+PRIME_GDL_STRATIFIED_EPISODE_QUALIFIER_BIN = runtime/qualify_gdl_stratified_episode-$(BUILD_CANON)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),-runtime-stats,)
+PRIME_IGGP_TYPE_OF_INFERENCE_CORPUS_QUALIFIER = scripts/qualify_prime_iggp_type_of_inference.py
+PRIME_IGGP_POSITIVE_HORN_CORPUS_QUALIFIER = scripts/qualify_prime_iggp_positive_horn.py
+PRIME_IGGP_STRATIFICATION_CORPUS_QUALIFIER = scripts/qualify_prime_iggp_stratification.py
+PRIME_IGGP_FINITE_HERBRAND_CORPUS_QUALIFIER = scripts/qualify_prime_iggp_finite_herbrand.py
+PRIME_IGGP_STRATIFIED_MODEL_CORPUS_QUALIFIER = scripts/qualify_prime_iggp_stratified_model.py
+PRIME_IGGP_STRATIFIED_EPISODE_CORPUS_QUALIFIER = scripts/qualify_prime_iggp_stratified_episode.py
+PRIME_IGGP_TARGET_FIBRE_CORPUS_QUALIFIER = scripts/qualify_prime_iggp_target_fibres.py
+PRIME_IGGP_TYPE_OF_INFERENCE_CORPUS_WORK = runtime/qualification/iggp_type_of_inference.current.generated.metta
+PRIME_IGGP_TYPE_SOURCE_CORPUS_WORK = runtime/qualification/iggp_type_source.current.generated.metta
+PRIME_IGGP_TYPE_OF_INFERENCE_TEST_LINK_OBJ = $(FALLBACK_EVAL_TEST_LINK_OBJ)
+PRIME_IGGP_TYPE_OF_INFERENCE_PROGRAM = lib/ilp/iggp_scissors_paper_stone_type_of_inference.generated.metta
+PRIME_IGGP_TYPE_SOURCE_PROGRAM = lib/ilp/iggp_scissors_paper_stone_type_source.generated.metta
+PRIME_IGGP_TYPE_OF_INFERENCE_PILGRIMAGE_PROGRAM = lib/ilp/iggp_pilgrimage_type_of_inference.generated.metta
+PRIME_IGGP_TYPE_SOURCE_PILGRIMAGE_PROGRAM = lib/ilp/iggp_pilgrimage_type_source.generated.metta
+PRIME_IGGP_TYPE_OF_INFERENCE_FROGS_PROGRAM = lib/ilp/iggp_frogs_and_toads_type_of_inference.generated.metta
+PRIME_IGGP_TYPE_SOURCE_FROGS_PROGRAM = lib/ilp/iggp_frogs_and_toads_type_source.generated.metta
+PRIME_GDL_POSITIVE_HORN_NATIVE_TEST_LINK_OBJ = $(FALLBACK_EVAL_TEST_LINK_OBJ)
+PRIME_GDL_POSITIVE_HORN_NATIVE_QUALIFIER_LINK_OBJ = $(FALLBACK_EVAL_TEST_LINK_OBJ)
+PRIME_GDL_STRATIFICATION_QUALIFIER_LINK_OBJ = $(FALLBACK_EVAL_TEST_LINK_OBJ)
+PRIME_GDL_STRATIFIED_MODEL_QUALIFIER_LINK_OBJ = $(FALLBACK_EVAL_TEST_LINK_OBJ)
+PRIME_GDL_STRATIFIED_EPISODE_QUALIFIER_LINK_OBJ = $(FALLBACK_EVAL_TEST_LINK_OBJ)
+PRIME_REGULAR_KERNEL_CORE_OBJ = src/prime_regular_kernel.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o
+PRIME_REGULAR_KERNEL_ENGINE_FAILURE_TEST_SRC = tests/support/test_prime_regular_kernel_engine_failure.c
+PRIME_REGULAR_KERNEL_ENGINE_FAILURE_TEST_OBJ = runtime/bootstrap/test_prime_regular_kernel_engine_failure.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o
+PRIME_REGULAR_PATTERN_TEST_SRC = tests/support/test_prime_regular_pattern.c
+PRIME_REGULAR_PATTERN_TEST_OBJ = runtime/bootstrap/test_prime_regular_pattern.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o
+PRIME_REGULAR_PATTERN_TEST_BIN = runtime/test_prime_regular_pattern-$(BUILD_CANON)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),-runtime-stats,)
+PRIME_REGULAR_PATTERN_TEST_LINK_OBJ = $(FALLBACK_EVAL_TEST_LINK_OBJ)
+PRIME_REGULAR_PATTERN_CORE_OBJ = src/prime_regular_pattern.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o
+PRIME_SEMANTICS_OBJ = src/prime_semantics.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o
+NIK_DIRECT_AUTHORITY_OBJ = src/nik_direct_authority.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o
+PRIME_REGULAR_KERNEL_LEGACY_REFERENCE_OBJ = runtime/bootstrap/prime_semantics.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).legacy-reference.o
+PRIME_REGULAR_KERNEL_LEGACY_REFERENCE_LINK_OBJ = $(filter-out $(PRIME_SEMANTICS_OBJ),$(OBJ)) $(PRIME_REGULAR_KERNEL_LEGACY_REFERENCE_OBJ)
+PRIME_REGULAR_KERNEL_LEGACY_REFERENCE_BIN = runtime/cetta-prime-regular-kernel-legacy-reference-$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),-runtime-stats,)
+PRIME_REGULAR_KERNEL_CONVERSION_BENCH_SRC = tests/bench_prime_regular_kernel_conversion.c
+PRIME_REGULAR_KERNEL_CONVERSION_BENCH_OBJ = runtime/bootstrap/bench_prime_regular_kernel_conversion.$(BUILD_OBJ_TAG).o
+PRIME_REGULAR_KERNEL_CONVERSION_BENCH_BIN = runtime/bench_prime_regular_kernel_conversion-$(BUILD_CANON)
+PRIME_REGULAR_KERNEL_CONVERSION_REFERENCE_BENCH_BIN = runtime/bench-prime-regular-kernel-conversion-legacy-reference-$(BUILD_OBJ_TAG)
+PRIME_REGULAR_KERNEL_SYNTHESIS_BENCH_SRC = tests/bench_prime_regular_kernel_synthesis.c
+PRIME_REGULAR_KERNEL_SYNTHESIS_BENCH_OBJ = runtime/bootstrap/bench_prime_regular_kernel_synthesis.$(BUILD_OBJ_TAG).o
+PRIME_REGULAR_KERNEL_SYNTHESIS_BENCH_BIN = runtime/bench_prime_regular_kernel_synthesis-$(BUILD_CANON)
+PRIME_REGULAR_KERNEL_SYNTHESIS_REFERENCE_BENCH_BIN = runtime/bench-prime-regular-kernel-synthesis-legacy-reference-$(BUILD_OBJ_TAG)
+PRIME_REGULAR_KERNEL_CHECKING_BENCH_SRC = tests/bench_prime_regular_kernel_checking.c
+PRIME_REGULAR_KERNEL_CHECKING_BENCH_OBJ = runtime/bootstrap/bench_prime_regular_kernel_checking.$(BUILD_OBJ_TAG).o
+PRIME_REGULAR_KERNEL_CHECKING_BENCH_BIN = runtime/bench_prime_regular_kernel_checking-$(BUILD_CANON)
+PRIME_REGULAR_KERNEL_CHECKING_REFERENCE_BENCH_BIN = runtime/bench-prime-regular-kernel-checking-legacy-reference-$(BUILD_OBJ_TAG)
+PRIME_REGULAR_KERNEL_FORMATION_BENCH_SRC = tests/bench_prime_regular_kernel_formation.c
+PRIME_REGULAR_KERNEL_FORMATION_BENCH_OBJ = runtime/bootstrap/bench_prime_regular_kernel_formation.$(BUILD_OBJ_TAG).o
+PRIME_REGULAR_KERNEL_FORMATION_BENCH_BIN = runtime/bench_prime_regular_kernel_formation-$(BUILD_CANON)
+PRIME_REGULAR_KERNEL_FORMATION_REFERENCE_BENCH_BIN = runtime/bench-prime-regular-kernel-formation-legacy-reference-$(BUILD_OBJ_TAG)
 RUNTIME_NAMED_VAR_TEST_SRC = tests/support/test_runtime_named_var.c
 RUNTIME_NAMED_VAR_TEST_OBJ = runtime/bootstrap/test_runtime_named_var.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o
 RUNTIME_NAMED_VAR_TEST_BIN = runtime/test_runtime_named_var-$(BUILD_CANON)
@@ -1320,6 +1463,8 @@ GSLT_HORN_RUNTIME_CANARY_V1 = tests/fixtures/gslt_horn_runtime_canary_v1.metta
 GSLT_LANGUAGE_RUNTIME_TEST_BIN = runtime/test_gslt_language_runtime-$(BUILD_OBJ_TAG)
 GSLT_COMPILED_PACKET_CHECK_BIN = runtime/check_gslt_compiled_packet_v1-$(BUILD_OBJ_TAG)
 NIK_RUNTIME_TEST_BIN = runtime/test_nik_runtime_v1-$(BUILD_OBJ_TAG)
+NIK_NATIVE_CALCULUS_SELECTION_OBJ = src/nik_native_calculus_selection.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o
+NIK_NATIVE_CALCULUS_SELECTION_TEST_BIN = runtime/test_nik_native_calculus_selection-$(BUILD_CANON)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),-runtime-stats,)
 GSLT_PROVIDER_RUNTIME_TEST_BIN = runtime/test_gslt_provider_runtime-$(BUILD_OBJ_TAG)
 GSLT_ABT_PROVIDER_V1_TEST_BIN = runtime/test_gslt_abt_provider_v1-$(BUILD_OBJ_TAG)
 ZERO_INTERACT_SPACE_PROVIDER_TEST_BIN = runtime/test_zero_interact_space_provider_v1-$(BUILD_OBJ_TAG)
@@ -1966,6 +2111,7 @@ PRIME_CONFORMANCE_TESTS = \
 	tests/prime/prepared_pure_shared_decision.metta \
 	tests/prime/rule_machine_compile.metta \
 	tests/prime/rule_machine_duplicate_id.metta \
+	tests/prime/rule_machine_link_package_duplicate.metta \
 	tests/prime/rule_machine_revision_identity.metta \
 	tests/prime/rule_machine_stale_program.metta \
 	tests/prime/system_timed_force.metta \
@@ -1976,15 +2122,59 @@ PRIME_CONFORMANCE_TESTS = \
 	tests/prime/conformance/canonical_binders.metta \
 	tests/prime/conformance/empty_observation.metta \
 	tests/prime/conformance/resource_policy.metta \
+	tests/prime/conformance/type_judgments.metta \
+	tests/prime/conformance/regular_kernel_constructors.metta \
+	tests/prime/conformance/regular_binders.metta \
+	tests/prime/conformance/regular_declarations.metta \
 	tests/prime/conformance/occurs_check.metta \
 	tests/prime/conformance/open_lambda_pi.metta \
+	tests/prime/conformance/scoped_regular_authority_routing.metta \
+	tests/prime/conformance/closed_lambda_pi_convert.metta \
+	tests/prime/conformance/closed_lambda_pi_synth.metta \
+	tests/prime/conformance/closed_lambda_pi_check.metta \
+	tests/prime/conformance/closed_lambda_pi_form.metta \
+	tests/prime/conformance/closed_lambda_pi_refine_boundary.metta \
 	tests/prime/conformance/syntax_algebra.metta \
 	tests/prime/conformance/typed_equality.metta \
 	tests/prime/conformance/unbounded_search.metta
 PRIME_EXAMPLE_TESTS = \
 	examples/prime/exact_gradual.metta \
 	examples/prime/dependent_telescope.metta \
+	examples/prime/dependent_proof_composition.metta \
+	examples/prime/nil_curried_chainer_native.metta \
+	examples/prime/chaining_prime_readiness.metta \
+	examples/prime/native_hyp_grandparent.metta \
+	examples/prime/prime_native_mil_grandparent.metta \
+	examples/prime/prime_native_mil_list_map_rel.metta \
+	tests/prime/native_hyp_path.metta \
+	examples/prime/popper_synthesis_length_ground_truth.metta \
+	examples/prime/popper_synthesis_filter_ground_truth.metta \
+	examples/prime/popper_synthesis_contains_ground_truth.metta \
+	examples/prime/popper_synthesis_droplast_ground_truth.metta \
+	examples/prime/popper_synthesis_finddupl_ground_truth.metta \
+	examples/prime/popper_synthesis_next_learned.metta \
+	examples/prime/popper_synthesis_reverse_ground_truth.metta \
+	examples/prime/popper_synthesis_recursive_arithmetic_ground_truth.metta \
+	examples/prime/popper_synthesis_sorted_ground_truth.metta \
+	examples/prime/iggp_minimal_decay_ground_truth.metta \
+	examples/prime/iggp_minimal_even_ground_truth.metta \
+	examples/prime/iggp_scissors_paper_stone_ground_truth.metta \
+	examples/prime/iggp_buttons_and_lights_ground_truth.metta \
+	examples/prime/iggp_multiplebuttonsandlights_ground_truth.metta \
+	examples/prime/iggp_tron_ground_truth.metta \
+	examples/prime/iggp_untwisty_corridor_ground_truth.metta \
+	examples/prime/hopper_table1_first_order_ground_truth.metta \
+	examples/prime/hopper_table1_higher_order_ground_truth.metta \
+	examples/prime/hopper_encryption_native_learning.metta \
+	examples/prime/hopper_table1_additional_iterative_ground_truth.metta \
+	examples/prime/hopper_table1_structural_list_ground_truth.metta \
+	examples/prime/hopper_table1_relational_recursion_ground_truth.metta \
+	examples/prime/hopper_table1_tree_relations_ground_truth.metta \
+	examples/prime/native_list_map_rel.metta \
+	examples/prime/metagol_typed_grandparent.metta \
+	examples/prime/metagol_higher_order_map.metta \
 	examples/prime/nondeterministic_judgments.metta \
+	examples/prime/abstention_boundary.metta \
 	examples/prime/context_tutorial.metta
 PRIME_PRACTICAL_TESTS = \
 	tests/prime/practical/typed_pln_chainer.metta \
@@ -3501,7 +3691,7 @@ test-abt-scope-construction-candidates: $(BIN)
 test-abt: $(ABT_TEST_BIN) test-abt-mm2-boundary test-rhocalc-abt-substitution test-abt-mutations test-abt-default-signatures test-abt-differential test-lib-parse-abt-bridge test-abt-integration-ledger
 	@result=$$(./$(ABT_TEST_BIN) 2>&1); \
 	printf '%s\n' "$$result"; \
-	if [ "$$(printf '%s\n' "$$result" | grep -Fxc '(ABTCoreSummary 114 114 0)')" -ne 1 ] || \
+	if [ "$$(printf '%s\n' "$$result" | grep -Fxc '(ABTCoreSummary 116 116 0)')" -ne 1 ] || \
 	   [ "$$(printf '%s\n' "$$result" | grep -Fxc 'PASS: iterative capture-avoiding ABT core')" -ne 1 ]; then \
 		echo "FAIL: ABT core exact summary absent or duplicated"; \
 		exit 1; \
@@ -3754,6 +3944,7 @@ DEPS = $(OBJ:.o=.d) $(STAGE0_OBJ:.o=.d) \
 	$(PRIME_DELAYED_AMBIGUITY_TEST_OBJ:.o=.d) \
 	$(PRIME_PACKAGE_VALIDATION_TEST_OBJ:.o=.d) \
 	$(PRIME_DEPENDENT_FORMATION_LANGDEF_TEST_OBJ:.o=.d) \
+	$(PRIME_REGULAR_PATTERN_TEST_OBJ:.o=.d) \
 	$(RUNTIME_NAMED_VAR_TEST_OBJ:.o=.d) \
 	$(PRIME_READER_AST_ORACLE_OBJ:.o=.d) \
 	$(PAYLOAD_MAP_CAPACITY_TEST_OBJ:.o=.d) \
@@ -3790,10 +3981,12 @@ $(BUILD_CONFIG_STAMP): $(BUILD_CONFIG_INPUTS)
 	printf '#define CETTA_VERSION_STRING "%s"\n' "$(CETTA_VERSION)" >> "$$tmp_cfg"; \
 	printf '#define CETTA_BUILD_MODE_STRING "%s"\n' "$(BUILD_CANON)" >> "$$tmp_cfg"; \
 	printf '#define CETTA_BUILD_WITH_PYTHON %s\n' "$(ENABLE_PYTHON)" >> "$$tmp_cfg"; \
+	printf '#define CETTA_BUILD_PYTHON_CONFIG_ID "%s"\n' "$(PYTHON_CONFIG_ID)" >> "$$tmp_cfg"; \
 	printf '#define CETTA_BUILD_WITH_MORK_STATIC %s\n' "$(ENABLE_MORK_STATIC)" >> "$$tmp_cfg"; \
 	printf '#define CETTA_BUILD_WITH_PATHMAP_SPACE %s\n' "$(ENABLE_PATHMAP_SPACE)" >> "$$tmp_cfg"; \
 	printf '#define CETTA_BUILD_WITH_GMP %s\n' "$(ENABLE_GMP)" >> "$$tmp_cfg"; \
 	printf '#define CETTA_BUILD_WITH_LIB_PROLOG %s\n' "$(LIB_PROLOG_ENABLED)" >> "$$tmp_cfg"; \
+	printf '#define CETTA_BUILD_LIB_PROLOG_CONFIG_ID "%s"\n' "$(LIB_PROLOG_CONFIG_ID)" >> "$$tmp_cfg"; \
 	printf '#define CETTA_BUILD_WITH_PETTA_TYPECHECK_V2 %s\n' "$(ENABLE_PETTA_TYPECHECK_V2)" >> "$$tmp_cfg"; \
 	printf '#define CETTA_BUILD_WITH_PETTA_TYPECHECK_CENSUS %s\n' "$(ENABLE_PETTA_TYPECHECK_CENSUS)" >> "$$tmp_cfg"; \
 	printf '#define CETTA_BUILD_WITH_LANGDEF_DIAGNOSTIC_BACKENDS %s\n' "$(ENABLE_LANGDEF_DIAGNOSTIC_BACKENDS)" >> "$$tmp_cfg"; \
@@ -3817,10 +4010,12 @@ $(STAGE0_BUILD_CONFIG_STAMP): $(BUILD_CONFIG_INPUTS)
 	printf '#define CETTA_VERSION_STRING "%s"\n' "$(CETTA_VERSION)" >> "$$tmp_cfg"; \
 	printf '#define CETTA_BUILD_MODE_STRING "%s"\n' "$(BUILD_CANON)" >> "$$tmp_cfg"; \
 	printf '#define CETTA_BUILD_WITH_PYTHON %s\n' "$(ENABLE_PYTHON)" >> "$$tmp_cfg"; \
+	printf '#define CETTA_BUILD_PYTHON_CONFIG_ID "%s"\n' "$(PYTHON_CONFIG_ID)" >> "$$tmp_cfg"; \
 	printf '#define CETTA_BUILD_WITH_MORK_STATIC %s\n' "$(ENABLE_MORK_STATIC)" >> "$$tmp_cfg"; \
 	printf '#define CETTA_BUILD_WITH_PATHMAP_SPACE %s\n' "$(ENABLE_PATHMAP_SPACE)" >> "$$tmp_cfg"; \
 	printf '#define CETTA_BUILD_WITH_GMP %s\n' "$(ENABLE_GMP)" >> "$$tmp_cfg"; \
 	printf '#define CETTA_BUILD_WITH_LIB_PROLOG %s\n' "$(LIB_PROLOG_ENABLED)" >> "$$tmp_cfg"; \
+	printf '#define CETTA_BUILD_LIB_PROLOG_CONFIG_ID "%s"\n' "$(LIB_PROLOG_CONFIG_ID)" >> "$$tmp_cfg"; \
 	printf '#define CETTA_BUILD_WITH_PETTA_TYPECHECK_V2 %s\n' "$(ENABLE_PETTA_TYPECHECK_V2)" >> "$$tmp_cfg"; \
 	printf '#define CETTA_BUILD_WITH_PETTA_TYPECHECK_CENSUS 0\n' >> "$$tmp_cfg"; \
 	printf '#define CETTA_BUILD_WITH_LANGDEF_DIAGNOSTIC_BACKENDS %s\n' "$(ENABLE_LANGDEF_DIAGNOSTIC_BACKENDS)" >> "$$tmp_cfg"; \
@@ -4199,16 +4394,226 @@ $(PRIME_DEPENDENT_FORMATION_LANGDEF_TEST_OBJ): $(PRIME_DEPENDENT_FORMATION_LANGD
 	@mkdir -p $(dir $@)
 	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
 
-$(PRIME_LAMBDA_PI_TEST_BIN): $(PRIME_LAMBDA_PI_TEST_OBJ) $(PRIME_LAMBDA_PI_TEST_LINK_OBJ) $(BRIDGE_DEPS)
+$(PRIME_REGULAR_KERNEL_TEST_BIN): $(PRIME_REGULAR_KERNEL_TEST_OBJ) $(PRIME_REGULAR_KERNEL_TEST_LINK_OBJ) $(BRIDGE_DEPS)
 	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
-	@tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/test-prime-lambda-pi.XXXXXX"); \
+	@tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/test-prime-regular-kernel.XXXXXX"); \
 	trap 'rm -f "$$tmp_out"' EXIT INT TERM; \
 	$(CC) $(CFLAGS) -o "$$tmp_out" $^ $(LDFLAGS); \
 	mv "$$tmp_out" $@
 
-$(PRIME_LAMBDA_PI_TEST_OBJ): $(PRIME_LAMBDA_PI_TEST_SRC) $(BUILD_CONFIG_HEADER)
+$(PRIME_REGULAR_KERNEL_TEST_OBJ): $(PRIME_REGULAR_KERNEL_TEST_SRC) $(BUILD_CONFIG_HEADER)
 	@mkdir -p $(dir $@)
 	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+
+$(PRIME_LEVEL_TEST_BIN): $(PRIME_LEVEL_TEST_OBJ) $(PRIME_LEVEL_TEST_LINK_OBJ) $(BRIDGE_DEPS)
+	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
+	@tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/test-prime-level.XXXXXX"); \
+	trap 'rm -f "$$tmp_out"' EXIT INT TERM; \
+	$(CC) $(CFLAGS) -o "$$tmp_out" $^ $(LDFLAGS); \
+	mv "$$tmp_out" $@
+
+$(PRIME_LEVEL_TEST_OBJ): $(PRIME_LEVEL_TEST_SRC) $(BUILD_CONFIG_HEADER)
+	@mkdir -p $(dir $@)
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+
+$(PRIME_TYPED_FLOW_TEST_BIN): $(PRIME_TYPED_FLOW_TEST_OBJ) $(PRIME_TYPED_FLOW_TEST_LINK_OBJ) $(BRIDGE_DEPS)
+	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
+	@tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/test-prime-typed-flow.XXXXXX"); \
+	trap 'rm -f "$$tmp_out"' EXIT INT TERM; \
+	$(CC) $(CFLAGS) -o "$$tmp_out" $^ $(LDFLAGS); \
+	mv "$$tmp_out" $@
+
+$(PRIME_TYPED_FLOW_TEST_OBJ): $(PRIME_TYPED_FLOW_TEST_SRC) $(BUILD_CONFIG_HEADER)
+	@mkdir -p $(dir $@)
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+
+$(PRIME_HOPPER_FOLD_NATIVE_TEST_BIN): $(PRIME_HOPPER_FOLD_NATIVE_TEST_OBJ) $(PRIME_HOPPER_FOLD_NATIVE_TEST_LINK_OBJ) $(BRIDGE_DEPS)
+	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
+	@tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/test-prime-hopper-fold-native.XXXXXX"); \
+	trap 'rm -f "$$tmp_out"' EXIT INT TERM; \
+	$(CC) $(CFLAGS) -o "$$tmp_out" $^ $(LDFLAGS); \
+	mv "$$tmp_out" $@
+
+$(PRIME_HOPPER_FOLD_NATIVE_TEST_OBJ): $(PRIME_HOPPER_FOLD_NATIVE_TEST_SRC) $(BUILD_CONFIG_HEADER)
+	@mkdir -p $(dir $@)
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+
+$(PRIME_HOPPER_BRANCHING_NATIVE_TEST_BIN): $(PRIME_HOPPER_BRANCHING_NATIVE_TEST_OBJ) $(PRIME_HOPPER_BRANCHING_NATIVE_TEST_LINK_OBJ) $(BRIDGE_DEPS)
+	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
+	@tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/test-prime-hopper-branching-native.XXXXXX"); \
+	trap 'rm -f "$$tmp_out"' EXIT INT TERM; \
+	$(CC) $(CFLAGS) -o "$$tmp_out" $^ $(LDFLAGS); \
+	mv "$$tmp_out" $@
+
+$(PRIME_HOPPER_BRANCHING_NATIVE_TEST_OBJ): $(PRIME_HOPPER_BRANCHING_NATIVE_TEST_SRC) $(BUILD_CONFIG_HEADER)
+	@mkdir -p $(dir $@)
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+
+$(PRIME_IGGP_TYPE_OF_INFERENCE_TEST_BIN): $(PRIME_IGGP_TYPE_OF_INFERENCE_TEST_OBJ) $(PRIME_IGGP_TYPE_OF_INFERENCE_TEST_LINK_OBJ) $(BRIDGE_DEPS)
+	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
+	@tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/test-prime-iggp-type-of-inference.XXXXXX"); \
+	trap 'rm -f "$$tmp_out"' EXIT INT TERM; \
+	$(CC) $(CFLAGS) -o "$$tmp_out" $^ $(LDFLAGS); \
+	mv "$$tmp_out" $@
+
+$(PRIME_IGGP_TYPE_OF_INFERENCE_TEST_OBJ): $(PRIME_IGGP_TYPE_OF_INFERENCE_TEST_SRC) $(BUILD_CONFIG_HEADER)
+	@mkdir -p $(dir $@)
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+
+$(PRIME_GDL_POSITIVE_HORN_NATIVE_TEST_BIN): $(PRIME_GDL_POSITIVE_HORN_NATIVE_TEST_OBJ) $(PRIME_GDL_POSITIVE_HORN_NATIVE_TEST_LINK_OBJ) $(BRIDGE_DEPS)
+	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
+	@tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/test-gdl-positive-horn-native.XXXXXX"); \
+	trap 'rm -f "$$tmp_out"' EXIT INT TERM; \
+	$(CC) $(CFLAGS) -o "$$tmp_out" $^ $(LDFLAGS); \
+	mv "$$tmp_out" $@
+
+$(PRIME_GDL_POSITIVE_HORN_NATIVE_TEST_OBJ): $(PRIME_GDL_POSITIVE_HORN_NATIVE_TEST_SRC) src/gdl_stratified_model.h $(BUILD_CONFIG_HEADER)
+	@mkdir -p $(dir $@)
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+
+$(PRIME_GDL_POSITIVE_HORN_NATIVE_QUALIFIER_BIN): $(PRIME_GDL_POSITIVE_HORN_NATIVE_QUALIFIER_OBJ) $(PRIME_GDL_POSITIVE_HORN_NATIVE_QUALIFIER_LINK_OBJ) $(BRIDGE_DEPS)
+	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
+	@tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/qualify-gdl-positive-horn-native.XXXXXX"); \
+	trap 'rm -f "$$tmp_out"' EXIT INT TERM; \
+	$(CC) $(CFLAGS) -o "$$tmp_out" $^ $(LDFLAGS); \
+	mv "$$tmp_out" $@
+
+$(PRIME_GDL_POSITIVE_HORN_NATIVE_QUALIFIER_OBJ): $(PRIME_GDL_POSITIVE_HORN_NATIVE_QUALIFIER_SRC) $(BUILD_CONFIG_HEADER)
+	@mkdir -p $(dir $@)
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+
+$(PRIME_GDL_STRATIFICATION_QUALIFIER_BIN): $(PRIME_GDL_STRATIFICATION_QUALIFIER_OBJ) $(PRIME_GDL_STRATIFICATION_QUALIFIER_LINK_OBJ) $(BRIDGE_DEPS)
+	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
+	@tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/qualify-gdl-stratification.XXXXXX"); \
+	trap 'rm -f "$$tmp_out"' EXIT INT TERM; \
+	$(CC) $(CFLAGS) -o "$$tmp_out" $^ $(LDFLAGS); \
+	mv "$$tmp_out" $@
+
+$(PRIME_GDL_STRATIFICATION_QUALIFIER_OBJ): $(PRIME_GDL_STRATIFICATION_QUALIFIER_SRC) $(BUILD_CONFIG_HEADER)
+	@mkdir -p $(dir $@)
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+
+$(PRIME_GDL_STRATIFIED_MODEL_QUALIFIER_BIN): $(PRIME_GDL_STRATIFIED_MODEL_QUALIFIER_OBJ) $(PRIME_GDL_STRATIFIED_MODEL_QUALIFIER_LINK_OBJ) $(BRIDGE_DEPS)
+	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
+	@tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/qualify-gdl-stratified-model.XXXXXX"); \
+	trap 'rm -f "$$tmp_out"' EXIT INT TERM; \
+	$(CC) $(CFLAGS) -o "$$tmp_out" $^ $(LDFLAGS); \
+	mv "$$tmp_out" $@
+
+$(PRIME_GDL_STRATIFIED_MODEL_QUALIFIER_OBJ): $(PRIME_GDL_STRATIFIED_MODEL_QUALIFIER_SRC) src/gdl_stratified_model.h $(BUILD_CONFIG_HEADER)
+	@mkdir -p $(dir $@)
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+
+$(PRIME_GDL_STRATIFIED_EPISODE_QUALIFIER_BIN): $(PRIME_GDL_STRATIFIED_EPISODE_QUALIFIER_OBJ) $(PRIME_GDL_STRATIFIED_EPISODE_QUALIFIER_LINK_OBJ) $(BRIDGE_DEPS)
+	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
+	@tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/qualify-gdl-stratified-episode.XXXXXX"); \
+	trap 'rm -f "$$tmp_out"' EXIT INT TERM; \
+	$(CC) $(CFLAGS) -o "$$tmp_out" $^ $(LDFLAGS); \
+	mv "$$tmp_out" $@
+
+$(PRIME_GDL_STRATIFIED_EPISODE_QUALIFIER_OBJ): $(PRIME_GDL_STRATIFIED_EPISODE_QUALIFIER_SRC) src/gdl_stratified_model.h $(BUILD_CONFIG_HEADER)
+	@mkdir -p $(dir $@)
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+
+$(PRIME_REGULAR_KERNEL_ENGINE_FAILURE_TEST_OBJ): $(PRIME_REGULAR_KERNEL_ENGINE_FAILURE_TEST_SRC) $(BUILD_CONFIG_HEADER)
+	@mkdir -p $(dir $@)
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+
+$(PRIME_REGULAR_PATTERN_TEST_BIN): $(PRIME_REGULAR_PATTERN_TEST_OBJ) $(PRIME_REGULAR_PATTERN_TEST_LINK_OBJ) $(BRIDGE_DEPS)
+	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
+	@tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/test-prime-regular-pattern.XXXXXX"); \
+	trap 'rm -f "$$tmp_out"' EXIT INT TERM; \
+	$(CC) $(CFLAGS) -o "$$tmp_out" $^ $(LDFLAGS); \
+	mv "$$tmp_out" $@
+
+$(PRIME_REGULAR_PATTERN_TEST_OBJ): $(PRIME_REGULAR_PATTERN_TEST_SRC) $(BUILD_CONFIG_HEADER)
+	@mkdir -p $(dir $@)
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+
+$(PRIME_REGULAR_KERNEL_LEGACY_REFERENCE_OBJ): src/prime_semantics.c $(BUILD_CONFIG_HEADER)
+	@mkdir -p $(dir $@)
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) \
+		-DCETTA_PRIME_REGULAR_KERNEL_TEST_LEGACY_REFERENCE=1 \
+		-MF $(@:.o=.d) -c -o $@ $<
+
+$(PRIME_REGULAR_KERNEL_LEGACY_REFERENCE_BIN): $(PRIME_REGULAR_KERNEL_LEGACY_REFERENCE_LINK_OBJ) $(BRIDGE_DEPS)
+	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
+	@tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/cetta-prime-regular-kernel-legacy-reference.XXXXXX"); \
+	trap 'rm -f "$$tmp_out"' EXIT INT TERM; \
+	$(CC) $(CFLAGS) -Wl,--export-dynamic -o "$$tmp_out" $^ $(LDFLAGS); \
+	mv "$$tmp_out" $@
+
+$(PRIME_REGULAR_KERNEL_CONVERSION_BENCH_OBJ): $(PRIME_REGULAR_KERNEL_CONVERSION_BENCH_SRC) $(BUILD_CONFIG_HEADER)
+	@mkdir -p $(dir $@)
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+
+$(PRIME_REGULAR_KERNEL_CONVERSION_BENCH_BIN): $(PRIME_REGULAR_KERNEL_CONVERSION_BENCH_OBJ) $(PRIME_REGULAR_KERNEL_TEST_LINK_OBJ) $(BRIDGE_DEPS)
+	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
+	@tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/bench-prime-regular-kernel-conversion.XXXXXX"); \
+	trap 'rm -f "$$tmp_out"' EXIT INT TERM; \
+	$(CC) $(CFLAGS) -o "$$tmp_out" $^ $(LDFLAGS); \
+	mv "$$tmp_out" $@
+
+$(PRIME_REGULAR_KERNEL_CONVERSION_REFERENCE_BENCH_BIN): $(PRIME_REGULAR_KERNEL_CONVERSION_BENCH_OBJ) $(filter-out $(PRIME_SEMANTICS_OBJ),$(PRIME_REGULAR_KERNEL_TEST_LINK_OBJ)) $(PRIME_REGULAR_KERNEL_LEGACY_REFERENCE_OBJ) $(BRIDGE_DEPS)
+	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
+	@tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/bench-prime-regular-kernel-conversion-legacy-reference.XXXXXX"); \
+	trap 'rm -f "$$tmp_out"' EXIT INT TERM; \
+	$(CC) $(CFLAGS) -o "$$tmp_out" $^ $(LDFLAGS); \
+	mv "$$tmp_out" $@
+
+$(PRIME_REGULAR_KERNEL_SYNTHESIS_BENCH_OBJ): $(PRIME_REGULAR_KERNEL_SYNTHESIS_BENCH_SRC) $(BUILD_CONFIG_HEADER)
+	@mkdir -p $(dir $@)
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+
+$(PRIME_REGULAR_KERNEL_SYNTHESIS_BENCH_BIN): $(PRIME_REGULAR_KERNEL_SYNTHESIS_BENCH_OBJ) $(PRIME_REGULAR_KERNEL_TEST_LINK_OBJ) $(BRIDGE_DEPS)
+	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
+	@tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/bench-prime-regular-kernel-synthesis.XXXXXX"); \
+	trap 'rm -f "$$tmp_out"' EXIT INT TERM; \
+	$(CC) $(CFLAGS) -o "$$tmp_out" $^ $(LDFLAGS); \
+	mv "$$tmp_out" $@
+
+$(PRIME_REGULAR_KERNEL_SYNTHESIS_REFERENCE_BENCH_BIN): $(PRIME_REGULAR_KERNEL_SYNTHESIS_BENCH_OBJ) $(filter-out $(PRIME_SEMANTICS_OBJ),$(PRIME_REGULAR_KERNEL_TEST_LINK_OBJ)) $(PRIME_REGULAR_KERNEL_LEGACY_REFERENCE_OBJ) $(BRIDGE_DEPS)
+	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
+	@tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/bench-prime-regular-kernel-synthesis-legacy-reference.XXXXXX"); \
+	trap 'rm -f "$$tmp_out"' EXIT INT TERM; \
+	$(CC) $(CFLAGS) -o "$$tmp_out" $^ $(LDFLAGS); \
+	mv "$$tmp_out" $@
+
+$(PRIME_REGULAR_KERNEL_CHECKING_BENCH_OBJ): $(PRIME_REGULAR_KERNEL_CHECKING_BENCH_SRC) $(BUILD_CONFIG_HEADER)
+	@mkdir -p $(dir $@)
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+
+$(PRIME_REGULAR_KERNEL_CHECKING_BENCH_BIN): $(PRIME_REGULAR_KERNEL_CHECKING_BENCH_OBJ) $(PRIME_REGULAR_KERNEL_TEST_LINK_OBJ) $(BRIDGE_DEPS)
+	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
+	@tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/bench-prime-regular-kernel-checking.XXXXXX"); \
+	trap 'rm -f "$$tmp_out"' EXIT INT TERM; \
+	$(CC) $(CFLAGS) -o "$$tmp_out" $^ $(LDFLAGS); \
+	mv "$$tmp_out" $@
+
+$(PRIME_REGULAR_KERNEL_CHECKING_REFERENCE_BENCH_BIN): $(PRIME_REGULAR_KERNEL_CHECKING_BENCH_OBJ) $(filter-out $(PRIME_SEMANTICS_OBJ),$(PRIME_REGULAR_KERNEL_TEST_LINK_OBJ)) $(PRIME_REGULAR_KERNEL_LEGACY_REFERENCE_OBJ) $(BRIDGE_DEPS)
+	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
+	@tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/bench-prime-regular-kernel-checking-legacy-reference.XXXXXX"); \
+	trap 'rm -f "$$tmp_out"' EXIT INT TERM; \
+	$(CC) $(CFLAGS) -o "$$tmp_out" $^ $(LDFLAGS); \
+	mv "$$tmp_out" $@
+
+$(PRIME_REGULAR_KERNEL_FORMATION_BENCH_OBJ): $(PRIME_REGULAR_KERNEL_FORMATION_BENCH_SRC) $(BUILD_CONFIG_HEADER)
+	@mkdir -p $(dir $@)
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+
+$(PRIME_REGULAR_KERNEL_FORMATION_BENCH_BIN): $(PRIME_REGULAR_KERNEL_FORMATION_BENCH_OBJ) $(PRIME_REGULAR_KERNEL_TEST_LINK_OBJ) $(BRIDGE_DEPS)
+	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
+	@tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/bench-prime-regular-kernel-formation.XXXXXX"); \
+	trap 'rm -f "$$tmp_out"' EXIT INT TERM; \
+	$(CC) $(CFLAGS) -o "$$tmp_out" $^ $(LDFLAGS); \
+	mv "$$tmp_out" $@
+
+$(PRIME_REGULAR_KERNEL_FORMATION_REFERENCE_BENCH_BIN): $(PRIME_REGULAR_KERNEL_FORMATION_BENCH_OBJ) $(filter-out $(PRIME_SEMANTICS_OBJ),$(PRIME_REGULAR_KERNEL_TEST_LINK_OBJ)) $(PRIME_REGULAR_KERNEL_LEGACY_REFERENCE_OBJ) $(BRIDGE_DEPS)
+	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
+	@tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/bench-prime-regular-kernel-formation-legacy-reference.XXXXXX"); \
+	trap 'rm -f "$$tmp_out"' EXIT INT TERM; \
+	$(CC) $(CFLAGS) -o "$$tmp_out" $^ $(LDFLAGS); \
+	mv "$$tmp_out" $@
 
 $(RUNTIME_NAMED_VAR_TEST_BIN): $(RUNTIME_NAMED_VAR_TEST_OBJ) $(RUNTIME_NAMED_VAR_TEST_LINK_OBJ) $(BRIDGE_DEPS)
 	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
@@ -9809,7 +10214,7 @@ test-list-lanes: $(BIN)
 bench-list: $(BIN) test-list-lanes
 	@./scripts/bench_list_lanes.py --cetta ./$(BIN)
 
-test: $(BIN) test-precise-vocabulary test-manifest-strict test-git-module test-symbolid-guard test-variant-shape-roundtrip test-bindings-lookup-index test-atom-deep-copy-iterative test-abt test-rhometta-payload-map-capacity-c test-space-term-universe-membership test-help-flags test-rhocalc test-he-contract-suite test-he-return-contract-correlation test-closed-stream-fastpath test-parse-depth-guard test-stdlib-growth-memory-regression test-rhometta-macro-audit test-eval-gc-adversarial test-list-lanes test-syn-lanes test-lib-prolog test-petta-libpl test-petta-process-text test-match-decision test-petta-search-machine test-petta-semantics test-petta-corpus-manifest-unit test-petta-chainer-manifest-unit test-petta-typecheck-v3-core-langdef-v1 test-petta-typecheck-v3-file-runner-v1 test-petta-typecheck-v3-profile test-gslt-provider-generation-v1 test-gslt-provider-runtime test-prime-nik-core-v1 test-subzero test-mettazero test-gslt-il test-zerouv test-metta-interact test-mm2-gslt-profile-v1
+test: $(BIN) test-python-build-config test-lib-prolog-build-config test-precise-vocabulary test-prime-public-judgment-vocabulary test-manifest-strict test-git-module test-symbolid-guard test-variant-shape-roundtrip test-bindings-lookup-index test-atom-deep-copy-iterative test-abt test-rhometta-payload-map-capacity-c test-space-term-universe-membership test-help-flags test-rhocalc test-he-contract-suite test-he-return-contract-correlation test-closed-stream-fastpath test-parse-depth-guard test-stdlib-growth-memory-regression test-rhometta-macro-audit test-eval-gc-adversarial test-list-lanes test-syn-lanes test-lib-prolog test-petta-libpl test-petta-process-text test-match-decision test-petta-search-machine test-petta-semantics test-petta-corpus-manifest-unit test-petta-chainer-manifest-unit test-petta-typecheck-v3-core-langdef-v1 test-petta-typecheck-v3-file-runner-v1 test-petta-typecheck-v3-profile test-gslt-provider-generation-v1 test-gslt-provider-runtime test-prime-nik-core-v1 test-subzero test-mettazero test-gslt-il test-zerouv test-metta-interact test-mm2-gslt-profile-v1
 	@pass=0; fail=0; skip=0; no_exp=0; \
 	cache_dir="$(GIT_TEST_CACHE_DIR)"; mkdir -p "$$cache_dir"; export CETTA_GIT_MODULE_CACHE_DIR="$$cache_dir"; \
 	for f in tests/test_*.metta tests/spec_*.metta tests/he_*.metta; do \
@@ -11899,12 +12304,31 @@ test-manifest-sync:
 
 test-manifest-strict: test-manifest-check
 
-.PHONY: test-forbidden-availability-errors test-precise-vocabulary
+.PHONY: test-forbidden-availability-errors test-precise-vocabulary \
+	test-prime-public-judgment-vocabulary
 test-forbidden-availability-errors:
 	@python3 scripts/check_forbidden_availability_errors.py
 
 test-precise-vocabulary:
 	@python3 scripts/check_precise_vocabulary.py
+
+test-prime-public-judgment-vocabulary:
+	@if rg -n \
+		'prime-judge|PrimeVerdict|show-native-status|\((Synth|Check|Analyze|Convert|Form|Refine|May|Must)([[:space:]]|\))' \
+		examples/prime tests/prime tests/prime_02_completion_resources.metta \
+		tests/prime_02_completion_resources.expected tests/support tools \
+		--glob '*.metta' --glob '*.expected' --glob '*.py'; then \
+		echo 'FAIL: retired Prime executable judgment vocabulary remains'; \
+		exit 1; \
+	fi
+	@if rg -n \
+		'\((Synth|Check|Analyze|Convert|Form|Refine|May|Must)([[:space:]]|\))|"(Synth|Check|Analyze|Convert|Form|Refine|May|Must)"' \
+		src/prime_semantics.c src/prime_semantics.h src/eval.c \
+		tests/support/test_prime_*.c tests/bench_prime_regular_kernel_*.c; then \
+		echo 'FAIL: retired Prime judgment language remains behind the public boundary'; \
+		exit 1; \
+	fi
+	@echo 'PASS: type: is the sole executable Prime judgment vocabulary'
 
 test-he-prime-search-mutation: $(BIN)
 	@mutation_dir=runtime/he-prime-search-mutation; \
@@ -12016,8 +12440,8 @@ test-prime-completion-mutation: $(BIN)
 	mutant=$$(timeout $(PRIME_COMPLETION_TIMEOUT) "$$mutation_dir/cetta-forged-completion" --lang prime tests/prime_02_completion_resources.metta 2>&1); \
 	baseline_delayed=$$(printf '%s\n' "$$baseline" | grep -F '(DelayedLow '); \
 	mutant_delayed=$$(printf '%s\n' "$$mutant" | grep -F '(DelayedLow '); \
-	if [ "$$baseline_delayed" != '[(DelayedLow Incomplete)]' ] || \
-	   [ "$$mutant_delayed" != '[(DelayedLow Established)]' ]; then \
+	if [ "$$baseline_delayed" != '[(DelayedLow (type:must (delayed-answer) Nat 520))]' ] || \
+	   [ "$$mutant_delayed" != '[(DelayedLow True)]' ]; then \
 		echo "FAIL: completion-gate mutation survived delayed ambiguity"; exit 1; \
 	fi; \
 	echo "PASS: answer-bag completion mutation is killed by delayed counterexample"
@@ -12063,9 +12487,9 @@ test-prime-variable-mutation: $(BIN)
 	baseline_probes=$$(printf '%s\n' "$$baseline" | sed -n '1,3p'); \
 	mutant_probes=$$(printf '%s\n' "$$mutant" | sed -n '1,3p'); \
 	if [ "$$baseline_probes" = "$$mutant_probes" ] || \
-	   ! printf '%s\n' "$$mutant_probes" | grep -Fq '(OpenExpected Established)' || \
-	   ! printf '%s\n' "$$mutant_probes" | grep -Fq '(UnconstrainedDeclaration Established)' || \
-	   ! printf '%s\n' "$$mutant_probes" | grep -Fq '(EscapedBinder Undetermined)'; then \
+	   ! printf '%s\n' "$$mutant_probes" | grep -Fq '(OpenExpected True)' || \
+	   ! printf '%s\n' "$$mutant_probes" | grep -Fq '(UnconstrainedDeclaration True)' || \
+	   ! printf '%s\n' "$$mutant_probes" | grep -Fq '(EscapedBinder (type:formed '; then \
 		echo "FAIL: variable-discipline mutation survived or bypassed canonical scope"; exit 1; \
 	fi; \
 	echo "PASS: bind-and-discard/implicit-formation mutation is killed; canonical scope independently blocks escape"
@@ -12181,8 +12605,8 @@ test-prime-applicability-capacity-mutation: $(BIN)
 	mutant=$$(timeout $(PRIME_COMPLETION_TIMEOUT) "$$mutation_dir/cetta-silent-applicability-cap" --lang prime tests/prime_02_completion_resources.metta 2>&1); \
 	baseline_cap=$$(printf '%s\n' "$$baseline" | grep -F '[(DynamicApplicability ' | head -1); \
 	mutant_cap=$$(printf '%s\n' "$$mutant" | grep -F '[(DynamicApplicability ' | head -1); \
-	if [ "$$baseline_cap" != '[(DynamicApplicability Established)]' ] || \
-	   [ "$$mutant_cap" != '[(DynamicApplicability Incomplete)]' ]; then \
+	if [ "$$baseline_cap" != '[(DynamicApplicability True)]' ] || \
+	   [ "$$mutant_cap" != '[(DynamicApplicability (type:must (cap-pairer cap-x cap-y) Nat 20000))]' ]; then \
 		echo "FAIL: fixed applicability-frontier mutation survived its gate"; exit 1; \
 	fi; \
 	echo "PASS: reintroduced 64-entry applicability frontier is killed by 81-way Must"
@@ -12202,8 +12626,9 @@ test-prime-type-capacity-mutation: $(BIN)
 	mutant=$$(timeout $(PRIME_COMPLETION_TIMEOUT) "$$mutation_dir/cetta-fixed-type-frontier" --lang prime tests/prime_02_completion_resources.metta 2>&1); \
 	baseline_types=$$(printf '%s\n' "$$baseline" | grep -F '[(DynamicTypeStorage ' | head -1); \
 	mutant_types=$$(printf '%s\n' "$$mutant" | grep -F '[(DynamicTypeStorage ' | head -1); \
-	if [ "$$baseline_types" != '[(DynamicTypeStorage Established)]' ] || \
-	   [ "$$mutant_types" != '[(DynamicTypeStorage Incomplete)]' ]; then \
+	if [ "$$baseline_types" = "$$mutant_types" ] || \
+	   ! printf '%s\n' "$$baseline_types" | grep -Fq '(X8 Y8)' || \
+	   printf '%s\n' "$$mutant_types" | grep -Fq '(X8 Y8)'; then \
 		echo "FAIL: fixed inferred-type frontier mutation survived its gate"; exit 1; \
 	fi; \
 	echo "PASS: reintroduced 64-entry inferred-type frontier is killed by 81-type synthesis"
@@ -12214,7 +12639,6 @@ test-prime-budget-monotonicity: $(BIN)
 .PHONY: test-prime-type-langdef-source-binding-v1
 test-prime-type-langdef-source-binding-v1:
 	@python3 tools/gslt2parse_schema_v1.py \
-		--require-nik-authority-frame \
 		langdef/prime/generated/closed_formation_v1.metta >/dev/null
 	@set -eu; mkdir -p $(BOOTSTRAP_TMPDIR); \
 	tmpdir=$$(mktemp -d "$(BOOTSTRAP_TMPDIR)/prime-type-binding.XXXXXX"); \
@@ -12240,7 +12664,6 @@ test-prime-type-langdef-source-binding-v1:
 .PHONY: test-prime-native-ground-langdef-source-binding-v1
 test-prime-native-ground-langdef-source-binding-v1:
 	@python3 tools/gslt2parse_schema_v1.py \
-		--require-nik-authority-frame \
 		langdef/prime/generated/native_ground_judgments_v1.metta >/dev/null
 	@set -eu; mkdir -p $(BOOTSTRAP_TMPDIR); \
 	tmpdir=$$(mktemp -d "$(BOOTSTRAP_TMPDIR)/prime-native-ground-binding.XXXXXX"); \
@@ -12263,7 +12686,6 @@ test-prime-native-ground-langdef-source-binding-v1:
 .PHONY: test-prime-dependent-formation-langdef-source-binding-v1
 test-prime-dependent-formation-langdef-source-binding-v1:
 	@python3 tools/gslt2parse_schema_v1.py \
-		--require-nik-authority-frame \
 		langdef/prime/generated/elaborated_dependent_formation_core_v1.metta >/dev/null
 	@set -eu; mkdir -p $(BOOTSTRAP_TMPDIR); \
 	tmpdir=$$(mktemp -d "$(BOOTSTRAP_TMPDIR)/prime-dependent-formation-binding.XXXXXX"); \
@@ -12286,7 +12708,6 @@ test-prime-dependent-formation-langdef-source-binding-v1:
 .PHONY: test-prime-typed-publication-langdef-source-binding-v1
 test-prime-typed-publication-langdef-source-binding-v1:
 	@python3 tools/gslt2parse_schema_v1.py \
-		--require-nik-authority-frame \
 		langdef/prime/generated/typed_publication_core_v1.metta >/dev/null
 	@set -eu; mkdir -p $(BOOTSTRAP_TMPDIR); \
 	tmpdir=$$(mktemp -d "$(BOOTSTRAP_TMPDIR)/prime-typed-publication-binding.XXXXXX"); \
@@ -12309,7 +12730,6 @@ test-prime-typed-publication-langdef-source-binding-v1:
 .PHONY: test-prime-open-lambda-pi-langdef-source-binding-v1
 test-prime-open-lambda-pi-langdef-source-binding-v1:
 	@python3 tools/gslt2parse_schema_v1.py \
-		--require-nik-authority-frame \
 		langdef/prime/generated/open_lambda_pi_core_v1.metta >/dev/null
 	@set -eu; mkdir -p $(BOOTSTRAP_TMPDIR); \
 	tmpdir=$$(mktemp -d "$(BOOTSTRAP_TMPDIR)/prime-open-lambda-pi-binding.XXXXXX"); \
@@ -12329,8 +12749,30 @@ test-prime-open-lambda-pi-langdef-source-binding-v1:
 		src/generated/prime_typing_open_lambda_pi_core_source_binding_v1.generated.c; \
 	echo "PASS: Prime open lambda-Pi langdef source binding is valid and deterministic"
 
+.PHONY: test-prime-open-regular-kernel-source-binding-v1
+test-prime-open-regular-kernel-source-binding-v1:
+	@python3 tools/gslt2parse_schema_v1.py \
+		langdef/prime/generated/open_regular_kernel_v1.metta >/dev/null
+	@set -eu; mkdir -p $(BOOTSTRAP_TMPDIR); \
+	tmpdir=$$(mktemp -d "$(BOOTSTRAP_TMPDIR)/prime-open-regular-kernel-binding.XXXXXX"); \
+	trap 'rm -f "$$tmpdir/prime_typing_open_regular_kernel_source_binding_v1.generated.h" "$$tmpdir/prime_typing_open_regular_kernel_source_binding_v1.generated.c"; rmdir "$$tmpdir"' EXIT INT TERM; \
+	python3 tools/generate_nik_direct_source_binding_v1.py \
+		--presentation langdef/prime/generated/open_regular_kernel_v1.metta \
+		--symbol-prefix prime_typing_open_regular_kernel \
+		--authority-symbol cetta_prime_typing_direct_authority_v1 \
+		--authority-header prime_semantics.h \
+		--semantic-scope prime.typing.open-regular-kernel \
+		--coverage fragment \
+		--header-output "$$tmpdir/prime_typing_open_regular_kernel_source_binding_v1.generated.h" \
+		--source-output "$$tmpdir/prime_typing_open_regular_kernel_source_binding_v1.generated.c"; \
+	cmp -s "$$tmpdir/prime_typing_open_regular_kernel_source_binding_v1.generated.h" \
+		src/generated/prime_typing_open_regular_kernel_source_binding_v1.generated.h; \
+	cmp -s "$$tmpdir/prime_typing_open_regular_kernel_source_binding_v1.generated.c" \
+		src/generated/prime_typing_open_regular_kernel_source_binding_v1.generated.c; \
+	echo "PASS: Prime open regular-kernel source binding is valid and deterministic"
+
 .PHONY: test-prime-open-lambda-pi-langdef-mutations
-test-prime-open-lambda-pi-langdef-mutations: $(PRIME_LAMBDA_PI_TEST_BIN)
+test-prime-open-lambda-pi-langdef-mutations: $(PRIME_REGULAR_KERNEL_TEST_BIN)
 	@set -eu; mkdir -p $(BOOTSTRAP_TMPDIR); \
 	mutation_dir=$$(mktemp -d "$(BOOTSTRAP_TMPDIR)/prime-open-lambda-pi-mutations.XXXXXX"); \
 	trap 'rm -f "$$mutation_dir"/*.metta "$$mutation_dir"/*.out; rmdir "$$mutation_dir"' EXIT INT TERM; \
@@ -12341,13 +12783,35 @@ test-prime-open-lambda-pi-langdef-mutations: $(PRIME_LAMBDA_PI_TEST_BIN)
 			"$$mutation" \
 			langdef/prime/generated/open_lambda_pi_core_v1.metta \
 			"$$mutant"; \
-		if "$(PRIME_LAMBDA_PI_TEST_BIN)" "$$mutant" \
+		if "$(PRIME_REGULAR_KERNEL_TEST_BIN)" "$$mutant" \
+				langdef/prime/generated/open_regular_kernel_v1.metta \
 				>"$$output" 2>&1; then \
 			echo "FAIL: Prime open lambda-Pi mutation survived: $$mutation"; \
 			exit 1; \
 		fi; \
 	done; \
 	echo "PASS: context, beta, and eta lambda-Pi mutations are killed"
+
+.PHONY: test-prime-open-regular-kernel-mutations
+test-prime-open-regular-kernel-mutations: $(PRIME_REGULAR_KERNEL_TEST_BIN)
+	@set -eu; mkdir -p $(BOOTSTRAP_TMPDIR); \
+	mutation_dir=$$(mktemp -d "$(BOOTSTRAP_TMPDIR)/prime-open-regular-kernel-mutations.XXXXXX"); \
+	trap 'rm -f "$$mutation_dir"/*.metta "$$mutation_dir"/*.out; rmdir "$$mutation_dir"' EXIT INT TERM; \
+	for mutation in disable-sigma disable-id disable-pair disable-fst disable-snd disable-refl disable-fst-beta disable-snd-beta disable-level-maximum disable-universe-synthesis disable-universe-join disable-cumulative-promotion disable-embedded-sort-conversion; do \
+		mutant="$$mutation_dir/$$mutation.metta"; \
+		output="$$mutation_dir/$$mutation.out"; \
+		python3 scripts/mutate_prime_open_regular_kernel.py \
+			"$$mutation" \
+			langdef/prime/generated/open_regular_kernel_v1.metta \
+			"$$mutant"; \
+		if "$(PRIME_REGULAR_KERNEL_TEST_BIN)" \
+				langdef/prime/generated/open_lambda_pi_core_v1.metta \
+				"$$mutant" >"$$output" 2>&1; then \
+			echo "FAIL: Prime open regular-kernel mutation survived: $$mutation"; \
+			exit 1; \
+		fi; \
+	done; \
+	echo "PASS: regular constructors, closed universes, joins, promotion, and conversion mutations are killed"
 
 test-prime-package-validation: $(PRIME_PACKAGE_VALIDATION_TEST_BIN) test-prime-type-langdef-source-binding-v1 test-prime-native-ground-langdef-source-binding-v1 test-prime-native-ground-langdef-mutations test-prime-dependent-formation-langdef-v1 test-prime-dependent-formation-langdef-mutations test-prime-typed-publication-langdef-source-binding-v1
 	@"$(PRIME_PACKAGE_VALIDATION_TEST_BIN)"
@@ -12508,24 +12972,952 @@ ifeq ($(ENABLE_RUNTIME_STATS),1)
 		>"$$optimized_out" 2>"$$optimized_err"; \
 	cmp -s tests/prime/nik_typed_applicability_pruning.expected \
 		"$$optimized_out"; \
-	grep -Fqx 'runtime-counter nik-typed-applicability-candidate-refuted 1' \
+	grep -Fqx 'runtime-counter nik-typed-applicability-candidate-refuted 0' \
 		"$$optimized_err"; \
-	CETTA_NIK_TYPED_APPLICABILITY=0 \
+	grep -Fqx 'runtime-counter prime-legacy-he-typed-applicability 0' \
+		"$$optimized_err"; \
+	CETTA_PRIME_HE_TYPED_APPLICABILITY=1 \
 		$(CETTA_BIN_INVOKE) --emit-runtime-stats --lang prime \
 		tests/prime/nik_typed_applicability_pruning.metta \
 		>"$$reference_out" 2>"$$reference_err"; \
 	cmp -s "$$optimized_out" "$$reference_out"; \
-	grep -Fqx 'runtime-counter nik-typed-applicability-candidate-refuted 0' \
+	grep -Fqx 'runtime-counter nik-typed-applicability-candidate-refuted 1' \
 		"$$reference_err"; \
-	echo 'PASS: Prime direct typing prunes only closed refuted overload candidates'
+	grep -Eq '^runtime-counter prime-legacy-he-typed-applicability [1-9][0-9]*$$' \
+		"$$reference_err"; \
+	echo 'PASS: Prime defaults to zero-HE applicability; the HE-assisted comparison is explicit'
 else
 	@echo 'INFO: Prime typed-applicability control requires runtime stats; re-running with ENABLE_RUNTIME_STATS=1'
 	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 $@
 endif
 
-test-prime: $(BIN) $(PRIME_LAMBDA_PI_TEST_BIN) test-prime-open-lambda-pi-langdef-source-binding-v1 test-prime-open-lambda-pi-langdef-mutations test-prime-coverage test-prime-budget-monotonicity test-prime-package-validation test-prime-internal-graduality test-prime-nik-core-v1 test-prime-nik-typed-applicability-pruning
-	@"$(PRIME_LAMBDA_PI_TEST_BIN)" \
-		langdef/prime/generated/open_lambda_pi_core_v1.metta
+.PHONY: test-prime-regular-kernel-conversion-flip
+test-prime-regular-kernel-conversion-flip: $(BIN) $(PRIME_REGULAR_KERNEL_LEGACY_REFERENCE_BIN)
+	@set -e; \
+	native_out=runtime/prime-regular-kernel-conversion-native.out; \
+	reference_out=runtime/prime-regular-kernel-conversion-reference.out; \
+	$(CETTA_BIN_INVOKE) --lang prime \
+		tests/prime/conformance/closed_lambda_pi_convert.metta \
+		>"$$native_out"; \
+	$(call cetta_exec,./$(PRIME_REGULAR_KERNEL_LEGACY_REFERENCE_BIN)) --lang prime \
+		tests/prime/conformance/closed_lambda_pi_convert.metta \
+		>"$$reference_out"; \
+	cmp -s tests/prime/conformance/closed_lambda_pi_convert.expected \
+		"$$native_out"; \
+	cmp -s tests/prime/conformance/closed_lambda_pi_convert.legacy.expected \
+		"$$reference_out"; \
+	test "$$(sed -n '1p;2p;6p;7p;10p;11p' "$$native_out")" = \
+	     "$$(sed -n '1p;2p;6p;7p;10p;11p' "$$reference_out")"; \
+	test "$$(sed -n '3p;4p' "$$native_out")" = \
+	     "$$(printf '%s\n' '[True]' '[True]')"; \
+	test "$$(sed -n '3p;4p' "$$reference_out")" = \
+	     "$$(printf '%s\n' '[False]' '[False]')"; \
+	test "$$(sed -n '5p;8p;9p' "$$native_out")" = \
+	     "$$(printf '%s\n' '[(type:eq u0 (lam x x))]' '[(type:eq (idx 0) (idx 0))]' '[(type:eq (u0 u0) (u0 u0))]')"; \
+	test "$$(sed -n '5p;8p;9p' "$$reference_out")" = \
+	     "$$(printf '%s\n' '[False]' '[True]' '[True]')"; \
+	echo 'PASS: six agreements, two alpha-equivalence repairs, and three authority-boundary deltas are pinned'
+
+.PHONY: test-prime-regular-kernel-admission-mutations
+test-prime-regular-kernel-admission-mutations: $(PRIME_REGULAR_KERNEL_TEST_BIN)
+	@set -e; \
+	mutation_dir=runtime/prime-regular-kernel-admission-mutations; \
+	mkdir -p "$$mutation_dir"; \
+	for mutation in receipt generation synthesis-receipt synthesis-generation checking-receipt checking-generation; do \
+		python3 scripts/mutate_prime_regular_kernel_admission.py \
+			"$$mutation" src/prime_regular_kernel_admission.c \
+			"$$mutation_dir/prime_regular_kernel_admission_$$mutation.c"; \
+		$(CC) $(CPPFLAGS) $(CFLAGS) -c \
+			"$$mutation_dir/prime_regular_kernel_admission_$$mutation.c" \
+			-o "$$mutation_dir/prime_regular_kernel_admission_$$mutation.o"; \
+		$(CC) $(CFLAGS) -o "$$mutation_dir/test_$$mutation" \
+			$(PRIME_REGULAR_KERNEL_TEST_OBJ) \
+			"$$mutation_dir/prime_regular_kernel_admission_$$mutation.o" \
+			$(filter-out src/prime_regular_kernel_admission.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o,$(PRIME_REGULAR_KERNEL_TEST_LINK_OBJ)) \
+			$(LDFLAGS); \
+		if "$$mutation_dir/test_$$mutation" \
+			langdef/prime/generated/open_lambda_pi_core_v1.metta \
+			langdef/prime/generated/open_regular_kernel_v1.metta \
+			>"$$mutation_dir/$$mutation.out" \
+			2>"$$mutation_dir/$$mutation.err"; then \
+			echo "FAIL: $$mutation admission mutation survived"; \
+			exit 1; \
+		fi; \
+	done; \
+	grep -Fq 'copied provenance receipt cannot mint native authority' \
+		"$$mutation_dir/receipt.err"; \
+	grep -Fq 'replaced TermUniverse storage generation invalidates admission' \
+		"$$mutation_dir/generation.err"; \
+	grep -Fq 'copied receipt cannot mint synthesis authority' \
+		"$$mutation_dir/synthesis-receipt.err"; \
+	grep -Fq 'replaced TermUniverse storage generation invalidates synthesis' \
+		"$$mutation_dir/synthesis-generation.err"; \
+	grep -Fq 'copied receipt cannot mint checking authority' \
+		"$$mutation_dir/checking-receipt.err"; \
+	grep -Fq 'replaced TermUniverse storage generation invalidates checking' \
+		"$$mutation_dir/checking-generation.err"; \
+	echo 'PASS: conversion, synthesis, and checking receipt/generation mutations are killed'
+
+.PHONY: test-prime-regular-kernel-verdict-polarity-mutations
+test-prime-regular-kernel-verdict-polarity-mutations: $(PRIME_REGULAR_KERNEL_TEST_BIN)
+	@set -e; \
+	mutation_dir=runtime/prime-regular-kernel-verdict-polarity-mutations; \
+	mkdir -p "$$mutation_dir"; \
+	for mutation in formed-position-refutes universe-synthesis-refutes universe-family-refutes refl-of-type-refutes; do \
+		python3 scripts/mutate_prime_regular_kernel_verdict_polarity.py \
+			"$$mutation" src/prime_regular_kernel.c \
+			"$$mutation_dir/prime_regular_kernel_$$mutation.c"; \
+		$(CC) $(CPPFLAGS) $(CFLAGS) -c \
+			"$$mutation_dir/prime_regular_kernel_$$mutation.c" \
+			-o "$$mutation_dir/prime_regular_kernel_$$mutation.o"; \
+		$(CC) $(CFLAGS) -o "$$mutation_dir/test_$$mutation" \
+			$(PRIME_REGULAR_KERNEL_TEST_OBJ) \
+			"$$mutation_dir/prime_regular_kernel_$$mutation.o" \
+			$(filter-out $(PRIME_REGULAR_KERNEL_CORE_OBJ),$(PRIME_REGULAR_KERNEL_TEST_LINK_OBJ)) \
+			$(LDFLAGS); \
+		if "$$mutation_dir/test_$$mutation" \
+			langdef/prime/generated/open_lambda_pi_core_v1.metta \
+			langdef/prime/generated/open_regular_kernel_v1.metta \
+			>"$$mutation_dir/$$mutation.out" \
+			2>"$$mutation_dir/$$mutation.err"; then \
+			echo "FAIL: $$mutation verdict-polarity mutation survived"; \
+			exit 1; \
+		fi; \
+		case "$$mutation" in \
+			formed-position-refutes) expected='a small term used as a type declines pending the universe ruling' ;; \
+			universe-synthesis-refutes) expected='the embedded legacy marker inhabits its successor universe' ;; \
+			universe-family-refutes) expected='Sigma formation joins the universe levels of domain and body' ;; \
+			refl-of-type-refutes) expected='identity introduction applies to universe-formed types' ;; \
+		esac; \
+		if ! grep -Fq "$$expected" "$$mutation_dir/$$mutation.err"; then \
+			echo "FAIL: $$mutation died outside its intended verdict-polarity assertion"; \
+			exit 1; \
+		fi; \
+	done; \
+	echo 'PASS: the abstention boundary and three tower judgments resist REFUTED mutations'
+
+.PHONY: test-prime-producer-bound-native-checking-mutations
+test-prime-producer-bound-native-checking-mutations: $(PRIME_REGULAR_KERNEL_TEST_BIN)
+	@set -e; \
+	mutation_dir=runtime/prime-producer-bound-native-checking-mutations; \
+	mkdir -p "$$mutation_dir"; \
+	for mutation in scoped-route-disabled declared-route-disabled; do \
+		python3 scripts/mutate_prime_producer_bound_native_checking.py \
+			"$$mutation" src/prime_semantics.c \
+			"$$mutation_dir/prime_semantics_$$mutation.c"; \
+		$(CC) $(CPPFLAGS) $(CFLAGS) -c \
+			"$$mutation_dir/prime_semantics_$$mutation.c" \
+			-o "$$mutation_dir/prime_semantics_$$mutation.o"; \
+		$(CC) $(CFLAGS) -o "$$mutation_dir/test_$$mutation" \
+			$(PRIME_REGULAR_KERNEL_TEST_OBJ) \
+			"$$mutation_dir/prime_semantics_$$mutation.o" \
+			$(filter-out $(PRIME_SEMANTICS_OBJ),$(PRIME_REGULAR_KERNEL_TEST_LINK_OBJ)) \
+			$(LDFLAGS); \
+		if "$$mutation_dir/test_$$mutation" \
+			langdef/prime/generated/open_lambda_pi_core_v1.metta \
+			langdef/prime/generated/open_regular_kernel_v1.metta \
+			>"$$mutation_dir/$$mutation.out" \
+			2>"$$mutation_dir/$$mutation.err"; then \
+			echo "FAIL: $$mutation producer-bound mutation survived"; \
+			exit 1; \
+		fi; \
+		case "$$mutation" in \
+			scoped-route-disabled) expected='producer-bound scoped values use the native checking authority' ;; \
+			declared-route-disabled) expected='producer-bound declared values use the native checking authority' ;; \
+		esac; \
+		if ! grep -Fq "$$expected" "$$mutation_dir/$$mutation.err"; then \
+			echo "FAIL: $$mutation died outside its intended producer-bound assertion"; \
+			exit 1; \
+		fi; \
+	done; \
+	echo 'PASS: producer-bound scoped and declared values cannot fall back from native checking'
+
+.PHONY: test-prime-scoped-formation-route-mutation
+test-prime-scoped-formation-route-mutation: $(PRIME_REGULAR_KERNEL_TEST_BIN)
+	@set -e; \
+	mutation_dir=runtime/prime-scoped-formation-route-mutation; \
+	mkdir -p "$$mutation_dir"; \
+	python3 scripts/mutate_prime_scoped_formation_route.py \
+		src/prime_semantics.c "$$mutation_dir/prime_semantics.c"; \
+	$(CC) $(CPPFLAGS) $(CFLAGS) -c \
+		"$$mutation_dir/prime_semantics.c" \
+		-o "$$mutation_dir/prime_semantics.o"; \
+	$(CC) $(CFLAGS) -o "$$mutation_dir/test" \
+		$(PRIME_REGULAR_KERNEL_TEST_OBJ) \
+		"$$mutation_dir/prime_semantics.o" \
+		$(filter-out $(PRIME_SEMANTICS_OBJ),$(PRIME_REGULAR_KERNEL_TEST_LINK_OBJ)) \
+		$(LDFLAGS); \
+	if "$$mutation_dir/test" \
+		langdef/prime/generated/open_lambda_pi_core_v1.metta \
+		langdef/prime/generated/open_regular_kernel_v1.metta \
+		>"$$mutation_dir/out" 2>"$$mutation_dir/err"; then \
+		echo 'FAIL: disabled scoped formation route survived'; \
+		exit 1; \
+	fi; \
+	grep -Fq 'Form directly establishes a contextual regular type' \
+		"$$mutation_dir/err"; \
+	echo 'PASS: contextual formation cannot fall back from its native route'
+
+.PHONY: test-prime-declared-conversion-route-mutation
+test-prime-declared-conversion-route-mutation: $(BIN) $(PRIME_REGULAR_KERNEL_TEST_BIN)
+	@set -e; \
+	mutation_dir=runtime/prime-declared-conversion-route-mutation; \
+	mkdir -p "$$mutation_dir"; \
+	for mutation in route-disabled budget-coupled-recognizer dependent-graphs-disabled constructed-terms-disabled; do \
+		python3 scripts/mutate_prime_declared_conversion_route.py \
+			--mutation "$$mutation" src/prime_semantics.c \
+			"$$mutation_dir/prime_semantics_$$mutation.c"; \
+		$(CC) $(CPPFLAGS) $(CFLAGS) -c \
+			"$$mutation_dir/prime_semantics_$$mutation.c" \
+			-o "$$mutation_dir/prime_semantics_$$mutation.o"; \
+		case "$$mutation" in \
+			route-disabled|dependent-graphs-disabled|constructed-terms-disabled) \
+				$(CC) $(CFLAGS) -o "$$mutation_dir/test_$$mutation" \
+					$(PRIME_REGULAR_KERNEL_TEST_OBJ) \
+					"$$mutation_dir/prime_semantics_$$mutation.o" \
+					$(filter-out $(PRIME_SEMANTICS_OBJ),$(PRIME_REGULAR_KERNEL_TEST_LINK_OBJ)) \
+					$(LDFLAGS); \
+				if "$$mutation_dir/test_$$mutation" \
+					langdef/prime/generated/open_lambda_pi_core_v1.metta \
+					langdef/prime/generated/open_regular_kernel_v1.metta \
+					>"$$mutation_dir/$$mutation.out" \
+					2>"$$mutation_dir/$$mutation.err"; then \
+					echo "FAIL: $$mutation declared-conversion mutation survived"; \
+					exit 1; \
+				fi; \
+				case "$$mutation" in \
+					route-disabled) \
+						grep -Fq 'declared regular conversion uses native positive evidence' \
+							"$$mutation_dir/$$mutation.err" ;; \
+					dependent-graphs-disabled) \
+						grep -Fq 'acyclic value-indexed declarations form, synthesize, and check natively' \
+							"$$mutation_dir/$$mutation.err" ;; \
+					constructed-terms-disabled) \
+						grep -Fq 'constructed value-indexed evidence uses the declaration-aware authority before the context-free authored authority' \
+							"$$mutation_dir/$$mutation.err" ;; \
+				esac ;; \
+			budget-coupled-recognizer) \
+				$(CC) $(CFLAGS) -o "$$mutation_dir/cetta_$$mutation" \
+					"$$mutation_dir/prime_semantics_$$mutation.o" \
+					$(filter-out $(PRIME_SEMANTICS_OBJ),$(OBJ)) $(LDFLAGS); \
+				if python3 scripts/check_prime_budget_monotonicity.py \
+					"$$(pwd)/$$mutation_dir/cetta_$$mutation" \
+					>"$$mutation_dir/$$mutation.out" \
+					2>"$$mutation_dir/$$mutation.err"; then \
+					echo "FAIL: $$mutation declared-conversion mutation survived"; \
+					exit 1; \
+				fi; \
+				grep -Fq 'ConvertArithmetic: determinate Established changed to Unsettled' \
+					"$$mutation_dir/$$mutation.err" ;; \
+		esac; \
+	done; \
+	echo 'PASS: declared conversion keeps its route, acyclic dependencies, and producer-budget-independent recognition'
+
+.PHONY: test-prime-declared-formation-route-mutation
+test-prime-declared-formation-route-mutation: $(PRIME_REGULAR_KERNEL_TEST_BIN)
+	@set -e; \
+	mutation_dir=runtime/prime-declared-formation-route-mutation; \
+	mkdir -p "$$mutation_dir"; \
+	python3 scripts/mutate_prime_declared_formation_route.py \
+		src/prime_semantics.c "$$mutation_dir/prime_semantics.c"; \
+	$(CC) $(CPPFLAGS) $(CFLAGS) -c \
+		"$$mutation_dir/prime_semantics.c" \
+		-o "$$mutation_dir/prime_semantics.o"; \
+	$(CC) $(CFLAGS) -o "$$mutation_dir/test" \
+		$(PRIME_REGULAR_KERNEL_TEST_OBJ) \
+		"$$mutation_dir/prime_semantics.o" \
+		$(filter-out $(PRIME_SEMANTICS_OBJ),$(PRIME_REGULAR_KERNEL_TEST_LINK_OBJ)) \
+		$(LDFLAGS); \
+	if "$$mutation_dir/test" \
+		langdef/prime/generated/open_lambda_pi_core_v1.metta \
+		langdef/prime/generated/open_regular_kernel_v1.metta \
+		>"$$mutation_dir/out" 2>"$$mutation_dir/err"; then \
+		echo 'FAIL: disabled declared formation route survived'; \
+		exit 1; \
+	fi; \
+	grep -Fq 'acyclic value-indexed declarations form, synthesize, and check natively' \
+		"$$mutation_dir/err"; \
+	echo 'PASS: value-indexed declared formation cannot fall back from its native route'
+
+.PHONY: test-prime-typing-engine-fault-separation-mutation
+test-prime-typing-engine-fault-separation-mutation: $(PRIME_REGULAR_KERNEL_TEST_BIN)
+	@set -e; \
+	mutation_dir=runtime/prime-typing-engine-fault-separation-mutation; \
+	mkdir -p "$$mutation_dir"; \
+	python3 scripts/mutate_prime_typing_engine_fault_separation.py \
+		src/prime_semantics.c "$$mutation_dir/prime_semantics.c"; \
+	$(CC) $(CPPFLAGS) $(CFLAGS) -c \
+		"$$mutation_dir/prime_semantics.c" \
+		-o "$$mutation_dir/prime_semantics.o"; \
+	$(CC) $(CFLAGS) -o "$$mutation_dir/test" \
+		$(PRIME_REGULAR_KERNEL_TEST_OBJ) \
+		"$$mutation_dir/prime_semantics.o" \
+		$(filter-out $(PRIME_SEMANTICS_OBJ),$(PRIME_REGULAR_KERNEL_TEST_LINK_OBJ)) \
+		$(LDFLAGS); \
+	if "$$mutation_dir/test" \
+		langdef/prime/generated/open_lambda_pi_core_v1.metta \
+		langdef/prime/generated/open_regular_kernel_v1.metta \
+		>"$$mutation_dir/out" 2>"$$mutation_dir/err"; then \
+		echo 'FAIL: engine fault entered the semantic status readout'; \
+		exit 1; \
+	fi; \
+	grep -Fq 'engine failure remains outside the semantic status readout' \
+		"$$mutation_dir/err"; \
+	echo 'PASS: engine faults remain outside semantic authority outcomes'
+
+.PHONY: test-prime-regular-kernel-constructors
+test-prime-regular-kernel-constructors: $(BIN) $(PRIME_REGULAR_KERNEL_LEGACY_REFERENCE_BIN)
+	@set -e; \
+	native_out=runtime/prime-regular-kernel-constructors-native.out; \
+	reference_out=runtime/prime-regular-kernel-constructors-reference.out; \
+	$(CETTA_BIN_INVOKE) --lang prime \
+		tests/prime/conformance/regular_kernel_constructors.metta \
+		>"$$native_out"; \
+	$(call cetta_exec,./$(PRIME_REGULAR_KERNEL_LEGACY_REFERENCE_BIN)) --lang prime \
+		tests/prime/conformance/regular_kernel_constructors.metta \
+		>"$$reference_out"; \
+	cmp -s tests/prime/conformance/regular_kernel_constructors.expected \
+		"$$native_out"; \
+	cmp -s tests/prime/conformance/regular_kernel_constructors.legacy.expected \
+		"$$reference_out"; \
+	echo 'PASS: closed regular constructors flip natively and scoped direct judgments agree'
+
+.PHONY: test-prime-regular-kernel-resource-honesty
+test-prime-regular-kernel-resource-honesty:
+ifeq ($(ENABLE_RUNTIME_STATS),1)
+	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 \
+		$(PRIME_REGULAR_KERNEL_ENGINE_FAILURE_TEST_OBJ) \
+		$(filter-out $(PRIME_REGULAR_KERNEL_CORE_OBJ),$(PRIME_REGULAR_KERNEL_TEST_LINK_OBJ))
+	@set -e; \
+	mutation_dir=runtime/prime-regular-kernel-engine-failure-mutation; \
+	mkdir -p "$$mutation_dir"; \
+	python3 scripts/mutate_prime_regular_kernel_engine_failure.py \
+		src/prime_regular_kernel.c "$$mutation_dir/prime_regular_kernel.c"; \
+	$(CC) $(CPPFLAGS) $(CFLAGS) -c \
+		"$$mutation_dir/prime_regular_kernel.c" \
+		-o "$$mutation_dir/prime_regular_kernel.o"; \
+	$(CC) $(CFLAGS) -o "$$mutation_dir/test" \
+		$(PRIME_REGULAR_KERNEL_ENGINE_FAILURE_TEST_OBJ) \
+		"$$mutation_dir/prime_regular_kernel.o" \
+		$(filter-out $(PRIME_REGULAR_KERNEL_CORE_OBJ),$(PRIME_REGULAR_KERNEL_TEST_LINK_OBJ)) \
+		$(LDFLAGS); \
+	"$$mutation_dir/test"; \
+	echo 'PASS: native engine failure stays Undetermined and never reaches HE or certificates'
+else
+	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 $@
+endif
+
+.PHONY: test-prime-regular-kernel-recognizer-mutation
+test-prime-regular-kernel-recognizer-mutation: $(PRIME_REGULAR_KERNEL_TEST_BIN)
+	@set -e; \
+	mutation_dir=runtime/prime-regular-kernel-recognizer-mutation; \
+	mkdir -p "$$mutation_dir"; \
+	python3 scripts/mutate_prime_regular_kernel_recognizer.py \
+		src/prime_regular_kernel.c "$$mutation_dir/prime_regular_kernel.c"; \
+	$(CC) $(CPPFLAGS) $(CFLAGS) -c \
+		"$$mutation_dir/prime_regular_kernel.c" \
+		-o "$$mutation_dir/prime_regular_kernel.o"; \
+	$(CC) $(CFLAGS) -o "$$mutation_dir/test" \
+		$(PRIME_REGULAR_KERNEL_TEST_OBJ) \
+		"$$mutation_dir/prime_regular_kernel.o" \
+		$(filter-out $(PRIME_REGULAR_KERNEL_CORE_OBJ),$(PRIME_REGULAR_KERNEL_TEST_LINK_OBJ)) \
+		$(LDFLAGS); \
+	if "$$mutation_dir/test" \
+		langdef/prime/generated/open_lambda_pi_core_v1.metta \
+		langdef/prime/generated/open_regular_kernel_v1.metta \
+		>"$$mutation_dir/out" 2>"$$mutation_dir/err"; then \
+		echo 'FAIL: regular-kernel recognizer mutation survived'; \
+		exit 1; \
+	fi; \
+	grep -Fq 'scoped recognizer rejects an unknown nested constructor' \
+		"$$mutation_dir/err"; \
+	echo 'PASS: scoped authority recognizer mutation is killed'
+
+.PHONY: test-prime-regular-kernel-production-authority
+test-prime-regular-kernel-production-authority:
+ifeq ($(ENABLE_RUNTIME_STATS),1)
+	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 $(BIN)
+	@set -e; \
+	if rg -n 'getenv\(|cetta_prime_regular_kernel_.*_enabled\(' \
+		src/prime_regular_kernel_admission.c \
+		src/prime_regular_kernel_admission.h \
+		src/prime_semantics.c; then \
+		echo 'FAIL: production Prime admission still has a runtime bypass'; \
+		exit 1; \
+	fi; \
+	conversion_out=runtime/prime-regular-kernel-production-conversion.out; \
+	conversion_err=runtime/prime-regular-kernel-production-conversion.err; \
+	synthesis_out=runtime/prime-regular-kernel-production-synthesis.out; \
+	synthesis_err=runtime/prime-regular-kernel-production-synthesis.err; \
+	$(CETTA_BIN_INVOKE) --emit-runtime-stats --lang prime \
+		tests/prime/conformance/closed_lambda_pi_convert.metta \
+		>"$$conversion_out" 2>"$$conversion_err"; \
+	$(CETTA_BIN_INVOKE) --emit-runtime-stats --lang prime \
+		tests/prime/conformance/closed_lambda_pi_synth.metta \
+		>"$$synthesis_out" 2>"$$synthesis_err"; \
+	cmp -s tests/prime/conformance/closed_lambda_pi_convert.expected \
+		"$$conversion_out"; \
+	cmp -s tests/prime/conformance/closed_lambda_pi_synth.expected \
+		"$$synthesis_out"; \
+	grep -Fqx 'runtime-counter prime-regular-kernel-conversion-admission-attempt 8' "$$conversion_err"; \
+	grep -Fqx 'runtime-counter prime-regular-kernel-conversion-admission-check 8' "$$conversion_err"; \
+	grep -Fqx 'runtime-counter prime-regular-kernel-conversion-admission-accepted 6' "$$conversion_err"; \
+	grep -Fqx 'runtime-counter prime-regular-kernel-conversion-admission-declined 2' "$$conversion_err"; \
+	grep -Fqx 'runtime-counter prime-regular-kernel-conversion-execution 6' "$$conversion_err"; \
+	grep -Fqx 'runtime-counter prime-regular-kernel-conversion-interior-check 0' "$$conversion_err"; \
+	grep -Fqx 'runtime-counter prime-legacy-he-conversion 2' "$$conversion_err"; \
+	grep -Fqx 'runtime-counter prime-conversion-certificate-construction 2' "$$conversion_err"; \
+	grep -Fqx 'runtime-counter prime-regular-kernel-conversion-cache-miss 8' "$$conversion_err"; \
+	grep -Fqx 'runtime-counter prime-regular-kernel-synthesis-admission-attempt 6' "$$synthesis_err"; \
+	grep -Fqx 'runtime-counter prime-regular-kernel-synthesis-admission-check 6' "$$synthesis_err"; \
+	grep -Fqx 'runtime-counter prime-regular-kernel-synthesis-admission-accepted 4' "$$synthesis_err"; \
+	grep -Fqx 'runtime-counter prime-regular-kernel-synthesis-admission-declined 2' "$$synthesis_err"; \
+	grep -Fqx 'runtime-counter prime-regular-kernel-synthesis-execution 4' "$$synthesis_err"; \
+	grep -Fqx 'runtime-counter prime-regular-kernel-synthesis-interior-check 0' "$$synthesis_err"; \
+	grep -Fqx 'runtime-counter prime-regular-kernel-synthesis-cache-miss 6' "$$synthesis_err"; \
+	echo 'PASS: production native authority has no runtime bypass and exact counters are pinned'
+else
+	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 $@
+endif
+
+.PHONY: test-prime-regular-kernel-synthesis-flip
+test-prime-regular-kernel-synthesis-flip: $(BIN) $(PRIME_REGULAR_KERNEL_LEGACY_REFERENCE_BIN)
+	@set -e; \
+	native_out=runtime/prime-regular-kernel-synthesis-native.out; \
+	reference_out=runtime/prime-regular-kernel-synthesis-reference.out; \
+	$(CETTA_BIN_INVOKE) --lang prime \
+		tests/prime/conformance/closed_lambda_pi_synth.metta \
+		>"$$native_out"; \
+	$(call cetta_exec,./$(PRIME_REGULAR_KERNEL_LEGACY_REFERENCE_BIN)) --lang prime \
+		tests/prime/conformance/closed_lambda_pi_synth.metta \
+		>"$$reference_out"; \
+	cmp -s tests/prime/conformance/closed_lambda_pi_synth.expected \
+		"$$native_out"; \
+	cmp -s tests/prime/conformance/closed_lambda_pi_synth.legacy.expected \
+		"$$reference_out"; \
+	test "$$(sed -n '7p;8p;9p' "$$native_out")" = \
+	     "$$(sed -n '7p;8p;9p' "$$reference_out")"; \
+	echo 'PASS: native closed synthesis owns six judgments and preserves three legacy boundaries'
+
+.PHONY: test-prime-regular-kernel-checking-flip
+test-prime-regular-kernel-checking-flip: $(BIN) $(PRIME_REGULAR_KERNEL_LEGACY_REFERENCE_BIN)
+	@set -e; \
+	native_out=runtime/prime-regular-kernel-checking-native.out; \
+	reference_out=runtime/prime-regular-kernel-checking-reference.out; \
+	$(CETTA_BIN_INVOKE) --lang prime \
+		tests/prime/conformance/closed_lambda_pi_check.metta \
+		>"$$native_out"; \
+	$(call cetta_exec,./$(PRIME_REGULAR_KERNEL_LEGACY_REFERENCE_BIN)) --lang prime \
+		tests/prime/conformance/closed_lambda_pi_check.metta \
+		>"$$reference_out"; \
+	cmp -s tests/prime/conformance/closed_lambda_pi_check.expected \
+		"$$native_out"; \
+	cmp -s tests/prime/conformance/closed_lambda_pi_check.legacy.expected \
+		"$$reference_out"; \
+	test "$$(sed -n '7p;8p' "$$native_out")" = \
+	     "$$(sed -n '7p;8p' "$$reference_out")"; \
+	echo 'PASS: native Check/Analyze/May/Must own eight judgments and preserve two legacy boundaries'
+
+.PHONY: test-prime-regular-kernel-checking-stats
+test-prime-regular-kernel-checking-stats:
+ifeq ($(ENABLE_RUNTIME_STATS),1)
+	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 $(BIN)
+	@set -e; \
+	stats_out=runtime/prime-regular-kernel-checking-stats.out; \
+	stats_err=runtime/prime-regular-kernel-checking-stats.err; \
+	$(CETTA_BIN_INVOKE) --emit-runtime-stats --lang prime \
+		tests/prime/conformance/closed_lambda_pi_check.metta \
+		>"$$stats_out" 2>"$$stats_err"; \
+	cmp -s tests/prime/conformance/closed_lambda_pi_check.expected \
+		"$$stats_out"; \
+	grep -Fqx 'runtime-counter prime-regular-kernel-checking-admission-attempt 8' "$$stats_err"; \
+	grep -Fqx 'runtime-counter prime-regular-kernel-checking-admission-check 4' "$$stats_err"; \
+	grep -Fqx 'runtime-counter prime-regular-kernel-checking-admission-accepted 8' "$$stats_err"; \
+	grep -Fqx 'runtime-counter prime-regular-kernel-checking-admission-declined 0' "$$stats_err"; \
+	grep -Fqx 'runtime-counter prime-regular-kernel-checking-execution 8' "$$stats_err"; \
+	grep -Fqx 'runtime-counter prime-regular-kernel-checking-interior-check 0' "$$stats_err"; \
+	grep -Fqx 'runtime-counter prime-regular-kernel-checking-cache-hit 4' "$$stats_err"; \
+	grep -Fqx 'runtime-counter prime-regular-kernel-checking-cache-miss 4' "$$stats_err"; \
+	grep -Fqx 'runtime-counter prime-legacy-he-checking 1' "$$stats_err"; \
+	echo 'PASS: Check/Analyze/May/Must share one native cache and retain one HE control'
+else
+	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 $@
+endif
+
+.PHONY: test-prime-regular-kernel-formation-flip
+test-prime-regular-kernel-formation-flip: $(BIN) $(PRIME_REGULAR_KERNEL_LEGACY_REFERENCE_BIN)
+	@set -e; \
+	native_out=runtime/prime-regular-kernel-formation-native.out; \
+	reference_out=runtime/prime-regular-kernel-formation-reference.out; \
+	$(CETTA_BIN_INVOKE) --lang prime \
+		tests/prime/conformance/closed_lambda_pi_form.metta \
+		>"$$native_out"; \
+	$(call cetta_exec,./$(PRIME_REGULAR_KERNEL_LEGACY_REFERENCE_BIN)) --lang prime \
+		tests/prime/conformance/closed_lambda_pi_form.metta \
+		>"$$reference_out"; \
+	cmp -s tests/prime/conformance/closed_lambda_pi_form.expected \
+		"$$native_out"; \
+	cmp -s tests/prime/conformance/closed_lambda_pi_form.legacy.expected \
+		"$$reference_out"; \
+	test "$$(sed -n '7p;8p;9p' "$$native_out")" = \
+	     "$$(sed -n '7p;8p;9p' "$$reference_out")"; \
+	echo 'PASS: native Form owns six judgments and preserves three legacy boundaries'
+
+.PHONY: test-prime-regular-kernel-formation-stats
+test-prime-regular-kernel-formation-stats:
+ifeq ($(ENABLE_RUNTIME_STATS),1)
+	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 $(BIN)
+	@set -e; \
+	stats_out=runtime/prime-regular-kernel-formation-stats.out; \
+	stats_err=runtime/prime-regular-kernel-formation-stats.err; \
+	$(CETTA_BIN_INVOKE) --emit-runtime-stats --lang prime \
+		tests/prime/conformance/closed_lambda_pi_form.metta \
+		>"$$stats_out" 2>"$$stats_err"; \
+	cmp -s tests/prime/conformance/closed_lambda_pi_form.expected \
+		"$$stats_out"; \
+	grep -Fqx 'runtime-counter prime-regular-kernel-synthesis-admission-attempt 5' "$$stats_err"; \
+	grep -Fqx 'runtime-counter prime-regular-kernel-synthesis-admission-check 4' "$$stats_err"; \
+	grep -Fqx 'runtime-counter prime-regular-kernel-synthesis-admission-accepted 4' "$$stats_err"; \
+	grep -Fqx 'runtime-counter prime-regular-kernel-synthesis-admission-declined 1' "$$stats_err"; \
+	grep -Fqx 'runtime-counter prime-regular-kernel-synthesis-execution 4' "$$stats_err"; \
+	grep -Fqx 'runtime-counter prime-regular-kernel-formation-execution 6' "$$stats_err"; \
+	grep -Fqx 'runtime-counter prime-legacy-formation 3' "$$stats_err"; \
+	echo 'PASS: Form consumes tower-aware synthesis and retains three legacy controls'
+else
+	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 $@
+endif
+
+.PHONY: test-prime-regular-kernel-refinement-boundary
+test-prime-regular-kernel-refinement-boundary:
+ifeq ($(ENABLE_RUNTIME_STATS),1)
+	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 \
+		$(BIN) $(PRIME_REGULAR_KERNEL_LEGACY_REFERENCE_BIN)
+	@set -e; \
+	native_out=runtime/prime-regular-kernel-refinement-native.out; \
+	native_err=runtime/prime-regular-kernel-refinement-native.err; \
+	reference_out=runtime/prime-regular-kernel-refinement-reference.out; \
+	reference_err=runtime/prime-regular-kernel-refinement-reference.err; \
+	$(CETTA_BIN_INVOKE) --emit-runtime-stats --lang prime \
+		tests/prime/conformance/closed_lambda_pi_refine_boundary.metta \
+		>"$$native_out" 2>"$$native_err"; \
+	$(call cetta_exec,./$(PRIME_REGULAR_KERNEL_LEGACY_REFERENCE_BIN)) \
+		--emit-runtime-stats --lang prime \
+		tests/prime/conformance/closed_lambda_pi_refine_boundary.metta \
+		>"$$reference_out" 2>"$$reference_err"; \
+	cmp -s tests/prime/conformance/closed_lambda_pi_refine_boundary.expected \
+		"$$native_out"; \
+	cmp -s tests/prime/conformance/closed_lambda_pi_refine_boundary.legacy.expected \
+		"$$reference_out"; \
+	grep -Fqx 'runtime-counter prime-regular-kernel-formation-execution 4' "$$native_err"; \
+	grep -Fqx 'runtime-counter prime-legacy-formation 0' "$$native_err"; \
+	grep -Fqx 'runtime-counter prime-legacy-he-refinement 4' "$$native_err"; \
+	grep -Fqx 'runtime-counter prime-regular-kernel-formation-execution 0' "$$reference_err"; \
+	grep -Fqx 'runtime-counter prime-legacy-formation 4' "$$reference_err"; \
+	grep -Fqx 'runtime-counter prime-legacy-he-refinement 0' "$$reference_err"; \
+	echo 'PASS: Refine uses native formation and retains space-indexed HE predicate authority'
+else
+	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 $@
+endif
+
+.PHONY: bench-prime-regular-kernel-conversion
+bench-prime-regular-kernel-conversion: $(PRIME_REGULAR_KERNEL_CONVERSION_BENCH_BIN) $(PRIME_REGULAR_KERNEL_CONVERSION_REFERENCE_BENCH_BIN)
+	@for workload in beta eta distinct control; do \
+		native_status=Established; \
+		if [ "$$workload" = distinct ]; then native_status=Refuted; fi; \
+		"$(PRIME_REGULAR_KERNEL_CONVERSION_BENCH_BIN)" "$$workload" \
+			"$${PRIME_REGULAR_KERNEL_CONVERSION_BENCH_ITERATIONS:-20000}" \
+			"$$native_status" native; \
+		reference_status=Established; \
+		if [ "$$workload" = distinct ]; then reference_status=Refuted; fi; \
+		if [ "$$workload" = beta ] || [ "$$workload" = eta ]; then \
+			reference_status=Refuted; \
+		fi; \
+		"$(PRIME_REGULAR_KERNEL_CONVERSION_REFERENCE_BENCH_BIN)" "$$workload" \
+			"$${PRIME_REGULAR_KERNEL_CONVERSION_BENCH_ITERATIONS:-20000}" \
+			"$$reference_status" reference; \
+	done
+
+.PHONY: bench-prime-regular-kernel-synthesis
+bench-prime-regular-kernel-synthesis: $(PRIME_REGULAR_KERNEL_SYNTHESIS_BENCH_BIN) $(PRIME_REGULAR_KERNEL_SYNTHESIS_REFERENCE_BENCH_BIN)
+	@iterations=$${PRIME_REGULAR_KERNEL_SYNTHESIS_BENCH_ITERATIONS:-20000}; \
+	"$(PRIME_REGULAR_KERNEL_SYNTHESIS_BENCH_BIN)" identity "$$iterations" Established native; \
+	"$(PRIME_REGULAR_KERNEL_SYNTHESIS_BENCH_BIN)" scoped-identity "$$iterations" Established checker; \
+	"$(PRIME_REGULAR_KERNEL_SYNTHESIS_BENCH_BIN)" refuted "$$iterations" Refuted native; \
+	"$(PRIME_REGULAR_KERNEL_SYNTHESIS_BENCH_BIN)" scoped-refuted "$$iterations" Refuted checker; \
+	"$(PRIME_REGULAR_KERNEL_SYNTHESIS_BENCH_BIN)" control "$$iterations" Established native; \
+	"$(PRIME_REGULAR_KERNEL_SYNTHESIS_REFERENCE_BENCH_BIN)" control "$$iterations" Established reference
+
+.PHONY: bench-prime-regular-kernel-checking
+bench-prime-regular-kernel-checking: $(PRIME_REGULAR_KERNEL_CHECKING_BENCH_BIN) $(PRIME_REGULAR_KERNEL_CHECKING_REFERENCE_BENCH_BIN)
+	@iterations=$${PRIME_REGULAR_KERNEL_CHECKING_BENCH_ITERATIONS:-20000}; \
+	"$(PRIME_REGULAR_KERNEL_CHECKING_BENCH_BIN)" identity "$$iterations" Established native; \
+	"$(PRIME_REGULAR_KERNEL_CHECKING_BENCH_BIN)" scoped-identity "$$iterations" Established checker; \
+	"$(PRIME_REGULAR_KERNEL_CHECKING_BENCH_BIN)" mismatch "$$iterations" Refuted native; \
+	"$(PRIME_REGULAR_KERNEL_CHECKING_BENCH_BIN)" scoped-mismatch "$$iterations" Refuted checker; \
+	"$(PRIME_REGULAR_KERNEL_CHECKING_BENCH_BIN)" control "$$iterations" Established native; \
+	"$(PRIME_REGULAR_KERNEL_CHECKING_REFERENCE_BENCH_BIN)" control "$$iterations" Established reference
+
+.PHONY: bench-prime-regular-kernel-formation
+bench-prime-regular-kernel-formation: $(PRIME_REGULAR_KERNEL_FORMATION_BENCH_BIN) $(PRIME_REGULAR_KERNEL_FORMATION_REFERENCE_BENCH_BIN)
+	@iterations=$${PRIME_REGULAR_KERNEL_FORMATION_BENCH_ITERATIONS:-20000}; \
+	"$(PRIME_REGULAR_KERNEL_FORMATION_BENCH_BIN)" formed "$$iterations" Established native; \
+	"$(PRIME_REGULAR_KERNEL_FORMATION_BENCH_BIN)" scoped-formed "$$iterations" Established checker; \
+	"$(PRIME_REGULAR_KERNEL_FORMATION_BENCH_BIN)" top "$$iterations" Refuted native; \
+	"$(PRIME_REGULAR_KERNEL_FORMATION_BENCH_BIN)" scoped-top "$$iterations" Refuted checker; \
+	"$(PRIME_REGULAR_KERNEL_FORMATION_BENCH_BIN)" control "$$iterations" Established native; \
+	"$(PRIME_REGULAR_KERNEL_FORMATION_REFERENCE_BENCH_BIN)" control "$$iterations" Established reference
+
+.PHONY: test-prime-regular-pattern
+test-prime-regular-pattern: $(PRIME_REGULAR_PATTERN_TEST_BIN)
+	@"$(PRIME_REGULAR_PATTERN_TEST_BIN)"
+
+.PHONY: test-prime-regular-pattern-mutations
+test-prime-regular-pattern-mutations: $(PRIME_REGULAR_PATTERN_TEST_BIN)
+	@set -e; \
+	mutation_dir=runtime/prime-regular-pattern-mutations; \
+	mkdir -p "$$mutation_dir"; \
+	for mutation in dangling-bound-variable context-index-shift binder-freshness expected-formation-phase malformed-list-as-budget syntax-lexical-resolution syntax-matcher-binder syntax-multibinder-nesting syntax-telescope-arity syntax-expected-phase syntax-index-scope; do \
+		python3 scripts/mutate_prime_regular_pattern.py \
+			src/prime_regular_pattern.c "$$mutation_dir/$$mutation.c" "$$mutation"; \
+		$(CC) $(CPPFLAGS) $(CFLAGS) -c "$$mutation_dir/$$mutation.c" \
+			-o "$$mutation_dir/$$mutation.o"; \
+		$(CC) $(CFLAGS) -o "$$mutation_dir/$$mutation-test" \
+			$(PRIME_REGULAR_PATTERN_TEST_OBJ) "$$mutation_dir/$$mutation.o" \
+			$(filter-out $(PRIME_REGULAR_PATTERN_CORE_OBJ),$(PRIME_REGULAR_PATTERN_TEST_LINK_OBJ)) \
+			$(LDFLAGS); \
+		if "$$mutation_dir/$$mutation-test" >/dev/null 2>&1; then \
+			echo "FAIL: Prime regular Pattern mutation survived: $$mutation"; \
+			exit 1; \
+		fi; \
+	done; \
+	echo 'PASS: strict Pattern and authored regular-syntax mutations are killed'
+
+# Several Prime checks execute the same runtime-statistics binary.  When the
+# parent make runs them in parallel, independent recursive makes cannot share
+# GNU Make's target graph and may compile or link that binary concurrently.
+# Build it once in the parent graph before any of those checks recurse.
+.PHONY: prime-runtime-stats-binary test-prime-runtime-stats-ready
+prime-runtime-stats-binary: $(BIN)
+
+test-prime-runtime-stats-ready:
+ifeq ($(ENABLE_RUNTIME_STATS),1)
+	@:
+else
+	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 prime-runtime-stats-binary
+endif
+
+ifneq ($(ENABLE_RUNTIME_STATS),1)
+test-prime-nik-typed-applicability-pruning \
+test-prime-regular-kernel-checking-stats \
+test-prime-regular-kernel-formation-stats \
+test-prime-regular-kernel-refinement-boundary \
+test-prime-regular-kernel-production-authority \
+test-prime-regular-kernel-resource-honesty \
+test-prime-mil-benchmark-accounting \
+test-prime-mil-native-workloads \
+test-prime-mil-native-claim-guard: test-prime-runtime-stats-ready
+endif
+
+.PHONY: test-prime-mil-benchmark-accounting
+ifeq ($(ENABLE_RUNTIME_STATS),1)
+test-prime-mil-benchmark-accounting: prime-runtime-stats-binary
+	@python3 scripts/bench_prime_mil.py \
+		--cetta "$(abspath $(BIN))" \
+		--runs 1 --quiet
+else
+test-prime-mil-benchmark-accounting:
+	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 $@
+endif
+
+.PHONY: test-prime-mil-native-workloads
+ifeq ($(ENABLE_RUNTIME_STATS),1)
+test-prime-mil-native-workloads: prime-runtime-stats-binary
+	@python3 scripts/bench_prime_mil.py \
+		--cetta "$(abspath $(BIN))" \
+		--runs 1 \
+		--workload native-grandparent \
+		--workload native-list-map-rel \
+		--workload native-path-canary \
+		--workload hopper-encryption-native \
+		--require-prime-native \
+		--require-zero-legacy-he-applicability \
+		--quiet
+else
+test-prime-mil-native-workloads:
+	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 $@
+endif
+
+.PHONY: test-prime-mil-native-claim-guard
+ifeq ($(ENABLE_RUNTIME_STATS),1)
+test-prime-mil-native-claim-guard: prime-runtime-stats-binary
+	@set -e; \
+	err=runtime/prime-mil-native-claim-guard.err; \
+	if python3 scripts/bench_prime_mil.py \
+		--cetta "$(abspath $(BIN))" \
+		--runs 1 --require-prime-native --quiet \
+		>/dev/null 2>"$$err"; then \
+		echo 'FAIL: mixed MIL calibration was mislabeled Prime-native'; \
+		exit 1; \
+	fi; \
+	grep -Fq 'observed mixed-prime-and-he' "$$err"; \
+	echo 'PASS: mixed MIL calibration cannot be reported as Prime-native'
+else
+test-prime-mil-native-claim-guard:
+	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 $@
+endif
+
+.PHONY: test-prime-mil-zero-he-applicability-guard
+ifeq ($(ENABLE_RUNTIME_STATS),1)
+test-prime-mil-zero-he-applicability-guard: test-prime-nik-typed-applicability-pruning
+	@python3 tests/test_bench_prime_mil_routes.py
+	@echo 'PASS: Prime benchmark guard rejects an injected HE applicability route'
+else
+test-prime-mil-zero-he-applicability-guard:
+	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 $@
+endif
+
+.PHONY: test-prime-popper-synthesis-manifest
+test-prime-popper-synthesis-manifest:
+	@python3 tests/test_prime_popper_synthesis_manifest.py
+	@python3 scripts/check_prime_popper_synthesis_manifest.py
+
+.PHONY: test-prime-hopper-table1-manifest
+test-prime-hopper-table1-manifest:
+	@python3 tests/test_prime_hopper_table1_manifest.py
+	@python3 scripts/check_prime_hopper_table1_manifest.py
+
+.PHONY: test-prime-chaining-readiness-manifest
+test-prime-chaining-readiness-manifest:
+	@python3 tests/test_prime_chaining_readiness_manifest.py
+	@python3 scripts/check_prime_chaining_readiness_manifest.py
+
+.PHONY: test-prime-iggp-manifest
+test-prime-iggp-manifest:
+	@python3 tests/test_prime_iggp_manifest.py
+	@python3 scripts/check_prime_iggp_manifest.py
+	@python3 scripts/check_prime_iggp_episode_evidence.py
+	@python3 scripts/check_prime_iggp_target_fibre_evidence.py
+
+.PHONY: test-prime-iggp-type-of-inference
+test-prime-iggp-type-of-inference: $(PRIME_IGGP_TYPE_OF_INFERENCE_TEST_BIN) $(PRIME_IGGP_TYPE_OF_INFERENCE_PROGRAM) $(PRIME_IGGP_TYPE_SOURCE_PROGRAM) $(PRIME_IGGP_TYPE_OF_INFERENCE_PILGRIMAGE_PROGRAM) $(PRIME_IGGP_TYPE_SOURCE_PILGRIMAGE_PROGRAM) $(PRIME_IGGP_TYPE_OF_INFERENCE_FROGS_PROGRAM) $(PRIME_IGGP_TYPE_SOURCE_FROGS_PROGRAM)
+	@"$(PRIME_IGGP_TYPE_OF_INFERENCE_TEST_BIN)" \
+		"$(PRIME_IGGP_TYPE_OF_INFERENCE_PROGRAM)" \
+		"$(PRIME_IGGP_TYPE_SOURCE_PROGRAM)" \
+		scissors_paper_stone \
+		fe401ac80704e5b138a48b80d6d2bd171427456245e72e555614efb96351710a \
+		eabc85a114e3021c95e54bc6dd3e57a58921c8f37a06b232c1580cdee92cb9ba \
+		gdl-type-of-2dc9555a9681c8c5772819288997508ab597ac77914911a3001da4d587f2f830 \
+		gdl-type-source-8465e0722c43a96449b2cd76bff4ee7206a0f923fa8dde36003223a9f364a2fa \
+		483 185 185
+	@"$(PRIME_IGGP_TYPE_OF_INFERENCE_TEST_BIN)" \
+		"$(PRIME_IGGP_TYPE_OF_INFERENCE_PILGRIMAGE_PROGRAM)" \
+		"$(PRIME_IGGP_TYPE_SOURCE_PILGRIMAGE_PROGRAM)" \
+		pilgrimage \
+		d5c91a5861b7f70327d58cdaaffd21d4a430496e61bb6e8338a8c7a2335e13d5 \
+		83380983388994a125f154802775deb2940022b5a2e64a746678349c1018a48b \
+		gdl-type-of-e6bfaeac9dd97972e5584351bc4ad4dc9de63eaf929bc53071b7e855c632687f \
+		gdl-type-source-008eab776e212d2c6cbedffa357d84dbdd346d0d6d79fd2066345ab862716aa5 \
+		3524 1377 1476
+	@"$(PRIME_IGGP_TYPE_OF_INFERENCE_TEST_BIN)" \
+		"$(PRIME_IGGP_TYPE_OF_INFERENCE_FROGS_PROGRAM)" \
+		"$(PRIME_IGGP_TYPE_SOURCE_FROGS_PROGRAM)" \
+		frogs_and_toads \
+		59d422135d7fe2232bb41b67baa0a1b53ddeedb88d147c5f68aad14e50661fb7 \
+		1145103176d4452fa17981a099dc0a9f6482958bb2be27b07c754cdb269bc508 \
+		gdl-type-of-a4c9048e42affa50eea7ad35f98f862e3a62871a87c43e6f619aa6e996d6213b \
+		gdl-type-source-b440d6a9d3f8d7f93046a6f851c57591fe078aed14c094f1b9b9ee0c933f2f05 \
+		7284 2899 2899
+
+.PHONY: qualify-prime-iggp-type-of-inference-source
+qualify-prime-iggp-type-of-inference-source: $(PRIME_IGGP_TYPE_OF_INFERENCE_TEST_BIN)
+	@test -n "$(IGGP_ROOT)" || { \
+		echo 'FAIL: set IGGP_ROOT to the pinned IGGP checkout'; \
+		exit 1; \
+	}
+	@mkdir -p $(dir $(PRIME_IGGP_TYPE_OF_INFERENCE_CORPUS_WORK))
+	@python3 $(PRIME_IGGP_TYPE_OF_INFERENCE_CORPUS_QUALIFIER) \
+		--snapshot-root "$(IGGP_ROOT)" \
+		--runner "$(PRIME_IGGP_TYPE_OF_INFERENCE_TEST_BIN)" \
+		--output "$(PRIME_IGGP_TYPE_OF_INFERENCE_CORPUS_WORK)" \
+		--source-output "$(PRIME_IGGP_TYPE_SOURCE_CORPUS_WORK)"
+
+.PHONY: test-prime-gdl-positive-horn-native
+test-prime-gdl-positive-horn-native: $(PRIME_GDL_POSITIVE_HORN_NATIVE_TEST_BIN) $(PRIME_GDL_STRATIFIED_MODEL_QUALIFIER_BIN) $(PRIME_GDL_STRATIFIED_EPISODE_QUALIFIER_BIN) $(PRIME_IGGP_TYPE_SOURCE_PROGRAM) $(PRIME_IGGP_TYPE_SOURCE_PILGRIMAGE_PROGRAM) tests/prime/gdl_finite_view_type_source.metta tests/prime/gdl_stratified_model_type_source.metta tests/prime/gdl_negative_cycle_type_source.metta tests/prime/gdl_overloaded_substitution_type_source.metta tests/prime/gdl_support_reallocation_type_source.metta tests/prime/gdl_false_source_distinct_type_source.metta tests/prime/gdl_rule_variable_greatest_type_source.metta tests/prime/gdl_rule_variable_incomparable_type_source.metta tests/prime/gdl_target_fibre_type_source.metta
+	@"$(PRIME_GDL_POSITIVE_HORN_NATIVE_TEST_BIN)" \
+		"$(PRIME_IGGP_TYPE_SOURCE_PROGRAM)" \
+		"$(PRIME_IGGP_TYPE_SOURCE_PILGRIMAGE_PROGRAM)" \
+		tests/prime/gdl_finite_view_type_source.metta \
+		tests/prime/gdl_stratified_model_type_source.metta \
+		tests/prime/gdl_negative_cycle_type_source.metta \
+		tests/prime/gdl_overloaded_substitution_type_source.metta \
+		tests/prime/gdl_support_reallocation_type_source.metta \
+		tests/prime/gdl_false_source_distinct_type_source.metta \
+		tests/prime/gdl_rule_variable_greatest_type_source.metta \
+		tests/prime/gdl_rule_variable_incomparable_type_source.metta \
+		tests/prime/gdl_target_fibre_type_source.metta
+
+.PHONY: qualify-prime-iggp-positive-horn
+qualify-prime-iggp-positive-horn: $(BIN)
+	@test -n "$(IGGP_ROOT)" || { \
+		echo 'FAIL: set IGGP_ROOT to the pinned IGGP checkout'; \
+		exit 1; \
+	}
+	@python3 $(PRIME_IGGP_POSITIVE_HORN_CORPUS_QUALIFIER) \
+		--snapshot-root "$(IGGP_ROOT)" \
+		--runner "$(abspath $(BIN))"
+
+.PHONY: qualify-prime-iggp-positive-horn-native
+qualify-prime-iggp-positive-horn-native: $(PRIME_GDL_POSITIVE_HORN_NATIVE_QUALIFIER_BIN)
+	@test -n "$(IGGP_ROOT)" || { \
+		echo 'FAIL: set IGGP_ROOT to the pinned IGGP checkout'; \
+		exit 1; \
+	}
+	@python3 $(PRIME_IGGP_POSITIVE_HORN_CORPUS_QUALIFIER) \
+		--snapshot-root "$(IGGP_ROOT)" \
+		--native-runner "$(abspath $(PRIME_GDL_POSITIVE_HORN_NATIVE_QUALIFIER_BIN))"
+
+.PHONY: qualify-prime-iggp-stratification-native
+qualify-prime-iggp-stratification-native: $(PRIME_GDL_STRATIFICATION_QUALIFIER_BIN)
+	@test -n "$(IGGP_ROOT)" || { \
+		echo 'FAIL: set IGGP_ROOT to the pinned IGGP checkout'; \
+		exit 1; \
+	}
+	@python3 $(PRIME_IGGP_STRATIFICATION_CORPUS_QUALIFIER) \
+		--snapshot-root "$(IGGP_ROOT)" \
+		--runner "$(abspath $(PRIME_GDL_STRATIFICATION_QUALIFIER_BIN))"
+
+.PHONY: qualify-prime-iggp-finite-herbrand-native
+qualify-prime-iggp-finite-herbrand-native: $(PRIME_GDL_STRATIFICATION_QUALIFIER_BIN)
+	@test -n "$(IGGP_ROOT)" || { \
+		echo 'FAIL: set IGGP_ROOT to the pinned IGGP checkout'; \
+		exit 1; \
+	}
+	@python3 $(PRIME_IGGP_FINITE_HERBRAND_CORPUS_QUALIFIER) \
+		--snapshot-root "$(IGGP_ROOT)" \
+		--runner "$(abspath $(PRIME_GDL_STRATIFICATION_QUALIFIER_BIN))"
+
+.PHONY: qualify-prime-iggp-stratified-model-native
+qualify-prime-iggp-stratified-model-native: $(PRIME_GDL_STRATIFIED_MODEL_QUALIFIER_BIN)
+	@test -n "$(IGGP_ROOT)" || { \
+		echo 'FAIL: set IGGP_ROOT to the pinned IGGP checkout'; \
+		exit 1; \
+	}
+	@python3 $(PRIME_IGGP_STRATIFIED_MODEL_CORPUS_QUALIFIER) \
+		--snapshot-root "$(IGGP_ROOT)" \
+		--runner "$(abspath $(PRIME_GDL_STRATIFIED_MODEL_QUALIFIER_BIN))"
+
+.PHONY: qualify-prime-iggp-stratified-episodes-native
+qualify-prime-iggp-stratified-episodes-native: $(PRIME_GDL_STRATIFIED_EPISODE_QUALIFIER_BIN)
+	@test -n "$(IGGP_ROOT)" || { \
+		echo 'FAIL: set IGGP_ROOT to the pinned IGGP checkout'; \
+		exit 1; \
+	}
+	@python3 $(PRIME_IGGP_STRATIFIED_EPISODE_CORPUS_QUALIFIER) \
+		--snapshot-root "$(IGGP_ROOT)" \
+		--runner "$(abspath $(PRIME_GDL_STRATIFIED_EPISODE_QUALIFIER_BIN))"
+
+.PHONY: qualify-prime-iggp-target-fibres-native
+qualify-prime-iggp-target-fibres-native: $(PRIME_GDL_STRATIFIED_EPISODE_QUALIFIER_BIN)
+	@test -n "$(IGGP_ROOT)" || { \
+		echo 'FAIL: set IGGP_ROOT to the pinned IGGP checkout'; \
+		exit 1; \
+	}
+	@python3 $(PRIME_IGGP_TARGET_FIBRE_CORPUS_QUALIFIER) \
+		--snapshot-root "$(IGGP_ROOT)" \
+		--runner "$(abspath $(PRIME_GDL_STRATIFIED_EPISODE_QUALIFIER_BIN))"
+
+.PHONY: probe-prime-iggp-source
+probe-prime-iggp-source: $(PRIME_GDL_STRATIFICATION_QUALIFIER_BIN)
+	@test -n "$(IGGP_ROOT)" || { \
+		echo 'FAIL: set IGGP_ROOT to the pinned IGGP checkout'; \
+		exit 1; \
+	}
+	@python3 scripts/check_prime_iggp_manifest.py \
+		--snapshot-root "$(IGGP_ROOT)"
+	@python3 scripts/check_prime_iggp_presentations.py \
+		--snapshot-root "$(IGGP_ROOT)"
+	@python3 scripts/check_prime_iggp_episode_evidence.py \
+		--snapshot-root "$(IGGP_ROOT)"
+	@python3 scripts/check_prime_iggp_target_fibre_evidence.py
+	@python3 scripts/generate_prime_iggp_minimal_decay.py \
+		--snapshot-root "$(IGGP_ROOT)" --check
+	@python3 scripts/generate_prime_iggp_minimal_even.py \
+		--snapshot-root "$(IGGP_ROOT)" --check
+	@python3 scripts/generate_prime_iggp_scissors_paper_stone.py \
+		--snapshot-root "$(IGGP_ROOT)" --check
+	@python3 scripts/generate_prime_iggp_type_of_inference.py \
+		--snapshot-root "$(IGGP_ROOT)" --check
+	@python3 scripts/generate_prime_iggp_type_source.py \
+		--snapshot-root "$(IGGP_ROOT)" --check
+	@python3 scripts/generate_prime_iggp_buttons_and_lights.py \
+		--snapshot-root "$(IGGP_ROOT)" --check
+	@python3 scripts/generate_prime_iggp_multiplebuttonsandlights.py \
+		--snapshot-root "$(IGGP_ROOT)" --check
+	@python3 scripts/generate_prime_iggp_tron.py \
+		--snapshot-root "$(IGGP_ROOT)" --check
+	@python3 scripts/generate_prime_iggp_untwisty_corridor.py \
+		--snapshot-root "$(IGGP_ROOT)" --check
+	@python3 $(PRIME_IGGP_STRATIFICATION_CORPUS_QUALIFIER) \
+		--snapshot-root "$(IGGP_ROOT)" \
+		--runner "$(abspath $(PRIME_GDL_STRATIFICATION_QUALIFIER_BIN))"
+
+.PHONY: probe-prime-hopper-table1-source
+probe-prime-hopper-table1-source:
+	@test -n "$(HOPPER_TABLE1_ROOT)" || { \
+		echo 'FAIL: set HOPPER_TABLE1_ROOT to the pinned Hopper checkout'; \
+		exit 1; \
+	}
+	@python3 scripts/check_prime_hopper_table1_manifest.py \
+		--snapshot-root "$(HOPPER_TABLE1_ROOT)"
+	@python3 scripts/generate_prime_hopper_first_order.py \
+		--snapshot-root "$(HOPPER_TABLE1_ROOT)" --check
+	@python3 scripts/generate_prime_hopper_higher_order.py \
+		--snapshot-root "$(HOPPER_TABLE1_ROOT)" --check
+	@python3 scripts/generate_prime_hopper_additional_iterative.py \
+		--snapshot-root "$(HOPPER_TABLE1_ROOT)" --check
+	@python3 scripts/generate_prime_hopper_structural_list.py \
+		--snapshot-root "$(HOPPER_TABLE1_ROOT)" --check
+	@python3 scripts/generate_prime_hopper_relational_recursion.py \
+		--snapshot-root "$(HOPPER_TABLE1_ROOT)" --check
+	@python3 scripts/generate_prime_hopper_tree_relations.py \
+		--snapshot-root "$(HOPPER_TABLE1_ROOT)" --check
+
+.PHONY: probe-prime-popper-synthesis-source
+probe-prime-popper-synthesis-source:
+	@test -n "$(POPPER_SYNTHESIS_ROOT)" || { \
+		echo 'FAIL: set POPPER_SYNTHESIS_ROOT to the pinned Popper checkout'; \
+		exit 1; \
+	}
+	@python3 scripts/check_prime_popper_synthesis_manifest.py \
+		--snapshot-root "$(POPPER_SYNTHESIS_ROOT)"
+	@python3 scripts/generate_prime_popper_recursive_arithmetic.py \
+		--snapshot-root "$(POPPER_SYNTHESIS_ROOT)" --check
+	@python3 scripts/generate_prime_popper_sorted.py \
+		--snapshot-root "$(POPPER_SYNTHESIS_ROOT)" --check
+
+.PHONY: probe-prime-popper-next-solution
+probe-prime-popper-next-solution:
+	@test -n "$(POPPER_SYNTHESIS_ROOT)" || { \
+		echo 'FAIL: set POPPER_SYNTHESIS_ROOT to the pinned Popper checkout'; \
+		exit 1; \
+	}
+	@python3 scripts/check_prime_popper_next_solution.py \
+		--popper-root "$(POPPER_SYNTHESIS_ROOT)"
+
+.PHONY: test-prime-native-typed-flow
+test-prime-native-typed-flow: $(PRIME_LEVEL_TEST_BIN) $(PRIME_REGULAR_KERNEL_TEST_BIN) $(PRIME_TYPED_FLOW_TEST_BIN) $(PRIME_HOPPER_FOLD_NATIVE_TEST_BIN) $(PRIME_HOPPER_BRANCHING_NATIVE_TEST_BIN)
+	@"$(PRIME_LEVEL_TEST_BIN)"
+	@"$(PRIME_REGULAR_KERNEL_TEST_BIN)" \
+		langdef/prime/generated/open_lambda_pi_core_v1.metta \
+		langdef/prime/generated/open_regular_kernel_v1.metta >/dev/null
+	@"$(PRIME_TYPED_FLOW_TEST_BIN)"
+	@"$(PRIME_HOPPER_FOLD_NATIVE_TEST_BIN)"
+	@"$(PRIME_HOPPER_BRANCHING_NATIVE_TEST_BIN)"
+
+test-prime: $(BIN) $(PRIME_REGULAR_KERNEL_TEST_BIN) test-prime-public-judgment-vocabulary test-prime-regular-pattern test-prime-regular-pattern-mutations test-prime-open-lambda-pi-langdef-source-binding-v1 test-prime-open-lambda-pi-langdef-mutations test-prime-open-regular-kernel-source-binding-v1 test-prime-open-regular-kernel-mutations test-prime-coverage test-prime-budget-monotonicity test-prime-package-validation test-prime-internal-graduality test-prime-nik-core-v1 test-prime-nik-typed-applicability-pruning test-prime-regular-kernel-conversion-flip test-prime-regular-kernel-synthesis-flip test-prime-regular-kernel-checking-flip test-prime-regular-kernel-checking-stats test-prime-regular-kernel-formation-flip test-prime-regular-kernel-formation-stats test-prime-regular-kernel-refinement-boundary test-prime-regular-kernel-production-authority test-prime-regular-kernel-resource-honesty test-prime-regular-kernel-recognizer-mutation test-prime-regular-kernel-admission-mutations test-prime-regular-kernel-verdict-polarity-mutations test-prime-producer-bound-native-checking-mutations test-prime-scoped-formation-route-mutation test-prime-declared-conversion-route-mutation test-prime-declared-formation-route-mutation test-prime-typing-engine-fault-separation-mutation test-prime-regular-kernel-constructors test-prime-native-typed-flow test-prime-mil-benchmark-accounting test-prime-mil-native-workloads test-prime-mil-native-claim-guard test-prime-mil-zero-he-applicability-guard test-prime-popper-synthesis-manifest test-prime-hopper-table1-manifest test-prime-chaining-readiness-manifest test-prime-iggp-manifest test-prime-iggp-type-of-inference test-prime-gdl-positive-horn-native
+	@"$(PRIME_REGULAR_KERNEL_TEST_BIN)" \
+		langdef/prime/generated/open_lambda_pi_core_v1.metta \
+		langdef/prime/generated/open_regular_kernel_v1.metta
 	@pass=0; fail=0; \
 	for f in $(PRIME_FAST_TESTS); do \
 		exp="$${f%.metta}.expected"; \
@@ -13827,7 +15219,59 @@ test-lib-prolog: $(BIN)
 	echo "PASS: shared lib_prolog syntax in HE, Prime, and PeTTa"
 .PHONY: test-lib-prolog
 
-test-petta-libpl: $(BIN)
+test-petta-libpl-explicit-utf8:
+	@if rg -n \
+		'PL_(put_atom_chars|put_atom_nchars|put_string_nchars|get_string|get_atom_nchars|new_atom_nchars|atom_nchars)\(' \
+		src/petta_libpl.c; then \
+		echo "FAIL: PeTTa/libpl dynamic text crossed through a default-representation SWI API"; \
+		exit 1; \
+	fi
+	@echo "PASS: PeTTa/libpl dynamic text declares UTF-8"
+.PHONY: test-petta-libpl-explicit-utf8
+
+test-python-build-config: $(BIN)
+ifeq ($(ENABLE_PYTHON),1)
+	@set -e; \
+	linked=$$(ldd "$(BIN)" | rg 'libpython' || true); \
+	if ! printf '%s\n' "$$linked" | \
+			rg -Fq 'libpython$(PYTHON_VERSION).so'; then \
+		echo "FAIL: $(BIN) does not link the Python $(PYTHON_VERSION) selected by $(PYTHON_CONFIG_PATH)"; \
+		printf '%s\n' "$$linked"; \
+		exit 1; \
+	fi; \
+	if ! printf '%s\n' "$$linked" | \
+			rg -Fq '$(PYTHON_LIBDIR)/'; then \
+		echo "FAIL: $(BIN) resolves libpython outside $(PYTHON_LIBDIR)"; \
+		printf '%s\n' "$$linked"; \
+		exit 1; \
+	fi; \
+	echo "PASS: selected Python configuration governs the linked artifact ($(PYTHON_VERSION), $(PYTHON_CONFIG_ID))"
+else
+	@echo "SKIP: Python link verification (BUILD=$(BUILD_CANON) has Python disabled)"
+endif
+.PHONY: test-python-build-config
+
+test-lib-prolog-build-config: $(BIN)
+ifeq ($(LIB_PROLOG_ENABLED),1)
+	@set -e; \
+	linked=$$(ldd "$(BIN)" | rg 'libswipl' || true); \
+	if [ -z "$$linked" ]; then \
+		echo "FAIL: $(BIN) does not link libswipl despite LIB_PROLOG_ENABLED=1"; \
+		exit 1; \
+	fi; \
+	if ! printf '%s\n' "$$linked" | \
+			rg -Fq '$(LIB_PROLOG_LIBDIR)/'; then \
+		echo "FAIL: $(BIN) resolves libswipl outside the selected $(LIB_PROLOG_LIBDIR)"; \
+		printf '%s\n' "$$linked"; \
+		exit 1; \
+	fi; \
+	echo "PASS: selected SWI-Prolog configuration governs the linked artifact ($(LIB_PROLOG_VERSION), $(LIB_PROLOG_CONFIG_ID))"
+else
+	@echo "SKIP: SWI-Prolog link verification (BUILD=$(BUILD_CANON) has lib-prolog disabled)"
+endif
+.PHONY: test-lib-prolog-build-config
+
+test-petta-libpl: $(BIN) test-petta-libpl-explicit-utf8
 	@actual=$$(mktemp runtime/petta-libpl.XXXXXX); \
 	trap 'rm -f "$$actual"' EXIT INT TERM; \
 	CETTA_PETTA_SEARCH_MACHINE=1 ./$(BIN) --lang petta \
@@ -13856,6 +15300,22 @@ test-petta-libpl: $(BIN)
 		if ! diff -u tests/petta/libpl_call_plan.expected \
 				"$$actual"; then \
 			echo "FAIL: PeTTa/libpl source-plan and accelerator contract"; \
+			exit 1; \
+		fi; \
+		CETTA_PETTA_SEARCH_MACHINE=1 ./$(BIN) --lang petta \
+			tests/petta/libpl_unicode.metta \
+			> "$$actual"; \
+		if ! diff -u tests/petta/libpl_unicode.expected \
+				"$$actual"; then \
+			echo "FAIL: PeTTa/libpl UTF-8 string, atom, and functor boundary"; \
+			exit 1; \
+		fi; \
+		CETTA_PETTA_SEARCH_MACHINE=1 ./$(BIN) --lang petta \
+			tests/petta/libpl_nested_string_replace.metta \
+			> "$$actual"; \
+		if ! diff -u tests/petta/libpl_nested_string_replace.expected \
+				"$$actual"; then \
+			echo "FAIL: PeTTa/libpl nested Unicode string replacement"; \
 			exit 1; \
 		fi; \
 		CETTA_PETTA_SEARCH_MACHINE=1 ./$(BIN) --lang petta \
@@ -14102,7 +15562,6 @@ test-petta-match-existence-fusion: $(BIN)
 .PHONY: test-petta-type-langdef-source-binding-v1
 test-petta-type-langdef-source-binding-v1:
 	@python3 tools/gslt2parse_schema_v1.py \
-		--require-nik-authority-frame \
 		langdef/petta/generated/typecheck_v2_guard_v1.metta >/dev/null
 	@set -eu; mkdir -p $(BOOTSTRAP_TMPDIR); \
 	tmpdir=$$(mktemp -d "$(BOOTSTRAP_TMPDIR)/petta-type-binding.XXXXXX"); \
@@ -14128,7 +15587,6 @@ test-petta-type-langdef-source-binding-v1:
 .PHONY: test-petta-boundary-langdef-source-binding-v1
 test-petta-boundary-langdef-source-binding-v1:
 	@python3 tools/gslt2parse_schema_v1.py \
-		--require-nik-authority-frame \
 		langdef/petta/generated/typecheck_v2_boundary_core_v1.metta >/dev/null
 	@set -eu; mkdir -p $(BOOTSTRAP_TMPDIR); \
 	tmpdir=$$(mktemp -d "$(BOOTSTRAP_TMPDIR)/petta-boundary-binding.XXXXXX"); \
@@ -16153,7 +17611,6 @@ test-he-compat-catalog-guards:
 .PHONY: test-he-type-langdef-source-binding-v1
 test-he-type-langdef-source-binding-v1:
 	@python3 tools/gslt2parse_schema_v1.py \
-		--require-nik-authority-frame \
 		langdef/he/generated/typing_consistency_core_v1.metta >/dev/null
 	@set -eu; mkdir -p $(BOOTSTRAP_TMPDIR); \
 	tmpdir=$$(mktemp -d "$(BOOTSTRAP_TMPDIR)/he-type-binding.XXXXXX"); \
@@ -16179,7 +17636,6 @@ test-he-type-langdef-source-binding-v1:
 .PHONY: test-he-profiled-type-langdef-source-binding-v1
 test-he-profiled-type-langdef-source-binding-v1:
 	@python3 tools/gslt2parse_schema_v1.py \
-		--require-nik-authority-frame \
 		langdef/he/generated/profiled_type_inference_core_v1.metta >/dev/null
 	@set -eu; mkdir -p $(BOOTSTRAP_TMPDIR); \
 	tmpdir=$$(mktemp -d "$(BOOTSTRAP_TMPDIR)/he-profiled-type-binding.XXXXXX"); \
@@ -16205,7 +17661,6 @@ test-he-profiled-type-langdef-source-binding-v1:
 .PHONY: test-he-closed-ground-langdef-source-binding-v1
 test-he-closed-ground-langdef-source-binding-v1:
 	@python3 tools/gslt2parse_schema_v1.py \
-		--require-nik-authority-frame \
 		langdef/he/generated/typing_closed_ground_core_v1.metta >/dev/null
 	@set -eu; mkdir -p $(BOOTSTRAP_TMPDIR); \
 	tmpdir=$$(mktemp -d "$(BOOTSTRAP_TMPDIR)/he-closed-ground-binding.XXXXXX"); \
@@ -19912,7 +21367,7 @@ test-gslt2parse-schema-v1-native-prime: \
 test-gslt2parse-schema-v1-native-rho-runtime: \
 		$(GSLT2PARSE_SCHEMA_V1_NATIVE_BIN)
 	@$(GSLT2PARSE_SCHEMA_V1_NATIVE_BIN) \
-		ee90a8366ce08bd38cc04a92ffb81d633031e1f95aa646db87b8fe3e8c708563 \
+		2055fabd3cbf7915384030a7b126d2604e98e42f4eb7efeb71943093f3cbadbd \
 		experiments/gslt2parse_foundation/presentations/shared/rho_abstract_syntax_v1.metta \
 		experiments/gslt2parse_foundation/presentations/shared/rho_runtime_term_abi_v1.metta
 	@echo '(GSLT2ParseLanguagePackageV1 rho-runtime PASS)'
@@ -19985,7 +21440,6 @@ test-gslt2parse-schema-v1: test-gslt2parse-schema-v1-native
 
 test-rule-machine-gslt-v1: $(BIN) $(GSLT2PARSE_CHART_V1_NATIVE_BIN)
 	@python3 tools/test_rule_machine_gslt_v1.py \
-		--cetta "$(abspath $(BIN))" \
 		--chart "$(GSLT2PARSE_CHART_V1_NATIVE_BIN)" \
 		--nil-root "$(CURDIR)/../../repos/ngeiswei-chaining-run"
 
@@ -20093,6 +21547,22 @@ $(NIK_RUNTIME_TEST_BIN): \
 .PHONY: test-nik-runtime-v1
 test-nik-runtime-v1: $(NIK_RUNTIME_TEST_BIN)
 	@$(NIK_RUNTIME_TEST_BIN)
+
+$(NIK_NATIVE_CALCULUS_SELECTION_TEST_BIN): \
+		tests/support/test_nik_native_calculus_selection.c \
+		src/nik_native_calculus_selection.h \
+		$(NIK_NATIVE_CALCULUS_SELECTION_OBJ) $(BUILD_CONFIG_HEADER)
+	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
+	@tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/test-nik-native-calculus-selection.XXXXXX"); \
+	trap 'rm -f "$$tmp_out"' EXIT INT TERM; \
+	$(CC) $(CPPFLAGS) $(CFLAGS) -o "$$tmp_out" \
+		tests/support/test_nik_native_calculus_selection.c \
+		$(NIK_NATIVE_CALCULUS_SELECTION_OBJ) $(LDFLAGS); \
+	mv "$$tmp_out" $@
+
+.PHONY: test-nik-native-calculus-selection
+test-nik-native-calculus-selection: $(NIK_NATIVE_CALCULUS_SELECTION_TEST_BIN)
+	@$(NIK_NATIVE_CALCULUS_SELECTION_TEST_BIN)
 
 $(GSLT_PROVIDER_RUNTIME_TEST_BIN): \
 		tests/support/test_gslt_provider_runtime.c \
@@ -20890,6 +22360,7 @@ test-prime-nik-megalodon-v1: \
 .PHONY: test-prime-nik-megalodon-term-v1
 test-prime-nik-megalodon-term-v1: \
 		$(BIN) \
+		$(NIK_RUNTIME_TEST_BIN) \
 		$(PRIME_NIK_MEGALODON_TERM_TEST_V1) \
 		$(PRIME_NIK_MEGALODON_TERM_POSITIVE_V1) \
 		$(PRIME_NIK_MEGALODON_TERM_WITNESS_V1) \
@@ -20920,6 +22391,7 @@ test-prime-nik-megalodon-term-v1: \
 	python3 $(PRIME_NIK_MEGALODON_TERM_TEST_V1) \
 		--megalodon "$(MEGALODON_AUTO_BIN)" \
 		--cetta "$(abspath $(BIN))" \
+		--differential "$(abspath $(NIK_RUNTIME_TEST_BIN))" \
 		--catalog $(PRIME_NIK_AUTHORITY_CATALOG_V1) \
 		--positive $(PRIME_NIK_MEGALODON_TERM_POSITIVE_V1) \
 		--lean-witness "$$witness_abs"
@@ -20927,6 +22399,7 @@ test-prime-nik-megalodon-term-v1: \
 .PHONY: test-prime-nik-megalodon-polymorphic-v1
 test-prime-nik-megalodon-polymorphic-v1: \
 		$(BIN) \
+		$(NIK_RUNTIME_TEST_BIN) \
 		$(PRIME_NIK_MEGALODON_POLY_TEST_V1) \
 		$(PRIME_NIK_MEGALODON_POLY_POSITIVE_V1) \
 		$(PRIME_NIK_MEGALODON_POLY_WITNESS_V1) \
@@ -20957,6 +22430,7 @@ test-prime-nik-megalodon-polymorphic-v1: \
 	python3 $(PRIME_NIK_MEGALODON_POLY_TEST_V1) \
 		--megalodon "$(MEGALODON_AUTO_BIN)" \
 		--cetta "$(abspath $(BIN))" \
+		--differential "$(abspath $(NIK_RUNTIME_TEST_BIN))" \
 		--catalog $(PRIME_NIK_AUTHORITY_CATALOG_V1) \
 		--positive $(PRIME_NIK_MEGALODON_POLY_POSITIVE_V1) \
 		--lean-witness "$$witness_abs"
@@ -20964,6 +22438,7 @@ test-prime-nik-megalodon-polymorphic-v1: \
 .PHONY: test-prime-nik-megalodon-known-implication-v1
 test-prime-nik-megalodon-known-implication-v1: \
 		$(BIN) \
+		$(NIK_RUNTIME_TEST_BIN) \
 		$(PRIME_NIK_MEGALODON_KNOWN_IMP_TEST_V1) \
 		$(PRIME_NIK_MEGALODON_KNOWN_IMP_POSITIVE_V1) \
 		$(PRIME_NIK_MEGALODON_KNOWN_IMP_WITNESS_V1) \
@@ -20994,12 +22469,14 @@ test-prime-nik-megalodon-known-implication-v1: \
 	python3 $(PRIME_NIK_MEGALODON_KNOWN_IMP_TEST_V1) \
 		--megalodon "$(MEGALODON_AUTO_BIN)" \
 		--cetta "$(abspath $(BIN))" \
+		--differential "$(abspath $(NIK_RUNTIME_TEST_BIN))" \
 		--positive $(PRIME_NIK_MEGALODON_KNOWN_IMP_POSITIVE_V1) \
 		--lean-witness "$$witness_abs"
 
 .PHONY: test-prime-nik-megalodon-definition-v1
 test-prime-nik-megalodon-definition-v1: \
 		$(BIN) \
+		$(NIK_RUNTIME_TEST_BIN) \
 		$(PRIME_NIK_MEGALODON_DEFINITION_TEST_V1) \
 		$(PRIME_NIK_MEGALODON_DEFINITION_POSITIVE_V1) \
 		$(PRIME_NIK_MEGALODON_DEFINITION_WITNESS_V1) \
@@ -21030,6 +22507,7 @@ test-prime-nik-megalodon-definition-v1: \
 	python3 $(PRIME_NIK_MEGALODON_DEFINITION_TEST_V1) \
 		--megalodon "$(MEGALODON_AUTO_BIN)" \
 		--cetta "$(abspath $(BIN))" \
+		--differential "$(abspath $(NIK_RUNTIME_TEST_BIN))" \
 		--catalog $(PRIME_NIK_AUTHORITY_CATALOG_V1) \
 		--positive $(PRIME_NIK_MEGALODON_DEFINITION_POSITIVE_V1) \
 		--lean-witness "$$witness_abs"
@@ -21060,7 +22538,8 @@ test-prime-nik-megalodon-tactics-package-v1: \
 		--positive $(PRIME_NIK_MEGALODON_TACTICS_POSITIVE_V1)
 
 .PHONY: test-prime-nik-core-v1
-test-prime-nik-core-v1: test-nik-runtime-v1 test-prime-nik-generation-v1 \
+test-prime-nik-core-v1: test-nik-runtime-v1 \
+		test-nik-native-calculus-selection test-prime-nik-generation-v1 \
 		test-prime-nik-proof-dag-v1
 
 .PHONY: test-prime-nik-qualification-v1
@@ -22323,10 +23802,6 @@ refresh-he-matrices:
 	@python3 -m json.tool specs/he_runtime_3layer_matrix.json > /dev/null
 	@echo "refreshed HE runtime parity matrices"
 
-.PHONY: test-nik-type-authority-frames-v1
-test-nik-type-authority-frames-v1:
-	@python3 tools/test_nik_type_authority_frames_v1.py
-
 NIK_TYPE_LANGDEFS_V1 = \
 	langdef/he/generated/typing_consistency_core_v1.metta \
 	langdef/he/generated/profiled_type_inference_core_v1.metta \
@@ -22337,21 +23812,21 @@ NIK_TYPE_LANGDEFS_V1 = \
 	langdef/prime/generated/native_ground_judgments_v1.metta \
 	langdef/prime/generated/elaborated_dependent_formation_core_v1.metta \
 	langdef/prime/generated/open_lambda_pi_core_v1.metta \
+	langdef/prime/generated/open_regular_kernel_v1.metta \
 	langdef/prime/generated/typed_publication_core_v1.metta
 
 .PHONY: test-nik-type-langdef-native-parity-v1
 test-nik-type-langdef-native-parity-v1: $(GSLT2PARSE_SCHEMA_V1_NATIVE_BIN)
 	@set -eu; \
 	digest=$$(python3 tools/gslt2parse_schema_v1.py \
-		--require-nik-authority-frame --digest-only \
+		--digest-only \
 		$(NIK_TYPE_LANGDEFS_V1)); \
 	"$(GSLT2PARSE_SCHEMA_V1_NATIVE_BIN)" "$$digest" \
 		$(NIK_TYPE_LANGDEFS_V1)
 
 .PHONY: test-nik-type-langdef-composition-v1
-test-nik-type-langdef-composition-v1: test-nik-type-authority-frames-v1 test-nik-type-langdef-native-parity-v1
+test-nik-type-langdef-composition-v1: test-nik-type-langdef-native-parity-v1
 	@python3 tools/gslt2parse_schema_v1.py \
-		--require-nik-authority-frame \
 		$(NIK_TYPE_LANGDEFS_V1) \
 		>/dev/null
 	@echo "PASS: HE, PeTTa, and Prime type presentations compose"

@@ -1182,11 +1182,11 @@ def check_catalog(path: Path, _goal: sx.SExpr, _article: sx.SExpr) -> None:
 def run_cetta(cetta: Path, goal: sx.SExpr, article: sx.SExpr) -> str:
     cetta = cetta.resolve()
     expression = (
-        "!(prime-judge &self (Check MEGALODON-TERM "
+        "!(nik:check MEGALODON-TERM "
         + sx.render(goal)
         + " "
         + sx.render(article)
-        + "))"
+        + ")"
     )
     with tempfile.TemporaryDirectory(prefix="cetta-nik-") as directory:
         query = Path(directory) / "query.metta"
@@ -1202,22 +1202,51 @@ def run_cetta(cetta: Path, goal: sx.SExpr, article: sx.SExpr) -> str:
     return result.stdout
 
 
-def require_receipt(output: str, *, accepted: bool) -> None:
-    expected = (
-        "(Agreement not-run)",
-        "(NativeReplay ok True " if accepted
-        else "(NativeReplay final-mismatch False ",
-        "(HornReference not-run False 0)",
-        "(CompiledWorklist not-run False 0)",
-        "(Outcome accepted)" if accepted else "(Outcome rejected)",
-    )
-    missing = [fragment for fragment in expected if fragment not in output]
-    if missing:
+def require_public_result(output: str, *, accepted: bool) -> None:
+    expected = "[True]" if accepted else "[False]"
+    if output.strip() != expected:
         raise SystemExit(
-            "CeTTa NIK receipt lacks exact realization evidence "
-            + ", ".join(missing)
-            + ":\n"
-            + output
+            f"CeTTa nik:check returned {output.strip()!r}, expected {expected}"
+        )
+
+
+def require_differential(
+    differential: Path,
+    goal: sx.SExpr,
+    article: sx.SExpr,
+    *,
+    accepted: bool,
+    native_status: str | None = None,
+) -> None:
+    request = (
+        "(NIKDifferentialV1 MEGALODON-TERM "
+        + sx.render(goal) + " " + sx.render(article) + ")"
+    )
+    with tempfile.TemporaryDirectory(prefix="cetta-nik-differential-") as directory:
+        request_path = Path(directory) / "request.metta"
+        request_path.write_text(request + "\n", encoding="utf-8")
+        result = subprocess.run(
+            [str(differential.resolve()), "--differential-file", str(request_path)],
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+    expected = "True" if accepted else "False"
+    fragments = [
+        f"(Outcome {'accepted' if accepted else 'rejected'})",
+        "(Agreement True)",
+        f"(Native {expected} ",
+        f"(HornReference {expected} ",
+        f"(CompiledWorklist {expected} ",
+    ]
+    if native_status is not None:
+        fragments.append(f"(NativeStatus {native_status})")
+    missing = [fragment for fragment in fragments if fragment not in result.stdout]
+    if result.returncode != 0 or missing:
+        raise SystemExit(
+            "CeTTa NIK C differential qualification failed"
+            + ("; missing " + ", ".join(missing) if missing else "")
+            + ":\n" + result.stdout + result.stderr
         )
 
 
@@ -1225,6 +1254,7 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--megalodon", type=Path, required=True)
     parser.add_argument("--cetta", type=Path, required=True)
+    parser.add_argument("--differential", type=Path, required=True)
     parser.add_argument("--catalog", type=Path, required=True)
     parser.add_argument("--positive", type=Path, required=True)
     parser.add_argument("--lean-witness", type=Path, required=True)
@@ -1256,14 +1286,18 @@ def main() -> int:
         )
     check_catalog(args.catalog, compiled_goal, compiled_article)
     accepted = run_cetta(args.cetta, compiled_goal, compiled_article)
-    if "PrimeVerdict Established" not in accepted:
-        raise SystemExit("CeTTa did not establish the polymorphic article:\n" + accepted)
-    require_receipt(accepted, accepted=True)
+    require_public_result(accepted, accepted=True)
+    require_differential(
+        args.differential, compiled_goal, compiled_article,
+        accepted=True, native_status="ok",
+    )
 
     rejected = run_cetta(args.cetta, wrong_goal, compiled_article)
-    if "PrimeVerdict Refuted" not in rejected:
-        raise SystemExit("CeTTa did not reject the wrong polymorphic goal:\n" + rejected)
-    require_receipt(rejected, accepted=False)
+    require_public_result(rejected, accepted=False)
+    require_differential(
+        args.differential, wrong_goal, compiled_article,
+        accepted=False, native_status="final-mismatch",
+    )
 
     print(
         "(NikMegalodonPolymorphicV1Summary "

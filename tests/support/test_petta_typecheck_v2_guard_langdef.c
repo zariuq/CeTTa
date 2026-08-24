@@ -156,9 +156,7 @@ int main(int argc, char **argv) {
               binding->authority ==
                   &petta_typecheck_v2_direct_authority_v1 &&
               binding->coverage ==
-                  CETTA_NIK_DIRECT_SOURCE_AUTHORED_FRAGMENT &&
-              strcmp(binding->presentation_status,
-                     "AUTHORED_FRAGMENT") == 0,
+                  CETTA_NIK_DIRECT_SOURCE_AUTHORED_FRAGMENT,
           "PeTTa guard remains an honestly partial direct source binding");
 
     const char *paths[] = {argv[1]};

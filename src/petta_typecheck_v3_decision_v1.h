@@ -3,16 +3,10 @@
 
 #include "gslt_horn_runtime.h"
 #include "gslt_provider_runtime.h"
+#include "nik_direct_authority.h"
 
 #include <stdbool.h>
 #include <stddef.h>
-
-typedef enum {
-    CETTA_PETTA_V3_EVIDENCE_ESTABLISHED = 0,
-    CETTA_PETTA_V3_EVIDENCE_REFUTED,
-    CETTA_PETTA_V3_EVIDENCE_UNDETERMINED,
-    CETTA_PETTA_V3_EVIDENCE_INCOMPLETE,
-} CettaPettaV3EvidenceOutcomeV1;
 
 typedef enum {
     CETTA_PETTA_V3_BOUNDARY_NONE = 0,
@@ -40,7 +34,7 @@ typedef struct {
 } CettaPettaV3EvidenceOptLicenseV1;
 
 typedef struct {
-    CettaPettaV3EvidenceOutcomeV1 outcome;
+    CettaNikOutcomeV1 outcome;
     CettaPettaV3EvidenceBoundaryV1 boundary;
     const char *relation;
     const Atom *actual;
@@ -52,7 +46,8 @@ typedef struct {
 
 /* Decide one ground v3 RuntimeEvidence value.  A completed failed relation
  * is a refutation only when both sides are positive ground evidence.  Search
- * limits map to INCOMPLETE, and missing result evidence maps to UNDETERMINED. */
+ * limits map to INCOMPLETE, and missing result evidence lies outside the
+ * authority's currently decided fragment. */
 bool cetta_petta_typecheck_v3_decide_evidence_v1(
     const CettaGsltHornProgram *program,
     const CettaGsltProviderRegistryV1 *providers,

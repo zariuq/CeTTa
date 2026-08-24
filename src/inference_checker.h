@@ -82,9 +82,9 @@ size_t cetta_inference_checker_rule_count(
 /*
  * Extend an admitted presentation without rebuilding it.  Constructor and
  * rule names remain globally unique, and rule handles are stable for the
- * lifetime of the checker.  Added rules borrow their canonical GRule atom,
- * which must therefore outlive the checker just like the initial
- * presentation.
+ * lifetime of the checker.  Added rules use the admitted presentation's wire
+ * version and borrow their canonical GRule/GRuleV1 atom, which must therefore
+ * outlive the checker just like the initial presentation.
  */
 CettaInferenceStatus cetta_inference_checker_add_constructor(
     CettaInferenceChecker *checker,

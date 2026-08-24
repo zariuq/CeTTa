@@ -1,0 +1,570 @@
+{
+  "schema": "cetta-prime-iggp-native-episode-evidence-v1",
+  "source": {
+    "corpus_manifest": "benchmarks/prime/ilp/iggp_manifest.json",
+    "corpus_manifest_sha256": "33cb3cd405e6ef8f005f2204dd8157e9ab8bd140073b405de5efa8700c84b2c9",
+    "presentation_digest": "a7e21987b3a6c75fbceca4501730915dec370631fc93369bf07ac3dd4c225f0a",
+    "native_contract": "gdl-stratified-episode-v1"
+  },
+  "summary": {
+    "games": 50,
+    "tasks": 200,
+    "source_eligible_games": 30,
+    "source_eligible_tasks": 120,
+    "fully_established_games": 29,
+    "established_tasks": 119,
+    "corpus_contradiction_games": 1,
+    "corpus_contradiction_tasks": 1,
+    "outside_source_image_games": 20,
+    "outside_source_image_tasks": 80
+  },
+  "task_presentation_overrides": {
+    "sokoban": {
+      "source": "games/sokoban_core.txt",
+      "instances": [
+        "games/sokoban_map1.txt",
+        "games/sokoban_map2.txt",
+        "games/sokoban_map3.txt",
+        "games/sokoban_map4.txt",
+        "games/sokoban_map5.txt",
+        "games/sokoban_map6.txt",
+        "games/sokoban_map7.txt"
+      ]
+    }
+  },
+  "established_games": {
+    "alquerque": {
+      "tasks": 4,
+      "states": 11124,
+      "episodes": 5514,
+      "static_facts": 1287,
+      "fact_occurrences": 165424,
+      "typing_proofs": 165424,
+      "supports": 8309155,
+      "proof_edges": 10517157
+    },
+    "breakthrough": {
+      "tasks": 4,
+      "states": 12213,
+      "episodes": 6081,
+      "static_facts": 376,
+      "fact_occurrences": 193469,
+      "typing_proofs": 193469,
+      "supports": 3755710,
+      "proof_edges": 4455941
+    },
+    "buttons_and_lights": {
+      "tasks": 4,
+      "states": 176,
+      "episodes": 104,
+      "static_facts": 0,
+      "fact_occurrences": 284,
+      "typing_proofs": 284,
+      "supports": 3064,
+      "proof_edges": 3166
+    },
+    "centipede": {
+      "tasks": 4,
+      "states": 10060,
+      "episodes": 5339,
+      "static_facts": 46,
+      "fact_occurrences": 23058,
+      "typing_proofs": 26072,
+      "supports": 1377500,
+      "proof_edges": 1401870
+    },
+    "checkers": {
+      "tasks": 4,
+      "states": 5727,
+      "episodes": 2849,
+      "static_facts": 4993,
+      "fact_occurrences": 57050,
+      "typing_proofs": 57050,
+      "supports": 15295431,
+      "proof_edges": 24302922
+    },
+    "connect4team": {
+      "tasks": 4,
+      "states": 8415,
+      "episodes": 4157,
+      "static_facts": 65,
+      "fact_occurrences": 68561,
+      "typing_proofs": 68561,
+      "supports": 1470394,
+      "proof_edges": 1498396
+    },
+    "duikoshi": {
+      "tasks": 4,
+      "states": 5286,
+      "episodes": 2594,
+      "static_facts": 141,
+      "fact_occurrences": 46694,
+      "typing_proofs": 46694,
+      "supports": 821509,
+      "proof_edges": 923946
+    },
+    "eight_puzzle": {
+      "tasks": 4,
+      "states": 25577,
+      "episodes": 13201,
+      "static_facts": 99,
+      "fact_occurrences": 139115,
+      "typing_proofs": 139115,
+      "supports": 3448098,
+      "proof_edges": 3519148
+    },
+    "forager2": {
+      "tasks": 4,
+      "states": 2822,
+      "episodes": 1427,
+      "static_facts": 64,
+      "fact_occurrences": 16273,
+      "typing_proofs": 16273,
+      "supports": 573349,
+      "proof_edges": 586192
+    },
+    "frogs_and_toads": {
+      "tasks": 4,
+      "states": 10488,
+      "episodes": 5416,
+      "static_facts": 117,
+      "fact_occurrences": 187024,
+      "typing_proofs": 187024,
+      "supports": 1135006,
+      "proof_edges": 1189411
+    },
+    "gt_chicken": {
+      "tasks": 4,
+      "states": 3712,
+      "episodes": 2080,
+      "static_facts": 103,
+      "fact_occurrences": 8828,
+      "typing_proofs": 8828,
+      "supports": 246276,
+      "proof_edges": 246276
+    },
+    "gt_prisoner": {
+      "tasks": 4,
+      "states": 4580,
+      "episodes": 2472,
+      "static_facts": 102,
+      "fact_occurrences": 12802,
+      "typing_proofs": 12802,
+      "supports": 297290,
+      "proof_edges": 297290
+    },
+    "hexforthree": {
+      "tasks": 4,
+      "states": 4940,
+      "episodes": 2457,
+      "static_facts": 797,
+      "fact_occurrences": 199710,
+      "typing_proofs": 199710,
+      "supports": 15804518,
+      "proof_edges": 15804658
+    },
+    "kono": {
+      "tasks": 4,
+      "states": 10749,
+      "episodes": 5329,
+      "static_facts": 555,
+      "fact_occurrences": 111918,
+      "typing_proofs": 111918,
+      "supports": 3820162,
+      "proof_edges": 4620852
+    },
+    "minimal_decay": {
+      "tasks": 4,
+      "states": 35,
+      "episodes": 21,
+      "static_facts": 5,
+      "fact_occurrences": 32,
+      "typing_proofs": 32,
+      "supports": 212,
+      "proof_edges": 212
+    },
+    "minimal_even": {
+      "tasks": 4,
+      "states": 309,
+      "episodes": 139,
+      "static_facts": 27,
+      "fact_occurrences": 339,
+      "typing_proofs": 339,
+      "supports": 6036,
+      "proof_edges": 7295
+    },
+    "multiplebuttonsandlights": {
+      "tasks": 4,
+      "states": 1075,
+      "episodes": 614,
+      "static_facts": 43,
+      "fact_occurrences": 1834,
+      "typing_proofs": 1834,
+      "supports": 68450,
+      "proof_edges": 69565
+    },
+    "nineboardtictactoe": {
+      "tasks": 4,
+      "states": 11491,
+      "episodes": 5695,
+      "static_facts": 169,
+      "fact_occurrences": 109750,
+      "typing_proofs": 109750,
+      "supports": 2604563,
+      "proof_edges": 2967447
+    },
+    "pentago": {
+      "tasks": 4,
+      "states": 21202,
+      "episodes": 10576,
+      "static_facts": 217,
+      "fact_occurrences": 174148,
+      "typing_proofs": 174148,
+      "supports": 3952077,
+      "proof_edges": 4169312
+    },
+    "pilgrimage": {
+      "tasks": 4,
+      "states": 9733,
+      "episodes": 4891,
+      "static_facts": 2912,
+      "fact_occurrences": 101061,
+      "typing_proofs": 111763,
+      "supports": 18285432,
+      "proof_edges": 18591647
+    },
+    "platformjumpers": {
+      "tasks": 4,
+      "states": 2161,
+      "episodes": 1075,
+      "static_facts": 22233,
+      "fact_occurrences": 129983,
+      "typing_proofs": 129983,
+      "supports": 29495221,
+      "proof_edges": 29505506
+    },
+    "scissors_paper_stone": {
+      "tasks": 4,
+      "states": 148,
+      "episodes": 98,
+      "static_facts": 0,
+      "fact_occurrences": 450,
+      "typing_proofs": 450,
+      "supports": 2722,
+      "proof_edges": 2722
+    },
+    "sheep_and_wolf": {
+      "tasks": 4,
+      "states": 3146,
+      "episodes": 1585,
+      "static_facts": 331,
+      "fact_occurrences": 104641,
+      "typing_proofs": 104641,
+      "supports": 802408,
+      "proof_edges": 856592
+    },
+    "sokoban": {
+      "tasks": 4,
+      "states": 22758,
+      "episodes": 14843,
+      "static_facts": 32,
+      "fact_occurrences": 96176,
+      "typing_proofs": 107065,
+      "supports": 2972333,
+      "proof_edges": 3037274
+    },
+    "sudoku": {
+      "tasks": 4,
+      "states": 4144,
+      "episodes": 2059,
+      "static_facts": 752,
+      "fact_occurrences": 167808,
+      "typing_proofs": 167808,
+      "supports": 4114493,
+      "proof_edges": 4637345
+    },
+    "switches": {
+      "tasks": 4,
+      "states": 1732,
+      "episodes": 990,
+      "static_facts": 27,
+      "fact_occurrences": 10621,
+      "typing_proofs": 10621,
+      "supports": 237351,
+      "proof_edges": 237927
+    },
+    "tron": {
+      "tasks": 4,
+      "states": 515,
+      "episodes": 225,
+      "static_facts": 25,
+      "fact_occurrences": 1694,
+      "typing_proofs": 1694,
+      "supports": 27950,
+      "proof_edges": 28042
+    },
+    "ttcc4": {
+      "tasks": 4,
+      "states": 2493,
+      "episodes": 1241,
+      "static_facts": 4048,
+      "fact_occurrences": 18521,
+      "typing_proofs": 18521,
+      "supports": 5559045,
+      "proof_edges": 7766875
+    },
+    "untwisty_corridor": {
+      "tasks": 4,
+      "states": 99,
+      "episodes": 76,
+      "static_facts": 0,
+      "fact_occurrences": 291,
+      "typing_proofs": 291,
+      "supports": 3851,
+      "proof_edges": 3893
+    }
+  },
+  "partially_established_games": {
+    "firesheep": {
+      "established_targets": [
+        "goal",
+        "legal",
+        "terminal"
+      ],
+      "corpus_contradictions": {
+        "next": {
+          "evaluated_tasks": 4,
+          "established_tasks": 3,
+          "contradiction_tasks": 1,
+          "evaluated_states": 10805,
+          "evaluated_episodes": 5363,
+          "typing_proofs": 183493,
+          "supports": 18456776,
+          "proof_edges": 18657965,
+          "contradiction_states": 182,
+          "missing_labels": 439,
+          "extra_labels": 16,
+          "target_states": [
+            [
+              "next",
+              182
+            ]
+          ],
+          "digest": "1786ea8b21aee6e94ec187b367d61aa3cefb98e80e096e067eb434ddab3a49fe",
+          "first_episode": "gdl:firesheep:next:train:state-27",
+          "first_missing": [
+            "(next_at 9 1 9)",
+            "(next_sheep 9 9 up)"
+          ],
+          "first_extra": []
+        }
+      }
+    }
+  },
+  "outside_source_image": {
+    "asylum": {
+      "blockers": [
+        "finite-type-obstruction"
+      ],
+      "foreign_code_lines": 0,
+      "finite_type_assignment": false,
+      "checked_type_of_extension": false,
+      "checked_occurrences": 0,
+      "empty_finite_domains": 29
+    },
+    "battle_of_numbers": {
+      "blockers": [
+        "finite-type-obstruction"
+      ],
+      "foreign_code_lines": 0,
+      "finite_type_assignment": false,
+      "checked_type_of_extension": false,
+      "checked_occurrences": 0,
+      "empty_finite_domains": 7
+    },
+    "coins": {
+      "blockers": [
+        "finite-type-obstruction",
+        "foreign-source-code"
+      ],
+      "foreign_code_lines": 10,
+      "finite_type_assignment": false,
+      "checked_type_of_extension": false,
+      "checked_occurrences": 0,
+      "empty_finite_domains": 30
+    },
+    "dont_touch": {
+      "blockers": [
+        "finite-type-obstruction",
+        "foreign-source-code"
+      ],
+      "foreign_code_lines": 12,
+      "finite_type_assignment": false,
+      "checked_type_of_extension": false,
+      "checked_occurrences": 0,
+      "empty_finite_domains": 1
+    },
+    "farming": {
+      "blockers": [
+        "finite-type-obstruction"
+      ],
+      "foreign_code_lines": 0,
+      "finite_type_assignment": false,
+      "checked_type_of_extension": false,
+      "checked_occurrences": 0,
+      "empty_finite_domains": 2
+    },
+    "fizzbuzz": {
+      "blockers": [
+        "foreign-source-code"
+      ],
+      "foreign_code_lines": 9,
+      "finite_type_assignment": true,
+      "checked_type_of_extension": true,
+      "checked_occurrences": 354,
+      "empty_finite_domains": 0
+    },
+    "freeforall": {
+      "blockers": [
+        "foreign-source-code"
+      ],
+      "foreign_code_lines": 1,
+      "finite_type_assignment": true,
+      "checked_type_of_extension": true,
+      "checked_occurrences": 822,
+      "empty_finite_domains": 0
+    },
+    "gt_attrition": {
+      "blockers": [
+        "foreign-source-code"
+      ],
+      "foreign_code_lines": 2,
+      "finite_type_assignment": true,
+      "checked_type_of_extension": true,
+      "checked_occurrences": 257,
+      "empty_finite_domains": 0
+    },
+    "gt_centipede": {
+      "blockers": [
+        "foreign-source-code"
+      ],
+      "foreign_code_lines": 4,
+      "finite_type_assignment": true,
+      "checked_type_of_extension": true,
+      "checked_occurrences": 263,
+      "empty_finite_domains": 0
+    },
+    "gt_ultimatum": {
+      "blockers": [
+        "foreign-source-code"
+      ],
+      "foreign_code_lines": 1,
+      "finite_type_assignment": true,
+      "checked_type_of_extension": true,
+      "checked_occurrences": 540,
+      "empty_finite_domains": 0
+    },
+    "horseshoe": {
+      "blockers": [
+        "no-live-gdl",
+        "foreign-source-code"
+      ],
+      "foreign_code_lines": 18,
+      "finite_type_assignment": true,
+      "checked_type_of_extension": true,
+      "checked_occurrences": 0,
+      "empty_finite_domains": 0
+    },
+    "hunter": {
+      "blockers": [
+        "foreign-source-code"
+      ],
+      "foreign_code_lines": 10,
+      "finite_type_assignment": true,
+      "checked_type_of_extension": true,
+      "checked_occurrences": 537,
+      "empty_finite_domains": 0
+    },
+    "knights_tour": {
+      "blockers": [
+        "foreign-source-code"
+      ],
+      "foreign_code_lines": 21,
+      "finite_type_assignment": true,
+      "checked_type_of_extension": true,
+      "checked_occurrences": 594,
+      "empty_finite_domains": 0
+    },
+    "leafy": {
+      "blockers": [
+        "foreign-source-code"
+      ],
+      "foreign_code_lines": 14,
+      "finite_type_assignment": true,
+      "checked_type_of_extension": true,
+      "checked_occurrences": 243,
+      "empty_finite_domains": 0
+    },
+    "lightboard": {
+      "blockers": [
+        "foreign-source-code"
+      ],
+      "foreign_code_lines": 4,
+      "finite_type_assignment": true,
+      "checked_type_of_extension": true,
+      "checked_occurrences": 258,
+      "empty_finite_domains": 0
+    },
+    "rainbow": {
+      "blockers": [
+        "foreign-source-code"
+      ],
+      "foreign_code_lines": 10,
+      "finite_type_assignment": true,
+      "checked_type_of_extension": true,
+      "checked_occurrences": 173,
+      "empty_finite_domains": 0
+    },
+    "sukoshi": {
+      "blockers": [
+        "foreign-source-code"
+      ],
+      "foreign_code_lines": 3,
+      "finite_type_assignment": true,
+      "checked_type_of_extension": true,
+      "checked_occurrences": 244,
+      "empty_finite_domains": 0
+    },
+    "tictactoe": {
+      "blockers": [
+        "foreign-source-code"
+      ],
+      "foreign_code_lines": 1,
+      "finite_type_assignment": true,
+      "checked_type_of_extension": true,
+      "checked_occurrences": 372,
+      "empty_finite_domains": 0
+    },
+    "tiger_vs_dogs": {
+      "blockers": [
+        "finite-type-obstruction",
+        "foreign-source-code"
+      ],
+      "foreign_code_lines": 1,
+      "finite_type_assignment": false,
+      "checked_type_of_extension": false,
+      "checked_occurrences": 0,
+      "empty_finite_domains": 36
+    },
+    "walkabout": {
+      "blockers": [
+        "foreign-source-code"
+      ],
+      "foreign_code_lines": 3,
+      "finite_type_assignment": true,
+      "checked_type_of_extension": true,
+      "checked_occurrences": 279,
+      "empty_finite_domains": 0
+    }
+  }
+}

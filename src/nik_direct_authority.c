@@ -16,12 +16,46 @@ static bool direct_digest_is_sha256(const char *digest) {
     return true;
 }
 
-static bool direct_string_is_one_of(
-    const char *value, const char *const *allowed, size_t allowed_count) {
-    if (!value) return false;
-    for (size_t index = 0u; index < allowed_count; index++)
-        if (strcmp(value, allowed[index]) == 0) return true;
-    return false;
+bool cetta_nik_outcome_v1_is_valid(CettaNikOutcomeV1 outcome) {
+    return outcome >= CETTA_NIK_OUTCOME_ESTABLISHED &&
+           outcome <= CETTA_NIK_OUTCOME_INCOMPLETE;
+}
+
+bool cetta_nik_result_v1_is_valid(CettaNikResultV1 result) {
+    if (result.kind == CETTA_NIK_RESULT_OUTCOME)
+        return cetta_nik_outcome_v1_is_valid(result.value.outcome);
+    return result.kind == CETTA_NIK_RESULT_ENGINE_FAULT &&
+           result.value.fault == CETTA_NIK_ENGINE_FAULT_UNAVAILABLE;
+}
+
+CettaNikResultV1 cetta_nik_result_v1_outcome(CettaNikOutcomeV1 outcome) {
+    return (CettaNikResultV1){
+        .kind = CETTA_NIK_RESULT_OUTCOME,
+        .value.outcome = outcome,
+    };
+}
+
+CettaNikResultV1 cetta_nik_result_v1_engine_fault(
+    CettaNikEngineFaultV1 fault) {
+    return (CettaNikResultV1){
+        .kind = CETTA_NIK_RESULT_ENGINE_FAULT,
+        .value.fault = fault,
+    };
+}
+
+bool cetta_nik_outcome_v1_status(
+    CettaNikOutcomeV1 outcome, CettaNikStatusV1 *status_out) {
+    if (!status_out || !cetta_nik_outcome_v1_is_valid(outcome))
+        return false;
+    if (outcome == CETTA_NIK_OUTCOME_ESTABLISHED)
+        *status_out = CETTA_NIK_STATUS_ESTABLISHED;
+    else if (outcome == CETTA_NIK_OUTCOME_REFUTED)
+        *status_out = CETTA_NIK_STATUS_REFUTED;
+    else if (outcome == CETTA_NIK_OUTCOME_INCOMPLETE)
+        *status_out = CETTA_NIK_STATUS_INCOMPLETE;
+    else
+        *status_out = CETTA_NIK_STATUS_UNDETERMINED;
+    return true;
 }
 
 bool cetta_nik_direct_authority_v1_is_valid(
@@ -40,14 +74,6 @@ bool cetta_nik_direct_authority_v1_is_valid(
 
 bool cetta_nik_direct_source_binding_v1_is_valid(
     const CettaNikDirectSourceBindingV1 *binding) {
-    static const char *const modes[] = {
-        "direct-decision", "native-proof", "admitted-operation",
-        "boundary-certificate"};
-    static const char *const projections[] = {
-        "pending", "qualified", "derived"};
-    static const char *const statuses[] = {
-        "AUTHORED_FRAGMENT", "COMPLETE_PRESENTATION",
-        "GENERATED_PROJECTION"};
     return binding &&
            cetta_nik_direct_authority_v1_is_valid(binding->authority) &&
            binding->schema_id && binding->schema_id[0] != '\0' &&
@@ -55,26 +81,10 @@ bool cetta_nik_direct_source_binding_v1_is_valid(
            binding->semantic_scope && binding->semantic_scope[0] != '\0' &&
            direct_digest_is_sha256(binding->source_sha256) &&
            direct_digest_is_sha256(binding->package_sha256) &&
-           direct_string_is_one_of(binding->mode, modes, 4u) &&
-           binding->certificate_policy &&
-           binding->certificate_policy[0] != '\0' &&
-           binding->fiber && binding->fiber[0] != '\0' &&
-           binding->default_outcome && binding->default_outcome[0] != '\0' &&
-           direct_string_is_one_of(
-               binding->native_projection, projections, 3u) &&
-           direct_string_is_one_of(
-               binding->presentation_status, statuses, 3u) &&
-           (strcmp(binding->mode, "direct-decision") != 0 ||
-            strcmp(binding->certificate_policy, "none") == 0) &&
            (binding->coverage ==
                 CETTA_NIK_DIRECT_SOURCE_AUTHORED_FRAGMENT ||
             binding->coverage ==
-                CETTA_NIK_DIRECT_SOURCE_COMPLETE_PRESENTATION) &&
-           ((binding->coverage == CETTA_NIK_DIRECT_SOURCE_AUTHORED_FRAGMENT &&
-             strcmp(binding->presentation_status, "AUTHORED_FRAGMENT") == 0) ||
-            (binding->coverage ==
-                 CETTA_NIK_DIRECT_SOURCE_COMPLETE_PRESENTATION &&
-             strcmp(binding->presentation_status, "AUTHORED_FRAGMENT") != 0));
+                CETTA_NIK_DIRECT_SOURCE_COMPLETE_PRESENTATION);
 }
 
 bool cetta_nik_direct_authority_v1_stamp(
@@ -136,6 +146,29 @@ bool cetta_nik_direct_authority_v1_token(
     token->length = (uint8_t)(
         CETTA_NIK_DIRECT_AUTHORITY_TOKEN_BASE_WORDS + mutable_length);
     return true;
+}
+
+bool cetta_nik_direct_authority_v1_token_from_sha256(
+    const CettaNikDirectAuthorityV1 *authority,
+    const char digest[65],
+    uint32_t policy_identity,
+    CettaNikDirectAuthorityTokenV1 *token) {
+    CettaNikDirectAuthorityTokenV1 suffix = {.length = 4u};
+    if (!direct_digest_is_sha256(digest) || !token)
+        return false;
+    for (size_t word_index = 0u; word_index < 4u; word_index++) {
+        uint64_t word = 0u;
+        for (size_t digit_index = 0u; digit_index < 16u; digit_index++) {
+            char digit = digest[word_index * 16u + digit_index];
+            uint8_t value = digit >= '0' && digit <= '9'
+                ? (uint8_t)(digit - '0')
+                : (uint8_t)(digit - 'a' + 10);
+            word = (word << 4u) | value;
+        }
+        suffix.words[word_index] = word;
+    }
+    return cetta_nik_direct_authority_v1_token(
+        authority, policy_identity, &suffix, token);
 }
 
 bool cetta_nik_direct_authority_token_v1_equal(

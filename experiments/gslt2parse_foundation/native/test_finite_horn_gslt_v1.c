@@ -28,19 +28,6 @@ static const char CORE_QUOTED[] =
     "(q-cons (q-rule (q-sym r) "
     "(q-app (q-sym p) (q-cons (q-var q-zero) q-nil)) q-nil) q-nil)";
 
-static const char FRAMED[] =
-    "(gslt-presentation-v1 FramedV1 "
-    "(nik-authority-frame-v1 "
-    "(mode direct-decision) (certificate-policy none) "
-    "(fiber sample-language) "
-    "(outcome-algebra (Accepted Rejected) (exclusive) (default Rejected)) "
-    "(native-projection pending) (status AUTHORED_FRAGMENT) "
-    "(commitments direct-computation certificate-free)) "
-    "(signature (operator probe 1)) (equations) "
-    "(rewrites (rule probe-a "
-    "(nik-rule-frame-v1 (native-projection native-probe) (role calculus)) "
-    "(head (probe a)) (body))))";
-
 static bool load_strings(const char *const *texts,
                          const char *const *sources,
                          size_t count,
@@ -357,61 +344,6 @@ static bool local_canaries(size_t *passed) {
     }
     (*passed)++;
 
-    const char *framed_texts[] = {FRAMED};
-    const char *framed_sources[] = {"framed"};
-    FHGSLTPackage *framed_package = NULL;
-    error[0] = '\0';
-    if (!load_strings(framed_texts,
-                      framed_sources,
-                      1u,
-                      &framed_package,
-                      error) ||
-        fhgslt_package_presentation_count(framed_package) != 1u ||
-        fhgslt_package_rule_count(framed_package) != 1u) {
-        fprintf(stderr, "framed authority failed admission: %s\n", error);
-        fhgslt_package_free(framed_package);
-        return false;
-    }
-    uint8_t *framed_canonical = NULL;
-    size_t framed_canonical_len = 0u;
-    if (!fhgslt_package_canonical_presentation(framed_package,
-                                               0u,
-                                               &framed_canonical,
-                                               &framed_canonical_len,
-                                               error,
-                                               sizeof(error)) ||
-        count_bytes(framed_canonical,
-                    framed_canonical_len,
-                    "(fiber sample-language)") != 1u ||
-        count_bytes(framed_canonical,
-                    framed_canonical_len,
-                    "(role calculus)") != 1u) {
-        fprintf(stderr, "framed authority metadata was not canonical: %s\n", error);
-        free(framed_canonical);
-        fhgslt_package_free(framed_package);
-        return false;
-    }
-    free(framed_canonical);
-    (*passed)++;
-
-    uint8_t *framed_quoted = NULL;
-    size_t framed_quoted_len = 0u;
-    if (!fhgslt_package_quoted_rules(framed_package,
-                                     0u,
-                                     &framed_quoted,
-                                     &framed_quoted_len,
-                                     error,
-                                     sizeof(error)) ||
-        count_bytes(framed_quoted, framed_quoted_len, "nik-") != 0u) {
-        fprintf(stderr, "authority metadata leaked into executable rules: %s\n", error);
-        free(framed_quoted);
-        fhgslt_package_free(framed_package);
-        return false;
-    }
-    free(framed_quoted);
-    fhgslt_package_free(framed_package);
-    (*passed)++;
-
     struct Rejection {
         const char *label;
         const char *text;
@@ -450,50 +382,6 @@ static bool local_canaries(size_t *passed) {
          "(gslt-presentation-v1 Bad (signature (operator p 1)) "
          "(equations) (rewrites "
          "(rule r (head (p abc\"def\")) (body))))"},
-        {"framed-direct-certificate",
-         "(gslt-presentation-v1 Bad "
-         "(nik-authority-frame-v1 (mode direct-decision) "
-         "(certificate-policy trace) (fiber sample-language) "
-         "(outcome-algebra (Accepted Rejected) (exclusive) "
-         "(default Rejected)) (native-projection pending) "
-         "(status AUTHORED_FRAGMENT) (commitments)) "
-         "(signature) (equations) (rewrites))"},
-        {"framed-missing-fiber",
-         "(gslt-presentation-v1 Bad "
-         "(nik-authority-frame-v1 (mode direct-decision) "
-         "(certificate-policy none) "
-         "(outcome-algebra (Accepted Rejected) (exclusive) "
-         "(default Rejected)) (native-projection pending) "
-         "(status AUTHORED_FRAGMENT) (commitments)) "
-         "(signature) (equations) (rewrites))"},
-        {"framed-default-outside-algebra",
-         "(gslt-presentation-v1 Bad "
-         "(nik-authority-frame-v1 (mode direct-decision) "
-         "(certificate-policy none) (fiber sample-language) "
-         "(outcome-algebra (Accepted Rejected) (exclusive) "
-         "(default Missing)) (native-projection pending) "
-         "(status AUTHORED_FRAGMENT) (commitments)) "
-         "(signature) (equations) (rewrites))"},
-        {"framed-missing-rule-frame",
-         "(gslt-presentation-v1 Bad "
-         "(nik-authority-frame-v1 (mode direct-decision) "
-         "(certificate-policy none) (fiber sample-language) "
-         "(outcome-algebra (Accepted Rejected) (exclusive) "
-         "(default Rejected)) (native-projection pending) "
-         "(status AUTHORED_FRAGMENT) (commitments)) "
-         "(signature (operator probe 1)) (equations) "
-         "(rewrites (rule probe-a (head (probe a)) (body))))"},
-        {"framed-unsupported-rule-role",
-         "(gslt-presentation-v1 Bad "
-         "(nik-authority-frame-v1 (mode direct-decision) "
-         "(certificate-policy none) (fiber sample-language) "
-         "(outcome-algebra (Accepted Rejected) (exclusive) "
-         "(default Rejected)) (native-projection pending) "
-         "(status AUTHORED_FRAGMENT) (commitments)) "
-         "(signature (operator probe 1)) (equations) "
-         "(rewrites (rule probe-a (nik-rule-frame-v1 "
-         "(native-projection native-probe) (role observation)) "
-         "(head (probe a)) (body))))"},
     };
     for (size_t index = 0u;
          index < sizeof(rejections) / sizeof(rejections[0]);
@@ -709,7 +597,7 @@ int main(int argc, char **argv) {
     size_t passed = 0u;
     if (!local_canaries(&passed) || !external_package(argc, argv, &passed))
         return 1;
-    size_t expected = argc == 1 ? 30u : 31u;
+    size_t expected = argc == 1 ? 23u : 24u;
     if (passed != expected) {
         fprintf(stderr,
                 "canary accounting mismatch: expected %zu, got %zu\n",

@@ -1,0 +1,7 @@
+[()]
+[()]
+[1]
+[(MIL:BenchV1 (Name hopper-encryption-native) (Mode (native-hyp (candidate-bag exact) (proof-relevant True) (relator list) (source hopper-table-1-encryption))) (CandidatesGenerated 81) (CandidatesChecked 81) (Established 2) (Refuted 79) (Undetermined 0) (Incomplete 0) (SafeFrontier 2) (ExampleChecked 2) (ExampleConsistent 1) (CountConserved True) (TraceConserved True) (TypedProducerEqualsSafeFrontier True))]
+[(quote (hyp:chain hopper:encryption:sort hopper:encryption:primitive hopper:encryption:char-sort hopper:encryption:num-sort hopper:encryption:char-sort (hyp:primitive hopper:encryption:sort hopper:encryption:primitive hopper:encryption:char-sort hopper:encryption:num-sort hopper:encryption:encode-symbol) (hyp:chain hopper:encryption:sort hopper:encryption:primitive hopper:encryption:num-sort hopper:encryption:num-sort hopper:encryption:char-sort (hyp:primitive hopper:encryption:sort hopper:encryption:primitive hopper:encryption:num-sort hopper:encryption:num-sort hopper:encryption:predecessor-symbol) (hyp:chain hopper:encryption:sort hopper:encryption:primitive hopper:encryption:num-sort hopper:encryption:num-sort hopper:encryption:char-sort (hyp:primitive hopper:encryption:sort hopper:encryption:primitive hopper:encryption:num-sort hopper:encryption:num-sort hopper:encryption:predecessor-symbol) (hyp:primitive hopper:encryption:sort hopper:encryption:primitive hopper:encryption:num-sort hopper:encryption:char-sort hopper:encryption:decode-symbol)))))]
+[True]
+[1]

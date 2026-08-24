@@ -2,7 +2,6 @@
 (: CorrNat Type)
 (: CorrZ CorrNat)
 (= (corr:omega) (corr:omega))
-(= (corr:status (PrimeVerdict $status $_judgment $_evidence)) $status)
 (= (corr:id $x) $x)
 (= (corr:dup $x) (Pair $x $x))
 (= (corr:ignore-empty $x) kept-empty)
@@ -35,7 +34,5 @@
 !(get-state &corr:counter)
 
 ; Same explicit producer budget and demanded divergence as the ABT route.
-!(corr:status
-   (prime-judge &self
-     (Must (PrimeEvaluate (corr:id (corr:omega))) CorrNat)
-     40))
+!(case (type:must (corr:id (corr:omega)) CorrNat 40)
+   ((True Established) (False Refuted) ($other Incomplete)))

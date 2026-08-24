@@ -36,8 +36,22 @@
 (= (synth-r1)
   (compile:link-rule (synth-r0) r1 (blackbird-block)))
 
+(= (identity-number-block)
+  (rm-block identity-number SynthesizeTest.metta:identity-number
+    (rm-proof-atom identity-number) rm-nil (arrow Number Number)))
+
+(= (identity-bool-block)
+  (rm-block identity-bool SynthesizeTest.metta:identity-bool
+    (rm-proof-atom identity-bool) rm-nil (arrow Bool Bool)))
+
+(= (synth-r2)
+  (compile:link-package
+    (synth-r0) r2
+    (rm-package (identity-number-block) (identity-bool-block))))
+
 !(compile:artifact-info (synth-r0))
 !(compile:artifact-info (synth-r1))
+!(compile:artifact-info (synth-r2))
 
 ; Negative and positive dynamic-publication witnesses.
 !(compile:run (synth-r0) 2 10000 100 (arrow String Number Number))
@@ -48,6 +62,10 @@
 
 ; A separate composition rule uses the same bytecode machine.
 !(compile:run (synth-r0) 2 10000 100 (arrow Number Bool))
+
+; A finite revision delta is published atomically and leaves r0 unchanged.
+!(compile:run (synth-r2) 0 10000 100 (arrow Number Number))
+!(compile:run (synth-r0) 0 10000 100 (arrow Number Number))
 
 ; Fail-closed malformed input example.
 !(compile:rule-package broken (rm-package (not-a-block x)))

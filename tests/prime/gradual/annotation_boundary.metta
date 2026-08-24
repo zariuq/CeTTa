@@ -13,15 +13,8 @@
    (let $_receipt (add-atom &prime-grad:effects prime-grad:tick)
      7))
 
-(= (prime-grad:status $label
-      (PrimeVerdict $status $judgment $evidence))
-   ($label $status))
-
-!(prime-grad:status ValidAnnotation
-   (prime-judge &self (Check (prime-grad:twice 21) Number)))
-!(prime-grad:status InvalidAnnotation
-   (prime-judge &self
-     (Must (PrimeEvaluate (prime-grad:wrong-result)) String)))
+!(type:check (prime-grad:twice 21) Number)
+!(type:must (prime-grad:wrong-result) String)
 !(prime-grad:overloaded-result)
 !(count-atoms &prime-grad:effects)
 ; Keep the intentional type error last: top-level errors terminate the
