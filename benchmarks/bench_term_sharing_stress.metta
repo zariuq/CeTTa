@@ -7,7 +7,11 @@
 ; larger workload.
 ;
 ; Usage:
-;   ./cetta --emit-runtime-stats benchmarks/bench_term_sharing_stress.metta
+;   make bench-term-sharing
+;
+; This benchmark requires a runtime-stats build and the he-extended profile.
+; Its shell runner enforces both conditions and checks the stable semantic
+; oracle in bench_term_sharing_stress.expected.
 ;
 ; =============================================================================
 
@@ -36,10 +40,17 @@
 
 !(bind! &stats1 (runtime-stats!))
 
-!(println! (space-len &dedup-space))
+!(println! (term-sharing-space-len (space-len &dedup-space)))
 !(println! (match &stats1 (runtime-counter hashcons-hit $n) (hashcons-hit $n)))
 !(println! (match &stats1 (runtime-counter hashcons-attempt $n) (hashcons-attempt $n)))
 !(assertEqual (space-len &dedup-space) 1)
+!(assertEqualToResult
+   (match &stats1 (runtime-counter hashcons-hit $n) (> $n 0))
+   (True))
+!(assertEqualToResult
+   (match &stats1 (runtime-counter hashcons-attempt $n) (> $n 0))
+   (True))
+!(println! "PASS: deep exact sharing")
 
 ; =============================================================================
 ; Test 2: Multi-Space Sharing
@@ -57,6 +68,10 @@
 
 !(println! (match &stats2 (runtime-counter hashcons-hit $n) (hashcons-hit $n)))
 !(println! (match &stats2 (runtime-counter hashcons-attempt $n) (hashcons-attempt $n)))
+!(assertEqualToResult
+   (match &stats2 (runtime-counter hashcons-hit $n) (> $n 0))
+   (True))
+!(println! "PASS: cross-space exact sharing")
 
 ; =============================================================================
 ; Test 3: Pattern Instantiation Sharing
@@ -84,6 +99,10 @@
 
 !(println! (match &stats3 (runtime-counter hashcons-hit $n) (hashcons-hit $n)))
 !(println! (match &stats3 (runtime-counter hashcons-attempt $n) (hashcons-attempt $n)))
+!(assertEqualToResult
+   (match &stats3 (runtime-counter hashcons-hit $n) (> $n 0))
+   (True))
+!(println! "PASS: instantiated wrapper sharing")
 
 ; =============================================================================
 ; Test 4: Recursive Production Sharing
@@ -103,6 +122,10 @@
 
 !(println! (match &stats4 (runtime-counter hashcons-hit $n) (hashcons-hit $n)))
 !(println! (match &stats4 (runtime-counter hashcons-attempt $n) (hashcons-attempt $n)))
+!(assertEqualToResult
+   (match &stats4 (runtime-counter hashcons-hit $n) (> $n 0))
+   (True))
+!(println! "PASS: recursive production sharing")
 
 ; =============================================================================
 ; Test 5: Ground Value Sharing
@@ -122,9 +145,13 @@
 !(add-ground-n-times &ground-space 42 100)
 !(bind! &stats5 (runtime-stats!))
 
-!(println! (space-len &ground-space))
+!(println! (term-sharing-space-len (space-len &ground-space)))
 !(println! (match &stats5 (runtime-counter hashcons-hit $n) (hashcons-hit $n)))
 !(assertEqual (space-len &ground-space) 1)
+!(assertEqualToResult
+   (match &stats5 (runtime-counter hashcons-hit $n) (> $n 0))
+   (True))
+!(println! "PASS: ground value sharing")
 
 ; =============================================================================
 ; Test 6: Layer 3 Placeholder
@@ -148,6 +175,13 @@
                      (term-universe-hit $n)))
 !(println! (match &stats6 (runtime-counter term-universe-insert $n)
                      (term-universe-insert $n)))
+!(assertEqualToResult
+   (match &stats6 (runtime-counter term-universe-lookup $n) (> $n 0))
+   (True))
+!(assertEqualToResult
+   (match &stats6 (runtime-counter term-universe-hit $n) (> $n 0))
+   (True))
+!(println! "PASS: alpha-equivalent terms reuse canonical identities")
 
 ; =============================================================================
 ; Summary
@@ -161,7 +195,4 @@
 !(println! "- Test 3: wrapper structure should begin sharing")
 !(println! "- Test 4: repeated production should show meaningful hashcons activity")
 !(println! "- Test 5: ground value sharing should dedup repeated values")
-!(println! "- Test 6: alpha-equivalent var sharing is still a Layer 3 target")
-!(println! "")
-!(println! "LAYER 3 TARGET:")
-!(println! "- term-universe-hit should become >0 for alpha-equivalent vars")
+!(println! "- Test 6: alpha-equivalent terms should reuse canonical identities")
