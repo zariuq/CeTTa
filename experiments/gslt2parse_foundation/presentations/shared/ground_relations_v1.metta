@@ -3,6 +3,10 @@
 
 (gslt-presentation-v1 GroundRelationsV1
   (signature
-    (operator different 2))
+    (operator different 2)
+    (operator oslf-external-relation-decl-v1 2))
   (equations)
-  (rewrites))
+  (rewrites
+    (rule ground-different-capability-v1
+      (head (oslf-external-relation-decl-v1 different 2))
+      (body))))

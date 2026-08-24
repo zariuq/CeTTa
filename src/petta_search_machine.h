@@ -542,6 +542,11 @@ typedef struct {
     uint64_t choice_binding_collections;
     uint64_t choice_binding_items_discarded;
     uint64_t choice_trail_entries_discarded;
+    uint64_t choice_nursery_evacuations;
+    uint64_t choice_nursery_evacuation_elapsed_ns;
+    uint64_t choice_nursery_goal_roots_scanned;
+    uint64_t choice_nursery_bytes_evacuated;
+    uint64_t choice_nursery_bytes_reclaimed;
     uint64_t choice_heap_resets;
     uint64_t choice_heap_bytes_reclaimed;
     uint64_t table_lookups;

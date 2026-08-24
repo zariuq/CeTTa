@@ -15,6 +15,12 @@ typedef struct {
 } CettaGsltFiniteFactSpanV1;
 
 typedef struct {
+    const CettaGsltProviderRequirementV1 *requirement;
+    Atom *const *rows;
+    size_t row_count;
+} CettaGsltFiniteFactRelationViewV1;
+
+typedef struct {
     uint64_t queries;
     uint64_t indexed_queries;
     uint64_t rows_considered;
@@ -50,6 +56,17 @@ cetta_gslt_finite_fact_provider_set_registry_v1(
 
 size_t cetta_gslt_finite_fact_provider_set_row_count_v1(
     const CettaGsltFiniteFactProviderSetV1 *set);
+
+/* Borrow a relation inventory view from the validated provider set.  The
+ * requirement and rows remain owned by their original inputs and the set;
+ * the view is valid only while both remain alive. */
+size_t cetta_gslt_finite_fact_provider_set_relation_count_v1(
+    const CettaGsltFiniteFactProviderSetV1 *set);
+
+bool cetta_gslt_finite_fact_provider_set_relation_view_v1(
+    const CettaGsltFiniteFactProviderSetV1 *set,
+    size_t relation_index,
+    CettaGsltFiniteFactRelationViewV1 *view);
 
 /* Read cumulative, thread-safe discrimination-index counters.  Counters are
  * observational only; overflow saturates and never affects provider meaning. */

@@ -317,6 +317,7 @@ void ppguard_relation_v1_init(PPGuardRelationV1 *relation) {
         return;
     memset(relation, 0, sizeof(*relation));
     arena_init(&relation->arena);
+    arena_set_hashcons(&relation->arena, NULL);
 }
 
 void ppguard_relation_v1_free(PPGuardRelationV1 *relation) {
@@ -661,15 +662,21 @@ static bool ppguard_relation_v1_build_impl(
             goto done;
         }
         if (atom_storage == PPGUARD_RELATION_V1_ATOMS_BORROWED &&
-            (!ppguard_relation_v1_owner_has_active_range(
-                 atom_owners, atom_owner_len,
-                 match->value, sizeof(*match->value)) ||
-             !ppguard_relation_v1_owner_has_active_range(
-                 atom_owners, atom_owner_len,
-                 match->proof, sizeof(*match->proof)))) {
+            !ppguard_relation_v1_owner_has_active_range(
+                atom_owners, atom_owner_len,
+                match->value, sizeof(*match->value))) {
             ppguard_relation_v1_set_error(
                 error_buf, error_buf_size,
-                "positive guard value or proof is outside declared Atom owners");
+                "positive guard value is outside declared Atom owners");
+            goto done;
+        }
+        if (atom_storage == PPGUARD_RELATION_V1_ATOMS_BORROWED &&
+            !ppguard_relation_v1_owner_has_active_range(
+                atom_owners, atom_owner_len,
+                match->proof, sizeof(*match->proof))) {
+            ppguard_relation_v1_set_error(
+                error_buf, error_buf_size,
+                "positive guard proof is outside declared Atom owners");
             goto done;
         }
         canonical->match = *match;

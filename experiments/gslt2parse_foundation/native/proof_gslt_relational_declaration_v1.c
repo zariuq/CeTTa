@@ -1749,6 +1749,7 @@ ppproof_gslt_relational_prepared_assertion_v1_build_with_workspace(
                     .template_sequence =
                         schema->essentials[ordered->schema_index]
                             .template_sequence,
+                    .actual_sequence = actual->formula,
                     .actual_proof = actual->proof,
                 };
         } else {

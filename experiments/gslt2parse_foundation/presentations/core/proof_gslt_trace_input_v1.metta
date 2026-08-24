@@ -12,23 +12,38 @@
     (operator ProofTraceInputAcceptIncompleteNormalV1 2)
     (operator ProofTraceInputVerifyCompressedV1 4)
     (operator ProofTraceInputVerifyNormalV1 2)
+    (operator ProofTokenApartDecisionV1 3)
+    (operator ProofTokenClassV1 2)
+    (operator ProofTokenCompareV1 3)
     (operator source-proof-trace-input-apartness-count-v1 2)
     (operator source-proof-trace-input-apartness-v1 4)
     (operator source-proof-trace-input-assertion-v1 3)
     (operator source-proof-trace-input-context-count-v1 2)
     (operator source-proof-trace-input-context-v1 3)
     (operator source-proof-trace-input-current-apart-v1 2)
+    (operator source-proof-trace-input-current-apart-decision-v1 3)
     (operator source-proof-trace-input-frame-count-v1 2)
     (operator source-proof-trace-input-frame-v1 3)
     (operator source-proof-trace-input-label-different-v1 2)
     (operator source-proof-trace-input-push-label-v1 3)
     (operator source-proof-trace-input-request-v1 2)
     (operator source-proof-trace-input-token-different-v1 2)
+    (operator source-proof-trace-input-token-class-v1 2)
+    (operator source-proof-trace-input-token-compare-v1 3)
     (operator source-proof-trace-input-token-literal-v1 1)
     (operator source-proof-trace-input-token-variable-v1 1)
   )
   (equations)
   (rewrites
+    (rule proof-trace-input-token-class-v1
+      (head (ProofTokenClassV1 ?token ?class))
+      (body
+        (source-proof-trace-input-token-class-v1 ?token ?class)))
+    (rule proof-trace-input-token-compare-v1
+      (head (ProofTokenCompareV1 ?left ?right ?comparison))
+      (body
+        (source-proof-trace-input-token-compare-v1
+          ?left ?right ?comparison)))
     (rule proof-trace-input-token-literal-v1
       (head (ProofTokenLiteralV1 ?token))
       (body
@@ -44,11 +59,18 @@
     (rule proof-trace-input-current-apart-forward-v1
       (head (ProofTokenApartV1 ?left ?right))
       (body
-        (source-proof-trace-input-current-apart-v1 ?left ?right)))
+        (ProofTokenApartDecisionV1
+          ?left ?right ProofTraceApartPresentV1)))
     (rule proof-trace-input-current-apart-reverse-v1
       (head (ProofTokenApartV1 ?right ?left))
       (body
         (source-proof-trace-input-current-apart-v1 ?left ?right)))
+    (rule proof-trace-input-current-apart-decision-v1
+      (head
+        (ProofTokenApartDecisionV1 ?left ?right ?decision))
+      (body
+        (source-proof-trace-input-current-apart-decision-v1
+          ?left ?right ?decision)))
 
     (rule proof-trace-input-build-context-nil-v1
       (head
@@ -121,21 +143,6 @@
           ?label ProofTraceNatZeroV1 ?apartness-count ?apartness)))
     (rule proof-trace-input-assertion-declared-v1
       (head (ProofAssertionDeclaredV1 ?assertion))
-      (body
-        (ProofTraceInputAssertionV1 ?label ?assertion ?frame)))
-
-    (rule proof-trace-input-push-instruction-v1
-      (head
-        (source-proof-trace-label-instruction-v1
-          ?label (ProofTracePushV1 ?formula)))
-      (body
-        (source-proof-trace-input-request-v1 ?request ?target)
-        (source-proof-trace-input-push-label-v1
-          ?request ?label ?formula)))
-    (rule proof-trace-input-apply-instruction-v1
-      (head
-        (source-proof-trace-label-instruction-v1
-          ?label (ProofTraceApplyV1 ?assertion ?frame)))
       (body
         (ProofTraceInputAssertionV1 ?label ?assertion ?frame)))
 

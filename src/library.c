@@ -3349,6 +3349,56 @@ static Atom *cetta_library_dispatch_rhometta(const CettaLibraryContext *ctx,
         return result;
     }
 
+    if (head->sym_id == g_builtin_syms.lib_rhometta_run_canonical) {
+        RhoRuntimeProfile profile = {
+            .scheduler_policy = RHO_SCHEDULER_CANONICAL,
+            .reduction_limit = 100000u,
+            .thread_count = 1u,
+            .threaded = false,
+        };
+        RhoReductionResult reduction;
+        if (nargs != 1) {
+            return library_signature_error(
+                a, head, args, nargs, "expected one rhometta process");
+        }
+        if (!rhocalc_process_well_formed_with_eval_payloads(args[0])) {
+            detail = rhocalc_last_validation_error();
+            return atom_error(
+                a, library_call_expr(a, head, args, nargs),
+                atom_string(a, detail ? detail
+                                      : "expected rhometta process"));
+        }
+        if (!rhocalc_reduce_to_quiescence_with_eval_context(
+                a, args[0], &profile, &eval_context, &reduction)) {
+            detail = rhocalc_last_validation_error();
+            return atom_error(
+                a, library_call_expr(a, head, args, nargs),
+                atom_string(a, detail ? detail
+                                      : "canonical rhometta reduction failed"));
+        }
+        if (reduction.status == RHOCALC_REDUCTION_LIMIT_EXHAUSTED) {
+            return atom_error(
+                a, library_call_expr(a, head, args, nargs),
+                atom_string(a, "canonical rhometta reduction limit exhausted"));
+        }
+        return reduction.residual;
+    }
+
+    if (head->sym_id == g_builtin_syms.lib_rhometta_values) {
+        Atom *result;
+        if (nargs != 1) {
+            return library_signature_error(
+                a, head, args, nargs, "expected one rhometta residual");
+        }
+        result = rhocalc_observe_top_level_values(a, args[0]);
+        if (!result) {
+            return atom_error(
+                a, library_call_expr(a, head, args, nargs),
+                atom_string(a, "cannot inspect rhometta residual"));
+        }
+        return result;
+    }
+
     return NULL;
 }
 

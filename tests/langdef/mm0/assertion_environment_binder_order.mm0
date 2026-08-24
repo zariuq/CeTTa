@@ -1,0 +1,3 @@
+provable sort wff;
+term truth: wff;
+axiom bad_order (h: $ truth $) (ph: wff): $ ph $;

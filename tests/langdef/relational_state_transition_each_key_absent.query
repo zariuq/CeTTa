@@ -1,0 +1,38 @@
+(StateStepV1
+  TransitionPackageV1
+  (StateV1
+    TransitionPackageV1
+    NatZeroV1
+    NatZeroV1
+    (TablesConsV1 (TableV1 TransitionTableV1 EntriesNilV1) TablesNilV1))
+  TransitionGoodOccurrenceV1
+  (StateRequireEachKeyAbsentV1
+    TransitionRoleV1
+    TransitionTableV1
+    (NatSuccV1 NatZeroV1)
+    (StateRowConsV1 StateInputV1 StateRowNilV1))
+  AcceptedV1
+  (StateV1
+    TransitionPackageV1
+    NatZeroV1
+    NatZeroV1
+    (TablesConsV1 (TableV1 TransitionTableV1 EntriesNilV1) TablesNilV1))
+  (HistoryConsV1
+    (EnteredActionV1
+      (StateRequireEachKeyAbsentV1
+        TransitionRoleV1
+        TransitionTableV1
+        (NatSuccV1 NatZeroV1)
+        (StateRowConsV1 StateInputV1 StateRowNilV1))
+      TransitionGoodPositionV1)
+    (HistoryConsV1
+      (CheckedKeyAbsentV1 TransitionTableV1 (RowConsV1 NatZeroV1 RowNilV1))
+      (HistoryConsV1
+        (CheckedKeyAbsentV1
+          TransitionTableV1
+          (RowConsV1 (NatSuccV1 NatZeroV1) RowNilV1))
+        (HistoryConsV1
+          (CheckedKeyAbsentV1
+            TransitionTableV1
+            (RowConsV1 (NatSuccV1 (NatSuccV1 NatZeroV1)) RowNilV1))
+          HistoryNilV1)))))

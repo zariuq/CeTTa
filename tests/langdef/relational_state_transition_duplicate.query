@@ -1,0 +1,29 @@
+(RunActionsV1
+  TransitionPackageV1
+  TransitionDuplicateOccurrenceV1
+  (StateV1
+    TransitionPackageV1 NatZeroV1 NatZeroV1
+    (TablesConsV1
+      (TableV1 TransitionTableV1 EntriesNilV1)
+      TablesNilV1))
+  (ActionsConsV1
+    (StateRequirePairwiseDistinctV1 TransitionRoleV1)
+    (ActionsConsV1
+      (StateInsertAllPairsV1
+        TransitionRoleV1
+        TransitionTableV1
+        StateInsertOrRequireEqualV1)
+      ActionsNilV1))
+  (RefusedDuplicateValueV1
+    NatZeroV1 NatZeroV1
+    (NatSuccV1 (NatSuccV1 NatZeroV1)))
+  (StateV1
+    TransitionPackageV1 NatZeroV1 NatZeroV1
+    (TablesConsV1
+      (TableV1 TransitionTableV1 EntriesNilV1)
+      TablesNilV1))
+  (HistoryConsV1
+    (EnteredActionV1
+      (StateRequirePairwiseDistinctV1 TransitionRoleV1)
+      TransitionDuplicatePositionV1)
+    HistoryNilV1))

@@ -16,6 +16,8 @@ typedef struct {
     const char *name;
     Atom *start;
     const char *pack_relative;
+    bool parser_pack_expected_closed;
+    bool parser_pack_closure_set;
     const char *lock_relative;
     const char *program_source_relative;
     const char *program_relative;

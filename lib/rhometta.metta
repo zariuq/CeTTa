@@ -11,6 +11,8 @@
 
 (: rhometta:transitions (-> Atom %Undefined%))
 (: rhometta:run (-> Atom %Undefined%))
+(: rhometta:run-canonical (-> Atom %Undefined%))
+(: rhometta:values (-> Atom %Undefined%))
 (: rhometta:eval (-> Atom Atom))
 (: rhometta:trace-2 (-> Atom %Undefined%))
 (: rhometta:is-normal-form (-> Atom Bool))
@@ -28,6 +30,18 @@
     (@param "Rhometta process to reduce")))
   (@return "One or more quiescent Rhometta residuals"))
 
+(@doc rhometta:run-canonical
+  (@desc "Runs one canonical sequence of Rhometta COMM reductions to a residual. This avoids enumerating scheduler alternatives and is complete only when the process image is determinate or when one representative schedule is explicitly intended.")
+  (@params (
+    (@param "Rhometta process to reduce")))
+  (@return "One quiescent Rhometta residual, or an explicit reduction-limit error"))
+
+(@doc rhometta:values
+  (@desc "Projects the payload of every top-level inert rho:val component from a normalized Rhometta residual. Other residual processes remain unobserved.")
+  (@params (
+    (@param "Rhometta residual to observe")))
+  (@return "An occurrence-preserving list of inert payload values"))
+
 (@doc rhometta:eval
   (@desc "Builds an explicit deferred Rhometta payload without eagerly evaluating the enclosed MeTTa term at the interface.")
   (@params (
@@ -42,6 +56,12 @@
 
 (= (rhometta:run $state)
    (__cetta_lib_rhometta_run $state))
+
+(= (rhometta:run-canonical $state)
+   (__cetta_lib_rhometta_run_canonical $state))
+
+(= (rhometta:values $state)
+   (__cetta_lib_rhometta_values $state))
 
 (= (rhometta:trace-2 $state)
    (lts:trace-2 rhometta:transitions $state))

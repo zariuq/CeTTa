@@ -2343,6 +2343,10 @@ static bool ppproof_runtime_v1_compiled_audit(
     CettaGsltHornOutcome compiled_outcome = CETTA_GSLT_HORN_FAULT;
     size_t compiled_answer_count = 0u;
     uint64_t compiled_rule_attempts = 0u;
+    uint64_t compiled_states = 0u;
+    uint64_t compiled_pending_peak = 0u;
+    uint64_t compiled_state_bytes_peak = 0u;
+    uint32_t compiled_maximum_depth = 0u;
     bool agreed = false;
     bool executed;
 
@@ -2469,6 +2473,10 @@ static bool ppproof_runtime_v1_compiled_audit(
     compiled_outcome = result.outcome;
     compiled_answer_count = result.answer_count;
     compiled_rule_attempts = result.rule_attempts;
+    compiled_states = result.worklist_states_created;
+    compiled_pending_peak = result.worklist_pending_peak;
+    compiled_state_bytes_peak = result.worklist_state_bytes_peak;
+    compiled_maximum_depth = result.max_depth_observed;
     cetta_gslt_horn_result_free(&result);
     arena_free(&output);
     if (!executed)
@@ -2483,13 +2491,18 @@ static bool ppproof_runtime_v1_compiled_audit(
             error_buf, error_buf_size,
             "generated proof realizations disagree on %s: primary=%u "
             "primary-attempts=%llu primary-depth=%u compiled=%u "
-            "answers=%zu attempts=%llu",
+            "answers=%zu attempts=%llu compiled-depth=%u states=%llu "
+            "pending-peak=%llu state-bytes-peak=%llu",
             query_name, (unsigned)primary_outcome,
             (unsigned long long)(primary_stats
                 ? primary_stats->rule_attempts : 0u),
             primary_stats ? primary_stats->maximum_goal_depth : 0u,
             (unsigned)compiled_outcome, compiled_answer_count,
-            (unsigned long long)compiled_rule_attempts);
+            (unsigned long long)compiled_rule_attempts,
+            compiled_maximum_depth,
+            (unsigned long long)compiled_states,
+            (unsigned long long)compiled_pending_peak,
+            (unsigned long long)compiled_state_bytes_peak);
     }
     return true;
 }

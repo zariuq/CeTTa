@@ -1099,10 +1099,63 @@ int main(void) {
                        &effect_space, mutable_root, NULL) ==
                    CETTA_GSLT_QUERY_EFFECT_RELATIONAL_QUERY);
 
+            /* A generated program commonly has hundreds of relation heads.
+             * Retain every revision-pinned result beyond the old fixed memo
+             * size, then prove that a later mutation invalidates the full
+             * scalable table rather than reviving a stale pure judgment. */
+            enum { EFFECT_STRESS_HEADS = 257 };
+            SymbolId stress_heads[EFFECT_STRESS_HEADS];
+            for (size_t index = 0u;
+                 index < EFFECT_STRESS_HEADS; index++) {
+                char name[48];
+                int written = snprintf(
+                    name, sizeof(name), "effect-cache-stress-%zu", index);
+                assert(written > 0 && (size_t)written < sizeof(name));
+                stress_heads[index] = symbol_intern_cstr(g_symbols, name);
+                space_add(
+                    &effect_space,
+                    EFFECT_EQUATION1(
+                        stress_heads[index], x,
+                        EFFECT_CALL1(inert, x)));
+            }
+            for (size_t index = 0u;
+                 index < EFFECT_STRESS_HEADS; index++) {
+                assert(space_query_effect_for_head(
+                           &effect_space, stress_heads[index], NULL) ==
+                       CETTA_GSLT_QUERY_EFFECT_PURE);
+            }
+            space_add(
+                &effect_space,
+                EFFECT_EQUATION1(stress_heads[128u], x, match_body));
+            assert(space_query_effect_for_head(
+                       &effect_space, stress_heads[0u], NULL) ==
+                   CETTA_GSLT_QUERY_EFFECT_PURE);
+            assert(space_query_effect_for_head(
+                       &effect_space, stress_heads[128u], NULL) ==
+                   CETTA_GSLT_QUERY_EFFECT_RELATIONAL_QUERY);
+            assert(space_query_effect_for_head(
+                       &effect_space,
+                       stress_heads[EFFECT_STRESS_HEADS - 1u], NULL) ==
+                   CETTA_GSLT_QUERY_EFFECT_PURE);
+
 #undef EFFECT_EQUATION1
 #undef EFFECT_CALL1
             space_free(&effect_space);
         }
+
+        /* Removing the final exact equation must remove its head from the
+         * rebuilt presence index.  A wildcard remains conservative until it
+         * too is removed. */
+        assert(space_remove(&equation_space, source_equation));
+        assert(space_remove(&equation_space,
+                            second_source_after_wildcard));
+        assert(space_equations_may_match_known_head(&equation_space,
+                                                    source_head));
+        assert(space_remove(&equation_space, wildcard_equation));
+        assert(!space_equations_may_match_known_head(&equation_space,
+                                                     source_head));
+        assert(space_equations_may_match_known_head(&equation_space,
+                                                    colliding_head));
 
         space_free(&equation_space);
         term_universe_free(&equation_universe);

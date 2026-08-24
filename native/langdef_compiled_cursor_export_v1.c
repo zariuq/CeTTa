@@ -28,6 +28,12 @@
 #define CETTA_LANGDEF_STATE_DIGEST \
     CETTA_LANGDEF_JOIN(CETTA_LANGDEF_COMPILED_PREFIX, \
                        _state_program_plan_digest)
+#define CETTA_LANGDEF_SOURCE_CONTROL_INIT \
+    CETTA_LANGDEF_JOIN(CETTA_LANGDEF_COMPILED_PREFIX, \
+                       _source_resolution_control_plan_init)
+#define CETTA_LANGDEF_SOURCE_CONTROL_DIGEST \
+    CETTA_LANGDEF_JOIN(CETTA_LANGDEF_COMPILED_PREFIX, \
+                       _source_resolution_control_plan_digest)
 
 extern bool CETTA_LANGDEF_PROGRAM_INIT(
     PPGuardedLexCursorV1Program *out,
@@ -48,6 +54,13 @@ extern bool CETTA_LANGDEF_OCCURRENCE_SPAN_MASK_INIT(
     char *error_buf,
     size_t error_buf_size);
 extern const char *CETTA_LANGDEF_OCCURRENCE_SPAN_MASK_DIGEST(void);
+#endif
+#ifdef CETTA_LANGDEF_COMPILED_HAS_SOURCE_CONTROL
+extern bool CETTA_LANGDEF_SOURCE_CONTROL_INIT(
+    PPSourceResolutionControlV1Plan *out,
+    char *error_buf,
+    size_t error_buf_size);
+extern const char *CETTA_LANGDEF_SOURCE_CONTROL_DIGEST(void);
 #endif
 #ifdef CETTA_LANGDEF_COMPILED_HAS_STATE_PROGRAM
 extern bool CETTA_LANGDEF_STATE_INIT(
@@ -80,6 +93,13 @@ const CettaLangDefCompiledCursorV1 *cetta_langdef_compiled_cursor_v1(void) {
 #else
         .relational_state_init = NULL,
         .relational_state_digest = NULL,
+#endif
+#ifdef CETTA_LANGDEF_COMPILED_HAS_SOURCE_CONTROL
+        .source_control_init = CETTA_LANGDEF_SOURCE_CONTROL_INIT,
+        .source_control_digest = CETTA_LANGDEF_SOURCE_CONTROL_DIGEST,
+#else
+        .source_control_init = NULL,
+        .source_control_digest = NULL,
 #endif
     };
     return &descriptor;

@@ -1,0 +1,52 @@
+(RunActionsV1
+  TransitionPackageV1
+  TransitionGoodOccurrenceV1
+  (StateV1
+    TransitionPackageV1 NatZeroV1 NatZeroV1
+    (TablesConsV1
+      (TableV1 TransitionTableV1 EntriesNilV1)
+      TablesNilV1))
+  (ActionsConsV1
+    (StateRequirePairwiseDistinctV1 TransitionRoleV1)
+    (ActionsConsV1
+      (StateInsertAllPairsV1
+        TransitionRoleV1
+        TransitionTableV1
+        StateInsertOrRequireEqualV1)
+      ActionsNilV1))
+  AcceptedV1
+  (StateV1
+    TransitionPackageV1
+    NatZeroV1
+    (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1)))
+    (TablesConsV1
+      (TableV1
+        TransitionTableV1
+        (EntriesConsV1
+          (EntryV1
+            NatZeroV1
+            (RowConsV1
+              NatZeroV1
+              (RowConsV1
+                (NatSuccV1 (NatSuccV1 NatZeroV1))
+                RowNilV1))
+            NatZeroV1)
+          (EntriesConsV1
+            (EntryV1
+              (NatSuccV1 NatZeroV1)
+              (RowConsV1
+                NatZeroV1
+                (RowConsV1 (NatSuccV1 NatZeroV1) RowNilV1))
+              NatZeroV1)
+            (EntriesConsV1
+              (EntryV1
+                (NatSuccV1 (NatSuccV1 NatZeroV1))
+                (RowConsV1
+                  (NatSuccV1 NatZeroV1)
+                  (RowConsV1
+                    (NatSuccV1 (NatSuccV1 NatZeroV1))
+                    RowNilV1))
+                NatZeroV1)
+              EntriesNilV1))))
+      TablesNilV1))
+  ?history)

@@ -10,6 +10,7 @@
 #include "atom.h"
 #include "symbol.h"
 
+#include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -390,7 +391,7 @@ done:
 }
 
 int main(int argc, char **argv) {
-    const PPOSLFNativeVMLimitsV1 limits = {
+    PPOSLFNativeVMLimitsV1 limits = {
         .maximum_rule_attempts = UINT64_C(100000000),
         .maximum_goal_depth = UINT32_MAX,
     };
@@ -420,6 +421,21 @@ int main(int argc, char **argv) {
                 "REPEATED-SAVE-COMPRESSED-MM\n",
                 argv[0]);
         return 2;
+    }
+    const char *rule_limit_text = getenv("CETTA_TEST_OSLF_RULE_LIMIT_V1");
+    if (rule_limit_text) {
+        char *end = NULL;
+        errno = 0;
+        unsigned long long parsed = strtoull(rule_limit_text, &end, 10);
+
+        if (!rule_limit_text[0] || !end || end[0] || errno == ERANGE ||
+            parsed == 0u) {
+            fprintf(stderr,
+                    "CETTA_TEST_OSLF_RULE_LIMIT_V1 must be a positive "
+                    "integer\n");
+            return 2;
+        }
+        limits.maximum_rule_attempts = (uint64_t)parsed;
     }
     symbol_table_init(&symbols);
     symbol_table_init_builtins(&symbols, &g_builtin_syms);

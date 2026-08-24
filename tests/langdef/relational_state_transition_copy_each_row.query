@@ -1,0 +1,124 @@
+(StateStepV1
+  TransitionPackageV1
+  (StateV1
+    TransitionPackageV1
+    NatZeroV1
+    (NatSuccV1 (NatSuccV1 NatZeroV1))
+    (TablesConsV1
+      (TableV1
+        NatZeroV1
+        (EntriesConsV1
+          (EntryV1
+            NatZeroV1
+            (RowConsV1
+              NatZeroV1
+              (RowConsV1
+                (NatSuccV1 (NatSuccV1 NatZeroV1))
+                RowNilV1))
+            NatZeroV1)
+          (EntriesConsV1
+            (EntryV1
+              (NatSuccV1 NatZeroV1)
+              (RowConsV1
+                (NatSuccV1 NatZeroV1)
+                (RowConsV1
+                  (NatSuccV1 (NatSuccV1 NatZeroV1))
+                  RowNilV1))
+              NatZeroV1)
+            EntriesNilV1)))
+      (TablesConsV1
+        (TableV1 (NatSuccV1 NatZeroV1) EntriesNilV1)
+        TablesNilV1)))
+  TransitionGoodOccurrenceV1
+  (StateCopyEachRowV1
+    NatZeroV1
+    (NatSuccV1 NatZeroV1)
+    (NatSuccV1 NatZeroV1)
+    StateInsertOrRequireEqualV1
+    (StateRowConsV1
+      (StateSourceColumnV1 NatZeroV1)
+      (StateRowConsV1 StateSourceRowIndexV1 StateRowNilV1)))
+  AcceptedV1
+  (StateV1
+    TransitionPackageV1
+    NatZeroV1
+    (NatSuccV1
+        (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1))))
+    (TablesConsV1
+        (TableV1
+              NatZeroV1
+              (EntriesConsV1
+                      (EntryV1
+                                NatZeroV1
+                                (RowConsV1
+                                            NatZeroV1
+                                            (RowConsV1 (NatSuccV1 (NatSuccV1 NatZeroV1)) RowNilV1))
+                                NatZeroV1)
+                      (EntriesConsV1
+                                (EntryV1
+                                            (NatSuccV1 NatZeroV1)
+                                            (RowConsV1
+                                                          (NatSuccV1 NatZeroV1)
+                                                          (RowConsV1 (NatSuccV1 (NatSuccV1 NatZeroV1)) RowNilV1))
+                                            NatZeroV1)
+                                EntriesNilV1)))
+        (TablesConsV1
+              (TableV1
+                      (NatSuccV1 NatZeroV1)
+                      (EntriesConsV1
+                                (EntryV1
+                                            (NatSuccV1 (NatSuccV1 NatZeroV1))
+                                            (RowConsV1
+                                                          NatZeroV1
+                                                          (RowConsV1
+                                                                          (StateIndexValueV1
+                                                                                            TransitionGoodOccurrenceV1
+                                                                                            NatZeroV1)
+                                                                          RowNilV1))
+                                            NatZeroV1)
+                                (EntriesConsV1
+                                            (EntryV1
+                                                          (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1)))
+                                                          (RowConsV1
+                                                                          (NatSuccV1 NatZeroV1)
+                                                                          (RowConsV1
+                                                                                            (StateIndexValueV1
+                                                                                                              TransitionGoodOccurrenceV1
+                                                                                                              (NatSuccV1 NatZeroV1))
+                                                                                            RowNilV1))
+                                                          NatZeroV1)
+                                            EntriesNilV1)))
+              TablesNilV1)))
+  (HistoryConsV1
+    (EnteredActionV1
+        (StateCopyEachRowV1
+              NatZeroV1
+              (NatSuccV1 NatZeroV1)
+              (NatSuccV1 NatZeroV1)
+              StateInsertOrRequireEqualV1
+              (StateRowConsV1
+                      (StateSourceColumnV1 NatZeroV1)
+                      (StateRowConsV1 StateSourceRowIndexV1 StateRowNilV1)))
+        TransitionGoodPositionV1)
+    (HistoryConsV1
+        (InsertedRowV1
+              (NatSuccV1 NatZeroV1)
+              (RowConsV1
+                NatZeroV1
+                (RowConsV1
+                  (StateIndexValueV1
+                    TransitionGoodOccurrenceV1 NatZeroV1)
+                  RowNilV1)))
+        (HistoryConsV1
+              (InsertedRowV1
+                      (NatSuccV1 NatZeroV1)
+                      (RowConsV1
+                                (NatSuccV1 NatZeroV1)
+                                (RowConsV1
+                                  (StateIndexValueV1
+                                    TransitionGoodOccurrenceV1
+                                    (NatSuccV1 NatZeroV1))
+                                  RowNilV1)))
+              (HistoryConsV1
+                      (CompletedActionV1 (NatSuccV1 NatZeroV1))
+                      HistoryNilV1)))))

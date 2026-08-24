@@ -5,6 +5,7 @@
 #include "parser_occurrence_span_mask_v1.h"
 
 #include <ctype.h>
+#include <inttypes.h>
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -795,7 +796,8 @@ bool ppoccurrence_fold_v1_plan_build(
     for (index = 0u; index < (uint32_t)record_len; index++) {
         Atom *record = records[index];
         if (ppof_v1_expr_head(record, "occurrence-fold-token-v1", 2u) ||
-            ppof_v1_expr_head(record, "occurrence-fold-token-v3", 5u))
+            ppof_v1_expr_head(record, "occurrence-fold-token-v3", 5u) ||
+            ppof_v1_expr_head(record, "occurrence-fold-token-v4", 4u))
             token_len++;
         else if (ppof_v1_expr_head(
                      record, "occurrence-fold-shift-v1", 2u))
@@ -827,7 +829,8 @@ bool ppoccurrence_fold_v1_plan_build(
     for (index = 0u; index < (uint32_t)record_len; index++) {
         Atom *record = records[index];
         if (ppof_v1_expr_head(record, "occurrence-fold-token-v1", 2u) ||
-            ppof_v1_expr_head(record, "occurrence-fold-token-v3", 5u)) {
+            ppof_v1_expr_head(record, "occurrence-fold-token-v3", 5u) ||
+            ppof_v1_expr_head(record, "occurrence-fold-token-v4", 4u)) {
             PPOccurrenceFoldV1RawToken *row = &tokens[token_write++];
             row->tag = record->expr.elems[1];
             row->role = record->expr.elems[2];
@@ -836,6 +839,9 @@ bool ppoccurrence_fold_v1_plan_build(
                 row->source_value_production_label =
                     record->expr.elems[4];
                 row->value_production_label = record->expr.elems[5];
+            } else if (record->expr.len == 5u) {
+                row->node = record->expr.elems[3];
+                row->value_production_label = record->expr.elems[4];
             }
             row->tag_name = ppof_v1_render(row->tag);
             row->role_name = ppof_v1_render(row->role);
@@ -1004,7 +1010,8 @@ bool ppoccurrence_fold_v1_plan_build(
                     "semantic token is also bound to a shift operation");
                 goto done;
             }
-            if (!ppof_v1_pack_production_has_source_occurrence(
+            if (tokens[index].source_value_production_label &&
+                !ppof_v1_pack_production_has_source_occurrence(
                     pack, (uint32_t)production_label,
                     tokens[index].source_value_production_label)) {
                 ppof_v1_set_error(
@@ -1477,6 +1484,699 @@ PPOccurrenceFoldV1Backend ppoccurrence_fold_v1_trace_backend(
         .commit = ppof_v1_trace_commit,
         .abort = ppof_v1_trace_abort,
     };
+}
+
+static bool ppof_v1_answer_stream_hex(
+    FILE *output, const uint8_t *bytes, size_t byte_len) {
+    static const char digits[] = "0123456789abcdef";
+    size_t index;
+
+    if (!output || (!bytes && byte_len > 0u) || fputs("hex-", output) < 0)
+        return false;
+    for (index = 0u; index < byte_len; index++) {
+        if (fputc(digits[bytes[index] >> 4u], output) == EOF ||
+            fputc(digits[bytes[index] & 0x0fu], output) == EOF) {
+            return false;
+        }
+    }
+    return true;
+}
+
+typedef struct {
+    uint8_t *bytes;
+    size_t byte_len;
+    uint64_t hash;
+    uint32_t id;
+    bool occupied;
+} PPOccurrenceFoldV1AnswerValue;
+
+typedef struct {
+    PPOccurrenceFoldV1AnswerValue *slots;
+    size_t slot_len;
+    size_t entry_len;
+} PPOccurrenceFoldV1AnswerStreamImpl;
+
+static uint64_t ppof_v1_answer_value_hash(
+    const uint8_t *bytes, size_t byte_len) {
+    uint64_t hash = UINT64_C(14695981039346656037);
+    size_t index;
+
+    for (index = 0u; index < byte_len; index++) {
+        hash ^= bytes[index];
+        hash *= UINT64_C(1099511628211);
+    }
+    hash ^= (uint64_t)byte_len;
+    hash *= UINT64_C(1099511628211);
+    return hash;
+}
+
+static bool ppof_v1_answer_value_insert(
+    PPOccurrenceFoldV1AnswerValue *slots,
+    size_t slot_len,
+    PPOccurrenceFoldV1AnswerValue value) {
+    size_t index;
+    size_t mask;
+
+    if (!slots || slot_len == 0u || (slot_len & (slot_len - 1u)) != 0u)
+        return false;
+    mask = slot_len - 1u;
+    index = (size_t)value.hash & mask;
+    while (slots[index].occupied)
+        index = (index + 1u) & mask;
+    slots[index] = value;
+    return true;
+}
+
+static bool ppof_v1_answer_value_grow(
+    PPOccurrenceFoldV1AnswerStreamImpl *implementation,
+    char *error_buf,
+    size_t error_buf_size) {
+    PPOccurrenceFoldV1AnswerValue *next;
+    size_t next_len;
+    size_t index;
+
+    if (!implementation)
+        return false;
+    next_len = implementation->slot_len
+        ? implementation->slot_len * 2u : 64u;
+    if (next_len < implementation->slot_len ||
+        next_len > SIZE_MAX / sizeof(*next)) {
+        ppof_v1_set_error(
+            error_buf, error_buf_size,
+            "occurrence answer value interner is too large");
+        return false;
+    }
+    next = calloc(next_len, sizeof(*next));
+    if (!next) {
+        ppof_v1_set_error(
+            error_buf, error_buf_size,
+            "cannot grow occurrence answer value interner");
+        return false;
+    }
+    for (index = 0u; index < implementation->slot_len; index++) {
+        if (implementation->slots[index].occupied &&
+            !ppof_v1_answer_value_insert(
+                next, next_len, implementation->slots[index])) {
+            free(next);
+            return false;
+        }
+    }
+    free(implementation->slots);
+    implementation->slots = next;
+    implementation->slot_len = next_len;
+    return true;
+}
+
+static size_t ppof_v1_answer_value_grow_at(size_t slot_len) {
+    size_t quotient = slot_len / 10u;
+    size_t remainder = slot_len % 10u;
+
+    /* ceil(slot_len * 7 / 10), without overflowing size_t */
+    return quotient * 7u + (remainder * 7u + 9u) / 10u;
+}
+
+static bool ppof_v1_answer_value_intern(
+    PPOccurrenceFoldV1AnswerStream *stream,
+    const uint8_t *bytes,
+    size_t byte_len,
+    uint32_t *id_out,
+    char *error_buf,
+    size_t error_buf_size) {
+    PPOccurrenceFoldV1AnswerStreamImpl *implementation;
+    uint64_t hash;
+    size_t mask;
+    size_t index;
+    uint8_t *owned = NULL;
+
+    if (!stream || !(implementation = stream->implementation) ||
+        (!bytes && byte_len > 0u) || !id_out) {
+        return false;
+    }
+    if (implementation->entry_len >= UINT32_MAX) {
+        ppof_v1_set_error(
+            error_buf, error_buf_size,
+            "occurrence answer value inventory is too large");
+        return false;
+    }
+    if (implementation->slot_len == 0u ||
+        implementation->entry_len + 1u >=
+            ppof_v1_answer_value_grow_at(implementation->slot_len)) {
+        if (!ppof_v1_answer_value_grow(
+                implementation, error_buf, error_buf_size)) {
+            return false;
+        }
+    }
+    hash = ppof_v1_answer_value_hash(bytes, byte_len);
+    mask = implementation->slot_len - 1u;
+    index = (size_t)hash & mask;
+    while (implementation->slots[index].occupied) {
+        const PPOccurrenceFoldV1AnswerValue *entry =
+            &implementation->slots[index];
+        if (entry->hash == hash && entry->byte_len == byte_len &&
+            (byte_len == 0u ||
+             memcmp(entry->bytes, bytes, byte_len) == 0)) {
+            *id_out = entry->id;
+            return true;
+        }
+        index = (index + 1u) & mask;
+    }
+    if (byte_len > 0u) {
+        owned = malloc(byte_len);
+        if (!owned) {
+            ppof_v1_set_error(
+                error_buf, error_buf_size,
+                "cannot retain occurrence answer value bytes");
+            return false;
+        }
+        memcpy(owned, bytes, byte_len);
+    }
+    implementation->slots[index] = (PPOccurrenceFoldV1AnswerValue){
+        .bytes = owned,
+        .byte_len = byte_len,
+        .hash = hash,
+        .id = (uint32_t)implementation->entry_len,
+        .occupied = true,
+    };
+    *id_out = (uint32_t)implementation->entry_len;
+    implementation->entry_len++;
+    stream->unique_value_len = (uint32_t)implementation->entry_len;
+    return true;
+}
+
+static bool ppof_v1_answer_stream_apply(
+    void *context,
+    const PPOccurrenceFoldV1Step *step,
+    char *error_buf,
+    size_t error_buf_size) {
+    PPOccurrenceFoldV1AnswerStream *stream = context;
+    const char *operation;
+    const char *node = "ParserOccurrenceNoNodeV1";
+    const char *kind;
+    uint32_t index;
+
+    if (!stream || !stream->active || stream->committed ||
+        stream->aborted || !stream->staging || !step ||
+        !(operation = ppoccurrence_fold_v1_operation_name(
+              stream->plan, step->operation_id)) ||
+        (step->node_id != UINT32_MAX &&
+         !(node = ppoccurrence_fold_v1_node_name(
+               stream->plan, step->node_id)))) {
+        ppof_v1_set_error(
+            error_buf, error_buf_size,
+            "occurrence answer stream received an invalid step");
+        return false;
+    }
+    if (step->kind == PPOCCURRENCE_FOLD_V1_STEP_SHIFT) {
+        kind = "ParserOccurrenceShiftV1";
+    } else if (step->kind == PPOCCURRENCE_FOLD_V1_STEP_REDUCE) {
+        kind = "ParserOccurrenceReduceV1";
+    } else {
+        ppof_v1_set_error(
+            error_buf, error_buf_size,
+            "occurrence answer stream received an unknown step kind");
+        return false;
+    }
+    if (stream->source_graph) {
+        if (fprintf(
+                stream->staging,
+                "(ParserOccurrenceV4 %" PRIu32 " %" PRIu32
+                " %s %s %s ",
+                stream->step_len, step->source_id,
+                kind, operation, node) < 0) {
+            goto write_failed;
+        }
+        if (step->source_id > stream->maximum_source_id)
+            stream->maximum_source_id = step->source_id;
+    } else if (fprintf(
+                   stream->staging,
+                   "(ParserOccurrenceV3 %" PRIu32 " %s %s %s ",
+                   stream->step_len, kind, operation, node) < 0) {
+        goto write_failed;
+    }
+    if (step->production_label == UINT32_MAX) {
+        if (fputs("ParserOccurrenceNoProductionV1 ", stream->staging) < 0)
+            goto write_failed;
+    } else if (fprintf(
+                   stream->staging, "%" PRIu32 " ",
+                   step->production_label) < 0) {
+        goto write_failed;
+    }
+    if (fprintf(
+            stream->staging,
+            "%" PRIu32 " %" PRIu32 " %" PRIu32 " %" PRIu32 " ",
+            step->left_scalar, step->right_scalar,
+            step->left_byte, step->right_byte) < 0) {
+        goto write_failed;
+    }
+    for (index = 0u; index < step->value_len; index++) {
+        const PPOccurrenceFoldV1Value *value = &step->values[index];
+        const char *role = ppoccurrence_fold_v1_role_name(
+            stream->plan, value->role_id);
+        uint32_t value_id;
+        if (!role || !ppof_v1_answer_value_intern(
+                stream, value->bytes, value->byte_len, &value_id,
+                error_buf, error_buf_size) ||
+            fprintf(
+                stream->staging,
+                "(ParserOccurrenceValuesConsV1 "
+                "(ParserOccurrenceValueV1 %s %" PRIu32 " %" PRIu32
+                " %" PRIu32 " %" PRIu32 " %" PRIu32 " %" PRIu32
+                " (SourceBytesHexV1 ",
+                role, value_id, value->source_index,
+                value->left_scalar, value->right_scalar,
+                value->left_byte, value->right_byte) < 0 ||
+            !ppof_v1_answer_stream_hex(
+                stream->staging, value->bytes, value->byte_len) ||
+            fputs(")) ", stream->staging) < 0) {
+            goto write_failed;
+        }
+    }
+    if (fputs("ParserOccurrenceValuesNilV1", stream->staging) < 0)
+        goto write_failed;
+    for (index = 0u; index < step->value_len; index++) {
+        if (fputc(')', stream->staging) == EOF)
+            goto write_failed;
+    }
+    if (fputc(' ', stream->staging) == EOF)
+        goto write_failed;
+    {
+        uint32_t empty_role_len = 0u;
+        if (step->kind == PPOCCURRENCE_FOLD_V1_STEP_REDUCE) {
+            uint32_t binding_index;
+            const PPOccurrenceFoldV1ProductionBinding *binding;
+            const PPOccurrenceFoldV1Contract *contract;
+            uint32_t role_id;
+
+            if (step->production_index >=
+                    stream->plan->cursor_production_len ||
+                (binding_index =
+                     stream->plan->production_binding_by_index[
+                         step->production_index]) == UINT32_MAX ||
+                binding_index >= stream->plan->production_len) {
+                ppof_v1_set_error(
+                    error_buf, error_buf_size,
+                    "occurrence answer stream cannot recover a fold contract");
+                return false;
+            }
+            binding = &stream->plan->productions[binding_index];
+            if (binding->contract_index >= stream->plan->contract_len) {
+                ppof_v1_set_error(
+                    error_buf, error_buf_size,
+                    "occurrence answer stream fold contract is invalid");
+                return false;
+            }
+            contract = &stream->plan->contracts[binding->contract_index];
+            for (role_id = 0u; role_id < stream->plan->role_len; role_id++) {
+                bool admitted = false;
+                bool present = false;
+                uint32_t transition_index;
+                uint32_t value_index;
+
+                for (transition_index = 0u;
+                     transition_index < contract->transition_len;
+                     transition_index++) {
+                    const PPOccurrenceFoldV1Transition *transition =
+                        &stream->plan->transitions[
+                            contract->transition_begin + transition_index];
+                    if (transition->kind ==
+                            PPOCCURRENCE_FOLD_V1_TRANSITION_ROLE &&
+                        transition->role_id == role_id) {
+                        admitted = true;
+                        break;
+                    }
+                }
+                for (value_index = 0u;
+                     admitted && value_index < step->value_len;
+                     value_index++) {
+                    if (step->values[value_index].role_id == role_id) {
+                        present = true;
+                        break;
+                    }
+                }
+                if (!admitted || present)
+                    continue;
+                if (fprintf(
+                        stream->staging,
+                        "(ParserOccurrenceEmptyRolesConsV1 %s ",
+                        stream->plan->roles[role_id]) < 0) {
+                    goto write_failed;
+                }
+                empty_role_len++;
+            }
+        }
+        if (fputs(
+                "ParserOccurrenceEmptyRolesNilV1",
+                stream->staging) < 0) {
+            goto write_failed;
+        }
+        for (index = 0u; index < empty_role_len; index++) {
+            if (fputc(')', stream->staging) == EOF)
+                goto write_failed;
+        }
+    }
+    if (fputs(")\n", stream->staging) < 0)
+        goto write_failed;
+    if (stream->step_len == UINT32_MAX ||
+        UINT32_MAX - stream->value_len < step->value_len) {
+        ppof_v1_set_error(
+            error_buf, error_buf_size,
+            "occurrence answer stream is too large");
+        return false;
+    }
+    stream->step_len++;
+    stream->value_len += step->value_len;
+    return true;
+
+write_failed:
+    ppof_v1_set_error(
+        error_buf, error_buf_size,
+        "cannot stage occurrence answer stream");
+    return false;
+}
+
+static bool ppof_v1_answer_stream_commit(
+    void *context,
+    char *error_buf,
+    size_t error_buf_size) {
+    PPOccurrenceFoldV1AnswerStream *stream = context;
+
+    if (!stream || !stream->active || stream->aborted ||
+        !stream->staging || fflush(stream->staging) != 0) {
+        ppof_v1_set_error(
+            error_buf, error_buf_size,
+            "occurrence answer stream cannot commit");
+        return false;
+    }
+    stream->active = false;
+    stream->committed = true;
+    return true;
+}
+
+static void ppof_v1_answer_stream_abort(void *context) {
+    PPOccurrenceFoldV1AnswerStream *stream = context;
+
+    if (!stream || !stream->active)
+        return;
+    stream->active = false;
+    stream->aborted = true;
+}
+
+bool ppoccurrence_fold_v1_answer_stream_init(
+    PPOccurrenceFoldV1AnswerStream *stream,
+    const PPOccurrenceFoldV1Plan *plan,
+    const uint8_t *source_bytes,
+    size_t source_byte_len,
+    char *error_buf,
+    size_t error_buf_size) {
+    CettaNativeSha256 source_hash;
+    PPOccurrenceFoldV1AnswerStreamImpl *implementation;
+
+    if (error_buf && error_buf_size > 0u)
+        error_buf[0] = '\0';
+    if (!stream || !plan || (!source_bytes && source_byte_len > 0u)) {
+        ppof_v1_set_error(
+            error_buf, error_buf_size,
+            "bad occurrence answer stream arguments");
+        return false;
+    }
+    memset(stream, 0, sizeof(*stream));
+    implementation = calloc(1u, sizeof(*implementation));
+    if (!implementation) {
+        ppof_v1_set_error(
+            error_buf, error_buf_size,
+            "cannot allocate occurrence answer value interner");
+        return false;
+    }
+    stream->staging = tmpfile();
+    if (!stream->staging) {
+        free(implementation);
+        ppof_v1_set_error(
+            error_buf, error_buf_size,
+            "cannot allocate occurrence answer staging stream");
+        return false;
+    }
+    cetta_native_sha256_init(&source_hash);
+    cetta_native_sha256_update(
+        &source_hash, source_bytes, source_byte_len);
+    cetta_native_sha256_finish_hex(
+        &source_hash, stream->source_digest);
+    stream->plan = plan;
+    stream->implementation = implementation;
+    stream->active = true;
+    return true;
+}
+
+bool ppoccurrence_fold_v1_answer_stream_init_source_graph(
+    PPOccurrenceFoldV1AnswerStream *stream,
+    const PPOccurrenceFoldV1Plan *plan,
+    const uint8_t *root_source_bytes,
+    size_t root_source_byte_len,
+    char *error_buf,
+    size_t error_buf_size) {
+    if (!ppoccurrence_fold_v1_answer_stream_init(
+            stream, plan, root_source_bytes, root_source_byte_len,
+            error_buf, error_buf_size)) {
+        return false;
+    }
+    stream->source_graph = true;
+    return true;
+}
+
+static bool ppof_v1_sha256_hex_valid(const char digest[65]) {
+    size_t index;
+
+    if (!digest || digest[64] != '\0')
+        return false;
+    for (index = 0u; index < 64u; index++) {
+        if (!((digest[index] >= '0' && digest[index] <= '9') ||
+              (digest[index] >= 'a' && digest[index] <= 'f'))) {
+            return false;
+        }
+    }
+    return true;
+}
+
+bool ppoccurrence_fold_v1_answer_stream_bind_source_graph(
+    PPOccurrenceFoldV1AnswerStream *stream,
+    const char source_program_digest[65],
+    const char source_dag_digest[65],
+    uint32_t source_len,
+    char *error_buf,
+    size_t error_buf_size) {
+    if (error_buf && error_buf_size > 0u)
+        error_buf[0] = '\0';
+    if (!stream || !stream->source_graph || !stream->committed ||
+        stream->active || stream->aborted ||
+        stream->source_graph_identity_ready || source_len == 0u ||
+        (stream->step_len > 0u &&
+         stream->maximum_source_id >= source_len) ||
+        !ppof_v1_sha256_hex_valid(source_program_digest) ||
+        !ppof_v1_sha256_hex_valid(source_dag_digest)) {
+        ppof_v1_set_error(
+            error_buf, error_buf_size,
+            "invalid source-graph identity for occurrence answers");
+        return false;
+    }
+    memcpy(stream->source_program_digest, source_program_digest, 65u);
+    memcpy(stream->source_digest, source_dag_digest, 65u);
+    stream->source_len = source_len;
+    stream->source_graph_identity_ready = true;
+    return true;
+}
+
+void ppoccurrence_fold_v1_answer_stream_free(
+    PPOccurrenceFoldV1AnswerStream *stream) {
+    if (!stream)
+        return;
+    if (stream->staging)
+        (void)fclose(stream->staging);
+    if (stream->implementation) {
+        PPOccurrenceFoldV1AnswerStreamImpl *implementation =
+            stream->implementation;
+        size_t index;
+        for (index = 0u; index < implementation->slot_len; index++) {
+            if (implementation->slots[index].occupied)
+                free(implementation->slots[index].bytes);
+        }
+        free(implementation->slots);
+        free(implementation);
+    }
+    memset(stream, 0, sizeof(*stream));
+}
+
+PPOccurrenceFoldV1Backend ppoccurrence_fold_v1_answer_stream_backend(
+    PPOccurrenceFoldV1AnswerStream *stream) {
+    return (PPOccurrenceFoldV1Backend){
+        .context = stream,
+        .apply = ppof_v1_answer_stream_apply,
+        .commit = ppof_v1_answer_stream_commit,
+        .abort = ppof_v1_answer_stream_abort,
+    };
+}
+
+static int ppof_v1_answer_line_compare(
+    const void *left,
+    const void *right) {
+    const char *const *left_line = left;
+    const char *const *right_line = right;
+
+    return strcmp(*left_line, *right_line);
+}
+
+bool ppoccurrence_fold_v1_answer_stream_write(
+    PPOccurrenceFoldV1AnswerStream *stream,
+    FILE *output,
+    char *error_buf,
+    size_t error_buf_size) {
+    char *records = NULL;
+    char **lines = NULL;
+    long staged_size_long;
+    size_t staged_size;
+    size_t line_count = 0u;
+    size_t offset = 0u;
+    size_t index;
+    bool ok = false;
+
+    if (error_buf && error_buf_size > 0u)
+        error_buf[0] = '\0';
+    if (!stream || !stream->committed || stream->active ||
+        stream->aborted || !stream->plan || !stream->staging || !output) {
+        ppof_v1_set_error(
+            error_buf, error_buf_size,
+            "occurrence answer stream is not publishable");
+        return false;
+    }
+    if (stream->source_graph && !stream->source_graph_identity_ready) {
+        ppof_v1_set_error(
+            error_buf, error_buf_size,
+            "occurrence source graph has no final identity");
+        return false;
+    }
+
+    /* The consumer's finite-answer format is a canonical set: records must
+     * be bytewise ordered even though the fold produces them chronologically.
+     * Occurrence indices and Next facts retain the authored source order. */
+    if (fseek(stream->staging, 0L, SEEK_END) != 0 ||
+        (staged_size_long = ftell(stream->staging)) < 0 ||
+        (uintmax_t)staged_size_long > (uintmax_t)(SIZE_MAX - 1u) ||
+        fseek(stream->staging, 0L, SEEK_SET) != 0) {
+        ppof_v1_set_error(
+            error_buf, error_buf_size,
+            "cannot size occurrence answer staging stream");
+        goto done;
+    }
+    staged_size = (size_t)staged_size_long;
+    records = malloc(staged_size + 1u);
+    lines = malloc(
+        (stream->step_len ? (size_t)stream->step_len : 1u) *
+        sizeof(*lines));
+    if (!records || !lines) {
+        ppof_v1_set_error(
+            error_buf, error_buf_size,
+            "cannot allocate canonical occurrence answer stream");
+        goto done;
+    }
+    if (staged_size > 0u &&
+        fread(records, 1u, staged_size, stream->staging) != staged_size) {
+        ppof_v1_set_error(
+            error_buf, error_buf_size,
+            "cannot read occurrence answer staging stream");
+        goto done;
+    }
+    if (ferror(stream->staging)) {
+        ppof_v1_set_error(
+            error_buf, error_buf_size,
+            "failed while reading occurrence answer staging stream");
+        goto done;
+    }
+    records[staged_size] = '\0';
+    while (offset < staged_size) {
+        char *line = records + offset;
+        char *newline = memchr(line, '\n', staged_size - offset);
+        size_t line_len;
+
+        if (!newline || line_count >= stream->step_len) {
+            ppof_v1_set_error(
+                error_buf, error_buf_size,
+                "occurrence answer staging framing is invalid");
+            goto done;
+        }
+        line_len = (size_t)(newline - line);
+        if (line_len == 0u || memchr(line, '\0', line_len) != NULL) {
+            ppof_v1_set_error(
+                error_buf, error_buf_size,
+                "occurrence answer staging record is invalid");
+            goto done;
+        }
+        *newline = '\0';
+        lines[line_count++] = line;
+        offset += line_len + 1u;
+    }
+    if (line_count != stream->step_len) {
+        ppof_v1_set_error(
+            error_buf, error_buf_size,
+            "occurrence answer staging count is inconsistent");
+        goto done;
+    }
+    if (line_count > 1u) {
+        qsort(
+            lines, line_count, sizeof(*lines),
+            ppof_v1_answer_line_compare);
+    }
+    for (index = 1u; index < line_count; index++) {
+        if (strcmp(lines[index - 1u], lines[index]) >= 0) {
+            ppof_v1_set_error(
+                error_buf, error_buf_size,
+                "occurrence answer records are not unique");
+            goto done;
+        }
+    }
+    if (stream->source_graph) {
+        if (fprintf(
+                output,
+                "(ParserOccurrenceStreamV4 sha256-%s sha256-%s sha256-%s %" PRIu32
+                " %" PRIu32 " %" PRIu32 " %" PRIu32 ")\n",
+                stream->plan->plan_digest, stream->source_program_digest,
+                stream->source_digest,
+                stream->step_len, stream->value_len,
+                stream->unique_value_len, stream->source_len) < 0) {
+            ppof_v1_set_error(
+                error_buf, error_buf_size,
+                "cannot publish occurrence source-graph header");
+            goto done;
+        }
+    } else if (fprintf(
+                   output,
+                   "(ParserOccurrenceStreamV3 sha256-%s sha256-%s %" PRIu32
+                   " %" PRIu32 " %" PRIu32 ")\n",
+                   stream->plan->plan_digest, stream->source_digest,
+                   stream->step_len, stream->value_len,
+                   stream->unique_value_len) < 0) {
+        ppof_v1_set_error(
+            error_buf, error_buf_size,
+            "cannot publish occurrence answer stream header");
+        goto done;
+    }
+    for (index = 0u; index < line_count; index++) {
+        if (fputs(lines[index], output) < 0 || fputc('\n', output) == EOF) {
+            ppof_v1_set_error(
+                error_buf, error_buf_size,
+                "cannot publish occurrence answer stream record");
+            goto done;
+        }
+    }
+    if (fflush(output) != 0) {
+        ppof_v1_set_error(
+            error_buf, error_buf_size,
+            "cannot finish occurrence answer stream publication");
+        goto done;
+    }
+    ok = true;
+
+done:
+    free(lines);
+    free(records);
+    return ok;
 }
 
 static void ppof_v1_abort(PPOccurrenceFoldV1Run *run) {

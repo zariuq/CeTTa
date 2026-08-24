@@ -1,0 +1,3 @@
+sort set;
+strict provable sort wff;
+term all {x: set} (ph: wff x): wff;

@@ -1,0 +1,10 @@
+(StateStepV1
+  TransitionPackageV1
+  (StateV1 TransitionPackageV1 NatZeroV1 NatZeroV1 TablesNilV1)
+  TransitionGoodOccurrenceV1
+  StatePopScopeV1
+  (RefusedScopeUnderflowV1 NatZeroV1)
+  (StateV1 TransitionPackageV1 NatZeroV1 NatZeroV1 TablesNilV1)
+  (HistoryConsV1
+    (EnteredActionV1 StatePopScopeV1 TransitionGoodPositionV1)
+    HistoryNilV1))

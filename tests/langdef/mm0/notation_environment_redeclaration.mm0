@@ -1,0 +1,4 @@
+sort wff;
+term neg: wff > wff;
+prefix neg: $ ~ $ prec 50;
+prefix neg: $ ~ $ prec 50;
