@@ -1,0 +1,15 @@
+=== Test 1: Deep Term Duplication ===
+(term-sharing-space-len 1)
+PASS: deep exact sharing
+=== Test 2: Multi-Space Sharing ===
+PASS: cross-space exact sharing
+=== Test 3: Pattern Instantiation Sharing ===
+PASS: instantiated wrapper sharing
+=== Test 4: Recursive Production Sharing ===
+PASS: recursive production sharing
+=== Test 5: Ground Value Sharing ===
+(term-sharing-space-len 1)
+PASS: ground value sharing
+=== Test 6: Alpha Canonical Variable Sharing ===
+PASS: alpha-equivalent terms reuse canonical identities
+=== Stress Test Complete ===
