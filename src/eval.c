@@ -10633,6 +10633,11 @@ static bool hyperpose_external_unsafe_head(Atom *head) {
            symbol_name_has_prefix(head, "prolog:") ||
            symbol_name_equals(head, "fs:write-text") ||
            symbol_name_equals(head, "fs:append-text") ||
+           symbol_name_equals(head, "io:submit") ||
+           symbol_name_equals(head, "io:poll") ||
+           symbol_name_equals(head, "io:cancel") ||
+           symbol_name_equals(head, "http:get") ||
+           symbol_name_equals(head, "http:post") ||
            symbol_name_equals(head, "system:exit") ||
            symbol_name_has_prefix(head, "foreign:");
 }
@@ -10640,7 +10645,10 @@ static bool hyperpose_external_unsafe_head(Atom *head) {
 static bool hyperpose_internal_unsafe_head(SymbolId head_id, Atom *head) {
     if (head_id == g_builtin_syms.lib_system_exit_with_code ||
         head_id == g_builtin_syms.lib_fs_write_text ||
-        head_id == g_builtin_syms.lib_fs_append_text) {
+        head_id == g_builtin_syms.lib_fs_append_text ||
+        head_id == g_builtin_syms.lib_io_submit ||
+        head_id == g_builtin_syms.lib_io_poll ||
+        head_id == g_builtin_syms.lib_io_cancel) {
         return true;
     }
     return symbol_name_has_prefix(head, "__cetta_lib_mork_") ||
