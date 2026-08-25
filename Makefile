@@ -20904,6 +20904,14 @@ test-petta-libpl: $(BIN) test-petta-libpl-explicit-utf8
 			exit 1; \
 		fi; \
 		CETTA_PETTA_SEARCH_MACHINE=1 ./$(BIN) --lang petta \
+			tests/petta/libpl_py_call.metta \
+			> "$$actual"; \
+		if ! diff -u tests/petta/libpl_py_call.expected \
+				"$$actual"; then \
+			echo "FAIL: PeTTa/libpl py-call callback boundary"; \
+			exit 1; \
+		fi; \
+		CETTA_PETTA_SEARCH_MACHINE=1 ./$(BIN) --lang petta \
 			--num-threads 2 \
 			tests/petta/foreign_predicate_hyperpose.metta \
 			> "$$actual"; \
