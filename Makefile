@@ -1488,6 +1488,8 @@ NAME_KEY_TEST_BIN = runtime/test_name_key-$(BUILD_OBJ_TAG)
 NAME_KEY_MUTATION_TEST_BIN = runtime/test_name_key_mutation-$(BUILD_OBJ_TAG)
 IO_RUNTIME_TEST_BIN = runtime/test_io_runtime-$(BUILD_OBJ_TAG)
 IO_RUNTIME_MUTATION_TEST_BIN = runtime/test_io_runtime_mutation-$(BUILD_OBJ_TAG)
+IO_RUNTIME_BENCH_BIN = runtime/bench_io_runtime-$(BUILD_OBJ_TAG)
+IO_BENCH_REQUESTS ?= 64
 PRIME_NEED_TEST_BIN = runtime/test_prime_need-$(BUILD_OBJ_TAG)
 PRIME_CONTEXT_MUTATION_TEST_BIN = runtime/test_prime_context_mutation-$(BUILD_OBJ_TAG)
 PRIME_NEED_UNIT_CPPFLAGS = -DCETTA_RUNTIME_STATS_NOOP=1
@@ -3211,6 +3213,11 @@ $(IO_RUNTIME_MUTATION_TEST_BIN): tests/test_io_runtime.c src/library_io.c src/li
 		-o $@ tests/test_io_runtime.c src/library_io.c src/symbol.c src/atom.c \
 		$(LDFLAGS)
 
+$(IO_RUNTIME_BENCH_BIN): tests/bench_io_runtime.c src/library_io.c src/library_io.h src/symbol.c src/atom.c $(BUILD_CONFIG_HEADER)
+	@mkdir -p runtime
+	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ tests/bench_io_runtime.c \
+		src/library_io.c src/symbol.c src/atom.c $(LDFLAGS)
+
 test-io-runtime:
 	@if [ "$(HTTP_ENABLED)" != "1" ]; then \
 		$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_HTTP=1 test-io-runtime; \
@@ -3239,6 +3246,29 @@ test-io-runtime:
 		fi; \
 		grep -Fq 'FAIL: consumed completions cannot replay' "$$work/mutation.out"; \
 		echo "PASS: replay-completion mutation rejected"; \
+	fi
+
+bench-io-runtime:
+	@if [ "$(HTTP_ENABLED)" != "1" ]; then \
+		$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_HTTP=1 \
+			IO_BENCH_REQUESTS=$(IO_BENCH_REQUESTS) bench-io-runtime; \
+	else \
+		set -e; \
+		$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_HTTP=1 $(IO_RUNTIME_BENCH_BIN); \
+		work=$$(mktemp -d runtime/io-benchmark.XXXXXX); \
+		server_pid=; \
+		trap 'if [ -n "$$server_pid" ]; then kill "$$server_pid" 2>/dev/null || true; wait "$$server_pid" 2>/dev/null || true; fi; rm -rf "$$work"' EXIT INT TERM; \
+		python3 tests/support/io_http_fixture.py > "$$work/port" 2> "$$work/server.err" & \
+		server_pid=$$!; \
+		tries=0; \
+		while [ ! -s "$$work/port" ] && [ $$tries -lt 100 ]; do \
+			kill -0 "$$server_pid" 2>/dev/null || break; \
+			tries=$$((tries + 1)); sleep 0.01; \
+		done; \
+		test -s "$$work/port" || { cat "$$work/server.err"; exit 1; }; \
+		./$(IO_RUNTIME_BENCH_BIN) \
+			"http://127.0.0.1:$$(cat "$$work/port")" \
+			"$(IO_BENCH_REQUESTS)"; \
 	fi
 
 test-io-syntax:
@@ -3304,7 +3334,7 @@ test-io-browser:
 	wait "$$chrome_pid" 2>/dev/null || true; \
 	chrome_pid=; \
 	printf '%s\n' "$$result"; \
-	test "$$result" = '(IoBrowserSummary 10 10 0)'
+	test "$$result" = '(IoBrowserSummary 24 24 0)'
 
 test-io:
 	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_HTTP=1 test-io-syntax
@@ -3312,7 +3342,8 @@ test-io:
 	@$(MAKE) -s BUILD=$(BUILD_CANON) test-io-browser
 	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_HTTP=0 test-io-no-http
 
-.PHONY: test-io test-io-runtime test-io-syntax test-io-no-http test-io-browser
+.PHONY: test-io test-io-runtime test-io-syntax test-io-no-http test-io-browser \
+	bench-io-runtime
 
 $(PRIME_NEED_TEST_BIN): tests/test_prime_need.c src/prime_need.c src/prime_need.h src/symbol.c src/atom.c $(BUILD_CONFIG_HEADER)
 	@mkdir -p runtime

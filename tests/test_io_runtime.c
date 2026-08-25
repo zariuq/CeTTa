@@ -34,18 +34,24 @@ static Atom *dispatch(CettaIoRuntime *runtime, Arena *arena,
                              args, nargs);
 }
 
-static Atom *http_request(Arena *arena, const char *url,
-                          int64_t max_bytes) {
+static Atom *http_request_full(Arena *arena, const char *method,
+                               const char *url, const char *body,
+                               int64_t timeout_ms, int64_t max_bytes) {
     Atom *items[7] = {
         atom_symbol(arena, "http:request"),
-        atom_string(arena, "GET"),
+        atom_string(arena, method),
         atom_string(arena, url),
         atom_expr(arena, NULL, 0u),
-        atom_string(arena, ""),
-        atom_int(arena, 3000),
+        atom_string(arena, body),
+        atom_int(arena, timeout_ms),
         atom_int(arena, max_bytes),
     };
     return atom_expr(arena, items, 7u);
+}
+
+static Atom *http_request(Arena *arena, const char *url,
+                          int64_t max_bytes) {
+    return http_request_full(arena, "GET", url, "", 3000, max_bytes);
 }
 
 static bool pending_id(Atom *atom, int64_t *id_out) {
@@ -104,6 +110,20 @@ static Atom *poll_until_event(CettaIoRuntime *runtime, Arena *arena,
         pause_one_ms();
     }
     return NULL;
+}
+
+static Atom *submit_and_poll(CettaIoRuntime *runtime, Arena *arena,
+                             Atom *request, int64_t *id_out) {
+    Atom *pending = dispatch(runtime, arena, "__cetta_lib_io_submit",
+                             &request, 1u);
+    if (!pending_id(pending, id_out)) return NULL;
+    Atom *event = poll_until_event(runtime, arena, 5000);
+    int64_t observed_id = 0;
+    Atom *result = NULL;
+    if (!event_parts(event, &observed_id, &result) ||
+        observed_id != *id_out)
+        return NULL;
+    return result;
 }
 
 static void make_url(char *out, size_t out_size, const char *base,
@@ -240,6 +260,56 @@ int main(int argc, char **argv) {
           "response bound fails explicitly instead of truncating");
     CHECK(idle(dispatch(runtime, &arena, "__cetta_lib_io_poll", NULL, 0u)),
           "bounded failure is also consumed at most once");
+
+    char exact_url[512];
+    make_url(exact_url, sizeof(exact_url), argv[1], "/bytes/4");
+    int64_t exact_id = 0;
+    Atom *exact_request = http_request(&arena, exact_url, 4);
+    Atom *exact_result = submit_and_poll(runtime, &arena, exact_request,
+                                         &exact_id);
+    CHECK(exact_id > large_id && http_response(exact_result, 200, "abcd"),
+          "response exactly at the byte bound succeeds");
+
+    int64_t over_id = 0;
+    Atom *over_request = http_request(&arena, exact_url, 3);
+    Atom *over_result = submit_and_poll(runtime, &arena, over_request,
+                                        &over_id);
+    CHECK(over_id > exact_id && response_too_large(over_result, 3),
+          "one byte over the bound fails explicitly");
+
+    char status_url[512];
+    make_url(status_url, sizeof(status_url), argv[1], "/status/418");
+    int64_t status_id = 0;
+    Atom *status_request = http_request(&arena, status_url, 64);
+    Atom *status_result = submit_and_poll(runtime, &arena, status_request,
+                                          &status_id);
+    CHECK(status_id > over_id &&
+              http_response(status_result, 418, "status-418"),
+          "HTTP error status remains a correlated response");
+
+    char redirect_url[512];
+    make_url(redirect_url, sizeof(redirect_url), argv[1], "/redirect/2");
+    int64_t redirect_id = 0;
+    Atom *redirect_request = http_request(&arena, redirect_url, 64);
+    Atom *redirect_result = submit_and_poll(runtime, &arena,
+                                             redirect_request, &redirect_id);
+    CHECK(redirect_id > status_id &&
+              http_response(redirect_result, 200, "one"),
+          "bounded redirect chain reaches its final response");
+
+    char echo_url[512];
+    make_url(echo_url, sizeof(echo_url), argv[1], "/echo");
+    int64_t echo_id = 0;
+    Atom *echo_request = http_request_full(
+        &arena, "POST", echo_url, "portable-body", 3000, 64);
+    Atom *echo_result = submit_and_poll(runtime, &arena, echo_request,
+                                        &echo_id);
+    CHECK(echo_id > redirect_id &&
+              http_response(echo_result, 200, "portable-body"),
+          "POST body round-trips through the native provider");
+
+    CHECK(idle(dispatch(runtime, &arena, "__cetta_lib_io_poll", NULL, 0u)),
+          "conformance completions leave the queue empty");
 
     printf("(IoRuntimeSummary %u %u %u)\n",
            checks, checks - failures, failures);

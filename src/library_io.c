@@ -24,6 +24,7 @@
 #include <pthread.h>
 #elif CETTA_BUILD_HTTP_PROVIDER_EMSCRIPTEN
 #include <emscripten/fetch.h>
+#include <emscripten/eventloop.h>
 #endif
 
 typedef struct CettaIoHeader {
@@ -58,6 +59,8 @@ typedef struct CettaIoRequest {
     emscripten_fetch_t *fetch;
     const char **fetch_headers;
     bool provider_closing;
+    bool abort_scheduled;
+    int abort_immediate;
 #endif
     struct CettaIoRequest *next;
     struct CettaIoRequest *ready_next;
@@ -149,6 +152,10 @@ static void io_request_free(CettaIoRuntime *runtime, CettaIoRequest *request) {
     }
     curl_slist_free_all(request->curl_headers);
 #elif CETTA_BUILD_HTTP_PROVIDER_EMSCRIPTEN
+    if (request->abort_scheduled) {
+        emscripten_clear_immediate(request->abort_immediate);
+        request->abort_scheduled = false;
+    }
     if (request->fetch) {
         request->provider_closing = true;
         (void)emscripten_fetch_close(request->fetch);
@@ -487,7 +494,12 @@ static void io_http_pump(CettaIoRuntime *runtime) {
         if (message->msg != CURLMSG_DONE) continue;
         CettaIoRequest *request = NULL;
         (void)curl_easy_getinfo(message->easy_handle, CURLINFO_PRIVATE, &request);
-        if (!request || request->ready) continue;
+        if (!request) {
+            (void)curl_multi_remove_handle(runtime->multi,
+                                           message->easy_handle);
+            curl_easy_cleanup(message->easy_handle);
+            continue;
+        }
         request->transport_code = (int)message->data.result;
         snprintf(request->transport_message,
                  sizeof(request->transport_message), "%s",
@@ -500,11 +512,31 @@ static void io_http_pump(CettaIoRuntime *runtime) {
         request->easy = NULL;
         curl_slist_free_all(request->curl_headers);
         request->curl_headers = NULL;
-        io_ready_append(runtime, request);
+        if (!request->ready) io_ready_append(runtime, request);
     }
 }
 
 #elif CETTA_BUILD_HTTP_PROVIDER_EMSCRIPTEN
+
+static void io_fetch_abort(void *user_data) {
+    CettaIoRequest *request = user_data;
+    if (!request) return;
+    request->abort_scheduled = false;
+    emscripten_fetch_t *fetch = request->fetch;
+    if (!fetch || request->provider_closing || request->ready) return;
+    request->provider_closing = true;
+    request->fetch = NULL;
+    (void)emscripten_fetch_close(fetch);
+    request->provider_closing = false;
+    io_ready_append(request->runtime, request);
+}
+
+static void io_fetch_schedule_abort(CettaIoRequest *request) {
+    if (!request || request->abort_scheduled || !request->fetch) return;
+    request->abort_immediate = emscripten_set_immediate(
+        io_fetch_abort, request);
+    request->abort_scheduled = true;
+}
 
 static void io_fetch_progress(emscripten_fetch_t *fetch) {
     CettaIoRequest *request = fetch ? fetch->userData : NULL;
@@ -518,14 +550,20 @@ static void io_fetch_progress(emscripten_fetch_t *fetch) {
         snprintf(request->transport_message,
                  sizeof(request->transport_message),
                  "noncontiguous browser response stream");
+        io_fetch_schedule_abort(request);
         return;
     }
-    (void)io_response_append(request, fetch->data, (size_t)fetch->numBytes);
+    if (!io_response_append(request, fetch->data, (size_t)fetch->numBytes))
+        io_fetch_schedule_abort(request);
 }
 
 static void io_fetch_finish(emscripten_fetch_t *fetch, bool failed) {
     CettaIoRequest *request = fetch ? fetch->userData : NULL;
     if (!request || request->provider_closing) return;
+    if (request->abort_scheduled) {
+        emscripten_clear_immediate(request->abort_immediate);
+        request->abort_scheduled = false;
+    }
     request->status = fetch->status;
     if (failed && fetch->status == 0u && !request->response_too_large &&
         !request->response_has_nul && request->transport_code == 0) {
@@ -690,6 +728,7 @@ static Atom *io_submit(CettaIoRuntime *runtime, Arena *arena,
                         "I/O request ID space exhausted");
     }
     request->id = runtime->next_id++;
+    request->runtime = runtime;
     request->next = runtime->requests;
     runtime->requests = request;
     if (!io_http_start(runtime, request, error, sizeof(error))) {
