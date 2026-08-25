@@ -3,6 +3,7 @@
 
 #include "eval.h"
 #include "grounded.h"
+#include "library.h"
 #include "stats.h"
 #include "symbol.h"
 
@@ -89,6 +90,13 @@ struct CettaLibPrologRuntime {
     uint64_t plref_next_generation;
     size_t plref_live;
 };
+
+static bool petta_libpl_register_grounded_bridge(
+    CettaLibPrologRuntime *runtime, SymbolId head,
+    size_t predicate_arity);
+static foreign_t petta_libpl_grounded_bridge(
+    term_t arguments, int supplied_arity,
+    control_t control);
 
 static void petta_libpl_advance_revision(
     CettaLibPrologRuntime *runtime) {
@@ -307,6 +315,12 @@ static bool petta_libpl_install_standard_bridges(
             .function_arity = 1u,
             .implementation =
                 (pl_function_t)petta_libpl_standard_swrite,
+        },
+        {
+            .name = "py-call",
+            .function_arity = 1u,
+            .implementation =
+                (pl_function_t)petta_libpl_grounded_bridge,
         },
     };
     if (!runtime || !runtime->module_name)
@@ -2499,11 +2513,11 @@ static bool petta_libpl_call_predicate(
 
 /*
  * Asserted PeTTa clauses may contain Predicate-wrapped calls to the same
- * deterministic grounded operations used by the native evaluator.  Register
- * those exact function-convention arities in the private SWI module and
- * dispatch them back through grounded_dispatch.  This keeps one arithmetic
- * and comparison implementation instead of maintaining a second Prolog
- * prelude inside the optional adapter.
+ * grounded operations used by the native evaluator.  Register those exact
+ * function-convention arities in the private SWI module and dispatch them
+ * back through grounded_dispatch.  Pure operations are admitted generally;
+ * py-call is the one explicit callback needed by consulted PeTTa dispatchers.
+ * This keeps one implementation and one authority boundary.
  */
 static foreign_t petta_libpl_grounded_bridge(
     term_t arguments, int supplied_arity,
@@ -2538,12 +2552,19 @@ static foreign_t petta_libpl_grounded_bridge(
         (uint32_t)name_len);
     PL_free(name);
     CettaExprLen function_arity = 0u;
+    bool explicit_python_callback =
+        head_id != SYMBOL_ID_NONE &&
+        symbol_eq_cstr(g_symbols, head_id, "py-call");
+    bool arity_matches = explicit_python_callback
+        ? predicate_arity == 2u
+        : petta_semantics_intrinsic_partial_arity(
+              head_id, &function_arity) &&
+          function_arity ==
+              (CettaExprLen)(predicate_arity - 1u);
     if (head_id == SYMBOL_ID_NONE ||
-        !grounded_op_is_type_pure(head_id) ||
-        !petta_semantics_intrinsic_partial_arity(
-            head_id, &function_arity) ||
-        function_arity !=
-            (CettaExprLen)(predicate_arity - 1u)) {
+        (!explicit_python_callback &&
+         !grounded_op_is_type_pure(head_id)) ||
+        !arity_matches) {
         return false;
     }
 
@@ -2576,11 +2597,19 @@ static foreign_t petta_libpl_grounded_bridge(
 
     Atom *head = atom_symbol_id(
         g_petta_libpl_active_arena, head_id);
-    Atom *result = head
-        ? grounded_dispatch(
-              g_petta_libpl_active_arena,
-              head, inputs, input_count)
-        : NULL;
+    CettaLibraryContext *library = eval_current_library_context();
+    Atom *result = NULL;
+    if (head && explicit_python_callback && library &&
+        library->foreign_runtime) {
+        result = cetta_foreign_dispatch_native(
+            library->foreign_runtime, NULL,
+            g_petta_libpl_active_arena,
+            head, inputs, input_count);
+    } else if (head && !explicit_python_callback) {
+        result = grounded_dispatch(
+            g_petta_libpl_active_arena,
+            head, inputs, input_count);
+    }
     if (!result)
         return false;
 
