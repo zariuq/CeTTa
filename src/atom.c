@@ -3230,10 +3230,10 @@ static void atom_deep_copy_memo_free(AtomDeepCopyMemo *memo) {
 }
 
 static size_t atom_deep_copy_memo_hash(const Atom *src) {
-    uintptr_t x = (uintptr_t)src;
+    uint64_t x = (uint64_t)(uintptr_t)src;
     x >>= 4;
     x ^= x >> 33;
-    x *= (uintptr_t)0xff51afd7ed558ccdULL;
+    x *= UINT64_C(0xff51afd7ed558ccd);
     x ^= x >> 33;
     return (size_t)x;
 }

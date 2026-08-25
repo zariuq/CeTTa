@@ -1,3 +1,5 @@
+#define _POSIX_C_SOURCE 200809L
+
 #include "space.h"
 #include "eval.h"
 #include "mm2_lower.h"
