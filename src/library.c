@@ -17,6 +17,7 @@
 #include "stats.h"
 #include "text_source.h"
 #include "langdef_pack.h"
+#include "library_io.h"
 #include <ctype.h>
 #include <dirent.h>
 #include <errno.h>
@@ -40,7 +41,8 @@ enum {
     CETTA_LIBRARY_RHOMETTA = 1u << 6,
     CETTA_LIBRARY_PETTA_IMPORT = 1u << 7,
     CETTA_LIBRARY_LIB_PROLOG = 1u << 8,
-    CETTA_LIBRARY_PETTA_MEMO = 1u << 9
+    CETTA_LIBRARY_PETTA_MEMO = 1u << 9,
+    CETTA_LIBRARY_IO = 1u << 10
 };
 
 typedef struct {
@@ -59,6 +61,7 @@ static const CettaLibrarySpec CETTA_LIBRARIES[] = {
     {"lib_import", CETTA_LIBRARY_PETTA_IMPORT},
     {"lib_prolog", CETTA_LIBRARY_LIB_PROLOG},
     {"lib_memo", CETTA_LIBRARY_PETTA_MEMO},
+    {"io", CETTA_LIBRARY_IO},
 };
 
 static const char *CETTA_MM2_PROGRAM_HANDLE_KIND = "mork-program";
@@ -398,6 +401,9 @@ void cetta_library_context_init_for_language_profile(CettaLibraryContext *ctx,
             ctx->lib_prolog, ctx->working_dir);
     }
     ctx->foreign_runtime = cetta_foreign_runtime_new();
+    /* The optional I/O provider is initialized only if its library is
+       imported. Programs which do not use I/O pay no provider startup cost. */
+    ctx->io_runtime = NULL;
 }
 
 void cetta_library_context_free(CettaLibraryContext *ctx) {
@@ -457,6 +463,8 @@ void cetta_library_context_free(CettaLibraryContext *ctx) {
         cetta_foreign_runtime_free(ctx->foreign_runtime);
         ctx->foreign_runtime = NULL;
     }
+    cetta_io_runtime_free(ctx->io_runtime);
+    ctx->io_runtime = NULL;
 }
 
 struct CettaNikRuntimeV1 *cetta_library_context_nik_runtime(
@@ -8240,6 +8248,8 @@ bool cetta_library_import(CettaLibraryContext *ctx, const char *name,
         ctx->active_mask &= ~import_bit;
         return false;
     }
+    if (import_bit == CETTA_LIBRARY_IO && !ctx->io_runtime)
+        ctx->io_runtime = cetta_io_runtime_new();
     return true;
 }
 
@@ -8937,6 +8947,10 @@ Atom *cetta_library_dispatch_native(CettaLibraryContext *ctx, Space *space,
     }
     if (ctx->active_mask & CETTA_LIBRARY_FS) {
         Atom *result = cetta_library_dispatch_fs(a, head, args, nargs);
+        if (result) return result;
+    }
+    if (ctx->active_mask & CETTA_LIBRARY_IO) {
+        Atom *result = cetta_io_dispatch(ctx->io_runtime, a, head, args, nargs);
         if (result) return result;
     }
     if (ctx->active_mask & CETTA_LIBRARY_STR) {

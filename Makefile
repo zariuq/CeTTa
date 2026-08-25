@@ -40,6 +40,10 @@ ENABLE_PRIME_NEED_HEAP_INDEX ?= 1
 ENABLE_PRIME_NEED_CLOSURE_CAPTURE ?= 0
 ENABLE_PRIME_EVAL_STACK ?= 1
 ENABLE_LIB_PROLOG ?= auto
+ENABLE_HTTP ?= auto
+CETTA_EMCC ?= emcc
+CETTA_BROWSER ?= google-chrome
+CETTA_BROWSER_NODE ?= node
 ENABLE_PETTA_TYPECHECK_V2 ?= 1
 ENABLE_PETTA_TYPECHECK_CENSUS ?= 0
 ENABLE_LANGDEF_DIAGNOSTIC_BACKENDS ?= 0
@@ -123,6 +127,9 @@ $(error ENABLE_PRIME_EVAL_STACK must be 0 or 1)
 endif
 ifneq ($(filter $(ENABLE_LIB_PROLOG),0 1 auto),$(ENABLE_LIB_PROLOG))
 $(error ENABLE_LIB_PROLOG must be 0, 1, or auto)
+endif
+ifneq ($(filter $(ENABLE_HTTP),0 1 auto),$(ENABLE_HTTP))
+$(error ENABLE_HTTP must be 0, 1, or auto)
 endif
 ifeq ($(ENABLE_RUNTIME_TIMING),1)
 ENABLE_RUNTIME_STATS := 1
@@ -292,6 +299,44 @@ LIB_PROLOG_CONFIG_ID := disabled
 LIB_PROLOG_RPATH :=
 LIB_PROLOG_SRC := src/petta_libpl_stub.c
 endif
+HTTP_PKG_AVAILABLE := $(shell pkg-config --exists libcurl 2>/dev/null && printf '%s' 1 || printf '%s' 0)
+HTTP_EMSCRIPTEN_CC := $(if $(findstring emcc,$(notdir $(firstword $(CC)))),1,0)
+HTTP_ENABLED := 0
+HTTP_PROVIDER_CURL := 0
+HTTP_PROVIDER_EMSCRIPTEN := 0
+HTTP_CFLAGS :=
+HTTP_LDFLAGS :=
+HTTP_VERSION :=
+HTTP_CONFIG_ID := disabled
+ifeq ($(HTTP_EMSCRIPTEN_CC),1)
+ifneq ($(ENABLE_HTTP),0)
+HTTP_ENABLED := 1
+HTTP_PROVIDER_EMSCRIPTEN := 1
+HTTP_LDFLAGS := -sFETCH=1 -sFETCH_STREAMING=1
+HTTP_VERSION := $(strip $(shell $(CC) --version 2>/dev/null | head -1))
+HTTP_CONFIG_ID := $(strip $(shell { \
+	printf '%s\n' emscripten "$(HTTP_LDFLAGS)" "$(HTTP_VERSION)"; \
+	} | sha256sum | cut -c1-16))
+endif
+else
+ifeq ($(ENABLE_HTTP),auto)
+HTTP_ENABLED := $(HTTP_PKG_AVAILABLE)
+else
+HTTP_ENABLED := $(ENABLE_HTTP)
+endif
+ifeq ($(HTTP_ENABLED),1)
+ifneq ($(HTTP_PKG_AVAILABLE),1)
+$(error ENABLE_HTTP=1 requires the libcurl pkg-config package)
+endif
+HTTP_PROVIDER_CURL := 1
+HTTP_CFLAGS := $(shell pkg-config --cflags libcurl)
+HTTP_LDFLAGS := $(shell pkg-config --libs libcurl)
+HTTP_VERSION := $(strip $(shell pkg-config --modversion libcurl))
+HTTP_CONFIG_ID := $(strip $(shell { \
+	printf '%s\n' curl "$(HTTP_CFLAGS)" "$(HTTP_LDFLAGS)" "$(HTTP_VERSION)"; \
+	} | sha256sum | cut -c1-16))
+endif
+endif
 ifeq ($(ENABLE_GMP),1)
 GMP_CFLAGS ?= $(shell pkg-config --cflags gmp 2>/dev/null)
 GMP_LDFLAGS ?= $(shell pkg-config --libs gmp 2>/dev/null || printf '%s' -lgmp)
@@ -367,6 +412,13 @@ endif
 ifeq ($(LIB_PROLOG_ENABLED),1)
 BUILD_OBJ_TAG := $(BUILD_OBJ_TAG).lib-prolog
 BUILD_OBJ_TAG := $(BUILD_OBJ_TAG).swipl-config-$(LIB_PROLOG_CONFIG_ID)
+endif
+ifeq ($(HTTP_ENABLED),1)
+HTTP_BUILD_TAG := .http-config-$(HTTP_CONFIG_ID)
+BUILD_OBJ_TAG := $(BUILD_OBJ_TAG).http-config-$(HTTP_CONFIG_ID)
+else
+HTTP_BUILD_TAG := .no-http
+BUILD_OBJ_TAG := $(BUILD_OBJ_TAG).no-http
 endif
 ifeq ($(ENABLE_PYTHON),1)
 BUILD_OBJ_TAG := $(BUILD_OBJ_TAG).python-config-$(PYTHON_CONFIG_ID)
@@ -449,10 +501,10 @@ PRIME_EVAL_STACK_CPPFLAGS =
 ifeq ($(ENABLE_PRIME_EVAL_STACK),1)
 PRIME_EVAL_STACK_CPPFLAGS = -DCETTA_PRIME_EVAL_STACK=1
 endif
-CPPFLAGS = -Isrc -I. -Iexperiments/gslt2parse_foundation/native $(BRIDGE_CFLAGS) $(PY_CFLAGS) $(GMP_CFLAGS) $(LIB_PROLOG_CFLAGS) $(PROVENANCE_CPPFLAGS) $(PRIME_RECEIPT_INDEX_CPPFLAGS) $(PRIME_NEED_HEAP_INDEX_CPPFLAGS) $(PRIME_NEED_CLOSURE_CAPTURE_CPPFLAGS) $(PRIME_EVAL_STACK_CPPFLAGS) -include $(BUILD_CONFIG_HEADER)
+CPPFLAGS = -Isrc -I. -Iexperiments/gslt2parse_foundation/native $(BRIDGE_CFLAGS) $(PY_CFLAGS) $(GMP_CFLAGS) $(LIB_PROLOG_CFLAGS) $(HTTP_CFLAGS) $(PROVENANCE_CPPFLAGS) $(PRIME_RECEIPT_INDEX_CPPFLAGS) $(PRIME_NEED_HEAP_INDEX_CPPFLAGS) $(PRIME_NEED_CLOSURE_CAPTURE_CPPFLAGS) $(PRIME_EVAL_STACK_CPPFLAGS) -include $(BUILD_CONFIG_HEADER)
 CFLAGS = -O3 -Wall -Werror -std=c11 -pthread
 DEPFLAGS = -MMD -MP
-LDFLAGS = $(BRIDGE_LDFLAGS) -ldl -lm -pthread $(GMP_LDFLAGS) $(LIB_PROLOG_LDFLAGS) $(LIB_PROLOG_RPATH) $(PY_LDFLAGS) $(PY_RPATH)
+LDFLAGS = $(BRIDGE_LDFLAGS) -ldl -lm -pthread $(GMP_LDFLAGS) $(LIB_PROLOG_LDFLAGS) $(LIB_PROLOG_RPATH) $(HTTP_LDFLAGS) $(PY_LDFLAGS) $(PY_RPATH)
 ifeq ($(ENABLE_SANITIZERS),1)
 CFLAGS := -O1 -g -fno-omit-frame-pointer -fsanitize=$(SANITIZERS) -fno-sanitize-recover=all -Wall -Werror -std=c11 -pthread
 LDFLAGS += -fsanitize=$(SANITIZERS) -fno-sanitize-recover=all
@@ -486,6 +538,7 @@ ifeq ($(ENABLE_PETTA_TYPECHECK_CENSUS),1)
 PETTA_TYPECHECK_CENSUS_SRC = src/petta_typecheck_census.c
 endif
 SRC = src/symbol.c src/atom.c src/name_key.c src/atom_blob.c src/abt.c src/parser.c $(COMPILED_READER_RUNTIME_SRC) src/mm2_lower.c src/subst_tree.c src/space.c src/registry_resolver.c src/space_match_backend.c src/match.c src/match_decision.c src/term_canon.c src/variant_shape.c src/variant_instance.c src/answer_bank.c src/table_store.c src/search_machine.c src/petta_program.c src/petta_type_fact_provider_v1.c src/petta_typecheck_v3_decision_v1.c src/petta_typecheck_v3.c src/generated/petta_typecheck_v3_core_v1.generated.c src/generated/petta_typecheck_v3_core_provider_catalog_v1.generated.c src/petta_search_machine.c $(PETTA_TYPECHECK_V2_SRC) src/petta_specializer.c src/rule_machine.c $(LIB_PROLOG_SRC) src/term_universe.c src/stats.c src/parallel_executor.c src/prime_need.c src/petta_semantics.c src/petta_numeric.c src/petta_runtime.c src/prepared_pure_machine.c src/eval.c src/grounded.c src/he_typing.c src/he_typing_authority.c src/generated/he_typing_consistency_core_source_binding_v1.generated.c src/generated/he_profiled_type_inference_core_source_binding_v1.generated.c src/inference_checker.c src/nik_direct_authority.c src/nik_native_calculus_selection.c src/nik_runtime.c src/prime_semantics.c src/generated/prime_typing_closed_formation_source_binding_v1.generated.c src/text_source.c src/native_handle.c src/native_sha256.c src/mork_space_bridge_runtime.c src/library.c src/langdef_pack.c src/gslt_provider_runtime.c src/gslt_space_fact_provider_v1.c src/gslt_finite_fact_provider_v1.c src/gslt_revisioned_space_provider_v1.c src/gslt_abt_provider_v1.c src/gslt_horn_runtime.c src/gslt_dense_bitset_v1.c src/gslt_compiled_runtime.c src/gslt_indexed_instruction_decoder_v1.c src/gslt_indexed_value_table_v1.c src/gslt_split_indexed_table_v1.c src/gslt_literal_hole_program_v1.c src/gslt_u32_index_v1.c src/gslt_u32_slice_arena_v1.c src/gslt_epoch_slots_v1.c src/gslt_ground_dense_term_v1.c src/gslt_language_runtime.c src/gslt_pure_provider_v1.c src/gslt_support_transform_runtime.c src/generated/prime_nik_authorities_v1.generated.c src/generated/prime_nik_runtime_v1.generated.c src/generated/gslt_il_language_v1.generated.c src/generated/metta_interact_language_v1.generated.c src/generated/mm2_gslt_profile_v1.generated.c src/generated/subzero_language_v1.generated.c src/generated/zero_language_v1.generated.c src/generated/zero_exp_language_v1.generated.c src/generated/zero_emit_language_v1.generated.c src/generated/zero_interact_language_v1.generated.c src/generated/zero_interact_provider_catalog_v1.generated.c src/generated/zerouv_language_v1.generated.c src/he_small_step_pack.c src/lib_parse_native_grammar.c src/lib_parse_inference_native.c experiments/gslt2parse_foundation/native/finite_horn_gslt_v1.c experiments/gslt2parse_foundation/native/finite_horn_ground_term_v1.c experiments/gslt2parse_foundation/native/parser_term_projection_v1.c experiments/gslt2parse_foundation/native/parser_pack_abi_v1.c experiments/gslt2parse_foundation/native/parser_action_bytecode_v1.c experiments/gslt2parse_foundation/native/parser_pack_native_v1.c experiments/gslt2parse_foundation/native/parser_pack_lexical_v1.c experiments/gslt2parse_foundation/native/parser_pack_gll_v1.c experiments/gslt2parse_foundation/native/regular_span_dfa_v1.c experiments/gslt2parse_foundation/native/regular_span_nfa_v1.c $(PYTHON_SRC) src/session.c src/lang.c src/rhocalc_core.c src/rhocalc_syntax.c src/compile.c src/runtime.c src/cetta_stdlib.c native/native_modules.c src/main.c
+SRC += src/library_io.c
 SRC += $(PETTA_TYPECHECK_CENSUS_SRC)
 SRC += \
 	src/gslt_rigid_coordinate_dispatch_v1.c \
@@ -1433,6 +1486,10 @@ ABT_MM2_BOUNDARY_TEST_BIN = runtime/test_abt_mm2_boundary-$(BUILD_OBJ_TAG)
 ABT_BENCH_BIN = runtime/bench_abt-$(BUILD_OBJ_TAG)
 NAME_KEY_TEST_BIN = runtime/test_name_key-$(BUILD_OBJ_TAG)
 NAME_KEY_MUTATION_TEST_BIN = runtime/test_name_key_mutation-$(BUILD_OBJ_TAG)
+IO_RUNTIME_TEST_BIN = runtime/test_io_runtime-$(BUILD_OBJ_TAG)
+IO_RUNTIME_MUTATION_TEST_BIN = runtime/test_io_runtime_mutation-$(BUILD_OBJ_TAG)
+IO_RUNTIME_BENCH_BIN = runtime/bench_io_runtime-$(BUILD_OBJ_TAG)
+IO_BENCH_REQUESTS ?= 64
 PRIME_NEED_TEST_BIN = runtime/test_prime_need-$(BUILD_OBJ_TAG)
 PRIME_CONTEXT_MUTATION_TEST_BIN = runtime/test_prime_context_mutation-$(BUILD_OBJ_TAG)
 PRIME_NEED_UNIT_CPPFLAGS = -DCETTA_RUNTIME_STATS_NOOP=1
@@ -2147,7 +2204,7 @@ METAMATH_SOURCE_RESOLUTION_CONTROL_V1 = $(METAMATH_LANGDEF_GENERATED_DIR_V1)/sou
 METAMATH_SOURCE_RESOLUTION_CONTROL_DIRECT_PROGRAM_V1 = langdef/petta/generated/metamath_source_resolution_control_direct_v1.metta
 METAMATH_SOURCE_RESOLUTION_CONTROL_DIRECT_QUERY_V1 = tests/petta/source_resolution_control_direct_query_v1.metta
 METAMATH_SOURCE_RESOLUTION_CONTROL_DIRECT_V1 = $(METAMATH_LANGDEF_GENERATED_DIR_V1)/source_resolution_control_direct_v1.answers
-RELATIONAL_STATE_TRANSITION_CORE_TAG_V1 = core.prime-need-heap-index.prime-eval-stack
+RELATIONAL_STATE_TRANSITION_CORE_TAG_V1 = core.prime-need-heap-index.prime-eval-stack$(HTTP_BUILD_TAG)
 RELATIONAL_STATE_TRANSITION_CHART_CORE_V1 = runtime/finite_horn_chart_v1-$(RELATIONAL_STATE_TRANSITION_CORE_TAG_V1)
 RELATIONAL_STATE_TRANSITION_LANGDEF_CORE_V1 = runtime/langdef-compile-v1-$(RELATIONAL_STATE_TRANSITION_CORE_TAG_V1)
 RELATIONAL_STATE_TRANSITION_MUTATOR_CORE_V1 = runtime/gslt-rule-mutate-v1-$(RELATIONAL_STATE_TRANSITION_CORE_TAG_V1)
@@ -3144,6 +3201,149 @@ test-name-key: $(NAME_KEY_TEST_BIN) $(NAME_KEY_MUTATION_TEST_BIN)
 		exit 1; \
 	fi; \
 	echo "PASS: digest-only NameId mutation rejected"
+
+$(IO_RUNTIME_TEST_BIN): tests/test_io_runtime.c src/library_io.c src/library_io.h src/symbol.c src/atom.c $(BUILD_CONFIG_HEADER)
+	@mkdir -p runtime
+	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ tests/test_io_runtime.c \
+		src/library_io.c src/symbol.c src/atom.c $(LDFLAGS)
+
+$(IO_RUNTIME_MUTATION_TEST_BIN): tests/test_io_runtime.c src/library_io.c src/library_io.h src/symbol.c src/atom.c $(BUILD_CONFIG_HEADER)
+	@mkdir -p runtime
+	$(CC) $(CPPFLAGS) $(CFLAGS) -DCETTA_IO_MUTATION_REPLAY_COMPLETION=1 \
+		-o $@ tests/test_io_runtime.c src/library_io.c src/symbol.c src/atom.c \
+		$(LDFLAGS)
+
+$(IO_RUNTIME_BENCH_BIN): tests/bench_io_runtime.c src/library_io.c src/library_io.h src/symbol.c src/atom.c $(BUILD_CONFIG_HEADER)
+	@mkdir -p runtime
+	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ tests/bench_io_runtime.c \
+		src/library_io.c src/symbol.c src/atom.c $(LDFLAGS)
+
+test-io-runtime:
+	@if [ "$(HTTP_ENABLED)" != "1" ]; then \
+		$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_HTTP=1 test-io-runtime; \
+	else \
+		set -e; \
+		$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_HTTP=1 \
+			$(IO_RUNTIME_TEST_BIN) $(IO_RUNTIME_MUTATION_TEST_BIN); \
+		work=$$(mktemp -d runtime/io-runtime.XXXXXX); \
+		server_pid=; \
+		trap 'if [ -n "$$server_pid" ]; then kill "$$server_pid" 2>/dev/null || true; wait "$$server_pid" 2>/dev/null || true; fi; rm -rf "$$work"' EXIT INT TERM; \
+		python3 tests/support/io_http_fixture.py > "$$work/port" 2> "$$work/server.err" & \
+		server_pid=$$!; \
+		tries=0; \
+		while [ ! -s "$$work/port" ] && [ $$tries -lt 100 ]; do \
+			kill -0 "$$server_pid" 2>/dev/null || break; \
+			tries=$$((tries + 1)); sleep 0.01; \
+		done; \
+		test -s "$$work/port" || { cat "$$work/server.err"; exit 1; }; \
+		base="http://127.0.0.1:$$(cat "$$work/port")"; \
+		result=$$(./$(IO_RUNTIME_TEST_BIN) "$$base"); \
+		printf '%s\n' "$$result"; \
+		printf '%s\n' "$$result" | grep -Eq '^\(IoRuntimeSummary [0-9]+ [0-9]+ 0\)$$'; \
+		if CETTA_IO_REPLAY_ONLY=1 ./$(IO_RUNTIME_MUTATION_TEST_BIN) "$$base" \
+			> "$$work/mutation.out" 2>&1; then \
+			echo "FAIL: replay-completion mutation survived"; exit 1; \
+		fi; \
+		grep -Fq 'FAIL: consumed completions cannot replay' "$$work/mutation.out"; \
+		echo "PASS: replay-completion mutation rejected"; \
+	fi
+
+bench-io-runtime:
+	@if [ "$(HTTP_ENABLED)" != "1" ]; then \
+		$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_HTTP=1 \
+			IO_BENCH_REQUESTS=$(IO_BENCH_REQUESTS) bench-io-runtime; \
+	else \
+		set -e; \
+		$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_HTTP=1 $(IO_RUNTIME_BENCH_BIN); \
+		work=$$(mktemp -d runtime/io-benchmark.XXXXXX); \
+		server_pid=; \
+		trap 'if [ -n "$$server_pid" ]; then kill "$$server_pid" 2>/dev/null || true; wait "$$server_pid" 2>/dev/null || true; fi; rm -rf "$$work"' EXIT INT TERM; \
+		python3 tests/support/io_http_fixture.py > "$$work/port" 2> "$$work/server.err" & \
+		server_pid=$$!; \
+		tries=0; \
+		while [ ! -s "$$work/port" ] && [ $$tries -lt 100 ]; do \
+			kill -0 "$$server_pid" 2>/dev/null || break; \
+			tries=$$((tries + 1)); sleep 0.01; \
+		done; \
+		test -s "$$work/port" || { cat "$$work/server.err"; exit 1; }; \
+		./$(IO_RUNTIME_BENCH_BIN) \
+			"http://127.0.0.1:$$(cat "$$work/port")" \
+			"$(IO_BENCH_REQUESTS)"; \
+	fi
+
+test-io-syntax:
+	@if [ "$(HTTP_ENABLED)" != "1" ]; then \
+		$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_HTTP=1 test-io-syntax; \
+	else \
+		$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_HTTP=1 $(BIN); \
+		./$(BIN) tests/test_io_syntax.metta; \
+	fi
+
+test-io-no-http:
+	@if [ "$(HTTP_ENABLED)" != "0" ]; then \
+		$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_HTTP=0 test-io-no-http; \
+	else \
+		$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_HTTP=0 $(BIN); \
+		./$(BIN) tests/test_io_no_http.metta; \
+	fi
+
+test-io-browser:
+	@set -e; \
+	command -v "$(CETTA_EMCC)" >/dev/null || { \
+		echo "SKIP: test-io-browser requires CETTA_EMCC=$(CETTA_EMCC)"; exit 0; }; \
+	command -v "$(CETTA_BROWSER)" >/dev/null || { \
+		echo "SKIP: test-io-browser requires CETTA_BROWSER=$(CETTA_BROWSER)"; exit 0; }; \
+	command -v "$(CETTA_BROWSER_NODE)" >/dev/null || { \
+		echo "SKIP: test-io-browser requires CETTA_BROWSER_NODE=$(CETTA_BROWSER_NODE)"; exit 0; }; \
+	work=$$(mktemp -d runtime/io-browser.XXXXXX); \
+	server_pid=; chrome_pid=; \
+	trap 'if [ -n "$$server_pid" ]; then kill "$$server_pid" 2>/dev/null || true; wait "$$server_pid" 2>/dev/null || true; fi; if [ -n "$$chrome_pid" ]; then kill "$$chrome_pid" 2>/dev/null || true; wait "$$chrome_pid" 2>/dev/null || true; fi; rm -rf "$$work"' EXIT INT TERM; \
+	cp tests/support/io_browser_test.html "$$work/index.html"; \
+	"$(CETTA_EMCC)" -Isrc -I. \
+		-DCETTA_BUILD_WITH_HTTP=1 \
+		-DCETTA_BUILD_HTTP_PROVIDER_CURL=0 \
+		-DCETTA_BUILD_HTTP_PROVIDER_EMSCRIPTEN=1 \
+		-O2 -Wall -Werror -std=c11 \
+		tests/test_io_browser.c src/library_io.c src/symbol.c src/atom.c \
+		-sFETCH=1 -sFETCH_STREAMING=1 -sEXIT_RUNTIME=1 \
+		-sALLOW_MEMORY_GROWTH=1 -sENVIRONMENT=web \
+		-o "$$work/io_browser_test.js"; \
+	python3 tests/support/io_http_fixture.py --root "$$work" \
+		> "$$work/server.port" 2> "$$work/server.err" & \
+	server_pid=$$!; \
+	"$(CETTA_BROWSER)" --headless=new --disable-gpu \
+		--disable-dev-shm-usage --remote-debugging-address=127.0.0.1 \
+		--remote-debugging-port=0 --user-data-dir="$$work/browser-profile" \
+		about:blank > "$$work/browser.out" 2> "$$work/browser.err" & \
+	chrome_pid=$$!; \
+	tries=0; \
+	while [ $$tries -lt 500 ]; do \
+		if [ -s "$$work/server.port" ] && \
+			rg -q 'DevTools listening on' "$$work/browser.err" 2>/dev/null; then break; fi; \
+		kill -0 "$$server_pid" 2>/dev/null || break; \
+		kill -0 "$$chrome_pid" 2>/dev/null || break; \
+		tries=$$((tries + 1)); sleep 0.01; \
+	done; \
+	test -s "$$work/server.port" || { cat "$$work/server.err"; exit 1; }; \
+	debug_port=$$(sed -n 's|.*ws://127\.0\.0\.1:\([0-9][0-9]*\)/.*|\1|p' \
+		"$$work/browser.err" | head -1); \
+	test -n "$$debug_port" || { cat "$$work/browser.err"; exit 1; }; \
+	page_url="http://127.0.0.1:$$(cat "$$work/server.port")/index.html"; \
+	result=$$("$(CETTA_BROWSER_NODE)" tests/support/browser_cdp_wait.mjs \
+		"$$debug_port" "$$page_url"); \
+	wait "$$chrome_pid" 2>/dev/null || true; \
+	chrome_pid=; \
+	printf '%s\n' "$$result"; \
+	test "$$result" = '(IoBrowserSummary 24 24 0)'
+
+test-io:
+	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_HTTP=1 test-io-syntax
+	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_HTTP=1 test-io-runtime
+	@$(MAKE) -s BUILD=$(BUILD_CANON) test-io-browser
+	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_HTTP=0 test-io-no-http
+
+.PHONY: test-io test-io-runtime test-io-syntax test-io-no-http test-io-browser \
+	bench-io-runtime
 
 $(PRIME_NEED_TEST_BIN): tests/test_prime_need.c src/prime_need.c src/prime_need.h src/symbol.c src/atom.c $(BUILD_CONFIG_HEADER)
 	@mkdir -p runtime
@@ -4457,6 +4657,10 @@ $(BUILD_CONFIG_STAMP): $(BUILD_CONFIG_INPUTS)
 	printf '#define CETTA_BUILD_WITH_GMP %s\n' "$(ENABLE_GMP)" >> "$$tmp_cfg"; \
 	printf '#define CETTA_BUILD_WITH_LIB_PROLOG %s\n' "$(LIB_PROLOG_ENABLED)" >> "$$tmp_cfg"; \
 	printf '#define CETTA_BUILD_LIB_PROLOG_CONFIG_ID "%s"\n' "$(LIB_PROLOG_CONFIG_ID)" >> "$$tmp_cfg"; \
+	printf '#define CETTA_BUILD_WITH_HTTP %s\n' "$(HTTP_ENABLED)" >> "$$tmp_cfg"; \
+	printf '#define CETTA_BUILD_HTTP_PROVIDER_CURL %s\n' "$(HTTP_PROVIDER_CURL)" >> "$$tmp_cfg"; \
+	printf '#define CETTA_BUILD_HTTP_PROVIDER_EMSCRIPTEN %s\n' "$(HTTP_PROVIDER_EMSCRIPTEN)" >> "$$tmp_cfg"; \
+	printf '#define CETTA_BUILD_HTTP_CONFIG_ID "%s"\n' "$(HTTP_CONFIG_ID)" >> "$$tmp_cfg"; \
 	printf '#define CETTA_BUILD_WITH_PETTA_TYPECHECK_V2 %s\n' "$(ENABLE_PETTA_TYPECHECK_V2)" >> "$$tmp_cfg"; \
 	printf '#define CETTA_BUILD_WITH_PETTA_TYPECHECK_CENSUS %s\n' "$(ENABLE_PETTA_TYPECHECK_CENSUS)" >> "$$tmp_cfg"; \
 	printf '#define CETTA_BUILD_WITH_LANGDEF_DIAGNOSTIC_BACKENDS %s\n' "$(ENABLE_LANGDEF_DIAGNOSTIC_BACKENDS)" >> "$$tmp_cfg"; \
@@ -4486,6 +4690,10 @@ $(STAGE0_BUILD_CONFIG_STAMP): $(BUILD_CONFIG_INPUTS)
 	printf '#define CETTA_BUILD_WITH_GMP %s\n' "$(ENABLE_GMP)" >> "$$tmp_cfg"; \
 	printf '#define CETTA_BUILD_WITH_LIB_PROLOG %s\n' "$(LIB_PROLOG_ENABLED)" >> "$$tmp_cfg"; \
 	printf '#define CETTA_BUILD_LIB_PROLOG_CONFIG_ID "%s"\n' "$(LIB_PROLOG_CONFIG_ID)" >> "$$tmp_cfg"; \
+	printf '#define CETTA_BUILD_WITH_HTTP %s\n' "$(HTTP_ENABLED)" >> "$$tmp_cfg"; \
+	printf '#define CETTA_BUILD_HTTP_PROVIDER_CURL %s\n' "$(HTTP_PROVIDER_CURL)" >> "$$tmp_cfg"; \
+	printf '#define CETTA_BUILD_HTTP_PROVIDER_EMSCRIPTEN %s\n' "$(HTTP_PROVIDER_EMSCRIPTEN)" >> "$$tmp_cfg"; \
+	printf '#define CETTA_BUILD_HTTP_CONFIG_ID "%s"\n' "$(HTTP_CONFIG_ID)" >> "$$tmp_cfg"; \
 	printf '#define CETTA_BUILD_WITH_PETTA_TYPECHECK_V2 %s\n' "$(ENABLE_PETTA_TYPECHECK_V2)" >> "$$tmp_cfg"; \
 	printf '#define CETTA_BUILD_WITH_PETTA_TYPECHECK_CENSUS 0\n' >> "$$tmp_cfg"; \
 	printf '#define CETTA_BUILD_WITH_LANGDEF_DIAGNOSTIC_BACKENDS %s\n' "$(ENABLE_LANGDEF_DIAGNOSTIC_BACKENDS)" >> "$$tmp_cfg"; \
@@ -4501,7 +4709,7 @@ $(STAGE0_BUILD_CONFIG_STAMP): $(BUILD_CONFIG_INPUTS)
 	touch "$@"
 
 %.$(BUILD_OBJ_TAG).stage0.o: %.c $(STAGE0_BUILD_CONFIG_HEADER)
-	$(CC) -Isrc -I. -Iexperiments/gslt2parse_foundation/native $(BRIDGE_CFLAGS) $(PY_CFLAGS) $(GMP_CFLAGS) $(LIB_PROLOG_CFLAGS) -include $(STAGE0_BUILD_CONFIG_HEADER) $(CFLAGS) $(DEPFLAGS) -DCETTA_NO_STDLIB -MF $(@:.o=.d) -c -o $@ $<
+	$(CC) -Isrc -I. -Iexperiments/gslt2parse_foundation/native $(BRIDGE_CFLAGS) $(PY_CFLAGS) $(GMP_CFLAGS) $(LIB_PROLOG_CFLAGS) $(HTTP_CFLAGS) -include $(STAGE0_BUILD_CONFIG_HEADER) $(CFLAGS) $(DEPFLAGS) -DCETTA_NO_STDLIB -MF $(@:.o=.d) -c -o $@ $<
 
 $(STAGE0_BIN): $(STAGE0_OBJ) $(BRIDGE_DEPS)
 	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
@@ -20904,6 +21112,14 @@ test-petta-libpl: $(BIN) test-petta-libpl-explicit-utf8
 			exit 1; \
 		fi; \
 		CETTA_PETTA_SEARCH_MACHINE=1 ./$(BIN) --lang petta \
+			tests/petta/libpl_py_call.metta \
+			> "$$actual"; \
+		if ! diff -u tests/petta/libpl_py_call.expected \
+				"$$actual"; then \
+			echo "FAIL: PeTTa/libpl py-call callback boundary"; \
+			exit 1; \
+		fi; \
+		CETTA_PETTA_SEARCH_MACHINE=1 ./$(BIN) --lang petta \
 			--num-threads 2 \
 			tests/petta/foreign_predicate_hyperpose.metta \
 			> "$$actual"; \
@@ -21356,7 +21572,29 @@ test-petta-native-host-runtime: $(BIN)
 	fi; \
 	echo "PASS: native PeTTa time and session random values"
 
-test-petta-search-machine: $(PETTA_SEARCH_MACHINE_TEST_BIN) $(BIN) test-petta-type-langdef-source-binding-v1 test-petta-boundary-langdef-source-binding-v1 test-petta-capability-ledger test-petta-specializer-relevance-filter test-petta-mam-contender-mutations test-petta-extended-query-algebra test-petta-prepared-register-loop test-petta-specialized-pure-call test-petta-memoization test-petta-match-existence-fusion test-petta-clause-slot-admission test-petta-equation-template-c0 test-petta-relational-equation-view test-petta-argv-native test-petta-native-host-runtime
+.PHONY: test-petta-imported-host-bridges
+test-petta-imported-host-bridges: $(BIN)
+	@actual=$$(./$(BIN) --lang petta \
+		tests/petta/libpl_native_eval.metta); \
+	expected=$$(cat tests/petta/libpl_native_eval.expected); \
+	if [ "$$actual" != "$$expected" ]; then \
+		echo "FAIL: imported Prolog predicates call native PeTTa eval"; \
+		diff <(printf '%s\n' "$$expected") \
+			<(printf '%s\n' "$$actual") | head -60; \
+		exit 1; \
+	fi; \
+	actual=$$(./$(BIN) --lang petta \
+		tests/petta/imported_swrite.metta); \
+	expected=$$(cat tests/petta/imported_swrite.expected); \
+	if [ "$$actual" != "$$expected" ]; then \
+		echo "FAIL: imported PeTTa swrite bridge"; \
+		diff <(printf '%s\n' "$$expected") \
+			<(printf '%s\n' "$$actual") | head -60; \
+		exit 1; \
+	fi; \
+	echo "PASS: imported Prolog eval and swrite host bridges"
+
+test-petta-search-machine: $(PETTA_SEARCH_MACHINE_TEST_BIN) $(BIN) test-petta-type-langdef-source-binding-v1 test-petta-boundary-langdef-source-binding-v1 test-petta-capability-ledger test-petta-specializer-relevance-filter test-petta-mam-contender-mutations test-petta-extended-query-algebra test-petta-prepared-register-loop test-petta-specialized-pure-call test-petta-memoization test-petta-match-existence-fusion test-petta-clause-slot-admission test-petta-equation-template-c0 test-petta-relational-equation-view test-petta-argv-native test-petta-native-host-runtime test-petta-imported-host-bridges
 	@./$(PETTA_SEARCH_MACHINE_TEST_BIN)
 	@machine_stats=$$(CETTA_PETTA_MACHINE_STATS=1 \
 		./$(BIN) --lang petta -e '!(+ 1 2)' \

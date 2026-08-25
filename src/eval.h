@@ -135,6 +135,8 @@ void eval_top_with_registry_outcome(
     Space *s, Arena *a, Arena *persistent, Registry *r, Atom *expr,
     EvalOutcome *outcome, CettaPrimeNeedAnswerObserver observer,
     void *observer_context);
+/* Re-entrant callback used only by the optional PeTTa/libpl adapter. */
+bool eval_petta_from_lib_prolog(Arena *a, Atom *expr, ResultSet *results);
 void eval_release_temporary_spaces(void);
 void eval_reset_form_gc_survivor(void);
 void eval_set_default_fuel(int fuel);
