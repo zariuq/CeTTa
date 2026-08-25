@@ -88,6 +88,7 @@ struct CettaPettaTokenSpaceClauseRegistry;
 struct CettaNikRuntimeV1;
 struct CettaPettaTypecheckV3;
 struct CettaPettaRuntimeState;
+struct CettaIoRuntime;
 
 typedef struct CettaLibraryContext {
     CettaEvalSession session;
@@ -141,6 +142,7 @@ typedef struct CettaLibraryContext {
         petta_token_space_clause_registry;
     CettaLibPrologRuntime *lib_prolog;
     CettaForeignRuntime *foreign_runtime;
+    struct CettaIoRuntime *io_runtime;
 } CettaLibraryContext;
 
 void cetta_library_context_init(CettaLibraryContext *ctx);
