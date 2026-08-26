@@ -1807,10 +1807,14 @@ static bool prepared_pure_compile_eval(
                 },
                 child_count ? &child : NULL, child_count, node_out);
         }
+        if (expression_view_state ==
+            CETTA_PREPARED_PURE_EXPRESSION_DECLINE) {
+            return prepared_pure_reject(
+                program, "dialect-owned form requires canonical evaluation",
+                source);
+        }
         if (expression_view_state !=
-                CETTA_PREPARED_PURE_EXPRESSION_DEFAULT &&
-            expression_view_state !=
-                CETTA_PREPARED_PURE_EXPRESSION_DECLINE)
+            CETTA_PREPARED_PURE_EXPRESSION_DEFAULT)
             return prepared_pure_reject(
                 program, "invalid dialect expression view", source);
     }
@@ -1988,9 +1992,7 @@ static bool prepared_pure_compile_eval(
     if (head_role == PREPARED_PURE_HEAD_CALLABLE)
         return prepared_pure_reject(
             program, "unsupported evaluator syntax", source);
-    if (head_role == PREPARED_PURE_HEAD_UNKNOWN ||
-        expression_view_state ==
-            CETTA_PREPARED_PURE_EXPRESSION_DECLINE)
+    if (head_role == PREPARED_PURE_HEAD_UNKNOWN)
         return prepared_pure_reject(
             program, "dialect-owned form requires canonical evaluation",
             source);
@@ -4152,6 +4154,19 @@ static bool prepared_pure_program_execute_internal(
                 return prepared_pure_runtime_decline(
                     program, "runtime frame has no expression", NULL);
             if (frame->state == 0u) {
+                if (source->kind == ATOM_EXPR &&
+                    program->expression_view) {
+                    CettaPreparedPureExpressionView view = {0};
+                    CettaPreparedPureExpressionViewState state =
+                        program->expression_view(source, &view);
+                    if (state !=
+                        CETTA_PREPARED_PURE_EXPRESSION_DEFAULT) {
+                        return prepared_pure_runtime_decline(
+                            program,
+                            "dynamic dialect form requires canonical evaluation",
+                            NULL);
+                    }
+                }
                 if (!prepared_pure_expression_is_callable(
                         program, source)) {
                     if (!prepared_pure_push_value(program, source))
