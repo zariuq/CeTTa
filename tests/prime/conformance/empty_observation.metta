@@ -100,6 +100,36 @@
      unexpected-fallback)
    ())
 
+; A selected conditional arm is still a computation.  In particular, its
+; zero must not be reclassified as the ordinary datum Empty by a tail,
+; equation, or multi-result let continuation.
+!(assertEqualToResult
+   (reify (if False accepted (empty)))
+   (()))
+
+!(assertEqualToResult
+   (reify (if True (empty) accepted))
+   (()))
+
+!(assertEqualToResult
+   (reify
+     (let $candidate (superpose (rejected wanted))
+       (if (== $candidate wanted)
+           accepted
+           (empty))))
+   ((accepted)))
+
+!(assertEqualToResult
+   (case (if False accepted (empty))
+     (($value (unexpected $value)))
+     conditional-zero)
+   (conditional-zero))
+
+; The similarly positioned datum remains observable.
+!(assertEqualToResult
+   (reify (if False accepted Empty))
+   ((Empty)))
+
 !(assertEqualToResult
    (case c
      ((a unexpected-a)
@@ -204,4 +234,4 @@
    (system:arg 0)
    ((CliArgumentNotFound 0)))
 
-!(println! (PrimeEmptyObservationSummary 35 35 0))
+!(println! (PrimeEmptyObservationSummary 40 40 0))
