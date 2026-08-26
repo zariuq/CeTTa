@@ -2670,6 +2670,7 @@ PRIME_CONFORMANCE_TESTS = \
 	tests/prime/need_storage_boundary.metta \
 	tests/prime/need_quote_preservation.metta \
 	tests/prime/need_sequential_unification_refinement.metta \
+	tests/prime/relational_first_demand.metta \
 	tests/prime/nik_plural_checking.metta \
 	tests/prime/nil_rule_machine_guests.generated.metta \
 	tests/prime/rule_machine_malformed_artifact_delta.metta \
@@ -2745,6 +2746,7 @@ PRIME_EXAMPLE_TESTS = \
 	examples/prime/abstention_boundary.metta \
 	examples/prime/context_tutorial.metta
 PRIME_PRACTICAL_TESTS = \
+	tests/prime/authored_frontier_chaining.metta \
 	tests/prime/practical/typed_pln_chainer.metta \
 	tests/prime/practical/atp_guided_inhabitation.metta \
 	tests/prime/practical/atp_direct_library.metta \
