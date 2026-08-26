@@ -1,0 +1,125 @@
+#!/usr/bin/env python3
+"""Parse and aggregate CeTTa's PeTTa-machine observability records."""
+
+from __future__ import annotations
+
+import statistics
+
+
+STATS_PREFIX = "PETTA_MACHINE_STATS "
+RUNTIME_COUNTER_PREFIX = "runtime-counter "
+PUBLICATION_STATS_PREFIX = "PETTA_PUBLICATION_STATS "
+
+
+def parse_stats_line(line: str) -> dict[str, int]:
+    if not line.startswith(STATS_PREFIX):
+        raise ValueError("not a PeTTa machine statistics line")
+    fields: dict[str, int] = {}
+    for item in line[len(STATS_PREFIX):].split():
+        key, separator, value = item.partition("=")
+        if not separator or not key or not value:
+            raise ValueError(f"malformed statistics field: {item!r}")
+        if key in fields:
+            raise ValueError(f"duplicate statistics field: {key}")
+        fields[key] = int(value)
+    return fields
+
+
+def parse_runtime_counter_line(line: str) -> tuple[str, int]:
+    if not line.startswith(RUNTIME_COUNTER_PREFIX):
+        raise ValueError("not a runtime-counter line")
+    fields = line.split()
+    if len(fields) != 3 or fields[0] != "runtime-counter":
+        raise ValueError(f"malformed runtime-counter line: {line!r}")
+    return fields[1], int(fields[2])
+
+
+def parse_publication_stats_line(line: str) -> dict[str, int]:
+    if not line.startswith(PUBLICATION_STATS_PREFIX):
+        raise ValueError("not a PeTTa publication statistics line")
+    fields: dict[str, int] = {}
+    for item in line[len(PUBLICATION_STATS_PREFIX):].split():
+        key, separator, value = item.partition("=")
+        if not separator or not key or not value:
+            raise ValueError(f"malformed publication field: {item!r}")
+        if key in fields:
+            raise ValueError(f"duplicate publication field: {key}")
+        fields[key] = int(value)
+    if set(fields) != {"answers", "ordered_occurrences"}:
+        raise ValueError(f"incomplete publication statistics: {fields!r}")
+    if fields["answers"] != fields["ordered_occurrences"]:
+        raise ValueError("publication answer/occurrence count disagrees")
+    return fields
+
+
+def extract_publication_stats(
+    stderr: str,
+) -> tuple[list[dict[str, int]], str]:
+    publications: list[dict[str, int]] = []
+    ordinary: list[str] = []
+    for line in stderr.splitlines(keepends=True):
+        payload = line[:-1] if line.endswith("\n") else line
+        if payload.startswith(PUBLICATION_STATS_PREFIX):
+            publications.append(parse_publication_stats_line(payload))
+        else:
+            ordinary.append(line)
+    return publications, "".join(ordinary)
+
+
+def extract_observability(
+    stderr: str,
+) -> tuple[list[dict[str, int]], dict[str, int], str]:
+    invocations: list[dict[str, int]] = []
+    runtime_counters: dict[str, int] = {}
+    ordinary: list[str] = []
+    for line in stderr.splitlines(keepends=True):
+        payload = line[:-1] if line.endswith("\n") else line
+        if payload.startswith(STATS_PREFIX):
+            invocations.append(parse_stats_line(payload))
+        elif payload.startswith(RUNTIME_COUNTER_PREFIX):
+            name, value = parse_runtime_counter_line(payload)
+            if name in runtime_counters:
+                raise ValueError(f"duplicate runtime counter: {name}")
+            runtime_counters[name] = value
+        else:
+            ordinary.append(line)
+    return invocations, runtime_counters, "".join(ordinary)
+
+
+def extract_stats(stderr: str) -> tuple[list[dict[str, int]], str]:
+    invocations: list[dict[str, int]] = []
+    ordinary: list[str] = []
+    for line in stderr.splitlines(keepends=True):
+        payload = line[:-1] if line.endswith("\n") else line
+        if payload.startswith(STATS_PREFIX):
+            invocations.append(parse_stats_line(payload))
+        else:
+            ordinary.append(line)
+    return invocations, "".join(ordinary)
+
+
+def aggregate_invocations(
+    invocations: list[dict[str, int]],
+) -> dict[str, int | float]:
+    if not invocations:
+        raise RuntimeError("run emitted no PETTA_MACHINE_STATS records")
+    aggregate: dict[str, int | float] = {"invocations": len(invocations)}
+    time_to_first_answer: list[int] = []
+    first_answer_transitions: list[int] = []
+    for invocation in invocations:
+        for key, value in invocation.items():
+            if key == "time_to_first_answer_ns":
+                time_to_first_answer.append(value)
+            elif key == "first_answer_transition":
+                first_answer_transitions.append(value)
+            elif key.startswith("max_"):
+                aggregate[key] = max(int(aggregate.get(key, 0)), value)
+            else:
+                aggregate[key] = int(aggregate.get(key, 0)) + value
+    aggregate["ttfa_ns_median"] = statistics.median(time_to_first_answer)
+    aggregate["ttfa_ns_max"] = max(time_to_first_answer)
+    aggregate["first_answer_transition_median"] = statistics.median(
+        first_answer_transitions
+    )
+    aggregate["first_answer_transition_max"] = max(first_answer_transitions)
+    return aggregate

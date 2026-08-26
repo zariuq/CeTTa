@@ -1,5 +1,5 @@
 ; generated finite-Horn facts from a canonical answer stream
-(gslt-presentation-v1 GeneratedAnswerFactsV1_481eae6a41e5a57c8d9230c691a2dbc1cfce82726cd19bf610a3eb376795b8de
+(gslt-presentation-v1 GeneratedAnswerFactsV1_dd45e9681220d0ec5c6127fc21a3d2185f4f2bf7995331bca934daf8f994bd0c
   (signature
     (operator compile-oslf-native-type-v1 1)
     (operator oslf-carrier-v1 1)
@@ -23,9 +23,10 @@
     (operator proof-relational-projection-selector-v1 3)
     (operator proof-relational-projection-table-v1 5)
     (operator proof-relational-runtime-artifact-v1 1)
+    (operator proof-relational-runtime-binary-table-enumeration-v1 8)
     (operator proof-relational-runtime-compressed-input-v1 11)
     (operator proof-relational-runtime-control-literal-v1 4)
-    (operator proof-relational-runtime-distinct-pairs-v1 6)
+    (operator proof-relational-runtime-distinct-pairs-v1 4)
     (operator proof-relational-runtime-identity-v1 2)
     (operator proof-relational-runtime-input-byte-v1 4)
     (operator proof-relational-runtime-normal-input-v1 5)
@@ -90,20 +91,20 @@
     (rule answer-fact-aa3854bd973532f6ba620809eb4ab38eaa1d2ea849cfb8c639978f12a4a79172
       (head (compile-oslf-native-type-v1 (oslf-carrier-v1 finite-horn-goal-state-v1)))
       (body))
-    (rule answer-fact-0e0f657975db8de6a196975110e40346cfeb58a5ad6dc601ae7b959d76a45bc5
-      (head (compile-oslf-native-type-v1 (oslf-external-relation-v1 (q-sym ProofGSLTFirstOrderSemanticInterfaceV1) (q-sym ProofAssertionDeclaredV1) (q-int 1))))
+    (rule answer-fact-044838224ff9d27746925f18b03f5a6b00ea3228b0da4384d931363f735bdf12
+      (head (compile-oslf-native-type-v1 (oslf-external-relation-v1 (q-sym CertificateGSLTFirstOrderSemanticInterfaceV1) (q-sym ProofAssertionDeclaredV1) (q-int 1))))
       (body))
-    (rule answer-fact-57fd66c856888728ae0c0de84c2e9739021303b67ff6e2e5eee0afd21eb47ae7
-      (head (compile-oslf-native-type-v1 (oslf-external-relation-v1 (q-sym ProofGSLTFirstOrderSemanticInterfaceV1) (q-sym ProofTokenApartV1) (q-int 2))))
+    (rule answer-fact-fbaced0a624665b0440ee5b4e600150a92c5afb0428bf2309fb20b7478e18899
+      (head (compile-oslf-native-type-v1 (oslf-external-relation-v1 (q-sym CertificateGSLTFirstOrderSemanticInterfaceV1) (q-sym ProofTokenApartV1) (q-int 2))))
       (body))
-    (rule answer-fact-ec12de6ca969543b80a76c286efe34f829c1fbb3002c49f4f5a7a5595e94af5c
-      (head (compile-oslf-native-type-v1 (oslf-external-relation-v1 (q-sym ProofGSLTFirstOrderSemanticInterfaceV1) (q-sym ProofTokenDifferentV1) (q-int 2))))
+    (rule answer-fact-dae7a126ed635e634f1ebd1e8164842ecc51b0543491f6823e70ceafdf29d057
+      (head (compile-oslf-native-type-v1 (oslf-external-relation-v1 (q-sym CertificateGSLTFirstOrderSemanticInterfaceV1) (q-sym ProofTokenDifferentV1) (q-int 2))))
       (body))
-    (rule answer-fact-c3aa79a7244d36ed73dd6fe430d70b0546d291efaa3eb0fe1d377065d6b2b49a
-      (head (compile-oslf-native-type-v1 (oslf-external-relation-v1 (q-sym ProofGSLTFirstOrderSemanticInterfaceV1) (q-sym ProofTokenLiteralV1) (q-int 1))))
+    (rule answer-fact-0d561cfff9abdc6f74361c43c716ae5d9ceab5adaeb32c67ae41bbf5a87112c8
+      (head (compile-oslf-native-type-v1 (oslf-external-relation-v1 (q-sym CertificateGSLTFirstOrderSemanticInterfaceV1) (q-sym ProofTokenLiteralV1) (q-int 1))))
       (body))
-    (rule answer-fact-86da60c0591b941ed9214ec338479e0e578b8851526978a5042365f120696d40
-      (head (compile-oslf-native-type-v1 (oslf-external-relation-v1 (q-sym ProofGSLTFirstOrderSemanticInterfaceV1) (q-sym ProofTokenVariableV1) (q-int 1))))
+    (rule answer-fact-bca4398fa3794b7033689e163a112a3ce0e48488ce974d8cfeb9ef695f994c76
+      (head (compile-oslf-native-type-v1 (oslf-external-relation-v1 (q-sym CertificateGSLTFirstOrderSemanticInterfaceV1) (q-sym ProofTokenVariableV1) (q-int 1))))
       (body))
     (rule answer-fact-69a9b402ac52f14404f78d03a9bb9f402d724f76abbdd1cb95deceb49f774bc3
       (head (compile-oslf-native-type-v1 (oslf-galois-v1 ntt-diamond-v1 ntt-box-v1)))
@@ -213,20 +214,20 @@
     (rule answer-fact-6aa58ac3f9abb0046f4fec3b02253015509e17d5d8e9ff9f47453750fd63e289
       (head (compile-oslf-native-type-v1 (oslf-native-former-v1 ntt-top-v1 q-zero)))
       (body))
-    (rule answer-fact-f10f7159ea9866dcf4d316eb866f749a24bd0dd337db9ca5922f2791352bd749
-      (head (compile-oslf-native-type-v1 (oslf-step-schema-v1 (q-sym ProofGSLTFirstOrderSemanticInterfaceV1) proof-first-order-interface-assertion-v1 (q-app (q-sym oslf-external-relation-decl-v1) (q-cons (q-sym ProofAssertionDeclaredV1) (q-cons (q-int 1) q-nil))) q-nil)))
+    (rule answer-fact-36db8eca7178a834f90257391c29969fd629ec137e4ab3bcdb0cf0ad145683de
+      (head (compile-oslf-native-type-v1 (oslf-step-schema-v1 (q-sym CertificateGSLTFirstOrderSemanticInterfaceV1) proof-first-order-interface-assertion-v1 (q-app (q-sym oslf-external-relation-decl-v1) (q-cons (q-sym ProofAssertionDeclaredV1) (q-cons (q-int 1) q-nil))) q-nil)))
       (body))
-    (rule answer-fact-9e4e0029d941e01a18bd42ba823a484c33c9b9f5737c1a9d1d52e32723edd6ce
-      (head (compile-oslf-native-type-v1 (oslf-step-schema-v1 (q-sym ProofGSLTFirstOrderSemanticInterfaceV1) proof-first-order-interface-token-apart-v1 (q-app (q-sym oslf-external-relation-decl-v1) (q-cons (q-sym ProofTokenApartV1) (q-cons (q-int 2) q-nil))) q-nil)))
+    (rule answer-fact-b9bb0699ddb7ae21ad76f9ba287b109090e07054eee8361e0d9d2485c2010389
+      (head (compile-oslf-native-type-v1 (oslf-step-schema-v1 (q-sym CertificateGSLTFirstOrderSemanticInterfaceV1) proof-first-order-interface-token-apart-v1 (q-app (q-sym oslf-external-relation-decl-v1) (q-cons (q-sym ProofTokenApartV1) (q-cons (q-int 2) q-nil))) q-nil)))
       (body))
-    (rule answer-fact-63e3bc412687561755f23f6cfcf79608bd06c9f1df198215672ecca0718b1f6b
-      (head (compile-oslf-native-type-v1 (oslf-step-schema-v1 (q-sym ProofGSLTFirstOrderSemanticInterfaceV1) proof-first-order-interface-token-different-v1 (q-app (q-sym oslf-external-relation-decl-v1) (q-cons (q-sym ProofTokenDifferentV1) (q-cons (q-int 2) q-nil))) q-nil)))
+    (rule answer-fact-82de927be38378381797927d63f4dc7dc16a681874446b246a13dd7bf40a3bfa
+      (head (compile-oslf-native-type-v1 (oslf-step-schema-v1 (q-sym CertificateGSLTFirstOrderSemanticInterfaceV1) proof-first-order-interface-token-different-v1 (q-app (q-sym oslf-external-relation-decl-v1) (q-cons (q-sym ProofTokenDifferentV1) (q-cons (q-int 2) q-nil))) q-nil)))
       (body))
-    (rule answer-fact-36f606f0b3f37527bf772ddf7d322a67a603e7c899f796efe60ff36b98c21694
-      (head (compile-oslf-native-type-v1 (oslf-step-schema-v1 (q-sym ProofGSLTFirstOrderSemanticInterfaceV1) proof-first-order-interface-token-literal-v1 (q-app (q-sym oslf-external-relation-decl-v1) (q-cons (q-sym ProofTokenLiteralV1) (q-cons (q-int 1) q-nil))) q-nil)))
+    (rule answer-fact-335787db41e37dc76ff9c77a14f1ef53ddfe68391e497dfebddf9289d0a9c669
+      (head (compile-oslf-native-type-v1 (oslf-step-schema-v1 (q-sym CertificateGSLTFirstOrderSemanticInterfaceV1) proof-first-order-interface-token-literal-v1 (q-app (q-sym oslf-external-relation-decl-v1) (q-cons (q-sym ProofTokenLiteralV1) (q-cons (q-int 1) q-nil))) q-nil)))
       (body))
-    (rule answer-fact-c3cb75bc011b1770f4a5fe5e7bfc5dd0b7e3c1a756b4f568dc542317b78bade9
-      (head (compile-oslf-native-type-v1 (oslf-step-schema-v1 (q-sym ProofGSLTFirstOrderSemanticInterfaceV1) proof-first-order-interface-token-variable-v1 (q-app (q-sym oslf-external-relation-decl-v1) (q-cons (q-sym ProofTokenVariableV1) (q-cons (q-int 1) q-nil))) q-nil)))
+    (rule answer-fact-b2700a169f414455161c5ae710af23a0665cebb00dc064f646b050b473d25d01
+      (head (compile-oslf-native-type-v1 (oslf-step-schema-v1 (q-sym CertificateGSLTFirstOrderSemanticInterfaceV1) proof-first-order-interface-token-variable-v1 (q-app (q-sym oslf-external-relation-decl-v1) (q-cons (q-sym ProofTokenVariableV1) (q-cons (q-int 1) q-nil))) q-nil)))
       (body))
     (rule answer-fact-c7146463e1438317114285390f4ab34969796ff0939b08bcacac5126698bf71d
       (head (compile-oslf-native-type-v1 (oslf-step-schema-v1 MetamathProofV1 proof-assertion-apply-v1 (q-app (q-sym MetamathProvableV1) (q-cons (q-app (q-sym ProofSequenceConsV1) (q-cons (q-var (q-succ (q-succ q-zero))) (q-cons (q-var (q-succ (q-succ (q-succ (q-succ (q-succ (q-succ (q-succ (q-succ q-zero))))))))) q-nil))) q-nil)) (q-cons (q-app (q-sym ProofAssertionDeclaredV1) (q-cons (q-app (q-sym ProofAssertionV1) (q-cons (q-var q-zero) (q-cons (q-var (q-succ q-zero)) (q-cons (q-var (q-succ (q-succ q-zero))) (q-cons (q-var (q-succ (q-succ (q-succ q-zero)))) (q-cons (q-var (q-succ (q-succ (q-succ (q-succ q-zero))))) q-nil)))))) q-nil)) (q-cons (q-app (q-sym ProofAssertionBuildEnvironmentV1) (q-cons (q-var q-zero) (q-cons (q-var (q-succ (q-succ (q-succ (q-succ (q-succ q-zero)))))) (q-cons (q-var (q-succ (q-succ (q-succ (q-succ (q-succ (q-succ (q-succ q-zero)))))))) q-nil)))) (q-cons (q-app (q-sym ProofAssertionCheckEssentialsV1) (q-cons (q-var (q-succ q-zero)) (q-cons (q-var (q-succ (q-succ (q-succ (q-succ (q-succ (q-succ q-zero))))))) (q-cons (q-var (q-succ (q-succ (q-succ (q-succ (q-succ (q-succ (q-succ q-zero)))))))) q-nil)))) (q-cons (q-app (q-sym ProofAssertionCheckDisjointsV1) (q-cons (q-var (q-succ (q-succ (q-succ (q-succ q-zero))))) (q-cons (q-var (q-succ (q-succ (q-succ (q-succ (q-succ (q-succ (q-succ q-zero)))))))) q-nil))) (q-cons (q-app (q-sym ProofSequenceInstantiateV1) (q-cons (q-var (q-succ (q-succ (q-succ q-zero)))) (q-cons (q-var (q-succ (q-succ (q-succ (q-succ (q-succ (q-succ (q-succ q-zero)))))))) (q-cons (q-var (q-succ (q-succ (q-succ (q-succ (q-succ (q-succ (q-succ (q-succ q-zero))))))))) q-nil)))) q-nil))))))))
@@ -489,6 +490,9 @@
     (rule answer-fact-736aeb34c0e460d81193bb0673710f7dd98bccb828f2d613d89b098490b36be3
       (head (proof-relational-projection-artifact-v1 (proof-relational-projection-table-v1 MetamathProofV1 proof-relational-symbol-class-v1 mm-state-symbol-kind 2 1)))
       (body))
+    (rule answer-fact-d2d66e61318c3c2b479b92512d52751207caf27405cab0eccd046115b306e524
+      (head (proof-relational-runtime-artifact-v1 (proof-relational-runtime-binary-table-enumeration-v1 MetamathProofV1 source-proof-relational-active-apartness-row-v1 source-proof-relational-active-apartness-count-v1 mm-state-disjoint-variable 0 1 ProofTraceNatZeroV1 ProofTraceNatSuccV1)))
+      (body))
     (rule answer-fact-1a42a776bcc0e7001b8b188e455743cec5518688ffcb3ee8e25b4b0574be22c5
       (head (proof-relational-runtime-artifact-v1 (proof-relational-runtime-compressed-input-v1 MetamathProofV1 ProofRelationalRequestV1 ProofRelationalLabelV1 ProofTraceLabelConsV1 ProofTraceLabelNilV1 ProofTraceCodeConsV1 ProofTraceCodeNilV1 mm-state-assertion-ordered-frame-hypothesis 0 1 2)))
       (body))
@@ -510,14 +514,14 @@
     (rule answer-fact-7315496110ec06186fcdcdc2d2c677da61ada615b8178e26b1672a1d2493c7a4
       (head (proof-relational-runtime-artifact-v1 (proof-relational-runtime-control-literal-v1 MetamathProofV1 mm-state-symbol-kind 1 mm-symbol-variable)))
       (body))
-    (rule answer-fact-93ee74315ce52932b6e53e274404264bdca60ac6cb23f6318463be2002535655
-      (head (proof-relational-runtime-artifact-v1 (proof-relational-runtime-distinct-pairs-v1 MetamathProofV1 source-proof-relational-value-different-v1 mm-state-symbol-kind 0 1 mm-symbol-variable)))
+    (rule answer-fact-3a4c9b0fb389727f23f99805fbcc2f39525f0eb265c567774033a4d4ac0edd67
+      (head (proof-relational-runtime-artifact-v1 (proof-relational-runtime-distinct-pairs-v1 MetamathProofV1 source-proof-relational-value-different-v1 mm-state-label-kind 0)))
+      (body))
+    (rule answer-fact-ecb0ba663ff6291bc759200e2fb17ec9fe9a8b2b15100c0d14ab4f97c9c19fa2
+      (head (proof-relational-runtime-artifact-v1 (proof-relational-runtime-distinct-pairs-v1 MetamathProofV1 source-proof-relational-value-different-v1 mm-state-symbol-kind 0)))
       (body))
     (rule answer-fact-8f0fe653b852a0718c7440152723fd38b2c1d76cb67bd0f4bf0194dc901096ef
       (head (proof-relational-runtime-artifact-v1 (proof-relational-runtime-identity-v1 MetamathProofV1 MetamathLanguageV1)))
-      (body))
-    (rule answer-fact-275ea87db1878facb75ae7dd418f32809259f879ba84aa059d8606b4ad5c71c9
-      (head (proof-relational-runtime-artifact-v1 (proof-relational-runtime-input-byte-v1 MetamathProofV1 proof-runtime-compressed-input-v1 source-proof-trace-input-incomplete-compressed-code-v1 63)))
       (body))
     (rule answer-fact-4fa06166511da532deb2f45031da08df9bf2c86dcc6f952e00a21026ec53194b
       (head (proof-relational-runtime-artifact-v1 (proof-relational-runtime-input-byte-v1 MetamathProofV1 proof-runtime-normal-input-v1 source-proof-trace-input-incomplete-normal-label-v1 63)))

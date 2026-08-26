@@ -72,6 +72,7 @@ typedef struct EvalGcRootFrame {
     CettaEvalGcRootPayload payload;
     struct EvalGcRootFrame *previous;
     bool linked;
+    bool precise_suspension;
 } EvalGcRootFrame;
 
 typedef struct {
@@ -137,6 +138,7 @@ static void eval_gc_root_frame_link(EvalGcRootFrame *frame,
     frame->kind = kind;
     frame->previous = g_eval_gc.roots;
     frame->linked = true;
+    frame->precise_suspension = false;
     g_eval_gc.roots = frame;
 }
 
@@ -188,6 +190,88 @@ static void eval_gc_root_frame_enter_function_args_machine(
         frame, CETTA_EVAL_GC_FRAME_FUNCTION_ARGS_MACHINE);
 }
 
+static void eval_gc_root_frame_enter_outcome_continuation(
+    EvalGcRootFrame *frame,
+    Atom **live_atoms, size_t live_atom_count,
+    OutcomeSet *child_outcomes,
+    OutcomeSet *parent_outcomes) {
+    if (!frame)
+        return;
+    frame->payload.outcome_continuation.live_atoms =
+        (CettaEvalGcAtomSpan){live_atoms, live_atom_count};
+    frame->payload.outcome_continuation.child_outcomes = child_outcomes;
+    frame->payload.outcome_continuation.parent_outcomes = parent_outcomes;
+    eval_gc_root_frame_link(
+        frame, CETTA_EVAL_GC_FRAME_OUTCOME_CONTINUATION);
+}
+
+static void eval_gc_root_frame_suspend_precisely(EvalGcRootFrame *frame) {
+    assert(frame && frame->linked &&
+           frame->kind == CETTA_EVAL_GC_FRAME_LEXICAL);
+    frame->precise_suspension = true;
+}
+
+static void eval_gc_root_frame_resume(EvalGcRootFrame *frame) {
+    assert(frame && frame->linked &&
+           frame->kind == CETTA_EVAL_GC_FRAME_LEXICAL);
+    frame->precise_suspension = false;
+}
+
+static void eval_gc_root_frame_leave(EvalGcRootFrame *frame);
+
+/* A recursive evaluator call may collect only when the suspended caller has
+ * named every arena pointer that remains live across the call.  Most such
+ * boundaries retain the caller's published outcomes and one child OutcomeSet
+ * in addition to the lexical atom/environment/type triple.  Keep that
+ * protocol in one object so special forms do not each invent a subtly
+ * different root order or forget to resume the lexical frame. */
+typedef struct {
+    EvalGcRootFrame continuation;
+    EvalGcRootFrame *lexical;
+    bool active;
+} EvalGcOutcomeSuspension;
+
+static void eval_gc_outcome_suspension_end(
+    EvalGcOutcomeSuspension *suspension) {
+    if (!suspension || !suspension->active)
+        return;
+    eval_gc_root_frame_resume(suspension->lexical);
+    eval_gc_root_frame_leave(&suspension->continuation);
+    suspension->lexical = NULL;
+    suspension->active = false;
+}
+
+static void eval_gc_outcome_suspension_begin_with_atoms(
+    EvalGcOutcomeSuspension *suspension,
+    EvalGcRootFrame *lexical,
+    OutcomeSet *parent_outcomes,
+    OutcomeSet *child_outcomes,
+    Atom **live_atoms,
+    size_t live_atom_count) {
+    assert(suspension && lexical && lexical->linked &&
+           lexical->kind == CETTA_EVAL_GC_FRAME_LEXICAL &&
+           parent_outcomes && child_outcomes);
+    assert(!suspension->active);
+    assert(live_atom_count == 0u || live_atoms != NULL);
+    eval_gc_root_frame_enter_outcome_continuation(
+        &suspension->continuation,
+        live_atoms, live_atom_count,
+        child_outcomes, parent_outcomes);
+    eval_gc_root_frame_suspend_precisely(lexical);
+    suspension->lexical = lexical;
+    suspension->active = true;
+}
+
+static void eval_gc_outcome_suspension_begin(
+    EvalGcOutcomeSuspension *suspension,
+    EvalGcRootFrame *lexical,
+    OutcomeSet *parent_outcomes,
+    OutcomeSet *child_outcomes) {
+    eval_gc_outcome_suspension_begin_with_atoms(
+        suspension, lexical, parent_outcomes, child_outcomes,
+        NULL, 0u);
+}
+
 static __attribute__((unused)) void eval_gc_external_owner_enter(void) {
     if (!g_eval_gc.ready)
         eval_gc_init_once();
@@ -223,6 +307,18 @@ static inline bool eval_gc_can_collect_arena(const Arena *arena) {
     return arena != NULL;
 }
 
+static inline bool eval_gc_root_chain_is_precise(
+    const EvalGcRootFrame *frame) {
+    bool precise_chain = frame && g_eval_gc.roots == frame;
+    for (const EvalGcRootFrame *root = frame ? frame->previous : NULL;
+         precise_chain && root; root = root->previous) {
+        if (root->kind == CETTA_EVAL_GC_FRAME_LEXICAL &&
+            !root->precise_suspension)
+            precise_chain = false;
+    }
+    return precise_chain;
+}
+
 static inline bool eval_gc_safe_point(const Arena *arena,
                                       const EvalGcRootFrame *frame,
                                       size_t os_len,
@@ -230,13 +326,13 @@ static inline bool eval_gc_safe_point(const Arena *arena,
     /*
      * The recursive C evaluator has no compiler stack maps for arbitrary
      * OutcomeSet and Atom locals held by older lexical frames.  Moving an
-     * arena while such a frame exists would require guessing its roots.  The
-     * outermost tail-dispatch frame is the only precise C-stack safe point;
-     * explicit machine continuations have their own complete frame scanner.
+     * arena while such a frame exists would require guessing its roots.  A
+     * nested tail-dispatch frame becomes precise only while each suspended
+     * lexical ancestor has registered its remaining live carriers through
+     * generated root frames; explicit machines have complete frame scanners.
      */
-    bool outermost_precise_frame =
-        frame && g_eval_gc.roots == frame && frame->previous == NULL;
-    return outermost_precise_frame &&
+    bool precise_chain = eval_gc_root_chain_is_precise(frame);
+    return precise_chain &&
            g_eval_gc.external_owner_depth == 0u && eval_gc_enabled() &&
            eval_gc_can_collect_arena(arena) && os_len == 0 &&
            live_above_anchor >= g_eval_gc.budget_bytes;

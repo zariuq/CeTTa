@@ -404,7 +404,9 @@ static bool pposlf_native_type_plan_v1_validate_external_relations(
         if (external->body_occurrences == 0u) {
             pposlf_native_type_plan_v1_set_error(
                 error_buf, error_buf_size,
-                "authored extensional interface is not consumed by the program");
+                "authored extensional interface %s/%u is not consumed by "
+                "the program",
+                external->relation, external->arity);
             return false;
         }
     }

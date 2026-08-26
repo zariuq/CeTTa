@@ -9,6 +9,8 @@ TIMEOUT_SEC="${CETTA_GC_ASAN_TIMEOUT:-180}"
 TESTS=(
     tests/gc/test_eval_gc_adversarial.metta
     tests/gc/test_eval_gc_indirect_state_stream.metta
+    tests/gc/test_eval_gc_precise_let_suspension.metta
+    tests/gc/diagnostics/test_eval_gc_precise_suspension.metta
     tests/gc/diagnostics/test_eval_gc_survivor_reset.metta
     tests/test_lib_parse_regression.metta
     tests/test_current_env_live_merge_regression.metta
@@ -65,6 +67,40 @@ for test_path in "${TESTS[@]}"; do
     else
         echo "FAIL: $test_path" >&2
         diff <(printf '%s\n' "$expected") <(printf '%s\n' "$result") | head -80 >&2
+        fail=$((fail + 1))
+    fi
+done
+
+PRIME_TESTS=(
+    tests/gc/diagnostics/test_eval_gc_precise_suspension.metta
+    tests/gc/diagnostics/test_eval_gc_control_suspensions.metta
+)
+
+for test_path in "${PRIME_TESTS[@]}"; do
+    expected_path="${test_path%.metta}.expected"
+    set +e
+    result="$(timeout "$TIMEOUT_SEC" \
+        env CETTA_GC=1 CETTA_GC_BUDGET_MB="$BUDGET_MB" \
+        CETTA_PRIME_NEED_HEAP_INDEX=1 \
+        "$BIN" --lang prime "$ROOT/$test_path" 2>&1 | normalize)"
+    status=$?
+    set -e
+
+    if [ "$status" -ne 0 ]; then
+        echo "FAIL: $test_path [prime] (exit $status)" >&2
+        printf '%s\n' "$result" | head -80 >&2
+        fail=$((fail + 1))
+        continue
+    fi
+
+    expected="$(normalize < "$ROOT/$expected_path")"
+    if [ "$result" = "$expected" ]; then
+        echo "PASS: $test_path [prime]"
+        pass=$((pass + 1))
+    else
+        echo "FAIL: $test_path [prime]" >&2
+        diff <(printf '%s\n' "$expected") \
+             <(printf '%s\n' "$result") | head -80 >&2 || true
         fail=$((fail + 1))
     fi
 done

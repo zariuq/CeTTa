@@ -204,7 +204,7 @@ CettaInferenceStatus cetta_inference_checker_check_raw_proof(
     size_t error_buf_size);
 
 /*
- * Replay the exact versioned chronological ProofGSLT carriers:
+ * Replay the exact versioned chronological CertificateGSLT carriers:
  *
  *   (GProofDAG 1 nodes root-id target)
  *   (GDNode id (GRuleInst "rule" arguments) references)

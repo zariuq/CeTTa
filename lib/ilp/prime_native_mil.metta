@@ -233,19 +233,22 @@
 (= (hyp:all-positive (quote $program) ()) True)
 (= (hyp:all-positive (quote $program) $examples)
    (let ($example $rest) (decons-atom $examples)
-     (and (hyp:positive-covered (quote $program) $example)
-          (hyp:all-positive (quote $program) $rest))))
+     (if (hyp:positive-covered (quote $program) $example)
+         (hyp:all-positive (quote $program) $rest)
+         False)))
 
 (= (hyp:all-negative (quote $program) ()) True)
 (= (hyp:all-negative (quote $program) $examples)
    (let ($example $rest) (decons-atom $examples)
-     (and (hyp:negative-avoided (quote $program) $example)
-          (hyp:all-negative (quote $program) $rest))))
+     (if (hyp:negative-avoided (quote $program) $example)
+         (hyp:all-negative (quote $program) $rest)
+         False)))
 
 (= (hyp:consistent
      (quote $program) (hyp:examples $positive $negative))
-   (and (hyp:all-positive (quote $program) $positive)
-        (hyp:all-negative (quote $program) $negative)))
+   (if (hyp:all-positive (quote $program) $positive)
+       (hyp:all-negative (quote $program) $negative)
+       False))
 
 (= (hyp:consistent-chain-candidate-data
      $bias $sorts $primitives $source-sort $target-sort $examples)

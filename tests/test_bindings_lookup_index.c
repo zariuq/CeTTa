@@ -533,7 +533,7 @@ int main(void) {
 
 #ifdef CETTA_TEST_HOOKS
     Bindings lazy_index_base;
-    CHECK(build_bindings(&arena, 64u, &lazy_index_base) &&
+    CHECK(build_bindings(&arena, 60u, &lazy_index_base) &&
               binding_is_int(&lazy_index_base, test_id(0u), 0),
           "demand-synchronized index fixture starts fully indexed");
     uint32_t lazy_synced_len = UINT32_MAX;
@@ -577,16 +577,46 @@ int main(void) {
             &lazy_index_branch.current, &lazy_synced_len) &&
         lazy_synced_len + 1u == lazy_index_branch.current.len;
     bool uncached_lookup_synchronizes =
-        bindings_lookup_id(
-            &lazy_index_branch.current, test_id(6401u)) == NULL &&
+        binding_is_int(&lazy_index_branch.current, test_id(5u), 5) &&
+        binding_is_int(&lazy_index_branch.current, test_id(6u), 6) &&
+        binding_is_int(&lazy_index_branch.current, lazy_index_id, 6400) &&
         bindings_lookup_index_test_synced_len(
             &lazy_index_branch.current, &lazy_synced_len) &&
         lazy_synced_len == lazy_index_branch.current.len;
     CHECK(!lookup_index_expected ||
               (cache_hit_stays_lazy && uncached_lookup_synchronizes),
-          "cache hits preserve a lazy suffix until index lookup needs it");
+          "one-entry index catch-up waits for demand and preserves its binding");
     bindings_builder_rollback(&lazy_index_branch, lazy_index_mark);
     bindings_builder_free(&lazy_index_branch);
+
+    Bindings shared_index_base;
+    CHECK(build_bindings(&arena, 60u, &shared_index_base) &&
+              binding_is_int(&shared_index_base, test_id(0u), 0),
+          "shared index fixture starts fully indexed");
+    BindingsBuilder shared_index_branch;
+    bindings_builder_init(&shared_index_branch, &shared_index_base);
+    uint32_t shared_index_mark =
+        bindings_builder_save(&shared_index_branch);
+    bool shared_append_stays_lazy =
+        bindings_builder_add_id_fresh(
+            &shared_index_branch, lazy_index_id, SYMBOL_ID_NONE,
+            atom_int(&arena, 6400)) &&
+        bindings_lookup_index_test_synced_len(
+            &shared_index_branch.current, &lazy_synced_len) &&
+        lazy_synced_len + 1u == shared_index_branch.current.len &&
+        binding_is_int(&shared_index_branch.current, test_id(5u), 5) &&
+        binding_is_int(&shared_index_branch.current, test_id(6u), 6) &&
+        binding_is_int(&shared_index_branch.current, lazy_index_id, 6400) &&
+        bindings_lookup_index_test_synced_len(
+            &shared_index_base, &lazy_synced_len) &&
+        lazy_synced_len == shared_index_base.len &&
+        bindings_lookup_id(&shared_index_base, lazy_index_id) == NULL;
+    bindings_builder_rollback(
+        &shared_index_branch, shared_index_mark);
+    CHECK(!lookup_index_expected || shared_append_stays_lazy,
+          "demanded catch-up detaches before mutating a shared index");
+    bindings_builder_free(&shared_index_branch);
+    bindings_free(&shared_index_base);
 #endif
 
     CHECK(sizeof(BindingsBuilderTrailEntry) <= 16u,

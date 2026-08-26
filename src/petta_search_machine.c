@@ -1165,9 +1165,22 @@ static bool petta_clause_slot_aliases_normalized(
 static bool petta_clause_body_activation_enabled(void) {
     static _Thread_local int enabled = -1;
     if (enabled < 0) {
+        const char *candidate = getenv(
+            "CETTA_PETTA_CLAUSE_BODY_ACTIVATION");
         const char *reference = getenv(
             "CETTA_PETTA_CLAUSE_BODY_ACTIVATION_REFERENCE");
-        enabled = !reference || strcmp(reference, "1") != 0;
+        /*
+         * The dense frame is a derived view of authoritative Bindings, but
+         * its control-specialized let/translator/deep-chain path is not yet
+         * semantically complete.  Keep it available for differential
+         * experiments without making it the language default.  The older
+         * REFERENCE switch remains a force-off control for paired runs.
+         */
+        enabled = candidate && candidate[0] != '\0' &&
+            strcmp(candidate, "0") != 0 &&
+            strcmp(candidate, "false") != 0 &&
+            strcmp(candidate, "off") != 0 &&
+            (!reference || strcmp(reference, "1") != 0);
     }
     return enabled != 0;
 }
