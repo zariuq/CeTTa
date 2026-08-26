@@ -376,7 +376,7 @@ static const char *const PRIME_NATIVE_MAP_REL_RUN_EQUATIONS_V1[] = {
     "(if (== (get-metatype $source-list) Expression) "
     "(let ($source-head $source-tail) (decons-atom $source-list) "
     "(let (rel:edge $target-head $head-evidence) "
-    "(rel:apply $relation $source-head) "
+    "($relation $source-head) "
     "(let (map-rel:edge $target-tail $tail-evidence) "
     "(map-rel:run $relation $source-tail) "
     "(map-rel:edge (cons-atom $target-head $target-tail) "
@@ -1816,13 +1816,13 @@ static PrimeNativePlanBuildV1 prime_native_hyp_denotation(
     return PRIME_NATIVE_PLAN_BUILT;
 }
 
-/* Admit a finite authored fact relation only when its complete live
- * `rel:apply relation source` profile consists of closed facts returning one
- * closed `(rel:edge target evidence)` occurrence apiece.  Logical
- * application `relation source target` remains the evidence fibre; the
- * operational answer stream is a separate authored relation.  An open rule
- * or richer body keeps the ordinary relational evaluator in charge, so a
- * native scan never silently under-approximates it. */
+/* Admit a finite authored fact relation only when its complete live direct
+ * application profile consists of closed facts returning one closed
+ * `(rel:edge target evidence)` occurrence apiece.  Logical application
+ * `relation source target` remains the evidence fibre; direct higher-order
+ * application produces its proof-bearing answer stream.  An open rule or
+ * richer body keeps the ordinary relational evaluator in charge, so a native
+ * scan never silently under-approximates it. */
 static PrimeNativePlanBuildV1 prime_native_relation_symbol_provider(
     Arena *owner, Space *space,
     const CettaPrimeTypedValueV1 *source_type,
@@ -1860,19 +1860,15 @@ static PrimeNativePlanBuildV1 prime_native_relation_symbol_provider(
     Atom *probe_argument = prime_native_fresh_variable(
         owner, "relation-input");
     Atom *relation_probe = probe_argument
-        ? atom_expr3(
-              owner, atom_symbol(owner, "rel:apply"),
-              relation_term, probe_argument)
+        ? atom_expr2(owner, relation_term, probe_argument)
         : NULL;
     if (!relation_probe) return PRIME_NATIVE_PLAN_FAULT;
 
     SpaceReadToken read = space_read_token(space);
     size_t occurrence_count = 0u;
     SpaceEquationCursor cursor;
-    SymbolId rel_apply = symbol_intern_cstr(g_symbols, "rel:apply");
-    if (rel_apply == SYMBOL_ID_NONE) return PRIME_NATIVE_PLAN_FAULT;
     bool has_equations = space_equation_cursor_init(
-        space, rel_apply, &cursor);
+        space, relation_term->sym_id, &cursor);
     if (has_equations) {
         for (;;) {
             SpaceEquationOccurrenceId occurrence_id;
@@ -1888,10 +1884,8 @@ static PrimeNativePlanBuildV1 prime_native_relation_symbol_provider(
                 return PRIME_NATIVE_PLAN_DECLINED;
             }
             bool exact_fact = occurrence.lhs->kind == ATOM_EXPR &&
-                occurrence.lhs->expr.len == 3u &&
-                atom_is_symbol(
-                    occurrence.lhs->expr.elems[0], "rel:apply") &&
-                atom_eq(occurrence.lhs->expr.elems[1], relation_term);
+                occurrence.lhs->expr.len == 2u &&
+                atom_eq(occurrence.lhs->expr.elems[0], relation_term);
             if (!exact_fact) {
                 if (prime_native_patterns_overlap(
                         occurrence.lhs, relation_probe)) {
@@ -1935,7 +1929,7 @@ static PrimeNativePlanBuildV1 prime_native_relation_symbol_provider(
     size_t written = 0u;
     if (has_equations &&
         !space_equation_cursor_init(
-            space, rel_apply, &cursor)) {
+            space, relation_term->sym_id, &cursor)) {
         return PRIME_NATIVE_PLAN_DECLINED;
     }
     while (has_equations) {
@@ -1953,14 +1947,12 @@ static PrimeNativePlanBuildV1 prime_native_relation_symbol_provider(
         }
         bool exact_fact = occurrence.lhs &&
             occurrence.lhs->kind == ATOM_EXPR &&
-            occurrence.lhs->expr.len == 3u &&
-            atom_is_symbol(
-                occurrence.lhs->expr.elems[0], "rel:apply") &&
-            atom_eq(occurrence.lhs->expr.elems[1], relation_term);
+            occurrence.lhs->expr.len == 2u &&
+            atom_eq(occurrence.lhs->expr.elems[0], relation_term);
         if (!exact_fact) continue;
         if (written >= occurrence_count)
             return PRIME_NATIVE_PLAN_DECLINED;
-        Atom *source_term = occurrence.lhs->expr.elems[2];
+        Atom *source_term = occurrence.lhs->expr.elems[1];
         Atom *target_term = occurrence.rhs->expr.elems[1];
         Atom *evidence_term = occurrence.rhs->expr.elems[2];
         CettaPrimeTypedValueV1 *source = NULL;

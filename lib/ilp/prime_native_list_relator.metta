@@ -1,9 +1,9 @@
 ; Proof-relevant relational execution for the native Prime `list` family.
 ;
-; `map-rel:run` lifts any relation view whose ordinary `rel:apply` produces
-; `(rel:edge target evidence)`.  Each relation representation authors that
-; operation explicitly; logical application `relation source target` remains
-; the evidence fibre and is never overloaded as an answer stream.
+; `map-rel:run` lifts any ordinary higher-order relation whose application
+; produces `(rel:edge target evidence)`.  Logical application
+; `relation source target` remains the evidence fibre and is never overloaded
+; as an answer stream.
 ; It preserves the ordered answer bag: two element proofs yielding the same
 ; target produce two distinct list proofs.
 ; The typed family and constructors live in the optional typing presentation;
@@ -16,7 +16,7 @@
        (if (== (get-metatype $source-list) Expression)
            (let ($source-head $source-tail) (decons-atom $source-list)
              (let (rel:edge $target-head $head-evidence)
-                  (rel:apply $relation $source-head)
+                  ($relation $source-head)
                (let (map-rel:edge $target-tail $tail-evidence)
                     (map-rel:run $relation $source-tail)
                  (map-rel:edge
@@ -42,7 +42,7 @@
                (let ($source-head $source-tail) (decons-atom $source-list)
                  (let ($target-head $target-tail) (decons-atom $target-list)
                    (let (rel:edge $target-head $head-evidence)
-                        (rel:apply $relation $source-head)
+                        ($relation $source-head)
                      (let $tail-evidence
                           (map-rel:check
                             $relation $source-tail $target-tail)

@@ -479,6 +479,35 @@ int main(void) {
         assert(space_single_linear_equation(&equation_space, source_head) ==
                space_get_at64(&equation_space, 0));
 
+        SpaceEquationOccurrenceId cursor_id;
+        Atom *callable_head = atom_expr2(
+            &equation_scratch,
+            atom_symbol(&equation_scratch, "equation-callable"),
+            atom_symbol(&equation_scratch, "captured"));
+        Atom *callable_lhs = atom_expr2(
+            &equation_scratch, callable_head,
+            atom_var_with_id(&equation_scratch, "input", 2));
+        Atom *callable_equation = atom_expr3(
+            &equation_scratch,
+            atom_symbol_id(&equation_scratch, g_builtin_syms.equals),
+            callable_lhs, atom_true(&equation_scratch));
+        space_add(&equation_space, callable_equation);
+        assert(space_single_linear_equation(&equation_space, source_head) ==
+               space_get_at64(&equation_space, 0));
+        assert(!space_equations_may_match_known_head(&equation_space,
+                                                     colliding_head));
+        SpaceEquationCursor structured_disjoint_cursor;
+        assert(space_equation_cursor_init(
+            &equation_space, source_head, &structured_disjoint_cursor));
+        assert(space_equation_cursor_next(
+                   &structured_disjoint_cursor, &cursor_id) ==
+               SPACE_EQUATION_CURSOR_ITEM);
+        assert(cursor_id.logical_index == 0u);
+        assert(space_equation_cursor_next(
+                   &structured_disjoint_cursor, &cursor_id) ==
+               SPACE_EQUATION_CURSOR_END);
+        assert(space_remove(&equation_space, callable_equation));
+
         Atom *colliding_lhs_elems[1] = {
             atom_symbol_id(&equation_scratch, colliding_head),
         };
@@ -508,7 +537,6 @@ int main(void) {
         space_add(&equation_space, second_source_after_wildcard);
 
         SpaceEquationCursor source_cursor;
-        SpaceEquationOccurrenceId cursor_id;
         assert(space_equation_cursor_init(
             &equation_space, source_head, &source_cursor));
         assert(space_equation_cursor_next(&source_cursor, &cursor_id) ==
