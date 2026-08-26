@@ -21,6 +21,13 @@
 !(prime-need:ignore-fault (== 1 "bad"))
 !(prime-need:ignore-divergence (prime-need:omega))
 
+; A structured higher-order callable head is usable without becoming a
+; wildcard equation for unrelated named calls.
+(= ((prime-need:offset $amount) $value) (+ $amount $value))
+(= (prime-need:named $value) (Named $value))
+!((prime-need:offset 5) 7)
+!(prime-need:named intact)
+
 ; Needed matching is per equation.  A stricter alternative may demand an
 ; argument without making a wildcard alternative eager, and unrelated
 ; positions remain suspended.

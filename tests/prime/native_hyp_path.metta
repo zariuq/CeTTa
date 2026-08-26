@@ -43,13 +43,13 @@
 (= (hyp:meaning path-test:num path-test:char path-test:decode-symbol)
    path-test:decode)
 
-(= (rel:apply path-test:encode path-test:a)
+(= (path-test:encode path-test:a)
    (rel:edge path-test:n0 path-test:encode-a))
-(= (rel:apply path-test:pred path-test:n0)
+(= (path-test:pred path-test:n0)
    (rel:edge path-test:n25 path-test:pred-0-25))
-(= (rel:apply path-test:pred path-test:n25)
+(= (path-test:pred path-test:n25)
    (rel:edge path-test:n24 path-test:pred-25-24))
-(= (rel:apply path-test:decode path-test:n24)
+(= (path-test:decode path-test:n24)
    (rel:edge path-test:y path-test:decode-24-y))
 
 (= (path-test:shape)

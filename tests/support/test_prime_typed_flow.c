@@ -667,27 +667,27 @@ int main(void) {
         "(= (hyp:meaning person-sort person-sort father-symbol) father)");
     add_form(
         &arena, &space,
-        "(= (rel:apply mother alice) "
+        "(= (mother alice) "
         "   (rel:edge bob mother-alice-bob))");
     add_form(
         &arena, &space,
-        "(= (rel:apply mother alice) "
+        "(= (mother alice) "
         "   (rel:edge eve mother-alice-eve))");
     add_form(
         &arena, &space,
-        "(= (rel:apply father bob) "
+        "(= (father bob) "
         "   (rel:edge carol father-bob-carol))");
     add_form(
         &arena, &space,
-        "(= (rel:apply father eve) "
+        "(= (father eve) "
         "   (rel:edge carol father-eve-carol))");
     add_form(
         &arena, &space,
-        "(= (rel:apply sort-step person-sort) "
+        "(= (sort-step person-sort) "
         "   (rel:edge number-sort person-number-proof-a))");
     add_form(
         &arena, &space,
-        "(= (rel:apply sort-step person-sort) "
+        "(= (sort-step person-sort) "
         "   (rel:edge number-sort person-number-proof-b))");
 
     CettaPrimeTypedValueV1 *node = import_native(
@@ -4734,7 +4734,7 @@ int main(void) {
     space_init_overlay(&open_relation_space, &space);
     add_form(
         &arena, &open_relation_space,
-        "(= (rel:apply mother $source) "
+        "(= (mother $source) "
         "   (rel:edge carol open-mother-proof))");
     Atom *open_relation_query = parse_one(
         &arena,

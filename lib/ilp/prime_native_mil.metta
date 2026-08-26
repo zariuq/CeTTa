@@ -205,10 +205,10 @@
 (= (hyp:outputs (quote $program) $input)
    (collapse (hyp:run (quote $program) $input)))
 
-; A checked hypothesis program contributes an ordinary authored relation view
-; through the open `rel:apply` protocol.  The generic List relator therefore
-; remains independent of learning and of the `hyp` representation.
-(= (rel:apply (hyp:relation (quote $program)) $input)
+; A checked hypothesis program is an ordinary higher-order relation value.
+; The generic List relator therefore remains independent of learning and of
+; the `hyp` representation.
+(= ((hyp:relation (quote $program)) $input)
    (let (hyp:edge $target $proof)
         (hyp:run (quote $program) $input)
      (rel:edge $target $proof)))

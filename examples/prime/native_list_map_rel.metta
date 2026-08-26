@@ -90,9 +90,9 @@
 
 ; Raw relational execution remains available and retains both proof
 ; occurrences even though their endpoint lists coincide.
-(= (rel:apply sort-step person-sort)
+(= (sort-step person-sort)
    (rel:edge number-sort person-number-proof-a))
-(= (rel:apply sort-step person-sort)
+(= (sort-step person-sort)
    (rel:edge number-sort person-number-proof-b))
 
 !(map-rel:run sort-step (person-sort))
