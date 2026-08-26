@@ -33784,6 +33784,16 @@ prime_need_strict_argument_ready:
             return;
         }
 
+        /* (eval <term> <space>) — explicit-context spelling; evalc semantics. */
+        if (petta_form == PETTA_FORM_EVAL && nargs == 2u) {
+            Atom *rewritten = atom_expr(a, (Atom *[]) {
+                atom_symbol_id(a, g_builtin_syms.evalc),
+                expr_arg(atom, 0),
+                expr_arg(atom, 1)
+            }, 3);
+            TAIL_REENTER(rewritten);
+        }
+
         if (petta_form == PETTA_FORM_PROGN ||
             petta_form == PETTA_FORM_PROG1 ||
             petta_form == PETTA_FORM_FOLDALL ||
@@ -36018,6 +36028,20 @@ petta_lowered_to_shared_form:
 
     /* ── eval (minimal instruction) ────────────────────────────────────── */
     if (head_id == g_builtin_syms.eval) {
+        /* (eval <atom> <space>): the explicit-context spelling; runs with
+         * evalc's semantics.  Not part of the HE conformance surface, and
+         * the zero kernels keep their minimal eval untouched. */
+        if (nargs == 2 && g_registry &&
+            active_language_id() != CETTA_LANGUAGE_ZERO &&
+            active_language_id() != CETTA_LANGUAGE_SUBZERO &&
+            active_builtin_allowed("eval-in-space")) {
+            Atom *rewritten = atom_expr(a, (Atom *[]) {
+                atom_symbol_id(a, g_builtin_syms.evalc),
+                expr_arg(atom, 0),
+                expr_arg(atom, 1)
+            }, 3);
+            TAIL_REENTER(rewritten);
+        }
         if (nargs != 1) {
             outcome_set_add(os,
                 atom_error(a, atom, atom_symbol(a, "IncorrectNumberOfArguments")),

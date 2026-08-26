@@ -200,6 +200,7 @@ static const CettaBuiltinPolicy CETTA_BUILTIN_POLICIES[] = {
     {"select", CETTA_PROFILE_MASK_HE_EXTENDED_PLUS, "clean_primary_extension"},
     {"hyperpose", CETTA_PROFILE_MASK_HE_EXTENDED_PLUS, "clean_primary_extension"},
     {"once", CETTA_PROFILE_MASK_HE_EXTENDED_PLUS, "compat_alias"},
+    {"eval-in-space", CETTA_PROFILE_MASK_HE_NON_COMPAT, "clean_primary_extension"},
     {"singleton-visible-witness", CETTA_PROFILE_MASK_ALL, "translator_compat_builtin"},
     {"search-policy", CETTA_PROFILE_MASK_HE_EXTENDED_PLUS, "clean_primary_extension"},
     {"new-space-kind", CETTA_PROFILE_MASK_HE_EXTENDED_PLUS, "clean_primary_extension"},

@@ -16124,6 +16124,23 @@ static bool petta_machine_dispatch_solve(
             expected, goal->barrier);
     }
 
+    if (form == PETTA_FORM_EVAL && nargs == 2u) {
+        /* (eval <term> <space>) — explicit-context spelling; the rewritten
+         * evalc call takes the machine's ordinary foreign-builtin path. */
+        Atom *rewritten = atom_expr(
+            &machine->heap,
+            (Atom *[]) {
+                atom_symbol_id(&machine->heap, g_builtin_syms.evalc),
+                expression->expr.elems[1],
+                expression->expr.elems[2]
+            }, 3u);
+        if (!rewritten) {
+            *failure = PETTA_MACHINE_STEP_CAPACITY;
+            return false;
+        }
+        return petta_push_force(machine, rewritten, expected, goal->barrier);
+    }
+
     if ((form == PETTA_FORM_EVAL ||
          form == PETTA_FORM_REDUCE) &&
         nargs == 1u) {
