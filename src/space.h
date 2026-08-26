@@ -86,7 +86,7 @@ typedef struct {
 
 typedef struct {
     EqBucket buckets[EQ_INDEX_BUCKETS];
-    EqBucket wildcard; /* equations with variable/expression LHS head */
+    EqBucket wildcard; /* equations with variable/structured LHS head */
     EqHeadSet heads;
 } EqIndex;
 
