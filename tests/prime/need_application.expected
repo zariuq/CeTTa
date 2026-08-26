@@ -7,6 +7,8 @@
 [kept-empty]
 [kept-fault]
 [kept-divergence]
+[12]
+[(Named intact)]
 [alpha, other]
 [same, any]
 [boxed-a, (prime-need:box (Box B) (empty))]

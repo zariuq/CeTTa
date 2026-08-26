@@ -39,11 +39,11 @@
 (= (hyp:meaning person-sort person-sort father-symbol) father)
 (= (hyp:meaning number-sort number-sort successor-symbol) successor)
 
-(= (rel:apply mother alice) (rel:edge bob mother-alice-bob))
-(= (rel:apply mother alice) (rel:edge eve mother-alice-eve))
-(= (rel:apply father bob) (rel:edge carol father-bob-carol))
-(= (rel:apply father eve) (rel:edge carol father-eve-carol))
-(= (rel:apply successor zero) (rel:edge one successor-zero-one))
+(= (mother alice) (rel:edge bob mother-alice-bob))
+(= (mother alice) (rel:edge eve mother-alice-eve))
+(= (father bob) (rel:edge carol father-bob-carol))
+(= (father eve) (rel:edge carol father-eve-carol))
+(= (successor zero) (rel:edge one successor-zero-one))
 
 (= (native-ho:scalar-examples)
    (hyp:examples

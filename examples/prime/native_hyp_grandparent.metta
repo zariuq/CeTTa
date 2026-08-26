@@ -32,10 +32,10 @@
 (= (hyp:meaning person-sort person-sort mother-symbol) mother)
 (= (hyp:meaning person-sort person-sort father-symbol) father)
 
-(= (rel:apply mother alice) (rel:edge bob mother-alice-bob))
-(= (rel:apply mother alice) (rel:edge eve mother-alice-eve))
-(= (rel:apply father bob) (rel:edge carol father-bob-carol))
-(= (rel:apply father eve) (rel:edge carol father-eve-carol))
+(= (mother alice) (rel:edge bob mother-alice-bob))
+(= (mother alice) (rel:edge eve mother-alice-eve))
+(= (father bob) (rel:edge carol father-bob-carol))
+(= (father eve) (rel:edge carol father-eve-carol))
 
 ; Native construction: each lookup instantiates the declaration freshly, and
 ; the indexed result records the exact source and target sorts.

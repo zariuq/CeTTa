@@ -32,7 +32,7 @@
    (let $relation
         (hyp:meaning $source-sort $target-sort $symbol)
      (let (rel:edge $target $evidence)
-          (rel:apply $relation $input)
+          ($relation $input)
        (hyp:edge $target
          (hyp:primitive-proof $symbol $evidence)))))
 

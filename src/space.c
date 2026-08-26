@@ -697,6 +697,22 @@ static SymbolId eq_head_symbol(Atom *lhs) {
     return SYMBOL_ID_NONE;
 }
 
+/* A known symbol-headed call can match an exact equation head or a genuinely
+ * open head variable.  A structured callable head such as `((closure x) y)`
+ * cannot match `(named y)` and must not become a wildcard candidate for every
+ * named call merely because both lack a top-level head symbol. */
+static bool eq_lhs_may_match_known_head(Atom *lhs, SymbolId head) {
+    if (!lhs || head == SYMBOL_ID_NONE)
+        return false;
+    SymbolId exact = eq_head_symbol(lhs);
+    if (exact != SYMBOL_ID_NONE)
+        return exact == head;
+    if (lhs->kind == ATOM_VAR)
+        return true;
+    return lhs->kind == ATOM_EXPR && lhs->expr.len > 0u &&
+           lhs->expr.elems[0]->kind == ATOM_VAR;
+}
+
 static SymbolId eq_head_symbol_id(const Space *s, AtomId lhs_id) {
     if (!s || !s->native.universe || lhs_id == CETTA_ATOM_ID_NONE)
         return SYMBOL_ID_NONE;
@@ -2150,7 +2166,8 @@ static bool space_equation_cursor_index_matches(
         return false;
     SymbolId lhs_head = eq_head_symbol(lhs);
     return wildcard
-        ? lhs_head == SYMBOL_ID_NONE
+        ? lhs_head == SYMBOL_ID_NONE &&
+              eq_lhs_may_match_known_head(lhs, cursor->head)
         : lhs_head == cursor->head;
 }
 
@@ -2206,8 +2223,7 @@ SpaceEquationCursorStep space_equation_cursor_next(
             Atom *rhs = NULL;
             if (!equation || !is_equation_atom(equation, &lhs, &rhs))
                 continue;
-            SymbolId lhs_head = eq_head_symbol(lhs);
-            if (lhs_head != SYMBOL_ID_NONE && lhs_head != cursor->head)
+            if (!eq_lhs_may_match_known_head(lhs, cursor->head))
                 continue;
             out->read = cursor->read;
             out->logical_index = logical_index;
@@ -5756,12 +5772,23 @@ static Atom *space_single_linear_equation_at(Space *s, SymbolId head,
     ensure_eq_index(s);
     if (s->native.eq_idx_dirty)
         return NULL;
-    /* The general equation query also visits the wildcard-head bucket after
-     * the known-head bucket.  A named singleton is therefore not a singleton
-     * reduction while any wildcard equation is visible: selecting only the
-     * named equation would drop a valid branch. */
-    if (s->native.eq_idx.wildcard.len != 0u)
-        return NULL;
+    /* A genuinely variable-headed equation can add a branch to this named
+     * call.  Structured callable heads are disjoint and do not invalidate the
+     * singleton view. */
+    for (CettaIndex position = 0u;
+         position < s->native.eq_idx.wildcard.len; position++) {
+        Atom *wildcard_equation = space_indexed_occurrence_atom(
+            s, s->native.eq_idx.wildcard.atom_indices,
+            s->native.eq_idx.wildcard.atom_ids, position);
+        Atom *wildcard_lhs = NULL;
+        Atom *wildcard_rhs = NULL;
+        if (wildcard_equation &&
+            is_equation_atom(
+                wildcard_equation, &wildcard_lhs, &wildcard_rhs) &&
+            eq_lhs_may_match_known_head(wildcard_lhs, head)) {
+            return NULL;
+        }
+    }
     const EqBucket *b = &s->native.eq_idx.buckets[symbol_hash(head)];
     if (!(b->head == head && !b->mixed_heads && b->len == 1))
         return NULL;
@@ -7239,20 +7266,30 @@ bool space_equations_may_match_known_head(Space *s, SymbolId head) {
             Atom *equation = space_get_at64(s, i);
             Atom *lhs = NULL;
             Atom *rhs = NULL;
-            SymbolId lhs_head;
             if (!equation || !is_equation_atom(equation, &lhs, &rhs))
                 continue;
-            lhs_head = eq_head_symbol(lhs);
-            if (lhs_head == SYMBOL_ID_NONE || lhs_head == head)
+            if (eq_lhs_may_match_known_head(lhs, head))
                 return true;
         }
         return space_equations_may_match_known_head((Space *)s->overlay_base,
                                                     head);
     }
     ensure_eq_index(s);
-    if (s->native.eq_idx.wildcard.len > 0)
+    if (eq_head_set_contains(&s->native.eq_idx.heads, head))
         return true;
-    return eq_head_set_contains(&s->native.eq_idx.heads, head);
+    for (CettaIndex position = 0u;
+         position < s->native.eq_idx.wildcard.len; position++) {
+        Atom *equation = space_indexed_occurrence_atom(
+            s, s->native.eq_idx.wildcard.atom_indices,
+            s->native.eq_idx.wildcard.atom_ids, position);
+        Atom *lhs = NULL;
+        Atom *rhs = NULL;
+        if (equation && is_equation_atom(equation, &lhs, &rhs) &&
+            eq_lhs_may_match_known_head(lhs, head)) {
+            return true;
+        }
+    }
+    return false;
 }
 
 static void space_equation_note_head_arity(

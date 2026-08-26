@@ -60,15 +60,15 @@
    chain:loop)
 
 ; Two authored evidence occurrences deliberately share their endpoints.
-(= (rel:apply chain:encode chain:a)
+(= (chain:encode chain:a)
    (rel:edge chain:b chain:encode-a-b-left))
-(= (rel:apply chain:encode chain:a)
+(= (chain:encode chain:a)
    (rel:edge chain:b chain:encode-a-b-right))
-(= (rel:apply chain:step chain:b)
+(= (chain:step chain:b)
    (rel:edge chain:c chain:step-b-c))
-(= (rel:apply chain:finish chain:c)
+(= (chain:finish chain:c)
    (rel:edge chain:d chain:finish-c-d))
-(= (rel:apply chain:loop chain:b)
+(= (chain:loop chain:b)
    (rel:edge chain:b chain:loop-b-b))
 
 (= (chain:path-shape)
