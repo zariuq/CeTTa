@@ -212,8 +212,6 @@ bool variant_shape_canonicalize_bindings(Arena *dst, const Bindings *src,
             return false;
         }
     }
-    out->lookup_cache_count = 0;
-    out->lookup_cache_next = 0;
     return true;
 }
 
@@ -265,8 +263,6 @@ bool variant_shape_materialize_bindings(Arena *dst, const Bindings *src,
             return false;
         }
     }
-    out->lookup_cache_count = 0;
-    out->lookup_cache_next = 0;
     return true;
 }
 

@@ -67,8 +67,6 @@ static bool answer_bank_promote_bindings(Arena *dst, Bindings *bindings) {
         bindings->constraints[i].lhs = lhs;
         bindings->constraints[i].rhs = rhs;
     }
-    bindings->lookup_cache_count = 0;
-    bindings->lookup_cache_next = 0;
     return true;
 }
 

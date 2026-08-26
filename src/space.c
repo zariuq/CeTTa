@@ -713,6 +713,14 @@ static bool eq_lhs_may_match_known_head(Atom *lhs, SymbolId head) {
            lhs->expr.elems[0]->kind == ATOM_VAR;
 }
 
+#if CETTA_BUILD_WITH_RUNTIME_STATS || defined(CETTA_RUNTIME_STATS_IMPL)
+static bool eq_lhs_has_structured_head(const Atom *lhs) {
+    return lhs && lhs->kind == ATOM_EXPR && lhs->expr.len > 0u &&
+           lhs->expr.elems[0]->kind != ATOM_SYMBOL &&
+           lhs->expr.elems[0]->kind != ATOM_VAR;
+}
+#endif
+
 static SymbolId eq_head_symbol_id(const Space *s, AtomId lhs_id) {
     if (!s || !s->native.universe || lhs_id == CETTA_ATOM_ID_NONE)
         return SYMBOL_ID_NONE;
@@ -2165,6 +2173,13 @@ static bool space_equation_cursor_index_matches(
     if (!equation || !is_equation_atom(equation, &lhs, &rhs))
         return false;
     SymbolId lhs_head = eq_head_symbol(lhs);
+#if CETTA_BUILD_WITH_RUNTIME_STATS || defined(CETTA_RUNTIME_STATS_IMPL)
+    if (wildcard && lhs_head == SYMBOL_ID_NONE &&
+        eq_lhs_has_structured_head(lhs)) {
+        cetta_runtime_stats_inc(
+            CETTA_RUNTIME_COUNTER_SPACE_KNOWN_HEAD_CURSOR_STRUCTURED_DISJOINT);
+    }
+#endif
     return wildcard
         ? lhs_head == SYMBOL_ID_NONE &&
               eq_lhs_may_match_known_head(lhs, cursor->head)
@@ -2223,12 +2238,23 @@ SpaceEquationCursorStep space_equation_cursor_next(
             Atom *rhs = NULL;
             if (!equation || !is_equation_atom(equation, &lhs, &rhs))
                 continue;
-            if (!eq_lhs_may_match_known_head(lhs, cursor->head))
+            if (!eq_lhs_may_match_known_head(lhs, cursor->head)) {
+#if CETTA_BUILD_WITH_RUNTIME_STATS || defined(CETTA_RUNTIME_STATS_IMPL)
+                if (eq_lhs_has_structured_head(lhs)) {
+                    cetta_runtime_stats_inc(
+                        CETTA_RUNTIME_COUNTER_SPACE_KNOWN_HEAD_CURSOR_STRUCTURED_DISJOINT);
+                }
+#endif
                 continue;
+            }
             out->read = cursor->read;
             out->logical_index = logical_index;
             out->equation_id = CETTA_ATOM_ID_NONE;
             out->has_equation_id = false;
+            cetta_runtime_stats_inc(
+                eq_head_symbol(lhs) == cursor->head
+                    ? CETTA_RUNTIME_COUNTER_SPACE_KNOWN_HEAD_CURSOR_EXACT_ITEM
+                    : CETTA_RUNTIME_COUNTER_SPACE_KNOWN_HEAD_CURSOR_OPEN_ITEM);
             return SPACE_EQUATION_CURSOR_ITEM;
         }
         return SPACE_EQUATION_CURSOR_END;
@@ -2252,18 +2278,30 @@ SpaceEquationCursorStep space_equation_cursor_next(
 
     CettaIndex logical_index;
     AtomId equation_id;
+#if CETTA_BUILD_WITH_RUNTIME_STATS || defined(CETTA_RUNTIME_STATS_IMPL)
+    bool exact_item;
+#endif
     if (has_exact && (!has_wildcard || exact_index < wildcard_index)) {
         logical_index = exact_index;
         equation_id = exact_id;
+#if CETTA_BUILD_WITH_RUNTIME_STATS || defined(CETTA_RUNTIME_STATS_IMPL)
+        exact_item = true;
+#endif
         cursor->exact_position++;
     } else if (has_wildcard &&
                (!has_exact || wildcard_index < exact_index)) {
         logical_index = wildcard_index;
         equation_id = wildcard_id;
+#if CETTA_BUILD_WITH_RUNTIME_STATS || defined(CETTA_RUNTIME_STATS_IMPL)
+        exact_item = false;
+#endif
         cursor->wildcard_position++;
     } else {
         logical_index = exact_index;
         equation_id = exact_id;
+#if CETTA_BUILD_WITH_RUNTIME_STATS || defined(CETTA_RUNTIME_STATS_IMPL)
+        exact_item = true;
+#endif
         cursor->exact_position++;
         cursor->wildcard_position++;
     }
@@ -2271,6 +2309,12 @@ SpaceEquationCursorStep space_equation_cursor_next(
     out->logical_index = logical_index;
     out->equation_id = equation_id;
     out->has_equation_id = equation_id != CETTA_ATOM_ID_NONE;
+#if CETTA_BUILD_WITH_RUNTIME_STATS || defined(CETTA_RUNTIME_STATS_IMPL)
+    cetta_runtime_stats_inc(
+        exact_item
+            ? CETTA_RUNTIME_COUNTER_SPACE_KNOWN_HEAD_CURSOR_EXACT_ITEM
+            : CETTA_RUNTIME_COUNTER_SPACE_KNOWN_HEAD_CURSOR_OPEN_ITEM);
+#endif
     return SPACE_EQUATION_CURSOR_ITEM;
 }
 
@@ -5784,9 +5828,18 @@ static Atom *space_single_linear_equation_at(Space *s, SymbolId head,
         Atom *wildcard_rhs = NULL;
         if (wildcard_equation &&
             is_equation_atom(
-                wildcard_equation, &wildcard_lhs, &wildcard_rhs) &&
-            eq_lhs_may_match_known_head(wildcard_lhs, head)) {
-            return NULL;
+                wildcard_equation, &wildcard_lhs, &wildcard_rhs)) {
+            if (eq_lhs_may_match_known_head(wildcard_lhs, head)) {
+                cetta_runtime_stats_inc(
+                    CETTA_RUNTIME_COUNTER_SPACE_KNOWN_HEAD_SINGLETON_OPEN_BLOCKED);
+                return NULL;
+            }
+#if CETTA_BUILD_WITH_RUNTIME_STATS || defined(CETTA_RUNTIME_STATS_IMPL)
+            if (eq_lhs_has_structured_head(wildcard_lhs)) {
+                cetta_runtime_stats_inc(
+                    CETTA_RUNTIME_COUNTER_SPACE_KNOWN_HEAD_SINGLETON_STRUCTURED_DISJOINT);
+            }
+#endif
         }
     }
     const EqBucket *b = &s->native.eq_idx.buckets[symbol_hash(head)];
@@ -5807,6 +5860,8 @@ static Atom *space_single_linear_equation_at(Space *s, SymbolId head,
         return NULL;
     if (logical_index)
         *logical_index = idx;
+    cetta_runtime_stats_inc(
+        CETTA_RUNTIME_COUNTER_SPACE_KNOWN_HEAD_SINGLETON_ADMITTED);
     return equation;
 }
 

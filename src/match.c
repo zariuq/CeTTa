@@ -31,7 +31,6 @@
 #define BINDINGS_POOL_CLASS_COUNT 4
 #define BINDINGS_MEMO_STACK_CAP 32
 #define BINDINGS_MEMO_INDEX_THRESHOLD 16u
-#define BINDINGS_LOOKUP_CACHE_MISS UINT32_MAX
 #define BINDINGS_LOOKUP_INDEX_THRESHOLD 16u
 #define FRESHEN_EPOCH_MEMO_INLINE_CAP 64u
 #define VAR_ID_SET_INLINE_CAP 8u
@@ -738,31 +737,6 @@ bool bindings_lookup_index_test_synced_len(const Bindings *bindings,
 }
 #endif
 
-static inline void bindings_lookup_cache_reset(Bindings *b) {
-    b->lookup_cache_count = 0;
-    b->lookup_cache_next = 0;
-}
-
-static inline void bindings_lookup_cache_note(Bindings *b, VarId var_id,
-                                              uint32_t index) {
-    for (uint32_t i = 0; i < b->lookup_cache_count; i++) {
-        if (binding_var_eq(b->lookup_cache_ids[i], var_id)) {
-            b->lookup_cache_indices[i] = index;
-            return;
-        }
-    }
-    uint32_t slot =
-        b->lookup_cache_count < CETTA_BINDINGS_LOOKUP_CACHE_SLOTS
-        ? b->lookup_cache_count++
-        : b->lookup_cache_next;
-    b->lookup_cache_ids[slot] = var_id;
-    b->lookup_cache_indices[slot] = index;
-    if (b->lookup_cache_count == CETTA_BINDINGS_LOOKUP_CACHE_SLOTS) {
-        b->lookup_cache_next = (uint8_t)(
-            (slot + 1u) % CETTA_BINDINGS_LOOKUP_CACHE_SLOTS);
-    }
-}
-
 static int32_t bindings_lookup_index_slow(Bindings *b, VarId var_id) {
     BindingsLookupIndex *index = bindings_lookup_index_current(b);
     if (index) {
@@ -772,50 +746,42 @@ static int32_t bindings_lookup_index_slow(Bindings *b, VarId var_id) {
             uint32_t idx = index_plus_one - 1u;
             if (idx < b->len &&
                 binding_var_eq(b->entries[idx].var_id, var_id)) {
-                bindings_lookup_cache_note(b, var_id, idx);
                 cetta_runtime_stats_inc(
-                    CETTA_RUNTIME_COUNTER_BINDINGS_LOOKUP_CACHE_MISS);
+                    CETTA_RUNTIME_COUNTER_BINDINGS_LOOKUP_AUTHORITATIVE);
                 return (int32_t)idx;
             }
             bindings_lookup_index_release(b->lookup_index);
             b->lookup_index = NULL;
         } else {
-            bindings_lookup_cache_note(
-                b, var_id, BINDINGS_LOOKUP_CACHE_MISS);
             cetta_runtime_stats_inc(
-                CETTA_RUNTIME_COUNTER_BINDINGS_LOOKUP_CACHE_MISS);
+                CETTA_RUNTIME_COUNTER_BINDINGS_LOOKUP_AUTHORITATIVE);
             return -1;
         }
     }
     for (uint32_t i = b->len; i > 0; i--) {
         uint32_t idx = i - 1;
         if (binding_var_eq(b->entries[idx].var_id, var_id)) {
-            bindings_lookup_cache_note(b, var_id, idx);
-            cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_BINDINGS_LOOKUP_CACHE_MISS);
+            cetta_runtime_stats_inc(
+                CETTA_RUNTIME_COUNTER_BINDINGS_LOOKUP_AUTHORITATIVE);
             return (int32_t)idx;
         }
     }
-    bindings_lookup_cache_note(b, var_id, BINDINGS_LOOKUP_CACHE_MISS);
-    cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_BINDINGS_LOOKUP_CACHE_MISS);
+    cetta_runtime_stats_inc(
+        CETTA_RUNTIME_COUNTER_BINDINGS_LOOKUP_AUTHORITATIVE);
     return -1;
 }
 
 static inline int32_t bindings_lookup_index(Bindings *b, VarId var_id) {
     cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_BINDINGS_LOOKUP);
-    for (uint32_t i = 0; i < b->lookup_cache_count; i++) {
-        uint32_t idx = b->lookup_cache_indices[i];
-        if (binding_var_eq(b->lookup_cache_ids[i], var_id) &&
-            idx == BINDINGS_LOOKUP_CACHE_MISS) {
+    BindingsLookupIndex *index = b->lookup_index;
+    if (__builtin_expect(
+            index && index->synced_len < b->len, false) &&
+        b->len - index->synced_len == 1u) {
+        uint32_t tail = index->synced_len;
+        if (binding_var_eq(b->entries[tail].var_id, var_id)) {
             cetta_runtime_stats_inc(
-                CETTA_RUNTIME_COUNTER_BINDINGS_LOOKUP_CACHE_HIT);
-            return -1;
-        }
-        if (idx < b->len &&
-            binding_var_eq(b->lookup_cache_ids[i], var_id) &&
-            binding_var_eq(b->entries[idx].var_id, var_id)) {
-            cetta_runtime_stats_inc(
-                CETTA_RUNTIME_COUNTER_BINDINGS_LOOKUP_CACHE_HIT);
-            return (int32_t)idx;
+                CETTA_RUNTIME_COUNTER_BINDINGS_LOOKUP_LAZY_TAIL_HIT);
+            return (int32_t)tail;
         }
     }
     return bindings_lookup_index_slow(b, var_id);
@@ -1132,7 +1098,6 @@ void bindings_init(Bindings *b) {
     b->cycle_state = BINDINGS_CYCLE_ACYCLIC;
     b->lookup_index = NULL;
     b->prime_ext = NULL;
-    bindings_lookup_cache_reset(b);
 }
 
 void bindings_free(Bindings *b) {
@@ -1173,14 +1138,6 @@ bool bindings_clone(Bindings *dst, const Bindings *src) {
         memcpy(dst->constraints, src->constraints,
                sizeof(BindingConstraint) * src->eq_len);
         dst->eq_len = src->eq_len;
-    }
-    if (src->lookup_cache_count > 0) {
-        dst->lookup_cache_count = src->lookup_cache_count;
-        dst->lookup_cache_next = src->lookup_cache_next;
-        for (uint32_t i = 0; i < src->lookup_cache_count; i++) {
-            dst->lookup_cache_ids[i] = src->lookup_cache_ids[i];
-            dst->lookup_cache_indices[i] = src->lookup_cache_indices[i];
-        }
     }
     if (src->lookup_index) {
         bindings_lookup_index_retain(src->lookup_index);
@@ -1343,8 +1300,6 @@ bool bindings_promote_logical_atoms_with_session(
         bindings->constraints[i].lhs = lhs;
         bindings->constraints[i].rhs = rhs;
     }
-    bindings->lookup_cache_count = 0;
-    bindings->lookup_cache_next = 0;
     return true;
 }
 
@@ -1431,7 +1386,6 @@ bool bindings_remove_entry_at(Bindings *bindings, uint32_t index) {
     bindings->len--;
     if (bindings->cycle_state != BINDINGS_CYCLE_ACYCLIC)
         bindings->cycle_state = BINDINGS_CYCLE_UNKNOWN;
-    bindings_lookup_cache_reset(bindings);
     bindings_lookup_index_release(bindings->lookup_index);
     bindings->lookup_index = NULL;
     return true;
@@ -1448,7 +1402,6 @@ void bindings_invalidate_after_key_rewrite(Bindings *bindings) {
         &bindings->private_constraint_count);
     bindings->legacy_fallback_count =
         bindings_legacy_fallback_count_slow(bindings);
-    bindings_lookup_cache_reset(bindings);
     bindings_lookup_index_release(bindings->lookup_index);
     bindings->lookup_index = NULL;
 }
@@ -1570,9 +1523,7 @@ static bool bindings_add_inplace_internal(Bindings *b, VarId var_id,
         b->legacy_fallback_count++;
     if (binding_contains_private_variant_slot(&b->entries[b->len]))
         b->private_entry_count++;
-    uint32_t added_index = b->len;
     b->len++;
-    bindings_lookup_cache_note(b, var_id, added_index);
     if (normalize_constraints && !bindings_normalize_constraints(b))
         return false;
     return true;
@@ -2473,18 +2424,6 @@ static bool bindings_epoch_coordinate_is_authoritative(
         !binding_var_eq(bindings->entries[index].var_id, expected)) {
         return false;
     }
-    for (uint32_t slot = 0u;
-         slot < bindings->lookup_cache_count; slot++) {
-        if (!binding_var_eq(
-                bindings->lookup_cache_ids[slot], expected)) {
-            continue;
-        }
-        uint32_t cached = bindings->lookup_cache_indices[slot];
-        return cached != BINDINGS_LOOKUP_CACHE_MISS &&
-            cached < bindings->len &&
-            binding_var_eq(bindings->entries[cached].var_id, expected) &&
-            cached == index;
-    }
     BindingsLookupIndex *lookup_index =
         bindings_lookup_index_current(bindings);
     if (lookup_index) {
@@ -3384,12 +3323,6 @@ void bindings_builder_rollback(BindingsBuilder *bb, uint32_t mark) {
         if (bb->rollback_count != UINT64_MAX)
             bb->rollback_count++;
     }
-    /*
-     * The inline cache is only an accelerator and its payload is not
-     * trailed.  Clearing it is both cheaper and safer than restoring stale
-     * count metadata.  The full index removes only rolled-back suffix entries.
-     */
-    bindings_lookup_cache_reset(&bb->current);
     if (bb->current.len < old_len)
         bindings_lookup_index_truncate(&bb->current, bb->current.len);
 }
@@ -3492,16 +3425,14 @@ static bool bindings_builder_add_id_internal(BindingsBuilder *bb, VarId var_id,
             &bb->current.entries[bb->current.len])) {
         bb->current.private_entry_count++;
     }
-    uint32_t added_index = bb->current.len;
     bb->current.len++;
     if (bb->growth_count != UINT64_MAX)
         bb->growth_count++;
-    bindings_lookup_cache_note(&bb->current, var_id, added_index);
     /* Entries are authoritative and the index records its synchronized
-     * prefix.  Inline-cache producer/consumer hits observe a fresh append
-     * without index maintenance; the first uncached, index-dependent lookup
-     * extends the prefix.  Rolling back an unobserved candidate therefore
-     * pays no derived-maintenance cost. */
+     * prefix.  A lookup of the one-entry authoritative suffix observes the
+     * fresh append without index maintenance; the first other lookup extends
+     * the prefix.  Rolling back an unobserved candidate therefore pays no
+     * derived-maintenance cost. */
     return true;
 }
 

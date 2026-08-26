@@ -14,7 +14,7 @@ import time
 import petta_corpus_manifest as corpus
 
 
-SCHEMA = "cetta-petta-live-sample-v1"
+SCHEMA = "cetta-petta-live-sample-v2"
 OPTIONAL_JANUS_INIT_FAILURE_RE = re.compile(
     r"ERROR: .*?/swipy/janus\.pl:[0-9]+:\n"
     r"ERROR:    .*?/swipy/janus\.pl:[0-9]+: Initialization goal "
@@ -94,6 +94,17 @@ def select_examples(
     return selected
 
 
+def select_tracked_examples(paths: list[str]) -> list[tuple[str, str]]:
+    selected = []
+    for text in sorted(paths):
+        path = Path(text)
+        if path.parent == Path("examples") and path.suffix == ".metta":
+            selected.append(("tracked-corpus", path.name))
+    if not selected:
+        raise ValueError("no tracked top-level PeTTa examples found")
+    return selected
+
+
 def git_text(root: Path, *arguments: str) -> str:
     result = subprocess.run(
         ["git", *arguments],
@@ -146,6 +157,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--output", required=True, type=Path)
     parser.add_argument("--seed", type=int)
     parser.add_argument("--per-stratum", type=int, default=1)
+    parser.add_argument("--all-tracked", action="store_true")
     parser.add_argument("--timeout", type=float, default=30.0)
     parser.add_argument("--require-match", action="store_true")
     return parser.parse_args()
@@ -163,13 +175,21 @@ def main() -> int:
     if arguments.timeout <= 0:
         raise ValueError("timeout must be positive")
 
-    seed = arguments.seed
-    if seed is None:
-        seed = time.time_ns()
     available = {
         path.name for path in (petta_root / "examples").glob("*.metta")
     }
-    selected = select_examples(seed, arguments.per_stratum, available)
+    seed = arguments.seed
+    if arguments.all_tracked:
+        tracked = git_text(
+            petta_root, "ls-files", "--", "examples/*.metta"
+        ).splitlines()
+        selected = select_tracked_examples(tracked)
+        selection_mode = "all-tracked"
+    else:
+        if seed is None:
+            seed = time.time_ns()
+        selected = select_examples(seed, arguments.per_stratum, available)
+        selection_mode = "stratified"
     output.mkdir(parents=True, exist_ok=True)
     actual = output / "actual"
     actual.mkdir(exist_ok=True)
@@ -190,12 +210,13 @@ def main() -> int:
             functions = tuple(reversed(functions))
         results: dict[str, tuple[int | str, str, str]] = {}
         elapsed: dict[str, float] = {}
+        fixture = corpus.FIXTURE_CASES.get(name)
         for engine, function in functions:
             call_arguments = (
                 (Path(__file__).resolve().parents[1], petta_root, source,
-                 arguments.timeout, None)
+                 arguments.timeout, fixture)
                 if engine == "petta"
-                else (cetta, petta_root, source, arguments.timeout, None)
+                else (cetta, petta_root, source, arguments.timeout, fixture)
             )
             result, seconds = run_timed(function, *call_arguments)
             results[engine] = result  # type: ignore[assignment]
@@ -231,8 +252,11 @@ def main() -> int:
     )
     summary = {
         "schema": SCHEMA,
+        "selection_mode": selection_mode,
         "seed": seed,
-        "per_stratum": arguments.per_stratum,
+        "per_stratum": (
+            None if arguments.all_tracked else arguments.per_stratum
+        ),
         "selected": [
             {"stratum": stratum, "example": name}
             for stratum, name in selected
