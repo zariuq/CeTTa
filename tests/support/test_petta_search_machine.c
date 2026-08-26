@@ -3385,6 +3385,8 @@ static void test_deterministic_clause_elision(
     assert(stats.deterministic_clause_choices_elided == 1u);
     assert(stats.clause_snapshot_candidates == 1u);
     assert(stats.clause_snapshot_candidates_copied == 1u);
+    assert(stats.clause_match_attempts == 1u);
+    assert(stats.clause_branches_scheduled == 1u);
     assert(stats.choice_continuation_snapshots == 0u);
     assert(stats.choice_continuation_items_copied == 0u);
     assert(petta_machine_next(
@@ -3541,6 +3543,8 @@ static void test_cons_shape_clause_index(
     assert(stats.clause_candidates_shape_pruned == 1u);
     assert(stats.clause_snapshot_candidates == 2u);
     assert(stats.clause_snapshot_candidates_copied == 1u);
+    assert(stats.clause_match_attempts == 1u);
+    assert(stats.clause_branches_scheduled == 1u);
     assert(stats.choice_continuation_snapshots == 0u);
     assert(stats.maximum_choice_continuation_trail == 0u);
     assert(petta_machine_next(
@@ -3571,6 +3575,8 @@ static void test_cons_shape_clause_index(
     assert(stats.clause_candidates_shape_pruned == 1u);
     assert(stats.clause_snapshot_candidates == 2u);
     assert(stats.clause_snapshot_candidates_copied == 1u);
+    assert(stats.clause_match_attempts == 1u);
+    assert(stats.clause_branches_scheduled == 1u);
     assert(stats.choice_continuation_snapshots == 0u);
     assert(stats.maximum_choice_continuation_trail == 0u);
     assert(petta_machine_next(
@@ -3607,6 +3613,8 @@ static void test_cons_shape_clause_index(
     assert(stats.clause_candidates_shape_pruned == 0u);
     assert(stats.clause_snapshot_candidates == 2u);
     assert(stats.clause_snapshot_candidates_copied == 2u);
+    assert(stats.clause_match_attempts == 2u);
+    assert(stats.clause_branches_scheduled == 2u);
     assert(petta_machine_next(
                &open_machine, &answer, &environment) ==
            PETTA_MACHINE_STEP_EXHAUSTED);

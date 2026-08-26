@@ -32217,6 +32217,7 @@ static bool petta_eval_machine_try(
                 " match_decision_unavailable_path_fallbacks=%" PRIu64
                 " match_decision_invalidations=%" PRIu64
                 " clause_match_attempts=%" PRIu64
+                " clause_branches_scheduled=%" PRIu64
                 " clause_match_allocated_bytes=%" PRIu64
                 " match_candidates=%" PRIu64
                 " match_candidate_epoch_views=%" PRIu64
@@ -32386,6 +32387,7 @@ static bool petta_eval_machine_try(
                 stats.match_decision_unavailable_path_fallbacks,
                 stats.match_decision_invalidations,
                 stats.clause_match_attempts,
+                stats.clause_branches_scheduled,
                 stats.clause_match_allocated_bytes,
                 stats.match_candidates,
                 stats.match_candidate_epoch_views,

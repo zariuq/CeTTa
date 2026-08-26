@@ -476,16 +476,6 @@ CETTA_TEST_ISOLATED := 1
 endif
 export CETTA_TEST_ISOLATED
 
-# A public binary and an isolated test binary use different output-addressing
-# policies.  Requesting both in one make process would make the public path an
-# unrelated existing file with no active prerequisites, so reject that stale-
-# evidence shape and require two independently incremental invocations.
-ifneq ($(strip $(filter test% probe%,$(MAKECMDGOALS))),)
-ifneq ($(strip $(filter cetta runtime/cetta-$(BUILD_CANON)-runtime-stats,$(MAKECMDGOALS))),)
-$(error Public binary and test/probe goals must be built in separate make invocations)
-endif
-endif
-
 GSLT2PARSE_SHARED_ASAN_ENV =
 GSLT2PARSE_SHARED_ASAN_ARGS =
 ifeq ($(ENABLE_SANITIZERS),1)
@@ -668,6 +658,8 @@ SRC += experiments/gslt2parse_foundation/native/parser_pack_abi_stream_v1.c \
 	$(LANGDEF_COMPILED_CURSOR_RUNTIME_SRC) native/langdef_module.c
 ifeq ($(ENABLE_RUNTIME_STATS),1)
 OBJ = $(SRC:.c=.$(BUILD_OBJ_TAG).runtime-stats.o)
+PUBLIC_BIN = runtime/cetta-$(BUILD_CANON)-runtime-stats
+PUBLIC_BIN_FORCE =
 ifeq ($(CETTA_TEST_ISOLATED),1)
 BIN = runtime/cetta-$(BUILD_OBJ_TAG)-runtime-stats
 FALLBACK_EVAL_TEST_BIN = runtime/test_fallback_eval_session-$(BUILD_OBJ_TAG)-runtime-stats
@@ -679,6 +671,8 @@ FALLBACK_EVAL_TEST_OBJ = runtime/bootstrap/test_fallback_eval_session.$(BUILD_OB
 BIN_FORCE =
 else
 OBJ = $(SRC:.c=.$(BUILD_OBJ_TAG).o)
+PUBLIC_BIN = cetta
+PUBLIC_BIN_FORCE = FORCE
 FALLBACK_EVAL_TEST_OBJ = runtime/bootstrap/test_fallback_eval_session.$(BUILD_OBJ_TAG).o
 FALLBACK_EVAL_TEST_BIN = runtime/test_fallback_eval_session-$(BUILD_CANON)
 ifeq ($(CETTA_TEST_ISOLATED),1)
@@ -4729,8 +4723,10 @@ $(ABT_DEFAULT_SIGNATURES_BLOB_STAMP): $(STAGE0_BIN) $(ABT_DEFAULT_SIGNATURES_SRC
 	touch "$@"
 endif
 
-# Stage 2: full binary with precompiled stdlib
-$(BIN): $(OBJ) $(BRIDGE_DEPS) $(BIN_FORCE)
+# Stage 2: full binary with precompiled stdlib.  Test/probe invocations use a
+# configuration-addressed binary, while an explicitly requested public binary
+# remains an independent target in the same Make process.
+define link_cetta_binary
 	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
 	@set -eu; \
 	tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/cetta.XXXXXX"); \
@@ -4738,6 +4734,15 @@ $(BIN): $(OBJ) $(BRIDGE_DEPS) $(BIN_FORCE)
 	$(CC) $(CFLAGS) -Wl,--export-dynamic -o "$$tmp_out" \
 		$(filter-out FORCE,$^) $(LDFLAGS); \
 	mv "$$tmp_out" $@
+endef
+
+$(BIN): $(OBJ) $(BRIDGE_DEPS) $(BIN_FORCE)
+	$(link_cetta_binary)
+
+ifneq ($(BIN),$(PUBLIC_BIN))
+$(PUBLIC_BIN): $(OBJ) $(BRIDGE_DEPS) $(PUBLIC_BIN_FORCE)
+	$(link_cetta_binary)
+endif
 
 $(FALLBACK_EVAL_TEST_BIN): $(FALLBACK_EVAL_TEST_OBJ) $(FALLBACK_EVAL_TEST_LINK_OBJ) $(BRIDGE_DEPS)
 	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)

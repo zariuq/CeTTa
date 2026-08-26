@@ -444,6 +444,11 @@ typedef struct {
     uint64_t match_decision_unavailable_path_fallbacks;
     uint64_t match_decision_invalidations;
     uint64_t clause_match_attempts;
+    /* Candidate occurrences whose branch goals were successfully installed.
+     * This is a control event, not a claim that the branch later produced an
+     * answer.  On a completed run, attempts minus scheduled branches is the
+     * exact number rejected before entering the branch. */
+    uint64_t clause_branches_scheduled;
     uint64_t clause_match_allocated_bytes;
     uint64_t match_candidates;
     uint64_t match_candidate_epoch_views;

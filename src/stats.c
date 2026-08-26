@@ -99,8 +99,8 @@ static const char *const CETTA_RUNTIME_COUNTER_NAMES[CETTA_RUNTIME_COUNTER_COUNT
     "outcome-variant-materialize-dispatch-call-term",
     "outcome-variant-materialize-let-chain",
     "outcome-variant-materialize-error-filter",
-    "bindings-lookup-cache-hit",
-    "bindings-lookup-cache-miss",
+    "bindings-lookup-lazy-tail-hit",
+    "bindings-lookup-authoritative",
     "bindings-apply-space-conj-default",
     "bindings-apply-space-conj-imported",
     "bindings-apply-eval-chain-step",
@@ -541,6 +541,12 @@ static const char *const CETTA_RUNTIME_COUNTER_NAMES[CETTA_RUNTIME_COUNTER_COUNT
     "prime-native-hyp-finite-provider-fallback",
     "prime-native-hyp-finite-search-realized",
     "prime-native-map-rel-realized",
+    "space-known-head-cursor-exact-item",
+    "space-known-head-cursor-open-item",
+    "space-known-head-cursor-structured-disjoint",
+    "space-known-head-singleton-admitted",
+    "space-known-head-singleton-open-blocked",
+    "space-known-head-singleton-structured-disjoint",
 };
 
 static int64_t clamp_counter(uint64_t value) {

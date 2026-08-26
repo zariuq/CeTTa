@@ -2599,8 +2599,6 @@ static bool petta_copy_binding_atoms(
         bindings->constraints[i].rhs = petta_copy_optional_atom(
             session, bindings->constraints[i].rhs, &ok);
     }
-    bindings->lookup_cache_count = 0u;
-    bindings->lookup_cache_next = 0u;
     if (!ok)
         return false;
     if (!bindings->prime_ext)
@@ -7788,6 +7786,8 @@ static void petta_machine_stats_accumulate(
         source->match_decision_invalidations;
     target->clause_match_attempts +=
         source->clause_match_attempts;
+    target->clause_branches_scheduled +=
+        source->clause_branches_scheduled;
     target->clause_match_allocated_bytes +=
         source->clause_match_allocated_bytes;
     target->match_candidates += source->match_candidates;
@@ -9033,6 +9033,7 @@ static bool petta_machine_advance_choice(
                     *failure = PETTA_MACHINE_STEP_CAPACITY;
                     return false;
                 }
+                machine->stats.clause_branches_scheduled++;
                 return true;
             }
             bindings_free(&match.environment);
@@ -9109,6 +9110,7 @@ static bool petta_machine_advance_choice(
                         return false;
                     }
                 }
+                machine->stats.clause_branches_scheduled++;
                 return true;
             }
             uint64_t freshen_bytes_before =
@@ -9183,6 +9185,7 @@ static bool petta_machine_advance_choice(
                     return false;
                 }
             }
+            machine->stats.clause_branches_scheduled++;
             return true;
         }
         return false;

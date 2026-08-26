@@ -56,6 +56,7 @@ MECHANISM_MACHINE_COUNTERS = (
     "match_decision_clause_inputs",
     "match_decision_clause_survivors",
     "clause_match_attempts",
+    "clause_branches_scheduled",
     "clause_match_allocated_bytes",
     "unification_calls",
     "unification_failures",
@@ -108,8 +109,8 @@ MECHANISM_MACHINE_COUNTERS = (
 MECHANISM_RUNTIME_COUNTERS = (
     "bindings-apply",
     "bindings-lookup",
-    "bindings-lookup-cache-hit",
-    "bindings-lookup-cache-miss",
+    "bindings-lookup-lazy-tail-hit",
+    "bindings-lookup-authoritative",
     "bindings-lookup-resolve",
     "bindings-lookup-add-guard",
     "bindings-lookup-apply",

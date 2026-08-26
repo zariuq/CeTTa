@@ -492,10 +492,21 @@ int main(void) {
             atom_symbol_id(&equation_scratch, g_builtin_syms.equals),
             callable_lhs, atom_true(&equation_scratch));
         space_add(&equation_space, callable_equation);
+        reset_test_counters();
         assert(space_single_linear_equation(&equation_space, source_head) ==
                space_get_at64(&equation_space, 0));
+        assert(test_counter(
+                   CETTA_RUNTIME_COUNTER_SPACE_KNOWN_HEAD_SINGLETON_ADMITTED) ==
+               1u);
+        assert(test_counter(
+                   CETTA_RUNTIME_COUNTER_SPACE_KNOWN_HEAD_SINGLETON_STRUCTURED_DISJOINT) ==
+               1u);
+        assert(test_counter(
+                   CETTA_RUNTIME_COUNTER_SPACE_KNOWN_HEAD_SINGLETON_OPEN_BLOCKED) ==
+               0u);
         assert(!space_equations_may_match_known_head(&equation_space,
                                                      colliding_head));
+        reset_test_counters();
         SpaceEquationCursor structured_disjoint_cursor;
         assert(space_equation_cursor_init(
             &equation_space, source_head, &structured_disjoint_cursor));
@@ -506,6 +517,15 @@ int main(void) {
         assert(space_equation_cursor_next(
                    &structured_disjoint_cursor, &cursor_id) ==
                SPACE_EQUATION_CURSOR_END);
+        assert(test_counter(
+                   CETTA_RUNTIME_COUNTER_SPACE_KNOWN_HEAD_CURSOR_EXACT_ITEM) ==
+               1u);
+        assert(test_counter(
+                   CETTA_RUNTIME_COUNTER_SPACE_KNOWN_HEAD_CURSOR_OPEN_ITEM) ==
+               0u);
+        assert(test_counter(
+                   CETTA_RUNTIME_COUNTER_SPACE_KNOWN_HEAD_CURSOR_STRUCTURED_DISJOINT) ==
+               1u);
         assert(space_remove(&equation_space, callable_equation));
 
         Atom *colliding_lhs_elems[1] = {
@@ -526,6 +546,15 @@ int main(void) {
                                                      absent_colliding_head));
 
         space_add(&equation_space, wildcard_equation);
+        reset_test_counters();
+        assert(space_single_linear_equation(&equation_space, source_head) ==
+               NULL);
+        assert(test_counter(
+                   CETTA_RUNTIME_COUNTER_SPACE_KNOWN_HEAD_SINGLETON_ADMITTED) ==
+               0u);
+        assert(test_counter(
+                   CETTA_RUNTIME_COUNTER_SPACE_KNOWN_HEAD_SINGLETON_OPEN_BLOCKED) ==
+               1u);
         assert(space_equations_may_match_known_head(&equation_space,
                                                     absent_colliding_head));
 
@@ -537,6 +566,7 @@ int main(void) {
         space_add(&equation_space, second_source_after_wildcard);
 
         SpaceEquationCursor source_cursor;
+        reset_test_counters();
         assert(space_equation_cursor_init(
             &equation_space, source_head, &source_cursor));
         assert(space_equation_cursor_next(&source_cursor, &cursor_id) ==
@@ -550,6 +580,12 @@ int main(void) {
         assert(cursor_id.logical_index == 3u);
         assert(space_equation_cursor_next(&source_cursor, &cursor_id) ==
                SPACE_EQUATION_CURSOR_END);
+        assert(test_counter(
+                   CETTA_RUNTIME_COUNTER_SPACE_KNOWN_HEAD_CURSOR_EXACT_ITEM) ==
+               2u);
+        assert(test_counter(
+                   CETTA_RUNTIME_COUNTER_SPACE_KNOWN_HEAD_CURSOR_OPEN_ITEM) ==
+               1u);
 
         SpaceEquationCursor collision_cursor;
         assert(space_equation_cursor_init(

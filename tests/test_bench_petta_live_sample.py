@@ -36,6 +36,26 @@ class LivePeTTaSampleTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "scalar-control"):
             SAMPLE.select_examples(1, 1, set())
 
+    def test_tracked_selection_excludes_nested_and_non_metta_paths(self) -> None:
+        self.assertEqual(
+            SAMPLE.select_tracked_examples(
+                [
+                    "examples/zeta.metta",
+                    "examples/nested/hidden.metta",
+                    "examples/readme.txt",
+                    "examples/alpha.metta",
+                ]
+            ),
+            [
+                ("tracked-corpus", "alpha.metta"),
+                ("tracked-corpus", "zeta.metta"),
+            ],
+        )
+
+    def test_empty_tracked_selection_fails_closed(self) -> None:
+        with self.assertRaisesRegex(ValueError, "no tracked"):
+            SAMPLE.select_tracked_examples(["examples/nested/hidden.metta"])
+
     def test_classification_requires_both_output_channels(self) -> None:
         same = (0, "answer\n", "")
         status, stdout_equal, stderr_equal = SAMPLE.classify(same, same)
