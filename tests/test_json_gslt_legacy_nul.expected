@@ -1,0 +1,2 @@
+[()]
+[(Error (__cetta_lib_json_parse "\"\\u0000\"") "legacy grounded strings cannot retain U+0000")]

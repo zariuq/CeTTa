@@ -1,15 +1,15 @@
-#include "nik_native_calculus_selection.h"
+#include "nik_licensed_implementation_selection.h"
 
 #include <stdbool.h>
 #include <stdlib.h>
 
-static CettaNikNativeSelectionV1 native_selection(
-    CettaNikNativeSelectionStatusV1 status,
-    CettaNikNativeSelectionKindV1 kind,
+static CettaNikImplementationSelectionV1 implementation_selection(
+    CettaNikImplementationSelectionStatusV1 status,
+    CettaNikImplementationSelectionKindV1 kind,
     size_t eligible_count,
     size_t frontier_count,
     size_t greatest_index) {
-    return (CettaNikNativeSelectionV1){
+    return (CettaNikImplementationSelectionV1){
         .status = status,
         .kind = kind,
         .eligible_count = eligible_count,
@@ -18,8 +18,8 @@ static CettaNikNativeSelectionV1 native_selection(
     };
 }
 
-static bool native_capabilities_valid(
-    const CettaNikNativeCapabilityIdV1 *capabilities,
+static bool implementation_capabilities_valid(
+    const CettaNikImplementationCapabilityIdV1 *capabilities,
     size_t capability_count) {
     if ((capability_count != 0u) != (capabilities != NULL))
         return false;
@@ -33,10 +33,10 @@ static bool native_capabilities_valid(
     return true;
 }
 
-static bool native_capabilities_include(
-    const CettaNikNativeCapabilityIdV1 *superset,
+static bool implementation_capabilities_include(
+    const CettaNikImplementationCapabilityIdV1 *superset,
     size_t superset_count,
-    const CettaNikNativeCapabilityIdV1 *subset,
+    const CettaNikImplementationCapabilityIdV1 *subset,
     size_t subset_count) {
     size_t superset_index = 0u;
     size_t subset_index = 0u;
@@ -53,25 +53,31 @@ static bool native_capabilities_include(
     return subset_index == subset_count;
 }
 
-static bool native_family_shape_valid(
-    const CettaNikLicensedNativeFamilyV1 *family) {
-    if (!family || family->realization_count == 0u ||
-        !family->realizations ||
+static bool implementation_family_shape_valid(
+    const CettaNikLicensedImplementationFamilyV1 *family) {
+    if (!family || family->implementation_count == 0u ||
+        !family->implementations ||
         ((family->upgrade_count != 0u) != (family->upgrades != NULL))) {
         return false;
     }
-    for (size_t index = 0u; index < family->realization_count; index++) {
-        const CettaNikLicensedNativeRealizationV1 *realization =
-            &family->realizations[index];
-        if (realization->realization_identity == 0u ||
-            !native_capabilities_valid(
-                realization->capabilities,
-                realization->capability_count)) {
+    for (size_t index = 0u; index < family->implementation_count; index++) {
+        const CettaNikLicensedImplementationV1 *implementation =
+            &family->implementations[index];
+        if (implementation->calculus_identity == 0u ||
+            implementation->implementation_identity == 0u ||
+            !implementation_capabilities_valid(
+                implementation->capabilities,
+                implementation->capability_count)) {
+            return false;
+        }
+        if (index != 0u &&
+            family->implementations[0].calculus_identity !=
+                implementation->calculus_identity) {
             return false;
         }
         for (size_t earlier = 0u; earlier < index; earlier++) {
-            if (family->realizations[earlier].realization_identity ==
-                realization->realization_identity) {
+            if (family->implementations[earlier].implementation_identity ==
+                implementation->implementation_identity) {
                 return false;
             }
         }
@@ -79,23 +85,23 @@ static bool native_family_shape_valid(
     return true;
 }
 
-static bool native_build_strict_order(
-    const CettaNikLicensedNativeFamilyV1 *family,
+static bool implementation_build_strict_order(
+    const CettaNikLicensedImplementationFamilyV1 *family,
     bool *strict_order) {
-    const size_t count = family->realization_count;
+    const size_t count = family->implementation_count;
     for (size_t edge_index = 0u;
          edge_index < family->upgrade_count; edge_index++) {
-        const CettaNikLicensedNativeUpgradeV1 *edge =
+        const CettaNikLicensedImplementationUpgradeV1 *edge =
             &family->upgrades[edge_index];
         if (edge->weaker_index >= count || edge->stronger_index >= count ||
             edge->weaker_index == edge->stronger_index) {
             return false;
         }
-        const CettaNikLicensedNativeRealizationV1 *weaker =
-            &family->realizations[edge->weaker_index];
-        const CettaNikLicensedNativeRealizationV1 *stronger =
-            &family->realizations[edge->stronger_index];
-        if (!native_capabilities_include(
+        const CettaNikLicensedImplementationV1 *weaker =
+            &family->implementations[edge->weaker_index];
+        const CettaNikLicensedImplementationV1 *stronger =
+            &family->implementations[edge->stronger_index];
+        if (!implementation_capabilities_include(
                 stronger->capabilities, stronger->capability_count,
                 weaker->capabilities, weaker->capability_count) ||
             stronger->capability_count == weaker->capability_count) {
@@ -124,9 +130,9 @@ static bool native_build_strict_order(
     return true;
 }
 
-CettaNikNativeSelectionV1 cetta_nik_native_calculus_select_v1(
-    const CettaNikLicensedNativeFamilyV1 *family,
-    const CettaNikNativeCapabilityRequestV1 *request,
+CettaNikImplementationSelectionV1 cetta_nik_licensed_implementation_select_v1(
+    const CettaNikLicensedImplementationFamilyV1 *family,
+    const CettaNikImplementationCapabilityRequestV1 *request,
     size_t *frontier_indices,
     size_t frontier_capacity) {
     bool *strict_order = NULL;
@@ -135,45 +141,45 @@ CettaNikNativeSelectionV1 cetta_nik_native_calculus_select_v1(
     size_t eligible_count = 0u;
     size_t frontier_count = 0u;
     size_t greatest_index = SIZE_MAX;
-    CettaNikNativeSelectionKindV1 kind = CETTA_NIK_NATIVE_SELECTION_NONE_V1;
-    CettaNikNativeSelectionStatusV1 status =
-        CETTA_NIK_NATIVE_SELECTION_STATUS_OK_V1;
+    CettaNikImplementationSelectionKindV1 kind = CETTA_NIK_IMPLEMENTATION_SELECTION_NONE_V1;
+    CettaNikImplementationSelectionStatusV1 status =
+        CETTA_NIK_IMPLEMENTATION_SELECTION_STATUS_OK_V1;
 
-    if (!native_family_shape_valid(family)) {
-        return native_selection(
-            CETTA_NIK_NATIVE_SELECTION_STATUS_INVALID_FAMILY_V1,
-            CETTA_NIK_NATIVE_SELECTION_NONE_V1, 0u, 0u, SIZE_MAX);
+    if (!implementation_family_shape_valid(family)) {
+        return implementation_selection(
+            CETTA_NIK_IMPLEMENTATION_SELECTION_STATUS_INVALID_FAMILY_V1,
+            CETTA_NIK_IMPLEMENTATION_SELECTION_NONE_V1, 0u, 0u, SIZE_MAX);
     }
-    if (!request || !native_capabilities_valid(
+    if (!request || !implementation_capabilities_valid(
             request->required_capabilities,
             request->required_capability_count)) {
-        return native_selection(
-            CETTA_NIK_NATIVE_SELECTION_STATUS_INVALID_REQUEST_V1,
-            CETTA_NIK_NATIVE_SELECTION_NONE_V1, 0u, 0u, SIZE_MAX);
+        return implementation_selection(
+            CETTA_NIK_IMPLEMENTATION_SELECTION_STATUS_INVALID_REQUEST_V1,
+            CETTA_NIK_IMPLEMENTATION_SELECTION_NONE_V1, 0u, 0u, SIZE_MAX);
     }
-    if (family->realization_count >
-        SIZE_MAX / family->realization_count) {
-        return native_selection(
-            CETTA_NIK_NATIVE_SELECTION_STATUS_RESOURCE_FAULT_V1,
-            CETTA_NIK_NATIVE_SELECTION_NONE_V1, 0u, 0u, SIZE_MAX);
+    if (family->implementation_count >
+        SIZE_MAX / family->implementation_count) {
+        return implementation_selection(
+            CETTA_NIK_IMPLEMENTATION_SELECTION_STATUS_RESOURCE_FAULT_V1,
+            CETTA_NIK_IMPLEMENTATION_SELECTION_NONE_V1, 0u, 0u, SIZE_MAX);
     }
-    matrix_count = family->realization_count * family->realization_count;
+    matrix_count = family->implementation_count * family->implementation_count;
     strict_order = calloc(matrix_count, sizeof(*strict_order));
-    eligible = calloc(family->realization_count, sizeof(*eligible));
+    eligible = calloc(family->implementation_count, sizeof(*eligible));
     if (!strict_order || !eligible) {
-        status = CETTA_NIK_NATIVE_SELECTION_STATUS_RESOURCE_FAULT_V1;
+        status = CETTA_NIK_IMPLEMENTATION_SELECTION_STATUS_RESOURCE_FAULT_V1;
         goto finish;
     }
-    if (!native_build_strict_order(family, strict_order)) {
-        status = CETTA_NIK_NATIVE_SELECTION_STATUS_INVALID_FAMILY_V1;
+    if (!implementation_build_strict_order(family, strict_order)) {
+        status = CETTA_NIK_IMPLEMENTATION_SELECTION_STATUS_INVALID_FAMILY_V1;
         goto finish;
     }
 
-    for (size_t index = 0u; index < family->realization_count; index++) {
-        const CettaNikLicensedNativeRealizationV1 *realization =
-            &family->realizations[index];
-        eligible[index] = native_capabilities_include(
-            realization->capabilities, realization->capability_count,
+    for (size_t index = 0u; index < family->implementation_count; index++) {
+        const CettaNikLicensedImplementationV1 *implementation =
+            &family->implementations[index];
+        eligible[index] = implementation_capabilities_include(
+            implementation->capabilities, implementation->capability_count,
             request->required_capabilities,
             request->required_capability_count);
         eligible_count += eligible[index] ? 1u : 0u;
@@ -182,12 +188,12 @@ CettaNikNativeSelectionV1 cetta_nik_native_calculus_select_v1(
         goto finish;
 
     for (size_t candidate = 0u;
-         candidate < family->realization_count; candidate++) {
+         candidate < family->implementation_count; candidate++) {
         bool maximal = eligible[candidate];
         for (size_t stronger = 0u;
-             maximal && stronger < family->realization_count; stronger++) {
+             maximal && stronger < family->implementation_count; stronger++) {
             if (eligible[stronger] &&
-                strict_order[candidate * family->realization_count +
+                strict_order[candidate * family->implementation_count +
                              stronger]) {
                 maximal = false;
             }
@@ -196,16 +202,16 @@ CettaNikNativeSelectionV1 cetta_nik_native_calculus_select_v1(
     }
 
     if (frontier_count == 1u) {
-        kind = CETTA_NIK_NATIVE_SELECTION_UNIQUE_GREATEST_V1;
+        kind = CETTA_NIK_IMPLEMENTATION_SELECTION_UNIQUE_GREATEST_V1;
         for (size_t candidate = 0u;
-             candidate < family->realization_count; candidate++) {
+             candidate < family->implementation_count; candidate++) {
             if (!eligible[candidate])
                 continue;
             bool maximal = true;
             for (size_t stronger = 0u;
-                 maximal && stronger < family->realization_count; stronger++) {
+                 maximal && stronger < family->implementation_count; stronger++) {
                 if (eligible[stronger] &&
-                    strict_order[candidate * family->realization_count +
+                    strict_order[candidate * family->implementation_count +
                                  stronger]) {
                     maximal = false;
                 }
@@ -216,34 +222,34 @@ CettaNikNativeSelectionV1 cetta_nik_native_calculus_select_v1(
             }
         }
         for (size_t candidate = 0u;
-             candidate < family->realization_count; candidate++) {
+             candidate < family->implementation_count; candidate++) {
             if (eligible[candidate] && candidate != greatest_index &&
-                !strict_order[candidate * family->realization_count +
+                !strict_order[candidate * family->implementation_count +
                               greatest_index]) {
                 status =
-                    CETTA_NIK_NATIVE_SELECTION_STATUS_INVALID_FAMILY_V1;
+                    CETTA_NIK_IMPLEMENTATION_SELECTION_STATUS_INVALID_FAMILY_V1;
                 goto finish;
             }
         }
     } else {
-        kind = CETTA_NIK_NATIVE_SELECTION_MAXIMAL_FRONTIER_V1;
+        kind = CETTA_NIK_IMPLEMENTATION_SELECTION_MAXIMAL_FRONTIER_V1;
     }
 
     if (frontier_capacity < frontier_count ||
         (frontier_count != 0u && !frontier_indices)) {
-        status = CETTA_NIK_NATIVE_SELECTION_STATUS_OUTPUT_TOO_SMALL_V1;
+        status = CETTA_NIK_IMPLEMENTATION_SELECTION_STATUS_OUTPUT_TOO_SMALL_V1;
         goto finish;
     }
     size_t output_index = 0u;
     for (size_t candidate = 0u;
-         candidate < family->realization_count; candidate++) {
+         candidate < family->implementation_count; candidate++) {
         if (!eligible[candidate])
             continue;
         bool maximal = true;
         for (size_t stronger = 0u;
-             maximal && stronger < family->realization_count; stronger++) {
+             maximal && stronger < family->implementation_count; stronger++) {
             if (eligible[stronger] &&
-                strict_order[candidate * family->realization_count +
+                strict_order[candidate * family->implementation_count +
                              stronger]) {
                 maximal = false;
             }
@@ -255,6 +261,6 @@ CettaNikNativeSelectionV1 cetta_nik_native_calculus_select_v1(
 finish:
     free(eligible);
     free(strict_order);
-    return native_selection(
+    return implementation_selection(
         status, kind, eligible_count, frontier_count, greatest_index);
 }

@@ -1,0 +1,7 @@
+[()]
+[()]
+[(rho:quote (rho:val (io:request 7)))]
+[(rho:quote (rho:val (io:request 7)))]
+[(rho:send (rho:quote (rho:val (io:request 7))) (rho:val (io:event 7 (http:response 200 "ok"))))]
+[(io:rho:event-process (io:idle))]
+[((rho:val (io:event 7 (http:response 200 "ok"))))]

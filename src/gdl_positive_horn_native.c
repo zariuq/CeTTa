@@ -64,8 +64,6 @@ struct CettaGdlPositiveHornNativeV1 {
     CettaGdlTypeOfNativeV1 *typing;
     GdlSourcePackageV1 package;
     CettaNikDirectAuthorityTokenV1 token;
-    CettaNikNativeSelectionV1 selection;
-    uint64_t selected_realization_identity;
     const CettaNikDirectAuthorityV1 *authority;
     GdlPositiveHornSourceModeV1 mode;
     GdlPositiveHornFiniteDomainV1 finite_domain;
@@ -111,108 +109,6 @@ static const CettaNikDirectAuthorityV1
         .authority_revision = 1u,
         .realization_abi = 1u,
     };
-
-/* One exact positive-Horn execution fibre contains both the generic
- * certificate-boundary RuleMachine realization and the language-owned typed
- * proof kernel.  These are stable language-owned capability identities, not
- * global NIK tiers. */
-static const CettaNikNativeCapabilityIdV1
-    g_gdl_positive_horn_generic_capabilities_v1[] = {
-        UINT64_C(0x67646c6800000001), /* exact ordered proof bag */
-        UINT64_C(0x67646c6800000002), /* finite relational execution */
-    };
-
-static const CettaNikNativeCapabilityIdV1
-    g_gdl_positive_horn_native_capabilities_v1[] = {
-        UINT64_C(0x67646c6800000001), /* exact ordered proof bag */
-        UINT64_C(0x67646c6800000002), /* finite relational execution */
-        UINT64_C(0x67646c6800000003), /* exact typed source image */
-        UINT64_C(0x67646c6800000004), /* native ground proof construction */
-        UINT64_C(0x67646c6800000005), /* typed finite episode ingress */
-        UINT64_C(0x67646c6800000006), /* current zero-interior-check flow */
-        UINT64_C(0x67646c6800000009), /* authored dependency strata */
-    };
-
-static const CettaNikNativeCapabilityIdV1
-    g_gdl_finite_view_native_capabilities_v1[] = {
-        UINT64_C(0x67646c6800000001), /* exact ordered proof bag */
-        UINT64_C(0x67646c6800000002), /* finite relational execution */
-        UINT64_C(0x67646c6800000003), /* exact typed source image */
-        UINT64_C(0x67646c6800000004), /* native ground proof construction */
-        UINT64_C(0x67646c6800000005), /* typed finite episode ingress */
-        UINT64_C(0x67646c6800000006), /* current zero-interior-check flow */
-        UINT64_C(0x67646c6800000007), /* source-declared finite true domain */
-        UINT64_C(0x67646c6800000008), /* constructive relation absence */
-        UINT64_C(0x67646c6800000009), /* authored dependency strata */
-    };
-
-static CettaNikNativeSelectionV1
-gdl_positive_horn_no_selection_v1(void) {
-    return (CettaNikNativeSelectionV1){
-        .status = CETTA_NIK_NATIVE_SELECTION_STATUS_OK_V1,
-        .kind = CETTA_NIK_NATIVE_SELECTION_NONE_V1,
-        .greatest_index = SIZE_MAX,
-    };
-}
-
-static CettaNikNativeSelectionV1 gdl_positive_horn_select_v1(
-    bool finite_view, size_t *frontier_index_out) {
-    const CettaNikLicensedNativeRealizationV1 realizations[] = {
-        {
-            .realization_identity = UINT64_C(0x67646c2e726d6331),
-            .capabilities = g_gdl_positive_horn_generic_capabilities_v1,
-            .capability_count =
-                sizeof(g_gdl_positive_horn_generic_capabilities_v1) /
-                sizeof(g_gdl_positive_horn_generic_capabilities_v1[0]),
-        },
-        {
-            .realization_identity = finite_view
-                ? g_gdl_finite_view_authority_v1.realization_identity
-                : g_gdl_positive_horn_authority_v1.realization_identity,
-            .capabilities = finite_view
-                ? g_gdl_finite_view_native_capabilities_v1
-                : g_gdl_positive_horn_native_capabilities_v1,
-            .capability_count = finite_view
-                ? sizeof(g_gdl_finite_view_native_capabilities_v1) /
-                    sizeof(g_gdl_finite_view_native_capabilities_v1[0])
-                : sizeof(g_gdl_positive_horn_native_capabilities_v1) /
-                    sizeof(g_gdl_positive_horn_native_capabilities_v1[0]),
-        },
-    };
-    /* The edge is admitted only for this exact typed positive-Horn image:
-     * its native construction retains the generic proof bag while adding
-     * source typing, typed ingress, and currentness evidence. */
-    const CettaNikLicensedNativeUpgradeV1 upgrades[] = {
-        {.weaker_index = 0u, .stronger_index = 1u},
-    };
-    const CettaNikLicensedNativeFamilyV1 family = {
-        .realizations = realizations,
-        .realization_count =
-            sizeof(realizations) / sizeof(realizations[0]),
-        .upgrades = upgrades,
-        .upgrade_count = sizeof(upgrades) / sizeof(upgrades[0]),
-    };
-    const CettaNikNativeCapabilityRequestV1 request = {
-        .required_capabilities =
-            g_gdl_positive_horn_generic_capabilities_v1,
-        .required_capability_count =
-            sizeof(g_gdl_positive_horn_generic_capabilities_v1) /
-            sizeof(g_gdl_positive_horn_generic_capabilities_v1[0]),
-    };
-    return cetta_nik_native_calculus_select_v1(
-        &family, &request, frontier_index_out, 1u);
-}
-
-static bool gdl_positive_horn_selection_is_native_greatest_v1(
-    const CettaNikNativeSelectionV1 *selection,
-    size_t frontier_index) {
-    return selection &&
-        selection->status == CETTA_NIK_NATIVE_SELECTION_STATUS_OK_V1 &&
-        selection->kind == CETTA_NIK_NATIVE_SELECTION_UNIQUE_GREATEST_V1 &&
-        selection->eligible_count == 2u &&
-        selection->frontier_count == 1u &&
-        selection->greatest_index == 1u && frontier_index == 1u;
-}
 
 typedef enum {
     GDL_POSITIVE_HORN_BUILD_OK_V1 = 0,
@@ -1102,17 +998,6 @@ gdl_positive_horn_native_admit_mode_v1(
         built = GDL_POSITIVE_HORN_BUILD_FAULT_V1;
         goto done;
     }
-    size_t frontier_index = SIZE_MAX;
-    native->selection = gdl_positive_horn_select_v1(
-        native->mode == GDL_POSITIVE_HORN_FINITE_TRUE_VIEW_V1,
-        &frontier_index);
-    if (!gdl_positive_horn_selection_is_native_greatest_v1(
-            &native->selection, frontier_index)) {
-        built = GDL_POSITIVE_HORN_BUILD_FAULT_V1;
-        goto done;
-    }
-    native->selected_realization_identity =
-        native->authority->realization_identity;
     native->stats.compiled_blocks = blocks.count;
 
 done:
@@ -1793,8 +1678,7 @@ bool cetta_gdl_positive_horn_episode_identity_v1(
 
 static CettaGdlPositiveHornRunV1 gdl_positive_horn_run_artifact_v1(
     Atom *artifact,
-    CettaNikNativeSelectionV1 selection,
-    uint64_t selected_realization_identity,
+    uint64_t implementation_identity,
     Arena *result_arena,
     Atom *query,
     uint32_t depth,
@@ -1804,9 +1688,7 @@ static CettaGdlPositiveHornRunV1 gdl_positive_horn_run_artifact_v1(
         max_states > INT64_MAX || max_occurrences == 0u)
         return (CettaGdlPositiveHornRunV1){
             .kind = CETTA_GDL_POSITIVE_HORN_RUN_ENGINE_FAULT_V1,
-            .selection = selection,
-            .selected_realization_identity =
-                selected_realization_identity,
+            .implementation_identity = implementation_identity,
         };
     Atom *head = atom_symbol(result_arena, "compile:run");
     Atom *query_copy = atom_deep_copy(result_arena, query);
@@ -1823,42 +1705,33 @@ static CettaGdlPositiveHornRunV1 gdl_positive_horn_run_artifact_v1(
         !arguments[4])
         return (CettaGdlPositiveHornRunV1){
             .kind = CETTA_GDL_POSITIVE_HORN_RUN_ENGINE_FAULT_V1,
-            .selection = selection,
-            .selected_realization_identity =
-                selected_realization_identity,
+            .implementation_identity = implementation_identity,
         };
     Atom *result = cetta_rule_machine_dispatch(
         result_arena, head, arguments, 5u);
     if (!result || gdl_positive_horn_error_v1(result))
         return (CettaGdlPositiveHornRunV1){
             .kind = CETTA_GDL_POSITIVE_HORN_RUN_ENGINE_FAULT_V1,
-            .selection = selection,
-            .selected_realization_identity =
-                selected_realization_identity,
+            .implementation_identity = implementation_identity,
             .result = result,
         };
     if (result->kind == ATOM_EXPR && result->expr.len == 6u &&
         atom_is_symbol(result->expr.elems[0], "compile-incomplete"))
         return (CettaGdlPositiveHornRunV1){
             .kind = CETTA_GDL_POSITIVE_HORN_RUN_INCOMPLETE_V1,
-            .selection = selection,
-            .selected_realization_identity =
-                selected_realization_identity,
+            .implementation_identity = implementation_identity,
             .result = result,
         };
     if (result->kind == ATOM_EXPR && result->expr.len == 5u &&
         atom_is_symbol(result->expr.elems[0], "compile-result"))
         return (CettaGdlPositiveHornRunV1){
             .kind = CETTA_GDL_POSITIVE_HORN_RUN_COMPLETE_V1,
-            .selection = selection,
-            .selected_realization_identity =
-                selected_realization_identity,
+            .implementation_identity = implementation_identity,
             .result = result,
         };
     return (CettaGdlPositiveHornRunV1){
         .kind = CETTA_GDL_POSITIVE_HORN_RUN_ENGINE_FAULT_V1,
-        .selection = selection,
-        .selected_realization_identity = selected_realization_identity,
+        .implementation_identity = implementation_identity,
         .result = result,
     };
 }
@@ -1874,16 +1747,14 @@ CettaGdlPositiveHornRunV1 cetta_gdl_positive_horn_native_run_v1(
     if (!native || !token)
         return (CettaGdlPositiveHornRunV1){
             .kind = CETTA_GDL_POSITIVE_HORN_RUN_ENGINE_FAULT_V1,
-            .selection = gdl_positive_horn_no_selection_v1(),
         };
     if (!cetta_gdl_positive_horn_native_token_is_current_v1(native, token))
         return (CettaGdlPositiveHornRunV1){
             .kind = CETTA_GDL_POSITIVE_HORN_RUN_STALE_V1,
-            .selection = gdl_positive_horn_no_selection_v1(),
         };
     return gdl_positive_horn_run_artifact_v1(
-        native->base_artifact, native->selection,
-        native->selected_realization_identity, result_arena, query,
+        native->base_artifact, native->authority->realization_identity,
+        result_arena, query,
         depth, max_states, max_occurrences);
 }
 
@@ -1898,17 +1769,14 @@ CettaGdlPositiveHornRunV1 cetta_gdl_positive_horn_episode_run_v1(
     if (!episode || !token)
         return (CettaGdlPositiveHornRunV1){
             .kind = CETTA_GDL_POSITIVE_HORN_RUN_ENGINE_FAULT_V1,
-            .selection = gdl_positive_horn_no_selection_v1(),
         };
     if (!cetta_gdl_positive_horn_episode_token_is_current_v1(
             episode, token))
         return (CettaGdlPositiveHornRunV1){
             .kind = CETTA_GDL_POSITIVE_HORN_RUN_STALE_V1,
-            .selection = gdl_positive_horn_no_selection_v1(),
         };
     return gdl_positive_horn_run_artifact_v1(
-        episode->artifact, episode->native->selection,
-        episode->native->selected_realization_identity,
+        episode->artifact, episode->native->authority->realization_identity,
         result_arena, query,
         depth, max_states, max_occurrences);
 }

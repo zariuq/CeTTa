@@ -5330,6 +5330,7 @@ static void query_bucket_legacy(Space *s, EqBucket *bucket, Atom *query,
         CettaIndex *candidates = NULL;
         CettaIndex ncand = 0, ccand = 0;
         CettaIndex considered = 0;
+        (void)considered;
         disc_lookup(bucket->trie, query, &candidates, &ncand, &ccand);
         for (CettaIndex ci = 0; ci < ncand; ci++) {
             CettaIndex i = candidates[ci];
@@ -5384,6 +5385,7 @@ static void query_bucket_legacy(Space *s, EqBucket *bucket, Atom *query,
     }
 
     uint32_t considered = 0;
+    (void)considered;
     for (CettaIndex i = 0; i < bucket->len; i++) {
         if (sink->candidate_filter) {
             Atom *equation = query_bucket_equation_at(s, bucket, i);
@@ -5540,6 +5542,7 @@ static void query_bucket(Space *s, EqBucket *bucket, Atom *query,
     }
     SubstMatchSet matches;
     uint32_t considered = 0;
+    (void)considered;
     smset_init(&matches);
     stree_query_bucket(&bucket->subst, a, query, NULL, &matches);
     for (CettaIndex mi = 0; mi < matches.len; mi++) {
@@ -5620,6 +5623,7 @@ static CettaCount query_equations_core_overlay(Space *s, Atom *query, Arena *a,
     SymbolId query_head = eq_head_symbol(query);
     CettaCount logical_len;
     CettaCount considered = 0;
+    (void)considered;
 
     query_visible_var_set_init(&visible);
     if (!collect_query_visible_vars_rec(query, &visible)) {

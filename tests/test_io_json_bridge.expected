@@ -1,0 +1,6 @@
+[()]
+[()]
+[(io:json:event 11 200 (JsonObjectV1 ((JsonMemberV1 0 (JsonStringV1 ((cp 120))) (JsonNumberV1 "1")) (JsonMemberV1 1 (JsonStringV1 ((cp 120))) (JsonNumberV1 "2")))))]
+[(io:json:event 12 200 (JsonFailureV1 JsonParseV1 JsonSyntaxRejectedV1 (quote (__cetta_lib_json_parse_v1 "01")) "JSON syntax rejected by authored grammar"))]
+[(io:json:decode-event (io:event 13 (io:cancelled)))]
+[((rho:val (io:json:event 11 200 (JsonObjectV1 ((JsonMemberV1 0 (JsonStringV1 ((cp 111) (cp 107))) (JsonBoolV1 True)))))))]

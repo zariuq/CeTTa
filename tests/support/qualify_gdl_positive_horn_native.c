@@ -100,21 +100,13 @@ static Atom *proof_goal(Arena *arena, Atom *quoted_proof) {
     return NULL;
 }
 
-static bool run_selection_is_native(
+static bool run_uses_expected_implementation(
     const CettaGdlPositiveHornRunV1 *run, bool finite_view) {
     const CettaNikDirectAuthorityV1 *authority = finite_view
         ? cetta_gdl_finite_view_native_authority_v1()
         : cetta_gdl_positive_horn_native_authority_v1();
     return run && authority &&
-        run->selection.status ==
-            CETTA_NIK_NATIVE_SELECTION_STATUS_OK_V1 &&
-        run->selection.kind ==
-            CETTA_NIK_NATIVE_SELECTION_UNIQUE_GREATEST_V1 &&
-        run->selection.eligible_count == 2u &&
-        run->selection.frontier_count == 1u &&
-        run->selection.greatest_index == 1u &&
-        run->selected_realization_identity ==
-            authority->realization_identity;
+        run->implementation_identity == authority->realization_identity;
 }
 
 static bool result_occurrences(
@@ -153,10 +145,10 @@ static bool print_query_observation(
     Atom **occurrences = NULL;
     size_t occurrence_count = 0u;
     if (run.kind != CETTA_GDL_POSITIVE_HORN_RUN_COMPLETE_V1 ||
-        !run_selection_is_native(&run, finite_view) ||
+        !run_uses_expected_implementation(&run, finite_view) ||
         !result_occurrences(
             run.result, &occurrences, &occurrence_count)) {
-        fputs("FAIL: native query did not return one selected complete bag\n",
+        fputs("FAIL: native query did not return the expected complete bag\n",
               stderr);
         arena_free(&result_arena);
         return false;

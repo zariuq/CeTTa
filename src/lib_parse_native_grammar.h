@@ -292,6 +292,44 @@ typedef struct {
 } CettaLpNativeUtf8Forest;
 
 /*
+ * Validate the complete public neutral-forest contract without rerunning a
+ * recognizer.  This checks owned choice ranges, scalar/byte spans, binary
+ * prefix/child factorization, terminal payloads, root reachability, and typed
+ * resource-limit results.  Semantic symbol, terminal, and production tables
+ * remain the caller's separate authority.
+ */
+bool cetta_lp_native_utf8_forest_validate(
+    const CettaLpNativeUtf8Forest *forest,
+    char *error_buf,
+    size_t error_buf_size);
+
+/*
+ * Canonical qualification snapshot of the public neutral-forest arrays.
+ * The wire is independent of C struct layout: magic "CNF1", followed by
+ * little-endian uint32 fields and length-delimited node, choice, root,
+ * expectation, scalar, and byte-offset tables.  Semantic identity tables are
+ * deliberately separate because the dense IDs are adapter-local.
+ *
+ * Both operations validate the forest first.  `wire_write` is fail-atomic:
+ * it writes nothing unless the supplied buffer is large enough for the whole
+ * snapshot.  These functions are opt-in qualification facilities and are not
+ * called by a parser or prepared hot path.
+ */
+bool cetta_lp_native_utf8_forest_wire_size(
+    const CettaLpNativeUtf8Forest *forest,
+    size_t *out_size,
+    char *error_buf,
+    size_t error_buf_size);
+
+bool cetta_lp_native_utf8_forest_wire_write(
+    const CettaLpNativeUtf8Forest *forest,
+    uint8_t *out_bytes,
+    size_t out_size,
+    size_t *out_written,
+    char *error_buf,
+    size_t error_buf_size);
+
+/*
  * Prepared recognizers own theory-derived tables and may parse many inputs.
  * Their implementation pointers are opaque; initialize before prepare and
  * free after the last parse.  Copying a prepared value does not transfer

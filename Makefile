@@ -3,6 +3,40 @@ CC = gcc
 LLVM_OPT ?= opt
 LLVM_CLANG ?= clang
 .DEFAULT_GOAL := all
+.DELETE_ON_ERROR:
+
+.PHONY: test-fail-atomic-build-v1
+test-fail-atomic-build-v1:
+	@set -eu; \
+	makefile='$(firstword $(MAKEFILE_LIST))'; \
+	unsafe=$$(awk '/^\t@tmp_[[:alnum:]_]+=/ { print NR ":" $$0 }' "$$makefile"); \
+	if [ -n "$$unsafe" ]; then \
+		echo "FAIL: temporary-output recipes without fail-fast prelude" >&2; \
+		printf '%s\n' "$$unsafe" >&2; \
+		exit 1; \
+	fi; \
+	if ! grep -qxF '.DELETE_ON_ERROR:' "$$makefile"; then \
+		echo "FAIL: GNU Make failed-target deletion is not enabled" >&2; \
+		exit 1; \
+	fi; \
+	mkdir -p runtime; \
+	probe_dir=$$(mktemp -d "runtime/fail-atomic-build-v1.XXXXXX"); \
+	trap 'rm -rf "$$probe_dir"' EXIT INT TERM; \
+	printf '%s\n' preserved > "$$probe_dir/target"; \
+	set +e; \
+	(set -eu; \
+		tmp_out=$$(mktemp "$$probe_dir/output.XXXXXX"); \
+		trap 'rm -f "$$tmp_out"' EXIT INT TERM; \
+		false; \
+		mv "$$tmp_out" "$$probe_dir/target"); \
+	status=$$?; \
+	set -e; \
+	if [ "$$status" -eq 0 ]; then \
+		echo "FAIL: failed producer reached atomic promotion" >&2; \
+		exit 1; \
+	fi; \
+	test "$$(cat "$$probe_dir/target")" = preserved; \
+	echo "fail-atomic build transactions: static and adversarial checks passed"
 
 include src/generated/cetta_execution_contracts.generated.mk
 
@@ -40,6 +74,11 @@ ENABLE_PRIME_NEED_HEAP_INDEX ?= 1
 ENABLE_PRIME_NEED_CLOSURE_CAPTURE ?= 0
 ENABLE_PRIME_EVAL_STACK ?= 1
 ENABLE_LIB_PROLOG ?= auto
+ENABLE_HTTP ?= 0
+ENABLE_JSON_GSLT ?= 0
+CETTA_EMCC ?= emcc
+CETTA_BROWSER ?= google-chrome
+CETTA_BROWSER_NODE ?= node
 ENABLE_PETTA_TYPECHECK_V2 ?= 1
 ENABLE_PETTA_TYPECHECK_CENSUS ?= 0
 ENABLE_LANGDEF_DIAGNOSTIC_BACKENDS ?= 0
@@ -123,6 +162,12 @@ $(error ENABLE_PRIME_EVAL_STACK must be 0 or 1)
 endif
 ifneq ($(filter $(ENABLE_LIB_PROLOG),0 1 auto),$(ENABLE_LIB_PROLOG))
 $(error ENABLE_LIB_PROLOG must be 0, 1, or auto)
+endif
+ifneq ($(filter $(ENABLE_HTTP),0 1),$(ENABLE_HTTP))
+$(error ENABLE_HTTP must be 0 or 1)
+endif
+ifneq ($(filter $(ENABLE_JSON_GSLT),0 1),$(ENABLE_JSON_GSLT))
+$(error ENABLE_JSON_GSLT must be 0 or 1)
 endif
 ifeq ($(ENABLE_RUNTIME_TIMING),1)
 ENABLE_RUNTIME_STATS := 1
@@ -292,6 +337,38 @@ LIB_PROLOG_CONFIG_ID := disabled
 LIB_PROLOG_RPATH :=
 LIB_PROLOG_SRC := src/petta_libpl_stub.c
 endif
+HTTP_ENABLED := 0
+HTTP_PROVIDER_CURL := 0
+HTTP_PROVIDER_EMSCRIPTEN := 0
+HTTP_CFLAGS :=
+HTTP_LDFLAGS :=
+HTTP_VERSION :=
+HTTP_CONFIG_ID := disabled
+ifeq ($(ENABLE_HTTP),1)
+HTTP_EMSCRIPTEN_CC := $(if $(findstring emcc,$(notdir $(firstword $(CC)))),1,0)
+ifeq ($(HTTP_EMSCRIPTEN_CC),1)
+HTTP_ENABLED := 1
+HTTP_PROVIDER_EMSCRIPTEN := 1
+HTTP_LDFLAGS := -sFETCH=1 -sFETCH_STREAMING=1
+HTTP_VERSION := $(strip $(shell $(CC) --version 2>/dev/null | head -1))
+HTTP_CONFIG_ID := $(strip $(shell { \
+	printf '%s\n' emscripten "$(HTTP_LDFLAGS)" "$(HTTP_VERSION)"; \
+	} | sha256sum | cut -c1-16))
+else
+HTTP_PKG_AVAILABLE := $(shell pkg-config --exists libcurl 2>/dev/null && printf '%s' 1 || printf '%s' 0)
+ifneq ($(HTTP_PKG_AVAILABLE),1)
+$(error ENABLE_HTTP=1 requires the libcurl pkg-config package)
+endif
+HTTP_ENABLED := 1
+HTTP_PROVIDER_CURL := 1
+HTTP_CFLAGS := $(shell pkg-config --cflags libcurl)
+HTTP_LDFLAGS := $(shell pkg-config --libs libcurl)
+HTTP_VERSION := $(strip $(shell pkg-config --modversion libcurl))
+HTTP_CONFIG_ID := $(strip $(shell { \
+	printf '%s\n' curl "$(HTTP_CFLAGS)" "$(HTTP_LDFLAGS)" "$(HTTP_VERSION)"; \
+	} | sha256sum | cut -c1-16))
+endif
+endif
 ifeq ($(ENABLE_GMP),1)
 GMP_CFLAGS ?= $(shell pkg-config --cflags gmp 2>/dev/null)
 GMP_LDFLAGS ?= $(shell pkg-config --libs gmp 2>/dev/null || printf '%s' -lgmp)
@@ -367,6 +444,12 @@ endif
 ifeq ($(LIB_PROLOG_ENABLED),1)
 BUILD_OBJ_TAG := $(BUILD_OBJ_TAG).lib-prolog
 BUILD_OBJ_TAG := $(BUILD_OBJ_TAG).swipl-config-$(LIB_PROLOG_CONFIG_ID)
+endif
+ifeq ($(HTTP_ENABLED),1)
+BUILD_OBJ_TAG := $(BUILD_OBJ_TAG).http-config-$(HTTP_CONFIG_ID)
+endif
+ifeq ($(ENABLE_JSON_GSLT),1)
+BUILD_OBJ_TAG := $(BUILD_OBJ_TAG).json-gslt
 endif
 ifeq ($(ENABLE_PYTHON),1)
 BUILD_OBJ_TAG := $(BUILD_OBJ_TAG).python-config-$(PYTHON_CONFIG_ID)
@@ -449,10 +532,10 @@ PRIME_EVAL_STACK_CPPFLAGS =
 ifeq ($(ENABLE_PRIME_EVAL_STACK),1)
 PRIME_EVAL_STACK_CPPFLAGS = -DCETTA_PRIME_EVAL_STACK=1
 endif
-CPPFLAGS = -Isrc -I. -Iexperiments/gslt2parse_foundation/native $(BRIDGE_CFLAGS) $(PY_CFLAGS) $(GMP_CFLAGS) $(LIB_PROLOG_CFLAGS) $(PROVENANCE_CPPFLAGS) $(PRIME_RECEIPT_INDEX_CPPFLAGS) $(PRIME_NEED_HEAP_INDEX_CPPFLAGS) $(PRIME_NEED_CLOSURE_CAPTURE_CPPFLAGS) $(PRIME_EVAL_STACK_CPPFLAGS) -include $(BUILD_CONFIG_HEADER)
+CPPFLAGS = -Isrc -I. -Iexperiments/gslt2parse_foundation/native $(BRIDGE_CFLAGS) $(PY_CFLAGS) $(GMP_CFLAGS) $(LIB_PROLOG_CFLAGS) $(HTTP_CFLAGS) $(PROVENANCE_CPPFLAGS) $(PRIME_RECEIPT_INDEX_CPPFLAGS) $(PRIME_NEED_HEAP_INDEX_CPPFLAGS) $(PRIME_NEED_CLOSURE_CAPTURE_CPPFLAGS) $(PRIME_EVAL_STACK_CPPFLAGS) -include $(BUILD_CONFIG_HEADER)
 CFLAGS = -O3 -Wall -Werror -std=c11 -pthread
 DEPFLAGS = -MMD -MP
-LDFLAGS = $(BRIDGE_LDFLAGS) -ldl -lm -pthread $(GMP_LDFLAGS) $(LIB_PROLOG_LDFLAGS) $(LIB_PROLOG_RPATH) $(PY_LDFLAGS) $(PY_RPATH)
+LDFLAGS = $(BRIDGE_LDFLAGS) -ldl -lm -pthread $(GMP_LDFLAGS) $(LIB_PROLOG_LDFLAGS) $(LIB_PROLOG_RPATH) $(HTTP_LDFLAGS) $(PY_LDFLAGS) $(PY_RPATH)
 ifeq ($(ENABLE_SANITIZERS),1)
 CFLAGS := -O1 -g -fno-omit-frame-pointer -fsanitize=$(SANITIZERS) -fno-sanitize-recover=all -Wall -Werror -std=c11 -pthread
 LDFLAGS += -fsanitize=$(SANITIZERS) -fno-sanitize-recover=all
@@ -475,6 +558,24 @@ COMPILED_READER_RUNTIME_SRC = \
 	$(HE_COMPILED_READER_RUNTIME_SRC) \
 	$(PETTA_COMPILED_READER_RUNTIME_SRC) \
 	$(PRIME_COMPILED_READER_RUNTIME_SRC)
+JSON_SOURCE_EMBED_TOOL_V1 = runtime/bootstrap/embed_c_sources_v1
+JSON_SOURCE_EMBED_TOOL_V1_SRC = tools/embed_c_sources_v1.c
+JSON_GSLT_GENERATED_DIR_V1 = runtime/generated/json
+JSON_GSLT_EMBEDDED_C_V1 = $(JSON_GSLT_GENERATED_DIR_V1)/rfc8259_sources_v1.generated.c
+JSON_GSLT_LANGUAGE_SOURCE_V1 = langdef/json/rfc8259_syntax_v1.metta
+JSON_GSLT_PROFILE_SOURCE_V1 = langdef/json/rfc8259_parser_profile_v1.metta
+JSON_GSLT_RUNTIME_SRC =
+ifeq ($(ENABLE_JSON_GSLT),1)
+JSON_GSLT_RUNTIME_SRC = \
+	$(JSON_GSLT_EMBEDDED_C_V1) \
+	src/library_json.c \
+	native/json_runtime_v1.c \
+	native/json_value_v1.c \
+	native/json_cst_value_v1.c \
+	native/language_def_parser_pack_v1.c \
+	native/language_def_core_v1.c \
+	native/operational_language_def_v1.c
+endif
 PETTA_TYPECHECK_V2_SRC =
 PETTA_TYPECHECK_CENSUS_SRC =
 ifeq ($(ENABLE_PETTA_TYPECHECK_V2),1)
@@ -485,7 +586,9 @@ endif
 ifeq ($(ENABLE_PETTA_TYPECHECK_CENSUS),1)
 PETTA_TYPECHECK_CENSUS_SRC = src/petta_typecheck_census.c
 endif
-SRC = src/symbol.c src/atom.c src/name_key.c src/atom_blob.c src/abt.c src/parser.c $(COMPILED_READER_RUNTIME_SRC) src/mm2_lower.c src/subst_tree.c src/space.c src/registry_resolver.c src/space_match_backend.c src/match.c src/match_decision.c src/term_canon.c src/variant_shape.c src/variant_instance.c src/answer_bank.c src/table_store.c src/search_machine.c src/petta_program.c src/petta_type_fact_provider_v1.c src/petta_typecheck_v3_decision_v1.c src/petta_typecheck_v3.c src/generated/petta_typecheck_v3_core_v1.generated.c src/generated/petta_typecheck_v3_core_provider_catalog_v1.generated.c src/petta_search_machine.c $(PETTA_TYPECHECK_V2_SRC) src/petta_specializer.c src/rule_machine.c $(LIB_PROLOG_SRC) src/term_universe.c src/stats.c src/parallel_executor.c src/prime_need.c src/petta_semantics.c src/petta_numeric.c src/petta_runtime.c src/prepared_pure_machine.c src/eval.c src/grounded.c src/he_typing.c src/he_typing_authority.c src/generated/he_typing_consistency_core_source_binding_v1.generated.c src/generated/he_profiled_type_inference_core_source_binding_v1.generated.c src/inference_checker.c src/nik_direct_authority.c src/nik_native_calculus_selection.c src/nik_runtime.c src/prime_semantics.c src/generated/prime_typing_closed_formation_source_binding_v1.generated.c src/text_source.c src/native_handle.c src/native_sha256.c src/mork_space_bridge_runtime.c src/library.c src/langdef_pack.c src/gslt_provider_runtime.c src/gslt_space_fact_provider_v1.c src/gslt_finite_fact_provider_v1.c src/gslt_revisioned_space_provider_v1.c src/gslt_abt_provider_v1.c src/gslt_horn_runtime.c src/gslt_dense_bitset_v1.c src/gslt_compiled_runtime.c src/gslt_indexed_instruction_decoder_v1.c src/gslt_indexed_value_table_v1.c src/gslt_split_indexed_table_v1.c src/gslt_literal_hole_program_v1.c src/gslt_u32_index_v1.c src/gslt_u32_slice_arena_v1.c src/gslt_epoch_slots_v1.c src/gslt_ground_dense_term_v1.c src/gslt_language_runtime.c src/gslt_pure_provider_v1.c src/gslt_support_transform_runtime.c src/generated/prime_nik_authorities_v1.generated.c src/generated/prime_nik_runtime_v1.generated.c src/generated/gslt_il_language_v1.generated.c src/generated/metta_interact_language_v1.generated.c src/generated/mm2_gslt_profile_v1.generated.c src/generated/subzero_language_v1.generated.c src/generated/zero_language_v1.generated.c src/generated/zero_exp_language_v1.generated.c src/generated/zero_emit_language_v1.generated.c src/generated/zero_interact_language_v1.generated.c src/generated/zero_interact_provider_catalog_v1.generated.c src/generated/zerouv_language_v1.generated.c src/he_small_step_pack.c src/lib_parse_native_grammar.c src/lib_parse_inference_native.c experiments/gslt2parse_foundation/native/finite_horn_gslt_v1.c experiments/gslt2parse_foundation/native/finite_horn_ground_term_v1.c experiments/gslt2parse_foundation/native/parser_term_projection_v1.c experiments/gslt2parse_foundation/native/parser_pack_abi_v1.c experiments/gslt2parse_foundation/native/parser_action_bytecode_v1.c experiments/gslt2parse_foundation/native/parser_pack_native_v1.c experiments/gslt2parse_foundation/native/parser_pack_lexical_v1.c experiments/gslt2parse_foundation/native/parser_pack_gll_v1.c experiments/gslt2parse_foundation/native/regular_span_dfa_v1.c experiments/gslt2parse_foundation/native/regular_span_nfa_v1.c $(PYTHON_SRC) src/session.c src/lang.c src/rhocalc_core.c src/rhocalc_syntax.c src/compile.c src/runtime.c src/cetta_stdlib.c native/native_modules.c src/main.c
+SRC = src/symbol.c src/atom.c src/name_key.c src/atom_blob.c src/abt.c src/parser.c $(COMPILED_READER_RUNTIME_SRC) src/mm2_lower.c src/subst_tree.c src/space.c src/registry_resolver.c src/space_match_backend.c src/match.c src/match_decision.c src/term_canon.c src/variant_shape.c src/variant_instance.c src/answer_bank.c src/table_store.c src/search_machine.c src/petta_program.c src/petta_type_fact_provider_v1.c src/petta_typecheck_v3_decision_v1.c src/petta_typecheck_v3.c src/generated/petta_typecheck_v3_core_v1.generated.c src/generated/petta_typecheck_v3_core_provider_catalog_v1.generated.c src/petta_search_machine.c $(PETTA_TYPECHECK_V2_SRC) src/petta_specializer.c src/rule_machine.c $(LIB_PROLOG_SRC) src/term_universe.c src/stats.c src/parallel_executor.c src/prime_need.c src/petta_semantics.c src/petta_numeric.c src/petta_runtime.c src/prepared_pure_machine.c src/eval.c src/grounded.c src/he_typing.c src/he_typing_authority.c src/generated/he_typing_consistency_core_source_binding_v1.generated.c src/generated/he_profiled_type_inference_core_source_binding_v1.generated.c src/inference_checker.c src/nik_direct_authority.c src/nik_hosted_calculus.c src/nik_licensed_implementation_selection.c src/nik_runtime.c src/prime_semantics.c src/generated/prime_typing_closed_formation_source_binding_v1.generated.c src/text_source.c src/native_handle.c src/native_sha256.c src/mork_space_bridge_runtime.c src/library.c src/langdef_pack.c src/gslt_provider_runtime.c src/gslt_space_fact_provider_v1.c src/gslt_finite_fact_provider_v1.c src/gslt_revisioned_space_provider_v1.c src/gslt_abt_provider_v1.c src/gslt_horn_runtime.c src/gslt_dense_bitset_v1.c src/gslt_compiled_runtime.c src/gslt_indexed_instruction_decoder_v1.c src/gslt_indexed_value_table_v1.c src/gslt_split_indexed_table_v1.c src/gslt_literal_hole_program_v1.c src/gslt_u32_index_v1.c src/gslt_u32_slice_arena_v1.c src/gslt_epoch_slots_v1.c src/gslt_ground_dense_term_v1.c src/gslt_language_runtime.c src/gslt_pure_provider_v1.c src/gslt_support_transform_runtime.c src/generated/prime_nik_authorities_v1.generated.c src/generated/prime_nik_runtime_v1.generated.c src/generated/gslt_il_language_v1.generated.c src/generated/metta_interact_language_v1.generated.c src/generated/mm2_gslt_profile_v1.generated.c src/generated/subzero_language_v1.generated.c src/generated/zero_language_v1.generated.c src/generated/zero_exp_language_v1.generated.c src/generated/zero_emit_language_v1.generated.c src/generated/zero_interact_language_v1.generated.c src/generated/zero_interact_provider_catalog_v1.generated.c src/generated/zerouv_language_v1.generated.c src/he_small_step_pack.c src/lib_parse_native_grammar.c src/lib_parse_inference_native.c experiments/gslt2parse_foundation/native/finite_horn_gslt_v1.c experiments/gslt2parse_foundation/native/finite_horn_ground_term_v1.c experiments/gslt2parse_foundation/native/parser_term_projection_v1.c experiments/gslt2parse_foundation/native/parser_pack_abi_v1.c experiments/gslt2parse_foundation/native/parser_action_bytecode_v1.c experiments/gslt2parse_foundation/native/parser_pack_native_v1.c experiments/gslt2parse_foundation/native/parser_pack_lexical_v1.c experiments/gslt2parse_foundation/native/parser_pack_gll_v1.c experiments/gslt2parse_foundation/native/regular_span_dfa_v1.c experiments/gslt2parse_foundation/native/regular_span_nfa_v1.c $(PYTHON_SRC) src/session.c src/lang.c src/rhocalc_core.c src/rhocalc_syntax.c src/compile.c src/runtime.c src/cetta_stdlib.c native/native_modules.c src/main.c
+SRC += src/library_io.c
+SRC += $(JSON_GSLT_RUNTIME_SRC)
 SRC += $(PETTA_TYPECHECK_CENSUS_SRC)
 SRC += \
 	src/gslt_rigid_coordinate_dispatch_v1.c \
@@ -1477,8 +1580,10 @@ GSLT_HORN_RUNTIME_CANARY_V1 = tests/fixtures/gslt_horn_runtime_canary_v1.metta
 GSLT_LANGUAGE_RUNTIME_TEST_BIN = runtime/test_gslt_language_runtime-$(BUILD_OBJ_TAG)
 GSLT_COMPILED_PACKET_CHECK_BIN = runtime/check_gslt_compiled_packet_v1-$(BUILD_OBJ_TAG)
 NIK_RUNTIME_TEST_BIN = runtime/test_nik_runtime_v1-$(BUILD_OBJ_TAG)
-NIK_NATIVE_CALCULUS_SELECTION_OBJ = src/nik_native_calculus_selection.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o
-NIK_NATIVE_CALCULUS_SELECTION_TEST_BIN = runtime/test_nik_native_calculus_selection-$(BUILD_CANON)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),-runtime-stats,)
+NIK_HOSTED_CALCULUS_OBJ = src/nik_hosted_calculus.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o
+NIK_HOSTED_CALCULUS_TEST_BIN = runtime/test_nik_hosted_calculus-$(BUILD_CANON)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),-runtime-stats,)
+NIK_LICENSED_IMPLEMENTATION_SELECTION_OBJ = src/nik_licensed_implementation_selection.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o
+NIK_LICENSED_IMPLEMENTATION_SELECTION_TEST_BIN = runtime/test_nik_licensed_implementation_selection-$(BUILD_CANON)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),-runtime-stats,)
 GSLT_PROVIDER_RUNTIME_TEST_BIN = runtime/test_gslt_provider_runtime-$(BUILD_OBJ_TAG)
 GSLT_ABT_PROVIDER_V1_TEST_BIN = runtime/test_gslt_abt_provider_v1-$(BUILD_OBJ_TAG)
 ZERO_INTERACT_SPACE_PROVIDER_TEST_BIN = runtime/test_zero_interact_space_provider_v1-$(BUILD_OBJ_TAG)
@@ -2769,6 +2874,16 @@ BACKEND_DEDICATED_TESTS = \
 	tests/test_new_space_mork_syntax.metta \
 	tests/test_step_space_syntax.metta
 
+OPT_IN_FEATURE_TESTS = \
+	tests/test_io_json_bridge.metta \
+	tests/test_io_json_bridge_compat.metta \
+	tests/test_io_no_http.metta \
+	tests/test_io_rho_bridge.metta \
+	tests/test_io_syntax.metta \
+	tests/test_json_gslt_invalid_number.metta \
+	tests/test_json_gslt_legacy_nul.metta \
+	tests/test_json_gslt_library.metta
+
 BACKEND_HEAVY_GOLDEN_TESTS = \
 	tests/test_bio_bc_let_hidden_env_regression.metta \
 	benchmarks/bc_depth10_spine_regression.metta \
@@ -2829,7 +2944,7 @@ BACKEND_DIAGNOSTIC_TESTS = \
 BACKEND_PENDING_CORRECTNESS_TESTS =
 
 BACKEND_PARAMETRIC_TEST_PATTERNS = tests/test_*.metta tests/spec_*.metta tests/he_*.metta
-BACKEND_PARAMETRIC_SKIP_TESTS = $(PATHMAP_REQUIRED_TESTS) $(PATHMAP_PROBE_TESTS) $(CORE_PROBE_TESTS) $(CORE_XFAIL_TESTS) $(BACKEND_DEDICATED_TESTS) $(BACKEND_HEAVY_TESTS) $(BACKEND_DIAGNOSTIC_TESTS) $(BACKEND_PENDING_CORRECTNESS_TESTS)
+BACKEND_PARAMETRIC_SKIP_TESTS = $(PATHMAP_REQUIRED_TESTS) $(PATHMAP_PROBE_TESTS) $(CORE_PROBE_TESTS) $(CORE_XFAIL_TESTS) $(BACKEND_DEDICATED_TESTS) $(OPT_IN_FEATURE_TESTS) $(BACKEND_HEAVY_TESTS) $(BACKEND_DIAGNOSTIC_TESTS) $(BACKEND_PENDING_CORRECTNESS_TESTS)
 BACKEND_PARAMETRIC_BACKENDS ?= $(SPACE_ENGINES)
 BACKEND_PARAMETRIC_TIMEOUT ?= 60
 BACKEND_PARAMETRIC_DIFF_LINES ?= 24
@@ -4446,7 +4561,8 @@ $(BUILD_CONFIG_HEADER): $(BUILD_CONFIG_STAMP)
 
 $(BUILD_CONFIG_STAMP): $(BUILD_CONFIG_INPUTS)
 	@mkdir -p $(BOOTSTRAP_TMPDIR)
-	@tmp_cfg=$$(mktemp "$(BOOTSTRAP_TMPDIR)/build_config.XXXXXX"); \
+	@set -eu; \
+	tmp_cfg=$$(mktemp "$(BOOTSTRAP_TMPDIR)/build_config.XXXXXX"); \
 	printf '%s\n' '/* autogenerated by Makefile; do not edit */' > "$$tmp_cfg"; \
 	printf '#define CETTA_VERSION_STRING "%s"\n' "$(CETTA_VERSION)" >> "$$tmp_cfg"; \
 	printf '#define CETTA_BUILD_MODE_STRING "%s"\n' "$(BUILD_CANON)" >> "$$tmp_cfg"; \
@@ -4457,6 +4573,11 @@ $(BUILD_CONFIG_STAMP): $(BUILD_CONFIG_INPUTS)
 	printf '#define CETTA_BUILD_WITH_GMP %s\n' "$(ENABLE_GMP)" >> "$$tmp_cfg"; \
 	printf '#define CETTA_BUILD_WITH_LIB_PROLOG %s\n' "$(LIB_PROLOG_ENABLED)" >> "$$tmp_cfg"; \
 	printf '#define CETTA_BUILD_LIB_PROLOG_CONFIG_ID "%s"\n' "$(LIB_PROLOG_CONFIG_ID)" >> "$$tmp_cfg"; \
+	printf '#define CETTA_BUILD_WITH_HTTP %s\n' "$(HTTP_ENABLED)" >> "$$tmp_cfg"; \
+	printf '#define CETTA_BUILD_WITH_JSON_GSLT %s\n' "$(ENABLE_JSON_GSLT)" >> "$$tmp_cfg"; \
+	printf '#define CETTA_BUILD_HTTP_PROVIDER_CURL %s\n' "$(HTTP_PROVIDER_CURL)" >> "$$tmp_cfg"; \
+	printf '#define CETTA_BUILD_HTTP_PROVIDER_EMSCRIPTEN %s\n' "$(HTTP_PROVIDER_EMSCRIPTEN)" >> "$$tmp_cfg"; \
+	printf '#define CETTA_BUILD_HTTP_CONFIG_ID "%s"\n' "$(HTTP_CONFIG_ID)" >> "$$tmp_cfg"; \
 	printf '#define CETTA_BUILD_WITH_PETTA_TYPECHECK_V2 %s\n' "$(ENABLE_PETTA_TYPECHECK_V2)" >> "$$tmp_cfg"; \
 	printf '#define CETTA_BUILD_WITH_PETTA_TYPECHECK_CENSUS %s\n' "$(ENABLE_PETTA_TYPECHECK_CENSUS)" >> "$$tmp_cfg"; \
 	printf '#define CETTA_BUILD_WITH_LANGDEF_DIAGNOSTIC_BACKENDS %s\n' "$(ENABLE_LANGDEF_DIAGNOSTIC_BACKENDS)" >> "$$tmp_cfg"; \
@@ -4475,7 +4596,8 @@ $(STAGE0_BUILD_CONFIG_HEADER): $(STAGE0_BUILD_CONFIG_STAMP)
 
 $(STAGE0_BUILD_CONFIG_STAMP): $(BUILD_CONFIG_INPUTS)
 	@mkdir -p $(BOOTSTRAP_TMPDIR)
-	@tmp_cfg=$$(mktemp "$(BOOTSTRAP_TMPDIR)/build_config.stage0.XXXXXX"); \
+	@set -eu; \
+	tmp_cfg=$$(mktemp "$(BOOTSTRAP_TMPDIR)/build_config.stage0.XXXXXX"); \
 	printf '%s\n' '/* autogenerated by Makefile; do not edit */' > "$$tmp_cfg"; \
 	printf '#define CETTA_VERSION_STRING "%s"\n' "$(CETTA_VERSION)" >> "$$tmp_cfg"; \
 	printf '#define CETTA_BUILD_MODE_STRING "%s"\n' "$(BUILD_CANON)" >> "$$tmp_cfg"; \
@@ -4486,6 +4608,11 @@ $(STAGE0_BUILD_CONFIG_STAMP): $(BUILD_CONFIG_INPUTS)
 	printf '#define CETTA_BUILD_WITH_GMP %s\n' "$(ENABLE_GMP)" >> "$$tmp_cfg"; \
 	printf '#define CETTA_BUILD_WITH_LIB_PROLOG %s\n' "$(LIB_PROLOG_ENABLED)" >> "$$tmp_cfg"; \
 	printf '#define CETTA_BUILD_LIB_PROLOG_CONFIG_ID "%s"\n' "$(LIB_PROLOG_CONFIG_ID)" >> "$$tmp_cfg"; \
+	printf '#define CETTA_BUILD_WITH_HTTP %s\n' "$(HTTP_ENABLED)" >> "$$tmp_cfg"; \
+	printf '#define CETTA_BUILD_WITH_JSON_GSLT %s\n' "$(ENABLE_JSON_GSLT)" >> "$$tmp_cfg"; \
+	printf '#define CETTA_BUILD_HTTP_PROVIDER_CURL %s\n' "$(HTTP_PROVIDER_CURL)" >> "$$tmp_cfg"; \
+	printf '#define CETTA_BUILD_HTTP_PROVIDER_EMSCRIPTEN %s\n' "$(HTTP_PROVIDER_EMSCRIPTEN)" >> "$$tmp_cfg"; \
+	printf '#define CETTA_BUILD_HTTP_CONFIG_ID "%s"\n' "$(HTTP_CONFIG_ID)" >> "$$tmp_cfg"; \
 	printf '#define CETTA_BUILD_WITH_PETTA_TYPECHECK_V2 %s\n' "$(ENABLE_PETTA_TYPECHECK_V2)" >> "$$tmp_cfg"; \
 	printf '#define CETTA_BUILD_WITH_PETTA_TYPECHECK_CENSUS 0\n' >> "$$tmp_cfg"; \
 	printf '#define CETTA_BUILD_WITH_LANGDEF_DIAGNOSTIC_BACKENDS %s\n' "$(ENABLE_LANGDEF_DIAGNOSTIC_BACKENDS)" >> "$$tmp_cfg"; \
@@ -4501,11 +4628,12 @@ $(STAGE0_BUILD_CONFIG_STAMP): $(BUILD_CONFIG_INPUTS)
 	touch "$@"
 
 %.$(BUILD_OBJ_TAG).stage0.o: %.c $(STAGE0_BUILD_CONFIG_HEADER)
-	$(CC) -Isrc -I. -Iexperiments/gslt2parse_foundation/native $(BRIDGE_CFLAGS) $(PY_CFLAGS) $(GMP_CFLAGS) $(LIB_PROLOG_CFLAGS) -include $(STAGE0_BUILD_CONFIG_HEADER) $(CFLAGS) $(DEPFLAGS) -DCETTA_NO_STDLIB -MF $(@:.o=.d) -c -o $@ $<
+	$(CC) -Isrc -I. -Iexperiments/gslt2parse_foundation/native $(BRIDGE_CFLAGS) $(PY_CFLAGS) $(GMP_CFLAGS) $(LIB_PROLOG_CFLAGS) $(HTTP_CFLAGS) -include $(STAGE0_BUILD_CONFIG_HEADER) $(CFLAGS) $(DEPFLAGS) -DCETTA_NO_STDLIB -MF $(@:.o=.d) -c -o $@ $<
 
 $(STAGE0_BIN): $(STAGE0_OBJ) $(BRIDGE_DEPS)
 	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
-	@tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/cetta-stage0.XXXXXX"); \
+	@set -eu; \
+	tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/cetta-stage0.XXXXXX"); \
 	trap 'rm -f "$$tmp_out"' EXIT INT TERM; \
 	$(CC) $(CFLAGS) -o "$$tmp_out" $^ $(LDFLAGS); \
 	mv "$$tmp_out" $@
@@ -4523,7 +4651,8 @@ $(STDLIB_BLOB_STAMP): $(STDLIB_SRC)
 else
 $(STDLIB_BLOB_STAMP): $(STAGE0_BIN) $(STDLIB_SRC)
 	@mkdir -p $(BOOTSTRAP_TMPDIR)
-	@tmp_stage0=$$(mktemp "$(BOOTSTRAP_TMPDIR)/cetta-stage0.run.XXXXXX"); \
+	@set -eu; \
+	tmp_stage0=$$(mktemp "$(BOOTSTRAP_TMPDIR)/cetta-stage0.run.XXXXXX"); \
 	tmp_blob=$$(mktemp "$(BOOTSTRAP_TMPDIR)/stdlib_blob.XXXXXX"); \
 	trap 'rm -f "$$tmp_stage0" "$$tmp_blob"' EXIT INT TERM; \
 	cp "$(STAGE0_BIN)" "$$tmp_stage0"; \
@@ -4552,7 +4681,8 @@ $(ABT_DEFAULT_SIGNATURES_BLOB_STAMP): $(ABT_DEFAULT_SIGNATURES_SRC)
 else
 $(ABT_DEFAULT_SIGNATURES_BLOB_STAMP): $(STAGE0_BIN) $(ABT_DEFAULT_SIGNATURES_SRC)
 	@mkdir -p $(BOOTSTRAP_TMPDIR)
-	@tmp_stage0=$$(mktemp "$(BOOTSTRAP_TMPDIR)/cetta-stage0.abt-signatures.XXXXXX"); \
+	@set -eu; \
+	tmp_stage0=$$(mktemp "$(BOOTSTRAP_TMPDIR)/cetta-stage0.abt-signatures.XXXXXX"); \
 	tmp_raw=$$(mktemp "$(BOOTSTRAP_TMPDIR)/abt-default-signatures.raw.XXXXXX"); \
 	tmp_blob=$$(mktemp "$(BOOTSTRAP_TMPDIR)/abt-default-signatures.XXXXXX"); \
 	trap 'rm -f "$$tmp_stage0" "$$tmp_raw" "$$tmp_blob"' EXIT INT TERM; \
@@ -4573,7 +4703,8 @@ endif
 # Stage 2: full binary with precompiled stdlib
 $(BIN): $(OBJ) $(BRIDGE_DEPS) $(BIN_FORCE)
 	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
-	@tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/cetta.XXXXXX"); \
+	@set -eu; \
+	tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/cetta.XXXXXX"); \
 	trap 'rm -f "$$tmp_out"' EXIT INT TERM; \
 	$(CC) $(CFLAGS) -Wl,--export-dynamic -o "$$tmp_out" \
 		$(filter-out FORCE,$^) $(LDFLAGS); \
@@ -4581,7 +4712,8 @@ $(BIN): $(OBJ) $(BRIDGE_DEPS) $(BIN_FORCE)
 
 $(FALLBACK_EVAL_TEST_BIN): $(FALLBACK_EVAL_TEST_OBJ) $(FALLBACK_EVAL_TEST_LINK_OBJ) $(BRIDGE_DEPS)
 	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
-	@tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/test-fallback-eval.XXXXXX"); \
+	@set -eu; \
+	tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/test-fallback-eval.XXXXXX"); \
 	trap 'rm -f "$$tmp_out"' EXIT INT TERM; \
 	$(CC) $(CFLAGS) -o "$$tmp_out" $^ $(LDFLAGS); \
 	mv "$$tmp_out" $@
@@ -4592,7 +4724,8 @@ $(FALLBACK_EVAL_TEST_OBJ): $(FALLBACK_EVAL_TEST_SRC) $(BUILD_CONFIG_HEADER)
 
 $(HE_COMPILED_READER_TEST_BIN): $(HE_COMPILED_READER_TEST_OBJ) $(HE_COMPILED_READER_TEST_LINK_OBJ) $(BRIDGE_DEPS)
 	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
-	@tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/test-he-compiled-reader.XXXXXX"); \
+	@set -eu; \
+	tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/test-he-compiled-reader.XXXXXX"); \
 	trap 'rm -f "$$tmp_out"' EXIT INT TERM; \
 	$(CC) $(CFLAGS) -o "$$tmp_out" $^ $(LDFLAGS); \
 	mv "$$tmp_out" $@
@@ -4603,7 +4736,8 @@ $(HE_COMPILED_READER_TEST_OBJ): $(HE_COMPILED_READER_TEST_SRC) $(BUILD_CONFIG_HE
 
 $(HE_TYPING_DIRECT_TEST_BIN): $(HE_TYPING_DIRECT_TEST_OBJ) $(HE_TYPING_DIRECT_TEST_LINK_OBJ) $(BRIDGE_DEPS)
 	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
-	@tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/test-he-typing-direct.XXXXXX"); \
+	@set -eu; \
+	tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/test-he-typing-direct.XXXXXX"); \
 	trap 'rm -f "$$tmp_out"' EXIT INT TERM; \
 	$(CC) $(CFLAGS) -o "$$tmp_out" $^ $(LDFLAGS); \
 	mv "$$tmp_out" $@
@@ -4614,7 +4748,8 @@ $(HE_TYPING_DIRECT_TEST_OBJ): $(HE_TYPING_DIRECT_TEST_SRC) $(BUILD_CONFIG_HEADER
 
 $(PETTA_COMPILED_READER_TEST_BIN): $(PETTA_COMPILED_READER_TEST_OBJ) $(PETTA_COMPILED_READER_TEST_LINK_OBJ) $(BRIDGE_DEPS)
 	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
-	@tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/test-petta-compiled-reader.XXXXXX"); \
+	@set -eu; \
+	tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/test-petta-compiled-reader.XXXXXX"); \
 	trap 'rm -f "$$tmp_out"' EXIT INT TERM; \
 	$(CC) $(CFLAGS) -o "$$tmp_out" $^ $(LDFLAGS); \
 	mv "$$tmp_out" $@
@@ -4625,7 +4760,8 @@ $(PETTA_COMPILED_READER_TEST_OBJ): $(PETTA_COMPILED_READER_TEST_SRC) $(BUILD_CON
 
 $(PETTA_SEARCH_MACHINE_TEST_BIN): $(PETTA_SEARCH_MACHINE_TEST_OBJ) $(PETTA_SEARCH_MACHINE_TEST_LINK_OBJ) $(BRIDGE_DEPS)
 	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
-	@tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/test-petta-search-machine.XXXXXX"); \
+	@set -eu; \
+	tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/test-petta-search-machine.XXXXXX"); \
 	trap 'rm -f "$$tmp_out"' EXIT INT TERM; \
 	$(CC) $(CFLAGS) -o "$$tmp_out" $^ $(LDFLAGS); \
 	mv "$$tmp_out" $@
@@ -4652,7 +4788,8 @@ $(PETTA_SEARCH_MACHINE_TEST_OBJ): $(PETTA_SEARCH_MACHINE_TEST_SRC) $(BUILD_CONFI
 
 $(MATCH_DECISION_TEST_BIN): $(MATCH_DECISION_TEST_OBJ) $(MATCH_DECISION_TEST_LINK_OBJ) $(BRIDGE_DEPS)
 	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
-	@tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/test-match-decision.XXXXXX"); \
+	@set -eu; \
+	tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/test-match-decision.XXXXXX"); \
 	trap 'rm -f "$$tmp_out"' EXIT INT TERM; \
 	$(CC) $(CFLAGS) -o "$$tmp_out" $^ $(LDFLAGS); \
 	mv "$$tmp_out" $@
@@ -4663,7 +4800,8 @@ $(MATCH_DECISION_TEST_OBJ): $(MATCH_DECISION_TEST_SRC) $(BUILD_CONFIG_HEADER)
 
 $(PETTA_SPECIALIZER_PREPARE_TEST_BIN): $(PETTA_SPECIALIZER_PREPARE_TEST_OBJ) $(PETTA_SPECIALIZER_PREPARE_TEST_LINK_OBJ) $(BRIDGE_DEPS)
 	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
-	@tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/test-petta-specializer-prepare.XXXXXX"); \
+	@set -eu; \
+	tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/test-petta-specializer-prepare.XXXXXX"); \
 	trap 'rm -f "$$tmp_out"' EXIT INT TERM; \
 	$(CC) $(CFLAGS) -o "$$tmp_out" $^ $(LDFLAGS); \
 	mv "$$tmp_out" $@
@@ -4674,7 +4812,8 @@ $(PETTA_SPECIALIZER_PREPARE_TEST_OBJ): $(PETTA_SPECIALIZER_PREPARE_TEST_SRC) $(B
 
 $(PETTA_TYPECHECK_V2_GUARD_LANGDEF_TEST_BIN): $(PETTA_TYPECHECK_V2_GUARD_LANGDEF_TEST_OBJ) $(PETTA_TYPECHECK_V2_GUARD_LANGDEF_TEST_LINK_OBJ) $(BRIDGE_DEPS)
 	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
-	@tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/test-petta-typecheck-v2-guard-langdef.XXXXXX"); \
+	@set -eu; \
+	tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/test-petta-typecheck-v2-guard-langdef.XXXXXX"); \
 	trap 'rm -f "$$tmp_out"' EXIT INT TERM; \
 	$(CC) $(CFLAGS) -o "$$tmp_out" $^ $(LDFLAGS); \
 	mv "$$tmp_out" $@
@@ -4684,7 +4823,8 @@ $(PETTA_TYPECHECK_V3_CORE_LANGDEF_TEST_BIN): \
 		$(PETTA_TYPECHECK_V3_CORE_LANGDEF_TEST_LINK_OBJ) \
 		$(BRIDGE_DEPS)
 	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
-	@tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/test-petta-typecheck-v3-core-langdef.XXXXXX"); \
+	@set -eu; \
+	tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/test-petta-typecheck-v3-core-langdef.XXXXXX"); \
 	trap 'rm -f "$$tmp_out"' EXIT INT TERM; \
 	$(CC) $(CPPFLAGS) $(CFLAGS) -o "$$tmp_out" $^ $(LDFLAGS); \
 	mv "$$tmp_out" $@
@@ -4704,7 +4844,8 @@ $(PETTA_TYPECHECK_V3_FILE_RUNNER_BIN): \
 		$(PETTA_TYPECHECK_V3_FILE_RUNNER_LINK_OBJ) \
 		$(BRIDGE_DEPS)
 	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
-	@tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/petta-typecheck-v3-file.XXXXXX"); \
+	@set -eu; \
+	tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/petta-typecheck-v3-file.XXXXXX"); \
 	trap 'rm -f "$$tmp_out"' EXIT INT TERM; \
 	$(CC) $(CFLAGS) -o "$$tmp_out" $^ $(LDFLAGS); \
 	mv "$$tmp_out" $@
@@ -4792,7 +4933,8 @@ $(PETTA_TYPECHECK_V2_FRAGMENT_RUNTIME_V1_TEST_BIN): \
 		$(PETTA_TYPECHECK_V2_FRAGMENT_RUNTIME_V1_TEST_LINK_OBJ) \
 		$(BRIDGE_DEPS)
 	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
-	@tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/test-petta-typecheck-v2-fragment-runtime.XXXXXX"); \
+	@set -eu; \
+	tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/test-petta-typecheck-v2-fragment-runtime.XXXXXX"); \
 	trap 'rm -f "$$tmp_out"' EXIT INT TERM; \
 	$(CC) $(CPPFLAGS) $(CFLAGS) -o "$$tmp_out" $^ $(LDFLAGS); \
 	mv "$$tmp_out" $@
@@ -4811,7 +4953,8 @@ test-petta-specializer-prepare: $(PETTA_SPECIALIZER_PREPARE_TEST_BIN)
 
 $(PRIME_COMPILED_READER_TEST_BIN): $(PRIME_COMPILED_READER_TEST_OBJ) $(PRIME_COMPILED_READER_TEST_LINK_OBJ) $(BRIDGE_DEPS)
 	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
-	@tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/test-prime-compiled-reader.XXXXXX"); \
+	@set -eu; \
+	tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/test-prime-compiled-reader.XXXXXX"); \
 	trap 'rm -f "$$tmp_out"' EXIT INT TERM; \
 	$(CC) $(CFLAGS) -o "$$tmp_out" $^ $(LDFLAGS); \
 	mv "$$tmp_out" $@
@@ -4822,7 +4965,8 @@ $(PRIME_COMPILED_READER_TEST_OBJ): $(PRIME_COMPILED_READER_TEST_SRC) $(BUILD_CON
 
 $(HE_COMPILED_READER_BENCH_BIN): $(HE_COMPILED_READER_BENCH_OBJ) $(HE_COMPILED_READER_BENCH_LINK_OBJ) $(BRIDGE_DEPS)
 	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
-	@tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/bench-he-compiled-reader.XXXXXX"); \
+	@set -eu; \
+	tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/bench-he-compiled-reader.XXXXXX"); \
 	trap 'rm -f "$$tmp_out"' EXIT INT TERM; \
 	$(CC) $(CFLAGS) -o "$$tmp_out" $^ $(LDFLAGS); \
 	mv "$$tmp_out" $@
@@ -4833,7 +4977,8 @@ $(HE_COMPILED_READER_BENCH_OBJ): $(HE_COMPILED_READER_BENCH_SRC) $(BUILD_CONFIG_
 
 $(PRIME_DELAYED_AMBIGUITY_TEST_BIN): $(PRIME_DELAYED_AMBIGUITY_TEST_OBJ) $(PRIME_DELAYED_AMBIGUITY_TEST_LINK_OBJ) $(BRIDGE_DEPS)
 	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
-	@tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/test-prime-delayed-ambiguity.XXXXXX"); \
+	@set -eu; \
+	tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/test-prime-delayed-ambiguity.XXXXXX"); \
 	trap 'rm -f "$$tmp_out"' EXIT INT TERM; \
 	$(CC) $(CFLAGS) -o "$$tmp_out" $^ $(LDFLAGS); \
 	mv "$$tmp_out" $@
@@ -4844,7 +4989,8 @@ $(PRIME_DELAYED_AMBIGUITY_TEST_OBJ): $(PRIME_DELAYED_AMBIGUITY_TEST_SRC) $(BUILD
 
 $(PRIME_PACKAGE_VALIDATION_TEST_BIN): $(PRIME_PACKAGE_VALIDATION_TEST_OBJ) $(PRIME_PACKAGE_VALIDATION_TEST_LINK_OBJ) $(BRIDGE_DEPS)
 	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
-	@tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/test-prime-package-validation.XXXXXX"); \
+	@set -eu; \
+	tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/test-prime-package-validation.XXXXXX"); \
 	trap 'rm -f "$$tmp_out"' EXIT INT TERM; \
 	$(CC) $(CFLAGS) -o "$$tmp_out" $^ $(LDFLAGS); \
 	mv "$$tmp_out" $@
@@ -4855,7 +5001,8 @@ $(PRIME_PACKAGE_VALIDATION_TEST_OBJ): $(PRIME_PACKAGE_VALIDATION_TEST_SRC) $(BUI
 
 $(PRIME_DEPENDENT_FORMATION_LANGDEF_TEST_BIN): $(PRIME_DEPENDENT_FORMATION_LANGDEF_TEST_OBJ) $(PRIME_DEPENDENT_FORMATION_LANGDEF_TEST_LINK_OBJ) $(BRIDGE_DEPS)
 	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
-	@tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/test-prime-dependent-formation-langdef.XXXXXX"); \
+	@set -eu; \
+	tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/test-prime-dependent-formation-langdef.XXXXXX"); \
 	trap 'rm -f "$$tmp_out"' EXIT INT TERM; \
 	$(CC) $(CFLAGS) -o "$$tmp_out" $^ $(LDFLAGS); \
 	mv "$$tmp_out" $@
@@ -4866,7 +5013,8 @@ $(PRIME_DEPENDENT_FORMATION_LANGDEF_TEST_OBJ): $(PRIME_DEPENDENT_FORMATION_LANGD
 
 $(PRIME_REGULAR_KERNEL_TEST_BIN): $(PRIME_REGULAR_KERNEL_TEST_OBJ) $(PRIME_REGULAR_KERNEL_TEST_LINK_OBJ) $(BRIDGE_DEPS)
 	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
-	@tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/test-prime-regular-kernel.XXXXXX"); \
+	@set -eu; \
+	tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/test-prime-regular-kernel.XXXXXX"); \
 	trap 'rm -f "$$tmp_out"' EXIT INT TERM; \
 	$(CC) $(CFLAGS) -o "$$tmp_out" $^ $(LDFLAGS); \
 	mv "$$tmp_out" $@
@@ -4877,7 +5025,8 @@ $(PRIME_REGULAR_KERNEL_TEST_OBJ): $(PRIME_REGULAR_KERNEL_TEST_SRC) $(BUILD_CONFI
 
 $(PRIME_LEVEL_TEST_BIN): $(PRIME_LEVEL_TEST_OBJ) $(PRIME_LEVEL_TEST_LINK_OBJ) $(BRIDGE_DEPS)
 	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
-	@tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/test-prime-level.XXXXXX"); \
+	@set -eu; \
+	tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/test-prime-level.XXXXXX"); \
 	trap 'rm -f "$$tmp_out"' EXIT INT TERM; \
 	$(CC) $(CFLAGS) -o "$$tmp_out" $^ $(LDFLAGS); \
 	mv "$$tmp_out" $@
@@ -4888,7 +5037,8 @@ $(PRIME_LEVEL_TEST_OBJ): $(PRIME_LEVEL_TEST_SRC) $(BUILD_CONFIG_HEADER)
 
 $(PRIME_TYPED_FLOW_TEST_BIN): $(PRIME_TYPED_FLOW_TEST_OBJ) $(PRIME_TYPED_FLOW_TEST_LINK_OBJ) $(BRIDGE_DEPS)
 	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
-	@tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/test-prime-typed-flow.XXXXXX"); \
+	@set -eu; \
+	tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/test-prime-typed-flow.XXXXXX"); \
 	trap 'rm -f "$$tmp_out"' EXIT INT TERM; \
 	$(CC) $(CFLAGS) -o "$$tmp_out" $^ $(LDFLAGS); \
 	mv "$$tmp_out" $@
@@ -4899,7 +5049,8 @@ $(PRIME_TYPED_FLOW_TEST_OBJ): $(PRIME_TYPED_FLOW_TEST_SRC) $(BUILD_CONFIG_HEADER
 
 $(PRIME_HOPPER_FOLD_NATIVE_TEST_BIN): $(PRIME_HOPPER_FOLD_NATIVE_TEST_OBJ) $(PRIME_HOPPER_FOLD_NATIVE_TEST_LINK_OBJ) $(BRIDGE_DEPS)
 	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
-	@tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/test-prime-hopper-fold-native.XXXXXX"); \
+	@set -eu; \
+	tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/test-prime-hopper-fold-native.XXXXXX"); \
 	trap 'rm -f "$$tmp_out"' EXIT INT TERM; \
 	$(CC) $(CFLAGS) -o "$$tmp_out" $^ $(LDFLAGS); \
 	mv "$$tmp_out" $@
@@ -4910,7 +5061,8 @@ $(PRIME_HOPPER_FOLD_NATIVE_TEST_OBJ): $(PRIME_HOPPER_FOLD_NATIVE_TEST_SRC) $(BUI
 
 $(PRIME_HOPPER_BRANCHING_NATIVE_TEST_BIN): $(PRIME_HOPPER_BRANCHING_NATIVE_TEST_OBJ) $(PRIME_HOPPER_BRANCHING_NATIVE_TEST_LINK_OBJ) $(BRIDGE_DEPS)
 	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
-	@tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/test-prime-hopper-branching-native.XXXXXX"); \
+	@set -eu; \
+	tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/test-prime-hopper-branching-native.XXXXXX"); \
 	trap 'rm -f "$$tmp_out"' EXIT INT TERM; \
 	$(CC) $(CFLAGS) -o "$$tmp_out" $^ $(LDFLAGS); \
 	mv "$$tmp_out" $@
@@ -4921,7 +5073,8 @@ $(PRIME_HOPPER_BRANCHING_NATIVE_TEST_OBJ): $(PRIME_HOPPER_BRANCHING_NATIVE_TEST_
 
 $(PRIME_IGGP_TYPE_OF_INFERENCE_TEST_BIN): $(PRIME_IGGP_TYPE_OF_INFERENCE_TEST_OBJ) $(PRIME_IGGP_TYPE_OF_INFERENCE_TEST_LINK_OBJ) $(BRIDGE_DEPS)
 	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
-	@tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/test-prime-iggp-type-of-inference.XXXXXX"); \
+	@set -eu; \
+	tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/test-prime-iggp-type-of-inference.XXXXXX"); \
 	trap 'rm -f "$$tmp_out"' EXIT INT TERM; \
 	$(CC) $(CFLAGS) -o "$$tmp_out" $^ $(LDFLAGS); \
 	mv "$$tmp_out" $@
@@ -4932,7 +5085,8 @@ $(PRIME_IGGP_TYPE_OF_INFERENCE_TEST_OBJ): $(PRIME_IGGP_TYPE_OF_INFERENCE_TEST_SR
 
 $(PRIME_GDL_POSITIVE_HORN_NATIVE_TEST_BIN): $(PRIME_GDL_POSITIVE_HORN_NATIVE_TEST_OBJ) $(PRIME_GDL_POSITIVE_HORN_NATIVE_TEST_LINK_OBJ) $(BRIDGE_DEPS)
 	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
-	@tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/test-gdl-positive-horn-native.XXXXXX"); \
+	@set -eu; \
+	tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/test-gdl-positive-horn-native.XXXXXX"); \
 	trap 'rm -f "$$tmp_out"' EXIT INT TERM; \
 	$(CC) $(CFLAGS) -o "$$tmp_out" $^ $(LDFLAGS); \
 	mv "$$tmp_out" $@
@@ -4943,7 +5097,8 @@ $(PRIME_GDL_POSITIVE_HORN_NATIVE_TEST_OBJ): $(PRIME_GDL_POSITIVE_HORN_NATIVE_TES
 
 $(PRIME_GDL_POSITIVE_HORN_NATIVE_QUALIFIER_BIN): $(PRIME_GDL_POSITIVE_HORN_NATIVE_QUALIFIER_OBJ) $(PRIME_GDL_POSITIVE_HORN_NATIVE_QUALIFIER_LINK_OBJ) $(BRIDGE_DEPS)
 	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
-	@tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/qualify-gdl-positive-horn-native.XXXXXX"); \
+	@set -eu; \
+	tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/qualify-gdl-positive-horn-native.XXXXXX"); \
 	trap 'rm -f "$$tmp_out"' EXIT INT TERM; \
 	$(CC) $(CFLAGS) -o "$$tmp_out" $^ $(LDFLAGS); \
 	mv "$$tmp_out" $@
@@ -4954,7 +5109,8 @@ $(PRIME_GDL_POSITIVE_HORN_NATIVE_QUALIFIER_OBJ): $(PRIME_GDL_POSITIVE_HORN_NATIV
 
 $(PRIME_GDL_STRATIFICATION_QUALIFIER_BIN): $(PRIME_GDL_STRATIFICATION_QUALIFIER_OBJ) $(PRIME_GDL_STRATIFICATION_QUALIFIER_LINK_OBJ) $(BRIDGE_DEPS)
 	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
-	@tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/qualify-gdl-stratification.XXXXXX"); \
+	@set -eu; \
+	tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/qualify-gdl-stratification.XXXXXX"); \
 	trap 'rm -f "$$tmp_out"' EXIT INT TERM; \
 	$(CC) $(CFLAGS) -o "$$tmp_out" $^ $(LDFLAGS); \
 	mv "$$tmp_out" $@
@@ -4965,7 +5121,8 @@ $(PRIME_GDL_STRATIFICATION_QUALIFIER_OBJ): $(PRIME_GDL_STRATIFICATION_QUALIFIER_
 
 $(PRIME_GDL_STRATIFIED_MODEL_QUALIFIER_BIN): $(PRIME_GDL_STRATIFIED_MODEL_QUALIFIER_OBJ) $(PRIME_GDL_STRATIFIED_MODEL_QUALIFIER_LINK_OBJ) $(BRIDGE_DEPS)
 	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
-	@tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/qualify-gdl-stratified-model.XXXXXX"); \
+	@set -eu; \
+	tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/qualify-gdl-stratified-model.XXXXXX"); \
 	trap 'rm -f "$$tmp_out"' EXIT INT TERM; \
 	$(CC) $(CFLAGS) -o "$$tmp_out" $^ $(LDFLAGS); \
 	mv "$$tmp_out" $@
@@ -4976,7 +5133,8 @@ $(PRIME_GDL_STRATIFIED_MODEL_QUALIFIER_OBJ): $(PRIME_GDL_STRATIFIED_MODEL_QUALIF
 
 $(PRIME_GDL_STRATIFIED_EPISODE_QUALIFIER_BIN): $(PRIME_GDL_STRATIFIED_EPISODE_QUALIFIER_OBJ) $(PRIME_GDL_STRATIFIED_EPISODE_QUALIFIER_LINK_OBJ) $(BRIDGE_DEPS)
 	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
-	@tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/qualify-gdl-stratified-episode.XXXXXX"); \
+	@set -eu; \
+	tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/qualify-gdl-stratified-episode.XXXXXX"); \
 	trap 'rm -f "$$tmp_out"' EXIT INT TERM; \
 	$(CC) $(CFLAGS) -o "$$tmp_out" $^ $(LDFLAGS); \
 	mv "$$tmp_out" $@
@@ -4991,7 +5149,8 @@ $(PRIME_REGULAR_KERNEL_ENGINE_FAILURE_TEST_OBJ): $(PRIME_REGULAR_KERNEL_ENGINE_F
 
 $(PRIME_REGULAR_PATTERN_TEST_BIN): $(PRIME_REGULAR_PATTERN_TEST_OBJ) $(PRIME_REGULAR_PATTERN_TEST_LINK_OBJ) $(BRIDGE_DEPS)
 	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
-	@tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/test-prime-regular-pattern.XXXXXX"); \
+	@set -eu; \
+	tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/test-prime-regular-pattern.XXXXXX"); \
 	trap 'rm -f "$$tmp_out"' EXIT INT TERM; \
 	$(CC) $(CFLAGS) -o "$$tmp_out" $^ $(LDFLAGS); \
 	mv "$$tmp_out" $@
@@ -5008,7 +5167,8 @@ $(PRIME_REGULAR_KERNEL_LEGACY_REFERENCE_OBJ): src/prime_semantics.c $(BUILD_CONF
 
 $(PRIME_REGULAR_KERNEL_LEGACY_REFERENCE_BIN): $(PRIME_REGULAR_KERNEL_LEGACY_REFERENCE_LINK_OBJ) $(BRIDGE_DEPS)
 	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
-	@tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/cetta-prime-regular-kernel-legacy-reference.XXXXXX"); \
+	@set -eu; \
+	tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/cetta-prime-regular-kernel-legacy-reference.XXXXXX"); \
 	trap 'rm -f "$$tmp_out"' EXIT INT TERM; \
 	$(CC) $(CFLAGS) -Wl,--export-dynamic -o "$$tmp_out" $^ $(LDFLAGS); \
 	mv "$$tmp_out" $@
@@ -5019,14 +5179,16 @@ $(PRIME_REGULAR_KERNEL_CONVERSION_BENCH_OBJ): $(PRIME_REGULAR_KERNEL_CONVERSION_
 
 $(PRIME_REGULAR_KERNEL_CONVERSION_BENCH_BIN): $(PRIME_REGULAR_KERNEL_CONVERSION_BENCH_OBJ) $(PRIME_REGULAR_KERNEL_TEST_LINK_OBJ) $(BRIDGE_DEPS)
 	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
-	@tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/bench-prime-regular-kernel-conversion.XXXXXX"); \
+	@set -eu; \
+	tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/bench-prime-regular-kernel-conversion.XXXXXX"); \
 	trap 'rm -f "$$tmp_out"' EXIT INT TERM; \
 	$(CC) $(CFLAGS) -o "$$tmp_out" $^ $(LDFLAGS); \
 	mv "$$tmp_out" $@
 
 $(PRIME_REGULAR_KERNEL_CONVERSION_REFERENCE_BENCH_BIN): $(PRIME_REGULAR_KERNEL_CONVERSION_BENCH_OBJ) $(filter-out $(PRIME_SEMANTICS_OBJ),$(PRIME_REGULAR_KERNEL_TEST_LINK_OBJ)) $(PRIME_REGULAR_KERNEL_LEGACY_REFERENCE_OBJ) $(BRIDGE_DEPS)
 	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
-	@tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/bench-prime-regular-kernel-conversion-legacy-reference.XXXXXX"); \
+	@set -eu; \
+	tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/bench-prime-regular-kernel-conversion-legacy-reference.XXXXXX"); \
 	trap 'rm -f "$$tmp_out"' EXIT INT TERM; \
 	$(CC) $(CFLAGS) -o "$$tmp_out" $^ $(LDFLAGS); \
 	mv "$$tmp_out" $@
@@ -5037,14 +5199,16 @@ $(PRIME_REGULAR_KERNEL_SYNTHESIS_BENCH_OBJ): $(PRIME_REGULAR_KERNEL_SYNTHESIS_BE
 
 $(PRIME_REGULAR_KERNEL_SYNTHESIS_BENCH_BIN): $(PRIME_REGULAR_KERNEL_SYNTHESIS_BENCH_OBJ) $(PRIME_REGULAR_KERNEL_TEST_LINK_OBJ) $(BRIDGE_DEPS)
 	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
-	@tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/bench-prime-regular-kernel-synthesis.XXXXXX"); \
+	@set -eu; \
+	tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/bench-prime-regular-kernel-synthesis.XXXXXX"); \
 	trap 'rm -f "$$tmp_out"' EXIT INT TERM; \
 	$(CC) $(CFLAGS) -o "$$tmp_out" $^ $(LDFLAGS); \
 	mv "$$tmp_out" $@
 
 $(PRIME_REGULAR_KERNEL_SYNTHESIS_REFERENCE_BENCH_BIN): $(PRIME_REGULAR_KERNEL_SYNTHESIS_BENCH_OBJ) $(filter-out $(PRIME_SEMANTICS_OBJ),$(PRIME_REGULAR_KERNEL_TEST_LINK_OBJ)) $(PRIME_REGULAR_KERNEL_LEGACY_REFERENCE_OBJ) $(BRIDGE_DEPS)
 	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
-	@tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/bench-prime-regular-kernel-synthesis-legacy-reference.XXXXXX"); \
+	@set -eu; \
+	tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/bench-prime-regular-kernel-synthesis-legacy-reference.XXXXXX"); \
 	trap 'rm -f "$$tmp_out"' EXIT INT TERM; \
 	$(CC) $(CFLAGS) -o "$$tmp_out" $^ $(LDFLAGS); \
 	mv "$$tmp_out" $@
@@ -5055,14 +5219,16 @@ $(PRIME_REGULAR_KERNEL_CHECKING_BENCH_OBJ): $(PRIME_REGULAR_KERNEL_CHECKING_BENC
 
 $(PRIME_REGULAR_KERNEL_CHECKING_BENCH_BIN): $(PRIME_REGULAR_KERNEL_CHECKING_BENCH_OBJ) $(PRIME_REGULAR_KERNEL_TEST_LINK_OBJ) $(BRIDGE_DEPS)
 	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
-	@tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/bench-prime-regular-kernel-checking.XXXXXX"); \
+	@set -eu; \
+	tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/bench-prime-regular-kernel-checking.XXXXXX"); \
 	trap 'rm -f "$$tmp_out"' EXIT INT TERM; \
 	$(CC) $(CFLAGS) -o "$$tmp_out" $^ $(LDFLAGS); \
 	mv "$$tmp_out" $@
 
 $(PRIME_REGULAR_KERNEL_CHECKING_REFERENCE_BENCH_BIN): $(PRIME_REGULAR_KERNEL_CHECKING_BENCH_OBJ) $(filter-out $(PRIME_SEMANTICS_OBJ),$(PRIME_REGULAR_KERNEL_TEST_LINK_OBJ)) $(PRIME_REGULAR_KERNEL_LEGACY_REFERENCE_OBJ) $(BRIDGE_DEPS)
 	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
-	@tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/bench-prime-regular-kernel-checking-legacy-reference.XXXXXX"); \
+	@set -eu; \
+	tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/bench-prime-regular-kernel-checking-legacy-reference.XXXXXX"); \
 	trap 'rm -f "$$tmp_out"' EXIT INT TERM; \
 	$(CC) $(CFLAGS) -o "$$tmp_out" $^ $(LDFLAGS); \
 	mv "$$tmp_out" $@
@@ -5073,21 +5239,24 @@ $(PRIME_REGULAR_KERNEL_FORMATION_BENCH_OBJ): $(PRIME_REGULAR_KERNEL_FORMATION_BE
 
 $(PRIME_REGULAR_KERNEL_FORMATION_BENCH_BIN): $(PRIME_REGULAR_KERNEL_FORMATION_BENCH_OBJ) $(PRIME_REGULAR_KERNEL_TEST_LINK_OBJ) $(BRIDGE_DEPS)
 	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
-	@tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/bench-prime-regular-kernel-formation.XXXXXX"); \
+	@set -eu; \
+	tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/bench-prime-regular-kernel-formation.XXXXXX"); \
 	trap 'rm -f "$$tmp_out"' EXIT INT TERM; \
 	$(CC) $(CFLAGS) -o "$$tmp_out" $^ $(LDFLAGS); \
 	mv "$$tmp_out" $@
 
 $(PRIME_REGULAR_KERNEL_FORMATION_REFERENCE_BENCH_BIN): $(PRIME_REGULAR_KERNEL_FORMATION_BENCH_OBJ) $(filter-out $(PRIME_SEMANTICS_OBJ),$(PRIME_REGULAR_KERNEL_TEST_LINK_OBJ)) $(PRIME_REGULAR_KERNEL_LEGACY_REFERENCE_OBJ) $(BRIDGE_DEPS)
 	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
-	@tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/bench-prime-regular-kernel-formation-legacy-reference.XXXXXX"); \
+	@set -eu; \
+	tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/bench-prime-regular-kernel-formation-legacy-reference.XXXXXX"); \
 	trap 'rm -f "$$tmp_out"' EXIT INT TERM; \
 	$(CC) $(CFLAGS) -o "$$tmp_out" $^ $(LDFLAGS); \
 	mv "$$tmp_out" $@
 
 $(RUNTIME_NAMED_VAR_TEST_BIN): $(RUNTIME_NAMED_VAR_TEST_OBJ) $(RUNTIME_NAMED_VAR_TEST_LINK_OBJ) $(BRIDGE_DEPS)
 	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
-	@tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/test-runtime-named-var.XXXXXX"); \
+	@set -eu; \
+	tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/test-runtime-named-var.XXXXXX"); \
 	trap 'rm -f "$$tmp_out"' EXIT INT TERM; \
 	$(CC) $(CFLAGS) -o "$$tmp_out" $^ $(LDFLAGS); \
 	mv "$$tmp_out" $@
@@ -5098,7 +5267,8 @@ $(RUNTIME_NAMED_VAR_TEST_OBJ): $(RUNTIME_NAMED_VAR_TEST_SRC) $(BUILD_CONFIG_HEAD
 
 $(PRIME_BARE_DOLLAR_PARSER_TEST_BIN): $(PRIME_BARE_DOLLAR_PARSER_TEST_OBJ) $(PRIME_BARE_DOLLAR_PARSER_TEST_LINK_OBJ) $(BRIDGE_DEPS)
 	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
-	@tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/test-prime-bare-dollar-parser.XXXXXX"); \
+	@set -eu; \
+	tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/test-prime-bare-dollar-parser.XXXXXX"); \
 	trap 'rm -f "$$tmp_out"' EXIT INT TERM; \
 	$(CC) $(CFLAGS) -o "$$tmp_out" $^ $(LDFLAGS); \
 	mv "$$tmp_out" $@
@@ -5121,7 +5291,8 @@ $(PRIME_BARE_DOLLAR_SHARED_PARSER_OBJ): src/parser.c src/parser.h $(BUILD_CONFIG
 
 $(PRIME_BARE_DOLLAR_LITERAL_BIN): $(PRIME_BARE_DOLLAR_LITERAL_PARSER_OBJ) $(OBJ) $(BRIDGE_DEPS)
 	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
-	@tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/cetta-bare-dollar-literal.XXXXXX"); \
+	@set -eu; \
+	tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/cetta-bare-dollar-literal.XXXXXX"); \
 	trap 'rm -f "$$tmp_out"' EXIT INT TERM; \
 	$(CC) $(filter-out src/parser.$(BUILD_OBJ_TAG).o src/parser.$(BUILD_OBJ_TAG).runtime-stats.o,$(OBJ)) \
 		$(PRIME_BARE_DOLLAR_LITERAL_PARSER_OBJ) -o "$$tmp_out" $(LDFLAGS); \
@@ -5129,7 +5300,8 @@ $(PRIME_BARE_DOLLAR_LITERAL_BIN): $(PRIME_BARE_DOLLAR_LITERAL_PARSER_OBJ) $(OBJ)
 
 $(PRIME_BARE_DOLLAR_SHARED_BIN): $(PRIME_BARE_DOLLAR_SHARED_PARSER_OBJ) $(OBJ) $(BRIDGE_DEPS)
 	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
-	@tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/cetta-bare-dollar-shared.XXXXXX"); \
+	@set -eu; \
+	tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/cetta-bare-dollar-shared.XXXXXX"); \
 	trap 'rm -f "$$tmp_out"' EXIT INT TERM; \
 	$(CC) $(filter-out src/parser.$(BUILD_OBJ_TAG).o src/parser.$(BUILD_OBJ_TAG).runtime-stats.o,$(OBJ)) \
 		$(PRIME_BARE_DOLLAR_SHARED_PARSER_OBJ) -o "$$tmp_out" $(LDFLAGS); \
@@ -5137,7 +5309,8 @@ $(PRIME_BARE_DOLLAR_SHARED_BIN): $(PRIME_BARE_DOLLAR_SHARED_PARSER_OBJ) $(OBJ) $
 
 $(PRIME_READER_AST_ORACLE_BIN): $(PRIME_READER_AST_ORACLE_OBJ) $(PRIME_READER_AST_ORACLE_LINK_OBJ) $(BRIDGE_DEPS)
 	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
-	@tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/prime-reader-ast-oracle.XXXXXX"); \
+	@set -eu; \
+	tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/prime-reader-ast-oracle.XXXXXX"); \
 	trap 'rm -f "$$tmp_out"' EXIT INT TERM; \
 	$(CC) $(CFLAGS) -o "$$tmp_out" $^ $(LDFLAGS); \
 	mv "$$tmp_out" $@
@@ -5164,7 +5337,8 @@ $(PRIME_SYNTAX_GSLT_DOLLAR_SYMBOL): scripts/build_prime_syntax_gslt.py
 
 $(PAYLOAD_MAP_CAPACITY_TEST_BIN): $(PAYLOAD_MAP_CAPACITY_TEST_OBJ) $(PAYLOAD_MAP_CAPACITY_TEST_LINK_OBJ) $(BRIDGE_DEPS)
 	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
-	@tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/test-rhometta-payload-map-capacity.XXXXXX"); \
+	@set -eu; \
+	tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/test-rhometta-payload-map-capacity.XXXXXX"); \
 	trap 'rm -f "$$tmp_out"' EXIT INT TERM; \
 	$(CC) $(CFLAGS) -o "$$tmp_out" $^ $(LDFLAGS); \
 	mv "$$tmp_out" $@
@@ -5175,7 +5349,8 @@ $(PAYLOAD_MAP_CAPACITY_TEST_OBJ): $(PAYLOAD_MAP_CAPACITY_TEST_SRC) $(BUILD_CONFI
 
 $(RHOCALC_ABT_SUBSTITUTION_TEST_BIN): $(RHOCALC_ABT_SUBSTITUTION_TEST_OBJ) $(RHOCALC_ABT_SUBSTITUTION_TEST_LINK_OBJ) $(BRIDGE_DEPS)
 	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
-	@tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/test-rhocalc-abt-substitution.XXXXXX"); \
+	@set -eu; \
+	tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/test-rhocalc-abt-substitution.XXXXXX"); \
 	trap 'rm -f "$$tmp_out"' EXIT INT TERM; \
 	$(CC) $(CFLAGS) -o "$$tmp_out" $^ $(LDFLAGS); \
 	mv "$$tmp_out" $@
@@ -5186,7 +5361,8 @@ $(RHOCALC_ABT_SUBSTITUTION_TEST_OBJ): $(RHOCALC_ABT_SUBSTITUTION_TEST_SRC) $(BUI
 
 $(LIB_PARSE_GLL_UTF8_FOREST_TEST_BIN): $(LIB_PARSE_GLL_UTF8_FOREST_TEST_OBJ) $(LIB_PARSE_GLL_UTF8_FOREST_TEST_LINK_OBJ) $(BRIDGE_DEPS)
 	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
-	@tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/test-lib-parse-gll-utf8-forest.XXXXXX"); \
+	@set -eu; \
+	tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/test-lib-parse-gll-utf8-forest.XXXXXX"); \
 	trap 'rm -f "$$tmp_out"' EXIT INT TERM; \
 	$(CC) $(CFLAGS) -o "$$tmp_out" $^ $(LDFLAGS); \
 	mv "$$tmp_out" $@
@@ -5197,7 +5373,8 @@ $(LIB_PARSE_GLL_UTF8_FOREST_TEST_OBJ): $(LIB_PARSE_GLL_UTF8_FOREST_TEST_SRC) $(B
 
 $(LIB_PARSE_GLR_UTF8_FOREST_TEST_BIN): $(LIB_PARSE_GLR_UTF8_FOREST_TEST_OBJ) $(LIB_PARSE_GLR_UTF8_FOREST_TEST_LINK_OBJ) $(BRIDGE_DEPS)
 	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
-	@tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/test-lib-parse-glr-utf8-forest.XXXXXX"); \
+	@set -eu; \
+	tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/test-lib-parse-glr-utf8-forest.XXXXXX"); \
 	trap 'rm -f "$$tmp_out"' EXIT INT TERM; \
 	$(CC) $(CFLAGS) -o "$$tmp_out" $^ $(LDFLAGS); \
 	mv "$$tmp_out" $@
@@ -5208,7 +5385,8 @@ $(LIB_PARSE_GLR_UTF8_FOREST_TEST_OBJ): $(LIB_PARSE_GLR_UTF8_FOREST_TEST_SRC) $(B
 
 $(LIB_PARSE_SLR_PREPARED_TEST_BIN): $(LIB_PARSE_SLR_PREPARED_TEST_OBJ) $(LIB_PARSE_SLR_PREPARED_TEST_LINK_OBJ) $(BRIDGE_DEPS)
 	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
-	@tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/test-lib-parse-slr-prepared.XXXXXX"); \
+	@set -eu; \
+	tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/test-lib-parse-slr-prepared.XXXXXX"); \
 	trap 'rm -f "$$tmp_out"' EXIT INT TERM; \
 	$(CC) $(CFLAGS) -o "$$tmp_out" $^ $(LDFLAGS); \
 	mv "$$tmp_out" $@
@@ -5219,7 +5397,8 @@ $(LIB_PARSE_SLR_PREPARED_TEST_OBJ): $(LIB_PARSE_SLR_PREPARED_TEST_SRC) $(BUILD_C
 
 $(PARSER_PACK_GLL_V1_TEST_BIN): $(PARSER_PACK_GLL_V1_TEST_OBJ) $(PARSER_PACK_GLL_V1_TEST_LINK_OBJ) $(BRIDGE_DEPS)
 	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
-	@tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/test-parser-pack-gll-v1.XXXXXX"); \
+	@set -eu; \
+	tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/test-parser-pack-gll-v1.XXXXXX"); \
 	trap 'rm -f "$$tmp_out"' EXIT INT TERM; \
 	$(CC) $(CFLAGS) -o "$$tmp_out" $^ $(LDFLAGS); \
 	mv "$$tmp_out" $@
@@ -5230,7 +5409,8 @@ $(PARSER_PACK_GLL_V1_TEST_OBJ): $(PARSER_PACK_GLL_V1_TEST_SRC) $(BUILD_CONFIG_HE
 
 $(PARSER_PACK_GLR_V1_TEST_BIN): $(PARSER_PACK_GLR_V1_TEST_OBJ) $(PARSER_PACK_GLR_V1_TEST_LINK_OBJ) $(BRIDGE_DEPS)
 	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
-	@tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/test-parser-pack-glr-v1.XXXXXX"); \
+	@set -eu; \
+	tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/test-parser-pack-glr-v1.XXXXXX"); \
 	trap 'rm -f "$$tmp_out"' EXIT INT TERM; \
 	$(CC) $(CFLAGS) -o "$$tmp_out" $^ $(LDFLAGS); \
 	mv "$$tmp_out" $@
@@ -5241,7 +5421,8 @@ $(PARSER_PACK_GLR_V1_TEST_OBJ): $(PARSER_PACK_GLR_V1_TEST_SRC) $(BUILD_CONFIG_HE
 
 $(PARSER_PACK_LEXICAL_V1_TEST_BIN): $(PARSER_PACK_LEXICAL_V1_TEST_OBJ) $(PARSER_PACK_LEXICAL_V1_TEST_LINK_OBJ) $(BRIDGE_DEPS)
 	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
-	@tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/test-parser-pack-lexical-v1.XXXXXX"); \
+	@set -eu; \
+	tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/test-parser-pack-lexical-v1.XXXXXX"); \
 	trap 'rm -f "$$tmp_out"' EXIT INT TERM; \
 	$(CC) $(CFLAGS) -o "$$tmp_out" $^ $(LDFLAGS); \
 	mv "$$tmp_out" $@
@@ -5252,7 +5433,8 @@ $(PARSER_PACK_LEXICAL_V1_TEST_OBJ): $(PARSER_PACK_LEXICAL_V1_TEST_SRC) $(BUILD_C
 
 $(PARSER_PACK_LEXICAL_PLAN_V1_STREAM_BIN): $(PARSER_PACK_LEXICAL_PLAN_V1_STREAM_OBJ) $(FINITE_HORN_ANSWER_STREAM_V1_OBJ) $(PARSER_PACK_GLL_V1_STREAM_READER_OBJ) $(PARSER_PACK_LEXICAL_PLAN_V1_STREAM_LINK_OBJ) $(BRIDGE_DEPS)
 	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
-	@tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/parser-pack-lexical-plan-v1-stream.XXXXXX"); \
+	@set -eu; \
+	tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/parser-pack-lexical-plan-v1-stream.XXXXXX"); \
 	trap 'rm -f "$$tmp_out"' EXIT INT TERM; \
 	$(CC) $(CFLAGS) -o "$$tmp_out" $^ $(LDFLAGS); \
 	mv "$$tmp_out" $@
@@ -5267,7 +5449,8 @@ $(PARSER_PACK_GUARD_RELATION_V1_OBJ): $(PARSER_PACK_GUARD_RELATION_V1_SRC) $(BUI
 
 $(PARSER_PACK_GUARD_PLAN_V1_TEST_BIN): $(PARSER_PACK_GUARD_PLAN_V1_TEST_OBJ) $(PARSER_PACK_GUARD_PLAN_V1_TEST_LINK_OBJ) $(BRIDGE_DEPS)
 	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
-	@tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/test-parser-pack-guard-plan-v1.XXXXXX"); \
+	@set -eu; \
+	tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/test-parser-pack-guard-plan-v1.XXXXXX"); \
 	trap 'rm -f "$$tmp_out"' EXIT INT TERM; \
 	$(CC) $(CFLAGS) -o "$$tmp_out" $^ $(LDFLAGS); \
 	mv "$$tmp_out" $@
@@ -5282,7 +5465,8 @@ $(PARSER_PACK_GUARD_PLAN_V1_OBJ): $(PARSER_PACK_GUARD_PLAN_V1_SRC) $(BUILD_CONFI
 
 $(PARSER_PACK_GUARD_PLAN_V1_STREAM_BIN): $(PARSER_PACK_GUARD_PLAN_V1_STREAM_OBJ) $(PARSER_PACK_GUARD_EVIDENCE_STREAM_V1_OBJ) $(FINITE_HORN_ANSWER_STREAM_V1_OBJ) $(PARSER_PACK_GLL_V1_STREAM_READER_OBJ) $(PARSER_PACK_GUARD_PLAN_V1_STREAM_LINK_OBJ) $(BRIDGE_DEPS)
 	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
-	@tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/parser-pack-guard-plan-v1-stream.XXXXXX"); \
+	@set -eu; \
+	tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/parser-pack-guard-plan-v1-stream.XXXXXX"); \
 	trap 'rm -f "$$tmp_out"' EXIT INT TERM; \
 	$(CC) $(CFLAGS) -o "$$tmp_out" $^ $(LDFLAGS); \
 	mv "$$tmp_out" $@
@@ -5297,7 +5481,8 @@ $(PARSER_PACK_GUARD_EVIDENCE_STREAM_V1_OBJ): $(PARSER_PACK_GUARD_EVIDENCE_STREAM
 
 $(PARSER_PACK_GUARDED_LEXICAL_PLAN_V1_STREAM_BIN): $(PARSER_PACK_GUARDED_LEXICAL_PLAN_V1_STREAM_OBJ) $(PARSER_PACK_GUARD_EVIDENCE_STREAM_V1_OBJ) $(FINITE_HORN_ANSWER_STREAM_V1_OBJ) $(PARSER_PACK_GLL_V1_STREAM_READER_OBJ) $(PARSER_PACK_GUARDED_LEXICAL_PLAN_V1_STREAM_LINK_OBJ) $(BRIDGE_DEPS)
 	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
-	@tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/parser-pack-guarded-lexical-plan-v1-stream.XXXXXX"); \
+	@set -eu; \
+	tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/parser-pack-guarded-lexical-plan-v1-stream.XXXXXX"); \
 	trap 'rm -f "$$tmp_out"' EXIT INT TERM; \
 	$(CC) $(CFLAGS) -o "$$tmp_out" $^ $(LDFLAGS); \
 	mv "$$tmp_out" $@
@@ -5312,7 +5497,8 @@ $(PARSER_PACK_GUARDED_LEXICAL_V1_OBJ): $(PARSER_PACK_GUARDED_LEXICAL_V1_SRC) $(B
 
 $(PARSER_PACK_GUARD_REF_V1_STREAM_BIN): $(PARSER_PACK_GUARD_REF_V1_STREAM_OBJ) $(PARSER_PACK_GUARD_EVIDENCE_STREAM_V1_OBJ) $(FINITE_HORN_ANSWER_STREAM_V1_OBJ) $(PARSER_PACK_GLL_V1_STREAM_READER_OBJ) $(PARSER_PACK_GUARD_REF_V1_STREAM_LINK_OBJ) $(BRIDGE_DEPS)
 	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
-	@tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/parser-pack-guard-ref-v1-stream.XXXXXX"); \
+	@set -eu; \
+	tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/parser-pack-guard-ref-v1-stream.XXXXXX"); \
 	trap 'rm -f "$$tmp_out"' EXIT INT TERM; \
 	$(CC) $(CFLAGS) -o "$$tmp_out" $^ $(LDFLAGS); \
 	mv "$$tmp_out" $@
@@ -5331,7 +5517,8 @@ $(PARSER_PACK_GUARD_SCALAR_EXEC_V1_OBJ): $(PARSER_PACK_GUARD_SCALAR_EXEC_V1_SRC)
 
 $(PARSER_PACK_GUARDED_LEXICAL_EXEC_V1_STREAM_BIN): $(PARSER_PACK_GUARDED_LEXICAL_EXEC_V1_STREAM_OBJ) $(PARSER_PACK_GUARD_EVIDENCE_STREAM_V1_OBJ) $(FINITE_HORN_ANSWER_STREAM_V1_OBJ) $(PARSER_PACK_GLL_V1_STREAM_READER_OBJ) $(PARSER_PACK_GUARDED_LEXICAL_EXEC_V1_STREAM_LINK_OBJ) $(BRIDGE_DEPS)
 	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
-	@tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/parser-pack-guarded-lexical-exec-v1-stream.XXXXXX"); \
+	@set -eu; \
+	tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/parser-pack-guarded-lexical-exec-v1-stream.XXXXXX"); \
 	trap 'rm -f "$$tmp_out"' EXIT INT TERM; \
 	$(CC) $(CFLAGS) -o "$$tmp_out" $^ $(LDFLAGS); \
 	mv "$$tmp_out" $@
@@ -5536,7 +5723,8 @@ $(PARSER_PACK_CURSOR_COMPILE_V1_STREAM_OBJ): $(PARSER_PACK_CURSOR_COMPILE_V1_STR
 
 $(PARSER_PACK_CURSOR_COMPILE_V1_STREAM_BIN): $(PARSER_PACK_CURSOR_COMPILE_V1_STREAM_OBJ) $(PARSER_PACK_CURSOR_COMPILE_V1_STREAM_LINK_OBJ) $(BRIDGE_DEPS)
 	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
-	@tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/parser-pack-cursor-compile-v1-stream.XXXXXX"); \
+	@set -eu; \
+	tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/parser-pack-cursor-compile-v1-stream.XXXXXX"); \
 	trap 'rm -f "$$tmp_out"' EXIT INT TERM; \
 	$(CC) $(CFLAGS) -Wl,--gc-sections -o "$$tmp_out" $^ $(LDFLAGS); \
 	mv "$$tmp_out" $@
@@ -5585,7 +5773,8 @@ $(PARSER_ATOM_PROJECTION_CLOSURE_V1_OBJ): $(PARSER_ATOM_PROJECTION_CLOSURE_V1_SR
 
 $(PARSER_ATOM_PROJECTION_CLOSURE_V1_STREAM_BIN): $(PARSER_ATOM_PROJECTION_CLOSURE_V1_STREAM_OBJ) $(FINITE_HORN_ANSWER_STREAM_V1_OBJ) $(PARSER_PACK_GLL_V1_STREAM_READER_OBJ) $(PARSER_ATOM_PROJECTION_CLOSURE_V1_STREAM_LINK_OBJ) $(BRIDGE_DEPS)
 	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
-	@tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/parser-atom-projection-closure-v1-stream.XXXXXX"); \
+	@set -eu; \
+	tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/parser-atom-projection-closure-v1-stream.XXXXXX"); \
 	trap 'rm -f "$$tmp_out"' EXIT INT TERM; \
 	$(CC) $(CFLAGS) -o "$$tmp_out" $^ $(LDFLAGS); \
 	mv "$$tmp_out" $@
@@ -5600,7 +5789,8 @@ $(SEMANTIC_MASK_NFA_V1_OBJ): $(SEMANTIC_MASK_NFA_V1_SRC) $(SEMANTIC_MASK_NFA_V1_
 
 $(SEMANTIC_MASK_NFA_V1_STREAM_BIN): $(SEMANTIC_MASK_NFA_V1_STREAM_OBJ) $(FINITE_HORN_ANSWER_STREAM_V1_OBJ) $(PARSER_PACK_GLL_V1_STREAM_READER_OBJ) $(SEMANTIC_MASK_NFA_V1_STREAM_LINK_OBJ) $(BRIDGE_DEPS)
 	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
-	@tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/semantic-mask-nfa-v1-stream.XXXXXX"); \
+	@set -eu; \
+	tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/semantic-mask-nfa-v1-stream.XXXXXX"); \
 	trap 'rm -f "$$tmp_out"' EXIT INT TERM; \
 	$(CC) $(CFLAGS) -o "$$tmp_out" $^ $(LDFLAGS); \
 	mv "$$tmp_out" $@
@@ -5615,7 +5805,8 @@ $(PARSER_PACK_SEMANTIC_MASK_BINDING_V1_OBJ): $(PARSER_PACK_SEMANTIC_MASK_BINDING
 
 $(HE_DOCUMENT_PIPELINE_V1_STREAM_BIN): $(HE_DOCUMENT_PIPELINE_V1_STREAM_OBJ) $(HE_DOCUMENT_PIPELINE_V1_OBJ) $(PARSER_PACK_GUARD_EVIDENCE_STREAM_V1_OBJ) $(FINITE_HORN_ANSWER_STREAM_V1_OBJ) $(PARSER_PACK_GLL_V1_STREAM_READER_OBJ) $(HE_DOCUMENT_PIPELINE_V1_STREAM_LINK_OBJ) $(BRIDGE_DEPS)
 	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
-	@tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/he-document-pipeline-v1-stream.XXXXXX"); \
+	@set -eu; \
+	tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/he-document-pipeline-v1-stream.XXXXXX"); \
 	trap 'rm -f "$$tmp_out"' EXIT INT TERM; \
 	$(CC) $(CFLAGS) -o "$$tmp_out" $^ $(LDFLAGS); \
 	mv "$$tmp_out" $@
@@ -5626,7 +5817,8 @@ $(HE_DOCUMENT_PIPELINE_V1_STREAM_OBJ): $(HE_DOCUMENT_PIPELINE_V1_STREAM_SRC) $(H
 
 $(HE_DOCUMENT_PIPELINE_V1_BENCH_BIN): $(HE_DOCUMENT_PIPELINE_V1_BENCH_OBJ) $(HE_DOCUMENT_PIPELINE_V1_OBJ) $(PARSER_PACK_GUARD_EVIDENCE_STREAM_V1_OBJ) $(FINITE_HORN_ANSWER_STREAM_V1_OBJ) $(PARSER_PACK_GLL_V1_STREAM_READER_OBJ) $(HE_DOCUMENT_PIPELINE_V1_STREAM_LINK_OBJ) $(BRIDGE_DEPS)
 	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
-	@tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/he-document-pipeline-v1-bench.XXXXXX"); \
+	@set -eu; \
+	tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/he-document-pipeline-v1-bench.XXXXXX"); \
 	trap 'rm -f "$$tmp_out"' EXIT INT TERM; \
 	$(CC) $(CFLAGS) -o "$$tmp_out" $^ $(LDFLAGS); \
 	mv "$$tmp_out" $@
@@ -5641,14 +5833,16 @@ $(HE_DOCUMENT_PIPELINE_V1_OBJ): $(HE_DOCUMENT_PIPELINE_V1_SRC) $(HE_DOCUMENT_PIP
 
 $(PETTA_DOCUMENT_PIPELINE_V1_BIN): $(PETTA_DOCUMENT_PIPELINE_V1_OBJ) $(PARSER_PACK_NATIVE_API_V1_OBJ) $(PARSER_PACK_GUARD_EVIDENCE_STREAM_V1_OBJ) $(FINITE_HORN_ANSWER_STREAM_V1_OBJ) $(PARSER_PACK_GLL_V1_STREAM_READER_OBJ) $(PETTA_DOCUMENT_PIPELINE_V1_LINK_OBJ) $(BRIDGE_DEPS)
 	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
-	@tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/petta-document-pipeline-v1.XXXXXX"); \
+	@set -eu; \
+	tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/petta-document-pipeline-v1.XXXXXX"); \
 	trap 'rm -f "$$tmp_out"' EXIT INT TERM; \
 	$(CC) $(CFLAGS) -o "$$tmp_out" $^ $(LDFLAGS); \
 	mv "$$tmp_out" $@
 
 $(PETTA_DOCUMENT_PIPELINE_V1_LIB): $(PETTA_DOCUMENT_PIPELINE_V1_OBJ) $(PETTA_DOCUMENT_PIPELINE_V1_SHARED_LINK_OBJ) $(PARSER_PACK_NATIVE_API_V1_LIB) $(BRIDGE_DEPS)
 	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
-	@tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/libcetta-petta-document-pipeline-v1.XXXXXX"); \
+	@set -eu; \
+	tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/libcetta-petta-document-pipeline-v1.XXXXXX"); \
 	trap 'rm -f "$$tmp_out"' EXIT INT TERM; \
 	$(CC) -shared -Wl,-soname,$(notdir $@) -Wl,-rpath,'$$ORIGIN' \
 		-o "$$tmp_out" $(PETTA_DOCUMENT_PIPELINE_V1_OBJ) \
@@ -5662,7 +5856,8 @@ $(PETTA_DOCUMENT_PIPELINE_V1_OBJ): $(PETTA_DOCUMENT_PIPELINE_V1_SRC) $(PETTA_DOC
 
 $(PARSER_PACK_GLL_V1_STREAM_BIN): $(PARSER_PACK_GLL_V1_STREAM_OBJ) $(PARSER_PACK_GLL_V1_STREAM_READER_OBJ) $(PARSER_PACK_GLL_V1_STREAM_LINK_OBJ) $(BRIDGE_DEPS)
 	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
-	@tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/parser-pack-gll-v1-stream.XXXXXX"); \
+	@set -eu; \
+	tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/parser-pack-gll-v1-stream.XXXXXX"); \
 	trap 'rm -f "$$tmp_out"' EXIT INT TERM; \
 	$(CC) $(CFLAGS) -o "$$tmp_out" $^ $(LDFLAGS); \
 	mv "$$tmp_out" $@
@@ -5677,7 +5872,8 @@ $(PARSER_PACK_GLL_V1_STREAM_READER_OBJ): $(PARSER_PACK_GLL_V1_STREAM_READER_SRC)
 
 $(PARSER_PACK_SLR_SUMMARY_V1_STREAM_BIN): $(PARSER_PACK_SLR_SUMMARY_V1_STREAM_OBJ) $(PARSER_PACK_GLL_V1_STREAM_READER_OBJ) $(PARSER_PACK_SLR_SUMMARY_V1_STREAM_LINK_OBJ) $(BRIDGE_DEPS)
 	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
-	@tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/parser-pack-slr-summary-v1-stream.XXXXXX"); \
+	@set -eu; \
+	tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/parser-pack-slr-summary-v1-stream.XXXXXX"); \
 	trap 'rm -f "$$tmp_out"' EXIT INT TERM; \
 	$(CC) $(CFLAGS) -o "$$tmp_out" $^ $(LDFLAGS); \
 	mv "$$tmp_out" $@
@@ -5688,7 +5884,8 @@ $(PARSER_PACK_SLR_SUMMARY_V1_STREAM_OBJ): $(PARSER_PACK_SLR_SUMMARY_V1_STREAM_SR
 
 $(PARSER_PACK_GLR_V1_STREAM_BIN): $(PARSER_PACK_GLR_V1_STREAM_OBJ) $(PARSER_PACK_GLL_V1_STREAM_READER_OBJ) $(PARSER_PACK_GLR_V1_STREAM_LINK_OBJ) $(BRIDGE_DEPS)
 	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
-	@tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/parser-pack-glr-v1-stream.XXXXXX"); \
+	@set -eu; \
+	tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/parser-pack-glr-v1-stream.XXXXXX"); \
 	trap 'rm -f "$$tmp_out"' EXIT INT TERM; \
 	$(CC) $(CFLAGS) -o "$$tmp_out" $^ $(LDFLAGS); \
 	mv "$$tmp_out" $@
@@ -5699,7 +5896,8 @@ $(PARSER_PACK_GLR_V1_STREAM_OBJ): $(PARSER_PACK_GLR_V1_STREAM_SRC) $(BUILD_CONFI
 
 $(PARSER_PACK_NATIVE_API_V1_LIB): $(PARSER_PACK_NATIVE_API_V1_OBJ) $(PARSER_PACK_GLL_V1_STREAM_READER_OBJ) $(PARSER_PACK_NATIVE_API_V1_LINK_OBJ) $(BRIDGE_DEPS)
 	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
-	@tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/libcetta-parser-pack-native-v1.XXXXXX"); \
+	@set -eu; \
+	tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/libcetta-parser-pack-native-v1.XXXXXX"); \
 	trap 'rm -f "$$tmp_out"' EXIT INT TERM; \
 	$(CC) -shared -Wl,-soname,$(notdir $@) -o "$$tmp_out" $^ $(LDFLAGS); \
 	mv "$$tmp_out" $@
@@ -5710,7 +5908,8 @@ $(PARSER_PACK_NATIVE_API_V1_OBJ): $(PARSER_PACK_NATIVE_API_V1_SRC) $(PARSER_PACK
 
 $(REGULAR_SPAN_DFA_V1_TEST_BIN): $(REGULAR_SPAN_DFA_V1_TEST_OBJ) $(REGULAR_SPAN_DFA_V1_TEST_LINK_OBJ) $(BRIDGE_DEPS)
 	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
-	@tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/test-regular-span-dfa-v1.XXXXXX"); \
+	@set -eu; \
+	tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/test-regular-span-dfa-v1.XXXXXX"); \
 	trap 'rm -f "$$tmp_out"' EXIT INT TERM; \
 	$(CC) $(CFLAGS) -o "$$tmp_out" $^ $(LDFLAGS); \
 	mv "$$tmp_out" $@
@@ -5721,7 +5920,8 @@ $(REGULAR_SPAN_DFA_V1_TEST_OBJ): $(REGULAR_SPAN_DFA_V1_TEST_SRC) $(BUILD_CONFIG_
 
 $(REGULAR_SPAN_NFA_V1_TEST_BIN): $(REGULAR_SPAN_NFA_V1_TEST_OBJ) $(REGULAR_SPAN_NFA_V1_TEST_LINK_OBJ) $(BRIDGE_DEPS)
 	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
-	@tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/test-regular-span-nfa-v1.XXXXXX"); \
+	@set -eu; \
+	tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/test-regular-span-nfa-v1.XXXXXX"); \
 	trap 'rm -f "$$tmp_out"' EXIT INT TERM; \
 	$(CC) $(CFLAGS) -o "$$tmp_out" $^ $(LDFLAGS); \
 	mv "$$tmp_out" $@
@@ -5732,7 +5932,8 @@ $(REGULAR_SPAN_NFA_V1_TEST_OBJ): $(REGULAR_SPAN_NFA_V1_TEST_SRC) $(BUILD_CONFIG_
 
 $(REGULAR_SPAN_DFA_V1_STREAM_BIN): $(REGULAR_SPAN_DFA_V1_STREAM_OBJ) $(FINITE_HORN_ANSWER_STREAM_V1_OBJ) $(PARSER_PACK_GLL_V1_STREAM_READER_OBJ) $(REGULAR_SPAN_DFA_V1_STREAM_LINK_OBJ) $(BRIDGE_DEPS)
 	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
-	@tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/regular-span-dfa-v1-stream.XXXXXX"); \
+	@set -eu; \
+	tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/regular-span-dfa-v1-stream.XXXXXX"); \
 	trap 'rm -f "$$tmp_out"' EXIT INT TERM; \
 	$(CC) $(CFLAGS) -o "$$tmp_out" $^ $(LDFLAGS); \
 	mv "$$tmp_out" $@
@@ -5754,7 +5955,8 @@ $(PARSER_PACK_TRANSPARENT_INLINE_NATIVE_V1_OBJ): \
 
 $(PARSER_ACTION_BYTECODE_V1_STREAM_BIN): $(PARSER_ACTION_BYTECODE_V1_STREAM_OBJ) $(FINITE_HORN_ANSWER_STREAM_V1_OBJ) $(PARSER_PACK_GLL_V1_STREAM_READER_OBJ) $(PARSER_ACTION_BYTECODE_V1_STREAM_LINK_OBJ) $(BRIDGE_DEPS)
 	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
-	@tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/parser-action-bytecode-v1-stream.XXXXXX"); \
+	@set -eu; \
+	tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/parser-action-bytecode-v1-stream.XXXXXX"); \
 	trap 'rm -f "$$tmp_out"' EXIT INT TERM; \
 	$(CC) $(CFLAGS) -o "$$tmp_out" $^ $(LDFLAGS); \
 	mv "$$tmp_out" $@
@@ -5872,7 +6074,8 @@ $(LANGDEF_COMPILER_V1_BIN): $(LANGDEF_COMPILER_V1_OBJ) \
 		$(RHO_ABSTRACT_SYNTAX_V1) $(RHO_RUNTIME_TERM_ABI_V1) \
 		$(RHOMETTA_PERSISTENT_RECEIVE_EXTENSION_V1)
 	@mkdir -p $(dir $@)
-	@tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/langdef-compile-v1.XXXXXX"); \
+	@set -eu; \
+	tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/langdef-compile-v1.XXXXXX"); \
 	trap 'rm -f "$$tmp_out"' EXIT INT TERM; \
 	$(CC) $(CFLAGS) -Wl,--gc-sections -o "$$tmp_out" \
 		$(filter-out %.metta,$^) $(LDFLAGS); \
@@ -6587,7 +6790,8 @@ $(METAMATH_COMPILED_CURSOR_V1): \
 		$(LANGDEF_COMPILED_CURSOR_EXPORT_V1) \
 		$(LANGDEF_COMPILED_CURSOR_HEADER_V1) $(BUILD_CONFIG_HEADER)
 	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
-	@tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/langdef-compiled-cursor.XXXXXX"); \
+	@set -eu; \
+	tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/langdef-compiled-cursor.XXXXXX"); \
 	trap 'rm -f "$$tmp_out"' EXIT INT TERM; \
 	$(CC) $(CPPFLAGS) $(CFLAGS) -fPIC -shared -Wl,--build-id=none \
 		-DCETTA_LANGDEF_COMPILED_PREFIX=$(METAMATH_CURSOR_FOLD_PREFIX_V1) \
@@ -6632,7 +6836,8 @@ $(METAMATH_DIRECT_COMPILED_CURSOR_V1): \
 		$(LANGDEF_COMPILED_CURSOR_EXPORT_V1) \
 		$(LANGDEF_COMPILED_CURSOR_HEADER_V1) $(BUILD_CONFIG_HEADER)
 	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
-	@tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/langdef-direct-compiled-cursor.XXXXXX"); \
+	@set -eu; \
+	tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/langdef-direct-compiled-cursor.XXXXXX"); \
 	trap 'rm -f "$$tmp_out"' EXIT INT TERM; \
 	$(CC) $(CPPFLAGS) $(CFLAGS) -fPIC -shared -Wl,--build-id=none \
 		-DCETTA_LANGDEF_COMPILED_PREFIX=$(METAMATH_DIRECT_CURSOR_FOLD_PREFIX_V1) \
@@ -15699,7 +15904,7 @@ test-list-lanes: $(BIN)
 bench-list: $(BIN) test-list-lanes
 	@./scripts/bench_list_lanes.py --cetta ./$(BIN)
 
-test: $(BIN) test-python-build-config test-lib-prolog-build-config test-precise-vocabulary test-prime-public-judgment-vocabulary test-manifest-strict test-git-module test-symbolid-guard test-variant-shape-roundtrip test-bindings-lookup-index test-atom-deep-copy-iterative test-abt test-rhometta-payload-map-capacity-c test-space-term-universe-membership test-help-flags test-rhocalc test-he-contract-suite test-he-return-contract-correlation test-closed-stream-fastpath test-parse-depth-guard test-stdlib-growth-memory-regression test-rhometta-macro-audit test-eval-gc-adversarial test-list-lanes test-syn-lanes test-lib-prolog test-petta-libpl test-petta-process-text test-match-decision test-petta-search-machine test-petta-semantics test-petta-corpus-manifest-unit test-petta-chainer-manifest-unit test-petta-typecheck-v3-core-langdef-v1 test-petta-typecheck-v3-file-runner-v1 test-petta-typecheck-v3-profile test-gslt-provider-generation-v1 test-gslt-provider-runtime test-prime-nik-core-v1 test-subzero test-mettazero test-gslt-il test-zerouv test-metta-interact test-mm2-gslt-profile-v1
+test: $(BIN) test-python-build-config test-lib-prolog-build-config test-precise-vocabulary test-prime-public-judgment-vocabulary test-manifest-strict test-fail-atomic-build-v1 test-operational-language-def-v1 test-language-def-core-v1 test-exact-integer-theory-v1 test-json-gslt test-io test-git-module test-symbolid-guard test-variant-shape-roundtrip test-bindings-lookup-index test-atom-deep-copy-iterative test-abt test-rhometta-payload-map-capacity-c test-space-term-universe-membership test-help-flags test-rhocalc test-he-contract-suite test-he-return-contract-correlation test-closed-stream-fastpath test-parse-depth-guard test-stdlib-growth-memory-regression test-rhometta-macro-audit test-eval-gc-adversarial test-list-lanes test-syn-lanes test-lib-prolog test-petta-libpl test-petta-process-text test-match-decision test-petta-search-machine test-petta-semantics test-petta-corpus-manifest-unit test-petta-chainer-manifest-unit test-petta-typecheck-v3-core-langdef-v1 test-petta-typecheck-v3-file-runner-v1 test-petta-typecheck-v3-profile test-gslt-provider-generation-v1 test-gslt-provider-runtime test-prime-nik-core-v1 test-subzero test-mettazero test-gslt-il test-zerouv test-metta-interact test-mm2-gslt-profile-v1
 	@pass=0; fail=0; skip=0; no_exp=0; \
 	cache_dir="$(GIT_TEST_CACHE_DIR)"; mkdir -p "$$cache_dir"; export CETTA_GIT_MODULE_CACHE_DIR="$$cache_dir"; \
 	for f in tests/test_*.metta tests/spec_*.metta tests/he_*.metta; do \
@@ -15746,6 +15951,11 @@ test: $(BIN) test-python-build-config test-lib-prolog-build-config test-precise-
 			continue; \
 		fi; \
 		if printf '%s\n' $(BACKEND_DEDICATED_TESTS) | grep -Fxq "$$f"; then \
+			continue; \
+		fi; \
+		if printf '%s\n' $(OPT_IN_FEATURE_TESTS) | grep -Fxq "$$f"; then \
+			echo "SKIP: $$f (covered by isolated opt-in feature gates)"; \
+			skip=$$((skip + 1)); \
 			continue; \
 		fi; \
 		exp="$${f%.metta}.expected"; \
@@ -27155,21 +27365,41 @@ $(NIK_RUNTIME_TEST_BIN): \
 test-nik-runtime-v1: $(NIK_RUNTIME_TEST_BIN)
 	@$(NIK_RUNTIME_TEST_BIN)
 
-$(NIK_NATIVE_CALCULUS_SELECTION_TEST_BIN): \
-		tests/support/test_nik_native_calculus_selection.c \
-		src/nik_native_calculus_selection.h \
-		$(NIK_NATIVE_CALCULUS_SELECTION_OBJ) $(BUILD_CONFIG_HEADER)
+$(NIK_LICENSED_IMPLEMENTATION_SELECTION_TEST_BIN): \
+		tests/support/test_nik_licensed_implementation_selection.c \
+		src/nik_licensed_implementation_selection.h \
+		$(NIK_LICENSED_IMPLEMENTATION_SELECTION_OBJ) $(BUILD_CONFIG_HEADER)
 	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
-	@tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/test-nik-native-calculus-selection.XXXXXX"); \
+	@set -eu; \
+	tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/test-nik-licensed-implementation-selection.XXXXXX"); \
 	trap 'rm -f "$$tmp_out"' EXIT INT TERM; \
 	$(CC) $(CPPFLAGS) $(CFLAGS) -o "$$tmp_out" \
-		tests/support/test_nik_native_calculus_selection.c \
-		$(NIK_NATIVE_CALCULUS_SELECTION_OBJ) $(LDFLAGS); \
+		tests/support/test_nik_licensed_implementation_selection.c \
+		$(NIK_LICENSED_IMPLEMENTATION_SELECTION_OBJ) $(LDFLAGS); \
 	mv "$$tmp_out" $@
 
-.PHONY: test-nik-native-calculus-selection
-test-nik-native-calculus-selection: $(NIK_NATIVE_CALCULUS_SELECTION_TEST_BIN)
-	@$(NIK_NATIVE_CALCULUS_SELECTION_TEST_BIN)
+.PHONY: test-nik-licensed-implementation-selection
+test-nik-licensed-implementation-selection: $(NIK_LICENSED_IMPLEMENTATION_SELECTION_TEST_BIN)
+	@$(NIK_LICENSED_IMPLEMENTATION_SELECTION_TEST_BIN)
+
+$(NIK_HOSTED_CALCULUS_TEST_BIN): \
+		tests/support/test_nik_hosted_calculus.c \
+		src/nik_hosted_calculus.h \
+		src/nik_direct_authority.h \
+		$(NIK_HOSTED_CALCULUS_OBJ) $(NIK_DIRECT_AUTHORITY_OBJ) \
+		$(BUILD_CONFIG_HEADER)
+	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
+	@set -eu; \
+	tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/test-nik-hosted-calculus.XXXXXX"); \
+	trap 'rm -f "$$tmp_out"' EXIT INT TERM; \
+	$(CC) $(CPPFLAGS) $(CFLAGS) -o "$$tmp_out" \
+		tests/support/test_nik_hosted_calculus.c \
+		$(NIK_HOSTED_CALCULUS_OBJ) $(NIK_DIRECT_AUTHORITY_OBJ) $(LDFLAGS); \
+	mv "$$tmp_out" $@
+
+.PHONY: test-nik-hosted-calculus
+test-nik-hosted-calculus: $(NIK_HOSTED_CALCULUS_TEST_BIN)
+	@$(NIK_HOSTED_CALCULUS_TEST_BIN)
 
 $(GSLT_PROVIDER_RUNTIME_TEST_BIN): \
 		tests/support/test_gslt_provider_runtime.c \
@@ -28146,7 +28376,8 @@ test-prime-nik-megalodon-tactics-package-v1: \
 
 .PHONY: test-prime-nik-core-v1
 test-prime-nik-core-v1: test-nik-runtime-v1 \
-		test-nik-native-calculus-selection test-prime-nik-generation-v1 \
+		test-nik-hosted-calculus \
+		test-nik-licensed-implementation-selection test-prime-nik-generation-v1 \
 		test-prime-nik-proof-dag-v1
 
 .PHONY: test-prime-nik-qualification-v1
@@ -31069,6 +31300,743 @@ test-nik-type-info-plumbing-v1: \
 	test-prime \
 	test-prime-need-algebra
 	@echo "PASS: direct NIK type info-plumbing qualification"
+
+# C-only source ingress for operational LanguageDef presentations.  This is an
+# opt-in build/qualification route: it is neither linked into the default
+# runtime nor involved in primitive dispatch.
+OPERATIONAL_LANGUAGE_DEF_V1_SRC = native/operational_language_def_v1.c
+OPERATIONAL_LANGUAGE_DEF_V1_HEADER = native/operational_language_def_v1.h
+OPERATIONAL_LANGUAGE_DEF_V1_OBJ = native/operational_language_def_v1.$(BUILD_OBJ_TAG).o
+OPERATIONAL_LANGUAGE_DEF_V1_TEST_SRC = tests/support/test_operational_language_def_v1.c
+OPERATIONAL_LANGUAGE_DEF_V1_TEST_OBJ = runtime/bootstrap/test_operational_language_def_v1.$(BUILD_OBJ_TAG).o
+OPERATIONAL_LANGUAGE_DEF_V1_TEST_BIN = runtime/test_operational_language_def_v1-$(BUILD_OBJ_TAG)
+OPERATIONAL_LANGUAGE_DEF_V1_NATIVE_PARSER_OBJ = runtime/bootstrap/lib_parse_native_grammar_operational_v1.$(BUILD_OBJ_TAG).o
+OPERATIONAL_LANGUAGE_DEF_V1_ALLOC_OBJ = runtime/bootstrap/cetta_standalone_alloc_v1.$(BUILD_OBJ_TAG).o
+OPERATIONAL_LANGUAGE_DEF_V1_LINK_OBJ = \
+	$(OPERATIONAL_LANGUAGE_DEF_V1_NATIVE_PARSER_OBJ) \
+	$(OPERATIONAL_LANGUAGE_DEF_V1_ALLOC_OBJ) \
+	$(GSLT_DENSE_BITSET_V1_OBJ) \
+	src/native_sha256.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o
+
+# lib_parse_native_grammar also contains legacy Atom-facing entry points.  The
+# operational LanguageDef bootstrap uses only its owned UTF-8 lattice and
+# GLL/GLR forest API, so compile a sectioned object and discard the unrelated
+# entry points instead of linking the whole CeTTa evaluator/test closure.
+$(OPERATIONAL_LANGUAGE_DEF_V1_NATIVE_PARSER_OBJ): \
+		src/lib_parse_native_grammar.c \
+		src/lib_parse_native_grammar.h \
+		src/gslt_dense_bitset_v1.h $(BUILD_CONFIG_HEADER)
+	@mkdir -p $(dir $@)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -ffunction-sections -fdata-sections \
+		$(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+
+$(OPERATIONAL_LANGUAGE_DEF_V1_ALLOC_OBJ): \
+		native/cetta_standalone_alloc_v1.c src/atom.h $(BUILD_CONFIG_HEADER)
+	@mkdir -p $(dir $@)
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+
+$(OPERATIONAL_LANGUAGE_DEF_V1_TEST_OBJ): \
+		$(OPERATIONAL_LANGUAGE_DEF_V1_TEST_SRC) \
+		$(OPERATIONAL_LANGUAGE_DEF_V1_HEADER) $(BUILD_CONFIG_HEADER)
+	@mkdir -p $(dir $@)
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+
+$(OPERATIONAL_LANGUAGE_DEF_V1_TEST_BIN): \
+		$(OPERATIONAL_LANGUAGE_DEF_V1_TEST_OBJ) \
+		$(OPERATIONAL_LANGUAGE_DEF_V1_OBJ) \
+		$(OPERATIONAL_LANGUAGE_DEF_V1_LINK_OBJ)
+	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
+	@set -eu; \
+	tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/test-operational-language-def-v1.XXXXXX"); \
+	trap 'rm -f "$$tmp_out"' EXIT INT TERM; \
+	$(CC) $(CFLAGS) -Wl,--gc-sections -o "$$tmp_out" $^; \
+	mv "$$tmp_out" $@
+
+.PHONY: test-operational-language-def-v1
+test-operational-language-def-v1: $(OPERATIONAL_LANGUAGE_DEF_V1_TEST_BIN)
+	@$(OPERATIONAL_LANGUAGE_DEF_V1_TEST_BIN)
+
+# Typed decoding of the same opt-in operational LanguageDef wire.  The owned
+# core is structural input to later lowering, not a runtime evaluator.
+LANGUAGE_DEF_CORE_V1_SRC = native/language_def_core_v1.c
+LANGUAGE_DEF_CORE_V1_HEADER = native/language_def_core_v1.h
+LANGUAGE_DEF_CORE_V1_OBJ = native/language_def_core_v1.$(BUILD_OBJ_TAG).o
+LANGUAGE_DEF_CORE_V1_TEST_SRC = tests/support/test_language_def_core_v1.c
+LANGUAGE_DEF_CORE_V1_TEST_OBJ = runtime/bootstrap/test_language_def_core_v1.$(BUILD_OBJ_TAG).o
+LANGUAGE_DEF_CORE_V1_TEST_BIN = runtime/test_language_def_core_v1-$(BUILD_OBJ_TAG)
+
+$(LANGUAGE_DEF_CORE_V1_TEST_OBJ): \
+		$(LANGUAGE_DEF_CORE_V1_TEST_SRC) \
+		$(LANGUAGE_DEF_CORE_V1_HEADER) \
+		$(OPERATIONAL_LANGUAGE_DEF_V1_HEADER) $(BUILD_CONFIG_HEADER)
+	@mkdir -p $(dir $@)
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+
+$(LANGUAGE_DEF_CORE_V1_TEST_BIN): \
+		$(LANGUAGE_DEF_CORE_V1_TEST_OBJ) \
+		$(LANGUAGE_DEF_CORE_V1_OBJ) \
+		$(OPERATIONAL_LANGUAGE_DEF_V1_OBJ) \
+		$(OPERATIONAL_LANGUAGE_DEF_V1_LINK_OBJ)
+	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
+	@set -eu; \
+	tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/test-language-def-core-v1.XXXXXX"); \
+	trap 'rm -f "$$tmp_out"' EXIT INT TERM; \
+	$(CC) $(CFLAGS) -Wl,--gc-sections -o "$$tmp_out" $^; \
+	mv "$$tmp_out" $@
+
+.PHONY: test-language-def-core-v1
+test-language-def-core-v1: $(LANGUAGE_DEF_CORE_V1_TEST_BIN)
+	@$(LANGUAGE_DEF_CORE_V1_TEST_BIN)
+
+# C-only deterministic source embedding for build-time language packages.
+# Generated artifacts stay under runtime/generated and are never checked in.
+$(JSON_SOURCE_EMBED_TOOL_V1): $(JSON_SOURCE_EMBED_TOOL_V1_SRC)
+	@mkdir -p $(dir $@)
+	@set -eu; \
+	tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/embed-c-sources-v1.XXXXXX"); \
+	trap 'rm -f "$$tmp_out"' EXIT INT TERM; \
+	$(CC) -O2 -Wall -Werror -std=c11 -o "$$tmp_out" $<; \
+	mv "$$tmp_out" $@
+
+$(JSON_GSLT_EMBEDDED_C_V1): \
+		$(JSON_SOURCE_EMBED_TOOL_V1) \
+		$(JSON_GSLT_LANGUAGE_SOURCE_V1) \
+		$(JSON_GSLT_PROFILE_SOURCE_V1)
+	@mkdir -p $(dir $@) $(BOOTSTRAP_TMPDIR)
+	@set -eu; \
+	tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/rfc8259-sources-v1.XXXXXX"); \
+	trap 'rm -f "$$tmp_out"' EXIT INT TERM; \
+	$(JSON_SOURCE_EMBED_TOOL_V1) "$$tmp_out" \
+		cetta_rfc8259_json_language_v1_source \
+		$(JSON_GSLT_LANGUAGE_SOURCE_V1) \
+		cetta_rfc8259_json_profile_v1_source \
+		$(JSON_GSLT_PROFILE_SOURCE_V1); \
+	mv "$$tmp_out" $@
+
+# Generic five-field LanguageDef syntax compilation into the shared native
+# ParserPack ABI.  This gate deliberately compiles a minimal C-only source
+# closure instead of inheriting the evaluator, Python, Prolog, GMP, or HTTP
+# build graph.  JSON is authored data consumed by the generic compiler; it is
+# not implemented by guest-specific parser code here.
+LANGUAGE_DEF_PARSER_PACK_V1_SRC = native/language_def_parser_pack_v1.c
+LANGUAGE_DEF_PARSER_PACK_V1_HEADER = native/language_def_parser_pack_v1.h
+PARSER_PACK_IDENTITY_WIRE_V1_SRC = native/parser_pack_identity_wire_v1.c
+PARSER_PACK_IDENTITY_WIRE_V1_HEADER = native/parser_pack_identity_wire_v1.h
+LANGUAGE_DEF_PARSER_PACK_V1_TEST_SRC = tests/support/test_language_def_parser_pack_v1.c
+LANGUAGE_DEF_PARSER_PACK_V1_BENCH_SRC = tests/bench_json_gslt_runtime.c
+LANGUAGE_DEF_PARSER_PACK_V1_CORPUS_SRC = tests/qualify_json_gslt_corpus.c
+LANGUAGE_DEF_PARSER_PACK_V1_TEST_BIN = runtime/test_language_def_parser_pack_v1-c-only$(if $(filter 1,$(ENABLE_SANITIZERS)),-sanitize,)
+LANGUAGE_DEF_PARSER_PACK_V1_MUTATION_BIN = runtime/test_language_def_parser_pack_v1-invent-occurrence-mutant
+LANGUAGE_DEF_PARSER_PACK_V1_BENCH_BIN = runtime/bench_json_gslt_runtime-c-only
+LANGUAGE_DEF_PARSER_PACK_V1_CORPUS_BIN = runtime/qualify_json_gslt_corpus-c-only
+LANGUAGE_DEF_PARSER_PACK_V1_RUNTIME_C_SOURCES = \
+	$(LANGUAGE_DEF_PARSER_PACK_V1_SRC) \
+	$(PARSER_PACK_IDENTITY_WIRE_V1_SRC) \
+	native/json_cst_value_v1.c \
+	native/json_runtime_v1.c \
+	native/json_value_v1.c \
+	$(LANGUAGE_DEF_CORE_V1_SRC) \
+	$(OPERATIONAL_LANGUAGE_DEF_V1_SRC) \
+	experiments/gslt2parse_foundation/native/parser_pack_abi_v1.c \
+	experiments/gslt2parse_foundation/native/parser_action_bytecode_v1.c \
+	experiments/gslt2parse_foundation/native/parser_pack_native_v1.c \
+	experiments/gslt2parse_foundation/native/parser_pack_gll_v1.c \
+	experiments/gslt2parse_foundation/native/parser_pack_glr_v1.c \
+	experiments/gslt2parse_foundation/native/finite_horn_ground_term_v1.c \
+	src/lib_parse_native_grammar.c \
+	src/gslt_dense_bitset_v1.c \
+	src/native_sha256.c \
+	src/symbol.c \
+	src/atom.c \
+	src/name_key.c
+LANGUAGE_DEF_PARSER_PACK_V1_C_SOURCES = \
+	$(LANGUAGE_DEF_PARSER_PACK_V1_TEST_SRC) \
+	$(LANGUAGE_DEF_PARSER_PACK_V1_RUNTIME_C_SOURCES)
+LANGUAGE_DEF_PARSER_PACK_V1_BENCH_C_SOURCES = \
+	$(LANGUAGE_DEF_PARSER_PACK_V1_BENCH_SRC) \
+	$(LANGUAGE_DEF_PARSER_PACK_V1_RUNTIME_C_SOURCES)
+LANGUAGE_DEF_PARSER_PACK_V1_CORPUS_C_SOURCES = \
+	$(LANGUAGE_DEF_PARSER_PACK_V1_CORPUS_SRC) \
+	$(LANGUAGE_DEF_PARSER_PACK_V1_RUNTIME_C_SOURCES)
+LANGUAGE_DEF_PARSER_PACK_V1_HEADERS = \
+	$(LANGUAGE_DEF_PARSER_PACK_V1_HEADER) \
+	$(PARSER_PACK_IDENTITY_WIRE_V1_HEADER) \
+	native/json_cst_value_v1.h \
+	native/json_runtime_v1.h \
+	native/json_value_v1.h \
+	$(LANGUAGE_DEF_CORE_V1_HEADER) \
+	$(OPERATIONAL_LANGUAGE_DEF_V1_HEADER) \
+	experiments/gslt2parse_foundation/native/parser_pack_abi_v1.h \
+	experiments/gslt2parse_foundation/native/parser_action_bytecode_v1.h \
+	experiments/gslt2parse_foundation/native/parser_pack_native_v1.h \
+	experiments/gslt2parse_foundation/native/parser_pack_gll_v1.h \
+	experiments/gslt2parse_foundation/native/parser_pack_glr_v1.h \
+	experiments/gslt2parse_foundation/native/finite_horn_ground_term_v1.h \
+	src/lib_parse_native_grammar.h \
+	src/gslt_dense_bitset_v1.h \
+	src/native_sha256.h \
+	src/symbol.h \
+	src/atom.h \
+	src/name_key.h
+
+$(LANGUAGE_DEF_PARSER_PACK_V1_TEST_BIN): \
+		$(LANGUAGE_DEF_PARSER_PACK_V1_C_SOURCES) \
+		$(LANGUAGE_DEF_PARSER_PACK_V1_HEADERS) \
+		langdef/json/rfc8259_syntax_v1.metta \
+		langdef/json/rfc8259_parser_profile_v1.metta \
+		$(BUILD_CONFIG_HEADER)
+	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
+	@set -eu; \
+	tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/test-language-def-parser-pack-v1.XXXXXX"); \
+	trap 'rm -f "$$tmp_out"' EXIT INT TERM; \
+	$(CC) $(CPPFLAGS) $(CFLAGS) -ffunction-sections -fdata-sections \
+		-o "$$tmp_out" $(LANGUAGE_DEF_PARSER_PACK_V1_C_SOURCES) \
+		-Wl,--gc-sections -ldl -lm -pthread; \
+	mv "$$tmp_out" $@
+
+$(LANGUAGE_DEF_PARSER_PACK_V1_MUTATION_BIN): \
+		$(LANGUAGE_DEF_PARSER_PACK_V1_C_SOURCES) \
+		$(LANGUAGE_DEF_PARSER_PACK_V1_HEADERS) \
+		langdef/json/rfc8259_syntax_v1.metta \
+		langdef/json/rfc8259_parser_profile_v1.metta \
+		$(BUILD_CONFIG_HEADER)
+	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
+	@set -eu; \
+	tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/test-language-def-parser-pack-v1-mutant.XXXXXX"); \
+	trap 'rm -f "$$tmp_out"' EXIT INT TERM; \
+	$(CC) $(CPPFLAGS) $(CFLAGS) \
+		-DCETTA_JSON_CST_VALUE_V1_MUTATION=1 \
+		-ffunction-sections -fdata-sections \
+		-o "$$tmp_out" $(LANGUAGE_DEF_PARSER_PACK_V1_C_SOURCES) \
+		-Wl,--gc-sections -ldl -lm -pthread; \
+	mv "$$tmp_out" $@
+
+$(LANGUAGE_DEF_PARSER_PACK_V1_BENCH_BIN): \
+		$(LANGUAGE_DEF_PARSER_PACK_V1_BENCH_C_SOURCES) \
+		$(LANGUAGE_DEF_PARSER_PACK_V1_HEADERS) \
+		langdef/json/rfc8259_syntax_v1.metta \
+		langdef/json/rfc8259_parser_profile_v1.metta \
+		$(BUILD_CONFIG_HEADER)
+	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
+	@set -eu; \
+	tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/bench-json-gslt-runtime.XXXXXX"); \
+	trap 'rm -f "$$tmp_out"' EXIT INT TERM; \
+	$(CC) $(CPPFLAGS) $(CFLAGS) -ffunction-sections -fdata-sections \
+		-o "$$tmp_out" $(LANGUAGE_DEF_PARSER_PACK_V1_BENCH_C_SOURCES) \
+		-Wl,--gc-sections -ldl -lm -pthread; \
+	mv "$$tmp_out" $@
+
+$(LANGUAGE_DEF_PARSER_PACK_V1_CORPUS_BIN): \
+		$(LANGUAGE_DEF_PARSER_PACK_V1_CORPUS_C_SOURCES) \
+		$(LANGUAGE_DEF_PARSER_PACK_V1_HEADERS) \
+		langdef/json/rfc8259_syntax_v1.metta \
+		langdef/json/rfc8259_parser_profile_v1.metta \
+		$(BUILD_CONFIG_HEADER)
+	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
+	@set -eu; \
+	tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/qualify-json-gslt-corpus.XXXXXX"); \
+	trap 'rm -f "$$tmp_out"' EXIT INT TERM; \
+	$(CC) $(CPPFLAGS) $(CFLAGS) -ffunction-sections -fdata-sections \
+		-o "$$tmp_out" $(LANGUAGE_DEF_PARSER_PACK_V1_CORPUS_C_SOURCES) \
+		-Wl,--gc-sections -ldl -lm -pthread; \
+	mv "$$tmp_out" $@
+
+.PHONY: test-language-def-parser-pack-v1-body
+test-language-def-parser-pack-v1-body: $(LANGUAGE_DEF_PARSER_PACK_V1_TEST_BIN)
+	@$(LANGUAGE_DEF_PARSER_PACK_V1_TEST_BIN)
+
+.PHONY: test-language-def-parser-pack-v1
+test-language-def-parser-pack-v1:
+	@$(MAKE) --no-print-directory \
+		BUILD=core ENABLE_GMP=0 ENABLE_LIB_PROLOG=0 ENABLE_HTTP=0 \
+		ENABLE_SANITIZERS=0 ENABLE_PIC=0 \
+		CETTA_PROVENANCE_ASSERT=0 RHOCOST_COMMIT_AUDIT=0 \
+		ENABLE_PRIME_RECEIPT_PRIMARY_INDEX=0 \
+		ENABLE_PRIME_NEED_HEAP_INDEX=0 \
+		ENABLE_PRIME_NEED_CLOSURE_CAPTURE=0 \
+		ENABLE_PRIME_EVAL_STACK=0 \
+		test-language-def-parser-pack-v1-body
+
+.PHONY: test-json-gslt-mutation-body
+test-json-gslt-mutation-body: $(LANGUAGE_DEF_PARSER_PACK_V1_MUTATION_BIN)
+	@set -eu; \
+	actual=$$(mktemp "$(BOOTSTRAP_TMPDIR)/json-invent-occurrence-mutant.XXXXXX"); \
+	trap 'rm -f "$$actual"' EXIT INT TERM; \
+	if $(LANGUAGE_DEF_PARSER_PACK_V1_MUTATION_BIN) > "$$actual" 2>&1; then \
+		echo "FAIL: invented-occurrence mutation survived" >&2; exit 1; \
+	fi; \
+	grep -Fq \
+		'FAIL: semantic JSON object retains ordered duplicate occurrence IDs' \
+		"$$actual"; \
+	echo "PASS: invented JSON occurrence mutation rejected"
+
+.PHONY: test-json-gslt-mutation
+test-json-gslt-mutation:
+	@$(MAKE) --no-print-directory \
+		BUILD=core ENABLE_GMP=0 ENABLE_LIB_PROLOG=0 ENABLE_HTTP=0 \
+		ENABLE_SANITIZERS=0 ENABLE_PIC=0 \
+		CETTA_PROVENANCE_ASSERT=0 RHOCOST_COMMIT_AUDIT=0 \
+		ENABLE_PRIME_RECEIPT_PRIMARY_INDEX=0 \
+		ENABLE_PRIME_NEED_HEAP_INDEX=0 \
+		ENABLE_PRIME_NEED_CLOSURE_CAPTURE=0 \
+		ENABLE_PRIME_EVAL_STACK=0 \
+		test-json-gslt-mutation-body
+
+.PHONY: test-json-gslt-c-only-closure-body
+test-json-gslt-c-only-closure-body: \
+		$(JSON_SOURCE_EMBED_TOOL_V1) \
+		$(JSON_GSLT_EMBEDDED_C_V1) \
+		$(LANGUAGE_DEF_PARSER_PACK_V1_TEST_BIN)
+	@set -eu; \
+	dry=$$(mktemp "$(BOOTSTRAP_TMPDIR)/json-c-only-dry-run.XXXXXX"); \
+	trap 'rm -f "$$dry"' EXIT INT TERM; \
+	$(MAKE) --no-print-directory -Bn \
+		BUILD=core ENABLE_GMP=0 ENABLE_LIB_PROLOG=0 ENABLE_HTTP=0 \
+		$(JSON_SOURCE_EMBED_TOOL_V1) \
+		$(JSON_GSLT_EMBEDDED_C_V1) \
+		$(LANGUAGE_DEF_PARSER_PACK_V1_TEST_BIN) > "$$dry"; \
+	if grep -E '(^|[[:space:]/])(python([0-9.]*)?|swipl)([[:space:]]|$$)' \
+		"$$dry" >/dev/null; then \
+		echo "FAIL: JSON source/compiler closure invokes Python or SWI" >&2; \
+		cat "$$dry" >&2; exit 1; \
+	fi; \
+	if ldd $(JSON_SOURCE_EMBED_TOOL_V1) \
+		$(LANGUAGE_DEF_PARSER_PACK_V1_TEST_BIN) 2>/dev/null | \
+		grep -E 'libpython|libswipl|libcurl|libgmp' >/dev/null; then \
+		echo "FAIL: JSON source/compiler closure links an unrelated provider" >&2; \
+		exit 1; \
+	fi; \
+	echo "PASS: JSON authored-source compiler closure is C-only and provider-isolated"
+
+.PHONY: test-json-gslt-c-only-closure
+test-json-gslt-c-only-closure:
+	@$(MAKE) --no-print-directory \
+		BUILD=core ENABLE_GMP=0 ENABLE_LIB_PROLOG=0 ENABLE_HTTP=0 \
+		ENABLE_SANITIZERS=0 ENABLE_PIC=0 \
+		CETTA_PROVENANCE_ASSERT=0 RHOCOST_COMMIT_AUDIT=0 \
+		ENABLE_PRIME_RECEIPT_PRIMARY_INDEX=0 \
+		ENABLE_PRIME_NEED_HEAP_INDEX=0 \
+		ENABLE_PRIME_NEED_CLOSURE_CAPTURE=0 \
+		ENABLE_PRIME_EVAL_STACK=0 \
+		test-json-gslt-c-only-closure-body
+
+.PHONY: bench-json-gslt-runtime-body
+bench-json-gslt-runtime-body: $(LANGUAGE_DEF_PARSER_PACK_V1_BENCH_BIN)
+	@$(LANGUAGE_DEF_PARSER_PACK_V1_BENCH_BIN) 100
+
+.PHONY: bench-json-gslt-runtime
+bench-json-gslt-runtime:
+	@$(MAKE) --no-print-directory \
+		BUILD=core ENABLE_GMP=0 ENABLE_LIB_PROLOG=0 ENABLE_HTTP=0 \
+		ENABLE_SANITIZERS=0 ENABLE_PIC=0 \
+		CETTA_PROVENANCE_ASSERT=0 RHOCOST_COMMIT_AUDIT=0 \
+		ENABLE_PRIME_RECEIPT_PRIMARY_INDEX=0 \
+		ENABLE_PRIME_NEED_HEAP_INDEX=0 \
+		ENABLE_PRIME_NEED_CLOSURE_CAPTURE=0 \
+		ENABLE_PRIME_EVAL_STACK=0 \
+		bench-json-gslt-runtime-body
+
+.PHONY: qualify-json-gslt-corpus-body
+qualify-json-gslt-corpus-body: $(LANGUAGE_DEF_PARSER_PACK_V1_CORPUS_BIN)
+	@test -n "$(JSON_TEST_SUITE_DIR)" || { \
+		echo "JSON_TEST_SUITE_DIR must name an external JSONTestSuite directory" >&2; \
+		exit 2; \
+	}
+	@$(LANGUAGE_DEF_PARSER_PACK_V1_CORPUS_BIN) "$(JSON_TEST_SUITE_DIR)"
+
+.PHONY: qualify-json-gslt-corpus
+qualify-json-gslt-corpus:
+	@$(MAKE) --no-print-directory \
+		BUILD=core ENABLE_GMP=0 ENABLE_LIB_PROLOG=0 ENABLE_HTTP=0 \
+		ENABLE_SANITIZERS=0 ENABLE_PIC=0 \
+		CETTA_PROVENANCE_ASSERT=0 RHOCOST_COMMIT_AUDIT=0 \
+		ENABLE_PRIME_RECEIPT_PRIMARY_INDEX=0 \
+		ENABLE_PRIME_NEED_HEAP_INDEX=0 \
+		ENABLE_PRIME_NEED_CLOSURE_CAPTURE=0 \
+		ENABLE_PRIME_EVAL_STACK=0 \
+		JSON_TEST_SUITE_DIR="$(JSON_TEST_SUITE_DIR)" \
+		qualify-json-gslt-corpus-body
+
+# Authored exact-integer operation-interface extension.  This opt-in decoder
+# validates redundant signatures and retains ordered, duplicate-free operation
+# identities; it supplies no arithmetic semantics and activates no runtime
+# implementation.
+EXACT_INTEGER_THEORY_V1_SRC = native/exact_integer_theory_v1.c
+EXACT_INTEGER_THEORY_V1_HEADER = native/exact_integer_theory_v1.h
+EXACT_INTEGER_THEORY_V1_OBJ = native/exact_integer_theory_v1.$(BUILD_OBJ_TAG).o
+EXACT_INTEGER_THEORY_V1_TEST_SRC = tests/support/test_exact_integer_theory_v1.c
+EXACT_INTEGER_THEORY_V1_TEST_OBJ = runtime/bootstrap/test_exact_integer_theory_v1.$(BUILD_OBJ_TAG).o
+EXACT_INTEGER_THEORY_V1_TEST_BIN = runtime/test_exact_integer_theory_v1-$(BUILD_OBJ_TAG)
+
+$(EXACT_INTEGER_THEORY_V1_TEST_OBJ): \
+		$(EXACT_INTEGER_THEORY_V1_TEST_SRC) \
+		$(EXACT_INTEGER_THEORY_V1_HEADER) \
+		$(OPERATIONAL_LANGUAGE_DEF_V1_HEADER) $(BUILD_CONFIG_HEADER)
+	@mkdir -p $(dir $@)
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+
+$(EXACT_INTEGER_THEORY_V1_TEST_BIN): \
+		$(EXACT_INTEGER_THEORY_V1_TEST_OBJ) \
+		$(EXACT_INTEGER_THEORY_V1_OBJ) \
+		$(OPERATIONAL_LANGUAGE_DEF_V1_OBJ) \
+		$(OPERATIONAL_LANGUAGE_DEF_V1_LINK_OBJ)
+	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
+	@set -eu; \
+	tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/test-exact-integer-theory-v1.XXXXXX"); \
+	trap 'rm -f "$$tmp_out"' EXIT INT TERM; \
+	$(CC) $(CFLAGS) -Wl,--gc-sections -o "$$tmp_out" $^; \
+	mv "$$tmp_out" $@
+
+.PHONY: test-exact-integer-theory-v1
+test-exact-integer-theory-v1: $(EXACT_INTEGER_THEORY_V1_TEST_BIN)
+	@$(EXACT_INTEGER_THEORY_V1_TEST_BIN)
+
+# Independent target-owned C-subset IR.  No arithmetic lowering is wired here;
+# a future compiler must derive its program from the supplied LanguageDefs.
+C_SUBSET_IR_V1_SRC = native/c_subset_ir_v1.c
+C_SUBSET_IR_V1_HEADER = native/c_subset_ir_v1.h
+C_SUBSET_IR_V1_OBJ = native/c_subset_ir_v1.$(BUILD_OBJ_TAG).o
+
+# Generic target-IR emitter retained without an arithmetic compiler route.
+C_SUBSET_GENERATED_ABI_V1_HEADER = native/c_subset_generated_abi_v1.h
+C_SUBSET_EMIT_V1_SRC = native/c_subset_emit_v1.c
+C_SUBSET_EMIT_V1_HEADER = native/c_subset_emit_v1.h
+C_SUBSET_EMIT_V1_OBJ = native/c_subset_emit_v1.$(BUILD_OBJ_TAG).o
+
+# Optional GMP realization of the opaque exact-integer ABI.  It has no
+# arithmetic compiler authority and is not part of default runtime objects.
+C_SUBSET_GMP_EXACT_INTEGER_V1_SRC = native/c_subset_gmp_exact_integer_v1.c
+C_SUBSET_GMP_EXACT_INTEGER_V1_HEADER = native/c_subset_gmp_exact_integer_v1.h
+C_SUBSET_GMP_EXACT_INTEGER_V1_OBJ = native/c_subset_gmp_exact_integer_v1.$(BUILD_OBJ_TAG).o
+
+$(C_SUBSET_GMP_EXACT_INTEGER_V1_OBJ): \
+		$(C_SUBSET_GMP_EXACT_INTEGER_V1_SRC) \
+		$(C_SUBSET_GMP_EXACT_INTEGER_V1_HEADER) \
+		$(C_SUBSET_GENERATED_ABI_V1_HEADER) $(BUILD_CONFIG_HEADER)
+	@mkdir -p $(dir $@)
+	$(CC) $(CPPFLAGS) $(GMP_CFLAGS) $(CFLAGS) $(DEPFLAGS) \
+		-MF $(@:.o=.d) -c -o $@ $<
+
+# Portable asynchronous I/O qualification.  HTTP is an explicit build
+# capability; no network provider or test fixture is activated by default.
+IO_RUNTIME_TEST_SRC = tests/test_io_runtime.c
+IO_RUNTIME_TEST_OBJ = runtime/bootstrap/test_io_runtime.$(BUILD_OBJ_TAG).o
+IO_RUNTIME_TEST_BIN = runtime/test_io_runtime-$(BUILD_OBJ_TAG)
+IO_RUNTIME_MUTATION_OBJ = runtime/bootstrap/library_io_replay_mutation.$(BUILD_OBJ_TAG).o
+IO_RUNTIME_MUTATION_TEST_BIN = runtime/test_io_runtime_replay_mutation-$(BUILD_OBJ_TAG)
+IO_RUNTIME_BENCH_SRC = tests/bench_io_runtime.c
+IO_RUNTIME_BENCH_OBJ = runtime/bootstrap/bench_io_runtime.$(BUILD_OBJ_TAG).o
+IO_RUNTIME_BENCH_BIN = runtime/bench_io_runtime-$(BUILD_OBJ_TAG)
+IO_HTTP_FIXTURE_SRC = tests/support/io_http_fixture.c
+IO_HTTP_FIXTURE_BIN = runtime/io_http_fixture-$(BUILD_OBJ_TAG)
+IO_BENCH_REQUESTS ?= 64
+
+$(IO_RUNTIME_TEST_OBJ): $(IO_RUNTIME_TEST_SRC) src/library_io.h $(BUILD_CONFIG_HEADER)
+	@mkdir -p $(dir $@)
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+
+$(IO_RUNTIME_BENCH_OBJ): $(IO_RUNTIME_BENCH_SRC) src/library_io.h $(BUILD_CONFIG_HEADER)
+	@mkdir -p $(dir $@)
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+
+$(IO_RUNTIME_MUTATION_OBJ): src/library_io.c src/library_io.h $(BUILD_CONFIG_HEADER)
+	@mkdir -p $(dir $@)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -DCETTA_IO_MUTATION_REPLAY_COMPLETION=1 \
+		$(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+
+$(IO_RUNTIME_TEST_BIN): $(IO_RUNTIME_TEST_OBJ) $(FALLBACK_EVAL_TEST_LINK_OBJ) $(BRIDGE_DEPS)
+	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
+	@set -eu; \
+	tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/test-io-runtime.XXXXXX"); \
+	trap 'rm -f "$$tmp_out"' EXIT INT TERM; \
+	$(CC) $(CFLAGS) -o "$$tmp_out" $^ $(LDFLAGS); \
+	mv "$$tmp_out" $@
+
+$(IO_RUNTIME_MUTATION_TEST_BIN): \
+		$(IO_RUNTIME_TEST_OBJ) $(IO_RUNTIME_MUTATION_OBJ) \
+		$(filter-out src/library_io.$(BUILD_OBJ_TAG).o \
+			src/library_io.$(BUILD_OBJ_TAG).runtime-stats.o,\
+			$(FALLBACK_EVAL_TEST_LINK_OBJ)) $(BRIDGE_DEPS)
+	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
+	@set -eu; \
+	tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/test-io-runtime-mutation.XXXXXX"); \
+	trap 'rm -f "$$tmp_out"' EXIT INT TERM; \
+	$(CC) $(CFLAGS) -o "$$tmp_out" $^ $(LDFLAGS); \
+	mv "$$tmp_out" $@
+
+$(IO_RUNTIME_BENCH_BIN): $(IO_RUNTIME_BENCH_OBJ) $(FALLBACK_EVAL_TEST_LINK_OBJ) $(BRIDGE_DEPS)
+	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
+	@set -eu; \
+	tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/bench-io-runtime.XXXXXX"); \
+	trap 'rm -f "$$tmp_out"' EXIT INT TERM; \
+	$(CC) $(CFLAGS) -o "$$tmp_out" $^ $(LDFLAGS); \
+	mv "$$tmp_out" $@
+
+$(IO_HTTP_FIXTURE_BIN): $(IO_HTTP_FIXTURE_SRC)
+	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
+	@set -eu; \
+	tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/io-http-fixture.XXXXXX"); \
+	trap 'rm -f "$$tmp_out"' EXIT INT TERM; \
+	$(CC) $(CFLAGS) -o "$$tmp_out" $<; \
+	mv "$$tmp_out" $@
+
+.PHONY: test-io-runtime bench-io-runtime
+ifeq ($(HTTP_ENABLED),1)
+test-io-runtime: \
+		$(IO_RUNTIME_TEST_BIN) $(IO_RUNTIME_MUTATION_TEST_BIN) \
+		$(IO_HTTP_FIXTURE_BIN)
+	@set -eu; \
+	work=$$(mktemp -d "$(BOOTSTRAP_TMPDIR)/io-runtime.XXXXXX"); \
+	server_pid=; \
+	trap 'if [ -n "$$server_pid" ]; then kill "$$server_pid" 2>/dev/null || true; wait "$$server_pid" 2>/dev/null || true; fi; rm -rf "$$work"' EXIT INT TERM; \
+	$(IO_HTTP_FIXTURE_BIN) > "$$work/port" 2> "$$work/server.err" & \
+	server_pid=$$!; \
+	tries=0; \
+	while [ ! -s "$$work/port" ] && [ $$tries -lt 100 ]; do \
+		kill -0 "$$server_pid" 2>/dev/null || break; \
+		tries=$$((tries + 1)); sleep 0.01; \
+	done; \
+	test -s "$$work/port" || { cat "$$work/server.err"; exit 1; }; \
+	base="http://127.0.0.1:$$(cat "$$work/port")"; \
+	result=$$($(IO_RUNTIME_TEST_BIN) "$$base"); \
+	printf '%s\n' "$$result"; \
+	printf '%s\n' "$$result" | grep -Eq '^\(IoRuntimeSummary [0-9]+ [0-9]+ 0\)$$'; \
+	if CETTA_IO_REPLAY_ONLY=1 $(IO_RUNTIME_MUTATION_TEST_BIN) "$$base" \
+		> "$$work/mutation.out" 2>&1; then \
+		echo "FAIL: replay-completion mutation survived"; exit 1; \
+	fi; \
+	grep -Fq 'FAIL: consumed completions cannot replay' "$$work/mutation.out"; \
+	echo "PASS: replay-completion mutation rejected"
+
+bench-io-runtime: $(IO_RUNTIME_BENCH_BIN) $(IO_HTTP_FIXTURE_BIN)
+	@set -eu; \
+	work=$$(mktemp -d "$(BOOTSTRAP_TMPDIR)/io-benchmark.XXXXXX"); \
+	server_pid=; \
+	trap 'if [ -n "$$server_pid" ]; then kill "$$server_pid" 2>/dev/null || true; wait "$$server_pid" 2>/dev/null || true; fi; rm -rf "$$work"' EXIT INT TERM; \
+	$(IO_HTTP_FIXTURE_BIN) > "$$work/port" 2> "$$work/server.err" & \
+	server_pid=$$!; \
+	tries=0; \
+	while [ ! -s "$$work/port" ] && [ $$tries -lt 100 ]; do \
+		kill -0 "$$server_pid" 2>/dev/null || break; \
+		tries=$$((tries + 1)); sleep 0.01; \
+	done; \
+	test -s "$$work/port" || { cat "$$work/server.err"; exit 1; }; \
+	$(IO_RUNTIME_BENCH_BIN) "http://127.0.0.1:$$(cat "$$work/port")" \
+		"$(IO_BENCH_REQUESTS)"
+else
+test-io-runtime bench-io-runtime:
+	@echo "$@ requires ENABLE_HTTP=1" >&2
+	@exit 1
+endif
+
+.PHONY: test-io-syntax test-io-no-http
+ifeq ($(HTTP_ENABLED),1)
+test-io-syntax: $(BIN)
+	@$(BIN) tests/test_io_syntax.metta
+else
+test-io-syntax:
+	@echo "test-io-syntax requires ENABLE_HTTP=1" >&2
+	@exit 1
+endif
+
+ifeq ($(HTTP_ENABLED),0)
+test-io-no-http: $(BIN)
+	@$(BIN) tests/test_io_no_http.metta
+else
+test-io-no-http:
+	@echo "test-io-no-http requires ENABLE_HTTP=0" >&2
+	@exit 1
+endif
+
+.PHONY: test-io-browser
+test-io-browser: $(IO_HTTP_FIXTURE_BIN)
+	@set -eu; \
+	command -v "$(CETTA_EMCC)" >/dev/null || { \
+		echo "SKIP: test-io-browser requires CETTA_EMCC=$(CETTA_EMCC)"; exit 0; }; \
+	command -v "$(CETTA_BROWSER)" >/dev/null || { \
+		echo "SKIP: test-io-browser requires CETTA_BROWSER=$(CETTA_BROWSER)"; exit 0; }; \
+	command -v "$(CETTA_BROWSER_NODE)" >/dev/null || { \
+		echo "SKIP: test-io-browser requires CETTA_BROWSER_NODE=$(CETTA_BROWSER_NODE)"; exit 0; }; \
+	work=$$(mktemp -d "$(BOOTSTRAP_TMPDIR)/io-browser.XXXXXX"); \
+	server_pid=; chrome_pid=; \
+	trap 'if [ -n "$$server_pid" ]; then kill "$$server_pid" 2>/dev/null || true; wait "$$server_pid" 2>/dev/null || true; fi; if [ -n "$$chrome_pid" ]; then kill "$$chrome_pid" 2>/dev/null || true; wait "$$chrome_pid" 2>/dev/null || true; fi; rm -rf "$$work"' EXIT INT TERM; \
+	cp tests/support/io_browser_test.html "$$work/index.html"; \
+	"$(CETTA_EMCC)" -Isrc -I. \
+		-DCETTA_BUILD_WITH_HTTP=1 \
+		-DCETTA_BUILD_HTTP_PROVIDER_CURL=0 \
+		-DCETTA_BUILD_HTTP_PROVIDER_EMSCRIPTEN=1 \
+		-O2 -Wall -Werror -std=c11 \
+		tests/test_io_browser.c src/library_io.c src/symbol.c src/atom.c \
+		-sFETCH=1 -sFETCH_STREAMING=1 -sEXIT_RUNTIME=1 \
+		-sALLOW_MEMORY_GROWTH=1 -sENVIRONMENT=web \
+		-o "$$work/io_browser_test.js"; \
+	$(IO_HTTP_FIXTURE_BIN) --root "$$work" \
+		> "$$work/server.port" 2> "$$work/server.err" & \
+	server_pid=$$!; \
+	"$(CETTA_BROWSER)" --headless=new --disable-gpu \
+		--disable-dev-shm-usage --remote-debugging-address=127.0.0.1 \
+		--remote-debugging-port=0 --user-data-dir="$$work/browser-profile" \
+		about:blank > "$$work/browser.out" 2> "$$work/browser.err" & \
+	chrome_pid=$$!; \
+	tries=0; \
+	while [ $$tries -lt 500 ]; do \
+		if [ -s "$$work/server.port" ] && \
+			grep -q 'DevTools listening on' "$$work/browser.err" 2>/dev/null; then break; fi; \
+		kill -0 "$$server_pid" 2>/dev/null || break; \
+		kill -0 "$$chrome_pid" 2>/dev/null || break; \
+		tries=$$((tries + 1)); sleep 0.01; \
+	done; \
+	test -s "$$work/server.port" || { cat "$$work/server.err"; exit 1; }; \
+	debug_port=$$(sed -n 's|.*ws://127\.0\.0\.1:\([0-9][0-9]*\)/.*|\1|p' \
+		"$$work/browser.err" | head -1); \
+	test -n "$$debug_port" || { cat "$$work/browser.err"; exit 1; }; \
+	page_url="http://127.0.0.1:$$(cat "$$work/server.port")/index.html"; \
+	result=$$("$(CETTA_BROWSER_NODE)" tests/support/browser_cdp_wait.mjs \
+		"$$debug_port" "$$page_url"); \
+	wait "$$chrome_pid" 2>/dev/null || true; \
+	chrome_pid=; \
+	printf '%s\n' "$$result"; \
+	test "$$result" = '(IoBrowserSummary 24 24 0)'
+
+.PHONY: test-io-rho-bridge
+test-io-rho-bridge: $(BIN)
+	@actual=$$(mktemp "$(BOOTSTRAP_TMPDIR)/test-io-rho-bridge.XXXXXX"); \
+	trap 'rm -f "$$actual"' EXIT INT TERM; \
+	$(BIN) --lang he tests/test_io_rho_bridge.metta > "$$actual"; \
+	diff -u tests/test_io_rho_bridge.expected "$$actual"
+
+.PHONY: test-io-json-bridge-body
+test-io-json-bridge-body: $(BIN)
+	@set -eu; \
+	actual=$$(mktemp "$(BOOTSTRAP_TMPDIR)/test-io-json-bridge.XXXXXX"); \
+	trap 'rm -f "$$actual"' EXIT INT TERM; \
+	$(BIN) --lang he tests/test_io_json_bridge.metta > "$$actual"; \
+	diff -u tests/test_io_json_bridge.expected "$$actual"; \
+	$(BIN) --lang prime tests/test_io_json_bridge_compat.metta > "$$actual"; \
+	diff -u tests/test_io_json_bridge_compat.expected "$$actual"; \
+	$(BIN) --lang petta tests/test_io_json_bridge_compat.metta > "$$actual"; \
+	diff -u tests/test_io_json_bridge_compat.petta.expected "$$actual"
+
+.PHONY: test-io-json-bridge
+test-io-json-bridge:
+	@$(MAKE) --no-print-directory \
+		BUILD=core CETTA_TEST_ISOLATED=1 \
+		ENABLE_JSON_GSLT=1 ENABLE_LIB_PROLOG=0 ENABLE_HTTP=0 \
+		test-io-json-bridge-body
+
+.PHONY: test-json-gslt-library-body
+test-json-gslt-library-body: $(BIN)
+	@set -eu; \
+	actual=$$(mktemp "$(BOOTSTRAP_TMPDIR)/test-json-gslt-library.XXXXXX"); \
+	trap 'rm -f "$$actual"' EXIT INT TERM; \
+	$(BIN) --lang he tests/test_json_gslt_library.metta > "$$actual"; \
+	diff -u tests/test_json_gslt_library.expected "$$actual"; \
+	$(BIN) --lang prime tests/test_json_gslt_library.metta > "$$actual"; \
+	diff -u tests/test_json_gslt_library.expected "$$actual"; \
+	$(BIN) --lang petta tests/test_json_gslt_library.metta > "$$actual"; \
+	diff -u tests/test_json_gslt_library.petta.expected "$$actual"; \
+	$(BIN) --lang he tests/test_json_gslt_legacy_nul.metta > "$$actual"; \
+	diff -u tests/test_json_gslt_legacy_nul.expected "$$actual"; \
+	$(BIN) --lang petta tests/test_json_gslt_legacy_nul.metta > "$$actual"; \
+	diff -u tests/test_json_gslt_legacy_nul.petta.expected "$$actual"; \
+	$(BIN) --lang he tests/test_json_gslt_invalid_number.metta > "$$actual"; \
+	diff -u tests/test_json_gslt_invalid_number.expected "$$actual"; \
+	$(BIN) --lang petta tests/test_json_gslt_invalid_number.metta > "$$actual"; \
+	diff -u tests/test_json_gslt_invalid_number.petta.expected "$$actual"; \
+	echo "(JsonGsltLibrarySummary 7 7 0)"
+
+.PHONY: test-json-gslt-library
+test-json-gslt-library:
+	@$(MAKE) --no-print-directory \
+		BUILD=core CETTA_TEST_ISOLATED=1 \
+		ENABLE_JSON_GSLT=1 ENABLE_LIB_PROLOG=0 ENABLE_HTTP=0 \
+		test-json-gslt-library-body
+
+.PHONY: test-json-gslt-disabled-link-body
+test-json-gslt-disabled-link-body: $(BIN)
+	@if nm "$(BIN)" | \
+		grep -E 'cetta_json_(runtime|library)_' >/dev/null; then \
+		echo "FAIL: disabled JSON GSLT runtime remains linked" >&2; exit 1; \
+	fi
+	@echo "PASS: disabled JSON GSLT runtime has no linked implementation"
+
+.PHONY: test-json-gslt-disabled-link
+test-json-gslt-disabled-link:
+	@$(MAKE) --no-print-directory \
+		BUILD=core CETTA_TEST_ISOLATED=1 \
+		ENABLE_JSON_GSLT=0 ENABLE_LIB_PROLOG=0 ENABLE_HTTP=0 \
+		test-json-gslt-disabled-link-body
+
+.PHONY: test-json-gslt-sanitizers
+test-json-gslt-sanitizers:
+	@$(MAKE) --no-print-directory -B \
+		BUILD=core ENABLE_GMP=0 ENABLE_LIB_PROLOG=0 ENABLE_HTTP=0 \
+		ENABLE_SANITIZERS=1 SANITIZERS=address,undefined \
+		ENABLE_PIC=0 CETTA_PROVENANCE_ASSERT=0 RHOCOST_COMMIT_AUDIT=0 \
+		ENABLE_PRIME_RECEIPT_PRIMARY_INDEX=0 \
+		ENABLE_PRIME_NEED_HEAP_INDEX=0 \
+		ENABLE_PRIME_NEED_CLOSURE_CAPTURE=0 \
+		ENABLE_PRIME_EVAL_STACK=0 \
+		test-language-def-parser-pack-v1-body
+	@$(MAKE) --no-print-directory -B \
+		BUILD=core CETTA_TEST_ISOLATED=1 \
+		ENABLE_JSON_GSLT=1 ENABLE_LIB_PROLOG=0 ENABLE_HTTP=0 \
+		ENABLE_SANITIZERS=1 SANITIZERS=address,undefined \
+		test-json-gslt-library-body
+
+.PHONY: test-json-gslt
+test-json-gslt: \
+		test-language-def-parser-pack-v1 \
+		test-json-gslt-mutation \
+		test-json-gslt-c-only-closure \
+		test-json-gslt-library \
+		test-io-json-bridge \
+		test-json-gslt-disabled-link
+
+.PHONY: test-io
+test-io:
+	@$(MAKE) -s BUILD=core ENABLE_HTTP=1 test-io-syntax test-io-runtime
+	@$(MAKE) -s BUILD=core ENABLE_HTTP=0 test-io-no-http test-io-rho-bridge
+	@$(MAKE) -s BUILD=core ENABLE_HTTP=0 test-io-json-bridge
+	@$(MAKE) -s BUILD=core ENABLE_HTTP=0 test-io-browser
+
+.PHONY: test-petta-imported-host-bridges
+ifeq ($(LIB_PROLOG_ENABLED),1)
+test-petta-imported-host-bridges: $(BIN)
+	@set -eu; \
+	actual=$$(mktemp "$(BOOTSTRAP_TMPDIR)/petta-imported-host.XXXXXX"); \
+	trap 'rm -f "$$actual"' EXIT INT TERM; \
+	$(BIN) --lang petta tests/petta/libpl_native_eval.metta > "$$actual"; \
+	diff -u tests/petta/libpl_native_eval.expected "$$actual"; \
+	$(BIN) --lang petta tests/petta/imported_swrite.metta > "$$actual"; \
+	diff -u tests/petta/imported_swrite.expected "$$actual"; \
+	echo "PASS: imported Prolog eval and swrite host bridges"
+else
+test-petta-imported-host-bridges:
+	@echo "test-petta-imported-host-bridges requires ENABLE_LIB_PROLOG=1" >&2
+	@exit 1
+endif
+
+.PHONY: test-petta-imported-python-host-bridge
+ifeq ($(ENABLE_PYTHON)$(LIB_PROLOG_ENABLED),11)
+test-petta-imported-python-host-bridge: $(BIN)
+	@set -eu; \
+	actual=$$(mktemp "$(BOOTSTRAP_TMPDIR)/petta-imported-python-host.XXXXXX"); \
+	trap 'rm -f "$$actual"' EXIT INT TERM; \
+	CETTA_PETTA_SEARCH_MACHINE=1 $(BIN) --lang petta \
+		tests/petta/libpl_py_call.metta > "$$actual"; \
+	diff -u tests/petta/libpl_py_call.expected "$$actual"; \
+	echo "PASS: imported Prolog to Python callback boundary"
+else
+test-petta-imported-python-host-bridge:
+	@echo "test-petta-imported-python-host-bridge requires BUILD=python and ENABLE_LIB_PROLOG=1" >&2
+	@exit 1
+endif
+
+test-petta-search-machine: test-petta-imported-host-bridges
+ifeq ($(ENABLE_PYTHON)$(LIB_PROLOG_ENABLED),11)
+test-petta-libpl: test-petta-imported-python-host-bridge
+endif
 
 .PHONY: test-gslt2parse-schema-v1 test-gslt2parse-schema-v1-native test-gslt2parse-c-horn-v1-native test-gslt2parse-c-horn-v1-differential test-gslt2parse-parser-action-bytecode-v1 test-gslt2parse-lookahead-semantics-v1 test-gslt2parse-parser-pack-guard-compiler-v1 test-gslt2parse-parser-pack-guard-regular-v1 test-gslt2parse-parser-pack-lr1-v1 test-gslt2parse-parser-pack-guard-plan-he-v1 test-gslt2parse-parser-pack-guard-plan-prime-v1 test-gslt2parse-parser-pack-abi-v1-native test-gslt2parse-parser-pack-abi-v1-matrix test-gslt2parse-parser-term-projection-v1-native test-gslt2parse-parser-atom-projection-v1-native test-gslt2parse-parser-atom-projection-closure-v1 test-gslt2parse-semantic-mask-span-compiler-v1 test-gslt2parse-parser-pack-gll-v1-native test-gslt2parse-parser-pack-gll-v1-matrix test-gslt2parse-regular-span-dfa-v1-native test-gslt2parse-regular-span-dfa-v1-matrix test-term-universe-backend-add-abi bench-space-scale-ladder
 .PHONY: list bench-index FORCE all core python mork main pathmap full profile clean bridge-setup doctor-bridge doctor-gmp test-bigint-no-gmp-fallback test-rational-no-gmp-fallback test test-light test-correctness test-heavy test-heavy-golden list-heavy-diagnostics probe-heavy-diagnostics test-correctness-all test-manifest test-manifest-check test-manifest-sync test-runtime-stats test-runtime-stats-lane test-runtime-stats-metta-suite test-backends test-he-contract-suite refresh-he-contract-tests refresh-he-compat-catalog test-he-compat-semantic-suite probe-he-compat-tier2 probe-he-compat-runnable-corpus test-mork-lane test-mork-lane-core test-mork-basic-pathmap-guard test-mork-runtime-stats-lane test-mork-runtime-stats-isolation test-closed-stream-fastpath test-closed-stream-runtime-stats test-parse-depth-guard test-stdlib-growth-memory-regression test-asan test-asan-main test-asan-mork test-pathmap-lane test-pathmap-lane-body test-pathmap-runtime-stats-lane test-pathmap-runtime-stats-lane-body test-mm2-mork-program-space test-mm2-exec-basic test-mm2-kiss-suite test-mm2-conformance-var-binding test-mm2-conformance-lean-suite test-mm2-sink-suite test-pathmap-bridge-v2 test-pathmap-long-string-regression test-pathmap-match-chain test-mork-lib-pathmap test-mork-open-act test-pretty-vars-flags test-pretty-namespaces-flags test-help-flags test-rhocalc test-lib-parse-oracles test-rhocalc-lib-parse-reference test-lib-parse-shared-cert test-lib-parse-slr-prepared test-lib-parse-gll-utf8-forest test-lib-parse-native-gparse test-lib-parse-generalized-native-integration test-lib-parse-generalized-cli test-lib-parse-generalized test-lib-parse-bounded test-rhocalc-runtime-stats test-variant-shape-roundtrip test-rhometta-payload-map-capacity-c test-space-term-universe-membership test-term-universe-store-abi test-pathmap-backend-primary-destructive-abi test-pathmap-backend-primary-replace-abi test-pathmap-typed-query-abi test-fallback-eval-session test-import-modes bench bench-light bench-correctness bench-performance-light bench-optional-bridge-light bench-capacity bench-heavy bench-prime-light bench-prime-heavy prepare-bio-eqtl-act bench-bio-eqtl-act-modes prepare-bio-1m-act bench-bio-1m-act-attach bench-bio-1m-act-modes test-duplicate-multiplicity-backends oracle-refresh bench-d3 bench-d3-backends bench-d3-nodup bench-d3-nodup-backends probe-d3-nodup probe-d3-nodup-backends probe-fc-native-memory bench-conj-backends bench-conj12-backends bench-dup-conj-backends bench-d4 bench-d4-nodup bench-d4-backends bench-d4-nodup-backends bench-rho-fanout bench-rho-comm-frontier bench-rho-comm-contention bench-rho-pipeline-forward bench-rho-route-synthesis bench-rho-demand-index bench-rho-indexed-demand bench-rho-route-policy bench-rho-certificate-quorum bench-compare-petta bench-mork-add-interface bench-mork-add-interface-timing bench-mork-bridge-add bench-mork-bridge-query bench-mork-bridge-scalar-cursor bench-mork-bridge-space-ops bench-answer-ref-demand bench-space-backend-matrix bench-space-transfer-matrix bench-ffi-friction-light bench-ffi-friction-basic bench-ffi-friction-stress bench-ffi-friction-heavy bench-closed-stream-fastpath bench-weird-audit tail-recursion-check compile-test refresh-he-matrices promote-runtime perf-list perf-show-baselines perf-capacity-tu perf-bench-tu perf-compare-tu probe-epoch-runtime-witness

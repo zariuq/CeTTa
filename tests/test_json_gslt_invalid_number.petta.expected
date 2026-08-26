@@ -1,0 +1,2 @@
+true
+(Error (__cetta_lib_json_stringify (JsonNumber "01")) "JSON syntax rejected by authored grammar")

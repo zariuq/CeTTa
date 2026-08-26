@@ -21,6 +21,96 @@ static bool expect(TestCounts *counts, bool condition, const char *label) {
     return false;
 }
 
+static void maybe_emit_wire_snapshot(
+    TestCounts *counts,
+    const uint8_t *wire,
+    size_t wire_size) {
+    const char *output_path = getenv("CETTA_NATIVE_FOREST_WIRE_OUT");
+    FILE *output;
+    bool written;
+
+    if (!output_path || output_path[0] == '\0')
+        return;
+    output = fopen(output_path, "wb");
+    if (!expect(counts, output != NULL,
+                "open GLL forest wire qualification output")) {
+        return;
+    }
+    written = fwrite(wire, 1u, wire_size, output) == wire_size;
+    if (fclose(output) != 0)
+        written = false;
+    (void)expect(counts, written,
+                 "emit GLL forest wire qualification output");
+}
+
+static void qualify_wire_snapshot(
+    TestCounts *counts,
+    const CettaLpNativeUtf8Forest *forest) {
+    char error[256] = {0};
+    size_t wire_size = 0u;
+    size_t first_written = 0u;
+    size_t second_written = 0u;
+    size_t expected_size;
+    uint8_t *first;
+    uint8_t *second;
+
+    if (!expect(
+            counts,
+            cetta_lp_native_utf8_forest_wire_size(
+                forest, &wire_size, error, sizeof(error)),
+            error[0] ? error : "size canonical GLL forest wire")) {
+        return;
+    }
+    expected_size = 4u + 4u *
+        (14u + 14u * (size_t)forest->node_len +
+         6u * (size_t)forest->choice_len +
+         (size_t)forest->root_len +
+         (size_t)forest->expected_terminal_len +
+         2u * (size_t)forest->scalar_len + 1u);
+    (void)expect(counts, wire_size == expected_size,
+                 "GLL forest wire has the versioned canonical extent");
+    first = malloc(wire_size);
+    second = malloc(wire_size);
+    if (!expect(counts, first && second,
+                "allocate GLL forest wire qualification buffers")) {
+        free(second);
+        free(first);
+        return;
+    }
+    error[0] = '\0';
+    if (expect(
+        counts,
+        cetta_lp_native_utf8_forest_wire_write(
+            forest, first, wire_size, &first_written,
+            error, sizeof(error)) &&
+            first_written == wire_size &&
+            memcmp(first, "CNF1", 4u) == 0,
+        error[0] ? error : "write canonical GLL forest wire")) {
+        maybe_emit_wire_snapshot(counts, first, wire_size);
+    }
+    error[0] = '\0';
+    (void)expect(
+        counts,
+        cetta_lp_native_utf8_forest_wire_write(
+            forest, second, wire_size, &second_written,
+            error, sizeof(error)) &&
+            second_written == wire_size &&
+            memcmp(first, second, wire_size) == 0,
+        error[0] ? error : "GLL forest wire is deterministic");
+    memset(second, 0x5a, wire_size);
+    second_written = wire_size;
+    error[0] = '\0';
+    (void)expect(
+        counts,
+        !cetta_lp_native_utf8_forest_wire_write(
+            forest, second, wire_size - 1u, &second_written,
+            error, sizeof(error)) &&
+            second_written == 0u && second[0] == 0x5au,
+        "undersized GLL forest wire output is fail-atomic");
+    free(second);
+    free(first);
+}
+
 static bool forest_node_equal(
     const CettaLpNativeUtf8ForestNode *lhs,
     const CettaLpNativeUtf8ForestNode *rhs) {
@@ -354,6 +444,26 @@ static void test_unicode_single_pass(TestCounts *counts) {
                  forest_kind_count(&forest,
                                    CETTA_LP_NATIVE_UTF8_FOREST_TERM) == 3u,
                  "reachable terminal count");
+    error[0] = '\0';
+    (void)expect(
+        counts,
+        cetta_lp_native_utf8_forest_validate(
+            &forest, error, sizeof(error)),
+        error[0] ? error : "validate exported GLL forest contract");
+    qualify_wire_snapshot(counts, &forest);
+    if (forest.root_len > 0u && forest.roots[0] < forest.node_len) {
+        CettaLpNativeUtf8ForestNode *root = &forest.nodes[forest.roots[0]];
+        uint32_t saved_byte_right = root->byte_right;
+        root->byte_right = saved_byte_right + 1u;
+        error[0] = '\0';
+        (void)expect(
+            counts,
+            !cetta_lp_native_utf8_forest_validate(
+                &forest, error, sizeof(error)) &&
+                strstr(error, "node span") != NULL,
+            "GLL forest validator rejects a corrupted byte span");
+        root->byte_right = saved_byte_right;
+    }
     cetta_lp_native_utf8_forest_free(&forest);
     cetta_lp_native_grammar_free(&grammar);
 }
@@ -657,6 +767,12 @@ static void test_descriptor_limit(TestCounts *counts) {
     (void)expect(counts, forest.decoded_byte_len == sizeof(input) &&
                          forest.source_pass_count == 1u,
                  "resource path retains one-pass input accounting");
+    error[0] = '\0';
+    (void)expect(
+        counts,
+        cetta_lp_native_utf8_forest_validate(
+            &forest, error, sizeof(error)),
+        error[0] ? error : "validate typed GLL resource result");
     cetta_lp_native_utf8_forest_free(&forest);
     cetta_lp_native_grammar_free(&grammar);
 }
@@ -811,6 +927,12 @@ static void test_lattice_witnesses_and_corruption(TestCounts *counts) {
                  full_root >= 0 &&
                  forest.nodes[full_root].choice_len == 2u,
                  "GLL packs equal-span witness ambiguity");
+    error[0] = '\0';
+    (void)expect(
+        counts,
+        cetta_lp_native_utf8_forest_validate(
+            &forest, error, sizeof(error)),
+        error[0] ? error : "validate ambiguous GLL witness forest");
     cetta_lp_native_utf8_forest_free(&forest);
 
     error[0] = '\0';
@@ -911,6 +1033,12 @@ static void test_zero_width_witness_sequence(TestCounts *counts) {
             forest.root_len == 1u && root_has_extent(&forest, 0u, 2u) &&
             forest_has_witness(&forest, 1u, 1u, 1u, 1u, 1u, 42u),
         "GLL composes a zero-width witness between consuming terminals");
+    error[0] = '\0';
+    (void)expect(
+        counts,
+        cetta_lp_native_utf8_forest_validate(
+            &forest, error, sizeof(error)),
+        error[0] ? error : "validate zero-width GLL witness forest");
     cetta_lp_native_utf8_forest_free(&forest);
 
     error[0] = '\0';

@@ -110,7 +110,7 @@ static const CettaNikDirectAuthorityV1 g_gdl_type_of_native_authority_v1 = {
 /* Language-owned capabilities for one exact GDL typing request.  Their
  * numeric identities are stable only within this family; NIK compares them
  * opaquely and never assigns a global mode rank. */
-static const CettaNikNativeCapabilityIdV1
+static const CettaNikImplementationCapabilityIdV1
     g_gdl_type_of_native_capabilities_v1[] = {
         UINT64_C(0x67646c2e65786163), /* exact ordered proof fibre */
         UINT64_C(0x67646c2e6e617469), /* native proof construction */
@@ -3287,8 +3287,8 @@ static CettaGdlTypeOfNativeQueryV1 gdl_native_query_outcome(
     CettaGdlTypeOfNativeQueryV1 result = {
         .kind = CETTA_GDL_TYPE_OF_NATIVE_QUERY_OUTCOME_V1,
         .selection = {
-            .status = CETTA_NIK_NATIVE_SELECTION_STATUS_OK_V1,
-            .kind = CETTA_NIK_NATIVE_SELECTION_NONE_V1,
+            .status = CETTA_NIK_IMPLEMENTATION_SELECTION_STATUS_OK_V1,
+            .kind = CETTA_NIK_IMPLEMENTATION_SELECTION_NONE_V1,
             .greatest_index = SIZE_MAX,
         },
         .value.outcome = outcome,
@@ -3314,8 +3314,8 @@ static CettaGdlTypeOfNativeQueryV1 gdl_native_construct_v1(
         CettaGdlTypeOfNativeQueryV1 fault = {
             .kind = CETTA_GDL_TYPE_OF_NATIVE_QUERY_ENGINE_FAULT_V1,
             .selection = {
-                .status = CETTA_NIK_NATIVE_SELECTION_STATUS_OK_V1,
-                .kind = CETTA_NIK_NATIVE_SELECTION_NONE_V1,
+                .status = CETTA_NIK_IMPLEMENTATION_SELECTION_STATUS_OK_V1,
+                .kind = CETTA_NIK_IMPLEMENTATION_SELECTION_NONE_V1,
                 .greatest_index = SIZE_MAX,
             },
             .value.fault = CETTA_NIK_ENGINE_FAULT_UNAVAILABLE,
@@ -3326,8 +3326,8 @@ static CettaGdlTypeOfNativeQueryV1 gdl_native_construct_v1(
         CettaGdlTypeOfNativeQueryV1 stale = {
             .kind = CETTA_GDL_TYPE_OF_NATIVE_QUERY_STALE_V1,
             .selection = {
-                .status = CETTA_NIK_NATIVE_SELECTION_STATUS_OK_V1,
-                .kind = CETTA_NIK_NATIVE_SELECTION_NONE_V1,
+                .status = CETTA_NIK_IMPLEMENTATION_SELECTION_STATUS_OK_V1,
+                .kind = CETTA_NIK_IMPLEMENTATION_SELECTION_NONE_V1,
                 .greatest_index = SIZE_MAX,
             },
         };
@@ -3374,33 +3374,35 @@ static CettaGdlTypeOfNativeQueryV1 gdl_native_construct_v1(
         strcmp(head, "type:of") == 0 ? node->type : NULL);
 }
 
-static CettaNikNativeSelectionV1 gdl_native_select_v1(
+static CettaNikImplementationSelectionV1 gdl_native_select_v1(
     size_t *frontier_index_out) {
-    const CettaNikLicensedNativeRealizationV1 realization = {
-        .realization_identity =
+    const CettaNikLicensedImplementationV1 implementation = {
+        .calculus_identity =
+            g_gdl_type_of_native_authority_v1.authority_identity,
+        .implementation_identity =
             g_gdl_type_of_native_authority_v1.realization_identity,
         .capabilities = g_gdl_type_of_native_capabilities_v1,
         .capability_count =
             sizeof(g_gdl_type_of_native_capabilities_v1) /
             sizeof(g_gdl_type_of_native_capabilities_v1[0]),
     };
-    const CettaNikLicensedNativeFamilyV1 family = {
-        .realizations = &realization,
-        .realization_count = 1u,
+    const CettaNikLicensedImplementationFamilyV1 family = {
+        .implementations = &implementation,
+        .implementation_count = 1u,
     };
-    const CettaNikNativeCapabilityRequestV1 request = {
+    const CettaNikImplementationCapabilityRequestV1 request = {
         .required_capabilities = g_gdl_type_of_native_capabilities_v1,
-        .required_capability_count = realization.capability_count,
+        .required_capability_count = implementation.capability_count,
     };
-    return cetta_nik_native_calculus_select_v1(
+    return cetta_nik_licensed_implementation_select_v1(
         &family, &request, frontier_index_out, 1u);
 }
 
 static bool gdl_native_selection_is_unique_greatest_v1(
-    const CettaNikNativeSelectionV1 *selection, size_t frontier_index) {
+    const CettaNikImplementationSelectionV1 *selection, size_t frontier_index) {
     return selection &&
-        selection->status == CETTA_NIK_NATIVE_SELECTION_STATUS_OK_V1 &&
-        selection->kind == CETTA_NIK_NATIVE_SELECTION_UNIQUE_GREATEST_V1 &&
+        selection->status == CETTA_NIK_IMPLEMENTATION_SELECTION_STATUS_OK_V1 &&
+        selection->kind == CETTA_NIK_IMPLEMENTATION_SELECTION_UNIQUE_GREATEST_V1 &&
         selection->eligible_count == 1u &&
         selection->frontier_count == 1u &&
         selection->greatest_index == 0u && frontier_index == 0u;
@@ -3408,7 +3410,7 @@ static bool gdl_native_selection_is_unique_greatest_v1(
 
 static CettaGdlTypeOfNativeQueryV1 gdl_native_selected_result_v1(
     CettaGdlTypeOfNativeQueryV1 result,
-    CettaNikNativeSelectionV1 selection) {
+    CettaNikImplementationSelectionV1 selection) {
     result.selection = selection;
     if (result.kind == CETTA_GDL_TYPE_OF_NATIVE_QUERY_OUTCOME_V1)
         result.selected_realization_identity =
@@ -3429,7 +3431,7 @@ CettaGdlTypeOfNativeQueryV1 cetta_gdl_type_of_native_serve_v1(
             native, token, judgment, max_proofs);
 
     size_t frontier_index = SIZE_MAX;
-    CettaNikNativeSelectionV1 selection = gdl_native_select_v1(
+    CettaNikImplementationSelectionV1 selection = gdl_native_select_v1(
         &frontier_index);
     if (!gdl_native_selection_is_unique_greatest_v1(
             &selection, frontier_index)) {
@@ -3454,8 +3456,8 @@ CettaGdlTypeOfNativeQueryV1 cetta_gdl_type_of_native_synthesize_v1(
         CettaGdlTypeOfNativeQueryV1 fault = {
             .kind = CETTA_GDL_TYPE_OF_NATIVE_QUERY_ENGINE_FAULT_V1,
             .selection = {
-                .status = CETTA_NIK_NATIVE_SELECTION_STATUS_OK_V1,
-                .kind = CETTA_NIK_NATIVE_SELECTION_NONE_V1,
+                .status = CETTA_NIK_IMPLEMENTATION_SELECTION_STATUS_OK_V1,
+                .kind = CETTA_NIK_IMPLEMENTATION_SELECTION_NONE_V1,
                 .greatest_index = SIZE_MAX,
             },
             .value.fault = CETTA_NIK_ENGINE_FAULT_UNAVAILABLE,
@@ -3466,15 +3468,15 @@ CettaGdlTypeOfNativeQueryV1 cetta_gdl_type_of_native_synthesize_v1(
         CettaGdlTypeOfNativeQueryV1 stale = {
             .kind = CETTA_GDL_TYPE_OF_NATIVE_QUERY_STALE_V1,
             .selection = {
-                .status = CETTA_NIK_NATIVE_SELECTION_STATUS_OK_V1,
-                .kind = CETTA_NIK_NATIVE_SELECTION_NONE_V1,
+                .status = CETTA_NIK_IMPLEMENTATION_SELECTION_STATUS_OK_V1,
+                .kind = CETTA_NIK_IMPLEMENTATION_SELECTION_NONE_V1,
                 .greatest_index = SIZE_MAX,
             },
         };
         return stale;
     }
     size_t frontier_index = SIZE_MAX;
-    CettaNikNativeSelectionV1 selection = gdl_native_select_v1(
+    CettaNikImplementationSelectionV1 selection = gdl_native_select_v1(
         &frontier_index);
     if (!gdl_native_selection_is_unique_greatest_v1(
             &selection, frontier_index)) {
@@ -3898,7 +3900,7 @@ static GdlNativeBuildV1 gdl_native_ground_derive_v1(
 }
 
 static CettaGdlTypeOfNativeGroundV1 gdl_native_ground_outcome_v1(
-    CettaNikOutcomeV1 outcome, CettaNikNativeSelectionV1 selection) {
+    CettaNikOutcomeV1 outcome, CettaNikImplementationSelectionV1 selection) {
     CettaGdlTypeOfNativeGroundV1 result = {
         .kind = CETTA_GDL_TYPE_OF_NATIVE_GROUND_OUTCOME_V1,
         .selection = selection,
@@ -3921,8 +3923,8 @@ cetta_gdl_type_of_native_construct_ground_literal_v1(
         return (CettaGdlTypeOfNativeGroundV1){
             .kind = CETTA_GDL_TYPE_OF_NATIVE_GROUND_ENGINE_FAULT_V1,
             .selection = {
-                .status = CETTA_NIK_NATIVE_SELECTION_STATUS_OK_V1,
-                .kind = CETTA_NIK_NATIVE_SELECTION_NONE_V1,
+                .status = CETTA_NIK_IMPLEMENTATION_SELECTION_STATUS_OK_V1,
+                .kind = CETTA_NIK_IMPLEMENTATION_SELECTION_NONE_V1,
                 .greatest_index = SIZE_MAX,
             },
             .value.fault = CETTA_NIK_ENGINE_FAULT_UNAVAILABLE,
@@ -3932,14 +3934,14 @@ cetta_gdl_type_of_native_construct_ground_literal_v1(
         return (CettaGdlTypeOfNativeGroundV1){
             .kind = CETTA_GDL_TYPE_OF_NATIVE_GROUND_STALE_V1,
             .selection = {
-                .status = CETTA_NIK_NATIVE_SELECTION_STATUS_OK_V1,
-                .kind = CETTA_NIK_NATIVE_SELECTION_NONE_V1,
+                .status = CETTA_NIK_IMPLEMENTATION_SELECTION_STATUS_OK_V1,
+                .kind = CETTA_NIK_IMPLEMENTATION_SELECTION_NONE_V1,
                 .greatest_index = SIZE_MAX,
             },
         };
     }
     size_t frontier_index = SIZE_MAX;
-    CettaNikNativeSelectionV1 selection = gdl_native_select_v1(
+    CettaNikImplementationSelectionV1 selection = gdl_native_select_v1(
         &frontier_index);
     if (!gdl_native_selection_is_unique_greatest_v1(
             &selection, frontier_index)) {

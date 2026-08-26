@@ -196,7 +196,7 @@ bool cetta_gdl_stratified_model_target_slice_v1(
 
 bool cetta_gdl_stratified_model_selection_v1(
     const CettaGdlStratifiedModelV1 *model,
-    CettaNikNativeSelectionV1 *selection_out,
+    CettaNikImplementationSelectionV1 *selection_out,
     uint64_t *realization_identity_out);
 
 typedef struct {

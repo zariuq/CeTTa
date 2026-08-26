@@ -540,7 +540,7 @@ int main(int argc, char **argv) {
                   native_query.value.outcome ==
                       CETTA_NIK_OUTCOME_ESTABLISHED &&
                   native_query.selection.kind ==
-                      CETTA_NIK_NATIVE_SELECTION_UNIQUE_GREATEST_V1 &&
+                      CETTA_NIK_IMPLEMENTATION_SELECTION_UNIQUE_GREATEST_V1 &&
                   native_query.selection.eligible_count == 1u &&
                   native_query.selection.frontier_count == 1u &&
                   native_query.selection.greatest_index == 0u &&
@@ -575,7 +575,7 @@ int main(int argc, char **argv) {
                       synthesized.value.outcome ==
                           CETTA_NIK_OUTCOME_ESTABLISHED &&
                       synthesized.selection.kind ==
-                          CETTA_NIK_NATIVE_SELECTION_UNIQUE_GREATEST_V1 &&
+                          CETTA_NIK_IMPLEMENTATION_SELECTION_UNIQUE_GREATEST_V1 &&
                       synthesized.type &&
                       atom_eq(synthesized.type, expected_type) &&
                       native_proof_bags_equal(
@@ -593,7 +593,7 @@ int main(int argc, char **argv) {
                       hosted_synthesized.native.value.outcome ==
                           CETTA_NIK_OUTCOME_ESTABLISHED &&
                       hosted_synthesized.native.selection.kind ==
-                          CETTA_NIK_NATIVE_SELECTION_UNIQUE_GREATEST_V1 &&
+                          CETTA_NIK_IMPLEMENTATION_SELECTION_UNIQUE_GREATEST_V1 &&
                       hosted_synthesized.native.type &&
                       atom_eq(
                           hosted_synthesized.native.type,
@@ -794,7 +794,7 @@ int main(int argc, char **argv) {
             native, &stale_native_token, first_case->expr.elems[2], 0u);
     CHECK(stale_native.kind == CETTA_GDL_TYPE_OF_NATIVE_QUERY_STALE_V1 &&
               stale_native.selection.kind ==
-                  CETTA_NIK_NATIVE_SELECTION_NONE_V1 &&
+                  CETTA_NIK_IMPLEMENTATION_SELECTION_NONE_V1 &&
               stale_native.selected_realization_identity == 0u &&
               stale_native.proof_count == 0u,
           "a stale native admission deoptimizes without a semantic verdict");
@@ -914,7 +914,7 @@ int main(int argc, char **argv) {
               stale_host_query.native.kind ==
                   CETTA_GDL_TYPE_OF_NATIVE_QUERY_STALE_V1 &&
               stale_host_query.native.selection.kind ==
-                  CETTA_NIK_NATIVE_SELECTION_NONE_V1,
+                  CETTA_NIK_IMPLEMENTATION_SELECTION_NONE_V1,
           "a changed hosting Space deauthorizes the old native context without refutation");
     CettaGdlTypeOfHostAdmissionV1 refreshed_host_admission =
         cetta_gdl_type_of_host_admit_v1(
@@ -933,7 +933,7 @@ int main(int argc, char **argv) {
               refreshed_host_query.native.value.outcome ==
                   CETTA_NIK_OUTCOME_ESTABLISHED &&
               refreshed_host_query.native.selection.kind ==
-                  CETTA_NIK_NATIVE_SELECTION_UNIQUE_GREATEST_V1 &&
+                  CETTA_NIK_IMPLEMENTATION_SELECTION_UNIQUE_GREATEST_V1 &&
               space_read_token_matches_live_space(
                   refreshed_host_query.receipt.read, &hosted_space),
           "the unchanged authored package may be re-admitted at the new Space revision");

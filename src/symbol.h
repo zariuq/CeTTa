@@ -286,6 +286,20 @@ static inline uint64_t symbol_table_instance_id(const SymbolTable *st) {
     X(lib_fs_write_text, "__cetta_lib_fs_write_text") \
     X(lib_fs_append_text, "__cetta_lib_fs_append_text") \
     X(lib_fs_read_lines, "__cetta_lib_fs_read_lines") \
+    X(lib_io_capabilities, "__cetta_lib_io_capabilities") \
+    X(lib_io_submit, "__cetta_lib_io_submit") \
+    X(lib_io_poll, "__cetta_lib_io_poll") \
+    X(lib_io_cancel, "__cetta_lib_io_cancel") \
+    X(lib_json_capabilities_v1, "__cetta_lib_json_capabilities_v1") \
+    X(lib_json_parse_v1, "__cetta_lib_json_parse_v1") \
+    X(lib_json_parse, "__cetta_lib_json_parse") \
+    X(lib_json_stringify_v1, "__cetta_lib_json_stringify_v1") \
+    X(lib_json_stringify, "__cetta_lib_json_stringify") \
+    X(lib_json_members_v1, "__cetta_lib_json_members_v1") \
+    X(lib_json_get_all_v1, "__cetta_lib_json_get_all_v1") \
+    X(lib_json_get_first_v1, "__cetta_lib_json_get_first_v1") \
+    X(lib_json_get_last_v1, "__cetta_lib_json_get_last_v1") \
+    X(lib_json_object_get, "__cetta_lib_json_object_get") \
     X(lib_str_length, "__cetta_lib_str_length") \
     X(lib_str_concat, "__cetta_lib_str_concat") \
     X(lib_str_split, "__cetta_lib_str_split") \

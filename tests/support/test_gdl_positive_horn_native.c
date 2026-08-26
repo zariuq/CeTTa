@@ -486,7 +486,7 @@ static void check_gdl_stratified_model(Atom *source) {
         goto done;
 
     CettaNikDirectAuthorityTokenV1 source_token = {0};
-    CettaNikNativeSelectionV1 source_selection = {0};
+    CettaNikImplementationSelectionV1 source_selection = {0};
     uint64_t source_realization = 0u;
     const char *source_digest = NULL;
     const char *profile_digest = NULL;
@@ -504,7 +504,7 @@ static void check_gdl_stratified_model(Atom *source) {
               cetta_gdl_stratified_model_selection_v1(
                   model, &source_selection, &source_realization) &&
               source_selection.kind ==
-                  CETTA_NIK_NATIVE_SELECTION_UNIQUE_GREATEST_V1 &&
+                  CETTA_NIK_IMPLEMENTATION_SELECTION_UNIQUE_GREATEST_V1 &&
               source_selection.eligible_count == 1u &&
               source_selection.frontier_count == 1u &&
               source_realization ==
@@ -1390,7 +1390,7 @@ int main(int argc, char **argv) {
     CHECK(ground.kind == CETTA_GDL_TYPE_OF_NATIVE_GROUND_OUTCOME_V1 &&
               ground.value.outcome == CETTA_NIK_OUTCOME_ESTABLISHED &&
               ground.selection.kind ==
-                  CETTA_NIK_NATIVE_SELECTION_UNIQUE_GREATEST_V1 &&
+                  CETTA_NIK_IMPLEMENTATION_SELECTION_UNIQUE_GREATEST_V1 &&
               ground.proof_count == 1u && ground.type &&
               expr_named(
                   ground.proofs[0], "gdl:native-ground-literal-v1", 6u),
@@ -1505,14 +1505,7 @@ int main(int argc, char **argv) {
     Atom *episode_goal_proof = first_occurrence_proof(episode_goal.result);
     CHECK(episode_goal.kind ==
                   CETTA_GDL_POSITIVE_HORN_RUN_COMPLETE_V1 &&
-              episode_goal.selection.status ==
-                  CETTA_NIK_NATIVE_SELECTION_STATUS_OK_V1 &&
-              episode_goal.selection.kind ==
-                  CETTA_NIK_NATIVE_SELECTION_UNIQUE_GREATEST_V1 &&
-              episode_goal.selection.eligible_count == 2u &&
-              episode_goal.selection.frontier_count == 1u &&
-              episode_goal.selection.greatest_index == 1u &&
-              episode_goal.selected_realization_identity ==
+              episode_goal.implementation_identity ==
                   cetta_gdl_positive_horn_native_authority_v1()
                       ->realization_identity &&
               result_occurrence_count(episode_goal.result) == 2u &&
@@ -1553,9 +1546,7 @@ int main(int argc, char **argv) {
             native, &token, &episode_result_arena,
             goal_query, 8u, 100000u, 100u);
     CHECK(base_goal.kind == CETTA_GDL_POSITIVE_HORN_RUN_COMPLETE_V1 &&
-              base_goal.selection.kind ==
-                  CETTA_NIK_NATIVE_SELECTION_UNIQUE_GREATEST_V1 &&
-              base_goal.selected_realization_identity ==
+              base_goal.implementation_identity ==
                   cetta_gdl_positive_horn_native_authority_v1()
                       ->realization_identity &&
               result_occurrence_count(base_goal.result) == 0u,
@@ -1571,10 +1562,7 @@ int main(int argc, char **argv) {
             goal_query, 8u, 100000u, 100u)
         : (CettaGdlPositiveHornRunV1){0};
     CHECK(stale_episode_run.kind == CETTA_GDL_POSITIVE_HORN_RUN_STALE_V1 &&
-              stale_episode_run.selection.kind ==
-                  CETTA_NIK_NATIVE_SELECTION_NONE_V1 &&
-              stale_episode_run.selection.greatest_index == SIZE_MAX &&
-              stale_episode_run.selected_realization_identity == 0u &&
+              stale_episode_run.implementation_identity == 0u &&
               stale_episode_run.result == NULL,
           "a stale episode revision deoptimizes without semantic rejection");
 
@@ -1692,9 +1680,7 @@ int main(int argc, char **argv) {
         : (CettaGdlPositiveHornRunV1){0};
     CHECK(hosted_goal.kind ==
                   CETTA_GDL_POSITIVE_HORN_RUN_COMPLETE_V1 &&
-              hosted_goal.selection.kind ==
-                  CETTA_NIK_NATIVE_SELECTION_UNIQUE_GREATEST_V1 &&
-              hosted_goal.selected_realization_identity ==
+              hosted_goal.implementation_identity ==
                   cetta_gdl_positive_horn_native_authority_v1()
                       ->realization_identity &&
               result_occurrence_count(hosted_goal.result) == 2u &&
@@ -1720,9 +1706,7 @@ int main(int argc, char **argv) {
         : (CettaGdlPositiveHornRunV1){0};
     CHECK(stale_hosted_goal.kind ==
                   CETTA_GDL_POSITIVE_HORN_RUN_STALE_V1 &&
-              stale_hosted_goal.selection.kind ==
-                  CETTA_NIK_NATIVE_SELECTION_NONE_V1 &&
-              stale_hosted_goal.selected_realization_identity == 0u &&
+              stale_hosted_goal.implementation_identity == 0u &&
               stale_hosted_goal.result == NULL,
           "hosted episode staleness deoptimizes rather than refuting");
     arena_free(&episode_result_arena);
@@ -1748,14 +1732,7 @@ int main(int argc, char **argv) {
         fputc('\n', stderr);
     }
     CHECK(player_run.kind == CETTA_GDL_POSITIVE_HORN_RUN_COMPLETE_V1 &&
-              player_run.selection.status ==
-                  CETTA_NIK_NATIVE_SELECTION_STATUS_OK_V1 &&
-              player_run.selection.kind ==
-                  CETTA_NIK_NATIVE_SELECTION_UNIQUE_GREATEST_V1 &&
-              player_run.selection.eligible_count == 2u &&
-              player_run.selection.frontier_count == 1u &&
-              player_run.selection.greatest_index == 1u &&
-              player_run.selected_realization_identity ==
+              player_run.implementation_identity ==
                   cetta_gdl_positive_horn_native_authority_v1()
                       ->realization_identity &&
               result_occurrence_count(player_run.result) == 2u &&
@@ -1799,9 +1776,7 @@ int main(int argc, char **argv) {
             native, &stale, &result_arena, player_query,
             8u, 100000u, 100u);
     CHECK(stale_run.kind == CETTA_GDL_POSITIVE_HORN_RUN_STALE_V1 &&
-              stale_run.selection.kind ==
-                  CETTA_NIK_NATIVE_SELECTION_NONE_V1 &&
-              stale_run.selected_realization_identity == 0u &&
+              stale_run.implementation_identity == 0u &&
               stale_run.result == NULL,
           "a changed realization identity deauthorizes execution without refutation");
 
@@ -1943,9 +1918,7 @@ int main(int argc, char **argv) {
         : (CettaGdlPositiveHornRunV1){0};
     CHECK(missing_run.kind ==
                   CETTA_GDL_POSITIVE_HORN_RUN_COMPLETE_V1 &&
-              missing_run.selection.kind ==
-                  CETTA_NIK_NATIVE_SELECTION_UNIQUE_GREATEST_V1 &&
-              missing_run.selected_realization_identity ==
+              missing_run.implementation_identity ==
                   cetta_gdl_finite_view_native_authority_v1()
                       ->realization_identity &&
               result_occurrence_count(missing_run.result) == 1u &&

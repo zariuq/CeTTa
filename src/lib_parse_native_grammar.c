@@ -8290,6 +8290,449 @@ void cetta_lp_native_utf8_forest_free(
     memset(forest, 0, sizeof(*forest));
 }
 
+bool cetta_lp_native_utf8_forest_validate(
+    const CettaLpNativeUtf8Forest *forest,
+    char *error_buf,
+    size_t error_buf_size) {
+    uint8_t *reachable = NULL;
+    uint32_t *stack = NULL;
+    uint32_t stack_len = 0u;
+    uint32_t choice_cursor = 0u;
+    uint32_t index;
+    bool valid = false;
+
+    if (error_buf && error_buf_size > 0u)
+        error_buf[0] = '\0';
+    if (!forest ||
+        (uint32_t)forest->outcome >
+            (uint32_t)CETTA_LP_NATIVE_UTF8_FOREST_RESOURCE_LIMIT ||
+        (forest->node_len > 0u && !forest->nodes) ||
+        (forest->choice_len > 0u && !forest->choices) ||
+        (forest->root_len > 0u && !forest->roots) ||
+        (forest->expected_terminal_len > 0u &&
+         !forest->expected_terminal_ids) ||
+        (forest->scalar_len > 0u && !forest->codepoints) ||
+        !forest->byte_offsets ||
+        !utf8_decode_receipt_valid(
+            forest->input_byte_len, forest->decoded_byte_len,
+            forest->source_pass_count)) {
+        slr_summary_set_error(error_buf, error_buf_size,
+                              "malformed UTF-8 forest header");
+        return false;
+    }
+    if (forest->byte_offsets[0] != 0u ||
+        forest->byte_offsets[forest->scalar_len] !=
+            forest->input_byte_len) {
+        slr_summary_set_error(error_buf, error_buf_size,
+                              "UTF-8 forest byte extent is invalid");
+        return false;
+    }
+    for (index = 0u; index < forest->scalar_len; index++) {
+        uint32_t scalar = forest->codepoints[index];
+        uint32_t left = forest->byte_offsets[index];
+        uint32_t right = forest->byte_offsets[index + 1u];
+        if (!utf8_scalar_valid(scalar) || right < left ||
+            right - left != utf8_scalar_width(scalar)) {
+            slr_summary_set_error(
+                error_buf, error_buf_size,
+                "UTF-8 forest scalar/byte index is invalid");
+            return false;
+        }
+    }
+    if (forest->farthest_scalar > forest->scalar_len ||
+        forest->farthest_byte !=
+            forest->byte_offsets[forest->farthest_scalar]) {
+        slr_summary_set_error(error_buf, error_buf_size,
+                              "UTF-8 forest farthest position is invalid");
+        return false;
+    }
+    for (index = 0u; index < forest->expected_terminal_len; index++) {
+        if (index > 0u &&
+            forest->expected_terminal_ids[index - 1u] >=
+                forest->expected_terminal_ids[index]) {
+            slr_summary_set_error(
+                error_buf, error_buf_size,
+                "UTF-8 forest expected terminal IDs are not strictly ordered");
+            return false;
+        }
+    }
+    if (forest->outcome == CETTA_LP_NATIVE_UTF8_FOREST_RESOURCE_LIMIT &&
+        (forest->node_len != 0u || forest->choice_len != 0u ||
+         forest->root_len != 0u)) {
+        slr_summary_set_error(
+            error_buf, error_buf_size,
+            "resource-limited UTF-8 forest contains partial semantic data");
+        return false;
+    }
+
+    for (index = 0u; index < forest->node_len; index++) {
+        const CettaLpNativeUtf8ForestNode *node = &forest->nodes[index];
+        if ((uint32_t)node->kind >
+                (uint32_t)CETTA_LP_NATIVE_UTF8_FOREST_INTERMEDIATE ||
+            node->scalar_left > node->scalar_right ||
+            node->scalar_right > forest->scalar_len ||
+            node->byte_left != forest->byte_offsets[node->scalar_left] ||
+            node->byte_right != forest->byte_offsets[node->scalar_right] ||
+            node->choice_begin != choice_cursor ||
+            node->choice_len > forest->choice_len - choice_cursor) {
+            slr_summary_set_error(error_buf, error_buf_size,
+                                  "UTF-8 forest node span or choice range is invalid");
+            return false;
+        }
+        choice_cursor += node->choice_len;
+        switch (node->kind) {
+        case CETTA_LP_NATIVE_UTF8_FOREST_TERM:
+            if (node->choice_len != 0u ||
+                node->symbol_id == CETTA_LP_NATIVE_UTF8_FOREST_NONE ||
+                node->production_index != CETTA_LP_NATIVE_UTF8_FOREST_NONE ||
+                (uint32_t)node->terminal_value_kind >
+                    (uint32_t)CETTA_LP_NATIVE_UTF8_TERMINAL_VALUE_WITNESS ||
+                node->terminal_is_eof !=
+                    (node->terminal_value_kind ==
+                     CETTA_LP_NATIVE_UTF8_TERMINAL_VALUE_EOF)) {
+                slr_summary_set_error(error_buf, error_buf_size,
+                                      "UTF-8 forest terminal node is invalid");
+                return false;
+            }
+            if (node->terminal_value_kind ==
+                    CETTA_LP_NATIVE_UTF8_TERMINAL_VALUE_SCALAR &&
+                (node->scalar_left >= forest->scalar_len ||
+                 node->scalar_right != node->scalar_left + 1u ||
+                 node->terminal_scalar !=
+                    forest->codepoints[node->scalar_left])) {
+                slr_summary_set_error(
+                    error_buf, error_buf_size,
+                    "UTF-8 forest scalar terminal is inconsistent");
+                return false;
+            }
+            if (node->terminal_value_kind ==
+                    CETTA_LP_NATIVE_UTF8_TERMINAL_VALUE_EOF &&
+                (node->scalar_left != forest->scalar_len ||
+                 node->scalar_right != forest->scalar_len)) {
+                slr_summary_set_error(
+                    error_buf, error_buf_size,
+                    "UTF-8 forest EOF terminal is inconsistent");
+                return false;
+            }
+            break;
+        case CETTA_LP_NATIVE_UTF8_FOREST_EPSILON:
+            if (node->choice_len != 0u ||
+                node->scalar_left != node->scalar_right ||
+                node->symbol_id != CETTA_LP_NATIVE_UTF8_FOREST_NONE ||
+                node->production_index != CETTA_LP_NATIVE_UTF8_FOREST_NONE) {
+                slr_summary_set_error(error_buf, error_buf_size,
+                                      "UTF-8 forest epsilon node is invalid");
+                return false;
+            }
+            break;
+        case CETTA_LP_NATIVE_UTF8_FOREST_SYMBOL:
+            if (node->symbol_id == CETTA_LP_NATIVE_UTF8_FOREST_NONE ||
+                node->production_index != CETTA_LP_NATIVE_UTF8_FOREST_NONE ||
+                node->choice_len == 0u) {
+                slr_summary_set_error(error_buf, error_buf_size,
+                                      "UTF-8 forest symbol node is invalid");
+                return false;
+            }
+            break;
+        case CETTA_LP_NATIVE_UTF8_FOREST_INTERMEDIATE:
+            if (node->symbol_id != CETTA_LP_NATIVE_UTF8_FOREST_NONE ||
+                node->production_index == CETTA_LP_NATIVE_UTF8_FOREST_NONE ||
+                node->choice_len == 0u) {
+                slr_summary_set_error(error_buf, error_buf_size,
+                                      "UTF-8 forest intermediate node is invalid");
+                return false;
+            }
+            break;
+        }
+    }
+    if (choice_cursor != forest->choice_len) {
+        slr_summary_set_error(error_buf, error_buf_size,
+                              "UTF-8 forest choices are not exactly owned");
+        return false;
+    }
+    for (index = 0u; index < forest->root_len; index++) {
+        uint32_t root = forest->roots[index];
+        if (root >= forest->node_len ||
+            forest->nodes[root].kind != CETTA_LP_NATIVE_UTF8_FOREST_SYMBOL ||
+            (index > 0u &&
+             forest->nodes[forest->roots[index - 1u]].scalar_right >=
+                 forest->nodes[root].scalar_right)) {
+            slr_summary_set_error(error_buf, error_buf_size,
+                                  "UTF-8 forest root index is invalid");
+            return false;
+        }
+    }
+    for (index = 0u; index < forest->choice_len; index++) {
+        const CettaLpNativeUtf8ForestChoice *choice = &forest->choices[index];
+        const CettaLpNativeUtf8ForestNode *parent;
+        const CettaLpNativeUtf8ForestNode *child;
+        if (choice->parent_node >= forest->node_len ||
+            choice->child_node >= forest->node_len ||
+            choice->production_index == CETTA_LP_NATIVE_UTF8_FOREST_NONE ||
+            choice->scalar_pivot > forest->scalar_len ||
+            choice->byte_pivot != forest->byte_offsets[choice->scalar_pivot]) {
+            slr_summary_set_error(error_buf, error_buf_size,
+                                  "UTF-8 forest choice reference is invalid");
+            return false;
+        }
+        parent = &forest->nodes[choice->parent_node];
+        child = &forest->nodes[choice->child_node];
+        if (index < parent->choice_begin ||
+            index - parent->choice_begin >= parent->choice_len ||
+            (parent->kind != CETTA_LP_NATIVE_UTF8_FOREST_SYMBOL &&
+             parent->kind != CETTA_LP_NATIVE_UTF8_FOREST_INTERMEDIATE) ||
+            child->scalar_left != choice->scalar_pivot ||
+            child->byte_left != choice->byte_pivot ||
+            child->scalar_right != parent->scalar_right ||
+            child->byte_right != parent->byte_right ||
+            choice->scalar_pivot < parent->scalar_left ||
+            choice->scalar_pivot > parent->scalar_right) {
+            slr_summary_set_error(error_buf, error_buf_size,
+                                  "UTF-8 forest choice factorization is invalid");
+            return false;
+        }
+        if (parent->kind == CETTA_LP_NATIVE_UTF8_FOREST_INTERMEDIATE &&
+            parent->production_index != choice->production_index) {
+            slr_summary_set_error(
+                error_buf, error_buf_size,
+                "UTF-8 forest intermediate production identity is invalid");
+            return false;
+        }
+        if (choice->prefix_node == CETTA_LP_NATIVE_UTF8_FOREST_NONE) {
+            if (choice->scalar_pivot != parent->scalar_left ||
+                choice->byte_pivot != parent->byte_left) {
+                slr_summary_set_error(
+                    error_buf, error_buf_size,
+                    "UTF-8 forest empty prefix boundary is invalid");
+                return false;
+            }
+        } else {
+            const CettaLpNativeUtf8ForestNode *prefix;
+            if (choice->prefix_node >= forest->node_len) {
+                slr_summary_set_error(error_buf, error_buf_size,
+                                      "UTF-8 forest prefix reference is invalid");
+                return false;
+            }
+            prefix = &forest->nodes[choice->prefix_node];
+            if (prefix->kind != CETTA_LP_NATIVE_UTF8_FOREST_INTERMEDIATE ||
+                prefix->production_index != choice->production_index ||
+                prefix->scalar_left != parent->scalar_left ||
+                prefix->byte_left != parent->byte_left ||
+                prefix->scalar_right != choice->scalar_pivot ||
+                prefix->byte_right != choice->byte_pivot) {
+                slr_summary_set_error(error_buf, error_buf_size,
+                                      "UTF-8 forest prefix factorization is invalid");
+                return false;
+            }
+        }
+    }
+
+    reachable = calloc(forest->node_len ? forest->node_len : 1u, 1u);
+    stack = malloc(sizeof(*stack) *
+                   (forest->node_len ? forest->node_len : 1u));
+    if (!reachable || !stack) {
+        slr_summary_set_error(error_buf, error_buf_size,
+                              "failed to validate UTF-8 forest reachability");
+        goto done;
+    }
+    for (index = 0u; index < forest->root_len; index++) {
+        uint32_t root = forest->roots[index];
+        if (!reachable[root]) {
+            reachable[root] = 1u;
+            stack[stack_len++] = root;
+        }
+    }
+    while (stack_len > 0u) {
+        const CettaLpNativeUtf8ForestNode *node =
+            &forest->nodes[stack[--stack_len]];
+        uint32_t choiceIndex;
+        for (choiceIndex = node->choice_begin;
+             choiceIndex < node->choice_begin + node->choice_len;
+             choiceIndex++) {
+            const CettaLpNativeUtf8ForestChoice *choice =
+                &forest->choices[choiceIndex];
+            uint32_t children[2] = {
+                choice->prefix_node, choice->child_node
+            };
+            uint32_t childIndex;
+            for (childIndex = 0u; childIndex < 2u; childIndex++) {
+                uint32_t next = children[childIndex];
+                if (next != CETTA_LP_NATIVE_UTF8_FOREST_NONE &&
+                    !reachable[next]) {
+                    reachable[next] = 1u;
+                    stack[stack_len++] = next;
+                }
+            }
+        }
+    }
+    for (index = 0u; index < forest->node_len; index++) {
+        if (!reachable[index]) {
+            slr_summary_set_error(error_buf, error_buf_size,
+                                  "UTF-8 forest contains an unreachable node");
+            goto done;
+        }
+    }
+    valid = true;
+
+done:
+    free(stack);
+    free(reachable);
+    return valid;
+}
+
+enum {
+    CETTA_LP_NATIVE_UTF8_FOREST_WIRE_HEADER_WORDS = 14u,
+    CETTA_LP_NATIVE_UTF8_FOREST_WIRE_NODE_WORDS = 14u,
+    CETTA_LP_NATIVE_UTF8_FOREST_WIRE_CHOICE_WORDS = 6u
+};
+
+static bool native_utf8_forest_wire_checked_size(
+    const CettaLpNativeUtf8Forest *forest,
+    size_t *out_size,
+    char *error_buf,
+    size_t error_buf_size) {
+    uint64_t words;
+
+    if (!out_size) {
+        slr_summary_set_error(error_buf, error_buf_size,
+                              "missing UTF-8 forest wire size output");
+        return false;
+    }
+    *out_size = 0u;
+    if (!cetta_lp_native_utf8_forest_validate(
+            forest, error_buf, error_buf_size)) {
+        return false;
+    }
+    words = (uint64_t)CETTA_LP_NATIVE_UTF8_FOREST_WIRE_HEADER_WORDS +
+        (uint64_t)CETTA_LP_NATIVE_UTF8_FOREST_WIRE_NODE_WORDS *
+            forest->node_len +
+        (uint64_t)CETTA_LP_NATIVE_UTF8_FOREST_WIRE_CHOICE_WORDS *
+            forest->choice_len +
+        (uint64_t)forest->root_len +
+        (uint64_t)forest->expected_terminal_len +
+        (uint64_t)forest->scalar_len +
+        (uint64_t)forest->scalar_len + 1u;
+    if (words > ((uint64_t)SIZE_MAX - 4u) / 4u) {
+        slr_summary_set_error(error_buf, error_buf_size,
+                              "UTF-8 forest wire size overflows size_t");
+        return false;
+    }
+    *out_size = 4u + (size_t)words * 4u;
+    return true;
+}
+
+bool cetta_lp_native_utf8_forest_wire_size(
+    const CettaLpNativeUtf8Forest *forest,
+    size_t *out_size,
+    char *error_buf,
+    size_t error_buf_size) {
+    if (error_buf && error_buf_size > 0u)
+        error_buf[0] = '\0';
+    return native_utf8_forest_wire_checked_size(
+        forest, out_size, error_buf, error_buf_size);
+}
+
+static void native_utf8_forest_wire_put_u32(
+    uint8_t **cursor,
+    uint32_t value) {
+    uint8_t *bytes = *cursor;
+
+    bytes[0] = (uint8_t)(value & 0xffu);
+    bytes[1] = (uint8_t)((value >> 8u) & 0xffu);
+    bytes[2] = (uint8_t)((value >> 16u) & 0xffu);
+    bytes[3] = (uint8_t)((value >> 24u) & 0xffu);
+    *cursor += 4u;
+}
+
+bool cetta_lp_native_utf8_forest_wire_write(
+    const CettaLpNativeUtf8Forest *forest,
+    uint8_t *out_bytes,
+    size_t out_size,
+    size_t *out_written,
+    char *error_buf,
+    size_t error_buf_size) {
+    size_t required = 0u;
+    uint8_t *cursor;
+    uint32_t index;
+
+    if (error_buf && error_buf_size > 0u)
+        error_buf[0] = '\0';
+    if (out_written)
+        *out_written = 0u;
+    if (!out_written ||
+        !native_utf8_forest_wire_checked_size(
+            forest, &required, error_buf, error_buf_size)) {
+        return false;
+    }
+    if (!out_bytes || out_size < required) {
+        slr_summary_set_error(error_buf, error_buf_size,
+                              "UTF-8 forest wire buffer is too small");
+        return false;
+    }
+
+    cursor = out_bytes;
+    *cursor++ = (uint8_t)'C';
+    *cursor++ = (uint8_t)'N';
+    *cursor++ = (uint8_t)'F';
+    *cursor++ = (uint8_t)'1';
+
+#define CETTA_LP_FOREST_WIRE_PUT(value) \
+    native_utf8_forest_wire_put_u32(&cursor, (uint32_t)(value))
+    CETTA_LP_FOREST_WIRE_PUT(forest->outcome);
+    CETTA_LP_FOREST_WIRE_PUT(forest->node_len);
+    CETTA_LP_FOREST_WIRE_PUT(forest->choice_len);
+    CETTA_LP_FOREST_WIRE_PUT(forest->root_len);
+    CETTA_LP_FOREST_WIRE_PUT(forest->expected_terminal_len);
+    CETTA_LP_FOREST_WIRE_PUT(forest->scalar_len);
+    CETTA_LP_FOREST_WIRE_PUT(forest->input_byte_len);
+    CETTA_LP_FOREST_WIRE_PUT(forest->farthest_scalar);
+    CETTA_LP_FOREST_WIRE_PUT(forest->farthest_byte);
+    CETTA_LP_FOREST_WIRE_PUT(forest->graph_node_len);
+    CETTA_LP_FOREST_WIRE_PUT(forest->stack_node_len);
+    CETTA_LP_FOREST_WIRE_PUT(forest->work_item_len);
+    CETTA_LP_FOREST_WIRE_PUT(forest->decoded_byte_len);
+    CETTA_LP_FOREST_WIRE_PUT(forest->source_pass_count);
+
+    for (index = 0u; index < forest->node_len; index++) {
+        const CettaLpNativeUtf8ForestNode *node = &forest->nodes[index];
+        CETTA_LP_FOREST_WIRE_PUT(node->kind);
+        CETTA_LP_FOREST_WIRE_PUT(node->symbol_id);
+        CETTA_LP_FOREST_WIRE_PUT(node->production_index);
+        CETTA_LP_FOREST_WIRE_PUT(node->dot);
+        CETTA_LP_FOREST_WIRE_PUT(node->scalar_left);
+        CETTA_LP_FOREST_WIRE_PUT(node->scalar_right);
+        CETTA_LP_FOREST_WIRE_PUT(node->byte_left);
+        CETTA_LP_FOREST_WIRE_PUT(node->byte_right);
+        CETTA_LP_FOREST_WIRE_PUT(node->terminal_is_eof ? 1u : 0u);
+        CETTA_LP_FOREST_WIRE_PUT(node->terminal_scalar);
+        CETTA_LP_FOREST_WIRE_PUT(node->terminal_value_kind);
+        CETTA_LP_FOREST_WIRE_PUT(node->terminal_witness_id);
+        CETTA_LP_FOREST_WIRE_PUT(node->choice_begin);
+        CETTA_LP_FOREST_WIRE_PUT(node->choice_len);
+    }
+    for (index = 0u; index < forest->choice_len; index++) {
+        const CettaLpNativeUtf8ForestChoice *choice = &forest->choices[index];
+        CETTA_LP_FOREST_WIRE_PUT(choice->parent_node);
+        CETTA_LP_FOREST_WIRE_PUT(choice->prefix_node);
+        CETTA_LP_FOREST_WIRE_PUT(choice->child_node);
+        CETTA_LP_FOREST_WIRE_PUT(choice->production_index);
+        CETTA_LP_FOREST_WIRE_PUT(choice->scalar_pivot);
+        CETTA_LP_FOREST_WIRE_PUT(choice->byte_pivot);
+    }
+    for (index = 0u; index < forest->root_len; index++)
+        CETTA_LP_FOREST_WIRE_PUT(forest->roots[index]);
+    for (index = 0u; index < forest->expected_terminal_len; index++)
+        CETTA_LP_FOREST_WIRE_PUT(forest->expected_terminal_ids[index]);
+    for (index = 0u; index < forest->scalar_len; index++)
+        CETTA_LP_FOREST_WIRE_PUT(forest->codepoints[index]);
+    for (index = 0u; index <= forest->scalar_len; index++)
+        CETTA_LP_FOREST_WIRE_PUT(forest->byte_offsets[index]);
+#undef CETTA_LP_FOREST_WIRE_PUT
+
+    *out_written = (size_t)(cursor - out_bytes);
+    return *out_written == required;
+}
+
 typedef struct {
     uint32_t token_idx;
     const CettaLpNativeUtf8LatticeEdge *edge;

@@ -36,7 +36,7 @@ static const CettaNikDirectAuthorityV1
 /* This family contains exactly the realization admitted for one immutable
  * source/profile/revision fibre.  No dominance edge is invented against the
  * separately admitted positive-Horn or finite-view calculi. */
-static const CettaNikNativeCapabilityIdV1
+static const CettaNikImplementationCapabilityIdV1
     g_gdl_stratified_model_capabilities_v1[] = {
         UINT64_C(0x67646c7300000001), /* exact typed source image */
         UINT64_C(0x67646c7300000002), /* finite typed Herbrand carrier */
@@ -48,44 +48,46 @@ static const CettaNikNativeCapabilityIdV1
         UINT64_C(0x67646c7300000008), /* revision-current native flow */
     };
 
-static CettaNikNativeSelectionV1 gdl_stratified_no_selection_v1(void) {
-    return (CettaNikNativeSelectionV1){
-        .status = CETTA_NIK_NATIVE_SELECTION_STATUS_OK_V1,
-        .kind = CETTA_NIK_NATIVE_SELECTION_NONE_V1,
+static CettaNikImplementationSelectionV1 gdl_stratified_no_selection_v1(void) {
+    return (CettaNikImplementationSelectionV1){
+        .status = CETTA_NIK_IMPLEMENTATION_SELECTION_STATUS_OK_V1,
+        .kind = CETTA_NIK_IMPLEMENTATION_SELECTION_NONE_V1,
         .greatest_index = SIZE_MAX,
     };
 }
 
-static CettaNikNativeSelectionV1 gdl_stratified_select_v1(
+static CettaNikImplementationSelectionV1 gdl_stratified_select_v1(
     size_t *frontier_index_out) {
-    const CettaNikLicensedNativeRealizationV1 realization = {
-        .realization_identity =
+    const CettaNikLicensedImplementationV1 implementation = {
+        .calculus_identity =
+            g_gdl_stratified_model_authority_v1.authority_identity,
+        .implementation_identity =
             g_gdl_stratified_model_authority_v1.realization_identity,
         .capabilities = g_gdl_stratified_model_capabilities_v1,
         .capability_count =
             sizeof(g_gdl_stratified_model_capabilities_v1) /
             sizeof(g_gdl_stratified_model_capabilities_v1[0]),
     };
-    const CettaNikLicensedNativeFamilyV1 family = {
-        .realizations = &realization,
-        .realization_count = 1u,
+    const CettaNikLicensedImplementationFamilyV1 family = {
+        .implementations = &implementation,
+        .implementation_count = 1u,
     };
-    const CettaNikNativeCapabilityRequestV1 request = {
+    const CettaNikImplementationCapabilityRequestV1 request = {
         .required_capabilities = g_gdl_stratified_model_capabilities_v1,
         .required_capability_count =
             sizeof(g_gdl_stratified_model_capabilities_v1) /
             sizeof(g_gdl_stratified_model_capabilities_v1[0]),
     };
-    return cetta_nik_native_calculus_select_v1(
+    return cetta_nik_licensed_implementation_select_v1(
         &family, &request, frontier_index_out, 1u);
 }
 
 static bool gdl_stratified_selection_is_native_greatest_v1(
-    const CettaNikNativeSelectionV1 *selection,
+    const CettaNikImplementationSelectionV1 *selection,
     size_t frontier_index) {
     return selection &&
-        selection->status == CETTA_NIK_NATIVE_SELECTION_STATUS_OK_V1 &&
-        selection->kind == CETTA_NIK_NATIVE_SELECTION_UNIQUE_GREATEST_V1 &&
+        selection->status == CETTA_NIK_IMPLEMENTATION_SELECTION_STATUS_OK_V1 &&
+        selection->kind == CETTA_NIK_IMPLEMENTATION_SELECTION_UNIQUE_GREATEST_V1 &&
         selection->eligible_count == 1u &&
         selection->frontier_count == 1u &&
         selection->greatest_index == 0u && frontier_index == 0u;
@@ -286,7 +288,7 @@ struct CettaGdlStratifiedModelV1 {
     size_t *completed_relation_support_counts;
     CettaGdlStratifiedModelStatsV1 stats;
     CettaNikDirectAuthorityTokenV1 token;
-    CettaNikNativeSelectionV1 selection;
+    CettaNikImplementationSelectionV1 selection;
     uint64_t selected_realization_identity;
     char source_sha256[65];
     char profile_sha256[65];
@@ -2722,7 +2724,7 @@ bool cetta_gdl_stratified_model_target_slice_v1(
 
 bool cetta_gdl_stratified_model_selection_v1(
     const CettaGdlStratifiedModelV1 *model,
-    CettaNikNativeSelectionV1 *selection_out,
+    CettaNikImplementationSelectionV1 *selection_out,
     uint64_t *realization_identity_out) {
     if (!model || !selection_out || !realization_identity_out ||
         !model->token_valid)
