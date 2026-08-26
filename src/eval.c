@@ -32868,7 +32868,7 @@ prime_prepared_pure_expression_view(
     const Atom *expression, CettaPreparedPureExpressionView *view) {
     (void)view;
     return atom_is_prime_computation_zero_form(expression)
-        ? CETTA_PREPARED_PURE_EXPRESSION_DECLINE
+        ? CETTA_PREPARED_PURE_EXPRESSION_CANONICAL_ONLY
         : CETTA_PREPARED_PURE_EXPRESSION_DEFAULT;
 }
 
@@ -33856,6 +33856,16 @@ prime_need_strict_argument_ready:
                 os, petta_semantics_boolean_value(a, answer),
                 CURRENT_ENV);
             return;
+        }
+
+        /* (eval <term> <space>) — explicit-context spelling; evalc semantics. */
+        if (petta_form == PETTA_FORM_EVAL && nargs == 2u) {
+            Atom *rewritten = atom_expr(a, (Atom *[]) {
+                atom_symbol_id(a, g_builtin_syms.evalc),
+                expr_arg(atom, 0),
+                expr_arg(atom, 1)
+            }, 3);
+            TAIL_REENTER(rewritten);
         }
 
         if (petta_form == PETTA_FORM_PROGN ||
@@ -36092,6 +36102,20 @@ petta_lowered_to_shared_form:
 
     /* ── eval (minimal instruction) ────────────────────────────────────── */
     if (head_id == g_builtin_syms.eval) {
+        /* (eval <atom> <space>): the explicit-context spelling; runs with
+         * evalc's semantics.  Not part of the HE compatibility contract, and
+         * the zero kernels keep their minimal eval untouched. */
+        if (nargs == 2 && g_registry &&
+            active_language_id() != CETTA_LANGUAGE_ZERO &&
+            active_language_id() != CETTA_LANGUAGE_SUBZERO &&
+            active_builtin_allowed("eval-in-space")) {
+            Atom *rewritten = atom_expr(a, (Atom *[]) {
+                atom_symbol_id(a, g_builtin_syms.evalc),
+                expr_arg(atom, 0),
+                expr_arg(atom, 1)
+            }, 3);
+            TAIL_REENTER(rewritten);
+        }
         if (nargs != 1) {
             outcome_set_add(os,
                 atom_error(a, atom, atom_symbol(a, "IncorrectNumberOfArguments")),

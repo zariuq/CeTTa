@@ -22521,8 +22521,49 @@ test-petta-multifile: $(BIN)
 	diff -u tests/petta/multifile/argv.expected "$$actual"; \
 	echo "PASS: PeTTa ordered files preserve per-file scope and working directories; other dialect argv is unchanged"
 
+.PHONY: test-petta-eval-in-space
+test-petta-eval-in-space: $(BIN)
+	@for machine in 0 1; do \
+		result=$$(CETTA_PETTA_SEARCH_MACHINE=$$machine ./$(BIN) --lang petta \
+			tests/petta/eval_in_space.metta 2>&1); \
+		expected=$$(cat tests/petta/eval_in_space.expected); \
+		if [ "$$result" != "$$expected" ]; then \
+			echo "FAIL: PeTTa eval-in-space (search machine=$$machine)"; \
+			diff <(printf '%s\n' "$$expected") \
+				<(printf '%s\n' "$$result") | head -40; \
+			exit 1; \
+		fi; \
+	done; \
+	echo "PASS: PeTTa eval-in-space native and fallback evaluators"
+
+.PHONY: test-eval-in-space-profiles
+test-eval-in-space-profiles: $(BIN)
+	@expected=$$(cat tests/test_eval_in_space.expected); \
+	for profile in he he-extended he-prime; do \
+		result=$$($(CETTA_BIN_INVOKE) --lang he --profile $$profile \
+			tests/test_eval_in_space.metta 2>&1); \
+		if [ "$$result" != "$$expected" ]; then \
+			echo "FAIL: eval-in-space HE profile $$profile"; \
+			diff <(printf '%s\n' "$$expected") \
+				<(printf '%s\n' "$$result") | head -40; \
+			exit 1; \
+		fi; \
+	done; \
+	result=$$($(CETTA_BIN_INVOKE) --lang prime \
+		tests/test_eval_in_space.metta 2>&1); \
+	test "$$result" = "$$expected"; \
+	compat=$$($(CETTA_BIN_INVOKE) --lang he --profile he-compat \
+		-e '!(eval foo bar)' 2>&1); \
+	test "$$compat" = '[(Error (eval foo bar) IncorrectNumberOfArguments)]'; \
+	for lang in zero subzero; do \
+		result=$$($(CETTA_BIN_INVOKE) --lang $$lang \
+			tests/test_eval_in_space.metta 2>&1); \
+		test "$$result" = '[]'; \
+	done; \
+	echo "PASS: eval-in-space profile boundary"
+
 .PHONY: test-petta-semantics
-test-petta-semantics: $(BIN) test-petta-multifile
+test-petta-semantics: $(BIN) test-petta-multifile test-petta-eval-in-space
 	@for stem in relational_control term_order numeric_semantics atom_operation_failure alpha_unique named_state implicit_space stream_ops list_length parse_data metatype_intrinsics type_failure_is_empty println_string unknown_head_quote library_descriptor library_descriptor_unsafe library_rooted_descriptor_unsafe git_import_syntax; do \
 		result=$$(CETTA_PETTA_SEARCH_MACHINE=1 ./$(BIN) --lang petta \
 			tests/petta/$$stem.metta 2>&1); \
@@ -23680,7 +23721,7 @@ else
 	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 $@
 endif
 
-test-he-contract-suite: $(BIN) test-he-compat-catalog-guards test-he-outcome-list-contracts test-he-nik-typed-applicability-pruning
+test-he-contract-suite: $(BIN) test-he-compat-catalog-guards test-he-outcome-list-contracts test-he-nik-typed-applicability-pruning test-eval-in-space-profiles
 	@pass=0; fail=0; \
 	files=($(HE_CONTRACT_GENERATED_DIR)/*.metta); \
 	if [ ! -e "$${files[0]}" ]; then \
