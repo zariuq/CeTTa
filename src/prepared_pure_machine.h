@@ -32,6 +32,7 @@ typedef enum {
     CETTA_PREPARED_PURE_EXPRESSION_PROJECT,
     CETTA_PREPARED_PURE_EXPRESSION_OBSERVE,
     CETTA_PREPARED_PURE_EXPRESSION_DECLINE,
+    CETTA_PREPARED_PURE_EXPRESSION_CANONICAL_ONLY,
 } CettaPreparedPureExpressionViewState;
 typedef struct {
     Atom *projected;
@@ -40,8 +41,10 @@ typedef struct {
 /* Classify dialect-owned expression forms before the generic constructor
  * fallback.  A projection names the source child which is the form's value;
  * an observation names a pure outer-value discriminator whose operand is
- * data rather than an evaluation position; decline preserves canonical
- * evaluation for every other owned form. */
+ * data rather than an evaluation position.  Decline prevents an unhandled
+ * form from falling through as inert syntax after shared prepared
+ * instructions have had their chance.  Canonical-only rejects the form at
+ * both compilation and dynamic execution boundaries. */
 typedef CettaPreparedPureExpressionViewState
 (*CettaPreparedPureExpressionViewFn)(
     const Atom *expression, CettaPreparedPureExpressionView *view);
