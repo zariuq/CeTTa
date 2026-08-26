@@ -159,6 +159,11 @@ typedef bool (*PettaMachineBorrowedItemConsumer)(
 typedef struct {
     void *context;
     const PettaAnalysisService *analysis;
+    /* The host contributes one component to the shared branch-capture
+     * capacity.  The relational backend combines it with its internal state
+     * profile and accepts an owned continuation only at multi-shot capacity. */
+    CettaBranchAdmission (*admit_branch_capture)(
+        void *context, Space *space);
     /* Candidate programs are meaningful only within this exact semantic
      * world.  Storage revision is tracked independently by SpaceReadToken. */
     CettaMatchDecisionSemanticIdentity match_decision_semantics;
@@ -385,6 +390,13 @@ typedef struct {
     PettaMachineImpl *impl;
 } PettaMachine;
 
+/* Relational-control adapter for the evaluator-neutral continuation seam.
+ * Capture is observational and restore is same-machine, authority-pinned, and
+ * consuming.  The first admitted payload profile owns ordinary CLAUSE/ONCE
+ * control plus ABT state; richer effects decline without changing evaluation. */
+CettaContinuationMachine petta_machine_continuation_machine(
+    PettaMachine *machine);
+
 bool petta_machine_init(
     PettaMachine *machine, Space *space, Arena *answer_arena,
     Atom *query, const Bindings *base_environment,
@@ -554,6 +566,15 @@ typedef struct {
     uint64_t choice_nursery_bytes_reclaimed;
     uint64_t choice_heap_resets;
     uint64_t choice_heap_bytes_reclaimed;
+    uint64_t owned_continuation_capture_attempts;
+    uint64_t owned_continuation_captures;
+    uint64_t owned_continuation_capture_deferred;
+    uint64_t owned_continuation_capture_unsupported;
+    uint64_t owned_continuation_capture_invalidated;
+    uint64_t owned_continuation_restores;
+    uint64_t owned_continuation_restore_invalidated;
+    uint64_t owned_continuation_atom_bytes_captured;
+    uint64_t owned_continuation_vector_bytes_captured;
     uint64_t table_lookups;
     uint64_t table_hits;
     uint64_t table_generator_rounds;

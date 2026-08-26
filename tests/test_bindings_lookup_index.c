@@ -665,6 +665,67 @@ int main(void) {
             atom_int(&arena, 6502)) &&
         sparse_effect_branch.prime_trail_len == 1u &&
         !sparse_effect_branch.trail[2].prime_state_present;
+
+    BindingsBuilder sparse_effect_clone;
+    bool sparse_clone_ready = bindings_builder_clone(
+        &sparse_effect_clone, &sparse_effect_branch);
+    Arena sparse_clone_owner;
+    arena_init(&sparse_clone_owner);
+    bool sparse_clone_exact = sparse_clone_ready &&
+        bindings_builder_promote_atoms_to_arena(
+            &sparse_effect_clone, &sparse_clone_owner) &&
+        sparse_effect_clone.instance_id !=
+            sparse_effect_branch.instance_id &&
+        sparse_effect_clone.trail_len ==
+            sparse_effect_branch.trail_len &&
+        sparse_effect_clone.prime_trail_len ==
+            sparse_effect_branch.prime_trail_len &&
+        sparse_effect_clone.growth_count ==
+            sparse_effect_branch.growth_count &&
+        sparse_effect_clone.rollback_count ==
+            sparse_effect_branch.rollback_count &&
+        sparse_effect_clone.prime_trail[0].prime_need.session_id ==
+            sparse_need.session_id &&
+        sparse_effect_clone.prime_trail[0].branch_state.owner ==
+            &sparse_clone_owner &&
+        bindings_logical_atoms_closed_for_arena(
+            &sparse_effect_clone.current, &sparse_clone_owner) &&
+        binding_is_int(
+            &sparse_effect_clone.current, test_id(6502u), 6502);
+    if (sparse_clone_exact) {
+        bindings_builder_rollback(
+            &sparse_effect_clone, sparse_plain_mark);
+        sparse_clone_exact =
+            bindings_prime_present(&sparse_effect_clone.current) &&
+            bindings_need_view(
+                &sparse_effect_clone.current)->session_id ==
+                    sparse_need.session_id &&
+            binding_is_int(
+                &sparse_effect_branch.current,
+                test_id(6502u), 6502) &&
+            !bindings_prime_present(
+                &sparse_effect_branch.current);
+    }
+    if (sparse_clone_exact) {
+        bindings_builder_rollback(
+            &sparse_effect_clone, sparse_root_mark);
+        sparse_clone_exact =
+            sparse_effect_clone.current.len == 0u &&
+            sparse_effect_branch.current.len == 3u;
+    }
+    CHECK(sparse_clone_exact,
+          "builder clone preserves independent logical and Prime rollback history");
+    if (sparse_clone_ready)
+        bindings_builder_free(&sparse_effect_clone);
+    arena_free(&sparse_clone_owner);
+
+    BindingsBuilder invalid_effect_source = sparse_effect_branch;
+    invalid_effect_source.prime_trail_len = 0u;
+    BindingsBuilder refused_effect_clone;
+    CHECK(!bindings_builder_clone(
+              &refused_effect_clone, &invalid_effect_source),
+          "builder clone rejects an effect mark outside the retained Prime trail");
+
     bindings_builder_rollback(
         &sparse_effect_branch, sparse_absent_mark);
     bool sparse_absent_restored =

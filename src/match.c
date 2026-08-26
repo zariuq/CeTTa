@@ -3272,6 +3272,82 @@ void bindings_builder_init_owned(BindingsBuilder *bb, Bindings *owned) {
     bindings_init(owned);
 }
 
+bool bindings_builder_clone(BindingsBuilder *dst,
+                            const BindingsBuilder *src) {
+    if (!dst || !src || dst == src ||
+        src->trail_len > src->trail_cap ||
+        src->prime_trail_len > src->prime_trail_cap ||
+        (src->trail_len > 0u && !src->trail) ||
+        (src->prime_trail_len > 0u && !src->prime_trail)) {
+        return false;
+    }
+    for (uint32_t i = 0u; i < src->trail_len; i++) {
+        if (src->trail[i].prime_state_mark >
+            src->prime_trail_len) {
+            return false;
+        }
+    }
+    if (!bindings_builder_init(dst, &src->current))
+        return false;
+    if (src->trail_len > 0u) {
+        if ((size_t)src->trail_len >
+            SIZE_MAX / sizeof(*dst->trail)) {
+            bindings_builder_free(dst);
+            return false;
+        }
+        dst->trail = cetta_malloc(
+            (size_t)src->trail_len * sizeof(*dst->trail));
+        memcpy(dst->trail, src->trail,
+               (size_t)src->trail_len * sizeof(*dst->trail));
+        dst->trail_len = src->trail_len;
+        dst->trail_cap = src->trail_len;
+    }
+    if (src->prime_trail_len > 0u) {
+        if ((size_t)src->prime_trail_len >
+            SIZE_MAX / sizeof(*dst->prime_trail)) {
+            bindings_builder_free(dst);
+            return false;
+        }
+        dst->prime_trail = cetta_malloc(
+            (size_t)src->prime_trail_len *
+                sizeof(*dst->prime_trail));
+        memcpy(dst->prime_trail, src->prime_trail,
+               (size_t)src->prime_trail_len *
+                   sizeof(*dst->prime_trail));
+        dst->prime_trail_len = src->prime_trail_len;
+        dst->prime_trail_cap = src->prime_trail_len;
+    }
+    dst->growth_count = src->growth_count;
+    dst->rollback_count = src->rollback_count;
+    return true;
+}
+
+bool bindings_builder_promote_atoms_to_arena(
+        BindingsBuilder *bb, Arena *owner) {
+    if (!bb || !owner ||
+        bb->prime_trail_len > bb->prime_trail_cap ||
+        (bb->prime_trail_len > 0u && !bb->prime_trail) ||
+        !bindings_promote_atoms_to_arena(&bb->current, owner)) {
+        return false;
+    }
+    for (uint32_t i = 0u; i < bb->prime_trail_len; i++) {
+        PrimeOccurrence *occurrence = &bb->prime_trail[i];
+        if (!prime_need_snapshot_promote(
+                owner, &occurrence->prime_need) ||
+            !prime_need_branch_state_promote(
+                owner, &occurrence->branch_state)) {
+            return false;
+        }
+#if CETTA_BUILD_WITH_PRIME_CAUSAL_RECEIPTS
+        if (!prime_need_receipt_promote(
+                owner, &occurrence->receipt)) {
+            return false;
+        }
+#endif
+    }
+    return true;
+}
+
 void bindings_builder_free(BindingsBuilder *bb) {
     free(bb->trail);
     bb->trail = NULL;

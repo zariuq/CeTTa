@@ -4939,6 +4939,310 @@ static void test_relational_obligation_guard_gc(
     petta_machine_destroy(&machine);
 }
 
+typedef struct {
+    uint64_t revision;
+    size_t calls;
+    size_t remaining;
+} OwnedContinuationAuthority;
+
+static CettaBranchAdmission
+admit_effect_free_continuation(
+    void *opaque, Space *space) {
+    (void)space;
+    OwnedContinuationAuthority *state = opaque;
+    assert(state);
+    state->calls++;
+    return (CettaBranchAdmission){
+        .status = CETTA_BRANCH_ADMISSION_AVAILABLE,
+        .capacity = CETTA_BRANCH_CAPTURE_MULTI_SHOT,
+        .authority = {
+            .words = {
+                UINT64_C(0x4f574e45442d4142),
+                state->revision,
+            },
+            .length = 2u,
+        },
+    };
+}
+
+static CettaContinuationStatus capture_relational_continuation(
+    PettaMachine *machine, CettaOwnedContinuation *continuation) {
+    return cetta_continuation_capture(
+        petta_machine_continuation_machine(machine), continuation);
+}
+
+static CettaContinuationStatus restore_relational_continuation(
+    PettaMachine *machine, CettaOwnedContinuation *continuation) {
+    return cetta_continuation_restore(
+        petta_machine_continuation_machine(machine), continuation);
+}
+
+static void test_branch_capture_algebra(void) {
+    assert(cetta_branch_capture_weakest(
+        CETTA_BRANCH_CAPTURE_MULTI_SHOT,
+        CETTA_BRANCH_CAPTURE_ONE_SHOT) ==
+        CETTA_BRANCH_CAPTURE_ONE_SHOT);
+    assert(cetta_branch_capture_admits(
+        CETTA_BRANCH_CAPTURE_MULTI_SHOT,
+        CETTA_BRANCH_STORAGE_OWNED_FRONTIER));
+    assert(!cetta_branch_capture_admits(
+        CETTA_BRANCH_CAPTURE_ONE_SHOT,
+        CETTA_BRANCH_STORAGE_OWNED_FRONTIER));
+    assert(cetta_branch_select_storage(
+        CETTA_BRANCH_CAPTURE_ONE_SHOT,
+        CETTA_BRANCH_STORAGE_OWNED_FRONTIER) ==
+        CETTA_BRANCH_STORAGE_EXCLUSIVE_DEPTH_FIRST);
+    assert(cetta_branch_select_storage(
+        CETTA_BRANCH_CAPTURE_INLINE_ONLY,
+        CETTA_BRANCH_STORAGE_OWNED_FRONTIER) ==
+        CETTA_BRANCH_STORAGE_INLINE);
+    puts("PASS: branch storage follows capture capacity, not evaluator dialect");
+}
+
+static bool permit_owned_continuation_transition(void *opaque) {
+    OwnedContinuationAuthority *state = opaque;
+    if (!state || state->remaining == 0u)
+        return false;
+    state->remaining--;
+    return true;
+}
+
+static void test_owned_clause_continuation_roundtrip(
+    Space *space, Arena *persistent, Arena *answers) {
+    add_clause(
+        space, persistent,
+        "(= (owned-continuation-answer) owned-first)");
+    add_clause(
+        space, persistent,
+        "(= (owned-continuation-answer) owned-second)");
+    SymbolId first_id = symbol_intern_cstr(
+        g_symbols, "owned-first");
+    SymbolId second_id = symbol_intern_cstr(
+        g_symbols, "owned-second");
+    assert(first_id != SYMBOL_ID_NONE &&
+           second_id != SYMBOL_ID_NONE);
+
+    Atom *query = parse_one(
+        answers, "(owned-continuation-answer)");
+    assert(query);
+    PettaMachine machine;
+    Atom *answer = NULL;
+    Bindings environment;
+    CettaOwnedContinuation declined;
+    cetta_owned_continuation_init(&declined);
+    assert(petta_machine_init(
+        &machine, space, answers, query, NULL, NULL));
+    assert(petta_machine_next(
+               &machine, &answer, &environment) ==
+           PETTA_MACHINE_STEP_ANSWER);
+    assert(atom_is_symbol_id(answer, first_id));
+    bindings_free(&environment);
+    assert(capture_relational_continuation(
+               &machine, &declined) ==
+           CETTA_CONTINUATION_DEFERRED);
+    cetta_owned_continuation_destroy(&declined);
+    petta_machine_destroy(&machine);
+
+    OwnedContinuationAuthority authority = {.revision = 1u};
+    PettaMachineHost host = {
+        .context = &authority,
+        .admit_branch_capture = admit_effect_free_continuation,
+    };
+    CettaOwnedContinuation first_image;
+    CettaOwnedContinuation second_image;
+    cetta_owned_continuation_init(&first_image);
+    cetta_owned_continuation_init(&second_image);
+    assert(petta_machine_init(
+        &machine, space, answers, query, NULL, &host));
+    assert(petta_machine_next(
+               &machine, &answer, &environment) ==
+           PETTA_MACHINE_STEP_ANSWER);
+    assert(atom_is_symbol_id(answer, first_id));
+    bindings_free(&environment);
+    CettaContinuationStatus first_capture =
+        capture_relational_continuation(
+            &machine, &first_image);
+    assert(first_capture == CETTA_CONTINUATION_READY);
+    assert(capture_relational_continuation(
+               &machine, &second_image) ==
+           CETTA_CONTINUATION_READY);
+    PettaMachine other_machine;
+    assert(petta_machine_init(
+        &other_machine, space, answers, query, NULL, &host));
+    assert(restore_relational_continuation(
+               &other_machine, &first_image) ==
+           CETTA_CONTINUATION_UNSUPPORTED);
+    petta_machine_destroy(&other_machine);
+    size_t atom_bytes = 0u;
+    size_t vector_bytes = 0u;
+    assert(cetta_owned_continuation_storage_bytes(
+        &first_image, &atom_bytes, &vector_bytes));
+    assert(atom_bytes > 0u && vector_bytes > 0u);
+
+    assert(petta_machine_next(
+               &machine, &answer, &environment) ==
+           PETTA_MACHINE_STEP_ANSWER);
+    assert(atom_is_symbol_id(answer, second_id));
+    bindings_free(&environment);
+    assert(petta_machine_next(
+               &machine, &answer, &environment) ==
+           PETTA_MACHINE_STEP_EXHAUSTED);
+    bindings_free(&environment);
+
+    assert(restore_relational_continuation(
+               &machine, &first_image) ==
+           CETTA_CONTINUATION_READY);
+    assert(petta_machine_next(
+               &machine, &answer, &environment) ==
+           PETTA_MACHINE_STEP_ANSWER);
+    assert(atom_is_symbol_id(answer, second_id));
+    bindings_free(&environment);
+    assert(petta_machine_next(
+               &machine, &answer, &environment) ==
+           PETTA_MACHINE_STEP_EXHAUSTED);
+    bindings_free(&environment);
+    assert(restore_relational_continuation(
+               &machine, &second_image) ==
+           CETTA_CONTINUATION_READY);
+    assert(petta_machine_next(
+               &machine, &answer, &environment) ==
+           PETTA_MACHINE_STEP_ANSWER);
+    assert(atom_is_symbol_id(answer, second_id));
+    bindings_free(&environment);
+    PettaMachineStats stats;
+    assert(petta_machine_stats(&machine, &stats));
+    assert(stats.owned_continuation_capture_attempts == 2u);
+    assert(stats.owned_continuation_captures == 2u);
+    assert(stats.owned_continuation_restores == 2u);
+    assert(stats.owned_continuation_atom_bytes_captured >=
+           2u * atom_bytes);
+    assert(stats.owned_continuation_vector_bytes_captured >=
+           2u * vector_bytes);
+    cetta_owned_continuation_destroy(&first_image);
+    cetta_owned_continuation_destroy(&second_image);
+    petta_machine_destroy(&machine);
+
+    CettaOwnedContinuation invalidated;
+    cetta_owned_continuation_init(&invalidated);
+    authority.revision = 2u;
+    assert(petta_machine_init(
+        &machine, space, answers, query, NULL, &host));
+    assert(petta_machine_next(
+               &machine, &answer, &environment) ==
+           PETTA_MACHINE_STEP_ANSWER);
+    bindings_free(&environment);
+    assert(capture_relational_continuation(
+               &machine, &invalidated) ==
+           CETTA_CONTINUATION_READY);
+    authority.revision++;
+    assert(restore_relational_continuation(
+               &machine, &invalidated) ==
+           CETTA_CONTINUATION_INVALIDATED);
+    assert(petta_machine_stats(&machine, &stats));
+    assert(stats.owned_continuation_restore_invalidated == 1u);
+    cetta_owned_continuation_destroy(&invalidated);
+    petta_machine_destroy(&machine);
+
+    CettaOwnedContinuation unsupported;
+    cetta_owned_continuation_init(&unsupported);
+    Atom *superpose = parse_one(
+        answers, "(superpose (owned-left owned-right))");
+    assert(superpose);
+    assert(petta_machine_init(
+        &machine, space, answers, superpose, NULL, &host));
+    assert(petta_machine_next(
+               &machine, &answer, &environment) ==
+           PETTA_MACHINE_STEP_ANSWER);
+    bindings_free(&environment);
+    assert(capture_relational_continuation(
+               &machine, &unsupported) ==
+           CETTA_CONTINUATION_UNSUPPORTED);
+    cetta_owned_continuation_destroy(&unsupported);
+    petta_machine_destroy(&machine);
+
+    bool once_captured = false;
+    Atom *once_query = parse_one(
+        answers, "(once (owned-continuation-answer))");
+    assert(once_query);
+    for (size_t budget = 1u; budget <= 64u && !once_captured;
+         budget++) {
+        CettaOwnedContinuation once_image;
+        cetta_owned_continuation_init(&once_image);
+        authority.remaining = budget;
+        PettaMachineHost once_host = {
+            .context = &authority,
+            .admit_branch_capture =
+                admit_effect_free_continuation,
+            .permit_transition =
+                permit_owned_continuation_transition,
+        };
+        assert(petta_machine_init(
+            &machine, space, answers, once_query, NULL,
+            &once_host));
+        PettaMachineStep step = petta_machine_next(
+            &machine, &answer, &environment);
+        bindings_free(&environment);
+        if (step == PETTA_MACHINE_STEP_SUSPENDED &&
+            capture_relational_continuation(
+                &machine, &once_image) ==
+                CETTA_CONTINUATION_READY) {
+            authority.remaining = 128u;
+            assert(petta_machine_next(
+                       &machine, &answer, &environment) ==
+                   PETTA_MACHINE_STEP_ANSWER);
+            assert(atom_is_symbol_id(answer, first_id));
+            bindings_free(&environment);
+            assert(petta_machine_next(
+                       &machine, &answer, &environment) ==
+                   PETTA_MACHINE_STEP_EXHAUSTED);
+            bindings_free(&environment);
+            assert(restore_relational_continuation(
+                       &machine, &once_image) ==
+                   CETTA_CONTINUATION_READY);
+            authority.remaining = 128u;
+            assert(petta_machine_next(
+                       &machine, &answer, &environment) ==
+                   PETTA_MACHINE_STEP_ANSWER);
+            assert(atom_is_symbol_id(answer, first_id));
+            bindings_free(&environment);
+            assert(petta_machine_next(
+                       &machine, &answer, &environment) ==
+                   PETTA_MACHINE_STEP_EXHAUSTED);
+            bindings_free(&environment);
+            once_captured = true;
+        }
+        cetta_owned_continuation_destroy(&once_image);
+        petta_machine_destroy(&machine);
+    }
+    assert(once_captured);
+
+    CettaOwnedContinuation stale_space;
+    cetta_owned_continuation_init(&stale_space);
+    authority.revision = 4u;
+    assert(petta_machine_init(
+        &machine, space, answers, query, NULL, &host));
+    assert(petta_machine_next(
+               &machine, &answer, &environment) ==
+           PETTA_MACHINE_STEP_ANSWER);
+    bindings_free(&environment);
+    assert(capture_relational_continuation(
+               &machine, &stale_space) ==
+           CETTA_CONTINUATION_READY);
+    Atom *mutation = parse_one(
+        persistent,
+        "(= (owned-continuation-unrelated)"
+        "   owned-continuation-space-mutation)");
+    assert(mutation);
+    space_add(space, mutation);
+    assert(restore_relational_continuation(
+               &machine, &stale_space) ==
+           CETTA_CONTINUATION_INVALIDATED);
+    cetta_owned_continuation_destroy(&stale_space);
+    petta_machine_destroy(&machine);
+
+    puts("PASS: owned ordinary-clause continuations are multi-shot and authority-pinned");
+}
+
 int main(void) {
     Arena persistent;
     Arena answers;
@@ -4976,6 +5280,9 @@ int main(void) {
     test_declaration_authority_parity(&universe, &answers);
     test_analysis_authority_retry(&space, &answers);
     test_relational_obligation_guard_gc(
+        &space, &persistent, &answers);
+    test_branch_capture_algebra();
+    test_owned_clause_continuation_roundtrip(
         &space, &persistent, &answers);
 
     test_native_residual_typecheck(
