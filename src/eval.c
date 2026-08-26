@@ -10633,6 +10633,11 @@ static bool hyperpose_external_unsafe_head(Atom *head) {
            symbol_name_has_prefix(head, "prolog:") ||
            symbol_name_equals(head, "fs:write-text") ||
            symbol_name_equals(head, "fs:append-text") ||
+           symbol_name_equals(head, "io:submit") ||
+           symbol_name_equals(head, "io:poll") ||
+           symbol_name_equals(head, "io:cancel") ||
+           symbol_name_equals(head, "http:get") ||
+           symbol_name_equals(head, "http:post") ||
            symbol_name_equals(head, "system:exit") ||
            symbol_name_has_prefix(head, "foreign:");
 }
@@ -10640,7 +10645,10 @@ static bool hyperpose_external_unsafe_head(Atom *head) {
 static bool hyperpose_internal_unsafe_head(SymbolId head_id, Atom *head) {
     if (head_id == g_builtin_syms.lib_system_exit_with_code ||
         head_id == g_builtin_syms.lib_fs_write_text ||
-        head_id == g_builtin_syms.lib_fs_append_text) {
+        head_id == g_builtin_syms.lib_fs_append_text ||
+        head_id == g_builtin_syms.lib_io_submit ||
+        head_id == g_builtin_syms.lib_io_poll ||
+        head_id == g_builtin_syms.lib_io_cancel) {
         return true;
     }
     return symbol_name_has_prefix(head, "__cetta_lib_mork_") ||
@@ -19852,6 +19860,31 @@ static void eval_for_caller(Space *s, Arena *a, Atom *type, Atom *atom, int fuel
     outcome_set_normalize_visible_frontier(a, &inner);
     outcome_set_append_prefixed_move(a, os, &inner, NULL, false);
     outcome_set_free(&inner);
+}
+
+bool eval_petta_from_lib_prolog(
+    Arena *arena, Atom *expression, ResultSet *results) {
+    if (!arena || !expression || !results ||
+        eval_current_language_id() != CETTA_LANGUAGE_PETTA ||
+        !g_eval_root_space || !g_library_context) {
+        return false;
+    }
+    result_set_init(results);
+    OutcomeSet outcomes;
+    outcome_set_init_with_owner(&outcomes, arena);
+    Bindings empty;
+    bindings_init(&empty);
+    eval_for_caller(
+        g_eval_root_space, arena, NULL, expression,
+        eval_current_effective_fuel_limit(), &empty, false, &outcomes);
+    bindings_free(&empty);
+    for (CettaCount index = 0u; index < outcomes.len; index++) {
+        Atom *value = outcome_atom_materialize(arena, &outcomes.items[index]);
+        if (value && !atom_is_legacy_empty_sentinel(value))
+            result_set_add(results, value);
+    }
+    outcome_set_free(&outcomes);
+    return true;
 }
 
 static void eval_direct_outcomes(Space *s, Arena *a, Atom *type, Atom *atom, int fuel,

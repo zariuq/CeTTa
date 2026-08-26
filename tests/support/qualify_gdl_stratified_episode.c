@@ -236,7 +236,7 @@ int main(int argc, char **argv) {
         : cetta_gdl_stratified_model_admit_authored_source_v1(
             forms[0], (CettaGdlStratifiedModelAdmissionLimitsV1){0});
     CettaNikDirectAuthorityTokenV1 source_token = {0};
-    CettaNikNativeSelectionV1 selection = {0};
+    CettaNikImplementationSelectionV1 selection = {0};
     uint64_t realization_identity = 0u;
     bool source_ready =
         source.kind == CETTA_GDL_STRATIFIED_MODEL_ESTABLISHED_V1 &&

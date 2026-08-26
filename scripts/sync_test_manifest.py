@@ -48,6 +48,7 @@ MAKEFILE_LISTS = (
     "PATHMAP_RUNTIME_STATS_METTA_TESTS",
     "GC_ADVERSARIAL_TESTS",
     "BACKEND_DEDICATED_TESTS",
+    "OPT_IN_FEATURE_TESTS",
     "BACKEND_HEAVY_TESTS",
     "BACKEND_DIAGNOSTIC_TESTS",
     "BACKEND_PENDING_CORRECTNESS_TESTS",
@@ -71,6 +72,7 @@ VALID_LANES = {
     "test-fallback-eval-session",
     "test-heavy",
     "test-import-modes",
+    "test-opt-in-feature",
     "test-pathmap-lane",
     "test-profiles",
     "test-python",
@@ -108,6 +110,7 @@ LANE_ORDER = {
     "xfail-core-lane": 100,
     "test-fallback-eval-session": 110,
     "test-import-modes": 120,
+    "test-opt-in-feature": 125,
     "test-rhometta-payload-map-capacity-c": 130,
 }
 
@@ -452,6 +455,16 @@ def generated_row(repo: Path, test_path: str, sets: dict[str, set[str]]) -> Mani
             test_path, "he", "metta", "he-extended", "python", "native",
             "test-python", expect, note,
         )
+    if test_path in sets["OPT_IN_FEATURE_TESTS"]:
+        expect, note = generated_expect_and_note(
+            repo,
+            test_path,
+            "isolated opt-in feature regression",
+        )
+        return ManifestRow(
+            test_path, "he", "metta", "he-extended", "core", "native",
+            "test-opt-in-feature", expect, note,
+        )
     if test_path in sets["BACKEND_HEAVY_TESTS"]:
         build = "pathmap" if "pathmap" in Path(test_path).stem else "main"
         engine = "pathmap" if build == "pathmap" else "native"
@@ -685,6 +698,13 @@ def validate_manifest(repo: Path, rows: list[ManifestRow]) -> list[str]:
         sets["PYTHON_TESTS"],
         "test-python",
         "PYTHON_TESTS",
+        errors,
+    )
+    check_exact_lane(
+        rows,
+        sets["OPT_IN_FEATURE_TESTS"],
+        "test-opt-in-feature",
+        "OPT_IN_FEATURE_TESTS",
         errors,
     )
     check_paths_present(

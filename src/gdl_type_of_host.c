@@ -50,8 +50,8 @@ static CettaGdlTypeOfNativeQueryV1 gdl_host_stale_query_v1(void) {
     return (CettaGdlTypeOfNativeQueryV1){
         .kind = CETTA_GDL_TYPE_OF_NATIVE_QUERY_STALE_V1,
         .selection = {
-            .status = CETTA_NIK_NATIVE_SELECTION_STATUS_OK_V1,
-            .kind = CETTA_NIK_NATIVE_SELECTION_NONE_V1,
+            .status = CETTA_NIK_IMPLEMENTATION_SELECTION_STATUS_OK_V1,
+            .kind = CETTA_NIK_IMPLEMENTATION_SELECTION_NONE_V1,
             .greatest_index = SIZE_MAX,
         },
     };
@@ -61,8 +61,8 @@ static CettaGdlTypeOfNativeQueryV1 gdl_host_fault_query_v1(void) {
     return (CettaGdlTypeOfNativeQueryV1){
         .kind = CETTA_GDL_TYPE_OF_NATIVE_QUERY_ENGINE_FAULT_V1,
         .selection = {
-            .status = CETTA_NIK_NATIVE_SELECTION_STATUS_OK_V1,
-            .kind = CETTA_NIK_NATIVE_SELECTION_NONE_V1,
+            .status = CETTA_NIK_IMPLEMENTATION_SELECTION_STATUS_OK_V1,
+            .kind = CETTA_NIK_IMPLEMENTATION_SELECTION_NONE_V1,
             .greatest_index = SIZE_MAX,
         },
         .value.fault = CETTA_NIK_ENGINE_FAULT_UNAVAILABLE,

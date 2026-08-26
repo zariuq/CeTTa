@@ -146,8 +146,11 @@ typedef enum {
 
 typedef struct {
     CettaGdlPositiveHornRunKindV1 kind;
-    CettaNikNativeSelectionV1 selection;
-    uint64_t selected_realization_identity;
+    /* The implementation actually used for this run.  Zero means that no
+     * implementation ran (for example, because the admission was stale).
+     * This is an observation, not a claim that RuleMachine is preferred to
+     * every other implementation of the positive-Horn calculus. */
+    uint64_t implementation_identity;
     /* Borrowed from the caller-provided result arena. */
     Atom *result;
 } CettaGdlPositiveHornRunV1;

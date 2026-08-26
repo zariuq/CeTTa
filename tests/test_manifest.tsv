@@ -315,8 +315,16 @@ tests/test_include_space_target_error.metta	he	metta	he-extended	main	native	tes
 tests/test_index_too_large_regression.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_integer_overflow_regression.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_intersection_atom.metta	he	metta	he-extended	main	native	test	golden	-
+tests/test_io_json_bridge.metta	he	metta	he-extended	core	native	test-opt-in-feature	golden	isolated opt-in feature regression
+tests/test_io_json_bridge_compat.metta	he	metta	he-extended	core	native	test-opt-in-feature	golden	isolated opt-in feature regression
+tests/test_io_no_http.metta	he	metta	he-extended	core	native	test-opt-in-feature	property	assertion-only property without golden oracle
+tests/test_io_rho_bridge.metta	he	metta	he-extended	core	native	test-opt-in-feature	golden	isolated opt-in feature regression
+tests/test_io_syntax.metta	he	metta	he-extended	core	native	test-opt-in-feature	property	assertion-only property without golden oracle
 tests/test_isinf_math_bad_type.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_isnan_math_bad_type.metta	he	metta	he-extended	main	native	test	golden	-
+tests/test_json_gslt_invalid_number.metta	he	metta	he-extended	core	native	test-opt-in-feature	golden	isolated opt-in feature regression
+tests/test_json_gslt_legacy_nul.metta	he	metta	he-extended	core	native	test-opt-in-feature	golden	isolated opt-in feature regression
+tests/test_json_gslt_library.metta	he	metta	he-extended	core	native	test-opt-in-feature	golden	isolated opt-in feature regression
 tests/test_let.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_let_star_error_short_circuit.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_lib_parse_abt_bridge.metta	he	metta	he-extended	main	native	test	golden	-

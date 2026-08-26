@@ -3,7 +3,7 @@
 
 #include "atom.h"
 #include "nik_direct_authority.h"
-#include "nik_native_calculus_selection.h"
+#include "nik_licensed_implementation_selection.h"
 
 #include <stddef.h>
 
@@ -97,7 +97,7 @@ typedef struct {
     /* Selection is request-local to this exact admitted source/profile/
      * revision fibre.  A served outcome always names the selected native
      * realization; stale or faulted requests select nothing. */
-    CettaNikNativeSelectionV1 selection;
+    CettaNikImplementationSelectionV1 selection;
     uint64_t selected_realization_identity;
     union {
         CettaNikOutcomeV1 outcome;
@@ -212,7 +212,7 @@ typedef enum {
 
 typedef struct {
     CettaGdlTypeOfNativeGroundKindV1 kind;
-    CettaNikNativeSelectionV1 selection;
+    CettaNikImplementationSelectionV1 selection;
     uint64_t selected_realization_identity;
     union {
         CettaNikOutcomeV1 outcome;

@@ -1,0 +1,16 @@
+true
+(JsonObjectV1 ((JsonMemberV1 0 (JsonStringV1 ((cp 120))) (JsonNumberV1 "1")) (JsonMemberV1 1 (JsonStringV1 ((cp 120))) (JsonNumberV1 "2"))))
+(JsonObject ((JsonPair "x" (JsonNumber "1")) (JsonPair "x" (JsonNumber "2"))))
+(JsonMatchesV1 ((JsonNumberV1 "1") (JsonNumberV1 "2")))
+(JsonFoundV1 0 (JsonNumberV1 "1"))
+(JsonFoundV1 1 (JsonNumberV1 "2"))
+JsonMissingV1
+(JsonNumber "1")
+JsonNull
+"message"
+(assertEqualToResult true (true))
+"[\"\\u0000\",-12.50e+2]"
+"{\"x\":1,\"x\":2}"
+"{\"permissions\":{\"write\":[\"/repo/runtime\"]},\"scope\":\"turn\"}"
+(JsonFailureV1 JsonParseV1 JsonSyntaxRejectedV1 (__cetta_lib_json_parse_v1 "01") "JSON syntax rejected by authored grammar")
+(JsonFailureV1 JsonStringifyV1 JsonRoundtripDisagreementV1 (__cetta_lib_json_stringify_v1 (JsonNumberV1 "01")) "JSON syntax rejected by authored grammar")

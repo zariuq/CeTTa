@@ -1,0 +1,3 @@
+true
+(io:json:event 21 200 (JsonObjectV1 ((JsonMemberV1 0 (JsonStringV1 ((cp 107) (cp 105) (cp 110) (cp 100))) (JsonStringV1 ((cp 109) (cp 101) (cp 115) (cp 115) (cp 97) (cp 103) (cp 101)))))))
+(io:json:event 22 502 (JsonFailureV1 JsonParseV1 JsonSyntaxRejectedV1 (__cetta_lib_json_parse_v1 "01") "JSON syntax rejected by authored grammar"))

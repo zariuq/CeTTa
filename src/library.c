@@ -17,6 +17,8 @@
 #include "stats.h"
 #include "text_source.h"
 #include "langdef_pack.h"
+#include "library_io.h"
+#include "library_json.h"
 #include <ctype.h>
 #include <dirent.h>
 #include <errno.h>
@@ -30,6 +32,10 @@
 #include <time.h>
 #include <unistd.h>
 
+#ifndef CETTA_BUILD_WITH_JSON_GSLT
+#define CETTA_BUILD_WITH_JSON_GSLT 0
+#endif
+
 enum {
     CETTA_LIBRARY_SYSTEM = 1u << 0,
     CETTA_LIBRARY_FS = 1u << 1,
@@ -40,7 +46,11 @@ enum {
     CETTA_LIBRARY_RHOMETTA = 1u << 6,
     CETTA_LIBRARY_PETTA_IMPORT = 1u << 7,
     CETTA_LIBRARY_LIB_PROLOG = 1u << 8,
-    CETTA_LIBRARY_PETTA_MEMO = 1u << 9
+    CETTA_LIBRARY_PETTA_MEMO = 1u << 9,
+    CETTA_LIBRARY_IO = 1u << 10,
+#if CETTA_BUILD_WITH_JSON_GSLT
+    CETTA_LIBRARY_JSON = 1u << 11
+#endif
 };
 
 typedef struct {
@@ -59,6 +69,10 @@ static const CettaLibrarySpec CETTA_LIBRARIES[] = {
     {"lib_import", CETTA_LIBRARY_PETTA_IMPORT},
     {"lib_prolog", CETTA_LIBRARY_LIB_PROLOG},
     {"lib_memo", CETTA_LIBRARY_PETTA_MEMO},
+    {"io", CETTA_LIBRARY_IO},
+#if CETTA_BUILD_WITH_JSON_GSLT
+    {"json", CETTA_LIBRARY_JSON},
+#endif
 };
 
 static const char *CETTA_MM2_PROGRAM_HANDLE_KIND = "mork-program";
@@ -398,6 +412,8 @@ void cetta_library_context_init_for_language_profile(CettaLibraryContext *ctx,
             ctx->lib_prolog, ctx->working_dir);
     }
     ctx->foreign_runtime = cetta_foreign_runtime_new();
+    ctx->io_runtime = NULL;
+    ctx->json_runtime = NULL;
 }
 
 void cetta_library_context_free(CettaLibraryContext *ctx) {
@@ -457,6 +473,12 @@ void cetta_library_context_free(CettaLibraryContext *ctx) {
         cetta_foreign_runtime_free(ctx->foreign_runtime);
         ctx->foreign_runtime = NULL;
     }
+    cetta_io_runtime_free(ctx->io_runtime);
+    ctx->io_runtime = NULL;
+#if CETTA_BUILD_WITH_JSON_GSLT
+    cetta_json_library_runtime_v1_free(ctx->json_runtime);
+#endif
+    ctx->json_runtime = NULL;
 }
 
 struct CettaNikRuntimeV1 *cetta_library_context_nik_runtime(
@@ -8228,6 +8250,21 @@ bool cetta_library_import(CettaLibraryContext *ctx, const char *name,
     import_name = spec ? spec->name : native_spec->name;
     if (ctx->active_mask & import_bit) return true;
 
+#if CETTA_BUILD_WITH_JSON_GSLT
+    if (import_bit == CETTA_LIBRARY_JSON && !ctx->json_runtime) {
+        char json_error[512] = {0};
+        ctx->json_runtime = cetta_json_library_runtime_v1_new(
+            json_error, sizeof(json_error));
+        if (!ctx->json_runtime) {
+            *error_out = atom_string(
+                eval_arena,
+                json_error[0] ? json_error
+                              : "failed to prepare authored JSON language");
+            return false;
+        }
+    }
+#endif
+
     ctx->active_mask |= import_bit;
     memset(&parsed_spec, 0, sizeof(parsed_spec));
     parsed_spec.kind = CETTA_MODULE_SPEC_STDLIB;
@@ -8240,6 +8277,8 @@ bool cetta_library_import(CettaLibraryContext *ctx, const char *name,
         ctx->active_mask &= ~import_bit;
         return false;
     }
+    if (import_bit == CETTA_LIBRARY_IO && !ctx->io_runtime)
+        ctx->io_runtime = cetta_io_runtime_new();
     return true;
 }
 
@@ -8939,6 +8978,17 @@ Atom *cetta_library_dispatch_native(CettaLibraryContext *ctx, Space *space,
         Atom *result = cetta_library_dispatch_fs(a, head, args, nargs);
         if (result) return result;
     }
+    if (ctx->active_mask & CETTA_LIBRARY_IO) {
+        Atom *result = cetta_io_dispatch(ctx->io_runtime, a, head, args, nargs);
+        if (result) return result;
+    }
+#if CETTA_BUILD_WITH_JSON_GSLT
+    if (ctx->active_mask & CETTA_LIBRARY_JSON) {
+        Atom *result = cetta_json_library_dispatch_v1(
+            ctx->json_runtime, a, head, args, nargs);
+        if (result) return result;
+    }
+#endif
     if (ctx->active_mask & CETTA_LIBRARY_STR) {
         Atom *result = cetta_library_dispatch_str(a, head, args, nargs);
         if (result) return result;
