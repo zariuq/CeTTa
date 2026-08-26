@@ -29,6 +29,124 @@ typedef struct {
     bool owns_scratch_arena;
 } SearchContext;
 
+/*
+ * Algebraic branch-storage seam shared by evaluator backends.
+ *
+ * Capacity describes ownership, not traversal order.  A depth-first,
+ * breadth-first, valuation-driven, or learned controller may request any
+ * storage mode; the weakest component of the concrete evaluator state decides
+ * which mode is physically admissible.
+ *
+ * Positive example: immutable syntax plus independently owned ABT state may
+ * admit an owned frontier.  Negative example: a live transaction with no
+ * snapshot operation remains inline-only even when the controller asks for
+ * breadth-first order.
+ */
+typedef enum {
+    CETTA_BRANCH_CAPTURE_INLINE_ONLY = 0,
+    CETTA_BRANCH_CAPTURE_ONE_SHOT,
+    CETTA_BRANCH_CAPTURE_MULTI_SHOT,
+} CettaBranchCaptureCapacity;
+
+typedef enum {
+    CETTA_BRANCH_STORAGE_INLINE = 0,
+    CETTA_BRANCH_STORAGE_EXCLUSIVE_DEPTH_FIRST,
+    CETTA_BRANCH_STORAGE_OWNED_FRONTIER,
+} CettaBranchStorageMode;
+
+CettaBranchCaptureCapacity cetta_branch_capture_weakest(
+    CettaBranchCaptureCapacity first,
+    CettaBranchCaptureCapacity second);
+bool cetta_branch_capture_admits(
+    CettaBranchCaptureCapacity available,
+    CettaBranchStorageMode requested);
+CettaBranchStorageMode cetta_branch_select_storage(
+    CettaBranchCaptureCapacity available,
+    CettaBranchStorageMode requested);
+
+#define CETTA_BRANCH_AUTHORITY_TOKEN_WORD_CAPACITY 8u
+typedef struct {
+    uint64_t words[CETTA_BRANCH_AUTHORITY_TOKEN_WORD_CAPACITY];
+    uint32_t length;
+} CettaBranchAuthorityToken;
+
+bool cetta_branch_authority_token_equal(
+    const CettaBranchAuthorityToken *left,
+    const CettaBranchAuthorityToken *right);
+
+/* Admission is sampled before and after capture.  AVAILABLE supplies the
+ * host-owned component's capacity and exact mutable authority.  DEFERRED
+ * makes no portability claim; INVALIDATED reports that no stable judgment
+ * could be made for the current revision. */
+typedef enum {
+    CETTA_BRANCH_ADMISSION_DEFERRED = 0,
+    CETTA_BRANCH_ADMISSION_AVAILABLE,
+    CETTA_BRANCH_ADMISSION_INVALIDATED,
+} CettaBranchAdmissionStatus;
+
+typedef struct {
+    CettaBranchAdmissionStatus status;
+    CettaBranchCaptureCapacity capacity;
+    CettaBranchAuthorityToken authority;
+} CettaBranchAdmission;
+
+typedef enum {
+    CETTA_CONTINUATION_READY = 0,
+    CETTA_CONTINUATION_DEFERRED,
+    CETTA_CONTINUATION_UNSUPPORTED,
+    CETTA_CONTINUATION_INVALIDATED,
+    CETTA_CONTINUATION_CAPACITY,
+} CettaContinuationStatus;
+
+typedef struct CettaContinuationBackend CettaContinuationBackend;
+
+/* A backend-erased machine endpoint.  PeTTa relational control, Prime's
+ * evaluation stack, and HE outcome continuations may provide different
+ * adapters without sharing their physical state layout. */
+typedef struct {
+    void *machine;
+    const CettaContinuationBackend *backend;
+} CettaContinuationMachine;
+
+/* An owned delimited continuation plus the evaluator state required for
+ * resumption.  The backend remains visible only as an identity/operation
+ * table; a controller treats the payload as opaque.  The handle is move-only
+ * by convention and one successful restore consumes it.  Multi-shot capacity
+ * means that independently captured images may coexist; it does not make one
+ * C handle implicitly copyable. */
+typedef struct {
+    void *payload;
+    const CettaContinuationBackend *backend;
+} CettaOwnedContinuation;
+
+struct CettaContinuationBackend {
+    CettaContinuationStatus (*capture)(
+        void *machine, void **payload);
+    CettaContinuationStatus (*restore)(
+        void *machine, void **payload);
+    void (*destroy)(void *payload);
+    bool (*storage_bytes)(
+        const void *payload,
+        size_t *atom_bytes,
+        size_t *exclusive_vector_bytes);
+};
+
+void cetta_owned_continuation_init(
+    CettaOwnedContinuation *continuation);
+void cetta_owned_continuation_destroy(
+    CettaOwnedContinuation *continuation);
+CettaContinuationStatus cetta_continuation_capture(
+    CettaContinuationMachine machine,
+    CettaOwnedContinuation *continuation);
+/* Restore consumes the owned continuation exactly when it succeeds. */
+CettaContinuationStatus cetta_continuation_restore(
+    CettaContinuationMachine machine,
+    CettaOwnedContinuation *continuation);
+bool cetta_owned_continuation_storage_bytes(
+    const CettaOwnedContinuation *continuation,
+    size_t *atom_bytes,
+    size_t *exclusive_vector_bytes);
+
 bool search_context_init(SearchContext *ctx, const Bindings *base,
                          Arena *scratch_arena);
 void search_context_init_owned(SearchContext *ctx, Bindings *owned,

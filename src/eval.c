@@ -32323,6 +32323,15 @@ static bool petta_eval_machine_try(
                 " choice_nursery_bytes_reclaimed=%" PRIu64
                 " choice_heap_resets=%" PRIu64
                 " choice_heap_bytes_reclaimed=%" PRIu64
+                " owned_continuation_capture_attempts=%" PRIu64
+                " owned_continuation_captures=%" PRIu64
+                " owned_continuation_capture_deferred=%" PRIu64
+                " owned_continuation_capture_unsupported=%" PRIu64
+                " owned_continuation_capture_invalidated=%" PRIu64
+                " owned_continuation_restores=%" PRIu64
+                " owned_continuation_restore_invalidated=%" PRIu64
+                " owned_continuation_atom_bytes_captured=%" PRIu64
+                " owned_continuation_vector_bytes_captured=%" PRIu64
                 " table_lookups=%" PRIu64
                 " table_hits=%" PRIu64
                 " table_generator_rounds=%" PRIu64
@@ -32493,6 +32502,15 @@ static bool petta_eval_machine_try(
                 stats.choice_nursery_bytes_reclaimed,
                 stats.choice_heap_resets,
                 stats.choice_heap_bytes_reclaimed,
+                stats.owned_continuation_capture_attempts,
+                stats.owned_continuation_captures,
+                stats.owned_continuation_capture_deferred,
+                stats.owned_continuation_capture_unsupported,
+                stats.owned_continuation_capture_invalidated,
+                stats.owned_continuation_restores,
+                stats.owned_continuation_restore_invalidated,
+                stats.owned_continuation_atom_bytes_captured,
+                stats.owned_continuation_vector_bytes_captured,
                 stats.table_lookups,
                 stats.table_hits,
                 stats.table_generator_rounds,
