@@ -208,6 +208,7 @@ tests/test_error_types.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_eval.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_eval_arity.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_eval_grounded.metta	he	metta	he-extended	main	native	test	golden	-
+tests/test_eval_in_space.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_evalc.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_evalc_unknown_space.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_fc_native_depth3_count_regression.metta	he	metta	he-extended	runtime-stats	native	test-runtime-stats-lane	golden	runtime-stats lane golden regression
