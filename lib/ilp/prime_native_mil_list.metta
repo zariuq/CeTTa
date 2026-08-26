@@ -9,8 +9,8 @@
 
 (= (rel:list-target-witness
      $relation $source-list $target-list)
-   (let (map-rel:edge $target-list $proof)
-        (map-rel:run $relation $source-list)
+   (let $proof
+        (map-rel:check $relation $source-list $target-list)
      True))
 
 (= (rel:list-positive-covered
@@ -32,19 +32,19 @@
 (= (rel:list-all-positive $relation ()) True)
 (= (rel:list-all-positive $relation $examples)
    (let ($example $rest) (decons-atom $examples)
-     (and
-       (rel:list-positive-covered $relation $example)
-       (rel:list-all-positive $relation $rest))))
+     (if (rel:list-positive-covered $relation $example)
+         (rel:list-all-positive $relation $rest)
+         False)))
 
 (= (rel:list-all-negative $relation ()) True)
 (= (rel:list-all-negative $relation $examples)
    (let ($example $rest) (decons-atom $examples)
-     (and
-       (rel:list-negative-avoided $relation $example)
-       (rel:list-all-negative $relation $rest))))
+     (if (rel:list-negative-avoided $relation $example)
+         (rel:list-all-negative $relation $rest)
+         False)))
 
 (= (rel:list-consistent
      $relation (rel:list-examples $positive $negative))
-   (and
-     (rel:list-all-positive $relation $positive)
-     (rel:list-all-negative $relation $negative)))
+   (if (rel:list-all-positive $relation $positive)
+       (rel:list-all-negative $relation $negative)
+       False))

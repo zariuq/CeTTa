@@ -23,11 +23,11 @@
 #include "first_order_frame_decoder_v1.h"
 #include "oslf_native_type_plan_v1.h"
 #include "oslf_native_type_vm_v1.h"
-#include "proof_gslt_plan_v1.h"
-#include "proof_gslt_relational_assertion_v1.h"
-#include "proof_gslt_relational_machine_v1.h"
-#include "proof_gslt_relational_runtime_v1.h"
-#include "proof_gslt_sequence_evidence_v1.h"
+#include "certificate_gslt_plan_v1.h"
+#include "certificate_gslt_relational_assertion_v1.h"
+#include "certificate_gslt_relational_machine_v1.h"
+#include "certificate_gslt_relational_runtime_v1.h"
+#include "certificate_gslt_sequence_evidence_v1.h"
 #include "proof_storage_plan_v1.h"
 #include <dlfcn.h>
 #endif
@@ -81,15 +81,15 @@ typedef struct {
     PPGuardPlanV1 parser_guard_plan;
     PPGuardedLexV1Plan parser_guarded_plan;
     PPGuardedLexExecV1Plan parser_guarded_exec;
-    PPProofGSLTPlanV1 proof_plan;
-    PPProofGSLTSequenceEvidenceABIV1 proof_evidence;
-    PPProofGSLTRelationalAssertionPlanV1 proof_relational;
+    PPCertificateGSLTPlanV1 proof_plan;
+    PPCertificateGSLTSequenceEvidenceABIV1 proof_evidence;
+    PPCertificateGSLTRelationalAssertionPlanV1 proof_relational;
     PPOSLFNativeTypePlanV1 proof_native_types;
     PPOSLFNativeTypePlanV1 proof_machine_native_types;
     PPOSLFNativeTypeVMV1 proof_machine_vm;
-    PPProofGSLTRelationalRuntimeV1 proof_generated_runtime;
+    PPCertificateGSLTRelationalRuntimeV1 proof_generated_runtime;
     PPProofStoragePlanV1 proof_storage_plan;
-    PPProofGSLTRelationalMachineV1Workspace proof_workspace;
+    PPCertificateGSLTRelationalMachineV1Workspace proof_workspace;
     const PPProofPreparedActionCaseV1 *proof_exact_action_cases;
     uint32_t proof_exact_action_case_len;
     PPFirstOrderFrameDecoderV1 *proof_frame_decoders;
@@ -612,9 +612,9 @@ static void langdef_resource_free(void *raw_resource) {
     if (resource->proof_generated_runtime_ready) {
         const char *profile_requested =
             getenv("CETTA_LANGDEF_OSLF_PROFILE_V1");
-        PPProofGSLTRelationalRuntimeV1Profile profile;
+        PPCertificateGSLTRelationalRuntimeV1Profile profile;
         if (profile_requested && profile_requested[0] != '\0' &&
-            ppproof_gslt_relational_runtime_v1_profile(
+            ppcertificate_gslt_relational_runtime_v1_profile(
                 &resource->proof_generated_runtime, &profile)) {
             fprintf(
                 stderr,
@@ -732,7 +732,7 @@ static void langdef_resource_free(void *raw_resource) {
                 profile.stats.maximum_search_frame_depth,
                 profile.stats.maximum_goal_depth);
         }
-        ppproof_gslt_relational_runtime_v1_free(
+        ppcertificate_gslt_relational_runtime_v1_free(
             &resource->proof_generated_runtime);
     }
     if (resource->proof_machine_vm_ready)
@@ -745,20 +745,20 @@ static void langdef_resource_free(void *raw_resource) {
     if (resource->proof_frame_decoders_ready)
         free(resource->proof_frame_decoders);
     if (resource->proof_workspace_ready)
-        ppproof_gslt_relational_machine_v1_workspace_free(
+        ppcertificate_gslt_relational_machine_v1_workspace_free(
             &resource->proof_workspace);
     if (resource->proof_storage_plan_ready)
         ppproof_storage_plan_v1_free(&resource->proof_storage_plan);
     if (resource->proof_native_types_ready)
         pposlf_native_type_plan_v1_free(&resource->proof_native_types);
     if (resource->proof_relational_ready)
-        ppproof_gslt_relational_assertion_v1_free(
+        ppcertificate_gslt_relational_assertion_v1_free(
             &resource->proof_relational);
     if (resource->proof_evidence_ready)
-        ppproof_gslt_sequence_evidence_abi_v1_free(
+        ppcertificate_gslt_sequence_evidence_abi_v1_free(
             &resource->proof_evidence);
     if (resource->proof_plan_ready)
-        ppproof_gslt_plan_v1_free(&resource->proof_plan);
+        ppcertificate_gslt_plan_v1_free(&resource->proof_plan);
     if (resource->parser_guarded_exec_initialized) {
         ppguarded_lex_exec_v1_plan_free(
             &resource->parser_guarded_exec);
@@ -1118,7 +1118,7 @@ static bool langdef_proof_extension_load(
     const CettaLangDefManifestV1 *manifest,
     const char artifact_paths[][PATH_MAX],
     char *error, size_t error_size) {
-    PPProofGSLTArticleV1Limits limits;
+    PPCertificateGSLTArticleV1Limits limits;
     int32_t plan_index;
     int32_t evidence_index;
     int32_t relational_index;
@@ -1175,29 +1175,29 @@ static bool langdef_proof_extension_load(
             error, error_size,
             "proof extension requires a compiled relational state program");
 
-    limits = ppproof_gslt_article_v1_default_limits();
-    ppproof_gslt_plan_v1_init(&resource->proof_plan);
+    limits = ppcertificate_gslt_article_v1_default_limits();
+    ppcertificate_gslt_plan_v1_init(&resource->proof_plan);
     resource->proof_plan_ready = true;
-    if (ppproof_gslt_plan_v1_load(
+    if (ppcertificate_gslt_plan_v1_load(
             &resource->proof_plan, artifact_paths[plan_index], &limits,
-            error, error_size) != PPPROOF_GSLT_ARTICLE_V1_OK)
+            error, error_size) != PPCERTIFICATE_GSLT_ARTICLE_V1_OK)
         return false;
-    ppproof_gslt_sequence_evidence_abi_v1_init(
+    ppcertificate_gslt_sequence_evidence_abi_v1_init(
         &resource->proof_evidence);
     resource->proof_evidence_ready = true;
-    if (ppproof_gslt_sequence_evidence_abi_v1_load(
+    if (ppcertificate_gslt_sequence_evidence_abi_v1_load(
             &resource->proof_evidence, artifact_paths[evidence_index],
             &resource->proof_plan, error, error_size) !=
-        PPPROOF_GSLT_ARTICLE_V1_OK)
+        PPCERTIFICATE_GSLT_ARTICLE_V1_OK)
         return false;
-    ppproof_gslt_relational_assertion_v1_init(
+    ppcertificate_gslt_relational_assertion_v1_init(
         &resource->proof_relational);
     resource->proof_relational_ready = true;
-    if (ppproof_gslt_relational_assertion_v1_load(
+    if (ppcertificate_gslt_relational_assertion_v1_load(
             &resource->proof_relational,
             artifact_paths[relational_index], &resource->proof_plan,
             &resource->compiled_state, error, error_size) !=
-        PPPROOF_GSLT_ARTICLE_V1_OK)
+        PPCERTIFICATE_GSLT_ARTICLE_V1_OK)
         return false;
     if (native_types_index >= 0) {
         pposlf_native_type_plan_v1_init(&resource->proof_native_types);
@@ -1262,17 +1262,17 @@ static bool langdef_proof_extension_load(
                 error, error_size,
                 "cannot retain generated proof runtime artifact paths");
     }
-    if (!ppproof_gslt_relational_machine_v1_workspace_init(
+    if (!ppcertificate_gslt_relational_machine_v1_workspace_init(
             &resource->proof_workspace))
         return langdef_set_error(
             error, error_size,
             "cannot initialize proof-call workspace");
     if (resource->proof_storage_plan_ready &&
         resource->proof_storage_plan.repetition_cache_len != 0u &&
-        !ppproof_gslt_relational_machine_v1_workspace_set_repetition_policy(
+        !ppcertificate_gslt_relational_machine_v1_workspace_set_repetition_policy(
             &resource->proof_workspace,
             CETTA_GSLT_REPETITION_POLICY_SECOND_OCCURRENCE_V1)) {
-        ppproof_gslt_relational_machine_v1_workspace_free(
+        ppcertificate_gslt_relational_machine_v1_workspace_free(
             &resource->proof_workspace);
         return langdef_set_error(
             error, error_size,
@@ -1287,7 +1287,7 @@ static bool langdef_generated_proof_prepare(
     CettaLangDefV1 *resource, char *error, size_t error_size) {
     PPOSLFNativeTypePlanV1 native_types;
     PPOSLFNativeTypeVMV1 vm;
-    PPProofGSLTRelationalRuntimeV1 runtime;
+    PPCertificateGSLTRelationalRuntimeV1 runtime;
     const PPOSLFNativeVMLimitsV1 vm_limits = {
         .maximum_rule_attempts = LANGDEF_DEFAULT_PROOF_RULE_ATTEMPTS,
         .maximum_goal_depth = LANGDEF_GENERATED_PROOF_GOAL_DEPTH,
@@ -1326,9 +1326,9 @@ static bool langdef_generated_proof_prepare(
     if (!pposlf_native_type_vm_v1_prepare(
             &vm, &native_types, error, error_size))
         goto done;
-    ppproof_gslt_relational_runtime_v1_init(&runtime);
+    ppcertificate_gslt_relational_runtime_v1_init(&runtime);
     runtime_ready = true;
-    if (!ppproof_gslt_relational_runtime_v1_prepare(
+    if (!ppcertificate_gslt_relational_runtime_v1_prepare(
             &runtime, resource->proof_generated_runtime_path,
             &resource->compiled_state, &native_types, &vm, vm_limits,
             error, error_size))
@@ -1347,7 +1347,7 @@ static bool langdef_generated_proof_prepare(
 
 done:
     if (runtime_ready)
-        ppproof_gslt_relational_runtime_v1_free(&runtime);
+        ppcertificate_gslt_relational_runtime_v1_free(&runtime);
     if (vm_ready)
         pposlf_native_type_vm_v1_free(&vm);
     if (native_types_ready)
@@ -2410,10 +2410,10 @@ static PPRelationalStateProofV1Result langdef_proof_extension_execute(
     char *error_buf,
     size_t error_buf_size) {
     CettaLangDefV1 *resource = raw_context;
-    PPProofGSLTRelationalMachineV1Receipt receipt;
-    PPProofGSLTRelationalMachineV1Result result;
-    PPProofGSLTArticleV1Limits limits;
-    PPProofGSLTRelationalMachineV1Workspace *workspace = NULL;
+    PPCertificateGSLTRelationalMachineV1Receipt receipt;
+    PPCertificateGSLTRelationalMachineV1Result result;
+    PPCertificateGSLTArticleV1Limits limits;
+    PPCertificateGSLTRelationalMachineV1Workspace *workspace = NULL;
 
     if (!resource || !resource->proof_extension_ready || !request ||
         !request->store || !request->state_plan) {
@@ -2421,7 +2421,7 @@ static PPRelationalStateProofV1Result langdef_proof_extension_execute(
                           "invalid proof-extension execution request");
         return PPRELATIONAL_STATE_PROOF_V1_INVALID;
     }
-    limits = ppproof_gslt_article_v1_default_limits();
+    limits = ppcertificate_gslt_article_v1_default_limits();
     if (resource->proof_storage_plan_ready &&
         resource->proof_workspace_ready && request->operation &&
         resource->proof_relational.execution.machine) {
@@ -2469,7 +2469,7 @@ static PPRelationalStateProofV1Result langdef_proof_extension_execute(
         const PPProofFrameIndexPlanV1 *frame_index_plan;
         PPProofIndexedEffectUnknownV1 indexed_unknown;
         const char *machine;
-        PPProofGSLTRelationalCompressedInputV1 input = {
+        PPCertificateGSLTRelationalCompressedInputV1 input = {
             .label = request->label,
             .claim = request->claim,
             .claim_len = request->claim_len,
@@ -2532,14 +2532,14 @@ static PPRelationalStateProofV1Result langdef_proof_extension_execute(
             return PPRELATIONAL_STATE_PROOF_V1_INVALID;
         }
         result =
-            ppproof_gslt_relational_machine_v1_compressed_with_workspace(
+            ppcertificate_gslt_relational_machine_v1_compressed_with_workspace(
             request->store, request->state_plan, &resource->proof_plan,
             &resource->proof_evidence, &resource->proof_relational,
             indexed_program_plan, frame_index_plan,
             workspace, &input, &limits, &receipt,
             error_buf, error_buf_size);
     } else {
-        PPProofGSLTRelationalNormalInputV1 input = {
+        PPCertificateGSLTRelationalNormalInputV1 input = {
             .label = request->label,
             .claim = request->claim,
             .claim_len = request->claim_len,
@@ -2555,7 +2555,7 @@ static PPRelationalStateProofV1Result langdef_proof_extension_execute(
                 "normal proof lacks generated action admission");
             return PPRELATIONAL_STATE_PROOF_V1_INVALID;
         }
-        result = ppproof_gslt_relational_machine_v1_normal_with_workspace(
+        result = ppcertificate_gslt_relational_machine_v1_normal_with_workspace(
             request->store, request->state_plan, &resource->proof_plan,
             &resource->proof_evidence, &resource->proof_relational,
             resource->proof_exact_action_cases,
@@ -2564,17 +2564,17 @@ static PPRelationalStateProofV1Result langdef_proof_extension_execute(
             error_buf, error_buf_size);
     }
     switch (result) {
-    case PPPROOF_GSLT_RELATIONAL_MACHINE_V1_OK:
+    case PPCERTIFICATE_GSLT_RELATIONAL_MACHINE_V1_OK:
         return PPRELATIONAL_STATE_PROOF_V1_VERIFIED;
-    case PPPROOF_GSLT_RELATIONAL_MACHINE_V1_INCOMPLETE:
+    case PPCERTIFICATE_GSLT_RELATIONAL_MACHINE_V1_INCOMPLETE:
         return PPRELATIONAL_STATE_PROOF_V1_INCOMPLETE;
-    case PPPROOF_GSLT_RELATIONAL_MACHINE_V1_REJECTED:
+    case PPCERTIFICATE_GSLT_RELATIONAL_MACHINE_V1_REJECTED:
         return PPRELATIONAL_STATE_PROOF_V1_REJECTED;
-    case PPPROOF_GSLT_RELATIONAL_MACHINE_V1_RESOURCE:
+    case PPCERTIFICATE_GSLT_RELATIONAL_MACHINE_V1_RESOURCE:
         return PPRELATIONAL_STATE_PROOF_V1_RESOURCE;
-    case PPPROOF_GSLT_RELATIONAL_MACHINE_V1_UNSUPPORTED:
+    case PPCERTIFICATE_GSLT_RELATIONAL_MACHINE_V1_UNSUPPORTED:
         return PPRELATIONAL_STATE_PROOF_V1_UNSUPPORTED;
-    case PPPROOF_GSLT_RELATIONAL_MACHINE_V1_INVALID:
+    case PPCERTIFICATE_GSLT_RELATIONAL_MACHINE_V1_INVALID:
     default:
         return PPRELATIONAL_STATE_PROOF_V1_INVALID;
     }
@@ -2709,7 +2709,7 @@ static Atom *langdef_parse_compiled_bytes(
         if (proof_execution ==
                 CETTA_LANGDEF_PROOF_EXECUTION_V1_GENERATED_RELATIONAL_AUDIT &&
             langdef->proof_generated_runtime_ready) {
-            proof_backend = ppproof_gslt_relational_runtime_v1_backend(
+            proof_backend = ppcertificate_gslt_relational_runtime_v1_backend(
                 &langdef->proof_generated_runtime);
         }
 #if CETTA_BUILD_WITH_LANGDEF_DIAGNOSTIC_BACKENDS

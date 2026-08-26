@@ -33861,9 +33861,25 @@ petta_lowered_to_shared_form:
                 CURRENT_ENV, cond_expr, then_br, else_br, os))
             return;
 #endif
+        /* The generic branch consumer can remain suspended across both
+         * condition evaluation and non-singleton branch evaluation.  Its
+         * derived pointers are not recoverable from C stack maps, so declare
+         * them beside the child and parent bags through the generated
+         * continuation-root contract. */
+        Atom *condition_roots[4] = {
+            cond_expr, then_br, else_br, NULL,
+        };
         OutcomeSet conds;
         outcome_set_init(&conds);
-        metta_eval_bind(s, a, cond_expr, fuel, &conds);
+        __attribute__((cleanup(eval_gc_outcome_suspension_end)))
+        EvalGcOutcomeSuspension condition_suspension = {0};
+        eval_gc_outcome_suspension_begin_with_atoms(
+            &condition_suspension, &eval_gc_root_frame, os, &conds,
+            condition_roots,
+            sizeof(condition_roots) / sizeof(condition_roots[0]));
+        metta_eval_bind(s, a, condition_roots[0], fuel, &conds);
+        then_br = condition_roots[1];
+        else_br = condition_roots[2];
 
         if (conds.len == 1) {
             Atom *cond =
@@ -33907,15 +33923,20 @@ petta_lowered_to_shared_form:
                 if (owns_continuation)
                     bindings_free(&continuation);
                 outcome_set_free(&conds);
+                eval_gc_outcome_suspension_end(
+                    &condition_suspension);
                 TAIL_REENTER(next_atom);
             }
         }
 
         for (CettaCount i = 0; i < conds.len; i++) {
+            then_br = condition_roots[1];
+            else_br = condition_roots[2];
             Atom *cond =
                 outcome_atom_materialize_traced(
                     a, &conds.items[i],
                     CETTA_RUNTIME_COUNTER_OUTCOME_VARIANT_MATERIALIZE_LET_CHAIN);
+            condition_roots[3] = cond;
             const Bindings *cond_env = &conds.items[i].env;
 
             if (atom_is_legacy_empty_sentinel(cond))
@@ -33950,22 +33971,27 @@ petta_lowered_to_shared_form:
                 continue;
             }
             if (cond->kind == ATOM_VAR) {
-                Atom *branches[2] = { then_br, else_br };
                 SymbolId bool_ids[2] = {
                     g_builtin_syms.true_text,
                     g_builtin_syms.false_text,
                 };
                 for (uint32_t bi = 0; bi < 2; bi++) {
+                    /* A preceding branch may collect.  Reload the selected
+                     * branch from the continuation root rather than retaining
+                     * an untracked C-stack copy across that nested call. */
+                    Atom *branch = condition_roots[bi == 0u ? 1u : 2u];
+                    Atom *branch_cond = condition_roots[3];
                     BindingsBuilder b;
                     if (!bindings_builder_init(&b, cond_env))
                         continue;
                     if (bindings_builder_add_var_fresh(
-                            &b, cond, atom_symbol_id(a, bool_ids[bi]))) {
+                            &b, branch_cond,
+                            atom_symbol_id(a, bool_ids[bi]))) {
                         const Bindings *bb = bindings_builder_bindings(&b);
                         if (language_id == CETTA_LANGUAGE_PRIME) {
                             bool applied = false;
                             Atom *next_atom = bindings_apply_body_exact_env(
-                                a, branches[bi], bb, &applied);
+                                a, branch, bb, &applied);
                             Bindings continuation;
                             if (applied && bindings_project_control_continuation(
                                     a, next_atom, bb, preserve_bindings,
@@ -33978,7 +34004,7 @@ petta_lowered_to_shared_form:
                             }
                         } else {
                             eval_for_current_caller(
-                                s, a, etype, branches[bi], fuel, bb,
+                                s, a, etype, branch, fuel, bb,
                                 CURRENT_ENV, preserve_bindings, os);
                         }
                     }
@@ -33990,6 +34016,9 @@ petta_lowered_to_shared_form:
             Atom **actual_types = NULL;
             uint32_t ntypes =
                 eval_get_atom_types_profiled(s, a, cond, &actual_types);
+            cond = condition_roots[3];
+            then_br = condition_roots[1];
+            else_br = condition_roots[2];
             Atom *bool_type = atom_symbol(a, "Bool");
             bool has_nonbool_concrete_type = false;
             bool may_be_bool = false;
@@ -34021,6 +34050,7 @@ petta_lowered_to_shared_form:
             outcome_set_add(os, atom_expr(a, elems, nargs + 1), cond_env);
         }
         outcome_set_free(&conds);
+        eval_gc_outcome_suspension_end(&condition_suspension);
         return;
     }
 
@@ -34121,10 +34151,18 @@ petta_lowered_to_shared_form:
              * open thunks see the branch's matcher refinements and heap.
              * The generic direct walker has no prefix parameter and would
              * otherwise sever precisely that correlation. */
+            Atom *stream_roots[1] = {expr_arg(atom, 0)};
             OutcomeSet inner;
             outcome_set_init(&inner);
-            eval_for_caller(s, a, NULL, expr_arg(atom, 0), fuel,
+            __attribute__((cleanup(eval_gc_outcome_suspension_end)))
+            EvalGcOutcomeSuspension aggregate_suspension = {0};
+            eval_gc_outcome_suspension_begin_with_atoms(
+                &aggregate_suspension, &eval_gc_root_frame, os, &inner,
+                stream_roots,
+                sizeof(stream_roots) / sizeof(stream_roots[0]));
+            eval_for_caller(s, a, NULL, stream_roots[0], fuel,
                             CURRENT_ENV, true, &inner);
+            eval_gc_outcome_suspension_end(&aggregate_suspension);
             (void)outcome_set_visit_ordered(
                 a, &inner, CETTA_SEARCH_POLICY_ORDER_NATIVE,
                 stream_visit_collect, &collect);
@@ -34726,9 +34764,41 @@ petta_lowered_to_shared_form:
             return;
         }
 
+        /* The prepared let is a derived view of the rooted call.  Do not
+         * retain its arena pointers across recursive source evaluation:
+         * discard it before suspending, then derive it again after any
+         * nested collection has updated the authoritative call root. */
+        prime_let_prepared_free(&prepared);
         OutcomeSet values;
         outcome_set_init(&values);
+        __attribute__((cleanup(eval_gc_outcome_suspension_end)))
+        EvalGcOutcomeSuspension source_suspension = {0};
+        eval_gc_outcome_suspension_begin(
+            &source_suspension, &eval_gc_root_frame, os, &values);
         metta_eval_bind(s, a, source, fuel, &values);
+        eval_gc_outcome_suspension_end(&source_suspension);
+
+        canonical = prime_canonical_let
+                ? atom : (signature
+                ? prime_let_make_canonical(
+                    signature, a, expr_arg(atom, 0), expr_arg(atom, 1),
+                    expr_arg(atom, 2), CURRENT_ENV)
+                : NULL);
+        if (!canonical ||
+            !prime_let_prepare_canonical(
+                signature, a, canonical, &prepared)) {
+            outcome_set_add(
+                os,
+                atom_error(
+                    a, atom,
+                    atom_symbol(
+                        a, prime_syntax_let
+                            ? "ABTLetElaborationFailed"
+                            : "ABTLetScopeError")),
+                &_empty);
+            outcome_set_free(&values);
+            return;
+        }
         if (values.len == 1u) {
             Atom *value = outcome_atom_materialize_traced(
                 a, &values.items[0],
@@ -34870,7 +34940,16 @@ petta_lowered_to_shared_form:
             return;
         }
         outcome_set_init(&vals);
+        __attribute__((cleanup(eval_gc_outcome_suspension_end)))
+        EvalGcOutcomeSuspension value_suspension = {0};
+        eval_gc_outcome_suspension_begin(
+            &value_suspension, &eval_gc_root_frame, os, &vals);
         metta_eval_bind(s, a, applied_val_expr, fuel, &vals);
+        eval_gc_outcome_suspension_end(&value_suspension);
+        /* A nested collection may have moved the source expression.  Derived
+         * child pointers are therefore recomputed from the rooted call. */
+        pat = expr_arg(atom, 0);
+        body_let = expr_arg(atom, 2);
         bool all_errors = vals.len > 0;
         for (CettaCount i = 0; i < vals.len; i++) {
             if (!atom_is_error(

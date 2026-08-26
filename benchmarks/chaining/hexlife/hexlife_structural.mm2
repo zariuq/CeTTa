@@ -1,0 +1,40 @@
+(neighbors ($q $r (S $s)) ($q (S $r) $s))
+(neighbors ($q $r (S $s)) ((S $q) $r $s))
+(neighbors ($q (S $r) $s) ((S $q) $r $s))
+(neighbors ($q (S $r) $s) ($q $r (S $s)))
+(neighbors ((S $q) $r $s) ($q (S $r) $s))
+(neighbors ((S $q) $r $s) ($q $r (S $s)))
+
+(cell dies 1)
+(cell lives 2)
+(cell dies 3)
+(cell dies 4)
+(cell dies 5)
+(cell dies 6)
+
+(alive ((S (S Z)) (S Z) (S Z)))
+(alive ((S Z) (S (S Z)) (S Z)))
+(alive ((S Z) (S (S (S Z))) Z))
+
+(exec 0 (, (alive $co) (neighbors $co $nco) (alive $nco))
+        (O (count (anbs $co $k) $k $nco)))
+(exec 0 (, (alive $co) (neighbors $co $nco) (neighbors $nco $nnco) (alive $nnco))
+        (O (count (adnbs $nco $k) $k $nnco)))
+
+(exec 1 (, (alive $co)) (, (alive-unseen $co)))
+
+(exec 2 (, (anbs $co $c) (alive-unseen $co))
+        (O (- (alive-unseen $co))))
+(exec 2 (, (alive $co) (adnbs $co $c))
+        (O (- (adnbs $co $c))))
+
+(exec 3 (, (alive-unseen $co))
+        (O (- (alive $co)) (- (alive-unseen $co))))
+(exec 3 (, (anbs $co $c) (cell dies $c))
+        (O (- (alive $co))))
+
+(exec 4 (, (adnbs $co $c) (cell lives $c))
+        (O (+ (alive $co))))
+
+(exec 5 (, (anbs $co $c)) (O (- (anbs $co $c))))
+(exec 5 (, (adnbs $co $c)) (O (- (adnbs $co $c))))

@@ -647,15 +647,15 @@ LANGDEF_COMPILED_CURSOR_RUNTIME_SRC = \
 	experiments/gslt2parse_foundation/native/parser_occurrence_source_composition_v1.c \
 	experiments/gslt2parse_foundation/native/parser_source_resolution_control_v1.c \
 	experiments/gslt2parse_foundation/native/relational_value_list_v1.c \
-	experiments/gslt2parse_foundation/native/proof_gslt_article_v1.c \
-	experiments/gslt2parse_foundation/native/proof_gslt_plan_v1.c \
-	experiments/gslt2parse_foundation/native/proof_gslt_sequence_evidence_v1.c \
-	experiments/gslt2parse_foundation/native/proof_gslt_relational_assertion_v1.c \
-	experiments/gslt2parse_foundation/native/proof_gslt_relational_declaration_v1.c \
-	experiments/gslt2parse_foundation/native/proof_gslt_relational_machine_v1.c \
+	experiments/gslt2parse_foundation/native/certificate_gslt_article_v1.c \
+	experiments/gslt2parse_foundation/native/certificate_gslt_plan_v1.c \
+	experiments/gslt2parse_foundation/native/certificate_gslt_sequence_evidence_v1.c \
+	experiments/gslt2parse_foundation/native/certificate_gslt_relational_assertion_v1.c \
+	experiments/gslt2parse_foundation/native/certificate_gslt_relational_declaration_v1.c \
+	experiments/gslt2parse_foundation/native/certificate_gslt_relational_machine_v1.c \
 	experiments/gslt2parse_foundation/native/oslf_native_type_plan_v1.c \
 	experiments/gslt2parse_foundation/native/oslf_native_type_vm_v1.c \
-	experiments/gslt2parse_foundation/native/proof_gslt_relational_runtime_v1.c \
+	experiments/gslt2parse_foundation/native/certificate_gslt_relational_runtime_v1.c \
 	experiments/gslt2parse_foundation/native/proof_storage_plan_v1.c \
 	experiments/gslt2parse_foundation/native/relational_stack_proof_v1.c \
 	experiments/gslt2parse_foundation/native/relational_state_program_v1.c \
@@ -975,18 +975,18 @@ PARSER_OCCURRENCE_SPAN_MASK_V1_OBJ = experiments/gslt2parse_foundation/native/pa
 RELATIONAL_VALUE_LIST_V1_SRC = experiments/gslt2parse_foundation/native/relational_value_list_v1.c
 RELATIONAL_VALUE_LIST_V1_HEADER = experiments/gslt2parse_foundation/native/relational_value_list_v1.h
 RELATIONAL_VALUE_LIST_V1_OBJ = experiments/gslt2parse_foundation/native/relational_value_list_v1.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o
-PROOF_GSLT_ARTICLE_V1_SRC = experiments/gslt2parse_foundation/native/proof_gslt_article_v1.c
-PROOF_GSLT_ARTICLE_V1_HEADER = experiments/gslt2parse_foundation/native/proof_gslt_article_v1.h
-PROOF_GSLT_ARTICLE_V1_OBJ = experiments/gslt2parse_foundation/native/proof_gslt_article_v1.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o
-PROOF_GSLT_ARTICLE_V1_TEST_SRC = experiments/gslt2parse_foundation/native/test_proof_gslt_article_v1.c
-PROOF_GSLT_ARTICLE_V1_TEST_BIN = runtime/test_proof_gslt_article_v1-$(BUILD_OBJ_TAG)
-PROOF_GSLT_PLAN_V1_SRC = experiments/gslt2parse_foundation/native/proof_gslt_plan_v1.c
-PROOF_GSLT_PLAN_V1_HEADER = experiments/gslt2parse_foundation/native/proof_gslt_plan_v1.h
-PROOF_GSLT_PLAN_V1_OBJ = experiments/gslt2parse_foundation/native/proof_gslt_plan_v1.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o
-PROOF_GSLT_PLAN_V1_TEST_SRC = experiments/gslt2parse_foundation/native/test_proof_gslt_plan_v1.c
-PROOF_GSLT_PLAN_V1_TEST_OBJ = runtime/bootstrap/test_proof_gslt_plan_v1.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o
-PROOF_GSLT_PLAN_V1_TEST_BIN = runtime/test_proof_gslt_plan_v1-$(BUILD_OBJ_TAG)
-PROOF_GSLT_PLAN_V1_TEST_LINK_OBJ = \
+CERTIFICATE_GSLT_ARTICLE_V1_SRC = experiments/gslt2parse_foundation/native/certificate_gslt_article_v1.c
+CERTIFICATE_GSLT_ARTICLE_V1_HEADER = experiments/gslt2parse_foundation/native/certificate_gslt_article_v1.h
+CERTIFICATE_GSLT_ARTICLE_V1_OBJ = experiments/gslt2parse_foundation/native/certificate_gslt_article_v1.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o
+CERTIFICATE_GSLT_ARTICLE_V1_TEST_SRC = experiments/gslt2parse_foundation/native/test_certificate_gslt_article_v1.c
+CERTIFICATE_GSLT_ARTICLE_V1_TEST_BIN = runtime/test_certificate_gslt_article_v1-$(BUILD_OBJ_TAG)
+CERTIFICATE_GSLT_PLAN_V1_SRC = experiments/gslt2parse_foundation/native/certificate_gslt_plan_v1.c
+CERTIFICATE_GSLT_PLAN_V1_HEADER = experiments/gslt2parse_foundation/native/certificate_gslt_plan_v1.h
+CERTIFICATE_GSLT_PLAN_V1_OBJ = experiments/gslt2parse_foundation/native/certificate_gslt_plan_v1.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o
+CERTIFICATE_GSLT_PLAN_V1_TEST_SRC = experiments/gslt2parse_foundation/native/test_certificate_gslt_plan_v1.c
+CERTIFICATE_GSLT_PLAN_V1_TEST_OBJ = runtime/bootstrap/test_certificate_gslt_plan_v1.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o
+CERTIFICATE_GSLT_PLAN_V1_TEST_BIN = runtime/test_certificate_gslt_plan_v1-$(BUILD_OBJ_TAG)
+CERTIFICATE_GSLT_PLAN_V1_TEST_LINK_OBJ = \
 	src/symbol.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o \
 	src/atom.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o \
 	src/name_key.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o \
@@ -995,51 +995,51 @@ PROOF_GSLT_PLAN_V1_TEST_LINK_OBJ = \
 	$(FINITE_HORN_ANSWER_STREAM_V1_OBJ) \
 	$(GSLT_U32_INDEX_V1_OBJ) \
 	$(GSLT_CHRONOLOGICAL_BUILDER_V1_OBJ) \
-	$(PROOF_GSLT_ARTICLE_V1_OBJ) \
-	$(PROOF_GSLT_PLAN_V1_OBJ)
-PROOF_GSLT_SEQUENCE_EVIDENCE_V1_SRC = experiments/gslt2parse_foundation/native/proof_gslt_sequence_evidence_v1.c
-PROOF_GSLT_SEQUENCE_EVIDENCE_V1_HEADER = experiments/gslt2parse_foundation/native/proof_gslt_sequence_evidence_v1.h
-PROOF_GSLT_SEQUENCE_EVIDENCE_V1_OBJ = experiments/gslt2parse_foundation/native/proof_gslt_sequence_evidence_v1.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o
-PROOF_GSLT_SEQUENCE_EVIDENCE_V1_TEST_SRC = experiments/gslt2parse_foundation/native/test_proof_gslt_sequence_evidence_v1.c
-PROOF_GSLT_SEQUENCE_EVIDENCE_V1_TEST_OBJ = runtime/bootstrap/test_proof_gslt_sequence_evidence_v1.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o
-PROOF_GSLT_SEQUENCE_EVIDENCE_V1_TEST_BIN = runtime/test_proof_gslt_sequence_evidence_v1-$(BUILD_OBJ_TAG)
-PROOF_GSLT_SEQUENCE_EVIDENCE_V1_TEST_LINK_OBJ = \
-	$(PROOF_GSLT_PLAN_V1_TEST_LINK_OBJ) \
-	$(PROOF_GSLT_SEQUENCE_EVIDENCE_V1_OBJ)
-PROOF_GSLT_RELATIONAL_ASSERTION_V1_SRC = experiments/gslt2parse_foundation/native/proof_gslt_relational_assertion_v1.c
-PROOF_GSLT_RELATIONAL_ASSERTION_V1_HEADER = experiments/gslt2parse_foundation/native/proof_gslt_relational_assertion_v1.h
-PROOF_GSLT_RELATIONAL_ASSERTION_V1_OBJ = experiments/gslt2parse_foundation/native/proof_gslt_relational_assertion_v1.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o
-PROOF_GSLT_RELATIONAL_ASSERTION_V1_TEST_SRC = experiments/gslt2parse_foundation/native/test_proof_gslt_relational_assertion_v1.c
-PROOF_GSLT_RELATIONAL_ASSERTION_V1_TEST_OBJ = runtime/bootstrap/test_proof_gslt_relational_assertion_v1.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o
-PROOF_GSLT_RELATIONAL_ASSERTION_V1_TEST_BIN = runtime/test_proof_gslt_relational_assertion_v1-$(BUILD_OBJ_TAG)
-PROOF_GSLT_RELATIONAL_ASSERTION_V1_TEST_LINK_OBJ = \
-	$(PROOF_GSLT_PLAN_V1_TEST_LINK_OBJ) \
+	$(CERTIFICATE_GSLT_ARTICLE_V1_OBJ) \
+	$(CERTIFICATE_GSLT_PLAN_V1_OBJ)
+CERTIFICATE_GSLT_SEQUENCE_EVIDENCE_V1_SRC = experiments/gslt2parse_foundation/native/certificate_gslt_sequence_evidence_v1.c
+CERTIFICATE_GSLT_SEQUENCE_EVIDENCE_V1_HEADER = experiments/gslt2parse_foundation/native/certificate_gslt_sequence_evidence_v1.h
+CERTIFICATE_GSLT_SEQUENCE_EVIDENCE_V1_OBJ = experiments/gslt2parse_foundation/native/certificate_gslt_sequence_evidence_v1.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o
+CERTIFICATE_GSLT_SEQUENCE_EVIDENCE_V1_TEST_SRC = experiments/gslt2parse_foundation/native/test_certificate_gslt_sequence_evidence_v1.c
+CERTIFICATE_GSLT_SEQUENCE_EVIDENCE_V1_TEST_OBJ = runtime/bootstrap/test_certificate_gslt_sequence_evidence_v1.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o
+CERTIFICATE_GSLT_SEQUENCE_EVIDENCE_V1_TEST_BIN = runtime/test_certificate_gslt_sequence_evidence_v1-$(BUILD_OBJ_TAG)
+CERTIFICATE_GSLT_SEQUENCE_EVIDENCE_V1_TEST_LINK_OBJ = \
+	$(CERTIFICATE_GSLT_PLAN_V1_TEST_LINK_OBJ) \
+	$(CERTIFICATE_GSLT_SEQUENCE_EVIDENCE_V1_OBJ)
+CERTIFICATE_GSLT_RELATIONAL_ASSERTION_V1_SRC = experiments/gslt2parse_foundation/native/certificate_gslt_relational_assertion_v1.c
+CERTIFICATE_GSLT_RELATIONAL_ASSERTION_V1_HEADER = experiments/gslt2parse_foundation/native/certificate_gslt_relational_assertion_v1.h
+CERTIFICATE_GSLT_RELATIONAL_ASSERTION_V1_OBJ = experiments/gslt2parse_foundation/native/certificate_gslt_relational_assertion_v1.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o
+CERTIFICATE_GSLT_RELATIONAL_ASSERTION_V1_TEST_SRC = experiments/gslt2parse_foundation/native/test_certificate_gslt_relational_assertion_v1.c
+CERTIFICATE_GSLT_RELATIONAL_ASSERTION_V1_TEST_OBJ = runtime/bootstrap/test_certificate_gslt_relational_assertion_v1.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o
+CERTIFICATE_GSLT_RELATIONAL_ASSERTION_V1_TEST_BIN = runtime/test_certificate_gslt_relational_assertion_v1-$(BUILD_OBJ_TAG)
+CERTIFICATE_GSLT_RELATIONAL_ASSERTION_V1_TEST_LINK_OBJ = \
+	$(CERTIFICATE_GSLT_PLAN_V1_TEST_LINK_OBJ) \
 	$(GSLT_INDEXED_INSTRUCTION_DECODER_V1_OBJ) \
-	$(PROOF_GSLT_RELATIONAL_ASSERTION_V1_OBJ)
-PROOF_GSLT_RELATIONAL_PROJECTION_NATIVE_V1_SRC = experiments/gslt2parse_foundation/native/proof_gslt_relational_projection_v1.c
-PROOF_GSLT_RELATIONAL_PROJECTION_NATIVE_V1_HEADER = experiments/gslt2parse_foundation/native/proof_gslt_relational_projection_v1.h
-PROOF_GSLT_RELATIONAL_PROJECTION_NATIVE_V1_OBJ = experiments/gslt2parse_foundation/native/proof_gslt_relational_projection_v1.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o
-PROOF_GSLT_RELATIONAL_PROJECTION_NATIVE_V1_TEST_SRC = experiments/gslt2parse_foundation/native/test_proof_gslt_relational_projection_v1.c
-PROOF_GSLT_RELATIONAL_PROJECTION_NATIVE_V1_TEST_OBJ = runtime/bootstrap/test_proof_gslt_relational_projection_v1.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o
-PROOF_GSLT_RELATIONAL_PROJECTION_NATIVE_V1_TEST_BIN = runtime/test_proof_gslt_relational_projection_v1-$(BUILD_OBJ_TAG)
-PROOF_GSLT_RELATIONAL_PROJECTION_NATIVE_V1_TEST_LINK_OBJ = \
-	$(PROOF_GSLT_PLAN_V1_TEST_LINK_OBJ) \
-	$(PROOF_GSLT_RELATIONAL_PROJECTION_NATIVE_V1_OBJ)
-PROOF_GSLT_RELATIONAL_DECLARATION_V1_SRC = experiments/gslt2parse_foundation/native/proof_gslt_relational_declaration_v1.c
-PROOF_GSLT_RELATIONAL_DECLARATION_V1_HEADER = experiments/gslt2parse_foundation/native/proof_gslt_relational_declaration_v1.h
-PROOF_GSLT_RELATIONAL_DECLARATION_V1_OBJ = experiments/gslt2parse_foundation/native/proof_gslt_relational_declaration_v1.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o
-PROOF_GSLT_RELATIONAL_MACHINE_V1_SRC = experiments/gslt2parse_foundation/native/proof_gslt_relational_machine_v1.c
-PROOF_GSLT_RELATIONAL_MACHINE_V1_HEADER = experiments/gslt2parse_foundation/native/proof_gslt_relational_machine_v1.h
-PROOF_GSLT_RELATIONAL_MACHINE_V1_OBJ = experiments/gslt2parse_foundation/native/proof_gslt_relational_machine_v1.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o
-PROOF_GSLT_RELATIONAL_DECLARATION_V1_TEST_SRC = experiments/gslt2parse_foundation/native/test_proof_gslt_relational_declaration_v1.c
-PROOF_GSLT_RELATIONAL_DECLARATION_V1_TEST_OBJ = runtime/bootstrap/test_proof_gslt_relational_declaration_v1.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o
-PROOF_GSLT_RELATIONAL_DECLARATION_V1_TEST_BIN = runtime/test_proof_gslt_relational_declaration_v1-$(BUILD_OBJ_TAG)
-PROOF_GSLT_RELATIONAL_DECLARATION_V1_TEST_LINK_OBJ = \
-	$(PROOF_GSLT_PLAN_V1_TEST_LINK_OBJ) \
-	$(PROOF_GSLT_SEQUENCE_EVIDENCE_V1_OBJ) \
-	$(PROOF_GSLT_RELATIONAL_ASSERTION_V1_OBJ) \
-	$(PROOF_GSLT_RELATIONAL_DECLARATION_V1_OBJ) \
-	$(PROOF_GSLT_RELATIONAL_MACHINE_V1_OBJ) \
+	$(CERTIFICATE_GSLT_RELATIONAL_ASSERTION_V1_OBJ)
+CERTIFICATE_GSLT_RELATIONAL_PROJECTION_NATIVE_V1_SRC = experiments/gslt2parse_foundation/native/certificate_gslt_relational_projection_v1.c
+CERTIFICATE_GSLT_RELATIONAL_PROJECTION_NATIVE_V1_HEADER = experiments/gslt2parse_foundation/native/certificate_gslt_relational_projection_v1.h
+CERTIFICATE_GSLT_RELATIONAL_PROJECTION_NATIVE_V1_OBJ = experiments/gslt2parse_foundation/native/certificate_gslt_relational_projection_v1.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o
+CERTIFICATE_GSLT_RELATIONAL_PROJECTION_NATIVE_V1_TEST_SRC = experiments/gslt2parse_foundation/native/test_certificate_gslt_relational_projection_v1.c
+CERTIFICATE_GSLT_RELATIONAL_PROJECTION_NATIVE_V1_TEST_OBJ = runtime/bootstrap/test_certificate_gslt_relational_projection_v1.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o
+CERTIFICATE_GSLT_RELATIONAL_PROJECTION_NATIVE_V1_TEST_BIN = runtime/test_certificate_gslt_relational_projection_v1-$(BUILD_OBJ_TAG)
+CERTIFICATE_GSLT_RELATIONAL_PROJECTION_NATIVE_V1_TEST_LINK_OBJ = \
+	$(CERTIFICATE_GSLT_PLAN_V1_TEST_LINK_OBJ) \
+	$(CERTIFICATE_GSLT_RELATIONAL_PROJECTION_NATIVE_V1_OBJ)
+CERTIFICATE_GSLT_RELATIONAL_DECLARATION_V1_SRC = experiments/gslt2parse_foundation/native/certificate_gslt_relational_declaration_v1.c
+CERTIFICATE_GSLT_RELATIONAL_DECLARATION_V1_HEADER = experiments/gslt2parse_foundation/native/certificate_gslt_relational_declaration_v1.h
+CERTIFICATE_GSLT_RELATIONAL_DECLARATION_V1_OBJ = experiments/gslt2parse_foundation/native/certificate_gslt_relational_declaration_v1.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o
+CERTIFICATE_GSLT_RELATIONAL_MACHINE_V1_SRC = experiments/gslt2parse_foundation/native/certificate_gslt_relational_machine_v1.c
+CERTIFICATE_GSLT_RELATIONAL_MACHINE_V1_HEADER = experiments/gslt2parse_foundation/native/certificate_gslt_relational_machine_v1.h
+CERTIFICATE_GSLT_RELATIONAL_MACHINE_V1_OBJ = experiments/gslt2parse_foundation/native/certificate_gslt_relational_machine_v1.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o
+CERTIFICATE_GSLT_RELATIONAL_DECLARATION_V1_TEST_SRC = experiments/gslt2parse_foundation/native/test_certificate_gslt_relational_declaration_v1.c
+CERTIFICATE_GSLT_RELATIONAL_DECLARATION_V1_TEST_OBJ = runtime/bootstrap/test_certificate_gslt_relational_declaration_v1.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o
+CERTIFICATE_GSLT_RELATIONAL_DECLARATION_V1_TEST_BIN = runtime/test_certificate_gslt_relational_declaration_v1-$(BUILD_OBJ_TAG)
+CERTIFICATE_GSLT_RELATIONAL_DECLARATION_V1_TEST_LINK_OBJ = \
+	$(CERTIFICATE_GSLT_PLAN_V1_TEST_LINK_OBJ) \
+	$(CERTIFICATE_GSLT_SEQUENCE_EVIDENCE_V1_OBJ) \
+	$(CERTIFICATE_GSLT_RELATIONAL_ASSERTION_V1_OBJ) \
+	$(CERTIFICATE_GSLT_RELATIONAL_DECLARATION_V1_OBJ) \
+	$(CERTIFICATE_GSLT_RELATIONAL_MACHINE_V1_OBJ) \
 	$(PROOF_STORAGE_PLAN_V1_OBJ) \
 	$(GSLT_INDEXED_INSTRUCTION_DECODER_V1_OBJ) \
 	$(GSLT_INDEXED_EFFECT_MACHINE_V1_OBJ) \
@@ -1173,11 +1173,11 @@ RELATIONAL_STATE_TRANSACTION_V1_TEST_LINK_OBJ = \
 	$(GSLT_EPOCH_SLOTS_V1_OBJ) \
 	$(RELATIONAL_STACK_PROOF_V1_OBJ) \
 	$(RELATIONAL_STATE_PROGRAM_V1_OBJ)
-PROOF_GSLT_RELATIONAL_RUNTIME_NATIVE_V1_SRC = experiments/gslt2parse_foundation/native/proof_gslt_relational_runtime_v1.c
-PROOF_GSLT_RELATIONAL_RUNTIME_NATIVE_V1_HEADER = experiments/gslt2parse_foundation/native/proof_gslt_relational_runtime_v1.h
-PROOF_GSLT_RELATIONAL_RUNTIME_NATIVE_V1_OBJ = experiments/gslt2parse_foundation/native/proof_gslt_relational_runtime_v1.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o
-PROOF_GSLT_RELATIONAL_RUNTIME_NATIVE_V1_TEST_SRC = experiments/gslt2parse_foundation/native/test_proof_gslt_relational_runtime_v1.c
-PROOF_GSLT_RELATIONAL_RUNTIME_NATIVE_V1_TEST_BIN = runtime/test_proof_gslt_relational_runtime_v1-$(BUILD_OBJ_TAG)
+CERTIFICATE_GSLT_RELATIONAL_RUNTIME_NATIVE_V1_SRC = experiments/gslt2parse_foundation/native/certificate_gslt_relational_runtime_v1.c
+CERTIFICATE_GSLT_RELATIONAL_RUNTIME_NATIVE_V1_HEADER = experiments/gslt2parse_foundation/native/certificate_gslt_relational_runtime_v1.h
+CERTIFICATE_GSLT_RELATIONAL_RUNTIME_NATIVE_V1_OBJ = experiments/gslt2parse_foundation/native/certificate_gslt_relational_runtime_v1.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o
+CERTIFICATE_GSLT_RELATIONAL_RUNTIME_NATIVE_V1_TEST_SRC = experiments/gslt2parse_foundation/native/test_certificate_gslt_relational_runtime_v1.c
+CERTIFICATE_GSLT_RELATIONAL_RUNTIME_NATIVE_V1_TEST_BIN = runtime/test_certificate_gslt_relational_runtime_v1-$(BUILD_OBJ_TAG)
 INDEXED_CHECKER_EFFECT_V1_SRC = experiments/gslt2parse_foundation/native/indexed_checker_effect_v1.c
 INDEXED_CHECKER_EFFECT_V1_OBJ = experiments/gslt2parse_foundation/native/indexed_checker_effect_v1.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o
 INDEXED_INFERENCE_STATE_V1_SRC = experiments/gslt2parse_foundation/native/indexed_inference_state_v1.c
@@ -1369,7 +1369,7 @@ OSLF_NATIVE_TYPE_VM_V1_TEST_LINK_OBJ = \
 OSLF_NATIVE_TYPE_VM_V1_LDFLAGS = \
 	-ldl -lm -pthread $(GMP_LDFLAGS) \
 	$(if $(filter 1,$(ENABLE_SANITIZERS)),-fsanitize=$(SANITIZERS) -fno-sanitize-recover=all,)
-PROOF_GSLT_RELATIONAL_RUNTIME_NATIVE_V1_TEST_LINK_OBJ = \
+CERTIFICATE_GSLT_RELATIONAL_RUNTIME_NATIVE_V1_TEST_LINK_OBJ = \
 	$(PARSER_PACK_CURSOR_GENERATED_V1_LINK_OBJ) \
 	$(OSLF_NATIVE_TYPE_PLAN_V1_OBJ) \
 	$(GSLT_GROUND_DENSE_TERM_V1_OBJ) \
@@ -1385,7 +1385,7 @@ PROOF_GSLT_RELATIONAL_RUNTIME_NATIVE_V1_TEST_LINK_OBJ = \
 	src/gslt_horn_runtime.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o \
 	src/gslt_compiled_runtime.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o \
 	src/gslt_language_runtime.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o \
-	$(PROOF_GSLT_RELATIONAL_RUNTIME_NATIVE_V1_OBJ)
+	$(CERTIFICATE_GSLT_RELATIONAL_RUNTIME_NATIVE_V1_OBJ)
 OSLF_NATIVE_TYPE_INSPECT_V1_SRC = tools/oslf_native_type_inspect_v1.c
 OSLF_NATIVE_TYPE_INSPECT_V1_OBJ = runtime/bootstrap/oslf_native_type_inspect_v1.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o
 OSLF_NATIVE_TYPE_INSPECT_V1_BIN = runtime/oslf_native_type_inspect_v1-$(BUILD_OBJ_TAG)
@@ -1731,7 +1731,7 @@ FINITE_HORN_REFLECTION_V1 = experiments/gslt2parse_foundation/presentations/refl
 OSLF_NATIVE_TYPE_COMPILER_V1 = experiments/gslt2parse_foundation/presentations/compiler/oslf_native_type_compiler_v1.metta
 SEMANTIC_MASK_SPAN_COMPILER_V1 = experiments/gslt2parse_foundation/presentations/compiler/semantic_mask_span_compiler_v1.metta
 PARSER_OCCURRENCE_SPAN_MASK_COMPILER_V1 = experiments/gslt2parse_foundation/presentations/compiler/parser_occurrence_span_mask_compiler_v1.metta
-PROOF_GSLT_FIRST_ORDER_DENOTATION_V1 = experiments/gslt2parse_foundation/presentations/compiler/proof_gslt_first_order_denotation_v1.metta
+CERTIFICATE_GSLT_FIRST_ORDER_DENOTATION_V1 = experiments/gslt2parse_foundation/presentations/compiler/certificate_gslt_first_order_denotation_v1.metta
 RULE_MACHINE_CORE_GSLT_V1 = experiments/gslt2parse_foundation/presentations/core/rule_machine_core_v1.metta
 RULE_MACHINE_PROGRAM_GSLT_V1 = experiments/gslt2parse_foundation/presentations/specializations/rule_machine_hilbert_bfc_program_v1.metta
 RULE_MACHINE_PROGRAM_GENERATOR_V1 = tools/generate_rule_machine_program_v1.py
@@ -1947,110 +1947,113 @@ GSLT2PARSE_PRIME_DIRECT_GENERATED_H = src/generated/prime_reader_direct_v1.gener
 GSLT2PARSE_PRIME_PROJECTION_SOURCE = experiments/gslt2parse_foundation/presentations/shared/cetta_prime_atom_projection_v1.metta
 GSLT2PARSE_PRIME_READER_SOURCE = experiments/gslt2parse_foundation/presentations/languages/cetta_prime_reader_v1.metta
 GSLT2PARSE_PRIME_SCALAR_SOURCE = experiments/gslt2parse_foundation/presentations/shared/cetta_prime_scalar_classes_v1.metta
-PROOF_GSLT_ARTICLE_CORE_V1 = experiments/gslt2parse_foundation/presentations/core/proof_gslt_article_core_v1.metta
-PROOF_GSLT_ARTICLE_INTERFACE_V1 = experiments/gslt2parse_foundation/presentations/core/proof_gslt_article_interface_v1.metta
-PROOF_GSLT_ARTICLE_DOCUMENT_V1 = experiments/gslt2parse_foundation/presentations/core/proof_gslt_article_document_v1.metta
-PROOF_GSLT_ARTICLE_DOCUMENT_INTERFACE_V1 = experiments/gslt2parse_foundation/presentations/core/proof_gslt_article_document_interface_v1.metta
-PROOF_GSLT_ARTICLE_COMPILER_V1 = experiments/gslt2parse_foundation/presentations/compiler/proof_gslt_article_compiler_v1.metta
-PROOF_GSLT_ARTICLE_DOCUMENT_COMPILER_V1 = experiments/gslt2parse_foundation/presentations/compiler/proof_gslt_article_document_compiler_v1.metta
-PROOF_GSLT_SEQUENCE_RELATIONS_V1 = experiments/gslt2parse_foundation/presentations/core/proof_gslt_sequence_relations_v1.metta
-PROOF_GSLT_SEQUENCE_SCHEMA_V1 = experiments/gslt2parse_foundation/presentations/core/proof_gslt_sequence_assertion_v1.metta
-PROOF_GSLT_TRACE_SEMANTICS_V1 = experiments/gslt2parse_foundation/presentations/core/proof_gslt_trace_semantics_v1.metta
-PROOF_GSLT_FIRST_ORDER_SEMANTIC_INTERFACE_V1 = experiments/gslt2parse_foundation/presentations/core/proof_gslt_first_order_semantic_interface_v1.metta
-PROOF_GSLT_TRACE_COMPILER_V1 = experiments/gslt2parse_foundation/presentations/core/proof_gslt_trace_compiler_v1.metta
-PROOF_GSLT_TRACE_INPUT_V1 = experiments/gslt2parse_foundation/presentations/core/proof_gslt_trace_input_v1.metta
-PROOF_GSLT_TRACE_INPUT_INTERFACE_V1 = experiments/gslt2parse_foundation/presentations/core/proof_gslt_trace_input_interface_v1.metta
-PROOF_GSLT_SEQUENCE_EVIDENCE_COMPILER_V1 = experiments/gslt2parse_foundation/presentations/compiler/proof_gslt_sequence_evidence_compiler_v1.metta
-PROOF_GSLT_RELATIONAL_ASSERTION_CORE_V1 = experiments/gslt2parse_foundation/presentations/core/proof_gslt_relational_assertion_v1.metta
-PROOF_GSLT_RELATIONAL_ASSERTION_COMPILER_V1 = experiments/gslt2parse_foundation/presentations/compiler/proof_gslt_relational_assertion_compiler_v1.metta
-PROOF_GSLT_RELATIONAL_PROJECTION_CORE_V1 = experiments/gslt2parse_foundation/presentations/core/proof_gslt_relational_projection_v1.metta
-PROOF_GSLT_RELATIONAL_PROJECTION_INTERFACE_V1 = experiments/gslt2parse_foundation/presentations/core/proof_gslt_relational_projection_interface_v1.metta
-PROOF_GSLT_RELATIONAL_PROJECTION_COMPILER_V1 = experiments/gslt2parse_foundation/presentations/compiler/proof_gslt_relational_projection_compiler_v1.metta
-PROOF_GSLT_RELATIONAL_RUNTIME_COMPILER_V1 = experiments/gslt2parse_foundation/presentations/compiler/proof_gslt_relational_runtime_compiler_v1.metta
+CERTIFICATE_GSLT_ARTICLE_CORE_V1 = experiments/gslt2parse_foundation/presentations/core/certificate_gslt_article_core_v1.metta
+CERTIFICATE_GSLT_ARTICLE_INTERFACE_V1 = experiments/gslt2parse_foundation/presentations/core/certificate_gslt_article_interface_v1.metta
+CERTIFICATE_GSLT_ARTICLE_CONVERSION_INTERFACE_V1 = experiments/gslt2parse_foundation/presentations/compiler/certificate_gslt_article_conversion_interface_v1.metta
+CERTIFICATE_GSLT_ARTICLE_DOCUMENT_V1 = experiments/gslt2parse_foundation/presentations/core/certificate_gslt_article_document_v1.metta
+CERTIFICATE_GSLT_ARTICLE_DOCUMENT_INTERFACE_V1 = experiments/gslt2parse_foundation/presentations/core/certificate_gslt_article_document_interface_v1.metta
+CERTIFICATE_GSLT_ARTICLE_COMPILER_V1 = experiments/gslt2parse_foundation/presentations/compiler/certificate_gslt_article_compiler_v1.metta
+CERTIFICATE_GSLT_ARTICLE_DOCUMENT_COMPILER_V1 = experiments/gslt2parse_foundation/presentations/compiler/certificate_gslt_article_document_compiler_v1.metta
+CERTIFICATE_GSLT_SEQUENCE_RELATIONS_V1 = experiments/gslt2parse_foundation/presentations/core/certificate_gslt_sequence_relations_v1.metta
+CERTIFICATE_GSLT_SEQUENCE_SCHEMA_V1 = experiments/gslt2parse_foundation/presentations/core/certificate_gslt_sequence_assertion_v1.metta
+CERTIFICATE_GSLT_TRACE_SEMANTICS_V1 = experiments/gslt2parse_foundation/presentations/core/certificate_gslt_trace_semantics_v1.metta
+CERTIFICATE_GSLT_FIRST_ORDER_SEMANTIC_INTERFACE_V1 = experiments/gslt2parse_foundation/presentations/core/certificate_gslt_first_order_semantic_interface_v1.metta
+CERTIFICATE_GSLT_TRACE_COMPILER_V1 = experiments/gslt2parse_foundation/presentations/core/certificate_gslt_trace_compiler_v1.metta
+CERTIFICATE_GSLT_TRACE_INPUT_V1 = experiments/gslt2parse_foundation/presentations/core/certificate_gslt_trace_input_v1.metta
+CERTIFICATE_GSLT_TRACE_INPUT_INTERFACE_V1 = experiments/gslt2parse_foundation/presentations/core/certificate_gslt_trace_input_interface_v1.metta
+CERTIFICATE_GSLT_TRACE_PROJECTED_INPUT_INTERFACE_V1 = experiments/gslt2parse_foundation/presentations/core/certificate_gslt_trace_projected_input_interface_v1.metta
+CERTIFICATE_GSLT_TRACE_APARTNESS_INTERFACE_V1 = experiments/gslt2parse_foundation/presentations/core/certificate_gslt_trace_apartness_interface_v1.metta
+CERTIFICATE_GSLT_SEQUENCE_EVIDENCE_COMPILER_V1 = experiments/gslt2parse_foundation/presentations/compiler/certificate_gslt_sequence_evidence_compiler_v1.metta
+CERTIFICATE_GSLT_RELATIONAL_ASSERTION_CORE_V1 = experiments/gslt2parse_foundation/presentations/core/certificate_gslt_relational_assertion_v1.metta
+CERTIFICATE_GSLT_RELATIONAL_ASSERTION_COMPILER_V1 = experiments/gslt2parse_foundation/presentations/compiler/certificate_gslt_relational_assertion_compiler_v1.metta
+CERTIFICATE_GSLT_RELATIONAL_PROJECTION_CORE_V1 = experiments/gslt2parse_foundation/presentations/core/certificate_gslt_relational_projection_v1.metta
+CERTIFICATE_GSLT_RELATIONAL_PROJECTION_INTERFACE_V1 = experiments/gslt2parse_foundation/presentations/core/certificate_gslt_relational_projection_interface_v1.metta
+CERTIFICATE_GSLT_RELATIONAL_PROJECTION_COMPILER_V1 = experiments/gslt2parse_foundation/presentations/compiler/certificate_gslt_relational_projection_compiler_v1.metta
+CERTIFICATE_GSLT_RELATIONAL_RUNTIME_COMPILER_V1 = experiments/gslt2parse_foundation/presentations/compiler/certificate_gslt_relational_runtime_compiler_v1.metta
 PROOF_STORAGE_PLAN_COMPILER_V1 = experiments/gslt2parse_foundation/presentations/compiler/proof_storage_plan_compiler_v1.metta
-PROOF_GSLT_METAMATH_CALCULUS_V1 = \
+CERTIFICATE_GSLT_METAMATH_CALCULUS_V1 = \
 	$(METAMATH_LANGDEF_DIR_V1)/proof_calculus_v1.metta
-PROOF_GSLT_METAMATH_FUNCTIONAL_CALCULUS_V1 = \
+CERTIFICATE_GSLT_METAMATH_FUNCTIONAL_CALCULUS_V1 = \
 	$(METAMATH_LANGDEF_DIR_V1)/proof_calculus_functional_v1.metta
-PROOF_GSLT_METAMATH_RELATIONAL_BRIDGE_V1 = \
+CERTIFICATE_GSLT_METAMATH_RELATIONAL_BRIDGE_V1 = \
 	$(METAMATH_LANGDEF_DIR_V1)/proof_relational_bridge_v1.metta
-PROOF_GSLT_METAMATH_RELATIONAL_PROJECTION_V1 = \
+CERTIFICATE_GSLT_METAMATH_RELATIONAL_PROJECTION_V1 = \
 	$(METAMATH_LANGDEF_DIR_V1)/proof_relational_projection_v1.metta
-PROOF_GSLT_PROP_CANARY_V1 = experiments/gslt2parse_foundation/presentations/canaries/proof_gslt_prop_v1.metta
-PROOF_GSLT_EVEN_CANARY_V1 = experiments/gslt2parse_foundation/presentations/canaries/proof_gslt_even_v1.metta
-PROOF_GSLT_BINDER_CANARY_V1 = experiments/gslt2parse_foundation/presentations/canaries/proof_gslt_binder_v1.metta
-PROOF_GSLT_SEQUENCE_CANARY_V1 = experiments/gslt2parse_foundation/presentations/canaries/proof_gslt_sequence_v1.metta
-PROOF_GSLT_TRACE_ORDER_CANARY_V1 = experiments/gslt2parse_foundation/presentations/canaries/proof_gslt_trace_order_v1.metta
-PROOF_GSLT_TRACE_CODEC_CANARY_V1 = experiments/gslt2parse_foundation/presentations/canaries/proof_gslt_trace_codec_v1.metta
-PROOF_GSLT_TRACE_INPUT_CANARY_V1 = experiments/gslt2parse_foundation/presentations/canaries/proof_gslt_trace_input_v1.metta
-PROOF_GSLT_TRACE_EVIDENCE_CANARY_V1 = experiments/gslt2parse_foundation/presentations/canaries/proof_gslt_trace_evidence_v1.metta
+CERTIFICATE_GSLT_PROP_CANARY_V1 = experiments/gslt2parse_foundation/presentations/canaries/certificate_gslt_prop_v1.metta
+CERTIFICATE_GSLT_EVEN_CANARY_V1 = experiments/gslt2parse_foundation/presentations/canaries/certificate_gslt_even_v1.metta
+CERTIFICATE_GSLT_BINDER_CANARY_V1 = experiments/gslt2parse_foundation/presentations/canaries/certificate_gslt_binder_v1.metta
+CERTIFICATE_GSLT_SEQUENCE_CANARY_V1 = experiments/gslt2parse_foundation/presentations/canaries/certificate_gslt_sequence_v1.metta
+CERTIFICATE_GSLT_TRACE_ORDER_CANARY_V1 = experiments/gslt2parse_foundation/presentations/canaries/certificate_gslt_trace_order_v1.metta
+CERTIFICATE_GSLT_TRACE_CODEC_CANARY_V1 = experiments/gslt2parse_foundation/presentations/canaries/certificate_gslt_trace_codec_v1.metta
+CERTIFICATE_GSLT_TRACE_INPUT_CANARY_V1 = experiments/gslt2parse_foundation/presentations/canaries/certificate_gslt_trace_input_v1.metta
+CERTIFICATE_GSLT_TRACE_EVIDENCE_CANARY_V1 = experiments/gslt2parse_foundation/presentations/canaries/certificate_gslt_trace_evidence_v1.metta
 PREPARED_ACTION_INVENTORY_CANARY_V1 = experiments/gslt2parse_foundation/presentations/canaries/prepared_action_inventory_v1.metta
 PREPARED_ACTION_INVENTORY_ANSWERS_V1 = runtime/bootstrap/prepared-action-inventory-v1.$(BUILD_OBJ_TAG)/answers
-PROOF_GSLT_TRACE_SERVICE_V1 = experiments/gslt2parse_foundation/presentations/core/proof_gslt_trace_service_v1.metta
-PROOF_GSLT_TRACE_EXECUTION_COMPOSITION_V1 = experiments/gslt2parse_foundation/presentations/canaries/proof_gslt_trace_execution_composition_v1.metta
-PROOF_GSLT_TRACE_COMPRESSED_COMPOSITION_CANARY_V1 = experiments/gslt2parse_foundation/presentations/canaries/proof_gslt_trace_compressed_composition_v1.metta
-PROOF_GSLT_RELATIONAL_PROJECTION_CANARY_V1 = experiments/gslt2parse_foundation/presentations/canaries/proof_gslt_relational_projection_v1.metta
-PROOF_GSLT_TRACE_ORDER_POSITIVE_V1 = tests/langdef/metamath/proof_trace_order_positive.query
-PROOF_GSLT_TRACE_ORDER_SWAPPED_V1 = tests/langdef/metamath/proof_trace_order_swapped.query
-PROOF_GSLT_TRACE_ORDER_MISSING_CONTEXT_V1 = tests/langdef/metamath/proof_trace_order_missing_context.query
-PROOF_GSLT_TRACE_SAVED_POSITIVE_V1 = tests/langdef/metamath/proof_trace_saved_positive.query
-PROOF_GSLT_TRACE_SAVED_RANGE_V1 = tests/langdef/metamath/proof_trace_saved_range.query
-PROOF_GSLT_TRACE_COMPILE_NORMAL_V1 = tests/langdef/metamath/proof_trace_compile_normal.query
-PROOF_GSLT_TRACE_COMPILE_COMPRESSED_V1 = tests/langdef/metamath/proof_trace_compile_compressed.query
-PROOF_GSLT_TRACE_COMPILE_CONTINUATION_V1 = tests/langdef/metamath/proof_trace_compile_continuation.query
-PROOF_GSLT_TRACE_COMPILE_OPEN_SAVE_V1 = tests/langdef/metamath/proof_trace_compile_open_save.query
-PROOF_GSLT_TRACE_COMPILE_SINGLE_SAVE_V1 = tests/langdef/metamath/proof_trace_compile_single_save.query
-PROOF_GSLT_TRACE_COMPILE_BARE_SAVE_V1 = tests/langdef/metamath/proof_trace_compile_bare_save.query
-PROOF_GSLT_TRACE_COMPILE_REPEATED_SAVE_V1 = tests/langdef/metamath/proof_trace_compile_repeated_save.query
-PROOF_GSLT_TRACE_COMPILE_UNKNOWN_V1 = tests/langdef/metamath/proof_trace_compile_unknown.query
-PROOF_GSLT_TRACE_COMPILE_ACCEPTED_V1 = tests/langdef/metamath/proof_trace_compile_accepted.query
-PROOF_GSLT_TRACE_INPUT_CONTEXT_V1 = tests/langdef/metamath/proof_trace_input_context.query
-PROOF_GSLT_TRACE_INPUT_FRAME_V1 = tests/langdef/metamath/proof_trace_input_frame.query
-PROOF_GSLT_TRACE_INPUT_NORMAL_V1 = tests/langdef/metamath/proof_trace_input_normal.query
-PROOF_GSLT_TRACE_INPUT_COMPRESSED_V1 = tests/langdef/metamath/proof_trace_input_compressed.query
-PROOF_GSLT_TRACE_INPUT_INCOMPLETE_NORMAL_V1 = tests/langdef/metamath/proof_trace_input_incomplete_normal.query
-PROOF_GSLT_TRACE_INPUT_INCOMPLETE_COMPRESSED_V1 = tests/langdef/metamath/proof_trace_input_incomplete_compressed.query
-PROOF_GSLT_TRACE_INPUT_UNKNOWN_NOT_VERIFIED_V1 = tests/langdef/metamath/proof_trace_input_unknown_not_verified.query
-PROOF_GSLT_TRACE_INPUT_WRONG_TARGET_V1 = tests/langdef/metamath/proof_trace_input_wrong_target.query
-PROOF_GSLT_TRACE_INPUT_BAD_COUNT_V1 = tests/langdef/metamath/proof_trace_input_bad_count.query
-PROOF_GSLT_TRACE_EVIDENCE_NORMAL_V1 = tests/langdef/metamath/proof_trace_evidence_normal.query
-PROOF_GSLT_TRACE_EVIDENCE_COMPRESSED_V1 = tests/langdef/metamath/proof_trace_evidence_compressed.query
-PROOF_GSLT_TRACE_EVIDENCE_WRONG_TARGET_V1 = tests/langdef/metamath/proof_trace_evidence_wrong_target.query
-PROOF_GSLT_TRACE_EVIDENCE_WRONG_TRACE_V1 = tests/langdef/metamath/proof_trace_evidence_wrong_trace.query
-PROOF_GSLT_TRACE_COMPRESSED_COMPOSITION_POSITIVE_V1 = tests/langdef/metamath/proof_trace_compressed_composition_positive.query
-PROOF_GSLT_TRACE_COMPRESSED_COMPOSITION_RANGE_V1 = tests/langdef/metamath/proof_trace_compressed_composition_range.query
-PROOF_GSLT_RELATIONAL_PROJECTION_CONTEXT_V1 = tests/langdef/metamath/proof_relational_projection_context.query
-PROOF_GSLT_RELATIONAL_PROJECTION_FRAME_V1 = tests/langdef/metamath/proof_relational_projection_frame.query
-PROOF_GSLT_RELATIONAL_PROJECTION_FILTERED_V1 = tests/langdef/metamath/proof_relational_projection_filtered.query
-PROOF_GSLT_RELATIONAL_PROJECTION_ASSERTION_V1 = tests/langdef/metamath/proof_relational_projection_assertion.query
-PROOF_GSLT_RELATIONAL_PROJECTION_PUSH_V1 = tests/langdef/metamath/proof_relational_projection_push.query
-PROOF_GSLT_RELATIONAL_PROJECTION_NO_APARTNESS_V1 = tests/langdef/metamath/proof_relational_projection_no_apartness.query
-PROOF_GSLT_STAGE_DIR_V1 = runtime/bootstrap/proof-gslt-article-v1.$(BUILD_OBJ_TAG)
-PROOF_GSLT_PROP_ANSWERS_V1 = $(PROOF_GSLT_STAGE_DIR_V1)/prop.answers
-PROOF_GSLT_EVEN_ANSWERS_V1 = $(PROOF_GSLT_STAGE_DIR_V1)/even.answers
-PROOF_GSLT_BINDER_ANSWERS_V1 = $(PROOF_GSLT_STAGE_DIR_V1)/binder.answers
-PROOF_GSLT_SEQUENCE_ANSWERS_V1 = $(PROOF_GSLT_STAGE_DIR_V1)/sequence.answers
-PROOF_GSLT_SEQUENCE_EVIDENCE_ABI_V1 = $(PROOF_GSLT_STAGE_DIR_V1)/sequence-evidence-abi.answers
-PROOF_GSLT_SEQUENCE_DELETE_ABI_ROLE_SOURCE_V1 = $(PROOF_GSLT_STAGE_DIR_V1)/sequence-delete-abi-role.metta
-PROOF_GSLT_SEQUENCE_DELETE_ABI_ROLE_V1 = $(PROOF_GSLT_STAGE_DIR_V1)/sequence-delete-abi-role.answers
-PROOF_GSLT_PROP_DELETE_MP_SOURCE_V1 = $(PROOF_GSLT_STAGE_DIR_V1)/prop-delete-mp.metta
-PROOF_GSLT_PROP_DELETE_MP_ANSWERS_V1 = $(PROOF_GSLT_STAGE_DIR_V1)/prop-delete-mp.answers
-PROOF_GSLT_SEQUENCE_DELETE_APART_SOURCE_V1 = $(PROOF_GSLT_STAGE_DIR_V1)/sequence-delete-apart.metta
-PROOF_GSLT_SEQUENCE_DELETE_APART_ANSWERS_V1 = $(PROOF_GSLT_STAGE_DIR_V1)/sequence-delete-apart.answers
-PROOF_GSLT_SEQUENCE_DELETE_ASSERTION_SOURCE_V1 = $(PROOF_GSLT_STAGE_DIR_V1)/sequence-delete-assertion.metta
-PROOF_GSLT_SEQUENCE_DELETE_ASSERTION_ANSWERS_V1 = $(PROOF_GSLT_STAGE_DIR_V1)/sequence-delete-assertion.answers
-PROOF_GSLT_METAMATH_PLAN_V1 = $(METAMATH_LANGDEF_GENERATED_DIR_V1)/proof_plan_v1.answers
-PROOF_GSLT_METAMATH_EVIDENCE_ABI_V1 = $(METAMATH_LANGDEF_GENERATED_DIR_V1)/proof_evidence_abi_v1.answers
-PROOF_GSLT_METAMATH_RELATIONAL_ABI_V1 = $(METAMATH_LANGDEF_GENERATED_DIR_V1)/proof_relational_abi_v1.answers
-PROOF_GSLT_METAMATH_RELATIONAL_PROJECTION_ABI_V1 = $(METAMATH_LANGDEF_GENERATED_DIR_V1)/proof_relational_projection_v1.answers
-PROOF_GSLT_METAMATH_RELATIONAL_RUNTIME_ABI_V1 = $(METAMATH_LANGDEF_GENERATED_DIR_V1)/proof_relational_runtime_v1.answers
-PROOF_GSLT_METAMATH_RELATIONAL_DELETE_ROLE_SOURCE_V1 = $(PROOF_GSLT_STAGE_DIR_V1)/metamath-relational-delete-role.metta
-PROOF_GSLT_METAMATH_RELATIONAL_DELETE_ROLE_V1 = $(PROOF_GSLT_STAGE_DIR_V1)/metamath-relational-delete-role.answers
-PROOF_GSLT_METAMATH_RELATIONAL_DELETE_EXECUTION_SOURCE_V1 = $(PROOF_GSLT_STAGE_DIR_V1)/metamath-relational-delete-execution.metta
-PROOF_GSLT_METAMATH_RELATIONAL_DELETE_EXECUTION_V1 = $(PROOF_GSLT_STAGE_DIR_V1)/metamath-relational-delete-execution.answers
-PROOF_GSLT_METAMATH_RELATIONAL_NO_ASSERTION_APARTNESS_SOURCE_V1 = $(PROOF_GSLT_STAGE_DIR_V1)/metamath-relational-no-assertion-apartness.metta
-PROOF_GSLT_METAMATH_RELATIONAL_NO_APARTNESS_SOURCE_V1 = $(PROOF_GSLT_STAGE_DIR_V1)/metamath-relational-no-apartness.metta
-PROOF_GSLT_METAMATH_RELATIONAL_NO_APARTNESS_V1 = $(PROOF_GSLT_STAGE_DIR_V1)/metamath-relational-no-apartness.answers
+CERTIFICATE_GSLT_TRACE_SERVICE_V1 = experiments/gslt2parse_foundation/presentations/core/certificate_gslt_trace_service_v1.metta
+CERTIFICATE_GSLT_TRACE_EXECUTION_COMPOSITION_V1 = experiments/gslt2parse_foundation/presentations/canaries/certificate_gslt_trace_execution_composition_v1.metta
+CERTIFICATE_GSLT_TRACE_COMPRESSED_COMPOSITION_CANARY_V1 = experiments/gslt2parse_foundation/presentations/canaries/certificate_gslt_trace_compressed_composition_v1.metta
+CERTIFICATE_GSLT_RELATIONAL_PROJECTION_CANARY_V1 = experiments/gslt2parse_foundation/presentations/canaries/certificate_gslt_relational_projection_v1.metta
+CERTIFICATE_GSLT_TRACE_ORDER_POSITIVE_V1 = tests/langdef/metamath/proof_trace_order_positive.query
+CERTIFICATE_GSLT_TRACE_ORDER_SWAPPED_V1 = tests/langdef/metamath/proof_trace_order_swapped.query
+CERTIFICATE_GSLT_TRACE_ORDER_MISSING_CONTEXT_V1 = tests/langdef/metamath/proof_trace_order_missing_context.query
+CERTIFICATE_GSLT_TRACE_SAVED_POSITIVE_V1 = tests/langdef/metamath/proof_trace_saved_positive.query
+CERTIFICATE_GSLT_TRACE_SAVED_RANGE_V1 = tests/langdef/metamath/proof_trace_saved_range.query
+CERTIFICATE_GSLT_TRACE_COMPILE_NORMAL_V1 = tests/langdef/metamath/proof_trace_compile_normal.query
+CERTIFICATE_GSLT_TRACE_COMPILE_COMPRESSED_V1 = tests/langdef/metamath/proof_trace_compile_compressed.query
+CERTIFICATE_GSLT_TRACE_COMPILE_CONTINUATION_V1 = tests/langdef/metamath/proof_trace_compile_continuation.query
+CERTIFICATE_GSLT_TRACE_COMPILE_OPEN_SAVE_V1 = tests/langdef/metamath/proof_trace_compile_open_save.query
+CERTIFICATE_GSLT_TRACE_COMPILE_SINGLE_SAVE_V1 = tests/langdef/metamath/proof_trace_compile_single_save.query
+CERTIFICATE_GSLT_TRACE_COMPILE_BARE_SAVE_V1 = tests/langdef/metamath/proof_trace_compile_bare_save.query
+CERTIFICATE_GSLT_TRACE_COMPILE_REPEATED_SAVE_V1 = tests/langdef/metamath/proof_trace_compile_repeated_save.query
+CERTIFICATE_GSLT_TRACE_COMPILE_UNKNOWN_V1 = tests/langdef/metamath/proof_trace_compile_unknown.query
+CERTIFICATE_GSLT_TRACE_COMPILE_ACCEPTED_V1 = tests/langdef/metamath/proof_trace_compile_accepted.query
+CERTIFICATE_GSLT_TRACE_INPUT_CONTEXT_V1 = tests/langdef/metamath/proof_trace_input_context.query
+CERTIFICATE_GSLT_TRACE_INPUT_FRAME_V1 = tests/langdef/metamath/proof_trace_input_frame.query
+CERTIFICATE_GSLT_TRACE_INPUT_NORMAL_V1 = tests/langdef/metamath/proof_trace_input_normal.query
+CERTIFICATE_GSLT_TRACE_INPUT_COMPRESSED_V1 = tests/langdef/metamath/proof_trace_input_compressed.query
+CERTIFICATE_GSLT_TRACE_INPUT_INCOMPLETE_NORMAL_V1 = tests/langdef/metamath/proof_trace_input_incomplete_normal.query
+CERTIFICATE_GSLT_TRACE_INPUT_INCOMPLETE_COMPRESSED_V1 = tests/langdef/metamath/proof_trace_input_incomplete_compressed.query
+CERTIFICATE_GSLT_TRACE_INPUT_UNKNOWN_NOT_VERIFIED_V1 = tests/langdef/metamath/proof_trace_input_unknown_not_verified.query
+CERTIFICATE_GSLT_TRACE_INPUT_WRONG_TARGET_V1 = tests/langdef/metamath/proof_trace_input_wrong_target.query
+CERTIFICATE_GSLT_TRACE_INPUT_BAD_COUNT_V1 = tests/langdef/metamath/proof_trace_input_bad_count.query
+CERTIFICATE_GSLT_TRACE_EVIDENCE_NORMAL_V1 = tests/langdef/metamath/proof_trace_evidence_normal.query
+CERTIFICATE_GSLT_TRACE_EVIDENCE_COMPRESSED_V1 = tests/langdef/metamath/proof_trace_evidence_compressed.query
+CERTIFICATE_GSLT_TRACE_EVIDENCE_WRONG_TARGET_V1 = tests/langdef/metamath/proof_trace_evidence_wrong_target.query
+CERTIFICATE_GSLT_TRACE_EVIDENCE_WRONG_TRACE_V1 = tests/langdef/metamath/proof_trace_evidence_wrong_trace.query
+CERTIFICATE_GSLT_TRACE_COMPRESSED_COMPOSITION_POSITIVE_V1 = tests/langdef/metamath/proof_trace_compressed_composition_positive.query
+CERTIFICATE_GSLT_TRACE_COMPRESSED_COMPOSITION_RANGE_V1 = tests/langdef/metamath/proof_trace_compressed_composition_range.query
+CERTIFICATE_GSLT_RELATIONAL_PROJECTION_CONTEXT_V1 = tests/langdef/metamath/proof_relational_projection_context.query
+CERTIFICATE_GSLT_RELATIONAL_PROJECTION_FRAME_V1 = tests/langdef/metamath/proof_relational_projection_frame.query
+CERTIFICATE_GSLT_RELATIONAL_PROJECTION_FILTERED_V1 = tests/langdef/metamath/proof_relational_projection_filtered.query
+CERTIFICATE_GSLT_RELATIONAL_PROJECTION_ASSERTION_V1 = tests/langdef/metamath/proof_relational_projection_assertion.query
+CERTIFICATE_GSLT_RELATIONAL_PROJECTION_PUSH_V1 = tests/langdef/metamath/proof_relational_projection_push.query
+CERTIFICATE_GSLT_RELATIONAL_PROJECTION_NO_APARTNESS_V1 = tests/langdef/metamath/proof_relational_projection_no_apartness.query
+CERTIFICATE_GSLT_STAGE_DIR_V1 = runtime/bootstrap/certificate-gslt-article-v1.$(BUILD_OBJ_TAG)
+CERTIFICATE_GSLT_PROP_ANSWERS_V1 = $(CERTIFICATE_GSLT_STAGE_DIR_V1)/prop.answers
+CERTIFICATE_GSLT_EVEN_ANSWERS_V1 = $(CERTIFICATE_GSLT_STAGE_DIR_V1)/even.answers
+CERTIFICATE_GSLT_BINDER_ANSWERS_V1 = $(CERTIFICATE_GSLT_STAGE_DIR_V1)/binder.answers
+CERTIFICATE_GSLT_SEQUENCE_ANSWERS_V1 = $(CERTIFICATE_GSLT_STAGE_DIR_V1)/sequence.answers
+CERTIFICATE_GSLT_SEQUENCE_EVIDENCE_ABI_V1 = $(CERTIFICATE_GSLT_STAGE_DIR_V1)/sequence-evidence-abi.answers
+CERTIFICATE_GSLT_SEQUENCE_DELETE_ABI_ROLE_SOURCE_V1 = $(CERTIFICATE_GSLT_STAGE_DIR_V1)/sequence-delete-abi-role.metta
+CERTIFICATE_GSLT_SEQUENCE_DELETE_ABI_ROLE_V1 = $(CERTIFICATE_GSLT_STAGE_DIR_V1)/sequence-delete-abi-role.answers
+CERTIFICATE_GSLT_PROP_DELETE_MP_SOURCE_V1 = $(CERTIFICATE_GSLT_STAGE_DIR_V1)/prop-delete-mp.metta
+CERTIFICATE_GSLT_PROP_DELETE_MP_ANSWERS_V1 = $(CERTIFICATE_GSLT_STAGE_DIR_V1)/prop-delete-mp.answers
+CERTIFICATE_GSLT_SEQUENCE_DELETE_APART_SOURCE_V1 = $(CERTIFICATE_GSLT_STAGE_DIR_V1)/sequence-delete-apart.metta
+CERTIFICATE_GSLT_SEQUENCE_DELETE_APART_ANSWERS_V1 = $(CERTIFICATE_GSLT_STAGE_DIR_V1)/sequence-delete-apart.answers
+CERTIFICATE_GSLT_SEQUENCE_DELETE_ASSERTION_SOURCE_V1 = $(CERTIFICATE_GSLT_STAGE_DIR_V1)/sequence-delete-assertion.metta
+CERTIFICATE_GSLT_SEQUENCE_DELETE_ASSERTION_ANSWERS_V1 = $(CERTIFICATE_GSLT_STAGE_DIR_V1)/sequence-delete-assertion.answers
+CERTIFICATE_GSLT_METAMATH_PLAN_V1 = $(METAMATH_LANGDEF_GENERATED_DIR_V1)/proof_plan_v1.answers
+CERTIFICATE_GSLT_METAMATH_EVIDENCE_ABI_V1 = $(METAMATH_LANGDEF_GENERATED_DIR_V1)/proof_evidence_abi_v1.answers
+CERTIFICATE_GSLT_METAMATH_RELATIONAL_ABI_V1 = $(METAMATH_LANGDEF_GENERATED_DIR_V1)/proof_relational_abi_v1.answers
+CERTIFICATE_GSLT_METAMATH_RELATIONAL_PROJECTION_ABI_V1 = $(METAMATH_LANGDEF_GENERATED_DIR_V1)/proof_relational_projection_v1.answers
+CERTIFICATE_GSLT_METAMATH_RELATIONAL_RUNTIME_ABI_V1 = $(METAMATH_LANGDEF_GENERATED_DIR_V1)/proof_relational_runtime_v1.answers
+CERTIFICATE_GSLT_METAMATH_RELATIONAL_DELETE_ROLE_SOURCE_V1 = $(CERTIFICATE_GSLT_STAGE_DIR_V1)/metamath-relational-delete-role.metta
+CERTIFICATE_GSLT_METAMATH_RELATIONAL_DELETE_ROLE_V1 = $(CERTIFICATE_GSLT_STAGE_DIR_V1)/metamath-relational-delete-role.answers
+CERTIFICATE_GSLT_METAMATH_RELATIONAL_DELETE_EXECUTION_SOURCE_V1 = $(CERTIFICATE_GSLT_STAGE_DIR_V1)/metamath-relational-delete-execution.metta
+CERTIFICATE_GSLT_METAMATH_RELATIONAL_DELETE_EXECUTION_V1 = $(CERTIFICATE_GSLT_STAGE_DIR_V1)/metamath-relational-delete-execution.answers
+CERTIFICATE_GSLT_METAMATH_RELATIONAL_NO_ASSERTION_APARTNESS_SOURCE_V1 = $(CERTIFICATE_GSLT_STAGE_DIR_V1)/metamath-relational-no-assertion-apartness.metta
+CERTIFICATE_GSLT_METAMATH_RELATIONAL_NO_APARTNESS_SOURCE_V1 = $(CERTIFICATE_GSLT_STAGE_DIR_V1)/metamath-relational-no-apartness.metta
+CERTIFICATE_GSLT_METAMATH_RELATIONAL_NO_APARTNESS_V1 = $(CERTIFICATE_GSLT_STAGE_DIR_V1)/metamath-relational-no-apartness.answers
 TPTP_LANGDEF_MANIFEST_V1 = langdef/tptp/langdef.metta
 TPTP_LANGDEF_SYNTAX_V1 = langdef/tptp/syntax_fof_cnf_v1.metta
 TPTP_LANGDEF_ATP_BRIDGE_V1 = langdef/tptp/atp_bridge_v1.metta
@@ -2128,24 +2131,24 @@ METAMATH_PROOF_TRACE_CODEC_V1 = $(METAMATH_LANGDEF_DIR_V1)/proof_trace_codec_v1.
 METAMATH_PROOF_MACHINE_NTT_V1 = $(METAMATH_LANGDEF_GENERATED_DIR_V1)/proof_machine_ntt_v1.answers
 METAMATH_PROOF_MACHINE_NTT_V1_SOURCES = \
 	$(METAMATH_PROOF_SEMANTIC_EXEC_V1) \
-	$(PROOF_GSLT_ARTICLE_CORE_V1) \
-	$(PROOF_GSLT_ARTICLE_INTERFACE_V1) \
-	$(PROOF_GSLT_SEQUENCE_RELATIONS_V1) \
-	$(PROOF_GSLT_SEQUENCE_SCHEMA_V1) \
+	$(CERTIFICATE_GSLT_ARTICLE_CORE_V1) \
+	$(CERTIFICATE_GSLT_ARTICLE_INTERFACE_V1) \
+	$(CERTIFICATE_GSLT_SEQUENCE_RELATIONS_V1) \
+	$(CERTIFICATE_GSLT_SEQUENCE_SCHEMA_V1) \
 	$(METAMATH_OCCURRENCE_FOLD_CORE_V1) \
 	$(METAMATH_SOURCE_FOLD_V1) \
 	$(METAMATH_RELATIONAL_STATE_CORE_V1) \
 	$(METAMATH_SOURCE_STATE_V1) \
 	$(METAMATH_SOURCE_PROOF_V1) \
-	$(PROOF_GSLT_TRACE_SEMANTICS_V1) \
-	$(PROOF_GSLT_TRACE_COMPILER_V1) \
-	$(PROOF_GSLT_TRACE_INPUT_V1) \
-	$(PROOF_GSLT_TRACE_INPUT_INTERFACE_V1) \
-	$(PROOF_GSLT_RELATIONAL_PROJECTION_CORE_V1) \
-	$(PROOF_GSLT_RELATIONAL_PROJECTION_INTERFACE_V1) \
-	$(PROOF_GSLT_RELATIONAL_PROJECTION_COMPILER_V1) \
-	$(PROOF_GSLT_METAMATH_CALCULUS_V1) \
-	$(PROOF_GSLT_METAMATH_RELATIONAL_PROJECTION_V1) \
+	$(CERTIFICATE_GSLT_TRACE_SEMANTICS_V1) \
+	$(CERTIFICATE_GSLT_TRACE_COMPILER_V1) \
+	$(CERTIFICATE_GSLT_TRACE_INPUT_V1) \
+	$(CERTIFICATE_GSLT_TRACE_INPUT_INTERFACE_V1) \
+	$(CERTIFICATE_GSLT_RELATIONAL_PROJECTION_CORE_V1) \
+	$(CERTIFICATE_GSLT_RELATIONAL_PROJECTION_INTERFACE_V1) \
+	$(CERTIFICATE_GSLT_RELATIONAL_PROJECTION_COMPILER_V1) \
+	$(CERTIFICATE_GSLT_METAMATH_CALCULUS_V1) \
+	$(CERTIFICATE_GSLT_METAMATH_RELATIONAL_PROJECTION_V1) \
 	$(METAMATH_PROOF_TRACE_POLICY_V1) \
 	$(METAMATH_PROOF_TRACE_CODEC_V1)
 METAMATH_PROOF_MACHINE_CAPABILITY_CANARY_V1 = experiments/gslt2parse_foundation/presentations/canaries/metamath_proof_machine_capability_v1.metta
@@ -2153,29 +2156,31 @@ METAMATH_PROOF_MACHINE_CAPABILITY_V1 = runtime/bootstrap/metamath-proof-machine-
 METAMATH_PROOF_MACHINE_CAPABILITY_DELETED_V1 = runtime/bootstrap/metamath-proof-machine-capability-v1.$(BUILD_OBJ_TAG)/reflection-deleted.answers
 METAMATH_PROOF_TRACE_NATIVE_PROGRAM_V1_SOURCES = \
 	$(METAMATH_PROOF_SEMANTIC_EXEC_V1) \
-	$(PROOF_GSLT_TRACE_SEMANTICS_V1) \
-	$(PROOF_GSLT_TRACE_COMPILER_V1) \
-	$(PROOF_GSLT_TRACE_INPUT_V1) \
-	$(PROOF_GSLT_TRACE_INPUT_INTERFACE_V1) \
+	$(CERTIFICATE_GSLT_TRACE_SEMANTICS_V1) \
+	$(CERTIFICATE_GSLT_TRACE_COMPILER_V1) \
+	$(CERTIFICATE_GSLT_TRACE_INPUT_V1) \
+	$(CERTIFICATE_GSLT_TRACE_INPUT_INTERFACE_V1) \
+	$(CERTIFICATE_GSLT_TRACE_PROJECTED_INPUT_INTERFACE_V1) \
+	$(CERTIFICATE_GSLT_TRACE_APARTNESS_INTERFACE_V1) \
 	$(METAMATH_PROOF_TRACE_POLICY_V1) \
 	$(METAMATH_PROOF_TRACE_CODEC_V1)
 METAMATH_PROOF_MACHINE_COMPILED_V1_SOURCES = \
-	$(METAMATH_PROOF_TRACE_NATIVE_PROGRAM_V1_SOURCES) \
-	$(PROOF_GSLT_ARTICLE_CORE_V1) \
-	$(PROOF_GSLT_ARTICLE_INTERFACE_V1) \
-	$(PROOF_GSLT_SEQUENCE_RELATIONS_V1) \
-	$(PROOF_GSLT_SEQUENCE_SCHEMA_V1) \
+	$(filter-out $(CERTIFICATE_GSLT_TRACE_PROJECTED_INPUT_INTERFACE_V1) $(CERTIFICATE_GSLT_TRACE_APARTNESS_INTERFACE_V1),$(METAMATH_PROOF_TRACE_NATIVE_PROGRAM_V1_SOURCES)) \
+	$(CERTIFICATE_GSLT_ARTICLE_CORE_V1) \
+	$(CERTIFICATE_GSLT_ARTICLE_INTERFACE_V1) \
+	$(CERTIFICATE_GSLT_SEQUENCE_RELATIONS_V1) \
+	$(CERTIFICATE_GSLT_SEQUENCE_SCHEMA_V1) \
 	$(METAMATH_OCCURRENCE_FOLD_CORE_V1) \
 	$(METAMATH_SOURCE_FOLD_V1) \
 	$(METAMATH_RELATIONAL_STATE_CORE_V1) \
 	$(METAMATH_SOURCE_PROOF_V1) \
-	$(PROOF_GSLT_RELATIONAL_PROJECTION_CORE_V1) \
-	$(PROOF_GSLT_RELATIONAL_PROJECTION_INTERFACE_V1) \
-	$(PROOF_GSLT_RELATIONAL_PROJECTION_COMPILER_V1) \
+	$(CERTIFICATE_GSLT_RELATIONAL_PROJECTION_CORE_V1) \
+	$(CERTIFICATE_GSLT_RELATIONAL_PROJECTION_INTERFACE_V1) \
+	$(CERTIFICATE_GSLT_RELATIONAL_PROJECTION_COMPILER_V1) \
 	$(METAMATH_SOURCE_STATE_V1) \
-	$(PROOF_GSLT_METAMATH_CALCULUS_V1) \
-	$(PROOF_GSLT_METAMATH_RELATIONAL_PROJECTION_V1) \
-	$(PROOF_GSLT_TRACE_SERVICE_V1)
+	$(CERTIFICATE_GSLT_METAMATH_CALCULUS_V1) \
+	$(CERTIFICATE_GSLT_METAMATH_RELATIONAL_PROJECTION_V1) \
+	$(CERTIFICATE_GSLT_TRACE_SERVICE_V1)
 METAMATH_PROOF_TRACE_NATIVE_PROGRAM_V1_DIR = runtime/bootstrap/metamath-proof-trace-native-v1.$(BUILD_OBJ_TAG)
 METAMATH_PROOF_TRACE_NATIVE_PROGRAM_V1_NTT = $(METAMATH_PROOF_TRACE_NATIVE_PROGRAM_V1_DIR)/ntt.answers
 METAMATH_PROOF_TRACE_NATIVE_CAPABILITY_V1 = $(METAMATH_PROOF_TRACE_NATIVE_PROGRAM_V1_DIR)/capability-reflection.answers
@@ -2423,23 +2428,25 @@ METAMATH_PROOF_TRACE_PETTA_SEVERED_PROGRAM_V1 = runtime/metamath_proof_trace_pet
 METAMATH_PROOF_TRACE_PETTA_SEVERED_RECEIPT_V1 = runtime/metamath_proof_trace_petta_severed_program_v1.receipt.metta
 METAMATH_PROOF_TRACE_PETTA_SOURCES_V1 = \
 	$(METAMATH_PROOF_SEMANTIC_EXEC_V1) \
-	$(PROOF_GSLT_TRACE_SEMANTICS_V1) \
-	$(PROOF_GSLT_TRACE_COMPILER_V1) \
-	$(PROOF_GSLT_TRACE_INPUT_V1) \
+	$(CERTIFICATE_GSLT_TRACE_SEMANTICS_V1) \
+	$(CERTIFICATE_GSLT_TRACE_COMPILER_V1) \
+	$(CERTIFICATE_GSLT_TRACE_INPUT_V1) \
 	$(METAMATH_PROOF_TRACE_POLICY_V1) \
 	$(METAMATH_PROOF_TRACE_CODEC_V1) \
-	$(PROOF_GSLT_TRACE_INPUT_CANARY_V1) \
-	$(PROOF_GSLT_TRACE_EVIDENCE_CANARY_V1)
+	$(CERTIFICATE_GSLT_TRACE_INPUT_CANARY_V1) \
+	$(CERTIFICATE_GSLT_TRACE_EVIDENCE_CANARY_V1)
 METAMATH_PROOF_TRACE_DIRECT_SOURCES_V1 = \
 	$(METAMATH_PROOF_SEMANTIC_EXEC_DIRECT_V1) \
-	$(PROOF_GSLT_TRACE_SEMANTICS_V1) \
-	$(PROOF_GSLT_TRACE_COMPILER_V1) \
-	$(PROOF_GSLT_TRACE_INPUT_V1) \
-	experiments/gslt2parse_foundation/presentations/core/proof_gslt_trace_input_interface_v1.metta \
+	$(CERTIFICATE_GSLT_TRACE_SEMANTICS_V1) \
+	$(CERTIFICATE_GSLT_TRACE_COMPILER_V1) \
+	$(CERTIFICATE_GSLT_TRACE_INPUT_V1) \
+	experiments/gslt2parse_foundation/presentations/core/certificate_gslt_trace_input_interface_v1.metta \
+	$(CERTIFICATE_GSLT_TRACE_PROJECTED_INPUT_INTERFACE_V1) \
+	$(CERTIFICATE_GSLT_TRACE_APARTNESS_INTERFACE_V1) \
 	$(METAMATH_PROOF_TRACE_POLICY_V1) \
 	$(METAMATH_PROOF_TRACE_CODEC_V1) \
-	$(PROOF_GSLT_TRACE_INPUT_CANARY_V1) \
-	$(PROOF_GSLT_TRACE_EVIDENCE_CANARY_V1)
+	$(CERTIFICATE_GSLT_TRACE_INPUT_CANARY_V1) \
+	$(CERTIFICATE_GSLT_TRACE_EVIDENCE_CANARY_V1)
 METAMATH_PROOF_TRACE_COMPILE_NORMAL_RHOMETTA_QUERY_V1 = tests/rhometta/metamath_proof_trace_compile_normal_status_query_v1.metta
 METAMATH_PROOF_TRACE_COMPILE_NORMAL_RHOMETTA_PROGRAM_V1 = langdef/rhometta/generated/metamath_proof_trace_compile_normal_v1.metta
 METAMATH_PROOF_TRACE_COMPILE_COMPRESSED_RHOMETTA_QUERY_V1 = tests/rhometta/metamath_proof_trace_compile_compressed_query_v1.metta
@@ -2459,10 +2466,11 @@ METAMATH_STATE_PROOF_BRIDGE_DIRECT_SOURCES_V1 = \
 	$(METAMATH_STATE_RUNTIME_PROOF_MACHINE_FACTS_DIRECT_V1) \
 	$(METAMATH_STATE_TRANSITION_EXEC_IR_FACTS_DIRECT_V1) \
 	$(METAMATH_PROOF_SEMANTIC_EXEC_DIRECT_V1) \
-	$(PROOF_GSLT_TRACE_SEMANTICS_V1) \
-	$(PROOF_GSLT_TRACE_COMPILER_V1) \
-	$(PROOF_GSLT_TRACE_INPUT_V1) \
-	experiments/gslt2parse_foundation/presentations/core/proof_gslt_trace_input_interface_v1.metta \
+	$(CERTIFICATE_GSLT_TRACE_SEMANTICS_V1) \
+	$(CERTIFICATE_GSLT_TRACE_COMPILER_V1) \
+	$(CERTIFICATE_GSLT_TRACE_INPUT_V1) \
+	experiments/gslt2parse_foundation/presentations/core/certificate_gslt_trace_input_interface_v1.metta \
+	$(CERTIFICATE_GSLT_TRACE_PROJECTED_INPUT_INTERFACE_V1) \
 	$(METAMATH_PROOF_TRACE_POLICY_V1) \
 	$(METAMATH_PROOF_TRACE_CODEC_V1) \
 	$(RELATIONAL_STATE_PROOF_BRIDGE_V1)
@@ -2470,15 +2478,16 @@ METAMATH_STATE_COMPILER_DIRECT_SOURCES_V1 = \
 	$(METAMATH_STATE_SOURCES_V1) \
 	$(RELATIONAL_STATE_PROGRAM_INTERFACE_V1)
 METAMATH_PROOF_COMPILER_DIRECT_SOURCES_V1 = \
-	$(PROOF_GSLT_ARTICLE_CORE_V1) \
-	$(PROOF_GSLT_ARTICLE_INTERFACE_V1) \
-	$(PROOF_GSLT_ARTICLE_DOCUMENT_V1) \
-	$(PROOF_GSLT_ARTICLE_DOCUMENT_INTERFACE_V1) \
-	$(PROOF_GSLT_ARTICLE_COMPILER_V1) \
-	$(PROOF_GSLT_ARTICLE_DOCUMENT_COMPILER_V1) \
-	$(PROOF_GSLT_SEQUENCE_RELATIONS_V1) \
-	$(PROOF_GSLT_SEQUENCE_SCHEMA_V1) \
-	$(PROOF_GSLT_METAMATH_FUNCTIONAL_CALCULUS_V1)
+	$(CERTIFICATE_GSLT_ARTICLE_CORE_V1) \
+	$(CERTIFICATE_GSLT_ARTICLE_INTERFACE_V1) \
+	$(CERTIFICATE_GSLT_ARTICLE_CONVERSION_INTERFACE_V1) \
+	$(CERTIFICATE_GSLT_ARTICLE_DOCUMENT_V1) \
+	$(CERTIFICATE_GSLT_ARTICLE_DOCUMENT_INTERFACE_V1) \
+	$(CERTIFICATE_GSLT_ARTICLE_COMPILER_V1) \
+	$(CERTIFICATE_GSLT_ARTICLE_DOCUMENT_COMPILER_V1) \
+	$(CERTIFICATE_GSLT_SEQUENCE_RELATIONS_V1) \
+	$(CERTIFICATE_GSLT_SEQUENCE_SCHEMA_V1) \
+	$(CERTIFICATE_GSLT_METAMATH_FUNCTIONAL_CALCULUS_V1)
 RELATIONAL_STATE_TRANSITION_ACCEPT_V1 = tests/langdef/relational_state_transition_accept.query
 RELATIONAL_STATE_TRANSITION_DUPLICATE_V1 = tests/langdef/relational_state_transition_duplicate.query
 RELATIONAL_STATE_TRANSITION_MISSING_ROW_V1 = tests/langdef/relational_state_transition_missing_row.query
@@ -2506,8 +2515,8 @@ METAMATH_COGSLT_AUTHORED_RULE_SOURCES_V1 = \
 	$(METAMATH_SOURCE_STATE_V1) \
 	$(METAMATH_PROOF_TRACE_POLICY_V1) \
 	$(METAMATH_SOURCE_PROOF_V1) \
-	$(PROOF_GSLT_METAMATH_CALCULUS_V1) \
-	$(PROOF_GSLT_METAMATH_RELATIONAL_BRIDGE_V1)
+	$(CERTIFICATE_GSLT_METAMATH_CALCULUS_V1) \
+	$(CERTIFICATE_GSLT_METAMATH_RELATIONAL_BRIDGE_V1)
 METAMATH_COGSLT_MUTATION_MODES_V1 ?= delete falsify
 METAMATH_COGSLT_MUTATION_SOURCE_FILTER_V1 ?=
 METAMATH_COGSLT_MUTATION_RULE_FILTER_V1 ?=
@@ -2521,7 +2530,7 @@ METAMATH_COGSLT_GENERATED_FORM_ARTIFACTS_V1 = \
 	$(METAMATH_OCCURRENCE_SPAN_MASK_V1) \
 	$(METAMATH_STATE_PROGRAM_V1) \
 	$(METAMATH_SOURCE_RESOLUTION_CONTROL_V1) \
-	$(PROOF_GSLT_METAMATH_PLAN_V1)
+	$(CERTIFICATE_GSLT_METAMATH_PLAN_V1)
 METAMATH_COGSLT_GENERATED_MUTATION_MODES_V1 ?= delete falsify
 METAMATH_COGSLT_GENERATED_MUTATION_ARTIFACT_FILTER_V1 ?=
 METAMATH_COGSLT_GENERATED_MUTATION_FORM_FILTER_V1 ?=
@@ -2590,15 +2599,15 @@ METAMATH_AUTHORING_COMPOSED_SOURCES_V1 = \
 	$(METAMATH_SOURCE_STATE_V1) \
 	$(METAMATH_PROOF_TRACE_POLICY_V1) \
 	$(METAMATH_SOURCE_PROOF_V1) \
-	$(PROOF_GSLT_ARTICLE_CORE_V1) \
-	$(PROOF_GSLT_ARTICLE_INTERFACE_V1) \
-	$(PROOF_GSLT_ARTICLE_DOCUMENT_V1) \
-	$(PROOF_GSLT_ARTICLE_DOCUMENT_INTERFACE_V1) \
-	$(PROOF_GSLT_SEQUENCE_RELATIONS_V1) \
-	$(PROOF_GSLT_SEQUENCE_SCHEMA_V1) \
-	$(PROOF_GSLT_RELATIONAL_ASSERTION_CORE_V1) \
-	$(PROOF_GSLT_METAMATH_CALCULUS_V1) \
-	$(PROOF_GSLT_METAMATH_RELATIONAL_BRIDGE_V1)
+	$(CERTIFICATE_GSLT_ARTICLE_CORE_V1) \
+	$(CERTIFICATE_GSLT_ARTICLE_INTERFACE_V1) \
+	$(CERTIFICATE_GSLT_ARTICLE_DOCUMENT_V1) \
+	$(CERTIFICATE_GSLT_ARTICLE_DOCUMENT_INTERFACE_V1) \
+	$(CERTIFICATE_GSLT_SEQUENCE_RELATIONS_V1) \
+	$(CERTIFICATE_GSLT_SEQUENCE_SCHEMA_V1) \
+	$(CERTIFICATE_GSLT_RELATIONAL_ASSERTION_CORE_V1) \
+	$(CERTIFICATE_GSLT_METAMATH_CALCULUS_V1) \
+	$(CERTIFICATE_GSLT_METAMATH_RELATIONAL_BRIDGE_V1)
 GSLT2PARSE_GENERATED_CHECK_DIR = runtime/gslt2parse-generated-check
 GSLT2PARSE_GENERIC_ENGINE_SOURCES = \
 	$(filter-out $(GSLT2PARSE_SCHEMA_V1_NATIVE_DIR)/test_%,$(wildcard $(GSLT2PARSE_SCHEMA_V1_NATIVE_DIR)/*.c)) \
@@ -2831,9 +2840,12 @@ PATHMAP_RUNTIME_STATS_METTA_TESTS = \
 
 GC_ADVERSARIAL_TESTS = \
 	tests/gc/test_eval_gc_adversarial.metta \
-	tests/gc/test_eval_gc_indirect_state_stream.metta
+	tests/gc/test_eval_gc_indirect_state_stream.metta \
+	tests/gc/test_eval_gc_precise_let_suspension.metta
 
 GC_SURVIVOR_RESET_TEST = tests/gc/diagnostics/test_eval_gc_survivor_reset.metta
+GC_PRECISE_SUSPENSION_TEST = tests/gc/diagnostics/test_eval_gc_precise_suspension.metta
+GC_CONTROL_SUSPENSIONS_TEST = tests/gc/diagnostics/test_eval_gc_control_suspensions.metta
 
 BACKEND_DEDICATED_TESTS = \
 	tests/test_rhocalc_lib_parse_translator_v3.metta \
@@ -3223,10 +3235,27 @@ test-bindings-lookup-index: $(BINDINGS_LOOKUP_INDEX_TEST_BIN)
 	@enabled=$$($(call cetta_exec,./$(BINDINGS_LOOKUP_INDEX_TEST_BIN))); \
 	disabled=$$(CETTA_BINDINGS_LOOKUP_INDEX=0 $(call cetta_exec,./$(BINDINGS_LOOKUP_INDEX_TEST_BIN))); \
 	audited=$$(CETTA_BINDINGS_DERIVED_AUDIT=1 $(call cetta_exec,./$(BINDINGS_LOOKUP_INDEX_TEST_BIN))); \
-	expected='(BindingsLookupIndexSummary 124 124 0)'; \
+	expected='(BindingsLookupIndexSummary 126 126 0)'; \
 	printf '%s\n' "$$enabled"; \
 	test "$$enabled" = "$$expected" && test "$$disabled" = "$$expected" && \
 		test "$$audited" = "$$expected"
+	@mutation_dir=$$(mktemp -d runtime/bindings-lookup-lazy-tail-mutations.XXXXXX); \
+	trap 'rm -rf "$$mutation_dir"' EXIT INT TERM; \
+	ulimit -c 0; \
+	for mutation in SKIP_INSERT MUTATE_SHARED; do \
+		binary="$$mutation_dir/test-$$mutation"; \
+		$(CC) $(CPPFLAGS) -DCETTA_TEST_HOOKS=1 $(CFLAGS) \
+			-DCETTA_MUTATION_BINDINGS_LAZY_TAIL_$$mutation=1 \
+			-o "$$binary" tests/test_bindings_lookup_index.c \
+			src/symbol.c src/atom.c $(MATCH_STANDALONE_SRC) \
+			src/term_canon.c src/variant_shape.c src/variant_instance.c \
+			src/term_universe.c $(LDFLAGS); \
+		if "$$binary" >/dev/null 2>&1; then \
+			echo "FAIL: lazy-tail binding index $$mutation mutation survived"; \
+			exit 1; \
+		fi; \
+	done; \
+	echo "PASS: lazy-tail binding index falsifiers kill both unsound mutations"
 .PHONY: test-bindings-lookup-index
 
 $(ATOM_DEEP_COPY_TEST_BIN): tests/test_atom_deep_copy_iterative.c src/symbol.c src/atom.c $(BUILD_CONFIG_HEADER)
@@ -4542,7 +4571,7 @@ DEPS = $(OBJ:.o=.d) $(STAGE0_OBJ:.o=.d) \
 	$(OSLF_NATIVE_TYPE_VM_V1_VARIANT_OBJ:.o=.d) \
 	$(OSLF_NATIVE_TYPE_VM_V1_PRIME_NEED_OBJ:.o=.d) \
 	$(OSLF_NATIVE_TYPE_VM_V1_TEST_LINK_OBJ:.o=.d) \
-	$(PROOF_GSLT_RELATIONAL_RUNTIME_NATIVE_V1_TEST_LINK_OBJ:.o=.d) \
+	$(CERTIFICATE_GSLT_RELATIONAL_RUNTIME_NATIVE_V1_TEST_LINK_OBJ:.o=.d) \
 	$(LANGDEF_COMPILER_V1_OBJ:.o=.d) \
 	$(LANGDEF_FINITE_HORN_GSLT_V1_OBJ:.o=.d) \
 	$(LANGDEF_METTA_EQUATION_COMPILER_V1_OBJ:.o=.d) \
@@ -5670,9 +5699,9 @@ $(RELATIONAL_STATE_TRANSACTION_V1_TEST_BIN): \
 	@mkdir -p $(dir $@)
 	$(CC) $(CFLAGS) -Wl,--gc-sections -o $@ $^ $(LDFLAGS)
 
-$(PROOF_GSLT_RELATIONAL_RUNTIME_NATIVE_V1_OBJ): \
-		$(PROOF_GSLT_RELATIONAL_RUNTIME_NATIVE_V1_SRC) \
-		$(PROOF_GSLT_RELATIONAL_RUNTIME_NATIVE_V1_HEADER) \
+$(CERTIFICATE_GSLT_RELATIONAL_RUNTIME_NATIVE_V1_OBJ): \
+		$(CERTIFICATE_GSLT_RELATIONAL_RUNTIME_NATIVE_V1_SRC) \
+		$(CERTIFICATE_GSLT_RELATIONAL_RUNTIME_NATIVE_V1_HEADER) \
 		$(OSLF_NATIVE_TYPE_VM_V1_HEADER) \
 		$(RELATIONAL_STATE_PROGRAM_V1_HEADER) \
 		$(RELATIONAL_STORE_V1_HEADER) \
@@ -5681,30 +5710,30 @@ $(PROOF_GSLT_RELATIONAL_RUNTIME_NATIVE_V1_OBJ): \
 	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) \
 		-I$(GSLT2PARSE_SCHEMA_V1_NATIVE_DIR) -c -o $@ $<
 
-$(PROOF_GSLT_RELATIONAL_ASSERTION_V1_OBJ): \
-		$(PROOF_GSLT_RELATIONAL_ASSERTION_V1_SRC) \
-		$(PROOF_GSLT_RELATIONAL_ASSERTION_V1_HEADER) \
-		$(PROOF_GSLT_PLAN_V1_HEADER) \
+$(CERTIFICATE_GSLT_RELATIONAL_ASSERTION_V1_OBJ): \
+		$(CERTIFICATE_GSLT_RELATIONAL_ASSERTION_V1_SRC) \
+		$(CERTIFICATE_GSLT_RELATIONAL_ASSERTION_V1_HEADER) \
+		$(CERTIFICATE_GSLT_PLAN_V1_HEADER) \
 		$(RELATIONAL_STATE_PROGRAM_V1_HEADER) $(BUILD_CONFIG_HEADER)
 	@mkdir -p $(dir $@)
 	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
 
-$(PROOF_GSLT_RELATIONAL_DECLARATION_V1_OBJ): \
-		$(PROOF_GSLT_RELATIONAL_DECLARATION_V1_SRC) \
-		$(PROOF_GSLT_RELATIONAL_DECLARATION_V1_HEADER) \
-		$(PROOF_GSLT_RELATIONAL_ASSERTION_V1_HEADER) \
-		$(PROOF_GSLT_SEQUENCE_EVIDENCE_V1_HEADER) \
+$(CERTIFICATE_GSLT_RELATIONAL_DECLARATION_V1_OBJ): \
+		$(CERTIFICATE_GSLT_RELATIONAL_DECLARATION_V1_SRC) \
+		$(CERTIFICATE_GSLT_RELATIONAL_DECLARATION_V1_HEADER) \
+		$(CERTIFICATE_GSLT_RELATIONAL_ASSERTION_V1_HEADER) \
+		$(CERTIFICATE_GSLT_SEQUENCE_EVIDENCE_V1_HEADER) \
 		$(RELATIONAL_STORE_V1_HEADER) \
 		$(RELATIONAL_VALUE_LIST_V1_HEADER) $(BUILD_CONFIG_HEADER)
 	@mkdir -p $(dir $@)
 	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
 
-$(PROOF_GSLT_RELATIONAL_MACHINE_V1_OBJ): \
-		$(PROOF_GSLT_RELATIONAL_MACHINE_V1_SRC) \
-		$(PROOF_GSLT_RELATIONAL_MACHINE_V1_HEADER) \
-		$(PROOF_GSLT_RELATIONAL_DECLARATION_V1_HEADER) \
-		$(PROOF_GSLT_RELATIONAL_ASSERTION_V1_HEADER) \
-		$(PROOF_GSLT_SEQUENCE_EVIDENCE_V1_HEADER) \
+$(CERTIFICATE_GSLT_RELATIONAL_MACHINE_V1_OBJ): \
+		$(CERTIFICATE_GSLT_RELATIONAL_MACHINE_V1_SRC) \
+		$(CERTIFICATE_GSLT_RELATIONAL_MACHINE_V1_HEADER) \
+		$(CERTIFICATE_GSLT_RELATIONAL_DECLARATION_V1_HEADER) \
+		$(CERTIFICATE_GSLT_RELATIONAL_ASSERTION_V1_HEADER) \
+		$(CERTIFICATE_GSLT_SEQUENCE_EVIDENCE_V1_HEADER) \
 		$(GSLT_CLASSIFIED_VALUE_V1_HEADER) \
 		$(GSLT_INDEXED_EFFECT_MACHINE_V1_HEADER) \
 		$(GSLT_REPETITION_ADMISSION_V1_HEADER) \
@@ -6086,213 +6115,213 @@ $(GSLT_RULE_MUTATOR_V1_BIN): $(GSLT_RULE_MUTATOR_V1_SRC) \
 	@mkdir -p $(dir $@)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ $< $(LDFLAGS)
 
-$(PROOF_GSLT_PROP_ANSWERS_V1): \
-		$(PROOF_GSLT_ARTICLE_CORE_V1) \
-		$(PROOF_GSLT_ARTICLE_COMPILER_V1) \
-		$(PROOF_GSLT_PROP_CANARY_V1) \
+$(CERTIFICATE_GSLT_PROP_ANSWERS_V1): \
+		$(CERTIFICATE_GSLT_ARTICLE_CORE_V1) \
+		$(CERTIFICATE_GSLT_ARTICLE_COMPILER_V1) \
+		$(CERTIFICATE_GSLT_PROP_CANARY_V1) \
 		$(LANGDEF_COMPILER_V1_BIN) $(GSLT2PARSE_CHART_V1_NATIVE_BIN)
 	@mkdir -p $(dir $@)
 	$(LANGDEF_COMPILER_V1_BIN) answers \
 		--chart $(GSLT2PARSE_CHART_V1_NATIVE_BIN) \
-		--source $(PROOF_GSLT_ARTICLE_CORE_V1) \
-		--source $(PROOF_GSLT_ARTICLE_COMPILER_V1) \
-		--source $(PROOF_GSLT_PROP_CANARY_V1) \
+		--source $(CERTIFICATE_GSLT_ARTICLE_CORE_V1) \
+		--source $(CERTIFICATE_GSLT_ARTICLE_COMPILER_V1) \
+		--source $(CERTIFICATE_GSLT_PROP_CANARY_V1) \
 		--query '(proof-artifact-v1 ?record)' --out $@
 
-$(PROOF_GSLT_EVEN_ANSWERS_V1): \
-		$(PROOF_GSLT_ARTICLE_CORE_V1) \
-		$(PROOF_GSLT_ARTICLE_COMPILER_V1) \
-		$(PROOF_GSLT_EVEN_CANARY_V1) \
+$(CERTIFICATE_GSLT_EVEN_ANSWERS_V1): \
+		$(CERTIFICATE_GSLT_ARTICLE_CORE_V1) \
+		$(CERTIFICATE_GSLT_ARTICLE_COMPILER_V1) \
+		$(CERTIFICATE_GSLT_EVEN_CANARY_V1) \
 		$(LANGDEF_COMPILER_V1_BIN) $(GSLT2PARSE_CHART_V1_NATIVE_BIN)
 	@mkdir -p $(dir $@)
 	$(LANGDEF_COMPILER_V1_BIN) answers \
 		--chart $(GSLT2PARSE_CHART_V1_NATIVE_BIN) \
-		--source $(PROOF_GSLT_ARTICLE_CORE_V1) \
-		--source $(PROOF_GSLT_ARTICLE_COMPILER_V1) \
-		--source $(PROOF_GSLT_EVEN_CANARY_V1) \
+		--source $(CERTIFICATE_GSLT_ARTICLE_CORE_V1) \
+		--source $(CERTIFICATE_GSLT_ARTICLE_COMPILER_V1) \
+		--source $(CERTIFICATE_GSLT_EVEN_CANARY_V1) \
 		--query '(proof-artifact-v1 ?record)' --out $@
 
-$(PROOF_GSLT_BINDER_ANSWERS_V1): \
-		$(PROOF_GSLT_ARTICLE_CORE_V1) \
-		$(PROOF_GSLT_ARTICLE_COMPILER_V1) \
-		$(PROOF_GSLT_BINDER_CANARY_V1) \
+$(CERTIFICATE_GSLT_BINDER_ANSWERS_V1): \
+		$(CERTIFICATE_GSLT_ARTICLE_CORE_V1) \
+		$(CERTIFICATE_GSLT_ARTICLE_COMPILER_V1) \
+		$(CERTIFICATE_GSLT_BINDER_CANARY_V1) \
 		$(LANGDEF_COMPILER_V1_BIN) $(GSLT2PARSE_CHART_V1_NATIVE_BIN)
 	@mkdir -p $(dir $@)
 	$(LANGDEF_COMPILER_V1_BIN) answers \
 		--chart $(GSLT2PARSE_CHART_V1_NATIVE_BIN) \
-		--source $(PROOF_GSLT_ARTICLE_CORE_V1) \
-		--source $(PROOF_GSLT_ARTICLE_COMPILER_V1) \
-		--source $(PROOF_GSLT_BINDER_CANARY_V1) \
+		--source $(CERTIFICATE_GSLT_ARTICLE_CORE_V1) \
+		--source $(CERTIFICATE_GSLT_ARTICLE_COMPILER_V1) \
+		--source $(CERTIFICATE_GSLT_BINDER_CANARY_V1) \
 		--query '(proof-artifact-v1 ?record)' --out $@
 
-$(PROOF_GSLT_SEQUENCE_ANSWERS_V1): \
-		$(PROOF_GSLT_ARTICLE_CORE_V1) \
-		$(PROOF_GSLT_ARTICLE_DOCUMENT_V1) \
-		$(PROOF_GSLT_ARTICLE_COMPILER_V1) \
-		$(PROOF_GSLT_ARTICLE_DOCUMENT_COMPILER_V1) \
-		$(PROOF_GSLT_SEQUENCE_RELATIONS_V1) \
-		$(PROOF_GSLT_SEQUENCE_SCHEMA_V1) \
-		$(PROOF_GSLT_SEQUENCE_CANARY_V1) \
+$(CERTIFICATE_GSLT_SEQUENCE_ANSWERS_V1): \
+		$(CERTIFICATE_GSLT_ARTICLE_CORE_V1) \
+		$(CERTIFICATE_GSLT_ARTICLE_DOCUMENT_V1) \
+		$(CERTIFICATE_GSLT_ARTICLE_COMPILER_V1) \
+		$(CERTIFICATE_GSLT_ARTICLE_DOCUMENT_COMPILER_V1) \
+		$(CERTIFICATE_GSLT_SEQUENCE_RELATIONS_V1) \
+		$(CERTIFICATE_GSLT_SEQUENCE_SCHEMA_V1) \
+		$(CERTIFICATE_GSLT_SEQUENCE_CANARY_V1) \
 		$(LANGDEF_COMPILER_V1_BIN) $(GSLT2PARSE_CHART_V1_NATIVE_BIN)
 	@mkdir -p $(dir $@)
 	$(LANGDEF_COMPILER_V1_BIN) answers \
 		--chart $(GSLT2PARSE_CHART_V1_NATIVE_BIN) \
-		--source $(PROOF_GSLT_ARTICLE_CORE_V1) \
-		--source $(PROOF_GSLT_ARTICLE_DOCUMENT_V1) \
-		--source $(PROOF_GSLT_ARTICLE_COMPILER_V1) \
-		--source $(PROOF_GSLT_ARTICLE_DOCUMENT_COMPILER_V1) \
-		--source $(PROOF_GSLT_SEQUENCE_RELATIONS_V1) \
-		--source $(PROOF_GSLT_SEQUENCE_SCHEMA_V1) \
-		--source $(PROOF_GSLT_SEQUENCE_CANARY_V1) \
+		--source $(CERTIFICATE_GSLT_ARTICLE_CORE_V1) \
+		--source $(CERTIFICATE_GSLT_ARTICLE_DOCUMENT_V1) \
+		--source $(CERTIFICATE_GSLT_ARTICLE_COMPILER_V1) \
+		--source $(CERTIFICATE_GSLT_ARTICLE_DOCUMENT_COMPILER_V1) \
+		--source $(CERTIFICATE_GSLT_SEQUENCE_RELATIONS_V1) \
+		--source $(CERTIFICATE_GSLT_SEQUENCE_SCHEMA_V1) \
+		--source $(CERTIFICATE_GSLT_SEQUENCE_CANARY_V1) \
 		--query '(proof-artifact-v1 ?record)' --out $@
 
-$(PROOF_GSLT_SEQUENCE_EVIDENCE_ABI_V1): \
-		$(PROOF_GSLT_ARTICLE_CORE_V1) \
-		$(PROOF_GSLT_ARTICLE_DOCUMENT_V1) \
-		$(PROOF_GSLT_SEQUENCE_RELATIONS_V1) \
-		$(PROOF_GSLT_SEQUENCE_SCHEMA_V1) \
-		$(PROOF_GSLT_SEQUENCE_EVIDENCE_COMPILER_V1) \
-		$(PROOF_GSLT_SEQUENCE_CANARY_V1) \
+$(CERTIFICATE_GSLT_SEQUENCE_EVIDENCE_ABI_V1): \
+		$(CERTIFICATE_GSLT_ARTICLE_CORE_V1) \
+		$(CERTIFICATE_GSLT_ARTICLE_DOCUMENT_V1) \
+		$(CERTIFICATE_GSLT_SEQUENCE_RELATIONS_V1) \
+		$(CERTIFICATE_GSLT_SEQUENCE_SCHEMA_V1) \
+		$(CERTIFICATE_GSLT_SEQUENCE_EVIDENCE_COMPILER_V1) \
+		$(CERTIFICATE_GSLT_SEQUENCE_CANARY_V1) \
 		$(LANGDEF_COMPILER_V1_BIN) $(GSLT2PARSE_CHART_V1_NATIVE_BIN)
 	@mkdir -p $(dir $@)
 	$(LANGDEF_COMPILER_V1_BIN) answers \
 		--chart $(GSLT2PARSE_CHART_V1_NATIVE_BIN) \
-		--source $(PROOF_GSLT_ARTICLE_CORE_V1) \
-		--source $(PROOF_GSLT_ARTICLE_DOCUMENT_V1) \
-		--source $(PROOF_GSLT_SEQUENCE_RELATIONS_V1) \
-		--source $(PROOF_GSLT_SEQUENCE_SCHEMA_V1) \
-		--source $(PROOF_GSLT_SEQUENCE_EVIDENCE_COMPILER_V1) \
-		--source $(PROOF_GSLT_SEQUENCE_CANARY_V1) \
+		--source $(CERTIFICATE_GSLT_ARTICLE_CORE_V1) \
+		--source $(CERTIFICATE_GSLT_ARTICLE_DOCUMENT_V1) \
+		--source $(CERTIFICATE_GSLT_SEQUENCE_RELATIONS_V1) \
+		--source $(CERTIFICATE_GSLT_SEQUENCE_SCHEMA_V1) \
+		--source $(CERTIFICATE_GSLT_SEQUENCE_EVIDENCE_COMPILER_V1) \
+		--source $(CERTIFICATE_GSLT_SEQUENCE_CANARY_V1) \
 		--query '(proof-sequence-evidence-artifact-v1 ?record)' --out $@
 
-$(PROOF_GSLT_METAMATH_PLAN_V1): \
-		$(PROOF_GSLT_ARTICLE_CORE_V1) \
-		$(PROOF_GSLT_ARTICLE_DOCUMENT_V1) \
-		$(PROOF_GSLT_ARTICLE_COMPILER_V1) \
-		$(PROOF_GSLT_ARTICLE_DOCUMENT_COMPILER_V1) \
-		$(PROOF_GSLT_SEQUENCE_RELATIONS_V1) \
-		$(PROOF_GSLT_SEQUENCE_SCHEMA_V1) \
-		$(PROOF_GSLT_METAMATH_CALCULUS_V1) \
+$(CERTIFICATE_GSLT_METAMATH_PLAN_V1): \
+		$(CERTIFICATE_GSLT_ARTICLE_CORE_V1) \
+		$(CERTIFICATE_GSLT_ARTICLE_DOCUMENT_V1) \
+		$(CERTIFICATE_GSLT_ARTICLE_COMPILER_V1) \
+		$(CERTIFICATE_GSLT_ARTICLE_DOCUMENT_COMPILER_V1) \
+		$(CERTIFICATE_GSLT_SEQUENCE_RELATIONS_V1) \
+		$(CERTIFICATE_GSLT_SEQUENCE_SCHEMA_V1) \
+		$(CERTIFICATE_GSLT_METAMATH_CALCULUS_V1) \
 		$(LANGDEF_COMPILER_V1_BIN) $(GSLT2PARSE_CHART_V1_NATIVE_BIN)
 	@mkdir -p $(dir $@)
 	$(LANGDEF_COMPILER_V1_BIN) answers \
 		--chart $(GSLT2PARSE_CHART_V1_NATIVE_BIN) \
-		--source $(PROOF_GSLT_ARTICLE_CORE_V1) \
-		--source $(PROOF_GSLT_ARTICLE_DOCUMENT_V1) \
-		--source $(PROOF_GSLT_ARTICLE_COMPILER_V1) \
-		--source $(PROOF_GSLT_ARTICLE_DOCUMENT_COMPILER_V1) \
-		--source $(PROOF_GSLT_SEQUENCE_RELATIONS_V1) \
-		--source $(PROOF_GSLT_SEQUENCE_SCHEMA_V1) \
-		--source $(PROOF_GSLT_METAMATH_CALCULUS_V1) \
+		--source $(CERTIFICATE_GSLT_ARTICLE_CORE_V1) \
+		--source $(CERTIFICATE_GSLT_ARTICLE_DOCUMENT_V1) \
+		--source $(CERTIFICATE_GSLT_ARTICLE_COMPILER_V1) \
+		--source $(CERTIFICATE_GSLT_ARTICLE_DOCUMENT_COMPILER_V1) \
+		--source $(CERTIFICATE_GSLT_SEQUENCE_RELATIONS_V1) \
+		--source $(CERTIFICATE_GSLT_SEQUENCE_SCHEMA_V1) \
+		--source $(CERTIFICATE_GSLT_METAMATH_CALCULUS_V1) \
 		--query '(proof-artifact-v1 ?record)' --out $@
 
-$(PROOF_GSLT_METAMATH_EVIDENCE_ABI_V1): \
-		$(PROOF_GSLT_ARTICLE_CORE_V1) \
-		$(PROOF_GSLT_ARTICLE_DOCUMENT_V1) \
-		$(PROOF_GSLT_SEQUENCE_RELATIONS_V1) \
-		$(PROOF_GSLT_SEQUENCE_SCHEMA_V1) \
-		$(PROOF_GSLT_SEQUENCE_EVIDENCE_COMPILER_V1) \
-		$(PROOF_GSLT_METAMATH_CALCULUS_V1) \
+$(CERTIFICATE_GSLT_METAMATH_EVIDENCE_ABI_V1): \
+		$(CERTIFICATE_GSLT_ARTICLE_CORE_V1) \
+		$(CERTIFICATE_GSLT_ARTICLE_DOCUMENT_V1) \
+		$(CERTIFICATE_GSLT_SEQUENCE_RELATIONS_V1) \
+		$(CERTIFICATE_GSLT_SEQUENCE_SCHEMA_V1) \
+		$(CERTIFICATE_GSLT_SEQUENCE_EVIDENCE_COMPILER_V1) \
+		$(CERTIFICATE_GSLT_METAMATH_CALCULUS_V1) \
 		$(LANGDEF_COMPILER_V1_BIN) $(GSLT2PARSE_CHART_V1_NATIVE_BIN)
 	@mkdir -p $(dir $@)
 	$(LANGDEF_COMPILER_V1_BIN) answers \
 		--chart $(GSLT2PARSE_CHART_V1_NATIVE_BIN) \
-		--source $(PROOF_GSLT_ARTICLE_CORE_V1) \
-		--source $(PROOF_GSLT_ARTICLE_DOCUMENT_V1) \
-		--source $(PROOF_GSLT_SEQUENCE_RELATIONS_V1) \
-		--source $(PROOF_GSLT_SEQUENCE_SCHEMA_V1) \
-		--source $(PROOF_GSLT_SEQUENCE_EVIDENCE_COMPILER_V1) \
-		--source $(PROOF_GSLT_METAMATH_CALCULUS_V1) \
+		--source $(CERTIFICATE_GSLT_ARTICLE_CORE_V1) \
+		--source $(CERTIFICATE_GSLT_ARTICLE_DOCUMENT_V1) \
+		--source $(CERTIFICATE_GSLT_SEQUENCE_RELATIONS_V1) \
+		--source $(CERTIFICATE_GSLT_SEQUENCE_SCHEMA_V1) \
+		--source $(CERTIFICATE_GSLT_SEQUENCE_EVIDENCE_COMPILER_V1) \
+		--source $(CERTIFICATE_GSLT_METAMATH_CALCULUS_V1) \
 		--query '(proof-sequence-evidence-artifact-v1 ?record)' --out $@
 
-$(PROOF_GSLT_METAMATH_RELATIONAL_ABI_V1): \
-		$(PROOF_GSLT_ARTICLE_CORE_V1) \
-		$(PROOF_GSLT_SEQUENCE_RELATIONS_V1) \
-		$(PROOF_GSLT_SEQUENCE_SCHEMA_V1) \
+$(CERTIFICATE_GSLT_METAMATH_RELATIONAL_ABI_V1): \
+		$(CERTIFICATE_GSLT_ARTICLE_CORE_V1) \
+		$(CERTIFICATE_GSLT_SEQUENCE_RELATIONS_V1) \
+		$(CERTIFICATE_GSLT_SEQUENCE_SCHEMA_V1) \
 		$(METAMATH_OCCURRENCE_FOLD_CORE_V1) \
 		$(METAMATH_SOURCE_FOLD_V1) \
 		$(METAMATH_RELATIONAL_STATE_CORE_V1) \
 		$(METAMATH_SOURCE_STATE_V1) \
 		$(METAMATH_PROOF_TRACE_POLICY_V1) \
 		$(METAMATH_SOURCE_PROOF_V1) \
-		$(PROOF_GSLT_RELATIONAL_ASSERTION_CORE_V1) \
-		$(PROOF_GSLT_RELATIONAL_ASSERTION_COMPILER_V1) \
-		$(PROOF_GSLT_METAMATH_CALCULUS_V1) \
-		$(PROOF_GSLT_METAMATH_RELATIONAL_BRIDGE_V1) \
+		$(CERTIFICATE_GSLT_RELATIONAL_ASSERTION_CORE_V1) \
+		$(CERTIFICATE_GSLT_RELATIONAL_ASSERTION_COMPILER_V1) \
+		$(CERTIFICATE_GSLT_METAMATH_CALCULUS_V1) \
+		$(CERTIFICATE_GSLT_METAMATH_RELATIONAL_BRIDGE_V1) \
 		$(LANGDEF_COMPILER_V1_BIN) $(GSLT2PARSE_CHART_V1_NATIVE_BIN)
 	@mkdir -p $(dir $@)
 	$(LANGDEF_COMPILER_V1_BIN) answers \
 		--chart $(GSLT2PARSE_CHART_V1_NATIVE_BIN) \
-		--source $(PROOF_GSLT_ARTICLE_CORE_V1) \
-		--source $(PROOF_GSLT_SEQUENCE_RELATIONS_V1) \
-		--source $(PROOF_GSLT_SEQUENCE_SCHEMA_V1) \
+		--source $(CERTIFICATE_GSLT_ARTICLE_CORE_V1) \
+		--source $(CERTIFICATE_GSLT_SEQUENCE_RELATIONS_V1) \
+		--source $(CERTIFICATE_GSLT_SEQUENCE_SCHEMA_V1) \
 		--source $(METAMATH_OCCURRENCE_FOLD_CORE_V1) \
 		--source $(METAMATH_SOURCE_FOLD_V1) \
 		--source $(METAMATH_RELATIONAL_STATE_CORE_V1) \
 		--source $(METAMATH_SOURCE_STATE_V1) \
 		--source $(METAMATH_PROOF_TRACE_POLICY_V1) \
 		--source $(METAMATH_SOURCE_PROOF_V1) \
-		--source $(PROOF_GSLT_RELATIONAL_ASSERTION_CORE_V1) \
-		--source $(PROOF_GSLT_RELATIONAL_ASSERTION_COMPILER_V1) \
-		--source $(PROOF_GSLT_METAMATH_CALCULUS_V1) \
-		--source $(PROOF_GSLT_METAMATH_RELATIONAL_BRIDGE_V1) \
+		--source $(CERTIFICATE_GSLT_RELATIONAL_ASSERTION_CORE_V1) \
+		--source $(CERTIFICATE_GSLT_RELATIONAL_ASSERTION_COMPILER_V1) \
+		--source $(CERTIFICATE_GSLT_METAMATH_CALCULUS_V1) \
+		--source $(CERTIFICATE_GSLT_METAMATH_RELATIONAL_BRIDGE_V1) \
 		--query '(proof-sequence-relational-artifact-v1 ?record)' --out $@
 
-$(PROOF_GSLT_METAMATH_RELATIONAL_PROJECTION_ABI_V1): \
+$(CERTIFICATE_GSLT_METAMATH_RELATIONAL_PROJECTION_ABI_V1): \
 		$(METAMATH_PROOF_SEMANTIC_EXEC_V1) \
-		$(PROOF_GSLT_ARTICLE_CORE_V1) \
-		$(PROOF_GSLT_SEQUENCE_RELATIONS_V1) \
-		$(PROOF_GSLT_SEQUENCE_SCHEMA_V1) \
+		$(CERTIFICATE_GSLT_ARTICLE_CORE_V1) \
+		$(CERTIFICATE_GSLT_SEQUENCE_RELATIONS_V1) \
+		$(CERTIFICATE_GSLT_SEQUENCE_SCHEMA_V1) \
 		$(METAMATH_OCCURRENCE_FOLD_CORE_V1) \
 		$(METAMATH_SOURCE_FOLD_V1) \
 		$(METAMATH_RELATIONAL_STATE_CORE_V1) \
 		$(METAMATH_SOURCE_STATE_V1) $(METAMATH_SOURCE_PROOF_V1) \
-		$(PROOF_GSLT_TRACE_SEMANTICS_V1) \
-		$(PROOF_GSLT_TRACE_COMPILER_V1) \
-		$(PROOF_GSLT_TRACE_INPUT_V1) \
-		$(PROOF_GSLT_RELATIONAL_PROJECTION_CORE_V1) \
-		$(PROOF_GSLT_RELATIONAL_PROJECTION_COMPILER_V1) \
-		$(PROOF_GSLT_METAMATH_CALCULUS_V1) \
-		$(PROOF_GSLT_METAMATH_RELATIONAL_PROJECTION_V1) \
+		$(CERTIFICATE_GSLT_TRACE_SEMANTICS_V1) \
+		$(CERTIFICATE_GSLT_TRACE_COMPILER_V1) \
+		$(CERTIFICATE_GSLT_TRACE_INPUT_V1) \
+		$(CERTIFICATE_GSLT_RELATIONAL_PROJECTION_CORE_V1) \
+		$(CERTIFICATE_GSLT_RELATIONAL_PROJECTION_COMPILER_V1) \
+		$(CERTIFICATE_GSLT_METAMATH_CALCULUS_V1) \
+		$(CERTIFICATE_GSLT_METAMATH_RELATIONAL_PROJECTION_V1) \
 		$(LANGDEF_COMPILER_V1_BIN) $(GSLT2PARSE_CHART_V1_NATIVE_BIN)
 	@mkdir -p $(dir $@)
 	$(LANGDEF_COMPILER_V1_BIN) answers \
 		--chart $(GSLT2PARSE_CHART_V1_NATIVE_BIN) \
 		--source $(METAMATH_PROOF_SEMANTIC_EXEC_V1) \
-		--source $(PROOF_GSLT_ARTICLE_CORE_V1) \
-		--source $(PROOF_GSLT_SEQUENCE_RELATIONS_V1) \
-		--source $(PROOF_GSLT_SEQUENCE_SCHEMA_V1) \
+		--source $(CERTIFICATE_GSLT_ARTICLE_CORE_V1) \
+		--source $(CERTIFICATE_GSLT_SEQUENCE_RELATIONS_V1) \
+		--source $(CERTIFICATE_GSLT_SEQUENCE_SCHEMA_V1) \
 		--source $(METAMATH_OCCURRENCE_FOLD_CORE_V1) \
 		--source $(METAMATH_SOURCE_FOLD_V1) \
 		--source $(METAMATH_RELATIONAL_STATE_CORE_V1) \
 		--source $(METAMATH_SOURCE_STATE_V1) \
 		--source $(METAMATH_SOURCE_PROOF_V1) \
-		--source $(PROOF_GSLT_TRACE_SEMANTICS_V1) \
-		--source $(PROOF_GSLT_TRACE_COMPILER_V1) \
-		--source $(PROOF_GSLT_TRACE_INPUT_V1) \
-		--source $(PROOF_GSLT_RELATIONAL_PROJECTION_CORE_V1) \
-		--source $(PROOF_GSLT_RELATIONAL_PROJECTION_COMPILER_V1) \
-		--source $(PROOF_GSLT_METAMATH_CALCULUS_V1) \
-		--source $(PROOF_GSLT_METAMATH_RELATIONAL_PROJECTION_V1) \
+		--source $(CERTIFICATE_GSLT_TRACE_SEMANTICS_V1) \
+		--source $(CERTIFICATE_GSLT_TRACE_COMPILER_V1) \
+		--source $(CERTIFICATE_GSLT_TRACE_INPUT_V1) \
+		--source $(CERTIFICATE_GSLT_RELATIONAL_PROJECTION_CORE_V1) \
+		--source $(CERTIFICATE_GSLT_RELATIONAL_PROJECTION_COMPILER_V1) \
+		--source $(CERTIFICATE_GSLT_METAMATH_CALCULUS_V1) \
+		--source $(CERTIFICATE_GSLT_METAMATH_RELATIONAL_PROJECTION_V1) \
 		--query '(proof-relational-projection-artifact-v1 ?record)' \
 		--out $@
 
-$(PROOF_GSLT_METAMATH_RELATIONAL_RUNTIME_ABI_V1): \
+$(CERTIFICATE_GSLT_METAMATH_RELATIONAL_RUNTIME_ABI_V1): \
 		$(METAMATH_PROOF_SEMANTIC_EXEC_V1) \
-		$(PROOF_GSLT_ARTICLE_CORE_V1) \
-		$(PROOF_GSLT_SEQUENCE_RELATIONS_V1) \
-		$(PROOF_GSLT_SEQUENCE_SCHEMA_V1) \
+		$(CERTIFICATE_GSLT_ARTICLE_CORE_V1) \
+		$(CERTIFICATE_GSLT_SEQUENCE_RELATIONS_V1) \
+		$(CERTIFICATE_GSLT_SEQUENCE_SCHEMA_V1) \
 		$(METAMATH_OCCURRENCE_FOLD_CORE_V1) \
 		$(METAMATH_SOURCE_FOLD_V1) \
 		$(METAMATH_RELATIONAL_STATE_CORE_V1) \
 		$(METAMATH_SOURCE_STATE_V1) $(METAMATH_SOURCE_PROOF_V1) \
-		$(PROOF_GSLT_TRACE_SEMANTICS_V1) \
-		$(PROOF_GSLT_TRACE_COMPILER_V1) \
-		$(PROOF_GSLT_TRACE_INPUT_V1) \
-		$(PROOF_GSLT_RELATIONAL_PROJECTION_CORE_V1) \
-		$(PROOF_GSLT_RELATIONAL_RUNTIME_COMPILER_V1) \
-		$(PROOF_GSLT_METAMATH_CALCULUS_V1) \
-		$(PROOF_GSLT_METAMATH_RELATIONAL_PROJECTION_V1) \
+		$(CERTIFICATE_GSLT_TRACE_SEMANTICS_V1) \
+		$(CERTIFICATE_GSLT_TRACE_COMPILER_V1) \
+		$(CERTIFICATE_GSLT_TRACE_INPUT_V1) \
+		$(CERTIFICATE_GSLT_RELATIONAL_PROJECTION_CORE_V1) \
+		$(CERTIFICATE_GSLT_RELATIONAL_RUNTIME_COMPILER_V1) \
+		$(CERTIFICATE_GSLT_METAMATH_CALCULUS_V1) \
+		$(CERTIFICATE_GSLT_METAMATH_RELATIONAL_PROJECTION_V1) \
 		$(METAMATH_PROOF_TRACE_POLICY_V1) \
 		$(METAMATH_PROOF_TRACE_CODEC_V1) \
 		$(LANGDEF_COMPILER_V1_BIN) $(GSLT2PARSE_CHART_V1_NATIVE_BIN)
@@ -6300,248 +6329,248 @@ $(PROOF_GSLT_METAMATH_RELATIONAL_RUNTIME_ABI_V1): \
 	$(LANGDEF_COMPILER_V1_BIN) answers \
 		--chart $(GSLT2PARSE_CHART_V1_NATIVE_BIN) \
 		--source $(METAMATH_PROOF_SEMANTIC_EXEC_V1) \
-		--source $(PROOF_GSLT_ARTICLE_CORE_V1) \
-		--source $(PROOF_GSLT_SEQUENCE_RELATIONS_V1) \
-		--source $(PROOF_GSLT_SEQUENCE_SCHEMA_V1) \
+		--source $(CERTIFICATE_GSLT_ARTICLE_CORE_V1) \
+		--source $(CERTIFICATE_GSLT_SEQUENCE_RELATIONS_V1) \
+		--source $(CERTIFICATE_GSLT_SEQUENCE_SCHEMA_V1) \
 		--source $(METAMATH_OCCURRENCE_FOLD_CORE_V1) \
 		--source $(METAMATH_SOURCE_FOLD_V1) \
 		--source $(METAMATH_RELATIONAL_STATE_CORE_V1) \
 		--source $(METAMATH_SOURCE_STATE_V1) \
 		--source $(METAMATH_PROOF_TRACE_POLICY_V1) \
 		--source $(METAMATH_SOURCE_PROOF_V1) \
-		--source $(PROOF_GSLT_TRACE_SEMANTICS_V1) \
-		--source $(PROOF_GSLT_TRACE_COMPILER_V1) \
-		--source $(PROOF_GSLT_TRACE_INPUT_V1) \
-		--source $(PROOF_GSLT_RELATIONAL_PROJECTION_CORE_V1) \
-		--source $(PROOF_GSLT_RELATIONAL_RUNTIME_COMPILER_V1) \
-		--source $(PROOF_GSLT_METAMATH_CALCULUS_V1) \
-		--source $(PROOF_GSLT_METAMATH_RELATIONAL_PROJECTION_V1) \
+		--source $(CERTIFICATE_GSLT_TRACE_SEMANTICS_V1) \
+		--source $(CERTIFICATE_GSLT_TRACE_COMPILER_V1) \
+		--source $(CERTIFICATE_GSLT_TRACE_INPUT_V1) \
+		--source $(CERTIFICATE_GSLT_RELATIONAL_PROJECTION_CORE_V1) \
+		--source $(CERTIFICATE_GSLT_RELATIONAL_RUNTIME_COMPILER_V1) \
+		--source $(CERTIFICATE_GSLT_METAMATH_CALCULUS_V1) \
+		--source $(CERTIFICATE_GSLT_METAMATH_RELATIONAL_PROJECTION_V1) \
 		--source $(METAMATH_PROOF_TRACE_CODEC_V1) \
 		--query '(proof-relational-runtime-artifact-v1 ?record)' \
 		--out $@
 
-$(PROOF_GSLT_METAMATH_RELATIONAL_DELETE_ROLE_SOURCE_V1): \
-		$(PROOF_GSLT_METAMATH_RELATIONAL_BRIDGE_V1) \
+$(CERTIFICATE_GSLT_METAMATH_RELATIONAL_DELETE_ROLE_SOURCE_V1): \
+		$(CERTIFICATE_GSLT_METAMATH_RELATIONAL_BRIDGE_V1) \
 		$(GSLT_RULE_MUTATOR_V1_BIN)
 	@mkdir -p $(dir $@)
 	$(GSLT_RULE_MUTATOR_V1_BIN) mutate \
-		--source $(PROOF_GSLT_METAMATH_RELATIONAL_BRIDGE_V1) --out $@ \
+		--source $(CERTIFICATE_GSLT_METAMATH_RELATIONAL_BRIDGE_V1) --out $@ \
 		--rule mm-proof-relational-table-formula --mode delete
 
-$(PROOF_GSLT_METAMATH_RELATIONAL_DELETE_ROLE_V1): \
-		$(PROOF_GSLT_ARTICLE_CORE_V1) \
-		$(PROOF_GSLT_SEQUENCE_RELATIONS_V1) \
-		$(PROOF_GSLT_SEQUENCE_SCHEMA_V1) \
+$(CERTIFICATE_GSLT_METAMATH_RELATIONAL_DELETE_ROLE_V1): \
+		$(CERTIFICATE_GSLT_ARTICLE_CORE_V1) \
+		$(CERTIFICATE_GSLT_SEQUENCE_RELATIONS_V1) \
+		$(CERTIFICATE_GSLT_SEQUENCE_SCHEMA_V1) \
 		$(METAMATH_OCCURRENCE_FOLD_CORE_V1) \
 		$(METAMATH_SOURCE_FOLD_V1) \
 		$(METAMATH_RELATIONAL_STATE_CORE_V1) \
 		$(METAMATH_SOURCE_STATE_V1) $(METAMATH_SOURCE_PROOF_V1) \
 		$(METAMATH_PROOF_TRACE_POLICY_V1) \
-		$(PROOF_GSLT_RELATIONAL_ASSERTION_CORE_V1) \
-		$(PROOF_GSLT_RELATIONAL_ASSERTION_COMPILER_V1) \
-		$(PROOF_GSLT_METAMATH_CALCULUS_V1) \
-		$(PROOF_GSLT_METAMATH_RELATIONAL_DELETE_ROLE_SOURCE_V1) \
+		$(CERTIFICATE_GSLT_RELATIONAL_ASSERTION_CORE_V1) \
+		$(CERTIFICATE_GSLT_RELATIONAL_ASSERTION_COMPILER_V1) \
+		$(CERTIFICATE_GSLT_METAMATH_CALCULUS_V1) \
+		$(CERTIFICATE_GSLT_METAMATH_RELATIONAL_DELETE_ROLE_SOURCE_V1) \
 		$(LANGDEF_COMPILER_V1_BIN) $(GSLT2PARSE_CHART_V1_NATIVE_BIN)
 	@mkdir -p $(dir $@)
 	$(LANGDEF_COMPILER_V1_BIN) answers \
 		--chart $(GSLT2PARSE_CHART_V1_NATIVE_BIN) \
-		--source $(PROOF_GSLT_ARTICLE_CORE_V1) \
-		--source $(PROOF_GSLT_SEQUENCE_RELATIONS_V1) \
-		--source $(PROOF_GSLT_SEQUENCE_SCHEMA_V1) \
+		--source $(CERTIFICATE_GSLT_ARTICLE_CORE_V1) \
+		--source $(CERTIFICATE_GSLT_SEQUENCE_RELATIONS_V1) \
+		--source $(CERTIFICATE_GSLT_SEQUENCE_SCHEMA_V1) \
 		--source $(METAMATH_OCCURRENCE_FOLD_CORE_V1) \
 		--source $(METAMATH_SOURCE_FOLD_V1) \
 		--source $(METAMATH_RELATIONAL_STATE_CORE_V1) \
 		--source $(METAMATH_SOURCE_STATE_V1) \
 		--source $(METAMATH_SOURCE_PROOF_V1) \
 		--source $(METAMATH_PROOF_TRACE_POLICY_V1) \
-		--source $(PROOF_GSLT_RELATIONAL_ASSERTION_CORE_V1) \
-		--source $(PROOF_GSLT_RELATIONAL_ASSERTION_COMPILER_V1) \
-		--source $(PROOF_GSLT_METAMATH_CALCULUS_V1) \
-		--source $(PROOF_GSLT_METAMATH_RELATIONAL_DELETE_ROLE_SOURCE_V1) \
+		--source $(CERTIFICATE_GSLT_RELATIONAL_ASSERTION_CORE_V1) \
+		--source $(CERTIFICATE_GSLT_RELATIONAL_ASSERTION_COMPILER_V1) \
+		--source $(CERTIFICATE_GSLT_METAMATH_CALCULUS_V1) \
+		--source $(CERTIFICATE_GSLT_METAMATH_RELATIONAL_DELETE_ROLE_SOURCE_V1) \
 		--query '(proof-sequence-relational-artifact-v1 ?record)' --out $@
 
-$(PROOF_GSLT_METAMATH_RELATIONAL_DELETE_EXECUTION_SOURCE_V1): \
-		$(PROOF_GSLT_RELATIONAL_ASSERTION_CORE_V1) \
+$(CERTIFICATE_GSLT_METAMATH_RELATIONAL_DELETE_EXECUTION_SOURCE_V1): \
+		$(CERTIFICATE_GSLT_RELATIONAL_ASSERTION_CORE_V1) \
 		$(GSLT_RULE_MUTATOR_V1_BIN)
 	@mkdir -p $(dir $@)
 	$(GSLT_RULE_MUTATOR_V1_BIN) mutate \
-		--source $(PROOF_GSLT_RELATIONAL_ASSERTION_CORE_V1) --out $@ \
+		--source $(CERTIFICATE_GSLT_RELATIONAL_ASSERTION_CORE_V1) --out $@ \
 		--rule proof-sequence-relational-execution --mode delete
 
-$(PROOF_GSLT_METAMATH_RELATIONAL_DELETE_EXECUTION_V1): \
-		$(PROOF_GSLT_ARTICLE_CORE_V1) \
-		$(PROOF_GSLT_SEQUENCE_RELATIONS_V1) \
-		$(PROOF_GSLT_SEQUENCE_SCHEMA_V1) \
+$(CERTIFICATE_GSLT_METAMATH_RELATIONAL_DELETE_EXECUTION_V1): \
+		$(CERTIFICATE_GSLT_ARTICLE_CORE_V1) \
+		$(CERTIFICATE_GSLT_SEQUENCE_RELATIONS_V1) \
+		$(CERTIFICATE_GSLT_SEQUENCE_SCHEMA_V1) \
 		$(METAMATH_OCCURRENCE_FOLD_CORE_V1) \
 		$(METAMATH_SOURCE_FOLD_V1) \
 		$(METAMATH_RELATIONAL_STATE_CORE_V1) \
 		$(METAMATH_SOURCE_STATE_V1) $(METAMATH_SOURCE_PROOF_V1) \
-		$(PROOF_GSLT_METAMATH_RELATIONAL_DELETE_EXECUTION_SOURCE_V1) \
-		$(PROOF_GSLT_RELATIONAL_ASSERTION_COMPILER_V1) \
-		$(PROOF_GSLT_METAMATH_CALCULUS_V1) \
-		$(PROOF_GSLT_METAMATH_RELATIONAL_BRIDGE_V1) \
+		$(CERTIFICATE_GSLT_METAMATH_RELATIONAL_DELETE_EXECUTION_SOURCE_V1) \
+		$(CERTIFICATE_GSLT_RELATIONAL_ASSERTION_COMPILER_V1) \
+		$(CERTIFICATE_GSLT_METAMATH_CALCULUS_V1) \
+		$(CERTIFICATE_GSLT_METAMATH_RELATIONAL_BRIDGE_V1) \
 		$(LANGDEF_COMPILER_V1_BIN) $(GSLT2PARSE_CHART_V1_NATIVE_BIN)
 	@mkdir -p $(dir $@)
 	$(LANGDEF_COMPILER_V1_BIN) answers \
 		--chart $(GSLT2PARSE_CHART_V1_NATIVE_BIN) \
-		--source $(PROOF_GSLT_ARTICLE_CORE_V1) \
-		--source $(PROOF_GSLT_SEQUENCE_RELATIONS_V1) \
-		--source $(PROOF_GSLT_SEQUENCE_SCHEMA_V1) \
+		--source $(CERTIFICATE_GSLT_ARTICLE_CORE_V1) \
+		--source $(CERTIFICATE_GSLT_SEQUENCE_RELATIONS_V1) \
+		--source $(CERTIFICATE_GSLT_SEQUENCE_SCHEMA_V1) \
 		--source $(METAMATH_OCCURRENCE_FOLD_CORE_V1) \
 		--source $(METAMATH_SOURCE_FOLD_V1) \
 		--source $(METAMATH_RELATIONAL_STATE_CORE_V1) \
 		--source $(METAMATH_SOURCE_STATE_V1) \
 		--source $(METAMATH_SOURCE_PROOF_V1) \
-		--source $(PROOF_GSLT_METAMATH_RELATIONAL_DELETE_EXECUTION_SOURCE_V1) \
-		--source $(PROOF_GSLT_RELATIONAL_ASSERTION_COMPILER_V1) \
-		--source $(PROOF_GSLT_METAMATH_CALCULUS_V1) \
-		--source $(PROOF_GSLT_METAMATH_RELATIONAL_BRIDGE_V1) \
+		--source $(CERTIFICATE_GSLT_METAMATH_RELATIONAL_DELETE_EXECUTION_SOURCE_V1) \
+		--source $(CERTIFICATE_GSLT_RELATIONAL_ASSERTION_COMPILER_V1) \
+		--source $(CERTIFICATE_GSLT_METAMATH_CALCULUS_V1) \
+		--source $(CERTIFICATE_GSLT_METAMATH_RELATIONAL_BRIDGE_V1) \
 		--query '(proof-sequence-relational-artifact-v1 ?record)' --out $@
 
-$(PROOF_GSLT_METAMATH_RELATIONAL_NO_ASSERTION_APARTNESS_SOURCE_V1): \
-		$(PROOF_GSLT_METAMATH_RELATIONAL_BRIDGE_V1) \
+$(CERTIFICATE_GSLT_METAMATH_RELATIONAL_NO_ASSERTION_APARTNESS_SOURCE_V1): \
+		$(CERTIFICATE_GSLT_METAMATH_RELATIONAL_BRIDGE_V1) \
 		$(GSLT_RULE_MUTATOR_V1_BIN)
 	@mkdir -p $(dir $@)
 	$(GSLT_RULE_MUTATOR_V1_BIN) mutate \
-		--source $(PROOF_GSLT_METAMATH_RELATIONAL_BRIDGE_V1) --out $@ \
+		--source $(CERTIFICATE_GSLT_METAMATH_RELATIONAL_BRIDGE_V1) --out $@ \
 		--rule mm-proof-relational-table-assertion-disjoint --mode delete
 
-$(PROOF_GSLT_METAMATH_RELATIONAL_NO_APARTNESS_SOURCE_V1): \
-		$(PROOF_GSLT_METAMATH_RELATIONAL_NO_ASSERTION_APARTNESS_SOURCE_V1) \
+$(CERTIFICATE_GSLT_METAMATH_RELATIONAL_NO_APARTNESS_SOURCE_V1): \
+		$(CERTIFICATE_GSLT_METAMATH_RELATIONAL_NO_ASSERTION_APARTNESS_SOURCE_V1) \
 		$(GSLT_RULE_MUTATOR_V1_BIN)
 	@mkdir -p $(dir $@)
 	$(GSLT_RULE_MUTATOR_V1_BIN) mutate \
-		--source $(PROOF_GSLT_METAMATH_RELATIONAL_NO_ASSERTION_APARTNESS_SOURCE_V1) --out $@ \
+		--source $(CERTIFICATE_GSLT_METAMATH_RELATIONAL_NO_ASSERTION_APARTNESS_SOURCE_V1) --out $@ \
 		--rule mm-proof-relational-table-active-apartness --mode delete
 
-$(PROOF_GSLT_METAMATH_RELATIONAL_NO_APARTNESS_V1): \
-		$(PROOF_GSLT_ARTICLE_CORE_V1) \
-		$(PROOF_GSLT_SEQUENCE_RELATIONS_V1) \
-		$(PROOF_GSLT_SEQUENCE_SCHEMA_V1) \
+$(CERTIFICATE_GSLT_METAMATH_RELATIONAL_NO_APARTNESS_V1): \
+		$(CERTIFICATE_GSLT_ARTICLE_CORE_V1) \
+		$(CERTIFICATE_GSLT_SEQUENCE_RELATIONS_V1) \
+		$(CERTIFICATE_GSLT_SEQUENCE_SCHEMA_V1) \
 		$(METAMATH_OCCURRENCE_FOLD_CORE_V1) \
 		$(METAMATH_SOURCE_FOLD_V1) \
 		$(METAMATH_RELATIONAL_STATE_CORE_V1) \
 		$(METAMATH_SOURCE_STATE_V1) $(METAMATH_SOURCE_PROOF_V1) \
 		$(METAMATH_PROOF_TRACE_POLICY_V1) \
-		$(PROOF_GSLT_RELATIONAL_ASSERTION_CORE_V1) \
-		$(PROOF_GSLT_RELATIONAL_ASSERTION_COMPILER_V1) \
-		$(PROOF_GSLT_METAMATH_CALCULUS_V1) \
-		$(PROOF_GSLT_METAMATH_RELATIONAL_NO_APARTNESS_SOURCE_V1) \
+		$(CERTIFICATE_GSLT_RELATIONAL_ASSERTION_CORE_V1) \
+		$(CERTIFICATE_GSLT_RELATIONAL_ASSERTION_COMPILER_V1) \
+		$(CERTIFICATE_GSLT_METAMATH_CALCULUS_V1) \
+		$(CERTIFICATE_GSLT_METAMATH_RELATIONAL_NO_APARTNESS_SOURCE_V1) \
 		$(LANGDEF_COMPILER_V1_BIN) $(GSLT2PARSE_CHART_V1_NATIVE_BIN)
 	@mkdir -p $(dir $@)
 	$(LANGDEF_COMPILER_V1_BIN) answers \
 		--chart $(GSLT2PARSE_CHART_V1_NATIVE_BIN) \
-		--source $(PROOF_GSLT_ARTICLE_CORE_V1) \
-		--source $(PROOF_GSLT_SEQUENCE_RELATIONS_V1) \
-		--source $(PROOF_GSLT_SEQUENCE_SCHEMA_V1) \
+		--source $(CERTIFICATE_GSLT_ARTICLE_CORE_V1) \
+		--source $(CERTIFICATE_GSLT_SEQUENCE_RELATIONS_V1) \
+		--source $(CERTIFICATE_GSLT_SEQUENCE_SCHEMA_V1) \
 		--source $(METAMATH_OCCURRENCE_FOLD_CORE_V1) \
 		--source $(METAMATH_SOURCE_FOLD_V1) \
 		--source $(METAMATH_RELATIONAL_STATE_CORE_V1) \
 		--source $(METAMATH_SOURCE_STATE_V1) \
 		--source $(METAMATH_SOURCE_PROOF_V1) \
 		--source $(METAMATH_PROOF_TRACE_POLICY_V1) \
-		--source $(PROOF_GSLT_RELATIONAL_ASSERTION_CORE_V1) \
-		--source $(PROOF_GSLT_RELATIONAL_ASSERTION_COMPILER_V1) \
-		--source $(PROOF_GSLT_METAMATH_CALCULUS_V1) \
-		--source $(PROOF_GSLT_METAMATH_RELATIONAL_NO_APARTNESS_SOURCE_V1) \
+		--source $(CERTIFICATE_GSLT_RELATIONAL_ASSERTION_CORE_V1) \
+		--source $(CERTIFICATE_GSLT_RELATIONAL_ASSERTION_COMPILER_V1) \
+		--source $(CERTIFICATE_GSLT_METAMATH_CALCULUS_V1) \
+		--source $(CERTIFICATE_GSLT_METAMATH_RELATIONAL_NO_APARTNESS_SOURCE_V1) \
 		--query '(proof-sequence-relational-artifact-v1 ?record)' --out $@
 
-$(PROOF_GSLT_SEQUENCE_DELETE_ABI_ROLE_SOURCE_V1): \
-		$(PROOF_GSLT_SEQUENCE_RELATIONS_V1) $(GSLT_RULE_MUTATOR_V1_BIN)
+$(CERTIFICATE_GSLT_SEQUENCE_DELETE_ABI_ROLE_SOURCE_V1): \
+		$(CERTIFICATE_GSLT_SEQUENCE_RELATIONS_V1) $(GSLT_RULE_MUTATOR_V1_BIN)
 	@mkdir -p $(dir $@)
 	$(GSLT_RULE_MUTATOR_V1_BIN) mutate \
-		--source $(PROOF_GSLT_SEQUENCE_RELATIONS_V1) --out $@ \
+		--source $(CERTIFICATE_GSLT_SEQUENCE_RELATIONS_V1) --out $@ \
 		--rule proof-sequence-role-rule-instantiate-variable --mode delete
 
-$(PROOF_GSLT_SEQUENCE_DELETE_ABI_ROLE_V1): \
-		$(PROOF_GSLT_ARTICLE_CORE_V1) \
-		$(PROOF_GSLT_ARTICLE_DOCUMENT_V1) \
-		$(PROOF_GSLT_SEQUENCE_DELETE_ABI_ROLE_SOURCE_V1) \
-		$(PROOF_GSLT_SEQUENCE_SCHEMA_V1) \
-		$(PROOF_GSLT_SEQUENCE_EVIDENCE_COMPILER_V1) \
-		$(PROOF_GSLT_SEQUENCE_CANARY_V1) \
+$(CERTIFICATE_GSLT_SEQUENCE_DELETE_ABI_ROLE_V1): \
+		$(CERTIFICATE_GSLT_ARTICLE_CORE_V1) \
+		$(CERTIFICATE_GSLT_ARTICLE_DOCUMENT_V1) \
+		$(CERTIFICATE_GSLT_SEQUENCE_DELETE_ABI_ROLE_SOURCE_V1) \
+		$(CERTIFICATE_GSLT_SEQUENCE_SCHEMA_V1) \
+		$(CERTIFICATE_GSLT_SEQUENCE_EVIDENCE_COMPILER_V1) \
+		$(CERTIFICATE_GSLT_SEQUENCE_CANARY_V1) \
 		$(LANGDEF_COMPILER_V1_BIN) $(GSLT2PARSE_CHART_V1_NATIVE_BIN)
 	$(LANGDEF_COMPILER_V1_BIN) answers \
 		--chart $(GSLT2PARSE_CHART_V1_NATIVE_BIN) \
-		--source $(PROOF_GSLT_ARTICLE_CORE_V1) \
-		--source $(PROOF_GSLT_ARTICLE_DOCUMENT_V1) \
-		--source $(PROOF_GSLT_SEQUENCE_DELETE_ABI_ROLE_SOURCE_V1) \
-		--source $(PROOF_GSLT_SEQUENCE_SCHEMA_V1) \
-		--source $(PROOF_GSLT_SEQUENCE_EVIDENCE_COMPILER_V1) \
-		--source $(PROOF_GSLT_SEQUENCE_CANARY_V1) \
+		--source $(CERTIFICATE_GSLT_ARTICLE_CORE_V1) \
+		--source $(CERTIFICATE_GSLT_ARTICLE_DOCUMENT_V1) \
+		--source $(CERTIFICATE_GSLT_SEQUENCE_DELETE_ABI_ROLE_SOURCE_V1) \
+		--source $(CERTIFICATE_GSLT_SEQUENCE_SCHEMA_V1) \
+		--source $(CERTIFICATE_GSLT_SEQUENCE_EVIDENCE_COMPILER_V1) \
+		--source $(CERTIFICATE_GSLT_SEQUENCE_CANARY_V1) \
 		--query '(proof-sequence-evidence-artifact-v1 ?record)' --out $@
 
-$(PROOF_GSLT_PROP_DELETE_MP_SOURCE_V1): \
-		$(PROOF_GSLT_PROP_CANARY_V1) $(GSLT_RULE_MUTATOR_V1_BIN)
+$(CERTIFICATE_GSLT_PROP_DELETE_MP_SOURCE_V1): \
+		$(CERTIFICATE_GSLT_PROP_CANARY_V1) $(GSLT_RULE_MUTATOR_V1_BIN)
 	@mkdir -p $(dir $@)
 	$(GSLT_RULE_MUTATOR_V1_BIN) mutate \
-		--source $(PROOF_GSLT_PROP_CANARY_V1) --out $@ \
+		--source $(CERTIFICATE_GSLT_PROP_CANARY_V1) --out $@ \
 		--rule prop-rule-modus-ponens --mode delete
 
-$(PROOF_GSLT_PROP_DELETE_MP_ANSWERS_V1): \
-		$(PROOF_GSLT_ARTICLE_CORE_V1) \
-		$(PROOF_GSLT_ARTICLE_COMPILER_V1) \
-		$(PROOF_GSLT_PROP_DELETE_MP_SOURCE_V1) \
+$(CERTIFICATE_GSLT_PROP_DELETE_MP_ANSWERS_V1): \
+		$(CERTIFICATE_GSLT_ARTICLE_CORE_V1) \
+		$(CERTIFICATE_GSLT_ARTICLE_COMPILER_V1) \
+		$(CERTIFICATE_GSLT_PROP_DELETE_MP_SOURCE_V1) \
 		$(LANGDEF_COMPILER_V1_BIN) $(GSLT2PARSE_CHART_V1_NATIVE_BIN)
 	$(LANGDEF_COMPILER_V1_BIN) answers \
 		--chart $(GSLT2PARSE_CHART_V1_NATIVE_BIN) \
-		--source $(PROOF_GSLT_ARTICLE_CORE_V1) \
-		--source $(PROOF_GSLT_ARTICLE_COMPILER_V1) \
-		--source $(PROOF_GSLT_PROP_DELETE_MP_SOURCE_V1) \
+		--source $(CERTIFICATE_GSLT_ARTICLE_CORE_V1) \
+		--source $(CERTIFICATE_GSLT_ARTICLE_COMPILER_V1) \
+		--source $(CERTIFICATE_GSLT_PROP_DELETE_MP_SOURCE_V1) \
 		--query '(proof-artifact-v1 ?record)' --out $@
 
-$(PROOF_GSLT_SEQUENCE_DELETE_APART_SOURCE_V1): \
-		$(PROOF_GSLT_SEQUENCE_CANARY_V1) $(GSLT_RULE_MUTATOR_V1_BIN)
+$(CERTIFICATE_GSLT_SEQUENCE_DELETE_APART_SOURCE_V1): \
+		$(CERTIFICATE_GSLT_SEQUENCE_CANARY_V1) $(GSLT_RULE_MUTATOR_V1_BIN)
 	@mkdir -p $(dir $@)
 	$(GSLT_RULE_MUTATOR_V1_BIN) mutate \
-		--source $(PROOF_GSLT_SEQUENCE_CANARY_V1) --out $@ \
+		--source $(CERTIFICATE_GSLT_SEQUENCE_CANARY_V1) --out $@ \
 		--rule sequence-canary-fact-apart-a-c --mode delete
 
-$(PROOF_GSLT_SEQUENCE_DELETE_APART_ANSWERS_V1): \
-		$(PROOF_GSLT_ARTICLE_CORE_V1) \
-		$(PROOF_GSLT_ARTICLE_DOCUMENT_V1) \
-		$(PROOF_GSLT_ARTICLE_COMPILER_V1) \
-		$(PROOF_GSLT_ARTICLE_DOCUMENT_COMPILER_V1) \
-		$(PROOF_GSLT_SEQUENCE_RELATIONS_V1) \
-		$(PROOF_GSLT_SEQUENCE_SCHEMA_V1) \
-		$(PROOF_GSLT_SEQUENCE_DELETE_APART_SOURCE_V1) \
+$(CERTIFICATE_GSLT_SEQUENCE_DELETE_APART_ANSWERS_V1): \
+		$(CERTIFICATE_GSLT_ARTICLE_CORE_V1) \
+		$(CERTIFICATE_GSLT_ARTICLE_DOCUMENT_V1) \
+		$(CERTIFICATE_GSLT_ARTICLE_COMPILER_V1) \
+		$(CERTIFICATE_GSLT_ARTICLE_DOCUMENT_COMPILER_V1) \
+		$(CERTIFICATE_GSLT_SEQUENCE_RELATIONS_V1) \
+		$(CERTIFICATE_GSLT_SEQUENCE_SCHEMA_V1) \
+		$(CERTIFICATE_GSLT_SEQUENCE_DELETE_APART_SOURCE_V1) \
 		$(LANGDEF_COMPILER_V1_BIN) $(GSLT2PARSE_CHART_V1_NATIVE_BIN)
 	$(LANGDEF_COMPILER_V1_BIN) answers \
 		--chart $(GSLT2PARSE_CHART_V1_NATIVE_BIN) \
-		--source $(PROOF_GSLT_ARTICLE_CORE_V1) \
-		--source $(PROOF_GSLT_ARTICLE_DOCUMENT_V1) \
-		--source $(PROOF_GSLT_ARTICLE_COMPILER_V1) \
-		--source $(PROOF_GSLT_ARTICLE_DOCUMENT_COMPILER_V1) \
-		--source $(PROOF_GSLT_SEQUENCE_RELATIONS_V1) \
-		--source $(PROOF_GSLT_SEQUENCE_SCHEMA_V1) \
-		--source $(PROOF_GSLT_SEQUENCE_DELETE_APART_SOURCE_V1) \
+		--source $(CERTIFICATE_GSLT_ARTICLE_CORE_V1) \
+		--source $(CERTIFICATE_GSLT_ARTICLE_DOCUMENT_V1) \
+		--source $(CERTIFICATE_GSLT_ARTICLE_COMPILER_V1) \
+		--source $(CERTIFICATE_GSLT_ARTICLE_DOCUMENT_COMPILER_V1) \
+		--source $(CERTIFICATE_GSLT_SEQUENCE_RELATIONS_V1) \
+		--source $(CERTIFICATE_GSLT_SEQUENCE_SCHEMA_V1) \
+		--source $(CERTIFICATE_GSLT_SEQUENCE_DELETE_APART_SOURCE_V1) \
 		--query '(proof-artifact-v1 ?record)' --out $@
 
-$(PROOF_GSLT_SEQUENCE_DELETE_ASSERTION_SOURCE_V1): \
-		$(PROOF_GSLT_SEQUENCE_SCHEMA_V1) $(GSLT_RULE_MUTATOR_V1_BIN)
+$(CERTIFICATE_GSLT_SEQUENCE_DELETE_ASSERTION_SOURCE_V1): \
+		$(CERTIFICATE_GSLT_SEQUENCE_SCHEMA_V1) $(GSLT_RULE_MUTATOR_V1_BIN)
 	@mkdir -p $(dir $@)
 	$(GSLT_RULE_MUTATOR_V1_BIN) mutate \
-		--source $(PROOF_GSLT_SEQUENCE_SCHEMA_V1) --out $@ \
+		--source $(CERTIFICATE_GSLT_SEQUENCE_SCHEMA_V1) --out $@ \
 		--rule proof-sequence-assertion-rule-apply --mode delete
 
-$(PROOF_GSLT_SEQUENCE_DELETE_ASSERTION_ANSWERS_V1): \
-		$(PROOF_GSLT_ARTICLE_CORE_V1) \
-		$(PROOF_GSLT_ARTICLE_DOCUMENT_V1) \
-		$(PROOF_GSLT_ARTICLE_COMPILER_V1) \
-		$(PROOF_GSLT_ARTICLE_DOCUMENT_COMPILER_V1) \
-		$(PROOF_GSLT_SEQUENCE_RELATIONS_V1) \
-		$(PROOF_GSLT_SEQUENCE_DELETE_ASSERTION_SOURCE_V1) \
-		$(PROOF_GSLT_SEQUENCE_CANARY_V1) \
+$(CERTIFICATE_GSLT_SEQUENCE_DELETE_ASSERTION_ANSWERS_V1): \
+		$(CERTIFICATE_GSLT_ARTICLE_CORE_V1) \
+		$(CERTIFICATE_GSLT_ARTICLE_DOCUMENT_V1) \
+		$(CERTIFICATE_GSLT_ARTICLE_COMPILER_V1) \
+		$(CERTIFICATE_GSLT_ARTICLE_DOCUMENT_COMPILER_V1) \
+		$(CERTIFICATE_GSLT_SEQUENCE_RELATIONS_V1) \
+		$(CERTIFICATE_GSLT_SEQUENCE_DELETE_ASSERTION_SOURCE_V1) \
+		$(CERTIFICATE_GSLT_SEQUENCE_CANARY_V1) \
 		$(LANGDEF_COMPILER_V1_BIN) $(GSLT2PARSE_CHART_V1_NATIVE_BIN)
 	$(LANGDEF_COMPILER_V1_BIN) answers \
 		--chart $(GSLT2PARSE_CHART_V1_NATIVE_BIN) \
-		--source $(PROOF_GSLT_ARTICLE_CORE_V1) \
-		--source $(PROOF_GSLT_ARTICLE_DOCUMENT_V1) \
-		--source $(PROOF_GSLT_ARTICLE_COMPILER_V1) \
-		--source $(PROOF_GSLT_ARTICLE_DOCUMENT_COMPILER_V1) \
-		--source $(PROOF_GSLT_SEQUENCE_RELATIONS_V1) \
-		--source $(PROOF_GSLT_SEQUENCE_DELETE_ASSERTION_SOURCE_V1) \
-		--source $(PROOF_GSLT_SEQUENCE_CANARY_V1) \
+		--source $(CERTIFICATE_GSLT_ARTICLE_CORE_V1) \
+		--source $(CERTIFICATE_GSLT_ARTICLE_DOCUMENT_V1) \
+		--source $(CERTIFICATE_GSLT_ARTICLE_COMPILER_V1) \
+		--source $(CERTIFICATE_GSLT_ARTICLE_DOCUMENT_COMPILER_V1) \
+		--source $(CERTIFICATE_GSLT_SEQUENCE_RELATIONS_V1) \
+		--source $(CERTIFICATE_GSLT_SEQUENCE_DELETE_ASSERTION_SOURCE_V1) \
+		--source $(CERTIFICATE_GSLT_SEQUENCE_CANARY_V1) \
 		--query '(proof-artifact-v1 ?record)' --out $@
 
 $(METAMATH_SOURCE_PACK_V1) $(METAMATH_SYNTAX_LOCK_V1) &: \
@@ -6895,56 +6924,56 @@ $(METAMATH_AUTHORING_NTT_V1): \
 		--timeout 120 --out $@
 
 $(METAMATH_PROOF_SEMANTIC_PAYLOAD_V1): \
-		$(PROOF_GSLT_METAMATH_PLAN_V1) $(LANGDEF_COMPILER_V1_BIN)
+		$(CERTIFICATE_GSLT_METAMATH_PLAN_V1) $(LANGDEF_COMPILER_V1_BIN)
 	@mkdir -p $(dir $@)
 	$(LANGDEF_COMPILER_V1_BIN) answer-facts \
-		--source $(PROOF_GSLT_METAMATH_PLAN_V1) --out $@
+		--source $(CERTIFICATE_GSLT_METAMATH_PLAN_V1) --out $@
 
 $(METAMATH_PROOF_SEMANTIC_OPERATOR_PART_V1): \
 		$(METAMATH_PROOF_SEMANTIC_PAYLOAD_V1) \
-		$(PROOF_GSLT_FIRST_ORDER_DENOTATION_V1) \
+		$(CERTIFICATE_GSLT_FIRST_ORDER_DENOTATION_V1) \
 		$(LANGDEF_COMPILER_V1_BIN) $(GSLT2PARSE_CHART_V1_NATIVE_BIN)
 	@mkdir -p $(dir $@)
 	$(LANGDEF_COMPILER_V1_BIN) answers \
 		--chart $(GSLT2PARSE_CHART_V1_NATIVE_BIN) \
 		--source $(METAMATH_PROOF_SEMANTIC_PAYLOAD_V1) \
-		--source $(PROOF_GSLT_FIRST_ORDER_DENOTATION_V1) \
+		--source $(CERTIFICATE_GSLT_FIRST_ORDER_DENOTATION_V1) \
 		--query '(source-operator ?owner ?name ?arity)' \
 		--timeout 120 --out $@
 
 $(METAMATH_PROOF_SEMANTIC_RULE_PART_V1): \
 		$(METAMATH_PROOF_SEMANTIC_PAYLOAD_V1) \
-		$(PROOF_GSLT_FIRST_ORDER_DENOTATION_V1) \
+		$(CERTIFICATE_GSLT_FIRST_ORDER_DENOTATION_V1) \
 		$(LANGDEF_COMPILER_V1_BIN) $(GSLT2PARSE_CHART_V1_NATIVE_BIN)
 	@mkdir -p $(dir $@)
 	$(LANGDEF_COMPILER_V1_BIN) answers \
 		--chart $(GSLT2PARSE_CHART_V1_NATIVE_BIN) \
 		--source $(METAMATH_PROOF_SEMANTIC_PAYLOAD_V1) \
-		--source $(PROOF_GSLT_FIRST_ORDER_DENOTATION_V1) \
+		--source $(CERTIFICATE_GSLT_FIRST_ORDER_DENOTATION_V1) \
 		--query '(source-rule ?owner ?rule)' \
 		--timeout 120 --out $@
 
 $(METAMATH_PROOF_SEMANTIC_REQUIRED_V1): \
 		$(METAMATH_PROOF_SEMANTIC_PAYLOAD_V1) \
-		$(PROOF_GSLT_FIRST_ORDER_DENOTATION_V1) \
+		$(CERTIFICATE_GSLT_FIRST_ORDER_DENOTATION_V1) \
 		$(LANGDEF_COMPILER_V1_BIN) $(GSLT2PARSE_CHART_V1_NATIVE_BIN)
 	@mkdir -p $(dir $@)
 	$(LANGDEF_COMPILER_V1_BIN) answers \
 		--chart $(GSLT2PARSE_CHART_V1_NATIVE_BIN) \
 		--source $(METAMATH_PROOF_SEMANTIC_PAYLOAD_V1) \
-		--source $(PROOF_GSLT_FIRST_ORDER_DENOTATION_V1) \
+		--source $(CERTIFICATE_GSLT_FIRST_ORDER_DENOTATION_V1) \
 		--query '(proof-semantic-required-v1 ?key)' \
 		--timeout 120 --out $@
 
 $(METAMATH_PROOF_SEMANTIC_DENOTED_V1): \
 		$(METAMATH_PROOF_SEMANTIC_PAYLOAD_V1) \
-		$(PROOF_GSLT_FIRST_ORDER_DENOTATION_V1) \
+		$(CERTIFICATE_GSLT_FIRST_ORDER_DENOTATION_V1) \
 		$(LANGDEF_COMPILER_V1_BIN) $(GSLT2PARSE_CHART_V1_NATIVE_BIN)
 	@mkdir -p $(dir $@)
 	$(LANGDEF_COMPILER_V1_BIN) answers \
 		--chart $(GSLT2PARSE_CHART_V1_NATIVE_BIN) \
 		--source $(METAMATH_PROOF_SEMANTIC_PAYLOAD_V1) \
-		--source $(PROOF_GSLT_FIRST_ORDER_DENOTATION_V1) \
+		--source $(CERTIFICATE_GSLT_FIRST_ORDER_DENOTATION_V1) \
 		--query '(proof-semantic-denoted-v1 ?key)' \
 		--timeout 120 --out $@
 
@@ -6986,7 +7015,7 @@ $(METAMATH_PROOF_SEMANTIC_EXEC_V1): \
 
 $(METAMATH_PROOF_SEMANTIC_NTT_V1): \
 		$(METAMATH_PROOF_SEMANTIC_GSLT_V1) \
-		$(PROOF_GSLT_FIRST_ORDER_SEMANTIC_INTERFACE_V1) \
+		$(CERTIFICATE_GSLT_FIRST_ORDER_SEMANTIC_INTERFACE_V1) \
 		$(FINITE_HORN_REFLECTION_V1) \
 		$(OSLF_NATIVE_TYPE_COMPILER_V1) \
 		$(LANGDEF_COMPILER_V1_BIN) $(GSLT2PARSE_CHART_V1_NATIVE_BIN)
@@ -6995,7 +7024,7 @@ $(METAMATH_PROOF_SEMANTIC_NTT_V1): \
 		--chart $(GSLT2PARSE_CHART_V1_NATIVE_BIN) \
 		--source $(METAMATH_PROOF_SEMANTIC_GSLT_V1) \
 		--source $(FINITE_HORN_REFLECTION_V1) \
-		--reflect-source $(PROOF_GSLT_FIRST_ORDER_SEMANTIC_INTERFACE_V1) \
+		--reflect-source $(CERTIFICATE_GSLT_FIRST_ORDER_SEMANTIC_INTERFACE_V1) \
 		--source $(OSLF_NATIVE_TYPE_COMPILER_V1) \
 		--query '(compile-oslf-native-type-v1 ?fact)' \
 		--timeout 120 --out $@
@@ -7016,11 +7045,11 @@ $(METAMATH_PROOF_MACHINE_NTT_V1): \
 $(METAMATH_PROOF_STORAGE_COMBINED_V1): \
 		$(METAMATH_STATE_PROGRAM_V1) \
 		$(METAMATH_STATE_PROOF_ACTION_PART_V1) \
-		$(PROOF_GSLT_METAMATH_PLAN_V1) \
-		$(PROOF_GSLT_METAMATH_EVIDENCE_ABI_V1) \
-		$(PROOF_GSLT_METAMATH_RELATIONAL_ABI_V1) \
-		$(PROOF_GSLT_METAMATH_RELATIONAL_PROJECTION_ABI_V1) \
-		$(PROOF_GSLT_METAMATH_RELATIONAL_RUNTIME_ABI_V1) \
+		$(CERTIFICATE_GSLT_METAMATH_PLAN_V1) \
+		$(CERTIFICATE_GSLT_METAMATH_EVIDENCE_ABI_V1) \
+		$(CERTIFICATE_GSLT_METAMATH_RELATIONAL_ABI_V1) \
+		$(CERTIFICATE_GSLT_METAMATH_RELATIONAL_PROJECTION_ABI_V1) \
+		$(CERTIFICATE_GSLT_METAMATH_RELATIONAL_RUNTIME_ABI_V1) \
 		$(METAMATH_PROOF_SEMANTIC_NTT_V1) \
 		$(LANGDEF_COMPILER_V1_BIN)
 	@mkdir -p $(dir $@)
@@ -7104,17 +7133,18 @@ $(METAMATH_LANGDEF_LOCK_V1): \
 		$(SOURCE_RESOLUTION_CONTROL_CORE_V1) \
 		$(SOURCE_RESOLUTION_CONTROL_COMPILER_V1) \
 		$(METAMATH_SOURCE_RESOLUTION_CONTROL_V1) \
-		$(PROOF_GSLT_METAMATH_PLAN_V1) \
-		$(PROOF_GSLT_METAMATH_EVIDENCE_ABI_V1) \
-		$(PROOF_GSLT_METAMATH_RELATIONAL_ABI_V1) \
-		$(PROOF_GSLT_METAMATH_RELATIONAL_PROJECTION_ABI_V1) \
-		$(PROOF_GSLT_METAMATH_RELATIONAL_RUNTIME_ABI_V1) \
+		$(CERTIFICATE_GSLT_METAMATH_PLAN_V1) \
+		$(CERTIFICATE_GSLT_METAMATH_EVIDENCE_ABI_V1) \
+		$(CERTIFICATE_GSLT_METAMATH_RELATIONAL_ABI_V1) \
+		$(CERTIFICATE_GSLT_METAMATH_RELATIONAL_PROJECTION_ABI_V1) \
+		$(CERTIFICATE_GSLT_METAMATH_RELATIONAL_RUNTIME_ABI_V1) \
 		$(METAMATH_AUTHORING_COMPOSITION_V1) \
 		$(METAMATH_PROOF_MACHINE_COMPOSITION_V1) \
-		$(PROOF_GSLT_ARTICLE_INTERFACE_V1) \
-		$(PROOF_GSLT_ARTICLE_DOCUMENT_INTERFACE_V1) \
+		$(CERTIFICATE_GSLT_ARTICLE_INTERFACE_V1) \
+		$(CERTIFICATE_GSLT_ARTICLE_CONVERSION_INTERFACE_V1) \
+		$(CERTIFICATE_GSLT_ARTICLE_DOCUMENT_INTERFACE_V1) \
 		$(FINITE_HORN_REFLECTION_V1) $(OSLF_NATIVE_TYPE_COMPILER_V1) \
-		$(PROOF_GSLT_FIRST_ORDER_DENOTATION_V1) \
+		$(CERTIFICATE_GSLT_FIRST_ORDER_DENOTATION_V1) \
 		$(PROOF_STORAGE_PLAN_COMPILER_V1) \
 		$(METAMATH_AUTHORING_NTT_V1) \
 		$(METAMATH_PROOF_SEMANTIC_PAYLOAD_V1) \
@@ -7122,15 +7152,15 @@ $(METAMATH_LANGDEF_LOCK_V1): \
 		$(METAMATH_PROOF_SEMANTIC_EXEC_V1) \
 		$(METAMATH_PROOF_SEMANTIC_NTT_V1) \
 		$(METAMATH_PROOF_MACHINE_NTT_V1) \
-		$(PROOF_GSLT_TRACE_SEMANTICS_V1) \
-		$(PROOF_GSLT_TRACE_COMPILER_V1) \
-		$(PROOF_GSLT_TRACE_INPUT_V1) \
-		$(PROOF_GSLT_TRACE_INPUT_INTERFACE_V1) \
-		$(PROOF_GSLT_RELATIONAL_PROJECTION_CORE_V1) \
-		$(PROOF_GSLT_RELATIONAL_PROJECTION_INTERFACE_V1) \
-		$(PROOF_GSLT_RELATIONAL_PROJECTION_COMPILER_V1) \
-		$(PROOF_GSLT_RELATIONAL_RUNTIME_COMPILER_V1) \
-		$(PROOF_GSLT_METAMATH_RELATIONAL_PROJECTION_V1) \
+		$(CERTIFICATE_GSLT_TRACE_SEMANTICS_V1) \
+		$(CERTIFICATE_GSLT_TRACE_COMPILER_V1) \
+		$(CERTIFICATE_GSLT_TRACE_INPUT_V1) \
+		$(CERTIFICATE_GSLT_TRACE_INPUT_INTERFACE_V1) \
+		$(CERTIFICATE_GSLT_RELATIONAL_PROJECTION_CORE_V1) \
+		$(CERTIFICATE_GSLT_RELATIONAL_PROJECTION_INTERFACE_V1) \
+		$(CERTIFICATE_GSLT_RELATIONAL_PROJECTION_COMPILER_V1) \
+		$(CERTIFICATE_GSLT_RELATIONAL_RUNTIME_COMPILER_V1) \
+		$(CERTIFICATE_GSLT_METAMATH_RELATIONAL_PROJECTION_V1) \
 		$(METAMATH_PROOF_TRACE_POLICY_V1) \
 		$(METAMATH_PROOF_TRACE_CODEC_V1) \
 		$(METAMATH_PROOF_STORAGE_ANALYSIS_PAYLOAD_V1) \
@@ -7161,11 +7191,11 @@ generate-metamath-cogslt-syntax-v1: \
 generate-metamath-cogslt-langdef-v1: \
 		generate-metamath-cogslt-syntax-v1 \
 		$(METAMATH_COMPILED_CURSOR_V1) \
-		$(PROOF_GSLT_METAMATH_PLAN_V1) \
-		$(PROOF_GSLT_METAMATH_EVIDENCE_ABI_V1) \
-		$(PROOF_GSLT_METAMATH_RELATIONAL_ABI_V1) \
-		$(PROOF_GSLT_METAMATH_RELATIONAL_PROJECTION_ABI_V1) \
-		$(PROOF_GSLT_METAMATH_RELATIONAL_RUNTIME_ABI_V1) \
+		$(CERTIFICATE_GSLT_METAMATH_PLAN_V1) \
+		$(CERTIFICATE_GSLT_METAMATH_EVIDENCE_ABI_V1) \
+		$(CERTIFICATE_GSLT_METAMATH_RELATIONAL_ABI_V1) \
+		$(CERTIFICATE_GSLT_METAMATH_RELATIONAL_PROJECTION_ABI_V1) \
+		$(CERTIFICATE_GSLT_METAMATH_RELATIONAL_RUNTIME_ABI_V1) \
 		$(METAMATH_AUTHORING_NTT_V1) \
 		$(METAMATH_PROOF_SEMANTIC_PAYLOAD_V1) \
 		$(METAMATH_PROOF_SEMANTIC_GSLT_V1) \
@@ -7205,11 +7235,11 @@ test-metamath-cogslt-regeneration-v1:
 		METAMATH_SOURCE_RESOLUTION_CONTROL_V1="$$regen_dir/generated/source_resolution_control_v1.answers" \
 		METAMATH_CURSOR_FOLD_GENERATED_C_V1="$$regen_dir/generated/syntax_cursor_fold_v1.generated.c" \
 		METAMATH_COMPILED_CURSOR_V1="$$regen_dir/generated/syntax_cursor_fold_v1.generated.so" \
-		PROOF_GSLT_METAMATH_PLAN_V1="$$regen_dir/generated/proof_plan_v1.answers" \
-		PROOF_GSLT_METAMATH_EVIDENCE_ABI_V1="$$regen_dir/generated/proof_evidence_abi_v1.answers" \
-		PROOF_GSLT_METAMATH_RELATIONAL_ABI_V1="$$regen_dir/generated/proof_relational_abi_v1.answers" \
-		PROOF_GSLT_METAMATH_RELATIONAL_PROJECTION_ABI_V1="$$regen_dir/generated/proof_relational_projection_v1.answers" \
-		PROOF_GSLT_METAMATH_RELATIONAL_RUNTIME_ABI_V1="$$regen_dir/generated/proof_relational_runtime_v1.answers" \
+		CERTIFICATE_GSLT_METAMATH_PLAN_V1="$$regen_dir/generated/proof_plan_v1.answers" \
+		CERTIFICATE_GSLT_METAMATH_EVIDENCE_ABI_V1="$$regen_dir/generated/proof_evidence_abi_v1.answers" \
+		CERTIFICATE_GSLT_METAMATH_RELATIONAL_ABI_V1="$$regen_dir/generated/proof_relational_abi_v1.answers" \
+		CERTIFICATE_GSLT_METAMATH_RELATIONAL_PROJECTION_ABI_V1="$$regen_dir/generated/proof_relational_projection_v1.answers" \
+		CERTIFICATE_GSLT_METAMATH_RELATIONAL_RUNTIME_ABI_V1="$$regen_dir/generated/proof_relational_runtime_v1.answers" \
 		METAMATH_AUTHORING_NTT_V1="$$regen_dir/generated/authoring_ntt_v1.answers" \
 		METAMATH_PROOF_SEMANTIC_PAYLOAD_V1="$$regen_dir/generated/proof_semantic_payload_v1.metta" \
 		METAMATH_PROOF_SEMANTIC_GSLT_V1="$$regen_dir/generated/proof_semantic_gslt_v1.metta" \
@@ -7267,21 +7297,21 @@ test-metamath-cogslt-authoring-ntt-v1: \
 		--timeout 120 --out "$$mutation_dir/regenerated.answers" \
 		>/dev/null; \
 	cmp "$$mutation_dir/regenerated.answers" $(METAMATH_AUTHORING_NTT_V1); \
-	test "$$(wc -l <$(METAMATH_AUTHORING_NTT_V1))" -eq 1160; \
+	test "$$(wc -l <$(METAMATH_AUTHORING_NTT_V1))" -eq 1226; \
 	test "$$(rg -c '^\(compile-oslf-native-type-v1 \(oslf-carrier-v1 ' \
 		$(METAMATH_AUTHORING_NTT_V1))" -eq 1; \
 	test "$$(rg -c '^\(compile-oslf-native-type-v1 \(oslf-native-former-v1 ' \
 		$(METAMATH_AUTHORING_NTT_V1))" -eq 7; \
 	test "$$(rg -c '^\(compile-oslf-native-type-v1 \(oslf-head-signature-v1 ' \
-		$(METAMATH_AUTHORING_NTT_V1))" -eq 171; \
+		$(METAMATH_AUTHORING_NTT_V1))" -eq 178; \
 	rg -F -x -q '(compile-oslf-native-type-v1 (oslf-head-signature-v1 source-proof-conversion (q-succ (q-succ (q-succ q-zero)))))' \
 		$(METAMATH_AUTHORING_NTT_V1); \
 	rg -F -x -q '(compile-oslf-native-type-v1 (oslf-head-signature-v1 source-state-final-action (q-succ (q-succ q-zero))))' \
 		$(METAMATH_AUTHORING_NTT_V1); \
 	test "$$(rg -c '^\(compile-oslf-native-type-v1 \(oslf-step-schema-v1 ' \
-		$(METAMATH_AUTHORING_NTT_V1))" -eq 969; \
+		$(METAMATH_AUTHORING_NTT_V1))" -eq 1023; \
 	test "$$(rg -c '^\(compile-oslf-native-type-v1 \(oslf-external-relation-v1 ' \
-		$(METAMATH_AUTHORING_NTT_V1))" -eq 8; \
+		$(METAMATH_AUTHORING_NTT_V1))" -eq 13; \
 	for lane in delete falsify; do \
 		mkdir -p "$$mutation_dir/$$lane"; \
 		cp --parents $(METAMATH_AUTHORING_COMPOSED_SOURCES_V1) \
@@ -7289,19 +7319,19 @@ test-metamath-cogslt-authoring-ntt-v1: \
 			"$$mutation_dir/$$lane"; \
 	done; \
 	$(GSLT_RULE_MUTATOR_V1_BIN) mutate \
-		--source "$$mutation_dir/delete/$(PROOF_GSLT_METAMATH_CALCULUS_V1)" \
+		--source "$$mutation_dir/delete/$(CERTIFICATE_GSLT_METAMATH_CALCULUS_V1)" \
 		--out "$$mutation_dir/delete/proof-calculus.mutated" \
 		--rule mm-proof-calculus-provable-judgment --mode delete; \
 	mv "$$mutation_dir/delete/proof-calculus.mutated" \
-		"$$mutation_dir/delete/$(PROOF_GSLT_METAMATH_CALCULUS_V1)"; \
+		"$$mutation_dir/delete/$(CERTIFICATE_GSLT_METAMATH_CALCULUS_V1)"; \
 	$(GSLT_RULE_MUTATOR_V1_BIN) mutate \
-		--source "$$mutation_dir/falsify/$(PROOF_GSLT_METAMATH_CALCULUS_V1)" \
+		--source "$$mutation_dir/falsify/$(CERTIFICATE_GSLT_METAMATH_CALCULUS_V1)" \
 		--out "$$mutation_dir/falsify/proof-calculus.mutated" \
 		--rule mm-proof-calculus-provable-judgment --mode falsify \
 		--replacement \
 		'(source-proof-judgment MetamathProofV1 MetamathProvableV1 proof-zero-v1)'; \
 	mv "$$mutation_dir/falsify/proof-calculus.mutated" \
-		"$$mutation_dir/falsify/$(PROOF_GSLT_METAMATH_CALCULUS_V1)"; \
+		"$$mutation_dir/falsify/$(CERTIFICATE_GSLT_METAMATH_CALCULUS_V1)"; \
 	for lane in delete falsify; do \
 		$(LANGDEF_COMPILER_V1_BIN) oslf-ntt \
 			--composition \
@@ -7318,9 +7348,9 @@ test-metamath-cogslt-authoring-ntt-v1: \
 		fi; \
 	done; \
 	test "$$(wc -l <"$$mutation_dir/delete/authoring-ntt.answers")" \
-		-eq 1159; \
+		-eq 1225; \
 	test "$$(wc -l <"$$mutation_dir/falsify/authoring-ntt.answers")" \
-		-eq 1160; \
+		-eq 1226; \
 	test "$$(rg -c 'mm-proof-calculus-provable-judgment' \
 		$(METAMATH_AUTHORING_NTT_V1))" -eq 1; \
 	if rg -q 'mm-proof-calculus-provable-judgment' \
@@ -7341,10 +7371,10 @@ test-metamath-cogslt-authoring-ntt-v1: \
 .PHONY: test-metamath-cogslt-proof-semantic-ntt-v1
 test-metamath-cogslt-proof-semantic-ntt-v1: \
 		$(METAMATH_PROOF_SEMANTIC_NTT_V1) \
-		$(PROOF_GSLT_FIRST_ORDER_SEMANTIC_INTERFACE_V1) \
+		$(CERTIFICATE_GSLT_FIRST_ORDER_SEMANTIC_INTERFACE_V1) \
 		$(METAMATH_PROOF_SEMANTIC_REQUIRED_KEYS_V1) \
 		$(METAMATH_PROOF_SEMANTIC_DENOTED_KEYS_V1) \
-		$(PROOF_GSLT_BINDER_ANSWERS_V1) \
+		$(CERTIFICATE_GSLT_BINDER_ANSWERS_V1) \
 		$(GSLT_RULE_MUTATOR_V1_BIN)
 	@set -eu; \
 	work=$$(mktemp -d runtime/metamath-proof-semantic-ntt.XXXXXX); \
@@ -7384,18 +7414,18 @@ test-metamath-cogslt-proof-semantic-ntt-v1: \
 	fi; \
 	mkdir -p "$$work/binder"; \
 	$(LANGDEF_COMPILER_V1_BIN) answer-facts \
-		--source $(PROOF_GSLT_BINDER_ANSWERS_V1) \
+		--source $(CERTIFICATE_GSLT_BINDER_ANSWERS_V1) \
 		--out "$$work/binder/payload.metta" >/dev/null; \
 	$(LANGDEF_COMPILER_V1_BIN) answers \
 		--chart $(GSLT2PARSE_CHART_V1_NATIVE_BIN) \
 		--source "$$work/binder/payload.metta" \
-		--source $(PROOF_GSLT_FIRST_ORDER_DENOTATION_V1) \
+		--source $(CERTIFICATE_GSLT_FIRST_ORDER_DENOTATION_V1) \
 		--query '(proof-semantic-required-v1 ?key)' \
 		--out "$$work/binder/required.answers" >/dev/null; \
 	$(LANGDEF_COMPILER_V1_BIN) answers \
 		--chart $(GSLT2PARSE_CHART_V1_NATIVE_BIN) \
 		--source "$$work/binder/payload.metta" \
-		--source $(PROOF_GSLT_FIRST_ORDER_DENOTATION_V1) \
+		--source $(CERTIFICATE_GSLT_FIRST_ORDER_DENOTATION_V1) \
 		--query '(proof-semantic-denoted-v1 ?key)' \
 		--out "$$work/binder/denoted.answers" >/dev/null; \
 	$(LANGDEF_COMPILER_V1_BIN) project-answers \
@@ -7416,11 +7446,11 @@ test-metamath-cogslt-proof-semantic-ntt-v1: \
 		"$$work/binder/denoted-keys.answers"; then exit 1; fi; \
 	for lane in delete falsify; do mkdir -p "$$work/$$lane"; done; \
 	$(GSLT_RULE_MUTATOR_V1_BIN) mutate \
-		--source $(PROOF_GSLT_METAMATH_CALCULUS_V1) \
+		--source $(CERTIFICATE_GSLT_METAMATH_CALCULUS_V1) \
 		--out "$$work/delete/proof-calculus.metta" \
 		--rule mm-proof-calculus-provable-judgment --mode delete; \
 	$(GSLT_RULE_MUTATOR_V1_BIN) mutate \
-		--source $(PROOF_GSLT_METAMATH_CALCULUS_V1) \
+		--source $(CERTIFICATE_GSLT_METAMATH_CALCULUS_V1) \
 		--out "$$work/falsify/proof-calculus.metta" \
 		--rule mm-proof-calculus-provable-judgment --mode falsify \
 		--replacement \
@@ -7428,12 +7458,12 @@ test-metamath-cogslt-proof-semantic-ntt-v1: \
 	for lane in delete falsify; do \
 		$(LANGDEF_COMPILER_V1_BIN) answers \
 			--chart $(GSLT2PARSE_CHART_V1_NATIVE_BIN) \
-			--source $(PROOF_GSLT_ARTICLE_CORE_V1) \
-			--source $(PROOF_GSLT_ARTICLE_DOCUMENT_V1) \
-			--source $(PROOF_GSLT_ARTICLE_COMPILER_V1) \
-			--source $(PROOF_GSLT_ARTICLE_DOCUMENT_COMPILER_V1) \
-			--source $(PROOF_GSLT_SEQUENCE_RELATIONS_V1) \
-			--source $(PROOF_GSLT_SEQUENCE_SCHEMA_V1) \
+			--source $(CERTIFICATE_GSLT_ARTICLE_CORE_V1) \
+			--source $(CERTIFICATE_GSLT_ARTICLE_DOCUMENT_V1) \
+			--source $(CERTIFICATE_GSLT_ARTICLE_COMPILER_V1) \
+			--source $(CERTIFICATE_GSLT_ARTICLE_DOCUMENT_COMPILER_V1) \
+			--source $(CERTIFICATE_GSLT_SEQUENCE_RELATIONS_V1) \
+			--source $(CERTIFICATE_GSLT_SEQUENCE_SCHEMA_V1) \
 			--source "$$work/$$lane/proof-calculus.metta" \
 			--query '(proof-artifact-v1 ?record)' \
 			--out "$$work/$$lane/plan.answers" >/dev/null; \
@@ -7443,25 +7473,25 @@ test-metamath-cogslt-proof-semantic-ntt-v1: \
 		$(LANGDEF_COMPILER_V1_BIN) answers \
 			--chart $(GSLT2PARSE_CHART_V1_NATIVE_BIN) \
 			--source "$$work/$$lane/payload.metta" \
-			--source $(PROOF_GSLT_FIRST_ORDER_DENOTATION_V1) \
+			--source $(CERTIFICATE_GSLT_FIRST_ORDER_DENOTATION_V1) \
 			--query '(source-operator ?owner ?name ?arity)' \
 			--out "$$work/$$lane/operator.answers" >/dev/null; \
 		$(LANGDEF_COMPILER_V1_BIN) answers \
 			--chart $(GSLT2PARSE_CHART_V1_NATIVE_BIN) \
 			--source "$$work/$$lane/payload.metta" \
-			--source $(PROOF_GSLT_FIRST_ORDER_DENOTATION_V1) \
+			--source $(CERTIFICATE_GSLT_FIRST_ORDER_DENOTATION_V1) \
 			--query '(source-rule ?owner ?rule)' \
 			--out "$$work/$$lane/rule.answers" >/dev/null; \
 		$(LANGDEF_COMPILER_V1_BIN) answers \
 			--chart $(GSLT2PARSE_CHART_V1_NATIVE_BIN) \
 			--source "$$work/$$lane/payload.metta" \
-			--source $(PROOF_GSLT_FIRST_ORDER_DENOTATION_V1) \
+			--source $(CERTIFICATE_GSLT_FIRST_ORDER_DENOTATION_V1) \
 			--query '(proof-semantic-required-v1 ?key)' \
 			--out "$$work/$$lane/required.answers" >/dev/null; \
 		$(LANGDEF_COMPILER_V1_BIN) answers \
 			--chart $(GSLT2PARSE_CHART_V1_NATIVE_BIN) \
 			--source "$$work/$$lane/payload.metta" \
-			--source $(PROOF_GSLT_FIRST_ORDER_DENOTATION_V1) \
+			--source $(CERTIFICATE_GSLT_FIRST_ORDER_DENOTATION_V1) \
 			--query '(proof-semantic-denoted-v1 ?key)' \
 			--out "$$work/$$lane/denoted.answers" >/dev/null; \
 		$(LANGDEF_COMPILER_V1_BIN) project-answers \
@@ -7485,7 +7515,7 @@ test-metamath-cogslt-proof-semantic-ntt-v1: \
 			--chart $(GSLT2PARSE_CHART_V1_NATIVE_BIN) \
 			--source "$$work/$$lane/semantic.metta" \
 			--source $(FINITE_HORN_REFLECTION_V1) \
-			--reflect-source $(PROOF_GSLT_FIRST_ORDER_SEMANTIC_INTERFACE_V1) \
+			--reflect-source $(CERTIFICATE_GSLT_FIRST_ORDER_SEMANTIC_INTERFACE_V1) \
 			--source $(OSLF_NATIVE_TYPE_COMPILER_V1) \
 			--query '(compile-oslf-native-type-v1 ?fact)' \
 			--out "$$work/$$lane/ntt.answers" >/dev/null; \
@@ -7571,30 +7601,30 @@ test-metamath-cogslt-proof-semantic-exec-v1: \
 
 .PHONY: test-metamath-cogslt-proof-relational-projection-v1
 test-metamath-cogslt-proof-relational-projection-v1: \
-		$(PROOF_GSLT_METAMATH_RELATIONAL_PROJECTION_ABI_V1) \
-		$(PROOF_GSLT_RELATIONAL_PROJECTION_NATIVE_V1_TEST_BIN) \
+		$(CERTIFICATE_GSLT_METAMATH_RELATIONAL_PROJECTION_ABI_V1) \
+		$(CERTIFICATE_GSLT_RELATIONAL_PROJECTION_NATIVE_V1_TEST_BIN) \
 		$(METAMATH_PROOF_SEMANTIC_EXEC_V1) \
-		$(PROOF_GSLT_ARTICLE_CORE_V1) \
-		$(PROOF_GSLT_SEQUENCE_RELATIONS_V1) \
-		$(PROOF_GSLT_SEQUENCE_SCHEMA_V1) \
+		$(CERTIFICATE_GSLT_ARTICLE_CORE_V1) \
+		$(CERTIFICATE_GSLT_SEQUENCE_RELATIONS_V1) \
+		$(CERTIFICATE_GSLT_SEQUENCE_SCHEMA_V1) \
 		$(METAMATH_OCCURRENCE_FOLD_CORE_V1) \
 		$(METAMATH_SOURCE_FOLD_V1) \
 		$(METAMATH_RELATIONAL_STATE_CORE_V1) \
 		$(METAMATH_SOURCE_STATE_V1) $(METAMATH_SOURCE_PROOF_V1) \
-		$(PROOF_GSLT_TRACE_SEMANTICS_V1) \
-		$(PROOF_GSLT_TRACE_COMPILER_V1) \
-		$(PROOF_GSLT_TRACE_INPUT_V1) \
-		$(PROOF_GSLT_RELATIONAL_PROJECTION_CORE_V1) \
-		$(PROOF_GSLT_RELATIONAL_PROJECTION_COMPILER_V1) \
-		$(PROOF_GSLT_METAMATH_CALCULUS_V1) \
-		$(PROOF_GSLT_METAMATH_RELATIONAL_PROJECTION_V1) \
-		$(PROOF_GSLT_RELATIONAL_PROJECTION_CANARY_V1) \
-		$(PROOF_GSLT_RELATIONAL_PROJECTION_CONTEXT_V1) \
-		$(PROOF_GSLT_RELATIONAL_PROJECTION_FRAME_V1) \
-		$(PROOF_GSLT_RELATIONAL_PROJECTION_FILTERED_V1) \
-		$(PROOF_GSLT_RELATIONAL_PROJECTION_ASSERTION_V1) \
-		$(PROOF_GSLT_RELATIONAL_PROJECTION_PUSH_V1) \
-		$(PROOF_GSLT_RELATIONAL_PROJECTION_NO_APARTNESS_V1) \
+		$(CERTIFICATE_GSLT_TRACE_SEMANTICS_V1) \
+		$(CERTIFICATE_GSLT_TRACE_COMPILER_V1) \
+		$(CERTIFICATE_GSLT_TRACE_INPUT_V1) \
+		$(CERTIFICATE_GSLT_RELATIONAL_PROJECTION_CORE_V1) \
+		$(CERTIFICATE_GSLT_RELATIONAL_PROJECTION_COMPILER_V1) \
+		$(CERTIFICATE_GSLT_METAMATH_CALCULUS_V1) \
+		$(CERTIFICATE_GSLT_METAMATH_RELATIONAL_PROJECTION_V1) \
+		$(CERTIFICATE_GSLT_RELATIONAL_PROJECTION_CANARY_V1) \
+		$(CERTIFICATE_GSLT_RELATIONAL_PROJECTION_CONTEXT_V1) \
+		$(CERTIFICATE_GSLT_RELATIONAL_PROJECTION_FRAME_V1) \
+		$(CERTIFICATE_GSLT_RELATIONAL_PROJECTION_FILTERED_V1) \
+		$(CERTIFICATE_GSLT_RELATIONAL_PROJECTION_ASSERTION_V1) \
+		$(CERTIFICATE_GSLT_RELATIONAL_PROJECTION_PUSH_V1) \
+		$(CERTIFICATE_GSLT_RELATIONAL_PROJECTION_NO_APARTNESS_V1) \
 		$(LANGDEF_COMPILER_V1_BIN) $(GSLT2PARSE_CHART_V1_NATIVE_BIN) \
 		$(GSLT_RULE_MUTATOR_V1_BIN)
 	@set -eu; \
@@ -7605,21 +7635,21 @@ test-metamath-cogslt-proof-relational-projection-v1: \
 		$(LANGDEF_COMPILER_V1_BIN) answers \
 			--chart $(GSLT2PARSE_CHART_V1_NATIVE_BIN) \
 			--source $(METAMATH_PROOF_SEMANTIC_EXEC_V1) \
-			--source $(PROOF_GSLT_ARTICLE_CORE_V1) \
-			--source $(PROOF_GSLT_SEQUENCE_RELATIONS_V1) \
-			--source $(PROOF_GSLT_SEQUENCE_SCHEMA_V1) \
+			--source $(CERTIFICATE_GSLT_ARTICLE_CORE_V1) \
+			--source $(CERTIFICATE_GSLT_SEQUENCE_RELATIONS_V1) \
+			--source $(CERTIFICATE_GSLT_SEQUENCE_SCHEMA_V1) \
 			--source $(METAMATH_OCCURRENCE_FOLD_CORE_V1) \
 			--source $(METAMATH_SOURCE_FOLD_V1) \
 			--source $(METAMATH_RELATIONAL_STATE_CORE_V1) \
 			--source $(METAMATH_SOURCE_STATE_V1) \
 			--source $(METAMATH_PROOF_TRACE_POLICY_V1) \
 			--source $(METAMATH_SOURCE_PROOF_V1) \
-			--source $(PROOF_GSLT_TRACE_SEMANTICS_V1) \
-			--source $(PROOF_GSLT_TRACE_COMPILER_V1) \
-			--source $(PROOF_GSLT_TRACE_INPUT_V1) \
-			--source $(PROOF_GSLT_RELATIONAL_PROJECTION_CORE_V1) \
-			--source $(PROOF_GSLT_RELATIONAL_PROJECTION_COMPILER_V1) \
-			--source $(PROOF_GSLT_METAMATH_CALCULUS_V1) \
+			--source $(CERTIFICATE_GSLT_TRACE_SEMANTICS_V1) \
+			--source $(CERTIFICATE_GSLT_TRACE_COMPILER_V1) \
+			--source $(CERTIFICATE_GSLT_TRACE_INPUT_V1) \
+			--source $(CERTIFICATE_GSLT_RELATIONAL_PROJECTION_CORE_V1) \
+			--source $(CERTIFICATE_GSLT_RELATIONAL_PROJECTION_COMPILER_V1) \
+			--source $(CERTIFICATE_GSLT_METAMATH_CALCULUS_V1) \
 			--source "$$guest" \
 			--query '(proof-relational-projection-artifact-v1 ?record)' \
 			--out "$$out" >/dev/null; \
@@ -7628,32 +7658,32 @@ test-metamath-cogslt-proof-relational-projection-v1: \
 		projection="$$1"; guest="$$2"; query="$$3"; \
 		$(GSLT2PARSE_CHART_V1_NATIVE_BIN) \
 			$(METAMATH_PROOF_SEMANTIC_EXEC_V1) \
-			$(PROOF_GSLT_ARTICLE_CORE_V1) \
-			$(PROOF_GSLT_SEQUENCE_RELATIONS_V1) \
-			$(PROOF_GSLT_SEQUENCE_SCHEMA_V1) \
+			$(CERTIFICATE_GSLT_ARTICLE_CORE_V1) \
+			$(CERTIFICATE_GSLT_SEQUENCE_RELATIONS_V1) \
+			$(CERTIFICATE_GSLT_SEQUENCE_SCHEMA_V1) \
 			$(METAMATH_OCCURRENCE_FOLD_CORE_V1) \
 			$(METAMATH_SOURCE_FOLD_V1) \
 			$(METAMATH_RELATIONAL_STATE_CORE_V1) \
 			$(METAMATH_SOURCE_STATE_V1) \
 			$(METAMATH_SOURCE_PROOF_V1) \
-			$(PROOF_GSLT_TRACE_SEMANTICS_V1) \
-			$(PROOF_GSLT_TRACE_COMPILER_V1) \
-			$(PROOF_GSLT_TRACE_INPUT_V1) \
-			"$$projection" $(PROOF_GSLT_METAMATH_CALCULUS_V1) "$$guest" \
+			$(CERTIFICATE_GSLT_TRACE_SEMANTICS_V1) \
+			$(CERTIFICATE_GSLT_TRACE_COMPILER_V1) \
+			$(CERTIFICATE_GSLT_TRACE_INPUT_V1) \
+			"$$projection" $(CERTIFICATE_GSLT_METAMATH_CALCULUS_V1) "$$guest" \
 			--query-file "$$query" --summary; \
 	}; \
-	run_projection_artifact $(PROOF_GSLT_METAMATH_RELATIONAL_PROJECTION_V1) \
+	run_projection_artifact $(CERTIFICATE_GSLT_METAMATH_RELATIONAL_PROJECTION_V1) \
 		"$$work/metamath.answers"; \
 	cmp "$$work/metamath.answers" \
-		$(PROOF_GSLT_METAMATH_RELATIONAL_PROJECTION_ABI_V1); \
-	test "$$(wc -l <$(PROOF_GSLT_METAMATH_RELATIONAL_PROJECTION_ABI_V1))" -eq 16; \
+		$(CERTIFICATE_GSLT_METAMATH_RELATIONAL_PROJECTION_ABI_V1); \
+	test "$$(wc -l <$(CERTIFICATE_GSLT_METAMATH_RELATIONAL_PROJECTION_ABI_V1))" -eq 16; \
 	test "$$(rg -c 'proof-relational-projection-identity-v1' \
-		$(PROOF_GSLT_METAMATH_RELATIONAL_PROJECTION_ABI_V1))" -eq 1; \
+		$(CERTIFICATE_GSLT_METAMATH_RELATIONAL_PROJECTION_ABI_V1))" -eq 1; \
 	test "$$(rg -c 'proof-relational-projection-table-v1' \
-		$(PROOF_GSLT_METAMATH_RELATIONAL_PROJECTION_ABI_V1))" -eq 9; \
+		$(CERTIFICATE_GSLT_METAMATH_RELATIONAL_PROJECTION_ABI_V1))" -eq 9; \
 	test "$$(rg -c 'proof-relational-projection-selector-v1' \
-		$(PROOF_GSLT_METAMATH_RELATIONAL_PROJECTION_ABI_V1))" -eq 6; \
-	run_projection_artifact $(PROOF_GSLT_RELATIONAL_PROJECTION_CANARY_V1) \
+		$(CERTIFICATE_GSLT_METAMATH_RELATIONAL_PROJECTION_ABI_V1))" -eq 6; \
+	run_projection_artifact $(CERTIFICATE_GSLT_RELATIONAL_PROJECTION_CANARY_V1) \
 		"$$work/canary.answers"; \
 	test "$$(wc -l <"$$work/canary.answers")" -eq 13; \
 	test "$$(rg -c 'proof-relational-projection-table-v1' \
@@ -7665,535 +7695,536 @@ test-metamath-cogslt-proof-relational-projection-v1: \
 		>"$$work/missing-identity.answers"; \
 	sed '0,/RelationalProjectionCanaryProofV1/s//MixedProjectionOwnerV1/' \
 		"$$work/canary.answers" >"$$work/mixed-owner.answers"; \
-	$(PROOF_GSLT_RELATIONAL_PROJECTION_NATIVE_V1_TEST_BIN) \
-		$(PROOF_GSLT_METAMATH_RELATIONAL_PROJECTION_ABI_V1) \
+	$(CERTIFICATE_GSLT_RELATIONAL_PROJECTION_NATIVE_V1_TEST_BIN) \
+		$(CERTIFICATE_GSLT_METAMATH_RELATIONAL_PROJECTION_ABI_V1) \
 		"$$work/canary.answers" \
 		"$$work/missing-identity.answers" \
 		"$$work/mixed-owner.answers"; \
 	context=$$(run_projection_query \
-		$(PROOF_GSLT_RELATIONAL_PROJECTION_CORE_V1) \
-		$(PROOF_GSLT_RELATIONAL_PROJECTION_CANARY_V1) \
-		$(PROOF_GSLT_RELATIONAL_PROJECTION_CONTEXT_V1)); \
+		$(CERTIFICATE_GSLT_RELATIONAL_PROJECTION_CORE_V1) \
+		$(CERTIFICATE_GSLT_RELATIONAL_PROJECTION_CANARY_V1) \
+		$(CERTIFICATE_GSLT_RELATIONAL_PROJECTION_CONTEXT_V1)); \
 	printf '%s\n' "$$context" | rg -F -q '"outcome":"Unique"'; \
 	frame=$$(run_projection_query \
-		$(PROOF_GSLT_RELATIONAL_PROJECTION_CORE_V1) \
-		$(PROOF_GSLT_RELATIONAL_PROJECTION_CANARY_V1) \
-		$(PROOF_GSLT_RELATIONAL_PROJECTION_FRAME_V1)); \
+		$(CERTIFICATE_GSLT_RELATIONAL_PROJECTION_CORE_V1) \
+		$(CERTIFICATE_GSLT_RELATIONAL_PROJECTION_CANARY_V1) \
+		$(CERTIFICATE_GSLT_RELATIONAL_PROJECTION_FRAME_V1)); \
 	printf '%s\n' "$$frame" | rg -F -q '"outcome":"Unique"'; \
 	filtered=$$(run_projection_query \
-		$(PROOF_GSLT_RELATIONAL_PROJECTION_CORE_V1) \
-		$(PROOF_GSLT_RELATIONAL_PROJECTION_CANARY_V1) \
-		$(PROOF_GSLT_RELATIONAL_PROJECTION_FILTERED_V1)); \
+		$(CERTIFICATE_GSLT_RELATIONAL_PROJECTION_CORE_V1) \
+		$(CERTIFICATE_GSLT_RELATIONAL_PROJECTION_CANARY_V1) \
+		$(CERTIFICATE_GSLT_RELATIONAL_PROJECTION_FILTERED_V1)); \
 	printf '%s\n' "$$filtered" | rg -F -q '"outcome":"NoAnswer"'; \
 	assertion=$$(run_projection_query \
-		$(PROOF_GSLT_RELATIONAL_PROJECTION_CORE_V1) \
-		$(PROOF_GSLT_RELATIONAL_PROJECTION_CANARY_V1) \
-		$(PROOF_GSLT_RELATIONAL_PROJECTION_ASSERTION_V1)); \
+		$(CERTIFICATE_GSLT_RELATIONAL_PROJECTION_CORE_V1) \
+		$(CERTIFICATE_GSLT_RELATIONAL_PROJECTION_CANARY_V1) \
+		$(CERTIFICATE_GSLT_RELATIONAL_PROJECTION_ASSERTION_V1)); \
 	printf '%s\n' "$$assertion" | rg -F -q '"outcome":"Unique"'; \
 	push=$$(run_projection_query \
-		$(PROOF_GSLT_RELATIONAL_PROJECTION_CORE_V1) \
-		$(PROOF_GSLT_RELATIONAL_PROJECTION_CANARY_V1) \
-		$(PROOF_GSLT_RELATIONAL_PROJECTION_PUSH_V1)); \
+		$(CERTIFICATE_GSLT_RELATIONAL_PROJECTION_CORE_V1) \
+		$(CERTIFICATE_GSLT_RELATIONAL_PROJECTION_CANARY_V1) \
+		$(CERTIFICATE_GSLT_RELATIONAL_PROJECTION_PUSH_V1)); \
 	printf '%s\n' "$$push" | rg -F -q '"outcome":"Unique"'; \
 	no_apartness=$$(run_projection_query \
-		$(PROOF_GSLT_RELATIONAL_PROJECTION_CORE_V1) \
-		$(PROOF_GSLT_RELATIONAL_PROJECTION_CANARY_V1) \
-		$(PROOF_GSLT_RELATIONAL_PROJECTION_NO_APARTNESS_V1)); \
+		$(CERTIFICATE_GSLT_RELATIONAL_PROJECTION_CORE_V1) \
+		$(CERTIFICATE_GSLT_RELATIONAL_PROJECTION_CANARY_V1) \
+		$(CERTIFICATE_GSLT_RELATIONAL_PROJECTION_NO_APARTNESS_V1)); \
 	printf '%s\n' "$$no_apartness" | rg -F -q '"outcome":"NoAnswer"'; \
 	$(GSLT_RULE_MUTATOR_V1_BIN) mutate \
-		--source $(PROOF_GSLT_RELATIONAL_PROJECTION_CORE_V1) \
+		--source $(CERTIFICATE_GSLT_RELATIONAL_PROJECTION_CORE_V1) \
 		--out "$$work/deleted-frame.metta" \
 		--rule proof-relational-projection-frame-binding-v1 --mode delete; \
 	deleted=$$(run_projection_query "$$work/deleted-frame.metta" \
-		$(PROOF_GSLT_RELATIONAL_PROJECTION_CANARY_V1) \
-		$(PROOF_GSLT_RELATIONAL_PROJECTION_FRAME_V1)); \
+		$(CERTIFICATE_GSLT_RELATIONAL_PROJECTION_CANARY_V1) \
+		$(CERTIFICATE_GSLT_RELATIONAL_PROJECTION_FRAME_V1)); \
 	printf '%s\n' "$$deleted" | rg -F -q '"outcome":"NoAnswer"'; \
 	$(GSLT_RULE_MUTATOR_V1_BIN) mutate \
-		--source $(PROOF_GSLT_RELATIONAL_PROJECTION_CANARY_V1) \
+		--source $(CERTIFICATE_GSLT_RELATIONAL_PROJECTION_CANARY_V1) \
 		--out "$$work/falsified-frame.metta" \
 		--rule relational-projection-canary-frame-identity-x-v1 \
 		--mode falsify --replacement \
 		'(source-proof-relational-row3-v1 projection-canary-t6-v1 projection-canary-identity-v1 projection-canary-position-0-v1 projection-canary-hy-v1)'; \
 	falsified=$$(run_projection_query \
-		$(PROOF_GSLT_RELATIONAL_PROJECTION_CORE_V1) \
+		$(CERTIFICATE_GSLT_RELATIONAL_PROJECTION_CORE_V1) \
 		"$$work/falsified-frame.metta" \
-		$(PROOF_GSLT_RELATIONAL_PROJECTION_FRAME_V1)); \
+		$(CERTIFICATE_GSLT_RELATIONAL_PROJECTION_FRAME_V1)); \
 	printf '%s\n' "$$falsified" | rg -F -q '"outcome":"NoAnswer"'; \
 	$(GSLT_RULE_MUTATOR_V1_BIN) mutate \
-		--source $(PROOF_GSLT_METAMATH_RELATIONAL_PROJECTION_V1) \
+		--source $(CERTIFICATE_GSLT_METAMATH_RELATIONAL_PROJECTION_V1) \
 		--out "$$work/deleted-metamath-role.metta" \
 		--rule mm-proof-relational-projection-formula-v1 --mode delete; \
 	run_projection_artifact "$$work/deleted-metamath-role.metta" \
 		"$$work/deleted-metamath-role.answers"; \
 	if cmp -s "$$work/deleted-metamath-role.answers" \
-		$(PROOF_GSLT_METAMATH_RELATIONAL_PROJECTION_ABI_V1); then exit 1; fi; \
+		$(CERTIFICATE_GSLT_METAMATH_RELATIONAL_PROJECTION_ABI_V1); then exit 1; fi; \
 	test "$$(wc -l <"$$work/deleted-metamath-role.answers")" -eq 15; \
 	$(GSLT_RULE_MUTATOR_V1_BIN) mutate \
-		--source $(PROOF_GSLT_METAMATH_RELATIONAL_PROJECTION_V1) \
+		--source $(CERTIFICATE_GSLT_METAMATH_RELATIONAL_PROJECTION_V1) \
 		--out "$$work/deleted-metamath-frame-role.metta" \
 		--rule mm-proof-relational-projection-ordered-frame-v1 --mode delete; \
 	run_projection_artifact "$$work/deleted-metamath-frame-role.metta" \
 		"$$work/deleted-metamath-frame-role.answers"; \
 	if cmp -s "$$work/deleted-metamath-frame-role.answers" \
-		$(PROOF_GSLT_METAMATH_RELATIONAL_PROJECTION_ABI_V1); then exit 1; fi; \
+		$(CERTIFICATE_GSLT_METAMATH_RELATIONAL_PROJECTION_ABI_V1); then exit 1; fi; \
 	test "$$(wc -l <"$$work/deleted-metamath-frame-role.answers")" -eq 15; \
 	if rg -q 'proof-relational-ordered-frame-v1' \
 		"$$work/deleted-metamath-frame-role.answers"; then exit 1; fi; \
 	if rg -ni 'metamath|megalodon|tptp|set[.]mm|mm-state|mm-symbol|mm-label|[$$][acdefpv]' \
-		$(PROOF_GSLT_RELATIONAL_PROJECTION_CORE_V1) \
-		$(PROOF_GSLT_RELATIONAL_PROJECTION_COMPILER_V1) \
-		$(PROOF_GSLT_RELATIONAL_PROJECTION_NATIVE_V1_SRC) \
-		$(PROOF_GSLT_RELATIONAL_PROJECTION_NATIVE_V1_HEADER); then exit 1; fi; \
+		$(CERTIFICATE_GSLT_RELATIONAL_PROJECTION_CORE_V1) \
+		$(CERTIFICATE_GSLT_RELATIONAL_PROJECTION_COMPILER_V1) \
+		$(CERTIFICATE_GSLT_RELATIONAL_PROJECTION_NATIVE_V1_SRC) \
+		$(CERTIFICATE_GSLT_RELATIONAL_PROJECTION_NATIVE_V1_HEADER); then exit 1; fi; \
 	printf '%s\n' '(MetamathProofRelationalProjectionV1Summary 23 23 0)'
 
 .PHONY: test-metamath-cogslt-proof-trace-semantics-v1
 test-metamath-cogslt-proof-trace-semantics-v1: \
 		$(METAMATH_PROOF_SEMANTIC_EXEC_V1) \
 		$(METAMATH_PROOF_MACHINE_NTT_V1) \
-		$(PROOF_GSLT_TRACE_SEMANTICS_V1) \
-		$(PROOF_GSLT_TRACE_ORDER_CANARY_V1) \
-		$(PROOF_GSLT_TRACE_ORDER_POSITIVE_V1) \
-		$(PROOF_GSLT_TRACE_ORDER_SWAPPED_V1) \
-		$(PROOF_GSLT_TRACE_ORDER_MISSING_CONTEXT_V1) \
-		$(PROOF_GSLT_TRACE_SAVED_POSITIVE_V1) \
-		$(PROOF_GSLT_TRACE_SAVED_RANGE_V1) \
-		$(PROOF_GSLT_TRACE_COMPILER_V1) \
+		$(CERTIFICATE_GSLT_TRACE_SEMANTICS_V1) \
+		$(CERTIFICATE_GSLT_TRACE_ORDER_CANARY_V1) \
+		$(CERTIFICATE_GSLT_TRACE_ORDER_POSITIVE_V1) \
+		$(CERTIFICATE_GSLT_TRACE_ORDER_SWAPPED_V1) \
+		$(CERTIFICATE_GSLT_TRACE_ORDER_MISSING_CONTEXT_V1) \
+		$(CERTIFICATE_GSLT_TRACE_SAVED_POSITIVE_V1) \
+		$(CERTIFICATE_GSLT_TRACE_SAVED_RANGE_V1) \
+		$(CERTIFICATE_GSLT_TRACE_COMPILER_V1) \
 		$(METAMATH_PROOF_TRACE_POLICY_V1) \
 		$(METAMATH_PROOF_TRACE_CODEC_V1) \
-		$(PROOF_GSLT_TRACE_CODEC_CANARY_V1) \
-		$(PROOF_GSLT_TRACE_COMPILE_NORMAL_V1) \
-		$(PROOF_GSLT_TRACE_COMPILE_COMPRESSED_V1) \
-		$(PROOF_GSLT_TRACE_COMPILE_CONTINUATION_V1) \
-		$(PROOF_GSLT_TRACE_COMPILE_OPEN_SAVE_V1) \
-		$(PROOF_GSLT_TRACE_COMPILE_SINGLE_SAVE_V1) \
-		$(PROOF_GSLT_TRACE_COMPILE_BARE_SAVE_V1) \
-		$(PROOF_GSLT_TRACE_COMPILE_REPEATED_SAVE_V1) \
-		$(PROOF_GSLT_TRACE_COMPILE_UNKNOWN_V1) \
-		$(PROOF_GSLT_TRACE_COMPILE_ACCEPTED_V1) \
-		$(PROOF_GSLT_TRACE_INPUT_V1) \
-		$(PROOF_GSLT_TRACE_INPUT_CANARY_V1) \
-		$(PROOF_GSLT_TRACE_EVIDENCE_CANARY_V1) \
-		$(PROOF_GSLT_TRACE_COMPRESSED_COMPOSITION_CANARY_V1) \
-		$(PROOF_GSLT_TRACE_INPUT_CONTEXT_V1) \
-		$(PROOF_GSLT_TRACE_INPUT_FRAME_V1) \
-		$(PROOF_GSLT_TRACE_INPUT_NORMAL_V1) \
-		$(PROOF_GSLT_TRACE_INPUT_COMPRESSED_V1) \
-		$(PROOF_GSLT_TRACE_INPUT_INCOMPLETE_NORMAL_V1) \
-		$(PROOF_GSLT_TRACE_INPUT_INCOMPLETE_COMPRESSED_V1) \
-		$(PROOF_GSLT_TRACE_INPUT_UNKNOWN_NOT_VERIFIED_V1) \
-		$(PROOF_GSLT_TRACE_INPUT_WRONG_TARGET_V1) \
-		$(PROOF_GSLT_TRACE_INPUT_BAD_COUNT_V1) \
-		$(PROOF_GSLT_TRACE_EVIDENCE_NORMAL_V1) \
-		$(PROOF_GSLT_TRACE_EVIDENCE_COMPRESSED_V1) \
-		$(PROOF_GSLT_TRACE_EVIDENCE_WRONG_TARGET_V1) \
-		$(PROOF_GSLT_TRACE_EVIDENCE_WRONG_TRACE_V1) \
-		$(PROOF_GSLT_TRACE_COMPRESSED_COMPOSITION_POSITIVE_V1) \
-		$(PROOF_GSLT_TRACE_COMPRESSED_COMPOSITION_RANGE_V1) \
+		$(CERTIFICATE_GSLT_TRACE_CODEC_CANARY_V1) \
+		$(CERTIFICATE_GSLT_TRACE_COMPILE_NORMAL_V1) \
+		$(CERTIFICATE_GSLT_TRACE_COMPILE_COMPRESSED_V1) \
+		$(CERTIFICATE_GSLT_TRACE_COMPILE_CONTINUATION_V1) \
+		$(CERTIFICATE_GSLT_TRACE_COMPILE_OPEN_SAVE_V1) \
+		$(CERTIFICATE_GSLT_TRACE_COMPILE_SINGLE_SAVE_V1) \
+		$(CERTIFICATE_GSLT_TRACE_COMPILE_BARE_SAVE_V1) \
+		$(CERTIFICATE_GSLT_TRACE_COMPILE_REPEATED_SAVE_V1) \
+		$(CERTIFICATE_GSLT_TRACE_COMPILE_UNKNOWN_V1) \
+		$(CERTIFICATE_GSLT_TRACE_COMPILE_ACCEPTED_V1) \
+		$(CERTIFICATE_GSLT_TRACE_INPUT_V1) \
+		$(CERTIFICATE_GSLT_TRACE_INPUT_CANARY_V1) \
+		$(CERTIFICATE_GSLT_TRACE_EVIDENCE_CANARY_V1) \
+		$(CERTIFICATE_GSLT_TRACE_COMPRESSED_COMPOSITION_CANARY_V1) \
+		$(CERTIFICATE_GSLT_TRACE_INPUT_CONTEXT_V1) \
+		$(CERTIFICATE_GSLT_TRACE_INPUT_FRAME_V1) \
+		$(CERTIFICATE_GSLT_TRACE_INPUT_NORMAL_V1) \
+		$(CERTIFICATE_GSLT_TRACE_INPUT_COMPRESSED_V1) \
+		$(CERTIFICATE_GSLT_TRACE_INPUT_INCOMPLETE_NORMAL_V1) \
+		$(CERTIFICATE_GSLT_TRACE_INPUT_INCOMPLETE_COMPRESSED_V1) \
+		$(CERTIFICATE_GSLT_TRACE_INPUT_UNKNOWN_NOT_VERIFIED_V1) \
+		$(CERTIFICATE_GSLT_TRACE_INPUT_WRONG_TARGET_V1) \
+		$(CERTIFICATE_GSLT_TRACE_INPUT_BAD_COUNT_V1) \
+		$(CERTIFICATE_GSLT_TRACE_EVIDENCE_NORMAL_V1) \
+		$(CERTIFICATE_GSLT_TRACE_EVIDENCE_COMPRESSED_V1) \
+		$(CERTIFICATE_GSLT_TRACE_EVIDENCE_WRONG_TARGET_V1) \
+		$(CERTIFICATE_GSLT_TRACE_EVIDENCE_WRONG_TRACE_V1) \
+		$(CERTIFICATE_GSLT_TRACE_COMPRESSED_COMPOSITION_POSITIVE_V1) \
+		$(CERTIFICATE_GSLT_TRACE_COMPRESSED_COMPOSITION_RANGE_V1) \
 		$(GSLT2PARSE_CHART_V1_NATIVE_BIN) $(GSLT_RULE_MUTATOR_V1_BIN)
 	@set -eu; \
 	work=$$(mktemp -d runtime/metamath-proof-trace.XXXXXX); \
 	trap 'rm -rf "$$work"' EXIT INT TERM; \
 	positive=$$($(GSLT2PARSE_CHART_V1_NATIVE_BIN) \
 		$(METAMATH_PROOF_SEMANTIC_EXEC_V1) \
-		$(PROOF_GSLT_TRACE_SEMANTICS_V1) \
-		$(PROOF_GSLT_TRACE_ORDER_CANARY_V1) \
-		--query-file $(PROOF_GSLT_TRACE_ORDER_POSITIVE_V1) \
+		$(CERTIFICATE_GSLT_TRACE_SEMANTICS_V1) \
+		$(CERTIFICATE_GSLT_TRACE_ORDER_CANARY_V1) \
+		--query-file $(CERTIFICATE_GSLT_TRACE_ORDER_POSITIVE_V1) \
 		--summary --cert-out "$$work/trace.cert"); \
 	printf '%s\n' "$$positive" | rg -F -q '"outcome":"Unique"'; \
 	replay=$$($(GSLT2PARSE_CHART_V1_NATIVE_BIN) \
 		$(METAMATH_PROOF_SEMANTIC_EXEC_V1) \
-		$(PROOF_GSLT_TRACE_SEMANTICS_V1) \
-		$(PROOF_GSLT_TRACE_ORDER_CANARY_V1) \
-		--query-file $(PROOF_GSLT_TRACE_ORDER_POSITIVE_V1) \
+		$(CERTIFICATE_GSLT_TRACE_SEMANTICS_V1) \
+		$(CERTIFICATE_GSLT_TRACE_ORDER_CANARY_V1) \
+		--query-file $(CERTIFICATE_GSLT_TRACE_ORDER_POSITIVE_V1) \
 		--replay "$$work/trace.cert"); \
 	printf '%s\n' "$$replay" | rg -F -q '"replay":"ACCEPT"'; \
 	swapped=$$($(GSLT2PARSE_CHART_V1_NATIVE_BIN) \
 		$(METAMATH_PROOF_SEMANTIC_EXEC_V1) \
-		$(PROOF_GSLT_TRACE_SEMANTICS_V1) \
-		$(PROOF_GSLT_TRACE_ORDER_CANARY_V1) \
-		--query-file $(PROOF_GSLT_TRACE_ORDER_SWAPPED_V1) --summary); \
+		$(CERTIFICATE_GSLT_TRACE_SEMANTICS_V1) \
+		$(CERTIFICATE_GSLT_TRACE_ORDER_CANARY_V1) \
+		--query-file $(CERTIFICATE_GSLT_TRACE_ORDER_SWAPPED_V1) --summary); \
 	printf '%s\n' "$$swapped" | rg -F -q '"outcome":"NoAnswer"'; \
 	missing=$$($(GSLT2PARSE_CHART_V1_NATIVE_BIN) \
 		$(METAMATH_PROOF_SEMANTIC_EXEC_V1) \
-		$(PROOF_GSLT_TRACE_SEMANTICS_V1) \
-		$(PROOF_GSLT_TRACE_ORDER_CANARY_V1) \
-		--query-file $(PROOF_GSLT_TRACE_ORDER_MISSING_CONTEXT_V1) \
+		$(CERTIFICATE_GSLT_TRACE_SEMANTICS_V1) \
+		$(CERTIFICATE_GSLT_TRACE_ORDER_CANARY_V1) \
+		--query-file $(CERTIFICATE_GSLT_TRACE_ORDER_MISSING_CONTEXT_V1) \
 		--summary); \
 	printf '%s\n' "$$missing" | rg -F -q '"outcome":"NoAnswer"'; \
 	saved=$$($(GSLT2PARSE_CHART_V1_NATIVE_BIN) \
 		$(METAMATH_PROOF_SEMANTIC_EXEC_V1) \
-		$(PROOF_GSLT_TRACE_SEMANTICS_V1) \
-		$(PROOF_GSLT_TRACE_ORDER_CANARY_V1) \
-		--query-file $(PROOF_GSLT_TRACE_SAVED_POSITIVE_V1) --summary); \
+		$(CERTIFICATE_GSLT_TRACE_SEMANTICS_V1) \
+		$(CERTIFICATE_GSLT_TRACE_ORDER_CANARY_V1) \
+		--query-file $(CERTIFICATE_GSLT_TRACE_SAVED_POSITIVE_V1) --summary); \
 	printf '%s\n' "$$saved" | rg -F -q '"outcome":"Unique"'; \
 	range=$$($(GSLT2PARSE_CHART_V1_NATIVE_BIN) \
 		$(METAMATH_PROOF_SEMANTIC_EXEC_V1) \
-		$(PROOF_GSLT_TRACE_SEMANTICS_V1) \
-		$(PROOF_GSLT_TRACE_ORDER_CANARY_V1) \
-		--query-file $(PROOF_GSLT_TRACE_SAVED_RANGE_V1) --summary); \
+		$(CERTIFICATE_GSLT_TRACE_SEMANTICS_V1) \
+		$(CERTIFICATE_GSLT_TRACE_ORDER_CANARY_V1) \
+		--query-file $(CERTIFICATE_GSLT_TRACE_SAVED_RANGE_V1) --summary); \
 	printf '%s\n' "$$range" | rg -F -q '"outcome":"NoAnswer"'; \
 	normal=$$($(GSLT2PARSE_CHART_V1_NATIVE_BIN) \
 		$(METAMATH_PROOF_SEMANTIC_EXEC_V1) \
-		$(PROOF_GSLT_TRACE_SEMANTICS_V1) \
-		$(PROOF_GSLT_TRACE_COMPILER_V1) \
+		$(CERTIFICATE_GSLT_TRACE_SEMANTICS_V1) \
+		$(CERTIFICATE_GSLT_TRACE_COMPILER_V1) \
 		$(METAMATH_PROOF_TRACE_POLICY_V1) \
 		$(METAMATH_PROOF_TRACE_CODEC_V1) \
-		$(PROOF_GSLT_TRACE_CODEC_CANARY_V1) \
-		--query-file $(PROOF_GSLT_TRACE_COMPILE_NORMAL_V1) --summary); \
+		$(CERTIFICATE_GSLT_TRACE_CODEC_CANARY_V1) \
+		--query-file $(CERTIFICATE_GSLT_TRACE_COMPILE_NORMAL_V1) --summary); \
 	printf '%s\n' "$$normal" | rg -F -q '"outcome":"Unique"'; \
 	compressed=$$($(GSLT2PARSE_CHART_V1_NATIVE_BIN) \
 		$(METAMATH_PROOF_SEMANTIC_EXEC_V1) \
-		$(PROOF_GSLT_TRACE_SEMANTICS_V1) \
-		$(PROOF_GSLT_TRACE_COMPILER_V1) \
+		$(CERTIFICATE_GSLT_TRACE_SEMANTICS_V1) \
+		$(CERTIFICATE_GSLT_TRACE_COMPILER_V1) \
 		$(METAMATH_PROOF_TRACE_POLICY_V1) \
 		$(METAMATH_PROOF_TRACE_CODEC_V1) \
-		$(PROOF_GSLT_TRACE_CODEC_CANARY_V1) \
-		--query-file $(PROOF_GSLT_TRACE_COMPILE_COMPRESSED_V1) --summary); \
+		$(CERTIFICATE_GSLT_TRACE_CODEC_CANARY_V1) \
+		--query-file $(CERTIFICATE_GSLT_TRACE_COMPILE_COMPRESSED_V1) --summary); \
 	printf '%s\n' "$$compressed" | rg -F -q '"outcome":"Unique"'; \
 	continuation=$$($(GSLT2PARSE_CHART_V1_NATIVE_BIN) \
 		$(METAMATH_PROOF_SEMANTIC_EXEC_V1) \
-		$(PROOF_GSLT_TRACE_SEMANTICS_V1) \
-		$(PROOF_GSLT_TRACE_COMPILER_V1) \
+		$(CERTIFICATE_GSLT_TRACE_SEMANTICS_V1) \
+		$(CERTIFICATE_GSLT_TRACE_COMPILER_V1) \
 		$(METAMATH_PROOF_TRACE_POLICY_V1) \
 		$(METAMATH_PROOF_TRACE_CODEC_V1) \
-		$(PROOF_GSLT_TRACE_CODEC_CANARY_V1) \
-		--query-file $(PROOF_GSLT_TRACE_COMPILE_CONTINUATION_V1) \
+		$(CERTIFICATE_GSLT_TRACE_CODEC_CANARY_V1) \
+		--query-file $(CERTIFICATE_GSLT_TRACE_COMPILE_CONTINUATION_V1) \
 		--summary); \
 	printf '%s\n' "$$continuation" | rg -F -q '"outcome":"Unique"'; \
 	open_save=$$($(GSLT2PARSE_CHART_V1_NATIVE_BIN) \
 		$(METAMATH_PROOF_SEMANTIC_EXEC_V1) \
-		$(PROOF_GSLT_TRACE_SEMANTICS_V1) \
-		$(PROOF_GSLT_TRACE_COMPILER_V1) \
+		$(CERTIFICATE_GSLT_TRACE_SEMANTICS_V1) \
+		$(CERTIFICATE_GSLT_TRACE_COMPILER_V1) \
 		$(METAMATH_PROOF_TRACE_POLICY_V1) \
 		$(METAMATH_PROOF_TRACE_CODEC_V1) \
-		$(PROOF_GSLT_TRACE_CODEC_CANARY_V1) \
-		--query-file $(PROOF_GSLT_TRACE_COMPILE_OPEN_SAVE_V1) --summary); \
+		$(CERTIFICATE_GSLT_TRACE_CODEC_CANARY_V1) \
+		--query-file $(CERTIFICATE_GSLT_TRACE_COMPILE_OPEN_SAVE_V1) --summary); \
 	printf '%s\n' "$$open_save" | rg -F -q '"outcome":"NoAnswer"'; \
 	single_save=$$($(GSLT2PARSE_CHART_V1_NATIVE_BIN) \
 		$(METAMATH_PROOF_SEMANTIC_EXEC_V1) \
-		$(PROOF_GSLT_TRACE_SEMANTICS_V1) \
-		$(PROOF_GSLT_TRACE_COMPILER_V1) \
-		$(PROOF_GSLT_TRACE_INPUT_V1) \
+		$(CERTIFICATE_GSLT_TRACE_SEMANTICS_V1) \
+		$(CERTIFICATE_GSLT_TRACE_COMPILER_V1) \
+		$(CERTIFICATE_GSLT_TRACE_INPUT_V1) \
 		$(METAMATH_PROOF_TRACE_POLICY_V1) \
 		$(METAMATH_PROOF_TRACE_CODEC_V1) \
-		$(PROOF_GSLT_TRACE_INPUT_CANARY_V1) \
-		$(PROOF_GSLT_TRACE_CODEC_CANARY_V1) \
-		--query-file $(PROOF_GSLT_TRACE_COMPILE_SINGLE_SAVE_V1) --summary); \
+		$(CERTIFICATE_GSLT_TRACE_INPUT_CANARY_V1) \
+		$(CERTIFICATE_GSLT_TRACE_CODEC_CANARY_V1) \
+		--query-file $(CERTIFICATE_GSLT_TRACE_COMPILE_SINGLE_SAVE_V1) --summary); \
 	printf '%s\n' "$$single_save" | rg -F -q '"outcome":"Unique"'; \
 	bare_save=$$($(GSLT2PARSE_CHART_V1_NATIVE_BIN) \
 		$(METAMATH_PROOF_SEMANTIC_EXEC_V1) \
-		$(PROOF_GSLT_TRACE_SEMANTICS_V1) \
-		$(PROOF_GSLT_TRACE_COMPILER_V1) \
+		$(CERTIFICATE_GSLT_TRACE_SEMANTICS_V1) \
+		$(CERTIFICATE_GSLT_TRACE_COMPILER_V1) \
 		$(METAMATH_PROOF_TRACE_POLICY_V1) \
 		$(METAMATH_PROOF_TRACE_CODEC_V1) \
-		$(PROOF_GSLT_TRACE_CODEC_CANARY_V1) \
-		--query-file $(PROOF_GSLT_TRACE_COMPILE_BARE_SAVE_V1) --summary); \
+		$(CERTIFICATE_GSLT_TRACE_CODEC_CANARY_V1) \
+		--query-file $(CERTIFICATE_GSLT_TRACE_COMPILE_BARE_SAVE_V1) --summary); \
 	printf '%s\n' "$$bare_save" | rg -F -q '"outcome":"NoAnswer"'; \
 	repeated_save=$$($(GSLT2PARSE_CHART_V1_NATIVE_BIN) \
 		$(METAMATH_PROOF_SEMANTIC_EXEC_V1) \
-		$(PROOF_GSLT_TRACE_SEMANTICS_V1) \
-		$(PROOF_GSLT_TRACE_COMPILER_V1) \
-		$(PROOF_GSLT_TRACE_INPUT_V1) \
+		$(CERTIFICATE_GSLT_TRACE_SEMANTICS_V1) \
+		$(CERTIFICATE_GSLT_TRACE_COMPILER_V1) \
+		$(CERTIFICATE_GSLT_TRACE_INPUT_V1) \
 		$(METAMATH_PROOF_TRACE_POLICY_V1) \
 		$(METAMATH_PROOF_TRACE_CODEC_V1) \
-		$(PROOF_GSLT_TRACE_INPUT_CANARY_V1) \
-		$(PROOF_GSLT_TRACE_CODEC_CANARY_V1) \
-		--query-file $(PROOF_GSLT_TRACE_COMPILE_REPEATED_SAVE_V1) --summary); \
+		$(CERTIFICATE_GSLT_TRACE_INPUT_CANARY_V1) \
+		$(CERTIFICATE_GSLT_TRACE_CODEC_CANARY_V1) \
+		--query-file $(CERTIFICATE_GSLT_TRACE_COMPILE_REPEATED_SAVE_V1) --summary); \
 	printf '%s\n' "$$repeated_save" | rg -F -q '"outcome":"NoAnswer"'; \
 	unknown=$$($(GSLT2PARSE_CHART_V1_NATIVE_BIN) \
 		$(METAMATH_PROOF_SEMANTIC_EXEC_V1) \
-		$(PROOF_GSLT_TRACE_SEMANTICS_V1) \
-		$(PROOF_GSLT_TRACE_COMPILER_V1) \
+		$(CERTIFICATE_GSLT_TRACE_SEMANTICS_V1) \
+		$(CERTIFICATE_GSLT_TRACE_COMPILER_V1) \
 		$(METAMATH_PROOF_TRACE_POLICY_V1) \
 		$(METAMATH_PROOF_TRACE_CODEC_V1) \
-		$(PROOF_GSLT_TRACE_CODEC_CANARY_V1) \
-		--query-file $(PROOF_GSLT_TRACE_COMPILE_UNKNOWN_V1) --summary); \
+		$(CERTIFICATE_GSLT_TRACE_CODEC_CANARY_V1) \
+		--query-file $(CERTIFICATE_GSLT_TRACE_COMPILE_UNKNOWN_V1) --summary); \
 	printf '%s\n' "$$unknown" | rg -F -q '"outcome":"NoAnswer"'; \
 	accepted=$$($(GSLT2PARSE_CHART_V1_NATIVE_BIN) \
 		$(METAMATH_PROOF_SEMANTIC_EXEC_V1) \
-		$(PROOF_GSLT_TRACE_SEMANTICS_V1) \
-		$(PROOF_GSLT_TRACE_COMPILER_V1) \
+		$(CERTIFICATE_GSLT_TRACE_SEMANTICS_V1) \
+		$(CERTIFICATE_GSLT_TRACE_COMPILER_V1) \
 		$(METAMATH_PROOF_TRACE_POLICY_V1) \
 		$(METAMATH_PROOF_TRACE_CODEC_V1) \
-		$(PROOF_GSLT_TRACE_CODEC_CANARY_V1) \
-		--query-file $(PROOF_GSLT_TRACE_COMPILE_ACCEPTED_V1) --summary); \
+		$(CERTIFICATE_GSLT_TRACE_CODEC_CANARY_V1) \
+		--query-file $(CERTIFICATE_GSLT_TRACE_COMPILE_ACCEPTED_V1) --summary); \
 	printf '%s\n' "$$accepted" | rg -F -q '"outcome":"Unique"'; \
 	input_context=$$($(GSLT2PARSE_CHART_V1_NATIVE_BIN) \
 		$(METAMATH_PROOF_SEMANTIC_EXEC_V1) \
-		$(PROOF_GSLT_TRACE_SEMANTICS_V1) \
-		$(PROOF_GSLT_TRACE_COMPILER_V1) \
-		$(PROOF_GSLT_TRACE_INPUT_V1) \
+		$(CERTIFICATE_GSLT_TRACE_SEMANTICS_V1) \
+		$(CERTIFICATE_GSLT_TRACE_COMPILER_V1) \
+		$(CERTIFICATE_GSLT_TRACE_INPUT_V1) \
 		$(METAMATH_PROOF_TRACE_POLICY_V1) \
 		$(METAMATH_PROOF_TRACE_CODEC_V1) \
-		$(PROOF_GSLT_TRACE_INPUT_CANARY_V1) \
-		--query-file $(PROOF_GSLT_TRACE_INPUT_CONTEXT_V1) --summary); \
+		$(CERTIFICATE_GSLT_TRACE_INPUT_CANARY_V1) \
+		--query-file $(CERTIFICATE_GSLT_TRACE_INPUT_CONTEXT_V1) --summary); \
 	printf '%s\n' "$$input_context" | rg -F -q '"outcome":"Unique"'; \
 	input_frame=$$($(GSLT2PARSE_CHART_V1_NATIVE_BIN) \
 		$(METAMATH_PROOF_SEMANTIC_EXEC_V1) \
-		$(PROOF_GSLT_TRACE_SEMANTICS_V1) \
-		$(PROOF_GSLT_TRACE_COMPILER_V1) \
-		$(PROOF_GSLT_TRACE_INPUT_V1) \
+		$(CERTIFICATE_GSLT_TRACE_SEMANTICS_V1) \
+		$(CERTIFICATE_GSLT_TRACE_COMPILER_V1) \
+		$(CERTIFICATE_GSLT_TRACE_INPUT_V1) \
 		$(METAMATH_PROOF_TRACE_POLICY_V1) \
 		$(METAMATH_PROOF_TRACE_CODEC_V1) \
-		$(PROOF_GSLT_TRACE_INPUT_CANARY_V1) \
-		--query-file $(PROOF_GSLT_TRACE_INPUT_FRAME_V1) --summary); \
+		$(CERTIFICATE_GSLT_TRACE_INPUT_CANARY_V1) \
+		--query-file $(CERTIFICATE_GSLT_TRACE_INPUT_FRAME_V1) --summary); \
 	printf '%s\n' "$$input_frame" | rg -F -q '"outcome":"Unique"'; \
 	input_normal=$$($(GSLT2PARSE_CHART_V1_NATIVE_BIN) \
 		$(METAMATH_PROOF_SEMANTIC_EXEC_V1) \
-		$(PROOF_GSLT_TRACE_SEMANTICS_V1) \
-		$(PROOF_GSLT_TRACE_COMPILER_V1) \
-		$(PROOF_GSLT_TRACE_INPUT_V1) \
+		$(CERTIFICATE_GSLT_TRACE_SEMANTICS_V1) \
+		$(CERTIFICATE_GSLT_TRACE_COMPILER_V1) \
+		$(CERTIFICATE_GSLT_TRACE_INPUT_V1) \
 		$(METAMATH_PROOF_TRACE_POLICY_V1) \
 		$(METAMATH_PROOF_TRACE_CODEC_V1) \
-		$(PROOF_GSLT_TRACE_INPUT_CANARY_V1) \
-		--query-file $(PROOF_GSLT_TRACE_INPUT_NORMAL_V1) --summary); \
+		$(CERTIFICATE_GSLT_TRACE_INPUT_CANARY_V1) \
+		--query-file $(CERTIFICATE_GSLT_TRACE_INPUT_NORMAL_V1) --summary); \
 	printf '%s\n' "$$input_normal" | rg -F -q '"outcome":"Unique"'; \
 	input_compressed=$$($(GSLT2PARSE_CHART_V1_NATIVE_BIN) \
 		$(METAMATH_PROOF_SEMANTIC_EXEC_V1) \
-		$(PROOF_GSLT_TRACE_SEMANTICS_V1) \
-		$(PROOF_GSLT_TRACE_COMPILER_V1) \
-		$(PROOF_GSLT_TRACE_INPUT_V1) \
+		$(CERTIFICATE_GSLT_TRACE_SEMANTICS_V1) \
+		$(CERTIFICATE_GSLT_TRACE_COMPILER_V1) \
+		$(CERTIFICATE_GSLT_TRACE_INPUT_V1) \
 		$(METAMATH_PROOF_TRACE_POLICY_V1) \
 		$(METAMATH_PROOF_TRACE_CODEC_V1) \
-		$(PROOF_GSLT_TRACE_INPUT_CANARY_V1) \
-		--query-file $(PROOF_GSLT_TRACE_INPUT_COMPRESSED_V1) --summary); \
+		$(CERTIFICATE_GSLT_TRACE_INPUT_CANARY_V1) \
+		--query-file $(CERTIFICATE_GSLT_TRACE_INPUT_COMPRESSED_V1) --summary); \
 	printf '%s\n' "$$input_compressed" | rg -F -q '"outcome":"Unique"'; \
 	evidence_normal=$$($(GSLT2PARSE_CHART_V1_NATIVE_BIN) \
 		$(METAMATH_PROOF_SEMANTIC_EXEC_V1) \
-		$(PROOF_GSLT_TRACE_SEMANTICS_V1) \
-		$(PROOF_GSLT_TRACE_COMPILER_V1) \
-		$(PROOF_GSLT_TRACE_INPUT_V1) \
+		$(CERTIFICATE_GSLT_TRACE_SEMANTICS_V1) \
+		$(CERTIFICATE_GSLT_TRACE_COMPILER_V1) \
+		$(CERTIFICATE_GSLT_TRACE_INPUT_V1) \
 		$(METAMATH_PROOF_TRACE_POLICY_V1) \
 		$(METAMATH_PROOF_TRACE_CODEC_V1) \
-		$(PROOF_GSLT_TRACE_INPUT_CANARY_V1) \
-		$(PROOF_GSLT_TRACE_EVIDENCE_CANARY_V1) \
-		--query-file $(PROOF_GSLT_TRACE_EVIDENCE_NORMAL_V1) \
+		$(CERTIFICATE_GSLT_TRACE_INPUT_CANARY_V1) \
+		$(CERTIFICATE_GSLT_TRACE_EVIDENCE_CANARY_V1) \
+		--query-file $(CERTIFICATE_GSLT_TRACE_EVIDENCE_NORMAL_V1) \
 		--summary --cert-out "$$work/evidence.cert"); \
 	printf '%s\n' "$$evidence_normal" | rg -F -q '"outcome":"Unique"'; \
 	evidence_replay=$$($(GSLT2PARSE_CHART_V1_NATIVE_BIN) \
 		$(METAMATH_PROOF_SEMANTIC_EXEC_V1) \
-		$(PROOF_GSLT_TRACE_SEMANTICS_V1) \
-		$(PROOF_GSLT_TRACE_COMPILER_V1) \
-		$(PROOF_GSLT_TRACE_INPUT_V1) \
+		$(CERTIFICATE_GSLT_TRACE_SEMANTICS_V1) \
+		$(CERTIFICATE_GSLT_TRACE_COMPILER_V1) \
+		$(CERTIFICATE_GSLT_TRACE_INPUT_V1) \
 		$(METAMATH_PROOF_TRACE_POLICY_V1) \
 		$(METAMATH_PROOF_TRACE_CODEC_V1) \
-		$(PROOF_GSLT_TRACE_INPUT_CANARY_V1) \
-		$(PROOF_GSLT_TRACE_EVIDENCE_CANARY_V1) \
-		--query-file $(PROOF_GSLT_TRACE_EVIDENCE_NORMAL_V1) \
+		$(CERTIFICATE_GSLT_TRACE_INPUT_CANARY_V1) \
+		$(CERTIFICATE_GSLT_TRACE_EVIDENCE_CANARY_V1) \
+		--query-file $(CERTIFICATE_GSLT_TRACE_EVIDENCE_NORMAL_V1) \
 		--replay "$$work/evidence.cert"); \
 	printf '%s\n' "$$evidence_replay" | rg -F -q '"replay":"ACCEPT"'; \
 	evidence_compressed=$$($(GSLT2PARSE_CHART_V1_NATIVE_BIN) \
 		$(METAMATH_PROOF_SEMANTIC_EXEC_V1) \
-		$(PROOF_GSLT_TRACE_SEMANTICS_V1) \
-		$(PROOF_GSLT_TRACE_COMPILER_V1) \
-		$(PROOF_GSLT_TRACE_INPUT_V1) \
+		$(CERTIFICATE_GSLT_TRACE_SEMANTICS_V1) \
+		$(CERTIFICATE_GSLT_TRACE_COMPILER_V1) \
+		$(CERTIFICATE_GSLT_TRACE_INPUT_V1) \
 		$(METAMATH_PROOF_TRACE_POLICY_V1) \
 		$(METAMATH_PROOF_TRACE_CODEC_V1) \
-		$(PROOF_GSLT_TRACE_INPUT_CANARY_V1) \
-		$(PROOF_GSLT_TRACE_EVIDENCE_CANARY_V1) \
-		--query-file $(PROOF_GSLT_TRACE_EVIDENCE_COMPRESSED_V1) \
+		$(CERTIFICATE_GSLT_TRACE_INPUT_CANARY_V1) \
+		$(CERTIFICATE_GSLT_TRACE_EVIDENCE_CANARY_V1) \
+		--query-file $(CERTIFICATE_GSLT_TRACE_EVIDENCE_COMPRESSED_V1) \
 		--summary); \
 	printf '%s\n' "$$evidence_compressed" | rg -F -q '"outcome":"Unique"'; \
 	evidence_wrong_target=$$($(GSLT2PARSE_CHART_V1_NATIVE_BIN) \
 		$(METAMATH_PROOF_SEMANTIC_EXEC_V1) \
-		$(PROOF_GSLT_TRACE_SEMANTICS_V1) \
-		$(PROOF_GSLT_TRACE_COMPILER_V1) \
-		$(PROOF_GSLT_TRACE_INPUT_V1) \
+		$(CERTIFICATE_GSLT_TRACE_SEMANTICS_V1) \
+		$(CERTIFICATE_GSLT_TRACE_COMPILER_V1) \
+		$(CERTIFICATE_GSLT_TRACE_INPUT_V1) \
 		$(METAMATH_PROOF_TRACE_POLICY_V1) \
 		$(METAMATH_PROOF_TRACE_CODEC_V1) \
-		$(PROOF_GSLT_TRACE_INPUT_CANARY_V1) \
-		$(PROOF_GSLT_TRACE_EVIDENCE_CANARY_V1) \
-		--query-file $(PROOF_GSLT_TRACE_EVIDENCE_WRONG_TARGET_V1) \
+		$(CERTIFICATE_GSLT_TRACE_INPUT_CANARY_V1) \
+		$(CERTIFICATE_GSLT_TRACE_EVIDENCE_CANARY_V1) \
+		--query-file $(CERTIFICATE_GSLT_TRACE_EVIDENCE_WRONG_TARGET_V1) \
 		--summary); \
 	printf '%s\n' "$$evidence_wrong_target" | \
 		rg -F -q '"outcome":"NoAnswer"'; \
 	evidence_wrong_trace=$$($(GSLT2PARSE_CHART_V1_NATIVE_BIN) \
 		$(METAMATH_PROOF_SEMANTIC_EXEC_V1) \
-		$(PROOF_GSLT_TRACE_SEMANTICS_V1) \
-		$(PROOF_GSLT_TRACE_COMPILER_V1) \
-		$(PROOF_GSLT_TRACE_INPUT_V1) \
+		$(CERTIFICATE_GSLT_TRACE_SEMANTICS_V1) \
+		$(CERTIFICATE_GSLT_TRACE_COMPILER_V1) \
+		$(CERTIFICATE_GSLT_TRACE_INPUT_V1) \
 		$(METAMATH_PROOF_TRACE_POLICY_V1) \
 		$(METAMATH_PROOF_TRACE_CODEC_V1) \
-		$(PROOF_GSLT_TRACE_INPUT_CANARY_V1) \
-		$(PROOF_GSLT_TRACE_EVIDENCE_CANARY_V1) \
-		--query-file $(PROOF_GSLT_TRACE_EVIDENCE_WRONG_TRACE_V1) \
+		$(CERTIFICATE_GSLT_TRACE_INPUT_CANARY_V1) \
+		$(CERTIFICATE_GSLT_TRACE_EVIDENCE_CANARY_V1) \
+		--query-file $(CERTIFICATE_GSLT_TRACE_EVIDENCE_WRONG_TRACE_V1) \
 		--summary); \
 	printf '%s\n' "$$evidence_wrong_trace" | \
 		rg -F -q '"outcome":"NoAnswer"'; \
 	$(GSLT_RULE_MUTATOR_V1_BIN) mutate \
-		--source $(PROOF_GSLT_TRACE_SEMANTICS_V1) \
+		--source $(CERTIFICATE_GSLT_TRACE_SEMANTICS_V1) \
 		--out "$$work/deleted-evidence-apply.metta" \
 		--rule proof-trace-exec-state-result-apply-v1 --mode delete; \
 	evidence_deleted=$$($(GSLT2PARSE_CHART_V1_NATIVE_BIN) \
 		$(METAMATH_PROOF_SEMANTIC_EXEC_V1) \
 		"$$work/deleted-evidence-apply.metta" \
-		$(PROOF_GSLT_TRACE_COMPILER_V1) \
-		$(PROOF_GSLT_TRACE_INPUT_V1) \
+		$(CERTIFICATE_GSLT_TRACE_COMPILER_V1) \
+		$(CERTIFICATE_GSLT_TRACE_INPUT_V1) \
 		$(METAMATH_PROOF_TRACE_POLICY_V1) \
 		$(METAMATH_PROOF_TRACE_CODEC_V1) \
-		$(PROOF_GSLT_TRACE_INPUT_CANARY_V1) \
-		$(PROOF_GSLT_TRACE_EVIDENCE_CANARY_V1) \
-		--query-file $(PROOF_GSLT_TRACE_EVIDENCE_NORMAL_V1) \
+		$(CERTIFICATE_GSLT_TRACE_INPUT_CANARY_V1) \
+		$(CERTIFICATE_GSLT_TRACE_EVIDENCE_CANARY_V1) \
+		--query-file $(CERTIFICATE_GSLT_TRACE_EVIDENCE_NORMAL_V1) \
 		--summary); \
 	printf '%s\n' "$$evidence_deleted" | rg -F -q '"outcome":"NoAnswer"'; \
 	input_incomplete_normal=$$($(GSLT2PARSE_CHART_V1_NATIVE_BIN) \
 		$(METAMATH_PROOF_SEMANTIC_EXEC_V1) \
-		$(PROOF_GSLT_TRACE_SEMANTICS_V1) \
-		$(PROOF_GSLT_TRACE_COMPILER_V1) \
-		$(PROOF_GSLT_TRACE_INPUT_V1) \
-		$(PROOF_GSLT_TRACE_INPUT_CANARY_V1) \
-		--query-file $(PROOF_GSLT_TRACE_INPUT_INCOMPLETE_NORMAL_V1) \
+		$(CERTIFICATE_GSLT_TRACE_SEMANTICS_V1) \
+		$(CERTIFICATE_GSLT_TRACE_COMPILER_V1) \
+		$(CERTIFICATE_GSLT_TRACE_INPUT_V1) \
+		$(CERTIFICATE_GSLT_TRACE_INPUT_CANARY_V1) \
+		--query-file $(CERTIFICATE_GSLT_TRACE_INPUT_INCOMPLETE_NORMAL_V1) \
 		--summary); \
 	printf '%s\n' "$$input_incomplete_normal" | \
 		rg -F -q '"outcome":"Unique"'; \
 	input_incomplete_compressed=$$($(GSLT2PARSE_CHART_V1_NATIVE_BIN) \
 		$(METAMATH_PROOF_SEMANTIC_EXEC_V1) \
-		$(PROOF_GSLT_TRACE_SEMANTICS_V1) \
-		$(PROOF_GSLT_TRACE_COMPILER_V1) \
-		$(PROOF_GSLT_TRACE_INPUT_V1) \
-		$(PROOF_GSLT_TRACE_INPUT_CANARY_V1) \
-		--query-file $(PROOF_GSLT_TRACE_INPUT_INCOMPLETE_COMPRESSED_V1) \
+		$(CERTIFICATE_GSLT_TRACE_SEMANTICS_V1) \
+		$(CERTIFICATE_GSLT_TRACE_COMPILER_V1) \
+		$(CERTIFICATE_GSLT_TRACE_INPUT_V1) \
+		$(METAMATH_PROOF_TRACE_CODEC_V1) \
+		$(CERTIFICATE_GSLT_TRACE_INPUT_CANARY_V1) \
+		--query-file $(CERTIFICATE_GSLT_TRACE_INPUT_INCOMPLETE_COMPRESSED_V1) \
 		--summary); \
 	printf '%s\n' "$$input_incomplete_compressed" | \
 		rg -F -q '"outcome":"Unique"'; \
 	input_unknown_not_verified=$$($(GSLT2PARSE_CHART_V1_NATIVE_BIN) \
 		$(METAMATH_PROOF_SEMANTIC_EXEC_V1) \
-		$(PROOF_GSLT_TRACE_SEMANTICS_V1) \
-		$(PROOF_GSLT_TRACE_COMPILER_V1) \
-		$(PROOF_GSLT_TRACE_INPUT_V1) \
-		$(PROOF_GSLT_TRACE_INPUT_CANARY_V1) \
-		--query-file $(PROOF_GSLT_TRACE_INPUT_UNKNOWN_NOT_VERIFIED_V1) \
+		$(CERTIFICATE_GSLT_TRACE_SEMANTICS_V1) \
+		$(CERTIFICATE_GSLT_TRACE_COMPILER_V1) \
+		$(CERTIFICATE_GSLT_TRACE_INPUT_V1) \
+		$(CERTIFICATE_GSLT_TRACE_INPUT_CANARY_V1) \
+		--query-file $(CERTIFICATE_GSLT_TRACE_INPUT_UNKNOWN_NOT_VERIFIED_V1) \
 		--summary); \
 	printf '%s\n' "$$input_unknown_not_verified" | \
 		rg -F -q '"outcome":"NoAnswer"'; \
 	composition_positive=$$($(GSLT2PARSE_CHART_V1_NATIVE_BIN) \
 		$(METAMATH_PROOF_SEMANTIC_EXEC_V1) \
-		$(PROOF_GSLT_TRACE_SEMANTICS_V1) \
-		$(PROOF_GSLT_TRACE_COMPILER_V1) \
-		$(PROOF_GSLT_TRACE_INPUT_V1) \
+		$(CERTIFICATE_GSLT_TRACE_SEMANTICS_V1) \
+		$(CERTIFICATE_GSLT_TRACE_COMPILER_V1) \
+		$(CERTIFICATE_GSLT_TRACE_INPUT_V1) \
 		$(METAMATH_PROOF_TRACE_POLICY_V1) \
 		$(METAMATH_PROOF_TRACE_CODEC_V1) \
-		$(PROOF_GSLT_TRACE_COMPRESSED_COMPOSITION_CANARY_V1) \
+		$(CERTIFICATE_GSLT_TRACE_COMPRESSED_COMPOSITION_CANARY_V1) \
 		--query-file \
-		$(PROOF_GSLT_TRACE_COMPRESSED_COMPOSITION_POSITIVE_V1) \
+		$(CERTIFICATE_GSLT_TRACE_COMPRESSED_COMPOSITION_POSITIVE_V1) \
 		--summary); \
 	printf '%s\n' "$$composition_positive" | \
 		rg -F -q '"outcome":"Unique"'; \
 	composition_range=$$($(GSLT2PARSE_CHART_V1_NATIVE_BIN) \
 		$(METAMATH_PROOF_SEMANTIC_EXEC_V1) \
-		$(PROOF_GSLT_TRACE_SEMANTICS_V1) \
-		$(PROOF_GSLT_TRACE_COMPILER_V1) \
-		$(PROOF_GSLT_TRACE_INPUT_V1) \
+		$(CERTIFICATE_GSLT_TRACE_SEMANTICS_V1) \
+		$(CERTIFICATE_GSLT_TRACE_COMPILER_V1) \
+		$(CERTIFICATE_GSLT_TRACE_INPUT_V1) \
 		$(METAMATH_PROOF_TRACE_POLICY_V1) \
 		$(METAMATH_PROOF_TRACE_CODEC_V1) \
-		$(PROOF_GSLT_TRACE_COMPRESSED_COMPOSITION_CANARY_V1) \
+		$(CERTIFICATE_GSLT_TRACE_COMPRESSED_COMPOSITION_CANARY_V1) \
 		--query-file \
-		$(PROOF_GSLT_TRACE_COMPRESSED_COMPOSITION_RANGE_V1) \
+		$(CERTIFICATE_GSLT_TRACE_COMPRESSED_COMPOSITION_RANGE_V1) \
 		--summary); \
 	printf '%s\n' "$$composition_range" | \
 		rg -F -q '"outcome":"NoAnswer"'; \
 	input_wrong_target=$$($(GSLT2PARSE_CHART_V1_NATIVE_BIN) \
 		$(METAMATH_PROOF_SEMANTIC_EXEC_V1) \
-		$(PROOF_GSLT_TRACE_SEMANTICS_V1) \
-		$(PROOF_GSLT_TRACE_COMPILER_V1) \
-		$(PROOF_GSLT_TRACE_INPUT_V1) \
+		$(CERTIFICATE_GSLT_TRACE_SEMANTICS_V1) \
+		$(CERTIFICATE_GSLT_TRACE_COMPILER_V1) \
+		$(CERTIFICATE_GSLT_TRACE_INPUT_V1) \
 		$(METAMATH_PROOF_TRACE_POLICY_V1) \
 		$(METAMATH_PROOF_TRACE_CODEC_V1) \
-		$(PROOF_GSLT_TRACE_INPUT_CANARY_V1) \
-		--query-file $(PROOF_GSLT_TRACE_INPUT_WRONG_TARGET_V1) \
+		$(CERTIFICATE_GSLT_TRACE_INPUT_CANARY_V1) \
+		--query-file $(CERTIFICATE_GSLT_TRACE_INPUT_WRONG_TARGET_V1) \
 		--summary); \
 	printf '%s\n' "$$input_wrong_target" | \
 		rg -F -q '"outcome":"NoAnswer"'; \
 	input_bad_count=$$($(GSLT2PARSE_CHART_V1_NATIVE_BIN) \
 		$(METAMATH_PROOF_SEMANTIC_EXEC_V1) \
-		$(PROOF_GSLT_TRACE_SEMANTICS_V1) \
-		$(PROOF_GSLT_TRACE_COMPILER_V1) \
-		$(PROOF_GSLT_TRACE_INPUT_V1) \
+		$(CERTIFICATE_GSLT_TRACE_SEMANTICS_V1) \
+		$(CERTIFICATE_GSLT_TRACE_COMPILER_V1) \
+		$(CERTIFICATE_GSLT_TRACE_INPUT_V1) \
 		$(METAMATH_PROOF_TRACE_POLICY_V1) \
 		$(METAMATH_PROOF_TRACE_CODEC_V1) \
-		$(PROOF_GSLT_TRACE_INPUT_CANARY_V1) \
-		--query-file $(PROOF_GSLT_TRACE_INPUT_BAD_COUNT_V1) --summary); \
+		$(CERTIFICATE_GSLT_TRACE_INPUT_CANARY_V1) \
+		--query-file $(CERTIFICATE_GSLT_TRACE_INPUT_BAD_COUNT_V1) --summary); \
 	printf '%s\n' "$$input_bad_count" | \
 		rg -F -q '"outcome":"NoAnswer"'; \
 	$(GSLT_RULE_MUTATOR_V1_BIN) mutate \
-		--source $(PROOF_GSLT_TRACE_SEMANTICS_V1) \
+		--source $(CERTIFICATE_GSLT_TRACE_SEMANTICS_V1) \
 		--out "$$work/deleted.metta" \
 		--rule proof-trace-frame-apply-variable-equal-v1 --mode delete; \
 	deleted=$$($(GSLT2PARSE_CHART_V1_NATIVE_BIN) \
 		$(METAMATH_PROOF_SEMANTIC_EXEC_V1) "$$work/deleted.metta" \
-		$(PROOF_GSLT_TRACE_ORDER_CANARY_V1) \
-		--query-file $(PROOF_GSLT_TRACE_ORDER_POSITIVE_V1) --summary); \
+		$(CERTIFICATE_GSLT_TRACE_ORDER_CANARY_V1) \
+		--query-file $(CERTIFICATE_GSLT_TRACE_ORDER_POSITIVE_V1) --summary); \
 	printf '%s\n' "$$deleted" | rg -F -q '"outcome":"NoAnswer"'; \
 	$(GSLT_RULE_MUTATOR_V1_BIN) mutate \
-		--source $(PROOF_GSLT_TRACE_SEMANTICS_V1) \
+		--source $(CERTIFICATE_GSLT_TRACE_SEMANTICS_V1) \
 		--out "$$work/deleted-save.metta" \
 		--rule proof-trace-exec-state-save-v1 --mode delete; \
 	deleted_save=$$($(GSLT2PARSE_CHART_V1_NATIVE_BIN) \
 		$(METAMATH_PROOF_SEMANTIC_EXEC_V1) \
 		"$$work/deleted-save.metta" \
-		$(PROOF_GSLT_TRACE_ORDER_CANARY_V1) \
-		--query-file $(PROOF_GSLT_TRACE_SAVED_POSITIVE_V1) --summary); \
+		$(CERTIFICATE_GSLT_TRACE_ORDER_CANARY_V1) \
+		--query-file $(CERTIFICATE_GSLT_TRACE_SAVED_POSITIVE_V1) --summary); \
 	printf '%s\n' "$$deleted_save" | rg -F -q '"outcome":"NoAnswer"'; \
 	$(GSLT_RULE_MUTATOR_V1_BIN) mutate \
-		--source $(PROOF_GSLT_TRACE_SEMANTICS_V1) \
+		--source $(CERTIFICATE_GSLT_TRACE_SEMANTICS_V1) \
 		--out "$$work/deleted-incomplete-step.metta" \
 		--rule proof-trace-exec-state-result-incomplete-v1 --mode delete; \
 	deleted_incomplete=$$($(GSLT2PARSE_CHART_V1_NATIVE_BIN) \
 		$(METAMATH_PROOF_SEMANTIC_EXEC_V1) \
 		"$$work/deleted-incomplete-step.metta" \
-		$(PROOF_GSLT_TRACE_COMPILER_V1) \
-		$(PROOF_GSLT_TRACE_INPUT_V1) \
-		$(PROOF_GSLT_TRACE_INPUT_CANARY_V1) \
-		--query-file $(PROOF_GSLT_TRACE_INPUT_INCOMPLETE_NORMAL_V1) \
+		$(CERTIFICATE_GSLT_TRACE_COMPILER_V1) \
+		$(CERTIFICATE_GSLT_TRACE_INPUT_V1) \
+		$(CERTIFICATE_GSLT_TRACE_INPUT_CANARY_V1) \
+		--query-file $(CERTIFICATE_GSLT_TRACE_INPUT_INCOMPLETE_NORMAL_V1) \
 		--summary); \
 	printf '%s\n' "$$deleted_incomplete" | \
 		rg -F -q '"outcome":"NoAnswer"'; \
 	$(GSLT_RULE_MUTATOR_V1_BIN) mutate \
-		--source $(PROOF_GSLT_TRACE_SEMANTICS_V1) \
+		--source $(CERTIFICATE_GSLT_TRACE_SEMANTICS_V1) \
 		--out "$$work/deleted-saved-lookup-zero.metta" \
 		--rule proof-trace-saved-lookup-from-zero-found-v1 --mode delete; \
 	deleted_saved_lookup=$$($(GSLT2PARSE_CHART_V1_NATIVE_BIN) \
 		$(METAMATH_PROOF_SEMANTIC_EXEC_V1) \
 		"$$work/deleted-saved-lookup-zero.metta" \
-		$(PROOF_GSLT_TRACE_COMPILER_V1) \
-		$(PROOF_GSLT_TRACE_INPUT_V1) \
+		$(CERTIFICATE_GSLT_TRACE_COMPILER_V1) \
+		$(CERTIFICATE_GSLT_TRACE_INPUT_V1) \
 		$(METAMATH_PROOF_TRACE_POLICY_V1) \
 		$(METAMATH_PROOF_TRACE_CODEC_V1) \
-		$(PROOF_GSLT_TRACE_COMPRESSED_COMPOSITION_CANARY_V1) \
+		$(CERTIFICATE_GSLT_TRACE_COMPRESSED_COMPOSITION_CANARY_V1) \
 		--query-file \
-		$(PROOF_GSLT_TRACE_COMPRESSED_COMPOSITION_POSITIVE_V1) \
+		$(CERTIFICATE_GSLT_TRACE_COMPRESSED_COMPOSITION_POSITIVE_V1) \
 		--summary); \
 	printf '%s\n' "$$deleted_saved_lookup" | \
 		rg -F -q '"outcome":"NoAnswer"'; \
 	$(GSLT_RULE_MUTATOR_V1_BIN) mutate \
-		--source $(PROOF_GSLT_TRACE_COMPILER_V1) \
+		--source $(CERTIFICATE_GSLT_TRACE_COMPILER_V1) \
 		--out "$$work/deleted-continuation.metta" \
 		--rule proof-trace-decode-class-continuation-v1 --mode delete; \
 	deleted_continuation=$$($(GSLT2PARSE_CHART_V1_NATIVE_BIN) \
 		$(METAMATH_PROOF_SEMANTIC_EXEC_V1) \
-		$(PROOF_GSLT_TRACE_SEMANTICS_V1) \
+		$(CERTIFICATE_GSLT_TRACE_SEMANTICS_V1) \
 		"$$work/deleted-continuation.metta" \
 		$(METAMATH_PROOF_TRACE_POLICY_V1) \
 		$(METAMATH_PROOF_TRACE_CODEC_V1) \
-		$(PROOF_GSLT_TRACE_CODEC_CANARY_V1) \
-		--query-file $(PROOF_GSLT_TRACE_COMPILE_CONTINUATION_V1) \
+		$(CERTIFICATE_GSLT_TRACE_CODEC_CANARY_V1) \
+		--query-file $(CERTIFICATE_GSLT_TRACE_COMPILE_CONTINUATION_V1) \
 		--summary); \
 	printf '%s\n' "$$deleted_continuation" | \
 		rg -F -q '"outcome":"NoAnswer"'; \
 	$(GSLT_RULE_MUTATOR_V1_BIN) mutate \
-		--source $(PROOF_GSLT_TRACE_COMPILER_V1) \
+		--source $(CERTIFICATE_GSLT_TRACE_COMPILER_V1) \
 		--out "$$work/falsified-save-phase.metta" \
 		--rule proof-trace-save-phase-immediate-v1 --mode falsify \
 		--replacement \
 		'(ProofTraceSavePhaseTransitionV1 ProofTracePhaseBetweenV1 ProofTracePhaseBetweenV1)'; \
 	falsified_bare_save=$$($(GSLT2PARSE_CHART_V1_NATIVE_BIN) \
 		$(METAMATH_PROOF_SEMANTIC_EXEC_V1) \
-		$(PROOF_GSLT_TRACE_SEMANTICS_V1) \
+		$(CERTIFICATE_GSLT_TRACE_SEMANTICS_V1) \
 		"$$work/falsified-save-phase.metta" \
 		$(METAMATH_PROOF_TRACE_POLICY_V1) \
 		$(METAMATH_PROOF_TRACE_CODEC_V1) \
-		$(PROOF_GSLT_TRACE_CODEC_CANARY_V1) \
-		--query-file $(PROOF_GSLT_TRACE_COMPILE_BARE_SAVE_V1) --summary); \
+		$(CERTIFICATE_GSLT_TRACE_CODEC_CANARY_V1) \
+		--query-file $(CERTIFICATE_GSLT_TRACE_COMPILE_BARE_SAVE_V1) --summary); \
 	printf '%s\n' "$$falsified_bare_save" | \
 		rg -F -q '"outcome":"Unique"'; \
 	$(GSLT_RULE_MUTATOR_V1_BIN) mutate \
@@ -8204,14 +8235,14 @@ test-metamath-cogslt-proof-trace-semantics-v1: \
 		'(source-proof-trace-save-placement-v1 state-proof-save-repeatable-v1)'; \
 	repeatable_save=$$($(GSLT2PARSE_CHART_V1_NATIVE_BIN) \
 		$(METAMATH_PROOF_SEMANTIC_EXEC_V1) \
-		$(PROOF_GSLT_TRACE_SEMANTICS_V1) \
-		$(PROOF_GSLT_TRACE_COMPILER_V1) \
-		$(PROOF_GSLT_TRACE_INPUT_V1) \
+		$(CERTIFICATE_GSLT_TRACE_SEMANTICS_V1) \
+		$(CERTIFICATE_GSLT_TRACE_COMPILER_V1) \
+		$(CERTIFICATE_GSLT_TRACE_INPUT_V1) \
 		"$$work/repeatable-save-policy.metta" \
 		$(METAMATH_PROOF_TRACE_CODEC_V1) \
-		$(PROOF_GSLT_TRACE_INPUT_CANARY_V1) \
-		$(PROOF_GSLT_TRACE_CODEC_CANARY_V1) \
-		--query-file $(PROOF_GSLT_TRACE_COMPILE_REPEATED_SAVE_V1) --summary); \
+		$(CERTIFICATE_GSLT_TRACE_INPUT_CANARY_V1) \
+		$(CERTIFICATE_GSLT_TRACE_CODEC_CANARY_V1) \
+		--query-file $(CERTIFICATE_GSLT_TRACE_COMPILE_REPEATED_SAVE_V1) --summary); \
 	printf '%s\n' "$$repeatable_save" | rg -F -q '"outcome":"Unique"'; \
 	$(GSLT_RULE_MUTATOR_V1_BIN) mutate \
 		--source $(METAMATH_PROOF_TRACE_CODEC_V1) \
@@ -8219,59 +8250,59 @@ test-metamath-cogslt-proof-trace-semantics-v1: \
 		--rule mm-proof-trace-terminal-a-v1 --mode delete; \
 	deleted_terminal=$$($(GSLT2PARSE_CHART_V1_NATIVE_BIN) \
 		$(METAMATH_PROOF_SEMANTIC_EXEC_V1) \
-		$(PROOF_GSLT_TRACE_SEMANTICS_V1) \
-		$(PROOF_GSLT_TRACE_COMPILER_V1) \
+		$(CERTIFICATE_GSLT_TRACE_SEMANTICS_V1) \
+		$(CERTIFICATE_GSLT_TRACE_COMPILER_V1) \
 		"$$work/deleted-terminal.metta" \
-		$(PROOF_GSLT_TRACE_CODEC_CANARY_V1) \
-		--query-file $(PROOF_GSLT_TRACE_COMPILE_ACCEPTED_V1) --summary); \
+		$(CERTIFICATE_GSLT_TRACE_CODEC_CANARY_V1) \
+		--query-file $(CERTIFICATE_GSLT_TRACE_COMPILE_ACCEPTED_V1) --summary); \
 	printf '%s\n' "$$deleted_terminal" | \
 		rg -F -q '"outcome":"NoAnswer"'; \
 	$(GSLT_RULE_MUTATOR_V1_BIN) mutate \
-		--source $(PROOF_GSLT_TRACE_INPUT_V1) \
+		--source $(CERTIFICATE_GSLT_TRACE_INPUT_V1) \
 		--out "$$work/deleted-input-assertion.metta" \
 		--rule proof-trace-input-assertion-v1 --mode delete; \
 	deleted_input=$$($(GSLT2PARSE_CHART_V1_NATIVE_BIN) \
 		$(METAMATH_PROOF_SEMANTIC_EXEC_V1) \
-		$(PROOF_GSLT_TRACE_SEMANTICS_V1) \
-		$(PROOF_GSLT_TRACE_COMPILER_V1) \
+		$(CERTIFICATE_GSLT_TRACE_SEMANTICS_V1) \
+		$(CERTIFICATE_GSLT_TRACE_COMPILER_V1) \
 		"$$work/deleted-input-assertion.metta" \
 		$(METAMATH_PROOF_TRACE_POLICY_V1) \
 		$(METAMATH_PROOF_TRACE_CODEC_V1) \
-		$(PROOF_GSLT_TRACE_INPUT_CANARY_V1) \
-		--query-file $(PROOF_GSLT_TRACE_INPUT_NORMAL_V1) --summary); \
+		$(CERTIFICATE_GSLT_TRACE_INPUT_CANARY_V1) \
+		--query-file $(CERTIFICATE_GSLT_TRACE_INPUT_NORMAL_V1) --summary); \
 	printf '%s\n' "$$deleted_input" | \
 		rg -F -q '"outcome":"NoAnswer"'; \
 	$(GSLT_RULE_MUTATOR_V1_BIN) mutate \
-		--source $(PROOF_GSLT_TRACE_INPUT_CANARY_V1) \
+		--source $(CERTIFICATE_GSLT_TRACE_INPUT_CANARY_V1) \
 		--out "$$work/falsified-input-count.metta" \
 		--rule proof-trace-input-canary-context-count-v1 \
 		--mode falsify --replacement \
 		'(source-proof-trace-input-context-count-v1 input-request-v1 (ProofTraceNatSuccV1 (ProofTraceNatSuccV1 (ProofTraceNatSuccV1 ProofTraceNatZeroV1))))'; \
 	falsified_input=$$($(GSLT2PARSE_CHART_V1_NATIVE_BIN) \
 		$(METAMATH_PROOF_SEMANTIC_EXEC_V1) \
-		$(PROOF_GSLT_TRACE_SEMANTICS_V1) \
-		$(PROOF_GSLT_TRACE_COMPILER_V1) \
-		$(PROOF_GSLT_TRACE_INPUT_V1) \
+		$(CERTIFICATE_GSLT_TRACE_SEMANTICS_V1) \
+		$(CERTIFICATE_GSLT_TRACE_COMPILER_V1) \
+		$(CERTIFICATE_GSLT_TRACE_INPUT_V1) \
 		$(METAMATH_PROOF_TRACE_POLICY_V1) \
 		$(METAMATH_PROOF_TRACE_CODEC_V1) \
 		"$$work/falsified-input-count.metta" \
-		--query-file $(PROOF_GSLT_TRACE_INPUT_NORMAL_V1) --summary); \
+		--query-file $(CERTIFICATE_GSLT_TRACE_INPUT_NORMAL_V1) --summary); \
 	printf '%s\n' "$$falsified_input" | \
 		rg -F -q '"outcome":"NoAnswer"'; \
 	if rg -ni 'metamath|megalodon|tptp|set\.mm|\$[acdefpv]' \
-		$(PROOF_GSLT_TRACE_SEMANTICS_V1) \
-		$(PROOF_GSLT_TRACE_COMPILER_V1) \
-		$(PROOF_GSLT_TRACE_INPUT_V1); then exit 1; fi; \
+		$(CERTIFICATE_GSLT_TRACE_SEMANTICS_V1) \
+		$(CERTIFICATE_GSLT_TRACE_COMPILER_V1) \
+		$(CERTIFICATE_GSLT_TRACE_INPUT_V1); then exit 1; fi; \
 	if rg -q 'ProofTokenApartV1|ProofAssertionDisjointV1' \
-		$(PROOF_GSLT_TRACE_ORDER_CANARY_V1) \
-		$(PROOF_GSLT_TRACE_INPUT_CANARY_V1); then exit 1; fi; \
-		test "$$(wc -l <$(METAMATH_PROOF_MACHINE_NTT_V1))" -eq 1186; \
+		$(CERTIFICATE_GSLT_TRACE_ORDER_CANARY_V1) \
+		$(CERTIFICATE_GSLT_TRACE_INPUT_CANARY_V1); then exit 1; fi; \
+		test "$$(wc -l <$(METAMATH_PROOF_MACHINE_NTT_V1))" -eq 1173; \
 		test "$$(rg -c '^\(compile-oslf-native-type-v1 \(oslf-head-signature-v1 ' \
-			$(METAMATH_PROOF_MACHINE_NTT_V1))" -eq 331; \
+			$(METAMATH_PROOF_MACHINE_NTT_V1))" -eq 332; \
 		test "$$(rg -c '^\(compile-oslf-native-type-v1 \(oslf-step-schema-v1 ' \
 			$(METAMATH_PROOF_MACHINE_NTT_V1))" -eq 809; \
 		test "$$(rg -c '^\(compile-oslf-native-type-v1 \(oslf-external-relation-v1 ' \
-			$(METAMATH_PROOF_MACHINE_NTT_V1))" -eq 34; \
+			$(METAMATH_PROOF_MACHINE_NTT_V1))" -eq 20; \
 	rg -F -q \
 		'(oslf-head-signature-v1 ProofTraceAcceptedV1 (q-succ (q-succ (q-succ q-zero))))' \
 		$(METAMATH_PROOF_MACHINE_NTT_V1); \
@@ -9428,7 +9459,7 @@ test-metamath-cogslt-state-transition-execution-v1: \
 		$(METAMATH_STATE_TRANSITION_EXEC_IR_V1) \
 		| build-cogslt-relational-state-transition-core-tools-v1
 	@set -eu; \
-	test "$$(wc -l <$(METAMATH_STATE_TRANSITION_EXEC_IR_V1))" -eq 32; \
+	test "$$(wc -l <$(METAMATH_STATE_TRANSITION_EXEC_IR_V1))" -eq 31; \
 	test "$$(wc -l <$(METAMATH_STATE_TRANSITION_EXECUTION_GOOD_V1))" -eq 1; \
 	test "$$(wc -l <$(METAMATH_STATE_TRANSITION_EXECUTION_REPEATED_V1))" -eq 1; \
 	rg -F -q ' AcceptedV1 ' \
@@ -10256,11 +10287,11 @@ test-metamath-proof-trace-compressed-rhometta-compile-v1: \
 	cmp -s "$$work/run.metta" \
 		$(METAMATH_PROOF_TRACE_COMPILE_COMPRESSED_RHOMETTA_RUN_V1); \
 	$(GSLT_RULE_MUTATOR_V1_BIN) mutate \
-		--source $(PROOF_GSLT_TRACE_COMPILER_V1) \
+		--source $(CERTIFICATE_GSLT_TRACE_COMPILER_V1) \
 		--out "$$work/severed-source.metta" \
 		--rule proof-trace-compile-compressed-v1 --mode delete; \
 	! $(RHOMETTA_DIRECT_COMPILER_V1) \
-		$(foreach source,$(METAMATH_PROOF_TRACE_DIRECT_SOURCES_V1),--source $(if $(filter $(PROOF_GSLT_TRACE_COMPILER_V1),$(source)),$$work/severed-source.metta,$(source))) \
+		$(foreach source,$(METAMATH_PROOF_TRACE_DIRECT_SOURCES_V1),--source $(if $(filter $(CERTIFICATE_GSLT_TRACE_COMPILER_V1),$(source)),$$work/severed-source.metta,$(source))) \
 		--entry-rule proof-trace-compile-compressed-v1 \
 		--out "$$work/severed-program.metta" >/dev/null 2>&1; \
 	if rg -qi 'HornClause|horn:prove|horn_prove|worklist' \
@@ -12078,7 +12109,7 @@ test-metamath-state-proof-bridge-rhometta-compile-v1: \
 		--entry-rule state-step-check-proof-compressed-v1 \
 		--out "$$work/regenerated.metta"); \
 	printf '%s\n' "$$summary" | rg -q \
-		'^\(GSLTDirectRhoMettaV1Summary 391 165 [0-9a-f]{64} [0-9a-f]{64}\)$$'; \
+		'^\(GSLTDirectRhoMettaV1Summary 392 164 [0-9a-f]{64} [0-9a-f]{64}\)$$'; \
 	cmp -s "$$work/regenerated.metta" \
 		$(METAMATH_STATE_PROOF_BRIDGE_RHOMETTA_PROGRAM_V1); \
 	rg -F -q '; selected-entry-rule state-step-check-proof-normal-v1' \
@@ -12114,7 +12145,7 @@ test-metamath-state-proof-bridge-rhometta-compile-v1: \
 		$(METAMATH_STATE_PROOF_BRIDGE_RHOMETTA_PROGRAM_V1); \
 	! rg -F -q 'state-proof-apply-owned-assertion-result-v1' \
 		"$$work/deleted-internal-program.metta"; \
-	printf '%s\n' '(MetamathStateProofBridgeRhoMettaCompileV1Summary 391 165 2 2 0)'
+	printf '%s\n' '(MetamathStateProofBridgeRhoMettaCompileV1Summary 392 164 2 2 0)'
 
 .PHONY: test-metamath-state-proof-runtime-rhometta-v1 \
 		test-metamath-state-proof-runtime-rhometta-core-v1
@@ -12146,7 +12177,7 @@ test-metamath-state-proof-runtime-rhometta-core-v1: \
 		--entry-rule state-start-occurrence-stream-v1 \
 		--out "$$work/regenerated.metta"); \
 	printf '%s\n' "$$summary" | rg -q \
-		'^[(]GSLTDirectRhoMettaV1Summary 577 237 [0-9a-f]{64} [0-9a-f]{64}[)]$$'; \
+		'^[(]GSLTDirectRhoMettaV1Summary 578 236 [0-9a-f]{64} [0-9a-f]{64}[)]$$'; \
 	cmp -s "$$work/regenerated.metta" \
 		$(METAMATH_STATE_PROOF_RUNTIME_RHOMETTA_PROGRAM_V1); \
 	rg -F -q '; selected-entry-rule state-start-occurrence-stream-v1' \
@@ -12177,7 +12208,7 @@ test-metamath-state-proof-runtime-rhometta-core-v1: \
 		$(METAMATH_STATE_PROOF_RUNTIME_RHOMETTA_PROGRAM_V1) | cut -d' ' -f1); \
 	test "$$program_digest_before" = "$$program_digest_after"; \
 	printf '%s\n' \
-		'(MetamathStateProofRuntimeRhoMettaV1Summary 577 237 1 1 0)'
+		'(MetamathStateProofRuntimeRhoMettaV1Summary 578 236 1 1 0)'
 
 .PHONY: prepare-metamath-state-proof-full-stream-rhocalc-profile-benchmark-v1
 prepare-metamath-state-proof-full-stream-rhocalc-profile-benchmark-v1: \
@@ -12571,11 +12602,11 @@ $(METAMATH_PROOF_SEMANTIC_PAYLOAD_DIRECT_V1): \
 
 $(METAMATH_PROOF_DENOTATION_DIRECT_PROGRAM_V1): \
 		$(METAMATH_PROOF_SEMANTIC_PAYLOAD_DIRECT_V1) \
-		$(PROOF_GSLT_FIRST_ORDER_DENOTATION_V1) \
+		$(CERTIFICATE_GSLT_FIRST_ORDER_DENOTATION_V1) \
 		$(LANGDEF_COMPILER_V1_BIN)
 	$(LANGDEF_COMPILER_V1_BIN) petta-direct \
 		--source $(METAMATH_PROOF_SEMANTIC_PAYLOAD_DIRECT_V1) \
-		--source $(PROOF_GSLT_FIRST_ORDER_DENOTATION_V1) \
+		--source $(CERTIFICATE_GSLT_FIRST_ORDER_DENOTATION_V1) \
 		--out $@
 
 $(METAMATH_PROOF_REFLECTION_DIRECT_V1): \
@@ -12688,19 +12719,21 @@ test-metamath-cogslt-petta-proof-trace-direct-v1: \
 	printf '%s\n' "$$essential" | rg -F -q \
 		'(ProofTraceRefusedEssentialMismatchV1 (ProofSequenceConsV1 input-x-v1 ProofSequenceNilV1) (ProofSequenceConsV1 input-a-v1 ProofSequenceNilV1) (ProofSequenceConsV1 input-dummy-v1 ProofSequenceNilV1))'; \
 	$(GSLT_RULE_MUTATOR_V1_BIN) mutate \
-		--source $(PROOF_GSLT_TRACE_SEMANTICS_V1) \
+		--source $(CERTIFICATE_GSLT_TRACE_SEMANTICS_V1) \
 		--out "$$work/severed-semantics.metta" \
 		--rule proof-trace-exec-state-result-apply-v1 --mode delete; \
 	$(LANGDEF_COMPILER_V1_BIN) petta-direct \
 		--source $(METAMATH_PROOF_SEMANTIC_EXEC_DIRECT_V1) \
 		--source "$$work/severed-semantics.metta" \
-		--source $(PROOF_GSLT_TRACE_COMPILER_V1) \
-		--source $(PROOF_GSLT_TRACE_INPUT_V1) \
-		--source experiments/gslt2parse_foundation/presentations/core/proof_gslt_trace_input_interface_v1.metta \
+		--source $(CERTIFICATE_GSLT_TRACE_COMPILER_V1) \
+		--source $(CERTIFICATE_GSLT_TRACE_INPUT_V1) \
+		--source experiments/gslt2parse_foundation/presentations/core/certificate_gslt_trace_input_interface_v1.metta \
+		--source $(CERTIFICATE_GSLT_TRACE_PROJECTED_INPUT_INTERFACE_V1) \
+		--source $(CERTIFICATE_GSLT_TRACE_APARTNESS_INTERFACE_V1) \
 		--source $(METAMATH_PROOF_TRACE_POLICY_V1) \
 		--source $(METAMATH_PROOF_TRACE_CODEC_V1) \
-		--source $(PROOF_GSLT_TRACE_INPUT_CANARY_V1) \
-		--source $(PROOF_GSLT_TRACE_EVIDENCE_CANARY_V1) \
+		--source $(CERTIFICATE_GSLT_TRACE_INPUT_CANARY_V1) \
+		--source $(CERTIFICATE_GSLT_TRACE_EVIDENCE_CANARY_V1) \
 		--out "$$work/severed-program.metta" >/dev/null; \
 	! cmp -s "$$work/severed-program.metta" \
 		$(METAMATH_PROOF_TRACE_DIRECT_PROGRAM_V1); \
@@ -13096,7 +13129,7 @@ $(METAMATH_PROOF_TRACE_PETTA_PROGRAM_V1) \
 		--receipt-out $(METAMATH_PROOF_TRACE_PETTA_RECEIPT_V1)
 
 $(METAMATH_PROOF_TRACE_PETTA_DELETED_SEMANTICS_V1): \
-		$(PROOF_GSLT_TRACE_SEMANTICS_V1) \
+		$(CERTIFICATE_GSLT_TRACE_SEMANTICS_V1) \
 		| build-cogslt-relational-state-transition-core-tools-v1
 	$(RELATIONAL_STATE_TRANSITION_MUTATOR_CORE_V1) mutate \
 		--source $< --out $@ \
@@ -13107,24 +13140,24 @@ $(METAMATH_PROOF_TRACE_PETTA_SEVERED_PROGRAM_V1) \
 		$(PETTA_FINITE_HORN_RUNTIME_V1) \
 		$(METAMATH_PROOF_SEMANTIC_EXEC_V1) \
 		$(METAMATH_PROOF_TRACE_PETTA_DELETED_SEMANTICS_V1) \
-		$(PROOF_GSLT_TRACE_COMPILER_V1) \
-		$(PROOF_GSLT_TRACE_INPUT_V1) \
+		$(CERTIFICATE_GSLT_TRACE_COMPILER_V1) \
+		$(CERTIFICATE_GSLT_TRACE_INPUT_V1) \
 		$(METAMATH_PROOF_TRACE_POLICY_V1) \
 		$(METAMATH_PROOF_TRACE_CODEC_V1) \
-		$(PROOF_GSLT_TRACE_INPUT_CANARY_V1) \
-		$(PROOF_GSLT_TRACE_EVIDENCE_CANARY_V1) \
+		$(CERTIFICATE_GSLT_TRACE_INPUT_CANARY_V1) \
+		$(CERTIFICATE_GSLT_TRACE_EVIDENCE_CANARY_V1) \
 		$(METAMATH_PROOF_TRACE_PETTA_QUERY_V1) \
 		| build-cogslt-relational-state-transition-core-tools-v1
 	$(RELATIONAL_STATE_TRANSITION_LANGDEF_CORE_V1) oracle-petta-horn \
 		--runtime $(PETTA_FINITE_HORN_RUNTIME_V1) \
 		--source $(METAMATH_PROOF_SEMANTIC_EXEC_V1) \
 		--source $(METAMATH_PROOF_TRACE_PETTA_DELETED_SEMANTICS_V1) \
-		--source $(PROOF_GSLT_TRACE_COMPILER_V1) \
-		--source $(PROOF_GSLT_TRACE_INPUT_V1) \
+		--source $(CERTIFICATE_GSLT_TRACE_COMPILER_V1) \
+		--source $(CERTIFICATE_GSLT_TRACE_INPUT_V1) \
 		--source $(METAMATH_PROOF_TRACE_POLICY_V1) \
 		--source $(METAMATH_PROOF_TRACE_CODEC_V1) \
-		--source $(PROOF_GSLT_TRACE_INPUT_CANARY_V1) \
-		--source $(PROOF_GSLT_TRACE_EVIDENCE_CANARY_V1) \
+		--source $(CERTIFICATE_GSLT_TRACE_INPUT_CANARY_V1) \
+		--source $(CERTIFICATE_GSLT_TRACE_EVIDENCE_CANARY_V1) \
 		--epilogue $(METAMATH_PROOF_TRACE_PETTA_QUERY_V1) \
 		--out $(METAMATH_PROOF_TRACE_PETTA_SEVERED_PROGRAM_V1) \
 		--receipt-out $(METAMATH_PROOF_TRACE_PETTA_SEVERED_RECEIPT_V1)
@@ -14085,7 +14118,11 @@ test-metamath-cogslt-cli-core-v1: $(BIN) \
 		tests/langdef/metamath/invalid_theorem_compressed_unknown_after_continuation.mm \
 		tests/langdef/metamath/invalid_theorem_compressed_explicit_mandatory.mm \
 		tests/langdef/metamath/invalid_theorem_compressed_bare_save.mm \
-		tests/langdef/metamath/invalid_theorem_compressed_repeated_save.mm
+		tests/langdef/metamath/invalid_theorem_compressed_repeated_save.mm \
+		tests/langdef/metamath/positive_theorem_disjoint_substitution.mm \
+		tests/langdef/metamath/positive_theorem_compressed_disjoint_substitution.mm \
+		tests/langdef/metamath/invalid_theorem_missing_disjoint.mm \
+		tests/langdef/metamath/invalid_theorem_compressed_reused_missing_disjoint.mm
 	@if [[ "$(ENABLE_PYTHON)" != 0 || "$(LIB_PROLOG_ENABLED)" != 0 ]]; then \
 		echo 'the compiled LanguageDef CLI gate requires the C-only core build'; \
 		exit 1; \
@@ -16046,6 +16083,51 @@ endif
 
 test-eval-gc-adversarial: $(BIN)
 	@CETTA_BIN="$(abspath $(BIN))" scripts/gc_adversarial_audit.sh
+	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 test-eval-gc-precise-suspension
+	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 test-eval-gc-control-suspensions
+
+.PHONY: test-eval-gc-precise-suspension test-eval-gc-control-suspensions
+test-eval-gc-precise-suspension:
+ifeq ($(ENABLE_RUNTIME_STATS),1)
+	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 $(BIN)
+	@exp="$(GC_PRECISE_SUSPENSION_TEST:.metta=.expected)"; \
+	for dialect in he prime; do \
+		if [ "$$dialect" = he ]; then \
+			result=$$(CETTA_GC=1 CETTA_GC_BUDGET_MB=1 $(CETTA_BIN_INVOKE) --profile he-extended --lang he $(GC_PRECISE_SUSPENSION_TEST) 2>&1); \
+		else \
+			result=$$(CETTA_GC=1 CETTA_GC_BUDGET_MB=1 $(CETTA_BIN_INVOKE) --lang prime $(GC_PRECISE_SUSPENSION_TEST) 2>&1); \
+		fi; \
+		if [ "$$result" = "$$(cat "$$exp")" ]; then \
+			echo "PASS: $(GC_PRECISE_SUSPENSION_TEST) [$$dialect]"; \
+		else \
+			echo "FAIL: $(GC_PRECISE_SUSPENSION_TEST) [$$dialect]"; \
+			diff <(cat "$$exp") <(echo "$$result") | head -80; \
+			exit 1; \
+		fi; \
+	done
+else
+	@echo "INFO: precise eval GC suspension diagnostic requires compile-time runtime stats; re-running with ENABLE_RUNTIME_STATS=1"
+	@$(MAKE) BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 $@
+endif
+
+test-eval-gc-control-suspensions:
+ifeq ($(ENABLE_RUNTIME_STATS),1)
+	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 $(BIN)
+	@result=$$(CETTA_GC=1 CETTA_GC_BUDGET_MB=1 \
+		CETTA_PRIME_NEED_HEAP_INDEX=1 $(CETTA_BIN_INVOKE) \
+		--lang prime $(GC_CONTROL_SUSPENSIONS_TEST) 2>&1); \
+	exp="$(GC_CONTROL_SUSPENSIONS_TEST:.metta=.expected)"; \
+	if [ "$$result" = "$$(cat "$$exp")" ]; then \
+		echo "PASS: $(GC_CONTROL_SUSPENSIONS_TEST) [prime]"; \
+	else \
+		echo "FAIL: $(GC_CONTROL_SUSPENSIONS_TEST) [prime]"; \
+		diff <(cat "$$exp") <(echo "$$result") | head -80; \
+		exit 1; \
+	fi
+else
+	@echo "INFO: eval GC control-suspension diagnostic requires compile-time runtime stats; re-running with ENABLE_RUNTIME_STATS=1"
+	@$(MAKE) BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 $@
+endif
 
 test-eval-gc-survivor-reset:
 ifeq ($(ENABLE_RUNTIME_STATS),1)
@@ -21567,7 +21649,8 @@ test-petta-native-host-runtime: $(BIN)
 	echo "PASS: native PeTTa time and session random values"
 
 test-petta-search-machine: $(PETTA_SEARCH_MACHINE_TEST_BIN) $(BIN) test-petta-type-langdef-source-binding-v1 test-petta-boundary-langdef-source-binding-v1 test-petta-capability-ledger test-petta-specializer-relevance-filter test-petta-mam-contender-mutations test-petta-extended-query-algebra test-petta-prepared-register-loop test-petta-specialized-pure-call test-petta-memoization test-petta-match-existence-fusion test-petta-clause-slot-admission test-petta-equation-template-c0 test-petta-relational-equation-view test-petta-argv-native test-petta-native-host-runtime
-	@./$(PETTA_SEARCH_MACHINE_TEST_BIN)
+	@CETTA_PETTA_CLAUSE_BODY_ACTIVATION=1 \
+		./$(PETTA_SEARCH_MACHINE_TEST_BIN)
 	@machine_stats=$$(CETTA_PETTA_MACHINE_STATS=1 \
 		./$(BIN) --lang petta -e '!(+ 1 2)' \
 		2>&1 >/dev/null); \
@@ -22309,6 +22392,16 @@ test-petta-search-machine: $(PETTA_SEARCH_MACHINE_TEST_BIN) $(BIN) test-petta-ty
 	expected=$$(cat tests/petta/search_machine_translator.expected); \
 	if [ "$$result" != "$$expected" ]; then \
 		echo "FAIL: native PeTTa translator registration and generated-code execution"; \
+		diff <(printf '%s\n' "$$expected") \
+			<(printf '%s\n' "$$result") | head -40; \
+		exit 1; \
+	fi; \
+	result=$$(CETTA_PETTA_SEARCH_MACHINE=1 ./$(BIN) --lang petta \
+		tests/petta/search_machine_activation_semantic_boundary.metta 2>&1); \
+	expected=$$(cat \
+		tests/petta/search_machine_activation_semantic_boundary.expected); \
+	if [ "$$result" != "$$expected" ]; then \
+		echo "FAIL: native PeTTa clause activation semantic boundary"; \
 		diff <(printf '%s\n' "$$expected") \
 			<(printf '%s\n' "$$result") | head -40; \
 		exit 1; \
@@ -25833,14 +25926,14 @@ $(OSLF_NATIVE_OPEN_CAPABILITY_V1_REFLECTION): \
 		--out $@
 
 $(METAMATH_PROOF_TRACE_NATIVE_PROGRAM_V1_NTT): \
-		$(PROOF_GSLT_TRACE_EXECUTION_COMPOSITION_V1) \
+		$(CERTIFICATE_GSLT_TRACE_EXECUTION_COMPOSITION_V1) \
 		$(METAMATH_PROOF_TRACE_NATIVE_PROGRAM_V1_SOURCES) \
 		$(FINITE_HORN_REFLECTION_V1) \
 		$(OSLF_NATIVE_TYPE_COMPILER_V1) \
 		$(LANGDEF_COMPILER_V1_BIN) $(GSLT2PARSE_CHART_V1_NATIVE_BIN)
 	@mkdir -p $(dir $@)
 	$(LANGDEF_COMPILER_V1_BIN) oslf-ntt \
-		--composition $(PROOF_GSLT_TRACE_EXECUTION_COMPOSITION_V1) \
+		--composition $(CERTIFICATE_GSLT_TRACE_EXECUTION_COMPOSITION_V1) \
 		--chart $(GSLT2PARSE_CHART_V1_NATIVE_BIN) \
 		--reflection $(FINITE_HORN_REFLECTION_V1) \
 		--compiler $(OSLF_NATIVE_TYPE_COMPILER_V1) \
@@ -25848,7 +25941,7 @@ $(METAMATH_PROOF_TRACE_NATIVE_PROGRAM_V1_NTT): \
 
 $(METAMATH_PROOF_TRACE_NATIVE_CAPABILITY_V1): \
 		$(METAMATH_PROOF_TRACE_NATIVE_PROGRAM_V1_SOURCES) \
-		$(PROOF_GSLT_TRACE_INPUT_CANARY_V1) \
+		$(CERTIFICATE_GSLT_TRACE_INPUT_CANARY_V1) \
 		$(FINITE_HORN_REFLECTION_V1) \
 		$(LANGDEF_COMPILER_V1_BIN) $(GSLT2PARSE_CHART_V1_NATIVE_BIN)
 	@mkdir -p $(dir $@)
@@ -25856,8 +25949,8 @@ $(METAMATH_PROOF_TRACE_NATIVE_CAPABILITY_V1): \
 		--chart $(GSLT2PARSE_CHART_V1_NATIVE_BIN) \
 		--source $(FINITE_HORN_REFLECTION_V1) \
 		$(foreach source,$(METAMATH_PROOF_TRACE_NATIVE_PROGRAM_V1_SOURCES),--reflect-source $(source)) \
-		--reflect-source $(PROOF_GSLT_TRACE_INPUT_CANARY_V1) \
-		--query '(source-rule (q-sym ProofGSLTTraceInputCanaryV1) ?rule)' \
+		--reflect-source $(CERTIFICATE_GSLT_TRACE_INPUT_CANARY_V1) \
+		--query '(source-rule (q-sym CertificateGSLTTraceInputCanaryV1) ?rule)' \
 		--timeout 120 --out $@
 
 $(METAMATH_PROOF_TRACE_NATIVE_CAPABILITY_DELETED_V1): \
@@ -26077,29 +26170,29 @@ $(OSLF_NATIVE_TYPE_VM_V1_TEST_BIN): \
 	$(CC) $(CFLAGS) -Wl,--gc-sections -o $@ $^ \
 		$(OSLF_NATIVE_TYPE_VM_V1_LDFLAGS)
 
-$(PROOF_GSLT_RELATIONAL_RUNTIME_NATIVE_V1_TEST_BIN): \
-		$(PROOF_GSLT_RELATIONAL_RUNTIME_NATIVE_V1_TEST_SRC) \
+$(CERTIFICATE_GSLT_RELATIONAL_RUNTIME_NATIVE_V1_TEST_BIN): \
+		$(CERTIFICATE_GSLT_RELATIONAL_RUNTIME_NATIVE_V1_TEST_SRC) \
 		$(METAMATH_CURSOR_FOLD_GENERATED_C_V1) \
 		$(METAMATH_PROOF_MACHINE_LANGUAGE_V1_GENERATED_H) \
 		$(METAMATH_PROOF_MACHINE_LANGUAGE_V1_GENERATED_C) \
 		$(METAMATH_PROOF_MACHINE_PROVIDER_CATALOG_V1_GENERATED_H) \
 		$(METAMATH_PROOF_MACHINE_PROVIDER_CATALOG_V1_GENERATED_C) \
-		$(PROOF_GSLT_RELATIONAL_RUNTIME_NATIVE_V1_TEST_LINK_OBJ) \
+		$(CERTIFICATE_GSLT_RELATIONAL_RUNTIME_NATIVE_V1_TEST_LINK_OBJ) \
 		$(BUILD_CONFIG_HEADER)
 	@mkdir -p $(dir $@)
 	$(CC) $(CPPFLAGS) -I$(GSLT2PARSE_SCHEMA_V1_NATIVE_DIR) $(CFLAGS) \
 		-Wl,--gc-sections \
-		-o $@ $(PROOF_GSLT_RELATIONAL_RUNTIME_NATIVE_V1_TEST_SRC) \
+		-o $@ $(CERTIFICATE_GSLT_RELATIONAL_RUNTIME_NATIVE_V1_TEST_SRC) \
 		$(METAMATH_CURSOR_FOLD_GENERATED_C_V1) \
 		$(METAMATH_PROOF_MACHINE_LANGUAGE_V1_GENERATED_C) \
 		$(METAMATH_PROOF_MACHINE_PROVIDER_CATALOG_V1_GENERATED_C) \
-		$(PROOF_GSLT_RELATIONAL_RUNTIME_NATIVE_V1_TEST_LINK_OBJ) \
+		$(CERTIFICATE_GSLT_RELATIONAL_RUNTIME_NATIVE_V1_TEST_LINK_OBJ) \
 		$(OSLF_NATIVE_TYPE_VM_V1_LDFLAGS)
 
-.PHONY: test-cogslt-proof-gslt-relational-runtime-v1
-test-cogslt-proof-gslt-relational-runtime-v1: \
-		$(PROOF_GSLT_RELATIONAL_RUNTIME_NATIVE_V1_TEST_BIN) \
-		$(PROOF_GSLT_METAMATH_RELATIONAL_RUNTIME_ABI_V1) \
+.PHONY: test-cogslt-certificate-gslt-relational-runtime-v1
+test-cogslt-certificate-gslt-relational-runtime-v1: \
+		$(CERTIFICATE_GSLT_RELATIONAL_RUNTIME_NATIVE_V1_TEST_BIN) \
+		$(CERTIFICATE_GSLT_METAMATH_RELATIONAL_RUNTIME_ABI_V1) \
 		$(METAMATH_PROOF_MACHINE_NTT_V1) \
 		$(GSLT_RULE_MUTATOR_V1_BIN) $(LANGDEF_COMPILER_V1_BIN) \
 		$(GSLT2PARSE_CHART_V1_NATIVE_BIN) \
@@ -26112,7 +26205,11 @@ test-cogslt-proof-gslt-relational-runtime-v1: \
 		tests/langdef/metamath/invalid_theorem_compressed_unknown_after_continuation.mm \
 		tests/langdef/metamath/invalid_theorem_compressed_explicit_mandatory.mm \
 		tests/langdef/metamath/invalid_theorem_compressed_bare_save.mm \
-		tests/langdef/metamath/invalid_theorem_compressed_repeated_save.mm
+		tests/langdef/metamath/invalid_theorem_compressed_repeated_save.mm \
+		tests/langdef/metamath/positive_theorem_disjoint_substitution.mm \
+		tests/langdef/metamath/positive_theorem_compressed_disjoint_substitution.mm \
+		tests/langdef/metamath/invalid_theorem_missing_disjoint.mm \
+		tests/langdef/metamath/invalid_theorem_compressed_reused_missing_disjoint.mm
 	@python3 tools/test_gslt_language_generation_v1.py \
 		--generator $(GSLT_LANGUAGE_GENERATOR_V1) \
 		--manifest $(METAMATH_PROOF_MACHINE_LANGUAGE_V1_MANIFEST) \
@@ -26130,8 +26227,8 @@ test-cogslt-proof-gslt-relational-runtime-v1: \
 		--source $(METAMATH_PROOF_MACHINE_PROVIDER_CATALOG_V1_GENERATED_C) \
 		--symbol cetta_metamath_proof_machine_provider_catalog_v1 \
 		--header-include langdef/metamath/generated/proof_machine_provider_catalog_v1.generated.h
-	@$(PROOF_GSLT_RELATIONAL_RUNTIME_NATIVE_V1_TEST_BIN) \
-		$(PROOF_GSLT_METAMATH_RELATIONAL_RUNTIME_ABI_V1) \
+	@$(CERTIFICATE_GSLT_RELATIONAL_RUNTIME_NATIVE_V1_TEST_BIN) \
+		$(CERTIFICATE_GSLT_METAMATH_RELATIONAL_RUNTIME_ABI_V1) \
 		$(METAMATH_PROOF_MACHINE_NTT_V1) \
 		tests/support/metamath_mini_thm_v0.mm \
 		tests/langdef/metamath/invalid_theorem_wrong_claim.mm \
@@ -26146,28 +26243,37 @@ test-cogslt-proof-gslt-relational-runtime-v1: \
 		tests/langdef/metamath/invalid_theorem_compressed_unknown_after_continuation.mm \
 		tests/langdef/metamath/invalid_theorem_compressed_explicit_mandatory.mm \
 		tests/langdef/metamath/invalid_theorem_compressed_bare_save.mm \
-		tests/langdef/metamath/invalid_theorem_compressed_repeated_save.mm
+		tests/langdef/metamath/invalid_theorem_compressed_repeated_save.mm \
+		tests/langdef/metamath/positive_theorem_disjoint_substitution.mm \
+		tests/langdef/metamath/positive_theorem_compressed_disjoint_substitution.mm \
+		tests/langdef/metamath/invalid_theorem_missing_disjoint.mm \
+		tests/langdef/metamath/invalid_theorem_compressed_reused_missing_disjoint.mm
 	@test "$$(rg -c 'proof-relational-runtime-compressed-input-v1' \
-		$(PROOF_GSLT_METAMATH_RELATIONAL_RUNTIME_ABI_V1))" -eq 1
+		$(CERTIFICATE_GSLT_METAMATH_RELATIONAL_RUNTIME_ABI_V1))" -eq 1
 	@test "$$(rg -c 'proof-relational-runtime-normal-input-v1' \
-		$(PROOF_GSLT_METAMATH_RELATIONAL_RUNTIME_ABI_V1))" -eq 1
+		$(CERTIFICATE_GSLT_METAMATH_RELATIONAL_RUNTIME_ABI_V1))" -eq 1
 	@test "$$(rg -c 'proof-relational-runtime-outcome-query-v1' \
-		$(PROOF_GSLT_METAMATH_RELATIONAL_RUNTIME_ABI_V1))" -eq 4
+		$(CERTIFICATE_GSLT_METAMATH_RELATIONAL_RUNTIME_ABI_V1))" -eq 4
 	@test "$$(rg -c 'proof-relational-runtime-input-byte-v1' \
-		$(PROOF_GSLT_METAMATH_RELATIONAL_RUNTIME_ABI_V1))" -eq 2
+		$(CERTIFICATE_GSLT_METAMATH_RELATIONAL_RUNTIME_ABI_V1))" -eq 1
 	@test "$$(rg -c 'proof-relational-runtime-distinct-pairs-v1' \
-		$(PROOF_GSLT_METAMATH_RELATIONAL_RUNTIME_ABI_V1))" -eq 1
+		$(CERTIFICATE_GSLT_METAMATH_RELATIONAL_RUNTIME_ABI_V1))" -eq 2
+	@test "$$(rg -c 'proof-relational-runtime-binary-table-enumeration-v1' \
+		$(CERTIFICATE_GSLT_METAMATH_RELATIONAL_RUNTIME_ABI_V1))" -eq 1
 	@set -eu; \
 	work=$$(mktemp -d runtime/proof-relational-runtime-mutation.XXXXXX); \
 	trap 'rm -rf "$$work"' EXIT INT TERM; \
 	sed '/proof-relational-runtime-distinct-pairs-v1/d' \
-		$(PROOF_GSLT_METAMATH_RELATIONAL_RUNTIME_ABI_V1) \
+		$(CERTIFICATE_GSLT_METAMATH_RELATIONAL_RUNTIME_ABI_V1) \
 		>"$$work/deleted.answers"; \
-	sed '/proof-relational-runtime-distinct-pairs-v1/s/mm-symbol-variable/mm-symbol-constant/' \
-		$(PROOF_GSLT_METAMATH_RELATIONAL_RUNTIME_ABI_V1) \
+	sed '/proof-relational-runtime-distinct-pairs-v1.*mm-state-symbol-kind/s/mm-state-symbol-kind/mm-state-formula/' \
+		$(CERTIFICATE_GSLT_METAMATH_RELATIONAL_RUNTIME_ABI_V1) \
 		>"$$work/falsified.answers"; \
-	for mutation in deleted falsified; do \
-		if $(PROOF_GSLT_RELATIONAL_RUNTIME_NATIVE_V1_TEST_BIN) \
+	sed '/proof-relational-runtime-binary-table-enumeration-v1/d' \
+		$(CERTIFICATE_GSLT_METAMATH_RELATIONAL_RUNTIME_ABI_V1) \
+		>"$$work/deleted-enumeration.answers"; \
+	for mutation in deleted falsified deleted-enumeration; do \
+		if $(CERTIFICATE_GSLT_RELATIONAL_RUNTIME_NATIVE_V1_TEST_BIN) \
 			"$$work/$$mutation.answers" \
 			$(METAMATH_PROOF_MACHINE_NTT_V1) \
 			tests/support/metamath_mini_thm_v0.mm \
@@ -26184,6 +26290,10 @@ test-cogslt-proof-gslt-relational-runtime-v1: \
 			tests/langdef/metamath/invalid_theorem_compressed_explicit_mandatory.mm \
 			tests/langdef/metamath/invalid_theorem_compressed_bare_save.mm \
 			tests/langdef/metamath/invalid_theorem_compressed_repeated_save.mm \
+			tests/langdef/metamath/positive_theorem_disjoint_substitution.mm \
+			tests/langdef/metamath/positive_theorem_compressed_disjoint_substitution.mm \
+			tests/langdef/metamath/invalid_theorem_missing_disjoint.mm \
+			tests/langdef/metamath/invalid_theorem_compressed_reused_missing_disjoint.mm \
 			>"$$work/$$mutation.out" 2>"$$work/$$mutation.err"; then \
 			exit 1; \
 		fi; \
@@ -26194,9 +26304,9 @@ test-cogslt-proof-gslt-relational-runtime-v1: \
 	trap 'rm -rf "$$work"' EXIT INT TERM; \
 	sed -e '/proof-runtime-result-incomplete-v1/d' \
 		-e '/proof-relational-runtime-input-byte-v1/d' \
-		$(PROOF_GSLT_METAMATH_RELATIONAL_RUNTIME_ABI_V1) \
+		$(CERTIFICATE_GSLT_METAMATH_RELATIONAL_RUNTIME_ABI_V1) \
 		>"$$work/deleted.answers"; \
-	if $(PROOF_GSLT_RELATIONAL_RUNTIME_NATIVE_V1_TEST_BIN) \
+	if $(CERTIFICATE_GSLT_RELATIONAL_RUNTIME_NATIVE_V1_TEST_BIN) \
 		"$$work/deleted.answers" \
 		$(METAMATH_PROOF_MACHINE_NTT_V1) \
 		tests/support/metamath_mini_thm_v0.mm \
@@ -26213,6 +26323,10 @@ test-cogslt-proof-gslt-relational-runtime-v1: \
 		tests/langdef/metamath/invalid_theorem_compressed_explicit_mandatory.mm \
 		tests/langdef/metamath/invalid_theorem_compressed_bare_save.mm \
 		tests/langdef/metamath/invalid_theorem_compressed_repeated_save.mm \
+		tests/langdef/metamath/positive_theorem_disjoint_substitution.mm \
+		tests/langdef/metamath/positive_theorem_compressed_disjoint_substitution.mm \
+		tests/langdef/metamath/invalid_theorem_missing_disjoint.mm \
+		tests/langdef/metamath/invalid_theorem_compressed_reused_missing_disjoint.mm \
 		>"$$work/deleted.out" 2>"$$work/deleted.err"; then \
 		exit 1; \
 	fi; \
@@ -26224,21 +26338,21 @@ test-cogslt-proof-gslt-relational-runtime-v1: \
 		$(LANGDEF_COMPILER_V1_BIN) answers \
 			--chart $(GSLT2PARSE_CHART_V1_NATIVE_BIN) \
 			--source $(METAMATH_PROOF_SEMANTIC_EXEC_V1) \
-			--source $(PROOF_GSLT_ARTICLE_CORE_V1) \
-			--source $(PROOF_GSLT_SEQUENCE_RELATIONS_V1) \
-			--source $(PROOF_GSLT_SEQUENCE_SCHEMA_V1) \
+			--source $(CERTIFICATE_GSLT_ARTICLE_CORE_V1) \
+			--source $(CERTIFICATE_GSLT_SEQUENCE_RELATIONS_V1) \
+			--source $(CERTIFICATE_GSLT_SEQUENCE_SCHEMA_V1) \
 			--source $(METAMATH_OCCURRENCE_FOLD_CORE_V1) \
 			--source $(METAMATH_SOURCE_FOLD_V1) \
 			--source $(METAMATH_RELATIONAL_STATE_CORE_V1) \
 			--source $(METAMATH_SOURCE_STATE_V1) \
 			--source $(METAMATH_SOURCE_PROOF_V1) \
-			--source $(PROOF_GSLT_TRACE_SEMANTICS_V1) \
-			--source $(PROOF_GSLT_TRACE_COMPILER_V1) \
-			--source $(PROOF_GSLT_TRACE_INPUT_V1) \
-			--source $(PROOF_GSLT_RELATIONAL_PROJECTION_CORE_V1) \
-			--source $(PROOF_GSLT_RELATIONAL_RUNTIME_COMPILER_V1) \
-			--source $(PROOF_GSLT_METAMATH_CALCULUS_V1) \
-			--source $(PROOF_GSLT_METAMATH_RELATIONAL_PROJECTION_V1) \
+			--source $(CERTIFICATE_GSLT_TRACE_SEMANTICS_V1) \
+			--source $(CERTIFICATE_GSLT_TRACE_COMPILER_V1) \
+			--source $(CERTIFICATE_GSLT_TRACE_INPUT_V1) \
+			--source $(CERTIFICATE_GSLT_RELATIONAL_PROJECTION_CORE_V1) \
+			--source $(CERTIFICATE_GSLT_RELATIONAL_RUNTIME_COMPILER_V1) \
+			--source $(CERTIFICATE_GSLT_METAMATH_CALCULUS_V1) \
+			--source $(CERTIFICATE_GSLT_METAMATH_RELATIONAL_PROJECTION_V1) \
 			--source "$$1" \
 			--query '(proof-relational-runtime-artifact-v1 ?record)' \
 			--out "$$2" >/dev/null; \
@@ -26253,9 +26367,14 @@ test-cogslt-proof-gslt-relational-runtime-v1: \
 			"$$work/$$kind-provider.answers"; \
 		test "$$(rg -c 'proof-relational-runtime-outcome-query-v1' \
 			"$$work/$$kind-provider.answers")" -eq 3; \
-		test "$$(rg -c 'proof-relational-runtime-input-byte-v1' \
-			"$$work/$$kind-provider.answers")" -eq 1; \
-		if $(PROOF_GSLT_RELATIONAL_RUNTIME_NATIVE_V1_TEST_BIN) \
+		input_byte_count=$$(rg -c 'proof-relational-runtime-input-byte-v1' \
+			"$$work/$$kind-provider.answers" || true); \
+		case "$$kind" in \
+			normal) expected_input_byte_count=0 ;; \
+			compressed) expected_input_byte_count=1 ;; \
+		esac; \
+		test "$${input_byte_count:-0}" -eq "$$expected_input_byte_count"; \
+		if $(CERTIFICATE_GSLT_RELATIONAL_RUNTIME_NATIVE_V1_TEST_BIN) \
 			"$$work/$$kind-provider.answers" \
 			$(METAMATH_PROOF_MACHINE_NTT_V1) \
 			tests/support/metamath_mini_thm_v0.mm \
@@ -26272,18 +26391,22 @@ test-cogslt-proof-gslt-relational-runtime-v1: \
 			tests/langdef/metamath/invalid_theorem_compressed_explicit_mandatory.mm \
 			tests/langdef/metamath/invalid_theorem_compressed_bare_save.mm \
 			tests/langdef/metamath/invalid_theorem_compressed_repeated_save.mm \
+			tests/langdef/metamath/positive_theorem_disjoint_substitution.mm \
+			tests/langdef/metamath/positive_theorem_compressed_disjoint_substitution.mm \
+			tests/langdef/metamath/invalid_theorem_missing_disjoint.mm \
+			tests/langdef/metamath/invalid_theorem_compressed_reused_missing_disjoint.mm \
 			>"$$work/$$kind.out" 2>"$$work/$$kind.err"; then \
 			exit 1; \
 		fi; \
 		rg -q '^FAIL:' "$$work/$$kind.err"; \
 	done
 	@if rg -ni 'metamath|megalodon|tptp|set[.]mm|[$$][acdefpv]|mm-state|mm-label|canary' \
-		$(PROOF_GSLT_RELATIONAL_RUNTIME_NATIVE_V1_SRC) \
-		$(PROOF_GSLT_RELATIONAL_RUNTIME_NATIVE_V1_HEADER); then \
+		$(CERTIFICATE_GSLT_RELATIONAL_RUNTIME_NATIVE_V1_SRC) \
+		$(CERTIFICATE_GSLT_RELATIONAL_RUNTIME_NATIVE_V1_HEADER); then \
 		echo 'guest-language knowledge leaked into the relational proof runtime'; \
 		exit 1; \
 	fi
-	@if ldd $(PROOF_GSLT_RELATIONAL_RUNTIME_NATIVE_V1_TEST_BIN) | \
+	@if ldd $(CERTIFICATE_GSLT_RELATIONAL_RUNTIME_NATIVE_V1_TEST_BIN) | \
 		rg -qi 'python|libswipl'; then \
 		echo 'the relational proof runtime retained a foreign dependency'; \
 		exit 1; \
@@ -26882,114 +27005,114 @@ test-cogslt-relational-stack-proof-cache-v1: \
 	fi
 
 # The article checker executes only compiled structural proof presentations.
-$(PROOF_GSLT_ARTICLE_V1_TEST_BIN): \
+$(CERTIFICATE_GSLT_ARTICLE_V1_TEST_BIN): \
 		$(BUILD_CONFIG_HEADER) \
 		$(GSLT_U32_INDEX_V1_SRC) \
 		$(GSLT_U32_INDEX_V1_HEADER) \
 		$(GSLT_CHRONOLOGICAL_BUILDER_V1_SRC) \
 		$(GSLT_CHRONOLOGICAL_BUILDER_V1_HEADER) \
-		$(PROOF_GSLT_ARTICLE_V1_SRC) \
-		$(PROOF_GSLT_ARTICLE_V1_HEADER) \
-		$(PROOF_GSLT_ARTICLE_V1_TEST_SRC)
+		$(CERTIFICATE_GSLT_ARTICLE_V1_SRC) \
+		$(CERTIFICATE_GSLT_ARTICLE_V1_HEADER) \
+		$(CERTIFICATE_GSLT_ARTICLE_V1_TEST_SRC)
 	@mkdir -p runtime
 	$(CC) $(CPPFLAGS) $(CFLAGS) \
 		-I$(GSLT2PARSE_SCHEMA_V1_NATIVE_DIR) -o $@ \
 		$(GSLT_U32_INDEX_V1_SRC) \
 		$(GSLT_CHRONOLOGICAL_BUILDER_V1_SRC) \
-		$(PROOF_GSLT_ARTICLE_V1_SRC) \
-		$(PROOF_GSLT_ARTICLE_V1_TEST_SRC)
+		$(CERTIFICATE_GSLT_ARTICLE_V1_SRC) \
+		$(CERTIFICATE_GSLT_ARTICLE_V1_TEST_SRC)
 
 .PHONY: test-cogslt-proof-article-v1
-test-cogslt-proof-article-v1: $(PROOF_GSLT_ARTICLE_V1_TEST_BIN)
-	@$(PROOF_GSLT_ARTICLE_V1_TEST_BIN)
+test-cogslt-proof-article-v1: $(CERTIFICATE_GSLT_ARTICLE_V1_TEST_BIN)
+	@$(CERTIFICATE_GSLT_ARTICLE_V1_TEST_BIN)
 	@if rg -ni '\b(he|petta|metta|rho|mrho|rhocalc|hyperon)\b|metamath|megalodon|tptp|cetta[-_ ]?prime|set\.mm' \
-		$(PROOF_GSLT_ARTICLE_V1_SRC) \
-		$(PROOF_GSLT_ARTICLE_V1_HEADER); then \
+		$(CERTIFICATE_GSLT_ARTICLE_V1_SRC) \
+		$(CERTIFICATE_GSLT_ARTICLE_V1_HEADER); then \
 		echo 'guest-language knowledge leaked into the generic proof checker'; \
 		exit 1; \
 	fi
 
-$(PROOF_GSLT_PLAN_V1_TEST_OBJ): \
-		$(PROOF_GSLT_PLAN_V1_TEST_SRC) \
-		$(PROOF_GSLT_PLAN_V1_HEADER) \
-		$(PROOF_GSLT_ARTICLE_V1_HEADER) $(BUILD_CONFIG_HEADER)
+$(CERTIFICATE_GSLT_PLAN_V1_TEST_OBJ): \
+		$(CERTIFICATE_GSLT_PLAN_V1_TEST_SRC) \
+		$(CERTIFICATE_GSLT_PLAN_V1_HEADER) \
+		$(CERTIFICATE_GSLT_ARTICLE_V1_HEADER) $(BUILD_CONFIG_HEADER)
 	@mkdir -p $(dir $@)
 	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) \
 		-I$(GSLT2PARSE_SCHEMA_V1_NATIVE_DIR) -c -o $@ \
-		$(PROOF_GSLT_PLAN_V1_TEST_SRC)
+		$(CERTIFICATE_GSLT_PLAN_V1_TEST_SRC)
 
-$(PROOF_GSLT_PLAN_V1_TEST_BIN): \
-		$(PROOF_GSLT_PLAN_V1_TEST_OBJ) \
-		$(PROOF_GSLT_PLAN_V1_TEST_LINK_OBJ)
+$(CERTIFICATE_GSLT_PLAN_V1_TEST_BIN): \
+		$(CERTIFICATE_GSLT_PLAN_V1_TEST_OBJ) \
+		$(CERTIFICATE_GSLT_PLAN_V1_TEST_LINK_OBJ)
 	@mkdir -p $(dir $@)
 	$(CC) $(CFLAGS) -Wl,--gc-sections -o $@ $^ $(LDFLAGS)
 
-$(PROOF_GSLT_SEQUENCE_EVIDENCE_V1_TEST_OBJ): \
-		$(PROOF_GSLT_SEQUENCE_EVIDENCE_V1_TEST_SRC) \
-		$(PROOF_GSLT_SEQUENCE_EVIDENCE_V1_HEADER) \
-		$(PROOF_GSLT_PLAN_V1_HEADER) \
-		$(PROOF_GSLT_ARTICLE_V1_HEADER) $(BUILD_CONFIG_HEADER)
+$(CERTIFICATE_GSLT_SEQUENCE_EVIDENCE_V1_TEST_OBJ): \
+		$(CERTIFICATE_GSLT_SEQUENCE_EVIDENCE_V1_TEST_SRC) \
+		$(CERTIFICATE_GSLT_SEQUENCE_EVIDENCE_V1_HEADER) \
+		$(CERTIFICATE_GSLT_PLAN_V1_HEADER) \
+		$(CERTIFICATE_GSLT_ARTICLE_V1_HEADER) $(BUILD_CONFIG_HEADER)
 	@mkdir -p $(dir $@)
 	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) \
 		-I$(GSLT2PARSE_SCHEMA_V1_NATIVE_DIR) -c -o $@ \
-		$(PROOF_GSLT_SEQUENCE_EVIDENCE_V1_TEST_SRC)
+		$(CERTIFICATE_GSLT_SEQUENCE_EVIDENCE_V1_TEST_SRC)
 
-$(PROOF_GSLT_SEQUENCE_EVIDENCE_V1_TEST_BIN): \
-		$(PROOF_GSLT_SEQUENCE_EVIDENCE_V1_TEST_OBJ) \
-		$(PROOF_GSLT_SEQUENCE_EVIDENCE_V1_TEST_LINK_OBJ)
+$(CERTIFICATE_GSLT_SEQUENCE_EVIDENCE_V1_TEST_BIN): \
+		$(CERTIFICATE_GSLT_SEQUENCE_EVIDENCE_V1_TEST_OBJ) \
+		$(CERTIFICATE_GSLT_SEQUENCE_EVIDENCE_V1_TEST_LINK_OBJ)
 	@mkdir -p $(dir $@)
 	$(CC) $(CFLAGS) -Wl,--gc-sections -o $@ $^ $(LDFLAGS)
 
-$(PROOF_GSLT_RELATIONAL_ASSERTION_V1_TEST_OBJ): \
-		$(PROOF_GSLT_RELATIONAL_ASSERTION_V1_TEST_SRC) \
-		$(PROOF_GSLT_RELATIONAL_ASSERTION_V1_HEADER) \
-		$(PROOF_GSLT_PLAN_V1_HEADER) \
+$(CERTIFICATE_GSLT_RELATIONAL_ASSERTION_V1_TEST_OBJ): \
+		$(CERTIFICATE_GSLT_RELATIONAL_ASSERTION_V1_TEST_SRC) \
+		$(CERTIFICATE_GSLT_RELATIONAL_ASSERTION_V1_HEADER) \
+		$(CERTIFICATE_GSLT_PLAN_V1_HEADER) \
 		$(RELATIONAL_STATE_PROGRAM_V1_HEADER) \
-		$(PROOF_GSLT_ARTICLE_V1_HEADER) $(BUILD_CONFIG_HEADER)
+		$(CERTIFICATE_GSLT_ARTICLE_V1_HEADER) $(BUILD_CONFIG_HEADER)
 	@mkdir -p $(dir $@)
 	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) \
 		-I$(GSLT2PARSE_SCHEMA_V1_NATIVE_DIR) -c -o $@ \
-		$(PROOF_GSLT_RELATIONAL_ASSERTION_V1_TEST_SRC)
+		$(CERTIFICATE_GSLT_RELATIONAL_ASSERTION_V1_TEST_SRC)
 
-$(PROOF_GSLT_RELATIONAL_ASSERTION_V1_TEST_BIN): \
-		$(PROOF_GSLT_RELATIONAL_ASSERTION_V1_TEST_OBJ) \
-		$(PROOF_GSLT_RELATIONAL_ASSERTION_V1_TEST_LINK_OBJ)
+$(CERTIFICATE_GSLT_RELATIONAL_ASSERTION_V1_TEST_BIN): \
+		$(CERTIFICATE_GSLT_RELATIONAL_ASSERTION_V1_TEST_OBJ) \
+		$(CERTIFICATE_GSLT_RELATIONAL_ASSERTION_V1_TEST_LINK_OBJ)
 	@mkdir -p $(dir $@)
 	$(CC) $(CFLAGS) -Wl,--gc-sections -o $@ $^ $(LDFLAGS)
 
-$(PROOF_GSLT_RELATIONAL_PROJECTION_NATIVE_V1_TEST_OBJ): \
-		$(PROOF_GSLT_RELATIONAL_PROJECTION_NATIVE_V1_TEST_SRC) \
-		$(PROOF_GSLT_RELATIONAL_PROJECTION_NATIVE_V1_HEADER) \
+$(CERTIFICATE_GSLT_RELATIONAL_PROJECTION_NATIVE_V1_TEST_OBJ): \
+		$(CERTIFICATE_GSLT_RELATIONAL_PROJECTION_NATIVE_V1_TEST_SRC) \
+		$(CERTIFICATE_GSLT_RELATIONAL_PROJECTION_NATIVE_V1_HEADER) \
 		$(RELATIONAL_STATE_PROGRAM_V1_HEADER) \
-		$(PROOF_GSLT_ARTICLE_V1_HEADER) $(BUILD_CONFIG_HEADER)
+		$(CERTIFICATE_GSLT_ARTICLE_V1_HEADER) $(BUILD_CONFIG_HEADER)
 	@mkdir -p $(dir $@)
 	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) \
 		-I$(GSLT2PARSE_SCHEMA_V1_NATIVE_DIR) -c -o $@ \
-		$(PROOF_GSLT_RELATIONAL_PROJECTION_NATIVE_V1_TEST_SRC)
+		$(CERTIFICATE_GSLT_RELATIONAL_PROJECTION_NATIVE_V1_TEST_SRC)
 
-$(PROOF_GSLT_RELATIONAL_PROJECTION_NATIVE_V1_TEST_BIN): \
-		$(PROOF_GSLT_RELATIONAL_PROJECTION_NATIVE_V1_TEST_OBJ) \
-		$(PROOF_GSLT_RELATIONAL_PROJECTION_NATIVE_V1_TEST_LINK_OBJ)
+$(CERTIFICATE_GSLT_RELATIONAL_PROJECTION_NATIVE_V1_TEST_BIN): \
+		$(CERTIFICATE_GSLT_RELATIONAL_PROJECTION_NATIVE_V1_TEST_OBJ) \
+		$(CERTIFICATE_GSLT_RELATIONAL_PROJECTION_NATIVE_V1_TEST_LINK_OBJ)
 	@mkdir -p $(dir $@)
 	$(CC) $(CFLAGS) -Wl,--gc-sections -o $@ $^ $(LDFLAGS)
 
-$(PROOF_GSLT_RELATIONAL_DECLARATION_V1_TEST_OBJ): \
-		$(PROOF_GSLT_RELATIONAL_DECLARATION_V1_TEST_SRC) \
-		$(PROOF_GSLT_RELATIONAL_DECLARATION_V1_HEADER) \
-		$(PROOF_GSLT_RELATIONAL_MACHINE_V1_HEADER) \
-		$(PROOF_GSLT_RELATIONAL_ASSERTION_V1_HEADER) \
-		$(PROOF_GSLT_SEQUENCE_EVIDENCE_V1_HEADER) \
+$(CERTIFICATE_GSLT_RELATIONAL_DECLARATION_V1_TEST_OBJ): \
+		$(CERTIFICATE_GSLT_RELATIONAL_DECLARATION_V1_TEST_SRC) \
+		$(CERTIFICATE_GSLT_RELATIONAL_DECLARATION_V1_HEADER) \
+		$(CERTIFICATE_GSLT_RELATIONAL_MACHINE_V1_HEADER) \
+		$(CERTIFICATE_GSLT_RELATIONAL_ASSERTION_V1_HEADER) \
+		$(CERTIFICATE_GSLT_SEQUENCE_EVIDENCE_V1_HEADER) \
 		$(PROOF_STORAGE_PLAN_V1_HEADER) \
 		$(RELATIONAL_VALUE_LIST_V1_HEADER) \
-		$(PROOF_GSLT_ARTICLE_V1_HEADER) $(BUILD_CONFIG_HEADER)
+		$(CERTIFICATE_GSLT_ARTICLE_V1_HEADER) $(BUILD_CONFIG_HEADER)
 	@mkdir -p $(dir $@)
 	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) \
 		-I$(GSLT2PARSE_SCHEMA_V1_NATIVE_DIR) -c -o $@ \
-		$(PROOF_GSLT_RELATIONAL_DECLARATION_V1_TEST_SRC)
+		$(CERTIFICATE_GSLT_RELATIONAL_DECLARATION_V1_TEST_SRC)
 
-$(PROOF_GSLT_RELATIONAL_DECLARATION_V1_TEST_BIN): \
-		$(PROOF_GSLT_RELATIONAL_DECLARATION_V1_TEST_OBJ) \
-		$(PROOF_GSLT_RELATIONAL_DECLARATION_V1_TEST_LINK_OBJ)
+$(CERTIFICATE_GSLT_RELATIONAL_DECLARATION_V1_TEST_BIN): \
+		$(CERTIFICATE_GSLT_RELATIONAL_DECLARATION_V1_TEST_OBJ) \
+		$(CERTIFICATE_GSLT_RELATIONAL_DECLARATION_V1_TEST_LINK_OBJ)
 	@mkdir -p $(dir $@)
 	$(CC) $(CFLAGS) -Wl,--gc-sections -o $@ $^ $(LDFLAGS)
 
@@ -26997,69 +27120,69 @@ $(PROOF_GSLT_RELATIONAL_DECLARATION_V1_TEST_BIN): \
 test-cogslt-proof-stage-v1: \
 		test-cogslt-proof-article-v1 \
 		$(GSLT2PARSE_SCHEMA_V1_NATIVE_BIN) \
-		$(PROOF_GSLT_PLAN_V1_TEST_BIN) \
-		$(PROOF_GSLT_SEQUENCE_EVIDENCE_V1_TEST_BIN) \
-		$(PROOF_GSLT_RELATIONAL_ASSERTION_V1_TEST_BIN) \
-		$(PROOF_GSLT_RELATIONAL_DECLARATION_V1_TEST_BIN) \
-		$(PROOF_GSLT_PROP_ANSWERS_V1) \
-		$(PROOF_GSLT_EVEN_ANSWERS_V1) \
-		$(PROOF_GSLT_BINDER_ANSWERS_V1) \
-		$(PROOF_GSLT_SEQUENCE_ANSWERS_V1) \
-		$(PROOF_GSLT_SEQUENCE_EVIDENCE_ABI_V1) \
-		$(PROOF_GSLT_METAMATH_PLAN_V1) \
-		$(PROOF_GSLT_METAMATH_EVIDENCE_ABI_V1) \
-		$(PROOF_GSLT_METAMATH_RELATIONAL_ABI_V1) \
-		$(PROOF_GSLT_METAMATH_RELATIONAL_NO_APARTNESS_V1) \
-		$(PROOF_GSLT_METAMATH_RELATIONAL_DELETE_ROLE_V1) \
-		$(PROOF_GSLT_METAMATH_RELATIONAL_DELETE_EXECUTION_V1) \
-		$(PROOF_GSLT_SEQUENCE_DELETE_ABI_ROLE_V1) \
-		$(PROOF_GSLT_PROP_DELETE_MP_ANSWERS_V1) \
-		$(PROOF_GSLT_SEQUENCE_DELETE_APART_ANSWERS_V1) \
-		$(PROOF_GSLT_SEQUENCE_DELETE_ASSERTION_ANSWERS_V1)
+		$(CERTIFICATE_GSLT_PLAN_V1_TEST_BIN) \
+		$(CERTIFICATE_GSLT_SEQUENCE_EVIDENCE_V1_TEST_BIN) \
+		$(CERTIFICATE_GSLT_RELATIONAL_ASSERTION_V1_TEST_BIN) \
+		$(CERTIFICATE_GSLT_RELATIONAL_DECLARATION_V1_TEST_BIN) \
+		$(CERTIFICATE_GSLT_PROP_ANSWERS_V1) \
+		$(CERTIFICATE_GSLT_EVEN_ANSWERS_V1) \
+		$(CERTIFICATE_GSLT_BINDER_ANSWERS_V1) \
+		$(CERTIFICATE_GSLT_SEQUENCE_ANSWERS_V1) \
+		$(CERTIFICATE_GSLT_SEQUENCE_EVIDENCE_ABI_V1) \
+		$(CERTIFICATE_GSLT_METAMATH_PLAN_V1) \
+		$(CERTIFICATE_GSLT_METAMATH_EVIDENCE_ABI_V1) \
+		$(CERTIFICATE_GSLT_METAMATH_RELATIONAL_ABI_V1) \
+		$(CERTIFICATE_GSLT_METAMATH_RELATIONAL_NO_APARTNESS_V1) \
+		$(CERTIFICATE_GSLT_METAMATH_RELATIONAL_DELETE_ROLE_V1) \
+		$(CERTIFICATE_GSLT_METAMATH_RELATIONAL_DELETE_EXECUTION_V1) \
+		$(CERTIFICATE_GSLT_SEQUENCE_DELETE_ABI_ROLE_V1) \
+		$(CERTIFICATE_GSLT_PROP_DELETE_MP_ANSWERS_V1) \
+		$(CERTIFICATE_GSLT_SEQUENCE_DELETE_APART_ANSWERS_V1) \
+		$(CERTIFICATE_GSLT_SEQUENCE_DELETE_ASSERTION_ANSWERS_V1)
 	@$(GSLT2PARSE_SCHEMA_V1_NATIVE_BIN) \
-		ecc42c94da8963a709f4567b81e51c620d7763dc6482cbd805925e3df8b8e995 \
-		$(PROOF_GSLT_ARTICLE_CORE_V1) \
-		$(PROOF_GSLT_ARTICLE_COMPILER_V1) \
-		$(PROOF_GSLT_PROP_CANARY_V1)
+		49302a834c88cb4c172d1e3ed59d8e5ac0a3833d78e34591fd4a3528174e7578 \
+		$(CERTIFICATE_GSLT_ARTICLE_CORE_V1) \
+		$(CERTIFICATE_GSLT_ARTICLE_COMPILER_V1) \
+		$(CERTIFICATE_GSLT_PROP_CANARY_V1)
 	@$(GSLT2PARSE_SCHEMA_V1_NATIVE_BIN) \
-		f37cbb4e1c0edd7de8484f97260823f3877eb82539321669000badc2535a8070 \
-		$(PROOF_GSLT_ARTICLE_CORE_V1) \
-		$(PROOF_GSLT_ARTICLE_COMPILER_V1) \
-		$(PROOF_GSLT_EVEN_CANARY_V1)
+		1e8ef2df59919671342d5eb2f8a939368200e4eea38fc07242d57e6c87ec9f4d \
+		$(CERTIFICATE_GSLT_ARTICLE_CORE_V1) \
+		$(CERTIFICATE_GSLT_ARTICLE_COMPILER_V1) \
+		$(CERTIFICATE_GSLT_EVEN_CANARY_V1)
 	@$(GSLT2PARSE_SCHEMA_V1_NATIVE_BIN) \
-		c9e09fcbd8c72cd21e1904abd3986926f2aa715bd25fb15d0c364fa085a4fd1d \
-		$(PROOF_GSLT_ARTICLE_CORE_V1) \
-		$(PROOF_GSLT_ARTICLE_COMPILER_V1) \
-		$(PROOF_GSLT_BINDER_CANARY_V1)
+		e249645ceaaedd218237caa243e0ff3ab99b19aafea90b9c4f95740f2722c944 \
+		$(CERTIFICATE_GSLT_ARTICLE_CORE_V1) \
+		$(CERTIFICATE_GSLT_ARTICLE_COMPILER_V1) \
+		$(CERTIFICATE_GSLT_BINDER_CANARY_V1)
 	@$(GSLT2PARSE_SCHEMA_V1_NATIVE_BIN) \
-		418d4c81446a311ff42a65200fafa405abbec7eddf34f7dc21547d0e5dce7d24 \
-		$(PROOF_GSLT_ARTICLE_CORE_V1) \
-		$(PROOF_GSLT_ARTICLE_DOCUMENT_V1) \
-		$(PROOF_GSLT_ARTICLE_COMPILER_V1) \
-		$(PROOF_GSLT_ARTICLE_DOCUMENT_COMPILER_V1) \
-		$(PROOF_GSLT_SEQUENCE_RELATIONS_V1) \
-		$(PROOF_GSLT_SEQUENCE_SCHEMA_V1) \
-		$(PROOF_GSLT_SEQUENCE_EVIDENCE_COMPILER_V1) \
-		$(PROOF_GSLT_SEQUENCE_CANARY_V1)
-	@$(PROOF_GSLT_PLAN_V1_TEST_BIN) \
-		$(PROOF_GSLT_PROP_ANSWERS_V1) \
-		$(PROOF_GSLT_EVEN_ANSWERS_V1) \
-		$(PROOF_GSLT_BINDER_ANSWERS_V1) \
-		$(PROOF_GSLT_SEQUENCE_ANSWERS_V1) \
-		$(PROOF_GSLT_PROP_DELETE_MP_ANSWERS_V1) \
-		$(PROOF_GSLT_SEQUENCE_DELETE_APART_ANSWERS_V1) \
-		$(PROOF_GSLT_SEQUENCE_DELETE_ASSERTION_ANSWERS_V1)
-	@$(PROOF_GSLT_SEQUENCE_EVIDENCE_V1_TEST_BIN) \
-		$(PROOF_GSLT_SEQUENCE_ANSWERS_V1) \
-		$(PROOF_GSLT_SEQUENCE_EVIDENCE_ABI_V1) \
-		$(PROOF_GSLT_PROP_ANSWERS_V1) \
-		$(PROOF_GSLT_SEQUENCE_DELETE_ABI_ROLE_V1)
-	@$(PROOF_GSLT_RELATIONAL_ASSERTION_V1_TEST_BIN) \
-		$(PROOF_GSLT_METAMATH_PLAN_V1) \
-		$(PROOF_GSLT_METAMATH_RELATIONAL_ABI_V1) \
-		$(PROOF_GSLT_METAMATH_RELATIONAL_NO_APARTNESS_V1) \
-		$(PROOF_GSLT_METAMATH_RELATIONAL_DELETE_ROLE_V1) \
-		$(PROOF_GSLT_SEQUENCE_ANSWERS_V1) \
+		b25d61e34b540b1b1def1b0b8f570046e9b7a538205fe5b56e7dfa3227724890 \
+		$(CERTIFICATE_GSLT_ARTICLE_CORE_V1) \
+		$(CERTIFICATE_GSLT_ARTICLE_DOCUMENT_V1) \
+		$(CERTIFICATE_GSLT_ARTICLE_COMPILER_V1) \
+		$(CERTIFICATE_GSLT_ARTICLE_DOCUMENT_COMPILER_V1) \
+		$(CERTIFICATE_GSLT_SEQUENCE_RELATIONS_V1) \
+		$(CERTIFICATE_GSLT_SEQUENCE_SCHEMA_V1) \
+		$(CERTIFICATE_GSLT_SEQUENCE_EVIDENCE_COMPILER_V1) \
+		$(CERTIFICATE_GSLT_SEQUENCE_CANARY_V1)
+	@$(CERTIFICATE_GSLT_PLAN_V1_TEST_BIN) \
+		$(CERTIFICATE_GSLT_PROP_ANSWERS_V1) \
+		$(CERTIFICATE_GSLT_EVEN_ANSWERS_V1) \
+		$(CERTIFICATE_GSLT_BINDER_ANSWERS_V1) \
+		$(CERTIFICATE_GSLT_SEQUENCE_ANSWERS_V1) \
+		$(CERTIFICATE_GSLT_PROP_DELETE_MP_ANSWERS_V1) \
+		$(CERTIFICATE_GSLT_SEQUENCE_DELETE_APART_ANSWERS_V1) \
+		$(CERTIFICATE_GSLT_SEQUENCE_DELETE_ASSERTION_ANSWERS_V1)
+	@$(CERTIFICATE_GSLT_SEQUENCE_EVIDENCE_V1_TEST_BIN) \
+		$(CERTIFICATE_GSLT_SEQUENCE_ANSWERS_V1) \
+		$(CERTIFICATE_GSLT_SEQUENCE_EVIDENCE_ABI_V1) \
+		$(CERTIFICATE_GSLT_PROP_ANSWERS_V1) \
+		$(CERTIFICATE_GSLT_SEQUENCE_DELETE_ABI_ROLE_V1)
+	@$(CERTIFICATE_GSLT_RELATIONAL_ASSERTION_V1_TEST_BIN) \
+		$(CERTIFICATE_GSLT_METAMATH_PLAN_V1) \
+		$(CERTIFICATE_GSLT_METAMATH_RELATIONAL_ABI_V1) \
+		$(CERTIFICATE_GSLT_METAMATH_RELATIONAL_NO_APARTNESS_V1) \
+		$(CERTIFICATE_GSLT_METAMATH_RELATIONAL_DELETE_ROLE_V1) \
+		$(CERTIFICATE_GSLT_SEQUENCE_ANSWERS_V1) \
 		mm-state-symbol-kind \
 		mm-state-formula \
 		mm-state-floating-variable \
@@ -27069,12 +27192,12 @@ test-cogslt-proof-stage-v1: \
 		mm-state-assertion-disjoint-variable \
 		mm-state-disjoint-variable \
 		mm-state-label-kind \
-		$(PROOF_GSLT_METAMATH_RELATIONAL_DELETE_EXECUTION_V1)
-	@$(PROOF_GSLT_RELATIONAL_DECLARATION_V1_TEST_BIN) \
-		$(PROOF_GSLT_METAMATH_PLAN_V1) \
-		$(PROOF_GSLT_METAMATH_EVIDENCE_ABI_V1) \
-		$(PROOF_GSLT_METAMATH_RELATIONAL_ABI_V1) \
-		$(PROOF_GSLT_METAMATH_RELATIONAL_NO_APARTNESS_V1) \
+		$(CERTIFICATE_GSLT_METAMATH_RELATIONAL_DELETE_EXECUTION_V1)
+	@$(CERTIFICATE_GSLT_RELATIONAL_DECLARATION_V1_TEST_BIN) \
+		$(CERTIFICATE_GSLT_METAMATH_PLAN_V1) \
+		$(CERTIFICATE_GSLT_METAMATH_EVIDENCE_ABI_V1) \
+		$(CERTIFICATE_GSLT_METAMATH_RELATIONAL_ABI_V1) \
+		$(CERTIFICATE_GSLT_METAMATH_RELATIONAL_NO_APARTNESS_V1) \
 		mm-state-symbol-kind \
 		mm-state-formula \
 		mm-state-floating-variable \
@@ -27085,27 +27208,27 @@ test-cogslt-proof-stage-v1: \
 		mm-state-disjoint-variable \
 		mm-state-label-kind
 	@if rg -ni '\b(he|petta|metta|rho|mrho|rhocalc|hyperon)\b|metamath|megalodon|tptp|cetta[-_ ]?prime|set\.mm' \
-		$(PROOF_GSLT_ARTICLE_CORE_V1) \
-		$(PROOF_GSLT_ARTICLE_COMPILER_V1) \
-		$(PROOF_GSLT_ARTICLE_DOCUMENT_V1) \
-		$(PROOF_GSLT_ARTICLE_DOCUMENT_COMPILER_V1) \
-		$(PROOF_GSLT_SEQUENCE_RELATIONS_V1) \
-		$(PROOF_GSLT_SEQUENCE_SCHEMA_V1) \
-		$(PROOF_GSLT_SEQUENCE_EVIDENCE_COMPILER_V1) \
-		$(PROOF_GSLT_RELATIONAL_ASSERTION_CORE_V1) \
-		$(PROOF_GSLT_RELATIONAL_ASSERTION_COMPILER_V1) \
-		$(PROOF_GSLT_ARTICLE_V1_SRC) \
-		$(PROOF_GSLT_ARTICLE_V1_HEADER) \
-		$(PROOF_GSLT_PLAN_V1_SRC) \
-		$(PROOF_GSLT_PLAN_V1_HEADER) \
-		$(PROOF_GSLT_SEQUENCE_EVIDENCE_V1_SRC) \
-		$(PROOF_GSLT_SEQUENCE_EVIDENCE_V1_HEADER) \
-		$(PROOF_GSLT_RELATIONAL_ASSERTION_V1_SRC) \
-		$(PROOF_GSLT_RELATIONAL_ASSERTION_V1_HEADER) \
-		$(PROOF_GSLT_RELATIONAL_DECLARATION_V1_SRC) \
-		$(PROOF_GSLT_RELATIONAL_DECLARATION_V1_HEADER) \
-		$(PROOF_GSLT_RELATIONAL_MACHINE_V1_SRC) \
-		$(PROOF_GSLT_RELATIONAL_MACHINE_V1_HEADER); then \
+		$(CERTIFICATE_GSLT_ARTICLE_CORE_V1) \
+		$(CERTIFICATE_GSLT_ARTICLE_COMPILER_V1) \
+		$(CERTIFICATE_GSLT_ARTICLE_DOCUMENT_V1) \
+		$(CERTIFICATE_GSLT_ARTICLE_DOCUMENT_COMPILER_V1) \
+		$(CERTIFICATE_GSLT_SEQUENCE_RELATIONS_V1) \
+		$(CERTIFICATE_GSLT_SEQUENCE_SCHEMA_V1) \
+		$(CERTIFICATE_GSLT_SEQUENCE_EVIDENCE_COMPILER_V1) \
+		$(CERTIFICATE_GSLT_RELATIONAL_ASSERTION_CORE_V1) \
+		$(CERTIFICATE_GSLT_RELATIONAL_ASSERTION_COMPILER_V1) \
+		$(CERTIFICATE_GSLT_ARTICLE_V1_SRC) \
+		$(CERTIFICATE_GSLT_ARTICLE_V1_HEADER) \
+		$(CERTIFICATE_GSLT_PLAN_V1_SRC) \
+		$(CERTIFICATE_GSLT_PLAN_V1_HEADER) \
+		$(CERTIFICATE_GSLT_SEQUENCE_EVIDENCE_V1_SRC) \
+		$(CERTIFICATE_GSLT_SEQUENCE_EVIDENCE_V1_HEADER) \
+		$(CERTIFICATE_GSLT_RELATIONAL_ASSERTION_V1_SRC) \
+		$(CERTIFICATE_GSLT_RELATIONAL_ASSERTION_V1_HEADER) \
+		$(CERTIFICATE_GSLT_RELATIONAL_DECLARATION_V1_SRC) \
+		$(CERTIFICATE_GSLT_RELATIONAL_DECLARATION_V1_HEADER) \
+		$(CERTIFICATE_GSLT_RELATIONAL_MACHINE_V1_SRC) \
+		$(CERTIFICATE_GSLT_RELATIONAL_MACHINE_V1_HEADER); then \
 		echo 'guest-language knowledge leaked into the structural proof stack'; \
 		exit 1; \
 	fi
@@ -27467,17 +27590,17 @@ test-metamath-cogslt-proof-trace-compiled-v1: \
 		--symbol cetta_metamath_proof_trace_provider_catalog_v1 \
 		--header-include langdef/metamath/generated/proof_trace_provider_catalog_v1.generated.h
 	@$(PROOF_TRACE_COMPILED_RUNTIME_V1_TEST_BIN) \
-		$(PROOF_GSLT_TRACE_INPUT_CANARY_V1) \
-		$(PROOF_GSLT_TRACE_COMPRESSED_COMPOSITION_CANARY_V1) \
+		$(CERTIFICATE_GSLT_TRACE_INPUT_CANARY_V1) \
+		$(CERTIFICATE_GSLT_TRACE_COMPRESSED_COMPOSITION_CANARY_V1) \
 		accept tests/langdef/metamath/proof_trace_service_normal.query \
 		reject tests/langdef/metamath/proof_trace_service_wrong_target.query \
 		accept tests/langdef/metamath/proof_trace_service_compressed.query \
 		reject tests/langdef/metamath/proof_trace_service_compressed_range.query \
 		accept tests/langdef/metamath/proof_trace_service_incomplete_normal.query \
 		reject tests/langdef/metamath/proof_trace_service_unknown_not_verified.query \
-		raw-accept $(PROOF_GSLT_TRACE_COMPILE_SINGLE_SAVE_V1) \
-		raw-reject $(PROOF_GSLT_TRACE_COMPILE_BARE_SAVE_V1) \
-		raw-reject $(PROOF_GSLT_TRACE_COMPILE_REPEATED_SAVE_V1)
+		raw-accept $(CERTIFICATE_GSLT_TRACE_COMPILE_SINGLE_SAVE_V1) \
+		raw-reject $(CERTIFICATE_GSLT_TRACE_COMPILE_BARE_SAVE_V1) \
+		raw-reject $(CERTIFICATE_GSLT_TRACE_COMPILE_REPEATED_SAVE_V1)
 
 $(GSLT_ABT_PROVIDER_V1_TEST_BIN): \
 		tests/support/test_gslt_abt_provider_v1.c \
@@ -28698,8 +28821,8 @@ $(PROOF_TRACE_COMPILED_CANARY_V1_GENERATED_H) $(PROOF_TRACE_COMPILED_CANARY_V1_G
 		tools/gslt2parse_schema_v1.py \
 		$(PROOF_TRACE_COMPILED_CANARY_V1_MANIFEST) \
 		$(METAMATH_PROOF_TRACE_NATIVE_PROGRAM_V1_SOURCES) \
-		$(PROOF_GSLT_TRACE_INPUT_CANARY_V1) \
-		$(PROOF_GSLT_TRACE_COMPRESSED_COMPOSITION_CANARY_V1)
+		$(CERTIFICATE_GSLT_TRACE_INPUT_CANARY_V1) \
+		$(CERTIFICATE_GSLT_TRACE_COMPRESSED_COMPOSITION_CANARY_V1)
 	@python3 $(GSLT_LANGUAGE_GENERATOR_V1) \
 		--manifest $(PROOF_TRACE_COMPILED_CANARY_V1_MANIFEST) \
 		--source-root . \
@@ -28713,7 +28836,7 @@ $(METAMATH_PROOF_TRACE_LANGUAGE_V1_GENERATED_H) $(METAMATH_PROOF_TRACE_LANGUAGE_
 		tools/gslt2parse_schema_v1.py \
 		$(METAMATH_PROOF_TRACE_LANGUAGE_V1_MANIFEST) \
 		$(METAMATH_PROOF_TRACE_NATIVE_PROGRAM_V1_SOURCES) \
-		$(PROOF_GSLT_TRACE_SERVICE_V1)
+		$(CERTIFICATE_GSLT_TRACE_SERVICE_V1)
 	@python3 $(GSLT_LANGUAGE_GENERATOR_V1) \
 		--manifest $(METAMATH_PROOF_TRACE_LANGUAGE_V1_MANIFEST) \
 		--source-root . \
@@ -28728,7 +28851,7 @@ $(METAMATH_PROOF_TRACE_PROVIDER_CATALOG_V1_GENERATED_H) $(METAMATH_PROOF_TRACE_P
 		$(METAMATH_PROOF_TRACE_PROVIDER_CATALOG_V1) \
 		$(METAMATH_PROOF_TRACE_LANGUAGE_V1_MANIFEST) \
 		$(METAMATH_PROOF_TRACE_NATIVE_PROGRAM_V1_SOURCES) \
-		$(PROOF_GSLT_TRACE_SERVICE_V1)
+		$(CERTIFICATE_GSLT_TRACE_SERVICE_V1)
 	@python3 $(GSLT_PROVIDER_CATALOG_GENERATOR_V1) \
 		--catalog $(METAMATH_PROOF_TRACE_PROVIDER_CATALOG_V1) \
 		--language-manifest $(METAMATH_PROOF_TRACE_LANGUAGE_V1_MANIFEST) \

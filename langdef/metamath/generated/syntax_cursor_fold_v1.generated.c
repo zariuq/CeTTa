@@ -30783,7 +30783,7 @@ fail:
 /* Generated from SourceResolutionControlCoreV1. */
 #include "parser_source_resolution_control_v1.h"
 
-const char *metamath_syntax_cursor_fold_v1_source_resolution_control_plan_digest(void) { return "a71a6d628e416d17a3b04459de3c8181ab890ed7953764601ac6f5b47906c875"; }
+const char *metamath_syntax_cursor_fold_v1_source_resolution_control_plan_digest(void) { return "18bdb6d436fa9890c1c10765d1f813a59c92ebba6022800fb4cc55527840ae24"; }
 
 bool metamath_syntax_cursor_fold_v1_source_resolution_control_plan_init(
     PPSourceResolutionControlV1Plan *out,
@@ -30826,9 +30826,9 @@ bool metamath_syntax_cursor_fold_v1_source_resolution_control_plan_init(
     result.outcomes[UINT32_C(29)] = UINT8_C(1);
     result.outcomes[UINT32_C(34)] = UINT8_C(2);
     result.outcomes[UINT32_C(39)] = UINT8_C(3);
-    memcpy(result.compiler_digest, "5c2178301231758cf6bde2404c6da4a55779bf517b470fd8abdb3c9a9fe76456", 65u);
+    memcpy(result.compiler_digest, "13569bd6bdb0bcee4b94549cc926501d76d8d9b2a360f54e693e2c7dde58eced", 65u);
     memcpy(result.answer_set_digest, "12fa29098f5d2300292291ecb16a7f246adc7047674272a200de76804eb49849", 65u);
-    memcpy(result.plan_digest, "a71a6d628e416d17a3b04459de3c8181ab890ed7953764601ac6f5b47906c875", 65u);
+    memcpy(result.plan_digest, "18bdb6d436fa9890c1c10765d1f813a59c92ebba6022800fb4cc55527840ae24", 65u);
     if (!ppsource_resolution_control_v1_plan_validate(
             &result, error_buf, error_buf_size)) return false;
     *out = result;

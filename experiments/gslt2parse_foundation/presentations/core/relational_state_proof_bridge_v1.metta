@@ -722,20 +722,6 @@
               ?variable-kind (state-byte-literal-v1 ?unknown-byte))
             ?decoder))))
 
-    (rule state-proof-incomplete-compressed-code-v1
-      (head
-        (source-proof-trace-input-incomplete-compressed-code-v1
-          ?unknown-byte))
-      (body
-        (state-proof-machine-v1
-          ?machine
-          (state-stack-proof-machine-v1
-            ?tables
-            (state-proof-kinds-v1
-              ?floating-kind ?essential-kind ?axiom-kind ?theorem-kind
-              ?variable-kind (state-byte-literal-v1 ?unknown-byte))
-            ?decoder))))
-
     ; Proof-trace input facts are projections of the owned state snapshot.
     (rule state-proof-token-class-v1
       (head

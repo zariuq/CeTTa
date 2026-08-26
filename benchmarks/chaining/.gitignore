@@ -1,0 +1,4 @@
+# Generated KB instances (reproducible from gen_kb*.sh) — keep the generators, not the output.
+roman_chain_noise/chain_d*.metta
+roman_chain_noise/branchy_d*.metta
+roman_chain_noise/_drv_*.metta

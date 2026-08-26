@@ -399,6 +399,13 @@
     (field etype_io strong-atom-slot))
   (frame-kind outcome_set
     (field outcomes outcome-set))
+  ; A suspended evaluator consumer retains the values it derived before the
+  ; nested call, the nested result bag, and any already-published parent bag.
+  ; Consumers with no derived Atom pointers use an empty live-atoms span.
+  (frame-kind outcome_continuation
+    (field live_atoms strong-atom-span)
+    (field child_outcomes outcome-set)
+    (field parent_outcomes outcome-set))
   (frame-kind function_args
     (field orig_arg strong-atom-slot)
     (field arg_type strong-atom-slot)

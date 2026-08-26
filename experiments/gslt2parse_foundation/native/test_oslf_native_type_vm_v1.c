@@ -108,6 +108,35 @@ static Atom *ternary(
     return atom_expr(arena, elements, 4u);
 }
 
+static Atom *quaternary(
+    Arena *arena, const char *head,
+    Atom *first, Atom *second, Atom *third, Atom *fourth) {
+    Atom *elements[5] = {
+        atom_symbol(arena, head),
+        first,
+        second,
+        third,
+        fourth,
+    };
+
+    return atom_expr(arena, elements, 5u);
+}
+
+static Atom *quinary(
+    Arena *arena, const char *head,
+    Atom *first, Atom *second, Atom *third, Atom *fourth, Atom *fifth) {
+    Atom *elements[6] = {
+        atom_symbol(arena, head),
+        first,
+        second,
+        third,
+        fourth,
+        fifth,
+    };
+
+    return atom_expr(arena, elements, 6u);
+}
+
 static bool exercise_positional_linear_builder_view(void) {
     const uint32_t epoch = 91u;
     Arena arena;
@@ -225,16 +254,23 @@ static bool prepare_program(
     PPOSLFNativeTypePlanV1 *plan,
     PPOSLFNativeTypeVMV1 *vm) {
     char error[512] = {0};
+    char step_count_error[160] = {0};
     bool loaded;
 
     pposlf_native_type_plan_v1_init(plan);
     pposlf_native_type_vm_v1_init(vm);
     loaded = pposlf_native_type_plan_v1_load(
         plan, path, error, sizeof(error));
+    if (loaded && plan->step_schema_len != expected_steps) {
+        snprintf(step_count_error, sizeof(step_count_error),
+                 "native NTT step count changed: expected %u, got %u (%s)",
+                 expected_steps, plan->step_schema_len, path);
+    }
     return expect(loaded,
                   error[0] ? error : "native NTT plan did not load") &&
            expect(plan->step_schema_len == expected_steps,
-                  "native NTT step count changed") &&
+                  step_count_error[0] ? step_count_error :
+                      "native NTT step count changed") &&
            expect(pposlf_native_type_vm_v1_prepare(
                       vm, plan, error, sizeof(error)),
                   error[0] ? error : "native NTT VM did not prepare");
@@ -1421,7 +1457,7 @@ static bool exercise_trace_program(
     char error[512] = {0};
     bool ok = false;
 
-    if (!prepare_program(program_path, 173u, &plan, &vm))
+    if (!prepare_program(program_path, 297u, &plan, &vm))
         return false;
     pposlf_native_capability_set_v1_init(&capabilities);
     pposlf_native_capability_set_v1_init(&deleted);
@@ -1497,8 +1533,11 @@ static bool exercise_trace_program(
         goto done;
     pposlf_native_vm_result_v1_free(&result);
 
-    if (!expect(plan.external_relation_len == 16u &&
-                    plan.open_head_len == 16u,
+    if (plan.external_relation_len != 18u || plan.open_head_len != 18u)
+        fprintf(stderr, "proof-trace externals=%u open-heads=%u\n",
+                plan.external_relation_len, plan.open_head_len);
+    if (!expect(plan.external_relation_len == 18u &&
+                    plan.open_head_len == 18u,
                 "proof-trace extensional inventory changed") ||
         !prove_expect(
             &vm, positive_query, limits,
@@ -1509,7 +1548,7 @@ static bool exercise_trace_program(
     if (!expect(
             pposlf_native_capability_set_v1_prepare_reflected_facts(
                 &capabilities, &plan, reflected_fact_path,
-                "ProofGSLTTraceInputCanaryV1", error, sizeof(error)),
+                "CertificateGSLTTraceInputCanaryV1", error, sizeof(error)),
             error[0] ? error :
                 "reflected proof-state facts were not admitted") ||
         !prove_with_capabilities_expect(
@@ -1541,7 +1580,7 @@ static bool exercise_trace_program(
     if (!expect(
             pposlf_native_capability_set_v1_prepare_reflected_facts(
                 &deleted, &plan, deleted_fact_path,
-                "ProofGSLTTraceInputCanaryV1", error, sizeof(error)),
+                "CertificateGSLTTraceInputCanaryV1", error, sizeof(error)),
             error[0] ? error :
                 "deleted proof-state capability was not admitted") ||
         !prove_with_capabilities_expect(
@@ -1587,11 +1626,40 @@ static bool exercise_full_proof_machine(
     Atom *negative_labels;
     Atom *positive_query;
     Atom *negative_query;
+    Atom *language;
+    Atom *token_wff;
+    Atom *token_a;
+    Atom *token_dummy;
+    Atom *token_x;
+    Atom *trace_zero;
+    Atom *trace_two;
+    Atom *sequence_nil;
+    Atom *formula_a;
+    Atom *formula_dummy;
+    Atom *formula_x;
+    Atom *context;
+    Atom *assertion_list_nil;
+    Atom *identity_variable;
+    Atom *identity_variables;
+    Atom *identity_frame_entry;
+    Atom *identity_frame;
+    Atom *identity_assertion;
+    Atom *active_instruction;
+    Atom *identity_instruction;
+    Atom *trace;
+    Atom *layer_query;
+    Atom *request_query;
+    Atom *context_query;
+    Atom *active_instruction_query;
+    Atom *identity_assertion_query;
+    Atom *identity_instruction_query;
+    Atom *compile_query;
+    Atom *check_query;
     char full_capability_digest[65] = {0};
     char error[512] = {0};
     bool ok = false;
 
-    if (!prepare_program(program_path, 647u, &plan, &vm))
+    if (!prepare_program(program_path, 809u, &plan, &vm))
         return false;
     pposlf_native_capability_set_v1_init(&capabilities);
     pposlf_native_capability_set_v1_init(&deleted);
@@ -1625,8 +1693,94 @@ static bool exercise_full_proof_machine(
         &query_arena, "ProofTraceInputVerifyNormalV1", request,
         negative_labels);
 
-    if (!expect(plan.external_relation_len == 25u &&
-                    plan.open_head_len == 14u,
+    language = atom_symbol(&query_arena, "MetamathLanguageV1");
+    token_wff = binary(
+        &query_arena, "ProofRelationalTokenV1", owner,
+        atom_symbol(&query_arena, "capability-wff-v1"));
+    token_a = binary(
+        &query_arena, "ProofRelationalTokenV1", owner,
+        atom_symbol(&query_arena, "capability-a-v1"));
+    token_dummy = binary(
+        &query_arena, "ProofRelationalTokenV1", owner,
+        atom_symbol(&query_arena, "capability-dummy-v1"));
+    token_x = binary(
+        &query_arena, "ProofRelationalTokenV1", owner,
+        atom_symbol(&query_arena, "capability-x-v1"));
+    trace_zero = atom_symbol(&query_arena, "ProofTraceNatZeroV1");
+    trace_two = unary(
+        &query_arena, "ProofTraceNatSuccV1",
+        unary(&query_arena, "ProofTraceNatSuccV1", trace_zero));
+    sequence_nil = atom_symbol(&query_arena, "ProofSequenceNilV1");
+    formula_a = binary(
+        &query_arena, "ProofSequenceConsV1", token_wff,
+        binary(&query_arena, "ProofSequenceConsV1", token_a,
+               sequence_nil));
+    formula_dummy = binary(
+        &query_arena, "ProofSequenceConsV1", token_wff,
+        binary(&query_arena, "ProofSequenceConsV1", token_dummy,
+               sequence_nil));
+    formula_x = binary(
+        &query_arena, "ProofSequenceConsV1", token_x, sequence_nil);
+    context = binary(
+        &query_arena, "ProofTraceContextConsV1", formula_a,
+        binary(
+            &query_arena, "ProofTraceContextConsV1", formula_dummy,
+            atom_symbol(&query_arena, "ProofTraceContextNilV1")));
+    assertion_list_nil = atom_symbol(
+        &query_arena, "ProofAssertionListNilV1");
+    identity_variable = binary(
+        &query_arena, "ProofAssertionVariableV1", token_x, token_wff);
+    identity_variables = binary(
+        &query_arena, "ProofAssertionListConsV1", identity_variable,
+        assertion_list_nil);
+    identity_frame_entry = binary(
+        &query_arena, "ProofTraceFrameVariableV1", token_x, token_wff);
+    identity_frame = binary(
+        &query_arena, "ProofTraceFrameConsV1", identity_frame_entry,
+        atom_symbol(&query_arena, "ProofTraceFrameNilV1"));
+    identity_assertion = quinary(
+        &query_arena, "ProofAssertionV1", identity_variables,
+        assertion_list_nil, token_wff, formula_x, assertion_list_nil);
+    active_instruction = unary(
+        &query_arena, "ProofTracePushV1", formula_a);
+    identity_instruction = binary(
+        &query_arena, "ProofTraceApplyV1", identity_assertion,
+        identity_frame);
+    trace = binary(
+        &query_arena, "ProofTraceConsV1", active_instruction,
+        binary(
+            &query_arena, "ProofTraceConsV1", identity_instruction,
+            atom_symbol(&query_arena, "ProofTraceNilV1")));
+    layer_query = binary(
+        &query_arena, "proof-relational-projection-layer-valid-v1",
+        owner, language);
+    request_query = binary(
+        &query_arena, "source-proof-trace-input-request-v1", request,
+        formula_a);
+    context_query = quaternary(
+        &query_arena, "ProofTraceInputBuildContextV1", request,
+        trace_zero, trace_two, context);
+    active_instruction_query = binary(
+        &query_arena, "source-proof-trace-label-instruction-v1",
+        active_label, active_instruction);
+    identity_assertion_query = ternary(
+        &query_arena, "ProofTraceInputAssertionV1", identity_label,
+        identity_assertion, identity_frame);
+    identity_instruction_query = binary(
+        &query_arena, "source-proof-trace-label-instruction-v1",
+        identity_label, identity_instruction);
+    compile_query = binary(
+        &query_arena, "ProofTraceCompileNormalV1", positive_labels,
+        trace);
+    check_query = quaternary(
+        &query_arena, "ProofTraceCheckResultV1", context, trace,
+        formula_a, atom_symbol(&query_arena, "ProofTraceSucceededV1"));
+
+    if (plan.external_relation_len != 20u || plan.open_head_len != 16u)
+        fprintf(stderr, "proof-machine externals=%u open-heads=%u\n",
+                plan.external_relation_len, plan.open_head_len);
+    if (!expect(plan.external_relation_len == 20u &&
+                    plan.open_head_len == 16u,
                 "complete proof-machine extensional inventory changed") ||
         !prove_expect(
             &vm, positive_query, limits,
@@ -1641,8 +1795,57 @@ static bool exercise_full_proof_machine(
                 "MetamathProofMachineCapabilityCanaryV1",
                 error, sizeof(error)),
             error[0] ? error :
-                "reflected complete-machine state was not admitted") ||
-        !prove_with_capabilities_expect(
+                "reflected complete-machine state was not admitted"))
+        goto done;
+    if (!prove_with_capabilities_expect(
+            &vm, &capabilities, layer_query, limits,
+            PPOSLF_NATIVE_VM_PROVED_V1, &result,
+            "complete machine did not admit its relational projection layer"))
+        goto done;
+    pposlf_native_vm_result_v1_free(&result);
+    if (!prove_with_capabilities_expect(
+            &vm, &capabilities, request_query, limits,
+            PPOSLF_NATIVE_VM_PROVED_V1, &result,
+            "complete machine did not project its exact proof request"))
+        goto done;
+    pposlf_native_vm_result_v1_free(&result);
+    if (!prove_with_capabilities_expect(
+            &vm, &capabilities, context_query, limits,
+            PPOSLF_NATIVE_VM_PROVED_V1, &result,
+            "complete machine did not reconstruct its ordered context"))
+        goto done;
+    pposlf_native_vm_result_v1_free(&result);
+    if (!prove_with_capabilities_expect(
+            &vm, &capabilities, active_instruction_query, limits,
+            PPOSLF_NATIVE_VM_PROVED_V1, &result,
+            "complete machine did not derive its active push instruction"))
+        goto done;
+    pposlf_native_vm_result_v1_free(&result);
+    if (!prove_with_capabilities_expect(
+            &vm, &capabilities, identity_assertion_query, limits,
+            PPOSLF_NATIVE_VM_PROVED_V1, &result,
+            "complete machine did not reconstruct its identity assertion"))
+        goto done;
+    pposlf_native_vm_result_v1_free(&result);
+    if (!prove_with_capabilities_expect(
+            &vm, &capabilities, identity_instruction_query, limits,
+            PPOSLF_NATIVE_VM_PROVED_V1, &result,
+            "complete machine did not derive its identity apply instruction"))
+        goto done;
+    pposlf_native_vm_result_v1_free(&result);
+    if (!prove_with_capabilities_expect(
+            &vm, &capabilities, compile_query, limits,
+            PPOSLF_NATIVE_VM_PROVED_V1, &result,
+            "complete machine did not compile its exact normal trace"))
+        goto done;
+    pposlf_native_vm_result_v1_free(&result);
+    if (!prove_with_capabilities_expect(
+            &vm, &capabilities, check_query, limits,
+            PPOSLF_NATIVE_VM_PROVED_V1, &result,
+            "complete machine did not execute its exact trace successfully"))
+        goto done;
+    pposlf_native_vm_result_v1_free(&result);
+    if (!prove_with_capabilities_expect(
             &vm, &capabilities, positive_query, limits,
             PPOSLF_NATIVE_VM_PROVED_V1, &result,
             "complete generated proof machine rejected its positive proof"))
@@ -1717,8 +1920,8 @@ int main(int argc, char **argv) {
 
     ok = exercise_stats_accumulation() &&
          exercise_positional_linear_builder_view() &&
-         prepare_large_program(argv[1], 647u) &&
-         prepare_large_program(argv[2], 989u) &&
+         prepare_large_program(argv[1], 809u) &&
+         prepare_large_program(argv[2], 1023u) &&
          exercise_canary(argv[3], argv[4]) &&
          exercise_search_hashcons_isolation(argv[3]) &&
          exercise_open_program(argv[5], argv[6]) &&

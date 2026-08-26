@@ -273,7 +273,7 @@ def main() -> int:
     parser.add_argument(
         "--clause-body-activation",
         choices=("0", "1"),
-        default="1",
+        default="0",
     )
     parser.add_argument(
         "--paired-baseline",
@@ -310,9 +310,10 @@ def main() -> int:
         "CETTA_TERM_UNIVERSE_SOURCE_ID_MEMO": (
             args.term_universe_source_id_memo
         ),
-        "CETTA_PETTA_CLAUSE_BODY_ACTIVATION_REFERENCE": (
-            "0" if args.clause_body_activation == "1" else "1"
+        "CETTA_PETTA_CLAUSE_BODY_ACTIVATION": (
+            args.clause_body_activation
         ),
+        "CETTA_PETTA_CLAUSE_BODY_ACTIVATION_REFERENCE": "0",
     }
     baseline_environment = {
         "CETTA_PETTA_SEARCH_MACHINE": "1",
@@ -322,6 +323,7 @@ def main() -> int:
             args.specializer_route_cache
         ),
         "CETTA_TERM_UNIVERSE_SOURCE_ID_MEMO": "0",
+        "CETTA_PETTA_CLAUSE_BODY_ACTIVATION": "0",
         "CETTA_PETTA_CLAUSE_BODY_ACTIVATION_REFERENCE": "1",
     }
 

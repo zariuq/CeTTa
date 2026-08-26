@@ -1,5 +1,5 @@
 ; generated finite-Horn facts from a canonical answer stream
-(gslt-presentation-v1 GeneratedAnswerFactsV1_3fcd2243e38a7c05af06283aab20e2c744e6a28eb53dc8c5c6b74ca0f229ab65
+(gslt-presentation-v1 GeneratedAnswerFactsV1_c0c6dcac4ade3d7f99a7395a8efd8629cf1b7d3e7029d6fade5ba04329c3d776
   (signature
     (operator ActionsConsV1 2)
     (operator NatSuccV1 1)
@@ -21,7 +21,6 @@
     (operator StateRequirePairwiseDistinctV1 1)
     (operator StateRequireRowKeyAbsentV1 3)
     (operator StateRequireRowV1 2)
-    (operator StateResolveSourceV1 3)
     (operator StateRoleAtV1 2)
     (operator StateRoleListV1 2)
     (operator StateRowConsV1 2)
@@ -68,9 +67,6 @@
       (body))
     (rule answer-fact-e089968bf043158f498256730912d2da80f75df3d37206779628a58f9089424d
       (head (StateOperationProgramV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-open-scope (ActionsConsV1 StatePushScopeV1 ActionsNilV1)))
-      (body))
-    (rule answer-fact-8588879dc13bd3041f552b1ade863866c2b5e41492ccb1f96715830daef32e02
-      (head (StateOperationProgramV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) mm-resolve-include (ActionsConsV1 (StateResolveSourceV1 mm-include-path StateSkipCompletedSourceV1 StateSkipActiveSourceV1) ActionsNilV1)))
       (body))
     (rule answer-fact-a33a583aec8106ee6eca413d2f930b3134eda9bbac81b52a2d430762fd754379
       (head (StateTableLifetimeV1 (StateProgramDigestV1 sha256-43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76) (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 (NatSuccV1 NatZeroV1)))))))))))))))))) StatePersistentV1))

@@ -8417,7 +8417,7 @@ static const CettaGsltEmbeddedSourceV1 cetta_proof_trace_compiled_canary_v1_sour
         .input = {
             .bytes = cetta_proof_trace_compiled_canary_v1_semantic_1,
             .length = sizeof(cetta_proof_trace_compiled_canary_v1_semantic_1),
-            .source = "../../../experiments/gslt2parse_foundation/presentations/core/proof_gslt_trace_semantics_v1.metta",
+            .source = "../../../experiments/gslt2parse_foundation/presentations/core/certificate_gslt_trace_semantics_v1.metta",
         },
         .sha256 = "07269a62f82e43f2d269e04c21946e774db6ef0887aad56ac073189adb4cd896",
     },
@@ -8425,7 +8425,7 @@ static const CettaGsltEmbeddedSourceV1 cetta_proof_trace_compiled_canary_v1_sour
         .input = {
             .bytes = cetta_proof_trace_compiled_canary_v1_semantic_2,
             .length = sizeof(cetta_proof_trace_compiled_canary_v1_semantic_2),
-            .source = "../../../experiments/gslt2parse_foundation/presentations/core/proof_gslt_trace_compiler_v1.metta",
+            .source = "../../../experiments/gslt2parse_foundation/presentations/core/certificate_gslt_trace_compiler_v1.metta",
         },
         .sha256 = "595293a3e320fbd7b18b56fd794b978f676c625cc46ffadaafaa2c448a24b286",
     },
@@ -8433,7 +8433,7 @@ static const CettaGsltEmbeddedSourceV1 cetta_proof_trace_compiled_canary_v1_sour
         .input = {
             .bytes = cetta_proof_trace_compiled_canary_v1_semantic_3,
             .length = sizeof(cetta_proof_trace_compiled_canary_v1_semantic_3),
-            .source = "../../../experiments/gslt2parse_foundation/presentations/core/proof_gslt_trace_input_v1.metta",
+            .source = "../../../experiments/gslt2parse_foundation/presentations/core/certificate_gslt_trace_input_v1.metta",
         },
         .sha256 = "7c70fc2c439c33edfd5971c9163dfd80ce00c834c98c3ef5deba7dc9916b8f4c",
     },
@@ -8441,7 +8441,7 @@ static const CettaGsltEmbeddedSourceV1 cetta_proof_trace_compiled_canary_v1_sour
         .input = {
             .bytes = cetta_proof_trace_compiled_canary_v1_semantic_4,
             .length = sizeof(cetta_proof_trace_compiled_canary_v1_semantic_4),
-            .source = "../../../experiments/gslt2parse_foundation/presentations/core/proof_gslt_trace_input_interface_v1.metta",
+            .source = "../../../experiments/gslt2parse_foundation/presentations/core/certificate_gslt_trace_input_interface_v1.metta",
         },
         .sha256 = "feb3d2e6dd1e88b934acd39b1c00134045ca5357dc436f2097b3de1d69d1e974",
     },
@@ -8457,7 +8457,7 @@ static const CettaGsltEmbeddedSourceV1 cetta_proof_trace_compiled_canary_v1_sour
         .input = {
             .bytes = cetta_proof_trace_compiled_canary_v1_semantic_6,
             .length = sizeof(cetta_proof_trace_compiled_canary_v1_semantic_6),
-            .source = "../../../experiments/gslt2parse_foundation/presentations/canaries/proof_gslt_trace_input_v1.metta",
+            .source = "../../../experiments/gslt2parse_foundation/presentations/canaries/certificate_gslt_trace_input_v1.metta",
         },
         .sha256 = "3047c73348a2622906e3b3ec8b3a730678b30c07b3a499b43e1f8294326330d5",
     },
@@ -8465,7 +8465,7 @@ static const CettaGsltEmbeddedSourceV1 cetta_proof_trace_compiled_canary_v1_sour
         .input = {
             .bytes = cetta_proof_trace_compiled_canary_v1_semantic_7,
             .length = sizeof(cetta_proof_trace_compiled_canary_v1_semantic_7),
-            .source = "../../../experiments/gslt2parse_foundation/presentations/canaries/proof_gslt_trace_compressed_composition_v1.metta",
+            .source = "../../../experiments/gslt2parse_foundation/presentations/canaries/certificate_gslt_trace_compressed_composition_v1.metta",
         },
         .sha256 = "d38e992757bf3f23a5e0a2695b196813437e11ad377fd014c550138bbae2063e",
     },

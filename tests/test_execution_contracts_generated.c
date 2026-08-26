@@ -396,6 +396,14 @@ typedef struct {
         TEST_DECLARE_OUTCOME_SET,
         TEST_DECLARE_EPHEMERON_ATOM_MAP)
 } TestPreparedPureMachineRoots;
+typedef struct {
+    CETTA_EVAL_GC_FRAME_FIELDS_outcome_continuation(
+        TEST_DECLARE_STRONG_ATOM_SLOT,
+        TEST_DECLARE_STRONG_ATOM_SPAN,
+        TEST_DECLARE_LOGICAL_BINDINGS,
+        TEST_DECLARE_OUTCOME_SET,
+        TEST_DECLARE_EPHEMERON_ATOM_MAP)
+} TestOutcomeContinuationRoots;
 #undef TEST_DECLARE_EPHEMERON_ATOM_MAP
 #undef TEST_DECLARE_OUTCOME_SET
 #undef TEST_DECLARE_LOGICAL_BINDINGS
@@ -438,6 +446,54 @@ static void test_generated_prepared_machine_roots(void) {
     assert(generated_root_atoms_visited(&omitted_runtime_frames) == 12u);
 }
 
+static size_t generated_outcome_continuation_roots_visited(
+    const TestOutcomeContinuationRoots *roots) {
+    size_t visited = 0u;
+#define CETTA_GC_VISIT_STRONG_ATOM_SPAN(session, span, fail) do { \
+    (void)(session);                                                \
+    if ((span).len == SIZE_MAX) { fail; }                           \
+    visited += (span).len;                                          \
+} while (0)
+#define CETTA_GC_VISIT_OUTCOME_SET(session, outcomes, fail) do { \
+    (void)(session);                                             \
+    if (!(outcomes)) { fail; }                                  \
+    visited++;                                                   \
+} while (0)
+    CETTA_EVAL_GC_ARM_outcome_continuation(
+        NULL, roots, goto failed);
+#undef CETTA_GC_VISIT_OUTCOME_SET
+#undef CETTA_GC_VISIT_STRONG_ATOM_SPAN
+    return visited;
+failed:
+    return SIZE_MAX;
+}
+
+static void test_generated_outcome_continuation_roots(void) {
+    int child = 0;
+    int parent = 0;
+    TestOutcomeContinuationRoots complete = {
+        .live_atoms = {NULL, 3u},
+        .child_outcomes = &child,
+        .parent_outcomes = &parent,
+    };
+    assert(generated_outcome_continuation_roots_visited(&complete) == 5u);
+
+    TestOutcomeContinuationRoots no_derived_atoms = complete;
+    no_derived_atoms.live_atoms.len = 0u;
+    assert(generated_outcome_continuation_roots_visited(
+               &no_derived_atoms) == 2u);
+
+    TestOutcomeContinuationRoots omitted_child = complete;
+    omitted_child.child_outcomes = NULL;
+    assert(generated_outcome_continuation_roots_visited(
+               &omitted_child) == SIZE_MAX);
+
+    TestOutcomeContinuationRoots omitted_parent = complete;
+    omitted_parent.parent_outcomes = NULL;
+    assert(generated_outcome_continuation_roots_visited(
+               &omitted_parent) == SIZE_MAX);
+}
+
 int main(void) {
     test_query_head_rows();
     test_row_dispositions();
@@ -451,6 +507,7 @@ int main(void) {
     test_generated_fold_control_program();
     test_generated_pure_call_modes();
     test_generated_prepared_machine_roots();
+    test_generated_outcome_continuation_roots();
     puts("PASS: generated execution contracts");
     return 0;
 }

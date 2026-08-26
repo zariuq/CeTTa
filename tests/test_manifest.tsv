@@ -15,6 +15,7 @@ benchmarks/test_tilepuzzle_pathmap.metta	he	metta	he-extended	pathmap	pathmap	te
 tests/gc/test_eval_gc_adversarial.metta	he	metta	he-extended	main	native	test-eval-gc-adversarial	golden	tail-safe eval GC adversarial golden regression
 tests/gc/test_eval_gc_indirect_state_stream.metta	he	metta	he-extended	main	native	test-eval-gc-adversarial	golden	tail-safe eval GC adversarial golden regression
 tests/gc/test_eval_gc_nested_outcome_roots.metta	he	metta	he-extended	main	native	test	golden	-
+tests/gc/test_eval_gc_precise_let_suspension.metta	he	metta	he-extended	main	native	test-eval-gc-adversarial	golden	tail-safe eval GC adversarial golden regression
 tests/generated/semiring_query_laws.metta	he	metta	he-extended	main	native	test	golden	-
 tests/he_a1_symbols.metta	he	metta	he-extended	main	native	test	golden	-
 tests/he_a2_opencoggy.metta	he	metta	he-extended	main	native	test	golden	-

@@ -1,0 +1,7 @@
+is 3, should 3. ✅ 
+is ((odd 3) (even 4)), should ((odd 3) (even 4)). ✅ 
+is 70, should 70. ✅ 
+true
+true
+true
+true

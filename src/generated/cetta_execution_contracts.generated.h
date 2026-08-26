@@ -2,7 +2,7 @@
 #define CETTA_EXECUTION_CONTRACTS_GENERATED_H
 
 /* Generated from lib/gslt_execution_contracts.metta.
- * Source SHA-256: 8ce6063233739673366c88c8cbeb80c246e85e8f63ea1f3ee131982ee462f7cf
+ * Source SHA-256: c21b55297238fa897de5d1de3ff505adee9f1fe80b4fe112dcf0e0bce7e9a6c7
  */
 
 #include <stdbool.h>
@@ -296,17 +296,19 @@ static inline bool cetta_gslt_pure_call_whnf_disjoint(
 typedef enum {
     CETTA_EVAL_GC_FRAME_LEXICAL = 0,
     CETTA_EVAL_GC_FRAME_OUTCOME_SET = 1,
-    CETTA_EVAL_GC_FRAME_FUNCTION_ARGS = 2,
-    CETTA_EVAL_GC_FRAME_FUNCTION_ARGS_MACHINE = 3,
-    CETTA_EVAL_GC_FRAME_PRIME_TASK = 4,
-    CETTA_EVAL_GC_FRAME_PRIME_FRAME = 5,
-    CETTA_EVAL_GC_FRAME_PRIME_DRIVER = 6,
-    CETTA_EVAL_GC_FRAME_PREPARED_PURE_MACHINE = 7,
+    CETTA_EVAL_GC_FRAME_OUTCOME_CONTINUATION = 2,
+    CETTA_EVAL_GC_FRAME_FUNCTION_ARGS = 3,
+    CETTA_EVAL_GC_FRAME_FUNCTION_ARGS_MACHINE = 4,
+    CETTA_EVAL_GC_FRAME_PRIME_TASK = 5,
+    CETTA_EVAL_GC_FRAME_PRIME_FRAME = 6,
+    CETTA_EVAL_GC_FRAME_PRIME_DRIVER = 7,
+    CETTA_EVAL_GC_FRAME_PREPARED_PURE_MACHINE = 8,
     CETTA_EVAL_GC_FRAME_KIND_COUNT
 } CettaEvalGcFrameKind;
 
 #define CETTA_EVAL_GC_FRAME_KIND_ROWS(X)     X(lexical, LEXICAL) \
     X(outcome_set, OUTCOME_SET) \
+    X(outcome_continuation, OUTCOME_CONTINUATION) \
     X(function_args, FUNCTION_ARGS) \
     X(function_args_machine, FUNCTION_ARGS_MACHINE) \
     X(prime_task, PRIME_TASK) \
@@ -329,6 +331,13 @@ typedef enum {
     STRONG_ATOM_SLOT, STRONG_ATOM_SPAN, \
     LOGICAL_BINDINGS, OUTCOME_SET, EPHEMERON_ATOM_MAP) \
     OUTCOME_SET(outcomes)
+
+#define CETTA_EVAL_GC_FRAME_FIELDS_outcome_continuation(\
+    STRONG_ATOM_SLOT, STRONG_ATOM_SPAN, \
+    LOGICAL_BINDINGS, OUTCOME_SET, EPHEMERON_ATOM_MAP) \
+    STRONG_ATOM_SPAN(live_atoms) \
+    OUTCOME_SET(child_outcomes) \
+    OUTCOME_SET(parent_outcomes)
 
 #define CETTA_EVAL_GC_FRAME_FIELDS_function_args(\
     STRONG_ATOM_SLOT, STRONG_ATOM_SPAN, \
@@ -394,6 +403,12 @@ typedef enum {
 
 #define CETTA_EVAL_GC_ARM_outcome_set(SESSION, PAYLOAD, FAIL) do { \
     CETTA_GC_VISIT_OUTCOME_SET((SESSION), (PAYLOAD)->outcomes, FAIL); \
+} while (0)
+
+#define CETTA_EVAL_GC_ARM_outcome_continuation(SESSION, PAYLOAD, FAIL) do { \
+    CETTA_GC_VISIT_STRONG_ATOM_SPAN((SESSION), (PAYLOAD)->live_atoms, FAIL); \
+    CETTA_GC_VISIT_OUTCOME_SET((SESSION), (PAYLOAD)->child_outcomes, FAIL); \
+    CETTA_GC_VISIT_OUTCOME_SET((SESSION), (PAYLOAD)->parent_outcomes, FAIL); \
 } while (0)
 
 #define CETTA_EVAL_GC_ARM_function_args(SESSION, PAYLOAD, FAIL) do { \

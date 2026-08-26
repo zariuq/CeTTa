@@ -694,6 +694,27 @@ static inline BindingsLookupIndex *bindings_lookup_index_current(
     BindingsLookupIndex *index = bindings->lookup_index;
     if (index && index->synced_len == bindings->len)
         return index;
+    if (index && index->synced_len < bindings->len &&
+        bindings->len - index->synced_len == 1u) {
+#if !defined(CETTA_MUTATION_BINDINGS_LAZY_TAIL_MUTATE_SHARED)
+        if (atomic_load_explicit(
+                &index->references, memory_order_acquire) != 1u) {
+            return bindings_lookup_index_sync(bindings);
+        }
+#endif
+        if ((size_t)bindings->len > index->capacity / 2u) {
+            return bindings_lookup_index_sync(bindings);
+        }
+#if !defined(CETTA_MUTATION_BINDINGS_LAZY_TAIL_SKIP_INSERT)
+        if (!bindings_lookup_index_insert_raw(
+                index, bindings->entries[index->synced_len].var_id,
+                index->synced_len)) {
+            return bindings_lookup_index_sync(bindings);
+        }
+#endif
+        index->synced_len = bindings->len;
+        return index;
+    }
     /* Appends deliberately leave a shared index at its existing prefix.
      * Synchronizing the suffix only when a lookup needs it avoids a
      * copy-on-write mutation on every binding write. */
@@ -5696,7 +5717,6 @@ typedef struct {
     MatchPathEntry *entries;
     size_t len;
     size_t entry_cap;
-    uint32_t inline_buckets[MATCH_PATH_BUCKET_INLINE_CAP];
     uint32_t *buckets;
     size_t bucket_cap;
 } MatchPathSet;
@@ -5705,15 +5725,13 @@ static void match_path_init(MatchPathSet *path) {
     path->entries = path->inline_entries;
     path->len = 0u;
     path->entry_cap = MATCH_PATH_INLINE_CAP;
-    path->buckets = path->inline_buckets;
-    path->bucket_cap = MATCH_PATH_BUCKET_INLINE_CAP;
-    memset(path->buckets, 0,
-           sizeof(*path->buckets) * path->bucket_cap);
+    path->buckets = NULL;
+    path->bucket_cap = 0u;
 }
 
 static void match_path_free(MatchPathSet *path) {
     if (path->entries != path->inline_entries) free(path->entries);
-    if (path->buckets != path->inline_buckets) free(path->buckets);
+    free(path->buckets);
 }
 
 static size_t match_path_hash(Atom *left, Atom *right, uint8_t tagged) {
@@ -5749,7 +5767,9 @@ static bool match_path_reserve_entries(MatchPathSet *path) {
 static bool match_path_grow_buckets(MatchPathSet *path) {
     if (path->bucket_cap > SIZE_MAX / 2u)
         return false;
-    size_t new_cap = path->bucket_cap * 2u;
+    size_t new_cap = path->bucket_cap
+        ? path->bucket_cap * 2u
+        : MATCH_PATH_BUCKET_INLINE_CAP;
     if (new_cap > SIZE_MAX / sizeof(*path->buckets) ||
         path->len > UINT32_MAX)
         return false;
@@ -5763,22 +5783,43 @@ static bool match_path_grow_buckets(MatchPathSet *path) {
         entry->previous = next[bucket];
         next[bucket] = (uint32_t)i + 1u;
     }
-    if (path->buckets != path->inline_buckets)
-        free(path->buckets);
+    free(path->buckets);
     path->buckets = next;
     path->bucket_cap = new_cap;
     return true;
 }
 
 /* Enter and leave are strictly nested by both structural matcher worklists.
- * Store exactly that active ancestry: the bucket head is the newest active
- * entry with its hash, and each entry links to the preceding active entry in
- * the same bucket.  Shared finite DAG nodes may therefore re-enter after their
- * sibling path leaves, while a genuine active-path recurrence still fails. */
+ * Store exactly that active ancestry.  Shallow paths use the inline entries
+ * directly, avoiding a bucket table that most matches never need.  Deeper
+ * paths switch once to the same hashed active set: each bucket head is the
+ * newest active entry and each entry links to its predecessor.  Shared finite
+ * DAG nodes may therefore re-enter after their sibling path leaves, while a
+ * genuine active-path recurrence still fails. */
 static bool match_path_enter(MatchPathSet *path, Atom *left, Atom *right,
                              uint8_t tagged) {
     if (!match_path_reserve_entries(path))
         return false;
+    if (!path->buckets) {
+        for (size_t i = 0u; i < path->len; i++) {
+            MatchPathEntry *entry = &path->entries[i];
+            if (entry->left == left && entry->right == right &&
+                entry->tagged == tagged) {
+                return false;
+            }
+        }
+        if (path->len < MATCH_PATH_INLINE_CAP) {
+            path->entries[path->len++] = (MatchPathEntry){
+                .left = left,
+                .right = right,
+                .previous = 0u,
+                .tagged = tagged,
+            };
+            return true;
+        }
+        if (!match_path_grow_buckets(path))
+            return false;
+    }
     if ((path->len + 1u) * 4u >= path->bucket_cap * 3u &&
         !match_path_grow_buckets(path))
         return false;
@@ -5813,6 +5854,10 @@ static void match_path_leave(MatchPathSet *path, Atom *left, Atom *right,
     MatchPathEntry *entry = &path->entries[index];
     assert(entry->left == left && entry->right == right &&
            entry->tagged == tagged);
+    if (!path->buckets) {
+        path->len = index;
+        return;
+    }
     size_t bucket = match_path_hash(left, right, tagged) &
         (path->bucket_cap - 1u);
     assert(path->buckets[bucket] == (uint32_t)index + 1u);
