@@ -136,6 +136,60 @@ typedef struct {
     const CettaContinuationBackend *backend;
 } CettaOwnedContinuation;
 
+/* A scorer sees only authorized occurrence identities and opaque owned
+ * continuations.  Equal continuation payloads remain distinct occurrences;
+ * a scorer may reorder them but cannot remove or duplicate one. */
+typedef struct {
+    uint64_t occurrence_id;
+    uint64_t age;
+    const CettaOwnedContinuation *continuation;
+} CettaControllerCandidateView;
+
+typedef enum {
+    CETTA_CONTROLLER_RANK_READY = 0,
+    CETTA_CONTROLLER_RANK_DEFERRED,
+    CETTA_CONTROLLER_RANK_INVALIDATED,
+} CettaControllerRankStatus;
+
+typedef CettaControllerRankStatus (*CettaControllerBatchRankFn)(
+    void *context,
+    const CettaControllerCandidateView *candidates,
+    size_t length,
+    size_t *permutation);
+
+typedef struct {
+    CettaControllerBatchRankFn rank;
+    void *context;
+    uint64_t scorer_identity;
+    uint64_t model_revision;
+} CettaControllerBatchRanker;
+
+typedef enum {
+    CETTA_CONTROLLER_RANKING_APPLIED = 0,
+    CETTA_CONTROLLER_RANKING_IDENTITY_DEFAULT,
+    CETTA_CONTROLLER_RANKING_IDENTITY_DEFERRED,
+    CETTA_CONTROLLER_RANKING_IDENTITY_INVALID,
+} CettaControllerRankingDecision;
+
+typedef struct {
+    CettaControllerRankingDecision decision;
+    uint64_t scorer_identity;
+    uint64_t model_revision;
+    size_t candidates;
+} CettaControllerRankingReceipt;
+
+/* Rank one complete live occurrence set.  PERMUTATION is always initialized
+ * to a total source-order permutation first.  A ready scorer replaces it only
+ * when its result contains every input index exactly once; deferred, stale,
+ * malformed, or absent scorers therefore have a deterministic zero-semantic-
+ * effect fallback. */
+CettaControllerRankingDecision cetta_controller_rank_complete(
+    const CettaControllerBatchRanker *ranker,
+    const CettaControllerCandidateView *candidates,
+    size_t length,
+    size_t *permutation,
+    CettaControllerRankingReceipt *receipt);
+
 /* A controller-owned sequence of independent successor continuations.
  * Expansion preserves occurrence identity: two equal successors remain two
  * entries.  The sequence order is the backend's authored occurrence order;

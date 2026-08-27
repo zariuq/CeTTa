@@ -28506,6 +28506,9 @@ typedef struct {
     uint64_t successors;
     uint64_t captures;
     uint64_t restores;
+    uint64_t capture_elapsed_ns;
+    uint64_t restore_elapsed_ns;
+    uint64_t expansion_elapsed_ns;
     uint64_t inline_fallbacks;
     uint64_t answers;
     size_t maximum_frontier_length;
@@ -28545,7 +28548,7 @@ typedef struct {
     uint64_t diagnostic_transitions_permitted;
     CettaSearchControllerPolicy controller_policy;
     bool controller_admitted;
-    bool controller_measure_storage;
+    bool controller_measure_representation;
     bool controller_quantum_active;
     bool controller_quantum_expired;
     uint64_t controller_quantum_limit;
@@ -32082,7 +32085,7 @@ static void petta_eval_controller_note_frontier(
     size_t length = cetta_continuation_queue_length(queue);
     if (length > context->controller_stats.maximum_frontier_length)
         context->controller_stats.maximum_frontier_length = length;
-    if (!context->controller_measure_storage)
+    if (!context->controller_measure_representation)
         return;
     size_t atom_bytes = 0u;
     size_t vector_bytes = 0u;
@@ -32121,6 +32124,63 @@ static PettaMachineStep petta_eval_controller_status_step(
         return PETTA_MACHINE_STEP_SUSPENDED;
     }
     return PETTA_MACHINE_STEP_HOST_ERROR;
+}
+
+static void petta_eval_controller_add_elapsed(
+        uint64_t *total, uint64_t started_ns) {
+    if (!total || started_ns == 0u)
+        return;
+    uint64_t finished_ns = eval_monotonic_ns();
+    if (finished_ns < started_ns)
+        return;
+    uint64_t elapsed_ns = finished_ns - started_ns;
+    *total = elapsed_ns > UINT64_MAX - *total
+        ? UINT64_MAX : *total + elapsed_ns;
+}
+
+static CettaContinuationStatus petta_eval_controller_capture(
+        PettaEvalMachineContext *context,
+        CettaContinuationMachine machine,
+        CettaOwnedContinuation *continuation) {
+    uint64_t started_ns = context && context->controller_measure_representation
+        ? eval_monotonic_ns() : 0u;
+    CettaContinuationStatus status = cetta_continuation_capture(
+        machine, continuation);
+    if (context) {
+        petta_eval_controller_add_elapsed(
+            &context->controller_stats.capture_elapsed_ns, started_ns);
+    }
+    return status;
+}
+
+static CettaContinuationStatus petta_eval_controller_restore(
+        PettaEvalMachineContext *context,
+        CettaContinuationMachine machine,
+        CettaOwnedContinuation *continuation) {
+    uint64_t started_ns = context && context->controller_measure_representation
+        ? eval_monotonic_ns() : 0u;
+    CettaContinuationStatus status = cetta_continuation_restore(
+        machine, continuation);
+    if (context) {
+        petta_eval_controller_add_elapsed(
+            &context->controller_stats.restore_elapsed_ns, started_ns);
+    }
+    return status;
+}
+
+static CettaContinuationStatus petta_eval_controller_expand(
+        PettaEvalMachineContext *context,
+        CettaContinuationMachine machine,
+        CettaContinuationFrontier *frontier) {
+    uint64_t started_ns = context && context->controller_measure_representation
+        ? eval_monotonic_ns() : 0u;
+    CettaContinuationStatus status = cetta_continuation_expand(
+        machine, frontier);
+    if (context) {
+        petta_eval_controller_add_elapsed(
+            &context->controller_stats.expansion_elapsed_ns, started_ns);
+    }
+    return status;
 }
 
 static bool petta_eval_machine_try(
@@ -32196,7 +32256,7 @@ static bool petta_eval_machine_try(
             ? CETTA_SEARCH_CONTROLLER_FIFO
             : CETTA_SEARCH_CONTROLLER_INLINE_DEPTH_FIRST,
         .controller_admitted = fifo_admitted,
-        .controller_measure_storage =
+        .controller_measure_representation =
             petta_eval_machine_stats_enabled(),
         .controller_quantum_limit = 1u,
         .semantic_authority_epoch = 1u,
@@ -32423,7 +32483,8 @@ static bool petta_eval_machine_try(
                     break;
                 }
                 CettaContinuationStatus restored =
-                    cetta_continuation_restore(
+                    petta_eval_controller_restore(
+                        &context,
                         petta_machine_continuation_machine(&machine),
                         &next);
                 if (restored != CETTA_CONTINUATION_READY) {
@@ -32490,7 +32551,8 @@ static bool petta_eval_machine_try(
                         CettaOwnedContinuation remainder;
                         cetta_owned_continuation_init(&remainder);
                         CettaContinuationStatus captured =
-                            cetta_continuation_capture(
+                            petta_eval_controller_capture(
+                                &context,
                                 petta_machine_continuation_machine(
                                     &machine),
                                 &remainder);
@@ -32540,7 +32602,8 @@ static bool petta_eval_machine_try(
                     CettaContinuationFrontier successors;
                     cetta_continuation_frontier_init(&successors);
                     CettaContinuationStatus expanded =
-                        cetta_continuation_expand(
+                        petta_eval_controller_expand(
+                            &context,
                             petta_machine_continuation_machine(&machine),
                             &successors);
                     if (expanded == CETTA_CONTINUATION_READY) {
@@ -32592,7 +32655,8 @@ static bool petta_eval_machine_try(
                     CettaOwnedContinuation remainder;
                     cetta_owned_continuation_init(&remainder);
                     CettaContinuationStatus captured =
-                        cetta_continuation_capture(
+                        petta_eval_controller_capture(
+                            &context,
                             petta_machine_continuation_machine(&machine),
                             &remainder);
                     if (captured == CETTA_CONTINUATION_READY &&
@@ -33043,6 +33107,9 @@ static bool petta_eval_machine_try(
             " successors=%" PRIu64
             " captures=%" PRIu64
             " restores=%" PRIu64
+            " capture_elapsed_ns=%" PRIu64
+            " restore_elapsed_ns=%" PRIu64
+            " expansion_elapsed_ns=%" PRIu64
             " inline_fallbacks=%" PRIu64
             " answers=%" PRIu64
             " max_frontier=%zu"
@@ -33057,6 +33124,9 @@ static bool petta_eval_machine_try(
             context.controller_stats.successors,
             context.controller_stats.captures,
             context.controller_stats.restores,
+            context.controller_stats.capture_elapsed_ns,
+            context.controller_stats.restore_elapsed_ns,
+            context.controller_stats.expansion_elapsed_ns,
             context.controller_stats.inline_fallbacks,
             context.controller_stats.answers,
             context.controller_stats.maximum_frontier_length,

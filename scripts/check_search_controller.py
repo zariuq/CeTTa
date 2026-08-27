@@ -51,6 +51,33 @@ def require_run(result: subprocess.CompletedProcess[str], label: str) -> None:
         )
 
 
+def require_measured_controller_work(
+    receipt: dict[str, int | str], label: str
+) -> None:
+    pairs = (
+        ("captures", "capture_elapsed_ns"),
+        ("restores", "restore_elapsed_ns"),
+        ("expansions", "expansion_elapsed_ns"),
+    )
+    measured = False
+    for count_name, elapsed_name in pairs:
+        count = int(receipt.get(count_name, 0))
+        elapsed = int(receipt.get(elapsed_name, 0))
+        if count > 0:
+            measured = True
+            if elapsed <= 0:
+                raise AssertionError(
+                    f"{label}: {count_name}={count} but "
+                    f"{elapsed_name}={elapsed}"
+                )
+        elif elapsed != 0:
+            raise AssertionError(
+                f"{label}: {count_name}=0 but {elapsed_name}={elapsed}"
+            )
+    if not measured:
+        raise AssertionError(f"{label}: no controller representation work")
+
+
 def main() -> int:
     binary = Path(sys.argv[1] if len(sys.argv) > 1 else ROOT / "cetta").resolve()
 
@@ -104,6 +131,7 @@ def main() -> int:
         raise AssertionError(
             "asymmetric FIFO query was not actively frontier-scheduled"
         )
+    require_measured_controller_work(order_receipt, "asymmetric FIFO query")
 
     fifo = run(
         binary, "search_controller_fifo_starvation.metta",
@@ -137,6 +165,7 @@ def main() -> int:
                 f"FIFO controller receipt has {field}="
                 f"{receipt.get(field)!r}, expected {expected_value!r}"
             )
+    require_measured_controller_work(receipt, "starvation FIFO query")
 
     depth_first = run(
         binary, "search_controller_fifo_starvation.metta",
@@ -186,6 +215,14 @@ def main() -> int:
         raise AssertionError(
             "effectful root was not visibly declined by FIFO admission"
         )
+    for field in (
+        "capture_elapsed_ns", "restore_elapsed_ns",
+        "expansion_elapsed_ns",
+    ):
+        if int(effect_receipt.get(field, 0)) != 0:
+            raise AssertionError(
+                f"effectful inline fallback unexpectedly measured {field}"
+            )
 
     print("PASS: controller streams differ and occurrence bags agree exactly")
     print("PASS: FIFO reaches the bounded DFS-starvation witness")
