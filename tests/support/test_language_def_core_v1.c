@@ -217,7 +217,7 @@ static void constructor_coverage_gate(TestCounts *counts) {
         counts,
         cetta_op_lang_v1_parse_file(
             &wire,
-            "langdef/c-subset/language_def_core_coverage_v1.metta",
+            "tests/langdef/fixtures/language_def_core_coverage_v1.metta",
             8000000u, 16000000u, &wire_status,
             error, sizeof(error)) &&
             cetta_language_def_core_v1_decode(
@@ -337,7 +337,7 @@ static void constructor_coverage_gate(TestCounts *counts) {
     cetta_op_lang_v1_free(&wire);
 }
 
-static void c0_pure_operational_gate(TestCounts *counts) {
+static void external_call_machine_operational_gate(TestCounts *counts) {
     CettaOperationalLanguageDefV1 wire;
     CettaLanguageDefCoreV1 language;
     CettaOpLangV1Status wire_status = CETTA_OP_LANG_V1_INTERNAL_FAILURE;
@@ -354,7 +354,7 @@ static void c0_pure_operational_gate(TestCounts *counts) {
     cetta_op_lang_v1_init(&wire);
     cetta_language_def_core_v1_init(&language);
     parse_ok = cetta_op_lang_v1_parse_file(
-        &wire, "langdef/c-subset/c0_pure_v1.metta",
+        &wire, "langdef/machines/external_call_machine_v1.metta",
         64000000u, 128000000u, &wire_status,
         error, sizeof(error));
     if (parse_ok) {
@@ -364,14 +364,14 @@ static void c0_pure_operational_gate(TestCounts *counts) {
     }
     if (!parse_ok || !decode_ok) {
         fprintf(stderr,
-                "C0-pure ingress failed: wire=%s core=%s detail=%s\n",
+                "external-call-machine ingress failed: wire=%s core=%s detail=%s\n",
                 cetta_op_lang_v1_status_name(wire_status),
                 cetta_ld_core_v1_status_name(core_status),
                 error[0] ? error : "none");
     }
     (void)expect(
         counts, parse_ok && decode_ok,
-        error[0] ? error : "decode authored C0-pure operational target");
+        error[0] ? error : "decode authored external-call machine");
     fuel_exhausted = language.rewrite_len > 0u
         ? &language.rewrites[0] : NULL;
     branch_zero = language.rewrite_len > 1u
@@ -404,44 +404,44 @@ static void c0_pure_operational_gate(TestCounts *counts) {
         counts,
         wire_status == CETTA_OP_LANG_V1_OK &&
             core_status == CETTA_LD_CORE_V1_OK &&
-            text_is(&language.name, "C0Pure") &&
+            text_is(&language.name, "ExternalCallMachine") &&
             language.type_len == 21u && language.term_len == 43u &&
             language.equation_len == 0u && language.rewrite_len == 12u &&
             text_is(&language.rewrites[11].name,
-                    "c0:return-resource-fault"),
-        "C0-pure retains authored types, constructors, and transitions");
+                    "external-call:return-resource-fault"),
+        "external-call machine retains authored types, constructors, and transitions");
     (void)expect(
         counts,
         !has_oracle && language.terms &&
-            text_is(&language.terms[0].label, "c0:nat-zero") &&
-            text_is(&language.terms[42].label, "c0:halted") &&
+            text_is(&language.terms[0].label, "external-call:nat-zero") &&
+            text_is(&language.terms[42].label, "external-call:halted") &&
             language.terms[41].eval_policy.present &&
             language.terms[41].eval_policy.value ==
                 CETTA_LD_EVAL_REWRITE_V1,
-        "C0-pure has no oracle-defined constructor semantics");
+        "external-call machine has no oracle-defined constructor semantics");
     (void)expect(
         counts, heads_declared,
-        "every C0-pure rewrite head is an authored constructor");
+        "every external-call rewrite head is an authored constructor");
     (void)expect(
         counts,
         fuel_exhausted && branch_zero &&
-            text_is(&fuel_exhausted->name, "c0:fuel-exhausted") &&
+            text_is(&fuel_exhausted->name, "external-call:fuel-exhausted") &&
             fuel_exhausted->premises.len == 1u &&
             fuel_exhausted->premises.items[0].kind ==
                 CETTA_LD_PREMISE_RELATION_QUERY_V1 &&
             text_is(
                 &fuel_exhausted->premises.items[0]
                     .as.relation_query.relation,
-                "C0StepLimitFault") &&
-            text_is(&branch_zero->name, "c0:branch-zero") &&
+                "ExternalCallStepLimitFault") &&
+            text_is(&branch_zero->name, "external-call:branch-zero") &&
             branch_zero->premises.len == 4u &&
             text_is(
                 &branch_zero->premises.items[1]
                     .as.relation_query.relation,
-                "C0FetchInstruction") &&
+                "ExternalCallFetchInstruction") &&
             branch_zero->left.kind == CETTA_LD_PATTERN_APPLY_V1 &&
             branch_zero->right.kind == CETTA_LD_PATTERN_APPLY_V1,
-        "C0-pure transition order and operational premises decode exactly");
+        "external-call transition order and operational premises decode exactly");
     cetta_language_def_core_v1_free(&language);
     cetta_op_lang_v1_free(&wire);
 }
@@ -471,7 +471,7 @@ static void exact_arithmetic_operational_gate(TestCounts *counts) {
     cetta_op_lang_v1_init(&wire);
     cetta_language_def_core_v1_init(&language);
     parse_ok = cetta_op_lang_v1_parse_file(
-        &wire, "langdef/c-subset/exact_arithmetic_v1.metta",
+        &wire, "langdef/arithmetic/exact_arithmetic_v1.metta",
         16000000u, 32000000u, &wire_status,
         error, sizeof(error));
     if (parse_ok) {
@@ -546,7 +546,7 @@ int main(void) {
 
     fail_closed_and_atomic_gate(&counts);
     constructor_coverage_gate(&counts);
-    c0_pure_operational_gate(&counts);
+    external_call_machine_operational_gate(&counts);
     exact_arithmetic_operational_gate(&counts);
     printf("typed LanguageDef core decode: %u passed, %u failed\n",
            counts.passed, counts.failed);

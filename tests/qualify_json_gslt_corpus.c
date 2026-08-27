@@ -149,23 +149,29 @@ static bool load_runtime(CettaJsonRuntimeV1 **runtime_out,
                          char *error, size_t error_size) {
     uint8_t *language = NULL;
     uint8_t *profile = NULL;
+    uint8_t *target = NULL;
     size_t language_len = 0u;
     size_t profile_len = 0u;
+    size_t target_len = 0u;
     CettaJsonRuntimeV1 *runtime = NULL;
 
     language = read_file("langdef/json/rfc8259_syntax_v1.metta",
                          &language_len);
     profile = read_file("langdef/json/rfc8259_parser_profile_v1.metta",
                         &profile_len);
-    if (!language || !profile) {
+    target = read_file("langdef/json/occurrence_preserving_value_v1.metta",
+                       &target_len);
+    if (!language || !profile || !target) {
         (void)snprintf(error, error_size,
                        "cannot read authored JSON language sources");
         goto done;
     }
     runtime = cetta_json_runtime_v1_new(
-        language, language_len, profile, profile_len, error, error_size);
+        language, language_len, profile, profile_len,
+        target, target_len, error, error_size);
 
 done:
+    free(target);
     free(profile);
     free(language);
     if (!runtime) return false;
@@ -196,7 +202,7 @@ static bool qualify_case(const CettaJsonRuntimeV1 *runtime,
         return false;
     }
     cetta_json_runtime_v1_default_limits(&limits);
-    limits.qualify_with_glr = true;
+    limits.kernel = CETTA_JSON_KERNEL_V1_PACKED_GLL_GLR_DUAL;
     parsed = cetta_json_runtime_v1_parse(
         runtime, arena, bytes, len, &limits, &value, &status,
         error, sizeof(error));
