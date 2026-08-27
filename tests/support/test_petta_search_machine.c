@@ -4977,6 +4977,95 @@ static CettaContinuationStatus restore_relational_continuation(
         petta_machine_continuation_machine(machine), continuation);
 }
 
+typedef struct {
+    size_t calls;
+    CettaControllerRankStatus status;
+    bool malformed;
+} ControllerRankProbe;
+
+static CettaControllerRankStatus controller_rank_probe(
+        void *opaque,
+        const CettaControllerCandidateView *candidates,
+        size_t length, size_t *permutation) {
+    ControllerRankProbe *probe = opaque;
+    assert(probe && candidates && permutation);
+    probe->calls++;
+    for (size_t i = 0u; i < length; i++)
+        permutation[i] = probe->malformed ? 0u : length - i - 1u;
+    return probe->status;
+}
+
+static void test_controller_batch_ranker(void) {
+    CettaOwnedContinuation handles[3] = {
+        {.payload = (void *)(uintptr_t)1u},
+        {.payload = (void *)(uintptr_t)1u},
+        {.payload = (void *)(uintptr_t)2u},
+    };
+    CettaControllerCandidateView candidates[3] = {
+        {.occurrence_id = 11u, .age = 0u, .continuation = &handles[0]},
+        {.occurrence_id = 12u, .age = 1u, .continuation = &handles[1]},
+        {.occurrence_id = 13u, .age = 2u, .continuation = &handles[2]},
+    };
+    size_t permutation[3] = {SIZE_MAX, SIZE_MAX, SIZE_MAX};
+    ControllerRankProbe probe = {
+        .status = CETTA_CONTROLLER_RANK_READY,
+    };
+    CettaControllerBatchRanker ranker = {
+        .rank = controller_rank_probe,
+        .context = &probe,
+        .scorer_identity = 29u,
+        .model_revision = 7u,
+    };
+    CettaControllerRankingReceipt receipt;
+    assert(cetta_controller_rank_complete(
+               &ranker, candidates, 3u, permutation, &receipt) ==
+           CETTA_CONTROLLER_RANKING_APPLIED);
+    assert(probe.calls == 1u);
+    assert(permutation[0] == 2u && permutation[1] == 1u &&
+           permutation[2] == 0u);
+    assert(receipt.decision == CETTA_CONTROLLER_RANKING_APPLIED);
+    assert(receipt.scorer_identity == 29u &&
+           receipt.model_revision == 7u && receipt.candidates == 3u);
+
+    /* Equal payloads remain separate occurrences, while a malformed scorer
+     * cannot duplicate either occurrence or prune the third one. */
+    probe.malformed = true;
+    assert(cetta_controller_rank_complete(
+               &ranker, candidates, 3u, permutation, &receipt) ==
+           CETTA_CONTROLLER_RANKING_IDENTITY_INVALID);
+    assert(permutation[0] == 0u && permutation[1] == 1u &&
+           permutation[2] == 2u);
+
+    probe.malformed = false;
+    probe.status = CETTA_CONTROLLER_RANK_DEFERRED;
+    assert(cetta_controller_rank_complete(
+               &ranker, candidates, 3u, permutation, &receipt) ==
+           CETTA_CONTROLLER_RANKING_IDENTITY_DEFERRED);
+    assert(permutation[0] == 0u && permutation[1] == 1u &&
+           permutation[2] == 2u);
+
+    assert(cetta_controller_rank_complete(
+               NULL, candidates, 3u, permutation, &receipt) ==
+           CETTA_CONTROLLER_RANKING_IDENTITY_DEFAULT);
+    assert(receipt.scorer_identity == 0u &&
+           receipt.model_revision == 0u);
+
+    size_t calls_before_empty = probe.calls;
+    assert(cetta_controller_rank_complete(
+               &ranker, NULL, 0u, NULL, &receipt) ==
+           CETTA_CONTROLLER_RANKING_IDENTITY_DEFAULT);
+    assert(probe.calls == calls_before_empty);
+    assert(receipt.candidates == 0u);
+
+    CettaControllerCandidateView invalid[1] = {{0}};
+    permutation[0] = SIZE_MAX;
+    assert(cetta_controller_rank_complete(
+               &ranker, invalid, 1u, permutation, &receipt) ==
+           CETTA_CONTROLLER_RANKING_IDENTITY_INVALID);
+    assert(permutation[0] == 0u);
+    puts("PASS: scorer batches preserve complete occurrence permutations");
+}
+
 static void test_branch_capture_algebra(void) {
     CettaSearchControllerPolicy policy =
         CETTA_SEARCH_CONTROLLER_FIFO;
@@ -5609,6 +5698,7 @@ int main(void) {
     test_analysis_authority_retry(&space, &answers);
     test_relational_obligation_guard_gc(
         &space, &persistent, &answers);
+    test_controller_batch_ranker();
     test_branch_capture_algebra();
     test_owned_clause_continuation_roundtrip(
         &space, &persistent, &answers);

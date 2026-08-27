@@ -774,6 +774,27 @@ static int32_t bindings_lookup_index_slow(Bindings *b, VarId var_id) {
 static inline int32_t bindings_lookup_index(Bindings *b, VarId var_id) {
     cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_BINDINGS_LOOKUP);
     BindingsLookupIndex *index = b->lookup_index;
+    /* The synchronized index is the overwhelmingly common state on long
+     * searches.  Answer it here instead of entering the catch-up/rebuild
+     * path on every lookup.  The authoritative Binding is still checked
+     * before a positive result is returned; this is only a derived view. */
+    if (__builtin_expect(
+            index && index->synced_len == b->len, true)) {
+        uint32_t index_plus_one =
+            bindings_lookup_index_find(index, var_id);
+        if (index_plus_one == 0u) {
+            cetta_runtime_stats_inc(
+                CETTA_RUNTIME_COUNTER_BINDINGS_LOOKUP_AUTHORITATIVE);
+            return -1;
+        }
+        uint32_t found = index_plus_one - 1u;
+        if (found < b->len &&
+            binding_var_eq(b->entries[found].var_id, var_id)) {
+            cetta_runtime_stats_inc(
+                CETTA_RUNTIME_COUNTER_BINDINGS_LOOKUP_AUTHORITATIVE);
+            return (int32_t)found;
+        }
+    }
     if (__builtin_expect(
             index && index->synced_len < b->len, false) &&
         b->len - index->synced_len == 1u) {

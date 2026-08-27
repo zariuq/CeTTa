@@ -170,6 +170,90 @@ bool cetta_owned_continuation_storage_bytes(
             atom_bytes, exclusive_vector_bytes);
 }
 
+static void cetta_controller_identity_permutation(
+        size_t *permutation, size_t length) {
+    for (size_t i = 0u; i < length; i++)
+        permutation[i] = i;
+}
+
+static bool cetta_controller_permutation_complete(
+        const size_t *permutation, size_t length) {
+    if (length == 0u)
+        return true;
+    if (!permutation)
+        return false;
+    uint8_t inline_seen[64] = {0};
+    uint8_t *seen = length <= sizeof(inline_seen)
+        ? inline_seen : calloc(length, sizeof(*seen));
+    if (!seen)
+        return false;
+    bool complete = true;
+    for (size_t i = 0u; i < length; i++) {
+        size_t selected = permutation[i];
+        if (selected >= length || seen[selected]) {
+            complete = false;
+            break;
+        }
+        seen[selected] = 1u;
+    }
+    if (seen != inline_seen)
+        free(seen);
+    return complete;
+}
+
+CettaControllerRankingDecision cetta_controller_rank_complete(
+        const CettaControllerBatchRanker *ranker,
+        const CettaControllerCandidateView *candidates,
+        size_t length,
+        size_t *permutation,
+        CettaControllerRankingReceipt *receipt) {
+    CettaControllerRankingDecision decision =
+        CETTA_CONTROLLER_RANKING_IDENTITY_INVALID;
+    if (receipt) {
+        *receipt = (CettaControllerRankingReceipt){
+            .decision = decision,
+            .scorer_identity = ranker ? ranker->scorer_identity : 0u,
+            .model_revision = ranker ? ranker->model_revision : 0u,
+            .candidates = length,
+        };
+    }
+    if (length != 0u && (!candidates || !permutation)) {
+        return decision;
+    }
+    cetta_controller_identity_permutation(permutation, length);
+    if (length == 0u) {
+        decision = CETTA_CONTROLLER_RANKING_IDENTITY_DEFAULT;
+        if (receipt)
+            receipt->decision = decision;
+        return decision;
+    }
+    for (size_t i = 0u; i < length; i++) {
+        if (candidates[i].occurrence_id == 0u ||
+            !candidates[i].continuation) {
+            return decision;
+        }
+    }
+    if (!ranker || !ranker->rank) {
+        decision = CETTA_CONTROLLER_RANKING_IDENTITY_DEFAULT;
+    } else {
+        CettaControllerRankStatus status = ranker->rank(
+            ranker->context, candidates, length, permutation);
+        if (status == CETTA_CONTROLLER_RANK_READY &&
+            cetta_controller_permutation_complete(
+                permutation, length)) {
+            decision = CETTA_CONTROLLER_RANKING_APPLIED;
+        } else {
+            cetta_controller_identity_permutation(permutation, length);
+            decision = status == CETTA_CONTROLLER_RANK_DEFERRED
+                ? CETTA_CONTROLLER_RANKING_IDENTITY_DEFERRED
+                : CETTA_CONTROLLER_RANKING_IDENTITY_INVALID;
+        }
+    }
+    if (receipt)
+        receipt->decision = decision;
+    return decision;
+}
+
 void cetta_continuation_frontier_init(
     CettaContinuationFrontier *frontier) {
     if (frontier)
