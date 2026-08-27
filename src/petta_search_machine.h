@@ -11,10 +11,11 @@
 #include "search_machine.h"
 
 /*
- * PeTTa's relational control is represented by an explicit heap machine.
- * The machine owns clause choice, continuation order, rollback, and answer
- * projection.  Shared evaluator operations enter only through the host
- * callbacks below; they never own a PeTTa choice point.
+ * The relational operational fragment is represented by an explicit heap
+ * machine.  The machine owns clause choice, continuation order, rollback, and
+ * answer projection; language-owned Need, effect, and observation semantics
+ * enter only through the host callbacks below.  PeTTa and Prime therefore
+ * share this mechanism without either dialect naming its admission boundary.
  */
 
 typedef enum {
@@ -392,8 +393,9 @@ typedef struct {
 
 /* Relational-control adapter for the evaluator-neutral continuation seam.
  * Capture is observational and restore is same-machine, authority-pinned, and
- * consuming.  The first admitted payload profile owns ordinary CLAUSE/ONCE
- * control plus ABT state; richer effects decline without changing evaluation. */
+ * consuming.  The current physical realization is a fully owned image; that
+ * contingent representation is receipted separately from multi-shot capacity.
+ * Richer effects decline rather than selecting another controller. */
 CettaContinuationMachine petta_machine_continuation_machine(
     PettaMachine *machine);
 

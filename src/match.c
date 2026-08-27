@@ -3343,14 +3343,27 @@ bool bindings_builder_clone(BindingsBuilder *dst,
     return true;
 }
 
-bool bindings_builder_promote_atoms_to_arena(
+bool bindings_builder_promote_prime_atoms_to_arena(
         BindingsBuilder *bb, Arena *owner) {
     if (!bb || !owner ||
         bb->prime_trail_len > bb->prime_trail_cap ||
-        (bb->prime_trail_len > 0u && !bb->prime_trail) ||
-        !bindings_promote_atoms_to_arena(&bb->current, owner)) {
+        (bb->prime_trail_len > 0u && !bb->prime_trail)) {
         return false;
     }
+    if (bb->current.prime_ext &&
+        (!prime_need_snapshot_promote(
+             owner, &bb->current.prime_ext->prime_need) ||
+         !prime_need_branch_state_promote(
+             owner, &bb->current.prime_ext->branch_state))) {
+        return false;
+    }
+#if CETTA_BUILD_WITH_PRIME_CAUSAL_RECEIPTS
+    if (bb->current.prime_ext &&
+        !prime_need_receipt_promote(
+            owner, &bb->current.prime_ext->receipt)) {
+        return false;
+    }
+#endif
     for (uint32_t i = 0u; i < bb->prime_trail_len; i++) {
         PrimeOccurrence *occurrence = &bb->prime_trail[i];
         if (!prime_need_snapshot_promote(
@@ -3367,6 +3380,14 @@ bool bindings_builder_promote_atoms_to_arena(
 #endif
     }
     return true;
+}
+
+bool bindings_builder_promote_atoms_to_arena(
+        BindingsBuilder *bb, Arena *owner) {
+    return bb && owner &&
+        bindings_promote_logical_atoms_to_arena(
+            &bb->current, owner) &&
+        bindings_builder_promote_prime_atoms_to_arena(bb, owner);
 }
 
 void bindings_builder_free(BindingsBuilder *bb) {

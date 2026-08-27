@@ -96,6 +96,7 @@ tests/prime/rule_machine_malformed_artifact_delta.metta	prime	metta		any	native	
 tests/prime/rule_machine_malformed_program.metta	prime	metta		any	native	test-prime	golden	Prime normative golden regression
 tests/prime/rule_machine_revision_identity.metta	prime	metta		any	native	test-prime	golden	Prime normative golden regression
 tests/prime/rule_machine_stale_program.metta	prime	metta		any	native	test-prime	golden	Prime normative golden regression
+tests/prime/search_controller_frontier.metta	prime	metta		any	native	test-prime	golden	Prime normative golden regression
 tests/prime/system_timed_force.metta	prime	metta		any	native	test-prime	golden	Prime explicit suspension timing and multiplicity regression
 tests/prime_02_completion_resources.metta	prime	metta		any	native	test-prime	golden	Prime normative golden regression
 tests/spec_include_unit.metta	he	metta	he-extended	main	native	test	golden	-

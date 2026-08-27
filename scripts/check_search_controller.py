@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Qualify controller order, fairness, multiplicity, and effect fallback."""
+"""Qualify controller order, fairness, multiplicity, and refusal."""
 
 from __future__ import annotations
 
@@ -14,12 +14,19 @@ from petta_machine_stats import parse_controller_stats_line
 
 ROOT = Path(__file__).resolve().parents[1]
 PETTA = ROOT / "tests" / "petta"
+PRIME = ROOT / "tests" / "prime"
 
 
-def run(binary: Path, fixture: str, *, controller: str, limit: int | None = None,
-        stats: bool = False) -> subprocess.CompletedProcess[str]:
+def run(binary: Path, fixture: str, *, controller: str | None,
+        limit: int | None = None,
+        stats: bool = False, language: str = "petta",
+        fixture_root: Path = PETTA,
+        forced_gc: bool = False) -> subprocess.CompletedProcess[str]:
     env = os.environ.copy()
-    env["CETTA_SEARCH_CONTROLLER"] = controller
+    if controller is None:
+        env.pop("CETTA_SEARCH_CONTROLLER", None)
+    else:
+        env["CETTA_SEARCH_CONTROLLER"] = controller
     if limit is None:
         env.pop("CETTA_PETTA_MACHINE_TRANSITION_LIMIT", None)
     else:
@@ -28,8 +35,12 @@ def run(binary: Path, fixture: str, *, controller: str, limit: int | None = None
         env["CETTA_PETTA_MACHINE_STATS"] = "1"
     else:
         env.pop("CETTA_PETTA_MACHINE_STATS", None)
+    if forced_gc:
+        env["CETTA_GC_BUDGET_MB"] = "1"
+    else:
+        env.pop("CETTA_GC_BUDGET_MB", None)
     return subprocess.run(
-        [str(binary), "--lang", "petta", str(PETTA / fixture)],
+        [str(binary), "--lang", language, str(fixture_root / fixture)],
         cwd=ROOT,
         env=env,
         text=True,
@@ -80,6 +91,25 @@ def require_measured_controller_work(
 
 def main() -> int:
     binary = Path(sys.argv[1] if len(sys.argv) > 1 else ROOT / "cetta").resolve()
+
+    reference = run(
+        binary, "search_controller_fifo_order.metta",
+        controller=None, stats=True,
+    )
+    require_run(reference, "unselected reference execution")
+    reference_expected = expected("search_controller_fifo_order.expected")
+    if reference.stdout != reference_expected:
+        raise AssertionError(
+            "unselected reference execution changed\n"
+            f"expected:\n{reference_expected}actual:\n{reference.stdout}"
+        )
+    if any(
+        line.startswith("CETTA_CONTROLLER_STATS ")
+        for line in reference.stderr.splitlines()
+    ):
+        raise AssertionError(
+            "unselected reference execution activated a controller"
+        )
 
     inline = run(
         binary, "search_controller_fifo_order.metta",
@@ -156,7 +186,7 @@ def main() -> int:
         "requested": "fifo",
         "admitted": 1,
         "active": "fifo",
-        "inline_fallbacks": 0,
+        "refusals": 0,
         "answers": 13,
     }
     for field, expected_value in expected_receipt.items():
@@ -179,26 +209,28 @@ def main() -> int:
         )
 
     effect_expected = run(
-        binary, "search_controller_effect_fallback.metta",
+        binary, "search_controller_effect_refusal.metta",
         controller="inline-depth-first",
     )
     require_run(effect_expected, "effect baseline")
     effect_golden = expected(
-        "search_controller_effect_fallback.expected")
+        "search_controller_effect_refusal.expected")
     if effect_expected.stdout != effect_golden:
         raise AssertionError(
             "effect baseline changed\n"
             f"expected:\n{effect_golden}actual:\n{effect_expected.stdout}"
         )
     effect_fifo = run(
-        binary, "search_controller_effect_fallback.metta",
+        binary, "search_controller_effect_refusal.metta",
         controller="fifo", stats=True,
     )
-    require_run(effect_fifo, "effect fallback")
-    if effect_fifo.stdout != effect_golden:
+    require_run(effect_fifo, "effect refusal")
+    effect_fifo_golden = expected(
+        "search_controller_effect_refusal.fifo.expected")
+    if effect_fifo.stdout != effect_fifo_golden:
         raise AssertionError(
-            "effectful root changed under controller request\n"
-            f"expected:\n{effect_golden}fifo:\n{effect_fifo.stdout}"
+            "effectful root was not refused under FIFO request\n"
+            f"expected:\n{effect_fifo_golden}fifo:\n{effect_fifo.stdout}"
         )
     effect_receipts = [
         line for line in effect_fifo.stderr.splitlines()
@@ -206,14 +238,16 @@ def main() -> int:
     ]
     if len(effect_receipts) != 1:
         raise AssertionError(
-            "effectful root was not visibly declined by FIFO admission"
+            "effectful root emitted no FIFO refusal receipt"
         )
     effect_receipt = parse_controller_stats_line(effect_receipts[0])
     if effect_receipt.get("admitted") != 0 or (
-        effect_receipt.get("active") != "inline-depth-first"
+        effect_receipt.get("active") != "refused"
+    ) or effect_receipt.get("storage") != "none" or (
+        effect_receipt.get("refusals") != 1
     ):
         raise AssertionError(
-            "effectful root was not visibly declined by FIFO admission"
+            "effectful root was not explicitly refused by FIFO admission"
         )
     for field in (
         "capture_elapsed_ns", "restore_elapsed_ns",
@@ -221,12 +255,64 @@ def main() -> int:
     ):
         if int(effect_receipt.get(field, 0)) != 0:
             raise AssertionError(
-                f"effectful inline fallback unexpectedly measured {field}"
+                f"effectful refusal unexpectedly measured {field}"
             )
+
+    prime_expected = (PRIME / "search_controller_frontier.expected").read_text(
+        encoding="utf-8"
+    )
+    prime_inline = run(
+        binary, "search_controller_frontier.metta",
+        controller="inline-depth-first", language="prime",
+        fixture_root=PRIME,
+    )
+    require_run(prime_inline, "Prime inline owned-frontier baseline")
+    if prime_inline.stdout != prime_expected:
+        raise AssertionError(
+            "Prime inline owned-frontier baseline changed\n"
+            f"expected:\n{prime_expected}actual:\n{prime_inline.stdout}"
+        )
+    prime_fifo = run(
+        binary, "search_controller_frontier.metta",
+        controller="fifo", stats=True, language="prime",
+        fixture_root=PRIME, forced_gc=True,
+    )
+    require_run(prime_fifo, "Prime FIFO owned frontier under forced GC")
+    if prime_fifo.stdout != prime_expected:
+        raise AssertionError(
+            "Prime FIFO changed the exact occurrence stream\n"
+            f"expected:\n{prime_expected}actual:\n{prime_fifo.stdout}"
+        )
+    prime_receipts = [
+        line for line in prime_fifo.stderr.splitlines()
+        if line.startswith("CETTA_CONTROLLER_STATS ")
+    ]
+    if len(prime_receipts) != 1:
+        raise AssertionError("Prime FIFO emitted no unique controller receipt")
+    prime_receipt = parse_controller_stats_line(prime_receipts[0])
+    for field, expected_value in {
+        "requested": "fifo",
+        "admitted": 1,
+        "active": "fifo",
+        "storage": "full-image",
+        "refusals": 0,
+        "answers": 2,
+    }.items():
+        if prime_receipt.get(field) != expected_value:
+            raise AssertionError(
+                f"Prime FIFO receipt has {field}="
+                f"{prime_receipt.get(field)!r}, expected {expected_value!r}"
+            )
+    if int(prime_receipt.get("expansions", 0)) == 0 or (
+        int(prime_receipt.get("successors", 0)) != 2
+    ):
+        raise AssertionError("Prime relation was not frontier-expanded")
+    require_measured_controller_work(prime_receipt, "Prime FIFO query")
 
     print("PASS: controller streams differ and occurrence bags agree exactly")
     print("PASS: FIFO reaches the bounded DFS-starvation witness")
-    print("PASS: effectful roots visibly retain inline semantics")
+    print("PASS: effectful roots are explicitly refused without substitution")
+    print("PASS: Prime relation uses the shared FIFO frontier under forced GC")
     return 0
 
 

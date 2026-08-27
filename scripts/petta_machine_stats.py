@@ -36,8 +36,10 @@ def parse_controller_stats_line(line: str) -> dict[str, int | str]:
             raise ValueError(f"malformed controller field: {item!r}")
         if key in fields:
             raise ValueError(f"duplicate controller field: {key}")
-        fields[key] = value if key in {"requested", "active"} else int(value)
-    if "requested" not in fields or "active" not in fields:
+        fields[key] = value if key in {
+            "requested", "active", "storage"
+        } else int(value)
+    if not {"requested", "active", "storage"}.issubset(fields):
         raise ValueError(f"incomplete controller statistics: {fields!r}")
     return fields
 
@@ -49,6 +51,9 @@ def aggregate_controller_stats(
         "records": len(invocations),
         "active_fifo": 0,
         "active_inline_depth_first": 0,
+        "active_refused": 0,
+        "storage_full_image": 0,
+        "storage_none": 0,
     }
     for invocation in invocations:
         requested = invocation.get("requested")
@@ -61,10 +66,19 @@ def aggregate_controller_stats(
             aggregate["active_fifo"] += 1
         elif active == "inline-depth-first":
             aggregate["active_inline_depth_first"] += 1
+        elif active == "refused":
+            aggregate["active_refused"] += 1
         else:
             raise ValueError(f"unexpected active controller: {active!r}")
+        storage = invocation.get("storage")
+        if storage == "full-image":
+            aggregate["storage_full_image"] += 1
+        elif storage == "none":
+            aggregate["storage_none"] += 1
+        else:
+            raise ValueError(f"unexpected controller storage: {storage!r}")
         for key, value in invocation.items():
-            if key in {"requested", "active"}:
+            if key in {"requested", "active", "storage"}:
                 continue
             if not isinstance(value, int):
                 raise ValueError(f"non-integral controller field: {key}")

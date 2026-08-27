@@ -202,6 +202,9 @@ def write_summary_tsv(path: Path, results: dict[str, Any]) -> None:
         "controller_admitted",
         "controller_active_fifo",
         "controller_active_inline_depth_first",
+        "controller_active_refused",
+        "controller_storage_full_image",
+        "controller_storage_none",
         "controller_scheduling_rounds",
         "controller_transitions",
         "controller_expansions",
@@ -211,11 +214,11 @@ def write_summary_tsv(path: Path, results: dict[str, Any]) -> None:
         "controller_capture_elapsed_ns",
         "controller_restore_elapsed_ns",
         "controller_expansion_elapsed_ns",
-        "controller_inline_fallbacks",
+        "controller_refusals",
         "controller_answers",
         "controller_max_frontier",
-        "controller_max_frontier_atom_bytes",
-        "controller_max_frontier_vector_bytes",
+        "controller_max_frontier_shared_bytes",
+        "controller_max_frontier_exclusive_bytes",
     )
     rows = ["\t".join(columns)]
     for name, result in results.items():

@@ -5082,39 +5082,44 @@ static void test_branch_capture_algebra(void) {
         CETTA_BRANCH_CAPTURE_ONE_SHOT);
     assert(cetta_branch_capture_admits(
         CETTA_BRANCH_CAPTURE_MULTI_SHOT,
-        CETTA_BRANCH_STORAGE_OWNED_FRONTIER));
+        CETTA_BRANCH_STORAGE_OWNED_MULTI_SHOT));
     assert(!cetta_branch_capture_admits(
         CETTA_BRANCH_CAPTURE_ONE_SHOT,
-        CETTA_BRANCH_STORAGE_OWNED_FRONTIER));
-    assert(cetta_branch_select_storage(
+        CETTA_BRANCH_STORAGE_OWNED_MULTI_SHOT));
+    CettaBranchStorageMode admitted = CETTA_BRANCH_STORAGE_INLINE;
+    assert(cetta_branch_storage_admit_exact(
+        CETTA_BRANCH_CAPTURE_MULTI_SHOT,
+        CETTA_BRANCH_STORAGE_OWNED_MULTI_SHOT, &admitted));
+    assert(admitted == CETTA_BRANCH_STORAGE_OWNED_MULTI_SHOT);
+    admitted = CETTA_BRANCH_STORAGE_INLINE;
+    assert(!cetta_branch_storage_admit_exact(
         CETTA_BRANCH_CAPTURE_ONE_SHOT,
-        CETTA_BRANCH_STORAGE_OWNED_FRONTIER) ==
-        CETTA_BRANCH_STORAGE_EXCLUSIVE_DEPTH_FIRST);
-    assert(cetta_branch_select_storage(
+        CETTA_BRANCH_STORAGE_OWNED_MULTI_SHOT, &admitted));
+    assert(admitted == CETTA_BRANCH_STORAGE_INLINE);
+    assert(!cetta_branch_storage_admit_exact(
         CETTA_BRANCH_CAPTURE_INLINE_ONLY,
-        CETTA_BRANCH_STORAGE_OWNED_FRONTIER) ==
-        CETTA_BRANCH_STORAGE_INLINE);
+        CETTA_BRANCH_STORAGE_OWNED_MULTI_SHOT, &admitted));
 
-    CettaContinuationQueue malformed_queue = {
+    CettaContinuationStore malformed_queue = {
         .begin = 1u,
         .end = 0u,
     };
     CettaOwnedContinuation empty;
     cetta_owned_continuation_init(&empty);
-    assert(!cetta_continuation_queue_push(
+    assert(!cetta_continuation_store_append(
         &malformed_queue, &empty));
 
-    CettaContinuationQueue queue;
-    cetta_continuation_queue_init(&queue);
-    CettaContinuationFrontier malformed_frontier = {
+    CettaContinuationStore queue;
+    cetta_continuation_store_init(&queue);
+    CettaContinuationBatch malformed_frontier = {
         .items = calloc(1u, sizeof(*malformed_frontier.items)),
         .length = 1u,
     };
     assert(malformed_frontier.items);
-    assert(!cetta_continuation_queue_push_frontier(
+    assert(!cetta_continuation_store_append_batch(
         &queue, &malformed_frontier));
-    cetta_continuation_frontier_destroy(&malformed_frontier);
-    cetta_continuation_queue_destroy(&queue);
+    cetta_continuation_batch_destroy(&malformed_frontier);
+    cetta_continuation_store_destroy(&queue);
     puts("PASS: branch storage follows capture capacity, not evaluator dialect");
 }
 
@@ -5127,7 +5132,7 @@ static bool permit_owned_continuation_transition(void *opaque) {
 }
 
 static CettaContinuationStatus expand_relational_frontier(
-    PettaMachine *machine, CettaContinuationFrontier *frontier) {
+    PettaMachine *machine, CettaContinuationBatch *frontier) {
     return cetta_continuation_expand(
         petta_machine_continuation_machine(machine), frontier);
 }
@@ -5148,8 +5153,8 @@ static void test_relational_frontier_expansion(
     assert(query);
     OwnedContinuationAuthority authority = {.revision = 11u};
     PettaMachine machine = {0};
-    CettaContinuationFrontier frontier;
-    cetta_continuation_frontier_init(&frontier);
+    CettaContinuationBatch frontier;
+    cetta_continuation_batch_init(&frontier);
     bool expanded = false;
     for (size_t budget = 1u; budget <= 64u && !expanded; budget++) {
         authority.remaining = budget;
@@ -5160,6 +5165,10 @@ static void test_relational_frontier_expansion(
         };
         assert(petta_machine_init(
             &machine, space, answers, query, NULL, &host));
+        assert(strcmp(
+            cetta_continuation_machine_storage_name(
+                petta_machine_continuation_machine(&machine)),
+            "full-image") == 0);
         Atom *answer = NULL;
         Bindings environment;
         PettaMachineStep step = petta_machine_next(
@@ -5171,7 +5180,7 @@ static void test_relational_frontier_expansion(
             expanded = true;
             break;
         }
-        cetta_continuation_frontier_destroy(&frontier);
+        cetta_continuation_batch_destroy(&frontier);
         petta_machine_destroy(&machine);
     }
     assert(expanded);
@@ -5200,8 +5209,29 @@ static void test_relational_frontier_expansion(
            PETTA_MACHINE_STEP_EXHAUSTED);
     bindings_free(&environment);
 
+    /* The controller store owns each physical payload once.  Selecting a
+     * different discipline chooses an index; it does not convert or clone
+     * the stored representation. */
+    void *left_payload = frontier.items[0].payload;
+    void *right_payload = frontier.items[1].payload;
+    CettaContinuationStore store;
+    cetta_continuation_store_init(&store);
+    assert(cetta_continuation_store_append_batch(&store, &frontier));
+    assert(cetta_continuation_store_length(&store) == 2u);
+    CettaOwnedContinuation selected_right;
+    cetta_owned_continuation_init(&selected_right);
+    assert(cetta_continuation_store_take(
+        &store, 1u, &selected_right));
+    assert(selected_right.payload == right_payload);
+    CettaOwnedContinuation selected_left;
+    cetta_owned_continuation_init(&selected_left);
+    assert(cetta_continuation_store_take(
+        &store, 0u, &selected_left));
+    assert(selected_left.payload == left_payload);
+    assert(cetta_continuation_store_length(&store) == 0u);
+
     assert(restore_relational_continuation(
-               &machine, &frontier.items[0]) ==
+               &machine, &selected_left) ==
            CETTA_CONTINUATION_READY);
     authority.remaining = 128u;
     assert(petta_machine_next(
@@ -5215,7 +5245,7 @@ static void test_relational_frontier_expansion(
     bindings_free(&environment);
 
     assert(restore_relational_continuation(
-               &machine, &frontier.items[1]) ==
+               &machine, &selected_right) ==
            CETTA_CONTINUATION_READY);
     authority.remaining = 128u;
     assert(petta_machine_next(
@@ -5228,7 +5258,8 @@ static void test_relational_frontier_expansion(
            PETTA_MACHINE_STEP_EXHAUSTED);
     bindings_free(&environment);
 
-    cetta_continuation_frontier_destroy(&frontier);
+    cetta_continuation_store_destroy(&store);
+    cetta_continuation_batch_destroy(&frontier);
     petta_machine_destroy(&machine);
     puts("PASS: relational frontier expansion preserves source and independent successors");
 }
@@ -5244,8 +5275,8 @@ static bool test_fifo_controller_run(
     }
     *answer_count = 0u;
     *exhausted = false;
-    CettaContinuationQueue queue;
-    cetta_continuation_queue_init(&queue);
+    CettaContinuationStore queue;
+    cetta_continuation_store_init(&queue);
     bool live = true;
     bool ok = true;
 
@@ -5253,7 +5284,7 @@ static bool test_fifo_controller_run(
         if (!live) {
             CettaOwnedContinuation next;
             cetta_owned_continuation_init(&next);
-            if (!cetta_continuation_queue_pop(&queue, &next)) {
+            if (!cetta_continuation_store_take(&queue, 0u, &next)) {
                 *exhausted = true;
                 break;
             }
@@ -5284,7 +5315,7 @@ static bool test_fifo_controller_run(
             if (capture_relational_continuation(
                     machine, &remainder) !=
                     CETTA_CONTINUATION_READY ||
-                !cetta_continuation_queue_push(
+                !cetta_continuation_store_append(
                     &queue, &remainder)) {
                 cetta_owned_continuation_destroy(&remainder);
                 ok = false;
@@ -5304,14 +5335,14 @@ static bool test_fifo_controller_run(
             break;
         }
 
-        CettaContinuationFrontier frontier;
-        cetta_continuation_frontier_init(&frontier);
+        CettaContinuationBatch frontier;
+        cetta_continuation_batch_init(&frontier);
         CettaContinuationStatus expansion =
             expand_relational_frontier(machine, &frontier);
         if (expansion == CETTA_CONTINUATION_READY) {
-            if (!cetta_continuation_queue_push_frontier(
+            if (!cetta_continuation_store_append_batch(
                     &queue, &frontier)) {
-                cetta_continuation_frontier_destroy(&frontier);
+                cetta_continuation_batch_destroy(&frontier);
                 ok = false;
                 break;
             }
@@ -5322,23 +5353,23 @@ static bool test_fifo_controller_run(
             if (capture_relational_continuation(
                     machine, &remainder) !=
                     CETTA_CONTINUATION_READY ||
-                !cetta_continuation_queue_push(
+                !cetta_continuation_store_append(
                     &queue, &remainder)) {
                 cetta_owned_continuation_destroy(&remainder);
-                cetta_continuation_frontier_destroy(&frontier);
+                cetta_continuation_batch_destroy(&frontier);
                 ok = false;
                 break;
             }
-            cetta_continuation_frontier_destroy(&frontier);
+            cetta_continuation_batch_destroy(&frontier);
         } else {
-            cetta_continuation_frontier_destroy(&frontier);
+            cetta_continuation_batch_destroy(&frontier);
             ok = false;
             break;
         }
         live = false;
     }
 
-    cetta_continuation_queue_destroy(&queue);
+    cetta_continuation_store_destroy(&queue);
     return ok && (stop_after == 0u ? *exhausted
                                    : *answer_count >= stop_after);
 }
@@ -5490,11 +5521,11 @@ static void test_owned_clause_continuation_roundtrip(
                &other_machine, &first_image) ==
            CETTA_CONTINUATION_UNSUPPORTED);
     petta_machine_destroy(&other_machine);
-    size_t atom_bytes = 0u;
-    size_t vector_bytes = 0u;
-    assert(cetta_owned_continuation_storage_bytes(
-        &first_image, &atom_bytes, &vector_bytes));
-    assert(atom_bytes > 0u && vector_bytes > 0u);
+    CettaContinuationStorage storage = {0};
+    assert(cetta_owned_continuation_storage(
+        &first_image, &storage));
+    assert(storage.shared_identity == first_image.payload);
+    assert(storage.shared_bytes > 0u && storage.exclusive_bytes > 0u);
 
     assert(petta_machine_next(
                &machine, &answer, &environment) ==
@@ -5532,9 +5563,9 @@ static void test_owned_clause_continuation_roundtrip(
     assert(stats.owned_continuation_captures == 2u);
     assert(stats.owned_continuation_restores == 2u);
     assert(stats.owned_continuation_atom_bytes_captured >=
-           2u * atom_bytes);
+           2u * storage.shared_bytes);
     assert(stats.owned_continuation_vector_bytes_captured >=
-           2u * vector_bytes);
+           2u * storage.exclusive_bytes);
     cetta_owned_continuation_destroy(&first_image);
     cetta_owned_continuation_destroy(&second_image);
     petta_machine_destroy(&machine);
