@@ -132,15 +132,26 @@ def load_property_manifest(path: Path) -> dict[str, Any]:
         )
     if manifest.get("qualification_runs_required") != 5:
         raise ReadinessModelError("qualification requires exactly five runs")
-    sizes = manifest.get("routine_ladder_sizes")
+    ladder_sizes: dict[str, list[int]] = {}
+    for field in ("routine_ladder_sizes", "exhaustive_ladder_sizes"):
+        sizes = manifest.get(field)
+        if (
+            not isinstance(sizes, list)
+            or len(sizes) < 4
+            or any(not isinstance(size, int) or size <= 0 for size in sizes)
+            or sizes != sorted(set(sizes))
+        ):
+            raise ReadinessModelError(
+                f"{field} must be a strictly increasing positive ladder "
+                "with at least four points"
+            )
+        ladder_sizes[field] = sizes
     if (
-        not isinstance(sizes, list)
-        or len(sizes) < 4
-        or any(not isinstance(size, int) or size <= 0 for size in sizes)
-        or sizes != sorted(set(sizes))
+        ladder_sizes["exhaustive_ladder_sizes"][-1]
+        <= ladder_sizes["routine_ladder_sizes"][-1]
     ):
         raise ReadinessModelError(
-            "routine_ladder_sizes must be a strictly increasing positive ladder"
+            "the exhaustive ladder must extend beyond the routine ceiling"
         )
     memory_limits = manifest.get("modeled_memory_bytes_per_entry_limits")
     if (
@@ -197,7 +208,6 @@ def load_property_manifest(path: Path) -> dict[str, Any]:
         "routine_witnesses",
         "exhaustive_witnesses",
         "negative_calibrations",
-        "evidence",
     )
     for prop in properties:
         if not isinstance(prop, dict):
@@ -290,6 +300,33 @@ def load_property_manifest(path: Path) -> dict[str, Any]:
             + ", ".join(sorted(unused_negatives))
         )
     return manifest
+
+
+def required_frontier_witness_ids(
+    manifest: Mapping[str, Any], frontier_size: int | None = None,
+) -> set[str]:
+    """Return execution-derived frontier witnesses claimed by the manifest."""
+    witnesses = {
+        witness
+        for prop in manifest["properties"]
+        for witness in prop["exhaustive_witnesses"]
+        if witness.startswith("space-frontier:")
+    }
+    if frontier_size is None:
+        return witnesses
+    return {
+        f"{witness.rsplit('@', 1)[0]}@{frontier_size}"
+        for witness in witnesses
+    }
+
+
+def missing_frontier_witness_ids(
+    manifest: Mapping[str, Any], realized: Iterable[str], frontier_size: int | None = None
+) -> list[str]:
+    """Report manifest frontier claims absent from one concrete execution."""
+    return sorted(
+        required_frontier_witness_ids(manifest, frontier_size) - set(realized)
+    )
 
 
 def resolve_source_anchors(root: Path, manifest: Mapping[str, Any]) -> list[dict[str, Any]]:
@@ -596,6 +633,43 @@ def log_slope(samples: Sequence[tuple[float, float]]) -> float:
     ) / denominator
 
 
+def marginal_power_exponent(
+    samples: Sequence[tuple[float, float]],
+    *,
+    minimum_delta: float = 0.0,
+) -> float | None:
+    """Estimate a power exponent after removing fixed startup cost.
+
+    For ``y = a + b*x**p``, adjacent differences remove ``a``.  With a
+    geometric size ladder, the slope of the resulting per-entry rates is
+    ``p - 1``.  At least three material intervals are required so the fit is
+    not determined by only two rates.
+    """
+    if minimum_delta < 0:
+        raise ReadinessModelError("minimum marginal delta must be nonnegative")
+    ordered = sorted(samples)
+    if len(ordered) < 4:
+        return None
+    if len({x for x, _ in ordered}) != len(ordered):
+        raise ReadinessModelError("marginal samples repeat a size")
+    if any(x <= 0 or y <= 0 for x, y in ordered):
+        raise ReadinessModelError("marginal samples must be positive")
+    rates: list[tuple[float, float]] = []
+    for (lower_x, lower_y), (upper_x, upper_y) in zip(ordered, ordered[1:]):
+        delta = upper_y - lower_y
+        if delta <= minimum_delta:
+            continue
+        rates.append(
+            (
+                math.sqrt(lower_x * upper_x),
+                delta / (upper_x - lower_x),
+            )
+        )
+    if len(rates) < 3:
+        return None
+    return 1.0 + log_slope(rates)
+
+
 def linear_fit(samples: Sequence[tuple[float, float]]) -> tuple[float, float]:
     if len(samples) < 2:
         raise ReadinessModelError("at least two samples are required")
@@ -633,17 +707,28 @@ def growth_verdict(
     time_samples: Sequence[tuple[float, float]],
     rss_samples: Sequence[tuple[float, float]],
     *,
-    max_time_slope: float = 1.35,
+    max_time_exponent: float = 1.5,
     max_rss_slope: float = 1.25,
 ) -> dict[str, Any]:
     time_slope = log_slope(time_samples)
+    time_marginal_exponent = marginal_power_exponent(time_samples)
+    effective_time_exponent = (
+        time_marginal_exponent
+        if time_marginal_exponent is not None
+        else time_slope
+    )
     rss_slope = log_slope(rss_samples)
     return {
         "time_slope": time_slope,
+        "time_marginal_exponent": time_marginal_exponent,
+        "effective_time_exponent": effective_time_exponent,
         "rss_slope": rss_slope,
-        "max_time_slope": max_time_slope,
+        "max_time_exponent": max_time_exponent,
         "max_rss_slope": max_rss_slope,
-        "passed": time_slope <= max_time_slope and rss_slope <= max_rss_slope,
+        "passed": (
+            effective_time_exponent <= max_time_exponent
+            and rss_slope <= max_rss_slope
+        ),
     }
 
 
@@ -655,7 +740,8 @@ def paired_growth_verdict(
     *,
     max_time_ratio: float,
     time_absolute_slack: float,
-    max_time_slope_delta: float,
+    max_time_increment_ratio: float,
+    max_time_exponent_delta: float,
     max_rss_ratio: float,
     rss_absolute_slack: float,
     max_rss_slope_delta: float,
@@ -664,7 +750,8 @@ def paired_growth_verdict(
 
     bounds = (
         max_time_ratio,
-        max_time_slope_delta,
+        max_time_increment_ratio,
+        max_time_exponent_delta,
         max_rss_ratio,
         max_rss_slope_delta,
     )
@@ -733,27 +820,51 @@ def paired_growth_verdict(
         max_rss_ratio,
         rss_absolute_slack,
     )
-    material_time_sizes = [
-        size
-        for size in sizes
-        if baseline_time_by_size[size] >= time_absolute_slack
-    ]
-    if len(material_time_sizes) >= 3:
-        candidate_time_slope = log_slope(
-            [(size, candidate_time_by_size[size]) for size in material_time_sizes]
+    time_increments: list[dict[str, Any]] = []
+    for lower, upper in zip(sizes, sizes[1:]):
+        candidate_delta = (
+            candidate_time_by_size[upper] - candidate_time_by_size[lower]
         )
-        baseline_time_slope = log_slope(
-            [(size, baseline_time_by_size[size]) for size in material_time_sizes]
+        baseline_delta = (
+            baseline_time_by_size[upper] - baseline_time_by_size[lower]
         )
-        time_slope_delta: float | None = (
-            candidate_time_slope - baseline_time_slope
+        baseline_work = max(0.0, baseline_delta)
+        limit = max(
+            baseline_work * max_time_increment_ratio,
+            baseline_work + time_absolute_slack,
         )
-        time_slope_passed = time_slope_delta <= max_time_slope_delta
-    else:
-        candidate_time_slope = None
-        baseline_time_slope = None
-        time_slope_delta = None
-        time_slope_passed = True
+        time_increments.append(
+            {
+                "lower_size": lower,
+                "upper_size": upper,
+                "candidate_delta": candidate_delta,
+                "baseline_delta": baseline_delta,
+                "baseline_work": baseline_work,
+                "limit": limit,
+                "passed": candidate_delta <= limit,
+            }
+        )
+    time_increment_passed = all(
+        interval["passed"] for interval in time_increments
+    )
+    candidate_time_exponent = marginal_power_exponent(
+        [(size, candidate_time_by_size[size]) for size in sizes],
+        minimum_delta=time_absolute_slack,
+    )
+    baseline_time_exponent = marginal_power_exponent(
+        [(size, baseline_time_by_size[size]) for size in sizes],
+        minimum_delta=time_absolute_slack,
+    )
+    time_exponent_delta = (
+        candidate_time_exponent - baseline_time_exponent
+        if candidate_time_exponent is not None
+        and baseline_time_exponent is not None
+        else None
+    )
+    time_exponent_passed = (
+        time_exponent_delta is None
+        or time_exponent_delta <= max_time_exponent_delta
+    )
     candidate_rss_slope = log_slope(
         [(size, candidate_rss_by_size[size]) for size in sizes]
     )
@@ -765,19 +876,22 @@ def paired_growth_verdict(
     passed = (
         all(cell["passed"] for cell in time_cells)
         and all(cell["passed"] for cell in rss_cells)
-        and time_slope_passed
+        and time_increment_passed
+        and time_exponent_passed
         and rss_slope_passed
     )
     return {
         "passed": passed,
         "time_cells": time_cells,
         "rss_cells": rss_cells,
-        "material_time_sizes": material_time_sizes,
-        "candidate_time_slope": candidate_time_slope,
-        "baseline_time_slope": baseline_time_slope,
-        "time_slope_delta": time_slope_delta,
-        "max_time_slope_delta": max_time_slope_delta,
-        "time_slope_passed": time_slope_passed,
+        "time_increments": time_increments,
+        "max_time_increment_ratio": max_time_increment_ratio,
+        "time_increment_passed": time_increment_passed,
+        "candidate_time_marginal_exponent": candidate_time_exponent,
+        "baseline_time_marginal_exponent": baseline_time_exponent,
+        "time_exponent_delta": time_exponent_delta,
+        "max_time_exponent_delta": max_time_exponent_delta,
+        "time_exponent_passed": time_exponent_passed,
         "candidate_rss_slope": candidate_rss_slope,
         "baseline_rss_slope": baseline_rss_slope,
         "rss_slope_delta": rss_slope_delta,

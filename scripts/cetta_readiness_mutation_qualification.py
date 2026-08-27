@@ -32,8 +32,10 @@ ROOT = Path(__file__).resolve().parent.parent
 MANIFEST = ROOT / "benchmarks/main_readiness_properties.json"
 EXPECTED_MUTANTS = {
     "mutant:quadratic-growth",
+    "mutant:tuned-superlinear-growth",
     "mutant:per-entry-leak",
     "mutant:wrong-backend-routing",
+    "mutant:transfer-counter-mismatch",
     "mutant:observer-work-state-only",
     "mutant:broken-claim-rollback",
 }
@@ -163,7 +165,7 @@ def run_storage_mutations(
     memory_limits = manifest["modeled_memory_bytes_per_entry_limits"]
     positive_series = series_evidence(
         native_runs,
-        max_time_slope=1.35,
+        max_time_exponent=1.5,
         max_rss_slope=1.25,
         memory_limits=memory_limits,
         baseline_runs=copy.deepcopy(native_runs),
@@ -189,7 +191,7 @@ def run_storage_mutations(
         )
     quadratic_series = series_evidence(
         quadratic_runs,
-        max_time_slope=1.35,
+        max_time_exponent=1.5,
         max_rss_slope=1.25,
         memory_limits=memory_limits,
         baseline_runs=quadratic_baseline,
@@ -203,6 +205,37 @@ def run_storage_mutations(
         ]
     )
 
+    tuned_baseline = copy.deepcopy(native_runs)
+    tuned_runs = copy.deepcopy(native_runs)
+    baseline_values = (100_000_000, 300_000_000, 1_000_000_000, 3_000_000_000)
+    candidate_values = (40_000_000, 182_000_000, 971_000_000, 4_471_000_000)
+    for baseline_item, candidate_item, baseline_value, candidate_value in zip(
+        tuned_baseline,
+        tuned_runs,
+        baseline_values,
+        candidate_values,
+    ):
+        baseline_item["row"]["scenario_ns"] = str(baseline_value)
+        candidate_item["row"]["scenario_ns"] = str(candidate_value)
+    tuned_series = series_evidence(
+        tuned_runs,
+        max_time_exponent=1.5,
+        max_rss_slope=1.25,
+        memory_limits=memory_limits,
+        baseline_runs=tuned_baseline,
+    )
+    tuned_growth = tuned_series["backend:native"]["paired"]
+    require(
+        all(cell["passed"] for cell in tuned_growth["time_cells"])
+        and tuned_growth["time_increment_passed"],
+        "tuned-superlinear mutant did not isolate exponent assurance",
+    )
+    tuned_failures = (
+        []
+        if tuned_growth["time_exponent_passed"]
+        else ["candidate marginal-time exponent diverges from baseline"]
+    )
+
     leak_runs = copy.deepcopy(native_runs)
     for item in leak_runs:
         item["row"]["term_universe_blob_bytes"] = str(
@@ -211,7 +244,7 @@ def run_storage_mutations(
         item["row"]["space_atom_id_capacity_bytes_peak"] = "0"
     leak_series = series_evidence(
         leak_runs,
-        max_time_slope=1.35,
+        max_time_exponent=1.5,
         max_rss_slope=1.25,
         memory_limits=memory_limits,
     )
@@ -243,10 +276,30 @@ def run_storage_mutations(
     wrong_route["mork_add_call"] = wrong_route["fact_count"]
     route_failures = primary_contract("backend", wrong_route)
 
+    transfer = run_case(
+        kind="transfer",
+        case="native-to-pathmap",
+        size=100,
+        binary=binary,
+        timeout=120,
+    )
+    require(
+        not transfer["primary_failures"],
+        "positive transfer counter witness failed",
+    )
+    transfer_mutant = dict(transfer["row"])
+    transfer_mutant["pathmap_direct_store"] = "0"
+    transfer_failures = primary_contract("transfer", transfer_mutant)
+
     return [
         killed(
             "mutant:quadratic-growth",
             quadratic_failures,
+            {"mutated_series": "backend:native"},
+        ),
+        killed(
+            "mutant:tuned-superlinear-growth",
+            tuned_failures,
             {"mutated_series": "backend:native"},
         ),
         killed(
@@ -258,6 +311,11 @@ def run_storage_mutations(
             "mutant:wrong-backend-routing",
             route_failures,
             {"mutated_series": "backend:pathmap"},
+        ),
+        killed(
+            "mutant:transfer-counter-mismatch",
+            transfer_failures,
+            {"mutated_series": "transfer:native-to-pathmap"},
         ),
     ]
 

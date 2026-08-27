@@ -575,6 +575,13 @@ typedef struct {
     uint64_t owned_continuation_restore_invalidated;
     uint64_t owned_continuation_atom_bytes_captured;
     uint64_t owned_continuation_vector_bytes_captured;
+    uint64_t owned_continuation_expansion_attempts;
+    uint64_t owned_continuation_expansions;
+    uint64_t owned_continuation_expansion_successors;
+    uint64_t owned_continuation_expansion_deferred;
+    uint64_t owned_continuation_expansion_unsupported;
+    uint64_t owned_continuation_expansion_invalidated;
+    uint64_t owned_continuation_expansion_capacity;
     uint64_t table_lookups;
     uint64_t table_hits;
     uint64_t table_generator_rounds;

@@ -54,6 +54,23 @@ typedef enum {
     CETTA_BRANCH_STORAGE_OWNED_FRONTIER,
 } CettaBranchStorageMode;
 
+/* Controller policy names semantic occurrence order, not an evaluator
+ * dialect.  Ordered streams, prefixes, and bounded observations may therefore
+ * distinguish policies.  Completed runs agree across controllers only after
+ * an order-quotient readout such as an occurrence bag; equal occurrences keep
+ * their multiplicity.  This enum contains only representation-level built-ins.
+ * Valuation, portfolio, and learned scorers are controller data; they do not
+ * create profile names or one enum value per scoring discipline. */
+typedef enum {
+    CETTA_SEARCH_CONTROLLER_INLINE_DEPTH_FIRST = 0,
+    CETTA_SEARCH_CONTROLLER_FIFO,
+} CettaSearchControllerPolicy;
+
+const char *cetta_search_controller_policy_name(
+    CettaSearchControllerPolicy policy);
+bool cetta_search_controller_policy_parse(
+    const char *name, CettaSearchControllerPolicy *policy);
+
 CettaBranchCaptureCapacity cetta_branch_capture_weakest(
     CettaBranchCaptureCapacity first,
     CettaBranchCaptureCapacity second);
@@ -119,6 +136,27 @@ typedef struct {
     const CettaContinuationBackend *backend;
 } CettaOwnedContinuation;
 
+/* A controller-owned sequence of independent successor continuations.
+ * Expansion preserves occurrence identity: two equal successors remain two
+ * entries.  The sequence order is the backend's authored occurrence order;
+ * DFS, FIFO, valuation, and learned controllers may store or select the
+ * entries differently without changing their denotation. */
+typedef struct {
+    CettaOwnedContinuation *items;
+    size_t length;
+} CettaContinuationFrontier;
+
+/* Physical FIFO storage for one controller lane.  The queue owns every
+ * continuation accepted by push operations.  It knows nothing about the
+ * evaluator payload or answer algebra, so the same lane can schedule any
+ * backend implementing CettaContinuationBackend. */
+typedef struct {
+    CettaOwnedContinuation *items;
+    size_t begin;
+    size_t end;
+    size_t capacity;
+} CettaContinuationQueue;
+
 struct CettaContinuationBackend {
     CettaContinuationStatus (*capture)(
         void *machine, void **payload);
@@ -129,6 +167,8 @@ struct CettaContinuationBackend {
         const void *payload,
         size_t *atom_bytes,
         size_t *exclusive_vector_bytes);
+    CettaContinuationStatus (*expand)(
+        void *machine, void ***payloads, size_t *length);
 };
 
 void cetta_owned_continuation_init(
@@ -144,6 +184,38 @@ CettaContinuationStatus cetta_continuation_restore(
     CettaOwnedContinuation *continuation);
 bool cetta_owned_continuation_storage_bytes(
     const CettaOwnedContinuation *continuation,
+    size_t *atom_bytes,
+    size_t *exclusive_vector_bytes);
+void cetta_continuation_frontier_init(
+    CettaContinuationFrontier *frontier);
+void cetta_continuation_frontier_destroy(
+    CettaContinuationFrontier *frontier);
+/* Expand one admitted semantic choice.  READY returns one or more owned
+ * successor occurrences and leaves the source machine's semantic state
+ * unchanged.  Failure leaves FRONTIER empty. */
+CettaContinuationStatus cetta_continuation_expand(
+    CettaContinuationMachine machine,
+    CettaContinuationFrontier *frontier);
+void cetta_continuation_queue_init(
+    CettaContinuationQueue *queue);
+void cetta_continuation_queue_destroy(
+    CettaContinuationQueue *queue);
+size_t cetta_continuation_queue_length(
+    const CettaContinuationQueue *queue);
+/* Successful insertion consumes CONTINUATION. */
+bool cetta_continuation_queue_push(
+    CettaContinuationQueue *queue,
+    CettaOwnedContinuation *continuation);
+/* Successful insertion consumes every item in FRONTIER. */
+bool cetta_continuation_queue_push_frontier(
+    CettaContinuationQueue *queue,
+    CettaContinuationFrontier *frontier);
+/* Successful removal transfers ownership to CONTINUATION. */
+bool cetta_continuation_queue_pop(
+    CettaContinuationQueue *queue,
+    CettaOwnedContinuation *continuation);
+bool cetta_continuation_queue_storage_bytes(
+    const CettaContinuationQueue *queue,
     size_t *atom_bytes,
     size_t *exclusive_vector_bytes);
 

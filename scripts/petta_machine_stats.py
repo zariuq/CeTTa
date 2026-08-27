@@ -9,6 +9,7 @@ import statistics
 STATS_PREFIX = "PETTA_MACHINE_STATS "
 RUNTIME_COUNTER_PREFIX = "runtime-counter "
 PUBLICATION_STATS_PREFIX = "PETTA_PUBLICATION_STATS "
+CONTROLLER_STATS_PREFIX = "CETTA_CONTROLLER_STATS "
 
 
 def parse_stats_line(line: str) -> dict[str, int]:
@@ -23,6 +24,55 @@ def parse_stats_line(line: str) -> dict[str, int]:
             raise ValueError(f"duplicate statistics field: {key}")
         fields[key] = int(value)
     return fields
+
+
+def parse_controller_stats_line(line: str) -> dict[str, int | str]:
+    if not line.startswith(CONTROLLER_STATS_PREFIX):
+        raise ValueError("not a search-controller statistics line")
+    fields: dict[str, int | str] = {}
+    for item in line[len(CONTROLLER_STATS_PREFIX):].split():
+        key, separator, value = item.partition("=")
+        if not separator or not key or not value:
+            raise ValueError(f"malformed controller field: {item!r}")
+        if key in fields:
+            raise ValueError(f"duplicate controller field: {key}")
+        fields[key] = value if key in {"requested", "active"} else int(value)
+    if "requested" not in fields or "active" not in fields:
+        raise ValueError(f"incomplete controller statistics: {fields!r}")
+    return fields
+
+
+def aggregate_controller_stats(
+    invocations: list[dict[str, int | str]],
+) -> dict[str, int]:
+    aggregate = {
+        "records": len(invocations),
+        "active_fifo": 0,
+        "active_inline_depth_first": 0,
+    }
+    for invocation in invocations:
+        requested = invocation.get("requested")
+        active = invocation.get("active")
+        if requested != "fifo":
+            raise ValueError(
+                f"unexpected requested controller: {requested!r}"
+            )
+        if active == "fifo":
+            aggregate["active_fifo"] += 1
+        elif active == "inline-depth-first":
+            aggregate["active_inline_depth_first"] += 1
+        else:
+            raise ValueError(f"unexpected active controller: {active!r}")
+        for key, value in invocation.items():
+            if key in {"requested", "active"}:
+                continue
+            if not isinstance(value, int):
+                raise ValueError(f"non-integral controller field: {key}")
+            if key.startswith("max_"):
+                aggregate[key] = max(aggregate.get(key, 0), value)
+            else:
+                aggregate[key] = aggregate.get(key, 0) + value
+    return aggregate
 
 
 def parse_runtime_counter_line(line: str) -> tuple[str, int]:
@@ -96,6 +146,27 @@ def extract_stats(stderr: str) -> tuple[list[dict[str, int]], str]:
         else:
             ordinary.append(line)
     return invocations, "".join(ordinary)
+
+
+def extract_machine_and_controller_stats(
+    stderr: str,
+) -> tuple[
+    list[dict[str, int]],
+    list[dict[str, int | str]],
+    str,
+]:
+    machine: list[dict[str, int]] = []
+    controller: list[dict[str, int | str]] = []
+    ordinary: list[str] = []
+    for line in stderr.splitlines(keepends=True):
+        payload = line[:-1] if line.endswith("\n") else line
+        if payload.startswith(STATS_PREFIX):
+            machine.append(parse_stats_line(payload))
+        elif payload.startswith(CONTROLLER_STATS_PREFIX):
+            controller.append(parse_controller_stats_line(payload))
+        else:
+            ordinary.append(line)
+    return machine, controller, "".join(ordinary)
 
 
 def aggregate_invocations(

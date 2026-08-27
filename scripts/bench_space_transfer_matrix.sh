@@ -9,6 +9,10 @@ MATCH_ROUNDS="${3:-3}"
 SCENARIOS_STR="${4:-copy_only exact_hit_after_copy full_scan_after_copy suite_total}"
 ROUTE_OVERRIDE="${CETTA_TRANSFER_ROUTE:-${5:-}}"
 RUNTIME_DIR="$ROOT/runtime/bench_space_transfer"
+CORPUS_PATH="${CETTA_BENCH_CORPUS_PATH:-}"
+SOURCE_ACT_PATH="${CETTA_BENCH_ACT_PATH:-}"
+RANGE_CHUNK="${CETTA_BENCH_RANGE_CHUNK:-100000}"
+MATERIALIZED_RANGE="${CETTA_BENCH_MATERIALIZED_RANGE:-0}"
 
 usage() {
     cat <<EOF
@@ -42,6 +46,15 @@ esac
 [ "$FACT_COUNT" -gt 42 ] || die "FACT_COUNT must be greater than 42 because the workload queries (friend sam 42)"
 [ "$MATCH_ROUNDS" -gt 0 ] || die "MATCH_ROUNDS must be positive"
 [ -x "$BIN" ] || die "Missing executable $BIN"
+[[ "$RANGE_CHUNK" =~ ^[0-9]+$ ]] || die "CETTA_BENCH_RANGE_CHUNK must be a positive integer"
+[ "$RANGE_CHUNK" -gt 0 ] || die "CETTA_BENCH_RANGE_CHUNK must be positive"
+case "$MATERIALIZED_RANGE" in
+    0|1) ;;
+    *) die "CETTA_BENCH_MATERIALIZED_RANGE must be 0 or 1" ;;
+esac
+if [ -n "$CORPUS_PATH" ]; then
+    [ -f "$CORPUS_PATH" ] || die "Missing corpus $CORPUS_PATH"
+fi
 case "$ROUTE_OVERRIDE" in
     ""|materialized-shim|collapse-direct|get-atoms-direct)
         ;;
@@ -52,6 +65,11 @@ esac
 
 mkdir -p "$RUNTIME_DIR"
 tmp_dir=$(mktemp -d "$RUNTIME_DIR/.bench_space_transfer.XXXXXX")
+CORPUS_IMPORT_PATH=""
+if [ -n "$CORPUS_PATH" ]; then
+    ln -s "$(realpath -- "$CORPUS_PATH")" "$tmp_dir/friend_corpus.metta"
+    CORPUS_IMPORT_PATH="friend_corpus.metta"
+fi
 preserve_tmp="${BENCH_KEEP_TMP:-0}"
 cleanup() {
     if [ "$preserve_tmp" = "1" ]; then
@@ -81,10 +99,14 @@ preserve_failure_artifacts() {
 run_cetta_file() {
     local file=$1
     local output=$2
+    local space_engine=${3:-}
     local status=0
     local -a command=("$BIN")
     if [ "${CETTA_BENCH_EMIT_RUNTIME_STATS:-0}" = "1" ]; then
         command+=(--emit-runtime-stats)
+    fi
+    if [ -n "$space_engine" ]; then
+        command+=(--space-engine "$space_engine")
     fi
     command+=(--quiet --profile he-extended --lang he "$file")
     (
@@ -168,31 +190,66 @@ kind_bind_space() {
 kind_populate_space() {
     local var=$1
     local kind=$2
-    case "$kind" in
-        native|pathmap)
-            cat <<EOF
+    local start=0
+    local stop
+    local chunk=$RANGE_CHUNK
+
+    if [ -n "$CORPUS_PATH" ]; then
+        case "$kind" in
+            native)
+                printf '!(import! %s "%s")\n' "$var" "$CORPUS_IMPORT_PATH"
+                ;;
+            pathmap)
+                printf '!(import! &corpus "%s")\n' "$CORPUS_IMPORT_PATH"
+                printf '!(add-atoms %s (get-atoms &corpus))\n' "$var"
+                ;;
+            mork-live)
+                [ -n "$SOURCE_ACT_PATH" ] || die "CETTA_BENCH_ACT_PATH is required for a MORK corpus source"
+                [ -f "$SOURCE_ACT_PATH" ] || die "Missing ACT corpus $SOURCE_ACT_PATH"
+                printf '!(mork:load-act! %s "%s")\n' "$var" "$SOURCE_ACT_PATH"
+                ;;
+            *)
+                die "Unsupported populate kind: $kind"
+                ;;
+        esac
+        return
+    fi
+
+    if [ "$MATERIALIZED_RANGE" = "1" ]; then
+        chunk=$FACT_COUNT
+    fi
+    while [ "$start" -lt "$FACT_COUNT" ]; do
+        stop=$((start + chunk))
+        if [ "$stop" -gt "$FACT_COUNT" ]; then
+            stop=$FACT_COUNT
+        fi
+        case "$kind" in
+            native|pathmap)
+                cat <<EOF
 !(let \$ignored
    (collapse
-     (let \$xs (eval (list:range $FACT_COUNT))
+     (let \$xs (eval (list:range $start $stop))
        (let \$i (superpose \$xs)
          (add-atom $var (friend sam \$i)))))
    ())
 EOF
-            ;;
-        mork-live)
-            cat <<EOF
+                ;;
+            mork-live)
+                cat <<EOF
 !(let \$ignored
    (collapse
-     (let \$xs (eval (list:range $FACT_COUNT))
+     (let \$xs (eval (list:range $start $stop))
        (let \$i (superpose \$xs)
          (mork:add-atom $var (friend sam \$i)))))
    ())
 EOF
-            ;;
-        *)
-            die "Unsupported populate kind: $kind"
-            ;;
-    esac
+                ;;
+            *)
+                die "Unsupported populate kind: $kind"
+                ;;
+        esac
+        start=$stop
+    done
 }
 
 kind_size_expr() {
@@ -253,7 +310,9 @@ render_case_program() {
         printf '!(import! &self system)\n'
         printf '!(bind! &bench-start-ns (system:monotonic-ns))\n'
 
-        kind_bind_space '&src' "$src_kind"
+        if [ -z "$CORPUS_PATH" ] || [ "$src_kind" != "native" ]; then
+            kind_bind_space '&src' "$src_kind"
+        fi
         kind_populate_space '&src' "$src_kind"
         printf '!(assertEqualToResult %s (%s))\n' "$(kind_size_expr "$src_kind" '&src')" "$FACT_COUNT"
         printf '!(println! (bench source_rows %s))\n' "$(kind_size_expr "$src_kind" '&src')"
@@ -428,13 +487,17 @@ run_case_scenario() {
     local pathmap_direct_store
     local mork_add_call
     local mork_add_batch_items
+    local default_space_engine=""
 
     src_kind="$(case_source_kind "$case_id")"
     dst_kind="$(case_target_kind "$case_id")"
     route_class="$(case_route_class "$case_id")"
+    if [ "$src_kind" = native ]; then
+        default_space_engine=native
+    fi
 
     render_case_program "$case_id" "$scenario" "$file"
-    if run_cetta_file "$file" "$log"; then
+    if run_cetta_file "$file" "$log" "$default_space_engine"; then
         :
     else
         local status=$?

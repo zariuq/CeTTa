@@ -58,16 +58,52 @@ class LivePeTTaSampleTests(unittest.TestCase):
 
     def test_classification_requires_both_output_channels(self) -> None:
         same = (0, "answer\n", "")
-        status, stdout_equal, stderr_equal = SAMPLE.classify(same, same)
+        status, observation_equal, stream_equal, stderr_equal = (
+            SAMPLE.classify(
+                same, same, SAMPLE.corpus.STDOUT_EXACT_STREAM
+            )
+        )
         self.assertEqual(status, "MATCH")
-        self.assertTrue(stdout_equal)
+        self.assertTrue(observation_equal)
+        self.assertTrue(stream_equal)
         self.assertTrue(stderr_equal)
 
-        status, _, stderr_equal = SAMPLE.classify(
-            same, (0, "answer\n", "warning\n")
+        status, _, _, stderr_equal = SAMPLE.classify(
+            same,
+            (0, "answer\n", "warning\n"),
+            SAMPLE.corpus.STDOUT_EXACT_STREAM,
         )
         self.assertEqual(status, "STDERR_MISMATCH")
         self.assertFalse(stderr_equal)
+
+    def test_exact_stream_rejects_reordering(self) -> None:
+        left = (0, "first\nsecond\n", "")
+        right = (0, "second\nfirst\n", "")
+        status, observation_equal, stream_equal, _ = SAMPLE.classify(
+            left, right, SAMPLE.corpus.STDOUT_EXACT_STREAM
+        )
+        self.assertEqual(status, "STDOUT_MISMATCH")
+        self.assertFalse(observation_equal)
+        self.assertFalse(stream_equal)
+
+    def test_occurrence_bag_reports_permitted_reordering(self) -> None:
+        left = (0, "first\nsecond\n", "")
+        right = (0, "second\nfirst\n", "")
+        status, observation_equal, stream_equal, _ = SAMPLE.classify(
+            left, right, SAMPLE.corpus.STDOUT_OCCURRENCE_BAG
+        )
+        self.assertEqual(status, "MATCH_REORDERED")
+        self.assertTrue(observation_equal)
+        self.assertFalse(stream_equal)
+
+    def test_occurrence_bag_rejects_missing_duplicate(self) -> None:
+        left = (0, "same\nsame\n", "")
+        right = (0, "same\n", "")
+        status, observation_equal, _, _ = SAMPLE.classify(
+            left, right, SAMPLE.corpus.STDOUT_OCCURRENCE_BAG
+        )
+        self.assertEqual(status, "STDOUT_MISMATCH")
+        self.assertFalse(observation_equal)
 
     def test_only_exact_optional_janus_failure_is_ignored(self) -> None:
         warning = (

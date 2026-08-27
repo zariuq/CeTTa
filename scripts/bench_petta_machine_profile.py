@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Profile native PeTTa machine work after exact oracle validation."""
+"""Profile native PeTTa work after receipt-selected oracle validation."""
 
 from __future__ import annotations
 
@@ -18,6 +18,11 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(SCRIPT_DIR))
 
 import petta_corpus_manifest as corpus  # noqa: E402
+from petta_machine_stats import (  # noqa: E402
+    aggregate_controller_stats,
+    aggregate_invocations,
+    extract_machine_and_controller_stats,
+)
 
 
 DEFAULT_WORKLOADS = (
@@ -27,64 +32,6 @@ DEFAULT_WORKLOADS = (
     "matespacefast.metta",
     "scale.metta",
 )
-STATS_PREFIX = "PETTA_MACHINE_STATS "
-
-
-def parse_stats_line(line: str) -> dict[str, int]:
-    if not line.startswith(STATS_PREFIX):
-        raise ValueError("not a PeTTa machine statistics line")
-    fields: dict[str, int] = {}
-    for item in line[len(STATS_PREFIX):].split():
-        key, separator, value = item.partition("=")
-        if not separator or not key or not value:
-            raise ValueError(f"malformed statistics field: {item!r}")
-        fields[key] = int(value)
-    return fields
-
-
-def extract_stats(stderr: str) -> tuple[list[dict[str, int]], str]:
-    invocations: list[dict[str, int]] = []
-    ordinary: list[str] = []
-    for line in stderr.splitlines(keepends=True):
-        payload = line[:-1] if line.endswith("\n") else line
-        if payload.startswith(STATS_PREFIX):
-            invocations.append(parse_stats_line(payload))
-        else:
-            ordinary.append(line)
-    return invocations, "".join(ordinary)
-
-
-def aggregate_invocations(
-    invocations: list[dict[str, int]],
-) -> dict[str, int | float]:
-    if not invocations:
-        raise RuntimeError("run emitted no PETTA_MACHINE_STATS records")
-    aggregate: dict[str, int | float] = {
-        "invocations": len(invocations),
-    }
-    ttfa: list[int] = []
-    first_answer_transitions: list[int] = []
-    for invocation in invocations:
-        for key, value in invocation.items():
-            if key == "time_to_first_answer_ns":
-                ttfa.append(value)
-            elif key == "first_answer_transition":
-                first_answer_transitions.append(value)
-            elif key.startswith("max_"):
-                aggregate[key] = max(int(aggregate.get(key, 0)), value)
-            else:
-                aggregate[key] = int(aggregate.get(key, 0)) + value
-    aggregate["ttfa_ns_median"] = statistics.median(ttfa)
-    aggregate["ttfa_ns_max"] = max(ttfa)
-    aggregate["first_answer_transition_median"] = statistics.median(
-        first_answer_transitions
-    )
-    aggregate["first_answer_transition_max"] = max(
-        first_answer_transitions
-    )
-    return aggregate
-
-
 def median_runs(runs: list[dict[str, Any]]) -> dict[str, int | float]:
     keys = sorted(
         set().union(*(run["aggregate"].keys() for run in runs))
@@ -132,7 +79,9 @@ def run_workload(
         raise RuntimeError(f"{entry['name']}: timed out")
     if output_limit:
         raise RuntimeError(f"{entry['name']}: exceeded output limit")
-    invocations, ordinary_stderr = extract_stats(stderr)
+    invocations, controller_invocations, ordinary_stderr = (
+        extract_machine_and_controller_stats(stderr)
+    )
     normalized_stdout = corpus.normalize_cetta_stdout(
         stdout, petta_dir, (cetta.parent,)
     )
@@ -140,23 +89,52 @@ def run_workload(
         ordinary_stderr, petta_dir, (cetta.parent,)
     )
     oracle = entry["oracle"]
-    exact = (
+    controller_aggregate = aggregate_controller_stats(
+        controller_invocations
+    )
+    stdout_contract = (
+        corpus.STDOUT_OCCURRENCE_BAG
+        if controller_aggregate["active_fifo"] > 0
+        else corpus.STDOUT_EXACT_STREAM
+    )
+    stdout_observation_equal = corpus.stdout_observation_equal(
+        normalized_stdout, oracle["stdout"], stdout_contract
+    )
+    stdout_stream_equal = corpus.stdout_observation_equal(
+        normalized_stdout,
+        oracle["stdout"],
+        corpus.STDOUT_EXACT_STREAM,
+    )
+    qualified = (
         exit_code == oracle["exit"]
-        and normalized_stdout == oracle["stdout"]
+        and stdout_observation_equal
         and normalized_stderr == oracle["stderr"]
     )
-    if not exact:
+    if not qualified:
         raise RuntimeError(
             f"{entry['name']}: oracle mismatch "
             f"(exit {exit_code!r} != {oracle['exit']!r}, "
-            f"stdout_equal={normalized_stdout == oracle['stdout']}, "
+            f"stdout_contract={stdout_contract}, "
+            f"stdout_observation_equal={stdout_observation_equal}, "
+            f"stdout_stream_equal={stdout_stream_equal}, "
             f"stderr_equal={normalized_stderr == oracle['stderr']})"
         )
+    aggregate = aggregate_invocations(invocations)
+    aggregate.update(
+        {
+            f"controller_{key}": value
+            for key, value in controller_aggregate.items()
+        }
+    )
     return {
-        "exact": True,
+        "qualified": True,
+        "stdout_contract": stdout_contract,
+        "stdout_observation_equal": stdout_observation_equal,
+        "stdout_stream_equal": stdout_stream_equal,
         "process_elapsed_ns": process_elapsed_ns,
         "invocation_stats": invocations,
-        "aggregate": aggregate_invocations(invocations),
+        "controller_stats": controller_invocations,
+        "aggregate": aggregate,
     }
 
 
@@ -164,6 +142,9 @@ def write_summary_tsv(path: Path, results: dict[str, Any]) -> None:
     columns = (
         "workload",
         "runs",
+        "stdout_contract",
+        "stdout_observation_equal",
+        "stdout_stream_equal",
         "process_seconds",
         "machine_seconds",
         "invocations",
@@ -217,6 +198,21 @@ def write_summary_tsv(path: Path, results: dict[str, Any]) -> None:
         "max_binding_entries",
         "max_binding_apply_environment_entries",
         "max_binding_apply_epoch_suffix_entries",
+        "controller_records",
+        "controller_admitted",
+        "controller_active_fifo",
+        "controller_active_inline_depth_first",
+        "controller_scheduling_rounds",
+        "controller_transitions",
+        "controller_expansions",
+        "controller_successors",
+        "controller_captures",
+        "controller_restores",
+        "controller_inline_fallbacks",
+        "controller_answers",
+        "controller_max_frontier",
+        "controller_max_frontier_atom_bytes",
+        "controller_max_frontier_vector_bytes",
     )
     rows = ["\t".join(columns)]
     for name, result in results.items():
@@ -224,6 +220,15 @@ def write_summary_tsv(path: Path, results: dict[str, Any]) -> None:
         values: dict[str, str | int | float] = {
             "workload": name,
             "runs": len(result["runs"]),
+            "stdout_contract": result["runs"][0]["stdout_contract"],
+            "stdout_observation_equal": int(all(
+                run["stdout_observation_equal"]
+                for run in result["runs"]
+            )),
+            "stdout_stream_equal": int(all(
+                run["stdout_stream_equal"]
+                for run in result["runs"]
+            )),
             "process_seconds": (
                 float(median["process_elapsed_ns"]) / 1e9
             ),
@@ -278,6 +283,11 @@ def main() -> int:
         default="0",
     )
     parser.add_argument(
+        "--search-controller",
+        choices=("inline-depth-first", "fifo"),
+        default="inline-depth-first",
+    )
+    parser.add_argument(
         "--paired-baseline",
         action="store_true",
         help=(
@@ -316,6 +326,7 @@ def main() -> int:
             args.clause_body_activation
         ),
         "CETTA_PETTA_CLAUSE_BODY_ACTIVATION_REFERENCE": "0",
+        "CETTA_SEARCH_CONTROLLER": args.search_controller,
     }
     baseline_environment = {
         "CETTA_PETTA_SEARCH_MACHINE": "1",
@@ -327,6 +338,7 @@ def main() -> int:
         "CETTA_TERM_UNIVERSE_SOURCE_ID_MEMO": "0",
         "CETTA_PETTA_CLAUSE_BODY_ACTIVATION": "0",
         "CETTA_PETTA_CLAUSE_BODY_ACTIVATION_REFERENCE": "1",
+        "CETTA_SEARCH_CONTROLLER": args.search_controller,
     }
 
     results: dict[str, Any] = {}
@@ -357,7 +369,10 @@ def main() -> int:
                 else:
                     baseline_runs.append(run)
                 print(
-                    f"  {label} {index + 1}/{args.runs}: exact, "
+                    f"  {label} {index + 1}/{args.runs}: qualified "
+                    f"contract={run['stdout_contract']} "
+                    f"stream="
+                    f"{'exact' if run['stdout_stream_equal'] else 'reordered'}, "
                     f"machine="
                     f"{run['aggregate']['active_elapsed_ns'] / 1e9:.3f}s",
                     flush=True,
@@ -385,9 +400,9 @@ def main() -> int:
     ).stdout
     document = {
         "schema": (
-            "cetta-petta-machine-profile-v3-paired"
+            "cetta-petta-machine-profile-v4-paired"
             if args.paired_baseline
-            else "cetta-petta-machine-profile-v2"
+            else "cetta-petta-machine-profile-v4"
         ),
         "cetta_revision": revision,
         "candidate_diff_sha256": corpus.sha256_bytes(candidate_diff),
@@ -417,8 +432,8 @@ def main() -> int:
         write_summary_tsv(baseline_tsv, baseline_results)
     legs_per_workload = 2 if args.paired_baseline else 1
     print(
-        f"PASS: {len(results)} workloads exact across {args.runs} runs "
-        f"and {legs_per_workload} leg(s)")
+        f"PASS: {len(results)} workloads qualified across {args.runs} runs "
+        f"and {legs_per_workload} leg(s) under controller receipts")
     return 0
 
 

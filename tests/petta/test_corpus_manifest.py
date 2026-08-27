@@ -293,6 +293,33 @@ class CorpusManifestTests(unittest.TestCase):
             "Not specialized user message\n",
         )
 
+    def test_stdout_observation_contracts_distinguish_order(self) -> None:
+        forward = "first\nsecond\n"
+        reverse = "second\nfirst\n"
+        self.assertFalse(
+            MANIFEST.stdout_observation_equal(
+                forward, reverse, MANIFEST.STDOUT_EXACT_STREAM
+            )
+        )
+        self.assertTrue(
+            MANIFEST.stdout_observation_equal(
+                forward, reverse, MANIFEST.STDOUT_OCCURRENCE_BAG
+            )
+        )
+
+    def test_occurrence_bag_preserves_duplicate_multiplicity(self) -> None:
+        self.assertFalse(
+            MANIFEST.stdout_observation_equal(
+                "same\nsame\n",
+                "same\n",
+                MANIFEST.STDOUT_OCCURRENCE_BAG,
+            )
+        )
+
+    def test_unknown_stdout_observation_contract_fails_closed(self) -> None:
+        with self.assertRaisesRegex(ValueError, "unknown stdout"):
+            MANIFEST.stdout_observation("answer\n", "unordered-ish")
+
     def test_source_mutation_is_detected(self) -> None:
         source = self.examples / self.manifest["entries"][0]["name"]
         source.write_text("; changed\n", encoding="utf-8")
