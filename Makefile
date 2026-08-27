@@ -2671,6 +2671,7 @@ PRIME_CONFORMANCE_TESTS = \
 	tests/prime/need_quote_preservation.metta \
 	tests/prime/need_sequential_unification_refinement.metta \
 	tests/prime/relational_first_demand.metta \
+	tests/prime/search_controller_frontier.metta \
 	tests/prime/nik_plural_checking.metta \
 	tests/prime/nil_rule_machine_guests.generated.metta \
 	tests/prime/rule_machine_malformed_artifact_delta.metta \
@@ -21679,7 +21680,40 @@ test-search-controller: $(BIN)
 	@$(CETTA_SCRIPT_RUN_ENV) python3 scripts/check_search_controller.py \
 		"$(CETTA_SCRIPT_BIN)"
 
-test-petta-search-machine: $(PETTA_SEARCH_MACHINE_TEST_BIN) $(BIN) test-search-controller test-petta-type-langdef-source-binding-v1 test-petta-boundary-langdef-source-binding-v1 test-petta-capability-ledger test-petta-specializer-relevance-filter test-petta-mam-contender-mutations test-petta-extended-query-algebra test-petta-prepared-register-loop test-petta-specialized-pure-call test-petta-memoization test-petta-match-existence-fusion test-petta-clause-slot-admission test-petta-equation-template-c0 test-petta-relational-equation-view test-petta-argv-native test-petta-native-host-runtime
+.PHONY: test-petta-machine-trace-config
+test-petta-machine-trace-config: $(BIN)
+	@set -eu; \
+	fixture=tests/petta/unsupported/recursive_relational_search.metta; \
+	query_trace=$$(CETTA_PETTA_QUERY_TRACE='*' \
+		CETTA_PETTA_QUERY_TRACE_START=0 \
+		CETTA_PETTA_QUERY_TRACE_LIMIT=1 \
+		./$(BIN) --lang petta "$$fixture" 2>&1 >/dev/null); \
+	test "$$(printf '%s\n' "$$query_trace" | \
+		grep -c '^\[petta-query\]')" -eq 1; \
+	! printf '%s\n' "$$query_trace" | grep -q ' resolved='; \
+	named_trace=$$(CETTA_PETTA_QUERY_TRACE=later \
+		CETTA_PETTA_QUERY_TRACE_START=0 \
+		CETTA_PETTA_QUERY_TRACE_LIMIT=1 \
+		./$(BIN) --lang petta "$$fixture" 2>&1 >/dev/null); \
+	test "$$(printf '%s\n' "$$named_trace" | \
+		grep -c '^\[petta-query\].* head=later .* resolved=')" -eq 1; \
+	quiet_query=$$(env -u CETTA_PETTA_QUERY_TRACE \
+		-u CETTA_PETTA_QUERY_TRACE_START \
+		-u CETTA_PETTA_QUERY_TRACE_LIMIT \
+		./$(BIN) --lang petta "$$fixture" 2>&1 >/dev/null); \
+	! printf '%s\n' "$$quiet_query" | grep -q '^\[petta-query\]'; \
+	choice_kind=$$(CETTA_PETTA_CHOICE_KIND_TRACE=1 \
+		./$(BIN) --lang petta \
+		tests/petta/search_controller_fifo_order.metta 2>&1 >/dev/null); \
+	printf '%s\n' "$$choice_kind" | \
+		grep -q '^\[petta-choice-kind\]'; \
+	choice=$$(CETTA_PETTA_CHOICE_TRACE=1 \
+		./$(BIN) --lang petta \
+		tests/petta/search_controller_fifo_order.metta 2>&1 >/dev/null); \
+	printf '%s\n' "$$choice" | grep -q '^\[petta-choice\]'; \
+	echo "PASS: PeTTa machine trace configuration"
+
+test-petta-search-machine: $(PETTA_SEARCH_MACHINE_TEST_BIN) $(BIN) test-search-controller test-petta-machine-trace-config test-petta-type-langdef-source-binding-v1 test-petta-boundary-langdef-source-binding-v1 test-petta-capability-ledger test-petta-specializer-relevance-filter test-petta-mam-contender-mutations test-petta-extended-query-algebra test-petta-prepared-register-loop test-petta-specialized-pure-call test-petta-memoization test-petta-match-existence-fusion test-petta-clause-slot-admission test-petta-equation-template-c0 test-petta-relational-equation-view test-petta-argv-native test-petta-native-host-runtime
 	@CETTA_PETTA_CLAUSE_BODY_ACTIVATION=1 \
 		./$(PETTA_SEARCH_MACHINE_TEST_BIN)
 	@machine_stats=$$(CETTA_PETTA_MACHINE_STATS=1 \

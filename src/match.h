@@ -362,6 +362,12 @@ bool      bindings_builder_clone(BindingsBuilder *dst,
  * used by a materialized branch image after `bindings_builder_clone`. */
 bool      bindings_builder_promote_atoms_to_arena(
               BindingsBuilder *bb, Arena *owner);
+/* Promote only Prime need/effect/receipt state in the current binding image
+ * and its rollback checkpoints.  Logical binding atoms are deliberately
+ * excluded so an enclosing branch-image copy can preserve their sharing with
+ * continuation roots through its own AtomDeepCopySession. */
+bool      bindings_builder_promote_prime_atoms_to_arena(
+              BindingsBuilder *bb, Arena *owner);
 void      bindings_builder_free(BindingsBuilder *bb);
 uint32_t  bindings_builder_save(const BindingsBuilder *bb);
 void      bindings_builder_rollback(BindingsBuilder *bb, uint32_t mark);

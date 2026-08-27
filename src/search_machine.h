@@ -50,8 +50,8 @@ typedef enum {
 
 typedef enum {
     CETTA_BRANCH_STORAGE_INLINE = 0,
-    CETTA_BRANCH_STORAGE_EXCLUSIVE_DEPTH_FIRST,
-    CETTA_BRANCH_STORAGE_OWNED_FRONTIER,
+    CETTA_BRANCH_STORAGE_EXCLUSIVE_ONE_SHOT,
+    CETTA_BRANCH_STORAGE_OWNED_MULTI_SHOT,
 } CettaBranchStorageMode;
 
 /* Controller policy names semantic occurrence order, not an evaluator
@@ -77,9 +77,12 @@ CettaBranchCaptureCapacity cetta_branch_capture_weakest(
 bool cetta_branch_capture_admits(
     CettaBranchCaptureCapacity available,
     CettaBranchStorageMode requested);
-CettaBranchStorageMode cetta_branch_select_storage(
+/* Admit only the requested physical mode.  Refusal leaves ADMITTED unchanged;
+ * storage capacity never selects a traversal policy or substitute mode. */
+bool cetta_branch_storage_admit_exact(
     CettaBranchCaptureCapacity available,
-    CettaBranchStorageMode requested);
+    CettaBranchStorageMode requested,
+    CettaBranchStorageMode *admitted);
 
 #define CETTA_BRANCH_AUTHORITY_TOKEN_WORD_CAPACITY 8u
 typedef struct {
@@ -136,6 +139,17 @@ typedef struct {
     const CettaContinuationBackend *backend;
 } CettaOwnedContinuation;
 
+/* Physical storage receipt for one continuation occurrence.  Shared bytes
+ * are counted once per non-NULL identity across a live frontier; exclusive
+ * bytes belong only to this occurrence.  A full-image backend therefore uses
+ * a distinct identity per payload, while a persistent/cactus backend may
+ * report one identity for many lightweight branch handles. */
+typedef struct {
+    const void *shared_identity;
+    size_t shared_bytes;
+    size_t exclusive_bytes;
+} CettaContinuationStorage;
+
 /* A scorer sees only authorized occurrence identities and opaque owned
  * continuations.  Equal continuation payloads remain distinct occurrences;
  * a scorer may reorder them but cannot remove or duplicate one. */
@@ -190,7 +204,7 @@ CettaControllerRankingDecision cetta_controller_rank_complete(
     size_t *permutation,
     CettaControllerRankingReceipt *receipt);
 
-/* A controller-owned sequence of independent successor continuations.
+/* A backend-produced sequence of independent successor continuations.
  * Expansion preserves occurrence identity: two equal successors remain two
  * entries.  The sequence order is the backend's authored occurrence order;
  * DFS, FIFO, valuation, and learned controllers may store or select the
@@ -198,32 +212,36 @@ CettaControllerRankingDecision cetta_controller_rank_complete(
 typedef struct {
     CettaOwnedContinuation *items;
     size_t length;
-} CettaContinuationFrontier;
+} CettaContinuationBatch;
 
-/* Physical FIFO storage for one controller lane.  The queue owns every
- * continuation accepted by push operations.  It knows nothing about the
- * evaluator payload or answer algebra, so the same lane can schedule any
- * backend implementing CettaContinuationBackend. */
+/* One controller-neutral live-occurrence store.  Each payload occurs exactly
+ * once; FIFO, LIFO, valuation, and learned selectors choose an index without
+ * converting or copying the stored continuation representation. */
 typedef struct {
     CettaOwnedContinuation *items;
     size_t begin;
     size_t end;
     size_t capacity;
-} CettaContinuationQueue;
+} CettaContinuationStore;
 
 struct CettaContinuationBackend {
+    /* Physical representation receipt.  This is not a controller name and
+     * may change independently of FIFO, valuation, or learned selection. */
+    const char *storage_name;
     CettaContinuationStatus (*capture)(
         void *machine, void **payload);
     CettaContinuationStatus (*restore)(
         void *machine, void **payload);
     void (*destroy)(void *payload);
-    bool (*storage_bytes)(
+    bool (*storage)(
         const void *payload,
-        size_t *atom_bytes,
-        size_t *exclusive_vector_bytes);
+        CettaContinuationStorage *storage);
     CettaContinuationStatus (*expand)(
         void *machine, void ***payloads, size_t *length);
 };
+
+const char *cetta_continuation_machine_storage_name(
+    CettaContinuationMachine machine);
 
 void cetta_owned_continuation_init(
     CettaOwnedContinuation *continuation);
@@ -236,42 +254,43 @@ CettaContinuationStatus cetta_continuation_capture(
 CettaContinuationStatus cetta_continuation_restore(
     CettaContinuationMachine machine,
     CettaOwnedContinuation *continuation);
-bool cetta_owned_continuation_storage_bytes(
+bool cetta_owned_continuation_storage(
     const CettaOwnedContinuation *continuation,
-    size_t *atom_bytes,
-    size_t *exclusive_vector_bytes);
-void cetta_continuation_frontier_init(
-    CettaContinuationFrontier *frontier);
-void cetta_continuation_frontier_destroy(
-    CettaContinuationFrontier *frontier);
+    CettaContinuationStorage *storage);
+void cetta_continuation_batch_init(
+    CettaContinuationBatch *batch);
+void cetta_continuation_batch_destroy(
+    CettaContinuationBatch *batch);
 /* Expand one admitted semantic choice.  READY returns one or more owned
  * successor occurrences and leaves the source machine's semantic state
- * unchanged.  Failure leaves FRONTIER empty. */
+ * unchanged.  Failure leaves BATCH empty. */
 CettaContinuationStatus cetta_continuation_expand(
     CettaContinuationMachine machine,
-    CettaContinuationFrontier *frontier);
-void cetta_continuation_queue_init(
-    CettaContinuationQueue *queue);
-void cetta_continuation_queue_destroy(
-    CettaContinuationQueue *queue);
-size_t cetta_continuation_queue_length(
-    const CettaContinuationQueue *queue);
-/* Successful insertion consumes CONTINUATION. */
-bool cetta_continuation_queue_push(
-    CettaContinuationQueue *queue,
+    CettaContinuationBatch *batch);
+void cetta_continuation_store_init(
+    CettaContinuationStore *store);
+void cetta_continuation_store_destroy(
+    CettaContinuationStore *store);
+size_t cetta_continuation_store_length(
+    const CettaContinuationStore *store);
+/* Successful append consumes CONTINUATION. */
+bool cetta_continuation_store_append(
+    CettaContinuationStore *store,
     CettaOwnedContinuation *continuation);
-/* Successful insertion consumes every item in FRONTIER. */
-bool cetta_continuation_queue_push_frontier(
-    CettaContinuationQueue *queue,
-    CettaContinuationFrontier *frontier);
-/* Successful removal transfers ownership to CONTINUATION. */
-bool cetta_continuation_queue_pop(
-    CettaContinuationQueue *queue,
+/* Successful append consumes every item in BATCH. */
+bool cetta_continuation_store_append_batch(
+    CettaContinuationStore *store,
+    CettaContinuationBatch *batch);
+/* Successful removal transfers ownership to CONTINUATION while preserving
+ * the relative order of every unselected live occurrence. */
+bool cetta_continuation_store_take(
+    CettaContinuationStore *store,
+    size_t index,
     CettaOwnedContinuation *continuation);
-bool cetta_continuation_queue_storage_bytes(
-    const CettaContinuationQueue *queue,
-    size_t *atom_bytes,
-    size_t *exclusive_vector_bytes);
+bool cetta_continuation_store_storage(
+    const CettaContinuationStore *store,
+    size_t *shared_bytes,
+    size_t *exclusive_bytes);
 
 bool search_context_init(SearchContext *ctx, const Bindings *base,
                          Arena *scratch_arena);

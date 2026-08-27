@@ -12,7 +12,7 @@ static bool cetta_branch_capture_capacity_valid(
 static bool cetta_branch_storage_mode_valid(
     CettaBranchStorageMode mode) {
     return mode >= CETTA_BRANCH_STORAGE_INLINE &&
-        mode <= CETTA_BRANCH_STORAGE_OWNED_FRONTIER;
+        mode <= CETTA_BRANCH_STORAGE_OWNED_MULTI_SHOT;
 }
 
 const char *cetta_search_controller_policy_name(
@@ -59,25 +59,24 @@ bool cetta_branch_capture_admits(
         return false;
     }
     CettaBranchCaptureCapacity required =
-        requested == CETTA_BRANCH_STORAGE_OWNED_FRONTIER
+        requested == CETTA_BRANCH_STORAGE_OWNED_MULTI_SHOT
             ? CETTA_BRANCH_CAPTURE_MULTI_SHOT
-            : requested == CETTA_BRANCH_STORAGE_EXCLUSIVE_DEPTH_FIRST
+            : requested == CETTA_BRANCH_STORAGE_EXCLUSIVE_ONE_SHOT
                 ? CETTA_BRANCH_CAPTURE_ONE_SHOT
                 : CETTA_BRANCH_CAPTURE_INLINE_ONLY;
     return available >= required;
 }
 
-CettaBranchStorageMode cetta_branch_select_storage(
+bool cetta_branch_storage_admit_exact(
     CettaBranchCaptureCapacity available,
-    CettaBranchStorageMode requested) {
-    if (cetta_branch_capture_admits(available, requested))
-        return requested;
-    if (cetta_branch_capture_admits(
-            available,
-            CETTA_BRANCH_STORAGE_EXCLUSIVE_DEPTH_FIRST)) {
-        return CETTA_BRANCH_STORAGE_EXCLUSIVE_DEPTH_FIRST;
+    CettaBranchStorageMode requested,
+    CettaBranchStorageMode *admitted) {
+    if (!admitted ||
+        !cetta_branch_capture_admits(available, requested)) {
+        return false;
     }
-    return CETTA_BRANCH_STORAGE_INLINE;
+    *admitted = requested;
+    return true;
 }
 
 bool cetta_branch_authority_token_equal(
@@ -94,8 +93,16 @@ bool cetta_branch_authority_token_equal(
 
 static bool cetta_continuation_backend_valid(
     const CettaContinuationBackend *backend) {
-    return backend && backend->capture && backend->restore &&
-        backend->destroy && backend->storage_bytes;
+    return backend && backend->storage_name &&
+        backend->storage_name[0] != '\0' &&
+        backend->capture && backend->restore &&
+        backend->destroy && backend->storage;
+}
+
+const char *cetta_continuation_machine_storage_name(
+    CettaContinuationMachine machine) {
+    return cetta_continuation_backend_valid(machine.backend)
+        ? machine.backend->storage_name : NULL;
 }
 
 void cetta_owned_continuation_init(
@@ -158,16 +165,14 @@ CettaContinuationStatus cetta_continuation_restore(
     return status;
 }
 
-bool cetta_owned_continuation_storage_bytes(
+bool cetta_owned_continuation_storage(
     const CettaOwnedContinuation *continuation,
-    size_t *atom_bytes,
-    size_t *exclusive_vector_bytes) {
+    CettaContinuationStorage *storage) {
     return continuation && continuation->payload &&
         cetta_continuation_backend_valid(continuation->backend) &&
-        atom_bytes && exclusive_vector_bytes &&
-        continuation->backend->storage_bytes(
-            continuation->payload,
-            atom_bytes, exclusive_vector_bytes);
+        storage && continuation->backend->storage(
+            continuation->payload, storage) &&
+        (storage->shared_bytes == 0u || storage->shared_identity);
 }
 
 static void cetta_controller_identity_permutation(
@@ -254,25 +259,25 @@ CettaControllerRankingDecision cetta_controller_rank_complete(
     return decision;
 }
 
-void cetta_continuation_frontier_init(
-    CettaContinuationFrontier *frontier) {
+void cetta_continuation_batch_init(
+    CettaContinuationBatch *frontier) {
     if (frontier)
-        *frontier = (CettaContinuationFrontier){0};
+        *frontier = (CettaContinuationBatch){0};
 }
 
-void cetta_continuation_frontier_destroy(
-    CettaContinuationFrontier *frontier) {
+void cetta_continuation_batch_destroy(
+    CettaContinuationBatch *frontier) {
     if (!frontier)
         return;
     for (size_t i = 0u; i < frontier->length; i++)
         cetta_owned_continuation_destroy(&frontier->items[i]);
     free(frontier->items);
-    *frontier = (CettaContinuationFrontier){0};
+    *frontier = (CettaContinuationBatch){0};
 }
 
 CettaContinuationStatus cetta_continuation_expand(
     CettaContinuationMachine machine,
-    CettaContinuationFrontier *frontier) {
+    CettaContinuationBatch *frontier) {
     if (!machine.machine ||
         !cetta_continuation_backend_valid(machine.backend) ||
         !machine.backend->expand || !frontier ||
@@ -322,38 +327,38 @@ CettaContinuationStatus cetta_continuation_expand(
     return CETTA_CONTINUATION_READY;
 }
 
-void cetta_continuation_queue_init(
-    CettaContinuationQueue *queue) {
+void cetta_continuation_store_init(
+    CettaContinuationStore *queue) {
     if (queue)
-        *queue = (CettaContinuationQueue){0};
+        *queue = (CettaContinuationStore){0};
 }
 
-void cetta_continuation_queue_destroy(
-    CettaContinuationQueue *queue) {
+void cetta_continuation_store_destroy(
+    CettaContinuationStore *queue) {
     if (!queue)
         return;
     for (size_t i = queue->begin; i < queue->end; i++)
         cetta_owned_continuation_destroy(&queue->items[i]);
     free(queue->items);
-    *queue = (CettaContinuationQueue){0};
+    *queue = (CettaContinuationStore){0};
 }
 
-size_t cetta_continuation_queue_length(
-    const CettaContinuationQueue *queue) {
+size_t cetta_continuation_store_length(
+    const CettaContinuationStore *queue) {
     return queue && queue->end >= queue->begin
         ? queue->end - queue->begin : 0u;
 }
 
-static bool cetta_continuation_queue_reserve(
-    CettaContinuationQueue *queue, size_t additional) {
+static bool cetta_continuation_store_reserve(
+    CettaContinuationStore *queue, size_t additional) {
     if (!queue || queue->begin > queue->end ||
         queue->end > queue->capacity ||
         (queue->capacity != 0u && !queue->items) ||
         additional > SIZE_MAX -
-            cetta_continuation_queue_length(queue)) {
+            cetta_continuation_store_length(queue)) {
         return false;
     }
-    size_t length = cetta_continuation_queue_length(queue);
+    size_t length = cetta_continuation_store_length(queue);
     if (additional <= queue->capacity - queue->end)
         return true;
     if (queue->begin != 0u) {
@@ -384,12 +389,12 @@ static bool cetta_continuation_queue_reserve(
     return true;
 }
 
-bool cetta_continuation_queue_push(
-    CettaContinuationQueue *queue,
+bool cetta_continuation_store_append(
+    CettaContinuationStore *queue,
     CettaOwnedContinuation *continuation) {
     if (!queue || !continuation || !continuation->payload ||
         !continuation->backend ||
-        !cetta_continuation_queue_reserve(queue, 1u)) {
+        !cetta_continuation_store_reserve(queue, 1u)) {
         return false;
     }
     queue->items[queue->end++] = *continuation;
@@ -397,9 +402,9 @@ bool cetta_continuation_queue_push(
     return true;
 }
 
-bool cetta_continuation_queue_push_frontier(
-    CettaContinuationQueue *queue,
-    CettaContinuationFrontier *frontier) {
+bool cetta_continuation_store_append_batch(
+    CettaContinuationStore *queue,
+    CettaContinuationBatch *frontier) {
     if (!queue || !frontier || !frontier->items ||
         frontier->length == 0u) {
         return false;
@@ -411,7 +416,7 @@ bool cetta_continuation_queue_push_frontier(
             return false;
         }
     }
-    if (!cetta_continuation_queue_reserve(
+    if (!cetta_continuation_store_reserve(
             queue, frontier->length)) {
         return false;
     }
@@ -420,46 +425,71 @@ bool cetta_continuation_queue_push_frontier(
         frontier->length * sizeof(*frontier->items));
     queue->end += frontier->length;
     free(frontier->items);
-    *frontier = (CettaContinuationFrontier){0};
+    *frontier = (CettaContinuationBatch){0};
     return true;
 }
 
-bool cetta_continuation_queue_pop(
-    CettaContinuationQueue *queue,
+bool cetta_continuation_store_take(
+    CettaContinuationStore *queue, size_t index,
     CettaOwnedContinuation *continuation) {
     if (!queue || !continuation || continuation->payload ||
-        continuation->backend || queue->begin == queue->end) {
+        continuation->backend ||
+        index >= cetta_continuation_store_length(queue)) {
         return false;
     }
-    *continuation = queue->items[queue->begin];
-    queue->items[queue->begin++] = (CettaOwnedContinuation){0};
+    size_t selected = queue->begin + index;
+    *continuation = queue->items[selected];
+    if (selected == queue->begin) {
+        queue->items[queue->begin++] = (CettaOwnedContinuation){0};
+    } else {
+        size_t remaining = queue->end - selected - 1u;
+        if (remaining != 0u) {
+            memmove(
+                &queue->items[selected], &queue->items[selected + 1u],
+                remaining * sizeof(*queue->items));
+        }
+        queue->items[--queue->end] = (CettaOwnedContinuation){0};
+    }
     if (queue->begin == queue->end)
         queue->begin = queue->end = 0u;
     return true;
 }
 
-bool cetta_continuation_queue_storage_bytes(
-    const CettaContinuationQueue *queue,
-    size_t *atom_bytes,
-    size_t *exclusive_vector_bytes) {
-    if (!queue || !atom_bytes || !exclusive_vector_bytes)
+bool cetta_continuation_store_storage(
+    const CettaContinuationStore *queue,
+    size_t *shared_bytes,
+    size_t *exclusive_bytes) {
+    if (!queue || !shared_bytes || !exclusive_bytes)
         return false;
-    size_t atoms = 0u;
-    size_t vectors = 0u;
+    size_t shared = 0u;
+    size_t exclusive = 0u;
     for (size_t i = queue->begin; i < queue->end; i++) {
-        size_t item_atoms = 0u;
-        size_t item_vectors = 0u;
-        if (!cetta_owned_continuation_storage_bytes(
-                &queue->items[i], &item_atoms, &item_vectors) ||
-            item_atoms > SIZE_MAX - atoms ||
-            item_vectors > SIZE_MAX - vectors) {
+        CettaContinuationStorage item = {0};
+        if (!cetta_owned_continuation_storage(
+                &queue->items[i], &item) ||
+            item.exclusive_bytes > SIZE_MAX - exclusive) {
             return false;
         }
-        atoms += item_atoms;
-        vectors += item_vectors;
+        exclusive += item.exclusive_bytes;
+        bool first_shared_identity = item.shared_bytes != 0u;
+        for (size_t prior = queue->begin;
+             first_shared_identity && prior < i; prior++) {
+            CettaContinuationStorage earlier = {0};
+            if (!cetta_owned_continuation_storage(
+                    &queue->items[prior], &earlier)) {
+                return false;
+            }
+            if (earlier.shared_identity == item.shared_identity)
+                first_shared_identity = false;
+        }
+        if (first_shared_identity) {
+            if (item.shared_bytes > SIZE_MAX - shared)
+                return false;
+            shared += item.shared_bytes;
+        }
     }
-    *atom_bytes = atoms;
-    *exclusive_vector_bytes = vectors;
+    *shared_bytes = shared;
+    *exclusive_bytes = exclusive;
     return true;
 }
 

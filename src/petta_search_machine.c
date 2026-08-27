@@ -569,6 +569,16 @@ typedef struct {
     uint32_t activation_first_entry;
 } PettaActivationFrameCacheEntry;
 
+typedef struct {
+    SymbolId query_head;
+    uint64_t query_start;
+    uint32_t query_limit;
+    bool query_enabled;
+    bool query_heads_only;
+    bool choice_kind;
+    bool choice;
+} PettaMachineTraceConfig;
+
 struct PettaMachineImpl {
     uint64_t instance_id;
     Space *space;
@@ -643,6 +653,7 @@ struct PettaMachineImpl {
     uint64_t binding_growth_collect_after;
     bool first_answer_timed;
     bool equation_template_c0_enabled;
+    PettaMachineTraceConfig trace;
     char typecheck_diagnostic[512];
     int typecheck_exit_code;
     PettaMachineStats stats;
@@ -1102,38 +1113,52 @@ static bool petta_goal_growth_trace_enabled(void) {
     return enabled == 1;
 }
 
-static bool petta_query_trace_head(SymbolId head) {
-    const char *requested = getenv("CETTA_PETTA_QUERY_TRACE");
-    return requested && head != SYMBOL_ID_NONE &&
-        (strcmp(requested, "*") == 0 ||
-         strcmp(requested, symbol_bytes(g_symbols, head)) == 0);
-}
-
-static bool petta_query_trace_heads_only(void) {
-    const char *requested = getenv("CETTA_PETTA_QUERY_TRACE");
-    return requested && strcmp(requested, "*") == 0;
-}
-
-static uint64_t petta_query_trace_start(void) {
-    const char *requested = getenv("CETTA_PETTA_QUERY_TRACE_START");
+static uint64_t petta_trace_u64(
+    const char *name, uint64_t fallback, uint64_t maximum) {
+    const char *requested = getenv(name);
     if (!requested || requested[0] == '\0')
-        return 0u;
+        return fallback;
     char *end = NULL;
     unsigned long long parsed = strtoull(requested, &end, 10);
     if (end == requested || !end || *end != '\0')
-        return 0u;
-    return parsed > UINT64_MAX ? UINT64_MAX : (uint64_t)parsed;
+        return fallback;
+    return parsed > maximum ? maximum : (uint64_t)parsed;
 }
 
-static uint32_t petta_query_trace_limit(void) {
-    const char *requested = getenv("CETTA_PETTA_QUERY_TRACE_LIMIT");
-    if (!requested || requested[0] == '\0')
-        return 64u;
-    char *end = NULL;
-    unsigned long long parsed = strtoull(requested, &end, 10);
-    if (end == requested || !end || *end != '\0')
-        return 64u;
-    return parsed > UINT32_MAX ? UINT32_MAX : (uint32_t)parsed;
+static void petta_machine_trace_config_init(
+    PettaMachineTraceConfig *config) {
+    if (!config)
+        return;
+    memset(config, 0, sizeof(*config));
+    config->query_head = SYMBOL_ID_NONE;
+    config->query_limit = (uint32_t)petta_trace_u64(
+        "CETTA_PETTA_QUERY_TRACE_LIMIT", 64u, UINT32_MAX);
+    config->query_start = petta_trace_u64(
+        "CETTA_PETTA_QUERY_TRACE_START", 0u, UINT64_MAX);
+    const char *requested = getenv("CETTA_PETTA_QUERY_TRACE");
+    if (requested) {
+        config->query_enabled = true;
+        if (strcmp(requested, "*") == 0) {
+            config->query_heads_only = true;
+        } else {
+            config->query_head = symbol_intern_cstr(
+                g_symbols, requested);
+        }
+    }
+    config->choice_kind =
+        getenv("CETTA_PETTA_CHOICE_KIND_TRACE") != NULL;
+    config->choice =
+        getenv("CETTA_PETTA_CHOICE_TRACE") != NULL;
+}
+
+static bool petta_query_trace_head(
+    const PettaMachineImpl *machine, SymbolId head) {
+    if (!machine || !machine->trace.query_enabled ||
+        head == SYMBOL_ID_NONE) {
+        return false;
+    }
+    return machine->trace.query_heads_only ||
+        machine->trace.query_head == head;
 }
 
 static bool petta_clause_slot_frame_enabled(void) {
@@ -2312,7 +2337,7 @@ static bool petta_choice_push_at_goal_trail_mark(
     choice.previous_protected_goal_height =
         machine->protected_goal_height;
     machine->stats.choice_continuation_snapshots++;
-    if (getenv("CETTA_PETTA_CHOICE_KIND_TRACE")) {
+    if (machine->trace.choice_kind) {
         fprintf(
             stderr,
             "[petta-choice-kind] kind=%u goals=%zu depth=%zu\n",
@@ -3519,8 +3544,6 @@ static bool petta_machine_owned_profile_supported(
         : machine ? machine->protected_goal_height : 0u;
     if (!machine || !machine->search.owns_scratch_arena ||
         machine->typecheck_exit_code != 0 ||
-        bindings_builder_prime_present(
-            &machine->search.bindings) ||
         machine->table_generator != PETTA_TABLE_ENTRY_NONE ||
         (machine->table_shared &&
          machine->table_shared->entry_len != 0u) ||
@@ -3581,7 +3604,7 @@ petta_machine_owned_profile_admission(
     if (admission.status != CETTA_BRANCH_ADMISSION_AVAILABLE ||
         !cetta_branch_capture_admits(
             admission.capacity,
-            CETTA_BRANCH_STORAGE_OWNED_FRONTIER) ||
+            CETTA_BRANCH_STORAGE_OWNED_MULTI_SHOT) ||
         admission.authority.length >
             CETTA_BRANCH_AUTHORITY_TOKEN_WORD_CAPACITY) {
         return CETTA_CONTINUATION_UNSUPPORTED;
@@ -3730,6 +3753,10 @@ static bool petta_owned_continuation_copy_atoms(
             &continuation->bindings.current, session);
     }
     atom_deep_copy_session_free(session);
+    if (ok) {
+        ok = bindings_builder_promote_prime_atoms_to_arena(
+            &continuation->bindings, destination);
+    }
     return ok && continuation->query &&
         continuation->answer_variable &&
         bindings_logical_atoms_closed_for_arena(
@@ -3782,16 +3809,18 @@ static size_t petta_owned_continuation_vector_bytes(
     return bytes;
 }
 
-static bool petta_continuation_storage_bytes(
+static bool petta_continuation_storage(
     const void *payload,
-    size_t *atom_bytes, size_t *exclusive_vector_bytes) {
+    CettaContinuationStorage *storage) {
     const PettaOwnedContinuationImpl *continuation = payload;
-    if (!continuation ||
-        !atom_bytes || !exclusive_vector_bytes) {
+    if (!continuation || !storage) {
         return false;
     }
-    *atom_bytes = continuation->atom_bytes;
-    *exclusive_vector_bytes = continuation->exclusive_vector_bytes;
+    *storage = (CettaContinuationStorage){
+        .shared_identity = continuation,
+        .shared_bytes = continuation->atom_bytes,
+        .exclusive_bytes = continuation->exclusive_vector_bytes,
+    };
     return true;
 }
 
@@ -4236,13 +4265,16 @@ static bool petta_machine_clause_expansion_supported(
     const PettaMachineImpl *machine) {
     if (!machine || machine->terminal || machine->yielded ||
         machine->suspended_choice || machine->choice_len != 1u ||
-        machine->host.begin_relation_call ||
-        machine->host.record_clause_use) {
+        (machine->host.record_clause_use &&
+         !machine->host.begin_relation_call)) {
         return false;
     }
     const PettaChoice *choice = &machine->choices[0];
+    bool occurrence_scoped =
+        machine->host.begin_relation_call != NULL;
     return choice->kind == PETTA_CHOICE_CLAUSE &&
-        choice->as.clause.call_occurrence == 0u &&
+        ((choice->as.clause.call_occurrence != 0u) ==
+         occurrence_scoped) &&
         !choice->as.clause.translate_result &&
         !choice->as.clause.count_collection_result &&
         choice->as.clause.next_equation <
@@ -4424,10 +4456,11 @@ static CettaContinuationStatus petta_relational_continuation_expand(
 }
 
 static const CettaContinuationBackend kPettaContinuationBackend = {
+    .storage_name = "full-image",
     .capture = petta_continuation_capture,
     .restore = petta_continuation_restore,
     .destroy = petta_continuation_destroy,
-    .storage_bytes = petta_continuation_storage_bytes,
+    .storage = petta_continuation_storage,
     .expand = petta_relational_continuation_expand,
 };
 
@@ -10975,10 +11008,10 @@ static bool petta_machine_start_space_query(
                 query->source, "petta.equation.query-source");
         }
     }
-    if (petta_query_trace_head(head)) {
+    if (petta_query_trace_head(machine, head)) {
         static _Thread_local uint32_t emitted = 0u;
-        if (emitted < petta_query_trace_limit() &&
-            machine->stats.transitions >= petta_query_trace_start()) {
+        if (emitted < machine->trace.query_limit &&
+            machine->stats.transitions >= machine->trace.query_start) {
             const Bindings *bindings =
                 search_context_bindings(&machine->search);
             fprintf(
@@ -10988,7 +11021,7 @@ static bool petta_machine_start_space_query(
                 machine->stats.transitions,
                 symbol_bytes(g_symbols, head),
                 bindings ? bindings->len : 0u);
-            if (!petta_query_trace_heads_only()) {
+            if (!machine->trace.query_heads_only) {
                 Atom *resolved = source_view
                     ? petta_machine_apply_bindings_epoch_then_all(
                           machine, (Bindings *)bindings, &machine->heap,
@@ -11318,7 +11351,7 @@ static bool petta_machine_start_space_query(
         return true;
     }
     if (selected) {
-        if (getenv("CETTA_PETTA_CHOICE_TRACE")) {
+        if (machine->trace.choice) {
             fprintf(
                 stderr,
                 "[petta-choice] head=%s candidates=%zu next=%zu depth=%zu\n",
@@ -11382,6 +11415,25 @@ static bool petta_machine_start_clause_choice(
 static bool petta_machine_start_outcome_choice(
     PettaMachineImpl *machine, OutcomeSet *outcomes, Atom *expected,
     uint32_t barrier) {
+    CettaCount outcome_count = outcomes ? outcomes->len : 0u;
+    cetta_runtime_stats_inc(
+        CETTA_RUNTIME_COUNTER_PETTA_OUTCOME_CHOICE_SET);
+    cetta_runtime_stats_add(
+        CETTA_RUNTIME_COUNTER_PETTA_OUTCOME_CHOICE_ITEM,
+        outcome_count);
+    cetta_runtime_stats_update_max(
+        CETTA_RUNTIME_COUNTER_PETTA_OUTCOME_CHOICE_ITEM_PEAK,
+        outcome_count);
+    if (outcome_count == 0u) {
+        cetta_runtime_stats_inc(
+            CETTA_RUNTIME_COUNTER_PETTA_OUTCOME_CHOICE_EMPTY);
+    } else if (outcome_count == 1u) {
+        cetta_runtime_stats_inc(
+            CETTA_RUNTIME_COUNTER_PETTA_OUTCOME_CHOICE_SINGLETON);
+    } else {
+        cetta_runtime_stats_inc(
+            CETTA_RUNTIME_COUNTER_PETTA_OUTCOME_CHOICE_MULTIPLE);
+    }
     PettaChoice choice = {
         .kind = PETTA_CHOICE_OUTCOMES,
         .trail = search_context_save(&machine->search),
@@ -19246,6 +19298,7 @@ static bool petta_machine_init_internal(
     impl->table_generator = table_generator;
     if (host)
         impl->host = *host;
+    petta_machine_trace_config_init(&impl->trace);
     petta_machine_heap_arena_init(&impl->heap);
     petta_machine_heap_arena_init(&impl->tenured);
     cetta_gslt_ground_dense_workspace_init_v1(

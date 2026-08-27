@@ -240,13 +240,15 @@ def main() -> int:
         "cetta_seconds\t"
         "source_sha256\torder\tcontroller_records\tcontroller_admitted\t"
         "controller_active_fifo\tcontroller_active_inline_depth_first\t"
+        "controller_active_refused\t"
+        "controller_storage_full_image\tcontroller_storage_none\t"
         "controller_transitions\tcontroller_expansions\t"
         "controller_successors\tcontroller_captures\tcontroller_restores\t"
         "controller_capture_elapsed_ns\tcontroller_restore_elapsed_ns\t"
         "controller_expansion_elapsed_ns\t"
-        "controller_inline_fallbacks\tcontroller_answers\t"
-        "controller_max_frontier\tcontroller_max_frontier_atom_bytes\t"
-        "controller_max_frontier_vector_bytes"
+        "controller_refusals\tcontroller_answers\t"
+        "controller_max_frontier\tcontroller_max_frontier_shared_bytes\t"
+        "controller_max_frontier_exclusive_bytes"
     ]
     counts: dict[str, int] = {}
     controller_totals: dict[str, int] = {}
@@ -336,6 +338,9 @@ def main() -> int:
             f"{controller_aggregate.get('admitted', 0)}\t"
             f"{controller_aggregate['active_fifo']}\t"
             f"{controller_aggregate['active_inline_depth_first']}\t"
+            f"{controller_aggregate['active_refused']}\t"
+            f"{controller_aggregate['storage_full_image']}\t"
+            f"{controller_aggregate['storage_none']}\t"
             f"{controller_aggregate.get('transitions', 0)}\t"
             f"{controller_aggregate.get('expansions', 0)}\t"
             f"{controller_aggregate.get('successors', 0)}\t"
@@ -344,11 +349,11 @@ def main() -> int:
             f"{controller_aggregate.get('capture_elapsed_ns', 0)}\t"
             f"{controller_aggregate.get('restore_elapsed_ns', 0)}\t"
             f"{controller_aggregate.get('expansion_elapsed_ns', 0)}\t"
-            f"{controller_aggregate.get('inline_fallbacks', 0)}\t"
+            f"{controller_aggregate.get('refusals', 0)}\t"
             f"{controller_aggregate.get('answers', 0)}\t"
             f"{controller_aggregate.get('max_frontier', 0)}\t"
-            f"{controller_aggregate.get('max_frontier_atom_bytes', 0)}\t"
-            f"{controller_aggregate.get('max_frontier_vector_bytes', 0)}"
+            f"{controller_aggregate.get('max_frontier_shared_bytes', 0)}\t"
+            f"{controller_aggregate.get('max_frontier_exclusive_bytes', 0)}"
         )
         print(
             f"[{index + 1:02d}/{len(selected):02d}] {stratum}: "

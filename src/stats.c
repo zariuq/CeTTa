@@ -547,6 +547,12 @@ static const char *const CETTA_RUNTIME_COUNTER_NAMES[CETTA_RUNTIME_COUNTER_COUNT
     "space-known-head-singleton-admitted",
     "space-known-head-singleton-open-blocked",
     "space-known-head-singleton-structured-disjoint",
+    "petta-outcome-choice-set",
+    "petta-outcome-choice-item",
+    "petta-outcome-choice-empty",
+    "petta-outcome-choice-singleton",
+    "petta-outcome-choice-multiple",
+    "petta-outcome-choice-item-peak",
 };
 
 static int64_t clamp_counter(uint64_t value) {
