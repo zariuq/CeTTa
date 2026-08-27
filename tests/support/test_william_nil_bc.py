@@ -16,6 +16,20 @@ MODULE = importlib.util.module_from_spec(SPEC)
 sys.modules[SPEC.name] = MODULE
 SPEC.loader.exec_module(MODULE)
 
+PRIME_GENERATOR = (
+    ROOT
+    / "experiments"
+    / "inference_guidance"
+    / "generate_prime_biluk_corpus.py"
+)
+PRIME_SPEC = importlib.util.spec_from_file_location(
+    "generate_prime_biluk_corpus", PRIME_GENERATOR
+)
+assert PRIME_SPEC is not None and PRIME_SPEC.loader is not None
+PRIME_MODULE = importlib.util.module_from_spec(PRIME_SPEC)
+sys.modules[PRIME_SPEC.name] = PRIME_MODULE
+PRIME_SPEC.loader.exec_module(PRIME_MODULE)
+
 
 class WilliamNilBackwardChainingTests(unittest.TestCase):
     def test_parse_proof_ignores_space_setup_results(self) -> None:
@@ -56,6 +70,43 @@ class WilliamNilBackwardChainingTests(unittest.TestCase):
     def test_proof_depth_counts_nested_rule_applications(self) -> None:
         proof = ["r4", ["r3", ["r2", ["r1", "axiom"]]]]
         self.assertEqual(MODULE.proof_depth(proof), 4)
+
+    def test_prime_generator_uses_only_the_strict_goal_prefix(self) -> None:
+        class Catalog:
+            @staticmethod
+            def assertion_catalog(_path: Path):
+                return (
+                    {
+                        "base": "𝜑",
+                        "step": ["->", "𝜑", "𝜓"],
+                        "goal": "𝜓",
+                        "later": "𝜒",
+                    },
+                    {"base": 1, "step": 2, "goal": 3, "later": 4},
+                )
+
+        rendered = PRIME_MODULE.render(
+            catalog_module=Catalog,
+            corpus=DRIVER,
+            goal="goal",
+        )
+        self.assertIn("Strict assertion prefix: 2 declarations", rendered)
+        self.assertIn("(: smm:base", rendered)
+        self.assertIn("(: smm:step", rendered)
+        self.assertNotIn("(: smm:goal", rendered)
+        self.assertNotIn("(: smm:later", rendered)
+        self.assertIn("(-> (app smm:holds $ph) (app smm:holds $ps))", rendered)
+
+    def test_generated_biluk_fixture_is_complete_and_path_independent(self) -> None:
+        fixture = (
+            ROOT
+            / "experiments"
+            / "inference_guidance"
+            / "generated_biluk_prime_corpus.metta"
+        ).read_text(encoding="utf-8")
+        self.assertIn("Strict assertion prefix: 381 declarations", fixture)
+        self.assertEqual(fixture.count("(: (proof:constructor "), 381)
+        self.assertNotIn("Source path:", fixture)
 
 
 if __name__ == "__main__":
