@@ -158,6 +158,13 @@ NO_EXPECT_CLASSIFICATION = {
 }
 
 PRIME_TEST_NOTES = {
+    "tests/prime/authored_frontier_chaining.metta": (
+        "Prime authored bounded-chaining integration canary with independent "
+        "kernel checking"
+    ),
+    "tests/prime/relational_first_demand.metta": (
+        "Prime root first-answer demand, fallback, and nested-search regression"
+    ),
     "tests/prime/system_timed_force.metta": (
         "Prime explicit suspension timing and multiplicity regression"
     ),

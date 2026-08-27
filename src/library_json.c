@@ -1,7 +1,7 @@
 #include "library_json.h"
 
 #include "json_embedded_sources_v1.h"
-#include "native/json_runtime_v1.h"
+#include "native/json_nik_v1.h"
 #include "native/json_value_v1.h"
 #include "symbol.h"
 
@@ -12,7 +12,7 @@
 #include <string.h>
 
 struct CettaJsonLibraryRuntimeV1 {
-    CettaJsonRuntimeV1 *parser;
+    CettaJsonNikV1 *parser_host;
 };
 
 static Atom *json_call(Arena *arena, Atom *head,
@@ -70,8 +70,12 @@ static const char *json_runtime_failure_symbol(
     case CETTA_JSON_RUNTIME_V1_BAD_ARGUMENT: return "JsonBadArgumentV1";
     case CETTA_JSON_RUNTIME_V1_INVALID_LANGUAGE_SOURCE:
         return "JsonInvalidLanguageSourceV1";
+    case CETTA_JSON_RUNTIME_V1_INVALID_TARGET_SOURCE:
+        return "JsonInvalidTargetSourceV1";
     case CETTA_JSON_RUNTIME_V1_OUTSIDE_LANGUAGE_FRAGMENT:
         return "JsonOutsideLanguageFragmentV1";
+    case CETTA_JSON_RUNTIME_V1_OUTSIDE_ELABORATION_PROFILE:
+        return "JsonOutsideElaborationProfileV1";
     case CETTA_JSON_RUNTIME_V1_PREPARATION_FAILURE:
         return "JsonPreparationFailureV1";
     case CETTA_JSON_RUNTIME_V1_INVALID_UTF8: return "JsonInvalidUtf8V1";
@@ -134,6 +138,7 @@ static bool json_zero_args(Atom **args, uint32_t nargs) {
 
 CettaJsonLibraryRuntimeV1 *cetta_json_library_runtime_v1_new(
     char *error_buf, size_t error_buf_size) {
+    CettaJsonNikV1Admission admission;
     CettaJsonLibraryRuntimeV1 *runtime =
         (CettaJsonLibraryRuntimeV1 *)calloc(1u, sizeof(*runtime));
     if (error_buf && error_buf_size > 0u) error_buf[0] = '\0';
@@ -144,30 +149,41 @@ CettaJsonLibraryRuntimeV1 *cetta_json_library_runtime_v1_new(
         }
         return NULL;
     }
-    runtime->parser = cetta_json_runtime_v1_new(
+    admission = cetta_json_nik_v1_admit(
         cetta_rfc8259_json_language_v1_source,
         cetta_rfc8259_json_language_v1_source_len,
         cetta_rfc8259_json_profile_v1_source,
         cetta_rfc8259_json_profile_v1_source_len,
+        cetta_rfc8259_json_value_target_v1_source,
+        cetta_rfc8259_json_value_target_v1_source_len,
         error_buf, error_buf_size);
-    if (!runtime->parser) {
+    if (admission.kind != CETTA_NIK_HOST_ADMISSION_ADMITTED_V1 ||
+        !admission.host) {
+        if (error_buf && error_buf_size > 0u && error_buf[0] == '\0') {
+            (void)snprintf(
+                error_buf, error_buf_size,
+                "JSON NIK could not admit the prepared parser realization");
+        }
         free(runtime);
         return NULL;
     }
+    runtime->parser_host = admission.host;
     return runtime;
 }
 
 void cetta_json_library_runtime_v1_free(CettaJsonLibraryRuntimeV1 *runtime) {
     if (!runtime) return;
-    cetta_json_runtime_v1_free(runtime->parser);
-    runtime->parser = NULL;
+    cetta_json_nik_v1_destroy(runtime->parser_host);
+    runtime->parser_host = NULL;
     free(runtime);
 }
 
 static Atom *json_capabilities(CettaJsonLibraryRuntimeV1 *runtime,
                                Arena *arena, Atom *head,
                                Atom **args, uint32_t nargs) {
-    Atom *items[11];
+    const CettaJsonRuntimeV1 *parser =
+        cetta_json_nik_v1_borrow_selected_runtime(runtime->parser_host);
+    Atom *items[12];
     Atom *language_items[2];
     Atom *profile_items[2];
     Atom *binding_items[2];
@@ -177,37 +193,43 @@ static Atom *json_capabilities(CettaJsonLibraryRuntimeV1 *runtime,
     Atom *tables_items[2];
     Atom *backend_values[2];
     Atom *backend_items[2];
+    Atom *production_items[2];
     if (!json_zero_args(args, nargs)) {
         return json_failure(
             arena, head, args, nargs,
             "JsonCapabilitiesV1", "JsonBadArgumentV1",
             "expected: (json:capabilities)");
     }
+    if (!parser) {
+        return json_failure(
+            arena, head, args, nargs,
+            "JsonCapabilitiesV1", "JsonInternalFailureV1",
+            "JSON NIK has no selected prepared parser realization");
+    }
     language_items[0] = atom_symbol(arena, "language-source-sha256");
     language_items[1] = atom_string(
-        arena, cetta_json_runtime_v1_language_digest(runtime->parser));
+        arena, cetta_json_runtime_v1_language_digest(parser));
     profile_items[0] = atom_symbol(arena, "profile-source-sha256");
     profile_items[1] = atom_string(
-        arena, cetta_json_runtime_v1_profile_digest(runtime->parser));
+        arena, cetta_json_runtime_v1_profile_digest(parser));
     binding_items[0] = atom_symbol(arena, "binding-sha256");
     binding_items[1] = atom_string(
-        arena, cetta_json_runtime_v1_binding_digest(runtime->parser));
+        arena, cetta_json_runtime_v1_binding_digest(parser));
     compiler_items[0] = atom_symbol(arena, "compiler-contract-sha256");
     compiler_items[1] = atom_string(
         arena,
-        cetta_json_runtime_v1_compiler_contract_digest(runtime->parser));
+        cetta_json_runtime_v1_compiler_contract_digest(parser));
     environment_items[0] = atom_symbol(
         arena, "parser-environment-contract-sha256");
     environment_items[1] = atom_string(
         arena,
-        cetta_json_runtime_v1_environment_contract_digest(runtime->parser));
+        cetta_json_runtime_v1_environment_contract_digest(parser));
     pack_items[0] = atom_symbol(arena, "parser-pack-sha256");
     pack_items[1] = atom_string(
-        arena, cetta_json_runtime_v1_parser_pack_digest(runtime->parser));
+        arena, cetta_json_runtime_v1_parser_pack_digest(parser));
     tables_items[0] = atom_symbol(arena, "prepared-table-builds");
     tables_items[1] = atom_int(
-        arena, (int64_t)cetta_json_runtime_v1_table_build_count(
-                   runtime->parser));
+        arena, (int64_t)cetta_json_runtime_v1_table_build_count(parser));
     items[0] = atom_symbol(arena, "JsonCapabilitiesV1");
     items[1] = atom_symbol(arena, "AuthoredLanguageDef");
     items[2] = atom_symbol(arena, "JsonOrderedOccurrenceValueV1");
@@ -216,14 +238,20 @@ static Atom *json_capabilities(CettaJsonLibraryRuntimeV1 *runtime,
     backend_items[0] = atom_symbol(arena, "prepared-backends");
     backend_items[1] = atom_expr(arena, backend_values, 2u);
     items[3] = atom_expr(arena, backend_items, 2u);
-    items[4] = atom_expr(arena, language_items, 2u);
-    items[5] = atom_expr(arena, profile_items, 2u);
-    items[6] = atom_expr(arena, compiler_items, 2u);
-    items[7] = atom_expr(arena, environment_items, 2u);
-    items[8] = atom_expr(arena, pack_items, 2u);
-    items[9] = atom_expr(arena, binding_items, 2u);
-    items[10] = atom_expr(arena, tables_items, 2u);
-    return atom_expr(arena, items, 11u);
+    production_items[0] = atom_symbol(arena, "production-backend");
+    production_items[1] = atom_symbol(
+        arena, cetta_json_nik_v1_production_kernel(runtime->parser_host) ==
+                CETTA_JSON_KERNEL_V1_PACKED_GLL
+            ? "GLLV1" : "GLRV1");
+    items[4] = atom_expr(arena, production_items, 2u);
+    items[5] = atom_expr(arena, language_items, 2u);
+    items[6] = atom_expr(arena, profile_items, 2u);
+    items[7] = atom_expr(arena, compiler_items, 2u);
+    items[8] = atom_expr(arena, environment_items, 2u);
+    items[9] = atom_expr(arena, pack_items, 2u);
+    items[10] = atom_expr(arena, binding_items, 2u);
+    items[11] = atom_expr(arena, tables_items, 2u);
+    return atom_expr(arena, items, 12u);
 }
 
 static Atom *json_parse(CettaJsonLibraryRuntimeV1 *runtime,
@@ -242,8 +270,8 @@ static Atom *json_parse(CettaJsonLibraryRuntimeV1 *runtime,
             "JsonParseV1", "JsonBadArgumentV1",
             "expected one JSON text argument");
     }
-    if (!cetta_json_runtime_v1_parse(
-            runtime->parser, arena,
+    if (!cetta_json_nik_v1_parse_prepared(
+            runtime->parser_host, arena,
             (const uint8_t *)source, strlen(source), NULL,
             &canonical, &parse_status, error, sizeof(error))) {
         return json_failure_or_error(
@@ -269,6 +297,8 @@ static Atom *json_stringify(CettaJsonLibraryRuntimeV1 *runtime,
     uint8_t *bytes = NULL;
     size_t len = 0u;
     CettaJsonValueV1Status status;
+    const CettaJsonRuntimeV1 *parser =
+        cetta_json_nik_v1_borrow_selected_runtime(runtime->parser_host);
     Atom *result;
     char error[512] = {0};
     if (nargs != 1u) {
@@ -277,8 +307,14 @@ static Atom *json_stringify(CettaJsonLibraryRuntimeV1 *runtime,
             "JsonStringifyV1", "JsonBadArgumentV1",
             "expected one JSON value argument");
     }
+    if (!parser) {
+        return json_failure_or_error(
+            arena, head, args, nargs, legacy,
+            "JsonStringifyV1", "JsonInternalFailureV1",
+            "JSON NIK has no selected prepared parser realization");
+    }
     if (!cetta_json_value_v1_stringify(
-            runtime->parser, args[0], legacy,
+            parser, args[0], legacy,
             4000000u, 1024u, 16u * 1024u * 1024u,
             &bytes, &len, &status, error, sizeof(error))) {
         return json_failure_or_error(
@@ -379,7 +415,7 @@ static Atom *json_lookup(CettaJsonLibraryRuntimeV1 *runtime,
     }
     for (index = 0u; index < members->expr.len; index++) {
         Atom *member = members->expr.elems[index];
-        if (json_expr_is(member, "JsonMemberV1", 4u) &&
+        if (json_expr_is(member, "JsonMemberV1", 5u) &&
             atom_eq(member->expr.elems[2], key)) {
             matches[match_len++] = member;
         }
@@ -450,7 +486,7 @@ Atom *cetta_json_library_dispatch_v1(
     CettaJsonLibraryRuntimeV1 *runtime, Arena *arena,
     Atom *head, Atom **args, uint32_t nargs) {
     SymbolId id;
-    if (!runtime || !runtime->parser || !arena || !head ||
+    if (!runtime || !runtime->parser_host || !arena || !head ||
         head->kind != ATOM_SYMBOL) return NULL;
     id = head->sym_id;
     if (id == g_builtin_syms.lib_json_capabilities_v1)
