@@ -1,5 +1,5 @@
 [()]
-[(JsonObjectV1 ((JsonMemberV1 0 (JsonStringV1 ((cp 120))) (JsonNumberV1 "1")) (JsonMemberV1 1 (JsonStringV1 ((cp 120))) (JsonNumberV1 "2"))))]
+[(JsonObjectV1 ((JsonMemberV1 0 (JsonStringV1 ((cp 120))) (JsonNumberV1 "1") (JsonSourceSpanV1 1 6)) (JsonMemberV1 1 (JsonStringV1 ((cp 120))) (JsonNumberV1 "2") (JsonSourceSpanV1 7 12))))]
 [(JsonObject ((JsonPair "x" (JsonNumber "1")) (JsonPair "x" (JsonNumber "2"))))]
 [(JsonMatchesV1 ((JsonNumberV1 "1") (JsonNumberV1 "2")))]
 [(JsonFoundV1 0 (JsonNumberV1 "1"))]

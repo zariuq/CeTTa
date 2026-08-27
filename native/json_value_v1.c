@@ -82,10 +82,64 @@ static Atom *json_app2(Arena *arena, const char *head,
     return atom_expr(arena, items, 3u);
 }
 
-static Atom *json_app3(Arena *arena, const char *head,
-                       Atom *first, Atom *second, Atom *third) {
-    Atom *items[4] = {atom_symbol(arena, head), first, second, third};
-    return atom_expr(arena, items, 4u);
+static Atom *json_app4(Arena *arena, const char *head,
+                       Atom *first, Atom *second, Atom *third,
+                       Atom *fourth) {
+    Atom *items[5] = {
+        atom_symbol(arena, head), first, second, third, fourth};
+    return atom_expr(arena, items, 5u);
+}
+
+static bool json_member_span_valid(Atom *span) {
+    Atom *start;
+    Atom *stop;
+    if (atom_is_symbol(span, "JsonNoSourceSpanV1"))
+        return true;
+    if (!json_expr_is(span, "JsonSourceSpanV1", 3u))
+        return false;
+    start = span->expr.elems[1];
+    stop = span->expr.elems[2];
+    return start && stop &&
+        start->kind == ATOM_GROUNDED && start->ground.gkind == GV_INT &&
+        stop->kind == ATOM_GROUNDED && stop->ground.gkind == GV_INT &&
+        start->ground.ival >= 0 &&
+        start->ground.ival <= stop->ground.ival;
+}
+
+/* Source locations are proof/provenance observations, not JSON data.  A
+ * stringify round trip must preserve every JSON constructor and occurrence,
+ * while the newly parsed source is expected to carry different spans. */
+static bool json_value_equal_ignoring_source_spans(
+    JsonValueCtxV1 *ctx, Atom *left, Atom *right, uint32_t depth) {
+    CettaExprIndex index;
+    CettaExprLen compared_len;
+
+    if (!left || !right || depth > ctx->depth_limit ||
+        !json_value_work(ctx, 1u)) {
+        return false;
+    }
+    if (json_expr_is(left, "JsonMemberV1", 5u) &&
+        json_expr_is(right, "JsonMemberV1", 5u)) {
+        if (!json_member_span_valid(left->expr.elems[4]) ||
+            !json_member_span_valid(right->expr.elems[4])) {
+            return false;
+        }
+        compared_len = 4u;
+    } else {
+        if (left->kind != right->kind || left->kind != ATOM_EXPR ||
+            left->expr.len != right->expr.len) {
+            return atom_eq(left, right);
+        }
+        compared_len = left->expr.len;
+    }
+    for (index = 0u; index < compared_len; index++) {
+        if (!json_value_equal_ignoring_source_spans(
+                ctx, left->expr.elems[index], right->expr.elems[index],
+                depth + 1u)) {
+            return false;
+        }
+    }
+    return true;
 }
 
 static bool json_scalar_list_view(JsonValueCtxV1 *ctx, Atom *string,
@@ -290,11 +344,12 @@ static Atom *json_to_legacy(JsonValueCtxV1 *ctx, Atom *value,
             Atom *member = members->expr.elems[index];
             JsonBytesV1 utf8 = {.limit = SIZE_MAX, .ctx = ctx};
             Atom *member_value;
-            if (!json_expr_is(member, "JsonMemberV1", 4u) ||
+            if (!json_expr_is(member, "JsonMemberV1", 5u) ||
                 !member->expr.elems[1] ||
                 member->expr.elems[1]->kind != ATOM_GROUNDED ||
                 member->expr.elems[1]->ground.gkind != GV_INT ||
                 member->expr.elems[1]->ground.ival != (int64_t)index ||
+                !json_member_span_valid(member->expr.elems[4]) ||
                 !json_canonical_string_utf8(
                     ctx, member->expr.elems[2], &utf8, true) ||
                 !json_bytes_char(&utf8, 0u) ||
@@ -458,10 +513,11 @@ static Atom *json_from_legacy(JsonValueCtxV1 *ctx, Atom *value,
                 if (ctx->status == CETTA_JSON_VALUE_V1_OK) goto malformed;
                 return NULL;
             }
-            members[index] = json_app3(
+            members[index] = json_app4(
                 ctx->arena, "JsonMemberV1",
                 atom_int(ctx->arena, (int64_t)index),
-                key_value, member_value);
+                key_value, member_value,
+                atom_symbol(ctx->arena, "JsonNoSourceSpanV1"));
         }
         list = atom_expr(ctx->arena, members, pairs->expr.len);
         free(members);
@@ -617,11 +673,12 @@ static bool json_emit_value(JsonValueCtxV1 *ctx, Atom *value,
             !json_bytes_char(out, '{')) goto malformed;
         for (index = 0u; index < members->expr.len; index++) {
             Atom *member = members->expr.elems[index];
-            if (!json_expr_is(member, "JsonMemberV1", 4u) ||
+            if (!json_expr_is(member, "JsonMemberV1", 5u) ||
                 !member->expr.elems[1] ||
                 member->expr.elems[1]->kind != ATOM_GROUNDED ||
                 member->expr.elems[1]->ground.gkind != GV_INT ||
                 member->expr.elems[1]->ground.ival != (int64_t)index ||
+                !json_member_span_valid(member->expr.elems[4]) ||
                 (index > 0u && !json_bytes_char(out, ',')) ||
                 !json_emit_string(ctx, member->expr.elems[2], out) ||
                 !json_bytes_char(out, ':') ||
@@ -692,7 +749,9 @@ bool cetta_json_value_v1_stringify(
     if (!cetta_json_runtime_v1_parse(
             runtime, &reparsed_arena, bytes.bytes, bytes.len,
             &limits, &reparsed, &parse_status,
-            error_buf, error_buf_size) || !atom_eq(canonical, reparsed)) {
+            error_buf, error_buf_size) ||
+        !json_value_equal_ignoring_source_spans(
+            &ctx, canonical, reparsed, 1u)) {
         if (status) *status = CETTA_JSON_VALUE_V1_ROUNDTRIP_DISAGREEMENT;
         if (error_buf && error_buf_size > 0u && error_buf[0] == '\0') {
             (void)snprintf(

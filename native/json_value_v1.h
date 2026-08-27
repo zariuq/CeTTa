@@ -20,7 +20,9 @@ typedef enum {
 
 /*
  * The canonical representation retains Unicode scalar lists, exact number
- * lexemes, member order, duplicate occurrences, and occurrence identities.
+ * lexemes, member order, duplicate occurrences, occurrence identities, and
+ * explicit source-span provenance.  Members converted from the historical
+ * representation carry JsonNoSourceSpanV1 instead of an invented location.
  * The historical JsonObject/JsonPair/JsonArray/... representation is a
  * compatibility codec over that value, not its definition.
  */

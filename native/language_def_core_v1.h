@@ -219,6 +219,17 @@ struct CettaLdPatternV1 {
     } as;
 };
 
+/*
+ * Public lifecycle for standalone canonical Pattern values.
+ *
+ * LanguageDef decoding owns patterns nested inside relation rules.  Compiler
+ * stages may also construct an ordinary target-language Pattern directly;
+ * these functions give that value the same ownership discipline without
+ * introducing a second target IR.
+ */
+void cetta_ld_pattern_v1_init(CettaLdPatternV1 *pattern);
+void cetta_ld_pattern_v1_free(CettaLdPatternV1 *pattern);
+
 typedef struct CettaLdPremiseV1 CettaLdPremiseV1;
 
 typedef struct {

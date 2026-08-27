@@ -554,12 +554,15 @@ JSON_GSLT_GENERATED_DIR_V1 = runtime/generated/json
 JSON_GSLT_EMBEDDED_C_V1 = $(JSON_GSLT_GENERATED_DIR_V1)/rfc8259_sources_v1.generated.c
 JSON_GSLT_LANGUAGE_SOURCE_V1 = langdef/json/rfc8259_syntax_v1.metta
 JSON_GSLT_PROFILE_SOURCE_V1 = langdef/json/rfc8259_parser_profile_v1.metta
+JSON_GSLT_VALUE_TARGET_SOURCE_V1 = langdef/json/occurrence_preserving_value_v1.metta
 JSON_GSLT_RUNTIME_SRC =
 ifeq ($(ENABLE_JSON_GSLT),1)
 JSON_GSLT_RUNTIME_SRC = \
 	$(JSON_GSLT_EMBEDDED_C_V1) \
 	src/library_json.c \
 	native/json_runtime_v1.c \
+	native/json_nik_v1.c \
+	native/json_elaboration_plan_v1.c \
 	native/json_value_v1.c \
 	native/json_cst_value_v1.c \
 	native/language_def_parser_pack_v1.c \
@@ -15946,7 +15949,7 @@ test-list-lanes: $(BIN)
 bench-list: $(BIN) test-list-lanes
 	@./scripts/bench_list_lanes.py --cetta ./$(BIN)
 
-test: $(BIN) test-python-build-config test-lib-prolog-build-config test-precise-vocabulary test-prime-public-judgment-vocabulary test-manifest-strict test-fail-atomic-build-v1 test-operational-language-def-v1 test-language-def-core-v1 test-exact-integer-theory-v1 test-json-gslt test-io test-git-module test-symbolid-guard test-variant-shape-roundtrip test-bindings-lookup-index test-atom-deep-copy-iterative test-abt test-rhometta-payload-map-capacity-c test-space-term-universe-membership test-help-flags test-rhocalc test-he-contract-suite test-he-return-contract-correlation test-closed-stream-fastpath test-parse-depth-guard test-stdlib-growth-memory-regression test-rhometta-macro-audit test-eval-gc-adversarial test-list-lanes test-syn-lanes test-lib-prolog test-petta-libpl test-petta-process-text test-match-decision test-petta-search-machine test-petta-semantics test-petta-corpus-manifest-unit test-petta-chainer-manifest-unit test-petta-typecheck-v3-core-langdef-v1 test-petta-typecheck-v3-file-runner-v1 test-petta-typecheck-v3-profile test-gslt-provider-generation-v1 test-gslt-provider-runtime test-prime-nik-core-v1 test-subzero test-mettazero test-gslt-il test-zerouv test-metta-interact test-mm2-gslt-profile-v1
+test: $(BIN) test-python-build-config test-lib-prolog-build-config test-precise-vocabulary test-prime-public-judgment-vocabulary test-manifest-strict test-fail-atomic-build-v1 test-operational-language-def-v1 test-language-def-premise-free-rewriter-v1 test-walters-zantema-da-to-radix-digit-transform-v1 test-walters-zantema-da-to-radix-digit-emitted-c-v1 test-walters-zantema-da-radix-digit-nik-v1 test-exact-arithmetic-to-external-call-v1 test-language-def-core-v1 test-exact-integer-theory-v1 test-json-gslt test-io test-git-module test-symbolid-guard test-variant-shape-roundtrip test-bindings-lookup-index test-atom-deep-copy-iterative test-abt test-rhometta-payload-map-capacity-c test-space-term-universe-membership test-help-flags test-rhocalc test-he-contract-suite test-he-return-contract-correlation test-closed-stream-fastpath test-parse-depth-guard test-stdlib-growth-memory-regression test-rhometta-macro-audit test-eval-gc-adversarial test-list-lanes test-syn-lanes test-lib-prolog test-petta-libpl test-petta-process-text test-match-decision test-petta-search-machine test-petta-semantics test-petta-corpus-manifest-unit test-petta-chainer-manifest-unit test-petta-typecheck-v3-core-langdef-v1 test-petta-typecheck-v3-file-runner-v1 test-petta-typecheck-v3-profile test-gslt-provider-generation-v1 test-gslt-provider-runtime test-prime-nik-core-v1 test-subzero test-mettazero test-gslt-il test-zerouv test-metta-interact test-mm2-gslt-profile-v1
 	@pass=0; fail=0; skip=0; no_exp=0; \
 	cache_dir="$(GIT_TEST_CACHE_DIR)"; mkdir -p "$$cache_dir"; export CETTA_GIT_MODULE_CACHE_DIR="$$cache_dir"; \
 	for f in tests/test_*.metta tests/spec_*.metta tests/he_*.metta; do \
@@ -31484,6 +31487,329 @@ $(OPERATIONAL_LANGUAGE_DEF_V1_TEST_BIN): \
 test-operational-language-def-v1: $(OPERATIONAL_LANGUAGE_DEF_V1_TEST_BIN)
 	@$(OPERATIONAL_LANGUAGE_DEF_V1_TEST_BIN)
 
+# Generic execution of the structurally supplied premise-free PApp/FVar
+# profile.  This remains separate from source ingestion: successful parsing
+# alone never grants executable meaning to a presentation.
+LANGUAGE_DEF_PFR_V1_SRC = native/language_def_premise_free_rewriter_v1.c
+LANGUAGE_DEF_PFR_V1_HEADER = native/language_def_premise_free_rewriter_v1.h
+LANGUAGE_DEF_PFR_V1_OBJ = native/language_def_premise_free_rewriter_v1.$(BUILD_OBJ_TAG).o
+LANGUAGE_DEF_PFR_V1_TEST_SRC = tests/support/test_language_def_premise_free_rewriter_v1.c
+LANGUAGE_DEF_PFR_V1_TEST_OBJ = runtime/bootstrap/test_language_def_premise_free_rewriter_v1.$(BUILD_OBJ_TAG).o
+LANGUAGE_DEF_PFR_V1_TEST_BIN = runtime/test_language_def_premise_free_rewriter_v1-$(BUILD_OBJ_TAG)
+
+$(LANGUAGE_DEF_PFR_V1_OBJ): \
+		$(LANGUAGE_DEF_PFR_V1_SRC) \
+		$(LANGUAGE_DEF_PFR_V1_HEADER) \
+		$(OPERATIONAL_LANGUAGE_DEF_V1_HEADER) $(BUILD_CONFIG_HEADER)
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+
+$(LANGUAGE_DEF_PFR_V1_TEST_OBJ): \
+		$(LANGUAGE_DEF_PFR_V1_TEST_SRC) \
+		$(LANGUAGE_DEF_PFR_V1_HEADER) \
+		$(OPERATIONAL_LANGUAGE_DEF_V1_HEADER) $(BUILD_CONFIG_HEADER)
+	@mkdir -p $(dir $@)
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+
+$(LANGUAGE_DEF_PFR_V1_TEST_BIN): \
+		$(LANGUAGE_DEF_PFR_V1_TEST_OBJ) \
+		$(LANGUAGE_DEF_PFR_V1_OBJ) \
+		$(OPERATIONAL_LANGUAGE_DEF_V1_OBJ) \
+		$(OPERATIONAL_LANGUAGE_DEF_V1_LINK_OBJ)
+	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
+	@set -eu; \
+	tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/test-language-def-pfr-v1.XXXXXX"); \
+	trap 'rm -f "$$tmp_out"' EXIT INT TERM; \
+	$(CC) $(CFLAGS) -Wl,--gc-sections -o "$$tmp_out" $^; \
+	mv "$$tmp_out" $@
+
+.PHONY: test-language-def-premise-free-rewriter-v1
+test-language-def-premise-free-rewriter-v1: $(LANGUAGE_DEF_PFR_V1_TEST_BIN)
+	@$(LANGUAGE_DEF_PFR_V1_TEST_BIN)
+
+# Presentation-sensitive Walters--Zantema DA-to-radix-digit Expand lowering.
+# Both supplied LanguageDefs are structurally inspected; source rule bodies
+# determine the embedded tables.
+WALTERS_ZANTEMA_DA_TO_RADIX_DIGIT_V1_SRC = native/walters_zantema_da_to_radix_digit_transform_v1.c
+WALTERS_ZANTEMA_DA_TO_RADIX_DIGIT_V1_HEADER = native/walters_zantema_da_to_radix_digit_transform_v1.h
+WALTERS_ZANTEMA_DA_TO_RADIX_DIGIT_V1_OBJ = native/walters_zantema_da_to_radix_digit_transform_v1.$(BUILD_OBJ_TAG).o
+RADIX_DIGIT_TARGET_PROGRAM_V1_SRC = native/radix_digit_target_program_v1.c
+RADIX_DIGIT_TARGET_PROGRAM_V1_HEADER = native/radix_digit_target_program_v1.h
+RADIX_DIGIT_TARGET_PROGRAM_V1_OBJ = native/radix_digit_target_program_v1.$(BUILD_OBJ_TAG).o
+RADIX_DIGIT_REFERENCE_EVALUATOR_V1_SRC = native/radix_digit_reference_evaluator_v1.c
+RADIX_DIGIT_REFERENCE_EVALUATOR_V1_HEADER = native/radix_digit_reference_evaluator_v1.h
+RADIX_DIGIT_REFERENCE_EVALUATOR_V1_OBJ = native/radix_digit_reference_evaluator_v1.$(BUILD_OBJ_TAG).o
+RADIX_DIGIT_C_EMITTER_V1_SRC = native/radix_digit_c_emitter_v1.c
+RADIX_DIGIT_C_EMITTER_V1_HEADER = native/radix_digit_c_emitter_v1.h
+RADIX_DIGIT_C_EMITTER_V1_OBJ = native/radix_digit_c_emitter_v1.$(BUILD_OBJ_TAG).o
+WALTERS_ZANTEMA_DA_TO_RADIX_DIGIT_V1_EMIT_SRC = tools/cetta_walters_zantema_da_to_radix_digit_emit_v1.c
+WALTERS_ZANTEMA_DA_TO_RADIX_DIGIT_V1_EMIT_OBJ = runtime/bootstrap/cetta_walters_zantema_da_to_radix_digit_emit_v1.$(BUILD_OBJ_TAG).o
+WALTERS_ZANTEMA_DA_TO_RADIX_DIGIT_V1_EMIT_BIN = runtime/cetta-walters-zantema-da-to-radix-digit-emit-v1-$(BUILD_OBJ_TAG)
+WALTERS_ZANTEMA_DA_RADIX_DIGIT_V1_REFERENCE_SRC = tools/cetta_walters_zantema_da_radix_digit_reference_v1.c
+WALTERS_ZANTEMA_DA_RADIX_DIGIT_V1_REFERENCE_OBJ = runtime/bootstrap/cetta_walters_zantema_da_radix_digit_reference_v1.$(BUILD_OBJ_TAG).o
+WALTERS_ZANTEMA_DA_RADIX_DIGIT_V1_REFERENCE_BIN = runtime/cetta-walters-zantema-da-radix-digit-reference-v1-$(BUILD_OBJ_TAG)
+WALTERS_ZANTEMA_DA_TO_RADIX_DIGIT_V1_TEST_SRC = tests/support/test_walters_zantema_da_to_radix_digit_transform_v1.c
+WALTERS_ZANTEMA_DA_TO_RADIX_DIGIT_V1_TEST_OBJ = runtime/bootstrap/test_walters_zantema_da_to_radix_digit_transform_v1.$(BUILD_OBJ_TAG).o
+WALTERS_ZANTEMA_DA_TO_RADIX_DIGIT_V1_TEST_BIN = runtime/test_walters_zantema_da_to_radix_digit_transform_v1-$(BUILD_OBJ_TAG)
+WALTERS_ZANTEMA_DA_RADIX_DIGIT_NIK_V1_SRC = native/walters_zantema_da_radix_digit_nik_v1.c
+WALTERS_ZANTEMA_DA_RADIX_DIGIT_NIK_V1_HEADER = native/walters_zantema_da_radix_digit_nik_v1.h
+WALTERS_ZANTEMA_DA_RADIX_DIGIT_NIK_V1_OBJ = native/walters_zantema_da_radix_digit_nik_v1.$(BUILD_OBJ_TAG).o
+WALTERS_ZANTEMA_DA_RADIX_DIGIT_NIK_V1_TEST_SRC = tests/support/test_walters_zantema_da_radix_digit_nik_v1.c
+WALTERS_ZANTEMA_DA_RADIX_DIGIT_NIK_V1_TEST_OBJ = runtime/bootstrap/test_walters_zantema_da_radix_digit_nik_v1.$(BUILD_OBJ_TAG).o
+WALTERS_ZANTEMA_DA_RADIX_DIGIT_NIK_V1_TEST_BIN = runtime/test_walters_zantema_da_radix_digit_nik_v1-$(BUILD_OBJ_TAG)
+
+$(WALTERS_ZANTEMA_DA_TO_RADIX_DIGIT_V1_OBJ): \
+		$(WALTERS_ZANTEMA_DA_TO_RADIX_DIGIT_V1_SRC) $(WALTERS_ZANTEMA_DA_TO_RADIX_DIGIT_V1_HEADER) \
+		$(RADIX_DIGIT_TARGET_PROGRAM_V1_HEADER) \
+		$(OPERATIONAL_LANGUAGE_DEF_V1_HEADER) $(BUILD_CONFIG_HEADER)
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+
+$(RADIX_DIGIT_TARGET_PROGRAM_V1_OBJ): \
+		$(RADIX_DIGIT_TARGET_PROGRAM_V1_SRC) $(RADIX_DIGIT_TARGET_PROGRAM_V1_HEADER) \
+		$(BUILD_CONFIG_HEADER)
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+
+$(RADIX_DIGIT_REFERENCE_EVALUATOR_V1_OBJ): \
+		$(RADIX_DIGIT_REFERENCE_EVALUATOR_V1_SRC) $(RADIX_DIGIT_REFERENCE_EVALUATOR_V1_HEADER) \
+		$(RADIX_DIGIT_TARGET_PROGRAM_V1_HEADER) $(BUILD_CONFIG_HEADER)
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+
+$(RADIX_DIGIT_C_EMITTER_V1_OBJ): \
+		$(RADIX_DIGIT_C_EMITTER_V1_SRC) $(RADIX_DIGIT_C_EMITTER_V1_HEADER) \
+		$(RADIX_DIGIT_TARGET_PROGRAM_V1_HEADER) $(BUILD_CONFIG_HEADER)
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+
+$(WALTERS_ZANTEMA_DA_TO_RADIX_DIGIT_V1_EMIT_OBJ): \
+		$(WALTERS_ZANTEMA_DA_TO_RADIX_DIGIT_V1_EMIT_SRC) $(RADIX_DIGIT_C_EMITTER_V1_HEADER) \
+		$(WALTERS_ZANTEMA_DA_TO_RADIX_DIGIT_V1_HEADER) $(BUILD_CONFIG_HEADER)
+	@mkdir -p $(dir $@)
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+
+$(WALTERS_ZANTEMA_DA_TO_RADIX_DIGIT_V1_EMIT_BIN): \
+		$(WALTERS_ZANTEMA_DA_TO_RADIX_DIGIT_V1_EMIT_OBJ) $(RADIX_DIGIT_C_EMITTER_V1_OBJ) \
+		$(WALTERS_ZANTEMA_DA_TO_RADIX_DIGIT_V1_OBJ) $(RADIX_DIGIT_TARGET_PROGRAM_V1_OBJ) \
+		$(OPERATIONAL_LANGUAGE_DEF_V1_OBJ) \
+		$(OPERATIONAL_LANGUAGE_DEF_V1_LINK_OBJ)
+	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
+	@set -eu; \
+	tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/cetta-walters-zantema-da-to-radix-digit-emit-v1.XXXXXX"); \
+	trap 'rm -f "$$tmp_out"' EXIT INT TERM; \
+	$(CC) $(CFLAGS) -Wl,--gc-sections -o "$$tmp_out" $^; \
+	mv "$$tmp_out" $@
+
+$(WALTERS_ZANTEMA_DA_RADIX_DIGIT_V1_REFERENCE_OBJ): \
+		$(WALTERS_ZANTEMA_DA_RADIX_DIGIT_V1_REFERENCE_SRC) $(RADIX_DIGIT_REFERENCE_EVALUATOR_V1_HEADER) \
+		$(WALTERS_ZANTEMA_DA_TO_RADIX_DIGIT_V1_HEADER) $(BUILD_CONFIG_HEADER)
+	@mkdir -p $(dir $@)
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+
+$(WALTERS_ZANTEMA_DA_RADIX_DIGIT_V1_REFERENCE_BIN): \
+		$(WALTERS_ZANTEMA_DA_RADIX_DIGIT_V1_REFERENCE_OBJ) $(WALTERS_ZANTEMA_DA_TO_RADIX_DIGIT_V1_OBJ) \
+		$(RADIX_DIGIT_TARGET_PROGRAM_V1_OBJ) $(RADIX_DIGIT_REFERENCE_EVALUATOR_V1_OBJ) \
+		$(OPERATIONAL_LANGUAGE_DEF_V1_OBJ) \
+		$(OPERATIONAL_LANGUAGE_DEF_V1_LINK_OBJ)
+	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
+	@set -eu; \
+	tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/cetta-walters-zantema-da-radix-digit-reference-v1.XXXXXX"); \
+	trap 'rm -f "$$tmp_out"' EXIT INT TERM; \
+	$(CC) $(CFLAGS) -Wl,--gc-sections -o "$$tmp_out" $^; \
+	mv "$$tmp_out" $@
+
+$(WALTERS_ZANTEMA_DA_TO_RADIX_DIGIT_V1_TEST_OBJ): \
+		$(WALTERS_ZANTEMA_DA_TO_RADIX_DIGIT_V1_TEST_SRC) $(WALTERS_ZANTEMA_DA_TO_RADIX_DIGIT_V1_HEADER) \
+		$(RADIX_DIGIT_REFERENCE_EVALUATOR_V1_HEADER) \
+		$(LANGUAGE_DEF_PFR_V1_HEADER) \
+		$(OPERATIONAL_LANGUAGE_DEF_V1_HEADER) $(BUILD_CONFIG_HEADER)
+	@mkdir -p $(dir $@)
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+
+$(WALTERS_ZANTEMA_DA_TO_RADIX_DIGIT_V1_TEST_BIN): \
+		$(WALTERS_ZANTEMA_DA_TO_RADIX_DIGIT_V1_TEST_OBJ) $(WALTERS_ZANTEMA_DA_TO_RADIX_DIGIT_V1_OBJ) \
+		$(RADIX_DIGIT_TARGET_PROGRAM_V1_OBJ) $(RADIX_DIGIT_REFERENCE_EVALUATOR_V1_OBJ) \
+		$(LANGUAGE_DEF_PFR_V1_OBJ) \
+		$(OPERATIONAL_LANGUAGE_DEF_V1_OBJ) \
+		$(OPERATIONAL_LANGUAGE_DEF_V1_LINK_OBJ)
+	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
+	@set -eu; \
+	tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/test-walters-zantema-da-to-radix-digit-v1.XXXXXX"); \
+	trap 'rm -f "$$tmp_out"' EXIT INT TERM; \
+	$(CC) $(CFLAGS) -Wl,--gc-sections -o "$$tmp_out" $^; \
+	mv "$$tmp_out" $@
+
+.PHONY: test-walters-zantema-da-to-radix-digit-transform-v1
+test-walters-zantema-da-to-radix-digit-transform-v1: $(WALTERS_ZANTEMA_DA_TO_RADIX_DIGIT_V1_TEST_BIN)
+	@$(WALTERS_ZANTEMA_DA_TO_RADIX_DIGIT_V1_TEST_BIN)
+
+$(WALTERS_ZANTEMA_DA_RADIX_DIGIT_NIK_V1_OBJ): \
+		$(WALTERS_ZANTEMA_DA_RADIX_DIGIT_NIK_V1_SRC) $(WALTERS_ZANTEMA_DA_RADIX_DIGIT_NIK_V1_HEADER) \
+		$(RADIX_DIGIT_REFERENCE_EVALUATOR_V1_HEADER) $(WALTERS_ZANTEMA_DA_TO_RADIX_DIGIT_V1_HEADER) \
+		src/nik_hosted_calculus.h src/nik_direct_authority.h \
+		src/native_sha256.h $(BUILD_CONFIG_HEADER)
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+
+$(WALTERS_ZANTEMA_DA_RADIX_DIGIT_NIK_V1_TEST_OBJ): \
+		$(WALTERS_ZANTEMA_DA_RADIX_DIGIT_NIK_V1_TEST_SRC) $(WALTERS_ZANTEMA_DA_RADIX_DIGIT_NIK_V1_HEADER) \
+		$(OPERATIONAL_LANGUAGE_DEF_V1_HEADER) $(BUILD_CONFIG_HEADER)
+	@mkdir -p $(dir $@)
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+
+$(WALTERS_ZANTEMA_DA_RADIX_DIGIT_NIK_V1_TEST_BIN): \
+		$(WALTERS_ZANTEMA_DA_RADIX_DIGIT_NIK_V1_TEST_OBJ) $(WALTERS_ZANTEMA_DA_RADIX_DIGIT_NIK_V1_OBJ) \
+		$(WALTERS_ZANTEMA_DA_TO_RADIX_DIGIT_V1_OBJ) $(RADIX_DIGIT_TARGET_PROGRAM_V1_OBJ) \
+		$(RADIX_DIGIT_REFERENCE_EVALUATOR_V1_OBJ) \
+		$(OPERATIONAL_LANGUAGE_DEF_V1_OBJ) \
+		$(OPERATIONAL_LANGUAGE_DEF_V1_LINK_OBJ) \
+		$(NIK_HOSTED_CALCULUS_OBJ) $(NIK_DIRECT_AUTHORITY_OBJ) \
+		src/native_sha256.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o
+	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
+	@set -eu; \
+	tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/test-walters-zantema-da-radix-digit-nik-v1.XXXXXX"); \
+	trap 'rm -f "$$tmp_out"' EXIT INT TERM; \
+	$(CC) $(CFLAGS) -Wl,--gc-sections -o "$$tmp_out" $^; \
+	mv "$$tmp_out" $@
+
+.PHONY: test-walters-zantema-da-radix-digit-nik-v1
+test-walters-zantema-da-radix-digit-nik-v1: $(WALTERS_ZANTEMA_DA_RADIX_DIGIT_NIK_V1_TEST_BIN)
+	@$(WALTERS_ZANTEMA_DA_RADIX_DIGIT_NIK_V1_TEST_BIN)
+
+.PHONY: test-walters-zantema-da-to-radix-digit-emitted-c-v1
+test-walters-zantema-da-to-radix-digit-emitted-c-v1: \
+		$(WALTERS_ZANTEMA_DA_TO_RADIX_DIGIT_V1_EMIT_BIN) $(WALTERS_ZANTEMA_DA_RADIX_DIGIT_V1_REFERENCE_BIN)
+	@set -eu; \
+	mkdir -p "$(BOOTSTRAP_TMPDIR)"; \
+	scratch=$$(mktemp -d "$(BOOTSTRAP_TMPDIR)/walters-zantema-da-radix-digit-emitted.XXXXXX"); \
+	trap 'rm -rf "$$scratch"' EXIT INT TERM; \
+	"$(WALTERS_ZANTEMA_DA_TO_RADIX_DIGIT_V1_EMIT_BIN)" \
+		langdef/arithmetic/walters_zantema_da_radix2_v1.metta \
+		langdef/machines/radix_digit_machine_v1.metta add > "$$scratch/add.c"; \
+	"$(WALTERS_ZANTEMA_DA_TO_RADIX_DIGIT_V1_EMIT_BIN)" \
+		langdef/arithmetic/walters_zantema_da_radix2_v1.metta \
+		langdef/machines/radix_digit_machine_v1.metta multiply > "$$scratch/multiply.c"; \
+	sed 's|(PApp "da:succ" (LCons (PApp "da:add" (LCons (FVar "x") (LCons (FVar "y") LNil))) LNil))|(PApp "da:add" (LCons (FVar "x") (LCons (FVar "y") LNil)))|' \
+		langdef/arithmetic/walters_zantema_da_radix2_v1.metta \
+		> "$$scratch/carry-dropped.metta"; \
+	! cmp -s langdef/arithmetic/walters_zantema_da_radix2_v1.metta \
+		"$$scratch/carry-dropped.metta"; \
+	"$(WALTERS_ZANTEMA_DA_TO_RADIX_DIGIT_V1_EMIT_BIN)" \
+		"$$scratch/carry-dropped.metta" \
+		langdef/machines/radix_digit_machine_v1.metta add \
+		> "$$scratch/add-carry-dropped.c"; \
+	! cmp -s "$$scratch/add.c" "$$scratch/add-carry-dropped.c"; \
+	$(CC) -I. -O2 -Wall -Wextra -Werror -std=c11 \
+		$(if $(filter 1,$(ENABLE_SANITIZERS)),-fsanitize=$(SANITIZERS) -fno-sanitize-recover=all,) \
+		-o "$$scratch/add" "$$scratch/add.c"; \
+	$(CC) -I. -O2 -Wall -Wextra -Werror -std=c11 \
+		$(if $(filter 1,$(ENABLE_SANITIZERS)),-fsanitize=$(SANITIZERS) -fno-sanitize-recover=all,) \
+		-o "$$scratch/add-carry-dropped" "$$scratch/add-carry-dropped.c"; \
+	$(CC) -I. -O2 -Wall -Wextra -Werror -std=c11 \
+		$(if $(filter 1,$(ENABLE_SANITIZERS)),-fsanitize=$(SANITIZERS) -fno-sanitize-recover=all,) \
+		-o "$$scratch/multiply" "$$scratch/multiply.c"; \
+	test "$$($$scratch/add 0 0)" = "value:0"; \
+	test "$$($$scratch/add 111 1)" = "value:1000"; \
+	test "$$($$scratch/add 101 110)" = "value:1011"; \
+	test "$$($$scratch/add-carry-dropped 1 1)" = "value:0"; \
+	test "$$($$scratch/multiply 0 111)" = "value:0"; \
+	test "$$($$scratch/multiply 111 110)" = "value:101010"; \
+	to_binary() { \
+		value=$$1; bits=; \
+		if [ "$$value" -eq 0 ]; then printf '0'; return; fi; \
+		while [ "$$value" -gt 0 ]; do \
+			bits="$$((value % 2))$$bits"; value=$$((value / 2)); \
+		done; \
+		printf '%s' "$$bits"; \
+	}; \
+	for first in 0 1 3 7 15 31 42; do \
+		for second in 0 1 3 7 15 31 42; do \
+			first_binary=$$(to_binary $$first); \
+			second_binary=$$(to_binary $$second); \
+			add_expected=$$(to_binary $$((first + second))); \
+			multiply_expected=$$(to_binary $$((first * second))); \
+			test "$$($$scratch/add $$first_binary $$second_binary)" = "value:$$add_expected"; \
+			test "$$($$scratch/multiply $$first_binary $$second_binary)" = "value:$$multiply_expected"; \
+			add_reference=$$("$(WALTERS_ZANTEMA_DA_RADIX_DIGIT_V1_REFERENCE_BIN)" \
+				langdef/arithmetic/walters_zantema_da_radix2_v1.metta \
+				langdef/machines/radix_digit_machine_v1.metta add \
+				$$first_binary $$second_binary --receipt); \
+			add_emitted=$$("$$scratch/add" $$first_binary $$second_binary --receipt); \
+			test "$$add_emitted" = "$$add_reference"; \
+			multiply_reference=$$("$(WALTERS_ZANTEMA_DA_RADIX_DIGIT_V1_REFERENCE_BIN)" \
+				langdef/arithmetic/walters_zantema_da_radix2_v1.metta \
+				langdef/machines/radix_digit_machine_v1.metta multiply \
+				$$first_binary $$second_binary --receipt); \
+			multiply_emitted=$$("$$scratch/multiply" $$first_binary $$second_binary --receipt); \
+			test "$$multiply_emitted" = "$$multiply_reference"; \
+		done; \
+	done; \
+	! "$$scratch/add" 01 1 >/dev/null 2>&1; \
+	! "$$scratch/multiply" 2 1 >/dev/null 2>&1; \
+	! nm "$$scratch/add" | grep -q 'cetta_walters_zantema_da_radix_digit_v1_transform'; \
+	! nm "$$scratch/add" | grep -q 'cetta_radix_digit_v1_execute'; \
+	! grep -Eq 'cetta_radix_digit_v1_execute|target_term_index|CettaWaltersZantemaDaRadixDigitV1Cell|\\.kind[[:space:]]*=' "$$scratch/add.c"; \
+	! ldd "$$scratch/add" | grep -Eq 'libpython|libswipl|libgmp'; \
+	echo "PASS: Walters--Zantema digit-arithmetic GSLT -> target-owned RadixDigitMachine program -> standalone C with exact reference receipts"
+
+PHONY_WIRE_PROVENANCE_V1 = \
+	check-walters-zantema-da-wire-v1 \
+	check-exact-arithmetic-wire-v1 \
+	check-external-call-machine-wire-v1 \
+	check-arithmetic-target-coproduct-wire-v1 \
+	check-structured-c-wire-v1 \
+	check-radix-digit-language-def-wire-v1 \
+	check-rfc8259-json-syntax-wire-v1 \
+	check-rfc8259-json-parser-profile-wire-v1 \
+	check-json-value-language-def-wire-v1
+
+.PHONY: require-mettapedia-root-for-wire-provenance-v1
+require-mettapedia-root-for-wire-provenance-v1:
+	@test -n "$(strip $(METTAPEDIA_ROOT))" || { \
+		echo "METTAPEDIA_ROOT must name a Mettapedia checkout for wire provenance qualification" >&2; \
+		echo "usage: make METTAPEDIA_ROOT=/path/to/Mettapedia qualify-language-def-wire-provenance-v1" >&2; \
+		exit 2; \
+	}
+	@test -f "$(METTAPEDIA_ROOT)/lean/mettapedia/lakefile.lean" || { \
+		echo "METTAPEDIA_ROOT does not contain lean/mettapedia/lakefile.lean: $(METTAPEDIA_ROOT)" >&2; \
+		exit 2; \
+	}
+
+.PHONY: check-walters-zantema-da-wire-v1
+check-walters-zantema-da-wire-v1: require-mettapedia-root-for-wire-provenance-v1
+	@sh tools/check_walters_zantema_da_wire_v1.sh "$(METTAPEDIA_ROOT)"
+
+.PHONY: check-radix-digit-language-def-wire-v1
+check-radix-digit-language-def-wire-v1: require-mettapedia-root-for-wire-provenance-v1
+	@sh tools/check_radix_digit_language_def_wire_v1.sh "$(METTAPEDIA_ROOT)"
+
+.PHONY: check-external-call-machine-wire-v1
+check-external-call-machine-wire-v1: require-mettapedia-root-for-wire-provenance-v1
+	@sh tools/check_external_call_machine_wire_v1.sh "$(METTAPEDIA_ROOT)"
+
+.PHONY: check-structured-c-wire-v1
+check-structured-c-wire-v1: require-mettapedia-root-for-wire-provenance-v1
+	@sh tools/check_structured_c_wire_v1.sh "$(METTAPEDIA_ROOT)"
+
+.PHONY: check-arithmetic-target-coproduct-wire-v1
+check-arithmetic-target-coproduct-wire-v1: require-mettapedia-root-for-wire-provenance-v1
+	@sh tools/check_arithmetic_target_coproduct_wire_v1.sh "$(METTAPEDIA_ROOT)"
+
+.PHONY: check-exact-arithmetic-wire-v1
+check-exact-arithmetic-wire-v1: require-mettapedia-root-for-wire-provenance-v1
+	@sh tools/check_exact_arithmetic_wire_v1.sh "$(METTAPEDIA_ROOT)"
+
+.PHONY: check-rfc8259-json-syntax-wire-v1
+check-rfc8259-json-syntax-wire-v1: require-mettapedia-root-for-wire-provenance-v1
+	@sh tools/check_rfc8259_json_syntax_wire_v1.sh "$(METTAPEDIA_ROOT)"
+
+.PHONY: check-rfc8259-json-parser-profile-wire-v1
+check-rfc8259-json-parser-profile-wire-v1: require-mettapedia-root-for-wire-provenance-v1
+	@sh tools/check_rfc8259_json_parser_profile_wire_v1.sh "$(METTAPEDIA_ROOT)"
+
+.PHONY: check-json-value-language-def-wire-v1
+check-json-value-language-def-wire-v1: require-mettapedia-root-for-wire-provenance-v1
+	@sh tools/check_json_value_language_def_wire_v1.sh "$(METTAPEDIA_ROOT)"
+
+.PHONY: qualify-language-def-wire-provenance-v1
+qualify-language-def-wire-provenance-v1: $(PHONY_WIRE_PROVENANCE_V1)
+	@echo "PASS: checked LanguageDef wires match the explicit Mettapedia checkout"
+
 # Typed decoding of the same opt-in operational LanguageDef wire.  The owned
 # core is structural input to later lowering, not a runtime evaluator.
 LANGUAGE_DEF_CORE_V1_SRC = native/language_def_core_v1.c
@@ -31529,7 +31855,8 @@ $(JSON_SOURCE_EMBED_TOOL_V1): $(JSON_SOURCE_EMBED_TOOL_V1_SRC)
 $(JSON_GSLT_EMBEDDED_C_V1): \
 		$(JSON_SOURCE_EMBED_TOOL_V1) \
 		$(JSON_GSLT_LANGUAGE_SOURCE_V1) \
-		$(JSON_GSLT_PROFILE_SOURCE_V1)
+		$(JSON_GSLT_PROFILE_SOURCE_V1) \
+		$(JSON_GSLT_VALUE_TARGET_SOURCE_V1)
 	@mkdir -p $(dir $@) $(BOOTSTRAP_TMPDIR)
 	@set -eu; \
 	tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/rfc8259-sources-v1.XXXXXX"); \
@@ -31538,7 +31865,9 @@ $(JSON_GSLT_EMBEDDED_C_V1): \
 		cetta_rfc8259_json_language_v1_source \
 		$(JSON_GSLT_LANGUAGE_SOURCE_V1) \
 		cetta_rfc8259_json_profile_v1_source \
-		$(JSON_GSLT_PROFILE_SOURCE_V1); \
+		$(JSON_GSLT_PROFILE_SOURCE_V1) \
+		cetta_rfc8259_json_value_target_v1_source \
+		$(JSON_GSLT_VALUE_TARGET_SOURCE_V1); \
 	mv "$$tmp_out" $@
 
 # Generic five-field LanguageDef syntax compilation into the shared native
@@ -31553,14 +31882,18 @@ PARSER_PACK_IDENTITY_WIRE_V1_HEADER = native/parser_pack_identity_wire_v1.h
 LANGUAGE_DEF_PARSER_PACK_V1_TEST_SRC = tests/support/test_language_def_parser_pack_v1.c
 LANGUAGE_DEF_PARSER_PACK_V1_BENCH_SRC = tests/bench_json_gslt_runtime.c
 LANGUAGE_DEF_PARSER_PACK_V1_CORPUS_SRC = tests/qualify_json_gslt_corpus.c
+JSON_NIK_V1_TEST_SRC = tests/support/test_json_nik_v1.c
 LANGUAGE_DEF_PARSER_PACK_V1_TEST_BIN = runtime/test_language_def_parser_pack_v1-c-only$(if $(filter 1,$(ENABLE_SANITIZERS)),-sanitize,)
 LANGUAGE_DEF_PARSER_PACK_V1_MUTATION_BIN = runtime/test_language_def_parser_pack_v1-invent-occurrence-mutant
 LANGUAGE_DEF_PARSER_PACK_V1_BENCH_BIN = runtime/bench_json_gslt_runtime-c-only
 LANGUAGE_DEF_PARSER_PACK_V1_CORPUS_BIN = runtime/qualify_json_gslt_corpus-c-only
+JSON_NIK_V1_TEST_BIN = runtime/test_json_nik_v1-c-only$(if $(filter 1,$(ENABLE_SANITIZERS)),-sanitize,)
 LANGUAGE_DEF_PARSER_PACK_V1_RUNTIME_C_SOURCES = \
 	$(LANGUAGE_DEF_PARSER_PACK_V1_SRC) \
 	$(PARSER_PACK_IDENTITY_WIRE_V1_SRC) \
 	native/json_cst_value_v1.c \
+	native/json_elaboration_plan_v1.c \
+	native/json_nik_v1.c \
 	native/json_runtime_v1.c \
 	native/json_value_v1.c \
 	$(LANGUAGE_DEF_CORE_V1_SRC) \
@@ -31573,6 +31906,8 @@ LANGUAGE_DEF_PARSER_PACK_V1_RUNTIME_C_SOURCES = \
 	experiments/gslt2parse_foundation/native/finite_horn_ground_term_v1.c \
 	src/lib_parse_native_grammar.c \
 	src/gslt_dense_bitset_v1.c \
+	src/nik_direct_authority.c \
+	src/nik_hosted_calculus.c \
 	src/native_sha256.c \
 	src/symbol.c \
 	src/atom.c \
@@ -31586,10 +31921,15 @@ LANGUAGE_DEF_PARSER_PACK_V1_BENCH_C_SOURCES = \
 LANGUAGE_DEF_PARSER_PACK_V1_CORPUS_C_SOURCES = \
 	$(LANGUAGE_DEF_PARSER_PACK_V1_CORPUS_SRC) \
 	$(LANGUAGE_DEF_PARSER_PACK_V1_RUNTIME_C_SOURCES)
+JSON_NIK_V1_TEST_C_SOURCES = \
+	$(JSON_NIK_V1_TEST_SRC) \
+	$(LANGUAGE_DEF_PARSER_PACK_V1_RUNTIME_C_SOURCES)
 LANGUAGE_DEF_PARSER_PACK_V1_HEADERS = \
 	$(LANGUAGE_DEF_PARSER_PACK_V1_HEADER) \
 	$(PARSER_PACK_IDENTITY_WIRE_V1_HEADER) \
 	native/json_cst_value_v1.h \
+	native/json_elaboration_plan_v1.h \
+	native/json_nik_v1.h \
 	native/json_runtime_v1.h \
 	native/json_value_v1.h \
 	$(LANGUAGE_DEF_CORE_V1_HEADER) \
@@ -31602,6 +31942,8 @@ LANGUAGE_DEF_PARSER_PACK_V1_HEADERS = \
 	experiments/gslt2parse_foundation/native/finite_horn_ground_term_v1.h \
 	src/lib_parse_native_grammar.h \
 	src/gslt_dense_bitset_v1.h \
+	src/nik_direct_authority.h \
+	src/nik_hosted_calculus.h \
 	src/native_sha256.h \
 	src/symbol.h \
 	src/atom.h \
@@ -31612,6 +31954,7 @@ $(LANGUAGE_DEF_PARSER_PACK_V1_TEST_BIN): \
 		$(LANGUAGE_DEF_PARSER_PACK_V1_HEADERS) \
 		langdef/json/rfc8259_syntax_v1.metta \
 		langdef/json/rfc8259_parser_profile_v1.metta \
+		langdef/json/occurrence_preserving_value_v1.metta \
 		$(BUILD_CONFIG_HEADER)
 	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
 	@set -eu; \
@@ -31627,6 +31970,7 @@ $(LANGUAGE_DEF_PARSER_PACK_V1_MUTATION_BIN): \
 		$(LANGUAGE_DEF_PARSER_PACK_V1_HEADERS) \
 		langdef/json/rfc8259_syntax_v1.metta \
 		langdef/json/rfc8259_parser_profile_v1.metta \
+		langdef/json/occurrence_preserving_value_v1.metta \
 		$(BUILD_CONFIG_HEADER)
 	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
 	@set -eu; \
@@ -31644,6 +31988,7 @@ $(LANGUAGE_DEF_PARSER_PACK_V1_BENCH_BIN): \
 		$(LANGUAGE_DEF_PARSER_PACK_V1_HEADERS) \
 		langdef/json/rfc8259_syntax_v1.metta \
 		langdef/json/rfc8259_parser_profile_v1.metta \
+		langdef/json/occurrence_preserving_value_v1.metta \
 		$(BUILD_CONFIG_HEADER)
 	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
 	@set -eu; \
@@ -31659,6 +32004,7 @@ $(LANGUAGE_DEF_PARSER_PACK_V1_CORPUS_BIN): \
 		$(LANGUAGE_DEF_PARSER_PACK_V1_HEADERS) \
 		langdef/json/rfc8259_syntax_v1.metta \
 		langdef/json/rfc8259_parser_profile_v1.metta \
+		langdef/json/occurrence_preserving_value_v1.metta \
 		$(BUILD_CONFIG_HEADER)
 	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
 	@set -eu; \
@@ -31666,6 +32012,22 @@ $(LANGUAGE_DEF_PARSER_PACK_V1_CORPUS_BIN): \
 	trap 'rm -f "$$tmp_out"' EXIT INT TERM; \
 	$(CC) $(CPPFLAGS) $(CFLAGS) -ffunction-sections -fdata-sections \
 		-o "$$tmp_out" $(LANGUAGE_DEF_PARSER_PACK_V1_CORPUS_C_SOURCES) \
+		-Wl,--gc-sections -ldl -lm -pthread; \
+	mv "$$tmp_out" $@
+
+$(JSON_NIK_V1_TEST_BIN): \
+		$(JSON_NIK_V1_TEST_C_SOURCES) \
+		$(LANGUAGE_DEF_PARSER_PACK_V1_HEADERS) \
+		langdef/json/rfc8259_syntax_v1.metta \
+		langdef/json/rfc8259_parser_profile_v1.metta \
+		langdef/json/occurrence_preserving_value_v1.metta \
+		$(BUILD_CONFIG_HEADER)
+	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
+	@set -eu; \
+	tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/test-json-nik-v1.XXXXXX"); \
+	trap 'rm -f "$$tmp_out"' EXIT INT TERM; \
+	$(CC) $(CPPFLAGS) $(CFLAGS) -ffunction-sections -fdata-sections \
+		-o "$$tmp_out" $(JSON_NIK_V1_TEST_C_SOURCES) \
 		-Wl,--gc-sections -ldl -lm -pthread; \
 	mv "$$tmp_out" $@
 
@@ -31685,6 +32047,22 @@ test-language-def-parser-pack-v1:
 		ENABLE_PRIME_EVAL_STACK=0 \
 		test-language-def-parser-pack-v1-body
 
+.PHONY: test-json-nik-v1-body
+test-json-nik-v1-body: $(JSON_NIK_V1_TEST_BIN)
+	@$(JSON_NIK_V1_TEST_BIN)
+
+.PHONY: test-json-nik-v1
+test-json-nik-v1:
+	@$(MAKE) --no-print-directory \
+		BUILD=core ENABLE_GMP=0 ENABLE_LIB_PROLOG=0 ENABLE_HTTP=0 \
+		ENABLE_SANITIZERS=0 ENABLE_PIC=0 \
+		CETTA_PROVENANCE_ASSERT=0 RHOCOST_COMMIT_AUDIT=0 \
+		ENABLE_PRIME_RECEIPT_PRIMARY_INDEX=0 \
+		ENABLE_PRIME_NEED_HEAP_INDEX=0 \
+		ENABLE_PRIME_NEED_CLOSURE_CAPTURE=0 \
+		ENABLE_PRIME_EVAL_STACK=0 \
+		test-json-nik-v1-body
+
 .PHONY: test-json-gslt-mutation-body
 test-json-gslt-mutation-body: $(LANGUAGE_DEF_PARSER_PACK_V1_MUTATION_BIN)
 	@set -eu; \
@@ -31694,7 +32072,7 @@ test-json-gslt-mutation-body: $(LANGUAGE_DEF_PARSER_PACK_V1_MUTATION_BIN)
 		echo "FAIL: invented-occurrence mutation survived" >&2; exit 1; \
 	fi; \
 	grep -Fq \
-		'FAIL: semantic JSON object retains ordered duplicate occurrence IDs' \
+		'FAIL: semantic JSON object retains ordered duplicate IDs and spans' \
 		"$$actual"; \
 	echo "PASS: invented JSON occurrence mutation rejected"
 
@@ -31709,6 +32087,50 @@ test-json-gslt-mutation:
 		ENABLE_PRIME_NEED_CLOSURE_CAPTURE=0 \
 		ENABLE_PRIME_EVAL_STACK=0 \
 		test-json-gslt-mutation-body
+
+.PHONY: qualify-json-gslt-native-forest-exact-v1-body
+qualify-json-gslt-native-forest-exact-v1-body: \
+		$(LANGUAGE_DEF_PARSER_PACK_V1_TEST_BIN)
+	@set -eu; \
+	lean_root="$(METTAPEDIA_LEAN_ROOT)"; \
+	if [ -z "$$lean_root" ] && \
+	   [ -f "$(METTAPEDIA_LEAN_AUTO_ROOT)/lakefile.lean" ]; then \
+		lean_root="$(METTAPEDIA_LEAN_AUTO_ROOT)"; \
+	fi; \
+	test -n "$$lean_root" && test -f "$$lean_root/lakefile.lean" || { \
+		echo "METTAPEDIA_LEAN_ROOT must name the Mettapedia Lean project" >&2; \
+		exit 2; \
+	}; \
+	packet_root="$(abspath $(BOOTSTRAP_TMPDIR))"; \
+	mkdir -p "$$packet_root"; \
+	identity=$$(mktemp "$$packet_root/json-parser-identity.XXXXXX"); \
+	gll_forest=$$(mktemp "$$packet_root/json-gll-forest.XXXXXX"); \
+	glr_forest=$$(mktemp "$$packet_root/json-glr-forest.XXXXXX"); \
+	trap 'rm -f "$$identity" "$$gll_forest" "$$glr_forest"' \
+		EXIT INT TERM; \
+	CETTA_JSON_PARSER_PACK_IDENTITY_WIRE_OUT="$$identity" \
+	CETTA_JSON_GLL_FOREST_WIRE_OUT="$$gll_forest" \
+	CETTA_JSON_GLR_FOREST_WIRE_OUT="$$glr_forest" \
+		$(LANGUAGE_DEF_PARSER_PACK_V1_TEST_BIN); \
+	(cd "$$lean_root" && \
+		lake exe checkRFC8259NativeForestExact \
+			gll "$$identity" "$$gll_forest"); \
+	(cd "$$lean_root" && \
+		lake exe checkRFC8259NativeForestExact \
+			glr "$$identity" "$$glr_forest"); \
+	echo "PASS: live JSON GLL and GLR forests exactly cover the independent root-relative ParserPack chart"
+
+.PHONY: qualify-json-gslt-native-forest-exact-v1
+qualify-json-gslt-native-forest-exact-v1:
+	@$(MAKE) --no-print-directory \
+		BUILD=core ENABLE_GMP=0 ENABLE_LIB_PROLOG=0 ENABLE_HTTP=0 \
+		ENABLE_SANITIZERS=0 ENABLE_PIC=0 \
+		CETTA_PROVENANCE_ASSERT=0 RHOCOST_COMMIT_AUDIT=0 \
+		ENABLE_PRIME_RECEIPT_PRIMARY_INDEX=0 \
+		ENABLE_PRIME_NEED_HEAP_INDEX=0 \
+		ENABLE_PRIME_NEED_CLOSURE_CAPTURE=0 \
+		ENABLE_PRIME_EVAL_STACK=0 \
+		qualify-json-gslt-native-forest-exact-v1-body
 
 .PHONY: test-json-gslt-c-only-closure-body
 test-json-gslt-c-only-closure-body: \
@@ -31749,8 +32171,9 @@ test-json-gslt-c-only-closure:
 		test-json-gslt-c-only-closure-body
 
 .PHONY: bench-json-gslt-runtime-body
+JSON_GSLT_BENCH_ITERATIONS ?= 100
 bench-json-gslt-runtime-body: $(LANGUAGE_DEF_PARSER_PACK_V1_BENCH_BIN)
-	@$(LANGUAGE_DEF_PARSER_PACK_V1_BENCH_BIN) 100
+	@$(LANGUAGE_DEF_PARSER_PACK_V1_BENCH_BIN) $(JSON_GSLT_BENCH_ITERATIONS)
 
 .PHONY: bench-json-gslt-runtime
 bench-json-gslt-runtime:
@@ -31819,31 +32242,246 @@ $(EXACT_INTEGER_THEORY_V1_TEST_BIN): \
 test-exact-integer-theory-v1: $(EXACT_INTEGER_THEORY_V1_TEST_BIN)
 	@$(EXACT_INTEGER_THEORY_V1_TEST_BIN)
 
-# Independent target-owned C-subset IR.  No arithmetic lowering is wired here;
-# a future compiler must derive its program from the supplied LanguageDefs.
-C_SUBSET_IR_V1_SRC = native/c_subset_ir_v1.c
-C_SUBSET_IR_V1_HEADER = native/c_subset_ir_v1.h
-C_SUBSET_IR_V1_OBJ = native/c_subset_ir_v1.$(BUILD_OBJ_TAG).o
+# Optional GMP realization of the external-call exact-integer ABI. It has no
+# compiler authority and is not part of default runtime objects.
+EXTERNAL_CALL_GENERATED_ABI_V1_HEADER = native/external_call_generated_abi_v1.h
+EXTERNAL_CALL_GMP_EXACT_INTEGER_V1_SRC = native/external_call_gmp_exact_integer_v1.c
+EXTERNAL_CALL_GMP_EXACT_INTEGER_V1_HEADER = native/external_call_gmp_exact_integer_v1.h
+EXTERNAL_CALL_GMP_EXACT_INTEGER_V1_OBJ = native/external_call_gmp_exact_integer_v1.$(BUILD_OBJ_TAG).o
 
-# Generic target-IR emitter retained without an arithmetic compiler route.
-C_SUBSET_GENERATED_ABI_V1_HEADER = native/c_subset_generated_abi_v1.h
-C_SUBSET_EMIT_V1_SRC = native/c_subset_emit_v1.c
-C_SUBSET_EMIT_V1_HEADER = native/c_subset_emit_v1.h
-C_SUBSET_EMIT_V1_OBJ = native/c_subset_emit_v1.$(BUILD_OBJ_TAG).o
-
-# Optional GMP realization of the opaque exact-integer ABI.  It has no
-# arithmetic compiler authority and is not part of default runtime objects.
-C_SUBSET_GMP_EXACT_INTEGER_V1_SRC = native/c_subset_gmp_exact_integer_v1.c
-C_SUBSET_GMP_EXACT_INTEGER_V1_HEADER = native/c_subset_gmp_exact_integer_v1.h
-C_SUBSET_GMP_EXACT_INTEGER_V1_OBJ = native/c_subset_gmp_exact_integer_v1.$(BUILD_OBJ_TAG).o
-
-$(C_SUBSET_GMP_EXACT_INTEGER_V1_OBJ): \
-		$(C_SUBSET_GMP_EXACT_INTEGER_V1_SRC) \
-		$(C_SUBSET_GMP_EXACT_INTEGER_V1_HEADER) \
-		$(C_SUBSET_GENERATED_ABI_V1_HEADER) $(BUILD_CONFIG_HEADER)
+$(EXTERNAL_CALL_GMP_EXACT_INTEGER_V1_OBJ): \
+		$(EXTERNAL_CALL_GMP_EXACT_INTEGER_V1_SRC) \
+		$(EXTERNAL_CALL_GMP_EXACT_INTEGER_V1_HEADER) \
+		$(EXTERNAL_CALL_GENERATED_ABI_V1_HEADER) $(BUILD_CONFIG_HEADER)
 	@mkdir -p $(dir $@)
 	$(CC) $(CPPFLAGS) $(GMP_CFLAGS) $(CFLAGS) $(DEPFLAGS) \
 		-MF $(@:.o=.d) -c -o $@ $<
+
+# Fixed-language Libcall lowering.  The first transformer constructs actual
+# ExternalCallMachine Pattern programs, and the second constructs one actual
+# StructuredC Program Pattern.  The final emitter traverses that Program; it
+# does not link an interpreter or a parallel private instruction format.
+EXACT_ARITHMETIC_TO_EXTERNAL_CALL_V1_SRC = native/exact_arithmetic_to_external_call_transform_v1.c
+EXACT_ARITHMETIC_TO_EXTERNAL_CALL_V1_HEADER = native/exact_arithmetic_to_external_call_transform_v1.h
+EXACT_ARITHMETIC_TO_EXTERNAL_CALL_V1_OBJ = native/exact_arithmetic_to_external_call_transform_v1.$(BUILD_OBJ_TAG).o
+STRUCTURED_C_PROFILE_V1_SRC = native/structured_c_profile_v1.c
+STRUCTURED_C_PROFILE_V1_HEADER = native/structured_c_profile_v1.h
+STRUCTURED_C_PROFILE_V1_OBJ = native/structured_c_profile_v1.$(BUILD_OBJ_TAG).o
+EXTERNAL_CALL_TO_STRUCTURED_C_V1_SRC = native/external_call_to_structured_c_transform_v1.c
+EXTERNAL_CALL_TO_STRUCTURED_C_V1_HEADER = native/external_call_to_structured_c_transform_v1.h
+EXTERNAL_CALL_TO_STRUCTURED_C_V1_OBJ = native/external_call_to_structured_c_transform_v1.$(BUILD_OBJ_TAG).o
+STRUCTURED_C_EMITTER_V1_SRC = native/structured_c_emitter_v1.c
+STRUCTURED_C_EMITTER_V1_HEADER = native/structured_c_emitter_v1.h
+STRUCTURED_C_EMITTER_V1_OBJ = native/structured_c_emitter_v1.$(BUILD_OBJ_TAG).o
+EXACT_ARITHMETIC_EXTERNAL_CALL_EMIT_V1_SRC = tools/cetta_exact_arithmetic_external_call_emit_v1.c
+EXACT_ARITHMETIC_EXTERNAL_CALL_EMIT_V1_OBJ = runtime/bootstrap/cetta_exact_arithmetic_external_call_emit_v1.$(BUILD_OBJ_TAG).o
+EXACT_ARITHMETIC_EXTERNAL_CALL_EMIT_V1_BIN = runtime/cetta-exact-arithmetic-external-call-emit-v1-$(BUILD_OBJ_TAG)
+EXACT_ARITHMETIC_TO_EXTERNAL_CALL_V1_TEST_SRC = tests/support/test_exact_arithmetic_to_external_call_transform_v1.c
+EXACT_ARITHMETIC_TO_EXTERNAL_CALL_V1_TEST_OBJ = runtime/bootstrap/test_exact_arithmetic_to_external_call_transform_v1.$(BUILD_OBJ_TAG).o
+EXACT_ARITHMETIC_TO_EXTERNAL_CALL_V1_TEST_BIN = runtime/test_exact_arithmetic_to_external_call_transform_v1-$(BUILD_OBJ_TAG)
+EXTERNAL_CALL_TO_STRUCTURED_C_V1_TEST_SRC = tests/support/test_external_call_to_structured_c_transform_v1.c
+EXTERNAL_CALL_TO_STRUCTURED_C_V1_TEST_OBJ = runtime/bootstrap/test_external_call_to_structured_c_transform_v1.$(BUILD_OBJ_TAG).o
+EXTERNAL_CALL_TO_STRUCTURED_C_V1_TEST_BIN = runtime/test_external_call_to_structured_c_transform_v1-$(BUILD_OBJ_TAG)
+ARITHMETIC_TARGET_COPRODUCT_V1_TEST_SRC = tests/support/test_arithmetic_target_coproduct_v1.c
+ARITHMETIC_TARGET_COPRODUCT_V1_TEST_OBJ = runtime/bootstrap/test_arithmetic_target_coproduct_v1.$(BUILD_OBJ_TAG).o
+ARITHMETIC_TARGET_COPRODUCT_V1_TEST_BIN = runtime/test_arithmetic_target_coproduct_v1-$(BUILD_OBJ_TAG)
+EXACT_ARITHMETIC_EXTERNAL_CALL_GENERATED_V1_C = runtime/generated/exact_arithmetic_external_call_v1.c
+EXACT_ARITHMETIC_EXTERNAL_CALL_GENERATED_V1_OBJ = runtime/bootstrap/exact_arithmetic_external_call_generated_v1.$(BUILD_OBJ_TAG).o
+EXACT_ARITHMETIC_EXTERNAL_CALL_GENERATED_V1_TEST_SRC = tests/support/test_exact_arithmetic_external_call_generated_v1.c
+EXACT_ARITHMETIC_EXTERNAL_CALL_GENERATED_V1_TEST_OBJ = runtime/bootstrap/test_exact_arithmetic_external_call_generated_v1.$(BUILD_OBJ_TAG).o
+EXACT_ARITHMETIC_EXTERNAL_CALL_GENERATED_V1_TEST_BIN = runtime/test_exact_arithmetic_external_call_generated_v1-$(BUILD_OBJ_TAG)
+
+$(EXACT_ARITHMETIC_TO_EXTERNAL_CALL_V1_OBJ): \
+		$(EXACT_ARITHMETIC_TO_EXTERNAL_CALL_V1_SRC) \
+		$(EXACT_ARITHMETIC_TO_EXTERNAL_CALL_V1_HEADER) \
+		$(LANGUAGE_DEF_CORE_V1_HEADER) $(BUILD_CONFIG_HEADER)
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+
+$(STRUCTURED_C_PROFILE_V1_OBJ): \
+		$(STRUCTURED_C_PROFILE_V1_SRC) $(STRUCTURED_C_PROFILE_V1_HEADER) \
+		$(LANGUAGE_DEF_CORE_V1_HEADER) $(BUILD_CONFIG_HEADER)
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+
+$(EXTERNAL_CALL_TO_STRUCTURED_C_V1_OBJ): \
+		$(EXTERNAL_CALL_TO_STRUCTURED_C_V1_SRC) \
+		$(EXTERNAL_CALL_TO_STRUCTURED_C_V1_HEADER) \
+		$(STRUCTURED_C_PROFILE_V1_HEADER) \
+		$(EXACT_ARITHMETIC_TO_EXTERNAL_CALL_V1_HEADER) \
+		$(LANGUAGE_DEF_CORE_V1_HEADER) $(BUILD_CONFIG_HEADER)
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+
+$(STRUCTURED_C_EMITTER_V1_OBJ): \
+		$(STRUCTURED_C_EMITTER_V1_SRC) $(STRUCTURED_C_EMITTER_V1_HEADER) \
+		$(STRUCTURED_C_PROFILE_V1_HEADER) \
+		$(LANGUAGE_DEF_CORE_V1_HEADER) $(BUILD_CONFIG_HEADER)
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+
+$(EXACT_ARITHMETIC_EXTERNAL_CALL_EMIT_V1_OBJ): \
+		$(EXACT_ARITHMETIC_EXTERNAL_CALL_EMIT_V1_SRC) \
+		$(EXTERNAL_CALL_TO_STRUCTURED_C_V1_HEADER) \
+		$(STRUCTURED_C_EMITTER_V1_HEADER) \
+		$(EXACT_ARITHMETIC_TO_EXTERNAL_CALL_V1_HEADER) \
+		$(LANGUAGE_DEF_CORE_V1_HEADER) $(BUILD_CONFIG_HEADER)
+	@mkdir -p $(dir $@)
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+
+$(EXACT_ARITHMETIC_EXTERNAL_CALL_EMIT_V1_BIN): \
+		$(EXACT_ARITHMETIC_EXTERNAL_CALL_EMIT_V1_OBJ) \
+		$(EXTERNAL_CALL_TO_STRUCTURED_C_V1_OBJ) \
+		$(STRUCTURED_C_EMITTER_V1_OBJ) \
+		$(STRUCTURED_C_PROFILE_V1_OBJ) \
+		$(EXACT_ARITHMETIC_TO_EXTERNAL_CALL_V1_OBJ) \
+		$(LANGUAGE_DEF_CORE_V1_OBJ) \
+		$(OPERATIONAL_LANGUAGE_DEF_V1_OBJ) \
+		$(OPERATIONAL_LANGUAGE_DEF_V1_LINK_OBJ)
+	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
+	@set -eu; \
+	tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/cetta-exact-arithmetic-external-call-emit-v1.XXXXXX"); \
+	trap 'rm -f "$$tmp_out"' EXIT INT TERM; \
+	$(CC) $(CFLAGS) -Wl,--gc-sections -o "$$tmp_out" $^; \
+	mv "$$tmp_out" $@
+
+$(EXACT_ARITHMETIC_TO_EXTERNAL_CALL_V1_TEST_OBJ): \
+		$(EXACT_ARITHMETIC_TO_EXTERNAL_CALL_V1_TEST_SRC) \
+		$(EXACT_ARITHMETIC_TO_EXTERNAL_CALL_V1_HEADER) \
+		$(LANGUAGE_DEF_CORE_V1_HEADER) $(BUILD_CONFIG_HEADER)
+	@mkdir -p $(dir $@)
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+
+$(EXACT_ARITHMETIC_TO_EXTERNAL_CALL_V1_TEST_BIN): \
+		$(EXACT_ARITHMETIC_TO_EXTERNAL_CALL_V1_TEST_OBJ) \
+		$(EXACT_ARITHMETIC_TO_EXTERNAL_CALL_V1_OBJ) \
+		$(LANGUAGE_DEF_CORE_V1_OBJ) \
+		$(OPERATIONAL_LANGUAGE_DEF_V1_OBJ) \
+		$(OPERATIONAL_LANGUAGE_DEF_V1_LINK_OBJ)
+	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
+	@set -eu; \
+	tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/test-exact-arithmetic-to-external-call-v1.XXXXXX"); \
+	trap 'rm -f "$$tmp_out"' EXIT INT TERM; \
+	$(CC) $(CFLAGS) -Wl,--gc-sections -o "$$tmp_out" $^; \
+	mv "$$tmp_out" $@
+
+$(EXTERNAL_CALL_TO_STRUCTURED_C_V1_TEST_OBJ): \
+		$(EXTERNAL_CALL_TO_STRUCTURED_C_V1_TEST_SRC) \
+		$(EXTERNAL_CALL_TO_STRUCTURED_C_V1_HEADER) \
+		$(STRUCTURED_C_EMITTER_V1_HEADER) \
+		$(EXACT_ARITHMETIC_TO_EXTERNAL_CALL_V1_HEADER) \
+		$(LANGUAGE_DEF_CORE_V1_HEADER) $(BUILD_CONFIG_HEADER)
+	@mkdir -p $(dir $@)
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+
+$(EXTERNAL_CALL_TO_STRUCTURED_C_V1_TEST_BIN): \
+		$(EXTERNAL_CALL_TO_STRUCTURED_C_V1_TEST_OBJ) \
+		$(EXTERNAL_CALL_TO_STRUCTURED_C_V1_OBJ) \
+		$(STRUCTURED_C_EMITTER_V1_OBJ) \
+		$(STRUCTURED_C_PROFILE_V1_OBJ) \
+		$(EXACT_ARITHMETIC_TO_EXTERNAL_CALL_V1_OBJ) \
+		$(LANGUAGE_DEF_CORE_V1_OBJ) \
+		$(OPERATIONAL_LANGUAGE_DEF_V1_OBJ) \
+		$(OPERATIONAL_LANGUAGE_DEF_V1_LINK_OBJ)
+	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
+	@set -eu; \
+	tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/test-external-call-to-structured-c-v1.XXXXXX"); \
+	trap 'rm -f "$$tmp_out"' EXIT INT TERM; \
+	$(CC) $(CFLAGS) -Wl,--gc-sections -o "$$tmp_out" $^; \
+	mv "$$tmp_out" $@
+
+$(ARITHMETIC_TARGET_COPRODUCT_V1_TEST_OBJ): \
+		$(ARITHMETIC_TARGET_COPRODUCT_V1_TEST_SRC) \
+		$(LANGUAGE_DEF_CORE_V1_HEADER) \
+		$(OPERATIONAL_LANGUAGE_DEF_V1_HEADER) $(BUILD_CONFIG_HEADER)
+	@mkdir -p $(dir $@)
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+
+$(ARITHMETIC_TARGET_COPRODUCT_V1_TEST_BIN): \
+		$(ARITHMETIC_TARGET_COPRODUCT_V1_TEST_OBJ) \
+		$(LANGUAGE_DEF_CORE_V1_OBJ) \
+		$(OPERATIONAL_LANGUAGE_DEF_V1_OBJ) \
+		$(OPERATIONAL_LANGUAGE_DEF_V1_LINK_OBJ)
+	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
+	@set -eu; \
+	tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/test-arithmetic-target-coproduct-v1.XXXXXX"); \
+	trap 'rm -f "$$tmp_out"' EXIT INT TERM; \
+	$(CC) $(CFLAGS) -Wl,--gc-sections -o "$$tmp_out" $^; \
+	mv "$$tmp_out" $@
+
+$(EXACT_ARITHMETIC_EXTERNAL_CALL_GENERATED_V1_C): \
+		$(EXACT_ARITHMETIC_EXTERNAL_CALL_EMIT_V1_BIN) \
+		langdef/arithmetic/exact_arithmetic_v1.metta \
+		langdef/machines/external_call_machine_v1.metta \
+		langdef/structured-c/structured_c_v1.metta \
+		$(EXTERNAL_CALL_GENERATED_ABI_V1_HEADER)
+	@mkdir -p $(dir $@) $(BOOTSTRAP_TMPDIR)
+	@set -eu; \
+	tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/exact-arithmetic-external-call-v1.XXXXXX"); \
+	trap 'rm -f "$$tmp_out"' EXIT INT TERM; \
+	"$(EXACT_ARITHMETIC_EXTERNAL_CALL_EMIT_V1_BIN)" \
+		langdef/arithmetic/exact_arithmetic_v1.metta \
+		langdef/machines/external_call_machine_v1.metta \
+		langdef/structured-c/structured_c_v1.metta > "$$tmp_out"; \
+	! grep -Eq '\bgoto\b|cetta_radix_digit|cetta_exact_arithmetic_to_external_call' "$$tmp_out"; \
+	mv "$$tmp_out" $@
+
+$(EXACT_ARITHMETIC_EXTERNAL_CALL_GENERATED_V1_OBJ): \
+		$(EXACT_ARITHMETIC_EXTERNAL_CALL_GENERATED_V1_C) \
+		$(EXTERNAL_CALL_GENERATED_ABI_V1_HEADER) $(BUILD_CONFIG_HEADER)
+	@mkdir -p $(dir $@)
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+
+$(EXACT_ARITHMETIC_EXTERNAL_CALL_GENERATED_V1_TEST_OBJ): \
+		$(EXACT_ARITHMETIC_EXTERNAL_CALL_GENERATED_V1_TEST_SRC) \
+		$(EXTERNAL_CALL_GMP_EXACT_INTEGER_V1_HEADER) \
+		$(EXTERNAL_CALL_GENERATED_ABI_V1_HEADER) $(BUILD_CONFIG_HEADER)
+	@mkdir -p $(dir $@)
+	$(CC) $(CPPFLAGS) $(GMP_CFLAGS) $(CFLAGS) $(DEPFLAGS) \
+		-MF $(@:.o=.d) -c -o $@ $<
+
+ifeq ($(ENABLE_GMP),1)
+$(EXACT_ARITHMETIC_EXTERNAL_CALL_GENERATED_V1_TEST_BIN): \
+		$(EXACT_ARITHMETIC_EXTERNAL_CALL_GENERATED_V1_TEST_OBJ) \
+		$(EXACT_ARITHMETIC_EXTERNAL_CALL_GENERATED_V1_OBJ) \
+		$(EXTERNAL_CALL_GMP_EXACT_INTEGER_V1_OBJ)
+	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
+	@set -eu; \
+	tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/test-exact-arithmetic-external-call-generated-v1.XXXXXX"); \
+	trap 'rm -f "$$tmp_out"' EXIT INT TERM; \
+	$(CC) $(CFLAGS) -Wl,--gc-sections -o "$$tmp_out" $^ $(GMP_LDFLAGS); \
+	mv "$$tmp_out" $@
+
+.PHONY: test-exact-arithmetic-external-call-generated-v1
+test-exact-arithmetic-external-call-generated-v1: \
+		$(EXACT_ARITHMETIC_EXTERNAL_CALL_GENERATED_V1_TEST_BIN)
+	@$(EXACT_ARITHMETIC_EXTERNAL_CALL_GENERATED_V1_TEST_BIN)
+	@! nm $(EXACT_ARITHMETIC_EXTERNAL_CALL_GENERATED_V1_TEST_BIN) | \
+		grep -Eq 'cetta_exact_arithmetic_to_external_call|cetta_external_call_to_structured_c|cetta_structured_c_(emit|profile)|cetta_language_def_core|cetta_radix_digit'
+	@echo "PASS: exact arithmetic GSLT -> ExternalCallMachine Patterns -> StructuredC Program -> ordinary C -> GMP provider"
+else
+.PHONY: test-exact-arithmetic-external-call-generated-v1
+test-exact-arithmetic-external-call-generated-v1: \
+		$(EXACT_ARITHMETIC_EXTERNAL_CALL_GENERATED_V1_OBJ)
+	@echo "PASS: exact arithmetic GSLT -> ExternalCallMachine Patterns -> StructuredC Program -> ordinary C (external provider intentionally unlinked)"
+endif
+
+.PHONY: test-exact-arithmetic-to-external-call-transform-v1
+test-exact-arithmetic-to-external-call-transform-v1: \
+		$(EXACT_ARITHMETIC_TO_EXTERNAL_CALL_V1_TEST_BIN)
+	@$(EXACT_ARITHMETIC_TO_EXTERNAL_CALL_V1_TEST_BIN)
+
+.PHONY: test-external-call-to-structured-c-transform-v1
+test-external-call-to-structured-c-transform-v1: \
+		$(EXTERNAL_CALL_TO_STRUCTURED_C_V1_TEST_BIN)
+	@$(EXTERNAL_CALL_TO_STRUCTURED_C_V1_TEST_BIN)
+
+.PHONY: test-arithmetic-target-coproduct-v1
+test-arithmetic-target-coproduct-v1: $(ARITHMETIC_TARGET_COPRODUCT_V1_TEST_BIN)
+	@$(ARITHMETIC_TARGET_COPRODUCT_V1_TEST_BIN)
+
+.PHONY: test-exact-arithmetic-to-external-call-v1
+test-exact-arithmetic-to-external-call-v1: \
+		test-exact-arithmetic-to-external-call-transform-v1 \
+		test-external-call-to-structured-c-transform-v1 \
+		test-arithmetic-target-coproduct-v1 \
+		test-exact-arithmetic-external-call-generated-v1
 
 # Portable asynchronous I/O qualification.  HTTP is an explicit build
 # capability; no network provider or test fixture is activated by default.
@@ -32083,7 +32721,7 @@ test-json-gslt-library:
 .PHONY: test-json-gslt-disabled-link-body
 test-json-gslt-disabled-link-body: $(BIN)
 	@if nm "$(BIN)" | \
-		grep -E 'cetta_json_(runtime|library)_' >/dev/null; then \
+		grep -E 'cetta_json_(runtime|library|nik)_' >/dev/null; then \
 		echo "FAIL: disabled JSON GSLT runtime remains linked" >&2; exit 1; \
 	fi
 	@echo "PASS: disabled JSON GSLT runtime has no linked implementation"
@@ -32107,6 +32745,15 @@ test-json-gslt-sanitizers:
 		ENABLE_PRIME_EVAL_STACK=0 \
 		test-language-def-parser-pack-v1-body
 	@$(MAKE) --no-print-directory -B \
+		BUILD=core ENABLE_GMP=0 ENABLE_LIB_PROLOG=0 ENABLE_HTTP=0 \
+		ENABLE_SANITIZERS=1 SANITIZERS=address,undefined \
+		ENABLE_PIC=0 CETTA_PROVENANCE_ASSERT=0 RHOCOST_COMMIT_AUDIT=0 \
+		ENABLE_PRIME_RECEIPT_PRIMARY_INDEX=0 \
+		ENABLE_PRIME_NEED_HEAP_INDEX=0 \
+		ENABLE_PRIME_NEED_CLOSURE_CAPTURE=0 \
+		ENABLE_PRIME_EVAL_STACK=0 \
+		test-json-nik-v1-body
+	@$(MAKE) --no-print-directory -B \
 		BUILD=core CETTA_TEST_ISOLATED=1 \
 		ENABLE_JSON_GSLT=1 ENABLE_LIB_PROLOG=0 ENABLE_HTTP=0 \
 		ENABLE_SANITIZERS=1 SANITIZERS=address,undefined \
@@ -32115,6 +32762,7 @@ test-json-gslt-sanitizers:
 .PHONY: test-json-gslt
 test-json-gslt: \
 		test-language-def-parser-pack-v1 \
+		test-json-nik-v1 \
 		test-json-gslt-mutation \
 		test-json-gslt-c-only-closure \
 		test-json-gslt-library \

@@ -61,7 +61,7 @@ static void canonical_file_gate(TestCounts *counts) {
 
     cetta_op_lang_v1_init(&language);
     if (!cetta_op_lang_v1_parse_file(
-            &language, "langdef/c-subset/exact_arithmetic_v1.metta",
+            &language, "langdef/arithmetic/exact_arithmetic_v1.metta",
             16000000u, 32000000u, &status, error, sizeof(error))) {
         fprintf(stderr, "ExactArithmetic parse status=%s detail=%s\n",
                 cetta_op_lang_v1_status_name(status),
@@ -77,7 +77,7 @@ static void canonical_file_gate(TestCounts *counts) {
     (void)expect(
         counts,
         strcmp(language.source_sha256,
-               "e0de2dd12a6ef14d3e5728fefe8bec5645bafa74effa9d1da463be72ae37c9d7") == 0,
+               "c0958f71834828bdef9e2b825e5755199128b863b09b11ea367ff96086fe45ae") == 0,
         "raw ExactArithmetic source identity is exact");
     (void)expect(counts,
                  bytes_equal(language.name_bytes, language.name_len,
