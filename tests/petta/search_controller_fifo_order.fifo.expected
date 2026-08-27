@@ -1,0 +1,12 @@
+(answer shallow)
+(dead (S (S (S (S (S (S (S Z))))))))
+(dead (S (S (S (S (S (S Z)))))))
+(dead (S (S (S (S (S Z))))))
+(dead (S (S (S (S Z)))))
+(dead (S (S (S Z))))
+(dead (S (S Z)))
+(dead (S Z))
+(dead Z)
+(answer deep)
+same
+same

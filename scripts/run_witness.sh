@@ -171,6 +171,9 @@ first_syntax_error="${first_syntax_error//$'\t'/ }"
 
 structured_evidence="$(awk -F= '
     /^WITNESS_EVIDENCE_[A-Z0-9_]+=/ { print }
+    /^SPACE_FRONTIER_[A-Z0-9_]+=/ { print }
+    /^GENERATOR_[A-Z0-9_]+=/ { print }
+    /^(record|measurement|growth)\t/ { print }
 ' "$logfile")"
 
 status_reason="exit-status"

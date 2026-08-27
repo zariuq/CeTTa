@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+from collections import Counter
 from contextlib import contextmanager
 import hashlib
 import json
@@ -22,6 +23,8 @@ from typing import Any
 
 
 SCHEMA = "cetta-petta-corpus-v1"
+STDOUT_EXACT_STREAM = "exact-stream"
+STDOUT_OCCURRENCE_BAG = "occurrence-bag"
 EXPECTED_TOTAL = 183
 EXPECTED_CONTROLLED = 6
 ANSI_RE = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
@@ -331,6 +334,26 @@ def semantic_stdout(text: str) -> str:
             continue
         kept.append(line_with_ending)
     return "".join(kept)
+
+
+def stdout_observation(
+    text: str, contract: str
+) -> str | Counter[str]:
+    """Observe output under an explicitly selected answer algebra."""
+    semantic = semantic_stdout(text)
+    if contract == STDOUT_EXACT_STREAM:
+        return semantic
+    if contract == STDOUT_OCCURRENCE_BAG:
+        return Counter(semantic.splitlines(keepends=True))
+    raise ValueError(f"unknown stdout observation contract: {contract!r}")
+
+
+def stdout_observation_equal(
+    left: str, right: str, contract: str
+) -> bool:
+    return stdout_observation(left, contract) == stdout_observation(
+        right, contract
+    )
 
 
 def normalize_oracle_stderr(
@@ -828,9 +851,15 @@ def run_cetta(
     source: Path,
     timeout_seconds: float,
     fixture: dict[str, Any] | None = None,
+    search_controller: str | None = None,
+    machine_stats: bool = False,
 ) -> tuple[int | str, str, str]:
     repo_root = Path(__file__).resolve().parents[1]
     environment = fixture_environment(repo_root, fixture)
+    if search_controller is not None:
+        environment["CETTA_SEARCH_CONTROLLER"] = search_controller
+    if machine_stats:
+        environment["CETTA_PETTA_MACHINE_STATS"] = "1"
     command = [str(cetta), "--lang", "petta", str(source)]
     if fixture and fixture.get("kind") == "source-file":
         corrected_source = repo_root / fixture["source_file"]

@@ -12,9 +12,13 @@ import subprocess
 import time
 
 import petta_corpus_manifest as corpus
+from petta_machine_stats import (
+    aggregate_controller_stats,
+    extract_machine_and_controller_stats,
+)
 
 
-SCHEMA = "cetta-petta-live-sample-v2"
+SCHEMA = "cetta-petta-live-sample-v4"
 OPTIONAL_JANUS_INIT_FAILURE_RE = re.compile(
     r"ERROR: .*?/swipy/janus\.pl:[0-9]+:\n"
     r"ERROR:    .*?/swipy/janus\.pl:[0-9]+: Initialization goal "
@@ -120,23 +124,38 @@ def git_text(root: Path, *arguments: str) -> str:
 def classify(
     petta: tuple[int | str, str, str],
     cetta: tuple[int | str, str, str],
-) -> tuple[str, bool, bool]:
+    stdout_contract: str,
+) -> tuple[str, bool, bool, bool]:
     petta_exit, petta_stdout, petta_stderr = petta
     cetta_exit, cetta_stdout, cetta_stderr = cetta
-    stdout_equal = (
-        corpus.semantic_stdout(petta_stdout)
-        == corpus.semantic_stdout(cetta_stdout)
+    stdout_observation_equal = corpus.stdout_observation_equal(
+        petta_stdout, cetta_stdout, stdout_contract
+    )
+    stdout_stream_equal = (
+        corpus.stdout_observation(
+            petta_stdout, corpus.STDOUT_EXACT_STREAM
+        )
+        == corpus.stdout_observation(
+            cetta_stdout, corpus.STDOUT_EXACT_STREAM
+        )
     )
     stderr_equal = semantic_stderr(petta_stderr) == semantic_stderr(cetta_stderr)
     if petta_exit != cetta_exit:
         status = "EXIT_MISMATCH"
-    elif not stdout_equal:
+    elif not stdout_observation_equal:
         status = "STDOUT_MISMATCH"
     elif not stderr_equal:
         status = "STDERR_MISMATCH"
-    else:
+    elif stdout_stream_equal:
         status = "MATCH"
-    return status, stdout_equal, stderr_equal
+    else:
+        status = "MATCH_REORDERED"
+    return (
+        status,
+        stdout_observation_equal,
+        stdout_stream_equal,
+        stderr_equal,
+    )
 
 
 def semantic_stderr(text: str) -> str:
@@ -160,6 +179,16 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--all-tracked", action="store_true")
     parser.add_argument("--timeout", type=float, default=30.0)
     parser.add_argument("--require-match", action="store_true")
+    parser.add_argument(
+        "--search-controller",
+        choices=("inline-depth-first", "fifo"),
+        default="inline-depth-first",
+    )
+    parser.add_argument(
+        "--controller-stats",
+        action="store_true",
+        help="record controller admission and work without changing semantics",
+    )
     return parser.parse_args()
 
 
@@ -174,6 +203,16 @@ def main() -> int:
         raise RuntimeError("CeTTa binary does not exist")
     if arguments.timeout <= 0:
         raise ValueError("timeout must be positive")
+    if arguments.controller_stats and arguments.search_controller != "fifo":
+        raise ValueError("controller statistics require the FIFO controller")
+    if (
+        arguments.require_match
+        and arguments.search_controller == "fifo"
+        and not arguments.controller_stats
+    ):
+        raise ValueError(
+            "qualified FIFO comparison requires controller statistics"
+        )
 
     available = {
         path.name for path in (petta_root / "examples").glob("*.metta")
@@ -196,10 +235,19 @@ def main() -> int:
 
     rows = [
         "stratum\texample\tstatus\tpetta_exit\tcetta_exit\t"
-        "stdout_equal\tstderr_equal\tpetta_seconds\tcetta_seconds\t"
-        "source_sha256\torder"
+        "stdout_contract\tstdout_observation_equal\t"
+        "stdout_stream_equal\tstderr_equal\tpetta_seconds\t"
+        "cetta_seconds\t"
+        "source_sha256\torder\tcontroller_records\tcontroller_admitted\t"
+        "controller_active_fifo\tcontroller_active_inline_depth_first\t"
+        "controller_transitions\tcontroller_expansions\t"
+        "controller_successors\tcontroller_captures\tcontroller_restores\t"
+        "controller_inline_fallbacks\tcontroller_answers\t"
+        "controller_max_frontier\tcontroller_max_frontier_atom_bytes\t"
+        "controller_max_frontier_vector_bytes"
     ]
     counts: dict[str, int] = {}
+    controller_totals: dict[str, int] = {}
     for index, (stratum, name) in enumerate(selected):
         source = petta_root / "examples" / name
         functions = (
@@ -216,18 +264,58 @@ def main() -> int:
                 (Path(__file__).resolve().parents[1], petta_root, source,
                  arguments.timeout, fixture)
                 if engine == "petta"
-                else (cetta, petta_root, source, arguments.timeout, fixture)
+                else (
+                    cetta, petta_root, source, arguments.timeout, fixture,
+                    arguments.search_controller,
+                    arguments.controller_stats,
+                )
             )
             result, seconds = run_timed(function, *call_arguments)
             results[engine] = result  # type: ignore[assignment]
             elapsed[engine] = seconds
 
-        status, stdout_equal, stderr_equal = classify(
-            results["petta"], results["cetta"]
+        controller_aggregate = aggregate_controller_stats([])
+        raw_cetta_stderr = results["cetta"][2]
+        if arguments.controller_stats:
+            _, controller_invocations, ordinary_stderr = (
+                extract_machine_and_controller_stats(raw_cetta_stderr)
+            )
+            controller_aggregate = aggregate_controller_stats(
+                controller_invocations
+            )
+            results["cetta"] = (
+                results["cetta"][0],
+                results["cetta"][1],
+                ordinary_stderr,
+            )
+            for key, value in controller_aggregate.items():
+                if key.startswith("max_"):
+                    controller_totals[key] = max(
+                        controller_totals.get(key, 0), value
+                    )
+                else:
+                    controller_totals[key] = (
+                        controller_totals.get(key, 0) + value
+                    )
+
+        stdout_contract = (
+            corpus.STDOUT_OCCURRENCE_BAG
+            if controller_aggregate["active_fifo"] > 0
+            else corpus.STDOUT_EXACT_STREAM
+        )
+        (
+            status,
+            stdout_observation_equal,
+            stdout_stream_equal,
+            stderr_equal,
+        ) = classify(
+            results["petta"], results["cetta"], stdout_contract
         )
         counts[status] = counts.get(status, 0) + 1
         for engine in ("petta", "cetta"):
             _, stdout, stderr = results[engine]
+            if engine == "cetta" and arguments.controller_stats:
+                stderr = raw_cetta_stderr
             (actual / f"{name}.{engine}.stdout").write_text(
                 stdout, encoding="utf-8"
             )
@@ -236,10 +324,26 @@ def main() -> int:
             )
         rows.append(
             f"{stratum}\t{name}\t{status}\t{results['petta'][0]}\t"
-            f"{results['cetta'][0]}\t{int(stdout_equal)}\t"
-            f"{int(stderr_equal)}\t{elapsed['petta']:.6f}\t"
+            f"{results['cetta'][0]}\t{stdout_contract}\t"
+            f"{int(stdout_observation_equal)}\t"
+            f"{int(stdout_stream_equal)}\t{int(stderr_equal)}\t"
+            f"{elapsed['petta']:.6f}\t"
             f"{elapsed['cetta']:.6f}\t{corpus.sha256_file(source)}\t"
-            f"{'-'.join(engine for engine, _ in functions)}"
+            f"{'-'.join(engine for engine, _ in functions)}\t"
+            f"{controller_aggregate['records']}\t"
+            f"{controller_aggregate.get('admitted', 0)}\t"
+            f"{controller_aggregate['active_fifo']}\t"
+            f"{controller_aggregate['active_inline_depth_first']}\t"
+            f"{controller_aggregate.get('transitions', 0)}\t"
+            f"{controller_aggregate.get('expansions', 0)}\t"
+            f"{controller_aggregate.get('successors', 0)}\t"
+            f"{controller_aggregate.get('captures', 0)}\t"
+            f"{controller_aggregate.get('restores', 0)}\t"
+            f"{controller_aggregate.get('inline_fallbacks', 0)}\t"
+            f"{controller_aggregate.get('answers', 0)}\t"
+            f"{controller_aggregate.get('max_frontier', 0)}\t"
+            f"{controller_aggregate.get('max_frontier_atom_bytes', 0)}\t"
+            f"{controller_aggregate.get('max_frontier_vector_bytes', 0)}"
         )
         print(
             f"[{index + 1:02d}/{len(selected):02d}] {stratum}: "
@@ -257,6 +361,13 @@ def main() -> int:
         "per_stratum": (
             None if arguments.all_tracked else arguments.per_stratum
         ),
+        "search_controller": arguments.search_controller,
+        "controller_stats": arguments.controller_stats,
+        "stdout_contract_policy": (
+            "occurrence-bag only with an active FIFO receipt; "
+            "exact-stream otherwise"
+        ),
+        "controller_totals": controller_totals,
         "selected": [
             {"stratum": stratum, "example": name}
             for stratum, name in selected
@@ -274,8 +385,16 @@ def main() -> int:
         encoding="utf-8",
     )
     print(json.dumps(summary, sort_keys=True))
-    if arguments.require_match and counts != {"MATCH": len(selected)}:
-        raise RuntimeError("live PeTTa sample is not exact")
+    qualified = counts.get("MATCH", 0) + counts.get(
+        "MATCH_REORDERED", 0
+    )
+    if arguments.require_match and (
+        qualified != len(selected)
+        or set(counts) - {"MATCH", "MATCH_REORDERED"}
+    ):
+        raise RuntimeError(
+            "live PeTTa sample violates its observation contract"
+        )
     return 0
 
 

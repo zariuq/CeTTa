@@ -3512,14 +3512,12 @@ static bool petta_machine_collect_choice_heap(
 }
 
 static bool petta_machine_owned_profile_supported(
-    const PettaMachineImpl *machine, bool require_live_choice) {
+    const PettaMachineImpl *machine) {
     size_t rooted_goal_len = machine &&
             machine->goal_len > machine->protected_goal_height
         ? machine->goal_len
         : machine ? machine->protected_goal_height : 0u;
     if (!machine || !machine->search.owns_scratch_arena ||
-        (require_live_choice &&
-         (machine->terminal || machine->choice_len == 0u)) ||
         machine->typecheck_exit_code != 0 ||
         bindings_builder_prime_present(
             &machine->search.bindings) ||
@@ -3819,7 +3817,8 @@ static CettaContinuationStatus petta_continuation_capture(
             source->stats.owned_continuation_capture_unsupported++;
         return admitted;
     }
-    if (!petta_machine_owned_profile_supported(source, true)) {
+    if (source->terminal ||
+        !petta_machine_owned_profile_supported(source)) {
         source->stats.owned_continuation_capture_unsupported++;
         return CETTA_CONTINUATION_UNSUPPORTED;
     }
@@ -4056,8 +4055,7 @@ static CettaContinuationStatus petta_continuation_restore(
     PettaOwnedContinuationImpl *saved = *payload;
     if (destination->instance_id !=
             saved->source_machine_instance ||
-        !petta_machine_owned_profile_supported(
-            destination, false)) {
+        !petta_machine_owned_profile_supported(destination)) {
         return CETTA_CONTINUATION_UNSUPPORTED;
     }
 
@@ -4230,11 +4228,207 @@ static void petta_continuation_destroy(void *payload) {
     petta_owned_continuation_impl_free(payload);
 }
 
+static bool petta_machine_resume_choice(
+    PettaMachineImpl *machine, PettaChoice *choice,
+    PettaMachineStep *failure);
+
+static bool petta_machine_clause_expansion_supported(
+    const PettaMachineImpl *machine) {
+    if (!machine || machine->terminal || machine->yielded ||
+        machine->suspended_choice || machine->choice_len != 1u ||
+        machine->host.begin_relation_call ||
+        machine->host.record_clause_use) {
+        return false;
+    }
+    const PettaChoice *choice = &machine->choices[0];
+    return choice->kind == PETTA_CHOICE_CLAUSE &&
+        choice->as.clause.call_occurrence == 0u &&
+        !choice->as.clause.translate_result &&
+        !choice->as.clause.count_collection_result &&
+        choice->as.clause.next_equation <
+            choice->as.clause.equation_len &&
+        machine->goal_len > choice->goal_height;
+}
+
+static bool petta_owned_continuation_commit_only_clause(
+    PettaOwnedContinuationImpl *continuation) {
+    if (!continuation || continuation->choice_len != 1u ||
+        !continuation->choices ||
+        continuation->choices[0].kind != PETTA_CHOICE_CLAUSE) {
+        return false;
+    }
+    free(continuation->choices[0].as.clause.candidates);
+    continuation->choices[0].as.clause.candidates = NULL;
+    free(continuation->choices);
+    continuation->choices = NULL;
+    continuation->choice_len = 0u;
+    continuation->protected_goal_height = 0u;
+    free(continuation->goal_trail);
+    continuation->goal_trail = NULL;
+    continuation->goal_trail_len = 0u;
+    bindings_builder_commit(&continuation->bindings);
+    continuation->exclusive_vector_bytes =
+        petta_owned_continuation_vector_bytes(continuation);
+    return true;
+}
+
+static void petta_continuation_payload_array_destroy(
+    void **payloads, size_t length) {
+    if (!payloads)
+        return;
+    for (size_t i = 0u; i < length; i++)
+        petta_owned_continuation_impl_free(payloads[i]);
+    free(payloads);
+}
+
+static bool petta_continuation_payload_array_push(
+    void ***payloads, size_t *length, size_t *capacity,
+    void *payload) {
+    if (!payloads || !length || !capacity || !payload)
+        return false;
+    if (*length == *capacity) {
+        size_t next = *capacity ? *capacity * 2u : 4u;
+        if (next < *capacity || next > SIZE_MAX / sizeof(**payloads))
+            return false;
+        *payloads = cetta_realloc(
+            *payloads, next * sizeof(**payloads));
+        *capacity = next;
+    }
+    (*payloads)[(*length)++] = payload;
+    return true;
+}
+
+static CettaContinuationStatus petta_machine_note_expansion_status(
+    PettaMachineImpl *machine, CettaContinuationStatus status,
+    size_t successors) {
+    if (!machine)
+        return status;
+    if (status == CETTA_CONTINUATION_READY) {
+        machine->stats.owned_continuation_expansions++;
+        petta_machine_add_u64(
+            &machine->stats.owned_continuation_expansion_successors,
+            (uint64_t)successors);
+    } else if (status == CETTA_CONTINUATION_DEFERRED) {
+        machine->stats.owned_continuation_expansion_deferred++;
+    } else if (status == CETTA_CONTINUATION_INVALIDATED) {
+        machine->stats.owned_continuation_expansion_invalidated++;
+    } else if (status == CETTA_CONTINUATION_CAPACITY) {
+        machine->stats.owned_continuation_expansion_capacity++;
+    } else {
+        machine->stats.owned_continuation_expansion_unsupported++;
+    }
+    return status;
+}
+
+static CettaContinuationStatus petta_relational_continuation_expand(
+    void *opaque_machine, void ***payloads, size_t *length) {
+    PettaMachine *machine = opaque_machine;
+    if (!machine || !machine->impl || !payloads || *payloads ||
+        !length || *length != 0u) {
+        return CETTA_CONTINUATION_UNSUPPORTED;
+    }
+    PettaMachineImpl *source = machine->impl;
+    source->stats.owned_continuation_expansion_attempts++;
+    if (source->choice_len == 0u) {
+        return petta_machine_note_expansion_status(
+            source, CETTA_CONTINUATION_DEFERRED, 0u);
+    }
+    if (!petta_machine_clause_expansion_supported(source) ||
+        !petta_machine_owned_profile_supported(source)) {
+        return petta_machine_note_expansion_status(
+            source, CETTA_CONTINUATION_UNSUPPORTED, 0u);
+    }
+
+    PettaMachineStats baseline_stats = source->stats;
+    void *restore_payload = NULL;
+    CettaContinuationStatus status = petta_continuation_capture(
+        machine, &restore_payload);
+    if (status != CETTA_CONTINUATION_READY) {
+        source->stats = baseline_stats;
+        return petta_machine_note_expansion_status(
+            source, status, 0u);
+    }
+
+    void **successors = NULL;
+    size_t successor_len = 0u;
+    size_t successor_cap = 0u;
+    for (;;) {
+        void *successor = NULL;
+        status = petta_continuation_capture(machine, &successor);
+        if (status != CETTA_CONTINUATION_READY)
+            break;
+        if (!petta_owned_continuation_commit_only_clause(successor) ||
+            !petta_continuation_payload_array_push(
+                &successors, &successor_len, &successor_cap,
+                successor)) {
+            petta_owned_continuation_impl_free(successor);
+            status = CETTA_CONTINUATION_CAPACITY;
+            break;
+        }
+
+        PettaChoice *choice = &source->choices[0];
+        PettaMachineStep failure = PETTA_MACHINE_STEP_EXHAUSTED;
+        if (!petta_machine_resume_choice(source, choice, &failure)) {
+            if (failure == PETTA_MACHINE_STEP_EXHAUSTED)
+                status = CETTA_CONTINUATION_READY;
+            else if (failure == PETTA_MACHINE_STEP_INVALIDATED)
+                status = CETTA_CONTINUATION_INVALIDATED;
+            else if (failure == PETTA_MACHINE_STEP_CAPACITY)
+                status = CETTA_CONTINUATION_CAPACITY;
+            else
+                status = CETTA_CONTINUATION_UNSUPPORTED;
+            break;
+        }
+        if (petta_choice_exhausted_after_success(choice)) {
+            void *last = NULL;
+            status = petta_continuation_capture(machine, &last);
+            if (status == CETTA_CONTINUATION_READY &&
+                petta_owned_continuation_commit_only_clause(last) &&
+                petta_continuation_payload_array_push(
+                    &successors, &successor_len, &successor_cap,
+                    last)) {
+                status = CETTA_CONTINUATION_READY;
+            } else {
+                petta_owned_continuation_impl_free(last);
+                if (status == CETTA_CONTINUATION_READY)
+                    status = CETTA_CONTINUATION_CAPACITY;
+            }
+            break;
+        }
+    }
+
+    CettaContinuationStatus restored =
+        petta_continuation_restore(machine, &restore_payload);
+    source->stats = baseline_stats;
+    if (restored != CETTA_CONTINUATION_READY) {
+        petta_owned_continuation_impl_free(restore_payload);
+        petta_continuation_payload_array_destroy(
+            successors, successor_len);
+        return petta_machine_note_expansion_status(
+            source, restored, 0u);
+    }
+    if (status != CETTA_CONTINUATION_READY || successor_len == 0u) {
+        petta_continuation_payload_array_destroy(
+            successors, successor_len);
+        return petta_machine_note_expansion_status(
+            source,
+            status == CETTA_CONTINUATION_READY
+                ? CETTA_CONTINUATION_UNSUPPORTED : status,
+            0u);
+    }
+
+    *payloads = successors;
+    *length = successor_len;
+    return petta_machine_note_expansion_status(
+        source, CETTA_CONTINUATION_READY, successor_len);
+}
+
 static const CettaContinuationBackend kPettaContinuationBackend = {
     .capture = petta_continuation_capture,
     .restore = petta_continuation_restore,
     .destroy = petta_continuation_destroy,
     .storage_bytes = petta_continuation_storage_bytes,
+    .expand = petta_relational_continuation_expand,
 };
 
 CettaContinuationMachine petta_machine_continuation_machine(
@@ -8816,6 +9010,20 @@ static void petta_machine_stats_accumulate(
         source->owned_continuation_atom_bytes_captured;
     target->owned_continuation_vector_bytes_captured +=
         source->owned_continuation_vector_bytes_captured;
+    target->owned_continuation_expansion_attempts +=
+        source->owned_continuation_expansion_attempts;
+    target->owned_continuation_expansions +=
+        source->owned_continuation_expansions;
+    target->owned_continuation_expansion_successors +=
+        source->owned_continuation_expansion_successors;
+    target->owned_continuation_expansion_deferred +=
+        source->owned_continuation_expansion_deferred;
+    target->owned_continuation_expansion_unsupported +=
+        source->owned_continuation_expansion_unsupported;
+    target->owned_continuation_expansion_invalidated +=
+        source->owned_continuation_expansion_invalidated;
+    target->owned_continuation_expansion_capacity +=
+        source->owned_continuation_expansion_capacity;
     target->table_lookups += source->table_lookups;
     target->table_hits += source->table_hits;
     target->table_generator_rounds +=

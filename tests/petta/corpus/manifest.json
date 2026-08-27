@@ -2,7 +2,7 @@
   "schema": "cetta-petta-corpus-v1",
   "petta_revision": "43705f5d9ff8958ffe7f0aa6777fb8477f2401f2",
   "run_sh_sha256": "175291accc8004f3721c9286d14323fc8d3d8045a621b841e6041268595ba096",
-  "generator_sha256": "75641e7f71c9aff2ad611baa0701c55d507e090e471cc355130547f6c2a51f8f",
+  "generator_sha256": "4e8e687a57e408330c08dd989dbc09a1bf9e827139b8099701f4274b9b7402d7",
   "normalization": {
     "line_endings": "LF",
     "strip_ansi_csi": true,

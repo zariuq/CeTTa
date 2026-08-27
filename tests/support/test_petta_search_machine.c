@@ -4978,6 +4978,15 @@ static CettaContinuationStatus restore_relational_continuation(
 }
 
 static void test_branch_capture_algebra(void) {
+    CettaSearchControllerPolicy policy =
+        CETTA_SEARCH_CONTROLLER_FIFO;
+    assert(cetta_search_controller_policy_parse(
+        "inline-depth-first", &policy));
+    assert(policy == CETTA_SEARCH_CONTROLLER_INLINE_DEPTH_FIRST);
+    assert(cetta_search_controller_policy_parse("fifo", &policy));
+    assert(policy == CETTA_SEARCH_CONTROLLER_FIFO);
+    assert(!cetta_search_controller_policy_parse("dfs", &policy));
+    assert(!cetta_search_controller_policy_parse("bfs", &policy));
     assert(cetta_branch_capture_weakest(
         CETTA_BRANCH_CAPTURE_MULTI_SHOT,
         CETTA_BRANCH_CAPTURE_ONE_SHOT) ==
@@ -4996,6 +5005,27 @@ static void test_branch_capture_algebra(void) {
         CETTA_BRANCH_CAPTURE_INLINE_ONLY,
         CETTA_BRANCH_STORAGE_OWNED_FRONTIER) ==
         CETTA_BRANCH_STORAGE_INLINE);
+
+    CettaContinuationQueue malformed_queue = {
+        .begin = 1u,
+        .end = 0u,
+    };
+    CettaOwnedContinuation empty;
+    cetta_owned_continuation_init(&empty);
+    assert(!cetta_continuation_queue_push(
+        &malformed_queue, &empty));
+
+    CettaContinuationQueue queue;
+    cetta_continuation_queue_init(&queue);
+    CettaContinuationFrontier malformed_frontier = {
+        .items = calloc(1u, sizeof(*malformed_frontier.items)),
+        .length = 1u,
+    };
+    assert(malformed_frontier.items);
+    assert(!cetta_continuation_queue_push_frontier(
+        &queue, &malformed_frontier));
+    cetta_continuation_frontier_destroy(&malformed_frontier);
+    cetta_continuation_queue_destroy(&queue);
     puts("PASS: branch storage follows capture capacity, not evaluator dialect");
 }
 
@@ -5005,6 +5035,304 @@ static bool permit_owned_continuation_transition(void *opaque) {
         return false;
     state->remaining--;
     return true;
+}
+
+static CettaContinuationStatus expand_relational_frontier(
+    PettaMachine *machine, CettaContinuationFrontier *frontier) {
+    return cetta_continuation_expand(
+        petta_machine_continuation_machine(machine), frontier);
+}
+
+static void test_relational_frontier_expansion(
+    Space *space, Arena *persistent, Arena *answers) {
+    add_clause(
+        space, persistent,
+        "(= (frontier-split-answer) frontier-left)");
+    add_clause(
+        space, persistent,
+        "(= (frontier-split-answer) frontier-right)");
+    SymbolId left_id = symbol_intern_cstr(g_symbols, "frontier-left");
+    SymbolId right_id = symbol_intern_cstr(g_symbols, "frontier-right");
+    assert(left_id != SYMBOL_ID_NONE && right_id != SYMBOL_ID_NONE);
+
+    Atom *query = parse_one(answers, "(frontier-split-answer)");
+    assert(query);
+    OwnedContinuationAuthority authority = {.revision = 11u};
+    PettaMachine machine = {0};
+    CettaContinuationFrontier frontier;
+    cetta_continuation_frontier_init(&frontier);
+    bool expanded = false;
+    for (size_t budget = 1u; budget <= 64u && !expanded; budget++) {
+        authority.remaining = budget;
+        PettaMachineHost host = {
+            .context = &authority,
+            .admit_branch_capture = admit_effect_free_continuation,
+            .permit_transition = permit_owned_continuation_transition,
+        };
+        assert(petta_machine_init(
+            &machine, space, answers, query, NULL, &host));
+        Atom *answer = NULL;
+        Bindings environment;
+        PettaMachineStep step = petta_machine_next(
+            &machine, &answer, &environment);
+        bindings_free(&environment);
+        if (step == PETTA_MACHINE_STEP_SUSPENDED &&
+            expand_relational_frontier(&machine, &frontier) ==
+                CETTA_CONTINUATION_READY) {
+            expanded = true;
+            break;
+        }
+        cetta_continuation_frontier_destroy(&frontier);
+        petta_machine_destroy(&machine);
+    }
+    assert(expanded);
+    assert(frontier.length == 2u);
+    PettaMachineStats expansion_stats;
+    assert(petta_machine_stats(&machine, &expansion_stats));
+    assert(expansion_stats.owned_continuation_expansion_attempts == 1u);
+    assert(expansion_stats.owned_continuation_expansions == 1u);
+    assert(expansion_stats.owned_continuation_expansion_successors == 2u);
+
+    authority.remaining = 128u;
+    Atom *answer = NULL;
+    Bindings environment;
+    assert(petta_machine_next(
+               &machine, &answer, &environment) ==
+           PETTA_MACHINE_STEP_ANSWER);
+    assert(atom_is_symbol_id(answer, left_id));
+    bindings_free(&environment);
+    assert(petta_machine_next(
+               &machine, &answer, &environment) ==
+           PETTA_MACHINE_STEP_ANSWER);
+    assert(atom_is_symbol_id(answer, right_id));
+    bindings_free(&environment);
+    assert(petta_machine_next(
+               &machine, &answer, &environment) ==
+           PETTA_MACHINE_STEP_EXHAUSTED);
+    bindings_free(&environment);
+
+    assert(restore_relational_continuation(
+               &machine, &frontier.items[0]) ==
+           CETTA_CONTINUATION_READY);
+    authority.remaining = 128u;
+    assert(petta_machine_next(
+               &machine, &answer, &environment) ==
+           PETTA_MACHINE_STEP_ANSWER);
+    assert(atom_is_symbol_id(answer, left_id));
+    bindings_free(&environment);
+    assert(petta_machine_next(
+               &machine, &answer, &environment) ==
+           PETTA_MACHINE_STEP_EXHAUSTED);
+    bindings_free(&environment);
+
+    assert(restore_relational_continuation(
+               &machine, &frontier.items[1]) ==
+           CETTA_CONTINUATION_READY);
+    authority.remaining = 128u;
+    assert(petta_machine_next(
+               &machine, &answer, &environment) ==
+           PETTA_MACHINE_STEP_ANSWER);
+    assert(atom_is_symbol_id(answer, right_id));
+    bindings_free(&environment);
+    assert(petta_machine_next(
+               &machine, &answer, &environment) ==
+           PETTA_MACHINE_STEP_EXHAUSTED);
+    bindings_free(&environment);
+
+    cetta_continuation_frontier_destroy(&frontier);
+    petta_machine_destroy(&machine);
+    puts("PASS: relational frontier expansion preserves source and independent successors");
+}
+
+static bool test_fifo_controller_run(
+    PettaMachine *machine, OwnedContinuationAuthority *authority,
+    Atom **answers, size_t answer_capacity, size_t stop_after,
+    size_t round_limit, size_t *answer_count, bool *exhausted) {
+    if (!machine || !machine->impl || !authority ||
+        !answers || answer_capacity == 0u || !answer_count ||
+        !exhausted) {
+        return false;
+    }
+    *answer_count = 0u;
+    *exhausted = false;
+    CettaContinuationQueue queue;
+    cetta_continuation_queue_init(&queue);
+    bool live = true;
+    bool ok = true;
+
+    for (size_t round = 0u; round < round_limit; round++) {
+        if (!live) {
+            CettaOwnedContinuation next;
+            cetta_owned_continuation_init(&next);
+            if (!cetta_continuation_queue_pop(&queue, &next)) {
+                *exhausted = true;
+                break;
+            }
+            if (restore_relational_continuation(machine, &next) !=
+                CETTA_CONTINUATION_READY) {
+                cetta_owned_continuation_destroy(&next);
+                ok = false;
+                break;
+            }
+            live = true;
+        }
+
+        authority->remaining = 1u;
+        Atom *answer = NULL;
+        Bindings environment;
+        PettaMachineStep step = petta_machine_next(
+            machine, &answer, &environment);
+        bindings_free(&environment);
+
+        if (step == PETTA_MACHINE_STEP_ANSWER) {
+            if (*answer_count >= answer_capacity) {
+                ok = false;
+                break;
+            }
+            answers[(*answer_count)++] = answer;
+            CettaOwnedContinuation remainder;
+            cetta_owned_continuation_init(&remainder);
+            if (capture_relational_continuation(
+                    machine, &remainder) !=
+                    CETTA_CONTINUATION_READY ||
+                !cetta_continuation_queue_push(
+                    &queue, &remainder)) {
+                cetta_owned_continuation_destroy(&remainder);
+                ok = false;
+                break;
+            }
+            live = false;
+            if (stop_after && *answer_count >= stop_after)
+                break;
+            continue;
+        }
+        if (step == PETTA_MACHINE_STEP_EXHAUSTED) {
+            live = false;
+            continue;
+        }
+        if (step != PETTA_MACHINE_STEP_SUSPENDED) {
+            ok = false;
+            break;
+        }
+
+        CettaContinuationFrontier frontier;
+        cetta_continuation_frontier_init(&frontier);
+        CettaContinuationStatus expansion =
+            expand_relational_frontier(machine, &frontier);
+        if (expansion == CETTA_CONTINUATION_READY) {
+            if (!cetta_continuation_queue_push_frontier(
+                    &queue, &frontier)) {
+                cetta_continuation_frontier_destroy(&frontier);
+                ok = false;
+                break;
+            }
+        } else if (expansion == CETTA_CONTINUATION_DEFERRED ||
+                   expansion == CETTA_CONTINUATION_UNSUPPORTED) {
+            CettaOwnedContinuation remainder;
+            cetta_owned_continuation_init(&remainder);
+            if (capture_relational_continuation(
+                    machine, &remainder) !=
+                    CETTA_CONTINUATION_READY ||
+                !cetta_continuation_queue_push(
+                    &queue, &remainder)) {
+                cetta_owned_continuation_destroy(&remainder);
+                cetta_continuation_frontier_destroy(&frontier);
+                ok = false;
+                break;
+            }
+            cetta_continuation_frontier_destroy(&frontier);
+        } else {
+            cetta_continuation_frontier_destroy(&frontier);
+            ok = false;
+            break;
+        }
+        live = false;
+    }
+
+    cetta_continuation_queue_destroy(&queue);
+    return ok && (stop_after == 0u ? *exhausted
+                                   : *answer_count >= stop_after);
+}
+
+static void test_fifo_starvation_and_duplicate_canaries(
+    Space *space, Arena *persistent, Arena *answers) {
+    add_clause(
+        space, persistent,
+        "(= (fair-dig $n) (fair-dig (S $n)))");
+    add_clause(
+        space, persistent,
+        "(= (fair-dig $n) (fair-found $n))");
+    Atom *query = parse_one(answers, "(fair-dig Z)");
+    assert(query);
+
+    OwnedContinuationAuthority dfs_budget = {
+        .revision = 21u,
+        .remaining = 256u,
+    };
+    PettaMachineHost dfs_host = {
+        .context = &dfs_budget,
+        .permit_transition = permit_owned_continuation_transition,
+    };
+    PettaMachine machine;
+    assert(petta_machine_init(
+        &machine, space, answers, query, NULL, &dfs_host));
+    Atom *answer = NULL;
+    Bindings environment;
+    assert(petta_machine_next(
+               &machine, &answer, &environment) ==
+           PETTA_MACHINE_STEP_SUSPENDED);
+    bindings_free(&environment);
+    PettaMachineStats stats;
+    assert(petta_machine_stats(&machine, &stats));
+    assert(stats.answers == 0u);
+    petta_machine_destroy(&machine);
+
+    OwnedContinuationAuthority fifo = {.revision = 22u};
+    PettaMachineHost fifo_host = {
+        .context = &fifo,
+        .admit_branch_capture = admit_effect_free_continuation,
+        .permit_transition = permit_owned_continuation_transition,
+    };
+    assert(petta_machine_init(
+        &machine, space, answers, query, NULL, &fifo_host));
+    Atom *fifo_answers[3] = {0};
+    size_t answer_count = 0u;
+    bool exhausted = false;
+    assert(test_fifo_controller_run(
+        &machine, &fifo, fifo_answers, 3u, 3u, 4096u,
+        &answer_count, &exhausted));
+    assert(answer_count == 3u && !exhausted);
+    assert(atom_alpha_eq(
+        fifo_answers[0], parse_one(answers, "(fair-found Z)")));
+    assert(atom_alpha_eq(
+        fifo_answers[1],
+        parse_one(answers, "(fair-found (S Z))")));
+    assert(atom_alpha_eq(
+        fifo_answers[2],
+        parse_one(answers, "(fair-found (S (S Z)))")));
+    petta_machine_destroy(&machine);
+
+    add_clause(
+        space, persistent,
+        "(= (fifo-duplicate) fifo-same)");
+    add_clause(
+        space, persistent,
+        "(= (fifo-duplicate) fifo-same)");
+    Atom *duplicate_query = parse_one(answers, "(fifo-duplicate)");
+    assert(duplicate_query);
+    fifo.revision++;
+    assert(petta_machine_init(
+        &machine, space, answers, duplicate_query, NULL,
+        &fifo_host));
+    Atom *duplicate_answers[4] = {0};
+    assert(test_fifo_controller_run(
+        &machine, &fifo, duplicate_answers, 4u, 0u, 1024u,
+        &answer_count, &exhausted));
+    assert(exhausted && answer_count == 2u);
+    assert(atom_alpha_eq(duplicate_answers[0], duplicate_answers[1]));
+    petta_machine_destroy(&machine);
+
+    puts("PASS: FIFO reaches DFS-starved answers and preserves duplicate occurrences");
 }
 
 static void test_owned_clause_continuation_roundtrip(
@@ -5283,6 +5611,10 @@ int main(void) {
         &space, &persistent, &answers);
     test_branch_capture_algebra();
     test_owned_clause_continuation_roundtrip(
+        &space, &persistent, &answers);
+    test_relational_frontier_expansion(
+        &space, &persistent, &answers);
+    test_fifo_starvation_and_duplicate_canaries(
         &space, &persistent, &answers);
 
     test_native_residual_typecheck(

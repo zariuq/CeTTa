@@ -81,6 +81,8 @@ static __thread CettaLibraryContext *g_library_context = NULL;
  * restores them together, including worker-thread branch evaluation. */
 static __thread CettaLanguageId g_active_language_id = CETTA_LANGUAGE_HE;
 static __thread bool g_active_dependent_telescope = false;
+static __thread CettaSearchControllerPolicy g_active_search_controller =
+    CETTA_SEARCH_CONTROLLER_INLINE_DEPTH_FIRST;
 
 /* `Empty` is a compatibility-lane no-result sentinel.  Prime's choice zero
  * has no occurrence at all, and its `Empty` symbol is ordinary inert data.
@@ -114,6 +116,14 @@ static CettaLibraryContext *eval_swap_library_context(
     g_active_dependent_telescope =
         next && next->session.profile &&
         next->session.profile->enable_dependent_telescope;
+    g_active_search_controller =
+        CETTA_SEARCH_CONTROLLER_INLINE_DEPTH_FIRST;
+    const char *controller = next
+        ? getenv("CETTA_SEARCH_CONTROLLER") : NULL;
+    if (controller) {
+        (void)cetta_search_controller_policy_parse(
+            controller, &g_active_search_controller);
+    }
     return previous;
 }
 static __thread CettaEvalSession g_fallback_eval_session;
@@ -28489,6 +28499,20 @@ typedef struct PettaEvalTransaction {
     PettaProgram *program;
 } PettaEvalTransaction;
 
+typedef struct {
+    uint64_t scheduling_rounds;
+    uint64_t transitions;
+    uint64_t expansions;
+    uint64_t successors;
+    uint64_t captures;
+    uint64_t restores;
+    uint64_t inline_fallbacks;
+    uint64_t answers;
+    size_t maximum_frontier_length;
+    size_t maximum_frontier_atom_bytes;
+    size_t maximum_frontier_vector_bytes;
+} PettaEvalControllerStats;
+
 #if CETTA_BUILD_WITH_PETTA_TYPECHECK_V2
 #define PETTA_TYPECHECK_BOUNDARY_CACHE_SLOTS 64u
 #define PETTA_TYPECHECK_BOUNDARY_PACKED_ARITY 32u
@@ -28519,6 +28543,14 @@ typedef struct {
     bool typecheck_ops;
     uint64_t diagnostic_transition_limit;
     uint64_t diagnostic_transitions_permitted;
+    CettaSearchControllerPolicy controller_policy;
+    bool controller_admitted;
+    bool controller_measure_storage;
+    bool controller_quantum_active;
+    bool controller_quantum_expired;
+    uint64_t controller_quantum_limit;
+    uint64_t controller_quantum_transitions;
+    PettaEvalControllerStats controller_stats;
     PettaEvalTransaction *transaction;
     uint64_t semantic_authority_epoch;
     CettaLibraryContext *library_context;
@@ -29367,6 +29399,11 @@ static bool petta_eval_machine_stats_enabled(void) {
            strcmp(value, "off") != 0;
 }
 
+static CettaSearchControllerPolicy
+petta_eval_search_controller_policy(void) {
+    return g_active_search_controller;
+}
+
 static bool petta_eval_symbol_name_is(
     SymbolId id, const char *name) {
     const char *actual =
@@ -29405,6 +29442,39 @@ static bool petta_eval_machine_semantic_authority_token(
         .length = 4u,
     };
     return true;
+}
+
+static CettaBranchAdmission petta_eval_machine_admit_branch_capture(
+    void *opaque, Space *space) {
+    PettaEvalMachineContext *context = opaque;
+    if (!context || !space || !context->controller_admitted ||
+        context->transaction) {
+        return (CettaBranchAdmission){
+            .status = CETTA_BRANCH_ADMISSION_DEFERRED,
+        };
+    }
+    CettaLibPrologReadToken foreign = {0};
+    if (context->library_context &&
+        context->library_context->lib_prolog) {
+        foreign = cetta_lib_prolog_read_token(
+            context->library_context->lib_prolog);
+    }
+    return (CettaBranchAdmission){
+        .status = CETTA_BRANCH_ADMISSION_AVAILABLE,
+        .capacity = CETTA_BRANCH_CAPTURE_MULTI_SHOT,
+        .authority = {
+            .words = {
+                UINT64_C(0x43455454412d4d41),
+                space_instance_id(space),
+                space_revision(space),
+                context->semantic_authority_epoch,
+                foreign.instance_id,
+                foreign.revision,
+                space_global_mutation_epoch(),
+            },
+            .length = 7u,
+        },
+    };
 }
 
 #if CETTA_BUILD_WITH_PETTA_TYPECHECK_V2
@@ -29753,6 +29823,25 @@ static bool petta_eval_machine_permit_transition(void *context) {
         return false;
     }
     eval_context->diagnostic_transitions_permitted++;
+    return true;
+}
+
+static bool petta_eval_machine_permit_controller_transition(
+    void *context) {
+    PettaEvalMachineContext *eval_context = context;
+    if (!eval_context)
+        return false;
+    if (eval_context->controller_quantum_active &&
+        eval_context->controller_quantum_transitions >=
+            eval_context->controller_quantum_limit) {
+        eval_context->controller_quantum_expired = true;
+        return false;
+    }
+    if (!petta_eval_machine_permit_transition(context))
+        return false;
+    if (eval_context->controller_quantum_active)
+        eval_context->controller_quantum_transitions++;
+    eval_context->controller_stats.transitions++;
     return true;
 }
 
@@ -31768,6 +31857,26 @@ static Atom *petta_eval_machine_prime_relational_subject(
     return expression;
 }
 
+static bool petta_eval_machine_fifo_admits_root(
+    Space *space, Atom *expression) {
+    if (eval_current_language_id() != CETTA_LANGUAGE_PETTA ||
+        !g_library_context || !g_library_context->petta_program ||
+        !space || !expression) {
+        return false;
+    }
+    Atom *subject = petta_eval_machine_prime_relational_subject(
+        expression);
+    SymbolId head = atom_head_symbol_id(subject);
+    if (!subject || subject->kind != ATOM_EXPR ||
+        subject->expr.len == 0u || head == SYMBOL_ID_NONE) {
+        return false;
+    }
+    return petta_program_relation_safety(
+               g_library_context->petta_program, space, head,
+               subject->expr.len - 1u) ==
+           PETTA_RELATION_SAFETY_STATIC;
+}
+
 static bool petta_eval_machine_admits_root(
     Space *space, Arena *arena, Atom *expression, Atom *etype,
     int fuel, const Bindings *environment,
@@ -31965,11 +32074,62 @@ static const char *petta_eval_machine_failure_name(
     return "PettaSearchInternalError";
 }
 
+static void petta_eval_controller_note_frontier(
+    PettaEvalMachineContext *context,
+    const CettaContinuationQueue *queue) {
+    if (!context || !queue)
+        return;
+    size_t length = cetta_continuation_queue_length(queue);
+    if (length > context->controller_stats.maximum_frontier_length)
+        context->controller_stats.maximum_frontier_length = length;
+    if (!context->controller_measure_storage)
+        return;
+    size_t atom_bytes = 0u;
+    size_t vector_bytes = 0u;
+    if (!cetta_continuation_queue_storage_bytes(
+            queue, &atom_bytes, &vector_bytes)) {
+        return;
+    }
+    if (atom_bytes >
+        context->controller_stats.maximum_frontier_atom_bytes) {
+        context->controller_stats.maximum_frontier_atom_bytes =
+            atom_bytes;
+    }
+    if (vector_bytes >
+        context->controller_stats.maximum_frontier_vector_bytes) {
+        context->controller_stats.maximum_frontier_vector_bytes =
+            vector_bytes;
+    }
+}
+
+static bool petta_eval_controller_trace_enabled(void) {
+    const char *value = getenv("CETTA_SEARCH_CONTROLLER_TRACE");
+    return value && value[0] != '\0' && strcmp(value, "0") != 0 &&
+        strcmp(value, "false") != 0 && strcmp(value, "off") != 0;
+}
+
+static PettaMachineStep petta_eval_controller_status_step(
+    CettaContinuationStatus status) {
+    switch (status) {
+    case CETTA_CONTINUATION_INVALIDATED:
+        return PETTA_MACHINE_STEP_INVALIDATED;
+    case CETTA_CONTINUATION_CAPACITY:
+        return PETTA_MACHINE_STEP_CAPACITY;
+    case CETTA_CONTINUATION_READY:
+    case CETTA_CONTINUATION_DEFERRED:
+    case CETTA_CONTINUATION_UNSUPPORTED:
+        return PETTA_MACHINE_STEP_SUSPENDED;
+    }
+    return PETTA_MACHINE_STEP_HOST_ERROR;
+}
+
 static bool petta_eval_machine_try(
     Space *space, Arena *arena, Atom *expression, Atom *etype,
     int fuel, const Bindings *outer_environment,
     bool preserve_bindings, OutcomeSet *outcomes) {
     bool prime_attempt = petta_eval_machine_prime_plan_active();
+    CettaSearchControllerPolicy requested_controller =
+        petta_eval_search_controller_policy();
     if (prime_attempt) {
         cetta_runtime_stats_inc(
             CETTA_RUNTIME_COUNTER_PRIME_RELATIONAL_PLAN_ATTEMPT);
@@ -31983,6 +32143,10 @@ static bool petta_eval_machine_try(
 
     bool prime_machine =
         eval_current_language_id() == CETTA_LANGUAGE_PRIME;
+    bool fifo_requested = requested_controller ==
+        CETTA_SEARCH_CONTROLLER_FIFO;
+    bool fifo_admitted = fifo_requested &&
+        petta_eval_machine_fifo_admits_root(space, expression);
     if (prime_machine) {
         cetta_runtime_stats_inc(
             CETTA_RUNTIME_COUNTER_PRIME_RELATIONAL_PLAN_ADMISSION);
@@ -31997,7 +32161,7 @@ static bool petta_eval_machine_try(
     }
     OutcomeSet staged_outcomes;
     outcome_set_init_with_owner(&staged_outcomes, arena);
-    OutcomeSet *machine_outcomes = prime_machine
+    OutcomeSet *machine_outcomes = prime_machine || fifo_admitted
         ? &staged_outcomes : outcomes;
     bool machine_declined = false;
     __attribute__((cleanup(bindings_free))) Bindings dynamic_environment;
@@ -32028,6 +32192,13 @@ static bool petta_eval_machine_try(
             cetta_petta_profile_admits_native_typecheck_v2(),
         .diagnostic_transition_limit =
             petta_eval_machine_diagnostic_transition_limit(),
+        .controller_policy = fifo_admitted
+            ? CETTA_SEARCH_CONTROLLER_FIFO
+            : CETTA_SEARCH_CONTROLLER_INLINE_DEPTH_FIRST,
+        .controller_admitted = fifo_admitted,
+        .controller_measure_storage =
+            petta_eval_machine_stats_enabled(),
+        .controller_quantum_limit = 1u,
         .semantic_authority_epoch = 1u,
         .library_context = g_library_context,
         .prepared_pure_cache = {
@@ -32064,9 +32235,13 @@ static bool petta_eval_machine_try(
                 cetta_match_decision_compiler_identity(),
         },
         .measure_stats = petta_eval_machine_stats_enabled(),
+        .admit_branch_capture = fifo_admitted
+            ? petta_eval_machine_admit_branch_capture : NULL,
         .quote_is_inert_data = prime_machine,
         .reify_head = g_builtin_syms.reify,
-        .permit_transition = petta_eval_machine_permit_transition,
+        .permit_transition = fifo_admitted
+            ? petta_eval_machine_permit_controller_transition
+            : petta_eval_machine_permit_transition,
         .classify = petta_eval_machine_classify_host,
         .callability_authority_token =
             petta_eval_machine_semantic_authority_token,
@@ -32176,61 +32351,306 @@ static bool petta_eval_machine_try(
         return true;
     }
 
-    for (;;) {
-        Atom *answer = NULL;
-        Bindings environment;
-        PettaMachineStep step =
-            petta_machine_next(&machine, &answer, &environment);
-        if (step == PETTA_MACHINE_STEP_ANSWER) {
-            /*
-             * A closed open-cons chain is machine-internal representation
-             * of the flat list it denotes.  Canonicalize at the answer
-             * boundary so no consumer — space stores, alpha-equality in
-             * test/assert reporting, printed results — ever distinguishes
-             * the two forms the reference cannot distinguish.
-             */
-            answer = petta_flatten_closed_open_cons(arena, answer);
-            outcome_set_add_prefixed(
-                arena, machine_outcomes, answer, &environment,
-                outer_environment, preserve_bindings);
+    if (!fifo_admitted) {
+        /* Keep the canonical inline driver physically separate from owned
+         * frontier scheduling.  In particular, the default loop performs no
+         * controller bookkeeping or conditional checks per transition. */
+        for (;;) {
+            Atom *answer = NULL;
+            Bindings environment;
+            PettaMachineStep step =
+                petta_machine_next(&machine, &answer, &environment);
+            if (step == PETTA_MACHINE_STEP_ANSWER) {
+                answer = petta_flatten_closed_open_cons(arena, answer);
+                outcome_set_add_prefixed(
+                    arena, machine_outcomes, answer, &environment,
+                    outer_environment, preserve_bindings);
+                bindings_free(&environment);
+                continue;
+            }
             bindings_free(&environment);
-            continue;
-        }
-        bindings_free(&environment);
-        if (step == PETTA_MACHINE_STEP_DECLINED) {
-            machine_declined = true;
-            break;
-        }
-        if (step == PETTA_MACHINE_STEP_SUSPENDED) {
-            if (prime_machine) {
+            if (step == PETTA_MACHINE_STEP_DECLINED) {
                 machine_declined = true;
-                cetta_runtime_stats_inc(
-                    CETTA_RUNTIME_COUNTER_PRIME_RELATIONAL_PLAN_SUSPEND_DECLINE);
+                break;
+            }
+            if (step == PETTA_MACHINE_STEP_SUSPENDED) {
+                if (prime_machine) {
+                    machine_declined = true;
+                    cetta_runtime_stats_inc(
+                        CETTA_RUNTIME_COUNTER_PRIME_RELATIONAL_PLAN_SUSPEND_DECLINE);
+                }
+                break;
+            }
+            const char *typecheck_diagnostic =
+                petta_machine_typecheck_diagnostic(&machine);
+            if (typecheck_diagnostic) {
+                fprintf(stderr, "%s\n", typecheck_diagnostic);
+                cetta_eval_session_request_process_exit(
+                    active_eval_session(),
+                    petta_machine_typecheck_exit_code(&machine));
+                break;
+            }
+            const char *failure =
+                petta_eval_machine_failure_name(step);
+            if (failure) {
+                Bindings empty;
+                bindings_init(&empty);
+                outcome_set_add_prefixed(
+                    arena, machine_outcomes,
+                    atom_error(
+                        arena, expression,
+                        atom_symbol(arena, failure)),
+                    prime_machine ? machine_base_environment : &empty,
+                    outer_environment, preserve_bindings);
             }
             break;
         }
-        const char *typecheck_diagnostic =
-            petta_machine_typecheck_diagnostic(&machine);
-        if (typecheck_diagnostic) {
-            fprintf(stderr, "%s\n", typecheck_diagnostic);
-            cetta_eval_session_request_process_exit(
-                active_eval_session(),
-                petta_machine_typecheck_exit_code(&machine));
+    } else {
+        /* FIFO publishes answers in controller order.  Do not buffer a later
+         * answer behind an earlier unfinished branch: that would reproduce
+         * depth-first starvation.  Cross-controller equivalence belongs to a
+         * commutative occurrence-bag readout, not the ordered stream. */
+        CettaContinuationQueue controller_queue;
+        cetta_continuation_queue_init(&controller_queue);
+        bool controller_live = true;
+        bool controller_inline_island = false;
+        for (;;) {
+            if (fifo_admitted && !controller_live) {
+                CettaOwnedContinuation next;
+                cetta_owned_continuation_init(&next);
+                if (!cetta_continuation_queue_pop(
+                        &controller_queue, &next)) {
+                    break;
+                }
+                CettaContinuationStatus restored =
+                    cetta_continuation_restore(
+                        petta_machine_continuation_machine(&machine),
+                        &next);
+                if (restored != CETTA_CONTINUATION_READY) {
+                    cetta_owned_continuation_destroy(&next);
+                    const char *failure = petta_eval_machine_failure_name(
+                        petta_eval_controller_status_step(restored));
+                    if (failure) {
+                        Bindings empty;
+                        bindings_init(&empty);
+                        outcome_set_add_prefixed(
+                            arena, machine_outcomes,
+                            atom_error(
+                                arena, expression,
+                                atom_symbol(arena, failure)),
+                            &empty, outer_environment,
+                            preserve_bindings);
+                    }
+                    break;
+                }
+                context.controller_stats.restores++;
+                if (petta_eval_controller_trace_enabled()) {
+                    fprintf(
+                        stderr,
+                        "[search-controller] restore pending=%zu\n",
+                        cetta_continuation_queue_length(
+                            &controller_queue));
+                }
+                controller_live = true;
+                controller_inline_island = false;
+            }
+            context.controller_quantum_active =
+                fifo_admitted && !controller_inline_island;
+            context.controller_quantum_expired = false;
+            context.controller_quantum_transitions = 0u;
+            if (context.controller_quantum_active)
+                context.controller_stats.scheduling_rounds++;
+            Atom *answer = NULL;
+            Bindings environment;
+            PettaMachineStep step =
+                petta_machine_next(&machine, &answer, &environment);
+            if (step == PETTA_MACHINE_STEP_ANSWER) {
+                /*
+                 * A closed open-cons chain is machine-internal representation
+                 * of the flat list it denotes.  Canonicalize at the answer
+                 * boundary so no consumer — space stores, alpha-equality in
+                 * test/assert reporting, printed results — ever distinguishes
+                 * the two forms the reference cannot distinguish.
+                 */
+                answer = petta_flatten_closed_open_cons(arena, answer);
+                outcome_set_add_prefixed(
+                    arena, machine_outcomes, answer, &environment,
+                    outer_environment, preserve_bindings);
+                bindings_free(&environment);
+                if (fifo_admitted) {
+                    context.controller_stats.answers++;
+                    if (petta_eval_controller_trace_enabled()) {
+                        fputs("[search-controller] answer ", stderr);
+                        atom_print(answer, stderr);
+                        fputc('\n', stderr);
+                    }
+                    if (!controller_inline_island &&
+                        cetta_continuation_queue_length(
+                            &controller_queue) != 0u) {
+                        CettaOwnedContinuation remainder;
+                        cetta_owned_continuation_init(&remainder);
+                        CettaContinuationStatus captured =
+                            cetta_continuation_capture(
+                                petta_machine_continuation_machine(
+                                    &machine),
+                                &remainder);
+                        if (captured == CETTA_CONTINUATION_READY &&
+                            cetta_continuation_queue_push(
+                                &controller_queue, &remainder)) {
+                            context.controller_stats.captures++;
+                            petta_eval_controller_note_frontier(
+                                &context, &controller_queue);
+                            controller_live = false;
+                        } else if (captured ==
+                                       CETTA_CONTINUATION_READY) {
+                            cetta_owned_continuation_destroy(&remainder);
+                            step = PETTA_MACHINE_STEP_CAPACITY;
+                        } else if (captured ==
+                                       CETTA_CONTINUATION_DEFERRED ||
+                                   captured ==
+                                       CETTA_CONTINUATION_UNSUPPORTED) {
+                            cetta_owned_continuation_destroy(&remainder);
+                            context.controller_stats.inline_fallbacks++;
+                            controller_inline_island = true;
+                        } else {
+                            cetta_owned_continuation_destroy(&remainder);
+                            step = petta_eval_controller_status_step(
+                                captured);
+                        }
+                    }
+                    if (step != PETTA_MACHINE_STEP_ANSWER)
+                        goto controller_failure;
+                }
+                continue;
+            }
+            bindings_free(&environment);
+            if (fifo_admitted &&
+                step == PETTA_MACHINE_STEP_EXHAUSTED) {
+                controller_live = false;
+                controller_inline_island = false;
+                continue;
+            }
+            if (step == PETTA_MACHINE_STEP_DECLINED) {
+                machine_declined = true;
+                break;
+            }
+            if (step == PETTA_MACHINE_STEP_SUSPENDED) {
+                if (fifo_admitted &&
+                    context.controller_quantum_expired) {
+                    CettaContinuationFrontier successors;
+                    cetta_continuation_frontier_init(&successors);
+                    CettaContinuationStatus expanded =
+                        cetta_continuation_expand(
+                            petta_machine_continuation_machine(&machine),
+                            &successors);
+                    if (expanded == CETTA_CONTINUATION_READY) {
+                        size_t successor_count = successors.length;
+                        if (!cetta_continuation_queue_push_frontier(
+                                &controller_queue, &successors)) {
+                            cetta_continuation_frontier_destroy(
+                                &successors);
+                            step = PETTA_MACHINE_STEP_CAPACITY;
+                            goto controller_failure;
+                        }
+                        context.controller_stats.expansions++;
+                        context.controller_stats.successors +=
+                            successor_count;
+                        if (petta_eval_controller_trace_enabled()) {
+                            fprintf(
+                                stderr,
+                                "[search-controller] expand successors=%zu"
+                                " pending=%zu\n",
+                                successor_count,
+                                cetta_continuation_queue_length(
+                                    &controller_queue));
+                        }
+                        petta_eval_controller_note_frontier(
+                            &context, &controller_queue);
+                        controller_live = false;
+                        continue;
+                    }
+                    cetta_continuation_frontier_destroy(&successors);
+                    if (expanded == CETTA_CONTINUATION_INVALIDATED ||
+                        expanded == CETTA_CONTINUATION_CAPACITY) {
+                        step = petta_eval_controller_status_step(expanded);
+                        goto controller_failure;
+                    }
+
+                    if (expanded == CETTA_CONTINUATION_DEFERRED &&
+                        cetta_continuation_queue_length(
+                            &controller_queue) == 0u) {
+                        continue;
+                    }
+                    if (expanded == CETTA_CONTINUATION_UNSUPPORTED &&
+                        cetta_continuation_queue_length(
+                            &controller_queue) == 0u) {
+                        context.controller_stats.inline_fallbacks++;
+                        controller_inline_island = true;
+                        continue;
+                    }
+
+                    CettaOwnedContinuation remainder;
+                    cetta_owned_continuation_init(&remainder);
+                    CettaContinuationStatus captured =
+                        cetta_continuation_capture(
+                            petta_machine_continuation_machine(&machine),
+                            &remainder);
+                    if (captured == CETTA_CONTINUATION_READY &&
+                        cetta_continuation_queue_push(
+                            &controller_queue, &remainder)) {
+                        context.controller_stats.captures++;
+                        petta_eval_controller_note_frontier(
+                            &context, &controller_queue);
+                        controller_live = false;
+                        continue;
+                    }
+                    cetta_owned_continuation_destroy(&remainder);
+                    if (captured == CETTA_CONTINUATION_READY) {
+                        step = PETTA_MACHINE_STEP_CAPACITY;
+                        goto controller_failure;
+                    }
+                    if (captured == CETTA_CONTINUATION_DEFERRED ||
+                        captured == CETTA_CONTINUATION_UNSUPPORTED) {
+                        context.controller_stats.inline_fallbacks++;
+                        controller_inline_island = true;
+                        continue;
+                    }
+                    step = petta_eval_controller_status_step(captured);
+                    goto controller_failure;
+                }
+                if (prime_machine) {
+                    machine_declined = true;
+                    cetta_runtime_stats_inc(
+                        CETTA_RUNTIME_COUNTER_PRIME_RELATIONAL_PLAN_SUSPEND_DECLINE);
+                }
+                break;
+            }
+    controller_failure:
+            const char *typecheck_diagnostic =
+                petta_machine_typecheck_diagnostic(&machine);
+            if (typecheck_diagnostic) {
+                fprintf(stderr, "%s\n", typecheck_diagnostic);
+                cetta_eval_session_request_process_exit(
+                    active_eval_session(),
+                    petta_machine_typecheck_exit_code(&machine));
+                break;
+            }
+            const char *failure = petta_eval_machine_failure_name(step);
+            if (failure) {
+                Bindings empty;
+                bindings_init(&empty);
+                outcome_set_add_prefixed(
+                    arena, machine_outcomes,
+                    atom_error(
+                        arena, expression,
+                        atom_symbol(arena, failure)),
+                    prime_machine ? machine_base_environment : &empty,
+                    outer_environment, preserve_bindings);
+            }
             break;
         }
-        const char *failure = petta_eval_machine_failure_name(step);
-        if (failure) {
-            Bindings empty;
-            bindings_init(&empty);
-            outcome_set_add_prefixed(
-                arena, machine_outcomes,
-                atom_error(
-                    arena, expression,
-                    atom_symbol(arena, failure)),
-                prime_machine ? machine_base_environment : &empty,
-                outer_environment, preserve_bindings);
-        }
-        break;
+        context.controller_quantum_active = false;
+        cetta_continuation_queue_destroy(&controller_queue);
     }
     if (petta_eval_machine_stats_enabled()) {
         PettaMachineStats stats;
@@ -32384,6 +32804,13 @@ static bool petta_eval_machine_try(
                 " owned_continuation_restore_invalidated=%" PRIu64
                 " owned_continuation_atom_bytes_captured=%" PRIu64
                 " owned_continuation_vector_bytes_captured=%" PRIu64
+                " owned_continuation_expansion_attempts=%" PRIu64
+                " owned_continuation_expansions=%" PRIu64
+                " owned_continuation_expansion_successors=%" PRIu64
+                " owned_continuation_expansion_deferred=%" PRIu64
+                " owned_continuation_expansion_unsupported=%" PRIu64
+                " owned_continuation_expansion_invalidated=%" PRIu64
+                " owned_continuation_expansion_capacity=%" PRIu64
                 " table_lookups=%" PRIu64
                 " table_hits=%" PRIu64
                 " table_generator_rounds=%" PRIu64
@@ -32563,6 +32990,13 @@ static bool petta_eval_machine_try(
                 stats.owned_continuation_restore_invalidated,
                 stats.owned_continuation_atom_bytes_captured,
                 stats.owned_continuation_vector_bytes_captured,
+                stats.owned_continuation_expansion_attempts,
+                stats.owned_continuation_expansions,
+                stats.owned_continuation_expansion_successors,
+                stats.owned_continuation_expansion_deferred,
+                stats.owned_continuation_expansion_unsupported,
+                stats.owned_continuation_expansion_invalidated,
+                stats.owned_continuation_expansion_capacity,
                 stats.table_lookups,
                 stats.table_hits,
                 stats.table_generator_rounds,
@@ -32598,6 +33032,37 @@ static bool petta_eval_machine_try(
                 stats.first_answer_transition);
         }
     }
+    if (petta_eval_machine_stats_enabled() && fifo_requested) {
+        fprintf(
+            stderr,
+            "CETTA_CONTROLLER_STATS"
+            " requested=fifo admitted=%u active=%s"
+            " scheduling_rounds=%" PRIu64
+            " transitions=%" PRIu64
+            " expansions=%" PRIu64
+            " successors=%" PRIu64
+            " captures=%" PRIu64
+            " restores=%" PRIu64
+            " inline_fallbacks=%" PRIu64
+            " answers=%" PRIu64
+            " max_frontier=%zu"
+            " max_frontier_atom_bytes=%zu"
+            " max_frontier_vector_bytes=%zu\n",
+            fifo_admitted ? 1u : 0u,
+            cetta_search_controller_policy_name(
+                context.controller_policy),
+            context.controller_stats.scheduling_rounds,
+            context.controller_stats.transitions,
+            context.controller_stats.expansions,
+            context.controller_stats.successors,
+            context.controller_stats.captures,
+            context.controller_stats.restores,
+            context.controller_stats.inline_fallbacks,
+            context.controller_stats.answers,
+            context.controller_stats.maximum_frontier_length,
+            context.controller_stats.maximum_frontier_atom_bytes,
+            context.controller_stats.maximum_frontier_vector_bytes);
+    }
     petta_machine_destroy(&machine);
     if (!prime_machine && context.library_context &&
         context.library_context->session.language_id ==
@@ -32613,9 +33078,11 @@ static bool petta_eval_machine_try(
             policy, memo->unique_limit,
             memo->size_limit_bytes);
     }
-    if (prime_machine && !machine_declined) {
-        cetta_runtime_stats_inc(
-            CETTA_RUNTIME_COUNTER_PRIME_RELATIONAL_PLAN_COMMIT);
+    if ((prime_machine || fifo_admitted) && !machine_declined) {
+        if (prime_machine) {
+            cetta_runtime_stats_inc(
+                CETTA_RUNTIME_COUNTER_PRIME_RELATIONAL_PLAN_COMMIT);
+        }
         for (CettaCount index = 0u;
              index < staged_outcomes.len; index++) {
             outcome_set_add_existing_move(
