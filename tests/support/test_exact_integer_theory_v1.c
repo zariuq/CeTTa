@@ -60,7 +60,7 @@ static void standard_theory_gate(TestCounts *counts) {
     (void)expect(
         counts,
         cetta_op_lang_v1_parse_document_file(
-            &document, "langdef/c-subset/exact_integer_theory_v1.metta",
+            &document, "langdef/arithmetic/exact_integer_theory_v1.metta",
             4000000u, 8000000u, &source_status,
             error, sizeof(error)),
         error[0] ? error : "parse standard exact-integer theory");

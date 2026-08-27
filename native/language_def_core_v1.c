@@ -265,6 +265,15 @@ static void ld_pattern_free(CettaLdPatternV1 *pattern) {
     memset(pattern, 0, sizeof(*pattern));
 }
 
+void cetta_ld_pattern_v1_init(CettaLdPatternV1 *pattern) {
+    if (pattern)
+        memset(pattern, 0, sizeof(*pattern));
+}
+
+void cetta_ld_pattern_v1_free(CettaLdPatternV1 *pattern) {
+    ld_pattern_free(pattern);
+}
+
 static void ld_premise_list_free(CettaLdPremiseListV1 *list) {
     uint32_t index;
 

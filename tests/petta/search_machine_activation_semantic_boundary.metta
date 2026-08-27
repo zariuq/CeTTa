@@ -1,6 +1,7 @@
 ; Clause-body activation is an experimental derived Bindings view.  These
 ; cases protect the authoritative materialized path at contextual binders,
-; authored translator rules, and deep recursive chains.
+; authored translator rules, and recursive chains.  The separate
+; recursive_chain_division example and benchmark own the depth ladder.
 
 (: apply (-> Atom %Undefined% %Undefined%))
 (= (apply (lambda $var $body) $arg)
@@ -29,4 +30,4 @@
                   (chain (eval (activation-div $difference $y $next))
                          $answer $answer)))
               $result $result))))
-!(test (chain (eval (activation-div 350 5 0)) $answer $answer) 70)
+!(test (chain (eval (activation-div 100 5 0)) $answer $answer) 20)

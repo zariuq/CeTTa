@@ -15,8 +15,11 @@
 struct CettaJsonRuntimeV1 {
     CettaOperationalLanguageDefV1 wire;
     CettaLanguageDefCoreV1 language;
+    CettaOperationalLanguageDefV1 target_wire;
+    CettaLanguageDefCoreV1 target_language;
     CettaOpLangV1Document profile_document;
     CettaLdParserProfileV1 profile;
+    CettaJsonElaborationPlanV1 elaboration_plan;
     CettaLdParserPackV1 compiled;
     PPNativeV1Prepared prepared;
 };
@@ -32,8 +35,11 @@ static void json_runtime_set_error(char *error_buf, size_t error_buf_size,
 static void json_runtime_init(CettaJsonRuntimeV1 *runtime) {
     cetta_op_lang_v1_init(&runtime->wire);
     cetta_language_def_core_v1_init(&runtime->language);
+    cetta_op_lang_v1_init(&runtime->target_wire);
+    cetta_language_def_core_v1_init(&runtime->target_language);
     cetta_op_lang_v1_document_init(&runtime->profile_document);
     cetta_ld_parser_profile_v1_init(&runtime->profile);
+    cetta_json_elaboration_plan_v1_init(&runtime->elaboration_plan);
     cetta_ld_parser_pack_v1_init(&runtime->compiled);
     ppnative_v1_prepared_init(&runtime->prepared);
 }
@@ -42,8 +48,11 @@ void cetta_json_runtime_v1_free(CettaJsonRuntimeV1 *runtime) {
     if (!runtime) return;
     ppnative_v1_prepared_free(&runtime->prepared);
     cetta_ld_parser_pack_v1_free(&runtime->compiled);
+    cetta_json_elaboration_plan_v1_free(&runtime->elaboration_plan);
     cetta_ld_parser_profile_v1_free(&runtime->profile);
     cetta_op_lang_v1_document_free(&runtime->profile_document);
+    cetta_language_def_core_v1_free(&runtime->target_language);
+    cetta_op_lang_v1_free(&runtime->target_wire);
     cetta_language_def_core_v1_free(&runtime->language);
     cetta_op_lang_v1_free(&runtime->wire);
     free(runtime);
@@ -56,7 +65,7 @@ void cetta_json_runtime_v1_default_limits(CettaJsonRuntimeV1Limits *limits) {
     limits->result_limit = 4096u;
     limits->elaboration_work_limit = 1000000u;
     limits->value_depth_limit = 1024u;
-    limits->qualify_with_glr = false;
+    limits->kernel = CETTA_JSON_KERNEL_V1_PACKED_GLL;
 }
 
 CettaJsonRuntimeV1 *cetta_json_runtime_v1_new(
@@ -64,6 +73,8 @@ CettaJsonRuntimeV1 *cetta_json_runtime_v1_new(
     size_t language_source_len,
     const uint8_t *profile_source,
     size_t profile_source_len,
+    const uint8_t *target_source,
+    size_t target_source_len,
     char *error_buf,
     size_t error_buf_size) {
     CettaJsonRuntimeV1 *runtime = NULL;
@@ -71,13 +82,17 @@ CettaJsonRuntimeV1 *cetta_json_runtime_v1_new(
     CettaLdCoreV1Status core_status = CETTA_LD_CORE_V1_BAD_ARGUMENT;
     CettaLdParserPackV1Status pack_status =
         CETTA_LD_PARSER_PACK_V1_BAD_ARGUMENT;
+    CettaJsonElaborationPlanV1Status plan_status =
+        CETTA_JSON_ELAB_PLAN_V1_BAD_ARGUMENT;
 
     if (error_buf && error_buf_size > 0u) error_buf[0] = '\0';
     if ((!language_source && language_source_len > 0u) ||
         (!profile_source && profile_source_len > 0u) ||
-        language_source_len == 0u || profile_source_len == 0u) {
+        (!target_source && target_source_len > 0u) ||
+        language_source_len == 0u || profile_source_len == 0u ||
+        target_source_len == 0u) {
         json_runtime_set_error(error_buf, error_buf_size,
-                               "missing authored JSON language source");
+                               "missing authored JSON source, profile, or target");
         return NULL;
     }
     runtime = (CettaJsonRuntimeV1 *)calloc(1u, sizeof(*runtime));
@@ -112,6 +127,34 @@ CettaJsonRuntimeV1 *cetta_json_runtime_v1_new(
             (void)snprintf(error_buf, error_buf_size,
                            "invalid JSON parser profile: %s",
                            cetta_ld_parser_pack_v1_status_name(pack_status));
+        }
+        goto failed;
+    }
+    if (!cetta_op_lang_v1_parse_bytes(
+            &runtime->target_wire, target_source, target_source_len,
+            8000000u, 16000000u, &wire_status,
+            error_buf, error_buf_size) ||
+        !cetta_language_def_core_v1_decode(
+            &runtime->target_language, &runtime->target_wire, 2000000u,
+            &core_status, error_buf, error_buf_size)) {
+        if (error_buf && error_buf_size > 0u && error_buf[0] == '\0') {
+            (void)snprintf(error_buf, error_buf_size,
+                           "invalid JSON target LanguageDef: %s",
+                           cetta_op_lang_v1_status_name(wire_status));
+        }
+        goto failed;
+    }
+    if (!cetta_json_elaboration_plan_v1_compile(
+            &runtime->elaboration_plan,
+            &runtime->language, runtime->wire.source_sha256,
+            &runtime->profile,
+            &runtime->target_language, runtime->target_wire.source_sha256,
+            &plan_status, error_buf, error_buf_size)) {
+        if (error_buf && error_buf_size > 0u && error_buf[0] == '\0') {
+            (void)snprintf(
+                error_buf, error_buf_size,
+                "JSON presentations are outside the elaboration profile: %s",
+                cetta_json_elaboration_plan_v1_status_name(plan_status));
         }
         goto failed;
     }
@@ -197,6 +240,7 @@ bool cetta_json_runtime_v1_parse(
     const CettaJsonRuntimeV1Limits *active = limits;
     PPNativeV1Result gll;
     PPNativeV1Result glr;
+    const PPNativeV1Result *selected;
     CettaJsonCstValueV1Status value_status =
         CETTA_JSON_CST_VALUE_V1_BAD_ARGUMENT;
     ArenaMark mark;
@@ -217,34 +261,41 @@ bool cetta_json_runtime_v1_parse(
     if (active->recognizer_work_limit == 0u ||
         active->replay_depth_limit == 0u || active->result_limit == 0u ||
         active->elaboration_work_limit == 0u ||
-        active->value_depth_limit == 0u) {
+        active->value_depth_limit == 0u ||
+        (active->kernel != CETTA_JSON_KERNEL_V1_PACKED_GLL &&
+         active->kernel != CETTA_JSON_KERNEL_V1_PACKED_GLR &&
+         active->kernel != CETTA_JSON_KERNEL_V1_PACKED_GLL_GLR_DUAL)) {
         json_runtime_set_error(error_buf, error_buf_size,
-                               "JSON resource limits must be positive");
+                               "invalid JSON resource limits or kernel package");
         return false;
     }
 
     ppnative_v1_result_init(&gll);
     ppnative_v1_result_init(&glr);
     mark = arena_mark(arena);
-    if (!ppgll_v1_prepared_parse(
-            &runtime->prepared, json_bytes, json_byte_len,
-            active->recognizer_work_limit, active->replay_depth_limit,
-            active->result_limit, &gll, error_buf, error_buf_size)) {
-        if (status) {
-            *status = error_buf && strstr(error_buf, "UTF-8")
-                ? CETTA_JSON_RUNTIME_V1_INVALID_UTF8
-                : CETTA_JSON_RUNTIME_V1_INTERNAL_FAILURE;
+    if (active->kernel == CETTA_JSON_KERNEL_V1_PACKED_GLL ||
+        active->kernel == CETTA_JSON_KERNEL_V1_PACKED_GLL_GLR_DUAL) {
+        if (!ppgll_v1_prepared_parse(
+                &runtime->prepared, json_bytes, json_byte_len,
+                active->recognizer_work_limit, active->replay_depth_limit,
+                active->result_limit, &gll, error_buf, error_buf_size)) {
+            if (status) {
+                *status = error_buf && strstr(error_buf, "UTF-8")
+                    ? CETTA_JSON_RUNTIME_V1_INVALID_UTF8
+                    : CETTA_JSON_RUNTIME_V1_INTERNAL_FAILURE;
+            }
+            goto done;
         }
-        goto done;
+        if (gll.outcome != PPNATIVE_V1_COMPLETED) {
+            if (status) *status = json_parser_outcome_status(gll.outcome);
+            json_runtime_set_error(
+                error_buf, error_buf_size,
+                gll.detail[0] ? gll.detail : "JSON parser resource limit");
+            goto done;
+        }
     }
-    if (gll.outcome != PPNATIVE_V1_COMPLETED) {
-        if (status) *status = json_parser_outcome_status(gll.outcome);
-        json_runtime_set_error(error_buf, error_buf_size,
-                               gll.detail[0] ? gll.detail
-                                             : "JSON parser resource limit");
-        goto done;
-    }
-    if (active->qualify_with_glr) {
+    if (active->kernel == CETTA_JSON_KERNEL_V1_PACKED_GLR ||
+        active->kernel == CETTA_JSON_KERNEL_V1_PACKED_GLL_GLR_DUAL) {
         if (!ppglr_v1_prepared_parse(
                 &runtime->prepared, json_bytes, json_byte_len,
                 active->recognizer_work_limit, active->replay_depth_limit,
@@ -256,6 +307,15 @@ bool cetta_json_runtime_v1_parse(
             }
             goto done;
         }
+        if (glr.outcome != PPNATIVE_V1_COMPLETED) {
+            if (status) *status = json_parser_outcome_status(glr.outcome);
+            json_runtime_set_error(
+                error_buf, error_buf_size,
+                glr.detail[0] ? glr.detail : "JSON parser resource limit");
+            goto done;
+        }
+    }
+    if (active->kernel == CETTA_JSON_KERNEL_V1_PACKED_GLL_GLR_DUAL) {
         if (!json_results_equal(&gll, &glr)) {
             if (status) *status = CETTA_JSON_RUNTIME_V1_BACKEND_DISAGREEMENT;
             json_runtime_set_error(
@@ -264,20 +324,23 @@ bool cetta_json_runtime_v1_parse(
             goto done;
         }
     }
-    if (!gll.accepted) {
+    selected = active->kernel == CETTA_JSON_KERNEL_V1_PACKED_GLR
+        ? &glr : &gll;
+    if (!selected->accepted) {
         if (status) *status = CETTA_JSON_RUNTIME_V1_SYNTAX_REJECTED;
         json_runtime_set_error(error_buf, error_buf_size,
                                "JSON syntax rejected by authored grammar");
         goto done;
     }
-    if (gll.semantic_result_len != 1u) {
+    if (selected->semantic_result_len != 1u) {
         if (status) *status = CETTA_JSON_RUNTIME_V1_AMBIGUOUS;
         json_runtime_set_error(error_buf, error_buf_size,
                                "JSON grammar produced a non-unique semantic result");
         goto done;
     }
     if (!cetta_json_cst_value_v1_elaborate(
-            arena, json_runtime_single_cst(&gll),
+            &runtime->elaboration_plan,
+            arena, json_runtime_single_cst(selected),
             active->elaboration_work_limit, active->value_depth_limit,
             &value, &value_status, error_buf, error_buf_size)) {
         if (status) {
@@ -330,6 +393,17 @@ const char *cetta_json_runtime_v1_profile_digest(
     return runtime ? runtime->compiled.profile_source_sha256 : NULL;
 }
 
+const char *cetta_json_runtime_v1_target_digest(
+    const CettaJsonRuntimeV1 *runtime) {
+    return runtime ? runtime->elaboration_plan.target_sha256 : NULL;
+}
+
+const CettaJsonElaborationPlanV1 *
+cetta_json_runtime_v1_elaboration_plan(
+    const CettaJsonRuntimeV1 *runtime) {
+    return runtime ? &runtime->elaboration_plan : NULL;
+}
+
 const char *cetta_json_runtime_v1_binding_digest(
     const CettaJsonRuntimeV1 *runtime) {
     return runtime ? runtime->compiled.binding_sha256 : NULL;
@@ -357,8 +431,12 @@ const char *cetta_json_runtime_v1_status_name(
     case CETTA_JSON_RUNTIME_V1_BAD_ARGUMENT: return "bad-argument";
     case CETTA_JSON_RUNTIME_V1_INVALID_LANGUAGE_SOURCE:
         return "invalid-language-source";
+    case CETTA_JSON_RUNTIME_V1_INVALID_TARGET_SOURCE:
+        return "invalid-target-source";
     case CETTA_JSON_RUNTIME_V1_OUTSIDE_LANGUAGE_FRAGMENT:
         return "outside-language-fragment";
+    case CETTA_JSON_RUNTIME_V1_OUTSIDE_ELABORATION_PROFILE:
+        return "outside-elaboration-profile";
     case CETTA_JSON_RUNTIME_V1_PREPARATION_FAILURE:
         return "preparation-failure";
     case CETTA_JSON_RUNTIME_V1_INVALID_UTF8: return "invalid-utf8";
@@ -373,6 +451,18 @@ const char *cetta_json_runtime_v1_status_name(
     case CETTA_JSON_RUNTIME_V1_ALLOCATION_FAILURE:
         return "allocation-failure";
     case CETTA_JSON_RUNTIME_V1_INTERNAL_FAILURE: return "internal-failure";
+    }
+    return "unknown";
+}
+
+const char *cetta_json_kernel_v1_name(CettaJsonKernelV1 kernel) {
+    switch (kernel) {
+    case CETTA_JSON_KERNEL_V1_PACKED_GLL:
+        return "packed-gll";
+    case CETTA_JSON_KERNEL_V1_PACKED_GLR:
+        return "packed-glr";
+    case CETTA_JSON_KERNEL_V1_PACKED_GLL_GLR_DUAL:
+        return "packed-gll-glr-dual";
     }
     return "unknown";
 }

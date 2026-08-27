@@ -81,6 +81,15 @@ static void maybe_emit_forest_packet(
     free(wire);
 }
 
+static bool selected_forest_packet_case(const JsonCase *test,
+                                        uint32_t index) {
+    const char *source = getenv("CETTA_JSON_FOREST_WIRE_SOURCE");
+    if (!source)
+        return index == 3u;
+    return strlen(source) == test->len &&
+        memcmp(source, test->bytes, test->len) == 0;
+}
+
 static bool text_is(const CettaLdTextV1 *text, const char *value) {
     size_t len = value ? strlen(value) : 0u;
     return text && value && (size_t)text->len == len &&
@@ -128,7 +137,7 @@ static uint32_t label_occurrences(Atom *term, const char *label) {
     CettaExprLen index;
     if (!term || !label || term->kind != ATOM_EXPR)
         return 0u;
-    if (term->expr.len >= 2u &&
+    if (term->expr.len >= 4u &&
         atom_is_symbol(term->expr.elems[0], "CstRuleV1") &&
         term->expr.elems[1] &&
         term->expr.elems[1]->kind == ATOM_GROUNDED &&
@@ -194,7 +203,7 @@ typedef struct {
     const CettaJsonRuntimeV1 *runtime;
     const char *source;
     const char *expected;
-    bool qualify_with_glr;
+    CettaJsonKernelV1 kernel;
     bool passed;
     char error[512];
 } JsonConcurrentCase;
@@ -209,7 +218,7 @@ static void *json_concurrent_parse(void *opaque) {
     test->error[0] = '\0';
     arena_init(&arena);
     cetta_json_runtime_v1_default_limits(&limits);
-    limits.qualify_with_glr = test->qualify_with_glr;
+    limits.kernel = test->kernel;
     for (iteration = 0u; iteration < 8u; iteration++) {
         ArenaMark mark = arena_mark(&arena);
         CettaJsonRuntimeV1Status status =
@@ -245,17 +254,19 @@ static void *json_concurrent_parse(void *opaque) {
 static void concurrent_runtime_gate(TestCounts *counts,
                                     const CettaJsonRuntimeV1 *runtime) {
     JsonConcurrentCase cases[] = {
-        {runtime, "null", "JsonNullV1", false, false, {0}},
+        {runtime, "null", "JsonNullV1",
+         CETTA_JSON_KERNEL_V1_PACKED_GLL, false, {0}},
         {runtime, "[true,false]",
          "(JsonArrayV1 ((JsonBoolV1 True) (JsonBoolV1 False)))",
-         false, false, {0}},
+         CETTA_JSON_KERNEL_V1_PACKED_GLR, false, {0}},
         {runtime, "{\"x\":1,\"x\":2}",
          "(JsonObjectV1 ((JsonMemberV1 0 (JsonStringV1 ((cp 120))) "
-         "(JsonNumberV1 \"1\")) (JsonMemberV1 1 "
-         "(JsonStringV1 ((cp 120))) (JsonNumberV1 \"2\"))))",
-         true, false, {0}},
+         "(JsonNumberV1 \"1\") (JsonSourceSpanV1 1 6)) "
+         "(JsonMemberV1 1 (JsonStringV1 ((cp 120))) "
+         "(JsonNumberV1 \"2\") (JsonSourceSpanV1 7 12))))",
+         CETTA_JSON_KERNEL_V1_PACKED_GLL_GLR_DUAL, false, {0}},
         {runtime, "\"\xce\xbb\"", "(JsonStringV1 ((cp 955)))",
-         true, false, {0}},
+         CETTA_JSON_KERNEL_V1_PACKED_GLL_GLR_DUAL, false, {0}},
     };
     pthread_t threads[sizeof(cases) / sizeof(cases[0])];
     uint32_t created = 0u;
@@ -312,6 +323,21 @@ static bool load_json_language(CettaOperationalLanguageDefV1 *wire,
         return false;
     }
     return true;
+}
+
+static bool load_json_value_target(CettaOperationalLanguageDefV1 *wire,
+                                   CettaLanguageDefCoreV1 *language,
+                                   char *error, size_t error_size) {
+    CettaOpLangV1Status wire_status = CETTA_OP_LANG_V1_INTERNAL_FAILURE;
+    CettaLdCoreV1Status core_status = CETTA_LD_CORE_V1_BAD_ARGUMENT;
+    return cetta_op_lang_v1_parse_file(
+               wire, "langdef/json/occurrence_preserving_value_v1.metta",
+               12000000u, 24000000u, &wire_status, error, error_size) &&
+        cetta_language_def_core_v1_decode(
+               language, wire, 500000u, &core_status,
+               error, error_size) &&
+        wire_status == CETTA_OP_LANG_V1_OK &&
+        core_status == CETTA_LD_CORE_V1_OK;
 }
 
 static bool load_json_profile(CettaOpLangV1Document *document,
@@ -550,7 +576,7 @@ static void json_corpus_gate(TestCounts *counts,
                     cases[index].expected_member_occurrences,
                 "duplicate JSON members remain distinct CST occurrences");
         }
-        if (ran && index == 3u) {
+        if (ran && selected_forest_packet_case(&cases[index], index)) {
             maybe_emit_forest_packet(
                 counts, "CETTA_JSON_GLL_FOREST_WIRE_OUT", &gll.forest,
                 "emit actual JSON GLL forest qualification packet");
@@ -614,7 +640,8 @@ static void json_corpus_gate(TestCounts *counts,
 }
 
 static void json_semantic_elaboration_gate(
-    TestCounts *counts, const CettaLdParserPackV1 *compiled) {
+    TestCounts *counts, const CettaLdParserPackV1 *compiled,
+    const CettaJsonElaborationPlanV1 *plan) {
     typedef struct {
         const char *source;
         const char *expected;
@@ -665,7 +692,7 @@ static void json_semantic_elaboration_gate(
         (void)expect(
             counts,
             cetta_json_cst_value_v1_elaborate(
-                &values, single_result_cst(&result),
+                plan, &values, single_result_cst(&result),
                 100000u, 1024u, &value, &status,
                 error, sizeof(error)),
             error[0] ? error : cases[index].name);
@@ -699,7 +726,7 @@ static void json_semantic_elaboration_gate(
                 sizeof(duplicate) - 1u, 2000000u, 512u, 4096u,
                 &result, error, sizeof(error)) && result.accepted &&
             cetta_json_cst_value_v1_elaborate(
-                &values, single_result_cst(&result),
+                plan, &values, single_result_cst(&result),
                 100000u, 1024u, &value, &status,
                 error, sizeof(error)),
             error[0] ? error : "elaborate duplicate JSON object");
@@ -712,7 +739,7 @@ static void json_semantic_elaboration_gate(
             members && members->kind == ATOM_EXPR &&
                 members->expr.len == 2u &&
                 members->expr.elems[0]->kind == ATOM_EXPR &&
-                members->expr.elems[0]->expr.len == 4u &&
+                members->expr.elems[0]->expr.len == 5u &&
                 atom_is_symbol(members->expr.elems[0]->expr.elems[0],
                                "JsonMemberV1") &&
                 members->expr.elems[0]->expr.elems[1]->kind ==
@@ -720,8 +747,21 @@ static void json_semantic_elaboration_gate(
                 members->expr.elems[0]->expr.elems[1]->ground.gkind ==
                     GV_INT &&
                 members->expr.elems[0]->expr.elems[1]->ground.ival == 0 &&
-                members->expr.elems[1]->expr.elems[1]->ground.ival == 1,
-            "semantic JSON object retains ordered duplicate occurrence IDs");
+                members->expr.elems[1]->expr.elems[1]->ground.ival == 1 &&
+                members->expr.elems[0]->expr.elems[4]->kind == ATOM_EXPR &&
+                members->expr.elems[0]->expr.elems[4]->expr.len == 3u &&
+                atom_is_symbol(
+                    members->expr.elems[0]->expr.elems[4]->expr.elems[0],
+                    "JsonSourceSpanV1") &&
+                members->expr.elems[0]->expr.elems[4]->expr.elems[1]
+                    ->ground.ival == 1 &&
+                members->expr.elems[0]->expr.elems[4]->expr.elems[2]
+                    ->ground.ival == 6 &&
+                members->expr.elems[1]->expr.elems[4]->expr.elems[1]
+                    ->ground.ival == 7 &&
+                members->expr.elems[1]->expr.elems[4]->expr.elems[2]
+                    ->ground.ival == 12,
+            "semantic JSON object retains ordered duplicate IDs and spans");
         ppnative_v1_result_free(&result);
     }
 
@@ -747,7 +787,7 @@ static void json_semantic_elaboration_gate(
         (void)expect(
             counts,
             !cetta_json_cst_value_v1_elaborate(
-                &values, single_result_cst(&result),
+                plan, &values, single_result_cst(&result),
                 100000u, 1024u, &value, &status,
                 error, sizeof(error)) &&
                 status ==
@@ -758,7 +798,7 @@ static void json_semantic_elaboration_gate(
         (void)expect(
             counts,
             !cetta_json_cst_value_v1_elaborate(
-                &values, single_result_cst(&result),
+                plan, &values, single_result_cst(&result),
                 1u, 1024u, &value, &status,
                 error, sizeof(error)) &&
                 status == CETTA_JSON_CST_VALUE_V1_RESOURCE_LIMIT &&
@@ -831,11 +871,104 @@ static void fail_closed_gate(TestCounts *counts,
         "compiler resource exhaustion is distinct and atomic");
 }
 
+static CettaLdGrammarRuleV1 *json_test_term(
+    CettaLanguageDefCoreV1 *language, const char *label) {
+    uint32_t index;
+    if (!language || !label) return NULL;
+    for (index = 0u; index < language->term_len; index++) {
+        if (text_is(&language->terms[index].label, label))
+            return &language->terms[index];
+    }
+    return NULL;
+}
+
+static void json_elaboration_plan_mutation_gate(
+    TestCounts *counts,
+    CettaOperationalLanguageDefV1 *source_wire,
+    CettaLanguageDefCoreV1 *source,
+    CettaLdParserProfileV1 *profile,
+    CettaOperationalLanguageDefV1 *target_wire,
+    CettaLanguageDefCoreV1 *target,
+    CettaJsonElaborationPlanV1 *admitted) {
+    CettaLdGrammarRuleV1 *member = json_test_term(source, "json:member");
+    CettaLdGrammarRuleV1 *target_member =
+        json_test_term(target, "JsonMemberV1");
+    CettaLdGrammarRuleV1 *target_null =
+        json_test_term(target, "JsonNullV1");
+    CettaJsonElaborationPlanV1Status status =
+        CETTA_JSON_ELAB_PLAN_V1_OK;
+    CettaJsonElaborationPlanV1 reordered;
+    CettaLdTypeExprV1 saved_value_type;
+    CettaLdTextV1 saved_target_label;
+    CettaLdGrammarRuleV1 saved_null;
+    CettaLdGrammarRuleV1 saved_member;
+    char admitted_target_digest[65];
+    char error[512] = {0};
+
+    cetta_json_elaboration_plan_v1_init(&reordered);
+    (void)memcpy(admitted_target_digest, admitted->target_sha256,
+                 sizeof(admitted_target_digest));
+    if (!member || member->param_len != 4u ||
+        !target_member || !target_null) {
+        (void)expect(counts, false,
+                     "locate JSON elaboration mutation canaries");
+        return;
+    }
+
+    saved_value_type = member->params[3].type;
+    member->params[3].type = member->params[0].type;
+    (void)expect(
+        counts,
+        !cetta_json_elaboration_plan_v1_compile(
+            admitted, source, source_wire->source_sha256, profile,
+            target, target_wire->source_sha256,
+            &status, error, sizeof(error)) &&
+            status == CETTA_JSON_ELAB_PLAN_V1_UNSUPPORTED_SOURCE &&
+            strcmp(admitted->target_sha256, admitted_target_digest) == 0,
+        "source parameter mutation rejects without replacing admitted plan");
+    member->params[3].type = saved_value_type;
+
+    saved_target_label = target_member->label;
+    target_member->label = target_null->label;
+    error[0] = '\0';
+    (void)expect(
+        counts,
+        !cetta_json_elaboration_plan_v1_compile(
+            admitted, source, source_wire->source_sha256, profile,
+            target, target_wire->source_sha256,
+            &status, error, sizeof(error)) &&
+            status == CETTA_JSON_ELAB_PLAN_V1_UNSUPPORTED_TARGET &&
+            strcmp(admitted->target_sha256, admitted_target_digest) == 0,
+        "target constructor mutation rejects without replacing admitted plan");
+    target_member->label = saved_target_label;
+
+    saved_null = *target_null;
+    saved_member = *target_member;
+    *target_null = saved_member;
+    *target_member = saved_null;
+    error[0] = '\0';
+    (void)expect(
+        counts,
+        cetta_json_elaboration_plan_v1_compile(
+            &reordered, source, source_wire->source_sha256, profile,
+            target, target_wire->source_sha256,
+            &status, error, sizeof(error)) &&
+            status == CETTA_JSON_ELAB_PLAN_V1_OK &&
+            reordered.target_term_indices[CETTA_JSON_TARGET_NULL_V1] == 6u &&
+            reordered.target_term_indices[CETTA_JSON_TARGET_MEMBER_V1] == 0u,
+        "target term reordering changes retained indices without changing semantics");
+    *target_null = saved_null;
+    *target_member = saved_member;
+    cetta_json_elaboration_plan_v1_free(&reordered);
+}
+
 static void reusable_runtime_gate(TestCounts *counts) {
     uint8_t *language_source = NULL;
     uint8_t *profile_source = NULL;
+    uint8_t *target_source = NULL;
     size_t language_len = 0u;
     size_t profile_len = 0u;
+    size_t target_len = 0u;
     CettaJsonRuntimeV1 *runtime = NULL;
     CettaJsonRuntimeV1Limits limits;
     CettaJsonRuntimeV1Status status = CETTA_JSON_RUNTIME_V1_BAD_ARGUMENT;
@@ -853,11 +986,14 @@ static void reusable_runtime_gate(TestCounts *counts) {
         "langdef/json/rfc8259_syntax_v1.metta", &language_len);
     profile_source = read_source(
         "langdef/json/rfc8259_parser_profile_v1.metta", &profile_len);
-    (void)expect(counts, language_source && profile_source,
+    target_source = read_source(
+        "langdef/json/occurrence_preserving_value_v1.metta", &target_len);
+    (void)expect(counts, language_source && profile_source && target_source,
                  "read authored JSON sources for reusable runtime");
-    if (!language_source || !profile_source) goto done;
+    if (!language_source || !profile_source || !target_source) goto done;
     runtime = cetta_json_runtime_v1_new(
         language_source, language_len, profile_source, profile_len,
+        target_source, target_len,
         error, sizeof(error));
     (void)expect(counts, runtime != NULL,
                  error[0] ? error : "prepare reusable JSON runtime");
@@ -867,6 +1003,7 @@ static void reusable_runtime_gate(TestCounts *counts) {
         cetta_json_runtime_v1_table_build_count(runtime) == 1u &&
             strlen(cetta_json_runtime_v1_language_digest(runtime)) == 64u &&
             strlen(cetta_json_runtime_v1_profile_digest(runtime)) == 64u &&
+            strlen(cetta_json_runtime_v1_target_digest(runtime)) == 64u &&
             strlen(cetta_json_runtime_v1_binding_digest(runtime)) == 64u &&
             strlen(cetta_json_runtime_v1_compiler_contract_digest(runtime)) ==
                 64u &&
@@ -877,7 +1014,7 @@ static void reusable_runtime_gate(TestCounts *counts) {
 
     arena_init(&arena);
     cetta_json_runtime_v1_default_limits(&limits);
-    limits.qualify_with_glr = true;
+    limits.kernel = CETTA_JSON_KERNEL_V1_PACKED_GLL_GLR_DUAL;
     error[0] = '\0';
     (void)expect(
         counts,
@@ -976,6 +1113,29 @@ static void reusable_runtime_gate(TestCounts *counts) {
 
     sentinel = atom_symbol(&arena, "stable-runtime-output");
     value = sentinel;
+    limits.kernel = (CettaJsonKernelV1)99;
+    error[0] = '\0';
+    (void)expect(
+        counts,
+        !cetta_json_runtime_v1_parse(
+            runtime, &arena, (const uint8_t *)"null", 4u,
+            &limits, &value, &status, error, sizeof(error)) &&
+            status == CETTA_JSON_RUNTIME_V1_BAD_ARGUMENT &&
+            value == sentinel,
+        "runtime rejects an unlicensed parser kernel atomically");
+    cetta_json_runtime_v1_default_limits(&limits);
+    (void)expect(
+        counts,
+        limits.kernel == CETTA_JSON_KERNEL_V1_PACKED_GLL &&
+            strcmp(cetta_json_kernel_v1_name(limits.kernel),
+                   "packed-gll") == 0 &&
+            strcmp(cetta_json_kernel_v1_name(
+                       CETTA_JSON_KERNEL_V1_PACKED_GLR),
+                   "packed-glr") == 0 &&
+            strcmp(cetta_json_kernel_v1_name(
+                       CETTA_JSON_KERNEL_V1_PACKED_GLL_GLR_DUAL),
+                   "packed-gll-glr-dual") == 0,
+        "default JSON kernel is one prepared production backend");
     error[0] = '\0';
     (void)expect(
         counts,
@@ -994,6 +1154,7 @@ static void reusable_runtime_gate(TestCounts *counts) {
 done:
     free(json_bytes);
     cetta_json_runtime_v1_free(runtime);
+    free(target_source);
     free(profile_source);
     free(language_source);
 }
@@ -1002,8 +1163,13 @@ int main(void) {
     SymbolTable symbols;
     CettaOperationalLanguageDefV1 wire;
     CettaLanguageDefCoreV1 language;
+    CettaOperationalLanguageDefV1 target_wire;
+    CettaLanguageDefCoreV1 target_language;
     CettaOpLangV1Document profile_document;
     CettaLdParserProfileV1 profile;
+    CettaJsonElaborationPlanV1 elaboration_plan;
+    CettaJsonElaborationPlanV1Status elaboration_status =
+        CETTA_JSON_ELAB_PLAN_V1_BAD_ARGUMENT;
     CettaLdParserPackV1 compiled;
     CettaLdParserPackV1Status status = CETTA_LD_PARSER_PACK_V1_BAD_ARGUMENT;
     TestCounts counts = {0};
@@ -1016,8 +1182,11 @@ int main(void) {
     g_var_intern = NULL;
     cetta_op_lang_v1_init(&wire);
     cetta_language_def_core_v1_init(&language);
+    cetta_op_lang_v1_init(&target_wire);
+    cetta_language_def_core_v1_init(&target_language);
     cetta_op_lang_v1_document_init(&profile_document);
     cetta_ld_parser_profile_v1_init(&profile);
+    cetta_json_elaboration_plan_v1_init(&elaboration_plan);
     cetta_ld_parser_pack_v1_init(&compiled);
 
     (void)expect(
@@ -1031,12 +1200,36 @@ int main(void) {
         load_json_profile(&profile_document, &profile, &status,
                           error, sizeof(error)),
         error[0] ? error : "load authored RFC 8259 parser profile");
+    error[0] = '\0';
+    (void)expect(
+        &counts,
+        load_json_value_target(&target_wire, &target_language,
+                               error, sizeof(error)),
+        error[0] ? error : "load authored occurrence-preserving JSON target");
     (void)expect(
         &counts,
         text_is(&language.name, "RFC8259JsonSyntaxV1") &&
             text_is(&profile.name, "RFC8259JsonParserV1") &&
             text_is(&profile.start_sort, "JsonText"),
         "JSON syntax and lexical profile remain separate authored layers");
+    error[0] = '\0';
+    (void)expect(
+        &counts,
+        cetta_json_elaboration_plan_v1_compile(
+            &elaboration_plan,
+            &language, wire.source_sha256, &profile,
+            &target_language, target_wire.source_sha256,
+            &elaboration_status, error, sizeof(error)) &&
+            elaboration_status == CETTA_JSON_ELAB_PLAN_V1_OK &&
+            elaboration_plan.entry_len == language.term_len +
+                profile.state_len,
+        error[0] ? error :
+            "compile syntax/profile/target-owned JSON elaboration plan");
+    if (elaboration_status == CETTA_JSON_ELAB_PLAN_V1_OK) {
+        json_elaboration_plan_mutation_gate(
+            &counts, &wire, &language, &profile,
+            &target_wire, &target_language, &elaboration_plan);
+    }
 
     compile_and_provenance_gate(
         &counts, &wire, &language, &profile, &compiled);
@@ -1047,19 +1240,24 @@ int main(void) {
     else
         (void)expect(&counts, false,
                      "compiled JSON ParserPack has a start state");
-    if (compiled.start_state)
-        json_semantic_elaboration_gate(&counts, &compiled);
+    if (compiled.start_state &&
+        elaboration_status == CETTA_JSON_ELAB_PLAN_V1_OK)
+        json_semantic_elaboration_gate(
+            &counts, &compiled, &elaboration_plan);
     fail_closed_gate(
         &counts, &wire, &language, &profile, &compiled);
     reusable_runtime_gate(&counts);
 
     printf("(LanguageDefParserPackV1Summary %u %u)\n",
            counts.passed, counts.failed);
+    cetta_json_elaboration_plan_v1_free(&elaboration_plan);
     cetta_ld_parser_pack_v1_free(&compiled);
     cetta_ld_parser_profile_v1_free(&profile);
     cetta_op_lang_v1_document_free(&profile_document);
     cetta_language_def_core_v1_free(&language);
     cetta_op_lang_v1_free(&wire);
+    cetta_language_def_core_v1_free(&target_language);
+    cetta_op_lang_v1_free(&target_wire);
     symbol_table_free(&symbols);
     g_symbols = NULL;
     return counts.failed == 0u ? 0 : 1;

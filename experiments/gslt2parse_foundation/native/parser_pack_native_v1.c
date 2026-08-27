@@ -1751,6 +1751,41 @@ static Atom *ppnative_v1_apply_action(PPNativeV1ReplayContext *context,
     return NULL;
 }
 
+/*
+ * CstRuleV1 is the span-aware node action of the authored scannerless
+ * presentation.  Its action term carries the label and retained children;
+ * the exact half-open span is supplied by the ambient forest symbol whose
+ * production action is being replayed.
+ */
+static Atom *ppnative_v1_materialize_cst_span(
+    PPNativeV1ReplayContext *context,
+    const CettaLpNativeUtf8ForestNode *node,
+    Atom *value) {
+    Atom **items;
+    uint32_t index;
+
+    if (!context || !node || !value || value->kind != ATOM_EXPR ||
+        value->expr.len < 2u ||
+        !atom_is_symbol(value->expr.elems[0], "CstRuleV1")) {
+        return value;
+    }
+    if (node->scalar_left > node->scalar_right) {
+        context->status = PPNATIVE_V1_REPLAY_MALFORMED;
+        return NULL;
+    }
+    items = arena_alloc(
+        context->arena, sizeof(*items) * ((size_t)value->expr.len + 2u));
+    if (!items)
+        return NULL;
+    items[0] = value->expr.elems[0];
+    items[1] = value->expr.elems[1];
+    items[2] = atom_int(context->arena, (int64_t)node->scalar_left);
+    items[3] = atom_int(context->arena, (int64_t)node->scalar_right);
+    for (index = 2u; index < value->expr.len; index++)
+        items[index + 2u] = value->expr.elems[index];
+    return atom_expr(context->arena, items, value->expr.len + 2u);
+}
+
 bool ppnative_v1_apply_action_term(Arena *arena,
                                    Atom *action,
                                    Atom *const *values,
@@ -1960,6 +1995,7 @@ static bool ppnative_v1_replay_stack_push(
 
 static bool ppnative_v1_eval_sequence_ready(
     PPNativeV1ReplayContext *context,
+    const CettaLpNativeUtf8ForestNode *parent,
     const PPNativeV1ReplayProduction *production,
     const PPNativeV1NodeSequence *sequence,
     PPNativeV1CanonicalAtomVec *out) {
@@ -2012,6 +2048,7 @@ static bool ppnative_v1_eval_sequence_ready(
             context, production->action, values, sequence->len, 0u);
         bool advanced = false;
         uint32_t position;
+        value = ppnative_v1_materialize_cst_span(context, parent, value);
         if (!value || !ppnative_v1_canonical_atomvec_push_unique(
                 out, value, context->result_limit, &context->status)) {
             goto done;
@@ -2072,6 +2109,7 @@ static bool ppnative_v1_eval_symbol_ready(
         if (production.item_len == 0u) {
             Atom *value = ppnative_v1_apply_action(
                 context, production.action, NULL, 0u, 0u);
+            value = ppnative_v1_materialize_cst_span(context, node, value);
             if (!value || !ppnative_v1_canonical_atomvec_push_unique(
                     &memo->values, value, context->result_limit,
                     &context->status)) {
@@ -2091,7 +2129,7 @@ static bool ppnative_v1_eval_symbol_ready(
                     &sequences.data[sequence_index];
                 if (sequence->len != production.item_len ||
                     !ppnative_v1_eval_sequence_ready(
-                        context, &production, sequence, &memo->values)) {
+                        context, node, &production, sequence, &memo->values)) {
                     ppnative_v1_sequence_vec_free(&sequences);
                     if (context->status == PPNATIVE_V1_REPLAY_OK)
                         context->status = PPNATIVE_V1_REPLAY_MALFORMED;
