@@ -351,6 +351,17 @@ bool      binding_set_push(BindingSet *bs, const Bindings *b);
 bool      binding_set_push_move(BindingSet *bs, Bindings *b);
 bool      bindings_builder_init(BindingsBuilder *bb, const Bindings *base);
 void      bindings_builder_init_owned(BindingsBuilder *bb, Bindings *owned);
+/* Clone one complete rollback-capable branch state.  The destination owns
+ * independent binding and trail arrays and receives a fresh builder identity;
+ * immutable Atom graphs retain their existing owners until an enclosing
+ * branch image promotes them into its own arena. */
+bool      bindings_builder_clone(BindingsBuilder *dst,
+                                 const BindingsBuilder *src);
+/* Move every Atom-bearing current or rollback state into `owner`.  The
+ * builder arrays remain independently owned.  This is the lifetime boundary
+ * used by a materialized branch image after `bindings_builder_clone`. */
+bool      bindings_builder_promote_atoms_to_arena(
+              BindingsBuilder *bb, Arena *owner);
 void      bindings_builder_free(BindingsBuilder *bb);
 uint32_t  bindings_builder_save(const BindingsBuilder *bb);
 void      bindings_builder_rollback(BindingsBuilder *bb, uint32_t mark);

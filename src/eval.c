@@ -95,6 +95,16 @@ static bool atom_is_legacy_empty_or_error(Atom *atom) {
     return atom_is_error(atom) || atom_is_legacy_empty_sentinel(atom);
 }
 
+/* Prime's explicit choice-zero form is computation, not the datum `Empty`.
+ * Keep its structural recognition shared by the canonical evaluator and
+ * every accelerator admission boundary. */
+static bool atom_is_prime_computation_zero_form(const Atom *atom) {
+    return atom && atom->kind == ATOM_EXPR && atom->expr.len == 1u &&
+           atom->expr.elems[0] &&
+           atom->expr.elems[0]->kind == ATOM_SYMBOL &&
+           atom->expr.elems[0]->sym_id == g_builtin_syms.empty_form;
+}
+
 static CettaLibraryContext *eval_swap_library_context(
     CettaLibraryContext *next) {
     CettaLibraryContext *previous = g_library_context;
@@ -12067,6 +12077,19 @@ static CettaPreparedPureExpressionViewState
 petta_prepared_pure_expression_view(
     const Atom *expression, CettaPreparedPureExpressionView *view);
 
+static CettaPreparedPureExpressionViewState
+prime_prepared_pure_expression_view(
+    const Atom *expression, CettaPreparedPureExpressionView *view);
+
+static CettaPreparedPureExpressionViewFn
+prepared_pure_expression_view_for_language(CettaLanguageId language_id) {
+    if (language_id == CETTA_LANGUAGE_PETTA)
+        return petta_prepared_pure_expression_view;
+    if (language_id == CETTA_LANGUAGE_PRIME)
+        return prime_prepared_pure_expression_view;
+    return NULL;
+}
+
 /* Execute a replay-safe, single-result lexical fold with one precise moving
  * root: the current accumulator.  Step evaluation happens in a resettable
  * nursery; the next accumulator is evacuated into the alternate carry arena
@@ -12143,9 +12166,8 @@ static PreparedFoldResult prepared_foldl_single_result(
             ? petta_prepared_pure_pattern_view
             : NULL;
     CettaPreparedPureExpressionViewFn expression_view =
-        eval_current_language_id() == CETTA_LANGUAGE_PETTA
-            ? petta_prepared_pure_expression_view
-            : NULL;
+        prepared_pure_expression_view_for_language(
+            eval_current_language_id());
     CettaPreparedPureProgram *pure_program =
         cetta_prepared_pure_program_compile(
             s, closed_step,
@@ -12505,8 +12527,7 @@ static PreparedFoldResult prepared_collection_pull_single_result(
         language_id == CETTA_LANGUAGE_PETTA
             ? petta_prepared_pure_pattern_view : NULL;
     CettaPreparedPureExpressionViewFn expression_view =
-        language_id == CETTA_LANGUAGE_PETTA
-            ? petta_prepared_pure_expression_view : NULL;
+        prepared_pure_expression_view_for_language(language_id);
     program = cetta_prepared_pure_program_compile_closed(
         space, closed, CETTA_GSLT_PURE_CALL_CALL_BY_NEED,
         boolean_value, construct_value, opaque_value,
@@ -31725,6 +31746,28 @@ static bool petta_eval_machine_prime_plan_active(void) {
         g_library_context->petta_program;
 }
 
+/* A root first-answer observation owns the same relational episode as its
+ * body.  Classify admission from that body so the search machine can enforce
+ * the existing delimited `once` semantics without first materializing the
+ * body's complete answer bag.  This is a generic readout boundary: it grants
+ * no authority to a particular authored relation or result shape. */
+static Atom *petta_eval_machine_prime_relational_subject(
+    Atom *expression) {
+    if (!expression || expression->kind != ATOM_EXPR ||
+        expression->expr.len == 0u) {
+        return NULL;
+    }
+    if (expression->expr.len == 2u &&
+        atom_is_symbol_id(
+            expression->expr.elems[0], g_builtin_syms.once)) {
+        Atom *body = expression->expr.elems[1];
+        return body && body->kind == ATOM_EXPR &&
+               body->expr.len > 0u
+            ? body : NULL;
+    }
+    return expression;
+}
+
 static bool petta_eval_machine_admits_root(
     Space *space, Arena *arena, Atom *expression, Atom *etype,
     int fuel, const Bindings *environment,
@@ -31748,10 +31791,15 @@ static bool petta_eval_machine_admits_root(
 
     SymbolId head = atom_head_symbol_id(expression);
     if (prime_plan) {
+        Atom *relational_subject =
+            petta_eval_machine_prime_relational_subject(expression);
+        SymbolId relation_head =
+            atom_head_symbol_id(relational_subject);
         if (fuel >= 0 ||
             prime_need_receipt_observer_requested() ||
-            head == SYMBOL_ID_NONE ||
-            !space_equations_may_match_known_head(space, head)) {
+            relation_head == SYMBOL_ID_NONE ||
+            !space_equations_may_match_known_head(
+                space, relation_head)) {
             return false;
         }
 
@@ -31761,32 +31809,36 @@ static bool petta_eval_machine_admits_root(
          * a later call happens to contain evaluated values. */
         bool defined = false;
         CettaGsltQueryEffect effect =
-            space_query_effect_for_head(space, head, &defined);
+            space_query_effect_for_head(
+                space, relation_head, &defined);
         PettaRelationSafety safety = PETTA_RELATION_SAFETY_UNSAFE;
         if (defined &&
             effect == CETTA_GSLT_QUERY_EFFECT_RELATIONAL_QUERY) {
             safety = petta_program_relation_safety(
-                g_library_context->petta_program, space, head,
-                expression->expr.len - 1u);
+                g_library_context->petta_program, space,
+                relation_head,
+                relational_subject->expr.len - 1u);
         }
         if (safety == PETTA_RELATION_SAFETY_UNSAFE)
             return false;
 
         if (!petta_eval_machine_prime_arguments_are_episode_safe(
-                expression)) {
+                relational_subject)) {
             return false;
         }
         if (!petta_eval_machine_prime_prepare_root(
-                space, expression)) {
+                space, relational_subject)) {
             cetta_runtime_stats_inc(
                 CETTA_RUNTIME_COUNTER_PRIME_RELATIONAL_PLAN_VALUE_DECLINE);
             return false;
         }
         if (getenv("CETTA_PRIME_RELATIONAL_MACHINE_TRACE")) {
             fprintf(stderr,
-                    "[prime-relational-machine] head=%s defined=%u"
+                    "[prime-relational-machine] head=%s relation-head=%s"
+                    " defined=%u"
                     " effect=%u relation-safety=%u\n",
                     symbol_bytes(g_symbols, head),
+                    symbol_bytes(g_symbols, relation_head),
                     defined ? 1u : 0u, (unsigned)effect,
                     (unsigned)safety);
         }
@@ -32323,6 +32375,15 @@ static bool petta_eval_machine_try(
                 " choice_nursery_bytes_reclaimed=%" PRIu64
                 " choice_heap_resets=%" PRIu64
                 " choice_heap_bytes_reclaimed=%" PRIu64
+                " owned_continuation_capture_attempts=%" PRIu64
+                " owned_continuation_captures=%" PRIu64
+                " owned_continuation_capture_deferred=%" PRIu64
+                " owned_continuation_capture_unsupported=%" PRIu64
+                " owned_continuation_capture_invalidated=%" PRIu64
+                " owned_continuation_restores=%" PRIu64
+                " owned_continuation_restore_invalidated=%" PRIu64
+                " owned_continuation_atom_bytes_captured=%" PRIu64
+                " owned_continuation_vector_bytes_captured=%" PRIu64
                 " table_lookups=%" PRIu64
                 " table_hits=%" PRIu64
                 " table_generator_rounds=%" PRIu64
@@ -32493,6 +32554,15 @@ static bool petta_eval_machine_try(
                 stats.choice_nursery_bytes_reclaimed,
                 stats.choice_heap_resets,
                 stats.choice_heap_bytes_reclaimed,
+                stats.owned_continuation_capture_attempts,
+                stats.owned_continuation_captures,
+                stats.owned_continuation_capture_deferred,
+                stats.owned_continuation_capture_unsupported,
+                stats.owned_continuation_capture_invalidated,
+                stats.owned_continuation_restores,
+                stats.owned_continuation_restore_invalidated,
+                stats.owned_continuation_atom_bytes_captured,
+                stats.owned_continuation_vector_bytes_captured,
                 stats.table_lookups,
                 stats.table_hits,
                 stats.table_generator_rounds,
@@ -32793,6 +32863,15 @@ petta_prepared_pure_expression_view(
         : CETTA_PREPARED_PURE_EXPRESSION_DEFAULT;
 }
 
+static CettaPreparedPureExpressionViewState
+prime_prepared_pure_expression_view(
+    const Atom *expression, CettaPreparedPureExpressionView *view) {
+    (void)view;
+    return atom_is_prime_computation_zero_form(expression)
+        ? CETTA_PREPARED_PURE_EXPRESSION_DECLINE
+        : CETTA_PREPARED_PURE_EXPRESSION_DEFAULT;
+}
+
 static bool prepared_pure_eager_entry_arguments_are_values(
     Space *space, Arena *arena, Atom *call, int fuel) {
     if (!space || !arena || !call || call->kind != ATOM_EXPR ||
@@ -32905,9 +32984,7 @@ static Atom *prepared_pure_closed_call_try(
             ? petta_prepared_pure_pattern_view
             : NULL;
     CettaPreparedPureExpressionViewFn expression_view =
-        language_id == CETTA_LANGUAGE_PETTA
-            ? petta_prepared_pure_expression_view
-            : NULL;
+        prepared_pure_expression_view_for_language(language_id);
     CettaGsltPureCallMode call_mode =
         language_id == CETTA_LANGUAGE_PRIME
             ? CETTA_GSLT_PURE_CALL_CALL_BY_NEED
@@ -33214,6 +33291,11 @@ tail_call: ;
     const SymbolId head_id = atom_head_symbol_id(atom);
     Atom *head = atom->expr.elems[0];
 
+    if (language_id == CETTA_LANGUAGE_PRIME &&
+        atom_is_prime_computation_zero_form(atom)) {
+        return;
+    }
+
     /* Prime's authored type language is the only MeTTa-facing type-judgment
      * boundary. Internal C judgments stay precise without creating a second
      * executable judgment language. All judgment operands are data. */
@@ -33239,14 +33321,6 @@ tail_call: ;
         head_id == g_builtin_syms.type_colon_prove) {
         prime_public_eval_prove(
             s, a, atom, fuel, CURRENT_ENV, preserve_bindings, os);
-        return;
-    }
-
-    /* Prime represents choice zero by producing no occurrences.  The
-     * explicit `(empty)` form is syntax for that computation; the unrelated
-     * symbol `Empty` remains an ordinary inert datum. */
-    if (language_id == CETTA_LANGUAGE_PRIME &&
-        head_id == g_builtin_syms.empty_form && nargs == 0u) {
         return;
     }
 

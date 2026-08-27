@@ -1,0 +1,15 @@
+; Generated recursive-chain depth benchmark.  The divisor is one, so the
+; dividend is exactly the number of recursive source-level calls.
+
+(= (recursive-depth $remaining $accum)
+   (chain (eval (- $remaining 1)) $next-remaining
+     (chain (eval (< $next-remaining 0)) $finished
+       (chain (unify $finished True
+                $accum
+                (chain (eval (+ 1 $accum)) $next-accum
+                  (chain (eval
+                           (recursive-depth $next-remaining $next-accum))
+                         $answer $answer)))
+              $result $result))))
+
+!(chain (eval (recursive-depth @DEPTH@ 0)) $answer $answer)

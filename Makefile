@@ -2673,6 +2673,7 @@ PRIME_CONFORMANCE_TESTS = \
 	tests/prime/need_storage_boundary.metta \
 	tests/prime/need_quote_preservation.metta \
 	tests/prime/need_sequential_unification_refinement.metta \
+	tests/prime/relational_first_demand.metta \
 	tests/prime/nik_plural_checking.metta \
 	tests/prime/nil_rule_machine_guests.generated.metta \
 	tests/prime/rule_machine_malformed_artifact_delta.metta \
@@ -2748,6 +2749,7 @@ PRIME_EXAMPLE_TESTS = \
 	examples/prime/abstention_boundary.metta \
 	examples/prime/context_tutorial.metta
 PRIME_PRACTICAL_TESTS = \
+	tests/prime/authored_frontier_chaining.metta \
 	tests/prime/practical/typed_pln_chainer.metta \
 	tests/prime/practical/atp_guided_inhabitation.metta \
 	tests/prime/practical/atp_direct_library.metta \
@@ -3232,7 +3234,7 @@ test-bindings-lookup-index: $(BINDINGS_LOOKUP_INDEX_TEST_BIN)
 	@enabled=$$($(call cetta_exec,./$(BINDINGS_LOOKUP_INDEX_TEST_BIN))); \
 	disabled=$$(CETTA_BINDINGS_LOOKUP_INDEX=0 $(call cetta_exec,./$(BINDINGS_LOOKUP_INDEX_TEST_BIN))); \
 	audited=$$(CETTA_BINDINGS_DERIVED_AUDIT=1 $(call cetta_exec,./$(BINDINGS_LOOKUP_INDEX_TEST_BIN))); \
-	expected='(BindingsLookupIndexSummary 126 126 0)'; \
+	expected='(BindingsLookupIndexSummary 128 128 0)'; \
 	printf '%s\n' "$$enabled"; \
 	test "$$enabled" = "$$expected" && test "$$disabled" = "$$expected" && \
 		test "$$audited" = "$$expected"
@@ -15949,7 +15951,7 @@ test-list-lanes: $(BIN)
 bench-list: $(BIN) test-list-lanes
 	@./scripts/bench_list_lanes.py --cetta ./$(BIN)
 
-test: $(BIN) test-python-build-config test-lib-prolog-build-config test-precise-vocabulary test-prime-public-judgment-vocabulary test-manifest-strict test-fail-atomic-build-v1 test-operational-language-def-v1 test-language-def-premise-free-rewriter-v1 test-walters-zantema-da-to-radix-digit-transform-v1 test-walters-zantema-da-to-radix-digit-emitted-c-v1 test-walters-zantema-da-radix-digit-nik-v1 test-exact-arithmetic-to-external-call-v1 test-language-def-core-v1 test-exact-integer-theory-v1 test-json-gslt test-io test-git-module test-symbolid-guard test-variant-shape-roundtrip test-bindings-lookup-index test-atom-deep-copy-iterative test-abt test-rhometta-payload-map-capacity-c test-space-term-universe-membership test-help-flags test-rhocalc test-he-contract-suite test-he-return-contract-correlation test-closed-stream-fastpath test-parse-depth-guard test-stdlib-growth-memory-regression test-rhometta-macro-audit test-eval-gc-adversarial test-list-lanes test-syn-lanes test-lib-prolog test-petta-libpl test-petta-process-text test-match-decision test-petta-search-machine test-petta-semantics test-petta-corpus-manifest-unit test-petta-chainer-manifest-unit test-petta-typecheck-v3-core-langdef-v1 test-petta-typecheck-v3-file-runner-v1 test-petta-typecheck-v3-profile test-gslt-provider-generation-v1 test-gslt-provider-runtime test-prime-nik-core-v1 test-subzero test-mettazero test-gslt-il test-zerouv test-metta-interact test-mm2-gslt-profile-v1
+test: $(BIN) test-python-build-config test-lib-prolog-build-config test-precise-vocabulary test-prime-public-judgment-vocabulary test-manifest-strict test-fail-atomic-build-v1 test-operational-language-def-v1 test-language-def-premise-free-rewriter-v1 test-walters-zantema-da-to-radix-digit-transform-v1 test-walters-zantema-da-to-radix-digit-emitted-c-v1 test-walters-zantema-da-radix-digit-nik-v1 test-exact-arithmetic-to-external-call-v1 test-language-def-core-v1 test-exact-integer-theory-v1 test-json-gslt test-io test-git-module test-symbolid-guard test-variant-shape-roundtrip test-bindings-lookup-index test-atom-deep-copy-iterative test-abt test-rhometta-payload-map-capacity-c test-space-term-universe-membership test-help-flags test-rhocalc test-he-contract-suite test-he-return-contract-correlation test-closed-stream-fastpath test-parse-depth-guard test-stdlib-growth-memory-regression test-rhometta-macro-audit test-eval-gc-adversarial test-list-lanes test-syn-lanes test-lib-prolog test-petta-libpl test-petta-process-text test-match-decision test-petta-search-machine test-petta-semantics test-petta-corpus-manifest-unit test-petta-chainer-manifest-unit test-petta-typecheck-v3-core-langdef-v1 test-petta-typecheck-v3-file-runner-v1 test-petta-typecheck-v3-profile test-gslt-provider-generation-v1 test-gslt-provider-runtime test-prime-nik-core-v1 test-prime-authored-chaining-fixtures test-prime-relational-plan test-subzero test-mettazero test-gslt-il test-zerouv test-metta-interact test-mm2-gslt-profile-v1
 	@pass=0; fail=0; skip=0; no_exp=0; \
 	cache_dir="$(GIT_TEST_CACHE_DIR)"; mkdir -p "$$cache_dir"; export CETTA_GIT_MODULE_CACHE_DIR="$$cache_dir"; \
 	for f in tests/test_*.metta tests/spec_*.metta tests/he_*.metta; do \
@@ -18823,6 +18825,25 @@ test-prime-relational-plan: $(BIN)
 		     <(printf '%s\n' "$$dependent_probe") | head -40; \
 		exit 1; \
 	fi; \
+	for relational_case in \
+		tests/prime/relational_first_demand.metta \
+		tests/prime/authored_frontier_chaining.metta; do \
+		relational_expected=$$(cat "$${relational_case%.metta}.expected"); \
+		relational_canonical=$$(CETTA_PRIME_RELATIONAL_PLAN_REFERENCE=1 \
+			$(CETTA_BIN_INVOKE) --lang prime "$$relational_case" 2>&1); \
+		relational_probe=$$($(CETTA_BIN_INVOKE) \
+			--lang prime "$$relational_case" 2>&1); \
+		relational_slot_reference=$$(CETTA_PETTA_CLAUSE_SLOT_FRAME_REFERENCE=1 \
+			$(CETTA_BIN_INVOKE) --lang prime "$$relational_case" 2>&1); \
+		if [ "$$relational_canonical" != "$$relational_expected" ] || \
+		   [ "$$relational_probe" != "$$relational_expected" ] || \
+		   [ "$$relational_slot_reference" != "$$relational_expected" ]; then \
+			echo "FAIL: Prime relation plan changed $$relational_case"; \
+			diff <(printf '%s\n' "$$relational_canonical") \
+			     <(printf '%s\n' "$$relational_probe") | head -40; \
+			exit 1; \
+		fi; \
+	done; \
 	echo "PASS: Prime relation plans preserve value, demand, effect, fault, rollback, and fuel boundaries"
 
 .PHONY: test-prime-relational-plan-stats
@@ -19799,7 +19820,7 @@ test-prime-native-typed-flow: $(PRIME_LEVEL_TEST_BIN) $(PRIME_REGULAR_KERNEL_TES
 	@"$(PRIME_HOPPER_FOLD_NATIVE_TEST_BIN)"
 	@"$(PRIME_HOPPER_BRANCHING_NATIVE_TEST_BIN)"
 
-test-prime: $(BIN) $(PRIME_REGULAR_KERNEL_TEST_BIN) test-prime-public-judgment-vocabulary test-prime-regular-pattern test-prime-regular-pattern-mutations test-prime-open-lambda-pi-langdef-source-binding-v1 test-prime-open-lambda-pi-langdef-mutations test-prime-open-regular-kernel-source-binding-v1 test-prime-open-regular-kernel-mutations test-prime-coverage test-prime-budget-monotonicity test-prime-package-validation test-prime-internal-graduality test-prime-nik-core-v1 test-prime-nik-typed-applicability-pruning test-prime-regular-kernel-conversion-flip test-prime-regular-kernel-synthesis-flip test-prime-regular-kernel-checking-flip test-prime-regular-kernel-checking-stats test-prime-regular-kernel-formation-flip test-prime-regular-kernel-formation-stats test-prime-regular-kernel-refinement-boundary test-prime-regular-kernel-production-authority test-prime-regular-kernel-resource-honesty test-prime-regular-kernel-recognizer-mutation test-prime-regular-kernel-admission-mutations test-prime-regular-kernel-verdict-polarity-mutations test-prime-producer-bound-native-checking-mutations test-prime-scoped-formation-route-mutation test-prime-declared-conversion-route-mutation test-prime-declared-formation-route-mutation test-prime-typing-engine-fault-separation-mutation test-prime-regular-kernel-constructors test-prime-native-typed-flow test-prime-mil-benchmark-accounting test-prime-mil-native-workloads test-prime-mil-native-claim-guard test-prime-mil-zero-he-applicability-guard test-prime-popper-synthesis-manifest test-prime-hopper-table1-manifest test-prime-chaining-readiness-manifest test-prime-iggp-manifest test-prime-iggp-type-of-inference test-prime-gdl-positive-horn-native
+test-prime: $(BIN) $(PRIME_REGULAR_KERNEL_TEST_BIN) test-prime-public-judgment-vocabulary test-prime-regular-pattern test-prime-regular-pattern-mutations test-prime-open-lambda-pi-langdef-source-binding-v1 test-prime-open-lambda-pi-langdef-mutations test-prime-open-regular-kernel-source-binding-v1 test-prime-open-regular-kernel-mutations test-prime-coverage test-prime-budget-monotonicity test-prime-package-validation test-prime-internal-graduality test-prime-nik-core-v1 test-prime-nik-typed-applicability-pruning test-prime-regular-kernel-conversion-flip test-prime-regular-kernel-synthesis-flip test-prime-regular-kernel-checking-flip test-prime-regular-kernel-checking-stats test-prime-regular-kernel-formation-flip test-prime-regular-kernel-formation-stats test-prime-regular-kernel-refinement-boundary test-prime-regular-kernel-production-authority test-prime-regular-kernel-resource-honesty test-prime-regular-kernel-recognizer-mutation test-prime-regular-kernel-admission-mutations test-prime-regular-kernel-verdict-polarity-mutations test-prime-producer-bound-native-checking-mutations test-prime-scoped-formation-route-mutation test-prime-declared-conversion-route-mutation test-prime-declared-formation-route-mutation test-prime-typing-engine-fault-separation-mutation test-prime-regular-kernel-constructors test-prime-native-typed-flow test-prime-mil-benchmark-accounting test-prime-mil-native-workloads test-prime-mil-native-claim-guard test-prime-mil-zero-he-applicability-guard test-prime-popper-synthesis-manifest test-prime-hopper-table1-manifest test-prime-chaining-readiness-manifest test-prime-iggp-manifest test-prime-iggp-type-of-inference test-prime-gdl-positive-horn-native test-prime-authored-chaining-fixtures
 	@"$(PRIME_REGULAR_KERNEL_TEST_BIN)" \
 		langdef/prime/generated/open_lambda_pi_core_v1.metta \
 		langdef/prime/generated/open_regular_kernel_v1.metta
@@ -19824,6 +19845,49 @@ test-prime: $(BIN) $(PRIME_REGULAR_KERNEL_TEST_BIN) test-prime-public-judgment-v
 	done; \
 	echo "Prime fast gate: $$pass passed, $$fail failed"; \
 	[ $$fail -eq 0 ]
+
+.PHONY: test-prime-authored-chaining-fixtures
+test-prime-authored-chaining-fixtures:
+	@python3 tests/support/test_william_nil_bc.py
+
+.PHONY: example-prime-william-biluk
+example-prime-william-biluk: $(BIN)
+	@test -n "$(INFCONTROL_REPO)" || { \
+		echo 'FAIL: set INFCONTROL_REPO to the pinned infcontrol checkout'; \
+		exit 1; \
+	}
+	@test -n "$(WILLIAM_MODEL_DIR)" || { \
+		echo 'FAIL: set WILLIAM_MODEL_DIR to the pinned WILLIAM model'; \
+		exit 1; \
+	}
+	@actual=$$(INFCONTROL_REPO="$(INFCONTROL_REPO)" \
+		WILLIAM_MODEL_DIR="$(WILLIAM_MODEL_DIR)" \
+		$(CETTA_BIN_INVOKE) --quiet --lang prime \
+		experiments/inference_guidance/william_biluk_authored_frontier.metta \
+		2>&1); \
+	expected=$$(cat \
+		experiments/inference_guidance/william_biluk_authored_frontier.expected); \
+	if [ "$$actual" != "$$expected" ]; then \
+		echo "FAIL: WILLIAM-guided authored proof or kernel verdict drifted"; \
+		diff <(printf '%s\n' "$$expected") \
+		     <(printf '%s\n' "$$actual") | head -40; \
+		exit 1; \
+	fi; \
+	echo "PASS: WILLIAM-guided example proof is independently admitted by Prime"
+
+.PHONY: example-petta-recursive-chain-division
+example-petta-recursive-chain-division: $(BIN)
+	@actual=$$(timeout 20 $(CETTA_BIN_INVOKE) --quiet --lang petta \
+		examples/petta/recursive_chain_division.metta 2>&1); \
+	status=$$?; \
+	expected=$$(cat examples/petta/recursive_chain_division.expected); \
+	if [ "$$status" -ne 0 ] || [ "$$actual" != "$$expected" ]; then \
+		echo "FAIL: recursive-chain division example"; \
+		diff <(printf '%s\n' "$$expected") \
+		     <(printf '%s\n' "$$actual") | head -40; \
+		exit 1; \
+	fi; \
+	echo "PASS: recursive-chain division example"
 
 test-prime-all: test-prime test-prime-relational-plan test-prime-need-algebra \
 	test-prime-need-he-noninterference \
@@ -22103,6 +22167,15 @@ test-petta-search-machine: $(PETTA_SEARCH_MACHINE_TEST_BIN) $(BIN) test-petta-ty
 	mapfile -t gc_binding_apply_calls < <( \
 		sed -n 's/.*binding_apply_calls=\([0-9][0-9]*\).*/\1/p' \
 			"$$gc_scaling_stats"); \
+	mapfile -t gc_binding_apply_allocated < <( \
+		sed -n 's/.*binding_apply_allocated_bytes=\([0-9][0-9]*\).*/\1/p' \
+			"$$gc_scaling_stats"); \
+	mapfile -t gc_binding_apply_epoch_suffix < <( \
+		sed -n 's/.*binding_apply_epoch_suffix_entries=\([0-9][0-9]*\).*/\1/p' \
+			"$$gc_scaling_stats"); \
+	mapfile -t gc_binding_apply_epoch_max_suffix < <( \
+		sed -n 's/.*max_binding_apply_epoch_suffix_entries=\([0-9][0-9]*\).*/\1/p' \
+			"$$gc_scaling_stats"); \
 	gc_collection_accounting_ok=1; \
 	if [ "$${#gc_collections[@]}" -eq 3 ] && \
 	   [ "$${#gc_roots[@]}" -eq 3 ] && \
@@ -22131,16 +22204,34 @@ test-petta-search-machine: $(PETTA_SEARCH_MACHINE_TEST_BIN) $(BIN) test-petta-ty
 	   [ "$${#gc_major[@]}" -ne 3 ] || \
 	   [ "$${#gc_continuation_copies[@]}" -ne 3 ] || \
 	   [ "$${#gc_binding_apply_calls[@]}" -ne 3 ] || \
+	   [ "$${#gc_binding_apply_allocated[@]}" -ne 3 ] || \
+	   [ "$${#gc_binding_apply_epoch_suffix[@]}" -ne 3 ] || \
+	   [ "$${#gc_binding_apply_epoch_max_suffix[@]}" -ne 3 ] || \
 	   [ "$${gc_steps[0]}" -le 0 ] || \
 	   [ "$${gc_heap[0]}" -le 0 ] || \
+	   [ "$${gc_binding_apply_calls[0]}" -le 0 ] || \
+	   [ "$${gc_binding_apply_allocated[0]}" -le 0 ] || \
+	   [ "$${gc_binding_apply_epoch_suffix[0]}" -le 0 ] || \
 	   [ "$${gc_collections[2]}" -le 0 ] || \
 	   [ "$$gc_collection_accounting_ok" -ne 1 ] || \
 	   [ "$${gc_continuation_copies[0]}" -ne 0 ] || \
 	   [ "$${gc_continuation_copies[1]}" -ne 0 ] || \
 	   [ "$${gc_continuation_copies[2]}" -ne 0 ] || \
-	   [ "$${gc_binding_apply_calls[0]}" -gt 256 ] || \
-	   [ "$${gc_binding_apply_calls[1]}" -gt 256 ] || \
-	   [ "$${gc_binding_apply_calls[2]}" -gt 256 ] || \
+	   [ "$${gc_binding_apply_calls[1]}" -gt \
+		"$$((3 * $${gc_binding_apply_calls[0]}))" ] || \
+	   [ "$${gc_binding_apply_calls[2]}" -gt \
+		"$$((3 * $${gc_binding_apply_calls[1]}))" ] || \
+	   [ "$${gc_binding_apply_allocated[1]}" -gt \
+		"$$((3 * $${gc_binding_apply_allocated[0]}))" ] || \
+	   [ "$${gc_binding_apply_allocated[2]}" -gt \
+		"$$((3 * $${gc_binding_apply_allocated[1]}))" ] || \
+	   [ "$${gc_binding_apply_epoch_suffix[1]}" -gt \
+		"$$((3 * $${gc_binding_apply_epoch_suffix[0]}))" ] || \
+	   [ "$${gc_binding_apply_epoch_suffix[2]}" -gt \
+		"$$((3 * $${gc_binding_apply_epoch_suffix[1]}))" ] || \
+	   [ "$${gc_binding_apply_epoch_max_suffix[0]}" -gt 4 ] || \
+	   [ "$${gc_binding_apply_epoch_max_suffix[1]}" -gt 4 ] || \
+	   [ "$${gc_binding_apply_epoch_max_suffix[2]}" -gt 4 ] || \
 	   [ "$${gc_steps[1]}" -gt "$$((3 * $${gc_steps[0]}))" ] || \
 	   [ "$${gc_steps[2]}" -gt "$$((3 * $${gc_steps[1]}))" ] || \
 	   { [ "$${gc_roots[0]}" -gt 0 ] && \
@@ -25479,6 +25570,11 @@ probe-d4-nodup-capability-backends: $(BIN)
 
 bench-compare-petta: $(BIN)
 	@./scripts/bench_compare_cetta_petta.sh
+
+.PHONY: bench-petta-recursive-chain-depth
+bench-petta-recursive-chain-depth: $(BIN)
+	@CETTA_BIN="$(CURDIR)/$(BIN)" \
+		./scripts/bench_petta_recursive_chain_depth.sh
 
 bench-mork-add-interface: $(BIN)
 ifeq ($(MORK_BRIDGE_ACTIVE),1)
