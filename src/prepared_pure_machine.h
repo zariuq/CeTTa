@@ -66,6 +66,7 @@ typedef CettaPreparedPurePatternViewState
 CettaPreparedPureProgram *cetta_prepared_pure_program_compile(
     Space *space, Atom *expression,
     VarId accumulator_var, VarId item_var,
+    CettaGsltPureCallMode call_mode,
     CettaPreparedPureBooleanValue boolean_value,
     CettaPreparedPureConstructValue construct_value,
     CettaPreparedPureOpaqueValue opaque_value,

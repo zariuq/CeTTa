@@ -103,6 +103,25 @@ static void test_term_stability_summary(Arena *arena) {
           "term stability composes and unstable children poison parents");
 }
 
+static void test_internal_tag_structural_summary(Arena *arena) {
+    Atom *plain = atom_expr3(
+        arena, atom_symbol(arena, "PlainStructure"),
+        atom_int(arena, 3), atom_symbol(arena, "leaf"));
+    Atom *tag = atom_internal_tag(
+        arena, CETTA_INTERNAL_TAG_PETTA_OPEN_CONS);
+    Atom *tagged = atom_expr2(
+        arena, atom_symbol(arena, "TaggedStructure"), tag);
+    CHECK(plain && !atom_structural_may_have_internal_tag(plain),
+          "constructor facts prove an ordinary expression has no internal tag");
+    CHECK(tagged && atom_structural_may_have_internal_tag(tagged),
+          "constructor facts propagate an internal tag through expressions");
+
+    Atom unknown = plain ? *plain : (Atom){0};
+    unknown.structural_facts = 0u;
+    CHECK(atom_structural_may_have_internal_tag(&unknown),
+          "missing structural facts conservatively retain the exact walk");
+}
+
 static void test_epoch_identity_and_publication(Arena *ordinary_arena) {
     HashConsTable hashcons;
     hashcons_init(&hashcons);
@@ -161,6 +180,16 @@ static void test_epoch_identity_and_publication(Arena *ordinary_arena) {
     stale_hash->expr.elems[1] = global_int_43;
     CHECK(hashcons_get(&hashcons, stale_hash) == stale_hash,
           "hash-cons publication rejects a stale structural hash");
+    Atom *stale_structural_facts = atom_expr2(
+        ordinary_arena, head, global_int_41);
+    if (stale_structural_facts) {
+        stale_structural_facts->structural_facts |=
+            ATOM_STRUCTURAL_HAS_INTERNAL_TAG;
+    }
+    CHECK(stale_structural_facts &&
+              hashcons_get(&hashcons, stale_structural_facts) ==
+                  stale_structural_facts,
+          "hash-cons publication rejects stale structural facts");
     BindingsBuilder values;
     bool values_ready = bindings_builder_init(&values, NULL);
     uint32_t values_mark = values_ready
@@ -275,6 +304,37 @@ static void test_incremental_occurs_large_frontier(Arena *arena) {
         bindings_builder_free(&builder);
 }
 
+static void test_single_variable_support_summary(Arena *arena) {
+    Atom *head = atom_symbol(arena, "SupportSummary");
+    Atom *left = atom_var_with_id(
+        arena, "support-left", test_id(8700u));
+    Atom *right = atom_var_with_id(
+        arena, "support-right", test_id(8701u));
+    Atom *singleton = atom_expr3(
+        arena, head, left,
+        atom_expr3(arena, head, left, left));
+    Atom *multiple = atom_expr3(arena, head, left, right);
+    Atom *closed = atom_expr2(arena, head, atom_int(arena, 87));
+    CHECK(singleton && atom_has_vars(singleton) &&
+              atom_single_variable_id(singleton) == left->var_id,
+          "nested repeated support records its exact single variable");
+    CHECK(multiple && atom_has_vars(multiple) &&
+              atom_single_variable_id(multiple) == VAR_ID_NONE,
+          "multi-variable support declines the singleton fast path");
+    CHECK(closed && !atom_has_vars(closed) &&
+              atom_single_variable_id(closed) == VAR_ID_NONE,
+          "closed support remains distinct from an open multi-variable term");
+
+    Atom *draft = atom_expr_builder_begin(arena, 2u);
+    if (draft) {
+        draft->expr.elems[0] = head;
+        draft->expr.elems[1] = left;
+        draft = atom_expr_builder_finish(arena, draft);
+    }
+    CHECK(draft && atom_single_variable_id(draft) == left->var_id,
+          "expression builders derive the same singleton support summary");
+}
+
 typedef struct {
     VarId variable;
     uint32_t offset;
@@ -300,6 +360,44 @@ static bool test_epoch_zero_coordinate(
     return true;
 }
 
+static void test_arena_symbol_cache_is_bounded(void) {
+    Arena arena;
+    arena_init(&arena);
+    arena_set_hashcons(&arena, NULL);
+    arena_set_runtime_kind(&arena, CETTA_ARENA_RUNTIME_KIND_EVAL);
+
+    SymbolId first_id = symbol_intern_cstr(
+        g_symbols, "arena-symbol-cache-first");
+    Atom *first = atom_symbol_id(&arena, first_id);
+    size_t cache_bytes = arena.symbol_cache_bytes;
+    Atom *first_again = atom_symbol_id(&arena, first_id);
+    CHECK(first && first_again == first && cache_bytes > 0u,
+          "arena symbol cache reuses an immediate exact symbol lookup");
+
+    bool exact_after_churn = true;
+    for (uint32_t i = 0u; i < 256u; i++) {
+        char name[64];
+        int written = snprintf(
+            name, sizeof(name), "arena-symbol-cache-churn-%u", i);
+        SymbolId id = written > 0 && (size_t)written < sizeof(name)
+            ? symbol_intern_cstr(g_symbols, name) : SYMBOL_ID_NONE;
+        Atom *atom = id != SYMBOL_ID_NONE
+            ? atom_symbol_id(&arena, id) : NULL;
+        if (!atom || atom->kind != ATOM_SYMBOL || atom->sym_id != id) {
+            exact_after_churn = false;
+            break;
+        }
+    }
+    Atom *first_after_churn = atom_symbol_id(&arena, first_id);
+    CHECK(exact_after_churn && first_after_churn &&
+              first_after_churn->kind == ATOM_SYMBOL &&
+              first_after_churn->sym_id == first_id &&
+              arena.symbol_cache_bytes == cache_bytes,
+          "arena symbol cache remains bounded and collisions are exact misses");
+
+    arena_free(&arena);
+}
+
 int main(void) {
     SymbolTable symbols;
     symbol_table_init(&symbols);
@@ -314,8 +412,11 @@ int main(void) {
     arena_init(&arena);
 
     test_term_stability_summary(&arena);
+    test_internal_tag_structural_summary(&arena);
     test_epoch_identity_and_publication(&arena);
+    test_single_variable_support_summary(&arena);
     test_incremental_occurs_large_frontier(&arena);
+    test_arena_symbol_cache_is_bounded();
     const char *lookup_index_setting =
         getenv("CETTA_BINDINGS_LOOKUP_INDEX");
     bool lookup_index_expected =
@@ -1935,6 +2036,44 @@ int main(void) {
     CHECK(view_compiled_bytes < view_reference_bytes,
           "activation-view matching removes complete parser/rule term materialization");
 
+    /* A relational-pattern UNIFY consumes an ordinary live right operand,
+     * not another freshly standardized rule.  Its direct activation view is
+     * exactly materialize-left-then-match, including current variable ids. */
+    BindingsBuilder view_current_reference;
+    BindingsBuilder view_current_compiled;
+    bool view_current_reference_ready = bindings_builder_init(
+        &view_current_reference, &view_base);
+    bool view_current_compiled_ready = bindings_builder_init(
+        &view_current_compiled, &view_base);
+    Arena view_current_reference_arena;
+    Arena view_current_compiled_arena;
+    arena_init(&view_current_reference_arena);
+    arena_init(&view_current_compiled_arena);
+    Atom *view_current_materialized =
+        view_current_reference_ready
+        ? bindings_apply_epoch_then_all(
+              &view_current_reference.current,
+              &view_current_reference_arena,
+              view_left, 37u, view_first_entry)
+        : NULL;
+    bool view_current_reference_match =
+        view_current_materialized &&
+        match_atoms_builder(
+            view_current_materialized, view_right,
+            &view_current_reference);
+    bool view_current_compiled_match =
+        view_current_compiled_ready &&
+        match_atoms_epoch_view_builder_current(
+            view_left, 37u, view_first_entry, view_right,
+            &view_current_compiled,
+            &view_current_compiled_arena);
+    CHECK(view_current_reference_match &&
+              view_current_compiled_match &&
+              bindings_eq(
+                  &view_current_reference.current,
+                  &view_current_compiled.current),
+          "activation view against a live term equals materialize-then-match");
+
     BindingsBuilder view_open_reference;
     BindingsBuilder view_open_compiled;
     Bindings view_open_base;
@@ -2081,6 +2220,58 @@ int main(void) {
               view_fail_reference.current.len == 0u,
           "open activation mismatch rejects and transactionally restores both paths");
 
+    BindingsBuilder view_current_fail_reference;
+    BindingsBuilder view_current_fail_compiled;
+    bool view_current_fail_reference_ready = bindings_builder_init(
+        &view_current_fail_reference, NULL);
+    bool view_current_fail_compiled_ready = bindings_builder_init(
+        &view_current_fail_compiled, NULL);
+    Arena view_current_fail_reference_arena;
+    Arena view_current_fail_compiled_arena;
+    arena_init(&view_current_fail_reference_arena);
+    arena_init(&view_current_fail_compiled_arena);
+    uint32_t view_current_fail_reference_mark =
+        view_current_fail_reference_ready
+        ? bindings_builder_save(&view_current_fail_reference) : 0u;
+    uint32_t view_current_fail_compiled_mark =
+        view_current_fail_compiled_ready
+        ? bindings_builder_save(&view_current_fail_compiled) : 0u;
+    Atom *view_current_fail_materialized =
+        view_current_fail_reference_ready
+        ? bindings_apply_epoch_then_all(
+              &view_current_fail_reference.current,
+              &view_current_fail_reference_arena,
+              view_fail_left, 61u, 0u)
+        : NULL;
+    bool view_current_fail_reference_match =
+        view_current_fail_materialized &&
+        match_atoms_builder(
+            view_current_fail_materialized, view_fail_right,
+            &view_current_fail_reference);
+    bool view_current_fail_compiled_match =
+        view_current_fail_compiled_ready &&
+        match_atoms_epoch_view_builder_current(
+            view_fail_left, 61u, 0u, view_fail_right,
+            &view_current_fail_compiled,
+            &view_current_fail_compiled_arena);
+    if (view_current_fail_reference_ready)
+        bindings_builder_rollback(
+            &view_current_fail_reference,
+            view_current_fail_reference_mark);
+    if (view_current_fail_compiled_ready)
+        bindings_builder_rollback(
+            &view_current_fail_compiled,
+            view_current_fail_compiled_mark);
+    CHECK(!view_current_fail_reference_match &&
+              !view_current_fail_compiled_match &&
+              view_current_fail_reference_ready &&
+              view_current_fail_compiled_ready &&
+              bindings_eq(
+                  &view_current_fail_reference.current,
+                  &view_current_fail_compiled.current) &&
+              view_current_fail_reference.current.len == 0u,
+          "live-term activation mismatch agrees and rolls back exactly");
+
     /* A successful bidirectional walk may expose a cyclic substitution.  The
      * production branch rejects that result before publication, then rolls
      * back.  Exercise the same boundary on the direct and materialized paths. */
@@ -2147,6 +2338,12 @@ int main(void) {
         bindings_builder_free(&view_cycle_compiled);
     if (view_cycle_reference_ready)
         bindings_builder_free(&view_cycle_reference);
+    arena_free(&view_current_fail_compiled_arena);
+    arena_free(&view_current_fail_reference_arena);
+    if (view_current_fail_compiled_ready)
+        bindings_builder_free(&view_current_fail_compiled);
+    if (view_current_fail_reference_ready)
+        bindings_builder_free(&view_current_fail_reference);
     arena_free(&view_fail_compiled_arena);
     arena_free(&view_fail_reference_arena);
     if (view_fail_compiled_ready)
@@ -2167,6 +2364,12 @@ int main(void) {
     if (view_open_reference_ready)
         bindings_builder_free(&view_open_reference);
     bindings_free(&view_open_base);
+    arena_free(&view_current_compiled_arena);
+    arena_free(&view_current_reference_arena);
+    if (view_current_compiled_ready)
+        bindings_builder_free(&view_current_compiled);
+    if (view_current_reference_ready)
+        bindings_builder_free(&view_current_reference);
     arena_free(&view_compiled_arena);
     arena_free(&view_reference_arena);
     if (view_compiled_ready)
@@ -2431,6 +2634,94 @@ int main(void) {
               bindings_has_loop(&indexed_memo_cycle),
           "indexed substitution memo preserves long-cycle termination");
     bindings_free(&indexed_memo_cycle);
+
+    Atom *reach_rollback_predecessor = atom_var(
+        &arena, "single-reach-rollback-predecessor");
+    Atom *reach_rollback_terminal = atom_var(
+        &arena, "single-reach-rollback-terminal");
+    BindingsBuilder reach_rollback;
+    bool reach_rollback_initialized =
+        bindings_builder_init(&reach_rollback, NULL);
+    bool reach_rollback_ready = reach_rollback_initialized;
+    for (uint32_t i = 0u; reach_rollback_ready && i < 23u; i++) {
+        reach_rollback_ready = bindings_builder_add_var_fresh(
+            &reach_rollback, memo_vars[i], memo_vars[i + 1u]);
+    }
+    reach_rollback_ready = reach_rollback_ready &&
+        bindings_builder_add_var_fresh(
+            &reach_rollback, reach_rollback_predecessor,
+            reach_rollback_terminal);
+    uint32_t reach_rollback_mark =
+        bindings_builder_save(&reach_rollback);
+    bool first_suffix_acyclic = reach_rollback_ready &&
+        bindings_builder_add_var_fresh(
+            &reach_rollback, memo_vars[23u], acyclic_leaf) &&
+        bindings_builder_add_var_fresh(
+            &reach_rollback, reach_rollback_terminal,
+            memo_vars[0u]) &&
+        !bindings_has_loop(&reach_rollback.current);
+    bindings_builder_rollback(
+        &reach_rollback, reach_rollback_mark);
+    bool replacement_suffix_cyclic = first_suffix_acyclic &&
+        bindings_builder_add_var_fresh(
+            &reach_rollback, memo_vars[23u],
+            reach_rollback_terminal) &&
+        bindings_builder_add_var_fresh(
+            &reach_rollback, reach_rollback_terminal,
+            memo_vars[0u]) &&
+        bindings_has_loop(&reach_rollback.current);
+    CHECK(replacement_suffix_cyclic,
+          "single-support roots are invalidated before rollback reuses a suffix length");
+    if (reach_rollback_initialized)
+        bindings_builder_free(&reach_rollback);
+
+    Atom *shared_reach_vars[18];
+    Bindings shared_reach_base;
+    bindings_init(&shared_reach_base);
+    bool shared_reach_ready = true;
+    for (uint32_t i = 0u; i < 18u; i++) {
+        char name[40];
+        snprintf(name, sizeof(name), "shared-reach-%u", i);
+        shared_reach_vars[i] = atom_var(&arena, name);
+        shared_reach_ready = shared_reach_ready &&
+            shared_reach_vars[i] != NULL;
+    }
+    for (uint32_t i = 0u; shared_reach_ready && i + 1u < 18u; i++) {
+        shared_reach_ready = bindings_add_var(
+            &shared_reach_base,
+            shared_reach_vars[i], shared_reach_vars[i + 1u]);
+    }
+    shared_reach_ready = shared_reach_ready &&
+        bindings_lookup_id(
+            &shared_reach_base, shared_reach_vars[0]->var_id) != NULL;
+    Bindings shared_reach_cycle;
+    Bindings shared_reach_safe;
+    bindings_init(&shared_reach_cycle);
+    bindings_init(&shared_reach_safe);
+    bool shared_cycle_ready = shared_reach_ready &&
+        bindings_clone(&shared_reach_cycle, &shared_reach_base);
+    bool shared_safe_ready = shared_reach_ready &&
+        bindings_clone(&shared_reach_safe, &shared_reach_base);
+    shared_cycle_ready = shared_cycle_ready &&
+        bindings_add_var(
+            &shared_reach_cycle,
+            shared_reach_vars[17u], shared_reach_vars[0u]);
+    Atom *shared_reach_outside = atom_var(
+        &arena, "shared-reach-outside");
+    shared_safe_ready = shared_safe_ready && shared_reach_outside &&
+        bindings_add_var(
+            &shared_reach_safe,
+            shared_reach_vars[17u], shared_reach_outside);
+    CHECK(shared_cycle_ready &&
+              bindings_has_loop(&shared_reach_cycle),
+          "a read-only shared reachability index still detects a closing cycle");
+    CHECK(shared_safe_ready &&
+              !bindings_has_loop(&shared_reach_safe) &&
+              !bindings_has_loop(&shared_reach_base),
+          "a read-only shared reachability index preserves acyclic siblings");
+    bindings_free(&shared_reach_cycle);
+    bindings_free(&shared_reach_safe);
+    bindings_free(&shared_reach_base);
 
     BindingsBuilder cycle_branch;
     CHECK(bindings_builder_init(&cycle_branch, &cycle),

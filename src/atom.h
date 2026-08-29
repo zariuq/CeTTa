@@ -67,6 +67,7 @@ typedef enum {
     CETTA_INTERNAL_TAG_PETTA_COUNTED_COLLECTION = 2,
     CETTA_INTERNAL_TAG_PRIME_LEXICAL_SLOT = 3,
     CETTA_INTERNAL_TAG_PRIME_LEVEL_PARAMETER = 4,
+    CETTA_INTERNAL_TAG_PETTA_OPEN_CONS = 5,
 } CettaInternalTag;
 
 #define ATOM_FLAG_HAS_VARS 0x01u
@@ -88,12 +89,29 @@ typedef enum {
 #define ATOM_FLAG_HAS_IDENTITY_GROUNDED 0x80u
 #define ATOM_FLAG_HAS_THREAD_LOCAL_RESOURCE 0x100u
 /*
+ * Conservative variable-support summary.  Each variable contributes two of
+ * the otherwise-unused high flag bits; expressions inherit their children's
+ * bits by OR.  A missing bit proves absence, while a collision merely asks the
+ * caller to use its exact traversal.  Keeping this inside `flags` preserves
+ * the Atom layout and makes the summary free to copy with the term.
+ */
+#define ATOM_FLAG_VAR_BLOOM_SHIFT 9u
+#define ATOM_FLAG_VAR_BLOOM_WIDTH 23u
+#define ATOM_FLAG_VAR_BLOOM_MASK UINT32_C(0xFFFFFE00)
+/*
  * Constructor-built atoms establish term-retention stability under the same
  * leaf and child-fold judgment as structural-hash stability.  Keep the
  * semantic name explicit for callers; split the bits before either judgment
  * is widened.  The summary assumes expression children remain immutable.
  */
 #define ATOM_FLAG_TERM_STABLE ATOM_FLAG_HASH_STABLE
+
+/* Exact, constructor-derived structural facts occupy the natural padding
+ * before Atom's payload on 64-bit targets.  The validity bit makes hand-built
+ * or unfinished atoms conservative unknowns rather than false negatives. */
+#define ATOM_STRUCTURAL_FACTS_VALID UINT32_C(0x80000000)
+#define ATOM_STRUCTURAL_HAS_INTERNAL_TAG UINT32_C(0x00000001)
+
 /*
  * VariantShape reserves this VarId prefix for its runtime-private slots.
  * Keeping the namespace test beside VarId lets immutable atoms summarize the
@@ -114,7 +132,15 @@ typedef struct Atom Atom;
 struct Atom {
     AtomKind kind;
     uint32_t flags;
-    VarId var_id;            /* ATOM_VAR only */
+    /*
+     * ATOM_VAR: the variable identity.
+     * ATOM_EXPR: an exact singleton-variable support summary.  A nonzero
+     * value means every variable occurrence in the expression has this id;
+     * zero means either no variables (distinguished by ATOM_FLAG_HAS_VARS)
+     * or support containing more than one id.  The summary is derived from
+     * immutable children and does not change equality or hashing.
+     */
+    VarId var_id;
     SymbolId sym_id;         /* ATOM_SYMBOL, or variable spelling */
     /*
      * Allocation identity, not part of atom equality or hashing.  Arena
@@ -125,6 +151,7 @@ struct Atom {
     uint32_t arena_id;
     Atom *name_key;          /* ATOM_VAR structural spelling, otherwise NULL */
     uint32_t hash_cache;     /* lazily memoized structural hash */
+    uint32_t structural_facts;
     union {
         struct {            /* ATOM_GROUNDED */
             GroundedKind gkind;
@@ -146,6 +173,55 @@ struct Atom {
         } expr;
     };
 };
+
+static inline VarId atom_single_variable_id(const Atom *atom) {
+    if (!atom || (atom->flags & ATOM_FLAG_HAS_VARS) == 0u)
+        return VAR_ID_NONE;
+    if (atom->kind == ATOM_VAR || atom->kind == ATOM_EXPR)
+        return atom->var_id;
+    return VAR_ID_NONE;
+}
+
+static inline bool atom_structural_may_have_internal_tag(
+        const Atom *atom) {
+    return !atom ||
+           (atom->structural_facts & ATOM_STRUCTURAL_FACTS_VALID) == 0u ||
+           (atom->structural_facts &
+            ATOM_STRUCTURAL_HAS_INTERNAL_TAG) != 0u;
+}
+
+static inline bool atom_is_internal_tag(
+        const Atom *atom, CettaInternalTag tag) {
+    return atom && atom->kind == ATOM_GROUNDED &&
+           atom->ground.gkind == GV_INTERNAL_TAG &&
+           atom->ground.ival == (int64_t)tag;
+}
+
+static inline uint32_t atom_var_bloom_for_id(VarId id) {
+    if (id == VAR_ID_NONE)
+        return 0u;
+    uint64_t mixed = (uint64_t)id;
+    mixed ^= mixed >> 33u;
+    mixed *= UINT64_C(0xff51afd7ed558ccd);
+    mixed ^= mixed >> 29u;
+    uint32_t first =
+        (uint32_t)(mixed % ATOM_FLAG_VAR_BLOOM_WIDTH);
+    uint32_t second =
+        (uint32_t)((mixed >> 32u) % ATOM_FLAG_VAR_BLOOM_WIDTH);
+    return (UINT32_C(1) << (ATOM_FLAG_VAR_BLOOM_SHIFT + first)) |
+           (UINT32_C(1) << (ATOM_FLAG_VAR_BLOOM_SHIFT + second));
+}
+
+static inline uint32_t atom_variable_bloom(const Atom *atom) {
+    return atom ? atom->flags & ATOM_FLAG_VAR_BLOOM_MASK : 0u;
+}
+
+static inline bool atom_variable_bloom_may_contain(
+        const Atom *atom, VarId id) {
+    uint32_t required = atom_var_bloom_for_id(id);
+    return required != 0u &&
+           (atom_variable_bloom(atom) & required) == required;
+}
 
 /* ── Arena allocator ────────────────────────────────────────────────────── */
 

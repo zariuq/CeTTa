@@ -2,8 +2,6 @@
 ; This stays small enough for the stats build, but still exercises recursive
 ; user equations rather than the synthetic control drafts.
 
-!(pragma! max-stack-depth 200000)
-
 (= (has-divisor $n $d)
    (if (> (* $d $d) $n)
        False

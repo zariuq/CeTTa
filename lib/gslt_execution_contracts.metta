@@ -223,6 +223,8 @@
   (sort Instruction)
   (instruction grounded-dispatch)
   (instruction deconstruct-nonempty-expression)
+  (instruction construct-expression-cons)
+  (instruction concatenate-expressions)
   (sort OperandDiscipline)
   (operand-discipline strict-all)
   (rule intrinsic-is-pure
@@ -279,7 +281,27 @@
     (= (demand (prepared-fold $step) $item)
        (demand (ordinary-fold $step) $item)))
   (law pattern-operands-are-not-evaluation-contexts
-    (= (effects (control-operand pattern $syntax)) pure)))
+    (= (effects (control-operand pattern $syntax)) pure))
+  (law represented-sequence-fold-equivalence
+    (implies
+      (= (sequence-representation $name)
+         ($materializer $empty $cons))
+      (= (bag-observe
+           (prepared-represented-fold
+             $name $items $initial $step))
+         (bag-observe
+           (ordinary-fold
+             ($materializer $items) $initial $step)))))
+  (law represented-sequence-preserves-occurrence-order
+    (implies
+      (= (sequence-representation $name)
+         ($materializer $empty $cons))
+      (= (occurrence-sequence
+           (prepared-represented-fold
+             $name $items $initial $step))
+         (occurrence-sequence
+           (ordinary-fold
+             ($materializer $items) $initial $step))))))
 
 (gslt determinate-pure-call-continuation
   (sort CallMode)
@@ -389,6 +411,7 @@
   (root-field-kind strong-atom-span)
   (root-field-kind logical-bindings)
   (root-field-kind outcome-set)
+  (root-field-kind variant-instance)
   ; An ephemeron map traces a value exactly when its key was reached by the
   ; strong-root traversal.  Conditional values may expose further keys, so
   ; the generated arm invokes a least-fixed-point visitor.
@@ -406,6 +429,46 @@
     (field live_atoms strong-atom-span)
     (field child_outcomes outcome-set)
     (field parent_outcomes outcome-set))
+  ; Binding evaluation may retry the same input without preserving logical
+  ; substitutions when its first relational call produces no occurrence.
+  ; The input is therefore live across that first call and must move with it.
+  (frame-kind evaluation_retry
+    (field input strong-atom-slot))
+  ; Type discovery may recursively evaluate the subject.  Both sides of the
+  ; judgment remain live until that discovery returns.
+  (frame-kind type_cast_continuation
+    (field subject strong-atom-slot)
+    (field expected_type strong-atom-slot))
+  ; A multi-result let retains the source bag and the caller prefix while one
+  ; branch body runs.  Once enumeration begins, its fresh binder identities
+  ; are shared witnesses across alternatives and cannot be regenerated.
+  ; The prefix is read again when the child's outcomes are merged, so it is
+  ; likewise an owned logical root rather than a transient argument.
+  (frame-kind let_branch_continuation
+    (field canonical strong-atom-slot)
+    (field pattern strong-atom-slot)
+    (field source strong-atom-slot)
+    (field scoped_body strong-atom-slot)
+    (field fresh strong-atom-span)
+    (field prefix logical-bindings)
+    (field source_outcomes outcome-set)
+    (field parent_outcomes outcome-set))
+  ; A multi-result case retains the source occurrence bag and the lexical
+  ; environment while one selected branch runs.  The selected branch has a
+  ; separately projected environment: both views must move, because the
+  ; lexical view is reused for later source occurrences while the branch view
+  ; governs the current continuation.
+  (frame-kind case_branch_continuation
+    (field live_atoms strong-atom-span)
+    (field lexical_env logical-bindings)
+    (field branch_env logical-bindings)
+    (field source_outcomes outcome-set)
+    (field parent_outcomes outcome-set))
+  ; A certified static superposition walker retains only its unvisited
+  ; occurrences.  Cursor-backed and effectful producers require richer
+  ; frames and are deliberately not inhabitants of this root shape.
+  (frame-kind static_branch_walk
+    (field pending strong-atom-span))
   (frame-kind function_args
     (field orig_arg strong-atom-slot)
     (field arg_type strong-atom-slot)
@@ -420,6 +483,49 @@
     (field arg_types strong-atom-span)
     (field prefix strong-atom-span)
     (field outcomes outcome-set))
+  ; The typed dispatcher retains more than the argument machine itself while
+  ; a head or argument is evaluated: overload and return-contract arrays,
+  ; accumulated errors, prior function results, and the caller's published
+  ; outcomes.  This frame makes that complete continuation explicit before
+  ; its lexical evaluator frame may be marked as precisely suspended.
+  (frame-kind typed_application_continuation
+    (field live_atoms strong-atom-span)
+    (field overload_types strong-atom-span)
+    (field return_contracts strong-atom-span)
+    (field applicability_errors strong-atom-span)
+    (field argument_types strong-atom-span)
+    (field function_results outcome-set)
+    (field heads outcome-set)
+    (field parent_outcomes outcome-set))
+  ; The synchronous structural observer remains a lawful fallback when the
+  ; managed Prime stack cannot own its caller's result set.  Its recursive
+  ; calls may cross collection points, so the source, partially rebuilt
+  ; constructor, branch environment, and both result bags form one exact
+  ; continuation rather than an opaque native-stack region.
+  (frame-kind observation_normalization
+    (field source strong-atom-slot)
+    (field value strong-atom-slot)
+    (field children strong-atom-span)
+    (field env logical-bindings)
+    (field child_outcomes outcome-set)
+    (field parent_outcomes outcome-set))
+  ; Tuple interpretation is an explicit Cartesian-product machine.  Its
+  ; frames carry both logical substitutions and delayed variant witnesses;
+  ; both are part of the continuation and must move with the arena.
+  (frame-kind tuple_frame
+    (field env logical-bindings)
+    (field sub outcome-set)
+    (field merged logical-bindings)
+    (field active logical-bindings)
+    (field prefix_variant variant-instance)
+    (field active_variant variant-instance))
+  (frame-kind tuple_machine
+    (field continuation_atoms strong-atom-span)
+    (field orig_elems strong-atom-span)
+    (field prefix strong-atom-span)
+    (field env logical-bindings)
+    (field outcomes outcome-set)
+    (field parent_outcomes outcome-set))
   (frame-kind prime_task
     (field atom strong-atom-slot)
     (field etype strong-atom-slot)
@@ -436,6 +542,13 @@
     (field normalization_children strong-atom-span)
     (field env logical-bindings)
     (field child outcome-set)
+    (field equation_roots strong-atom-span)
+    (field equation_work outcome-set)
+    (field equation_current outcome-set)
+    (field equation_raw outcome-set)
+    (field equation_residuals outcome-set)
+    (field equation_publication outcome-set)
+    (field equation_worlds outcome-set)
     (field target outcome-set))
   (frame-kind prime_driver
     (field root_target outcome-set))
@@ -523,13 +636,56 @@
   (register-head >= 2 boolean integer-greater-equal)
   (register-head numeric-eq 2 boolean integer-equal)
   (prepared-pure-intrinsic-head
+    / 2 strict-all grounded-dispatch)
+  (prepared-pure-intrinsic-head
     abs-math 1 strict-all grounded-dispatch)
   (prepared-pure-intrinsic-head
+    car-atom 1 strict-all grounded-dispatch)
+  (prepared-pure-intrinsic-head
+    cdr-atom 1 strict-all grounded-dispatch)
+  (prepared-pure-intrinsic-head
+    size-atom 1 strict-all grounded-dispatch)
+  (prepared-pure-intrinsic-head
+    index-atom 2 strict-all grounded-dispatch)
+  (prepared-pure-intrinsic-head
+    unique-atom 1 strict-all grounded-dispatch)
+  (prepared-pure-intrinsic-head
+    remove-all-atom 2 strict-all grounded-dispatch)
+  (prepared-pure-intrinsic-head
+    sort-atom 1 strict-all grounded-dispatch)
+  (prepared-pure-intrinsic-head
+    sort-numbers-atom 1 strict-all grounded-dispatch)
+  (prepared-pure-intrinsic-head
+    retain-top-k-keyed-atom 2 strict-all grounded-dispatch)
+  (prepared-pure-intrinsic-head
+    unkey-atom 1 strict-all grounded-dispatch)
+  (prepared-pure-intrinsic-head
+    range-atom 1 strict-all grounded-dispatch)
+  (prepared-pure-intrinsic-head
+    range-atom 2 strict-all grounded-dispatch)
+  (prepared-pure-intrinsic-head
+    repeat-atom 2 strict-all grounded-dispatch)
+  (prepared-pure-intrinsic-head
     decons-atom 1 strict-all deconstruct-nonempty-expression)
+  (prepared-pure-intrinsic-head
+    cons-atom 2 strict-all construct-expression-cons)
+  (prepared-pure-intrinsic-head
+    union-atom 2 strict-all concatenate-expressions)
   (fold-control-head let 3 bind)
   (fold-control-head if 3 branch)
   (fold-control-head eval 1 evaluate)
   (fold-control-head function 1 evaluate)
+  (sequence-representation clist clist:to-list ClistNil ClistCons)
+  (sequence-fold-consumer clist clist:foldl 5 0)
+  (sequence-fold-target clist list:foldl)
+  (sequence-erasure
+    clist clist:from-list identity unwrap 1 1)
+  (sequence-erasure
+    clist clist:append list:append recursive-all 2 2)
+  (sequence-erasure
+    clist clist:range list:range scalar-all 1 2)
+  (sequence-erasure
+    clist clist:repeat list:repeat scalar-all 2 2)
   (owned-local Bindings bindings_init bindings_free))
 
 (fixtures relational-admission

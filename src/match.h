@@ -36,6 +36,13 @@ typedef struct {
     */
     uint8_t cycle_state;
     /*
+     * Monotone conservative summary of variable ids occurring in binding
+     * values.  Three bytes occupy the former alignment padding.  Rollback and
+     * deletion may leave extra bits (a performance-only false positive), but
+     * every live value's bits must remain present.
+     */
+    uint8_t rhs_variable_bloom[3];
+    /*
      * Derived count of entries that participate in the legacy spelling-keyed
      * lookup relation.  Modern VarId-only environments keep this at zero, so
      * a failed identity lookup never scans the whole environment merely to
@@ -223,6 +230,10 @@ bool      bindings_promote_logical_atoms_with_session(
               Bindings *bindings, AtomDeepCopySession *session);
 bool      bindings_logical_atoms_closed_for_arena(
               const Bindings *bindings, const Arena *arena);
+/* Conservative support query over the logical substitution carrier only.
+ * Prime occurrence state is intentionally excluded: callers use this to
+ * decide whether a visible continuation can retain a registry capability. */
+bool      bindings_logical_has_registry_refs(const Bindings *bindings);
 size_t    bindings_entry_active_bytes(void);
 size_t    bindings_constraint_active_bytes(void);
 void      bindings_thread_cache_free(void);
@@ -511,6 +522,15 @@ bool match_atoms_epoch_view_builder(
          Atom *left_original, uint32_t left_epoch,
          uint32_t left_first_entry, Atom *right_original,
          BindingsBuilder *bb, Arena *a, uint32_t right_epoch);
+/* Match the same activation-local source view against an ordinary live term.
+ * Unlike `match_atoms_epoch_view_builder`, the right operand keeps its current
+ * variable identities.  This is the demand-driven equivalent of applying the
+ * activation environment to the left source and then calling
+ * match_atoms_builder. */
+bool match_atoms_epoch_view_builder_current(
+         Atom *left_original, uint32_t left_epoch,
+         uint32_t left_first_entry, Atom *right,
+         BindingsBuilder *bb, Arena *a);
 /* Exact matcher for the same activation view when its finite source-variable
  * inventory has already been resolved into dense slots. */
 bool match_atoms_dense_epoch_view_builder(

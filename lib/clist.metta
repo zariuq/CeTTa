@@ -83,7 +83,11 @@
      (list:filter (clist:to-list $list) $var $body)))
 
 (= (clist:foldl $list $init $acc $item $step)
-   (list:foldl (clist:to-list $list) $init $acc $item $step))
+   (function
+     (chain (context-space) $space
+       (eval
+         (_minimal-foldl-sequence
+           clist $list $init $acc $item $step $space)))))
 
 (= (clist:range $end)
    (clist:from-list (list:range $end)))

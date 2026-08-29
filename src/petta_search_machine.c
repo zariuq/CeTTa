@@ -579,6 +579,8 @@ typedef struct {
     bool choice;
 } PettaMachineTraceConfig;
 
+typedef struct PettaContinuationTermPool PettaContinuationTermPool;
+
 struct PettaMachineImpl {
     uint64_t instance_id;
     Space *space;
@@ -591,6 +593,10 @@ struct PettaMachineImpl {
      */
     Arena heap;
     Arena tenured;
+    /* Immutable term graphs restored from the controller remain in one
+     * append-only pool shared by the live machine and its latent siblings.
+     * Branch-local vectors and bindings retain independent ownership. */
+    PettaContinuationTermPool *continuation_term_pool;
     CettaGsltGroundDenseWorkspaceV1 equation_template_c0_workspace;
     PettaActivationFrameCacheEntry
         activation_frames[PETTA_ACTIVATION_FRAME_CACHE_CAP];
@@ -659,12 +665,27 @@ struct PettaMachineImpl {
     PettaMachineStats stats;
 };
 
-typedef struct PettaOwnedContinuationImpl {
+struct PettaContinuationTermPool {
+    _Atomic size_t references;
+    _Atomic size_t reclaim_after_bytes;
+    Arena owner;
+};
+
+typedef struct {
     uint64_t source_machine_instance;
     SpaceReadToken space_read;
     CettaBranchAuthorityToken capture_authority;
-    Arena owner;
+} PettaContinuationAuthorityComponent;
+
+typedef struct {
+    PettaContinuationTermPool *pool;
+} PettaContinuationTermComponent;
+
+typedef struct {
     BindingsBuilder bindings;
+} PettaContinuationBindingComponent;
+
+typedef struct {
     PettaGoal *goals;
     size_t goal_len;
     size_t goal_initialized_len;
@@ -673,11 +694,19 @@ typedef struct PettaOwnedContinuationImpl {
     size_t goal_trail_len;
     PettaChoice *choices;
     size_t choice_len;
+    uint64_t next_goal_instance;
+    uint64_t binding_growth_collect_after;
+} PettaContinuationControlComponent;
+
+typedef struct {
     PettaVisibleVariable *visible;
     size_t visible_len;
     PettaTypeObligation *type_obligations;
     size_t type_obligation_len;
     uint64_t next_type_obligation_id;
+} PettaContinuationObligationComponent;
+
+typedef struct {
     Atom *query;
     Atom *answer_variable;
     Atom *raised_error;
@@ -688,8 +717,15 @@ typedef struct PettaOwnedContinuationImpl {
     uint64_t pending_answer_weight;
     uint64_t last_answer_weight;
     PettaMachineStep terminal_step;
-    uint64_t next_goal_instance;
-    size_t atom_bytes;
+} PettaContinuationReadoutComponent;
+
+typedef struct PettaOwnedContinuationImpl {
+    PettaContinuationAuthorityComponent authority;
+    PettaContinuationTermComponent terms;
+    PettaContinuationBindingComponent bindings;
+    PettaContinuationControlComponent control;
+    PettaContinuationObligationComponent obligations;
+    PettaContinuationReadoutComponent readout;
     size_t exclusive_vector_bytes;
 } PettaOwnedContinuationImpl;
 
@@ -3662,43 +3698,135 @@ static bool petta_owned_continuation_choices_clone(
     return true;
 }
 
+static PettaContinuationTermPool *petta_continuation_term_pool_new(void) {
+    PettaContinuationTermPool *pool = cetta_malloc(sizeof(*pool));
+    atomic_init(&pool->references, 1u);
+    atomic_init(&pool->reclaim_after_bytes, (size_t)1u << 20u);
+    arena_init(&pool->owner);
+    arena_set_runtime_kind(
+        &pool->owner, CETTA_ARENA_RUNTIME_KIND_PERSISTENT);
+    arena_set_hashcons(&pool->owner, NULL);
+    return pool;
+}
+
+static bool petta_continuation_term_pool_retain(
+        PettaContinuationTermPool *pool) {
+    if (!pool)
+        return false;
+    size_t references = atomic_load_explicit(
+        &pool->references, memory_order_relaxed);
+    for (;;) {
+        if (references == 0u || references == SIZE_MAX)
+            return false;
+        if (atomic_compare_exchange_weak_explicit(
+                &pool->references, &references, references + 1u,
+                memory_order_relaxed, memory_order_relaxed)) {
+            return true;
+        }
+    }
+}
+
+static void petta_continuation_term_pool_release(
+        PettaContinuationTermPool *pool) {
+    if (!pool)
+        return;
+    size_t prior = atomic_fetch_sub_explicit(
+        &pool->references, 1u, memory_order_acq_rel);
+    assert(prior != 0u);
+    if (prior != 1u)
+        return;
+    arena_free(&pool->owner);
+    free(pool);
+}
+
+static size_t petta_continuation_term_pool_bytes(
+        const PettaContinuationTermPool *pool) {
+    if (!pool)
+        return 0u;
+    size_t atoms = arena_accounted_live_bytes(&pool->owner);
+    return atoms > SIZE_MAX - sizeof(*pool)
+        ? SIZE_MAX : atoms + sizeof(*pool);
+}
+
 static void petta_owned_continuation_impl_free(
     PettaOwnedContinuationImpl *continuation) {
     if (!continuation)
         return;
     petta_owned_continuation_choices_free(
-        continuation->choices, continuation->choice_len);
-    free(continuation->goals);
-    free(continuation->goal_trail);
-    free(continuation->visible);
-    free(continuation->type_obligations);
-    bindings_builder_free(&continuation->bindings);
-    arena_free(&continuation->owner);
+        continuation->control.choices,
+        continuation->control.choice_len);
+    free(continuation->control.goals);
+    free(continuation->control.goal_trail);
+    free(continuation->obligations.visible);
+    free(continuation->obligations.type_obligations);
+    bindings_builder_free(&continuation->bindings.bindings);
+    petta_continuation_term_pool_release(
+        continuation->terms.pool);
     free(continuation);
 }
 
-static void petta_owned_continuation_payload_free(
-    PettaOwnedContinuationImpl *continuation) {
-    if (!continuation)
-        return;
-    petta_owned_continuation_choices_free(
-        continuation->choices, continuation->choice_len);
-    continuation->choices = NULL;
-    continuation->choice_len = 0u;
-    free(continuation->goals);
-    continuation->goals = NULL;
-    continuation->goal_len = 0u;
-    continuation->goal_initialized_len = 0u;
-    free(continuation->goal_trail);
-    continuation->goal_trail = NULL;
-    continuation->goal_trail_len = 0u;
-    free(continuation->visible);
-    continuation->visible = NULL;
-    continuation->visible_len = 0u;
-    free(continuation->type_obligations);
-    continuation->type_obligations = NULL;
-    continuation->type_obligation_len = 0u;
-    bindings_builder_free(&continuation->bindings);
+static bool petta_owned_continuation_copy_atoms_with_session(
+    PettaOwnedContinuationImpl *continuation,
+    Arena *destination,
+    AtomDeepCopySession *session) {
+    if (!continuation || !destination || !session)
+        return false;
+    bool ok = true;
+    continuation->readout.query = petta_copy_optional_atom(
+        session, continuation->readout.query, &ok);
+    continuation->readout.answer_variable = petta_copy_optional_atom(
+        session, continuation->readout.answer_variable, &ok);
+    continuation->readout.raised_error = petta_copy_optional_atom(
+        session, continuation->readout.raised_error, &ok);
+    for (size_t i = 0u;
+         ok && i < continuation->obligations.visible_len; i++) {
+        continuation->obligations.visible[i].variable =
+            petta_copy_optional_atom(
+                session,
+                continuation->obligations.visible[i].variable,
+                &ok);
+    }
+    for (size_t i = 0u;
+         ok && i < continuation->obligations.type_obligation_len; i++) {
+        PettaTypeObligation *obligation =
+            &continuation->obligations.type_obligations[i];
+        obligation->value = petta_copy_optional_atom(
+            session, obligation->value, &ok);
+        obligation->formal = petta_copy_optional_atom(
+            session, obligation->formal, &ok);
+        obligation->checked_value = petta_copy_optional_atom(
+            session, obligation->checked_value, &ok);
+        obligation->checked_formal = petta_copy_optional_atom(
+            session, obligation->checked_formal, &ok);
+    }
+    for (size_t i = 0u;
+         ok && i < continuation->control.goal_initialized_len; i++) {
+        ok = petta_copy_goal_atoms(
+            session, &continuation->control.goals[i]);
+    }
+    for (size_t i = 0u;
+         ok && i < continuation->control.goal_trail_len; i++) {
+        ok = petta_copy_goal_atoms(
+            session,
+            &continuation->control.goal_trail[i].previous);
+    }
+    for (size_t i = 0u;
+         ok && i < continuation->control.choice_len; i++) {
+        ok = petta_copy_supported_choice_atoms(
+            session, &continuation->control.choices[i]);
+    }
+    if (ok) {
+        ok = bindings_promote_logical_atoms_with_session(
+            &continuation->bindings.bindings.current, session);
+    }
+    if (ok) {
+        ok = bindings_builder_promote_prime_atoms_to_arena(
+            &continuation->bindings.bindings, destination);
+    }
+    return ok && continuation->readout.query &&
+        continuation->readout.answer_variable &&
+        bindings_logical_atoms_closed_for_arena(
+            &continuation->bindings.bindings.current, destination);
 }
 
 static bool petta_owned_continuation_copy_atoms(
@@ -3710,103 +3838,369 @@ static bool petta_owned_continuation_copy_atoms(
         atom_deep_copy_session_new(destination);
     if (!session)
         return false;
-    bool ok = true;
-    continuation->query = petta_copy_optional_atom(
-        session, continuation->query, &ok);
-    continuation->answer_variable = petta_copy_optional_atom(
-        session, continuation->answer_variable, &ok);
-    continuation->raised_error = petta_copy_optional_atom(
-        session, continuation->raised_error, &ok);
-    for (size_t i = 0u; ok && i < continuation->visible_len; i++) {
-        continuation->visible[i].variable = petta_copy_optional_atom(
-            session, continuation->visible[i].variable, &ok);
-    }
-    for (size_t i = 0u;
-         ok && i < continuation->type_obligation_len; i++) {
-        PettaTypeObligation *obligation =
-            &continuation->type_obligations[i];
-        obligation->value = petta_copy_optional_atom(
-            session, obligation->value, &ok);
-        obligation->formal = petta_copy_optional_atom(
-            session, obligation->formal, &ok);
-        obligation->checked_value = petta_copy_optional_atom(
-            session, obligation->checked_value, &ok);
-        obligation->checked_formal = petta_copy_optional_atom(
-            session, obligation->checked_formal, &ok);
-    }
-    for (size_t i = 0u;
-         ok && i < continuation->goal_initialized_len; i++) {
-        ok = petta_copy_goal_atoms(session, &continuation->goals[i]);
-    }
-    for (size_t i = 0u;
-         ok && i < continuation->goal_trail_len; i++) {
-        ok = petta_copy_goal_atoms(
-            session, &continuation->goal_trail[i].previous);
-    }
-    for (size_t i = 0u;
-         ok && i < continuation->choice_len; i++) {
-        ok = petta_copy_supported_choice_atoms(
-            session, &continuation->choices[i]);
-    }
-    if (ok) {
-        ok = bindings_promote_logical_atoms_with_session(
-            &continuation->bindings.current, session);
-    }
+    bool ok = petta_owned_continuation_copy_atoms_with_session(
+        continuation, destination, session);
     atom_deep_copy_session_free(session);
-    if (ok) {
-        ok = bindings_builder_promote_prime_atoms_to_arena(
-            &continuation->bindings, destination);
-    }
-    return ok && continuation->query &&
-        continuation->answer_variable &&
-        bindings_logical_atoms_closed_for_arena(
-            &continuation->bindings.current, destination);
+    return ok;
 }
 
 static size_t petta_owned_continuation_vector_bytes(
-    const PettaOwnedContinuationImpl *continuation) {
-    if (!continuation)
-        return 0u;
-    size_t bytes = sizeof(*continuation);
-#define PETTA_CONTINUATION_ADD_VECTOR(count, type) \
-    do { \
-        size_t petta_count_ = (count); \
-        size_t petta_bytes_ = petta_count_ > SIZE_MAX / sizeof(type) \
-            ? SIZE_MAX : petta_count_ * sizeof(type); \
-        bytes = petta_size_add_saturating(bytes, petta_bytes_); \
-    } while (0)
-    PETTA_CONTINUATION_ADD_VECTOR(
-        continuation->goal_initialized_len, PettaGoal);
-    PETTA_CONTINUATION_ADD_VECTOR(
-        continuation->goal_trail_len, PettaGoalTrailEntry);
-    PETTA_CONTINUATION_ADD_VECTOR(
-        continuation->choice_len, PettaChoice);
-    PETTA_CONTINUATION_ADD_VECTOR(
-        continuation->visible_len, PettaVisibleVariable);
-    PETTA_CONTINUATION_ADD_VECTOR(
-        continuation->type_obligation_len, PettaTypeObligation);
-    PETTA_CONTINUATION_ADD_VECTOR(
-        continuation->bindings.current.cap, Binding);
-    PETTA_CONTINUATION_ADD_VECTOR(
-        continuation->bindings.current.eq_cap, BindingConstraint);
-    PETTA_CONTINUATION_ADD_VECTOR(
-        continuation->bindings.trail_cap,
-        BindingsBuilderTrailEntry);
-    PETTA_CONTINUATION_ADD_VECTOR(
-        continuation->bindings.prime_trail_cap,
-        PrimeOccurrence);
-    if (continuation->bindings.current.prime_ext)
-        bytes = petta_size_add_saturating(
-            bytes, sizeof(PrimeOccurrence));
-    for (size_t i = 0u; i < continuation->choice_len; i++) {
-        if (continuation->choices[i].kind == PETTA_CHOICE_CLAUSE) {
-            PETTA_CONTINUATION_ADD_VECTOR(
-                continuation->choices[i].as.clause.equation_len,
-                PettaClauseCandidate);
+    const PettaOwnedContinuationImpl *continuation);
+
+static PettaOwnedContinuationImpl *
+petta_owned_continuation_clone_to_term_pool(
+        const PettaOwnedContinuationImpl *source,
+        PettaContinuationTermPool *pool,
+        AtomDeepCopySession *session) {
+    if (!source || !source->terms.pool || !pool || !session ||
+        source->control.goal_len >
+            source->control.goal_initialized_len ||
+        source->control.protected_goal_height >
+            source->control.goal_initialized_len ||
+        (source->control.goal_initialized_len != 0u &&
+         !source->control.goals) ||
+        (source->control.goal_trail_len != 0u &&
+         !source->control.goal_trail) ||
+        (source->control.choice_len != 0u &&
+         !source->control.choices) ||
+        (source->obligations.visible_len != 0u &&
+         !source->obligations.visible) ||
+        (source->obligations.type_obligation_len != 0u &&
+         !source->obligations.type_obligations) ||
+        source->control.goal_initialized_len >
+            SIZE_MAX / sizeof(PettaGoal) ||
+        source->control.goal_trail_len >
+            SIZE_MAX / sizeof(PettaGoalTrailEntry) ||
+        source->obligations.visible_len >
+            SIZE_MAX / sizeof(PettaVisibleVariable) ||
+        source->obligations.type_obligation_len >
+            SIZE_MAX / sizeof(PettaTypeObligation) ||
+        !petta_continuation_term_pool_retain(pool)) {
+        return NULL;
+    }
+
+    PettaOwnedContinuationImpl *copy = cetta_malloc(sizeof(*copy));
+    memset(copy, 0, sizeof(*copy));
+    copy->authority = source->authority;
+    copy->terms.pool = pool;
+    copy->control.goal_len = source->control.goal_len;
+    copy->control.goal_initialized_len =
+        source->control.goal_initialized_len;
+    copy->control.protected_goal_height =
+        source->control.protected_goal_height;
+    copy->control.goal_trail_len = source->control.goal_trail_len;
+    copy->control.choice_len = source->control.choice_len;
+    copy->control.next_goal_instance =
+        source->control.next_goal_instance;
+    copy->control.binding_growth_collect_after =
+        source->control.binding_growth_collect_after;
+    copy->obligations.visible_len = source->obligations.visible_len;
+    copy->obligations.type_obligation_len =
+        source->obligations.type_obligation_len;
+    copy->obligations.next_type_obligation_id =
+        source->obligations.next_type_obligation_id;
+    copy->readout = source->readout;
+
+    bool ok = bindings_builder_clone(
+        &copy->bindings.bindings,
+        &source->bindings.bindings);
+    if (ok && copy->control.goal_initialized_len != 0u) {
+        size_t bytes = copy->control.goal_initialized_len *
+            sizeof(*copy->control.goals);
+        copy->control.goals = cetta_malloc(bytes);
+        memcpy(copy->control.goals, source->control.goals, bytes);
+    }
+    if (ok && copy->control.goal_trail_len != 0u) {
+        size_t bytes = copy->control.goal_trail_len *
+            sizeof(*copy->control.goal_trail);
+        copy->control.goal_trail = cetta_malloc(bytes);
+        memcpy(
+            copy->control.goal_trail,
+            source->control.goal_trail, bytes);
+    }
+    if (ok) {
+        ok = petta_owned_continuation_choices_clone(
+            &copy->control.choices, source->control.choices,
+            copy->control.choice_len);
+    }
+    if (ok && copy->obligations.visible_len != 0u) {
+        size_t bytes = copy->obligations.visible_len *
+            sizeof(*copy->obligations.visible);
+        copy->obligations.visible = cetta_malloc(bytes);
+        memcpy(
+            copy->obligations.visible,
+            source->obligations.visible, bytes);
+    }
+    if (ok && copy->obligations.type_obligation_len != 0u) {
+        size_t bytes = copy->obligations.type_obligation_len *
+            sizeof(*copy->obligations.type_obligations);
+        copy->obligations.type_obligations = cetta_malloc(bytes);
+        memcpy(
+            copy->obligations.type_obligations,
+            source->obligations.type_obligations, bytes);
+    }
+    if (ok) {
+        ok = petta_owned_continuation_copy_atoms_with_session(
+            copy, &pool->owner, session);
+    }
+    if (!ok) {
+        petta_owned_continuation_impl_free(copy);
+        return NULL;
+    }
+    copy->exclusive_vector_bytes =
+        petta_owned_continuation_vector_bytes(copy);
+    return copy;
+}
+
+static size_t petta_continuation_next_reclaim_threshold(
+        size_t live_bytes) {
+    const size_t minimum_growth = (size_t)1u << 20u;
+    size_t additive = live_bytes > SIZE_MAX - minimum_growth
+        ? SIZE_MAX : live_bytes + minimum_growth;
+    size_t doubled = live_bytes > SIZE_MAX / 2u
+        ? SIZE_MAX : live_bytes * 2u;
+    return additive > doubled ? additive : doubled;
+}
+
+static bool petta_continuation_reclaim_due(const void *payload) {
+    const PettaOwnedContinuationImpl *continuation = payload;
+    PettaContinuationTermPool *pool = continuation
+        ? continuation->terms.pool : NULL;
+    return pool && petta_continuation_term_pool_bytes(pool) >=
+        atomic_load_explicit(
+            &pool->reclaim_after_bytes, memory_order_relaxed);
+}
+
+static CettaContinuationStatus petta_continuation_reclaim_terms(
+        const void *const *source_payloads, size_t length,
+        void ***replacement_payloads,
+        CettaContinuationReclamationReceipt *receipt) {
+    if (!source_payloads || length == 0u || !replacement_payloads ||
+        *replacement_payloads || !receipt ||
+        length > SIZE_MAX / sizeof(void *)) {
+        return CETTA_CONTINUATION_UNSUPPORTED;
+    }
+    *receipt = (CettaContinuationReclamationReceipt){0};
+    const PettaOwnedContinuationImpl *first = source_payloads[0];
+    PettaContinuationTermPool *old_pool =
+        first ? first->terms.pool : NULL;
+    if (!old_pool)
+        return CETTA_CONTINUATION_UNSUPPORTED;
+    for (size_t i = 0u; i < length; i++) {
+        const PettaOwnedContinuationImpl *source = source_payloads[i];
+        if (!source || source->terms.pool != old_pool)
+            return CETTA_CONTINUATION_UNSUPPORTED;
+    }
+
+    size_t shared_before =
+        petta_continuation_term_pool_bytes(old_pool);
+    size_t threshold = atomic_load_explicit(
+        &old_pool->reclaim_after_bytes, memory_order_relaxed);
+    if (shared_before < threshold)
+        return CETTA_CONTINUATION_DEFERRED;
+
+    size_t exclusive_before = 0u;
+    for (size_t i = 0u; i < length; i++) {
+        const PettaOwnedContinuationImpl *source = source_payloads[i];
+        exclusive_before = petta_size_add_saturating(
+            exclusive_before, source->exclusive_vector_bytes);
+    }
+
+    PettaContinuationTermPool *new_pool =
+        petta_continuation_term_pool_new();
+    AtomDeepCopySession *session =
+        atom_deep_copy_session_new(&new_pool->owner);
+    void **prepared = calloc(length, sizeof(*prepared));
+    if (!session || !prepared) {
+        atom_deep_copy_session_free(session);
+        free(prepared);
+        petta_continuation_term_pool_release(new_pool);
+        return CETTA_CONTINUATION_CAPACITY;
+    }
+    bool ok = true;
+    size_t exclusive_after = 0u;
+    for (size_t i = 0u; ok && i < length; i++) {
+        prepared[i] = petta_owned_continuation_clone_to_term_pool(
+            source_payloads[i], new_pool, session);
+        ok = prepared[i] != NULL;
+        if (ok) {
+            exclusive_after = petta_size_add_saturating(
+                exclusive_after,
+                ((PettaOwnedContinuationImpl *)prepared[i])
+                    ->exclusive_vector_bytes);
         }
     }
-#undef PETTA_CONTINUATION_ADD_VECTOR
+    atom_deep_copy_session_free(session);
+    if (!ok) {
+        for (size_t i = 0u; i < length; i++)
+            petta_owned_continuation_impl_free(prepared[i]);
+        free(prepared);
+        petta_continuation_term_pool_release(new_pool);
+        return CETTA_CONTINUATION_CAPACITY;
+    }
+
+    size_t shared_after =
+        petta_continuation_term_pool_bytes(new_pool);
+    atomic_store_explicit(
+        &new_pool->reclaim_after_bytes,
+        petta_continuation_next_reclaim_threshold(shared_after),
+        memory_order_relaxed);
+    *receipt = (CettaContinuationReclamationReceipt){
+        .live_occurrences = length,
+        .shared_bytes_before = shared_before,
+        .shared_bytes_after = shared_after,
+        .exclusive_bytes_before = exclusive_before,
+        .exclusive_bytes_after = exclusive_after,
+    };
+    petta_continuation_term_pool_release(new_pool);
+    *replacement_payloads = prepared;
+    return CETTA_CONTINUATION_READY;
+}
+
+static size_t petta_continuation_array_bytes(
+        size_t count, size_t item_size) {
+    return item_size != 0u && count <= SIZE_MAX / item_size
+        ? count * item_size : SIZE_MAX;
+}
+
+static size_t petta_continuation_component_exclusive_bytes(
+        const PettaOwnedContinuationImpl *continuation,
+        CettaContinuationComponent component) {
+    if (!continuation ||
+        component < CETTA_CONTINUATION_COMPONENT_AUTHORITY ||
+        component >= CETTA_CONTINUATION_COMPONENT_COUNT) {
+        return 0u;
+    }
+    size_t nested_fixed =
+        sizeof(continuation->authority) +
+        sizeof(continuation->terms) +
+        sizeof(continuation->bindings) +
+        sizeof(continuation->control) +
+        sizeof(continuation->obligations) +
+        sizeof(continuation->readout);
+    size_t bytes = 0u;
+    switch (component) {
+    case CETTA_CONTINUATION_COMPONENT_AUTHORITY:
+        bytes = sizeof(continuation->authority);
+        if (nested_fixed <= sizeof(*continuation)) {
+            bytes = petta_size_add_saturating(
+                bytes, sizeof(*continuation) - nested_fixed);
+        }
+        break;
+    case CETTA_CONTINUATION_COMPONENT_TERMS:
+        bytes = sizeof(continuation->terms);
+        break;
+    case CETTA_CONTINUATION_COMPONENT_BINDINGS: {
+        const BindingsBuilder *builder =
+            &continuation->bindings.bindings;
+        bytes = sizeof(continuation->bindings);
+        bytes = petta_size_add_saturating(
+            bytes, petta_continuation_array_bytes(
+                builder->current.cap, sizeof(Binding)));
+        bytes = petta_size_add_saturating(
+            bytes, petta_continuation_array_bytes(
+                builder->current.eq_cap,
+                sizeof(BindingConstraint)));
+        bytes = petta_size_add_saturating(
+            bytes, petta_continuation_array_bytes(
+                builder->trail_cap,
+                sizeof(BindingsBuilderTrailEntry)));
+        bytes = petta_size_add_saturating(
+            bytes, petta_continuation_array_bytes(
+                builder->prime_trail_cap,
+                sizeof(PrimeOccurrence)));
+        if (builder->current.prime_ext) {
+            bytes = petta_size_add_saturating(
+                bytes, sizeof(PrimeOccurrence));
+        }
+        break;
+    }
+    case CETTA_CONTINUATION_COMPONENT_CONTROL:
+        bytes = sizeof(continuation->control);
+        bytes = petta_size_add_saturating(
+            bytes, petta_continuation_array_bytes(
+                continuation->control.goal_initialized_len,
+                sizeof(PettaGoal)));
+        bytes = petta_size_add_saturating(
+            bytes, petta_continuation_array_bytes(
+                continuation->control.goal_trail_len,
+                sizeof(PettaGoalTrailEntry)));
+        bytes = petta_size_add_saturating(
+            bytes, petta_continuation_array_bytes(
+                continuation->control.choice_len,
+                sizeof(PettaChoice)));
+        for (size_t i = 0u;
+             i < continuation->control.choice_len; i++) {
+            if (continuation->control.choices[i].kind !=
+                PETTA_CHOICE_CLAUSE) {
+                continue;
+            }
+            bytes = petta_size_add_saturating(
+                bytes, petta_continuation_array_bytes(
+                    continuation->control.choices[i]
+                        .as.clause.equation_len,
+                    sizeof(PettaClauseCandidate)));
+        }
+        break;
+    case CETTA_CONTINUATION_COMPONENT_OBLIGATIONS:
+        bytes = sizeof(continuation->obligations);
+        bytes = petta_size_add_saturating(
+            bytes, petta_continuation_array_bytes(
+                continuation->obligations.visible_len,
+                sizeof(PettaVisibleVariable)));
+        bytes = petta_size_add_saturating(
+            bytes, petta_continuation_array_bytes(
+                continuation->obligations.type_obligation_len,
+                sizeof(PettaTypeObligation)));
+        break;
+    case CETTA_CONTINUATION_COMPONENT_READOUT:
+        bytes = sizeof(continuation->readout);
+        break;
+    case CETTA_CONTINUATION_COMPONENT_COUNT:
+        return 0u;
+    }
     return bytes;
+}
+
+static size_t petta_owned_continuation_vector_bytes(
+        const PettaOwnedContinuationImpl *continuation) {
+    if (!continuation)
+        return 0u;
+    size_t bytes = 0u;
+    for (CettaContinuationComponent component =
+             CETTA_CONTINUATION_COMPONENT_AUTHORITY;
+         component < CETTA_CONTINUATION_COMPONENT_COUNT;
+         component++) {
+        bytes = petta_size_add_saturating(
+            bytes,
+            petta_continuation_component_exclusive_bytes(
+                continuation, component));
+    }
+    return bytes;
+}
+
+static bool petta_continuation_component_storage(
+        const void *payload,
+        CettaContinuationComponent component,
+        CettaContinuationStorage *storage) {
+    const PettaOwnedContinuationImpl *continuation = payload;
+    if (!continuation || !storage ||
+        component < CETTA_CONTINUATION_COMPONENT_AUTHORITY ||
+        component >= CETTA_CONTINUATION_COMPONENT_COUNT) {
+        return false;
+    }
+    *storage = (CettaContinuationStorage){
+        .exclusive_bytes =
+            petta_continuation_component_exclusive_bytes(
+                continuation, component),
+    };
+    if (component == CETTA_CONTINUATION_COMPONENT_TERMS) {
+        storage->shared_identity = continuation->terms.pool;
+        storage->shared_bytes =
+            petta_continuation_term_pool_bytes(
+                continuation->terms.pool);
+    }
+    return true;
 }
 
 static bool petta_continuation_storage(
@@ -3817,11 +4211,174 @@ static bool petta_continuation_storage(
         return false;
     }
     *storage = (CettaContinuationStorage){
-        .shared_identity = continuation,
-        .shared_bytes = continuation->atom_bytes,
+        .shared_identity = continuation->terms.pool,
+        .shared_bytes = petta_continuation_term_pool_bytes(
+            continuation->terms.pool),
         .exclusive_bytes = continuation->exclusive_vector_bytes,
     };
     return true;
+}
+
+typedef struct {
+    uint8_t *bytes;
+    size_t length;
+    size_t capacity;
+} PettaContinuationTraceWriter;
+
+static bool petta_continuation_trace_reserve(
+        PettaContinuationTraceWriter *writer, size_t additional) {
+    if (!writer || additional >
+            CETTA_CONTINUATION_TRACE_BYTE_LIMIT - writer->length) {
+        return false;
+    }
+    size_t required = writer->length + additional;
+    if (required <= writer->capacity)
+        return true;
+    size_t capacity = writer->capacity ? writer->capacity : 256u;
+    while (capacity < required) {
+        size_t next = capacity * 2u;
+        if (next < capacity ||
+            next > CETTA_CONTINUATION_TRACE_BYTE_LIMIT) {
+            capacity = CETTA_CONTINUATION_TRACE_BYTE_LIMIT;
+            break;
+        }
+        capacity = next;
+    }
+    uint8_t *bytes = realloc(writer->bytes, capacity);
+    if (!bytes)
+        return false;
+    writer->bytes = bytes;
+    writer->capacity = capacity;
+    return true;
+}
+
+static bool petta_continuation_trace_append(
+        PettaContinuationTraceWriter *writer,
+        const void *bytes, size_t length) {
+    if (!petta_continuation_trace_reserve(writer, length))
+        return false;
+    if (length != 0u)
+        memcpy(&writer->bytes[writer->length], bytes, length);
+    writer->length += length;
+    return true;
+}
+
+static bool petta_continuation_trace_u8(
+        PettaContinuationTraceWriter *writer, uint8_t value) {
+    return petta_continuation_trace_append(writer, &value, 1u);
+}
+
+static bool petta_continuation_trace_u32(
+        PettaContinuationTraceWriter *writer, uint32_t value) {
+    uint8_t bytes[4];
+    for (size_t i = 0u; i < sizeof(bytes); i++)
+        bytes[i] = (uint8_t)(value >> (8u * i));
+    return petta_continuation_trace_append(
+        writer, bytes, sizeof(bytes));
+}
+
+static bool petta_continuation_trace_u64(
+        PettaContinuationTraceWriter *writer, uint64_t value) {
+    uint8_t bytes[8];
+    for (size_t i = 0u; i < sizeof(bytes); i++)
+        bytes[i] = (uint8_t)(value >> (8u * i));
+    return petta_continuation_trace_append(
+        writer, bytes, sizeof(bytes));
+}
+
+static bool petta_continuation_trace_atom(
+        PettaContinuationTraceWriter *writer, Arena *scratch,
+        Atom *atom) {
+    if (!atom)
+        return petta_continuation_trace_u32(writer, UINT32_MAX);
+    ArenaMark mark = arena_mark(scratch);
+    char *rendered = atom_to_parseable_string_petta(scratch, atom);
+    size_t length = strlen(rendered);
+    bool appended = length <= UINT32_MAX &&
+        petta_continuation_trace_u32(writer, (uint32_t)length) &&
+        petta_continuation_trace_append(writer, rendered, length);
+    arena_reset(scratch, mark);
+    return appended;
+}
+
+static CettaContinuationStatus petta_continuation_trace(
+        const void *payload, CettaContinuationTrace *trace) {
+    const PettaOwnedContinuationImpl *continuation = payload;
+    if (!continuation || !trace || trace->bytes ||
+        trace->length != 0u || trace->projection_identity != 0u ||
+        continuation->control.goal_len > UINT32_MAX ||
+        continuation->bindings.bindings.current.len > UINT32_MAX ||
+        continuation->bindings.bindings.current.eq_len > UINT32_MAX) {
+        return CETTA_CONTINUATION_UNSUPPORTED;
+    }
+    PettaContinuationTraceWriter writer = {0};
+    Arena scratch;
+    arena_init(&scratch);
+    static const uint8_t schema[] = {
+        'p', 'e', 't', 't', 'a', '-', 'c', 'o', 'n', 't', '-', 'v', '2'
+    };
+    /* The query is already the persisted model condition through its key.
+     * Repeating it in every candidate trace would count shared context as
+     * candidate evidence and bias compression rate toward shorter traces. */
+    bool ok = petta_continuation_trace_append(
+            &writer, schema, sizeof(schema)) &&
+        petta_continuation_trace_u32(
+            &writer, (uint32_t)continuation->control.goal_len);
+    for (size_t i = 0u;
+         ok && i < continuation->control.goal_len; i++) {
+        const PettaGoal *goal = &continuation->control.goals[i];
+        ok = petta_continuation_trace_u32(
+                &writer, (uint32_t)goal->kind) &&
+            petta_continuation_trace_u8(
+                &writer, goal->activation_source_fields) &&
+            petta_continuation_trace_u8(
+                &writer, goal->first_operand_resolved ? 1u : 0u) &&
+            petta_continuation_trace_atom(
+                &writer, &scratch, goal->first) &&
+            petta_continuation_trace_atom(
+                &writer, &scratch, goal->second) &&
+            petta_continuation_trace_atom(
+                &writer, &scratch, goal->third) &&
+            petta_continuation_trace_atom(
+                &writer, &scratch, goal->fourth);
+    }
+    const Bindings *bindings =
+        &continuation->bindings.bindings.current;
+    if (ok)
+        ok = petta_continuation_trace_u32(
+            &writer, bindings->len);
+    for (uint32_t i = 0u; ok && i < bindings->len; i++) {
+        const Binding *binding = &bindings->entries[i];
+        ok = petta_continuation_trace_u64(
+                &writer, (uint64_t)binding->var_id) &&
+            petta_continuation_trace_u32(
+                &writer, (uint32_t)binding->spelling) &&
+            petta_continuation_trace_u8(
+                &writer, binding->legacy_name_fallback ? 1u : 0u) &&
+            petta_continuation_trace_atom(
+                &writer, &scratch, binding->name_key) &&
+            petta_continuation_trace_atom(
+                &writer, &scratch, binding->val);
+    }
+    if (ok)
+        ok = petta_continuation_trace_u32(
+            &writer, bindings->eq_len);
+    for (uint32_t i = 0u; ok && i < bindings->eq_len; i++) {
+        ok = petta_continuation_trace_atom(
+                &writer, &scratch, bindings->constraints[i].lhs) &&
+            petta_continuation_trace_atom(
+                &writer, &scratch, bindings->constraints[i].rhs);
+    }
+    arena_free(&scratch);
+    if (!ok || writer.length == 0u) {
+        free(writer.bytes);
+        return CETTA_CONTINUATION_CAPACITY;
+    }
+    trace->bytes = writer.bytes;
+    trace->length = writer.length;
+    trace->projection_identity =
+        UINT64_C(0x5054544154524332); /* "PTTATRC2" */
+    return CETTA_CONTINUATION_READY;
 }
 
 static CettaContinuationStatus petta_continuation_capture(
@@ -3860,86 +4417,110 @@ static CettaContinuationStatus petta_continuation_capture(
     PettaOwnedContinuationImpl *owned =
         cetta_malloc(sizeof(*owned));
     memset(owned, 0, sizeof(*owned));
-    arena_init(&owned->owner);
-    arena_set_runtime_kind(
-        &owned->owner, CETTA_ARENA_RUNTIME_KIND_PERSISTENT);
-    arena_set_hashcons(&owned->owner, NULL);
-    owned->source_machine_instance = source->instance_id;
-    owned->space_read = read;
-    owned->capture_authority = authority;
-    owned->goal_len = source->goal_len;
-    owned->goal_initialized_len =
+    if (source->continuation_term_pool) {
+        if (!petta_continuation_term_pool_retain(
+                source->continuation_term_pool)) {
+            free(owned);
+            return CETTA_CONTINUATION_CAPACITY;
+        }
+        owned->terms.pool = source->continuation_term_pool;
+    } else {
+        owned->terms.pool = petta_continuation_term_pool_new();
+    }
+    ArenaMark term_mark = arena_mark(&owned->terms.pool->owner);
+    size_t term_bytes_before = arena_accounted_live_bytes(
+        &owned->terms.pool->owner);
+    owned->authority.source_machine_instance = source->instance_id;
+    owned->authority.space_read = read;
+    owned->authority.capture_authority = authority;
+    owned->control.goal_len = source->goal_len;
+    owned->control.goal_initialized_len =
         source->goal_len > source->protected_goal_height
             ? source->goal_len
             : source->protected_goal_height;
-    owned->protected_goal_height =
+    owned->control.protected_goal_height =
         source->protected_goal_height;
-    owned->goal_trail_len = source->goal_trail_len;
-    owned->choice_len = source->choice_len;
-    owned->visible_len = source->visible_len;
-    owned->type_obligation_len =
+    owned->control.goal_trail_len = source->goal_trail_len;
+    owned->control.choice_len = source->choice_len;
+    owned->obligations.visible_len = source->visible_len;
+    owned->obligations.type_obligation_len =
         source->type_obligation_len;
-    owned->next_type_obligation_id =
+    owned->obligations.next_type_obligation_id =
         source->next_type_obligation_id;
-    owned->query = source->query;
-    owned->answer_variable = source->answer_variable;
-    owned->raised_error = source->raised_error;
-    owned->yielded = source->yielded;
-    owned->suspended_choice = source->suspended_choice;
-    owned->terminal = source->terminal;
-    owned->count_only_emission = source->count_only_emission;
-    owned->pending_answer_weight =
+    owned->readout.query = source->query;
+    owned->readout.answer_variable = source->answer_variable;
+    owned->readout.raised_error = source->raised_error;
+    owned->readout.yielded = source->yielded;
+    owned->readout.suspended_choice = source->suspended_choice;
+    owned->readout.terminal = source->terminal;
+    owned->readout.count_only_emission =
+        source->count_only_emission;
+    owned->readout.pending_answer_weight =
         source->pending_answer_weight;
-    owned->last_answer_weight = source->last_answer_weight;
-    owned->terminal_step = source->terminal_step;
-    owned->next_goal_instance = source->next_goal_instance;
+    owned->readout.last_answer_weight = source->last_answer_weight;
+    owned->readout.terminal_step = source->terminal_step;
+    owned->control.next_goal_instance = source->next_goal_instance;
+    owned->control.binding_growth_collect_after =
+        source->binding_growth_collect_after;
 
     bool ok =
-        owned->goal_initialized_len <=
-            SIZE_MAX / sizeof(*owned->goals) &&
-        owned->goal_trail_len <=
-            SIZE_MAX / sizeof(*owned->goal_trail) &&
-        owned->visible_len <=
-            SIZE_MAX / sizeof(*owned->visible) &&
-        owned->type_obligation_len <=
-            SIZE_MAX / sizeof(*owned->type_obligations) &&
+        owned->control.goal_initialized_len <=
+            SIZE_MAX / sizeof(*owned->control.goals) &&
+        owned->control.goal_trail_len <=
+            SIZE_MAX / sizeof(*owned->control.goal_trail) &&
+        owned->obligations.visible_len <=
+            SIZE_MAX / sizeof(*owned->obligations.visible) &&
+        owned->obligations.type_obligation_len <=
+            SIZE_MAX /
+                sizeof(*owned->obligations.type_obligations) &&
         bindings_builder_clone(
-            &owned->bindings, &source->search.bindings);
-    if (ok && owned->goal_initialized_len) {
-        owned->goals = cetta_malloc(
-            owned->goal_initialized_len * sizeof(*owned->goals));
-        memcpy(owned->goals, source->goals,
-               owned->goal_initialized_len * sizeof(*owned->goals));
+            &owned->bindings.bindings,
+            &source->search.bindings);
+    if (ok && owned->control.goal_initialized_len) {
+        owned->control.goals = cetta_malloc(
+            owned->control.goal_initialized_len *
+                sizeof(*owned->control.goals));
+        memcpy(
+            owned->control.goals, source->goals,
+            owned->control.goal_initialized_len *
+                sizeof(*owned->control.goals));
     }
-    if (ok && owned->goal_trail_len) {
-        owned->goal_trail = cetta_malloc(
-            owned->goal_trail_len * sizeof(*owned->goal_trail));
-        memcpy(owned->goal_trail, source->goal_trail,
-               owned->goal_trail_len * sizeof(*owned->goal_trail));
+    if (ok && owned->control.goal_trail_len) {
+        owned->control.goal_trail = cetta_malloc(
+            owned->control.goal_trail_len *
+                sizeof(*owned->control.goal_trail));
+        memcpy(
+            owned->control.goal_trail, source->goal_trail,
+            owned->control.goal_trail_len *
+                sizeof(*owned->control.goal_trail));
     }
     if (ok) {
         ok = petta_owned_continuation_choices_clone(
-            &owned->choices, source->choices,
-            owned->choice_len);
+            &owned->control.choices, source->choices,
+            owned->control.choice_len);
     }
-    if (ok && owned->visible_len) {
-        owned->visible = cetta_malloc(
-            owned->visible_len * sizeof(*owned->visible));
-        memcpy(owned->visible, source->visible,
-               owned->visible_len * sizeof(*owned->visible));
+    if (ok && owned->obligations.visible_len) {
+        owned->obligations.visible = cetta_malloc(
+            owned->obligations.visible_len *
+                sizeof(*owned->obligations.visible));
+        memcpy(
+            owned->obligations.visible, source->visible,
+            owned->obligations.visible_len *
+                sizeof(*owned->obligations.visible));
     }
-    if (ok && owned->type_obligation_len) {
-        owned->type_obligations = cetta_malloc(
-            owned->type_obligation_len *
-                sizeof(*owned->type_obligations));
-        memcpy(owned->type_obligations,
-               source->type_obligations,
-               owned->type_obligation_len *
-                   sizeof(*owned->type_obligations));
+    if (ok && owned->obligations.type_obligation_len) {
+        owned->obligations.type_obligations = cetta_malloc(
+            owned->obligations.type_obligation_len *
+                sizeof(*owned->obligations.type_obligations));
+        memcpy(
+            owned->obligations.type_obligations,
+            source->type_obligations,
+            owned->obligations.type_obligation_len *
+                sizeof(*owned->obligations.type_obligations));
     }
     if (ok)
         ok = petta_owned_continuation_copy_atoms(
-            owned, &owned->owner);
+            owned, &owned->terms.pool->owner);
 
     CettaBranchAuthorityToken confirmed_authority = {0};
     CettaContinuationStatus confirmed =
@@ -3952,6 +4533,7 @@ static CettaContinuationStatus petta_continuation_capture(
         cetta_branch_authority_token_equal(
             &authority, &confirmed_authority);
     if (!ok || !current) {
+        arena_reset(&owned->terms.pool->owner, term_mark);
         petta_owned_continuation_impl_free(owned);
         if (!current) {
             source->stats.owned_continuation_capture_invalidated++;
@@ -3959,14 +4541,16 @@ static CettaContinuationStatus petta_continuation_capture(
         }
         return CETTA_CONTINUATION_CAPACITY;
     }
-    owned->atom_bytes =
-        arena_accounted_live_bytes(&owned->owner);
+    size_t term_bytes_after = arena_accounted_live_bytes(
+        &owned->terms.pool->owner);
+    size_t term_bytes_added = term_bytes_after >= term_bytes_before
+        ? term_bytes_after - term_bytes_before : 0u;
     owned->exclusive_vector_bytes =
         petta_owned_continuation_vector_bytes(owned);
     source->stats.owned_continuation_captures++;
     petta_machine_add_u64(
         &source->stats.owned_continuation_atom_bytes_captured,
-        (uint64_t)owned->atom_bytes);
+        (uint64_t)term_bytes_added);
     petta_machine_add_u64(
         &source->stats.owned_continuation_vector_bytes_captured,
         (uint64_t)owned->exclusive_vector_bytes);
@@ -3974,101 +4558,27 @@ static CettaContinuationStatus petta_continuation_capture(
     return CETTA_CONTINUATION_READY;
 }
 
-static bool petta_owned_continuation_clone_payload(
-    PettaOwnedContinuationImpl *destination,
-    const PettaOwnedContinuationImpl *source, Arena *atom_owner) {
-    if (!destination || !source || !atom_owner ||
-        source->goal_initialized_len >
-            SIZE_MAX / sizeof(*source->goals) ||
-        source->goal_trail_len >
-            SIZE_MAX / sizeof(*source->goal_trail) ||
-        source->visible_len >
-            SIZE_MAX / sizeof(*source->visible) ||
-        source->type_obligation_len >
-            SIZE_MAX / sizeof(*source->type_obligations)) {
-        return false;
-    }
-    *destination = *source;
-    destination->owner = (Arena){0};
-    destination->bindings = (BindingsBuilder){0};
-    destination->goals = NULL;
-    destination->goal_trail = NULL;
-    destination->choices = NULL;
-    destination->visible = NULL;
-    destination->type_obligations = NULL;
-    destination->atom_bytes = 0u;
-    destination->exclusive_vector_bytes = 0u;
-
-    bool ok = bindings_builder_clone(
-        &destination->bindings, &source->bindings);
-    if (ok && source->goal_initialized_len) {
-        destination->goals = cetta_malloc(
-            source->goal_initialized_len *
-                sizeof(*destination->goals));
-        memcpy(destination->goals, source->goals,
-               source->goal_initialized_len *
-                   sizeof(*destination->goals));
-    }
-    if (ok && source->goal_trail_len) {
-        destination->goal_trail = cetta_malloc(
-            source->goal_trail_len *
-                sizeof(*destination->goal_trail));
-        memcpy(destination->goal_trail, source->goal_trail,
-               source->goal_trail_len *
-                   sizeof(*destination->goal_trail));
-    }
-    if (ok) {
-        ok = petta_owned_continuation_choices_clone(
-            &destination->choices, source->choices,
-            source->choice_len);
-    }
-    if (ok && source->visible_len) {
-        destination->visible = cetta_malloc(
-            source->visible_len *
-                sizeof(*destination->visible));
-        memcpy(destination->visible, source->visible,
-               source->visible_len *
-                   sizeof(*destination->visible));
-    }
-    if (ok && source->type_obligation_len) {
-        destination->type_obligations = cetta_malloc(
-            source->type_obligation_len *
-                sizeof(*destination->type_obligations));
-        memcpy(destination->type_obligations,
-               source->type_obligations,
-               source->type_obligation_len *
-                   sizeof(*destination->type_obligations));
-    }
-    if (ok)
-        ok = petta_owned_continuation_copy_atoms(
-            destination, atom_owner);
-    if (!ok)
-        petta_owned_continuation_payload_free(destination);
-    return ok;
-}
-
-static void petta_owned_continuation_rebase_scratch_marks(
-    PettaOwnedContinuationImpl *continuation, ArenaMark scratch_origin,
+static void petta_continuation_control_rebase_marks(
+    PettaContinuationControlComponent *control, ArenaMark scratch_origin,
     ArenaMark heap_origin) {
-    if (!continuation)
+    if (!control)
         return;
-    for (size_t i = 0u; i < continuation->choice_len; i++) {
-        continuation->choices[i].trail.scratch_mark = scratch_origin;
-        continuation->choices[i].trail.has_scratch_mark = true;
-        continuation->choices[i].heap_mark = heap_origin;
-        continuation->choices[i].heap_mark_captured = true;
+    for (size_t i = 0u; i < control->choice_len; i++) {
+        control->choices[i].trail.scratch_mark = scratch_origin;
+        control->choices[i].trail.has_scratch_mark = true;
+        control->choices[i].heap_mark = heap_origin;
+        control->choices[i].heap_mark_captured = true;
     }
     for (size_t i = 0u;
-         i < continuation->goal_initialized_len; i++) {
-        if (continuation->goals[i].catch_trail.has_scratch_mark)
-            continuation->goals[i].catch_trail.scratch_mark =
+         i < control->goal_initialized_len; i++) {
+        if (control->goals[i].catch_trail.has_scratch_mark)
+            control->goals[i].catch_trail.scratch_mark =
                 scratch_origin;
     }
-    for (size_t i = 0u;
-         i < continuation->goal_trail_len; i++) {
-        if (continuation->goal_trail[i]
+    for (size_t i = 0u; i < control->goal_trail_len; i++) {
+        if (control->goal_trail[i]
                 .previous.catch_trail.has_scratch_mark) {
-            continuation->goal_trail[i]
+            control->goal_trail[i]
                 .previous.catch_trail.scratch_mark = scratch_origin;
         }
     }
@@ -4083,7 +4593,7 @@ static CettaContinuationStatus petta_continuation_restore(
     PettaMachineImpl *destination = machine->impl;
     PettaOwnedContinuationImpl *saved = *payload;
     if (destination->instance_id !=
-            saved->source_machine_instance ||
+            saved->authority.source_machine_instance ||
         !petta_machine_owned_profile_supported(destination)) {
         return CETTA_CONTINUATION_UNSUPPORTED;
     }
@@ -4095,19 +4605,11 @@ static CettaContinuationStatus petta_continuation_restore(
     if (admitted != CETTA_CONTINUATION_READY)
         return admitted;
     if (!space_read_token_matches_live_space(
-            saved->space_read, destination->space) ||
+            saved->authority.space_read, destination->space) ||
         !cetta_branch_authority_token_equal(
-            &saved->capture_authority, &authority)) {
+            &saved->authority.capture_authority, &authority)) {
         destination->stats.owned_continuation_restore_invalidated++;
         return CETTA_CONTINUATION_INVALIDATED;
-    }
-
-    ArenaMark tenured_mark = arena_mark(&destination->tenured);
-    PettaOwnedContinuationImpl prepared = {0};
-    if (!petta_owned_continuation_clone_payload(
-            &prepared, saved, &destination->tenured)) {
-        arena_reset(&destination->tenured, tenured_mark);
-        return CETTA_CONTINUATION_CAPACITY;
     }
 
     CettaBranchAuthorityToken confirmed_authority = {0};
@@ -4116,20 +4618,28 @@ static CettaContinuationStatus petta_continuation_restore(
             destination, &confirmed_authority);
     bool current =
         space_read_token_matches_live_space(
-            saved->space_read, destination->space) &&
+            saved->authority.space_read, destination->space) &&
         confirmed == CETTA_CONTINUATION_READY &&
         cetta_branch_authority_token_equal(
-            &saved->capture_authority, &confirmed_authority);
+            &saved->authority.capture_authority,
+            &confirmed_authority);
     if (!current) {
-        petta_owned_continuation_payload_free(&prepared);
-        arena_reset(&destination->tenured, tenured_mark);
         destination->stats.owned_continuation_restore_invalidated++;
         return CETTA_CONTINUATION_INVALIDATED;
     }
+    if (!saved->terms.pool)
+        return CETTA_CONTINUATION_UNSUPPORTED;
 
     uint64_t next_goal_instance = destination->next_goal_instance;
     uint64_t next_type_obligation_id =
         destination->next_type_obligation_id;
+    /* Restore consumes one continuation handle.  Its branch-local vectors
+     * are exclusively owned, while its immutable term pool may also serve
+     * latent siblings.  Validate first, then transfer both the vectors and
+     * this handle's pool reference into the stable machine fields. */
+    petta_machine_invalidate_activation_frame(destination);
+    cetta_gslt_ground_dense_workspace_discard_match_v1(
+        &destination->equation_template_c0_workspace);
     petta_choice_truncate(destination, 0u);
     free(destination->choices);
     free(destination->goals);
@@ -4144,6 +4654,16 @@ static CettaContinuationStatus petta_continuation_restore(
     search_context_free(&destination->search);
     arena_free(&destination->heap);
     petta_machine_heap_arena_init(&destination->heap);
+    arena_free(&destination->tenured);
+    petta_machine_heap_arena_init(&destination->tenured);
+    arena_set_runtime_kind(
+        &destination->tenured,
+        CETTA_ARENA_RUNTIME_KIND_SURVIVOR);
+    arena_set_hashcons(&destination->tenured, NULL);
+    petta_continuation_term_pool_release(
+        destination->continuation_term_pool);
+    destination->continuation_term_pool = saved->terms.pool;
+    saved->terms.pool = NULL;
 
     memset(&destination->search, 0, sizeof(destination->search));
     arena_init(&destination->search.owned_scratch_arena);
@@ -4153,68 +4673,69 @@ static CettaContinuationStatus petta_continuation_restore(
     destination->search.scratch_arena =
         &destination->search.owned_scratch_arena;
     destination->search.owns_scratch_arena = true;
-    destination->search.bindings = prepared.bindings;
-    prepared.bindings = (BindingsBuilder){0};
+    destination->search.bindings = saved->bindings.bindings;
+    saved->bindings.bindings = (BindingsBuilder){0};
 
-    destination->goals = prepared.goals;
-    destination->goal_len = prepared.goal_len;
+    destination->goals = saved->control.goals;
+    destination->goal_len = saved->control.goal_len;
     destination->goal_initialized_len =
-        prepared.goal_initialized_len;
-    destination->goal_cap = prepared.goal_initialized_len;
+        saved->control.goal_initialized_len;
+    destination->goal_cap = saved->control.goal_initialized_len;
     destination->protected_goal_height =
-        prepared.protected_goal_height;
-    prepared.goals = NULL;
-    prepared.goal_len = 0u;
-    prepared.goal_initialized_len = 0u;
-    destination->goal_trail = prepared.goal_trail;
-    destination->goal_trail_len = prepared.goal_trail_len;
-    destination->goal_trail_cap = prepared.goal_trail_len;
-    prepared.goal_trail = NULL;
-    prepared.goal_trail_len = 0u;
-    destination->choices = prepared.choices;
-    destination->choice_len = prepared.choice_len;
-    destination->choice_cap = prepared.choice_len;
-    prepared.choices = NULL;
-    prepared.choice_len = 0u;
-    destination->visible = prepared.visible;
-    destination->visible_len = prepared.visible_len;
-    destination->visible_cap = prepared.visible_len;
-    prepared.visible = NULL;
-    prepared.visible_len = 0u;
+        saved->control.protected_goal_height;
+    saved->control.goals = NULL;
+    saved->control.goal_len = 0u;
+    saved->control.goal_initialized_len = 0u;
+    destination->goal_trail = saved->control.goal_trail;
+    destination->goal_trail_len = saved->control.goal_trail_len;
+    destination->goal_trail_cap = saved->control.goal_trail_len;
+    saved->control.goal_trail = NULL;
+    saved->control.goal_trail_len = 0u;
+    destination->choices = saved->control.choices;
+    destination->choice_len = saved->control.choice_len;
+    destination->choice_cap = saved->control.choice_len;
+    saved->control.choices = NULL;
+    saved->control.choice_len = 0u;
+    destination->visible = saved->obligations.visible;
+    destination->visible_len = saved->obligations.visible_len;
+    destination->visible_cap = saved->obligations.visible_len;
+    saved->obligations.visible = NULL;
+    saved->obligations.visible_len = 0u;
     destination->type_obligations =
-        prepared.type_obligations;
+        saved->obligations.type_obligations;
     destination->type_obligation_len =
-        prepared.type_obligation_len;
+        saved->obligations.type_obligation_len;
     destination->type_obligation_cap =
-        prepared.type_obligation_len;
-    prepared.type_obligations = NULL;
-    prepared.type_obligation_len = 0u;
+        saved->obligations.type_obligation_len;
+    saved->obligations.type_obligations = NULL;
+    saved->obligations.type_obligation_len = 0u;
 
-    destination->query = prepared.query;
-    destination->answer_variable = prepared.answer_variable;
-    destination->raised_error = prepared.raised_error;
-    destination->yielded = prepared.yielded;
-    destination->suspended_choice = prepared.suspended_choice;
-    destination->terminal = prepared.terminal;
+    destination->query = saved->readout.query;
+    destination->answer_variable = saved->readout.answer_variable;
+    destination->raised_error = saved->readout.raised_error;
+    destination->yielded = saved->readout.yielded;
+    destination->suspended_choice = saved->readout.suspended_choice;
+    destination->terminal = saved->readout.terminal;
     destination->count_only_emission =
-        prepared.count_only_emission;
+        saved->readout.count_only_emission;
     destination->pending_answer_weight =
-        prepared.pending_answer_weight;
+        saved->readout.pending_answer_weight;
     destination->last_answer_weight =
-        prepared.last_answer_weight;
-    destination->terminal_step = prepared.terminal_step;
+        saved->readout.last_answer_weight;
+    destination->terminal_step = saved->readout.terminal_step;
     destination->next_goal_instance = next_goal_instance >
-            prepared.next_goal_instance
-        ? next_goal_instance : prepared.next_goal_instance;
+            saved->control.next_goal_instance
+        ? next_goal_instance : saved->control.next_goal_instance;
     destination->next_type_obligation_id =
-        next_type_obligation_id > prepared.next_type_obligation_id
+        next_type_obligation_id >
+                saved->obligations.next_type_obligation_id
             ? next_type_obligation_id
-            : prepared.next_type_obligation_id;
+            : saved->obligations.next_type_obligation_id;
 
     ArenaMark scratch_origin = arena_mark(
         destination->search.scratch_arena);
     ArenaMark heap_origin = arena_mark(&destination->heap);
-    PettaOwnedContinuationImpl installed = {
+    PettaContinuationControlComponent installed = {
         .goals = destination->goals,
         .goal_initialized_len =
             destination->goal_initialized_len,
@@ -4223,31 +4744,19 @@ static CettaContinuationStatus petta_continuation_restore(
         .choices = destination->choices,
         .choice_len = destination->choice_len,
     };
-    petta_owned_continuation_rebase_scratch_marks(
+    petta_continuation_control_rebase_marks(
         &installed, scratch_origin, heap_origin);
 
-    petta_machine_invalidate_activation_frame(destination);
     petta_machine_invalidate_type_obligation_cache(destination);
-    cetta_gslt_ground_dense_workspace_discard_match_v1(
-        &destination->equation_template_c0_workspace);
     destination->heap_collect_after =
         petta_machine_nursery_window(destination);
     destination->tenured_major_after =
         petta_machine_next_major_threshold(
             arena_accounted_live_bytes(&destination->tenured));
-    const BindingsBuilder *builder =
-        &destination->search.bindings;
     destination->binding_growth_collect_after =
-        petta_u64_add_saturating(
-            builder->growth_count,
-            (uint64_t)(destination->choice_len
-                ? petta_choice_binding_window(
-                      destination, builder->current.len)
-                : petta_deterministic_binding_window(
-                      destination, builder->current.len)));
+        saved->control.binding_growth_collect_after;
     destination->stats.owned_continuation_restores++;
 
-    petta_owned_continuation_payload_free(&prepared);
     petta_owned_continuation_impl_free(saved);
     *payload = NULL;
     return CETTA_CONTINUATION_READY;
@@ -4264,12 +4773,30 @@ static bool petta_machine_resume_choice(
 static bool petta_machine_clause_expansion_supported(
     const PettaMachineImpl *machine) {
     if (!machine || machine->terminal || machine->yielded ||
-        machine->suspended_choice || machine->choice_len != 1u ||
+        machine->suspended_choice || machine->choice_len == 0u ||
         (machine->host.record_clause_use &&
          !machine->host.begin_relation_call)) {
         return false;
     }
-    const PettaChoice *choice = &machine->choices[0];
+    size_t clause_index = machine->choice_len - 1u;
+    if (clause_index != 0u &&
+        (!machine->host.control_plan ||
+         machine->host.control_plan->readout !=
+             CETTA_OBSERVATION_FIRST)) {
+        return false;
+    }
+    for (size_t i = 0u; i < clause_index; i++) {
+        /*
+         * A delimited first-answer scope is linear until it accepts a
+         * witness.  It may therefore surround the clause choice being
+         * split without becoming another branch of the frontier.  Every
+         * other prefix choice still carries an unpartitioned alternative
+         * and must be refused rather than duplicated across successors.
+         */
+        if (machine->choices[i].kind != PETTA_CHOICE_ONCE)
+            return false;
+    }
+    const PettaChoice *choice = &machine->choices[clause_index];
     bool occurrence_scoped =
         machine->host.begin_relation_call != NULL;
     return choice->kind == PETTA_CHOICE_CLAUSE &&
@@ -4282,23 +4809,141 @@ static bool petta_machine_clause_expansion_supported(
         machine->goal_len > choice->goal_height;
 }
 
-static bool petta_owned_continuation_commit_only_clause(
+bool petta_machine_external_branch_ready(const PettaMachine *machine) {
+    return machine && machine->impl &&
+        machine->impl->host.externalize_clause_choices &&
+        petta_machine_clause_expansion_supported(machine->impl) &&
+        petta_machine_owned_profile_supported(machine->impl);
+}
+
+static bool petta_owned_continuation_compact_committed_bindings(
     PettaOwnedContinuationImpl *continuation) {
-    if (!continuation || continuation->choice_len != 1u ||
-        !continuation->choices ||
-        continuation->choices[0].kind != PETTA_CHOICE_CLAUSE) {
+    if (!continuation || continuation->control.choice_len != 0u ||
+        continuation->bindings.bindings.trail_len != 0u ||
+        continuation->bindings.bindings.prime_trail_len != 0u) {
         return false;
     }
-    free(continuation->choices[0].as.clause.candidates);
-    continuation->choices[0].as.clause.candidates = NULL;
-    free(continuation->choices);
-    continuation->choices = NULL;
-    continuation->choice_len = 0u;
-    continuation->protected_goal_height = 0u;
-    free(continuation->goal_trail);
-    continuation->goal_trail = NULL;
-    continuation->goal_trail_len = 0u;
-    bindings_builder_commit(&continuation->bindings);
+
+    PettaBindingRoots roots = {0};
+    PettaActivationRoots activation_roots = {0};
+    size_t rooted_goal_len =
+        continuation->control.goal_len >
+                continuation->control.protected_goal_height
+            ? continuation->control.goal_len
+            : continuation->control.protected_goal_height;
+    bool compacted =
+        rooted_goal_len <= continuation->control.goal_initialized_len &&
+        petta_binding_roots_add(
+            &roots, continuation->readout.query) &&
+        petta_binding_roots_add(
+            &roots, continuation->readout.answer_variable) &&
+        petta_binding_roots_add(
+            &roots, continuation->readout.raised_error);
+    for (size_t i = 0u;
+         compacted && i < continuation->obligations.visible_len; i++) {
+        compacted = petta_binding_roots_add(
+            &roots, continuation->obligations.visible[i].variable);
+    }
+    for (size_t i = 0u;
+         compacted &&
+             i < continuation->obligations.type_obligation_len;
+         i++) {
+        PettaTypeObligation *obligation =
+            &continuation->obligations.type_obligations[i];
+        compacted =
+            petta_binding_roots_add(&roots, obligation->value) &&
+            petta_binding_roots_add(&roots, obligation->formal) &&
+            petta_binding_roots_add(
+                &roots, obligation->checked_value) &&
+            petta_binding_roots_add(
+                &roots, obligation->checked_formal);
+    }
+    for (size_t i = 0u; compacted && i < rooted_goal_len; i++) {
+        compacted = petta_binding_roots_add_goal(
+            &roots, &activation_roots, NULL,
+            &continuation->control.goals[i]);
+    }
+    for (size_t i = 0u;
+         compacted && i < continuation->control.goal_trail_len; i++) {
+        compacted = petta_binding_roots_add_goal(
+            &roots, &activation_roots, NULL,
+            &continuation->control.goal_trail[i].previous);
+    }
+    uint64_t discarded_items = 0u;
+    uint64_t discarded_trail = 0u;
+    if (compacted) {
+        compacted =
+            bindings_builder_compact_reachable_with_epoch_roots_and_entry_marks(
+                &continuation->bindings.bindings,
+                roots.items, roots.len,
+                activation_roots.epoch_roots,
+                activation_roots.epoch_root_len,
+                NULL, 0u,
+                activation_roots.entry_marks,
+                activation_roots.mark_len,
+                &discarded_items, &discarded_trail);
+    }
+    free(roots.items);
+    if (compacted)
+        petta_activation_roots_commit_marks(&activation_roots);
+    petta_activation_roots_free(&activation_roots);
+    return compacted && discarded_trail == 0u;
+}
+
+static bool petta_owned_continuation_commit_expanded_clause(
+    PettaOwnedContinuationImpl *continuation) {
+    if (!continuation || continuation->control.choice_len == 0u ||
+        !continuation->control.choices) {
+        return false;
+    }
+    size_t clause_index = continuation->control.choice_len - 1u;
+    for (size_t i = 0u; i < clause_index; i++) {
+        if (continuation->control.choices[i].kind !=
+            PETTA_CHOICE_ONCE) {
+            return false;
+        }
+    }
+    PettaChoice clause = continuation->control.choices[clause_index];
+    if (clause.kind != PETTA_CHOICE_CLAUSE ||
+        clause.goal_trail_mark >
+            continuation->control.goal_trail_len ||
+        clause.previous_protected_goal_height >
+            continuation->control.goal_initialized_len) {
+        return false;
+    }
+
+    free(continuation->control.choices[clause_index]
+             .as.clause.candidates);
+    continuation->control.choices[clause_index]
+        .as.clause.candidates = NULL;
+    continuation->control.choice_len = clause_index;
+    if (clause_index == 0u) {
+        free(continuation->control.choices);
+        continuation->control.choices = NULL;
+        bindings_builder_commit(&continuation->bindings.bindings);
+    } else {
+        continuation->control.choices = cetta_realloc(
+            continuation->control.choices,
+            clause_index * sizeof(*continuation->control.choices));
+    }
+    continuation->control.protected_goal_height =
+        clause.previous_protected_goal_height;
+    continuation->control.goal_trail_len = clause.goal_trail_mark;
+    if (continuation->control.goal_trail_len == 0u) {
+        free(continuation->control.goal_trail);
+        continuation->control.goal_trail = NULL;
+    } else {
+        continuation->control.goal_trail = cetta_realloc(
+            continuation->control.goal_trail,
+            continuation->control.goal_trail_len *
+                sizeof(*continuation->control.goal_trail));
+    }
+
+    if (clause_index == 0u &&
+        !petta_owned_continuation_compact_committed_bindings(
+            continuation)) {
+        return false;
+    }
     continuation->exclusive_vector_bytes =
         petta_owned_continuation_vector_bytes(continuation);
     return true;
@@ -4372,6 +5017,8 @@ static CettaContinuationStatus petta_relational_continuation_expand(
     }
 
     PettaMachineStats baseline_stats = source->stats;
+    bool establish_shared_terms =
+        source->continuation_term_pool == NULL;
     void *restore_payload = NULL;
     CettaContinuationStatus status = petta_continuation_capture(
         machine, &restore_payload);
@@ -4379,6 +5026,23 @@ static CettaContinuationStatus petta_relational_continuation_expand(
         source->stats = baseline_stats;
         return petta_machine_note_expansion_status(
             source, status, 0u);
+    }
+    if (establish_shared_terms) {
+        status = petta_continuation_restore(
+            machine, &restore_payload);
+        if (status != CETTA_CONTINUATION_READY) {
+            petta_owned_continuation_impl_free(restore_payload);
+            source->stats = baseline_stats;
+            return petta_machine_note_expansion_status(
+                source, status, 0u);
+        }
+        status = petta_continuation_capture(
+            machine, &restore_payload);
+        if (status != CETTA_CONTINUATION_READY) {
+            source->stats = baseline_stats;
+            return petta_machine_note_expansion_status(
+                source, status, 0u);
+        }
     }
 
     void **successors = NULL;
@@ -4389,7 +5053,7 @@ static CettaContinuationStatus petta_relational_continuation_expand(
         status = petta_continuation_capture(machine, &successor);
         if (status != CETTA_CONTINUATION_READY)
             break;
-        if (!petta_owned_continuation_commit_only_clause(successor) ||
+        if (!petta_owned_continuation_commit_expanded_clause(successor) ||
             !petta_continuation_payload_array_push(
                 &successors, &successor_len, &successor_cap,
                 successor)) {
@@ -4398,7 +5062,8 @@ static CettaContinuationStatus petta_relational_continuation_expand(
             break;
         }
 
-        PettaChoice *choice = &source->choices[0];
+        PettaChoice *choice =
+            &source->choices[source->choice_len - 1u];
         PettaMachineStep failure = PETTA_MACHINE_STEP_EXHAUSTED;
         if (!petta_machine_resume_choice(source, choice, &failure)) {
             if (failure == PETTA_MACHINE_STEP_EXHAUSTED)
@@ -4415,7 +5080,7 @@ static CettaContinuationStatus petta_relational_continuation_expand(
             void *last = NULL;
             status = petta_continuation_capture(machine, &last);
             if (status == CETTA_CONTINUATION_READY &&
-                petta_owned_continuation_commit_only_clause(last) &&
+                petta_owned_continuation_commit_expanded_clause(last) &&
                 petta_continuation_payload_array_push(
                     &successors, &successor_len, &successor_cap,
                     last)) {
@@ -4455,20 +5120,48 @@ static CettaContinuationStatus petta_relational_continuation_expand(
         source, CETTA_CONTINUATION_READY, successor_len);
 }
 
-static const CettaContinuationBackend kPettaContinuationBackend = {
-    .storage_name = "full-image",
-    .capture = petta_continuation_capture,
-    .restore = petta_continuation_restore,
-    .destroy = petta_continuation_destroy,
-    .storage = petta_continuation_storage,
-    .expand = petta_relational_continuation_expand,
+static const CettaContinuationProvider kPettaContinuationProvider = {
+    .representation_name = "shared-terms-owned-state",
+    .ownership = {
+        .capture = petta_continuation_capture,
+        .restore = petta_continuation_restore,
+        .destroy = petta_continuation_destroy,
+        .storage = petta_continuation_storage,
+    },
+    .branching = {
+        .expand = petta_relational_continuation_expand,
+    },
+    .projection = {
+        .trace = petta_continuation_trace,
+    },
+    .components = {
+        .representation = {
+            [CETTA_CONTINUATION_COMPONENT_AUTHORITY] =
+                "revision-authority",
+            [CETTA_CONTINUATION_COMPONENT_TERMS] =
+                "shared-term-pool",
+            [CETTA_CONTINUATION_COMPONENT_BINDINGS] =
+                "owned-abt-bindings",
+            [CETTA_CONTINUATION_COMPONENT_CONTROL] =
+                "owned-control-vectors",
+            [CETTA_CONTINUATION_COMPONENT_OBLIGATIONS] =
+                "owned-obligation-vectors",
+            [CETTA_CONTINUATION_COMPONENT_READOUT] =
+                "inline-readout-state",
+        },
+        .storage = petta_continuation_component_storage,
+    },
+    .maintenance = {
+        .reclaim_due = petta_continuation_reclaim_due,
+        .reclaim = petta_continuation_reclaim_terms,
+    },
 };
 
 CettaContinuationMachine petta_machine_continuation_machine(
     PettaMachine *machine) {
     return (CettaContinuationMachine){
         .machine = machine,
-        .backend = &kPettaContinuationBackend,
+        .provider = &kPettaContinuationProvider,
     };
 }
 
@@ -5622,8 +6315,12 @@ static bool petta_push_data_expression_planned(
         !cetta_expr_len_mul_fits_size(length, sizeof(Atom *))) {
         return false;
     }
-    Atom **slots = arena_alloc(
-        &machine->heap, sizeof(*slots) * (size_t)length);
+    Atom *inline_slots[9];
+    Atom **slots = length <= 9u
+        ? inline_slots
+        : arena_alloc(
+              &machine->heap,
+              sizeof(*slots) * (size_t)length);
     if (length > 0u && !slots)
         return false;
     for (CettaExprIndex index = 0u; index < length; index++) {
@@ -5685,11 +6382,18 @@ static bool petta_push_evaluated_expression_range_planned(
         !cetta_expr_len_mul_fits_size(length, sizeof(Atom *))) {
         return false;
     }
-    Atom **ready_elements = arena_alloc(
-        &machine->heap, sizeof(*ready_elements) * (size_t)length);
-    uint8_t *needs_evaluation = arena_alloc(
-        &machine->heap,
-        sizeof(*needs_evaluation) * (size_t)length);
+    Atom *inline_ready[9];
+    uint8_t inline_needs_evaluation[9];
+    Atom **ready_elements = length <= 9u
+        ? inline_ready
+        : arena_alloc(
+              &machine->heap,
+              sizeof(*ready_elements) * (size_t)length);
+    uint8_t *needs_evaluation = length <= 9u
+        ? inline_needs_evaluation
+        : arena_alloc(
+              &machine->heap,
+              sizeof(*needs_evaluation) * (size_t)length);
     if ((length > 0u && !ready_elements) ||
         (length > 0u && !needs_evaluation)) {
         return false;
@@ -6234,6 +6938,13 @@ static Atom *petta_machine_materialize_answer(
         &machine->heap, atom);
     if (!resolved)
         return NULL;
+    /* Open-cons is the only private carrier normalized at this boundary.
+     * Constructor-derived structural facts compose through expressions, so
+     * absence of every internal tag proves that the complete transformation
+     * is the identity.  Missing or hand-built facts remain conservative and
+     * take the general graph-preserving traversal below. */
+    if (!atom_structural_may_have_internal_tag(resolved))
+        return resolved;
 
     Atom *result = NULL;
     PettaAnswerMaterializeFrame *frames = NULL;
@@ -13570,7 +14281,8 @@ static bool petta_machine_cons(
  */
 static bool petta_machine_map_atom(
     PettaMachineImpl *machine, Atom *items, Atom *mapper_or_binder,
-    Atom *body, Atom *expected, uint32_t barrier) {
+    Atom *body, Atom *expected, uint32_t barrier,
+    const Bindings *environment) {
     if (!machine || !items || !mapper_or_binder || !expected ||
         (body && mapper_or_binder->kind != ATOM_VAR)) {
         return false;
@@ -13580,6 +14292,22 @@ static bool petta_machine_map_atom(
         !cetta_expr_len_mul_fits_size(
             items->expr.len, sizeof(Atom *))) {
         return false;
+    }
+
+    if (body && machine->host.map_single_result) {
+        Atom *prepared_result = NULL;
+        PettaMachineFoldResult prepared =
+            machine->host.map_single_result(
+                machine->host.context, machine->space,
+                &machine->heap, items, mapper_or_binder, body,
+                environment, &prepared_result);
+        if (prepared == PETTA_MACHINE_FOLD_VALUE) {
+            return prepared_result &&
+                petta_push_unify(
+                    machine, prepared_result, expected, barrier);
+        }
+        if (prepared == PETTA_MACHINE_FOLD_INTERRUPTED)
+            return true;
     }
 
     Atom **mapped_items = items->expr.len > 0u
@@ -13917,9 +14645,11 @@ static bool petta_machine_all_arguments_immediate(
     }
     for (CettaExprIndex index = 1u;
          index < expression->expr.len; index++) {
+        const PettaPlanNode *argument_plan =
+            petta_plan_child(plan, index);
         if (!petta_machine_immediate_value(
                 expression->expr.elems[index],
-                petta_plan_child(plan, index)) ||
+                argument_plan) ||
             petta_semantics_value_contains_observable_open_cons(
                 expression->expr.elems[index])) {
             return false;
@@ -14784,13 +15514,18 @@ static bool petta_machine_unify_activation_source(
         *handled_out = true;
         return petta_machine_unify(machine, source, value);
     }
-    Bindings *bindings = NULL;
-    BindingsDenseEpochFrame *frame = NULL;
-    if (!petta_machine_prepare_activation_frame(
-            machine, goal, &bindings, &frame)) {
+    BindingsBuilder *builder =
+        search_context_builder(&machine->search);
+    Bindings *bindings =
+        (Bindings *)bindings_builder_bindings(builder);
+    if (goal->activation_first_entry > bindings->len)
         return false;
-    }
-    if (source->kind == ATOM_VAR) {
+
+    BindingsDenseEpochFrame *frame = NULL;
+    bool dense_ready = goal->activation_template && goal->plan &&
+        petta_machine_prepare_activation_frame(
+            machine, goal, &bindings, &frame);
+    if (dense_ready && source->kind == ATOM_VAR) {
         Atom *resolved = petta_machine_resolve_activation_source_root(
             machine, bindings, frame, source, goal->plan);
         if (!resolved)
@@ -14800,21 +15535,22 @@ static bool petta_machine_unify_activation_source(
     }
     Atom *value_root = petta_machine_resolve_root(bindings, value);
     if (!value_root ||
-        value_root->kind == ATOM_VAR ||
         petta_semantics_is_open_cons_value(source) ||
         petta_semantics_is_open_cons_value(value_root)) {
         return false;
     }
 
-    BindingsBuilder *builder =
-        search_context_builder(&machine->search);
     machine->stats.unification_calls++;
     uint64_t growth_before = builder->growth_count;
     size_t heap_before = arena_accounted_live_bytes(&machine->heap);
     uint32_t mark = bindings_builder_save(builder);
-    bool matched = match_atoms_dense_epoch_view_builder_current(
-        source, frame,
-        value_root, builder, &machine->heap);
+    bool matched = dense_ready
+        ? match_atoms_dense_epoch_view_builder_current(
+              source, frame, value_root, builder, &machine->heap)
+        : match_atoms_epoch_view_builder_current(
+              source, goal->activation_epoch,
+              goal->activation_first_entry, value_root,
+              builder, &machine->heap);
     if (matched && bindings_has_loop(
             bindings_builder_bindings(builder))) {
         matched = false;
@@ -14842,8 +15578,12 @@ static bool petta_push_data_activation_planned(
         return false;
     }
     CettaExprLen length = goal->first->expr.len;
-    Atom **slots = arena_alloc(
-        &machine->heap, sizeof(*slots) * (size_t)length);
+    Atom *inline_slots[9];
+    Atom **slots = length <= 9u
+        ? inline_slots
+        : arena_alloc(
+              &machine->heap,
+              sizeof(*slots) * (size_t)length);
     if (!slots)
         return false;
     slots[0] = goal->first->expr.elems[0];
@@ -15131,6 +15871,58 @@ static Atom *petta_machine_materialize_call_free_activation_data(
     }
     return petta_machine_materialize_call_free_data_node(
         machine, bindings, frame, goal->first, goal->plan);
+}
+
+/* A variable-headed expression is conservatively compiled as a dynamic
+ * call.  When every direct field is nevertheless an authored ready value,
+ * retain those resolved roots and build only the shallow application shell.
+ * The ordinary SOLVE dispatcher remains the authority for deciding whether
+ * the resolved head denotes a call or data.  Any executable descendant or
+ * unresolved field declines to the complete activation materializer. */
+static Atom *petta_machine_materialize_dynamic_call_fields(
+        PettaMachineImpl *machine, const PettaGoal *goal) {
+    if (!machine || !goal || !goal->first || !goal->plan ||
+        goal->plan->role != PETTA_PLAN_DYNAMIC_CALL ||
+        goal->first->kind != ATOM_EXPR ||
+        goal->first->expr.len == 0u ||
+        goal->plan->child_count != goal->first->expr.len ||
+        !cetta_expr_len_mul_fits_size(
+            goal->first->expr.len, sizeof(Atom *))) {
+        return NULL;
+    }
+    Bindings *bindings = NULL;
+    BindingsDenseEpochFrame *frame = NULL;
+    if (!petta_machine_prepare_activation_frame(
+            machine, goal, &bindings, &frame)) {
+        return NULL;
+    }
+    CettaExprLen length = goal->first->expr.len;
+    Atom *inline_fields[16];
+    Atom **fields = length <= 16u
+        ? inline_fields
+        : arena_alloc(
+              &machine->heap,
+              sizeof(*fields) * (size_t)length);
+    if (!fields)
+        return NULL;
+    for (CettaExprIndex index = 0u; index < length; index++) {
+        const PettaPlanNode *field_plan =
+            petta_plan_child(goal->plan, index);
+        if (!field_plan ||
+            (field_plan->contains_call &&
+             field_plan->role != PETTA_PLAN_VALUE)) {
+            return NULL;
+        }
+        Atom *field = petta_machine_resolve_activation_source_root(
+            machine, bindings, frame,
+            goal->first->expr.elems[index], field_plan);
+        if (!field || !petta_machine_planned_value_ready(
+                machine, field, field_plan)) {
+            return NULL;
+        }
+        fields[index] = field;
+    }
+    return atom_expr(&machine->heap, fields, length);
 }
 
 typedef enum {
@@ -15648,6 +16440,22 @@ static bool petta_machine_dispatch_activation_solve(
         if (argument_status == PETTA_ACTIVATION_CALL_VIEW_READY)
             return true;
     }
+
+    Atom *dynamic_call_fields =
+        petta_machine_materialize_dynamic_call_fields(
+            machine, goal);
+    if (dynamic_call_fields) {
+        PettaGoal solve = *goal;
+        solve.kind = PETTA_GOAL_SOLVE;
+        solve.first = dynamic_call_fields;
+        solve.activation_epoch = 0u;
+        solve.activation_first_entry = 0u;
+        solve.activation_source_fields = 0u;
+        solve.first_operand_resolved = true;
+        return petta_machine_dispatch_solve(
+            machine, &solve, failure);
+    }
+
     Atom *materialized =
         petta_machine_materialize_activation_source(
             machine, goal, source);
@@ -17632,7 +18440,7 @@ static bool petta_machine_dispatch_solve(
      * the NULL/not-ready fallback.
      */
     if (head_id != SYMBOL_ID_NONE &&
-        is_grounded_op(head_id) &&
+        grounded_op_is_type_pure(head_id) &&
         nargs <= UINT32_MAX &&
         petta_machine_all_arguments_immediate(
             expression, plan)) {
@@ -17731,6 +18539,26 @@ static bool petta_machine_dispatch_solve(
             !petta_push_evaluated_expression_range_planned(
                 machine, expression, expected,
                 PETTA_GOAL_HOST_READY, 1u, 2u,
+                goal->barrier, plan)) {
+            *failure = PETTA_MACHINE_STEP_CAPACITY;
+            return false;
+        }
+        return true;
+    }
+
+    /*
+     * A compiled pure-grounded occurrence carries enough authority to run
+     * without an evaluator adapter.  The immediate case above remains
+     * allocation-free; this case evaluates only the operands that are not
+     * ready yet and rejoins the same pure dispatcher.  Effects and live
+     * state reads remain owned by the host, while unknown heads remain data.
+     */
+    if (head_id != SYMBOL_ID_NONE &&
+        grounded_op_is_type_pure(head_id) && plan &&
+        plan->execution == PETTA_PLAN_EXEC_PURE_GROUNDED_SLOTS) {
+        if (!petta_push_evaluated_expression_planned(
+                machine, expression, expected,
+                PETTA_GOAL_HOST_STRICT_READY, 1u,
                 goal->barrier, plan)) {
             *failure = PETTA_MACHINE_STEP_CAPACITY;
             return false;
@@ -17877,8 +18705,7 @@ static bool petta_machine_dispatch_goal(
         if (goal.kind == PETTA_GOAL_UNIFY &&
             goal.activation_source_fields != 0u) {
             if (goal.activation_source_fields ==
-                    PETTA_ACTIVATION_SOURCE_FIRST &&
-                goal.activation_template && goal.plan) {
+                    PETTA_ACTIVATION_SOURCE_FIRST) {
                 bool handled = false;
                 bool matched =
                     petta_machine_unify_activation_source(
@@ -18491,7 +19318,7 @@ static bool petta_machine_dispatch_goal(
         }
         return petta_machine_map_atom(
             machine, first, second, body, expected,
-            goal.barrier);
+            goal.barrier, environment);
     }
 
     if (goal.kind == PETTA_GOAL_FOLDL_ATOM_READY) {
@@ -19071,7 +19898,13 @@ static bool petta_machine_dispatch_goal(
      * positive-list of pure operators here; a NULL result falls through to
      * the host so "not ready" and extension behavior remain unchanged.
      */
-    if ((goal.kind == PETTA_GOAL_HOST_READY ||
+    PettaMachineHostMode ready_host_mode =
+        first && machine->host.classify
+            ? machine->host.classify(
+                  machine->host.context, machine->space, first)
+            : PETTA_MACHINE_HOST_NONE;
+    if (ready_host_mode != PETTA_MACHINE_HOST_READY_OVERRIDE &&
+        (goal.kind == PETTA_GOAL_HOST_READY ||
          goal.kind == PETTA_GOAL_HOST_STRICT_READY) &&
         first && first->kind == ATOM_EXPR &&
         first->expr.len > 0u &&
@@ -19525,6 +20358,10 @@ PettaMachineStep petta_machine_next(
             return petta_machine_finish_next(
                 impl, started_ns, impl->terminal_step);
         }
+        if (petta_machine_external_branch_ready(machine)) {
+            return petta_machine_finish_next(
+                impl, started_ns, PETTA_MACHINE_STEP_SUSPENDED);
+        }
         if (impl->host.permit_transition &&
             !impl->host.permit_transition(impl->host.context)) {
             return petta_machine_finish_next(
@@ -19607,6 +20444,8 @@ void petta_machine_destroy(PettaMachine *machine) {
     search_context_free(&impl->search);
     arena_free(&impl->heap);
     arena_free(&impl->tenured);
+    petta_continuation_term_pool_release(
+        impl->continuation_term_pool);
     cetta_gslt_ground_dense_workspace_free_v1(
         &impl->equation_template_c0_workspace);
     for (uint32_t index = 0u;

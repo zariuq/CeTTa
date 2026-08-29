@@ -72,14 +72,13 @@ typedef struct {
     bool smaller;
 } PeTTaNamedArity;
 
-/* A table-incarnation-identified snapshot of PeTTa's cons head identities.
+/* A table-incarnation-identified snapshot of PeTTa's authored cons head.
  * Classifications are exact only while `petta_semantics_cons_shape_facts_current`
  * holds.  Conservative discriminators must treat a stale snapshot as unknown. */
 typedef struct {
     const SymbolTable *symbol_table;
     uint64_t symbol_table_instance_id;
     SymbolId cons;
-    SymbolId open_cons;
 } PeTTaConsShapeFacts;
 
 bool petta_semantics_cons_shape_facts(PeTTaConsShapeFacts *facts);
@@ -88,11 +87,12 @@ bool petta_semantics_cons_shape_facts_current(
 
 static inline bool petta_semantics_facts_is_open_cons_value(
     const PeTTaConsShapeFacts *facts, const Atom *atom) {
-    return facts && facts->open_cons != SYMBOL_ID_NONE && atom &&
+    return facts && atom &&
            atom->kind == ATOM_EXPR && atom->expr.len == 3u &&
            atom->expr.elems[0] &&
-           atom->expr.elems[0]->kind == ATOM_SYMBOL &&
-           atom->expr.elems[0]->sym_id == facts->open_cons;
+           atom_is_internal_tag(
+               atom->expr.elems[0],
+               CETTA_INTERNAL_TAG_PETTA_OPEN_CONS);
 }
 
 static inline bool petta_semantics_facts_is_cons_constraint(

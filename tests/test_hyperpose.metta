@@ -7,6 +7,7 @@
 !(assertEqualToResult (hyperpose (a b Empty c)) (a b c))
 !(assertEqual (collapse (hyperpose (a Empty b))) (a b))
 !(assertEqual (collapse (hyperpose ((superpose (x y)) z))) (x y z))
+!(assertEqual (collapse (hyperpose (same same))) (same same))
 
 !(pragma! num-threads 0)
 !(assertEqual (select 2 (hyperpose (a b c))) (a b))

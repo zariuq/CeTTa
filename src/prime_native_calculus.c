@@ -1031,6 +1031,7 @@ static CettaPrimeNativeExecutionV1 prime_native_try_map_application(
     if (!value) return prime_native_fault();
     return (CettaPrimeNativeExecutionV1){
         .kind = CETTA_PRIME_NATIVE_EXECUTION_REALIZED,
+        .result_form = CETTA_PRIME_NATIVE_RESULT_VALUE,
         .value = value,
         .typed_value = mapped,
     };
@@ -1681,6 +1682,7 @@ static CettaPrimeNativeExecutionV1 prime_native_try_hyp_candidates(
     if (!plan) return prime_native_fault();
     return (CettaPrimeNativeExecutionV1){
         .kind = CETTA_PRIME_NATIVE_EXECUTION_REALIZED,
+        .result_form = CETTA_PRIME_NATIVE_RESULT_PLAN,
         .value = plan,
         .typed_value = receipt,
     };
@@ -2397,6 +2399,7 @@ static PrimeNativePlanBuildV1 prime_native_hyp_finite_search(
     if (!plan) return PRIME_NATIVE_PLAN_FAULT;
     *execution_out = (CettaPrimeNativeExecutionV1){
         .kind = CETTA_PRIME_NATIVE_EXECUTION_REALIZED,
+        .result_form = CETTA_PRIME_NATIVE_RESULT_PLAN,
         .value = plan,
         .typed_value = search.receipt,
     };
@@ -2547,6 +2550,7 @@ static CettaPrimeNativeExecutionV1 prime_native_try_map_rel_run(
     if (!plan) return prime_native_fault();
     return (CettaPrimeNativeExecutionV1){
         .kind = CETTA_PRIME_NATIVE_EXECUTION_REALIZED,
+        .result_form = CETTA_PRIME_NATIVE_RESULT_PLAN,
         .value = plan,
         .typed_value = lift.search.receipt,
     };
@@ -2736,6 +2740,7 @@ static CettaPrimeNativeExecutionV1 prime_native_try_hyp_run(
         return prime_native_fault();
     return (CettaPrimeNativeExecutionV1){
         .kind = CETTA_PRIME_NATIVE_EXECUTION_REALIZED,
+        .result_form = CETTA_PRIME_NATIVE_RESULT_PLAN,
         .value = plan,
         .typed_value = admitted.denotation
             ? admitted.denotation

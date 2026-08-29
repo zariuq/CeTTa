@@ -142,6 +142,18 @@ def generated_assertions() -> list[str]:
         reversed_left = render_sequence(list(reversed(left)))
         mapped = render_sequence([value + 3 for value in left])
         filtered = render_sequence([value for value in left if value > 8])
+        sorted_left = render_sequence(sorted(left))
+        unique_left = render_sequence(list(dict.fromkeys(left)))
+        removed_left = render_sequence(
+            [value for value in left if not left or value != left[0]]
+        )
+        top_k_count = case % 5
+        ranked_indices = sorted(
+            range(len(left)), key=lambda index: (-left[index], index)
+        )[:top_k_count]
+        retained_top_k = render_sequence(
+            [left[index] for index in sorted(ranked_indices)]
+        )
         total = sum(left)
         assertions.extend(
             (
@@ -154,6 +166,14 @@ def generated_assertions() -> list[str]:
                 f"(clist:to-list (clist:append (clist:from-list {left_form}) "
                 f"(clist:from-list {right_form}))) {appended})",
                 f"!(assertEqual (list:reverse {left_form}) {reversed_left})",
+                f"!(assertEqual (list:sort-numbers {left_form}) {sorted_left})",
+                f"!(assertEqual (list:unique {left_form}) {unique_left})",
+                "!(assertEqual "
+                f"(list:retain-top-k-by-number test:identity-key "
+                f"{left_form} {top_k_count}) {retained_top_k})",
+                "!(assertEqual "
+                f"(list:remove-all {left[0] if left else 0} {left_form}) "
+                f"{removed_left})",
                 "!(assertEqual "
                 f"(clist:to-list (clist:reverse (clist:from-list {left_form}))) "
                 f"{reversed_left})",
@@ -200,7 +220,10 @@ def check_generated_model(cetta: Path) -> int:
     assertions = generated_assertions()
     driver = RUNTIME / "generated_direct_model.metta"
     driver.write_text(
-        "!(import! &self clist)\n" + "\n".join(assertions) + "\n"
+        "!(import! &self clist)\n"
+        "(= (test:identity-key $x) $x)\n"
+        + "\n".join(assertions)
+        + "\n"
     )
     expected = "\n".join("[()]" for _ in range(len(assertions) + 1))
     outputs = {lane: run(cetta, lane, str(driver)) for lane in ("he", "prime")}
@@ -226,6 +249,13 @@ def check_scale(cetta: Path) -> int:
         "!(assertEqual (clist:len (clist:range 200)) 200)",
         "!(assertEqual (clist:first (clist:reverse (clist:range 200))) 199)",
         "!(assertEqual (clist:to-list (clist:from-list (list:range 200))) (list:range 200))",
+        # A produced constructor value is invocation data, not syntax to
+        # recompile at every consumer step.  This composition crossed the
+        # native-stack boundary when the eager value proof was ignored.
+        "!(assertEqual "
+        "(clist:foldl "
+        "(clist:append (clist:range 600) (clist:range 600)) "
+        "0 $a $x (+ $a $x)) 359400)",
     )
     driver = RUNTIME / "scale_correctness.metta"
     driver.write_text(
@@ -297,10 +327,56 @@ def check_mutations(cetta: Path) -> int:
             "(clist:from-list (c b a)))\n",
         ),
         (
+            "default-sort",
+            list_source,
+            "(= (list:sort $xs)\n   (sort-atom $xs))",
+            "(= (list:sort $xs)\n   $xs)",
+            "!(assertEqual (list:sort (ccc a bb)) (a bb ccc))\n",
+        ),
+        (
+            "numeric-sort",
+            list_source,
+            "(= (list:sort-numbers $xs)\n"
+            "   (sort-numbers-atom $xs))",
+            "(= (list:sort-numbers $xs)\n"
+            "   $xs)",
+            "!(assertEqual (list:sort-numbers (3 1 2)) (1 2 3))\n",
+        ),
+        (
+            "remove-all",
+            list_source,
+            "(= (list:remove-all $item $xs)\n"
+            "   (remove-all-atom $item $xs))",
+            "(= (list:remove-all $item $xs)\n"
+            "   $xs)",
+            "!(assertEqual (list:remove-all a (b a a c)) (b c))\n",
+        ),
+        (
+            "unique",
+            list_source,
+            "(= (list:unique $xs)\n   (unique-atom $xs))",
+            "(= (list:unique $xs)\n   $xs)",
+            "!(assertEqual (list:unique (a b a c b)) (a b c))\n",
+        ),
+        (
+            "stable-merge",
+            list_source,
+            "if $take-left\n",
+            "if (if (eval ($precedes $right-head $left-head))\n"
+            "                        False\n"
+            "                        $take-left)\n",
+            "(= (test:key<= (item $a $x) (item $b $y)) (<= $a $b))\n"
+            "!(assertEqual (list:sort-by test:key<= "
+            "((item 1 a) (item 0 z) (item 1 b))) "
+            "((item 0 z) (item 1 a) (item 1 b)))\n",
+        ),
+        (
             "append",
             list_source,
-            "(= (list:append () $rhs)\n   $rhs)",
-            "(= (list:append () $rhs)\n   ())",
+            "(= (list:append $lhs $rhs)\n"
+            "   (union-atom $lhs $rhs))",
+            "(= (list:append $lhs $rhs)\n"
+            "   $lhs)",
             "!(assertEqual (list:append (a b) (c d)) (a b c d))\n",
         ),
         (
@@ -323,6 +399,38 @@ def check_mutations(cetta: Path) -> int:
             "(= (list:filter $xs $var $body)\n   (filter-atom $xs $var $body))",
             "(= (list:filter $xs $var $body)\n   $xs)",
             "!(assertEqual (list:filter (1 2 3 4) $x (> $x 2)) (3 4))\n",
+        ),
+        (
+            "retain-top-k-by-number",
+            list_source,
+            "(= (list:retain-top-k-by-number $key-function $xs $count)\n"
+            "   (function\n"
+            "     (chain (eval $xs) $__list_top_k_items\n"
+            "       (chain (eval $count) $__list_top_k_count\n"
+            "         (eval\n"
+            "           (_minimal-retain-top-k-by-number\n"
+            "             $__list_top_k_items $__list_top_k_count $__list_top_k_item\n"
+            "             (eval ($key-function $__list_top_k_item))))))))",
+            "(= (list:retain-top-k-by-number $key-function $xs $count)\n"
+            "   $xs)",
+            "(= (test:key (item $key $value)) $key)\n"
+            "!(assertEqual (list:retain-top-k-by-number test:key "
+            "((item 1 a) (item 3 b) (item 2 c)) 2) "
+            "((item 3 b) (item 2 c)))\n",
+        ),
+        (
+            "retain-top-k-relational-fallback",
+            list_source,
+            "(chain (unkey-atom $retained) $result\n"
+            "         (return $result))",
+            "(chain (unkey-atom $retained) $result\n"
+            "         (return ()))",
+            "(= (test:key-choice (item $key $value)) $key)\n"
+            "(= (test:key-choice (item $key $value)) (+ $key 10))\n"
+            "!(assertEqualToResult "
+            "(list:retain-top-k-by-number test:key-choice "
+            "((item 2 a) (item 3 b)) 1) "
+            "(((item 3 b)) ((item 2 a)) ((item 3 b)) ((item 3 b))))\n",
         ),
     )
 

@@ -74,3 +74,8 @@
     (runtime-counter hyperpose-cancel-request $n)
     (> $n 0))
   (True))
+!(assertEqualToResult
+  (match &hyperpose-stats
+    (runtime-counter hyperpose-cancel-observed $n)
+    (> $n 0))
+  (True))

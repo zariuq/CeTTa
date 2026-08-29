@@ -25,3 +25,6 @@
 [()]
 [(ResolvedReference resolved)]
 [(UnresolvedReference &ctx:unbound-reference)]
+[(DirectLetResolvedReference resolved)]
+[(LetResolvedReference resolved)]
+[(UnresolvedLetReference &ctx:unbound-reference)]

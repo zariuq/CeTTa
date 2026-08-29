@@ -14,8 +14,17 @@ typedef enum {
     CETTA_PRIME_NATIVE_EXECUTION_FAULT,
 } CettaPrimeNativeExecutionKindV1;
 
+typedef enum {
+    CETTA_PRIME_NATIVE_RESULT_VALUE = 0,
+    CETTA_PRIME_NATIVE_RESULT_PLAN,
+} CettaPrimeNativeResultFormV1;
+
 typedef struct {
     CettaPrimeNativeExecutionKindV1 kind;
+    /* A value has reached the native operation's promised weak-head form.
+     * A plan is ordinary MeTTa that must still run before its occurrences may
+     * be observed or matched by an enclosing continuation. */
+    CettaPrimeNativeResultFormV1 result_form;
     Atom *value;
     /* Current typed value that licenses this realization.  For a native
      * constructor it is the typed result.  Relational execution carries the

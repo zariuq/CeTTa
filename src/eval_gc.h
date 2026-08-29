@@ -41,6 +41,7 @@ typedef struct {
 #define CETTA_EVAL_GC_DECLARE_STRONG_ATOM_SPAN(name) CettaEvalGcAtomSpan name;
 #define CETTA_EVAL_GC_DECLARE_LOGICAL_BINDINGS(name) Bindings *name;
 #define CETTA_EVAL_GC_DECLARE_OUTCOME_SET(name) OutcomeSet *name;
+#define CETTA_EVAL_GC_DECLARE_VARIANT_INSTANCE(name) VariantInstance *name;
 #define CETTA_EVAL_GC_DECLARE_EPHEMERON_ATOM_MAP(name) \
     CettaEvalGcEphemeronAtomMap name;
 #define CETTA_EVAL_GC_DECLARE_PAYLOAD(kind, upper)                         \
@@ -50,12 +51,14 @@ typedef struct {
             CETTA_EVAL_GC_DECLARE_STRONG_ATOM_SPAN,                       \
             CETTA_EVAL_GC_DECLARE_LOGICAL_BINDINGS,                       \
             CETTA_EVAL_GC_DECLARE_OUTCOME_SET,                            \
+            CETTA_EVAL_GC_DECLARE_VARIANT_INSTANCE,                       \
             CETTA_EVAL_GC_DECLARE_EPHEMERON_ATOM_MAP)                     \
     } CettaEvalGcPayload_##kind;
 CETTA_EVAL_GC_FRAME_KIND_ROWS(CETTA_EVAL_GC_DECLARE_PAYLOAD)
 #undef CETTA_EVAL_GC_DECLARE_PAYLOAD
 #undef CETTA_EVAL_GC_DECLARE_EPHEMERON_ATOM_MAP
 #undef CETTA_EVAL_GC_DECLARE_OUTCOME_SET
+#undef CETTA_EVAL_GC_DECLARE_VARIANT_INSTANCE
 #undef CETTA_EVAL_GC_DECLARE_LOGICAL_BINDINGS
 #undef CETTA_EVAL_GC_DECLARE_STRONG_ATOM_SPAN
 #undef CETTA_EVAL_GC_DECLARE_STRONG_ATOM_SLOT
@@ -78,6 +81,9 @@ typedef struct EvalGcRootFrame {
 typedef struct {
     Arena survivor;
     EvalGcRootFrame *roots;
+    Arena *region_arena;
+    ArenaMark region_anchor;
+    uint32_t region_depth;
     bool ready;
     bool enabled;
     uint32_t external_owner_depth;
@@ -85,6 +91,17 @@ typedef struct {
     uint64_t collections;
     uint64_t reclaimed_bytes;
 } EvalGc;
+
+/* Every evacuation carries its lifetime boundary explicitly.  Atom payloads
+ * move into the fresh semispace, while persistent Prime branch state must
+ * remain owned by the top-level Prime episode arena.  `old_survivor` and
+ * `collected_arena` identify exactly the two owners invalidated by commit. */
+typedef struct {
+    AtomDeepCopySession *atom_copy_session;
+    const Arena *collected_arena;
+    const Arena *old_survivor;
+    Arena *prime_episode_owner;
+} EvalGcEvacuationContext;
 
 static __thread EvalGc g_eval_gc;
 
@@ -110,6 +127,8 @@ static void eval_gc_init_once(void) {
     g_eval_gc.collections = 0;
     g_eval_gc.reclaimed_bytes = 0;
     g_eval_gc.roots = NULL;
+    g_eval_gc.region_arena = NULL;
+    g_eval_gc.region_depth = 0u;
     g_eval_gc.external_owner_depth = 0u;
 
     eval_gc_init_survivor_arena(&g_eval_gc.survivor);
@@ -120,6 +139,48 @@ static inline bool eval_gc_enabled(void) {
     if (!g_eval_gc.ready)
         eval_gc_init_once();
     return g_eval_gc.enabled;
+}
+
+typedef struct {
+    Arena *arena;
+    bool joined;
+} EvalGcRegionGuard;
+
+static ArenaMark eval_gc_region_enter(EvalGcRegionGuard *guard,
+                                      Arena *arena) {
+    ArenaMark local = arena_mark(arena);
+    if (!guard || !arena)
+        return local;
+    if (!g_eval_gc.ready)
+        eval_gc_init_once();
+    guard->arena = arena;
+    guard->joined = false;
+    if (g_eval_gc.region_depth == 0u) {
+        g_eval_gc.region_arena = arena;
+        g_eval_gc.region_anchor = local;
+        g_eval_gc.region_depth = 1u;
+        guard->joined = true;
+        return g_eval_gc.region_anchor;
+    }
+    if (g_eval_gc.region_arena == arena &&
+        g_eval_gc.region_depth < UINT32_MAX) {
+        g_eval_gc.region_depth++;
+        guard->joined = true;
+        return g_eval_gc.region_anchor;
+    }
+    return local;
+}
+
+static void eval_gc_region_leave(EvalGcRegionGuard *guard) {
+    if (!guard || !guard->joined)
+        return;
+    assert(g_eval_gc.region_arena == guard->arena);
+    assert(g_eval_gc.region_depth > 0u);
+    g_eval_gc.region_depth--;
+    if (g_eval_gc.region_depth == 0u)
+        g_eval_gc.region_arena = NULL;
+    guard->arena = NULL;
+    guard->joined = false;
 }
 
 /*
@@ -190,6 +251,96 @@ static void eval_gc_root_frame_enter_function_args_machine(
         frame, CETTA_EVAL_GC_FRAME_FUNCTION_ARGS_MACHINE);
 }
 
+static void eval_gc_root_frame_enter_typed_application_continuation(
+    EvalGcRootFrame *frame,
+    Atom **live_atoms, size_t live_atom_count,
+    Atom **overload_types, size_t overload_type_count,
+    Atom **return_contracts, size_t return_contract_count,
+    Atom **applicability_errors, size_t applicability_error_count,
+    Atom **argument_types, size_t argument_type_count,
+    OutcomeSet *function_results, OutcomeSet *heads,
+    OutcomeSet *parent_outcomes) {
+    if (!frame)
+        return;
+    frame->payload.typed_application_continuation.live_atoms =
+        (CettaEvalGcAtomSpan){live_atoms, live_atom_count};
+    frame->payload.typed_application_continuation.overload_types =
+        (CettaEvalGcAtomSpan){overload_types, overload_type_count};
+    frame->payload.typed_application_continuation.return_contracts =
+        (CettaEvalGcAtomSpan){return_contracts, return_contract_count};
+    frame->payload.typed_application_continuation.applicability_errors =
+        (CettaEvalGcAtomSpan){
+            applicability_errors, applicability_error_count};
+    frame->payload.typed_application_continuation.argument_types =
+        (CettaEvalGcAtomSpan){argument_types, argument_type_count};
+    frame->payload.typed_application_continuation.function_results =
+        function_results;
+    frame->payload.typed_application_continuation.heads = heads;
+    frame->payload.typed_application_continuation.parent_outcomes =
+        parent_outcomes;
+    eval_gc_root_frame_link(
+        frame,
+        CETTA_EVAL_GC_FRAME_TYPED_APPLICATION_CONTINUATION);
+}
+
+static void eval_gc_root_frame_enter_observation_normalization(
+    EvalGcRootFrame *frame,
+    Atom **source, Atom **value,
+    Atom **children, size_t child_count,
+    Bindings *env, OutcomeSet *child_outcomes,
+    OutcomeSet *parent_outcomes) {
+    if (!frame)
+        return;
+    frame->payload.observation_normalization.source = source;
+    frame->payload.observation_normalization.value = value;
+    frame->payload.observation_normalization.children =
+        (CettaEvalGcAtomSpan){children, child_count};
+    frame->payload.observation_normalization.env = env;
+    frame->payload.observation_normalization.child_outcomes =
+        child_outcomes;
+    frame->payload.observation_normalization.parent_outcomes =
+        parent_outcomes;
+    eval_gc_root_frame_link(
+        frame, CETTA_EVAL_GC_FRAME_OBSERVATION_NORMALIZATION);
+}
+
+static void eval_gc_root_frame_enter_tuple_frame(
+    EvalGcRootFrame *frame, Bindings *env, OutcomeSet *sub,
+    Bindings *merged, Bindings *active,
+    VariantInstance *prefix_variant,
+    VariantInstance *active_variant) {
+    if (!frame)
+        return;
+    frame->payload.tuple_frame.env = env;
+    frame->payload.tuple_frame.sub = sub;
+    frame->payload.tuple_frame.merged = merged;
+    frame->payload.tuple_frame.active = active;
+    frame->payload.tuple_frame.prefix_variant = prefix_variant;
+    frame->payload.tuple_frame.active_variant = active_variant;
+    eval_gc_root_frame_link(frame, CETTA_EVAL_GC_FRAME_TUPLE_FRAME);
+}
+
+static void eval_gc_root_frame_enter_tuple_machine(
+    EvalGcRootFrame *frame,
+    Atom **continuation_atoms, size_t continuation_atom_count,
+    Atom **orig_elems, size_t orig_count,
+    Atom **prefix, size_t prefix_count,
+    Bindings *env, OutcomeSet *outcomes,
+    OutcomeSet *parent_outcomes) {
+    if (!frame)
+        return;
+    frame->payload.tuple_machine.continuation_atoms =
+        (CettaEvalGcAtomSpan){continuation_atoms, continuation_atom_count};
+    frame->payload.tuple_machine.orig_elems =
+        (CettaEvalGcAtomSpan){orig_elems, orig_count};
+    frame->payload.tuple_machine.prefix =
+        (CettaEvalGcAtomSpan){prefix, prefix_count};
+    frame->payload.tuple_machine.env = env;
+    frame->payload.tuple_machine.outcomes = outcomes;
+    frame->payload.tuple_machine.parent_outcomes = parent_outcomes;
+    eval_gc_root_frame_link(frame, CETTA_EVAL_GC_FRAME_TUPLE_MACHINE);
+}
+
 static void eval_gc_root_frame_enter_outcome_continuation(
     EvalGcRootFrame *frame,
     Atom **live_atoms, size_t live_atom_count,
@@ -203,6 +354,91 @@ static void eval_gc_root_frame_enter_outcome_continuation(
     frame->payload.outcome_continuation.parent_outcomes = parent_outcomes;
     eval_gc_root_frame_link(
         frame, CETTA_EVAL_GC_FRAME_OUTCOME_CONTINUATION);
+}
+
+static void eval_gc_root_frame_enter_evaluation_retry(
+    EvalGcRootFrame *frame, Atom **input) {
+    if (!frame)
+        return;
+    frame->payload.evaluation_retry.input = input;
+    eval_gc_root_frame_link(
+        frame, CETTA_EVAL_GC_FRAME_EVALUATION_RETRY);
+}
+
+static void eval_gc_root_frame_enter_type_cast_continuation(
+    EvalGcRootFrame *frame, Atom **subject, Atom **expected_type) {
+    if (!frame)
+        return;
+    frame->payload.type_cast_continuation.subject = subject;
+    frame->payload.type_cast_continuation.expected_type = expected_type;
+    eval_gc_root_frame_link(
+        frame, CETTA_EVAL_GC_FRAME_TYPE_CAST_CONTINUATION);
+}
+
+static void eval_gc_root_frame_enter_let_branch_continuation(
+    EvalGcRootFrame *frame,
+    Atom **canonical,
+    Atom **pattern,
+    Atom **source,
+    Atom **scoped_body,
+    Atom **fresh,
+    size_t fresh_count,
+    Bindings *prefix,
+    OutcomeSet *source_outcomes,
+    OutcomeSet *parent_outcomes) {
+    if (!frame)
+        return;
+    frame->payload.let_branch_continuation.canonical = canonical;
+    frame->payload.let_branch_continuation.pattern = pattern;
+    frame->payload.let_branch_continuation.source = source;
+    frame->payload.let_branch_continuation.scoped_body = scoped_body;
+    frame->payload.let_branch_continuation.fresh =
+        (CettaEvalGcAtomSpan){fresh, fresh_count};
+    frame->payload.let_branch_continuation.prefix = prefix;
+    frame->payload.let_branch_continuation.source_outcomes =
+        source_outcomes;
+    frame->payload.let_branch_continuation.parent_outcomes =
+        parent_outcomes;
+    eval_gc_root_frame_link(
+        frame, CETTA_EVAL_GC_FRAME_LET_BRANCH_CONTINUATION);
+}
+
+static void eval_gc_root_frame_enter_case_branch_continuation(
+    EvalGcRootFrame *frame,
+    Atom **live_atoms, size_t live_atom_count,
+    Bindings *lexical_env, Bindings *branch_env,
+    OutcomeSet *source_outcomes,
+    OutcomeSet *parent_outcomes) {
+    if (!frame)
+        return;
+    frame->payload.case_branch_continuation.live_atoms =
+        (CettaEvalGcAtomSpan){live_atoms, live_atom_count};
+    frame->payload.case_branch_continuation.lexical_env = lexical_env;
+    frame->payload.case_branch_continuation.branch_env = branch_env;
+    frame->payload.case_branch_continuation.source_outcomes =
+        source_outcomes;
+    frame->payload.case_branch_continuation.parent_outcomes =
+        parent_outcomes;
+    eval_gc_root_frame_link(
+        frame, CETTA_EVAL_GC_FRAME_CASE_BRANCH_CONTINUATION);
+}
+
+static void eval_gc_root_frame_enter_static_branch_walk(
+    EvalGcRootFrame *frame, Atom **pending, size_t pending_count) {
+    if (!frame)
+        return;
+    frame->payload.static_branch_walk.pending =
+        (CettaEvalGcAtomSpan){pending, pending_count};
+    eval_gc_root_frame_link(
+        frame, CETTA_EVAL_GC_FRAME_STATIC_BRANCH_WALK);
+}
+
+static void eval_gc_root_frame_update_static_branch_walk(
+    EvalGcRootFrame *frame, Atom **pending, size_t pending_count) {
+    assert(frame && frame->linked &&
+           frame->kind == CETTA_EVAL_GC_FRAME_STATIC_BRANCH_WALK);
+    frame->payload.static_branch_walk.pending =
+        (CettaEvalGcAtomSpan){pending, pending_count};
 }
 
 static void eval_gc_root_frame_suspend_precisely(EvalGcRootFrame *frame) {
@@ -272,6 +508,231 @@ static void eval_gc_outcome_suspension_begin(
         NULL, 0u);
 }
 
+typedef struct {
+    EvalGcRootFrame continuation;
+    EvalGcRootFrame *lexical;
+    bool active;
+} EvalGcLetBranchSuspension;
+
+static void eval_gc_let_branch_suspension_end(
+    EvalGcLetBranchSuspension *suspension) {
+    if (!suspension || !suspension->active)
+        return;
+    eval_gc_root_frame_resume(suspension->lexical);
+    eval_gc_root_frame_leave(&suspension->continuation);
+    suspension->lexical = NULL;
+    suspension->active = false;
+}
+
+static void eval_gc_let_branch_suspension_begin(
+    EvalGcLetBranchSuspension *suspension,
+    EvalGcRootFrame *lexical,
+    Atom **canonical,
+    Atom **pattern,
+    Atom **source,
+    Atom **scoped_body,
+    Atom **fresh,
+    size_t fresh_count,
+    Bindings *prefix,
+    OutcomeSet *source_outcomes,
+    OutcomeSet *parent_outcomes) {
+    assert(suspension && lexical && lexical->linked &&
+           lexical->kind == CETTA_EVAL_GC_FRAME_LEXICAL &&
+           canonical && pattern && source && scoped_body &&
+           prefix && source_outcomes && parent_outcomes);
+    assert(!suspension->active);
+    assert(fresh_count == 0u || fresh != NULL);
+    eval_gc_root_frame_enter_let_branch_continuation(
+        &suspension->continuation,
+        canonical, pattern, source, scoped_body, fresh, fresh_count,
+        prefix, source_outcomes, parent_outcomes);
+    eval_gc_root_frame_suspend_precisely(lexical);
+    suspension->lexical = lexical;
+    suspension->active = true;
+}
+
+typedef struct {
+    EvalGcRootFrame continuation;
+    EvalGcRootFrame *lexical;
+    bool active;
+} EvalGcCaseBranchSuspension;
+
+static void eval_gc_case_branch_suspension_end(
+    EvalGcCaseBranchSuspension *suspension) {
+    if (!suspension || !suspension->active)
+        return;
+    eval_gc_root_frame_resume(suspension->lexical);
+    eval_gc_root_frame_leave(&suspension->continuation);
+    suspension->lexical = NULL;
+    suspension->active = false;
+}
+
+static void eval_gc_case_branch_suspension_begin(
+    EvalGcCaseBranchSuspension *suspension,
+    EvalGcRootFrame *lexical,
+    Atom **live_atoms, size_t live_atom_count,
+    Bindings *lexical_env, Bindings *branch_env,
+    OutcomeSet *source_outcomes,
+    OutcomeSet *parent_outcomes) {
+    assert(suspension && lexical && lexical->linked &&
+           lexical->kind == CETTA_EVAL_GC_FRAME_LEXICAL &&
+           lexical_env && branch_env && source_outcomes &&
+           parent_outcomes);
+    assert(!suspension->active);
+    assert(live_atom_count == 0u || live_atoms != NULL);
+    eval_gc_root_frame_enter_case_branch_continuation(
+        &suspension->continuation,
+        live_atoms, live_atom_count,
+        lexical_env, branch_env,
+        source_outcomes, parent_outcomes);
+    eval_gc_root_frame_suspend_precisely(lexical);
+    suspension->lexical = lexical;
+    suspension->active = true;
+}
+
+typedef struct {
+    EvalGcRootFrame continuation;
+    EvalGcRootFrame *lexical;
+    bool active;
+} EvalGcTypedApplicationSuspension;
+
+static void eval_gc_typed_application_suspension_end(
+    EvalGcTypedApplicationSuspension *suspension) {
+    if (!suspension || !suspension->active)
+        return;
+    eval_gc_root_frame_resume(suspension->lexical);
+    eval_gc_root_frame_leave(&suspension->continuation);
+    suspension->lexical = NULL;
+    suspension->active = false;
+}
+
+static void eval_gc_typed_application_suspension_begin(
+    EvalGcTypedApplicationSuspension *suspension,
+    EvalGcRootFrame *lexical,
+    Atom **live_atoms, size_t live_atom_count,
+    Atom **overload_types, size_t overload_type_count,
+    Atom **return_contracts, size_t return_contract_count,
+    Atom **applicability_errors, size_t applicability_error_count,
+    Atom **argument_types, size_t argument_type_count,
+    OutcomeSet *function_results, OutcomeSet *heads,
+    OutcomeSet *parent_outcomes) {
+    assert(suspension && lexical && lexical->linked &&
+           lexical->kind == CETTA_EVAL_GC_FRAME_LEXICAL &&
+           parent_outcomes);
+    assert(!suspension->active);
+    assert(live_atom_count == 0u || live_atoms != NULL);
+    assert(overload_type_count == 0u || overload_types != NULL);
+    assert(return_contract_count == 0u || return_contracts != NULL);
+    assert(applicability_error_count == 0u ||
+           applicability_errors != NULL);
+    assert(argument_type_count == 0u || argument_types != NULL);
+    eval_gc_root_frame_enter_typed_application_continuation(
+        &suspension->continuation,
+        live_atoms, live_atom_count,
+        overload_types, overload_type_count,
+        return_contracts, return_contract_count,
+        applicability_errors, applicability_error_count,
+        argument_types, argument_type_count,
+        function_results, heads, parent_outcomes);
+    eval_gc_root_frame_suspend_precisely(lexical);
+    suspension->lexical = lexical;
+    suspension->active = true;
+}
+
+typedef struct {
+    EvalGcRootFrame continuation;
+    EvalGcRootFrame *lexical;
+    bool lexical_was_precise;
+    bool active;
+} EvalGcObservationNormalizationSuspension;
+
+static void eval_gc_observation_normalization_suspension_end(
+    EvalGcObservationNormalizationSuspension *suspension) {
+    if (!suspension || !suspension->active)
+        return;
+    assert(suspension->lexical && suspension->lexical->linked &&
+           suspension->lexical->kind == CETTA_EVAL_GC_FRAME_LEXICAL);
+    suspension->lexical->precise_suspension =
+        suspension->lexical_was_precise;
+    eval_gc_root_frame_leave(&suspension->continuation);
+    suspension->lexical = NULL;
+    suspension->active = false;
+}
+
+static void eval_gc_observation_normalization_suspension_begin(
+    EvalGcObservationNormalizationSuspension *suspension,
+    EvalGcRootFrame *lexical,
+    Atom **source, Atom **value,
+    Atom **children, size_t child_count,
+    Bindings *env, OutcomeSet *child_outcomes,
+    OutcomeSet *parent_outcomes) {
+    if (!suspension || !lexical)
+        return;
+    assert(lexical->linked &&
+           lexical->kind == CETTA_EVAL_GC_FRAME_LEXICAL &&
+           parent_outcomes && !suspension->active);
+    assert(child_count == 0u || children != NULL);
+    eval_gc_root_frame_enter_observation_normalization(
+        &suspension->continuation,
+        source, value, children, child_count,
+        env, child_outcomes, parent_outcomes);
+    suspension->lexical_was_precise = lexical->precise_suspension;
+    eval_gc_root_frame_suspend_precisely(lexical);
+    suspension->lexical = lexical;
+    suspension->active = true;
+}
+
+typedef struct {
+    EvalGcRootFrame continuation;
+    EvalGcRootFrame *lexical;
+    bool lexical_was_precise;
+    bool active;
+} EvalGcTupleMachineSuspension;
+
+static void eval_gc_tuple_machine_suspension_end(
+    EvalGcTupleMachineSuspension *suspension) {
+    if (!suspension || !suspension->active)
+        return;
+    if (suspension->lexical) {
+        assert(suspension->lexical->linked &&
+               suspension->lexical->kind == CETTA_EVAL_GC_FRAME_LEXICAL);
+        suspension->lexical->precise_suspension =
+            suspension->lexical_was_precise;
+    }
+    eval_gc_root_frame_leave(&suspension->continuation);
+    suspension->lexical = NULL;
+    suspension->active = false;
+}
+
+static void eval_gc_tuple_machine_suspension_begin(
+    EvalGcTupleMachineSuspension *suspension,
+    EvalGcRootFrame *lexical,
+    Atom **continuation_atoms, size_t continuation_atom_count,
+    Atom **orig_elems, size_t orig_count,
+    Atom **prefix, size_t prefix_count,
+    Bindings *env, OutcomeSet *outcomes,
+    OutcomeSet *parent_outcomes) {
+    if (!suspension)
+        return;
+    assert(!suspension->active);
+    assert(continuation_atom_count == 0u || continuation_atoms != NULL);
+    assert(orig_count == 0u || orig_elems != NULL);
+    assert(prefix_count == 0u || prefix != NULL);
+    eval_gc_root_frame_enter_tuple_machine(
+        &suspension->continuation,
+        continuation_atoms, continuation_atom_count,
+        orig_elems, orig_count, prefix, prefix_count,
+        env, outcomes, parent_outcomes);
+    if (lexical) {
+        assert(lexical->linked &&
+               lexical->kind == CETTA_EVAL_GC_FRAME_LEXICAL);
+        suspension->lexical_was_precise = lexical->precise_suspension;
+        eval_gc_root_frame_suspend_precisely(lexical);
+        suspension->lexical = lexical;
+    }
+    suspension->active = true;
+}
+
 static __attribute__((unused)) void eval_gc_external_owner_enter(void) {
     if (!g_eval_gc.ready)
         eval_gc_init_once();
@@ -331,11 +792,28 @@ static inline bool eval_gc_safe_point(const Arena *arena,
      * lexical ancestor has registered its remaining live carriers through
      * generated root frames; explicit machines have complete frame scanners.
      */
+    if (!eval_gc_enabled() || !eval_gc_can_collect_arena(arena) ||
+        g_eval_gc.region_arena != arena ||
+        live_above_anchor < g_eval_gc.budget_bytes) {
+        return false;
+    }
+    cetta_runtime_stats_inc(
+        CETTA_RUNTIME_COUNTER_EVAL_TAIL_COLLECTION_CANDIDATE);
     bool precise_chain = eval_gc_root_chain_is_precise(frame);
-    return precise_chain &&
-           g_eval_gc.external_owner_depth == 0u && eval_gc_enabled() &&
-           eval_gc_can_collect_arena(arena) && os_len == 0 &&
-           live_above_anchor >= g_eval_gc.budget_bytes;
+    if (!precise_chain) {
+        cetta_runtime_stats_inc(
+            CETTA_RUNTIME_COUNTER_EVAL_TAIL_BLOCKED_IMPRECISE_ROOT);
+    }
+    if (g_eval_gc.external_owner_depth != 0u) {
+        cetta_runtime_stats_inc(
+            CETTA_RUNTIME_COUNTER_EVAL_TAIL_BLOCKED_EXTERNAL_OWNER);
+    }
+    if (os_len != 0u) {
+        cetta_runtime_stats_inc(
+            CETTA_RUNTIME_COUNTER_EVAL_TAIL_BLOCKED_LIVE_OUTCOME);
+    }
+    return precise_chain && g_eval_gc.external_owner_depth == 0u &&
+           os_len == 0u;
 }
 
 /* A copying collector must not recopy a growing live graph after every fixed
@@ -381,12 +859,52 @@ static void eval_gc_note_survivor_usage(void) {
 static inline void eval_gc_commit_evacuated(
     Arena *eval_arena, ArenaMark anchor, Arena *evacuated);
 
+/* An initialized, event-free branch-state carrier is the identity element of
+ * the persistent event DAG: it owns no arena allocation, but its owner is the
+ * allocation authority for the first future event.  Rehome that authority
+ * only when collection invalidates its current owner.  Persistent branch
+ * state belongs to the Prime episode arena, never to either semispace. */
+static bool eval_gc_rehome_empty_prime_branch_state(
+    const EvalGcEvacuationContext *context,
+    PrimeNeedBranchState *state) {
+    if (!state || !prime_need_branch_state_present(state) ||
+        prime_need_branch_state_has_events(state))
+        return true;
+    if (!context ||
+        (state->owner != context->collected_arena &&
+         state->owner != context->old_survivor))
+        return true;
+    if (!context->prime_episode_owner ||
+        context->prime_episode_owner == context->collected_arena ||
+        context->prime_episode_owner == context->old_survivor)
+        return false;
+    return
+        prime_need_branch_state_promote(
+            context->prime_episode_owner, state);
+}
+
+static bool eval_gc_rehome_empty_prime_bindings(
+    const EvalGcEvacuationContext *context, Bindings *env) {
+    if (!env || !bindings_prime_present(env))
+        return true;
+    if (!eval_gc_rehome_empty_prime_branch_state(
+            context, bindings_branch_state_mut(env)))
+        return false;
+#if CETTA_BUILD_WITH_PRIME_CAUSAL_RECEIPTS
+    if (!eval_gc_rehome_empty_prime_branch_state(
+            context, bindings_receipt_mut(env)))
+        return false;
+#endif
+    return true;
+}
+
 static bool eval_gc_evacuate_outcomes(
-    AtomDeepCopySession *session, OutcomeSet *outcomes) {
+    EvalGcEvacuationContext *context, OutcomeSet *outcomes) {
     if (!outcomes)
         return true;
-    if (!session)
+    if (!context || !context->atom_copy_session)
         return false;
+    AtomDeepCopySession *session = context->atom_copy_session;
     for (CettaCount i = 0u; i < outcomes->len; i++) {
         Outcome *outcome = &outcomes->items[i];
         if (outcome->atom) {
@@ -398,6 +916,8 @@ static bool eval_gc_evacuate_outcomes(
         }
         if (!bindings_promote_logical_atoms_with_session(
                 &outcome->env, session) ||
+            !eval_gc_rehome_empty_prime_bindings(
+                context, &outcome->env) ||
             !variant_instance_promote_atoms_with_session(
                 session, &outcome->variant))
             return false;
@@ -417,26 +937,26 @@ static bool eval_gc_evacuate_outcomes(
     return true;
 }
 
-#define CETTA_GC_VISIT_STRONG_ATOM_SLOT(SESSION, SLOT_PTR, FAIL) do {      \
+#define CETTA_GC_VISIT_STRONG_ATOM_SLOT(CONTEXT, SLOT_PTR, FAIL) do {      \
     Atom **cetta_gc_slot__ = (SLOT_PTR);                                  \
     if (cetta_gc_slot__ && *cetta_gc_slot__) {                            \
         Atom *cetta_gc_next__ = atom_deep_copy_session_copy(              \
-            (SESSION), *cetta_gc_slot__);                                 \
+            (CONTEXT)->atom_copy_session, *cetta_gc_slot__);              \
         if (!cetta_gc_next__) { FAIL; }                                   \
         *cetta_gc_slot__ = cetta_gc_next__;                               \
     }                                                                     \
 } while (0)
 
-#define CETTA_GC_VISIT_STRONG_ATOM_SPAN(SESSION, SPAN, FAIL) do {          \
+#define CETTA_GC_VISIT_STRONG_ATOM_SPAN(CONTEXT, SPAN, FAIL) do {          \
     CettaEvalGcAtomSpan cetta_gc_span__ = (SPAN);                         \
     for (size_t cetta_gc_i__ = 0u;                                       \
          cetta_gc_i__ < cetta_gc_span__.len; cetta_gc_i__++) {           \
         CETTA_GC_VISIT_STRONG_ATOM_SLOT(                                  \
-            (SESSION), &cetta_gc_span__.items[cetta_gc_i__], FAIL);       \
+            (CONTEXT), &cetta_gc_span__.items[cetta_gc_i__], FAIL);       \
     }                                                                     \
 } while (0)
 
-#define CETTA_GC_VISIT_LOGICAL_BINDINGS(SESSION, ENV_PTR, FAIL) do {       \
+#define CETTA_GC_VISIT_LOGICAL_BINDINGS(CONTEXT, ENV_PTR, FAIL) do {       \
     Bindings *cetta_gc_env__ = (ENV_PTR);                                 \
     if (cetta_gc_env__) {                                                 \
         cetta_runtime_stats_update_max(                                   \
@@ -446,31 +966,46 @@ static bool eval_gc_evacuate_outcomes(
             CETTA_RUNTIME_COUNTER_EVAL_TAIL_PROMOTED_BINDING_CONSTRAINTS_PEAK,\
             (uint64_t)cetta_gc_env__->eq_len);                            \
         if (!bindings_promote_logical_atoms_with_session(                 \
-                cetta_gc_env__, (SESSION))) { FAIL; }                     \
+                cetta_gc_env__, (CONTEXT)->atom_copy_session) ||          \
+            !eval_gc_rehome_empty_prime_bindings(                         \
+                (CONTEXT), cetta_gc_env__)) {                             \
+            FAIL;                                                         \
+        }                                                                 \
     }                                                                     \
 } while (0)
 
-#define CETTA_GC_VISIT_OUTCOME_SET(SESSION, OS_PTR, FAIL) do {             \
-    if (!eval_gc_evacuate_outcomes((SESSION), (OS_PTR))) { FAIL; }        \
+#define CETTA_GC_VISIT_OUTCOME_SET(CONTEXT, OS_PTR, FAIL) do {             \
+    OutcomeSet *cetta_gc_outcomes__ = (OS_PTR);                            \
+    if (cetta_gc_outcomes__ &&                                            \
+        !eval_gc_evacuate_outcomes(                                       \
+            (CONTEXT), cetta_gc_outcomes__)) { FAIL; }                    \
 } while (0)
 
-#define CETTA_GC_VISIT_EPHEMERON_ATOM_MAP(SESSION, MAP, FAIL) do {         \
+#define CETTA_GC_VISIT_VARIANT_INSTANCE(CONTEXT, INSTANCE_PTR, FAIL) do {  \
+    VariantInstance *cetta_gc_instance__ = (INSTANCE_PTR);                 \
+    if (cetta_gc_instance__ &&                                            \
+        !variant_instance_promote_atoms_with_session(                     \
+            (CONTEXT)->atom_copy_session, cetta_gc_instance__)) { FAIL; } \
+} while (0)
+
+#define CETTA_GC_VISIT_EPHEMERON_ATOM_MAP(CONTEXT, MAP, FAIL) do {         \
     CettaEvalGcEphemeronAtomMap cetta_gc_map__ = (MAP);                   \
     if (!cetta_gc_map__.visit ||                                         \
-        !cetta_gc_map__.visit((SESSION), cetta_gc_map__.context)) {       \
+        !cetta_gc_map__.visit(                                            \
+            (CONTEXT)->atom_copy_session, cetta_gc_map__.context)) {      \
         FAIL;                                                             \
     }                                                                     \
 } while (0)
 
 static bool eval_gc_evacuate_root_frame(
-    AtomDeepCopySession *session, EvalGcRootFrame *frame) {
-    if (!session || !frame)
+    EvalGcEvacuationContext *context, EvalGcRootFrame *frame) {
+    if (!context || !context->atom_copy_session || !frame)
         return false;
     switch (frame->kind) {
 #define CETTA_EVAL_GC_DISPATCH_FRAME(kind, upper)                          \
     case CETTA_EVAL_GC_FRAME_##upper:                                     \
         CETTA_EVAL_GC_ARM_##kind(                                         \
-            session, &frame->payload.kind, goto failed);                  \
+            context, &frame->payload.kind, goto failed);                  \
         return true;
         CETTA_EVAL_GC_FRAME_KIND_ROWS(CETTA_EVAL_GC_DISPATCH_FRAME)
 #undef CETTA_EVAL_GC_DISPATCH_FRAME
@@ -482,23 +1017,197 @@ failed:
 }
 
 static bool eval_gc_evacuate_root_chain(
-    AtomDeepCopySession *session, EvalGcRootFrame *roots) {
+    EvalGcEvacuationContext *context, EvalGcRootFrame *roots) {
     for (EvalGcRootFrame *frame = roots; frame; frame = frame->previous) {
-        if (!eval_gc_evacuate_root_frame(session, frame))
+        if (!eval_gc_evacuate_root_frame(context, frame))
             return false;
     }
     return true;
 }
 
 #undef CETTA_GC_VISIT_OUTCOME_SET
+#undef CETTA_GC_VISIT_VARIANT_INSTANCE
 #undef CETTA_GC_VISIT_EPHEMERON_ATOM_MAP
+#undef CETTA_GC_VISIT_LOGICAL_BINDINGS
+#undef CETTA_GC_VISIT_STRONG_ATOM_SPAN
+#undef CETTA_GC_VISIT_STRONG_ATOM_SLOT
+
+/* Generic recursive evaluation shares the generated root-frame catalogue
+ * with the explicit Prime stack, but it cannot discover an unsafe persistent
+ * carrier after evacuation has begun: earlier root slots may already point
+ * into the fresh semispace.  Audit the Prime components of every generated
+ * logical root first, against both arenas that commit will invalidate. */
+typedef struct {
+    const EvalGcEvacuationContext *evacuation;
+    PrimeNeedArenaAudit *collected_audit;
+    PrimeNeedArenaAudit *survivor_audit;
+} EvalGcPrimePreflightContext;
+
+static bool eval_gc_preflight_prime_carrier(
+    EvalGcPrimePreflightContext *context,
+    const PrimeNeedBranchState *carrier) {
+    if (!carrier || !prime_need_branch_state_present(carrier))
+        return true;
+    if (!prime_need_branch_state_has_events(carrier)) {
+        if (carrier->owner != context->evacuation->collected_arena &&
+            carrier->owner != context->evacuation->old_survivor)
+            return true;
+        Arena *owner = context->evacuation->prime_episode_owner;
+        return owner &&
+            owner != context->evacuation->collected_arena &&
+            owner != context->evacuation->old_survivor;
+    }
+    return prime_need_arena_audit_branch_state(
+               context->collected_audit, carrier) &&
+           prime_need_arena_audit_branch_state(
+               context->survivor_audit, carrier);
+}
+
+static bool eval_gc_preflight_prime_bindings(
+    EvalGcPrimePreflightContext *context, const Bindings *env) {
+    if (!context || !context->evacuation)
+        return false;
+    if (!env || !bindings_prime_present(env))
+        return true;
+    if (!prime_need_arena_audit_snapshot(
+            context->collected_audit, bindings_need_view(env)) ||
+        !prime_need_arena_audit_snapshot(
+            context->survivor_audit, bindings_need_view(env)) ||
+        !eval_gc_preflight_prime_carrier(
+            context, bindings_branch_state_view(env)))
+        return false;
+#if CETTA_BUILD_WITH_PRIME_CAUSAL_RECEIPTS
+    if (!eval_gc_preflight_prime_carrier(
+            context, bindings_receipt_view(env)))
+        return false;
+#endif
+    return true;
+}
+
+static bool eval_gc_preflight_prime_outcomes(
+    EvalGcPrimePreflightContext *context, const OutcomeSet *outcomes) {
+    if (!outcomes)
+        return true;
+    for (CettaCount i = 0u; i < outcomes->len; i++) {
+        if (!eval_gc_preflight_prime_bindings(
+                context, &outcomes->items[i].env))
+            return false;
+    }
+    return true;
+}
+
+#define CETTA_GC_VISIT_STRONG_ATOM_SLOT(CONTEXT, SLOT_PTR, FAIL) do {      \
+    (void)(CONTEXT);                                                       \
+    (void)(SLOT_PTR);                                                      \
+} while (0)
+
+#define CETTA_GC_VISIT_STRONG_ATOM_SPAN(CONTEXT, SPAN, FAIL) do {          \
+    (void)(CONTEXT);                                                       \
+    (void)(SPAN);                                                          \
+} while (0)
+
+#define CETTA_GC_VISIT_LOGICAL_BINDINGS(CONTEXT, ENV_PTR, FAIL) do {       \
+    if (!eval_gc_preflight_prime_bindings((CONTEXT), (ENV_PTR))) {        \
+        FAIL;                                                              \
+    }                                                                     \
+} while (0)
+
+#define CETTA_GC_VISIT_OUTCOME_SET(CONTEXT, OS_PTR, FAIL) do {             \
+    if (!eval_gc_preflight_prime_outcomes((CONTEXT), (OS_PTR))) {         \
+        FAIL;                                                              \
+    }                                                                     \
+} while (0)
+
+#define CETTA_GC_VISIT_VARIANT_INSTANCE(CONTEXT, INSTANCE_PTR, FAIL) do {  \
+    (void)(CONTEXT);                                                       \
+    (void)(INSTANCE_PTR);                                                  \
+} while (0)
+
+#define CETTA_GC_VISIT_EPHEMERON_ATOM_MAP(CONTEXT, MAP, FAIL) do {         \
+    (void)(CONTEXT);                                                       \
+    (void)(MAP);                                                           \
+} while (0)
+
+static bool eval_gc_preflight_prime_root_frame(
+    EvalGcPrimePreflightContext *context,
+    const EvalGcRootFrame *frame) {
+    if (!context || !frame)
+        return false;
+    switch (frame->kind) {
+#define CETTA_EVAL_GC_PREFLIGHT_FRAME(kind, upper)                         \
+    case CETTA_EVAL_GC_FRAME_##upper:                                     \
+        CETTA_EVAL_GC_ARM_##kind(                                         \
+            context, &frame->payload.kind, goto failed);                  \
+        return true;
+        CETTA_EVAL_GC_FRAME_KIND_ROWS(CETTA_EVAL_GC_PREFLIGHT_FRAME)
+#undef CETTA_EVAL_GC_PREFLIGHT_FRAME
+    default:
+        return false;
+    }
+failed:
+    return false;
+}
+
+static bool eval_gc_preflight_prime_root_chain(
+    const EvalGcEvacuationContext *evacuation,
+    const EvalGcRootFrame *roots,
+    const PrimeNeedSnapshot *active_need,
+    const PrimeNeedBranchState *active_branch_state
+#if CETTA_BUILD_WITH_PRIME_CAUSAL_RECEIPTS
+    , const PrimeNeedReceipt *active_receipt
+#endif
+    ) {
+    if (!evacuation || !evacuation->collected_arena ||
+        !evacuation->old_survivor)
+        return false;
+    EvalGcPrimePreflightContext context = {
+        .evacuation = evacuation,
+        .collected_audit = prime_need_arena_audit_new(
+            evacuation->collected_arena),
+        .survivor_audit = prime_need_arena_audit_new(
+            evacuation->old_survivor),
+    };
+    bool valid = context.collected_audit && context.survivor_audit;
+    if (valid && active_need) {
+        valid = prime_need_arena_audit_snapshot(
+                    context.collected_audit, active_need) &&
+                prime_need_arena_audit_snapshot(
+                    context.survivor_audit, active_need);
+    }
+    if (valid && active_branch_state)
+        valid = eval_gc_preflight_prime_carrier(
+            &context, active_branch_state);
+#if CETTA_BUILD_WITH_PRIME_CAUSAL_RECEIPTS
+    if (valid && active_receipt)
+        valid = eval_gc_preflight_prime_carrier(
+            &context, active_receipt);
+#endif
+    for (const EvalGcRootFrame *frame = roots;
+         valid && frame; frame = frame->previous) {
+        valid = eval_gc_preflight_prime_root_frame(&context, frame);
+    }
+    prime_need_arena_audit_free(context.collected_audit);
+    prime_need_arena_audit_free(context.survivor_audit);
+    return valid;
+}
+
+#undef CETTA_GC_VISIT_EPHEMERON_ATOM_MAP
+#undef CETTA_GC_VISIT_VARIANT_INSTANCE
+#undef CETTA_GC_VISIT_OUTCOME_SET
 #undef CETTA_GC_VISIT_LOGICAL_BINDINGS
 #undef CETTA_GC_VISIT_STRONG_ATOM_SPAN
 #undef CETTA_GC_VISIT_STRONG_ATOM_SLOT
 
 static void eval_gc_collect(Arena *eval_arena, ArenaMark anchor,
                             Atom **atom_io, Bindings *env,
-                            Atom **etype_io) {
+                            Atom **etype_io,
+                            Arena *prime_episode_owner,
+                            PrimeNeedSnapshot *active_need,
+                            PrimeNeedBranchState *active_branch_state
+#if CETTA_BUILD_WITH_PRIME_CAUSAL_RECEIPTS
+                            , PrimeNeedReceipt *active_receipt
+#endif
+                            ) {
     if (!g_eval_gc.ready)
         eval_gc_init_once();
     if (!eval_gc_can_collect_arena(eval_arena))
@@ -515,6 +1224,20 @@ static void eval_gc_collect(Arena *eval_arena, ArenaMark anchor,
     EvalGcRootFrame *roots = g_eval_gc.roots
         ? g_eval_gc.roots : &fallback;
 
+    EvalGcEvacuationContext context = {
+        .atom_copy_session = NULL,
+        .collected_arena = eval_arena,
+        .old_survivor = &g_eval_gc.survivor,
+        .prime_episode_owner = prime_episode_owner,
+    };
+    if (!eval_gc_preflight_prime_root_chain(
+            &context, roots, active_need, active_branch_state
+#if CETTA_BUILD_WITH_PRIME_CAUSAL_RECEIPTS
+            , active_receipt
+#endif
+            ))
+        return;
+
     Arena evacuated;
     eval_gc_init_survivor_arena(&evacuated);
     AtomDeepCopySession *session =
@@ -524,7 +1247,14 @@ static void eval_gc_collect(Arena *eval_arena, ArenaMark anchor,
         return;
     }
 
-    bool copied = eval_gc_evacuate_root_chain(session, roots);
+    context.atom_copy_session = session;
+    bool copied = eval_gc_evacuate_root_chain(&context, roots) &&
+        eval_gc_rehome_empty_prime_branch_state(
+            &context, active_branch_state);
+#if CETTA_BUILD_WITH_PRIME_CAUSAL_RECEIPTS
+    copied = copied && eval_gc_rehome_empty_prime_branch_state(
+        &context, active_receipt);
+#endif
     atom_deep_copy_session_free(session);
     if (!copied) {
         /* Some registered roots may already name the fresh semispace. */

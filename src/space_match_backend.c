@@ -1602,13 +1602,15 @@ static bool imported_projected_pack_space_atom_ids(const Space *space,
     return ok;
 }
 
-static AtomId shadow_storage_get_atom_id_at(const Space *s, uint64_t idx) {
+static inline AtomId shadow_storage_get_atom_id_at_direct(
+        const Space *s, uint64_t idx) {
     size_t physical_idx = 0;
     if (!s || idx >= s->native.len)
         return CETTA_ATOM_ID_NONE;
     if (idx > (uint64_t)SIZE_MAX)
         return CETTA_ATOM_ID_NONE;
-    physical_idx = (size_t)(space_is_queue(s) ? (s->native.start + idx) : idx);
+    physical_idx = (size_t)(
+        s->kind == SPACE_KIND_QUEUE ? (s->native.start + idx) : idx);
     return cetta_atom_id_storage_load_bits(
         s->native.atom_ids +
             (physical_idx *
@@ -1617,8 +1619,12 @@ static AtomId shadow_storage_get_atom_id_at(const Space *s, uint64_t idx) {
         s->native.atom_id_width_bits);
 }
 
+static AtomId shadow_storage_get_atom_id_at(const Space *s, uint64_t idx) {
+    return shadow_storage_get_atom_id_at_direct(s, idx);
+}
+
 static Atom *shadow_storage_get_at(const Space *s, uint64_t idx) {
-    AtomId atom_id = shadow_storage_get_atom_id_at(s, idx);
+    AtomId atom_id = shadow_storage_get_atom_id_at_direct(s, idx);
     return term_universe_get_atom(s ? s->native.universe : NULL, atom_id);
 }
 
@@ -4284,6 +4290,10 @@ uint64_t space_match_backend_logical_len64(const Space *s) {
 AtomId space_match_backend_get_atom_id_at(const Space *s, uint32_t idx) {
     if (!s)
         return CETTA_ATOM_ID_NONE;
+    if (s->match_backend.kind == SPACE_ENGINE_NATIVE ||
+        s->match_backend.kind == SPACE_ENGINE_NATIVE_CANDIDATE_EXACT) {
+        return shadow_storage_get_atom_id_at_direct(s, idx);
+    }
     if (s->match_backend.ops && s->match_backend.ops->get_atom_id_at)
         return s->match_backend.ops->get_atom_id_at(s, idx);
     return shadow_storage_get_atom_id_at(s, idx);
@@ -4292,6 +4302,10 @@ AtomId space_match_backend_get_atom_id_at(const Space *s, uint32_t idx) {
 AtomId space_match_backend_get_atom_id_at64(const Space *s, uint64_t idx) {
     if (!s)
         return CETTA_ATOM_ID_NONE;
+    if (s->match_backend.kind == SPACE_ENGINE_NATIVE ||
+        s->match_backend.kind == SPACE_ENGINE_NATIVE_CANDIDATE_EXACT) {
+        return shadow_storage_get_atom_id_at_direct(s, idx);
+    }
     if (s->match_backend.ops && s->match_backend.ops->get_atom_id_at)
         return s->match_backend.ops->get_atom_id_at(s, idx);
     return shadow_storage_get_atom_id_at(s, idx);
@@ -4300,6 +4314,11 @@ AtomId space_match_backend_get_atom_id_at64(const Space *s, uint64_t idx) {
 Atom *space_match_backend_get_at(const Space *s, uint32_t idx) {
     if (!s)
         return NULL;
+    if (s->match_backend.kind == SPACE_ENGINE_NATIVE ||
+        s->match_backend.kind == SPACE_ENGINE_NATIVE_CANDIDATE_EXACT) {
+        AtomId atom_id = shadow_storage_get_atom_id_at_direct(s, idx);
+        return term_universe_get_atom(s->native.universe, atom_id);
+    }
     if (s->match_backend.ops && s->match_backend.ops->get_at)
         return s->match_backend.ops->get_at(s, idx);
     return shadow_storage_get_at(s, idx);
@@ -4308,6 +4327,11 @@ Atom *space_match_backend_get_at(const Space *s, uint32_t idx) {
 Atom *space_match_backend_get_at64(const Space *s, uint64_t idx) {
     if (!s)
         return NULL;
+    if (s->match_backend.kind == SPACE_ENGINE_NATIVE ||
+        s->match_backend.kind == SPACE_ENGINE_NATIVE_CANDIDATE_EXACT) {
+        AtomId atom_id = shadow_storage_get_atom_id_at_direct(s, idx);
+        return term_universe_get_atom(s->native.universe, atom_id);
+    }
     if (s->match_backend.ops && s->match_backend.ops->get_at)
         return s->match_backend.ops->get_at(s, idx);
     return shadow_storage_get_at(s, idx);
@@ -10115,8 +10139,16 @@ bool space_match_count_flat_linear64(
         return false;
     }
     space_linearize(s);
-    return s->match_backend.ops->count_flat_linear(
+    bool admitted = s->match_backend.ops->count_flat_linear(
         s, scratch, pattern, count, examined);
+    if (admitted) {
+        cetta_runtime_stats_inc(
+            CETTA_RUNTIME_COUNTER_MATCH_FLAT_COUNT_ADMISSION);
+        cetta_runtime_stats_add(
+            CETTA_RUNTIME_COUNTER_MATCH_FLAT_COUNT_ROWS_EXAMINED,
+            (uint64_t)*examined);
+    }
+    return admitted;
 }
 
 bool space_match_count_conjunction64(

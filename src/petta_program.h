@@ -157,6 +157,17 @@ typedef enum {
     PETTA_RELATION_SAFETY_GUARDED_DYNAMIC,
 } PettaRelationSafety;
 
+/* A deliberately small evaluator-neutral relation fragment.  The positive
+ * class contains only structural equation heads, inert data constructors,
+ * recursive calls within the same revision-pinned Space, and ordinary
+ * declaration-order alternatives.  Language-owned intrinsics, dynamic
+ * heads, effects, quotation, and specialized list constraints remain
+ * unqualified. */
+typedef enum {
+    CETTA_RELATIONAL_EXECUTION_UNQUALIFIED = 0,
+    CETTA_RELATIONAL_EXECUTION_STRUCTURAL_EQUATIONS_V1,
+} CettaRelationalExecutionClass;
+
 typedef enum {
     PETTA_RESOLVED_CALL_UNSAFE = 0,
     PETTA_RESOLVED_CALL_MACHINE_LOCAL,
@@ -170,6 +181,20 @@ void petta_program_free(PettaProgram *program);
 bool petta_program_enable_analysis(PettaProgram *program);
 bool petta_program_analysis_enabled(const PettaProgram *program);
 bool petta_program_is_equation(Atom *atom);
+
+/* Build a revision-pinned occurrence catalog directly from the live Space.
+ * This is the common ingress for evaluators whose document reader does not
+ * already maintain PettaProgram incrementally.  A concurrent mutation makes
+ * the operation decline and leaves no catalog for that Space. */
+bool petta_program_synchronize_space(
+    PettaProgram *program, Space *space);
+
+/* Classify one call only after synchronize_space has established a current
+ * complete catalog.  UNQUALIFIED is conservative: canonical evaluation keeps
+ * authority and no continuation controller is installed. */
+CettaRelationalExecutionClass
+petta_program_relational_execution_class(
+    PettaProgram *program, Space *space, Atom *call);
 
 /* True when PeTTa's relational machine, rather than an ordinary user
  * equation or inert constructor, owns the head's execution semantics. */

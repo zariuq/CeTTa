@@ -203,7 +203,7 @@ def write_summary_tsv(path: Path, results: dict[str, Any]) -> None:
         "controller_active_fifo",
         "controller_active_inline_depth_first",
         "controller_active_refused",
-        "controller_storage_full_image",
+        "controller_storage_shared_terms_owned_state",
         "controller_storage_none",
         "controller_scheduling_rounds",
         "controller_transitions",
@@ -301,6 +301,15 @@ def main() -> int:
             "reference on the same binary"
         ),
     )
+    parser.add_argument(
+        "--selected-workloads-only",
+        action="store_true",
+        help=(
+            "validate the selected sources and their pinned oracles without "
+            "requiring unrelated examples in the PeTTa checkout to match "
+            "the complete corpus inventory"
+        ),
+    )
     args = parser.parse_args()
     if args.runs < 1:
         parser.error("--runs must be positive")
@@ -308,7 +317,8 @@ def main() -> int:
     cetta = args.cetta.resolve()
     petta_dir = args.petta_dir.resolve()
     manifest_path = args.manifest.resolve()
-    corpus.verify_manifest(petta_dir, manifest_path, True)
+    if not args.selected_workloads_only:
+        corpus.verify_manifest(petta_dir, manifest_path, True)
     manifest = corpus.load_manifest(manifest_path)
     entries = {entry["name"]: entry for entry in manifest["entries"]}
     workloads = tuple(args.workloads or DEFAULT_WORKLOADS)
@@ -415,6 +425,11 @@ def main() -> int:
         "cetta_binary_sha256": corpus.sha256_file(cetta),
         "petta_revision": manifest["petta_revision"],
         "runs_per_workload": args.runs,
+        "corpus_validation": (
+            "selected-source-digests-and-pinned-oracles"
+            if args.selected_workloads_only
+            else "complete-corpus-inventory-digests-and-pinned-oracles"
+        ),
         "candidate_environment": candidate_environment,
         "measurement": (
             "CLOCK_MONOTONIC time accumulated inside petta_machine_next; "

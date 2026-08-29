@@ -25,6 +25,33 @@
 !(assertEqualToResult
   (size (collapse (match &native-count (friend $y $x) hit)))
   (512))
+!(bind! &strict-count-stats (runtime-stats!))
+!(assertEqualToResult
+  (match &strict-count-stats
+         (runtime-counter match-flat-count-admission $n)
+         (== $n 1))
+  (True))
+!(assertEqualToResult
+  (match &strict-count-stats
+         (runtime-counter match-flat-count-rows-examined $n)
+         (== $n 512))
+  (True))
+; A binding-dependent template is not a one-result-per-row homomorphism.
+; It must decline the binding-free counter and preserve ordinary filtering.
+!(reset-runtime-stats!)
+!(assertEqualToResult
+  (size
+    (collapse
+      (match &native-count
+             (friend sam $x)
+             (if (== $x 0) (empty) hit))))
+  (511))
+!(bind! &filtered-count-stats (runtime-stats!))
+!(assertEqualToResult
+  (match &filtered-count-stats
+         (runtime-counter match-flat-count-admission $n)
+         (== $n 0))
+  (True))
 ; Non-strict `size-atom` over the unevaluated (collapse ...) = its arity = 2.
 !(assertEqualToResult
   (size-atom (collapse (match &native-count (friend $y $x) hit)))

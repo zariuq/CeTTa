@@ -1,0 +1,11 @@
+(source-proof-trace-label-instruction-v1
+  (ProofRelationalLabelV1
+    RelationalProjectionCanaryProofV1 projection-canary-ha-v1)
+  (ProofTracePushV1
+    (ProofSequenceConsV1
+      (ProofRelationalTokenV1
+        RelationalProjectionCanaryProofV1 projection-canary-wff-v1)
+      (ProofSequenceConsV1
+        (ProofRelationalTokenV1
+          RelationalProjectionCanaryProofV1 projection-canary-a-v1)
+        ProofSequenceNilV1))))

@@ -1,0 +1,1 @@
+[(answer deep), (dead Z), (dead (S Z)), (dead (S (S Z))), (dead (S (S (S Z)))), (dead (S (S (S (S Z))))), (dead (S (S (S (S (S Z)))))), (dead (S (S (S (S (S (S Z))))))), (dead (S (S (S (S (S (S (S Z)))))))), (answer shallow)]

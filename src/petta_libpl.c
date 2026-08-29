@@ -1787,7 +1787,7 @@ static bool petta_libpl_to_term(
                 &plref, output);
         /*
          * An open-cons carrier is one logical list cell; marshalling its
-         * three implementation fields would leak the PeTTa.OpenConsV1 tag
+         * three implementation fields would leak the private carrier tag
          * into the engine as data (the chainer's ccls rows were stored that
          * way).  Emit real './2' cells: a closed chain becomes a proper
          * list, an unbound tail a partial one.

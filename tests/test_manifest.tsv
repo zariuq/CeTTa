@@ -17,6 +17,8 @@ tests/gc/test_eval_gc_indirect_state_stream.metta	he	metta	he-extended	main	nati
 tests/gc/test_eval_gc_nested_outcome_roots.metta	he	metta	he-extended	main	native	test	golden	-
 tests/gc/test_eval_gc_precise_let_suspension.metta	he	metta	he-extended	main	native	test-eval-gc-adversarial	golden	tail-safe eval GC adversarial golden regression
 tests/generated/semiring_query_laws.metta	he	metta	he-extended	main	native	test	golden	-
+tests/he/search_controller_host_owned_refusal.metta	he	metta		main	native	test	golden	host-owned equations conservatively retain canonical HE control
+tests/he/search_controller_structural_equations.metta	he	metta		main	native	test	golden	qualified eager structural equations share the continuation hub
 tests/he_a1_symbols.metta	he	metta	he-extended	main	native	test	golden	-
 tests/he_a2_opencoggy.metta	he	metta	he-extended	main	native	test	golden	-
 tests/he_a3_twoside.metta	he	metta	he-extended	main	native	test	golden	-
@@ -64,6 +66,7 @@ tests/prime/conformance/type_judgments.metta	prime	metta		any	native	test-prime	
 tests/prime/conformance/typed_equality.metta	prime	metta		any	native	test-prime	golden	Prime normative golden regression
 tests/prime/conformance/unbounded_search.metta	prime	metta		any	native	test-prime	golden	Prime normative golden regression
 tests/prime/first_class_contexts.metta	prime	metta		any	native	test-prime	golden	Prime normative golden regression
+tests/prime/if_atom_data_boundary.metta	prime	metta		any	native	test-prime	golden	Prime normative golden regression
 tests/prime/native_hyp_path.metta	prime	metta		any	native	test-prime	golden	Prime normative golden regression
 tests/prime/need_application.metta	prime	metta		any	native	test-prime	golden	Prime normative golden regression
 tests/prime/need_demand_modes.metta	prime	metta		any	native	test-prime	golden	Prime normative golden regression
@@ -281,6 +284,7 @@ tests/test_hyperpose.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_hyperpose_arity.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_hyperpose_bang_name_regression.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_hyperpose_fair_once.metta	he	metta	he-extended	main	native	test	golden	-
+tests/test_hyperpose_finite_fuel_runtime_stats.metta	he	metta	he-extended	runtime-stats	native	test-runtime-stats-lane	golden	runtime-stats lane golden regression
 tests/test_hyperpose_handle_fallback_runtime_stats.metta	he	metta	he-extended	runtime-stats	native	test-runtime-stats-lane	golden	runtime-stats lane golden regression
 tests/test_hyperpose_hidden_effect_fallback_regression.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_hyperpose_prime_runtime_stats.metta	he	metta	he-extended	runtime-stats	native	test-runtime-stats-lane	golden	runtime-stats lane golden regression
@@ -483,6 +487,8 @@ tests/test_pragma_max_stack_depth_error.metta	he	metta	he-extended	main	native	t
 tests/test_pragma_modes.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_pragma_thread_count_error.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_pragma_wrong_arity.metta	he	metta	he-extended	main	native	test	golden	-
+tests/test_prepared_keyed_top_k_stats.metta	he	metta	he-extended	main	native	test	golden	-
+tests/test_prepared_sequence_erasure_stats.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_pretty_namespaces_syntax.metta	he	metta	he-extended	main	native	test	golden	-
 tests/test_pretty_vars_syntax.metta	he	metta	he-extended	main	native	test-backend-dedicated	golden	dedicated backend or bridge golden regression
 tests/test_print_alternatives.metta	he	metta	he-extended	main	native	test	golden	-

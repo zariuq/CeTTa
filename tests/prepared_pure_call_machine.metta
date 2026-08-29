@@ -84,6 +84,27 @@
      (Triple $head (abs-math -7) $tail)))
 !(prepared-intrinsic-composition ignored)
 
+; The free-monoid list algebra is one generated intrinsic language.  This
+; exercises constructors, observers, stable sorting, filtering, duplicate
+; removal, and order-statistic retention without interpreter recursion.
+(= (prepared-list-algebra $ignored)
+   (prepared-list-joined (union-atom (3 1) (2 1 4))))
+(= (prepared-list-joined $items)
+   (prepared-list-sorted (sort-numbers-atom $items)))
+(= (prepared-list-sorted $items)
+   (prepared-list-filtered (remove-all-atom 1 $items)))
+(= (prepared-list-filtered $items)
+   (prepared-list-unique (unique-atom $items)))
+(= (prepared-list-unique $items)
+   (ListAlgebra
+     (cons-atom 0 $items)
+     (size-atom $items)
+     (index-atom $items 1)
+     (retain-top-k-keyed-atom
+       ((0 low) (7 high-a) (7 high-b) (3 middle)) 2)
+     (/ 5 2)))
+!(prepared-list-algebra ignored)
+
 ; Negative: the generated deconstruction instruction implements only the
 ; successful nonempty-expression arm.  Computation zero and dialect-specific
 ; errors must decline and replay through the canonical evaluator.
