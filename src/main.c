@@ -1198,7 +1198,10 @@ static void write_results(FILE *out, ResultSet *rs,
     bool rust_compat =
         cetta_language_uses_rust_he_compat_semantics(language_id, profile);
     if (rs->len == 0) {
-        if (rust_compat) fprintf(out, "[]\n");
+        if (g_count_only)
+            fprintf(out, "0\n");
+        else if (rust_compat)
+            fprintf(out, "[]\n");
         return;
     }
 
@@ -1209,7 +1212,10 @@ static void write_results(FILE *out, ResultSet *rs,
             visible_len++;
     }
     if (visible_len == 0) {
-        if (rust_compat) fprintf(out, "[]\n");
+        if (g_count_only)
+            fprintf(out, "0\n");
+        else if (rust_compat)
+            fprintf(out, "[]\n");
         return;
     }
     if (visible_len != rs->len) {
@@ -1226,6 +1232,22 @@ static void write_results(FILE *out, ResultSet *rs,
         rs = &visible;
     }
 
+    if (g_count_only) {
+        /* Preserve the established aggregate protocol: an in-language
+         * reducer may return its computed integer count directly; otherwise
+         * this observer reports the cardinality of the visible occurrence
+         * bag.  Completion is checked by the caller before either result is
+         * published. */
+        if (rs->len == 1 &&
+            rs->items[0]->kind == ATOM_GROUNDED &&
+            rs->items[0]->ground.gkind == GV_INT) {
+            fprintf(out, "%lld\n", (long long)rs->items[0]->ground.ival);
+            goto done;
+        }
+        fprintf(out, "%" PRIu64 "\n", rs->len);
+        goto done;
+    }
+
     /*
      * PeTTa's runnable driver exposes the answer stream one result per line.
      * The surrounding result vector is CeTTa's host API container, not part
@@ -1236,17 +1258,6 @@ static void write_results(FILE *out, ResultSet *rs,
             atom_print_petta(rs->items[index], out);
             fputc('\n', out);
         }
-        goto done;
-    }
-
-    if (g_count_only) {
-        if (rs->len == 1 &&
-            rs->items[0]->kind == ATOM_GROUNDED &&
-            rs->items[0]->ground.gkind == GV_INT) {
-            fprintf(out, "%lld\n", (long long)rs->items[0]->ground.ival);
-            goto done;
-        }
-        fprintf(out, "%" PRIu64 "\n", rs->len);
         goto done;
     }
     if (g_quiet_results && !result_set_has_error(rs) &&
@@ -3965,6 +3976,7 @@ process_petta_document:
             ResultSet rs;
             EvalOutcome detailed;
             ResultSet *results = &rs;
+            bool detailed_initialized = false;
             PrimeNeedTracePrinter trace = {0};
             if (!expr) {
                 fprintf(stderr, "error: could not decode top-level eval form\n");
@@ -3973,6 +3985,7 @@ process_petta_document:
             }
             if (emit_prime_need_trace) {
                 eval_outcome_init(&detailed);
+                detailed_initialized = true;
                 results = &detailed.results;
                 trace.out = stderr;
                 trace.form = ++g_prime_need_trace_form;
@@ -3989,6 +4002,19 @@ process_petta_document:
                         (size_t)eval_outcome_value_count(&detailed),
                         (size_t)eval_outcome_fault_count(&detailed),
                         detailed.steps_spent);
+            } else if (g_count_only) {
+                eval_outcome_init(&detailed);
+                detailed_initialized = true;
+                results = &detailed.results;
+                if (lang->id == CETTA_LANGUAGE_PETTA) {
+                    eval_top_with_registry_petta_plan_outcome(
+                        &space, &eval_arena, &arena, &registry,
+                        expr, source_plan, &detailed);
+                } else {
+                    eval_top_with_registry_outcome(
+                        &space, &eval_arena, &arena, &registry, expr,
+                        &detailed, NULL, NULL);
+                }
             } else {
                 result_set_init(&rs);
                 if (lang->id == CETTA_LANGUAGE_PETTA) {
@@ -4005,7 +4031,7 @@ process_petta_document:
                     &libraries.session)) {
                 rc = cetta_eval_session_process_exit_code(
                     &libraries.session);
-                if (emit_prime_need_trace)
+                if (detailed_initialized)
                     eval_outcome_free(&detailed);
                 else
                     result_set_free(&rs);
@@ -4027,17 +4053,28 @@ process_petta_document:
                         ? typecheck_diagnostic
                         : "runtime analysis judgment failed");
                 rc = typecheck_exit_code;
-                if (emit_prime_need_trace)
+                if (detailed_initialized)
                     eval_outcome_free(&detailed);
                 else
                     result_set_free(&rs);
                 prime_need_trace_printer_free(&trace);
                 goto cleanup;
             }
+            if (g_count_only && detailed_initialized &&
+                detailed.completion != CETTA_EVAL_COMPLETE) {
+                fprintf(
+                    stderr,
+                    "error: count observation incomplete: %s\n",
+                    eval_completion_reason(detailed.completion));
+                eval_outcome_free(&detailed);
+                prime_need_trace_printer_free(&trace);
+                rc = 1;
+                goto cleanup;
+            }
             write_results(output_spool, results, lang->id, profile);
             if (fflush(output_spool) != 0) {
                 fprintf(stderr, "error: could not write output spool\n");
-                if (emit_prime_need_trace)
+                if (detailed_initialized)
                     eval_outcome_free(&detailed);
                 else
                     result_set_free(&rs);
@@ -4052,7 +4089,7 @@ process_petta_document:
                 stop_after_error = true;
                 prime_need_trace_failed = true;
             }
-            if (emit_prime_need_trace)
+            if (detailed_initialized)
                 eval_outcome_free(&detailed);
             else
                 result_set_free(&rs);

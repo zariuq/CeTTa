@@ -128,6 +128,8 @@ REGISTER_INSTRUCTION_ATOM_C: dict[str, tuple[str, str]] = {
 PREPARED_PURE_INTRINSIC_INSTRUCTIONS = {
     "grounded-dispatch",
     "deconstruct-nonempty-expression",
+    "construct-expression-cons",
+    "concatenate-expressions",
 }
 PREPARED_PURE_INTRINSIC_OPERAND_DISCIPLINES = {"strict-all"}
 
@@ -667,6 +669,12 @@ class Spec:
                     int(arity_text) != 1):
                 raise SpecError(
                     "deconstruct-nonempty-expression requires arity one")
+            if (instruction in {
+                    "construct-expression-cons",
+                    "concatenate-expressions",
+                    } and int(arity_text) != 2):
+                raise SpecError(
+                    f"{instruction} requires arity two")
             self.prepared_intrinsic_heads.append((
                 name, symbol_fields[name], int(arity_text), discipline,
                 instruction))
@@ -715,6 +723,143 @@ class Spec:
                 in self.fold_control_heads}) != len(self.fold_control_heads):
             raise SpecError(
                 "fold control heads must be unique by symbol and arity")
+
+        self.sequence_representations: list[
+            tuple[str, str, str, str]
+        ] = []
+        for entry in entries(native, "sequence-representation"):
+            if len(entry) != 5:
+                raise SpecError(
+                    f"malformed sequence-representation: {sexpr(entry)}")
+            key = atom_text(entry[1], "sequence representation key")
+            materializer = atom_text(
+                entry[2], "sequence representation materializer")
+            empty = atom_text(
+                entry[3], "sequence representation empty constructor")
+            cons = atom_text(
+                entry[4], "sequence representation cons constructor")
+            if not all((key, materializer, empty, cons)):
+                raise SpecError(
+                    "sequence representation names must be nonempty")
+            if empty == cons:
+                raise SpecError(
+                    "sequence empty and cons constructors must differ")
+            self.sequence_representations.append(
+                (key, materializer, empty, cons))
+        if not self.sequence_representations:
+            raise SpecError(
+                "at least one sequence representation is required")
+        if len({key for key, _, _, _ in self.sequence_representations}) != \
+                len(self.sequence_representations):
+            raise SpecError("sequence representation keys must be unique")
+
+        representation_keys = {
+            key for key, _, _, _ in self.sequence_representations
+        }
+        self.sequence_fold_consumers: list[tuple[str, str, int, int]] = []
+        for entry in entries(native, "sequence-fold-consumer"):
+            if len(entry) != 5:
+                raise SpecError(
+                    f"malformed sequence-fold-consumer: {sexpr(entry)}")
+            key = atom_text(entry[1], "sequence fold consumer key")
+            consumer = atom_text(entry[2], "sequence fold consumer")
+            arity_text = atom_text(entry[3], "sequence fold consumer arity")
+            operand_text = atom_text(
+                entry[4], "sequence fold consumer represented operand")
+            if key not in representation_keys:
+                raise SpecError(
+                    f"sequence fold consumer names unknown representation "
+                    f"{key}")
+            if not consumer:
+                raise SpecError("sequence fold consumer name must be nonempty")
+            if not arity_text.isdigit() or not operand_text.isdigit():
+                raise SpecError(
+                    "sequence fold consumer arity and operand must be "
+                    "nonnegative integers")
+            arity = int(arity_text)
+            operand = int(operand_text)
+            if arity != 5 or operand != 0:
+                raise SpecError(
+                    "sequence fold consumer must have foldl arity 5 with "
+                    "represented operand 0")
+            self.sequence_fold_consumers.append(
+                (key, consumer, arity, operand))
+        if {key for key, _, _, _ in self.sequence_fold_consumers} != \
+                representation_keys:
+            raise SpecError(
+                "sequence fold consumers must cover every representation")
+        if len({(consumer, arity) for _, consumer, arity, _
+                in self.sequence_fold_consumers}) != \
+                len(self.sequence_fold_consumers):
+            raise SpecError(
+                "sequence fold consumers must be unique by head and arity")
+
+        self.sequence_fold_targets: list[tuple[str, str]] = []
+        for entry in entries(native, "sequence-fold-target"):
+            if len(entry) != 3:
+                raise SpecError(
+                    f"malformed sequence-fold-target: {sexpr(entry)}")
+            key = atom_text(entry[1], "sequence fold target key")
+            target = atom_text(entry[2], "sequence fold target")
+            if not key or not target:
+                raise SpecError(
+                    "sequence fold target names must be nonempty")
+            self.sequence_fold_targets.append((key, target))
+        if {key for key, _ in self.sequence_fold_targets} != \
+                representation_keys or \
+                len(self.sequence_fold_targets) != len(representation_keys):
+            raise SpecError(
+                "sequence fold targets must cover representation keys "
+                "exactly once")
+
+        erasure_modes = {"unwrap", "recursive-all", "scalar-all"}
+        self.sequence_erasures: list[
+            tuple[str, str, str, str, int, int]
+        ] = []
+        for entry in entries(native, "sequence-erasure"):
+            if len(entry) != 7:
+                raise SpecError(
+                    f"malformed sequence-erasure: {sexpr(entry)}")
+            key = atom_text(entry[1], "sequence erasure key")
+            source = atom_text(entry[2], "sequence erasure source")
+            target = atom_text(entry[3], "sequence erasure target")
+            mode = atom_text(entry[4], "sequence erasure mode")
+            minimum_text = atom_text(
+                entry[5], "sequence erasure minimum arity")
+            maximum_text = atom_text(
+                entry[6], "sequence erasure maximum arity")
+            if key not in representation_keys:
+                raise SpecError(
+                    f"sequence erasure names unknown representation {key}")
+            if not source or not target:
+                raise SpecError(
+                    "sequence erasure names must be nonempty")
+            if mode not in erasure_modes:
+                raise SpecError(
+                    f"sequence erasure has unknown mode {mode}")
+            if not minimum_text.isdigit() or not maximum_text.isdigit():
+                raise SpecError(
+                    "sequence erasure arities must be nonnegative integers")
+            minimum = int(minimum_text)
+            maximum = int(maximum_text)
+            if minimum > maximum or maximum > 16:
+                raise SpecError(
+                    "sequence erasure arity interval must lie in [0, 16]")
+            if mode == "unwrap" and (
+                    target != "identity" or minimum != 1 or maximum != 1):
+                raise SpecError(
+                    "unwrap sequence erasure must target identity at arity 1")
+            if mode != "unwrap" and target == "identity":
+                raise SpecError(
+                    "non-unwrap sequence erasure needs an operation target")
+            self.sequence_erasures.append(
+                (key, source, target, mode, minimum, maximum))
+        if not self.sequence_erasures:
+            raise SpecError("at least one sequence erasure is required")
+        if len({(key, source) for key, source, _, _, _, _
+                in self.sequence_erasures}) != len(self.sequence_erasures):
+            raise SpecError(
+                "sequence erasures must be unique by representation and source")
 
         user_head_analysis = entries(native, "user-head-analysis")
         if user_head_analysis != [["user-head-analysis", "revision-keyed",
@@ -1163,6 +1308,27 @@ def render_header(spec: Spec) -> str:
         f"CETTA_GSLT_FOLD_CONTROL_{c_enum(control)})"
         for _, field, arity, control in spec.fold_control_heads
     )
+    sequence_representation_rows = " \\\n".join(
+        f'    X("{key}", "{materializer}", "{empty}", "{cons}")'
+        for key, materializer, empty, cons
+        in spec.sequence_representations
+    )
+    sequence_fold_consumer_rows = " \\\n".join(
+        f'    X("{key}", "{consumer}", {arity}u, {operand}u)'
+        for key, consumer, arity, operand
+        in spec.sequence_fold_consumers
+    )
+    sequence_fold_target_rows = " \\\n".join(
+        f'    X("{key}", "{target}")'
+        for key, target in spec.sequence_fold_targets
+    )
+    sequence_erasure_rows = " \\\n".join(
+        f'    X("{key}", "{source}", "{target}", '
+        f'CETTA_GSLT_SEQUENCE_ERASURE_{c_enum(mode)}, '
+        f'{minimum}u, {maximum}u)'
+        for key, source, target, mode, minimum, maximum
+        in spec.sequence_erasures
+    )
     register_instruction_cases = "\n".join(
         f"    case CETTA_GSLT_REGISTER_INSTRUCTION_{c_enum(instruction)}:\n"
         f"        {REGISTER_INSTRUCTION_C[instruction][1]}\n"
@@ -1272,6 +1438,7 @@ def render_header(spec: Spec) -> str:
         "strong-atom-span": "CETTA_GC_VISIT_STRONG_ATOM_SPAN",
         "logical-bindings": "CETTA_GC_VISIT_LOGICAL_BINDINGS",
         "outcome-set": "CETTA_GC_VISIT_OUTCOME_SET",
+        "variant-instance": "CETTA_GC_VISIT_VARIANT_INSTANCE",
         "ephemeron-atom-map": "CETTA_GC_VISIT_EPHEMERON_ATOM_MAP",
     }
     field_emitter_of = {
@@ -1279,6 +1446,7 @@ def render_header(spec: Spec) -> str:
         "strong-atom-span": "STRONG_ATOM_SPAN",
         "logical-bindings": "LOGICAL_BINDINGS",
         "outcome-set": "OUTCOME_SET",
+        "variant-instance": "VARIANT_INSTANCE",
         "ephemeron-atom-map": "EPHEMERON_ATOM_MAP",
     }
     frame_field_macros = []
@@ -1295,7 +1463,8 @@ def render_header(spec: Spec) -> str:
         frame_field_macros.append(
             f"#define CETTA_EVAL_GC_FRAME_FIELDS_{kind}(\\\n"
             f"    STRONG_ATOM_SLOT, STRONG_ATOM_SPAN, \\\n"
-            f"    LOGICAL_BINDINGS, OUTCOME_SET, EPHEMERON_ATOM_MAP) \\\n"
+            f"    LOGICAL_BINDINGS, OUTCOME_SET, VARIANT_INSTANCE, \\\n"
+            f"    EPHEMERON_ATOM_MAP) \\\n"
             f"{field_body}"
         )
         body = " \\\n".join(
@@ -1484,6 +1653,34 @@ static inline bool cetta_gslt_pure_call_whnf_disjoint(
 /* Executable control arms for the generated determinate-fold program. */
 #define CETTA_GSLT_FOLD_CONTROL_HEAD_ROWS(X) \
 {fold_control_rows}
+
+/* Representation rows for sequence consumers.  The runtime resolves these
+ * names in the active symbol table; library constructors therefore remain
+ * authored data rather than evaluator vocabulary. */
+#define CETTA_GSLT_SEQUENCE_REPRESENTATION_ROWS(X) \
+{sequence_representation_rows}
+
+/* A represented operand remains source syntax until its sequence consumer
+ * exposes the generated fold handler.  This prevents eager pure-call
+ * compilation from materializing a representation that the handler can erase
+ * by an observer-commuting homomorphism. */
+#define CETTA_GSLT_SEQUENCE_FOLD_CONSUMER_ROWS(X) \
+{sequence_fold_consumer_rows}
+
+typedef enum {{
+    CETTA_GSLT_SEQUENCE_ERASURE_UNWRAP = 0,
+    CETTA_GSLT_SEQUENCE_ERASURE_RECURSIVE_ALL = 1,
+    CETTA_GSLT_SEQUENCE_ERASURE_SCALAR_ALL = 2,
+}} CettaGsltSequenceErasureMode;
+
+/* Canonical fold target used only after a prepared sequence path declines. */
+#define CETTA_GSLT_SEQUENCE_FOLD_TARGET_ROWS(X) \
+{sequence_fold_target_rows}
+
+/* Observer-commuting erasures from authored sequence producers to the flat
+ * free-monoid representation consumed by the prepared fold. */
+#define CETTA_GSLT_SEQUENCE_ERASURE_ROWS(X) \
+{sequence_erasure_rows}
 
 /* ── Evaluator root frames: generated evacuation arms ─────────────────────
  * Frame kinds and their field traversal sequences come from the

@@ -1,3 +1,5 @@
+#define _GNU_SOURCE
+
 #include "eval.h"
 #include "generated/petta_typecheck_v2_boundary_core_source_binding_v1.generated.h"
 #include "generated/petta_typecheck_v2_source_binding_v1.generated.h"
@@ -8,15 +10,20 @@
 #include "petta_program.h"
 #include "petta_runtime.h"
 #include "petta_search_machine.h"
+#include "search_control_advice.h"
 #include "petta_semantics.h"
 #include "petta_typecheck.h"
 #include "symbol.h"
 #include "variant_shape.h"
 
 #include <assert.h>
+#include <inttypes.h>
 #include <pthread.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
+#include <sys/stat.h>
+#include <unistd.h>
 
 static Atom *parse_one(Arena *arena, const char *source) {
     Atom **forms = NULL;
@@ -367,7 +374,6 @@ static void test_semantic_form_facts(void) {
     PeTTaConsShapeFacts high_cons_facts;
     assert(petta_semantics_cons_shape_facts(&high_cons_facts));
     assert(high_cons_facts.cons >= 4096u);
-    assert(high_cons_facts.open_cons >= 4096u);
     Arena high_fact_arena;
     arena_init(&high_fact_arena);
     Atom *high_item = atom_symbol(&high_fact_arena, "high-item");
@@ -376,10 +382,8 @@ static void test_semantic_form_facts(void) {
         &high_fact_arena,
         atom_symbol_id(&high_fact_arena, high_cons_facts.cons),
         high_item, high_tail);
-    Atom *high_open_cons = atom_expr3(
-        &high_fact_arena,
-        atom_symbol_id(&high_fact_arena, high_cons_facts.open_cons),
-        high_item, high_tail);
+    Atom *high_open_cons = petta_semantics_open_cons_value(
+        &high_fact_arena, high_item, high_tail);
     assert(high_item && high_tail && high_cons && high_open_cons);
     assert(petta_semantics_facts_is_cons_constraint(
         &high_cons_facts, high_cons));
@@ -663,7 +667,8 @@ static void test_deep_cons_semantics(Arena *arena) {
     assert(!petta_semantics_facts_is_cons_constraint(
         &cons_facts, cons_lookalike));
     Atom *cons_head = atom_symbol_id(arena, cons_facts.cons);
-    Atom *open_cons_head = atom_symbol_id(arena, cons_facts.open_cons);
+    Atom *open_cons_head = atom_internal_tag(
+        arena, CETTA_INTERNAL_TAG_PETTA_OPEN_CONS);
     Atom *short_cons = atom_expr2(arena, cons_head, item);
     Atom *short_open_cons = atom_expr2(arena, open_cons_head, item);
     Atom *long_cons_elements[] = {cons_head, item, tail, item};
@@ -1960,6 +1965,19 @@ static void test_constructor_slot_frame_plans(
         petta_program_plan_current(program, activation_partial_query);
     assert(activation_partial_query_plan);
 
+    Atom *stale_clause = add_compiled_program_clause(
+        program, &execution_space, persistent,
+        "(= (stale-machine-call $value) should-not-run)");
+    Atom *stale_query = parse_one(
+        persistent, "(stale-machine-call (+ 1 2))");
+    const PettaPlanNode *stale_query_plan =
+        petta_program_plan_current(program, stale_query);
+    assert(stale_query_plan);
+    assert(stale_query_plan->role == PETTA_PLAN_STATIC_CALL);
+    assert(space_remove(&execution_space, stale_clause));
+    petta_program_note_remove_one(
+        program, &execution_space, stale_clause);
+
     PettaMachineHost activation_host = {
         .context = program,
         .clause_snapshot_lease =
@@ -2028,7 +2046,18 @@ static void test_constructor_slot_frame_plans(
     assert(atom_alpha_eq(answer, parse_one(answers, "3")));
     bindings_free(&environment);
     assert(petta_machine_stats(&machine, &stats));
-    assert(stats.relation_slot_frame_entries == 2u);
+    /* Ordinary execution materializes the outer RHS, so only the resolved
+     * inner relation enters a slot frame.  The optional activation path
+     * instead keeps a partial outer frame while its callable operand runs;
+     * the resolved inner relation is the second frame. */
+    const char *activation_setting = getenv(
+        "CETTA_PETTA_CLAUSE_BODY_ACTIVATION");
+    bool activation_enabled = activation_setting &&
+        strcmp(activation_setting, "1") == 0;
+    assert(stats.relation_slot_frame_entries ==
+           (activation_enabled ? 2u : 1u));
+    assert(stats.relation_slot_operands_reused == 1u);
+    assert(stats.pure_grounded_slot_frame_entries == 1u);
     assert(stats.activation_materialization_calls == 0u);
     assert(petta_machine_next(
                &machine, &answer, &environment) ==
@@ -2087,7 +2116,27 @@ static void test_constructor_slot_frame_plans(
         answer, parse_one(answers, "(partial + (2))")));
     bindings_free(&environment);
     assert(petta_machine_stats(&machine, &stats));
-    assert(stats.activation_materialization_calls == 1u);
+    /* Ordinary execution materializes the clause RHS before this metric's
+     * boundary.  The optional activation path keeps the source paired with
+     * its frame and performs one explicit fallback materialization here. */
+    assert(stats.activation_materialization_calls ==
+           (activation_enabled ? 1u : 0u));
+    assert(petta_machine_next(
+               &machine, &answer, &environment) ==
+           PETTA_MACHINE_STEP_EXHAUSTED);
+    bindings_free(&environment);
+    petta_machine_destroy(&machine);
+
+    assert(petta_machine_init_with_plan(
+        &machine, &execution_space, answers,
+        stale_query, stale_query_plan, NULL,
+        &activation_host));
+    bindings_init(&environment);
+    assert(petta_machine_next(
+               &machine, &answer, &environment) ==
+           PETTA_MACHINE_STEP_ANSWER);
+    assert(atom_alpha_eq(answer, stale_query));
+    bindings_free(&environment);
     assert(petta_machine_next(
                &machine, &answer, &environment) ==
            PETTA_MACHINE_STEP_EXHAUSTED);
@@ -2654,6 +2703,93 @@ static void test_typed_data_purity_boundary(
 
     petta_program_free(program);
     space_free(&typed_space);
+}
+
+static void test_evaluator_neutral_structural_equation_classification(
+    TermUniverse *universe, Arena *persistent) {
+    Space structural_space;
+    space_init_with_universe(&structural_space, universe);
+    PettaProgram *program = petta_program_new();
+    assert(program);
+
+    space_add(
+        &structural_space,
+        parse_one(persistent, "(= (portable Z) base)"));
+    space_add(
+        &structural_space,
+        parse_one(
+            persistent,
+            "(= (portable (S $n)) (portable $n))"));
+    Atom *portable_call =
+        parse_one(persistent, "(portable (S (S Z)))");
+    assert(petta_program_synchronize_space(
+        program, &structural_space));
+    assert(petta_program_relational_execution_class(
+               program, &structural_space, portable_call) ==
+           CETTA_RELATIONAL_EXECUTION_STRUCTURAL_EQUATIONS_V1);
+
+    /* A revision change invalidates the qualification until the complete
+     * occurrence catalog has been rebuilt from that exact Space revision. */
+    space_add(
+        &structural_space,
+        parse_one(persistent, "unrelated-data"));
+    assert(petta_program_relational_execution_class(
+               program, &structural_space, portable_call) ==
+           CETTA_RELATIONAL_EXECUTION_UNQUALIFIED);
+    assert(petta_program_synchronize_space(
+        program, &structural_space));
+    assert(petta_program_relational_execution_class(
+               program, &structural_space, portable_call) ==
+           CETTA_RELATIONAL_EXECUTION_STRUCTURAL_EQUATIONS_V1);
+
+    Space intrinsic_space;
+    space_init_with_universe(&intrinsic_space, universe);
+    space_add(
+        &intrinsic_space,
+        parse_one(
+            persistent,
+            "(= (portable-intrinsic $x) (+ $x 1))"));
+    assert(petta_program_synchronize_space(
+        program, &intrinsic_space));
+    assert(petta_program_relational_execution_class(
+               program, &intrinsic_space,
+               parse_one(persistent, "(portable-intrinsic 2)")) ==
+           CETTA_RELATIONAL_EXECUTION_UNQUALIFIED);
+
+    Space list_space;
+    space_init_with_universe(&list_space, universe);
+    space_add(
+        &list_space,
+        parse_one(
+            persistent,
+            "(= (portable-cons $x) (cons $x ()))"));
+    assert(petta_program_synchronize_space(program, &list_space));
+    assert(petta_program_relational_execution_class(
+               program, &list_space,
+               parse_one(persistent, "(portable-cons item)")) ==
+           CETTA_RELATIONAL_EXECUTION_UNQUALIFIED);
+
+    Space open_head_space;
+    space_init_with_universe(&open_head_space, universe);
+    space_add(
+        &open_head_space,
+        parse_one(persistent, "(= (portable-open $x) ok)"));
+    space_add(
+        &open_head_space,
+        parse_one(persistent, "(= ($callable $x) dynamic)"));
+    assert(petta_program_synchronize_space(
+        program, &open_head_space));
+    assert(petta_program_relational_execution_class(
+               program, &open_head_space,
+               parse_one(persistent, "(portable-open item)")) ==
+           CETTA_RELATIONAL_EXECUTION_UNQUALIFIED);
+
+    petta_program_free(program);
+    space_free(&open_head_space);
+    space_free(&list_space);
+    space_free(&intrinsic_space);
+    space_free(&structural_space);
+    puts("PASS: evaluator-neutral structural equations qualify exactly");
 }
 
 static void expect_answers(
@@ -5066,6 +5202,388 @@ static void test_controller_batch_ranker(void) {
     puts("PASS: scorer batches preserve complete occurrence permutations");
 }
 
+typedef struct {
+    uint32_t value;
+} ReclamationProbePayload;
+
+typedef enum {
+    RECLAMATION_PROBE_READY = 0,
+    RECLAMATION_PROBE_DEFERRED,
+    RECLAMATION_PROBE_MALFORMED,
+    RECLAMATION_PROBE_INVALID_STORAGE,
+} ReclamationProbeMode;
+
+static ReclamationProbeMode g_reclamation_probe_mode;
+static size_t g_reclamation_probe_destroyed;
+
+static CettaContinuationStatus reclamation_probe_capture(
+        void *machine, void **payload) {
+    (void)machine;
+    (void)payload;
+    return CETTA_CONTINUATION_UNSUPPORTED;
+}
+
+static CettaContinuationStatus reclamation_probe_restore(
+        void *machine, void **payload) {
+    (void)machine;
+    (void)payload;
+    return CETTA_CONTINUATION_UNSUPPORTED;
+}
+
+static void reclamation_probe_destroy(void *opaque) {
+    g_reclamation_probe_destroyed++;
+    free(opaque);
+}
+
+static bool reclamation_probe_storage(
+        const void *payload, CettaContinuationStorage *storage) {
+    if (!payload || !storage)
+        return false;
+    const ReclamationProbePayload *probe = payload;
+    if (probe->value == UINT32_MAX)
+        return false;
+    *storage = (CettaContinuationStorage){
+        .shared_identity = payload,
+        .shared_bytes = sizeof(ReclamationProbePayload),
+    };
+    return true;
+}
+
+static CettaContinuationStatus reclamation_probe_reclaim(
+        const void *const *sources, size_t length,
+        void ***replacements,
+        CettaContinuationReclamationReceipt *receipt) {
+    assert(sources && length != 0u && replacements && !*replacements);
+    assert(receipt);
+    if (g_reclamation_probe_mode == RECLAMATION_PROBE_DEFERRED)
+        return CETTA_CONTINUATION_DEFERRED;
+    void **prepared = calloc(length, sizeof(*prepared));
+    assert(prepared);
+    size_t limit = g_reclamation_probe_mode == RECLAMATION_PROBE_MALFORMED
+        ? length - 1u : length;
+    for (size_t i = 0u; i < limit; i++) {
+        const ReclamationProbePayload *source = sources[i];
+        ReclamationProbePayload *replacement = malloc(sizeof(*replacement));
+        assert(source && replacement);
+        replacement->value = source->value + 100u;
+        if (g_reclamation_probe_mode ==
+                RECLAMATION_PROBE_INVALID_STORAGE && i + 1u == length) {
+            replacement->value = UINT32_MAX;
+        }
+        prepared[i] = replacement;
+    }
+    *replacements = prepared;
+    *receipt = (CettaContinuationReclamationReceipt){
+        .live_occurrences = length,
+        .shared_bytes_before = length * 20u,
+        .shared_bytes_after = length * 7u,
+        .exclusive_bytes_before = length * 3u,
+        .exclusive_bytes_after = length * 3u,
+    };
+    return CETTA_CONTINUATION_READY;
+}
+
+static const CettaContinuationProvider kReclamationProbeProvider = {
+    .representation_name = "reclamation-probe",
+    .ownership = {
+        .capture = reclamation_probe_capture,
+        .restore = reclamation_probe_restore,
+        .destroy = reclamation_probe_destroy,
+        .storage = reclamation_probe_storage,
+    },
+    .maintenance = {
+        .reclaim = reclamation_probe_reclaim,
+    },
+};
+
+static const CettaContinuationProvider kOtherReclamationProbeProvider = {
+    .representation_name = "other-reclamation-probe",
+    .ownership = {
+        .capture = reclamation_probe_capture,
+        .restore = reclamation_probe_restore,
+        .destroy = reclamation_probe_destroy,
+        .storage = reclamation_probe_storage,
+    },
+    .maintenance = {
+        .reclaim = reclamation_probe_reclaim,
+    },
+};
+
+static CettaOwnedContinuation reclamation_probe_continuation(
+        uint32_t value, uint64_t parent_occurrence_id) {
+    ReclamationProbePayload *payload = malloc(sizeof(*payload));
+    assert(payload);
+    payload->value = value;
+    return (CettaOwnedContinuation){
+        .payload = payload,
+        .provider = &kReclamationProbeProvider,
+        .parent_occurrence_id = parent_occurrence_id,
+    };
+}
+
+static void test_continuation_hub_atomic_reclamation(void) {
+    CettaControlPlan plan;
+    assert(cetta_control_plan_derive(
+        (CettaObservationDemand){
+            .completion = CETTA_OBSERVATION_ORDERED_STREAM,
+        },
+        CETTA_CONTROL_BRANCH_GENERAL,
+        CETTA_CONTROL_BATCH_SINGLETON_ONLY, &plan));
+    CettaSelectionAutomaton ratio;
+    assert(cetta_selection_automaton_ratio(2u, &ratio));
+    CettaContinuationHub hub = {0};
+    assert(cetta_continuation_hub_init(
+        &hub, &ratio, CETTA_SELECTION_DUTY_RECURRENT_OLDEST, &plan));
+    CettaOwnedContinuation first = reclamation_probe_continuation(1u, 41u);
+    CettaOwnedContinuation second = reclamation_probe_continuation(2u, 42u);
+    assert(cetta_continuation_hub_append(&hub, &first));
+    assert(cetta_continuation_hub_append(&hub, &second));
+    const CettaOwnedContinuation *old_first =
+        cetta_continuation_hub_at(&hub, 0u);
+    const CettaOwnedContinuation *old_second =
+        cetta_continuation_hub_at(&hub, 1u);
+    assert(old_first && old_second);
+    void *old_first_payload = old_first->payload;
+    void *old_second_payload = old_second->payload;
+    uint64_t first_occurrence = old_first->occurrence_id;
+    uint64_t second_occurrence = old_second->occurrence_id;
+    CettaSelectionLane lane;
+    size_t selected;
+    assert(cetta_continuation_hub_select(&hub, &lane, &selected));
+    uint32_t schedule_state = hub.schedule.state;
+
+    g_reclamation_probe_destroyed = 0u;
+    g_reclamation_probe_mode = RECLAMATION_PROBE_READY;
+    CettaContinuationReclamationReceipt receipt;
+    assert(cetta_continuation_hub_reclaim(&hub, &receipt) ==
+           CETTA_CONTINUATION_READY);
+    assert(g_reclamation_probe_destroyed == 2u);
+    const CettaOwnedContinuation *new_first =
+        cetta_continuation_hub_at(&hub, 0u);
+    const CettaOwnedContinuation *new_second =
+        cetta_continuation_hub_at(&hub, 1u);
+    assert(new_first && new_second);
+    assert(new_first->payload != old_first_payload &&
+           new_second->payload != old_second_payload);
+    assert(((ReclamationProbePayload *)new_first->payload)->value == 101u);
+    assert(((ReclamationProbePayload *)new_second->payload)->value == 102u);
+    assert(new_first->occurrence_id == first_occurrence &&
+           new_second->occurrence_id == second_occurrence);
+    assert(new_first->parent_occurrence_id == 41u &&
+           new_second->parent_occurrence_id == 42u);
+    assert(hub.schedule.state == schedule_state);
+    assert(receipt.live_occurrences == 2u &&
+           receipt.shared_bytes_before == 40u &&
+           receipt.shared_bytes_after == 14u &&
+           receipt.exclusive_bytes_before == 6u &&
+           receipt.exclusive_bytes_after == 6u);
+
+    void *stable_first_payload = new_first->payload;
+    void *stable_second_payload = new_second->payload;
+    g_reclamation_probe_mode = RECLAMATION_PROBE_DEFERRED;
+    assert(cetta_continuation_hub_reclaim(&hub, &receipt) ==
+           CETTA_CONTINUATION_DEFERRED);
+    assert(cetta_continuation_hub_at(&hub, 0u)->payload ==
+           stable_first_payload);
+    assert(cetta_continuation_hub_at(&hub, 1u)->payload ==
+           stable_second_payload);
+    assert(g_reclamation_probe_destroyed == 2u);
+
+    g_reclamation_probe_mode = RECLAMATION_PROBE_MALFORMED;
+    assert(cetta_continuation_hub_reclaim(&hub, &receipt) ==
+           CETTA_CONTINUATION_UNSUPPORTED);
+    assert(cetta_continuation_hub_at(&hub, 0u)->payload ==
+           stable_first_payload);
+    assert(cetta_continuation_hub_at(&hub, 1u)->payload ==
+           stable_second_payload);
+    assert(g_reclamation_probe_destroyed == 3u);
+
+    g_reclamation_probe_mode = RECLAMATION_PROBE_INVALID_STORAGE;
+    assert(cetta_continuation_hub_reclaim(&hub, &receipt) ==
+           CETTA_CONTINUATION_UNSUPPORTED);
+    assert(cetta_continuation_hub_at(&hub, 0u)->payload ==
+           stable_first_payload);
+    assert(cetta_continuation_hub_at(&hub, 1u)->payload ==
+           stable_second_payload);
+    assert(g_reclamation_probe_destroyed == 5u);
+
+    hub.store.items[hub.store.begin + 1u].provider =
+        &kOtherReclamationProbeProvider;
+    assert(cetta_continuation_hub_reclaim(&hub, &receipt) ==
+           CETTA_CONTINUATION_UNSUPPORTED);
+    assert(g_reclamation_probe_destroyed == 5u);
+    hub.store.items[hub.store.begin + 1u].provider =
+        &kReclamationProbeProvider;
+    cetta_continuation_hub_destroy(&hub);
+    assert(g_reclamation_probe_destroyed == 7u);
+    puts("PASS: hub reclamation is atomic and preserves occurrence control state");
+}
+
+static void test_observation_indexed_control_plan(void) {
+    CettaControlPlan plan = {
+        .readout = CETTA_OBSERVATION_UNDETERMINED,
+        .activation = CETTA_CONTROL_ACTIVATE_CONTROLLED,
+        .prefix_limit = UINT64_MAX,
+    };
+    assert(cetta_control_plan_derive(
+        (CettaObservationDemand){
+            .completion = CETTA_OBSERVATION_FIRST,
+        },
+        CETTA_CONTROL_BRANCH_GENERAL,
+        CETTA_CONTROL_BATCH_SINGLETON_ONLY, &plan));
+    assert(plan.readout == CETTA_OBSERVATION_FIRST &&
+           plan.activation == CETTA_CONTROL_ACTIVATE_CONTROLLED &&
+           plan.prefix_limit == 0u);
+    assert(!cetta_control_plan_observation_satisfied(&plan, 0u));
+    assert(cetta_control_plan_observation_satisfied(&plan, 1u));
+    assert(cetta_control_plan_observation_satisfied(&plan, 2u));
+
+    CettaSelectionAutomaton fifo;
+    assert(cetta_selection_automaton_fifo(&fifo));
+    CettaContinuationHub first_hub = {0};
+    assert(cetta_continuation_hub_init(
+        &first_hub, &fifo,
+        CETTA_SELECTION_DUTY_RECURRENT_OLDEST, &plan));
+    CettaSelectionLane empty_lane = CETTA_SELECTION_LANE_NEWEST;
+    size_t empty_index = SIZE_MAX;
+    assert(!cetta_continuation_hub_select(
+        &first_hub, &empty_lane, &empty_index));
+    assert(!cetta_continuation_hub_observe(&first_hub, 0u));
+    assert(cetta_continuation_hub_observe(&first_hub, 1u));
+    assert(first_hub.observed_occurrences == 1u);
+    cetta_continuation_hub_destroy(&first_hub);
+
+    CettaSelectionAutomaton lifo;
+    assert(cetta_selection_automaton_lifo(&lifo));
+    CettaContinuationHub unrestricted_hub = {0};
+    assert(cetta_continuation_hub_init(
+        &unrestricted_hub, &lifo,
+        CETTA_SELECTION_DUTY_NONE, &plan));
+    assert(cetta_continuation_hub_switch_schedule(
+        &unrestricted_hub, &fifo));
+    assert(cetta_continuation_hub_switch_schedule(
+        &unrestricted_hub, &lifo));
+    cetta_continuation_hub_destroy(&unrestricted_hub);
+
+    assert(cetta_control_plan_derive(
+        (CettaObservationDemand){
+            .completion = CETTA_OBSERVATION_FIRST,
+        },
+        CETTA_CONTROL_BRANCH_SINGLE_PATH,
+        CETTA_CONTROL_BATCH_SINGLETON_ONLY, &plan));
+    assert(plan.readout == CETTA_OBSERVATION_FIRST &&
+           plan.activation == CETTA_CONTROL_ACTIVATE_SINGLE_PATH &&
+           plan.prefix_limit == 0u);
+    CettaContinuationHub single_path_hub = {0};
+    assert(!cetta_continuation_hub_init(
+        &single_path_hub, &fifo,
+        CETTA_SELECTION_DUTY_RECURRENT_OLDEST, &plan));
+
+    assert(cetta_control_plan_derive(
+        (CettaObservationDemand){
+            .completion = CETTA_OBSERVATION_FINITE_PREFIX,
+            .prefix_limit = 0u,
+        },
+        CETTA_CONTROL_BRANCH_SINGLE_PATH,
+        CETTA_CONTROL_BATCH_SERIALIZABLE, &plan));
+    assert(plan.readout == CETTA_OBSERVATION_FINITE_PREFIX &&
+           plan.activation == CETTA_CONTROL_ACTIVATE_NONE &&
+           plan.prefix_limit == 0u);
+    assert(cetta_control_plan_observation_satisfied(&plan, 0u));
+    assert(cetta_control_plan_derive(
+        (CettaObservationDemand){
+            .completion = CETTA_OBSERVATION_FINITE_PREFIX,
+            .prefix_limit = 4u,
+        },
+        CETTA_CONTROL_BRANCH_GENERAL,
+        CETTA_CONTROL_BATCH_SINGLETON_ONLY, &plan));
+    assert(plan.readout == CETTA_OBSERVATION_FINITE_PREFIX &&
+           plan.activation == CETTA_CONTROL_ACTIVATE_CONTROLLED &&
+           plan.prefix_limit == 4u);
+    assert(!cetta_control_plan_observation_satisfied(&plan, 3u));
+    assert(cetta_control_plan_observation_satisfied(&plan, 4u));
+
+    assert(cetta_control_plan_derive(
+        (CettaObservationDemand){
+            .completion = CETTA_OBSERVATION_COMPLETE_BAG,
+        },
+        CETTA_CONTROL_BRANCH_GENERAL,
+        CETTA_CONTROL_BATCH_SERIALIZABLE, &plan));
+    assert(plan.readout == CETTA_OBSERVATION_COMPLETE_BAG &&
+           plan.activation == CETTA_CONTROL_ACTIVATE_BULK &&
+           plan.prefix_limit == 0u);
+    assert(!cetta_control_plan_observation_satisfied(&plan, UINT64_MAX));
+    assert(cetta_control_plan_derive(
+        (CettaObservationDemand){
+            .completion = CETTA_OBSERVATION_COMPLETE_BAG,
+        },
+        CETTA_CONTROL_BRANCH_GENERAL,
+        CETTA_CONTROL_BATCH_SINGLETON_ONLY, &plan));
+    assert(plan.readout == CETTA_OBSERVATION_COMPLETE_BAG &&
+           plan.activation == CETTA_CONTROL_ACTIVATE_CONTROLLED &&
+           plan.prefix_limit == 0u);
+
+    assert(cetta_control_plan_derive(
+        (CettaObservationDemand){
+            .completion = CETTA_OBSERVATION_ORDERED_STREAM,
+        },
+        CETTA_CONTROL_BRANCH_GENERAL,
+        CETTA_CONTROL_BATCH_SERIALIZABLE, &plan));
+    assert(plan.readout == CETTA_OBSERVATION_ORDERED_STREAM &&
+           plan.activation == CETTA_CONTROL_ACTIVATE_CONTROLLED &&
+           plan.prefix_limit == 0u);
+    assert(cetta_control_plan_derive(
+        (CettaObservationDemand){
+            .completion = CETTA_OBSERVATION_UNDETERMINED,
+        },
+        CETTA_CONTROL_BRANCH_GENERAL,
+        CETTA_CONTROL_BATCH_SERIALIZABLE, &plan));
+    assert(plan.readout == CETTA_OBSERVATION_UNDETERMINED &&
+           plan.activation == CETTA_CONTROL_ACTIVATE_CONTROLLED &&
+           plan.prefix_limit == 0u);
+
+    CettaControlPlan unchanged = {
+        .readout = CETTA_OBSERVATION_FINITE_PREFIX,
+        .activation = CETTA_CONTROL_ACTIVATE_SINGLE_PATH,
+        .prefix_limit = 17u,
+    };
+    assert(!cetta_control_plan_derive(
+        (CettaObservationDemand){
+            .completion = CETTA_OBSERVATION_FIRST,
+            .prefix_limit = 9u,
+        },
+        CETTA_CONTROL_BRANCH_GENERAL,
+        CETTA_CONTROL_BATCH_SERIALIZABLE, &unchanged));
+    assert(unchanged.readout == CETTA_OBSERVATION_FINITE_PREFIX &&
+           unchanged.activation == CETTA_CONTROL_ACTIVATE_SINGLE_PATH &&
+           unchanged.prefix_limit == 17u);
+    assert(!cetta_control_plan_derive(
+        (CettaObservationDemand){
+            .completion = CETTA_OBSERVATION_COMPLETE_BAG,
+        },
+        CETTA_CONTROL_BRANCH_GENERAL,
+        (CettaControlBatchAuthority)99, &unchanged));
+    assert(unchanged.readout == CETTA_OBSERVATION_FINITE_PREFIX &&
+           unchanged.activation == CETTA_CONTROL_ACTIVATE_SINGLE_PATH &&
+           unchanged.prefix_limit == 17u);
+    assert(!cetta_control_plan_derive(
+        (CettaObservationDemand){
+            .completion = CETTA_OBSERVATION_COMPLETE_BAG,
+        },
+        (CettaControlBranchAuthority)99,
+        CETTA_CONTROL_BATCH_SERIALIZABLE, &unchanged));
+    assert(unchanged.readout == CETTA_OBSERVATION_FINITE_PREFIX &&
+           unchanged.activation == CETTA_CONTROL_ACTIVATE_SINGLE_PATH &&
+           unchanged.prefix_limit == 17u);
+
+    CettaControlPlan malformed = plan;
+    malformed.prefix_limit = 1u;
+    assert(!cetta_control_plan_observation_satisfied(
+        &malformed, UINT64_MAX));
+
+    puts("PASS: readout demand never manufactures branch authority");
+}
+
 static void test_branch_capture_algebra(void) {
     CettaSearchControllerPolicy policy =
         CETTA_SEARCH_CONTROLLER_FIFO;
@@ -5166,9 +5684,9 @@ static void test_relational_frontier_expansion(
         assert(petta_machine_init(
             &machine, space, answers, query, NULL, &host));
         assert(strcmp(
-            cetta_continuation_machine_storage_name(
+            cetta_continuation_machine_representation_name(
                 petta_machine_continuation_machine(&machine)),
-            "full-image") == 0);
+            "shared-terms-owned-state") == 0);
         Atom *answer = NULL;
         Bindings environment;
         PettaMachineStep step = petta_machine_next(
@@ -5214,21 +5732,117 @@ static void test_relational_frontier_expansion(
      * the stored representation. */
     void *left_payload = frontier.items[0].payload;
     void *right_payload = frontier.items[1].payload;
-    CettaContinuationStore store;
-    cetta_continuation_store_init(&store);
-    assert(cetta_continuation_store_append_batch(&store, &frontier));
-    assert(cetta_continuation_store_length(&store) == 2u);
+    CettaSelectionAutomaton ratio;
+    assert(cetta_selection_automaton_ratio(1u, &ratio));
+    CettaControlPlan ordered_plan;
+    assert(cetta_control_plan_derive(
+        (CettaObservationDemand){
+            .completion = CETTA_OBSERVATION_ORDERED_STREAM,
+        },
+        CETTA_CONTROL_BRANCH_GENERAL,
+        CETTA_CONTROL_BATCH_SINGLETON_ONLY, &ordered_plan));
+    CettaContinuationHub hub = {0};
+    assert(cetta_continuation_hub_init(
+        &hub, &ratio,
+        CETTA_SELECTION_DUTY_RECURRENT_OLDEST,
+        &ordered_plan));
+    assert(cetta_continuation_hub_append_batch(&hub, &frontier));
+    assert(cetta_continuation_hub_length(&hub) == 2u);
+    const CettaOwnedContinuation *stored_left =
+        cetta_continuation_hub_at(&hub, 0u);
+    const CettaOwnedContinuation *stored_right =
+        cetta_continuation_hub_at(&hub, 1u);
+    assert(stored_left && stored_right);
+    CettaContinuationStorage left_storage = {0};
+    CettaContinuationStorage right_storage = {0};
+    assert(cetta_owned_continuation_storage(
+        stored_left, &left_storage));
+    assert(cetta_owned_continuation_storage(
+        stored_right, &right_storage));
+    assert(left_storage.shared_identity != NULL &&
+           left_storage.shared_identity == right_storage.shared_identity &&
+           left_storage.shared_bytes == right_storage.shared_bytes &&
+           left_storage.shared_bytes > 0u);
+    assert(stored_left->occurrence_id != 0u &&
+           stored_right->occurrence_id != 0u &&
+           stored_left->occurrence_id != stored_right->occurrence_id);
+    uint64_t left_occurrence = stored_left->occurrence_id;
+    uint64_t right_occurrence = stored_right->occurrence_id;
+    size_t before_shared = 0u;
+    size_t before_exclusive = 0u;
+    assert(cetta_continuation_hub_storage(
+        &hub, &before_shared, &before_exclusive));
+    size_t component_exclusive = 0u;
+    for (CettaContinuationComponent component =
+             CETTA_CONTINUATION_COMPONENT_AUTHORITY;
+         component < CETTA_CONTINUATION_COMPONENT_COUNT;
+         component++) {
+        size_t shared = 0u;
+        size_t exclusive = 0u;
+        assert(cetta_continuation_hub_component_storage(
+            &hub, component, &shared, &exclusive));
+        assert(component_exclusive <= SIZE_MAX - exclusive);
+        component_exclusive += exclusive;
+        if (component == CETTA_CONTINUATION_COMPONENT_TERMS)
+            assert(shared == before_shared);
+        else
+            assert(shared == 0u);
+    }
+    assert(component_exclusive == before_exclusive);
+    CettaSelectionAutomaton lifo;
+    assert(cetta_selection_automaton_lifo(&lifo));
+    assert(!cetta_continuation_hub_switch_schedule(&hub, &lifo));
+    CettaSelectionAutomaton fifo;
+    assert(cetta_selection_automaton_fifo(&fifo));
+    assert(cetta_continuation_hub_switch_schedule(&hub, &fifo));
+    assert(cetta_continuation_hub_at(&hub, 0u)->payload == left_payload);
+    assert(cetta_continuation_hub_at(&hub, 1u)->payload == right_payload);
+    assert(cetta_continuation_hub_at(&hub, 0u)->occurrence_id ==
+           left_occurrence);
+    assert(cetta_continuation_hub_at(&hub, 1u)->occurrence_id ==
+           right_occurrence);
+    size_t after_shared = 0u;
+    size_t after_exclusive = 0u;
+    assert(cetta_continuation_hub_storage(
+        &hub, &after_shared, &after_exclusive));
+    assert(after_shared == before_shared &&
+           after_exclusive == before_exclusive);
+    assert(cetta_continuation_hub_switch_schedule(&hub, &ratio));
+    CettaContinuationTrace left_trace;
+    CettaContinuationTrace right_trace;
+    cetta_continuation_trace_init(&left_trace);
+    cetta_continuation_trace_init(&right_trace);
+    assert(cetta_owned_continuation_trace(
+               stored_left, &left_trace) ==
+           CETTA_CONTINUATION_READY);
+    assert(cetta_owned_continuation_trace(
+               stored_right, &right_trace) ==
+           CETTA_CONTINUATION_READY);
+    assert(left_trace.length != 0u && right_trace.length != 0u);
+    assert(left_trace.projection_identity ==
+           right_trace.projection_identity);
+    cetta_continuation_trace_destroy(&left_trace);
+    cetta_continuation_trace_destroy(&right_trace);
     CettaOwnedContinuation selected_right;
     cetta_owned_continuation_init(&selected_right);
-    assert(cetta_continuation_store_take(
-        &store, 1u, &selected_right));
+    CettaSelectionLane selected_lane = CETTA_SELECTION_LANE_OLDEST;
+    size_t selected_index = SIZE_MAX;
+    assert(cetta_continuation_hub_select(
+        &hub, &selected_lane, &selected_index));
+    assert(selected_lane == CETTA_SELECTION_LANE_NEWEST &&
+           selected_index == 1u);
+    assert(cetta_continuation_hub_take(
+        &hub, selected_index, &selected_right));
     assert(selected_right.payload == right_payload);
     CettaOwnedContinuation selected_left;
     cetta_owned_continuation_init(&selected_left);
-    assert(cetta_continuation_store_take(
-        &store, 0u, &selected_left));
+    assert(cetta_continuation_hub_select(
+        &hub, &selected_lane, &selected_index));
+    assert(selected_index == 0u);
+    assert(cetta_continuation_hub_take(
+        &hub, selected_index, &selected_left));
     assert(selected_left.payload == left_payload);
-    assert(cetta_continuation_store_length(&store) == 0u);
+    assert(cetta_continuation_hub_length(&hub) == 0u);
 
     assert(restore_relational_continuation(
                &machine, &selected_left) ==
@@ -5258,7 +5872,7 @@ static void test_relational_frontier_expansion(
            PETTA_MACHINE_STEP_EXHAUSTED);
     bindings_free(&environment);
 
-    cetta_continuation_store_destroy(&store);
+    cetta_continuation_hub_destroy(&hub);
     cetta_continuation_batch_destroy(&frontier);
     petta_machine_destroy(&machine);
     puts("PASS: relational frontier expansion preserves source and independent successors");
@@ -5524,8 +6138,57 @@ static void test_owned_clause_continuation_roundtrip(
     CettaContinuationStorage storage = {0};
     assert(cetta_owned_continuation_storage(
         &first_image, &storage));
-    assert(storage.shared_identity == first_image.payload);
+    assert(storage.shared_identity != NULL);
     assert(storage.shared_bytes > 0u && storage.exclusive_bytes > 0u);
+    static const char *const component_representations[] = {
+        [CETTA_CONTINUATION_COMPONENT_AUTHORITY] =
+            "revision-authority",
+        [CETTA_CONTINUATION_COMPONENT_TERMS] =
+            "shared-term-pool",
+        [CETTA_CONTINUATION_COMPONENT_BINDINGS] =
+            "owned-abt-bindings",
+        [CETTA_CONTINUATION_COMPONENT_CONTROL] =
+            "owned-control-vectors",
+        [CETTA_CONTINUATION_COMPONENT_OBLIGATIONS] =
+            "owned-obligation-vectors",
+        [CETTA_CONTINUATION_COMPONENT_READOUT] =
+            "inline-readout-state",
+    };
+    size_t component_shared = 0u;
+    size_t component_exclusive = 0u;
+    for (CettaContinuationComponent component =
+             CETTA_CONTINUATION_COMPONENT_AUTHORITY;
+         component < CETTA_CONTINUATION_COMPONENT_COUNT;
+         component++) {
+        const char *representation =
+            cetta_owned_continuation_component_representation(
+                &first_image, component);
+        assert(representation && strcmp(
+            representation,
+            component_representations[component]) == 0);
+        CettaContinuationStorage component_storage = {0};
+        assert(cetta_owned_continuation_component_storage(
+            &first_image, component, &component_storage));
+        assert(component_exclusive <=
+               SIZE_MAX - component_storage.exclusive_bytes);
+        component_exclusive += component_storage.exclusive_bytes;
+        if (component == CETTA_CONTINUATION_COMPONENT_TERMS) {
+            assert(component_storage.shared_identity ==
+                   storage.shared_identity);
+            assert(component_storage.shared_bytes ==
+                   storage.shared_bytes);
+            component_shared = component_storage.shared_bytes;
+        } else {
+            assert(component_storage.shared_identity == NULL);
+            assert(component_storage.shared_bytes == 0u);
+        }
+    }
+    assert(component_shared == storage.shared_bytes);
+    assert(component_exclusive == storage.exclusive_bytes);
+    assert(!cetta_owned_continuation_component_storage(
+        &first_image,
+        (CettaContinuationComponent)CETTA_CONTINUATION_COMPONENT_COUNT,
+        &storage));
 
     assert(petta_machine_next(
                &machine, &answer, &environment) ==
@@ -5562,8 +6225,7 @@ static void test_owned_clause_continuation_roundtrip(
     assert(stats.owned_continuation_capture_attempts == 2u);
     assert(stats.owned_continuation_captures == 2u);
     assert(stats.owned_continuation_restores == 2u);
-    assert(stats.owned_continuation_atom_bytes_captured >=
-           2u * storage.shared_bytes);
+    assert(stats.owned_continuation_atom_bytes_captured > 0u);
     assert(stats.owned_continuation_vector_bytes_captured >=
            2u * storage.exclusive_bytes);
     cetta_owned_continuation_destroy(&first_image);
@@ -5664,6 +6326,71 @@ static void test_owned_clause_continuation_roundtrip(
     }
     assert(once_captured);
 
+    CettaControlPlan first_plan;
+    CettaControlPlan ordered_plan;
+    assert(cetta_control_plan_derive(
+        (CettaObservationDemand){
+            .completion = CETTA_OBSERVATION_FIRST,
+        },
+        CETTA_CONTROL_BRANCH_GENERAL,
+        CETTA_CONTROL_BATCH_SINGLETON_ONLY,
+        &first_plan));
+    assert(cetta_control_plan_derive(
+        (CettaObservationDemand){
+            .completion = CETTA_OBSERVATION_ORDERED_STREAM,
+        },
+        CETTA_CONTROL_BRANCH_GENERAL,
+        CETTA_CONTROL_BATCH_SINGLETON_ONLY,
+        &ordered_plan));
+    size_t once_expansion_budget = 0u;
+    for (size_t budget = 1u;
+         budget <= 64u && once_expansion_budget == 0u; budget++) {
+        authority.remaining = budget;
+        PettaMachineHost first_host = {
+            .context = &authority,
+            .control_plan = &first_plan,
+            .admit_branch_capture = admit_effect_free_continuation,
+            .permit_transition = permit_owned_continuation_transition,
+        };
+        assert(petta_machine_init(
+            &machine, space, answers, once_query, NULL, &first_host));
+        PettaMachineStep step = petta_machine_next(
+            &machine, &answer, &environment);
+        bindings_free(&environment);
+        CettaContinuationBatch first_frontier;
+        cetta_continuation_batch_init(&first_frontier);
+        if (step == PETTA_MACHINE_STEP_SUSPENDED &&
+            expand_relational_frontier(&machine, &first_frontier) ==
+                CETTA_CONTINUATION_READY) {
+            assert(first_frontier.length == 2u);
+            once_expansion_budget = budget;
+        }
+        cetta_continuation_batch_destroy(&first_frontier);
+        petta_machine_destroy(&machine);
+    }
+    assert(once_expansion_budget != 0u);
+
+    authority.remaining = once_expansion_budget;
+    PettaMachineHost ordered_host = {
+        .context = &authority,
+        .control_plan = &ordered_plan,
+        .admit_branch_capture = admit_effect_free_continuation,
+        .permit_transition = permit_owned_continuation_transition,
+    };
+    assert(petta_machine_init(
+        &machine, space, answers, once_query, NULL, &ordered_host));
+    assert(petta_machine_next(
+               &machine, &answer, &environment) ==
+           PETTA_MACHINE_STEP_SUSPENDED);
+    bindings_free(&environment);
+    CettaContinuationBatch ordered_frontier;
+    cetta_continuation_batch_init(&ordered_frontier);
+    assert(expand_relational_frontier(&machine, &ordered_frontier) ==
+           CETTA_CONTINUATION_UNSUPPORTED);
+    assert(ordered_frontier.length == 0u);
+    cetta_continuation_batch_destroy(&ordered_frontier);
+    petta_machine_destroy(&machine);
+
     CettaOwnedContinuation stale_space;
     cetta_owned_continuation_init(&stale_space);
     authority.revision = 4u;
@@ -5689,6 +6416,468 @@ static void test_owned_clause_continuation_roundtrip(
     petta_machine_destroy(&machine);
 
     puts("PASS: owned ordinary-clause continuations are multi-shot and authority-pinned");
+}
+
+static void test_selection_automaton_lane_recurrence(void) {
+    CettaSelectionAutomaton automaton;
+    /* FIFO: one OLDEST state; the lane-recurrence check accepts it. */
+    assert(cetta_selection_automaton_fifo(&automaton));
+    assert(cetta_selection_automaton_has_recurrent_oldest(&automaton));
+    /* Bare LIFO is representable data but fails the check: its single
+     * cycle never visits an OLDEST state. */
+    assert(cetta_selection_automaton_lifo(&automaton));
+    assert(!cetta_selection_automaton_has_recurrent_oldest(&automaton));
+    /* ratio:2 cycles NEWEST,NEWEST,OLDEST and passes the check. */
+    assert(cetta_selection_automaton_ratio(2u, &automaton));
+    assert(cetta_selection_automaton_has_recurrent_oldest(&automaton));
+    size_t index = 99u;
+    assert(cetta_selection_automaton_select(&automaton, 5u, &index));
+    assert(index == 4u);
+    assert(cetta_selection_automaton_select(&automaton, 5u, &index));
+    assert(index == 4u);
+    assert(cetta_selection_automaton_select(&automaton, 5u, &index));
+    assert(index == 0u);
+    assert(cetta_selection_automaton_select(&automaton, 5u, &index));
+    assert(index == 4u);
+    /* A singleton frontier is controller-invariant: every lane selects
+     * the sole live occurrence. */
+    uint32_t phase_before_singleton = automaton.state;
+    assert(cetta_selection_automaton_select(&automaton, 1u, &index));
+    assert(index == 0u);
+    assert(automaton.state == phase_before_singleton);
+    /* An empty frontier refuses and leaves INDEX unchanged. */
+    index = 7u;
+    assert(!cetta_selection_automaton_select(&automaton, 0u, &index));
+    assert(index == 7u);
+    assert(cetta_selection_automaton_parse("fifo", &automaton));
+    assert(automaton.state_count == 1u);
+    assert(cetta_selection_automaton_parse("ratio:3", &automaton));
+    assert(automaton.state_count == 4u);
+    assert(!cetta_selection_automaton_parse("ratio:", &automaton));
+    assert(!cetta_selection_automaton_parse(
+        "ratio:banana", &automaton));
+    assert(!cetta_selection_automaton_parse("ratio:+3", &automaton));
+    assert(!cetta_selection_automaton_parse("ratio: 3", &automaton));
+    assert(!cetta_selection_automaton_parse("ratio:64", &automaton));
+    assert(!cetta_selection_automaton_parse("dfs", &automaton));
+    CettaSearchControllerPolicy policy = CETTA_SEARCH_CONTROLLER_FIFO;
+    assert(cetta_search_controller_policy_parse("ratio:5", &policy));
+    assert(policy == CETTA_SEARCH_CONTROLLER_RATIO);
+    assert(cetta_search_controller_policy_parse("ratio", &policy));
+    assert(policy == CETTA_SEARCH_CONTROLLER_RATIO);
+    policy = CETTA_SEARCH_CONTROLLER_FIFO;
+    assert(!cetta_search_controller_policy_parse(
+        "ratio:banana", &policy));
+    assert(policy == CETTA_SEARCH_CONTROLLER_FIFO);
+    puts("PASS: selection disciplines have exact parsing and checked"
+         " recurrent-oldest data");
+}
+
+static void test_whistle_embedding_and_ambient_monitor(Arena *arena) {
+    Atom *base = parse_one(arena, "(loop $x)");
+    Atom *deeper = parse_one(arena, "(loop (loop $x))");
+    Atom *unrelated = parse_one(arena, "(found $x)");
+    assert(base && deeper && unrelated);
+    /* Homeomorphic embedding: the recursive-first shape embeds into its
+     * own unfolding; the unfolding does not embed back; an unrelated head
+     * is untouched. */
+    assert(cetta_atom_homeomorphically_embedded(base, deeper));
+    assert(!cetta_atom_homeomorphically_embedded(deeper, base));
+    assert(!cetta_atom_homeomorphically_embedded(unrelated, deeper));
+    CettaWhistle whistle;
+    assert(cetta_whistle_init(&whistle));
+    assert(!cetta_whistle_observe(&whistle, base, 1u, 0u));
+    /* Structural similarity on a sibling is not an ancestor whistle. */
+    assert(!cetta_whistle_observe(&whistle, deeper, 2u, 0u));
+    assert(!cetta_whistle_demoted(&whistle, 2u));
+    assert(cetta_whistle_observe(&whistle, deeper, 3u, 1u));
+    assert(cetta_whistle_demoted(&whistle, 3u));
+    assert(!cetta_whistle_demoted(&whistle, 1u));
+    assert(cetta_whistle_count(&whistle) == 1u);
+    cetta_whistle_destroy(&whistle);
+    /* Retention is physically bounded: evicting old observations also frees
+     * their independent arenas instead of growing one monotone arena. */
+    assert(cetta_whistle_init(&whistle));
+    for (uint64_t occurrence = 1u;
+         occurrence <= CETTA_WHISTLE_ANCESTOR_CAPACITY + 9u;
+         occurrence++) {
+        assert(!cetta_whistle_observe(
+            &whistle, base, occurrence, 0u));
+    }
+    assert(whistle.term_length == CETTA_WHISTLE_ANCESTOR_CAPACITY);
+    size_t retained_arenas = 0u;
+    for (size_t i = 0u; i < CETTA_WHISTLE_ANCESTOR_CAPACITY; i++) {
+        if (whistle.term_arenas[i])
+            retained_arenas++;
+    }
+    assert(retained_arenas == CETTA_WHISTLE_ANCESTOR_CAPACITY);
+    cetta_whistle_destroy(&whistle);
+    /* The ambient monitor computes the same advice on an OS thread; stop
+     * drains the ring before joining, so the verdicts are deterministic
+     * once the submitter has quiesced. */
+    assert(cetta_whistle_init(&whistle));
+    CettaWhistleMonitor monitor;
+    assert(cetta_whistle_monitor_start(&monitor, &whistle));
+    Arena transient;
+    arena_init(&transient);
+    Atom *transient_base = atom_deep_copy(&transient, base);
+    Atom *transient_deeper = atom_deep_copy(&transient, deeper);
+    Atom *transient_unrelated = atom_deep_copy(&transient, unrelated);
+    assert(cetta_whistle_monitor_submit(
+        &monitor, transient_base, 10u, 0u));
+    assert(cetta_whistle_monitor_submit(
+        &monitor, transient_deeper, 11u, 10u));
+    assert(cetta_whistle_monitor_submit(
+        &monitor, transient_unrelated, 12u, 10u));
+    /* Accepted submissions own snapshots; the producer arena may die before
+     * the worker drains them. */
+    arena_free(&transient);
+    cetta_whistle_monitor_stop(&monitor);
+    assert(cetta_whistle_count(&whistle) == 1u);
+    assert(cetta_whistle_demoted(&whistle, 11u));
+    assert(!cetta_whistle_demoted(&whistle, 12u));
+    cetta_whistle_destroy(&whistle);
+    puts("PASS: ancestor-embedding whistle advises inline and from an"
+         " ambient thread");
+}
+
+static void test_act_profile_memory(void) {
+    char directory[] = "runtime/act-profile-test-XXXXXX";
+    assert(mkdtemp(directory));
+    CettaActKey key = {
+        .language_id = 2u,
+        .profile_id = 7u,
+        .space_revision = 11u,
+        .program_hash = 0xC0FFEEu,
+    };
+    CettaActRecord record = {
+        .key = key,
+        .policy = "ratio:4",
+        .outcome = CETTA_ACT_OUTCOME_COMPLETE,
+        .transitions = 100u,
+        .answers = 3u,
+        .expansions = 7u,
+        .max_frontier = 5u,
+        .whistles = 0u,
+    };
+    assert(cetta_act_profile_store(directory, &record));
+    CettaActRecord loaded;
+    assert(cetta_act_profile_lookup(directory, &key, &loaded));
+    assert(loaded.answers == 3u);
+    assert(strcmp(loaded.policy, "ratio:4") == 0);
+    CettaActKey other_key = key;
+    other_key.space_revision++;
+    assert(!cetta_act_profile_lookup(directory, &other_key, &loaded));
+    CettaSearchControllerPolicy policy;
+    CettaSelectionAutomaton automaton;
+    /* Reuse what worked: the recorded ratio discipline comes back. */
+    assert(cetta_act_profile_choose(
+        directory, &key, &policy, &automaton));
+    assert(policy == CETTA_SEARCH_CONTROLLER_RATIO);
+    assert(automaton.state_count == 5u);
+    assert(cetta_selection_automaton_has_recurrent_oldest(&automaton));
+    /* Finite zero-answer closure is absence, not starvation. */
+    record.answers = 0u;
+    record.outcome = CETTA_ACT_OUTCOME_COMPLETE;
+    assert(cetta_act_profile_store(directory, &record));
+    assert(!cetta_act_profile_choose(
+        directory, &key, &policy, &automaton));
+    /* Only explicit incompleteness escalates to recurrent-oldest control. */
+    record.outcome = CETTA_ACT_OUTCOME_INCOMPLETE;
+    assert(cetta_act_profile_store(directory, &record));
+    assert(cetta_act_profile_choose(
+        directory, &key, &policy, &automaton));
+    assert(policy == CETTA_SEARCH_CONTROLLER_FIFO);
+    assert(automaton.state_count == 1u);
+    record.outcome = CETTA_ACT_OUTCOME_REFUSED;
+    assert(cetta_act_profile_store(directory, &record));
+    assert(!cetta_act_profile_choose(
+        directory, &key, &policy, &automaton));
+    /* No exact key means no advice, never a fabricated policy. */
+    assert(!cetta_act_profile_choose(
+        directory, &other_key, &policy, &automaton));
+    CettaActRecord unterminated = record;
+    memset(unterminated.policy, 'x', sizeof(unterminated.policy));
+    assert(!cetta_act_profile_store(directory, &unterminated));
+    char path[4200];
+    snprintf(
+        path, sizeof(path), "%s/%u-%u-%" PRIu64 "-%08x.act",
+        directory, key.language_id, key.profile_id,
+        key.space_revision, key.program_hash);
+    remove(path);
+    rmdir(directory);
+    puts("PASS: act profile is revision-scoped and distinguishes closure,"
+         " incompleteness, and refusal");
+}
+
+typedef struct {
+    const uint8_t *bytes;
+    size_t length;
+    uint64_t projection_identity;
+} CompressionTracePayload;
+
+static CettaContinuationStatus compression_trace_capture(
+        void *machine, void **payload) {
+    (void)machine;
+    (void)payload;
+    return CETTA_CONTINUATION_UNSUPPORTED;
+}
+
+static CettaContinuationStatus compression_trace_restore(
+        void *machine, void **payload) {
+    (void)machine;
+    (void)payload;
+    return CETTA_CONTINUATION_UNSUPPORTED;
+}
+
+static void compression_trace_destroy(void *payload) {
+    (void)payload;
+}
+
+static bool compression_trace_storage(
+        const void *payload, CettaContinuationStorage *storage) {
+    if (!payload || !storage)
+        return false;
+    *storage = (CettaContinuationStorage){
+        .shared_identity = payload,
+        .shared_bytes = 1u,
+    };
+    return true;
+}
+
+static CettaContinuationStatus compression_trace_project(
+        const void *opaque, CettaContinuationTrace *trace) {
+    const CompressionTracePayload *payload = opaque;
+    if (!payload || !trace || trace->bytes || payload->length == 0u ||
+        payload->projection_identity == 0u)
+        return CETTA_CONTINUATION_UNSUPPORTED;
+    uint8_t *bytes = malloc(payload->length);
+    if (!bytes)
+        return CETTA_CONTINUATION_CAPACITY;
+    memcpy(bytes, payload->bytes, payload->length);
+    *trace = (CettaContinuationTrace){
+        .bytes = bytes,
+        .length = payload->length,
+        .projection_identity = payload->projection_identity,
+    };
+    return CETTA_CONTINUATION_READY;
+}
+
+static const CettaContinuationProvider kCompressionTraceProvider = {
+    .representation_name = "compression-test-trace",
+    .ownership = {
+        .capture = compression_trace_capture,
+        .restore = compression_trace_restore,
+        .destroy = compression_trace_destroy,
+        .storage = compression_trace_storage,
+    },
+    .projection = {
+        .trace = compression_trace_project,
+    },
+};
+
+static void test_act_incremental_compression(void) {
+    char directory[] = "runtime/act-compression-test-XXXXXX";
+    assert(mkdtemp(directory));
+    CettaActKey key = {
+        .language_id = 3u,
+        .profile_id = 9u,
+        .space_revision = 17u,
+        .program_hash = UINT32_C(0x1234abcd),
+    };
+    CettaActCompressionModel model;
+    assert(cetta_act_compression_model_init(&model, &key));
+    uint8_t familiar[512];
+    uint8_t noise[512];
+    for (size_t i = 0u; i < sizeof(familiar); i++) {
+        familiar[i] = (uint8_t)("successful-branch-shape"[
+            i % (sizeof("successful-branch-shape") - 1u)]);
+        uint32_t mixed = (uint32_t)i * UINT32_C(2654435761) +
+            UINT32_C(0x9e3779b9);
+        noise[i] = (uint8_t)(mixed ^ (mixed >> 11u));
+    }
+    CettaContinuationTrace successful = {
+        .bytes = familiar,
+        .length = sizeof(familiar),
+        .projection_identity = UINT64_C(0xabcddcba12344321),
+    };
+    assert(cetta_act_compression_model_observe_success(
+        &model, &successful));
+    assert(model.revision == 1u && model.observations == 1u &&
+           model.dictionary_length == sizeof(familiar));
+    CettaActCompressionMeasurement familiar_measurement;
+    CettaActCompressionMeasurement noise_measurement;
+    CettaContinuationTrace unfamiliar = {
+        .bytes = noise,
+        .length = sizeof(noise),
+        .projection_identity = successful.projection_identity,
+    };
+    assert(cetta_act_compression_measure(
+        &model, &successful, &familiar_measurement));
+    assert(cetta_act_compression_measure(
+        &model, &unfamiliar, &noise_measurement));
+    assert(familiar_measurement.saved_bits >
+           noise_measurement.saved_bits);
+    assert(familiar_measurement.ordinary_bits ==
+           familiar_measurement.residual_bits +
+               familiar_measurement.saved_bits);
+
+    CettaContinuationTrace wrong_projection = successful;
+    wrong_projection.projection_identity++;
+    assert(!cetta_act_compression_measure(
+        &model, &wrong_projection, &familiar_measurement));
+    assert(!cetta_act_compression_model_observe_success(
+        &model, &wrong_projection));
+
+    CettaActCompressionModel lineage_model;
+    assert(cetta_act_compression_model_init(&lineage_model, &key));
+    CettaActCompressionLineage lineage;
+    cetta_act_compression_lineage_init(&lineage);
+    CompressionTracePayload lineage_payloads[3] = {
+        {familiar, sizeof(familiar), successful.projection_identity},
+        {familiar, sizeof(familiar), successful.projection_identity},
+        {noise, sizeof(noise), successful.projection_identity},
+    };
+    CettaContinuationTrace lineage_traces[3] = {{0}};
+    for (size_t i = 0u; i < 3u; i++) {
+        assert(compression_trace_project(
+                   &lineage_payloads[i], &lineage_traces[i]) ==
+               CETTA_CONTINUATION_READY);
+    }
+    assert(cetta_act_compression_lineage_record(
+        &lineage, 41u, 0u, &lineage_traces[0]));
+    assert(cetta_act_compression_lineage_record(
+        &lineage, 42u, 41u, &lineage_traces[1]));
+    assert(cetta_act_compression_lineage_record(
+        &lineage, 43u, 41u, &lineage_traces[2]));
+    assert(!lineage_traces[0].bytes && !lineage_traces[1].bytes &&
+           !lineage_traces[2].bytes);
+    assert(cetta_act_compression_lineage_resident_bytes(&lineage) ==
+           sizeof(lineage) + 3u * sizeof(familiar));
+    size_t lineage_updates = 0u;
+    assert(cetta_act_compression_lineage_credit_answer(
+        &lineage, 42u, &lineage_model, &lineage_updates));
+    assert(lineage_updates == 2u &&
+           lineage_model.observations == 2u &&
+           lineage_model.revision == 2u);
+    assert(!cetta_act_compression_lineage_credit_answer(
+        &lineage, 99u, &lineage_model, &lineage_updates));
+    assert(lineage_updates == 0u);
+    CettaContinuationTrace invalid_parent = {0};
+    assert(compression_trace_project(
+               &lineage_payloads[0], &invalid_parent) ==
+           CETTA_CONTINUATION_READY);
+    assert(!cetta_act_compression_lineage_record(
+        &lineage, 44u, 44u, &invalid_parent));
+    assert(invalid_parent.bytes);
+    cetta_continuation_trace_destroy(&invalid_parent);
+    CettaContinuationTrace missing_parent = {0};
+    assert(compression_trace_project(
+               &lineage_payloads[0], &missing_parent) ==
+           CETTA_CONTINUATION_READY);
+    assert(cetta_act_compression_lineage_record(
+        &lineage, 44u, 40u, &missing_parent));
+    assert(!missing_parent.bytes);
+    assert(!cetta_act_compression_lineage_credit_answer(
+        &lineage, 44u, &lineage_model, &lineage_updates));
+    assert(lineage_updates == 0u &&
+           lineage_model.observations == 2u &&
+           lineage_model.revision == 2u);
+    cetta_act_compression_lineage_destroy(&lineage);
+
+    assert(cetta_act_compression_model_store(directory, &model));
+    CettaActCompressionModel loaded;
+    assert(cetta_act_compression_model_lookup(
+        directory, &key, &loaded));
+    assert(loaded.digest == model.digest &&
+           loaded.revision == model.revision &&
+           loaded.dictionary_length == model.dictionary_length &&
+           memcmp(loaded.dictionary, model.dictionary,
+                  model.dictionary_length) == 0);
+    CettaActCompressionModel tampered = loaded;
+    tampered.observations++;
+    assert(!cetta_act_compression_measure(
+        &tampered, &successful, &familiar_measurement));
+    assert(!cetta_act_compression_model_observe_success(
+        &tampered, &successful));
+    assert(!cetta_act_compression_model_store(directory, &tampered));
+    CettaActKey stale_key = key;
+    stale_key.space_revision++;
+    assert(!cetta_act_compression_model_lookup(
+        directory, &stale_key, &loaded));
+
+    CompressionTracePayload payloads[3] = {
+        {noise, sizeof(noise), successful.projection_identity},
+        {familiar, sizeof(familiar), successful.projection_identity},
+        {familiar, sizeof(familiar), successful.projection_identity},
+    };
+    CettaOwnedContinuation handles[3] = {
+        {.payload = &payloads[0], .provider = &kCompressionTraceProvider,
+         .occurrence_id = 31u},
+        {.payload = &payloads[1], .provider = &kCompressionTraceProvider,
+         .occurrence_id = 32u},
+        {.payload = &payloads[2], .provider = &kCompressionTraceProvider,
+         .occurrence_id = 33u},
+    };
+    CettaControllerCandidateView candidates[3] = {
+        {.occurrence_id = 31u, .age = 0u, .continuation = &handles[0]},
+        {.occurrence_id = 32u, .age = 1u, .continuation = &handles[1]},
+        {.occurrence_id = 33u, .age = 2u, .continuation = &handles[2]},
+    };
+    CettaActCompressionRankContext rank_context;
+    CettaControllerBatchRanker ranker;
+    cetta_act_compression_ranker_init(
+        &model, &rank_context, &ranker);
+    size_t permutation[3] = {SIZE_MAX, SIZE_MAX, SIZE_MAX};
+    CettaControllerRankingReceipt receipt;
+    assert(cetta_controller_rank_complete(
+               &ranker, candidates, 3u, permutation, &receipt) ==
+           CETTA_CONTROLLER_RANKING_APPLIED);
+    assert(permutation[0] == 1u && permutation[1] == 2u &&
+           permutation[2] == 0u);
+    assert(receipt.scorer_identity ==
+           CETTA_ACT_COMPRESSION_SCORER_IDENTITY);
+    assert(receipt.model_revision == model.revision);
+    assert(rank_context.attempts == 1u &&
+           rank_context.applied == 1u);
+    size_t first_peak_working = rank_context.maximum_working_bytes;
+    size_t pair_permutation[2] = {SIZE_MAX, SIZE_MAX};
+    assert(cetta_controller_rank_complete(
+               &ranker, &candidates[1], 2u,
+               pair_permutation, &receipt) ==
+           CETTA_CONTROLLER_RANKING_APPLIED);
+    assert(pair_permutation[0] == 0u && pair_permutation[1] == 1u);
+    assert(rank_context.attempts == 2u &&
+           rank_context.applied == 2u &&
+           rank_context.maximum_working_bytes == first_peak_working);
+
+    CettaActCompressionModel empty;
+    assert(cetta_act_compression_model_init(&empty, &key));
+    cetta_act_compression_ranker_init(
+        &empty, &rank_context, &ranker);
+    assert(cetta_controller_rank_complete(
+               &ranker, candidates, 3u, permutation, &receipt) ==
+           CETTA_CONTROLLER_RANKING_IDENTITY_DEFERRED);
+    assert(permutation[0] == 0u && permutation[1] == 1u &&
+           permutation[2] == 2u);
+
+    char path[4200];
+    snprintf(
+        path, sizeof(path),
+        "%s/%u-%u-%" PRIu64 "-%08x.compression.act",
+        directory, key.language_id, key.profile_id,
+        key.space_revision, key.program_hash);
+    FILE *corrupt = fopen(path, "wb");
+    assert(corrupt);
+    assert(fputs("act-compression-v1\tcorrupt\n", corrupt) >= 0);
+    assert(fclose(corrupt) == 0);
+    assert(!cetta_act_compression_model_lookup(
+        directory, &key, &loaded));
+    assert(unlink(path) == 0);
+    assert(rmdir(directory) == 0);
+    puts("PASS: incremental compression persists successful structure,"
+         " ranks a complete stable frontier, and declines stale or corrupt"
+         " advice");
 }
 
 int main(void) {
@@ -5730,6 +6919,8 @@ int main(void) {
     test_relational_obligation_guard_gc(
         &space, &persistent, &answers);
     test_controller_batch_ranker();
+    test_continuation_hub_atomic_reclamation();
+    test_observation_indexed_control_plan();
     test_branch_capture_algebra();
     test_owned_clause_continuation_roundtrip(
         &space, &persistent, &answers);
@@ -5737,6 +6928,10 @@ int main(void) {
         &space, &persistent, &answers);
     test_fifo_starvation_and_duplicate_canaries(
         &space, &persistent, &answers);
+    test_selection_automaton_lane_recurrence();
+    test_whistle_embedding_and_ambient_monitor(&answers);
+    test_act_profile_memory();
+    test_act_incremental_compression();
 
     test_native_residual_typecheck(
         &space, &persistent, &answers);
@@ -5756,6 +6951,8 @@ int main(void) {
     test_program_analysis_sidecar_interop(
         &universe, &persistent, &answers);
     test_typed_data_purity_boundary(
+        &universe, &persistent);
+    test_evaluator_neutral_structural_equation_classification(
         &universe, &persistent);
     test_deep_typecheck_source_rewrites(&universe);
     test_deep_cons_semantics(&answers);

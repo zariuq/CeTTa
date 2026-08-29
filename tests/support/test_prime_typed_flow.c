@@ -2562,6 +2562,7 @@ int main(void) {
     CettaPrimeTypedDerivationViewV1 live_map_derivation = {0};
     CHECK(live_map_application && live_map_expected &&
               live_map.kind == CETTA_PRIME_NATIVE_EXECUTION_REALIZED &&
+              live_map.result_form == CETTA_PRIME_NATIVE_RESULT_VALUE &&
               live_map.value && atom_eq(live_map.value, live_map_expected) &&
               live_map.typed_value &&
               cetta_prime_typed_value_v1_is_current(
@@ -3640,6 +3641,8 @@ int main(void) {
     CettaPrimeTypedIndexedViewV1 native_hyp_execution_indexed = {0};
     CHECK(native_hyp_execution.kind ==
               CETTA_PRIME_NATIVE_EXECUTION_REALIZED &&
+              native_hyp_execution.result_form ==
+                  CETTA_PRIME_NATIVE_RESULT_PLAN &&
               native_hyp_execution.value &&
               native_hyp_execution.typed_value &&
               cetta_prime_typed_value_v1_metadata(
@@ -3967,6 +3970,8 @@ int main(void) {
         candidate_query && expected_candidate_plan &&
         candidate_execution.kind ==
             CETTA_PRIME_NATIVE_EXECUTION_REALIZED &&
+        candidate_execution.result_form ==
+            CETTA_PRIME_NATIVE_RESULT_PLAN &&
         candidate_execution.value &&
         atom_eq(candidate_execution.value, expected_candidate_plan) &&
         candidate_receipt_observed &&
@@ -4184,6 +4189,8 @@ int main(void) {
     CHECK(legacy_map_rel_query && expected_legacy_map_rel_plan &&
               legacy_map_rel_execution.kind ==
                   CETTA_PRIME_NATIVE_EXECUTION_REALIZED &&
+              legacy_map_rel_execution.result_form ==
+                  CETTA_PRIME_NATIVE_RESULT_PLAN &&
               legacy_map_rel_execution.value &&
               legacy_map_rel_execution.typed_value &&
               atom_eq(

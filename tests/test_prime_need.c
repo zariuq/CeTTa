@@ -20,6 +20,7 @@ int main(void) {
     SymbolTable symbols;
     Arena arena;
     Arena branch_arena;
+    Arena empty_suffix_arena;
     Arena snapshot_branch_arena;
     Arena promoted_arena;
     symbol_table_init(&symbols);
@@ -29,8 +30,73 @@ int main(void) {
     g_var_intern = NULL;
     arena_init(&arena);
     arena_init(&branch_arena);
+    arena_init(&empty_suffix_arena);
     arena_init(&snapshot_branch_arena);
     arena_init(&promoted_arena);
+
+    PrimeNeedBranchState identity_carrier;
+    prime_need_branch_state_init(&identity_carrier);
+    PrimeNeedArenaAudit *identity_audit =
+        prime_need_arena_audit_new(&branch_arena);
+    CHECK(prime_need_branch_state_begin(
+              &branch_arena, &identity_carrier) && identity_audit &&
+              prime_need_arena_audit_branch_state(
+                  identity_audit, &identity_carrier),
+          "event-free branch-state identity owns no arena root");
+    prime_need_arena_audit_free(identity_audit);
+    uint64_t identity_session = identity_carrier.session_id;
+    CHECK(prime_need_branch_state_promote(
+              &promoted_arena, &identity_carrier) &&
+              identity_carrier.owner == &promoted_arena &&
+              identity_carrier.session_id == identity_session &&
+              identity_carrier.top == NULL,
+          "event-free branch-state identity rehomes without allocation");
+    StateCell audit_cell = {
+        .value = atom_int(&arena, 0),
+        .content_type = atom_symbol(&arena, "Number"),
+    };
+    PrimeNeedBranchState event_base;
+    PrimeNeedBranchState eventful_carrier;
+    prime_need_branch_state_init(&event_base);
+    PrimeNeedArenaAudit *eventful_audit =
+        prime_need_arena_audit_new(&branch_arena);
+    CHECK(prime_need_branch_state_begin(&branch_arena, &event_base) &&
+              prime_need_branch_state_write(
+              &branch_arena, &event_base, &audit_cell,
+              audit_cell.value, atom_int(&arena, 1),
+              &eventful_carrier) && eventful_audit &&
+              !prime_need_arena_audit_branch_state(
+                  eventful_audit, &eventful_carrier),
+          "event-bearing branch state retains its exact owner arena");
+    prime_need_arena_audit_free(eventful_audit);
+
+    PrimeNeedBranchState suffix_identity;
+    prime_need_branch_state_init(&suffix_identity);
+    CHECK(prime_need_branch_state_begin(
+              &empty_suffix_arena, &suffix_identity) &&
+              prime_need_branch_state_promote_suffix(
+                  &promoted_arena, &empty_suffix_arena,
+                  &suffix_identity) &&
+              suffix_identity.owner == &promoted_arena &&
+              suffix_identity.top == NULL,
+          "empty suffix promotion rehomes future allocation authority");
+    arena_free(&empty_suffix_arena);
+    arena_init(&empty_suffix_arena);
+    Atom *reused_region_marker = atom_symbol(
+        &empty_suffix_arena, "reused-region");
+    PrimeNeedBranchState suffix_first_event;
+    CHECK(reused_region_marker &&
+              prime_need_branch_state_write(
+                  &empty_suffix_arena, &suffix_identity, &audit_cell,
+                  audit_cell.value, atom_int(&arena, 2),
+                  &suffix_first_event) &&
+              suffix_first_event.owner == &promoted_arena &&
+              prime_need_branch_state_has_events(&suffix_first_event) &&
+              prime_need_branch_state_excludes_arena(
+                  &suffix_first_event, &empty_suffix_arena) &&
+              !prime_need_branch_state_excludes_arena(
+                  &suffix_first_event, &promoted_arena),
+          "first event after region reuse allocates in promoted owner");
 
     PrimeNeedSnapshot root;
     prime_need_snapshot_init(&root);
@@ -431,11 +497,11 @@ int main(void) {
               prime_need_receipt_present(&receipt_root) &&
               prime_need_receipt_event_count(&receipt_root) == 0u,
           "an evaluation episode has an explicit empty receipt root");
-    CHECK(!prime_need_receipt_excludes_arena(
+    CHECK(prime_need_receipt_excludes_arena(
               &receipt_root, &arena) &&
               prime_need_receipt_excludes_arena(
                   &receipt_root, &promoted_arena),
-          "receipt ownership audit distinguishes its owner arena");
+          "event-free receipt root excludes every arena");
     PrimeNeedReceipt empty_promoted = receipt_root;
     CHECK(prime_need_receipt_promote(&promoted_arena, &empty_promoted) &&
               prime_need_receipt_equal(&empty_promoted, &receipt_root),
@@ -512,6 +578,21 @@ int main(void) {
               !prime_need_receipt_excludes_arena(
                   &branch_local_equation, &branch_arena),
           "branch-local extension retains its older base across arenas");
+    PrimeNeedReceipt remote_branch_equation;
+    PrimeNeedReceipt cross_arena_join = branch_local_equation;
+    PrimeNeedArenaAudit *cross_arena_audit =
+        prime_need_arena_audit_new(&promoted_arena);
+    CHECK(prime_need_receipt_use_equation_ids_branch_local(
+              &promoted_arena, &receipt_root, source_occurrence, 21u,
+              &remote_branch_equation) &&
+              prime_need_receipt_merge(
+                  &cross_arena_join, &remote_branch_equation) &&
+              cross_arena_join.owner == &branch_arena &&
+              cross_arena_audit &&
+              !prime_need_arena_audit_receipt(
+                  cross_arena_audit, &cross_arena_join),
+          "exact audit rejects a stable-owned join with forbidden descendant");
+    prime_need_arena_audit_free(cross_arena_audit);
     PrimeNeedReceipt promoted_branch_local = branch_local_equation;
     CHECK(prime_need_receipt_promote(
               &promoted_arena, &promoted_branch_local) &&
@@ -770,6 +851,7 @@ int main(void) {
     printf("(PrimeNeedAlgebraSummary %u %u %u)\n",
            checks, checks - failures, failures);
     arena_free(&promoted_arena);
+    arena_free(&empty_suffix_arena);
     arena_free(&branch_arena);
     arena_free(&arena);
     symbol_table_free(&symbols);

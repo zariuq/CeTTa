@@ -85,8 +85,69 @@
   (clist:to-list (clist:repeat 4 (compound value)))
   (list:repeat 4 (compound value)))
 
+; A represented fold may erase only producers named by the generated
+; execution contract.  Unlisted producers take the ordinary materialize-then-
+; fold path, preserving alternatives, duplicate occurrences, Empty, and
+; effects exactly once.
+(= (clist:test-produced) (clist:from-list (1 2 3)))
+!(assertEqual
+  (clist:foldl (clist:test-produced) 0 $acc $item (+ $acc $item))
+  6)
+
+(= (clist:test-alternatives) (clist:from-list (1 2)))
+(= (clist:test-alternatives) (clist:from-list (3 4)))
+!(assertEqual
+  (collapse
+    (clist:foldl (clist:test-alternatives) 0 $acc $item (+ $acc $item)))
+  (3 7))
+
+(= (clist:test-duplicates) (clist:from-list (1 2)))
+(= (clist:test-duplicates) (clist:from-list (1 2)))
+!(assertEqual
+  (collapse
+    (clist:foldl (clist:test-duplicates) 0 $acc $item (+ $acc $item)))
+  (3 3))
+
+(= (clist:test-empty-or-value) (empty))
+(= (clist:test-empty-or-value) (clist:from-list (1 2)))
+!(assertEqual
+  (collapse
+    (clist:foldl (clist:test-empty-or-value) 0 $acc $item (+ $acc $item)))
+  (3))
+
+!(bind! &clist:test-fold-effects (new-space))
+(= (clist:test-effectful)
+   (let $_receipt
+        (add-atom &clist:test-fold-effects tick)
+     (clist:from-list (1 2))))
+!(assertEqual
+  (clist:foldl (clist:test-effectful) 0 $acc $item (+ $acc $item))
+  3)
+!(assertEqual
+  (collapse (match &clist:test-fold-effects $effect $effect))
+  (tick))
+
+(= (clist:test-malformed) (ClistCons 1 malformed))
+!(assertEqual
+  (clist:foldl (clist:test-malformed) 0 $acc $item (+ $acc $item))
+  (list:foldl
+    (clist:to-list (clist:test-malformed))
+    0 $acc $item (+ $acc $item)))
+
 ; Partial eliminators remain inert on nil or malformed inductive data.
 !(clist:first ClistNil)
 !(clist:rest ClistNil)
 !(clist:len (ClistCons a malformed))
 !(clist:to-list (ClistCons a malformed))
+
+; The represented consumer expansion is licensed only while the imported
+; definition is its sole applicable equation.  An added alternative must
+; disable the optimization and preserve the ordinary result bag.
+(= (clist:foldl $list $init $acc $item $step)
+   extra-fold-result)
+!(assertEqual
+  (collapse
+    (clist:foldl
+      (clist:from-list (1 2))
+      0 $acc $item (+ $acc $item)))
+  (3 extra-fold-result))

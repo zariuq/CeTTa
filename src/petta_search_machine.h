@@ -160,6 +160,15 @@ typedef bool (*PettaMachineBorrowedItemConsumer)(
 typedef struct {
     void *context;
     const PettaAnalysisService *analysis;
+    /* Scope-entry observation plan supplied by the evaluator.  The machine
+     * may use it only to preserve a delimiter across externalized branches;
+     * it grants neither storage nor batching authority.  NULL keeps nested
+     * observation boundaries inline. */
+    const CettaControlPlan *control_plan;
+    /* Request suspension only at an exactly externalizable relational
+     * choice.  Deterministic stretches remain inside the machine; this avoids
+     * polling the continuation hub after every transition. */
+    bool externalize_clause_choices;
     /* The host contributes one component to the shared branch-capture
      * capacity.  The relational backend combines it with its internal state
      * profile and accepts an owned continuation only at multi-shot capacity. */
@@ -251,6 +260,13 @@ typedef struct {
         Atom *accumulator_binder, Atom *item_binder,
         Atom *step_expression, const Bindings *environment,
         Atom **result_out);
+    /* A generated determinate-map program may own a lexical map without
+     * allocating one result variable and one relational goal per item.
+     * NOT_APPLICABLE preserves the complete relational product. */
+    PettaMachineFoldResult (*map_single_result)(
+        void *context, Space *space, Arena *arena,
+        Atom *items, Atom *item_binder, Atom *body_expression,
+        const Bindings *environment, Atom **result_out);
     /* Pull a determinate, effect-free collection without materializing its
      * spine.  The callback is the consumer algebra; length is only its first
      * use.  NOT_APPLICABLE leaves canonical evaluation authoritative. */
@@ -398,6 +414,10 @@ typedef struct {
  * Richer effects decline rather than selecting another controller. */
 CettaContinuationMachine petta_machine_continuation_machine(
     PettaMachine *machine);
+
+/* True exactly when the active machine is at a provider-supported owned
+ * relational choice that may be split into independent continuations. */
+bool petta_machine_external_branch_ready(const PettaMachine *machine);
 
 bool petta_machine_init(
     PettaMachine *machine, Space *space, Arena *answer_arena,

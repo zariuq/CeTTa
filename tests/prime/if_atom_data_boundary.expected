@@ -1,0 +1,4 @@
+[(Test:Wrap (Test:Pair test-list-rel test-list-rel))]
+[((Test:Wrap (Test:Pair test-list-rel test-list-rel)))]
+[branch-not-selected]
+[(Error (Test:Pair test-list-rel test-list-rel) (BadArgType 1 (Test:Rel Number Number) (Test:Rel (Test:List Number) (Test:List Number))))]

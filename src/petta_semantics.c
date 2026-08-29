@@ -88,7 +88,6 @@ typedef struct {
     SymbolId library;
     SymbolId value_let;
     SymbolId value_chain;
-    SymbolId open_cons;
     uint32_t open_cons_tag_arena_id;
     uint64_t open_cons_tag_arena_reset_epoch;
     Atom *open_cons_tag;
@@ -254,7 +253,6 @@ static bool petta_cons_shape_facts_ready(
 #undef PETTA_CAPTURE_CONS_PREIMAGE
     return ids && ids->table && ids->table_instance_id != 0u &&
            ids->cons != SYMBOL_ID_NONE &&
-           ids->open_cons != SYMBOL_ID_NONE &&
            cons_preimage_count == 1u &&
            cons_preimage == ids->cons;
 }
@@ -347,8 +345,6 @@ static const PeTTaSymbolIds *petta_symbol_ids_refresh(void) {
             symbol_intern_cstr(g_symbols, "PeTTa.ValueLetV1");
         ids.value_chain =
             symbol_intern_cstr(g_symbols, "PeTTa.ValueChainV1");
-        ids.open_cons =
-            symbol_intern_cstr(g_symbols, "PeTTa.OpenConsV1");
     }
     ids.form_by_symbol_ready = petta_form_dense_build(&ids);
     ids.cons_shape_facts_ready =
@@ -381,7 +377,6 @@ bool petta_semantics_cons_shape_facts(PeTTaConsShapeFacts *facts) {
         .symbol_table = ids->table,
         .symbol_table_instance_id = ids->table_instance_id,
         .cons = ids->cons,
-        .open_cons = ids->open_cons,
     };
     return ids->form_by_symbol_ready
         ? ids->cons_shape_facts_ready
@@ -504,11 +499,11 @@ bool petta_semantics_is_cons_constraint(const Atom *atom) {
 }
 
 bool petta_semantics_is_open_cons_value(const Atom *atom) {
-    const PeTTaSymbolIds *ids = petta_symbol_ids();
     return atom && atom->kind == ATOM_EXPR &&
            atom->expr.len == 3u &&
-           atom->expr.elems[0]->kind == ATOM_SYMBOL &&
-           atom->expr.elems[0]->sym_id == ids->open_cons;
+           atom_is_internal_tag(
+               atom->expr.elems[0],
+               CETTA_INTERNAL_TAG_PETTA_OPEN_CONS);
 }
 
 void petta_semantics_logical_list_cursor_init(
@@ -752,7 +747,8 @@ Atom *petta_semantics_open_cons_value(
             arena->reset_epoch ||
         !g_petta_symbol_ids.open_cons_tag) {
         g_petta_symbol_ids.open_cons_tag =
-            atom_symbol_id(arena, ids->open_cons);
+            atom_internal_tag(
+                arena, CETTA_INTERNAL_TAG_PETTA_OPEN_CONS);
         if (!g_petta_symbol_ids.open_cons_tag)
             return NULL;
         g_petta_symbol_ids.open_cons_tag_arena_id = arena->identity;
@@ -1175,6 +1171,10 @@ static bool petta_semantics_contains_cons_walk(
     const Atom *root, bool observable_open_only) {
     if (!root)
         return false;
+    if (observable_open_only &&
+        !atom_structural_may_have_internal_tag(root)) {
+        return false;
+    }
     PeTTaConsWalkItem *stack = NULL;
     size_t length = 0u;
     size_t capacity = 0u;

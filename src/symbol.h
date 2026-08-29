@@ -237,6 +237,9 @@ static inline uint64_t symbol_table_instance_id(const SymbolTable *st) {
     X(subtraction_atom, "subtraction-atom") \
     X(max_atom, "max-atom") \
     X(min_atom, "min-atom") \
+    X(sort_atom, "sort-atom") \
+    X(retain_top_k_keyed_atom, "retain-top-k-keyed-atom") \
+    X(unkey_atom, "unkey-atom") \
     X(sort_strings, "sort-strings") \
     /* ── Grounded math functions ── */ \
     X(pow_math, "pow-math") \
@@ -259,8 +262,11 @@ static inline uint64_t symbol_table_instance_id(const SymbolTable *st) {
     X(grounded_placeholder, "__grounded__") \
     X(llist_nil, "LNil") \
     X(llist_cons, "LCons") \
+    X(minimal_map_atom, "_minimal-map-atom") \
+    X(minimal_retain_top_k_by_number, "_minimal-retain-top-k-by-number") \
     X(minimal_foldl_atom, "_minimal-foldl-atom") \
     X(minimal_foldl_llist, "_minimal-foldl-llist") \
+    X(minimal_foldl_sequence, "_minimal-foldl-sequence") \
     X(minimal_space_contains_exact, "_minimal-space-contains-exact") \
     X(minimal_space_revision, "_minimal-space-revision") \
     X(collapse_add_next, "_collapse-add-next-atom-from-collapse-bind-result") \
@@ -467,7 +473,9 @@ static inline uint64_t symbol_table_instance_id(const SymbolTable *st) {
     X(type_colon_theorem, "type:theorem") \
     X(type_colon_prove, "type:prove") \
     X(compile_link_package, "compile:link-package") \
-    X(unquote, "unquote")
+    X(unquote, "unquote") \
+    X(remove_all_atom, "remove-all-atom") \
+    X(sort_numbers_atom, "sort-numbers-atom")
 
 /* Builtins whose grounded-operation capability is independent of language
    and profile.  symbol_table_init_builtins compiles this declaration into
@@ -515,8 +523,10 @@ static inline uint64_t symbol_table_instance_id(const SymbolTable *st) {
     X(alpha_eq) \
     X(if_equal) \
     X(sealed_text) \
+    X(minimal_retain_top_k_by_number) \
     X(minimal_foldl_atom) \
     X(minimal_foldl_llist) \
+    X(minimal_foldl_sequence) \
     X(minimal_space_contains_exact) \
     X(minimal_space_revision) \
     X(collapse_add_next) \
@@ -537,9 +547,14 @@ static inline uint64_t symbol_table_instance_id(const SymbolTable *st) {
     X(py_atom) \
     X(py_dot) \
     X(py_call) \
+    X(sort_atom) \
+    X(sort_numbers_atom) \
+    X(retain_top_k_keyed_atom) \
+    X(unkey_atom) \
     X(sort_strings) \
     X(print_alternatives_bang) \
     X(unique_atom) \
+    X(remove_all_atom) \
     X(intersection_atom) \
     X(subtraction_atom) \
     X(max_atom) \
@@ -602,6 +617,10 @@ static inline uint64_t symbol_table_instance_id(const SymbolTable *st) {
     X(op_not) \
     X(op_xor) \
     X(sha256) \
+    X(sort_atom) \
+    X(sort_numbers_atom) \
+    X(retain_top_k_keyed_atom) \
+    X(unkey_atom) \
     X(max_atom) \
     X(min_atom) \
     X(pow_math) \
@@ -627,6 +646,7 @@ static inline uint64_t symbol_table_instance_id(const SymbolTable *st) {
     X(range_atom) \
     X(repeat_atom) \
     X(unique_atom) \
+    X(remove_all_atom) \
     X(intersection_atom) \
     X(subtraction_atom)
 

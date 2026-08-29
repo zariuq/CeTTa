@@ -72,6 +72,7 @@ typedef struct {
 #define PREPARED_PURE_DECLARE_STRONG_ATOM_SPAN(name) PreparedPureAtomSpan name;
 #define PREPARED_PURE_DECLARE_LOGICAL_BINDINGS(name) void *name;
 #define PREPARED_PURE_DECLARE_OUTCOME_SET(name) void *name;
+#define PREPARED_PURE_DECLARE_VARIANT_INSTANCE(name) void *name;
 #define PREPARED_PURE_DECLARE_EPHEMERON_ATOM_MAP(name) \
     PreparedPureEphemeronAtomMap name;
 typedef struct {
@@ -80,10 +81,12 @@ typedef struct {
         PREPARED_PURE_DECLARE_STRONG_ATOM_SPAN,
         PREPARED_PURE_DECLARE_LOGICAL_BINDINGS,
         PREPARED_PURE_DECLARE_OUTCOME_SET,
+        PREPARED_PURE_DECLARE_VARIANT_INSTANCE,
         PREPARED_PURE_DECLARE_EPHEMERON_ATOM_MAP)
 } PreparedPureGcRoots;
 #undef PREPARED_PURE_DECLARE_EPHEMERON_ATOM_MAP
 #undef PREPARED_PURE_DECLARE_OUTCOME_SET
+#undef PREPARED_PURE_DECLARE_VARIANT_INSTANCE
 #undef PREPARED_PURE_DECLARE_LOGICAL_BINDINGS
 #undef PREPARED_PURE_DECLARE_STRONG_ATOM_SPAN
 #undef PREPARED_PURE_DECLARE_STRONG_ATOM_SLOT
@@ -3474,8 +3477,11 @@ static Atom *prepared_pure_execute_intrinsic(
         !arguments)
         return NULL;
     switch (instruction) {
-    case CETTA_GSLT_PREPARED_PURE_INTRINSIC_GROUNDED_DISPATCH:
-        return grounded_dispatch(arena, head, (Atom **)arguments, arity);
+    case CETTA_GSLT_PREPARED_PURE_INTRINSIC_GROUNDED_DISPATCH: {
+        Atom *result = grounded_dispatch(
+            arena, head, (Atom **)arguments, arity);
+        return result && !atom_is_empty_or_error(result) ? result : NULL;
+    }
     case CETTA_GSLT_PREPARED_PURE_INTRINSIC_DECONSTRUCT_NONEMPTY_EXPRESSION: {
         if (arity != 1u || !arguments[0] ||
             arguments[0]->kind != ATOM_EXPR ||
@@ -3488,6 +3494,51 @@ static Atom *prepared_pure_execute_intrinsic(
             return NULL;
         Atom *pair[2] = {arguments[0]->expr.elems[0], tail};
         return program->construct_value(arena, pair, 2u);
+    }
+    case CETTA_GSLT_PREPARED_PURE_INTRINSIC_CONSTRUCT_EXPRESSION_CONS: {
+        if (arity != 2u || !arguments[0] || !arguments[1] ||
+            arguments[1]->kind != ATOM_EXPR ||
+            arguments[1]->expr.len == UINT64_MAX)
+            return NULL;
+        CettaExprLen length = arguments[1]->expr.len + 1u;
+        if (!cetta_expr_len_mul_fits_size(length, sizeof(Atom *)))
+            return NULL;
+        Atom **elements = arena_alloc(
+            arena, sizeof(*elements) * (size_t)length);
+        elements[0] = arguments[0];
+        if (arguments[1]->expr.len > 0u) {
+            memcpy(
+                elements + 1u, arguments[1]->expr.elems,
+                sizeof(*elements) * (size_t)arguments[1]->expr.len);
+        }
+        return atom_expr(arena, elements, length);
+    }
+    case CETTA_GSLT_PREPARED_PURE_INTRINSIC_CONCATENATE_EXPRESSIONS: {
+        if (arity != 2u || !arguments[0] || !arguments[1] ||
+            arguments[0]->kind != ATOM_EXPR ||
+            arguments[1]->kind != ATOM_EXPR ||
+            arguments[0]->expr.len >
+                UINT64_MAX - arguments[1]->expr.len)
+            return NULL;
+        CettaExprLen length =
+            arguments[0]->expr.len + arguments[1]->expr.len;
+        if (!cetta_expr_len_mul_fits_size(length, sizeof(Atom *)))
+            return NULL;
+        Atom **elements = length
+            ? arena_alloc(arena, sizeof(*elements) * (size_t)length)
+            : NULL;
+        if (arguments[0]->expr.len > 0u) {
+            memcpy(
+                elements, arguments[0]->expr.elems,
+                sizeof(*elements) * (size_t)arguments[0]->expr.len);
+        }
+        if (arguments[1]->expr.len > 0u) {
+            memcpy(
+                elements + arguments[0]->expr.len,
+                arguments[1]->expr.elems,
+                sizeof(*elements) * (size_t)arguments[1]->expr.len);
+        }
+        return atom_expr(arena, elements, length);
     }
     }
     return NULL;
@@ -3797,6 +3848,7 @@ static bool prepared_pure_resume_call(
 CettaPreparedPureProgram *cetta_prepared_pure_program_compile(
     Space *space, Atom *expression,
     VarId accumulator_var, VarId item_var,
+    CettaGsltPureCallMode call_mode,
     CettaPreparedPureBooleanValue boolean_value,
     CettaPreparedPureConstructValue construct_value,
     CettaPreparedPureOpaqueValue opaque_value,
@@ -3807,7 +3859,9 @@ CettaPreparedPureProgram *cetta_prepared_pure_program_compile(
     CettaMatchDecisionSemanticIdentity match_decision_semantics) {
     if (!space || !expression || accumulator_var == VAR_ID_NONE ||
         item_var == VAR_ID_NONE || accumulator_var == item_var ||
-        !boolean_value || !construct_value)
+        !boolean_value || !construct_value ||
+        (call_mode != CETTA_GSLT_PURE_CALL_EAGER &&
+         call_mode != CETTA_GSLT_PURE_CALL_CALL_BY_NEED))
         return NULL;
     CettaPreparedPureProgram *program = calloc(1u, sizeof(*program));
     if (!program)
@@ -3820,7 +3874,7 @@ CettaPreparedPureProgram *cetta_prepared_pure_program_compile(
     program->register_view = register_view;
     program->expression_view = expression_view;
     program->pattern_view = pattern_view;
-    program->call_mode = CETTA_GSLT_PURE_CALL_CALL_BY_NEED;
+    program->call_mode = call_mode;
     program->total_structural_equality = total_structural_equality;
     program->match_decision_semantics = match_decision_semantics;
     PreparedPureCompileContext context = {0};

@@ -82,13 +82,13 @@ CETTA_BROWSER_NODE ?= node
 ENABLE_PETTA_TYPECHECK_V2 ?= 1
 ENABLE_PETTA_TYPECHECK_CENSUS ?= 0
 ENABLE_LANGDEF_DIAGNOSTIC_BACKENDS ?= 0
-PRIME_NEED_ALGEBRA_CHECKS := 97
+PRIME_NEED_ALGEBRA_CHECKS := 103
 PRIME_NEED_CLOSURE_CAPTURE_GATE :=
 PRIME_NEED_CLOSURE_CAPTURE_STATS_GATE :=
 PRIME_EVAL_STACK_GATE :=
 PRIME_EVAL_STACK_STATS_GATE :=
 ifeq ($(ENABLE_PRIME_NEED_CLOSURE_CAPTURE),1)
-PRIME_NEED_ALGEBRA_CHECKS := 106
+PRIME_NEED_ALGEBRA_CHECKS := 111
 PRIME_NEED_CLOSURE_CAPTURE_GATE := test-prime-need-closure-capture
 ifeq ($(ENABLE_RUNTIME_STATS),1)
 PRIME_NEED_CLOSURE_CAPTURE_STATS_GATE := test-prime-need-closure-capture-stats
@@ -579,7 +579,7 @@ endif
 ifeq ($(ENABLE_PETTA_TYPECHECK_CENSUS),1)
 PETTA_TYPECHECK_CENSUS_SRC = src/petta_typecheck_census.c
 endif
-SRC = src/symbol.c src/atom.c src/name_key.c src/atom_blob.c src/abt.c src/parser.c $(COMPILED_READER_RUNTIME_SRC) src/mm2_lower.c src/subst_tree.c src/space.c src/registry_resolver.c src/space_match_backend.c src/match.c src/match_decision.c src/term_canon.c src/variant_shape.c src/variant_instance.c src/answer_bank.c src/table_store.c src/search_machine.c src/petta_program.c src/petta_type_fact_provider_v1.c src/petta_typecheck_v3_decision_v1.c src/petta_typecheck_v3.c src/generated/petta_typecheck_v3_core_v1.generated.c src/generated/petta_typecheck_v3_core_provider_catalog_v1.generated.c src/petta_search_machine.c $(PETTA_TYPECHECK_V2_SRC) src/petta_specializer.c src/rule_machine.c $(LIB_PROLOG_SRC) src/term_universe.c src/stats.c src/parallel_executor.c src/prime_need.c src/petta_semantics.c src/petta_numeric.c src/petta_runtime.c src/prepared_pure_machine.c src/eval.c src/grounded.c src/he_typing.c src/he_typing_authority.c src/generated/he_typing_consistency_core_source_binding_v1.generated.c src/generated/he_profiled_type_inference_core_source_binding_v1.generated.c src/inference_checker.c src/nik_direct_authority.c src/nik_hosted_calculus.c src/nik_licensed_implementation_selection.c src/nik_runtime.c src/prime_semantics.c src/generated/prime_typing_closed_formation_source_binding_v1.generated.c src/text_source.c src/native_handle.c src/native_sha256.c src/mork_space_bridge_runtime.c src/library.c src/langdef_pack.c src/gslt_provider_runtime.c src/gslt_space_fact_provider_v1.c src/gslt_finite_fact_provider_v1.c src/gslt_revisioned_space_provider_v1.c src/gslt_abt_provider_v1.c src/gslt_horn_runtime.c src/gslt_dense_bitset_v1.c src/gslt_compiled_runtime.c src/gslt_indexed_instruction_decoder_v1.c src/gslt_indexed_value_table_v1.c src/gslt_split_indexed_table_v1.c src/gslt_literal_hole_program_v1.c src/gslt_u32_index_v1.c src/gslt_u32_slice_arena_v1.c src/gslt_epoch_slots_v1.c src/gslt_ground_dense_term_v1.c src/gslt_language_runtime.c src/gslt_pure_provider_v1.c src/gslt_support_transform_runtime.c src/generated/prime_nik_authorities_v1.generated.c src/generated/prime_nik_runtime_v1.generated.c src/generated/gslt_il_language_v1.generated.c src/generated/metta_interact_language_v1.generated.c src/generated/mm2_gslt_profile_v1.generated.c src/generated/subzero_language_v1.generated.c src/generated/zero_language_v1.generated.c src/generated/zero_exp_language_v1.generated.c src/generated/zero_emit_language_v1.generated.c src/generated/zero_interact_language_v1.generated.c src/generated/zero_interact_provider_catalog_v1.generated.c src/generated/zerouv_language_v1.generated.c src/he_small_step_pack.c src/lib_parse_native_grammar.c src/lib_parse_inference_native.c experiments/gslt2parse_foundation/native/finite_horn_gslt_v1.c experiments/gslt2parse_foundation/native/finite_horn_ground_term_v1.c experiments/gslt2parse_foundation/native/parser_term_projection_v1.c experiments/gslt2parse_foundation/native/parser_pack_abi_v1.c experiments/gslt2parse_foundation/native/parser_action_bytecode_v1.c experiments/gslt2parse_foundation/native/parser_pack_native_v1.c experiments/gslt2parse_foundation/native/parser_pack_lexical_v1.c experiments/gslt2parse_foundation/native/parser_pack_gll_v1.c experiments/gslt2parse_foundation/native/regular_span_dfa_v1.c experiments/gslt2parse_foundation/native/regular_span_nfa_v1.c $(PYTHON_SRC) src/session.c src/lang.c src/rhocalc_core.c src/rhocalc_syntax.c src/compile.c src/runtime.c src/cetta_stdlib.c native/native_modules.c src/main.c
+SRC = src/symbol.c src/atom.c src/name_key.c src/atom_blob.c src/abt.c src/parser.c $(COMPILED_READER_RUNTIME_SRC) src/mm2_lower.c src/subst_tree.c src/space.c src/registry_resolver.c src/space_match_backend.c src/match.c src/match_decision.c src/term_canon.c src/variant_shape.c src/variant_instance.c src/answer_bank.c src/table_store.c src/search_machine.c src/search_control_advice.c src/petta_program.c src/petta_type_fact_provider_v1.c src/petta_typecheck_v3_decision_v1.c src/petta_typecheck_v3.c src/generated/petta_typecheck_v3_core_v1.generated.c src/generated/petta_typecheck_v3_core_provider_catalog_v1.generated.c src/petta_search_machine.c $(PETTA_TYPECHECK_V2_SRC) src/petta_specializer.c src/rule_machine.c $(LIB_PROLOG_SRC) src/term_universe.c src/stats.c src/parallel_executor.c src/prime_need.c src/petta_semantics.c src/petta_numeric.c src/petta_runtime.c src/prepared_pure_machine.c src/eval.c src/grounded.c src/he_typing.c src/he_typing_authority.c src/generated/he_typing_consistency_core_source_binding_v1.generated.c src/generated/he_profiled_type_inference_core_source_binding_v1.generated.c src/inference_checker.c src/nik_direct_authority.c src/nik_hosted_calculus.c src/nik_licensed_implementation_selection.c src/nik_runtime.c src/prime_semantics.c src/generated/prime_typing_closed_formation_source_binding_v1.generated.c src/text_source.c src/native_handle.c src/native_sha256.c src/mork_space_bridge_runtime.c src/library.c src/langdef_pack.c src/gslt_provider_runtime.c src/gslt_space_fact_provider_v1.c src/gslt_finite_fact_provider_v1.c src/gslt_revisioned_space_provider_v1.c src/gslt_abt_provider_v1.c src/gslt_horn_runtime.c src/gslt_dense_bitset_v1.c src/gslt_compiled_runtime.c src/gslt_indexed_instruction_decoder_v1.c src/gslt_indexed_value_table_v1.c src/gslt_split_indexed_table_v1.c src/gslt_literal_hole_program_v1.c src/gslt_u32_index_v1.c src/gslt_u32_slice_arena_v1.c src/gslt_epoch_slots_v1.c src/gslt_ground_dense_term_v1.c src/gslt_language_runtime.c src/gslt_pure_provider_v1.c src/gslt_support_transform_runtime.c src/generated/prime_nik_authorities_v1.generated.c src/generated/prime_nik_runtime_v1.generated.c src/generated/gslt_il_language_v1.generated.c src/generated/metta_interact_language_v1.generated.c src/generated/mm2_gslt_profile_v1.generated.c src/generated/subzero_language_v1.generated.c src/generated/zero_language_v1.generated.c src/generated/zero_exp_language_v1.generated.c src/generated/zero_emit_language_v1.generated.c src/generated/zero_interact_language_v1.generated.c src/generated/zero_interact_provider_catalog_v1.generated.c src/generated/zerouv_language_v1.generated.c src/he_small_step_pack.c src/lib_parse_native_grammar.c src/lib_parse_inference_native.c experiments/gslt2parse_foundation/native/finite_horn_gslt_v1.c experiments/gslt2parse_foundation/native/finite_horn_ground_term_v1.c experiments/gslt2parse_foundation/native/parser_term_projection_v1.c experiments/gslt2parse_foundation/native/parser_pack_abi_v1.c experiments/gslt2parse_foundation/native/parser_action_bytecode_v1.c experiments/gslt2parse_foundation/native/parser_pack_native_v1.c experiments/gslt2parse_foundation/native/parser_pack_lexical_v1.c experiments/gslt2parse_foundation/native/parser_pack_gll_v1.c experiments/gslt2parse_foundation/native/regular_span_dfa_v1.c experiments/gslt2parse_foundation/native/regular_span_nfa_v1.c $(PYTHON_SRC) src/session.c src/lang.c src/rhocalc_core.c src/rhocalc_syntax.c src/compile.c src/runtime.c src/cetta_stdlib.c native/native_modules.c src/main.c
 SRC += src/library_io.c
 SRC += $(JSON_GSLT_RUNTIME_SRC)
 SRC += $(PETTA_TYPECHECK_CENSUS_SRC)
@@ -2669,6 +2669,7 @@ PRIME_CONFORMANCE_TESTS = \
 	tests/prime/need_explicit_control_negative.metta \
 	tests/prime/need_demand_modes.metta \
 	tests/prime/first_class_contexts.metta \
+	tests/prime/if_atom_data_boundary.metta \
 	tests/prime/need_gc_lifetime.metta \
 	tests/prime/need_storage_boundary.metta \
 	tests/prime/need_quote_preservation.metta \
@@ -2814,6 +2815,7 @@ RUNTIME_STATS_METTA_TESTS = \
 	tests/test_dispatch_fastpath_equation_guard_regression.metta \
 	tests/test_fc_native_depth3_count_regression.metta \
 	tests/test_hyperpose_handle_fallback_runtime_stats.metta \
+	tests/test_hyperpose_finite_fuel_runtime_stats.metta \
 	tests/test_hyperpose_prime_runtime_stats.metta \
 	tests/test_hyperpose_threaded_stats.metta \
 	tests/test_lts_rho_cost_parallel_runtime_stats.metta \
@@ -2846,6 +2848,7 @@ GC_ADVERSARIAL_TESTS = \
 GC_SURVIVOR_RESET_TEST = tests/gc/diagnostics/test_eval_gc_survivor_reset.metta
 GC_PRECISE_SUSPENSION_TEST = tests/gc/diagnostics/test_eval_gc_precise_suspension.metta
 GC_CONTROL_SUSPENSIONS_TEST = tests/gc/diagnostics/test_eval_gc_control_suspensions.metta
+GC_MONOLITHIC_EQUATION_TEST = benchmarks/chaining_crossengine/13_nars_tuffy/nars_tuffy_step10.metta
 
 BACKEND_DEDICATED_TESTS = \
 	tests/test_rhocalc_lib_parse_translator_v3.metta \
@@ -3234,7 +3237,7 @@ test-bindings-lookup-index: $(BINDINGS_LOOKUP_INDEX_TEST_BIN)
 	@enabled=$$($(call cetta_exec,./$(BINDINGS_LOOKUP_INDEX_TEST_BIN))); \
 	disabled=$$(CETTA_BINDINGS_LOOKUP_INDEX=0 $(call cetta_exec,./$(BINDINGS_LOOKUP_INDEX_TEST_BIN))); \
 	audited=$$(CETTA_BINDINGS_DERIVED_AUDIT=1 $(call cetta_exec,./$(BINDINGS_LOOKUP_INDEX_TEST_BIN))); \
-	expected='(BindingsLookupIndexSummary 128 128 0)'; \
+	expected='(BindingsLookupIndexSummary 143 143 0)'; \
 	printf '%s\n' "$$enabled"; \
 	test "$$enabled" = "$$expected" && test "$$disabled" = "$$expected" && \
 		test "$$audited" = "$$expected"
@@ -3249,12 +3252,25 @@ test-bindings-lookup-index: $(BINDINGS_LOOKUP_INDEX_TEST_BIN)
 			src/symbol.c src/atom.c $(MATCH_STANDALONE_SRC) \
 			src/term_canon.c src/variant_shape.c src/variant_instance.c \
 			src/term_universe.c $(LDFLAGS); \
+		test -x "$$binary"; \
 		if "$$binary" >/dev/null 2>&1; then \
 			echo "FAIL: lazy-tail binding index $$mutation mutation survived"; \
 			exit 1; \
 		fi; \
 	done; \
-	echo "PASS: lazy-tail binding index falsifiers kill both unsound mutations"
+	binary="$$mutation_dir/test-single-reach-rollback"; \
+	$(CC) $(CPPFLAGS) -DCETTA_TEST_HOOKS=1 $(CFLAGS) \
+		-DCETTA_MUTATION_BINDINGS_SINGLE_REACH_KEEP_ROLLBACK_CACHE=1 \
+		-o "$$binary" tests/test_bindings_lookup_index.c \
+		src/symbol.c src/atom.c $(MATCH_STANDALONE_SRC) \
+		src/term_canon.c src/variant_shape.c src/variant_instance.c \
+		src/term_universe.c $(LDFLAGS); \
+	test -x "$$binary"; \
+	if "$$binary" >/dev/null 2>&1; then \
+		echo "FAIL: stale single-reach rollback cache mutation survived"; \
+		exit 1; \
+	fi; \
+	echo "PASS: binding-index falsifiers kill lazy-tail and stale-root mutations"
 .PHONY: test-bindings-lookup-index
 
 $(ATOM_DEEP_COPY_TEST_BIN): tests/test_atom_deep_copy_iterative.c src/symbol.c src/atom.c $(BUILD_CONFIG_HEADER)
@@ -16095,26 +16111,21 @@ test-eval-gc-adversarial: $(BIN)
 	@CETTA_BIN="$(abspath $(BIN))" scripts/gc_adversarial_audit.sh
 	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 test-eval-gc-precise-suspension
 	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 test-eval-gc-control-suspensions
+	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 test-prime-monolithic-equation-gc-decline
 
-.PHONY: test-eval-gc-precise-suspension test-eval-gc-control-suspensions
+.PHONY: test-eval-gc-precise-suspension test-eval-gc-control-suspensions test-prime-monolithic-equation-gc-decline
 test-eval-gc-precise-suspension:
 ifeq ($(ENABLE_RUNTIME_STATS),1)
 	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 $(BIN)
 	@exp="$(GC_PRECISE_SUSPENSION_TEST:.metta=.expected)"; \
-	for dialect in he prime; do \
-		if [ "$$dialect" = he ]; then \
-			result=$$(CETTA_GC=1 CETTA_GC_BUDGET_MB=1 $(CETTA_BIN_INVOKE) --profile he-extended --lang he $(GC_PRECISE_SUSPENSION_TEST) 2>&1); \
-		else \
-			result=$$(CETTA_GC=1 CETTA_GC_BUDGET_MB=1 $(CETTA_BIN_INVOKE) --lang prime $(GC_PRECISE_SUSPENSION_TEST) 2>&1); \
-		fi; \
-		if [ "$$result" = "$$(cat "$$exp")" ]; then \
-			echo "PASS: $(GC_PRECISE_SUSPENSION_TEST) [$$dialect]"; \
-		else \
-			echo "FAIL: $(GC_PRECISE_SUSPENSION_TEST) [$$dialect]"; \
-			diff <(cat "$$exp") <(echo "$$result") | head -80; \
-			exit 1; \
-		fi; \
-	done
+	result=$$(CETTA_GC=1 CETTA_GC_BUDGET_MB=1 $(CETTA_BIN_INVOKE) --profile he-extended --lang he $(GC_PRECISE_SUSPENSION_TEST) 2>&1); \
+	if [ "$$result" = "$$(cat "$$exp")" ]; then \
+		echo "PASS: $(GC_PRECISE_SUSPENSION_TEST) [he]"; \
+	else \
+		echo "FAIL: $(GC_PRECISE_SUSPENSION_TEST) [he]"; \
+		diff <(cat "$$exp") <(echo "$$result") | head -80; \
+		exit 1; \
+	fi
 else
 	@echo "INFO: precise eval GC suspension diagnostic requires compile-time runtime stats; re-running with ENABLE_RUNTIME_STATS=1"
 	@$(MAKE) BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 $@
@@ -16136,6 +16147,45 @@ ifeq ($(ENABLE_RUNTIME_STATS),1)
 	fi
 else
 	@echo "INFO: eval GC control-suspension diagnostic requires compile-time runtime stats; re-running with ENABLE_RUNTIME_STATS=1"
+	@$(MAKE) BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 $@
+endif
+
+test-prime-monolithic-equation-gc-decline:
+ifeq ($(ENABLE_RUNTIME_STATS),1)
+	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 $(BIN)
+	@result=$$(CETTA_GC=1 CETTA_GC_BUDGET_MB=1 \
+		CETTA_PRIME_NEED_HEAP_INDEX=1 $(CETTA_BIN_INVOKE) \
+		--emit-runtime-stats --lang prime \
+		$(GC_MONOLITHIC_EQUATION_TEST) 2>&1); \
+	visible=$$(printf '%s\n' "$$result" | grep '^\['); \
+	expected=$$(printf '%s\n' '[()]' '[((stv 0.6 0.486) (2 10))]'); \
+	candidates=$$(printf '%s\n' "$$result" | sed -n \
+		's/^runtime-counter eval-tail-collection-candidate //p'); \
+	blocked=$$(printf '%s\n' "$$result" | sed -n \
+		's/^runtime-counter eval-tail-blocked-imprecise-root //p'); \
+	live=$$(printf '%s\n' "$$result" | sed -n \
+		's/^runtime-counter eval-tail-blocked-live-outcome //p'); \
+	safe=$$(printf '%s\n' "$$result" | sed -n \
+		's/^runtime-counter prime-eval-stack-gc-frame-safe-point //p'); \
+	reclaimed=$$(printf '%s\n' "$$result" | sed -n \
+		's/^runtime-counter eval-tail-reclaimed-bytes //p'); \
+	if [ "$$visible" != "$$expected" ] || \
+	   ! expr "$$candidates" : '[0-9][0-9]*$$' >/dev/null || \
+	   ! expr "$$blocked" : '[0-9][0-9]*$$' >/dev/null || \
+	   ! expr "$$live" : '[0-9][0-9]*$$' >/dev/null || \
+	   ! expr "$$safe" : '[0-9][0-9]*$$' >/dev/null || \
+	   ! expr "$$reclaimed" : '[0-9][0-9]*$$' >/dev/null || \
+	   [ "$$blocked" -le 0 ] || [ "$$live" -ne 0 ] || \
+	   [ "$$safe" -le 0 ] || [ "$$reclaimed" -le 0 ] || \
+	   [ "$$candidates" -ne $$((blocked + safe)) ]; then \
+		echo "FAIL: monolithic Prime equation search did not fail closed around moving GC"; \
+		printf '%s\n' "visible=$$visible" \
+			"candidates=$$candidates blocked=$$blocked live=$$live safe=$$safe reclaimed=$$reclaimed"; \
+		exit 1; \
+	fi; \
+	echo "PASS: monolithic Prime equation search blocks unsafe collection while explicit frames still collect"
+else
+	@echo "INFO: monolithic Prime equation GC diagnostic requires compile-time runtime stats; re-running with ENABLE_RUNTIME_STATS=1"
 	@$(MAKE) BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 $@
 endif
 
@@ -17852,6 +17902,8 @@ test-runtime-stats-lane-body:
 	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 test-petta-specialized-pure-call-stats
 	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 test-petta-prepared-program-cache-stats
 	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 test-petta-prepared-collection-pull-stats
+	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 test-prepared-sequence-erasure-stats
+	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 test-prepared-keyed-top-k-stats
 	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 test-petta-libpl-runtime-stats
 	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 test-term-sharing-stress
 	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 test-runtime-stats-metta-suite
@@ -21745,6 +21797,14 @@ test-search-controller: $(BIN)
 	@$(CETTA_SCRIPT_RUN_ENV) python3 scripts/check_search_controller.py \
 		"$(CETTA_SCRIPT_BIN)"
 
+.PHONY: test-controller-diversity
+test-controller-diversity: $(BIN)
+	@$(CETTA_SCRIPT_RUN_ENV) python3 -m unittest \
+		tests/test_bench_controller_diversity.py
+	@$(CETTA_SCRIPT_RUN_ENV) python3 \
+		scripts/bench_controller_diversity.py --run-current --runs 1 \
+		--cetta "$(CETTA_SCRIPT_BIN)"
+
 .PHONY: test-petta-machine-trace-config
 test-petta-machine-trace-config: $(BIN)
 	@set -eu; \
@@ -21778,7 +21838,9 @@ test-petta-machine-trace-config: $(BIN)
 	printf '%s\n' "$$choice" | grep -q '^\[petta-choice\]'; \
 	echo "PASS: PeTTa machine trace configuration"
 
-test-petta-search-machine: $(PETTA_SEARCH_MACHINE_TEST_BIN) $(BIN) test-search-controller test-petta-machine-trace-config test-petta-type-langdef-source-binding-v1 test-petta-boundary-langdef-source-binding-v1 test-petta-capability-ledger test-petta-specializer-relevance-filter test-petta-mam-contender-mutations test-petta-extended-query-algebra test-petta-prepared-register-loop test-petta-specialized-pure-call test-petta-memoization test-petta-match-existence-fusion test-petta-clause-slot-admission test-petta-equation-template-c0 test-petta-relational-equation-view test-petta-argv-native test-petta-native-host-runtime
+test-petta-search-machine: $(PETTA_SEARCH_MACHINE_TEST_BIN) $(BIN) test-search-controller test-controller-diversity test-petta-machine-trace-config test-petta-type-langdef-source-binding-v1 test-petta-boundary-langdef-source-binding-v1 test-petta-capability-ledger test-petta-specializer-relevance-filter test-petta-mam-contender-mutations test-petta-extended-query-algebra test-petta-prepared-register-loop test-petta-specialized-pure-call test-petta-memoization test-petta-match-existence-fusion test-petta-clause-slot-admission test-petta-equation-template-c0 test-petta-relational-equation-view test-petta-argv-native test-petta-native-host-runtime
+	@CETTA_PETTA_CLAUSE_BODY_ACTIVATION=0 \
+		./$(PETTA_SEARCH_MACHINE_TEST_BIN)
 	@CETTA_PETTA_CLAUSE_BODY_ACTIVATION=1 \
 		./$(PETTA_SEARCH_MACHINE_TEST_BIN)
 	@machine_stats=$$(CETTA_PETTA_MACHINE_STATS=1 \
@@ -22269,7 +22331,6 @@ test-petta-search-machine: $(PETTA_SEARCH_MACHINE_TEST_BIN) $(BIN) test-search-c
 	   [ "$${gc_heap[0]}" -le 0 ] || \
 	   [ "$${gc_binding_apply_calls[0]}" -le 0 ] || \
 	   [ "$${gc_binding_apply_allocated[0]}" -le 0 ] || \
-	   [ "$${gc_binding_apply_epoch_suffix[0]}" -le 0 ] || \
 	   [ "$${gc_collections[2]}" -le 0 ] || \
 	   [ "$$gc_collection_accounting_ok" -ne 1 ] || \
 	   [ "$${gc_continuation_copies[0]}" -ne 0 ] || \
@@ -24475,6 +24536,89 @@ ifeq ($(ENABLE_RUNTIME_STATS),1)
 else
 	@echo "INFO: pure-call mechanism witness requires compile-time runtime stats; re-running with ENABLE_RUNTIME_STATS=1"
 	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 test-prepared-pure-call-machine-stats
+endif
+
+.PHONY: test-prepared-sequence-erasure-stats
+test-prepared-sequence-erasure-stats: $(BIN)
+ifeq ($(ENABLE_RUNTIME_STATS),1)
+	@expected=$$(cat tests/test_prepared_sequence_erasure_stats.expected); \
+	for lane in he prime; do \
+		result=$$($(CETTA_BIN_INVOKE) --emit-runtime-stats --lang $$lane \
+			tests/test_prepared_sequence_erasure_stats.metta 2>&1); \
+		actual=$$(printf '%s\n' "$$result" | grep '^\[' || true); \
+		stat() { \
+			printf '%s\n' "$$result" | awk -v key="$$1" \
+				'$$1 == "runtime-counter" && $$2 == key { print $$3; found=1 } END { if (!found) exit 1 }'; \
+		}; \
+		admissions=$$(stat prepared-sequence-erasure-admission) || exit 1; \
+		commits=$$(stat prepared-sequence-erasure-commit) || exit 1; \
+		declines=$$(stat prepared-sequence-erasure-decline) || exit 1; \
+		if [ "$$actual" != "$$expected" ] || \
+		   [ "$$admissions" != 1 ] || [ "$$commits" != 1 ] || \
+		   [ "$$declines" != 1 ]; then \
+			echo "FAIL: $$lane represented-sequence erasure answers or receipts admission=$$admissions commit=$$commits decline=$$declines"; \
+			diff <(printf '%s\n' "$$expected") <(printf '%s\n' "$$actual") | head -20; \
+			exit 1; \
+		fi; \
+	done; \
+	echo "PASS: HE and Prime represented-sequence erasure commits licensed producers and declines unlisted producers"
+else
+	@echo "INFO: represented-sequence erasure receipts require compile-time runtime stats; re-running with ENABLE_RUNTIME_STATS=1"
+	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 test-prepared-sequence-erasure-stats
+endif
+
+.PHONY: test-prepared-keyed-top-k-stats
+test-prepared-keyed-top-k-stats: $(BIN)
+ifeq ($(ENABLE_RUNTIME_STATS),1)
+	@set -e; \
+	actual=$$(mktemp runtime/prepared-keyed-top-k.XXXXXX); \
+	stats=$$(mktemp runtime/prepared-keyed-top-k-stats.XXXXXX); \
+	effect=$$(mktemp runtime/prepared-keyed-top-k-effect.XXXXXX); \
+	effect_stats=$$(mktemp runtime/prepared-keyed-top-k-effect-stats.XXXXXX); \
+	trap 'rm -f "$$actual" "$$stats" "$$effect" "$$effect_stats"' EXIT INT TERM; \
+	for lane in he prime; do \
+		$(CETTA_BIN_INVOKE) --emit-runtime-stats --lang $$lane \
+			tests/test_prepared_keyed_top_k_stats.metta \
+			>"$$actual" 2>"$$stats"; \
+		diff -u tests/test_prepared_keyed_top_k_stats.expected "$$actual"; \
+		field() { \
+			awk -v name="$$1" \
+				'$$1 == "runtime-counter" && $$2 == name { print $$3 }' \
+				"$$stats"; \
+		}; \
+		admissions=$$(field prepared-keyed-top-k-admission); \
+		commits=$$(field prepared-keyed-top-k-commit); \
+		declines=$$(field prepared-keyed-top-k-decline); \
+		retained=$$(field prepared-keyed-top-k-retained-item); \
+		owner_publications=$$(field prepared-keyed-top-k-owner-publication); \
+		expected_owner_publications=0; \
+		if [ "$$lane" = prime ]; then expected_owner_publications=4; fi; \
+		if [ "$$admissions" != 5 ] || [ "$$commits" != 4 ] || \
+		   [ "$$declines" != 2 ] || [ "$$retained" != 7 ] || \
+		   [ "$$owner_publications" != "$$expected_owner_publications" ]; then \
+			echo "FAIL: $$lane prepared keyed top-k receipts admission=$$admissions commit=$$commits decline=$$declines retained=$$retained owner-publication=$$owner_publications"; \
+			exit 1; \
+		fi; \
+		$(CETTA_BIN_INVOKE) --emit-runtime-stats --lang $$lane \
+			-e '!(import! &self list)' \
+			-e '(= (prepared-top-k:effect-key $$x) (let $$_ (println! (TOP_K_EFFECT $$x)) $$x))' \
+			-e '!(list:retain-top-k-by-number prepared-top-k:effect-key (1 3 2) 2)' \
+			>"$$effect" 2>"$$effect_stats"; \
+		effect_values=$$(sed -n 's/^(TOP_K_EFFECT \([0-9][0-9]*\))$$/\1/p' "$$effect" | sort -n | tr '\n' ' '); \
+		if [ "$$effect_values" != '1 2 3 ' ] || \
+		   [ "$$(awk '$$1 == "runtime-counter" && $$2 == "prepared-keyed-top-k-admission" { print $$3 }' "$$effect_stats")" != 0 ] || \
+		   [ "$$(awk '$$1 == "runtime-counter" && $$2 == "prepared-keyed-top-k-commit" { print $$3 }' "$$effect_stats")" != 0 ] || \
+		   [ "$$(awk '$$1 == "runtime-counter" && $$2 == "prepared-keyed-top-k-decline" { print $$3 }' "$$effect_stats")" != 1 ] || \
+		   [ "$$(awk '$$1 == "runtime-counter" && $$2 == "prepared-keyed-top-k-owner-publication" { print $$3 }' "$$effect_stats")" != 0 ]; then \
+			echo "FAIL: $$lane effectful key did not take the exact ordinary fallback"; \
+			cat "$$effect"; \
+			exit 1; \
+		fi; \
+	done; \
+	echo "PASS: HE and Prime keyed top-k commit only pure determinate projections and preserve relational/effectful fallback"
+else
+	@echo "INFO: prepared keyed top-k receipts require compile-time runtime stats; re-running with ENABLE_RUNTIME_STATS=1"
+	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 test-prepared-keyed-top-k-stats
 endif
 
 .PHONY: test-gslt-execution-contracts

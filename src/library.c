@@ -388,9 +388,18 @@ void cetta_library_context_init_for_language_profile(CettaLibraryContext *ctx,
         getenv("CETTA_PRIME_RELATIONAL_PLAN_REFERENCE") == NULL;
     ctx->petta_runtime = language_id == CETTA_LANGUAGE_PETTA
         ? cetta_petta_runtime_state_new() : NULL;
+    CettaSearchControllerPolicy requested_controller;
+    const char *controller = getenv("CETTA_SEARCH_CONTROLLER");
+    bool portable_relational_control_requested =
+        cetta_language_portable_relational_contract(language_id) !=
+            CETTA_PORTABLE_RELATIONAL_NONE &&
+        controller &&
+        cetta_search_controller_policy_parse(
+            controller, &requested_controller);
     bool needs_occurrence_program =
         language_id == CETTA_LANGUAGE_PETTA ||
-        ctx->prime_relational_plan_enabled;
+        ctx->prime_relational_plan_enabled ||
+        portable_relational_control_requested;
     ctx->petta_program = needs_occurrence_program
         ? petta_program_new() : NULL;
     if (ctx->petta_program && cetta_profile_uses_petta_typing(profile)) {

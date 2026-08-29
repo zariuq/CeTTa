@@ -342,6 +342,137 @@ static void test_generated_fold_control_program(void) {
     assert(saw_bind && saw_branch && saw_eval);
 }
 
+static void test_generated_sequence_representations(void) {
+    unsigned rows = 0u;
+    bool saw_clist = false;
+#define CHECK_SEQUENCE_REPRESENTATION(key, materializer, empty, cons) do { \
+    rows++;                                                               \
+    if (strcmp((key), "clist") == 0) {                                  \
+        assert(strcmp((materializer), "clist:to-list") == 0);            \
+        assert(strcmp((empty), "ClistNil") == 0);                        \
+        assert(strcmp((cons), "ClistCons") == 0);                        \
+        assert(strcmp((empty), (cons)) != 0);                             \
+        saw_clist = true;                                                  \
+    }                                                                      \
+} while (0);
+    CETTA_GSLT_SEQUENCE_REPRESENTATION_ROWS(
+        CHECK_SEQUENCE_REPRESENTATION)
+#undef CHECK_SEQUENCE_REPRESENTATION
+    assert(rows == 1u);
+    assert(saw_clist);
+
+    unsigned consumer_rows = 0u;
+    bool saw_clist_consumer = false;
+#define CHECK_SEQUENCE_FOLD_CONSUMER(                                  \
+    key, consumer, arity, represented_operand) do {                    \
+    consumer_rows++;                                                    \
+    if (strcmp((key), "clist") == 0) {                                \
+        assert(strcmp((consumer), "clist:foldl") == 0);               \
+        assert((arity) == 5u);                                          \
+        assert((represented_operand) == 0u);                            \
+        saw_clist_consumer = true;                                      \
+    }                                                                   \
+} while (0);
+    CETTA_GSLT_SEQUENCE_FOLD_CONSUMER_ROWS(
+        CHECK_SEQUENCE_FOLD_CONSUMER)
+#undef CHECK_SEQUENCE_FOLD_CONSUMER
+    assert(consumer_rows == 1u);
+    assert(saw_clist_consumer);
+
+    unsigned fold_rows = 0u;
+    bool saw_clist_fold = false;
+#define CHECK_SEQUENCE_FOLD_TARGET(key, target) do {                    \
+    fold_rows++;                                                        \
+    if (strcmp((key), "clist") == 0) {                                \
+        assert(strcmp((target), "list:foldl") == 0);                   \
+        saw_clist_fold = true;                                          \
+    }                                                                   \
+} while (0);
+    CETTA_GSLT_SEQUENCE_FOLD_TARGET_ROWS(CHECK_SEQUENCE_FOLD_TARGET)
+#undef CHECK_SEQUENCE_FOLD_TARGET
+    assert(fold_rows == 1u);
+    assert(saw_clist_fold);
+
+    unsigned erasure_rows = 0u;
+    bool saw_identity = false, saw_append = false, saw_range = false;
+#define CHECK_SEQUENCE_ERASURE(                                        \
+    key, source, target, mode, minimum, maximum) do {                   \
+    assert(strcmp((key), "clist") == 0);                              \
+    assert((minimum) <= (maximum));                                     \
+    erasure_rows++;                                                     \
+    if (strcmp((source), "clist:from-list") == 0) {                   \
+        assert(strcmp((target), "identity") == 0);                    \
+        assert((mode) == CETTA_GSLT_SEQUENCE_ERASURE_UNWRAP);           \
+        assert((minimum) == 1u && (maximum) == 1u);                     \
+        saw_identity = true;                                            \
+    }                                                                   \
+    if (strcmp((source), "clist:append") == 0) {                      \
+        assert(strcmp((target), "list:append") == 0);                 \
+        assert((mode) == CETTA_GSLT_SEQUENCE_ERASURE_RECURSIVE_ALL);    \
+        assert((minimum) == 2u && (maximum) == 2u);                     \
+        saw_append = true;                                              \
+    }                                                                   \
+    if (strcmp((source), "clist:range") == 0) {                       \
+        assert(strcmp((target), "list:range") == 0);                  \
+        assert((mode) == CETTA_GSLT_SEQUENCE_ERASURE_SCALAR_ALL);       \
+        assert((minimum) == 1u && (maximum) == 2u);                     \
+        saw_range = true;                                               \
+    }                                                                   \
+} while (0);
+    CETTA_GSLT_SEQUENCE_ERASURE_ROWS(CHECK_SEQUENCE_ERASURE)
+#undef CHECK_SEQUENCE_ERASURE
+    assert(erasure_rows == 4u);
+    assert(saw_identity && saw_append && saw_range);
+}
+
+static void test_generated_prepared_intrinsic_program(void) {
+    unsigned rows = 0u;
+    bool saw_division = false, saw_sort_numbers = false;
+    bool saw_remove_all = false, saw_unkey = false;
+    bool saw_retain_top_k = false, saw_cons = false, saw_union = false;
+#define COUNT_PREPARED_INTRINSIC_HEAD(                                  \
+    field, arity, discipline, instruction) do {                         \
+    assert((discipline) ==                                              \
+           CETTA_GSLT_PREPARED_PURE_INTRINSIC_OPERANDS_STRICT_ALL);     \
+    rows++;                                                             \
+    if (strcmp(#field, "sort_numbers_atom") == 0) {                    \
+        saw_sort_numbers = true;                                        \
+        assert((arity) == 1u);                                          \
+        assert((instruction) ==                                         \
+               CETTA_GSLT_PREPARED_PURE_INTRINSIC_GROUNDED_DISPATCH);   \
+    }                                                                   \
+    if (strcmp(#field, "op_div") == 0) {                              \
+        saw_division = true;                                            \
+        assert((arity) == 2u);                                          \
+        assert((instruction) ==                                         \
+               CETTA_GSLT_PREPARED_PURE_INTRINSIC_GROUNDED_DISPATCH);   \
+    }                                                                   \
+    if (strcmp(#field, "remove_all_atom") == 0) saw_remove_all = true; \
+    if (strcmp(#field, "retain_top_k_keyed_atom") == 0)                \
+        saw_retain_top_k = true;                                        \
+    if (strcmp(#field, "unkey_atom") == 0) saw_unkey = true;          \
+    if (strcmp(#field, "cons_atom") == 0) {                            \
+        saw_cons = true;                                                \
+        assert((arity) == 2u);                                          \
+        assert((instruction) ==                                         \
+               CETTA_GSLT_PREPARED_PURE_INTRINSIC_CONSTRUCT_EXPRESSION_CONS); \
+    }                                                                   \
+    if (strcmp(#field, "union_atom") == 0) {                           \
+        saw_union = true;                                               \
+        assert((arity) == 2u);                                          \
+        assert((instruction) ==                                         \
+               CETTA_GSLT_PREPARED_PURE_INTRINSIC_CONCATENATE_EXPRESSIONS); \
+    }                                                                   \
+} while (0);
+    CETTA_GSLT_PREPARED_PURE_INTRINSIC_HEAD_ROWS(
+        COUNT_PREPARED_INTRINSIC_HEAD)
+#undef COUNT_PREPARED_INTRINSIC_HEAD
+    assert(rows >= 15u);
+    assert(saw_division && saw_sort_numbers && saw_remove_all);
+    assert(saw_retain_top_k && saw_unkey);
+    assert(saw_cons && saw_union);
+}
+
 static void test_generated_pure_call_modes(void) {
     assert(CETTA_GSLT_PURE_CALL_EAGER !=
            CETTA_GSLT_PURE_CALL_CALL_BY_NEED);
@@ -386,6 +517,7 @@ typedef struct {
 #define TEST_DECLARE_STRONG_ATOM_SPAN(name) TestGeneratedRootSpan name;
 #define TEST_DECLARE_LOGICAL_BINDINGS(name) void *name;
 #define TEST_DECLARE_OUTCOME_SET(name) void *name;
+#define TEST_DECLARE_VARIANT_INSTANCE(name) void *name;
 #define TEST_DECLARE_EPHEMERON_ATOM_MAP(name) \
     TestGeneratedEphemeronAtomMap name;
 typedef struct {
@@ -394,6 +526,7 @@ typedef struct {
         TEST_DECLARE_STRONG_ATOM_SPAN,
         TEST_DECLARE_LOGICAL_BINDINGS,
         TEST_DECLARE_OUTCOME_SET,
+        TEST_DECLARE_VARIANT_INSTANCE,
         TEST_DECLARE_EPHEMERON_ATOM_MAP)
 } TestPreparedPureMachineRoots;
 typedef struct {
@@ -402,9 +535,29 @@ typedef struct {
         TEST_DECLARE_STRONG_ATOM_SPAN,
         TEST_DECLARE_LOGICAL_BINDINGS,
         TEST_DECLARE_OUTCOME_SET,
+        TEST_DECLARE_VARIANT_INSTANCE,
         TEST_DECLARE_EPHEMERON_ATOM_MAP)
 } TestOutcomeContinuationRoots;
+typedef struct {
+    CETTA_EVAL_GC_FRAME_FIELDS_case_branch_continuation(
+        TEST_DECLARE_STRONG_ATOM_SLOT,
+        TEST_DECLARE_STRONG_ATOM_SPAN,
+        TEST_DECLARE_LOGICAL_BINDINGS,
+        TEST_DECLARE_OUTCOME_SET,
+        TEST_DECLARE_VARIANT_INSTANCE,
+        TEST_DECLARE_EPHEMERON_ATOM_MAP)
+} TestCaseBranchContinuationRoots;
+typedef struct {
+    CETTA_EVAL_GC_FRAME_FIELDS_tuple_machine(
+        TEST_DECLARE_STRONG_ATOM_SLOT,
+        TEST_DECLARE_STRONG_ATOM_SPAN,
+        TEST_DECLARE_LOGICAL_BINDINGS,
+        TEST_DECLARE_OUTCOME_SET,
+        TEST_DECLARE_VARIANT_INSTANCE,
+        TEST_DECLARE_EPHEMERON_ATOM_MAP)
+} TestTupleMachineRoots;
 #undef TEST_DECLARE_EPHEMERON_ATOM_MAP
+#undef TEST_DECLARE_VARIANT_INSTANCE
 #undef TEST_DECLARE_OUTCOME_SET
 #undef TEST_DECLARE_LOGICAL_BINDINGS
 #undef TEST_DECLARE_STRONG_ATOM_SPAN
@@ -494,6 +647,127 @@ static void test_generated_outcome_continuation_roots(void) {
                &omitted_parent) == SIZE_MAX);
 }
 
+static size_t generated_case_branch_continuation_roots_visited(
+    const TestCaseBranchContinuationRoots *roots) {
+    size_t visited = 0u;
+#define CETTA_GC_VISIT_STRONG_ATOM_SPAN(session, span, fail) do { \
+    (void)(session);                                                \
+    if ((span).len == SIZE_MAX) { fail; }                           \
+    visited += (span).len;                                          \
+} while (0)
+#define CETTA_GC_VISIT_LOGICAL_BINDINGS(session, bindings, fail) do { \
+    (void)(session);                                                   \
+    if (!(bindings)) { fail; }                                        \
+    visited++;                                                         \
+} while (0)
+#define CETTA_GC_VISIT_OUTCOME_SET(session, outcomes, fail) do { \
+    (void)(session);                                             \
+    if (!(outcomes)) { fail; }                                  \
+    visited++;                                                   \
+} while (0)
+    CETTA_EVAL_GC_ARM_case_branch_continuation(
+        NULL, roots, goto failed);
+#undef CETTA_GC_VISIT_OUTCOME_SET
+#undef CETTA_GC_VISIT_LOGICAL_BINDINGS
+#undef CETTA_GC_VISIT_STRONG_ATOM_SPAN
+    return visited;
+failed:
+    return SIZE_MAX;
+}
+
+static void test_generated_case_branch_continuation_roots(void) {
+    int lexical_env = 0;
+    int branch_env = 0;
+    int source_outcomes = 0;
+    int parent_outcomes = 0;
+    TestCaseBranchContinuationRoots complete = {
+        .live_atoms = {NULL, 4u},
+        .lexical_env = &lexical_env,
+        .branch_env = &branch_env,
+        .source_outcomes = &source_outcomes,
+        .parent_outcomes = &parent_outcomes,
+    };
+    assert(generated_case_branch_continuation_roots_visited(
+               &complete) == 8u);
+
+    TestCaseBranchContinuationRoots omitted_atoms = complete;
+    omitted_atoms.live_atoms.len = 0u;
+    assert(generated_case_branch_continuation_roots_visited(
+               &omitted_atoms) == 4u);
+
+    TestCaseBranchContinuationRoots omitted_lexical = complete;
+    omitted_lexical.lexical_env = NULL;
+    assert(generated_case_branch_continuation_roots_visited(
+               &omitted_lexical) == SIZE_MAX);
+
+    TestCaseBranchContinuationRoots omitted_branch = complete;
+    omitted_branch.branch_env = NULL;
+    assert(generated_case_branch_continuation_roots_visited(
+               &omitted_branch) == SIZE_MAX);
+
+    TestCaseBranchContinuationRoots omitted_source = complete;
+    omitted_source.source_outcomes = NULL;
+    assert(generated_case_branch_continuation_roots_visited(
+               &omitted_source) == SIZE_MAX);
+
+    TestCaseBranchContinuationRoots omitted_parent = complete;
+    omitted_parent.parent_outcomes = NULL;
+    assert(generated_case_branch_continuation_roots_visited(
+               &omitted_parent) == SIZE_MAX);
+}
+
+static size_t generated_tuple_machine_roots_visited(
+    const TestTupleMachineRoots *roots) {
+    size_t visited = 0u;
+#define CETTA_GC_VISIT_STRONG_ATOM_SPAN(session, span, fail) do { \
+    (void)(session);                                                \
+    if ((span).len == SIZE_MAX) { fail; }                           \
+    visited += (span).len;                                          \
+} while (0)
+#define CETTA_GC_VISIT_LOGICAL_BINDINGS(session, bindings, fail) do { \
+    (void)(session);                                                   \
+    if (!(bindings)) { fail; }                                        \
+    visited++;                                                         \
+} while (0)
+#define CETTA_GC_VISIT_OUTCOME_SET(session, outcomes, fail) do { \
+    (void)(session);                                             \
+    if (!(outcomes)) { fail; }                                  \
+    visited++;                                                   \
+} while (0)
+    CETTA_EVAL_GC_ARM_tuple_machine(NULL, roots, goto failed);
+#undef CETTA_GC_VISIT_OUTCOME_SET
+#undef CETTA_GC_VISIT_LOGICAL_BINDINGS
+#undef CETTA_GC_VISIT_STRONG_ATOM_SPAN
+    return visited;
+failed:
+    return SIZE_MAX;
+}
+
+static void test_generated_tuple_machine_roots(void) {
+    int env = 0;
+    int outcomes = 0;
+    int parent_outcomes = 0;
+    TestTupleMachineRoots complete = {
+        .continuation_atoms = {NULL, 2u},
+        .orig_elems = {NULL, 3u},
+        .prefix = {NULL, 5u},
+        .env = &env,
+        .outcomes = &outcomes,
+        .parent_outcomes = &parent_outcomes,
+    };
+    assert(generated_tuple_machine_roots_visited(&complete) == 13u);
+
+    TestTupleMachineRoots omitted_continuation = complete;
+    omitted_continuation.continuation_atoms.len = 0u;
+    assert(generated_tuple_machine_roots_visited(
+               &omitted_continuation) == 11u);
+
+    TestTupleMachineRoots omitted_env = complete;
+    omitted_env.env = NULL;
+    assert(generated_tuple_machine_roots_visited(
+               &omitted_env) == SIZE_MAX);
+}
+
 int main(void) {
     test_query_head_rows();
     test_row_dispositions();
@@ -505,9 +779,13 @@ int main(void) {
     test_register_heads();
     test_generated_register_program();
     test_generated_fold_control_program();
+    test_generated_sequence_representations();
+    test_generated_prepared_intrinsic_program();
     test_generated_pure_call_modes();
     test_generated_prepared_machine_roots();
     test_generated_outcome_continuation_roots();
+    test_generated_case_branch_continuation_roots();
+    test_generated_tuple_machine_roots();
     puts("PASS: generated execution contracts");
     return 0;
 }

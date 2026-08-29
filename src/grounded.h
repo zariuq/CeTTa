@@ -15,6 +15,14 @@ Atom *grounded_dispatch(Arena *a, Atom *head, Atom **args, uint32_t nargs);
 bool grounded_try_plain_scalar_truth(Atom *head, Atom **args,
                                      uint32_t nargs, bool *truth_out);
 
+/* Select the values carrying the greatest numeric keys while retaining source
+   occurrence order and preferring earlier occurrences at a boundary tie.
+   The two expression-backed sequences must have equal length.  False leaves
+   the caller responsible for its ordinary fallback semantics. */
+bool grounded_retain_top_k_numeric_projection(
+    Arena *arena, Atom *keys, Atom *values, int64_t requested,
+    Atom **result_out);
+
 /* Check if a symbol is a known grounded op head (by SymbolId). */
 bool is_grounded_op(SymbolId id);
 

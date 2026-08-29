@@ -24,6 +24,8 @@
 (: intersection (-> Atom Atom %Undefined%))
 (: subtraction (-> Atom Atom %Undefined%))
 (: unique-atom (-> Expression Expression))
+(: remove-all-atom (-> Atom Expression Expression))
+(: sort-numbers-atom (-> Expression Expression))
 (: union-atom (-> Expression Expression Expression))
 (: intersection-atom (-> Expression Expression Expression))
 (: subtraction-atom (-> Expression Expression Expression))
@@ -64,8 +66,11 @@
 (: get-type (-> Atom %Undefined%))
 (: get-metatype (-> Atom Atom))
 (: get-type-space (-> SpaceType Atom Atom))
+(: _minimal-map-atom (-> Expression Variable Atom %Undefined%))
+(: _minimal-retain-top-k-by-number (-> Expression Number Variable Atom %Undefined%))
 (: _minimal-foldl-atom (-> Expression Atom Variable Variable Atom SpaceType %Undefined%))
 (: _minimal-foldl-llist (-> Atom Atom Variable Variable Atom SpaceType %Undefined%))
+(: _minimal-foldl-sequence (-> Atom %Undefined% Atom Variable Variable Atom SpaceType %Undefined%))
 (: _minimal-space-contains-exact (-> Atom Atom Bool))
 (: _minimal-space-revision (-> SpaceType Number))
 (: _collapse-add-next-atom-from-collapse-bind-result (-> Expression Expression Atom))
@@ -101,6 +106,9 @@
 (: module-space-no-deps (-> SpaceType SpaceType))
 (: for-each-in-atom (-> Expression Atom (->)))
 (: noreduce-eq (-> Atom Atom Bool))
+(: sort-atom (-> Expression Expression))
+(: retain-top-k-keyed-atom (-> Expression Number Expression))
+(: unkey-atom (-> Expression Expression))
 (: sort-strings (-> Expression Expression))
 (: repr (-> Atom String))
 (: sha256 (-> String String))
@@ -144,6 +152,25 @@
   (@params (
     (@param "List of strings")))
   (@return "Sorted list of strings"))
+
+(@doc sort-atom
+  (@desc "Stable shortlex sort of an expression's children by their common parseable atom syntax. Use a typed list comparator when numeric or domain-specific order is intended.")
+  (@params (
+    (@param "Expression whose children should be ordered")))
+  (@return "Expression containing the same child occurrences in canonical shortlex order"))
+
+(@doc retain-top-k-keyed-atom
+  (@desc "Retains the entries with the greatest numeric keys from an expression of (key payload) pairs. Original occurrence order is preserved, and earlier occurrences win boundary ties.")
+  (@params (
+    (@param "Expression of numeric-keyed entries")
+    (@param "Maximum number of entries to retain")))
+  (@return "Selected keyed entries in their original occurrence order"))
+
+(@doc unkey-atom
+  (@desc "Projects an expression of exact (key value) pairs to its values, preserving occurrence order and multiplicity.")
+  (@params (
+    (@param "Expression of keyed entries")))
+  (@return "Expression containing each value in source order"))
 
 (@doc repr
   (@desc "Reader-style representation of one atom in the active language. Prime emits its compact syntax; HE retains its established syntax. Native handles are debug text and are not guaranteed to parse back.")
@@ -736,15 +763,21 @@
 
 (= (map-atom $list $var $map)
   (function
-    (eval
-      (if-equal $list ()
-        (return ())
-        (chain (decons-atom $list) $ht
-          (unify ($head $tail) $ht
-            (chain (eval (sealed ($var) $map)) $sealedmap
-              (chain (eval (map-atom $tail $var $sealedmap)) $tail-mapped
-                (chain (eval (atom-subst $head $var $sealedmap)) $map-expr
-                  (chain $map-expr $head-mapped
-                    (chain (cons-atom $head-mapped $tail-mapped) $res
-                      (return $res))))))
-            (empty)))))))
+    (eval (_minimal-map-atom $list $var $map))))
+
+; The evaluator may discharge the whole map through its generated pure
+; machine.  When admission declines, this equation remains the authoritative
+; relational definition, including failure, nondeterminism, and multiplicity.
+(= (_minimal-map-atom $list $var $map)
+  (eval
+    (if-equal $list ()
+      (return ())
+      (chain (decons-atom $list) $ht
+        (unify ($head $tail) $ht
+          (chain (eval (sealed ($var) $map)) $sealedmap
+            (chain (eval (map-atom $tail $var $sealedmap)) $tail-mapped
+              (chain (eval (atom-subst $head $var $sealedmap)) $map-expr
+                (chain $map-expr $head-mapped
+                  (chain (cons-atom $head-mapped $tail-mapped) $res
+                    (return $res))))))
+          (empty))))))

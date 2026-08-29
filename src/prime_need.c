@@ -101,6 +101,11 @@ static PrimeNeedHeapIndexNode *prime_need_heap_index_node_alloc(
     PrimeNeedHeapIndexNode *node = arena_alloc(owner, bytes);
     if (!node)
         return NULL;
+    cetta_runtime_stats_inc(
+        CETTA_RUNTIME_COUNTER_PRIME_NEED_HEAP_INDEX_NODE_ALLOC);
+    cetta_runtime_stats_add(
+        CETTA_RUNTIME_COUNTER_PRIME_NEED_HEAP_INDEX_NODE_BYTES,
+        (uint64_t)bytes);
     node->value = NULL;
     node->child_mask = 0u;
     node->child_count = child_count;
@@ -537,11 +542,16 @@ bool prime_need_arena_audit_branch_state(
         return false;
     if (receipt->session_id == 0u || !receipt->owner)
         return true;
+    /* The initialized carrier is the identity of the event-DAG algebra.  Its
+     * owner records where future events should be allocated, but with no top
+     * frame it retains no allocation from that arena and therefore excludes
+     * every forbidden arena.  Event-bearing carriers retain the exact owner
+     * and transitive-frame audit below. */
+    if (!prime_need_branch_state_has_events(receipt))
+        return true;
     if (receipt->owner == audit->forbidden ||
         (receipt->top && receipt->owner != receipt->top->owner))
         return false;
-    if (!prime_need_branch_state_has_events(receipt))
-        return true;
     cetta_runtime_stats_inc(
         CETTA_RUNTIME_COUNTER_PRIME_NEED_CARRIER_AUDIT);
     if (receipt->top && receipt->top->closure_owner)
@@ -914,6 +924,11 @@ static bool prime_need_snapshot_push(Arena *owner,
     PrimeNeedFrame *frame = arena_alloc(owner, sizeof(*frame));
     if (!frame)
         return false;
+    cetta_runtime_stats_inc(
+        CETTA_RUNTIME_COUNTER_PRIME_NEED_SNAPSHOT_FRAME_ALLOC);
+    cetta_runtime_stats_add(
+        CETTA_RUNTIME_COUNTER_PRIME_NEED_SNAPSHOT_FRAME_BYTES,
+        (uint64_t)sizeof(*frame));
     frame->parent = base->top;
     frame->owner = owner;
     uint64_t payload_bloom = 0u;
@@ -2190,7 +2205,7 @@ static bool prime_need_receipt_append_with_lifetime(
         .session_id = session_id,
         .owner = actual_owner,
     };
-#if CETTA_BUILD_WITH_RUNTIME_STATS
+#if CETTA_BUILD_WITH_RUNTIME_STATS && !defined(CETTA_RUNTIME_STATS_NOOP)
     CettaRuntimeCounter event_counter =
         CETTA_RUNTIME_COUNTER_PRIME_NEED_RECEIPT_EVENT_OBSERVE_CELL;
     switch (event.kind) {
@@ -2753,8 +2768,12 @@ bool prime_need_branch_state_promote_suffix_with_session(
     if (!dst || !forbidden || !copy_session || !receipt ||
         dst == forbidden)
         return false;
-    if (!prime_need_branch_state_has_events(receipt))
-        return true;
+    if (!prime_need_branch_state_has_events(receipt)) {
+        /* The empty event-DAG has no payload to copy, but its owner is the
+         * allocation authority for the first future event.  Rehome that
+         * authority before the forbidden region can be reset. */
+        return prime_need_branch_state_promote(dst, receipt);
+    }
     cetta_runtime_stats_inc(
         CETTA_RUNTIME_COUNTER_PRIME_NEED_CARRIER_PROMOTE_SUFFIX);
     if (receipt->top->closure_owner &&

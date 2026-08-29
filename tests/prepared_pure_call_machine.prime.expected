@@ -10,3 +10,4 @@
 [(1 5)]
 [42]
 [(Triple a 7 (b c))]
+[(ListAlgebra (0 2 3 4) 3 3 ((7 high-a) (7 high-b)) 2.5)]
