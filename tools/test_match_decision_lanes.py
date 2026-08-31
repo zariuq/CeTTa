@@ -42,11 +42,11 @@ def manifest_cases() -> list[Case]:
             if not common:
                 continue
             if (row["lang"] == "he"
-                    and row["profile"] == "he-extended"
+                    and row["profile"] == "extended"
                     and row["lane"] == "test"):
                 cases.append(Case(
                     "he", row["path"],
-                    ("--lang", "he", "--profile", "he-extended",
+                    ("--lang", "he", "--profile", "extended",
                      row["path"]), expected,
                 ))
             elif (row["lang"] == "prime"

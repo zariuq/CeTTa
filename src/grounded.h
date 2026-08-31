@@ -3,6 +3,25 @@
 
 #include "atom.h"
 
+/* A compact carrier for the closed Int/Float/Bool fragment.  This is a
+ * representation of an already admitted grounded value, never a new public
+ * Atom kind.  Values may remain in this carrier only inside a deterministic
+ * region with no intermediate representation observer. */
+typedef enum {
+    CETTA_PLAIN_SCALAR_INT = 0,
+    CETTA_PLAIN_SCALAR_FLOAT,
+    CETTA_PLAIN_SCALAR_BOOL,
+} CettaPlainScalarKind;
+
+typedef struct {
+    CettaPlainScalarKind kind;
+    union {
+        int64_t integer;
+        double floating;
+        bool boolean;
+    } as;
+} CettaPlainScalar;
+
 /* Try to dispatch a grounded operation.
    If head is a known grounded op and args are valid, returns result atom.
    Otherwise returns NULL (not a grounded op). */
@@ -14,6 +33,36 @@ Atom *grounded_dispatch(Arena *a, Atom *head, Atom **args, uint32_t nargs);
  * unsupported operator, payload, arity, or dialect-specific override. */
 bool grounded_try_plain_scalar_truth(Atom *head, Atom **args,
                                      uint32_t nargs, bool *truth_out);
+
+/* Observe or publish the compact scalar carrier at an explicit
+ * representation boundary. */
+bool grounded_plain_scalar_from_atom(
+    const Atom *atom, CettaPlainScalar *value_out);
+Atom *grounded_plain_scalar_materialize(
+    Arena *arena, const CettaPlainScalar *value);
+
+/* Interpret one admitted scalar operation without allocating intermediate
+ * Atoms.  False is an exact specialization refusal: the ordinary grounded
+ * dispatcher remains authoritative for overflow, unsupported payloads,
+ * dialect-owned spellings, and operations outside this fragment. */
+bool grounded_try_plain_scalar_operation(
+    Atom *head, const CettaPlainScalar *arguments, uint32_t nargs,
+    CettaPlainScalar *value_out);
+
+/* Classify the source spelling and arity of the closed scalar-tree fragment.
+   This is a syntactic admission fact only: callers must still establish that
+   every leaf is a plain scalar and use one of the exact evaluators below. */
+bool grounded_is_plain_scalar_tree_operator(
+    Atom *head, uint32_t nargs);
+
+/* Evaluate the positive, effect-free scalar arithmetic fragment used by
+ * bounded source-derived execution segments.  True means `value_out` is the
+ * exact ordinary grounded result.  False leaves the caller responsible for
+ * canonical evaluation.  Dialect-owned spellings, non-scalar operands,
+ * division, errors, and results outside Int/Float are deliberately refused. */
+bool grounded_try_plain_scalar_arithmetic(
+    Arena *arena, Atom *head, Atom **args, uint32_t nargs,
+    Atom **value_out);
 
 /* Select the values carrying the greatest numeric keys while retaining source
    occurrence order and preferring earlier occurrences at a boundary tie.

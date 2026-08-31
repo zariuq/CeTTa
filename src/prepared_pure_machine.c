@@ -98,7 +98,21 @@ typedef struct {
     uint32_t local_count;
     uint32_t first_pattern_var;
     uint32_t pattern_var_count;
+    uint32_t scalar_guard;
 } PreparedPureClause;
+
+typedef struct {
+    Atom *literal;
+    uint32_t slot;
+    bool from_slot;
+} PreparedPureScalarGuardArgument;
+
+typedef struct {
+    Atom *head;
+    uint32_t first_argument;
+    uint32_t argument_count;
+    bool expected_truth;
+} PreparedPureScalarGuard;
 
 typedef struct {
     uint32_t arity;
@@ -207,6 +221,12 @@ struct CettaPreparedPureProgram {
     PreparedPureClause *clauses;
     size_t clause_len;
     size_t clause_cap;
+    PreparedPureScalarGuard *scalar_guards;
+    size_t scalar_guard_len;
+    size_t scalar_guard_cap;
+    PreparedPureScalarGuardArgument *scalar_guard_arguments;
+    size_t scalar_guard_argument_len;
+    size_t scalar_guard_argument_cap;
     PreparedPureDecisionProgram *decisions;
     size_t decision_len;
     size_t decision_cap;
@@ -278,13 +298,27 @@ enum {
      * families, while the direct matcher is cheaper for tiny groups. */
     PREPARED_PURE_DECISION_MIN_CLAUSES = 8u,
     PREPARED_PURE_GC_INITIAL_NURSERY_INTERVALS = 3u,
+    PREPARED_PURE_MAX_SCALAR_GUARD_ARGUMENTS = 16u,
 };
+
+#define PREPARED_PURE_NO_SCALAR_GUARD UINT32_MAX
 
 static bool prepared_pure_debug_enabled(void) {
     static _Thread_local int enabled = -1;
     if (enabled < 0) {
         const char *debug = getenv("CETTA_PREPARED_PURE_DEBUG");
         enabled = debug && debug[0] != '\0' && debug[0] != '0';
+    }
+    return enabled != 0;
+}
+
+static bool prepared_pure_scalar_guard_enabled(void) {
+    static _Thread_local int enabled = -1;
+    if (enabled < 0) {
+        const char *reference = getenv(
+            "CETTA_PREPARED_PURE_SCALAR_GUARD_REFERENCE");
+        enabled = !(reference && reference[0] != '\0' &&
+                    reference[0] != '0');
     }
     return enabled != 0;
 }
@@ -1572,6 +1606,167 @@ static bool prepared_pure_compile_eval(
     PreparedPureCompileContext *context,
     Atom *source, uint32_t depth, uint32_t *node_out);
 
+typedef enum {
+    PREPARED_PURE_GUARDED_CLAUSE_ERROR = -1,
+    PREPARED_PURE_GUARDED_CLAUSE_NOT_APPLICABLE = 0,
+    PREPARED_PURE_GUARDED_CLAUSE_READY = 1,
+} PreparedPureGuardedClauseState;
+
+static bool prepared_pure_expression_is_zero(
+        CettaPreparedPureProgram *program, Atom *source) {
+    if (!program || !source || !program->expression_view)
+        return false;
+    if (source->kind == ATOM_EXPR && source->expr.len > 0u &&
+        source->expr.elems[0] &&
+        source->expr.elems[0]->kind == ATOM_SYMBOL &&
+        space_equations_may_match_known_head(
+            program->space, source->expr.elems[0]->sym_id))
+        return false;
+    CettaPreparedPureExpressionView view = {0};
+    return program->expression_view(source, &view) ==
+        CETTA_PREPARED_PURE_EXPRESSION_ZERO;
+}
+
+static bool prepared_pure_scalar_guard_flat_lhs(Atom *lhs) {
+    if (!lhs || lhs->kind != ATOM_EXPR || lhs->expr.len == 0u)
+        return false;
+    for (CettaExprIndex index = 1u; index < lhs->expr.len; index++) {
+        Atom *pattern = lhs->expr.elems[index];
+        if (!pattern ||
+            (pattern->kind == ATOM_EXPR && pattern->expr.len != 0u))
+            return false;
+    }
+    return true;
+}
+
+static bool prepared_pure_plain_scalar_truth_head(SymbolId head) {
+    return head == g_builtin_syms.op_lt ||
+           head == g_builtin_syms.op_gt ||
+           head == g_builtin_syms.op_le ||
+           head == g_builtin_syms.op_ge ||
+           head == g_builtin_syms.numeric_eq;
+}
+
+static bool prepared_pure_compile_scalar_guard(
+        CettaPreparedPureProgram *program,
+        const PreparedPureCompileContext *context,
+        Atom *condition, bool expected_truth,
+        uint32_t *guard_out) {
+    if (!program || !context || !condition || !guard_out ||
+        condition->kind != ATOM_EXPR || condition->expr.len == 0u ||
+        condition->expr.len - 1u >
+            PREPARED_PURE_MAX_SCALAR_GUARD_ARGUMENTS)
+        return false;
+    Atom *head = condition->expr.elems[0];
+    if (!head || head->kind != ATOM_SYMBOL ||
+        !prepared_pure_plain_scalar_truth_head(head->sym_id) ||
+        !grounded_op_is_type_pure(head->sym_id) ||
+        program->scalar_guard_len >= UINT32_MAX ||
+        program->scalar_guard_argument_len >= UINT32_MAX)
+        return false;
+
+    size_t argument_mark = program->scalar_guard_argument_len;
+    CettaExprLen argument_count = condition->expr.len - 1u;
+    if (!prepared_pure_reserve(
+            (void **)&program->scalar_guard_arguments,
+            sizeof(*program->scalar_guard_arguments),
+            &program->scalar_guard_argument_cap,
+            argument_mark + argument_count) ||
+        !prepared_pure_reserve(
+            (void **)&program->scalar_guards,
+            sizeof(*program->scalar_guards),
+            &program->scalar_guard_cap,
+            program->scalar_guard_len + 1u))
+        return false;
+
+    for (CettaExprIndex index = 1u;
+         index < condition->expr.len; index++) {
+        Atom *argument = condition->expr.elems[index];
+        PreparedPureScalarGuardArgument compiled = {0};
+        if (argument && argument->kind == ATOM_VAR) {
+            uint32_t slot = 0u;
+            if (!prepared_pure_context_lookup(
+                    context, argument->var_id, &slot)) {
+                program->scalar_guard_argument_len = argument_mark;
+                return false;
+            }
+            compiled.slot = slot;
+            compiled.from_slot = true;
+        } else if (argument && argument->kind == ATOM_GROUNDED &&
+                   (argument->ground.gkind == GV_INT ||
+                    argument->ground.gkind == GV_FLOAT)) {
+            compiled.literal = argument;
+        } else {
+            program->scalar_guard_argument_len = argument_mark;
+            return false;
+        }
+        program->scalar_guard_arguments[
+            program->scalar_guard_argument_len++] = compiled;
+    }
+
+    uint32_t guard_index = (uint32_t)program->scalar_guard_len;
+    program->scalar_guards[program->scalar_guard_len++] =
+        (PreparedPureScalarGuard){
+            .head = head,
+            .first_argument = (uint32_t)argument_mark,
+            .argument_count = argument_count,
+            .expected_truth = expected_truth,
+        };
+    *guard_out = guard_index;
+    return true;
+}
+
+static PreparedPureGuardedClauseState
+prepared_pure_compile_guarded_clause(
+        CettaPreparedPureProgram *program,
+        PreparedPureCompileContext *context,
+        Atom *lhs, Atom *rhs, uint32_t depth,
+        uint32_t *root_out, uint32_t *guard_out) {
+    if (!program || !context || !lhs || !rhs || !root_out || !guard_out)
+        return PREPARED_PURE_GUARDED_CLAUSE_ERROR;
+    if (!prepared_pure_scalar_guard_enabled() ||
+        !prepared_pure_scalar_guard_flat_lhs(lhs) ||
+        rhs->kind != ATOM_EXPR || rhs->expr.len != 4u ||
+        !rhs->expr.elems[0] ||
+        rhs->expr.elems[0]->kind != ATOM_SYMBOL)
+        return PREPARED_PURE_GUARDED_CLAUSE_NOT_APPLICABLE;
+
+    CettaGsltFoldControl control;
+    if (!prepared_pure_control_program(
+            rhs->expr.elems[0]->sym_id, 3u, &control) ||
+        control != CETTA_GSLT_FOLD_CONTROL_BRANCH)
+        return PREPARED_PURE_GUARDED_CLAUSE_NOT_APPLICABLE;
+    bool then_zero = prepared_pure_expression_is_zero(
+        program, rhs->expr.elems[2]);
+    bool else_zero = prepared_pure_expression_is_zero(
+        program, rhs->expr.elems[3]);
+    if (then_zero == else_zero)
+        return PREPARED_PURE_GUARDED_CLAUSE_NOT_APPLICABLE;
+
+    size_t guard_mark = program->scalar_guard_len;
+    size_t argument_mark = program->scalar_guard_argument_len;
+    uint32_t guard = PREPARED_PURE_NO_SCALAR_GUARD;
+    bool expected_truth = else_zero;
+    if (!prepared_pure_compile_scalar_guard(
+            program, context, rhs->expr.elems[1],
+            expected_truth, &guard)) {
+        program->scalar_guard_len = guard_mark;
+        program->scalar_guard_argument_len = argument_mark;
+        return PREPARED_PURE_GUARDED_CLAUSE_NOT_APPLICABLE;
+    }
+    Atom *result_branch = rhs->expr.elems[then_zero ? 3u : 2u];
+    if (!prepared_pure_compile_eval(
+            program, context, result_branch, depth + 1u, root_out)) {
+        program->scalar_guard_len = guard_mark;
+        program->scalar_guard_argument_len = argument_mark;
+        return PREPARED_PURE_GUARDED_CLAUSE_ERROR;
+    }
+    *guard_out = guard;
+    cetta_runtime_stats_inc(
+        CETTA_RUNTIME_COUNTER_PREPARED_PURE_SCALAR_GUARD_ADMITTED);
+    return PREPARED_PURE_GUARDED_CLAUSE_READY;
+}
+
 static bool prepared_pure_compile_children(
     CettaPreparedPureProgram *program,
     PreparedPureCompileContext *context,
@@ -1632,7 +1827,8 @@ static PreparedPureHeadRole prepared_pure_head_role(
         CettaPreparedPureExpressionViewState state =
             program->expression_view(source, &view);
         if (state == CETTA_PREPARED_PURE_EXPRESSION_DECLINE ||
-            state == CETTA_PREPARED_PURE_EXPRESSION_CANONICAL_ONLY)
+            state == CETTA_PREPARED_PURE_EXPRESSION_CANONICAL_ONLY ||
+            state == CETTA_PREPARED_PURE_EXPRESSION_ZERO)
             return PREPARED_PURE_HEAD_UNKNOWN;
         if (state == CETTA_PREPARED_PURE_EXPRESSION_PROJECT ||
             state == CETTA_PREPARED_PURE_EXPRESSION_OBSERVE)
@@ -1815,6 +2011,13 @@ static bool prepared_pure_compile_eval(
             CETTA_PREPARED_PURE_EXPRESSION_CANONICAL_ONLY) {
             return prepared_pure_reject(
                 program, "dialect-owned form requires canonical evaluation",
+                source);
+        }
+        if (expression_view_state ==
+            CETTA_PREPARED_PURE_EXPRESSION_ZERO) {
+            return prepared_pure_reject(
+                program,
+                "choice zero is not an ordinary prepared value",
                 source);
         }
         if (expression_view_state !=
@@ -2375,7 +2578,8 @@ static bool prepared_pure_compile_decision_group(
     CettaMatchDecision *selector = cetta_match_decision_compile(
         program->read, program->match_decision_semantics,
         clauses, clause_count, CETTA_MATCH_DECISION_DEEP,
-        0u, NULL, NULL);
+        0u, cetta_match_decision_realization_from_process(),
+        NULL, NULL);
     free(clauses);
     if (!selector)
         return false;
@@ -2508,8 +2712,16 @@ static bool prepared_pure_compile_head(
                 occurrence.lhs);
         }
         uint32_t root = 0u;
-        bool rhs_ok = prepared_pure_compile_eval(
-            program, &context, occurrence.rhs, 0u, &root);
+        uint32_t scalar_guard = PREPARED_PURE_NO_SCALAR_GUARD;
+        PreparedPureGuardedClauseState guarded =
+            prepared_pure_compile_guarded_clause(
+                program, &context, occurrence.lhs, occurrence.rhs,
+                0u, &root, &scalar_guard);
+        bool rhs_ok = guarded == PREPARED_PURE_GUARDED_CLAUSE_READY;
+        if (guarded == PREPARED_PURE_GUARDED_CLAUSE_NOT_APPLICABLE) {
+            rhs_ok = prepared_pure_compile_eval(
+                program, &context, occurrence.rhs, 0u, &root);
+        }
         if (rhs_ok)
             rhs_ok = prepared_pure_mark_tail_spine(
                 program, root, 0u);
@@ -2530,6 +2742,7 @@ static bool prepared_pure_compile_head(
             .local_count = context.next_slot,
             .first_pattern_var = first_pattern_var,
             .pattern_var_count = pattern_var_count,
+            .scalar_guard = scalar_guard,
         };
         head = &program->heads[head_index];
         head->clause_count++;
@@ -2540,7 +2753,16 @@ static bool prepared_pure_compile_head(
         !space_read_token_is_current(program->read))
         return prepared_pure_reject(
             program, "empty or invalidated user head", NULL);
-    if (!prepared_pure_head_is_whnf_determinate(program, head))
+    bool has_scalar_guard = false;
+    for (uint32_t i = 0u; i < head->clause_count; i++) {
+        if (program->clauses[head->first_clause + i].scalar_guard !=
+                PREPARED_PURE_NO_SCALAR_GUARD) {
+            has_scalar_guard = true;
+            break;
+        }
+    }
+    if (!prepared_pure_head_is_whnf_determinate(program, head) &&
+        !has_scalar_guard)
         return prepared_pure_reject(
             program,
             "head is not determinate from weak-head patterns", NULL);
@@ -2891,6 +3113,78 @@ static PreparedPureMatchState prepared_pure_match_clause(
     return PREPARED_PURE_MATCH_MATCHED;
 }
 
+typedef enum {
+    PREPARED_PURE_GUARD_DECLINED = -1,
+    PREPARED_PURE_GUARD_REFUTED = 0,
+    PREPARED_PURE_GUARD_ACCEPTED = 1,
+} PreparedPureGuardState;
+
+static PreparedPureGuardState prepared_pure_evaluate_scalar_guard(
+        CettaPreparedPureProgram *program,
+        const PreparedPureClause *clause) {
+    if (!program || !clause)
+        return PREPARED_PURE_GUARD_DECLINED;
+    if (clause->scalar_guard == PREPARED_PURE_NO_SCALAR_GUARD)
+        return PREPARED_PURE_GUARD_ACCEPTED;
+    if (clause->scalar_guard >= program->scalar_guard_len) {
+        cetta_runtime_stats_inc(
+            CETTA_RUNTIME_COUNTER_PREPARED_PURE_SCALAR_GUARD_DECLINED);
+        return PREPARED_PURE_GUARD_DECLINED;
+    }
+    const PreparedPureScalarGuard *guard =
+        &program->scalar_guards[clause->scalar_guard];
+    if (!guard->head ||
+        guard->argument_count >
+            PREPARED_PURE_MAX_SCALAR_GUARD_ARGUMENTS ||
+        guard->first_argument > program->scalar_guard_argument_len ||
+        guard->argument_count >
+            program->scalar_guard_argument_len - guard->first_argument) {
+        cetta_runtime_stats_inc(
+            CETTA_RUNTIME_COUNTER_PREPARED_PURE_SCALAR_GUARD_DECLINED);
+        return PREPARED_PURE_GUARD_DECLINED;
+    }
+
+    Atom *arguments[PREPARED_PURE_MAX_SCALAR_GUARD_ARGUMENTS];
+    for (uint32_t index = 0u; index < guard->argument_count; index++) {
+        const PreparedPureScalarGuardArgument *argument =
+            &program->scalar_guard_arguments[
+                guard->first_argument + index];
+        Atom *value = argument->literal;
+        if (argument->from_slot) {
+            if (argument->slot >= clause->local_count ||
+                argument->slot >= program->match_cap) {
+                cetta_runtime_stats_inc(
+                    CETTA_RUNTIME_COUNTER_PREPARED_PURE_SCALAR_GUARD_DECLINED);
+                return PREPARED_PURE_GUARD_DECLINED;
+            }
+            value = program->match_values[argument->slot];
+        }
+        if (!value || atom_has_vars(value) ||
+            petta_semantics_value_contains_observable_open_cons(value)) {
+            cetta_runtime_stats_inc(
+                CETTA_RUNTIME_COUNTER_PREPARED_PURE_SCALAR_GUARD_DECLINED);
+            return PREPARED_PURE_GUARD_DECLINED;
+        }
+        arguments[index] = value;
+    }
+
+    bool truth = false;
+    if (!grounded_try_plain_scalar_truth(
+            guard->head, arguments, guard->argument_count, &truth)) {
+        cetta_runtime_stats_inc(
+            CETTA_RUNTIME_COUNTER_PREPARED_PURE_SCALAR_GUARD_DECLINED);
+        return PREPARED_PURE_GUARD_DECLINED;
+    }
+    cetta_runtime_stats_inc(
+        CETTA_RUNTIME_COUNTER_PREPARED_PURE_SCALAR_GUARD_EVALUATED);
+    if (truth != guard->expected_truth) {
+        cetta_runtime_stats_inc(
+            CETTA_RUNTIME_COUNTER_PREPARED_PURE_SCALAR_GUARD_REFUTED);
+        return PREPARED_PURE_GUARD_REFUTED;
+    }
+    return PREPARED_PURE_GUARD_ACCEPTED;
+}
+
 static PreparedPureMatchState prepared_pure_match_bind_pattern(
     CettaPreparedPureProgram *program,
     const PreparedPureBindPattern *descriptor,
@@ -3149,6 +3443,12 @@ static PreparedPureSelectState prepared_pure_consider_clause(
         return PREPARED_PURE_SELECT_NO_MATCH;
     }
     if (matched != PREPARED_PURE_MATCH_MATCHED)
+        return PREPARED_PURE_SELECT_NO_MATCH;
+    PreparedPureGuardState guard =
+        prepared_pure_evaluate_scalar_guard(program, clause);
+    if (guard == PREPARED_PURE_GUARD_DECLINED)
+        return PREPARED_PURE_SELECT_ERROR;
+    if (guard == PREPARED_PURE_GUARD_REFUTED)
         return PREPARED_PURE_SELECT_NO_MATCH;
     if (*selected)
         return PREPARED_PURE_SELECT_AMBIGUOUS;
@@ -4215,7 +4515,8 @@ static bool prepared_pure_program_execute_internal(
                     CettaPreparedPureExpressionViewState state =
                         program->expression_view(source, &view);
                     if (state ==
-                        CETTA_PREPARED_PURE_EXPRESSION_CANONICAL_ONLY) {
+                            CETTA_PREPARED_PURE_EXPRESSION_CANONICAL_ONLY ||
+                        state == CETTA_PREPARED_PURE_EXPRESSION_ZERO) {
                         return prepared_pure_runtime_decline(
                             program,
                             "dynamic dialect form requires canonical evaluation",
@@ -4878,6 +5179,8 @@ void cetta_prepared_pure_program_free(
     free(program->head_buckets);
     free(program->callable_buckets);
     free(program->clauses);
+    free(program->scalar_guards);
+    free(program->scalar_guard_arguments);
     for (size_t index = 0u; index < program->decision_len; index++)
         cetta_match_decision_free(program->decisions[index].selector);
     free(program->decisions);

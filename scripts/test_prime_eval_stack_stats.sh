@@ -391,7 +391,7 @@ done
 
 he_stdout="$probe_dir/he.stdout"
 he_stats="$probe_dir/he.stats"
-"$BIN" --emit-runtime-stats --lang he --profile he-extended \
+"$BIN" --emit-runtime-stats --lang he --profile extended \
     -e '!(+ 1 2)' >"$he_stdout" 2>"$he_stats"
 if [[ $(<"$he_stdout") != '[3]' ]]; then
     echo "FAIL: HE control result changed" >&2

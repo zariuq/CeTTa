@@ -133,6 +133,39 @@ class ControllerDiversityManifestTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "transitions"):
             diversity._qualify_ordinary_erasure(row, ordinary, inline)
 
+    def test_controlled_first_accepts_only_one_source_witness(self) -> None:
+        row = {"id": "absorbing-once"}
+        base = {
+            "stdout": "(answer deep)\n",
+            "aggregate": {
+                "controller_expansions": 1,
+                "controller_answers": 1,
+            },
+        }
+        diversity._qualify(row, base, base, {
+            "stdout": "(answer shallow)\n",
+            "aggregate": {
+                "controller_expansions": 1,
+                "controller_answers": 1,
+            },
+        })
+        with self.assertRaisesRegex(RuntimeError, "source witness"):
+            diversity._qualify(row, base, base, {
+                "stdout": "(answer invented)\n",
+                "aggregate": {
+                    "controller_expansions": 1,
+                    "controller_answers": 1,
+                },
+            })
+        with self.assertRaisesRegex(RuntimeError, "source witness"):
+            diversity._qualify(row, base, base, {
+                "stdout": "(answer deep)\n(answer shallow)\n",
+                "aggregate": {
+                    "controller_expansions": 1,
+                    "controller_answers": 2,
+                },
+            })
+
     def test_printed_result_list_preserves_nested_occurrences(self) -> None:
         self.assertEqual(
             controller_check.metta_list_occurrences(

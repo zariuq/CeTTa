@@ -116,7 +116,61 @@ typedef struct {
      * growth value.
      */
     uint64_t rollback_count;
+    /*
+     * An unobserved write region may share one entrance checkpoint across
+     * consecutive append-only mutations.  `bindings_builder_save` ends the
+     * current segment, so an observed intermediate rollback mark is never
+     * coalesced away.
+     */
+    bool unobserved_write_region_active;
+    bool unobserved_write_region_has_checkpoint;
+    uint32_t unobserved_write_region_entry_mark;
 } BindingsBuilder;
+
+/*
+ * Proof-erased classification of one immutable rule-pattern occurrence.
+ * `source` remains semantic authority; the plan records exactly one node for
+ * each authored occurrence and is valid only for the program snapshot that
+ * owns that source.  Dynamic query structure and the live binding store are
+ * deliberately absent.
+ */
+typedef struct CettaOpenPatternPlan CettaOpenPatternPlan;
+
+/* Contiguous preorder realization of the same source-derived plan.  Each
+ * instruction retains the exact tagged authored Atom occurrence plus only
+ * support/cursor metadata; kind and arity remain available from that Atom,
+ * and the instruction does not point back into the semantic plan tree.
+ * `subtree_span` counts that occurrence and all descendants, so a dynamic
+ * variable may advance over precisely one source subtree without scanning
+ * it. */
+typedef struct {
+    Atom *source;
+    uint64_t variable_mask;
+    uint32_t subtree_span;
+} CettaOpenPatternInstruction;
+
+struct CettaOpenPatternPlan {
+    Atom *source;
+    AtomKind kind;
+    CettaExprLen child_count;
+    const CettaOpenPatternPlan *children;
+    /* Exact subtree support over the equation template's sorted variable
+     * inventory.  Common templates with at most 64 variables receive a
+     * proof-erased bit mask; wider templates retain structural matching but
+     * decline support-directed cycle admission. */
+    const VarId *variable_ids;
+    uint64_t variable_mask;
+    /* Exact support whose source variable occurs at least twice in this
+     * subtree.  This is derived while compiling the immutable source plan;
+     * it admits shared observations only where at least one read can be
+     * eliminated. */
+    uint64_t repeated_variable_mask;
+    /* Populated only on the root returned by the equation template.  Child
+     * plan nodes remain ordinary exact occurrences and are referenced by the
+     * root-owned preorder program. */
+    const CettaOpenPatternInstruction *linear_program;
+    uint32_t linear_program_len;
+};
 
 typedef Atom *(*BindingsRewriteVarFn)(Arena *a, Atom *var, void *ctx);
 typedef bool (*BindingsEpochCoordinateFn)(
@@ -380,7 +434,15 @@ bool      bindings_builder_promote_atoms_to_arena(
 bool      bindings_builder_promote_prime_atoms_to_arena(
               BindingsBuilder *bb, Arena *owner);
 void      bindings_builder_free(BindingsBuilder *bb);
-uint32_t  bindings_builder_save(const BindingsBuilder *bb);
+/* Begin/end one non-nested region whose intermediate physical states are not
+ * observed.  Begin captures the exact entrance mark.  End either publishes
+ * the final state or restores that mark before the region becomes observable;
+ * ordinary saves and rollbacks remain exact internal barriers. */
+bool      bindings_builder_begin_unobserved_write_region(
+              BindingsBuilder *bb);
+void      bindings_builder_end_unobserved_write_region(
+              BindingsBuilder *bb, bool publish);
+uint32_t  bindings_builder_save(BindingsBuilder *bb);
 void      bindings_builder_rollback(BindingsBuilder *bb, uint32_t mark);
 void      bindings_builder_commit(BindingsBuilder *bb);
 /* True when either the current state or a rollback checkpoint carries an
@@ -464,6 +526,9 @@ void bindings_lookup_index_test_clear(Bindings *bindings);
  * production representation.  Returns false when no index is present. */
 bool bindings_lookup_index_test_synced_len(const Bindings *bindings,
                                            uint32_t *synced_len_out);
+bool bindings_lookup_index_test_single_cache_support(
+    const Bindings *bindings, size_t *support_len_out,
+    size_t *capacity_out);
 #endif
 
 /* Rename all variables in atom: $name → $name#suffix.
@@ -503,6 +568,20 @@ bool match_atoms_epoch_builder(Atom *left, Atom *right,
 bool match_atoms_epoch_builder_rule_local(
          Atom *left, Atom *right, BindingsBuilder *bb,
          Arena *a, uint32_t epoch);
+/* The same clause-frame matcher with a source-derived finite plan for the
+ * right rule pattern.  The plan may remove repeated source classification
+ * and source-side cycle bookkeeping, but never supplies query facts or
+ * binding authority.  A mismatched plan fails without changing the caller's
+ * save/rollback contract. */
+bool match_atoms_epoch_builder_rule_local_planned(
+         Atom *left, Atom *right, const CettaOpenPatternPlan *right_plan,
+         BindingsBuilder *bb, Arena *a, uint32_t epoch);
+/* Experimental contiguous realization of the same exact plan.  It is kept
+ * separate from the ordinary planned matcher until a measured physical-cost
+ * predicate earns selection; callers retain the same save/rollback contract. */
+bool match_atoms_epoch_builder_rule_local_linear(
+         Atom *left, Atom *right, const CettaOpenPatternPlan *right_plan,
+         BindingsBuilder *bb, Arena *a, uint32_t epoch);
 /* Match an activation-local source term without first materializing the
  * complete substituted term.  Variables in `left_original` are interpreted
  * through `left_epoch` and the binding suffix beginning at
@@ -549,6 +628,14 @@ bool match_atoms_dense_epoch_view_builder_rule_local(
          Atom *left_original, const BindingsDenseEpochFrame *left_frame,
          Atom *right_original, BindingsBuilder *bb, Arena *a,
          uint32_t right_epoch);
+bool match_atoms_dense_epoch_view_builder_rule_local_planned(
+         Atom *left_original, const BindingsDenseEpochFrame *left_frame,
+         Atom *right_original, const CettaOpenPatternPlan *right_plan,
+         BindingsBuilder *bb, Arena *a, uint32_t right_epoch);
+bool match_atoms_dense_epoch_view_builder_rule_local_linear(
+         Atom *left_original, const BindingsDenseEpochFrame *left_frame,
+         Atom *right_original, const CettaOpenPatternPlan *right_plan,
+         BindingsBuilder *bb, Arena *a, uint32_t right_epoch);
 /* Leaf-patch view (env CETTA_LEAF_PATCH_VIEW=1, OFF by default). */
 bool match_leaf_patch_view_enabled(void);
 /* Positional bind for a flat linear pattern (lhs) vs a non-variable-arg query;

@@ -8986,6 +8986,7 @@ static EquationMatchDecisionCacheSlot *equation_match_decision_lookup(
 
     CettaMatchDecision *decision = cetta_match_decision_compile(
         cursor.read, semantics, clauses, count, mode, 0u,
+        cetta_match_decision_realization_from_process(),
         NULL, NULL);
     free(clauses);
     if (!decision)
@@ -21376,6 +21377,30 @@ static void eval_for_caller(Space *s, Arena *a, Atom *type, Atom *atom, int fuel
     outcome_set_free(&inner);
 }
 
+/* An effective prefix synthesized by the caller remains live while the
+ * nested evaluator runs and is read again when its outcomes are published.
+ * Register that owned carrier explicitly; otherwise a moving collection in
+ * the child can leave its logical Atom pointers naming the retired survivor
+ * arena.  Borrowed prefixes retain their existing owner's root instead. */
+static void eval_for_caller_with_owned_prefix(
+    Space *s, Arena *a, Atom *type, Atom *atom, int fuel,
+    const Bindings *prefix, Bindings *owned_prefix,
+    bool preserve_bindings, OutcomeSet *os) {
+    if (prefix != owned_prefix) {
+        eval_for_caller(s, a, type, atom, fuel, prefix,
+                        preserve_bindings, os);
+        return;
+    }
+
+    __attribute__((cleanup(eval_gc_root_frame_leave)))
+    EvalGcRootFrame prefix_root = {0};
+    eval_gc_root_frame_enter(&prefix_root, NULL, owned_prefix, NULL);
+    /* The only carrier retained by this helper is represented above. */
+    eval_gc_root_frame_suspend_precisely(&prefix_root);
+    eval_for_caller(s, a, type, atom, fuel, prefix,
+                    preserve_bindings, os);
+}
+
 bool eval_petta_from_lib_prolog(
     Arena *arena, Atom *expression, ResultSet *results) {
     if (!arena || !expression || !results ||
@@ -21785,7 +21810,8 @@ eval_for_current_caller(Space *s, Arena *a, Atom *type, Atom *atom,
         if (!bindings_effective_merge(&merged, &effective,
                                       outer_env, prefix, true))
             return;
-        eval_for_caller(s, a, type, atom, fuel, effective, true, os);
+        eval_for_caller_with_owned_prefix(
+            s, a, type, atom, fuel, effective, &merged, true, os);
         if (effective == &merged)
             bindings_free(&merged);
         return;
@@ -21795,7 +21821,8 @@ eval_for_current_caller(Space *s, Arena *a, Atom *type, Atom *atom,
         const Bindings *effective = NULL;
         if (!bindings_effective_merge(&merged, &effective, outer_env, prefix, true))
             return;
-        eval_for_caller(s, a, type, atom, fuel, effective, false, os);
+        eval_for_caller_with_owned_prefix(
+            s, a, type, atom, fuel, effective, &merged, false, os);
         if (effective == &merged)
             bindings_free(&merged);
         return;
@@ -32610,14 +32637,19 @@ static bool petta_eval_machine_semantic_authority_token(
         foreign = cetta_lib_prolog_read_token(
             context->library_context->lib_prolog);
     }
+    uint64_t translator_revision = context->library_context
+        ? cetta_library_petta_translator_rule_revision(
+              context->library_context)
+        : 0u;
     *token = (PettaMachineAuthorityToken){
         .words = {
             foreign.instance_id,
             foreign.revision,
             context->semantic_authority_epoch,
             context->transaction ? UINT64_C(1) : UINT64_C(0),
+            translator_revision,
         },
-        .length = 4u,
+        .length = 5u,
     };
     return true;
 }
@@ -32637,6 +32669,10 @@ static CettaBranchAdmission petta_eval_machine_admit_branch_capture(
         foreign = cetta_lib_prolog_read_token(
             context->library_context->lib_prolog);
     }
+    uint64_t translator_revision = context->library_context
+        ? cetta_library_petta_translator_rule_revision(
+              context->library_context)
+        : 0u;
     return (CettaBranchAdmission){
         .status = CETTA_BRANCH_ADMISSION_AVAILABLE,
         .capacity = CETTA_BRANCH_CAPTURE_MULTI_SHOT,
@@ -32649,8 +32685,9 @@ static CettaBranchAdmission petta_eval_machine_admit_branch_capture(
                 foreign.instance_id,
                 foreign.revision,
                 space_global_mutation_epoch(),
+                translator_revision,
             },
-            .length = 7u,
+            .length = 8u,
         },
     };
 }
@@ -33051,10 +33088,21 @@ static bool petta_eval_machine_translator_rule_set(
      * a speculative transaction until translator-state deltas participate in
      * the transaction commit/rollback protocol.
      */
-    return eval_context && !eval_context->transaction &&
-           eval_context->library_context &&
-           cetta_library_petta_translator_rule_set(
-               eval_context->library_context, head, enabled);
+    if (!eval_context || eval_context->transaction ||
+        !eval_context->library_context) {
+        return false;
+    }
+    uint64_t revision_before =
+        cetta_library_petta_translator_rule_revision(
+            eval_context->library_context);
+    bool updated = cetta_library_petta_translator_rule_set(
+        eval_context->library_context, head, enabled);
+    uint64_t revision_after =
+        cetta_library_petta_translator_rule_revision(
+            eval_context->library_context);
+    if (updated && revision_before != revision_after)
+        petta_eval_machine_advance_semantic_authority(eval_context);
+    return updated;
 }
 
 static bool petta_eval_machine_tabled_relation_contains(
@@ -35881,6 +35929,8 @@ static bool petta_eval_machine_try(
         .permit_transition = frontier_admitted
             ? petta_eval_machine_permit_controller_transition
             : petta_eval_machine_permit_transition,
+        .unlimited_transition_budget =
+            fuel < 0 && context.diagnostic_transition_limit == 0u,
         .classify = petta_eval_machine_classify_host,
         .callability_authority_token =
             petta_eval_machine_semantic_authority_token,
@@ -35933,6 +35983,8 @@ static bool petta_eval_machine_try(
             eval_current_language_id() == CETTA_LANGUAGE_PRIME
                 ? petta_eval_machine_prime_clause_result_payload_observed
                 : NULL,
+        .clause_activation_relation_admissible =
+            petta_eval_machine_tabled_relation_admissible,
         .translator_rule_contains =
             petta_eval_machine_translator_rule_contains,
         .translator_rule_set =
@@ -36621,6 +36673,10 @@ static bool petta_eval_machine_try(
                 " pure_grounded_slot_frame_direct_dispatches=%" PRIu64
                 " relation_slot_frame_entries=%" PRIu64
                 " relation_slot_operands_reused=%" PRIu64
+                " activation_scalar_argument_segment_attempts=%" PRIu64
+                " activation_scalar_argument_segment_commits=%" PRIu64
+                " activation_scalar_argument_segment_declines=%" PRIu64
+                " activation_scalar_argument_segment_operations=%" PRIu64
                 " atom_copy_calls=%" PRIu64
                 " atom_copy_allocated_bytes=%" PRIu64
                 " atom_copy_query_calls=%" PRIu64
@@ -36807,6 +36863,10 @@ static bool petta_eval_machine_try(
                 stats.pure_grounded_slot_frame_direct_dispatches,
                 stats.relation_slot_frame_entries,
                 stats.relation_slot_operands_reused,
+                stats.activation_scalar_argument_segment_attempts,
+                stats.activation_scalar_argument_segment_commits,
+                stats.activation_scalar_argument_segment_declines,
+                stats.activation_scalar_argument_segment_operations,
                 stats.atom_copy_calls,
                 stats.atom_copy_allocated_bytes,
                 stats.atom_copy_query_calls,
@@ -37357,6 +37417,8 @@ petta_prepared_pure_expression_view(
             g_library_context, head, arity)) {
         return CETTA_PREPARED_PURE_EXPRESSION_DECLINE;
     }
+    if (head == g_builtin_syms.empty_form && arity == 0u)
+        return CETTA_PREPARED_PURE_EXPRESSION_ZERO;
     PeTTaForm form = petta_semantics_form(head);
     /* These unary forms all lower to their sole child in
      * petta_semantics_lower.  The prepared view must preserve that same

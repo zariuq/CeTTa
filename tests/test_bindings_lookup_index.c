@@ -1,7 +1,9 @@
 #include "atom.h"
 #include "match.h"
+#include "stats.h"
 #include "term_universe.h"
 #include "variant_shape.h"
+#include "tests/test_runtime_stats_stubs.h"
 
 #include <math.h>
 #include <stdbool.h>
@@ -122,12 +124,75 @@ static void test_internal_tag_structural_summary(Arena *arena) {
           "missing structural facts conservatively retain the exact walk");
 }
 
+static Atom *published_decision_int(Arena *arena, int64_t value) {
+    Atom *local = atom_int(arena, value);
+    return arena && arena->hashcons
+        ? hashcons_get(arena->hashcons, local) : local;
+}
+
+static Atom *published_decision_geometry(
+        Arena *arena, unsigned geometry, bool mismatch) {
+    Atom *value = atom_symbol(
+        arena, mismatch ? "published-other" : "published-leaf");
+    if (!value)
+        return NULL;
+    switch (geometry) {
+    case 0u:
+        for (unsigned depth = 0u; depth < 8u; depth++)
+            value = atom_expr2(
+                arena, atom_symbol(arena, "PublishedUnary"), value);
+        return value;
+    case 1u: {
+        Atom *left_branch = atom_expr3(
+            arena, atom_symbol(arena, "PublishedBranch"),
+            published_decision_int(arena, 1), value);
+        Atom *right_branch = atom_expr3(
+            arena, atom_symbol(arena, "PublishedBranch"),
+            published_decision_int(arena, 2),
+            atom_symbol(arena, "published-anchor"));
+        return atom_expr3(
+            arena, atom_symbol(arena, "PublishedBalanced"),
+            left_branch, right_branch);
+    }
+    case 2u:
+        for (unsigned depth = 0u; depth < 6u; depth++)
+            value = atom_expr3(
+                arena, atom_symbol(arena, "PublishedLeftSpine"),
+                value, published_decision_int(arena, (int64_t)depth));
+        return value;
+    case 3u:
+        for (unsigned depth = 0u; depth < 6u; depth++)
+            value = atom_expr3(
+                arena, atom_symbol(arena, "PublishedRightSpine"),
+                published_decision_int(arena, (int64_t)depth), value);
+        return value;
+    case 4u:
+        for (unsigned depth = 0u; depth < 5u; depth++) {
+            Atom *items[4] = {
+                atom_symbol(arena, "PublishedTernary"),
+                published_decision_int(arena, (int64_t)depth),
+                value,
+                atom_symbol(arena, (depth & 1u) ? "odd" : "even"),
+            };
+            value = atom_expr(arena, items, 4u);
+        }
+        return value;
+    default:
+        return NULL;
+    }
+}
+
 static void test_epoch_identity_and_publication(Arena *ordinary_arena) {
     HashConsTable hashcons;
     hashcons_init(&hashcons);
     Arena shared_arena;
     arena_init(&shared_arena);
     arena_set_hashcons(&shared_arena, &hashcons);
+    HashConsTable peer_hashcons;
+    hashcons_init(&peer_hashcons);
+    Arena peer_arena;
+    arena_init(&peer_arena);
+    arena_set_hashcons(&peer_arena, &peer_hashcons);
 
     Atom *head = atom_symbol(&shared_arena, "IdentityProbe");
     Atom *nan_left = hashcons_get(
@@ -194,6 +259,83 @@ static void test_epoch_identity_and_publication(Arena *ordinary_arena) {
     bool values_ready = bindings_builder_init(&values, NULL);
     uint32_t values_mark = values_ready
         ? bindings_builder_save(&values) : 0u;
+    test_runtime_stats_reset_counters();
+    bool published_decisions_exact = values_ready;
+    unsigned published_geometries_completed = 0u;
+    for (unsigned geometry = 0u;
+         geometry < 5u && published_decisions_exact; geometry++) {
+        Atom *left = published_decision_geometry(
+            &shared_arena, geometry, false);
+        Atom *equal = published_decision_geometry(
+            &peer_arena, geometry, false);
+        Atom *unequal = published_decision_geometry(
+            &peer_arena, geometry, true);
+        bool nodes_certified = left && equal && unequal &&
+            left != equal && left->arena_id == 0u &&
+            equal->arena_id == 0u && unequal->arena_id == 0u;
+        bool equal_match = nodes_certified &&
+            match_atoms_epoch_view_builder(
+                left, 3u, 0u, equal, &values, &shared_arena, 5u) &&
+            bindings_builder_save(&values) == values_mark;
+        bool unequal_rejected = equal_match &&
+            !match_atoms_epoch_view_builder(
+                left, 3u, 0u, unequal, &values, &shared_arena, 5u) &&
+            bindings_builder_save(&values) == values_mark;
+        published_decisions_exact = unequal_rejected;
+        if (!published_decisions_exact) {
+            fprintf(stderr,
+                    "published geometry %u failed: certified=%u equal=%u unequal-rejected=%u arenas=%u/%u/%u\n",
+                    geometry, nodes_certified ? 1u : 0u,
+                    equal_match ? 1u : 0u, unequal_rejected ? 1u : 0u,
+                    left ? left->arena_id : UINT32_MAX,
+                    equal ? equal->arena_id : UINT32_MAX,
+                    unequal ? unequal->arena_id : UINT32_MAX);
+            if (left && left->kind == ATOM_EXPR) {
+                for (CettaExprIndex index = 0u;
+                     index < left->expr.len; index++) {
+                    Atom *child = left->expr.elems[index];
+                    fprintf(stderr,
+                            "  left child %llu: arena=%u flags=0x%x kind=%d\n",
+                            (unsigned long long)index,
+                            child ? child->arena_id : UINT32_MAX,
+                            child ? child->flags : 0u,
+                            child ? (int)child->kind : -1);
+                    if (child && child->kind == ATOM_EXPR) {
+                        for (CettaExprIndex nested = 0u;
+                             nested < child->expr.len; nested++) {
+                            Atom *grandchild = child->expr.elems[nested];
+                            fprintf(stderr,
+                                    "    grandchild %llu: arena=%u flags=0x%x kind=%d\n",
+                                    (unsigned long long)nested,
+                                    grandchild ? grandchild->arena_id : UINT32_MAX,
+                                    grandchild ? grandchild->flags : 0u,
+                                    grandchild ? (int)grandchild->kind : -1);
+                        }
+                    }
+                }
+            }
+        }
+        if (published_decisions_exact)
+            published_geometries_completed++;
+    }
+    uint64_t published_attempts = test_runtime_stats_counter(
+        CETTA_RUNTIME_COUNTER_MATCH_CLOSED_EXPRESSION_DECISION_ATTEMPT);
+    uint64_t published_equal = test_runtime_stats_counter(
+        CETTA_RUNTIME_COUNTER_MATCH_CLOSED_EXPRESSION_DECISION_EQUAL);
+    uint64_t published_unequal = test_runtime_stats_counter(
+        CETTA_RUNTIME_COUNTER_MATCH_CLOSED_EXPRESSION_DECISION_UNEQUAL);
+    if (!published_decisions_exact || published_attempts != 10u ||
+        published_equal != 5u || published_unequal != 5u) {
+        fprintf(stderr,
+                "published decision receipt: geometries=%u attempts=%llu equal=%llu unequal=%llu\n",
+                published_geometries_completed,
+                (unsigned long long)published_attempts,
+                (unsigned long long)published_equal,
+                (unsigned long long)published_unequal);
+    }
+    CHECK(published_decisions_exact && published_attempts == 10u &&
+              published_equal == 5u && published_unequal == 5u,
+          "published immutable DAGs admit exact closed-expression decisions across five geometries");
     bool shared_nan_matches = values_ready && shared_nan &&
         shared_nan->arena_id == 0u &&
         (shared_nan->flags & ATOM_FLAG_HASHCONS_ELIGIBLE) != 0u &&
@@ -257,6 +399,8 @@ static void test_epoch_identity_and_publication(Arena *ordinary_arena) {
 
     arena_free(&shared_arena);
     hashcons_free(&hashcons);
+    arena_free(&peer_arena);
+    hashcons_free(&peer_hashcons);
 }
 
 static void test_incremental_occurs_large_frontier(Arena *arena) {
@@ -631,6 +775,103 @@ int main(void) {
               inner_rolled_back && root_rolled_back,
           "write and restore revisions distinguish rollback ABA exactly");
     bindings_builder_take(&branch, &clone);
+
+    BindingsBuilder coalesced;
+    bool coalesced_ready = bindings_builder_init(&coalesced, NULL);
+    uint32_t coalesced_root = coalesced_ready
+        ? bindings_builder_save(&coalesced) : 0u;
+    bool coalesced_entered = coalesced_ready &&
+        bindings_builder_begin_unobserved_write_region(&coalesced);
+    VarId coalesced_a = test_id(2100u);
+    VarId coalesced_b = test_id(2101u);
+    VarId coalesced_c = test_id(2102u);
+    VarId coalesced_d = test_id(2103u);
+    VarId coalesced_e = test_id(2104u);
+    VarId coalesced_f = test_id(2105u);
+    bool coalesced_first_segment = coalesced_entered &&
+        bindings_builder_add_id_fresh(
+            &coalesced, coalesced_a, SYMBOL_ID_NONE,
+            atom_int(&arena, 2100)) &&
+        bindings_builder_add_id_fresh(
+            &coalesced, coalesced_b, SYMBOL_ID_NONE,
+            atom_int(&arena, 2101)) &&
+        bindings_builder_add_id_fresh(
+            &coalesced, coalesced_c, SYMBOL_ID_NONE,
+            atom_int(&arena, 2102)) &&
+        coalesced.trail_len == coalesced_root + 1u &&
+        binding_is_int(&coalesced.current, coalesced_a, 2100) &&
+        binding_is_int(&coalesced.current, coalesced_b, 2101) &&
+        binding_is_int(&coalesced.current, coalesced_c, 2102);
+    CHECK(coalesced_first_segment,
+          "one unobserved checkpoint covers three exact binding writes");
+    CHECK(!bindings_builder_begin_unobserved_write_region(&coalesced),
+          "unobserved checkpoint regions reject ambiguous nesting");
+
+    uint32_t coalesced_middle = bindings_builder_save(&coalesced);
+    bool coalesced_second_segment =
+        bindings_builder_add_id_fresh(
+            &coalesced, coalesced_d, SYMBOL_ID_NONE,
+            atom_int(&arena, 2103)) &&
+        bindings_builder_add_id_fresh(
+            &coalesced, coalesced_e, SYMBOL_ID_NONE,
+            atom_int(&arena, 2104)) &&
+        coalesced.trail_len == coalesced_middle + 1u;
+    CHECK(coalesced_second_segment,
+          "an observed save starts one distinct checkpoint segment");
+    bindings_builder_rollback(&coalesced, coalesced_middle);
+    CHECK(binding_is_int(&coalesced.current, coalesced_a, 2100) &&
+              binding_is_int(&coalesced.current, coalesced_b, 2101) &&
+              binding_is_int(&coalesced.current, coalesced_c, 2102) &&
+              bindings_lookup_id(&coalesced.current, coalesced_d) == NULL &&
+              bindings_lookup_id(&coalesced.current, coalesced_e) == NULL,
+          "observed middle rollback preserves only the earlier segment");
+    CHECK(bindings_builder_add_id_fresh(
+              &coalesced, coalesced_f, SYMBOL_ID_NONE,
+              atom_int(&arena, 2105)) &&
+              coalesced.trail_len == coalesced_middle + 1u,
+          "a post-rollback write opens a fresh exact segment");
+
+    BindingsBuilder coalesced_clone;
+    bool coalesced_clone_ready =
+        bindings_builder_clone(&coalesced_clone, &coalesced);
+    CHECK(coalesced_clone_ready &&
+              !coalesced_clone.unobserved_write_region_active &&
+              !coalesced_clone.unobserved_write_region_has_checkpoint &&
+              coalesced_clone.unobserved_write_region_entry_mark == 0u &&
+              binding_is_int(
+                  &coalesced_clone.current, coalesced_f, 2105),
+          "a fork publishes the current meaning outside the private region");
+    if (coalesced_clone_ready)
+        bindings_builder_free(&coalesced_clone);
+
+    bindings_builder_end_unobserved_write_region(&coalesced, true);
+    bindings_builder_rollback(&coalesced, coalesced_root);
+    CHECK(coalesced.trail_len == coalesced_root &&
+              bindings_lookup_id(&coalesced.current, coalesced_a) == NULL &&
+              bindings_lookup_id(&coalesced.current, coalesced_b) == NULL &&
+              bindings_lookup_id(&coalesced.current, coalesced_c) == NULL &&
+              bindings_lookup_id(&coalesced.current, coalesced_f) == NULL,
+          "the entrance checkpoint restores the complete region exactly");
+    bool rejected_region = coalesced_ready &&
+        bindings_builder_begin_unobserved_write_region(&coalesced);
+    bool rejected_region_writes = rejected_region &&
+        bindings_builder_add_id_fresh(
+            &coalesced, coalesced_a, SYMBOL_ID_NONE,
+            atom_int(&arena, 2110)) &&
+        bindings_builder_add_id_fresh(
+            &coalesced, coalesced_b, SYMBOL_ID_NONE,
+            atom_int(&arena, 2111));
+    if (rejected_region)
+        bindings_builder_end_unobserved_write_region(&coalesced, false);
+    CHECK(rejected_region_writes &&
+              !coalesced.unobserved_write_region_active &&
+              coalesced.unobserved_write_region_entry_mark == 0u &&
+              coalesced.trail_len == coalesced_root &&
+              bindings_lookup_id(&coalesced.current, coalesced_a) == NULL &&
+              bindings_lookup_id(&coalesced.current, coalesced_b) == NULL,
+          "a rejected unobserved region restores its captured entrance before exit");
+    if (coalesced_ready)
+        bindings_builder_free(&coalesced);
 
 #ifdef CETTA_TEST_HOOKS
     Bindings lazy_index_base;
@@ -2660,8 +2901,21 @@ int main(void) {
             &reach_rollback, reach_rollback_terminal,
             memo_vars[0u]) &&
         !bindings_has_loop(&reach_rollback.current);
+    size_t reach_cache_support = 0u;
+    size_t reach_cache_capacity = 0u;
+    bool reach_cache_support_recorded = !lookup_index_expected ||
+        (bindings_lookup_index_test_single_cache_support(
+             &reach_rollback.current, &reach_cache_support,
+             &reach_cache_capacity) &&
+         reach_cache_support > 0u &&
+         reach_cache_support < reach_cache_capacity);
     bindings_builder_rollback(
         &reach_rollback, reach_rollback_mark);
+    bool reach_cache_support_cleared = !lookup_index_expected ||
+        (bindings_lookup_index_test_single_cache_support(
+             &reach_rollback.current, &reach_cache_support,
+             &reach_cache_capacity) &&
+         reach_cache_support == 0u);
     bool replacement_suffix_cyclic = first_suffix_acyclic &&
         bindings_builder_add_var_fresh(
             &reach_rollback, memo_vars[23u],
@@ -2670,8 +2924,10 @@ int main(void) {
             &reach_rollback, reach_rollback_terminal,
             memo_vars[0u]) &&
         bindings_has_loop(&reach_rollback.current);
-    CHECK(replacement_suffix_cyclic,
-          "single-support roots are invalidated before rollback reuses a suffix length");
+    CHECK(reach_cache_support_recorded &&
+              reach_cache_support_cleared &&
+              replacement_suffix_cyclic,
+          "rollback invalidates exactly recorded single-support roots before suffix reuse");
     if (reach_rollback_initialized)
         bindings_builder_free(&reach_rollback);
 

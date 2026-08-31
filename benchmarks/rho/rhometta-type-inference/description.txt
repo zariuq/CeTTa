@@ -32,6 +32,6 @@ WHAT YOU SEE
   derives the same proofs (ACT6 in the file).
 
 RUN
-  ./cetta --quiet --profile he-extended --lang he benchmarks/rho/rhometta-type-inference/example.metta
+  ./cetta --quiet --profile extended --lang he benchmarks/rho/rhometta-type-inference/example.metta
 
 Expect: every line tagged PASS, no Error.

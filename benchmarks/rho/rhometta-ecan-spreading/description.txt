@@ -28,5 +28,5 @@ omitted here; full ECAN with mutable per-atom state belongs to the later
 actor-owned-space slice of rhometta.
 
 Run:
-  ./cetta --profile he-extended --lang he \
+  ./cetta --profile extended --lang he \
       benchmarks/rho/rhometta-ecan-spreading/example.metta

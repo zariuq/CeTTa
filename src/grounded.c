@@ -1234,6 +1234,118 @@ static bool grounded_is_plain_number(const Atom *atom) {
             atom->ground.gkind == GV_FLOAT);
 }
 
+bool grounded_plain_scalar_from_atom(
+        const Atom *atom, CettaPlainScalar *value_out) {
+    if (!atom || !value_out || atom->kind != ATOM_GROUNDED)
+        return false;
+    switch (atom->ground.gkind) {
+    case GV_INT:
+        value_out->kind = CETTA_PLAIN_SCALAR_INT;
+        value_out->as.integer = atom->ground.ival;
+        return true;
+    case GV_FLOAT:
+        value_out->kind = CETTA_PLAIN_SCALAR_FLOAT;
+        value_out->as.floating = atom->ground.fval;
+        return true;
+    case GV_BOOL:
+        value_out->kind = CETTA_PLAIN_SCALAR_BOOL;
+        value_out->as.boolean = atom->ground.bval;
+        return true;
+    default:
+        return false;
+    }
+}
+
+Atom *grounded_plain_scalar_materialize(
+        Arena *arena, const CettaPlainScalar *value) {
+    if (!arena || !value)
+        return NULL;
+    switch (value->kind) {
+    case CETTA_PLAIN_SCALAR_INT:
+        return atom_int(arena, value->as.integer);
+    case CETTA_PLAIN_SCALAR_FLOAT:
+        return atom_float(arena, value->as.floating);
+    case CETTA_PLAIN_SCALAR_BOOL:
+        return atom_bool(arena, value->as.boolean);
+    }
+    return NULL;
+}
+
+static bool grounded_plain_scalar_is_number(
+        const CettaPlainScalar *value) {
+    return value &&
+        (value->kind == CETTA_PLAIN_SCALAR_INT ||
+         value->kind == CETTA_PLAIN_SCALAR_FLOAT);
+}
+
+static bool grounded_plain_scalar_strict_equal(
+        const CettaPlainScalar *left,
+        const CettaPlainScalar *right) {
+    if (!left || !right || left->kind != right->kind)
+        return false;
+    switch (left->kind) {
+    case CETTA_PLAIN_SCALAR_INT:
+        return left->as.integer == right->as.integer;
+    case CETTA_PLAIN_SCALAR_FLOAT:
+        return left->as.floating == right->as.floating;
+    case CETTA_PLAIN_SCALAR_BOOL:
+        return left->as.boolean == right->as.boolean;
+    }
+    return false;
+}
+
+static double grounded_plain_scalar_as_double(
+        const CettaPlainScalar *value) {
+    return value->kind == CETTA_PLAIN_SCALAR_FLOAT
+        ? value->as.floating
+        : (double)value->as.integer;
+}
+
+static bool grounded_spelling_has_guest_owner(SymbolId head_id) {
+    return abt_is_op(head_id) ||
+        (prime_semantics_is_op_id &&
+         prime_semantics_is_op_id(head_id)) ||
+        (he_typing_is_op_id && he_typing_is_op_id(head_id));
+}
+
+static bool grounded_is_plain_scalar_truth_operator(
+        SymbolId head_id, uint32_t nargs) {
+    if (head_id == g_builtin_syms.op_not)
+        return nargs == 1u;
+    return nargs == 2u &&
+        (head_id == g_builtin_syms.op_eq ||
+         head_id == g_builtin_syms.op_and ||
+         head_id == g_builtin_syms.op_or ||
+         head_id == g_builtin_syms.op_xor ||
+         head_id == g_builtin_syms.op_lt ||
+         head_id == g_builtin_syms.op_gt ||
+         head_id == g_builtin_syms.op_le ||
+         head_id == g_builtin_syms.op_ge ||
+         head_id == g_builtin_syms.numeric_eq);
+}
+
+static bool grounded_is_plain_scalar_arithmetic_operator(
+        SymbolId head_id, uint32_t nargs) {
+    return nargs == 2u &&
+        (head_id == g_builtin_syms.op_plus ||
+         head_id == g_builtin_syms.op_minus ||
+         head_id == g_builtin_syms.op_mul);
+}
+
+bool grounded_is_plain_scalar_tree_operator(
+        Atom *head, uint32_t nargs) {
+    if (!head || head->kind != ATOM_SYMBOL) {
+        return false;
+    }
+    /* Plans are compiled independently of the dynamic dialect owner.  This
+     * records only source spelling and arity; the exact evaluators below
+     * repeat guest-precedence admission at the execution boundary. */
+    return grounded_is_plain_scalar_truth_operator(
+               head->sym_id, nargs) ||
+        grounded_is_plain_scalar_arithmetic_operator(
+            head->sym_id, nargs);
+}
+
 static bool grounded_plain_scalar_truth_common(
         SymbolId head_id, Atom **args, uint32_t nargs,
         bool *truth_out) {
@@ -1332,14 +1444,149 @@ bool grounded_try_plain_scalar_truth(
     SymbolId head_id = head->sym_id;
     /* grounded_dispatch gives guest operators first refusal.  Mirror that
      * precedence and decline whenever a dialect owns this spelling. */
-    if (abt_is_op(head_id) ||
-        (prime_semantics_is_op_id &&
-         prime_semantics_is_op_id(head_id)) ||
-        (he_typing_is_op_id && he_typing_is_op_id(head_id))) {
+    if (grounded_spelling_has_guest_owner(head_id) ||
+        !grounded_is_plain_scalar_truth_operator(head_id, nargs)) {
         return false;
     }
     return grounded_plain_scalar_truth_common(
         head_id, args, nargs, truth_out);
+}
+
+bool grounded_try_plain_scalar_arithmetic(
+        Arena *arena, Atom *head, Atom **args, uint32_t nargs,
+        Atom **value_out) {
+    if (value_out)
+        *value_out = NULL;
+    if (!arena || !head || head->kind != ATOM_SYMBOL || !args ||
+        !value_out || nargs != 2u ||
+        grounded_spelling_has_guest_owner(head->sym_id)) {
+        return false;
+    }
+    SymbolId head_id = head->sym_id;
+    if (!grounded_is_plain_scalar_arithmetic_operator(
+            head_id, nargs) ||
+        !grounded_is_plain_number(args[0]) ||
+        !grounded_is_plain_number(args[1])) {
+        return false;
+    }
+    Atom *value = grounded_dispatch(arena, head, args, nargs);
+    if (!grounded_is_plain_number(value))
+        return false;
+    *value_out = value;
+    return true;
+}
+
+bool grounded_try_plain_scalar_operation(
+        Atom *head, const CettaPlainScalar *arguments, uint32_t nargs,
+        CettaPlainScalar *value_out) {
+    if (!head || head->kind != ATOM_SYMBOL || !arguments || !value_out ||
+        grounded_spelling_has_guest_owner(head->sym_id)) {
+        return false;
+    }
+    SymbolId head_id = head->sym_id;
+
+    if (grounded_is_plain_scalar_arithmetic_operator(head_id, nargs)) {
+        if (nargs != 2u ||
+            !grounded_plain_scalar_is_number(&arguments[0]) ||
+            !grounded_plain_scalar_is_number(&arguments[1])) {
+            return false;
+        }
+        if (arguments[0].kind == CETTA_PLAIN_SCALAR_INT &&
+            arguments[1].kind == CETTA_PLAIN_SCALAR_INT) {
+            __int128 result = head_id == g_builtin_syms.op_plus
+                ? (__int128)arguments[0].as.integer +
+                    (__int128)arguments[1].as.integer
+                : head_id == g_builtin_syms.op_minus
+                    ? (__int128)arguments[0].as.integer -
+                        (__int128)arguments[1].as.integer
+                    : (__int128)arguments[0].as.integer *
+                        (__int128)arguments[1].as.integer;
+            if (result < INT64_MIN || result > INT64_MAX)
+                return false;
+            value_out->kind = CETTA_PLAIN_SCALAR_INT;
+            value_out->as.integer = (int64_t)result;
+            return true;
+        }
+        double left = grounded_plain_scalar_as_double(&arguments[0]);
+        double right = grounded_plain_scalar_as_double(&arguments[1]);
+        value_out->kind = CETTA_PLAIN_SCALAR_FLOAT;
+        value_out->as.floating = head_id == g_builtin_syms.op_plus
+            ? left + right
+            : head_id == g_builtin_syms.op_minus
+                ? left - right
+                : left * right;
+        return true;
+    }
+
+    if (!grounded_is_plain_scalar_truth_operator(head_id, nargs))
+        return false;
+    value_out->kind = CETTA_PLAIN_SCALAR_BOOL;
+    if (head_id == g_builtin_syms.op_eq) {
+        if (nargs != 2u)
+            return false;
+        value_out->as.boolean = grounded_plain_scalar_strict_equal(
+            &arguments[0], &arguments[1]);
+        return true;
+    }
+    if (head_id == g_builtin_syms.op_not) {
+        if (nargs != 1u ||
+            arguments[0].kind != CETTA_PLAIN_SCALAR_BOOL) {
+            return false;
+        }
+        value_out->as.boolean = !arguments[0].as.boolean;
+        return true;
+    }
+    if (head_id == g_builtin_syms.op_and ||
+        head_id == g_builtin_syms.op_or ||
+        head_id == g_builtin_syms.op_xor) {
+        if (nargs != 2u ||
+            arguments[0].kind != CETTA_PLAIN_SCALAR_BOOL ||
+            arguments[1].kind != CETTA_PLAIN_SCALAR_BOOL) {
+            return false;
+        }
+        bool left = arguments[0].as.boolean;
+        bool right = arguments[1].as.boolean;
+        value_out->as.boolean = head_id == g_builtin_syms.op_and
+            ? left && right
+            : head_id == g_builtin_syms.op_or
+                ? left || right
+                : left != right;
+        return true;
+    }
+    if (nargs != 2u ||
+        !grounded_plain_scalar_is_number(&arguments[0]) ||
+        !grounded_plain_scalar_is_number(&arguments[1])) {
+        return false;
+    }
+    bool floating =
+        arguments[0].kind == CETTA_PLAIN_SCALAR_FLOAT ||
+        arguments[1].kind == CETTA_PLAIN_SCALAR_FLOAT;
+    if (!floating) {
+        int64_t left = arguments[0].as.integer;
+        int64_t right = arguments[1].as.integer;
+        value_out->as.boolean = head_id == g_builtin_syms.op_lt
+            ? left < right
+            : head_id == g_builtin_syms.op_gt
+                ? left > right
+                : head_id == g_builtin_syms.op_le
+                    ? left <= right
+                    : head_id == g_builtin_syms.op_ge
+                        ? left >= right
+                        : left == right;
+        return true;
+    }
+    double left = grounded_plain_scalar_as_double(&arguments[0]);
+    double right = grounded_plain_scalar_as_double(&arguments[1]);
+    value_out->as.boolean = head_id == g_builtin_syms.op_lt
+        ? left < right
+        : head_id == g_builtin_syms.op_gt
+            ? left > right
+            : head_id == g_builtin_syms.op_le
+                ? left <= right
+                : head_id == g_builtin_syms.op_ge
+                    ? left >= right
+                    : left == right;
+    return true;
 }
 
 static Atom *grounded_bool_bad_arg(Arena *a, Atom *head, Atom **args, uint32_t nargs,

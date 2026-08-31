@@ -192,6 +192,10 @@ typedef struct {
      * resume when its caller restores a budget or clears cancellation.
      */
     bool (*permit_transition)(void *context);
+    /* True only when compiled, bounded pure instructions do not consume a
+     * finite transition purse.  A metered host leaves this false so clause
+     * selection retains the canonical transition boundary. */
+    bool unlimited_transition_budget;
     PettaMachineHostMode (*classify)(
         void *context, Space *space, Atom *expression);
     /* Exact mutable authority for deciding whether an expression root is
@@ -337,6 +341,12 @@ typedef struct {
      * activation and outer-environment substitution before recording the
      * occurrence IDs; the callback must then ignore the result payload. */
     bool (*clause_result_payload_observed)(void *context);
+    /* A delayed clause-body view may outlive the immediate match step.
+     * The host must therefore prove the defining relation effect-free at
+     * the pinned Space revision; absence or refusal selects materialization. */
+    bool (*clause_activation_relation_admissible)(
+        void *context, Space *space,
+        SymbolId head, CettaExprLen arity);
     bool (*translator_rule_contains)(
         void *context, SymbolId head);
     bool (*translator_rule_set)(
@@ -466,6 +476,9 @@ typedef struct {
     uint64_t clause_snapshot_candidates_copied;
     uint64_t clause_candidates;
     uint64_t clause_candidates_shape_pruned;
+    uint64_t clause_guard_prune_attempts;
+    uint64_t clause_guard_pruned;
+    uint64_t clause_guard_retained;
     uint64_t match_decision_compilations;
     uint64_t match_decision_cache_hits;
     uint64_t match_decision_runs;
@@ -526,6 +539,10 @@ typedef struct {
     uint64_t pure_grounded_slot_frame_direct_dispatches;
     uint64_t relation_slot_frame_entries;
     uint64_t relation_slot_operands_reused;
+    uint64_t activation_scalar_argument_segment_attempts;
+    uint64_t activation_scalar_argument_segment_commits;
+    uint64_t activation_scalar_argument_segment_declines;
+    uint64_t activation_scalar_argument_segment_operations;
     uint64_t atom_copy_calls;
     uint64_t atom_copy_allocated_bytes;
     uint64_t atom_copy_query_calls;

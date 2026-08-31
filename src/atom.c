@@ -162,7 +162,14 @@ static void arena_runtime_note_alloc(const Arena *a, size_t size) {
                                     &live_peak_counter,
                                     &reserved_peak_counter))
         return;
-    cetta_runtime_stats_add(alloc_counter, (uint64_t)size);
+    if (a->runtime_kind == CETTA_ARENA_RUNTIME_KIND_SURVIVOR) {
+        /* Record the aggregate and its unique semantic role under the same
+         * lock.  This is the executable conservation boundary: every
+         * survivor byte belongs to exactly one role, including OTHER. */
+        cetta_runtime_stats_note_survivor_allocation((uint64_t)size);
+    } else {
+        cetta_runtime_stats_add(alloc_counter, (uint64_t)size);
+    }
     cetta_runtime_stats_update_max(
         live_peak_counter, (uint64_t)arena_accounted_live_bytes(a));
     cetta_runtime_stats_update_max(reserved_peak_counter,

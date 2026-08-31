@@ -24,6 +24,6 @@ rho:eval-payload is left behind waiting for a communication that never happened.
 
 RUN
 ---
-    ./cetta --profile he-extended --lang he benchmarks/rho/rho-patterns/example.metta
+    ./cetta --profile extended --lang he benchmarks/rho/rho-patterns/example.metta
 
 Expected: ACT1, ACT2, and ACT3 all report PASS, with no Error or *FAIL*.

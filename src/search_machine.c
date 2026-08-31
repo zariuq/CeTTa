@@ -1112,6 +1112,16 @@ bool search_context_init(SearchContext *ctx, const Bindings *base,
     return false;
 }
 
+bool search_context_init_bindings_only(
+        SearchContext *ctx, const Bindings *base) {
+    if (!ctx)
+        return false;
+    ctx->scratch_arena = NULL;
+    ctx->owns_scratch_arena = false;
+    ctx->owned_scratch_arena = (Arena){0};
+    return bindings_builder_init(&ctx->bindings, base);
+}
+
 void search_context_init_owned(SearchContext *ctx, Bindings *owned,
                                Arena *scratch_arena) {
     ctx->scratch_arena = scratch_arena;
@@ -1135,7 +1145,7 @@ void search_context_free(SearchContext *ctx) {
     }
 }
 
-ChoicePoint search_context_save(const SearchContext *ctx) {
+ChoicePoint search_context_save(SearchContext *ctx) {
     ChoicePoint point = {
         .bindings_mark = bindings_builder_save(&ctx->bindings),
         .has_scratch_mark = ctx->scratch_arena != NULL,

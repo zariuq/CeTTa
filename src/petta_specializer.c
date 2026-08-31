@@ -3,6 +3,7 @@
 #include "grounded.h"
 #include "match.h"
 #include "petta_semantics.h"
+#include "stats.h"
 #include "symbol.h"
 
 #include <inttypes.h>
@@ -182,6 +183,7 @@ struct PettaSpecializerSemanticCache {
     uint64_t mutation_epoch;
     const SymbolTable *symbols;
     uint64_t symbol_table_instance;
+    bool mixed_index;
     PettaCallableCacheSlot callable[PETTA_CALLABLE_CACHE_SLOTS];
     PettaNamedArityCacheSlot
         named_arity[PETTA_NAMED_ARITY_CACHE_SLOTS];
@@ -232,6 +234,15 @@ static bool petta_specializer_route_cache_enabled(void) {
     return enabled != 0;
 }
 
+static bool petta_specializer_semantic_cache_mixed_index_enabled(void) {
+    const char *value = getenv(
+        "CETTA_PETTA_SPECIALIZER_SEMANTIC_CACHE_LEGACY_INDEX");
+    return !value || value[0] == '\0' ||
+        strcmp(value, "0") == 0 ||
+        strcmp(value, "false") == 0 ||
+        strcmp(value, "off") == 0;
+}
+
 static bool petta_specializer_relevance_filter_enabled(void) {
     static _Thread_local int enabled = -1;
     if (enabled < 0) {
@@ -243,6 +254,16 @@ static bool petta_specializer_relevance_filter_enabled(void) {
                    strcmp(value, "off") != 0);
     }
     return enabled == 1;
+}
+
+static bool petta_specializer_relation_prefilter_enabled(void) {
+    static _Thread_local int enabled = -1;
+    if (enabled < 0) {
+        const char *reference = getenv(
+            "CETTA_PETTA_SPECIALIZER_RELATION_PREFILTER_REFERENCE");
+        enabled = !reference || strcmp(reference, "1") != 0;
+    }
+    return enabled != 0;
 }
 
 static void petta_specializer_trace_atom(
@@ -848,6 +869,8 @@ petta_semantic_cache_prepare(
         g_petta_semantic_cache.symbols = g_symbols;
         g_petta_semantic_cache.symbol_table_instance =
             symbol_table_instance;
+        g_petta_semantic_cache.mixed_index =
+            petta_specializer_semantic_cache_mixed_index_enabled();
     }
     return &g_petta_semantic_cache;
 }
@@ -868,6 +891,8 @@ static bool petta_symbol_is_callable_uncached(
     }
     Atom *subject = atom_symbol_id(scratch, symbol);
     Atom **types = NULL;
+    cetta_runtime_stats_inc(
+        CETTA_RUNTIME_COUNTER_DECLARED_TYPE_SPECIALIZER_CALLABLE);
     uint32_t count = space_get_declared_types(
         space, scratch, subject, &types);
     bool callable = false;
@@ -903,10 +928,20 @@ static bool petta_symbol_is_callable(
         return petta_symbol_is_callable_uncached(
             context->space, &context->scratch, symbol);
     }
+    uint32_t mixed = symbol * UINT32_C(2654435761);
+    mixed ^= mixed >> 16u;
+    size_t index = cache->mixed_index
+        ? (size_t)mixed & (PETTA_CALLABLE_CACHE_SLOTS - 1u)
+        : (size_t)symbol & (PETTA_CALLABLE_CACHE_SLOTS - 1u);
     PettaCallableCacheSlot *slot = &cache->callable[
-        (size_t)symbol & (PETTA_CALLABLE_CACHE_SLOTS - 1u)];
-    if (slot->used && slot->symbol == symbol)
+        index];
+    if (slot->used && slot->symbol == symbol) {
+        cetta_runtime_stats_inc(
+            CETTA_RUNTIME_COUNTER_PETTA_SPECIALIZER_CALLABLE_CACHE_HIT);
         return slot->callable;
+    }
+    cetta_runtime_stats_inc(
+        CETTA_RUNTIME_COUNTER_PETTA_SPECIALIZER_CALLABLE_CACHE_MISS);
     *slot = (PettaCallableCacheSlot){
         .symbol = symbol,
         .callable = petta_symbol_is_callable_uncached(
@@ -930,15 +965,23 @@ static PeTTaNamedArity petta_specializer_named_arity(
             context->space, &context->scratch, head, supplied);
     }
     SymbolId symbol = head->sym_id;
-    size_t index =
-        ((size_t)symbol * 33u + (size_t)supplied) &
-        (PETTA_NAMED_ARITY_CACHE_SLOTS - 1u);
+    uint32_t mixed = symbol ^ (symbol >> 8u) ^
+        (symbol >> 16u) ^ (symbol >> 24u);
+    mixed = mixed * 33u + (uint32_t)supplied;
+    size_t index = cache->mixed_index
+        ? (size_t)mixed & (PETTA_NAMED_ARITY_CACHE_SLOTS - 1u)
+        : ((size_t)symbol * 33u + (size_t)supplied) &
+            (PETTA_NAMED_ARITY_CACHE_SLOTS - 1u);
     PettaNamedArityCacheSlot *slot =
         &cache->named_arity[index];
     if (slot->used && slot->symbol == symbol &&
         slot->supplied == supplied) {
+        cetta_runtime_stats_inc(
+            CETTA_RUNTIME_COUNTER_PETTA_SPECIALIZER_ARITY_CACHE_HIT);
         return slot->arity;
     }
+    cetta_runtime_stats_inc(
+        CETTA_RUNTIME_COUNTER_PETTA_SPECIALIZER_ARITY_CACHE_MISS);
     *slot = (PettaNamedArityCacheSlot){
         .symbol = symbol,
         .supplied = supplied,
@@ -1348,6 +1391,27 @@ petta_specializer_query_execution_admission(
         (arity > 0u && !arguments)) {
         return PETTA_SPECIALIZER_RELATION_DEFER;
     }
+    uint64_t instance = space_instance_id(space);
+    uint64_t revision = space_revision(space);
+    PettaRelationRelevance cached_relation =
+        PETTA_RELATION_RELEVANCE_UNKNOWN;
+    bool relation_cached =
+        petta_specializer_relation_prefilter_enabled() &&
+        petta_relation_relevance_cache_lookup(
+            space, instance, revision, source,
+            &cached_relation);
+    /*
+     * Specialization requires both a relation-side consumer and a
+     * query-side supplier.  A revision-pinned proof that the first factor is
+     * absent refutes the conjunction for every concrete query, so inspecting
+     * that query cannot add information.  Unknown and positive certificates
+     * retain the ordinary bounded query analysis below.
+     */
+    if (relation_cached &&
+        cached_relation == PETTA_RELATION_RELEVANCE_IRRELEVANT) {
+        return PETTA_SPECIALIZER_RELATION_IRRELEVANT;
+    }
+
     PettaSpecializerContext context = {
         .space = space,
         .semantic_cache = petta_semantic_cache_prepare(space),
@@ -1361,11 +1425,14 @@ petta_specializer_query_execution_admission(
         petta_query_arguments_may_supply_specializable_value(
             &context, arguments, arity);
     PettaRelationRelevance relation_relevance =
-        PETTA_RELATION_RELEVANCE_UNKNOWN;
+        relation_cached ? cached_relation
+                        : PETTA_RELATION_RELEVANCE_UNKNOWN;
     if (query_relevance != PETTA_RELEVANCE_NO) {
-        relation_relevance =
-            petta_relation_specialization_relevance(
-                &context, source);
+        if (!relation_cached) {
+            relation_relevance =
+                petta_relation_specialization_relevance(
+                    &context, source);
+        }
     }
     arena_free(&context.scratch);
 
@@ -2147,6 +2214,8 @@ static bool petta_materialize_specialization(
     Atom *source_atom =
         atom_symbol_id(&context->scratch, source);
     Atom **types = NULL;
+    cetta_runtime_stats_inc(
+        CETTA_RUNTIME_COUNTER_DECLARED_TYPE_SPECIALIZER_COPY);
     uint32_t type_count = space_get_declared_types(
         context->space, &context->scratch,
         source_atom, &types);

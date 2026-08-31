@@ -18,7 +18,7 @@ RUNTIME = ROOT / "runtime" / "syn-lane-gate"
 def lane_arguments(lane: str) -> list[str]:
     if lane == "prime":
         return ["--lang", "prime"]
-    if lane in ("he", "he-compat", "he-extended", "he-prime"):
+    if lane in ("he", "he-compat", "extended", "he-prime"):
         return ["--profile", lane, "--lang", "he"]
     raise ValueError(f"unknown lane: {lane}")
 
@@ -127,7 +127,7 @@ def check_strict_profile_isolation(cetta: Path) -> int:
         )
     )
     checks = 0
-    for lane in ("he", "he-compat", "he-extended", "he-prime"):
+    for lane in ("he", "he-compat", "extended", "he-prime"):
         require_equal(
             f"strict profile isolation:{lane}",
             run(cetta, lane, *arguments),
@@ -140,7 +140,7 @@ def check_strict_profile_isolation(cetta: Path) -> int:
 def check_he_has_no_syn_library(cetta: Path) -> int:
     expected = "[(Error (import! &self syn) Failed to resolve module syn)]"
     checks = 0
-    for lane in ("he", "he-compat", "he-extended", "he-prime"):
+    for lane in ("he", "he-compat", "extended", "he-prime"):
         require_equal(
             f"no HE syn library:{lane}",
             run(cetta, lane, "-e", "!(import! &self syn)"),
@@ -155,7 +155,7 @@ def check_he_reflection_unchanged(cetta: Path) -> int:
     trailing = {
         "he": '[(Error (parse "&@(agent zar)") ParseFailed)]',
         "he-compat": "[&@]",
-        "he-extended": '[(Error (parse "&@(agent zar)") ParseFailed)]',
+        "extended": '[(Error (parse "&@(agent zar)") ParseFailed)]',
         "he-prime": '[(Error (parse "&@(agent zar)") ParseFailed)]',
     }
     arguments = (

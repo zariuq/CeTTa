@@ -4,6 +4,7 @@
 #include "atom.h"
 #include "gslt_ground_dense_term_v1.h"
 #include "nik_direct_authority.h"
+#include "match.h"
 #include "space.h"
 #include "term_universe.h"
 
@@ -39,12 +40,123 @@ typedef enum {
     PETTA_PLAN_CONTROL_LET_STAR,
 } PettaPlanControl;
 
-typedef struct PettaPlanNode {
+/* Source-derived continuation boundaries.  These tags refine the existing
+ * plan tree across parent/child edges; they do not reclassify either child.
+ * The anonymous-hole form records that an open producer must retain every
+ * occurrence, while its always-successful anonymous match may be omitted
+ * before resuming the authored body. */
+typedef enum {
+    PETTA_PLAN_CONTINUATION_GENERIC = 0,
+    PETTA_PLAN_CONTINUATION_AFTER_ANONYMOUS_HOLE,
+} PettaPlanContinuation;
+
+typedef struct PettaPlanNode PettaPlanNode;
+
+/* One qualified physical realization of a deterministic RegionPlan.  It is
+ * not a language limit and not the eventual equation-plan ABI.  The compiler
+ * emits this compact program only for a validated, call-free scalar region;
+ * every open call and unsupported observer remains in the generic machine.
+ *
+ * Shape nodes pair runtime source occurrences with the already compiled
+ * syntax plan.  A TermUniverse-stable authored occurrence may additionally
+ * retain its exact source pointer; alpha-equivalent or transient occurrences
+ * still use validated runtime shape pairing. */
+typedef enum {
+    PETTA_REGION_SCALAR_LOAD = 0,
+    PETTA_REGION_SCALAR_APPLY,
+} PettaRegionScalarInstructionKind;
+
+typedef struct {
+    const PettaPlanNode *source_plan;
+    Atom *stable_source;
+    size_t first_child;
+    size_t child_count;
+} PettaRegionScalarShapeNode;
+
+typedef struct {
+    PettaRegionScalarInstructionKind kind;
+    size_t source_node;
+    uint8_t argument_count;
+} PettaRegionScalarInstruction;
+
+typedef struct PettaDeterministicRegionProgram {
+    const PettaPlanNode *root_plan;
+    size_t source_node_count;
+    size_t instruction_count;
+    uint32_t operation_count;
+    size_t maximum_stack;
+    const PettaRegionScalarShapeNode *source_nodes;
+    const PettaRegionScalarInstruction *instructions;
+} PettaDeterministicRegionProgram;
+
+/* Source-derived physical realizations of alternating Region/Hole paths.
+ * Every card is tied to one exact authored occurrence and immutable plan.
+ * A runtime occurrence which does not carry that identity must validate the
+ * complete source shape or decline to the canonical machine.
+ *
+ * Boolean branching contributes one deterministic entry Region followed by
+ * one selected Hole.  A binding sequence alternates producer Holes with
+ * deterministic pattern-binding Regions before its final body Region.  These
+ * are realizations of the common Region/Hole normal form, not new control
+ * semantics or a closed inventory of possible realizations. */
+typedef enum {
+    PETTA_REGION_HOLE_BOOLEAN_BRANCH = 0,
+    PETTA_REGION_HOLE_BINDING_SEQUENCE,
+} PettaRegionHoleProgramKind;
+
+typedef struct {
+    CettaExprIndex source_child;
+    const PettaPlanNode *plan;
+} PettaRegionHoleBranch;
+
+typedef struct {
+    CettaExprIndex binding_index;
+    CettaExprIndex pattern_child;
+    CettaExprIndex producer_child;
+    const PettaPlanNode *binding_plan;
+    const PettaPlanNode *pattern_plan;
+    const PettaPlanNode *producer_plan;
+} PettaRegionHoleBinding;
+
+typedef struct {
+    const PettaDeterministicRegionProgram *entry_region;
+    CettaExprIndex entry_source_child;
+    size_t branch_count;
+    const PettaRegionHoleBranch *branches;
+} PettaRegionHoleBooleanProgram;
+
+typedef struct {
+    CettaExprIndex bindings_source_child;
+    CettaExprIndex body_source_child;
+    const PettaPlanNode *bindings_plan;
+    const PettaPlanNode *body_plan;
+    size_t binding_count;
+    const PettaRegionHoleBinding *bindings;
+} PettaRegionHoleBindingSequenceProgram;
+
+typedef struct PettaRegionHoleProgram {
+    const PettaPlanNode *root_plan;
+    Atom *stable_source;
+    PettaRegionHoleProgramKind kind;
+    union {
+        PettaRegionHoleBooleanProgram boolean_branch;
+        PettaRegionHoleBindingSequenceProgram binding_sequence;
+    } as;
+} PettaRegionHoleProgram;
+
+struct PettaPlanNode {
     PettaPlanRole role;
     PettaPlanExecution execution;
     PettaPlanControl control;
+    PettaPlanContinuation continuation;
     bool contains_length_call;
     bool contains_call;
+    /* Source-plan evidence that this complete subtree consists of
+     * plain scalar leaves and admitted scalar operators.  The operation
+     * count is exact whenever the evidence is present; runtime leaf values
+     * and dialect authority remain independently checked before execution. */
+    bool plain_scalar_tree;
+    uint32_t plain_scalar_tree_operations;
     /* Positive program-snapshot evidence that this occurrence's symbol head
      * names a Space relation.  Intrinsics and engine-known names remain
      * callable without acquiring this execution license. */
@@ -59,9 +171,15 @@ typedef struct PettaPlanNode {
      * and the exact matcher remain semantic authority. */
     bool has_equation_variable_slot;
     uint32_t equation_variable_slot;
+    /* Separate immutable residual program compiled from this exact source
+     * structure.  NULL means that this backend realization declined. */
+    const PettaDeterministicRegionProgram *deterministic_region;
+    /* A normalized deterministic-region/observable-hole path compiled from
+     * this exact source occurrence.  NULL preserves ordinary evaluation. */
+    const PettaRegionHoleProgram *region_hole_program;
     CettaExprLen child_count;
-    const struct PettaPlanNode *children;
-} PettaPlanNode;
+    const PettaPlanNode *children;
+};
 
 typedef struct PettaEquationTemplateC0 PettaEquationTemplateC0;
 typedef struct PettaEquationTemplate PettaEquationTemplate;
@@ -109,6 +227,12 @@ bool petta_equation_template_variable_inventory(
     const VarId **source_ids_out,
     Atom *const **source_variables_out,
     uint32_t *variable_count_out);
+
+/* Borrow the exact finite LHS occurrence plan compiled with this equation.
+ * NULL means the source lay outside the admitted acyclic first-order tree
+ * fragment; ordinary matching remains authoritative. */
+const CettaOpenPatternPlan *petta_equation_template_lhs_match_plan(
+    const PettaEquationTemplate *template);
 
 /* Apply only the conservative C0 equation template: match the LHS and
  * instantiate the RHS. Selection, revisions, occurrence identity,

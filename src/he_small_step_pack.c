@@ -22,7 +22,7 @@ static const CettaLangdefRuleDef he_small_step_rules[] = {
          * step is absorbed by the official declarative MettaCall. */
         .name = "HES_GroundedDispatch",
         .rule_id = CETTA_HES_RULE_GROUNDED_DISPATCH,
-        .profiles = "he he-extended",
+        .profiles = "he extended",
         .provenance = "M_Expression IE_FuncType IF_* MC_Grounded",
         .claim = "rule-sound",
         .live = true,
@@ -36,7 +36,7 @@ static const CettaLangdefRuleDef he_small_step_rules[] = {
          * inner step in FragStep). */
         .name = "HES_LeftmostExprCongruence",
         .rule_id = CETTA_HES_RULE_LEFTMOST_EXPR_CONGRUENCE,
-        .profiles = "he he-extended",
+        .profiles = "he extended",
         .provenance = "IA_Start_* M_Expression IE_* IF_*",
         .claim = "rule-sound-on-fragment",
         .live = true,
@@ -46,7 +46,7 @@ static const CettaLangdefRuleDef he_small_step_rules[] = {
          * (Mettapedia/Languages/MeTTa/HE/SmallStepSound.lean). */
         .name = "HES_EquationMatch",
         .rule_id = CETTA_HES_RULE_EQUATION_MATCH,
-        .profiles = "he he-extended",
+        .profiles = "he extended",
         .provenance = "MC_Equation",
         .claim = "rule-sound",
         .live = true,
@@ -57,7 +57,7 @@ static const CettaLangdefRuleDef he_small_step_rules[] = {
          * content is exactly the official MinimalStep.eval instruction. */
         .name = "HES_Eval",
         .rule_id = CETTA_HES_RULE_EVAL,
-        .profiles = "he he-extended",
+        .profiles = "he extended",
         .provenance = "minimal.eval",
         .claim = "rule-sound",
         .live = true,
@@ -71,7 +71,7 @@ static const CettaLangdefRuleDef he_small_step_rules[] = {
          * MinimalStep.chain instruction. */
         .name = "HES_Chain",
         .rule_id = CETTA_HES_RULE_CHAIN,
-        .profiles = "he he-extended",
+        .profiles = "he extended",
         .provenance = "minimal.chain (incl. arity error)",
         .claim = "rule-sound-on-fragment",
         .live = true,
@@ -79,7 +79,7 @@ static const CettaLangdefRuleDef he_small_step_rules[] = {
     {
         .name = "HES_Let",
         .rule_id = CETTA_HES_RULE_LET,
-        .profiles = "he he-extended",
+        .profiles = "he extended",
         .provenance = "minimal.let (chain/unify sugar)",
         .claim = "bag-tested-adequate",
         .live = true,
@@ -87,7 +87,7 @@ static const CettaLangdefRuleDef he_small_step_rules[] = {
     {
         .name = "HES_LetStar",
         .rule_id = CETTA_HES_RULE_LET_STAR,
-        .profiles = "he he-extended",
+        .profiles = "he extended",
         .provenance = "minimal.let* (nested let sugar)",
         .claim = "bag-tested-adequate",
         .live = true,
@@ -95,7 +95,7 @@ static const CettaLangdefRuleDef he_small_step_rules[] = {
     {
         .name = "HES_Case",
         .rule_id = CETTA_HES_RULE_CASE,
-        .profiles = "he he-extended",
+        .profiles = "he extended",
         .provenance = "minimal.case (incl. arity error)",
         .claim = "bag-tested-adequate",
         .live = true,
@@ -108,7 +108,7 @@ static const CettaLangdefRuleDef he_small_step_rules[] = {
          * (oracle probe: upstream three vs CeTTa (got 1 2)). */
         .name = "HES_Switch",
         .rule_id = CETTA_HES_RULE_SWITCH,
-        .profiles = "he he-extended",
+        .profiles = "he extended",
         .provenance = "stdlib.switch (evaluated scrutinee; incl. arity error)",
         .claim = "bag-tested-adequate",
         .live = true,
@@ -118,7 +118,7 @@ static const CettaLangdefRuleDef he_small_step_rules[] = {
          * ((: switch-minimal (-> Atom Expression Atom))). */
         .name = "HES_SwitchMinimal",
         .rule_id = CETTA_HES_RULE_SWITCH_MINIMAL,
-        .profiles = "he he-extended",
+        .profiles = "he extended",
         .provenance = "stdlib.switch-minimal (structural; incl. arity error)",
         .claim = "bag-tested-adequate",
         .live = true,
@@ -128,7 +128,7 @@ static const CettaLangdefRuleDef he_small_step_rules[] = {
          * the pointwise bag meet.  It is not a coarse one-step gate. */
         .name = "HES_SpaceMeet",
         .rule_id = CETTA_HES_RULE_SPACE_MEET,
-        .profiles = "he-extended prime petta-extended",
+        .profiles = "extended prime petta-extended",
         .provenance =
             "Lean:Mettapedia.GSLT.Dynamics.SpaceQueryAlgebra.sMeet_assoc",
         .claim = "bag-tested-adequate",
@@ -139,7 +139,7 @@ static const CettaLangdefRuleDef he_small_step_rules[] = {
          * pointwise additive union. */
         .name = "HES_SpaceAdditiveUnion",
         .rule_id = CETTA_HES_RULE_SPACE_ADDITIVE_UNION,
-        .profiles = "he-extended prime petta-extended",
+        .profiles = "extended prime petta-extended",
         .provenance =
             "Lean:Mettapedia.GSLT.Dynamics.SpaceQueryAlgebra.weightedAnswers_union",
         .claim = "bag-tested-adequate",
@@ -150,7 +150,7 @@ static const CettaLangdefRuleDef he_small_step_rules[] = {
          * the seed-threaded conjunction fold across named spaces. */
         .name = "HES_SourcedConjunctionMatch",
         .rule_id = CETTA_HES_RULE_SOURCED_CONJUNCTION_MATCH,
-        .profiles = "he-extended prime petta-extended",
+        .profiles = "extended prime petta-extended",
         .provenance =
             "Lean:Mettapedia.GSLT.Dynamics.SpaceQueryAlgebra.foldConj_eq_meet",
         .claim = "bag-tested-adequate",
@@ -159,7 +159,7 @@ static const CettaLangdefRuleDef he_small_step_rules[] = {
     {
         .name = "HES_QuoteQuiescent",
         .rule_id = CETTA_HES_RULE_QUOTE_QUIESCENT,
-        .profiles = "he he-extended",
+        .profiles = "he extended",
         .provenance = "M_SymbolOrGrounded (quote syntax)",
         .claim = "bag-tested-adequate",
         .live = false,
@@ -167,7 +167,7 @@ static const CettaLangdefRuleDef he_small_step_rules[] = {
     {
         .name = "HES_ReturnQuiescent",
         .rule_id = CETTA_HES_RULE_RETURN_QUIESCENT,
-        .profiles = "he he-extended",
+        .profiles = "he extended",
         .provenance = "IF_AfterArgs_Call return syntax",
         .claim = "bag-tested-adequate",
         .live = false,
@@ -175,7 +175,7 @@ static const CettaLangdefRuleDef he_small_step_rules[] = {
     {
         .name = "HES_EmptyQuiescent",
         .rule_id = CETTA_HES_RULE_EMPTY_QUIESCENT,
-        .profiles = "he he-extended",
+        .profiles = "he extended",
         .provenance = "M_Empty",
         .claim = "bag-tested-adequate",
         .live = false,
@@ -183,7 +183,7 @@ static const CettaLangdefRuleDef he_small_step_rules[] = {
     {
         .name = "HES_ErrorQuiescent",
         .rule_id = CETTA_HES_RULE_ERROR_QUIESCENT,
-        .profiles = "he he-extended",
+        .profiles = "he extended",
         .provenance = "M_Error",
         .claim = "bag-tested-adequate",
         .live = false,
@@ -196,7 +196,7 @@ const CettaLangdefPack *cetta_langdef_pack_he_small_step(void) {
 
     if (!initialized) {
         pack.language_id = "HE";
-        pack.profile_id = "he-extended";
+        pack.profile_id = "extended";
         pack.granularity = "small-step";
         pack.schema_version = 2;
         pack.rules = he_small_step_rules;

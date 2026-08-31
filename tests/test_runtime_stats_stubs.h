@@ -22,6 +22,8 @@
 #endif
 
 static uint64_t g_test_runtime_stats_counters[CETTA_RUNTIME_COUNTER_COUNT];
+static _Thread_local CettaSurvivorAllocationRole
+    g_test_survivor_allocation_role = CETTA_SURVIVOR_ALLOC_ROLE_OTHER;
 
 static inline void test_runtime_stats_reset_counters(void) {
     memset(g_test_runtime_stats_counters, 0,
@@ -68,11 +70,64 @@ void cetta_runtime_stats_update_max(CettaRuntimeCounter counter, uint64_t value)
         g_test_runtime_stats_counters[counter] = value;
 }
 
+CettaSurvivorAllocationScope cetta_survivor_allocation_scope_enter(
+        CettaSurvivorAllocationRole role) {
+    CettaSurvivorAllocationScope scope = {
+        .previous = g_test_survivor_allocation_role,
+    };
+    g_test_survivor_allocation_role =
+        (uint32_t)role < CETTA_SURVIVOR_ALLOC_ROLE_COUNT
+            ? role : CETTA_SURVIVOR_ALLOC_ROLE_OTHER;
+    return scope;
+}
+
+void cetta_survivor_allocation_scope_leave(
+        CettaSurvivorAllocationScope scope) {
+    g_test_survivor_allocation_role =
+        (uint32_t)scope.previous < CETTA_SURVIVOR_ALLOC_ROLE_COUNT
+            ? scope.previous : CETTA_SURVIVOR_ALLOC_ROLE_OTHER;
+}
+
+void cetta_runtime_stats_note_survivor_allocation(uint64_t bytes) {
+    CettaSurvivorAllocationRole role =
+        (uint32_t)g_test_survivor_allocation_role <
+                CETTA_SURVIVOR_ALLOC_ROLE_COUNT
+            ? g_test_survivor_allocation_role
+            : CETTA_SURVIVOR_ALLOC_ROLE_OTHER;
+    g_test_runtime_stats_counters[
+        CETTA_RUNTIME_COUNTER_QUERY_EPISODE_SURVIVOR_ARENA_ALLOC_BYTES] +=
+        bytes;
+    g_test_runtime_stats_counters[
+        CETTA_RUNTIME_COUNTER_SURVIVOR_ALLOC_ROLE_OTHER_BYTES + role] +=
+        bytes;
+}
+
 void cetta_runtime_stats_snapshot(CettaRuntimeStats *out) {
     if (!out)
         return;
     memcpy(out->counters, g_test_runtime_stats_counters,
            sizeof(g_test_runtime_stats_counters));
+}
+
+uint64_t cetta_runtime_stats_survivor_role_total(
+        const CettaRuntimeStats *stats) {
+    if (!stats)
+        return 0u;
+    uint64_t total = 0u;
+    for (uint32_t role = 0u;
+         role < CETTA_SURVIVOR_ALLOC_ROLE_COUNT; role++) {
+        total += stats->counters[
+            CETTA_RUNTIME_COUNTER_SURVIVOR_ALLOC_ROLE_OTHER_BYTES + role];
+    }
+    return total;
+}
+
+bool cetta_runtime_stats_survivor_role_account_is_exact(
+        const CettaRuntimeStats *stats) {
+    return stats &&
+        cetta_runtime_stats_survivor_role_total(stats) ==
+            stats->counters[
+                CETTA_RUNTIME_COUNTER_QUERY_EPISODE_SURVIVOR_ARENA_ALLOC_BYTES];
 }
 
 void cetta_runtime_stats_print(FILE *out, const CettaRuntimeStats *stats) {

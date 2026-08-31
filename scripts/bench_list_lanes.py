@@ -29,7 +29,7 @@ def expected_value(kernel: str, size: int) -> int:
 
 def lane_arguments(lane: str) -> list[str]:
     if lane == "he":
-        return ["--profile", "he-extended", "--lang", "he"]
+        return ["--profile", "extended", "--lang", "he"]
     if lane == "prime":
         return ["--lang", "prime"]
     raise ValueError(lane)

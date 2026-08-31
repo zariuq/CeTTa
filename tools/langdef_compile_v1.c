@@ -4787,7 +4787,8 @@ static bool state_transition_bindings_command(
                   "state-transition program declares no tables");
         goto done;
     }
-    qsort(tables, table_len, sizeof(*tables), canonical_answer_compare);
+    if (table_len > 1u)
+        qsort(tables, table_len, sizeof(*tables), canonical_answer_compare);
     for (size_t index = 1u; index < table_len; index++) {
         if (strcmp(tables[index - 1u].text, tables[index].text) == 0) {
             set_error(error, error_size,
@@ -4795,12 +4796,15 @@ static bool state_transition_bindings_command(
             goto done;
         }
     }
-    qsort(numerals.values, numerals.len,
-          sizeof(*numerals.values), state_transition_u32_compare);
-    qsort(actions.values, actions.len,
-          sizeof(*actions.values), state_transition_action_compare);
-    qsort(final_actions.values, final_actions.len,
-          sizeof(*final_actions.values), state_transition_u32_compare);
+    if (numerals.len > 1u)
+        qsort(numerals.values, numerals.len,
+              sizeof(*numerals.values), state_transition_u32_compare);
+    if (actions.len > 1u)
+        qsort(actions.values, actions.len,
+              sizeof(*actions.values), state_transition_action_compare);
+    if (final_actions.len > 1u)
+        qsort(final_actions.values, final_actions.len,
+              sizeof(*final_actions.values), state_transition_u32_compare);
     if (!state_transition_answer_pushf(
             &answers, &answers_len, &answers_cap, error, error_size,
             "(StateTransitionPackageV1 %s)", package))

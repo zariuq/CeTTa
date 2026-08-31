@@ -10,7 +10,7 @@ trap 'rm -rf "$scratch"' EXIT INT TERM
 
 lane_args() {
     case "$1" in
-        he) printf '%s\n' --lang he --profile he-extended ;;
+        he) printf '%s\n' --lang he --profile extended ;;
         prime|petta) printf '%s\n' --lang "$1" ;;
         *) return 1 ;;
     esac
