@@ -605,10 +605,16 @@ bool cetta_continuation_hub_observe(
 
 bool search_context_init(SearchContext *ctx, const Bindings *base,
                          Arena *scratch_arena);
+/* Initialize the binding-store component without admitting scratch
+ * allocation.  A consumer using this capability may checkpoint only the
+ * binding trail; search_context_scratch() returns NULL, so future code cannot
+ * silently make an omitted scratch checkpoint observable. */
+bool search_context_init_bindings_only(
+    SearchContext *ctx, const Bindings *base);
 void search_context_init_owned(SearchContext *ctx, Bindings *owned,
                                Arena *scratch_arena);
 void search_context_free(SearchContext *ctx);
-ChoicePoint search_context_save(const SearchContext *ctx);
+ChoicePoint search_context_save(SearchContext *ctx);
 void search_context_rollback(SearchContext *ctx, ChoicePoint point);
 Arena *search_context_scratch(SearchContext *ctx);
 BindingsBuilder *search_context_builder(SearchContext *ctx);

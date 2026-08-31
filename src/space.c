@@ -5515,13 +5515,18 @@ static bool query_equation_emit_stored(Space *s, AtomId lhs_id, AtomId rhs_id,
     if (match_atoms_atom_id_epoch(query, s->native.universe, lhs_id,
                                   &merged, a, epoch) &&
         !bindings_has_loop(&merged)) {
+        CettaSurvivorAllocationScope allocation_scope =
+            cetta_survivor_allocation_scope_enter(
+                CETTA_SURVIVOR_ALLOC_ROLE_EQUATION_RESULT_INSTANTIATION);
         Atom *rhs_copy = tu_has_vars(s->native.universe, rhs_id)
             ? term_universe_copy_atom_epoch(s->native.universe, a, rhs_id, epoch)
             : term_universe_copy_atom(s->native.universe, a, rhs_id);
         Atom *result =
             rhs_copy ? bindings_apply_if_vars(&merged, a, rhs_copy) : NULL;
-        if (result) {
+        if (result)
             result = rewrite_query_visible_aliases(a, result, visible, &merged);
+        cetta_survivor_allocation_scope_leave(allocation_scope);
+        if (result) {
             Bindings projected;
             if (project_query_visible_bindings(a, visible, &merged, &projected)) {
                 emitted = query_result_sink_emit(sink, result, &projected);
@@ -5566,8 +5571,12 @@ static bool query_equation_emit_decoded_epoch(Atom *lhs, Atom *rhs,
         bindings_builder_take(&match_builder, &merged);
     }
     if (matched && !bindings_has_loop(&merged)) {
+        CettaSurvivorAllocationScope allocation_scope =
+            cetta_survivor_allocation_scope_enter(
+                CETTA_SURVIVOR_ALLOC_ROLE_EQUATION_RESULT_INSTANTIATION);
         Atom *result = bindings_apply_epoch(&merged, a, rhs, epoch);
         result = rewrite_query_visible_aliases(a, result, visible, &merged);
+        cetta_survivor_allocation_scope_leave(allocation_scope);
         Bindings projected;
         if (project_query_visible_bindings(a, visible, &merged, &projected)) {
             emitted = query_result_sink_emit(sink, result, &projected);

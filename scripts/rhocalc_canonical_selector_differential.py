@@ -186,7 +186,7 @@ def exhaustive_first(bin_path: str, process: str,
         f"!(lts:rho:transitions {process})"
     )
     result = run(
-        [bin_path, "--lang", "he", "--profile", "he-extended", "-e", program],
+        [bin_path, "--lang", "he", "--profile", "extended", "-e", program],
         timeout,
     )
     if result.returncode != 0:

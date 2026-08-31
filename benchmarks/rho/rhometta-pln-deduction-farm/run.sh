@@ -65,7 +65,7 @@ for size in $(sizes); do
         metta="${line#*	}"
         for repeat in $(seq 1 "$REPEATS"); do
             if ! time_case "$size" "$threads" "$name" "$repeat" \
-                    "$CETTA_BIN" --quiet --profile he-extended --lang he "$metta"; then
+                    "$CETTA_BIN" --quiet --profile extended --lang he "$metta"; then
                 overall=1
             fi
         done

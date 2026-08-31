@@ -19,7 +19,7 @@ time_file="$ROOT/runtime/tile_runtime_probe_${BACKEND}.time"
 mkdir -p "$ROOT/runtime"
 
 /usr/bin/time -v -o "$time_file" \
-    bash -lc "cd '$ROOT' && '$BIN' --count-only --emit-runtime-stats --profile he-extended --space-engine '$BACKEND' --lang he '$PROBE'" \
+    bash -lc "cd '$ROOT' && '$BIN' --count-only --emit-runtime-stats --profile extended --space-engine '$BACKEND' --lang he '$PROBE'" \
     > "$out_file" 2> "$stats_file"
 
 counter() {

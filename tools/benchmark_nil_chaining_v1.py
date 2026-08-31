@@ -228,7 +228,7 @@ def main():
                 "cetta", [args.cetta, "--lang", "petta", "--profile", "extended"],
                 fx, expected, args.samples, ladder, tmp)
             results["lanes"][f"cetta_he_extended/{wl}"] = eq_lane(
-                "cetta-he-ext", [args.cetta, "--profile", "he-extended"],
+                "cetta-he-ext", [args.cetta, "--profile", "extended"],
                 fx, args.samples, ladder, tmp, "heext")
             results["lanes"][f"cetta_prime/{wl}"] = eq_lane(
                 "cetta-prime", [args.cetta, "--lang", "prime"],

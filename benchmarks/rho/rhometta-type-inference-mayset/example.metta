@@ -31,7 +31,7 @@
 ; a minimality choice, not an expressiveness limitation.
 ;
 ; Runs on the core build:  make BUILD=core
-;     ./cetta --profile he-extended --lang he <this file>
+;     ./cetta --profile extended --lang he <this file>
 ; ===========================================================================
 
 !(import! &self rhometta)

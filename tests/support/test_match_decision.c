@@ -169,16 +169,18 @@ int main(void) {
     CettaMatchDecision *linear = cetta_match_decision_compile(
         space_read_token(&space), semantic_identity, clauses,
         sizeof(clauses) / sizeof(clauses[0]),
-        CETTA_MATCH_DECISION_LINEAR, 0u, NULL, NULL);
+        CETTA_MATCH_DECISION_LINEAR, 0u,
+        (CettaMatchDecisionRealization){0}, NULL, NULL);
     CettaMatchDecision *deep = cetta_match_decision_compile(
         space_read_token(&space), semantic_identity, clauses,
         sizeof(clauses) / sizeof(clauses[0]),
-        CETTA_MATCH_DECISION_DEEP, 0u, NULL, NULL);
+        CETTA_MATCH_DECISION_DEEP, 0u,
+        (CettaMatchDecisionRealization){0}, NULL, NULL);
     CettaMatchDecision *opaque = cetta_match_decision_compile(
         space_read_token(&space), semantic_identity, clauses,
         sizeof(clauses) / sizeof(clauses[0]),
         CETTA_MATCH_DECISION_DEEP, 0u,
-        opaque_argument, NULL);
+        (CettaMatchDecisionRealization){0}, opaque_argument, NULL);
     assert(linear && deep && opaque);
     assert(cetta_match_decision_retain(NULL) == NULL);
     CettaMatchDecision *deep_lease =
@@ -189,17 +191,17 @@ int main(void) {
 
     const uint32_t all[] = {11u, 22u, 33u, 44u, 45u};
     const uint32_t ax1[] = {11u, 44u, 45u};
-    /* Clause 11 remains a legal false positive: its repeated `$p` is the
-     * correlation that rejects this query, and MatchDecision deliberately
-     * leaves variable equality to the exact matcher. */
-    const uint32_t ax2[] = {11u, 22u, 44u, 45u};
+    /* Clause 11 is structurally compatible but its repeated `$p` observes
+     * different ground subterms.  The equality refuter removes precisely that
+     * occurrence while preserving authored order for every survivor. */
+    const uint32_t ax2[] = {22u, 44u, 45u};
     const uint32_t general[] = {44u, 45u};
     expect_refs(linear, &space, ax1_query, semantic_identity,
                 UINT64_MAX, all, 5u);
     expect_refs(deep, &space, ax1_query, semantic_identity,
                 UINT64_MAX, ax1, 3u);
     expect_refs(deep, &space, ax2_query, semantic_identity,
-                UINT64_MAX, ax2, 4u);
+                UINT64_MAX, ax2, 3u);
     expect_refs(deep, &space, negative_query, semantic_identity,
                 UINT64_MAX, general, 2u);
 
@@ -217,7 +219,8 @@ int main(void) {
     CettaMatchDecision *parts = cetta_match_decision_compile(
         space_read_token(&space), semantic_identity, clauses,
         sizeof(clauses) / sizeof(clauses[0]),
-        CETTA_MATCH_DECISION_DEEP, 0u, NULL, NULL);
+        CETTA_MATCH_DECISION_DEEP, 0u,
+        (CettaMatchDecisionRealization){0}, NULL, NULL);
     assert(parts);
     expect_part_refs(parts, &space, ax1_query, semantic_identity,
                      UINT64_MAX, ax1, 3u);
@@ -243,7 +246,7 @@ int main(void) {
     assert(stats.compilations == 1u);
     assert(stats.runs == 6u);
     assert(stats.clause_inputs == 30u);
-    assert(stats.clause_survivors == 21u);
+    assert(stats.clause_survivors == 20u);
     assert(stats.linear_fallbacks == 2u);
     assert(stats.unavailable_path_fallbacks > 0u);
 
@@ -262,7 +265,8 @@ int main(void) {
         space_read_token(&space), semantic_identity,
         ladder_clauses,
         sizeof(ladder_clauses) / sizeof(ladder_clauses[0]),
-        CETTA_MATCH_DECISION_DEEP, 0u, NULL, NULL);
+        CETTA_MATCH_DECISION_DEEP, 0u,
+        (CettaMatchDecisionRealization){0}, NULL, NULL);
     assert(ladder && ladder_query);
     size_t bottom_count = 0u;
     size_t left_count = 0u;
@@ -304,7 +308,8 @@ int main(void) {
         space_read_token(&space), semantic_identity,
         grid_clauses,
         sizeof(grid_clauses) / sizeof(grid_clauses[0]),
-        CETTA_MATCH_DECISION_CONJUNCTIVE, 0u, NULL, NULL);
+        CETTA_MATCH_DECISION_CONJUNCTIVE, 0u,
+        (CettaMatchDecisionRealization){0}, NULL, NULL);
     assert(conjunctive && grid_query && grid_open);
     const uint32_t grid_exact[] = {201u, 204u, 205u};
     const uint32_t grid_all[] = {201u, 202u, 203u, 204u, 205u};
@@ -315,6 +320,174 @@ int main(void) {
     expect_refs(conjunctive, &space, grid_open, semantic_identity,
                 UINT64_MAX, grid_all, 5u);
     cetta_match_decision_free(conjunctive);
+
+    /* Repeated source variables compile to cross-position equality
+     * refuters.  A ground disagreement removes only nonlinear occurrences;
+     * equal and unavailable observations retain authored order and duplicate
+     * occurrences for the canonical matcher. */
+    CettaMatchDecisionClause equality_clauses[] = {
+        {parse_one(&persistent, "(equal $x $x)"), 301u},
+        {parse_one(&persistent, "(equal $x $y)"), 302u},
+        {parse_one(&persistent, "(equal $x $x)"), 303u},
+    };
+    Atom *equality_disagrees =
+        parse_one(&persistent, "(equal left right)");
+    Atom *equality_agrees =
+        parse_one(&persistent, "(equal same same)");
+    Atom *equality_unknown =
+        parse_one(&persistent, "(equal $open right)");
+    CettaMatchDecision *equality = cetta_match_decision_compile(
+        space_read_token(&space), semantic_identity,
+        equality_clauses,
+        sizeof(equality_clauses) / sizeof(equality_clauses[0]),
+        CETTA_MATCH_DECISION_DEEP, 0u,
+        (CettaMatchDecisionRealization){0}, NULL, NULL);
+    assert(equality && equality_disagrees && equality_agrees &&
+           equality_unknown);
+    const uint32_t equality_linear_only[] = {302u};
+    const uint32_t equality_all[] = {301u, 302u, 303u};
+    expect_refs(equality, &space, equality_disagrees, semantic_identity,
+                UINT64_MAX, equality_linear_only, 1u);
+    expect_refs(equality, &space, equality_agrees, semantic_identity,
+                UINT64_MAX, equality_all, 3u);
+    expect_refs(equality, &space, equality_unknown, semantic_identity,
+                UINT64_MAX, equality_all, 3u);
+    CettaMatchDecisionStats equality_stats = {0};
+    cetta_match_decision_stats(equality, &equality_stats);
+    assert(equality_stats.equality_checks == 6u);
+    assert(equality_stats.equality_refutations == 2u);
+    assert(equality_stats.equality_observation_reads == 0u);
+    assert(equality_stats.equality_observation_fallbacks == 12u);
+    assert(equality_stats.equality_observation_direct_edges == 12u);
+    assert(equality_stats.equality_observation_graph_edges == 0u);
+    assert(equality_stats.prefix_observation_build_attempts == 1u);
+    assert(equality_stats.prefix_observation_build_commits == 0u);
+    assert(equality_stats.prefix_observation_build_declines == 1u);
+    cetta_match_decision_free(equality);
+
+    /* Deep nonlinear occurrences demand the same read-only coordinates as
+     * ordinary selection.  Their endpoint requests join the shared prefix
+     * graph, while shallow disjoint equalities above remain on the direct
+     * walker because the charged representation would not save work. */
+    CettaMatchDecisionClause deep_equality_clauses[] = {
+        {parse_one(&persistent,
+            "(equal-deep (nest (pair $x $x)))"), 311u},
+        {parse_one(&persistent,
+            "(equal-deep (nest (pair $x $x)))"), 312u},
+        {parse_one(&persistent,
+            "(equal-deep (nest (pair $x $x)))"), 313u},
+        {parse_one(&persistent,
+            "(equal-deep (nest (pair $x $y)))"), 314u},
+    };
+    Atom *deep_equality_disagrees = parse_one(
+        &persistent, "(equal-deep (nest (pair left right)))");
+    Atom *deep_equality_agrees = parse_one(
+        &persistent, "(equal-deep (nest (pair same same)))");
+    Atom *deep_equality_unknown = parse_one(
+        &persistent, "(equal-deep (nest (pair $open right)))");
+    CettaMatchDecision *deep_equality = cetta_match_decision_compile(
+        space_read_token(&space), semantic_identity,
+        deep_equality_clauses,
+        sizeof(deep_equality_clauses) /
+            sizeof(deep_equality_clauses[0]),
+        CETTA_MATCH_DECISION_DEEP, 8u,
+        (CettaMatchDecisionRealization){0}, NULL, NULL);
+    assert(deep_equality && deep_equality_disagrees &&
+           deep_equality_agrees && deep_equality_unknown);
+    const uint32_t deep_equality_linear_only[] = {314u};
+    const uint32_t deep_equality_all[] = {311u, 312u, 313u, 314u};
+    expect_refs(deep_equality, &space, deep_equality_disagrees,
+                semantic_identity, UINT64_MAX,
+                deep_equality_linear_only, 1u);
+    expect_refs(deep_equality, &space, deep_equality_agrees,
+                semantic_identity, UINT64_MAX,
+                deep_equality_all, 4u);
+    expect_refs(deep_equality, &space, deep_equality_unknown,
+                semantic_identity, UINT64_MAX,
+                deep_equality_all, 4u);
+    CettaMatchDecisionStats deep_equality_stats = {0};
+    cetta_match_decision_stats(deep_equality, &deep_equality_stats);
+    assert(deep_equality_stats.equality_checks == 9u);
+    assert(deep_equality_stats.equality_refutations == 3u);
+    assert(deep_equality_stats.equality_observation_reads == 18u);
+    assert(deep_equality_stats.equality_observation_fallbacks == 0u);
+    assert(deep_equality_stats.equality_observation_direct_edges > 0u);
+    assert(deep_equality_stats.equality_observation_graph_edges > 0u);
+    assert(deep_equality_stats.equality_observation_graph_edges <
+           deep_equality_stats.equality_observation_direct_edges);
+    assert(deep_equality_stats.prefix_observation_build_attempts == 1u);
+    assert(deep_equality_stats.prefix_observation_build_commits == 1u);
+    assert(deep_equality_stats.prefix_observation_build_declines == 0u);
+    assert(deep_equality_stats.prefix_observation_node_visits > 0u);
+    assert(deep_equality_stats.prefix_observation_node_visits <=
+           deep_equality_stats.prefix_observation_trie_edges * 3u);
+    cetta_match_decision_free(deep_equality);
+
+    /* A source-independent observation graph shares a long structural prefix
+     * across literal, duplicate, and wildcard occurrences.  Present, unknown,
+     * unavailable, absent, and split-register observations must retain the
+     * same ordered candidate superset as independent path walking. */
+    CettaMatchDecisionClause prefix_clauses[] = {
+        {parse_one(&persistent,
+            "(prefix (nest (nest (nest (nest (row a))))))"), 401u},
+        {parse_one(&persistent,
+            "(prefix (nest (nest (nest (nest (row b))))))"), 402u},
+        {parse_one(&persistent,
+            "(prefix (nest (nest (nest (nest (row c))))))"), 403u},
+        {parse_one(&persistent,
+            "(prefix (nest (nest (nest (nest (row d))))))"), 404u},
+        {parse_one(&persistent,
+            "(prefix (nest (nest (nest (nest (row e))))))"), 405u},
+        {parse_one(&persistent,
+            "(prefix (nest (nest (nest (nest (row f))))))"), 406u},
+        {parse_one(&persistent,
+            "(prefix (nest (nest (nest (nest (row a))))))"), 407u},
+        {parse_one(&persistent, "(prefix $open)"), 408u},
+    };
+    for (size_t index = 0u;
+         index < sizeof(prefix_clauses) / sizeof(prefix_clauses[0]);
+         index++) {
+        assert(prefix_clauses[index].pattern);
+    }
+    Atom *prefix_hit = parse_one(
+        &persistent,
+        "(prefix (nest (nest (nest (nest (row a))))))");
+    Atom *prefix_open = parse_one(&persistent, "(prefix $query)");
+    Atom *prefix_absent = parse_one(&persistent, "(prefix)");
+    CettaMatchDecision *prefix = cetta_match_decision_compile(
+        space_read_token(&space), semantic_identity,
+        prefix_clauses,
+        sizeof(prefix_clauses) / sizeof(prefix_clauses[0]),
+        CETTA_MATCH_DECISION_DEEP, 12u,
+        (CettaMatchDecisionRealization){0}, NULL, NULL);
+    assert(prefix && prefix_hit && prefix_open && prefix_absent);
+    const uint32_t prefix_exact[] = {401u, 407u, 408u};
+    const uint32_t prefix_all[] = {
+        401u, 402u, 403u, 404u, 405u, 406u, 407u, 408u,
+    };
+    const uint32_t prefix_wildcard[] = {408u};
+    expect_refs(prefix, &space, prefix_hit, semantic_identity,
+                UINT64_MAX, prefix_exact, 3u);
+    expect_refs(prefix, &space, prefix_open, semantic_identity,
+                UINT64_MAX, prefix_all, 8u);
+    expect_refs(prefix, &space, prefix_hit, semantic_identity,
+                0u, prefix_all, 8u);
+    expect_refs(prefix, &space, prefix_absent, semantic_identity,
+                UINT64_MAX, prefix_wildcard, 1u);
+    expect_part_refs(prefix, &space, prefix_hit, semantic_identity,
+                     UINT64_MAX, prefix_exact, 3u);
+    CettaMatchDecisionStats prefix_stats = {0};
+    cetta_match_decision_stats(prefix, &prefix_stats);
+    assert(prefix_stats.prefix_observation_build_attempts == 1u);
+    assert(prefix_stats.prefix_observation_build_commits == 1u);
+    assert(prefix_stats.prefix_observation_build_declines == 0u);
+    assert(prefix_stats.prefix_observation_runs == 5u);
+    assert(prefix_stats.prefix_observation_node_visits > 0u);
+    assert(prefix_stats.prefix_observation_node_visits <=
+           prefix_stats.prefix_observation_trie_edges * 5u);
+    assert(prefix_stats.prefix_observation_trie_edges * 2u + 1u <
+           prefix_stats.prefix_observation_direct_edges);
+    cetta_match_decision_free(prefix);
 
     /* Wide literal families must compile and select through the physical key
      * index rather than scanning one key per authored occurrence.  Wildcard
@@ -344,7 +517,8 @@ int main(void) {
     CettaMatchDecision *wide = cetta_match_decision_compile(
         space_read_token(&space), semantic_identity,
         wide_clauses, wide_count,
-        CETTA_MATCH_DECISION_DEEP, 0u, NULL, NULL);
+        CETTA_MATCH_DECISION_DEEP, 0u,
+        (CettaMatchDecisionRealization){0}, NULL, NULL);
     Atom *wide_hit = parse_one(&persistent, "(wide target observed)");
     Atom *wide_miss = parse_one(&persistent, "(wide missing observed)");
     Atom *wide_absent = parse_one(&persistent, "(wide)");
@@ -379,6 +553,10 @@ int main(void) {
            128u + wide_repeat_count * 16u);
 #endif
     assert(wide_stats.key_index_build_probes < wide_count * 20u);
+    assert(wide_stats.prefix_observation_build_attempts == 1u);
+    assert(wide_stats.prefix_observation_build_commits == 0u);
+    assert(wide_stats.prefix_observation_build_declines == 1u);
+    assert(wide_stats.prefix_observation_runs == 0u);
     cetta_match_decision_free(wide);
     free(wide_clauses);
 

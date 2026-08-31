@@ -92,7 +92,7 @@ def main() -> int:
     source = SOURCE.read_text(encoding="utf-8")
     for lane, args in (
         ("Prime", ["--lang", "prime"]),
-        ("HE-extended", ["--lang", "he", "--profile", "he-extended"]),
+        ("HE-extended", ["--lang", "he", "--profile", "extended"]),
     ):
         require_exact_positive(run_source(binary, source + PROBES, args), lane)
 

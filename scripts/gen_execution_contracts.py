@@ -2037,7 +2037,7 @@ def oracle_expected(cetta: Path, fixture_text: str) -> str:
     env["CETTA_PATHMAP_PULL_CONSUMERS"] = "0"
     try:
         proc = subprocess.run(
-            [str(cetta), "--lang", "he", "--profile", "he-extended", str(scratch)],
+            [str(cetta), "--lang", "he", "--profile", "extended", str(scratch)],
             cwd=ROOT, env=env, text=True, capture_output=True, timeout=30,
         )
     finally:
@@ -2058,7 +2058,7 @@ def fold_oracle_expected(
     env["CETTA_MATCH_CHAIN_TRACE"] = "1"
     command = [str(cetta), "--quiet", "--lang", language]
     if language == "he":
-        command.extend(["--profile", "he-extended"])
+        command.extend(["--profile", "extended"])
     command.append(str(scratch))
     try:
         proc = subprocess.run(
@@ -2091,7 +2091,7 @@ def verify_prepared_fold_runtime(
         str(cetta), "--emit-runtime-stats", "--quiet", "--lang", language,
     ]
     if language == "he":
-        command.extend(["--profile", "he-extended"])
+        command.extend(["--profile", "extended"])
     command.append(str(scratch))
     try:
         proc = subprocess.run(

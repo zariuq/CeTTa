@@ -83,12 +83,50 @@ def test_rust_drift_requires_evidence(module: ModuleType) -> bool:
         module.BROAD_RUST_DRIFT_NOTES.update(original)
 
 
+def test_extended_profile_requires_evidence(module: ModuleType) -> bool:
+    original = dict(module.BROAD_EXTENDED_PROFILE_NOTES)
+    try:
+        module.BROAD_EXTENDED_PROFILE_NOTES["tests/synthetic_extended_gap.metta"] = {
+            "note": "",
+            "spec_refs": [],
+            "rule_ids": ["not-a-real-rule"],
+        }
+        return expect_exit(
+            "extended-profile entries require note/spec/rule evidence",
+            module.validate_broad_extended_profile_notes,
+            "invalid broad extended-profile notes",
+        )
+    finally:
+        module.BROAD_EXTENDED_PROFILE_NOTES.clear()
+        module.BROAD_EXTENDED_PROFILE_NOTES.update(original)
+
+
 def test_closed_buckets_fail(module: ModuleType) -> bool:
     return expect_exit(
         "closed broad buckets fail the catalog build",
         lambda: build_summary(module, [result_row("tests/synthetic_core_gap.metta")]),
         "closed HE-compat broad buckets reappeared",
     )
+
+
+def test_cetta_timeout_remains_visible(module: ModuleType) -> bool:
+    row = result_row(
+        "tests/synthetic_rho_timeout.metta",
+        upstream_head=(
+            "[(Error (import! ModuleSpace(GroundingSpace-top) ./rho.metta) "
+            "Illegal module name: ./rho.metta)]"
+        ),
+    )
+    row["classification"] = "cetta-timeout"
+    summary = build_summary(module, [row])
+    if (
+        summary["by_classification"].get("cetta-timeout") != 1
+        or summary["serious_triage_count"] != 1
+    ):
+        print("FAIL: CeTTa timeout was hidden by upstream module-resolution triage")
+        return False
+    print("PASS: CeTTa timeout remains serious across an upstream module boundary")
+    return True
 
 
 def test_import_bucket_requires_import_boundary(module: ModuleType) -> bool:
@@ -159,7 +197,9 @@ def main() -> int:
     module = load_generator()
     checks = [
         test_rust_drift_requires_evidence(module),
+        test_extended_profile_requires_evidence(module),
         test_closed_buckets_fail(module),
+        test_cetta_timeout_remains_visible(module),
         test_import_bucket_requires_import_boundary(module),
         test_module_resolution_requires_policy_note(module),
         test_module_inventory_requires_policy_note(module),

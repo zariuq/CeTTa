@@ -2,7 +2,7 @@ id	availability	language	source	observation	niche	contrast	transition_limit
 fair-starvation	runnable	petta	tests/petta/search_controller_fifo_starvation.metta	bounded-prefix	age-protected-frontier	finite answers versus DFS silence	100
 order-sensitivity	runnable	petta	tests/petta/search_controller_fifo_order.metta	ordered-stream	observation-pinned	stream differs while occurrence bag agrees	1000
 prime-shared-frontier	runnable	prime	tests/prime/search_controller_frontier.metta	ordered-stream	evaluator-neutral-frontier	Prime and PeTTa share storage admission	1000
-absorbing-once	runnable	petta	benchmarks/controller_diversity/deep_once.metta	first-answer	first-witness-frontier	controlled branching preserves one finite authored witness	1000
+absorbing-once	runnable	petta	benchmarks/controller_diversity/deep_once.metta	first-answer	first-witness-frontier	inline retains authored first; controlled scheduling returns one source witness	1000
 once-recursive-first	runnable	petta	benchmarks/controller_diversity/once_recursive_first.metta	first-answer	witness-fairness	once contracts after a witness rather than before branch selection	100
 finite-prefix-recursive	runnable	petta	benchmarks/controller_diversity/finite_prefix_recursive.metta	bounded-prefix	finite-prefix-demand	recurrent selection finds two answers and the consumer then contracts	100
 reverse-prefix-completion	runnable	petta	benchmarks/controller_diversity/reverse_prefix_requires_completion.metta	ordered-stream	order-postprocessing	reverse selection preserves the complete source before taking one	100
@@ -14,4 +14,4 @@ transitive-closure	asset	he	benchmarks/chaining/transitive_closure/closure_bc.me
 variant-loop	asset	petta	tests/petta/search_machine_tabled_ground.metta	complete-bag	variant-tabling	finite answer completion of a recursive variant	0
 recursive-chain	asset	petta	examples/petta/recursive_chain_division.metta	bounded-prefix	iterative-deepening	bounded restart cost versus retained frontier	0
 connection-search	planned	neutral	TPTP-first-proof-slice	first-proof	connection-portfolio	native formula paths versus saturation	0
-compression-induction	runnable	petta	benchmarks/controller_diversity/compression_guidance.metta	bounded-prefix	incremental-compression-guidance	successful continuation structure versus a divergent newest distractor	12
+compression-induction	runnable	petta	benchmarks/controller_diversity/compression_guidance.metta	bounded-prefix	incremental-compression-guidance	successful continuation structure versus a divergent newest distractor	16

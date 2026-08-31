@@ -71,6 +71,6 @@ Division of labour for now:
 RUN
 ---
     make BUILD=core
-    ./cetta --profile he-extended --lang he benchmarks/rho/rhometta-type-inference-nested/example.metta
+    ./cetta --profile extended --lang he benchmarks/rho/rhometta-type-inference-nested/example.metta
 
 Expect: every ACT tagged PASS, no Error, no *FAIL*.

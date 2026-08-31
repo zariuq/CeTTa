@@ -636,7 +636,7 @@ def run_cetta(
         for case in cases
     )
     proc = subprocess.run(
-        [bin_path, "--profile", "he-extended", "--lang", "he", "/dev/stdin"],
+        [bin_path, "--profile", "extended", "--lang", "he", "/dev/stdin"],
         input="\n".join(script) + "\n",
         check=False,
         text=True,
@@ -664,7 +664,7 @@ def run_branch_outcome_checks(
         f"!(lts:rho:cost:steps {render_term(case.term)})" for case in cases
     )
     reference_proc = subprocess.run(
-        [bin_path, "--profile", "he-extended", "--lang", "he", "/dev/stdin"],
+        [bin_path, "--profile", "extended", "--lang", "he", "/dev/stdin"],
         input="\n".join(reference_script) + "\n",
         check=False,
         text=True,
@@ -694,7 +694,7 @@ def run_branch_outcome_checks(
             for _ in range(repeat)
         )
     threaded_proc = subprocess.run(
-        [bin_path, "--profile", "he-extended", "--lang", "he", "/dev/stdin"],
+        [bin_path, "--profile", "extended", "--lang", "he", "/dev/stdin"],
         input="\n".join(threaded_script) + "\n",
         check=False,
         text=True,

@@ -24,6 +24,6 @@ API used (lib/rhometta.metta):
   rhometta:transitions  one-step successors (for inspecting the frontier)
 
 RUN
-  ./cetta --quiet --profile he-extended --lang he benchmarks/rho/rhometta-eval-cell/example.metta
+  ./cetta --quiet --profile extended --lang he benchmarks/rho/rhometta-eval-cell/example.metta
 
 Expect: A -> (5);  B -> (a b c);  C -> 3.

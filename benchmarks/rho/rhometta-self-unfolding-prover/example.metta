@@ -19,7 +19,7 @@
 ;  reduction, private channels, or may-set frontier.  rhometta is the fusion.
 ;
 ;  Self-contained: runs on the core build (no lib_pln, no MORK, no pathmap):
-;     make BUILD=core && ./cetta --quiet --profile he-extended --lang he <this file>
+;     make BUILD=core && ./cetta --quiet --profile extended --lang he <this file>
 ; ===========================================================================
 
 !(import! &self rhometta)

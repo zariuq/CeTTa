@@ -33,6 +33,7 @@ typedef enum {
     CETTA_PREPARED_PURE_EXPRESSION_OBSERVE,
     CETTA_PREPARED_PURE_EXPRESSION_DECLINE,
     CETTA_PREPARED_PURE_EXPRESSION_CANONICAL_ONLY,
+    CETTA_PREPARED_PURE_EXPRESSION_ZERO,
 } CettaPreparedPureExpressionViewState;
 typedef struct {
     Atom *projected;
@@ -44,7 +45,9 @@ typedef struct {
  * data rather than an evaluation position.  Decline prevents an unhandled
  * form from falling through as inert syntax after shared prepared
  * instructions have had their chance.  Canonical-only rejects the form at
- * both compilation and dynamic execution boundaries. */
+ * both compilation and dynamic execution boundaries.  Zero identifies a
+ * dialect-owned no-result form; it is usable only as an explicitly guarded
+ * clause branch and never becomes an ordinary prepared value. */
 typedef CettaPreparedPureExpressionViewState
 (*CettaPreparedPureExpressionViewFn)(
     const Atom *expression, CettaPreparedPureExpressionView *view);

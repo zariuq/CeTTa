@@ -108,7 +108,7 @@ run_cetta_file() {
     if [ -n "$space_engine" ]; then
         command+=(--space-engine "$space_engine")
     fi
-    command+=(--quiet --profile he-extended --lang he "$file")
+    command+=(--quiet --profile extended --lang he "$file")
     (
         cd "$ROOT"
         /usr/bin/time -f 'time_sec=%e rss_kb=%M' "${command[@]}"

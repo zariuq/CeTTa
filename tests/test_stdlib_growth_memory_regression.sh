@@ -57,7 +57,7 @@ cat >> "$system_file" <<'PAD'
 PAD
 
 if ! (
-  /usr/bin/time -f '%M' -o "$time_file" "$bin" --profile he-extended --lang he "$workload" >"$stdout_raw" 2>"$stderr_file"
+  /usr/bin/time -f '%M' -o "$time_file" "$bin" --profile extended --lang he "$workload" >"$stdout_raw" 2>"$stderr_file"
 ); then
   echo "FAIL: stdlib growth memory regression exited non-zero" >&2
   cat "$stderr_file" >&2

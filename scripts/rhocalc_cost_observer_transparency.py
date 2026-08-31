@@ -122,7 +122,7 @@ def observed_command(binary: str, fixture: Path, threads: int) -> list[str]:
         "--emit-runtime-stats",
         "--num-threads", str(threads),
         "--lang", "he",
-        "--profile", "he-extended",
+        "--profile", "extended",
         str(fixture),
     ]
 

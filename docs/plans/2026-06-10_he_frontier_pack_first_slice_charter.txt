@@ -48,7 +48,7 @@ the existing frontier through it. No metta_eval changes. No codegen yet.
 
 Pack identity (all fields mandatory):
     language_id   = HE
-    profile_id    = he-extended        (the profile the lts tests run under)
+    profile_id    = extended        (the profile the lts tests run under)
     granularity   = frontier
     schema_version
     source_digest (sha256 over the canonical authored rule source)
@@ -71,7 +71,7 @@ Files (new):
     src/langdef_pack.h        pack schema: CettaCtorDef / CettaRuleDef /
                               profile masks / digest / disabled_rules
     src/langdef_pack.c        loader + generic application for THIS slice
-    src/he_frontier_pack.c    the hand-authored he-extended frontier pack
+    src/he_frontier_pack.c    the hand-authored extended frontier pack
 Files (modified, minimal):
     src/library.c             route lts_he_transitions_frontier through
                               he_frontier_bag_from_pack for covered shapes
@@ -150,7 +150,7 @@ OSLF; do NOT state fine-collapse theorems yet:
   - No he-prime / DTT / proof-kernel work.
   - No runtime trace/certificate syntax; the existing gate stays.
   - he-compat/he packs are LATER profile instantiations; never let
-    he-extended rules silently serve he-compat or vice versa (fail closed).
+    extended rules silently serve he-compat or vice versa (fail closed).
 
 6. AFTER THIS SLICE (next tranches, in order, each separately approved)
 -----------------------------------------------------------------------

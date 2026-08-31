@@ -42,7 +42,7 @@ run_stress_test() {
     echo "--- Stress Test (targeted sharing invariants) ---"
     /usr/bin/time -q -f 'rss=%MKB time=%E' -o "$timing" \
         timeout "$TIMEOUT_SECONDS" "$CETTA_BIN" \
-        --profile he-extended --lang he \
+        --profile extended --lang he \
         "$ROOT/benchmarks/bench_term_sharing_stress.metta" \
         >"$output" 2>"$errors" || status=$?
 

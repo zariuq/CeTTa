@@ -45,7 +45,7 @@
     (obs bag)))
 
 (interpretation query-connectives (of semiring)
-  (profiles he-extended prime petta-extended)
+  (profiles extended prime petta-extended)
   (map otimes ,)
   (map one (,))
   (map oplus |)

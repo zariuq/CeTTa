@@ -82,7 +82,7 @@ run_case() {
   fi
 }
 
-run_case HE "$he_stdout" "$he_stderr" --lang he --profile he-extended
+run_case HE "$he_stdout" "$he_stderr" --lang he --profile extended
 run_case Prime "$prime_stdout" "$prime_stderr" --lang prime
 
 echo "PASS: wide typed-call stack regression width=$width (HE and Prime)"

@@ -75,7 +75,7 @@ ENABLE_PRIME_NEED_CLOSURE_CAPTURE ?= 0
 ENABLE_PRIME_EVAL_STACK ?= 1
 ENABLE_LIB_PROLOG ?= auto
 ENABLE_HTTP ?= 0
-ENABLE_JSON_GSLT ?= 0
+ENABLE_JSON_GSLT ?= 1
 CETTA_EMCC ?= emcc
 CETTA_BROWSER ?= google-chrome
 CETTA_BROWSER_NODE ?= node
@@ -749,6 +749,10 @@ MATCH_DECISION_TEST_SRC = tests/support/test_match_decision.c
 MATCH_DECISION_TEST_OBJ = runtime/bootstrap/test_match_decision.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o
 MATCH_DECISION_TEST_BIN = runtime/test_match_decision-$(BUILD_CANON)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),-runtime-stats,)
 MATCH_DECISION_TEST_LINK_OBJ = $(FALLBACK_EVAL_TEST_LINK_OBJ)
+MATCH_DECISION_PREFIX_BENCH_SRC = benchmarks/inference_cost_axes/bench_match_decision_prefix_observation.c
+MATCH_DECISION_PREFIX_BENCH_OBJ = runtime/bootstrap/bench_match_decision_prefix_observation.$(BUILD_OBJ_TAG).o
+MATCH_DECISION_PREFIX_BENCH_BIN = runtime/bench_match_decision_prefix_observation-$(BUILD_CANON)
+MATCH_DECISION_PREFIX_BENCH_LINK_OBJ = $(FALLBACK_EVAL_TEST_LINK_OBJ)
 PETTA_SPECIALIZER_PREPARE_TEST_SRC = tests/test_petta_specializer_prepare.c
 PETTA_SPECIALIZER_PREPARE_TEST_OBJ = runtime/bootstrap/test_petta_specializer_prepare.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o
 PETTA_SPECIALIZER_PREPARE_TEST_BIN = runtime/test_petta_specializer_prepare-$(BUILD_CANON)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),-runtime-stats,)
@@ -3224,29 +3228,33 @@ test-symbolid-guard:
 
 $(VARIANT_SHAPE_TEST_BIN): tests/test_variant_shape_roundtrip.c src/symbol.c src/atom.c $(MATCH_STANDALONE_SRC) src/term_canon.c src/variant_shape.c src/variant_instance.c src/term_universe.c $(BUILD_CONFIG_HEADER)
 	@mkdir -p runtime
-	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ tests/test_variant_shape_roundtrip.c src/symbol.c src/atom.c $(MATCH_STANDALONE_SRC) src/term_canon.c src/variant_shape.c src/variant_instance.c src/term_universe.c $(LDFLAGS)
+	$(CC) $(CPPFLAGS) -DCETTA_RUNTIME_STATS_IMPL=1 $(CFLAGS) -o $@ tests/test_variant_shape_roundtrip.c src/symbol.c src/atom.c $(MATCH_STANDALONE_SRC) src/term_canon.c src/variant_shape.c src/variant_instance.c src/term_universe.c $(LDFLAGS)
 
 test-variant-shape-roundtrip: $(VARIANT_SHAPE_TEST_BIN)
 	@$(call cetta_exec,./$(VARIANT_SHAPE_TEST_BIN))
 
 $(BINDINGS_LOOKUP_INDEX_TEST_BIN): tests/test_bindings_lookup_index.c src/symbol.c src/atom.c $(MATCH_STANDALONE_SRC) src/term_canon.c src/variant_shape.c src/variant_instance.c src/term_universe.c $(BUILD_CONFIG_HEADER)
 	@mkdir -p runtime
-	$(CC) $(CPPFLAGS) -DCETTA_TEST_HOOKS=1 $(CFLAGS) -o $@ tests/test_bindings_lookup_index.c src/symbol.c src/atom.c $(MATCH_STANDALONE_SRC) src/term_canon.c src/variant_shape.c src/variant_instance.c src/term_universe.c $(LDFLAGS)
+	$(CC) $(CPPFLAGS) -DCETTA_TEST_HOOKS=1 -DCETTA_RUNTIME_STATS_IMPL=1 $(CFLAGS) -o $@ tests/test_bindings_lookup_index.c src/symbol.c src/atom.c $(MATCH_STANDALONE_SRC) src/term_canon.c src/variant_shape.c src/variant_instance.c src/term_universe.c $(LDFLAGS)
 
 test-bindings-lookup-index: $(BINDINGS_LOOKUP_INDEX_TEST_BIN)
 	@enabled=$$($(call cetta_exec,./$(BINDINGS_LOOKUP_INDEX_TEST_BIN))); \
 	disabled=$$(CETTA_BINDINGS_LOOKUP_INDEX=0 $(call cetta_exec,./$(BINDINGS_LOOKUP_INDEX_TEST_BIN))); \
 	audited=$$(CETTA_BINDINGS_DERIVED_AUDIT=1 $(call cetta_exec,./$(BINDINGS_LOOKUP_INDEX_TEST_BIN))); \
-	expected='(BindingsLookupIndexSummary 143 143 0)'; \
+	reference=$$(CETTA_BINDINGS_SINGLE_REACH_CAPACITY_SCAN_REFERENCE=1 \
+		$(call cetta_exec,./$(BINDINGS_LOOKUP_INDEX_TEST_BIN))); \
+	expected='(BindingsLookupIndexSummary 152 152 0)'; \
 	printf '%s\n' "$$enabled"; \
 	test "$$enabled" = "$$expected" && test "$$disabled" = "$$expected" && \
-		test "$$audited" = "$$expected"
-	@mutation_dir=$$(mktemp -d runtime/bindings-lookup-lazy-tail-mutations.XXXXXX); \
+		test "$$audited" = "$$expected" && test "$$reference" = "$$expected"
+	@set -eu; \
+	mutation_dir=$$(mktemp -d runtime/bindings-lookup-lazy-tail-mutations.XXXXXX); \
 	trap 'rm -rf "$$mutation_dir"' EXIT INT TERM; \
 	ulimit -c 0; \
 	for mutation in SKIP_INSERT MUTATE_SHARED; do \
 		binary="$$mutation_dir/test-$$mutation"; \
-		$(CC) $(CPPFLAGS) -DCETTA_TEST_HOOKS=1 $(CFLAGS) \
+		$(CC) $(CPPFLAGS) -DCETTA_TEST_HOOKS=1 \
+			-DCETTA_RUNTIME_STATS_IMPL=1 $(CFLAGS) \
 			-DCETTA_MUTATION_BINDINGS_LAZY_TAIL_$$mutation=1 \
 			-o "$$binary" tests/test_bindings_lookup_index.c \
 			src/symbol.c src/atom.c $(MATCH_STANDALONE_SRC) \
@@ -3259,7 +3267,8 @@ test-bindings-lookup-index: $(BINDINGS_LOOKUP_INDEX_TEST_BIN)
 		fi; \
 	done; \
 	binary="$$mutation_dir/test-single-reach-rollback"; \
-	$(CC) $(CPPFLAGS) -DCETTA_TEST_HOOKS=1 $(CFLAGS) \
+	$(CC) $(CPPFLAGS) -DCETTA_TEST_HOOKS=1 \
+		-DCETTA_RUNTIME_STATS_IMPL=1 $(CFLAGS) \
 		-DCETTA_MUTATION_BINDINGS_SINGLE_REACH_KEEP_ROLLBACK_CACHE=1 \
 		-o "$$binary" tests/test_bindings_lookup_index.c \
 		src/symbol.c src/atom.c $(MATCH_STANDALONE_SRC) \
@@ -3272,6 +3281,14 @@ test-bindings-lookup-index: $(BINDINGS_LOOKUP_INDEX_TEST_BIN)
 	fi; \
 	echo "PASS: binding-index falsifiers kill lazy-tail and stale-root mutations"
 .PHONY: test-bindings-lookup-index
+
+runtime/bench_match_shared_published_reflexivity: benchmarks/inference_cost_axes/bench_shared_published_reflexivity.c src/symbol.c src/atom.c $(MATCH_STANDALONE_SRC) src/term_canon.c src/variant_shape.c src/variant_instance.c src/term_universe.c $(BUILD_CONFIG_HEADER)
+	@mkdir -p runtime
+	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ benchmarks/inference_cost_axes/bench_shared_published_reflexivity.c src/symbol.c src/atom.c $(MATCH_STANDALONE_SRC) src/term_canon.c src/variant_shape.c src/variant_instance.c src/term_universe.c $(LDFLAGS)
+
+.PHONY: bench-match-shared-published-reflexivity
+bench-match-shared-published-reflexivity: runtime/bench_match_shared_published_reflexivity
+	@$(call cetta_exec,./runtime/bench_match_shared_published_reflexivity)
 
 $(ATOM_DEEP_COPY_TEST_BIN): tests/test_atom_deep_copy_iterative.c src/symbol.c src/atom.c $(BUILD_CONFIG_HEADER)
 	@mkdir -p runtime
@@ -3411,7 +3428,7 @@ test-prime-eval-stack: $(BIN)
 		printf '%s\n' "$$actual"; \
 		exit 1; \
 	fi; \
-	actual=$$($(CETTA_BIN_INVOKE) --lang he --profile he-extended \
+	actual=$$($(CETTA_BIN_INVOKE) --lang he --profile extended \
 		-e '!(+ 1 2)' 2>&1); \
 	if [ "$$actual" != '[3]' ]; then \
 		echo "FAIL: Prime-only explicit stack changed HE evaluation"; \
@@ -3432,7 +3449,7 @@ test-prime-eval-stack-stats: $(BIN)
 test-prime-need-he-noninterference: $(BIN)
 	@set -eu; \
 	source=tests/prime/need_he_noninterference.metta; \
-	for profile in he he-compat he-extended he-prime; do \
+	for profile in he he-compat extended he-prime; do \
 		actual=$$($(CETTA_BIN_INVOKE) --lang he --profile "$$profile" \
 			"$$source" 2>&1); \
 		expected=$$(cat "tests/prime/need_he_noninterference.$$profile.expected"); \
@@ -3665,7 +3682,7 @@ test-prime-contexts: $(BIN) $(PRIME_CONTEXT_MUTATION_TEST_BIN)
 		exit 1; \
 	fi; \
 	he_expected=$$(cat tests/prime/first_class_contexts_he_guard.expected); \
-	for profile in he he-compat he-extended he-prime; do \
+	for profile in he he-compat extended he-prime; do \
 		he_actual=$$($(CETTA_BIN_INVOKE) --lang he --profile "$$profile" \
 			tests/prime/first_class_contexts_he_guard.metta 2>&1); \
 		if [ "$$he_actual" != "$$he_expected" ]; then \
@@ -3749,7 +3766,7 @@ test-prime-rewrite-frontier-tutorial: $(BIN)
 			echo "PASS: $$source ($$frontier)"; \
 		done; \
 	done; \
-	if $(CETTA_BIN_INVOKE) --lang he --profile he-extended \
+	if $(CETTA_BIN_INVOKE) --lang he --profile extended \
 		--prime-rewrite-frontier monolithic \
 		examples/prime/rewrite_frontier_tutorial/01_directional_rules.metta \
 		>/dev/null 2>&1; then \
@@ -4849,9 +4866,45 @@ $(MATCH_DECISION_TEST_BIN): $(MATCH_DECISION_TEST_OBJ) $(MATCH_DECISION_TEST_LIN
 	$(CC) $(CFLAGS) -o "$$tmp_out" $^ $(LDFLAGS); \
 	mv "$$tmp_out" $@
 
-$(MATCH_DECISION_TEST_OBJ): $(MATCH_DECISION_TEST_SRC) $(BUILD_CONFIG_HEADER)
+$(MATCH_DECISION_TEST_OBJ): $(MATCH_DECISION_TEST_SRC) src/match_decision.h $(BUILD_CONFIG_HEADER)
 	@mkdir -p $(dir $@)
 	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+
+$(MATCH_DECISION_PREFIX_BENCH_BIN): $(MATCH_DECISION_PREFIX_BENCH_OBJ) $(MATCH_DECISION_PREFIX_BENCH_LINK_OBJ) $(BRIDGE_DEPS)
+	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
+	@set -eu; \
+	tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/bench-match-decision-prefix.XXXXXX"); \
+	trap 'rm -f "$$tmp_out"' EXIT INT TERM; \
+	$(CC) $(CFLAGS) -o "$$tmp_out" $^ $(LDFLAGS); \
+	mv "$$tmp_out" $@
+
+$(MATCH_DECISION_PREFIX_BENCH_OBJ): $(MATCH_DECISION_PREFIX_BENCH_SRC) src/match_decision.h $(BUILD_CONFIG_HEADER)
+	@mkdir -p $(dir $@)
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+
+.PHONY: bench-match-decision-prefix-observation
+bench-match-decision-prefix-observation: $(MATCH_DECISION_PREFIX_BENCH_BIN)
+	@$(call cetta_exec,./$(MATCH_DECISION_PREFIX_BENCH_BIN))
+
+.PHONY: test-match-decision-prefix-observation
+test-match-decision-prefix-observation: $(MATCH_DECISION_PREFIX_BENCH_BIN)
+	@set -eu; \
+	optimized=$$($(call cetta_exec,./$(MATCH_DECISION_PREFIX_BENCH_BIN)) \
+		12 20000); \
+	eager=$$(CETTA_MATCH_DECISION_PREFIX_OBSERVATION_EAGER_REFERENCE=1 \
+		$(call cetta_exec,./$(MATCH_DECISION_PREFIX_BENCH_BIN)) \
+		12 20000); \
+	reference=$$(CETTA_MATCH_DECISION_PREFIX_OBSERVATION_REFERENCE=1 \
+		$(call cetta_exec,./$(MATCH_DECISION_PREFIX_BENCH_BIN)) \
+		12 20000); \
+	printf '%s\n%s\n%s\n' "$$optimized" "$$eager" "$$reference"; \
+	printf '%s\n' "$$optimized" | grep -q ' pass '; \
+	printf '%s\n' "$$eager" | grep -q ' pass '; \
+	printf '%s\n' "$$reference" | grep -q ' pass '; \
+	optimized_visits=$$(printf '%s\n' "$$optimized" | awk '{print $$9}'); \
+	eager_visits=$$(printf '%s\n' "$$eager" | awk '{print $$9}'); \
+	test "$$optimized_visits" -lt "$$eager_visits"; \
+	echo "PASS: demand-driven prefix observations preserve seven query geometries and skip absorbing suffixes"
 
 $(PETTA_SPECIALIZER_PREPARE_TEST_BIN): $(PETTA_SPECIALIZER_PREPARE_TEST_OBJ) $(PETTA_SPECIALIZER_PREPARE_TEST_LINK_OBJ) $(BRIDGE_DEPS)
 	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
@@ -15809,7 +15862,7 @@ test-bigint-no-gmp-fallback:
 test-bigint-no-gmp-fallback-body: $(BIN)
 	@set -e; \
 	tmp="$(BOOTSTRAP_TMPDIR)/test-bigint-no-gmp-fallback.out"; \
-	$(CETTA_BIN_INVOKE) --profile he-extended --lang he tests/support/test_bigint_no_gmp_fallback.metta > "$$tmp"; \
+	$(CETTA_BIN_INVOKE) --profile extended --lang he tests/support/test_bigint_no_gmp_fallback.metta > "$$tmp"; \
 	diff -u tests/support/test_bigint_no_gmp_fallback.expected "$$tmp"; \
 	rm -f "$$tmp"; \
 	echo "PASS: bigint no-GMP fallback is loud and parseable"
@@ -15820,7 +15873,7 @@ test-rational-no-gmp-fallback:
 test-rational-no-gmp-fallback-body: $(BIN)
 	@set -e; \
 	tmp="$(BOOTSTRAP_TMPDIR)/test-rational-no-gmp-fallback.out"; \
-	$(CETTA_BIN_INVOKE) --profile he-extended --lang he tests/support/test_rational_no_gmp_fallback.metta > "$$tmp"; \
+	$(CETTA_BIN_INVOKE) --profile extended --lang he tests/support/test_rational_no_gmp_fallback.metta > "$$tmp"; \
 	diff -u tests/support/test_rational_no_gmp_fallback.expected "$$tmp"; \
 	rm -f "$$tmp"; \
 	echo "PASS: rational no-GMP fallback is loud and default-compatible"
@@ -15862,7 +15915,7 @@ test-git-module: $(BIN) prepare-git-test-fixture
 		'!(import! &gitdb git_module_fixture)' \
 		'!(assertEqualToResult (match &gitdb (git-root $$x) $$x) (loaded))' \
 		> "$(GIT_TEST_DYNAMIC)"; \
-	result=$$(CETTA_GIT_MODULE_CACHE_DIR="$(GIT_TEST_CACHE_DIR)" $(CETTA_BIN_INVOKE) --profile he-extended --lang he "$(GIT_TEST_DYNAMIC)" 2>&1); \
+	result=$$(CETTA_GIT_MODULE_CACHE_DIR="$(GIT_TEST_CACHE_DIR)" $(CETTA_BIN_INVOKE) --profile extended --lang he "$(GIT_TEST_DYNAMIC)" 2>&1); \
 	expected=$$'[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]'; \
 	if [ "$$result" = "$$expected" ]; then \
 		echo "PASS: dynamic git-module! fixture"; pass=$$((pass + 1)); \
@@ -15882,7 +15935,7 @@ test-git-module: $(BIN) prepare-git-test-fixture
 		'!(import! &gitupd git_module_fixture:'"$$update_mod"')' \
 		'!(assertEqualToResult (match &gitupd (git-update $$x) $$x) (fetched))' \
 		> "$(GIT_TEST_COMPAT_DYNAMIC)"; \
-	result=$$(CETTA_GIT_MODULE_CACHE_DIR="$(GIT_TEST_CACHE_DIR)" $(CETTA_BIN_INVOKE) --profile he-extended --lang he "$(GIT_TEST_COMPAT_DYNAMIC)" 2>&1); \
+	result=$$(CETTA_GIT_MODULE_CACHE_DIR="$(GIT_TEST_CACHE_DIR)" $(CETTA_BIN_INVOKE) --profile extended --lang he "$(GIT_TEST_COMPAT_DYNAMIC)" 2>&1); \
 	expected=$$'[()]\n[()]\n[()]'; \
 	if [ "$$result" = "$$expected" ]; then \
 		echo "PASS: git-module! cache refresh"; pass=$$((pass + 1)); \
@@ -15997,7 +16050,7 @@ test: $(BIN) test-python-build-config test-lib-prolog-build-config test-precise-
 			continue; \
 		fi; \
 		if printf '%s\n' $(CORE_XFAIL_TESTS) | grep -Fxq "$$f"; then \
-			result=$$($(CETTA_BIN_INVOKE) --profile he-extended --lang he "$$f" 2>&1); \
+			result=$$($(CETTA_BIN_INVOKE) --profile extended --lang he "$$f" 2>&1); \
 			if printf '%s\n' "$$result" | grep -Fq "(Error "; then \
 				echo "XFAIL: $$f"; \
 				skip=$$((skip + 1)); \
@@ -16026,7 +16079,7 @@ test: $(BIN) test-python-build-config test-lib-prolog-build-config test-precise-
 			no_exp=$$((no_exp + 1)); \
 			continue; \
 		fi; \
-		result=$$($(CETTA_BIN_INVOKE) --profile he-extended --lang he "$$f" 2>&1); \
+		result=$$($(CETTA_BIN_INVOKE) --profile extended --lang he "$$f" 2>&1); \
 		if [ "$$result" = "$$(cat $$exp)" ]; then \
 			echo "PASS: $$f"; \
 			pass=$$((pass + 1)); \
@@ -16061,7 +16114,7 @@ test-step-rules: $(BIN)
 	@set -e; \
 	expected_file=tests/test_step_rules.expected; \
 	echo "[step-rules] baseline witnesses"; \
-	out=$$($(CETTA_BIN_INVOKE) --profile he-extended --lang he tests/test_step_rules.metta 2>/dev/null); \
+	out=$$($(CETTA_BIN_INVOKE) --profile extended --lang he tests/test_step_rules.metta 2>/dev/null); \
 	if [ "$$out" != "$$(cat $$expected_file)" ]; then \
 		echo "FAIL [step-rules]: baseline witnesses diverged from expected"; exit 1; \
 	fi; \
@@ -16069,11 +16122,11 @@ test-step-rules: $(BIN)
 	for pf in tests/support/step_rules/HES_*.metta; do \
 		rule=$$(basename $$pf .metta); \
 		echo "[step-rules] rule-removal: $$rule"; \
-		out=$$(CETTA_LANGDEF_DISABLED_RULES=$$rule $(CETTA_BIN_INVOKE) --profile he-extended --lang he tests/test_step_rules.metta 2>/dev/null); \
+		out=$$(CETTA_LANGDEF_DISABLED_RULES=$$rule $(CETTA_BIN_INVOKE) --profile extended --lang he tests/test_step_rules.metta 2>/dev/null); \
 		if [ "$$out" = "$$(cat $$expected_file)" ]; then \
 			echo "FAIL [step-rules]: witnesses did not fail with $$rule disabled (rule table is decorative)"; exit 1; \
 		fi; \
-		out=$$(CETTA_LANGDEF_DISABLED_RULES=$$rule $(CETTA_BIN_INVOKE) --profile he-extended --lang he $$pf 2>/dev/null); \
+		out=$$(CETTA_LANGDEF_DISABLED_RULES=$$rule $(CETTA_BIN_INVOKE) --profile extended --lang he $$pf 2>/dev/null); \
 		if [ "$$out" != "$$(cat tests/support/step_rules/$$rule.disabled.expected)" ]; then \
 			echo "FAIL [step-rules]: disabled-$$rule one-step shape unexpected:"; echo "$$out"; exit 1; \
 		fi; \
@@ -16118,7 +16171,7 @@ test-eval-gc-precise-suspension:
 ifeq ($(ENABLE_RUNTIME_STATS),1)
 	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 $(BIN)
 	@exp="$(GC_PRECISE_SUSPENSION_TEST:.metta=.expected)"; \
-	result=$$(CETTA_GC=1 CETTA_GC_BUDGET_MB=1 $(CETTA_BIN_INVOKE) --profile he-extended --lang he $(GC_PRECISE_SUSPENSION_TEST) 2>&1); \
+	result=$$(CETTA_GC=1 CETTA_GC_BUDGET_MB=1 $(CETTA_BIN_INVOKE) --profile extended --lang he $(GC_PRECISE_SUSPENSION_TEST) 2>&1); \
 	if [ "$$result" = "$$(cat "$$exp")" ]; then \
 		echo "PASS: $(GC_PRECISE_SUSPENSION_TEST) [he]"; \
 	else \
@@ -16157,6 +16210,7 @@ ifeq ($(ENABLE_RUNTIME_STATS),1)
 		CETTA_PRIME_NEED_HEAP_INDEX=1 $(CETTA_BIN_INVOKE) \
 		--emit-runtime-stats --lang prime \
 		$(GC_MONOLITHIC_EQUATION_TEST) 2>&1); \
+	status=$$?; \
 	visible=$$(printf '%s\n' "$$result" | grep '^\['); \
 	expected=$$(printf '%s\n' '[()]' '[((stv 0.6 0.486) (2 10))]'); \
 	candidates=$$(printf '%s\n' "$$result" | sed -n \
@@ -16169,7 +16223,8 @@ ifeq ($(ENABLE_RUNTIME_STATS),1)
 		's/^runtime-counter prime-eval-stack-gc-frame-safe-point //p'); \
 	reclaimed=$$(printf '%s\n' "$$result" | sed -n \
 		's/^runtime-counter eval-tail-reclaimed-bytes //p'); \
-	if [ "$$visible" != "$$expected" ] || \
+	if [ "$$status" -ne 0 ] || \
+	   [ "$$visible" != "$$expected" ] || \
 	   ! expr "$$candidates" : '[0-9][0-9]*$$' >/dev/null || \
 	   ! expr "$$blocked" : '[0-9][0-9]*$$' >/dev/null || \
 	   ! expr "$$live" : '[0-9][0-9]*$$' >/dev/null || \
@@ -16180,7 +16235,10 @@ ifeq ($(ENABLE_RUNTIME_STATS),1)
 	   [ "$$candidates" -ne $$((blocked + safe)) ]; then \
 		echo "FAIL: monolithic Prime equation search did not fail closed around moving GC"; \
 		printf '%s\n' "visible=$$visible" \
-			"candidates=$$candidates blocked=$$blocked live=$$live safe=$$safe reclaimed=$$reclaimed"; \
+			"exit=$$status candidates=$$candidates blocked=$$blocked live=$$live safe=$$safe reclaimed=$$reclaimed"; \
+		if [ "$$status" -ne 0 ]; then \
+			printf '%s\n' "$$result" | tail -120; \
+		fi; \
 		exit 1; \
 	fi; \
 	echo "PASS: monolithic Prime equation search blocks unsafe collection while explicit frames still collect"
@@ -16192,7 +16250,7 @@ endif
 test-eval-gc-survivor-reset:
 ifeq ($(ENABLE_RUNTIME_STATS),1)
 	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 $(BIN)
-	@result=$$(CETTA_GC=1 CETTA_GC_BUDGET_MB=1 $(CETTA_BIN_INVOKE) --profile he-extended --lang he $(GC_SURVIVOR_RESET_TEST) 2>&1); \
+	@result=$$(CETTA_GC=1 CETTA_GC_BUDGET_MB=1 $(CETTA_BIN_INVOKE) --profile extended --lang he $(GC_SURVIVOR_RESET_TEST) 2>&1); \
 	exp="$(GC_SURVIVOR_RESET_TEST:.metta=.expected)"; \
 	if [ "$$result" = "$$(cat "$$exp")" ]; then \
 		echo "PASS: $(GC_SURVIVOR_RESET_TEST)"; \
@@ -16721,7 +16779,7 @@ test-rhocalc: $(BIN) test-rhocalc-rhometta-profile test-gslt-rhometta-rhocalc-pr
 	fi; \
 	for f in tests/test_lts_syntax.metta tests/test_rho_lib_syntax.metta tests/test_rho_lib_hygiene_syntax.metta tests/test_rhometta_lib_syntax.metta tests/test_rhometta_isolation_oracle.metta tests/test_rhometta_demo_dedfarm.metta tests/test_rhometta_demo_revision.metta tests/test_rhometta_demo_mayset.metta tests/test_rhometta_demo_ecan.metta tests/test_lts_rho_syntax.metta tests/test_lts_rho_cost_location.metta tests/test_lts_rho_cost_causal_trace.metta tests/test_lts_rho_cost_parallel_branches.metta tests/test_lts_rho_cost_search_budget.metta; do \
 		exp="$${f%.metta}.expected"; \
-		result=$$($(CETTA_BIN_INVOKE) --profile he-extended --lang he "$$f" 2>&1); \
+		result=$$($(CETTA_BIN_INVOKE) --profile extended --lang he "$$f" 2>&1); \
 		if [ "$$result" = "$$(cat "$$exp")" ]; then \
 			echo "PASS: rhocalc lib/rho syntax $$f"; \
 			pass=$$((pass + 1)); \
@@ -17791,7 +17849,7 @@ probe-lib-parse-metamath-plus-weq-variant-matrix: $(BIN)
 probe-core-lane: $(BIN)
 	@for f in $(CORE_PROBE_TESTS); do \
 		echo "PROBE: $$f"; \
-		$(CETTA_BIN_INVOKE) --profile he-extended --lang he "$$f"; \
+		$(CETTA_BIN_INVOKE) --profile extended --lang he "$$f"; \
 	done
 
 test-heavy: $(BIN)
@@ -17803,7 +17861,7 @@ test-heavy: $(BIN)
 			no_exp=$$((no_exp + 1)); \
 			continue; \
 		fi; \
-		result=$$($(CETTA_BIN_INVOKE) --profile he-extended --lang he "$$f" 2>&1); \
+		result=$$($(CETTA_BIN_INVOKE) --profile extended --lang he "$$f" 2>&1); \
 		if [ "$$result" = "$$(cat "$$exp")" ]; then \
 			echo "PASS: $$f"; \
 			pass=$$((pass + 1)); \
@@ -17828,7 +17886,7 @@ test-heavy-golden: $(BIN)
 			fail=$$((fail + 1)); \
 			continue; \
 		fi; \
-		result=$$($(CETTA_BIN_INVOKE) --profile he-extended --lang he "$$f" 2>&1); \
+		result=$$($(CETTA_BIN_INVOKE) --profile extended --lang he "$$f" 2>&1); \
 		if [ "$$result" = "$$(cat "$$exp")" ]; then \
 			echo "PASS: $$f"; \
 			pass=$$((pass + 1)); \
@@ -17855,7 +17913,7 @@ probe-heavy-diagnostics: $(BIN)
 		count=$$((count + 1)); \
 		echo "DIAGNOSTIC: $$f"; \
 		set +e; \
-		result=$$(timeout "$${CETTA_HEAVY_DIAGNOSTIC_TIMEOUT:-300}" $(CETTA_BIN_INVOKE) --profile he-extended --lang he "$$f" 2>&1); \
+		result=$$(timeout "$${CETTA_HEAVY_DIAGNOSTIC_TIMEOUT:-300}" $(CETTA_BIN_INVOKE) --profile extended --lang he "$$f" 2>&1); \
 		status=$$?; \
 		set -e; \
 		printf '%s\n' "$$result" | head -40; \
@@ -17925,7 +17983,7 @@ ifeq ($(ENABLE_RUNTIME_STATS),1)
 			no_exp=$$((no_exp + 1)); \
 			continue; \
 		fi; \
-		result=$$($(CETTA_BIN_INVOKE) --profile he-extended --lang he "$$f" 2>&1); \
+		result=$$($(CETTA_BIN_INVOKE) --profile extended --lang he "$$f" 2>&1); \
 		if [ "$$result" = "$$(cat "$$exp")" ]; then \
 			echo "PASS: $$f"; \
 			pass=$$((pass + 1)); \
@@ -20001,7 +20059,7 @@ test-profiles: $(BIN) test-manifest test-forbidden-availability-errors test-git-
 	profiles=$$($(CETTA_BIN_INVOKE) --list-profiles 2>&1); \
 	if printf '%s\n' "$$profiles" | grep -Eq '^he[[:space:]]' && \
 	   printf '%s\n' "$$profiles" | grep -Eq '^he-compat[[:space:]]' && \
-	   printf '%s\n' "$$profiles" | grep -Eq '^he-extended[[:space:]]' && \
+	   printf '%s\n' "$$profiles" | grep -Eq '^extended[[:space:]]' && \
 	   printf '%s\n' "$$profiles" | grep -Eq '^he-prime[[:space:]]'; then \
 		echo "PASS: profile inventory"; pass=$$((pass + 1)); \
 	else \
@@ -20067,11 +20125,11 @@ test-profiles: $(BIN) test-manifest test-forbidden-availability-errors test-git-
 		printf '%s\n' "$$rhocalc_cost"; \
 		fail=$$((fail + 1)); \
 	fi; \
-	he_lts=$$($(CETTA_BIN_INVOKE) --profile he-extended --lang he tests/test_lts_he_syntax.metta 2>&1); \
+	he_lts=$$($(CETTA_BIN_INVOKE) --profile extended --lang he tests/test_lts_he_syntax.metta 2>&1); \
 	if [ "$$he_lts" = "$$(cat tests/test_lts_he_syntax.expected)" ]; then \
-		echo "PASS: he-extended lts:he syntax"; pass=$$((pass + 1)); \
+		echo "PASS: extended lts:he syntax"; pass=$$((pass + 1)); \
 	else \
-		echo "FAIL: he-extended lts:he syntax"; \
+		echo "FAIL: extended lts:he syntax"; \
 		diff <(cat tests/test_lts_he_syntax.expected) <(echo "$$he_lts") | head -20; \
 		fail=$$((fail + 1)); \
 	fi; \
@@ -20099,7 +20157,7 @@ test-profiles: $(BIN) test-manifest test-forbidden-availability-errors test-git-
 		diff <(cat tests/he_g1_docs.expected) <(echo "$$formal_docs") | head -10; \
 		fail=$$((fail + 1)); \
 	fi; \
-	for profile in he-compat he-extended he-prime; do \
+	for profile in he-compat extended he-prime; do \
 		result=$$($(CETTA_BIN_INVOKE) --profile "$$profile" --lang he tests/test_import_modules.metta 2>&1); \
 		if [ "$$result" = "$$(cat tests/test_import_modules.expected)" ]; then \
 			echo "PASS: $$profile import modules"; pass=$$((pass + 1)); \
@@ -20109,11 +20167,11 @@ test-profiles: $(BIN) test-manifest test-forbidden-availability-errors test-git-
 			fail=$$((fail + 1)); \
 		fi; \
 	done; \
-	result=$$($(CETTA_BIN_INVOKE) --profile he-extended --lang he tests/spec_profile_count_atoms.metta 2>&1); \
+	result=$$($(CETTA_BIN_INVOKE) --profile extended --lang he tests/spec_profile_count_atoms.metta 2>&1); \
 	if [ "$$result" = "$$(cat tests/spec_profile_count_atoms.expected)" ]; then \
-		echo "PASS: he-extended count-atoms extension"; pass=$$((pass + 1)); \
+		echo "PASS: extended count-atoms extension"; pass=$$((pass + 1)); \
 	else \
-		echo "FAIL: he-extended count-atoms extension"; \
+		echo "FAIL: extended count-atoms extension"; \
 		diff <(cat tests/spec_profile_count_atoms.expected) <(echo "$$result") | head -10; \
 		fail=$$((fail + 1)); \
 	fi; \
@@ -20148,11 +20206,11 @@ test-profiles: $(BIN) test-manifest test-forbidden-availability-errors test-git-
 		echo "FAIL: assertion diagnostics handle large failure terms"; \
 		fail=$$((fail + 1)); \
 	fi; \
-	result=$$($(CETTA_BIN_INVOKE) --profile he-extended --lang he tests/support/profile_new_space_kind_extended.metta 2>&1); \
+	result=$$($(CETTA_BIN_INVOKE) --profile extended --lang he tests/support/profile_new_space_kind_extended.metta 2>&1); \
 	if [ "$$result" = "$$(cat tests/support/profile_new_space_kind_extended.expected)" ]; then \
-		echo "PASS: he-extended new-space kind overload is visible"; pass=$$((pass + 1)); \
+		echo "PASS: extended new-space kind overload is visible"; pass=$$((pass + 1)); \
 	else \
-		echo "FAIL: he-extended new-space kind overload is visible"; \
+		echo "FAIL: extended new-space kind overload is visible"; \
 		diff <(cat tests/support/profile_new_space_kind_extended.expected) <(echo "$$result") | head -10; \
 		fail=$$((fail + 1)); \
 	fi; \
@@ -20244,19 +20302,19 @@ test-profiles: $(BIN) test-manifest test-forbidden-availability-errors test-git-
 		diff <(cat tests/support/profile_get_doc_syntax.expected) <(echo "$$result") | head -10; \
 		fail=$$((fail + 1)); \
 	fi; \
-	result=$$($(CETTA_BIN_INVOKE) --profile he-extended --lang he tests/support/profile_get_doc_extended_syntax.metta 2>&1); \
+	result=$$($(CETTA_BIN_INVOKE) --profile extended --lang he tests/support/profile_get_doc_extended_syntax.metta 2>&1); \
 	if [ "$$result" = "$$(cat tests/support/profile_get_doc_syntax.expected)" ]; then \
-		echo "PASS: he-extended get-doc syntax"; pass=$$((pass + 1)); \
+		echo "PASS: extended get-doc syntax"; pass=$$((pass + 1)); \
 	else \
-		echo "FAIL: he-extended get-doc syntax"; \
+		echo "FAIL: extended get-doc syntax"; \
 		diff <(cat tests/support/profile_get_doc_syntax.expected) <(echo "$$result") | head -10; \
 		fail=$$((fail + 1)); \
 	fi; \
-	result=$$($(CETTA_BIN_INVOKE) --profile he-extended --lang he tests/spec_profile_size_extension.metta 2>&1); \
+	result=$$($(CETTA_BIN_INVOKE) --profile extended --lang he tests/spec_profile_size_extension.metta 2>&1); \
 	if [ "$$result" = "$$(cat tests/spec_profile_size_extension.expected)" ]; then \
-		echo "PASS: he-extended size extension"; pass=$$((pass + 1)); \
+		echo "PASS: extended size extension"; pass=$$((pass + 1)); \
 	else \
-		echo "FAIL: he-extended size extension"; \
+		echo "FAIL: extended size extension"; \
 		diff <(cat tests/spec_profile_size_extension.expected) <(echo "$$result") | head -10; \
 		fail=$$((fail + 1)); \
 	fi; \
@@ -20274,17 +20332,17 @@ test-profiles: $(BIN) test-manifest test-forbidden-availability-errors test-git-
 		echo "FAIL: he-compat size compile leaves extension call inert"; \
 		fail=$$((fail + 1)); \
 	fi; \
-	if $(CETTA_BIN_INVOKE) --profile he-extended --compile tests/support/profile_compile_size_extension.metta >/dev/null 2>&1; then \
-		echo "PASS: he-extended size compile"; pass=$$((pass + 1)); \
+	if $(CETTA_BIN_INVOKE) --profile extended --compile tests/support/profile_compile_size_extension.metta >/dev/null 2>&1; then \
+		echo "PASS: extended size compile"; pass=$$((pass + 1)); \
 	else \
-		echo "FAIL: he-extended size compile"; \
+		echo "FAIL: extended size compile"; \
 		fail=$$((fail + 1)); \
 	fi; \
-		result=$$($(CETTA_BIN_INVOKE) --profile he-extended --lang he tests/spec_profile_foldl_extension.metta 2>&1); \
+		result=$$($(CETTA_BIN_INVOKE) --profile extended --lang he tests/spec_profile_foldl_extension.metta 2>&1); \
 		if [ "$$result" = "$$(cat tests/spec_profile_foldl_extension.expected)" ]; then \
-			echo "PASS: he-extended foldl-atom-in-space extension"; pass=$$((pass + 1)); \
+			echo "PASS: extended foldl-atom-in-space extension"; pass=$$((pass + 1)); \
 		else \
-			echo "FAIL: he-extended foldl-atom-in-space extension"; \
+			echo "FAIL: extended foldl-atom-in-space extension"; \
 		diff <(cat tests/spec_profile_foldl_extension.expected) <(echo "$$result") | head -10; \
 		fail=$$((fail + 1)); \
 	fi; \
@@ -20304,11 +20362,11 @@ test-profiles: $(BIN) test-manifest test-forbidden-availability-errors test-git-
 		diff <(cat tests/spec_profile_foldl_public.expected) <(echo "$$result") | head -10; \
 		fail=$$((fail + 1)); \
 	fi; \
-		result=$$($(CETTA_BIN_INVOKE) --profile he-extended --lang he tests/spec_profile_collect_extension.metta 2>&1); \
+		result=$$($(CETTA_BIN_INVOKE) --profile extended --lang he tests/spec_profile_collect_extension.metta 2>&1); \
 		if [ "$$result" = "$$(cat tests/spec_profile_collect_extension.expected)" ]; then \
-			echo "PASS: he-extended collect extension"; pass=$$((pass + 1)); \
+			echo "PASS: extended collect extension"; pass=$$((pass + 1)); \
 		else \
-			echo "FAIL: he-extended collect extension"; \
+			echo "FAIL: extended collect extension"; \
 			diff <(cat tests/spec_profile_collect_extension.expected) <(echo "$$result") | head -10; \
 			fail=$$((fail + 1)); \
 		fi; \
@@ -20320,11 +20378,11 @@ test-profiles: $(BIN) test-manifest test-forbidden-availability-errors test-git-
 			printf '%s\n' "$$result"; \
 			fail=$$((fail + 1)); \
 		fi; \
-		result=$$($(CETTA_BIN_INVOKE) --profile he-extended --lang he tests/spec_profile_select_extension.metta 2>&1); \
+		result=$$($(CETTA_BIN_INVOKE) --profile extended --lang he tests/spec_profile_select_extension.metta 2>&1); \
 		if [ "$$result" = "$$(cat tests/spec_profile_select_extension.expected)" ]; then \
-			echo "PASS: he-extended select extension"; pass=$$((pass + 1)); \
+			echo "PASS: extended select extension"; pass=$$((pass + 1)); \
 		else \
-			echo "FAIL: he-extended select extension"; \
+			echo "FAIL: extended select extension"; \
 			diff <(cat tests/spec_profile_select_extension.expected) <(echo "$$result") | head -10; \
 			fail=$$((fail + 1)); \
 		fi; \
@@ -20336,11 +20394,11 @@ test-profiles: $(BIN) test-manifest test-forbidden-availability-errors test-git-
 			printf '%s\n' "$$result"; \
 			fail=$$((fail + 1)); \
 		fi; \
-		result=$$($(CETTA_BIN_INVOKE) --profile he-extended --lang he tests/spec_profile_fold_extension.metta 2>&1); \
+		result=$$($(CETTA_BIN_INVOKE) --profile extended --lang he tests/spec_profile_fold_extension.metta 2>&1); \
 		if [ "$$result" = "$$(cat tests/spec_profile_fold_extension.expected)" ]; then \
-			echo "PASS: he-extended fold extension"; pass=$$((pass + 1)); \
+			echo "PASS: extended fold extension"; pass=$$((pass + 1)); \
 		else \
-			echo "FAIL: he-extended fold extension"; \
+			echo "FAIL: extended fold extension"; \
 			diff <(cat tests/spec_profile_fold_extension.expected) <(echo "$$result") | head -10; \
 			fail=$$((fail + 1)); \
 		fi; \
@@ -20352,11 +20410,11 @@ test-profiles: $(BIN) test-manifest test-forbidden-availability-errors test-git-
 			printf '%s\n' "$$result"; \
 			fail=$$((fail + 1)); \
 		fi; \
-		result=$$($(CETTA_BIN_INVOKE) --profile he-extended --lang he tests/spec_profile_fold_by_key_extension.metta 2>&1); \
+		result=$$($(CETTA_BIN_INVOKE) --profile extended --lang he tests/spec_profile_fold_by_key_extension.metta 2>&1); \
 		if [ "$$result" = "$$(cat tests/spec_profile_fold_by_key_extension.expected)" ]; then \
-			echo "PASS: he-extended fold-by-key extension"; pass=$$((pass + 1)); \
+			echo "PASS: extended fold-by-key extension"; pass=$$((pass + 1)); \
 		else \
-			echo "FAIL: he-extended fold-by-key extension"; \
+			echo "FAIL: extended fold-by-key extension"; \
 			diff <(cat tests/spec_profile_fold_by_key_extension.expected) <(echo "$$result") | head -10; \
 			fail=$$((fail + 1)); \
 		fi; \
@@ -20368,11 +20426,11 @@ test-profiles: $(BIN) test-manifest test-forbidden-availability-errors test-git-
 			printf '%s\n' "$$result"; \
 			fail=$$((fail + 1)); \
 		fi; \
-		result=$$($(CETTA_BIN_INVOKE) --profile he-extended --lang he tests/spec_profile_reduce_extension.metta 2>&1); \
+		result=$$($(CETTA_BIN_INVOKE) --profile extended --lang he tests/spec_profile_reduce_extension.metta 2>&1); \
 		if [ "$$result" = "$$(cat tests/spec_profile_reduce_extension.expected)" ]; then \
-			echo "PASS: he-extended reduce extension"; pass=$$((pass + 1)); \
+			echo "PASS: extended reduce extension"; pass=$$((pass + 1)); \
 		else \
-			echo "FAIL: he-extended reduce extension"; \
+			echo "FAIL: extended reduce extension"; \
 			diff <(cat tests/spec_profile_reduce_extension.expected) <(echo "$$result") | head -10; \
 			fail=$$((fail + 1)); \
 		fi; \
@@ -20384,11 +20442,11 @@ test-profiles: $(BIN) test-manifest test-forbidden-availability-errors test-git-
 			printf '%s\n' "$$result"; \
 			fail=$$((fail + 1)); \
 		fi; \
-		result=$$($(CETTA_BIN_INVOKE) --profile he-extended --lang he tests/spec_profile_runtime_stats_extension.metta 2>&1); \
+		result=$$($(CETTA_BIN_INVOKE) --profile extended --lang he tests/spec_profile_runtime_stats_extension.metta 2>&1); \
 		if [ "$$result" = "$$(cat tests/spec_profile_runtime_stats_extension.expected)" ]; then \
-			echo "PASS: he-extended runtime-stats extension"; pass=$$((pass + 1)); \
+			echo "PASS: extended runtime-stats extension"; pass=$$((pass + 1)); \
 		else \
-			echo "FAIL: he-extended runtime-stats extension"; \
+			echo "FAIL: extended runtime-stats extension"; \
 			diff <(cat tests/spec_profile_runtime_stats_extension.expected) <(echo "$$result") | head -10; \
 			fail=$$((fail + 1)); \
 		fi; \
@@ -20400,11 +20458,11 @@ test-profiles: $(BIN) test-manifest test-forbidden-availability-errors test-git-
 			printf '%s\n' "$$result"; \
 			fail=$$((fail + 1)); \
 		fi; \
-		result=$$($(CETTA_BIN_INVOKE) --profile he-extended --lang he tests/spec_profile_once_alias_extension.metta 2>&1); \
+		result=$$($(CETTA_BIN_INVOKE) --profile extended --lang he tests/spec_profile_once_alias_extension.metta 2>&1); \
 		if [ "$$result" = "$$(cat tests/spec_profile_once_alias_extension.expected)" ]; then \
-			echo "PASS: he-extended once alias"; pass=$$((pass + 1)); \
+			echo "PASS: extended once alias"; pass=$$((pass + 1)); \
 		else \
-			echo "FAIL: he-extended once alias"; \
+			echo "FAIL: extended once alias"; \
 			diff <(cat tests/spec_profile_once_alias_extension.expected) <(echo "$$result") | head -10; \
 			fail=$$((fail + 1)); \
 		fi; \
@@ -20415,11 +20473,11 @@ test-profiles: $(BIN) test-manifest test-forbidden-availability-errors test-git-
 			echo "FAIL: he-compat once Rust-inert syntax"; \
 			fail=$$((fail + 1)); \
 		fi; \
-		result=$$($(CETTA_BIN_INVOKE) --profile he-extended --lang he tests/spec_profile_hyperpose_extension.metta 2>&1); \
+		result=$$($(CETTA_BIN_INVOKE) --profile extended --lang he tests/spec_profile_hyperpose_extension.metta 2>&1); \
 		if [ "$$result" = "$$(cat tests/spec_profile_hyperpose_extension.expected)" ]; then \
-			echo "PASS: he-extended hyperpose extension"; pass=$$((pass + 1)); \
+			echo "PASS: extended hyperpose extension"; pass=$$((pass + 1)); \
 		else \
-			echo "FAIL: he-extended hyperpose extension"; \
+			echo "FAIL: extended hyperpose extension"; \
 			diff <(cat tests/spec_profile_hyperpose_extension.expected) <(echo "$$result") | head -10; \
 			fail=$$((fail + 1)); \
 		fi; \
@@ -20465,25 +20523,25 @@ test-profiles: $(BIN) test-manifest test-forbidden-availability-errors test-git-
 			echo "FAIL: he-compat compile hyperpose pass-through"; \
 			fail=$$((fail + 1)); \
 		fi; \
-		if $(CETTA_BIN_INVOKE) --profile he-extended --compile tests/support/profile_compile_hyperpose_extension.metta >/dev/null 2>&1; then \
-			echo "PASS: he-extended compile hyperpose"; pass=$$((pass + 1)); \
+		if $(CETTA_BIN_INVOKE) --profile extended --compile tests/support/profile_compile_hyperpose_extension.metta >/dev/null 2>&1; then \
+			echo "PASS: extended compile hyperpose"; pass=$$((pass + 1)); \
 		else \
-			echo "FAIL: he-extended compile hyperpose"; \
+			echo "FAIL: extended compile hyperpose"; \
 			fail=$$((fail + 1)); \
 		fi; \
-		result=$$($(CETTA_BIN_INVOKE) --profile he-extended --lang he --num-threads 2 tests/support/hyperpose_cli_threads.metta 2>&1); \
+		result=$$($(CETTA_BIN_INVOKE) --profile extended --lang he --num-threads 2 tests/support/hyperpose_cli_threads.metta 2>&1); \
 		if [ "$$result" = "$$(cat tests/support/hyperpose_cli_threads.expected)" ]; then \
-			echo "PASS: he-extended hyperpose CLI threads"; pass=$$((pass + 1)); \
+			echo "PASS: extended hyperpose CLI threads"; pass=$$((pass + 1)); \
 		else \
-			echo "FAIL: he-extended hyperpose CLI threads"; \
+			echo "FAIL: extended hyperpose CLI threads"; \
 			diff <(cat tests/support/hyperpose_cli_threads.expected) <(echo "$$result") | head -10; \
 			fail=$$((fail + 1)); \
 		fi; \
-		result=$$($(CETTA_BIN_INVOKE) --profile he-extended --lang he tests/spec_profile_search_policy_extension.metta 2>&1); \
+		result=$$($(CETTA_BIN_INVOKE) --profile extended --lang he tests/spec_profile_search_policy_extension.metta 2>&1); \
 		if [ "$$result" = "$$(cat tests/spec_profile_search_policy_extension.expected)" ]; then \
-			echo "PASS: he-extended search-policy capability"; pass=$$((pass + 1)); \
+			echo "PASS: extended search-policy capability"; pass=$$((pass + 1)); \
 		else \
-			echo "FAIL: he-extended search-policy capability"; \
+			echo "FAIL: extended search-policy capability"; \
 			diff <(cat tests/spec_profile_search_policy_extension.expected) <(echo "$$result") | head -10; \
 			fail=$$((fail + 1)); \
 		fi; \
@@ -20501,17 +20559,17 @@ test-profiles: $(BIN) test-manifest test-forbidden-availability-errors test-git-
 			echo "FAIL: he-compat compile search-policy leaves extension call inert"; \
 			fail=$$((fail + 1)); \
 		fi; \
-		if $(CETTA_BIN_INVOKE) --profile he-extended --compile tests/support/profile_compile_search_policy_extension.metta >/dev/null 2>&1; then \
-			echo "PASS: he-extended compile search-policy"; pass=$$((pass + 1)); \
+		if $(CETTA_BIN_INVOKE) --profile extended --compile tests/support/profile_compile_search_policy_extension.metta >/dev/null 2>&1; then \
+			echo "PASS: extended compile search-policy"; pass=$$((pass + 1)); \
 		else \
-			echo "FAIL: he-extended compile search-policy"; \
+			echo "FAIL: extended compile search-policy"; \
 			fail=$$((fail + 1)); \
 		fi; \
-		result=$$($(CETTA_BIN_INVOKE) --profile he-extended --lang he tests/spec_profile_space_set_match_backend_extension.metta 2>&1); \
+		result=$$($(CETTA_BIN_INVOKE) --profile extended --lang he tests/spec_profile_space_set_match_backend_extension.metta 2>&1); \
 		if [ "$$result" = "$$(cat tests/spec_profile_space_set_match_backend_extension.expected)" ]; then \
-			echo "PASS: he-extended space-set-match-backend! extension"; pass=$$((pass + 1)); \
+			echo "PASS: extended space-set-match-backend! extension"; pass=$$((pass + 1)); \
 		else \
-			echo "FAIL: he-extended space-set-match-backend! extension"; \
+			echo "FAIL: extended space-set-match-backend! extension"; \
 			diff <(cat tests/spec_profile_space_set_match_backend_extension.expected) <(echo "$$result") | head -10; \
 			fail=$$((fail + 1)); \
 		fi; \
@@ -20529,10 +20587,10 @@ test-profiles: $(BIN) test-manifest test-forbidden-availability-errors test-git-
 			echo "FAIL: he-compat compile space-set-match-backend! leaves extension call inert"; \
 			fail=$$((fail + 1)); \
 		fi; \
-		if $(CETTA_BIN_INVOKE) --profile he-extended --compile tests/support/profile_compile_space_set_match_backend_extension.metta >/dev/null 2>&1; then \
-			echo "PASS: he-extended compile space-set-match-backend!"; pass=$$((pass + 1)); \
+		if $(CETTA_BIN_INVOKE) --profile extended --compile tests/support/profile_compile_space_set_match_backend_extension.metta >/dev/null 2>&1; then \
+			echo "PASS: extended compile space-set-match-backend!"; pass=$$((pass + 1)); \
 		else \
-			echo "FAIL: he-extended compile space-set-match-backend!"; \
+			echo "FAIL: extended compile space-set-match-backend!"; \
 			fail=$$((fail + 1)); \
 		fi; \
 		if $(CETTA_BIN_INVOKE) --profile he-compat --compile tests/support/profile_compile_extension.metta >/dev/null 2>&1; then \
@@ -20541,10 +20599,10 @@ test-profiles: $(BIN) test-manifest test-forbidden-availability-errors test-git-
 			echo "FAIL: he-compat compile count-atoms leaves extension call inert"; \
 			fail=$$((fail + 1)); \
 		fi; \
-		if $(CETTA_BIN_INVOKE) --profile he-extended --compile tests/support/profile_compile_extension.metta >/dev/null 2>&1; then \
-			echo "PASS: he-extended compile extension"; pass=$$((pass + 1)); \
+		if $(CETTA_BIN_INVOKE) --profile extended --compile tests/support/profile_compile_extension.metta >/dev/null 2>&1; then \
+			echo "PASS: extended compile extension"; pass=$$((pass + 1)); \
 		else \
-			echo "FAIL: he-extended compile extension"; \
+			echo "FAIL: extended compile extension"; \
 			fail=$$((fail + 1)); \
 		fi; \
 		if $(CETTA_BIN_INVOKE) --profile he-compat --compile tests/support/profile_compile_collect_extension.metta >/dev/null 2>&1; then \
@@ -20553,10 +20611,10 @@ test-profiles: $(BIN) test-manifest test-forbidden-availability-errors test-git-
 			echo "FAIL: he-compat compile collect leaves extension call inert"; \
 			fail=$$((fail + 1)); \
 		fi; \
-		if $(CETTA_BIN_INVOKE) --profile he-extended --compile tests/support/profile_compile_collect_extension.metta >/dev/null 2>&1; then \
-			echo "PASS: he-extended compile collect"; pass=$$((pass + 1)); \
+		if $(CETTA_BIN_INVOKE) --profile extended --compile tests/support/profile_compile_collect_extension.metta >/dev/null 2>&1; then \
+			echo "PASS: extended compile collect"; pass=$$((pass + 1)); \
 		else \
-			echo "FAIL: he-extended compile collect"; \
+			echo "FAIL: extended compile collect"; \
 			fail=$$((fail + 1)); \
 		fi; \
 		if $(CETTA_BIN_INVOKE) --profile he-compat --compile tests/support/profile_compile_select_extension.metta >/dev/null 2>&1; then \
@@ -20565,10 +20623,10 @@ test-profiles: $(BIN) test-manifest test-forbidden-availability-errors test-git-
 			echo "FAIL: he-compat compile select leaves extension call inert"; \
 			fail=$$((fail + 1)); \
 		fi; \
-		if $(CETTA_BIN_INVOKE) --profile he-extended --compile tests/support/profile_compile_select_extension.metta >/dev/null 2>&1; then \
-			echo "PASS: he-extended compile select"; pass=$$((pass + 1)); \
+		if $(CETTA_BIN_INVOKE) --profile extended --compile tests/support/profile_compile_select_extension.metta >/dev/null 2>&1; then \
+			echo "PASS: extended compile select"; pass=$$((pass + 1)); \
 		else \
-			echo "FAIL: he-extended compile select"; \
+			echo "FAIL: extended compile select"; \
 			fail=$$((fail + 1)); \
 		fi; \
 		if $(CETTA_BIN_INVOKE) --profile he-compat --compile tests/support/profile_compile_fold_extension.metta >/dev/null 2>&1; then \
@@ -20577,10 +20635,10 @@ test-profiles: $(BIN) test-manifest test-forbidden-availability-errors test-git-
 			echo "FAIL: he-compat compile fold leaves extension call inert"; \
 			fail=$$((fail + 1)); \
 		fi; \
-		if $(CETTA_BIN_INVOKE) --profile he-extended --compile tests/support/profile_compile_fold_extension.metta >/dev/null 2>&1; then \
-			echo "PASS: he-extended compile fold"; pass=$$((pass + 1)); \
+		if $(CETTA_BIN_INVOKE) --profile extended --compile tests/support/profile_compile_fold_extension.metta >/dev/null 2>&1; then \
+			echo "PASS: extended compile fold"; pass=$$((pass + 1)); \
 		else \
-			echo "FAIL: he-extended compile fold"; \
+			echo "FAIL: extended compile fold"; \
 			fail=$$((fail + 1)); \
 		fi; \
 		if $(CETTA_BIN_INVOKE) --profile he-compat --compile tests/support/profile_compile_fold_by_key_extension.metta >/dev/null 2>&1; then \
@@ -20589,10 +20647,10 @@ test-profiles: $(BIN) test-manifest test-forbidden-availability-errors test-git-
 			echo "FAIL: he-compat compile fold-by-key leaves extension call inert"; \
 			fail=$$((fail + 1)); \
 		fi; \
-		if $(CETTA_BIN_INVOKE) --profile he-extended --compile tests/support/profile_compile_fold_by_key_extension.metta >/dev/null 2>&1; then \
-			echo "PASS: he-extended compile fold-by-key"; pass=$$((pass + 1)); \
+		if $(CETTA_BIN_INVOKE) --profile extended --compile tests/support/profile_compile_fold_by_key_extension.metta >/dev/null 2>&1; then \
+			echo "PASS: extended compile fold-by-key"; pass=$$((pass + 1)); \
 		else \
-			echo "FAIL: he-extended compile fold-by-key"; \
+			echo "FAIL: extended compile fold-by-key"; \
 			fail=$$((fail + 1)); \
 		fi; \
 		if $(CETTA_BIN_INVOKE) --profile he-compat --compile tests/support/profile_compile_reduce_extension.metta >/dev/null 2>&1; then \
@@ -20601,10 +20659,10 @@ test-profiles: $(BIN) test-manifest test-forbidden-availability-errors test-git-
 			echo "FAIL: he-compat compile reduce leaves extension call inert"; \
 			fail=$$((fail + 1)); \
 		fi; \
-		if $(CETTA_BIN_INVOKE) --profile he-extended --compile tests/support/profile_compile_reduce_extension.metta >/dev/null 2>&1; then \
-			echo "PASS: he-extended compile reduce"; pass=$$((pass + 1)); \
+		if $(CETTA_BIN_INVOKE) --profile extended --compile tests/support/profile_compile_reduce_extension.metta >/dev/null 2>&1; then \
+			echo "PASS: extended compile reduce"; pass=$$((pass + 1)); \
 		else \
-			echo "FAIL: he-extended compile reduce"; \
+			echo "FAIL: extended compile reduce"; \
 			fail=$$((fail + 1)); \
 		fi; \
 		if $(CETTA_BIN_INVOKE) --profile he-compat --compile tests/support/profile_compile_runtime_stats_extension.metta >/dev/null 2>&1; then \
@@ -20613,17 +20671,17 @@ test-profiles: $(BIN) test-manifest test-forbidden-availability-errors test-git-
 			echo "FAIL: he-compat compile runtime-stats leaves extension call inert"; \
 			fail=$$((fail + 1)); \
 		fi; \
-		if $(CETTA_BIN_INVOKE) --profile he-extended --compile tests/support/profile_compile_runtime_stats_extension.metta >/dev/null 2>&1; then \
-			echo "PASS: he-extended compile runtime-stats"; pass=$$((pass + 1)); \
+		if $(CETTA_BIN_INVOKE) --profile extended --compile tests/support/profile_compile_runtime_stats_extension.metta >/dev/null 2>&1; then \
+			echo "PASS: extended compile runtime-stats"; pass=$$((pass + 1)); \
 		else \
-			echo "FAIL: he-extended compile runtime-stats"; \
+			echo "FAIL: extended compile runtime-stats"; \
 			fail=$$((fail + 1)); \
 		fi; \
-		result=$$($(CETTA_BIN_INVOKE) --profile he-extended --lang he tests/spec_module_inventory.metta 2>&1); \
+		result=$$($(CETTA_BIN_INVOKE) --profile extended --lang he tests/spec_module_inventory.metta 2>&1); \
 		if [ "$$result" = "$$(cat tests/spec_module_inventory.expected)" ]; then \
-			echo "PASS: he-extended module-inventory extension"; pass=$$((pass + 1)); \
+			echo "PASS: extended module-inventory extension"; pass=$$((pass + 1)); \
 		else \
-		echo "FAIL: he-extended module-inventory extension"; \
+		echo "FAIL: extended module-inventory extension"; \
 		diff <(cat tests/spec_module_inventory.expected) <(echo "$$result") | head -10; \
 		fail=$$((fail + 1)); \
 	fi; \
@@ -20635,7 +20693,7 @@ test-profiles: $(BIN) test-manifest test-forbidden-availability-errors test-git-
 		printf '%s\n' "$$result"; \
 		fail=$$((fail + 1)); \
 	fi; \
-	for profile in he-compat he-extended he-prime; do \
+	for profile in he-compat extended he-prime; do \
 		result=$$($(CETTA_BIN_INVOKE) --profile "$$profile" --lang he tests/spec_profile_system_extension.metta 2>&1); \
 		if [ "$$result" = "$$(cat tests/spec_profile_system_extension.expected)" ]; then \
 			echo "PASS: $$profile system capability"; pass=$$((pass + 1)); \
@@ -20651,7 +20709,7 @@ test-profiles: $(BIN) test-manifest test-forbidden-availability-errors test-git-
 			fail=$$((fail + 1)); \
 		fi; \
 	done; \
-	for profile in he-compat he-extended he-prime; do \
+	for profile in he-compat extended he-prime; do \
 		result=$$($(CETTA_BIN_INVOKE) --profile "$$profile" --lang he tests/spec_profile_fs_extension.metta 2>&1); \
 		if [ "$$result" = "$$(cat tests/spec_profile_fs_extension.expected)" ]; then \
 			echo "PASS: $$profile fs capability"; pass=$$((pass + 1)); \
@@ -20667,7 +20725,7 @@ test-profiles: $(BIN) test-manifest test-forbidden-availability-errors test-git-
 			fail=$$((fail + 1)); \
 		fi; \
 	done; \
-	for profile in he-compat he-extended he-prime; do \
+	for profile in he-compat extended he-prime; do \
 		result=$$($(CETTA_BIN_INVOKE) --profile "$$profile" --lang he tests/spec_profile_str_extension.metta 2>&1); \
 		if [ "$$result" = "$$(cat tests/spec_profile_str_extension.expected)" ]; then \
 			echo "PASS: $$profile str capability"; pass=$$((pass + 1)); \
@@ -20683,7 +20741,7 @@ test-profiles: $(BIN) test-manifest test-forbidden-availability-errors test-git-
 			fail=$$((fail + 1)); \
 		fi; \
 		done; \
-	for profile in he he-compat he-extended he-prime; do \
+	for profile in he he-compat extended he-prime; do \
 		result=$$($(CETTA_BIN_INVOKE) --profile "$$profile" --lang he tests/profile_he_shared_typing_conformance.metta 2>&1); \
 		if [ "$$result" = "$$(cat tests/profile_he_shared_typing_conformance.expected)" ]; then \
 			echo "PASS: $$profile shared HE typing conformance"; pass=$$((pass + 1)); \
@@ -20693,7 +20751,7 @@ test-profiles: $(BIN) test-manifest test-forbidden-availability-errors test-git-
 			fail=$$((fail + 1)); \
 		fi; \
 	done; \
-	for profile in he he-compat he-extended; do \
+	for profile in he he-compat extended; do \
 		result=$$($(CETTA_BIN_INVOKE) --profile "$$profile" --lang he tests/profile_he_shared_type_level_query.metta 2>&1); \
 		if [ "$$result" = "$$(cat tests/profile_he_shared_type_level_query_residual.expected)" ]; then \
 			echo "PASS: $$profile leaves type-level user computation residual"; pass=$$((pass + 1)); \
@@ -20721,11 +20779,11 @@ test-profiles: $(BIN) test-manifest test-forbidden-availability-errors test-git-
 		diff <(cat tests/profile_he_shared_type_level_query_computed.expected) <(echo "$$result") | head -20; \
 		fail=$$((fail + 1)); \
 	fi; \
-	result=$$($(CETTA_BIN_INVOKE) --profile he-extended --lang he tests/profile_he_prime_dependent_binders_compat.metta 2>&1); \
+	result=$$($(CETTA_BIN_INVOKE) --profile extended --lang he tests/profile_he_prime_dependent_binders_compat.metta 2>&1); \
 	if [ "$$result" = "$$(cat tests/profile_he_prime_dependent_binders_compat.expected)" ]; then \
-		echo "PASS: he-extended keeps literal binder-domain behavior"; pass=$$((pass + 1)); \
+		echo "PASS: extended keeps literal binder-domain behavior"; pass=$$((pass + 1)); \
 	else \
-		echo "FAIL: he-extended keeps literal binder-domain behavior"; \
+		echo "FAIL: extended keeps literal binder-domain behavior"; \
 		diff <(cat tests/profile_he_prime_dependent_binders_compat.expected) <(echo "$$result") | head -10; \
 		fail=$$((fail + 1)); \
 	fi; \
@@ -20825,7 +20883,7 @@ test-profiles: $(BIN) test-manifest test-forbidden-availability-errors test-git-
 		diff <(cat tests/profile_he_prime_search_pln_multi.expected) <(echo "$$result") | head -10; \
 		fail=$$((fail + 1)); \
 	fi; \
-	for profile in he he-compat he-extended; do \
+	for profile in he he-compat extended; do \
 		result=$$($(CETTA_BIN_INVOKE) --profile "$$profile" --lang he tests/profile_he_prime_search_fuel_prefix.metta 2>&1); \
 		count=$$(printf '%s\n' "$$result" | grep -Fc '(search-inhabitants ' || true); \
 		if [ "$$count" -eq 2 ] && ! printf '%s\n' "$$result" | grep -Eq 'typing-search|he-reject|Error'; then \
@@ -20841,10 +20899,10 @@ test-profiles: $(BIN) test-manifest test-forbidden-availability-errors test-git-
 		echo "FAIL: he-compat module-inventory compile leaves extension call inert"; \
 		fail=$$((fail + 1)); \
 	fi; \
-	if $(CETTA_BIN_INVOKE) --profile he-extended --compile tests/support/profile_compile_module_inventory.metta >/dev/null 2>&1; then \
-		echo "PASS: he-extended compile module-inventory"; pass=$$((pass + 1)); \
+	if $(CETTA_BIN_INVOKE) --profile extended --compile tests/support/profile_compile_module_inventory.metta >/dev/null 2>&1; then \
+		echo "PASS: extended compile module-inventory"; pass=$$((pass + 1)); \
 	else \
-		echo "FAIL: he-extended compile module-inventory"; \
+		echo "FAIL: extended compile module-inventory"; \
 		fail=$$((fail + 1)); \
 	fi; \
 	echo "---"; \
@@ -20879,7 +20937,7 @@ test-he-compiled-reader-v1: $(HE_COMPILED_READER_TEST_BIN) $(BIN)
 		echo "FAIL: HE CLI rejection did not originate at the compiled reader"; \
 		exit 1; \
 	fi; \
-	for profile in he he-compat he-extended he-prime; do \
+	for profile in he he-compat extended he-prime; do \
 		if ./$(BIN) --lang he --profile "$$profile" -e '$$' \
 				>/dev/null 2>runtime/test-he-compiled-reader-route.err; then \
 			echo "FAIL: $$profile bypassed compiled bare-variable rejection"; \
@@ -20929,12 +20987,12 @@ test-petta-compiled-reader-v1: test-petta-compiled-reader-direct-generated-v1 $(
 		echo "FAIL: PeTTa reader installation leaked into --lang prime"; \
 		exit 1; \
 	fi; \
-	if ./$(BIN) --lang petta --profile he-extended -e '!(+ 1 2)' \
+	if ./$(BIN) --lang petta --profile he-prime -e '!(+ 1 2)' \
 			>/dev/null 2>runtime/test-petta-compiled-reader-profile.err; then \
 		echo "FAIL: PeTTa was silently treated as an HE profile"; \
 		exit 1; \
 	fi; \
-	if ! grep -Fq "unknown source profile 'he-extended' for language 'petta'" \
+	if ! grep -Fq "unknown source profile 'he-prime' for language 'petta'" \
 			runtime/test-petta-compiled-reader-profile.err; then \
 		echo "FAIL: PeTTa/HE profile boundary diagnostic changed"; \
 		exit 1; \
@@ -21145,7 +21203,7 @@ ifeq ($(ENABLE_RUNTIME_STATS),1)
 	actual=$$(mktemp runtime/he-prepared-program-cache.XXXXXX); \
 	trap 'rm -f "$$actual"' EXIT INT TERM; \
 	stats=$$(./$(BIN) --emit-runtime-stats --lang he \
-		--profile he-extended \
+		--profile extended \
 		tests/prepared_pure_program_cache_he.metta \
 		2>&1 >"$$actual"); \
 	diff -u tests/prepared_pure_program_cache_he.expected \
@@ -21487,16 +21545,28 @@ endif
 .PHONY: test-petta-source-memo-reset-mutation
 
 .PHONY: test-match-decision test-match-decision-gslt-v1 \
-	test-match-decision-lanes \
+	test-match-decision-lanes test-match-decision-lanes-body \
 	test-match-decision-stats test-match-decision-stats-body
-test-match-decision: test-match-decision-gslt-v1 $(MATCH_DECISION_TEST_BIN)
+test-match-decision: test-match-decision-gslt-v1 \
+	test-match-decision-prefix-observation $(MATCH_DECISION_TEST_BIN)
 	@./$(MATCH_DECISION_TEST_BIN)
 
 test-match-decision-gslt-v1: $(MATCH_DECISION_POLICY_GENERATED_V1)
 	@python3 tools/test_match_decision_policy_v1.py --root "$(CURDIR)" \
 		--cc "$(CC)"
 
-test-match-decision-lanes: $(BIN) test-prime-equation-call-sharing-tournament
+test-match-decision-lanes:
+ifeq ($(ENABLE_PRIME_CAUSAL_RECEIPTS),0)
+	@$(MAKE) -s BUILD=$(BUILD_CANON) \
+		ENABLE_PRIME_CAUSAL_RECEIPTS=1 \
+		test-match-decision-lanes-body
+else
+	@$(MAKE) -s BUILD=$(BUILD_CANON) \
+		ENABLE_PRIME_CAUSAL_RECEIPTS=1 \
+		test-match-decision-lanes-body
+endif
+
+test-match-decision-lanes-body: $(BIN) test-prime-equation-call-sharing-tournament
 	@$(CETTA_SCRIPT_RUN_ENV) python3 tools/test_match_decision_lanes.py \
 		--cetta $(CETTA_SCRIPT_BIN) \
 		--timeout $(MATCH_DECISION_LANE_TIMEOUT)
@@ -21514,6 +21584,58 @@ test-match-decision-stats-body: $(BIN)
 	@$(CETTA_SCRIPT_RUN_ENV) python3 tools/test_match_decision_stats.py \
 		--cetta $(CETTA_SCRIPT_BIN) \
 		--timeout $(MATCH_DECISION_LANE_TIMEOUT)
+
+.PHONY: test-petta-match-decision-equality
+test-petta-match-decision-equality: $(BIN)
+	@set -eu; \
+	fixture=tests/petta/search_machine_match_decision_equality.metta; \
+	expected=$$(cat tests/petta/search_machine_match_decision_equality.expected); \
+	for mode in default index verify linear; do \
+		if [ "$$mode" = default ]; then \
+			actual=$$(./$(BIN) --lang petta "$$fixture" 2>&1); \
+		else \
+			actual=$$(CETTA_PETTA_MATCH_DECISION="$$mode" \
+				./$(BIN) --lang petta "$$fixture" 2>&1); \
+		fi; \
+		if [ "$$actual" != "$$expected" ]; then \
+			echo "FAIL: $$mode repeated-variable decision result"; \
+			exit 1; \
+		fi; \
+	done; \
+	if printf '!(+ 1 1)\n' | \
+		./$(BIN) --fuel 0 --lang petta /dev/stdin >/dev/null 2>&1; then \
+		echo "FAIL: zero fuel was accepted as a positive or unlimited budget"; \
+		exit 1; \
+	fi; \
+	if printf '!(+ 1 1)\n' | \
+		./$(BIN) --fuel -2 --lang petta /dev/stdin >/dev/null 2>&1; then \
+		echo "FAIL: unsupported negative fuel was accepted"; \
+		exit 1; \
+	fi
+ifeq ($(ENABLE_RUNTIME_STATS),1)
+	@set -eu; \
+	fixture=tests/petta/search_machine_match_decision_equality.metta; \
+	optimized=$$(./$(BIN) --emit-runtime-stats --lang petta \
+		"$$fixture" 2>&1); \
+	linear=$$(CETTA_PETTA_MATCH_DECISION=linear \
+		./$(BIN) --emit-runtime-stats --lang petta \
+		"$$fixture" 2>&1); \
+	counter() { \
+		printf '%s\n' "$$1" | awk -v name="$$2" \
+			'$$1 == "runtime-counter" && $$2 == name { print $$3 }'; \
+	}; \
+	checks=$$(counter "$$optimized" match-decision-equality-check); \
+	refutations=$$(counter "$$optimized" match-decision-equality-refutation); \
+	test "$$checks" -gt 0; \
+	test "$$refutations" -gt 0; \
+	test "$$refutations" -lt "$$checks"; \
+	test "$$(counter "$$linear" match-decision-equality-check)" -eq 0; \
+	test "$$(counter "$$linear" match-decision-equality-refutation)" -eq 0; \
+	echo "PASS: repeated-variable refutation is exact and non-vacuous"
+else
+	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 \
+		test-petta-match-decision-equality
+endif
 
 .PHONY: test-petta-memoization
 test-petta-memoization: $(BIN)
@@ -21836,9 +21958,914 @@ test-petta-machine-trace-config: $(BIN)
 		./$(BIN) --lang petta \
 		tests/petta/search_controller_fifo_order.metta 2>&1 >/dev/null); \
 	printf '%s\n' "$$choice" | grep -q '^\[petta-choice\]'; \
-	echo "PASS: PeTTa machine trace configuration"
+		echo "PASS: PeTTa machine trace configuration"
 
-test-petta-search-machine: $(PETTA_SEARCH_MACHINE_TEST_BIN) $(BIN) test-search-controller test-controller-diversity test-petta-machine-trace-config test-petta-type-langdef-source-binding-v1 test-petta-boundary-langdef-source-binding-v1 test-petta-capability-ledger test-petta-specializer-relevance-filter test-petta-mam-contender-mutations test-petta-extended-query-algebra test-petta-prepared-register-loop test-petta-specialized-pure-call test-petta-memoization test-petta-match-existence-fusion test-petta-clause-slot-admission test-petta-equation-template-c0 test-petta-relational-equation-view test-petta-argv-native test-petta-native-host-runtime
+.PHONY: test-petta-activation-admission-cache
+test-petta-activation-admission-cache: $(BIN)
+	@set -eu; \
+	fixture=tests/petta/search_machine_activation_admission_cache.metta; \
+	expected=$$(cat tests/petta/search_machine_activation_admission_cache.expected); \
+	actual=$$(./$(BIN) --lang petta "$$fixture" 2>&1); \
+	reference=$$(CETTA_PETTA_ACTIVATION_ADMISSION_CACHE_REFERENCE=1 \
+		./$(BIN) --lang petta "$$fixture" 2>&1); \
+	if [ "$$actual" != "$$expected" ] || \
+	   [ "$$reference" != "$$expected" ]; then \
+		echo "FAIL: activation admission cache changed PeTTa results"; \
+		exit 1; \
+	fi
+ifeq ($(ENABLE_RUNTIME_STATS),1)
+	@set -eu; \
+	fixture=tests/petta/search_machine_activation_admission_cache.metta; \
+	expected=$$(cat tests/petta/search_machine_activation_admission_cache.expected); \
+	optimized=$$(./$(BIN) --emit-runtime-stats --lang petta \
+		"$$fixture" 2>&1); \
+	reference=$$(CETTA_PETTA_ACTIVATION_ADMISSION_CACHE_REFERENCE=1 \
+		./$(BIN) --emit-runtime-stats --lang petta \
+		"$$fixture" 2>&1); \
+	for variant in optimized reference; do \
+		value=$${!variant}; \
+		actual=$$(printf '%s\n' "$$value" | \
+			grep -v '^runtime-counter '); \
+		test "$$actual" = "$$expected"; \
+	done; \
+	counter() { \
+		printf '%s\n' "$$1" | awk -v name="$$2" \
+			'$$1 == "runtime-counter" && $$2 == name { print $$3 }'; \
+	}; \
+	attempts=$$(counter "$$optimized" petta-activation-admission-cache-attempt); \
+	hits=$$(counter "$$optimized" petta-activation-admission-cache-hit); \
+	misses=$$(counter "$$optimized" petta-activation-admission-cache-miss); \
+	invalidations=$$(counter "$$optimized" petta-activation-admission-cache-authority-invalidation); \
+	test "$$attempts" -gt 0; \
+	test "$$hits" -gt 0; \
+	test "$$misses" -gt 0; \
+	test "$$attempts" -eq $$((hits + misses)); \
+	test "$$invalidations" -eq 2; \
+	for name in attempt hit miss authority-invalidation; do \
+		test "$$(counter "$$reference" petta-activation-admission-cache-$$name)" -eq 0; \
+	done; \
+	echo "PASS: activation admission reuse is authority-indexed and reference-exact"
+else
+	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 \
+		test-petta-activation-admission-cache
+endif
+
+.PHONY: test-petta-activation-scalar-if
+test-petta-activation-scalar-if: $(BIN)
+	@set -eu; \
+	fixture=tests/petta/search_machine_activation_scalar_if.metta; \
+	expected=$$(cat tests/petta/search_machine_activation_scalar_if.expected); \
+	actual=$$(./$(BIN) --lang petta "$$fixture" 2>&1); \
+	program_reference=$$(CETTA_PETTA_DETERMINISTIC_REGION_PROGRAM_REFERENCE=1 \
+		./$(BIN) --lang petta "$$fixture" 2>&1); \
+	match_region_reference=$$(CETTA_PETTA_MATCH_REGION_HOLE_REFERENCE=1 \
+		./$(BIN) --lang petta "$$fixture" 2>&1); \
+	reference=$$(CETTA_PETTA_ACTIVATION_SCALAR_IF_REFERENCE=1 \
+		./$(BIN) --lang petta "$$fixture" 2>&1); \
+	tail_reference=$$(CETTA_PETTA_ACTIVATION_TAIL_SEGMENT_REFERENCE=1 \
+		./$(BIN) --lang petta "$$fixture" 2>&1); \
+	resume_reference=$$(CETTA_PETTA_IF_RESUME_SEGMENT_REFERENCE=1 \
+		./$(BIN) --lang petta "$$fixture" 2>&1); \
+	finite=$$(./$(BIN) --fuel 1000 --lang petta "$$fixture" 2>&1); \
+	if [ "$$actual" != "$$expected" ] || \
+	   [ "$$program_reference" != "$$expected" ] || \
+	   [ "$$match_region_reference" != "$$expected" ] || \
+	   [ "$$reference" != "$$expected" ] || \
+	   [ "$$tail_reference" != "$$expected" ] || \
+	   [ "$$resume_reference" != "$$expected" ] || \
+	   [ "$$finite" != "$$expected" ]; then \
+		echo "FAIL: activation scalar-if changed PeTTa results"; \
+		diff <(printf '%s\n' "$$expected") \
+			<(printf '%s\n' "$$actual") | head -40; \
+		exit 1; \
+	fi
+ifeq ($(ENABLE_RUNTIME_STATS),1)
+	@set -eu; \
+	fixture=tests/petta/search_machine_activation_scalar_if.metta; \
+	expected=$$(cat tests/petta/search_machine_activation_scalar_if.expected); \
+	optimized=$$(./$(BIN) --emit-runtime-stats --lang petta \
+		"$$fixture" 2>&1); \
+	program_reference=$$(CETTA_PETTA_DETERMINISTIC_REGION_PROGRAM_REFERENCE=1 \
+		./$(BIN) --emit-runtime-stats --lang petta \
+		"$$fixture" 2>&1); \
+	match_region_reference=$$(CETTA_PETTA_MATCH_REGION_HOLE_REFERENCE=1 \
+		./$(BIN) --emit-runtime-stats --lang petta \
+		"$$fixture" 2>&1); \
+	reference=$$(CETTA_PETTA_ACTIVATION_SCALAR_IF_REFERENCE=1 \
+		./$(BIN) --emit-runtime-stats --lang petta \
+		"$$fixture" 2>&1); \
+	tail_reference=$$(CETTA_PETTA_ACTIVATION_TAIL_SEGMENT_REFERENCE=1 \
+		./$(BIN) --emit-runtime-stats --lang petta \
+		"$$fixture" 2>&1); \
+	resume_reference=$$(CETTA_PETTA_IF_RESUME_SEGMENT_REFERENCE=1 \
+		./$(BIN) --emit-runtime-stats --lang petta \
+		"$$fixture" 2>&1); \
+	finite=$$(./$(BIN) --fuel 1000 --emit-runtime-stats --lang petta \
+		"$$fixture" 2>&1); \
+	for variant in optimized program_reference match_region_reference reference tail_reference resume_reference finite; do \
+		value=$${!variant}; \
+		actual=$$(printf '%s\n' "$$value" | \
+			grep -v '^runtime-counter '); \
+		if [ "$$actual" != "$$expected" ]; then \
+			echo "FAIL: $$variant activation scalar-if result"; \
+			exit 1; \
+		fi; \
+	done; \
+	counter() { \
+		printf '%s\n' "$$1" | awk -v name="$$2" \
+			'$$1 == "runtime-counter" && $$2 == name { print $$3 }'; \
+	}; \
+	test "$$(counter "$$optimized" petta-activation-scalar-if-attempt)" -eq 19; \
+	test "$$(counter "$$optimized" petta-activation-scalar-if-commit)" -eq 16; \
+	test "$$(counter "$$optimized" petta-activation-scalar-if-decline)" -eq 3; \
+	test "$$(counter "$$optimized" petta-activation-scalar-if-operation)" -eq 49; \
+	test "$$(counter "$$program_reference" petta-activation-scalar-if-attempt)" -eq 19; \
+	test "$$(counter "$$program_reference" petta-activation-scalar-if-commit)" -eq 16; \
+	test "$$(counter "$$program_reference" petta-activation-scalar-if-decline)" -eq 3; \
+	test "$$(counter "$$program_reference" petta-activation-scalar-if-operation)" -eq 49; \
+	test "$$(counter "$$optimized" petta-match-region-hole-attempt)" -eq 6; \
+	test "$$(counter "$$optimized" petta-match-region-hole-commit)" -eq 6; \
+	test "$$(counter "$$optimized" petta-match-region-hole-decline)" -eq 0; \
+	for value in "$$match_region_reference" "$$reference" "$$finite"; do \
+		test "$$(counter "$$value" petta-match-region-hole-attempt)" -eq 6; \
+		test "$$(counter "$$value" petta-match-region-hole-commit)" -eq 0; \
+		test "$$(counter "$$value" petta-match-region-hole-decline)" -eq 6; \
+	done; \
+	program_attempts=$$(counter "$$optimized" petta-deterministic-region-program-attempt); \
+	program_commits=$$(counter "$$optimized" petta-deterministic-region-program-commit); \
+	program_declines=$$(counter "$$optimized" petta-deterministic-region-program-decline); \
+	test "$$program_attempts" -gt 0; \
+	test "$$program_commits" -gt 0; \
+	test "$$program_attempts" -eq $$((program_commits + program_declines)); \
+	test "$$(counter "$$optimized" petta-deterministic-region-program-stable-source)" -gt 0; \
+	for name in attempt commit decline stable-source; do \
+		test "$$(counter "$$program_reference" petta-deterministic-region-program-$$name)" -eq 0; \
+	done; \
+	algebra_attempts=$$(counter "$$optimized" petta-algebra-homomorphic-region-attempt); \
+	algebra_commits=$$(counter "$$optimized" petta-algebra-homomorphic-region-commit); \
+	algebra_declines=$$(counter "$$optimized" petta-algebra-homomorphic-region-decline); \
+	test "$$algebra_attempts" -gt 0; \
+	test "$$algebra_commits" -gt 0; \
+	test "$$algebra_declines" -gt 0; \
+	test "$$algebra_attempts" -eq $$((algebra_commits + algebra_declines)); \
+	test "$$algebra_attempts" -eq "$$program_attempts"; \
+	test "$$algebra_commits" -eq "$$program_commits"; \
+	test "$$algebra_declines" -eq "$$program_declines"; \
+	test "$$(counter "$$optimized" petta-algebra-homomorphic-region-representation-elision)" -eq 49; \
+	for name in attempt commit decline representation-elision; do \
+		test "$$(counter "$$program_reference" petta-algebra-homomorphic-region-$$name)" -eq 0; \
+	done; \
+	test "$$(counter "$$tail_reference" petta-activation-scalar-if-attempt)" -eq 19; \
+	test "$$(counter "$$tail_reference" petta-activation-scalar-if-commit)" -eq 16; \
+	test "$$(counter "$$tail_reference" petta-activation-scalar-if-decline)" -eq 3; \
+	test "$$(counter "$$tail_reference" petta-activation-scalar-if-operation)" -eq 49; \
+	for value in "$$reference" "$$finite"; do \
+		test "$$(counter "$$value" petta-activation-scalar-if-attempt)" -eq 0; \
+		test "$$(counter "$$value" petta-activation-scalar-if-commit)" -eq 0; \
+		test "$$(counter "$$value" petta-activation-scalar-if-decline)" -eq 0; \
+		test "$$(counter "$$value" petta-activation-scalar-if-operation)" -eq 0; \
+	done; \
+	test "$$(counter "$$optimized" petta-activation-tail-segment-attempt)" -eq 6; \
+	test "$$(counter "$$optimized" petta-activation-tail-segment-commit)" -eq 6; \
+	test "$$(counter "$$optimized" petta-activation-tail-segment-decline)" -eq 0; \
+	test "$$(counter "$$tail_reference" petta-activation-tail-segment-attempt)" -eq 6; \
+	test "$$(counter "$$tail_reference" petta-activation-tail-segment-commit)" -eq 0; \
+	test "$$(counter "$$tail_reference" petta-activation-tail-segment-decline)" -eq 6; \
+	for value in "$$reference" "$$finite"; do \
+		test "$$(counter "$$value" petta-activation-tail-segment-attempt)" -eq 0; \
+		test "$$(counter "$$value" petta-activation-tail-segment-commit)" -eq 0; \
+		test "$$(counter "$$value" petta-activation-tail-segment-decline)" -eq 0; \
+	done; \
+	test "$$(counter "$$optimized" petta-if-resume-segment-attempt)" -eq 6; \
+	test "$$(counter "$$optimized" petta-if-resume-segment-commit)" -eq 6; \
+	test "$$(counter "$$optimized" petta-if-resume-segment-decline)" -eq 0; \
+	test "$$(counter "$$resume_reference" petta-if-resume-segment-attempt)" -eq 6; \
+	test "$$(counter "$$resume_reference" petta-if-resume-segment-commit)" -eq 0; \
+	test "$$(counter "$$resume_reference" petta-if-resume-segment-decline)" -eq 6; \
+	test "$$(counter "$$reference" petta-if-resume-segment-attempt)" -eq 22; \
+	test "$$(counter "$$reference" petta-if-resume-segment-commit)" -eq 22; \
+	test "$$(counter "$$reference" petta-if-resume-segment-decline)" -eq 0; \
+	test "$$(counter "$$tail_reference" petta-if-resume-segment-attempt)" -eq 6; \
+	test "$$(counter "$$tail_reference" petta-if-resume-segment-commit)" -eq 6; \
+	test "$$(counter "$$tail_reference" petta-if-resume-segment-decline)" -eq 0; \
+	test "$$(counter "$$finite" petta-if-resume-segment-attempt)" -eq 22; \
+	test "$$(counter "$$finite" petta-if-resume-segment-commit)" -eq 0; \
+	test "$$(counter "$$finite" petta-if-resume-segment-decline)" -eq 22; \
+	echo "PASS: source-planned scalar trees, bounded tail segments, and open-condition resumes preserve fallback, multiplicity, and finite fuel"
+else
+	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 \
+		test-petta-activation-scalar-if
+endif
+
+.PHONY: test-petta-match-region-hole
+test-petta-match-region-hole: $(BIN)
+	@set -eu; \
+	generator=benchmarks/inference_cost_axes/gen_match_region_hole_family.sh; \
+	expected=$$(printf 'done\nnever\nnever\nnever'); \
+	for mode in arithmetic conjunction mixed structural disjunction; do \
+		optimized=$$(bash "$$generator" "$$mode" 2000 | \
+			./$(BIN) --fuel -1 --lang petta /dev/stdin 2>&1); \
+		reference=$$(bash "$$generator" "$$mode" 2000 | \
+			env CETTA_PETTA_MATCH_REGION_HOLE_REFERENCE=1 \
+			./$(BIN) --fuel -1 --lang petta /dev/stdin 2>&1); \
+		selector_off=$$(bash "$$generator" "$$mode" 2000 | \
+			env CETTA_PETTA_MATCH_DECISION=off \
+			./$(BIN) --fuel -1 --lang petta /dev/stdin 2>&1); \
+		if [ "$$optimized" != "$$expected" ] || \
+		   [ "$$reference" != "$$expected" ] || \
+		   [ "$$selector_off" != "$$expected" ]; then \
+			echo "FAIL: $$mode match/Region/Hole composition"; \
+			exit 1; \
+		fi; \
+	done
+ifeq ($(ENABLE_RUNTIME_STATS),1)
+	@set -eu; \
+	generator=benchmarks/inference_cost_axes/gen_match_region_hole_family.sh; \
+	expected=$$(printf 'done\nnever\nnever\nnever'); \
+	counter() { \
+		printf '%s\n' "$$1" | awk -v name="$$2" \
+			'$$1 == "runtime-counter" && $$2 == name { print $$3 }'; \
+	}; \
+	for mode in arithmetic conjunction mixed structural disjunction; do \
+		optimized=$$(bash "$$generator" "$$mode" 20 | \
+			./$(BIN) --fuel -1 --emit-runtime-stats \
+			--lang petta /dev/stdin 2>&1); \
+		reference=$$(bash "$$generator" "$$mode" 20 | \
+			env CETTA_PETTA_MATCH_REGION_HOLE_REFERENCE=1 \
+			./$(BIN) --fuel -1 --emit-runtime-stats \
+			--lang petta /dev/stdin 2>&1); \
+		selector_off=$$(bash "$$generator" "$$mode" 20 | \
+			env CETTA_PETTA_MATCH_DECISION=off \
+			./$(BIN) --fuel -1 --emit-runtime-stats \
+			--lang petta /dev/stdin 2>&1); \
+		for value in "$$optimized" "$$reference" "$$selector_off"; do \
+			actual=$$(printf '%s\n' "$$value" | \
+				grep -v '^runtime-counter '); \
+			test "$$actual" = "$$expected"; \
+		done; \
+		attempts=$$(counter "$$optimized" petta-match-region-hole-attempt); \
+		commits=$$(counter "$$optimized" petta-match-region-hole-commit); \
+		declines=$$(counter "$$optimized" petta-match-region-hole-decline); \
+		reference_attempts=$$(counter "$$reference" petta-match-region-hole-attempt); \
+		reference_commits=$$(counter "$$reference" petta-match-region-hole-commit); \
+		reference_declines=$$(counter "$$reference" petta-match-region-hole-decline); \
+		test "$$attempts" -gt 0; \
+		test "$$commits" -eq "$$attempts"; \
+		test "$$declines" -eq 0; \
+		test "$$reference_attempts" -eq "$$attempts"; \
+		test "$$reference_commits" -eq 0; \
+		test "$$reference_declines" -eq "$$reference_attempts"; \
+		test "$$(counter "$$selector_off" match-decision-run)" -eq 0; \
+	done; \
+	echo "PASS: match/Region composition transfers across five scalar algebras, preserves every open Hole, and selector-off follows authored occurrences"
+else
+	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 \
+		test-petta-match-region-hole
+endif
+
+.PHONY: test-petta-binding-region-hole
+test-petta-binding-region-hole: $(BIN)
+	@set -eu; \
+	generator=benchmarks/inference_cost_axes/gen_binding_region_hole_family.sh; \
+	for mode in linear nested dependent repeated anonymous wide; do \
+		optimized=$$(bash "$$generator" "$$mode" 2000 | \
+			./$(BIN) --fuel -1 --lang petta /dev/stdin 2>&1); \
+		reference=$$(bash "$$generator" "$$mode" 2000 | \
+			env CETTA_PETTA_BINDING_REGION_HOLE_REFERENCE=1 \
+			./$(BIN) --fuel -1 --lang petta /dev/stdin 2>&1); \
+		finite=$$(bash "$$generator" "$$mode" 20 | \
+			./$(BIN) --fuel 1000000 --lang petta /dev/stdin 2>&1); \
+		test "$$optimized" = done; \
+		test "$$reference" = done; \
+		test "$$finite" = done; \
+	done
+ifeq ($(ENABLE_RUNTIME_STATS),1)
+	@set -eu; \
+	generator=benchmarks/inference_cost_axes/gen_binding_region_hole_family.sh; \
+	counter() { \
+		printf '%s\n' "$$1" | awk -v name="$$2" \
+			'$$1 == "runtime-counter" && $$2 == name { print $$3 }'; \
+	}; \
+	for mode in linear nested dependent repeated anonymous wide; do \
+		optimized=$$(bash "$$generator" "$$mode" 20 | \
+			./$(BIN) --fuel -1 --emit-runtime-stats \
+			--lang petta /dev/stdin 2>&1); \
+		reference=$$(bash "$$generator" "$$mode" 20 | \
+			env CETTA_PETTA_BINDING_REGION_HOLE_REFERENCE=1 \
+			./$(BIN) --fuel -1 --emit-runtime-stats \
+			--lang petta /dev/stdin 2>&1); \
+		for value in "$$optimized" "$$reference"; do \
+			result=$$(printf '%s\n' "$$value" | \
+				grep -v '^runtime-counter '); \
+			test "$$result" = done; \
+		done; \
+		test "$$(counter "$$optimized" \
+			petta-binding-region-hole-attempt)" -eq 20; \
+		test "$$(counter "$$optimized" \
+			petta-binding-region-hole-commit)" -eq 20; \
+		test "$$(counter "$$optimized" \
+			petta-binding-region-hole-decline)" -eq 0; \
+		test "$$(counter "$$optimized" \
+			petta-binding-region-hole-stable-source)" -eq 20; \
+		test "$$(counter "$$reference" \
+			petta-binding-region-hole-attempt)" -eq 20; \
+		test "$$(counter "$$reference" \
+			petta-binding-region-hole-commit)" -eq 0; \
+		test "$$(counter "$$reference" \
+			petta-binding-region-hole-decline)" -eq 20; \
+		test "$$(counter "$$reference" \
+			petta-binding-region-hole-stable-source)" -eq 0; \
+	done; \
+	echo "PASS: binding Region/Hole cards preserve six open-sequence algebras with exact dynamic and finite-fuel references"
+else
+	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 \
+		test-petta-binding-region-hole
+endif
+
+.PHONY: test-petta-rule-slot-view
+test-petta-rule-slot-view: $(BIN)
+	@set -eu; \
+	generator=benchmarks/inference_cost_axes/gen_rule_slot_view_family.sh; \
+	expected=$$(printf 'done\nnever\nnever\nnever'); \
+	for mode in sibling nested braided evidence structural fanout; do \
+		optimized=$$(bash "$$generator" "$$mode" 2000 | \
+			./$(BIN) --fuel -1 --lang petta /dev/stdin 2>&1); \
+		reference=$$(bash "$$generator" "$$mode" 2000 | \
+			env CETTA_MATCH_RULE_SLOT_VIEW_REFERENCE=1 \
+			./$(BIN) --fuel -1 --lang petta /dev/stdin 2>&1); \
+		observation_reference=$$(bash "$$generator" "$$mode" 2000 | \
+			env CETTA_MATCH_DECISION_EQUALITY_OBSERVATION_REFERENCE=1 \
+			./$(BIN) --fuel -1 --lang petta /dev/stdin 2>&1); \
+		test "$$optimized" = "$$expected"; \
+		test "$$reference" = "$$expected"; \
+		test "$$observation_reference" = "$$expected"; \
+	done
+ifeq ($(ENABLE_RUNTIME_STATS),1)
+	@set -eu; \
+	generator=benchmarks/inference_cost_axes/gen_rule_slot_view_family.sh; \
+	expected=$$(printf 'done\nnever\nnever\nnever'); \
+	counter() { \
+		printf '%s\n' "$$1" | awk -v name="$$2" \
+			'$$1 == "runtime-counter" && $$2 == name { print $$3 }'; \
+	}; \
+	for mode in sibling nested braided evidence structural fanout; do \
+		optimized=$$(bash "$$generator" "$$mode" 40 | \
+			./$(BIN) --fuel -1 --emit-runtime-stats \
+			--lang petta /dev/stdin 2>&1); \
+		reference=$$(bash "$$generator" "$$mode" 40 | \
+			env CETTA_MATCH_RULE_SLOT_VIEW_REFERENCE=1 \
+			./$(BIN) --fuel -1 --emit-runtime-stats \
+			--lang petta /dev/stdin 2>&1); \
+		observation_reference=$$(bash "$$generator" "$$mode" 40 | \
+			env CETTA_MATCH_DECISION_EQUALITY_OBSERVATION_REFERENCE=1 \
+			./$(BIN) --fuel -1 --emit-runtime-stats \
+			--lang petta /dev/stdin 2>&1); \
+		for value in "$$optimized" "$$reference" \
+				"$$observation_reference"; do \
+			actual=$$(printf '%s\n' "$$value" | \
+				grep -v '^runtime-counter '); \
+			test "$$actual" = "$$expected"; \
+		done; \
+		attempts=$$(counter "$$optimized" match-rule-slot-view-attempt); \
+		hits=$$(counter "$$optimized" match-rule-slot-view-hit); \
+		records=$$(counter "$$optimized" match-rule-slot-view-record); \
+		declines=$$(counter "$$optimized" match-rule-slot-view-decline); \
+		reference_attempts=$$(counter "$$reference" match-rule-slot-view-attempt); \
+		test "$$attempts" -gt 0; \
+		test "$$hits" -gt 0; \
+		test "$$records" -gt 0; \
+		test "$$declines" -eq 0; \
+		test "$$reference_attempts" -eq "$$attempts"; \
+		test "$$(counter "$$reference" match-rule-slot-view-hit)" -eq 0; \
+		test "$$(counter "$$reference" match-rule-slot-view-record)" -eq 0; \
+		test "$$(counter "$$reference" match-rule-slot-view-decline)" \
+			-eq "$$reference_attempts"; \
+		test "$$(counter "$$optimized" bindings-lookup)" \
+			-lt "$$(counter "$$reference" bindings-lookup)"; \
+		test "$$(counter "$$optimized" \
+			match-decision-prefix-observation-build-commit)" -eq 1; \
+		test "$$(counter "$$optimized" \
+			match-decision-prefix-observation-build-decline)" -eq 0; \
+		test "$$(counter "$$optimized" \
+			match-decision-prefix-observation-node-visit)" -gt 0; \
+		test "$$(counter "$$optimized" \
+			match-decision-equality-observation-read)" -gt 0; \
+		test "$$(counter "$$optimized" \
+			match-decision-equality-observation-fallback)" -eq 0; \
+		test "$$(counter "$$optimized" \
+			match-decision-equality-observation-direct-edge)" \
+			-gt "$$(counter "$$optimized" \
+			match-decision-equality-observation-graph-edge)"; \
+		test "$$(counter "$$observation_reference" \
+			match-decision-equality-observation-read)" -eq 0; \
+		test "$$(counter "$$observation_reference" \
+			match-decision-equality-observation-fallback)" -gt 0; \
+		test "$$(counter "$$observation_reference" \
+			match-decision-equality-observation-graph-edge)" -eq 0; \
+	done; \
+	echo "PASS: exact repeated-slot views and lazy equality observations share authoritative reads across six nonlinear pattern algebras"
+else
+	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 \
+		test-petta-rule-slot-view
+endif
+
+.PHONY: test-petta-deterministic-region-scalability
+test-petta-deterministic-region-scalability: $(BIN)
+	@set -eu; \
+	generator=benchmarks/inference_cost_axes/gen_scalar_tree_family.sh; \
+	for mode in arithmetic conjunction mixed structural disjunction; do \
+		optimized=$$(bash "$$generator" "$$mode" 20 12 | \
+			./$(BIN) --lang petta /dev/stdin 2>&1); \
+		program_reference=$$(bash "$$generator" "$$mode" 20 12 | \
+			env CETTA_PETTA_DETERMINISTIC_REGION_PROGRAM_REFERENCE=1 \
+			./$(BIN) --lang petta /dev/stdin 2>&1); \
+		canonical=$$(bash "$$generator" "$$mode" 20 12 | \
+			env CETTA_PETTA_ACTIVATION_SCALAR_IF_REFERENCE=1 \
+			./$(BIN) --lang petta /dev/stdin 2>&1); \
+		finite=$$(bash "$$generator" "$$mode" 20 12 | \
+			./$(BIN) --fuel 100000 --lang petta /dev/stdin 2>&1); \
+		for value in "$$optimized" "$$program_reference" \
+				"$$canonical" "$$finite"; do \
+			test "$$value" = done; \
+		done; \
+	done
+ifeq ($(ENABLE_RUNTIME_STATS),1)
+	@set -eu; \
+	generator=benchmarks/inference_cost_axes/gen_scalar_tree_family.sh; \
+	counter() { \
+		printf '%s\n' "$$1" | awk -v name="$$2" \
+			'$$1 == "runtime-counter" && $$2 == name { print $$3 }'; \
+	}; \
+	for mode in arithmetic conjunction mixed structural disjunction; do \
+		optimized=$$(bash "$$generator" "$$mode" 20 12 | \
+			./$(BIN) --emit-runtime-stats --lang petta /dev/stdin 2>&1); \
+		program_reference=$$(bash "$$generator" "$$mode" 20 12 | \
+			env CETTA_PETTA_DETERMINISTIC_REGION_PROGRAM_REFERENCE=1 \
+			./$(BIN) --emit-runtime-stats --lang petta /dev/stdin 2>&1); \
+		canonical=$$(bash "$$generator" "$$mode" 20 12 | \
+			env CETTA_PETTA_ACTIVATION_SCALAR_IF_REFERENCE=1 \
+			./$(BIN) --emit-runtime-stats --lang petta /dev/stdin 2>&1); \
+		finite=$$(bash "$$generator" "$$mode" 20 12 | \
+			./$(BIN) --fuel 100000 --emit-runtime-stats \
+			--lang petta /dev/stdin 2>&1); \
+		for value in "$$optimized" "$$program_reference" \
+				"$$canonical" "$$finite"; do \
+			result=$$(printf '%s\n' "$$value" | \
+				grep -v '^runtime-counter '); \
+			test "$$result" = done; \
+		done; \
+		scalar_attempt=$$(counter "$$optimized" \
+			petta-activation-scalar-if-attempt); \
+		scalar_commit=$$(counter "$$optimized" \
+			petta-activation-scalar-if-commit); \
+		region_attempt=$$(counter "$$optimized" \
+			petta-deterministic-region-program-attempt); \
+		region_commit=$$(counter "$$optimized" \
+			petta-deterministic-region-program-commit); \
+		test "$$scalar_attempt" -gt 0; \
+		test "$$scalar_commit" -eq "$$scalar_attempt"; \
+		test "$$(counter "$$optimized" \
+			petta-activation-scalar-if-decline)" -eq 0; \
+		test "$$(counter "$$optimized" \
+			petta-activation-scalar-if-operation)" -gt 16; \
+		test "$$region_attempt" -gt 0; \
+		test "$$region_commit" -eq "$$region_attempt"; \
+		test "$$(counter "$$optimized" \
+			petta-deterministic-region-program-decline)" -eq 0; \
+		test "$$(counter "$$program_reference" \
+			petta-activation-scalar-if-commit)" -eq "$$scalar_commit"; \
+		test "$$(counter "$$program_reference" \
+			petta-deterministic-region-program-attempt)" -eq 0; \
+		test "$$(counter "$$canonical" \
+			petta-activation-scalar-if-attempt)" -eq 0; \
+		test "$$(counter "$$finite" \
+			petta-activation-scalar-if-attempt)" -eq 0; \
+		test "$$(counter "$$finite" \
+			petta-deterministic-region-program-attempt)" -eq 0; \
+	done; \
+	echo "PASS: deterministic Region workspace scales across five scalar algebras with exact reference and finite-fuel boundaries"
+else
+	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 \
+		test-petta-deterministic-region-scalability
+endif
+
+.PHONY: test-petta-match-decision-tree-repository
+test-petta-match-decision-tree-repository: $(BIN)
+	@set -eu; \
+	for fixture in \
+		search_machine_match_decision_tree_repository \
+		search_machine_match_decision_tree_repository_revision; do \
+		expected=$$(cat tests/petta/$$fixture.expected); \
+		optimized=$$(./$(BIN) --lang petta \
+			tests/petta/$$fixture.metta 2>&1); \
+		reference=$$(CETTA_PETTA_MATCH_DECISION_TREE_REPOSITORY_REFERENCE=1 \
+			./$(BIN) --lang petta tests/petta/$$fixture.metta 2>&1); \
+		if [ "$$optimized" != "$$expected" ] || \
+		   [ "$$reference" != "$$expected" ]; then \
+			echo "FAIL: exact-key match-decision repository changed $$fixture"; \
+			exit 1; \
+		fi; \
+	done
+ifeq ($(ENABLE_RUNTIME_STATS),1)
+	@set -eu; \
+	run_stats() { \
+		fixture=$$1; reference=$$2; \
+		if [ "$$reference" -eq 1 ]; then \
+			CETTA_PETTA_MATCH_DECISION_TREE_REPOSITORY_REFERENCE=1 \
+			CETTA_PETTA_SEARCH_MACHINE=1 CETTA_PETTA_MACHINE_STATS=1 \
+				./$(BIN) --emit-runtime-stats --lang petta \
+				"tests/petta/$$fixture.metta" 2>&1; \
+		else \
+			env -u CETTA_PETTA_MATCH_DECISION_TREE_REPOSITORY_REFERENCE \
+				CETTA_PETTA_SEARCH_MACHINE=1 CETTA_PETTA_MACHINE_STATS=1 \
+				./$(BIN) --emit-runtime-stats --lang petta \
+				"tests/petta/$$fixture.metta" 2>&1; \
+		fi; \
+	}; \
+	field() { \
+		printf '%s\n' "$$1" | awk -v key="$$2" \
+			'{ for (i = 1; i <= NF; i++) { split($$i, pair, "="); if (pair[1] == key) { print pair[2]; exit } } }'; \
+	}; \
+	check_fixture() { \
+		fixture=$$1; opt_compiles=$$2; ref_compiles=$$3; \
+		opt_hits=$$4; ref_hits=$$5; runs=$$6; children=$$7; \
+		expected=$$(cat tests/petta/$$fixture.expected); \
+		optimized=$$(run_stats "$$fixture" 0); \
+		reference=$$(run_stats "$$fixture" 1); \
+		for variant in optimized reference; do \
+			value=$${!variant}; \
+			actual=$$(printf '%s\n' "$$value" | \
+				grep -v '^PETTA_MACHINE_STATS ' | \
+				grep -v '^runtime-counter '); \
+			test "$$actual" = "$$expected"; \
+		done; \
+		optimized_stats=$$(printf '%s\n' "$$optimized" | \
+			grep '^PETTA_MACHINE_STATS ' | tail -1); \
+		reference_stats=$$(printf '%s\n' "$$reference" | \
+			grep '^PETTA_MACHINE_STATS ' | tail -1); \
+		test "$$(field "$$optimized_stats" match_decision_compilations)" -eq "$$opt_compiles"; \
+		test "$$(field "$$reference_stats" match_decision_compilations)" -eq "$$ref_compiles"; \
+		test "$$(field "$$optimized_stats" match_decision_cache_hits)" -eq "$$opt_hits"; \
+		test "$$(field "$$reference_stats" match_decision_cache_hits)" -eq "$$ref_hits"; \
+		test "$$(field "$$optimized_stats" match_decision_runs)" -eq "$$runs"; \
+		test "$$(field "$$reference_stats" match_decision_runs)" -eq "$$runs"; \
+		test "$$(field "$$optimized_stats" child_machine_init_attempts)" -eq "$$children"; \
+		test "$$(field "$$reference_stats" child_machine_init_attempts)" -eq "$$children"; \
+	}; \
+	check_fixture search_machine_match_decision_tree_repository \
+		6 106 120 20 126 126; \
+	check_fixture search_machine_match_decision_tree_repository_revision \
+		4 7 6 3 10 5; \
+	echo "PASS: exact-key match decisions compile once per synchronous tree and invalidate by revision"
+else
+	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 \
+		test-petta-match-decision-tree-repository
+endif
+
+.PHONY: test-petta-match-decision-shape-receipt
+test-petta-match-decision-shape-receipt: $(BIN) $(PETTA_SEARCH_MACHINE_TEST_BIN)
+	@set -eu; \
+	fixture=tests/petta/search_machine_match_decision_shape_receipt.metta; \
+	expected=$$(cat tests/petta/search_machine_match_decision_shape_receipt.expected); \
+	optimized=$$(./$(BIN) --lang petta --quiet "$$fixture" 2>&1); \
+	reference=$$(CETTA_PETTA_MATCH_DECISION_SHAPE_RECEIPT_REFERENCE=1 \
+		./$(BIN) --lang petta --quiet "$$fixture" 2>&1); \
+	test "$$optimized" = "$$expected"; \
+	test "$$reference" = "$$expected"
+ifeq ($(ENABLE_RUNTIME_STATS),1)
+	@set -eu; \
+	fixture=tests/petta/search_machine_match_decision_shape_receipt.metta; \
+	expected=$$(cat tests/petta/search_machine_match_decision_shape_receipt.expected); \
+	optimized=$$(./$(BIN) --emit-runtime-stats --lang petta --quiet \
+		"$$fixture" 2>&1); \
+	reference=$$(CETTA_PETTA_MATCH_DECISION_SHAPE_RECEIPT_REFERENCE=1 \
+		./$(BIN) --emit-runtime-stats --lang petta --quiet \
+		"$$fixture" 2>&1); \
+	for variant in optimized reference; do \
+		value=$${!variant}; \
+		actual=$$(printf '%s\n' "$$value" | \
+			grep -v '^runtime-counter '); \
+		test "$$actual" = "$$expected"; \
+	done; \
+	counter() { \
+		printf '%s\n' "$$1" | awk -v name="$$2" \
+			'$$1 == "runtime-counter" && $$2 == name { print $$3 }'; \
+	}; \
+	attempts=$$(counter "$$optimized" petta-match-decision-shape-receipt-attempt); \
+	reuses=$$(counter "$$optimized" petta-match-decision-shape-receipt-reuse); \
+	stale=$$(counter "$$optimized" petta-match-decision-shape-receipt-stale); \
+	test "$$attempts" -gt 0; \
+	test "$$reuses" -gt 0; \
+	test "$$stale" -eq 0; \
+	test "$$attempts" -eq $$((reuses + stale)); \
+	test "$$(counter "$$reference" petta-match-decision-shape-receipt-attempt)" -gt 0; \
+	test "$$(counter "$$reference" petta-match-decision-shape-receipt-reuse)" -eq 0; \
+	test "$$(counter "$$reference" petta-match-decision-shape-receipt-stale)" -eq 0; \
+	unit=$$(./$(PETTA_SEARCH_MACHINE_TEST_BIN) 2>&1); \
+	printf '%s\n' "$$unit" | \
+		grep -q '^PASS: revision-keyed structural verifier receipt$$'; \
+	echo "PASS: keyed shape receipts preserve order, multiplicity, overlap, staged effects, and mutation fallback"
+else
+	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 \
+		test-petta-match-decision-shape-receipt
+endif
+
+.PHONY: test-petta-activation-anonymous-hole
+test-petta-activation-anonymous-hole: $(BIN)
+	@set -eu; \
+	fixture=tests/petta/search_machine_activation_anonymous_hole.metta; \
+	expected=$$(cat tests/petta/search_machine_activation_anonymous_hole.expected); \
+	optimized=$$(./$(BIN) --lang petta --quiet "$$fixture" 2>&1); \
+	reference=$$(CETTA_PETTA_ACTIVATION_ANONYMOUS_HOLE_REFERENCE=1 \
+		./$(BIN) --lang petta --quiet "$$fixture" 2>&1); \
+	finite=$$(./$(BIN) --fuel 10000 --lang petta --quiet "$$fixture" 2>&1); \
+	for variant in optimized reference finite; do \
+		value=$${!variant}; \
+		if [ "$$value" != "$$expected" ]; then \
+			echo "FAIL: $$variant activation anonymous-hole result"; \
+			diff <(printf '%s\n' "$$expected") \
+				<(printf '%s\n' "$$value") | head -40; \
+			exit 1; \
+		fi; \
+	done
+ifeq ($(ENABLE_RUNTIME_STATS),1)
+	@set -eu; \
+	fixture=tests/petta/search_machine_activation_anonymous_hole.metta; \
+	expected=$$(cat tests/petta/search_machine_activation_anonymous_hole.expected); \
+	optimized=$$(./$(BIN) --emit-runtime-stats --lang petta --quiet \
+		"$$fixture" 2>&1); \
+	reference=$$(CETTA_PETTA_ACTIVATION_ANONYMOUS_HOLE_REFERENCE=1 \
+		./$(BIN) --emit-runtime-stats --lang petta --quiet \
+		"$$fixture" 2>&1); \
+	finite=$$(./$(BIN) --fuel 10000 --emit-runtime-stats --lang petta \
+		--quiet "$$fixture" 2>&1); \
+	for variant in optimized reference finite; do \
+		value=$${!variant}; \
+		actual=$$(printf '%s\n' "$$value" | \
+			grep -v '^runtime-counter '); \
+		test "$$actual" = "$$expected"; \
+	done; \
+	counter() { \
+		printf '%s\n' "$$1" | awk -v name="$$2" \
+			'$$1 == "runtime-counter" && $$2 == name { print $$3 }'; \
+	}; \
+	attempts=$$(counter "$$optimized" petta-activation-anonymous-hole-attempt); \
+	commits=$$(counter "$$optimized" petta-activation-anonymous-hole-commit); \
+	declines=$$(counter "$$optimized" petta-activation-anonymous-hole-decline); \
+	test "$$attempts" -gt 0; \
+	test "$$commits" -gt 0; \
+	test "$$attempts" -eq $$((commits + declines)); \
+	for value in "$$reference" "$$finite"; do \
+		attempts=$$(counter "$$value" petta-activation-anonymous-hole-attempt); \
+		commits=$$(counter "$$value" petta-activation-anonymous-hole-commit); \
+		declines=$$(counter "$$value" petta-activation-anonymous-hole-decline); \
+		test "$$attempts" -gt 0; \
+		test "$$commits" -eq 0; \
+		test "$$declines" -eq "$$attempts"; \
+	done; \
+	echo "PASS: anonymous-hole lowering preserves order, duplicates, zero, effects, and finite fuel"
+else
+	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 \
+		test-petta-activation-anonymous-hole
+endif
+
+.PHONY: test-petta-activation-scalar-argument-segment
+test-petta-activation-scalar-argument-segment: $(BIN)
+	@set -eu; \
+	fixture=tests/petta/search_machine_activation_scalar_argument_segment.metta; \
+	expected=$$(cat tests/petta/search_machine_activation_scalar_argument_segment.expected); \
+	optimized=$$(./$(BIN) --lang petta --quiet "$$fixture" 2>&1); \
+	program_reference=$$(CETTA_PETTA_DETERMINISTIC_REGION_PROGRAM_REFERENCE=1 \
+		./$(BIN) --lang petta --quiet "$$fixture" 2>&1); \
+	reference=$$(CETTA_PETTA_ACTIVATION_SCALAR_ARGUMENT_SEGMENT_REFERENCE=1 \
+		./$(BIN) --lang petta --quiet "$$fixture" 2>&1); \
+	finite=$$(./$(BIN) --fuel 1000 --lang petta --quiet "$$fixture" 2>&1); \
+	for variant in optimized program_reference reference finite; do \
+		value=$${!variant}; \
+		if [ "$$value" != "$$expected" ]; then \
+			echo "FAIL: $$variant activation scalar-argument segment result"; \
+			exit 1; \
+		fi; \
+	done
+ifeq ($(ENABLE_RUNTIME_STATS),1)
+	@set -eu; \
+	fixture=tests/petta/search_machine_activation_scalar_argument_segment.metta; \
+	expected=$$(cat tests/petta/search_machine_activation_scalar_argument_segment.expected); \
+	optimized=$$(./$(BIN) --emit-runtime-stats --lang petta --quiet \
+		"$$fixture" 2>&1); \
+	program_reference=$$(CETTA_PETTA_DETERMINISTIC_REGION_PROGRAM_REFERENCE=1 \
+		./$(BIN) --emit-runtime-stats --lang petta --quiet \
+		"$$fixture" 2>&1); \
+	reference=$$(CETTA_PETTA_ACTIVATION_SCALAR_ARGUMENT_SEGMENT_REFERENCE=1 \
+		./$(BIN) --emit-runtime-stats --lang petta --quiet \
+		"$$fixture" 2>&1); \
+	finite=$$(./$(BIN) --fuel 1000 --emit-runtime-stats --lang petta --quiet \
+		"$$fixture" 2>&1); \
+	for variant in optimized program_reference reference finite; do \
+		value=$${!variant}; \
+		actual=$$(printf '%s\n' "$$value" | \
+			grep -v '^runtime-counter '); \
+		test "$$actual" = "$$expected"; \
+	done; \
+	counter() { \
+		printf '%s\n' "$$1" | awk -v name="$$2" \
+			'$$1 == "runtime-counter" && $$2 == name { print $$3 }'; \
+	}; \
+	test "$$(counter "$$optimized" petta-activation-scalar-argument-segment-attempt)" -eq 3; \
+	test "$$(counter "$$optimized" petta-activation-scalar-argument-segment-commit)" -eq 1; \
+	test "$$(counter "$$optimized" petta-activation-scalar-argument-segment-decline)" -eq 2; \
+	test "$$(counter "$$optimized" petta-activation-scalar-argument-segment-operation)" -eq 3; \
+	test "$$(counter "$$program_reference" petta-activation-scalar-argument-segment-attempt)" -eq 3; \
+	test "$$(counter "$$program_reference" petta-activation-scalar-argument-segment-commit)" -eq 1; \
+	test "$$(counter "$$program_reference" petta-activation-scalar-argument-segment-decline)" -eq 2; \
+	test "$$(counter "$$program_reference" petta-activation-scalar-argument-segment-operation)" -eq 3; \
+	program_attempts=$$(counter "$$optimized" petta-deterministic-region-program-attempt); \
+	program_commits=$$(counter "$$optimized" petta-deterministic-region-program-commit); \
+	program_declines=$$(counter "$$optimized" petta-deterministic-region-program-decline); \
+	test "$$program_attempts" -gt 0; \
+	test "$$program_commits" -gt 0; \
+	test "$$program_attempts" -eq $$((program_commits + program_declines)); \
+	test "$$(counter "$$optimized" petta-deterministic-region-program-stable-source)" -gt 0; \
+	for name in attempt commit decline stable-source; do \
+		test "$$(counter "$$program_reference" petta-deterministic-region-program-$$name)" -eq 0; \
+	done; \
+	algebra_attempts=$$(counter "$$optimized" petta-algebra-homomorphic-region-attempt); \
+	algebra_commits=$$(counter "$$optimized" petta-algebra-homomorphic-region-commit); \
+	algebra_declines=$$(counter "$$optimized" petta-algebra-homomorphic-region-decline); \
+	test "$$algebra_attempts" -eq 3; \
+	test "$$algebra_commits" -eq 1; \
+	test "$$algebra_declines" -eq 2; \
+	test "$$algebra_attempts" -eq $$((algebra_commits + algebra_declines)); \
+	test "$$(counter "$$optimized" petta-algebra-homomorphic-region-representation-elision)" -eq 2; \
+	for name in attempt commit decline representation-elision; do \
+		test "$$(counter "$$program_reference" petta-algebra-homomorphic-region-$$name)" -eq 0; \
+	done; \
+	for value in "$$reference" "$$finite"; do \
+		test "$$(counter "$$value" petta-activation-scalar-argument-segment-attempt)" -eq 3; \
+		test "$$(counter "$$value" petta-activation-scalar-argument-segment-commit)" -eq 0; \
+		test "$$(counter "$$value" petta-activation-scalar-argument-segment-decline)" -eq 3; \
+		test "$$(counter "$$value" petta-activation-scalar-argument-segment-operation)" -eq 0; \
+	done; \
+	echo "PASS: scalar-argument segments preserve fallback, multiplicity, effects, and finite-fuel accounting"
+else
+	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 \
+		test-petta-activation-scalar-argument-segment
+endif
+
+.PHONY: test-petta-activation-pure-data-segment
+test-petta-activation-pure-data-segment: $(BIN)
+	@set -eu; \
+	fixture=tests/petta/search_machine_activation_pure_data_segment.metta; \
+	expected=$$(cat tests/petta/search_machine_activation_pure_data_segment.expected); \
+	actual=$$(./$(BIN) --lang petta "$$fixture" 2>&1); \
+	reference=$$(CETTA_PETTA_ACTIVATION_PURE_DATA_SEGMENT_REFERENCE=1 \
+		./$(BIN) --lang petta "$$fixture" 2>&1); \
+	finite=$$(./$(BIN) --fuel 1000 --lang petta "$$fixture" 2>&1); \
+	for variant in actual reference finite; do \
+		value=$${!variant}; \
+		if [ "$$value" != "$$expected" ]; then \
+			echo "FAIL: $$variant activation pure-data segment result"; \
+			exit 1; \
+		fi; \
+	done
+ifeq ($(ENABLE_RUNTIME_STATS),1)
+	@set -eu; \
+	fixture=tests/petta/search_machine_activation_pure_data_segment.metta; \
+	expected=$$(cat tests/petta/search_machine_activation_pure_data_segment.expected); \
+	optimized=$$(./$(BIN) --emit-runtime-stats --lang petta \
+		"$$fixture" 2>&1); \
+	reference=$$(CETTA_PETTA_ACTIVATION_PURE_DATA_SEGMENT_REFERENCE=1 \
+		./$(BIN) --emit-runtime-stats --lang petta \
+		"$$fixture" 2>&1); \
+	finite=$$(./$(BIN) --fuel 1000 --emit-runtime-stats --lang petta \
+		"$$fixture" 2>&1); \
+	for variant in optimized reference finite; do \
+		value=$${!variant}; \
+		actual=$$(printf '%s\n' "$$value" | \
+			grep -v '^runtime-counter '); \
+		test "$$actual" = "$$expected"; \
+	done; \
+	counter() { \
+		printf '%s\n' "$$1" | awk -v name="$$2" \
+			'$$1 == "runtime-counter" && $$2 == name { print $$3 }'; \
+	}; \
+	attempts=$$(counter "$$optimized" petta-activation-pure-data-segment-attempt); \
+	commits=$$(counter "$$optimized" petta-activation-pure-data-segment-commit); \
+	declines=$$(counter "$$optimized" petta-activation-pure-data-segment-decline); \
+	test "$$attempts" -gt 0; \
+	test "$$commits" -gt 0; \
+	test "$$declines" -gt 0; \
+	test "$$attempts" -eq $$((commits + declines)); \
+	for value in "$$reference" "$$finite"; do \
+		test "$$(counter "$$value" petta-activation-pure-data-segment-attempt)" -eq 0; \
+		test "$$(counter "$$value" petta-activation-pure-data-segment-commit)" -eq 0; \
+		test "$$(counter "$$value" petta-activation-pure-data-segment-decline)" -eq 0; \
+	done; \
+	echo "PASS: activation pure-data segments preserve aliases, multiplicity, effects, and finite-fuel fallback"
+else
+	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 \
+		test-petta-activation-pure-data-segment
+endif
+
+.PHONY: test-petta-body-resume-segment
+test-petta-body-resume-segment: $(BIN)
+	@set -eu; \
+	fixture=tests/petta/search_machine_body_resume_segment.metta; \
+	expected=$$(cat tests/petta/search_machine_body_resume_segment.expected); \
+	optimized=$$(./$(BIN) --lang petta "$$fixture" 2>&1); \
+	reference=$$(CETTA_PETTA_BODY_RESUME_SEGMENT_REFERENCE=1 \
+		./$(BIN) --lang petta "$$fixture" 2>&1); \
+	finite=$$(./$(BIN) --fuel 1000 --lang petta "$$fixture" 2>&1); \
+	for variant in optimized reference finite; do \
+		value=$${!variant}; \
+		test "$$value" = "$$expected"; \
+	done
+ifeq ($(ENABLE_RUNTIME_STATS),1)
+	@set -eu; \
+	fixture=tests/petta/search_machine_body_resume_segment.metta; \
+	expected=$$(cat tests/petta/search_machine_body_resume_segment.expected); \
+	optimized=$$(./$(BIN) --emit-runtime-stats --lang petta \
+		"$$fixture" 2>&1); \
+	reference=$$(CETTA_PETTA_BODY_RESUME_SEGMENT_REFERENCE=1 \
+		./$(BIN) --emit-runtime-stats --lang petta \
+		"$$fixture" 2>&1); \
+	finite=$$(./$(BIN) --fuel 1000 --emit-runtime-stats --lang petta \
+		"$$fixture" 2>&1); \
+	for variant in optimized reference finite; do \
+		value=$${!variant}; \
+		actual=$$(printf '%s\n' "$$value" | \
+			grep -v '^runtime-counter '); \
+		test "$$actual" = "$$expected"; \
+	done; \
+	counter() { \
+		printf '%s\n' "$$1" | awk -v name="$$2" \
+			'$$1 == "runtime-counter" && $$2 == name { print $$3 }'; \
+	}; \
+	test "$$(counter "$$optimized" petta-body-resume-segment-attempt)" -eq 9; \
+	test "$$(counter "$$optimized" petta-body-resume-segment-commit)" -eq 9; \
+	test "$$(counter "$$optimized" petta-body-resume-segment-decline)" -eq 0; \
+	for value in "$$reference" "$$finite"; do \
+		test "$$(counter "$$value" petta-body-resume-segment-attempt)" -eq 9; \
+		test "$$(counter "$$value" petta-body-resume-segment-commit)" -eq 0; \
+		test "$$(counter "$$value" petta-body-resume-segment-decline)" -eq 9; \
+	done; \
+	echo "PASS: source-derived body resumes preserve ordered duplicates, empty holes, effects, and finite fuel"
+else
+	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 \
+		test-petta-body-resume-segment
+endif
+
+.PHONY: test-match-closed-expression-decision
+test-match-closed-expression-decision: $(BIN) $(BINDINGS_LOOKUP_INDEX_TEST_BIN)
+	@$(call cetta_exec,./$(BINDINGS_LOOKUP_INDEX_TEST_BIN)) >/dev/null
+	@set -eu; \
+	fixture=tests/petta/match_closed_expression_decision.metta; \
+	expected=$$(cat tests/petta/match_closed_expression_decision.expected); \
+	optimized=$$(./$(BIN) --quiet --lang petta "$$fixture" 2>&1); \
+	reference=$$(CETTA_MATCH_CLOSED_EXPRESSION_DECISION_REFERENCE=1 \
+		./$(BIN) --quiet --lang petta "$$fixture" 2>&1); \
+	finite=$$(./$(BIN) --fuel 1000 --quiet --lang petta "$$fixture" 2>&1); \
+	for variant in optimized reference finite; do \
+		value=$${!variant}; \
+		test "$$value" = "$$expected"; \
+	done
+ifeq ($(ENABLE_RUNTIME_STATS),1)
+	@set -eu; \
+	fixture=tests/petta/match_closed_expression_decision.metta; \
+	expected=$$(cat tests/petta/match_closed_expression_decision.expected); \
+	optimized=$$(./$(BIN) --emit-runtime-stats --quiet --lang petta \
+		"$$fixture" 2>&1); \
+	reference=$$(CETTA_MATCH_CLOSED_EXPRESSION_DECISION_REFERENCE=1 \
+		./$(BIN) --emit-runtime-stats --quiet --lang petta \
+		"$$fixture" 2>&1); \
+	finite=$$(./$(BIN) --fuel 1000 --emit-runtime-stats --quiet \
+		--lang petta "$$fixture" 2>&1); \
+	for variant in optimized reference finite; do \
+		value=$${!variant}; \
+		actual=$$(printf '%s\n' "$$value" | \
+			grep -v '^runtime-counter '); \
+		test "$$actual" = "$$expected"; \
+	done; \
+	counter() { \
+		printf '%s\n' "$$1" | awk -v name="$$2" \
+			'$$1 == "runtime-counter" && $$2 == name { print $$3 }'; \
+	}; \
+	for value in "$$optimized" "$$reference" "$$finite"; do \
+		for name in attempt equal unequal; do \
+			test "$$(counter "$$value" \
+				match-closed-expression-decision-$$name)" -eq 0; \
+		done; \
+	done; \
+	echo "PASS: certified published decisions and arena-local fallback each transfer across five term geometries"
+else
+	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 \
+		test-match-closed-expression-decision
+endif
+
+test-petta-search-machine: $(PETTA_SEARCH_MACHINE_TEST_BIN) $(BIN) test-search-controller test-controller-diversity test-petta-machine-trace-config test-petta-type-langdef-source-binding-v1 test-petta-boundary-langdef-source-binding-v1 test-petta-capability-ledger test-petta-specializer-relevance-filter test-petta-mam-contender-mutations test-petta-extended-query-algebra test-petta-prepared-register-loop test-petta-specialized-pure-call test-petta-memoization test-petta-match-existence-fusion test-petta-clause-slot-admission test-petta-equation-template-c0 test-petta-relational-equation-view test-petta-argv-native test-petta-activation-admission-cache test-petta-activation-scalar-if test-petta-match-region-hole test-petta-binding-region-hole test-petta-rule-slot-view test-petta-deterministic-region-scalability test-petta-body-resume-segment test-petta-match-decision-tree-repository test-petta-match-decision-shape-receipt test-petta-activation-anonymous-hole test-petta-activation-scalar-argument-segment test-petta-activation-pure-data-segment test-petta-match-decision-equality test-match-closed-expression-decision
+	@env -u CETTA_PETTA_CLAUSE_BODY_ACTIVATION \
+		-u CETTA_PETTA_CLAUSE_BODY_ACTIVATION_REFERENCE \
+		./$(PETTA_SEARCH_MACHINE_TEST_BIN)
 	@CETTA_PETTA_CLAUSE_BODY_ACTIVATION=0 \
 		./$(PETTA_SEARCH_MACHINE_TEST_BIN)
 	@CETTA_PETTA_CLAUSE_BODY_ACTIVATION=1 \
@@ -22614,7 +23641,9 @@ test-petta-search-machine: $(PETTA_SEARCH_MACHINE_TEST_BIN) $(BIN) test-search-c
 			<(printf '%s\n' "$$result") | head -40; \
 		exit 1; \
 	fi; \
-	result=$$(CETTA_PETTA_SEARCH_MACHINE=1 ./$(BIN) --lang petta \
+	result=$$(CETTA_PETTA_SEARCH_MACHINE=1 \
+		CETTA_PETTA_CLAUSE_BODY_ACTIVATION=1 \
+		./$(BIN) --lang petta \
 		tests/petta/search_machine_activation_semantic_boundary.metta 2>&1); \
 	expected=$$(cat \
 		tests/petta/search_machine_activation_semantic_boundary.expected); \
@@ -22750,7 +23779,7 @@ test-petta-eval-in-space: $(BIN)
 .PHONY: test-eval-in-space-profiles
 test-eval-in-space-profiles: $(BIN)
 	@expected=$$(cat tests/test_eval_in_space.expected); \
-	for profile in he he-extended he-prime; do \
+	for profile in he extended he-prime; do \
 		result=$$($(CETTA_BIN_INVOKE) --lang he --profile $$profile \
 			tests/test_eval_in_space.metta 2>&1); \
 		if [ "$$result" != "$$expected" ]; then \
@@ -23670,14 +24699,14 @@ test-prime-compiled-reader-v1: test-prime-compiled-reader-direct-generated-v1 te
 		echo "FAIL: Prime rejection did not originate at the compiled reader"; \
 		exit 1; \
 	fi; \
-	if ! ./$(BIN) --lang he --profile he-extended -e '@' \
+	if ! ./$(BIN) --lang he --profile extended -e '@' \
 			>/dev/null 2>&1; then \
 		echo "FAIL: Prime prefix policy leaked into the HE reader"; \
 		exit 1; \
 	fi; \
-	if ./$(BIN) --lang prime --profile he-extended -e '!(+ 1 2)' \
+	if ./$(BIN) --lang prime --profile extended -e '!(+ 1 2)' \
 			>/dev/null 2>runtime/test-prime-compiled-reader-profile.err; then \
-		echo "FAIL: Prime was silently treated as he-extended"; \
+		echo "FAIL: Prime was silently treated as extended"; \
 		exit 1; \
 	fi; \
 	if ! grep -Fq "language 'prime' has no named profiles" \
@@ -23707,7 +24736,7 @@ bench-he-compiled-reader-v1: $(HE_COMPILED_READER_BENCH_BIN)
 		"$(HE_COMPILED_READER_BENCH_ITERATIONS)"
 
 test-import-modes: $(BIN)
-	@default_result=$$($(CETTA_BIN_INVOKE) --profile he-extended --lang he tests/support/import_mode/nested/use_parent_helper.metta 2>&1); \
+	@default_result=$$($(CETTA_BIN_INVOKE) --profile extended --lang he tests/support/import_mode/nested/use_parent_helper.metta 2>&1); \
 	if printf '%s\n' "$$default_result" | grep -Fq "Failed to resolve module Helper"; then \
 		echo "PASS: default relative import mode stays local"; \
 	else \
@@ -23715,7 +24744,7 @@ test-import-modes: $(BIN)
 		printf '%s\n' "$$default_result"; \
 		exit 1; \
 	fi; \
-	ancestor_result=$$($(CETTA_BIN_INVOKE) --profile he-extended --lang he --import-mode ancestor-walk tests/support/import_mode/nested/use_parent_helper.metta 2>&1); \
+	ancestor_result=$$($(CETTA_BIN_INVOKE) --profile extended --lang he --import-mode ancestor-walk tests/support/import_mode/nested/use_parent_helper.metta 2>&1); \
 	if [ "$$ancestor_result" = "$$(cat tests/support/import_mode/nested/use_parent_helper.expected)" ]; then \
 		echo "PASS: ancestor-walk import mode finds parent helper"; \
 	else \
@@ -23724,7 +24753,7 @@ test-import-modes: $(BIN)
 		exit 1; \
 	fi; \
 	expected_inventory=$$'[()]\n[()]'; \
-	inventory_result=$$($(CETTA_BIN_INVOKE) --profile he-extended --lang he --import-mode ancestor-walk \
+	inventory_result=$$($(CETTA_BIN_INVOKE) --profile extended --lang he --import-mode ancestor-walk \
 		-e '!(bind! &mods (module-inventory!))' \
 		-e '!(assertEqualToResult (match &mods (module-import-mode ancestor-walk) ok) (ok))' 2>&1); \
 	if [ "$$inventory_result" = "$$expected_inventory" ]; then \
@@ -23740,7 +24769,7 @@ test-backends: $(BIN)
 	CETTA_GIT_MODULE_CACHE_DIR="$$cache_dir" python3 scripts/run_backend_parametric_tests.py \
 		--cetta $(CETTA_BIN_INVOKE) \
 		--lang he \
-		--profile he-extended \
+		--profile extended \
 		--backends "$(BACKEND_PARAMETRIC_BACKENDS)" \
 		--skip-tests "$(BACKEND_PARAMETRIC_SKIP_TESTS)" \
 		--timeout "$(BACKEND_PARAMETRIC_TIMEOUT)" \
@@ -23947,7 +24976,7 @@ test-he-contract-suite: $(BIN) test-he-compat-catalog-guards test-he-outcome-lis
 			fail=$$((fail + 1)); \
 			continue; \
 		fi; \
-		result=$$($(CETTA_BIN_INVOKE) --profile he-extended --lang he "$$f" 2>&1); \
+		result=$$($(CETTA_BIN_INVOKE) --profile extended --lang he "$$f" 2>&1); \
 		if [ "$$result" = "$$(cat "$$exp")" ]; then \
 			echo "PASS: $$f"; \
 			pass=$$((pass + 1)); \
@@ -23965,7 +24994,7 @@ test-he-contract-suite: $(BIN) test-he-compat-catalog-guards test-he-outcome-lis
 test-he-return-contract-correlation: $(BIN)
 	@expected=$$(cat tests/test_he_return_contract_correlation.expected); \
 	pass=0; fail=0; \
-	for profile in he he-compat he-extended he-prime; do \
+	for profile in he he-compat extended he-prime; do \
 		result=$$($(CETTA_BIN_INVOKE) --lang he --profile $$profile \
 			tests/test_he_return_contract_correlation.metta 2>&1); \
 		if [ "$$result" = "$$expected" ]; then \
@@ -24062,7 +25091,7 @@ test-mork-runtime-stats-lane-body:
 	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 test-mork-add-atoms-runtime-stats-body
 
 test-mork-add-atoms-runtime-stats-body: $(BIN)
-	@result=$$($(CETTA_BIN_INVOKE) --profile he-extended --lang he tests/test_mork_add_atoms_runtime_stats.metta 2>&1); \
+	@result=$$($(CETTA_BIN_INVOKE) --profile extended --lang he tests/test_mork_add_atoms_runtime_stats.metta 2>&1); \
 	if [ "$$result" = "$$(cat tests/test_mork_add_atoms_runtime_stats.expected)" ]; then \
 		echo "PASS: test_mork_add_atoms_runtime_stats"; \
 	else \
@@ -24098,7 +25127,7 @@ test-mork-basic-pathmap-guard: $(BIN)
 	@if [ "$(ENABLE_PATHMAP_SPACE)" = "1" ]; then \
 		echo "SKIP: mork/basic pathmap guards (pathmap lane enabled)"; \
 	else \
-		result=$$($(CETTA_BIN_INVOKE) --profile he-extended --lang he \
+		result=$$($(CETTA_BIN_INVOKE) --profile extended --lang he \
 			-e '!(assertEqualToResult (new-space pathmap) ((Error (new-space pathmap) "generic pathmap-backed spaces require a bridge build (BUILD=mork or BUILD=main)")))' \
 			-e '!(bind! &h (new-space hash))' \
 			-e '!(assertEqualToResult (space-set-backend! &h pathmap) ((Error (space-set-backend! &h pathmap) "generic pathmap-backed spaces require a bridge build (BUILD=mork or BUILD=main)")))' \
@@ -24140,7 +25169,7 @@ test-pathmap-lane-body: $(BIN)
 			no_exp=$$((no_exp + 1)); \
 			continue; \
 		fi; \
-		result=$$($(CETTA_BIN_INVOKE) --profile he-extended --lang he "$$f" 2>&1); \
+		result=$$($(CETTA_BIN_INVOKE) --profile extended --lang he "$$f" 2>&1); \
 		if [ "$$result" = "$$(cat $$exp)" ]; then \
 			echo "PASS: $$f"; \
 			pass=$$((pass + 1)); \
@@ -24189,7 +25218,7 @@ endif
 probe-pathmap-lane-body: $(BIN)
 	@for f in $(PATHMAP_PROBE_TESTS); do \
 		echo "PROBE: $$f"; \
-		$(CETTA_BIN_INVOKE) --profile he-extended --lang he "$$f"; \
+		$(CETTA_BIN_INVOKE) --profile extended --lang he "$$f"; \
 	done
 
 test-pathmap-runtime-stats-lane:
@@ -24224,7 +25253,7 @@ test-pathmap-runtime-stats-lane-body:
 	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 test-pathmap-program-shadow-sync-work
 	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 test-pathmap-interleaved-dispatch-view
 	@expected=$$(cat tests/test_pathmap_direct_store_runtime_stats.expected); \
-	result=$$($(CETTA_BIN_INVOKE) --profile he-extended --lang he tests/test_pathmap_direct_store_runtime_stats.metta 2>&1); \
+	result=$$($(CETTA_BIN_INVOKE) --profile extended --lang he tests/test_pathmap_direct_store_runtime_stats.metta 2>&1); \
 	if [ "$$result" = "$$expected" ]; then \
 		echo "PASS: pathmap direct-store runtime-stats regression"; \
 	else \
@@ -24240,19 +25269,19 @@ test-pathmap-runtime-stats-lane-body:
 test-pathmap-indexed-admission-boundaries: $(BIN)
 ifeq ($(ENABLE_RUNTIME_STATS),1)
 	@positive=$$(CETTA_PATHMAP_QUERY_INDEX=1 CETTA_PATHMAP_PULL_CONSUMERS=1 \
-		$(CETTA_BIN_INVOKE) --emit-runtime-stats --profile he-extended \
+		$(CETTA_BIN_INVOKE) --emit-runtime-stats --profile extended \
 		--lang he \
 		-e '!(bind! &positive (new-space pathmap))' \
 		-e '!(add-atom &positive (edge a b))' \
 		-e '!(collapse (match &positive (edge $$x $$y) ($$x $$y)))' 2>&1); \
 	automatic=$$(CETTA_PATHMAP_QUERY_INDEX= CETTA_PATHMAP_PULL_CONSUMERS=1 \
-		$(CETTA_BIN_INVOKE) --emit-runtime-stats --profile he-extended \
+		$(CETTA_BIN_INVOKE) --emit-runtime-stats --profile extended \
 		--lang he \
 		-e '!(bind! &automatic (new-space pathmap))' \
 		-e '!(add-atom &automatic (edge a b))' \
 		-e '!(collapse (match &automatic (edge $$x $$y) ($$x $$y)))' 2>&1); \
 	ordered=$$(CETTA_PATHMAP_QUERY_INDEX=1 CETTA_PATHMAP_PULL_CONSUMERS=1 \
-		$(CETTA_BIN_INVOKE) --emit-runtime-stats --profile he-extended \
+		$(CETTA_BIN_INVOKE) --emit-runtime-stats --profile extended \
 		--lang he \
 		-e '!(bind! &ordered (new-space stack))' \
 		-e '!(space-set-backend! &ordered pathmap)' \
@@ -24260,7 +25289,7 @@ ifeq ($(ENABLE_RUNTIME_STATS),1)
 		-e '!(add-atom &ordered (edge c d))' \
 		-e '!(collapse (match &ordered (edge $$x $$y) ($$x $$y)))' 2>&1); \
 	unsupported=$$(CETTA_PATHMAP_QUERY_INDEX=1 CETTA_PATHMAP_PULL_CONSUMERS=1 \
-		$(CETTA_BIN_INVOKE) --emit-runtime-stats --profile he-extended \
+		$(CETTA_BIN_INVOKE) --emit-runtime-stats --profile extended \
 		--lang he \
 		-e '!(bind! &unsupported (new-space pathmap))' \
 		-e '!(add-atom &unsupported (typed f (arrow a b)))' \
@@ -24302,10 +25331,10 @@ endif
 
 test-pathmap-indexed-query-work: $(BIN)
 	@result=$$(CETTA_PATHMAP_QUERY_INDEX=1 CETTA_PATHMAP_PULL_CONSUMERS=0 $(CETTA_BIN_INVOKE) \
-		--emit-runtime-stats --profile he-extended --lang he \
+		--emit-runtime-stats --profile extended --lang he \
 		tests/test_pathmap_indexed_query_work.metta 2>&1); \
 	oracle_result=$$(CETTA_PATHMAP_QUERY_INDEX=0 CETTA_PATHMAP_PULL_CONSUMERS=0 $(CETTA_BIN_INVOKE) \
-		--profile he-extended --lang he \
+		--profile extended --lang he \
 		tests/test_pathmap_indexed_query_work.metta 2>&1); \
 	expected=$$(cat tests/test_pathmap_indexed_query_work.expected); \
 	actual=$$(printf '%s\n' "$$result" | grep '^\[' || true); \
@@ -24372,11 +25401,13 @@ test-prepared-pure-call-machine: $(BIN)
 	sharing_out=$$(mktemp runtime/prepared-pure-call-sharing.XXXXXX); \
 	choice_out=$$(mktemp runtime/prepared-pure-call-choice.XXXXXX); \
 	choice_diag=$$(mktemp runtime/prepared-pure-call-choice-diag.XXXXXX); \
-	trap 'rm -f "$$he_out" "$$he_no_gc_out" "$$prime_out" "$$petta_out" "$$demand_out" "$$sharing_out" "$$choice_out" "$$choice_diag"' EXIT INT TERM; \
-	CETTA_GC=1 CETTA_GC_BUDGET_MB=1 ./$(BIN) --lang he --profile he-extended \
+	scalar_guard_out=$$(mktemp runtime/prepared-pure-scalar-guard.XXXXXX); \
+	scalar_guard_reference_out=$$(mktemp runtime/prepared-pure-scalar-guard-reference.XXXXXX); \
+	trap 'rm -f "$$he_out" "$$he_no_gc_out" "$$prime_out" "$$petta_out" "$$demand_out" "$$sharing_out" "$$choice_out" "$$choice_diag" "$$scalar_guard_out" "$$scalar_guard_reference_out"' EXIT INT TERM; \
+	CETTA_GC=1 CETTA_GC_BUDGET_MB=1 ./$(BIN) --lang he --profile extended \
 		tests/prepared_pure_call_machine.metta >"$$he_out"; \
 	diff -u tests/prepared_pure_call_machine.he.expected "$$he_out"; \
-	CETTA_GC=0 ./$(BIN) --lang he --profile he-extended \
+	CETTA_GC=0 ./$(BIN) --lang he --profile extended \
 		tests/prepared_pure_call_machine.metta >"$$he_no_gc_out"; \
 	diff -u "$$he_no_gc_out" "$$he_out"; \
 	CETTA_GC=1 CETTA_GC_BUDGET_MB=1 ./$(BIN) --lang prime \
@@ -24387,6 +25418,17 @@ test-prepared-pure-call-machine: $(BIN)
 		tests/prepared_pure_call_machine.metta \
 		>"$$petta_out"; \
 	diff -u tests/prepared_pure_call_machine.petta.expected "$$petta_out"; \
+	./$(BIN) --lang petta \
+		tests/petta/prepared_pure_scalar_guard.metta \
+		>"$$scalar_guard_out"; \
+	diff -u tests/petta/prepared_pure_scalar_guard.expected \
+		"$$scalar_guard_out"; \
+	CETTA_PREPARED_PURE_SCALAR_GUARD_REFERENCE=1 \
+		./$(BIN) --lang petta \
+		tests/petta/prepared_pure_scalar_guard.metta \
+		>"$$scalar_guard_reference_out"; \
+	diff -u tests/petta/prepared_pure_scalar_guard.expected \
+		"$$scalar_guard_reference_out"; \
 	./$(BIN) --lang prime tests/prime/prepared_pure_call_demand.metta \
 		>"$$demand_out"; \
 	diff -u tests/prime/prepared_pure_call_demand.expected "$$demand_out"; \
@@ -24444,7 +25486,7 @@ test-mam-held-symbolic: $(BIN)
 	prime_out=$$(mktemp runtime/mam-held-symbolic-prime.XXXXXX); \
 	petta_out=$$(mktemp runtime/mam-held-symbolic-petta.XXXXXX); \
 	trap 'rm -f "$$he_out" "$$prime_out" "$$petta_out"' EXIT INT TERM; \
-	timeout 60 ./$(BIN) --lang he --profile he-extended \
+	timeout 60 ./$(BIN) --lang he --profile extended \
 		tests/gc/repro_held_symbolic_arg_inner_loop.metta >"$$he_out"; \
 	timeout 60 ./$(BIN) --lang prime \
 		tests/gc/repro_held_symbolic_arg_inner_loop.metta >"$$prime_out"; \
@@ -24466,7 +25508,7 @@ test-mam-jetta-smoke: $(BIN)
 test-mam-jetta-paper: $(BIN)
 	@MAM_JETTA_SCALE=paper \
 		MAM_JETTA_LANGUAGES='he prime petta' \
-		MAM_JETTA_HE_PROFILE=he-extended \
+		MAM_JETTA_HE_PROFILE=extended \
 		MAM_JETTA_REQUIRE_PASS=1 \
 		CETTA_BIN=./$(BIN) \
 		bash scripts/bench_mam_jetta_suite.sh
@@ -24482,7 +25524,7 @@ test-prepared-pure-call-machine-stats: $(BIN)
 ifeq ($(ENABLE_RUNTIME_STATS),1)
 	@result=$$(CETTA_GC=1 CETTA_GC_BUDGET_MB=1 \
 		./$(BIN) --emit-runtime-stats --lang he \
-		--profile he-extended tests/prepared_pure_call_machine.metta 2>&1); \
+		--profile extended tests/prepared_pure_call_machine.metta 2>&1); \
 	admissions=$$(printf '%s\n' "$$result" | awk \
 		'$$1 == "runtime-counter" && $$2 == "prepared-pure-call-admission" { print $$3 }'); \
 	commits=$$(printf '%s\n' "$$result" | awk \
@@ -24532,7 +25574,45 @@ ifeq ($(ENABLE_RUNTIME_STATS),1)
 		echo "FAIL: Need update-cell witness stores=$$memo_stores hits=$$memo_hits blackholes=$$blackholes collections=$$need_collections ephemeron-reclaimed=$$ephemeron_reclaimed path-compressions=$$path_compressions tail-reentries=$$tail_reentries"; \
 		exit 1; \
 	fi; \
-	echo "PASS: pure-call mechanism witnesses commit, conservative decline, bounded collection sampling, generated-root reclamation, shared Need updates, and tail reentry"
+	guard_result=$$(./$(BIN) --emit-runtime-stats --lang petta \
+		tests/petta/prepared_pure_scalar_guard.metta 2>&1); \
+	guard_actual=$$(printf '%s\n' "$$guard_result" | \
+		grep -v '^runtime-counter '); \
+	guard_expected=$$(cat tests/petta/prepared_pure_scalar_guard.expected); \
+	guard_admitted=$$(printf '%s\n' "$$guard_result" | awk \
+		'$$1 == "runtime-counter" && $$2 == "prepared-pure-scalar-guard-admitted" { print $$3 }'); \
+	guard_evaluated=$$(printf '%s\n' "$$guard_result" | awk \
+		'$$1 == "runtime-counter" && $$2 == "prepared-pure-scalar-guard-evaluated" { print $$3 }'); \
+	guard_refuted=$$(printf '%s\n' "$$guard_result" | awk \
+		'$$1 == "runtime-counter" && $$2 == "prepared-pure-scalar-guard-refuted" { print $$3 }'); \
+	guard_tail_reentries=$$(printf '%s\n' "$$guard_result" | awk \
+		'$$1 == "runtime-counter" && $$2 == "prepared-pure-call-tail-reentry" { print $$3 }'); \
+	guard_reference=$$(CETTA_PREPARED_PURE_SCALAR_GUARD_REFERENCE=1 \
+		./$(BIN) --emit-runtime-stats --lang petta \
+		tests/petta/prepared_pure_scalar_guard.metta 2>&1); \
+	guard_reference_actual=$$(printf '%s\n' "$$guard_reference" | \
+		grep -v '^runtime-counter '); \
+	guard_reference_admitted=$$(printf '%s\n' "$$guard_reference" | awk \
+		'$$1 == "runtime-counter" && $$2 == "prepared-pure-scalar-guard-admitted" { print $$3 }'); \
+	guard_bounded=$$(./$(BIN) --fuel 1000000 --emit-runtime-stats \
+		--lang petta tests/petta/prepared_pure_scalar_guard.metta 2>&1); \
+	guard_bounded_actual=$$(printf '%s\n' "$$guard_bounded" | \
+		grep -v '^runtime-counter '); \
+	guard_bounded_admitted=$$(printf '%s\n' "$$guard_bounded" | awk \
+		'$$1 == "runtime-counter" && $$2 == "prepared-pure-scalar-guard-admitted" { print $$3 }'); \
+	if [ "$$guard_actual" != "$$guard_expected" ] || \
+	   [ "$$guard_reference_actual" != "$$guard_expected" ] || \
+	   [ "$$guard_bounded_actual" != "$$guard_expected" ] || \
+	   [ "$${guard_admitted:-0}" -lt 3 ] || \
+	   [ "$${guard_evaluated:-0}" -lt 1000 ] || \
+	   [ "$${guard_refuted:-0}" -lt 1 ] || \
+	   [ "$${guard_tail_reentries:-0}" -lt 1000 ] || \
+	   [ "$${guard_reference_admitted:-0}" -ne 0 ] || \
+	   [ "$${guard_bounded_admitted:-0}" -ne 0 ]; then \
+		echo "FAIL: scalar guard answers or receipts admitted=$$guard_admitted evaluated=$$guard_evaluated refuted=$$guard_refuted tail-reentries=$$guard_tail_reentries reference-admitted=$$guard_reference_admitted bounded-admitted=$$guard_bounded_admitted"; \
+		exit 1; \
+	fi; \
+	echo "PASS: pure-call mechanism witnesses commit, conservative decline, scalar-guard refinement, bounded collection sampling, generated-root reclamation, shared Need updates, and tail reentry"
 else
 	@echo "INFO: pure-call mechanism witness requires compile-time runtime stats; re-running with ENABLE_RUNTIME_STATS=1"
 	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 test-prepared-pure-call-machine-stats
@@ -24630,10 +25710,10 @@ ifeq ($(ENABLE_RUNTIME_STATS),1)
 		--cetta ./$(BIN) --check --check-fold-runtime
 	@$(EXECUTION_CONTRACTS_TEST_BIN)
 	@result=$$(CETTA_PATHMAP_QUERY_INDEX=1 CETTA_PATHMAP_PULL_CONSUMERS=1 \
-		$(CETTA_BIN_INVOKE) --emit-runtime-stats --profile he-extended \
+		$(CETTA_BIN_INVOKE) --emit-runtime-stats --profile extended \
 		--lang he tests/generated/execution_contracts.metta 2>&1); \
 	oracle_result=$$(CETTA_PATHMAP_QUERY_INDEX=1 CETTA_PATHMAP_PULL_CONSUMERS=0 \
-		$(CETTA_BIN_INVOKE) --profile he-extended --lang he \
+		$(CETTA_BIN_INVOKE) --profile extended --lang he \
 		tests/generated/execution_contracts.metta 2>&1); \
 	expected=$$(cat tests/generated/execution_contracts.expected); \
 	actual=$$(printf '%s\n' "$$result" | grep '^\[' || true); \
@@ -24660,7 +25740,7 @@ ifeq ($(ENABLE_RUNTIME_STATS),1)
 	fi; \
 	trace=$$(CETTA_PATHMAP_QUERY_INDEX=1 CETTA_PATHMAP_PULL_CONSUMERS=1 \
 		CETTA_MATCH_CHAIN_TRACE=1 CETTA_MATCH_CHAIN_TRACE_INTERVAL=1 \
-		$(CETTA_BIN_INVOKE) --profile he-extended --lang he \
+		$(CETTA_BIN_INVOKE) --profile extended --lang he \
 		tests/generated/execution_contracts.metta 2>&1 >/dev/null); \
 	if ! printf '%s\n' "$$trace" | grep -Fq '[chain]'; then \
 		echo "FAIL: diagnostic observation profile emitted no chain progress"; \
@@ -24678,10 +25758,10 @@ endif
 ifeq ($(ENABLE_RUNTIME_STATS),1)
 test-pathmap-pull-consumers-work: $(BIN)
 	@result=$$(CETTA_PATHMAP_QUERY_INDEX=1 CETTA_PATHMAP_PULL_CONSUMERS=1 \
-		$(CETTA_BIN_INVOKE) --emit-runtime-stats --profile he-extended \
+		$(CETTA_BIN_INVOKE) --emit-runtime-stats --profile extended \
 		--lang he tests/test_pathmap_pull_consumers_work.metta 2>&1); \
 	oracle_result=$$(CETTA_PATHMAP_QUERY_INDEX=1 CETTA_PATHMAP_PULL_CONSUMERS=0 \
-		$(CETTA_BIN_INVOKE) --profile he-extended --lang he \
+		$(CETTA_BIN_INVOKE) --profile extended --lang he \
 		tests/test_pathmap_pull_consumers_work.metta 2>&1); \
 	expected=$$(cat tests/test_pathmap_pull_consumers_work.expected); \
 	actual=$$(printf '%s\n' "$$result" | grep '^\[' || true); \
@@ -24726,7 +25806,7 @@ endif
 
 test-pathmap-program-shadow-sync-work: $(BIN)
 	@result=$$(CETTA_PATHMAP_QUERY_INDEX=1 $(CETTA_BIN_INVOKE) \
-		--emit-runtime-stats --profile he-extended --space-engine pathmap \
+		--emit-runtime-stats --profile extended --space-engine pathmap \
 		--lang he tests/test_pathmap_program_shadow_sync_work.metta 2>&1); \
 	petta_result=$$(CETTA_PATHMAP_QUERY_INDEX=1 $(CETTA_BIN_INVOKE) \
 		--emit-runtime-stats --profile extended --space-engine pathmap \
@@ -24772,11 +25852,11 @@ test-pathmap-program-shadow-sync-work: $(BIN)
 test-pathmap-interleaved-dispatch-view: $(BIN)
 ifeq ($(ENABLE_RUNTIME_STATS),1)
 	@result=$$(CETTA_PATHMAP_QUERY_INDEX=1 CETTA_PATHMAP_PULL_CONSUMERS= \
-		$(CETTA_BIN_INVOKE) --emit-runtime-stats --profile he-extended \
+		$(CETTA_BIN_INVOKE) --emit-runtime-stats --profile extended \
 		--space-engine pathmap --lang he \
 		tests/pathmap/probe_interleaved_mutation_full_refresh.metta 2>&1); \
 	off_result=$$(CETTA_PATHMAP_QUERY_INDEX=0 CETTA_PATHMAP_PULL_CONSUMERS=1 \
-		$(CETTA_BIN_INVOKE) --emit-runtime-stats --profile he-extended \
+		$(CETTA_BIN_INVOKE) --emit-runtime-stats --profile extended \
 		--space-engine pathmap --lang he \
 		tests/pathmap/probe_interleaved_mutation_full_refresh.metta 2>&1); \
 	expected=$$(cat tests/pathmap/probe_interleaved_mutation_full_refresh.expected); \
@@ -24991,7 +26071,7 @@ test-mm2-gslt-profile-v1: \
 test-import-mm2-mork-session-lowering: $(BIN)
 ifeq ($(MORK_BRIDGE_ACTIVE),1)
 	@ \
-	result=$$($(CETTA_BIN_INVOKE) --profile he-extended --lang he \
+	result=$$($(CETTA_BIN_INVOKE) --profile extended --lang he \
 		tests/test_import_mm2_mork_session_lowering.metta 2>&1); \
 	if [ "$$result" = "$$(cat tests/test_import_mm2_mork_session_lowering.expected)" ]; then \
 		echo "PASS: mork-space sugar over explicit handles"; \
@@ -25007,7 +26087,7 @@ endif
 test-mm2-kiss-suite: $(BIN)
 ifeq ($(MORK_BRIDGE_ACTIVE),1)
 	@ \
-	prep=$$($(CETTA_BIN_INVOKE) --quiet --profile he-extended --lang he tests/support/prepare_mm2_kiss_fruit_colors_act.metta 2>&1); \
+	prep=$$($(CETTA_BIN_INVOKE) --quiet --profile extended --lang he tests/support/prepare_mm2_kiss_fruit_colors_act.metta 2>&1); \
 	if [ -n "$$prep" ]; then \
 		echo "FAIL: mm2 KISS ACT prepare"; \
 		printf '%s\n' "$$prep"; \
@@ -25044,7 +26124,7 @@ ifeq ($(MORK_BRIDGE_ACTIVE),1)
 		fail=$$((fail + 1)); \
 	fi; \
 	for stem in test_import_mm2_module_syntax; do \
-		result=$$($(CETTA_BIN_INVOKE) --profile he-extended --lang he "tests/$$stem.metta" 2>&1); \
+		result=$$($(CETTA_BIN_INVOKE) --profile extended --lang he "tests/$$stem.metta" 2>&1); \
 		if [ "$$result" = "$$(cat "tests/$$stem.expected")" ]; then \
 			echo "PASS: $$stem"; \
 			pass=$$((pass + 1)); \
@@ -25056,7 +26136,7 @@ ifeq ($(MORK_BRIDGE_ACTIVE),1)
 	done; \
 	if [ "$(ENABLE_PATHMAP_SPACE)" = "1" ]; then \
 		stem=test_include_mm2_space_target; \
-		result=$$($(CETTA_BIN_INVOKE) --profile he-extended --lang he "tests/$$stem.metta" 2>&1); \
+		result=$$($(CETTA_BIN_INVOKE) --profile extended --lang he "tests/$$stem.metta" 2>&1); \
 		if [ "$$result" = "$$(cat "tests/$$stem.expected")" ]; then \
 			echo "PASS: $$stem"; \
 			pass=$$((pass + 1)); \
@@ -25093,7 +26173,7 @@ ifeq ($(MORK_BRIDGE_ACTIVE),1)
 		test_mork_zipper_syntax \
 		test_new_space_mork_syntax \
 		test_step_space_syntax; do \
-		result=$$($(CETTA_BIN_INVOKE) --profile he-extended --lang he "tests/$$stem.metta" 2>&1); \
+		result=$$($(CETTA_BIN_INVOKE) --profile extended --lang he "tests/$$stem.metta" 2>&1); \
 		if [ "$$result" = "$$(cat "tests/$$stem.expected")" ]; then \
 			echo "PASS: $$stem"; \
 			pass=$$((pass + 1)); \
@@ -25134,7 +26214,7 @@ test-mork-runtime-stats-isolation:
 	fi
 
 test-mork-runtime-stats-isolation-body: $(BIN)
-	@result=$$($(CETTA_BIN_INVOKE) --profile he-extended --lang he tests/test_mork_runtime_stats_isolation.metta 2>&1); \
+	@result=$$($(CETTA_BIN_INVOKE) --profile extended --lang he tests/test_mork_runtime_stats_isolation.metta 2>&1); \
 	if [ "$$result" = "$$(cat tests/test_mork_runtime_stats_isolation.expected)" ]; then \
 		echo "PASS: test_mork_runtime_stats_isolation"; \
 	else \
@@ -25144,7 +26224,7 @@ test-mork-runtime-stats-isolation-body: $(BIN)
 	fi
 
 test-closed-stream-fastpath: $(BIN)
-	@result=$$($(CETTA_BIN_INVOKE) --quiet --profile he-extended --lang he tests/test_closed_stream_fastpath.metta 2>&1); \
+	@result=$$($(CETTA_BIN_INVOKE) --quiet --profile extended --lang he tests/test_closed_stream_fastpath.metta 2>&1); \
 	if [ "$$result" = "$$(cat tests/test_closed_stream_fastpath.expected)" ]; then \
 		echo "PASS: test_closed_stream_fastpath"; \
 	else \
@@ -25155,7 +26235,7 @@ test-closed-stream-fastpath: $(BIN)
 
 test-closed-stream-runtime-stats: $(BIN)
 ifeq ($(ENABLE_RUNTIME_STATS),1)
-	@result=$$($(CETTA_BIN_INVOKE) --quiet --profile he-extended --lang he tests/test_closed_stream_runtime_stats.metta 2>&1); \
+	@result=$$($(CETTA_BIN_INVOKE) --quiet --profile extended --lang he tests/test_closed_stream_runtime_stats.metta 2>&1); \
 	if [ "$$result" = "$$(cat tests/test_closed_stream_runtime_stats.expected)" ]; then \
 		echo "PASS: test_closed_stream_runtime_stats"; \
 	else \
@@ -25259,7 +26339,7 @@ test-pathmap-conjunction-init: $(BIN)
 ifeq ($(ENABLE_PATHMAP_SPACE),1)
 ifeq ($(ENABLE_RUNTIME_STATS),1)
 	@for source in $(PATHMAP_RUNTIME_STATS_METTA_TESTS); do \
-		result=$$($(CETTA_BIN_INVOKE) --profile he-extended --space-engine pathmap --lang he "$$source" 2>&1); \
+		result=$$($(CETTA_BIN_INVOKE) --profile extended --space-engine pathmap --lang he "$$source" 2>&1); \
 		if [ "$$result" = "$$(cat "$${source%.metta}.expected")" ]; then \
 			echo "PASS: pathmap runtime-stats $$(basename "$$source")"; \
 		else \
@@ -25280,7 +26360,7 @@ test-pathmap-bridge-v2: $(BIN)
 ifeq ($(ENABLE_PATHMAP_SPACE),1)
 ifeq ($(ENABLE_RUNTIME_STATS),1)
 	@expected=$$(printf '%s\n' '[()]' '[()]' '[()]' '[()]' '[()]' '[()]' '[()]' '[()]' '[()]' '[()]' '[()]' '[()]' '[()]' '[()]'); \
-	result=$$(CETTA_PATHMAP_QUERY_INDEX=0 $(CETTA_BIN_INVOKE) --profile he-extended --space-engine pathmap --lang he tests/test_pathmap_imported_bridge_v2.metta 2>&1); \
+	result=$$(CETTA_PATHMAP_QUERY_INDEX=0 $(CETTA_BIN_INVOKE) --profile extended --space-engine pathmap --lang he tests/test_pathmap_imported_bridge_v2.metta 2>&1); \
 	if [ "$$result" = "$$expected" ]; then \
 		echo "PASS: pathmap bridge v2 regression"; \
 	else \
@@ -25331,7 +26411,7 @@ test-pathmap-match-chain-v3: $(BIN)
 ifeq ($(ENABLE_PATHMAP_SPACE),1)
 ifeq ($(ENABLE_RUNTIME_STATS),1)
 	@ \
-	result=$$($(CETTA_BIN_INVOKE) --profile he-extended --space-engine pathmap --lang he tests/test_imported_match_chain_conjunction_lowering.metta 2>&1); \
+	result=$$($(CETTA_BIN_INVOKE) --profile extended --space-engine pathmap --lang he tests/test_imported_match_chain_conjunction_lowering.metta 2>&1); \
 	if [ "$$result" = "$$(cat tests/test_imported_match_chain_conjunction_lowering.expected)" ]; then \
 		echo "PASS: pathmap nested-match conjunction lowering regression"; \
 	else \
@@ -25351,7 +26431,7 @@ test-mork-lib-pathmap: $(BIN)
 ifeq ($(ENABLE_PATHMAP_SPACE),1)
 	@ \
 	expected=$$(printf '%s\n' '[()]' '[()]' '[()]' '[()]' '[()]' '[()]' '[()]' '[()]' '[()]' '[()]'); \
-	result=$$($(CETTA_BIN_INVOKE) --profile he-extended --space-engine pathmap --lang he tests/support/mork_lib_pathmap_imported.metta 2>&1); \
+	result=$$($(CETTA_BIN_INVOKE) --profile extended --space-engine pathmap --lang he tests/support/mork_lib_pathmap_imported.metta 2>&1); \
 	if [ "$$result" = "$$expected" ]; then \
 		echo "PASS: mork lib pathmap probe"; \
 	else \
@@ -25366,7 +26446,7 @@ endif
 test-mork-open-act: $(BIN)
 ifeq ($(MORK_BRIDGE_ACTIVE),1)
 	@ \
-	result=$$($(CETTA_BIN_INVOKE) --profile he-extended --lang he tests/test_mork_open_act_syntax.metta 2>&1); \
+	result=$$($(CETTA_BIN_INVOKE) --profile extended --lang he tests/test_mork_open_act_syntax.metta 2>&1); \
 	if [ "$$result" = "$$(cat tests/test_mork_open_act_syntax.expected)" ]; then \
 		echo "PASS: mork open-act probe"; \
 	else \
@@ -25379,9 +26459,9 @@ else
 endif
 
 test-pretty-vars-flags: $(BIN)
-	@raw_result=$$($(CETTA_BIN_INVOKE) --raw-vars --profile he-extended --lang he tests/test_pretty_vars_syntax.metta 2>&1); \
-	default_result=$$($(CETTA_BIN_INVOKE) --profile he-extended --lang he tests/test_pretty_vars_syntax.metta 2>&1); \
-	pretty_result=$$($(CETTA_BIN_INVOKE) --pretty-vars --profile he-extended --lang he tests/test_pretty_vars_syntax.metta 2>&1); \
+	@raw_result=$$($(CETTA_BIN_INVOKE) --raw-vars --profile extended --lang he tests/test_pretty_vars_syntax.metta 2>&1); \
+	default_result=$$($(CETTA_BIN_INVOKE) --profile extended --lang he tests/test_pretty_vars_syntax.metta 2>&1); \
+	pretty_result=$$($(CETTA_BIN_INVOKE) --pretty-vars --profile extended --lang he tests/test_pretty_vars_syntax.metta 2>&1); \
 	if printf '%s\n' "$$raw_result" | grep -Fq '#'; then \
 		:; \
 	else \
@@ -25405,9 +26485,9 @@ test-pretty-vars-flags: $(BIN)
 	fi
 
 test-pretty-namespaces-flags: $(BIN)
-	@raw_result=$$($(CETTA_BIN_INVOKE) --raw-namespaces --profile he-extended --lang he tests/test_pretty_namespaces_syntax.metta 2>&1); \
-	default_result=$$($(CETTA_BIN_INVOKE) --profile he-extended --lang he tests/test_pretty_namespaces_syntax.metta 2>&1); \
-	pretty_result=$$($(CETTA_BIN_INVOKE) --pretty-namespaces --profile he-extended --lang he tests/test_pretty_namespaces_syntax.metta 2>&1); \
+	@raw_result=$$($(CETTA_BIN_INVOKE) --raw-namespaces --profile extended --lang he tests/test_pretty_namespaces_syntax.metta 2>&1); \
+	default_result=$$($(CETTA_BIN_INVOKE) --profile extended --lang he tests/test_pretty_namespaces_syntax.metta 2>&1); \
+	pretty_result=$$($(CETTA_BIN_INVOKE) --pretty-namespaces --profile extended --lang he tests/test_pretty_namespaces_syntax.metta 2>&1); \
 	if printf '%s\n' "$$raw_result" | grep -Fq 'mork:open-act' && \
 	   printf '%s\n' "$$raw_result" | grep -Fq 'runtime:test-module' && \
 	   printf '%s\n' "$$raw_result" | grep -Fq '$mork:space'; then \
@@ -25451,7 +26531,7 @@ endif
 prepare-bio-1m-act: $(BIN)
 ifeq ($(MORK_BRIDGE_ACTIVE),1)
 	@ \
-	result=$$($(CETTA_BIN_INVOKE) --quiet --profile he-extended --lang he tests/support/prepare_bio_1m_act.metta 2>&1); \
+	result=$$($(CETTA_BIN_INVOKE) --quiet --profile extended --lang he tests/support/prepare_bio_1m_act.metta 2>&1); \
 	if [ -z "$$result" ]; then \
 		echo "PASS: prepared runtime/bench_bio_1m.act"; \
 	else \
@@ -25485,7 +26565,7 @@ ifeq ($(ENABLE_PATHMAP_SPACE),1)
 	@ \
 	expected=$$(printf '%s\n' '[()]' '[()]' '[()]' '[()]' '[()]' '[()]' '[()]' '[()]'); \
 	for backend in native native-candidate-exact pathmap; do \
-		result=$$($(CETTA_BIN_INVOKE) --profile he-extended --space-engine "$$backend" --lang he tests/support/duplicate_multiplicity_probe.metta 2>&1); \
+		result=$$($(CETTA_BIN_INVOKE) --profile extended --space-engine "$$backend" --lang he tests/support/duplicate_multiplicity_probe.metta 2>&1); \
 		if [ "$$result" = "$$expected" ]; then \
 			echo "PASS: $$backend duplicate multiplicity probe"; \
 		else \
@@ -25577,7 +26657,7 @@ test-help-flags: $(BIN)
 probe-imported-conjunction-lanes: $(BIN)
 ifeq ($(ENABLE_PATHMAP_SPACE),1)
 	@ \
-	$(CETTA_BIN_INVOKE) --profile he-extended --space-engine pathmap --lang he \
+	$(CETTA_BIN_INVOKE) --profile extended --space-engine pathmap --lang he \
 		tests/support/imported_conjunction_lane_probe.metta
 else
 	$(call reexec_pathmap_bridge_or_skip,imported conjunction lane probe,$@)
@@ -25643,7 +26723,7 @@ bench-d3-backends: $(BIN)
 	done
 
 probe-d3-nodup: $(BIN)
-	@count=$$($(CETTA_BIN_INVOKE) --profile he-extended --lang he --count-only tests/nil_pc_fc_d3_nodup.metta 2>&1 | tail -1); \
+	@count=$$($(CETTA_BIN_INVOKE) --profile extended --lang he --count-only tests/nil_pc_fc_d3_nodup.metta 2>&1 | tail -1); \
 	echo "depth-3 nodup probe: $$count theorems"; \
 	if [ "$$count" = "2759" ]; then \
 		echo "PASS: nodup theorem count matches"; \
@@ -25653,7 +26733,7 @@ probe-d3-nodup: $(BIN)
 
 probe-d3-nodup-backends: $(BIN)
 	@for backend in $(SPACE_ENGINES); do \
-		count=$$($(CETTA_BIN_INVOKE) --profile he-extended --lang he --space-engine "$$backend" --count-only tests/nil_pc_fc_d3_nodup.metta 2>&1 | tail -1); \
+		count=$$($(CETTA_BIN_INVOKE) --profile extended --lang he --space-engine "$$backend" --count-only tests/nil_pc_fc_d3_nodup.metta 2>&1 | tail -1); \
 		echo "$$backend depth-3 nodup probe: $$count theorems"; \
 		if [ "$$count" = "2759" ]; then \
 			echo "PASS: $$backend nodup theorem count matches"; \
@@ -25669,7 +26749,7 @@ bench-d3-nodup-backends: probe-d3-nodup-backends
 probe-fc-native-memory: $(BIN)
 ifeq ($(ENABLE_RUNTIME_STATS),1)
 	@echo "=== native FC memory buckets (depth 3 duplicate vs nodup) ==="; \
-	out=$$($(CETTA_BIN_INVOKE) --profile he-extended --lang he tests/support/fc_native_memory_probe.metta 2>&1); \
+	out=$$($(CETTA_BIN_INVOKE) --profile extended --lang he tests/support/fc_native_memory_probe.metta 2>&1); \
 	status=$$?; \
 	printf '%s\n' "$$out" | grep -E '^(=== fc-native-memory-probe ===|\\(fc3-(dup|nodup).+\\))$$' || true; \
 	if [ $$status -ne 0 ]; then \
@@ -33055,7 +34135,7 @@ test-json-gslt-library-body: $(BIN)
 test-json-gslt-library:
 	@$(MAKE) --no-print-directory \
 		BUILD=core CETTA_TEST_ISOLATED=1 \
-		ENABLE_JSON_GSLT=1 ENABLE_LIB_PROLOG=0 ENABLE_HTTP=0 \
+		ENABLE_LIB_PROLOG=0 ENABLE_HTTP=0 \
 		test-json-gslt-library-body
 
 .PHONY: test-json-gslt-disabled-link-body

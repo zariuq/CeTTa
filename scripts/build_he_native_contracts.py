@@ -59,12 +59,12 @@ MASK_PROFILES = {
     "CETTA_PROFILE_MASK_HE_FORMAL": ["he"],
     "CETTA_PROFILE_MASK_HE_BASE": ["he", "he-compat"],
     "CETTA_PROFILE_MASK_HE_COMPAT": ["he-compat"],
-    "CETTA_PROFILE_MASK_HE_EXTENDED": ["he-extended"],
+    "CETTA_PROFILE_MASK_HE_EXTENDED": ["extended"],
     "CETTA_PROFILE_MASK_HE_PRIME": ["he-prime"],
-    "CETTA_PROFILE_MASK_HE_PUBLIC": ["he", "he-compat", "he-extended", "he-prime"],
-    "CETTA_PROFILE_MASK_HE_EXTENDED_PLUS": ["he-extended", "he-prime"],
-    "CETTA_PROFILE_MASK_HE_NON_COMPAT": ["he", "he-extended", "he-prime"],
-    "CETTA_PROFILE_MASK_ALL": ["he", "he-compat", "he-extended", "he-prime"],
+    "CETTA_PROFILE_MASK_HE_PUBLIC": ["he", "he-compat", "extended", "he-prime"],
+    "CETTA_PROFILE_MASK_HE_EXTENDED_PLUS": ["extended", "he-prime"],
+    "CETTA_PROFILE_MASK_HE_NON_COMPAT": ["he", "extended", "he-prime"],
+    "CETTA_PROFILE_MASK_ALL": ["he", "he-compat", "extended", "he-prime"],
 }
 
 OSLF_ANCHORS = {
@@ -759,19 +759,21 @@ def module_policy_contracts(catalog_path: Path) -> list[dict[str, Any]]:
             "statement": (
                 "Module-resolution rows are explicit policy evidence, not "
                 "core he-compat evaluator obligations: Rust HE rejects these "
-                "local-path or nested module names before shared semantics are "
-                "reachable, while formal he owns the local-path, nested-import, "
-                "cycle, parse-failure, and transactional rollback contract to "
-                "pin next."
+                "CeTTa parser modules and local-path or nested module names "
+                "before shared semantics are reachable, while formal he owns "
+                "the named parser-module, local-path, nested-import, cycle, "
+                "parse-failure, and transactional rollback contracts to pin "
+                "next."
             ),
             "he_compat_obligation": (
                 "Keep these rows out of core evaluator agreement counts unless "
                 "Rust becomes runnable past the import/module-name boundary."
             ),
             "formal_he_obligation": (
-                "Pin CeTTa's local-path import, nested import, cycle detection, "
-                "parse-failure reporting, and transactional rollback semantics "
-                "as formal he module/import behavior."
+                "Pin CeTTa's named parser modules, local-path import, nested "
+                "import, cycle detection, parse-failure reporting, and "
+                "transactional rollback semantics as formal he module/import "
+                "behavior."
             ),
             "implementation_anchors": [
                 "scripts/build_he_compat_catalog.py:BROAD_MODULE_RESOLUTION_NOTES",
@@ -781,7 +783,7 @@ def module_policy_contracts(catalog_path: Path) -> list[dict[str, Any]]:
                 "lib/stdlib.metta:@doc include",
             ],
             "catalog_category": "module-resolution-diff",
-            "expected_policy_row_count": 6,
+            "expected_policy_row_count": 39,
             "policy_rows": module_resolution,
             "regression_tests": [row["path"] for row in module_resolution],
             "spec_refs": sorted(

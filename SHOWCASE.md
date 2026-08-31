@@ -32,7 +32,7 @@ boundary below).
 - **Three-valued honesty end to end.** accept / reject(reason) / unknown(reason); forward
   closure reports `fixpoint` only when one is reached (`resource-incomplete` /
   `rounds-exhausted` otherwise); deep searches report fuel exhaustion instead of a false no.
-- Profile-scoped: the extension operations are he-prime only; under `he`/`he-compat`/`he-extended`
+- Profile-scoped: the extension operations are he-prime only; under `he`/`he-compat`/`extended`
   they stay inert, while all four profiles share the same native HE inference engine.
 
 ## Build + run

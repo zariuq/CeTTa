@@ -362,6 +362,7 @@ void cetta_library_context_init_for_language_profile(CettaLibraryContext *ctx,
     ctx->petta_translator_rule_cap = 0u;
     ctx->petta_translator_symbol_table_instance =
         symbol_table_instance_id(g_symbols);
+    ctx->petta_translator_rule_revision = 1u;
     ctx->petta_tabled_relations = NULL;
     ctx->petta_tabled_relation_len = 0u;
     ctx->petta_tabled_relation_cap = 0u;
@@ -451,6 +452,7 @@ void cetta_library_context_free(CettaLibraryContext *ctx) {
     ctx->petta_translator_rule_len = 0u;
     ctx->petta_translator_rule_cap = 0u;
     ctx->petta_translator_symbol_table_instance = 0u;
+    ctx->petta_translator_rule_revision = 0u;
     free(ctx->petta_tabled_relations);
     ctx->petta_tabled_relations = NULL;
     ctx->petta_tabled_relation_len = 0u;
@@ -519,6 +521,15 @@ struct CettaNikRuntimeV1 *cetta_library_context_nik_runtime(
     return runtime;
 }
 
+static void cetta_library_petta_translator_rule_advance(
+    CettaLibraryContext *ctx) {
+    if (!ctx)
+        return;
+    ctx->petta_translator_rule_revision =
+        ctx->petta_translator_rule_revision == UINT64_MAX
+            ? 1u : ctx->petta_translator_rule_revision + 1u;
+}
+
 static void cetta_library_petta_translator_rule_sync(
     CettaLibraryContext *ctx) {
     if (!ctx)
@@ -528,6 +539,7 @@ static void cetta_library_petta_translator_rule_sync(
         return;
     ctx->petta_translator_rule_len = 0u;
     ctx->petta_translator_symbol_table_instance = instance;
+    cetta_library_petta_translator_rule_advance(ctx);
 }
 
 static uint32_t cetta_library_petta_translator_rule_lower_bound(
@@ -574,6 +586,7 @@ bool cetta_library_petta_translator_rule_set(
             sizeof(*ctx->petta_translator_rules) *
                 (size_t)(ctx->petta_translator_rule_len - index - 1u));
         ctx->petta_translator_rule_len--;
+        cetta_library_petta_translator_rule_advance(ctx);
         return true;
     }
     if (ctx->petta_translator_rule_len ==
@@ -597,7 +610,16 @@ bool cetta_library_petta_translator_rule_set(
             (size_t)(ctx->petta_translator_rule_len - index));
     ctx->petta_translator_rules[index] = head;
     ctx->petta_translator_rule_len++;
+    cetta_library_petta_translator_rule_advance(ctx);
     return true;
+}
+
+uint64_t cetta_library_petta_translator_rule_revision(
+    CettaLibraryContext *ctx) {
+    if (!ctx)
+        return 0u;
+    cetta_library_petta_translator_rule_sync(ctx);
+    return ctx->petta_translator_rule_revision;
 }
 
 static void cetta_library_petta_tabled_relation_sync(

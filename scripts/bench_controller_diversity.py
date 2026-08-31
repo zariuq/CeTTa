@@ -251,8 +251,25 @@ def _qualify(
         expected = _expected(
             "benchmarks/controller_diversity/deep_once.expected"
         )
-        if inline["stdout"] != expected or fifo["stdout"] != expected:
-            raise RuntimeError("absorbing-once: exact first answer changed")
+        if inline["stdout"] != expected:
+            raise RuntimeError(
+                "absorbing-once: authored-order first answer changed"
+            )
+        lawful_witnesses = {
+            line
+            for line in _expected(
+                "benchmarks/controller_diversity/deep_once.witnesses"
+            ).splitlines()
+            if line
+        }
+        fifo_witnesses = fifo["stdout"].splitlines()
+        if len(fifo_witnesses) != 1 or fifo_witnesses[0] not in (
+            lawful_witnesses
+        ):
+            raise RuntimeError(
+                "absorbing-once: controlled first answer was not a "
+                "source witness"
+            )
         if fifo["aggregate"]["controller_expansions"] < 1:
             raise RuntimeError(
                 "absorbing-once: first-witness frontier was not exercised"

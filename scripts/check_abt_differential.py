@@ -280,7 +280,7 @@ def run_three_way_oracle(binary: Path, waist: Path) -> bool:
         60,
     )
     canonical = run_source(
-        [str(binary), "--profile", "he-extended", "--lang", "he"],
+        [str(binary), "--profile", "extended", "--lang", "he"],
         mettakernel_waist_for_cetta(waist.read_text(encoding="utf-8"))
         + "\n"
         + CANONICAL_ORACLE_PRELUDE
@@ -435,7 +435,7 @@ def main() -> int:
         run_lane(
             binary,
             generated,
-            ["--profile", "he-extended", "--lang", "he"],
+            ["--profile", "extended", "--lang", "he"],
             expected + 1,
             summary,
         )

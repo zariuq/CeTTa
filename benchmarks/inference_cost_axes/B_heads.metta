@@ -1,0 +1,6 @@
+(= (classify (: ax1 (→ $p (→ $q $p)))) 1)
+(= (classify (: ax2 (→ (→ $p (→ $q $r)) (→ (→ $p $q) (→ $p $r))))) 2)
+(= (classify (: ax3 (→ (→ (¬ $p) (¬ $q)) (→ $q $p)))) 3)
+(= (drive $n $acc) (if (== $n 0) $acc (drive (- $n 1) (+ $acc (classify (: ax2 (→ (→ a (→ b c)) (→ (→ a b) (→ a c)))))))))
+(= (drive $n $acc) (if (< $n 0) never (empty)))
+!(drive 150000 0)

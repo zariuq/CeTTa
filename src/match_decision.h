@@ -39,6 +39,23 @@ typedef enum {
     CETTA_MATCH_DECISION_PATTERN_STRUCTURAL = 1,
 } CettaMatchDecisionPatternClass;
 
+/* Physical realization choices used only for differential qualification.
+ * The zero value is the optimized realization.  These fields cannot change
+ * candidate meaning: the ordinary matcher remains semantic authority over
+ * every survivor.  A compiled decision retains its realization, so selection
+ * never consults ambient process state. */
+typedef struct {
+    bool use_direct_prefix_observation;
+    bool use_eager_prefix_observation;
+    bool use_direct_equality_observation;
+} CettaMatchDecisionRealization;
+
+/* Read the process-level qualification controls once, at an explicit artifact
+ * construction boundary.  Tests and embedded clients should normally pass a
+ * literal realization instead. */
+CettaMatchDecisionRealization
+cetta_match_decision_realization_from_process(void);
+
 typedef struct {
     Atom *pattern;
     uint32_t source_ref;
@@ -82,6 +99,21 @@ typedef struct {
     uint64_t key_index_build_probes;
     uint64_t key_index_select_probes;
     uint64_t generic_key_policy_scans;
+    uint64_t equality_checks;
+    uint64_t equality_refutations;
+    uint64_t equality_observation_reads;
+    uint64_t equality_observation_fallbacks;
+    uint64_t equality_observation_direct_edges;
+    uint64_t equality_observation_graph_edges;
+    uint64_t prefix_observation_build_attempts;
+    uint64_t prefix_observation_build_commits;
+    uint64_t prefix_observation_build_declines;
+    uint64_t prefix_observation_runs;
+    uint64_t prefix_observation_node_visits;
+    uint64_t prefix_observation_absorbed_suffixes;
+    uint64_t prefix_observation_skipped_edges;
+    uint64_t prefix_observation_direct_edges;
+    uint64_t prefix_observation_trie_edges;
 } CettaMatchDecisionStats;
 
 /* Compile an ordered clause family.  `max_depth` counts expression edges;
@@ -94,6 +126,7 @@ CettaMatchDecision *cetta_match_decision_compile(
     size_t clause_count,
     CettaMatchDecisionMode mode,
     uint32_t max_depth,
+    CettaMatchDecisionRealization realization,
     CettaMatchDecisionClassifyPatternFn classify,
     void *classify_context);
 
