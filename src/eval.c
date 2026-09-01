@@ -4,6 +4,7 @@
 #include "match.h"
 #include "search_machine.h"
 #include "search_control_advice.h"
+#include "shared_transition.h"
 #include "grounded.h"
 #include "he_typing.h"
 #include "he_typing_authority.h"
@@ -1950,6 +1951,13 @@ static Atom *guard_mork_handle_syntax(Space *s, Arena *a, Atom *call,
     return NULL;
 }
 
+static pthread_once_t g_table_mode_env_once = PTHREAD_ONCE_INIT;
+static const char *g_table_mode_env_repr;
+
+static void table_mode_env_init(void) {
+    g_table_mode_env_repr = getenv("CETTA_TABLE_MODE");
+}
+
 static CettaTableMode active_search_table_mode(void) {
     const CettaEvalOptionEntry *table_mode = active_eval_option("search-table-mode");
     const char *repr = NULL;
@@ -1958,13 +1966,9 @@ static CettaTableMode active_search_table_mode(void) {
     if (!repr) {
         /* Env fallback (read once) so benchmarks can opt in without editing
          * the source under test.  A `pragma!` still takes precedence. */
-        static int env_checked = 0;
-        static const char *env_repr = NULL;
-        if (!env_checked) {
-            env_repr = getenv("CETTA_TABLE_MODE");
-            env_checked = 1;
-        }
-        repr = env_repr;
+        if (pthread_once(&g_table_mode_env_once, table_mode_env_init) != 0)
+            abort();
+        repr = g_table_mode_env_repr;
     }
     if (repr) {
         if (strcmp(repr, "variant") == 0)
@@ -2305,6 +2309,9 @@ static Atom *eval_petta_program_mutation_error(
 
 static bool eval_admit_atom(Space *space, Arena *source_arena,
                             Arena *storage_arena, Atom *atom) {
+    __attribute__((cleanup(cetta_shared_transition_guard_leave)))
+    CettaSharedTransitionGuard shared_transition = {0};
+    cetta_shared_transition_guard_enter(&shared_transition);
     return space_admit_atom_from_source_arena(
         space, storage_arena, source_arena, atom);
 }
@@ -2446,6 +2453,103 @@ static Atom *space_remove_compare_atom(const Space *space, Arena *dst,
                                        NULL, true);
     }
     return atom_deep_copy(dst, src);
+}
+
+/* PeTTa removal interprets a nonempty expression as its match pattern.  A
+ * bare matcher variable carries no finite expression arity, so its removal
+ * receipt is empty; other data have no removal interpretation. */
+static Atom *petta_space_remove_request_pattern(Arena *arena, Atom *value) {
+    if (!arena || !value)
+        return NULL;
+    if (value->kind == ATOM_EXPR)
+        return value->expr.len != 0u ? value : NULL;
+    return NULL;
+}
+
+/* PeTTa removal is the ordered-bag contraction induced by unifiability.
+ * Discover the complete occurrence set against one pinned Space revision,
+ * then use the resulting receipt to mutate both semantic authority and every
+ * derived execution view.  Stored variables are freshened independently for
+ * each occurrence, matching the ordinary Space query discipline. */
+static bool petta_space_remove_pattern_all(
+        Space *space, Atom *pattern, PettaProgram *program,
+        CettaCount *removed_out) {
+    if (removed_out)
+        *removed_out = 0u;
+    if (!space || !pattern || pattern->kind != ATOM_EXPR ||
+        pattern->expr.len == 0u)
+        return false;
+
+    __attribute__((cleanup(cetta_shared_transition_guard_leave)))
+    CettaSharedTransitionGuard shared_transition = {0};
+    cetta_shared_transition_guard_enter(&shared_transition);
+
+    CettaCount logical_len = space_length64(space);
+    if (logical_len == 0u)
+        return true;
+    if (logical_len > SIZE_MAX / sizeof(Atom *))
+        return false;
+
+    uint8_t *remove_mask = cetta_malloc((size_t)logical_len);
+    memset(remove_mask, 0, (size_t)logical_len);
+    Atom **removed_atoms = cetta_malloc(
+        (size_t)logical_len * sizeof(*removed_atoms));
+    CettaCount receipt_len = 0u;
+    SpaceReadToken source = space_read_token(space);
+    Arena scratch;
+    arena_init(&scratch);
+    ArenaMark scratch_origin = arena_mark(&scratch);
+    bool ok = true;
+
+    for (CettaIndex index = 0u; ok && index < logical_len; index++) {
+        AtomId atom_id = space_get_atom_id_at64(space, index);
+        Atom *candidate = space_get_at64(space, index);
+        uint32_t epoch = 0u;
+        Bindings trial;
+        bindings_init(&trial);
+
+        if (!candidate || !fresh_var_suffix_try(&epoch)) {
+            ok = false;
+        } else {
+            bool matched = atom_id != CETTA_ATOM_ID_NONE && space->universe
+                ? match_atoms_atom_id_epoch(
+                      pattern, space->universe, atom_id,
+                      &trial, &scratch, epoch)
+                : match_atoms_epoch(
+                      pattern, candidate, &trial, &scratch, epoch);
+            if (matched) {
+                remove_mask[index] = 1u;
+                removed_atoms[receipt_len++] = candidate;
+            }
+        }
+
+        bindings_free(&trial);
+        arena_reset(&scratch, scratch_origin);
+    }
+    arena_free(&scratch);
+
+    if (!ok || !space_read_token_matches_live_space(source, space)) {
+        free(removed_atoms);
+        free(remove_mask);
+        return false;
+    }
+
+    CettaCount removed = 0u;
+    ok = space_remove_occurrence_mask_stable(
+        space, remove_mask, logical_len, &removed);
+
+    for (CettaCount index = 0u; ok && index < removed; index++) {
+        Atom *removed_atom = removed_atoms[index];
+        petta_specializer_note_mutation(space, removed_atom);
+        if (program)
+            petta_program_note_remove_all(program, space, removed_atom);
+    }
+
+    free(removed_atoms);
+    free(remove_mask);
+    if (removed_out)
+        *removed_out = removed;
+    return ok && removed == receipt_len;
 }
 
 /* ── Outcome set (unified result type: atom + bindings) ─────────────────── */
@@ -3254,9 +3358,9 @@ static Atom *eval_direct_grounded_application(Space *s, Arena *a, Atom *atom,
     /* `size` is STRICT: it evaluates its (collapse …) argument and counts the
      * resulting tuple.  When the argument is (collapse MATCH) we evaluate the
      * match as a stream and count the rows without ever materializing the
-     * tuple — an O(1)-memory strict evaluation.  `size-atom` is NON-STRICT and
-     * must NOT be fused here: it returns the literal arity of its unevaluated
-     * argument (e.g. 2 for (collapse …)). */
+     * tuple.  This shared direct path does not force `size-atom`; PeTTa gives
+     * that spelling source-occurrence value demand in its relational machine,
+     * while HE retains its own syntax-observation contract. */
     if (head->sym_id == g_builtin_syms.size && nargs == 1) {
         uint64_t count = 0;
         Atom *applied = (!prefix || prefix->len == 0)
@@ -5615,6 +5719,10 @@ static Atom *dispatch_native_space_mutation(Space *s, Arena *a, Atom *head,
     if (!is_add && !is_remove)
         return NULL;
 
+    __attribute__((cleanup(cetta_shared_transition_guard_leave)))
+    CettaSharedTransitionGuard shared_transition = {0};
+    cetta_shared_transition_guard_enter(&shared_transition);
+
     Atom *call = make_call_expr(a, head, args, nargs);
     Atom *space_ref = args[0];
     Atom *payload = args[1];
@@ -5676,12 +5784,29 @@ static Atom *dispatch_native_space_mutation(Space *s, Arena *a, Atom *head,
 
     payload = petta_flatten_closed_open_cons(a, payload);
     Atom *compare_atom = space_remove_compare_atom(target, a, payload);
+    if (eval_current_language_id() == CETTA_LANGUAGE_PETTA) {
+        if (compare_atom && compare_atom->kind == ATOM_VAR)
+            return atom_unit(a);
+        compare_atom = petta_space_remove_request_pattern(
+            a, compare_atom);
+        if (!compare_atom)
+            return NULL;
+    }
     Atom *type_error = eval_petta_program_mutation_error(
         a, call, target, compare_atom, PETTA_TYPECHECK_MUTATION_REMOVE);
     if (type_error)
         return type_error;
-    if (eval_current_language_id() == CETTA_LANGUAGE_PETTA)
-        petta_specializer_note_mutation(target, compare_atom);
+    if (eval_current_language_id() == CETTA_LANGUAGE_PETTA) {
+        PettaProgram *program = g_library_context
+            ? g_library_context->petta_program : NULL;
+        if (!petta_space_remove_pattern_all(
+                target, compare_atom, program, NULL)) {
+            return atom_error(
+                a, call,
+                atom_symbol(a, "PeTTaSpacePatternRemovalFailed"));
+        }
+        return atom_unit(a);
+    }
     if (!(target && target->universe &&
           space_remove_atom_id(target,
                                term_universe_lookup_atom_id(target->universe,
@@ -5692,14 +5817,35 @@ static Atom *dispatch_native_space_mutation(Space *s, Arena *a, Atom *head,
 }
 
 static Atom *dispatch_native_op(Space *s, Arena *a, Atom *head, Atom **args, uint32_t nargs) {
-    if (head && head->kind == ATOM_SYMBOL &&
-        hyperpose_thread_barrier_head(head->sym_id, head) &&
-        eval_mark_hyperpose_thread_unsafe()) {
-        return NULL;
+    __attribute__((cleanup(cetta_shared_transition_guard_leave)))
+    CettaSharedTransitionGuard shared_operation_transition = {0};
+    if (g_hyperpose_thread_unsafe_requested && head &&
+        head->kind == ATOM_SYMBOL &&
+        hyperpose_thread_barrier_head(head->sym_id, head)) {
+        if (eval_current_language_id() == CETTA_LANGUAGE_PETTA) {
+            /* PeTTa permits the operation.  This initial realization merely
+               serializes its indivisible physical effect; it neither assumes
+               commutativity nor turns synchronization into an admission
+               policy. */
+            cetta_shared_transition_guard_enter(
+                &shared_operation_transition);
+        } else if (eval_mark_hyperpose_thread_unsafe()) {
+            return NULL;
+        }
     }
     const char *head_name = head ? atom_name_cstr(head) : NULL;
     if (head && head_name && !active_builtin_allowed(head_name)) {
         return NULL;
+    }
+    __attribute__((cleanup(cetta_shared_transition_guard_leave)))
+    CettaSharedTransitionGuard shared_resource_transition = {0};
+    for (uint32_t index = 0u; index < nargs; index++) {
+        if (args[index] && args[index]->kind == ATOM_GROUNDED &&
+            args[index]->ground.gkind == GV_SPACE) {
+            cetta_shared_transition_guard_enter(
+                &shared_resource_transition);
+            break;
+        }
     }
     if (head && atom_is_symbol_id(head, g_builtin_syms.size) &&
         nargs == 1) {
@@ -10956,6 +11102,23 @@ static bool hyperpose_thread_barrier_head(SymbolId head_id, Atom *head) {
 static bool hyperpose_atom_is_thread_local_resource(Atom *atom) {
     if (!atom)
         return false;
+    if (eval_current_language_id() == CETTA_LANGUAGE_PETTA) {
+        /* Published spaces and foreign handles keep identity.  Capture
+           closures are copied while preserving their referenced published
+           space.  A parent StateCell remains a separate oracle question:
+           SWI non-backtrackable variables are thread-local and are not
+           inherited by concurrent_and workers, so do not silently invent an
+           inheritance rule here.  States created inside a branch are still
+           admissible and cross the result boundary through fresh identity. */
+        if (atom->kind == ATOM_SYMBOL)
+            return false;
+        if (atom->kind == ATOM_GROUNDED &&
+            (atom->ground.gkind == GV_SPACE ||
+             atom->ground.gkind == GV_CAPTURE ||
+             atom->ground.gkind == GV_FOREIGN)) {
+            return false;
+        }
+    }
     if (atom->kind == ATOM_SYMBOL)
         return cetta_gslt_thread_local_resource_symbol(
             atom->sym_id, &g_builtin_syms);
@@ -10967,7 +11130,19 @@ static bool hyperpose_atom_has_thread_local_resource(Atom *atom) {
     return atom_has_thread_local_resource(atom);
 }
 
+static bool hyperpose_atom_has_nonspace_identity(
+    const Atom *atom, void *context) {
+    (void)context;
+    return atom && atom->kind == ATOM_GROUNDED &&
+           cetta_gslt_identity_bearing_grounded_kind(atom->ground.gkind) &&
+           atom->ground.gkind != GV_SPACE;
+}
+
 static bool hyperpose_atom_parent_portable(Atom *atom) {
+    if (eval_current_language_id() == CETTA_LANGUAGE_PETTA) {
+        return !atom_tree_any(
+            atom, hyperpose_atom_has_nonspace_identity, NULL);
+    }
     return !hyperpose_atom_has_thread_local_resource(atom);
 }
 
@@ -11039,15 +11214,29 @@ static bool hyperpose_branch_thread_eligible_rec(
     Space *s, Atom *atom, HyperposeThreadEligibilityCtx *ctx) {
     if (!atom)
         return true;
+    if (atom_has_registry_refs(atom)) {
+        if (eval_current_language_id() != CETTA_LANGUAGE_PETTA)
+            return false;
+        /* A complete registry reference is admissible exactly when it names
+           an already-published shared space.  Parent expressions carry the
+           same summary flag, so only decide here when the whole occurrence
+           itself resolves.  Child traversal handles nested references. */
+        if (resolve_registry_space_payload(g_registry, atom))
+            return true;
+        if (atom->kind != ATOM_EXPR)
+            return false;
+    }
     if (hyperpose_atom_is_thread_local_resource(atom))
-        return false;
-    if (atom_has_registry_refs(atom))
         return false;
     if (atom->kind != ATOM_EXPR || atom->expr.len == 0)
         return true;
     Atom *head = atom->expr.elems[0];
     SymbolId head_id = atom_head_symbol_id(atom);
-    if (hyperpose_thread_barrier_head(head_id, head))
+    /* A PeTTa barrier chooses the serial physical realization at the actual
+       operation boundary.  It is never evidence that a legal branch must be
+       removed from OS-threaded hyperpose. */
+    if (eval_current_language_id() != CETTA_LANGUAGE_PETTA &&
+        hyperpose_thread_barrier_head(head_id, head))
         return false;
     if (!hyperpose_equation_bodies_thread_eligible_for_head(s, head_id, ctx))
         return false;
@@ -11079,7 +11268,9 @@ static bool hyperpose_all_branches_thread_eligible_without_capture(Space *s,
         return false;
     for (CettaExprIndex i = 0; i < branches->expr.len; i++) {
         Atom *branch = branches->expr.elems[i];
-        if (atom_has_vars(branch) || atom_has_registry_refs(branch))
+        if (atom_has_vars(branch) ||
+            (eval_current_language_id() != CETTA_LANGUAGE_PETTA &&
+             atom_has_registry_refs(branch)))
             return false;
     }
     return true;
@@ -11092,7 +11283,12 @@ typedef struct {
 } HyperposeThreadResultBuffer;
 
 typedef struct {
-    Space **items;
+    Space *space;
+    PettaProgram *petta_program;
+} HyperposeOwnedSpace;
+
+typedef struct {
+    HyperposeOwnedSpace *items;
     CettaCount len;
     CettaCount cap;
 } HyperposeOwnedSpaces;
@@ -11128,6 +11324,12 @@ typedef struct {
     _Atomic int winner_index;
 } HyperposeThreadRun;
 
+typedef enum {
+    HYPERPOSE_THREAD_OBSERVE_OCCURRENCES = 0,
+    HYPERPOSE_THREAD_OBSERVE_REIFIED_BAG,
+    HYPERPOSE_THREAD_OBSERVE_FIRST,
+} HyperposeThreadObservation;
+
 static bool hyperpose_result_buffer_push(HyperposeThreadResultBuffer *buffer,
                                          Atom *atom) {
     if (buffer->len >= buffer->cap) {
@@ -11154,26 +11356,188 @@ static void hyperpose_result_buffer_free(HyperposeThreadResultBuffer *buffer) {
 }
 
 static bool hyperpose_owned_spaces_push(HyperposeOwnedSpaces *spaces,
-                                        Space *space) {
+                                        Space *space,
+                                        PettaProgram *petta_program) {
+    if (!spaces || !space)
+        return false;
+    for (CettaCount i = 0; i < spaces->len; i++) {
+        if (spaces->items[i].space == space)
+            return true;
+    }
     if (spaces->len >= spaces->cap) {
         CettaCount next_cap;
-        Space **next;
+        HyperposeOwnedSpace *next;
         if (!eval_next_capacity(spaces->cap, spaces->len + 1u,
-                                sizeof(Space *), &next_cap))
+                                sizeof(HyperposeOwnedSpace), &next_cap))
             return false;
-        next = cetta_realloc(spaces->items, sizeof(Space *) * (size_t)next_cap);
+        next = cetta_realloc(
+            spaces->items,
+            sizeof(HyperposeOwnedSpace) * (size_t)next_cap);
         if (!next)
             return false;
         spaces->items = next;
         spaces->cap = next_cap;
     }
-    spaces->items[spaces->len++] = space;
+    spaces->items[spaces->len++] = (HyperposeOwnedSpace){
+        .space = space,
+        .petta_program = petta_program,
+    };
     return true;
 }
 
-static Atom *hyperpose_clone_atom_materialized(Arena *owner, Atom *src) {
-    if (!owner || !src)
+static bool hyperpose_adopt_space_set(HyperposeThreadBranch *branch,
+                                      TempSpaceSet *set) {
+    if (!branch || !set)
+        return false;
+    for (CettaCount i = 0; i < set->len; i++) {
+        EvalTrackedSpace tracked = set->items[i];
+        if (!tracked.space)
+            continue;
+        if (!hyperpose_owned_spaces_push(
+                &branch->owned_spaces, tracked.space,
+                tracked.petta_program)) {
+            return false;
+        }
+        /* Ownership moved to the branch.  Clearing the source entry makes a
+           partial adoption safe: worker teardown only releases entries that
+           were not transferred before the allocation failure. */
+        set->items[i].space = NULL;
+        set->items[i].petta_program = NULL;
+    }
+    free(set->items);
+    set->items = NULL;
+    set->len = 0;
+    set->cap = 0;
+    return true;
+}
+
+static bool hyperpose_adopt_tracked_spaces(
+    HyperposeThreadBranch *branch) {
+    return hyperpose_adopt_space_set(branch, &g_temp_spaces) &&
+           hyperpose_adopt_space_set(branch, &g_new_space_track);
+}
+
+typedef struct {
+    const StateCell *source;
+    StateCell *target;
+} HyperposeStateCloneEntry;
+
+typedef struct {
+    const CaptureClosure *source;
+    CaptureClosure *target;
+} HyperposeCaptureCloneEntry;
+
+typedef struct {
+    Arena *owner;
+    bool share_spaces;
+    HyperposeStateCloneEntry *states;
+    CettaCount state_len;
+    CettaCount state_cap;
+    HyperposeCaptureCloneEntry *captures;
+    CettaCount capture_len;
+    CettaCount capture_cap;
+} HyperposeCloneContext;
+
+static void hyperpose_clone_context_free(HyperposeCloneContext *context) {
+    if (!context)
+        return;
+    free(context->states);
+    free(context->captures);
+    context->states = NULL;
+    context->captures = NULL;
+    context->state_len = 0;
+    context->state_cap = 0;
+    context->capture_len = 0;
+    context->capture_cap = 0;
+}
+
+static StateCell *hyperpose_clone_state_lookup(
+    const HyperposeCloneContext *context, const StateCell *source) {
+    if (!context || !source)
         return NULL;
+    for (CettaCount i = 0; i < context->state_len; i++) {
+        if (context->states[i].source == source)
+            return context->states[i].target;
+    }
+    return NULL;
+}
+
+static bool hyperpose_clone_state_insert(
+    HyperposeCloneContext *context, const StateCell *source,
+    StateCell *target) {
+    if (!context || !source || !target)
+        return false;
+    if (context->state_len >= context->state_cap) {
+        CettaCount next_cap;
+        HyperposeStateCloneEntry *next;
+        if (!eval_next_capacity(context->state_cap,
+                                context->state_len + 1u,
+                                sizeof(HyperposeStateCloneEntry),
+                                &next_cap)) {
+            return false;
+        }
+        next = cetta_realloc(
+            context->states,
+            sizeof(HyperposeStateCloneEntry) * (size_t)next_cap);
+        if (!next)
+            return false;
+        context->states = next;
+        context->state_cap = next_cap;
+    }
+    context->states[context->state_len++] =
+        (HyperposeStateCloneEntry){
+            .source = source,
+            .target = target,
+        };
+    return true;
+}
+
+static CaptureClosure *hyperpose_clone_capture_lookup(
+    const HyperposeCloneContext *context, const CaptureClosure *source) {
+    if (!context || !source)
+        return NULL;
+    for (CettaCount i = 0; i < context->capture_len; i++) {
+        if (context->captures[i].source == source)
+            return context->captures[i].target;
+    }
+    return NULL;
+}
+
+static bool hyperpose_clone_capture_insert(
+    HyperposeCloneContext *context, const CaptureClosure *source,
+    CaptureClosure *target) {
+    if (!context || !source || !target)
+        return false;
+    if (context->capture_len >= context->capture_cap) {
+        CettaCount next_cap;
+        HyperposeCaptureCloneEntry *next;
+        if (!eval_next_capacity(context->capture_cap,
+                                context->capture_len + 1u,
+                                sizeof(HyperposeCaptureCloneEntry),
+                                &next_cap)) {
+            return false;
+        }
+        next = cetta_realloc(
+            context->captures,
+            sizeof(HyperposeCaptureCloneEntry) * (size_t)next_cap);
+        if (!next)
+            return false;
+        context->captures = next;
+        context->capture_cap = next_cap;
+    }
+    context->captures[context->capture_len++] =
+        (HyperposeCaptureCloneEntry){
+            .source = source,
+            .target = target,
+        };
+    return true;
+}
+
+static Atom *hyperpose_clone_atom_materialized(
+    HyperposeCloneContext *context, Atom *src) {
+    if (!context || !context->owner || !src)
+        return NULL;
+    Arena *owner = context->owner;
     switch (src->kind) {
     case ATOM_SYMBOL:
         return atom_symbol_id(owner, src->sym_id);
@@ -11198,22 +11562,30 @@ static Atom *hyperpose_clone_atom_materialized(Arena *owner, Atom *src) {
                 owner, (CettaInternalTag)src->ground.ival);
         case GV_STATE: {
             StateCell *src_cell = (StateCell *)src->ground.ptr;
-            StateCell *dst_cell = arena_alloc(owner, sizeof(StateCell));
-            dst_cell->value = NULL;
-            dst_cell->content_type = NULL;
-            dst_cell->payload_owner_epoch = 0;
-            dst_cell->payload_export_owner_epoch = 0;
-            if (src_cell) {
+            if (!src_cell)
+                return atom_state(owner, NULL);
+            StateCell *dst_cell = hyperpose_clone_state_lookup(
+                context, src_cell);
+            if (!dst_cell) {
+                dst_cell = arena_alloc(owner, sizeof(StateCell));
+                if (!dst_cell)
+                    return NULL;
+                *dst_cell = (StateCell){0};
+                if (!hyperpose_clone_state_insert(
+                        context, src_cell, dst_cell)) {
+                    return NULL;
+                }
                 if (src_cell->value) {
                     dst_cell->value =
-                        hyperpose_clone_atom_materialized(owner, src_cell->value);
+                        hyperpose_clone_atom_materialized(
+                            context, src_cell->value);
                     if (!dst_cell->value)
                         return NULL;
                 }
                 if (src_cell->content_type) {
                     dst_cell->content_type =
-                        hyperpose_clone_atom_materialized(owner,
-                                                          src_cell->content_type);
+                        hyperpose_clone_atom_materialized(
+                            context, src_cell->content_type);
                     if (!dst_cell->content_type)
                         return NULL;
                 }
@@ -11221,8 +11593,35 @@ static Atom *hyperpose_clone_atom_materialized(Arena *owner, Atom *src) {
             return atom_state(owner, dst_cell);
         }
         case GV_SPACE:
-        case GV_CAPTURE:
+            return context->share_spaces
+                ? atom_space(owner, (Space *)src->ground.ptr)
+                : NULL;
+        case GV_CAPTURE: {
+            if (!context->share_spaces)
+                return NULL;
+            CaptureClosure *src_closure =
+                (CaptureClosure *)src->ground.ptr;
+            if (!src_closure)
+                return atom_capture(owner, NULL);
+            CaptureClosure *dst_closure = hyperpose_clone_capture_lookup(
+                context, src_closure);
+            if (!dst_closure) {
+                dst_closure = arena_alloc(owner, sizeof(CaptureClosure));
+                if (!dst_closure)
+                    return NULL;
+                *dst_closure = *src_closure;
+                if (!hyperpose_clone_capture_insert(
+                        context, src_closure, dst_closure)) {
+                    return NULL;
+                }
+            }
+            return atom_capture(owner, dst_closure);
+        }
         case GV_FOREIGN:
+            return context->share_spaces
+                ? atom_foreign(
+                      owner, (CettaForeignValue *)src->ground.ptr)
+                : NULL;
         case GV_PRIME_NEED_CAPABILITY:
         case GV_PRIME_CONTEXT:
             return NULL;
@@ -11232,7 +11631,8 @@ static Atom *hyperpose_clone_atom_materialized(Arena *owner, Atom *src) {
         Atom **elems = arena_alloc(owner, sizeof(Atom *) * src->expr.len);
         for (CettaExprIndex i = 0; i < src->expr.len; i++) {
             elems[i] =
-                hyperpose_clone_atom_materialized(owner, src->expr.elems[i]);
+                hyperpose_clone_atom_materialized(
+                    context, src->expr.elems[i]);
             if (!elems[i])
                 return NULL;
         }
@@ -11242,9 +11642,9 @@ static Atom *hyperpose_clone_atom_materialized(Arena *owner, Atom *src) {
     return NULL;
 }
 
-static Space *hyperpose_clone_space_materialized(Space *src, Arena *owner,
-                                                 TermUniverse *universe) {
-    if (!src || !owner || !universe)
+static Space *hyperpose_clone_space_materialized(
+    Space *src, HyperposeCloneContext *context, TermUniverse *universe) {
+    if (!src || !context || !context->owner || !universe)
         return NULL;
     Space *clone = cetta_malloc(sizeof(Space));
     space_init_with_universe(clone, universe);
@@ -11254,7 +11654,8 @@ static Space *hyperpose_clone_space_materialized(Space *src, Arena *owner,
         Atom *item = space_get_at(src, i);
         if (!item)
             continue;
-        Atom *cloned_item = hyperpose_clone_atom_materialized(owner, item);
+        Atom *cloned_item = hyperpose_clone_atom_materialized(
+            context, item);
         if (!cloned_item) {
             space_free(clone);
             free(clone);
@@ -11267,8 +11668,11 @@ static Space *hyperpose_clone_space_materialized(Space *src, Arena *owner,
 
 static bool hyperpose_clone_registry(Registry *dst, Registry *src,
                                      Space *src_root, Space *root_clone,
-                                     Arena *owner,
+                                     HyperposeCloneContext *context,
                                      HyperposeOwnedSpaces *owned_spaces) {
+    if (!context || !context->owner)
+        return false;
+    Arena *owner = context->owner;
     registry_init(dst);
     bool saw_self = false;
     if (src) {
@@ -11283,14 +11687,18 @@ static bool hyperpose_clone_registry(Registry *dst, Registry *src,
             if (value->kind == ATOM_GROUNDED &&
                 value->ground.gkind == GV_SPACE) {
                 Space *space_value = (Space *)value->ground.ptr;
-                Space *space_clone = space_value == src_root
-                    ? root_clone
-                    : hyperpose_clone_space_materialized(
-                          space_value, owner, root_clone->native.universe);
+                Space *space_clone = context->share_spaces
+                    ? space_value
+                    : space_value == src_root
+                        ? root_clone
+                        : hyperpose_clone_space_materialized(
+                              space_value, context,
+                              root_clone->native.universe);
                 if (!space_clone)
                     return false;
-                if (space_clone != root_clone &&
-                    !hyperpose_owned_spaces_push(owned_spaces, space_clone)) {
+                if (!context->share_spaces && space_clone != root_clone &&
+                    !hyperpose_owned_spaces_push(
+                        owned_spaces, space_clone, NULL)) {
                     space_free(space_clone);
                     free(space_clone);
                     return false;
@@ -11307,7 +11715,8 @@ static bool hyperpose_clone_registry(Registry *dst, Registry *src,
                 }
             } else {
                 Atom *cloned_value =
-                    hyperpose_clone_atom_materialized(owner, value);
+                    hyperpose_clone_atom_materialized(
+                        context, value);
                 if (!cloned_value)
                     return false;
                 cetta_provenance_assert_not_transient(
@@ -11323,7 +11732,8 @@ static bool hyperpose_clone_registry(Registry *dst, Registry *src,
         }
     }
     if (!saw_self) {
-        Atom *self_value = atom_space(owner, root_clone);
+        Atom *self_value = atom_space(
+            owner, context->share_spaces ? src_root : root_clone);
         cetta_provenance_assert_not_transient(
             self_value, "hyperpose.registry.self");
         registry_bind_id(dst, g_builtin_syms.self, self_value);
@@ -11335,7 +11745,8 @@ static bool hyperpose_prepare_thread_branch(HyperposeThreadBranch *branch,
                                             CettaExprIndex index,
                                             Space *source_space,
                                             Registry *source_registry,
-                                            Atom *source_branch) {
+                                            Atom *source_branch,
+                                            bool share_spaces) {
 #define HYPERPOSE_THREAD_PERSISTENT_ARENA_RESERVE (2u * ARENA_BLOCK_SIZE)
 #define HYPERPOSE_THREAD_EVAL_ARENA_RESERVE (4u * ARENA_BLOCK_SIZE)
     memset(branch, 0, sizeof(*branch));
@@ -11355,23 +11766,29 @@ static bool hyperpose_prepare_thread_branch(HyperposeThreadBranch *branch,
     term_universe_init(&branch->term_universe);
     term_universe_set_persistent_arena(&branch->term_universe,
                                        &branch->persistent_arena);
+    __attribute__((cleanup(hyperpose_clone_context_free)))
+    HyperposeCloneContext clone_context = {
+        .owner = &branch->persistent_arena,
+        .share_spaces = share_spaces,
+    };
     branch->space =
         hyperpose_clone_space_materialized(source_space,
-                                          &branch->persistent_arena,
+                                          &clone_context,
                                           &branch->term_universe);
     if (!branch->space)
         return false;
-    if (!hyperpose_owned_spaces_push(&branch->owned_spaces, branch->space))
+    if (!hyperpose_owned_spaces_push(
+            &branch->owned_spaces, branch->space, NULL))
         return false;
     if (!hyperpose_clone_registry(&branch->registry, source_registry,
                                   source_space, branch->space,
-                                  &branch->persistent_arena,
+                                  &clone_context,
                                   &branch->owned_spaces)) {
         return false;
     }
     branch->branch =
-        hyperpose_clone_atom_materialized(&branch->persistent_arena,
-                                          source_branch);
+        hyperpose_clone_atom_materialized(
+            &clone_context, source_branch);
     if (!branch->branch)
         return false;
     branch->prepared = true;
@@ -11383,9 +11800,16 @@ static void hyperpose_thread_branch_free(HyperposeThreadBranch *branch) {
         return;
     hyperpose_result_buffer_free(&branch->results);
     for (CettaCount i = 0; i < branch->owned_spaces.len; i++) {
-        if (branch->owned_spaces.items[i]) {
-            space_free(branch->owned_spaces.items[i]);
-            free(branch->owned_spaces.items[i]);
+        HyperposeOwnedSpace owned = branch->owned_spaces.items[i];
+        if (owned.space) {
+            if (owned.petta_program)
+                petta_program_forget_space(
+                    owned.petta_program, owned.space);
+            space_free(owned.space);
+            if (!arena_owns_ptr(
+                    &branch->persistent_arena, owned.space)) {
+                free(owned.space);
+            }
         }
     }
     free(branch->owned_spaces.items);
@@ -11398,6 +11822,371 @@ static void hyperpose_thread_branch_free(HyperposeThreadBranch *branch) {
     arena_free(&branch->persistent_arena);
     hashcons_free(&branch->hashcons);
     memset(branch, 0, sizeof(*branch));
+}
+
+typedef struct {
+    const StateCell *source;
+    StateCell *target;
+} HyperposeStateTransferEntry;
+
+typedef struct {
+    const Space *source;
+    Space *target;
+} HyperposeSpaceTransferEntry;
+
+typedef struct {
+    const CaptureClosure *source;
+    CaptureClosure *target;
+} HyperposeCaptureTransferEntry;
+
+typedef struct {
+    HyperposeThreadBranch *branch;
+    Arena *resource_owner;
+    TermUniverse *parent_universe;
+    Space *parent_root;
+    HyperposeStateTransferEntry *states;
+    CettaCount state_len;
+    CettaCount state_cap;
+    HyperposeSpaceTransferEntry *spaces;
+    CettaCount space_len;
+    CettaCount space_cap;
+    HyperposeCaptureTransferEntry *captures;
+    CettaCount capture_len;
+    CettaCount capture_cap;
+} HyperposeResourceTransfer;
+
+static void hyperpose_resource_transfer_free(
+    HyperposeResourceTransfer *transfer) {
+    if (!transfer)
+        return;
+    free(transfer->states);
+    free(transfer->spaces);
+    free(transfer->captures);
+    transfer->states = NULL;
+    transfer->spaces = NULL;
+    transfer->captures = NULL;
+    transfer->state_len = 0;
+    transfer->state_cap = 0;
+    transfer->space_len = 0;
+    transfer->space_cap = 0;
+    transfer->capture_len = 0;
+    transfer->capture_cap = 0;
+}
+
+static StateCell *hyperpose_transferred_state_lookup(
+    const HyperposeResourceTransfer *transfer, const StateCell *source) {
+    if (!transfer || !source)
+        return NULL;
+    for (CettaCount i = 0; i < transfer->state_len; i++) {
+        if (transfer->states[i].source == source)
+            return transfer->states[i].target;
+    }
+    return NULL;
+}
+
+static bool hyperpose_transferred_state_insert(
+    HyperposeResourceTransfer *transfer, const StateCell *source,
+    StateCell *target) {
+    if (!transfer || !source || !target)
+        return false;
+    if (transfer->state_len >= transfer->state_cap) {
+        CettaCount next_cap;
+        HyperposeStateTransferEntry *next;
+        if (!eval_next_capacity(transfer->state_cap,
+                                transfer->state_len + 1u,
+                                sizeof(HyperposeStateTransferEntry),
+                                &next_cap)) {
+            return false;
+        }
+        next = cetta_realloc(
+            transfer->states,
+            sizeof(HyperposeStateTransferEntry) * (size_t)next_cap);
+        if (!next)
+            return false;
+        transfer->states = next;
+        transfer->state_cap = next_cap;
+    }
+    transfer->states[transfer->state_len++] =
+        (HyperposeStateTransferEntry){
+            .source = source,
+            .target = target,
+        };
+    return true;
+}
+
+static Space *hyperpose_transferred_space_lookup(
+    const HyperposeResourceTransfer *transfer, const Space *source) {
+    if (!transfer || !source)
+        return NULL;
+    for (CettaCount i = 0; i < transfer->space_len; i++) {
+        if (transfer->spaces[i].source == source)
+            return transfer->spaces[i].target;
+    }
+    return NULL;
+}
+
+static bool hyperpose_transferred_space_insert(
+    HyperposeResourceTransfer *transfer, const Space *source,
+    Space *target) {
+    if (!transfer || !source || !target)
+        return false;
+    if (transfer->space_len >= transfer->space_cap) {
+        CettaCount next_cap;
+        HyperposeSpaceTransferEntry *next;
+        if (!eval_next_capacity(transfer->space_cap,
+                                transfer->space_len + 1u,
+                                sizeof(HyperposeSpaceTransferEntry),
+                                &next_cap)) {
+            return false;
+        }
+        next = cetta_realloc(
+            transfer->spaces,
+            sizeof(HyperposeSpaceTransferEntry) * (size_t)next_cap);
+        if (!next)
+            return false;
+        transfer->spaces = next;
+        transfer->space_cap = next_cap;
+    }
+    transfer->spaces[transfer->space_len++] =
+        (HyperposeSpaceTransferEntry){
+            .source = source,
+            .target = target,
+        };
+    return true;
+}
+
+static CaptureClosure *hyperpose_transferred_capture_lookup(
+    const HyperposeResourceTransfer *transfer,
+    const CaptureClosure *source) {
+    if (!transfer || !source)
+        return NULL;
+    for (CettaCount i = 0; i < transfer->capture_len; i++) {
+        if (transfer->captures[i].source == source)
+            return transfer->captures[i].target;
+    }
+    return NULL;
+}
+
+static bool hyperpose_transferred_capture_insert(
+    HyperposeResourceTransfer *transfer,
+    const CaptureClosure *source, CaptureClosure *target) {
+    if (!transfer || !source || !target)
+        return false;
+    if (transfer->capture_len >= transfer->capture_cap) {
+        CettaCount next_cap;
+        HyperposeCaptureTransferEntry *next;
+        if (!eval_next_capacity(
+                transfer->capture_cap, transfer->capture_len + 1u,
+                sizeof(HyperposeCaptureTransferEntry), &next_cap)) {
+            return false;
+        }
+        next = cetta_realloc(
+            transfer->captures,
+            sizeof(HyperposeCaptureTransferEntry) * (size_t)next_cap);
+        if (!next)
+            return false;
+        transfer->captures = next;
+        transfer->capture_cap = next_cap;
+    }
+    transfer->captures[transfer->capture_len++] =
+        (HyperposeCaptureTransferEntry){
+            .source = source,
+            .target = target,
+        };
+    return true;
+}
+
+static bool hyperpose_branch_owns_space(
+    const HyperposeThreadBranch *branch, const Space *space) {
+    if (!branch || !space)
+        return false;
+    for (CettaCount i = 0; i < branch->owned_spaces.len; i++) {
+        if (branch->owned_spaces.items[i].space == space)
+            return true;
+    }
+    return arena_owns_ptr(&branch->persistent_arena, space) ||
+           arena_owns_ptr(&branch->eval_arena, space);
+}
+
+static Atom *hyperpose_transfer_atom(HyperposeResourceTransfer *transfer,
+                                     Arena *owner, Atom *source);
+
+static Space *hyperpose_transfer_space(HyperposeResourceTransfer *transfer,
+                                       Space *source) {
+    if (!transfer || !source)
+        return NULL;
+    if (source == transfer->branch->space)
+        return transfer->parent_root;
+
+    Space *memoized = hyperpose_transferred_space_lookup(transfer, source);
+    if (memoized)
+        return memoized;
+
+    if (!hyperpose_branch_owns_space(transfer->branch, source))
+        return source;
+
+    /* Some result-producing operations allocate a local Space directly in a
+       worker arena rather than registering it as a `new-space`.  Record it as
+       branch-owned before copying so its heap-backed indexes are released
+       after the parent has received the logical graph. */
+    if (!hyperpose_owned_spaces_push(
+            &transfer->branch->owned_spaces, source, NULL)) {
+        return NULL;
+    }
+
+    Space *target = arena_alloc(transfer->resource_owner, sizeof(Space));
+    if (!target)
+        return NULL;
+    space_init_with_universe(target, transfer->parent_universe);
+    target->kind = source->kind;
+    if (!hyperpose_transferred_space_insert(transfer, source, target)) {
+        space_free(target);
+        return NULL;
+    }
+    /* The struct belongs to the parent persistent arena; this registry owns
+       its heap-backed storage until session teardown. */
+    eval_track_new_space(target);
+
+    CettaCount len = space_length64(source);
+    for (CettaCount i = 0; i < len; i++) {
+        Atom *item = space_get_at(source, i);
+        if (!item)
+            continue;
+        Atom *transferred = hyperpose_transfer_atom(
+            transfer, transfer->resource_owner, item);
+        if (!transferred ||
+            !space_admit_atom(target, transfer->resource_owner,
+                              transferred)) {
+            return NULL;
+        }
+    }
+    return target;
+}
+
+static Atom *hyperpose_transfer_atom(HyperposeResourceTransfer *transfer,
+                                     Arena *owner, Atom *source) {
+    if (!transfer || !owner || !source)
+        return NULL;
+    switch (source->kind) {
+    case ATOM_SYMBOL:
+        return atom_symbol_id(owner, source->sym_id);
+    case ATOM_VAR:
+        return atom_var_like(owner, source, source->var_id);
+    case ATOM_GROUNDED:
+        switch (source->ground.gkind) {
+        case GV_INT:
+            return atom_int(owner, source->ground.ival);
+        case GV_FLOAT:
+            return atom_float(owner, source->ground.fval);
+        case GV_BOOL:
+            return atom_bool(owner, source->ground.bval);
+        case GV_STRING:
+            return atom_string(owner, source->ground.sval);
+        case GV_BIGINT:
+            return atom_bigint_copy(owner, source);
+        case GV_RATIONAL:
+            return atom_rational(owner, atom_rational_cstr(source));
+        case GV_INTERNAL_TAG:
+            return atom_internal_tag(
+                owner, (CettaInternalTag)source->ground.ival);
+        case GV_SPACE: {
+            Space *space = hyperpose_transfer_space(
+                transfer, (Space *)source->ground.ptr);
+            return space ? atom_space(owner, space) : NULL;
+        }
+        case GV_STATE: {
+            StateCell *source_cell = (StateCell *)source->ground.ptr;
+            if (!source_cell)
+                return atom_state(owner, NULL);
+            StateCell *target_cell = hyperpose_transferred_state_lookup(
+                transfer, source_cell);
+            if (!target_cell) {
+                target_cell = arena_alloc(
+                    transfer->resource_owner, sizeof(StateCell));
+                if (!target_cell)
+                    return NULL;
+                *target_cell = (StateCell){0};
+                if (!hyperpose_transferred_state_insert(
+                        transfer, source_cell, target_cell)) {
+                    return NULL;
+                }
+                if (source_cell->value) {
+                    target_cell->value = hyperpose_transfer_atom(
+                        transfer, transfer->resource_owner,
+                        source_cell->value);
+                    if (!target_cell->value)
+                        return NULL;
+                }
+                if (source_cell->content_type) {
+                    target_cell->content_type = hyperpose_transfer_atom(
+                        transfer, transfer->resource_owner,
+                        source_cell->content_type);
+                    if (!target_cell->content_type)
+                        return NULL;
+                }
+            }
+            return atom_state(owner, target_cell);
+        }
+        case GV_CAPTURE: {
+            CaptureClosure *source_closure =
+                (CaptureClosure *)source->ground.ptr;
+            if (!source_closure)
+                return atom_capture(owner, NULL);
+            CaptureClosure *target_closure =
+                hyperpose_transferred_capture_lookup(
+                    transfer, source_closure);
+            if (!target_closure) {
+                target_closure = arena_alloc(
+                    transfer->resource_owner, sizeof(CaptureClosure));
+                if (!target_closure)
+                    return NULL;
+                *target_closure = (CaptureClosure){0};
+                if (!hyperpose_transferred_capture_insert(
+                        transfer, source_closure, target_closure)) {
+                    return NULL;
+                }
+                target_closure->options = source_closure->options;
+                target_closure->space_ptr = source_closure->space_ptr
+                    ? hyperpose_transfer_space(
+                          transfer,
+                          (Space *)source_closure->space_ptr)
+                    : NULL;
+                if (source_closure->space_ptr &&
+                    !target_closure->space_ptr) {
+                    return NULL;
+                }
+            }
+            return atom_capture(owner, target_closure);
+        }
+        case GV_FOREIGN:
+            /* Foreign values are runtime-owned.  Their operations execute
+               behind the PeTTa transition barrier; crossing the result
+               boundary preserves their published identity. */
+            return atom_foreign(
+                owner, (CettaForeignValue *)source->ground.ptr);
+        case GV_PRIME_NEED_CAPABILITY:
+        case GV_PRIME_CONTEXT:
+            /* These capabilities belong to Prime's evaluator episode and are
+               not values in the PeTTa thread-boundary algebra. */
+            return NULL;
+        }
+        return NULL;
+    case ATOM_EXPR: {
+        Atom **elems = arena_alloc(
+            owner, sizeof(Atom *) *
+                       (size_t)(source->expr.len ? source->expr.len : 1u));
+        if (!elems)
+            return NULL;
+        for (CettaExprIndex i = 0; i < source->expr.len; i++) {
+            elems[i] = hyperpose_transfer_atom(
+                transfer, owner, source->expr.elems[i]);
+            if (!elems[i])
+                return NULL;
+        }
+        return atom_expr(owner, elems, source->expr.len);
+    }
+    }
+    return NULL;
 }
 
 static void hyperpose_eval_branch_in_thread(HyperposeThreadRun *run,
@@ -11413,6 +12202,7 @@ static void hyperpose_eval_branch_in_thread(HyperposeThreadRun *run,
     Arena *prev_fallback_persistent =
         g_eval_fallback_universe.persistent_arena;
     CettaLibraryContext *prev_library_context = g_library_context;
+    HashConsTable *prev_hashcons = g_hashcons;
     EvalCompletionTracker *prev_completion = g_eval_completion_tracker;
     _Atomic bool *prev_cancel = eval_set_cancel_token(&run->cancel_requested);
     _Atomic bool *prev_unsafe =
@@ -11435,6 +12225,7 @@ static void hyperpose_eval_branch_in_thread(HyperposeThreadRun *run,
 
     g_registry = &branch->registry;
     g_eval_root_space = branch->space;
+    g_hashcons = &branch->hashcons;
     eval_swap_library_context(run->library_context);
     term_universe_set_persistent_arena(&g_eval_fallback_universe,
                                        &branch->persistent_arena);
@@ -11447,19 +12238,26 @@ static void hyperpose_eval_branch_in_thread(HyperposeThreadRun *run,
     eval_for_current_caller(branch->space, &branch->eval_arena, NULL,
                             branch->branch, run->fuel, &empty, &empty,
                             run->preserve_bindings, &outcomes);
+    const bool petta_worker =
+        eval_current_language_id() == CETTA_LANGUAGE_PETTA;
     for (CettaCount i = 0; i < outcomes.len; i++) {
         Atom *candidate =
             outcome_atom_materialize(&branch->eval_arena, &outcomes.items[i]);
         if (atom_is_legacy_empty_sentinel(candidate))
             continue;
-        if (!hyperpose_atom_parent_portable(candidate)) {
+        if (!petta_worker && !hyperpose_atom_parent_portable(candidate)) {
             atomic_store_explicit(&run->unsafe_result, true, memory_order_release);
             atomic_store_explicit(&run->cancel_requested, true, memory_order_release);
             cetta_parallel_executor_cancel(&run->parallel);
             break;
         }
         bool success = !atom_is_error(candidate);
-        Atom *stable = atom_deep_copy(&branch->persistent_arena, candidate);
+        /* PeTTa results are transported as an identity-bearing resource graph
+           after all workers join.  Keeping the materialized worker value here
+           avoids a shallow resource copy that would outlive its owner. */
+        Atom *stable = petta_worker
+            ? candidate
+            : atom_deep_copy(&branch->persistent_arena, candidate);
         if (!hyperpose_result_buffer_push(&branch->results, stable)) {
             atomic_store_explicit(&run->unsafe_result, true, memory_order_release);
             atomic_store_explicit(&run->cancel_requested, true, memory_order_release);
@@ -11484,7 +12282,20 @@ static void hyperpose_eval_branch_in_thread(HyperposeThreadRun *run,
         }
     }
     outcome_set_free(&outcomes);
-    eval_release_temporary_spaces();
+    if (petta_worker) {
+        if (!hyperpose_adopt_tracked_spaces(branch)) {
+            atomic_store_explicit(
+                &run->unsafe_result, true, memory_order_release);
+            atomic_store_explicit(
+                &run->cancel_requested, true, memory_order_release);
+            cetta_parallel_executor_cancel(&run->parallel);
+        }
+        /* On a partial adoption, this releases only the temporary spaces that
+           did not already move to branch ownership. */
+        eval_release_temporary_spaces();
+    } else {
+        eval_release_temporary_spaces();
+    }
     branch->completion = completion.completion;
     branch->execution_finished = true;
     if (atomic_load_explicit(&run->unsafe_result, memory_order_acquire))
@@ -11494,6 +12305,7 @@ static void hyperpose_eval_branch_in_thread(HyperposeThreadRun *run,
     eval_set_hyperpose_thread_unsafe_token(prev_unsafe);
     eval_set_cancel_token(prev_cancel);
     eval_swap_library_context(prev_library_context);
+    g_hashcons = prev_hashcons;
     g_registry = prev_registry;
     g_eval_root_space = prev_root_space;
     term_universe_set_persistent_arena(&g_eval_fallback_universe,
@@ -11505,6 +12317,7 @@ static void hyperpose_worker_enter(CettaParallelWorker *worker, void *user) {
     HyperposeThreadRun *run = user;
     g_eval_parallel_resource_share_count =
         run && run->worker_count > 0u ? run->worker_count : 1u;
+    cetta_shared_transition_scope_enter();
     cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_HYPERPOSE_WORKER_STARTED);
 }
 
@@ -11521,7 +12334,9 @@ static void hyperpose_worker_leave(CettaParallelWorker *worker, void *user) {
     eval_cleanup_owned_new_spaces_for_current_thread();
     eval_match_decision_cache_free_for_current_thread();
     eval_profiled_type_cache_free_for_current_thread();
+    space_execution_analysis_cache_free_for_current_thread();
     bindings_thread_cache_free();
+    cetta_shared_transition_scope_leave();
     g_eval_parallel_resource_share_count = 1u;
 }
 
@@ -11565,11 +12380,34 @@ static void hyperpose_join_worker_completion(
     }
 }
 
-static bool hyperpose_threaded_stream(Space *s, Arena *a, Atom *stream_expr,
-                                      int fuel, bool bounded, int64_t limit,
-                                      bool preserve_bindings, OutcomeSet *os) {
+static void hyperpose_record_result_transfer_failure(
+    Arena *a, Atom *stream_expr, OutcomeSet *os) {
+    Bindings empty;
+    bindings_init(&empty);
+    eval_mark_incomplete(CETTA_EVAL_INCOMPLETE_CAPACITY);
+    outcome_set_add(
+        os,
+        atom_error(
+            a, stream_expr,
+            atom_symbol(a, "HyperposeResultTransferFailed")),
+        &empty);
+}
+
+static bool hyperpose_threaded_execute(
+    Space *s, Arena *a, Atom *stream_expr, int fuel,
+    HyperposeThreadObservation observation,
+    bool preserve_bindings, OutcomeSet *os) {
 #define HYPERPOSE_WORKER_STACK_BYTES (16u * 1024u * 1024u)
     (void)preserve_bindings;
+    /* An exclusive physical transition cannot be transferred to child
+       threads while their parent waits for them.  Execute the same Hyperpose
+       operation through its cooperative realization inside such a region;
+       this is a realization choice, never a language-level refusal. */
+    if (cetta_shared_transition_guard_held_by_current_thread()) {
+        cetta_runtime_stats_inc(
+            CETTA_RUNTIME_COUNTER_HYPERPOSE_COOPERATIVE_FALLBACK);
+        return false;
+    }
     Atom *branches_expr = NULL;
     if (!hyperpose_static_branch_list(stream_expr, &branches_expr))
         return false;
@@ -11595,10 +12433,6 @@ static bool hyperpose_threaded_stream(Space *s, Arena *a, Atom *stream_expr,
     CettaCount branch_count = branches_expr->expr.len;
     if (branch_count == 0)
         return false;
-    if (bounded && limit > 1) {
-        cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_HYPERPOSE_SELECT_K_RUN);
-        return false;
-    }
     if (!hyperpose_all_branches_thread_eligible_without_capture(s, branches_expr)) {
         cetta_runtime_stats_inc(
             CETTA_RUNTIME_COUNTER_HYPERPOSE_COOPERATIVE_FALLBACK);
@@ -11610,9 +12444,12 @@ static bool hyperpose_threaded_stream(Space *s, Arena *a, Atom *stream_expr,
     if (!branches)
         return false;
     bool prepared = true;
+    bool share_spaces =
+        eval_current_language_id() == CETTA_LANGUAGE_PETTA;
     for (CettaCount i = 0; i < branch_count; i++) {
         if (!hyperpose_prepare_thread_branch(&branches[i], i, s, g_registry,
-                                             branches_expr->expr.elems[i])) {
+                                             branches_expr->expr.elems[i],
+                                             share_spaces)) {
             prepared = false;
             break;
         }
@@ -11641,7 +12478,8 @@ static bool hyperpose_threaded_stream(Space *s, Arena *a, Atom *stream_expr,
          * that does not make a closed hyperpose branch capture those bindings.
          */
         .preserve_bindings = false,
-        .first_success = bounded && limit == 1,
+        .first_success =
+            observation == HYPERPOSE_THREAD_OBSERVE_FIRST,
         .worker_count = thread_count,
         .library_context = g_library_context,
     };
@@ -11673,54 +12511,131 @@ static bool hyperpose_threaded_stream(Space *s, Arena *a, Atom *stream_expr,
         }
     }
 
-    cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_HYPERPOSE_THREADED_RUN);
-    if (run.first_success)
-        cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_HYPERPOSE_ONCE_RUN);
-
-    bool run_ok = pushed && cetta_parallel_executor_run(&run.parallel);
-
-    bool unsafe =
-        atomic_load_explicit(&run.unsafe_result, memory_order_acquire);
-    cetta_parallel_executor_free(&run.parallel);
-
-    if (!run_ok || unsafe) {
+    if (!pushed) {
+        cetta_parallel_executor_free(&run.parallel);
         cetta_runtime_stats_inc(
-            unsafe ? CETTA_RUNTIME_COUNTER_HYPERPOSE_COOPERATIVE_FALLBACK
-                   : CETTA_RUNTIME_COUNTER_HYPERPOSE_FALLBACK_THREAD_LIMIT);
+            CETTA_RUNTIME_COUNTER_HYPERPOSE_FALLBACK_THREAD_LIMIT);
         for (CettaCount i = 0; i < branch_count; i++)
             hyperpose_thread_branch_free(&branches[i]);
         free(branches);
         return false;
     }
 
+    cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_HYPERPOSE_THREADED_RUN);
+    if (run.first_success)
+        cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_HYPERPOSE_ONCE_RUN);
+
+    bool run_ok = cetta_parallel_executor_run(&run.parallel);
+
+    bool unsafe =
+        atomic_load_explicit(&run.unsafe_result, memory_order_acquire);
+    cetta_parallel_executor_free(&run.parallel);
+
+    if (!run_ok || unsafe) {
+        const bool petta_execution_started =
+            eval_current_language_id() == CETTA_LANGUAGE_PETTA;
+        cetta_runtime_stats_inc(
+            CETTA_RUNTIME_COUNTER_HYPERPOSE_FALLBACK_THREAD_LIMIT);
+        if (petta_execution_started) {
+            /* Worker effects may already be visible.  Re-entering the
+               cooperative evaluator would execute them twice, so a failed
+               physical realization is a terminal incomplete observation. */
+            Bindings empty;
+            bindings_init(&empty);
+            eval_mark_incomplete(
+                unsafe ? CETTA_EVAL_INCOMPLETE_CAPACITY
+                       : CETTA_EVAL_INCOMPLETE_CANCELLED);
+            outcome_set_add(
+                os,
+                atom_error(
+                    a, stream_expr,
+                    atom_symbol(a, "HyperposeThreadExecutionFailed")),
+                &empty);
+        }
+        for (CettaCount i = 0; i < branch_count; i++)
+            hyperpose_thread_branch_free(&branches[i]);
+        free(branches);
+        return petta_execution_started;
+    }
+
     Bindings empty;
     bindings_init(&empty);
+    const bool petta_transfer =
+        eval_current_language_id() == CETTA_LANGUAGE_PETTA;
+    bool transfer_failed = false;
     if (run.first_success) {
         int winner =
             atomic_load_explicit(&run.winner_index, memory_order_acquire);
         hyperpose_join_worker_completion(
             branches, branch_count, winner >= 0);
         Atom *selected_atom = NULL;
+        CettaCount selected_branch = branch_count;
         if (winner >= 0 && (CettaCount)winner < branch_count) {
             HyperposeThreadBranch *branch = &branches[winner];
             for (CettaCount i = 0; i < branch->results.len; i++) {
                 if (!atom_is_error(branch->results.items[i])) {
                     selected_atom = branch->results.items[i];
+                    selected_branch = (CettaCount)winner;
                     break;
                 }
             }
         }
         if (!selected_atom) {
             for (CettaCount i = 0; i < branch_count && !selected_atom; i++) {
-                if (branches[i].results.len > 0)
+                if (branches[i].results.len > 0) {
                     selected_atom = branches[i].results.items[0];
+                    selected_branch = i;
+                }
             }
         }
         if (selected_atom) {
-            outcome_set_add(
-                os, atom_deep_copy(a, selected_atom), &empty);
+            Atom *parent_atom = NULL;
+            if (petta_transfer && selected_branch < branch_count) {
+                HyperposeResourceTransfer transfer = {
+                    .branch = &branches[selected_branch],
+                    .resource_owner = eval_storage_arena(a),
+                    .parent_universe = eval_current_term_universe(),
+                    .parent_root = s,
+                };
+                parent_atom = hyperpose_transfer_atom(
+                    &transfer, a, selected_atom);
+                hyperpose_resource_transfer_free(&transfer);
+            } else {
+                parent_atom = atom_deep_copy(a, selected_atom);
+            }
+            if (parent_atom) {
+                outcome_set_add(os, parent_atom, &empty);
+            } else {
+                transfer_failed = true;
+            }
         } else if (eval_current_language_id() != CETTA_LANGUAGE_PRIME) {
             outcome_set_add(os, atom_empty(a), &empty);
+        }
+    } else if (observation ==
+               HYPERPOSE_THREAD_OBSERVE_OCCURRENCES) {
+        hyperpose_join_worker_completion(
+            branches, branch_count, false);
+        for (CettaCount i = 0; i < branch_count; i++) {
+            HyperposeResourceTransfer transfer = {
+                .branch = &branches[i],
+                .resource_owner = eval_storage_arena(a),
+                .parent_universe = eval_current_term_universe(),
+                .parent_root = s,
+            };
+            for (CettaCount j = 0; j < branches[i].results.len; j++) {
+                Atom *parent_atom = petta_transfer
+                    ? hyperpose_transfer_atom(
+                          &transfer, a, branches[i].results.items[j])
+                    : atom_deep_copy(a, branches[i].results.items[j]);
+                if (!parent_atom) {
+                    transfer_failed = true;
+                    break;
+                }
+                outcome_set_add(os, parent_atom, &empty);
+            }
+            hyperpose_resource_transfer_free(&transfer);
+            if (transfer_failed)
+                break;
         }
     } else {
         hyperpose_join_worker_completion(branches, branch_count, false);
@@ -11735,16 +12650,36 @@ static bool hyperpose_threaded_stream(Space *s, Arena *a, Atom *stream_expr,
             arena_alloc(a, sizeof(Atom *) * (result_count ? result_count : 1));
         CettaCount len = 0;
         for (CettaCount i = 0; i < branch_count; i++) {
+            HyperposeResourceTransfer transfer = {
+                .branch = &branches[i],
+                .resource_owner = eval_storage_arena(a),
+                .parent_universe = eval_current_term_universe(),
+                .parent_root = s,
+            };
             for (CettaCount j = 0; j < branches[i].results.len; j++) {
                 Atom *item = branches[i].results.items[j];
                 if (has_success && atom_is_error(item) &&
                     eval_current_language_id() != CETTA_LANGUAGE_PRIME)
                     continue;
-                items[len++] = atom_deep_copy(a, item);
+                Atom *parent_atom = petta_transfer
+                    ? hyperpose_transfer_atom(&transfer, a, item)
+                    : atom_deep_copy(a, item);
+                if (!parent_atom) {
+                    transfer_failed = true;
+                    break;
+                }
+                items[len++] = parent_atom;
             }
+            hyperpose_resource_transfer_free(&transfer);
+            if (transfer_failed)
+                break;
         }
-        outcome_set_add(os, atom_expr(a, items, len), &empty);
+        if (!transfer_failed)
+            outcome_set_add(os, atom_expr(a, items, len), &empty);
     }
+
+    if (transfer_failed)
+        hyperpose_record_result_transfer_failure(a, stream_expr, os);
 
     for (CettaCount i = 0; i < branch_count; i++)
         hyperpose_thread_branch_free(&branches[i]);
@@ -12156,8 +13091,12 @@ static void stream_emit(Space *s, Arena *a, Atom *stream_expr, int fuel,
     }
 
     if (order == CETTA_SEARCH_POLICY_ORDER_NATIVE &&
-        hyperpose_threaded_stream(s, a, stream_expr, fuel, bounded, limit,
-                                  preserve_bindings, os)) {
+        hyperpose_threaded_execute(
+            s, a, stream_expr, fuel,
+            bounded && limit == 1
+                ? HYPERPOSE_THREAD_OBSERVE_FIRST
+                : HYPERPOSE_THREAD_OBSERVE_REIFIED_BAG,
+            preserve_bindings, os)) {
         return;
     }
 
@@ -15149,18 +16088,196 @@ static Space *resolve_registry_space_payload(Registry *r, Atom *ref) {
     return payload_resolve_space_read(resolve_space(r, ref));
 }
 
+typedef enum {
+    PETTA_SPACE_READ_INVALID = 0,
+    PETTA_SPACE_READ_EMPTY_LOCATION,
+    PETTA_SPACE_READ_PRESENT
+} PettaSpaceReadKind;
+
+typedef struct {
+    PettaSpaceReadKind kind;
+    Atom *location;
+    Space *space;
+} PettaSpaceReadOccurrence;
+
+typedef struct {
+    PettaSpaceReadOccurrence *items;
+    CettaCount len;
+    CettaCount cap;
+} PettaSpaceReadSet;
+
+typedef enum {
+    PETTA_SPACE_ATOM_SNAPSHOT_OK = 0,
+    PETTA_SPACE_ATOM_SNAPSHOT_MATERIALIZE_FAILED,
+    PETTA_SPACE_ATOM_SNAPSHOT_OUT_OF_MEMORY
+} PettaSpaceAtomSnapshotStatus;
+
+typedef struct {
+    Atom **items;
+    CettaCount len;
+} PettaSpaceAtomSnapshot;
+
+/*
+ * Capture one logical occurrence view into branch-owned storage.  The
+ * physical transition guard covers only the shared representation read;
+ * consumers remain outside it and may evaluate in any oracle-permitted
+ * interleaving.
+ */
+static PettaSpaceAtomSnapshotStatus petta_space_atom_snapshot_capture(
+    Arena *arena, Space *space, PettaSpaceAtomSnapshot *snapshot) {
+    if (!arena || !space || !snapshot)
+        return PETTA_SPACE_ATOM_SNAPSHOT_OUT_OF_MEMORY;
+    *snapshot = (PettaSpaceAtomSnapshot){0};
+
+    __attribute__((cleanup(cetta_shared_transition_guard_leave)))
+    CettaSharedTransitionGuard transition = {0};
+    cetta_shared_transition_guard_enter(&transition);
+
+    if (!space_match_backend_materialize_attached(
+            space, eval_storage_arena(arena))) {
+        return PETTA_SPACE_ATOM_SNAPSHOT_MATERIALIZE_FAILED;
+    }
+    CettaCount logical_len = space_length64(space);
+    if (logical_len > (CettaCount)(SIZE_MAX / sizeof(*snapshot->items)))
+        return PETTA_SPACE_ATOM_SNAPSHOT_OUT_OF_MEMORY;
+    if (logical_len > 0u) {
+        snapshot->items = arena_alloc(
+            arena, sizeof(*snapshot->items) * (size_t)logical_len);
+        if (!snapshot->items)
+            return PETTA_SPACE_ATOM_SNAPSHOT_OUT_OF_MEMORY;
+    }
+    for (CettaIndex index = 0u; index < logical_len; index++) {
+        Atom *stored = space_get_at64(space, index);
+        if (!stored)
+            return PETTA_SPACE_ATOM_SNAPSHOT_MATERIALIZE_FAILED;
+        snapshot->items[index] = payload_rebind_resources(arena, stored);
+        if (!snapshot->items[index])
+            return PETTA_SPACE_ATOM_SNAPSHOT_OUT_OF_MEMORY;
+    }
+    snapshot->len = logical_len;
+    return PETTA_SPACE_ATOM_SNAPSHOT_OK;
+}
+
+static CettaCount petta_space_length_observe(Space *space) {
+    __attribute__((cleanup(cetta_shared_transition_guard_leave)))
+    CettaSharedTransitionGuard transition = {0};
+    cetta_shared_transition_guard_enter(&transition);
+    return space_length64(space);
+}
+
+static void petta_space_read_set_free(PettaSpaceReadSet *set) {
+    if (!set)
+        return;
+    free(set->items);
+    set->items = NULL;
+    set->len = 0u;
+    set->cap = 0u;
+}
+
+static bool petta_space_read_set_push(
+    PettaSpaceReadSet *set, PettaSpaceReadOccurrence occurrence) {
+    if (!set)
+        return false;
+    if (set->len == set->cap) {
+        CettaCount next_cap = set->cap ? set->cap * 2u : 4u;
+        if (next_cap < set->cap ||
+            (size_t)next_cap > SIZE_MAX / sizeof(*set->items)) {
+            return false;
+        }
+        set->items = cetta_realloc(
+            set->items, sizeof(*set->items) * (size_t)next_cap);
+        set->cap = next_cap;
+    }
+    set->items[set->len++] = occurrence;
+    return true;
+}
+
+/*
+ * PeTTa's logical spaces are an authored family indexed by symbolic
+ * locations.  The C registry is a sparse realization of that family:
+ * absence of a physical entry denotes an empty location, not an invalid
+ * query.  Invalid operands remain distinct, and a space expression may
+ * produce an ordered family of locations.
+ */
+static PettaSpaceReadOccurrence petta_classify_space_read(
+    Space *root, Atom *location) {
+    PettaSpaceReadOccurrence occurrence = {
+        .kind = PETTA_SPACE_READ_INVALID,
+        .location = location,
+        .space = NULL,
+    };
+    if (!location)
+        return occurrence;
+
+    Space *space = g_registry
+        ? resolve_registry_space_payload(g_registry, location)
+        : payload_resolve_space_read(resolve_space(NULL, location));
+    if (!space && location->kind == ATOM_SYMBOL &&
+        location->sym_id == g_builtin_syms.self) {
+        space = root;
+    }
+    if (space) {
+        occurrence.kind = PETTA_SPACE_READ_PRESENT;
+        occurrence.space = space;
+        return occurrence;
+    }
+
+    Atom *name_key = NULL;
+    if (location->kind == ATOM_SYMBOL ||
+        registry_ref_name_key(location, &name_key)) {
+        occurrence.kind = PETTA_SPACE_READ_EMPTY_LOCATION;
+    }
+    return occurrence;
+}
+
+static bool petta_collect_space_reads(
+    Space *root, Arena *arena, Atom *space_expression, int fuel,
+    PettaSpaceReadSet *reads) {
+    if (!arena || !space_expression || !reads)
+        return false;
+
+    PettaSpaceReadOccurrence direct =
+        petta_classify_space_read(root, space_expression);
+    if (direct.kind != PETTA_SPACE_READ_INVALID ||
+        space_expression->kind != ATOM_EXPR) {
+        return petta_space_read_set_push(reads, direct);
+    }
+
+    ResultSet values;
+    result_set_init(&values);
+    metta_eval(root, arena, NULL, space_expression, fuel, &values);
+    bool ok = true;
+    for (CettaCount index = 0u; index < values.len; index++) {
+        if (!petta_space_read_set_push(
+                reads,
+                petta_classify_space_read(root, values.items[index]))) {
+            ok = false;
+            break;
+        }
+    }
+    result_set_free(&values);
+    return ok;
+}
+
 static Space *space_algebra_fresh_result(Arena *a);
 static void space_algebra_add_union(Space *ns, Space *sa, Space *sb);
 static void space_algebra_add_meet(Space *ns, Space *sa, Space *sb);
+
+static bool petta_space_expression_is_algebra(const Atom *expression) {
+    return expression && expression->kind == ATOM_EXPR &&
+           expression->expr.len >= 2u &&
+           (atom_is_symbol_id(
+                expression->expr.elems[0], g_builtin_syms.comma) ||
+            atom_is_symbol_id(
+                expression->expr.elems[0], g_builtin_syms.pipe));
+}
 
 static Space *resolve_single_space_arg(Space *s, Arena *a, Atom *space_expr, int fuel) {
     if (!g_registry) return NULL;
 
     /* Comma is meet and pipe is additive union in a read-only space
      * expression.  A singleton fold is the original space itself. */
-    if (space_expr && space_expr->kind == ATOM_EXPR && space_expr->expr.len >= 2 &&
-        (atom_is_symbol_id(space_expr->expr.elems[0], g_builtin_syms.comma) ||
-         atom_is_symbol_id(space_expr->expr.elems[0], g_builtin_syms.pipe))) {
+    if (petta_space_expression_is_algebra(space_expr)) {
         bool is_meet =
             atom_is_symbol_id(space_expr->expr.elems[0], g_builtin_syms.comma);
         Space *acc = resolve_single_space_arg(s, a, space_expr->expr.elems[1], fuel);
@@ -22242,10 +23359,17 @@ static void dispatch_capture_outcomes(Space *s, Arena *a, Atom *head, Atom **arg
                                       bool preserve_bindings, OutcomeSet *os) {
     if (!is_capture_closure(head))
         return;
-    if (eval_mark_hyperpose_thread_unsafe()) {
-        if (eval_current_language_id() != CETTA_LANGUAGE_PRIME)
-            outcome_set_add(os, atom_empty(a), prefix);
-        return;
+    __attribute__((cleanup(cetta_shared_transition_guard_leave)))
+    CettaSharedTransitionGuard shared_capture_transition = {0};
+    if (g_hyperpose_thread_unsafe_requested) {
+        if (eval_current_language_id() == CETTA_LANGUAGE_PETTA) {
+            cetta_shared_transition_guard_enter(
+                &shared_capture_transition);
+        } else if (eval_mark_hyperpose_thread_unsafe()) {
+            if (eval_current_language_id() != CETTA_LANGUAGE_PRIME)
+                outcome_set_add(os, atom_empty(a), prefix);
+            return;
+        }
     }
 
     if (nargs != 1) {
@@ -22384,10 +23508,17 @@ static bool dispatch_foreign_outcomes(Space *s, Arena *a, Atom *head,
          head->sym_id == g_builtin_syms.py_call);
     if (!callable && !exact_native)
         return false;
-    if (eval_mark_hyperpose_thread_unsafe()) {
-        if (eval_current_language_id() != CETTA_LANGUAGE_PRIME)
-            outcome_set_add(os, atom_empty(a), prefix);
-        return true;
+    __attribute__((cleanup(cetta_shared_transition_guard_leave)))
+    CettaSharedTransitionGuard shared_foreign_transition = {0};
+    if (g_hyperpose_thread_unsafe_requested) {
+        if (eval_current_language_id() == CETTA_LANGUAGE_PETTA) {
+            cetta_shared_transition_guard_enter(
+                &shared_foreign_transition);
+        } else if (eval_mark_hyperpose_thread_unsafe()) {
+            if (eval_current_language_id() != CETTA_LANGUAGE_PRIME)
+                outcome_set_add(os, atom_empty(a), prefix);
+            return true;
+        }
     }
 
     ResultSet rs;
@@ -23953,6 +25084,55 @@ handle_match(Space *s, Arena *a, Atom *atom, int fuel, bool preserve_bindings,
         outcome_set_add(os, mork_handle_error, &_empty);
         return true;
     }
+    if (eval_current_language_id() == CETTA_LANGUAGE_PETTA &&
+        !petta_space_expression_is_algebra(space_ref) &&
+        !(space_ref->kind == ATOM_GROUNDED &&
+          space_ref->ground.gkind == GV_SPACE)) {
+        PettaSpaceReadSet reads = {0};
+        if (!petta_collect_space_reads(s, a, space_ref, fuel, &reads)) {
+            petta_space_read_set_free(&reads);
+            outcome_set_add(
+                os, atom_error(a, atom, atom_symbol(a, "OutOfMemory")),
+                &_empty);
+            return true;
+        }
+        for (CettaCount index = 0u; index < reads.len; index++) {
+            PettaSpaceReadOccurrence read = reads.items[index];
+            if (read.kind == PETTA_SPACE_READ_EMPTY_LOCATION)
+                continue;
+            if (read.kind == PETTA_SPACE_READ_INVALID) {
+                outcome_set_add(
+                    os,
+                    read.location && atom_is_error(read.location)
+                        ? read.location
+                        : space_arg_error(
+                              a, atom,
+                              "match expects a space as the first argument"),
+                    &_empty);
+                break;
+            }
+
+            Atom *resolved_call = atom_expr(
+                a,
+                (Atom *[]){
+                    atom_symbol_id(a, g_builtin_syms.match),
+                    atom_space(a, read.space),
+                    pattern,
+                    template,
+                },
+                4u);
+            if (!resolved_call ||
+                !handle_match(
+                    s, a, resolved_call, fuel, preserve_bindings, os)) {
+                outcome_set_add(
+                    os, atom_error(a, atom, atom_symbol(a, "OutOfMemory")),
+                    &_empty);
+                break;
+            }
+        }
+        petta_space_read_set_free(&reads);
+        return true;
+    }
     Space *ms = resolve_single_space_arg(s, a, space_ref, fuel);
     if (g_registry && !ms) {
         outcome_set_add(os, space_arg_error(a, atom,
@@ -25090,8 +26270,9 @@ static bool try_count_generic_match_collapse(Space *s, Arena *a, Atom *match_ato
  * its one sound case: `size` is strict, so evaluating (size (collapse MATCH))
  * genuinely evaluates the collapse and consumes its tuple linearly by counting.
  * We therefore stream the match rows and count them, never materializing the
- * O(N) tuple.  It must NOT be reached for `size-atom` (non-strict) — the caller
- * guards on g_builtin_syms.size only. */
+ * O(N) tuple.  It must NOT be reached for `size-atom`: the caller guards on
+ * g_builtin_syms.size, and PeTTa's value-demanded `size-atom` is owned by its
+ * occurrence-plan machine. */
 static bool try_stream_count_size_collapse(Space *s, Arena *a, Atom *atom,
                                            const Bindings *current_env, int fuel,
                                            uint64_t *out_count) {
@@ -27250,8 +28431,8 @@ handle_dispatch(Space *s, Arena *a, Atom *atom, Atom *etype, int fuel,
     bool profile_disabled_whole_call_syntax =
         active_profile_disables_whole_call_syntax(head_id);
     /* Strict `size` over (collapse MATCH): stream the rows and count without
-     * materializing the tuple.  `size-atom` is non-strict and is intentionally
-     * excluded (it returns the arity of its unevaluated argument). */
+     * materializing the tuple.  `size-atom` remains outside this shared
+     * shortcut because its demand policy is language-profiled. */
     if (!profile_disabled_whole_call_syntax &&
         head_id == g_builtin_syms.size &&
         nargs == 1) {
@@ -31674,7 +32855,7 @@ typedef struct PettaEvalTransaction {
     size_t state_cap;
     Arena *machine_arena;
     Arena *persistent_arena;
-    PettaProgram *program;
+    CettaSharedTransitionGuard shared_lifetime;
 } PettaEvalTransaction;
 
 typedef struct {
@@ -32387,6 +33568,16 @@ static Space *petta_eval_transaction_clone_space(
             transaction, space);
     if (existing)
         return existing->working;
+
+    __attribute__((cleanup(cetta_shared_transition_guard_leave)))
+    CettaSharedTransitionGuard shared_snapshot = {0};
+    cetta_shared_transition_guard_enter(&shared_snapshot);
+
+    cetta_runtime_stats_inc(
+        CETTA_RUNTIME_COUNTER_PETTA_TRANSACTION_SPACE_CLONE);
+    cetta_runtime_stats_add(
+        CETTA_RUNTIME_COUNTER_PETTA_TRANSACTION_SPACE_CLONE_ROW,
+        space_length64(space));
     if (!petta_eval_transaction_reserve(
             (void **)&transaction->spaces,
             &transaction->space_cap,
@@ -32397,13 +33588,10 @@ static Space *petta_eval_transaction_clone_space(
     Space *working = space_heap_clone_shallow(space);
     if (!working)
         return NULL;
-    if (transaction->program &&
-        !petta_program_clone_space(
-            transaction->program, space, working)) {
-        space_free(working);
-        free(working);
-        return NULL;
-    }
+    /* Space is semantic authority.  A transaction's working image is
+       branch-private and must not be installed into the shared derived
+       program catalog; candidate selection can reconstruct from the live
+       image when no private compiled plan is available. */
     PettaEvalTransactionSpace entry = {
         .original = space,
         .working = working,
@@ -32549,13 +33737,11 @@ static void petta_eval_transaction_destroy(
     PettaEvalTransaction *transaction) {
     if (!transaction)
         return;
+
     for (size_t index = 0u;
          index < transaction->space_len; index++) {
         Space *working = transaction->spaces[index].working;
         if (working) {
-            if (transaction->program)
-                petta_program_forget_space(
-                    transaction->program, working);
             space_free(working);
             free(working);
         }
@@ -32568,7 +33754,11 @@ static void petta_eval_transaction_destroy(
     free(transaction->initial_registry_values);
     free(transaction->spaces);
     free(transaction->states);
+    CettaSharedTransitionGuard shared_lifetime =
+        transaction->shared_lifetime;
+    transaction->shared_lifetime.held = false;
     free(transaction);
+    cetta_shared_transition_guard_leave(&shared_lifetime);
 }
 
 static bool petta_eval_transaction_bind_entry(
@@ -32765,7 +33955,15 @@ static bool petta_eval_machine_transaction_begin(
 
     PettaEvalTransaction *transaction =
         cetta_malloc(sizeof(*transaction));
+    cetta_runtime_stats_inc(
+        CETTA_RUNTIME_COUNTER_PETTA_TRANSACTION_BEGIN);
     memset(transaction, 0, sizeof(*transaction));
+    /* The initial realization is serializable: retain one physical
+       transition for the full transaction lifetime.  This executes every
+       transaction and leaves optimistic delta publication as a future
+       refinement requiring stable cross-revision occurrence identities. */
+    cetta_shared_transition_guard_enter(
+        &transaction->shared_lifetime);
     transaction->parent = eval_context->transaction;
     transaction->outer_registry = transaction->parent
         ? &transaction->parent->registry : g_registry;
@@ -32778,10 +33976,6 @@ static bool petta_eval_machine_transaction_begin(
     if (!transaction->persistent_arena)
         transaction->persistent_arena =
             eval_storage_arena(arena);
-    transaction->program =
-        eval_context->library_context
-            ? eval_context->library_context->petta_program
-            : NULL;
     registry_init(&transaction->registry);
 
     Space *working_root =
@@ -32864,6 +34058,16 @@ static bool petta_eval_machine_transaction_commit(
         eval_context->transaction != transaction) {
         return false;
     }
+    cetta_runtime_stats_inc(
+        CETTA_RUNTIME_COUNTER_PETTA_TRANSACTION_COMMIT);
+
+    /* Validation and publication are one physical transition.  The
+       transaction's working values were prepared branch-locally; this
+       guard makes their all-or-nothing publication linearizable without
+       restricting which PeTTa programs may request a transaction. */
+    __attribute__((cleanup(cetta_shared_transition_guard_leave)))
+    CettaSharedTransitionGuard shared_publication = {0};
+    cetta_shared_transition_guard_enter(&shared_publication);
 
     for (size_t index = 0u;
          index < transaction->space_len; index++) {
@@ -32964,15 +34168,8 @@ static bool petta_eval_machine_transaction_commit(
             &transaction->spaces[index];
         if (space_revision(entry->working) !=
             entry->working_base_revision) {
-            if (transaction->program &&
-                !petta_program_replace_space(
-                    transaction->program,
-                    entry->original, entry->working)) {
-                free(registry_values);
-                free(state_values);
-                free(state_types);
-                return false;
-            }
+            cetta_runtime_stats_inc(
+                CETTA_RUNTIME_COUNTER_PETTA_TRANSACTION_DIRTY_SPACE_COMMIT);
             space_replace_contents(
                 entry->original, entry->working);
         }
@@ -33017,6 +34214,8 @@ static void petta_eval_machine_transaction_rollback(
     PettaEvalTransaction *transaction = handle;
     if (!eval_context || !transaction)
         return;
+    cetta_runtime_stats_inc(
+        CETTA_RUNTIME_COUNTER_PETTA_TRANSACTION_ROLLBACK);
     if (eval_context->transaction == transaction)
         eval_context->transaction = transaction->parent;
     petta_eval_machine_advance_semantic_authority(eval_context);
@@ -33738,6 +34937,66 @@ static bool petta_memo_add_result(
     return outcomes->len == before + 1u;
 }
 
+/* One capability-indexed interpretation of the PeTTa package effect for
+ * both canonical relational execution and evaluator fallback.  Importing
+ * lib_import installs the capability; without it, git-import! remains
+ * ordinary uninterpreted syntax. */
+static bool petta_git_import_native_try(
+    CettaLibraryContext *library_context,
+    Arena *arena, Atom *expression,
+    OutcomeSet *outcomes, bool *recognized) {
+    if (recognized)
+        *recognized = false;
+    if (!library_context || !arena || !expression || !outcomes ||
+        !recognized || expression->kind != ATOM_EXPR ||
+        expression->expr.len == 0u ||
+        expression->expr.elems[0]->kind != ATOM_SYMBOL ||
+        expression->expr.elems[0]->sym_id !=
+            g_builtin_syms.git_import_bang ||
+        !cetta_library_petta_git_import_enabled(library_context)) {
+        return library_context && arena && expression && outcomes &&
+               recognized;
+    }
+
+    *recognized = true;
+    CettaExprLen nargs = expression->expr.len - 1u;
+    Atom *result = NULL;
+    if (nargs < 1u || nargs > 4u) {
+        result = atom_error(
+            arena, expression,
+            atom_symbol(arena, "IncorrectNumberOfArguments"));
+        return result && petta_memo_add_result(
+            arena, outcomes, result);
+    }
+
+    const char *git_path =
+        string_like_atom(expression->expr.elems[1]);
+    const char *build_command = nargs >= 2u
+        ? string_like_atom(expression->expr.elems[2]) : "";
+    const char *base_directory = nargs >= 3u
+        ? string_like_atom(expression->expr.elems[3]) : "./repos";
+    const char *commit_sha = nargs >= 4u
+        ? string_like_atom(expression->expr.elems[4]) : NULL;
+    Atom *error = NULL;
+    if (!git_path || !build_command || !base_directory ||
+        (nargs >= 4u && !commit_sha)) {
+        error = atom_symbol(
+            arena, "git-import! expects text arguments");
+    }
+    if (!error && cetta_library_petta_git_import(
+            library_context, git_path, build_command,
+            base_directory, commit_sha, arena, &error)) {
+        result = petta_semantics_success_value(arena);
+    } else {
+        result = atom_error(
+            arena, expression,
+            error ? error : atom_symbol(
+                arena, "git-import! failed"));
+    }
+    return result && petta_memo_add_result(
+        arena, outcomes, result);
+}
+
 static bool petta_memo_integer(
     const Atom *atom, int64_t *value) {
     if (!atom || !value || atom->kind != ATOM_GROUNDED ||
@@ -33984,7 +35243,7 @@ static bool petta_memo_native_control_try(
             result = petta_semantics_success_value(arena);
         }
     } else if (configure) {
-        if (nargs < 1u || nargs > 3u) {
+        if (nargs < 1u || nargs > 4u) {
             result = petta_memo_control_error(
                 arena, expression,
                 "IncorrectNumberOfArguments", NULL);
@@ -34114,6 +35373,39 @@ static bool petta_memo_native_import_try(
         petta_semantics_success_value(arena));
 }
 
+static bool petta_outcomes_contain_true(const OutcomeSet *outcomes) {
+    if (!outcomes)
+        return false;
+    for (CettaCount index = 0u; index < outcomes->len; index++) {
+        bool value = false;
+        Atom *atom = outcomes->items[index].materialized_atom
+            ? outcomes->items[index].materialized_atom
+            : outcomes->items[index].atom;
+        if (petta_semantics_truth_value(atom, &value) && value)
+            return true;
+    }
+    return false;
+}
+
+static bool petta_channel_library_path_effect(
+    CettaLibraryContext *context, Arena *arena,
+    Atom *expression, const Bindings *environment,
+    const OutcomeSet *outcomes) {
+    if (!context || !arena || !expression || !environment)
+        return false;
+    Atom *resolved = bindings_apply_if_vars(
+        environment, arena, expression);
+    PeTTaLibraryPathEffect effect;
+    if (!resolved ||
+        !petta_semantics_library_path_effect(resolved, &effect)) {
+        return true;
+    }
+    /* retractPredicate returns false when no occurrence was removed.  Only a
+     * true foreign result denotes a committed edit of the ordered relation. */
+    return !petta_outcomes_contain_true(outcomes) ||
+           cetta_library_petta_library_path_apply(context, &effect);
+}
+
 static bool petta_eval_machine_extension_call(
     void *context, Arena *arena,
     Atom *expression, Atom *expected,
@@ -34134,6 +35426,11 @@ static bool petta_eval_machine_extension_call(
         expression, outcomes, recognized);
     if (*recognized)
         return memo_import_called;
+    bool git_import_called = petta_git_import_native_try(
+        eval_context->library_context, arena,
+        expression, outcomes, recognized);
+    if (*recognized)
+        return git_import_called;
     Atom *runtime_result = NULL;
     bool runtime_completed = cetta_petta_runtime_call(
         eval_context->library_context, arena,
@@ -34141,47 +35438,48 @@ static bool petta_eval_machine_extension_call(
     if (*recognized)
         return runtime_completed && (!runtime_result ||
             petta_memo_add_result(arena, outcomes, runtime_result));
-    const char *library_member = NULL;
-    if (petta_semantics_library_descriptor(
-            expression, &library_member)) {
-        char canonical_path[PATH_MAX];
+    PeTTaLibraryReference library_reference;
+    if (petta_semantics_library_reference(
+            expression, &library_reference)) {
         *recognized = true;
-        if (!cetta_library_petta_resolve_library_member(
-                eval_context->library_context,
-                library_member, canonical_path,
-                sizeof(canonical_path))) {
-            return true;
+        for (uint32_t occurrence = 0u;; occurrence++) {
+            char path[PATH_MAX];
+            CettaPettaLibraryReferenceObservation observation =
+                cetta_library_petta_reference_observe(
+                    eval_context->library_context,
+                    &library_reference, occurrence,
+                    path, sizeof(path));
+            if (observation.kind ==
+                    CETTA_PETTA_LIBRARY_REFERENCE_EXHAUSTED) {
+                return true;
+            }
+            if (observation.kind ==
+                    CETTA_PETTA_LIBRARY_REFERENCE_REFUSED) {
+                Bindings empty;
+                bindings_init(&empty);
+                CettaCount previous_len = outcomes->len;
+                outcome_set_add(
+                    outcomes,
+                    atom_error(
+                        arena, expression,
+                        atom_symbol(
+                            arena,
+                            observation.reason
+                                ? observation.reason
+                                : "library reference refused")),
+                    &empty);
+                return outcomes->len == previous_len + 1u;
+            }
+            Bindings empty;
+            bindings_init(&empty);
+            CettaCount previous_len = outcomes->len;
+            outcome_set_add(
+                outcomes, atom_symbol(arena, path), &empty);
+            if (outcomes->len != previous_len + 1u)
+                return false;
+            if (occurrence == UINT32_MAX)
+                return true;
         }
-        Bindings empty;
-        bindings_init(&empty);
-        CettaCount previous_len = outcomes->len;
-        outcome_set_add(
-            outcomes,
-            atom_string(arena, canonical_path),
-            &empty);
-        return outcomes->len == previous_len + 1u;
-    }
-    const char *library_root = NULL;
-    if (petta_semantics_library_file_descriptor(
-            expression, &library_root,
-            &library_member)) {
-        char canonical_path[PATH_MAX];
-        *recognized = true;
-        if (!cetta_library_petta_resolve_library_file(
-                eval_context->library_context,
-                library_root, library_member,
-                canonical_path,
-                sizeof(canonical_path))) {
-            return true;
-        }
-        Bindings empty;
-        bindings_init(&empty);
-        CettaCount previous_len = outcomes->len;
-        outcome_set_add(
-            outcomes,
-            atom_string(arena, canonical_path),
-            &empty);
-        return outcomes->len == previous_len + 1u;
     }
     if (petta_token_space_boundary_try(
             eval_context->library_context,
@@ -34194,10 +35492,17 @@ static bool petta_eval_machine_extension_call(
         arena, expression, outcomes, recognized);
     if (*recognized)
         return memo_control_called;
-    return petta_libpl_call(
+    bool libpl_completed = petta_libpl_call(
         eval_context->library_context->lib_prolog,
         arena, expression, expected, environment,
         outcomes, recognized);
+    if (libpl_completed && *recognized &&
+        !petta_channel_library_path_effect(
+            eval_context->library_context, arena,
+            expression, environment, outcomes)) {
+        return false;
+    }
+    return libpl_completed;
 }
 
 static bool petta_eval_machine_clause_snapshot_lease(
@@ -34375,6 +35680,13 @@ static PettaMachineHostMode petta_eval_machine_classify_host(
          head->sym_id == g_builtin_syms.get_atoms)) {
         return PETTA_MACHINE_HOST_STRICT_FIRST_APPLICATION;
     }
+    /* Import consumes an authored destination and module-reference syntax.
+     * Neither coordinate is a computation.  The import evaluator performs
+     * the later path/enabled-provider observations explicitly. */
+    if (head->kind == ATOM_SYMBOL &&
+        head->sym_id == g_builtin_syms.import_bang) {
+        return PETTA_MACHINE_HOST_READY_APPLICATION;
+    }
     /*
      * Assertion is strict in its condition, but its failure reporting and
      * process contract remain host effects.  Evaluating the condition in
@@ -34413,13 +35725,15 @@ static PettaMachineHostMode petta_eval_machine_classify_host(
     if (petta_eval_machine_all_grounded_args_are_data(expression)) {
         return PETTA_MACHINE_HOST_READY_APPLICATION;
     }
+    if (form == PETTA_FORM_IS_SPACE)
+        return PETTA_MACHINE_HOST_STRICT_APPLICATION;
     /*
      * These PeTTa forms already have dialect-specific implementations in the
      * shared evaluator.  They receive their source expression unchanged:
-     * folds, maps, quantifiers, syntax predicates, and lambda capture decide
-     * for themselves which children are computations.  Pre-evaluating every
-     * child here would erase precisely the higher-order/search structure they
-     * consume.
+     * folds, maps, quantifiers, syntax-sensitive predicates, and lambda
+     * capture decide for themselves which children are computations.
+     * Pre-evaluating every child here would erase precisely the higher-order
+     * or search structure they consume.
      */
     if (form == PETTA_FORM_PROGN ||
         form == PETTA_FORM_PROG1 ||
@@ -34437,7 +35751,6 @@ static PettaMachineHostMode petta_eval_machine_classify_host(
         form == PETTA_FORM_IS_VAR ||
         form == PETTA_FORM_IS_GROUND ||
         form == PETTA_FORM_IS_EXPR ||
-        form == PETTA_FORM_IS_SPACE ||
         form == PETTA_FORM_IS_ALPHA_MEMBER ||
         form == PETTA_FORM_ALPHA_UNIQUE ||
         form == PETTA_FORM_LAMBDA) {
@@ -38312,12 +39625,20 @@ tail_call: ;
     }
 
 prime_need_strict_argument_ready:
+    ;
+    __attribute__((cleanup(cetta_shared_transition_guard_leave)))
+    CettaSharedTransitionGuard shared_operation_transition = {0};
     if (g_hyperpose_thread_unsafe_requested &&
         hyperpose_thread_barrier_head(head_id, head)) {
-        eval_mark_hyperpose_thread_unsafe();
-        if (language_id != CETTA_LANGUAGE_PRIME)
-            outcome_set_add(os, atom_empty(a), &_empty);
-        return;
+        if (language_id == CETTA_LANGUAGE_PETTA) {
+            cetta_shared_transition_guard_enter(
+                &shared_operation_transition);
+        } else {
+            eval_mark_hyperpose_thread_unsafe();
+            if (language_id != CETTA_LANGUAGE_PRIME)
+                outcome_set_add(os, atom_empty(a), &_empty);
+            return;
+        }
     }
 
     /*
@@ -38507,6 +39828,25 @@ prime_need_strict_argument_ready:
 
             Atom *argument = bindings_apply_if_vars(
                 CURRENT_ENV, a, expr_arg(atom, 0u));
+            if (petta_form == PETTA_FORM_IS_SPACE &&
+                argument->kind == ATOM_EXPR) {
+                ResultSet values;
+                result_set_init(&values);
+                metta_eval(s, a, NULL, argument, fuel, &values);
+                for (CettaCount index = 0u; index < values.len; index++) {
+                    Atom *value = values.items[index];
+                    const char *name = value->kind == ATOM_SYMBOL
+                        ? atom_name_cstr(value)
+                        : NULL;
+                    outcome_set_add(
+                        os,
+                        petta_semantics_boolean_value(
+                            a, name && name[0] == '&'),
+                        CURRENT_ENV);
+                }
+                result_set_free(&values);
+                return;
+            }
             bool answer = false;
             if (petta_form == PETTA_FORM_IS_VAR) {
                 answer = argument->kind == ATOM_VAR;
@@ -38858,6 +40198,12 @@ petta_lowered_to_shared_form:
                 &_empty);
             return;
         }
+        if (hyperpose_threaded_execute(
+                s, a, atom, fuel,
+                HYPERPOSE_THREAD_OBSERVE_OCCURRENCES,
+                preserve_bindings, os)) {
+            return;
+        }
         Atom *list = expr_arg(atom, 0);
         if (list->kind == ATOM_EXPR) {
             for (CettaExprIndex i = 0; i < list->expr.len; i++) {
@@ -38909,8 +40255,10 @@ petta_lowered_to_shared_form:
             return;
         }
         if (!prime_need_reify &&
-            hyperpose_threaded_stream(s, a, expr_arg(atom, 0), fuel, false, 0,
-                                      preserve_bindings, os)) {
+            hyperpose_threaded_execute(
+                s, a, expr_arg(atom, 0), fuel,
+                HYPERPOSE_THREAD_OBSERVE_REIFIED_BAG,
+                preserve_bindings, os)) {
             return;
         }
         /* Reification delimits the stream's bindings: both the materializing
@@ -41084,45 +42432,15 @@ petta_lowered_to_shared_form:
         language_id == CETTA_LANGUAGE_PETTA &&
         g_library_context &&
         cetta_library_petta_git_import_enabled(g_library_context)) {
-        if (nargs < 1u || nargs > 3u) {
+        bool recognized = false;
+        if (!petta_git_import_native_try(
+                g_library_context, a, atom, os, &recognized) ||
+            !recognized) {
             outcome_set_add(
                 os,
                 atom_error(
                     a, atom,
-                    atom_symbol(a, "IncorrectNumberOfArguments")),
-                &_empty);
-            return;
-        }
-        const char *git_path =
-            string_like_atom(expr_arg(atom, 0));
-        const char *build_command =
-            nargs >= 2u
-                ? string_like_atom(expr_arg(atom, 1))
-                : "";
-        const char *base_directory =
-            nargs >= 3u
-                ? string_like_atom(expr_arg(atom, 2))
-                : "./repos";
-        Atom *error = NULL;
-        if (!git_path || !build_command || !base_directory) {
-            error = atom_symbol(
-                a, "git-import! expects text arguments");
-        }
-        if (!error &&
-            cetta_library_petta_git_import(
-                g_library_context,
-                git_path, build_command, base_directory,
-                a, &error)) {
-            outcome_set_add(
-                os, petta_semantics_success_value(a), &_empty);
-        } else {
-            outcome_set_add(
-                os,
-                atom_error(
-                    a, atom,
-                    error
-                        ? error
-                        : atom_symbol(a, "git-import! failed")),
+                    atom_symbol(a, "git-import! failed")),
                 &_empty);
         }
         return;
@@ -41179,48 +42497,84 @@ petta_lowered_to_shared_form:
     if (head_id == g_builtin_syms.import_bang &&
         nargs == 2 && g_registry && g_library_context) {
         const char *spec = string_like_atom(expr_arg(atom, 1));
-        const char *library_member = NULL;
-        bool has_library_descriptor =
+        PeTTaLibraryReference library_reference;
+        bool has_library_reference =
             language_id == CETTA_LANGUAGE_PETTA &&
-            petta_semantics_library_descriptor(
-                expr_arg(atom, 1), &library_member);
-        const char *library_root = NULL;
-        const char *rooted_library_member = NULL;
-        bool has_rooted_library_descriptor =
-            language_id == CETTA_LANGUAGE_PETTA &&
-            petta_semantics_library_file_descriptor(
-                expr_arg(atom, 1), &library_root,
-                &rooted_library_member);
+            petta_semantics_library_reference(
+                expr_arg(atom, 1), &library_reference);
         Atom *error = NULL;
         ImportDestination dest = {0};
-        if (spec || has_library_descriptor ||
-            has_rooted_library_descriptor) {
+        if (spec || has_library_reference) {
             dest = resolve_import_destination(a, expr_arg(atom, 0), &error);
         }
-        if (!spec && !has_library_descriptor &&
-            !has_rooted_library_descriptor && !error) {
+        if (!spec && !has_library_reference && !error) {
             error = atom_symbol(a, "import! expects a module name");
         }
         bool imported = false;
+        uint32_t import_result_count = 0u;
         if (!error && dest.space) {
-            imported = has_library_descriptor
-                ? cetta_library_import_library_member(
-                      g_library_context, library_member,
-                      dest.space, dest.is_fresh,
-                      a, eval_storage_arena(a),
-                      g_registry, fuel, &error)
-                : has_rooted_library_descriptor
-                    ? cetta_library_import_rooted_library_member(
-                          g_library_context, library_root,
-                          rooted_library_member,
-                          dest.space, dest.is_fresh,
-                          a, eval_storage_arena(a),
-                          g_registry, fuel, &error)
-                : cetta_library_import_module(
-                      g_library_context, spec,
-                      dest.space, dest.is_fresh,
-                      a, eval_storage_arena(a),
-                      g_registry, fuel, &error);
+            if (has_library_reference) {
+                for (uint32_t occurrence = 0u;; occurrence++) {
+                    char candidate[PATH_MAX];
+                    CettaPettaLibraryReferenceObservation observation =
+                        cetta_library_petta_reference_observe(
+                            g_library_context, &library_reference,
+                            occurrence, candidate, sizeof(candidate));
+                    if (observation.kind ==
+                            CETTA_PETTA_LIBRARY_REFERENCE_EXHAUSTED) {
+                        break;
+                    }
+                    if (observation.kind ==
+                            CETTA_PETTA_LIBRARY_REFERENCE_REFUSED) {
+                        error = atom_symbol(
+                            a,
+                            observation.reason
+                                ? observation.reason
+                                : "library reference refused");
+                        break;
+                    }
+                    if (!cetta_library_import_petta_reference_at(
+                            g_library_context, &library_reference,
+                            occurrence, dest.space, dest.is_fresh,
+                            a, eval_storage_arena(a),
+                            g_registry, fuel, &error)) {
+                        /* SWI evaluates a rooted library relation
+                         * nondeterministically, then catches failure of each
+                         * import candidate.  One absent member is therefore
+                         * the additive zero, not a reason to discard later
+                         * root occurrences.  The stricter typecheck profile
+                         * still exposes a source that was found but rejected
+                         * by its parser or checker. */
+#if CETTA_BUILD_WITH_PETTA_TYPECHECK_V2
+                        int candidate_typecheck_exit = 0;
+                        const char *candidate_typecheck_diagnostic = NULL;
+                        bool candidate_source_failure =
+                            active_profile_is_petta_typecheck_v2() &&
+                            (petta_typecheck_error_view(
+                                 error, &candidate_typecheck_exit,
+                                 &candidate_typecheck_diagnostic) ||
+                             petta_import_parse_failure(error));
+                        (void)candidate_typecheck_exit;
+                        (void)candidate_typecheck_diagnostic;
+                        if (candidate_source_failure)
+                            break;
+#endif
+                        error = NULL;
+                        continue;
+                    }
+                    imported = true;
+                    import_result_count++;
+                    if (occurrence == UINT32_MAX)
+                        break;
+                }
+            } else {
+                imported = cetta_library_import_module(
+                    g_library_context, spec,
+                    dest.space, dest.is_fresh,
+                    a, eval_storage_arena(a),
+                    g_registry, fuel, &error);
+                import_result_count = imported ? 1u : 0u;
+            }
         }
         if (!error && imported) {
             if (dest.is_fresh) {
@@ -41232,12 +42586,15 @@ petta_lowered_to_shared_form:
                 }
                 registry_bind_id(g_registry, dest.bind_key, space_value);
             }
-            outcome_set_add(
-                os,
-                language_id == CETTA_LANGUAGE_PETTA
-                    ? petta_semantics_success_value(a)
-                    : atom_unit(a),
-                &_empty);
+            for (uint32_t index = 0u;
+                 index < import_result_count; index++) {
+                outcome_set_add(
+                    os,
+                    language_id == CETTA_LANGUAGE_PETTA
+                        ? petta_semantics_success_value(a)
+                        : atom_unit(a),
+                    &_empty);
+            }
         } else if (error) {
             if (dest.is_fresh && dest.space) {
                 space_free(dest.space);
@@ -41271,10 +42628,11 @@ petta_lowered_to_shared_form:
             } else
 #endif
             if (language_id != CETTA_LANGUAGE_PETTA ||
-                has_library_descriptor ||
-                has_rooted_library_descriptor) {
+                has_library_reference) {
                 outcome_set_add(os, atom_error(a, atom, error), &_empty);
             }
+        } else if (dest.is_fresh && dest.space) {
+            space_free(dest.space);
         }
         return;
     }
@@ -41587,7 +42945,9 @@ petta_lowered_to_shared_form:
             outcome_set_add(os, mork_error, &_empty);
             return;
         }
-        outcome_set_add(os, atom_int(a, (int64_t)space_length64(target)), &_empty);
+        outcome_set_add(
+            os, atom_int(a, (int64_t)petta_space_length_observe(target)),
+            &_empty);
         return;
     }
 
@@ -42032,7 +43392,8 @@ petta_lowered_to_shared_form:
         Arena *dst = eval_storage_arena(a);
         PettaProgram *petta_program =
             language_id == CETTA_LANGUAGE_PETTA &&
-                    g_library_context
+                    g_library_context &&
+                    !cetta_shared_transition_scope_active()
                 ? g_library_context->petta_program
                 : NULL;
         Atom *type_error = eval_petta_program_mutation_error(
@@ -42147,7 +43508,8 @@ petta_lowered_to_shared_form:
             Arena *dst = eval_storage_arena(a);
             PettaProgram *petta_program =
                 language_id == CETTA_LANGUAGE_PETTA &&
-                        g_library_context
+                        g_library_context &&
+                        !cetta_shared_transition_scope_active()
                     ? g_library_context->petta_program
                     : NULL;
             Atom *type_error = eval_petta_program_mutation_error(
@@ -42259,6 +43621,17 @@ petta_lowered_to_shared_form:
             return;
         }
         Atom *compare_atom = space_remove_compare_atom(target, a, atom_to_rm);
+        if (language_id == CETTA_LANGUAGE_PETTA) {
+            if (compare_atom && compare_atom->kind == ATOM_VAR) {
+                outcome_set_add(
+                    os, petta_semantics_success_value(a), &_empty);
+                return;
+            }
+            compare_atom = petta_space_remove_request_pattern(
+                a, compare_atom);
+            if (!compare_atom)
+                return;
+        }
         Atom *type_error = eval_petta_program_mutation_error(
             a, atom, target, compare_atom,
             PETTA_TYPECHECK_MUTATION_REMOVE);
@@ -42266,38 +43639,32 @@ petta_lowered_to_shared_form:
             outcome_set_add(os, type_error, &_empty);
             return;
         }
-        if (language_id == CETTA_LANGUAGE_PETTA)
-            petta_specializer_note_mutation(target, compare_atom);
-        bool removed_exact = false;
-        AtomId remove_id = target && target->native.universe
-            ? term_universe_lookup_atom_id(
-                  target->native.universe, compare_atom)
-            : CETTA_ATOM_ID_NONE;
-        if (remove_id != CETTA_ATOM_ID_NONE) {
-            if (language_id == CETTA_LANGUAGE_PETTA) {
-                /* PeTTa's source predicate uses retractall/1: every exact
-                 * duplicate occurrence is removed in one successful call. */
-                while (space_remove_atom_id(target, remove_id))
-                    removed_exact = true;
-            } else {
-                removed_exact =
-                    space_remove_atom_id(target, remove_id);
-            }
-        }
         PettaProgram *petta_program =
             language_id == CETTA_LANGUAGE_PETTA &&
                     g_library_context
                 ? g_library_context->petta_program
                 : NULL;
-        if (removed_exact) {
-            if (petta_program)
-                petta_program_note_remove_all(
-                    petta_program, target, compare_atom);
+        if (language_id == CETTA_LANGUAGE_PETTA) {
+            if (!petta_space_remove_pattern_all(
+                    target, compare_atom, petta_program, NULL)) {
+                outcome_set_add(
+                    os,
+                    atom_error(
+                        a, atom,
+                        atom_symbol(
+                            a, "PeTTaSpacePatternRemovalFailed")),
+                    &_empty);
+                return;
+            }
         } else {
-            bool removed = space_remove(target, compare_atom);
-            if (removed && petta_program)
-                petta_program_note_remove_one(
-                    petta_program, target, compare_atom);
+            AtomId remove_id = target && target->native.universe
+                ? term_universe_lookup_atom_id(
+                      target->native.universe, compare_atom)
+                : CETTA_ATOM_ID_NONE;
+            if (!(remove_id != CETTA_ATOM_ID_NONE &&
+                  space_remove_atom_id(target, remove_id))) {
+                (void)space_remove(target, compare_atom);
+            }
         }
         outcome_set_add(
             os,
@@ -42321,6 +43688,66 @@ petta_lowered_to_shared_form:
             outcome_set_add(os, mork_handle_error, &_empty);
             return;
         }
+        if (language_id == CETTA_LANGUAGE_PETTA &&
+            !(space_ref->kind == ATOM_GROUNDED &&
+              space_ref->ground.gkind == GV_SPACE)) {
+            PettaSpaceReadSet reads = {0};
+            if (!petta_collect_space_reads(s, a, space_ref, fuel, &reads)) {
+                petta_space_read_set_free(&reads);
+                outcome_set_add(
+                    os,
+                    atom_error(a, atom, atom_symbol(a, "OutOfMemory")),
+                    &_empty);
+                return;
+            }
+            for (CettaCount read_index = 0u;
+                 read_index < reads.len; read_index++) {
+                PettaSpaceReadOccurrence read = reads.items[read_index];
+                if (read.kind == PETTA_SPACE_READ_EMPTY_LOCATION)
+                    continue;
+                if (read.kind == PETTA_SPACE_READ_INVALID) {
+                    outcome_set_add(
+                        os,
+                        read.location && atom_is_error(read.location)
+                            ? read.location
+                            : space_arg_error(
+                                  a, atom,
+                                  "get-atoms expects a space as its argument"),
+                        &_empty);
+                    break;
+                }
+                PettaSpaceAtomSnapshot snapshot = {0};
+                PettaSpaceAtomSnapshotStatus snapshot_status =
+                    petta_space_atom_snapshot_capture(
+                        a, read.space, &snapshot);
+                if (snapshot_status ==
+                    PETTA_SPACE_ATOM_SNAPSHOT_MATERIALIZE_FAILED) {
+                    outcome_set_add(
+                        os,
+                        space_backend_or_symbol_error(
+                            a, atom,
+                            "AttachedCompiledSpaceMaterializeFailed"),
+                        &_empty);
+                    break;
+                }
+                if (snapshot_status ==
+                    PETTA_SPACE_ATOM_SNAPSHOT_OUT_OF_MEMORY) {
+                    outcome_set_add(
+                        os, atom_error(
+                                a, atom,
+                                atom_symbol(a, "OutOfMemory")),
+                        &_empty);
+                    break;
+                }
+                for (CettaIndex atom_index = 0u;
+                     atom_index < snapshot.len; atom_index++) {
+                    outcome_set_add_unfactored(
+                        os, snapshot.items[atom_index], &_empty);
+                }
+            }
+            petta_space_read_set_free(&reads);
+            return;
+        }
         Space *target = resolve_single_space_arg(s, a, space_ref, fuel);
         if (!target) {
             outcome_set_add(os, space_arg_error(a, atom,
@@ -42333,18 +43760,25 @@ petta_lowered_to_shared_form:
             outcome_set_add(os, mork_error, &_empty);
             return;
         }
-        if (!space_match_backend_materialize_attached(
-                target, eval_storage_arena(a))) {
+        PettaSpaceAtomSnapshot snapshot = {0};
+        PettaSpaceAtomSnapshotStatus snapshot_status =
+            petta_space_atom_snapshot_capture(a, target, &snapshot);
+        if (snapshot_status ==
+            PETTA_SPACE_ATOM_SNAPSHOT_MATERIALIZE_FAILED) {
             outcome_set_add(os,
                 space_backend_or_symbol_error(
                     a, atom, "AttachedCompiledSpaceMaterializeFailed"),
                 &_empty);
             return;
         }
-        CettaCount logical_len = space_length64(target);
-        for (CettaIndex i = 0; i < logical_len; i++) {
-            Atom *item = payload_rebind_resources(a, space_get_at64(target, i));
-            outcome_set_add_unfactored(os, item, &_empty);
+        if (snapshot_status == PETTA_SPACE_ATOM_SNAPSHOT_OUT_OF_MEMORY) {
+            outcome_set_add(
+                os, atom_error(a, atom, atom_symbol(a, "OutOfMemory")),
+                &_empty);
+            return;
+        }
+        for (CettaIndex i = 0; i < snapshot.len; i++) {
+            outcome_set_add_unfactored(os, snapshot.items[i], &_empty);
         }
         return;
     }
@@ -42372,7 +43806,9 @@ petta_lowered_to_shared_form:
             outcome_set_add(os, mork_error, &_empty);
             return;
         }
-        outcome_set_add(os, atom_int(a, (int64_t)space_length64(target)), &_empty);
+        outcome_set_add(
+            os, atom_int(a, (int64_t)petta_space_length_observe(target)),
+            &_empty);
         return;
     }
 

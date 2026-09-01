@@ -52,6 +52,11 @@ void disc_node_free(DiscNode *n);
 void disc_insert(DiscNode *root, Atom *lhs, CettaIndex eq_idx);
 bool disc_insert_id(DiscNode *root, const TermUniverse *universe,
                     AtomId atom_id, CettaIndex eq_idx);
+/* Transport every retained leaf coordinate through one validated stable
+ * occurrence contraction.  Returns the number of removed leaves. */
+CettaCount disc_transport_stable_coordinates(
+    DiscNode *root, const CettaIndex *source_to_target,
+    CettaCount source_len);
 /* Collect all matching equation indices into result array */
 void disc_lookup(DiscNode *root, Atom *query, CettaIndex **out,
                  CettaIndex *nout, CettaIndex *cout);
@@ -192,6 +197,7 @@ void space_init_with_universe(Space *s, TermUniverse *universe);
 void space_init_overlay(Space *s, const Space *base);
 void space_init(Space *s);
 void space_free(Space *s);
+void space_execution_analysis_cache_free_for_current_thread(void);
 Atom *space_store_atom(Space *s, Arena *fallback, Atom *atom);
 void space_add(Space *s, Atom *atom);
 void space_add_atom_id(Space *s, AtomId atom_id);
@@ -501,6 +507,13 @@ bool space_remove_atom_id(Space *s, AtomId atom_id);
 bool space_remove_atom_ids_batch(Space *s, const AtomId *atom_ids,
                                  CettaCount atom_count,
                                  CettaCount *out_removed);
+
+/* Apply one stable contraction to the current logical occurrence sequence.
+ * A nonzero mask entry removes that exact occurrence; every retained
+ * occurrence preserves its prior relative order and multiplicity. */
+bool space_remove_occurrence_mask_stable(
+    Space *s, const uint8_t *remove_mask, CettaCount mask_len,
+    CettaCount *out_removed);
 
 /* ── Match Indexing ─────────────────────────────────────────────────────── */
 

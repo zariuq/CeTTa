@@ -1,0 +1,2 @@
+true
+(Error (domain_error (function_input_arities git-import! (1 2 3 4)) 5) none)

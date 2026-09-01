@@ -49,6 +49,74 @@ void snode_free(SubstNode *n) {
     free(n);
 }
 
+static CettaCount snode_transport_stable_coordinates(
+        SubstNode *node, const CettaIndex *source_to_target,
+        CettaCount source_len, CettaCount *retained) {
+    if (!node)
+        return 0u;
+
+    CettaIndex write = 0u;
+    CettaCount removed = 0u;
+    for (CettaIndex read = 0u; read < node->nleaves; read++) {
+        CettaIndex source = node->leaves[read].idx;
+        if (source >= source_len) {
+            fputs("CeTTa: clean substitution index contains an invalid "
+                  "occurrence coordinate\n", stderr);
+            abort();
+        }
+        CettaIndex target = source_to_target[source];
+        if (target == UINT64_MAX) {
+            removed++;
+            continue;
+        }
+        node->leaves[write] = node->leaves[read];
+        node->leaves[write].idx = target;
+        write++;
+    }
+    node->nleaves = write;
+    *retained += write;
+
+    if (node->sym_hashed) {
+        uint32_t cap = node->sym_ht.mask + 1u;
+        for (uint32_t i = 0u; i < cap; i++) {
+            if (node->sym_ht.entries[i].key != SYMBOL_ID_NONE) {
+                removed += snode_transport_stable_coordinates(
+                    node->sym_ht.entries[i].child, source_to_target,
+                    source_len, retained);
+            }
+        }
+    } else {
+        for (uint32_t i = 0u; i < node->nsym; i++) {
+            removed += snode_transport_stable_coordinates(
+                node->sym[i].child, source_to_target, source_len, retained);
+        }
+    }
+    for (uint32_t i = 0u; i < node->nvars; i++) {
+        removed += snode_transport_stable_coordinates(
+            node->vars[i].child, source_to_target, source_len, retained);
+    }
+    for (uint32_t i = 0u; i < node->nexpr; i++) {
+        removed += snode_transport_stable_coordinates(
+            node->expr[i].child, source_to_target, source_len, retained);
+    }
+    if (node->int_hashed) {
+        uint32_t cap = node->int_ht.mask + 1u;
+        for (uint32_t i = 0u; i < cap; i++) {
+            if (node->int_ht.entries[i].child) {
+                removed += snode_transport_stable_coordinates(
+                    node->int_ht.entries[i].child, source_to_target,
+                    source_len, retained);
+            }
+        }
+    } else {
+        for (uint32_t i = 0u; i < node->nints; i++) {
+            removed += snode_transport_stable_coordinates(
+                node->ints[i].child, source_to_target, source_len, retained);
+        }
+    }
+    return removed;
+}
+
 /* ── Symbol hash table helpers ─────────────────────────────────────────── */
 
 static inline uint32_t sym_hash(SymbolId key) {
@@ -437,6 +505,36 @@ void stree_free(SubstTree *t) {
     for (uint32_t i = 0; i < STREE_BUCKETS; i++)
         stree_bucket_free(&t->buckets[i]);
     stree_bucket_free(&t->wildcard);
+}
+
+static CettaCount stree_bucket_transport_stable_coordinates(
+        SubstBucket *bucket, const CettaIndex *source_to_target,
+        CettaCount source_len) {
+    if (!bucket || !bucket->root) {
+        if (bucket)
+            bucket->count = 0u;
+        return 0u;
+    }
+    CettaCount retained = 0u;
+    CettaCount removed = snode_transport_stable_coordinates(
+        bucket->root, source_to_target, source_len, &retained);
+    bucket->count = retained;
+    return removed;
+}
+
+CettaCount stree_transport_stable_coordinates(
+        SubstTree *tree, const CettaIndex *source_to_target,
+        CettaCount source_len) {
+    if (!tree || (!source_to_target && source_len != 0u))
+        return 0u;
+    CettaCount removed = 0u;
+    for (uint32_t i = 0u; i < STREE_BUCKETS; i++) {
+        removed += stree_bucket_transport_stable_coordinates(
+            &tree->buckets[i], source_to_target, source_len);
+    }
+    removed += stree_bucket_transport_stable_coordinates(
+        &tree->wildcard, source_to_target, source_len);
+    return removed;
 }
 
 uint32_t stree_head_hash(SymbolId id) {

@@ -72,6 +72,36 @@ typedef struct {
     bool smaller;
 } PeTTaNamedArity;
 
+/* PeTTa has two distinct library-reference constructors.  Standard members
+ * are resolved only through the language library overlay; rooted members are
+ * resolved only through the named registered package root. */
+typedef enum {
+    PETTA_LIBRARY_REFERENCE_NONE = 0,
+    PETTA_LIBRARY_REFERENCE_STANDARD,
+    PETTA_LIBRARY_REFERENCE_ROOTED,
+} PeTTaLibraryReferenceKind;
+
+typedef struct {
+    PeTTaLibraryReferenceKind kind;
+    const char *root;
+    const char *member;
+} PeTTaLibraryReference;
+
+/* PeTTa exposes SWI's ordered dynamic library_path/1 relation through the
+ * Predicate boundary.  These are sequence edits, not map updates: duplicate
+ * path occurrences and their authored order remain observable to library/3. */
+typedef enum {
+    PETTA_LIBRARY_PATH_EFFECT_NONE = 0,
+    PETTA_LIBRARY_PATH_EFFECT_PREPEND,
+    PETTA_LIBRARY_PATH_EFFECT_APPEND,
+    PETTA_LIBRARY_PATH_EFFECT_RETRACT_FIRST,
+} PeTTaLibraryPathEffectKind;
+
+typedef struct {
+    PeTTaLibraryPathEffectKind kind;
+    const char *path;
+} PeTTaLibraryPathEffect;
+
 /* A table-incarnation-identified snapshot of PeTTa's authored cons head.
  * Classifications are exact only while `petta_semantics_cons_shape_facts_current`
  * holds.  Conservative discriminators must treat a stale snapshot as unknown. */
@@ -126,10 +156,10 @@ bool petta_semantics_intrinsic_partial_arity(
 bool petta_semantics_truth_value(const Atom *atom, bool *value);
 Atom *petta_semantics_boolean_value(Arena *arena, bool value);
 Atom *petta_semantics_success_value(Arena *arena);
-bool petta_semantics_library_descriptor(
-    const Atom *atom, const char **member);
-bool petta_semantics_library_file_descriptor(
-    const Atom *atom, const char **root, const char **member);
+bool petta_semantics_library_reference(
+    const Atom *atom, PeTTaLibraryReference *reference);
+bool petta_semantics_library_path_effect(
+    const Atom *atom, PeTTaLibraryPathEffect *effect);
 
 /*
  * PeTTa list patterns use `(cons Head Tail)` relationally.  A native

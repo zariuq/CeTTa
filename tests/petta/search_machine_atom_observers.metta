@@ -16,8 +16,10 @@
 !(observer-cons-computed)
 !(observer-decons-computed)
 
-; A non-strict observer must not reinterpret a callable-headed list as code,
-; whether the list is authored directly or supplied through a value binding.
+; The source occurrence plan decides whether an expression is a computation
+; or list data before size-atom observes its value.  The second call is a
+; negative conformance canary: upstream PeTTa produces no answer for this
+; quoted relational path, so CeTTa must not invent one.
 !(size-atom (and implies iff))
 (= (observer-size $items)
    (size-atom $items))

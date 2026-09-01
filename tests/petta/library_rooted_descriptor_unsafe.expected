@@ -1,2 +1,0 @@
-()
-(Error (import! &self (library import_pkg ../moduleA)) illegal library member name)

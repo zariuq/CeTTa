@@ -1,5 +1,6 @@
 #include <time.h>
 #include "space.h"
+#include "shared_transition.h"
 #include "grounded.h"
 #include "search_machine.h"
 #include "stats.h"
@@ -24,6 +25,10 @@ static _Atomic uint64_t g_space_global_mutation_epoch = 0u;
 
 static _Thread_local bool g_declared_type_index_configured = false;
 static _Thread_local bool g_declared_type_index_enabled = true;
+static _Thread_local bool
+    g_stable_occurrence_transport_configured = false;
+static _Thread_local bool
+    g_stable_occurrence_transport_enabled = true;
 
 /* The native index is the production path.  Its opt-out exists solely so a
  * separate qualification process can compare it with the observationally
@@ -39,6 +44,19 @@ static bool declared_type_index_enabled(void) {
         g_declared_type_index_configured = true;
     }
     return g_declared_type_index_enabled;
+}
+
+/* The reference switch is a qualification seam only.  Both realizations
+ * implement the same stable ordered contraction; production chooses the
+ * coordinate-transport realization whenever its backend admits it. */
+static bool stable_occurrence_transport_enabled(void) {
+    if (!g_stable_occurrence_transport_configured) {
+        g_stable_occurrence_transport_enabled =
+            getenv("CETTA_SPACE_STABLE_OCCURRENCE_TRANSPORT_REFERENCE") ==
+            NULL;
+        g_stable_occurrence_transport_configured = true;
+    }
+    return g_stable_occurrence_transport_enabled;
 }
 
 static uint64_t space_fresh_instance_id(void) {
@@ -171,6 +189,67 @@ void disc_node_free(DiscNode *n) {
     free(n->ints);
     free(n->leaves);
     free(n);
+}
+
+static CettaCount disc_node_transport_stable_coordinates(
+        DiscNode *node, const CettaIndex *source_to_target,
+        CettaCount source_len) {
+    if (!node)
+        return 0u;
+
+    CettaIndex write = 0u;
+    CettaCount removed = 0u;
+    for (CettaIndex read = 0u; read < node->nleaves; read++) {
+        CettaIndex source = node->leaves[read];
+        if (source >= source_len) {
+            fputs("CeTTa: clean discrimination index contains an invalid "
+                  "occurrence coordinate\n", stderr);
+            abort();
+        }
+        CettaIndex target = source_to_target[source];
+        if (target == SPACE_OCCURRENCE_COORDINATE_REMOVED) {
+            removed++;
+            continue;
+        }
+        node->leaves[write++] = target;
+    }
+    node->nleaves = write;
+
+    if (node->sym_hashed) {
+        uint32_t cap = node->sym_ht.mask + 1u;
+        for (uint32_t i = 0u; i < cap; i++) {
+            if (node->sym_ht.entries[i].key != SYMBOL_ID_NONE) {
+                removed += disc_node_transport_stable_coordinates(
+                    node->sym_ht.entries[i].child, source_to_target,
+                    source_len);
+            }
+        }
+    } else {
+        for (uint32_t i = 0u; i < node->nsym; i++) {
+            removed += disc_node_transport_stable_coordinates(
+                node->sym[i].child, source_to_target, source_len);
+        }
+    }
+    removed += disc_node_transport_stable_coordinates(
+        node->var_child, source_to_target, source_len);
+    for (uint32_t i = 0u; i < node->nexpr; i++) {
+        removed += disc_node_transport_stable_coordinates(
+            node->expr[i].child, source_to_target, source_len);
+    }
+    for (uint32_t i = 0u; i < node->nints; i++) {
+        removed += disc_node_transport_stable_coordinates(
+            node->ints[i].child, source_to_target, source_len);
+    }
+    return removed;
+}
+
+CettaCount disc_transport_stable_coordinates(
+        DiscNode *root, const CettaIndex *source_to_target,
+        CettaCount source_len) {
+    if (!root || (!source_to_target && source_len != 0u))
+        return 0u;
+    return disc_node_transport_stable_coordinates(
+        root, source_to_target, source_len);
 }
 
 static void disc_add_leaf(DiscNode *n, CettaIndex idx) {
@@ -2075,6 +2154,9 @@ void space_free(Space *s) {
 }
 
 Atom *space_store_atom(Space *s, Arena *fallback, Atom *atom) {
+    __attribute__((cleanup(cetta_shared_transition_guard_leave)))
+    CettaSharedTransitionGuard shared_transition = {0};
+    cetta_shared_transition_guard_enter(&shared_transition);
     return term_universe_store_atom(s ? s->native.universe : NULL, fallback, atom);
 }
 
@@ -2343,6 +2425,14 @@ typedef struct {
 } SpaceEffectCache;
 
 static _Thread_local SpaceEffectCache g_space_effect_cache;
+
+void space_execution_analysis_cache_free_for_current_thread(void) {
+    for (size_t index = 0u;
+         index < SPACE_EFFECT_CACHE_SHARDS; index++) {
+        free(g_space_effect_cache.shards[index].entries);
+    }
+    memset(&g_space_effect_cache, 0, sizeof(g_space_effect_cache));
+}
 
 typedef struct {
     SymbolId head;
@@ -3352,6 +3442,11 @@ Space *space_heap_clone_shallow(Space *src) {
     if (!src)
         return NULL;
     logical_len = space_length64(src);
+    cetta_runtime_stats_inc(
+        CETTA_RUNTIME_COUNTER_SPACE_SHALLOW_CLONE_CALL);
+    cetta_runtime_stats_add(
+        CETTA_RUNTIME_COUNTER_SPACE_SHALLOW_CLONE_ROW,
+        logical_len);
     if (src->native.len != logical_len) {
         if (!space_length_u32_checked(src, &narrow_len))
             return NULL;
@@ -4233,6 +4328,172 @@ bool space_remove_atom_ids_batch(Space *s, const AtomId *atom_ids,
     if (out_removed)
         *out_removed = (CettaCount)removed;
     return true;
+}
+
+bool space_remove_occurrence_mask_stable(
+        Space *s, const uint8_t *remove_mask, CettaCount mask_len,
+        CettaCount *out_removed) {
+    if (out_removed)
+        *out_removed = 0u;
+    if (!s || (!remove_mask && mask_len != 0u))
+        return false;
+
+    CettaCount logical_len = space_length64(s);
+    if (mask_len != logical_len)
+        return false;
+
+    cetta_runtime_stats_inc(
+        CETTA_RUNTIME_COUNTER_SPACE_STABLE_MASK_CONTRACTION);
+    cetta_runtime_stats_add(
+        CETTA_RUNTIME_COUNTER_SPACE_STABLE_MASK_SOURCE_ROW,
+        logical_len);
+
+    CettaCount removed = 0u;
+    for (CettaIndex index = 0u; index < logical_len; index++) {
+        if (remove_mask[index] != 0u)
+            removed++;
+    }
+    if (removed == 0u)
+        return true;
+    cetta_runtime_stats_add(
+        CETTA_RUNTIME_COUNTER_SPACE_STABLE_MASK_REMOVED_OCCURRENCE,
+        removed);
+
+    if (stable_occurrence_transport_enabled() && !space_has_overlay_base(s) &&
+        logical_len <= SIZE_MAX / sizeof(CettaIndex) &&
+        space_match_backend_materialize_native_storage(s, NULL) &&
+        s->native.len == logical_len &&
+        (logical_len == 0u ||
+         (s->native.atom_ids &&
+          space_atom_id_width_bytes_bits(s->native.atom_id_width_bits) != 0u))) {
+        if (space_is_queue(s))
+            space_linearize(s);
+
+        CettaIndex *source_to_target = cetta_malloc(
+            sizeof(*source_to_target) * (size_t)logical_len);
+        CettaIndex target = 0u;
+        for (CettaIndex source_index = 0u;
+             source_index < logical_len; source_index++) {
+            if (remove_mask[source_index] != 0u) {
+                source_to_target[source_index] =
+                    SPACE_OCCURRENCE_COORDINATE_REMOVED;
+            } else {
+                source_to_target[source_index] = target++;
+            }
+        }
+        SpaceStableOccurrenceTransport transport = {
+            .source_to_target = source_to_target,
+            .source_len = logical_len,
+            .target_len = target,
+        };
+        SpaceBackendBatchResult transport_result =
+            space_match_backend_transport_stable_occurrence_coordinates(
+                s, &transport);
+        if (transport_result == SPACE_BACKEND_BATCH_ERROR) {
+            free(source_to_target);
+            return false;
+        }
+        if (transport_result == SPACE_BACKEND_BATCH_APPLIED) {
+            CettaCount moved = 0u;
+            for (CettaIndex source_index = 0u;
+                 source_index < logical_len; source_index++) {
+                CettaIndex target_index = source_to_target[source_index];
+                if (target_index == SPACE_OCCURRENCE_COORDINATE_REMOVED ||
+                    target_index == source_index) {
+                    continue;
+                }
+                AtomId atom_id = space_atom_id_storage_load_at(
+                    s->native.atom_ids, s->native.atom_id_width_bits,
+                    source_index);
+                if (!space_atom_id_storage_store_at(
+                        s->native.atom_ids, s->native.atom_id_width_bits,
+                        target_index, atom_id)) {
+                    fputs("CeTTa: admitted stable occurrence transport lost "
+                          "its native coordinate store\n", stderr);
+                    abort();
+                }
+                moved++;
+            }
+            s->native.len = target;
+            s->native.start = 0u;
+            space_mark_derived_state_dirty(s);
+            space_bump_revision(s);
+            cetta_runtime_stats_add(
+                CETTA_RUNTIME_COUNTER_SPACE_STABLE_COORDINATE_TRANSPORT_RETAINED_MOVE,
+                moved);
+            free(source_to_target);
+            if (out_removed)
+                *out_removed = removed;
+            return true;
+        }
+        free(source_to_target);
+    }
+
+    cetta_runtime_stats_add(
+        CETTA_RUNTIME_COUNTER_SPACE_STABLE_MASK_RETAINED_ROW_COPY,
+        logical_len - removed);
+
+    SpaceReadToken source = space_read_token(s);
+    Space *replacement = cetta_malloc(sizeof(*replacement));
+    space_init_with_universe(replacement, s->native.universe);
+    replacement->kind = s->kind;
+    bool ok = space_match_backend_try_set(
+                  replacement, s->match_backend.kind) &&
+              space_match_backend_require_logical_order(
+                  replacement, NULL);
+
+    for (CettaIndex index = 0u;
+         ok && index < logical_len; index++) {
+        if (remove_mask[index] != 0u)
+            continue;
+        CettaCount before = space_length64(replacement);
+        AtomId atom_id = space_get_atom_id_at64(s, index);
+        if (atom_id != CETTA_ATOM_ID_NONE) {
+            space_add_atom_id(replacement, atom_id);
+        } else {
+            Atom *atom = space_get_at64(s, index);
+            ok = atom && space_admit_atom(replacement, NULL, atom);
+        }
+        ok = ok && space_length64(replacement) == before + 1u;
+    }
+
+    CettaIndex retained_index = 0u;
+    for (CettaIndex source_index = 0u;
+         ok && source_index < logical_len; source_index++) {
+        if (remove_mask[source_index] != 0u)
+            continue;
+        AtomId source_id = space_get_atom_id_at64(s, source_index);
+        AtomId retained_id = space_get_atom_id_at64(
+            replacement, retained_index);
+        if (source_id != CETTA_ATOM_ID_NONE &&
+            retained_id != CETTA_ATOM_ID_NONE) {
+            ok = source_id == retained_id;
+        } else {
+            Atom *source_atom = space_get_at64(s, source_index);
+            Atom *retained_atom = space_get_at64(
+                replacement, retained_index);
+            ok = source_atom && retained_atom &&
+                 atom_eq(source_atom, retained_atom);
+        }
+        retained_index++;
+    }
+    ok = ok &&
+         retained_index == logical_len - removed &&
+         space_length64(replacement) == retained_index &&
+         space_read_token_matches_live_space(source, s);
+
+    if (ok) {
+        replacement->payload_owner_epoch = s->payload_owner_epoch;
+        replacement->payload_export_owner_epoch =
+            s->payload_export_owner_epoch;
+        space_replace_contents(s, replacement);
+    }
+    space_free(replacement);
+    free(replacement);
+
+    if (ok && out_removed)
+        *out_removed = removed;
+    return ok;
 }
 
 AtomId space_get_atom_id_at(const Space *s, uint32_t idx) {

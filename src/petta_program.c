@@ -3,6 +3,7 @@
 #include "eval.h"
 #include "grounded.h"
 #include "petta_semantics.h"
+#include "shared_transition.h"
 #include "stats.h"
 #include "symbol.h"
 
@@ -3004,15 +3005,19 @@ bool petta_program_clause_snapshot_lease_profiled(
         memset(stats, 0, sizeof(*stats));
     if (lease)
         memset(lease, 0, sizeof(*lease));
-    if (!program || !space || head == SYMBOL_ID_NONE ||
-        !lease) {
+    if (!space || head == SYMBOL_ID_NONE || !lease) {
         return false;
     }
     if (stats)
         stats->snapshots = 1u;
 
+    /* A live Space is the source of truth.  Shared mutable catalogs are
+       optimization evidence, so parallel workers use the complete live
+       occurrence path until an immutable revision-pinned catalog exists. */
     PettaProgramSpace *entry =
-        petta_program_find_space(program, space);
+        program && !cetta_shared_transition_scope_active()
+            ? petta_program_find_space(program, space)
+            : NULL;
     uint64_t revision = space_revision(space);
     const PettaProgramClauseSnapshot *cached =
         petta_program_space_find_clause_snapshot(
