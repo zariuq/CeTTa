@@ -801,7 +801,7 @@ void arena_reset(Arena *a, ArenaMark mark) {
 
 /* ── Hash-Consing ──────────────────────────────────────────────────────── */
 
-HashConsTable *g_hashcons = NULL;
+_Thread_local HashConsTable *g_hashcons = NULL;
 
 static bool atom_is_hash_stable(const Atom *atom);
 

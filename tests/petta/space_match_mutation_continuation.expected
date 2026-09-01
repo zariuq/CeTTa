@@ -1,0 +1,50 @@
+is (), should (). ✅ 
+is (), should (). ✅ 
+is (), should (). ✅ 
+is (), should (). ✅ 
+is (), should (). ✅ 
+is ((pair a b) (pair c d)), should ((pair a b) (pair c d)). ✅ 
+is (keep), should (keep). ✅ 
+is (one one), should (one one). ✅ 
+is (zero), should (zero). ✅ 
+is (keep-1 keep-2), should (keep-1 keep-2). ✅ 
+true
+true
+true
+true
+true
+true
+true
+true
+true
+true
+true
+true
+true
+true
+true
+true
+true
+true
+true
+true
+true
+true
+true
+true
+true
+true
+true
+true
+true
+true
+true
+true
+true
+true
+true
+true
+true
+true
+true
+true

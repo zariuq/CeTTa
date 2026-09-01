@@ -1491,29 +1491,6 @@ Atom *petta_semantics_boolean_value(Arena *arena, bool value) {
         : NULL;
 }
 
-bool petta_semantics_library_descriptor(
-    const Atom *atom, const char **member) {
-    const PeTTaSymbolIds *ids = petta_symbol_ids();
-    if (member)
-        *member = NULL;
-    if (!atom || !member || !ids->table ||
-        atom->kind != ATOM_EXPR || atom->expr.len != 2u ||
-        !atom_is_symbol_id(atom->expr.elems[0], ids->library)) {
-        return false;
-    }
-    Atom *name = atom->expr.elems[1];
-    if (name->kind == ATOM_SYMBOL) {
-        *member = atom_name_cstr(name);
-        return *member != NULL;
-    }
-    if (name->kind == ATOM_GROUNDED &&
-        name->ground.gkind == GV_STRING) {
-        *member = name->ground.sval;
-        return *member != NULL;
-    }
-    return false;
-}
-
 static const char *petta_semantics_path_component(
     const Atom *atom) {
     if (!atom)
@@ -1527,24 +1504,90 @@ static const char *petta_semantics_path_component(
     return NULL;
 }
 
-bool petta_semantics_library_file_descriptor(
-    const Atom *atom, const char **root,
-    const char **member) {
+bool petta_semantics_library_reference(
+    const Atom *atom, PeTTaLibraryReference *reference) {
     const PeTTaSymbolIds *ids = petta_symbol_ids();
-    if (root)
-        *root = NULL;
-    if (member)
-        *member = NULL;
-    if (!atom || !root || !member || !ids->table ||
-        atom->kind != ATOM_EXPR || atom->expr.len != 3u ||
+    if (reference) {
+        reference->kind = PETTA_LIBRARY_REFERENCE_NONE;
+        reference->root = NULL;
+        reference->member = NULL;
+    }
+    if (!atom || !reference || !ids->table ||
+        atom->kind != ATOM_EXPR || atom->expr.len == 0u ||
         !atom_is_symbol_id(atom->expr.elems[0], ids->library)) {
         return false;
     }
-    *root = petta_semantics_path_component(
-        atom->expr.elems[1]);
-    *member = petta_semantics_path_component(
-        atom->expr.elems[2]);
-    return *root != NULL && *member != NULL;
+    if (atom->expr.len == 2u) {
+        reference->member = petta_semantics_path_component(
+            atom->expr.elems[1]);
+        if (!reference->member)
+            return false;
+        reference->kind = PETTA_LIBRARY_REFERENCE_STANDARD;
+        return true;
+    }
+    if (atom->expr.len == 3u) {
+        reference->root = petta_semantics_path_component(
+            atom->expr.elems[1]);
+        reference->member = petta_semantics_path_component(
+            atom->expr.elems[2]);
+        if (!reference->root || !reference->member)
+            return false;
+        reference->kind = PETTA_LIBRARY_REFERENCE_ROOTED;
+        return true;
+    }
+    return false;
+}
+
+bool petta_semantics_library_path_effect(
+    const Atom *atom, PeTTaLibraryPathEffect *effect) {
+    if (effect) {
+        effect->kind = PETTA_LIBRARY_PATH_EFFECT_NONE;
+        effect->path = NULL;
+    }
+    if (!atom || !effect || atom->kind != ATOM_EXPR ||
+        atom->expr.len != 2u || !atom->expr.elems[0] ||
+        atom->expr.elems[0]->kind != ATOM_SYMBOL) {
+        return false;
+    }
+
+    switch (petta_semantics_form(atom->expr.elems[0]->sym_id)) {
+    case PETTA_FORM_ASSERTA_PREDICATE:
+        effect->kind = PETTA_LIBRARY_PATH_EFFECT_PREPEND;
+        break;
+    case PETTA_FORM_ASSERTZ_PREDICATE:
+        effect->kind = PETTA_LIBRARY_PATH_EFFECT_APPEND;
+        break;
+    case PETTA_FORM_RETRACT_PREDICATE:
+        effect->kind = PETTA_LIBRARY_PATH_EFFECT_RETRACT_FIRST;
+        break;
+    default:
+        return false;
+    }
+
+    const Atom *wrapper = atom->expr.elems[1];
+    if (!wrapper || wrapper->kind != ATOM_EXPR ||
+        wrapper->expr.len != 2u || !wrapper->expr.elems[0] ||
+        wrapper->expr.elems[0]->kind != ATOM_SYMBOL ||
+        petta_semantics_form(wrapper->expr.elems[0]->sym_id) !=
+            PETTA_FORM_PREDICATE) {
+        effect->kind = PETTA_LIBRARY_PATH_EFFECT_NONE;
+        return false;
+    }
+
+    const Atom *body = wrapper->expr.elems[1];
+    if (!body || body->kind != ATOM_EXPR || body->expr.len != 2u ||
+        !body->expr.elems[0] || body->expr.elems[0]->kind != ATOM_SYMBOL ||
+        !symbol_eq_cstr(
+            g_symbols, body->expr.elems[0]->sym_id, "library_path")) {
+        effect->kind = PETTA_LIBRARY_PATH_EFFECT_NONE;
+        return false;
+    }
+    effect->path = petta_semantics_path_component(body->expr.elems[1]);
+    if (!effect->path) {
+        effect->kind = PETTA_LIBRARY_PATH_EFFECT_NONE;
+        return false;
+    }
+    return true;
 }
 
 bool petta_semantics_is_value_let(SymbolId head) {
@@ -1668,11 +1711,27 @@ static Atom *petta_foldall_lower(Arena *arena, Atom *form) {
         arena, "__petta_fold_acc", fresh_var_id());
     Atom *item = atom_var_with_id(
         arena, "__petta_fold_item", fresh_var_id());
+    Atom *raw_item = atom_var_with_id(
+        arena, "__petta_fold_raw_item", fresh_var_id());
+    /* PeTTa's aggregate goal calls reduce/2 for every yielded occurrence.
+     * Express that value demand as an ordinary chain so an executable result
+     * is normalized before the fold algebra observes it. */
+    Atom *demanded_item = atom_expr2(
+        arena,
+        atom_symbol_id(arena, g_builtin_syms.eval),
+        raw_item);
+    Atom *stream_elems[4] = {
+        atom_symbol_id(arena, g_builtin_syms.chain),
+        form->expr.elems[2],
+        raw_item,
+        demanded_item,
+    };
+    Atom *stream = atom_expr(arena, stream_elems, 4u);
     Atom *step = atom_expr3(
         arena, form->expr.elems[1], acc, item);
     Atom *elems[6] = {
         atom_symbol_id(arena, g_builtin_syms.fold),
-        form->expr.elems[2],
+        stream,
         form->expr.elems[3],
         acc,
         item,

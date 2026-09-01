@@ -133,6 +133,50 @@ static void test_store_format_contract(void) {
     term_universe_free(&universe);
 }
 
+static void test_root_token_generation_contract(void) {
+    Arena first_persistent;
+    Arena second_persistent;
+    Arena scratch;
+    TermUniverse universe;
+
+    arena_init(&first_persistent);
+    arena_init(&second_persistent);
+    arena_init(&scratch);
+    term_universe_init(&universe);
+    term_universe_set_persistent_arena(
+        &universe, &first_persistent);
+
+    AtomId root_id = term_universe_store_atom_id(
+        &universe, NULL, atom_symbol(&scratch, "root-token"));
+    TermUniverseRootToken token = {0};
+    assert(root_id != CETTA_ATOM_ID_NONE);
+    assert(term_universe_root_token_capture(
+        &universe, root_id, &token));
+    Atom *root = term_universe_root_token_resolve(
+        token, &universe);
+    assert(root && atom_is_symbol(root, "root-token"));
+
+    /* Store-format migration preserves logical roots and decoded pointers. */
+    assert(term_universe_migrate_store_format(
+        &universe, TERM_UNIVERSE_STORE_FORMAT_WIDE64_V1));
+    assert(term_universe_root_token_resolve(
+        token, &universe) == root);
+
+    /* Replacing storage starts a new generation.  The old capability must
+     * fail closed before its former root address can be consulted. */
+    term_universe_set_persistent_arena(
+        &universe, &second_persistent);
+    assert(!term_universe_root_token_matches_live_universe(
+        token, &universe));
+    assert(term_universe_root_token_resolve(
+        token, &universe) == NULL);
+
+    term_universe_free(&universe);
+    arena_free(&scratch);
+    arena_free(&second_persistent);
+    arena_free(&first_persistent);
+}
+
 static void test_structural_variable_name_store_contract(void) {
     Arena persistent;
     Arena scratch;
@@ -747,6 +791,14 @@ bool space_match_backend_materialize_native_storage(Space *s,
     (void)s;
     (void)persistent_arena;
     return true;
+}
+
+SpaceBackendBatchResult
+space_match_backend_transport_stable_occurrence_coordinates(
+        Space *s, const SpaceStableOccurrenceTransport *transport) {
+    (void)s;
+    (void)transport;
+    return SPACE_BACKEND_BATCH_UNSUPPORTED;
 }
 
 bool space_match_backend_require_logical_order(Space *s,
@@ -1466,6 +1518,7 @@ int main(void) {
     g_var_intern = &var_intern;
     test_arena_accounting_saturation_contract();
     test_store_format_contract();
+    test_root_token_generation_contract();
     test_structural_variable_name_store_contract();
     test_store_format_migration_contract();
     test_compact_ceiling_migrate_then_continue_witness();

@@ -384,6 +384,16 @@ static PeTTaNamedArity petta_runtime_arity(
 PeTTaNamedArity cetta_petta_runtime_named_arity(
     const CettaLibraryContext *context,
     SymbolId head, CettaExprLen supplied) {
+    /* Importing lib_import installs one capability-indexed native family.
+     * Keep its accepted interval here, at the same named-arity authority
+     * consulted by canonical and prepared PeTTa calls.  The evaluator owns
+     * the effect itself; before the capability is present the authored head
+     * remains ordinary uninterpreted MeTTa syntax. */
+    if (context && g_symbols && head != SYMBOL_ID_NONE &&
+        symbol_eq_cstr(g_symbols, head, "git-import!") &&
+        cetta_library_petta_git_import_enabled(context)) {
+        return petta_runtime_arity(supplied, 1u, 4u);
+    }
     switch (petta_runtime_op(context, head)) {
     case PETTA_RUNTIME_OP_ARGV:
     case PETTA_RUNTIME_OP_FORMAT_TIME:

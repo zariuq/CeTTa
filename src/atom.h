@@ -368,7 +368,7 @@ Atom *hashcons_get(HashConsTable *hc, Atom *atom);
 bool atom_grounded_kind_is_term_stable(GroundedKind kind);
 
 /* Global hash-cons table */
-extern HashConsTable *g_hashcons;
+extern _Thread_local HashConsTable *g_hashcons;
 
 /* Fast equality: if both atoms are hash-consed, pointer comparison suffices */
 bool atom_eq_fast(Atom *a, Atom *b);

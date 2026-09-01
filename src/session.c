@@ -627,8 +627,8 @@ const char *cetta_remote_revision_policy_name(CettaRemoteRevisionPolicy policy) 
         return "none";
     case CETTA_REMOTE_REVISION_DEFAULT_BRANCH_ONLY:
         return "default-branch-only";
-    case CETTA_REMOTE_REVISION_EXPLICIT_REF_FUTURE:
-        return "explicit-ref-future";
+    case CETTA_REMOTE_REVISION_EXPLICIT_COMMIT:
+        return "explicit-commit";
     case CETTA_REMOTE_REVISION_CATALOG_CONTROLLED:
         return "catalog-controlled";
     }

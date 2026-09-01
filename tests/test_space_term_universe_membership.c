@@ -140,6 +140,14 @@ bool space_match_backend_materialize_native_storage(Space *s,
     return true;
 }
 
+SpaceBackendBatchResult
+space_match_backend_transport_stable_occurrence_coordinates(
+        Space *s, const SpaceStableOccurrenceTransport *transport) {
+    (void)s;
+    (void)transport;
+    return SPACE_BACKEND_BATCH_UNSUPPORTED;
+}
+
 bool space_match_backend_require_logical_order(Space *s,
                                                Arena *persistent_arena) {
     (void)persistent_arena;

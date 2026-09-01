@@ -2297,6 +2297,7 @@ static void cetta_main_cleanup(CettaMainCleanup *cleanup) {
     cetta_foreign_global_shutdown();
     eval_match_decision_cache_free_for_current_thread();
     eval_profiled_type_cache_free_for_current_thread();
+    space_execution_analysis_cache_free_for_current_thread();
 
     if (cleanup->space_initialized) {
         space_free(cleanup->space);

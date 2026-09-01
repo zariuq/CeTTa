@@ -1,0 +1,16 @@
+(producer 3)
+(let-value 3)
+(collapse-value 2)
+(nested-observer 2)
+(empty-value 0)
+(one-value 1)
+(non-list-value ())
+(bound-value 3)
+true
+true
+true
+true
+true
+true
+true
+true

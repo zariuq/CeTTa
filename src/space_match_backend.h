@@ -28,6 +28,18 @@ typedef enum {
     SPACE_BACKEND_BATCH_ERROR = 2,
 } SpaceBackendBatchResult;
 
+/* A stable contraction induces a partial monotone map from source
+ * occurrence coordinates to target occurrence coordinates.  The all-ones
+ * value marks a removed source occurrence; every other coordinate is a
+ * unique target position in [0, target_len), in ascending source order. */
+#define SPACE_OCCURRENCE_COORDINATE_REMOVED UINT64_MAX
+
+typedef struct {
+    const CettaIndex *source_to_target;
+    CettaCount source_len;
+    CettaCount target_len;
+} SpaceStableOccurrenceTransport;
+
 static inline bool space_engine_uses_pathmap(SpaceEngine engine) {
     return engine == SPACE_ENGINE_PATHMAP || engine == SPACE_ENGINE_MORK;
 }
@@ -39,8 +51,10 @@ static inline bool space_engine_supports_exec(SpaceEngine engine) {
 typedef struct {
     DiscNode *match_trie;
     bool match_trie_dirty;
+    CettaCount match_trie_stale_occurrences;
     SubstTree *stree;
     bool stree_dirty;
+    CettaCount stree_stale_occurrences;
 } SpaceMatchNativeState;
 
 typedef enum {
@@ -150,6 +164,14 @@ typedef struct SpaceMatchBackendOps {
     void (*free)(Space *s);
     void (*note_add)(Space *s, AtomId atom_id, Atom *atom, CettaIndex atom_idx);
     void (*note_remove)(Space *s);
+    /* Transport already-realized derived indexes through an exact stable
+     * occurrence contraction.  This does not mutate the logical occurrence
+     * store.  APPLIED means every live derived coordinate now denotes the
+     * corresponding target occurrence; UNSUPPORTED asks the Space layer to
+     * use its reconstruct-and-verify oracle; ERROR must leave derived state
+     * unchanged. */
+    SpaceBackendBatchResult (*transport_stable_occurrence_coordinates)(
+        Space *s, const SpaceStableOccurrenceTransport *transport);
     CettaIndex (*candidates)(Space *s, Atom *pattern, CettaIndex **out);
     /*
      * Exact COUNT pushdown for a flat linear pattern over ground stored
@@ -270,6 +292,9 @@ void space_match_backend_note_add(Space *s, AtomId atom_id, Atom *atom,
 void space_match_backend_note_native_shadow_add(Space *s, AtomId atom_id,
                                                 CettaIndex atom_idx);
 void space_match_backend_note_remove(Space *s);
+SpaceBackendBatchResult
+space_match_backend_transport_stable_occurrence_coordinates(
+    Space *s, const SpaceStableOccurrenceTransport *transport);
 CettaIndex space_match_backend_candidates64(Space *s, Atom *pattern,
                                             CettaIndex **out);
 uint32_t space_match_backend_candidates(Space *s, Atom *pattern, uint32_t **out);

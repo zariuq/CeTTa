@@ -29,9 +29,12 @@
 !(test (append-cons-view (a b)) (x y a b))
 !(test (fold-cons-view (1 2)) 3)
 
-; Ordinary authored three-item data remains an ordinary three-item value.
+; A tail received through the equation pattern remains a value.  By contrast,
+; the explicit size-atom declaration above makes the direct callable-headed
+; source expression a demanded computation in upstream PeTTa; its non-list
+; result is observed as the empty value.
 !(test (declared-size-cons-tail (a b c)) 2)
-!(test (size-atom (and implies iff)) 3)
+!(test (size-atom (and implies iff)) ())
 
 (= (if-error $value $yes $no)
    (if (= $value (cons Error $_)) $yes $no))

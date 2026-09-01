@@ -3799,6 +3799,45 @@ AtomId term_universe_lookup_atom_id(const TermUniverse *universe, Atom *src) {
     return stable_id;
 }
 
+bool term_universe_root_token_capture(
+        const TermUniverse *universe, AtomId root_id,
+        TermUniverseRootToken *out) {
+    if (out)
+        *out = (TermUniverseRootToken){0};
+    if (!universe || !out || root_id == CETTA_ATOM_ID_NONE ||
+        !term_universe_get_atom(universe, root_id)) {
+        return false;
+    }
+    *out = (TermUniverseRootToken){
+        .universe = universe,
+        .instance_id = universe->instance_id,
+        .storage_epoch = universe->storage_epoch,
+        .root_id = root_id,
+    };
+    return true;
+}
+
+bool term_universe_root_token_matches_live_universe(
+        TermUniverseRootToken token,
+        const TermUniverse *live_universe) {
+    return live_universe && token.universe == live_universe &&
+        token.instance_id != 0u &&
+        token.instance_id == live_universe->instance_id &&
+        token.storage_epoch != 0u &&
+        token.storage_epoch == live_universe->storage_epoch &&
+        token.root_id != CETTA_ATOM_ID_NONE &&
+        term_universe_get_atom(live_universe, token.root_id) != NULL;
+}
+
+Atom *term_universe_root_token_resolve(
+        TermUniverseRootToken token,
+        const TermUniverse *live_universe) {
+    return term_universe_root_token_matches_live_universe(
+               token, live_universe)
+        ? term_universe_get_atom(live_universe, token.root_id)
+        : NULL;
+}
+
 bool term_universe_atom_id_eq(const TermUniverse *universe, AtomId id,
                               Atom *src) {
     if (!universe || id == CETTA_ATOM_ID_NONE || !src)

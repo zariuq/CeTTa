@@ -1,1 +1,0 @@
-(Error (import! &self (library ../lib_descriptor_probe)) illegal library member name)
