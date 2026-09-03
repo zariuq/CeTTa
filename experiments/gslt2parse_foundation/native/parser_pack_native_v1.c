@@ -1752,10 +1752,12 @@ static Atom *ppnative_v1_apply_action(PPNativeV1ReplayContext *context,
 }
 
 /*
- * CstRuleV1 is the span-aware node action of the authored scannerless
- * presentation.  Its action term carries the label and retained children;
- * the exact half-open span is supplied by the ambient forest symbol whose
- * production action is being replayed.
+ * CstRuleV1 is the span-aware node action of the authored LanguageDef parser.
+ * SourceSpanActionV1 is the opt-in action of scannerless syntax presentations;
+ * it materializes as SourceSpanNodeV1 so transparent parent productions cannot
+ * attach the same interval a second time.  Each action carries the label and
+ * retained children; the exact half-open span comes from the ambient forest
+ * symbol whose production action is being replayed.
  */
 static Atom *ppnative_v1_materialize_cst_span(
     PPNativeV1ReplayContext *context,
@@ -1764,11 +1766,17 @@ static Atom *ppnative_v1_materialize_cst_span(
     Atom **items;
     uint32_t index;
 
+    bool source_span_action;
+
     if (!context || !node || !value || value->kind != ATOM_EXPR ||
-        value->expr.len < 2u ||
-        !atom_is_symbol(value->expr.elems[0], "CstRuleV1")) {
+        value->expr.len < 2u) {
         return value;
     }
+    source_span_action = atom_is_symbol(
+        value->expr.elems[0], "SourceSpanActionV1");
+    if (!source_span_action &&
+        !atom_is_symbol(value->expr.elems[0], "CstRuleV1"))
+        return value;
     if (node->scalar_left > node->scalar_right) {
         context->status = PPNATIVE_V1_REPLAY_MALFORMED;
         return NULL;
@@ -1777,7 +1785,9 @@ static Atom *ppnative_v1_materialize_cst_span(
         context->arena, sizeof(*items) * ((size_t)value->expr.len + 2u));
     if (!items)
         return NULL;
-    items[0] = value->expr.elems[0];
+    items[0] = source_span_action
+        ? atom_symbol(context->arena, "SourceSpanNodeV1")
+        : value->expr.elems[0];
     items[1] = value->expr.elems[1];
     items[2] = atom_int(context->arena, (int64_t)node->scalar_left);
     items[3] = atom_int(context->arena, (int64_t)node->scalar_right);

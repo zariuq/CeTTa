@@ -4,7 +4,7 @@
 ; the intermediate hypothesis stack explicit and therefore preserves the
 ; constraint that guides Nil's inverse proof search.
 
-!(import! &self lib_atp)
+!(import! &self ../../../../examples/atp/prime/search_modules.metta)
 
 (: p Type)
 (: q Type)

@@ -75,13 +75,14 @@ tests/prime/need_sequential_unification_refinement.metta	prime	metta		any	native
 tests/prime/need_storage_boundary.metta	prime	metta		any	native	test-prime	golden	Prime normative golden regression
 tests/prime/nik_plural_checking.metta	prime	metta		any	native	test-prime	golden	Prime normative golden regression
 tests/prime/nil_rule_machine_guests.generated.metta	prime	metta		any	native	test-prime	golden	Prime normative golden regression
-tests/prime/practical/atp_agenda_library.metta	prime	metta		any	native	test-prime	golden	Prime normative golden regression
-tests/prime/practical/atp_direct_library.metta	prime	metta		any	native	test-prime	golden	Prime normative golden regression
+tests/prime/practical/atp_agenda_example.metta	prime	metta		any	native	test-prime	golden	Prime ATP example regression
+tests/prime/practical/atp_direct_example.metta	prime	metta		any	native	test-prime	golden	Prime ATP example regression
 tests/prime/practical/atp_guided_inhabitation.metta	prime	metta		any	native	test-prime	golden	Prime normative golden regression
-tests/prime/practical/atp_indexed_library.metta	prime	metta		any	native	test-prime	golden	Prime normative golden regression
-tests/prime/practical/atp_resolution_replay.metta	prime	metta		any	native	test-prime	golden	Prime normative golden regression
-tests/prime/practical/atp_resolution_search.metta	prime	metta		any	native	test-prime	golden	Prime normative golden regression
-tests/prime/practical/atp_superposition_replay.metta	prime	metta		any	native	test-prime	golden	Prime normative golden regression
+tests/prime/practical/atp_indexed_example.metta	prime	metta		any	native	test-prime	golden	Prime ATP example regression
+tests/prime/practical/atp_resolution_replay.metta	prime	metta		any	native	test-prime	golden	Prime ATP example regression
+tests/prime/practical/atp_resolution_search.metta	prime	metta		any	native	test-prime	golden	Prime ATP example regression
+tests/prime/practical/atp_superposition_replay.metta	prime	metta		any	native	test-prime	golden	Prime ATP example regression
+tests/prime/practical/first_order_resolution_input_unification.metta	prime	metta		any	native	test-prime	golden	TPTP resolution-example regression
 tests/prime/practical/need_control_branch_discriminators.metta	prime	metta		any	native	test-prime	golden	Prime normative golden regression
 tests/prime/practical/prism_agenda_policy_contrast.metta	he	metta	he-extended	main	native	test	property	assertion-only property without golden oracle
 tests/prime/practical/typed_pln_chainer.metta	prime	metta		any	native	test-prime	golden	Prime normative golden regression

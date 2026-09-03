@@ -732,6 +732,107 @@ done:
     ppabi_v1_pack_free(&pack);
 }
 
+static void recognition_without_semantics_gate(TestCounts *counts,
+                                                Arena *arena) {
+    Atom *state = unary(arena, "pp-def", atom_symbol(arena, "recognize"));
+    Atom *a = terminal_char(arena, 97u);
+    Atom *rhs[1] = {a};
+    Atom *productions[1] = {
+        production(arena, "recognize-a", state, rhs, 1u,
+                   slot(arena, 0u)),
+    };
+    static const uint8_t accepted_input[] = {'a'};
+    static const uint8_t rejected_input[] = {'b'};
+    static const uint32_t codepoints[] = {97u};
+    static const uint32_t byte_offsets[] = {0u, 1u};
+    const CettaLpNativeUtf8ScalarView accepted_view = {
+        codepoints, byte_offsets, 1u, 1u, 0u, 0u,
+    };
+    PPABIV1Pack pack = {0};
+    PPNativeV1Prepared prepared;
+    PPNativeV1Result parsed;
+    PPNativeV1Result recognized;
+    PPNativeV1Result prepared_recognized;
+    PPNativeV1Result view_recognized;
+    PPNativeV1Result rejected;
+    char error[512] = {0};
+
+    ppnative_v1_prepared_init(&prepared);
+    ppnative_v1_result_init(&parsed);
+    ppnative_v1_result_init(&recognized);
+    ppnative_v1_result_init(&prepared_recognized);
+    ppnative_v1_result_init(&view_recognized);
+    ppnative_v1_result_init(&rejected);
+    if (!load_pack(arena, productions, 1u, NULL, 0u,
+                   &pack, error, sizeof(error))) {
+        (void)expect(counts, false, error);
+        goto done;
+    }
+    (void)expect(
+        counts,
+        ppgll_v1_parse(
+            &pack, state, accepted_input, sizeof(accepted_input),
+            1000u, 64u, 64u, &parsed, error, sizeof(error)) &&
+        ppgll_v1_recognize(
+            &pack, state, accepted_input, sizeof(accepted_input),
+            1000u, &recognized, error, sizeof(error)) &&
+        parsed.accepted == recognized.accepted &&
+        parsed.forest.node_len == recognized.forest.node_len &&
+        parsed.forest.choice_len == recognized.forest.choice_len &&
+        parsed.forest.root_len == recognized.forest.root_len,
+        error[0] ? error
+                 : "recognition preserves complete GLL acceptance forest");
+    (void)expect(
+        counts,
+        recognized.outcome == PPNATIVE_V1_COMPLETED &&
+        recognized.accepted &&
+        !recognized.canonical_forest_materialized &&
+        recognized.canonical_forest == NULL &&
+        recognized.semantic_results == NULL &&
+        recognized.semantic_result_len == 0u &&
+        recognized.forest_digest[0] == '\0',
+        "recognition omits canonical forest and semantic replay");
+    error[0] = '\0';
+    (void)expect(
+        counts,
+        ppgll_v1_recognize(
+            &pack, state, rejected_input, sizeof(rejected_input),
+            1000u, &rejected, error, sizeof(error)) &&
+        rejected.outcome == PPNATIVE_V1_COMPLETED &&
+        !rejected.accepted &&
+        !rejected.canonical_forest_materialized &&
+        rejected.semantic_result_len == 0u,
+        error[0] ? error : "recognition rejects without semantic replay");
+    error[0] = '\0';
+    (void)expect(
+        counts,
+        ppnative_v1_prepare(
+            &prepared, &pack, state, error, sizeof(error)) &&
+        ppgll_v1_prepared_recognize(
+            &prepared, accepted_input, sizeof(accepted_input),
+            1000u, &prepared_recognized, error, sizeof(error)) &&
+        ppgll_v1_prepared_recognize_scalar_view(
+            &prepared, &accepted_view, 1000u,
+            &view_recognized, error, sizeof(error)) &&
+        prepared_recognized.accepted && view_recognized.accepted &&
+        prepared_recognized.forest.node_len == recognized.forest.node_len &&
+        view_recognized.forest.node_len == recognized.forest.node_len &&
+        prepared_recognized.semantic_result_len == 0u &&
+        view_recognized.semantic_result_len == 0u &&
+        view_recognized.forest.source_pass_count == 0u,
+        error[0] ? error
+                 : "prepared and borrowed recognition preserve acceptance");
+
+done:
+    ppnative_v1_result_free(&parsed);
+    ppnative_v1_result_free(&recognized);
+    ppnative_v1_result_free(&prepared_recognized);
+    ppnative_v1_result_free(&view_recognized);
+    ppnative_v1_result_free(&rejected);
+    ppnative_v1_prepared_free(&prepared);
+    ppabi_v1_pack_free(&pack);
+}
+
 int main(void) {
     SymbolTable symbols;
     Arena arena;
@@ -750,6 +851,7 @@ int main(void) {
     class_and_eof_gate(&counts, &arena);
     typed_boundaries_gate(&counts, &arena);
     prepared_reuse_gate(&counts, &arena);
+    recognition_without_semantics_gate(&counts, &arena);
 
     printf("(ParserPackGLLV1NativeSummary %u %u)\n",
            counts.passed, counts.failed);

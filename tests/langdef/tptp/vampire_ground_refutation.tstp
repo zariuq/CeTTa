@@ -1,0 +1,15 @@
+fof(f1,axiom,(
+  q | p),
+  file('examples/tptp/external_ground_refutation.p',unknown)).
+fof(f2,axiom,(
+  ~p),
+  file('examples/tptp/external_ground_refutation.p',unknown)).
+fof(f3,axiom,(
+  ~q),
+  file('examples/tptp/external_ground_refutation.p',unknown)).
+fof(f4,plain,(
+  p),
+  inference(resolution,[],[f1,f3])).
+fof(f5,plain,(
+  $false),
+  inference(resolution,[],[f4,f2])).

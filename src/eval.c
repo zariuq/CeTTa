@@ -10680,7 +10680,7 @@ static bool hyperpose_external_unsafe_head(Atom *head) {
     return symbol_name_has_prefix(head, "mork:") ||
            symbol_name_has_prefix(head, "mm2:") ||
            symbol_name_has_prefix(head, "prolog:") ||
-           symbol_name_equals(head, "fs:write-text") ||
+           symbol_name_equals(head, "fs:write") ||
            symbol_name_equals(head, "fs:append-text") ||
            symbol_name_equals(head, "io:submit") ||
            symbol_name_equals(head, "io:poll") ||
@@ -10693,7 +10693,7 @@ static bool hyperpose_external_unsafe_head(Atom *head) {
 
 static bool hyperpose_internal_unsafe_head(SymbolId head_id, Atom *head) {
     if (head_id == g_builtin_syms.lib_system_exit_with_code ||
-        head_id == g_builtin_syms.lib_fs_write_text ||
+        head_id == g_builtin_syms.lib_fs_write ||
         head_id == g_builtin_syms.lib_fs_append_text ||
         head_id == g_builtin_syms.lib_io_submit ||
         head_id == g_builtin_syms.lib_io_poll ||
@@ -17130,7 +17130,12 @@ static bool prime_need_atom_has_observable_ref(Atom *root) {
     items[0] = root;
     while (len > 0u) {
         Atom *atom = items[--len];
-        if (!atom || !outcome_preview_seen_add(&seen, atom))
+        /* Registry-reference summaries are compositional on every subtree,
+         * not only at the root.  A large ordinary payload may sit beside one
+         * private reference in an outer call; do not traverse that payload
+         * while locating the reference. */
+        if (!atom || !atom_has_registry_refs(atom) ||
+            !outcome_preview_seen_add(&seen, atom))
             continue;
         if (prime_need_ref_belongs_to(atom, &g_prime_need_active, NULL)) {
             if (items != inline_items)

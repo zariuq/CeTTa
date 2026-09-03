@@ -19,6 +19,11 @@
      (((LangDef.ParseAccepted MetamathV1 $digest $constructs) True)
       ($_ False))))
 
+(= (test:metamath-recognized $result)
+   (case $result
+     (((LangDef:RunAccepted MetamathV1 $digest 1) True)
+      ($_ False))))
+
 (= (test:metamath-imported $result)
    (case $result
      (((LangDef.Imported MetamathV1 $digest 1) True)
@@ -88,6 +93,11 @@
        "tests/langdef/metamath/positive_constants.mm"))
    True)
 !(assertEqual
+   (test:metamath-recognized
+     (langdef:recognize-file &metamath-langdef
+       "tests/langdef/metamath/positive_constants.mm"))
+   True)
+!(assertEqual
    (test:metamath-parse-accepted
      (langdef:parse-file &metamath-langdef
        "tests/langdef/metamath/syntax_every_form.mm"))
@@ -101,6 +111,11 @@
 !(assertEqual
    (test:metamath-rejected
      (langdef:parse-file &metamath-langdef
+       "tests/langdef/metamath/invalid_missing_terminator.mm"))
+   True)
+!(assertEqual
+   (test:metamath-rejected
+     (langdef:recognize-file &metamath-langdef
        "tests/langdef/metamath/invalid_missing_terminator.mm"))
    True)
 !(assertEqual (count-atoms &self) &before-rejected)

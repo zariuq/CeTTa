@@ -24,9 +24,11 @@ typedef struct {
     const CettaLdTextV1 *expression_call;
     const CettaLdTextV1 *expressions_nil;
     const CettaLdTextV1 *expressions_cons;
+    const CettaLdTextV1 *assign;
     const CettaLdTextV1 *declare;
     const CettaLdTextV1 *effect;
     const CettaLdTextV1 *if_statement;
+    const CettaLdTextV1 *while_statement;
     const CettaLdTextV1 *switch_statement;
     const CettaLdTextV1 *return_statement;
     const CettaLdTextV1 *statements_nil;

@@ -61,7 +61,7 @@
   (hit))
 
 !(assertEqual
-  (fs:write-text "runtime/test_mork_act_roundtrip.act.copies" "legacy sidecar")
+  (fs:write "runtime/test_mork_act_roundtrip.act.copies" "legacy sidecar")
   ())
 !(assertEqual
   (fs:exists "runtime/test_mork_act_roundtrip.act.copies")

@@ -414,6 +414,42 @@ static bool local_canaries(size_t *passed) {
     (*passed)++;
     fhgslt_package_free(package);
 
+    const char nullary_operator[] =
+        "(gslt-presentation-v1 NullaryV1 "
+        "(signature (operator z 0)) (equations) "
+        "(rewrites (rule z-rule (head (z)) (body))))";
+    const char *nullary_texts[] = {nullary_operator};
+    const char *nullary_sources[] = {"nullary"};
+    FHGSLTPackage *nullary_package = NULL;
+    uint8_t *nullary_canonical = NULL;
+    size_t nullary_canonical_len = 0u;
+    error[0] = '\0';
+    if (!load_strings(nullary_texts,
+                      nullary_sources,
+                      1u,
+                      &nullary_package,
+                      error) ||
+        !fhgslt_package_canonical_presentation(nullary_package,
+                                               0u,
+                                               &nullary_canonical,
+                                               &nullary_canonical_len,
+                                               error,
+                                               sizeof(error)) ||
+        count_bytes(nullary_canonical,
+                    nullary_canonical_len,
+                    "(operator z 0)") != 1u ||
+        count_bytes(nullary_canonical,
+                    nullary_canonical_len,
+                    "(head (z))") != 1u) {
+        fprintf(stderr, "nullary operator canary failed: %s\n", error);
+        free(nullary_canonical);
+        fhgslt_package_free(nullary_package);
+        return false;
+    }
+    free(nullary_canonical);
+    fhgslt_package_free(nullary_package);
+    (*passed)++;
+
     const char structural_shape[] =
         "(gslt-presentation-v1 StructuralShapeV1 "
         "(signature (operator fact 1) (operator same 2) "
@@ -518,6 +554,9 @@ static bool local_canaries(size_t *passed) {
         {"authored-equation",
          "(gslt-presentation-v1 Bad (signature) "
          "(equations (equation e a b)) (rewrites))"},
+        {"negative-operator-arity",
+         "(gslt-presentation-v1 Bad (signature (operator p -1)) "
+         "(equations) (rewrites))"},
         {"duplicate-operator",
          "(gslt-presentation-v1 Bad "
          "(signature (operator p 1) (operator p 1)) "
@@ -758,7 +797,7 @@ int main(int argc, char **argv) {
     size_t passed = 0u;
     if (!local_canaries(&passed) || !external_package(argc, argv, &passed))
         return 1;
-    size_t expected = argc == 1 ? 27u : 28u;
+    size_t expected = argc == 1 ? 29u : 30u;
     if (passed != expected) {
         fprintf(stderr,
                 "canary accounting mismatch: expected %zu, got %zu\n",

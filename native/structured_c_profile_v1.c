@@ -371,6 +371,8 @@ static bool language_terms_exact(const CettaLanguageDefCoreV1 *language) {
         {"structured-c:if", "Statement",
          "condition:Expression,thenBranch:Statements,elseBranch:Statements",
          false},
+        {"structured-c:while", "Statement",
+         "condition:Expression,body:Statements", false},
         {"structured-c:switch", "Statement",
          "scrutinee:Expression,cases:Cases,defaultBranch:Statements", false},
         {"structured-c:return", "Statement", "expression:Expression", false},
@@ -599,6 +601,21 @@ static bool language_rewrites_exact(const CettaLanguageDefCoreV1 *language) {
         },
         {
             "environment:Environment,receipt:Receipt,rest:Statements,"
+            "condition:Expression,body:Statements", 0u, {NULL, NULL},
+            "(structured-c:run (structured-c:statements-cons "
+            "(structured-c:while $condition $body) $rest) "
+            "$environment $receipt)",
+            "(structured-c:run (structured-c:statements-cons "
+            "(structured-c:if $condition "
+            "(structured-c:statements-append $body "
+            "(structured-c:statements-cons "
+            "(structured-c:while $condition $body) "
+            "(structured-c:statements-nil))) "
+            "(structured-c:statements-nil)) $rest) "
+            "$environment $receipt)"
+        },
+        {
+            "environment:Environment,receipt:Receipt,rest:Statements,"
             "scrutinee:Expression,cases:Cases,defaultBranch:Statements,"
             "value:Value,evaluatedEnvironment:Environment,"
             "evaluatedReceipt:Receipt,selected:Statements", 2u,
@@ -690,8 +707,10 @@ bool cetta_structured_c_profile_v1_admit(
     static const char *const value1[] = {"Value"};
     static const char *const expression1[] = {"Expression"};
     static const char *const expressions2[] = {"Expression", "Expressions"};
+    static const char *const assign2[] = {"Identifier", "Expression"};
     static const char *const declare3[] = {"Identifier", "CType", "Expression"};
     static const char *const if3[] = {"Expression", "Statements", "Statements"};
+    static const char *const while2[] = {"Expression", "Statements"};
     static const char *const switch3[] = {"Expression", "Cases", "Statements"};
     static const char *const statements2[] = {"Statement", "Statements"};
     static const char *const case2[] = {"Value", "Statements"};
@@ -740,9 +759,11 @@ bool cetta_structured_c_profile_v1_admit(
             NULL);
     PROFILE(expressions_cons, "structured-c:expressions-cons", "Expressions", 2u,
             expressions2);
+    PROFILE(assign, "structured-c:assign", "Statement", 2u, assign2);
     PROFILE(declare, "structured-c:declare", "Statement", 3u, declare3);
     PROFILE(effect, "structured-c:effect", "Statement", 1u, expression1);
     PROFILE(if_statement, "structured-c:if", "Statement", 3u, if3);
+    PROFILE(while_statement, "structured-c:while", "Statement", 2u, while2);
     PROFILE(switch_statement, "structured-c:switch", "Statement", 3u, switch3);
     PROFILE(return_statement, "structured-c:return", "Statement", 1u,
             expression1);

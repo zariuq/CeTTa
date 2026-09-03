@@ -34,6 +34,15 @@ run :-
     package_digest([Roundtrip], RoundtripDigest),
     require(RoundtripDigest == Digest, canonical_roundtrip),
 
+    nullary_text(NullaryText),
+    read_presentation_text(NullaryText, nullary_canary, Nullary),
+    admit_presentations([Nullary]),
+    canonical_text(Nullary, NullaryCanonical),
+    require(sub_string(NullaryCanonical, _, _, _, "(operator z 0)"),
+            nullary_operator_admitted),
+    require(sub_string(NullaryCanonical, _, _, _, "(head (z))"),
+            nullary_application_preserved),
+
     quotation_rule(x, y, z, QuotationRule),
     quote_rule(QuotationRule, QuotedRule),
     expected_quotation(ExpectedQuotation),
@@ -89,6 +98,14 @@ run :-
     reject_text(
         AuthoredEquationText,
         'identity equations only', authored_equation),
+    join_text(
+        [ "(gslt-presentation-v1 Bad (signature (operator p -1)) ",
+          "(equations) (rewrites))"
+        ],
+        NegativeArityText),
+    reject_text(
+        NegativeArityText,
+        'NONNEGATIVE-ARITY', negative_operator_arity),
     join_text(
         [ "(gslt-presentation-v1 Bad (signature (operator p 1)) ",
           "(equations) (rewrites ",
@@ -168,7 +185,7 @@ run :-
 
     current_prolog_flag(argv, Arguments),
     run_external_package(Arguments, ExternalCount),
-    LocalCount = 31,
+    LocalCount = 34,
     Total is LocalCount + ExternalCount,
     format('(FiniteHornGSLTV1PeTTaCanarySummary ~d ~d 0)~n',
            [Total, Total]).
@@ -217,6 +234,15 @@ valid_text(Text) :-
           "(signature (operator p 1)) ",
           "(equations) ",
           "(rewrites (rule r (head (p ?x)) (body))))"
+        ],
+        Text).
+
+nullary_text(Text) :-
+    join_text(
+        [ "(gslt-presentation-v1 NullaryV1 ",
+          "(signature (operator z 0)) ",
+          "(equations) ",
+          "(rewrites (rule z-rule (head (z)) (body))))"
         ],
         Text).
 

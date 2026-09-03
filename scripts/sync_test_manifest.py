@@ -158,6 +158,27 @@ NO_EXPECT_CLASSIFICATION = {
 }
 
 PRIME_TEST_NOTES = {
+    "tests/prime/practical/atp_agenda_example.metta": (
+        "Prime ATP example regression"
+    ),
+    "tests/prime/practical/atp_direct_example.metta": (
+        "Prime ATP example regression"
+    ),
+    "tests/prime/practical/atp_indexed_example.metta": (
+        "Prime ATP example regression"
+    ),
+    "tests/prime/practical/atp_resolution_replay.metta": (
+        "Prime ATP example regression"
+    ),
+    "tests/prime/practical/atp_resolution_search.metta": (
+        "Prime ATP example regression"
+    ),
+    "tests/prime/practical/atp_superposition_replay.metta": (
+        "Prime ATP example regression"
+    ),
+    "tests/prime/practical/first_order_resolution_input_unification.metta": (
+        "TPTP resolution-example regression"
+    ),
     "tests/prime/authored_frontier_chaining.metta": (
         "Prime authored bounded-chaining integration canary with independent "
         "kernel checking"
