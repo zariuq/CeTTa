@@ -16,6 +16,9 @@
                (hyperpose
                  ((nested-transaction-publish)
                   (add-atom &nested-transaction-space (sibling)))))
-             (test (size &nested-transaction-space) 5))))
+             (test
+               (size-atom
+                 (collapse (get-atoms &nested-transaction-space)))
+               5))))
 
 !(run-nested-transaction)

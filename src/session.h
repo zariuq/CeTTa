@@ -58,7 +58,16 @@ typedef enum {
         CETTA_PROFILE_MASK_HE_FORMAL |
         CETTA_PROFILE_MASK_HE_EXTENDED |
         CETTA_PROFILE_MASK_HE_PRIME,
-    CETTA_PROFILE_MASK_ALL = CETTA_PROFILE_MASK_HE_PUBLIC
+    /* Plain --lang petta is the reference-compatible dialect.  Its named
+       extended/typechecking profiles add CeTTa capabilities explicitly. */
+    CETTA_PROFILE_MASK_PETTA_BASE = 1u << 4,
+    CETTA_PROFILE_MASK_PETTA_EXTENDED = 1u << 5,
+    CETTA_PROFILE_MASK_PETTA_BASE_FORMS =
+        CETTA_PROFILE_MASK_PETTA_BASE |
+        CETTA_PROFILE_MASK_PETTA_EXTENDED,
+    CETTA_PROFILE_MASK_ALL =
+        CETTA_PROFILE_MASK_HE_PUBLIC |
+        CETTA_PROFILE_MASK_PETTA_BASE_FORMS
 } CettaProfileMask;
 
 typedef struct {

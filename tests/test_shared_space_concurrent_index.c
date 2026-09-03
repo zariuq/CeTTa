@@ -28,8 +28,6 @@ typedef struct {
     Atom *query;
     pthread_barrier_t *start;
     bool ok;
-    bool saw_present;
-    bool saw_absent;
 } ReaderTask;
 
 typedef struct {
@@ -136,8 +134,6 @@ static void *reader_main(void *opaque) {
         smset_init(&matches);
         space_subst_query(task->space, &scratch, task->query, &matches);
         task->ok = validate_snapshot(&matches, &optional_present);
-        task->saw_present |= optional_present;
-        task->saw_absent |= !optional_present;
         smset_free(&matches);
         arena_reset(&scratch, mark);
         if ((round & 7u) == 0u)
@@ -203,6 +199,21 @@ static void assert_deferred_outside_concurrent_scope(
     smset_free(&matches);
 }
 
+static void assert_concurrent_snapshot(Space *space, Arena *scratch,
+                                       Atom *query,
+                                       bool expected_optional_present) {
+    SubstMatchSet matches;
+    bool optional_present = false;
+
+    cetta_shared_transition_scope_enter();
+    smset_init(&matches);
+    space_subst_query(space, scratch, query, &matches);
+    assert(validate_snapshot(&matches, &optional_present));
+    assert(optional_present == expected_optional_present);
+    smset_free(&matches);
+    cetta_shared_transition_scope_leave();
+}
+
 int main(void) {
     SymbolTable symbols;
     Arena persistent;
@@ -220,8 +231,6 @@ int main(void) {
     SymbolId row_symbol;
     SymbolId value_spelling;
     Atom *query;
-    bool saw_present = false;
-    bool saw_absent = false;
 
     init_symbols(&symbols);
     arena_init(&persistent);
@@ -249,6 +258,21 @@ int main(void) {
     space_free(&deferred_space);
 
     seed_space(&concurrent_space, &universe, base_ids, optional_id);
+    assert_concurrent_snapshot(
+        &concurrent_space, &construction, query, true);
+    {
+        CETTA_SCOPED_SHARED_TRANSITION(remove_transition);
+        assert(space_remove_atom_id(&concurrent_space, optional_id));
+    }
+    assert_concurrent_snapshot(
+        &concurrent_space, &construction, query, false);
+    {
+        CETTA_SCOPED_SHARED_TRANSITION(add_transition);
+        space_add_atom_id(&concurrent_space, optional_id);
+    }
+    assert_concurrent_snapshot(
+        &concurrent_space, &construction, query, true);
+
     assert(pthread_barrier_init(&start, NULL, READER_COUNT + 1u) == 0);
     for (size_t i = 0u; i < READER_COUNT; i++) {
         reader_tasks[i] = (ReaderTask){
@@ -269,28 +293,13 @@ int main(void) {
     for (size_t i = 0u; i < READER_COUNT; i++) {
         assert(pthread_join(readers[i], NULL) == 0);
         assert(reader_tasks[i].ok);
-        saw_present |= reader_tasks[i].saw_present;
-        saw_absent |= reader_tasks[i].saw_absent;
     }
     assert(pthread_join(writer, NULL) == 0);
     assert(writer_task.ok);
     assert(pthread_barrier_destroy(&start) == 0);
-    assert(saw_present);
-    assert(saw_absent);
     assert(space_length64(&concurrent_space) == BASE_ROW_COUNT + 1u);
-    {
-        SubstMatchSet final_matches;
-        bool optional_present = false;
-
-        cetta_shared_transition_scope_enter();
-        smset_init(&final_matches);
-        space_subst_query(
-            &concurrent_space, &construction, query, &final_matches);
-        assert(validate_snapshot(&final_matches, &optional_present));
-        assert(optional_present);
-        smset_free(&final_matches);
-        cetta_shared_transition_scope_leave();
-    }
+    assert_concurrent_snapshot(
+        &concurrent_space, &construction, query, true);
     assert(concurrent_space.match_backend.native.stree != NULL);
     assert(!concurrent_space.match_backend.native.stree_dirty);
 

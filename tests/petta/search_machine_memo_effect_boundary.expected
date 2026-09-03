@@ -2,6 +2,5 @@ true
 true
 true
 true
-true
-(hit hit)
-()
+(hit)
+((cache_hit 1) (cache_miss 1))

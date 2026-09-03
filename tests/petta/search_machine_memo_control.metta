@@ -1,13 +1,4 @@
-!(import_prolog_function
-  (superpose
-    (memoize
-     config-memoize
-     get-memoize-config
-     clear-memoize
-     invalidate-memoize
-     is-memoized
-     get-memoize-stats
-     clear-memoize-stats)))
+!(import! &self (library lib_memo))
 
 ; Declaration order is not an execution-order restriction: the complete
 ; document has already declared the relation head when this request runs.

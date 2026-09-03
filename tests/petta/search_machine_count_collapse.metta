@@ -8,6 +8,9 @@
 (counted-dynamic-left count-dynamic-marker)
 (counted-dynamic-right count-dynamic-marker)
 (counted-dynamic-right other-marker)
+(counted-nested (tag 1) alpha)
+(counted-nested (tag 1) beta)
+(counted-nested (tag 2) gamma)
 
 (= (counted-items)
    (collapse (match &self (counted $x) $x)))
@@ -35,6 +38,15 @@
      (match &self
             ($relation count-dynamic-marker)
             ($relation count-dynamic-marker))))
+
+; Stable compound keys and absent keys exercise the same bag fold without
+; making the physical equality representation part of the language contract.
+!(length
+   (collapse
+     (match &self (counted-nested (tag 1) $value) $value)))
+!(length
+   (collapse
+     (match &self (counted-nested (tag 9) $value) $value)))
 
 ; The same shape outside COUNT remains fully materialized.
 !(collapse

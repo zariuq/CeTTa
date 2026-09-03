@@ -28,7 +28,10 @@
                   (transactional-publish 6)
                   (transactional-publish 7))))
              (test
-               (if (== (size &shared-transactions) 9)
+               (if (==
+                       (size-atom
+                         (collapse (get-atoms &shared-transactions)))
+                       9)
                    (all-transaction-values-published)
                    false)
                true))))

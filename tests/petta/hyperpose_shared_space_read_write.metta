@@ -8,8 +8,10 @@
    (if (== $n 0)
        true
        (let $snapshot (collapse (get-atoms &shared-read-write))
-            (let $count (count-atoms &shared-read-write)
-                 (let $size (size &shared-read-write)
+            (let $count (size-atom $snapshot)
+                 (let $size
+                      (size-atom
+                        (collapse (get-atoms &shared-read-write)))
                       (shared-read-loop (- $n 1)))))))
 
 (= (run-shared-read-write)
@@ -24,6 +26,9 @@
                   (add-atom &shared-read-write (value 1))
                   (add-atom &shared-read-write (value 2))
                   (add-atom &shared-read-write (value 3)))))
-             (test (size &shared-read-write) 105))))
+             (test
+               (size-atom
+                 (collapse (get-atoms &shared-read-write)))
+               105))))
 
 !(run-shared-read-write)

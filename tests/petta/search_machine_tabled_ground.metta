@@ -1,3 +1,5 @@
+!(import! &self (library lib_tabling))
+
 !(tabled (bagged $x))
 (= (bagged one) same)
 (= (bagged one) same)
@@ -7,16 +9,14 @@
 (= (plain one) same)
 !(collapse (plain one))
 
-!(tabled (terminating-loop $x))
-(= (terminating-loop $x) (terminating-loop $x))
-!(collapse (terminating-loop one))
+!(tabled (terminating_loop $x))
+(= (terminating_loop $x) (terminating_loop $x))
+!(collapse (terminating_loop one))
 
-!(tabled (alpha-bag $x))
-(= (alpha-bag left) one)
-(= (alpha-bag right) two)
+!(tabled (alpha_bag $x))
+(= (alpha_bag left) one)
+(= (alpha_bag right) two)
 (= (alpha-pair)
-   (superpose ((alpha-bag $left)
-               (alpha-bag $right))))
+   (superpose ((alpha_bag $left)
+               (alpha_bag $right))))
 !(collapse (alpha-pair))
-
-!(tabled not-a-call)

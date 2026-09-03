@@ -12,6 +12,9 @@
                   (add-atom &shared-concurrent-add (value 5))
                   (add-atom &shared-concurrent-add (value 6))
                   (add-atom &shared-concurrent-add (value 7)))))
-             (test (size &shared-concurrent-add) 9))))
+             (test
+               (size-atom
+                 (collapse (get-atoms &shared-concurrent-add)))
+               9))))
 
 !(run-shared-concurrent-add)

@@ -151,6 +151,10 @@ struct PettaPlanNode {
     PettaPlanContinuation continuation;
     bool contains_length_call;
     bool contains_call;
+    /* This subtree contains an operator which transports authored child
+     * occurrences across an evaluation stage.  Its positional plan must
+     * therefore remain available until those deferred occurrences run. */
+    bool contains_deferred_occurrence_transport;
     /* Source-plan evidence that this complete subtree consists of
      * plain scalar leaves and admitted scalar operators.  The operation
      * count is exact whenever the evidence is present; runtime leaf values
@@ -403,10 +407,11 @@ bool petta_program_clause_snapshot(
     PettaProgram *program, Space *space, SymbolId head,
     PettaClauseCandidate **candidates, size_t *candidate_count);
 
-/* Borrow a revision-pinned candidate view when the private catalog can own
- * it, otherwise return an owned lease.  This is the zero-copy selection
- * boundary used by the relational machine; ordinary callers should continue
- * to use `petta_program_clause_snapshot` when they need an independent array.
+/* Return a candidate lease selected from the live Space.  A cache entry may
+ * be borrowed when its complete read revision is current; a data-only append
+ * can instead return an owned lease with refreshed occurrence provenance.
+ * Ordinary callers should continue to use `petta_program_clause_snapshot`
+ * when they need an independent array.
  */
 bool petta_program_clause_snapshot_lease_profiled(
     PettaProgram *program, Space *space, SymbolId head,
@@ -414,6 +419,43 @@ bool petta_program_clause_snapshot_lease_profiled(
     PettaClauseSnapshotStats *stats);
 void petta_program_clause_snapshot_lease_release(
     PettaClauseSnapshotLease *lease);
+
+/*
+ * An immutable, revision-bound selection view of the authored equation
+ * program.  Capture acquires an owned lease from the program-space authority:
+ * an exact-key repeat reuses the view, while a changed revision detaches the
+ * cached reference and builds a replacement.  Existing leases remain valid
+ * until released with `petta_program_revision_view_free`.
+ *
+ * Source-owned plans and templates are explicitly erased: alpha-equivalence
+ * supplies no representation map for compiled payloads.  Binding to the
+ * source Space at the captured revision is the identity presentation;
+ * binding to another Space checks the complete ordered equation family.
+ * Both erased payloads and stale projections use the generic target-equation
+ * realization; neither may refuse evaluation.
+ */
+typedef struct PettaProgramRevisionView PettaProgramRevisionView;
+
+typedef struct {
+    const PettaProgramRevisionView *view;
+    SpaceEquationToken target;
+} PettaProgramRevisionProjection;
+
+PettaProgramRevisionView *petta_program_revision_view_capture(
+    PettaProgram *program, Space *source);
+void petta_program_revision_view_free(
+    PettaProgramRevisionView *view);
+bool petta_program_revision_view_bind(
+    const PettaProgramRevisionView *view, Space *target,
+    PettaProgramRevisionProjection *projection);
+bool petta_program_revision_projection_current(
+    const PettaProgramRevisionProjection *projection,
+    const Space *target);
+bool petta_program_revision_view_equation_lease(
+    const PettaProgramRevisionProjection *projection,
+    Space *space, SymbolId head,
+    PettaClauseSnapshotLease *lease,
+    PettaClauseSnapshotStats *stats);
 
 /* Return the declaration-ordered live equation catalog for one Space.  The
  * caller owns only the pointer array; equation atoms remain Space-owned. */

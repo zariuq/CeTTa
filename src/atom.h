@@ -282,6 +282,11 @@ typedef struct {
 void *cetta_malloc(size_t size);
 void *cetta_realloc(void *ptr, size_t size);
 void  arena_init(Arena *a);
+/* Initialize an arena whose allocation identity must not inherit the
+ * calling thread's hash-cons table.  Use this for process-lifetime and
+ * cross-thread owners: an ordinary arena_init deliberately inherits the
+ * current evaluator's table for branch-local sharing. */
+void  arena_init_detached(Arena *a);
 void  arena_free(Arena *a);
 void  arena_reserve(Arena *a, size_t size);
 void  arena_set_hashcons(Arena *a, HashConsTable *hc);

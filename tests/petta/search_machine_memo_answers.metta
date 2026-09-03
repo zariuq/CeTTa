@@ -1,7 +1,4 @@
-!(import_prolog_function
-  (superpose
-    (memoize config-memoize get-memoize-stats
-     clear-memoize-stats)))
+!(import! &self (library lib_memo))
 
 !(memoize choose)
 (= (choose $x) $x)

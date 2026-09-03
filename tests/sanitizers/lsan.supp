@@ -1,0 +1,6 @@
+# Process-lifetime allocations retained by the embedded SWI-Prolog runtime
+# after PL_cleanup.  Keep these at the allocating subsystem boundary: a
+# library-wide suppression would also hide unrelated leaks crossing libswipl.
+leak:assessAddKey
+leak:initVM
+leak:initPrologThreads

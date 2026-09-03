@@ -15,6 +15,10 @@
                   (sloppy-increment)
                   (sloppy-increment)
                   (sloppy-increment))))
-             (test (< 0 (size &shared-sloppy-update)) true))))
+             (test
+               (< 0
+                  (size-atom
+                    (collapse (get-atoms &shared-sloppy-update))))
+               true))))
 
 !(run-shared-sloppy-update)

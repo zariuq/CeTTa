@@ -21,6 +21,7 @@ import petta_corpus_manifest as corpus  # noqa: E402
 from petta_machine_stats import (  # noqa: E402
     aggregate_controller_stats,
     aggregate_invocations,
+    extract_observability,
     extract_machine_and_controller_stats,
 )
 
@@ -32,6 +33,23 @@ DEFAULT_WORKLOADS = (
     "matespacefast.metta",
     "scale.metta",
 )
+
+# These are process-wide receipts that complement the per-invocation machine
+# records.  They are reported, not asserted: another valid realization may
+# account for the same work through different internal objects.
+RUNTIME_RECEIPTS = (
+    "match-decision-compile",
+    "match-decision-run",
+    "petta-match-decision-shape-receipt-attempt",
+    "petta-match-decision-shape-receipt-reuse",
+    "petta-match-decision-shape-receipt-stale",
+    "space-mutation-publish-data-only",
+    "space-equation-revision-bump",
+    "persistent-arena-alloc-bytes",
+    "eval-arena-alloc-bytes",
+)
+
+
 def median_runs(runs: list[dict[str, Any]]) -> dict[str, int | float]:
     keys = sorted(
         set().union(*(run["aggregate"].keys() for run in runs))
@@ -53,6 +71,7 @@ def run_workload(
     entry: dict[str, Any],
     timeout_seconds: float,
     candidate_environment: dict[str, str],
+    emit_runtime_stats: bool,
 ) -> dict[str, Any]:
     source = petta_dir / entry["source"]
     if corpus.sha256_file(source) != entry["source_sha256"]:
@@ -65,9 +84,13 @@ def run_workload(
             del environment[key]
     environment.update(candidate_environment)
     started_ns = time.monotonic_ns()
+    command = [str(cetta)]
+    if emit_runtime_stats:
+        command.append("--emit-runtime-stats")
+    command.extend(("--lang", "petta", str(source)))
     exit_code, stdout, stderr, timed_out, output_limit = (
         corpus.run_bounded_process(
-            [str(cetta), "--lang", "petta", str(source)],
+            command,
             cetta.parent,
             environment,
             None,
@@ -79,9 +102,18 @@ def run_workload(
         raise RuntimeError(f"{entry['name']}: timed out")
     if output_limit:
         raise RuntimeError(f"{entry['name']}: exceeded output limit")
-    invocations, controller_invocations, ordinary_stderr = (
-        extract_machine_and_controller_stats(stderr)
-    )
+    if emit_runtime_stats:
+        invocations, runtime_counters, without_runtime = (
+            extract_observability(stderr)
+        )
+        _, controller_invocations, ordinary_stderr = (
+            extract_machine_and_controller_stats(without_runtime)
+        )
+    else:
+        invocations, controller_invocations, ordinary_stderr = (
+            extract_machine_and_controller_stats(stderr)
+        )
+        runtime_counters = {}
     normalized_stdout = corpus.normalize_cetta_stdout(
         stdout, petta_dir, (cetta.parent,)
     )
@@ -126,6 +158,14 @@ def run_workload(
             for key, value in controller_aggregate.items()
         }
     )
+    runtime_receipts = {
+        name: runtime_counters.get(name, 0)
+        for name in RUNTIME_RECEIPTS
+    }
+    aggregate.update({
+        "runtime_" + name.replace("-", "_"): value
+        for name, value in runtime_receipts.items()
+    })
     return {
         "qualified": True,
         "stdout_contract": stdout_contract,
@@ -134,6 +174,7 @@ def run_workload(
         "process_elapsed_ns": process_elapsed_ns,
         "invocation_stats": invocations,
         "controller_stats": controller_invocations,
+        "runtime_receipts": runtime_receipts,
         "aggregate": aggregate,
     }
 
@@ -219,6 +260,15 @@ def write_summary_tsv(path: Path, results: dict[str, Any]) -> None:
         "controller_max_frontier",
         "controller_max_frontier_shared_bytes",
         "controller_max_frontier_exclusive_bytes",
+        "runtime_match_decision_compile",
+        "runtime_match_decision_run",
+        "runtime_petta_match_decision_shape_receipt_attempt",
+        "runtime_petta_match_decision_shape_receipt_reuse",
+        "runtime_petta_match_decision_shape_receipt_stale",
+        "runtime_space_mutation_publish_data_only",
+        "runtime_space_equation_revision_bump",
+        "runtime_persistent_arena_alloc_bytes",
+        "runtime_eval_arena_alloc_bytes",
     )
     rows = ["\t".join(columns)]
     for name, result in results.items():
@@ -298,7 +348,16 @@ def main() -> int:
         action="store_true",
         help=(
             "interleave each candidate run with the all-contenders-off "
-            "reference on the same binary"
+            "reference configuration; use --baseline-cetta for a separate "
+            "reference binary"
+        ),
+    )
+    parser.add_argument(
+        "--baseline-cetta",
+        type=Path,
+        help=(
+            "optional separately built reference binary for --paired-baseline; "
+            "without it the reference uses the candidate binary"
         ),
     )
     parser.add_argument(
@@ -310,13 +369,33 @@ def main() -> int:
             "the complete corpus inventory"
         ),
     )
+    parser.add_argument(
+        "--runtime-stats",
+        action="store_true",
+        help=(
+            "request process-wide runtime receipts; requires a runtime-stats "
+            "CeTTa binary"
+        ),
+    )
     args = parser.parse_args()
     if args.runs < 1:
         parser.error("--runs must be positive")
+    if args.baseline_cetta and not args.paired_baseline:
+        parser.error("--baseline-cetta requires --paired-baseline")
 
     cetta = args.cetta.resolve()
+    baseline_cetta = (
+        args.baseline_cetta.resolve()
+        if args.baseline_cetta else cetta
+    )
     petta_dir = args.petta_dir.resolve()
     manifest_path = args.manifest.resolve()
+    if not cetta.is_file():
+        raise RuntimeError(f"candidate binary does not exist: {cetta}")
+    if not baseline_cetta.is_file():
+        raise RuntimeError(
+            f"baseline binary does not exist: {baseline_cetta}"
+        )
     if not args.selected_workloads_only:
         corpus.verify_manifest(petta_dir, manifest_path, True)
     manifest = corpus.load_manifest(manifest_path)
@@ -374,11 +453,12 @@ def main() -> int:
                     legs.reverse()
             for label, environment in legs:
                 run = run_workload(
-                    cetta,
+                    baseline_cetta if label == "baseline" else cetta,
                     petta_dir,
                     entries[name],
                     args.timeout,
                     environment,
+                    args.runtime_stats,
                 )
                 if label == "candidate":
                     runs.append(run)
@@ -435,10 +515,16 @@ def main() -> int:
             "CLOCK_MONOTONIC time accumulated inside petta_machine_next; "
             "process elapsed time retained separately"
         ),
+        "runtime_receipts": (
+            list(RUNTIME_RECEIPTS) if args.runtime_stats else []
+        ),
         "results": results,
     }
     if args.paired_baseline:
         document["baseline_environment"] = baseline_environment
+        document["baseline_cetta_binary_sha256"] = corpus.sha256_file(
+            baseline_cetta
+        )
         document["baseline_results"] = baseline_results
     args.out.parent.mkdir(parents=True, exist_ok=True)
     args.out.write_text(

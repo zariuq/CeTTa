@@ -396,6 +396,257 @@ static void assert_exact_match_none(Space *space, Atom *query) {
     assert(matches == NULL);
 }
 
+static void assert_space_mutation_receipts_follow_tokens(
+        bool read_changed, bool equation_projection_changed) {
+    uint64_t data_only = test_counter(
+        CETTA_RUNTIME_COUNTER_SPACE_MUTATION_PUBLISH_DATA_ONLY);
+    uint64_t equation = test_counter(
+        CETTA_RUNTIME_COUNTER_SPACE_MUTATION_PUBLISH_EQUATION);
+    uint64_t opaque = test_counter(
+        CETTA_RUNTIME_COUNTER_SPACE_MUTATION_PUBLISH_OPAQUE);
+    assert(test_counter(CETTA_RUNTIME_COUNTER_SPACE_REVISION_BUMP) ==
+           data_only + equation + opaque);
+    assert(test_counter(
+               CETTA_RUNTIME_COUNTER_SPACE_EQUATION_REVISION_BUMP) ==
+           equation + opaque);
+    assert((data_only + equation + opaque != 0u) == read_changed);
+    assert((equation + opaque != 0u) == equation_projection_changed);
+}
+
+static void test_space_equation_projection_tokens(void) {
+    Arena persistent;
+    Arena scratch;
+    TermUniverse universe;
+    Space ordered;
+
+    arena_init(&persistent);
+    arena_set_runtime_kind(
+        &persistent, CETTA_ARENA_RUNTIME_KIND_PERSISTENT);
+    arena_init(&scratch);
+    term_universe_init(&universe);
+    term_universe_set_persistent_arena(&universe, &persistent);
+    space_init_with_universe(&ordered, &universe);
+    ordered.kind = SPACE_KIND_STACK;
+
+    SymbolId exact_head = symbol_intern_cstr(
+        g_symbols, "equation-token-exact");
+    Atom *exact_lhs_elems[1] = {
+        atom_symbol_id(&scratch, exact_head),
+    };
+    Atom *exact_lhs = atom_expr(&scratch, exact_lhs_elems, 1u);
+    Atom *exact_equation = atom_expr3(
+        &scratch,
+        atom_symbol_id(&scratch, g_builtin_syms.equals),
+        exact_lhs, atom_int(&scratch, 1));
+    Atom *wildcard_equation = atom_expr3(
+        &scratch,
+        atom_symbol_id(&scratch, g_builtin_syms.equals),
+        atom_var_with_id(&scratch, "equation-token-head", 9001u),
+        atom_int(&scratch, 2));
+    Atom *data = atom_symbol(&scratch, "equation-token-data");
+
+    SpaceReadToken initial_read = space_read_token(&ordered);
+    SpaceEquationToken initial_equations = space_equation_token(&ordered);
+    reset_test_counters();
+    space_add(&ordered, data);
+    bool data_read_changed =
+        !space_read_token_matches_live_space(initial_read, &ordered);
+    bool data_equation_changed = !space_equation_token_matches_live_space(
+        initial_equations, &ordered);
+    assert(data_read_changed);
+    assert(!data_equation_changed);
+    assert_space_mutation_receipts_follow_tokens(
+        data_read_changed, data_equation_changed);
+
+    SpaceEquationToken before_exact = space_equation_token(&ordered);
+    SpaceReadToken before_exact_read = space_read_token(&ordered);
+    reset_test_counters();
+    space_add(&ordered, exact_equation);
+    bool exact_read_changed =
+        !space_read_token_matches_live_space(before_exact_read, &ordered);
+    bool exact_equation_changed = !space_equation_token_matches_live_space(
+        before_exact, &ordered);
+    assert(exact_read_changed);
+    assert(exact_equation_changed);
+    assert_space_mutation_receipts_follow_tokens(
+        exact_read_changed, exact_equation_changed);
+
+    SpaceEquationToken before_wildcard = space_equation_token(&ordered);
+    space_add(&ordered, wildcard_equation);
+    assert(!space_equation_token_matches_live_space(
+        before_wildcard, &ordered));
+
+    SpaceEquationToken before_data_remove = space_equation_token(&ordered);
+    assert(space_remove(&ordered, data));
+    assert(space_equation_token_matches_live_space(
+        before_data_remove, &ordered));
+
+    SpaceEquationToken before_equation_remove =
+        space_equation_token(&ordered);
+    assert(space_remove(&ordered, exact_equation));
+    assert(!space_equation_token_matches_live_space(
+        before_equation_remove, &ordered));
+    space_free(&ordered);
+
+    /* Negative canary: an unordered removal may swap a tail equation ahead
+       of another equation even when the removed occurrence is data. */
+    Space unordered;
+    space_init_with_universe(&unordered, &universe);
+    space_add(&unordered, data);
+    space_add(&unordered, exact_equation);
+    space_add(&unordered, wildcard_equation);
+    SpaceEquationToken before_tail_transport =
+        space_equation_token(&unordered);
+    assert(space_remove(&unordered, data));
+    assert(!space_equation_token_matches_live_space(
+        before_tail_transport, &unordered));
+    space_free(&unordered);
+
+    /* Stable contraction and truncation preserve the key exactly when their
+       removed occurrence family contains data only. */
+    Space contracted;
+    space_init_with_universe(&contracted, &universe);
+    contracted.kind = SPACE_KIND_STACK;
+    space_add(&contracted, atom_symbol(&scratch, "contract-left-data"));
+    space_add(&contracted, exact_equation);
+    space_add(&contracted, atom_symbol(&scratch, "contract-right-data"));
+    SpaceEquationToken before_data_contraction =
+        space_equation_token(&contracted);
+    uint8_t remove_data_mask[3] = {1u, 0u, 1u};
+    CettaCount removed = 0u;
+    assert(space_remove_occurrence_mask_stable(
+        &contracted, remove_data_mask, 3u, &removed));
+    assert(removed == 2u);
+    assert(space_equation_token_matches_live_space(
+        before_data_contraction, &contracted));
+    SpaceEquationToken before_equation_contraction =
+        space_equation_token(&contracted);
+    uint8_t remove_equation_mask[1] = {1u};
+    assert(space_remove_occurrence_mask_stable(
+        &contracted, remove_equation_mask, 1u, &removed));
+    assert(removed == 1u);
+    assert(!space_equation_token_matches_live_space(
+        before_equation_contraction, &contracted));
+    space_free(&contracted);
+
+    Space truncated;
+    space_init_with_universe(&truncated, &universe);
+    truncated.kind = SPACE_KIND_STACK;
+    space_add(&truncated, exact_equation);
+    space_add(&truncated, atom_symbol(&scratch, "truncate-data-a"));
+    space_add(&truncated, atom_symbol(&scratch, "truncate-data-b"));
+    SpaceEquationToken before_data_truncate =
+        space_equation_token(&truncated);
+    assert(space_truncate64(&truncated, 1u));
+    assert(space_equation_token_matches_live_space(
+        before_data_truncate, &truncated));
+    space_add(&truncated, atom_symbol(&scratch, "truncate-data-c"));
+    space_add(&truncated, wildcard_equation);
+    SpaceEquationToken before_equation_truncate =
+        space_equation_token(&truncated);
+    assert(space_truncate64(&truncated, 1u));
+    assert(!space_equation_token_matches_live_space(
+        before_equation_truncate, &truncated));
+    space_free(&truncated);
+
+    /* An overlay has two authorities: its local publication coordinate and
+       the live base prefix on which it depends.  Append-only data edits in
+       either place retain the equation token, and an unrelated Space cannot
+       invalidate it.  A destructive base edit rejects both direct and nested
+       overlays even though neither overlay's own revision moves. */
+    Space overlay_base;
+    Space overlay;
+    Space nested_overlay;
+    Space unrelated;
+    space_init_with_universe(&overlay_base, &universe);
+    overlay_base.kind = SPACE_KIND_STACK;
+    space_add(&overlay_base, exact_equation);
+    space_add(&overlay_base, data);
+    space_init_overlay(&overlay, &overlay_base);
+    space_init_overlay(&nested_overlay, &overlay);
+    space_init_with_universe(&unrelated, &universe);
+    unrelated.kind = SPACE_KIND_STACK;
+    SpaceEquationToken overlay_equations = space_equation_token(&overlay);
+    SpaceEquationToken nested_equations =
+        space_equation_token(&nested_overlay);
+    space_add(&overlay, atom_symbol(&scratch, "overlay-local-data"));
+    space_add(&overlay_base, atom_symbol(&scratch, "overlay-base-data"));
+    space_add(&unrelated, wildcard_equation);
+    assert(space_remove(&unrelated, wildcard_equation));
+    assert(space_equation_token_matches_live_space(
+        overlay_equations, &overlay));
+    assert(space_equation_token_matches_live_space(
+        nested_equations, &nested_overlay));
+    uint64_t overlay_revision = space_revision(&overlay);
+    uint64_t nested_revision = space_revision(&nested_overlay);
+    assert(space_remove(&overlay_base, exact_equation));
+    assert(space_revision(&overlay) == overlay_revision);
+    assert(space_revision(&nested_overlay) == nested_revision);
+    assert(!space_equation_token_matches_live_space(
+        overlay_equations, &overlay));
+    assert(!space_equation_token_matches_live_space(
+        nested_equations, &nested_overlay));
+    space_free(&unrelated);
+    space_free(&nested_overlay);
+    space_free(&overlay);
+    space_free(&overlay_base);
+
+    /* A backend transition without a projection receipt must decline to
+       classify and invalidate conservatively. */
+    Space external;
+    space_init_with_universe(&external, &universe);
+    space_add(&external, data);
+    SpaceEquationToken before_external = space_equation_token(&external);
+    SpaceReadToken before_external_read = space_read_token(&external);
+    reset_test_counters();
+    space_note_external_backend_mutation(&external);
+    bool external_read_changed = !space_read_token_matches_live_space(
+        before_external_read, &external);
+    bool external_equation_changed = !space_equation_token_matches_live_space(
+        before_external, &external);
+    assert(external_read_changed);
+    assert(external_equation_changed);
+    assert_space_mutation_receipts_follow_tokens(
+        external_read_changed, external_equation_changed);
+    space_free(&external);
+
+    /* Opaque replacement must conservatively reject an old token even when
+       both concrete states happen to contain data only. */
+    Space replacement_target;
+    Space replacement_source;
+    space_init_with_universe(&replacement_target, &universe);
+    space_init_with_universe(&replacement_source, &universe);
+    space_add(&replacement_target, atom_int(&scratch, 10));
+    space_add(&replacement_source, atom_int(&scratch, 11));
+    SpaceEquationToken before_opaque =
+        space_equation_token(&replacement_target);
+    SpaceReadToken before_opaque_read =
+        space_read_token(&replacement_target);
+    reset_test_counters();
+    space_replace_contents(&replacement_target, &replacement_source);
+    bool opaque_read_changed = !space_read_token_matches_live_space(
+        before_opaque_read, &replacement_target);
+    bool opaque_equation_changed = !space_equation_token_matches_live_space(
+        before_opaque, &replacement_target);
+    assert(opaque_read_changed);
+    assert(opaque_equation_changed);
+    assert_space_mutation_receipts_follow_tokens(
+        opaque_read_changed, opaque_equation_changed);
+
+    SpaceEquationToken old_lifetime =
+        space_equation_token(&replacement_target);
+    space_free(&replacement_target);
+    space_init_with_universe(&replacement_target, &universe);
+    assert(!space_equation_token_matches_live_space(
+        old_lifetime, &replacement_target));
+    space_free(&replacement_target);
+    space_free(&replacement_source);
+    term_universe_free(&universe);
+    arena_free(&scratch);
+    arena_free(&persistent);
+    puts("PASS: equation-projection tokens preserve data-only reuse and reject changed, opaque, transported, and stale lifetimes");
+}
+
 int main(void) {
     SymbolTable symbols;
     Arena persistent;
@@ -409,6 +660,7 @@ int main(void) {
     Space right;
 
     init_test_symbols(&symbols);
+    test_space_equation_projection_tokens();
 
     {
         Arena equation_persistent;

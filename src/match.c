@@ -1694,6 +1694,65 @@ bool bindings_clone(Bindings *dst, const Bindings *src) {
     return true;
 }
 
+bool bindings_transport_logical(Bindings *dst, const Bindings *src,
+                                BindingsAtomTransportFn transport,
+                                void *context) {
+    if (!dst || !src || dst == src)
+        return false;
+
+    bindings_init(dst);
+    if (!transport || bindings_prime_present(src))
+        return false;
+    if (src->len > 0u && !bindings_reserve_entries(dst, src->len))
+        return false;
+    if (src->eq_len > 0u &&
+        !bindings_reserve_constraints(dst, src->eq_len)) {
+        bindings_free(dst);
+        return false;
+    }
+
+    for (uint32_t i = 0u; i < src->len; i++) {
+        const Binding *source = &src->entries[i];
+        Binding target = *source;
+        if (source->name_key) {
+            target.name_key = transport(context, source->name_key);
+            if (!target.name_key)
+                goto fail;
+        }
+        target.val = transport(context, source->val);
+        if (!target.val)
+            goto fail;
+        dst->entries[dst->len++] = target;
+        bindings_rhs_variable_bloom_add(dst, target.val);
+        if (target.legacy_name_fallback)
+            dst->legacy_fallback_count++;
+        if (binding_contains_private_variant_slot(&target))
+            dst->private_entry_count++;
+    }
+
+    for (uint32_t i = 0u; i < src->eq_len; i++) {
+        BindingConstraint target = {
+            .lhs = transport(context, src->constraints[i].lhs),
+            .rhs = transport(context, src->constraints[i].rhs),
+        };
+        if (!target.lhs || !target.rhs)
+            goto fail;
+        dst->constraints[dst->eq_len++] = target;
+        if (constraint_contains_private_variant_slot(&target))
+            dst->private_constraint_count++;
+    }
+
+    dst->cycle_state =
+        src->cycle_state == BINDINGS_CYCLE_ACYCLIC
+            ? BINDINGS_CYCLE_ACYCLIC
+            : BINDINGS_CYCLE_UNKNOWN;
+    return true;
+
+fail:
+    bindings_free(dst);
+    return false;
+}
+
 static bool binding_prefix_item_equal(const Binding *left,
                                       const Binding *right) {
     if (!left || !right ||

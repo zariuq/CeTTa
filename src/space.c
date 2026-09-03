@@ -21,6 +21,7 @@ static _Thread_local uint64_t
     g_space_match_backend_contextual_query_slot_limit_override = 0;
 static _Thread_local CettaCount g_query_results_capacity_limit_override = 0;
 static _Atomic uint64_t g_space_next_instance_id = 1u;
+static _Atomic uint64_t g_space_next_prefix_epoch = 1u;
 static _Atomic uint64_t g_space_global_mutation_epoch = 0u;
 
 static _Thread_local bool g_declared_type_index_configured = false;
@@ -59,6 +60,10 @@ static bool stable_occurrence_transport_enabled(void) {
     return g_stable_occurrence_transport_enabled;
 }
 
+#ifndef CETTA_DISC_INT_HASH_REFERENCE
+#define CETTA_DISC_INT_HASH_REFERENCE 0
+#endif
+
 static uint64_t space_fresh_instance_id(void) {
     uint64_t id = atomic_fetch_add_explicit(
         &g_space_next_instance_id, 1u, memory_order_relaxed);
@@ -67,6 +72,17 @@ static uint64_t space_fresh_instance_id(void) {
         abort();
     }
     return id;
+}
+
+static uint64_t space_fresh_prefix_epoch(void) {
+    uint64_t epoch = atomic_fetch_add_explicit(
+        &g_space_next_prefix_epoch, 1u, memory_order_relaxed);
+    if (epoch == 0u || epoch == UINT64_MAX) {
+        fputs("CeTTa: exhausted process-local Space prefix epochs\n",
+              stderr);
+        abort();
+    }
+    return epoch;
 }
 
 static uint64_t space_match_backend_atom_id_materialization_limit(void) {
@@ -185,8 +201,18 @@ void disc_node_free(DiscNode *n) {
     disc_node_free(n->var_child);
     for (uint32_t i = 0; i < n->nexpr; i++) disc_node_free(n->expr[i].child);
     free(n->expr);
-    for (uint32_t i = 0; i < n->nints; i++) disc_node_free(n->ints[i].child);
-    free(n->ints);
+    if (n->ints_hashed) {
+        uint32_t cap = n->int_ht.mask + 1u;
+        for (uint32_t i = 0u; i < cap; i++) {
+            if (n->int_ht.entries[i].child)
+                disc_node_free(n->int_ht.entries[i].child);
+        }
+        free(n->int_ht.entries);
+    } else {
+        for (uint32_t i = 0u; i < n->nints; i++)
+            disc_node_free(n->ints[i].child);
+        free(n->ints);
+    }
     free(n->leaves);
     free(n);
 }
@@ -236,9 +262,20 @@ static CettaCount disc_node_transport_stable_coordinates(
         removed += disc_node_transport_stable_coordinates(
             node->expr[i].child, source_to_target, source_len);
     }
-    for (uint32_t i = 0u; i < node->nints; i++) {
-        removed += disc_node_transport_stable_coordinates(
-            node->ints[i].child, source_to_target, source_len);
+    if (node->ints_hashed) {
+        uint32_t cap = node->int_ht.mask + 1u;
+        for (uint32_t i = 0u; i < cap; i++) {
+            if (node->int_ht.entries[i].child) {
+                removed += disc_node_transport_stable_coordinates(
+                    node->int_ht.entries[i].child, source_to_target,
+                    source_len);
+            }
+        }
+    } else {
+        for (uint32_t i = 0u; i < node->nints; i++) {
+            removed += disc_node_transport_stable_coordinates(
+                node->ints[i].child, source_to_target, source_len);
+        }
     }
     return removed;
 }
@@ -365,17 +402,103 @@ static DiscNode *disc_get_expr(DiscNode *n, CettaExprLen arity) {
     return child;
 }
 
+static inline uint32_t disc_int_hash(int64_t key) {
+    uint64_t mixed = (uint64_t)key;
+    mixed ^= mixed >> 30u;
+    mixed *= UINT64_C(0xbf58476d1ce4e5b9);
+    mixed ^= mixed >> 27u;
+    mixed *= UINT64_C(0x94d049bb133111eb);
+    mixed ^= mixed >> 31u;
+    return (uint32_t)(mixed ^ (mixed >> 32u));
+}
+
+static void disc_int_ht_init(DiscIntHashTable *ht, uint32_t min_cap) {
+    uint32_t cap = 32u;
+    while (cap < min_cap * 2u)
+        cap *= 2u;
+    ht->entries = cetta_malloc(sizeof(*ht->entries) * (size_t)cap);
+    memset(ht->entries, 0, sizeof(*ht->entries) * (size_t)cap);
+    ht->mask = cap - 1u;
+    ht->count = 0u;
+}
+
+static DiscNode *disc_int_ht_get(
+        const DiscIntHashTable *ht, int64_t key) {
+    uint32_t index = disc_int_hash(key) & ht->mask;
+    for (;;) {
+        const DiscIntBranch *entry = &ht->entries[index];
+        if (!entry->child)
+            return NULL;
+        if (entry->key == key)
+            return entry->child;
+        index = (index + 1u) & ht->mask;
+    }
+}
+
+static void disc_int_ht_put(
+        DiscIntHashTable *ht, int64_t key, DiscNode *child) {
+    if (ht->count * 10u > (ht->mask + 1u) * 7u) {
+        uint32_t old_cap = ht->mask + 1u;
+        DiscIntBranch *old = ht->entries;
+        uint32_t new_cap = old_cap * 2u;
+        ht->entries = cetta_malloc(
+            sizeof(*ht->entries) * (size_t)new_cap);
+        memset(ht->entries, 0,
+               sizeof(*ht->entries) * (size_t)new_cap);
+        ht->mask = new_cap - 1u;
+        ht->count = 0u;
+        for (uint32_t i = 0u; i < old_cap; i++) {
+            if (old[i].child)
+                disc_int_ht_put(ht, old[i].key, old[i].child);
+        }
+        free(old);
+    }
+    uint32_t index = disc_int_hash(key) & ht->mask;
+    while (ht->entries[index].child)
+        index = (index + 1u) & ht->mask;
+    ht->entries[index] = (DiscIntBranch){
+        .key = key,
+        .child = child,
+    };
+    ht->count++;
+}
+
+static void disc_int_promote(DiscNode *node) {
+    DiscIntBranch *old = node->ints;
+    uint32_t count = node->nints;
+    disc_int_ht_init(&node->int_ht, count + 16u);
+    for (uint32_t i = 0u; i < count; i++)
+        disc_int_ht_put(&node->int_ht, old[i].key, old[i].child);
+    free(old);
+    node->ints = NULL;
+    node->cints = 0u;
+    node->ints_hashed = true;
+}
+
 static DiscNode *disc_get_int(DiscNode *n, int64_t val) {
+    if (n->ints_hashed) {
+        DiscNode *existing = disc_int_ht_get(&n->int_ht, val);
+        if (existing)
+            return existing;
+        DiscNode *child = disc_node_new();
+        disc_int_ht_put(&n->int_ht, val, child);
+        n->nints++;
+        return child;
+    }
     for (uint32_t i = 0; i < n->nints; i++)
-        if (n->ints[i].val == val) return n->ints[i].child;
+        if (n->ints[i].key == val) return n->ints[i].child;
     if (n->nints >= n->cints) {
         n->cints = n->cints ? n->cints * 2 : 4;
         n->ints = cetta_realloc(n->ints, sizeof(n->ints[0]) * n->cints);
     }
     DiscNode *child = disc_node_new();
-    n->ints[n->nints].val = val;
+    n->ints[n->nints].key = val;
     n->ints[n->nints].child = child;
     n->nints++;
+    if (n->nints > DISC_HASH_THRESHOLD &&
+        !CETTA_DISC_INT_HASH_REFERENCE) {
+        disc_int_promote(n);
+    }
     return child;
 }
 
@@ -494,8 +617,16 @@ static void disc_skip_term(DiscNode *node, DiscNodeSet *next) {
     /* Variable branches: one trie step */
     dns_push(next, node->var_child);
     /* Int branches: one trie step */
-    for (uint32_t i = 0; i < node->nints; i++)
-        dns_push(next, node->ints[i].child);
+    if (node->ints_hashed) {
+        uint32_t cap = node->int_ht.mask + 1u;
+        for (uint32_t i = 0u; i < cap; i++) {
+            if (node->int_ht.entries[i].child)
+                dns_push(next, node->int_ht.entries[i].child);
+        }
+    } else {
+        for (uint32_t i = 0u; i < node->nints; i++)
+            dns_push(next, node->ints[i].child);
+    }
     /* Expression branches: arity tag + arity sub-terms (depth-first) */
     for (uint32_t i = 0; i < node->nexpr; i++) {
         DiscNodeSet cur;
@@ -541,9 +672,15 @@ static void disc_step(DiscNode *node, Atom *q, DiscNodeSet *next) {
 
     case ATOM_GROUNDED:
         if (q->ground.gkind == GV_INT) {
-            for (uint32_t i = 0; i < node->nints; i++)
-                if (node->ints[i].val == q->ground.ival)
-                    dns_push(next, node->ints[i].child);
+            if (node->ints_hashed) {
+                dns_push(next, disc_int_ht_get(
+                    &node->int_ht, q->ground.ival));
+            } else {
+                for (uint32_t i = 0u; i < node->nints; i++) {
+                    if (node->ints[i].key == q->ground.ival)
+                        dns_push(next, node->ints[i].child);
+                }
+            }
         }
         /* A variable in the indexed LHS matches any grounded value */
         dns_push(next, node->var_child);
@@ -1431,8 +1568,26 @@ static bool space_has_overlay_base(const Space *s) {
     return s && s->overlay_base;
 }
 
+typedef enum {
+    SPACE_MUTATION_EQUATION_PROJECTION_DATA_ONLY = 0,
+    SPACE_MUTATION_EQUATION_PROJECTION_RELEVANT,
+    SPACE_MUTATION_EQUATION_PROJECTION_OPAQUE,
+} SpaceMutationEquationProjection;
+
+typedef enum {
+    SPACE_MUTATION_PREFIX_APPEND_ONLY = 0,
+    SPACE_MUTATION_PREFIX_REWRITTEN,
+} SpaceMutationPrefixEffect;
+
 static void space_mark_indexes_dirty(Space *s);
-static void space_bump_revision(Space *s);
+static void space_publish_mutation(
+    Space *s, SpaceMutationEquationProjection equation_projection,
+    SpaceMutationPrefixEffect prefix_effect);
+static void space_replace_contents_classified(
+    Space *dst, Space *src,
+    SpaceMutationEquationProjection equation_projection);
+static SpaceMutationEquationProjection
+space_local_removal_equation_projection(const Space *s, CettaIndex raw_idx);
 
 static CettaCount space_local_length64(const Space *s) {
     return s ? (CettaCount)space_match_backend_logical_len64(s) : 0;
@@ -1586,6 +1741,8 @@ static bool space_overlay_remove_local_raw_index(Space *s, CettaIndex raw_idx) {
         space_linearize(s);
     if (raw_idx >= s->native.len)
         return false;
+    SpaceMutationEquationProjection equation_projection =
+        space_local_removal_equation_projection(s, raw_idx);
     if (space_is_ordered(s)) {
         size_t width = space_atom_id_width_bytes_bits(s->native.atom_id_width_bits);
         memmove(s->native.atom_ids + ((size_t)raw_idx * width),
@@ -1601,7 +1758,8 @@ static bool space_overlay_remove_local_raw_index(Space *s, CettaIndex raw_idx) {
     }
     space_mark_indexes_dirty(s);
     space_match_backend_note_remove(s);
-    space_bump_revision(s);
+    space_publish_mutation(
+        s, equation_projection, SPACE_MUTATION_PREFIX_REWRITTEN);
     return true;
 }
 
@@ -1772,6 +1930,81 @@ static bool space_atom_id_form_is(const Space *s, AtomId atom_id,
     return space_atom_form_is(atom, head, arity);
 }
 
+static SpaceMutationEquationProjection
+space_atom_equation_projection(const Space *s, AtomId atom_id, Atom *atom) {
+    if (s && s->native.universe && atom_id != CETTA_ATOM_ID_NONE) {
+        const CettaTermHdr *header = tu_hdr(s->native.universe, atom_id);
+        if (header) {
+            return tu_kind(s->native.universe, atom_id) == ATOM_EXPR &&
+                    tu_arity(s->native.universe, atom_id) == 3u &&
+                    tu_head_sym(s->native.universe, atom_id) ==
+                        g_builtin_syms.equals
+                ? SPACE_MUTATION_EQUATION_PROJECTION_RELEVANT
+                : SPACE_MUTATION_EQUATION_PROJECTION_DATA_ONLY;
+        }
+        if (!atom)
+            atom = term_universe_get_atom(s->native.universe, atom_id);
+    }
+    if (atom) {
+        return space_atom_form_is(atom, g_builtin_syms.equals, 3u)
+            ? SPACE_MUTATION_EQUATION_PROJECTION_RELEVANT
+            : SPACE_MUTATION_EQUATION_PROJECTION_DATA_ONLY;
+    }
+    return SPACE_MUTATION_EQUATION_PROJECTION_OPAQUE;
+}
+
+static SpaceMutationEquationProjection space_merge_equation_projection(
+        SpaceMutationEquationProjection left,
+        SpaceMutationEquationProjection right) {
+    if (left == SPACE_MUTATION_EQUATION_PROJECTION_RELEVANT ||
+        right == SPACE_MUTATION_EQUATION_PROJECTION_RELEVANT) {
+        return SPACE_MUTATION_EQUATION_PROJECTION_RELEVANT;
+    }
+    if (left == SPACE_MUTATION_EQUATION_PROJECTION_OPAQUE ||
+        right == SPACE_MUTATION_EQUATION_PROJECTION_OPAQUE) {
+        return SPACE_MUTATION_EQUATION_PROJECTION_OPAQUE;
+    }
+    return SPACE_MUTATION_EQUATION_PROJECTION_DATA_ONLY;
+}
+
+static SpaceMutationEquationProjection
+space_local_removal_equation_projection(const Space *s, CettaIndex raw_idx) {
+    if (!s || raw_idx >= s->native.len)
+        return SPACE_MUTATION_EQUATION_PROJECTION_OPAQUE;
+    AtomId removed_id = space_local_get_atom_id_at64(s, raw_idx);
+    Atom *removed_atom = space_local_get_at64(s, raw_idx);
+    SpaceMutationEquationProjection result =
+        space_atom_equation_projection(s, removed_id, removed_atom);
+    if (!space_is_ordered(s) && raw_idx + 1u < s->native.len) {
+        CettaIndex tail = s->native.len - 1u;
+        result = space_merge_equation_projection(
+            result,
+            space_atom_equation_projection(
+                s, space_local_get_atom_id_at64(s, tail),
+                space_local_get_at64(s, tail)));
+    }
+    return result;
+}
+
+static SpaceMutationEquationProjection
+space_logical_removed_range_equation_projection(
+        const Space *s, CettaIndex begin, CettaCount end) {
+    if (!s || begin > end || end > space_length64(s))
+        return SPACE_MUTATION_EQUATION_PROJECTION_OPAQUE;
+    SpaceMutationEquationProjection result =
+        SPACE_MUTATION_EQUATION_PROJECTION_DATA_ONLY;
+    for (CettaIndex index = begin; index < end; index++) {
+        result = space_merge_equation_projection(
+            result,
+            space_atom_equation_projection(
+                s, space_get_atom_id_at64(s, index),
+                space_get_at64(s, index)));
+        if (result == SPACE_MUTATION_EQUATION_PROJECTION_RELEVANT)
+            break;
+    }
+    return result;
+}
+
 bool space_atom_id_requires_authored_order(const Space *s,
                                            AtomId atom_id,
                                            Atom *atom) {
@@ -1853,7 +2086,9 @@ static bool space_store_via_backend_primary(Space *s, AtomId atom_id,
             had_non_exact_atom || !atom_exact_indexable;
         s->native.has_non_exact_atoms_dirty = false;
     }
-    space_bump_revision(s);
+    space_publish_mutation(
+        s, space_atom_equation_projection(s, atom_id, atom),
+        SPACE_MUTATION_PREFIX_REWRITTEN);
     return true;
 }
 
@@ -1898,7 +2133,10 @@ static bool space_store_atom_via_backend_primary(
             had_non_exact_atom || !atom_exact_indexable;
         s->native.has_non_exact_atoms_dirty = false;
     }
-    space_bump_revision(s);
+    space_publish_mutation(
+        s, space_atom_equation_projection(
+               s, CETTA_ATOM_ID_NONE, atom),
+        SPACE_MUTATION_PREFIX_REWRITTEN);
     return true;
 }
 
@@ -1922,7 +2160,9 @@ static bool space_remove_via_backend_primary(Space *s, AtomId atom_id) {
         s->native.has_non_exact_atoms_dirty =
             had_non_exact_atom && !atom_exact_indexable;
     }
-    space_bump_revision(s);
+    space_publish_mutation(
+        s, space_atom_equation_projection(s, atom_id, NULL),
+        SPACE_MUTATION_PREFIX_REWRITTEN);
     return true;
 }
 
@@ -1947,17 +2187,27 @@ static bool space_remove_atom_via_backend_primary(Space *s, Atom *atom) {
         s->native.has_non_exact_atoms_dirty =
             had_non_exact_atom && !atom_exact_indexable;
     }
-    space_bump_revision(s);
+    space_publish_mutation(
+        s, space_atom_equation_projection(
+               s, CETTA_ATOM_ID_NONE, atom),
+        SPACE_MUTATION_PREFIX_REWRITTEN);
     return true;
 }
 
 static bool space_truncate_via_backend_primary64(Space *s, CettaCount new_len) {
     if (!s)
         return false;
+    CettaCount old_len = space_length64(s);
+    if (new_len > old_len)
+        return false;
+    SpaceMutationEquationProjection equation_projection =
+        space_logical_removed_range_equation_projection(
+            s, new_len, old_len);
     if (!space_match_backend_truncate_direct64(s, new_len))
         return false;
     space_mark_indexes_dirty(s);
-    space_bump_revision(s);
+    space_publish_mutation(
+        s, equation_projection, SPACE_MUTATION_PREFIX_REWRITTEN);
     return true;
 }
 
@@ -2082,6 +2332,8 @@ static void space_reset_moved_from(Space *s) {
        universe observer keeps AtomId storage width synchronized. */
     s->instance_id = space_fresh_instance_id();
     s->revision = 0;
+    s->equation_revision = 0;
+    s->prefix_epoch = space_fresh_prefix_epoch();
     space_native_storage_init_empty(s, space_default_universe());
     space_match_backend_init(s);
     space_attach_to_universe(s, s->native.universe);
@@ -2098,6 +2350,8 @@ void space_init_with_universe(Space *s, TermUniverse *universe) {
     space_native_storage_init_empty(s, universe);
     s->instance_id = space_fresh_instance_id();
     s->revision = 0;
+    s->equation_revision = 0;
+    s->prefix_epoch = space_fresh_prefix_epoch();
     space_match_backend_init(s);
     space_attach_to_universe(s, s->native.universe);
     s->payload_owner_epoch = 0;
@@ -2135,6 +2389,8 @@ void space_free(Space *s) {
     s->native.universe = space_default_universe();
     s->instance_id = 0;
     s->revision = 0;
+    s->equation_revision = 0;
+    s->prefix_epoch = 0;
     eq_index_free(&s->native.eq_idx);
     ty_ann_index_free(&s->native.ty_idx);
     exact_index_free(&s->native.exact_idx);
@@ -2188,6 +2444,60 @@ bool space_read_token_matches_live_space(SpaceReadToken token,
            token.instance_id != 0u &&
            token.instance_id == space_instance_id(live_space) &&
            token.revision == space_revision(live_space);
+}
+
+static uint64_t space_projection_dependency_epoch(const Space *s) {
+    const Space *slow = s ? s->overlay_base : NULL;
+    const Space *fast = slow;
+    while (fast && fast->overlay_base) {
+        slow = slow->overlay_base;
+        fast = fast->overlay_base->overlay_base;
+        if (slow == fast)
+            return UINT64_MAX;
+    }
+
+    uint64_t latest = 0u;
+    for (const Space *dependency = s ? s->overlay_base : NULL;
+         dependency; dependency = dependency->overlay_base) {
+        if (dependency->prefix_epoch > latest)
+            latest = dependency->prefix_epoch;
+    }
+    return latest;
+}
+
+SpaceEquationToken space_equation_token(const Space *s) {
+    return (SpaceEquationToken){
+        .space = s,
+        .instance_id = space_instance_id(s),
+        .equation_revision = space_equation_revision(s),
+        .projection_dependency = s ? s->overlay_base : NULL,
+        .projection_dependency_epoch =
+            space_projection_dependency_epoch(s),
+    };
+}
+
+bool space_equation_token_is_current(SpaceEquationToken token) {
+    return token.space && token.instance_id != 0u &&
+           token.instance_id == space_instance_id(token.space) &&
+           token.equation_revision ==
+               space_equation_revision(token.space) &&
+           token.projection_dependency == token.space->overlay_base &&
+           token.projection_dependency_epoch != UINT64_MAX &&
+           token.projection_dependency_epoch ==
+               space_projection_dependency_epoch(token.space);
+}
+
+bool space_equation_token_matches_live_space(
+        SpaceEquationToken token, const Space *live_space) {
+    return live_space && token.space == live_space &&
+           token.instance_id != 0u &&
+           token.instance_id == space_instance_id(live_space) &&
+           token.equation_revision ==
+               space_equation_revision(live_space) &&
+           token.projection_dependency == live_space->overlay_base &&
+           token.projection_dependency_epoch != UINT64_MAX &&
+           token.projection_dependency_epoch ==
+               space_projection_dependency_epoch(live_space);
 }
 
 static AtomId space_indexed_occurrence_atom_id(
@@ -3133,7 +3443,9 @@ uint64_t space_global_mutation_epoch(void) {
                                 memory_order_relaxed);
 }
 
-static void space_bump_revision(Space *s) {
+static void space_publish_mutation(
+        Space *s, SpaceMutationEquationProjection equation_projection,
+        SpaceMutationPrefixEffect prefix_effect) {
     if (!s)
         return;
     space_execution_analysis_note_mutation(s);
@@ -3142,6 +3454,37 @@ static void space_bump_revision(Space *s) {
         abort();
     }
     s->revision++;
+    if (prefix_effect == SPACE_MUTATION_PREFIX_REWRITTEN) {
+        s->prefix_epoch = space_fresh_prefix_epoch();
+    } else if (prefix_effect != SPACE_MUTATION_PREFIX_APPEND_ONLY) {
+        abort();
+    }
+    switch (equation_projection) {
+    case SPACE_MUTATION_EQUATION_PROJECTION_DATA_ONLY:
+        cetta_runtime_stats_inc(
+            CETTA_RUNTIME_COUNTER_SPACE_MUTATION_PUBLISH_DATA_ONLY);
+        break;
+    case SPACE_MUTATION_EQUATION_PROJECTION_RELEVANT:
+        cetta_runtime_stats_inc(
+            CETTA_RUNTIME_COUNTER_SPACE_MUTATION_PUBLISH_EQUATION);
+        break;
+    case SPACE_MUTATION_EQUATION_PROJECTION_OPAQUE:
+        cetta_runtime_stats_inc(
+            CETTA_RUNTIME_COUNTER_SPACE_MUTATION_PUBLISH_OPAQUE);
+        break;
+    default:
+        abort();
+    }
+    if (equation_projection !=
+            SPACE_MUTATION_EQUATION_PROJECTION_DATA_ONLY) {
+        if (s->equation_revision == UINT64_MAX) {
+            fputs("CeTTa: exhausted Space equation revision counter\n", stderr);
+            abort();
+        }
+        s->equation_revision++;
+        cetta_runtime_stats_inc(
+            CETTA_RUNTIME_COUNTER_SPACE_EQUATION_REVISION_BUMP);
+    }
     uint64_t prior = atomic_fetch_add_explicit(
         &g_space_global_mutation_epoch, 1u, memory_order_relaxed);
     if (prior == UINT64_MAX) {
@@ -3155,7 +3498,9 @@ void space_note_external_backend_mutation(Space *s) {
     if (!s)
         return;
     space_mark_derived_state_dirty(s);
-    space_bump_revision(s);
+    space_publish_mutation(
+        s, SPACE_MUTATION_EQUATION_PROJECTION_OPAQUE,
+        SPACE_MUTATION_PREFIX_REWRITTEN);
 }
 
 static bool space_defer_incremental_secondary_indices(const Space *s) {
@@ -3195,7 +3540,9 @@ static void space_add_stored_id(Space *s, AtomId atom_id, Atom *backend_atom) {
     }
     s->native.len++;
     space_note_atom_id_storage_peak(s);
-    space_bump_revision(s);
+    space_publish_mutation(
+        s, space_atom_equation_projection(s, atom_id, backend_atom),
+        SPACE_MUTATION_PREFIX_APPEND_ONLY);
     if (queue_gap) {
         space_mark_indexes_dirty(s);
         space_match_backend_note_remove(s);
@@ -3272,12 +3619,19 @@ bool space_add_atom_ids_batch(Space *s, const AtomId *atom_ids,
     bool keep_pathmap_exact_metadata;
     bool had_non_exact_atom;
     bool batch_has_non_exact_atom = false;
+    SpaceMutationEquationProjection equation_projection =
+        SPACE_MUTATION_EQUATION_PROJECTION_DATA_ONLY;
     SpaceBackendBatchResult batch_result;
 
     if (!s || (!atom_ids && atom_count != 0))
         return false;
     if (atom_count == 0)
         return true;
+    for (CettaCount i = 0; i < atom_count; i++) {
+        equation_projection = space_merge_equation_projection(
+            equation_projection,
+            space_atom_equation_projection(s, atom_ids[i], NULL));
+    }
 
     if (!space_has_overlay_base(s) &&
         s->match_backend.kind == SPACE_ENGINE_PATHMAP) {
@@ -3333,7 +3687,8 @@ bool space_add_atom_ids_batch(Space *s, const AtomId *atom_ids,
                 had_non_exact_atom || batch_has_non_exact_atom;
             s->native.has_non_exact_atoms_dirty = false;
         }
-        space_bump_revision(s);
+        space_publish_mutation(
+            s, equation_projection, SPACE_MUTATION_PREFIX_REWRITTEN);
         return true;
     }
 
@@ -3479,20 +3834,36 @@ Space *space_heap_clone_shallow(Space *src) {
     return clone;
 }
 
-void space_replace_contents(Space *dst, Space *src) {
+static void space_replace_contents_classified(
+        Space *dst, Space *src,
+        SpaceMutationEquationProjection equation_projection) {
     if (!dst || !src || dst == src)
         return;
     uint64_t dst_instance_id = dst->instance_id;
     uint64_t old_revision = dst->revision;
     uint64_t src_revision = src->revision;
+    uint64_t old_equation_revision = dst->equation_revision;
+    uint64_t src_equation_revision = src->equation_revision;
     space_free(dst);
     space_move_storage_and_backend(dst, src);
     space_detach_from_universe(src);
     space_attach_to_universe(dst, dst->native.universe);
     dst->instance_id = dst_instance_id;
     dst->revision = old_revision > src_revision ? old_revision : src_revision;
-    space_bump_revision(dst);
+    dst->equation_revision =
+        equation_projection ==
+                SPACE_MUTATION_EQUATION_PROJECTION_DATA_ONLY
+            ? old_equation_revision
+            : old_equation_revision > src_equation_revision
+                ? old_equation_revision : src_equation_revision;
+    space_publish_mutation(
+        dst, equation_projection, SPACE_MUTATION_PREFIX_REWRITTEN);
     space_reset_moved_from(src);
+}
+
+void space_replace_contents(Space *dst, Space *src) {
+    space_replace_contents_classified(
+        dst, src, SPACE_MUTATION_EQUATION_PROJECTION_OPAQUE);
 }
 
 /* ── Query Results ──────────────────────────────────────────────────────── */
@@ -4106,9 +4477,15 @@ bool space_remove(Space *s, Atom *atom) {
                 continue;
             candidate = space_get_at64(s->overlay_base, raw);
             if (candidate && atom_eq(candidate, atom)) {
+                SpaceMutationEquationProjection equation_projection =
+                    space_atom_equation_projection(
+                        s->overlay_base,
+                        space_get_atom_id_at64(s->overlay_base, raw),
+                        candidate);
                 if (!space_overlay_mark_base_removed(s, raw))
                     return false;
-                space_bump_revision(s);
+                space_publish_mutation(
+                    s, equation_projection, SPACE_MUTATION_PREFIX_REWRITTEN);
                 return true;
             }
         }
@@ -4140,9 +4517,17 @@ bool space_remove(Space *s, Atom *atom) {
         if (alpha_count != 1u)
             return false;
         if (alpha_in_base) {
+            AtomId removed_id = space_get_atom_id_at64(
+                s->overlay_base, alpha_index);
+            Atom *removed_atom = space_get_at64(
+                s->overlay_base, alpha_index);
+            SpaceMutationEquationProjection equation_projection =
+                space_atom_equation_projection(
+                    s->overlay_base, removed_id, removed_atom);
             if (!space_overlay_mark_base_removed(s, alpha_index))
                 return false;
-            space_bump_revision(s);
+            space_publish_mutation(
+                s, equation_projection, SPACE_MUTATION_PREFIX_REWRITTEN);
             return true;
         }
         return space_overlay_remove_local_raw_index(s, alpha_index);
@@ -4203,6 +4588,9 @@ bool space_remove(Space *s, Atom *atom) {
     if (!found)
         return false;
 
+    SpaceMutationEquationProjection equation_projection =
+        space_local_removal_equation_projection(s, remove_idx);
+
     if (space_is_ordered(s)) {
         size_t width = space_atom_id_width_bytes_bits(s->native.atom_id_width_bits);
         memmove(s->native.atom_ids + ((size_t)remove_idx * width),
@@ -4220,7 +4608,8 @@ bool space_remove(Space *s, Atom *atom) {
     }
     space_mark_indexes_dirty(s);
     space_match_backend_note_remove(s);
-    space_bump_revision(s);
+    space_publish_mutation(
+        s, equation_projection, SPACE_MUTATION_PREFIX_REWRITTEN);
     return true;
 }
 
@@ -4247,9 +4636,14 @@ bool space_remove_atom_id(Space *s, AtomId atom_id) {
                 continue;
             if (space_get_atom_id_at64(s->overlay_base, raw) != atom_id)
                 continue;
+            SpaceMutationEquationProjection equation_projection =
+                space_atom_equation_projection(
+                    s->overlay_base, atom_id,
+                    space_get_at64(s->overlay_base, raw));
             if (!space_overlay_mark_base_removed(s, raw))
                 return false;
-            space_bump_revision(s);
+            space_publish_mutation(
+                s, equation_projection, SPACE_MUTATION_PREFIX_REWRITTEN);
             return true;
         }
         for (CettaIndex i = 0; i < space_local_length64(s); i++) {
@@ -4267,6 +4661,8 @@ bool space_remove_atom_id(Space *s, AtomId atom_id) {
     for (CettaIndex i = 0; i < s->native.len; i++) {
         if (space_get_atom_id_at64(s, i) != atom_id)
             continue;
+        SpaceMutationEquationProjection equation_projection =
+            space_local_removal_equation_projection(s, i);
         if (space_is_ordered(s)) {
             size_t width = space_atom_id_width_bytes_bits(s->native.atom_id_width_bits);
             memmove(s->native.atom_ids + ((size_t)i * width),
@@ -4284,7 +4680,8 @@ bool space_remove_atom_id(Space *s, AtomId atom_id) {
         }
         space_mark_indexes_dirty(s);
         space_match_backend_note_remove(s);
-        space_bump_revision(s);
+        space_publish_mutation(
+            s, equation_projection, SPACE_MUTATION_PREFIX_REWRITTEN);
         return true;
     }
     return false;
@@ -4314,7 +4711,12 @@ bool space_remove_atom_ids_batch(Space *s, const AtomId *atom_ids,
             for (CettaCount i = 0; i < atom_count; i++)
                 space_mark_backend_primary_atom_mutation(
                     s, atom_ids[i], NULL);
-            space_bump_revision(s);
+            /* The direct backend reports only a count, not the exact authored
+               occurrences or their transport.  Preserve soundness until that
+               interface supplies a projection receipt. */
+            space_publish_mutation(
+                s, SPACE_MUTATION_EQUATION_PROJECTION_OPAQUE,
+                SPACE_MUTATION_PREFIX_REWRITTEN);
         }
         if (out_removed)
             *out_removed = (CettaCount)removed;
@@ -4349,9 +4751,17 @@ bool space_remove_occurrence_mask_stable(
         logical_len);
 
     CettaCount removed = 0u;
+    SpaceMutationEquationProjection equation_projection =
+        SPACE_MUTATION_EQUATION_PROJECTION_DATA_ONLY;
     for (CettaIndex index = 0u; index < logical_len; index++) {
-        if (remove_mask[index] != 0u)
+        if (remove_mask[index] != 0u) {
             removed++;
+            equation_projection = space_merge_equation_projection(
+                equation_projection,
+                space_atom_equation_projection(
+                    s, space_get_atom_id_at64(s, index),
+                    space_get_at64(s, index)));
+        }
     }
     if (removed == 0u)
         return true;
@@ -4417,7 +4827,8 @@ bool space_remove_occurrence_mask_stable(
             s->native.len = target;
             s->native.start = 0u;
             space_mark_derived_state_dirty(s);
-            space_bump_revision(s);
+            space_publish_mutation(
+                s, equation_projection, SPACE_MUTATION_PREFIX_REWRITTEN);
             cetta_runtime_stats_add(
                 CETTA_RUNTIME_COUNTER_SPACE_STABLE_COORDINATE_TRANSPORT_RETAINED_MOVE,
                 moved);
@@ -4486,7 +4897,8 @@ bool space_remove_occurrence_mask_stable(
         replacement->payload_owner_epoch = s->payload_owner_epoch;
         replacement->payload_export_owner_epoch =
             s->payload_export_owner_epoch;
-        space_replace_contents(s, replacement);
+        space_replace_contents_classified(
+            s, replacement, equation_projection);
     }
     space_free(replacement);
     free(replacement);
@@ -4574,7 +4986,11 @@ bool space_pop(Space *s, Atom **out) {
                 !space_overlay_mark_base_removed(s, raw)) {
                 return false;
             }
-            space_bump_revision(s);
+            space_publish_mutation(
+                s, space_atom_equation_projection(
+                       s->overlay_base,
+                       space_get_atom_id_at64(s->overlay_base, raw), top),
+                SPACE_MUTATION_PREFIX_REWRITTEN);
             return true;
         }
         return false;
@@ -4587,6 +5003,10 @@ bool space_pop(Space *s, Atom **out) {
         return false;
     if (out)
         *out = top;
+    SpaceMutationEquationProjection equation_projection =
+        space_atom_equation_projection(
+            s, space_get_atom_id_at64(
+                   s, space_is_queue(s) ? 0u : logical_len - 1u), top);
     if (space_truncate_via_backend_primary64(s, logical_len - 1))
         return true;
     if (!space_match_backend_materialize_native_storage(s, NULL))
@@ -4601,7 +5021,8 @@ bool space_pop(Space *s, Atom **out) {
     }
     space_mark_indexes_dirty(s);
     space_match_backend_note_remove(s);
-    space_bump_revision(s);
+    space_publish_mutation(
+        s, equation_projection, SPACE_MUTATION_PREFIX_REWRITTEN);
     return true;
 }
 
@@ -4622,12 +5043,16 @@ bool space_truncate(Space *s, uint32_t new_len) {
         return false;
     if (new_len == s->native.len)
         return true;
+    SpaceMutationEquationProjection equation_projection =
+        space_logical_removed_range_equation_projection(
+            s, new_len, logical_len);
     s->native.len = new_len;
     if (s->native.len == 0)
         s->native.start = 0;
     space_mark_indexes_dirty(s);
     space_match_backend_note_remove(s);
-    space_bump_revision(s);
+    space_publish_mutation(
+        s, equation_projection, SPACE_MUTATION_PREFIX_REWRITTEN);
     return true;
 }
 
@@ -4648,16 +5073,23 @@ bool space_truncate64(Space *s, CettaCount new_len) {
                 return true;
             if (!space_match_backend_materialize_native_storage(s, NULL))
                 return false;
+            SpaceMutationEquationProjection equation_projection =
+                space_logical_removed_range_equation_projection(
+                    s, new_len, logical_len);
             s->native.len = want_local;
             if (s->native.len == 0)
                 s->native.start = 0;
             space_mark_indexes_dirty(s);
             space_match_backend_note_remove(s);
-            space_bump_revision(s);
+            space_publish_mutation(
+                s, equation_projection, SPACE_MUTATION_PREFIX_REWRITTEN);
             return true;
         }
         if (!space_match_backend_materialize_native_storage(s, NULL))
             return false;
+        SpaceMutationEquationProjection equation_projection =
+            space_logical_removed_range_equation_projection(
+                s, new_len, logical_len);
         s->native.len = 0;
         s->native.start = 0;
         if (new_len == 0) {
@@ -4672,7 +5104,8 @@ bool space_truncate64(Space *s, CettaCount new_len) {
         }
         space_mark_indexes_dirty(s);
         space_match_backend_note_remove(s);
-        space_bump_revision(s);
+        space_publish_mutation(
+            s, equation_projection, SPACE_MUTATION_PREFIX_REWRITTEN);
         return true;
     }
     if (space_truncate_via_backend_primary64(s, new_len))
@@ -4684,12 +5117,16 @@ bool space_truncate64(Space *s, CettaCount new_len) {
         return false;
     if (new_len == s->native.len)
         return true;
+    SpaceMutationEquationProjection equation_projection =
+        space_logical_removed_range_equation_projection(
+            s, new_len, logical_len);
     s->native.len = new_len;
     if (s->native.len == 0)
         s->native.start = 0;
     space_mark_indexes_dirty(s);
     space_match_backend_note_remove(s);
-    space_bump_revision(s);
+    space_publish_mutation(
+        s, equation_projection, SPACE_MUTATION_PREFIX_REWRITTEN);
     return true;
 }
 

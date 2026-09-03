@@ -90,6 +90,8 @@ typedef struct {
 struct CettaMatchDecision {
     _Atomic size_t owner_count;
     SpaceReadToken read;
+    SpaceEquationToken equations;
+    bool equation_projection_pinned;
     CettaMatchDecisionSemanticIdentity semantic_identity;
     CettaMatchDecisionMode mode;
     uint32_t max_depth;
@@ -1013,8 +1015,9 @@ static bool match_decision_build_conjunctive_masks(
     return true;
 }
 
-CettaMatchDecision *cetta_match_decision_compile(
-    SpaceReadToken read,
+static CettaMatchDecision *cetta_match_decision_compile_with_dependency(
+    SpaceReadToken read, SpaceEquationToken equations,
+    bool equation_projection_pinned,
     CettaMatchDecisionSemanticIdentity semantic_identity,
     const CettaMatchDecisionClause *clauses,
     size_t clause_count,
@@ -1024,7 +1027,9 @@ CettaMatchDecision *cetta_match_decision_compile(
     CettaMatchDecisionClassifyPatternFn classify,
     void *classify_context) {
     if (!clauses || clause_count == 0u || clause_count > UINT32_MAX ||
-        !space_read_token_is_current(read) ||
+        (equation_projection_pinned
+             ? !space_equation_token_is_current(equations)
+             : !space_read_token_is_current(read)) ||
         (mode != CETTA_MATCH_DECISION_LINEAR &&
          mode != CETTA_MATCH_DECISION_DEEP &&
          mode != CETTA_MATCH_DECISION_CONJUNCTIVE)) {
@@ -1040,6 +1045,8 @@ CettaMatchDecision *cetta_match_decision_compile(
         return NULL;
     atomic_init(&decision->owner_count, 1u);
     decision->read = read;
+    decision->equations = equations;
+    decision->equation_projection_pinned = equation_projection_pinned;
     decision->semantic_identity = semantic_identity;
     decision->mode = mode;
     decision->max_depth = max_depth;
@@ -1082,6 +1089,38 @@ CettaMatchDecision *cetta_match_decision_compile(
     cetta_runtime_stats_inc(
         CETTA_RUNTIME_COUNTER_MATCH_DECISION_COMPILE);
     return decision;
+}
+
+CettaMatchDecision *cetta_match_decision_compile(
+    SpaceReadToken read,
+    CettaMatchDecisionSemanticIdentity semantic_identity,
+    const CettaMatchDecisionClause *clauses,
+    size_t clause_count,
+    CettaMatchDecisionMode mode,
+    uint32_t max_depth,
+    CettaMatchDecisionRealization realization,
+    CettaMatchDecisionClassifyPatternFn classify,
+    void *classify_context) {
+    return cetta_match_decision_compile_with_dependency(
+        read, (SpaceEquationToken){0}, false, semantic_identity,
+        clauses, clause_count, mode, max_depth, realization,
+        classify, classify_context);
+}
+
+CettaMatchDecision *cetta_match_decision_compile_equation_projection(
+    SpaceEquationToken equations,
+    CettaMatchDecisionSemanticIdentity semantic_identity,
+    const CettaMatchDecisionClause *clauses,
+    size_t clause_count,
+    CettaMatchDecisionMode mode,
+    uint32_t max_depth,
+    CettaMatchDecisionRealization realization,
+    CettaMatchDecisionClassifyPatternFn classify,
+    void *classify_context) {
+    return cetta_match_decision_compile_with_dependency(
+        (SpaceReadToken){0}, equations, true, semantic_identity,
+        clauses, clause_count, mode, max_depth, realization,
+        classify, classify_context);
 }
 
 CettaMatchDecision *cetta_match_decision_retain(
@@ -1153,8 +1192,11 @@ bool cetta_match_decision_is_current(
     const CettaMatchDecision *decision, const Space *live_space,
     CettaMatchDecisionSemanticIdentity semantic_identity) {
     return decision && live_space &&
-           space_read_token_matches_live_space(
-               decision->read, live_space) &&
+           (decision->equation_projection_pinned
+                ? space_equation_token_matches_live_space(
+                      decision->equations, live_space)
+                : space_read_token_matches_live_space(
+                      decision->read, live_space)) &&
            match_decision_semantic_identity_equal(
                decision->semantic_identity, semantic_identity);
 }
