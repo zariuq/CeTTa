@@ -666,6 +666,11 @@ void arena_init(Arena *a) {
     a->finalizers = NULL;
 }
 
+void arena_init_detached(Arena *a) {
+    arena_init(a);
+    a->hashcons = NULL;
+}
+
 static void arena_run_finalizers_until(Arena *a, ArenaFinalizer *stop) {
     while (a->finalizers != stop) {
         ArenaFinalizer *node = a->finalizers;

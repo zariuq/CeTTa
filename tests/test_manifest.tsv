@@ -289,6 +289,7 @@ tests/test_hyperpose_handle_fallback_runtime_stats.metta	he	metta	extended	runti
 tests/test_hyperpose_hidden_effect_fallback_regression.metta	he	metta	extended	main	native	test	golden	-
 tests/test_hyperpose_prime_runtime_stats.metta	he	metta	extended	runtime-stats	native	test-runtime-stats-lane	golden	runtime-stats lane golden regression
 tests/test_hyperpose_recursive_prime_regression.metta	he	metta	extended	main	native	test	golden	-
+tests/test_hyperpose_source_family_capture_stats.metta	he	metta	extended	runtime-stats	native	test-runtime-stats-lane	golden	runtime-stats lane golden regression
 tests/test_hyperpose_threaded_error_regression.metta	he	metta	extended	main	native	test	golden	-
 tests/test_hyperpose_threaded_stats.metta	he	metta	extended	runtime-stats	native	test-runtime-stats-lane	golden	runtime-stats lane golden regression
 tests/test_if.metta	he	metta	extended	main	native	test	golden	-
@@ -540,6 +541,7 @@ tests/test_rhometta_threaded_differential.metta	he	metta	extended	main	native	te
 tests/test_rhometta_threaded_runtime_stats.metta	he	metta	extended	runtime-stats	native	test-runtime-stats-lane	golden	runtime-stats lane golden regression
 tests/test_round_math_bad_type.metta	he	metta	extended	main	native	test	golden	-
 tests/test_runtime_builtin_docs.metta	he	metta	extended	main	native	test	golden	-
+tests/test_runtime_stats_contract.metta	he	metta	extended	runtime-stats	native	test-runtime-stats-lane	golden	runtime-stats lane golden regression
 tests/test_runtime_stats_syntax.metta	he	metta	extended	runtime-stats	native	test-runtime-stats-lane	golden	runtime-stats lane golden regression
 tests/test_sealed.metta	he	metta	extended	main	native	test	golden	-
 tests/test_sealed_arity.metta	he	metta	extended	main	native	test	golden	-

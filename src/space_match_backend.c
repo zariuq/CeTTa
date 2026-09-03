@@ -4283,6 +4283,7 @@ bool space_match_backend_snapshot_clone(Space *dst, Space *src) {
     snapshot_state->built = true;
     snapshot_state->dirty = false;
     dst->revision = space_revision(src);
+    dst->equation_revision = space_equation_revision(src);
     return true;
 }
 

@@ -173,6 +173,7 @@ struct CettaOpenPatternPlan {
 };
 
 typedef Atom *(*BindingsRewriteVarFn)(Arena *a, Atom *var, void *ctx);
+typedef Atom *(*BindingsAtomTransportFn)(void *context, Atom *atom);
 typedef bool (*BindingsEpochCoordinateFn)(
     void *context, VarId source_variable, uint32_t *offset_out);
 
@@ -180,6 +181,14 @@ void      bindings_init(Bindings *b);
 void      bindings_free(Bindings *b);
 bool      bindings_clone(Bindings *dst, const Bindings *src);
 bool      bindings_copy(Bindings *dst, const Bindings *src);
+/* Transport the logical binding product through an identity-preserving Atom
+ * representation map.  Entry order, VarIds, spelling fallback, constraints,
+ * and exact multiplicity are retained; derived indexes are rebuilt lazily.
+ * Prime occurrence state has its own ownership algebra and is deliberately
+ * refused rather than shallow-copied through this logical-only operation. */
+bool      bindings_transport_logical(Bindings *dst, const Bindings *src,
+                                     BindingsAtomTransportFn transport,
+                                     void *context);
 /*
  * Retain exactly the logical environment reachable from `roots`.
  *

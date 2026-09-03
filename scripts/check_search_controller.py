@@ -26,6 +26,7 @@ DIVERSITY = ROOT / "benchmarks" / "controller_diversity"
 def run(binary: Path, fixture: str, *, controller: str | None,
         limit: int | None = None,
         stats: bool = False, language: str = "petta",
+        profile: str | None = None,
         fixture_root: Path = PETTA,
         forced_gc: bool = False,
         act_directory: Path | None = None,
@@ -51,8 +52,12 @@ def run(binary: Path, fixture: str, *, controller: str | None,
         env.pop("CETTA_SEARCH_ACT_DIR", None)
     else:
         env["CETTA_SEARCH_ACT_DIR"] = str(act_directory)
+    command = [str(binary), "--lang", language]
+    if profile is not None:
+        command.extend(("--profile", profile))
+    command.append(str(fixture_root / fixture))
     return subprocess.run(
-        [str(binary), "--lang", language, str(fixture_root / fixture)],
+        command,
         cwd=ROOT,
         env=env,
         text=True,
@@ -521,7 +526,7 @@ def main() -> int:
 
     auto_prefix = run(
         binary, "finite_prefix_recursive.metta", controller="auto",
-        limit=100, stats=True, fixture_root=DIVERSITY,
+        limit=100, stats=True, profile="extended", fixture_root=DIVERSITY,
     )
     require_run(auto_prefix, "observation-derived finite-prefix control")
     auto_prefix_expected = expected(

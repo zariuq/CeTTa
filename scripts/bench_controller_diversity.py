@@ -35,9 +35,11 @@ REQUIRED_COLUMNS = (
     "observation",
     "niche",
     "contrast",
+    "profile",
     "transition_limit",
 )
 AVAILABILITY = frozenset(("runnable", "asset", "planned"))
+PROFILES = frozenset(("-", "extended"))
 OBSERVATIONS = frozenset(
     ("ordered-stream", "bounded-prefix", "complete-bag", "first-answer",
      "first-proof", "first-program", "graded-bag")
@@ -85,6 +87,14 @@ def validate_manifest(
         if row["observation"] not in OBSERVATIONS:
             raise ValueError(
                 f"{identifier}: invalid observation {row['observation']!r}"
+            )
+        if row["profile"] not in PROFILES:
+            raise ValueError(
+                f"{identifier}: invalid profile {row['profile']!r}"
+            )
+        if row["profile"] == "extended" and row["language"] != "petta":
+            raise ValueError(
+                f"{identifier}: extended profile requires PeTTa"
             )
         try:
             limit = int(row["transition_limit"])
@@ -137,8 +147,12 @@ def _run(
     else:
         environment["CETTA_SEARCH_ACT_DIR"] = str(act_directory)
     started = time.monotonic_ns()
+    command = [str(binary), "--lang", row["language"]]
+    if row["profile"] != "-":
+        command.extend(("--profile", row["profile"]))
+    command.append(str(ROOT / row["source"]))
     process = subprocess.run(
-        [str(binary), "--lang", row["language"], str(ROOT / row["source"])],
+        command,
         cwd=ROOT,
         env=environment,
         text=True,

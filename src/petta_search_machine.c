@@ -13,6 +13,7 @@
 
 #include <assert.h>
 #include <inttypes.h>
+#include <limits.h>
 #include <math.h>
 #if defined(__GLIBC__)
 #include <malloc.h>
@@ -21,6 +22,10 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+
+#ifndef CETTA_PETTA_MATCH_DECISION_EQUATION_TOKEN_REUSE
+#define CETTA_PETTA_MATCH_DECISION_EQUATION_TOKEN_REUSE 1
+#endif
 
 #define PETTA_MACHINE_HEAP_WINDOW_BYTES \
     ((size_t)8u * 1024u * 1024u)
@@ -57,11 +62,21 @@ typedef struct {
     size_t tarjan_lowlink;
     SymbolId memo_head;
     CettaExprLen memo_arity;
+    /* Memo entries are derived from the equation projection visible when
+     * their generator starts.  Ordinary SLG entries deliberately omit this
+     * coordinate: reference PeTTa tabling has static-world semantics, while
+     * lib_memo invalidates cached functions when their definitions change. */
+    SpaceEquationToken memo_equations;
     uint64_t access_tick;
+    /* PeTTa's public size-limit is defined by SWI term_size words, not by
+     * this implementation's arena allocation. */
+    uint64_t memo_key_bytes;
     uint64_t retained_bytes;
+    PettaMemoAggregateMode memo_aggregate_mode;
     bool tarjan_on_stack;
     bool self_edge;
     bool memoized;
+    bool memo_ground_query;
 } PettaTableEntry;
 
 struct PettaMachineTable {
@@ -80,12 +95,20 @@ struct PettaMachineTable {
     uint64_t access_tick;
     uint64_t memo_retained_bytes;
     uint64_t mutation_epoch;
+    PettaTableMutationPolicy mutation_policy;
     bool failed;
     bool root_leased;
     bool memo_policy_dirty;
 };
 
 typedef PettaMachineTable PettaTableShared;
+
+static uint64_t petta_memo_key_estimated_bytes(Atom *query);
+static uint64_t petta_memo_cached_answer_estimated_bytes(
+    const PettaTableEntry *entry, Atom *record);
+static void petta_memo_record_aggregate_size(
+    PettaTableShared *shared, PettaTableEntry *entry,
+    Atom *aggregate);
 
 typedef enum {
     PETTA_TABLE_CHOICE_GENERATE_INITIAL = 0,
@@ -462,12 +485,15 @@ typedef struct {
             bool equation_template_c0_closed_query;
             /* The selector has already applied the complete structural
              * verifier to every retained occurrence under this exact
-             * mutation epoch.  Canonical matching still follows; this
-             * receipt skips only an identical second structural pass while
-             * every mutable authority consulted by that pass remains
-             * unchanged. */
+             * mutation epoch and, where required, host callability authority.
+             * Canonical matching still follows; this receipt skips only an
+             * identical second structural pass while every mutable authority
+             * consulted by that pass remains unchanged. */
             bool candidates_structurally_verified;
             uint64_t structural_verification_mutation_epoch;
+            PettaMachineAuthorityToken
+                structural_verification_callability_authority;
+            bool structural_verification_callability_authority_pinned;
         } clause;
         struct {
             OutcomeSet *outcomes;
@@ -604,12 +630,15 @@ typedef struct {
             Atom **round_answers;
             size_t round_len;
             size_t round_cap;
+            Atom **initial_answers;
+            size_t initial_len;
+            size_t initial_cap;
             PettaMemoAggregateMode aggregate_mode;
             uint32_t answer_limit;
             bool memoized;
             bool ground_query;
+            bool replay_initial_answers;
             bool aggregate_emitted;
-            bool truncation_observed;
             bool pass_changed;
         } table;
     } as;
@@ -681,17 +710,21 @@ typedef struct {
 } PettaTypeObligation;
 
 typedef struct {
-    SpaceReadToken read;
     SymbolId head;
     CettaExprLen arity;
     CettaMatchDecisionMode mode;
-    /* Borrowed candidate-array identity is compared only after `read` proves
-     * the decision current.  Revision mismatch drops this entry before the
-     * possibly freed address is considered, preventing an allocator ABA from
-     * authorizing a stale decision. */
+    /* Borrowed candidate-array identity is compared only after the decision's
+     * declared dependency token proves it current.  A changed equation
+     * projection drops this entry before the possibly freed address is
+     * considered, preventing an allocator ABA from authorizing stale code. */
     const PettaClauseCandidate *snapshot_identity;
     Atom **equations;
     size_t equation_len;
+    /* An equation-projection selector may also classify a nested occurrence
+     * through the host's mutable foreign/translator authority.  Its equation
+     * token is therefore necessary but not sufficient for reuse. */
+    PettaMachineAuthorityToken callability_authority;
+    bool callability_authority_pinned;
     CettaMatchDecision *decision;
 } PettaMatchDecisionCacheEntry;
 
@@ -706,6 +739,10 @@ typedef struct {
     size_t len;
     size_t cap;
 } PettaMatchDecisionRepository;
+
+static bool petta_machine_authority_token_eq(
+    const PettaMachineAuthorityToken *left,
+    const PettaMachineAuthorityToken *right);
 
 /* One equation/pattern pair's nested application roots are classified once
  * for an exact Space revision and host-callability authority.  The source
@@ -976,6 +1013,44 @@ static bool petta_machine_atom_is_reify_head(
     const PettaMachineImpl *machine, const Atom *atom) {
     return atom && atom->kind == ATOM_SYMBOL &&
         petta_machine_is_reify_head(machine, atom->sym_id);
+}
+
+/* Every machine-local shortcut reaches this same admission boundary before
+ * calling the shared grounded dispatcher.  A host that does not model
+ * profiles retains the historical unrestricted embedding behavior. */
+static bool petta_machine_builtin_allowed(
+        const PettaMachineImpl *machine, Atom *head) {
+    if (!machine || !head || head->kind != ATOM_SYMBOL ||
+        !machine->host.builtin_allowed) {
+        return true;
+    }
+    return machine->host.builtin_allowed(
+        machine->host.context, head->sym_id);
+}
+
+static Atom *petta_machine_grounded_dispatch(
+        PettaMachineImpl *machine, Atom *head,
+        Atom **arguments, uint32_t argument_count) {
+    if (!machine || !petta_machine_builtin_allowed(machine, head))
+        return NULL;
+    return grounded_dispatch(
+        &machine->heap, head, arguments, argument_count);
+}
+
+static bool petta_machine_try_plain_scalar_truth(
+        PettaMachineImpl *machine, Atom *head,
+        Atom **arguments, uint32_t argument_count, bool *truth_out) {
+    return petta_machine_builtin_allowed(machine, head) &&
+        grounded_try_plain_scalar_truth(
+            head, arguments, argument_count, truth_out);
+}
+
+static bool petta_machine_try_plain_scalar_arithmetic(
+        PettaMachineImpl *machine, Atom *head,
+        Atom **arguments, uint32_t argument_count, Atom **value_out) {
+    return petta_machine_builtin_allowed(machine, head) &&
+        grounded_try_plain_scalar_arithmetic(
+            &machine->heap, head, arguments, argument_count, value_out);
 }
 
 static bool petta_machine_type_obligations_enabled(
@@ -1308,6 +1383,11 @@ static bool petta_machine_host_valid(const PettaMachineHost *host) {
           analysis->error_atom &&
           analysis->reason_name &&
           analysis->validate_ready_call));
+}
+
+static bool petta_machine_host_can_evaluate(
+        const PettaMachineHost *host) {
+    return host && (host->evaluate || host->evaluate_planned);
 }
 
 static uint64_t petta_machine_fresh_instance_id(void) {
@@ -2218,6 +2298,8 @@ static PettaTableShared *petta_table_shared_new(void) {
         sizeof(*shared->frequency_sketch) *
             PETTA_MEMO_FREQUENCY_SKETCH_SIZE);
     shared->mutation_epoch = space_global_mutation_epoch();
+    shared->mutation_policy =
+        PETTA_TABLE_MUTATION_REVISION_GUARDED;
     return shared;
 }
 
@@ -2240,6 +2322,8 @@ static void petta_table_shared_reset(PettaTableShared *shared) {
     if (!shared)
         return;
     bool leased = shared->root_leased;
+    PettaTableMutationPolicy mutation_policy =
+        shared->mutation_policy;
     for (size_t index = 0u;
          index < shared->entry_len; index++) {
         free(shared->entries[index].answers);
@@ -2262,6 +2346,7 @@ static void petta_table_shared_reset(PettaTableShared *shared) {
         sizeof(*shared->frequency_sketch) *
             PETTA_MEMO_FREQUENCY_SKETCH_SIZE);
     shared->mutation_epoch = space_global_mutation_epoch();
+    shared->mutation_policy = mutation_policy;
     shared->root_leased = leased;
 }
 
@@ -2277,6 +2362,20 @@ void petta_machine_table_reset(PettaMachineTable *table) {
     petta_table_shared_reset(table);
 }
 
+bool petta_machine_table_set_mutation_policy(
+    PettaMachineTable *table, PettaTableMutationPolicy policy) {
+    if (!table || table->root_leased ||
+        (policy != PETTA_TABLE_MUTATION_STATIC_WORLD &&
+         policy != PETTA_TABLE_MUTATION_REVISION_GUARDED)) {
+        return false;
+    }
+    if (table->mutation_policy == policy)
+        return true;
+    petta_table_shared_reset(table);
+    table->mutation_policy = policy;
+    return true;
+}
+
 static bool petta_table_shared_reusable(
     const PettaTableShared *shared) {
     if (!shared || shared->failed || shared->tarjan_len != 0u)
@@ -2288,15 +2387,19 @@ static bool petta_table_shared_reusable(
             return false;
         }
     }
-    return shared->mutation_epoch ==
-        space_global_mutation_epoch();
+    return shared->mutation_policy ==
+               PETTA_TABLE_MUTATION_STATIC_WORLD ||
+           shared->mutation_epoch ==
+               space_global_mutation_epoch();
 }
 
 static bool petta_table_shared_epoch_current(
     const PettaTableShared *shared) {
     return shared &&
-           shared->mutation_epoch ==
-               space_global_mutation_epoch();
+           (shared->mutation_policy ==
+                PETTA_TABLE_MUTATION_STATIC_WORLD ||
+            shared->mutation_epoch ==
+                space_global_mutation_epoch());
 }
 
 static void petta_table_memo_note_access(
@@ -2364,9 +2467,27 @@ static bool petta_table_ensure_slot_capacity(
         shared, shared->slot_cap * 2u);
 }
 
+static uint64_t petta_table_hash_mix(
+        uint64_t hash, uint64_t coordinate) {
+    return hash ^
+        (coordinate + UINT64_C(0x9e3779b97f4a7c15) +
+         (hash << 6u) + (hash >> 2u));
+}
+
+static uint64_t petta_memo_equation_key_hash(
+        uint64_t hash, SpaceEquationToken equations) {
+    hash = petta_table_hash_mix(hash, equations.instance_id);
+    hash = petta_table_hash_mix(hash, equations.equation_revision);
+    hash = petta_table_hash_mix(
+        hash, (uint64_t)(uintptr_t)equations.projection_dependency);
+    return petta_table_hash_mix(
+        hash, equations.projection_dependency_epoch);
+}
+
 static size_t petta_table_find(
     const PettaTableShared *shared, Atom *key,
-    uint64_t hash) {
+    uint64_t hash, bool memoized,
+    SpaceEquationToken memo_equations) {
     if (!shared || !key || shared->slot_cap == 0u)
         return PETTA_TABLE_ENTRY_NONE;
     size_t slot =
@@ -2379,6 +2500,19 @@ static size_t petta_table_find(
         size_t index = encoded - 1u;
         if (index < shared->entry_len &&
             shared->entries[index].hash == hash &&
+            shared->entries[index].memoized == memoized &&
+            (!memoized ||
+             (shared->entries[index].memo_equations.space ==
+                  memo_equations.space &&
+              shared->entries[index].memo_equations.instance_id ==
+                  memo_equations.instance_id &&
+              shared->entries[index].memo_equations.equation_revision ==
+                  memo_equations.equation_revision &&
+              shared->entries[index].memo_equations.projection_dependency ==
+                  memo_equations.projection_dependency &&
+              shared->entries[index].memo_equations
+                      .projection_dependency_epoch ==
+                  memo_equations.projection_dependency_epoch)) &&
             atom_eq(shared->entries[index].key, key)) {
             return index;
         }
@@ -2389,7 +2523,11 @@ static size_t petta_table_find(
 
 static bool petta_table_find_or_insert(
     PettaTableShared *shared, Atom *key, Atom *generator_key,
-    uint64_t hash,
+    uint64_t hash, bool memoized,
+    SymbolId memo_head, CettaExprLen memo_arity,
+    PettaMemoAggregateMode memo_aggregate_mode,
+    bool memo_ground_query,
+    SpaceEquationToken memo_equations,
     size_t *index_out, bool *inserted_out) {
     if (index_out)
         *index_out = PETTA_TABLE_ENTRY_NONE;
@@ -2399,7 +2537,8 @@ static bool petta_table_find_or_insert(
         !index_out || !inserted_out)
         return false;
 
-    size_t found = petta_table_find(shared, key, hash);
+    size_t found = petta_table_find(
+        shared, key, hash, memoized, memo_equations);
     if (found != PETTA_TABLE_ENTRY_NONE) {
         *index_out = found;
         return true;
@@ -2426,17 +2565,29 @@ static bool petta_table_find_or_insert(
         return false;
     size_t retained_after =
         arena_accounted_live_bytes(&shared->arena);
+    uint64_t physical_retained = retained_after >= retained_before
+        ? (uint64_t)(retained_after - retained_before)
+        : 0u;
+    uint64_t memo_key_bytes = memoized
+        ? petta_memo_key_estimated_bytes(key)
+        : 0u;
     size_t index = shared->entry_len++;
     shared->entries[index] = (PettaTableEntry){
         .key = owned,
         .generator_key = owned_generator,
         .hash = hash,
-        .retained_bytes = retained_after >= retained_before
-            ? (uint64_t)(retained_after - retained_before)
-            : 0u,
+        .memo_head = memo_head,
+        .memo_arity = memo_arity,
+        .memo_equations = memo_equations,
+        .memo_key_bytes = memo_key_bytes,
+        .retained_bytes = memoized
+            ? memo_key_bytes : physical_retained,
+        .memo_aggregate_mode = memo_aggregate_mode,
         .state = PETTA_TABLE_ENTRY_NEW,
         .tarjan_index = PETTA_TABLE_ENTRY_NONE,
         .tarjan_lowlink = PETTA_TABLE_ENTRY_NONE,
+        .memoized = memoized,
+        .memo_ground_query = memo_ground_query,
     };
     size_t slot =
         (size_t)hash & (shared->slot_cap - 1u);
@@ -2536,8 +2687,18 @@ static bool petta_table_merge_round_answers(
             return false;
         }
         slot->round_count++;
-        if (slot->round_count <= slot->existing_count)
-            continue;
+        if (entry->memoized) {
+            /* PeTTa's lib_memo caches the answer bag, including repeated
+             * occurrences.  A later generator round contributes only the
+             * multiplicity not already retained by an earlier round. */
+            if (slot->round_count <= slot->existing_count)
+                continue;
+        } else {
+            /* SWI variant tabling is set-valued: one variant answer is
+             * retained regardless of how many clauses or rounds derive it. */
+            if (slot->existing_count > 0u || slot->round_count > 1u)
+                continue;
+        }
         size_t answer_cap_before = entry->answer_cap;
         size_t retained_before =
             arena_accounted_live_bytes(&shared->arena);
@@ -2558,10 +2719,17 @@ static bool petta_table_merge_round_answers(
         entry->answers[entry->answer_len++] = owned;
         size_t retained_after =
             arena_accounted_live_bytes(&shared->arena);
-        uint64_t retained_delta = retained_after >= retained_before
-            ? (uint64_t)(retained_after - retained_before)
-            : 0u;
-        if (entry->answer_cap > answer_cap_before) {
+        uint64_t retained_delta = entry->memoized
+            ? (entry->memo_aggregate_mode ==
+                       PETTA_MEMO_AGGREGATE_NONE
+                   ? petta_memo_cached_answer_estimated_bytes(
+                         entry, answer)
+                   : 0u)
+            : (retained_after >= retained_before
+                   ? (uint64_t)(retained_after - retained_before)
+                   : 0u);
+        if (!entry->memoized &&
+            entry->answer_cap > answer_cap_before) {
             uint64_t slots_delta =
                 (uint64_t)(entry->answer_cap - answer_cap_before) *
                 (uint64_t)sizeof(*entry->answers);
@@ -2669,6 +2837,7 @@ static bool petta_table_shared_copy_selected(
         shared->frequency_accesses;
     replacement.access_tick = shared->access_tick;
     replacement.mutation_epoch = shared->mutation_epoch;
+    replacement.mutation_policy = shared->mutation_policy;
 
     bool ok = true;
     for (size_t index = 0u;
@@ -2721,16 +2890,18 @@ static bool petta_table_shared_copy_selected(
         }
         size_t retained_after =
             arena_accounted_live_bytes(&replacement.arena);
-        uint64_t retained = retained_after >= retained_before
+        uint64_t physical_retained = retained_after >= retained_before
             ? (uint64_t)(retained_after - retained_before)
             : 0u;
         uint64_t answer_bytes =
             (uint64_t)source->answer_len *
             (uint64_t)sizeof(*answers);
-        if (UINT64_MAX - retained < answer_bytes)
-            retained = UINT64_MAX;
+        if (UINT64_MAX - physical_retained < answer_bytes)
+            physical_retained = UINT64_MAX;
         else
-            retained += answer_bytes;
+            physical_retained += answer_bytes;
+        uint64_t retained = source->memoized
+            ? source->retained_bytes : physical_retained;
 
         PettaTableEntry copied = *source;
         copied.key = key;
@@ -3149,6 +3320,10 @@ static void petta_choice_release(
         choice->as.table.round_answers = NULL;
         choice->as.table.round_len = 0u;
         choice->as.table.round_cap = 0u;
+        free(choice->as.table.initial_answers);
+        choice->as.table.initial_answers = NULL;
+        choice->as.table.initial_len = 0u;
+        choice->as.table.initial_cap = 0u;
         choice->as.table.generator_query = NULL;
         cetta_var_map_free(
             &choice->as.table.goal_instantiation);
@@ -3995,6 +4170,13 @@ static bool petta_binding_roots_add_choice(
              i < choice->as.table.round_len; i++) {
             if (!petta_binding_roots_add(
                     roots, choice->as.table.round_answers[i])) {
+                return false;
+            }
+        }
+        for (size_t i = 0u;
+             i < choice->as.table.initial_len; i++) {
+            if (!petta_binding_roots_add(
+                    roots, choice->as.table.initial_answers[i])) {
                 return false;
             }
         }
@@ -8354,6 +8536,17 @@ static bool petta_machine_callability_authority(
         machine->host.context, token);
 }
 
+/* The structural selector asks exactly these host services whether a nested
+ * expression is callable.  A host exposing one of them must provide its
+ * changing authority before a structural proof can be retained across a
+ * choice point. */
+static bool petta_machine_callability_authority_required(
+        const PettaMachineImpl *machine) {
+    return machine && (machine->host.classify ||
+        machine->host.native_named_arity ||
+        machine->host.foreign_named_arity);
+}
+
 static bool petta_space_read_token_eq(
         SpaceReadToken left, SpaceReadToken right) {
     return left.space == right.space &&
@@ -8767,6 +8960,10 @@ static void petta_match_decision_cache_drop_stale(
         return;
     PettaMatchDecisionRepository *repository =
         machine->match_decision_repository;
+    PettaMachineAuthorityToken current_authority = {0};
+    bool current_authority_available =
+        petta_machine_callability_authority(
+            machine, &current_authority);
     size_t write = 0u;
     for (size_t read = 0u;
          read < repository->len; read++) {
@@ -8774,7 +8971,12 @@ static void petta_match_decision_cache_drop_stale(
             &repository->entries[read];
         if (!cetta_match_decision_is_current(
                 entry->decision, machine->space,
-                machine->host.match_decision_semantics)) {
+                machine->host.match_decision_semantics) ||
+            (entry->callability_authority_pinned &&
+             (!current_authority_available ||
+              !petta_machine_authority_token_eq(
+                  &entry->callability_authority,
+                  &current_authority)))) {
             petta_match_decision_cache_entry_free(entry);
             continue;
         }
@@ -9072,7 +9274,33 @@ static CettaMatchDecision *petta_match_decision_prepare(
         };
     }
     SpaceReadToken read = space_read_token(machine->space);
-    CettaMatchDecision *decision = cetta_match_decision_compile(
+    SpaceEquationToken equation_token =
+        space_equation_token(machine->space);
+    PettaMachineAuthorityToken callability_authority = {0};
+    bool equation_projection_pinned = false;
+    CettaMatchDecision *decision = NULL;
+#if CETTA_PETTA_MATCH_DECISION_EQUATION_TOKEN_REUSE
+    equation_projection_pinned = petta_machine_callability_authority(
+        machine, &callability_authority);
+    decision = equation_projection_pinned
+        ? cetta_match_decision_compile_equation_projection(
+              equation_token, machine->host.match_decision_semantics,
+              clauses, candidate_count, mode, 0u,
+              cetta_match_decision_realization_from_process(),
+              mode == CETTA_MATCH_DECISION_DEEP ||
+                      mode == CETTA_MATCH_DECISION_CONJUNCTIVE
+                  ? petta_match_decision_classify_pattern : NULL,
+              context)
+        : cetta_match_decision_compile(
+              read, machine->host.match_decision_semantics,
+              clauses, candidate_count, mode, 0u,
+              cetta_match_decision_realization_from_process(),
+              mode == CETTA_MATCH_DECISION_DEEP ||
+                      mode == CETTA_MATCH_DECISION_CONJUNCTIVE
+                  ? petta_match_decision_classify_pattern : NULL,
+              context);
+#else
+    decision = cetta_match_decision_compile(
         read, machine->host.match_decision_semantics,
         clauses, candidate_count, mode, 0u,
         cetta_match_decision_realization_from_process(),
@@ -9080,9 +9308,21 @@ static CettaMatchDecision *petta_match_decision_prepare(
                 mode == CETTA_MATCH_DECISION_CONJUNCTIVE
             ? petta_match_decision_classify_pattern : NULL,
         context);
+#endif
     free(clauses);
     if (!decision)
         return NULL;
+    if (equation_projection_pinned) {
+        PettaMachineAuthorityToken confirmed_authority = {0};
+        if (!space_equation_token_is_current(equation_token) ||
+            !petta_machine_callability_authority(
+                machine, &confirmed_authority) ||
+            !petta_machine_authority_token_eq(
+                &callability_authority, &confirmed_authority)) {
+            cetta_match_decision_free(decision);
+            return NULL;
+        }
+    }
     CettaMatchDecisionStats compiled_stats = {0};
     cetta_match_decision_stats(decision, &compiled_stats);
     machine->stats.match_decision_key_index_build_probes +=
@@ -9091,7 +9331,8 @@ static CettaMatchDecision *petta_match_decision_prepare(
         fprintf(
             stderr,
             "[petta-match-decision] compile head=%s arity=%u "
-            "clauses=%zu backend=%s revision=%" PRIu64 " "
+            "clauses=%zu backend=%s revision=%" PRIu64
+            " equation_revision=%" PRIu64 " "
             "prefix_direct=%" PRIu64 " prefix_trie=%" PRIu64 " "
             "prefix_admitted=%" PRIu64 "\n",
             symbol_bytes(g_symbols, head), (unsigned)arity,
@@ -9100,7 +9341,7 @@ static CettaMatchDecision *petta_match_decision_prepare(
                 ? "deep"
                 : mode == CETTA_MATCH_DECISION_CONJUNCTIVE
                     ? "conjunctive" : "linear",
-            read.revision,
+            read.revision, equation_token.equation_revision,
             compiled_stats.prefix_observation_direct_edges,
             compiled_stats.prefix_observation_trie_edges,
             compiled_stats.prefix_observation_build_commits);
@@ -9127,13 +9368,14 @@ static CettaMatchDecision *petta_match_decision_prepare(
     }
     repository->entries[repository->len++] =
         (PettaMatchDecisionCacheEntry){
-            .read = read,
             .head = head,
             .arity = arity,
             .mode = mode,
             .snapshot_identity = snapshot_identity,
             .equations = equations,
             .equation_len = candidate_count,
+            .callability_authority = callability_authority,
+            .callability_authority_pinned = equation_projection_pinned,
             .decision = decision,
         };
     machine->stats.match_decision_compilations++;
@@ -10124,6 +10366,10 @@ static PeTTaNamedArity petta_machine_source_named_arity(
     CettaExprLen nargs) {
     if (!machine)
         return (PeTTaNamedArity){0};
+    /* The arity summary is a detached value, but deriving it traverses the
+     * live equation and type indexes.  Observe one coherent physical state;
+     * later calls may see later authored mutations exactly as before. */
+    CETTA_SCOPED_SHARED_TRANSITION(named_arity_observation);
     PeTTaNamedArity result = {0};
     bool source_cached = false;
     if (head_atom && head_atom->kind == ATOM_SYMBOL &&
@@ -11280,6 +11526,50 @@ static Atom *petta_table_choice_canonical_answer(
     return canonical;
 }
 
+static bool petta_table_choice_capture_initial_answer(
+    PettaMachineImpl *machine, PettaChoice *choice,
+    Atom *canonical_answer) {
+    if (!machine || !choice || !canonical_answer ||
+        choice->kind != PETTA_CHOICE_TABLE ||
+        !choice->as.table.replay_initial_answers ||
+        choice->as.table.phase !=
+            PETTA_TABLE_CHOICE_GENERATE_INITIAL ||
+        choice->as.table.iteration_entry !=
+            choice->as.table.requested_entry) {
+        return true;
+    }
+    Atom *owned = atom_deep_copy(
+        &machine->heap, canonical_answer);
+    if (!owned || !petta_machine_reserve(
+            (void **)&choice->as.table.initial_answers,
+            &choice->as.table.initial_cap,
+            choice->as.table.initial_len + 1u,
+            sizeof(*choice->as.table.initial_answers))) {
+        return false;
+    }
+    size_t prior_len = choice->as.table.initial_len;
+    choice->as.table.initial_answers[
+        choice->as.table.initial_len++] = owned;
+    /* PeTTa's memo adapter probes answers in answer-limit-sized batches.
+     * The first batch is the already-recorded miss; every later batch is
+     * another cache miss, while the complete first-call bag remains visible
+     * to the caller. */
+    if (prior_len > 0u && choice->as.table.answer_limit > 0u &&
+        prior_len % (size_t)choice->as.table.answer_limit == 0u &&
+        machine->host.memoized_relation_observed &&
+        choice->as.table.query &&
+        choice->as.table.query->kind == ATOM_EXPR &&
+        choice->as.table.query->expr.len > 0u &&
+        choice->as.table.query->expr.elems[0]->kind ==
+            ATOM_SYMBOL) {
+        machine->host.memoized_relation_observed(
+            machine->host.context,
+            choice->as.table.query->expr.elems[0]->sym_id,
+            choice->as.table.query->expr.len - 1u, false);
+    }
+    return true;
+}
+
 static bool petta_table_choice_drive_generator(
     PettaMachineImpl *machine, PettaChoice *choice,
     bool *changed, PettaMachineStep *failure) {
@@ -11308,6 +11598,17 @@ static bool petta_table_choice_drive_generator(
             choice->as.table.generator,
             &answer, &environment);
         if (step == PETTA_MACHINE_STEP_ANSWER) {
+            Atom *canonical_answer =
+                petta_table_choice_canonical_answer(
+                    machine, choice, answer, &environment);
+            if (!canonical_answer ||
+                !petta_table_choice_capture_initial_answer(
+                    machine, choice, canonical_answer)) {
+                bindings_free(&environment);
+                *failure = PETTA_MACHINE_STEP_CAPACITY;
+                machine->table_shared->failed = true;
+                return false;
+            }
             PettaTableEntry *entry =
                 &machine->table_shared->entries[
                     choice->as.table.iteration_entry];
@@ -11315,25 +11616,9 @@ static bool petta_table_choice_drive_generator(
                 (uint64_t)choice->as.table.round_len;
             if (choice->as.table.memoized &&
                 retained >= choice->as.table.answer_limit) {
-                if (!choice->as.table.truncation_observed &&
-                    machine->host.memoized_relation_truncated &&
-                    choice->as.table.query &&
-                    choice->as.table.query->kind == ATOM_EXPR &&
-                    choice->as.table.query->expr.len > 0u &&
-                    choice->as.table.query->expr.elems[0]->kind ==
-                        ATOM_SYMBOL) {
-                    machine->host.memoized_relation_truncated(
-                        machine->host.context,
-                        choice->as.table.query->expr.elems[0]->sym_id,
-                        choice->as.table.query->expr.len - 1u);
-                    choice->as.table.truncation_observed = true;
-                }
                 bindings_free(&environment);
                 continue;
             }
-            Atom *canonical_answer =
-                petta_table_choice_canonical_answer(
-                    machine, choice, answer, &environment);
             if (!petta_machine_reserve(
                     (void **)&choice->as.table.round_answers,
                     &choice->as.table.round_cap,
@@ -11382,10 +11667,11 @@ static bool petta_table_choice_drive_generator(
     return true;
 }
 
-static Atom *petta_table_choice_aggregate_answer(
+static Atom *petta_table_choice_aggregate_records(
     PettaMachineImpl *machine, PettaChoice *choice,
-    PettaTableEntry *entry) {
-    if (!machine || !choice || !entry ||
+    Atom *const *answers, size_t answer_len) {
+    if (!machine || !choice ||
+        (answer_len > 0u && !answers) ||
         choice->kind != PETTA_CHOICE_TABLE ||
         choice->as.table.aggregate_mode ==
             PETTA_MEMO_AGGREGATE_NONE) {
@@ -11393,29 +11679,47 @@ static Atom *petta_table_choice_aggregate_answer(
     }
     if (choice->as.table.aggregate_mode ==
             PETTA_MEMO_AGGREGATE_COUNT) {
-        return entry->answer_len <= (size_t)INT64_MAX
+        Atom *result = answer_len <= (size_t)INT64_MAX
             ? atom_int(
                   &machine->heap,
-                  (int64_t)entry->answer_len)
+                  (int64_t)answer_len)
             : NULL;
+        if (result && choice->as.table.requested_entry <
+                          machine->table_shared->entry_len) {
+            petta_memo_record_aggregate_size(
+                machine->table_shared,
+                &machine->table_shared->entries[
+                    choice->as.table.requested_entry],
+                result);
+        }
+        return result;
     }
-    if (entry->answer_len == 0u) {
-        return choice->as.table.aggregate_mode ==
+    if (answer_len == 0u) {
+        Atom *result = choice->as.table.aggregate_mode ==
                    PETTA_MEMO_AGGREGATE_SUM
             ? atom_int(&machine->heap, 0)
             : NULL;
+        if (result && choice->as.table.requested_entry <
+                          machine->table_shared->entry_len) {
+            petta_memo_record_aggregate_size(
+                machine->table_shared,
+                &machine->table_shared->entries[
+                    choice->as.table.requested_entry],
+                result);
+        }
+        return result;
     }
-    if (entry->answer_len > SIZE_MAX / sizeof(Atom *))
+    if (answer_len > SIZE_MAX / sizeof(Atom *))
         return NULL;
     Atom **values = cetta_malloc(
-        sizeof(*values) * entry->answer_len);
+        sizeof(*values) * answer_len);
     bool ok = true;
     for (size_t index = 0u;
-         index < entry->answer_len; index++) {
+         index < answer_len; index++) {
         CettaVarMap local_slots;
         cetta_var_map_init(&local_slots);
         Atom *record = variant_shape_materialize_atom(
-            &machine->heap, entry->answers[index],
+            &machine->heap, answers[index],
             &choice->as.table.goal_instantiation,
             &local_slots);
         cetta_var_map_free(&local_slots);
@@ -11435,15 +11739,15 @@ static Atom *petta_table_choice_aggregate_answer(
         Atom *plus = atom_symbol_id(
             &machine->heap, g_builtin_syms.op_plus);
         for (size_t index = 0u;
-             result && plus && index < entry->answer_len; index++) {
+             result && plus && index < answer_len; index++) {
             Atom *arguments[2] = {result, values[index]};
-            result = grounded_dispatch(
-                &machine->heap, plus, arguments, 2u);
+            result = petta_machine_grounded_dispatch(
+                machine, plus, arguments, 2u);
         }
     } else if (ok) {
         Atom *list = atom_expr(
             &machine->heap, values,
-            (CettaExprLen)entry->answer_len);
+            (CettaExprLen)answer_len);
         SymbolId operation =
             choice->as.table.aggregate_mode ==
                     PETTA_MEMO_AGGREGATE_MIN
@@ -11453,11 +11757,19 @@ static Atom *petta_table_choice_aggregate_answer(
             &machine->heap, operation);
         Atom *arguments[1] = {list};
         result = list && head
-            ? grounded_dispatch(
-                  &machine->heap, head, arguments, 1u)
+            ? petta_machine_grounded_dispatch(
+                  machine, head, arguments, 1u)
             : NULL;
     }
     free(values);
+    if (result && choice->as.table.requested_entry <
+                      machine->table_shared->entry_len) {
+        petta_memo_record_aggregate_size(
+            machine->table_shared,
+            &machine->table_shared->entries[
+                choice->as.table.requested_entry],
+            result);
+    }
     return result;
 }
 
@@ -11496,12 +11808,42 @@ static bool petta_machine_resume_table_choice(
             if (choice->as.table.ground_query &&
                 choice->as.table.aggregate_mode !=
                     PETTA_MEMO_AGGREGATE_NONE) {
-                if (choice->as.table.aggregate_emitted)
-                    return false;
-                choice->as.table.aggregate_emitted = true;
+                Atom *const *aggregate_answers = requested->answers;
+                size_t aggregate_len = requested->answer_len;
+                if (choice->as.table.replay_initial_answers) {
+                    if (choice->as.table.initial_len == 0u) {
+                        if (choice->as.table.aggregate_emitted)
+                            return false;
+                        choice->as.table.aggregate_emitted = true;
+                        aggregate_answers =
+                            choice->as.table.initial_answers;
+                        aggregate_len = 0u;
+                    } else {
+                        if (choice->as.table.replay_next >=
+                            choice->as.table.initial_len) {
+                            return false;
+                        }
+                        size_t remaining =
+                            choice->as.table.initial_len -
+                            choice->as.table.replay_next;
+                        aggregate_len = remaining <
+                                (size_t)choice->as.table.answer_limit
+                            ? remaining
+                            : (size_t)choice->as.table.answer_limit;
+                        aggregate_answers =
+                            choice->as.table.initial_answers +
+                            choice->as.table.replay_next;
+                        choice->as.table.replay_next += aggregate_len;
+                    }
+                } else {
+                    if (choice->as.table.aggregate_emitted)
+                        return false;
+                    choice->as.table.aggregate_emitted = true;
+                }
                 Atom *aggregate =
-                    petta_table_choice_aggregate_answer(
-                        machine, choice, requested);
+                    petta_table_choice_aggregate_records(
+                        machine, choice,
+                        aggregate_answers, aggregate_len);
                 if (!aggregate)
                     return false;
                 if (!petta_push_unify(
@@ -11515,10 +11857,17 @@ static bool petta_machine_resume_table_choice(
                 machine->stats.table_answer_replays++;
                 return true;
             }
-            while (choice->as.table.replay_next <
-                   requested->answer_len) {
+            Atom *const *replay_answers =
+                choice->as.table.replay_initial_answers
+                    ? choice->as.table.initial_answers
+                    : requested->answers;
+            size_t replay_len =
+                choice->as.table.replay_initial_answers
+                    ? choice->as.table.initial_len
+                    : requested->answer_len;
+            while (choice->as.table.replay_next < replay_len) {
                 Atom *stored =
-                    requested->answers[
+                    replay_answers[
                         choice->as.table.replay_next++];
                 CettaVarMap local_slots;
                 cetta_var_map_init(&local_slots);
@@ -11597,6 +11946,10 @@ static bool petta_machine_resume_table_choice(
                 continue;
             }
 
+            /* Recursive generators need the completed fixed-point table,
+             * not merely the answers from their first probe round. */
+            choice->as.table.replay_initial_answers = false;
+
             choice->as.table.phase =
                 PETTA_TABLE_CHOICE_GENERATE_FIXPOINT;
             choice->as.table.scc_begin = begin;
@@ -11657,10 +12010,20 @@ static bool petta_machine_advance_choice(
         if (choice->as.clause.candidates_structurally_verified) {
             cetta_runtime_stats_inc(
                 CETTA_RUNTIME_COUNTER_PETTA_MATCH_DECISION_SHAPE_RECEIPT_ATTEMPT);
+            PettaMachineAuthorityToken current_authority = {0};
+            bool authority_current =
+                !choice->as.clause.
+                    structural_verification_callability_authority_pinned ||
+                (petta_machine_callability_authority(
+                     machine, &current_authority) &&
+                 petta_machine_authority_token_eq(
+                     &choice->as.clause.
+                          structural_verification_callability_authority,
+                     &current_authority));
             if (petta_match_decision_shape_receipt_enabled() &&
                 choice->as.clause.
                         structural_verification_mutation_epoch ==
-                    space_global_mutation_epoch()) {
+                    space_global_mutation_epoch() && authority_current) {
                 shape_receipt_reusable = true;
                 cetta_runtime_stats_inc(
                     CETTA_RUNTIME_COUNTER_PETTA_MATCH_DECISION_SHAPE_RECEIPT_REUSE);
@@ -13044,8 +13407,8 @@ static bool petta_machine_clause_guard_selects_empty(
             }
             bool truth = false;
             if (ready && condition->expr.len - 1u <= UINT32_MAX &&
-                grounded_try_plain_scalar_truth(
-                    condition->expr.elems[0],
+                petta_machine_try_plain_scalar_truth(
+                    machine, condition->expr.elems[0],
                     condition->expr.elems + 1u,
                     (uint32_t)(condition->expr.len - 1u),
                     &truth)) {
@@ -13269,6 +13632,8 @@ static bool petta_machine_start_space_query(
     bool has_statically_eligible_guard = false;
     bool candidates_structurally_verified = false;
     uint64_t structural_verification_mutation_epoch = 0u;
+    PettaMachineAuthorityToken structural_verification_authority = {0};
+    bool structural_verification_authority_pinned = false;
     if (source_len > 0u) {
         if (!source_candidates) {
             petta_program_clause_snapshot_lease_release(
@@ -13291,6 +13656,12 @@ static bool petta_machine_start_space_query(
         size_t selected_count = 0u;
         uint64_t verification_epoch_before =
             space_global_mutation_epoch();
+        bool verification_authority_required =
+            petta_machine_callability_authority_required(machine);
+        bool verification_authority_available =
+            !verification_authority_required ||
+            petta_machine_callability_authority(
+                machine, &structural_verification_authority);
         CettaMatchDecisionSelectState selection =
             petta_match_decision_select_candidates(
                 machine, head, query,
@@ -13301,10 +13672,22 @@ static bool petta_machine_start_space_query(
                 &candidates_structurally_verified);
         uint64_t verification_epoch_after =
             space_global_mutation_epoch();
+        PettaMachineAuthorityToken confirmed_authority = {0};
+        bool verification_authority_current =
+            !verification_authority_required ||
+            (verification_authority_available &&
+             petta_machine_callability_authority(
+                 machine, &confirmed_authority) &&
+             petta_machine_authority_token_eq(
+                 &structural_verification_authority,
+                 &confirmed_authority));
         if (candidates_structurally_verified &&
-            verification_epoch_before == verification_epoch_after) {
+            verification_epoch_before == verification_epoch_after &&
+            verification_authority_current) {
             structural_verification_mutation_epoch =
                 verification_epoch_after;
+            structural_verification_authority_pinned =
+                verification_authority_required;
         } else {
             /* A verifier receipt is evidence about all mutable authorities
              * it consulted.  If any Space changed during verification, keep
@@ -13484,6 +13867,10 @@ static bool petta_machine_start_space_query(
                 candidates_structurally_verified,
             .structural_verification_mutation_epoch =
                 structural_verification_mutation_epoch,
+            .structural_verification_callability_authority =
+                structural_verification_authority,
+            .structural_verification_callability_authority_pinned =
+                structural_verification_authority_pinned,
         },
     };
     /*
@@ -13884,6 +14271,374 @@ static Atom *petta_memo_quantized_ground_key(
     return ok ? result : NULL;
 }
 
+static uint64_t petta_memo_size_add(
+    uint64_t left, uint64_t right) {
+    return UINT64_MAX - left < right
+        ? UINT64_MAX : left + right;
+}
+
+static uint64_t petta_memo_size_mul(
+    uint64_t left, uint64_t right) {
+    return left != 0u && right > UINT64_MAX / left
+        ? UINT64_MAX : left * right;
+}
+
+/* SWI stores small integers in the tagged word itself.  On its supported
+ * word layouts the signed payload leaves seven tag bits, so values outside
+ * this interval become indirect GMP integers. */
+static bool petta_memo_swi_integer_is_tagged(int64_t value) {
+    const unsigned word_bits =
+        (unsigned)(sizeof(uintptr_t) * CHAR_BIT);
+    if (word_bits <= 8u)
+        return false;
+    const unsigned magnitude_bits = word_bits - 8u;
+    if (magnitude_bits >= 63u)
+        return true;
+    uint64_t limit = UINT64_C(1) << magnitude_bits;
+    return value >= -(int64_t)limit &&
+           value <= (int64_t)(limit - 1u);
+}
+
+static uint64_t petta_memo_u64_limb_count(uint64_t magnitude) {
+    if (magnitude == 0u)
+        return 0u;
+    uint64_t bits = 0u;
+    while (magnitude != 0u) {
+        magnitude >>= 1u;
+        bits++;
+    }
+    uint64_t word_bits =
+        (uint64_t)(sizeof(uintptr_t) * CHAR_BIT);
+    return (bits + word_bits - 1u) / word_bits;
+}
+
+/* The no-GMP build retains big integers as canonical decimal text.  Recover
+ * the exact binary limb count by long division in base 2^32; decimal length
+ * is not a valid proxy near a limb boundary. */
+static uint64_t petta_memo_decimal_limb_count(const char *text) {
+    if (!text)
+        return UINT64_MAX;
+    const char *digits = *text == '-' ? text + 1 : text;
+    while (*digits == '0')
+        digits++;
+    size_t length = strlen(digits);
+    if (length == 0u)
+        return 0u;
+    char *quotient = malloc(length);
+    if (!quotient)
+        return UINT64_MAX;
+    memcpy(quotient, digits, length);
+
+    uint64_t base_digits = 0u;
+    uint32_t most_significant = 0u;
+    while (length > 0u) {
+        uint64_t remainder = 0u;
+        size_t written = 0u;
+        bool leading = true;
+        for (size_t index = 0u; index < length; index++) {
+            unsigned char byte = (unsigned char)quotient[index];
+            if (byte < (unsigned char)'0' ||
+                byte > (unsigned char)'9') {
+                free(quotient);
+                return UINT64_MAX;
+            }
+            uint64_t current =
+                remainder * UINT64_C(10) +
+                (uint64_t)(byte - (unsigned char)'0');
+            unsigned digit = (unsigned)(current >> 32u);
+            remainder = current & UINT32_MAX;
+            if (digit != 0u || !leading) {
+                quotient[written++] = (char)('0' + digit);
+                leading = false;
+            }
+        }
+        if (base_digits == UINT64_MAX) {
+            free(quotient);
+            return UINT64_MAX;
+        }
+        base_digits++;
+        most_significant = (uint32_t)remainder;
+        length = written;
+    }
+    free(quotient);
+
+    uint64_t high_bits = 0u;
+    while (most_significant != 0u) {
+        most_significant >>= 1u;
+        high_bits++;
+    }
+    if (base_digits == 0u ||
+        base_digits - 1u > (UINT64_MAX - high_bits) / 32u) {
+        return UINT64_MAX;
+    }
+    uint64_t bits = (base_digits - 1u) * 32u + high_bits;
+    uint64_t word_bits =
+        (uint64_t)(sizeof(uintptr_t) * CHAR_BIT);
+    return (bits + word_bits - 1u) / word_bits;
+}
+
+static uint64_t petta_memo_bigint_limb_count(const Atom *atom) {
+#if CETTA_BUILD_WITH_GMP
+    mpz_srcptr value = atom_bigint_mpz_view(atom);
+    if (value)
+        return (uint64_t)mpz_size(value);
+#endif
+    return petta_memo_decimal_limb_count(atom_bigint_cstr(atom));
+}
+
+/* SWI's lib_memo admits a key using term_size(AVs) * 8, where AVs is
+ * the Prolog list of input arguments.  CeTTa's native adapter represents
+ * MeTTa expressions as Prolog lists at that boundary, so list cells cost
+ * three words and atomic symbols/integers cost no heap words. */
+static uint64_t petta_memo_term_size_cells(Atom *root) {
+    if (!root)
+        return 0u;
+    Atom **stack = NULL;
+    size_t stack_len = 0u;
+    size_t stack_cap = 0u;
+    if (!petta_machine_reserve(
+            (void **)&stack, &stack_cap, 1u,
+            sizeof(*stack))) {
+        return UINT64_MAX;
+    }
+    stack[stack_len++] = root;
+    uint64_t cells = 0u;
+    while (stack_len > 0u && cells != UINT64_MAX) {
+        Atom *atom = stack[--stack_len];
+        if (!atom)
+            continue;
+        if (atom->kind == ATOM_EXPR) {
+            if (petta_semantics_is_open_cons_value(atom)) {
+                cells = petta_memo_size_add(cells, 3u);
+                if (!petta_machine_reserve(
+                        (void **)&stack, &stack_cap,
+                        stack_len + 2u, sizeof(*stack))) {
+                    cells = UINT64_MAX;
+                    break;
+                }
+                stack[stack_len++] = atom->expr.elems[1];
+                stack[stack_len++] = atom->expr.elems[2];
+                continue;
+            }
+            cells = petta_memo_size_add(
+                cells,
+                petta_memo_size_mul(
+                    3u, (uint64_t)atom->expr.len));
+            if (atom->expr.len >
+                (CettaExprLen)(SIZE_MAX - stack_len)) {
+                cells = UINT64_MAX;
+                break;
+            }
+            if (!petta_machine_reserve(
+                    (void **)&stack, &stack_cap,
+                    stack_len + (size_t)atom->expr.len,
+                    sizeof(*stack))) {
+                cells = UINT64_MAX;
+                break;
+            }
+            for (CettaExprIndex index = 0u;
+                 index < atom->expr.len; index++) {
+                stack[stack_len++] = atom->expr.elems[index];
+            }
+            continue;
+        }
+        if (atom->kind != ATOM_GROUNDED)
+            continue;
+        if (atom->ground.gkind == GV_FLOAT ||
+            atom->ground.gkind == GV_RATIONAL) {
+            cells = petta_memo_size_add(cells, 3u);
+        } else if (atom->ground.gkind == GV_INT &&
+                   !petta_memo_swi_integer_is_tagged(
+                       atom->ground.ival)) {
+            uint64_t magnitude = atom->ground.ival < 0
+                ? (uint64_t)(-(atom->ground.ival + 1)) + 1u
+                : (uint64_t)atom->ground.ival;
+            cells = petta_memo_size_add(
+                cells,
+                petta_memo_size_add(
+                    3u, petta_memo_u64_limb_count(magnitude)));
+        } else if (atom->ground.gkind == GV_STRING) {
+            size_t length = atom->ground.sval
+                ? strlen(atom->ground.sval) : 0u;
+            if (length == SIZE_MAX) {
+                cells = UINT64_MAX;
+                break;
+            }
+            cells = petta_memo_size_add(
+                cells, petta_memo_size_add(
+                    3u,
+                    (uint64_t)((length + 1u) /
+                               sizeof(uintptr_t))));
+        } else if (atom->ground.gkind == GV_BIGINT) {
+            uint64_t limbs = petta_memo_bigint_limb_count(atom);
+            if (limbs == UINT64_MAX) {
+                cells = UINT64_MAX;
+                break;
+            }
+            cells = petta_memo_size_add(
+                cells, petta_memo_size_add(
+                    3u, limbs));
+        }
+    }
+    free(stack);
+    return cells;
+}
+
+static uint64_t petta_memo_arguments_estimated_bytes(
+    Atom *query) {
+    if (!query || query->kind != ATOM_EXPR ||
+        query->expr.len == 0u) {
+        return UINT64_MAX;
+    }
+    uint64_t argument_count =
+        (uint64_t)(query->expr.len - 1u);
+    uint64_t cells = petta_memo_size_mul(3u, argument_count);
+    for (CettaExprIndex index = 1u;
+         cells != UINT64_MAX && index < query->expr.len; index++) {
+        cells = petta_memo_size_add(
+            cells,
+            petta_memo_term_size_cells(query->expr.elems[index]));
+    }
+    return petta_memo_size_mul(cells, 8u);
+}
+
+static uint64_t petta_memo_unique_argument_variables(Atom *query) {
+    if (!query || query->kind != ATOM_EXPR ||
+        query->expr.len == 0u) {
+        return UINT64_MAX;
+    }
+    Atom **stack = NULL;
+    size_t stack_len = 0u;
+    size_t stack_cap = 0u;
+    VarId *seen = NULL;
+    size_t seen_len = 0u;
+    size_t seen_cap = 0u;
+    if (!petta_machine_reserve(
+            (void **)&stack, &stack_cap,
+            (size_t)query->expr.len - 1u,
+            sizeof(*stack))) {
+        return UINT64_MAX;
+    }
+    for (CettaExprIndex index = 1u;
+         index < query->expr.len; index++) {
+        stack[stack_len++] = query->expr.elems[index];
+    }
+
+    bool ok = true;
+    while (stack_len > 0u) {
+        Atom *atom = stack[--stack_len];
+        if (!atom)
+            continue;
+        if (atom->kind == ATOM_VAR) {
+            bool known = false;
+            for (size_t index = 0u; index < seen_len; index++) {
+                if (seen[index] == atom->var_id) {
+                    known = true;
+                    break;
+                }
+            }
+            if (!known) {
+                if (!petta_machine_reserve(
+                        (void **)&seen, &seen_cap,
+                        seen_len + 1u, sizeof(*seen))) {
+                    ok = false;
+                    break;
+                }
+                seen[seen_len++] = atom->var_id;
+            }
+            continue;
+        }
+        if (atom->kind != ATOM_EXPR)
+            continue;
+        if (atom->expr.len >
+            (CettaExprLen)(SIZE_MAX - stack_len)) {
+            ok = false;
+            break;
+        }
+        if (!petta_machine_reserve(
+                (void **)&stack, &stack_cap,
+                stack_len + (size_t)atom->expr.len,
+                sizeof(*stack))) {
+            ok = false;
+            break;
+        }
+        for (CettaExprIndex index = 0u;
+             index < atom->expr.len; index++) {
+            stack[stack_len++] = atom->expr.elems[index];
+        }
+    }
+    free(stack);
+    free(seen);
+    return ok ? (uint64_t)seen_len : UINT64_MAX;
+}
+
+/* memo_store retains the canonicalized key.  PeTTa's numbervars/3 turns
+ * each distinct key variable into one shared $VAR(N) compound (two cells). */
+static uint64_t petta_memo_key_estimated_bytes(Atom *query) {
+    uint64_t base = petta_memo_arguments_estimated_bytes(query);
+    uint64_t variables =
+        petta_memo_unique_argument_variables(query);
+    if (base == UINT64_MAX || variables == UINT64_MAX)
+        return UINT64_MAX;
+    return petta_memo_size_add(
+        base, petta_memo_size_mul(variables, 16u));
+}
+
+/* CachedResults is a Prolog list.  Each element therefore contributes one
+ * list cell (three words), plus answer/1 for a ground key or answer/2 for a
+ * variant key.  The latter also retains the solved argument list. */
+static uint64_t petta_memo_cached_answer_estimated_bytes(
+    const PettaTableEntry *entry, Atom *record) {
+    if (!entry || !record || record->kind != ATOM_EXPR ||
+        record->expr.len != 2u ||
+        !record->expr.elems[0] || !record->expr.elems[1]) {
+        return UINT64_MAX;
+    }
+    uint64_t cells = entry->memo_ground_query ? 5u : 6u;
+    if (!entry->memo_ground_query) {
+        uint64_t argument_bytes =
+            petta_memo_arguments_estimated_bytes(
+                record->expr.elems[0]);
+        if (argument_bytes == UINT64_MAX)
+            return UINT64_MAX;
+        cells = petta_memo_size_add(cells, argument_bytes / 8u);
+    }
+    uint64_t output_cells =
+        petta_memo_term_size_cells(record->expr.elems[1]);
+    cells = petta_memo_size_add(cells, output_cells);
+    return petta_memo_size_mul(cells, 8u);
+}
+
+static void petta_memo_record_aggregate_size(
+    PettaTableShared *shared, PettaTableEntry *entry,
+    Atom *aggregate) {
+    if (!shared || !entry || !aggregate || !entry->memoized ||
+        entry->memo_aggregate_mode == PETTA_MEMO_AGGREGATE_NONE) {
+        return;
+    }
+    uint64_t output_cells = petta_memo_term_size_cells(aggregate);
+    uint64_t answer_bytes = petta_memo_size_mul(
+        petta_memo_size_add(5u, output_cells), 8u);
+    uint64_t retained = petta_memo_size_add(
+        entry->memo_key_bytes, answer_bytes);
+    uint64_t previous = entry->retained_bytes;
+    entry->retained_bytes = retained;
+    if (shared->memo_retained_bytes != UINT64_MAX) {
+        if (retained >= previous) {
+            shared->memo_retained_bytes = petta_memo_size_add(
+                shared->memo_retained_bytes,
+                retained - previous);
+        } else {
+            uint64_t removed = previous - retained;
+            shared->memo_retained_bytes =
+                removed <= shared->memo_retained_bytes
+                    ? shared->memo_retained_bytes - removed
+                    : 0u;
+        }
+    }
+    shared->memo_policy_dirty = true;
+}
+
 static bool petta_machine_start_tabled_call(
     PettaMachineImpl *machine, Atom *query, Atom *expected,
     uint32_t barrier, bool *handled,
@@ -13893,19 +14648,25 @@ static bool petta_machine_start_tabled_call(
     if (!machine || !query || !expected || !handled ||
         !failure || query->kind != ATOM_EXPR ||
         query->expr.len == 0u ||
-        query->expr.elems[0]->kind != ATOM_SYMBOL ||
-        !machine->host.tabled_relation_contains ||
-        !machine->host.tabled_relation_contains(
-            machine->host.context,
-            query->expr.elems[0]->sym_id,
-            query->expr.len - 1u)) {
+        query->expr.elems[0]->kind != ATOM_SYMBOL) {
         return false;
     }
+    SymbolId head = query->expr.elems[0]->sym_id;
+    CettaExprLen arity = query->expr.len - 1u;
+    bool explicitly_tabled =
+        machine->host.tabled_relation_contains &&
+        machine->host.tabled_relation_contains(
+            machine->host.context, head, arity);
+    bool memoized =
+        machine->host.memoized_relation_contains &&
+        machine->host.memoized_relation_contains(
+            machine->host.context, head, arity);
+    if (!explicitly_tabled && !memoized)
+        return false;
     if (machine->host.tabled_relation_admissible &&
         !machine->host.tabled_relation_admissible(
             machine->host.context, machine->space,
-            query->expr.elems[0]->sym_id,
-            query->expr.len - 1u)) {
+            head, arity)) {
         return false;
     }
 
@@ -13918,15 +14679,31 @@ static bool petta_machine_start_tabled_call(
         return false;
     }
 
+    if (memoized &&
+        machine->host.memoized_relation_size_limit_bytes) {
+        uint64_t size_limit =
+            machine->host.memoized_relation_size_limit_bytes(
+                machine->host.context, head, arity);
+        if (petta_memo_arguments_estimated_bytes(query) > size_limit) {
+            if (machine->host.memoized_relation_bypassed) {
+                machine->host.memoized_relation_bypassed(
+                    machine->host.context, head, arity);
+            }
+            memoized = false;
+            if (!explicitly_tabled)
+                return false;
+        }
+    }
+
     *handled = true;
     machine->stats.table_lookups++;
     bool ground_query = !atom_has_vars(query);
-    bool memoized =
-        machine->host.memoized_relation_contains &&
-        machine->host.memoized_relation_contains(
-            machine->host.context,
-            query->expr.elems[0]->sym_id,
-            query->expr.len - 1u);
+    PettaMemoAggregateMode aggregate_mode =
+        memoized && ground_query &&
+                machine->host.memoized_relation_aggregate
+            ? machine->host.memoized_relation_aggregate(
+                  machine->host.context, head, arity)
+            : PETTA_MEMO_AGGREGATE_NONE;
     Atom *key_query = query;
     if (memoized && ground_query &&
         machine->host.memoized_relation_float_precision) {
@@ -13950,8 +14727,14 @@ static bool petta_machine_start_tabled_call(
         &machine->heap, key_query, &query_to_slot,
         &goal_instantiation, &kPettaTableVariantOptions);
     cetta_var_map_free(&query_to_slot);
+    SpaceEquationToken memo_equations = {0};
     uint64_t hash = canonical
         ? (uint64_t)atom_hash(canonical) : 0u;
+    if (canonical && memoized) {
+        memo_equations = space_equation_token(machine->space);
+        hash = petta_memo_equation_key_hash(
+            hash, memo_equations);
+    }
     if (!canonical) {
         cetta_var_map_free(&goal_instantiation);
         *failure = PETTA_MACHINE_STEP_CAPACITY;
@@ -13978,7 +14761,11 @@ static bool petta_machine_start_tabled_call(
     if (!petta_table_find_or_insert(
             machine->table_shared, canonical,
             memoized && ground_query ? query : canonical,
-            hash,
+            hash, memoized,
+            query->expr.elems[0]->sym_id,
+            query->expr.len - 1u,
+            aggregate_mode, ground_query,
+            memo_equations,
             &entry_index, &inserted) ||
         entry_index >= machine->table_shared->entry_len) {
         cetta_var_map_free(&goal_instantiation);
@@ -13990,10 +14777,7 @@ static bool petta_machine_start_tabled_call(
     PettaTableEntry *entry =
         &machine->table_shared->entries[entry_index];
     if (memoized) {
-        if (!entry->memoized) {
-            entry->memoized = true;
-            entry->memo_head = query->expr.elems[0]->sym_id;
-            entry->memo_arity = query->expr.len - 1u;
+        if (inserted) {
             if (UINT64_MAX -
                     machine->table_shared->memo_retained_bytes <
                 entry->retained_bytes) {
@@ -14017,14 +14801,6 @@ static bool petta_machine_start_tabled_call(
     }
     if (!inserted)
         machine->stats.table_hits++;
-    PettaMemoAggregateMode aggregate_mode =
-        memoized && ground_query &&
-                machine->host.memoized_relation_aggregate
-            ? machine->host.memoized_relation_aggregate(
-                  machine->host.context,
-                  query->expr.elems[0]->sym_id,
-                  query->expr.len - 1u)
-            : PETTA_MEMO_AGGREGATE_NONE;
     uint32_t answer_limit =
         memoized && machine->host.memoized_relation_answer_limit
             ? machine->host.memoized_relation_answer_limit(
@@ -14069,6 +14845,7 @@ static bool petta_machine_start_tabled_call(
             .answer_limit = answer_limit,
             .memoized = memoized,
             .ground_query = ground_query,
+            .replay_initial_answers = inserted && memoized,
         },
     };
     if (!petta_choice_push(machine, choice)) {
@@ -17118,13 +17895,13 @@ static bool petta_machine_try_activation_pure_grounded(
         return false;
     }
     bool truth = false;
-    bool scalar_truth = grounded_try_plain_scalar_truth(
-        goal->first->expr.elems[0], arguments,
+    bool scalar_truth = petta_machine_try_plain_scalar_truth(
+        machine, goal->first->expr.elems[0], arguments,
         argument_count, &truth);
     Atom *direct = scalar_truth
         ? petta_machine_boolean_value(machine, truth)
-        : grounded_dispatch(
-              &machine->heap, goal->first->expr.elems[0],
+        : petta_machine_grounded_dispatch(
+              machine, goal->first->expr.elems[0],
               arguments, argument_count);
     if (!direct)
         return false;
@@ -17508,12 +18285,12 @@ petta_machine_evaluate_activation_scalar_tree_reference_node(
             return status;
     }
     Atom *value = NULL;
-    if (!grounded_try_plain_scalar_arithmetic(
-            &machine->heap, source->expr.elems[0],
+    if (!petta_machine_try_plain_scalar_arithmetic(
+            machine, source->expr.elems[0],
             arguments, argument_count, &value)) {
         bool truth = false;
-        if (!grounded_try_plain_scalar_truth(
-                source->expr.elems[0], arguments,
+        if (!petta_machine_try_plain_scalar_truth(
+                machine, source->expr.elems[0], arguments,
                 argument_count, &truth)) {
             return PETTA_ACTIVATION_CALL_VIEW_DECLINED;
         }
@@ -18939,13 +19716,13 @@ static bool petta_machine_dispatch_solve(
         if (ready) {
             machine->stats.pure_grounded_slot_frame_entries++;
             bool truth = false;
-            bool scalar_truth = grounded_try_plain_scalar_truth(
-                goal->first->expr.elems[0], arguments,
+            bool scalar_truth = petta_machine_try_plain_scalar_truth(
+                machine, goal->first->expr.elems[0], arguments,
                 (uint32_t)nargs, &truth);
             Atom *direct = scalar_truth
                 ? petta_machine_boolean_value(machine, truth)
-                : grounded_dispatch(
-                      &machine->heap, goal->first->expr.elems[0],
+                : petta_machine_grounded_dispatch(
+                      machine, goal->first->expr.elems[0],
                       arguments, (uint32_t)nargs);
             if (direct) {
                 if (atom_is_empty(direct))
@@ -19187,6 +19964,7 @@ static bool petta_machine_dispatch_solve(
                 .barrier = goal->barrier,
                 .first = expression,
                 .second = expected,
+                .plan = plan,
             });
     }
 
@@ -19271,7 +20049,8 @@ static bool petta_machine_dispatch_solve(
         atom_is_symbol_id(
             expression->expr.elems[1]->expr.elems[0],
             g_builtin_syms.hyperpose);
-    if (host_hyperpose_wrapper && machine->host.evaluate) {
+    if (host_hyperpose_wrapper &&
+        petta_machine_host_can_evaluate(&machine->host)) {
         return petta_goal_push(
             machine,
             (PettaGoal){
@@ -19279,6 +20058,7 @@ static bool petta_machine_dispatch_solve(
                 .barrier = goal->barrier,
                 .first = expression,
                 .second = expected,
+                .plan = plan,
             });
     }
 
@@ -19553,7 +20333,8 @@ static bool petta_machine_dispatch_solve(
     }
 
     if (head_id == g_builtin_syms.hyperpose &&
-        nargs == 1u && machine->host.evaluate) {
+        nargs == 1u &&
+        petta_machine_host_can_evaluate(&machine->host)) {
         return petta_goal_push(
             machine,
             (PettaGoal){
@@ -19561,6 +20342,7 @@ static bool petta_machine_dispatch_solve(
                 .barrier = goal->barrier,
                 .first = expression,
                 .second = expected,
+                .plan = plan,
             });
     }
 
@@ -20801,8 +21583,8 @@ static bool petta_machine_dispatch_solve(
             petta_machine_resolve_immediate_arguments(
                 machine, expression, plan, arguments,
                 (uint32_t)nargs)) {
-            Atom *direct = grounded_dispatch(
-                &machine->heap, head, arguments,
+            Atom *direct = petta_machine_grounded_dispatch(
+                machine, head, arguments,
                 (uint32_t)nargs);
             if (direct) {
                 if (atom_is_empty(direct))
@@ -20857,6 +21639,7 @@ static bool petta_machine_dispatch_solve(
                 .barrier = goal->barrier,
                 .first = expression,
                 .second = expected,
+                .plan = plan,
             });
     }
     if (host_mode ==
@@ -21610,8 +22393,8 @@ static bool petta_machine_dispatch_goal(
             atom_symbol_id(&machine->heap, g_builtin_syms.parse);
         Atom *arguments[1] = {text};
         Atom *parsed = text && parse_head
-            ? grounded_dispatch(
-                  &machine->heap, parse_head, arguments, 1u)
+            ? petta_machine_grounded_dispatch(
+                  machine, parse_head, arguments, 1u)
             : NULL;
             return parsed &&
                petta_machine_unify(machine, parsed, second);
@@ -21837,8 +22620,17 @@ static bool petta_machine_dispatch_goal(
             }
             value = flattened;
         }
-        return petta_push_solve(
-            machine, value, second, goal.barrier);
+        const PettaPlanNode *translated = NULL;
+        if (machine->host.translate_source) {
+            translated = machine->host.translate_source(
+                machine->host.context, machine->space, value);
+            if (!translated) {
+                *failure = PETTA_MACHINE_STEP_CAPACITY;
+                return false;
+            }
+        }
+        return petta_push_solve_planned(
+            machine, value, second, goal.barrier, translated);
     }
 
     if (goal.kind == PETTA_GOAL_EQUAL_COMMIT) {
@@ -22358,8 +23150,8 @@ static bool petta_machine_dispatch_goal(
                 ? is_grounded_op(head_id)
                 : grounded_op_is_type_pure(head_id);
         if (direct) {
-            Atom *direct = grounded_dispatch(
-                &machine->heap, head,
+            Atom *direct = petta_machine_grounded_dispatch(
+                machine, head,
                 first->expr.elems + 1u,
                 (uint32_t)(first->expr.len - 1u));
             if (direct) {
@@ -22380,7 +23172,7 @@ static bool petta_machine_dispatch_goal(
         }
     }
 
-    if (!machine->host.evaluate) {
+    if (!petta_machine_host_can_evaluate(&machine->host)) {
         *failure = PETTA_MACHINE_STEP_HOST_ERROR;
         return false;
     }
@@ -22426,9 +23218,13 @@ static bool petta_machine_dispatch_goal(
 
     OutcomeSet *outcomes = cetta_malloc(sizeof(*outcomes));
     outcome_set_init_with_owner(outcomes, &machine->heap);
-    bool evaluated = machine->host.evaluate(
-            machine->host.context, machine->space, &machine->heap,
-            first, &host_environment, outcomes);
+    bool evaluated = machine->host.evaluate_planned
+        ? machine->host.evaluate_planned(
+              machine->host.context, machine->space, &machine->heap,
+              first, goal.plan, &host_environment, outcomes)
+        : machine->host.evaluate(
+              machine->host.context, machine->space, &machine->heap,
+              first, &host_environment, outcomes);
     if (evaluated) {
         evaluated = petta_machine_factor_outcome_prefixes(
             machine, outcomes, &host_environment);

@@ -15,6 +15,9 @@
                   (publish 5)
                   (publish 6)
                   (publish 7))))
-             (test (size &shared-indirect-add) 9))))
+             (test
+               (size-atom
+                 (collapse (get-atoms &shared-indirect-add)))
+               9))))
 
 !(run-shared-indirect-add)

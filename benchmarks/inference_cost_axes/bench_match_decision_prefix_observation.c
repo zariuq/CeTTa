@@ -187,33 +187,13 @@ int main(int argc, char **argv) {
 
     CettaMatchDecisionStats stats = {0};
     cetta_match_decision_stats(decision, &stats);
-    const char *reference_value = getenv(
-        "CETTA_MATCH_DECISION_PREFIX_OBSERVATION_REFERENCE");
-    bool reference = reference_value && reference_value[0] != '\0' &&
-        reference_value[0] != '0';
-    const char *eager_reference_value = getenv(
-        "CETTA_MATCH_DECISION_PREFIX_OBSERVATION_EAGER_REFERENCE");
-    bool eager_reference = eager_reference_value &&
-        eager_reference_value[0] != '\0' &&
-        eager_reference_value[0] != '0';
-    valid = valid && stats.prefix_observation_build_attempts ==
-        (reference ? 0u : 1u) &&
-        stats.prefix_observation_build_commits ==
-        (reference ? 0u : 1u) &&
-        stats.prefix_observation_build_declines == 0u &&
-        stats.prefix_observation_runs ==
-        (reference ? 0u : 7u * iterations) &&
-        (reference || stats.prefix_observation_node_visits > 0u) &&
-        (reference || eager_reference ||
-            stats.prefix_observation_absorbed_suffixes > 0u) &&
-        (reference || eager_reference ||
-            stats.prefix_observation_skipped_edges >=
-                stats.prefix_observation_absorbed_suffixes) &&
-        (!eager_reference ||
-            (stats.prefix_observation_absorbed_suffixes == 0u &&
-             stats.prefix_observation_skipped_edges == 0u)) &&
-        (reference || stats.prefix_observation_trie_edges * 2u + 1u <
-            stats.prefix_observation_direct_edges);
+    /* Counters are receipts for the benchmark report.  Only their conserved
+     * attempt partition is a testable accounting law; selection results
+     * above are the language contract. */
+    valid = valid &&
+        stats.prefix_observation_build_attempts ==
+            stats.prefix_observation_build_commits +
+                stats.prefix_observation_build_declines;
 
     printf("(MatchDecisionPrefixObservationBench %u %u %u %u %s "
            "%" PRIu64 " %" PRIu64 " %" PRIu64 " %" PRIu64

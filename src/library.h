@@ -101,9 +101,15 @@ typedef struct {
     uint32_t float_precision;
     uint32_t answer_limit;
     CettaPettaMemoAggregate aggregate;
+    uint64_t stat_tick;
     uint64_t cache_hits;
+    uint64_t cache_hits_stamp;
     uint64_t cache_misses;
+    uint64_t cache_misses_stamp;
+    uint64_t cache_bypasses;
+    uint64_t cache_bypasses_stamp;
     uint64_t answer_limit_truncated;
+    uint64_t answer_limit_truncated_stamp;
     bool imported_controls[CETTA_PETTA_MEMO_CONTROL_COUNT];
 } CettaPettaMemoState;
 
@@ -217,6 +223,8 @@ bool cetta_library_petta_git_import(CettaLibraryContext *ctx,
                                     Atom **error_out);
 bool cetta_library_petta_git_import_enabled(
     const CettaLibraryContext *ctx);
+bool cetta_library_petta_tabling_enabled(
+    const CettaLibraryContext *ctx);
 bool cetta_library_petta_library_path_apply(
     CettaLibraryContext *ctx,
     const PeTTaLibraryPathEffect *effect);
@@ -308,6 +316,9 @@ void cetta_library_petta_memo_clear_stats(
 void cetta_library_petta_memo_observe(
     CettaLibraryContext *ctx, SymbolId head,
     CettaExprLen arity, bool cache_hit);
+void cetta_library_petta_memo_observe_bypass(
+    CettaLibraryContext *ctx, SymbolId head,
+    CettaExprLen arity);
 void cetta_library_petta_memo_observe_truncation(
     CettaLibraryContext *ctx, SymbolId head,
     CettaExprLen arity);

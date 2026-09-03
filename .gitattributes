@@ -1,1 +1,4 @@
 *.expected whitespace=-trailing-space
+# Preserve byte-identical upstream library presentations.  Their source hashes
+# are recorded in lib/petta/vendored_from_petta.tsv.
+lib/petta/* whitespace=-trailing-space

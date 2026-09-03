@@ -1000,9 +1000,14 @@ static void init_test_symbols(SymbolTable *symbols) {
 }
 
 static void test_query_results_capacity_failure_is_loud(void) {
+    int diagnostics[2];
+    assert(pipe(diagnostics) == 0);
     pid_t pid = fork();
     assert(pid >= 0);
     if (pid == 0) {
+        close(diagnostics[0]);
+        assert(dup2(diagnostics[1], STDERR_FILENO) >= 0);
+        close(diagnostics[1]);
         Arena child_arena;
         QueryResults results;
         Bindings bindings;
@@ -1016,10 +1021,18 @@ static void test_query_results_capacity_failure_is_loud(void) {
                                  &bindings);
         _exit(0);
     }
+    close(diagnostics[1]);
+    char message[256];
+    FILE *stream = fdopen(diagnostics[0], "r");
+    assert(stream != NULL);
+    size_t length = fread(message, 1u, sizeof(message) - 1u, stream);
+    assert(fclose(stream) == 0);
+    message[length] = '\0';
     int status = 0;
     assert(waitpid(pid, &status, 0) == pid);
     assert((WIFSIGNALED(status) && WTERMSIG(status) == SIGABRT) ||
            (WIFEXITED(status) && WEXITSTATUS(status) != 0));
+    assert(strstr(message, "query result capacity exhausted") != NULL);
 }
 
 static void test_atom_deep_copy_preserves_pointer_dag(void) {
@@ -1967,6 +1980,87 @@ int main(void) {
     assert(disc_matches[0] == 77);
     free(disc_matches);
     disc_node_free(disc);
+
+    /* Integer discrimination promotes from a small linear branch set to an
+     * open-addressed table.  Exercise positive, negative, duplicate, extreme,
+     * and wildcard observations across several resize/collision regimes. */
+    DiscNode *integer_disc = disc_node_new();
+    for (int64_t value = 0; value < 256; value++) {
+        Atom *integer = atom_int(&scratch, value);
+        AtomId integer_id = term_universe_store_atom_id(
+            &universe, NULL, integer);
+        assert(integer_id != CETTA_ATOM_ID_NONE);
+        assert(disc_insert_id(
+            integer_disc, &universe, integer_id, (CettaIndex)value));
+    }
+    Atom *minimum_integer = atom_int(&scratch, INT64_MIN);
+    Atom *maximum_integer = atom_int(&scratch, INT64_MAX);
+    AtomId minimum_integer_id = term_universe_store_atom_id(
+        &universe, NULL, minimum_integer);
+    AtomId maximum_integer_id = term_universe_store_atom_id(
+        &universe, NULL, maximum_integer);
+    assert(disc_insert_id(
+        integer_disc, &universe, minimum_integer_id, 256u));
+    assert(disc_insert_id(
+        integer_disc, &universe, maximum_integer_id, 257u));
+    AtomId duplicate_integer_id = term_universe_store_atom_id(
+        &universe, NULL, atom_int(&scratch, 17));
+    assert(disc_insert_id(
+        integer_disc, &universe, duplicate_integer_id, 258u));
+
+    for (int64_t value = 0; value < 256; value++) {
+        CettaIndex *integer_matches = NULL;
+        CettaIndex integer_match_count = 0u;
+        CettaIndex integer_match_cap = 0u;
+        disc_lookup(integer_disc, atom_int(&scratch, value),
+                    &integer_matches, &integer_match_count,
+                    &integer_match_cap);
+        assert(integer_match_count == (value == 17 ? 2u : 1u));
+        bool saw_primary = false;
+        bool saw_duplicate = false;
+        for (CettaIndex i = 0u; i < integer_match_count; i++) {
+            saw_primary = saw_primary ||
+                integer_matches[i] == (CettaIndex)value;
+            saw_duplicate = saw_duplicate ||
+                integer_matches[i] == 258u;
+        }
+        assert(saw_primary);
+        assert(saw_duplicate == (value == 17));
+        free(integer_matches);
+    }
+    CettaIndex *integer_matches = NULL;
+    CettaIndex integer_match_count = 0u;
+    CettaIndex integer_match_cap = 0u;
+    disc_lookup(integer_disc, atom_int(&scratch, INT64_MIN),
+                &integer_matches, &integer_match_count,
+                &integer_match_cap);
+    assert(integer_match_count == 1u && integer_matches[0] == 256u);
+    free(integer_matches);
+    integer_matches = NULL;
+    integer_match_count = 0u;
+    integer_match_cap = 0u;
+    disc_lookup(integer_disc, atom_int(&scratch, INT64_MAX),
+                &integer_matches, &integer_match_count,
+                &integer_match_cap);
+    assert(integer_match_count == 1u && integer_matches[0] == 257u);
+    free(integer_matches);
+    integer_matches = NULL;
+    integer_match_count = 0u;
+    integer_match_cap = 0u;
+    disc_lookup(integer_disc, atom_int(&scratch, -1),
+                &integer_matches, &integer_match_count,
+                &integer_match_cap);
+    assert(integer_match_count == 0u);
+    free(integer_matches);
+    integer_matches = NULL;
+    integer_match_count = 0u;
+    integer_match_cap = 0u;
+    disc_lookup(integer_disc, atom_var(&scratch, "$integer"),
+                &integer_matches, &integer_match_count,
+                &integer_match_cap);
+    assert(integer_match_count == 259u);
+    free(integer_matches);
+    disc_node_free(integer_disc);
 
     SubstTree stree;
     stree_init(&stree);

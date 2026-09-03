@@ -64,9 +64,69 @@ static __thread const PettaPlanNode *g_petta_source_plan = NULL;
  * receives is the very atom the plan was compiled for; a stale root plan
  * would misassign roles (e.g. mark a known call as inert data). */
 static __thread const Atom *g_petta_source_plan_atom = NULL;
+
+typedef struct {
+    const PettaPlanNode *previous_plan;
+    const Atom *previous_atom;
+    bool active;
+} PettaSourcePlanScope;
+
+static void petta_source_plan_scope_leave(
+        PettaSourcePlanScope *scope) {
+    if (!scope || !scope->active)
+        return;
+    g_petta_source_plan = scope->previous_plan;
+    g_petta_source_plan_atom = scope->previous_atom;
+    scope->active = false;
+}
+
+static void petta_source_plan_scope_enter(
+        PettaSourcePlanScope *scope,
+        const PettaPlanNode *plan, const Atom *atom) {
+    if (!scope)
+        return;
+    *scope = (PettaSourcePlanScope){
+        .previous_plan = g_petta_source_plan,
+        .previous_atom = g_petta_source_plan_atom,
+        .active = true,
+    };
+    g_petta_source_plan = plan;
+    g_petta_source_plan_atom = plan ? atom : NULL;
+}
+
+static const PettaPlanNode *petta_eval_translation_plan_current(
+    CettaLibraryContext *library_context,
+    Space *space, Atom *expression);
+static bool active_builtin_allowed(const char *syntax_name);
 /* Current evaluation root space and persistent fallback. */
 static __thread Space *g_eval_root_space = NULL;
 static __thread TermUniverse g_eval_fallback_universe = {0};
+static __thread TermUniverse *g_eval_term_universe_override = NULL;
+
+typedef struct {
+    TermUniverse *previous;
+    bool active;
+} EvalTermUniverseScope;
+
+static void eval_term_universe_scope_leave(
+        EvalTermUniverseScope *scope) {
+    if (!scope || !scope->active)
+        return;
+    g_eval_term_universe_override = scope->previous;
+    scope->active = false;
+}
+
+static void eval_term_universe_scope_enter(
+        EvalTermUniverseScope *scope,
+        TermUniverse *universe) {
+    if (!scope)
+        return;
+    *scope = (EvalTermUniverseScope){
+        .previous = g_eval_term_universe_override,
+        .active = true,
+    };
+    g_eval_term_universe_override = universe;
+}
 /* Query cache for the current logical evaluation episode. */
 static __thread TableStore g_episode_table;
 static __thread bool g_episode_table_ready = false;
@@ -78,6 +138,11 @@ static __thread Arena g_episode_survivor_arena;
 static __thread bool g_episode_survivor_arena_ready = false;
 /* Active importable library set */
 static __thread CettaLibraryContext *g_library_context = NULL;
+/* A worker-local transport of immutable equation-program metadata onto its
+ * private root image.  This is optimization evidence only: an absent or
+ * stale projection selects the ordinary live equation path. */
+static __thread const PettaProgramRevisionProjection
+    *g_petta_program_revision_projection = NULL;
 /* Language is an execution-register property of the active library context.
  * Keep hot profile reads scalar; every context switch below updates and
  * restores them together, including worker-thread branch evaluation. */
@@ -2217,6 +2282,8 @@ static bool petta_import_parse_failure(Atom *error) {
 #endif
 
 static TermUniverse *eval_current_term_universe(void) {
+    if (g_eval_term_universe_override)
+        return g_eval_term_universe_override;
     if (g_eval_root_space && g_eval_root_space->native.universe)
         return g_eval_root_space->native.universe;
     if (g_library_context && g_library_context->term_universe.persistent_arena)
@@ -3339,6 +3406,9 @@ static Atom *eval_direct_grounded_application(Space *s, Arena *a, Atom *atom,
 
     Atom *head = atom->expr.elems[0];
     if (head->kind != ATOM_SYMBOL || !is_grounded_op(head->sym_id))
+        return NULL;
+    const char *head_name = atom_name_cstr(head);
+    if (head_name && !active_builtin_allowed(head_name))
         return NULL;
 
     /* Prime's Python convenience heads are occurrence-valued: a call can
@@ -11296,11 +11366,14 @@ typedef struct {
 typedef struct HyperposeThreadBranch {
     CettaExprIndex index;
     Atom *branch;
+    const PettaPlanNode *source_plan;
     HashConsTable hashcons;
     Arena persistent_arena;
     Arena eval_arena;
     TermUniverse term_universe;
     Space *space;
+    Bindings capture_env;
+    PettaProgramRevisionProjection program_projection;
     Registry registry;
     HyperposeOwnedSpaces owned_spaces;
     HyperposeThreadResultBuffer results;
@@ -11642,6 +11715,12 @@ static Atom *hyperpose_clone_atom_materialized(
     return NULL;
 }
 
+static Atom *hyperpose_transport_binding_atom(void *raw_context,
+                                              Atom *source) {
+    return hyperpose_clone_atom_materialized(
+        (HyperposeCloneContext *)raw_context, source);
+}
+
 static Space *hyperpose_clone_space_materialized(
     Space *src, HyperposeCloneContext *context, TermUniverse *universe) {
     if (!src || !context || !context->owner || !universe)
@@ -11746,11 +11825,17 @@ static bool hyperpose_prepare_thread_branch(HyperposeThreadBranch *branch,
                                             Space *source_space,
                                             Registry *source_registry,
                                             Atom *source_branch,
-                                            bool share_spaces) {
+                                            const PettaPlanNode *source_plan,
+                                            const Bindings *source_env,
+                                            bool share_published_spaces,
+                                            const PettaProgramRevisionView
+                                                *program_view) {
 #define HYPERPOSE_THREAD_PERSISTENT_ARENA_RESERVE (2u * ARENA_BLOCK_SIZE)
 #define HYPERPOSE_THREAD_EVAL_ARENA_RESERVE (4u * ARENA_BLOCK_SIZE)
     memset(branch, 0, sizeof(*branch));
     branch->index = index;
+    branch->source_plan = source_plan;
+    bindings_init(&branch->capture_env);
     hashcons_init(&branch->hashcons);
     arena_init(&branch->persistent_arena);
     arena_reserve(&branch->persistent_arena,
@@ -11769,15 +11854,22 @@ static bool hyperpose_prepare_thread_branch(HyperposeThreadBranch *branch,
     __attribute__((cleanup(hyperpose_clone_context_free)))
     HyperposeCloneContext clone_context = {
         .owner = &branch->persistent_arena,
-        .share_spaces = share_spaces,
+        .share_spaces = share_published_spaces,
     };
-    branch->space =
-        hyperpose_clone_space_materialized(source_space,
-                                          &clone_context,
-                                          &branch->term_universe);
+    branch->space = share_published_spaces
+        ? source_space
+        : hyperpose_clone_space_materialized(
+              source_space, &clone_context,
+              &branch->term_universe);
     if (!branch->space)
         return false;
-    if (!hyperpose_owned_spaces_push(
+    if (program_view) {
+        (void)petta_program_revision_view_bind(
+            program_view, branch->space,
+            &branch->program_projection);
+    }
+    if (!share_published_spaces &&
+        !hyperpose_owned_spaces_push(
             &branch->owned_spaces, branch->space, NULL))
         return false;
     if (!hyperpose_clone_registry(&branch->registry, source_registry,
@@ -11791,6 +11883,25 @@ static bool hyperpose_prepare_thread_branch(HyperposeThreadBranch *branch,
             &clone_context, source_branch);
     if (!branch->branch)
         return false;
+    if (source_env &&
+        (source_env->len > 0u || source_env->eq_len > 0u ||
+         bindings_prime_present(source_env))) {
+        Atom *roots[1] = {source_branch};
+        __attribute__((cleanup(bindings_free))) Bindings projected;
+        if (!bindings_project_reachable(
+                source_env, roots, 1u, &projected) ||
+            !bindings_transport_logical(
+                &branch->capture_env, &projected,
+                hyperpose_transport_binding_atom, &clone_context)) {
+            return false;
+        }
+        cetta_runtime_stats_add(
+            CETTA_RUNTIME_COUNTER_HYPERPOSE_SOURCE_FAMILY_CAPTURE_ENTRY,
+            branch->capture_env.len);
+        cetta_runtime_stats_add(
+            CETTA_RUNTIME_COUNTER_HYPERPOSE_SOURCE_FAMILY_CAPTURE_CONSTRAINT,
+            branch->capture_env.eq_len);
+    }
     branch->prepared = true;
     return true;
 }
@@ -11799,6 +11910,7 @@ static void hyperpose_thread_branch_free(HyperposeThreadBranch *branch) {
     if (!branch)
         return;
     hyperpose_result_buffer_free(&branch->results);
+    bindings_free(&branch->capture_env);
     for (CettaCount i = 0; i < branch->owned_spaces.len; i++) {
         HyperposeOwnedSpace owned = branch->owned_spaces.items[i];
         if (owned.space) {
@@ -11807,7 +11919,9 @@ static void hyperpose_thread_branch_free(HyperposeThreadBranch *branch) {
                     owned.petta_program, owned.space);
             space_free(owned.space);
             if (!arena_owns_ptr(
-                    &branch->persistent_arena, owned.space)) {
+                    &branch->persistent_arena, owned.space) &&
+                !arena_owns_ptr(
+                    &branch->eval_arena, owned.space)) {
                 free(owned.space);
             }
         }
@@ -12197,11 +12311,47 @@ static void hyperpose_eval_branch_in_thread(HyperposeThreadRun *run,
         atomic_load_explicit(&run->cancel_requested, memory_order_acquire))
         return;
 
+    const bool petta_worker = run->library_context &&
+        run->library_context->session.language_id ==
+            CETTA_LANGUAGE_PETTA;
+    const PettaPlanNode *execution_plan = branch->source_plan;
+    if (petta_worker && !execution_plan) {
+        /* A computed branch is translated by the worker at its actual entry
+           event.  A literal branch instead arrives with the earlier plan
+           transported from its enclosing source occurrence. */
+        execution_plan = petta_eval_translation_plan_current(
+            run->library_context, branch->space, branch->branch);
+        if (!execution_plan) {
+            branch->completion = CETTA_EVAL_INCOMPLETE_CAPACITY;
+            branch->execution_finished = true;
+            atomic_store_explicit(
+                &run->unsafe_result, true, memory_order_release);
+            atomic_store_explicit(
+                &run->cancel_requested, true, memory_order_release);
+            cetta_parallel_executor_cancel(&run->parallel);
+            return;
+        }
+    }
+
+    __attribute__((cleanup(petta_source_plan_scope_leave)))
+    PettaSourcePlanScope source_scope = {0};
+    petta_source_plan_scope_enter(
+        &source_scope, execution_plan, branch->branch);
+    /* The published root Space is shared authority, not ownership of worker
+       temporaries.  Keep every branch allocation in its own TermUniverse
+       even while its reads and authored effects address the shared root. */
+    __attribute__((cleanup(eval_term_universe_scope_leave)))
+    EvalTermUniverseScope universe_scope = {0};
+    eval_term_universe_scope_enter(
+        &universe_scope, &branch->term_universe);
+
     Registry *prev_registry = g_registry;
     Space *prev_root_space = g_eval_root_space;
     Arena *prev_fallback_persistent =
         g_eval_fallback_universe.persistent_arena;
     CettaLibraryContext *prev_library_context = g_library_context;
+    const PettaProgramRevisionProjection *prev_program_projection =
+        g_petta_program_revision_projection;
     HashConsTable *prev_hashcons = g_hashcons;
     EvalCompletionTracker *prev_completion = g_eval_completion_tracker;
     _Atomic bool *prev_cancel = eval_set_cancel_token(&run->cancel_requested);
@@ -12227,6 +12377,9 @@ static void hyperpose_eval_branch_in_thread(HyperposeThreadRun *run,
     g_eval_root_space = branch->space;
     g_hashcons = &branch->hashcons;
     eval_swap_library_context(run->library_context);
+    g_petta_program_revision_projection =
+        branch->program_projection.view
+            ? &branch->program_projection : NULL;
     term_universe_set_persistent_arena(&g_eval_fallback_universe,
                                        &branch->persistent_arena);
     eval_release_outcome_variant_bank();
@@ -12236,10 +12389,9 @@ static void hyperpose_eval_branch_in_thread(HyperposeThreadRun *run,
     OutcomeSet outcomes;
     outcome_set_init(&outcomes);
     eval_for_current_caller(branch->space, &branch->eval_arena, NULL,
-                            branch->branch, run->fuel, &empty, &empty,
+                            branch->branch, run->fuel, &empty,
+                            &branch->capture_env,
                             run->preserve_bindings, &outcomes);
-    const bool petta_worker =
-        eval_current_language_id() == CETTA_LANGUAGE_PETTA;
     for (CettaCount i = 0; i < outcomes.len; i++) {
         Atom *candidate =
             outcome_atom_materialize(&branch->eval_arena, &outcomes.items[i]);
@@ -12305,6 +12457,7 @@ static void hyperpose_eval_branch_in_thread(HyperposeThreadRun *run,
     eval_set_hyperpose_thread_unsafe_token(prev_unsafe);
     eval_set_cancel_token(prev_cancel);
     eval_swap_library_context(prev_library_context);
+    g_petta_program_revision_projection = prev_program_projection;
     g_hashcons = prev_hashcons;
     g_registry = prev_registry;
     g_eval_root_space = prev_root_space;
@@ -12393,12 +12546,60 @@ static void hyperpose_record_result_transfer_failure(
         &empty);
 }
 
+static void hyperpose_program_revision_view_cleanup(
+        PettaProgramRevisionView **view) {
+    if (!view)
+        return;
+    petta_program_revision_view_free(*view);
+    *view = NULL;
+}
+
+/* Recover the plan attached to the exact Hyperpose occurrence currently
+ * crossing the generic host boundary.  Literal alternatives inherit child
+ * plans from that earlier translation event.  A computed alternative list
+ * has no such children and is translated afresh by each worker at entry. */
+static const PettaPlanNode *hyperpose_stream_source_plan(
+        Atom *stream_expr) {
+    if (!stream_expr || !g_petta_source_plan ||
+        !g_petta_source_plan_atom) {
+        return NULL;
+    }
+    if (g_petta_source_plan_atom == stream_expr)
+        return g_petta_source_plan;
+    const Atom *wrapper = g_petta_source_plan_atom;
+    if (wrapper->kind != ATOM_EXPR || wrapper->expr.len != 2u ||
+        wrapper->expr.elems[1] != stream_expr) {
+        return NULL;
+    }
+    SymbolId head = atom_head_symbol_id((Atom *)wrapper);
+    if (head != g_builtin_syms.once && !eval_is_reify_head(head))
+        return NULL;
+    return petta_plan_child(g_petta_source_plan, 1u);
+}
+
+typedef struct {
+    bool attempted;
+    bool committed;
+} HyperposeSourceFamilyCaptureReceipt;
+
+static void hyperpose_source_family_capture_receipt_finish(
+        HyperposeSourceFamilyCaptureReceipt *receipt) {
+    if (receipt && receipt->attempted && !receipt->committed) {
+        cetta_runtime_stats_inc(
+            CETTA_RUNTIME_COUNTER_HYPERPOSE_SOURCE_FAMILY_CAPTURE_DECLINE);
+    }
+}
+
 static bool hyperpose_threaded_execute(
     Space *s, Arena *a, Atom *stream_expr, int fuel,
+    const Bindings *outer_env,
     HyperposeThreadObservation observation,
     bool preserve_bindings, OutcomeSet *os) {
 #define HYPERPOSE_WORKER_STACK_BYTES (16u * 1024u * 1024u)
     (void)preserve_bindings;
+    __attribute__((cleanup(
+        hyperpose_source_family_capture_receipt_finish)))
+    HyperposeSourceFamilyCaptureReceipt capture_receipt = {0};
     /* An exclusive physical transition cannot be transferred to child
        threads while their parent waits for them.  Execute the same Hyperpose
        operation through its cooperative realization inside such a region;
@@ -12408,9 +12609,6 @@ static bool hyperpose_threaded_execute(
             CETTA_RUNTIME_COUNTER_HYPERPOSE_COOPERATIVE_FALLBACK);
         return false;
     }
-    Atom *branches_expr = NULL;
-    if (!hyperpose_static_branch_list(stream_expr, &branches_expr))
-        return false;
     if (!active_builtin_allowed("hyperpose"))
         return false;
     /* A finite fuel grant is one affine purse.  Until a parallel allocation
@@ -12430,13 +12628,59 @@ static bool hyperpose_threaded_execute(
     if (configured_threads > 1024)
         configured_threads = 1024;
 
+    const bool petta_execution =
+        eval_current_language_id() == CETTA_LANGUAGE_PETTA;
+    __attribute__((cleanup(bindings_free))) Bindings family_env;
+    bindings_init(&family_env);
+    const Bindings *captured_env = NULL;
+    Atom *captured_stream_expr = stream_expr;
+    if (petta_execution && outer_env) {
+        cetta_runtime_stats_inc(
+            CETTA_RUNTIME_COUNTER_HYPERPOSE_SOURCE_FAMILY_CAPTURE_ATTEMPT);
+        capture_receipt.attempted = true;
+        Atom *roots[1] = {stream_expr};
+        if (!bindings_project_reachable(
+                outer_env, roots, 1u, &family_env) ||
+            bindings_prime_present(&family_env)) {
+            cetta_runtime_stats_inc(
+                CETTA_RUNTIME_COUNTER_HYPERPOSE_COOPERATIVE_FALLBACK);
+            return false;
+        }
+        captured_env = &family_env;
+        captured_stream_expr = bindings_apply_if_vars(
+            captured_env, a, stream_expr);
+        if (!captured_stream_expr) {
+            cetta_runtime_stats_inc(
+                CETTA_RUNTIME_COUNTER_HYPERPOSE_COOPERATIVE_FALLBACK);
+            return false;
+        }
+    }
+
+    Atom *branches_expr = NULL;
+    if (!hyperpose_static_branch_list(
+            captured_stream_expr, &branches_expr)) {
+        return false;
+    }
+
     CettaCount branch_count = branches_expr->expr.len;
     if (branch_count == 0)
         return false;
-    if (!hyperpose_all_branches_thread_eligible_without_capture(s, branches_expr)) {
+    bool eligible = petta_execution && captured_env
+        ? hyperpose_all_branches_thread_eligible(s, branches_expr)
+        : hyperpose_all_branches_thread_eligible_without_capture(
+              s, branches_expr);
+    if (!eligible) {
         cetta_runtime_stats_inc(
             CETTA_RUNTIME_COUNTER_HYPERPOSE_COOPERATIVE_FALLBACK);
         return false;
+    }
+
+    __attribute__((cleanup(hyperpose_program_revision_view_cleanup)))
+    PettaProgramRevisionView *program_view = NULL;
+    if (petta_execution && g_library_context &&
+        g_library_context->petta_program) {
+        program_view = petta_program_revision_view_capture(
+            g_library_context->petta_program, s);
     }
 
     HyperposeThreadBranch *branches =
@@ -12444,12 +12688,19 @@ static bool hyperpose_threaded_execute(
     if (!branches)
         return false;
     bool prepared = true;
-    bool share_spaces =
-        eval_current_language_id() == CETTA_LANGUAGE_PETTA;
+    bool share_published_spaces = petta_execution;
+    const PettaPlanNode *stream_plan = petta_execution
+        ? hyperpose_stream_source_plan(stream_expr) : NULL;
+    const PettaPlanNode *branch_family_plan =
+        petta_plan_child(stream_plan, 1u);
     for (CettaCount i = 0; i < branch_count; i++) {
         if (!hyperpose_prepare_thread_branch(&branches[i], i, s, g_registry,
                                              branches_expr->expr.elems[i],
-                                             share_spaces)) {
+                                             petta_plan_child(
+                                                 branch_family_plan, i),
+                                             captured_env,
+                                             share_published_spaces,
+                                             program_view)) {
             prepared = false;
             break;
         }
@@ -12459,6 +12710,11 @@ static bool hyperpose_threaded_execute(
             hyperpose_thread_branch_free(&branches[i]);
         free(branches);
         return false;
+    }
+    if (petta_execution && outer_env) {
+        cetta_runtime_stats_inc(
+            CETTA_RUNTIME_COUNTER_HYPERPOSE_SOURCE_FAMILY_CAPTURE_COMMIT);
+        capture_receipt.committed = true;
     }
 
     uint32_t thread_count = (uint32_t)configured_threads;
@@ -12470,12 +12726,13 @@ static bool hyperpose_threaded_execute(
         .branch_count = branch_count,
         .fuel = fuel,
         /*
-         * Admission above proves that every branch is closed and contains no
-         * registry reference.  Any bindings created while reducing a branch
-         * are therefore branch-internal: materialize its answer in the worker
-         * and do not export that private environment across the thread
-         * boundary.  The caller may itself be on a binding-preserving path;
-         * that does not make a closed hyperpose branch capture those bindings.
+         * A branch may carry the support-restricted caller environment and
+         * published registry identities prepared above.  That captured input
+         * is distinct from bindings produced while the branch runs: produced
+         * bindings remain branch-local, while the materialized answer and its
+         * owned resource graph cross the join boundary.  Do not export the
+         * worker's private continuation environment merely because the caller
+         * itself requested binding-preserving evaluation.
          */
         .preserve_bindings = false,
         .first_success =
@@ -12490,6 +12747,7 @@ static bool hyperpose_threaded_execute(
     CettaParallelExecutorConfig config = {
         .thread_count = thread_count,
         .stack_size_bytes = HYPERPOSE_WORKER_STACK_BYTES,
+        .prefer_persistent_workers = true,
         .user = &run,
         .task_fn = hyperpose_thread_task,
         .worker_enter = hyperpose_worker_enter,
@@ -12536,6 +12794,10 @@ static bool hyperpose_threaded_execute(
             eval_current_language_id() == CETTA_LANGUAGE_PETTA;
         cetta_runtime_stats_inc(
             CETTA_RUNTIME_COUNTER_HYPERPOSE_FALLBACK_THREAD_LIMIT);
+        if (!petta_execution_started) {
+            cetta_runtime_stats_inc(
+                CETTA_RUNTIME_COUNTER_HYPERPOSE_COOPERATIVE_FALLBACK);
+        }
         if (petta_execution_started) {
             /* Worker effects may already be visible.  Re-entering the
                cooperative evaluator would execute them twice, so a failed
@@ -13092,7 +13354,7 @@ static void stream_emit(Space *s, Arena *a, Atom *stream_expr, int fuel,
 
     if (order == CETTA_SEARCH_POLICY_ORDER_NATIVE &&
         hyperpose_threaded_execute(
-            s, a, stream_expr, fuel,
+            s, a, stream_expr, fuel, NULL,
             bounded && limit == 1
                 ? HYPERPOSE_THREAD_OBSERVE_FIRST
                 : HYPERPOSE_THREAD_OBSERVE_REIFIED_BAG,
@@ -17092,6 +17354,7 @@ static bool space_snapshot_copy_logical_view(Space *dst, const Space *src) {
     if (!space_length_u32_checked(src, &n))
         return false;
     dst->revision = space_revision(src);
+    dst->equation_revision = space_equation_revision(src);
     if (n == 0)
         return true;
     for (uint32_t i = 0; i < n; i++) {
@@ -32927,6 +33190,19 @@ typedef struct {
 } PettaEvalMachineAnalysisState;
 #endif
 
+#define PETTA_BUILTIN_ADMISSION_CACHE_SLOTS 64u
+
+_Static_assert(
+    (PETTA_BUILTIN_ADMISSION_CACHE_SLOTS &
+     (PETTA_BUILTIN_ADMISSION_CACHE_SLOTS - 1u)) == 0u,
+    "builtin admission cache must use a power-of-two slot count");
+
+typedef struct {
+    SymbolId head;
+    bool valid;
+    bool allowed;
+} PettaBuiltinAdmissionCacheEntry;
+
 typedef struct {
     int fuel;
     bool data_ops;
@@ -32946,7 +33222,10 @@ typedef struct {
     PettaEvalTransaction *transaction;
     uint64_t semantic_authority_epoch;
     CettaLibraryContext *library_context;
+    const PettaProgramRevisionProjection *program_projection;
     PreparedPureProgramCache prepared_pure_cache;
+    PettaBuiltinAdmissionCacheEntry
+        builtin_admission_cache[PETTA_BUILTIN_ADMISSION_CACHE_SLOTS];
 #if CETTA_BUILD_WITH_PETTA_TYPECHECK_V2
     PettaEvalMachineAnalysisState *analysis_state;
 #endif
@@ -33181,7 +33460,10 @@ static void petta_eval_mutex_registry_init(void) {
             "fatal: failed to initialize PeTTa mutex registry\n");
         abort();
     }
-    arena_init(&g_petta_eval_mutex_name_arena);
+    /* pthread_once may run in a Hyperpose worker.  A process-lifetime mutex
+       key must therefore not inherit that worker's branch-local hash-cons
+       table: the table is destroyed when the branch joins. */
+    arena_init_detached(&g_petta_eval_mutex_name_arena);
     arena_set_runtime_kind(
         &g_petta_eval_mutex_name_arena,
         CETTA_ARENA_RUNTIME_KIND_PERSISTENT);
@@ -33807,6 +34089,30 @@ static bool petta_eval_symbol_name_is(
     return actual && name && strcmp(actual, name) == 0;
 }
 
+static bool petta_eval_machine_builtin_allowed(
+        void *opaque, SymbolId head) {
+    PettaEvalMachineContext *context = opaque;
+    PettaBuiltinAdmissionCacheEntry *entry = NULL;
+    if (context && head != SYMBOL_ID_NONE) {
+        entry = &context->builtin_admission_cache[
+            (size_t)head &
+            (PETTA_BUILTIN_ADMISSION_CACHE_SLOTS - 1u)];
+        if (entry->valid && entry->head == head)
+            return entry->allowed;
+    }
+    const char *name = head == SYMBOL_ID_NONE
+        ? NULL : symbol_bytes(g_symbols, head);
+    bool allowed = !name || active_builtin_allowed(name);
+    if (entry) {
+        *entry = (PettaBuiltinAdmissionCacheEntry){
+            .head = head,
+            .valid = true,
+            .allowed = allowed,
+        };
+    }
+    return allowed;
+}
+
 static void petta_eval_machine_advance_semantic_authority(
     PettaEvalMachineContext *context) {
     if (!context)
@@ -34309,10 +34615,8 @@ static bool petta_eval_machine_tabled_relation_contains(
     PettaEvalMachineContext *eval_context = context;
     return eval_context && !eval_context->transaction &&
            eval_context->library_context &&
-           (cetta_library_petta_tabled_relation_contains(
-                eval_context->library_context, head, arity) ||
-            cetta_library_petta_memo_contains(
-                eval_context->library_context, head, arity));
+           cetta_library_petta_tabled_relation_contains(
+               eval_context->library_context, head, arity);
 }
 
 static bool petta_eval_machine_memoized_relation_contains(
@@ -34364,6 +34668,19 @@ petta_eval_machine_memoized_relation_answer_limit(
     return eval_context->library_context->petta_memo.answer_limit;
 }
 
+static uint64_t
+petta_eval_machine_memoized_relation_size_limit_bytes(
+    void *context, SymbolId head, CettaExprLen arity) {
+    PettaEvalMachineContext *eval_context = context;
+    if (!eval_context || eval_context->transaction ||
+        !eval_context->library_context ||
+        !cetta_library_petta_memo_contains(
+            eval_context->library_context, head, arity)) {
+        return UINT64_MAX;
+    }
+    return eval_context->library_context->petta_memo.size_limit_bytes;
+}
+
 static void petta_eval_machine_memoized_relation_observed(
     void *context, SymbolId head, CettaExprLen arity,
     bool cache_hit) {
@@ -34375,6 +34692,17 @@ static void petta_eval_machine_memoized_relation_observed(
     cetta_library_petta_memo_observe(
         eval_context->library_context, head, arity,
         cache_hit);
+}
+
+static void petta_eval_machine_memoized_relation_bypassed(
+    void *context, SymbolId head, CettaExprLen arity) {
+    PettaEvalMachineContext *eval_context = context;
+    if (!eval_context || eval_context->transaction ||
+        !eval_context->library_context) {
+        return;
+    }
+    cetta_library_petta_memo_observe_bypass(
+        eval_context->library_context, head, arity);
 }
 
 static void petta_eval_machine_memoized_relation_truncated(
@@ -34396,10 +34724,16 @@ static bool petta_eval_machine_tabled_relation_admissible(
         !eval_context->transaction &&
         eval_context->library_context &&
         eval_context->library_context->petta_program;
+    /* Ordinary PeTTa tabling has SWI's static-world contract: tabled
+     * predicates may be impure, and completed answers persist until explicit
+     * table control clears them.  The extended profile opts into CeTTa's
+     * stronger revision-indexed discipline and therefore requires a proof
+     * that table generation cannot replay or suppress effects. */
     bool relation_admitted = context_admitted &&
-        petta_program_relation_table_safe(
-            eval_context->library_context->petta_program,
-            space, head, arity);
+        (!active_profile_is_petta_extended() ||
+         petta_program_relation_table_safe(
+             eval_context->library_context->petta_program,
+             space, head, arity));
     if (g_active_petta_table_safety_trace) {
         fprintf(
             stderr,
@@ -34413,12 +34747,30 @@ static bool petta_eval_machine_tabled_relation_admissible(
     return relation_admitted;
 }
 
+static bool petta_eval_machine_clause_activation_relation_admissible(
+    void *context, Space *space,
+    SymbolId head, CettaExprLen arity) {
+    PettaEvalMachineContext *eval_context = context;
+    /* Persistent table answers and delayed clause bodies have different
+     * effect laws.  Base PeTTa follows SWI's static-world table contract, but
+     * clause activation may bypass the ordinary materialization boundary and
+     * therefore remains restricted to relations proved effect-safe. */
+    return eval_context && !eval_context->transaction &&
+           eval_context->library_context &&
+           eval_context->library_context->petta_program &&
+           petta_program_relation_table_safe(
+               eval_context->library_context->petta_program,
+               space, head, arity);
+}
+
 static bool petta_eval_machine_tabled_relation_set(
     void *context, SymbolId head, CettaExprLen arity,
     bool enabled) {
     PettaEvalMachineContext *eval_context = context;
     return eval_context && !eval_context->transaction &&
            eval_context->library_context &&
+           cetta_library_petta_tabling_enabled(
+               eval_context->library_context) &&
            cetta_library_petta_tabled_relation_set(
                eval_context->library_context, head, arity, enabled);
 }
@@ -35158,25 +35510,45 @@ static Atom *petta_memo_stats_atom(
     Arena *arena, const CettaPettaMemoState *state) {
     if (!arena || !state)
         return NULL;
-    Atom *items[3] = {0};
+    typedef struct {
+        const char *name;
+        uint64_t value;
+        uint64_t stamp;
+    } PettaMemoStatView;
+    PettaMemoStatView stats[4] = {
+        {"cache_hit", state->cache_hits,
+         state->cache_hits_stamp},
+        {"cache_miss", state->cache_misses,
+         state->cache_misses_stamp},
+        {"cache_bypass", state->cache_bypasses,
+         state->cache_bypasses_stamp},
+        {"answer_limit_truncated",
+         state->answer_limit_truncated,
+         state->answer_limit_truncated_stamp},
+    };
+    for (size_t index = 1u; index < 4u; index++) {
+        size_t cursor = index;
+        while (cursor > 0u &&
+               stats[cursor].stamp > stats[cursor - 1u].stamp) {
+            PettaMemoStatView swap = stats[cursor - 1u];
+            stats[cursor - 1u] = stats[cursor];
+            stats[cursor] = swap;
+            cursor--;
+        }
+    }
+    Atom *items[4] = {0};
     CettaExprLen length = 0u;
-#define PETTA_MEMO_STAT(name, field) do { \
-    if ((state)->field != 0u) { \
-        uint64_t petta_memo_stat_value__ = (state)->field; \
-        if (petta_memo_stat_value__ > (uint64_t)INT64_MAX) \
-            return NULL; \
-        items[length++] = atom_expr2( \
-            arena, atom_symbol(arena, (name)), \
-            atom_int(arena, (int64_t)petta_memo_stat_value__)); \
-        if (!items[length - 1u]) \
-            return NULL; \
-    } \
-} while (0)
-    PETTA_MEMO_STAT("cache_hit", cache_hits);
-    PETTA_MEMO_STAT("cache_miss", cache_misses);
-    PETTA_MEMO_STAT(
-        "answer_limit_truncated", answer_limit_truncated);
-#undef PETTA_MEMO_STAT
+    for (size_t index = 0u; index < 4u; index++) {
+        if (stats[index].value == 0u)
+            continue;
+        if (stats[index].value > (uint64_t)INT64_MAX)
+            return NULL;
+        items[length++] = atom_expr2(
+            arena, atom_symbol(arena, stats[index].name),
+            atom_int(arena, (int64_t)stats[index].value));
+        if (!items[length - 1u])
+            return NULL;
+    }
     return atom_expr(arena, items, length);
 }
 
@@ -35273,8 +35645,6 @@ static bool petta_memo_native_control_try(
                     proposed.float_precision;
                 current->answer_limit = proposed.answer_limit;
                 current->aggregate = proposed.aggregate;
-                petta_machine_table_reset(
-                    library_context->petta_shared_table);
                 result = petta_semantics_success_value(arena);
             }
         }
@@ -35509,13 +35879,54 @@ static bool petta_eval_machine_clause_snapshot_lease(
     void *context, Space *space, SymbolId head,
     PettaClauseSnapshotLease *lease,
     PettaClauseSnapshotStats *stats) {
+    /* Capture the complete ordered candidate vector as one physical read.
+       The owned lease outlives this guard, so equation bodies may interleave
+       effects without exposing a torn Space representation to enumeration. */
+    CETTA_SCOPED_SHARED_TRANSITION(call_snapshot);
     PettaEvalMachineContext *eval_context = context;
-    return eval_context &&
-        eval_context->library_context &&
-        eval_context->library_context->petta_program &&
-        petta_program_clause_snapshot_lease_profiled(
-            eval_context->library_context->petta_program,
+    if (!eval_context || !eval_context->library_context ||
+        !eval_context->library_context->petta_program) {
+        return false;
+    }
+    if (eval_context->program_projection) {
+        return petta_program_revision_view_equation_lease(
+            eval_context->program_projection,
             space, head, lease, stats);
+    }
+    return petta_program_clause_snapshot_lease_profiled(
+        eval_context->library_context->petta_program,
+        space, head, lease, stats);
+}
+
+static const PettaPlanNode *petta_eval_translation_plan_current(
+        CettaLibraryContext *library_context,
+        Space *space, Atom *expression) {
+    if (!library_context || !library_context->petta_program ||
+        !space || !expression) {
+        return NULL;
+    }
+    /* Translation observes one coherent definition revision.  The plan is
+       append-only program metadata and remains valid after the guard leaves;
+       each later explicit translation repeats this operation and may observe
+       a newer revision. */
+    CETTA_SCOPED_SHARED_TRANSITION(translation_stage);
+    if (!petta_program_synchronize_space(
+            library_context->petta_program, space)) {
+        return NULL;
+    }
+    return petta_program_plan_current(
+        library_context->petta_program, expression);
+}
+
+static const PettaPlanNode *petta_eval_machine_translate_source(
+        void *context, Space *space, Atom *expression) {
+    PettaEvalMachineContext *eval_context = context;
+    if (eval_current_language_id() != CETTA_LANGUAGE_PETTA ||
+        !eval_context) {
+        return NULL;
+    }
+    return petta_eval_translation_plan_current(
+        eval_context->library_context, space, expression);
 }
 
 static PettaSpecializeResult petta_eval_machine_prepare_call(
@@ -35593,6 +36004,10 @@ static PettaMachineHostMode petta_eval_machine_classify_host(
         return PETTA_MACHINE_HOST_NONE;
     }
     Atom *head = expression->expr.elems[0];
+    if (head->kind == ATOM_SYMBOL &&
+        !petta_eval_machine_builtin_allowed(context, head->sym_id)) {
+        return PETTA_MACHINE_HOST_NONE;
+    }
     PeTTaForm form = head->kind == ATOM_SYMBOL
         ? petta_semantics_form(head->sym_id)
         : PETTA_FORM_NONE;
@@ -35698,7 +36113,16 @@ static PettaMachineHostMode petta_eval_machine_classify_host(
         return PETTA_MACHINE_HOST_STRICT_APPLICATION;
     }
     if (form == PETTA_FORM_PROCESS_METTA_STRING) {
-        return PETTA_MACHINE_HOST_STRICT_APPLICATION;
+        PettaEvalMachineContext *eval_context = context;
+        PeTTaNamedArity imported =
+            eval_context && eval_context->library_context
+            ? petta_libpl_named_arity(
+                  eval_context->library_context->lib_prolog,
+                  head->sym_id, expression->expr.len - 1u)
+            : (PeTTaNamedArity){0};
+        return imported.exact
+            ? PETTA_MACHINE_HOST_STRICT_APPLICATION
+            : PETTA_MACHINE_HOST_NONE;
     }
     /*
      * A PeTTa form remains owned by PeTTa when its spelling also names a
@@ -36026,15 +36450,18 @@ static bool petta_eval_machine_evaluate_host(
                 &result, &reason);
         }
 
-        Atom *outcome_atom = processed
-            ? result
-            : reason && atom_is_error(reason)
-                ? reason
-                : atom_error(
-                      arena, host_expression,
-                      reason ? reason : atom_symbol(
-                          arena,
-                          "PettaProcessTextEvaluationFailed"));
+        if (!processed) {
+            fputs("ERROR: process_metta_string: ", stderr);
+            atom_print_petta(
+                reason ? reason : atom_symbol(
+                    arena, "PettaProcessTextEvaluationFailed"),
+                stderr);
+            fputc('\n', stderr);
+            cetta_eval_session_request_process_exit(
+                active_eval_session(), 2);
+            return true;
+        }
+        Atom *outcome_atom = result;
         CettaCount previous_len = outcomes->len;
         if (outcome_atom)
             outcome_set_add(
@@ -36104,6 +36531,19 @@ static bool petta_eval_machine_evaluate_host(
         }
     }
     return true;
+}
+
+static bool petta_eval_machine_evaluate_planned_host(
+    void *context, Space *space, Arena *arena, Atom *expression,
+    const PettaPlanNode *plan,
+    const Bindings *environment, OutcomeSet *outcomes) {
+    __attribute__((cleanup(petta_source_plan_scope_leave)))
+    PettaSourcePlanScope source_scope = {0};
+    petta_source_plan_scope_enter(
+        &source_scope, plan, expression);
+    return petta_eval_machine_evaluate_host(
+        context, space, arena, expression,
+        environment, outcomes);
 }
 
 static bool petta_eval_machine_get_type(
@@ -36527,6 +36967,19 @@ static bool petta_eval_machine_admits_root(
     }
 
     SymbolId head = atom_head_symbol_id(expression);
+    /* Deferred authored occurrences need the plan-aware owner so their
+       positional roles survive until the later evaluation stage.  Ordinary
+       plans remain classification evidence and do not seize execution
+       authority merely by being present. */
+    if (!prime_plan &&
+        eval_current_language_id() == CETTA_LANGUAGE_PETTA &&
+        expression == g_petta_source_plan_atom &&
+        g_petta_source_plan &&
+        g_petta_source_plan
+            ->contains_deferred_occurrence_transport) {
+        return true;
+    }
+
     if (prime_plan) {
         Atom *relational_subject =
             petta_eval_machine_relational_subject(expression);
@@ -36661,12 +37114,10 @@ static bool petta_eval_machine_admits_root(
            form == PETTA_FORM_CHAIN ||
            form == PETTA_FORM_TRANSLATE_PREDICATE ||
            form == PETTA_FORM_IMPORT_PROLOG_FUNCTION ||
-           form == PETTA_FORM_PROCESS_METTA_STRING ||
            form == PETTA_FORM_CALL_PREDICATE ||
            form == PETTA_FORM_ASSERTA_PREDICATE ||
            form == PETTA_FORM_ASSERTZ_PREDICATE ||
            form == PETTA_FORM_RETRACT_PREDICATE ||
-           form == PETTA_FORM_TABLED ||
            form == PETTA_FORM_ADD_TRANSLATOR_RULE ||
            form == PETTA_FORM_REMOVE_TRANSLATOR_RULE ||
            form == PETTA_FORM_IS_MEMBER ||
@@ -37192,6 +37643,8 @@ static bool petta_eval_machine_try(
         .control_plan = control_plan,
         .semantic_authority_epoch = 1u,
         .library_context = g_library_context,
+        .program_projection =
+            g_petta_program_revision_projection,
         .prepared_pure_cache = {
             .root_space = space,
         },
@@ -37245,6 +37698,7 @@ static bool petta_eval_machine_try(
         .unlimited_transition_budget =
             fuel < 0 && context.diagnostic_transition_limit == 0u,
         .classify = petta_eval_machine_classify_host,
+        .builtin_allowed = petta_eval_machine_builtin_allowed,
         .callability_authority_token =
             petta_eval_machine_semantic_authority_token,
         .admit_query_without_specialization =
@@ -37256,6 +37710,10 @@ static bool petta_eval_machine_try(
             petta_eval_machine_resolve_value_reference,
         .resolve_value_references_in_value_role = prime_machine,
         .evaluate = petta_eval_machine_evaluate_host,
+        .evaluate_planned =
+            petta_eval_machine_evaluate_planned_host,
+        .translate_source = !prime_machine && !portable_machine
+            ? petta_eval_machine_translate_source : NULL,
         .get_type = petta_eval_machine_get_type,
         .boolean_value = petta_eval_machine_boolean_value,
         .is_data_constructor =
@@ -37297,7 +37755,7 @@ static bool petta_eval_machine_try(
                 ? petta_eval_machine_prime_clause_result_payload_observed
                 : NULL,
         .clause_activation_relation_admissible =
-            petta_eval_machine_tabled_relation_admissible,
+            petta_eval_machine_clause_activation_relation_admissible,
         .translator_rule_contains =
             petta_eval_machine_translator_rule_contains,
         .translator_rule_set =
@@ -37318,8 +37776,12 @@ static bool petta_eval_machine_try(
             petta_eval_machine_memoized_relation_float_precision,
         .memoized_relation_answer_limit =
             petta_eval_machine_memoized_relation_answer_limit,
+        .memoized_relation_size_limit_bytes =
+            petta_eval_machine_memoized_relation_size_limit_bytes,
         .memoized_relation_observed =
             petta_eval_machine_memoized_relation_observed,
+        .memoized_relation_bypassed =
+            petta_eval_machine_memoized_relation_bypassed,
         .memoized_relation_truncated =
             petta_eval_machine_memoized_relation_truncated,
         .transaction_begin =
@@ -38865,6 +39327,11 @@ static Atom *prepared_pure_closed_call_try(
         prepared_pure_precheck_debug("active table mode", call);
         return NULL;
     }
+    /* Qualification, revision-keyed cache lookup, and compilation jointly
+     * observe one physical definition state.  The resulting program owns
+     * stable Atom pointers and may execute after this guard is released;
+     * shared authored effects remain free to interleave during execution. */
+    CETTA_SCOPED_SHARED_TRANSITION(prepared_pure_observation);
     bool defined = false;
     CettaGsltQueryEffect effect = space_query_effect_for_head(
         space, head->sym_id, &defined);
@@ -38962,6 +39429,8 @@ static Atom *prepared_pure_closed_call_try(
     cetta_runtime_stats_inc(
         CETTA_RUNTIME_COUNTER_PREPARED_PURE_CALL_ADMISSION);
 
+    cetta_shared_transition_guard_leave(&prepared_pure_observation);
+
     Arena machine_arena;
     arena_init(&machine_arena);
     arena_set_runtime_kind(
@@ -38998,6 +39467,8 @@ static Atom *prepared_pure_closed_call_try(
         CettaPreparedPureProgram *cache_candidate = program;
         if (call_mode == CETTA_GSLT_PURE_CALL_EAGER &&
             !cache_entry_arguments_are_values) {
+            CETTA_SCOPED_SHARED_TRANSITION(
+                prepared_pure_cache_recompile);
             cetta_runtime_stats_inc(
                 CETTA_RUNTIME_COUNTER_PREPARED_PURE_CALL_COMPILE_ATTEMPT);
             cache_candidate = cetta_prepared_pure_program_compile_closed(
@@ -39082,11 +39553,16 @@ static void metta_call_impl(
     EvalGcRegionGuard eval_gc_region = {0};
     ArenaMark eval_gc_anchor = eval_gc_region_enter(&eval_gc_region, a);
     bool eval_gc_query_closed = eval_gc_enabled() && !atom_contains_vars(atom);
+    /* The PeTTa foldall form lowers to the shared fold worker.  That worker
+     * is not itself a base-PeTTa form, so grant it only across this
+     * one immediate, evaluator-private lowering step. */
+    bool petta_internal_foldall_lowering = false;
 #define CURRENT_ENV bindings_builder_bindings(&current_env_builder)
-#define TAIL_REENTER_ENV(next_atom, extra_env) do { \
+#define TAIL_REENTER_ENV_WITH_FOLDALL_LOWERING(next_atom, extra_env, lowering) do { \
     if ((extra_env) != NULL && \
         !bindings_builder_merge_commit(&current_env_builder, (extra_env))) return; \
     atom = resolve_registry_refs(a, (next_atom)); \
+    petta_internal_foldall_lowering = (lowering); \
     if (fuel == 0) { \
         eval_mark_incomplete(CETTA_EVAL_INCOMPLETE_FUEL); \
         return; \
@@ -39094,7 +39570,11 @@ static void metta_call_impl(
     if (fuel > 0) fuel--; \
     goto tail_call; \
 } while (0)
+#define TAIL_REENTER_ENV(next_atom, extra_env) \
+    TAIL_REENTER_ENV_WITH_FOLDALL_LOWERING((next_atom), (extra_env), false)
 #define TAIL_REENTER(next_atom) TAIL_REENTER_ENV((next_atom), NULL)
+#define TAIL_REENTER_PETTA_FOLDALL_LOWERING(next_atom) \
+    TAIL_REENTER_ENV_WITH_FOLDALL_LOWERING((next_atom), NULL, true)
 #define outcome_set_add(_os, _atom, _env) \
     outcome_set_add_prefixed(a, (_os), (_atom), (_env), CURRENT_ENV, preserve_bindings)
 tail_call: ;
@@ -39895,8 +40375,11 @@ prime_need_strict_argument_ready:
             Atom *lowered = petta_semantics_lower(
                 a, atom, petta_form,
                 eval_reify_head());
-            if (lowered)
+            if (lowered) {
+                if (petta_form == PETTA_FORM_FOLDALL)
+                    TAIL_REENTER_PETTA_FOLDALL_LOWERING(lowered);
                 TAIL_REENTER(lowered);
+            }
             if (petta_form == PETTA_FORM_MAP_ATOM)
                 goto petta_lowered_to_shared_form;
             outcome_set_add(os, atom, &_empty);
@@ -40199,7 +40682,7 @@ petta_lowered_to_shared_form:
             return;
         }
         if (hyperpose_threaded_execute(
-                s, a, atom, fuel,
+                s, a, atom, fuel, CURRENT_ENV,
                 HYPERPOSE_THREAD_OBSERVE_OCCURRENCES,
                 preserve_bindings, os)) {
             return;
@@ -40256,7 +40739,7 @@ petta_lowered_to_shared_form:
         }
         if (!prime_need_reify &&
             hyperpose_threaded_execute(
-                s, a, expr_arg(atom, 0), fuel,
+                s, a, expr_arg(atom, 0), fuel, CURRENT_ENV,
                 HYPERPOSE_THREAD_OBSERVE_REIFIED_BAG,
                 preserve_bindings, os)) {
             return;
@@ -41717,7 +42200,11 @@ petta_lowered_to_shared_form:
         policy.order = CETTA_SEARCH_POLICY_ORDER_NATIVE;
         CettaExprIndex policy_stream_arg_idx = 0;
         bool policy_stream_arg_present = false;
-        if (!active_builtin_allowed(syntax)) {
+        bool internal_foldall_worker =
+            petta_internal_foldall_lowering &&
+            head_id == g_builtin_syms.fold;
+        petta_internal_foldall_lowering = false;
+        if (!active_builtin_allowed(syntax) && !internal_foldall_worker) {
             goto generic_dispatch;
         }
 
@@ -45151,8 +45638,10 @@ void metta_eval_outcome(Space *s, Arena *a, Atom *type, Atom *atom, int fuel,
 }
 
 #undef outcome_set_add
+#undef TAIL_REENTER_PETTA_FOLDALL_LOWERING
 #undef TAIL_REENTER
 #undef TAIL_REENTER_ENV
+#undef TAIL_REENTER_ENV_WITH_FOLDALL_LOWERING
 #undef CURRENT_ENV
 
 static void metta_eval_one_step(Space *s, Arena *a, Atom *type, Atom *atom,

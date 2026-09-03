@@ -116,11 +116,28 @@ typedef struct {
     uint64_t prefix_observation_trie_edges;
 } CettaMatchDecisionStats;
 
-/* Compile an ordered clause family.  `max_depth` counts expression edges;
- * zero requests the implementation default.  Pattern pointers remain owned
- * by the pinned Space revision. */
+/* Compile an ordered clause family against a complete Space read.  `max_depth`
+ * counts expression edges; zero requests the implementation default.  Pattern
+ * pointers remain owned by the pinned Space revision. */
 CettaMatchDecision *cetta_match_decision_compile(
     SpaceReadToken read,
+    CettaMatchDecisionSemanticIdentity semantic_identity,
+    const CettaMatchDecisionClause *clauses,
+    size_t clause_count,
+    CettaMatchDecisionMode mode,
+    uint32_t max_depth,
+    CettaMatchDecisionRealization realization,
+    CettaMatchDecisionClassifyPatternFn classify,
+    void *classify_context);
+
+/* Compile an ordered clause family whose complete construction depends only
+ * on the Space's ordered equation projection and the supplied semantic
+ * identity.  This is narrower than `cetta_match_decision_compile`: callers
+ * must not use it for a selector that reads ordinary data atoms.  It remains
+ * current across data-only mutations and is rejected by every equation or
+ * opaque mutation. */
+CettaMatchDecision *cetta_match_decision_compile_equation_projection(
+    SpaceEquationToken equations,
     CettaMatchDecisionSemanticIdentity semantic_identity,
     const CettaMatchDecisionClause *clauses,
     size_t clause_count,

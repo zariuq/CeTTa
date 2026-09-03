@@ -50,8 +50,9 @@ enum {
     CETTA_LIBRARY_LIB_PROLOG = 1u << 8,
     CETTA_LIBRARY_PETTA_MEMO = 1u << 9,
     CETTA_LIBRARY_IO = 1u << 10,
+    CETTA_LIBRARY_PETTA_TABLING = 1u << 11,
 #if CETTA_BUILD_WITH_JSON_GSLT
-    CETTA_LIBRARY_JSON = 1u << 11
+    CETTA_LIBRARY_JSON = 1u << 12
 #endif
 };
 
@@ -71,6 +72,7 @@ static const CettaLibrarySpec CETTA_LIBRARIES[] = {
     {"lib_import", CETTA_LIBRARY_PETTA_IMPORT},
     {"lib_prolog", CETTA_LIBRARY_LIB_PROLOG},
     {"lib_memo", CETTA_LIBRARY_PETTA_MEMO},
+    {"lib_tabling", CETTA_LIBRARY_PETTA_TABLING},
     {"io", CETTA_LIBRARY_IO},
 #if CETTA_BUILD_WITH_JSON_GSLT
     {"json", CETTA_LIBRARY_JSON},
@@ -385,6 +387,14 @@ void cetta_library_context_init_for_language_profile(CettaLibraryContext *ctx,
         CETTA_PETTA_MEMO_AGGREGATE_NONE;
     ctx->petta_shared_table = language_id == CETTA_LANGUAGE_PETTA
         ? petta_machine_table_new() : NULL;
+    if (ctx->petta_shared_table) {
+        PettaTableMutationPolicy table_policy =
+            profile && profile->enable_cetta_extensions
+                ? PETTA_TABLE_MUTATION_REVISION_GUARDED
+                : PETTA_TABLE_MUTATION_STATIC_WORLD;
+        (void)petta_machine_table_set_mutation_policy(
+            ctx->petta_shared_table, table_policy);
+    }
     /* Prime's guarded relational plan is the default execution strategy.
        The environment switch exists only so the differential gate can retain
        the canonical evaluator as an executable reference implementation. */
@@ -875,6 +885,7 @@ bool cetta_library_petta_memo_control_import(
     CettaPettaMemoControl control;
     if (!ctx ||
         ctx->session.language_id != CETTA_LANGUAGE_PETTA ||
+        !(ctx->active_mask & CETTA_LIBRARY_PETTA_MEMO) ||
         !cetta_library_petta_memo_control_lookup(head, &control)) {
         return false;
     }
@@ -1044,9 +1055,15 @@ void cetta_library_petta_memo_clear_stats(
     CettaLibraryContext *ctx) {
     if (!ctx)
         return;
+    ctx->petta_memo.stat_tick = 0u;
     ctx->petta_memo.cache_hits = 0u;
+    ctx->petta_memo.cache_hits_stamp = 0u;
     ctx->petta_memo.cache_misses = 0u;
+    ctx->petta_memo.cache_misses_stamp = 0u;
+    ctx->petta_memo.cache_bypasses = 0u;
+    ctx->petta_memo.cache_bypasses_stamp = 0u;
     ctx->petta_memo.answer_limit_truncated = 0u;
+    ctx->petta_memo.answer_limit_truncated_stamp = 0u;
 }
 
 void cetta_library_petta_memo_clear(
@@ -1078,8 +1095,29 @@ void cetta_library_petta_memo_observe(
     uint64_t *counter = cache_hit
         ? &ctx->petta_memo.cache_hits
         : &ctx->petta_memo.cache_misses;
+    uint64_t *stamp = cache_hit
+        ? &ctx->petta_memo.cache_hits_stamp
+        : &ctx->petta_memo.cache_misses_stamp;
     if (*counter != UINT64_MAX)
         (*counter)++;
+    if (ctx->petta_memo.stat_tick != UINT64_MAX)
+        ctx->petta_memo.stat_tick++;
+    *stamp = ctx->petta_memo.stat_tick;
+}
+
+void cetta_library_petta_memo_observe_bypass(
+    CettaLibraryContext *ctx, SymbolId head,
+    CettaExprLen arity) {
+    if (!ctx || !cetta_library_petta_memo_contains(
+                    ctx, head, arity)) {
+        return;
+    }
+    if (ctx->petta_memo.cache_bypasses != UINT64_MAX)
+        ctx->petta_memo.cache_bypasses++;
+    if (ctx->petta_memo.stat_tick != UINT64_MAX)
+        ctx->petta_memo.stat_tick++;
+    ctx->petta_memo.cache_bypasses_stamp =
+        ctx->petta_memo.stat_tick;
 }
 
 void cetta_library_petta_memo_observe_truncation(
@@ -1091,6 +1129,10 @@ void cetta_library_petta_memo_observe_truncation(
     }
     if (ctx->petta_memo.answer_limit_truncated != UINT64_MAX)
         ctx->petta_memo.answer_limit_truncated++;
+    if (ctx->petta_memo.stat_tick != UINT64_MAX)
+        ctx->petta_memo.stat_tick++;
+    ctx->petta_memo.answer_limit_truncated_stamp =
+        ctx->petta_memo.stat_tick;
 }
 
 static void copy_parent_dir(char *dst, size_t dst_sz, const char *path);
@@ -9247,6 +9289,13 @@ bool cetta_library_petta_git_import_enabled(
     return ctx &&
            ctx->session.language_id == CETTA_LANGUAGE_PETTA &&
            (ctx->active_mask & CETTA_LIBRARY_PETTA_IMPORT) != 0u;
+}
+
+bool cetta_library_petta_tabling_enabled(
+    const CettaLibraryContext *ctx) {
+    return ctx &&
+           ctx->session.language_id == CETTA_LANGUAGE_PETTA &&
+           (ctx->active_mask & CETTA_LIBRARY_PETTA_TABLING) != 0u;
 }
 
 bool cetta_library_import_module(CettaLibraryContext *ctx, const char *spec,

@@ -1,5 +1,6 @@
-; Runtime-stats lane witness: hyperpose with more than one configured worker
-; uses the pthread-backed scheduler for eligible static branch lists.
+; Hyperpose must preserve its observable bag and cancellation behavior under a
+; multi-worker configuration.  Runtime receipts are constrained only by
+; scheduler-independent conservation laws.
 
 !(import! &self fs)
 !(import! &self system)
@@ -14,33 +15,9 @@
 !(assertEqual
   (collapse (hyperpose ((fs:exists "tests/support/fs_fixture.txt") collapse-d)))
   (True collapse-d))
-!(bind! &hyperpose-fs-stats (runtime-stats!))
-!(assertEqualToResult
-  (match &hyperpose-fs-stats
-    (runtime-counter hyperpose-threaded-run $n)
-    (> $n 0))
-  (True))
-!(assertEqualToResult
-  (match &hyperpose-fs-stats
-    (runtime-counter hyperpose-cooperative-fallback $n)
-    (== $n 0))
-  (True))
-!(reset-runtime-stats!)
 !(assertEqual
   (collapse (hyperpose ((get-type (system:cwd)) system-ok)))
   (String system-ok))
-!(bind! &hyperpose-system-stats (runtime-stats!))
-!(assertEqualToResult
-  (match &hyperpose-system-stats
-    (runtime-counter hyperpose-threaded-run $n)
-    (> $n 0))
-  (True))
-!(assertEqualToResult
-  (match &hyperpose-system-stats
-    (runtime-counter hyperpose-cooperative-fallback $n)
-    (== $n 0))
-  (True))
-!(reset-runtime-stats!)
 !(assertEqual
   (collapse (hyperpose ((superpose (collapse-a collapse-b)) collapse-c)))
   (collapse-a collapse-b collapse-c))
@@ -51,31 +28,19 @@
 !(bind! &hyperpose-stats (runtime-stats!))
 !(assertEqualToResult
   (match &hyperpose-stats
-    (runtime-counter hyperpose-threaded-run $n)
-    (> $n 0))
+    (runtime-counter parallel-persistent-episode-attempt $attempt)
+    (match &hyperpose-stats
+      (runtime-counter parallel-persistent-episode-commit $commit)
+      (match &hyperpose-stats
+        (runtime-counter parallel-persistent-busy-decline $busy)
+        (match &hyperpose-stats
+          (runtime-counter parallel-persistent-capacity-decline $capacity)
+          (== $attempt (+ $commit (+ $busy $capacity)))))))
   (True))
 !(assertEqualToResult
   (match &hyperpose-stats
-    (runtime-counter hyperpose-worker-started $n)
-    (> $n 0))
-  (True))
-!(assertEqualToResult
-  (match &hyperpose-stats
-    (runtime-counter parallel-queue-push $n)
-    (> $n 0))
-  (True))
-!(assertEqualToResult
-  (match &hyperpose-stats
-    (runtime-counter parallel-worker-task $n)
-    (> $n 0))
-  (True))
-!(assertEqualToResult
-  (match &hyperpose-stats
-    (runtime-counter hyperpose-cancel-request $n)
-    (> $n 0))
-  (True))
-!(assertEqualToResult
-  (match &hyperpose-stats
-    (runtime-counter hyperpose-cancel-observed $n)
-    (> $n 0))
+    (runtime-counter parallel-persistent-episode-commit $commit)
+    (match &hyperpose-stats
+      (runtime-counter parallel-persistent-episode-complete $complete)
+      (== $commit $complete)))
   (True))

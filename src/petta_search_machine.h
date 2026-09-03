@@ -137,9 +137,22 @@ typedef enum {
     PETTA_MEMO_RETENTION_LRU,
 } PettaMemoRetentionPolicy;
 
+typedef enum {
+    /* Ordinary PeTTa/SWI tables assume a static world.  A completed variant
+     * table remains authoritative until an explicit table-control operation
+     * clears it; unrelated source mutation does not update it implicitly. */
+    PETTA_TABLE_MUTATION_STATIC_WORLD = 0,
+    /* CeTTa's extended policy treats a table as a derived view of one Space
+     * revision.  Any intervening mutation refuses replay and forces a fresh
+     * table before the next root evaluation. */
+    PETTA_TABLE_MUTATION_REVISION_GUARDED,
+} PettaTableMutationPolicy;
+
 PettaMachineTable *petta_machine_table_new(void);
 void petta_machine_table_free(PettaMachineTable *table);
 void petta_machine_table_reset(PettaMachineTable *table);
+bool petta_machine_table_set_mutation_policy(
+    PettaMachineTable *table, PettaTableMutationPolicy policy);
 /* Enforce cache-only retention after a root machine has released its lease.
  * Completed non-memo SLG entries are not charged to these library controls.
  * On allocation failure the table is cleared, preserving answers by forcing
@@ -198,6 +211,11 @@ typedef struct {
     bool unlimited_transition_budget;
     PettaMachineHostMode (*classify)(
         void *context, Space *space, Atom *expression);
+    /* Direct grounded execution is a physical realization of a language
+     * call.  The host therefore retains profile-owned admission for each
+     * shared opcode; absence preserves the standalone machine's unrestricted
+     * embedding contract. */
+    bool (*builtin_allowed)(void *context, SymbolId head);
     /* Exact mutable authority for deciding whether an expression root is
      * callable.  A missing token disables reuse of derived callability
      * judgments; it never makes an unknown host registry look immutable. */
@@ -232,6 +250,20 @@ typedef struct {
     bool (*evaluate)(
         void *context, Space *space, Arena *arena, Atom *expression,
         const Bindings *environment, OutcomeSet *outcomes);
+    /* Preserve the translation-stage classification of an authored source
+     * occurrence when evaluation crosses a host-owned boundary.  The plan is
+     * positional metadata for `expression`; NULL means that this boundary
+     * has no earlier translation event to transport.  Hosts which do not
+     * model staged callability may omit this callback and use `evaluate`. */
+    bool (*evaluate_planned)(
+        void *context, Space *space, Arena *arena, Atom *expression,
+        const PettaPlanNode *plan,
+        const Bindings *environment, OutcomeSet *outcomes);
+    /* Create a new translation event at an explicit forcing boundary such as
+     * PeTTa `eval`.  A returned plan fixes callability for that occurrence;
+     * NULL declines because the host could not establish the event. */
+    const PettaPlanNode *(*translate_source)(
+        void *context, Space *space, Atom *expression);
     /* Enumerate the intrinsic answers of the language's `get-type`
      * relation after its subject has reached the ready-value boundary.
      * The returned pointer array is caller-owned; every Atom is owned by
@@ -376,9 +408,13 @@ typedef struct {
         void *context, SymbolId head, CettaExprLen arity);
     uint32_t (*memoized_relation_answer_limit)(
         void *context, SymbolId head, CettaExprLen arity);
+    uint64_t (*memoized_relation_size_limit_bytes)(
+        void *context, SymbolId head, CettaExprLen arity);
     void (*memoized_relation_observed)(
         void *context, SymbolId head, CettaExprLen arity,
         bool cache_hit);
+    void (*memoized_relation_bypassed)(
+        void *context, SymbolId head, CettaExprLen arity);
     void (*memoized_relation_truncated)(
         void *context, SymbolId head, CettaExprLen arity);
     /*
