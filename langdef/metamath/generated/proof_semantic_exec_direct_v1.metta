@@ -10,23 +10,30 @@
     (operator ProofAssertionDisjointV1 2)
     (operator ProofAssertionEssentialV1 1)
     (operator ProofAssertionListConsV1 2)
+    (operator ProofAssertionListNilV1 0)
     (operator ProofAssertionV1 5)
     (operator ProofAssertionVariableV1 2)
     (operator ProofEnvironmentConsV1 3)
     (operator ProofEnvironmentLookupComparedV1 5)
     (operator ProofEnvironmentLookupV1 3)
+    (operator ProofEnvironmentNilV1 0)
     (operator ProofSequenceAppendV1 3)
     (operator ProofSequenceConsV1 2)
     (operator ProofSequenceInstantiateClassV1 5)
     (operator ProofSequenceInstantiateV1 3)
+    (operator ProofSequenceNilV1 0)
     (operator ProofSequenceSupportApartV1 2)
     (operator ProofTokenAgainstSequenceV1 2)
     (operator ProofTokenApartV1 2)
     (operator ProofTokenClassV1 2)
     (operator ProofTokenCompareV1 3)
     (operator ProofTokenDifferentV1 2)
+    (operator ProofTokenEqualV1 0)
+    (operator ProofTokenLiteralClassV1 0)
     (operator ProofTokenLiteralV1 1)
     (operator ProofTokenPairAllowedV1 2)
+    (operator ProofTokenUnequalV1 0)
+    (operator ProofTokenVariableClassV1 0)
     (operator ProofTokenVariableV1 1)
   )
   (equations)
@@ -46,7 +53,7 @@
         (MetamathProvableV1 (ProofSequenceConsV1 ?v1 ?v2))
         (ProofAssertionBuildEnvironmentV1 ?v3 ?v4 ?v5)))
     (rule proof-assertion-build-environment-nil-v1
-      (head (ProofAssertionBuildEnvironmentV1 ProofAssertionListNilV1 ProofAssertionListNilV1 ProofEnvironmentNilV1))
+      (head (ProofAssertionBuildEnvironmentV1 (ProofAssertionListNilV1) (ProofAssertionListNilV1) (ProofEnvironmentNilV1)))
       (body))
     (rule proof-assertion-check-disjoints-cons-v1
       (head (ProofAssertionCheckDisjointsV1 (ProofAssertionListConsV1 (ProofAssertionDisjointV1 ?v0 ?v1) ?v2) ?v3))
@@ -57,7 +64,7 @@
         (ProofSequenceSupportApartV1 ?v4 ?v5)
         (ProofAssertionCheckDisjointsV1 ?v2 ?v3)))
     (rule proof-assertion-check-disjoints-nil-v1
-      (head (ProofAssertionCheckDisjointsV1 ProofAssertionListNilV1 ?v0))
+      (head (ProofAssertionCheckDisjointsV1 (ProofAssertionListNilV1) ?v0))
       (body))
     (rule proof-assertion-check-essentials-cons-v1
       (head (ProofAssertionCheckEssentialsV1 (ProofAssertionListConsV1 (ProofAssertionEssentialV1 ?v0) ?v2) (ProofAssertionListConsV1 ?v1 ?v3) ?v4))
@@ -66,17 +73,17 @@
         (ProofSequenceInstantiateV1 ?v0 ?v4 ?v1)
         (ProofAssertionCheckEssentialsV1 ?v2 ?v3 ?v4)))
     (rule proof-assertion-check-essentials-nil-v1
-      (head (ProofAssertionCheckEssentialsV1 ProofAssertionListNilV1 ProofAssertionListNilV1 ?v0))
+      (head (ProofAssertionCheckEssentialsV1 (ProofAssertionListNilV1) (ProofAssertionListNilV1) ?v0))
       (body))
     (rule proof-assertion-use-premise-v1
       (head (MetamathProvableV1 ?v0))
       (body
         (MetamathProvableV1 ?v0)))
     (rule proof-environment-lookup-compared-equal-v1
-      (head (ProofEnvironmentLookupComparedV1 ProofTokenEqualV1 ?v0 ?v1 ?v2 ?v0))
+      (head (ProofEnvironmentLookupComparedV1 (ProofTokenEqualV1) ?v0 ?v1 ?v2 ?v0))
       (body))
     (rule proof-environment-lookup-compared-unequal-v1
-      (head (ProofEnvironmentLookupComparedV1 ProofTokenUnequalV1 ?v0 ?v1 ?v2 ?v3))
+      (head (ProofEnvironmentLookupComparedV1 (ProofTokenUnequalV1) ?v0 ?v1 ?v2 ?v3))
       (body
         (ProofEnvironmentLookupV1 ?v1 ?v2 ?v3)))
     (rule proof-environment-lookup-cons-v1
@@ -89,14 +96,14 @@
       (body
         (ProofSequenceAppendV1 ?v1 ?v2 ?v3)))
     (rule proof-sequence-append-nil-v1
-      (head (ProofSequenceAppendV1 ProofSequenceNilV1 ?v0 ?v0))
+      (head (ProofSequenceAppendV1 (ProofSequenceNilV1) ?v0 ?v0))
       (body))
     (rule proof-sequence-instantiate-class-literal-v1
-      (head (ProofSequenceInstantiateClassV1 ProofTokenLiteralClassV1 ?v0 ?v1 ?v2 (ProofSequenceConsV1 ?v0 ?v3)))
+      (head (ProofSequenceInstantiateClassV1 (ProofTokenLiteralClassV1) ?v0 ?v1 ?v2 (ProofSequenceConsV1 ?v0 ?v3)))
       (body
         (ProofSequenceInstantiateV1 ?v1 ?v2 ?v3)))
     (rule proof-sequence-instantiate-class-variable-v1
-      (head (ProofSequenceInstantiateClassV1 ProofTokenVariableClassV1 ?v0 ?v1 ?v2 ?v5))
+      (head (ProofSequenceInstantiateClassV1 (ProofTokenVariableClassV1) ?v0 ?v1 ?v2 ?v5))
       (body
         (ProofEnvironmentLookupV1 ?v2 ?v0 ?v3)
         (ProofSequenceInstantiateV1 ?v1 ?v2 ?v4)
@@ -107,7 +114,7 @@
         (ProofTokenClassV1 ?v0 ?v3)
         (ProofSequenceInstantiateClassV1 ?v3 ?v0 ?v1 ?v2 ?v4)))
     (rule proof-sequence-instantiate-nil-v1
-      (head (ProofSequenceInstantiateV1 ProofSequenceNilV1 ?v0 ProofSequenceNilV1))
+      (head (ProofSequenceInstantiateV1 (ProofSequenceNilV1) ?v0 (ProofSequenceNilV1)))
       (body))
     (rule proof-sequence-support-apart-cons-v1
       (head (ProofSequenceSupportApartV1 (ProofSequenceConsV1 ?v0 ?v1) ?v2))
@@ -115,7 +122,7 @@
         (ProofTokenAgainstSequenceV1 ?v0 ?v2)
         (ProofSequenceSupportApartV1 ?v1 ?v2)))
     (rule proof-sequence-support-apart-nil-v1
-      (head (ProofSequenceSupportApartV1 ProofSequenceNilV1 ?v0))
+      (head (ProofSequenceSupportApartV1 (ProofSequenceNilV1) ?v0))
       (body))
     (rule proof-token-against-sequence-cons-v1
       (head (ProofTokenAgainstSequenceV1 ?v0 (ProofSequenceConsV1 ?v1 ?v2)))
@@ -123,7 +130,7 @@
         (ProofTokenPairAllowedV1 ?v0 ?v1)
         (ProofTokenAgainstSequenceV1 ?v0 ?v2)))
     (rule proof-token-against-sequence-nil-v1
-      (head (ProofTokenAgainstSequenceV1 ?v0 ProofSequenceNilV1))
+      (head (ProofTokenAgainstSequenceV1 ?v0 (ProofSequenceNilV1)))
       (body))
     (rule proof-token-pair-apart-v1
       (head (ProofTokenPairAllowedV1 ?v0 ?v1))

@@ -282,8 +282,12 @@ static inline uint64_t symbol_table_instance_id(const SymbolTable *st) {
     X(lib_prolog_available, "__cetta_lib_prolog_available") \
     X(lib_prolog_query, "__cetta_lib_prolog_query") \
     X(lib_fs_exists, "__cetta_lib_fs_exists") \
+    X(lib_fs_canonical_path, "__cetta_lib_fs_canonical_path") \
+    X(lib_fs_try_canonical_path, "__cetta_lib_fs_try_canonical_path") \
+    X(lib_fs_try_canonical_from_file, "__cetta_lib_fs_try_canonical_from_file") \
+    X(lib_fs_try_canonical_under, "__cetta_lib_fs_try_canonical_under") \
     X(lib_fs_read_text, "__cetta_lib_fs_read_text") \
-    X(lib_fs_write_text, "__cetta_lib_fs_write_text") \
+    X(lib_fs_write, "__cetta_lib_fs_write") \
     X(lib_fs_append_text, "__cetta_lib_fs_append_text") \
     X(lib_fs_read_lines, "__cetta_lib_fs_read_lines") \
     X(lib_io_capabilities, "__cetta_lib_io_capabilities") \

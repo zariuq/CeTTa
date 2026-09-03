@@ -744,10 +744,9 @@ static bool require_symbol(const Node *node,
     return true;
 }
 
-static bool positive_size(const Node *node, size_t *out) {
+static bool nonnegative_size(const Node *node, size_t *out) {
     if (node == NULL || node->kind != NODE_INTEGER || node->text_len == 0u ||
-        node->text[0] == (uint8_t)'-' ||
-        (node->text_len == 1u && node->text[0] == (uint8_t)'0'))
+        node->text[0] == (uint8_t)'-')
         return false;
     size_t value = 0u;
     for (size_t index = 0u; index < node->text_len; index++) {
@@ -897,12 +896,12 @@ static bool parse_presentation(const FHGSLTInput *input,
                             "operator name",
                             error,
                             error_cap) ||
-            !positive_size(raw->items[2], &arity)) {
+            !nonnegative_size(raw->items[2], &arity)) {
             presentation_destroy(presentation);
             return set_error(
                 error,
                 error_cap,
-                "%s: operator declaration must be (operator NAME POSITIVE-ARITY)",
+                "%s: operator declaration must be (operator NAME NONNEGATIVE-ARITY)",
                 input->source);
         }
         for (size_t prior = 0u; prior < presentation->operator_count; prior++) {

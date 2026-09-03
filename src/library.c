@@ -2788,8 +2788,8 @@ static bool library_read_text_file(const char *path, CettaStringBuf *out,
     return true;
 }
 
-static bool library_write_text_file(const char *path, const char *text, bool append,
-                                    char *errbuf, size_t errbuf_sz) {
+static bool library_write_file(const char *path, const char *text, bool append,
+                               char *errbuf, size_t errbuf_sz) {
     FILE *fp = fopen(path, append ? "ab" : "wb");
     size_t len = strlen(text);
 
@@ -3433,6 +3433,177 @@ static Atom *fs_exists(Arena *a, Atom *head, Atom **args, uint32_t nargs) {
     return stat(path, &st) == 0 ? atom_true(a) : atom_false(a);
 }
 
+static Atom *fs_canonical_path(Arena *a, Atom *head, Atom **args,
+                               uint32_t nargs) {
+    const char *path;
+    char *canonical;
+    Atom *result;
+    char error[192];
+
+    if (nargs != 1 || !(path = library_text_arg(args[0]))) {
+        return library_signature_error(a, head, args, nargs,
+                                       "expected filename");
+    }
+    canonical = realpath(path, NULL);
+    if (!canonical) {
+        (void)snprintf(error, sizeof(error),
+                       "cannot canonicalize path: %s", strerror(errno));
+        return atom_error(a, library_call_expr(a, head, args, nargs),
+                          atom_string(a, error));
+    }
+    result = atom_string(a, canonical);
+    free(canonical);
+    return result;
+}
+
+static Atom *fs_try_canonical_path(Arena *a, Atom *head, Atom **args,
+                                   uint32_t nargs) {
+    const char *path;
+    char *canonical;
+    Atom *result;
+    char error[192];
+
+    if (nargs != 1 || !(path = library_text_arg(args[0]))) {
+        return library_signature_error(a, head, args, nargs,
+                                       "expected filename");
+    }
+    canonical = realpath(path, NULL);
+    if (!canonical) {
+        (void)snprintf(error, sizeof(error),
+                       "cannot canonicalize path: %s", strerror(errno));
+        return atom_expr2(a, atom_symbol(a, "FS:CanonicalPathFault"),
+                          atom_string(a, error));
+    }
+    result = atom_expr2(a, atom_symbol(a, "FS:CanonicalPath"),
+                        atom_string(a, canonical));
+    free(canonical);
+    return result;
+}
+
+static Atom *fs_try_canonical_candidate(Arena *a, const char *candidate) {
+    char *canonical;
+    Atom *result;
+    char error[192];
+
+    canonical = realpath(candidate, NULL);
+    if (!canonical) {
+        (void)snprintf(error, sizeof(error),
+                       "cannot canonicalize path: %s", strerror(errno));
+        return atom_expr2(a, atom_symbol(a, "FS:CanonicalPathFault"),
+                          atom_string(a, error));
+    }
+    result = atom_expr2(a, atom_symbol(a, "FS:CanonicalPath"),
+                        atom_string(a, canonical));
+    free(canonical);
+    return result;
+}
+
+static Atom *fs_try_canonical_from_file(Arena *a, Atom *head, Atom **args,
+                                        uint32_t nargs) {
+    const char *base_file;
+    const char *relative;
+    char directory[PATH_MAX];
+    char candidate[PATH_MAX];
+    char *slash;
+
+    if (nargs != 2 || !(base_file = library_text_arg(args[0])) ||
+        !(relative = library_text_arg(args[1]))) {
+        return library_signature_error(
+            a, head, args, nargs, "expected base filename and relative path");
+    }
+    if (relative[0] == '/') {
+        return fs_try_canonical_candidate(a, relative);
+    }
+    if (snprintf(directory, sizeof(directory), "%s", base_file) >=
+        (int)sizeof(directory)) {
+        return atom_expr2(a, atom_symbol(a, "FS:CanonicalPathFault"),
+                          atom_string(a, "base filename is too long"));
+    }
+    slash = strrchr(directory, '/');
+    if (!slash) {
+        (void)snprintf(directory, sizeof(directory), ".");
+    } else if (slash == directory) {
+        slash[1] = '\0';
+    } else {
+        *slash = '\0';
+    }
+    if (!path_join2(candidate, sizeof(candidate), directory, relative)) {
+        return atom_expr2(a, atom_symbol(a, "FS:CanonicalPathFault"),
+                          atom_string(a, "resolved path is too long"));
+    }
+    return fs_try_canonical_candidate(a, candidate);
+}
+
+static bool fs_canonical_path_is_under(const char *directory,
+                                       const char *candidate) {
+    size_t directory_len;
+
+    if (!directory || !candidate) return false;
+    if (strcmp(directory, "/") == 0) return candidate[0] == '/';
+    directory_len = strlen(directory);
+    return strncmp(directory, candidate, directory_len) == 0 &&
+           (candidate[directory_len] == '\0' ||
+            candidate[directory_len] == '/');
+}
+
+static Atom *fs_try_canonical_under(Arena *a, Atom *head, Atom **args,
+                                    uint32_t nargs) {
+    const char *directory;
+    const char *relative;
+    char candidate[PATH_MAX];
+    char error[192];
+    char *canonical_directory;
+    char *canonical_candidate;
+    Atom *result;
+
+    if (nargs != 2 || !(directory = library_text_arg(args[0])) ||
+        !(relative = library_text_arg(args[1]))) {
+        return library_signature_error(
+            a, head, args, nargs, "expected directory and relative path");
+    }
+    canonical_directory = realpath(directory, NULL);
+    if (!canonical_directory) {
+        (void)snprintf(error, sizeof(error),
+                       "cannot canonicalize directory: %s", strerror(errno));
+        return atom_expr2(a, atom_symbol(a, "FS:CanonicalPathFault"),
+                          atom_string(a, error));
+    }
+    if (relative[0] == '/') {
+        if (snprintf(candidate, sizeof(candidate), "%s", relative) >=
+            (int)sizeof(candidate)) {
+            free(canonical_directory);
+            return atom_expr2(a, atom_symbol(a, "FS:CanonicalPathFault"),
+                              atom_string(a, "requested path is too long"));
+        }
+    } else if (!path_join2(candidate, sizeof(candidate), canonical_directory,
+                           relative)) {
+        free(canonical_directory);
+        return atom_expr2(a, atom_symbol(a, "FS:CanonicalPathFault"),
+                          atom_string(a, "resolved path is too long"));
+    }
+    canonical_candidate = realpath(candidate, NULL);
+    if (!canonical_candidate) {
+        (void)snprintf(error, sizeof(error),
+                       "cannot canonicalize path: %s", strerror(errno));
+        free(canonical_directory);
+        return atom_expr2(a, atom_symbol(a, "FS:CanonicalPathFault"),
+                          atom_string(a, error));
+    }
+    if (!fs_canonical_path_is_under(canonical_directory,
+                                    canonical_candidate)) {
+        free(canonical_candidate);
+        free(canonical_directory);
+        return atom_expr2(a, atom_symbol(a, "FS:CanonicalPathFault"),
+                          atom_string(a,
+                                      "canonical path escapes directory"));
+    }
+    result = atom_expr2(a, atom_symbol(a, "FS:CanonicalPath"),
+                        atom_string(a, canonical_candidate));
+    free(canonical_candidate);
+    free(canonical_directory);
+    return result;
+}
+
 static Atom *fs_read_text(Arena *a, Atom *head, Atom **args, uint32_t nargs) {
     const char *path;
     CettaStringBuf text;
@@ -3458,13 +3629,13 @@ static Atom *fs_write_like(Arena *a, Atom *head, Atom **args, uint32_t nargs, bo
         return library_signature_error(a, head, args, nargs,
                                        "expected filename and text");
     }
-    if (!library_write_text_file(path, text, append, errbuf, sizeof(errbuf))) {
+    if (!library_write_file(path, text, append, errbuf, sizeof(errbuf))) {
         return atom_error(a, library_call_expr(a, head, args, nargs), atom_string(a, errbuf));
     }
     return atom_unit(a);
 }
 
-static Atom *fs_write_text(Arena *a, Atom *head, Atom **args, uint32_t nargs) {
+static Atom *fs_write(Arena *a, Atom *head, Atom **args, uint32_t nargs) {
     return fs_write_like(a, head, args, nargs, false);
 }
 
@@ -3540,11 +3711,23 @@ static Atom *cetta_library_dispatch_fs(Arena *a, Atom *head,
     if (head_id == g_builtin_syms.lib_fs_exists) {
         return fs_exists(a, head, args, nargs);
     }
+    if (head_id == g_builtin_syms.lib_fs_canonical_path) {
+        return fs_canonical_path(a, head, args, nargs);
+    }
+    if (head_id == g_builtin_syms.lib_fs_try_canonical_path) {
+        return fs_try_canonical_path(a, head, args, nargs);
+    }
+    if (head_id == g_builtin_syms.lib_fs_try_canonical_from_file) {
+        return fs_try_canonical_from_file(a, head, args, nargs);
+    }
+    if (head_id == g_builtin_syms.lib_fs_try_canonical_under) {
+        return fs_try_canonical_under(a, head, args, nargs);
+    }
     if (head_id == g_builtin_syms.lib_fs_read_text) {
         return fs_read_text(a, head, args, nargs);
     }
-    if (head_id == g_builtin_syms.lib_fs_write_text) {
-        return fs_write_text(a, head, args, nargs);
+    if (head_id == g_builtin_syms.lib_fs_write) {
+        return fs_write(a, head, args, nargs);
     }
     if (head_id == g_builtin_syms.lib_fs_append_text) {
         return fs_append_text(a, head, args, nargs);

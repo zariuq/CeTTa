@@ -191,9 +191,10 @@ int main(void) {
                         "cetta_generated_exact_integer_add_v1") &&
                     strstr(baseline_c,
                         "cetta_external_call_exact_integer_add_v1") &&
+                    strstr(baseline_c, "break;") &&
                     !strstr(baseline_c, "goto"),
                 error[0] ? error :
-                    "the StructuredC Program structurally emits ordinary C without goto");
+                    "the StructuredC Program emits non-fallthrough ordinary C without goto");
         }
 
         if (first_stage &&

@@ -10,7 +10,7 @@
 /*
  * Owned C representation of the five-field GSLT LanguageDef core.
  *
- * This is a decoding target, not an execution engine.  It retains authored
+ * This is a decoding target, not an execution engine.  It retains declared
  * order, multiplicity, binder metadata, and arbitrary Unicode strings.  It
  * neither gives the core a Horn meaning nor admits any implementation as a
  * native calculus.

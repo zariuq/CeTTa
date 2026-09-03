@@ -1249,8 +1249,8 @@ static bool langdef_semantic_render_q_term_v1(
     arguments = term->expr.elems[2];
     if (!langdef_semantic_q_list_next_v1(
             &arguments, &argument, &done, error, error_size) ||
-        (!done && !langdef_byte_buffer_v1_literal(
-                      buffer, "(", error, error_size)))
+        !langdef_byte_buffer_v1_literal(
+            buffer, "(", error, error_size))
         return false;
     {
         char *head = NULL;
@@ -1264,7 +1264,8 @@ static bool langdef_semantic_render_q_term_v1(
             return false;
     }
     if (done)
-        return true;
+        return langdef_byte_buffer_v1_literal(
+            buffer, ")", error, error_size);
     for (;;) {
         if (!langdef_byte_buffer_v1_literal(
                 buffer, " ", error, error_size) ||
@@ -2404,8 +2405,6 @@ static bool compile_semantic_gslt_presentation_v1(
         goto done;
     for (size_t index = 0u; index < operators_len; index++) {
         char arity[32];
-        if (operators[index].arity == 0u)
-            continue;
         int arity_len = snprintf(
             arity, sizeof(arity), "%" PRIu32, operators[index].arity);
         if (arity_len <= 0 || (size_t)arity_len >= sizeof(arity) ||
@@ -2680,39 +2679,61 @@ done:
     return ok;
 }
 
-static bool compile_equations(const char *source, const char *output,
+static bool compile_equations(
+                              const char *const *sources,
+                              size_t source_count,
+                              const char *output,
                               char *error, size_t error_size) {
-    const char *paths[1] = {source};
     FHGSLTPackage *package = NULL;
     uint8_t *equations = NULL;
     size_t equation_len = 0u;
-    uint8_t *canonical = NULL;
-    size_t canonical_len = 0u;
+    uint8_t **canonical = NULL;
+    size_t *canonical_lens = NULL;
+    size_t presentation_count = 0u;
     char package_digest[65];
     char header[256];
     int header_len;
     uint8_t *program = NULL;
     bool ok = false;
 
-    if (!fhgslt_package_from_paths(paths, 1u, &package,
+    if (sources == NULL || source_count == 0u || output == NULL)
+        return set_error(error, error_size,
+                         "invalid equation composition request");
+    if (!fhgslt_package_from_paths(sources, source_count, &package,
                                    error, error_size) ||
-        fhgslt_package_presentation_count(package) != 1u ||
         !fhgslt_package_digest(package, package_digest,
-                               error, error_size) ||
-        !fhgslt_package_canonical_presentation(
-            package, 0u, &canonical, &canonical_len,
-            error, error_size) ||
-        !cetta_langdef_metta_equations_v1(
-            canonical, canonical_len, &equations, &equation_len,
-            error, error_size)) {
-        if (error[0] == '\0')
-            set_error(error, error_size,
-                      "equation source must contain one presentation");
+                               error, error_size))
+        goto done;
+    presentation_count = fhgslt_package_presentation_count(package);
+    if (presentation_count == 0u ||
+        presentation_count > SIZE_MAX / sizeof(*canonical) ||
+        presentation_count > SIZE_MAX / sizeof(*canonical_lens)) {
+        set_error(error, error_size,
+                  "equation composition has no presentations or is too large");
         goto done;
     }
+    canonical = calloc(presentation_count, sizeof(*canonical));
+    canonical_lens = calloc(
+        presentation_count, sizeof(*canonical_lens));
+    if (canonical == NULL || canonical_lens == NULL) {
+        set_error(error, error_size,
+                  "out of memory canonicalizing equation composition");
+        goto done;
+    }
+    for (size_t index = 0u; index < presentation_count; index++) {
+        if (!fhgslt_package_canonical_presentation(
+                package, index, &canonical[index],
+                &canonical_lens[index], error, error_size))
+            goto done;
+    }
+    if (!cetta_langdef_metta_equation_composition_v1(
+            (const uint8_t *const *)canonical, canonical_lens,
+            presentation_count, &equations, &equation_len,
+            error, error_size))
+        goto done;
     header_len = snprintf(
         header, sizeof(header),
-        "; generated from a compositional GSLT equation presentation\n"
+        "; generated from an ordered GSLT equation composition\n"
         "; source-package-sha256 %s\n"
         "; compiler c-finite-horn-metta-equation-v1\n\n",
         package_digest);
@@ -2734,6 +2755,11 @@ static bool compile_equations(const char *source, const char *output,
                       error, error_size);
 
 done:
+    if (canonical != NULL) {
+        for (size_t index = 0u; index < presentation_count; index++)
+            free(canonical[index]);
+    }
+    free(canonical_lens);
     free(canonical);
     free(program);
     free(equations);
@@ -2791,6 +2817,63 @@ static bool direct_sources_from_composition_v1(
             error, error_size,
             "%s composition requires a name and sources", command);
     return true;
+}
+
+static bool compile_equations_command_v1(
+    int argc, char **argv, char *error, size_t error_size) {
+    const char *sources[CETTA_LANGDEF_MAX_SOURCES];
+    size_t source_count = 0u;
+    const char *composition = NULL;
+    const char *output = NULL;
+    char resolved_sources[CETTA_LANGDEF_MAX_SOURCES][PATH_MAX];
+    Arena arena;
+    bool ok = false;
+
+    arena_init(&arena);
+    for (int index = 2; index < argc; index++) {
+        const char *option = argv[index];
+        const char *value;
+        if (index + 1 >= argc) {
+            set_error(error, error_size,
+                      "equations option lacks a value");
+            goto done;
+        }
+        value = argv[++index];
+        if (strcmp(option, "--source") == 0) {
+            if (source_count >= CETTA_LANGDEF_MAX_SOURCES) {
+                set_error(error, error_size,
+                          "equations has too many sources");
+                goto done;
+            }
+            sources[source_count++] = value;
+        } else if (strcmp(option, "--composition") == 0 &&
+                   composition == NULL) {
+            composition = value;
+        } else if (strcmp(option, "--out") == 0 && output == NULL) {
+            output = value;
+        } else {
+            set_error(error, error_size,
+                      "equations has an unknown or repeated option");
+            goto done;
+        }
+    }
+    if ((source_count == 0u) == (composition == NULL) || output == NULL) {
+        set_error(
+            error, error_size,
+            "equations requires exactly one source list or composition and an output");
+        goto done;
+    }
+    if (composition != NULL &&
+        !direct_sources_from_composition_v1(
+            composition, &arena, resolved_sources, sources, &source_count,
+            "equations", error, error_size))
+        goto done;
+    ok = compile_equations(
+        sources, source_count, output, error, error_size);
+
+done:
+    arena_free(&arena);
+    return ok;
 }
 
 static bool compile_petta_direct_command_v1(
@@ -6294,7 +6377,8 @@ done:
 static void usage(const char *program) {
     fprintf(stderr,
             "usage:\n"
-            "  %s equations --source FILE --out FILE\n"
+            "  %s equations (--source FILE... | --composition FILE) "
+            "--out FILE\n"
             "  %s petta-direct (--source FILE... | --composition FILE) "
             "[--entry-mode RELATION:BITS... | "
             "--closed-entry-mode RELATION:BITS...] "
@@ -6389,10 +6473,8 @@ int main(int argc, char **argv) {
     g_var_intern = NULL;
 
     if (strcmp(argv[1], "equations") == 0) {
-        const char *source = option_value(argc, argv, "--source");
-        const char *output = option_value(argc, argv, "--out");
-        if (source != NULL && output != NULL)
-            ok = compile_equations(source, output, error, sizeof(error));
+        ok = compile_equations_command_v1(
+            argc, argv, error, sizeof(error));
     } else if (strcmp(argv[1], "petta-direct") == 0) {
         petta_direct_command = true;
         ok = compile_petta_direct_command_v1(
