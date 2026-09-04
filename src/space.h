@@ -3,6 +3,7 @@
 
 #include "atom.h"
 #include "generated/cetta_execution_contracts.generated.h"
+#include "gslt_term_view_v1.h"
 #include "name_key.h"
 #include "match.h"
 #include "subst_tree.h"
@@ -73,6 +74,21 @@ CettaCount disc_transport_stable_coordinates(
 /* Collect all matching equation indices into result array */
 void disc_lookup(DiscNode *root, Atom *query, CettaIndex **out,
                  CettaIndex *nout, CettaIndex *cout);
+/* Traverse a borrowed top-level expression coordinate vector through the same
+ * matcher.  The coordinate atoms remain owned by the caller. */
+void disc_lookup_expression_coordinates(
+    DiscNode *root, Atom *const *coordinates,
+    CettaExprLen coordinate_count, CettaIndex **out,
+    CettaIndex *nout, CettaIndex *cout);
+/* Count the leaf occurrences on one fully rigid query path without building a
+ * candidate vector.  The observation is admitted only when no stored-variable
+ * edge can match at any traversed prefix.  A missing rigid edge is an exact
+ * zero; unsupported grounded values and wildcard overlap decline. */
+bool disc_count_rigid_exact_path(
+    const DiscNode *root, const Atom *query, CettaIndex *out_count);
+bool disc_count_rigid_exact_expression_coordinates(
+    const DiscNode *root, Atom *const *coordinates,
+    CettaExprLen coordinate_count, CettaIndex *out_count);
 
 #include "space_match_backend.h"
 
@@ -198,6 +214,11 @@ typedef struct Space {
        mutations leave this coordinate unchanged; mutations whose projection
        effect is opaque advance it conservatively. */
     uint64_t equation_revision;
+    /* Revision of the declaration projection: `(: subject type)` occurrences
+       only.  Callability, named arity, and effect classification read the
+       equation and declaration projections together and nothing else, so
+       caches of those facts key on this pair rather than on `revision`. */
+    uint64_t declaration_revision;
     /* Process-wide unique prefix stamp, refreshed at initialization and when
        a publication may rewrite an already visible prefix.  Append-only
        publications preserve it.  An overlay folds the stamps of its actual
@@ -267,6 +288,9 @@ static inline uint64_t space_revision(const Space *s) {
 static inline uint64_t space_equation_revision(const Space *s) {
     return s ? s->equation_revision : 0;
 }
+static inline uint64_t space_declaration_revision(const Space *s) {
+    return s ? s->declaration_revision : 0;
+}
 static inline uint64_t space_instance_id(const Space *s) {
     return s ? s->instance_id : 0;
 }
@@ -302,6 +326,20 @@ typedef struct {
     uint64_t projection_dependency_epoch;
 } SpaceEquationToken;
 
+/* Lifetime-qualified identity of the program projection a Space presents to
+   callability, named-arity, and effect classification: its equation and
+   declaration occurrences.  Data-only mutations leave it unchanged.  An
+   overlay reads a live base chain whose program may change without touching
+   the overlay's own clocks, so an overlay's token folds in the process-wide
+   mutation epoch and stays conservative. */
+typedef struct {
+    const Space *space;
+    uint64_t instance_id;
+    uint64_t equation_revision;
+    uint64_t declaration_revision;
+    uint64_t base_dependency_epoch;
+} SpaceProgramToken;
+
 typedef struct {
     SpaceReadToken read;
     CettaIndex logical_index; /* captured ordering/occurrence key */
@@ -324,6 +362,15 @@ bool space_read_token_is_current(SpaceReadToken token);
 bool space_read_token_matches_live_space(SpaceReadToken token,
                                          const Space *live_space);
 SpaceEquationToken space_equation_token(const Space *s);
+SpaceProgramToken space_program_token(const Space *s);
+static inline bool space_program_token_eq(SpaceProgramToken left,
+                                          SpaceProgramToken right) {
+    return left.space == right.space &&
+           left.instance_id == right.instance_id &&
+           left.equation_revision == right.equation_revision &&
+           left.declaration_revision == right.declaration_revision &&
+           left.base_dependency_epoch == right.base_dependency_epoch;
+}
 bool space_equation_token_is_current(SpaceEquationToken token);
 bool space_equation_token_matches_live_space(
     SpaceEquationToken token, const Space *live_space);
@@ -359,12 +406,19 @@ SpaceEquationCursorStep space_equation_cursor_next(
 
 bool space_contains_exact(Space *s, Atom *atom);
 /* Exact fragment of match existence.  The result is applicable only when a
-   ground, structurally indexable pattern is queried against a relation whose
-   stored rows are all exact.  Backend-primary PathMap answers through its
-   direct structural membership operation; if that operation is unavailable,
-   the fragment declines instead of materializing a native shadow. */
+   ground, structurally indexable pattern has a complete candidate frontier
+   whose rows are all exact.  Backend-primary PathMap answers through its
+   direct structural membership operation when its whole-row exactness summary
+   proves the same premise; if that operation is unavailable, the fragment
+   declines instead of materializing a native shadow. */
 bool space_match_exists_ground_exact(Space *s, Atom *pattern,
                                      bool *out_applicable);
+/* Exact match existence for an expression presented as borrowed top-level
+ * coordinates.  Native storage answers from its canonical AtomId presence
+ * projection only when every stored row is structurally exact. */
+bool space_match_exists_ground_exact_expression_coordinates(
+    Space *s, Atom *const *coordinates, CettaExprLen coordinate_count,
+    bool *out_applicable);
 /* O(1)-amortized alpha-aware membership over native spaces, including native
    overlays; *out_applicable is false for non-native backends. */
 bool space_contains_canonical(Space *s, Atom *atom, bool *out_applicable);
@@ -576,6 +630,23 @@ Atom *space_match_candidate_at64(const Space *s, CettaIndex idx);
 bool space_match_count_flat_linear64(Space *s, Arena *scratch,
                                      Atom *pattern, uint64_t *count,
                                      CettaIndex *examined);
+/* Count through a borrowed query presentation.  `open_bindings` governs
+ * unresolved query roots; stored-row bindings are existentially hidden by
+ * the count observer and may be erased only by a backend which checks their
+ * remaining equality constraints exactly. */
+bool space_match_count_flat_linear_view64(
+    Space *s, Arena *scratch, const CettaGsltTermViewV1 *view,
+    CettaGsltTermViewOpenBindingObservationV1 open_bindings,
+    uint64_t *count,
+    CettaIndex *examined);
+/* Boolean image of the same flat match producer.  This interface keeps the
+ * observer independent of evaluator syntax; the current native realization
+ * reuses exact occurrence aggregation and otherwise the exact count fold. */
+bool space_match_exists_flat_linear_view64(
+    Space *s, Arena *scratch, const CettaGsltTermViewV1 *view,
+    CettaGsltTermViewOpenBindingObservationV1 open_bindings,
+    bool *exists,
+    CettaIndex *examined);
 bool space_match_count_conjunction64(Space *s, Arena *scratch,
                                      Atom **patterns,
                                      CettaExprLen npatterns,

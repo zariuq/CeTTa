@@ -1160,7 +1160,7 @@ GSLT_EPOCH_SLOTS_V1_TEST_SRC = tests/support/test_gslt_epoch_slots_v1.c
 GSLT_EPOCH_SLOTS_V1_TEST_OBJ = runtime/bootstrap/test_gslt_epoch_slots_v1.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o
 GSLT_EPOCH_SLOTS_V1_TEST_BIN = runtime/test_gslt_epoch_slots_v1-$(BUILD_OBJ_TAG)
 GSLT_GROUND_DENSE_TERM_V1_SRC = src/gslt_ground_dense_term_v1.c
-GSLT_GROUND_DENSE_TERM_V1_HEADER = src/gslt_ground_dense_term_v1.h
+GSLT_GROUND_DENSE_TERM_V1_HEADER = src/gslt_ground_dense_term_v1.h src/gslt_term_view_v1.h
 GSLT_GROUND_DENSE_TERM_V1_OBJ = src/gslt_ground_dense_term_v1.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o
 GSLT_GROUND_DENSE_TERM_V1_TEST_SRC = tests/support/test_gslt_ground_dense_term_v1.c
 GSLT_GROUND_DENSE_TERM_V1_TEST_OBJ = runtime/bootstrap/test_gslt_ground_dense_term_v1.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o
@@ -1950,6 +1950,7 @@ PETTA_CORPUS_TIMEOUT ?= 30
 PETTA_CHAINER_ROOT ?=
 PETTA_CHAINER_COMPAT_MANIFEST = tests/petta/chainer_compat/manifest.json
 PETTA_CHAINER_COMPAT_RESULTS ?= runtime/petta-chainer-compat
+PETTA_CHAINER_SPACE_ENGINE ?= native
 MATCH_DECISION_LANE_TIMEOUT ?= 60
 GSLT2PARSE_HE_ROOT ?=
 GSLT2PARSE_HE_GENERATED_C_OUTPUT ?=
@@ -2282,6 +2283,9 @@ METAMATH_SOURCE_RESOLUTION_CONTROL_V1 = $(METAMATH_LANGDEF_GENERATED_DIR_V1)/sou
 METAMATH_SOURCE_RESOLUTION_CONTROL_DIRECT_PROGRAM_V1 = langdef/petta/generated/metamath_source_resolution_control_direct_v1.metta
 METAMATH_SOURCE_RESOLUTION_CONTROL_DIRECT_QUERY_V1 = tests/petta/source_resolution_control_direct_query_v1.metta
 METAMATH_SOURCE_RESOLUTION_CONTROL_DIRECT_V1 = $(METAMATH_LANGDEF_GENERATED_DIR_V1)/source_resolution_control_direct_v1.answers
+# These bootstrap tools deliberately exclude optional runtime libraries.  Keep
+# this tag paired with the explicit recursive-build feature set below: an
+# artifact name and the configuration that produces it are one identity.
 RELATIONAL_STATE_TRANSITION_CORE_TAG_V1 = core.prime-need-heap-index.prime-eval-stack
 RELATIONAL_STATE_TRANSITION_CHART_CORE_V1 = runtime/finite_horn_chart_v1-$(RELATIONAL_STATE_TRANSITION_CORE_TAG_V1)
 RELATIONAL_STATE_TRANSITION_LANGDEF_CORE_V1 = runtime/langdef-compile-v1-$(RELATIONAL_STATE_TRANSITION_CORE_TAG_V1)
@@ -2808,6 +2812,7 @@ PATHMAP_REQUIRED_TESTS = \
 	tests/test_mork_act_roundtrip.metta \
 	tests/test_pathmap_counted_space_syntax.metta \
 	tests/test_pathmap_contextual_var_projection_remove.metta \
+	tests/test_pathmap_scientific_float_roundtrip_regression.metta \
 	tests/test_pathmap_indexed_query_work.metta \
 	tests/test_pathmap_indexed_opening_identity_regression.metta \
 	tests/test_space_batch_copy_optimizer_guards.metta \
@@ -8964,6 +8969,7 @@ test-metamath-cogslt-diagnostic-binary-v1:
 .PHONY: build-cogslt-relational-state-transition-core-tools-v1
 build-cogslt-relational-state-transition-core-tools-v1:
 	@$(MAKE) -s --no-print-directory BUILD=core ENABLE_LIB_PROLOG=0 \
+		ENABLE_JSON_GSLT=0 \
 		$(RELATIONAL_STATE_TRANSITION_CHART_CORE_V1) \
 		$(RELATIONAL_STATE_TRANSITION_LANGDEF_CORE_V1) \
 		$(RELATIONAL_STATE_TRANSITION_MUTATOR_CORE_V1)
@@ -16304,6 +16310,8 @@ ifeq ($(ENABLE_RUNTIME_STATS),1)
 		's/^runtime-counter prime-eval-stack-gc-frame-safe-point //p'); \
 	reclaimed=$$(printf '%s\n' "$$result" | sed -n \
 		's/^runtime-counter eval-tail-reclaimed-bytes //p'); \
+	collected=$$(printf '%s\n' "$$result" | sed -n \
+		's/^runtime-counter eval-tail-collected //p'); \
 	if [ "$$status" -ne 0 ] || \
 	   [ "$$visible" != "$$expected" ] || \
 	   ! expr "$$candidates" : '[0-9][0-9]*$$' >/dev/null || \
@@ -16311,12 +16319,14 @@ ifeq ($(ENABLE_RUNTIME_STATS),1)
 	   ! expr "$$live" : '[0-9][0-9]*$$' >/dev/null || \
 	   ! expr "$$safe" : '[0-9][0-9]*$$' >/dev/null || \
 	   ! expr "$$reclaimed" : '[0-9][0-9]*$$' >/dev/null || \
+	   ! expr "$$collected" : '[0-9][0-9]*$$' >/dev/null || \
 	   [ "$$blocked" -le 0 ] || [ "$$live" -ne 0 ] || \
 	   [ "$$safe" -le 0 ] || [ "$$reclaimed" -le 0 ] || \
-	   [ "$$candidates" -ne $$((blocked + safe)) ]; then \
+	   [ "$$collected" -le 0 ] || [ "$$collected" -gt "$$safe" ] || \
+	   [ "$$candidates" -ne $$((blocked + live + collected)) ]; then \
 		echo "FAIL: monolithic Prime equation search did not fail closed around moving GC"; \
 		printf '%s\n' "visible=$$visible" \
-			"exit=$$status candidates=$$candidates blocked=$$blocked live=$$live safe=$$safe reclaimed=$$reclaimed"; \
+			"exit=$$status candidates=$$candidates blocked=$$blocked live=$$live safe=$$safe collected=$$collected reclaimed=$$reclaimed"; \
 		if [ "$$status" -ne 0 ]; then \
 			printf '%s\n' "$$result" | tail -120; \
 		fi; \
@@ -16346,7 +16356,10 @@ else
 endif
 
 test-eval-gc-asan-selected:
-	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 ENABLE_SANITIZERS=1 SANITIZERS=address,undefined CETTA_PROVENANCE_ASSERT=1 ASAN_REPEATABLE=1 test-eval-gc-asan-selected-body
+	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 \
+		ENABLE_SANITIZERS=1 SANITIZERS=address,undefined \
+		CETTA_PROVENANCE_ASSERT=1 ENABLE_PYTHON=0 ASAN_REPEATABLE=1 \
+		test-eval-gc-asan-selected-body
 
 test-eval-gc-asan-selected-body: $(BIN)
 	@CETTA_BIN="$(abspath $(BIN))" scripts/gc_asan_selected_audit.sh
@@ -18105,22 +18118,55 @@ test-petta-activation-effect-runtime-stats: $(BIN)
 		echo "INFO: PeTTa activation-effect receipts require compile-time runtime stats; re-running with ENABLE_RUNTIME_STATS=1"; \
 		$(MAKE) BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 $@; \
 	else \
-		stats=$$(CETTA_PETTA_SEARCH_MACHINE=1 \
+		fixture=tests/petta/search_machine_activation_effect_boundary.metta; \
+		expected=$$(cat tests/petta/search_machine_activation_effect_boundary.expected); \
+		optimized=$$(CETTA_PETTA_SEARCH_MACHINE=1 \
 			CETTA_PETTA_CLAUSE_BODY_ACTIVATION=1 \
 			./$(BIN) --lang petta --emit-runtime-stats \
-			tests/petta/search_machine_activation_effect_boundary.metta \
-			2>&1 >/dev/null); \
+			"$$fixture" 2>&1); \
+		reference=$$(CETTA_PETTA_SEARCH_MACHINE=1 \
+			CETTA_PETTA_CLAUSE_BODY_ACTIVATION=1 \
+			CETTA_PETTA_MATCH_REGION_HOLE_REFERENCE=1 \
+			CETTA_PETTA_BINDING_REGION_HOLE_REFERENCE=1 \
+			./$(BIN) --lang petta --emit-runtime-stats \
+			"$$fixture" 2>&1); \
+		finite=$$(CETTA_PETTA_SEARCH_MACHINE=1 \
+			CETTA_PETTA_CLAUSE_BODY_ACTIVATION=1 \
+			./$(BIN) --fuel 1000 --lang petta --emit-runtime-stats \
+			"$$fixture" 2>&1); \
+		for variant in optimized reference finite; do \
+			value=$${!variant}; \
+			actual=$$(printf '%s\n' "$$value" | \
+				grep -v '^runtime-counter '); \
+			test "$$actual" = "$$expected"; \
+		done; \
 		counter() { \
-			printf '%s\n' "$$stats" | awk -v name="$$1" \
+			printf '%s\n' "$$1" | awk -v name="$$2" \
 				'$$1 == "runtime-counter" && $$2 == name { value = $$3 } END { print value + 0 }'; \
 		}; \
-		declined=$$(counter petta-clause-activation-plan-declined-relation-effect); \
-		admitted=$$(counter petta-clause-activation-plan-admitted); \
-		if [ "$$declined" -le 0 ] || [ "$$admitted" -ne 0 ]; then \
-			echo "FAIL: effectful PeTTa relation crossed delayed clause activation"; \
-			exit 1; \
-		fi; \
-		echo "PASS: effectful PeTTa relations remain on the materialization boundary"; \
+		attempts=$$(counter "$$optimized" petta-match-region-hole-attempt); \
+		commits=$$(counter "$$optimized" petta-match-region-hole-commit); \
+		declines=$$(counter "$$optimized" petta-match-region-hole-decline); \
+		binding_attempts=$$(counter "$$optimized" petta-binding-region-hole-attempt); \
+		binding_commits=$$(counter "$$optimized" petta-binding-region-hole-commit); \
+		binding_declines=$$(counter "$$optimized" petta-binding-region-hole-decline); \
+		admitted=$$(counter "$$optimized" petta-clause-activation-plan-admitted); \
+		test "$$attempts" -eq $$((commits + declines)); \
+		test "$$binding_attempts" -eq \
+			$$((binding_commits + binding_declines)); \
+		test "$$commits" -gt 0; \
+		test "$$binding_commits" -gt 0; \
+		test "$$admitted" -gt 0; \
+		for variant in reference finite; do \
+			value=$${!variant}; \
+			declined=$$(counter "$$value" petta-clause-activation-plan-declined-relation-effect); \
+			attempts=$$(counter "$$value" petta-match-region-hole-attempt); \
+			binding_attempts=$$(counter "$$value" petta-binding-region-hole-attempt); \
+			test "$$declined" -gt 0; \
+			test "$$attempts" -eq 0; \
+			test "$$binding_attempts" -eq 0; \
+		done; \
+		echo "PASS: Boolean and binding Region/Hole paths preserve ordered effects while reference and finite-fuel execution materialize"; \
 	fi
 
 test-petta-hyperpose-occurrence-runtime-stats: $(BIN)
@@ -21932,7 +21978,7 @@ test-petta-match-existence-fusion: $(BIN)
 			"$$positive_on"; \
 		diff -u "$$positive_off" "$$positive_on"; \
 		folds=$$(awk '{ for (i = 1; i <= NF; i++) if ($$i ~ /^match_existence_observer_folds=/) { split($$i, pair, "="); n += pair[2] } } END { print n + 0 }' "$$positive_stats"); \
-		if [ "$$folds" -le 0 ]; then \
+		if [ "$$folds" -lt 6 ]; then \
 			echo "FAIL: PeTTa $$engine existence observer folded no positive case"; \
 			exit 1; \
 		fi; \
@@ -22911,7 +22957,48 @@ else
 		test-match-closed-expression-decision
 endif
 
-test-petta-search-machine: $(PETTA_SEARCH_MACHINE_TEST_BIN) $(BIN) test-search-controller test-controller-diversity test-petta-machine-trace-config test-petta-type-langdef-source-binding-v1 test-petta-boundary-langdef-source-binding-v1 test-petta-capability-ledger test-petta-specializer-relevance-filter test-petta-mam-contender-mutations test-petta-extended-query-algebra test-petta-prepared-register-loop test-petta-specialized-pure-call test-petta-memoization test-petta-match-existence-fusion test-petta-clause-slot-admission test-petta-equation-template-c0 test-petta-relational-equation-view test-petta-argv-native test-petta-activation-admission-cache test-petta-activation-scalar-if test-petta-match-region-hole test-petta-binding-region-hole test-petta-rule-slot-view test-petta-deterministic-region-scalability test-petta-body-resume-segment test-petta-match-decision-tree-repository test-petta-match-decision-shape-receipt test-petta-activation-anonymous-hole test-petta-activation-scalar-argument-segment test-petta-activation-pure-data-segment test-petta-match-decision-equality test-match-closed-expression-decision
+.PHONY: test-petta-translation-time-callability
+test-petta-translation-time-callability: $(BIN)
+	@actual=runtime/test-petta-translation-time-callability.out; \
+	CETTA_PETTA_SEARCH_MACHINE=1 ./$(BIN) --lang petta \
+		tests/petta/search_machine_translation_time_callability.metta \
+		>"$$actual" 2>&1; \
+	diff -u \
+		tests/petta/search_machine_translation_time_callability.expected \
+		"$$actual"
+	@echo "PASS: PeTTa source occurrences preserve translation-time callability"
+
+.PHONY: test-petta-match-conjunction-cursor
+test-petta-match-conjunction-cursor: $(BIN)
+ifeq ($(ENABLE_RUNTIME_STATS),1)
+	@set -eu; \
+	fixture=tests/petta/search_machine_conjunctive_match.metta; \
+	expected=$$(cat tests/petta/search_machine_conjunctive_match.expected); \
+	observed=$$(CETTA_PETTA_SEARCH_MACHINE=1 \
+		./$(BIN) --emit-runtime-stats --lang petta "$$fixture" 2>&1); \
+	actual=$$(printf '%s\n' "$$observed" | \
+		grep -v '^runtime-counter '); \
+	test "$$actual" = "$$expected"; \
+	counter() { \
+		printf '%s\n' "$$observed" | awk -v name="$$1" \
+			'$$1 == "runtime-counter" && $$2 == name { print $$3 }'; \
+	}; \
+	attempt=$$(counter petta-match-conjunction-cursor-attempt); \
+	commit=$$(counter petta-match-conjunction-cursor-commit); \
+	decline=$$(counter petta-match-conjunction-cursor-decline); \
+	legs=$$(counter petta-match-conjunction-cursor-leg); \
+	test "$$attempt" -eq $$((commit + decline)); \
+	test "$$commit" -gt 0; \
+	test "$$decline" -gt 0; \
+	test "$$legs" -gt "$$commit"; \
+	echo "PASS: PeTTa conjunctive match cursor preserves source-family observations and exact admission receipts"
+else
+	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 \
+		test-petta-match-conjunction-cursor
+endif
+
+test-petta-search-machine: test-petta-match-conjunction-cursor
+test-petta-search-machine: $(PETTA_SEARCH_MACHINE_TEST_BIN) $(BIN) test-search-controller test-controller-diversity test-petta-machine-trace-config test-petta-type-langdef-source-binding-v1 test-petta-boundary-langdef-source-binding-v1 test-petta-capability-ledger test-petta-specializer-relevance-filter test-petta-mam-contender-mutations test-petta-extended-query-algebra test-petta-prepared-register-loop test-petta-specialized-pure-call test-petta-memoization test-petta-match-existence-fusion test-petta-clause-slot-admission test-petta-equation-template-c0 test-petta-relational-equation-view test-petta-argv-native test-petta-activation-admission-cache test-petta-activation-scalar-if test-petta-match-region-hole test-petta-binding-region-hole test-petta-rule-slot-view test-petta-deterministic-region-scalability test-petta-body-resume-segment test-petta-match-decision-tree-repository test-petta-match-decision-shape-receipt test-petta-activation-anonymous-hole test-petta-activation-scalar-argument-segment test-petta-activation-pure-data-segment test-petta-match-decision-equality test-match-closed-expression-decision test-petta-translation-time-callability
 	@env -u CETTA_PETTA_CLAUSE_BODY_ACTIVATION \
 		-u CETTA_PETTA_CLAUSE_BODY_ACTIVATION_REFERENCE \
 		./$(PETTA_SEARCH_MACHINE_TEST_BIN)
@@ -23617,6 +23704,11 @@ test-petta-search-machine: $(PETTA_SEARCH_MACHINE_TEST_BIN) $(BIN) test-search-c
 		echo "FAIL: source-planned PeTTa let/count fusion did not fire"; \
 		exit 1; \
 	fi; \
+	if ! printf '%s\n' "$$count_stats" | \
+			grep -Eq 'count_aggregate_match_folds=[1-9][0-9]*'; then \
+		echo "FAIL: source-planned PeTTa match/count fold did not fire"; \
+		exit 1; \
+	fi; \
 	oracle_result=$$(CETTA_PETTA_SEARCH_MACHINE=1 \
 		CETTA_PETTA_LET_COUNT_FUSION=0 \
 		./$(BIN) --lang petta \
@@ -23715,8 +23807,12 @@ test-petta-search-machine: $(PETTA_SEARCH_MACHINE_TEST_BIN) $(BIN) test-search-c
 		CETTA_PETTA_CLAUSE_BODY_ACTIVATION=1 \
 		./$(BIN) --lang petta \
 		tests/petta/search_machine_activation_effect_boundary.metta 2>&1); \
-	if [ "$$activation_result" != "true" ]; then \
+	activation_expected=$$(cat \
+		tests/petta/search_machine_activation_effect_boundary.expected); \
+	if [ "$$activation_result" != "$$activation_expected" ]; then \
 		echo "FAIL: effectful PeTTa relation changed observable result"; \
+		diff <(printf '%s\n' "$$activation_expected") \
+			<(printf '%s\n' "$$activation_result") | head -40; \
 		exit 1; \
 	fi; \
 	result=$$(CETTA_PETTA_SEARCH_MACHINE=1 ./$(BIN) --lang petta \
@@ -23899,7 +23995,7 @@ test-absolute-module-import: $(BIN)
 	test "$$prime" = "$$(printf '[()]\n[descriptor-loaded]')"; \
 	echo "PASS: absolute module imports remain available in PeTTa, HE, HE-compatible, and Prime dialects"
 
-PETTA_SEMANTIC_ORACLE_STEMS = \
+PETTA_SEMANTIC_EXACT_STREAM_STEMS = \
 	relational_control term_order numeric_semantics \
 	atom_operation_failure alpha_unique named_state implicit_space \
 	space_namespace_contract space_match_mutation_continuation \
@@ -23913,7 +24009,11 @@ PETTA_SEMANTIC_ORACLE_STEMS = \
 	hyperpose_shared_space_sloppy_update hyperpose_shared_space_transactions \
 	hyperpose_capture_alias_transfer hyperpose_nested_transaction \
 	foldall_open_match_collection named_space_substitution \
-	profile_petta_base_extension_boundary
+	profile_petta_base_extension_boundary conjunctive_match_count_semantics
+PETTA_SEMANTIC_OCCURRENCE_BAG_STEMS = semantic_counter_equations
+PETTA_SEMANTIC_ORACLE_STEMS = \
+	$(PETTA_SEMANTIC_EXACT_STREAM_STEMS) \
+	$(PETTA_SEMANTIC_OCCURRENCE_BAG_STEMS)
 
 .PHONY: test-petta-profile-boundary test-petta-semantics \
 	test-petta-semantics-differential
@@ -23948,36 +24048,62 @@ test-petta-semantics-differential: $(BIN)
 	@set -eu; pass=0; \
 	for stem in $(PETTA_SEMANTIC_ORACLE_STEMS); do \
 		fixture="$(abspath tests/petta)/$$stem.metta"; \
-		cetta=$$(CETTA_PETTA_SEARCH_MACHINE=1 ./$(BIN) --lang petta \
-			"$$fixture" 2>&1); \
-		oracle_status=0; \
-		oracle=$$(cd "$(PETTA_ORACLE_ROOT)" && \
-			timeout 90 ./run.sh "$$fixture" --silent 2>&1) || \
-			oracle_status=$$?; \
-		if [[ "$$oracle_status" -ne 0 ]]; then \
-			echo "FAIL: PeTTa oracle could not run $$stem (exit $$oracle_status)"; \
-			printf '%s\n' "$$oracle"; \
+		contract=exact-stream; \
+		case " $(PETTA_SEMANTIC_OCCURRENCE_BAG_STEMS) " in \
+			*" $$stem "*) contract=occurrence-bag ;; \
+		esac; \
+		cetta_out="runtime/test-petta-semantics-differential-$$stem.cetta.out"; \
+		oracle_out="runtime/test-petta-semantics-differential-$$stem.oracle.out"; \
+		cetta_status=0; \
+		CETTA_PETTA_SEARCH_MACHINE=1 ./$(BIN) --lang petta \
+			"$$fixture" >"$$cetta_out" 2>&1 || cetta_status=$$?; \
+		if [[ "$$cetta_status" -ne 0 ]]; then \
+			echo "FAIL: CeTTa could not run $$stem (exit $$cetta_status)"; \
+			cat "$$cetta_out"; \
 			exit 1; \
 		fi; \
-		if [[ "$$cetta" != "$$oracle" ]]; then \
-			echo "FAIL: CeTTa --lang petta diverges from PeTTa on $$stem"; \
-			diff <(printf '%s\n' "$$oracle") \
-				<(printf '%s\n' "$$cetta") | head -40; \
+		oracle_status=0; \
+		(cd "$(PETTA_ORACLE_ROOT)" && \
+			timeout 90 ./run.sh "$$fixture" --silent) \
+			>"$$oracle_out" 2>&1 || oracle_status=$$?; \
+		if [[ "$$oracle_status" -ne 0 ]]; then \
+			echo "FAIL: PeTTa oracle could not run $$stem (exit $$oracle_status)"; \
+			cat "$$oracle_out"; \
+			exit 1; \
+		fi; \
+		if ! PYTHONDONTWRITEBYTECODE=1 python3 \
+			scripts/compare_petta_observation.py \
+			--contract "$$contract" --expected "$$oracle_out" \
+			--actual "$$cetta_out"; then \
+			echo "FAIL: CeTTa --lang petta diverges from PeTTa on $$stem ($$contract)"; \
 			exit 1; \
 		fi; \
 		pass=$$((pass + 1)); \
 	done; \
-	echo "PASS: $$pass/$$pass base PeTTa semantic fixtures match the live PeTTa oracle exactly"
+	echo "PASS: $$pass/$$pass base PeTTa semantic fixtures match their explicit oracle observations"
 
 test-petta-semantics: $(BIN) test-petta-multifile test-petta-eval-in-space
-	@for stem in $(PETTA_SEMANTIC_ORACLE_STEMS); do \
-		result=$$(CETTA_PETTA_SEARCH_MACHINE=1 ./$(BIN) --lang petta \
-			tests/petta/$$stem.metta 2>&1); \
-		expected=$$(cat tests/petta/$$stem.expected); \
-		if [ "$$result" != "$$expected" ]; then \
-			echo "FAIL: PeTTa semantic discriminator $$stem"; \
-			diff <(printf '%s\n' "$$expected") \
-				<(printf '%s\n' "$$result") | head -40; \
+	@set -eu; \
+	for stem in $(PETTA_SEMANTIC_ORACLE_STEMS); do \
+		contract=exact-stream; \
+		case " $(PETTA_SEMANTIC_OCCURRENCE_BAG_STEMS) " in \
+			*" $$stem "*) contract=occurrence-bag ;; \
+		esac; \
+		actual="runtime/test-petta-semantics-$$stem.out"; \
+		status=0; \
+		CETTA_PETTA_SEARCH_MACHINE=1 ./$(BIN) --lang petta \
+			tests/petta/$$stem.metta >"$$actual" 2>&1 || status=$$?; \
+		if [ "$$status" -ne 0 ]; then \
+			echo "FAIL: PeTTa semantic discriminator $$stem exited $$status"; \
+			cat "$$actual"; \
+			exit 1; \
+		fi; \
+		if ! PYTHONDONTWRITEBYTECODE=1 python3 \
+			scripts/compare_petta_observation.py \
+			--contract "$$contract" \
+			--expected "tests/petta/$$stem.expected" \
+			--actual "$$actual"; then \
+			echo "FAIL: PeTTa semantic discriminator $$stem ($$contract)"; \
 			exit 1; \
 		fi; \
 	done; \
@@ -24735,6 +24861,7 @@ test-petta-chainer-compat: $(BIN) test-petta-chainer-manifest-unit
 		--petta-root "$(PETTA_ORACLE_ROOT)" \
 		--manifest "$(PETTA_CHAINER_COMPAT_MANIFEST)" \
 		--out "$(PETTA_CHAINER_COMPAT_RESULTS)" \
+		--space-engine "$(PETTA_CHAINER_SPACE_ENGINE)" \
 		--reference
 
 test-petta-typecheck-v2-chainer: $(BIN) test-petta-chainer-manifest-unit
@@ -33604,7 +33731,7 @@ test-language-def-parser-pack-v1-body: $(LANGUAGE_DEF_PARSER_PACK_V1_TEST_BIN)
 .PHONY: test-language-def-parser-pack-v1
 test-language-def-parser-pack-v1:
 	@$(MAKE) --no-print-directory \
-		BUILD=core ENABLE_GMP=0 ENABLE_LIB_PROLOG=0 ENABLE_HTTP=0 \
+		BUILD=core ENABLE_GMP=0 ENABLE_LIB_PROLOG=0 ENABLE_HTTP=0 ENABLE_RUNTIME_STATS=0 \
 		ENABLE_SANITIZERS=0 ENABLE_PIC=0 \
 		CETTA_PROVENANCE_ASSERT=0 RHOCOST_COMMIT_AUDIT=0 \
 		ENABLE_PRIME_RECEIPT_PRIMARY_INDEX=0 \
@@ -33620,7 +33747,7 @@ test-json-nik-v1-body: $(JSON_NIK_V1_TEST_BIN)
 .PHONY: test-json-nik-v1
 test-json-nik-v1:
 	@$(MAKE) --no-print-directory \
-		BUILD=core ENABLE_GMP=0 ENABLE_LIB_PROLOG=0 ENABLE_HTTP=0 \
+		BUILD=core ENABLE_GMP=0 ENABLE_LIB_PROLOG=0 ENABLE_HTTP=0 ENABLE_RUNTIME_STATS=0 \
 		ENABLE_SANITIZERS=0 ENABLE_PIC=0 \
 		CETTA_PROVENANCE_ASSERT=0 RHOCOST_COMMIT_AUDIT=0 \
 		ENABLE_PRIME_RECEIPT_PRIMARY_INDEX=0 \
@@ -33645,7 +33772,7 @@ test-json-gslt-mutation-body: $(LANGUAGE_DEF_PARSER_PACK_V1_MUTATION_BIN)
 .PHONY: test-json-gslt-mutation
 test-json-gslt-mutation:
 	@$(MAKE) --no-print-directory \
-		BUILD=core ENABLE_GMP=0 ENABLE_LIB_PROLOG=0 ENABLE_HTTP=0 \
+		BUILD=core ENABLE_GMP=0 ENABLE_LIB_PROLOG=0 ENABLE_HTTP=0 ENABLE_RUNTIME_STATS=0 \
 		ENABLE_SANITIZERS=0 ENABLE_PIC=0 \
 		CETTA_PROVENANCE_ASSERT=0 RHOCOST_COMMIT_AUDIT=0 \
 		ENABLE_PRIME_RECEIPT_PRIMARY_INDEX=0 \
@@ -33689,7 +33816,7 @@ qualify-json-gslt-native-forest-exact-v1-body: \
 .PHONY: qualify-json-gslt-native-forest-exact-v1
 qualify-json-gslt-native-forest-exact-v1:
 	@$(MAKE) --no-print-directory \
-		BUILD=core ENABLE_GMP=0 ENABLE_LIB_PROLOG=0 ENABLE_HTTP=0 \
+		BUILD=core ENABLE_GMP=0 ENABLE_LIB_PROLOG=0 ENABLE_HTTP=0 ENABLE_RUNTIME_STATS=0 \
 		ENABLE_SANITIZERS=0 ENABLE_PIC=0 \
 		CETTA_PROVENANCE_ASSERT=0 RHOCOST_COMMIT_AUDIT=0 \
 		ENABLE_PRIME_RECEIPT_PRIMARY_INDEX=0 \
@@ -33707,7 +33834,7 @@ test-json-gslt-c-only-closure-body: \
 	dry=$$(mktemp "$(BOOTSTRAP_TMPDIR)/json-c-only-dry-run.XXXXXX"); \
 	trap 'rm -f "$$dry"' EXIT INT TERM; \
 	$(MAKE) --no-print-directory -Bn \
-		BUILD=core ENABLE_GMP=0 ENABLE_LIB_PROLOG=0 ENABLE_HTTP=0 \
+		BUILD=core ENABLE_GMP=0 ENABLE_LIB_PROLOG=0 ENABLE_HTTP=0 ENABLE_RUNTIME_STATS=0 \
 		$(JSON_SOURCE_EMBED_TOOL_V1) \
 		$(JSON_GSLT_EMBEDDED_C_V1) \
 		$(LANGUAGE_DEF_PARSER_PACK_V1_TEST_BIN) > "$$dry"; \
@@ -33727,7 +33854,7 @@ test-json-gslt-c-only-closure-body: \
 .PHONY: test-json-gslt-c-only-closure
 test-json-gslt-c-only-closure:
 	@$(MAKE) --no-print-directory \
-		BUILD=core ENABLE_GMP=0 ENABLE_LIB_PROLOG=0 ENABLE_HTTP=0 \
+		BUILD=core ENABLE_GMP=0 ENABLE_LIB_PROLOG=0 ENABLE_HTTP=0 ENABLE_RUNTIME_STATS=0 \
 		ENABLE_SANITIZERS=0 ENABLE_PIC=0 \
 		CETTA_PROVENANCE_ASSERT=0 RHOCOST_COMMIT_AUDIT=0 \
 		ENABLE_PRIME_RECEIPT_PRIMARY_INDEX=0 \
@@ -33744,7 +33871,7 @@ bench-json-gslt-runtime-body: $(LANGUAGE_DEF_PARSER_PACK_V1_BENCH_BIN)
 .PHONY: bench-json-gslt-runtime
 bench-json-gslt-runtime:
 	@$(MAKE) --no-print-directory \
-		BUILD=core ENABLE_GMP=0 ENABLE_LIB_PROLOG=0 ENABLE_HTTP=0 \
+		BUILD=core ENABLE_GMP=0 ENABLE_LIB_PROLOG=0 ENABLE_HTTP=0 ENABLE_RUNTIME_STATS=0 \
 		ENABLE_SANITIZERS=0 ENABLE_PIC=0 \
 		CETTA_PROVENANCE_ASSERT=0 RHOCOST_COMMIT_AUDIT=0 \
 		ENABLE_PRIME_RECEIPT_PRIMARY_INDEX=0 \
@@ -33764,7 +33891,7 @@ qualify-json-gslt-corpus-body: $(LANGUAGE_DEF_PARSER_PACK_V1_CORPUS_BIN)
 .PHONY: qualify-json-gslt-corpus
 qualify-json-gslt-corpus:
 	@$(MAKE) --no-print-directory \
-		BUILD=core ENABLE_GMP=0 ENABLE_LIB_PROLOG=0 ENABLE_HTTP=0 \
+		BUILD=core ENABLE_GMP=0 ENABLE_LIB_PROLOG=0 ENABLE_HTTP=0 ENABLE_RUNTIME_STATS=0 \
 		ENABLE_SANITIZERS=0 ENABLE_PIC=0 \
 		CETTA_PROVENANCE_ASSERT=0 RHOCOST_COMMIT_AUDIT=0 \
 		ENABLE_PRIME_RECEIPT_PRIMARY_INDEX=0 \

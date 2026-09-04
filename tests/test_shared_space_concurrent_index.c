@@ -26,6 +26,7 @@ static const int64_t OPTIONAL_VALUE = INT64_C(10000);
 typedef struct {
     Space *space;
     Atom *query;
+    Atom *stable_exact_pattern;
     pthread_barrier_t *start;
     bool ok;
 } ReaderTask;
@@ -135,6 +136,13 @@ static void *reader_main(void *opaque) {
         space_subst_query(task->space, &scratch, task->query, &matches);
         task->ok = validate_snapshot(&matches, &optional_present);
         smset_free(&matches);
+        if (task->ok) {
+            bool found = false;
+            task->ok = space_match_backend_ground_exact_exists_frontier(
+                           task->space, task->stable_exact_pattern,
+                           &found) &&
+                       found;
+        }
         arena_reset(&scratch, mark);
         if ((round & 7u) == 0u)
             sched_yield();
@@ -231,6 +239,7 @@ int main(void) {
     SymbolId row_symbol;
     SymbolId value_spelling;
     Atom *query;
+    Atom *stable_exact_pattern;
 
     init_symbols(&symbols);
     arena_init(&persistent);
@@ -251,6 +260,8 @@ int main(void) {
     assert(optional_id != CETTA_ATOM_ID_NONE);
     assert(term_universe_get_atom(&universe, optional_id) != NULL);
     query = row_query(&persistent, row_symbol, value_spelling);
+    stable_exact_pattern = term_universe_get_atom(&universe, base_ids[0]);
+    assert(stable_exact_pattern != NULL);
 
     seed_space(&deferred_space, &universe, base_ids, optional_id);
     assert_deferred_outside_concurrent_scope(
@@ -278,6 +289,7 @@ int main(void) {
         reader_tasks[i] = (ReaderTask){
             .space = &concurrent_space,
             .query = query,
+            .stable_exact_pattern = stable_exact_pattern,
             .start = &start,
         };
         assert(pthread_create(&readers[i], NULL, reader_main,

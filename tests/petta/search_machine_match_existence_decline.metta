@@ -26,3 +26,10 @@
      (collapse
        (once
          (match &template-existence-space (value $item) $item))))
+
+; Translation-time value authority is not enough when the resolved value is
+; the empty expression: the matching row emits no visible answer.
+(= (resolved-empty-template $Space $Pattern $Template)
+   (== () (collapse (once (match $Space $Pattern $Template)))))
+!(resolved-empty-template
+    &template-existence-space (key a) ())

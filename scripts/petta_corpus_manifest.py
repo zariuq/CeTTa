@@ -22,9 +22,18 @@ import time
 from typing import Any
 
 
-SCHEMA = "cetta-petta-corpus-v1"
+SCHEMA = "cetta-petta-corpus-v2"
 STDOUT_EXACT_STREAM = "exact-stream"
 STDOUT_OCCURRENCE_BAG = "occurrence-bag"
+STDOUT_OBSERVATION_CONTRACTS = frozenset({
+    STDOUT_EXACT_STREAM,
+    STDOUT_OCCURRENCE_BAG,
+})
+# Whole-stdout bag comparison is sound only when every line belongs to one
+# pure answer scope.  The pinned upstream examples currently mix assertions,
+# imports, or multiple top-level requests, so they remain exact streams.  New
+# cases enter this set only after a source-level scope audit.
+CORPUS_OCCURRENCE_BAG_CASES: frozenset[str] = frozenset()
 EXPECTED_TOTAL = 183
 EXPECTED_CONTROLLED = 6
 ANSI_RE = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
@@ -344,7 +353,9 @@ def stdout_observation(
     if contract == STDOUT_EXACT_STREAM:
         return semantic
     if contract == STDOUT_OCCURRENCE_BAG:
-        return Counter(semantic.splitlines(keepends=True))
+        # Line terminators are transport framing, not part of an answer.
+        # Multiplicity and every character within each answer remain exact.
+        return Counter(semantic.splitlines())
     raise ValueError(f"unknown stdout observation contract: {contract!r}")
 
 
@@ -353,6 +364,20 @@ def stdout_observation_equal(
 ) -> bool:
     return stdout_observation(left, contract) == stdout_observation(
         right, contract
+    )
+
+
+def stdout_observation_contract_for_case(name: str) -> str:
+    if name in CORPUS_OCCURRENCE_BAG_CASES:
+        return STDOUT_OCCURRENCE_BAG
+    return STDOUT_EXACT_STREAM
+
+
+def entry_stdout_equal(entry: dict[str, Any], actual: str) -> bool:
+    return stdout_observation_equal(
+        actual,
+        entry["oracle"]["stdout"],
+        entry["stdout_observation"],
     )
 
 
@@ -379,6 +404,11 @@ def normalization_contract() -> dict[str, Any]:
         "comparison_stdout_quotients": [
             "Not specialized <generated-head>/<arity>"
         ],
+        "stdout_observation_contracts": {
+            STDOUT_EXACT_STREAM: "byte-exact semantic stdout stream",
+            STDOUT_OCCURRENCE_BAG:
+                "multiset of complete stdout lines, retaining multiplicity",
+        },
         "drop_exact_leading_oracle_stdout": [MORK_READY_BANNER],
         "drop_exact_leading_oracle_stderr": [
             PYTHON_RUNTIME_WARNING,
@@ -1198,6 +1228,8 @@ def build_manifest(
             "source": f"examples/{source.name}",
             "source_sha256": sha256_bytes(source_bytes),
             "git_state": "tracked" if source.name in tracked else "untracked",
+            "stdout_observation":
+                stdout_observation_contract_for_case(source.name),
             "class": entry_class,
             "command": [
                 "sh",
@@ -1261,6 +1293,13 @@ def build_manifest(
                 entry["class"] in {"external", "interactive"}
                 for entry in entries
             ),
+            "stdout_observations": {
+                contract: sum(
+                    entry["stdout_observation"] == contract
+                    for entry in entries
+                )
+                for contract in sorted(STDOUT_OBSERVATION_CONTRACTS)
+            },
         },
         "entries": entries,
     }
@@ -1376,6 +1415,16 @@ def verify_manifest(
                 f"expected {entry.get('git_state')}"
             )
 
+        expected_stdout_observation = (
+            stdout_observation_contract_for_case(name)
+        )
+        if entry.get("stdout_observation") != expected_stdout_observation:
+            raise RuntimeError(
+                f"{name}: stdout observation is "
+                f"{entry.get('stdout_observation')!r}, expected "
+                f"{expected_stdout_observation!r}"
+            )
+
         expected_command = [
             "sh",
             "run.sh",
@@ -1474,6 +1523,13 @@ def verify_manifest(
         "total": len(entries),
         "hermetic": hermetic,
         "controlled": controlled,
+        "stdout_observations": {
+            contract: sum(
+                entry["stdout_observation"] == contract
+                for entry in entries
+            )
+            for contract in sorted(STDOUT_OBSERVATION_CONTRACTS)
+        },
     }
     if manifest.get("counts") != expected_counts:
         raise RuntimeError(
@@ -1572,7 +1628,8 @@ def compare_manifest(
     actual_dir = out_dir / "actual"
     actual_dir.mkdir(parents=True, exist_ok=True)
     rows = [
-        "example\tclass\tstatus\toracle_exit\tcetta_exit\t"
+        "example\tclass\tstdout_observation\tstatus\t"
+        "oracle_exit\tcetta_exit\t"
         "stdout_equal\tstderr_equal\tcetta_seconds"
     ]
     counts: dict[str, int] = {}
@@ -1583,7 +1640,8 @@ def compare_manifest(
         if oracle["status"] == "fixture-pending":
             status = "FIXTURE_PENDING"
             rows.append(
-                f"{name}\t{entry['class']}\t{status}\t-\t-\t-\t-\t-"
+                f"{name}\t{entry['class']}\t"
+                f"{entry['stdout_observation']}\t{status}\t-\t-\t-\t-\t-"
             )
             counts[status] = counts.get(status, 0) + 1
             print(f"[{index:03d}/{len(entries):03d}] {name}: {status}")
@@ -1604,10 +1662,7 @@ def compare_manifest(
             FIXTURE_CASES.get(name),
         )
         elapsed = time.monotonic() - started
-        stdout_equal = (
-            semantic_stdout(cetta_stdout)
-            == semantic_stdout(oracle["stdout"])
-        )
+        stdout_equal = entry_stdout_equal(entry, cetta_stdout)
         stderr_equal = cetta_stderr == oracle["stderr"]
 
         (actual_dir / f"{name}.stdout").write_text(
@@ -1630,7 +1685,8 @@ def compare_manifest(
             status = "MATCH"
         counts[status] = counts.get(status, 0) + 1
         rows.append(
-            f"{name}\t{entry['class']}\t{status}\t"
+            f"{name}\t{entry['class']}\t"
+            f"{entry['stdout_observation']}\t{status}\t"
             f"{oracle['exit']}\t{cetta_exit}\t"
             f"{int(stdout_equal)}\t{int(stderr_equal)}\t{elapsed:.3f}"
         )
@@ -1651,6 +1707,9 @@ def compare_manifest(
         "excluded_capabilities": sorted(excluded_capabilities),
         "excluded_examples": excluded_names,
         "selected": len(entries),
+        "stdout_observations": dict(sorted(Counter(
+            entry["stdout_observation"] for entry in entries
+        ).items())),
     }
     (out_dir / "summary.json").write_text(
         json.dumps(summary, indent=2, sort_keys=True) + "\n",

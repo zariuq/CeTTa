@@ -2694,15 +2694,32 @@ bool atom_petta_prolog_compound_body(Atom *atom, Atom **body) {
            (*body)->expr.elems[0]->kind == ATOM_SYMBOL;
 }
 
+/* `prolog:compound` interned once per symbol-table instance: every solve
+ * step asks whether its head is a compound carrier, so compare identifiers
+ * rather than spellings. */
+static SymbolId atom_prolog_compound_symbol(void) {
+    static _Thread_local const SymbolTable *table = NULL;
+    static _Thread_local uint64_t table_instance_id = 0u;
+    static _Thread_local SymbolId symbol = SYMBOL_ID_NONE;
+    uint64_t instance = symbol_table_instance_id(g_symbols);
+    if (!g_symbols)
+        return SYMBOL_ID_NONE;
+    if (table != g_symbols || table_instance_id != instance) {
+        table = g_symbols;
+        table_instance_id = instance;
+        symbol = symbol_intern_cstr(g_symbols, "prolog:compound");
+    }
+    return symbol;
+}
+
 bool atom_prolog_compound_body(Atom *atom, Atom **body) {
     if (body)
         *body = NULL;
     if (!atom || !body || atom->kind != ATOM_EXPR ||
         atom->expr.len != 2u ||
         atom->expr.elems[0]->kind != ATOM_SYMBOL ||
-        !symbol_eq_cstr(
-            g_symbols, atom->expr.elems[0]->sym_id,
-            "prolog:compound")) {
+        atom->expr.elems[0]->sym_id == SYMBOL_ID_NONE ||
+        atom->expr.elems[0]->sym_id != atom_prolog_compound_symbol()) {
         return false;
     }
     *body = atom->expr.elems[1];

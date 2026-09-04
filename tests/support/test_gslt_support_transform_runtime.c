@@ -115,7 +115,7 @@ int main(void) {
     Atom *grounded_source = parse_one(
         &arena,
         "(types -12 999999999999999999999999 0.34714285714285714 "
-        "2/3 True \"line\\ntext\")");
+        "0.000001 2/3 True \"line\\ntext\" modelE)");
     Atom *grounded_roundtrip = cetta_mm2_alpha_canonicalize_atom(
         &arena, grounded_source, &roundtrip_error);
     CHECK(grounded_roundtrip && atom_eq(grounded_source, grounded_roundtrip),

@@ -201,6 +201,31 @@ static bool cetta_observation_demand_valid(
         demand.prefix_limit == 0u;
 }
 
+static bool cetta_observation_algebra_valid(
+        CettaObservationAlgebra algebra) {
+    return algebra >=
+               CETTA_OBSERVATION_ALGEBRA_EXACT_OCCURRENCES &&
+        algebra <=
+               CETTA_OBSERVATION_ALGEBRA_PREFERRED_FALLBACK_COUNT;
+}
+
+bool cetta_observation_contract_valid(
+        CettaObservationContract contract) {
+    if (!cetta_observation_demand_valid(contract.demand) ||
+        !cetta_observation_algebra_valid(contract.algebra)) {
+        return false;
+    }
+    if (contract.algebra == CETTA_OBSERVATION_ALGEBRA_EXISTENCE)
+        return cetta_observation_contract_is_existence(contract);
+    /* Only complete preferred/fallback count has a physical weighted-answer
+     * presentation today.  Do not admit unused combinations as latent API. */
+    return contract.algebra !=
+               CETTA_OBSERVATION_ALGEBRA_PREFERRED_FALLBACK_COUNT ||
+        (contract.demand.completion ==
+             CETTA_OBSERVATION_COMPLETE_BAG &&
+         contract.demand.prefix_limit == 0u);
+}
+
 static bool cetta_control_batch_authority_valid(
         CettaControlBatchAuthority authority) {
     return authority >= CETTA_CONTROL_BATCH_SINGLETON_ONLY &&

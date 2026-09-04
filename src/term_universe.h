@@ -321,6 +321,12 @@ AtomId term_universe_store_atom_id_from_source_arena(
     Atom *src);
 bool term_universe_source_id_memo_enabled(void);
 AtomId term_universe_lookup_atom_id(const TermUniverse *universe, Atom *src);
+/* Non-inserting lookup of an expression presented as borrowed child
+ * coordinates.  This is structurally identical to lookup of an expression
+ * Atom with those children, but it never manufactures that wrapper. */
+AtomId term_universe_lookup_expression_coordinates(
+    const TermUniverse *universe, Atom *const *coordinates,
+    CettaExprLen coordinate_count);
 bool term_universe_root_token_capture(
     const TermUniverse *universe, AtomId root_id,
     TermUniverseRootToken *out);

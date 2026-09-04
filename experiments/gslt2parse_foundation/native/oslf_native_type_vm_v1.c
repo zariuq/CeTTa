@@ -4344,20 +4344,20 @@ typedef struct {
     uint32_t first_entry;
 } PPOSLFNativeDenseActivationResolverV1;
 
-static CettaGsltGroundDenseStatusV1
+static CettaGsltTermViewStatusV1
 pposlf_native_type_vm_v1_resolve_dense_activation_variable(
         void *context, Atom *source_variable, Atom **target_out) {
     const PPOSLFNativeDenseActivationResolverV1 *resolver = context;
 
     if (!resolver || !source_variable || !target_out)
-        return CETTA_GSLT_GROUND_DENSE_INVALID_V1;
+        return CETTA_GSLT_TERM_VIEW_INVALID_V1;
     if (!bindings_resolve_epoch_view_ground(
             resolver->bindings, source_variable, resolver->epoch,
             resolver->first_entry, target_out))
-        return CETTA_GSLT_GROUND_DENSE_INVALID_V1;
+        return CETTA_GSLT_TERM_VIEW_INVALID_V1;
     return *target_out
-        ? CETTA_GSLT_GROUND_DENSE_OK_V1
-        : CETTA_GSLT_GROUND_DENSE_DEFER_V1;
+        ? CETTA_GSLT_TERM_VIEW_OK_V1
+        : CETTA_GSLT_TERM_VIEW_DEFER_V1;
 }
 
 static void pposlf_native_type_vm_v1_add_ground_dense_stats(

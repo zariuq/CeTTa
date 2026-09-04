@@ -901,6 +901,15 @@ static Atom *var(Arena *a, const char *name, VarId id) {
     return atom_var_with_spelling(a, symbol_intern_cstr(g_symbols, name), id);
 }
 
+static CettaGsltTermViewStatusV1 leave_term_view_variable_open(
+        void *context, Atom *source_variable, Atom **target_out) {
+    (void)context;
+    if (!source_variable || source_variable->kind != ATOM_VAR || !target_out)
+        return CETTA_GSLT_TERM_VIEW_INVALID_V1;
+    *target_out = source_variable;
+    return CETTA_GSLT_TERM_VIEW_OK_V1;
+}
+
 static Atom *expr2(Arena *a, Atom *x0, Atom *x1) {
     Atom *items[2] = {x0, x1};
     return atom_expr(a, items, 2);
@@ -991,6 +1000,289 @@ static void test_native_add_boundary(TermUniverse *universe, Arena *scratch) {
     smset_free(&unstable_matches);
 
     space_free(&native_space);
+}
+
+static void test_native_ground_exact_candidate_frontier(void) {
+    Arena persistent;
+    Arena scratch;
+    TermUniverse universe;
+    Space space;
+    bool applicable = false;
+
+    arena_init(&persistent);
+    arena_init(&scratch);
+    term_universe_init(&universe);
+    term_universe_set_persistent_arena(&universe, &persistent);
+    Atom *present = expr2(
+        &scratch, sym(&scratch, "exact-existence"), sym(&scratch, "present"));
+    Atom *missing = expr2(
+        &scratch, sym(&scratch, "exact-existence"), sym(&scratch, "missing"));
+    Atom *unrelated_open = expr2(
+        &scratch, sym(&scratch, "unrelated-existence"),
+        var(&scratch, "unrelated", 76001u));
+    Atom *unrelated_ground = expr2(
+        &scratch, sym(&scratch, "unrelated-existence"),
+        sym(&scratch, "ground"));
+    Atom *related_open = expr2(
+        &scratch, sym(&scratch, "exact-existence"),
+        var(&scratch, "related", 76002u));
+
+    space_init_with_universe(&space, &universe);
+    assert(space_match_backend_try_set(&space, SPACE_ENGINE_NATIVE));
+    space_add(&space, present);
+
+    /* An all-exact store can answer from borrowed expression coordinates and
+       from their shared term-view wrapper without constructing a query Atom. */
+    assert(space_match_exists_ground_exact_expression_coordinates(
+        &space, present->expr.elems, present->expr.len, &applicable));
+    assert(applicable);
+    assert(!space_match_exists_ground_exact_expression_coordinates(
+        &space, missing->expr.elems, missing->expr.len, &applicable));
+    assert(applicable);
+    CettaGsltTermViewV1 present_view = {
+        .source = present,
+    };
+    bool view_exists = false;
+    CettaIndex view_examined = UINT64_MAX;
+    assert(space_match_exists_flat_linear_view64(
+        &space, &scratch, &present_view,
+        CETTA_GSLT_TERM_VIEW_OPEN_BINDINGS_OBSERVED_V1,
+        &view_exists, &view_examined));
+    assert(view_exists && view_examined == 0u);
+
+    space_add(&space, unrelated_open);
+    for (CettaIndex i = 0u; i < MATCH_TRIE_THRESHOLD; i++)
+        space_add(&space, unrelated_ground);
+    assert(space_length64(&space) > MATCH_TRIE_THRESHOLD);
+
+    /* The complete frontier excludes an open row beneath a different rigid
+       head, so exact membership decides both the positive and negative case. */
+    assert(space_match_exists_ground_exact(&space, present, &applicable));
+    assert(applicable);
+    assert(!space_match_exists_ground_exact(&space, missing, &applicable));
+    assert(applicable);
+
+    /* A newly appended open row beneath the queried head belongs to the
+       frontier.  Structural equality is then insufficient and must decline. */
+    space_add(&space, related_open);
+    applicable = true;
+    assert(!space_match_exists_ground_exact(&space, missing, &applicable));
+    assert(!applicable);
+    applicable = true;
+    assert(!space_match_exists_ground_exact(&space, related_open, &applicable));
+    assert(!applicable);
+    view_exists = false;
+    view_examined = UINT64_MAX;
+    assert(space_match_exists_flat_linear_view64(
+        &space, &scratch, &present_view,
+        CETTA_GSLT_TERM_VIEW_OPEN_BINDINGS_OBSERVED_V1,
+        &view_exists, &view_examined));
+    assert(view_exists && view_examined > 0u);
+
+    space_free(&space);
+    term_universe_free(&universe);
+    arena_free(&scratch);
+    arena_free(&persistent);
+}
+
+static void test_native_flat_view_dead_binding_count(void) {
+    Arena persistent;
+    Arena scratch;
+    TermUniverse universe;
+    Space space;
+    uint64_t count = UINT64_MAX;
+    CettaIndex examined = UINT64_MAX;
+
+    arena_init(&persistent);
+    arena_init(&scratch);
+    term_universe_init(&universe);
+    term_universe_set_persistent_arena(&universe, &persistent);
+    space_init_with_universe(&space, &universe);
+    assert(space_match_backend_try_set(&space, SPACE_ENGINE_NATIVE));
+
+    Atom *pair = sym(&scratch, "dead-binding-pair");
+    Atom *a = sym(&scratch, "a");
+    Atom *b = sym(&scratch, "b");
+    Atom *tail = sym(&scratch, "tail");
+    Atom *same = var(&scratch, "same", 76101u);
+    Atom *left = var(&scratch, "left", 76102u);
+    Atom *right = var(&scratch, "right", 76103u);
+    Atom *same_row = expr3(&scratch, pair, same, same);
+    Atom *independent_row = expr3(&scratch, pair, left, right);
+    Atom *ground_row = expr3(&scratch, pair, a, b);
+    space_add(&space, same_row);
+    space_add(&space, independent_row);
+    space_add(&space, ground_row);
+    space_add(&space, ground_row);
+
+    Atom *query_aa = expr3(&scratch, pair, a, a);
+    CettaGsltTermViewV1 query_aa_view = {.source = query_aa};
+    assert(space_match_count_flat_linear_view64(
+        &space, &scratch, &query_aa_view,
+        CETTA_GSLT_TERM_VIEW_OPEN_BINDINGS_OBSERVED_V1,
+        &count, &examined));
+    assert(count == 2u && examined == 4u);
+
+    Atom *query_ab = expr3(&scratch, pair, a, b);
+    CettaGsltTermViewV1 query_ab_view = {.source = query_ab};
+    assert(space_match_count_flat_linear_view64(
+        &space, &scratch, &query_ab_view,
+        CETTA_GSLT_TERM_VIEW_OPEN_BINDINGS_OBSERVED_V1,
+        &count, &examined));
+    assert(count == 3u && examined == 4u);
+
+    Atom *query_left = var(&scratch, "query-left", 76104u);
+    Atom *query_right = var(&scratch, "query-right", 76105u);
+    Atom *query_open = expr3(&scratch, pair, query_left, query_right);
+    CettaGsltTermViewV1 query_open_view = {
+        .source = query_open,
+        .resolve = leave_term_view_variable_open,
+    };
+    assert(space_match_count_flat_linear_view64(
+        &space, &scratch, &query_open_view,
+        CETTA_GSLT_TERM_VIEW_OPEN_BINDINGS_DEAD_V1,
+        &count, &examined));
+    assert(count == 4u && examined == 4u);
+    assert(!space_match_count_flat_linear_view64(
+        &space, &scratch, &query_open_view,
+        CETTA_GSLT_TERM_VIEW_OPEN_BINDINGS_OBSERVED_V1,
+        &count, &examined));
+
+    Atom *query_repeated = expr3(
+        &scratch, pair, query_left, query_left);
+    CettaGsltTermViewV1 query_repeated_view = {
+        .source = query_repeated,
+        .resolve = leave_term_view_variable_open,
+    };
+    assert(!space_match_count_flat_linear_view64(
+        &space, &scratch, &query_repeated_view,
+        CETTA_GSLT_TERM_VIEW_OPEN_BINDINGS_DEAD_V1,
+        &count, &examined));
+
+    Atom *wrap = sym(&scratch, "wrap");
+    Atom *inner = var(&scratch, "inner", 76106u);
+    Atom *nested_row = expr3(
+        &scratch, pair, expr2(&scratch, wrap, inner), tail);
+    space_add(&space, nested_row);
+    Atom *query_open_tail = expr3(&scratch, pair, query_left, tail);
+    CettaGsltTermViewV1 query_open_tail_view = {
+        .source = query_open_tail,
+        .resolve = leave_term_view_variable_open,
+    };
+    assert(space_match_count_flat_linear_view64(
+        &space, &scratch, &query_open_tail_view,
+        CETTA_GSLT_TERM_VIEW_OPEN_BINDINGS_DEAD_V1,
+        &count, &examined));
+    assert(count == 3u && examined == 5u);
+
+    Atom *query_nested = expr3(
+        &scratch, pair,
+        expr2(&scratch, wrap, sym(&scratch, "fixed")), tail);
+    CettaGsltTermViewV1 query_nested_view = {.source = query_nested};
+    assert(!space_match_count_flat_linear_view64(
+        &space, &scratch, &query_nested_view,
+        CETTA_GSLT_TERM_VIEW_OPEN_BINDINGS_OBSERVED_V1,
+        &count, &examined));
+
+    space_free(&space);
+    term_universe_free(&universe);
+    arena_free(&scratch);
+    arena_free(&persistent);
+}
+
+static void test_native_conjunction_count_fold(void) {
+    Arena persistent;
+    Arena scratch;
+    TermUniverse universe;
+    Space space;
+
+    arena_init(&persistent);
+    arena_init(&scratch);
+    term_universe_init(&universe);
+    term_universe_set_persistent_arena(&universe, &persistent);
+    space_init_with_universe(&space, &universe);
+    assert(space_match_backend_try_set(&space, SPACE_ENGINE_NATIVE));
+
+    Atom *edge = sym(&scratch, "count-fold-edge");
+    Atom *a = sym(&scratch, "a");
+    Atom *b = sym(&scratch, "b");
+    Atom *c = sym(&scratch, "c");
+    Atom *d = sym(&scratch, "d");
+    Atom *edge_ab = expr3(&scratch, edge, a, b);
+    space_add(&space, edge_ab);
+    space_add(&space, edge_ab);
+    space_add(&space, expr3(&scratch, edge, a, c));
+    space_add(&space, expr3(&scratch, edge, b, d));
+    space_add(&space, expr3(&scratch, edge, c, d));
+
+    Atom *x = var(&scratch, "x", 76201u);
+    Atom *y = var(&scratch, "y", 76202u);
+    Atom *z = var(&scratch, "z", 76203u);
+    Atom *path[] = {
+        expr3(&scratch, edge, x, y),
+        expr3(&scratch, edge, y, z),
+    };
+    uint64_t direct = UINT64_MAX;
+    assert(space_match_count_conjunction64(
+        &space, &scratch, path, 2u, NULL, &direct));
+    assert(direct == 3u);
+    BindingSet materialized;
+    space_query_conjunction(
+        &space, &scratch, path, 2u, NULL, &materialized);
+    assert(direct == materialized.len);
+    binding_set_free(&materialized);
+
+    /* A seed is part of the producer input, not a post-filter.  Duplicate
+       edge occurrences therefore remain a multiplicative factor. */
+    Bindings seed;
+    bindings_init(&seed);
+    assert(bindings_add_id(&seed, y->var_id, y->sym_id, b));
+    assert(space_match_count_conjunction64(
+        &space, &scratch, path, 2u, &seed, &direct));
+    assert(direct == 2u);
+    space_query_conjunction(
+        &space, &scratch, path, 2u, &seed, &materialized);
+    assert(direct == materialized.len);
+    binding_set_free(&materialized);
+    bindings_free(&seed);
+
+    /* Repeated stored variables constrain the query before the next leg.
+       Two identical stored occurrences times two identical ground edges are
+       four semantic occurrences, not one set element. */
+    Atom *same = var(&scratch, "same", 76204u);
+    Atom *relation = sym(&scratch, "count-fold-relation");
+    Atom *same_row = expr3(&scratch, relation, same, same);
+    space_add(&space, same_row);
+    space_add(&space, same_row);
+    Atom *q = var(&scratch, "q", 76205u);
+    Atom *stored_variable_join[] = {
+        expr3(&scratch, relation, a, q),
+        expr3(&scratch, edge, q, b),
+    };
+    assert(space_match_count_conjunction64(
+        &space, &scratch, stored_variable_join, 2u, NULL, &direct));
+    assert(direct == 4u);
+    space_query_conjunction(
+        &space, &scratch, stored_variable_join, 2u, NULL, &materialized);
+    assert(direct == materialized.len);
+    binding_set_free(&materialized);
+
+    Atom *no_cycle[] = {
+        expr3(&scratch, edge, x, x),
+        expr3(&scratch, edge, x, d),
+    };
+    assert(space_match_count_conjunction64(
+        &space, &scratch, no_cycle, 2u, NULL, &direct));
+    assert(direct == 0u);
+    space_query_conjunction(
+        &space, &scratch, no_cycle, 2u, NULL, &materialized);
+    assert(materialized.len == 0u);
+    binding_set_free(&materialized);
+
+    space_free(&space);
+    term_universe_free(&universe);
+    arena_free(&scratch);
+    arena_free(&persistent);
 }
 
 static void test_imported_flat_add_boundary(TermUniverse *universe, Arena *scratch) {
@@ -2292,6 +2584,9 @@ int main(void) {
     test_imported_flat_add_boundary(&universe, &scratch);
     test_imported_bridge_add_boundary(&universe, &scratch);
     test_imported_chunk_remove_direct_id_boundary(&universe, &scratch);
+    test_native_ground_exact_candidate_frontier();
+    test_native_flat_view_dead_binding_count();
+    test_native_conjunction_count_fold();
     test_imported_chunk_switchback_regression(&universe, &scratch);
     test_byte_backed_rematch_delay(&universe, &scratch);
     test_subst_tree_live_branch_builder_witness(&scratch);

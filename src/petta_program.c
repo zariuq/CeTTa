@@ -135,10 +135,13 @@ typedef struct {
 
 #define PETTA_TABLE_SAFETY_CACHE_CAP 128u
 
+/* Keyed on the space program (equation and declaration occurrences), not on
+ * the data revision: safety reads the relation's clauses and their plans plus
+ * static tables, so a data-only mutation leaves the answer valid.  An answer
+ * that depended on a plan not built yet, or on an allocation failure, is
+ * transient and is not stored. */
 typedef struct {
-    const Space *space;
-    uint64_t instance_id;
-    uint64_t revision;
+    SpaceProgramToken program;
     SymbolId head;
     CettaExprLen arity;
     PettaRelationSafety safety;
@@ -1292,6 +1295,27 @@ bool petta_program_is_equation(Atom *atom) {
         atom, NULL, NULL, NULL);
 }
 
+static bool petta_program_type_declaration_view(
+        Atom *atom, Atom **subject, Atom **type) {
+    if (!atom || atom->kind != ATOM_EXPR ||
+        atom->expr.len != 3u ||
+        !atom_is_symbol_id(
+            atom->expr.elems[0], g_builtin_syms.colon) ||
+        atom->expr.elems[1]->kind != ATOM_SYMBOL) {
+        return false;
+    }
+    if (subject)
+        *subject = atom->expr.elems[1];
+    if (type)
+        *type = atom->expr.elems[2];
+    return true;
+}
+
+bool petta_program_atom_affects_metadata(Atom *atom) {
+    return petta_program_is_equation(atom) ||
+           petta_program_type_declaration_view(atom, NULL, NULL);
+}
+
 bool petta_program_predeclare_equation(
     PettaProgram *program, Atom *atom) {
     if (!program || !atom)
@@ -1333,29 +1357,86 @@ bool petta_program_head_declared(
     return false;
 }
 
+/* Machine-named and typecheck-named heads, interned once per symbol table
+ * instance so classification compares identifiers instead of spellings. */
+typedef struct {
+    const SymbolTable *table;
+    uint64_t table_instance_id;
+    SymbolId member;
+    SymbolId last;
+    SymbolId reverse;
+    SymbolId empty;
+    SymbolId min;
+    SymbolId max;
+    SymbolId transaction;
+    SymbolId with_mutex;
+    SymbolId data;
+    SymbolId make_list;
+    SymbolId the;
+} PettaIntrinsicNameIds;
+
+static _Thread_local PettaIntrinsicNameIds g_petta_intrinsic_name_ids;
+
+static const PettaIntrinsicNameIds *petta_intrinsic_name_ids(void) {
+    PettaIntrinsicNameIds *ids = &g_petta_intrinsic_name_ids;
+    uint64_t table_instance_id = symbol_table_instance_id(g_symbols);
+    if (ids->table == g_symbols && g_symbols &&
+        ids->table_instance_id == table_instance_id) {
+        return ids;
+    }
+    *ids = (PettaIntrinsicNameIds){
+        .table = g_symbols,
+        .table_instance_id = table_instance_id,
+        .member = SYMBOL_ID_NONE,
+        .last = SYMBOL_ID_NONE,
+        .reverse = SYMBOL_ID_NONE,
+        .empty = SYMBOL_ID_NONE,
+        .min = SYMBOL_ID_NONE,
+        .max = SYMBOL_ID_NONE,
+        .transaction = SYMBOL_ID_NONE,
+        .with_mutex = SYMBOL_ID_NONE,
+        .data = SYMBOL_ID_NONE,
+        .make_list = SYMBOL_ID_NONE,
+        .the = SYMBOL_ID_NONE,
+    };
+    if (!g_symbols)
+        return ids;
+    ids->member = symbol_intern_cstr(g_symbols, "member");
+    ids->last = symbol_intern_cstr(g_symbols, "last");
+    ids->reverse = symbol_intern_cstr(g_symbols, "reverse");
+    ids->empty = symbol_intern_cstr(g_symbols, "empty");
+    ids->min = symbol_intern_cstr(g_symbols, "min");
+    ids->max = symbol_intern_cstr(g_symbols, "max");
+    ids->transaction = symbol_intern_cstr(g_symbols, "transaction");
+    ids->with_mutex = symbol_intern_cstr(g_symbols, "with_mutex");
+    ids->data = symbol_intern_cstr(g_symbols, "data");
+    ids->make_list = symbol_intern_cstr(g_symbols, "make-list");
+    ids->the = symbol_intern_cstr(g_symbols, "the");
+    return ids;
+}
+
 bool petta_program_head_is_intrinsic(SymbolId head) {
-    const char *name =
-        head == SYMBOL_ID_NONE
-            ? NULL : symbol_bytes(g_symbols, head);
+    const PettaIntrinsicNameIds *ids =
+        head == SYMBOL_ID_NONE ? NULL : petta_intrinsic_name_ids();
     bool machine_named =
-        name &&
-        (strcmp(name, "member") == 0 ||
-         strcmp(name, "last") == 0 ||
-         strcmp(name, "reverse") == 0 ||
-         strcmp(name, "empty") == 0 ||
-         strcmp(name, "min") == 0 ||
-         strcmp(name, "max") == 0 ||
-         strcmp(name, "transaction") == 0 ||
-         strcmp(name, "with_mutex") == 0);
+        ids && ids->table &&
+        (head == ids->member ||
+         head == ids->last ||
+         head == ids->reverse ||
+         head == ids->empty ||
+         head == ids->min ||
+         head == ids->max ||
+         head == ids->transaction ||
+         head == ids->with_mutex);
     /* `data` is shared with historical extended PeTTa.  Live `make-list`
      * and `the` forms are owned only by typecheck-v2; extended erases `the`
      * during document ingestion. */
     bool typecheck_named =
-        name && cetta_petta_profile_admits_typecheck_ops() &&
-        (strcmp(name, "data") == 0 ||
+        ids && ids->table && cetta_petta_profile_admits_typecheck_ops() &&
+        (head == ids->data ||
          (cetta_petta_profile_admits_native_typecheck_v2() &&
-          (strcmp(name, "make-list") == 0 ||
-           strcmp(name, "the") == 0)));
+          (head == ids->make_list ||
+           head == ids->the)));
     PeTTaForm form = petta_semantics_form(head);
     bool intrinsic_form =
         form != PETTA_FORM_NONE &&
@@ -2423,14 +2504,13 @@ PettaProgramRevisionView *petta_program_revision_view_capture(
         cetta_runtime_stats_add(
             CETTA_RUNTIME_COUNTER_PETTA_PROGRAM_REVISION_VIEW_AUTHORITY_CLAUSE_COPY,
             entry->clause_len);
-        /* This view transports occurrence-selection evidence only.  Plans
-           and templates are representations of the source atom graph; an
-           alpha-equivalent target supplies no code morphism that could make
-           those pointers target-relative.  Erasing the optional payload here
-           realizes the generic/declined branch of RevisionBoundProgramView
-           and makes accidental shallow-code transport impossible. */
+        /* Plans remain immutable in the owning program arena and may be
+           borrowed when this view is rebound to its identical source Space.
+           Templates are tied more deeply to the source atom graph and are
+           not needed by that narrow consumer.  Alpha-equivalent targets use
+           the payload-erased equation lease below: they supply no code
+           morphism that could make source plan pointers target-relative. */
         for (size_t index = 0u; index < entry->clause_len; index++) {
-            view->catalog.clauses[index].plan = NULL;
             view->catalog.clauses[index].equation_template_c0 = NULL;
             view->catalog.clauses[index].equation_template = NULL;
             view->catalog.clauses[index].static_variable_count = 0u;
@@ -2802,22 +2882,29 @@ const PettaPlanNode *petta_program_plan_dynamic_add(
     return plan;
 }
 
+bool petta_plan_match_template_is_single_data_answer(
+    const PettaPlanNode *template_plan) {
+    return template_plan &&
+        (template_plan->role == PETTA_PLAN_VALUE ||
+         (template_plan->role == PETTA_PLAN_DATA &&
+          !template_plan->contains_call));
+}
+
 bool petta_program_note_add(
     PettaProgram *program, Space *space, Atom *atom,
     const PettaPlanNode *plan) {
     if (!program || !space || !atom)
         return false;
-    if (atom->kind == ATOM_EXPR && atom->expr.len == 3u &&
-        atom_is_symbol_id(atom->expr.elems[0], g_builtin_syms.colon) &&
-        atom->expr.elems[1]->kind == ATOM_SYMBOL) {
+    Atom *subject = NULL;
+    Atom *type = NULL;
+    if (petta_program_type_declaration_view(
+            atom, &subject, &type)) {
         if (!program->analysis)
             return petta_program_ensure_space(program, space) != NULL;
         PettaProgramAnalysisSpace *entry =
             petta_program_ensure_analysis_space(program, space);
         if (!entry)
             return false;
-        Atom *subject = atom->expr.elems[1];
-        Atom *type = atom->expr.elems[2];
         if (petta_program_type_is_exclusive_kind(type)) {
             for (size_t index = 0u;
                  index < entry->type_annotation_len; index++) {
@@ -2890,6 +2977,18 @@ bool petta_program_note_add(
             .head = head,
         });
     return true;
+}
+
+bool petta_program_observe_addition(
+    PettaProgram *program, Space *space, Arena *storage,
+    Atom *atom, const PettaPlanNode *plan) {
+    if (!program || !space || !storage || !atom)
+        return false;
+    if (!petta_program_atom_affects_metadata(atom))
+        return true;
+    Atom *recorded = space_store_atom(space, storage, atom);
+    return recorded &&
+        petta_program_note_add(program, space, recorded, plan);
 }
 
 void petta_program_note_remove_all(
@@ -3866,6 +3965,30 @@ bool petta_program_revision_view_equation_lease(
         NULL, NULL, false, space, head, lease, stats);
 }
 
+bool petta_program_revision_view_source_clause_lease(
+        const PettaProgramRevisionProjection *projection,
+        Space *space, SymbolId head,
+        PettaClauseSnapshotLease *lease,
+        PettaClauseSnapshotStats *stats) {
+    if (!petta_program_revision_projection_current(
+            projection, space) ||
+        projection->target.space !=
+            projection->view->source_equation_token.space ||
+        projection->target.instance_id !=
+            projection->view->source_equation_token.instance_id ||
+        projection->target.equation_revision !=
+            projection->view->source_equation_token.equation_revision) {
+        if (lease)
+            memset(lease, 0, sizeof(*lease));
+        if (stats)
+            memset(stats, 0, sizeof(*stats));
+        return false;
+    }
+    return petta_program_clause_snapshot_lease_from_entry(
+        &projection->view->catalog, NULL, true,
+        space, head, lease, stats);
+}
+
 bool petta_program_clause_snapshot_profiled(
     PettaProgram *program, Space *space, SymbolId head,
     PettaClauseCandidate **candidates, size_t *candidate_count,
@@ -4562,26 +4685,42 @@ static bool petta_table_safety_primitive(
         return true;
     }
 
-    const char *name = symbol_bytes(g_symbols, head);
-    return name &&
-           (strcmp(name, "empty") == 0 ||
-            strcmp(name, "member") == 0 ||
-            strcmp(name, "last") == 0 ||
-            strcmp(name, "reverse") == 0 ||
-            strcmp(name, "min") == 0 ||
-            strcmp(name, "max") == 0);
+    const PettaIntrinsicNameIds *ids = petta_intrinsic_name_ids();
+    return ids->table &&
+           (head == ids->empty ||
+            head == ids->member ||
+            head == ids->last ||
+            head == ids->reverse ||
+            head == ids->min ||
+            head == ids->max);
 }
 
+/* A trace request is process-constant.  Read the environment once per
+ * thread rather than on every relation-safety classification, which runs
+ * once per space query. */
+static bool petta_table_safety_trace_enabled(void) {
+    static _Thread_local int enabled = -1;
+    if (enabled < 0)
+        enabled = getenv("CETTA_PETTA_TABLE_SAFETY_TRACE") != NULL;
+    return enabled != 0;
+}
+
+/* `transient_out` is raised when an UNSAFE answer does not follow from the
+ * program itself: a clause whose plan is not built yet, or an allocation
+ * failure.  Such an answer must not be memoized under the program token. */
 static PettaRelationSafety petta_table_safety_scan_relation(
     PettaProgram *program, Space *space,
     PettaTableSafetyRelation relation,
     PettaTableSafetyRelation **relations,
-    size_t *relation_len, size_t *relation_cap) {
+    size_t *relation_len, size_t *relation_cap,
+    bool *transient_out) {
     PettaClauseCandidate *candidates = NULL;
     size_t candidate_count = 0u;
     if (!petta_program_clause_snapshot(
             program, space, relation.head,
             &candidates, &candidate_count)) {
+        if (transient_out)
+            *transient_out = true;
         return PETTA_RELATION_SAFETY_UNSAFE;
     }
 
@@ -4591,7 +4730,7 @@ static PettaRelationSafety petta_table_safety_scan_relation(
     bool saw_matching_clause = false;
     bool safe = true;
     bool guarded_dynamic = false;
-    bool trace = getenv("CETTA_PETTA_TABLE_SAFETY_TRACE") != NULL;
+    bool trace = petta_table_safety_trace_enabled();
     for (size_t index = 0u;
          safe && index < candidate_count; index++) {
         Atom *lhs = NULL;
@@ -4612,6 +4751,8 @@ static PettaRelationSafety petta_table_safety_scan_relation(
         safe = petta_table_safety_push_node(
             &nodes, &node_len, &node_cap,
             rhs, candidates[index].rhs_plan);
+        if (!safe && transient_out)
+            *transient_out = true;
         if (!safe && trace) {
             fprintf(
                 stderr,
@@ -4642,6 +4783,8 @@ static PettaRelationSafety petta_table_safety_scan_relation(
                     &nodes, &node_len, &node_cap,
                     atom->expr.elems[child],
                     &plan->children[child]);
+                if (!safe && transient_out)
+                    *transient_out = true;
             }
             continue;
         }
@@ -4667,6 +4810,8 @@ static PettaRelationSafety petta_table_safety_scan_relation(
                     &nodes, &node_len, &node_cap,
                     atom->expr.elems[child],
                     &plan->children[child]);
+                if (!safe && transient_out)
+                    *transient_out = true;
             }
             continue;
         }
@@ -4727,6 +4872,8 @@ static PettaRelationSafety petta_table_safety_scan_relation(
                     &nodes, &node_len, &node_cap,
                     atom->expr.elems[child],
                     &plan->children[child]);
+                if (!safe && transient_out)
+                    *transient_out = true;
             }
             continue;
         }
@@ -4779,7 +4926,7 @@ PettaRelationSafety petta_program_relation_safety(
     if (!program || !space || head == SYMBOL_ID_NONE)
         return PETTA_RELATION_SAFETY_UNSAFE;
 
-    /* Safety classification and its revision-keyed cache entry form one
+    /* Safety classification and its program-keyed cache entry form one
      * derived observation.  Concurrent evaluators may compute the same fact,
      * but the mutable cache has one publication authority until it is
      * replaced by an immutable once-published index. */
@@ -4789,23 +4936,27 @@ PettaRelationSafety petta_program_relation_safety(
         petta_table_safety_cache_slot(space, head, arity);
     PettaTableSafetyCacheEntry *cached =
         &program->table_safety_cache[cache_slot];
-    uint64_t instance_id = space_instance_id(space);
-    uint64_t revision = space_revision(space);
+    SpaceProgramToken program_token = space_program_token(space);
     if (cached->occupied &&
-        cached->space == space &&
-        cached->instance_id == instance_id &&
-        cached->revision == revision &&
         cached->head == head &&
-        cached->arity == arity) {
+        cached->arity == arity &&
+        space_program_token_eq(cached->program, program_token)) {
+        cetta_runtime_stats_inc(
+            CETTA_RUNTIME_COUNTER_PETTA_RELATION_SAFETY_CACHE_HIT);
         return cached->safety;
     }
+    cetta_runtime_stats_inc(
+        CETTA_RUNTIME_COUNTER_PETTA_RELATION_SAFETY_CACHE_MISS);
 
     PettaTableSafetyRelation *relations = NULL;
     size_t relation_len = 0u;
     size_t relation_cap = 0u;
+    bool transient = false;
     bool safe = petta_table_safety_add_relation(
         &relations, &relation_len, &relation_cap,
         head, arity);
+    if (!safe)
+        transient = true;
     PettaRelationSafety safety = safe
         ? PETTA_RELATION_SAFETY_STATIC
         : PETTA_RELATION_SAFETY_UNSAFE;
@@ -4814,7 +4965,8 @@ PettaRelationSafety petta_program_relation_safety(
         PettaRelationSafety relation_safety =
             petta_table_safety_scan_relation(
             program, space, relations[index],
-            &relations, &relation_len, &relation_cap);
+            &relations, &relation_len, &relation_cap,
+            &transient);
         safe = relation_safety != PETTA_RELATION_SAFETY_UNSAFE;
         if (safe &&
             relation_safety ==
@@ -4826,7 +4978,7 @@ PettaRelationSafety petta_program_relation_safety(
     if (!safe)
         safety = PETTA_RELATION_SAFETY_UNSAFE;
 
-    if (getenv("CETTA_PETTA_TABLE_SAFETY_TRACE")) {
+    if (petta_table_safety_trace_enabled()) {
         const char *classification =
             safety == PETTA_RELATION_SAFETY_STATIC
                 ? "static"
@@ -4840,15 +4992,15 @@ PettaRelationSafety petta_program_relation_safety(
             classification);
     }
 
-    *cached = (PettaTableSafetyCacheEntry){
-        .space = space,
-        .instance_id = instance_id,
-        .revision = revision,
-        .head = head,
-        .arity = arity,
-        .safety = safety,
-        .occupied = true,
-    };
+    if (!transient) {
+        *cached = (PettaTableSafetyCacheEntry){
+            .program = program_token,
+            .head = head,
+            .arity = arity,
+            .safety = safety,
+            .occupied = true,
+        };
+    }
     return safety;
 }
 

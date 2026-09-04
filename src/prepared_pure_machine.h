@@ -66,6 +66,43 @@ typedef CettaPreparedPurePatternViewState
     const Atom *pattern, const Atom *value,
     CettaPreparedPurePatternView *view);
 
+/*
+ * Optional language-owned evidence for the authored occurrence paired with
+ * an Atom.  The prepared machine sees only a small role algebra and the
+ * occurrence tree; the language keeps its concrete planning representation
+ * private.  A missing view preserves the ordinary live-space classifier.
+ *
+ * The clause callback supplies the authored RHS view for an exact live
+ * equation occurrence.  Refusal is an accelerator decline, leaving the
+ * canonical evaluator authoritative.
+ */
+typedef enum {
+    CETTA_PREPARED_PURE_SOURCE_UNSPECIFIED = 0,
+    CETTA_PREPARED_PURE_SOURCE_VALUE,
+    CETTA_PREPARED_PURE_SOURCE_DATA,
+    CETTA_PREPARED_PURE_SOURCE_CALL,
+    CETTA_PREPARED_PURE_SOURCE_DYNAMIC_CALL,
+    CETTA_PREPARED_PURE_SOURCE_DECLINE,
+} CettaPreparedPureSourceRole;
+typedef CettaPreparedPureSourceRole
+(*CettaPreparedPureSourceRoleFn)(
+    void *context, const void *source_view);
+typedef const void *(*CettaPreparedPureSourceChildFn)(
+    void *context, const void *source_view,
+    CettaExprIndex child_index);
+typedef bool (*CettaPreparedPureClauseSourceFn)(
+    void *context, Space *space, SymbolId head,
+    size_t occurrence_ordinal,
+    SpaceEquationOccurrenceId occurrence,
+    const Atom *equation, const void **rhs_view_out);
+typedef struct {
+    void *context;
+    const void *root;
+    CettaPreparedPureSourceRoleFn role;
+    CettaPreparedPureSourceChildFn child;
+    CettaPreparedPureClauseSourceFn clause_rhs;
+} CettaPreparedPureSourceView;
+
 CettaPreparedPureProgram *cetta_prepared_pure_program_compile(
     Space *space, Atom *expression,
     VarId accumulator_var, VarId item_var,
@@ -76,6 +113,7 @@ CettaPreparedPureProgram *cetta_prepared_pure_program_compile(
     CettaPreparedPureRegisterViewFn register_view,
     CettaPreparedPureExpressionViewFn expression_view,
     CettaPreparedPurePatternViewFn pattern_view,
+    const CettaPreparedPureSourceView *source_view,
     bool total_structural_equality,
     CettaMatchDecisionSemanticIdentity match_decision_semantics);
 
@@ -91,6 +129,7 @@ CettaPreparedPureProgram *cetta_prepared_pure_program_compile_closed(
     CettaPreparedPureRegisterViewFn register_view,
     CettaPreparedPureExpressionViewFn expression_view,
     CettaPreparedPurePatternViewFn pattern_view,
+    const CettaPreparedPureSourceView *source_view,
     bool entry_arguments_are_values,
     bool total_structural_equality,
     CettaMatchDecisionSemanticIdentity match_decision_semantics);

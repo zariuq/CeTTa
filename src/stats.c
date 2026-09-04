@@ -824,6 +824,14 @@ static const char *const CETTA_RUNTIME_COUNTER_NAMES[CETTA_RUNTIME_COUNTER_COUNT
     "space-mutation-publish-equation",
     "space-mutation-publish-opaque",
     "space-equation-revision-bump",
+    "space-declaration-revision-bump",
+    "petta-relation-safety-cache-hit",
+    "petta-relation-safety-cache-miss",
+    "eval-tail-collected",
+    "petta-match-conjunction-cursor-attempt",
+    "petta-match-conjunction-cursor-commit",
+    "petta-match-conjunction-cursor-decline",
+    "petta-match-conjunction-cursor-leg",
 };
 
 static int64_t clamp_counter(uint64_t value) {

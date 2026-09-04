@@ -1,0 +1,4 @@
+(late-callable 1 1)
+true
+(late-callable 1 1)
+2

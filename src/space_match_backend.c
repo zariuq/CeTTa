@@ -1136,7 +1136,12 @@ static void imported_binding_set_to_exact_matches(SubstMatchSet *out,
 
 static CettaIndex native_candidates(Space *s, Atom *pattern, CettaIndex **out) {
     SpaceMatchNativeState *st = &s->match_backend.native;
-    if (s->native.len <= MATCH_TRIE_THRESHOLD) {
+    /* A root variable matches every visible occurrence.  Its complete
+       candidate frontier is therefore the space itself; discrimination can
+       neither prune that frontier nor replace duplicate occurrences with a
+       representative. */
+    if ((pattern && pattern->kind == ATOM_VAR) ||
+        s->native.len <= MATCH_TRIE_THRESHOLD) {
         cetta_runtime_stats_add(CETTA_RUNTIME_COUNTER_MATCH_NATIVE_CANDIDATES,
                                 s->native.len);
         *out = cetta_malloc(sizeof(CettaIndex) * (s->native.len ? s->native.len : 1));
@@ -1196,6 +1201,44 @@ static bool native_pattern_is_flat_linear(Atom *pattern) {
     return admissible;
 }
 
+static bool native_count_rigid_occurrences(
+        SpaceMatchNativeState *state, const Atom *pattern,
+        uint64_t *count, CettaIndex *examined) {
+    CettaIndex occurrences = 0u;
+    if (!state || !state->match_trie || state->match_trie_dirty ||
+        !pattern || atom_has_vars(pattern) ||
+        !disc_count_rigid_exact_path(
+            state->match_trie, pattern, &occurrences)) {
+        return false;
+    }
+    *count = (uint64_t)occurrences;
+    /* The leaf multiplicity is consumed as one aggregate; no candidate row is
+     * decoded or matched individually. */
+    *examined = 0u;
+    cetta_runtime_stats_inc(
+        CETTA_RUNTIME_COUNTER_MATCH_NATIVE_TRIE_LOOKUP);
+    return true;
+}
+
+static bool native_count_rigid_expression_coordinates(
+        SpaceMatchNativeState *state, Atom *const *coordinates,
+        CettaExprLen coordinate_count,
+        uint64_t *count, CettaIndex *examined) {
+    CettaIndex occurrences = 0u;
+    if (!state || !state->match_trie || state->match_trie_dirty ||
+        !coordinates || coordinate_count == 0u ||
+        !disc_count_rigid_exact_expression_coordinates(
+            state->match_trie, coordinates, coordinate_count,
+            &occurrences)) {
+        return false;
+    }
+    *count = (uint64_t)occurrences;
+    *examined = 0u;
+    cetta_runtime_stats_inc(
+        CETTA_RUNTIME_COUNTER_MATCH_NATIVE_TRIE_LOOKUP);
+    return true;
+}
+
 /*
  * For a flat linear query and a ground stored expression, matching reduces
  * to positional equality at every non-variable column.  Variables are
@@ -1223,7 +1266,6 @@ static bool native_count_flat_linear(
         !native_pattern_is_flat_linear(pattern)) {
         return false;
     }
-
     /*
      * A cold one-shot aggregate must not build and decode the complete
      * discrimination trie merely to avoid a compact AtomId scan.  Reuse a
@@ -1235,6 +1277,10 @@ static bool native_count_flat_linear(
         &s->match_backend.native;
     bool indexed =
         state->match_trie && !state->match_trie_dirty;
+    if (indexed && native_count_rigid_occurrences(
+            state, pattern, count, examined)) {
+        return true;
+    }
     CettaIndex *candidates = NULL;
     CettaIndex candidate_len = indexed
         ? native_candidates(s, pattern, &candidates)
@@ -1332,6 +1378,412 @@ static bool native_count_flat_linear(
     *count = matches;
     *examined = candidate_len;
     return true;
+}
+
+/* Prepare only the immediate coordinates required by the native flat-count
+ * consumer.  This is a bounded projection of a term view, not a second term:
+ * rigid coordinates remain borrowed and distinct open variables remain
+ * wildcards.  Nested open structure declines to materialization. */
+static bool native_prepare_flat_linear_view(
+    const CettaGsltTermViewV1 *view,
+    CettaGsltTermViewOpenBindingObservationV1 open_bindings,
+    Atom **columns, CettaExprLen column_count) {
+    return cetta_gslt_term_view_project_expression_coordinates_v1(
+        view, open_bindings, columns, column_count);
+}
+
+typedef enum {
+    NATIVE_FLAT_VIEW_ROW_DECLINE = 0,
+    NATIVE_FLAT_VIEW_ROW_MISMATCH,
+    NATIVE_FLAT_VIEW_ROW_MATCH,
+} NativeFlatViewRowResult;
+
+enum { NATIVE_FLAT_VIEW_INLINE_COLUMNS = 16u };
+
+typedef struct {
+    Atom *inline_columns[NATIVE_FLAT_VIEW_INLINE_COLUMNS];
+    VarId inline_stored_variables[NATIVE_FLAT_VIEW_INLINE_COLUMNS];
+    Atom *inline_stored_values[NATIVE_FLAT_VIEW_INLINE_COLUMNS];
+    Atom **columns;
+    VarId *stored_variables;
+    Atom **stored_values;
+} NativeFlatViewWorkspace;
+
+static bool native_flat_view_workspace_init(
+        NativeFlatViewWorkspace *workspace,
+        CettaExprLen column_count) {
+    if (!workspace || column_count == 0u ||
+        (size_t)column_count > SIZE_MAX / sizeof(Atom *) ||
+        (size_t)column_count > SIZE_MAX / sizeof(VarId)) {
+        return false;
+    }
+    if (column_count <= NATIVE_FLAT_VIEW_INLINE_COLUMNS) {
+        workspace->columns = workspace->inline_columns;
+        workspace->stored_variables = workspace->inline_stored_variables;
+        workspace->stored_values = workspace->inline_stored_values;
+        return true;
+    }
+    workspace->columns = malloc(
+        (size_t)column_count * sizeof(*workspace->columns));
+    workspace->stored_variables = malloc(
+        (size_t)column_count * sizeof(*workspace->stored_variables));
+    workspace->stored_values = malloc(
+        (size_t)column_count * sizeof(*workspace->stored_values));
+    return workspace->columns && workspace->stored_variables &&
+        workspace->stored_values;
+}
+
+static void native_flat_view_workspace_cleanup(
+        NativeFlatViewWorkspace *workspace) {
+    if (!workspace)
+        return;
+    if (workspace->columns != workspace->inline_columns)
+        free(workspace->columns);
+    if (workspace->stored_variables !=
+            workspace->inline_stored_variables) {
+        free(workspace->stored_variables);
+    }
+    if (workspace->stored_values != workspace->inline_stored_values)
+        free(workspace->stored_values);
+}
+
+/* Count-only observation existentially erases bindings produced by a stored
+ * row.  On the flat encoded fragment, only equality between repeated stored
+ * root variables remains observable: rigid query columns constrain those
+ * variables, while dead open query columns impose no constraint.  Nested
+ * stored variables retain the ordinary matcher as the authority. */
+static NativeFlatViewRowResult native_flat_view_variable_row_matches(
+    const TermUniverse *universe, AtomId candidate_id,
+    Atom *const *columns, CettaExprLen column_count,
+    VarId *stored_variables, Atom **stored_values) {
+    if (!universe || !columns || !stored_variables || !stored_values ||
+        !tu_hdr(universe, candidate_id) ||
+        tu_kind(universe, candidate_id) != ATOM_EXPR ||
+        tu_arity(universe, candidate_id) != column_count) {
+        return NATIVE_FLAT_VIEW_ROW_DECLINE;
+    }
+
+    CettaExprLen assignment_count = 0u;
+    for (CettaExprIndex index = 0u; index < column_count; index++) {
+        Atom *query = columns[index];
+        if (!query)
+            return NATIVE_FLAT_VIEW_ROW_DECLINE;
+        if (query->kind == ATOM_VAR)
+            continue;
+
+        AtomId stored = tu_child(universe, candidate_id, index);
+        if (stored == CETTA_ATOM_ID_NONE || !tu_hdr(universe, stored))
+            return NATIVE_FLAT_VIEW_ROW_DECLINE;
+        if (tu_kind(universe, stored) != ATOM_VAR) {
+            if (tu_has_vars(universe, stored))
+                return NATIVE_FLAT_VIEW_ROW_DECLINE;
+            if (!term_universe_atom_id_eq(universe, stored, query))
+                return NATIVE_FLAT_VIEW_ROW_MISMATCH;
+            continue;
+        }
+
+        VarId variable = tu_var_id(universe, stored);
+        if (variable == VAR_ID_NONE)
+            return NATIVE_FLAT_VIEW_ROW_DECLINE;
+        bool assigned = false;
+        for (CettaExprIndex previous = 0u;
+             previous < assignment_count; previous++) {
+            if (stored_variables[previous] != variable)
+                continue;
+            assigned = true;
+            if (!atom_eq(stored_values[previous], query))
+                return NATIVE_FLAT_VIEW_ROW_MISMATCH;
+            break;
+        }
+        if (!assigned) {
+            stored_variables[assignment_count] = variable;
+            stored_values[assignment_count] = query;
+            assignment_count++;
+        }
+    }
+    return NATIVE_FLAT_VIEW_ROW_MATCH;
+}
+
+static bool native_count_flat_linear_view(
+    Space *s, Arena *scratch, const CettaGsltTermViewV1 *view,
+    CettaGsltTermViewOpenBindingObservationV1 open_bindings,
+    uint64_t *count,
+    CettaIndex *examined) {
+    if (count)
+        *count = 0u;
+    if (examined)
+        *examined = 0u;
+    if (!s || !scratch || !view || !count || !examined ||
+        s->overlay_base ||
+        (s->match_backend.kind != SPACE_ENGINE_NATIVE &&
+         s->match_backend.kind != SPACE_ENGINE_NATIVE_CANDIDATE_EXACT) ||
+        !s->native.universe) {
+        return false;
+    }
+
+    CettaExprLen column_count = view->source->kind == ATOM_EXPR
+        ? view->source->expr.len : 0u;
+    __attribute__((cleanup(native_flat_view_workspace_cleanup)))
+    NativeFlatViewWorkspace workspace = {0};
+    if (!native_flat_view_workspace_init(&workspace, column_count))
+        return false;
+    Atom **columns = workspace.columns;
+    if (!native_prepare_flat_linear_view(
+            view, open_bindings, columns, column_count)) {
+        return false;
+    }
+
+    SpaceMatchNativeState *state = &s->match_backend.native;
+    bool indexed = state->match_trie && !state->match_trie_dirty;
+    if (!indexed && s->native.len > MATCH_TRIE_THRESHOLD)
+        return false;
+
+    CettaIndex *candidates = NULL;
+    CettaIndex candidate_len = s->native.len;
+    if (indexed) {
+        CettaIndex candidate_cap = 0u;
+        if (native_count_rigid_expression_coordinates(
+                state, columns, column_count, count, examined))
+            return true;
+        disc_lookup_expression_coordinates(
+            state->match_trie, columns, column_count,
+            &candidates, &candidate_len, &candidate_cap);
+        if (candidate_len > 1u)
+            candidate_len = sort_unique_cetta_index(
+                candidates, candidate_len);
+        cetta_runtime_stats_inc(
+            CETTA_RUNTIME_COUNTER_MATCH_NATIVE_TRIE_LOOKUP);
+    }
+    cetta_runtime_stats_add(
+        CETTA_RUNTIME_COUNTER_MATCH_NATIVE_CANDIDATES,
+        candidate_len);
+
+    uint64_t matches = 0u;
+    for (CettaIndex position = 0u;
+         position < candidate_len; position++) {
+        CettaIndex logical_index = indexed
+            ? candidates[position] : position;
+        if (logical_index >= s->native.len) {
+            free(candidates);
+            return false;
+        }
+        AtomId candidate_id = space_get_atom_id_at64(
+            s, logical_index);
+        if (!tu_hdr(s->native.universe, candidate_id)) {
+            free(candidates);
+            return false;
+        }
+        if (tu_kind(s->native.universe, candidate_id) != ATOM_EXPR ||
+            tu_arity(s->native.universe, candidate_id) != column_count) {
+            if (tu_has_vars(s->native.universe, candidate_id)) {
+                free(candidates);
+                return false;
+            }
+            continue;
+        }
+
+        if (tu_has_vars(s->native.universe, candidate_id)) {
+            NativeFlatViewRowResult row =
+                native_flat_view_variable_row_matches(
+                    s->native.universe, candidate_id,
+                    columns, column_count,
+                    workspace.stored_variables,
+                    workspace.stored_values);
+            if (row == NATIVE_FLAT_VIEW_ROW_DECLINE) {
+                free(candidates);
+                return false;
+            }
+            if (row == NATIVE_FLAT_VIEW_ROW_MISMATCH)
+                continue;
+            if (matches == UINT64_MAX) {
+                free(candidates);
+                return false;
+            }
+            matches++;
+            continue;
+        }
+
+        bool matches_candidate = true;
+        for (CettaExprIndex index = 0u;
+             index < column_count; index++) {
+            if (columns[index]->kind == ATOM_VAR)
+                continue;
+            AtomId child = tu_child(
+                s->native.universe, candidate_id, index);
+            if (child == CETTA_ATOM_ID_NONE ||
+                !term_universe_atom_id_eq(
+                    s->native.universe, child, columns[index])) {
+                matches_candidate = false;
+                break;
+            }
+        }
+        if (matches_candidate) {
+            if (matches == UINT64_MAX) {
+                free(candidates);
+                return false;
+            }
+            matches++;
+        }
+    }
+    free(candidates);
+    *count = matches;
+    *examined = candidate_len;
+    return true;
+}
+
+/* A conjunction observed only through cardinality is a fold, not a request
+ * for a resident BindingSet.  Walk one binding path at a time and add its
+ * terminal unit.  Whenever a leg is already rigid under the current
+ * environment, its occurrence count is a multiplicative factor and the
+ * continuation is evaluated once.  The final leg may additionally erase
+ * open bindings because no downstream consumer can observe them.
+ *
+ * This realizes the backend-neutral count_conjunction operation for native
+ * storage.  It deliberately remains a conservative fragment: overlays and
+ * impractically deep conjunctions use the materializing oracle. */
+enum { NATIVE_CONJUNCTION_COUNT_PATTERN_LIMIT = 1024u };
+
+static bool native_count_conjunction_suffix(
+    Space *s, Arena *scratch, Atom **patterns,
+    CettaExprLen npatterns, CettaExprIndex index,
+    const Bindings *environment, uint64_t *out_count) {
+    if (!s || !scratch || !patterns || !environment || !out_count ||
+        index > npatterns) {
+        return false;
+    }
+    if (index == npatterns) {
+        *out_count = 1u;
+        return true;
+    }
+
+    Atom *source_pattern = patterns[index];
+    if (!source_pattern)
+        return false;
+
+    bool final_leg = index + 1u == npatterns;
+    CettaGsltTermViewV1 view = bindings_term_view_v1(
+        source_pattern, environment);
+    uint64_t factor = 0u;
+    CettaIndex examined = 0u;
+    if (native_count_flat_linear_view(
+            s, scratch, &view,
+            final_leg
+                ? CETTA_GSLT_TERM_VIEW_OPEN_BINDINGS_DEAD_V1
+                : CETTA_GSLT_TERM_VIEW_OPEN_BINDINGS_OBSERVED_V1,
+            &factor, &examined)) {
+        if (final_leg || factor == 0u) {
+            *out_count = factor;
+            return true;
+        }
+        uint64_t continuation = 0u;
+        if (!native_count_conjunction_suffix(
+                s, scratch, patterns, npatterns, index + 1u,
+                environment, &continuation) ||
+            (continuation != 0u && factor > UINT64_MAX / continuation)) {
+            return false;
+        }
+        *out_count = factor * continuation;
+        return true;
+    }
+
+    ArenaMark level_mark = arena_mark(scratch);
+    Atom *pattern = bindings_apply_if_vars(
+        environment, scratch, source_pattern);
+    if (!pattern) {
+        arena_reset(scratch, level_mark);
+        return false;
+    }
+
+    /* A rigid nested pattern may lie outside the borrowed flat-view fragment
+     * while remaining inside the older exact counter. */
+    if (!atom_has_vars(pattern) &&
+        native_count_flat_linear(
+            s, scratch, pattern, &factor, &examined)) {
+        uint64_t continuation = 1u;
+        bool ok = final_leg || factor == 0u ||
+            native_count_conjunction_suffix(
+                s, scratch, patterns, npatterns, index + 1u,
+                environment, &continuation);
+        if (!ok ||
+            (continuation != 0u && factor > UINT64_MAX / continuation)) {
+            arena_reset(scratch, level_mark);
+            return false;
+        }
+        *out_count = factor * continuation;
+        arena_reset(scratch, level_mark);
+        return true;
+    }
+
+    CettaIndex *candidates = NULL;
+    CettaIndex candidate_count = native_candidates(
+        s, pattern, &candidates);
+    uint64_t total = 0u;
+    bool supported = true;
+    for (CettaIndex candidate = 0u;
+         candidate < candidate_count; candidate++) {
+        CettaIndex logical_index = candidates[candidate];
+        if (logical_index >= s->native.len) {
+            supported = false;
+            break;
+        }
+
+        ArenaMark branch_mark = arena_mark(scratch);
+        Bindings next;
+        if (!bindings_clone(&next, environment)) {
+            supported = false;
+            arena_reset(scratch, branch_mark);
+            break;
+        }
+        bool matched = match_space_atom_epoch(
+                s, logical_index, pattern, &next, scratch,
+                fresh_var_suffix()) &&
+            !bindings_has_loop(&next);
+        if (matched) {
+            uint64_t contribution = 0u;
+            if (!native_count_conjunction_suffix(
+                    s, scratch, patterns, npatterns, index + 1u,
+                    &next, &contribution) ||
+                contribution > UINT64_MAX - total) {
+                supported = false;
+            } else {
+                total += contribution;
+            }
+        }
+        bindings_free(&next);
+        arena_reset(scratch, branch_mark);
+        if (!supported)
+            break;
+    }
+    free(candidates);
+    arena_reset(scratch, level_mark);
+    if (!supported)
+        return false;
+    *out_count = total;
+    return true;
+}
+
+static bool native_count_conjunction(
+    Space *s, Arena *scratch, Atom **patterns,
+    CettaExprLen npatterns, const Bindings *seed,
+    uint64_t *out_count) {
+    if (out_count)
+        *out_count = 0u;
+    if (!s || !scratch || !patterns || !out_count ||
+        s->overlay_base || npatterns == 0u ||
+        npatterns > NATIVE_CONJUNCTION_COUNT_PATTERN_LIMIT ||
+        (s->match_backend.kind != SPACE_ENGINE_NATIVE &&
+         s->match_backend.kind != SPACE_ENGINE_NATIVE_CANDIDATE_EXACT) ||
+        !s->native.universe) {
+        return false;
+    }
+
+    Bindings empty;
+    if (!seed) {
+        bindings_init(&empty);
+        seed = &empty;
+    }
+    return native_count_conjunction_suffix(
+        s, scratch, patterns, npatterns, 0u, seed, out_count);
 }
 
 static void native_query(Space *s, Arena *a, Atom *query, SubstMatchSet *out) {
@@ -2271,7 +2723,7 @@ static ImportedBridgeExprDecodeResult imported_bridge_token_to_atom_id(
         imported_bridge_parse_rational_token_id(universe, tok, out_id))
         return IMPORTED_BRIDGE_EXPR_DECODE_OK;
 
-    if (strchr(tok, '.')) {
+    if (strpbrk(tok, ".eE")) {
         char *fendp = NULL;
         errno = 0;
         double fval = strtod(tok, &fendp);
@@ -6038,7 +6490,7 @@ static Atom *imported_bridge_parse_token_bytes(Arena *a,
             return rational;
     }
 
-    if (strchr(tok, '.')) {
+    if (strpbrk(tok, ".eE")) {
         char *fendp = NULL;
         errno = 0;
         double fval = strtod(tok, &fendp);
@@ -9970,6 +10422,8 @@ static const SpaceMatchBackendOps NATIVE_BACKEND_OPS = {
         native_transport_stable_occurrence_coordinates,
     .candidates = native_candidates,
     .count_flat_linear = native_count_flat_linear,
+    .count_flat_linear_view = native_count_flat_linear_view,
+    .count_conjunction = native_count_conjunction,
     .query = native_query,
     .query_conjunction = NULL,
 };
@@ -9995,6 +10449,8 @@ static const SpaceMatchBackendOps NATIVE_CANDIDATE_EXACT_BACKEND_OPS = {
         native_transport_stable_occurrence_coordinates,
     .candidates = native_candidates,
     .count_flat_linear = native_count_flat_linear,
+    .count_flat_linear_view = native_count_flat_linear_view,
+    .count_conjunction = native_count_conjunction,
     .query = native_candidate_exact_query,
     .query_conjunction = NULL,
 };
@@ -10228,6 +10684,39 @@ Atom *space_match_backend_candidate_at64(const Space *s, CettaIndex idx) {
     return term_universe_get_atom(s ? s->native.universe : NULL, atom_id);
 }
 
+bool space_match_backend_ground_exact_exists_frontier(
+    Space *s, Atom *pattern, bool *out_found) {
+    if (out_found)
+        *out_found = false;
+    if (!s || !pattern || !out_found || s->overlay_base ||
+        atom_has_vars(pattern) || !space_atom_is_exact_indexable(pattern) ||
+        (s->match_backend.kind != SPACE_ENGINE_NATIVE &&
+         s->match_backend.kind != SPACE_ENGINE_NATIVE_CANDIDATE_EXACT)) {
+        return false;
+    }
+
+    CETTA_SCOPED_SHARED_TRANSITION(candidate_frontier_observation);
+    CettaIndex *candidates = NULL;
+    CettaIndex candidate_count = native_candidates(s, pattern, &candidates);
+    bool found = false;
+    bool frontier_exact = true;
+    for (CettaIndex i = 0u; i < candidate_count; i++) {
+        Atom *candidate =
+            space_match_backend_candidate_at64(s, candidates[i]);
+        if (!candidate || !space_atom_is_exact_indexable(candidate)) {
+            frontier_exact = false;
+            break;
+        }
+        if (atom_eq(candidate, pattern))
+            found = true;
+    }
+    free(candidates);
+    if (!frontier_exact)
+        return false;
+    *out_found = found;
+    return true;
+}
+
 void space_match_backend_query(Space *s, Arena *a, Atom *query, SubstMatchSet *out) {
     if (!s->match_backend.ops || !s->match_backend.ops->query) {
         smset_init(out);
@@ -10336,6 +10825,85 @@ bool space_match_count_flat_linear64(
             (uint64_t)*examined);
     }
     return admitted;
+}
+
+bool space_match_count_flat_linear_view64(
+    Space *s, Arena *scratch, const CettaGsltTermViewV1 *view,
+    CettaGsltTermViewOpenBindingObservationV1 open_bindings,
+    uint64_t *count,
+    CettaIndex *examined) {
+    CETTA_SCOPED_SHARED_TRANSITION(shared_read);
+    if (count)
+        *count = 0u;
+    if (examined)
+        *examined = 0u;
+    if (!s || !scratch || !view || !view->source || !count ||
+        !examined || !s->match_backend.ops ||
+        !cetta_gslt_term_view_open_binding_observation_valid_v1(
+            open_bindings) ||
+        !s->match_backend.ops->count_flat_linear_view) {
+        return false;
+    }
+    space_linearize(s);
+    bool admitted = s->match_backend.ops->count_flat_linear_view(
+        s, scratch, view, open_bindings, count, examined);
+    if (admitted) {
+        cetta_runtime_stats_inc(
+            CETTA_RUNTIME_COUNTER_MATCH_FLAT_COUNT_ADMISSION);
+        cetta_runtime_stats_add(
+            CETTA_RUNTIME_COUNTER_MATCH_FLAT_COUNT_ROWS_EXAMINED,
+            (uint64_t)*examined);
+    }
+    return admitted;
+}
+
+bool space_match_exists_flat_linear_view64(
+    Space *s, Arena *scratch, const CettaGsltTermViewV1 *view,
+    CettaGsltTermViewOpenBindingObservationV1 open_bindings,
+    bool *exists,
+    CettaIndex *examined) {
+    enum { MATCH_EXISTENCE_INLINE_COORDINATES = 16u };
+    uint64_t count = 0u;
+    if (exists)
+        *exists = false;
+    if (examined)
+        *examined = 0u;
+    if (!s || !scratch || !view || !view->source || !exists || !examined ||
+        view->source->kind != ATOM_EXPR || view->source->expr.len == 0u ||
+        !cetta_gslt_term_view_open_binding_observation_valid_v1(
+            open_bindings)) {
+        return false;
+    }
+
+    CettaExprLen coordinate_count = view->source->expr.len;
+    if ((size_t)coordinate_count > SIZE_MAX / sizeof(Atom *))
+        return false;
+    Atom *inline_coordinates[MATCH_EXISTENCE_INLINE_COORDINATES];
+    Atom **coordinates = coordinate_count <= MATCH_EXISTENCE_INLINE_COORDINATES
+        ? inline_coordinates
+        : malloc((size_t)coordinate_count * sizeof(*coordinates));
+    if (!coordinates)
+        return false;
+    bool projected =
+        cetta_gslt_term_view_project_expression_coordinates_v1(
+            view, open_bindings, coordinates, coordinate_count);
+    bool applicable = false;
+    bool found = projected &&
+        space_match_exists_ground_exact_expression_coordinates(
+            s, coordinates, coordinate_count, &applicable);
+    if (coordinates != inline_coordinates)
+        free(coordinates);
+    if (applicable) {
+        *exists = found;
+        return true;
+    }
+
+    if (!space_match_count_flat_linear_view64(
+            s, scratch, view, open_bindings, &count, examined)) {
+        return false;
+    }
+    *exists = count != 0u;
+    return true;
 }
 
 bool space_match_count_conjunction64(
