@@ -2050,6 +2050,24 @@ Atom *bindings_resolve_atom_preview(Bindings *b, Atom *atom) {
     return bindings_resolve_atom(b, atom);
 }
 
+CettaGsltTermViewStatusV1 bindings_resolve_term_view_root_v1(
+        void *context, Atom *source_variable, Atom **target_out) {
+    if (target_out)
+        *target_out = NULL;
+    if (!source_variable || source_variable->kind != ATOM_VAR ||
+        !target_out) {
+        return CETTA_GSLT_TERM_VIEW_INVALID_V1;
+    }
+    const Bindings *bindings = context;
+    *target_out = !bindings || bindings->len == 0u
+        ? source_variable
+        : bindings_resolve_atom_preview(
+              (Bindings *)bindings, source_variable);
+    return *target_out
+        ? CETTA_GSLT_TERM_VIEW_OK_V1
+        : CETTA_GSLT_TERM_VIEW_INVALID_V1;
+}
+
 static Atom *bindings_lookup_spelling(Bindings *b, SymbolId spelling) {
     if (b->legacy_fallback_count == 0u)
         return NULL;

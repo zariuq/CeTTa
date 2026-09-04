@@ -41,3 +41,114 @@
 !(assertEqualToResult
   (let $c (collapse (match &native-count (friend $y $x) hit)) (size-atom $c))
   (512))
+
+; A fully rigid query may consume the discrimination leaf multiplicity
+; directly.  Duplicate occurrences remain observable.  Once a stored wildcard
+; overlaps the same path, the aggregate must decline to ordinary matching and
+; include that occurrence as well.
+!(bind! &native-rigid-count (new-space native))
+!(add-atom &native-rigid-count (edge a b))
+!(add-atom &native-rigid-count (edge a b))
+!(add-atom &native-rigid-count (edge a c))
+!(assertEqualToResult
+  (size (collapse (match &native-rigid-count (edge a b) hit)))
+  (2))
+!(add-atom &native-rigid-count (edge a $stored-wildcard))
+!(assertEqualToResult
+  (size (collapse (match &native-rigid-count (edge a b) hit)))
+  (3))
+
+; A count observer discards every produced binding.  The native term-view
+; route may therefore match variable-bearing stored rows without decoding or
+; freshening them, while preserving repeated-variable equality, duplicate
+; occurrences, and conservative fallback for nested variable structure.
+!(bind! &native-dead-binding-count (new-space native))
+!(add-atom &native-dead-binding-count (pair $same $same))
+!(add-atom &native-dead-binding-count (pair $left $right))
+!(add-atom &native-dead-binding-count (pair a b))
+!(add-atom &native-dead-binding-count (pair a b))
+!(assertEqualToResult
+  (size (collapse (match &native-dead-binding-count (pair a a) hit)))
+  (2))
+!(assertEqualToResult
+  (size (collapse (match &native-dead-binding-count (pair a b) hit)))
+  (3))
+!(assertEqualToResult
+  (size
+    (collapse
+      (match &native-dead-binding-count (pair $query-left $query-right) hit)))
+  (4))
+!(add-atom &native-dead-binding-count (pair (wrap $inner) tail))
+!(assertEqualToResult
+  (size (collapse (match &native-dead-binding-count (pair $any tail) hit)))
+  (3))
+; A rigid query against nested stored variables is outside flat admission and
+; must retain the ordinary matcher as the authority.
+!(assertEqualToResult
+  (size
+    (collapse
+      (match &native-dead-binding-count (pair (wrap fixed) tail) hit)))
+  (2))
+; Repeated open query variables are observable equality constraints, so the
+; distinct-wildcard projection declines and ordinary matching remains exact.
+!(assertEqualToResult
+  (size (collapse (match &native-dead-binding-count (pair $q $q) hit)))
+  (2))
+
+; A pure conjunction observed only by strict size is a streaming count fold.
+; Cross-leg bindings remain live along one path, rigid later legs contribute
+; occurrence factors, and the completed BindingSet is never required.
+!(bind! &native-conjunction-count (new-space native))
+!(add-atom &native-conjunction-count (edge a b))
+!(add-atom &native-conjunction-count (edge a b))
+!(add-atom &native-conjunction-count (edge a c))
+!(add-atom &native-conjunction-count (edge b d))
+!(add-atom &native-conjunction-count (edge c d))
+!(assertEqualToResult
+  (size
+    (collapse
+      (match &native-conjunction-count
+             (, (edge $x $y) (edge $y $z))
+             (path $x $z))))
+  (3))
+; The same fold passes through a private let-bound tuple presentation.  This
+; is the form emitted by the PeTTa-to-HE translator for length-after-collapse.
+!(assertEqualToResult
+  (let $paths
+    (collapse
+      (match &native-conjunction-count
+             (, (edge $x $y) (edge $y $z))
+             (path $x $z)))
+    (size-atom $paths))
+  (3))
+!(assertEqualToResult
+  (size
+    (collapse
+      (match &native-conjunction-count
+             (, (edge $x $x) (edge $x d))
+             hit)))
+  (0))
+!(add-atom &native-conjunction-count (same-edge $stored $stored))
+!(add-atom &native-conjunction-count (same-edge $stored $stored))
+!(assertEqualToResult
+  (size
+    (collapse
+      (match &native-conjunction-count
+             (, (same-edge a $middle) (edge $middle b))
+             hit)))
+  (4))
+
+; A nested match template is an active producer, not one inert row.  The
+; private-let presentation must retain its inner multiplicity and therefore
+; decline the direct outer-row count.
+!(add-atom &native-conjunction-count (tag a red))
+!(add-atom &native-conjunction-count (tag a red))
+!(add-atom &native-conjunction-count (tag a red))
+!(assertEqualToResult
+  (let $nested
+    (collapse
+      (match &native-conjunction-count (edge $x b)
+        (match &native-conjunction-count (tag $x red)
+          (joined $x))))
+    (size-atom $nested))
+  (6))

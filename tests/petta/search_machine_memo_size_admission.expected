@@ -1,0 +1,27 @@
+true
+true
+true
+((cache_hit 1) (cache_miss 1))
+true
+((cache_bypass 2))
+true
+true
+((cache_hit 1) (cache_miss 1))
+true
+true
+true
+7
+7
+((cache_hit 1) (cache_miss 1))
+true
+true
+true
+(ok ok)
+(ok ok)
+((cache_hit 1) (cache_miss 1))
+true
+true
+true
+2
+2
+((cache_hit 1) (cache_miss 1))

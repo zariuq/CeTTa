@@ -309,6 +309,15 @@ void petta_program_free(PettaProgram *program);
 bool petta_program_enable_analysis(PettaProgram *program);
 bool petta_program_analysis_enabled(const PettaProgram *program);
 bool petta_program_is_equation(Atom *atom);
+/* True exactly when adding atom can change the program-owned equation or
+ * declaration catalog.  Ordinary data remains solely a Space occurrence. */
+bool petta_program_atom_affects_metadata(Atom *atom);
+/* Observe one already-admitted Space addition.  Data outside the program
+ * projection is accepted without copying; equations and declarations are
+ * retained in the program-owned catalog. */
+bool petta_program_observe_addition(
+    PettaProgram *program, Space *space, Arena *storage,
+    Atom *atom, const PettaPlanNode *plan);
 
 /* Build a revision-pinned occurrence catalog directly from the live Space.
  * This is the common ingress for evaluators whose document reader does not
@@ -376,6 +385,13 @@ const PettaPlanNode *petta_program_declaration_block_plan_at(
  */
 const PettaPlanNode *petta_program_plan_dynamic_add(
     PettaProgram *program, Atom *atom);
+
+/* Prove that one successful match produces exactly one ordinary data answer
+ * under PeTTa's translation-time occurrence plan.  Payload spelling is not
+ * an answer-classification authority: an `Error` expression in a VALUE or
+ * call-free DATA occurrence remains ordinary data. */
+bool petta_plan_match_template_is_single_data_answer(
+    const PettaPlanNode *template_plan);
 
 bool petta_program_note_add(
     PettaProgram *program, Space *space, Atom *atom,
@@ -452,6 +468,15 @@ bool petta_program_revision_projection_current(
     const PettaProgramRevisionProjection *projection,
     const Space *target);
 bool petta_program_revision_view_equation_lease(
+    const PettaProgramRevisionProjection *projection,
+    Space *space, SymbolId head,
+    PettaClauseSnapshotLease *lease,
+    PettaClauseSnapshotStats *stats);
+
+/* Borrow translation payloads only when a captured projection still names
+ * the identical source Space.  An alpha-equivalent target preserves equation
+ * selection but supplies no representation map for source-owned plans. */
+bool petta_program_revision_view_source_clause_lease(
     const PettaProgramRevisionProjection *projection,
     Space *space, SymbolId head,
     PettaClauseSnapshotLease *lease,

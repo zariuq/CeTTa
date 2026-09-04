@@ -3,6 +3,7 @@
 import importlib.util
 from pathlib import Path
 import sys
+import tempfile
 import unittest
 
 
@@ -58,6 +59,49 @@ class ChainerCompatManifestTests(unittest.TestCase):
             compat.checked_relative_path("../outside", "fixture")
         with self.assertRaises(compat.CompatFailure):
             compat.checked_relative_path("/absolute", "fixture")
+
+    def test_executable_is_materialized_inside_the_library_image(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            source = root / "source-cetta"
+            image = root / "image"
+            image.mkdir()
+            source.write_bytes(b"candidate")
+
+            executable = compat.materialize_executable(source, image)
+
+            self.assertEqual(executable, image / "cetta")
+            self.assertEqual(executable.read_bytes(), b"candidate")
+            self.assertTrue(executable.stat().st_mode & 0o100)
+
+    def test_cetta_command_makes_the_space_engine_explicit(self) -> None:
+        command = compat.cetta_example_command(
+            Path("image/cetta"),
+            "extended",
+            "pathmap",
+            Path("image/example.metta"),
+        )
+
+        self.assertEqual(
+            command,
+            [
+                "image/cetta",
+                "--lang",
+                "petta",
+                "--profile",
+                "extended",
+                "--space-engine",
+                "pathmap",
+                "image/example.metta",
+            ],
+        )
+        with self.assertRaises(compat.CompatFailure):
+            compat.cetta_example_command(
+                Path("image/cetta"),
+                "extended",
+                "unknown",
+                Path("image/example.metta"),
+            )
 
 
 if __name__ == "__main__":

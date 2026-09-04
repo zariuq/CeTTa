@@ -1321,7 +1321,7 @@ static Atom *bridge_packet_parse_token(Arena *a, const uint8_t *bytes,
         }
     }
 
-    if (strchr(token, '.') || strcmp(token, "NaN") == 0 ||
+    if (strpbrk(token, ".eE") || strcmp(token, "NaN") == 0 ||
         strcmp(token, "inf") == 0 || strcmp(token, "-inf") == 0) {
         errno = 0;
         end = NULL;

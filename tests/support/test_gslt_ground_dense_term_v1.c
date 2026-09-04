@@ -23,7 +23,7 @@ typedef struct {
     uint32_t len;
 } ViewEnvironment;
 
-static CettaGsltGroundDenseStatusV1 resolve_view_variable(
+static CettaGsltTermViewStatusV1 resolve_view_variable(
         void *context, Atom *source_variable, Atom **target_out) {
     ViewEnvironment *environment = context;
 
@@ -31,16 +31,16 @@ static CettaGsltGroundDenseStatusV1 resolve_view_variable(
         *target_out = NULL;
     if (!environment || !source_variable || !target_out ||
         source_variable->kind != ATOM_VAR)
-        return CETTA_GSLT_GROUND_DENSE_INVALID_V1;
+        return CETTA_GSLT_TERM_VIEW_INVALID_V1;
     for (uint32_t index = 0u; index < environment->len; index++) {
         if (environment->variables[index] == source_variable->var_id) {
             *target_out = environment->values[index];
             return *target_out
-                ? CETTA_GSLT_GROUND_DENSE_OK_V1
-                : CETTA_GSLT_GROUND_DENSE_INVALID_V1;
+                ? CETTA_GSLT_TERM_VIEW_OK_V1
+                : CETTA_GSLT_TERM_VIEW_INVALID_V1;
         }
     }
-    return CETTA_GSLT_GROUND_DENSE_DEFER_V1;
+    return CETTA_GSLT_TERM_VIEW_DEFER_V1;
 }
 
 static Atom *expression(
@@ -190,12 +190,16 @@ int main(void) {
                 .values = {cursor_value, forest_value},
                 .len = 2u,
             };
+            CettaGsltTermViewV1 term_view = {
+                .source = view,
+                .resolve = resolve_view_variable,
+                .resolve_context = &environment,
+            };
             CettaGsltGroundDenseStatsV1 view_stats = {0};
 
             expect_true(
-                cetta_gslt_ground_dense_term_match_view_v1(
-                    &workspace, &parser_head, view,
-                    resolve_view_variable, &environment, &view_stats) ==
+                cetta_gslt_ground_dense_term_match_borrowed_view_v1(
+                    &workspace, &parser_head, &term_view, &view_stats) ==
                     CETTA_GSLT_GROUND_DENSE_OK_V1 &&
                     view_stats.view_nodes > 0u &&
                     view_stats.view_variable_resolutions == 3u &&

@@ -477,6 +477,7 @@ tests/test_pathmap_indexed_query_work.metta	he	metta	extended	pathmap	pathmap	te
 tests/test_pathmap_match_copy_var_identity_regression.metta	he	metta	extended	pathmap	pathmap	test-pathmap-lane	golden	pathmap lane golden regression
 tests/test_pathmap_program_shadow_sync_work.metta	he	metta	extended	pathmap	pathmap	test-pathmap-lane	golden	pathmap lane golden regression
 tests/test_pathmap_pull_consumers_work.metta	he	metta	extended	pathmap	pathmap	test-pathmap-lane	golden	pathmap lane golden regression
+tests/test_pathmap_scientific_float_roundtrip_regression.metta	he	metta	extended	pathmap	pathmap	test-pathmap-lane	golden	pathmap lane golden regression
 tests/test_pathmap_stored_variable_exact_query_regression.metta	he	metta	extended	pathmap	pathmap	test-pathmap-lane	golden	pathmap lane golden regression
 tests/test_pathmap_typed_query_syntax.metta	he	metta	extended	pathmap	pathmap	test-pathmap-lane	golden	pathmap lane golden regression
 tests/test_pln_portable_minmax_regression.metta	he	metta	extended	main	native	test	golden	-

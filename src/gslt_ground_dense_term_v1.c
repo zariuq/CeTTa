@@ -561,19 +561,20 @@ cetta_gslt_ground_dense_term_match_impl_v1(
             stats->view_nodes++;
         if (pair_is_view && pair.target->kind == ATOM_VAR) {
             Atom *resolved = NULL;
-            CettaGsltGroundDenseStatusV1 resolved_status =
+            CettaGsltTermViewStatusV1 resolved_status =
                 resolve
                     ? resolve(resolve_context, pair.target, &resolved)
-                    : CETTA_GSLT_GROUND_DENSE_DEFER_V1;
+                    : CETTA_GSLT_TERM_VIEW_DEFER_V1;
 
-            if (resolved_status != CETTA_GSLT_GROUND_DENSE_OK_V1) {
+            if (resolved_status != CETTA_GSLT_TERM_VIEW_OK_V1) {
                 if (stats &&
-                    resolved_status == CETTA_GSLT_GROUND_DENSE_DEFER_V1)
+                    resolved_status == CETTA_GSLT_TERM_VIEW_DEFER_V1)
                     stats->view_deferrals++;
-                return resolved_status ==
-                           CETTA_GSLT_GROUND_DENSE_MISMATCH_V1
-                    ? CETTA_GSLT_GROUND_DENSE_INVALID_V1
-                    : resolved_status;
+                if (resolved_status == CETTA_GSLT_TERM_VIEW_DEFER_V1)
+                    return CETTA_GSLT_GROUND_DENSE_DEFER_V1;
+                if (resolved_status == CETTA_GSLT_TERM_VIEW_RESOURCE_V1)
+                    return CETTA_GSLT_GROUND_DENSE_RESOURCE_V1;
+                return CETTA_GSLT_GROUND_DENSE_INVALID_V1;
             }
             if (!resolved)
                 return CETTA_GSLT_GROUND_DENSE_INVALID_V1;
@@ -684,8 +685,26 @@ CettaGsltGroundDenseStatusV1 cetta_gslt_ground_dense_term_match_view_v1(
     CettaGsltGroundDenseViewResolveV1 resolve,
     void *resolve_context,
     CettaGsltGroundDenseStatsV1 *stats) {
+    CettaGsltTermViewV1 view = {
+        .source = source,
+        .resolve = resolve,
+        .resolve_context = resolve_context,
+    };
+    return cetta_gslt_ground_dense_term_match_borrowed_view_v1(
+        workspace, program, &view, stats);
+}
+
+CettaGsltGroundDenseStatusV1
+cetta_gslt_ground_dense_term_match_borrowed_view_v1(
+    CettaGsltGroundDenseWorkspaceV1 *workspace,
+    const CettaGsltGroundDenseTermProgramV1 *program,
+    const CettaGsltTermViewV1 *view,
+    CettaGsltGroundDenseStatsV1 *stats) {
+    if (!view || !view->source)
+        return CETTA_GSLT_GROUND_DENSE_INVALID_V1;
     return cetta_gslt_ground_dense_term_match_impl_v1(
-        workspace, program, source, true, resolve, resolve_context, stats);
+        workspace, program, view->source, true,
+        view->resolve, view->resolve_context, stats);
 }
 
 CettaGsltGroundDenseStatusV1 cetta_gslt_ground_dense_term_instantiate_v1(

@@ -2,6 +2,7 @@
 #define CETTA_GSLT_GROUND_DENSE_TERM_V1_H
 
 #include "atom.h"
+#include "gslt_term_view_v1.h"
 
 #include <stdbool.h>
 #include <stddef.h>
@@ -18,12 +19,7 @@ typedef enum {
     CETTA_GSLT_GROUND_DENSE_DEFER_V1,
 } CettaGsltGroundDenseStatusV1;
 
-/* Resolve one variable of an immutable source view.  OK must return a closed
- * target.  DEFER retains the source semantics but asks the caller to use its
- * general matcher.  MISMATCH is not a valid resolver result. */
-typedef CettaGsltGroundDenseStatusV1
-    (*CettaGsltGroundDenseViewResolveV1)(
-        void *context, Atom *source_variable, Atom **target_out);
+typedef CettaGsltTermViewResolveV1 CettaGsltGroundDenseViewResolveV1;
 
 typedef struct {
     void *impl;
@@ -112,6 +108,16 @@ CettaGsltGroundDenseStatusV1 cetta_gslt_ground_dense_term_match_view_v1(
     Atom *source,
     CettaGsltGroundDenseViewResolveV1 resolve,
     void *resolve_context,
+    CettaGsltGroundDenseStatsV1 *stats);
+
+/* Consume the shared dialect-neutral term-view interface.  This is the same
+ * exact operation as match_view_v1; the older argument form remains as a
+ * convenience wrapper for callers which hold its three fields separately. */
+CettaGsltGroundDenseStatusV1
+cetta_gslt_ground_dense_term_match_borrowed_view_v1(
+    CettaGsltGroundDenseWorkspaceV1 *workspace,
+    const CettaGsltGroundDenseTermProgramV1 *program,
+    const CettaGsltTermViewV1 *view,
     CettaGsltGroundDenseStatsV1 *stats);
 
 /*

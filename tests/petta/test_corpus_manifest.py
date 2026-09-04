@@ -73,6 +73,9 @@ class CorpusManifestTests(unittest.TestCase):
                 "source": f"examples/{name}",
                 "source_sha256": MANIFEST.sha256_file(source),
                 "git_state": "untracked",
+                "stdout_observation": (
+                    MANIFEST.stdout_observation_contract_for_case(name)
+                ),
                 "class": (
                     fixture["class"]
                     if fixture is not None
@@ -132,6 +135,15 @@ class CorpusManifestTests(unittest.TestCase):
                     entry["class"] in {"external", "interactive"}
                     for entry in entries
                 ),
+                "stdout_observations": {
+                    contract: sum(
+                        entry["stdout_observation"] == contract
+                        for entry in entries
+                    )
+                    for contract in sorted(
+                        MANIFEST.STDOUT_OBSERVATION_CONTRACTS
+                    )
+                },
             },
             "entries": entries,
         }
@@ -320,6 +332,31 @@ class CorpusManifestTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "unknown stdout"):
             MANIFEST.stdout_observation("answer\n", "unordered-ish")
 
+    def test_occurrence_bag_ignores_transport_line_termination(self) -> None:
+        self.assertTrue(
+            MANIFEST.stdout_observation_equal(
+                "answer\n", "answer", MANIFEST.STDOUT_OCCURRENCE_BAG
+            )
+        )
+        self.assertFalse(
+            MANIFEST.stdout_observation_equal(
+                "answer\n", "answer", MANIFEST.STDOUT_EXACT_STREAM
+            )
+        )
+
+    def test_entry_stdout_comparison_uses_its_declared_contract(self) -> None:
+        entry = {
+            "stdout_observation": MANIFEST.STDOUT_OCCURRENCE_BAG,
+            "oracle": {"stdout": "first\nsecond\n"},
+        }
+        self.assertTrue(
+            MANIFEST.entry_stdout_equal(entry, "second\nfirst\n")
+        )
+        entry["stdout_observation"] = MANIFEST.STDOUT_EXACT_STREAM
+        self.assertFalse(
+            MANIFEST.entry_stdout_equal(entry, "second\nfirst\n")
+        )
+
     def test_source_mutation_is_detected(self) -> None:
         source = self.examples / self.manifest["entries"][0]["name"]
         source.write_text("; changed\n", encoding="utf-8")
@@ -423,6 +460,18 @@ class CorpusManifestTests(unittest.TestCase):
         self.manifest["entries"][0]["command"].append("--other")
         self.write_manifest()
         with self.assertRaisesRegex(RuntimeError, "command changed"):
+            self.verify()
+
+    def test_stdout_observation_mutation_is_detected(self) -> None:
+        self.manifest["entries"][0]["stdout_observation"] = (
+            MANIFEST.STDOUT_OCCURRENCE_BAG
+        )
+        self.manifest["counts"]["stdout_observations"] = {
+            MANIFEST.STDOUT_EXACT_STREAM: MANIFEST.EXPECTED_TOTAL - 1,
+            MANIFEST.STDOUT_OCCURRENCE_BAG: 1,
+        }
+        self.write_manifest()
+        with self.assertRaisesRegex(RuntimeError, "stdout observation"):
             self.verify()
 
     def test_required_capability_mutation_is_detected(self) -> None:

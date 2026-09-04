@@ -1,8 +1,8 @@
 {
-  "schema": "cetta-petta-corpus-v1",
+  "schema": "cetta-petta-corpus-v2",
   "petta_revision": "43705f5d9ff8958ffe7f0aa6777fb8477f2401f2",
   "run_sh_sha256": "175291accc8004f3721c9286d14323fc8d3d8045a621b841e6041268595ba096",
-  "generator_sha256": "4e8e687a57e408330c08dd989dbc09a1bf9e827139b8099701f4274b9b7402d7",
+  "generator_sha256": "2974bc34dbf846cdda08007c5ec8da4d08a45994b69409c2b1d2e916bb4543cb",
   "normalization": {
     "line_endings": "LF",
     "strip_ansi_csi": true,
@@ -11,6 +11,10 @@
     "comparison_stdout_quotients": [
       "Not specialized <generated-head>/<arity>"
     ],
+    "stdout_observation_contracts": {
+      "exact-stream": "byte-exact semantic stdout stream",
+      "occurrence-bag": "multiset of complete stdout lines, retaining multiplicity"
+    },
     "drop_exact_leading_oracle_stdout": [
       "MORK init: done\n"
     ],
@@ -23,7 +27,11 @@
   "counts": {
     "total": 183,
     "hermetic": 177,
-    "controlled": 6
+    "controlled": 6,
+    "stdout_observations": {
+      "exact-stream": 183,
+      "occurrence-bag": 0
+    }
   },
   "entries": [
     {
@@ -31,6 +39,7 @@
       "source": "examples/add_atom_fun_space.metta",
       "source_sha256": "7905d7a89078f3376d27d028e90a77940a77808beea6dd2e154e369d3cb073c8",
       "git_state": "tracked",
+      "stdout_observation": "exact-stream",
       "class": "hermetic",
       "command": [
         "sh",
@@ -53,6 +62,7 @@
       "source": "examples/and_or.metta",
       "source_sha256": "54b2b721babdb395a46c07cabd0f035af98800505ce11223c7e13761f9a3ec5d",
       "git_state": "tracked",
+      "stdout_observation": "exact-stream",
       "class": "hermetic",
       "command": [
         "sh",
@@ -75,6 +85,7 @@
       "source": "examples/assert_probe.metta",
       "source_sha256": "8e51a7383d6bd860a292b49f07b06fdc4384ded492a46d6036d01a2cc8f3040c",
       "git_state": "untracked",
+      "stdout_observation": "exact-stream",
       "class": "hermetic-negative",
       "command": [
         "sh",
@@ -98,6 +109,7 @@
       "source": "examples/atomops.metta",
       "source_sha256": "0510852506d2a16d7b0d8a24dcdb60f72dde1ecd9846d1222c378f5c1466bdbc",
       "git_state": "tracked",
+      "stdout_observation": "exact-stream",
       "class": "hermetic",
       "command": [
         "sh",
@@ -120,6 +132,7 @@
       "source": "examples/audit_probe.metta",
       "source_sha256": "ee89590434a466d5f8d10f019d85ecb69720883c67bc58c03923a419fc3f3af3",
       "git_state": "untracked",
+      "stdout_observation": "exact-stream",
       "class": "hermetic",
       "command": [
         "sh",
@@ -142,6 +155,7 @@
       "source": "examples/booleansolver.metta",
       "source_sha256": "a7bdb0049123eb2acbfa103bbb1d7b30a14384b9b8df6074d1a26a389d51b8c3",
       "git_state": "tracked",
+      "stdout_observation": "exact-stream",
       "class": "hermetic",
       "command": [
         "sh",
@@ -164,6 +178,7 @@
       "source": "examples/builin_types.metta",
       "source_sha256": "a58e8797e4c02b2f7fd32f7467550b232a14957647c0c47eb4d232ed2f5a41c0",
       "git_state": "tracked",
+      "stdout_observation": "exact-stream",
       "class": "hermetic",
       "command": [
         "sh",
@@ -186,6 +201,7 @@
       "source": "examples/callquoteevalreduce.metta",
       "source_sha256": "7d2686e99e6287f4a14c409c112d1cef51d5f96f053b9d486e30e03fa47f34ef",
       "git_state": "tracked",
+      "stdout_observation": "exact-stream",
       "class": "hermetic",
       "command": [
         "sh",
@@ -208,6 +224,7 @@
       "source": "examples/callquoteevalreduce2.metta",
       "source_sha256": "dd5de3615095f4f7593091e7c4dd6acbd588264a56c44519b12e36500e42bd8a",
       "git_state": "tracked",
+      "stdout_observation": "exact-stream",
       "class": "hermetic",
       "command": [
         "sh",
@@ -230,6 +247,7 @@
       "source": "examples/case.metta",
       "source_sha256": "c7bb5d83f03c682189a699cc7aba9aba65c2fa0078c5a00ff2e33daa6b9d549a",
       "git_state": "tracked",
+      "stdout_observation": "exact-stream",
       "class": "hermetic",
       "command": [
         "sh",
@@ -252,6 +270,7 @@
       "source": "examples/case2.metta",
       "source_sha256": "fcc516c7710b34c0d8fb3e0bef74444b7cc478e239cc20a000d986a3cb0a5b3d",
       "git_state": "tracked",
+      "stdout_observation": "exact-stream",
       "class": "hermetic",
       "command": [
         "sh",
@@ -274,6 +293,7 @@
       "source": "examples/caseconstrain.metta",
       "source_sha256": "59e11f78dfdc7554a546f397c199dbdda67a86d278236be36f3b6fa120b50fc6",
       "git_state": "tracked",
+      "stdout_observation": "exact-stream",
       "class": "hermetic",
       "command": [
         "sh",
@@ -296,6 +316,7 @@
       "source": "examples/caseempty.metta",
       "source_sha256": "b67d0de6dff06f19fbbf71b1f13e79d664eb5f217019b9c7e717d230779f8adc",
       "git_state": "tracked",
+      "stdout_observation": "exact-stream",
       "class": "hermetic",
       "command": [
         "sh",
@@ -318,6 +339,7 @@
       "source": "examples/casenew.metta",
       "source_sha256": "ff27b5fc9a702affad0b34054397a8606117264f4d237ac14722ed7fb4fb8f03",
       "git_state": "tracked",
+      "stdout_observation": "exact-stream",
       "class": "hermetic",
       "command": [
         "sh",
@@ -340,6 +362,7 @@
       "source": "examples/chain.metta",
       "source_sha256": "160b9ab758866cd9a299aa74182b0044fa6c7cb7d83278e7a3fef414568c0819",
       "git_state": "tracked",
+      "stdout_observation": "exact-stream",
       "class": "hermetic",
       "command": [
         "sh",
@@ -362,6 +385,7 @@
       "source": "examples/codex_with_he.metta",
       "source_sha256": "d68cee33206df654226d5527f3acbe4723014ae9615a1733a75919254a83102e",
       "git_state": "untracked",
+      "stdout_observation": "exact-stream",
       "class": "hermetic",
       "command": [
         "sh",
@@ -384,6 +408,7 @@
       "source": "examples/collapse.metta",
       "source_sha256": "db447741f8d0be3a89bce266c30027bfd48b6679686316517519e8229a4b1b36",
       "git_state": "tracked",
+      "stdout_observation": "exact-stream",
       "class": "hermetic",
       "command": [
         "sh",
@@ -406,6 +431,7 @@
       "source": "examples/comments.metta",
       "source_sha256": "3b50f5208ec90b9238607f85b1c259ee3196d4ed40fe5b92f17656d210a32a91",
       "git_state": "tracked",
+      "stdout_observation": "exact-stream",
       "class": "hermetic",
       "command": [
         "sh",
@@ -428,6 +454,7 @@
       "source": "examples/constanthead.metta",
       "source_sha256": "dcba00818675c4254eb6a84d995f619456a41ff60e31230f41dd1c562f56f7e3",
       "git_state": "tracked",
+      "stdout_observation": "exact-stream",
       "class": "hermetic",
       "command": [
         "sh",
@@ -450,6 +477,7 @@
       "source": "examples/curry.metta",
       "source_sha256": "d963c3e47e95ad2a9c3bcdcc226274bb22250f4f3ad925a02ef1bf4afba1be9e",
       "git_state": "tracked",
+      "stdout_observation": "exact-stream",
       "class": "hermetic",
       "command": [
         "sh",
@@ -472,6 +500,7 @@
       "source": "examples/cut.metta",
       "source_sha256": "cefbe40e37033f0af432dbcbb615a2b1c0ec2eef6a294d41685db09bc2e2e7d5",
       "git_state": "tracked",
+      "stdout_observation": "exact-stream",
       "class": "hermetic",
       "command": [
         "sh",
@@ -494,6 +523,7 @@
       "source": "examples/empty.metta",
       "source_sha256": "ea8b2444f71e961c0ab00d54ebf8e9668424a03da0549ed710cab04e08e617d8",
       "git_state": "tracked",
+      "stdout_observation": "exact-stream",
       "class": "hermetic",
       "command": [
         "sh",
@@ -516,6 +546,7 @@
       "source": "examples/eval.metta",
       "source_sha256": "543d06b308d5f5da9ec741d92139ff049b4bb404ecfc387c0aa99d5a2a1a2648",
       "git_state": "tracked",
+      "stdout_observation": "exact-stream",
       "class": "hermetic",
       "command": [
         "sh",
@@ -538,6 +569,7 @@
       "source": "examples/factorial.metta",
       "source_sha256": "f1db24633644c3ff5dc9b26c59f89d8924cf009c845b0c3797919cd58dba7d56",
       "git_state": "tracked",
+      "stdout_observation": "exact-stream",
       "class": "hermetic",
       "command": [
         "sh",
@@ -560,6 +592,7 @@
       "source": "examples/fib.metta",
       "source_sha256": "6e4a7e98b5d7fc130672e17dbdcf77588141645d3a1413cc6a4b3dae9eec825a",
       "git_state": "tracked",
+      "stdout_observation": "exact-stream",
       "class": "hermetic",
       "command": [
         "sh",
@@ -582,6 +615,7 @@
       "source": "examples/fibadd.metta",
       "source_sha256": "fde14dfea013fe03d460d7d0ca9b62384201e4451946199184c283e7f82d2af8",
       "git_state": "tracked",
+      "stdout_observation": "exact-stream",
       "class": "hermetic",
       "command": [
         "sh",
@@ -604,6 +638,7 @@
       "source": "examples/fibsmart.metta",
       "source_sha256": "17937771aeb86b1d4fe84f8e1c00eb05aa8a9632c221e238ea473a99d70b7094",
       "git_state": "tracked",
+      "stdout_observation": "exact-stream",
       "class": "hermetic",
       "command": [
         "sh",
@@ -626,6 +661,7 @@
       "source": "examples/fibsmartimport.metta",
       "source_sha256": "c4b1b98adf6f4b7586083db11316a56acc262aa94fb39f32fd2ff3be9f06ad6b",
       "git_state": "tracked",
+      "stdout_observation": "exact-stream",
       "class": "hermetic",
       "command": [
         "sh",
@@ -648,6 +684,7 @@
       "source": "examples/foldall.metta",
       "source_sha256": "15d1939a0d5d4f51232b0248c423eb045f991e74644eab553388a019822ac67c",
       "git_state": "tracked",
+      "stdout_observation": "exact-stream",
       "class": "hermetic",
       "command": [
         "sh",
@@ -670,6 +707,7 @@
       "source": "examples/foldallmatch.metta",
       "source_sha256": "b4bdc361751a57ca0b797470e199ceda8f5eadc9cd46f76a5564c77cb86cc2d4",
       "git_state": "tracked",
+      "stdout_observation": "exact-stream",
       "class": "hermetic",
       "command": [
         "sh",
@@ -692,6 +730,7 @@
       "source": "examples/foldallspacecount.metta",
       "source_sha256": "0ea16a60a5da06e66bd11fa33eae3f36592636f10bf88ef69ebc960d03595027",
       "git_state": "tracked",
+      "stdout_observation": "exact-stream",
       "class": "hermetic",
       "command": [
         "sh",
@@ -714,6 +753,7 @@
       "source": "examples/forall.metta",
       "source_sha256": "d1666bfe882340e2c862aea7b8544965d93d1d8d8170cb3a88b3124b71de3bd9",
       "git_state": "tracked",
+      "stdout_observation": "exact-stream",
       "class": "hermetic",
       "command": [
         "sh",
@@ -736,6 +776,7 @@
       "source": "examples/functionhead.metta",
       "source_sha256": "ddfa48327027a99913ef710a8fd8c10ffdb0b4cba66cb736de0f6aa2c202ee10",
       "git_state": "tracked",
+      "stdout_observation": "exact-stream",
       "class": "hermetic",
       "command": [
         "sh",
@@ -758,6 +799,7 @@
       "source": "examples/functionhead2.metta",
       "source_sha256": "f57b458973b0b41d01a0b7089133b1631298ca3c3a08ea59f1344a0222420c71",
       "git_state": "tracked",
+      "stdout_observation": "exact-stream",
       "class": "hermetic",
       "command": [
         "sh",
@@ -780,6 +822,7 @@
       "source": "examples/functionhead3.metta",
       "source_sha256": "61b2711cd17a7fbc0e7f526508fab8fdcdb2fca4b9dbbd2b2385b7136812d409",
       "git_state": "tracked",
+      "stdout_observation": "exact-stream",
       "class": "hermetic",
       "command": [
         "sh",
@@ -802,6 +845,7 @@
       "source": "examples/functionremoval.metta",
       "source_sha256": "1150218d8a0a3e0c6d3466d53a4d9b41311aa72755e17aa5038e736b1f2f9f0e",
       "git_state": "tracked",
+      "stdout_observation": "exact-stream",
       "class": "hermetic",
       "command": [
         "sh",
@@ -824,6 +868,7 @@
       "source": "examples/functionremovalspec.metta",
       "source_sha256": "a5a29c85ce0f58a3c3b231021148b9ec73485c3d8007137679d9341bd7dacf6d",
       "git_state": "tracked",
+      "stdout_observation": "exact-stream",
       "class": "hermetic",
       "command": [
         "sh",
@@ -846,6 +891,7 @@
       "source": "examples/functiontypes.metta",
       "source_sha256": "6185dc02f4b01ae72b87b639fecc7810aa99591aec9d8a115986143d9c1ec725",
       "git_state": "tracked",
+      "stdout_observation": "exact-stream",
       "class": "hermetic",
       "command": [
         "sh",
@@ -868,6 +914,7 @@
       "source": "examples/git_import.metta",
       "source_sha256": "1a32ed00bc7514936f6bf8a89133aa0469b040b6143f8c842f80956dcb0dfe2f",
       "git_state": "tracked",
+      "stdout_observation": "exact-stream",
       "class": "hermetic",
       "command": [
         "sh",
@@ -896,6 +943,7 @@
       "source": "examples/git_import2.metta",
       "source_sha256": "8abc99570e919d7a1019997a89bf515e0e64834f728988406ac211e622e4250e",
       "git_state": "tracked",
+      "stdout_observation": "exact-stream",
       "class": "external",
       "command": [
         "sh",
@@ -957,6 +1005,7 @@
       "source": "examples/greedy_chess.metta",
       "source_sha256": "acdc22b8bfe4f08b74245e79ada8218e4593aec5bbf7d2ce977a9d1e3922f29c",
       "git_state": "tracked",
+      "stdout_observation": "exact-stream",
       "class": "interactive",
       "command": [
         "sh",
@@ -986,6 +1035,7 @@
       "source": "examples/he_assert.metta",
       "source_sha256": "9af5e8f42f7024ce47aa4378e4fda353a2eb60d11ce325a7442d0292608956d4",
       "git_state": "tracked",
+      "stdout_observation": "exact-stream",
       "class": "hermetic",
       "command": [
         "sh",
@@ -1008,6 +1058,7 @@
       "source": "examples/he_atomspace.metta",
       "source_sha256": "2e296263fc790af8dbf70dbaf94293078ae4463c356291ded8e5e217ba45ec95",
       "git_state": "tracked",
+      "stdout_observation": "exact-stream",
       "class": "hermetic",
       "command": [
         "sh",
@@ -1030,6 +1081,7 @@
       "source": "examples/he_equalreduct.metta",
       "source_sha256": "b3a505725a923ce9b4d630c5762e013c1c90f6e921277807628e09afb960607e",
       "git_state": "tracked",
+      "stdout_observation": "exact-stream",
       "class": "hermetic",
       "command": [
         "sh",
@@ -1052,6 +1104,7 @@
       "source": "examples/he_error.metta",
       "source_sha256": "2b7162f955cbbce34b3214e3cf1feeaa9e9cafe0594267320d20aebe64174a0a",
       "git_state": "tracked",
+      "stdout_observation": "exact-stream",
       "class": "hermetic",
       "command": [
         "sh",
@@ -1074,6 +1127,7 @@
       "source": "examples/he_evaluation.metta",
       "source_sha256": "268bbcbf727e1e4b93bb1ddf887fcf09df352e0ddaa1045a7f60cc59fae27cf9",
       "git_state": "tracked",
+      "stdout_observation": "exact-stream",
       "class": "hermetic",
       "command": [
         "sh",
@@ -1096,6 +1150,7 @@
       "source": "examples/he_math.metta",
       "source_sha256": "88d5404293ce0f562add29767c2f19dc77536c752160530c766e3fa8ad356dcb",
       "git_state": "tracked",
+      "stdout_observation": "exact-stream",
       "class": "hermetic",
       "command": [
         "sh",
@@ -1118,6 +1173,7 @@
       "source": "examples/he_minimalmetta.metta",
       "source_sha256": "85915fdc8cc33bcb40787a5d8171adb067e9d0adebf8962a37adb551a41b437f",
       "git_state": "tracked",
+      "stdout_observation": "exact-stream",
       "class": "hermetic",
       "command": [
         "sh",
@@ -1140,6 +1196,7 @@
       "source": "examples/he_quoting.metta",
       "source_sha256": "47041638500dcd5f12bcaa3aa3833d739f20ef6ca979c957d88447666c9cc246",
       "git_state": "tracked",
+      "stdout_observation": "exact-stream",
       "class": "hermetic",
       "command": [
         "sh",
@@ -1162,6 +1219,7 @@
       "source": "examples/he_types.metta",
       "source_sha256": "2c1caf9909b7f36181f1adb65139360af870124b5c19db739f919f518330ec00",
       "git_state": "tracked",
+      "stdout_observation": "exact-stream",
       "class": "hermetic",
       "command": [
         "sh",
@@ -1184,6 +1242,7 @@
       "source": "examples/holbenchmark.metta",
       "source_sha256": "3803dd9aa406189dc2cfcd36f7cdf2d23f14b914a49e8ff9b3788645032d0f23",
       "git_state": "tracked",
+      "stdout_observation": "exact-stream",
       "class": "hermetic",
       "command": [
         "sh",
@@ -1206,6 +1265,7 @@
       "source": "examples/holfunctions.metta",
       "source_sha256": "d54c7bce56e097146043291cd1119d6df1d1b15ecf902f1133de03b28bb2674e",
       "git_state": "tracked",
+      "stdout_observation": "exact-stream",
       "class": "hermetic",
       "command": [
         "sh",
@@ -1228,6 +1288,7 @@
       "source": "examples/holfunctions_intrinsicop.metta",
       "source_sha256": "08b6c8818abe42b01cb683d99d679a99b6709f00a9190758f7ac176b30000bb2",
       "git_state": "tracked",
+      "stdout_observation": "exact-stream",
       "class": "hermetic",
       "command": [
         "sh",
@@ -1250,6 +1311,7 @@
       "source": "examples/hyperpose_primes.metta",
       "source_sha256": "058e6558aba6d22479960200ad806270f25a00d0a1dd63810c1c587f4ac7bbcc",
       "git_state": "tracked",
+      "stdout_observation": "exact-stream",
       "class": "hermetic",
       "command": [
         "sh",
@@ -1272,6 +1334,7 @@
       "source": "examples/identity.metta",
       "source_sha256": "d687f5f631c3f1a4d0e43435483616adebdfb6ac0dc2c2e40ee7edb3d2e159e1",
       "git_state": "tracked",
+      "stdout_observation": "exact-stream",
       "class": "hermetic",
       "command": [
         "sh",
@@ -1294,6 +1357,7 @@
       "source": "examples/if.metta",
       "source_sha256": "0ee8f85e4dcc94899faa8bb9c561d11b4ba4261dca29ad178ac726d0b7981012",
       "git_state": "tracked",
+      "stdout_observation": "exact-stream",
       "class": "hermetic",
       "command": [
         "sh",
@@ -1316,6 +1380,7 @@
       "source": "examples/if2.metta",
       "source_sha256": "22f156d21e15c09109640d3058751484f374a6369f641b07224593878d61e668",
       "git_state": "tracked",
+      "stdout_observation": "exact-stream",
       "class": "hermetic",
       "command": [
         "sh",
@@ -1338,6 +1403,7 @@
       "source": "examples/if3.metta",
       "source_sha256": "846a2b7bd6e9f59329608628cd5093de43e2f6a7ab443d03f7a3f953c7db5c5e",
       "git_state": "tracked",
+      "stdout_observation": "exact-stream",
       "class": "hermetic",
       "command": [
         "sh",
@@ -1360,6 +1426,7 @@
       "source": "examples/if4.metta",
       "source_sha256": "451e10ee36a3a747744f41fe05a1f21edae1b66143aa73bd9cf848e6b1cc24ea",
       "git_state": "tracked",
+      "stdout_observation": "exact-stream",
       "class": "hermetic",
       "command": [
         "sh",
@@ -1382,6 +1449,7 @@
       "source": "examples/ifcasenondet.metta",
       "source_sha256": "299baba9a5572e7c53ce74c27025ed38f0ac1e9bc9208823d19a3f11fe22522c",
       "git_state": "tracked",
+      "stdout_observation": "exact-stream",
       "class": "hermetic",
       "command": [
         "sh",
@@ -1404,6 +1472,7 @@
       "source": "examples/ifsimple.metta",
       "source_sha256": "85b978a40746fb60509c715528e2a66d20e4329d8296d9bcc35b33d6f4ecd9fc",
       "git_state": "tracked",
+      "stdout_observation": "exact-stream",
       "class": "hermetic",
       "command": [
         "sh",
@@ -1426,6 +1495,7 @@
       "source": "examples/intensional_probe.metta",
       "source_sha256": "73184639102721d210bf8cfb94aab3078cb73e32fa09ddbbad9aeba277878226",
       "git_state": "untracked",
+      "stdout_observation": "exact-stream",
       "class": "hermetic",
       "command": [
         "sh",
@@ -1448,6 +1518,7 @@
       "source": "examples/intensional_probe2.metta",
       "source_sha256": "3c97db74f0ac63db58a7b13bc59550993fa95034b936ea692085e7126be694c4",
       "git_state": "untracked",
+      "stdout_observation": "exact-stream",
       "class": "hermetic",
       "command": [
         "sh",
@@ -1470,6 +1541,7 @@
       "source": "examples/intensional_probe3.metta",
       "source_sha256": "987ff5846f4b6c9ae23ac1d0de895531068dea9ffe66c48f77025d4407a4fe0f",
       "git_state": "untracked",
+      "stdout_observation": "exact-stream",
       "class": "hermetic",
       "command": [
         "sh",
@@ -1492,6 +1564,7 @@
       "source": "examples/intensional_probe4.metta",
       "source_sha256": "cad1d4af1bba76fb0f1c9b4777a691a86aec1a4f5f1c8ceff4d9ae37ba996ada",
       "git_state": "untracked",
+      "stdout_observation": "exact-stream",
       "class": "hermetic",
       "command": [
         "sh",
@@ -1514,6 +1587,7 @@
       "source": "examples/intensional_probe5.metta",
       "source_sha256": "924f6d3d1961c046875c799fa13fac01111fa50002b306925ad9ffc6aa0efe71",
       "git_state": "untracked",
+      "stdout_observation": "exact-stream",
       "class": "hermetic",
       "command": [
         "sh",
@@ -1536,6 +1610,7 @@
       "source": "examples/intensional_probe6.metta",
       "source_sha256": "6171cf9394760f4a96ab67c2f9b16270e3faa83cb69383b0f733c96873b556d2",
       "git_state": "untracked",
+      "stdout_observation": "exact-stream",
       "class": "hermetic",
       "command": [
         "sh",
@@ -1558,6 +1633,7 @@
       "source": "examples/intensional_probe7.metta",
       "source_sha256": "9c534ab9790315be0bb438648427bf27826d0cbc3884c6e9520177ecf0b4d000",
       "git_state": "untracked",
+      "stdout_observation": "exact-stream",
       "class": "hermetic",
       "command": [
         "sh",
@@ -1580,6 +1656,7 @@
       "source": "examples/invertfunction.metta",
       "source_sha256": "a0d948c7a6c89f28b382d0d1984e27628052a249836f52cc6db9ebbe57aa2878",
       "git_state": "tracked",
+      "stdout_observation": "exact-stream",
       "class": "hermetic",
       "command": [
         "sh",
@@ -1602,6 +1679,7 @@
       "source": "examples/invertpeanoplus.metta",
       "source_sha256": "e5fd36510c17b3b56590c14f4dccbf427891d5186972d525e2cfabbf4b302e70",
       "git_state": "tracked",
+      "stdout_observation": "exact-stream",
       "class": "hermetic",
       "command": [
         "sh",
@@ -1624,6 +1702,7 @@
       "source": "examples/is_alpha_member_test.metta",
       "source_sha256": "08d9994e07fcd5f7c19d779c3d7719e1f56749b060e19c3c04fd422686eb099e",
       "git_state": "tracked",
+      "stdout_observation": "exact-stream",
       "class": "hermetic",
       "command": [
         "sh",
@@ -1646,6 +1725,7 @@
       "source": "examples/iter.metta",
       "source_sha256": "ed00f32f7671c1df02e0d13b750f0d2bb7ac30d3ca9f7057879c4d9ec42b7794",
       "git_state": "tracked",
+      "stdout_observation": "exact-stream",
       "class": "hermetic",
       "command": [
         "sh",
@@ -1668,6 +1748,7 @@
       "source": "examples/lambda.metta",
       "source_sha256": "413c89910c680502a4b971feb05392374acf70a2451b1870d96a669f8fe22f13",
       "git_state": "tracked",
+      "stdout_observation": "exact-stream",
       "class": "hermetic",
       "command": [
         "sh",
@@ -1690,6 +1771,7 @@
       "source": "examples/let_superpose_if_case.metta",
       "source_sha256": "9d9d1cadd76f978e234f528419a5ec1f41b4d7884e9bef96286fc213ad8cc5a8",
       "git_state": "tracked",
+      "stdout_observation": "exact-stream",
       "class": "hermetic",
       "command": [
         "sh",
@@ -1712,6 +1794,7 @@
       "source": "examples/letext.metta",
       "source_sha256": "3b9b51ded0a8871b30bd320c90ccc578354fcfba392eeb61a36137599910af2d",
       "git_state": "tracked",
+      "stdout_observation": "exact-stream",
       "class": "hermetic",
       "command": [
         "sh",
@@ -1734,6 +1817,7 @@
       "source": "examples/letlet.metta",
       "source_sha256": "9c626f3c6d5ce1bb7161807002a8d6d1941ea8400fe5c75888b8e6b8a81f058b",
       "git_state": "tracked",
+      "stdout_observation": "exact-stream",
       "class": "hermetic",
       "command": [
         "sh",
@@ -1756,6 +1840,7 @@
       "source": "examples/letstar.metta",
       "source_sha256": "59a86e44b7bb9b90cfabc457691d42bc623a83a04be99252dc6f9ab8aceaabd9",
       "git_state": "tracked",
+      "stdout_observation": "exact-stream",
       "class": "hermetic",
       "command": [
         "sh",
@@ -1778,6 +1863,7 @@
       "source": "examples/lib_roman_pair_helpers.metta",
       "source_sha256": "768931252ded98c6953c152a0b477e29e85cda7b60f691b74940e37acd1296eb",
       "git_state": "tracked",
+      "stdout_observation": "exact-stream",
       "class": "hermetic",
       "command": [
         "sh",
@@ -1800,6 +1886,7 @@
       "source": "examples/library.metta",
       "source_sha256": "15e66adc107e6a86f9dc89b71d7586551f669c837f93c60e77553f023869ca39",
       "git_state": "tracked",
+      "stdout_observation": "exact-stream",
       "class": "hermetic",
       "command": [
         "sh",
@@ -1822,6 +1909,7 @@
       "source": "examples/listhead.metta",
       "source_sha256": "ea869a6e3a824047c1b819884a979337ad22815087bd037622a987af144255a3",
       "git_state": "tracked",
+      "stdout_observation": "exact-stream",
       "class": "hermetic",
       "command": [
         "sh",
@@ -1844,6 +1932,7 @@
       "source": "examples/llm_cities.metta",
       "source_sha256": "6f60999a01a9e60112e2903017852f03ac393c5796af8a5ab2562dcffb7d2bc3",
       "git_state": "tracked",
+      "stdout_observation": "exact-stream",
       "class": "external",
       "command": [
         "sh",
@@ -1901,6 +1990,7 @@
       "source": "examples/logicprog.metta",
       "source_sha256": "c5c9a7acc9254968d050de54a6dd71e6787051460040ac26014013f530effa6b",
       "git_state": "tracked",
+      "stdout_observation": "exact-stream",
       "class": "hermetic",
       "command": [
         "sh",
@@ -1923,6 +2013,7 @@
       "source": "examples/logicprogset.metta",
       "source_sha256": "915d1e2f9e557cd7149f33c24e7bb449737ecd41829cdabd60bb02af68a122e4",
       "git_state": "tracked",
+      "stdout_observation": "exact-stream",
       "class": "hermetic",
       "command": [
         "sh",
@@ -1945,6 +2036,7 @@
       "source": "examples/matchnested.metta",
       "source_sha256": "a9240d78974fc6a5a2b89f8a8aeabbf107ae80df87f826f3e973af6ff7cc55da",
       "git_state": "tracked",
+      "stdout_observation": "exact-stream",
       "class": "hermetic",
       "command": [
         "sh",
@@ -1967,6 +2059,7 @@
       "source": "examples/matchnested2.metta",
       "source_sha256": "5ad7fe61bd5940f07e9fb37f95a1f9b1ae603996dc8517e06fdac6c1af928af7",
       "git_state": "tracked",
+      "stdout_observation": "exact-stream",
       "class": "hermetic",
       "command": [
         "sh",
@@ -1989,6 +2082,7 @@
       "source": "examples/matchsingle.metta",
       "source_sha256": "3b3ce2156b63f9111a842400d8d927eb4ebfa7630013735331cfe40b3f19da01",
       "git_state": "tracked",
+      "stdout_observation": "exact-stream",
       "class": "hermetic",
       "command": [
         "sh",
@@ -2011,6 +2105,7 @@
       "source": "examples/matchtypes.metta",
       "source_sha256": "d20a12fd25efe8f0641c326a839a7c188a6029137af13ceb11d22956bb690df4",
       "git_state": "tracked",
+      "stdout_observation": "exact-stream",
       "class": "hermetic",
       "command": [
         "sh",
@@ -2033,6 +2128,7 @@
       "source": "examples/matespace.metta",
       "source_sha256": "63ed7dd1b32e0b6fa68a2f9139bbdac553fd54431bcf8e1d8b4bc3ca146eb3fb",
       "git_state": "tracked",
+      "stdout_observation": "exact-stream",
       "class": "hermetic",
       "command": [
         "sh",
@@ -2055,6 +2151,7 @@
       "source": "examples/matespace2.metta",
       "source_sha256": "77e69b8c70c0a749b526e5e5baeddf970f1ba1b6a53fdf13e7e67ac5c3d8a8bf",
       "git_state": "tracked",
+      "stdout_observation": "exact-stream",
       "class": "hermetic",
       "command": [
         "sh",
@@ -2077,6 +2174,7 @@
       "source": "examples/matespacefast.metta",
       "source_sha256": "bfbcca082115bee2ec469f8c9bb214b25070187556f90462fe0d8a51034f850a",
       "git_state": "tracked",
+      "stdout_observation": "exact-stream",
       "class": "hermetic",
       "command": [
         "sh",
@@ -2099,6 +2197,7 @@
       "source": "examples/math.metta",
       "source_sha256": "88d5404293ce0f562add29767c2f19dc77536c752160530c766e3fa8ad356dcb",
       "git_state": "tracked",
+      "stdout_observation": "exact-stream",
       "class": "hermetic",
       "command": [
         "sh",
@@ -2121,6 +2220,7 @@
       "source": "examples/meta_types.metta",
       "source_sha256": "876fbee795432ff09eccfa66f3c8873afb21181eb0be5fa93c1f0a7b78b630fe",
       "git_state": "tracked",
+      "stdout_observation": "exact-stream",
       "class": "hermetic",
       "command": [
         "sh",
@@ -2143,6 +2243,7 @@
       "source": "examples/metamo_tea_break.metta",
       "source_sha256": "e9fdd0aab39bdd489656cdbb2f8e6cc23db353591927d3ebe20c2a0f3aa07c4e",
       "git_state": "untracked",
+      "stdout_observation": "exact-stream",
       "class": "hermetic",
       "command": [
         "sh",
@@ -2171,6 +2272,7 @@
       "source": "examples/metta4_prog.metta",
       "source_sha256": "85e174c3bc70c36ad815487f6f9421c0aabca3599ab5dc241840c2de5222ca67",
       "git_state": "tracked",
+      "stdout_observation": "exact-stream",
       "class": "hermetic",
       "command": [
         "sh",
@@ -2193,6 +2295,7 @@
       "source": "examples/metta4_streams.metta",
       "source_sha256": "088bae0e6c41508d29040c3ae23bf8b9cc40e902776effd6b1d1a229ab0d007b",
       "git_state": "tracked",
+      "stdout_observation": "exact-stream",
       "class": "hermetic",
       "command": [
         "sh",
@@ -2215,6 +2318,7 @@
       "source": "examples/mettaset.metta",
       "source_sha256": "4a212e1453ae3a3ddbb1f3c6a5cb29a90823f66f0065a3ae3f56c34efa247cd9",
       "git_state": "tracked",
+      "stdout_observation": "exact-stream",
       "class": "hermetic",
       "command": [
         "sh",
@@ -2237,6 +2341,7 @@
       "source": "examples/multicall.metta",
       "source_sha256": "de1057ed6e5168d8b83047751cfbf16a1baef86ace037ff66967a0dbfa7dcadf",
       "git_state": "tracked",
+      "stdout_observation": "exact-stream",
       "class": "hermetic",
       "command": [
         "sh",
@@ -2259,6 +2364,7 @@
       "source": "examples/multiset_operations.metta",
       "source_sha256": "c4dcd3092ee51cdafa4b34a4ed75d866f8a2d04e237f65947c7534d38c5fe658",
       "git_state": "tracked",
+      "stdout_observation": "exact-stream",
       "class": "hermetic",
       "command": [
         "sh",
@@ -2281,6 +2387,7 @@
       "source": "examples/mutex_and_transaction.metta",
       "source_sha256": "2ac119368505b8ea95c7bf1aa9d7560b29109221d7d7d85a3032f30376eac20f",
       "git_state": "tracked",
+      "stdout_observation": "exact-stream",
       "class": "hermetic",
       "command": [
         "sh",
@@ -2303,6 +2410,7 @@
       "source": "examples/myinterpreter.metta",
       "source_sha256": "d62fa80458ec267ee288fcdf8b436c26d247d532c3ce4d9ad6ea4578f6a0eedc",
       "git_state": "tracked",
+      "stdout_observation": "exact-stream",
       "class": "hermetic",
       "command": [
         "sh",
@@ -2325,6 +2433,7 @@
       "source": "examples/nars_direct.metta",
       "source_sha256": "d52b8b3c28aa1f0ee1a35c576bf40d355128fbb6c502c057c9abc3b71de906fb",
       "git_state": "tracked",
+      "stdout_observation": "exact-stream",
       "class": "hermetic",
       "command": [
         "sh",
@@ -2347,6 +2456,7 @@
       "source": "examples/nars_temporal_sequence_probe.metta",
       "source_sha256": "57943e6a7facfa62b47c6135f32f7896139fae81efa0dee5e05462af06bea1c2",
       "git_state": "untracked",
+      "stdout_observation": "exact-stream",
       "class": "hermetic",
       "command": [
         "sh",
@@ -2369,6 +2479,7 @@
       "source": "examples/nars_tuffy.metta",
       "source_sha256": "2cccba71e9acb6994ba625c464e92382b215b189dffb5694740e41bf19e2a0da",
       "git_state": "tracked",
+      "stdout_observation": "exact-stream",
       "class": "hermetic",
       "command": [
         "sh",
@@ -2391,6 +2502,7 @@
       "source": "examples/nestedcons.metta",
       "source_sha256": "294dd8e214687ba6a2ff575543dcc1c4ed9d4e85408a2284e1367fc7314b192e",
       "git_state": "tracked",
+      "stdout_observation": "exact-stream",
       "class": "hermetic",
       "command": [
         "sh",
@@ -2413,6 +2525,7 @@
       "source": "examples/newtons_method.metta",
       "source_sha256": "e1cd4675f50d566ea3bbe43c25d1688aa523dd3251d6134dba07551f36fc6bec",
       "git_state": "tracked",
+      "stdout_observation": "exact-stream",
       "class": "hermetic",
       "command": [
         "sh",
@@ -2435,6 +2548,7 @@
       "source": "examples/nilbc.metta",
       "source_sha256": "3c5f3b1cfe926aa74b55640d45e270d9771d288e54b9d71e5d9946871732a899",
       "git_state": "tracked",
+      "stdout_observation": "exact-stream",
       "class": "hermetic",
       "command": [
         "sh",
@@ -2457,6 +2571,7 @@
       "source": "examples/once.metta",
       "source_sha256": "3eade112966db4df2a0953cab3411512993fc65e1b70a4393c930fe63f4975ce",
       "git_state": "tracked",
+      "stdout_observation": "exact-stream",
       "class": "hermetic",
       "command": [
         "sh",
@@ -2479,6 +2594,7 @@
       "source": "examples/outputtype.metta",
       "source_sha256": "5ba899ef415b9cbcc506525bb8240a508a6eba5c2f474a539e71a75f7b258824",
       "git_state": "tracked",
+      "stdout_observation": "exact-stream",
       "class": "hermetic",
       "command": [
         "sh",
@@ -2501,6 +2617,7 @@
       "source": "examples/parametric_types.metta",
       "source_sha256": "3e2b1d79c8030ed18ea15ea5b07582a31c74fc3fb73ec294190612b763af0a7f",
       "git_state": "tracked",
+      "stdout_observation": "exact-stream",
       "class": "hermetic",
       "command": [
         "sh",
@@ -2523,6 +2640,7 @@
       "source": "examples/parse.metta",
       "source_sha256": "33e70b9592e4d06132cc43b3a21986f699314e740d77e7d081b81981c4ebd20b",
       "git_state": "tracked",
+      "stdout_observation": "exact-stream",
       "class": "hermetic",
       "command": [
         "sh",
@@ -2545,6 +2663,7 @@
       "source": "examples/partialdef.metta",
       "source_sha256": "672514556ca9079c18eee206a6c6d76afe92f62ee4a138c69e90ede57300a826",
       "git_state": "tracked",
+      "stdout_observation": "exact-stream",
       "class": "hermetic",
       "command": [
         "sh",
@@ -2567,6 +2686,7 @@
       "source": "examples/patrick_iterate_fib.metta",
       "source_sha256": "c78d16f77150e18a9360d247fa8c52e75d2f23517f0900a9b517a253f2eb14cb",
       "git_state": "tracked",
+      "stdout_observation": "exact-stream",
       "class": "hermetic",
       "command": [
         "sh",
@@ -2589,6 +2709,7 @@
       "source": "examples/patrick_iterate_quad.metta",
       "source_sha256": "515b90ed7ddc91174bd736a77ec0b0fee38886919018b4a63105e04e00e33eb8",
       "git_state": "tracked",
+      "stdout_observation": "exact-stream",
       "class": "hermetic",
       "command": [
         "sh",
@@ -2611,6 +2732,7 @@
       "source": "examples/patrick_test.metta",
       "source_sha256": "efa926f03a47c2c12a71d231dd49916eecfea5ac656827171fbbf29fb85831c8",
       "git_state": "tracked",
+      "stdout_observation": "exact-stream",
       "class": "hermetic",
       "command": [
         "sh",
@@ -2633,6 +2755,7 @@
       "source": "examples/peano.metta",
       "source_sha256": "1ba91ef911f00115e64f9bea1595474a725cafaebc16324ce20faea9ea34b610",
       "git_state": "tracked",
+      "stdout_observation": "exact-stream",
       "class": "hermetic",
       "command": [
         "sh",
@@ -2655,6 +2778,7 @@
       "source": "examples/peanofast.metta",
       "source_sha256": "c2ff18d8f52e0686afae16cfdcb40a08799705c5ecd571b825c74cb5fbdd6700",
       "git_state": "tracked",
+      "stdout_observation": "exact-stream",
       "class": "hermetic",
       "command": [
         "sh",
@@ -2677,6 +2801,7 @@
       "source": "examples/permutations.metta",
       "source_sha256": "8ad558a980c9c3373cd95e7881520b790a89baa85790acdd48afdcb384ee385e",
       "git_state": "tracked",
+      "stdout_observation": "exact-stream",
       "class": "hermetic",
       "command": [
         "sh",
@@ -2699,6 +2824,7 @@
       "source": "examples/pln_didactic_witnesses.metta",
       "source_sha256": "b8d268dbb56da86d65355495c076937e56159360b1c368fc162e2fdbb766610f",
       "git_state": "untracked",
+      "stdout_observation": "exact-stream",
       "class": "hermetic",
       "command": [
         "sh",
@@ -2721,6 +2847,7 @@
       "source": "examples/pln_direct.metta",
       "source_sha256": "245de02e538983ccb2518028d1a91107af860500d371422122ed5bcc5d5f28e5",
       "git_state": "tracked",
+      "stdout_observation": "exact-stream",
       "class": "hermetic",
       "command": [
         "sh",
@@ -2743,6 +2870,7 @@
       "source": "examples/pln_itv_idm_parity_golden.metta",
       "source_sha256": "c14b53eed1c2a6eaea8321e3678d8fb49fcd1c63f375ce6d45dfcb262503b03b",
       "git_state": "untracked",
+      "stdout_observation": "exact-stream",
       "class": "hermetic",
       "command": [
         "sh",
@@ -2765,6 +2893,7 @@
       "source": "examples/pln_projection_tower_bool_canary.metta",
       "source_sha256": "f4b480ede6e70d94c9a836a5e623e3e2c83260ce21bd54f49347d7cf87892372",
       "git_state": "untracked",
+      "stdout_observation": "exact-stream",
       "class": "hermetic",
       "command": [
         "sh",
@@ -2787,6 +2916,7 @@
       "source": "examples/pln_roman.metta",
       "source_sha256": "ecc6283c64769c5963ffe6c433081217102b00d55e361633ec7d284c19575afb",
       "git_state": "tracked",
+      "stdout_observation": "exact-stream",
       "class": "hermetic",
       "command": [
         "sh",
@@ -2809,6 +2939,7 @@
       "source": "examples/pln_strength_prior_canary.metta",
       "source_sha256": "27a52a265864bafe8044ee6beaa0d4018dabd8ad2034ffae34eacb06d51bbf1e",
       "git_state": "untracked",
+      "stdout_observation": "exact-stream",
       "class": "hermetic",
       "command": [
         "sh",
@@ -2831,6 +2962,7 @@
       "source": "examples/pln_temporal_sequence_probe.metta",
       "source_sha256": "97361aeb29b7d71e1a7faf39ae7117fb2164ce4cc9c5afe245c10694245b6b3d",
       "git_state": "untracked",
+      "stdout_observation": "exact-stream",
       "class": "hermetic",
       "command": [
         "sh",
@@ -2853,6 +2985,7 @@
       "source": "examples/pln_truth_parity_golden.metta",
       "source_sha256": "2ecb03da5b11bcadfd57f73ae453c0121345f29c2bde97e2db32857258bef838",
       "git_state": "untracked",
+      "stdout_observation": "exact-stream",
       "class": "hermetic",
       "command": [
         "sh",
@@ -2875,6 +3008,7 @@
       "source": "examples/pln_tuffy.metta",
       "source_sha256": "39a1daf8d2bc97bfdc996ad5ff7125eb286d6031d4eab11561388c6859c63ad2",
       "git_state": "tracked",
+      "stdout_observation": "exact-stream",
       "class": "hermetic",
       "command": [
         "sh",
@@ -2897,6 +3031,7 @@
       "source": "examples/plntest.metta",
       "source_sha256": "dd2bad54d723221df226358a133ff91ee9818be486d278f676e3a00525194b83",
       "git_state": "tracked",
+      "stdout_observation": "exact-stream",
       "class": "hermetic",
       "command": [
         "sh",
@@ -2919,6 +3054,7 @@
       "source": "examples/plntestdirect.metta",
       "source_sha256": "138167c0ba4ada60ff94568e3155d725eeb1c29198d8647021ebac93026fc315",
       "git_state": "tracked",
+      "stdout_observation": "exact-stream",
       "class": "hermetic",
       "command": [
         "sh",
@@ -2941,6 +3077,7 @@
       "source": "examples/println_probe.metta",
       "source_sha256": "d87cb09c433eb71119c7e40b20f5e13ae68f0e6c7220e3d0e8f51e9cadd5e827",
       "git_state": "untracked",
+      "stdout_observation": "exact-stream",
       "class": "hermetic",
       "command": [
         "sh",
@@ -2963,6 +3100,7 @@
       "source": "examples/prologimport.metta",
       "source_sha256": "6befd34a75373617f318e47a9850a2466b9a0129bb13aeefd3b353a2db0a7d47",
       "git_state": "tracked",
+      "stdout_observation": "exact-stream",
       "class": "hermetic",
       "command": [
         "sh",
@@ -2988,6 +3126,7 @@
       "source": "examples/python.metta",
       "source_sha256": "4ab2f5212060389c2467ab4c9c58621742954603b9374ceef7b5a7a6e900d042",
       "git_state": "tracked",
+      "stdout_observation": "exact-stream",
       "class": "hermetic",
       "command": [
         "sh",
@@ -3010,6 +3149,7 @@
       "source": "examples/python_import.metta",
       "source_sha256": "1b9a96cdb36ca5d5f8ca4c12b5c6b4762bafe9bcb8e2234b1275749f662f9bdd",
       "git_state": "tracked",
+      "stdout_observation": "exact-stream",
       "class": "hermetic",
       "command": [
         "sh",
@@ -3032,6 +3172,7 @@
       "source": "examples/recursive_types.metta",
       "source_sha256": "c6cc4715f4e00219ce4d1f51479f8fd78957d71cc97408e3413dba1bf394f94c",
       "git_state": "tracked",
+      "stdout_observation": "exact-stream",
       "class": "hermetic",
       "command": [
         "sh",
@@ -3054,6 +3195,7 @@
       "source": "examples/recursive_types2.metta",
       "source_sha256": "2d2693b7260b74f2c2508d5793893dc48282aa4ced021f1829d563abe58e09cb",
       "git_state": "tracked",
+      "stdout_observation": "exact-stream",
       "class": "hermetic",
       "command": [
         "sh",
@@ -3076,6 +3218,7 @@
       "source": "examples/repl.metta",
       "source_sha256": "60d61798bca29c124e7845556b6c5e8a0f069232d1ef7ac0febedc2e7e980227",
       "git_state": "tracked",
+      "stdout_observation": "exact-stream",
       "class": "interactive",
       "command": [
         "sh",
@@ -3106,6 +3249,7 @@
       "source": "examples/repr.metta",
       "source_sha256": "c97007c9acd27d1a0883f25d4be56443c1815d603a024eff14c21ec53fee9a44",
       "git_state": "tracked",
+      "stdout_observation": "exact-stream",
       "class": "hermetic",
       "command": [
         "sh",
@@ -3128,6 +3272,7 @@
       "source": "examples/roman_test.metta",
       "source_sha256": "c384609e6c7a1c6d6dbb25871f70c7198d680cfa86d2a3950833aaf6f8ca540b",
       "git_state": "tracked",
+      "stdout_observation": "exact-stream",
       "class": "hermetic",
       "command": [
         "sh",
@@ -3150,6 +3295,7 @@
       "source": "examples/scale.metta",
       "source_sha256": "0dd3eb4503a887818e5763528577de0a7b60be10bb64ea5ed1a1e99b103bd242",
       "git_state": "tracked",
+      "stdout_observation": "exact-stream",
       "class": "hermetic",
       "command": [
         "sh",
@@ -3172,6 +3318,7 @@
       "source": "examples/selfprog.metta",
       "source_sha256": "120670f4d142fc4498b769360d74066d05a70dba09eff74ee75e5eb7f970d449",
       "git_state": "tracked",
+      "stdout_observation": "exact-stream",
       "class": "hermetic",
       "command": [
         "sh",
@@ -3194,6 +3341,7 @@
       "source": "examples/smartdispatch.metta",
       "source_sha256": "333f4ffdeeba70b2a57f4653034afc7805087dc07f9f6e898fc9280f8a5935cc",
       "git_state": "tracked",
+      "stdout_observation": "exact-stream",
       "class": "hermetic",
       "command": [
         "sh",
@@ -3216,6 +3364,7 @@
       "source": "examples/space_let_probe.metta",
       "source_sha256": "0bb1a628874b922973be7890d3ee1926212fc0523d307046d0476bc2bf75eaf0",
       "git_state": "untracked",
+      "stdout_observation": "exact-stream",
       "class": "hermetic-corrected",
       "command": [
         "sh",
@@ -3251,6 +3400,7 @@
       "source": "examples/spacefunction.metta",
       "source_sha256": "d98406d6761a67c3cce88942cacdf757bd81a62125449f62dfe6bc08d4eb752d",
       "git_state": "tracked",
+      "stdout_observation": "exact-stream",
       "class": "hermetic",
       "command": [
         "sh",
@@ -3273,6 +3423,7 @@
       "source": "examples/spaces.metta",
       "source_sha256": "5c5bee701685b6b5d1d00da5d1b6ad0f7f8f4cb7f81e302c97abf62f0903e26f",
       "git_state": "tracked",
+      "stdout_observation": "exact-stream",
       "class": "hermetic",
       "command": [
         "sh",
@@ -3295,6 +3446,7 @@
       "source": "examples/spaces2.metta",
       "source_sha256": "f14f4598702f5024a8645006573c32004f2ab7187b217655ab34fa1f091984eb",
       "git_state": "tracked",
+      "stdout_observation": "exact-stream",
       "class": "hermetic",
       "command": [
         "sh",
@@ -3317,6 +3469,7 @@
       "source": "examples/spaces3.metta",
       "source_sha256": "114d02286d0a03017d98a0d34a95367e7b99dcf1f9d3be0890fa2feec71919a9",
       "git_state": "tracked",
+      "stdout_observation": "exact-stream",
       "class": "hermetic",
       "command": [
         "sh",
@@ -3339,6 +3492,7 @@
       "source": "examples/spaces_find.metta",
       "source_sha256": "0515337af2bd470a5a6414b22accfa1b8cdc7fca2db36dd36334aaca299b4475",
       "git_state": "tracked",
+      "stdout_observation": "exact-stream",
       "class": "hermetic",
       "command": [
         "sh",
@@ -3361,6 +3515,7 @@
       "source": "examples/spaces_removeallatoms.metta",
       "source_sha256": "010a47fb19d70a99f01ef654c84f5e137c9234d044da23cab44a84c17563f231",
       "git_state": "tracked",
+      "stdout_observation": "exact-stream",
       "class": "hermetic",
       "command": [
         "sh",
@@ -3383,6 +3538,7 @@
       "source": "examples/spaces_succeedspredicate.metta",
       "source_sha256": "062c402656a921ebcc395e0551c536ce954414b97dc102dfb55376d961fb1c94",
       "git_state": "tracked",
+      "stdout_observation": "exact-stream",
       "class": "hermetic",
       "command": [
         "sh",
@@ -3405,6 +3561,7 @@
       "source": "examples/specialize.metta",
       "source_sha256": "6cb0a62fcee4c44f0ea2dd801eeb91f27fabd9ec7d47176f0d49880057b2cc41",
       "git_state": "tracked",
+      "stdout_observation": "exact-stream",
       "class": "hermetic",
       "command": [
         "sh",
@@ -3427,6 +3584,7 @@
       "source": "examples/specialize_recursive_wrap.metta",
       "source_sha256": "7ee22461c826c247a1a32ec8e2bef6ddc196d7795c3493f296747b8eb9698ca6",
       "git_state": "tracked",
+      "stdout_observation": "exact-stream",
       "class": "hermetic",
       "command": [
         "sh",
@@ -3449,6 +3607,7 @@
       "source": "examples/specializecyclic.metta",
       "source_sha256": "b7c44c25e838995917b8cc60e89341601400ba5634c24918ed9c4d39e446a0e6",
       "git_state": "tracked",
+      "stdout_observation": "exact-stream",
       "class": "hermetic",
       "command": [
         "sh",
@@ -3471,6 +3630,7 @@
       "source": "examples/specializefunctiontypes.metta",
       "source_sha256": "1124e55cc71566c1f1f55a8e5bab098adb6f2d400b1d91b0a1feb5081d5c1859",
       "git_state": "tracked",
+      "stdout_observation": "exact-stream",
       "class": "hermetic",
       "command": [
         "sh",
@@ -3493,6 +3653,7 @@
       "source": "examples/state.metta",
       "source_sha256": "40ba60970e02442f6321e11b3906c28cfce8e95fbb442f79a5d78d75332f8558",
       "git_state": "tracked",
+      "stdout_observation": "exact-stream",
       "class": "hermetic",
       "command": [
         "sh",
@@ -3515,6 +3676,7 @@
       "source": "examples/streamops.metta",
       "source_sha256": "992653b9d9ea6113b39974831042f9900dcf948ea284bd6aa534989989a509a3",
       "git_state": "tracked",
+      "stdout_observation": "exact-stream",
       "class": "hermetic",
       "command": [
         "sh",
@@ -3537,6 +3699,7 @@
       "source": "examples/string.metta",
       "source_sha256": "eefac0e82ccba76d79d211c36c436caaac1690ee52b5cf979eb492c7862fbb7c",
       "git_state": "tracked",
+      "stdout_observation": "exact-stream",
       "class": "hermetic",
       "command": [
         "sh",
@@ -3559,6 +3722,7 @@
       "source": "examples/supercollapse.metta",
       "source_sha256": "ef7f249ab8d245d069510a7e6e8006913036581db837a4d7b72db4c74466e787",
       "git_state": "tracked",
+      "stdout_observation": "exact-stream",
       "class": "hermetic",
       "command": [
         "sh",
@@ -3581,6 +3745,7 @@
       "source": "examples/superpose_nested.metta",
       "source_sha256": "66293b0898e578c80c9c450ecfd3c698eb196110cebe3411ff4f955f7e55293d",
       "git_state": "tracked",
+      "stdout_observation": "exact-stream",
       "class": "hermetic",
       "command": [
         "sh",
@@ -3603,6 +3768,7 @@
       "source": "examples/superpose_primes.metta",
       "source_sha256": "21ef63c2b2280307618774465ceb894146c7d0329471ac4ca0acec97a00ac3c1",
       "git_state": "tracked",
+      "stdout_observation": "exact-stream",
       "class": "hermetic",
       "command": [
         "sh",
@@ -3625,6 +3791,7 @@
       "source": "examples/tabling_fib.metta",
       "source_sha256": "49418f91a50b79d0ae8269a73833f5dc7801d014cb8578acb6d928d1b3b91c72",
       "git_state": "tracked",
+      "stdout_observation": "exact-stream",
       "class": "hermetic",
       "command": [
         "sh",
@@ -3647,6 +3814,7 @@
       "source": "examples/test_alpha_unique_atom.metta",
       "source_sha256": "775c7f8420b3654701eaf55bd3b46feba5d7410abf5e4a1bf8b395431e0945c7",
       "git_state": "tracked",
+      "stdout_observation": "exact-stream",
       "class": "hermetic",
       "command": [
         "sh",
@@ -3669,6 +3837,7 @@
       "source": "examples/test_datetime.metta",
       "source_sha256": "b273389991b864b2c49ab678dfc42e24caf1e7c95a8a384a5ae7aeecc8fe1978",
       "git_state": "tracked",
+      "stdout_observation": "exact-stream",
       "class": "external",
       "command": [
         "sh",
@@ -3719,6 +3888,7 @@
       "source": "examples/test_memo_aggregate.metta",
       "source_sha256": "ef3b78f0e01905f4973ed933c5b23dc504ed6020394f7fe46a7a4908d1a6a3c4",
       "git_state": "tracked",
+      "stdout_observation": "exact-stream",
       "class": "hermetic",
       "command": [
         "sh",
@@ -3741,6 +3911,7 @@
       "source": "examples/test_memo_dependency_invalidation.metta",
       "source_sha256": "a726a1e3159d2d39b56e405621aaec84ed167c18948352ce1e0e6a1256925f4a",
       "git_state": "tracked",
+      "stdout_observation": "exact-stream",
       "class": "hermetic",
       "command": [
         "sh",
@@ -3763,6 +3934,7 @@
       "source": "examples/test_memo_multi_answer.metta",
       "source_sha256": "e92c5289f530ed9ad5a15703827197bb1ee7de9c629a3146e2bd26338041f846",
       "git_state": "tracked",
+      "stdout_observation": "exact-stream",
       "class": "hermetic",
       "command": [
         "sh",
@@ -3785,6 +3957,7 @@
       "source": "examples/test_memo_per_arity.metta",
       "source_sha256": "1fd0dfcf2dbd65dd2afba1efa66dff701681c1e016da2da77886abf9618610e6",
       "git_state": "tracked",
+      "stdout_observation": "exact-stream",
       "class": "hermetic",
       "command": [
         "sh",
@@ -3807,6 +3980,7 @@
       "source": "examples/test_memo_same_name_multi_arity.metta",
       "source_sha256": "63a0795a52a0635962b3403f07e43f23876dffa8b4b900a0a4f9e5eff9bbe682",
       "git_state": "tracked",
+      "stdout_observation": "exact-stream",
       "class": "hermetic",
       "command": [
         "sh",
@@ -3829,6 +4003,7 @@
       "source": "examples/test_memo_stats.metta",
       "source_sha256": "d260e10926d3aceac8244cc6aa37bb1bcc79d16ce31d5a84e81ed8a7409557e8",
       "git_state": "tracked",
+      "stdout_observation": "exact-stream",
       "class": "hermetic",
       "command": [
         "sh",
@@ -3851,6 +4026,7 @@
       "source": "examples/test_memo_variant_nonground.metta",
       "source_sha256": "df8e3c3158890132d6c70259b4c2a2efb1d6bd307858f91e3bf15857db4b32cf",
       "git_state": "tracked",
+      "stdout_observation": "exact-stream",
       "class": "hermetic",
       "command": [
         "sh",
@@ -3873,6 +4049,7 @@
       "source": "examples/test_string_comments.metta",
       "source_sha256": "6204dbd7c4c75a37edf7b6336c0de879ed35a582871f755b58df263a3d8dd331",
       "git_state": "tracked",
+      "stdout_observation": "exact-stream",
       "class": "hermetic",
       "command": [
         "sh",
@@ -3895,6 +4072,7 @@
       "source": "examples/test_unify_eval_branches.metta",
       "source_sha256": "bde3f08b91a5cc3ba4d792888ebd9134bea0ca9b9600e678ccfe77d05cefec3b",
       "git_state": "tracked",
+      "stdout_observation": "exact-stream",
       "class": "hermetic",
       "command": [
         "sh",
@@ -3917,6 +4095,7 @@
       "source": "examples/tests.metta",
       "source_sha256": "5eac52c32161043f9bbf1edb2495117bbfc3034a202c3449e26d26882e67576a",
       "git_state": "tracked",
+      "stdout_observation": "exact-stream",
       "class": "hermetic",
       "command": [
         "sh",
@@ -3939,6 +4118,7 @@
       "source": "examples/tilepuzzle.metta",
       "source_sha256": "fe1ad93314528c5da78bc5980351d918113636f22d5ea9f6c99366caa80e5f7f",
       "git_state": "tracked",
+      "stdout_observation": "exact-stream",
       "class": "hermetic",
       "command": [
         "sh",
@@ -3961,6 +4141,7 @@
       "source": "examples/torch.metta",
       "source_sha256": "0f71fbaf6b53c9a6ba5599f5817697c4384fc4f9d21f092158f8247b5c3bf07b",
       "git_state": "tracked",
+      "stdout_observation": "exact-stream",
       "class": "external",
       "command": [
         "sh",
@@ -4000,6 +4181,7 @@
       "source": "examples/translatepredicate.metta",
       "source_sha256": "068dd162d14faf7c8714b5f0e68b76d2382fc526ada9b538a9ae1c3ff0b3093a",
       "git_state": "tracked",
+      "stdout_observation": "exact-stream",
       "class": "hermetic",
       "command": [
         "sh",
@@ -4022,6 +4204,7 @@
       "source": "examples/translatorrule.metta",
       "source_sha256": "1d95af405704216526d714e575ac6322c34d6c82779404d78f6ca949a9dfac60",
       "git_state": "tracked",
+      "stdout_observation": "exact-stream",
       "class": "hermetic",
       "command": [
         "sh",
@@ -4044,6 +4227,7 @@
       "source": "examples/translatorrule_fib.metta",
       "source_sha256": "50c0e76209e0e0747d5c30aaddbd0f7f56011e965f96f48ca423f773c20d1105",
       "git_state": "tracked",
+      "stdout_observation": "exact-stream",
       "class": "hermetic",
       "command": [
         "sh",
@@ -4066,6 +4250,7 @@
       "source": "examples/translatorrule_for.metta",
       "source_sha256": "a6b33e34afe59a171aa0d15c5786097ad5f57c1d66faeb239d7638d004cde082",
       "git_state": "tracked",
+      "stdout_observation": "exact-stream",
       "class": "hermetic",
       "command": [
         "sh",
@@ -4088,6 +4273,7 @@
       "source": "examples/twostage.metta",
       "source_sha256": "e9625f1621442342b342fa8be91ea8a4df7e154c0cfe166b8bf4bd5f5854025d",
       "git_state": "tracked",
+      "stdout_observation": "exact-stream",
       "class": "hermetic",
       "command": [
         "sh",
@@ -4110,6 +4296,7 @@
       "source": "examples/types.metta",
       "source_sha256": "0fc3eae720905d401d642a4c0c06e13bd0f8515f919dc5b593fc765dea6ad227",
       "git_state": "tracked",
+      "stdout_observation": "exact-stream",
       "class": "hermetic",
       "command": [
         "sh",
@@ -4132,6 +4319,7 @@
       "source": "examples/types_dependent.metta",
       "source_sha256": "b4fa7ec93e095d83b6a85095a459a7b9fbd9b5867bac4a81017c191d39646092",
       "git_state": "tracked",
+      "stdout_observation": "exact-stream",
       "class": "hermetic",
       "command": [
         "sh",
@@ -4154,6 +4342,7 @@
       "source": "examples/types_nondet.metta",
       "source_sha256": "639c20ead992f3fcf4930c3ad56b762b0bf14735adc5c5a4b8c6fbc36b4ef967",
       "git_state": "tracked",
+      "stdout_observation": "exact-stream",
       "class": "hermetic",
       "command": [
         "sh",
@@ -4176,6 +4365,7 @@
       "source": "examples/with_explicit_count.metta",
       "source_sha256": "a3369de2667cc4589c27837e2ba01466bbbe1e61bfd2bbb32afe267c6562336b",
       "git_state": "untracked",
+      "stdout_observation": "exact-stream",
       "class": "hermetic",
       "command": [
         "sh",
@@ -4198,6 +4388,7 @@
       "source": "examples/xor.metta",
       "source_sha256": "24e2dbd12646d7f6147f91b14d7d07a498d5b64ca7f7e8c546f376d9b2d88b30",
       "git_state": "tracked",
+      "stdout_observation": "exact-stream",
       "class": "hermetic",
       "command": [
         "sh",

@@ -65,6 +65,15 @@ uint32_t space_match_backend_candidates(Space *s, Atom *pattern, uint32_t **out)
     return 0;
 }
 
+bool space_match_backend_ground_exact_exists_frontier(
+    Space *s, Atom *pattern, bool *out_found) {
+    (void)s;
+    (void)pattern;
+    if (out_found)
+        *out_found = false;
+    return false;
+}
+
 void space_match_backend_query(Space *s, Arena *a, Atom *query, SubstMatchSet *out) {
     (void)s;
     (void)a;
@@ -413,6 +422,115 @@ static void assert_space_mutation_receipts_follow_tokens(
     assert((equation + opaque != 0u) == equation_projection_changed);
 }
 
+/* The program projection (equations and `:` declarations) is what
+   callability, named arity, and effect classification read.  Its token must
+   ignore data-only mutations, advance on either kind of program occurrence,
+   and leave the equation-occurrence token untouched by a declaration. */
+static void test_space_program_projection_tokens(void) {
+    Arena persistent;
+    Arena scratch;
+    TermUniverse universe;
+    Space ordered;
+
+    arena_init(&persistent);
+    arena_set_runtime_kind(
+        &persistent, CETTA_ARENA_RUNTIME_KIND_PERSISTENT);
+    arena_init(&scratch);
+    term_universe_init(&universe);
+    term_universe_set_persistent_arena(&universe, &persistent);
+    space_init_with_universe(&ordered, &universe);
+    ordered.kind = SPACE_KIND_STACK;
+
+    SymbolId head = symbol_intern_cstr(
+        g_symbols, "program-token-head");
+    Atom *lhs_elems[1] = { atom_symbol_id(&scratch, head) };
+    Atom *lhs = atom_expr(&scratch, lhs_elems, 1u);
+    Atom *equation = atom_expr3(
+        &scratch,
+        atom_symbol_id(&scratch, g_builtin_syms.equals),
+        lhs, atom_int(&scratch, 1));
+    Atom *declaration = atom_expr3(
+        &scratch,
+        atom_symbol_id(&scratch, g_builtin_syms.colon),
+        atom_symbol_id(&scratch, head),
+        atom_symbol(&scratch, "Number"));
+    /* A `:` form of the wrong arity is data, not a declaration. */
+    Atom *colon_data_elems[2] = {
+        atom_symbol_id(&scratch, g_builtin_syms.colon),
+        atom_symbol_id(&scratch, head),
+    };
+    Atom *colon_data = atom_expr(&scratch, colon_data_elems, 2u);
+    Atom *data = atom_symbol(&scratch, "program-token-data");
+
+    /* Data-only mutation: read token moves, program token does not. */
+    SpaceReadToken read0 = space_read_token(&ordered);
+    SpaceProgramToken program0 = space_program_token(&ordered);
+    reset_test_counters();
+    space_add(&ordered, data);
+    assert(!space_read_token_matches_live_space(read0, &ordered));
+    assert(space_program_token_eq(program0, space_program_token(&ordered)));
+    assert(test_counter(
+               CETTA_RUNTIME_COUNTER_SPACE_DECLARATION_REVISION_BUMP) == 0u);
+    assert(test_counter(
+               CETTA_RUNTIME_COUNTER_SPACE_EQUATION_REVISION_BUMP) == 0u);
+
+    /* Equation: program token moves through the equation clock only. */
+    SpaceProgramToken program1 = space_program_token(&ordered);
+    reset_test_counters();
+    space_add(&ordered, equation);
+    SpaceProgramToken program2 = space_program_token(&ordered);
+    assert(!space_program_token_eq(program1, program2));
+    assert(program2.equation_revision == program1.equation_revision + 1u);
+    assert(program2.declaration_revision == program1.declaration_revision);
+    assert(test_counter(
+               CETTA_RUNTIME_COUNTER_SPACE_EQUATION_REVISION_BUMP) == 1u);
+    assert(test_counter(
+               CETTA_RUNTIME_COUNTER_SPACE_DECLARATION_REVISION_BUMP) == 0u);
+
+    /* Declaration: program token moves through the declaration clock only,
+       and the equation-occurrence token stays current. */
+    SpaceEquationToken equations_before_declaration =
+        space_equation_token(&ordered);
+    SpaceProgramToken program3 = space_program_token(&ordered);
+    reset_test_counters();
+    space_add(&ordered, declaration);
+    SpaceProgramToken program4 = space_program_token(&ordered);
+    assert(!space_program_token_eq(program3, program4));
+    assert(program4.equation_revision == program3.equation_revision);
+    assert(program4.declaration_revision ==
+           program3.declaration_revision + 1u);
+    assert(space_equation_token_matches_live_space(
+        equations_before_declaration, &ordered));
+    assert(test_counter(
+               CETTA_RUNTIME_COUNTER_SPACE_DECLARATION_REVISION_BUMP) == 1u);
+    assert(test_counter(
+               CETTA_RUNTIME_COUNTER_SPACE_EQUATION_REVISION_BUMP) == 0u);
+    assert(test_counter(
+               CETTA_RUNTIME_COUNTER_SPACE_MUTATION_PUBLISH_DATA_ONLY) == 1u);
+
+    /* Negative canary: a two-element `:` form is ordinary data. */
+    SpaceProgramToken program5 = space_program_token(&ordered);
+    space_add(&ordered, colon_data);
+    assert(space_program_token_eq(program5, space_program_token(&ordered)));
+
+    /* Removals follow the same partition. */
+    SpaceProgramToken program6 = space_program_token(&ordered);
+    assert(space_remove(&ordered, data));
+    assert(space_program_token_eq(program6, space_program_token(&ordered)));
+    SpaceProgramToken program7 = space_program_token(&ordered);
+    assert(space_remove(&ordered, declaration));
+    SpaceProgramToken program8 = space_program_token(&ordered);
+    assert(!space_program_token_eq(program7, program8));
+    assert(program8.declaration_revision ==
+           program7.declaration_revision + 1u);
+    assert(program8.equation_revision == program7.equation_revision);
+
+    space_free(&ordered);
+    term_universe_free(&universe);
+    arena_free(&scratch);
+    arena_free(&persistent);
+}
+
 static void test_space_equation_projection_tokens(void) {
     Arena persistent;
     Arena scratch;
@@ -661,6 +779,7 @@ int main(void) {
 
     init_test_symbols(&symbols);
     test_space_equation_projection_tokens();
+    test_space_program_projection_tokens();
 
     {
         Arena equation_persistent;

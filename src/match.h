@@ -2,6 +2,7 @@
 #define CETTA_MATCH_H
 
 #include "atom.h"
+#include "gslt_term_view_v1.h"
 #include "prime_need.h"
 #include "term_universe.h"
 
@@ -352,6 +353,20 @@ bool      bindings_resolve_epoch_view_ground_at(
               Atom **ground_out);
 Atom     *binding_variable_atom(Arena *a, const Binding *binding);
 Atom     *bindings_resolve_atom_preview(Bindings *b, Atom *atom);
+/* Adapter from the shared immutable term-view interface to a Bindings
+ * environment.  It follows only a variable's root chain and never constructs
+ * a substituted term, so evaluator dialects can share structural observers
+ * without sharing their control semantics. */
+CettaGsltTermViewStatusV1 bindings_resolve_term_view_root_v1(
+              void *context, Atom *source_variable, Atom **target_out);
+static inline CettaGsltTermViewV1 bindings_term_view_v1(
+        Atom *source, const Bindings *bindings) {
+    return (CettaGsltTermViewV1){
+        .source = source,
+        .resolve = bindings_resolve_term_view_root_v1,
+        .resolve_context = (void *)bindings,
+    };
+}
 bool      bindings_add_id(Bindings *b, VarId var_id, SymbolId spelling, Atom *val);
 bool      bindings_add_id_acyclic(Bindings *b, VarId var_id,
                                   SymbolId spelling, Atom *val);

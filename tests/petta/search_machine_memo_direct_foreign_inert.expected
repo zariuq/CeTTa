@@ -1,0 +1,3 @@
+true
+(partial memoize (sq))
+9

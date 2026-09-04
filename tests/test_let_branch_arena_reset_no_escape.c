@@ -74,6 +74,14 @@ uint32_t space_match_backend_candidates(Space *s, Atom *pattern, uint32_t **out)
         *out = NULL;
     return 0;
 }
+bool space_match_backend_ground_exact_exists_frontier(
+    Space *s, Atom *pattern, bool *out_found) {
+    (void)s;
+    (void)pattern;
+    if (out_found)
+        *out_found = false;
+    return false;
+}
 void space_match_backend_query(Space *s, Arena *a, Atom *query,
                                SubstMatchSet *out) {
     (void)s;

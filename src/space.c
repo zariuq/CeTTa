@@ -312,7 +312,7 @@ static void disc_sym_ht_init(DiscSymHashTable *ht, uint32_t min_cap) {
         ht->entries[i].key = SYMBOL_ID_NONE;
 }
 
-static DiscNode *disc_sym_ht_get(DiscSymHashTable *ht, SymbolId key) {
+static DiscNode *disc_sym_ht_get(const DiscSymHashTable *ht, SymbolId key) {
     uint32_t idx = disc_sym_hash(key) & ht->mask;
     for (;;) {
         if (ht->entries[idx].key == key)
@@ -599,6 +599,44 @@ static void dns_push(DiscNodeSet *s, DiscNode *node) {
 static void disc_step(DiscNode *node, Atom *q, DiscNodeSet *next);
 static void disc_skip_term(DiscNode *node, DiscNodeSet *next);
 
+/* Traverse a borrowed expression coordinate vector without manufacturing an
+ * Atom header.  This is the storage-level realization of a projected term
+ * view: the trie observes the same coordinates as an expression Atom, while
+ * ownership and materialization remain with the caller. */
+static void disc_step_expression_coordinates(
+        DiscNode *node, Atom *const *coordinates,
+        CettaExprLen coordinate_count, DiscNodeSet *next) {
+    if (!node || !next || (coordinate_count > 0u && !coordinates))
+        return;
+    for (uint32_t i = 0u; i < node->nexpr; i++) {
+        if (node->expr[i].arity != coordinate_count)
+            continue;
+        DiscNodeSet current;
+        dns_init(&current);
+        dns_push(&current, node->expr[i].child);
+        for (CettaExprIndex coordinate = 0u;
+             coordinate < coordinate_count; coordinate++) {
+            DiscNodeSet following;
+            dns_init(&following);
+            for (uint32_t candidate = 0u;
+                 candidate < current.n; candidate++) {
+                disc_step(
+                    current.nodes[candidate], coordinates[coordinate],
+                    &following);
+            }
+            dns_free(&current);
+            current = following;
+        }
+        for (uint32_t candidate = 0u;
+             candidate < current.n; candidate++) {
+            dns_push(next, current.nodes[candidate]);
+        }
+        dns_free(&current);
+    }
+    /* A variable stored at this position matches the complete expression. */
+    dns_push(next, node->var_child);
+}
+
 /* Skip one complete term from the trie.  A query variable can match any
    indexed term, so we must advance past the entire depth-first encoding
    of whatever term appears at this position. */
@@ -687,31 +725,24 @@ static void disc_step(DiscNode *node, Atom *q, DiscNodeSet *next) {
         break;
 
     case ATOM_EXPR:
-        /* Match expression by arity, then chain depth-first through children */
-        for (uint32_t i = 0; i < node->nexpr; i++) {
-            if (node->expr[i].arity == q->expr.len) {
-                /* Start with the arity branch's child, then advance through
-                   each sub-element of the expression */
-                DiscNodeSet cur;
-                dns_init(&cur);
-                dns_push(&cur, node->expr[i].child);
-                for (CettaExprIndex ci = 0; ci < q->expr.len; ci++) {
-                    DiscNodeSet tmp;
-                    dns_init(&tmp);
-                    for (uint32_t ni = 0; ni < cur.n; ni++)
-                        disc_step(cur.nodes[ni], q->expr.elems[ci], &tmp);
-                    dns_free(&cur);
-                    cur = tmp;
-                }
-                /* After all children: cur holds the terminal nodes */
-                for (uint32_t ni = 0; ni < cur.n; ni++)
-                    dns_push(next, cur.nodes[ni]);
-                dns_free(&cur);
-            }
-        }
-        /* A variable in the indexed LHS matches any expression */
-        dns_push(next, node->var_child);
+        disc_step_expression_coordinates(
+            node, q->expr.elems, q->expr.len, next);
         break;
+    }
+}
+
+static void disc_collect_leaves(
+        const DiscNodeSet *final, CettaIndex **out,
+        CettaIndex *nout, CettaIndex *cout) {
+    for (uint32_t i = 0u; i < final->n; i++) {
+        DiscNode *node = final->nodes[i];
+        for (CettaIndex j = 0u; j < node->nleaves; j++) {
+            if (*nout >= *cout) {
+                *cout = *cout ? *cout * 2u : 16u;
+                *out = cetta_realloc(*out, sizeof(CettaIndex) * *cout);
+            }
+            (*out)[(*nout)++] = node->leaves[j];
+        }
     }
 }
 
@@ -722,18 +753,151 @@ void disc_lookup(DiscNode *root, Atom *query, CettaIndex **out,
     DiscNodeSet final;
     dns_init(&final);
     disc_step(root, query, &final);
-    /* Collect equation indices from all terminal nodes' leaves */
-    for (uint32_t i = 0; i < final.n; i++) {
-        DiscNode *n = final.nodes[i];
-        for (CettaIndex j = 0; j < n->nleaves; j++) {
-            if (*nout >= *cout) {
-                *cout = *cout ? *cout * 2 : 16;
-                *out = cetta_realloc(*out, sizeof(CettaIndex) * *cout);
-            }
-            (*out)[(*nout)++] = n->leaves[j];
-        }
-    }
+    disc_collect_leaves(&final, out, nout, cout);
     dns_free(&final);
+}
+
+void disc_lookup_expression_coordinates(
+        DiscNode *root, Atom *const *coordinates,
+        CettaExprLen coordinate_count, CettaIndex **out,
+        CettaIndex *nout, CettaIndex *cout) {
+    *out = NULL;
+    *nout = 0u;
+    *cout = 0u;
+    DiscNodeSet final;
+    dns_init(&final);
+    disc_step_expression_coordinates(
+        root, coordinates, coordinate_count, &final);
+    disc_collect_leaves(&final, out, nout, cout);
+    dns_free(&final);
+}
+
+static const DiscNode *disc_find_symbol_branch(
+        const DiscNode *node, SymbolId key) {
+    if (node->sym_hashed)
+        return disc_sym_ht_get(&node->sym_ht, key);
+    for (uint32_t i = 0u; i < node->nsym; i++) {
+        if (node->sym[i].key == key)
+            return node->sym[i].child;
+    }
+    return NULL;
+}
+
+static const DiscNode *disc_find_integer_branch(
+        const DiscNode *node, int64_t value) {
+    if (node->ints_hashed)
+        return disc_int_ht_get(&node->int_ht, value);
+    for (uint32_t i = 0u; i < node->nints; i++) {
+        if (node->ints[i].key == value)
+            return node->ints[i].child;
+    }
+    return NULL;
+}
+
+static const DiscNode *disc_find_expression_branch(
+        const DiscNode *node, CettaExprLen arity) {
+    for (uint32_t i = 0u; i < node->nexpr; i++) {
+        if (node->expr[i].arity == arity)
+            return node->expr[i].child;
+    }
+    return NULL;
+}
+
+static bool disc_follow_rigid_exact_path(
+    const DiscNode *node, const Atom *query,
+    const DiscNode **out_continuation);
+
+static bool disc_follow_rigid_exact_expression_coordinates(
+        const DiscNode *node, Atom *const *coordinates,
+        CettaExprLen coordinate_count,
+        const DiscNode **out_continuation) {
+    if (out_continuation)
+        *out_continuation = NULL;
+    if (!node || !out_continuation || node->var_child ||
+        (coordinate_count > 0u && !coordinates)) {
+        return false;
+    }
+    const DiscNode *continuation = disc_find_expression_branch(
+        node, coordinate_count);
+    if (!continuation)
+        return true;
+    for (CettaExprIndex i = 0u; i < coordinate_count; i++) {
+        const DiscNode *next = NULL;
+        if (!disc_follow_rigid_exact_path(
+                continuation, coordinates[i], &next)) {
+            return false;
+        }
+        if (!next)
+            return true;
+        continuation = next;
+    }
+    *out_continuation = continuation;
+    return true;
+}
+
+/* Follow the unique rigid encoding used by disc_insert_atom.  NULL in
+ * out_continuation denotes a proven empty path; false denotes a query for
+ * which the trie cannot by itself account for every matching occurrence. */
+static bool disc_follow_rigid_exact_path(
+        const DiscNode *node, const Atom *query,
+        const DiscNode **out_continuation) {
+    if (out_continuation)
+        *out_continuation = NULL;
+    if (!node || !query || !out_continuation || node->var_child)
+        return false;
+
+    switch (query->kind) {
+    case ATOM_SYMBOL:
+        *out_continuation = disc_find_symbol_branch(
+            node, query->sym_id);
+        return true;
+    case ATOM_VAR:
+        return false;
+    case ATOM_GROUNDED:
+        if (query->ground.gkind != GV_INT)
+            return false;
+        *out_continuation = disc_find_integer_branch(
+            node, query->ground.ival);
+        return true;
+    case ATOM_EXPR: {
+        return disc_follow_rigid_exact_expression_coordinates(
+            node, query->expr.elems, query->expr.len,
+            out_continuation);
+    }
+    }
+    return false;
+}
+
+bool disc_count_rigid_exact_expression_coordinates(
+        const DiscNode *root, Atom *const *coordinates,
+        CettaExprLen coordinate_count, CettaIndex *out_count) {
+    if (out_count)
+        *out_count = 0u;
+    if (!root || !out_count ||
+        (coordinate_count > 0u && !coordinates)) {
+        return false;
+    }
+    const DiscNode *leaf = NULL;
+    if (!disc_follow_rigid_exact_expression_coordinates(
+            root, coordinates, coordinate_count, &leaf)) {
+        return false;
+    }
+    *out_count = leaf ? leaf->nleaves : 0u;
+    return true;
+}
+
+bool disc_count_rigid_exact_path(
+        const DiscNode *root, const Atom *query,
+        CettaIndex *out_count) {
+    if (out_count)
+        *out_count = 0u;
+    if (!root || !query || !out_count)
+        return false;
+    const DiscNode *leaf = NULL;
+    if (!disc_follow_rigid_exact_path(root, query, &leaf))
+        return false;
+    *out_count = leaf ? leaf->nleaves : 0u;
+    return true;
 }
 
 /* ── Equation Index ─────────────────────────────────────────────────────── */
@@ -1230,6 +1394,15 @@ static Arena *canon_scratch(void) {
    theorem maps to one id.  The presence bitset then answers alpha-aware
    containment as an O(1) id predicate. */
 static AtomId space_canonical_id_for_stored(Space *s, AtomId atom_id) {
+    const CettaTermHdr *hdr =
+        s && s->native.universe
+            ? tu_hdr(s->native.universe, atom_id)
+            : NULL;
+    /* A byte-backed ground record is already its own alpha-canonical key.
+       Reading that fact from the stored summary avoids materializing a
+       persistent Atom merely to rediscover that it has no variables. */
+    if (hdr && !tu_has_vars(s->native.universe, atom_id))
+        return atom_id;
     Atom *atom = term_universe_get_atom(s->native.universe, atom_id);
     if (!atom)
         return CETTA_ATOM_ID_NONE;
@@ -1570,8 +1743,13 @@ static bool space_has_overlay_base(const Space *s) {
 
 typedef enum {
     SPACE_MUTATION_EQUATION_PROJECTION_DATA_ONLY = 0,
-    SPACE_MUTATION_EQUATION_PROJECTION_RELEVANT,
-    SPACE_MUTATION_EQUATION_PROJECTION_OPAQUE,
+    /* Bits, merged by union: an `=` occurrence, an unclassifiable
+     * occurrence (advances every projection clock conservatively), and a
+     * `:` declaration, which lies outside the equation-occurrence projection
+     * but inside the program projection read by callability and arity. */
+    SPACE_MUTATION_EQUATION_PROJECTION_RELEVANT = 1u << 0,
+    SPACE_MUTATION_EQUATION_PROJECTION_OPAQUE = 1u << 1,
+    SPACE_MUTATION_EQUATION_PROJECTION_DECLARATION = 1u << 2,
 } SpaceMutationEquationProjection;
 
 typedef enum {
@@ -1935,20 +2113,25 @@ space_atom_equation_projection(const Space *s, AtomId atom_id, Atom *atom) {
     if (s && s->native.universe && atom_id != CETTA_ATOM_ID_NONE) {
         const CettaTermHdr *header = tu_hdr(s->native.universe, atom_id);
         if (header) {
-            return tu_kind(s->native.universe, atom_id) == ATOM_EXPR &&
-                    tu_arity(s->native.universe, atom_id) == 3u &&
-                    tu_head_sym(s->native.universe, atom_id) ==
-                        g_builtin_syms.equals
-                ? SPACE_MUTATION_EQUATION_PROJECTION_RELEVANT
-                : SPACE_MUTATION_EQUATION_PROJECTION_DATA_ONLY;
+            if (tu_kind(s->native.universe, atom_id) == ATOM_EXPR &&
+                tu_arity(s->native.universe, atom_id) == 3u) {
+                SymbolId head = tu_head_sym(s->native.universe, atom_id);
+                if (head == g_builtin_syms.equals)
+                    return SPACE_MUTATION_EQUATION_PROJECTION_RELEVANT;
+                if (head == g_builtin_syms.colon)
+                    return SPACE_MUTATION_EQUATION_PROJECTION_DECLARATION;
+            }
+            return SPACE_MUTATION_EQUATION_PROJECTION_DATA_ONLY;
         }
         if (!atom)
             atom = term_universe_get_atom(s->native.universe, atom_id);
     }
     if (atom) {
-        return space_atom_form_is(atom, g_builtin_syms.equals, 3u)
-            ? SPACE_MUTATION_EQUATION_PROJECTION_RELEVANT
-            : SPACE_MUTATION_EQUATION_PROJECTION_DATA_ONLY;
+        if (space_atom_form_is(atom, g_builtin_syms.equals, 3u))
+            return SPACE_MUTATION_EQUATION_PROJECTION_RELEVANT;
+        if (space_atom_form_is(atom, g_builtin_syms.colon, 3u))
+            return SPACE_MUTATION_EQUATION_PROJECTION_DECLARATION;
+        return SPACE_MUTATION_EQUATION_PROJECTION_DATA_ONLY;
     }
     return SPACE_MUTATION_EQUATION_PROJECTION_OPAQUE;
 }
@@ -1956,15 +2139,7 @@ space_atom_equation_projection(const Space *s, AtomId atom_id, Atom *atom) {
 static SpaceMutationEquationProjection space_merge_equation_projection(
         SpaceMutationEquationProjection left,
         SpaceMutationEquationProjection right) {
-    if (left == SPACE_MUTATION_EQUATION_PROJECTION_RELEVANT ||
-        right == SPACE_MUTATION_EQUATION_PROJECTION_RELEVANT) {
-        return SPACE_MUTATION_EQUATION_PROJECTION_RELEVANT;
-    }
-    if (left == SPACE_MUTATION_EQUATION_PROJECTION_OPAQUE ||
-        right == SPACE_MUTATION_EQUATION_PROJECTION_OPAQUE) {
-        return SPACE_MUTATION_EQUATION_PROJECTION_OPAQUE;
-    }
-    return SPACE_MUTATION_EQUATION_PROJECTION_DATA_ONLY;
+    return (SpaceMutationEquationProjection)(left | right);
 }
 
 static SpaceMutationEquationProjection
@@ -1972,16 +2147,15 @@ space_local_removal_equation_projection(const Space *s, CettaIndex raw_idx) {
     if (!s || raw_idx >= s->native.len)
         return SPACE_MUTATION_EQUATION_PROJECTION_OPAQUE;
     AtomId removed_id = space_local_get_atom_id_at64(s, raw_idx);
-    Atom *removed_atom = space_local_get_at64(s, raw_idx);
     SpaceMutationEquationProjection result =
-        space_atom_equation_projection(s, removed_id, removed_atom);
+        space_atom_equation_projection(s, removed_id, NULL);
     if (!space_is_ordered(s) && raw_idx + 1u < s->native.len) {
         CettaIndex tail = s->native.len - 1u;
         result = space_merge_equation_projection(
             result,
             space_atom_equation_projection(
                 s, space_local_get_atom_id_at64(s, tail),
-                space_local_get_at64(s, tail)));
+                NULL));
     }
     return result;
 }
@@ -1999,7 +2173,9 @@ space_logical_removed_range_equation_projection(
             space_atom_equation_projection(
                 s, space_get_atom_id_at64(s, index),
                 space_get_at64(s, index)));
-        if (result == SPACE_MUTATION_EQUATION_PROJECTION_RELEVANT)
+        if ((result & SPACE_MUTATION_EQUATION_PROJECTION_OPAQUE) ||
+            ((result & SPACE_MUTATION_EQUATION_PROJECTION_RELEVANT) &&
+             (result & SPACE_MUTATION_EQUATION_PROJECTION_DECLARATION)))
             break;
     }
     return result;
@@ -2333,6 +2509,7 @@ static void space_reset_moved_from(Space *s) {
     s->instance_id = space_fresh_instance_id();
     s->revision = 0;
     s->equation_revision = 0;
+    s->declaration_revision = 0;
     s->prefix_epoch = space_fresh_prefix_epoch();
     space_native_storage_init_empty(s, space_default_universe());
     space_match_backend_init(s);
@@ -2351,6 +2528,7 @@ void space_init_with_universe(Space *s, TermUniverse *universe) {
     s->instance_id = space_fresh_instance_id();
     s->revision = 0;
     s->equation_revision = 0;
+    s->declaration_revision = 0;
     s->prefix_epoch = space_fresh_prefix_epoch();
     space_match_backend_init(s);
     space_attach_to_universe(s, s->native.universe);
@@ -2390,6 +2568,7 @@ void space_free(Space *s) {
     s->instance_id = 0;
     s->revision = 0;
     s->equation_revision = 0;
+    s->declaration_revision = 0;
     s->prefix_epoch = 0;
     eq_index_free(&s->native.eq_idx);
     ty_ann_index_free(&s->native.ty_idx);
@@ -2463,6 +2642,17 @@ static uint64_t space_projection_dependency_epoch(const Space *s) {
             latest = dependency->prefix_epoch;
     }
     return latest;
+}
+
+SpaceProgramToken space_program_token(const Space *s) {
+    return (SpaceProgramToken){
+        .space = s,
+        .instance_id = space_instance_id(s),
+        .equation_revision = space_equation_revision(s),
+        .declaration_revision = space_declaration_revision(s),
+        .base_dependency_epoch =
+            s && s->overlay_base ? space_global_mutation_epoch() : 0u,
+    };
 }
 
 SpaceEquationToken space_equation_token(const Space *s) {
@@ -3386,13 +3576,15 @@ static bool id_present_sync(Space *s) {
     for (CettaIndex i = s->native.id_present_synced_len;
          i < logical_len; i++) {
         AtomId stored_id = space_get_atom_id_at64(s, i);
-        Atom *stored =
-            term_universe_get_atom(s->native.universe, stored_id);
-        /* Pointer-backed runtime values do not have lawful structural intern
-           keys.  Leave them to the exact/alpha scan; stable queries can still
-           use the projection built from the remaining rows. */
-        if (stored && !term_universe_atom_is_stable(stored))
-            continue;
+        if (!tu_hdr(s->native.universe, stored_id)) {
+            Atom *stored =
+                term_universe_get_atom(s->native.universe, stored_id);
+            /* Pointer-backed runtime values do not have lawful structural
+               intern keys.  Leave them to the exact/alpha scan; stable queries
+               can still use the projection built from the remaining rows. */
+            if (stored && !term_universe_atom_is_stable(stored))
+                continue;
+        }
         AtomId cid = space_canonical_id_for_stored(s, stored_id);
         if (cid == CETTA_ATOM_ID_NONE ||
             !id_present_set(&s->native, cid)) {
@@ -3459,24 +3651,40 @@ static void space_publish_mutation(
     } else if (prefix_effect != SPACE_MUTATION_PREFIX_APPEND_ONLY) {
         abort();
     }
-    switch (equation_projection) {
-    case SPACE_MUTATION_EQUATION_PROJECTION_DATA_ONLY:
-        cetta_runtime_stats_inc(
-            CETTA_RUNTIME_COUNTER_SPACE_MUTATION_PUBLISH_DATA_ONLY);
-        break;
-    case SPACE_MUTATION_EQUATION_PROJECTION_RELEVANT:
-        cetta_runtime_stats_inc(
-            CETTA_RUNTIME_COUNTER_SPACE_MUTATION_PUBLISH_EQUATION);
-        break;
-    case SPACE_MUTATION_EQUATION_PROJECTION_OPAQUE:
-        cetta_runtime_stats_inc(
-            CETTA_RUNTIME_COUNTER_SPACE_MUTATION_PUBLISH_OPAQUE);
-        break;
-    default:
+    if (equation_projection &
+            ~(SPACE_MUTATION_EQUATION_PROJECTION_RELEVANT |
+              SPACE_MUTATION_EQUATION_PROJECTION_OPAQUE |
+              SPACE_MUTATION_EQUATION_PROJECTION_DECLARATION)) {
         abort();
     }
-    if (equation_projection !=
-            SPACE_MUTATION_EQUATION_PROJECTION_DATA_ONLY) {
+    /* The publication counters describe the equation-occurrence projection:
+     * a declaration-only mutation is data-only for that projection. */
+    if (equation_projection & SPACE_MUTATION_EQUATION_PROJECTION_RELEVANT) {
+        cetta_runtime_stats_inc(
+            CETTA_RUNTIME_COUNTER_SPACE_MUTATION_PUBLISH_EQUATION);
+    } else if (equation_projection &
+               SPACE_MUTATION_EQUATION_PROJECTION_OPAQUE) {
+        cetta_runtime_stats_inc(
+            CETTA_RUNTIME_COUNTER_SPACE_MUTATION_PUBLISH_OPAQUE);
+    } else {
+        cetta_runtime_stats_inc(
+            CETTA_RUNTIME_COUNTER_SPACE_MUTATION_PUBLISH_DATA_ONLY);
+    }
+    if (equation_projection &
+            (SPACE_MUTATION_EQUATION_PROJECTION_DECLARATION |
+             SPACE_MUTATION_EQUATION_PROJECTION_OPAQUE)) {
+        if (s->declaration_revision == UINT64_MAX) {
+            fputs("CeTTa: exhausted Space declaration revision counter\n",
+                  stderr);
+            abort();
+        }
+        s->declaration_revision++;
+        cetta_runtime_stats_inc(
+            CETTA_RUNTIME_COUNTER_SPACE_DECLARATION_REVISION_BUMP);
+    }
+    if (equation_projection &
+            (SPACE_MUTATION_EQUATION_PROJECTION_RELEVANT |
+             SPACE_MUTATION_EQUATION_PROJECTION_OPAQUE)) {
         if (s->equation_revision == UINT64_MAX) {
             fputs("CeTTa: exhausted Space equation revision counter\n", stderr);
             abort();
@@ -3844,6 +4052,8 @@ static void space_replace_contents_classified(
     uint64_t src_revision = src->revision;
     uint64_t old_equation_revision = dst->equation_revision;
     uint64_t src_equation_revision = src->equation_revision;
+    uint64_t old_declaration_revision = dst->declaration_revision;
+    uint64_t src_declaration_revision = src->declaration_revision;
     space_free(dst);
     space_move_storage_and_backend(dst, src);
     space_detach_from_universe(src);
@@ -3851,11 +4061,19 @@ static void space_replace_contents_classified(
     dst->instance_id = dst_instance_id;
     dst->revision = old_revision > src_revision ? old_revision : src_revision;
     dst->equation_revision =
-        equation_projection ==
-                SPACE_MUTATION_EQUATION_PROJECTION_DATA_ONLY
+        (equation_projection &
+         (SPACE_MUTATION_EQUATION_PROJECTION_RELEVANT |
+          SPACE_MUTATION_EQUATION_PROJECTION_OPAQUE)) == 0
             ? old_equation_revision
             : old_equation_revision > src_equation_revision
                 ? old_equation_revision : src_equation_revision;
+    dst->declaration_revision =
+        (equation_projection &
+         (SPACE_MUTATION_EQUATION_PROJECTION_DECLARATION |
+          SPACE_MUTATION_EQUATION_PROJECTION_OPAQUE)) == 0
+            ? old_declaration_revision
+            : old_declaration_revision > src_declaration_revision
+                ? old_declaration_revision : src_declaration_revision;
     space_publish_mutation(
         dst, equation_projection, SPACE_MUTATION_PREFIX_REWRITTEN);
     space_reset_moved_from(src);
@@ -5292,14 +5510,43 @@ bool space_match_exists_ground_exact(Space *s, Atom *pattern,
             return false;
         }
     } else {
-        if (!space_contains_only_exact_atoms(s))
+        if (space_contains_only_exact_atoms(s)) {
+            found = space_contains_exact(s, pattern);
+        } else if (!space_match_backend_ground_exact_exists_frontier(
+                       s, pattern, &found)) {
             return false;
-        found = space_contains_exact(s, pattern);
+        }
     }
 
     if (out_applicable)
         *out_applicable = true;
     return found;
+}
+
+bool space_match_exists_ground_exact_expression_coordinates(
+        Space *s, Atom *const *coordinates,
+        CettaExprLen coordinate_count, bool *out_applicable) {
+    if (out_applicable)
+        *out_applicable = false;
+    if (!s || coordinate_count == 0u || !coordinates ||
+        space_has_overlay_base(s) ||
+        space_engine_uses_pathmap(s->match_backend.kind) ||
+        !s->native.universe || !space_contains_only_exact_atoms(s)) {
+        return false;
+    }
+    for (CettaExprIndex index = 0u;
+         index < coordinate_count; index++) {
+        if (!atom_is_exact_indexable(coordinates[index]))
+            return false;
+    }
+    if (!id_present_sync(s))
+        return false;
+    AtomId query_id = term_universe_lookup_expression_coordinates(
+        s->native.universe, coordinates, coordinate_count);
+    if (out_applicable)
+        *out_applicable = true;
+    return query_id != CETTA_ATOM_ID_NONE &&
+        id_present_contains(&s->native, query_id);
 }
 
 bool space_contains_canonical(Space *s, Atom *atom, bool *out_applicable) {

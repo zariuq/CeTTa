@@ -173,6 +173,11 @@ typedef bool (*PettaMachineBorrowedItemConsumer)(
 typedef struct {
     void *context;
     const PettaAnalysisService *analysis;
+    /* The semantic consumer contract remains separate from its derived
+     * control plan: changing the contraction algebra cannot manufacture
+     * scheduling or branch-storage authority.  NULL preserves exact ordered
+     * answers for standalone embeddings. */
+    const CettaObservationContract *observation_contract;
     /* Scope-entry observation plan supplied by the evaluator.  The machine
      * may use it only to preserve a delimiter across externalized branches;
      * it grants neither storage nor batching authority.  NULL keeps nested
@@ -666,6 +671,7 @@ typedef struct {
     uint64_t count_aggregate_boundary_copies_avoided;
     uint64_t count_aggregate_match_folds;
     uint64_t count_aggregate_match_answers;
+    uint64_t count_aggregate_match_view_folds;
     uint64_t count_aggregate_let_fusions;
     uint64_t match_existence_observer_folds;
     uint64_t child_machine_init_attempts;

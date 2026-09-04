@@ -381,6 +381,24 @@ static PeTTaNamedArity petta_runtime_arity(
     };
 }
 
+/* `git-import!` interned once per symbol-table instance: this authority is
+ * consulted on every canonical and prepared PeTTa call, so it must compare
+ * identifiers rather than spellings. */
+static SymbolId petta_runtime_git_import_symbol(void) {
+    static _Thread_local const SymbolTable *table = NULL;
+    static _Thread_local uint64_t table_instance_id = 0u;
+    static _Thread_local SymbolId symbol = SYMBOL_ID_NONE;
+    uint64_t instance = symbol_table_instance_id(g_symbols);
+    if (!g_symbols)
+        return SYMBOL_ID_NONE;
+    if (table != g_symbols || table_instance_id != instance) {
+        table = g_symbols;
+        table_instance_id = instance;
+        symbol = symbol_intern_cstr(g_symbols, "git-import!");
+    }
+    return symbol;
+}
+
 PeTTaNamedArity cetta_petta_runtime_named_arity(
     const CettaLibraryContext *context,
     SymbolId head, CettaExprLen supplied) {
@@ -390,7 +408,7 @@ PeTTaNamedArity cetta_petta_runtime_named_arity(
      * the effect itself; before the capability is present the authored head
      * remains ordinary uninterpreted MeTTa syntax. */
     if (context && g_symbols && head != SYMBOL_ID_NONE &&
-        symbol_eq_cstr(g_symbols, head, "git-import!") &&
+        head == petta_runtime_git_import_symbol() &&
         cetta_library_petta_git_import_enabled(context)) {
         return petta_runtime_arity(supplied, 1u, 4u);
     }

@@ -718,6 +718,15 @@ uint32_t space_match_backend_candidates(Space *s, Atom *pattern, uint32_t **out)
     return 0;
 }
 
+bool space_match_backend_ground_exact_exists_frontier(
+    Space *s, Atom *pattern, bool *out_found) {
+    (void)s;
+    (void)pattern;
+    if (out_found)
+        *out_found = false;
+    return false;
+}
+
 void space_match_backend_query(Space *s, Arena *a, Atom *query, SubstMatchSet *out) {
     (void)s;
     (void)a;
@@ -1945,6 +1954,16 @@ int main(void) {
     CettaTermUniverseDiagnostics lookup_diag =
         snapshot_term_universe_witnesses(&universe);
     assert(lookup_id == seen_id);
+    assert(term_universe_lookup_expression_coordinates(
+               &universe, seen_atom->expr.elems,
+               seen_atom->expr.len) == seen_id);
+    Atom *missing_seen_coordinates[2] = {
+        seen_head,
+        atom_symbol(&scratch, "missing-seen-coordinate"),
+    };
+    assert(term_universe_lookup_expression_coordinates(
+               &universe, missing_seen_coordinates, 2u) ==
+           CETTA_ATOM_ID_NONE);
     assert(term_universe_atom_id_eq(&universe, seen_id, seen_atom));
     assert(tu_hash32(&universe, seen_id) == atom_hash(seen_atom));
     assert(test_counter(CETTA_RUNTIME_COUNTER_TERM_UNIVERSE_LAZY_DECODE) == 0);
@@ -1979,7 +1998,59 @@ int main(void) {
     assert(disc_matches != NULL);
     assert(disc_matches[0] == 77);
     free(disc_matches);
+    disc_matches = NULL;
+    disc_nmatches = 0u;
+    disc_cap = 0u;
+    assert(seen_atom->kind == ATOM_EXPR);
+    disc_lookup_expression_coordinates(
+        disc, seen_atom->expr.elems, seen_atom->expr.len,
+        &disc_matches, &disc_nmatches, &disc_cap);
+    assert(disc_nmatches == 1u);
+    assert(disc_matches != NULL);
+    assert(disc_matches[0] == 77u);
+    free(disc_matches);
     disc_node_free(disc);
+
+    /* A rigid path can be summarized by its occurrence-bearing leaf without
+     * materializing a candidate vector.  Duplicate rows remain duplicate
+     * occurrences, a missing rigid edge is an exact zero, and any overlapping
+     * stored wildcard makes the aggregate conservatively decline. */
+    DiscNode *rigid_count_disc = disc_node_new();
+    disc_insert(rigid_count_disc, seen_atom, 3u);
+    disc_insert(rigid_count_disc, seen_atom, 9u);
+    CettaIndex rigid_count = 0u;
+    assert(disc_count_rigid_exact_path(
+        rigid_count_disc, seen_atom, &rigid_count));
+    assert(rigid_count == 2u);
+    assert(disc_count_rigid_exact_expression_coordinates(
+        rigid_count_disc, seen_atom->expr.elems,
+        seen_atom->expr.len, &rigid_count));
+    assert(rigid_count == 2u);
+    Atom *missing_items[2] = {
+        seen_head,
+        atom_symbol(&scratch, "missing-rigid-path"),
+    };
+    Atom *missing_rigid = atom_expr(&scratch, missing_items, 2u);
+    assert(disc_count_rigid_exact_path(
+        rigid_count_disc, missing_rigid, &rigid_count));
+    assert(rigid_count == 0u);
+    assert(disc_count_rigid_exact_expression_coordinates(
+        rigid_count_disc, missing_rigid->expr.elems,
+        missing_rigid->expr.len, &rigid_count));
+    assert(rigid_count == 0u);
+    Atom *wildcard_items[2] = {
+        seen_head,
+        atom_var(&scratch, "$wildcard"),
+    };
+    disc_insert(
+        rigid_count_disc,
+        atom_expr(&scratch, wildcard_items, 2u), 12u);
+    assert(!disc_count_rigid_exact_path(
+        rigid_count_disc, seen_atom, &rigid_count));
+    assert(!disc_count_rigid_exact_expression_coordinates(
+        rigid_count_disc, seen_atom->expr.elems,
+        seen_atom->expr.len, &rigid_count));
+    disc_node_free(rigid_count_disc);
 
     /* Integer discrimination promotes from a small linear branch set to an
      * open-addressed table.  Exercise positive, negative, duplicate, extreme,
@@ -2007,6 +2078,17 @@ int main(void) {
         &universe, NULL, atom_int(&scratch, 17));
     assert(disc_insert_id(
         integer_disc, &universe, duplicate_integer_id, 258u));
+
+    CettaIndex integer_rigid_count = 0u;
+    assert(disc_count_rigid_exact_path(
+        integer_disc, atom_int(&scratch, 17), &integer_rigid_count));
+    assert(integer_rigid_count == 2u);
+    assert(disc_count_rigid_exact_path(
+        integer_disc, atom_int(&scratch, -1), &integer_rigid_count));
+    assert(integer_rigid_count == 0u);
+    assert(!disc_count_rigid_exact_path(
+        integer_disc, atom_var(&scratch, "$rigid-count-open"),
+        &integer_rigid_count));
 
     for (int64_t value = 0; value < 256; value++) {
         CettaIndex *integer_matches = NULL;
@@ -2144,6 +2226,25 @@ int main(void) {
     assert(atom_is_symbol_id(eq_results.items[0].result, b_sym));
     assert(test_counter(CETTA_RUNTIME_COUNTER_TERM_UNIVERSE_LAZY_DECODE) == 0);
     query_results_free(&eq_results);
+
+    bool coordinate_existence_applicable = false;
+    assert(space_match_exists_ground_exact_expression_coordinates(
+        &hash_space, seen_atom->expr.elems, seen_atom->expr.len,
+        &coordinate_existence_applicable));
+    assert(coordinate_existence_applicable);
+    assert(!space_match_exists_ground_exact_expression_coordinates(
+        &hash_space, missing_seen_coordinates, 2u,
+        &coordinate_existence_applicable));
+    assert(coordinate_existence_applicable);
+    Atom *open_seen_items[2] = {
+        seen_head,
+        atom_var(&scratch, "$stored-seen-value"),
+    };
+    space_add(&hash_space, atom_expr(&scratch, open_seen_items, 2u));
+    assert(!space_match_exists_ground_exact_expression_coordinates(
+        &hash_space, seen_atom->expr.elems, seen_atom->expr.len,
+        &coordinate_existence_applicable));
+    assert(!coordinate_existence_applicable);
 
     DiscNode *fallback_disc = disc_node_new();
     assert(!disc_insert_id(fallback_disc, &universe, boxed_id, 99));

@@ -6,6 +6,7 @@ import json
 import os
 from pathlib import Path, PurePosixPath
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -13,6 +14,7 @@ import time
 
 
 SCHEMA = "cetta.petta-chainer-compat.v1"
+SPACE_ENGINES = ("native", "pathmap")
 ANSI_ESCAPE = re.compile(r"\x1b\[[0-9;]*m")
 HEX_COMMIT = re.compile(r"[0-9a-f]{40}")
 HEX_SHA256 = re.compile(r"[0-9a-f]{64}")
@@ -122,6 +124,13 @@ def write_materialized_file(root: Path, relative: PurePosixPath, payload: bytes)
     destination = root.joinpath(*relative.parts)
     destination.parent.mkdir(parents=True, exist_ok=True)
     destination.write_bytes(payload)
+
+
+def materialize_executable(source: Path, image: Path) -> Path:
+    destination = image / "cetta"
+    shutil.copy2(source, destination)
+    destination.chmod(destination.stat().st_mode | 0o100)
+    return destination
 
 
 def materialize_sources(
@@ -257,6 +266,26 @@ def run_example(
         fail(f"cannot run {' '.join(command)}: {error}")
 
 
+def cetta_example_command(
+    executable: Path,
+    profile: str,
+    space_engine: str,
+    source: Path,
+) -> list[str]:
+    if space_engine not in SPACE_ENGINES:
+        fail(f"unsupported Space engine: {space_engine}")
+    return [
+        str(executable),
+        "--lang",
+        "petta",
+        "--profile",
+        profile,
+        "--space-engine",
+        space_engine,
+        str(source),
+    ]
+
+
 def require_reference_checkout(petta_repo: Path, revision: str) -> None:
     head = run_git(petta_repo, "rev-parse", "HEAD", text=True).strip()
     if head != revision:
@@ -283,6 +312,9 @@ def main() -> int:
         "--profile",
         choices=("extended", "typecheck-v2", "typecheck-v3"),
         default="extended",
+    )
+    parser.add_argument(
+        "--space-engine", choices=SPACE_ENGINES, default="native"
     )
     parser.add_argument("--reference", action="store_true")
     parser.add_argument("--chainer-working-tree", action="store_true")
@@ -336,6 +368,7 @@ def main() -> int:
             petta_repo,
             chainer_working_tree=arguments.chainer_working_tree,
         )
+        image_cetta = materialize_executable(cetta, image)
         for example in manifest["examples"]:
             source = image.joinpath(
                 *checked_relative_path(example["path"], "example path").parts
@@ -351,14 +384,12 @@ def main() -> int:
 
             started = time.monotonic()
             completed = run_example(
-                [
-                    str(cetta),
-                    "--lang",
-                    "petta",
-                    "--profile",
+                cetta_example_command(
+                    image_cetta,
                     arguments.profile,
-                    str(source),
-                ],
+                    arguments.space_engine,
+                    source,
+                ),
                 image,
                 example["timeout_seconds"],
                 environment,
@@ -420,6 +451,7 @@ def main() -> int:
         "chainer_revision": manifest["chainer"]["revision"],
         "petta_revision": manifest["petta"]["revision"],
         "profile": arguments.profile,
+        "space_engine": arguments.space_engine,
         "chainer_source": (
             "working-tree" if arguments.chainer_working_tree else "commit"
         ),

@@ -88,6 +88,108 @@ typedef struct {
     uint64_t prefix_limit;
 } CettaObservationDemand;
 
+/* Completion demand and contraction algebra are independent coordinates.
+ * The former governs how much of a producer must run; the latter records
+ * which distinctions its consumer retains.  Keep the catalogue restricted
+ * to realized contracts: exact occurrences, Boolean existence, and the count
+ * used by collapse after language-owned preferred/fallback classification. */
+typedef enum {
+    CETTA_OBSERVATION_ALGEBRA_EXACT_OCCURRENCES = 0,
+    CETTA_OBSERVATION_ALGEBRA_EXISTENCE,
+    CETTA_OBSERVATION_ALGEBRA_PREFERRED_FALLBACK_COUNT,
+} CettaObservationAlgebra;
+
+typedef struct {
+    CettaObservationDemand demand;
+    CettaObservationAlgebra algebra;
+} CettaObservationContract;
+
+/* A physical occurrence presented to a preferred/fallback contraction.
+ * Language adapters decide the channel; the contraction itself is dialect
+ * neutral.  Positive multiplicities preserve occurrence bags without
+ * retaining one payload per occurrence. */
+typedef enum {
+    CETTA_OBSERVATION_CHANNEL_PREFERRED = 0,
+    CETTA_OBSERVATION_CHANNEL_FALLBACK,
+} CettaObservationChannel;
+
+typedef struct {
+    uint64_t preferred;
+    uint64_t fallback;
+} CettaPreferredFallbackCount;
+
+static inline bool cetta_observation_count_add_bounded(
+        uint64_t *accumulator, uint64_t amount, uint64_t maximum) {
+    if (!accumulator || *accumulator > maximum ||
+        amount > maximum - *accumulator) {
+        return false;
+    }
+    *accumulator += amount;
+    return true;
+}
+
+static inline bool cetta_observation_count_multiply_bounded(
+        uint64_t left, uint64_t right, uint64_t maximum,
+        uint64_t *product) {
+    if (!product || left > maximum || right > maximum ||
+        (left != 0u && right > maximum / left)) {
+        return false;
+    }
+    *product = left * right;
+    return true;
+}
+
+static inline bool cetta_preferred_fallback_count_present(
+        CettaPreferredFallbackCount *presentation,
+        CettaObservationChannel channel, uint64_t multiplicity,
+        uint64_t maximum) {
+    if (!presentation || multiplicity == 0u)
+        return false;
+    if (channel == CETTA_OBSERVATION_CHANNEL_PREFERRED) {
+        return cetta_observation_count_add_bounded(
+            &presentation->preferred, multiplicity, maximum);
+    }
+    if (channel == CETTA_OBSERVATION_CHANNEL_FALLBACK) {
+        return cetta_observation_count_add_bounded(
+            &presentation->fallback, multiplicity, maximum);
+    }
+    return false;
+}
+
+static inline uint64_t cetta_preferred_fallback_count_observe(
+        const CettaPreferredFallbackCount *presentation) {
+    if (!presentation)
+        return 0u;
+    return presentation->preferred != 0u
+        ? presentation->preferred : presentation->fallback;
+}
+
+bool cetta_observation_contract_valid(
+    CettaObservationContract contract);
+
+/* Existential contraction is the Boolean image of an occurrence producer.
+ * A positive witness absorbs the remainder; a negative result still requires
+ * a completed source. */
+static inline bool cetta_observation_contract_is_existence(
+        CettaObservationContract contract) {
+    return contract.demand.completion == CETTA_OBSERVATION_FIRST &&
+        contract.demand.prefix_limit == 0u &&
+        contract.algebra == CETTA_OBSERVATION_ALGEBRA_EXISTENCE;
+}
+
+/* True only for the realized contract whose complete answer bag may be
+ * represented by weighted preferred/fallback occurrences.  Classification
+ * remains language-owned provenance; this predicate grants no classifier. */
+static inline bool
+cetta_observation_contract_is_complete_preferred_count(
+        CettaObservationContract contract) {
+    return contract.demand.completion ==
+               CETTA_OBSERVATION_COMPLETE_BAG &&
+        contract.demand.prefix_limit == 0u &&
+        contract.algebra ==
+               CETTA_OBSERVATION_ALGEBRA_PREFERRED_FALLBACK_COUNT;
+}
+
 typedef enum {
     CETTA_CONTROL_BATCH_SINGLETON_ONLY = 0,
     CETTA_CONTROL_BATCH_SERIALIZABLE,

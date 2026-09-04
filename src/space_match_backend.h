@@ -2,6 +2,7 @@
 #define CETTA_SPACE_MATCH_BACKEND_H
 
 #include "atom.h"
+#include "gslt_term_view_v1.h"
 #include "subst_tree.h"
 #include <stdbool.h>
 #include <stdint.h>
@@ -181,11 +182,21 @@ typedef struct SpaceMatchBackendOps {
      */
     bool (*count_flat_linear)(Space *s, Arena *scratch, Atom *pattern,
                               uint64_t *count, CettaIndex *examined);
-    /*
-     * Exact bag COUNT for a conjunction, consuming a backend-native pull
-     * traversal without reconstructing binding rows.  False declines to the
-     * ordinary conjunction evaluator.
-     */
+    /* Exact COUNT without first forcing a borrowed source view.  Distinct
+     * open query roots are admitted only when the observer proves their
+     * bindings dead.  A backend may also existentially erase bindings made
+     * by stored rows, but it must preserve rigid-coordinate constraints,
+     * repeated stored-variable equality, and occurrence multiplicity. */
+    bool (*count_flat_linear_view)(
+        Space *s, Arena *scratch, const CettaGsltTermViewV1 *view,
+        CettaGsltTermViewOpenBindingObservationV1 open_bindings,
+        uint64_t *count,
+        CettaIndex *examined);
+    /* Exact bag COUNT for a pure conjunction.  A realization may stream one
+     * binding path at a time or aggregate backend-native rows, but must retain
+     * occurrence multiplicity and every cross-leg variable constraint without
+     * constructing the completed BindingSet.  False declines to the ordinary
+     * conjunction evaluator. */
     bool (*count_conjunction)(Space *s, Arena *scratch,
                               Atom **patterns, CettaExprLen npatterns,
                               const Bindings *seed, uint64_t *count);
@@ -299,6 +310,11 @@ CettaIndex space_match_backend_candidates64(Space *s, Atom *pattern,
                                             CettaIndex **out);
 uint32_t space_match_backend_candidates(Space *s, Atom *pattern, uint32_t **out);
 Atom *space_match_backend_candidate_at64(const Space *s, CettaIndex idx);
+/* Decide ground structural-match existence when this backend can certify that
+ * every member of its complete pattern frontier is exact.  False means the
+ * premise is unavailable and the ordinary matcher remains authoritative. */
+bool space_match_backend_ground_exact_exists_frontier(
+    Space *s, Atom *pattern, bool *out_found);
 void space_match_backend_query(Space *s, Arena *a, Atom *query, SubstMatchSet *out);
 const char *space_match_backend_name(const Space *s);
 bool space_match_backend_supports_direct_bindings(const Space *s);

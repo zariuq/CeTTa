@@ -1630,6 +1630,26 @@ static uint64_t term_universe_record_slot_hash(
     return term_universe_index_finalize(h);
 }
 
+/* Compute the intern-table coordinate of an expression directly from its
+ * canonical children.  The encoded record path above performs the same mix;
+ * keeping this read-only form separate lets borrowed term views probe the
+ * universe without allocating a temporary payload. */
+static uint64_t term_universe_expr_ids_slot_hash(
+        const CettaTermHdr *hdr, const AtomId *child_ids,
+        uint32_t arity) {
+    if (!hdr || (arity > 0u && !child_ids))
+        return 0u;
+    uint64_t h = UINT64_C(0x243f6a8885a308d3);
+    h = term_universe_index_mix(h, hdr->tag);
+    h = term_universe_index_mix(h, hdr->subtag);
+    h = term_universe_index_mix(h, hdr->sym_or_head);
+    h = term_universe_index_mix(h, term_universe_aux_data(hdr));
+    h = term_universe_index_mix(h, hdr->hash32);
+    for (uint32_t i = 0u; i < arity; i++)
+        h = term_universe_index_mix(h, child_ids[i]);
+    return term_universe_index_finalize(h);
+}
+
 static uint64_t term_universe_atom_slot_hash(Atom *atom) {
     if (!atom)
         return 0;
@@ -1925,6 +1945,73 @@ static AtomId term_universe_lookup_record_id(const TermUniverse *universe,
             have_hdr->hash32 == h &&
             term_universe_entry_eq_record(universe, id, hdr, payload,
                                           payload_len)) {
+            cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_TERM_UNIVERSE_HIT);
+            TU_DIAG_LOOKUP_PROBES(
+                (TermUniverse *)universe, probe + 1u);
+            TU_DIAG_INC((TermUniverse *)universe, direct_lookup_hits);
+            return id;
+        }
+    }
+    TU_DIAG_LOOKUP_PROBES(
+        (TermUniverse *)universe, universe->intern_mask + 1u);
+    TU_DIAG_INC((TermUniverse *)universe, direct_lookup_misses);
+    return CETTA_ATOM_ID_NONE;
+}
+
+static bool term_universe_entry_eq_expr_ids(
+        const TermUniverse *universe, AtomId id,
+        const CettaTermHdr *want_hdr, const AtomId *child_ids,
+        uint32_t arity) {
+    const CettaTermHdr *have_hdr = tu_hdr(universe, id);
+    if (!have_hdr || !want_hdr || have_hdr->tag != ATOM_EXPR ||
+        have_hdr->tag != want_hdr->tag ||
+        have_hdr->subtag != want_hdr->subtag ||
+        have_hdr->arity_or_len != want_hdr->arity_or_len ||
+        have_hdr->sym_or_head != want_hdr->sym_or_head ||
+        have_hdr->aux32 != want_hdr->aux32 ||
+        term_universe_aux_data(have_hdr) != arity) {
+        return false;
+    }
+    const uint8_t *payload = term_universe_payload(universe, id);
+    size_t width = term_universe_atom_id_storage_width_bytes(universe);
+    if ((arity > 0u && (!payload || !child_ids)) || width == 0u)
+        return false;
+    for (uint32_t i = 0u; i < arity; i++) {
+        if (term_universe_load_stored_atom_id(
+                universe, payload + (size_t)i * width) != child_ids[i]) {
+            return false;
+        }
+    }
+    return true;
+}
+
+static AtomId term_universe_lookup_expr_id_from_ids(
+        const TermUniverse *universe, const CettaTermHdr *hdr,
+        const AtomId *child_ids, uint32_t arity) {
+    if (!universe || !universe->intern_slots || !hdr ||
+        (arity > 0u && !child_ids)) {
+        return CETTA_ATOM_ID_NONE;
+    }
+    cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_TERM_UNIVERSE_LOOKUP);
+    uint64_t hslot = term_universe_expr_ids_slot_hash(
+        hdr, child_ids, arity);
+    for (size_t probe = 0u; probe <= universe->intern_mask; probe++) {
+        size_t idx = term_universe_intern_probe_index(
+            hslot, probe, universe->intern_mask);
+        uint64_t slot = term_universe_load_slot_value(
+            universe, universe->intern_slots, idx);
+        if (slot == 0u) {
+            TU_DIAG_LOOKUP_PROBES(
+                (TermUniverse *)universe, probe + 1u);
+            TU_DIAG_INC((TermUniverse *)universe, direct_lookup_misses);
+            return CETTA_ATOM_ID_NONE;
+        }
+        AtomId id = slot - 1u;
+        const CettaTermHdr *have_hdr = tu_hdr(universe, id);
+        if (term_universe_entry(universe, id) && have_hdr &&
+            have_hdr->hash32 == hdr->hash32 &&
+            term_universe_entry_eq_expr_ids(
+                universe, id, hdr, child_ids, arity)) {
             cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_TERM_UNIVERSE_HIT);
             TU_DIAG_LOOKUP_PROBES(
                 (TermUniverse *)universe, probe + 1u);
@@ -2787,15 +2874,60 @@ static AtomId term_universe_expr_id_from_ids(TermUniverse *universe,
     hdr.sym_or_head = head_sym;
     hdr.aux32 = term_universe_aux_make(arity32, has_vars);
     hdr.hash32 = term_universe_hash_expr_ids(universe, child_ids, arity32);
-    uint8_t *payload = NULL;
-    size_t payload_len = 0;
-    AtomId id = CETTA_ATOM_ID_NONE;
-    if (!term_universe_encode_expr_payload(universe, child_ids, arity32,
-                                           &payload, &payload_len))
+    return term_universe_lookup_expr_id_from_ids(
+        universe, &hdr, child_ids, arity32);
+}
+
+/* Read-only term lookup for the common shallow case.  It shares canonical
+ * child ids with the stored expression rather than creating an encoded term.
+ * The complete flag distinguishes a proven miss from a shape that should use
+ * the general iterative path. */
+static AtomId term_universe_lookup_atom_id_borrowed(
+        const TermUniverse *universe, Atom *src, uint32_t depth,
+        bool *complete) {
+    enum {
+        TERM_UNIVERSE_LOOKUP_INLINE_CHILDREN = 16u,
+        TERM_UNIVERSE_LOOKUP_MAX_DEPTH = 64u,
+    };
+    if (!complete || !*complete || !universe || !src) {
+        if (complete)
+            *complete = false;
         return CETTA_ATOM_ID_NONE;
-    id = term_universe_lookup_record_id(universe, &hdr, payload, payload_len);
-    free(payload);
-    return id;
+    }
+    AtomId existing_ptr = term_universe_lookup_ptr_id(universe, src);
+    if (existing_ptr != CETTA_ATOM_ID_NONE)
+        return existing_ptr;
+    if (src->kind != ATOM_EXPR)
+        return term_universe_leaf_id((TermUniverse *)universe, src, false);
+    if (depth >= TERM_UNIVERSE_LOOKUP_MAX_DEPTH ||
+        !cetta_expr_len_fits_u32(src->expr.len) ||
+        (size_t)src->expr.len > SIZE_MAX / sizeof(AtomId)) {
+        *complete = false;
+        return CETTA_ATOM_ID_NONE;
+    }
+
+    AtomId inline_ids[TERM_UNIVERSE_LOOKUP_INLINE_CHILDREN];
+    AtomId *child_ids =
+        src->expr.len <= TERM_UNIVERSE_LOOKUP_INLINE_CHILDREN
+            ? inline_ids
+            : cetta_malloc((size_t)src->expr.len * sizeof(*child_ids));
+    if (!child_ids) {
+        *complete = false;
+        return CETTA_ATOM_ID_NONE;
+    }
+    AtomId result = CETTA_ATOM_ID_NONE;
+    for (CettaExprIndex i = 0u; i < src->expr.len; i++) {
+        child_ids[i] = term_universe_lookup_atom_id_borrowed(
+            universe, src->expr.elems[i], depth + 1u, complete);
+        if (!*complete || child_ids[i] == CETTA_ATOM_ID_NONE)
+            goto done;
+    }
+    result = term_universe_expr_id_from_ids(
+        (TermUniverse *)universe, child_ids, src->expr.len, false);
+done:
+    if (child_ids != inline_ids)
+        free(child_ids);
+    return result;
 }
 
 static AtomId term_universe_stable_atom_id_iterative(TermUniverse *universe,
@@ -3797,6 +3929,43 @@ AtomId term_universe_lookup_atom_id(const TermUniverse *universe, Atom *src) {
     if (!stable)
         return CETTA_ATOM_ID_NONE;
     return stable_id;
+}
+
+AtomId term_universe_lookup_expression_coordinates(
+        const TermUniverse *universe, Atom *const *coordinates,
+        CettaExprLen coordinate_count) {
+    enum { TERM_UNIVERSE_LOOKUP_INLINE_COORDINATES = 16u };
+    if (!universe ||
+        (coordinate_count > 0u && !coordinates) ||
+        (size_t)coordinate_count > SIZE_MAX / sizeof(AtomId)) {
+        return CETTA_ATOM_ID_NONE;
+    }
+    AtomId inline_ids[TERM_UNIVERSE_LOOKUP_INLINE_COORDINATES];
+    AtomId *child_ids =
+        coordinate_count <= TERM_UNIVERSE_LOOKUP_INLINE_COORDINATES
+            ? inline_ids
+            : cetta_malloc((size_t)coordinate_count * sizeof(*child_ids));
+    if (!child_ids)
+        return CETTA_ATOM_ID_NONE;
+    AtomId result = CETTA_ATOM_ID_NONE;
+    for (CettaExprIndex index = 0u;
+         index < coordinate_count; index++) {
+        bool complete = true;
+        child_ids[index] = term_universe_lookup_atom_id_borrowed(
+            universe, coordinates[index], 0u, &complete);
+        if (!complete) {
+            child_ids[index] = term_universe_lookup_atom_id(
+                universe, coordinates[index]);
+        }
+        if (child_ids[index] == CETTA_ATOM_ID_NONE)
+            goto done;
+    }
+    result = term_universe_expr_id_from_ids(
+        (TermUniverse *)universe, child_ids, coordinate_count, false);
+done:
+    if (child_ids != inline_ids)
+        free(child_ids);
+    return result;
 }
 
 bool term_universe_root_token_capture(

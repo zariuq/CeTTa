@@ -165,12 +165,14 @@ enum {
 };
 
 typedef struct {
+    uint64_t generation;
     SymbolId symbol;
     bool callable;
     bool used;
 } PettaCallableCacheSlot;
 
 typedef struct {
+    uint64_t generation;
     SymbolId symbol;
     CettaExprLen supplied;
     PeTTaNamedArity arity;
@@ -180,10 +182,14 @@ typedef struct {
 struct PettaSpecializerSemanticCache {
     Space *space;
     uint64_t space_instance;
-    uint64_t mutation_epoch;
+    SpaceProgramToken program;
     const SymbolTable *symbols;
     uint64_t symbol_table_instance;
     bool mixed_index;
+    /* Invalidation stamps the cache rather than clearing it: a slot is live
+     * only when its generation equals the cache generation, so a key change
+     * costs one increment instead of zeroing every slot. */
+    uint64_t generation;
     PettaCallableCacheSlot callable[PETTA_CALLABLE_CACHE_SLOTS];
     PettaNamedArityCacheSlot
         named_arity[PETTA_NAMED_ARITY_CACHE_SLOTS];
@@ -235,12 +241,16 @@ static bool petta_specializer_route_cache_enabled(void) {
 }
 
 static bool petta_specializer_semantic_cache_mixed_index_enabled(void) {
-    const char *value = getenv(
-        "CETTA_PETTA_SPECIALIZER_SEMANTIC_CACHE_LEGACY_INDEX");
-    return !value || value[0] == '\0' ||
-        strcmp(value, "0") == 0 ||
-        strcmp(value, "false") == 0 ||
-        strcmp(value, "off") == 0;
+    static _Thread_local int enabled = -1;
+    if (enabled < 0) {
+        const char *value = getenv(
+            "CETTA_PETTA_SPECIALIZER_SEMANTIC_CACHE_LEGACY_INDEX");
+        enabled = (!value || value[0] == '\0' ||
+                   strcmp(value, "0") == 0 ||
+                   strcmp(value, "false") == 0 ||
+                   strcmp(value, "off") == 0) ? 1 : 0;
+    }
+    return enabled != 0;
 }
 
 static bool petta_specializer_relevance_filter_enabled(void) {
@@ -852,20 +862,19 @@ petta_semantic_cache_prepare(
     if (!space || !g_symbols)
         return NULL;
     uint64_t space_instance = space_instance_id(space);
-    uint64_t mutation_epoch = space_global_mutation_epoch();
+    SpaceProgramToken program = space_program_token(space);
     uint64_t symbol_table_instance =
         symbol_table_instance_id(g_symbols);
     if (g_petta_semantic_cache.space != space ||
         g_petta_semantic_cache.space_instance != space_instance ||
-        g_petta_semantic_cache.mutation_epoch != mutation_epoch ||
+        !space_program_token_eq(g_petta_semantic_cache.program, program) ||
         g_petta_semantic_cache.symbols != g_symbols ||
         g_petta_semantic_cache.symbol_table_instance !=
             symbol_table_instance) {
-        memset(&g_petta_semantic_cache, 0,
-               sizeof(g_petta_semantic_cache));
+        g_petta_semantic_cache.generation++;
         g_petta_semantic_cache.space = space;
         g_petta_semantic_cache.space_instance = space_instance;
-        g_petta_semantic_cache.mutation_epoch = mutation_epoch;
+        g_petta_semantic_cache.program = program;
         g_petta_semantic_cache.symbols = g_symbols;
         g_petta_semantic_cache.symbol_table_instance =
             symbol_table_instance;
@@ -935,7 +944,8 @@ static bool petta_symbol_is_callable(
         : (size_t)symbol & (PETTA_CALLABLE_CACHE_SLOTS - 1u);
     PettaCallableCacheSlot *slot = &cache->callable[
         index];
-    if (slot->used && slot->symbol == symbol) {
+    if (slot->used && slot->generation == cache->generation &&
+        slot->symbol == symbol) {
         cetta_runtime_stats_inc(
             CETTA_RUNTIME_COUNTER_PETTA_SPECIALIZER_CALLABLE_CACHE_HIT);
         return slot->callable;
@@ -943,6 +953,7 @@ static bool petta_symbol_is_callable(
     cetta_runtime_stats_inc(
         CETTA_RUNTIME_COUNTER_PETTA_SPECIALIZER_CALLABLE_CACHE_MISS);
     *slot = (PettaCallableCacheSlot){
+        .generation = cache->generation,
         .symbol = symbol,
         .callable = petta_symbol_is_callable_uncached(
             context->space, &context->scratch, symbol),
@@ -974,8 +985,8 @@ static PeTTaNamedArity petta_specializer_named_arity(
             (PETTA_NAMED_ARITY_CACHE_SLOTS - 1u);
     PettaNamedArityCacheSlot *slot =
         &cache->named_arity[index];
-    if (slot->used && slot->symbol == symbol &&
-        slot->supplied == supplied) {
+    if (slot->used && slot->generation == cache->generation &&
+        slot->symbol == symbol && slot->supplied == supplied) {
         cetta_runtime_stats_inc(
             CETTA_RUNTIME_COUNTER_PETTA_SPECIALIZER_ARITY_CACHE_HIT);
         return slot->arity;
@@ -983,6 +994,7 @@ static PeTTaNamedArity petta_specializer_named_arity(
     cetta_runtime_stats_inc(
         CETTA_RUNTIME_COUNTER_PETTA_SPECIALIZER_ARITY_CACHE_MISS);
     *slot = (PettaNamedArityCacheSlot){
+        .generation = cache->generation,
         .symbol = symbol,
         .supplied = supplied,
         .arity = petta_semantics_named_arity(

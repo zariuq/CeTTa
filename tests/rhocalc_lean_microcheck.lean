@@ -25,8 +25,8 @@ open Mettapedia.Languages.ProcessCalculi.RhoCalculus.OperationalBridge
 open Mettapedia.Languages.ProcessCalculi.RhoCalculus.Soundness
 open Mettapedia.Languages.MeTTa.HE
 
-local notation "possibly" => possiblyProp
-local notation "rely" => relyProp
+local notation "possibly" => rawStepFuture
+local notation "rely" => rawStepPast
 
 def emptyBag : Pattern := .collection .hashBag [] none
 

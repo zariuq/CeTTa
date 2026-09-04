@@ -1637,6 +1637,24 @@ static Atom *add_indexed_program_clause(
     return stored;
 }
 
+static void test_program_metadata_projection(Arena *arena) {
+    assert(!petta_program_atom_affects_metadata(
+        parse_one(arena, "(num (M Z))")));
+    assert(petta_program_atom_affects_metadata(
+        parse_one(arena, "(= (step $x) (next $x))")));
+    assert(petta_program_atom_affects_metadata(
+        parse_one(arena, "(: step (-> Atom Atom))")));
+
+    /* Equation and declaration spellings alone are insufficient: these
+     * malformed/data forms do not enter either program-owned catalog. */
+    assert(!petta_program_atom_affects_metadata(
+        parse_one(arena, "(= step value)")));
+    assert(!petta_program_atom_affects_metadata(
+        parse_one(arena, "(: (step value) Atom)")));
+    assert(!petta_program_atom_affects_metadata(
+        parse_one(arena, "(: step)")));
+}
+
 static Atom *add_compiled_program_clause(
     PettaProgram *program, Space *space,
     Arena *arena, const char *source) {
@@ -5853,6 +5871,46 @@ static void test_terminal_match_count_fold(
         stats.count_aggregate_match_answers ==
         EXPECTED_ROWS);
     assert(stats.count_aggregate_answers == EXPECTED_ROWS);
+    assert(stats.count_aggregate_match_view_folds > 0u);
+    assert(
+        stats.count_aggregate_match_view_folds <=
+        stats.count_aggregate_match_folds);
+    petta_machine_destroy(&machine);
+
+    add_clause(
+        space, answers,
+        "(error-data-row (Error source hidden))");
+    add_clause(
+        space, answers,
+        "(error-data-row ordinary)");
+    match_children[3] = (PettaPlanNode){
+        .role = PETTA_PLAN_VALUE,
+    };
+    query = parse_one(
+        answers,
+        "(length"
+        "  (collapse"
+        "    (match &self (error-data-row $value) $value)))");
+    assert(query);
+    assert(petta_machine_init_with_plan(
+        &machine, space, answers, query, &length_plan,
+        NULL, NULL));
+    assert(petta_machine_next(
+               &machine, &answer, &environment) ==
+           PETTA_MACHINE_STEP_ANSWER);
+    assert(answer && answer->kind == ATOM_GROUNDED);
+    assert(answer->ground.gkind == GV_INT);
+    assert(answer->ground.ival == 2);
+    bindings_free(&environment);
+    assert(petta_machine_next(
+               &machine, &answer, &environment) ==
+           PETTA_MACHINE_STEP_EXHAUSTED);
+    bindings_free(&environment);
+    assert(petta_machine_stats(&machine, &stats));
+    assert(stats.count_aggregate_match_folds == 1u);
+    assert(stats.count_aggregate_match_answers == 2u);
+    assert(stats.count_aggregate_answers == 2u);
+    assert(stats.count_aggregate_match_view_folds == 1u);
     petta_machine_destroy(&machine);
 
     add_clause(
@@ -5891,8 +5949,10 @@ static void test_terminal_match_count_fold(
            PETTA_MACHINE_STEP_EXHAUSTED);
     bindings_free(&environment);
     assert(petta_machine_stats(&machine, &stats));
-    assert(stats.count_aggregate_match_folds == 1u);
-    assert(stats.count_aggregate_match_answers == 3u);
+    /* A dynamic template can change answer multiplicity and classification,
+     * so only the enclosing count observer may aggregate its realized rows. */
+    assert(stats.count_aggregate_match_folds == 0u);
+    assert(stats.count_aggregate_match_answers == 0u);
     assert(stats.count_aggregate_answers == 3u);
     petta_machine_destroy(&machine);
 
@@ -7016,6 +7076,90 @@ static void test_continuation_hub_atomic_reclamation(void) {
 }
 
 static void test_observation_indexed_control_plan(void) {
+    CettaObservationContract count_contract = {
+        .demand = {
+            .completion = CETTA_OBSERVATION_COMPLETE_BAG,
+        },
+        .algebra =
+            CETTA_OBSERVATION_ALGEBRA_PREFERRED_FALLBACK_COUNT,
+    };
+    assert(cetta_observation_contract_valid(count_contract));
+    assert(cetta_observation_contract_is_complete_preferred_count(
+        count_contract));
+
+    CettaObservationContract exact_contract = count_contract;
+    exact_contract.algebra =
+        CETTA_OBSERVATION_ALGEBRA_EXACT_OCCURRENCES;
+    assert(cetta_observation_contract_valid(exact_contract));
+    assert(!cetta_observation_contract_is_complete_preferred_count(
+        exact_contract));
+
+    CettaObservationContract existence_contract = {
+        .demand = {
+            .completion = CETTA_OBSERVATION_FIRST,
+        },
+        .algebra = CETTA_OBSERVATION_ALGEBRA_EXISTENCE,
+    };
+    assert(cetta_observation_contract_valid(existence_contract));
+    assert(cetta_observation_contract_is_existence(
+        existence_contract));
+    assert(!cetta_observation_contract_is_complete_preferred_count(
+        existence_contract));
+
+    CettaObservationContract complete_existence_contract =
+        existence_contract;
+    complete_existence_contract.demand.completion =
+        CETTA_OBSERVATION_COMPLETE_BAG;
+    assert(!cetta_observation_contract_valid(
+        complete_existence_contract));
+    assert(!cetta_observation_contract_is_existence(
+        complete_existence_contract));
+
+    CettaObservationContract ordered_count_contract = count_contract;
+    ordered_count_contract.demand.completion =
+        CETTA_OBSERVATION_ORDERED_STREAM;
+    assert(!cetta_observation_contract_valid(
+        ordered_count_contract));
+    assert(!cetta_observation_contract_is_complete_preferred_count(
+        ordered_count_contract));
+
+    CettaObservationContract malformed_contract = count_contract;
+    malformed_contract.algebra = (CettaObservationAlgebra)99;
+    assert(!cetta_observation_contract_valid(malformed_contract));
+    assert(!cetta_observation_contract_is_complete_preferred_count(
+        malformed_contract));
+
+    CettaPreferredFallbackCount presentation = {0};
+    assert(cetta_preferred_fallback_count_observe(&presentation) == 0u);
+    assert(cetta_preferred_fallback_count_present(
+        &presentation, CETTA_OBSERVATION_CHANNEL_FALLBACK,
+        5u, (uint64_t)INT64_MAX));
+    assert(cetta_preferred_fallback_count_observe(&presentation) == 5u);
+    assert(cetta_preferred_fallback_count_present(
+        &presentation, CETTA_OBSERVATION_CHANNEL_PREFERRED,
+        2u, (uint64_t)INT64_MAX));
+    assert(cetta_preferred_fallback_count_observe(&presentation) == 2u);
+    CettaPreferredFallbackCount stable_presentation = presentation;
+    assert(!cetta_preferred_fallback_count_present(
+        &presentation, (CettaObservationChannel)99,
+        1u, (uint64_t)INT64_MAX));
+    assert(memcmp(&presentation, &stable_presentation,
+                  sizeof(presentation)) == 0);
+    assert(!cetta_preferred_fallback_count_present(
+        &presentation, CETTA_OBSERVATION_CHANNEL_PREFERRED,
+        (uint64_t)INT64_MAX, (uint64_t)INT64_MAX));
+    assert(memcmp(&presentation, &stable_presentation,
+                  sizeof(presentation)) == 0);
+
+    uint64_t product = 17u;
+    assert(cetta_observation_count_multiply_bounded(
+        3u, 7u, (uint64_t)INT64_MAX, &product));
+    assert(product == 21u);
+    assert(!cetta_observation_count_multiply_bounded(
+        (uint64_t)INT64_MAX, 2u,
+        (uint64_t)INT64_MAX, &product));
+    assert(product == 21u);
+
     CettaControlPlan plan = {
         .readout = CETTA_OBSERVATION_UNDETERMINED,
         .activation = CETTA_CONTROL_ACTIVATE_CONTROLLED,
@@ -8502,6 +8646,7 @@ int main(void) {
     test_search_context_checkpoint_capabilities();
     test_native_runtime_named_arity();
     test_semantic_form_facts();
+    test_program_metadata_projection(&answers);
     space_init_with_universe(&space, &universe);
 
     test_plain_scalar_truth_dispatch(&answers);
