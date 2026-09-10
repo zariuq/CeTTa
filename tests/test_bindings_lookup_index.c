@@ -52,6 +52,60 @@ static bool binding_is_int(Bindings *bindings, VarId id, int64_t expected) {
            value->ground.ival == expected;
 }
 
+static void test_borrowed_root_identity(Arena *arena) {
+    Atom *first = atom_var_with_id(arena, "same-root-name", test_id(9000u));
+    Atom *second = atom_var_with_id(arena, "same-root-name", test_id(9001u));
+    Atom *open = atom_var_with_id(arena, "open-root", test_id(9002u));
+    Atom *value = atom_expr3(
+        arena, atom_symbol(arena, "RootPair"), open, open);
+    BindingsBuilder builder;
+    if (!bindings_builder_init(&builder, NULL)) {
+        CHECK(false, "borrowed-root fixture initializes its binding store");
+        return;
+    }
+    bool ready = bindings_builder_add_var_fresh(&builder, first, second);
+    uint32_t mark = bindings_builder_save(&builder);
+    ready = ready && bindings_builder_add_var_fresh(&builder, second, value);
+    CHECK(ready && first->var_id != second->var_id &&
+              first->sym_id == second->sym_id &&
+              !first->name_key && !second->name_key,
+          "borrowed-root fixture separates logical identity from spelling");
+
+    CettaGsltTermViewV1 view = bindings_term_view_v1(first, &builder.current);
+    Atom *resolved = NULL;
+    CHECK(cetta_gslt_term_view_resolve_root_v1(&view, first, &resolved) ==
+              CETTA_GSLT_TERM_VIEW_OK_V1 && resolved == value,
+          "borrowed roots follow aliases with equal spelling and distinct identities");
+    CHECK(resolved && atom_eq(
+              bindings_apply(&builder.current, arena, first),
+              bindings_apply(&builder.current, arena, resolved)),
+          "root resolution preserves correlated open-term forcing");
+    CHECK(cetta_gslt_term_view_resolve_root_v1(&view, open, &resolved) ==
+              CETTA_GSLT_TERM_VIEW_OK_V1 && resolved == open,
+          "an unbound root preserves its exact variable identity");
+
+    Atom *replacement = atom_int(arena, 17);
+    bindings_builder_rollback(&builder, mark);
+    CHECK(bindings_builder_add_var_fresh(&builder, second, replacement) &&
+              cetta_gslt_term_view_resolve_root_v1(&view, first, &resolved) ==
+                  CETTA_GSLT_TERM_VIEW_OK_V1 && resolved == replacement,
+          "a borrowed root observes the current branch after rollback");
+    /* Simulate an invalid externally rewritten store. Normal binding
+     * insertion may already reject or normalize this alias cycle. */
+    for (uint32_t index = 0u; index < builder.current.len; index++) {
+        if (builder.current.entries[index].var_id == second->var_id)
+            builder.current.entries[index].val = first;
+    }
+    bindings_invalidate_after_key_rewrite(&builder.current);
+    CHECK(bindings_has_loop(&builder.current),
+          "borrowed-root cycle canary creates a nontrivial alias cycle");
+    resolved = value;
+    CHECK(cetta_gslt_term_view_resolve_root_v1(&view, first, &resolved) ==
+              CETTA_GSLT_TERM_VIEW_DEFER_V1 && resolved == NULL,
+          "a cyclic root declines instead of exposing an unbound wildcard");
+    bindings_builder_free(&builder);
+}
+
 static void test_term_stability_summary(Arena *arena) {
     static const bool expected[GV_INTERNAL_TAG + 1u] = {
         [GV_INT] = true,
@@ -645,6 +699,7 @@ int main(void) {
     Arena arena;
     arena_init(&arena);
 
+    test_borrowed_root_identity(&arena);
     test_term_stability_summary(&arena);
     test_internal_tag_structural_summary(&arena);
     test_epoch_identity_and_publication(&arena);

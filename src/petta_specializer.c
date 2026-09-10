@@ -53,6 +53,7 @@ typedef struct {
     size_t artifact_len;
     size_t artifact_cap;
     bool productive;
+    bool negative;
     bool invalidating;
 } PettaSpecializationRecord;
 
@@ -2438,10 +2439,12 @@ static bool petta_specializer_analyze_call(
          * Source mutation removes this record through the same dependency
          * closure as a productive specialization.
          */
-        if (!petta_create_record(
-                context, source, specialized,
-                &candidates)) {
+        PettaSpecializationRecord *negative = petta_create_record(
+            context, source, specialized, &candidates);
+        if (!negative) {
             ok = false;
+        } else {
+            negative->negative = true;
         }
     }
 
@@ -2617,6 +2620,20 @@ void petta_specializer_note_mutation(
      * prevents stale reuse. */
     petta_relation_relevance_cache_clear();
     uint64_t instance = space_instance_id(space);
+    /* A failed derivation can depend on callees absent from the productive
+     * artifact graph. Clear completed failures for this space whenever a
+     * definition changes; the dependency closure below still handles
+     * productive records precisely. */
+    for (size_t index = 0u; index < g_petta_specializations.len;) {
+        PettaSpecializationRecord *record =
+            &g_petta_specializations.items[index];
+        if (record->negative && record->space == space &&
+            record->space_instance == instance) {
+            petta_remove_record_at(index);
+        } else {
+            index++;
+        }
+    }
     PettaSymbolVector invalid_heads = {0};
     bool invalidate_all =
         !petta_symbol_vector_push_unique(

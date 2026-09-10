@@ -36,9 +36,11 @@
 (= (p c) found-c)
 (= (p d) found-d)
 
-; Variable query — matches any LHS
-! (p specific)
-! (p a)
+; Variable and exact clauses both contribute to the result bag.  Equation
+; selection order is an execution detail, so compare these distinct results
+; without imposing an order.  Duplicate preservation is tested separately.
+!(assertEqualToResult (p specific) ((got specific) found-specific))
+!(assertEqualToResult (p a) ((got a) found-a))
 
 ; Many equations to force trie usage (bucket > 4)
 (= (m 1) one)

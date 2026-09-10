@@ -822,6 +822,99 @@ static void test_deep_cons_semantics(Arena *arena) {
     bindings_builder_free(&builder);
 }
 
+static void test_logical_cons_binding_views(Arena *arena) {
+    Atom *nil = atom_unit(arena);
+    Atom *a = atom_symbol(arena, "view-a");
+    Atom *b = atom_symbol(arena, "view-b");
+    Atom *f = atom_symbol(arena, "view-f");
+    Atom *x = atom_var_with_id(arena, "view-x", fresh_var_id());
+    Atom *y = atom_var_with_id(arena, "view-y", fresh_var_id());
+    Atom *v = atom_var_with_id(arena, "view-v", fresh_var_id());
+    Atom *head = atom_var_with_id(arena, "view-head", fresh_var_id());
+    Atom *tail = atom_var_with_id(arena, "view-tail", fresh_var_id());
+    Atom *cell = petta_semantics_open_cons_value(arena, a, nil);
+    Atom *flat = atom_expr(arena, &a, 1u);
+    Atom *lookalike = atom_expr3(arena, x, a, nil);
+    BindingsBuilder builder;
+    assert(bindings_builder_init(&builder, NULL));
+    uint32_t empty_mark = bindings_builder_save(&builder);
+
+    assert(petta_semantics_match_lowered_head(arena, cell, flat, &builder));
+    assert(!petta_semantics_match_lowered_head(
+        arena, cell, lookalike, &builder));
+    assert(!bindings_lookup_var(&builder.current, x));
+    assert(builder.current.len == 0u);
+
+    /* A private carrier must retain its logical shape through aliases and
+     * nested raw containers. A structural three-field match leaks its tag. */
+    assert(bindings_builder_add_var_fresh(&builder, v, cell));
+    assert(!petta_semantics_match_lowered_head(
+        arena, v, lookalike, &builder));
+    assert(builder.current.len == 1u);
+    Atom *quote = atom_symbol_id(arena, g_builtin_syms.quote);
+    assert(!petta_semantics_match_lowered_head(
+        arena, atom_expr2(arena, quote, v),
+        atom_expr2(arena, quote, lookalike), &builder));
+    assert(builder.current.len == 1u);
+    assert(!bindings_lookup_var(&builder.current, x));
+    bindings_builder_rollback(&builder, empty_mark);
+
+    Atom *aliased_head = atom_expr3(arena, head, a, nil);
+    assert(bindings_builder_add_var_fresh(
+        &builder, head, atom_symbol(arena, "cons")));
+    assert(petta_semantics_match_cons_constraint(
+        arena, aliased_head, flat, &builder));
+    assert(!petta_semantics_match_lowered_head(
+        arena, aliased_head, flat, &builder));
+    assert(builder.current.len == 1u);
+    bindings_builder_rollback(&builder, empty_mark);
+    assert(bindings_builder_add_var_fresh(
+        &builder, head, cell->expr.elems[0]));
+    assert(petta_semantics_match_lowered_head(
+        arena, aliased_head, flat, &builder));
+    bindings_builder_rollback(&builder, empty_mark);
+
+    Atom *u1 = atom_var_with_id(arena, "view-u", fresh_var_id());
+    Atom *u2 = atom_var_with_id(arena, "view-u", fresh_var_id());
+    assert(bindings_builder_add_var_fresh(&builder, u1, u2));
+    assert(bindings_builder_add_var_fresh(&builder, u2, cell));
+    assert(petta_semantics_match_lowered_head(arena, u1, flat, &builder));
+    bindings_builder_rollback(&builder, empty_mark);
+
+    /* Captures keep one correlated environment. Failure restores the entry
+     * checkpoint, including bindings made by earlier coordinates. */
+    assert(bindings_builder_add_var_fresh(&builder, y, a));
+    uint32_t bound_y = bindings_builder_save(&builder);
+    assert(petta_semantics_match_lowered_head(
+        arena, atom_expr3(arena, f, x, x),
+        atom_expr3(arena, f, y, a), &builder));
+    assert(atom_eq(bindings_apply_if_vars(&builder.current, arena, x), a));
+    bindings_builder_rollback(&builder, bound_y);
+    assert(!petta_semantics_match_lowered_head(
+        arena, atom_expr3(arena, f, x, x),
+        atom_expr3(arena, f, y, b), &builder));
+    assert(builder.current.len == 1u);
+    assert(!bindings_lookup_var(&builder.current, x));
+    assert(atom_eq(bindings_lookup_var(&builder.current, y), a));
+    bindings_builder_rollback(&builder, empty_mark);
+
+    assert(petta_semantics_match_lowered_head(
+        arena, petta_semantics_open_cons_value(arena, x, tail),
+        atom_expr2(arena, a, b), &builder));
+    assert(atom_eq(bindings_apply_if_vars(&builder.current, arena, x), a));
+    Atom *observed_tail = bindings_apply_if_vars(&builder.current, arena, tail);
+    Atom *flat_tail = petta_semantics_materialize_closed_logical_list(
+        arena, observed_tail);
+    assert(flat_tail && atom_eq(flat_tail, atom_expr(arena, &b, 1u)));
+    bindings_builder_rollback(&builder, empty_mark);
+    assert(!petta_semantics_match_lowered_head(
+        arena, x, atom_expr2(arena, f, x), &builder));
+    assert(builder.current.len == 0u);
+    bindings_builder_free(&builder);
+    puts("PASS: logical cons views preserve tag boundaries, aliases,"
+         " correlation, occurs checks and rollback");
+}
+
 typedef struct {
     SymbolId head;
     Atom *value;
@@ -1653,6 +1746,44 @@ static void test_program_metadata_projection(Arena *arena) {
         parse_one(arena, "(: (step value) Atom)")));
     assert(!petta_program_atom_affects_metadata(
         parse_one(arena, "(: step)")));
+}
+
+static void test_program_callability_head_kinds(Arena *arena) {
+    Atom *probe = parse_one(arena, "(unrelated-call payload)");
+    assert(probe);
+
+    PettaProgram *structured_program = petta_program_new();
+    assert(structured_program);
+    Atom *structured_equation = parse_one(
+        arena,
+        "(= ((higher-order-relation $program) $input) "
+        "    (structured-result $program $input))");
+    assert(structured_equation);
+    assert(petta_program_predeclare_equation(
+        structured_program, structured_equation));
+    const PettaPlanNode *structured_probe_plan =
+        petta_program_plan_current(structured_program, probe);
+    assert(structured_probe_plan);
+    assert(structured_probe_plan->role == PETTA_PLAN_DATA);
+    assert(!structured_probe_plan->relation_head_admitted);
+    petta_program_free(structured_program);
+
+    PettaProgram *variable_program = petta_program_new();
+    assert(variable_program);
+    Atom *variable_equation = parse_one(
+        arena,
+        "(= ($relation payload) (variable-result $relation))");
+    assert(variable_equation);
+    assert(petta_program_predeclare_equation(
+        variable_program, variable_equation));
+    const PettaPlanNode *variable_probe_plan =
+        petta_program_plan_current(variable_program, probe);
+    assert(variable_probe_plan);
+    assert(variable_probe_plan->role == PETTA_PLAN_STATIC_CALL);
+    assert(variable_probe_plan->relation_head_admitted);
+    petta_program_free(variable_program);
+
+    puts("PASS: callability distinguishes variable and structured heads");
 }
 
 static Atom *add_compiled_program_clause(
@@ -8647,6 +8778,7 @@ int main(void) {
     test_native_runtime_named_arity();
     test_semantic_form_facts();
     test_program_metadata_projection(&answers);
+    test_program_callability_head_kinds(&answers);
     space_init_with_universe(&space, &universe);
 
     test_plain_scalar_truth_dispatch(&answers);
@@ -8708,6 +8840,7 @@ int main(void) {
         &universe, &persistent, &answers);
     test_deep_typecheck_source_rewrites(&universe);
     test_deep_cons_semantics(&answers);
+    test_logical_cons_binding_views(&answers);
     test_answer_materialization_boundaries(
         &space, &persistent, &answers);
     test_logical_list_cursor_boundaries(&answers);

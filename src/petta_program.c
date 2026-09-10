@@ -1277,6 +1277,16 @@ static bool petta_equation_view(
     return true;
 }
 
+/* Only a variable in function position can unify with every named head.
+ * Structured and grounded heads retain their outer constructor and therefore
+ * cannot serve as universal callability evidence. */
+static bool petta_equation_lhs_admits_any_named_head(
+        const Atom *lhs) {
+    return lhs && lhs->kind == ATOM_EXPR && lhs->expr.len > 0u &&
+           lhs->expr.elems[0] &&
+           lhs->expr.elems[0]->kind == ATOM_VAR;
+}
+
 static PettaEquationActivationLayout petta_equation_activation_layout(
     Atom *equation, uint32_t static_variable_count) {
     PettaEquationActivationLayout layout = {0};
@@ -1320,15 +1330,16 @@ bool petta_program_predeclare_equation(
     PettaProgram *program, Atom *atom) {
     if (!program || !atom)
         return false;
+    Atom *lhs = NULL;
     SymbolId head = SYMBOL_ID_NONE;
-    if (!petta_equation_view(atom, NULL, NULL, &head))
+    if (!petta_equation_view(atom, &lhs, NULL, &head))
         return false;
-    if (head == SYMBOL_ID_NONE) {
+    if (petta_equation_lhs_admits_any_named_head(lhs)) {
         program->predeclared_callability.admits_any_head = true;
-        return true;
     }
-    return petta_callability_insert_named(
-        &program->predeclared_callability, head);
+    return head == SYMBOL_ID_NONE ||
+           petta_callability_insert_named(
+               &program->predeclared_callability, head);
 }
 
 bool petta_program_head_declared(
@@ -2100,6 +2111,7 @@ static const PettaPlanNode *petta_plan_build(
         }
         if (atom->kind != ATOM_EXPR) {
             node->role = PETTA_PLAN_VALUE;
+            node->output = PETTA_PLAN_OUTPUT_VALUE;
             node->plain_scalar_tree = atom->kind == ATOM_VAR ||
                 (atom->kind == ATOM_GROUNDED &&
                  (atom->ground.gkind == GV_INT ||
@@ -2110,6 +2122,7 @@ static const PettaPlanNode *petta_plan_build(
         node->child_count = atom->expr.len;
         if (atom->expr.len == 0u) {
             node->role = PETTA_PLAN_DATA;
+            node->output = PETTA_PLAN_OUTPUT_VALUE;
             continue;
         }
         Atom *head_atom = atom->expr.elems[0];
@@ -2163,6 +2176,55 @@ static const PettaPlanNode *petta_plan_build(
                         : PETTA_PLAN_EXEC_GENERIC;
         } else {
             node->role = PETTA_PLAN_DYNAMIC_CALL;
+        }
+
+        if (node->role == PETTA_PLAN_DATA) {
+            node->output = PETTA_PLAN_OUTPUT_CONSTRUCTOR;
+        } else if (head_atom->kind == ATOM_SYMBOL) {
+            SymbolId head = head_atom->sym_id;
+            PeTTaForm form = petta_semantics_form(head);
+            CettaExprLen nargs = atom->expr.len - 1u;
+            if (head == g_builtin_syms.quote && nargs == 1u) {
+                node->output = PETTA_PLAN_OUTPUT_QUOTED_CHILD;
+                node->output_child = 1u;
+            } else if (form == PETTA_FORM_CUT && nargs == 0u) {
+                node->output = PETTA_PLAN_OUTPUT_TRUE;
+            } else {
+                CettaExprIndex child = 0u;
+                if (form == PETTA_FORM_PROGN && nargs > 0u)
+                    child = nargs;
+                else if (form == PETTA_FORM_PROG1 && nargs > 0u)
+                    child = 1u;
+                else if ((form == PETTA_FORM_LET ||
+                          form == PETTA_FORM_CHAIN) && nargs == 3u)
+                    child = 3u;
+                else if (head == g_builtin_syms.let_star && nargs == 2u) {
+                    Atom *pairs = atom->expr.elems[1];
+                    bool valid = pairs && pairs->kind == ATOM_EXPR &&
+                        pairs->expr.len > 0u;
+                    for (CettaExprIndex index = 0u;
+                         valid && index < pairs->expr.len; index++) {
+                        Atom *pair = pairs->expr.elems[index];
+                        valid = pair && pair->kind == ATOM_EXPR &&
+                            pair->expr.len == 2u;
+                    }
+                    if (valid)
+                        child = 2u;
+                } else if ((head == g_builtin_syms.once ||
+                            head == g_builtin_syms.petta_transaction) &&
+                           nargs == 1u) {
+                    child = 1u;
+                } else if (head == g_builtin_syms.petta_with_mutex &&
+                           nargs == 2u) {
+                    child = 2u;
+                } else if (head == g_builtin_syms.match && nargs == 3u) {
+                    child = 3u;
+                }
+                if (child != 0u) {
+                    node->output = PETTA_PLAN_OUTPUT_CHILD;
+                    node->output_child = child;
+                }
+            }
         }
 
         if (!cetta_expr_len_mul_fits_size(
@@ -2233,13 +2295,15 @@ static bool petta_program_collect_callability(
         CettaCount length = space_length64(space->space);
         for (CettaIndex atom_index = 0u;
              atom_index < length; atom_index++) {
+            Atom *lhs = NULL;
             SymbolId head = SYMBOL_ID_NONE;
             if (petta_equation_view(
                     space_get_at64(space->space, atom_index),
-                    NULL, NULL, &head)) {
-                if (head == SYMBOL_ID_NONE) {
+                    &lhs, NULL, &head)) {
+                if (petta_equation_lhs_admits_any_named_head(lhs)) {
                     callability->admits_any_head = true;
-                } else if (!petta_callability_insert_named(
+                } else if (head != SYMBOL_ID_NONE &&
+                           !petta_callability_insert_named(
                                callability, head)) {
                     return false;
                 }
@@ -2821,11 +2885,12 @@ PettaDeclarationBlock *petta_program_declaration_block_new(
         program, &callability);
     for (int index = 0; ok && index < atom_count; index++) {
         Atom *atom = term_universe_get_atom(universe, atoms[index]);
+        Atom *lhs = NULL;
         SymbolId head = SYMBOL_ID_NONE;
-        if (petta_equation_view(atom, NULL, NULL, &head)) {
-            if (head == SYMBOL_ID_NONE) {
+        if (petta_equation_view(atom, &lhs, NULL, &head)) {
+            if (petta_equation_lhs_admits_any_named_head(lhs)) {
                 callability.admits_any_head = true;
-            } else {
+            } else if (head != SYMBOL_ID_NONE) {
                 ok = petta_callability_insert_named(
                     &callability, head);
             }
@@ -2866,12 +2931,13 @@ const PettaPlanNode *petta_program_plan_dynamic_add(
     PettaCallabilityDomain callability = {0};
     bool ok = petta_program_collect_callability(
         program, &callability);
+    Atom *lhs = NULL;
     SymbolId head = SYMBOL_ID_NONE;
     if (ok && petta_equation_view(
-            atom, NULL, NULL, &head)) {
-        if (head == SYMBOL_ID_NONE) {
+            atom, &lhs, NULL, &head)) {
+        if (petta_equation_lhs_admits_any_named_head(lhs)) {
             callability.admits_any_head = true;
-        } else {
+        } else if (head != SYMBOL_ID_NONE) {
             ok = petta_callability_insert_named(
                 &callability, head);
         }
@@ -3084,14 +3150,15 @@ bool petta_program_synchronize_space(
     bool ok = true;
     for (CettaIndex index = 0u; ok && index < atom_count; index++) {
         Atom *atom = space_get_at64(space, index);
+        Atom *lhs = NULL;
         SymbolId head = SYMBOL_ID_NONE;
         if (!atom) {
             ok = false;
         } else if (petta_equation_view(
-                       atom, NULL, NULL, &head)) {
-            if (head == SYMBOL_ID_NONE) {
+                       atom, &lhs, NULL, &head)) {
+            if (petta_equation_lhs_admits_any_named_head(lhs)) {
                 callability.admits_any_head = true;
-            } else {
+            } else if (head != SYMBOL_ID_NONE) {
                 ok = petta_callability_insert_named(
                     &callability, head);
             }

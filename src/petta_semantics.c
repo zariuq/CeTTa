@@ -786,6 +786,22 @@ Atom *petta_semantics_flat_list_spine(
     return tail;
 }
 
+bool petta_semantics_construct_value_allocation_bound(
+    CettaExprLen length, size_t *bytes_out) {
+    if (!atom_expr_allocation_bound(length, bytes_out))
+        return false;
+    /* A first Cons in an arena epoch also allocates its internal carrier
+     * tag.  Charging it on every three-child construction is conservative
+     * independently of the tag cache and of the actual head symbol. */
+    if (length == 3u) {
+        size_t tag_bytes = (sizeof(Atom) + 7u) & ~(size_t)7u;
+        if (*bytes_out > SIZE_MAX - tag_bytes)
+            return false;
+        *bytes_out += tag_bytes;
+    }
+    return true;
+}
+
 Atom *petta_semantics_construct_value(
     Arena *arena, Atom **elements, CettaExprLen length) {
     if (!arena || (length > 0u && !elements))
@@ -1041,10 +1057,44 @@ bool petta_semantics_cons_pattern_may_match(
     return true;
 }
 
-bool petta_semantics_match_cons_constraint(
+/* Resolve only the observed root. A declined view retains eager forcing as
+ * its reference path; physical observation limits do not mean mismatch. */
+static Atom *petta_semantics_match_view_root(
+    Arena *arena, const Bindings *bindings, Atom *source) {
+    CettaGsltTermViewV1 view = bindings_term_view_v1(source, bindings);
+    Atom *root = NULL;
+    if (cetta_gslt_term_view_resolve_root_v1(
+            &view, source, &root) == CETTA_GSLT_TERM_VIEW_OK_V1) {
+        return root;
+    }
+    return bindings_apply_if_vars(bindings, arena, source);
+}
+
+/* Field zero can itself be an alias. Observe it before choosing logical-list
+ * decomposition, while retaining borrowed children in the same environment. */
+static bool petta_semantics_match_view_cons(
+    Arena *arena, const Bindings *bindings, Atom *value,
+    bool authored_cons, bool *cons_out) {
+    *cons_out = false;
+    if (value->kind != ATOM_EXPR || value->expr.len != 3u)
+        return true;
+    Atom *head = petta_semantics_match_view_root(
+        arena, bindings, value->expr.elems[0]);
+    if (!head)
+        return false;
+    *cons_out = atom_is_internal_tag(
+                    head, CETTA_INTERNAL_TAG_PETTA_OPEN_CONS) ||
+                (authored_cons && head->kind == ATOM_SYMBOL &&
+                 petta_semantics_form(head->sym_id) == PETTA_FORM_CONS);
+    return true;
+}
+
+static bool petta_semantics_match_cons_constraint_mode(
     Arena *arena, Atom *constraint, Atom *value,
-    BindingsBuilder *builder) {
+    BindingsBuilder *builder, bool authored_cons) {
     if (!arena || !constraint || !value || !builder)
+        return false;
+    if (bindings_has_loop(bindings_builder_bindings(builder)))
         return false;
 
     uint32_t entry_mark = bindings_builder_save(builder);
@@ -1060,17 +1110,21 @@ bool petta_semantics_match_cons_constraint(
         PeTTaConsMatchPair pair = pairs[--length];
         const Bindings *current =
             bindings_builder_bindings(builder);
-        Atom *left = bindings_apply_if_vars(
-            current, arena, pair.left);
-        Atom *right = bindings_apply_if_vars(
-            current, arena, pair.right);
+        Atom *left = petta_semantics_match_view_root(
+            arena, current, pair.left);
+        Atom *right = petta_semantics_match_view_root(
+            arena, current, pair.right);
         if (!left || !right)
             goto fail;
 
-        bool left_cons =
-            petta_semantics_is_cons_constraint(left);
-        bool right_cons =
-            petta_semantics_is_cons_constraint(right);
+        bool left_cons = false;
+        bool right_cons = false;
+        if (!petta_semantics_match_view_cons(
+                arena, current, left, authored_cons, &left_cons) ||
+            !petta_semantics_match_view_cons(
+                arena, current, right, authored_cons, &right_cons)) {
+            goto fail;
+        }
         /*
          * An open PeTTa list is represented by a variable whose binding is a
          * cons spine.  Bind that variable to the spine before attempting
@@ -1079,8 +1133,12 @@ bool petta_semantics_match_cons_constraint(
          * construct an open one.
          */
         if (left->kind == ATOM_VAR || right->kind == ATOM_VAR) {
-            if (!match_atoms_builder(left, right, builder))
+            /* A later pair may revisit either variable. Reject a cycle
+             * before its substitution can be expanded by that next pair. */
+            if (!match_atoms_builder(left, right, builder) ||
+                bindings_has_loop(bindings_builder_bindings(builder))) {
                 goto fail;
+            }
             continue;
         }
         if (!left_cons && !right_cons &&
@@ -1100,8 +1158,10 @@ bool petta_semantics_match_cons_constraint(
             continue;
         }
         if (!left_cons && !right_cons) {
-            if (!match_atoms_builder(left, right, builder))
+            if (!match_atoms_builder(left, right, builder) ||
+                bindings_has_loop(bindings_builder_bindings(builder))) {
                 goto fail;
+            }
             continue;
         }
 
@@ -1161,6 +1221,19 @@ fail:
     free(pairs);
     bindings_builder_rollback(builder, entry_mark);
     return false;
+}
+
+bool petta_semantics_match_cons_constraint(
+    Arena *arena, Atom *constraint, Atom *value,
+    BindingsBuilder *builder) {
+    return petta_semantics_match_cons_constraint_mode(
+        arena, constraint, value, builder, true);
+}
+
+bool petta_semantics_match_lowered_head(
+    Arena *arena, Atom *head, Atom *value, BindingsBuilder *builder) {
+    return petta_semantics_match_cons_constraint_mode(
+        arena, head, value, builder, false);
 }
 
 typedef struct {
