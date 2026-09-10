@@ -3012,6 +3012,15 @@ Atom *atom_string(Arena *a, const char *val) {
     return at;
 }
 
+bool atom_expr_allocation_bound(CettaExprLen length, size_t *bytes_out) {
+    if (!bytes_out ||
+        length > (SIZE_MAX - sizeof(Atom) - 7u) / sizeof(Atom *))
+        return false;
+    *bytes_out = (sizeof(Atom) + (size_t)length * sizeof(Atom *) + 7u)
+        & ~(size_t)7u;
+    return true;
+}
+
 Atom *atom_expr(Arena *a, Atom **elems, CettaExprLen len) {
     Atom temp = {0};
     size_t elems_bytes = 0;

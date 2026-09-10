@@ -698,6 +698,8 @@ endif
 endif
 COMPILED_READER_RUNTIME_OBJ = $(patsubst %.c,%.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o,$(COMPILED_READER_RUNTIME_SRC))
 FALLBACK_EVAL_TEST_SRC = tests/support/test_fallback_eval_session.c
+PREPARED_PURE_ANSWER_TEST_OBJ = runtime/bootstrap/test_prepared_pure_answer_producer.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o
+PREPARED_PURE_ANSWER_TEST_BIN = runtime/test_prepared_pure_answer_producer-$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),-runtime-stats,)
 FALLBACK_EVAL_TEST_LINK_OBJ = $(filter-out src/main.$(BUILD_OBJ_TAG).runtime-stats.o src/main.$(BUILD_OBJ_TAG).o $(COMPILED_READER_RUNTIME_OBJ),$(OBJ))
 STABLE_OCCURRENCE_TRANSPORT_TEST_SRC = tests/test_stable_occurrence_transport.c
 STABLE_OCCURRENCE_TRANSPORT_TEST_OBJ = runtime/bootstrap/test_stable_occurrence_transport.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o
@@ -3274,7 +3276,7 @@ test-bindings-lookup-index: $(BINDINGS_LOOKUP_INDEX_TEST_BIN)
 	audited=$$(CETTA_BINDINGS_DERIVED_AUDIT=1 $(call cetta_exec,./$(BINDINGS_LOOKUP_INDEX_TEST_BIN))); \
 	reference=$$(CETTA_BINDINGS_SINGLE_REACH_CAPACITY_SCAN_REFERENCE=1 \
 		$(call cetta_exec,./$(BINDINGS_LOOKUP_INDEX_TEST_BIN))); \
-	expected='(BindingsLookupIndexSummary 154 154 0)'; \
+	expected='(BindingsLookupIndexSummary 161 161 0)'; \
 	printf '%s\n' "$$enabled"; \
 	test "$$enabled" = "$$expected" && test "$$disabled" = "$$expected" && \
 		test "$$audited" = "$$expected" && test "$$reference" = "$$expected"
@@ -4656,6 +4658,7 @@ endif
 STAGE0_OBJ = $(SRC:.c=.$(BUILD_OBJ_TAG).stage0.o)
 BUILD_CONFIG_INPUTS = Makefile $(VERSION_FILE)
 DEPS = $(OBJ:.o=.d) $(STAGE0_OBJ:.o=.d) \
+	$(PREPARED_PURE_ANSWER_TEST_OBJ:.o=.d) \
 	$(FALLBACK_EVAL_TEST_OBJ:.o=.d) \
 	$(REGISTRY_RESOLVER_TEST_OBJ:.o=.d) \
 	$(HE_COMPILED_READER_TEST_OBJ:.o=.d) \
@@ -21934,13 +21937,26 @@ test-petta-match-decision-equality: $(BIN)
 test-petta-memoization: $(BIN)
 	@for stem in memo_control memo_policy_limits memo_size_admission memo_answers \
 			memo_effect_boundary memo_equation_projection \
-			memo_direct_foreign_inert memo_inert memo_library; do \
+			memo_direct_foreign_inert memo_inert memo_library \
+			memo_nested_replay; do \
 		actual=runtime/test-petta-search-machine-$$stem.out; \
 		CETTA_PETTA_SEARCH_MACHINE=1 ./$(BIN) --lang petta \
 			tests/petta/search_machine_$$stem.metta \
 			>"$$actual" 2>&1; \
-		if ! diff -u tests/petta/search_machine_$$stem.expected \
-				"$$actual"; then \
+		if [ "$$stem" = memo_nested_replay ]; then \
+			contract_ok=1; \
+			diff -u \
+				<(head -n 3 tests/petta/search_machine_$$stem.expected) \
+				<(head -n 3 "$$actual") || contract_ok=0; \
+			diff -u \
+				<(tail -n +4 tests/petta/search_machine_$$stem.expected | LC_ALL=C sort) \
+				<(tail -n +4 "$$actual" | LC_ALL=C sort) || contract_ok=0; \
+		else \
+			contract_ok=1; \
+			diff -u tests/petta/search_machine_$$stem.expected \
+				"$$actual" || contract_ok=0; \
+		fi; \
+		if [ "$$contract_ok" -ne 1 ]; then \
 			echo "FAIL: PeTTa memoization contract $$stem"; \
 			exit 1; \
 		fi; \
@@ -24009,11 +24025,33 @@ PETTA_SEMANTIC_EXACT_STREAM_STEMS = \
 	hyperpose_shared_space_sloppy_update hyperpose_shared_space_transactions \
 	hyperpose_capture_alias_transfer hyperpose_nested_transaction \
 	foldall_open_match_collection named_space_substitution \
-	profile_petta_base_extension_boundary conjunctive_match_count_semantics
-PETTA_SEMANTIC_OCCURRENCE_BAG_STEMS = semantic_counter_equations
+	profile_petta_base_extension_boundary conjunctive_match_count_semantics \
+	search_machine_relational_head_phases search_machine_relational_output_phases
+PETTA_SEMANTIC_OCCURRENCE_BAG_STEMS = semantic_counter_equations \
+	search_machine_specializer_negative_mutation
 PETTA_SEMANTIC_ORACLE_STEMS = \
 	$(PETTA_SEMANTIC_EXACT_STREAM_STEMS) \
 	$(PETTA_SEMANTIC_OCCURRENCE_BAG_STEMS)
+
+.PHONY: test-petta-relational-head-phases
+test-petta-search-machine: test-petta-relational-head-phases
+test-petta-relational-head-phases: $(BIN)
+	@set -eu; \
+	for stem in search_machine_relational_head_phases search_machine_relational_output_phases; do \
+		for selector in default off; do \
+			for materialized in 0 1; do \
+				actual=$$(CETTA_PETTA_MATCH_DECISION="$$selector" \
+					CETTA_PETTA_RELATIONAL_EQUATION_VIEW_REFERENCE="$$materialized" \
+					./$(BIN) --lang petta tests/petta/$$stem.metta 2>&1); \
+				expected=$$(cat tests/petta/$$stem.expected); \
+				if [[ "$$actual" != "$$expected" ]]; then \
+					echo "FAIL: $$stem selector=$$selector materialized=$$materialized"; \
+					exit 1; \
+				fi; \
+			done; \
+		done; \
+	done; \
+	echo "PASS: relational clause heads reject impossible structure before ordered effects"
 
 .PHONY: test-petta-profile-boundary test-petta-semantics \
 	test-petta-semantics-differential
@@ -25668,8 +25706,24 @@ $(EXECUTION_CONTRACTS_TEST_BIN): tests/test_execution_contracts_generated.c \
 	$(CC) $(CPPFLAGS) $(CFLAGS) -Isrc -o $@ \
 		tests/test_execution_contracts_generated.c $(LDFLAGS)
 
+.PHONY: test-prepared-pure-answer-producer
+test-prepared-pure-answer-producer: $(PREPARED_PURE_ANSWER_TEST_BIN)
+	@$(call cetta_exec,./$(PREPARED_PURE_ANSWER_TEST_BIN))
+
+$(PREPARED_PURE_ANSWER_TEST_OBJ): tests/test_prepared_pure_answer_producer.c src/prepared_pure_machine.h $(BUILD_CONFIG_HEADER)
+	@mkdir -p $(dir $@)
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c $< -o $@
+
+$(PREPARED_PURE_ANSWER_TEST_BIN): $(PREPARED_PURE_ANSWER_TEST_OBJ) $(FALLBACK_EVAL_TEST_LINK_OBJ) $(BRIDGE_DEPS)
+	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+
+.PHONY: test-prepared-pure-answer-resource-fallback
+test-prepared-pure-answer-resource-fallback: $(BIN)
+	@$(CETTA_SCRIPT_RUN_ENV) python3 tests/test_prepared_pure_answer_resource_fallback.py \
+		./$(BIN) $(if $(filter 1,$(ENABLE_RUNTIME_STATS)),--stats,)
+
 .PHONY: test-prepared-pure-call-machine
-test-prepared-pure-call-machine: $(BIN)
+test-prepared-pure-call-machine: $(BIN) test-prepared-pure-answer-producer test-prepared-pure-answer-resource-fallback
 	@set -e; \
 	he_out=$$(mktemp runtime/prepared-pure-call-he.XXXXXX); \
 	he_no_gc_out=$$(mktemp runtime/prepared-pure-call-he-no-gc.XXXXXX); \
@@ -25681,10 +25735,25 @@ test-prepared-pure-call-machine: $(BIN)
 	choice_diag=$$(mktemp runtime/prepared-pure-call-choice-diag.XXXXXX); \
 	scalar_guard_out=$$(mktemp runtime/prepared-pure-scalar-guard.XXXXXX); \
 	scalar_guard_reference_out=$$(mktemp runtime/prepared-pure-scalar-guard-reference.XXXXXX); \
-	trap 'rm -f "$$he_out" "$$he_no_gc_out" "$$prime_out" "$$petta_out" "$$demand_out" "$$sharing_out" "$$choice_out" "$$choice_diag" "$$scalar_guard_out" "$$scalar_guard_reference_out"' EXIT INT TERM; \
+	answer_effect_out=$$(mktemp runtime/prepared-pure-answer-effect.XXXXXX); \
+	answer_effect_diag=$$(mktemp runtime/prepared-pure-answer-effect-diag.XXXXXX); \
+	trap 'rm -f "$$he_out" "$$he_no_gc_out" "$$prime_out" "$$petta_out" "$$demand_out" "$$sharing_out" "$$choice_out" "$$choice_diag" "$$scalar_guard_out" "$$scalar_guard_reference_out" "$$answer_effect_out" "$$answer_effect_diag"' EXIT INT TERM; \
 	CETTA_GC=1 CETTA_GC_BUDGET_MB=1 ./$(BIN) --lang he --profile extended \
 		tests/prepared_pure_call_machine.metta >"$$he_out"; \
 	diff -u tests/prepared_pure_call_machine.he.expected "$$he_out"; \
+	CETTA_PREPARED_PURE_DEBUG=1 ./$(BIN) --lang he --profile extended \
+		tests/prepared_pure_answer_effect_boundary.metta \
+		>"$$answer_effect_out" 2>"$$answer_effect_diag"; \
+	diff -u tests/prepared_pure_answer_effect_boundary.he.expected \
+		"$$answer_effect_out"; \
+	answer_effect_declines=$$(grep -c \
+		'answer effect is outside the single-result machine' \
+		"$$answer_effect_diag"); \
+	if [ "$$answer_effect_declines" -ne 2 ]; then \
+		echo "FAIL: direct answer-effect boundary was not exercised twice"; \
+		cat "$$answer_effect_diag"; \
+		exit 1; \
+	fi; \
 	CETTA_GC=0 ./$(BIN) --lang he --profile extended \
 		tests/prepared_pure_call_machine.metta >"$$he_no_gc_out"; \
 	diff -u "$$he_no_gc_out" "$$he_out"; \
@@ -25751,7 +25820,7 @@ test-prepared-pure-call-machine: $(BIN)
 		printf '%s\n' "$$non_tail_observation_count"; \
 		exit 1; \
 	fi; \
-	echo "PASS: generated pure-call machine is stack-safe, demand-preserving, nested-ambiguity-conservative, and non-tail-symbolic"
+	echo "PASS: generated pure-call and finite-answer machines are stack-safe, multiplicity-preserving, demand-preserving, and non-tail-symbolic"
 
 .PHONY: test-mam-symbolic-battery
 test-mam-symbolic-battery: $(BIN)
@@ -25798,7 +25867,7 @@ bench-mam-linear-fibonacci: $(BIN)
 		bash scripts/bench_mam_linear_fibonacci.sh
 
 .PHONY: test-prepared-pure-call-machine-stats
-test-prepared-pure-call-machine-stats: $(BIN)
+test-prepared-pure-call-machine-stats: $(BIN) test-prepared-pure-answer-resource-fallback
 ifeq ($(ENABLE_RUNTIME_STATS),1)
 	@result=$$(CETTA_GC=1 CETTA_GC_BUDGET_MB=1 \
 		./$(BIN) --emit-runtime-stats --lang he \
@@ -25809,6 +25878,16 @@ ifeq ($(ENABLE_RUNTIME_STATS),1)
 		'$$1 == "runtime-counter" && $$2 == "prepared-pure-call-commit" { print $$3 }'); \
 	declines=$$(printf '%s\n' "$$result" | awk \
 		'$$1 == "runtime-counter" && $$2 == "prepared-pure-call-decline" { print $$3 }'); \
+	answer_admissions=$$(printf '%s\n' "$$result" | awk \
+		'$$1 == "runtime-counter" && $$2 == "prepared-pure-answer-producer-admission" { print $$3 }'); \
+	answer_commits=$$(printf '%s\n' "$$result" | awk \
+		'$$1 == "runtime-counter" && $$2 == "prepared-pure-answer-producer-commit" { print $$3 }'); \
+	answer_declines=$$(printf '%s\n' "$$result" | awk \
+		'$$1 == "runtime-counter" && $$2 == "prepared-pure-answer-producer-decline" { print $$3 }'); \
+	answer_count=$$(printf '%s\n' "$$result" | awk \
+		'$$1 == "runtime-counter" && $$2 == "prepared-pure-answer-producer-answer" { print $$3 }'); \
+	answer_tail_calls=$$(printf '%s\n' "$$result" | awk \
+		'$$1 == "runtime-counter" && $$2 == "prepared-pure-answer-producer-tail-call" { print $$3 }'); \
 	collections=$$(printf '%s\n' "$$result" | awk \
 		'$$1 == "runtime-counter" && $$2 == "prepared-pure-call-gc-collection" { print $$3 }'); \
 	evacuated=$$(printf '%s\n' "$$result" | awk \
@@ -25819,8 +25898,13 @@ ifeq ($(ENABLE_RUNTIME_STATS),1)
 	   [ "$${declines:-0}" -lt 1 ] || [ "$${collections:-0}" -lt 1 ] || \
 	   [ "$${collections:-0}" -gt 10 ] || \
 	   [ "$${evacuated:-0}" -gt 1048576 ] || \
-	   [ "$${reclaimed:-0}" -lt 1 ]; then \
-		echo "FAIL: pure-call mechanism witness admission=$$admissions commit=$$commits decline=$$declines collections=$$collections evacuated=$$evacuated reclaimed=$$reclaimed"; \
+	   [ "$${reclaimed:-0}" -lt 1 ] || \
+	   [ "$${answer_admissions:-0}" -lt 3 ] || \
+	   [ "$${answer_commits:-0}" -lt 3 ] || \
+	   [ "$${answer_declines:-0}" -lt 1 ] || \
+	   [ "$${answer_count:-0}" -ne 6 ] || \
+	   [ "$${answer_tail_calls:-0}" -lt 1 ]; then \
+		echo "FAIL: pure-call mechanism witness admission=$$admissions commit=$$commits decline=$$declines collections=$$collections evacuated=$$evacuated reclaimed=$$reclaimed answer-admission=$$answer_admissions answer-commit=$$answer_commits answer-decline=$$answer_declines answers=$$answer_count answer-tail-calls=$$answer_tail_calls"; \
 		exit 1; \
 	fi; \
 	need_result=$$(CETTA_GC=1 CETTA_GC_BUDGET_MB=1 \
@@ -25890,7 +25974,7 @@ ifeq ($(ENABLE_RUNTIME_STATS),1)
 		echo "FAIL: scalar guard answers or receipts admitted=$$guard_admitted evaluated=$$guard_evaluated refuted=$$guard_refuted tail-reentries=$$guard_tail_reentries reference-admitted=$$guard_reference_admitted bounded-admitted=$$guard_bounded_admitted"; \
 		exit 1; \
 	fi; \
-	echo "PASS: pure-call mechanism witnesses commit, conservative decline, scalar-guard refinement, bounded collection sampling, generated-root reclamation, shared Need updates, and tail reentry"
+	echo "PASS: pure-call mechanism witnesses deterministic and finite-answer commits, conservative decline, scalar-guard refinement, bounded collection sampling, generated-root reclamation, shared Need updates, and tail reentry"
 else
 	@echo "INFO: pure-call mechanism witness requires compile-time runtime stats; re-running with ENABLE_RUNTIME_STATS=1"
 	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 test-prepared-pure-call-machine-stats

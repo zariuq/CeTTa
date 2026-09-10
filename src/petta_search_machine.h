@@ -200,6 +200,9 @@ typedef struct {
     /* Quotation is presentation-owned.  PeTTa evaluates `(quote x)` to `x`,
      * while Prime keeps the quoted expression as inert first-class data. */
     bool quote_is_inert_data;
+    /* PeTTa's translation places exposed result structure before ordered
+     * clause effects. Other dialects require their own phase law. */
+    bool source_output_constraints;
     /* Language-owned canonical answer-traversal materializer.  Runtime
      * dialects supply `reify`; a zero field retains the historical PeTTa
      * spelling for standalone machine clients that omit this field. */

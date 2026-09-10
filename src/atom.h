@@ -321,6 +321,9 @@ void  arena_account_external_bytes(Arena *a, size_t size);
 ArenaMark arena_mark(const Arena *a);
 void  arena_reset(Arena *a, ArenaMark mark);
 void *arena_alloc(Arena *a, size_t size);
+/* Upper bound on live arena bytes allocated by atom_expr with hash-consing
+ * disabled.  Block reservation overhead is not part of this logical charge. */
+bool atom_expr_allocation_bound(CettaExprLen length, size_t *bytes_out);
 char *arena_strdup(Arena *a, const char *s);
 bool  arena_owns_ptr(const Arena *a, const void *ptr);
 bool  arena_owns_atom(const Arena *a, const Atom *atom);

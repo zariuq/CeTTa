@@ -832,6 +832,12 @@ static const char *const CETTA_RUNTIME_COUNTER_NAMES[CETTA_RUNTIME_COUNTER_COUNT
     "petta-match-conjunction-cursor-commit",
     "petta-match-conjunction-cursor-decline",
     "petta-match-conjunction-cursor-leg",
+    "prepared-pure-answer-producer-admission",
+    "prepared-pure-answer-producer-commit",
+    "prepared-pure-answer-producer-decline",
+    "prepared-pure-answer-producer-answer",
+    "prepared-pure-answer-producer-tail-call",
+    "prepared-pure-answer-producer-resource-decline",
 };
 
 static int64_t clamp_counter(uint64_t value) {

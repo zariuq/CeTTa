@@ -1,6 +1,8 @@
 [603]
 [left, right]
+[same, same]
 [1, 2]
+[(prepared-partial Nil)]
 [(Unpacked a b)]
 [(Same same)]
 [(Rigid same tail)]

@@ -2059,13 +2059,24 @@ CettaGsltTermViewStatusV1 bindings_resolve_term_view_root_v1(
         return CETTA_GSLT_TERM_VIEW_INVALID_V1;
     }
     const Bindings *bindings = context;
-    *target_out = !bindings || bindings->len == 0u
-        ? source_variable
-        : bindings_resolve_atom_preview(
-              (Bindings *)bindings, source_variable);
-    return *target_out
-        ? CETTA_GSLT_TERM_VIEW_OK_V1
-        : CETTA_GSLT_TERM_VIEW_INVALID_V1;
+    Atom *root = source_variable;
+    size_t dereferences = 0u;
+    size_t limit = bindings_dereference_limit(bindings);
+    while (bindings && bindings->len > 0u && root->kind == ATOM_VAR) {
+        Atom *next = bindings_lookup_var((Bindings *)bindings, root);
+        if (!next)
+            next = bindings_lookup_spelling((Bindings *)bindings, root->sym_id);
+        if (!next || next == root ||
+            (next->kind == ATOM_VAR &&
+             binding_var_eq(next->var_id, root->var_id))) {
+            break;
+        }
+        if (++dereferences > limit)
+            return CETTA_GSLT_TERM_VIEW_DEFER_V1;
+        root = next;
+    }
+    *target_out = root;
+    return CETTA_GSLT_TERM_VIEW_OK_V1;
 }
 
 static Atom *bindings_lookup_spelling(Bindings *b, SymbolId spelling) {

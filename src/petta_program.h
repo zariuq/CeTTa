@@ -50,6 +50,18 @@ typedef enum {
     PETTA_PLAN_CONTINUATION_AFTER_ANONYMOUS_HOLE,
 } PettaPlanContinuation;
 
+/* Abstract output shape for a source occurrence. Opaque results are connected
+ * by runtime goals; constructors and transparent children can constrain an
+ * enclosing clause before effects run. */
+typedef enum {
+    PETTA_PLAN_OUTPUT_OPAQUE = 0,
+    PETTA_PLAN_OUTPUT_VALUE,
+    PETTA_PLAN_OUTPUT_CONSTRUCTOR,
+    PETTA_PLAN_OUTPUT_CHILD,
+    PETTA_PLAN_OUTPUT_QUOTED_CHILD,
+    PETTA_PLAN_OUTPUT_TRUE,
+} PettaPlanOutput;
+
 typedef struct PettaPlanNode PettaPlanNode;
 
 /* One qualified physical realization of a deterministic RegionPlan.  It is
@@ -149,6 +161,8 @@ struct PettaPlanNode {
     PettaPlanExecution execution;
     PettaPlanControl control;
     PettaPlanContinuation continuation;
+    PettaPlanOutput output;
+    CettaExprIndex output_child;
     bool contains_length_call;
     bool contains_call;
     /* This subtree contains an operator which transports authored child

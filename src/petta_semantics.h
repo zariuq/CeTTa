@@ -218,6 +218,8 @@ Atom *petta_semantics_materialize_logical_list(
  * tail as authored `cons` syntax. */
 Atom *petta_semantics_construct_value(
     Arena *arena, Atom **elements, CettaExprLen length);
+bool petta_semantics_construct_value_allocation_bound(
+    CettaExprLen length, size_t *bytes_out);
 Atom *petta_semantics_materialize_value(
     Arena *arena, Atom *value);
 /* True exactly when materialize_value has an observable open-cons carrier
@@ -244,6 +246,12 @@ bool petta_semantics_cons_pattern_may_match(
 bool petta_semantics_match_cons_constraint(
     Arena *arena, Atom *constraint, Atom *value,
     BindingsBuilder *builder);
+/* A lowered head has already classified authored constructors and replaced
+ * logical cons patterns with private list carriers. Interpret only those
+ * carriers here: retained `cons` syntax in quoted or structural data must
+ * not acquire list-pattern meaning during matching. */
+bool petta_semantics_match_lowered_head(
+    Arena *arena, Atom *head, Atom *value, BindingsBuilder *builder);
 
 /*
  * HE stdlib equations reused by PeTTa are lowered to private value-binding

@@ -200,10 +200,11 @@ static bool atom_is_legacy_empty_or_error(Atom *atom) {
     return atom_is_error(atom) || atom_is_legacy_empty_sentinel(atom);
 }
 
-/* Prime's explicit choice-zero form is computation, not the datum `Empty`.
+/* The explicit choice-zero form is computation, not the datum `Empty`.
  * Keep its structural recognition shared by the canonical evaluator and
- * every accelerator admission boundary. */
-static bool atom_is_prime_computation_zero_form(const Atom *atom) {
+ * every accelerator admission boundary.  Each language adapter still owns
+ * whether the form is visible to a particular realization. */
+static bool atom_is_computation_zero_form(const Atom *atom) {
     return atom && atom->kind == ATOM_EXPR && atom->expr.len == 1u &&
            atom->expr.elems[0] &&
            atom->expr.elems[0]->kind == ATOM_SYMBOL &&
@@ -13694,6 +13695,10 @@ petta_prepared_pure_expression_view(
     const Atom *expression, CettaPreparedPureExpressionView *view);
 
 static CettaPreparedPureExpressionViewState
+he_prepared_pure_expression_view(
+    const Atom *expression, CettaPreparedPureExpressionView *view);
+
+static CettaPreparedPureExpressionViewState
 prime_prepared_pure_expression_view(
     const Atom *expression, CettaPreparedPureExpressionView *view);
 
@@ -13803,6 +13808,8 @@ static CettaPreparedPureSourceView prepared_pure_source_view_for_language(
 
 static CettaPreparedPureExpressionViewFn
 prepared_pure_expression_view_for_language(CettaLanguageId language_id) {
+    if (language_id == CETTA_LANGUAGE_HE)
+        return he_prepared_pure_expression_view;
     if (language_id == CETTA_LANGUAGE_PETTA)
         return petta_prepared_pure_expression_view;
     if (language_id == CETTA_LANGUAGE_PRIME)
@@ -19245,6 +19252,7 @@ typedef struct PreparedPureCacheEntry {
     CettaExprLen arity;
     CettaLanguageId language_id;
     CettaGsltPureCallMode call_mode;
+    bool answer_producer;
     const void *source_identity;
     bool entry_arguments_are_values;
     bool total_structural_equality;
@@ -19261,6 +19269,9 @@ typedef struct {
     Space *root_space;
     SpaceReadToken read;
     uint64_t capability_revision;
+    Arena execution_scratch;
+    bool execution_scratch_ready;
+    bool answer_collection_budget_declined;
 } PreparedPureProgramCache;
 
 /* HE calls within one top-level evaluation share revision-pinned compiled
@@ -19288,9 +19299,28 @@ static void prepared_pure_program_cache_free(
     if (!cache)
         return;
     prepared_pure_program_cache_clear_entries(cache);
+    if (cache->execution_scratch_ready) {
+        arena_free(&cache->execution_scratch);
+        cache->execution_scratch_ready = false;
+    }
     cache->root_space = NULL;
     memset(&cache->read, 0, sizeof(cache->read));
     cache->capability_revision = 0u;
+}
+
+static Arena *prepared_pure_program_cache_execution_scratch(
+        PreparedPureProgramCache *cache) {
+    if (!cache)
+        return NULL;
+    if (!cache->execution_scratch_ready) {
+        arena_init(&cache->execution_scratch);
+        arena_set_hashcons(&cache->execution_scratch, NULL);
+        arena_set_runtime_kind(
+            &cache->execution_scratch,
+            CETTA_ARENA_RUNTIME_KIND_SCRATCH);
+        cache->execution_scratch_ready = true;
+    }
+    return &cache->execution_scratch;
 }
 
 static bool prepared_pure_program_cache_prepare_revision(
@@ -37210,6 +37240,28 @@ static CettaObservationDemand petta_eval_machine_root_observation(
     };
 }
 
+/* Backward output constraints exist to reject a clause before an observable
+ * body effect runs.  A revision-pinned proof that the complete reachable
+ * relation is static and effect-free removes that ordering obligation.  In
+ * that case ordinary result unification is equivalent and avoids projecting
+ * an output pattern for every attempted clause. */
+static bool petta_eval_machine_source_output_constraints_required(
+    Space *space, Atom *expression) {
+    if (!g_library_context || !g_library_context->petta_program ||
+        !space || !expression) {
+        return true;
+    }
+    Atom *subject = petta_eval_machine_relational_subject(expression);
+    SymbolId head = atom_head_symbol_id(subject);
+    if (!subject || subject->kind != ATOM_EXPR ||
+        subject->expr.len == 0u || head == SYMBOL_ID_NONE) {
+        return true;
+    }
+    return !petta_program_relation_table_safe(
+        g_library_context->petta_program, space, head,
+        subject->expr.len - 1u);
+}
+
 static bool petta_eval_machine_owned_multishot_admits_root(
     Space *space, Atom *expression) {
     if (!g_library_context || !g_library_context->petta_program ||
@@ -37774,6 +37826,10 @@ static bool petta_eval_machine_try(
         cetta_language_portable_relational_contract(
             eval_current_language_id()) ==
         CETTA_PORTABLE_RELATIONAL_EAGER_STRUCTURAL_EQUATIONS_V1;
+    bool source_output_constraints =
+        !prime_machine && !portable_machine &&
+        petta_eval_machine_source_output_constraints_required(
+            space, expression);
     /* Selection discipline for the owned frontier, as checked data.  FIFO
      * and ratio ride one mechanism; admission checks recurrent access to the
      * oldest lane before any frontier work begins.  Persistent-occurrence
@@ -38010,6 +38066,7 @@ static bool petta_eval_machine_try(
         .admit_branch_capture = frontier_admitted
             ? petta_eval_machine_admit_branch_capture : NULL,
         .quote_is_inert_data = prime_machine,
+        .source_output_constraints = source_output_constraints,
         .reify_head = g_builtin_syms.reify,
         .permit_transition = frontier_admitted
             ? petta_eval_machine_permit_controller_transition
@@ -39259,6 +39316,7 @@ static CettaPreparedPureProgram *prepared_pure_program_cache_lookup(
     const void *source_identity,
     CettaLanguageId language_id,
     CettaGsltPureCallMode call_mode,
+    bool answer_producer,
     bool entry_arguments_are_values,
     bool total_structural_equality,
     bool *compilation_declined) {
@@ -39287,6 +39345,7 @@ static CettaPreparedPureProgram *prepared_pure_program_cache_lookup(
             entry->source_identity != source_identity ||
             entry->language_id != language_id ||
             entry->call_mode != call_mode ||
+            entry->answer_producer != answer_producer ||
             entry->entry_arguments_are_values !=
                 entry_arguments_are_values ||
             entry->total_structural_equality !=
@@ -39321,6 +39380,7 @@ static bool prepared_pure_program_cache_insert(
     const void *source_identity,
     CettaLanguageId language_id,
     CettaGsltPureCallMode call_mode,
+    bool answer_producer,
     bool entry_arguments_are_values,
     bool total_structural_equality,
     CettaPreparedPureProgram *program) {
@@ -39348,6 +39408,7 @@ static bool prepared_pure_program_cache_insert(
     entry->source_identity = source_identity;
     entry->language_id = language_id;
     entry->call_mode = call_mode;
+    entry->answer_producer = answer_producer;
     entry->entry_arguments_are_values =
         entry_arguments_are_values;
     entry->total_structural_equality =
@@ -39366,6 +39427,7 @@ static bool prepared_pure_program_cache_insert_decline(
     const void *source_identity,
     CettaLanguageId language_id,
     CettaGsltPureCallMode call_mode,
+    bool answer_producer,
     bool entry_arguments_are_values,
     bool total_structural_equality) {
     uint64_t capability_revision =
@@ -39387,6 +39449,7 @@ static bool prepared_pure_program_cache_insert_decline(
     entry->source_identity = source_identity;
     entry->language_id = language_id;
     entry->call_mode = call_mode;
+    entry->answer_producer = answer_producer;
     entry->entry_arguments_are_values =
         entry_arguments_are_values;
     entry->total_structural_equality =
@@ -39561,10 +39624,19 @@ petta_prepared_pure_expression_view(
 }
 
 static CettaPreparedPureExpressionViewState
+he_prepared_pure_expression_view(
+    const Atom *expression, CettaPreparedPureExpressionView *view) {
+    (void)view;
+    return atom_is_computation_zero_form(expression)
+        ? CETTA_PREPARED_PURE_EXPRESSION_ZERO
+        : CETTA_PREPARED_PURE_EXPRESSION_DEFAULT;
+}
+
+static CettaPreparedPureExpressionViewState
 prime_prepared_pure_expression_view(
     const Atom *expression, CettaPreparedPureExpressionView *view) {
     (void)view;
-    return atom_is_prime_computation_zero_form(expression)
+    return atom_is_computation_zero_form(expression)
         ? CETTA_PREPARED_PURE_EXPRESSION_CANONICAL_ONLY
         : CETTA_PREPARED_PURE_EXPRESSION_DEFAULT;
 }
@@ -39602,13 +39674,34 @@ static size_t prepared_pure_nursery_budget_bytes(void) {
     return budget < private_cap ? budget : private_cap;
 }
 
-static Atom *prepared_pure_closed_call_try(
+typedef struct {
+    CettaLanguageId language_id;
+    CettaPreparedPureBooleanValue boolean_value;
+    CettaPreparedPureConstructValue construct_value;
+    CettaPreparedPureOpaqueValue opaque_value;
+    CettaPreparedPureRegisterViewFn register_view;
+    CettaPreparedPurePatternViewFn pattern_view;
+    CettaPreparedPureExpressionViewFn expression_view;
+    CettaPreparedPureSourceView source_view;
+    CettaGsltPureCallMode call_mode;
+    bool cache_entry_arguments_are_values;
+    bool total_structural_equality;
+    bool cacheable_program;
+} PreparedPureClosedCallPlan;
+
+/* One conservative admission judgment supplies every closed prepared
+ * realization.  The single-result executor and the finite answer producer
+ * differ only after this boundary; unsupported effects, tables, traces, and
+ * language-owned forms therefore decline in exactly the same way. */
+static bool prepared_pure_closed_call_plan(
     Space *space, Arena *destination, Atom *call, int fuel,
     bool entry_arguments_are_values,
-    bool preserve_internal_values,
-    PreparedPureProgramCache *program_cache) {
+    PreparedPureProgramCache *program_cache,
+    PreparedPureClosedCallPlan *plan) {
+    if (plan)
+        memset(plan, 0, sizeof(*plan));
     const char *precheck_reason = NULL;
-    if (!space || !destination || !call)
+    if (!space || !destination || !call || !plan)
         precheck_reason = "missing input";
     else if (fuel >= 0)
         precheck_reason = "bounded fuel";
@@ -39624,44 +39717,32 @@ static Atom *prepared_pure_closed_call_try(
         precheck_reason = "active answer observer";
     if (precheck_reason) {
         prepared_pure_precheck_debug(precheck_reason, call);
-        return NULL;
+        return false;
     }
     Atom *head = call->expr.elems[0];
     if (!head || head->kind != ATOM_SYMBOL ||
         is_grounded_op(head->sym_id) ||
         symbol_id_is_builtin(head->sym_id)) {
         prepared_pure_precheck_debug("non-user head", call);
-        return NULL;
+        return false;
     }
-    /* This explicit guard also covers a program compiled and cached before
-     * the relation was opted into memoization.  The expression-view guard
-     * above handles memoized calls nested inside newly compiled programs. */
     if (eval_current_language_id() == CETTA_LANGUAGE_PETTA &&
         g_library_context &&
         cetta_library_petta_memo_contains(
             g_library_context, head->sym_id,
             call->expr.len - 1u)) {
         prepared_pure_precheck_debug("memoized relation", call);
-        return NULL;
+        return false;
     }
     if (cetta_petta_profile_admits_typecheck_ops() &&
         petta_expr_contains_typecheck_op(call)) {
         prepared_pure_precheck_debug("typecheck operation", call);
-        return NULL;
+        return false;
     }
-    /* Variant tables are an operational protocol: they own
-       loop handling, invalidation, and answer reuse.  Until the generated
-       pure machine carries that protocol, keep tabled calls on the canonical
-       evaluator path. */
     if (active_search_table_mode() != CETTA_TABLE_MODE_NONE) {
         prepared_pure_precheck_debug("active table mode", call);
-        return NULL;
+        return false;
     }
-    /* Qualification, revision-keyed cache lookup, and compilation jointly
-     * observe one physical definition state.  The resulting program owns
-     * stable Atom pointers and may execute after this guard is released;
-     * shared authored effects remain free to interleave during execution. */
-    CETTA_SCOPED_SHARED_TRANSITION(prepared_pure_observation);
     bool defined = false;
     CettaGsltQueryEffect effect = space_query_effect_for_head(
         space, head->sym_id, &defined);
@@ -39671,61 +39752,93 @@ static Atom *prepared_pure_closed_call_try(
             reason, sizeof(reason), "effect=%u defined=%u",
             (unsigned)effect, defined ? 1u : 0u);
         prepared_pure_precheck_debug(reason, call);
-        return NULL;
+        return false;
     }
     if (gslt_match_chain_trace_active()) {
         prepared_pure_precheck_debug("active match trace", call);
-        return NULL;
+        return false;
     }
 
-    CettaLanguageId language_id = eval_current_language_id();
-    CettaPreparedPureBooleanValue boolean_value =
-        language_id == CETTA_LANGUAGE_PETTA
+    plan->language_id = eval_current_language_id();
+    plan->boolean_value =
+        plan->language_id == CETTA_LANGUAGE_PETTA
             ? petta_semantics_boolean_value
             : atom_bool;
-    CettaPreparedPureConstructValue construct_value =
-        language_id == CETTA_LANGUAGE_PETTA
+    plan->construct_value =
+        plan->language_id == CETTA_LANGUAGE_PETTA
             ? petta_semantics_construct_value
             : atom_expr;
-    CettaPreparedPureOpaqueValue opaque_value =
-        language_id == CETTA_LANGUAGE_PETTA
+    plan->opaque_value =
+        plan->language_id == CETTA_LANGUAGE_PETTA
             ? petta_semantics_is_opaque_runtime_value
             : NULL;
-    CettaPreparedPureRegisterViewFn register_view =
-        language_id == CETTA_LANGUAGE_PETTA
+    plan->register_view =
+        plan->language_id == CETTA_LANGUAGE_PETTA
             ? petta_prepared_pure_register_view
             : cetta_prepared_pure_register_view;
-    CettaPreparedPurePatternViewFn pattern_view =
-        language_id == CETTA_LANGUAGE_PETTA
+    plan->pattern_view =
+        plan->language_id == CETTA_LANGUAGE_PETTA
             ? petta_prepared_pure_pattern_view
             : NULL;
-    CettaPreparedPureExpressionViewFn expression_view =
-        prepared_pure_expression_view_for_language(language_id);
-    CettaPreparedPureSourceView source_view =
-        prepared_pure_source_view_for_language(language_id, call);
-    CettaGsltPureCallMode call_mode =
-        language_id == CETTA_LANGUAGE_PRIME
+    plan->expression_view =
+        prepared_pure_expression_view_for_language(plan->language_id);
+    plan->source_view =
+        prepared_pure_source_view_for_language(
+            plan->language_id, call);
+    plan->call_mode =
+        plan->language_id == CETTA_LANGUAGE_PRIME
             ? CETTA_GSLT_PURE_CALL_CALL_BY_NEED
             : CETTA_GSLT_PURE_CALL_EAGER;
-    bool cache_entry_arguments_are_values =
+    plan->cache_entry_arguments_are_values =
         entry_arguments_are_values;
-    if (!cache_entry_arguments_are_values && program_cache &&
-        call_mode == CETTA_GSLT_PURE_CALL_EAGER) {
-        cache_entry_arguments_are_values =
+    if (!plan->cache_entry_arguments_are_values && program_cache &&
+        plan->call_mode == CETTA_GSLT_PURE_CALL_EAGER) {
+        plan->cache_entry_arguments_are_values =
             prepared_pure_eager_entry_arguments_are_values(
                 space, destination, call, fuel);
     }
-    bool total_structural_equality =
+    plan->total_structural_equality =
         active_composition_uses_total_structural_eq();
-    bool cacheable_program =
-        call_mode == CETTA_GSLT_PURE_CALL_CALL_BY_NEED ||
-        cache_entry_arguments_are_values;
+    plan->cacheable_program =
+        plan->call_mode == CETTA_GSLT_PURE_CALL_CALL_BY_NEED ||
+        plan->cache_entry_arguments_are_values;
+    return true;
+}
+
+static Atom *prepared_pure_closed_call_try(
+    Space *space, Arena *destination, Atom *call, int fuel,
+    bool entry_arguments_are_values,
+    bool preserve_internal_values,
+    PreparedPureProgramCache *program_cache) {
+    CETTA_SCOPED_SHARED_TRANSITION(prepared_pure_observation);
+    PreparedPureClosedCallPlan plan;
+    if (!prepared_pure_closed_call_plan(
+            space, destination, call, fuel,
+            entry_arguments_are_values, program_cache, &plan))
+        return NULL;
+    CettaLanguageId language_id = plan.language_id;
+    CettaPreparedPureBooleanValue boolean_value = plan.boolean_value;
+    CettaPreparedPureConstructValue construct_value =
+        plan.construct_value;
+    CettaPreparedPureOpaqueValue opaque_value = plan.opaque_value;
+    CettaPreparedPureRegisterViewFn register_view = plan.register_view;
+    CettaPreparedPurePatternViewFn pattern_view = plan.pattern_view;
+    CettaPreparedPureExpressionViewFn expression_view =
+        plan.expression_view;
+    CettaPreparedPureSourceView source_view = plan.source_view;
+    CettaGsltPureCallMode call_mode = plan.call_mode;
+    bool cache_entry_arguments_are_values =
+        plan.cache_entry_arguments_are_values;
+    bool total_structural_equality =
+        plan.total_structural_equality;
+    bool cacheable_program = plan.cacheable_program;
     bool program_is_cached = false;
     bool compilation_declined = false;
     CettaPreparedPureProgram *program =
         prepared_pure_program_cache_lookup(
             program_cache, space, call, source_view.root,
             language_id, call_mode,
+            false,
             cache_entry_arguments_are_values,
             total_structural_equality, &compilation_declined);
     if (compilation_declined) {
@@ -39734,6 +39847,15 @@ static Atom *prepared_pure_closed_call_try(
         return NULL;
     }
     program_is_cached = program != NULL;
+    if (!program &&
+        cetta_prepared_pure_single_result_requires_answer_effect(
+            call, expression_view)) {
+        prepared_pure_precheck_debug(
+            "answer effect is outside the single-result machine", call);
+        cetta_runtime_stats_inc(
+            CETTA_RUNTIME_COUNTER_PREPARED_PURE_CALL_DECLINE);
+        return NULL;
+    }
     if (!program) {
         cetta_runtime_stats_inc(
             CETTA_RUNTIME_COUNTER_PREPARED_PURE_CALL_COMPILE_ATTEMPT);
@@ -39752,6 +39874,7 @@ static Atom *prepared_pure_closed_call_try(
             (void)prepared_pure_program_cache_insert_decline(
                 program_cache, space, call, source_view.root,
                 language_id, call_mode,
+                false,
                 cache_entry_arguments_are_values,
                 total_structural_equality);
         }
@@ -39765,16 +39888,23 @@ static Atom *prepared_pure_closed_call_try(
 
     cetta_shared_transition_guard_leave(&prepared_pure_observation);
 
-    Arena machine_arena;
-    arena_init(&machine_arena);
-    arena_set_runtime_kind(
-        &machine_arena, CETTA_ARENA_RUNTIME_KIND_SCRATCH);
-    arena_set_hashcons(&machine_arena, NULL);
+    Arena local_machine_arena;
+    Arena *machine_arena =
+        prepared_pure_program_cache_execution_scratch(program_cache);
+    bool machine_arena_is_local = machine_arena == NULL;
+    if (machine_arena_is_local) {
+        arena_init(&local_machine_arena);
+        arena_set_runtime_kind(
+            &local_machine_arena, CETTA_ARENA_RUNTIME_KIND_SCRATCH);
+        arena_set_hashcons(&local_machine_arena, NULL);
+        machine_arena = &local_machine_arena;
+    }
+    ArenaMark machine_arena_mark = arena_mark(machine_arena);
     Atom *machine_result = NULL;
     size_t machine_nursery_budget =
         prepared_pure_nursery_budget_bytes();
     bool executed = cetta_prepared_pure_program_execute_closed_controlled(
-        program, &machine_arena, machine_nursery_budget,
+        program, machine_arena, machine_nursery_budget,
         eval_prepared_pure_interrupt_poll, NULL,
         &machine_result);
     bool interrupted = !executed &&
@@ -39790,7 +39920,10 @@ static Atom *prepared_pure_closed_call_try(
         : NULL;
     cetta_prepared_pure_program_release_closed_execution(program);
     cetta_prepared_pure_program_clear_closed_entry_call(program);
-    arena_free(&machine_arena);
+    if (machine_arena_is_local)
+        arena_free(machine_arena);
+    else
+        arena_reset(machine_arena, machine_arena_mark);
     if (program_is_cached && !result && !interrupted) {
         prepared_pure_program_cache_remove(
             program_cache, program);
@@ -39819,6 +39952,7 @@ static Atom *prepared_pure_closed_call_try(
         if (cache_candidate && prepared_pure_program_cache_insert(
                 program_cache, space, call, source_view.root,
                 language_id, call_mode,
+                false,
                 cache_entry_arguments_are_values,
                 total_structural_equality, cache_candidate)) {
             if (cache_candidate != program) {
@@ -39840,6 +39974,256 @@ static Atom *prepared_pure_closed_call_try(
         result
             ? CETTA_RUNTIME_COUNTER_PREPARED_PURE_CALL_COMMIT
             : CETTA_RUNTIME_COUNTER_PREPARED_PURE_CALL_DECLINE);
+    return result;
+}
+
+typedef struct {
+    Atom **items;
+    size_t len;
+    size_t cap;
+    bool failed;
+} PreparedPureAnswerBuffer;
+
+static bool prepared_pure_answer_buffer_visit(
+    Atom *answer, void *context) {
+    PreparedPureAnswerBuffer *buffer = context;
+    if (!buffer)
+        return false;
+    if (!answer) {
+        buffer->failed = true;
+        return false;
+    }
+    if (buffer->len == buffer->cap) {
+        size_t next = buffer->cap ? buffer->cap * 2u : 8u;
+        if (next < buffer->cap ||
+            next > SIZE_MAX / sizeof(*buffer->items)) {
+            buffer->failed = true;
+            return false;
+        }
+        Atom **items = realloc(
+            buffer->items, sizeof(*buffer->items) * next);
+        if (!items) {
+            buffer->failed = true;
+            return false;
+        }
+        buffer->items = items;
+        buffer->cap = next;
+    }
+    buffer->items[buffer->len++] = answer;
+    return true;
+}
+
+static CettaPreparedPureAnswersResult
+prepared_pure_closed_answers_try(
+    Space *space, Arena *destination, Atom *call, int fuel,
+    PreparedPureProgramCache *program_cache,
+    const Bindings *outer_env, bool preserve_bindings,
+    OutcomeSet *outcomes) {
+    if (!outcomes ||
+        (program_cache && program_cache->answer_collection_budget_declined))
+        return CETTA_PREPARED_PURE_ANSWERS_DECLINED;
+    CETTA_SCOPED_SHARED_TRANSITION(prepared_pure_answers_observation);
+    PreparedPureClosedCallPlan plan;
+    if (!prepared_pure_closed_call_plan(
+            space, destination, call, fuel, false,
+            program_cache, &plan) ||
+        plan.language_id == CETTA_LANGUAGE_PRIME ||
+        plan.call_mode != CETTA_GSLT_PURE_CALL_EAGER ||
+        !plan.cache_entry_arguments_are_values ||
+        !plan.cacheable_program) {
+        return CETTA_PREPARED_PURE_ANSWERS_DECLINED;
+    }
+
+    bool compilation_declined = false;
+    bool program_is_cached = false;
+    CettaPreparedPureProgram *program =
+        prepared_pure_program_cache_lookup(
+            program_cache, space, call, plan.source_view.root,
+            plan.language_id, plan.call_mode, true,
+            plan.cache_entry_arguments_are_values,
+            plan.total_structural_equality,
+            &compilation_declined);
+    if (compilation_declined) {
+        cetta_runtime_stats_inc(
+            CETTA_RUNTIME_COUNTER_PREPARED_PURE_ANSWER_PRODUCER_DECLINE);
+        return CETTA_PREPARED_PURE_ANSWERS_DECLINED;
+    }
+    program_is_cached = program != NULL;
+    if (!program) {
+        program = cetta_prepared_pure_program_compile_closed_answers(
+            space, call, plan.call_mode,
+            plan.boolean_value, plan.construct_value,
+            plan.opaque_value, plan.register_view,
+            plan.expression_view, plan.pattern_view,
+            plan.source_view.role ? &plan.source_view : NULL,
+            true, plan.total_structural_equality,
+            prepared_pure_match_decision_semantics(plan.call_mode));
+    }
+    if (!program) {
+        if (program_cache) {
+            (void)prepared_pure_program_cache_insert_decline(
+                program_cache, space, call, plan.source_view.root,
+                plan.language_id, plan.call_mode, true,
+                plan.cache_entry_arguments_are_values,
+                plan.total_structural_equality);
+        }
+        cetta_runtime_stats_inc(
+            CETTA_RUNTIME_COUNTER_PREPARED_PURE_ANSWER_PRODUCER_DECLINE);
+        return CETTA_PREPARED_PURE_ANSWERS_DECLINED;
+    }
+    cetta_runtime_stats_inc(
+        CETTA_RUNTIME_COUNTER_PREPARED_PURE_ANSWER_PRODUCER_ADMISSION);
+    cetta_shared_transition_guard_leave(
+        &prepared_pure_answers_observation);
+
+    Arena local_machine_arena;
+    Arena *machine_arena =
+        prepared_pure_program_cache_execution_scratch(program_cache);
+    bool machine_arena_is_local = machine_arena == NULL;
+    if (machine_arena_is_local) {
+        arena_init(&local_machine_arena);
+        arena_set_runtime_kind(
+            &local_machine_arena,
+            CETTA_ARENA_RUNTIME_KIND_SCRATCH);
+        arena_set_hashcons(&local_machine_arena, NULL);
+        machine_arena = &local_machine_arena;
+    }
+    ArenaMark machine_arena_mark = arena_mark(machine_arena);
+    PreparedPureAnswerBuffer buffer = {0};
+    /* This is a speculative-execution purse, independent of semantic fuel
+     * and of whether nursery collection is enabled.  Exhaustion publishes
+     * nothing and leaves the canonical route authoritative. */
+    size_t scratch_budget = prepared_pure_nursery_budget_bytes();
+    if (scratch_budget == 0u)
+        scratch_budget = 256u * ARENA_BLOCK_SIZE;
+    CettaPreparedPureAnswerLimits limits = {
+        .max_transitions = UINT64_C(65536),
+        .max_scratch_bytes = scratch_budget,
+        .construct_allocation_bound = plan.language_id == CETTA_LANGUAGE_PETTA
+            ? petta_semantics_construct_value_allocation_bound
+            : atom_expr_allocation_bound,
+    };
+    uint64_t answer_count = 0u;
+    uint64_t tail_call_count = 0u;
+    CettaPreparedPureAnswersResult result =
+        cetta_prepared_pure_program_visit_closed_answers(
+            program, machine_arena, &limits,
+            prepared_pure_answer_buffer_visit, &buffer,
+            eval_prepared_pure_interrupt_poll, NULL,
+            &answer_count, &tail_call_count);
+
+    if (result == CETTA_PREPARED_PURE_ANSWERS_LIMIT) {
+        /* The invocation-local cache also delimits the fallback episode.
+         * Do not repeatedly speculate on its recursive suffixes after the
+         * first exhausted attempt; later top-level evaluations start fresh. */
+        if (program_cache)
+            program_cache->answer_collection_budget_declined = true;
+        cetta_runtime_stats_inc(
+            CETTA_RUNTIME_COUNTER_PREPARED_PURE_ANSWER_PRODUCER_RESOURCE_DECLINE);
+        result = CETTA_PREPARED_PURE_ANSWERS_DECLINED;
+    }
+
+    if (result == CETTA_PREPARED_PURE_ANSWERS_STOPPED &&
+        buffer.failed)
+        result = CETTA_PREPARED_PURE_ANSWERS_DECLINED;
+    if (result == CETTA_PREPARED_PURE_ANSWERS_COMPLETE &&
+        !cetta_prepared_pure_program_is_current(program))
+        result = CETTA_PREPARED_PURE_ANSWERS_DECLINED;
+
+    ArenaMark publication_mark = arena_mark(destination);
+    size_t publication_start =
+        arena_mark_accounted_live_bytes(publication_mark);
+    bool publish_resource_decline = publication_start == SIZE_MAX;
+    Atom **published = NULL;
+    bool publish_ok = !publish_resource_decline &&
+        result == CETTA_PREPARED_PURE_ANSWERS_COMPLETE &&
+        answer_count == buffer.len;
+    if (publish_ok && buffer.len > 0u) {
+        if (buffer.len > SIZE_MAX / sizeof(*published)) {
+            publish_ok = false;
+            publish_resource_decline = true;
+        } else {
+            published = malloc(sizeof(*published) * buffer.len);
+        }
+        publish_ok = published != NULL;
+        publish_resource_decline |= !publish_ok;
+    }
+    for (size_t index = 0u;
+         publish_ok && index < buffer.len; index++) {
+        published[index] = plan.language_id == CETTA_LANGUAGE_PETTA
+            ? petta_semantics_materialize_value(
+                  destination, buffer.items[index])
+            : atom_deep_copy(destination, buffer.items[index]);
+        publish_ok = published[index] != NULL;
+        publish_resource_decline |= !publish_ok;
+        size_t publication_live =
+            arena_accounted_live_bytes(destination);
+        if (publish_ok &&
+            (publication_live < publication_start ||
+             publication_live - publication_start > scratch_budget)) {
+            publish_ok = false;
+            publish_resource_decline = true;
+        }
+    }
+    if (!publish_ok &&
+        result == CETTA_PREPARED_PURE_ANSWERS_COMPLETE) {
+        arena_reset(destination, publication_mark);
+        if (publish_resource_decline) {
+            if (program_cache)
+                program_cache->answer_collection_budget_declined = true;
+            cetta_runtime_stats_inc(
+                CETTA_RUNTIME_COUNTER_PREPARED_PURE_ANSWER_PRODUCER_RESOURCE_DECLINE);
+        }
+        result = CETTA_PREPARED_PURE_ANSWERS_DECLINED;
+    }
+
+    cetta_prepared_pure_program_clear_closed_entry_call(program);
+    if (machine_arena_is_local)
+        arena_free(machine_arena);
+    else
+        arena_reset(machine_arena, machine_arena_mark);
+
+    if (!program_is_cached &&
+        result == CETTA_PREPARED_PURE_ANSWERS_COMPLETE &&
+        program_cache &&
+        prepared_pure_program_cache_insert(
+            program_cache, space, call, plan.source_view.root,
+            plan.language_id, plan.call_mode, true,
+            plan.cache_entry_arguments_are_values,
+            plan.total_structural_equality, program)) {
+        program_is_cached = true;
+    }
+    if (program_is_cached &&
+        result == CETTA_PREPARED_PURE_ANSWERS_DECLINED) {
+        prepared_pure_program_cache_remove(program_cache, program);
+        program = NULL;
+        program_is_cached = false;
+    }
+    if (program && !program_is_cached)
+        cetta_prepared_pure_program_free(program);
+
+    if (result == CETTA_PREPARED_PURE_ANSWERS_COMPLETE) {
+        Bindings empty;
+        bindings_init(&empty);
+        for (size_t index = 0u; index < buffer.len; index++) {
+            outcome_set_add_prefixed(
+                destination, outcomes, published[index], &empty,
+                outer_env, preserve_bindings);
+        }
+        cetta_runtime_stats_inc(
+            CETTA_RUNTIME_COUNTER_PREPARED_PURE_ANSWER_PRODUCER_COMMIT);
+        cetta_runtime_stats_add(
+            CETTA_RUNTIME_COUNTER_PREPARED_PURE_ANSWER_PRODUCER_ANSWER,
+            answer_count);
+        cetta_runtime_stats_add(
+            CETTA_RUNTIME_COUNTER_PREPARED_PURE_ANSWER_PRODUCER_TAIL_CALL,
+            tail_call_count);
+    } else if (result == CETTA_PREPARED_PURE_ANSWERS_DECLINED) {
+        cetta_runtime_stats_inc(
+            CETTA_RUNTIME_COUNTER_PREPARED_PURE_ANSWER_PRODUCER_DECLINE);
+    }
+    free(published);
+    free(buffer.items);
     return result;
 }
 
@@ -40083,7 +40467,7 @@ tail_call: ;
     Atom *head = atom->expr.elems[0];
 
     if (language_id == CETTA_LANGUAGE_PRIME &&
-        atom_is_prime_computation_zero_form(atom)) {
+        atom_is_computation_zero_form(atom)) {
         return;
     }
 
@@ -40196,6 +40580,17 @@ tail_call: ;
         return;
     }
 
+    PreparedPureProgramCache *answer_program_cache = program_cache;
+    if (!answer_program_cache &&
+        language_id == CETTA_LANGUAGE_PETTA)
+        answer_program_cache = g_eval_episode_prepared_pure_cache;
+    CettaPreparedPureAnswersResult prepared_answers =
+        prepared_pure_closed_answers_try(
+            s, a, atom, fuel, answer_program_cache,
+            CURRENT_ENV, preserve_bindings, os);
+    if (prepared_answers == CETTA_PREPARED_PURE_ANSWERS_COMPLETE ||
+        prepared_answers == CETTA_PREPARED_PURE_ANSWERS_STOPPED)
+        return;
     if (petta_eval_relational_machine_available() &&
         petta_eval_machine_try(
             s, a, atom, etype, fuel, CURRENT_ENV,

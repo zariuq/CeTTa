@@ -51,6 +51,14 @@ typedef struct {
 typedef CettaPreparedPureExpressionViewState
 (*CettaPreparedPureExpressionViewFn)(
     const Atom *expression, CettaPreparedPureExpressionView *view);
+
+/* A closed single-result program cannot represent a branch whose selected
+ * arm has no answer.  Detect that direct answer-effect boundary before
+ * constructing a program; false means only "not established" and never
+ * licenses execution. */
+bool cetta_prepared_pure_single_result_requires_answer_effect(
+    const Atom *expression,
+    CettaPreparedPureExpressionViewFn expression_view);
 typedef enum {
     CETTA_PREPARED_PURE_PATTERN_VIEW_NOT_APPLICABLE = 0,
     CETTA_PREPARED_PURE_PATTERN_VIEW_MISMATCH,
@@ -134,6 +142,25 @@ CettaPreparedPureProgram *cetta_prepared_pure_program_compile_closed(
     bool total_structural_equality,
     CettaMatchDecisionSemanticIdentity match_decision_semantics);
 
+/* Compile the finite answer-producing fragment of a closed pure relation.
+ * Each matching clause must either expose a fully determined value or make a
+ * pure tail call whose arguments are fully determined by the current match.
+ * Unsupported answer effects decline compilation; they are never interpreted
+ * as an empty answer set. */
+CettaPreparedPureProgram *cetta_prepared_pure_program_compile_closed_answers(
+    Space *space, Atom *expression,
+    CettaGsltPureCallMode call_mode,
+    CettaPreparedPureBooleanValue boolean_value,
+    CettaPreparedPureConstructValue construct_value,
+    CettaPreparedPureOpaqueValue opaque_value,
+    CettaPreparedPureRegisterViewFn register_view,
+    CettaPreparedPureExpressionViewFn expression_view,
+    CettaPreparedPurePatternViewFn pattern_view,
+    const CettaPreparedPureSourceView *source_view,
+    bool entry_arguments_are_values,
+    bool total_structural_equality,
+    CettaMatchDecisionSemanticIdentity match_decision_semantics);
+
 bool cetta_prepared_pure_program_is_current(
     const CettaPreparedPureProgram *program);
 
@@ -172,6 +199,43 @@ bool cetta_prepared_pure_program_execute_closed_controlled(
     size_t nursery_budget_bytes,
     CettaPreparedPureInterruptPollFn interrupt_poll,
     void *interrupt_context, Atom **result_out);
+
+typedef bool (*CettaPreparedPureAnswerVisitorFn)(
+    Atom *answer, void *context);
+
+typedef enum {
+    CETTA_PREPARED_PURE_ANSWERS_DECLINED = 0,
+    CETTA_PREPARED_PURE_ANSWERS_COMPLETE = 1,
+    CETTA_PREPARED_PURE_ANSWERS_STOPPED = 2,
+    CETTA_PREPARED_PURE_ANSWERS_LIMIT = 3,
+} CettaPreparedPureAnswersResult;
+
+typedef struct {
+    uint64_t max_transitions;
+    size_t max_scratch_bytes;
+    /* Must bound one construct_value call's live arena allocation with
+     * hash-consing disabled.  No callback means constructed values decline.
+     * Native and dialect-owned constructors supply separate cost adapters. */
+    bool (*construct_allocation_bound)(CettaExprLen length, size_t *bytes_out);
+} CettaPreparedPureAnswerLimits;
+
+/* Enumerate a compiled closed answer producer in authored occurrence order.
+ * COMPLETE includes the legitimate zero-answer case.  DECLINED means the
+ * canonical evaluator remains authoritative; STOPPED means the caller or
+ * interrupt observer requested an early boundary.  LIMIT is physical budget
+ * exhaustion, never logical zero or completion.  All earlier visitor calls
+ * are provisional unless a consumer has a separate partial-stream contract.
+ * Limits bound loop transitions and charged constructor allocations; input,
+ * compiled metadata, matcher workspace, arena block overhead, and output
+ * publication have separate ownership and resource obligations. */
+CettaPreparedPureAnswersResult
+cetta_prepared_pure_program_visit_closed_answers(
+    CettaPreparedPureProgram *program, Arena *arena,
+    const CettaPreparedPureAnswerLimits *limits,
+    CettaPreparedPureAnswerVisitorFn visitor, void *visitor_context,
+    CettaPreparedPureInterruptPollFn interrupt_poll,
+    void *interrupt_context, uint64_t *answer_count_out,
+    uint64_t *tail_call_count_out);
 
 /* Resume a closed expression through the revision-pinned code and semantic
  * views of an existing Need program.  This is the producer-side dual of the

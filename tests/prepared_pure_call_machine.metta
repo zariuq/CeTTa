@@ -10,19 +10,32 @@
    (if (== $n 0) Z (S (prepared-i2p (- $n 1)))))
 !(prepared-p2i (prepared-pack (prepared-i2p 2) (prepared-i2p 300)))
 
-; Overlap is not determinate.  The prepared machine must decline and preserve
-; the active language's canonical bag/retry behavior.
+; Overlap is not single-result determinate.  The finite-answer capability may
+; enumerate pure value branches, preserving authored multiplicity and order;
+; languages without that capability retain canonical bag/retry behavior.
 (= (prepared-choice $x) left)
 (= (prepared-choice $x) right)
 !(prepared-choice value)
 
-; A later alternative can itself continue through the same head.  Prime's
-; explicit driver must not park that continuation on a native-stack
-; OutcomeSet, and conservative decline must preserve both occurrences.
+; Occurrence semantics retain duplicate branches; a set-valued shortcut would
+; be observably wrong even though both payloads are structurally equal.
+(= (prepared-duplicate $x) same)
+(= (prepared-duplicate $x) same)
+!(prepared-duplicate value)
+
+; A later alternative can tail-unfold through the same head.  HE may stream
+; this finite producer without capturing evaluator continuations.  Prime's
+; explicit driver remains canonical, and both routes preserve occurrences.
 (= (prepared-deferred-choice (Cons $x $xs)) $x)
 (= (prepared-deferred-choice (Cons $x (Cons $y $ys)))
    (prepared-deferred-choice (Cons $y $ys)))
 !(prepared-deferred-choice (Cons 1 (Cons 2 Nil)))
+
+; Negative: a closed call outside every compiled pattern remains an unknown
+; expression.  Physical noncoverage must decline to the canonical evaluator;
+; it is not computation zero.
+(= (prepared-partial (Cons $x $xs)) $x)
+!(prepared-partial Nil)
 
 ; The generated bind instruction must implement the canonical structural-let
 ; contract: fresh fields bind positionally, repeated fields co-refer, and a
