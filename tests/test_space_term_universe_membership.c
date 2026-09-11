@@ -469,6 +469,8 @@ static void test_space_program_projection_tokens(void) {
     space_add(&ordered, data);
     assert(!space_read_token_matches_live_space(read0, &ordered));
     assert(space_program_token_eq(program0, space_program_token(&ordered)));
+    assert(space_program_token_is_current(program0));
+    assert(space_program_token_matches_live_space(program0, &ordered));
     assert(test_counter(
                CETTA_RUNTIME_COUNTER_SPACE_DECLARATION_REVISION_BUMP) == 0u);
     assert(test_counter(
@@ -480,6 +482,9 @@ static void test_space_program_projection_tokens(void) {
     space_add(&ordered, equation);
     SpaceProgramToken program2 = space_program_token(&ordered);
     assert(!space_program_token_eq(program1, program2));
+    assert(!space_program_token_is_current(program1));
+    assert(!space_program_token_matches_live_space(program1, &ordered));
+    assert(space_program_token_is_current(program2));
     assert(program2.equation_revision == program1.equation_revision + 1u);
     assert(program2.declaration_revision == program1.declaration_revision);
     assert(test_counter(
@@ -687,6 +692,9 @@ static void test_space_equation_projection_tokens(void) {
     SpaceEquationToken overlay_equations = space_equation_token(&overlay);
     SpaceEquationToken nested_equations =
         space_equation_token(&nested_overlay);
+    SpaceProgramToken overlay_program = space_program_token(&overlay);
+    SpaceProgramToken nested_program =
+        space_program_token(&nested_overlay);
     space_add(&overlay, atom_symbol(&scratch, "overlay-local-data"));
     space_add(&overlay_base, atom_symbol(&scratch, "overlay-base-data"));
     space_add(&unrelated, wildcard_equation);
@@ -695,6 +703,10 @@ static void test_space_equation_projection_tokens(void) {
         overlay_equations, &overlay));
     assert(space_equation_token_matches_live_space(
         nested_equations, &nested_overlay));
+    assert(space_program_token_matches_live_space(
+        overlay_program, &overlay));
+    assert(space_program_token_matches_live_space(
+        nested_program, &nested_overlay));
     uint64_t overlay_revision = space_revision(&overlay);
     uint64_t nested_revision = space_revision(&nested_overlay);
     assert(space_remove(&overlay_base, exact_equation));
@@ -704,6 +716,10 @@ static void test_space_equation_projection_tokens(void) {
         overlay_equations, &overlay));
     assert(!space_equation_token_matches_live_space(
         nested_equations, &nested_overlay));
+    assert(!space_program_token_matches_live_space(
+        overlay_program, &overlay));
+    assert(!space_program_token_matches_live_space(
+        nested_program, &nested_overlay));
     space_free(&unrelated);
     space_free(&nested_overlay);
     space_free(&overlay);

@@ -1,0 +1,5 @@
+[(counts 3 3)]
+[(counts 3 3)]
+[(counts 0 0)]
+[(pair 3 left), (pair 3 left), (pair 3 right)]
+[3, 1]

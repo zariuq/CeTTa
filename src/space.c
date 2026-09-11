@@ -64,6 +64,8 @@ static bool stable_occurrence_transport_enabled(void) {
 #define CETTA_DISC_INT_HASH_REFERENCE 0
 #endif
 
+#define DISC_HASH_THRESHOLD 16u
+
 static uint64_t space_fresh_instance_id(void) {
     uint64_t id = atomic_fetch_add_explicit(
         &g_space_next_instance_id, 1u, memory_order_relaxed);
@@ -180,6 +182,132 @@ bool space_match_backend_u32_bound_checked(uint64_t value,
 
 /* ── Discrimination Trie ────────────────────────────────────────────────── */
 
+typedef struct {
+    SymbolId key;
+    DiscNode *child;
+} DiscSymBranch;
+
+typedef DiscSymBranch DiscSymHashEntry;
+
+typedef struct {
+    DiscSymHashEntry *entries;
+    uint32_t mask;
+    uint32_t count;
+} DiscSymHashTable;
+
+typedef struct {
+    int64_t key;
+    DiscNode *child;
+} DiscIntBranch;
+
+typedef struct {
+    DiscIntBranch *entries;
+    uint32_t mask;
+    uint32_t count;
+} DiscIntHashTable;
+
+typedef struct {
+    CettaExprLen arity;
+    DiscNode *child;
+} DiscExprBranch;
+
+typedef struct {
+    DiscSymBranch *sym;
+    uint32_t nsym;
+    uint32_t csym;
+    DiscSymHashTable sym_ht;
+    bool sym_hashed;
+    DiscNode *var_child;
+    DiscExprBranch *expr;
+    uint32_t nexpr;
+    uint32_t cexpr;
+    DiscIntBranch *ints;
+    uint32_t nints;
+    uint32_t cints;
+    DiscIntHashTable int_ht;
+    bool ints_hashed;
+} DiscBranchSet;
+
+typedef enum {
+    DISC_EDGE_EMPTY = 0,
+    DISC_EDGE_SYMBOL,
+    DISC_EDGE_VARIABLE,
+    DISC_EDGE_EXPRESSION,
+    DISC_EDGE_INTEGER,
+    DISC_EDGE_MANY,
+} DiscEdgeKind;
+
+typedef union {
+    SymbolId symbol;
+    CettaExprLen arity;
+    int64_t integer;
+} DiscEdgeKey;
+
+typedef struct {
+    DiscEdgeKind kind;
+    union {
+        struct {
+            DiscEdgeKey key;
+            DiscNode *child;
+        } one;
+        DiscBranchSet *many;
+    } payload;
+} DiscEdgeStore;
+
+typedef struct {
+    union {
+        CettaIndex one;
+        CettaIndex *many;
+    } payload;
+    CettaIndex count;
+    CettaIndex capacity;
+} DiscLeafStore;
+
+struct DiscNode {
+    /* Most trie positions have zero or one outgoing coordinate.  Keep that
+     * finite map inline, and allocate the heterogeneous branch set only when
+     * a second distinct coordinate is inserted. */
+    DiscEdgeStore edges;
+    /* Likewise, the common one-occurrence leaf needs no side allocation. */
+    DiscLeafStore leaves;
+};
+
+static bool disc_edge_key_eq(
+        DiscEdgeKind kind, DiscEdgeKey left, DiscEdgeKey right) {
+    switch (kind) {
+    case DISC_EDGE_SYMBOL:
+        return left.symbol == right.symbol;
+    case DISC_EDGE_VARIABLE:
+        return true;
+    case DISC_EDGE_EXPRESSION:
+        return left.arity == right.arity;
+    case DISC_EDGE_INTEGER:
+        return left.integer == right.integer;
+    case DISC_EDGE_EMPTY:
+    case DISC_EDGE_MANY:
+        return false;
+    }
+    return false;
+}
+
+static DiscNode *disc_singleton_find(
+        const DiscNode *node, DiscEdgeKind kind, DiscEdgeKey key) {
+    if (!node || node->edges.kind != kind ||
+        !disc_edge_key_eq(kind, node->edges.payload.one.key, key)) {
+        return NULL;
+    }
+    return node->edges.payload.one.child;
+}
+
+static DiscNode *disc_singleton_insert(
+        DiscNode *node, DiscEdgeKind kind, DiscEdgeKey key) {
+    DiscNode *child = disc_node_new();
+    node->edges.kind = kind;
+    node->edges.payload.one.key = key;
+    node->edges.payload.one.child = child;
+    return child;
+}
+
 DiscNode *disc_node_new(void) {
     DiscNode *n = cetta_malloc(sizeof(DiscNode));
     memset(n, 0, sizeof(DiscNode));
@@ -187,34 +315,60 @@ DiscNode *disc_node_new(void) {
 }
 
 void disc_node_free(DiscNode *n) {
-    if (!n) return;
-    if (n->sym_hashed) {
-        uint32_t cap = n->sym_ht.mask + 1;
-        for (uint32_t i = 0; i < cap; i++)
-            if (n->sym_ht.entries[i].key != SYMBOL_ID_NONE)
-                disc_node_free(n->sym_ht.entries[i].child);
-        free(n->sym_ht.entries);
-    } else {
-        for (uint32_t i = 0; i < n->nsym; i++) disc_node_free(n->sym[i].child);
-        free(n->sym);
-    }
-    disc_node_free(n->var_child);
-    for (uint32_t i = 0; i < n->nexpr; i++) disc_node_free(n->expr[i].child);
-    free(n->expr);
-    if (n->ints_hashed) {
-        uint32_t cap = n->int_ht.mask + 1u;
-        for (uint32_t i = 0u; i < cap; i++) {
-            if (n->int_ht.entries[i].child)
-                disc_node_free(n->int_ht.entries[i].child);
+    if (!n)
+        return;
+    if (n->edges.kind == DISC_EDGE_MANY) {
+        DiscBranchSet *branches = n->edges.payload.many;
+        if (branches->sym_hashed) {
+            uint32_t cap = branches->sym_ht.mask + 1u;
+            for (uint32_t i = 0u; i < cap; i++) {
+                if (branches->sym_ht.entries[i].key != SYMBOL_ID_NONE) {
+                    disc_node_free(branches->sym_ht.entries[i].child);
+                }
+            }
+            free(branches->sym_ht.entries);
+        } else {
+            for (uint32_t i = 0u; i < branches->nsym; i++)
+                disc_node_free(branches->sym[i].child);
+            free(branches->sym);
         }
-        free(n->int_ht.entries);
-    } else {
-        for (uint32_t i = 0u; i < n->nints; i++)
-            disc_node_free(n->ints[i].child);
-        free(n->ints);
+        disc_node_free(branches->var_child);
+        for (uint32_t i = 0u; i < branches->nexpr; i++)
+            disc_node_free(branches->expr[i].child);
+        free(branches->expr);
+        if (branches->ints_hashed) {
+            uint32_t cap = branches->int_ht.mask + 1u;
+            for (uint32_t i = 0u; i < cap; i++) {
+                if (branches->int_ht.entries[i].child)
+                    disc_node_free(branches->int_ht.entries[i].child);
+            }
+            free(branches->int_ht.entries);
+        } else {
+            for (uint32_t i = 0u; i < branches->nints; i++)
+                disc_node_free(branches->ints[i].child);
+            free(branches->ints);
+        }
+        free(branches);
+    } else if (n->edges.kind != DISC_EDGE_EMPTY) {
+        disc_node_free(n->edges.payload.one.child);
     }
-    free(n->leaves);
+    if (n->leaves.capacity > 0u)
+        free(n->leaves.payload.many);
     free(n);
+}
+
+static CettaIndex disc_leaf_at(const DiscNode *node, CettaIndex index) {
+    return node->leaves.capacity > 0u
+        ? node->leaves.payload.many[index]
+        : node->leaves.payload.one;
+}
+
+static void disc_leaf_set(
+        DiscNode *node, CettaIndex index, CettaIndex value) {
+    if (node->leaves.capacity > 0u)
+        node->leaves.payload.many[index] = value;
+    else
+        node->leaves.payload.one = value;
 }
 
 static CettaCount disc_node_transport_stable_coordinates(
@@ -225,8 +379,8 @@ static CettaCount disc_node_transport_stable_coordinates(
 
     CettaIndex write = 0u;
     CettaCount removed = 0u;
-    for (CettaIndex read = 0u; read < node->nleaves; read++) {
-        CettaIndex source = node->leaves[read];
+    for (CettaIndex read = 0u; read < node->leaves.count; read++) {
+        CettaIndex source = disc_leaf_at(node, read);
         if (source >= source_len) {
             fputs("CeTTa: clean discrimination index contains an invalid "
                   "occurrence coordinate\n", stderr);
@@ -237,45 +391,53 @@ static CettaCount disc_node_transport_stable_coordinates(
             removed++;
             continue;
         }
-        node->leaves[write++] = target;
+        disc_leaf_set(node, write++, target);
     }
-    node->nleaves = write;
+    node->leaves.count = write;
 
-    if (node->sym_hashed) {
-        uint32_t cap = node->sym_ht.mask + 1u;
-        for (uint32_t i = 0u; i < cap; i++) {
-            if (node->sym_ht.entries[i].key != SYMBOL_ID_NONE) {
+    if (node->edges.kind == DISC_EDGE_MANY) {
+        DiscBranchSet *branches = node->edges.payload.many;
+        if (branches->sym_hashed) {
+            uint32_t cap = branches->sym_ht.mask + 1u;
+            for (uint32_t i = 0u; i < cap; i++) {
+                if (branches->sym_ht.entries[i].key != SYMBOL_ID_NONE) {
+                    removed += disc_node_transport_stable_coordinates(
+                        branches->sym_ht.entries[i].child,
+                        source_to_target, source_len);
+                }
+            }
+        } else {
+            for (uint32_t i = 0u; i < branches->nsym; i++) {
                 removed += disc_node_transport_stable_coordinates(
-                    node->sym_ht.entries[i].child, source_to_target,
+                    branches->sym[i].child, source_to_target,
                     source_len);
             }
         }
-    } else {
-        for (uint32_t i = 0u; i < node->nsym; i++) {
-            removed += disc_node_transport_stable_coordinates(
-                node->sym[i].child, source_to_target, source_len);
-        }
-    }
-    removed += disc_node_transport_stable_coordinates(
-        node->var_child, source_to_target, source_len);
-    for (uint32_t i = 0u; i < node->nexpr; i++) {
         removed += disc_node_transport_stable_coordinates(
-            node->expr[i].child, source_to_target, source_len);
-    }
-    if (node->ints_hashed) {
-        uint32_t cap = node->int_ht.mask + 1u;
-        for (uint32_t i = 0u; i < cap; i++) {
-            if (node->int_ht.entries[i].child) {
+            branches->var_child, source_to_target, source_len);
+        for (uint32_t i = 0u; i < branches->nexpr; i++) {
+            removed += disc_node_transport_stable_coordinates(
+                branches->expr[i].child, source_to_target, source_len);
+        }
+        if (branches->ints_hashed) {
+            uint32_t cap = branches->int_ht.mask + 1u;
+            for (uint32_t i = 0u; i < cap; i++) {
+                if (branches->int_ht.entries[i].child) {
+                    removed += disc_node_transport_stable_coordinates(
+                        branches->int_ht.entries[i].child,
+                        source_to_target, source_len);
+                }
+            }
+        } else {
+            for (uint32_t i = 0u; i < branches->nints; i++) {
                 removed += disc_node_transport_stable_coordinates(
-                    node->int_ht.entries[i].child, source_to_target,
+                    branches->ints[i].child, source_to_target,
                     source_len);
             }
         }
-    } else {
-        for (uint32_t i = 0u; i < node->nints; i++) {
-            removed += disc_node_transport_stable_coordinates(
-                node->ints[i].child, source_to_target, source_len);
-        }
+    } else if (node->edges.kind != DISC_EDGE_EMPTY) {
+        removed += disc_node_transport_stable_coordinates(
+            node->edges.payload.one.child, source_to_target, source_len);
     }
     return removed;
 }
@@ -290,11 +452,24 @@ CettaCount disc_transport_stable_coordinates(
 }
 
 static void disc_add_leaf(DiscNode *n, CettaIndex idx) {
-    if (n->nleaves >= n->cleaves) {
-        n->cleaves = n->cleaves ? n->cleaves * 2 : 4;
-        n->leaves = cetta_realloc(n->leaves, sizeof(CettaIndex) * n->cleaves);
+    if (n->leaves.count == 0u && n->leaves.capacity == 0u) {
+        n->leaves.payload.one = idx;
+        n->leaves.count = 1u;
+        return;
     }
-    n->leaves[n->nleaves++] = idx;
+    if (n->leaves.capacity == 0u) {
+        CettaIndex first = n->leaves.payload.one;
+        n->leaves.capacity = 4u;
+        n->leaves.payload.many = cetta_malloc(
+            sizeof(CettaIndex) * (size_t)n->leaves.capacity);
+        n->leaves.payload.many[0] = first;
+    } else if (n->leaves.count >= n->leaves.capacity) {
+        n->leaves.capacity *= 2u;
+        n->leaves.payload.many = cetta_realloc(
+            n->leaves.payload.many,
+            sizeof(CettaIndex) * (size_t)n->leaves.capacity);
+    }
+    n->leaves.payload.many[n->leaves.count++] = idx;
 }
 
 static inline uint32_t disc_sym_hash(SymbolId key) {
@@ -347,58 +522,144 @@ static void disc_sym_ht_put(DiscSymHashTable *ht, SymbolId key, DiscNode *child)
     ht->count++;
 }
 
-static void disc_sym_promote(DiscNode *n) {
-    DiscSymBranch *old_sym = n->sym;
-    uint32_t count = n->nsym;
-    disc_sym_ht_init(&n->sym_ht, count + 16);
+static DiscBranchSet *disc_promote_singleton(DiscNode *node) {
+    DiscEdgeKind kind = node->edges.kind;
+    DiscEdgeKey key = node->edges.payload.one.key;
+    DiscNode *child = node->edges.payload.one.child;
+    DiscBranchSet *branches = cetta_malloc(sizeof(*branches));
+    memset(branches, 0, sizeof(*branches));
+    switch (kind) {
+    case DISC_EDGE_SYMBOL:
+        branches->csym = 4u;
+        branches->sym = cetta_malloc(
+            sizeof(*branches->sym) * branches->csym);
+        branches->sym[0] = (DiscSymBranch){
+            .key = key.symbol,
+            .child = child,
+        };
+        branches->nsym = 1u;
+        break;
+    case DISC_EDGE_VARIABLE:
+        branches->var_child = child;
+        break;
+    case DISC_EDGE_EXPRESSION:
+        branches->cexpr = 4u;
+        branches->expr = cetta_malloc(
+            sizeof(*branches->expr) * branches->cexpr);
+        branches->expr[0] = (DiscExprBranch){
+            .arity = key.arity,
+            .child = child,
+        };
+        branches->nexpr = 1u;
+        break;
+    case DISC_EDGE_INTEGER:
+        branches->cints = 4u;
+        branches->ints = cetta_malloc(
+            sizeof(*branches->ints) * branches->cints);
+        branches->ints[0] = (DiscIntBranch){
+            .key = key.integer,
+            .child = child,
+        };
+        branches->nints = 1u;
+        break;
+    case DISC_EDGE_EMPTY:
+    case DISC_EDGE_MANY:
+        break;
+    }
+    node->edges.kind = DISC_EDGE_MANY;
+    node->edges.payload.many = branches;
+    return branches;
+}
+
+static void disc_sym_promote(DiscBranchSet *branches) {
+    DiscSymBranch *old_sym = branches->sym;
+    uint32_t count = branches->nsym;
+    disc_sym_ht_init(&branches->sym_ht, count + 16u);
     for (uint32_t i = 0; i < count; i++)
-        disc_sym_ht_put(&n->sym_ht, old_sym[i].key, old_sym[i].child);
+        disc_sym_ht_put(
+            &branches->sym_ht, old_sym[i].key, old_sym[i].child);
     free(old_sym);
-    n->sym = NULL;
-    n->csym = 0;
-    n->sym_hashed = true;
+    branches->sym = NULL;
+    branches->csym = 0u;
+    branches->sym_hashed = true;
 }
 
 static DiscNode *disc_get_sym(DiscNode *n, SymbolId key) {
-    if (n->sym_hashed) {
-        DiscNode *existing = disc_sym_ht_get(&n->sym_ht, key);
+    DiscEdgeKey edge_key = {.symbol = key};
+    if (n->edges.kind == DISC_EDGE_EMPTY)
+        return disc_singleton_insert(n, DISC_EDGE_SYMBOL, edge_key);
+    DiscNode *single = disc_singleton_find(
+        n, DISC_EDGE_SYMBOL, edge_key);
+    if (single)
+        return single;
+    DiscBranchSet *branches = n->edges.kind == DISC_EDGE_MANY
+        ? n->edges.payload.many
+        : disc_promote_singleton(n);
+    if (branches->sym_hashed) {
+        DiscNode *existing = disc_sym_ht_get(&branches->sym_ht, key);
         if (existing) return existing;
         DiscNode *child = disc_node_new();
-        disc_sym_ht_put(&n->sym_ht, key, child);
-        n->nsym++;
+        disc_sym_ht_put(&branches->sym_ht, key, child);
+        branches->nsym++;
         return child;
     }
-    for (uint32_t i = 0; i < n->nsym; i++)
-        if (n->sym[i].key == key) return n->sym[i].child;
-    if (n->nsym >= n->csym) {
-        n->csym = n->csym ? n->csym * 2 : 4;
-        n->sym = cetta_realloc(n->sym, sizeof(n->sym[0]) * n->csym);
+    for (uint32_t i = 0; i < branches->nsym; i++)
+        if (branches->sym[i].key == key) return branches->sym[i].child;
+    if (branches->nsym >= branches->csym) {
+        branches->csym = branches->csym ? branches->csym * 2u : 4u;
+        branches->sym = cetta_realloc(
+            branches->sym,
+            sizeof(branches->sym[0]) * branches->csym);
     }
     DiscNode *child = disc_node_new();
-    n->sym[n->nsym].key = key;
-    n->sym[n->nsym].child = child;
-    n->nsym++;
-    if (n->nsym > DISC_HASH_THRESHOLD)
-        disc_sym_promote(n);
+    branches->sym[branches->nsym].key = key;
+    branches->sym[branches->nsym].child = child;
+    branches->nsym++;
+    if (branches->nsym > DISC_HASH_THRESHOLD)
+        disc_sym_promote(branches);
     return child;
 }
 
 static DiscNode *disc_get_var(DiscNode *n) {
-    if (!n->var_child) n->var_child = disc_node_new();
-    return n->var_child;
+    DiscEdgeKey edge_key = {0};
+    if (n->edges.kind == DISC_EDGE_EMPTY)
+        return disc_singleton_insert(n, DISC_EDGE_VARIABLE, edge_key);
+    DiscNode *single = disc_singleton_find(
+        n, DISC_EDGE_VARIABLE, edge_key);
+    if (single)
+        return single;
+    DiscBranchSet *branches = n->edges.kind == DISC_EDGE_MANY
+        ? n->edges.payload.many
+        : disc_promote_singleton(n);
+    if (!branches->var_child)
+        branches->var_child = disc_node_new();
+    return branches->var_child;
 }
 
 static DiscNode *disc_get_expr(DiscNode *n, CettaExprLen arity) {
-    for (uint32_t i = 0; i < n->nexpr; i++)
-        if (n->expr[i].arity == arity) return n->expr[i].child;
-    if (n->nexpr >= n->cexpr) {
-        n->cexpr = n->cexpr ? n->cexpr * 2 : 4;
-        n->expr = cetta_realloc(n->expr, sizeof(n->expr[0]) * n->cexpr);
+    DiscEdgeKey edge_key = {.arity = arity};
+    if (n->edges.kind == DISC_EDGE_EMPTY)
+        return disc_singleton_insert(n, DISC_EDGE_EXPRESSION, edge_key);
+    DiscNode *single = disc_singleton_find(
+        n, DISC_EDGE_EXPRESSION, edge_key);
+    if (single)
+        return single;
+    DiscBranchSet *branches = n->edges.kind == DISC_EDGE_MANY
+        ? n->edges.payload.many
+        : disc_promote_singleton(n);
+    for (uint32_t i = 0; i < branches->nexpr; i++)
+        if (branches->expr[i].arity == arity)
+            return branches->expr[i].child;
+    if (branches->nexpr >= branches->cexpr) {
+        branches->cexpr = branches->cexpr ? branches->cexpr * 2u : 4u;
+        branches->expr = cetta_realloc(
+            branches->expr,
+            sizeof(branches->expr[0]) * branches->cexpr);
     }
     DiscNode *child = disc_node_new();
-    n->expr[n->nexpr].arity = arity;
-    n->expr[n->nexpr].child = child;
-    n->nexpr++;
+    branches->expr[branches->nexpr].arity = arity;
+    branches->expr[branches->nexpr].child = child;
+    branches->nexpr++;
     return child;
 }
 
@@ -463,41 +724,54 @@ static void disc_int_ht_put(
     ht->count++;
 }
 
-static void disc_int_promote(DiscNode *node) {
-    DiscIntBranch *old = node->ints;
-    uint32_t count = node->nints;
-    disc_int_ht_init(&node->int_ht, count + 16u);
+static void disc_int_promote(DiscBranchSet *branches) {
+    DiscIntBranch *old = branches->ints;
+    uint32_t count = branches->nints;
+    disc_int_ht_init(&branches->int_ht, count + 16u);
     for (uint32_t i = 0u; i < count; i++)
-        disc_int_ht_put(&node->int_ht, old[i].key, old[i].child);
+        disc_int_ht_put(&branches->int_ht, old[i].key, old[i].child);
     free(old);
-    node->ints = NULL;
-    node->cints = 0u;
-    node->ints_hashed = true;
+    branches->ints = NULL;
+    branches->cints = 0u;
+    branches->ints_hashed = true;
 }
 
 static DiscNode *disc_get_int(DiscNode *n, int64_t val) {
-    if (n->ints_hashed) {
-        DiscNode *existing = disc_int_ht_get(&n->int_ht, val);
+    DiscEdgeKey edge_key = {.integer = val};
+    if (n->edges.kind == DISC_EDGE_EMPTY)
+        return disc_singleton_insert(n, DISC_EDGE_INTEGER, edge_key);
+    DiscNode *single = disc_singleton_find(
+        n, DISC_EDGE_INTEGER, edge_key);
+    if (single)
+        return single;
+    DiscBranchSet *branches = n->edges.kind == DISC_EDGE_MANY
+        ? n->edges.payload.many
+        : disc_promote_singleton(n);
+    if (branches->ints_hashed) {
+        DiscNode *existing = disc_int_ht_get(&branches->int_ht, val);
         if (existing)
             return existing;
         DiscNode *child = disc_node_new();
-        disc_int_ht_put(&n->int_ht, val, child);
-        n->nints++;
+        disc_int_ht_put(&branches->int_ht, val, child);
+        branches->nints++;
         return child;
     }
-    for (uint32_t i = 0; i < n->nints; i++)
-        if (n->ints[i].key == val) return n->ints[i].child;
-    if (n->nints >= n->cints) {
-        n->cints = n->cints ? n->cints * 2 : 4;
-        n->ints = cetta_realloc(n->ints, sizeof(n->ints[0]) * n->cints);
+    for (uint32_t i = 0; i < branches->nints; i++)
+        if (branches->ints[i].key == val)
+            return branches->ints[i].child;
+    if (branches->nints >= branches->cints) {
+        branches->cints = branches->cints ? branches->cints * 2u : 4u;
+        branches->ints = cetta_realloc(
+            branches->ints,
+            sizeof(branches->ints[0]) * branches->cints);
     }
     DiscNode *child = disc_node_new();
-    n->ints[n->nints].key = val;
-    n->ints[n->nints].child = child;
-    n->nints++;
-    if (n->nints > DISC_HASH_THRESHOLD &&
+    branches->ints[branches->nints].key = val;
+    branches->ints[branches->nints].child = child;
+    branches->nints++;
+    if (branches->nints > DISC_HASH_THRESHOLD &&
         !CETTA_DISC_INT_HASH_REFERENCE) {
-        disc_int_promote(n);
+        disc_int_promote(branches);
     }
     return child;
 }
@@ -569,6 +843,77 @@ bool disc_insert_id(DiscNode *root, const TermUniverse *universe,
     return true;
 }
 
+static const DiscBranchSet *disc_many_branches(const DiscNode *node) {
+    return node && node->edges.kind == DISC_EDGE_MANY
+        ? node->edges.payload.many
+        : NULL;
+}
+
+static DiscNode *disc_find_symbol_branch(
+        const DiscNode *node, SymbolId key) {
+    DiscEdgeKey edge_key = {.symbol = key};
+    DiscNode *single = disc_singleton_find(
+        node, DISC_EDGE_SYMBOL, edge_key);
+    if (single)
+        return single;
+    const DiscBranchSet *branches = disc_many_branches(node);
+    if (!branches)
+        return NULL;
+    if (branches->sym_hashed)
+        return disc_sym_ht_get(&branches->sym_ht, key);
+    for (uint32_t i = 0u; i < branches->nsym; i++) {
+        if (branches->sym[i].key == key)
+            return branches->sym[i].child;
+    }
+    return NULL;
+}
+
+static DiscNode *disc_find_integer_branch(
+        const DiscNode *node, int64_t value) {
+    DiscEdgeKey edge_key = {.integer = value};
+    DiscNode *single = disc_singleton_find(
+        node, DISC_EDGE_INTEGER, edge_key);
+    if (single)
+        return single;
+    const DiscBranchSet *branches = disc_many_branches(node);
+    if (!branches)
+        return NULL;
+    if (branches->ints_hashed)
+        return disc_int_ht_get(&branches->int_ht, value);
+    for (uint32_t i = 0u; i < branches->nints; i++) {
+        if (branches->ints[i].key == value)
+            return branches->ints[i].child;
+    }
+    return NULL;
+}
+
+static DiscNode *disc_find_expression_branch(
+        const DiscNode *node, CettaExprLen arity) {
+    DiscEdgeKey edge_key = {.arity = arity};
+    DiscNode *single = disc_singleton_find(
+        node, DISC_EDGE_EXPRESSION, edge_key);
+    if (single)
+        return single;
+    const DiscBranchSet *branches = disc_many_branches(node);
+    if (!branches)
+        return NULL;
+    for (uint32_t i = 0u; i < branches->nexpr; i++) {
+        if (branches->expr[i].arity == arity)
+            return branches->expr[i].child;
+    }
+    return NULL;
+}
+
+static DiscNode *disc_find_variable_branch(const DiscNode *node) {
+    DiscEdgeKey edge_key = {0};
+    DiscNode *single = disc_singleton_find(
+        node, DISC_EDGE_VARIABLE, edge_key);
+    if (single)
+        return single;
+    const DiscBranchSet *branches = disc_many_branches(node);
+    return branches ? branches->var_child : NULL;
+}
+
 /* ── Discrimination Trie Lookup (node-set based) ──────────────────────── */
 
 /* A dynamic set of trie nodes — used during lookup to track all reachable
@@ -608,12 +953,12 @@ static void disc_step_expression_coordinates(
         CettaExprLen coordinate_count, DiscNodeSet *next) {
     if (!node || !next || (coordinate_count > 0u && !coordinates))
         return;
-    for (uint32_t i = 0u; i < node->nexpr; i++) {
-        if (node->expr[i].arity != coordinate_count)
-            continue;
+    DiscNode *expression = disc_find_expression_branch(
+        node, coordinate_count);
+    if (expression) {
         DiscNodeSet current;
         dns_init(&current);
-        dns_push(&current, node->expr[i].child);
+        dns_push(&current, expression);
         for (CettaExprIndex coordinate = 0u;
              coordinate < coordinate_count; coordinate++) {
             DiscNodeSet following;
@@ -634,43 +979,27 @@ static void disc_step_expression_coordinates(
         dns_free(&current);
     }
     /* A variable stored at this position matches the complete expression. */
-    dns_push(next, node->var_child);
+    dns_push(next, disc_find_variable_branch(node));
 }
 
 /* Skip one complete term from the trie.  A query variable can match any
    indexed term, so we must advance past the entire depth-first encoding
    of whatever term appears at this position. */
 static void disc_skip_term(DiscNode *node, DiscNodeSet *next) {
-    if (!node) return;
-    /* Symbol branches: one trie step → child is the continuation */
-    if (node->sym_hashed) {
-        uint32_t cap = node->sym_ht.mask + 1;
-        for (uint32_t i = 0; i < cap; i++)
-            if (node->sym_ht.entries[i].key != SYMBOL_ID_NONE)
-                dns_push(next, node->sym_ht.entries[i].child);
-    } else {
-        for (uint32_t i = 0; i < node->nsym; i++)
-            dns_push(next, node->sym[i].child);
-    }
-    /* Variable branches: one trie step */
-    dns_push(next, node->var_child);
-    /* Int branches: one trie step */
-    if (node->ints_hashed) {
-        uint32_t cap = node->int_ht.mask + 1u;
-        for (uint32_t i = 0u; i < cap; i++) {
-            if (node->int_ht.entries[i].child)
-                dns_push(next, node->int_ht.entries[i].child);
+    if (!node)
+        return;
+    if (node->edges.kind != DISC_EDGE_MANY) {
+        if (node->edges.kind == DISC_EDGE_EMPTY)
+            return;
+        if (node->edges.kind != DISC_EDGE_EXPRESSION) {
+            dns_push(next, node->edges.payload.one.child);
+            return;
         }
-    } else {
-        for (uint32_t i = 0u; i < node->nints; i++)
-            dns_push(next, node->ints[i].child);
-    }
-    /* Expression branches: arity tag + arity sub-terms (depth-first) */
-    for (uint32_t i = 0; i < node->nexpr; i++) {
         DiscNodeSet cur;
         dns_init(&cur);
-        dns_push(&cur, node->expr[i].child);
-        for (CettaExprIndex ci = 0; ci < node->expr[i].arity; ci++) {
+        dns_push(&cur, node->edges.payload.one.child);
+        for (CettaExprIndex ci = 0u;
+             ci < node->edges.payload.one.key.arity; ci++) {
             DiscNodeSet tmp;
             dns_init(&tmp);
             for (uint32_t ni = 0; ni < cur.n; ni++)
@@ -682,6 +1011,49 @@ static void disc_skip_term(DiscNode *node, DiscNodeSet *next) {
         for (uint32_t ni = 0; ni < cur.n; ni++)
             dns_push(next, cur.nodes[ni]);
         dns_free(&cur);
+        return;
+    }
+
+    const DiscBranchSet *branches = node->edges.payload.many;
+    /* Symbol, variable and integer branches each consume one trie step. */
+    if (branches->sym_hashed) {
+        uint32_t cap = branches->sym_ht.mask + 1u;
+        for (uint32_t i = 0u; i < cap; i++) {
+            if (branches->sym_ht.entries[i].key != SYMBOL_ID_NONE)
+                dns_push(next, branches->sym_ht.entries[i].child);
+        }
+    } else {
+        for (uint32_t i = 0u; i < branches->nsym; i++)
+            dns_push(next, branches->sym[i].child);
+    }
+    dns_push(next, branches->var_child);
+    if (branches->ints_hashed) {
+        uint32_t cap = branches->int_ht.mask + 1u;
+        for (uint32_t i = 0u; i < cap; i++) {
+            if (branches->int_ht.entries[i].child)
+                dns_push(next, branches->int_ht.entries[i].child);
+        }
+    } else {
+        for (uint32_t i = 0u; i < branches->nints; i++)
+            dns_push(next, branches->ints[i].child);
+    }
+    /* Expression branches consume their arity tag and complete subterms. */
+    for (uint32_t i = 0u; i < branches->nexpr; i++) {
+        DiscNodeSet cur;
+        dns_init(&cur);
+        dns_push(&cur, branches->expr[i].child);
+        for (CettaExprIndex ci = 0u;
+             ci < branches->expr[i].arity; ci++) {
+            DiscNodeSet tmp;
+            dns_init(&tmp);
+            for (uint32_t ni = 0u; ni < cur.n; ni++)
+                disc_skip_term(cur.nodes[ni], &tmp);
+            dns_free(&cur);
+            cur = tmp;
+        }
+        for (uint32_t ni = 0u; ni < cur.n; ni++)
+            dns_push(next, cur.nodes[ni]);
+        dns_free(&cur);
     }
 }
 
@@ -691,16 +1063,9 @@ static void disc_step(DiscNode *node, Atom *q, DiscNodeSet *next) {
     if (!node) return;
     switch (q->kind) {
     case ATOM_SYMBOL:
-        if (node->sym_hashed) {
-            DiscNode *child = disc_sym_ht_get(&node->sym_ht, q->sym_id);
-            dns_push(next, child);
-        } else {
-            for (uint32_t i = 0; i < node->nsym; i++)
-                if (node->sym[i].key == q->sym_id)
-                    dns_push(next, node->sym[i].child);
-        }
+        dns_push(next, disc_find_symbol_branch(node, q->sym_id));
         /* A variable in the indexed LHS matches any query symbol */
-        dns_push(next, node->var_child);
+        dns_push(next, disc_find_variable_branch(node));
         break;
 
     case ATOM_VAR:
@@ -709,19 +1074,11 @@ static void disc_step(DiscNode *node, Atom *q, DiscNodeSet *next) {
         break;
 
     case ATOM_GROUNDED:
-        if (q->ground.gkind == GV_INT) {
-            if (node->ints_hashed) {
-                dns_push(next, disc_int_ht_get(
-                    &node->int_ht, q->ground.ival));
-            } else {
-                for (uint32_t i = 0u; i < node->nints; i++) {
-                    if (node->ints[i].key == q->ground.ival)
-                        dns_push(next, node->ints[i].child);
-                }
-            }
-        }
+        if (q->ground.gkind == GV_INT)
+            dns_push(next, disc_find_integer_branch(
+                node, q->ground.ival));
         /* A variable in the indexed LHS matches any grounded value */
-        dns_push(next, node->var_child);
+        dns_push(next, disc_find_variable_branch(node));
         break;
 
     case ATOM_EXPR:
@@ -736,12 +1093,12 @@ static void disc_collect_leaves(
         CettaIndex *nout, CettaIndex *cout) {
     for (uint32_t i = 0u; i < final->n; i++) {
         DiscNode *node = final->nodes[i];
-        for (CettaIndex j = 0u; j < node->nleaves; j++) {
+        for (CettaIndex j = 0u; j < node->leaves.count; j++) {
             if (*nout >= *cout) {
                 *cout = *cout ? *cout * 2u : 16u;
                 *out = cetta_realloc(*out, sizeof(CettaIndex) * *cout);
             }
-            (*out)[(*nout)++] = node->leaves[j];
+            (*out)[(*nout)++] = disc_leaf_at(node, j);
         }
     }
 }
@@ -772,37 +1129,6 @@ void disc_lookup_expression_coordinates(
     dns_free(&final);
 }
 
-static const DiscNode *disc_find_symbol_branch(
-        const DiscNode *node, SymbolId key) {
-    if (node->sym_hashed)
-        return disc_sym_ht_get(&node->sym_ht, key);
-    for (uint32_t i = 0u; i < node->nsym; i++) {
-        if (node->sym[i].key == key)
-            return node->sym[i].child;
-    }
-    return NULL;
-}
-
-static const DiscNode *disc_find_integer_branch(
-        const DiscNode *node, int64_t value) {
-    if (node->ints_hashed)
-        return disc_int_ht_get(&node->int_ht, value);
-    for (uint32_t i = 0u; i < node->nints; i++) {
-        if (node->ints[i].key == value)
-            return node->ints[i].child;
-    }
-    return NULL;
-}
-
-static const DiscNode *disc_find_expression_branch(
-        const DiscNode *node, CettaExprLen arity) {
-    for (uint32_t i = 0u; i < node->nexpr; i++) {
-        if (node->expr[i].arity == arity)
-            return node->expr[i].child;
-    }
-    return NULL;
-}
-
 static bool disc_follow_rigid_exact_path(
     const DiscNode *node, const Atom *query,
     const DiscNode **out_continuation);
@@ -813,7 +1139,8 @@ static bool disc_follow_rigid_exact_expression_coordinates(
         const DiscNode **out_continuation) {
     if (out_continuation)
         *out_continuation = NULL;
-    if (!node || !out_continuation || node->var_child ||
+    if (!node || !out_continuation ||
+        disc_find_variable_branch(node) ||
         (coordinate_count > 0u && !coordinates)) {
         return false;
     }
@@ -843,7 +1170,8 @@ static bool disc_follow_rigid_exact_path(
         const DiscNode **out_continuation) {
     if (out_continuation)
         *out_continuation = NULL;
-    if (!node || !query || !out_continuation || node->var_child)
+    if (!node || !query || !out_continuation ||
+        disc_find_variable_branch(node))
         return false;
 
     switch (query->kind) {
@@ -882,7 +1210,7 @@ bool disc_count_rigid_exact_expression_coordinates(
             root, coordinates, coordinate_count, &leaf)) {
         return false;
     }
-    *out_count = leaf ? leaf->nleaves : 0u;
+    *out_count = leaf ? leaf->leaves.count : 0u;
     return true;
 }
 
@@ -896,7 +1224,7 @@ bool disc_count_rigid_exact_path(
     const DiscNode *leaf = NULL;
     if (!disc_follow_rigid_exact_path(root, query, &leaf))
         return false;
-    *out_count = leaf ? leaf->nleaves : 0u;
+    *out_count = leaf ? leaf->leaves.count : 0u;
     return true;
 }
 
@@ -2651,7 +2979,7 @@ SpaceProgramToken space_program_token(const Space *s) {
         .equation_revision = space_equation_revision(s),
         .declaration_revision = space_declaration_revision(s),
         .base_dependency_epoch =
-            s && s->overlay_base ? space_global_mutation_epoch() : 0u,
+            space_projection_dependency_epoch(s),
     };
 }
 
@@ -2664,6 +2992,22 @@ SpaceEquationToken space_equation_token(const Space *s) {
         .projection_dependency_epoch =
             space_projection_dependency_epoch(s),
     };
+}
+
+bool space_program_token_is_current(SpaceProgramToken token) {
+    return token.space && token.instance_id != 0u &&
+           token.base_dependency_epoch != UINT64_MAX &&
+           space_program_token_eq(
+               token, space_program_token(token.space));
+}
+
+bool space_program_token_matches_live_space(
+        SpaceProgramToken token, const Space *live_space) {
+    return live_space && token.space == live_space &&
+           token.instance_id != 0u &&
+           token.base_dependency_epoch != UINT64_MAX &&
+           space_program_token_eq(
+               token, space_program_token(live_space));
 }
 
 bool space_equation_token_is_current(SpaceEquationToken token) {
@@ -2910,7 +3254,7 @@ typedef struct {
 } SpaceEffectCacheEntry;
 
 typedef struct {
-    SpaceReadToken read;
+    SpaceProgramToken program;
     SpaceEffectCacheEntry *entries;
     size_t len;
     size_t cap;
@@ -2947,7 +3291,7 @@ typedef struct {
 
 typedef struct {
     Space *space;
-    SpaceReadToken read;
+    SpaceProgramToken program;
     SpaceEffectNode *nodes;
     size_t len;
     size_t cap;
@@ -3022,26 +3366,26 @@ static bool space_effect_cache_rehash(
 
 static SpaceEffectCacheShard *space_effect_cache_shard(
     Space *space, bool create) {
-    SpaceReadToken read = space_read_token(space);
+    SpaceProgramToken program = space_program_token(space);
     SpaceEffectCacheShard *reusable = NULL;
     for (size_t index = 0u;
          index < SPACE_EFFECT_CACHE_SHARDS; index++) {
         SpaceEffectCacheShard *shard =
             &g_space_effect_cache.shards[index];
-        if (shard->occupied && shard->read.space == space &&
-            shard->read.instance_id == read.instance_id &&
-            shard->read.revision == read.revision &&
-            space_read_token_matches_live_space(shard->read, space)) {
+        if (shard->occupied &&
+            space_program_token_eq(shard->program, program) &&
+            space_program_token_matches_live_space(
+                shard->program, space)) {
             return shard;
         }
         if (!reusable &&
-            ((!shard->occupied && shard->read.space == space &&
-              shard->read.instance_id == read.instance_id) ||
-             (!shard->occupied && shard->read.space == NULL))) {
+            ((!shard->occupied && shard->program.space == space &&
+              shard->program.instance_id == program.instance_id) ||
+             (!shard->occupied && shard->program.space == NULL))) {
             reusable = shard;
         }
-        if (shard->occupied && shard->read.space == space &&
-            shard->read.instance_id == read.instance_id) {
+        if (shard->occupied && shard->program.space == space &&
+            shard->program.instance_id == program.instance_id) {
             reusable = shard;
         }
     }
@@ -3068,7 +3412,7 @@ static SpaceEffectCacheShard *space_effect_cache_shard(
         memset(reusable->entries, 0,
                reusable->cap * sizeof(*reusable->entries));
     }
-    reusable->read = read;
+    reusable->program = program;
     reusable->len = 0u;
     reusable->occupied = true;
     return reusable;
@@ -3143,8 +3487,8 @@ void space_execution_analysis_note_mutation(Space *space) {
          index < SPACE_EFFECT_CACHE_SHARDS; index++) {
         SpaceEffectCacheShard *shard =
             &g_space_effect_cache.shards[index];
-        if (shard->occupied && shard->read.space == space &&
-            shard->read.instance_id == instance) {
+        if (shard->occupied && shard->program.space == space &&
+            shard->program.instance_id == instance) {
             shard->occupied = false;
             shard->len = 0u;
         }
@@ -3335,7 +3679,7 @@ static bool space_effect_scan_node(
         }
     }
     graph->nodes[node_index].scanned = true;
-    return space_read_token_is_current(graph->read);
+    return space_program_token_is_current(graph->program);
 }
 
 static void space_effect_graph_free(SpaceEffectGraph *graph) {
@@ -3374,7 +3718,7 @@ static bool space_effect_graph_solve(SpaceEffectGraph *graph) {
             }
         }
     } while (changed);
-    return space_read_token_is_current(graph->read);
+    return space_program_token_is_current(graph->program);
 }
 
 CettaGsltQueryEffect space_query_effect_for_head(
@@ -3409,7 +3753,7 @@ CettaGsltQueryEffect space_query_effect_for_head(
 
     SpaceEffectGraph graph = {
         .space = space,
-        .read = space_read_token(space),
+        .program = space_program_token(space),
     };
     size_t root_index = 0u;
     if (!space_effect_graph_find_or_add(&graph, head, &root_index) ||
@@ -3640,7 +3984,6 @@ static void space_publish_mutation(
         SpaceMutationPrefixEffect prefix_effect) {
     if (!s)
         return;
-    space_execution_analysis_note_mutation(s);
     if (s->revision == UINT64_MAX) {
         fputs("CeTTa: exhausted Space revision counter\n", stderr);
         abort();
@@ -3656,6 +3999,12 @@ static void space_publish_mutation(
               SPACE_MUTATION_EQUATION_PROJECTION_OPAQUE |
               SPACE_MUTATION_EQUATION_PROJECTION_DECLARATION)) {
         abort();
+    }
+    if (equation_projection &
+            (SPACE_MUTATION_EQUATION_PROJECTION_RELEVANT |
+             SPACE_MUTATION_EQUATION_PROJECTION_OPAQUE |
+             SPACE_MUTATION_EQUATION_PROJECTION_DECLARATION)) {
+        space_execution_analysis_note_mutation(s);
     }
     /* The publication counters describe the equation-occurrence projection:
      * a declaration-only mutation is data-only for that projection. */
@@ -5485,6 +5834,35 @@ bool space_contains_exact(Space *s, Atom *atom) {
     CettaIndex n = space_exact_match_indices64(s, atom, &matches);
     free(matches);
     return n > 0;
+}
+
+bool space_contains_exact_symbol_application(
+        Space *s, SymbolId head, Atom *const *arguments,
+        CettaExprLen argument_count, bool *out_applicable) {
+    if (out_applicable)
+        *out_applicable = false;
+    bool native_membership_authoritative =
+        s && (!space_engine_uses_pathmap(s->match_backend.kind) ||
+              (s->match_backend.kind == SPACE_ENGINE_PATHMAP &&
+               s->match_backend.pathmap.bridge.preserve_logical_order));
+    if (!native_membership_authoritative || !s->native.universe ||
+        head == SYMBOL_ID_NONE ||
+        (argument_count > 0u && !arguments)) {
+        return false;
+    }
+    for (CettaExprIndex index = 0u;
+         index < argument_count; index++) {
+        if (!atom_is_exact_indexable(arguments[index]))
+            return false;
+    }
+    if (!id_present_sync(s))
+        return false;
+    AtomId query_id = term_universe_lookup_symbol_application(
+        s->native.universe, head, arguments, argument_count);
+    if (out_applicable)
+        *out_applicable = true;
+    return query_id != CETTA_ATOM_ID_NONE &&
+        id_present_contains(&s->native, query_id);
 }
 
 bool space_match_exists_ground_exact(Space *s, Atom *pattern,

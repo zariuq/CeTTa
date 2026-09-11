@@ -5,6 +5,183 @@
 #include <stdlib.h>
 #include <string.h>
 
+typedef struct {
+    const Atom *atom;
+    bool executable;
+} CettaObservationUseWork;
+
+static bool cetta_observation_work_reserve(
+        CettaObservationUseWork **work, size_t *capacity,
+        size_t needed) {
+    if (!work || !capacity)
+        return false;
+    if (needed <= *capacity)
+        return true;
+    size_t next = *capacity ? *capacity : 32u;
+    while (next < needed) {
+        if (next > SIZE_MAX / 2u)
+            return false;
+        next *= 2u;
+    }
+    if (next > SIZE_MAX / sizeof(**work))
+        return false;
+    CettaObservationUseWork *grown =
+        realloc(*work, next * sizeof(**work));
+    if (!grown)
+        return false;
+    *work = grown;
+    *capacity = next;
+    return true;
+}
+
+bool cetta_observation_atom_contains_var(
+        const Atom *root, VarId variable) {
+    if (!root || variable == VAR_ID_NONE)
+        return false;
+    if (!atom_variable_bloom_may_contain(root, variable))
+        return false;
+
+    CettaObservationUseWork *work = NULL;
+    size_t length = 0u;
+    size_t capacity = 0u;
+    if (!cetta_observation_work_reserve(
+            &work, &capacity, 1u)) {
+        return true;
+    }
+    work[length++] = (CettaObservationUseWork){.atom = root};
+    while (length > 0u) {
+        const Atom *atom = work[--length].atom;
+        if (atom->kind == ATOM_VAR && atom->var_id == variable) {
+            free(work);
+            return true;
+        }
+        if (atom->kind != ATOM_EXPR ||
+            !atom_variable_bloom_may_contain(atom, variable)) {
+            continue;
+        }
+        if ((uint64_t)atom->expr.len >
+                (uint64_t)(SIZE_MAX - length) ||
+            !cetta_observation_work_reserve(
+                &work, &capacity,
+                length + (size_t)atom->expr.len)) {
+            free(work);
+            return true;
+        }
+        for (CettaExprIndex index = atom->expr.len;
+             index > 0u; index--) {
+            const Atom *child = atom->expr.elems[index - 1u];
+            if (atom_variable_bloom_may_contain(child, variable)) {
+                work[length++] =
+                    (CettaObservationUseWork){.atom = child};
+            }
+        }
+    }
+    free(work);
+    return false;
+}
+
+bool cetta_observation_environment_var_is_private(
+        const Bindings *environment, VarId variable) {
+    if (!environment || variable == VAR_ID_NONE)
+        return false;
+    for (uint32_t index = 0u; index < environment->len; index++) {
+        const Binding *binding = &environment->entries[index];
+        if (binding->var_id == variable ||
+            cetta_observation_atom_contains_var(
+                binding->val, variable)) {
+            return false;
+        }
+    }
+    for (uint32_t index = 0u;
+         index < environment->eq_len; index++) {
+        const BindingConstraint *constraint =
+            &environment->constraints[index];
+        if (cetta_observation_atom_contains_var(
+                constraint->lhs, variable) ||
+            cetta_observation_atom_contains_var(
+                constraint->rhs, variable)) {
+            return false;
+        }
+    }
+    return true;
+}
+
+bool cetta_observation_variable_uses_only_unary_consumers(
+        const Atom *root, VarId variable,
+        CettaObservationUnaryConsumerPredicate is_consumer,
+        CettaObservationExecutableChildrenPredicate children_executable,
+        void *context, uint64_t *uses) {
+    if (!root || variable == VAR_ID_NONE || !is_consumer || !uses)
+        return false;
+    if (!atom_variable_bloom_may_contain(root, variable))
+        return true;
+
+    CettaObservationUseWork *work = NULL;
+    size_t length = 0u;
+    size_t capacity = 0u;
+    if (!cetta_observation_work_reserve(
+            &work, &capacity, 1u)) {
+        return false;
+    }
+    work[length++] = (CettaObservationUseWork){
+        .atom = root,
+        .executable = true,
+    };
+    while (length > 0u) {
+        CettaObservationUseWork item = work[--length];
+        const Atom *atom = item.atom;
+        if (atom->kind == ATOM_VAR && atom->var_id == variable) {
+            free(work);
+            return false;
+        }
+        if (atom->kind != ATOM_EXPR ||
+            !atom_variable_bloom_may_contain(atom, variable)) {
+            continue;
+        }
+
+        SymbolId head = atom->expr.len > 0u &&
+                        atom->expr.elems[0]->kind == ATOM_SYMBOL
+            ? atom->expr.elems[0]->sym_id : SYMBOL_ID_NONE;
+        bool direct_consumer =
+            item.executable && atom->expr.len == 2u &&
+            head != SYMBOL_ID_NONE && is_consumer(context, head) &&
+            atom->expr.elems[1]->kind == ATOM_VAR &&
+            atom->expr.elems[1]->var_id == variable;
+        if (direct_consumer) {
+            if (*uses == UINT64_MAX) {
+                free(work);
+                return false;
+            }
+            (*uses)++;
+            continue;
+        }
+
+        bool executable = item.executable &&
+            (!children_executable ||
+             children_executable(context, head));
+        if ((uint64_t)atom->expr.len >
+                (uint64_t)(SIZE_MAX - length) ||
+            !cetta_observation_work_reserve(
+                &work, &capacity,
+                length + (size_t)atom->expr.len)) {
+            free(work);
+            return false;
+        }
+        for (CettaExprIndex index = atom->expr.len;
+             index > 0u; index--) {
+            const Atom *child = atom->expr.elems[index - 1u];
+            if (atom_variable_bloom_may_contain(child, variable)) {
+                work[length++] = (CettaObservationUseWork){
+                    .atom = child,
+                    .executable = executable,
+                };
+            }
+        }
+    }
+    free(work);
+    return true;
+}
+
 static bool cetta_ratio_share_parse(
         const char *name, uint32_t *newest_share) {
     if (!name || !newest_share)

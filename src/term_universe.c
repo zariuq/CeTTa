@@ -3937,7 +3937,8 @@ AtomId term_universe_lookup_expression_coordinates(
     enum { TERM_UNIVERSE_LOOKUP_INLINE_COORDINATES = 16u };
     if (!universe ||
         (coordinate_count > 0u && !coordinates) ||
-        (size_t)coordinate_count > SIZE_MAX / sizeof(AtomId)) {
+        !cetta_expr_len_mul_fits_size(
+            coordinate_count, sizeof(AtomId))) {
         return CETTA_ATOM_ID_NONE;
     }
     AtomId inline_ids[TERM_UNIVERSE_LOOKUP_INLINE_COORDINATES];
@@ -3958,6 +3959,58 @@ AtomId term_universe_lookup_expression_coordinates(
                 universe, coordinates[index]);
         }
         if (child_ids[index] == CETTA_ATOM_ID_NONE)
+            goto done;
+    }
+    result = term_universe_expr_id_from_ids(
+        (TermUniverse *)universe, child_ids, coordinate_count, false);
+done:
+    if (child_ids != inline_ids)
+        free(child_ids);
+    return result;
+}
+
+AtomId term_universe_lookup_symbol_application(
+        const TermUniverse *universe, SymbolId head,
+        Atom *const *arguments, CettaExprLen argument_count) {
+    enum { TERM_UNIVERSE_LOOKUP_INLINE_APPLICATION = 16u };
+    if (!universe || head == SYMBOL_ID_NONE ||
+        (argument_count > 0u && !arguments) ||
+        argument_count == UINT64_MAX ||
+        !cetta_expr_len_mul_fits_size(
+            argument_count + 1u, sizeof(AtomId))) {
+        return CETTA_ATOM_ID_NONE;
+    }
+
+    CettaExprLen coordinate_count = argument_count + 1u;
+    AtomId inline_ids[TERM_UNIVERSE_LOOKUP_INLINE_APPLICATION];
+    AtomId *child_ids =
+        coordinate_count <= TERM_UNIVERSE_LOOKUP_INLINE_APPLICATION
+            ? inline_ids
+            : cetta_malloc((size_t)coordinate_count * sizeof(*child_ids));
+    if (!child_ids)
+        return CETTA_ATOM_ID_NONE;
+
+    CettaTermHdr head_hdr = {0};
+    head_hdr.tag = (uint8_t)ATOM_SYMBOL;
+    head_hdr.sym_or_head = head;
+    head_hdr.aux32 = term_universe_aux_make(0u, false);
+    head_hdr.hash32 = term_universe_hash_symbol_id(head);
+    child_ids[0] = term_universe_lookup_record_id(
+        universe, &head_hdr, NULL, 0u);
+    AtomId result = CETTA_ATOM_ID_NONE;
+    if (child_ids[0] == CETTA_ATOM_ID_NONE)
+        goto done;
+
+    for (CettaExprIndex index = 0u;
+         index < argument_count; index++) {
+        bool complete = true;
+        child_ids[index + 1u] = term_universe_lookup_atom_id_borrowed(
+            universe, arguments[index], 0u, &complete);
+        if (!complete) {
+            child_ids[index + 1u] = term_universe_lookup_atom_id(
+                universe, arguments[index]);
+        }
+        if (child_ids[index + 1u] == CETTA_ATOM_ID_NONE)
             goto done;
     }
     result = term_universe_expr_id_from_ids(

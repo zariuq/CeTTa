@@ -2052,6 +2052,114 @@ int main(void) {
         seen_atom->expr.len, &rigid_count));
     disc_node_free(rigid_count_disc);
 
+    /* A trie position may begin as any singleton coordinate and later promote
+     * to a heterogeneous branch set.  Exact queries must continue to include
+     * a stored variable branch, while a query variable observes every stored
+     * occurrence.  Stable-coordinate transport preserves that behavior after
+     * both renumbering and removal. */
+    DiscNode *mixed_disc = disc_node_new();
+    Atom *mixed_symbol = atom_symbol(&scratch, "mixed-symbol");
+    Atom *mixed_expression_item = atom_symbol(&scratch, "mixed-child");
+    Atom *mixed_expression_items[1] = {mixed_expression_item};
+    Atom *mixed_expression = atom_expr(
+        &scratch, mixed_expression_items, 1u);
+    Atom *mixed_integer = atom_int(&scratch, 41);
+    Atom *mixed_variable = atom_var(&scratch, "$mixed");
+    Atom *mixed_coordinates[4] = {
+        mixed_symbol,
+        mixed_expression,
+        mixed_integer,
+        mixed_variable,
+    };
+    for (CettaIndex first = 0u; first < 4u; first++) {
+        DiscNode *promotion_disc = disc_node_new();
+        for (CettaIndex offset = 0u; offset < 4u; offset++) {
+            CettaIndex coordinate = (first + offset) % 4u;
+            disc_insert(
+                promotion_disc, mixed_coordinates[coordinate],
+                31u + coordinate);
+        }
+        CettaIndex *promotion_matches = NULL;
+        CettaIndex promotion_match_count = 0u;
+        CettaIndex promotion_match_cap = 0u;
+        disc_lookup(
+            promotion_disc, atom_var(&scratch, "$promotion-query"),
+            &promotion_matches, &promotion_match_count,
+            &promotion_match_cap);
+        assert(promotion_match_count == 4u);
+        bool promotion_seen[4] = {false, false, false, false};
+        for (CettaIndex index = 0u;
+             index < promotion_match_count; index++) {
+            assert(promotion_matches[index] >= 31u &&
+                   promotion_matches[index] < 35u);
+            promotion_seen[promotion_matches[index] - 31u] = true;
+        }
+        for (CettaIndex index = 0u; index < 4u; index++)
+            assert(promotion_seen[index]);
+        free(promotion_matches);
+        disc_node_free(promotion_disc);
+    }
+    disc_insert(mixed_disc, mixed_symbol, 21u);
+    disc_insert(mixed_disc, mixed_expression, 22u);
+    disc_insert(mixed_disc, mixed_integer, 23u);
+    disc_insert(mixed_disc, mixed_variable, 24u);
+
+    CettaIndex *mixed_matches = NULL;
+    CettaIndex mixed_match_count = 0u;
+    CettaIndex mixed_match_cap = 0u;
+    disc_lookup(mixed_disc, mixed_symbol, &mixed_matches,
+                &mixed_match_count, &mixed_match_cap);
+    assert(mixed_match_count == 2u);
+    bool saw_mixed_symbol = false;
+    bool saw_mixed_variable = false;
+    for (CettaIndex i = 0u; i < mixed_match_count; i++) {
+        saw_mixed_symbol = saw_mixed_symbol || mixed_matches[i] == 21u;
+        saw_mixed_variable = saw_mixed_variable || mixed_matches[i] == 24u;
+    }
+    assert(saw_mixed_symbol && saw_mixed_variable);
+    free(mixed_matches);
+
+    mixed_matches = NULL;
+    mixed_match_count = 0u;
+    mixed_match_cap = 0u;
+    disc_lookup(mixed_disc, atom_var(&scratch, "$query"),
+                &mixed_matches, &mixed_match_count, &mixed_match_cap);
+    assert(mixed_match_count == 4u);
+    free(mixed_matches);
+
+    CettaIndex mixed_transport[25];
+    for (CettaIndex i = 0u; i < 25u; i++)
+        mixed_transport[i] = SPACE_OCCURRENCE_COORDINATE_REMOVED;
+    mixed_transport[21] = 3u;
+    mixed_transport[23] = 1u;
+    mixed_transport[24] = 2u;
+    assert(disc_transport_stable_coordinates(
+               mixed_disc, mixed_transport, 25u) == 1u);
+
+    mixed_matches = NULL;
+    mixed_match_count = 0u;
+    mixed_match_cap = 0u;
+    disc_lookup(mixed_disc, mixed_expression, &mixed_matches,
+                &mixed_match_count, &mixed_match_cap);
+    assert(mixed_match_count == 1u && mixed_matches[0] == 2u);
+    free(mixed_matches);
+
+    mixed_matches = NULL;
+    mixed_match_count = 0u;
+    mixed_match_cap = 0u;
+    disc_lookup(mixed_disc, mixed_integer, &mixed_matches,
+                &mixed_match_count, &mixed_match_cap);
+    assert(mixed_match_count == 2u);
+    bool saw_mixed_integer = false;
+    saw_mixed_variable = false;
+    for (CettaIndex i = 0u; i < mixed_match_count; i++) {
+        saw_mixed_integer = saw_mixed_integer || mixed_matches[i] == 1u;
+        saw_mixed_variable = saw_mixed_variable || mixed_matches[i] == 2u;
+    }
+    assert(saw_mixed_integer && saw_mixed_variable);
+    free(mixed_matches);
+    disc_node_free(mixed_disc);
+
     /* Integer discrimination promotes from a small linear branch set to an
      * open-addressed table.  Exercise positive, negative, duplicate, extreme,
      * and wildcard observations across several resize/collision regimes. */
@@ -2232,6 +2340,25 @@ int main(void) {
         &hash_space, seen_atom->expr.elems, seen_atom->expr.len,
         &coordinate_existence_applicable));
     assert(coordinate_existence_applicable);
+    Atom *seen_arguments[1] = {seen_alpha};
+    assert(term_universe_lookup_symbol_application(
+               &universe, seen_head->sym_id, seen_arguments, 1u) == seen_id);
+    assert(space_contains_exact_symbol_application(
+        &hash_space, seen_head->sym_id, seen_arguments, 1u,
+        &coordinate_existence_applicable));
+    assert(coordinate_existence_applicable);
+    Atom *missing_seen_arguments[1] = {missing_seen_coordinates[1]};
+    assert(!space_contains_exact_symbol_application(
+        &hash_space, seen_head->sym_id, missing_seen_arguments, 1u,
+        &coordinate_existence_applicable));
+    assert(coordinate_existence_applicable);
+    Atom *open_seen_arguments[1] = {
+        atom_var(&scratch, "$open-seen-argument"),
+    };
+    assert(!space_contains_exact_symbol_application(
+        &hash_space, seen_head->sym_id, open_seen_arguments, 1u,
+        &coordinate_existence_applicable));
+    assert(!coordinate_existence_applicable);
     assert(!space_match_exists_ground_exact_expression_coordinates(
         &hash_space, missing_seen_coordinates, 2u,
         &coordinate_existence_applicable));

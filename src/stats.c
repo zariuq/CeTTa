@@ -838,6 +838,8 @@ static const char *const CETTA_RUNTIME_COUNTER_NAMES[CETTA_RUNTIME_COUNTER_COUNT
     "prepared-pure-answer-producer-answer",
     "prepared-pure-answer-producer-tail-call",
     "prepared-pure-answer-producer-resource-decline",
+    "he-unary-marker-index-lookup",
+    "he-unary-marker-fallback-row",
 };
 
 static int64_t clamp_counter(uint64_t value) {

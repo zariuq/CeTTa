@@ -2728,17 +2728,17 @@ bool atom_prolog_compound_body(Atom *atom, Atom **body) {
            (*body)->expr.elems[0]->kind == ATOM_SYMBOL;
 }
 
-Atom *atom_petta_counted_collection(
+Atom *atom_counted_collection(
     Arena *a, int64_t count) {
     if (!a || count < 0)
         return NULL;
     Atom *tag = atom_internal_tag(
-        a, CETTA_INTERNAL_TAG_PETTA_COUNTED_COLLECTION);
+        a, CETTA_INTERNAL_TAG_COUNTED_COLLECTION);
     Atom *value = atom_int(a, count);
     return tag && value ? atom_expr2(a, tag, value) : NULL;
 }
 
-bool atom_petta_counted_collection_count(
+bool atom_counted_collection_count(
     Atom *atom, int64_t *count) {
     if (count)
         *count = 0;
@@ -2747,7 +2747,7 @@ bool atom_petta_counted_collection_count(
         atom->expr.elems[0]->kind != ATOM_GROUNDED ||
         atom->expr.elems[0]->ground.gkind != GV_INTERNAL_TAG ||
         atom->expr.elems[0]->ground.ival !=
-            (int64_t)CETTA_INTERNAL_TAG_PETTA_COUNTED_COLLECTION ||
+            (int64_t)CETTA_INTERNAL_TAG_COUNTED_COLLECTION ||
         atom->expr.elems[1]->kind != ATOM_GROUNDED ||
         atom->expr.elems[1]->ground.gkind != GV_INT ||
         atom->expr.elems[1]->ground.ival < 0) {

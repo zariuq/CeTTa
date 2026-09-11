@@ -104,6 +104,25 @@ typedef struct {
     CettaObservationAlgebra algebra;
 } CettaObservationContract;
 
+/* A private intermediate may be represented by an observer summary only
+ * when every live occurrence is consumed by that observer.  Dialects supply
+ * semantic head predicates; the traversal and escape checks are shared.
+ * Returning false is always a safe decline to ordinary evaluation. */
+typedef bool (*CettaObservationUnaryConsumerPredicate)(
+    void *context, SymbolId head);
+typedef bool (*CettaObservationExecutableChildrenPredicate)(
+    void *context, SymbolId head);
+
+bool cetta_observation_atom_contains_var(
+    const Atom *root, VarId variable);
+bool cetta_observation_environment_var_is_private(
+    const Bindings *environment, VarId variable);
+bool cetta_observation_variable_uses_only_unary_consumers(
+    const Atom *root, VarId variable,
+    CettaObservationUnaryConsumerPredicate is_consumer,
+    CettaObservationExecutableChildrenPredicate children_executable,
+    void *context, uint64_t *uses);
+
 /* A physical occurrence presented to a preferred/fallback contraction.
  * Language adapters decide the channel; the contraction itself is dialect
  * neutral.  Positive multiplicities preserve occurrence bags without

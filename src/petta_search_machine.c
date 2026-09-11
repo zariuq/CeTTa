@@ -7324,6 +7324,36 @@ static bool petta_push_solve_activation_planned(
         });
 }
 
+/* Preserve the consumer's collection observation while an equation result is
+ * still represented by source plus an activation environment.  The ordinary
+ * counted-collection dispatcher remains the sole implementation of the fold;
+ * this goal only delays construction of the producer expression until all
+ * preceding bindings in the same activation have run. */
+static bool petta_push_counted_collection_activation_planned(
+    PettaMachineImpl *machine, Atom *source, Atom *expected,
+    uint32_t barrier, const PettaPlanNode *plan,
+    const PettaEquationTemplate *equation_template,
+    uint32_t epoch, uint32_t first_entry) {
+    if (!machine || !source || !expected || epoch == 0u)
+        return false;
+    cetta_provenance_assert_not_transient(
+        source, "petta.goal.counted-activation-source");
+    return petta_goal_push(
+        machine,
+        (PettaGoal){
+            .kind = PETTA_GOAL_SOLVE_COUNTED_COLLECTION,
+            .barrier = barrier,
+            .first = source,
+            .second = expected,
+            .plan = plan,
+            .activation_template = equation_template,
+            .activation_epoch = epoch,
+            .activation_first_entry = first_entry,
+            .activation_source_fields =
+                PETTA_ACTIVATION_SOURCE_FIRST,
+        });
+}
+
 static bool petta_mark_top_goal_segment_resume(
         PettaMachineImpl *machine) {
     if (!machine || machine->goal_len == 0u)
@@ -7503,7 +7533,7 @@ static bool petta_machine_immediate_value(
            petta_semantics_is_open_cons_value(atom) ||
            atom_petta_prolog_compound_body(atom, &body) ||
            atom_prolog_compound_body(atom, &body) ||
-           atom_petta_counted_collection_count(atom, &counted);
+           atom_counted_collection_count(atom, &counted);
 }
 
 static bool petta_machine_is_value_reference(Atom *atom) {
@@ -13385,7 +13415,7 @@ static bool petta_machine_advance_choice(
                 visible_count;
             Atom *count =
                 choice->as.count_collapse.wrap_collection
-                    ? atom_petta_counted_collection(
+                    ? atom_counted_collection(
                           &machine->heap,
                           (int64_t)visible_count)
                     : atom_int(
@@ -17459,191 +17489,31 @@ static bool petta_machine_relation_slots_ready(
     return true;
 }
 
-typedef struct {
-    Atom *atom;
-    bool executable;
-} PettaCountUseWork;
-
-static bool petta_atom_contains_var_id(
-    Atom *root, VarId variable) {
-    if (!root || variable == VAR_ID_NONE)
-        return false;
-    Atom **stack = NULL;
-    size_t length = 0u;
-    size_t capacity = 0u;
-    if (!petta_machine_reserve(
-            (void **)&stack, &capacity, 1u,
-            sizeof(*stack))) {
+static bool petta_count_consumer_head(
+        void *context, SymbolId head) {
+    PettaMachineImpl *machine = context;
+    PeTTaForm form = petta_semantics_form(head);
+    if (form == PETTA_FORM_LENGTH)
         return true;
+    if (head != g_builtin_syms.size_atom &&
+        head != g_builtin_syms.size) {
+        return false;
     }
-    stack[length++] = root;
-    while (length > 0u) {
-        Atom *atom = stack[--length];
-        if (atom->kind == ATOM_VAR &&
-            atom->var_id == variable) {
-            free(stack);
-            return true;
-        }
-        if (atom->kind != ATOM_EXPR)
-            continue;
-        for (CettaExprIndex index = 0u;
-             index < atom->expr.len; index++) {
-            Atom *child = atom->expr.elems[index];
-            if (child->kind == ATOM_VAR &&
-                child->var_id == variable) {
-                free(stack);
-                return true;
-            }
-        }
-        if ((uint64_t)atom->expr.len >
-                (uint64_t)(SIZE_MAX - length) ||
-            !petta_machine_reserve(
-                (void **)&stack, &capacity,
-                length + (size_t)atom->expr.len,
-                sizeof(*stack))) {
-            free(stack);
-            return true;
-        }
-        for (CettaExprIndex index = atom->expr.len;
-             index > 0u; index--) {
-            Atom *child = atom->expr.elems[index - 1u];
-            if (child->kind != ATOM_VAR)
-                stack[length++] = child;
-        }
-    }
-    free(stack);
-    return false;
+    return machine &&
+        (!machine->host.builtin_allowed ||
+         machine->host.builtin_allowed(
+             machine->host.context, head));
 }
 
 static bool petta_count_use_children_executable(
-    Atom *expression) {
-    if (!expression || expression->kind != ATOM_EXPR ||
-        expression->expr.len == 0u ||
-        expression->expr.elems[0]->kind != ATOM_SYMBOL) {
-        return true;
-    }
-    SymbolId head = expression->expr.elems[0]->sym_id;
-    PeTTaForm form = petta_semantics_form(head);
+        void *context, SymbolId head) {
+    (void)context;
+    PeTTaForm form = head == SYMBOL_ID_NONE
+        ? PETTA_FORM_NONE : petta_semantics_form(head);
     return head != g_builtin_syms.quote &&
            head != g_builtin_syms.return_text &&
            form != PETTA_FORM_LAMBDA &&
            form != PETTA_FORM_PREDICATE;
-}
-
-/*
- * Admit collection-count fusion only when every observable occurrence of
- * `variable` is the complete argument of an executable `length` call.
- * Occurrences under quoted/callable data are not observations of the list
- * and therefore reject the optimization rather than leaking its private
- * counted carrier.
- */
-static bool petta_count_use_scan(
-    Atom *root, VarId variable, uint64_t *uses) {
-    if (!root || variable == VAR_ID_NONE || !uses)
-        return false;
-    PettaCountUseWork *work = NULL;
-    size_t length = 0u;
-    size_t capacity = 0u;
-    if (!petta_machine_reserve(
-            (void **)&work, &capacity, 1u,
-            sizeof(*work))) {
-        return false;
-    }
-    work[length++] = (PettaCountUseWork){
-        .atom = root,
-        .executable = true,
-    };
-    while (length > 0u) {
-        PettaCountUseWork item = work[--length];
-        Atom *atom = item.atom;
-        if (atom->kind == ATOM_VAR &&
-            atom->var_id == variable) {
-            free(work);
-            return false;
-        }
-        if (atom->kind != ATOM_EXPR)
-            continue;
-
-        bool direct_length =
-            item.executable &&
-            atom->expr.len == 2u &&
-            atom->expr.elems[0]->kind == ATOM_SYMBOL &&
-            petta_semantics_form(
-                atom->expr.elems[0]->sym_id) ==
-                    PETTA_FORM_LENGTH &&
-            atom->expr.elems[1]->kind == ATOM_VAR &&
-            atom->expr.elems[1]->var_id == variable;
-        if (direct_length) {
-            (*uses)++;
-            continue;
-        }
-
-        /*
-         * A direct occurrence outside the admitted length position rejects
-         * fusion immediately.  Check all shallow children before descending
-         * into any potentially large substituted sibling.
-         */
-        for (CettaExprIndex index = 0u;
-             index < atom->expr.len; index++) {
-            Atom *child = atom->expr.elems[index];
-            if (child->kind == ATOM_VAR &&
-                child->var_id == variable) {
-                free(work);
-                return false;
-            }
-        }
-        bool executable =
-            item.executable &&
-            petta_count_use_children_executable(atom);
-        if ((uint64_t)atom->expr.len >
-                (uint64_t)(SIZE_MAX - length) ||
-            !petta_machine_reserve(
-                (void **)&work, &capacity,
-                length + (size_t)atom->expr.len,
-                sizeof(*work))) {
-            free(work);
-            return false;
-        }
-        for (CettaExprIndex index = atom->expr.len;
-             index > 0u; index--) {
-            Atom *child = atom->expr.elems[index - 1u];
-            if (child->kind == ATOM_VAR)
-                continue;
-            work[length++] = (PettaCountUseWork){
-                .atom = child,
-                .executable = executable,
-            };
-        }
-    }
-    free(work);
-    return true;
-}
-
-static bool petta_environment_var_is_private(
-    const Bindings *environment, VarId variable) {
-    if (!environment || variable == VAR_ID_NONE)
-        return false;
-    for (uint32_t index = 0u;
-         index < environment->len; index++) {
-        const Binding *binding = &environment->entries[index];
-        if (binding->var_id == variable ||
-            petta_atom_contains_var_id(
-                binding->val, variable)) {
-            return false;
-        }
-    }
-    for (uint32_t index = 0u;
-         index < environment->eq_len; index++) {
-        const BindingConstraint *constraint =
-            &environment->constraints[index];
-        if (petta_atom_contains_var_id(
-                constraint->lhs, variable) ||
-            petta_atom_contains_var_id(
-                constraint->rhs, variable)) {
-            return false;
-        }
-    }
-    return true;
 }
 
 static bool petta_let_binding_count_only(
@@ -17657,17 +17527,17 @@ static bool petta_let_binding_count_only(
         binding_index >= bindings->expr.len || !body) {
         return false;
     }
-    bool may_contain_length =
-        body_plan && body_plan->contains_length_call;
+    bool may_contain_cardinality =
+        body_plan && body_plan->contains_cardinality_call;
     for (CettaExprIndex index = binding_index + 1u;
-         !may_contain_length &&
+         !may_contain_cardinality &&
          bindings_plan &&
          index < bindings_plan->child_count; index++) {
-        may_contain_length =
+        may_contain_cardinality =
             bindings_plan->children[index]
-                .contains_length_call;
+                .contains_cardinality_call;
     }
-    if (!may_contain_length)
+    if (!may_contain_cardinality)
         return false;
 
     Atom *binding = bindings->expr.elems[binding_index];
@@ -17678,7 +17548,7 @@ static bool petta_let_binding_count_only(
     }
     VarId variable = binding->expr.elems[0]->var_id;
     if (variable == VAR_ID_NONE ||
-        petta_atom_contains_var_id(
+        cetta_observation_atom_contains_var(
             binding->expr.elems[1], variable)) {
         return false;
     }
@@ -17686,15 +17556,20 @@ static bool petta_let_binding_count_only(
     uint64_t uses = 0u;
     for (CettaExprIndex index = binding_index + 1u;
          index < bindings->expr.len; index++) {
-        if (!petta_count_use_scan(
-                bindings->expr.elems[index],
-                variable, &uses)) {
+        if (!cetta_observation_variable_uses_only_unary_consumers(
+                bindings->expr.elems[index], variable,
+                petta_count_consumer_head,
+                petta_count_use_children_executable,
+                machine, &uses)) {
             return false;
         }
     }
-    return petta_count_use_scan(body, variable, &uses) &&
+    return cetta_observation_variable_uses_only_unary_consumers(
+               body, variable, petta_count_consumer_head,
+               petta_count_use_children_executable,
+               machine, &uses) &&
            uses > 0u &&
-           petta_environment_var_is_private(
+           cetta_observation_environment_var_is_private(
                search_context_bindings(&machine->search),
                variable);
 }
@@ -17705,14 +17580,18 @@ static bool petta_direct_let_binding_count_only(
     if (!petta_let_count_fusion_enabled() || !machine || !binder ||
         !producer || !body || binder->kind != ATOM_VAR ||
         binder->var_id == VAR_ID_NONE ||
-        (body_plan && !body_plan->contains_length_call) ||
-        petta_atom_contains_var_id(producer, binder->var_id)) {
+        (body_plan && !body_plan->contains_cardinality_call) ||
+        cetta_observation_atom_contains_var(
+            producer, binder->var_id)) {
         return false;
     }
     uint64_t uses = 0u;
-    return petta_count_use_scan(body, binder->var_id, &uses) &&
+    return cetta_observation_variable_uses_only_unary_consumers(
+               body, binder->var_id, petta_count_consumer_head,
+               petta_count_use_children_executable,
+               machine, &uses) &&
            uses > 0u &&
-           petta_environment_var_is_private(
+           cetta_observation_environment_var_is_private(
                search_context_bindings(&machine->search),
                binder->var_id);
 }
@@ -17761,7 +17640,7 @@ static bool petta_machine_dispatch_counted_collection(
     }
 
     int64_t counted = 0;
-    if (atom_petta_counted_collection_count(
+    if (atom_counted_collection_count(
             expression, &counted)) {
         return petta_machine_unify_resolved(
             machine, expression, expected);
@@ -17792,7 +17671,7 @@ static bool petta_machine_dispatch_counted_collection(
                 search_context_bindings(&machine->search),
                 petta_collection_count_item, &cardinality);
         if (pulled == PETTA_MACHINE_FOLD_VALUE) {
-            Atom *collection = atom_petta_counted_collection(
+            Atom *collection = atom_counted_collection(
                 &machine->heap, (int64_t)cardinality.count);
             return collection &&
                    petta_machine_unify_resolved(
@@ -18605,16 +18484,28 @@ static bool petta_push_activation_let_star(
             petta_machine_resolve_activation_source_root(
                 machine, frame_bindings, frame,
                 pattern_source, pattern_plan);
-        if (!pattern ||
-            !petta_push_solve_activation_planned(
-                machine, binding->expr.elems[producer_child], pattern,
-                goal->barrier, producer_plan,
-                goal->activation_template,
-                goal->activation_epoch,
-                goal->activation_first_entry)) {
+        bool count_only = petta_let_binding_count_only(
+            machine, bindings, bindings_plan, source_index,
+            goal->first->expr.elems[body_source_child], body_plan);
+        bool pushed = pattern && (count_only
+            ? petta_push_counted_collection_activation_planned(
+                  machine, binding->expr.elems[producer_child], pattern,
+                  goal->barrier, producer_plan,
+                  goal->activation_template,
+                  goal->activation_epoch,
+                  goal->activation_first_entry)
+            : petta_push_solve_activation_planned(
+                  machine, binding->expr.elems[producer_child], pattern,
+                  goal->barrier, producer_plan,
+                  goal->activation_template,
+                  goal->activation_epoch,
+                  goal->activation_first_entry));
+        if (!pushed) {
             return false;
         }
-        if (binding_index > 0u &&
+        if (count_only)
+            machine->stats.count_aggregate_let_fusions++;
+        if (!count_only && binding_index > 0u &&
             !petta_mark_top_goal_segment_resume(machine)) {
             return false;
         }
@@ -19894,6 +19785,46 @@ activation_tail_segment:
         if ((control == PETTA_PLAN_CONTROL_LET ||
              control == PETTA_PLAN_CONTROL_CHAIN) &&
             nargs == 3u) {
+            const PettaPlanNode *binder_plan =
+                petta_plan_child(goal->plan, 1u);
+            const PettaPlanNode *producer_plan =
+                petta_plan_child(goal->plan, 2u);
+            const PettaPlanNode *body_plan =
+                petta_plan_child(goal->plan, 3u);
+            if (control == PETTA_PLAN_CONTROL_LET &&
+                petta_direct_let_binding_count_only(
+                    machine, source->expr.elems[1],
+                    source->expr.elems[2], source->expr.elems[3],
+                    body_plan)) {
+                Bindings *frame_bindings = NULL;
+                BindingsDenseEpochFrame *frame = NULL;
+                Atom *binder = NULL;
+                if (petta_machine_prepare_activation_frame(
+                        machine, goal, &frame_bindings, &frame)) {
+                    binder = petta_machine_resolve_activation_source_root(
+                        machine, frame_bindings, frame,
+                        source->expr.elems[1], binder_plan);
+                }
+                if (!binder ||
+                    !petta_push_solve_activation_planned(
+                        machine, source->expr.elems[3], goal->second,
+                        goal->barrier, body_plan,
+                        goal->activation_template,
+                        goal->activation_epoch,
+                        goal->activation_first_entry) ||
+                    !petta_mark_top_goal_segment_resume(machine) ||
+                    !petta_push_counted_collection_activation_planned(
+                        machine, source->expr.elems[2], binder,
+                        goal->barrier, producer_plan,
+                        goal->activation_template,
+                        goal->activation_epoch,
+                        goal->activation_first_entry)) {
+                    *failure = PETTA_MACHINE_STEP_CAPACITY;
+                    return false;
+                }
+                machine->stats.count_aggregate_let_fusions++;
+                return true;
+            }
             bool anonymous_hole_candidate =
                 control == PETTA_PLAN_CONTROL_LET && goal->plan &&
                 goal->plan->continuation ==
@@ -19919,10 +19850,6 @@ activation_tail_segment:
                 *failure = PETTA_MACHINE_STEP_CAPACITY;
                 return false;
             }
-            const PettaPlanNode *binder_plan =
-                petta_plan_child(goal->plan, 1u);
-            const PettaPlanNode *producer_plan =
-                petta_plan_child(goal->plan, 2u);
             bool solve_right_first =
                 control == PETTA_PLAN_CONTROL_LET && producer_plan &&
                 producer_plan->role == PETTA_PLAN_DATA &&
@@ -20307,7 +20234,15 @@ static bool petta_machine_dispatch_solve(
     }
 
     Atom *expression = goal->first;
-    if (!goal->first_operand_resolved) {
+    bool counted_activation =
+        goal->kind == PETTA_GOAL_SOLVE_COUNTED_COLLECTION &&
+        goal->activation_source_fields ==
+            PETTA_ACTIVATION_SOURCE_FIRST &&
+        goal->activation_epoch != 0u;
+    if (counted_activation) {
+        expression = petta_machine_materialize_activation_source(
+            machine, goal, goal->first);
+    } else if (!goal->first_operand_resolved) {
         uint64_t before = machine->stats.binding_apply_allocated_bytes;
         bool expression_view =
             petta_solve_expression_root_view_enabled() &&
@@ -20390,8 +20325,22 @@ static bool petta_machine_dispatch_solve(
 
     if (goal->kind ==
         PETTA_GOAL_SOLVE_COUNTED_COLLECTION) {
+        PettaGoal resolved_goal;
+        const PettaGoal *counted_goal = goal;
+        if (counted_activation) {
+            resolved_goal = *goal;
+            resolved_goal.first = expression;
+            resolved_goal.second = expected;
+            resolved_goal.activation_template = NULL;
+            resolved_goal.activation_epoch = 0u;
+            resolved_goal.activation_first_entry = 0u;
+            resolved_goal.activation_source_fields = 0u;
+            resolved_goal.first_operand_resolved = true;
+            resolved_goal.segment_resume = false;
+            counted_goal = &resolved_goal;
+        }
         return petta_machine_dispatch_counted_collection(
-            machine, goal, expression, expected,
+            machine, counted_goal, expression, expected,
             plan, failure);
     }
 
@@ -20456,7 +20405,7 @@ static bool petta_machine_dispatch_solve(
     }
 
     int64_t counted_collection = 0;
-    if (atom_petta_counted_collection_count(
+    if (atom_counted_collection_count(
             expression, &counted_collection)) {
         return petta_machine_unify_resolved(
             machine, expression, expected);
@@ -22787,7 +22736,7 @@ static bool petta_machine_dispatch_goal(
 
     if (goal.kind == PETTA_GOAL_COLLECTION_COUNT_READY) {
         int64_t existing = 0;
-        if (atom_petta_counted_collection_count(
+        if (atom_counted_collection_count(
                 first, &existing)) {
             return petta_machine_unify(
                 machine, first, second);
@@ -22821,7 +22770,7 @@ static bool petta_machine_dispatch_goal(
             first->ground.ival < 0) {
             return false;
         }
-        Atom *collection = atom_petta_counted_collection(
+        Atom *collection = atom_counted_collection(
             &machine->heap, first->ground.ival);
         return collection &&
                petta_machine_unify(
@@ -22837,7 +22786,7 @@ static bool petta_machine_dispatch_goal(
             first->expr.elems[0]->sym_id == g_builtin_syms.size_atom;
         Atom *items = first->expr.elems[1];
         int64_t counted = 0;
-        if (atom_petta_counted_collection_count(
+        if (atom_counted_collection_count(
                 items, &counted)) {
             return petta_machine_unify(
                 machine, atom_int(&machine->heap, counted),
