@@ -11,55 +11,10 @@
 
 /* ── Discrimination Trie (à la Vampire SubstitutionTree) ───────────────── */
 
-#define DISC_HASH_THRESHOLD 16
-
-typedef struct {
-    SymbolId key;
-    struct DiscNode *child;
-} DiscSymBranch;
-
-typedef struct {
-    SymbolId key;
-    struct DiscNode *child;
-} DiscSymHashEntry;
-
-typedef struct {
-    DiscSymHashEntry *entries;
-    uint32_t mask;
-    uint32_t count;
-} DiscSymHashTable;
-
-typedef struct {
-    int64_t key;
-    struct DiscNode *child;
-} DiscIntBranch;
-
-typedef struct {
-    DiscIntBranch *entries;
-    uint32_t mask;
-    uint32_t count;
-} DiscIntHashTable;
-
-typedef struct DiscNode {
-    /* Symbol branches: name → child */
-    DiscSymBranch *sym;
-    uint32_t nsym, csym;
-    DiscSymHashTable sym_ht;
-    bool sym_hashed;
-    /* Variable branch: wildcard matches anything */
-    struct DiscNode *var_child;
-    /* Expression branches: arity → child */
-    struct { CettaExprLen arity; struct DiscNode *child; } *expr;
-    uint32_t nexpr, cexpr;
-    /* Grounded int branches */
-    DiscIntBranch *ints;
-    uint32_t nints, cints;
-    DiscIntHashTable int_ht;
-    bool ints_hashed;
-    /* Leaf data: indices of equations that match this path */
-    CettaIndex *leaves;
-    CettaIndex nleaves, cleaves;
-} DiscNode;
+/* The discrimination-trie representation is private to space.c.  Consumers
+ * observe only the finite coordinate-map operations below; this keeps storage
+ * choices such as singleton or hashed branches out of the space ABI. */
+typedef struct DiscNode DiscNode;
 
 DiscNode *disc_node_new(void);
 void disc_node_free(DiscNode *n);
@@ -371,6 +326,9 @@ static inline bool space_program_token_eq(SpaceProgramToken left,
            left.declaration_revision == right.declaration_revision &&
            left.base_dependency_epoch == right.base_dependency_epoch;
 }
+bool space_program_token_is_current(SpaceProgramToken token);
+bool space_program_token_matches_live_space(
+    SpaceProgramToken token, const Space *live_space);
 bool space_equation_token_is_current(SpaceEquationToken token);
 bool space_equation_token_matches_live_space(
     SpaceEquationToken token, const Space *live_space);
@@ -405,6 +363,12 @@ SpaceEquationCursorStep space_equation_cursor_next(
     SpaceEquationCursor *cursor, SpaceEquationOccurrenceId *out);
 
 bool space_contains_exact(Space *s, Atom *atom);
+/* Exact membership for `(head argument...)`, presented as a borrowed term
+ * view.  `out_applicable` is false when the active backend cannot answer from
+ * its authoritative exact-membership projection. */
+bool space_contains_exact_symbol_application(
+    Space *s, SymbolId head, Atom *const *arguments,
+    CettaExprLen argument_count, bool *out_applicable);
 /* Exact fragment of match existence.  The result is applicable only when a
    ground, structurally indexable pattern has a complete candidate frontier
    whose rows are all exact.  Backend-primary PathMap answers through its

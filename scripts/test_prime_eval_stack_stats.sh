@@ -154,6 +154,112 @@ if ((evacuated_800 > 3 * evacuated_400 + 1048576 ||
     exit 1
 fi
 
+# A singleton equation publication with no residual branch is a last call.
+# The explicit machine must transfer that task directly to its enclosing
+# target and retain only bindings supported by the call and its continuation.
+# An effectful loader keeps this probe on the general equation machine rather
+# than the pure-call compiler.
+run_equation_tail_probe() {
+    local n=$1
+    local stdout_file="$probe_dir/equation-tail-${n}.stdout"
+    local stats_file="$probe_dir/equation-tail-${n}.stats"
+    local definition
+    definition='(= (mam:tail-insert $remaining) (let $key (+ $remaining 0) (if (== $key 0) done (let $bucket (% $key 10) (if (== $bucket $bucket) (let $_ (add-atom &mam:tail-space (mam:tail-row $key $bucket)) (mam:tail-insert (- $key 1))) impossible)))))'
+
+    "$BIN" --emit-runtime-stats --lang prime \
+        -e '!(bind! &mam:tail-space (new-space))' \
+        -e "$definition" \
+        -e "!(mam:tail-insert ${n})" \
+        >"$stdout_file" 2>"$stats_file"
+
+    if [[ $(<"$stdout_file") != $'[()]\n[done]' ]]; then
+        echo "FAIL: equation tail(${n}) changed its observable result" >&2
+        cat "$stdout_file" >&2
+        exit 1
+    fi
+
+    local heap_peak c_stack_peak active_peak publications pushes
+    heap_peak=$(counter "$stats_file" prime-eval-stack-frame-depth-peak)
+    c_stack_peak=$(counter "$stats_file" eval-c-stack-guard-depth-peak)
+    active_peak=$(counter "$stats_file" bindings-entry-active-bytes-peak)
+    publications=$(counter "$stats_file" prime-need-publication-raw-result)
+    pushes=$(counter "$stats_file" prime-eval-stack-frame-push)
+    if ((heap_peak > 16 || c_stack_peak > 8 ||
+        active_peak > 4096 * n + 1048576 ||
+        publications < n || pushes < n)); then
+        echo "FAIL: equation tail(${n}) retained a dead continuation or matcher environment" >&2
+        printf '%s\n' \
+            "heap=$heap_peak c-stack=$c_stack_peak active=$active_peak" \
+            "publications=$publications pushes=$pushes" >&2
+        exit 1
+    fi
+}
+
+run_equation_tail_probe 400
+run_equation_tail_probe 800
+
+# Data rows added to the program space change its extensional contents while
+# leaving its equation/declaration projection unchanged.  The evaluator must
+# therefore reuse program analyses, and every ground unary-marker query must
+# use exact membership rather than rescan the growing space.
+run_live_data_projection_probe() {
+    local n=$1
+    local stdout_file="$probe_dir/live-data-${n}.stdout"
+    local stats_file="$probe_dir/live-data-${n}.stats"
+    local definition
+    definition='(= (mam:live-data-insert $remaining) (let $key (+ $remaining 0) (if (== $key 0) done (let $bucket (% $key 10) (if (== $bucket $bucket) (let $_ (add-atom &self (mam:live-data-row $key $bucket)) (mam:live-data-insert (- $key 1))) impossible)))))'
+
+    "$BIN" --emit-runtime-stats --lang prime \
+        -e "$definition" \
+        -e "!(let \$_loaded (mam:live-data-insert ${n}) \$_loaded)" \
+        >"$stdout_file" 2>"$stats_file"
+
+    if [[ $(<"$stdout_file") != '[done]' ]]; then
+        echo "FAIL: live-data projection(${n}) changed its result" >&2
+        cat "$stdout_file" >&2
+        exit 1
+    fi
+
+    local data_mutations decision_compiles negative_hits negative_stores
+    local marker_index_lookups marker_fallback_rows released_capacity
+    data_mutations=$(
+        counter "$stats_file" space-mutation-publish-data-only
+    )
+    decision_compiles=$(counter "$stats_file" match-decision-compile)
+    negative_hits=$(
+        counter "$stats_file" prepared-pure-call-negative-cache-hit
+    )
+    negative_stores=$(
+        counter "$stats_file" prepared-pure-call-negative-cache-store
+    )
+    marker_index_lookups=$(
+        counter "$stats_file" he-unary-marker-index-lookup
+    )
+    marker_fallback_rows=$(
+        counter "$stats_file" he-unary-marker-fallback-row
+    )
+    released_capacity=$(
+        counter "$stats_file" bindings-released-entry-capacity
+    )
+
+    if ((data_mutations < n || decision_compiles < 1 ||
+        decision_compiles > 4 || negative_hits < n ||
+        negative_stores != 1 || marker_index_lookups < n ||
+        marker_fallback_rows != 0 ||
+        released_capacity > 4096 * n + 1048576)); then
+        echo "FAIL: live data retained dead bindings, invalidated a cache, or scanned the growing space" >&2
+        printf '%s\n' \
+            "mutations=$data_mutations decisions=$decision_compiles" \
+            "negative-hits=$negative_hits negative-stores=$negative_stores" \
+            "marker-index=$marker_index_lookups marker-rows=$marker_fallback_rows" \
+            "released-capacity=$released_capacity" >&2
+        exit 1
+    fi
+}
+
+run_live_data_projection_probe 400
+run_live_data_projection_probe 800
+
 # The first collection used to rehome an empty branch-state identity onto the
 # moving survivor semispace.  Its first later StateCell event then allocated
 # there, so the next collection had to abort safely.  Exercise nested active

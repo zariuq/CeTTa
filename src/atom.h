@@ -64,7 +64,7 @@ typedef enum {
 
 typedef enum {
     CETTA_INTERNAL_TAG_PETTA_PROLOG_COMPOUND = 1,
-    CETTA_INTERNAL_TAG_PETTA_COUNTED_COLLECTION = 2,
+    CETTA_INTERNAL_TAG_COUNTED_COLLECTION = 2,
     CETTA_INTERNAL_TAG_PRIME_LEXICAL_SLOT = 3,
     CETTA_INTERNAL_TAG_PRIME_LEVEL_PARAMETER = 4,
     CETTA_INTERNAL_TAG_PETTA_OPEN_CONS = 5,
@@ -544,8 +544,8 @@ Atom *atom_internal_tag(Arena *a, CettaInternalTag tag);
 Atom *atom_petta_prolog_compound(Arena *a, Atom *body);
 bool atom_petta_prolog_compound_body(Atom *atom, Atom **body);
 bool atom_prolog_compound_body(Atom *atom, Atom **body);
-Atom *atom_petta_counted_collection(Arena *a, int64_t count);
-bool atom_petta_counted_collection_count(
+Atom *atom_counted_collection(Arena *a, int64_t count);
+bool atom_counted_collection_count(
     Atom *atom, int64_t *count);
 Atom *atom_prime_need_capability(Arena *a, uint64_t session_id,
                                  uint64_t thunk_id, uint64_t authority_id);

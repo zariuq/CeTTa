@@ -14,6 +14,7 @@
 #include "grounded.h"
 #include "match.h"
 #include "space.h"
+#include "stats.h"
 #include "symbol.h"
 
 /* ── result plumbing (three-valued) ────────────────────────────────────── */
@@ -404,14 +405,27 @@ static void he_note_depth(uint32_t *max_depth_observed, uint32_t depth) {
         *max_depth_observed = depth;
 }
 
-static bool space_has_unary_marker(Space *space, const char *marker,
+static bool space_has_unary_marker(Space *space, SymbolId marker,
                                    Atom *payload) {
+    if (space && marker && payload &&
+        space_atom_is_exact_indexable(payload)) {
+        cetta_runtime_stats_inc(
+            CETTA_RUNTIME_COUNTER_HE_UNARY_MARKER_INDEX_LOOKUP);
+        Atom *arguments[1] = {payload};
+        bool applicable = false;
+        bool found = space_contains_exact_symbol_application(
+            space, marker, arguments, 1u, &applicable);
+        if (applicable)
+            return found;
+    }
     uint32_t len = 0;
     if (!space_length_u32_checked(space, &len)) return false;
     for (uint32_t i = 0; i < len; i++) {
+        cetta_runtime_stats_inc(
+            CETTA_RUNTIME_COUNTER_HE_UNARY_MARKER_FALLBACK_ROW);
         Atom *at = space_get_at(space, i);
         if (!at || at->kind != ATOM_EXPR || at->expr.len != 2) continue;
-        if (!atom_is_symbol(at->expr.elems[0], marker)) continue;
+        if (!atom_is_symbol_id(at->expr.elems[0], marker)) continue;
         if (atom_eq(at->expr.elems[1], payload)) return true;
     }
     return false;
@@ -534,7 +548,8 @@ static Atom *normalize_type_checked(Arena *a, Space *space, Atom *ty,
             goto fail;
         }
 
-        if (!space_has_unary_marker(space, "type-level-function", head)) {
+        if (!space_has_unary_marker(
+                space, g_builtin_syms.type_level_function, head)) {
             completed = norm;
             goto frame_complete;
         }
@@ -831,7 +846,8 @@ static HeTypeValidity check_type_refinements(Arena *a, Space *space,
                 }
                 Atom *predicate = row->expr.elems[3];
                 if (!space_has_unary_marker(
-                        space, "type-level-function", predicate)) {
+                        space, g_builtin_syms.type_level_function,
+                        predicate)) {
                     if (detail)
                         *detail = he_reason(a, "untrusted-type-refinement");
                     if (stack != inline_stack) free(stack);
@@ -1622,10 +1638,12 @@ static bool chain_index_build(ChainContext *ctx) {
         Atom *term = row->expr.elems[1];
         Atom *type = row->expr.elems[2];
         bool rule = is_arrow(type) &&
-                    space_has_unary_marker(ctx->space, "chaining-rule", term);
+                    space_has_unary_marker(
+                        ctx->space, g_builtin_syms.chaining_rule, term);
         if (is_arrow(type) && !rule) continue;
         bool scheme = rule ||
-                      space_has_unary_marker(ctx->space, "type-scheme", term);
+                      space_has_unary_marker(
+                          ctx->space, g_builtin_syms.type_scheme, term);
         /* Open declarations are rigid space facts unless explicitly promoted
            to a type scheme.  Keeping them out of the instantiable index avoids
            treating a free variable as an implicit forall. */
@@ -2051,7 +2069,8 @@ static bool chain_vec_push_move(ChainContext *ctx, ChainProofVec *v,
 
 static bool chain_type_level_open_call(ChainContext *ctx, Atom *a) {
     return a && a->kind == ATOM_EXPR && a->expr.len > 0 && atom_has_vars(a) &&
-           space_has_unary_marker(ctx->space, "type-level-function",
+           space_has_unary_marker(ctx->space,
+                                  g_builtin_syms.type_level_function,
                                   a->expr.elems[0]);
 }
 

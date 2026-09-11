@@ -327,6 +327,11 @@ AtomId term_universe_lookup_atom_id(const TermUniverse *universe, Atom *src);
 AtomId term_universe_lookup_expression_coordinates(
     const TermUniverse *universe, Atom *const *coordinates,
     CettaExprLen coordinate_count);
+/* Non-inserting lookup of `(head argument...)` without constructing an Atom
+ * wrapper for either the symbol head or the application. */
+AtomId term_universe_lookup_symbol_application(
+    const TermUniverse *universe, SymbolId head,
+    Atom *const *arguments, CettaExprLen argument_count);
 bool term_universe_root_token_capture(
     const TermUniverse *universe, AtomId root_id,
     TermUniverseRootToken *out);

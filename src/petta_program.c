@@ -1533,8 +1533,8 @@ static bool petta_plan_finish_features(
             for (CettaExprIndex index = 0u;
                  index < node->child_count; index++) {
                 if (node->children[index]
-                        .contains_length_call) {
-                    node->contains_length_call = true;
+                        .contains_cardinality_call) {
+                    node->contains_cardinality_call = true;
                 }
                 if (node->children[index].contains_call) {
                     descendant_contains_call = true;
@@ -2129,8 +2129,10 @@ static const PettaPlanNode *petta_plan_build(
         if (head_atom->kind == ATOM_SYMBOL) {
             SymbolId head = head_atom->sym_id;
             PeTTaForm form = petta_semantics_form(head);
-            node->contains_length_call =
-                form == PETTA_FORM_LENGTH;
+            node->contains_cardinality_call =
+                form == PETTA_FORM_LENGTH ||
+                head == g_builtin_syms.size_atom ||
+                head == g_builtin_syms.size;
             node->contains_deferred_occurrence_transport =
                 petta_head_transports_source_occurrences(head);
             node->control = form == PETTA_FORM_IF

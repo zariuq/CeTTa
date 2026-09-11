@@ -163,7 +163,7 @@ struct PettaPlanNode {
     PettaPlanContinuation continuation;
     PettaPlanOutput output;
     CettaExprIndex output_child;
-    bool contains_length_call;
+    bool contains_cardinality_call;
     bool contains_call;
     /* This subtree contains an operator which transports authored child
      * occurrences across an evaluation stage.  Its positional plan must

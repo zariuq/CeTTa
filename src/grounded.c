@@ -3117,6 +3117,11 @@ Atom *grounded_dispatch(Arena *a, Atom *head, Atom **args, uint32_t nargs) {
 
     /* ── Expression introspection ─────────────────────────────────────── */
     if ((head_id == g_builtin_syms.size || head_id == g_builtin_syms.size_atom) && nargs == 1) {
+        int64_t counted_collection = 0;
+        if (atom_counted_collection_count(
+                args[0], &counted_collection)) {
+            return atom_int(a, counted_collection);
+        }
         if (args[0]->kind == ATOM_EXPR)
             return atom_int(a, args[0]->expr.len);
         if (head_id == g_builtin_syms.size_atom &&

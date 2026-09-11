@@ -189,7 +189,8 @@ typedef struct {
 
 struct CettaPreparedPureProgram {
     Space *space;
-    SpaceReadToken read;
+    SpaceProgramToken source_program;
+    SpaceEquationToken equation_projection;
     CettaPreparedPureBooleanValue boolean_value;
     CettaPreparedPureConstructValue construct_value;
     CettaPreparedPureOpaqueValue opaque_value;
@@ -1583,7 +1584,7 @@ static bool prepared_pure_head_index_admitted(
         !prepared_pure_head_buckets_rebuild(
             program, program->head_len + 1u))
         return false;
-    if (!space_read_token_is_current(program->read))
+    if (!space_program_token_is_current(program->source_program))
         return false;
     *index_out = (uint32_t)program->head_len;
     program->heads[program->head_len++] = (PreparedPureHead){
@@ -1603,7 +1604,8 @@ static bool prepared_pure_head_index(
     if (space_query_effect_for_head(
             program->space, head, &defined) !=
             CETTA_GSLT_QUERY_EFFECT_PURE ||
-        !defined || !space_read_token_is_current(program->read)) {
+        !defined ||
+        !space_program_token_is_current(program->source_program)) {
         return prepared_pure_reject(
             program, "user head is not revision-pinned pure", NULL);
     }
@@ -2753,8 +2755,10 @@ static bool prepared_pure_compile_decision_group(
         return false;
     }
 
-    CettaMatchDecision *selector = cetta_match_decision_compile(
-        program->read, program->match_decision_semantics,
+    CettaMatchDecision *selector =
+        cetta_match_decision_compile_equation_projection(
+        program->equation_projection,
+        program->match_decision_semantics,
         clauses, clause_count, CETTA_MATCH_DECISION_DEEP,
         0u, cetta_match_decision_realization_from_process(),
         NULL, NULL);
@@ -2942,7 +2946,7 @@ static bool prepared_pure_compile_head(
     }
     head = &program->heads[head_index];
     if (head->clause_count == 0u ||
-        !space_read_token_is_current(program->read))
+        !space_program_token_is_current(program->source_program))
         return prepared_pure_reject(
             program, "empty or invalidated user head", NULL);
     bool has_scalar_guard = false;
@@ -2977,7 +2981,7 @@ static bool prepared_pure_compile_pending_heads(
             !prepared_pure_compile_head(program, i))
             return false;
     }
-    return space_read_token_is_current(program->read);
+    return space_program_token_is_current(program->source_program);
 }
 
 static bool prepared_pure_runtime_head_index(
@@ -4363,7 +4367,8 @@ CettaPreparedPureProgram *cetta_prepared_pure_program_compile(
     if (!program)
         return NULL;
     program->space = space;
-    program->read = space_read_token(space);
+    program->source_program = space_program_token(space);
+    program->equation_projection = space_equation_token(space);
     program->boolean_value = boolean_value;
     program->construct_value = construct_value;
     program->opaque_value = opaque_value;
@@ -4673,7 +4678,8 @@ prepared_pure_program_compile_closed_mode(
     if (!program)
         return NULL;
     program->space = space;
-    program->read = space_read_token(space);
+    program->source_program = space_program_token(space);
+    program->equation_projection = space_equation_token(space);
     program->boolean_value = boolean_value;
     program->construct_value = construct_value;
     program->opaque_value = opaque_value;
@@ -4751,7 +4757,8 @@ CettaPreparedPureProgram *cetta_prepared_pure_program_compile_closed_answers(
 
 bool cetta_prepared_pure_program_is_current(
     const CettaPreparedPureProgram *program) {
-    return program && space_read_token_is_current(program->read);
+    return program &&
+           space_program_token_is_current(program->source_program);
 }
 
 bool cetta_prepared_pure_program_rebind_closed_entry_call(

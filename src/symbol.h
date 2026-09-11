@@ -188,6 +188,9 @@ static inline uint64_t symbol_table_instance_id(const SymbolTable *st) {
     X(assertAlphaEqualToResultMsg, "assertAlphaEqualToResultMsg") \
     X(assertIncludes, "assertIncludes") \
     X(type_check, "type-check") \
+    X(type_level_function, "type-level-function") \
+    X(chaining_rule, "chaining-rule") \
+    X(type_scheme, "type-scheme") \
     X(auto_text, "auto") \
     X(interpreter, "interpreter") \
     X(bare_minimal, "bare-minimal") \

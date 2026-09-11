@@ -9037,7 +9037,7 @@ enum {
 #define HE_SEMANTIC_PRESENTATION_ID_V1 UINT64_C(1)
 
 typedef struct {
-    SpaceReadToken read;
+    SpaceEquationToken equation_projection;
     CettaMatchDecisionSemanticIdentity semantics;
     SymbolId head;
     CettaMatchDecisionMode mode;
@@ -9168,11 +9168,14 @@ static EquationMatchDecisionCacheSlot *equation_match_decision_lookup(
     if (slot->valid && slot->head == head && slot->mode == mode &&
         equation_match_decision_semantics_equal(
             slot->semantics, semantics) &&
-        space_read_token_matches_live_space(slot->read, space)) {
+        space_equation_token_matches_live_space(
+            slot->equation_projection, space)) {
         return slot;
     }
     equation_match_decision_cache_slot_clear(slot);
 
+    SpaceEquationToken equation_projection =
+        space_equation_token(space);
     SpaceEquationCursor cursor;
     if (!space_equation_cursor_init(space, head, &cursor))
         return NULL;
@@ -9215,15 +9218,19 @@ static EquationMatchDecisionCacheSlot *equation_match_decision_lookup(
     if (step == SPACE_EQUATION_CURSOR_INVALIDATED || count == 0u)
         goto fail;
 
-    CettaMatchDecision *decision = cetta_match_decision_compile(
-        cursor.read, semantics, clauses, count, mode, 0u,
+    if (!space_equation_token_matches_live_space(
+            equation_projection, space))
+        goto fail;
+    CettaMatchDecision *decision =
+        cetta_match_decision_compile_equation_projection(
+        equation_projection, semantics, clauses, count, mode, 0u,
         cetta_match_decision_realization_from_process(),
         NULL, NULL);
     free(clauses);
     if (!decision)
         goto fail_equations;
     *slot = (EquationMatchDecisionCacheSlot){
-        .read = cursor.read,
+        .equation_projection = equation_projection,
         .semantics = semantics,
         .head = head,
         .mode = mode,
@@ -9252,8 +9259,8 @@ static bool he_match_decision_candidate_allowed(
     Atom *equation, void *context) {
     HeMatchDecisionFilter *filter = context;
     if (!filter || !filter->space || !filter->slot || !equation ||
-        !space_read_token_matches_live_space(
-            filter->slot->read, filter->space)) {
+        !space_equation_token_matches_live_space(
+            filter->slot->equation_projection, filter->space)) {
         return true;
     }
     for (size_t index = 0u;
@@ -9300,7 +9307,8 @@ static CettaCount eval_query_equations_visit(
             space, query, arena, visitor, context);
     }
 
-    if (!space_read_token_matches_live_space(slot->read, space))
+    if (!space_equation_token_matches_live_space(
+            slot->equation_projection, space))
         return query_equations_visit(
             space, query, arena, visitor, context);
     HeMatchDecisionFilter filter = {
@@ -14383,11 +14391,11 @@ typedef struct {
     Bindings bindings;
     bool found;
     bool failed;
-} PreparedSequenceFoldExpansion;
+} EvalSingletonEquationExpansion;
 
-static bool prepared_sequence_fold_capture_expansion(
+static bool eval_capture_singleton_equation_expansion(
     Atom *result, const Bindings *bindings, void *context) {
-    PreparedSequenceFoldExpansion *expansion = context;
+    EvalSingletonEquationExpansion *expansion = context;
     if (!expansion || expansion->found || !result || !bindings) {
         if (expansion)
             expansion->failed = true;
@@ -14471,11 +14479,11 @@ static bool prepared_sequence_fold_expand_authored_consumer(
         current_env, arena, call);
     if (!bound_call)
         return false;
-    PreparedSequenceFoldExpansion expansion = {0};
+    EvalSingletonEquationExpansion expansion = {0};
     bindings_init(&expansion.bindings);
     CettaCount emitted = query_equations_visit_singleton(
         equation, bound_call, arena,
-        prepared_sequence_fold_capture_expansion, &expansion);
+        eval_capture_singleton_equation_expansion, &expansion);
     if (emitted != 1u || !expansion.found || expansion.failed) {
         bindings_free(&expansion.bindings);
         return false;
@@ -19267,7 +19275,7 @@ typedef struct PreparedPureCacheEntry {
 typedef struct {
     PreparedPureCacheEntry *entries;
     Space *root_space;
-    SpaceReadToken read;
+    SpaceProgramToken program;
     uint64_t capability_revision;
     Arena execution_scratch;
     bool execution_scratch_ready;
@@ -19304,7 +19312,7 @@ static void prepared_pure_program_cache_free(
         cache->execution_scratch_ready = false;
     }
     cache->root_space = NULL;
-    memset(&cache->read, 0, sizeof(cache->read));
+    memset(&cache->program, 0, sizeof(cache->program));
     cache->capability_revision = 0u;
 }
 
@@ -19328,13 +19336,14 @@ static bool prepared_pure_program_cache_prepare_revision(
     uint64_t capability_revision) {
     if (!cache || !space || cache->root_space != space)
         return false;
-    if (space_read_token_matches_live_space(cache->read, space) &&
+    if (space_program_token_matches_live_space(
+            cache->program, space) &&
         cache->capability_revision == capability_revision)
         return true;
     prepared_pure_program_cache_clear_entries(cache);
-    cache->read = space_read_token(space);
+    cache->program = space_program_token(space);
     cache->capability_revision = capability_revision;
-    return cache->read.instance_id != 0u;
+    return cache->program.instance_id != 0u;
 }
 
 #if CETTA_PRIME_EVAL_STACK
@@ -21053,6 +21062,67 @@ static bool prime_need_atom_contains_private_capability(Atom *root) {
     return false;
 }
 
+/* Expose one untyped, ground call through the equation query authority.
+ * Candidate order, freshening, pattern matching, and substitution remain
+ * owned by the ordinary equation engine.  The singleton proof excludes
+ * alternative named or wildcard clauses; a declared arrow type declines so
+ * this shortcut cannot bypass a dialect's checking-first call boundary.
+ * Prime additionally declines private Need capabilities and suspended root
+ * arguments, whose demand and sharing are observable parts of application. */
+static Atom *eval_expand_ground_singleton_equation(
+        Space *space, Arena *arena, Atom *call,
+        const Bindings *current_env) {
+    if (!space || !arena || !call || !current_env ||
+        call->kind != ATOM_EXPR || call->expr.len == 0u ||
+        !call->expr.elems[0] ||
+        call->expr.elems[0]->kind != ATOM_SYMBOL) {
+        return NULL;
+    }
+
+    Atom *bound_call = bindings_apply_if_vars(
+        current_env, arena, call);
+    if (!bound_call || atom_has_vars(bound_call) ||
+        bound_call->kind != ATOM_EXPR || bound_call->expr.len == 0u ||
+        !bound_call->expr.elems[0] ||
+        bound_call->expr.elems[0]->kind != ATOM_SYMBOL) {
+        return NULL;
+    }
+    if (eval_current_language_id() == CETTA_LANGUAGE_PRIME) {
+        if (prime_need_atom_contains_private_capability(bound_call))
+            return NULL;
+        for (CettaExprIndex index = 1u;
+             index < bound_call->expr.len; index++) {
+            Atom *argument = bound_call->expr.elems[index];
+            if (prime_need_is_stored_thunk(
+                    argument, NULL, NULL, NULL) ||
+                prime_need_is_stored_promise(
+                    argument, NULL, NULL, NULL) ||
+                prime_need_is_canonical_app(argument) ||
+                prime_need_is_explicit_control_form(argument)) {
+                return NULL;
+            }
+        }
+    }
+
+    SymbolId head = bound_call->expr.elems[0]->sym_id;
+    CettaExprLen arity = bound_call->expr.len - 1u;
+    if (space_head_has_arrow_signature(space, head, arity))
+        return NULL;
+    Atom *equation = space_single_linear_equation(space, head);
+    if (!equation)
+        return NULL;
+
+    EvalSingletonEquationExpansion expansion = {0};
+    bindings_init(&expansion.bindings);
+    CettaCount emitted = query_equations_visit_singleton(
+        equation, bound_call, arena,
+        eval_capture_singleton_equation_expansion, &expansion);
+    bindings_free(&expansion.bindings);
+    if (emitted != 1u || !expansion.found || expansion.failed)
+        return NULL;
+    return expansion.result;
+}
+
 static bool prime_need_record_origin_inspection(
     Arena *a, Bindings *env, uint64_t need_session_id,
     uint64_t thunk_id, Atom *origin) {
@@ -22201,18 +22271,35 @@ static void metta_eval_bind(Space *s, Arena *a, Atom *atom, int fuel, OutcomeSet
     uint64_t continuation_before =
         prime_eval_stack_continuation_generation();
 #endif
-    metta_call(s, a, atom, NULL, fuel > 0 ? fuel - 1 : fuel, true, os);
+    bool source_has_vars = atom_contains_vars(atom);
+#if CETTA_PRIME_EVAL_STACK
+    /* Prime's heap evaluator may suspend a bind before the ordinary
+     * closed-call retry below.  Select its eventual projection before
+     * scheduling: bindings of a closed source are existential, so only
+     * bindings reachable from the returned value or private Need closures
+     * may escape.  The synchronous evaluators retain their established
+     * first-attempt and retry contract. */
+    bool projected_closed_call =
+        !source_has_vars &&
+        eval_current_language_id() == CETTA_LANGUAGE_PRIME;
+#else
+    bool projected_closed_call = false;
+#endif
+    bool preserve_call_bindings = !projected_closed_call;
+    metta_call(s, a, atom, NULL, fuel > 0 ? fuel - 1 : fuel,
+               preserve_call_bindings, os);
 #if CETTA_PRIME_EVAL_STACK
     if (prime_eval_stack_continuation_generation() !=
         continuation_before)
         return;
 #endif
-    if (os->len == 0 && !atom_contains_vars(atom)) {
+    if (os->len == 0u && !source_has_vars && !projected_closed_call) {
 #if CETTA_PRIME_EVAL_STACK
         continuation_before =
             prime_eval_stack_continuation_generation();
 #endif
-        metta_call(s, a, atom, NULL, fuel > 0 ? fuel - 1 : fuel, false, os);
+        metta_call(s, a, atom, NULL, fuel > 0 ? fuel - 1 : fuel,
+                   false, os);
 #if CETTA_PRIME_EVAL_STACK
         if (prime_eval_stack_continuation_generation() !=
             continuation_before)
@@ -26813,83 +26900,190 @@ static bool try_count_generic_match_collapse(Space *s, Arena *a, Atom *match_ato
     return true;
 }
 
-/* Streamed count for the strict `size` consumer over (collapse MATCH).
- * Evaluating (size (collapse MATCH)) consumes the completed tuple only through
- * cardinality, so the match rows may be folded directly without materializing
- * the O(N) tuple.  This entry point must not be reached for `size-atom`: the
- * caller guards on g_builtin_syms.size, and PeTTa's value-demanded `size-atom`
- * is owned by its occurrence-plan machine. */
+/* Follow determinate, untyped equation calls until a collapsed match becomes
+ * visible, then interpret that producer in the cardinality algebra.  The
+ * bound is a capacity decline: longer chains retain ordinary evaluation. */
+static bool eval_try_count_collapsed_match_source(
+        Space *s, Arena *a, Atom **source, int fuel,
+        uint64_t *out_count) {
+    enum { MAX_CARDINALITY_SINGLETON_UNFOLDS = 8 };
+    Bindings empty;
+    bindings_init(&empty);
+    if (!s || !a || !source || !*source || !out_count)
+        return false;
+    for (unsigned depth = 0u;
+         depth <= MAX_CARDINALITY_SINGLETON_UNFOLDS; depth++) {
+        Atom *current = *source;
+        if (current->kind == ATOM_EXPR &&
+            atom_head_symbol_id(current) == g_builtin_syms.collapse &&
+            expr_nargs(current) == 1u) {
+            Atom *match = expr_arg(current, 0u);
+            return try_count_mork_match_collapse(
+                       s, a, match, fuel, out_count) ||
+                   try_count_generic_match_collapse(
+                       s, a, match, fuel, out_count);
+        }
+        if (depth == MAX_CARDINALITY_SINGLETON_UNFOLDS)
+            break;
+        /* Equation evaluation spends observable fuel/completion steps.  The
+         * shortcut has no receipt for reproducing that accounting, so a
+         * bounded episode retains the ordinary evaluator. */
+        if (fuel >= 0)
+            break;
+        Atom *expanded = eval_expand_ground_singleton_equation(
+            s, a, current, &empty);
+        if (!expanded || atom_eq(expanded, current))
+            break;
+        *source = expanded;
+    }
+    return false;
+}
+
+/* Streamed count for the strict `size` consumer over a collapsed match or a
+ * determinate equation chain that produces one.  Strict size consumes the
+ * completed tuple only through cardinality, so rows may be folded directly
+ * without materializing the O(N) tuple.  This entry point must not be reached
+ * for `size-atom`: the caller guards on g_builtin_syms.size, and PeTTa's
+ * value-demanded `size-atom` is owned by its occurrence-plan machine. */
 static bool try_stream_count_size_collapse(Space *s, Arena *a, Atom *atom,
                                            const Bindings *current_env, int fuel,
                                            uint64_t *out_count) {
-    Atom *target;
+    Atom *closed;
+    Bindings empty;
+    bindings_init(&empty);
     if (!atom || atom->kind != ATOM_EXPR || expr_nargs(atom) != 1 ||
-        !out_count || (current_env && current_env->len != 0)) {
+        !out_count) {
         return false;
     }
     if (atom_head_symbol_id(atom) != g_builtin_syms.size) {
         return false;
     }
-    target = expr_arg(atom, 0);
-    if (!target || target->kind != ATOM_EXPR ||
-        atom_head_symbol_id(target) != g_builtin_syms.collapse ||
-        expr_nargs(target) != 1) {
+    const Bindings *environment = current_env ? current_env : &empty;
+    closed = environment->len == 0u && environment->eq_len == 0u
+        ? atom : bindings_apply_if_vars(environment, a, atom);
+    if (!closed || closed->kind != ATOM_EXPR ||
+        atom_head_symbol_id(closed) != g_builtin_syms.size ||
+        expr_nargs(closed) != 1u) {
         return false;
     }
-    target = expr_arg(target, 0);
-    return try_count_mork_match_collapse(s, a, target, fuel, out_count) ||
-           try_count_generic_match_collapse(s, a, target, fuel, out_count);
+    Atom *source = expr_arg(closed, 0u);
+    return eval_try_count_collapsed_match_source(
+        s, a, &source, fuel, out_count);
 }
 
-/* Deforest the strict presentation
- *
- *   let x = collapse(match ...) in size-atom x
- *
- * when the binder is private and the match admits the shared count algebra.
- * The let still forces its source; only the intermediate tuple presentation
- * is removed.  Richer bodies, outer environments, computed templates, and
- * unsupported storage all retain ordinary let/collapse evaluation. */
-static bool try_stream_count_let_size_collapse(
-    Space *s, Arena *a, Atom *let_atom,
-    const Bindings *current_env, int fuel, uint64_t *out_count) {
-    if (!s || !a || !let_atom || !out_count ||
-        (current_env &&
-         (current_env->len != 0u || current_env->eq_len != 0u)) ||
-        let_atom->kind != ATOM_EXPR ||
-        atom_head_symbol_id(let_atom) != g_builtin_syms.let ||
-        expr_nargs(let_atom) != 3u) {
-        return false;
-    }
+typedef enum {
+    EVAL_COLLECTION_CARDINALITY_DECLINED = 0,
+    EVAL_COLLECTION_CARDINALITY_COMMITTED,
+    EVAL_COLLECTION_CARDINALITY_INTERRUPTED,
+} EvalCollectionCardinalityResult;
 
-    Atom *binder = expr_arg(let_atom, 0u);
-    Atom *source = expr_arg(let_atom, 1u);
-    Atom *body = expr_arg(let_atom, 2u);
-    if (!binder || binder->kind != ATOM_VAR || !source || !body ||
-        body->kind != ATOM_EXPR || expr_nargs(body) != 1u ||
-        atom_head_symbol_id(body) != g_builtin_syms.size_atom ||
-        !active_builtin_allowed("size-atom")) {
-        return false;
-    }
-    Atom *body_argument = expr_arg(body, 0u);
-    if (!body_argument || body_argument->kind != ATOM_VAR ||
-        body_argument->var_id != binder->var_id ||
-        source->kind != ATOM_EXPR ||
-        atom_head_symbol_id(source) != g_builtin_syms.collapse ||
-        expr_nargs(source) != 1u) {
-        return false;
-    }
+typedef struct {
+    uint64_t count;
+} EvalCollectionCardinality;
 
-    Atom *producer = expr_arg(source, 0u);
-    uint64_t count = 0u;
-    if (!(try_count_mork_match_collapse(
-              s, a, producer, fuel, &count) ||
-          try_count_generic_match_collapse(
-              s, a, producer, fuel, &count)) ||
-        count > (uint64_t)INT64_MAX) {
+static bool eval_cardinality_consumer_head(
+        void *context, SymbolId head) {
+    (void)context;
+    if (eval_current_language_id() == CETTA_LANGUAGE_PETTA &&
+        petta_semantics_form(head) == PETTA_FORM_LENGTH) {
+        return true;
+    }
+    if (head == g_builtin_syms.size_atom)
+        return active_builtin_allowed("size-atom");
+    if (head == g_builtin_syms.size)
+        return active_builtin_allowed("size");
+    return false;
+}
+
+static bool eval_cardinality_children_executable(
+        void *context, SymbolId head) {
+    (void)context;
+    PeTTaForm form = head == SYMBOL_ID_NONE
+        ? PETTA_FORM_NONE : petta_semantics_form(head);
+    return head != g_builtin_syms.quote &&
+           head != g_builtin_syms.return_text &&
+           form != PETTA_FORM_LAMBDA &&
+           form != PETTA_FORM_PREDICATE;
+}
+
+static bool eval_count_collection_item(
+        void *context, Atom *item) {
+    EvalCollectionCardinality *cardinality = context;
+    (void)item;
+    if (!cardinality ||
+        cardinality->count >= (uint64_t)INT64_MAX) {
         return false;
     }
-    *out_count = count;
+    cardinality->count++;
     return true;
+}
+
+/* Interpret a private let-bound collection through the cardinality algebra.
+ * The use judgment is independent of producer syntax: every live occurrence
+ * of the binder must be the whole argument of a dialect-admitted cardinality
+ * consumer.  A semantic match fold is the cheapest realization; the general
+ * pure producer pulls one demanded item at a time.  Any uncertainty declines
+ * before the private counted carrier can enter ordinary user data. */
+static EvalCollectionCardinalityResult
+eval_try_private_collection_cardinality(
+        Space *s, Arena *a, Atom *binder, Atom *producer, Atom *body,
+        const Bindings *environment, int fuel, Atom **carrier_out) {
+    if (carrier_out)
+        *carrier_out = NULL;
+    if (!s || !a || !binder || !producer || !body || !environment ||
+        !carrier_out || binder->kind != ATOM_VAR ||
+        binder->var_id == VAR_ID_NONE ||
+        fuel >= 0 ||
+        g_eval_payload_transactional ||
+        prime_need_receipt_observer_requested() ||
+        active_search_table_mode() != CETTA_TABLE_MODE_NONE ||
+        gslt_match_chain_trace_active() ||
+        cetta_observation_atom_contains_var(
+            producer, binder->var_id) ||
+        !cetta_observation_environment_var_is_private(
+            environment, binder->var_id)) {
+        return EVAL_COLLECTION_CARDINALITY_DECLINED;
+    }
+
+    uint64_t uses = 0u;
+    if (!cetta_observation_variable_uses_only_unary_consumers(
+            body, binder->var_id,
+            eval_cardinality_consumer_head,
+            eval_cardinality_children_executable,
+            NULL, &uses) || uses == 0u) {
+        return EVAL_COLLECTION_CARDINALITY_DECLINED;
+    }
+
+    Atom *closed = environment->len == 0u && environment->eq_len == 0u
+        ? producer : bindings_apply_if_vars(environment, a, producer);
+    if (!closed)
+        return EVAL_COLLECTION_CARDINALITY_DECLINED;
+
+    uint64_t count = 0u;
+    if (eval_try_count_collapsed_match_source(
+            s, a, &closed, fuel, &count)) {
+        *carrier_out = atom_counted_collection(
+            a, (int64_t)count);
+        return *carrier_out
+            ? EVAL_COLLECTION_CARDINALITY_COMMITTED
+            : EVAL_COLLECTION_CARDINALITY_DECLINED;
+    }
+
+    EvalCollectionCardinality cardinality = {0};
+    PreparedFoldResult pulled =
+        prepared_collection_pull_single_result(
+            s, closed, environment, fuel,
+            eval_count_collection_item, &cardinality);
+    if (pulled == PREPARED_FOLD_INTERRUPTED)
+        return EVAL_COLLECTION_CARDINALITY_INTERRUPTED;
+    if (pulled != PREPARED_FOLD_VALUE)
+        return EVAL_COLLECTION_CARDINALITY_DECLINED;
+
+    *carrier_out = atom_counted_collection(
+        a, (int64_t)cardinality.count);
+    return *carrier_out
+        ? EVAL_COLLECTION_CARDINALITY_COMMITTED
+        : EVAL_COLLECTION_CARDINALITY_DECLINED;
 }
 
 typedef struct {
@@ -28313,9 +28507,8 @@ static bool prime_need_try_equation_call_core(
     if (!space_equation_cursor_init(s, head->sym_id, &candidate_cursor))
         return false;
     if (match_slot &&
-        (match_slot->read.space != candidate_cursor.read.space ||
-         match_slot->read.instance_id != candidate_cursor.read.instance_id ||
-         match_slot->read.revision != candidate_cursor.read.revision)) {
+        !space_equation_token_matches_live_space(
+            match_slot->equation_projection, s)) {
         match_slot = NULL;
     }
     cetta_runtime_stats_add(
@@ -31933,7 +32126,8 @@ static bool prime_eval_stack_schedule_force(
         return false;
     }
     bool source_argument_universal_demand = false;
-    if (driver->top->kind == PRIME_EVAL_STACK_FRAME_EQUATION_SEARCH &&
+    if (driver->top &&
+        driver->top->kind == PRIME_EVAL_STACK_FRAME_EQUATION_SEARCH &&
         driver->top->equation_search) {
         const PrimeNeedEquationContinuation *equation =
             driver->top->equation_search;
@@ -32517,6 +32711,11 @@ static void prime_eval_stack_resume_equation_publication(
     }
     if (continuation->publication_index <
         continuation->publication.len) {
+        bool tail_candidate =
+            continuation->publication_index == 0u &&
+            continuation->publication.len == 1u &&
+            continuation->residuals.len == 0u &&
+            frame->child.len == 0u;
         Outcome *seed = &continuation->publication.items[
             continuation->publication_index++];
         Atom *next = outcome_atom_materialize_variant_only(
@@ -32526,6 +32725,33 @@ static void prime_eval_stack_resume_equation_publication(
         Atom *contract = continuation->result_contract_count == 1u
             ? continuation->result_contracts[0] : frame->etype;
         Atom *type_hint = result_eval_type_hint(contract, next);
+        if (tail_candidate) {
+            /* A singleton publication with no residual branch is the whole
+             * continuation of this equation search.  The scheduled task
+             * owns a projection of the live logical bindings and writes to
+             * the enclosing target, so retaining either this frame or dead
+             * matcher bindings would turn tail recursion into a growing
+             * continuation chain. */
+            Bindings tail_env;
+            if (!bindings_project_control_continuation(
+                    continuation->arena, next, &seed->env,
+                    continuation->preserve_bindings, &tail_env)) {
+                goto capacity_failure;
+            }
+            prime_need_equation_record_publication_stats(continuation);
+            bool scheduled = prime_eval_stack_schedule_call(
+                    continuation->space, continuation->arena,
+                    next, type_hint, continuation->fuel,
+                    continuation->preserve_bindings, -1,
+                    &tail_env, &tail_env, frame->evaluator_id,
+                    frame->target);
+            bindings_free(&tail_env);
+            if (scheduled) {
+                prime_eval_stack_pop();
+                return;
+            }
+            goto capacity_failure;
+        }
         prime_need_equation_outcome_set_clear(&frame->child);
         continuation->state =
             PRIME_NEED_EQUATION_SEARCH_WAIT_PUBLICATION;
@@ -42066,6 +42292,17 @@ petta_lowered_to_shared_form:
         language_id == CETTA_LANGUAGE_PRIME &&
         head_id == g_builtin_syms.abt_let_v1 && nargs == 3u;
     if (prime_syntax_let || prime_canonical_let) {
+        Atom *cardinality_source = NULL;
+        EvalCollectionCardinalityResult cardinality =
+            EVAL_COLLECTION_CARDINALITY_DECLINED;
+        if (prime_syntax_let) {
+            cardinality = eval_try_private_collection_cardinality(
+                s, a, expr_arg(atom, 0u), expr_arg(atom, 1u),
+                expr_arg(atom, 2u), CURRENT_ENV, fuel,
+                &cardinality_source);
+            if (cardinality == EVAL_COLLECTION_CARDINALITY_INTERRUPTED)
+                return;
+        }
         const AbtSignature *signature = runtime_abt_signature(a);
         Atom *canonical = prime_canonical_let
                 ? atom : (signature
@@ -42089,16 +42326,22 @@ petta_lowered_to_shared_form:
             return;
         }
 
-        Atom *source = bindings_apply_if_vars(
-            CURRENT_ENV, a, prepared.source);
+        Atom *source =
+            cardinality == EVAL_COLLECTION_CARDINALITY_COMMITTED
+                ? cardinality_source
+                : bindings_apply_if_vars(
+                      CURRENT_ENV, a, prepared.source);
         /* `let` observes its whole source.  A bound registry name in that
          * position is a value reference; an unbound name remains ordinary
          * data.  Resolve only the root reference here so constructor fields
          * continue to follow Prime's declared demand modes. */
-        Atom *registered_source = registry_lookup_atom(source);
-        if (registered_source)
-            source = registered_source;
-        if (atom_eval_is_immediate_value(source, fuel)) {
+        if (cardinality != EVAL_COLLECTION_CARDINALITY_COMMITTED) {
+            Atom *registered_source = registry_lookup_atom(source);
+            if (registered_source)
+                source = registered_source;
+        }
+        if (cardinality == EVAL_COLLECTION_CARDINALITY_COMMITTED ||
+            atom_eval_is_immediate_value(source, fuel)) {
             Atom *body = NULL;
             Bindings matched_env;
             PrimeLetMatchStatus status = prime_let_match_body(
@@ -42320,13 +42563,13 @@ petta_lowered_to_shared_form:
         SpaceTransferEndpointKind bulk_source_kind = SPACE_TRANSFER_ENDPOINT_NONE;
         bool public_add_atoms_body =
             expr_head_is_id(body_let, g_builtin_syms.add_atoms);
-        uint64_t deforested_count = 0u;
-        if (try_stream_count_let_size_collapse(
-                s, a, atom, CURRENT_ENV, fuel, &deforested_count)) {
-            outcome_set_add(
-                os, atom_int(a, (int64_t)deforested_count), &_empty);
+        Atom *cardinality_source = NULL;
+        EvalCollectionCardinalityResult cardinality =
+            eval_try_private_collection_cardinality(
+                s, a, pat, val_expr, body_let,
+                CURRENT_ENV, fuel, &cardinality_source);
+        if (cardinality == EVAL_COLLECTION_CARDINALITY_INTERRUPTED)
             return;
-        }
         if (!preserve_bindings &&
             CURRENT_ENV->len == 0 && CURRENT_ENV->eq_len == 0 &&
             let_add_atoms_source_shape(pat, val_expr, body_let,
@@ -42356,7 +42599,8 @@ petta_lowered_to_shared_form:
         OutcomeSet vals;
         __attribute__((cleanup(direct_walk_preflight_free)))
         DirectWalkPreflight value_preflight = {0};
-        if (!preserve_bindings &&
+        if (cardinality != EVAL_COLLECTION_CARDINALITY_COMMITTED &&
+            !preserve_bindings &&
             direct_outcome_walk_prepare(
                 s, a, applied_val_expr, fuel, &value_preflight)) {
             LetDirectVisitCtx visit = {
@@ -42385,12 +42629,16 @@ petta_lowered_to_shared_form:
             return;
         }
         outcome_set_init(&vals);
-        __attribute__((cleanup(eval_gc_outcome_suspension_end)))
-        EvalGcOutcomeSuspension value_suspension = {0};
-        eval_gc_outcome_suspension_begin(
-            &value_suspension, &eval_gc_root_frame, os, &vals);
-        metta_eval_bind(s, a, applied_val_expr, fuel, &vals);
-        eval_gc_outcome_suspension_end(&value_suspension);
+        if (cardinality == EVAL_COLLECTION_CARDINALITY_COMMITTED) {
+            outcome_set_add(&vals, cardinality_source, &_empty);
+        } else {
+            __attribute__((cleanup(eval_gc_outcome_suspension_end)))
+            EvalGcOutcomeSuspension value_suspension = {0};
+            eval_gc_outcome_suspension_begin(
+                &value_suspension, &eval_gc_root_frame, os, &vals);
+            metta_eval_bind(s, a, applied_val_expr, fuel, &vals);
+            eval_gc_outcome_suspension_end(&value_suspension);
+        }
         /* A nested collection may have moved the source expression.  Derived
          * child pointers are therefore recomputed from the rooted call. */
         pat = expr_arg(atom, 0);

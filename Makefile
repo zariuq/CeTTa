@@ -2706,6 +2706,7 @@ PRIME_CONFORMANCE_TESTS = \
 	tests/prime/if_atom_data_boundary.metta \
 	tests/prime/need_gc_lifetime.metta \
 	tests/prime/need_storage_boundary.metta \
+	tests/prime/cardinality_observer_dynamic_space.metta \
 	tests/prime/need_quote_preservation.metta \
 	tests/prime/need_sequential_unification_refinement.metta \
 	tests/prime/relational_first_demand.metta \
@@ -23735,6 +23736,73 @@ test-petta-search-machine: $(PETTA_SEARCH_MACHINE_TEST_BIN) $(BIN) test-search-c
 			<(printf '%s\n' "$$oracle_result") | head -40; \
 		exit 1; \
 	fi; \
+	result=$$(CETTA_PETTA_SEARCH_MACHINE=1 ./$(BIN) --lang petta \
+		tests/petta/search_machine_activation_count_observer.metta 2>&1); \
+	expected=$$(cat \
+		tests/petta/search_machine_activation_count_observer.expected); \
+	if [ "$$(printf '%s\n' "$$result" | sort)" != \
+		 "$$(printf '%s\n' "$$expected" | sort)" ]; then \
+		echo "FAIL: PeTTa activation preserves collection observation"; \
+		diff <(printf '%s\n' "$$expected" | sort) \
+			<(printf '%s\n' "$$result" | sort) | head -40; \
+		exit 1; \
+	fi; \
+	activation_count_stats=$$(CETTA_PETTA_SEARCH_MACHINE=1 \
+		CETTA_PETTA_MACHINE_STATS=1 \
+		./$(BIN) --lang petta \
+		tests/petta/search_machine_activation_count_observer.metta \
+		2>&1 >/dev/null); \
+	activation_count_fusions=$$(printf '%s\n' \
+		"$$activation_count_stats" | \
+		grep -Ec 'count_aggregate_let_fusions=[1-9][0-9]*'); \
+	if [ "$$activation_count_fusions" -ne 3 ]; then \
+		echo "FAIL: PeTTa activation lost count-only consumer demand"; \
+		exit 1; \
+	fi; \
+	oracle_result=$$(CETTA_PETTA_SEARCH_MACHINE=1 \
+		CETTA_PETTA_LET_COUNT_FUSION=0 \
+		./$(BIN) --lang petta \
+		tests/petta/search_machine_activation_count_observer.metta \
+		2>&1); \
+	if [ "$$(printf '%s\n' "$$oracle_result" | sort)" != \
+		 "$$(printf '%s\n' "$$expected" | sort)" ]; then \
+		echo "FAIL: PeTTa activation count-fusion OFF oracle differs"; \
+		diff <(printf '%s\n' "$$expected" | sort) \
+			<(printf '%s\n' "$$oracle_result" | sort) | head -40; \
+		exit 1; \
+	fi; \
+	for dialect in he prime petta; do \
+		result=$$(CETTA_PETTA_SEARCH_MACHINE=1 ./$(BIN) \
+			--lang "$$dialect" \
+			tests/cardinality_observer_shared.metta 2>&1); \
+		expected=$$(cat \
+			tests/cardinality_observer_shared.$$dialect.expected); \
+		if [ "$$(printf '%s\n' "$$result" | sort)" != \
+			 "$$(printf '%s\n' "$$expected" | sort)" ]; then \
+			echo "FAIL: $$dialect cardinality observer changed the occurrence bag"; \
+			diff <(printf '%s\n' "$$expected" | sort) \
+				<(printf '%s\n' "$$result" | sort) | head -40; \
+			exit 1; \
+		fi; \
+	done; \
+	for dialect in he prime petta; do \
+		profile_arg=""; \
+		if [ "$$dialect" != prime ]; then \
+			profile_arg="--profile extended"; \
+		fi; \
+		result=$$(CETTA_PETTA_SEARCH_MACHINE=1 ./$(BIN) \
+			--lang "$$dialect" $$profile_arg \
+			tests/cardinality_observer_size_extended.metta 2>&1); \
+		expected=$$(cat \
+			tests/cardinality_observer_size_extended.$$dialect.expected); \
+		if [ "$$(printf '%s\n' "$$result" | sort)" != \
+			 "$$(printf '%s\n' "$$expected" | sort)" ]; then \
+			echo "FAIL: $$dialect size observer changed the occurrence bag"; \
+			diff <(printf '%s\n' "$$expected" | sort) \
+				<(printf '%s\n' "$$result" | sort) | head -40; \
+			exit 1; \
+		fi; \
+	done; \
 	result=$$(CETTA_PETTA_SEARCH_MACHINE=1 ./$(BIN) --lang petta \
 		tests/petta/search_machine_transaction.metta 2>&1); \
 	expected=$$(cat tests/petta/search_machine_transaction.expected); \
