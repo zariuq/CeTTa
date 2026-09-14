@@ -317,6 +317,7 @@ Atom *petta_semantics_partial_value(
     Arena *arena, Atom *base, Atom *const *arguments, CettaExprLen nargs);
 bool petta_semantics_partial_view(
     const Atom *atom, Atom **base, Atom **arguments);
+bool petta_semantics_partial_head(const Atom *head);
 
 /* Closed callable carriers are already PeTTa values.  A generated evaluator
  * must not reinterpret their representation as a fresh call. */

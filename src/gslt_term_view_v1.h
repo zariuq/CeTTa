@@ -24,6 +24,70 @@ typedef struct {
     void *resolve_context;
 } CettaGsltTermViewV1;
 
+/* A recursive observation retains the environment of each subtree. Following
+ * a variable may enter a different environment; its children must inherit
+ * that resulting environment rather than the variable's original one.
+ * `scope` is opaque to structural consumers and owned by the resolver.
+ * All sources, scopes and returned atoms are borrowed for one stable read. */
+typedef struct {
+    Atom *source;
+    const void *scope;
+} CettaGsltTermCursorV1;
+
+typedef CettaGsltTermViewStatusV1 (*CettaGsltTermCursorResolveV1)(
+    void *context, CettaGsltTermCursorV1 source,
+    CettaGsltTermCursorV1 *target_out);
+
+typedef struct {
+    CettaGsltTermCursorResolveV1 resolve;
+    void *context;
+} CettaGsltTermCursorObserverV1;
+
+static inline CettaGsltTermViewStatusV1
+cetta_gslt_term_cursor_resolve_root_v1(
+        CettaGsltTermCursorObserverV1 observer,
+        CettaGsltTermCursorV1 source,
+        CettaGsltTermCursorV1 *target_out) {
+    if (!target_out)
+        return CETTA_GSLT_TERM_VIEW_INVALID_V1;
+    *target_out = (CettaGsltTermCursorV1){0};
+    if (!source.source)
+        return CETTA_GSLT_TERM_VIEW_INVALID_V1;
+    if (source.source->kind != ATOM_VAR || !observer.resolve) {
+        if (source.source->kind == ATOM_VAR && source.scope && !observer.resolve)
+            return CETTA_GSLT_TERM_VIEW_DEFER_V1;
+        *target_out = source;
+        return CETTA_GSLT_TERM_VIEW_OK_V1;
+    }
+    CettaGsltTermViewStatusV1 status = observer.resolve(
+        observer.context, source, target_out);
+    if (status < CETTA_GSLT_TERM_VIEW_OK_V1 ||
+        status > CETTA_GSLT_TERM_VIEW_RESOURCE_V1 ||
+        (status == CETTA_GSLT_TERM_VIEW_OK_V1 && !target_out->source)) {
+        *target_out = (CettaGsltTermCursorV1){0};
+        return CETTA_GSLT_TERM_VIEW_INVALID_V1;
+    }
+    return status;
+}
+
+/* The parent must already have been root-resolved. This operation changes
+ * only the term coordinate, preserving the environment selected by that
+ * resolution. A missing child is distinct from an unresolved parent. */
+static inline bool cetta_gslt_term_cursor_child_v1(
+        CettaGsltTermCursorV1 parent, CettaExprIndex index,
+        CettaGsltTermCursorV1 *child_out) {
+    if (!child_out)
+        return false;
+    *child_out = (CettaGsltTermCursorV1){0};
+    if (!parent.source || parent.source->kind != ATOM_EXPR ||
+        index >= parent.source->expr.len)
+        return false;
+    *child_out = (CettaGsltTermCursorV1){
+        .source = parent.source->expr.elems[index], .scope = parent.scope,
+    };
+    return true;
+}
+
 /* Whether a consumer retains bindings for variable roots which remain open
  * after resolution.  A backend may erase such roots only under DEAD, and it
  * must still enforce any structural premise required by its operation. */

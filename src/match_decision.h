@@ -3,6 +3,7 @@
 
 #include "atom.h"
 #include "space.h"
+#include "gslt_term_view_v1.h"
 
 /*
  * MatchDecision is a derived, revision-pinned candidate selector.  It never
@@ -182,6 +183,30 @@ CettaMatchDecisionSelectState cetta_match_decision_select_parts(
     CettaMatchDecisionSemanticIdentity semantic_identity,
     Atom *head, Atom *const *arguments, size_t arity,
     uint64_t ready_arguments,
+    const uint32_t **source_refs, size_t *source_ref_count);
+
+/* A synchronous read of split constructor coordinates. Each coordinate may
+ * carry a different substitution scope; the observer resolves only demanded
+ * roots. All cursor storage and environments must outlive this selection
+ * and remain stable until it returns. No cursor is retained by a result. */
+typedef struct {
+    CettaGsltTermCursorV1 head;
+    const CettaGsltTermCursorV1 *arguments;
+    size_t arity;
+    CettaGsltTermCursorObserverV1 observer;
+} CettaMatchDecisionQueryViewV1;
+
+/* Like the materialized verifier, this callback may only reject candidates
+ * proved impossible. It must preserve the observer's stable-read contract. */
+typedef bool (*CettaMatchDecisionVerifyViewCandidateFnV1)(
+    void *context, uint32_t source_ref, Atom *pattern,
+    const CettaMatchDecisionQueryViewV1 *query);
+
+CettaMatchDecisionSelectState cetta_match_decision_select_view_v1(
+    CettaMatchDecision *decision, const Space *live_space,
+    CettaMatchDecisionSemanticIdentity semantic_identity,
+    const CettaMatchDecisionQueryViewV1 *query, uint64_t ready_arguments,
+    CettaMatchDecisionVerifyViewCandidateFnV1 verify, void *verify_context,
     const uint32_t **source_refs, size_t *source_ref_count);
 
 void cetta_match_decision_stats(

@@ -8,6 +8,7 @@
 #include "symbol.h"
 
 #include <stdlib.h>
+#include <pthread.h>
 #include <stdatomic.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -16,6 +17,227 @@
 #ifndef CETTA_PETTA_CLAUSE_SNAPSHOT_APPEND_REUSE
 #define CETTA_PETTA_CLAUSE_SNAPSHOT_APPEND_REUSE 1
 #endif
+
+struct PettaClauseSnapshotStorage {
+    atomic_size_t references;
+    pthread_mutex_t lock;
+    PettaClauseCandidate *items;
+    size_t len;
+    bool retired;
+    PettaClauseProjection *projections;
+};
+
+struct PettaClauseProjection {
+    atomic_size_t references;
+    pthread_mutex_t lock;
+    PettaClauseSnapshotStorage *source;
+    PettaClauseProjection *previous, *next;
+    PettaClauseSelectionEntry *entries;
+    PettaClauseCandidate *owned;
+    size_t first, len;
+};
+
+static PettaClauseSnapshotStorage *petta_clause_storage_take(
+        PettaClauseCandidate *items, size_t len) {
+    PettaClauseSnapshotStorage *storage = cetta_malloc(sizeof(*storage));
+    atomic_init(&storage->references, 1u);
+    pthread_mutex_init(&storage->lock, NULL);
+    storage->items = items;
+    storage->len = len;
+    storage->retired = false;
+    storage->projections = NULL;
+    return storage;
+}
+
+static bool petta_clause_storage_retain(PettaClauseSnapshotStorage *storage) {
+    size_t count = atomic_load_explicit(&storage->references, memory_order_relaxed);
+    do {
+        if (count == 0u || count == SIZE_MAX)
+            return false;
+    } while (!atomic_compare_exchange_weak_explicit(
+        &storage->references, &count, count + 1u,
+        memory_order_relaxed, memory_order_relaxed));
+    return true;
+}
+
+static void petta_clause_storage_release(PettaClauseSnapshotStorage *storage) {
+    if (storage && atomic_fetch_sub_explicit(
+            &storage->references, 1u, memory_order_acq_rel) == 1u) {
+        free(storage->items);
+        pthread_mutex_destroy(&storage->lock);
+        free(storage);
+    }
+}
+
+static PettaClauseCandidate petta_clause_projection_get_locked(
+        const PettaClauseProjection *projection, size_t index) {
+    if (projection->owned)
+        return projection->owned[index];
+    size_t source_index = projection->entries
+        ? projection->entries[index].index : projection->first + index;
+    PettaClauseCandidate candidate = projection->source->items[source_index];
+    if (projection->entries)
+        candidate.rhs_plan = projection->entries[index].rhs_plan;
+    return candidate;
+}
+
+PettaClauseCandidate petta_program_clause_projection_get(
+        const PettaClauseProjection *projection, size_t index) {
+    pthread_mutex_t *lock = (pthread_mutex_t *)&projection->lock;
+    pthread_mutex_lock(lock);
+    PettaClauseCandidate candidate = petta_clause_projection_get_locked(projection, index);
+    pthread_mutex_unlock(lock);
+    return candidate;
+}
+
+static void petta_clause_projection_unlink(PettaClauseProjection *projection) {
+    PettaClauseSnapshotStorage *source = projection->source;
+    if (projection->previous)
+        projection->previous->next = projection->next;
+    else
+        source->projections = projection->next;
+    if (projection->next)
+        projection->next->previous = projection->previous;
+    projection->source = NULL;
+    projection->previous = projection->next = NULL;
+}
+
+/* Catalog mutation already requires exclusive program access. Retirement
+ * changes only physical storage: every projection retains exactly the same
+ * occurrence sequence and completed plans. Atomic reference counts support
+ * continuation ownership transfers; they do not authorize concurrent mutation
+ * of an executing program. */
+static void petta_clause_storage_retire(PettaClauseSnapshotStorage *storage) {
+    if (!petta_clause_storage_retain(storage))
+        return;
+    pthread_mutex_lock(&storage->lock);
+    storage->retired = true;
+    size_t projected = 0u;
+    for (PettaClauseProjection *p = storage->projections; p; p = p->next) {
+        if (p->len >= storage->len - projected) {
+            pthread_mutex_unlock(&storage->lock);
+            petta_clause_storage_release(storage);
+            return; /* Sharing is no larger than separately promoted records. */
+        }
+        projected += p->len;
+    }
+    while (storage->projections) {
+        PettaClauseProjection *p = storage->projections;
+        pthread_mutex_lock(&p->lock);
+        PettaClauseCandidate *owned = cetta_malloc(p->len * sizeof(*owned));
+        for (size_t i = 0u; i < p->len; i++)
+            owned[i] = petta_clause_projection_get_locked(p, i);
+        p->owned = owned;
+        cetta_runtime_stats_add(
+            CETTA_RUNTIME_COUNTER_PETTA_CLAUSE_PROJECTION_PROMOTED_RECORDS, p->len);
+        cetta_runtime_stats_add(
+            CETTA_RUNTIME_COUNTER_PETTA_CLAUSE_PROJECTION_PROMOTED_BYTES,
+            p->len * sizeof(*owned));
+        free(p->entries);
+        p->entries = NULL;
+        p->first = 0u;
+        petta_clause_projection_unlink(p);
+        pthread_mutex_unlock(&p->lock);
+        petta_clause_storage_release(storage);
+    }
+    pthread_mutex_unlock(&storage->lock);
+    petta_clause_storage_release(storage);
+}
+
+PettaClauseProjection *petta_program_clause_projection_take(
+        PettaClauseSnapshotLease *catalog, PettaClauseSelectionEntry *entries,
+        size_t first, size_t len) {
+    if (!catalog || !len || !catalog->storage ||
+        len > SIZE_MAX / sizeof(PettaClauseCandidate) ||
+        (!entries && (first > catalog->len || len > catalog->len - first)))
+        return NULL;
+    if (entries) {
+        for (size_t i = 0u; i < len; i++)
+            if (entries[i].index >= catalog->len)
+                return NULL;
+    }
+    PettaClauseProjection *p = cetta_malloc(sizeof(*p));
+    atomic_init(&p->references, 1u);
+    pthread_mutex_init(&p->lock, NULL);
+    p->source = catalog->storage;
+    pthread_mutex_lock(&p->source->lock);
+    p->previous = NULL;
+    p->next = p->source->projections;
+    if (p->next)
+        p->next->previous = p;
+    p->source->projections = p;
+    p->entries = entries;
+    p->owned = NULL;
+    p->first = first;
+    p->len = len;
+    PettaClauseSnapshotStorage *source = p->source;
+    bool retired = source->retired;
+    if (retired && !petta_clause_storage_retain(source))
+        abort();
+    pthread_mutex_unlock(&source->lock);
+    *catalog = (PettaClauseSnapshotLease){0};
+    if (retired) {
+        petta_clause_storage_retire(source);
+        petta_clause_storage_release(source);
+    }
+    return p;
+}
+
+bool petta_program_clause_projection_retain(PettaClauseProjection *projection) {
+    size_t count = atomic_load_explicit(&projection->references, memory_order_relaxed);
+    do {
+        if (count == 0u || count == SIZE_MAX)
+            return false;
+    } while (!atomic_compare_exchange_weak_explicit(
+        &projection->references, &count, count + 1u,
+        memory_order_relaxed, memory_order_relaxed));
+    return true;
+}
+
+void petta_program_clause_projection_release(PettaClauseProjection *projection) {
+    if (!projection || atomic_fetch_sub_explicit(
+            &projection->references, 1u, memory_order_acq_rel) != 1u)
+        return;
+    pthread_mutex_lock(&projection->lock);
+    PettaClauseSnapshotStorage *source = projection->source;
+    if (source && !petta_clause_storage_retain(source))
+        abort();
+    pthread_mutex_unlock(&projection->lock);
+    if (source) {
+        pthread_mutex_lock(&source->lock);
+        pthread_mutex_lock(&projection->lock);
+        bool linked = projection->source != NULL;
+        if (linked)
+            petta_clause_projection_unlink(projection);
+        bool retired = source->retired;
+        pthread_mutex_unlock(&projection->lock);
+        pthread_mutex_unlock(&source->lock);
+        if (linked)
+            petta_clause_storage_release(source);
+        if (retired)
+            petta_clause_storage_retire(source);
+        petta_clause_storage_release(source);
+    }
+    free(projection->entries);
+    free(projection->owned);
+    pthread_mutex_destroy(&projection->lock);
+    free(projection);
+}
+
+size_t petta_program_clause_projection_retained_bytes(
+        const PettaClauseProjection *projection) {
+    pthread_mutex_t *lock = (pthread_mutex_t *)&projection->lock;
+    pthread_mutex_lock(lock);
+    size_t records = projection->source ? projection->source->len : projection->len;
+    size_t entries = projection->entries ? projection->len : 0u;
+    pthread_mutex_unlock(lock);
+    if (records > (SIZE_MAX - sizeof(*projection)) / sizeof(PettaClauseCandidate))
+        return SIZE_MAX;
+    size_t bytes = sizeof(*projection) + records * sizeof(PettaClauseCandidate);
+    if (entries > (SIZE_MAX - bytes) / sizeof(PettaClauseSelectionEntry))
+        return SIZE_MAX;
+    return bytes + entries * sizeof(PettaClauseSelectionEntry);
+}
 
 typedef struct {
     Atom *equation;
@@ -67,6 +289,7 @@ typedef struct {
     PettaProgramClauseSnapshotKey key;
     PettaClauseCandidate *candidates;
     size_t len;
+    PettaClauseSnapshotStorage *storage;
 } PettaProgramClauseSnapshot;
 
 typedef struct {
@@ -1030,7 +1253,8 @@ static void petta_program_space_clear_clause_snapshots(
         return;
     for (size_t index = 0u;
          index < space->snapshot_len; index++) {
-        free(space->snapshots[index].candidates);
+        petta_clause_storage_retire(space->snapshots[index].storage);
+        petta_clause_storage_release(space->snapshots[index].storage);
     }
     free(space->snapshots);
     space->snapshots = NULL;
@@ -1097,7 +1321,8 @@ static bool petta_program_space_store_clause_snapshot_take(
         space, head);
     if (index < space->snapshot_len &&
         space->snapshots[index].head == head) {
-        free(space->snapshots[index].candidates);
+        petta_clause_storage_retire(space->snapshots[index].storage);
+        petta_clause_storage_release(space->snapshots[index].storage);
     } else {
         if (!petta_program_reserve(
                 (void **)&space->snapshots,
@@ -1119,6 +1344,7 @@ static bool petta_program_space_store_clause_snapshot_take(
         .key = key,
         .candidates = candidates,
         .len = candidate_count,
+        .storage = petta_clause_storage_take(candidates, candidate_count),
     };
     return true;
 }
@@ -3598,8 +3824,48 @@ void petta_program_clause_snapshot_lease_release(
         PettaClauseSnapshotLease *lease) {
     if (!lease)
         return;
+    petta_clause_storage_release(lease->storage);
     free(lease->owned_items);
     memset(lease, 0, sizeof(*lease));
+}
+
+bool petta_program_clause_snapshot_lease_pin(PettaClauseSnapshotLease *lease) {
+    if (!lease || (lease->len && !lease->items) ||
+        lease->len > SIZE_MAX / sizeof(*lease->items))
+        return false;
+    if (lease->storage || !lease->len)
+        return true;
+    PettaClauseCandidate *items = lease->owned_items;
+    if (!items) {
+        items = cetta_malloc(lease->len * sizeof(*items));
+        memcpy(items, lease->items, lease->len * sizeof(*items));
+    }
+    lease->storage = petta_clause_storage_take(items, lease->len);
+    /* A private host array has no cache owner to retire it later. Its full
+     * observation is owned by this lease; narrower projections may compact
+     * immediately when they escape into a suspended choice. */
+    lease->storage->retired = true;
+    lease->items = items;
+    lease->owned_items = NULL;
+    return true;
+}
+
+bool petta_program_clause_snapshot_lease_clone(
+        const PettaClauseSnapshotLease *source, PettaClauseSnapshotLease *out) {
+    if (!source || !out || source == out ||
+        (source->len && !source->items) ||
+        source->len > SIZE_MAX / sizeof(*source->items))
+        return false;
+    *out = (PettaClauseSnapshotLease){0};
+    if (source->storage) {
+        if (!petta_clause_storage_retain(source->storage))
+            return false;
+        *out = *source;
+        return true;
+    }
+    out->items = source->items;
+    out->len = source->len;
+    return petta_program_clause_snapshot_lease_pin(out);
 }
 
 /* A data-only append changes the full read revision, so a cached occurrence
@@ -3677,8 +3943,11 @@ static bool petta_program_clause_snapshot_lease_from_entry(
         : NULL;
     if (cached) {
         if (space_read_token_matches_live_space(cached->source, space)) {
+            if (!petta_clause_storage_retain(cached->storage))
+                return false;
             lease->items = cached->candidates;
             lease->len = cached->len;
+            lease->storage = cached->storage;
         } else if (!CETTA_PETTA_CLAUSE_SNAPSHOT_APPEND_REUSE ||
                    !petta_program_clause_snapshot_lease_rebase(
                        cached, space, lease)) {
@@ -3990,8 +4259,11 @@ static bool petta_program_clause_snapshot_lease_from_entry(
                 publication_authority, head, space);
         if (!stored)
             return false;
+        if (!petta_clause_storage_retain(stored->storage))
+            return false;
         lease->items = stored->candidates;
         lease->len = stored->len;
+        lease->storage = stored->storage;
     } else {
         lease->items = items;
         lease->len = length;

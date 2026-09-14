@@ -3271,7 +3271,19 @@ $(BINDINGS_LOOKUP_INDEX_TEST_BIN): tests/test_bindings_lookup_index.c src/symbol
 	@mkdir -p runtime
 	$(CC) $(CPPFLAGS) -DCETTA_TEST_HOOKS=1 -DCETTA_RUNTIME_STATS_IMPL=1 $(CFLAGS) -o $@ tests/test_bindings_lookup_index.c src/symbol.c src/atom.c $(MATCH_STANDALONE_SRC) src/term_canon.c src/variant_shape.c src/variant_instance.c src/term_universe.c $(LDFLAGS)
 
-test-bindings-lookup-index: $(BINDINGS_LOOKUP_INDEX_TEST_BIN)
+# First-child worklist fusion is checked against binding/failure, epoch,
+# cycle, and plan-validation boundaries without changing runtime admission.
+MATCH_WORKLIST_FRAMES_TEST_BIN = runtime/test_match_worklist_frames-$(BUILD_OBJ_TAG)
+
+$(MATCH_WORKLIST_FRAMES_TEST_BIN): tests/test_match_worklist_frames.c src/symbol.c src/atom.c $(MATCH_STANDALONE_SRC) src/term_canon.c src/variant_shape.c src/variant_instance.c src/term_universe.c $(BUILD_CONFIG_HEADER)
+	@mkdir -p runtime
+	$(CC) $(CPPFLAGS) -DCETTA_TEST_HOOKS=1 -DCETTA_RUNTIME_STATS_IMPL=1 $(CFLAGS) -o $@ tests/test_match_worklist_frames.c src/symbol.c src/atom.c $(MATCH_STANDALONE_SRC) src/term_canon.c src/variant_shape.c src/variant_instance.c src/term_universe.c $(LDFLAGS)
+
+.PHONY: test-match-worklist-frames
+test-match-worklist-frames: $(MATCH_WORKLIST_FRAMES_TEST_BIN)
+	@$(call cetta_exec,./$(MATCH_WORKLIST_FRAMES_TEST_BIN) --expect-elision)
+
+test-bindings-lookup-index: $(BINDINGS_LOOKUP_INDEX_TEST_BIN) test-match-worklist-frames
 	@enabled=$$($(call cetta_exec,./$(BINDINGS_LOOKUP_INDEX_TEST_BIN))); \
 	disabled=$$(CETTA_BINDINGS_LOOKUP_INDEX=0 $(call cetta_exec,./$(BINDINGS_LOOKUP_INDEX_TEST_BIN))); \
 	audited=$$(CETTA_BINDINGS_DERIVED_AUDIT=1 $(call cetta_exec,./$(BINDINGS_LOOKUP_INDEX_TEST_BIN))); \
@@ -4992,7 +5004,14 @@ test-match-decision-prefix-observation: $(MATCH_DECISION_PREFIX_BENCH_BIN)
 	printf '%s\n' "$$optimized" | grep -q ' pass '; \
 	printf '%s\n' "$$eager" | grep -q ' pass '; \
 	printf '%s\n' "$$reference" | grep -q ' pass '; \
-	echo "PASS: prefix-observation realizations preserve seven query geometries"
+	for mode in deep conjunctive; do \
+		for dimensions in '1 6' '12 16' '24 256'; do \
+			set -- $$dimensions; \
+			$(call cetta_exec,./$(MATCH_DECISION_PREFIX_BENCH_BIN)) \
+				"$$1" 100 "$$mode" all "$$2"; \
+		done; \
+	done; \
+	echo "PASS: prefix-observation realizations and selection modes preserve seven query geometries"
 
 $(PETTA_SPECIALIZER_PREPARE_TEST_BIN): $(PETTA_SPECIALIZER_PREPARE_TEST_OBJ) $(PETTA_SPECIALIZER_PREPARE_TEST_LINK_OBJ) $(BRIDGE_DEPS)
 	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
@@ -23015,6 +23034,20 @@ else
 endif
 
 test-petta-search-machine: test-petta-match-conjunction-cursor
+test-petta-search-machine: test-petta-named-arity-source-cache
+
+.PHONY: test-petta-named-arity-source-cache
+test-petta-named-arity-source-cache: $(BIN)
+	@set -eu; \
+	fixture=tests/petta/search_machine_named_arity_scope.metta; \
+	expected=$$(cat tests/petta/search_machine_named_arity_scope.expected); \
+	for reference in 0 1; do \
+		actual=$$(CETTA_PETTA_NAMED_ARITY_SOURCE_CACHE_REFERENCE="$$reference" \
+			$(call cetta_exec,./$(BIN)) --lang petta "$$fixture"); \
+		test "$$actual" = "$$expected"; \
+	done; \
+	echo "PASS: shared source-arity cache preserves mutation, partial calls and duplicates"
+
 test-petta-search-machine: $(PETTA_SEARCH_MACHINE_TEST_BIN) $(BIN) test-search-controller test-controller-diversity test-petta-machine-trace-config test-petta-type-langdef-source-binding-v1 test-petta-boundary-langdef-source-binding-v1 test-petta-capability-ledger test-petta-specializer-relevance-filter test-petta-mam-contender-mutations test-petta-extended-query-algebra test-petta-prepared-register-loop test-petta-specialized-pure-call test-petta-memoization test-petta-match-existence-fusion test-petta-clause-slot-admission test-petta-equation-template-c0 test-petta-relational-equation-view test-petta-argv-native test-petta-activation-admission-cache test-petta-activation-scalar-if test-petta-match-region-hole test-petta-binding-region-hole test-petta-rule-slot-view test-petta-deterministic-region-scalability test-petta-body-resume-segment test-petta-match-decision-tree-repository test-petta-match-decision-shape-receipt test-petta-activation-anonymous-hole test-petta-activation-scalar-argument-segment test-petta-activation-pure-data-segment test-petta-match-decision-equality test-match-closed-expression-decision test-petta-translation-time-callability
 	@env -u CETTA_PETTA_CLAUSE_BODY_ACTIVATION \
 		-u CETTA_PETTA_CLAUSE_BODY_ACTIVATION_REFERENCE \
@@ -24096,7 +24129,8 @@ PETTA_SEMANTIC_EXACT_STREAM_STEMS = \
 	profile_petta_base_extension_boundary conjunctive_match_count_semantics \
 	search_machine_relational_head_phases search_machine_relational_output_phases
 PETTA_SEMANTIC_OCCURRENCE_BAG_STEMS = semantic_counter_equations \
-	search_machine_specializer_negative_mutation
+	search_machine_specializer_negative_mutation \
+	search_machine_partial_head_observation search_machine_query_field_composition
 PETTA_SEMANTIC_ORACLE_STEMS = \
 	$(PETTA_SEMANTIC_EXACT_STREAM_STEMS) \
 	$(PETTA_SEMANTIC_OCCURRENCE_BAG_STEMS)
@@ -24105,7 +24139,8 @@ PETTA_SEMANTIC_ORACLE_STEMS = \
 test-petta-search-machine: test-petta-relational-head-phases
 test-petta-relational-head-phases: $(BIN)
 	@set -eu; \
-	for stem in search_machine_relational_head_phases search_machine_relational_output_phases; do \
+	for stem in search_machine_relational_head_phases search_machine_relational_output_phases \
+		search_machine_partial_head_observation search_machine_query_field_composition; do \
 		for selector in default off; do \
 			for materialized in 0 1; do \
 				actual=$$(CETTA_PETTA_MATCH_DECISION="$$selector" \
@@ -25791,7 +25826,18 @@ test-prepared-pure-answer-resource-fallback: $(BIN)
 		./$(BIN) $(if $(filter 1,$(ENABLE_RUNTIME_STATS)),--stats,)
 
 .PHONY: test-prepared-pure-call-machine
-test-prepared-pure-call-machine: $(BIN) test-prepared-pure-answer-producer test-prepared-pure-answer-resource-fallback
+.PHONY: test-prepared-pure-dispatch-authority
+test-prepared-pure-dispatch-authority: $(BIN)
+	@set -e; for dialect in petta he prime; do \
+		actual=$$(./$(BIN) --lang $$dialect tests/prepared_pure_dispatch_authority.metta); \
+		expected=$$(cat tests/prepared_pure_dispatch_authority.$$dialect.expected); \
+		if [ "$$actual" != "$$expected" ]; then \
+			echo "FAIL: $$dialect prepared entry changed dispatch authority"; \
+			printf '%s\n' "$$actual"; exit 1; \
+		fi; \
+	done
+
+test-prepared-pure-call-machine: $(BIN) test-prepared-pure-answer-producer test-prepared-pure-answer-resource-fallback test-prepared-pure-dispatch-authority
 	@set -e; \
 	he_out=$$(mktemp runtime/prepared-pure-call-he.XXXXXX); \
 	he_no_gc_out=$$(mktemp runtime/prepared-pure-call-he-no-gc.XXXXXX); \

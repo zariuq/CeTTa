@@ -2,6 +2,7 @@
 #define CETTA_PETTA_SPECIALIZER_H
 
 #include "atom.h"
+#include "gslt_term_view_v1.h"
 #include "petta_program.h"
 #include "space.h"
 
@@ -68,6 +69,12 @@ PettaSpecializerRelationAdmission
 petta_specializer_query_execution_admission(
     Space *space, SymbolId source,
     Atom *const *arguments, CettaExprLen arity);
+
+PettaSpecializerRelationAdmission
+petta_specializer_query_view_execution_admission(
+    Space *space, SymbolId source,
+    const CettaGsltTermCursorV1 *arguments, CettaExprLen arity,
+    CettaGsltTermCursorObserverV1 observer);
 
 /*
  * Equation and function-type mutations invalidate every specialization

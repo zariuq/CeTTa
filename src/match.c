@@ -3026,6 +3026,61 @@ static bool bindings_dense_epoch_frame_is_current(
     return true;
 }
 
+CettaGsltTermViewStatusV1 bindings_resolve_term_cursor_v1(
+        void *raw_context, CettaGsltTermCursorV1 source,
+        CettaGsltTermCursorV1 *target_out) {
+    BindingsTermCursorContextV1 *context = raw_context;
+    if (target_out)
+        *target_out = (CettaGsltTermCursorV1){0};
+    if (!context || !context->bindings || !source.source || !target_out)
+        return CETTA_GSLT_TERM_VIEW_INVALID_V1;
+    const BindingsDenseEpochFrame *frame = context->frame;
+    if (source.scope &&
+        (source.scope != frame || !frame ||
+         !bindings_dense_epoch_frame_is_current(frame, frame->builder) ||
+         context->bindings != &frame->builder->current)) {
+        return CETTA_GSLT_TERM_VIEW_DEFER_V1;
+    }
+    Atom *root = source.source;
+    if (source.scope && root->kind == ATOM_VAR) {
+        Atom *value = NULL;
+        bool present = false;
+        bool known = bindings_dense_epoch_frame_lookup(
+            frame, root->var_id, &value, &present);
+        if (!known) {
+            value = bindings_lookup_id_since(
+                (Bindings *)context->bindings,
+                var_epoch_id(root->var_id, frame->epoch), frame->first_entry);
+        } else if (!present) {
+            value = NULL;
+        }
+        if (!value) {
+            /* An open authored variable remains in its source namespace.
+             * Structural observation needs no allocated renamed variable. */
+            *target_out = source;
+            return CETTA_GSLT_TERM_VIEW_OK_V1;
+        }
+        root = value;
+        source.scope = NULL;
+    }
+    size_t dereferences = 0u;
+    size_t limit = bindings_dereference_limit(context->bindings);
+    while (!source.scope && root->kind == ATOM_VAR) {
+        Atom *next = bindings_lookup_var((Bindings *)context->bindings, root);
+        if (!next)
+            next = bindings_lookup_spelling(
+                (Bindings *)context->bindings, root->sym_id);
+        if (!next || next == root ||
+            (next->kind == ATOM_VAR && next->var_id == root->var_id))
+            break;
+        if (++dereferences > limit)
+            return CETTA_GSLT_TERM_VIEW_DEFER_V1;
+        root = next;
+    }
+    *target_out = (CettaGsltTermCursorV1){root, source.scope};
+    return CETTA_GSLT_TERM_VIEW_OK_V1;
+}
+
 static bool bindings_resolve_ground_value(
         const Bindings *bindings, Atom *value, Atom **ground_out) {
     size_t dereferences = 0u;
@@ -7033,12 +7088,26 @@ retry_pair:
             goto fail;
         /* Push in reverse so binding effects retain the recursive
            implementation's left-to-right traversal order. */
-        for (CettaExprIndex i = left->expr.len; i > 0; i--) {
+        for (CettaExprIndex i = left->expr.len; i > 1u; i--) {
             CettaExprIndex child = i - 1u;
             if (!decoded_match_push(&work, left->expr.elems[child],
                                     right->expr.elems[child])) {
                 goto fail;
             }
+        }
+        /* The first child is next in the reference LIFO traversal. Reuse
+         * this frame; leave siblings and the parent's exit marker queued.
+         * No matching test, binding, or failure is moved past another. */
+        if (left->expr.len != 0u) {
+            Atom *next_left = left->expr.elems[0];
+            Atom *next_right = right->expr.elems[0];
+            cetta_runtime_stats_inc(
+                CETTA_RUNTIME_COUNTER_MATCH_WORKLIST_FRAME_ELIDED);
+            left = next_left;
+            right = next_right;
+            dereferences = 0u;
+            dereference_limit = bindings_dereference_limit(current);
+            goto retry_pair;
         }
     }
     decoded_match_worklist_free(&work);
@@ -7702,9 +7771,9 @@ retry_pair:
             continue;
         }
         if (left->kind == ATOM_VAR) {
+            VarId left_id = left_original
+                ? var_epoch_id(left->var_id, left_epoch) : left->var_id;
             if (left_original) {
-                VarId left_id = var_epoch_id(
-                    left->var_id, left_epoch);
                 Atom *existing = NULL;
                 bool dense_present = false;
                 bool dense_known = left_frame &&
@@ -7722,18 +7791,24 @@ retry_pair:
                     if (++dereferences > dereference_limit)
                         goto fail;
                     left = existing;
-                } else {
+                    left_original = false;
+                    goto retry_pair;
+                /* An unbound plain variable is already a complete binding
+                 * key. Keep its source and epoch until a value must escape.
+                 * Structured names retain the owned presentation copy. */
+                } else if (!builder || left->name_key) {
                     left = epoch_var_atom(a, left, left_epoch);
                     if (!left)
                         goto fail;
+                    left_original = false;
+                    goto retry_pair;
                 }
-                left_original = false;
-                goto retry_pair;
             }
-            Atom *existing = bindings_lookup_var(current, left);
+            Atom *existing = bindings_lookup_id(current, left_id);
             if (existing) {
                 if (++dereferences > dereference_limit) goto fail;
                 left = existing;
+                left_original = false;
                 goto retry_pair;
             }
             if (right->kind == ATOM_VAR) {
@@ -7754,12 +7829,14 @@ retry_pair:
                     right_plan = NULL;
                     goto retry_pair;
                 }
-                if (left->var_id == right_id) continue;
+                if (left_id == right_id) continue;
                 if (prefer_right_rule_slot && right_original) {
                     Atom *authoritative_value = NULL;
-                    bool added = builder
+                    Atom *value = left_original
+                        ? epoch_var_atom(a, left, left_epoch) : left;
+                    bool added = builder && value
                         ? bindings_builder_add_rule_epoch_key_fresh(
-                              builder, right, right_epoch, left, a,
+                              builder, right, right_epoch, value, a,
                               &authoritative_value)
                         : false;
                     if (!added) goto fail;
@@ -7772,7 +7849,9 @@ retry_pair:
                 Atom *value = right_original
                     ? epoch_var_atom(a, right, right_epoch) : right;
                 bool added = value && (builder
-                    ? bindings_builder_add_var_fresh(builder, left, value)
+                    ? bindings_builder_add_id_internal(
+                          builder, left_id, left->sym_id, left->name_key,
+                          value, false)
                     : bindings_add_var(bindings, left, value));
                 if (!added) goto fail;
                 continue;
@@ -7785,7 +7864,7 @@ retry_pair:
                         current, right_plan->source,
                         right_plan->variable_ids,
                         right_plan->variable_mask,
-                        right_epoch, left->var_id);
+                        right_epoch, left_id);
             }
             Atom *value = right_original
                 ? bindings_materialize_epoch_view_for_match(
@@ -7796,12 +7875,14 @@ retry_pair:
             if (value && builder &&
                 cycle_evidence != BINDINGS_REACHABILITY_UNKNOWN) {
                 added =
-                    bindings_builder_add_var_fresh_with_cycle_evidence(
-                        builder, left, value, cycle_evidence);
+                    bindings_builder_add_id_internal_with_cycle_evidence(
+                        builder, left_id, left->sym_id, left->name_key,
+                        value, false, true, cycle_evidence, NULL);
             } else if (value) {
                 added = builder
-                    ? bindings_builder_add_var_fresh(
-                          builder, left, value)
+                    ? bindings_builder_add_id_internal(
+                          builder, left_id, left->sym_id, left->name_key,
+                          value, false)
                     : bindings_add_var(bindings, left, value);
             }
             if (!added) goto fail;
@@ -7832,8 +7913,8 @@ retry_pair:
                     BINDINGS_MATCH_MATERIALIZE_ACTIVATION_SOURCE)
                 : left;
             bool added = false;
-            if (binding_value && builder && prefer_right_rule_slot &&
-                right_original) {
+            if (binding_value && builder && right_original &&
+                (prefer_right_rule_slot || !right->name_key)) {
                 Atom *authoritative_value = NULL;
                 added = bindings_builder_add_rule_epoch_key_fresh(
                     builder, right, right_epoch, binding_value, a,
@@ -7879,13 +7960,29 @@ retry_pair:
                  &work, left, left_original, right, right_original))) {
             goto fail;
         }
-        for (CettaExprIndex i = left->expr.len; i > 0; i--) {
+        for (CettaExprIndex i = left->expr.len; i > 1u; i--) {
             CettaExprIndex child = i - 1u;
             if (!epoch_match_push(
                     &work, left->expr.elems[child], left_original,
                     right->expr.elems[child], right_original,
                     right_plan ? &right_plan->children[child] : NULL))
                 goto fail;
+        }
+        /* Preserve activation flags and validate the child plan normally.
+         * Only its otherwise immediate enqueue/dequeue is removed. */
+        if (left->expr.len != 0u) {
+            Atom *next_left = left->expr.elems[0];
+            Atom *next_right = right->expr.elems[0];
+            const CettaOpenPatternPlan *next_plan = right_plan
+                ? &right_plan->children[0] : NULL;
+            cetta_runtime_stats_inc(
+                CETTA_RUNTIME_COUNTER_MATCH_WORKLIST_FRAME_ELIDED);
+            left = next_left;
+            right = next_right;
+            right_plan = next_plan;
+            dereferences = 0u;
+            dereference_limit = bindings_dereference_limit(current);
+            goto retry_pair;
         }
     }
     if (work.items != work.inline_items) free(work.items);

@@ -234,10 +234,11 @@ typedef struct {
             void *context, Space *space,
             SymbolId head, Atom *const *arguments,
             CettaExprLen arity);
+    /* The observer and fields are borrowed for this read-only callback. */
     PettaMachineSpaceQueryAdmission (*admit_space_query)(
         void *context, Space *space,
-        SymbolId head, Atom *const *arguments,
-        CettaExprLen arity);
+        SymbolId head, const CettaGsltTermCursorV1 *arguments,
+        CettaExprLen arity, CettaGsltTermCursorObserverV1 observer);
     Space *(*resolve_space)(
         void *context, Space *root_space, Arena *arena,
         Atom *reference);

@@ -367,6 +367,17 @@ static inline CettaGsltTermViewV1 bindings_term_view_v1(
         .resolve_context = (void *)bindings,
     };
 }
+
+/* A stable read of the current binding image. A NULL cursor scope denotes
+ * an ordinary outer term; `frame` denotes an authored activation subtree.
+ * The image and frame must remain unchanged throughout the consuming call. */
+typedef struct {
+    const Bindings *bindings;
+    const BindingsDenseEpochFrame *frame;
+} BindingsTermCursorContextV1;
+CettaGsltTermViewStatusV1 bindings_resolve_term_cursor_v1(
+    void *context, CettaGsltTermCursorV1 source,
+    CettaGsltTermCursorV1 *target_out);
 bool      bindings_add_id(Bindings *b, VarId var_id, SymbolId spelling, Atom *val);
 bool      bindings_add_id_acyclic(Bindings *b, VarId var_id,
                                   SymbolId spelling, Atom *val);

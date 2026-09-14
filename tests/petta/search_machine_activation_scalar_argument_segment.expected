@@ -5,3 +5,15 @@ true
 2
 5
 1
+14
+14
+true
+false
+17.5
+14
+14
+8
+3
+9223372036854775810
+18446744073709551622
+(Error (+ (Error (- $V0 1) (BadArgType 1 Number Variable)) 6) (BadArgType 1 Number Expression))

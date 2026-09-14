@@ -36800,8 +36800,8 @@ static PettaMachineHostMode petta_eval_machine_classify_host(
 static PettaMachineSpaceQueryAdmission
 petta_eval_machine_admit_space_query(
         void *context, Space *space,
-        SymbolId head, Atom *const *arguments,
-        CettaExprLen arity) {
+        SymbolId head, const CettaGsltTermCursorV1 *arguments,
+        CettaExprLen arity, CettaGsltTermCursorObserverV1 observer) {
     PettaEvalMachineContext *eval_context = context;
     if (!eval_context || !space || head == SYMBOL_ID_NONE ||
         eval_context->transaction ||
@@ -36837,8 +36837,8 @@ petta_eval_machine_admit_space_query(
     }
 
     PettaSpecializerRelationAdmission specialization =
-        petta_specializer_query_execution_admission(
-            space, head, arguments, arity);
+        petta_specializer_query_view_execution_admission(
+            space, head, arguments, arity, observer);
     if (specialization ==
             PETTA_SPECIALIZER_RELATION_INVALIDATED) {
         return PETTA_MACHINE_SPACE_QUERY_INVALIDATED;
@@ -39724,6 +39724,14 @@ static void prepared_pure_precheck_debug(
     fputc('\n', stderr);
 }
 
+static bool prepared_pure_precheck_refuse(
+    CettaRuntimeCounter counter, const char *reason, Atom *call) {
+    (void)counter;
+    cetta_runtime_stats_inc(counter);
+    prepared_pure_precheck_debug(reason, call);
+    return false;
+}
+
 static bool prepared_pure_mod_register_view(
     SymbolId head, CettaExprLen arity,
     CettaGsltRegisterInstruction modulo_instruction,
@@ -39926,48 +39934,58 @@ static bool prepared_pure_closed_call_plan(
     PreparedPureClosedCallPlan *plan) {
     if (plan)
         memset(plan, 0, sizeof(*plan));
-    const char *precheck_reason = NULL;
     if (!space || !destination || !call || !plan)
-        precheck_reason = "missing input";
-    else if (fuel >= 0)
-        precheck_reason = "bounded fuel";
-    else if (call->kind != ATOM_EXPR || call->expr.len == 0u)
-        precheck_reason = "not a call";
-    else if (atom_has_vars(call))
-        precheck_reason = "open call";
-    else if (atom_has_registry_refs(call))
-        precheck_reason = "registry reference";
-    else if (hyperpose_atom_has_thread_local_resource(call))
-        precheck_reason = "thread-local resource";
-    else if (prime_need_receipt_observer_requested())
-        precheck_reason = "active answer observer";
-    if (precheck_reason) {
-        prepared_pure_precheck_debug(precheck_reason, call);
-        return false;
-    }
+        return prepared_pure_precheck_refuse(
+            CETTA_RUNTIME_COUNTER_PREPARED_PURE_PRECHECK_SHAPE,
+            "missing input", call);
+    if (fuel >= 0)
+        return prepared_pure_precheck_refuse(
+            CETTA_RUNTIME_COUNTER_PREPARED_PURE_PRECHECK_OBSERVER,
+            "bounded fuel", call);
+    if (call->kind != ATOM_EXPR || call->expr.len == 0u)
+        return prepared_pure_precheck_refuse(
+            CETTA_RUNTIME_COUNTER_PREPARED_PURE_PRECHECK_SHAPE,
+            "not a call", call);
+    if (atom_has_vars(call))
+        return prepared_pure_precheck_refuse(
+            CETTA_RUNTIME_COUNTER_PREPARED_PURE_PRECHECK_OPEN,
+            "open call", call);
+    if (atom_has_registry_refs(call) ||
+        hyperpose_atom_has_thread_local_resource(call))
+        return prepared_pure_precheck_refuse(
+            CETTA_RUNTIME_COUNTER_PREPARED_PURE_PRECHECK_RESOURCE,
+            "external resource", call);
+    if (prime_need_receipt_observer_requested())
+        return prepared_pure_precheck_refuse(
+            CETTA_RUNTIME_COUNTER_PREPARED_PURE_PRECHECK_OBSERVER,
+            "active answer observer", call);
     Atom *head = call->expr.elems[0];
     if (!head || head->kind != ATOM_SYMBOL ||
         is_grounded_op(head->sym_id) ||
         symbol_id_is_builtin(head->sym_id)) {
-        prepared_pure_precheck_debug("non-user head", call);
-        return false;
+        return prepared_pure_precheck_refuse(
+            CETTA_RUNTIME_COUNTER_PREPARED_PURE_PRECHECK_DISPATCH,
+            "non-user head", call);
     }
     if (eval_current_language_id() == CETTA_LANGUAGE_PETTA &&
         g_library_context &&
         cetta_library_petta_memo_contains(
             g_library_context, head->sym_id,
             call->expr.len - 1u)) {
-        prepared_pure_precheck_debug("memoized relation", call);
-        return false;
+        return prepared_pure_precheck_refuse(
+            CETTA_RUNTIME_COUNTER_PREPARED_PURE_PRECHECK_DISPATCH,
+            "memoized relation", call);
     }
     if (cetta_petta_profile_admits_typecheck_ops() &&
         petta_expr_contains_typecheck_op(call)) {
-        prepared_pure_precheck_debug("typecheck operation", call);
-        return false;
+        return prepared_pure_precheck_refuse(
+            CETTA_RUNTIME_COUNTER_PREPARED_PURE_PRECHECK_DISPATCH,
+            "typecheck operation", call);
     }
     if (active_search_table_mode() != CETTA_TABLE_MODE_NONE) {
-        prepared_pure_precheck_debug("active table mode", call);
-        return false;
+        return prepared_pure_precheck_refuse(
+            CETTA_RUNTIME_COUNTER_PREPARED_PURE_PRECHECK_OBSERVER,
+            "active table mode", call);
     }
     bool defined = false;
     CettaGsltQueryEffect effect = space_query_effect_for_head(
@@ -39977,12 +39995,14 @@ static bool prepared_pure_closed_call_plan(
         snprintf(
             reason, sizeof(reason), "effect=%u defined=%u",
             (unsigned)effect, defined ? 1u : 0u);
-        prepared_pure_precheck_debug(reason, call);
-        return false;
+        return prepared_pure_precheck_refuse(
+            CETTA_RUNTIME_COUNTER_PREPARED_PURE_PRECHECK_EFFECT,
+            reason, call);
     }
     if (gslt_match_chain_trace_active()) {
-        prepared_pure_precheck_debug("active match trace", call);
-        return false;
+        return prepared_pure_precheck_refuse(
+            CETTA_RUNTIME_COUNTER_PREPARED_PURE_PRECHECK_OBSERVER,
+            "active match trace", call);
     }
 
     plan->language_id = eval_current_language_id();
@@ -40028,6 +40048,8 @@ static bool prepared_pure_closed_call_plan(
     plan->cacheable_program =
         plan->call_mode == CETTA_GSLT_PURE_CALL_CALL_BY_NEED ||
         plan->cache_entry_arguments_are_values;
+    cetta_runtime_stats_inc(
+        CETTA_RUNTIME_COUNTER_PREPARED_PURE_PRECHECK_ADMITTED);
     return true;
 }
 

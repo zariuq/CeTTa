@@ -27,3 +27,12 @@
 !(test (collapse
          (match &self (binding-effect-transient alpha) $value))
        ())
+
+; Zero discards its result demand, not an effect already performed by its
+; producer. An extra argument also keeps the ordinary arity interpretation.
+(= (effect-before-zero $value)
+   (let $_write (add-atom &self (before-zero $value)) (empty)))
+!(collapse (effect-before-zero observed))
+!(collapse (match &self (before-zero observed) true))
+(= (zero-with-extra-argument $value) (empty $value))
+!(collapse (zero-with-extra-argument 7))
