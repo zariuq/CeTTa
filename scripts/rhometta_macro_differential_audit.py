@@ -325,7 +325,7 @@ def run_text(cetta, src, macro_on, timeout):
     with tempfile.NamedTemporaryFile("w", suffix=".metta", delete=False) as f:
         f.write(src); path = f.name
     try:
-        proc = subprocess.run([cetta, "--quiet", "--profile", "he-extended",
+        proc = subprocess.run([cetta, "--quiet", "--profile", "extended",
                                "--lang", "he", path], capture_output=True,
                               text=True, env=env, timeout=timeout)
     finally:

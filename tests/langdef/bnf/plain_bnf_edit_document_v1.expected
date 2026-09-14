@@ -1,0 +1,5 @@
+true
+PlainBnfStructuredEditAcceptedV1
+PlainBnfMalformedEditRefusedV1
+PlainBnfEditedUnknownStartRefusedV1
+PlainBnfEditedAuthorityFaultRetainedV1

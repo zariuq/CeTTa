@@ -5,6 +5,7 @@
 
 #include "parser.h"
 #include <ctype.h>
+#include <pthread.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -25,6 +26,8 @@ struct CettaForeignRuntime {
 
 static bool g_python_bootstrap_ready = false;
 static bool g_python_inittab_ready = false;
+static bool g_python_interpreter_prepared = false;
+static pthread_mutex_t g_python_lifecycle_mutex = PTHREAD_MUTEX_INITIALIZER;
 static PyObject *g_bridge_module = NULL;
 static PyObject *g_bridge_cetta_atom_class = NULL;
 static PyObject *g_bridge_operation_atom_class = NULL;
@@ -33,6 +36,8 @@ static PyObject *g_bridge_load_module = NULL;
 static PyObject *g_bridge_resolve = NULL;
 static uint64_t g_bridge_module_counter = 0;
 static Space *g_python_callback_space = NULL;
+
+PyMODINIT_FUNC PyInit_cetta_bridge(void);
 
 static const char *PYTHON_BOOTSTRAP =
 "import sys, types, builtins, importlib, importlib.util, os\n"
@@ -320,6 +325,84 @@ static Atom *foreign_error_atom(Arena *a, const char *message) {
     return atom_symbol(a, message);
 }
 
+typedef struct {
+    bool active;
+    PyGILState_STATE state;
+} PythonExecutionGuard;
+
+/* CPython's GIL is a provider execution capability, not a language
+ * permission.  Initialize the provider once, release the initializing
+ * thread's implicit ownership, and let every calling OS thread attach for
+ * exactly the dynamic extent in which it touches Python objects. */
+static bool python_prepare_interpreter(Arena *error_arena,
+                                       Atom **error_out) {
+    if (pthread_mutex_lock(&g_python_lifecycle_mutex) != 0) {
+        if (error_out) {
+            *error_out = foreign_error_atom(
+                error_arena, "failed to lock python runtime lifecycle");
+        }
+        return false;
+    }
+
+    bool ok = true;
+    if (!g_python_inittab_ready) {
+        if (Py_IsInitialized() ||
+            PyImport_AppendInittab(
+                "cetta_bridge", PyInit_cetta_bridge) == -1) {
+            if (error_out) {
+                *error_out = foreign_error_atom(
+                    error_arena, "failed to register cetta_bridge");
+            }
+            ok = false;
+        } else {
+            g_python_inittab_ready = true;
+        }
+    }
+
+    if (ok && !Py_IsInitialized()) {
+        Py_Initialize();
+        if (!Py_IsInitialized()) {
+            if (error_out) {
+                *error_out = foreign_error_atom(
+                    error_arena, "failed to initialize python runtime");
+            }
+            ok = false;
+        } else {
+            /* Py_Initialize leaves this thread holding the GIL.  Detach it
+             * before any worker can call PyGILState_Ensure; otherwise the
+             * parent can wait for a worker while permanently owning the
+             * provider lock. */
+            (void)PyEval_SaveThread();
+            g_python_interpreter_prepared = true;
+        }
+    } else if (ok) {
+        g_python_interpreter_prepared = true;
+    }
+
+    (void)pthread_mutex_unlock(&g_python_lifecycle_mutex);
+    return ok;
+}
+
+static bool python_execution_guard_enter(
+    PythonExecutionGuard *guard, Arena *error_arena,
+    Atom **error_out) {
+    if (!guard)
+        return false;
+    guard->active = false;
+    if (!python_prepare_interpreter(error_arena, error_out))
+        return false;
+    guard->state = PyGILState_Ensure();
+    guard->active = true;
+    return true;
+}
+
+static void python_execution_guard_leave(PythonExecutionGuard *guard) {
+    if (!guard || !guard->active)
+        return;
+    guard->active = false;
+    PyGILState_Release(guard->state);
+}
+
 static Atom *python_error_atom(Arena *a, const char *prefix) {
     PyObject *ptype = NULL;
     PyObject *pvalue = NULL;
@@ -428,10 +511,17 @@ CettaForeignRuntime *cetta_foreign_runtime_new(void) {
 
 void cetta_foreign_runtime_free(CettaForeignRuntime *rt) {
     if (!rt) return;
+    __attribute__((cleanup(python_execution_guard_leave)))
+    PythonExecutionGuard python = {0};
+    if (rt->values && Py_IsInitialized()) {
+        python.state = PyGILState_Ensure();
+        python.active = true;
+    }
     CettaForeignValue *cur = rt->values;
     while (cur) {
         CettaForeignValue *next = cur->next;
-        Py_XDECREF(cur->obj);
+        if (python.active)
+            Py_XDECREF(cur->obj);
         free(cur);
         cur = next;
     }
@@ -440,8 +530,18 @@ void cetta_foreign_runtime_free(CettaForeignRuntime *rt) {
 }
 
 void cetta_foreign_global_shutdown(void) {
-    if (!Py_IsInitialized())
+    if (pthread_mutex_lock(&g_python_lifecycle_mutex) != 0)
         return;
+    if (!Py_IsInitialized()) {
+        (void)pthread_mutex_unlock(&g_python_lifecycle_mutex);
+        return;
+    }
+
+    /* Main shutdown runs after all evaluator workers and foreign values have
+     * joined/freed.  Attach this thread for the final decrefs; finalization
+     * destroys that attachment, so there is deliberately no matching
+     * PyGILState_Release after Py_FinalizeEx. */
+    (void)PyGILState_Ensure();
 
     g_python_callback_space = NULL;
     Py_CLEAR(g_bridge_resolve);
@@ -452,6 +552,8 @@ void cetta_foreign_global_shutdown(void) {
     Py_CLEAR(g_bridge_module);
     g_python_bootstrap_ready = false;
     (void)Py_FinalizeEx();
+    g_python_interpreter_prepared = false;
+    (void)pthread_mutex_unlock(&g_python_lifecycle_mutex);
 }
 
 static PyObject *bridge_run(PyObject *self, PyObject *args) {
@@ -548,16 +650,12 @@ PyMODINIT_FUNC PyInit_cetta_bridge(void) {
 }
 
 static bool ensure_python_bridge(Arena *error_arena, Atom **error_out) {
-    if (!g_python_inittab_ready) {
-        if (PyImport_AppendInittab("cetta_bridge", PyInit_cetta_bridge) == -1) {
-            if (error_out) *error_out = foreign_error_atom(error_arena, "failed to register cetta_bridge");
-            return false;
+    if (!Py_IsInitialized() || !PyGILState_Check()) {
+        if (error_out) {
+            *error_out = foreign_error_atom(
+                error_arena, "python provider execution guard is absent");
         }
-        g_python_inittab_ready = true;
-    }
-
-    if (!Py_IsInitialized()) {
-        Py_Initialize();
+        return false;
     }
 
     if (g_python_bootstrap_ready) return true;
@@ -1413,6 +1511,12 @@ bool cetta_foreign_load_module(CettaForeignRuntime *rt,
                                Space *target_space,
                                Arena *persistent_arena,
                                Atom **error_out) {
+    __attribute__((cleanup(python_execution_guard_leave)))
+    PythonExecutionGuard python = {0};
+    if (!python_execution_guard_enter(
+            &python, persistent_arena, error_out)) {
+        return false;
+    }
     if (!ensure_python_bridge(persistent_arena, error_out)) return false;
 
     PyObject *module = call_python_load_module(canonical_path, persistent_arena, error_out);
@@ -1508,6 +1612,12 @@ bool cetta_foreign_call(CettaForeignRuntime *rt,
         if (error_out) *error_out = foreign_error_atom(a, "unsupported foreign callable backend");
         return false;
     }
+    __attribute__((cleanup(python_execution_guard_leave)))
+    PythonExecutionGuard python = {0};
+    if (!python_execution_guard_enter(&python, a, error_out))
+        return false;
+    if (!ensure_python_bridge(a, error_out))
+        return false;
     return python_call_object(rt, space, a, value->obj, value->unwrap, args, nargs, rs, error_out);
 }
 
@@ -1550,6 +1660,13 @@ bool cetta_foreign_dispatch_native_results(CettaForeignRuntime *rt,
         return false;
 
     Atom *bridge_error = NULL;
+    __attribute__((cleanup(python_execution_guard_leave)))
+    PythonExecutionGuard python = {0};
+    if (!python_execution_guard_enter(&python, a, &bridge_error)) {
+        foreign_result_set_add_failure(results, a, bridge_error,
+                                       "python provider entry failed");
+        return true;
+    }
     if (!ensure_python_bridge(a, &bridge_error)) {
         foreign_result_set_add_failure(results, a, bridge_error,
                                        "python bridge initialization failed");
@@ -1653,7 +1770,49 @@ bool cetta_foreign_dispatch_native_results(CettaForeignRuntime *rt,
     }
 
     if (is_py_call) {
-        if (nargs != 1 || args[0]->kind != ATOM_EXPR || args[0]->expr.len < 1) {
+        if (nargs != 1) {
+            result_set_add(
+                results,
+                atom_error(a, atom_expr(a, (Atom *[]){ head }, 1),
+                           atom_symbol(a, "IncorrectNumberOfArguments")));
+            return true;
+        }
+        /* PeTTa/SWI permits `(py-call path)` to denote the Python callable
+         * itself.  Ordinary MeTTa application may then supply its arguments,
+         * as in `((py-call time.sleep) 1.0)`.  Keep lookup distinct from the
+         * immediate invocation form `(py-call (path args...))`. */
+        if (args[0]->kind != ATOM_EXPR) {
+            Atom *error = NULL;
+            PyObject *obj = python_resolve_path(args[0], NULL, a, &error);
+            if (!obj) {
+                foreign_result_set_add_failure(
+                    results, a, error, "py-call path resolution failed");
+                return true;
+            }
+            if (PyCallable_Check(obj)) {
+                result_set_add(
+                    results,
+                    atom_foreign(
+                        a,
+                        foreign_new_python_value(
+                            rt, obj, true, true)));
+            } else {
+                ResultSet produced;
+                result_set_init(&produced);
+                if (python_emit_single(
+                        rt, a, obj, &produced, &error)) {
+                    foreign_result_set_append(results, &produced);
+                } else {
+                    foreign_result_set_add_failure(
+                        results, a, error,
+                        "py-call path conversion failed");
+                }
+                result_set_free(&produced);
+            }
+            Py_DECREF(obj);
+            return true;
+        }
+        if (args[0]->expr.len < 1) {
             result_set_add(
                 results,
                 atom_error(a, atom_expr(a, (Atom *[]){ head }, 1),

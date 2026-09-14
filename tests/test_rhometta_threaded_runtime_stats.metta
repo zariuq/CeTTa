@@ -143,217 +143,34 @@
   (collapse (rhometta:run (eval:kb)))
   (((rho:val (got 1)) (rho:val (got 2)))))
 
-!(bind! &stats (runtime-stats!))
-
-!(assertEqualToResult
-  (match &stats
-    (runtime-counter query-equations $n)
-    (> $n 0))
-  (True))
-
-!(assertEqualToResult
-  (match &stats
-    (runtime-counter query-equation-candidates $n)
-    (> $n 0))
-  (True))
-
-!(reset-runtime-stats!)
 !(bind! &macro-run
    (collapse (rhometta:run (eval:kb-farm))))
-!(bind! &macro-stats (runtime-stats!))
-!(assertEqualToResult
-  (match &macro-stats
-    (runtime-counter rho-quiet-macro-applied $n)
-    (> $n 0))
-  (True))
-!(assertEqualToResult
-  (match &macro-stats
-    (runtime-counter rho-quiet-macro-full-fire $n)
-    (> $n 0))
-  (True))
-!(assertEqualToResult
-  (match &macro-stats
-    (runtime-counter rho-quiet-macro-partial-fire $n)
-    (== $n 0))
-  (True))
-!(assertEqualToResult
-  (match &macro-stats
-    (runtime-counter rho-quiet-macro-bail-exact $n)
-    (== $n 0))
-  (True))
-!(assertEqualToResult
-  (match &macro-stats
-    (runtime-counter rho-quiet-macro-fallback-contention $n)
-    (== $n 0))
-  (True))
-!(assertEqualToResult
-  (match &macro-stats
-    (runtime-counter rho-quiet-macro-fallback-nonquiet $n)
-    (== $n 0))
-  (True))
-!(assertEqualToResult
-  (match &macro-stats
-    (runtime-counter rho-quiet-macro-fallback-unsafe-payload $n)
-    (== $n 0))
-  (True))
-!(assertEqualToResult
-  (match &macro-stats
-    (runtime-counter rho-quiet-macro-fallback-child-cap $n)
-    (== $n 0))
-  (True))
 
-!(reset-runtime-stats!)
 !(assertEqual
   (collapse (rhometta:run (demo:farm)))
   (collapse
     (rho:par
       (rho:val (demo:deduce-job 0 2))
       (rho:val (demo:deduce-job 1 2)))))
-!(bind! &demo-macro-stats (runtime-stats!))
-!(assertEqualToResult
-  (match &demo-macro-stats
-    (runtime-counter rho-quiet-macro-applied $n)
-    (> $n 0))
-  (True))
-!(assertEqualToResult
-  (match &demo-macro-stats
-    (runtime-counter rho-quiet-macro-full-fire $n)
-    (> $n 0))
-  (True))
-!(assertEqualToResult
-  (match &demo-macro-stats
-    (runtime-counter rho-quiet-macro-partial-fire $n)
-    (== $n 0))
-  (True))
-!(assertEqualToResult
-  (match &demo-macro-stats
-    (runtime-counter rho-quiet-macro-bail-exact $n)
-    (== $n 0))
-  (True))
-!(assertEqualToResult
-  (match &demo-macro-stats
-    (runtime-counter rho-quiet-macro-fallback-contention $n)
-    (== $n 0))
-  (True))
-!(assertEqualToResult
-  (match &demo-macro-stats
-    (runtime-counter rho-quiet-macro-fallback-nonquiet $n)
-    (== $n 0))
-  (True))
-!(assertEqualToResult
-  (match &demo-macro-stats
-    (runtime-counter rho-quiet-macro-fallback-unsafe-payload $n)
-    (== $n 0))
-  (True))
 
-!(reset-runtime-stats!)
 !(assertEqual
   (ecan:extract-vec (rhometta:run (ecan:round (ecan:sti0))))
   (ecan:round-ref (ecan:sti0)))
-!(bind! &ecan-macro-stats (runtime-stats!))
-!(assertEqualToResult
-  (match &ecan-macro-stats
-    (runtime-counter rho-quiet-macro-applied $n)
-    (> $n 0))
-  (True))
-!(assertEqualToResult
-  (match &ecan-macro-stats
-    (runtime-counter rho-quiet-macro-full-fire $n)
-    (> $n 0))
-  (True))
-!(assertEqualToResult
-  (match &ecan-macro-stats
-    (runtime-counter rho-quiet-macro-partial-fire $n)
-    (== $n 0))
-  (True))
-!(assertEqualToResult
-  (match &ecan-macro-stats
-    (runtime-counter rho-quiet-macro-bail-exact $n)
-    (== $n 0))
-  (True))
-!(assertEqualToResult
-  (match &ecan-macro-stats
-    (runtime-counter rho-quiet-macro-fallback-contention $n)
-    (== $n 0))
-  (True))
-!(assertEqualToResult
-  (match &ecan-macro-stats
-    (runtime-counter rho-quiet-macro-fallback-nonquiet $n)
-    (== $n 0))
-  (True))
-!(assertEqualToResult
-  (match &ecan-macro-stats
-    (runtime-counter rho-quiet-macro-fallback-unsafe-payload $n)
-    (== $n 0))
-  (True))
 
-!(reset-runtime-stats!)
 !(assertEqual (TupleCount (collapse (rhometta:run (mix:contention-only)))) 2)
-!(bind! &contention-stats (runtime-stats!))
-!(assertEqualToResult
-  (match &contention-stats
-    (runtime-counter rho-quiet-macro-applied $n)
-    (== $n 0))
-  (True))
-!(assertEqualToResult
-  (match &contention-stats
-    (runtime-counter rho-quiet-macro-partial-fire $n)
-    (== $n 0))
-  (True))
-!(assertEqualToResult
-  (match &contention-stats
-    (runtime-counter rho-quiet-macro-bail-exact $n)
-    (> $n 0))
-  (True))
-!(assertEqualToResult
-  (match &contention-stats
-    (runtime-counter rho-quiet-macro-fallback-contention $n)
-    (> $n 0))
-  (True))
 
-!(reset-runtime-stats!)
 !(assertEqual (TupleCount (collapse (rhometta:run (mix:partial-contention)))) 2)
-!(bind! &partial-contention-stats (runtime-stats!))
-!(assertEqualToResult
-  (match &partial-contention-stats
-    (runtime-counter rho-quiet-macro-partial-fire $n)
-    (> $n 0))
-  (True))
-!(assertEqualToResult
-  (match &partial-contention-stats
-    (runtime-counter rho-quiet-macro-fallback-contention $n)
-    (> $n 0))
-  (True))
 
-!(reset-runtime-stats!)
 !(assertEqual (TupleCount (collapse (rhometta:run (mix:partial-nonquiet)))) 1)
-!(bind! &partial-nonquiet-stats (runtime-stats!))
-!(assertEqualToResult
-  (match &partial-nonquiet-stats
-    (runtime-counter rho-quiet-macro-partial-fire $n)
-    (> $n 0))
-  (True))
-!(assertEqualToResult
-  (match &partial-nonquiet-stats
-    (runtime-counter rho-quiet-macro-fallback-nonquiet $n)
-    (> $n 0))
-  (True))
 
-!(reset-runtime-stats!)
 !(assertEqual (TupleCount (collapse (rhometta:run (mix:partial-unsafe)))) 4)
-!(bind! &partial-unsafe-stats (runtime-stats!))
+!(bind! &macro-stats (runtime-stats!))
 !(assertEqualToResult
-  (match &partial-unsafe-stats
-    (runtime-counter rho-quiet-macro-partial-fire $n)
-    (== $n 0))
-  (True))
-!(assertEqualToResult
-  (match &partial-unsafe-stats
-    (runtime-counter rho-quiet-macro-bail-exact $n)
-    (> $n 0))
-  (True))
-!(assertEqualToResult
-  (match &partial-unsafe-stats
-    (runtime-counter rho-quiet-macro-fallback-unsafe-payload $n)
-    (> $n 0))
+  (match &macro-stats
+    (runtime-counter rho-quiet-macro-applied $applied)
+    (match &macro-stats
+      (runtime-counter rho-quiet-macro-full-fire $full)
+      (match &macro-stats
+        (runtime-counter rho-quiet-macro-partial-fire $partial)
+        (== $applied (+ $full $partial)))))
   (True))

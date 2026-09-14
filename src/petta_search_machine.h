@@ -137,9 +137,22 @@ typedef enum {
     PETTA_MEMO_RETENTION_LRU,
 } PettaMemoRetentionPolicy;
 
+typedef enum {
+    /* Ordinary PeTTa/SWI tables assume a static world.  A completed variant
+     * table remains authoritative until an explicit table-control operation
+     * clears it; unrelated source mutation does not update it implicitly. */
+    PETTA_TABLE_MUTATION_STATIC_WORLD = 0,
+    /* CeTTa's extended policy treats a table as a derived view of one Space
+     * revision.  Any intervening mutation refuses replay and forces a fresh
+     * table before the next root evaluation. */
+    PETTA_TABLE_MUTATION_REVISION_GUARDED,
+} PettaTableMutationPolicy;
+
 PettaMachineTable *petta_machine_table_new(void);
 void petta_machine_table_free(PettaMachineTable *table);
 void petta_machine_table_reset(PettaMachineTable *table);
+bool petta_machine_table_set_mutation_policy(
+    PettaMachineTable *table, PettaTableMutationPolicy policy);
 /* Enforce cache-only retention after a root machine has released its lease.
  * Completed non-memo SLG entries are not charged to these library controls.
  * On allocation failure the table is cleared, preserving answers by forcing
@@ -160,6 +173,15 @@ typedef bool (*PettaMachineBorrowedItemConsumer)(
 typedef struct {
     void *context;
     const PettaAnalysisService *analysis;
+    /* Scope-entry observation plan supplied by the evaluator.  The machine
+     * may use it only to preserve a delimiter across externalized branches;
+     * it grants neither storage nor batching authority.  NULL keeps nested
+     * observation boundaries inline. */
+    const CettaControlPlan *control_plan;
+    /* Request suspension only at an exactly externalizable relational
+     * choice.  Deterministic stretches remain inside the machine; this avoids
+     * polling the continuation hub after every transition. */
+    bool externalize_clause_choices;
     /* The host contributes one component to the shared branch-capture
      * capacity.  The relational backend combines it with its internal state
      * profile and accepts an owned continuation only at multi-shot capacity. */
@@ -183,8 +205,17 @@ typedef struct {
      * resume when its caller restores a budget or clears cancellation.
      */
     bool (*permit_transition)(void *context);
+    /* True only when compiled, bounded pure instructions do not consume a
+     * finite transition purse.  A metered host leaves this false so clause
+     * selection retains the canonical transition boundary. */
+    bool unlimited_transition_budget;
     PettaMachineHostMode (*classify)(
         void *context, Space *space, Atom *expression);
+    /* Direct grounded execution is a physical realization of a language
+     * call.  The host therefore retains profile-owned admission for each
+     * shared opcode; absence preserves the standalone machine's unrestricted
+     * embedding contract. */
+    bool (*builtin_allowed)(void *context, SymbolId head);
     /* Exact mutable authority for deciding whether an expression root is
      * callable.  A missing token disables reuse of derived callability
      * judgments; it never makes an unknown host registry look immutable. */
@@ -219,6 +250,20 @@ typedef struct {
     bool (*evaluate)(
         void *context, Space *space, Arena *arena, Atom *expression,
         const Bindings *environment, OutcomeSet *outcomes);
+    /* Preserve the translation-stage classification of an authored source
+     * occurrence when evaluation crosses a host-owned boundary.  The plan is
+     * positional metadata for `expression`; NULL means that this boundary
+     * has no earlier translation event to transport.  Hosts which do not
+     * model staged callability may omit this callback and use `evaluate`. */
+    bool (*evaluate_planned)(
+        void *context, Space *space, Arena *arena, Atom *expression,
+        const PettaPlanNode *plan,
+        const Bindings *environment, OutcomeSet *outcomes);
+    /* Create a new translation event at an explicit forcing boundary such as
+     * PeTTa `eval`.  A returned plan fixes callability for that occurrence;
+     * NULL declines because the host could not establish the event. */
+    const PettaPlanNode *(*translate_source)(
+        void *context, Space *space, Atom *expression);
     /* Enumerate the intrinsic answers of the language's `get-type`
      * relation after its subject has reached the ready-value boundary.
      * The returned pointer array is caller-owned; every Atom is owned by
@@ -251,6 +296,13 @@ typedef struct {
         Atom *accumulator_binder, Atom *item_binder,
         Atom *step_expression, const Bindings *environment,
         Atom **result_out);
+    /* A generated determinate-map program may own a lexical map without
+     * allocating one result variable and one relational goal per item.
+     * NOT_APPLICABLE preserves the complete relational product. */
+    PettaMachineFoldResult (*map_single_result)(
+        void *context, Space *space, Arena *arena,
+        Atom *items, Atom *item_binder, Atom *body_expression,
+        const Bindings *environment, Atom **result_out);
     /* Pull a determinate, effect-free collection without materializing its
      * spine.  The callback is the consumer algebra; length is only its first
      * use.  NOT_APPLICABLE leaves canonical evaluation authoritative. */
@@ -321,6 +373,12 @@ typedef struct {
      * activation and outer-environment substitution before recording the
      * occurrence IDs; the callback must then ignore the result payload. */
     bool (*clause_result_payload_observed)(void *context);
+    /* A delayed clause-body view may outlive the immediate match step.
+     * The host must therefore prove the defining relation effect-free at
+     * the pinned Space revision; absence or refusal selects materialization. */
+    bool (*clause_activation_relation_admissible)(
+        void *context, Space *space,
+        SymbolId head, CettaExprLen arity);
     bool (*translator_rule_contains)(
         void *context, SymbolId head);
     bool (*translator_rule_set)(
@@ -350,9 +408,13 @@ typedef struct {
         void *context, SymbolId head, CettaExprLen arity);
     uint32_t (*memoized_relation_answer_limit)(
         void *context, SymbolId head, CettaExprLen arity);
+    uint64_t (*memoized_relation_size_limit_bytes)(
+        void *context, SymbolId head, CettaExprLen arity);
     void (*memoized_relation_observed)(
         void *context, SymbolId head, CettaExprLen arity,
         bool cache_hit);
+    void (*memoized_relation_bypassed)(
+        void *context, SymbolId head, CettaExprLen arity);
     void (*memoized_relation_truncated)(
         void *context, SymbolId head, CettaExprLen arity);
     /*
@@ -398,6 +460,10 @@ typedef struct {
  * Richer effects decline rather than selecting another controller. */
 CettaContinuationMachine petta_machine_continuation_machine(
     PettaMachine *machine);
+
+/* True exactly when the active machine is at a provider-supported owned
+ * relational choice that may be split into independent continuations. */
+bool petta_machine_external_branch_ready(const PettaMachine *machine);
 
 bool petta_machine_init(
     PettaMachine *machine, Space *space, Arena *answer_arena,
@@ -446,6 +512,9 @@ typedef struct {
     uint64_t clause_snapshot_candidates_copied;
     uint64_t clause_candidates;
     uint64_t clause_candidates_shape_pruned;
+    uint64_t clause_guard_prune_attempts;
+    uint64_t clause_guard_pruned;
+    uint64_t clause_guard_retained;
     uint64_t match_decision_compilations;
     uint64_t match_decision_cache_hits;
     uint64_t match_decision_runs;
@@ -506,6 +575,10 @@ typedef struct {
     uint64_t pure_grounded_slot_frame_direct_dispatches;
     uint64_t relation_slot_frame_entries;
     uint64_t relation_slot_operands_reused;
+    uint64_t activation_scalar_argument_segment_attempts;
+    uint64_t activation_scalar_argument_segment_commits;
+    uint64_t activation_scalar_argument_segment_declines;
+    uint64_t activation_scalar_argument_segment_operations;
     uint64_t atom_copy_calls;
     uint64_t atom_copy_allocated_bytes;
     uint64_t atom_copy_query_calls;
@@ -532,6 +605,8 @@ typedef struct {
     uint64_t choice_continuation_snapshots;
     uint64_t choice_continuation_items_copied;
     uint64_t choice_continuation_items_trailed;
+    uint64_t choice_continuation_trail_compactions;
+    uint64_t choice_continuation_trail_discarded;
     uint64_t deterministic_clause_choices_elided;
     uint64_t singleton_outcome_choices_elided;
     uint64_t rollbacks;

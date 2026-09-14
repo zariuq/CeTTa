@@ -118,6 +118,8 @@ typedef struct {
 void ppabi_v1_pack_init(PPABIV1Pack *pack);
 void ppabi_v1_pack_free(PPABIV1Pack *pack);
 
+/* Require structurally consistent derivation roots covering every artifact.
+ * The ABI checks coverage and identity; proof replay belongs to the caller. */
 bool ppabi_v1_pack_load(PPABIV1Pack *out,
                         Atom *const *production_terms,
                         size_t production_len,
@@ -126,6 +128,19 @@ bool ppabi_v1_pack_load(PPABIV1Pack *out,
                         const PPABIV1ProvenanceInput *provenance,
                         char *error_buf,
                         size_t error_buf_size);
+
+/* Decode the same ParserPack syntax without supplying derivation roots.
+ * Digests identify the claimed inputs, not a checked compiler execution.
+ * The resulting pack has no derivations and no per-artifact evidence.
+ * This entry point does not establish compiler correctness or replay any
+ * proof; callers needing the evidence-bearing route must use pack_load. */
+bool ppabi_v1_pack_load_structural(
+    PPABIV1Pack *out,
+    Atom *const *production_terms, size_t production_len,
+    Atom *const *class_clause_terms, size_t class_clause_len,
+    const char *source_digest, const char *compiler_digest,
+    const char *environment_digest,
+    char *error_buf, size_t error_buf_size);
 
 bool ppabi_v1_pack_start_is_closed(const PPABIV1Pack *pack,
                                    const Atom *start_state,

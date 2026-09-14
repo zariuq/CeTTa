@@ -36,6 +36,7 @@ typedef void (*CettaParallelWorkerHookFn)(CettaParallelWorker *worker,
 typedef struct {
     uint32_t thread_count;
     size_t stack_size_bytes;
+    bool prefer_persistent_workers;
     void *user;
     CettaParallelTaskFn task_fn;
     CettaParallelWorkerHookFn worker_enter;
@@ -53,10 +54,14 @@ struct CettaParallelExecutor {
     CettaParallelExecutorConfig config;
     CettaParallelReadyQueue queue;
     pthread_mutex_t error_mutex;
+    pthread_mutex_t completion_mutex;
+    pthread_cond_t completion_cond;
     char error[256];
     pthread_t *threads;
     CettaParallelWorker *workers;
     uint32_t thread_count;
+    uint32_t completed_workers;
+    bool run_started;
 };
 
 bool cetta_parallel_executor_init(CettaParallelExecutor *executor,

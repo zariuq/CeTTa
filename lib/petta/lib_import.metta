@@ -23,3 +23,4 @@
 (: git-import! (-> Atom Bool))
 (: git-import! (-> Atom Atom Bool))
 (: git-import! (-> Atom Atom Atom Bool))
+(: git-import! (-> Atom Atom Atom Atom Bool))

@@ -10,7 +10,7 @@ trap 'rm -rf "$scratch"' EXIT INT TERM
 
 lane_args() {
     case "$1" in
-        he) printf '%s\n' --lang he --profile he-extended ;;
+        he) printf '%s\n' --lang he --profile extended ;;
         prime|petta) printf '%s\n' --lang "$1" ;;
         *) return 1 ;;
     esac
@@ -74,9 +74,6 @@ EOF
     actual="$(timeout "$case_timeout" "$cetta" \
         "${args[@]}" --count-only "$input")"
     local count="$actual"
-    if [[ "$lane" == petta ]]; then
-        count="$(printf '%s\n' "$actual" | awk 'NF { n++ } END { print n + 0 }')"
-    fi
     if [[ "$count" != 92 ]]; then
         printf 'FAIL: %s queens(8) expected 92 answers, got %s\n' \
             "$lane" "$count" >&2

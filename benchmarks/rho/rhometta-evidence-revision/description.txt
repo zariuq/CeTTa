@@ -27,4 +27,4 @@ WHAT YOU SEE
   (count observations -> build the stv), not read off a table.
 
 RUN
-  ./cetta --quiet --profile he-extended --lang he benchmarks/rho/rhometta-evidence-revision/example.metta
+  ./cetta --quiet --profile extended --lang he benchmarks/rho/rhometta-evidence-revision/example.metta

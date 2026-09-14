@@ -122,6 +122,15 @@ MECHANISM_MACHINE_COUNTERS = (
     "max_binding_apply_environment_entries",
     "max_binding_apply_epoch_suffix_entries",
 )
+SURVIVOR_ALLOCATION_ROLE_COUNTERS = (
+    "survivor-alloc-role-other-bytes",
+    "survivor-alloc-role-match-stored-equation-view-bytes",
+    "survivor-alloc-role-match-activation-source-view-bytes",
+    "survivor-alloc-role-equation-pattern-instantiation-bytes",
+    "survivor-alloc-role-equation-result-instantiation-bytes",
+    "survivor-alloc-role-equation-result-execution-bytes",
+    "survivor-alloc-role-whole-equation-instantiation-bytes",
+)
 MECHANISM_RUNTIME_COUNTERS = (
     "bindings-apply",
     "bindings-lookup",
@@ -166,6 +175,8 @@ MECHANISM_RUNTIME_COUNTERS = (
     "scratch-arena-alloc-bytes",
     "scratch-arena-live-bytes-peak",
     "scratch-arena-reserved-bytes-peak",
+    "query-episode-survivor-arena-alloc-bytes",
+    *SURVIVOR_ALLOCATION_ROLE_COUNTERS,
     "loop-view-prepared-tail",
     "petta-equation-template-c0-admission-attempt",
     "petta-equation-template-c0-artifact-built",
@@ -174,6 +185,16 @@ MECHANISM_RUNTIME_COUNTERS = (
     "petta-equation-template-c0-execution-match",
     "petta-equation-template-c0-execution-mismatch",
     "petta-equation-template-c0-execution-fallback",
+    "petta-clause-guard-prune-attempt",
+    "petta-clause-guard-pruned",
+    "petta-clause-guard-retained",
+    "petta-clause-activation-plan-admitted",
+    "petta-clause-activation-plan-declined-malformed",
+    "petta-clause-activation-plan-declined-chain",
+    "petta-clause-activation-plan-declined-translator",
+    "petta-clause-activation-plan-declined-depth",
+    "petta-clause-activation-plan-declined-active-data",
+    "petta-clause-activation-plan-declined-relation-effect",
 )
 
 
@@ -741,6 +762,17 @@ def mechanism_record(row_id: str, result: dict[str, object]) -> dict[str, object
     record["derived_binding_apply_node_visits_per_call"] = (
         f"{node_visits / apply_calls:.6f}" if apply_calls else ""
     )
+    survivor_total = int(runtime["query-episode-survivor-arena-alloc-bytes"])
+    survivor_role_total = sum(
+        int(runtime[name]) for name in SURVIVOR_ALLOCATION_ROLE_COUNTERS
+    )
+    if survivor_role_total != survivor_total:
+        raise RuntimeError(
+            f"survivor allocation role account is not exact for {row_id}: "
+            f"roles={survivor_role_total}, total={survivor_total}"
+        )
+    record["derived_survivor_role_total_bytes"] = survivor_role_total
+    record["derived_survivor_role_account_exact"] = 1
     return record
 
 
@@ -762,6 +794,8 @@ def write_mechanism_tsv(
         "derived_binding_apply_bytes_per_call",
         "derived_binding_apply_environment_entries_per_call",
         "derived_binding_apply_node_visits_per_call",
+        "derived_survivor_role_total_bytes",
+        "derived_survivor_role_account_exact",
         *(f"identity_{key}" for key in identities),
     )
     path.parent.mkdir(parents=True, exist_ok=True)

@@ -33,6 +33,10 @@ bool variant_instance_promote_atoms_with_session(
     AtomDeepCopySession *session, VariantInstance *instance);
 bool variant_instance_atoms_closed_for_arena(
     const VariantInstance *instance, const Arena *arena);
+/* True exactly when a populated private slot may retain a registry
+ * capability.  The Atom flag is compositional, so this does not traverse
+ * subtrees on the common capability-free path. */
+bool variant_instance_has_registry_refs(const VariantInstance *instance);
 bool variant_instance_from_shape(VariantInstance *out, const VariantShape *shape);
 bool variant_instance_append_rebased(Arena *dst, VariantInstance *instance,
                                      Atom **out_skeleton,

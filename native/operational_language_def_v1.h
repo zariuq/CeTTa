@@ -68,8 +68,10 @@ typedef struct {
  */
 typedef struct {
     CettaOpLangV1SExpr *root;
-    /* Exact raw-source identity; semantic fingerprints remain parser-local. */
+    /* Empty when this tree was adopted from an already structured value. */
     char source_sha256[65];
+    /* Raw-source digest when parsed; structural digest when adopted. */
+    char authority_sha256[65];
     CettaOpLangV1ParserReceipt gll;
     CettaOpLangV1ParserReceipt glr;
 } CettaOpLangV1Document;
@@ -91,8 +93,10 @@ typedef enum {
 
 typedef struct {
     CettaOpLangV1SExpr *root;
-    /* Exact raw-source identity; semantic fingerprints remain parser-local. */
+    /* Empty when this tree was adopted from an already structured value. */
     char source_sha256[65];
+    /* Raw-source digest when parsed; structural digest when adopted. */
+    char authority_sha256[65];
     const uint8_t *name_bytes;
     uint32_t name_len;
     const CettaOpLangV1SExpr *types_field;
@@ -121,6 +125,14 @@ bool cetta_op_lang_v1_parse_document_bytes(
     CettaOpLangV1Status *status,
     char *error_buf,
     size_t error_buf_size);
+
+/* The same CettaTerm grammar with semicolon-to-line-end source comments.
+ * Comments are trivia edges over the original bytes, never pre-stripped text.
+ * The canonical entry above keeps its original semicolon-as-symbol policy. */
+bool cetta_op_lang_v1_parse_commented_document_bytes(
+    CettaOpLangV1Document *out, const uint8_t *bytes, size_t byte_len,
+    uint32_t gll_work_limit, uint32_t glr_work_limit,
+    CettaOpLangV1Status *status, char *error_buf, size_t error_buf_size);
 
 bool cetta_op_lang_v1_parse_document_file(
     CettaOpLangV1Document *out,
@@ -155,6 +167,21 @@ bool cetta_op_lang_v1_parse_file(
     const char *path,
     uint32_t gll_work_limit,
     uint32_t glr_work_limit,
+    CettaOpLangV1Status *status,
+    char *error_buf,
+    size_t error_buf_size);
+
+/*
+ * Adopt an already structured canonical CettaTerm tree and decode its
+ * LanguageDef envelope without rendering or reparsing text.  This function
+ * takes ownership of root on every return path.  The caller supplies the
+ * structural authority digest; parser receipts and a raw source digest are
+ * absent because this boundary did not consume bytes.
+ */
+bool cetta_op_lang_v1_adopt_structured_root(
+    CettaOperationalLanguageDefV1 *out,
+    CettaOpLangV1SExpr *root,
+    const char authority_sha256[65],
     CettaOpLangV1Status *status,
     char *error_buf,
     size_t error_buf_size);

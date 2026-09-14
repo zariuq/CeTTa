@@ -160,7 +160,7 @@ CettaJsonRuntimeV1 *cetta_json_runtime_v1_new(
     }
     if (!cetta_language_def_parser_pack_v1_compile(
             &runtime->compiled, &runtime->language,
-            runtime->wire.source_sha256, &runtime->profile,
+            runtime->wire.authority_sha256, &runtime->profile,
             4000000u, &pack_status, error_buf, error_buf_size)) {
         if (error_buf && error_buf_size > 0u && error_buf[0] == '\0') {
             (void)snprintf(error_buf, error_buf_size,
@@ -209,6 +209,7 @@ static CettaJsonRuntimeV1Status json_parser_outcome_status(
     case PPNATIVE_V1_RESULT_LIMIT:
         return CETTA_JSON_RUNTIME_V1_RESOURCE_LIMIT;
     case PPNATIVE_V1_UNSUPPORTED_OPEN_PACK:
+    case PPNATIVE_V1_CYCLIC_FOREST:
         return CETTA_JSON_RUNTIME_V1_INTERNAL_FAILURE;
     }
     return CETTA_JSON_RUNTIME_V1_INTERNAL_FAILURE;
@@ -385,12 +386,12 @@ uint32_t cetta_json_runtime_v1_table_build_count(
 
 const char *cetta_json_runtime_v1_language_digest(
     const CettaJsonRuntimeV1 *runtime) {
-    return runtime ? runtime->compiled.language_source_sha256 : NULL;
+    return runtime ? runtime->compiled.language_authority_sha256 : NULL;
 }
 
 const char *cetta_json_runtime_v1_profile_digest(
     const CettaJsonRuntimeV1 *runtime) {
-    return runtime ? runtime->compiled.profile_source_sha256 : NULL;
+    return runtime ? runtime->compiled.profile_authority_sha256 : NULL;
 }
 
 const char *cetta_json_runtime_v1_target_digest(

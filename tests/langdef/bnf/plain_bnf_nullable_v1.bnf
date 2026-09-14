@@ -1,0 +1,3 @@
+% A nullable recursive prefix followed by a required terminal.
+<s> ::= <prefix> "x"
+<prefix> ::= "a" <prefix> |

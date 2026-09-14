@@ -102,6 +102,8 @@ static const char *ppnative_api_v1_outcome_name(PPNativeV1Outcome outcome) {
         return "replay-depth";
     case PPNATIVE_V1_RESULT_LIMIT:
         return "result-limit";
+    case PPNATIVE_V1_CYCLIC_FOREST:
+        return "cyclic-forest";
     }
     return "unknown";
 }
@@ -184,6 +186,16 @@ static Atom *ppnative_api_v1_response_atom(
         arena, pack->environment_digest));
     ADD_FIELD("pack-digest", atom_string(arena, pack->pack_digest));
 
+    if (result->outcome == PPNATIVE_V1_CYCLIC_FOREST) {
+        ADD_FIELD("decision", atom_symbol(
+            arena, result->accepted ? "accepted" : "rejected"));
+        ADD_FIELD("forest-digest", atom_string(arena, result->forest_digest));
+        ADD_FIELD("forest-materialized", atom_bool(
+            arena, result->canonical_forest_materialized));
+        if (result->canonical_forest_materialized)
+            ADD_FIELD("forest", result->canonical_forest);
+        /* No finite results field: zero stored values is not a parse count. */
+    }
     if (result->outcome == PPNATIVE_V1_COMPLETED) {
         Atom *semantic_results = ppnative_api_v1_list(
             arena, result->semantic_results, result->semantic_result_len);

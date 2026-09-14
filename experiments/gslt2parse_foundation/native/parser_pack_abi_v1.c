@@ -1005,11 +1005,14 @@ done:
     return ok;
 }
 
-bool ppabi_v1_pack_load(PPABIV1Pack *out,
+static bool ppabi_v1_pack_decode(PPABIV1Pack *out,
                         Atom *const *production_terms,
                         size_t production_len,
                         Atom *const *class_clause_terms,
                         size_t class_clause_len,
+                        const char *source_digest,
+                        const char *compiler_digest,
+                        const char *environment_digest,
                         const PPABIV1ProvenanceInput *provenance,
                         char *error_buf,
                         size_t error_buf_size) {
@@ -1026,12 +1029,13 @@ bool ppabi_v1_pack_load(PPABIV1Pack *out,
 
     if (error_buf && error_buf_size > 0u)
         error_buf[0] = '\0';
-    if (!out || !provenance || production_len == 0u ||
-        !ppabi_v1_digest_valid(provenance->source_digest) ||
-        !ppabi_v1_digest_valid(provenance->compiler_digest) ||
-        !ppabi_v1_digest_valid(provenance->environment_digest) ||
-        provenance->derivation_len > UINT32_MAX ||
-        (provenance->derivation_len > 0u && !provenance->derivations)) {
+    if (!out || production_len == 0u ||
+        !ppabi_v1_digest_valid(source_digest) ||
+        !ppabi_v1_digest_valid(compiler_digest) ||
+        !ppabi_v1_digest_valid(environment_digest) ||
+        (provenance &&
+         (provenance->derivation_len > UINT32_MAX ||
+          (provenance->derivation_len > 0u && !provenance->derivations)))) {
         ppabi_v1_set_error(error_buf, error_buf_size,
                            "bad ParserPack ABI or provenance arguments");
         return false;
@@ -1145,12 +1149,12 @@ bool ppabi_v1_pack_load(PPABIV1Pack *out,
         }
     }
 
-    (void)memcpy(pack.source_digest, provenance->source_digest, 65u);
-    (void)memcpy(pack.compiler_digest, provenance->compiler_digest, 65u);
+    (void)memcpy(pack.source_digest, source_digest, 65u);
+    (void)memcpy(pack.compiler_digest, compiler_digest, 65u);
     (void)memcpy(pack.environment_digest,
-                 provenance->environment_digest, 65u);
-    if (!ppabi_v1_build_evidence(
-            &pack, provenance, error_buf, error_buf_size) ||
+                 environment_digest, 65u);
+    if ((provenance && !ppabi_v1_build_evidence(
+            &pack, provenance, error_buf, error_buf_size)) ||
         !ppabi_v1_compute_pack_digest(&pack)) {
         goto done;
     }
@@ -1175,6 +1179,41 @@ done:
     ppabi_v1_canonical_inputs_free(production_inputs, production_len);
     ppabi_v1_canonical_inputs_free(class_inputs, class_clause_len);
     return ok;
+}
+
+bool ppabi_v1_pack_load(PPABIV1Pack *out,
+                        Atom *const *production_terms,
+                        size_t production_len,
+                        Atom *const *class_clause_terms,
+                        size_t class_clause_len,
+                        const PPABIV1ProvenanceInput *provenance,
+                        char *error_buf,
+                        size_t error_buf_size) {
+    if (!provenance) {
+        ppabi_v1_set_error(error_buf, error_buf_size,
+                            "bad ParserPack ABI or provenance arguments");
+        return false;
+    }
+    return ppabi_v1_pack_decode(
+        out, production_terms, production_len,
+        class_clause_terms, class_clause_len,
+        provenance->source_digest, provenance->compiler_digest,
+        provenance->environment_digest, provenance,
+        error_buf, error_buf_size);
+}
+
+bool ppabi_v1_pack_load_structural(
+    PPABIV1Pack *out,
+    Atom *const *production_terms, size_t production_len,
+    Atom *const *class_clause_terms, size_t class_clause_len,
+    const char *source_digest, const char *compiler_digest,
+    const char *environment_digest,
+    char *error_buf, size_t error_buf_size) {
+    return ppabi_v1_pack_decode(
+        out, production_terms, production_len,
+        class_clause_terms, class_clause_len,
+        source_digest, compiler_digest, environment_digest, NULL,
+        error_buf, error_buf_size);
 }
 
 bool ppabi_v1_pack_start_is_closed(const PPABIV1Pack *pack,

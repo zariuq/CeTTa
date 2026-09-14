@@ -5,4 +5,6 @@
 (pair 3 3)
 (pair 3 (a a b))
 3
+2
+0
 ((counted-dynamic-left count-dynamic-marker) (counted-dynamic-left count-dynamic-marker) (counted-dynamic-right count-dynamic-marker))

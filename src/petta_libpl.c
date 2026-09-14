@@ -1787,7 +1787,7 @@ static bool petta_libpl_to_term(
                 &plref, output);
         /*
          * An open-cons carrier is one logical list cell; marshalling its
-         * three implementation fields would leak the PeTTa.OpenConsV1 tag
+         * three implementation fields would leak the private carrier tag
          * into the engine as data (the chainer's ccls rows were stored that
          * way).  Emit real './2' cells: a closed chain becomes a proper
          * list, an unbound tail a partial one.
@@ -2926,20 +2926,12 @@ CettaLibPrologReadToken cetta_lib_prolog_read_token(
     CettaLibPrologReadToken token = {0};
     if (!runtime)
         return token;
-    /* A foreign predicate may re-enter the PeTTa evaluator while this thread
-     * already owns the adapter boundary.  The owning thread can read its
-     * context-private revision directly; trying to lock again deadlocks on
-     * equation-backed nested calls. */
-    if (g_petta_libpl_enter_depth > 0u) {
-        token.instance_id = runtime->instance_id;
-        token.revision = runtime->revision;
-        return token;
-    }
-    if (pthread_mutex_lock(&g_petta_libpl_lock) != 0)
-        return token;
+    /* Instance identity is immutable for the runtime lifetime.  Capability
+     * mutation publishes through the dedicated atomic revision, so a validity
+     * read neither needs the engine mutex nor risks recursive-entry deadlock. */
     token.instance_id = runtime->instance_id;
-    token.revision = runtime->revision;
-    (void)pthread_mutex_unlock(&g_petta_libpl_lock);
+    token.revision = atomic_load_explicit(
+        &runtime->capability_revision, memory_order_acquire);
     return token;
 }
 
@@ -3226,6 +3218,15 @@ PeTTaNamedArity petta_libpl_named_arity_including_resolved(
         supplied > (CettaExprLen)SIZE_MAX) {
         return result;
     }
+    /* Auto-resolved names are published into the same admission index as
+       explicit imports.  Its negative answer therefore proves there is no
+       resolved entry to inspect and keeps native calls out of the engine. */
+    if (!petta_libpl_import_admission_maybe_contains(
+            runtime, head)) {
+        cetta_runtime_stats_inc(
+            CETTA_RUNTIME_COUNTER_PETTA_LIBPL_ADMISSION_NEGATIVE);
+        return result;
+    }
     bool claimed = false;
     if (!petta_libpl_enter(&claimed))
         return result;
@@ -3300,7 +3301,6 @@ bool petta_libpl_call(
     Atom *expression, Atom *expected,
     const Bindings *environment, OutcomeSet *outcomes,
     bool *recognized) {
-    (void)environment;
     if (recognized)
         *recognized = false;
     if (!runtime || !arena ||
@@ -3312,6 +3312,39 @@ bool petta_libpl_call(
         return runtime && arena && expression && expected &&
                environment && outcomes && recognized;
     }
+
+    SymbolId head = expression->expr.elems[0]->sym_id;
+    PeTTaForm form = petta_semantics_form(head);
+    bool adapter_form =
+        form == PETTA_FORM_IMPORT_PROLOG_FUNCTION ||
+        form == PETTA_FORM_CALL_PREDICATE ||
+        form == PETTA_FORM_ASSERTA_PREDICATE ||
+        form == PETTA_FORM_ASSERTZ_PREDICATE ||
+        form == PETTA_FORM_RETRACT_PREDICATE;
+    size_t standard_arities[2] = {0u, 0u};
+    size_t standard_arity_count =
+        petta_libpl_standard_function_arities(
+            head, standard_arities);
+    /* The admission index is a lock-free negative certificate: an ordinary
+       native form, equation call, or inert constructor cannot acquire an
+       embedded Prolog engine.  Saturation conservatively falls through, and
+       adapter forms plus standard functions retain their explicit route. */
+    if (!adapter_form && standard_arity_count == 0u &&
+        !petta_libpl_import_admission_maybe_contains(
+            runtime, head)) {
+        cetta_runtime_stats_inc(
+            CETTA_RUNTIME_COUNTER_PETTA_LIBPL_ADMISSION_NEGATIVE);
+        return true;
+    }
+
+    /* A foreign call observes the current logical substitution.  Materialize
+     * bound inputs once at the boundary while retaining genuinely free
+     * variables as output slots for the Prolog-to-Bindings result map. */
+    Atom *resolved_expression = bindings_apply_if_vars(
+        environment, arena, expression);
+    if (!resolved_expression)
+        return false;
+    expression = resolved_expression;
 
     bool claimed = false;
     if (!petta_libpl_enter(&claimed))
@@ -3330,18 +3363,19 @@ bool petta_libpl_call(
         g_petta_libpl_active_runtime;
     g_petta_libpl_active_runtime = runtime;
 
-    SymbolId head =
-        expression->expr.elems[0]->sym_id;
-    PeTTaForm form = petta_semantics_form(head);
     bool ok = true;
     if (form == PETTA_FORM_IMPORT_PROLOG_FUNCTION &&
         expression->expr.len == 2u) {
         *recognized = true;
         Atom *name = expression->expr.elems[1];
+        PeTTaForm imported_form =
+            name && name->kind == ATOM_SYMBOL
+            ? petta_semantics_form(name->sym_id)
+            : PETTA_FORM_NONE;
         bool native_form =
             name && name->kind == ATOM_SYMBOL &&
-            petta_semantics_form(name->sym_id) !=
-                PETTA_FORM_NONE;
+            imported_form != PETTA_FORM_NONE &&
+            imported_form != PETTA_FORM_PROCESS_METTA_STRING;
         PettaLibplImport *entry =
             name && name->kind == ATOM_SYMBOL &&
             !native_form
@@ -3389,17 +3423,13 @@ bool petta_libpl_call(
     } else {
         PettaLibplImport *entry =
             petta_libpl_find_import(runtime, head);
-        size_t standard_arities[2] = {0u, 0u};
-        size_t standard_arity_count =
-            !entry
-                ? petta_libpl_standard_function_arities(
-                      head, standard_arities)
-                : 0u;
-        if (!entry && standard_arity_count > 0u) {
+        size_t available_standard_arity_count =
+            entry ? 0u : standard_arity_count;
+        if (!entry && available_standard_arity_count > 0u) {
             size_t supplied =
                 (size_t)(expression->expr.len - 1u);
             for (size_t index = 0u;
-                 index < standard_arity_count; index++) {
+                 index < available_standard_arity_count; index++) {
                 if (standard_arities[index] != supplied)
                     continue;
                 entry = petta_libpl_register_import(
@@ -3438,7 +3468,37 @@ bool petta_libpl_call(
                 ok = petta_libpl_registered_call(
                     runtime, arena, expression,
                     expected, entry, outcomes);
-                if (ok) {
+                if (!ok) {
+                    /* An explicit import registers a PeTTa function name
+                     * before SWI necessarily has a predicate for it.  A
+                     * successful call may autoload and thereby establish
+                     * the arity; an undefined name instead remains an
+                     * uninterpreted partial application, as in reference
+                     * PeTTa.  Errors from a predicate that does exist remain
+                     * genuine foreign-boundary failures. */
+                    bool exists = false;
+                    if (petta_libpl_predicate_exists(
+                            runtime, entry->name, entry->name_len,
+                            function_arity + 1u, &exists) &&
+                        !exists) {
+                        Atom *partial =
+                            petta_semantics_partial_value(
+                                arena,
+                                expression->expr.elems[0],
+                                expression->expr.elems + 1u,
+                                expression->expr.len - 1u);
+                        Bindings empty;
+                        bindings_init(&empty);
+                        CettaCount prior_len = outcomes->len;
+                        if (partial) {
+                            outcome_set_add(
+                                outcomes, partial, &empty);
+                        }
+                        ok = partial &&
+                            outcomes->len == prior_len + 1u;
+                    }
+                }
+                if (ok && *recognized) {
                     ok = petta_libpl_import_add_arity(
                         entry, function_arity);
                 }

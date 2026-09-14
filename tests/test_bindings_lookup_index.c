@@ -1,7 +1,9 @@
 #include "atom.h"
 #include "match.h"
+#include "stats.h"
 #include "term_universe.h"
 #include "variant_shape.h"
+#include "tests/test_runtime_stats_stubs.h"
 
 #include <math.h>
 #include <stdbool.h>
@@ -48,6 +50,110 @@ static bool binding_is_int(Bindings *bindings, VarId id, int64_t expected) {
     return value && value->kind == ATOM_GROUNDED &&
            value->ground.gkind == GV_INT &&
            value->ground.ival == expected;
+}
+
+static bool dense_frame_matches_suffix_scan(
+        const BindingsDenseEpochFrame *frame, const Bindings *bindings) {
+    for (uint32_t slot = 0u; slot < frame->len; slot++) {
+        Atom *expected = NULL;
+        VarId id = var_epoch_id(frame->source_ids[slot], frame->epoch);
+        for (uint32_t entry = frame->first_entry; entry < bindings->len; entry++)
+            if (bindings->entries[entry].var_id == id)
+                expected = bindings->entries[entry].val;
+        bool present = frame->slot_stamps[slot] == frame->slot_generation;
+        if (present != (expected != NULL) ||
+            (present && frame->values[slot] != expected))
+            return false;
+    }
+    return frame->scanned_len == bindings->len;
+}
+
+static void test_dense_frame_indexed_suffix(Arena *arena) {
+    VarId ids[] = {UINT64_C(80001), UINT64_C(80003), UINT64_C(80008)};
+    Atom *variables[] = {
+        atom_var_with_id(arena, "frame-prefix", ids[0]),
+        atom_var_with_id(arena, "frame-present", ids[1]),
+        atom_var_with_id(arena, "frame-missing", ids[2])
+    };
+    const uint32_t epoch = 113u;
+    Bindings base;
+    bool ready = build_bindings(arena, 256u, &base);
+    BindingsBuilder builder;
+    ready = ready && bindings_builder_init(&builder, &base);
+    if (!ready) { CHECK(false, "indexed frame fixture allocation"); return; }
+    bindings_free(&base);
+    ready = bindings_builder_add_id_fresh(&builder, var_epoch_id(ids[0], epoch),
+        SYMBOL_ID_NONE, atom_int(arena, 11));
+    uint32_t begin = builder.current.len;
+    ready = ready && bindings_builder_add_id_fresh(&builder, var_epoch_id(ids[1], epoch),
+        SYMBOL_ID_NONE, atom_int(arena, 22));
+    for (uint32_t i = 0u; i < 256u && ready; i++)
+        ready = bindings_builder_add_id_fresh(&builder, test_id(300u + i),
+            SYMBOL_ID_NONE, atom_int(arena, i));
+    ready = ready && bindings_builder_add_id_fresh(&builder, var_epoch_id(ids[1], epoch + 1u),
+        SYMBOL_ID_NONE, atom_int(arena, 99));
+
+    BindingsDenseEpochFrame frame;
+    bindings_dense_epoch_frame_init(&frame);
+    bool prepared = ready && bindings_dense_epoch_frame_prepare(
+        &frame, &builder, ids, variables, 3u, epoch, begin);
+    CHECK(prepared && dense_frame_matches_suffix_scan(&frame, &builder.current) &&
+          frame.slot_stamps[0] != frame.slot_generation &&
+          frame.slot_stamps[1] == frame.slot_generation &&
+          frame.slot_stamps[2] != frame.slot_generation,
+          "indexed frame excludes prefix and other epochs, retaining missing slots");
+
+    bindings_lookup_index_test_clear(&builder.current);
+    prepared = bindings_dense_epoch_frame_prepare(
+        &frame, &builder, ids, variables, 3u, epoch, begin);
+    CHECK(prepared && dense_frame_matches_suffix_scan(&frame, &builder.current),
+          "frame construction without a retained index equals the suffix scan");
+
+    uint32_t mark = bindings_builder_save(&builder);
+    for (uint32_t i = 0u; i < 128u && ready; i++)
+        ready = bindings_builder_add_id_fresh(&builder, test_id(700u + i),
+            SYMBOL_ID_NONE, atom_int(arena, i));
+    ready = ready && bindings_builder_add_id_fresh(&builder, var_epoch_id(ids[2], epoch),
+        SYMBOL_ID_NONE, atom_int(arena, 33));
+    CHECK(ready && bindings_dense_epoch_frame_refresh(&frame, &builder) &&
+          dense_frame_matches_suffix_scan(&frame, &builder.current) &&
+          frame.slot_stamps[2] == frame.slot_generation,
+          "frame refresh observes the pending index suffix without losing prior slots");
+    bindings_builder_rollback(&builder, mark);
+    CHECK(!bindings_dense_epoch_frame_refresh(&frame, &builder) &&
+          bindings_dense_epoch_frame_prepare(&frame, &builder, ids, variables, 3u, epoch, begin) &&
+          dense_frame_matches_suffix_scan(&frame, &builder.current) &&
+          frame.slot_stamps[2] != frame.slot_generation,
+          "rollback rejects stale frames and rebuilding removes rolled-back values");
+
+    frame.slot_generation = UINT32_MAX;
+    CHECK(bindings_dense_epoch_frame_prepare(&frame, &builder, ids, variables, 3u, epoch, begin) &&
+          dense_frame_matches_suffix_scan(&frame, &builder.current) &&
+          frame.slot_stamps[2] != frame.slot_generation,
+          "generation wrap preserves absence instead of reviving stale slots");
+    CHECK(bindings_dense_epoch_frame_prepare(&frame, &builder, NULL, NULL, 0u, epoch, 0u) &&
+          frame.len == 0u && frame.scanned_len == builder.current.len,
+          "empty variable inventory observes no bindings");
+    bindings_dense_epoch_frame_free(&frame);
+    bindings_builder_free(&builder);
+
+    /* The raw binding ABI permits duplicate keys. Its derived index and the
+     * forward frame scan must both retain the newest occurrence. */
+    ready = build_bindings(arena, 256u, &base);
+    if (!ready) { CHECK(false, "duplicate frame fixture allocation"); return; }
+    base.entries[0].var_id = var_epoch_id(ids[1], epoch);
+    base.entries[255].var_id = var_epoch_id(ids[1], epoch);
+    bindings_lookup_index_test_clear(&base);
+    ready = bindings_builder_init(&builder, &base);
+    bindings_free(&base);
+    bindings_dense_epoch_frame_init(&frame);
+    prepared = ready && bindings_dense_epoch_frame_prepare(
+        &frame, &builder, ids, variables, 3u, epoch, 128u);
+    CHECK(prepared && dense_frame_matches_suffix_scan(&frame, &builder.current) &&
+          frame.values[1] == builder.current.entries[255].val,
+          "indexed frame retains the last duplicate occurrence within the suffix");
+    bindings_dense_epoch_frame_free(&frame);
+    bindings_builder_free(&builder);
 }
 
 static void test_term_stability_summary(Arena *arena) {
@@ -103,12 +209,94 @@ static void test_term_stability_summary(Arena *arena) {
           "term stability composes and unstable children poison parents");
 }
 
+static void test_internal_tag_structural_summary(Arena *arena) {
+    Atom *plain = atom_expr3(
+        arena, atom_symbol(arena, "PlainStructure"),
+        atom_int(arena, 3), atom_symbol(arena, "leaf"));
+    Atom *tag = atom_internal_tag(
+        arena, CETTA_INTERNAL_TAG_PETTA_OPEN_CONS);
+    Atom *tagged = atom_expr2(
+        arena, atom_symbol(arena, "TaggedStructure"), tag);
+    CHECK(plain && !atom_structural_may_have_internal_tag(plain),
+          "constructor facts prove an ordinary expression has no internal tag");
+    CHECK(tagged && atom_structural_may_have_internal_tag(tagged),
+          "constructor facts propagate an internal tag through expressions");
+
+    Atom unknown = plain ? *plain : (Atom){0};
+    unknown.structural_facts = 0u;
+    CHECK(atom_structural_may_have_internal_tag(&unknown),
+          "missing structural facts conservatively retain the exact walk");
+}
+
+static Atom *published_decision_int(Arena *arena, int64_t value) {
+    Atom *local = atom_int(arena, value);
+    return arena && arena->hashcons
+        ? hashcons_get(arena->hashcons, local) : local;
+}
+
+static Atom *published_decision_geometry(
+        Arena *arena, unsigned geometry, bool mismatch) {
+    Atom *value = atom_symbol(
+        arena, mismatch ? "published-other" : "published-leaf");
+    if (!value)
+        return NULL;
+    switch (geometry) {
+    case 0u:
+        for (unsigned depth = 0u; depth < 8u; depth++)
+            value = atom_expr2(
+                arena, atom_symbol(arena, "PublishedUnary"), value);
+        return value;
+    case 1u: {
+        Atom *left_branch = atom_expr3(
+            arena, atom_symbol(arena, "PublishedBranch"),
+            published_decision_int(arena, 1), value);
+        Atom *right_branch = atom_expr3(
+            arena, atom_symbol(arena, "PublishedBranch"),
+            published_decision_int(arena, 2),
+            atom_symbol(arena, "published-anchor"));
+        return atom_expr3(
+            arena, atom_symbol(arena, "PublishedBalanced"),
+            left_branch, right_branch);
+    }
+    case 2u:
+        for (unsigned depth = 0u; depth < 6u; depth++)
+            value = atom_expr3(
+                arena, atom_symbol(arena, "PublishedLeftSpine"),
+                value, published_decision_int(arena, (int64_t)depth));
+        return value;
+    case 3u:
+        for (unsigned depth = 0u; depth < 6u; depth++)
+            value = atom_expr3(
+                arena, atom_symbol(arena, "PublishedRightSpine"),
+                published_decision_int(arena, (int64_t)depth), value);
+        return value;
+    case 4u:
+        for (unsigned depth = 0u; depth < 5u; depth++) {
+            Atom *items[4] = {
+                atom_symbol(arena, "PublishedTernary"),
+                published_decision_int(arena, (int64_t)depth),
+                value,
+                atom_symbol(arena, (depth & 1u) ? "odd" : "even"),
+            };
+            value = atom_expr(arena, items, 4u);
+        }
+        return value;
+    default:
+        return NULL;
+    }
+}
+
 static void test_epoch_identity_and_publication(Arena *ordinary_arena) {
     HashConsTable hashcons;
     hashcons_init(&hashcons);
     Arena shared_arena;
     arena_init(&shared_arena);
     arena_set_hashcons(&shared_arena, &hashcons);
+    HashConsTable peer_hashcons;
+    hashcons_init(&peer_hashcons);
+    Arena peer_arena;
+    arena_init(&peer_arena);
+    arena_set_hashcons(&peer_arena, &peer_hashcons);
 
     Atom *head = atom_symbol(&shared_arena, "IdentityProbe");
     Atom *nan_left = hashcons_get(
@@ -161,10 +349,103 @@ static void test_epoch_identity_and_publication(Arena *ordinary_arena) {
     stale_hash->expr.elems[1] = global_int_43;
     CHECK(hashcons_get(&hashcons, stale_hash) == stale_hash,
           "hash-cons publication rejects a stale structural hash");
+    Atom *stale_structural_facts = atom_expr2(
+        ordinary_arena, head, global_int_41);
+    if (stale_structural_facts) {
+        stale_structural_facts->structural_facts |=
+            ATOM_STRUCTURAL_HAS_INTERNAL_TAG;
+    }
+    CHECK(stale_structural_facts &&
+              hashcons_get(&hashcons, stale_structural_facts) ==
+                  stale_structural_facts,
+          "hash-cons publication rejects stale structural facts");
     BindingsBuilder values;
     bool values_ready = bindings_builder_init(&values, NULL);
     uint32_t values_mark = values_ready
         ? bindings_builder_save(&values) : 0u;
+    test_runtime_stats_reset_counters();
+    bool published_decisions_exact = values_ready;
+    unsigned published_geometries_completed = 0u;
+    for (unsigned geometry = 0u;
+         geometry < 5u && published_decisions_exact; geometry++) {
+        Atom *left = published_decision_geometry(
+            &shared_arena, geometry, false);
+        Atom *equal = published_decision_geometry(
+            &peer_arena, geometry, false);
+        Atom *unequal = published_decision_geometry(
+            &peer_arena, geometry, true);
+        bool nodes_certified = left && equal && unequal &&
+            left != equal && left->arena_id == 0u &&
+            equal->arena_id == 0u && unequal->arena_id == 0u;
+        bool equal_match = nodes_certified &&
+            match_atoms_epoch_view_builder(
+                left, 3u, 0u, equal, &values, &shared_arena, 5u) &&
+            bindings_builder_save(&values) == values_mark;
+        bool unequal_rejected = equal_match &&
+            !match_atoms_epoch_view_builder(
+                left, 3u, 0u, unequal, &values, &shared_arena, 5u) &&
+            bindings_builder_save(&values) == values_mark;
+        published_decisions_exact = unequal_rejected;
+        if (!published_decisions_exact) {
+            fprintf(stderr,
+                    "published geometry %u failed: certified=%u equal=%u unequal-rejected=%u arenas=%u/%u/%u\n",
+                    geometry, nodes_certified ? 1u : 0u,
+                    equal_match ? 1u : 0u, unequal_rejected ? 1u : 0u,
+                    left ? left->arena_id : UINT32_MAX,
+                    equal ? equal->arena_id : UINT32_MAX,
+                    unequal ? unequal->arena_id : UINT32_MAX);
+            if (left && left->kind == ATOM_EXPR) {
+                for (CettaExprIndex index = 0u;
+                     index < left->expr.len; index++) {
+                    Atom *child = left->expr.elems[index];
+                    fprintf(stderr,
+                            "  left child %llu: arena=%u flags=0x%x kind=%d\n",
+                            (unsigned long long)index,
+                            child ? child->arena_id : UINT32_MAX,
+                            child ? child->flags : 0u,
+                            child ? (int)child->kind : -1);
+                    if (child && child->kind == ATOM_EXPR) {
+                        for (CettaExprIndex nested = 0u;
+                             nested < child->expr.len; nested++) {
+                            Atom *grandchild = child->expr.elems[nested];
+                            fprintf(stderr,
+                                    "    grandchild %llu: arena=%u flags=0x%x kind=%d\n",
+                                    (unsigned long long)nested,
+                                    grandchild ? grandchild->arena_id : UINT32_MAX,
+                                    grandchild ? grandchild->flags : 0u,
+                                    grandchild ? (int)grandchild->kind : -1);
+                        }
+                    }
+                }
+            }
+        }
+        if (published_decisions_exact)
+            published_geometries_completed++;
+    }
+    uint64_t published_attempts = test_runtime_stats_counter(
+        CETTA_RUNTIME_COUNTER_MATCH_CLOSED_EXPRESSION_DECISION_ATTEMPT);
+    uint64_t published_equal = test_runtime_stats_counter(
+        CETTA_RUNTIME_COUNTER_MATCH_CLOSED_EXPRESSION_DECISION_EQUAL);
+    uint64_t published_unequal = test_runtime_stats_counter(
+        CETTA_RUNTIME_COUNTER_MATCH_CLOSED_EXPRESSION_DECISION_UNEQUAL);
+    if (!published_decisions_exact ||
+        published_attempts != published_equal + published_unequal ||
+        published_equal == 0u || published_unequal == 0u) {
+        fprintf(stderr,
+                "published decision receipt: geometries=%u attempts=%llu equal=%llu unequal=%llu\n",
+                published_geometries_completed,
+                (unsigned long long)published_attempts,
+                (unsigned long long)published_equal,
+                (unsigned long long)published_unequal);
+    }
+    /* The five explicit equal/unequal checks above establish the observable
+       result.  Receipts are diagnostic: every recorded decision must have one
+       outcome, and this mixed workload must exercise both outcome classes,
+       without prescribing an implementation's internal visit count. */
+    CHECK(published_decisions_exact &&
+              published_attempts == published_equal + published_unequal &&
+              published_equal > 0u && published_unequal > 0u,
+          "published immutable DAGs preserve closed-expression decisions and receipt partitioning");
     bool shared_nan_matches = values_ready && shared_nan &&
         shared_nan->arena_id == 0u &&
         (shared_nan->flags & ATOM_FLAG_HASHCONS_ELIGIBLE) != 0u &&
@@ -228,6 +509,8 @@ static void test_epoch_identity_and_publication(Arena *ordinary_arena) {
 
     arena_free(&shared_arena);
     hashcons_free(&hashcons);
+    arena_free(&peer_arena);
+    hashcons_free(&peer_hashcons);
 }
 
 static void test_incremental_occurs_large_frontier(Arena *arena) {
@@ -275,6 +558,37 @@ static void test_incremental_occurs_large_frontier(Arena *arena) {
         bindings_builder_free(&builder);
 }
 
+static void test_single_variable_support_summary(Arena *arena) {
+    Atom *head = atom_symbol(arena, "SupportSummary");
+    Atom *left = atom_var_with_id(
+        arena, "support-left", test_id(8700u));
+    Atom *right = atom_var_with_id(
+        arena, "support-right", test_id(8701u));
+    Atom *singleton = atom_expr3(
+        arena, head, left,
+        atom_expr3(arena, head, left, left));
+    Atom *multiple = atom_expr3(arena, head, left, right);
+    Atom *closed = atom_expr2(arena, head, atom_int(arena, 87));
+    CHECK(singleton && atom_has_vars(singleton) &&
+              atom_single_variable_id(singleton) == left->var_id,
+          "nested repeated support records its exact single variable");
+    CHECK(multiple && atom_has_vars(multiple) &&
+              atom_single_variable_id(multiple) == VAR_ID_NONE,
+          "multi-variable support declines the singleton fast path");
+    CHECK(closed && !atom_has_vars(closed) &&
+              atom_single_variable_id(closed) == VAR_ID_NONE,
+          "closed support remains distinct from an open multi-variable term");
+
+    Atom *draft = atom_expr_builder_begin(arena, 2u);
+    if (draft) {
+        draft->expr.elems[0] = head;
+        draft->expr.elems[1] = left;
+        draft = atom_expr_builder_finish(arena, draft);
+    }
+    CHECK(draft && atom_single_variable_id(draft) == left->var_id,
+          "expression builders derive the same singleton support summary");
+}
+
 typedef struct {
     VarId variable;
     uint32_t offset;
@@ -300,6 +614,224 @@ static bool test_epoch_zero_coordinate(
     return true;
 }
 
+static void test_arena_symbol_cache_is_bounded(void) {
+    Arena arena;
+    arena_init(&arena);
+    arena_set_hashcons(&arena, NULL);
+    arena_set_runtime_kind(&arena, CETTA_ARENA_RUNTIME_KIND_EVAL);
+
+    SymbolId first_id = symbol_intern_cstr(
+        g_symbols, "arena-symbol-cache-first");
+    Atom *first = atom_symbol_id(&arena, first_id);
+    size_t cache_bytes = arena.symbol_cache_bytes;
+    Atom *first_again = atom_symbol_id(&arena, first_id);
+    CHECK(first && first_again == first && cache_bytes > 0u,
+          "arena symbol cache reuses an immediate exact symbol lookup");
+
+    bool exact_after_churn = true;
+    for (uint32_t i = 0u; i < 256u; i++) {
+        char name[64];
+        int written = snprintf(
+            name, sizeof(name), "arena-symbol-cache-churn-%u", i);
+        SymbolId id = written > 0 && (size_t)written < sizeof(name)
+            ? symbol_intern_cstr(g_symbols, name) : SYMBOL_ID_NONE;
+        Atom *atom = id != SYMBOL_ID_NONE
+            ? atom_symbol_id(&arena, id) : NULL;
+        if (!atom || atom->kind != ATOM_SYMBOL || atom->sym_id != id) {
+            exact_after_churn = false;
+            break;
+        }
+    }
+    Atom *first_after_churn = atom_symbol_id(&arena, first_id);
+    CHECK(exact_after_churn && first_after_churn &&
+              first_after_churn->kind == ATOM_SYMBOL &&
+              first_after_churn->sym_id == first_id &&
+              arena.symbol_cache_bytes == cache_bytes,
+          "arena symbol cache remains bounded and collisions are exact misses");
+
+    arena_free(&arena);
+}
+
+typedef struct {
+    Arena *destination;
+} LogicalTransportTestContext;
+
+static Atom *logical_transport_test_atom(void *raw_context, Atom *source) {
+    LogicalTransportTestContext *context = raw_context;
+    return context && context->destination && source
+        ? atom_deep_copy(context->destination, source)
+        : NULL;
+}
+
+static void test_logical_binding_transport(void) {
+    Arena source_arena;
+    Arena destination_arena;
+    arena_init(&source_arena);
+    arena_init(&destination_arena);
+
+    VarId first_id = test_id(7000u);
+    VarId constraint_left_id = test_id(7001u);
+    VarId constraint_right_id = test_id(7002u);
+    Atom *value = atom_expr2(
+        &source_arena, atom_symbol(&source_arena, "transported"),
+        atom_int(&source_arena, 41));
+    Atom *constraint_left = atom_expr2(
+        &source_arena, atom_symbol(&source_arena, "left"),
+        atom_var_with_id(&source_arena, "transport-left",
+                         constraint_left_id));
+    Atom *constraint_right = atom_expr2(
+        &source_arena, atom_symbol(&source_arena, "right"),
+        atom_var_with_id(&source_arena, "transport-right",
+                         constraint_right_id));
+
+    Bindings source;
+    bindings_init(&source);
+    bool source_ready =
+        bindings_add_id(&source, first_id, SYMBOL_ID_NONE, value) &&
+        bindings_add_constraint(
+            &source, constraint_left, constraint_right);
+    LogicalTransportTestContext context = {
+        .destination = &destination_arena,
+    };
+    Bindings transported;
+    bool transported_ready = source_ready &&
+        bindings_transport_logical(
+            &transported, &source, logical_transport_test_atom, &context);
+    CHECK(transported_ready && transported.len == source.len &&
+              transported.eq_len == source.eq_len &&
+              transported.entries[0].var_id == first_id &&
+              transported.entries[0].val != source.entries[0].val &&
+              arena_owns_ptr(
+                  &destination_arena, transported.entries[0].val) &&
+              arena_owns_ptr(
+                  &destination_arena, transported.constraints[0].lhs) &&
+              arena_owns_ptr(
+                  &destination_arena, transported.constraints[0].rhs) &&
+              atom_eq(transported.entries[0].val,
+                      source.entries[0].val) &&
+              atom_eq(transported.constraints[0].lhs,
+                      source.constraints[0].lhs) &&
+              atom_eq(transported.constraints[0].rhs,
+                      source.constraints[0].rhs),
+          "logical transport preserves ordered bindings and constraints in a new owner");
+
+    Bindings prime_source;
+    Bindings refused;
+    bindings_init(&prime_source);
+    bindings_init(&refused);
+    bool prime_ready = bindings_refresh_occurrence_token(&prime_source);
+    CHECK(prime_ready &&
+              !bindings_transport_logical(
+                  &refused, &prime_source,
+                  logical_transport_test_atom, &context) &&
+              refused.len == 0u && refused.eq_len == 0u,
+          "logical transport refuses orthogonal Prime occurrence state");
+
+    bindings_free(&refused);
+    bindings_free(&prime_source);
+    if (transported_ready)
+        bindings_free(&transported);
+    bindings_free(&source);
+    arena_free(&destination_arena);
+    arena_free(&source_arena);
+}
+
+static bool ground_test_loop_oracle(Bindings *bindings) {
+    uint8_t saved = bindings->cycle_state;
+    bindings->cycle_state = 0u; /* Unknown: force the full-graph oracle. */
+    bool result = bindings_has_loop(bindings);
+    bindings->cycle_state = saved;
+    return result;
+}
+
+static void test_closed_component_cache(void) {
+    HashConsTable hc;
+    hashcons_init(&hc);
+    Arena arena;
+    arena_init(&arena);
+    arena_set_hashcons(&arena, &hc);
+    Atom *node = atom_symbol(&arena, "ClosedComponent");
+    Atom *leaf = atom_symbol(&arena, "closed-leaf");
+    Atom *x = atom_var_with_id(&arena, "closed-x", test_id(9100));
+    Atom *y = atom_var_with_id(&arena, "closed-y", test_id(9101));
+    Atom *p = atom_var_with_id(&arena, "closed-p", test_id(9102));
+    Atom *q = atom_var_with_id(&arena, "closed-q", test_id(9103));
+    Atom *z = atom_var_with_id(&arena, "closed-z", test_id(9104));
+    Atom *open = atom_expr3(&arena, node, x, y);
+    BindingsBuilder parent;
+    bool ready = bindings_builder_init(&parent, NULL);
+    for (uint32_t i=0; ready && i<128; i++)
+        ready = bindings_builder_add_id_fresh(&parent, test_id(9200+i), SYMBOL_ID_NONE,
+            atom_var_with_id(&arena, "unbound-pad", test_id(9600+i)));
+    ready = ready && bindings_builder_add_var_fresh(&parent, p, open);
+    ready = ready && bindings_builder_add_var_fresh(&parent, z, leaf) &&
+        bindings_builder_add_id_fresh(&parent, test_id(9105), SYMBOL_ID_NONE,
+            atom_expr3(&arena, node, p, z));
+    CHECK(ready && (open->flags & ATOM_FLAG_HASH_STABLE) &&
+          !bindings_has_loop(&parent.current) && !ground_test_loop_oracle(&parent.current),
+          "open multi-support component remains acyclic without assuming it is closed");
+    if (!ready) { bindings_builder_free(&parent); arena_free(&arena); hashcons_free(&hc); return; }
+    uint32_t mark = bindings_builder_save(&parent);
+    BindingsBuilder sibling;
+    bool sibling_ready = bindings_builder_init(&sibling, &parent.current);
+    ready = bindings_builder_add_var_fresh(&parent, x, leaf) &&
+            bindings_builder_add_var_fresh(&parent, y, leaf) &&
+            bindings_builder_add_var_fresh(&parent, q, atom_expr3(&arena, node, p, x));
+    CHECK(ready && !bindings_has_loop(&parent.current) && !ground_test_loop_oracle(&parent.current),
+          "closed branching component agrees with the independent full graph traversal");
+    bool repeated = ready;
+    for (uint32_t i=0; repeated && i<64; i++)
+        repeated = bindings_builder_add_id_fresh(&parent, test_id(9900+i), SYMBOL_ID_NONE,
+            atom_expr3(&arena, node, p, y));
+    CHECK(repeated && !bindings_has_loop(&parent.current) && !ground_test_loop_oracle(&parent.current),
+          "repeated references to a closed component preserve acyclicity");
+    bool sibling_cycle = sibling_ready && bindings_builder_add_var_fresh(&sibling, x, p);
+    CHECK(sibling_cycle && bindings_has_loop(&sibling.current) && ground_test_loop_oracle(&sibling.current) &&
+          !bindings_has_loop(&parent.current),
+          "closedness established in one branch cannot erase a sibling's open cycle");
+    bindings_builder_rollback(&parent, mark);
+    CHECK(!bindings_has_loop(&parent.current) && !ground_test_loop_oracle(&parent.current),
+          "rollback restores the original open acyclic component");
+    bool after_rollback = bindings_builder_add_var_fresh(&parent, x, p);
+    CHECK(after_rollback && bindings_has_loop(&parent.current) && ground_test_loop_oracle(&parent.current),
+          "rollback invalidates closedness before the old open frontier closes a cycle");
+    if (sibling_ready) bindings_builder_free(&sibling);
+    bindings_builder_free(&parent);
+
+    Arena scratch;
+    arena_init(&scratch);
+    Atom *mutable = atom_expr_builder_begin(&scratch, 3u);
+    mutable->expr.elems[0] = node;
+    mutable->expr.elems[1] = x;
+    mutable->expr.elems[2] = y;
+    mutable = atom_expr_builder_finish(&scratch, mutable);
+    /* This raw ABI specimen deliberately withholds the immutability fact. */
+    mutable->flags &= ~ATOM_FLAG_HASH_STABLE;
+    ready = bindings_builder_init(&parent, NULL);
+    for (uint32_t i=0; ready && i<128; i++)
+        ready = bindings_builder_add_id_fresh(&parent, test_id(9200+i), SYMBOL_ID_NONE,
+            atom_var_with_id(&arena, "unbound-pad", test_id(9600+i)));
+    ready = ready && bindings_builder_add_var_fresh(&parent, x, leaf) &&
+        bindings_builder_add_var_fresh(&parent, y, leaf) &&
+        bindings_builder_add_var_fresh(&parent, p, mutable) &&
+        bindings_builder_add_id_fresh(&parent, test_id(9106), SYMBOL_ID_NONE,
+            atom_expr3(&arena, node, p, x));
+    CHECK(ready && !(mutable->flags & ATOM_FLAG_HASH_STABLE) &&
+          !bindings_has_loop(&parent.current) && !ground_test_loop_oracle(&parent.current),
+          "multi-support data without a stability fact retains exact traversal");
+    mutable->expr.elems[2] = q;
+    mutable = atom_expr_builder_finish(&scratch, mutable);
+    mutable->flags &= ~ATOM_FLAG_HASH_STABLE;
+    bool changed_cycle = ready && mutable &&
+        bindings_builder_add_var_fresh(&parent, q, atom_expr3(&arena, node, p, x));
+    CHECK(changed_cycle && bindings_has_loop(&parent.current) && ground_test_loop_oracle(&parent.current),
+          "changed uncertified component is traversed before accepting a new edge");
+    bindings_builder_free(&parent);
+    arena_free(&scratch);
+    arena_free(&arena);
+    hashcons_free(&hc);
+}
+
 int main(void) {
     SymbolTable symbols;
     symbol_table_init(&symbols);
@@ -314,8 +846,14 @@ int main(void) {
     arena_init(&arena);
 
     test_term_stability_summary(&arena);
+    test_dense_frame_indexed_suffix(&arena);
+    test_closed_component_cache();
+    test_internal_tag_structural_summary(&arena);
     test_epoch_identity_and_publication(&arena);
+    test_single_variable_support_summary(&arena);
     test_incremental_occurs_large_frontier(&arena);
+    test_arena_symbol_cache_is_bounded();
+    test_logical_binding_transport();
     const char *lookup_index_setting =
         getenv("CETTA_BINDINGS_LOOKUP_INDEX");
     bool lookup_index_expected =
@@ -530,6 +1068,103 @@ int main(void) {
               inner_rolled_back && root_rolled_back,
           "write and restore revisions distinguish rollback ABA exactly");
     bindings_builder_take(&branch, &clone);
+
+    BindingsBuilder coalesced;
+    bool coalesced_ready = bindings_builder_init(&coalesced, NULL);
+    uint32_t coalesced_root = coalesced_ready
+        ? bindings_builder_save(&coalesced) : 0u;
+    bool coalesced_entered = coalesced_ready &&
+        bindings_builder_begin_unobserved_write_region(&coalesced);
+    VarId coalesced_a = test_id(2100u);
+    VarId coalesced_b = test_id(2101u);
+    VarId coalesced_c = test_id(2102u);
+    VarId coalesced_d = test_id(2103u);
+    VarId coalesced_e = test_id(2104u);
+    VarId coalesced_f = test_id(2105u);
+    bool coalesced_first_segment = coalesced_entered &&
+        bindings_builder_add_id_fresh(
+            &coalesced, coalesced_a, SYMBOL_ID_NONE,
+            atom_int(&arena, 2100)) &&
+        bindings_builder_add_id_fresh(
+            &coalesced, coalesced_b, SYMBOL_ID_NONE,
+            atom_int(&arena, 2101)) &&
+        bindings_builder_add_id_fresh(
+            &coalesced, coalesced_c, SYMBOL_ID_NONE,
+            atom_int(&arena, 2102)) &&
+        coalesced.trail_len == coalesced_root + 1u &&
+        binding_is_int(&coalesced.current, coalesced_a, 2100) &&
+        binding_is_int(&coalesced.current, coalesced_b, 2101) &&
+        binding_is_int(&coalesced.current, coalesced_c, 2102);
+    CHECK(coalesced_first_segment,
+          "one unobserved checkpoint covers three exact binding writes");
+    CHECK(!bindings_builder_begin_unobserved_write_region(&coalesced),
+          "unobserved checkpoint regions reject ambiguous nesting");
+
+    uint32_t coalesced_middle = bindings_builder_save(&coalesced);
+    bool coalesced_second_segment =
+        bindings_builder_add_id_fresh(
+            &coalesced, coalesced_d, SYMBOL_ID_NONE,
+            atom_int(&arena, 2103)) &&
+        bindings_builder_add_id_fresh(
+            &coalesced, coalesced_e, SYMBOL_ID_NONE,
+            atom_int(&arena, 2104)) &&
+        coalesced.trail_len == coalesced_middle + 1u;
+    CHECK(coalesced_second_segment,
+          "an observed save starts one distinct checkpoint segment");
+    bindings_builder_rollback(&coalesced, coalesced_middle);
+    CHECK(binding_is_int(&coalesced.current, coalesced_a, 2100) &&
+              binding_is_int(&coalesced.current, coalesced_b, 2101) &&
+              binding_is_int(&coalesced.current, coalesced_c, 2102) &&
+              bindings_lookup_id(&coalesced.current, coalesced_d) == NULL &&
+              bindings_lookup_id(&coalesced.current, coalesced_e) == NULL,
+          "observed middle rollback preserves only the earlier segment");
+    CHECK(bindings_builder_add_id_fresh(
+              &coalesced, coalesced_f, SYMBOL_ID_NONE,
+              atom_int(&arena, 2105)) &&
+              coalesced.trail_len == coalesced_middle + 1u,
+          "a post-rollback write opens a fresh exact segment");
+
+    BindingsBuilder coalesced_clone;
+    bool coalesced_clone_ready =
+        bindings_builder_clone(&coalesced_clone, &coalesced);
+    CHECK(coalesced_clone_ready &&
+              !coalesced_clone.unobserved_write_region_active &&
+              !coalesced_clone.unobserved_write_region_has_checkpoint &&
+              coalesced_clone.unobserved_write_region_entry_mark == 0u &&
+              binding_is_int(
+                  &coalesced_clone.current, coalesced_f, 2105),
+          "a fork publishes the current meaning outside the private region");
+    if (coalesced_clone_ready)
+        bindings_builder_free(&coalesced_clone);
+
+    bindings_builder_end_unobserved_write_region(&coalesced, true);
+    bindings_builder_rollback(&coalesced, coalesced_root);
+    CHECK(coalesced.trail_len == coalesced_root &&
+              bindings_lookup_id(&coalesced.current, coalesced_a) == NULL &&
+              bindings_lookup_id(&coalesced.current, coalesced_b) == NULL &&
+              bindings_lookup_id(&coalesced.current, coalesced_c) == NULL &&
+              bindings_lookup_id(&coalesced.current, coalesced_f) == NULL,
+          "the entrance checkpoint restores the complete region exactly");
+    bool rejected_region = coalesced_ready &&
+        bindings_builder_begin_unobserved_write_region(&coalesced);
+    bool rejected_region_writes = rejected_region &&
+        bindings_builder_add_id_fresh(
+            &coalesced, coalesced_a, SYMBOL_ID_NONE,
+            atom_int(&arena, 2110)) &&
+        bindings_builder_add_id_fresh(
+            &coalesced, coalesced_b, SYMBOL_ID_NONE,
+            atom_int(&arena, 2111));
+    if (rejected_region)
+        bindings_builder_end_unobserved_write_region(&coalesced, false);
+    CHECK(rejected_region_writes &&
+              !coalesced.unobserved_write_region_active &&
+              coalesced.unobserved_write_region_entry_mark == 0u &&
+              coalesced.trail_len == coalesced_root &&
+              bindings_lookup_id(&coalesced.current, coalesced_a) == NULL &&
+              bindings_lookup_id(&coalesced.current, coalesced_b) == NULL,
+          "a rejected unobserved region restores its captured entrance before exit");
+    if (coalesced_ready)
+        bindings_builder_free(&coalesced);
 
 #ifdef CETTA_TEST_HOOKS
     Bindings lazy_index_base;
@@ -1935,6 +2570,44 @@ int main(void) {
     CHECK(view_compiled_bytes < view_reference_bytes,
           "activation-view matching removes complete parser/rule term materialization");
 
+    /* A relational-pattern UNIFY consumes an ordinary live right operand,
+     * not another freshly standardized rule.  Its direct activation view is
+     * exactly materialize-left-then-match, including current variable ids. */
+    BindingsBuilder view_current_reference;
+    BindingsBuilder view_current_compiled;
+    bool view_current_reference_ready = bindings_builder_init(
+        &view_current_reference, &view_base);
+    bool view_current_compiled_ready = bindings_builder_init(
+        &view_current_compiled, &view_base);
+    Arena view_current_reference_arena;
+    Arena view_current_compiled_arena;
+    arena_init(&view_current_reference_arena);
+    arena_init(&view_current_compiled_arena);
+    Atom *view_current_materialized =
+        view_current_reference_ready
+        ? bindings_apply_epoch_then_all(
+              &view_current_reference.current,
+              &view_current_reference_arena,
+              view_left, 37u, view_first_entry)
+        : NULL;
+    bool view_current_reference_match =
+        view_current_materialized &&
+        match_atoms_builder(
+            view_current_materialized, view_right,
+            &view_current_reference);
+    bool view_current_compiled_match =
+        view_current_compiled_ready &&
+        match_atoms_epoch_view_builder_current(
+            view_left, 37u, view_first_entry, view_right,
+            &view_current_compiled,
+            &view_current_compiled_arena);
+    CHECK(view_current_reference_match &&
+              view_current_compiled_match &&
+              bindings_eq(
+                  &view_current_reference.current,
+                  &view_current_compiled.current),
+          "activation view against a live term equals materialize-then-match");
+
     BindingsBuilder view_open_reference;
     BindingsBuilder view_open_compiled;
     Bindings view_open_base;
@@ -2081,6 +2754,58 @@ int main(void) {
               view_fail_reference.current.len == 0u,
           "open activation mismatch rejects and transactionally restores both paths");
 
+    BindingsBuilder view_current_fail_reference;
+    BindingsBuilder view_current_fail_compiled;
+    bool view_current_fail_reference_ready = bindings_builder_init(
+        &view_current_fail_reference, NULL);
+    bool view_current_fail_compiled_ready = bindings_builder_init(
+        &view_current_fail_compiled, NULL);
+    Arena view_current_fail_reference_arena;
+    Arena view_current_fail_compiled_arena;
+    arena_init(&view_current_fail_reference_arena);
+    arena_init(&view_current_fail_compiled_arena);
+    uint32_t view_current_fail_reference_mark =
+        view_current_fail_reference_ready
+        ? bindings_builder_save(&view_current_fail_reference) : 0u;
+    uint32_t view_current_fail_compiled_mark =
+        view_current_fail_compiled_ready
+        ? bindings_builder_save(&view_current_fail_compiled) : 0u;
+    Atom *view_current_fail_materialized =
+        view_current_fail_reference_ready
+        ? bindings_apply_epoch_then_all(
+              &view_current_fail_reference.current,
+              &view_current_fail_reference_arena,
+              view_fail_left, 61u, 0u)
+        : NULL;
+    bool view_current_fail_reference_match =
+        view_current_fail_materialized &&
+        match_atoms_builder(
+            view_current_fail_materialized, view_fail_right,
+            &view_current_fail_reference);
+    bool view_current_fail_compiled_match =
+        view_current_fail_compiled_ready &&
+        match_atoms_epoch_view_builder_current(
+            view_fail_left, 61u, 0u, view_fail_right,
+            &view_current_fail_compiled,
+            &view_current_fail_compiled_arena);
+    if (view_current_fail_reference_ready)
+        bindings_builder_rollback(
+            &view_current_fail_reference,
+            view_current_fail_reference_mark);
+    if (view_current_fail_compiled_ready)
+        bindings_builder_rollback(
+            &view_current_fail_compiled,
+            view_current_fail_compiled_mark);
+    CHECK(!view_current_fail_reference_match &&
+              !view_current_fail_compiled_match &&
+              view_current_fail_reference_ready &&
+              view_current_fail_compiled_ready &&
+              bindings_eq(
+                  &view_current_fail_reference.current,
+                  &view_current_fail_compiled.current) &&
+              view_current_fail_reference.current.len == 0u,
+          "live-term activation mismatch agrees and rolls back exactly");
+
     /* A successful bidirectional walk may expose a cyclic substitution.  The
      * production branch rejects that result before publication, then rolls
      * back.  Exercise the same boundary on the direct and materialized paths. */
@@ -2147,6 +2872,12 @@ int main(void) {
         bindings_builder_free(&view_cycle_compiled);
     if (view_cycle_reference_ready)
         bindings_builder_free(&view_cycle_reference);
+    arena_free(&view_current_fail_compiled_arena);
+    arena_free(&view_current_fail_reference_arena);
+    if (view_current_fail_compiled_ready)
+        bindings_builder_free(&view_current_fail_compiled);
+    if (view_current_fail_reference_ready)
+        bindings_builder_free(&view_current_fail_reference);
     arena_free(&view_fail_compiled_arena);
     arena_free(&view_fail_reference_arena);
     if (view_fail_compiled_ready)
@@ -2167,6 +2898,12 @@ int main(void) {
     if (view_open_reference_ready)
         bindings_builder_free(&view_open_reference);
     bindings_free(&view_open_base);
+    arena_free(&view_current_compiled_arena);
+    arena_free(&view_current_reference_arena);
+    if (view_current_compiled_ready)
+        bindings_builder_free(&view_current_compiled);
+    if (view_current_reference_ready)
+        bindings_builder_free(&view_current_reference);
     arena_free(&view_compiled_arena);
     arena_free(&view_reference_arena);
     if (view_compiled_ready)
@@ -2431,6 +3168,109 @@ int main(void) {
               bindings_has_loop(&indexed_memo_cycle),
           "indexed substitution memo preserves long-cycle termination");
     bindings_free(&indexed_memo_cycle);
+
+    Atom *reach_rollback_predecessor = atom_var(
+        &arena, "single-reach-rollback-predecessor");
+    Atom *reach_rollback_terminal = atom_var(
+        &arena, "single-reach-rollback-terminal");
+    BindingsBuilder reach_rollback;
+    bool reach_rollback_initialized =
+        bindings_builder_init(&reach_rollback, NULL);
+    bool reach_rollback_ready = reach_rollback_initialized;
+    for (uint32_t i = 0u; reach_rollback_ready && i < 23u; i++) {
+        reach_rollback_ready = bindings_builder_add_var_fresh(
+            &reach_rollback, memo_vars[i], memo_vars[i + 1u]);
+    }
+    reach_rollback_ready = reach_rollback_ready &&
+        bindings_builder_add_var_fresh(
+            &reach_rollback, reach_rollback_predecessor,
+            reach_rollback_terminal);
+    uint32_t reach_rollback_mark =
+        bindings_builder_save(&reach_rollback);
+    bool first_suffix_acyclic = reach_rollback_ready &&
+        bindings_builder_add_var_fresh(
+            &reach_rollback, memo_vars[23u], acyclic_leaf) &&
+        bindings_builder_add_var_fresh(
+            &reach_rollback, reach_rollback_terminal,
+            memo_vars[0u]) &&
+        !bindings_has_loop(&reach_rollback.current);
+    size_t reach_cache_support = 0u;
+    size_t reach_cache_capacity = 0u;
+    bool reach_cache_support_recorded = !lookup_index_expected ||
+        (bindings_lookup_index_test_single_cache_support(
+             &reach_rollback.current, &reach_cache_support,
+             &reach_cache_capacity) &&
+         reach_cache_support > 0u &&
+         reach_cache_support < reach_cache_capacity);
+    bindings_builder_rollback(
+        &reach_rollback, reach_rollback_mark);
+    bool reach_cache_support_cleared = !lookup_index_expected ||
+        (bindings_lookup_index_test_single_cache_support(
+             &reach_rollback.current, &reach_cache_support,
+             &reach_cache_capacity) &&
+         reach_cache_support == 0u);
+    bool replacement_suffix_cyclic = first_suffix_acyclic &&
+        bindings_builder_add_var_fresh(
+            &reach_rollback, memo_vars[23u],
+            reach_rollback_terminal) &&
+        bindings_builder_add_var_fresh(
+            &reach_rollback, reach_rollback_terminal,
+            memo_vars[0u]) &&
+        bindings_has_loop(&reach_rollback.current);
+    CHECK(reach_cache_support_recorded &&
+              reach_cache_support_cleared &&
+              replacement_suffix_cyclic,
+          "rollback invalidates exactly recorded single-support roots before suffix reuse");
+    if (reach_rollback_initialized)
+        bindings_builder_free(&reach_rollback);
+
+    Atom *shared_reach_vars[18];
+    Bindings shared_reach_base;
+    bindings_init(&shared_reach_base);
+    bool shared_reach_ready = true;
+    for (uint32_t i = 0u; i < 18u; i++) {
+        char name[40];
+        snprintf(name, sizeof(name), "shared-reach-%u", i);
+        shared_reach_vars[i] = atom_var(&arena, name);
+        shared_reach_ready = shared_reach_ready &&
+            shared_reach_vars[i] != NULL;
+    }
+    for (uint32_t i = 0u; shared_reach_ready && i + 1u < 18u; i++) {
+        shared_reach_ready = bindings_add_var(
+            &shared_reach_base,
+            shared_reach_vars[i], shared_reach_vars[i + 1u]);
+    }
+    shared_reach_ready = shared_reach_ready &&
+        bindings_lookup_id(
+            &shared_reach_base, shared_reach_vars[0]->var_id) != NULL;
+    Bindings shared_reach_cycle;
+    Bindings shared_reach_safe;
+    bindings_init(&shared_reach_cycle);
+    bindings_init(&shared_reach_safe);
+    bool shared_cycle_ready = shared_reach_ready &&
+        bindings_clone(&shared_reach_cycle, &shared_reach_base);
+    bool shared_safe_ready = shared_reach_ready &&
+        bindings_clone(&shared_reach_safe, &shared_reach_base);
+    shared_cycle_ready = shared_cycle_ready &&
+        bindings_add_var(
+            &shared_reach_cycle,
+            shared_reach_vars[17u], shared_reach_vars[0u]);
+    Atom *shared_reach_outside = atom_var(
+        &arena, "shared-reach-outside");
+    shared_safe_ready = shared_safe_ready && shared_reach_outside &&
+        bindings_add_var(
+            &shared_reach_safe,
+            shared_reach_vars[17u], shared_reach_outside);
+    CHECK(shared_cycle_ready &&
+              bindings_has_loop(&shared_reach_cycle),
+          "a read-only shared reachability index still detects a closing cycle");
+    CHECK(shared_safe_ready &&
+              !bindings_has_loop(&shared_reach_safe) &&
+              !bindings_has_loop(&shared_reach_base),
+          "a read-only shared reachability index preserves acyclic siblings");
+    bindings_free(&shared_reach_cycle);
+    bindings_free(&shared_reach_safe);
+    bindings_free(&shared_reach_base);
 
     BindingsBuilder cycle_branch;
     CHECK(bindings_builder_init(&cycle_branch, &cycle),

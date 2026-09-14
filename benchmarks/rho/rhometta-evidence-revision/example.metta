@@ -12,7 +12,7 @@
 ; it belongs on a probabilistic judgment, unlike the crisp proof terms in the
 ; other rho demos (a typing/derivation is true or it is not).
 ;
-; Run:  ./cetta --quiet --profile he-extended --lang he <this file>
+; Run:  ./cetta --quiet --profile extended --lang he <this file>
 
 !(import! &self rhometta)
 !(import! &self lib_pln)

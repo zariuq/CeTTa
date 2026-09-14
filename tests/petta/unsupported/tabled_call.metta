@@ -1,3 +1,5 @@
+!(import! &self (library lib_tabling))
+
 !(tabled (fib $n))
 
 (= (fib $n)

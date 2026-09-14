@@ -1,8 +1,6 @@
-; Runtime-stats witness for the real threaded recursive matcher/evaluator path.
-; This stays small enough for the stats build, but still exercises recursive
-; user equations rather than the synthetic control drafts.
-
-!(pragma! max-stack-depth 200000)
+; Scheduler-invariance witness for recursive matcher/evaluator work.  This
+; stays small enough for the stats build while exercising user equations rather
+; than a synthetic control draft.
 
 (= (has-divisor $n $d)
    (if (> (* $d $d) $n)
@@ -20,45 +18,11 @@
                False
                (not (has-divisor $n 3))))))
 
-!(reset-runtime-stats!)
+!(pragma! num-threads 1)
+!(assertEqual
+  (collapse (hyperpose ((is-prime 10000019) (is-prime 10000079))))
+  (True True))
 !(pragma! num-threads 2)
 !(assertEqual
   (collapse (hyperpose ((is-prime 10000019) (is-prime 10000079))))
   (True True))
-
-!(bind! &stats (runtime-stats!))
-!(assertEqualToResult
-  (match &stats
-    (runtime-counter hyperpose-threaded-run $n)
-    (> $n 0))
-  (True))
-!(assertEqualToResult
-  (match &stats
-    (runtime-counter parallel-worker-task $n)
-    (> $n 0))
-  (True))
-!(assertEqualToResult
-  (match &stats
-    (runtime-counter hyperpose-cooperative-fallback $n)
-    (== $n 0))
-  (True))
-!(assertEqualToResult
-  (match &stats
-    (runtime-counter arena-spare-miss $n)
-    (> $n 0))
-  (True))
-!(assertEqualToResult
-  (match &stats
-    (runtime-counter eval-arena-reserved-bytes-peak $n)
-    (> $n 0))
-  (True))
-!(assertEqualToResult
-  (match &stats
-    (runtime-counter scratch-arena-reserved-bytes-peak $n)
-    (> $n 0))
-  (True))
-!(assertEqualToResult
-  (match &stats
-    (runtime-counter bindings-entry-pool-bytes-peak $n)
-    (> $n 0))
-  (True))

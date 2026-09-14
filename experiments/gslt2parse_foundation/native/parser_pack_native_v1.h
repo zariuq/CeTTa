@@ -13,7 +13,10 @@ typedef enum {
     PPNATIVE_V1_UNSUPPORTED_OPEN_PACK = 1,
     PPNATIVE_V1_RECOGNIZER_LIMIT = 2,
     PPNATIVE_V1_REPLAY_DEPTH = 3,
-    PPNATIVE_V1_RESULT_LIMIT = 4
+    PPNATIVE_V1_RESULT_LIMIT = 4,
+    /* A root-reachable symbol dependency is cyclic. Recognition and the
+       packed forest remain valid; finite semantic replay is not supplied. */
+    PPNATIVE_V1_CYCLIC_FOREST = 5
 } PPNativeV1Outcome;
 
 typedef struct {
@@ -196,6 +199,20 @@ bool ppnative_v1_finish_extended(
     const PPNativeV1ForestExtension *extension,
     uint32_t replay_depth,
     uint32_t result_limit,
+    char *error_buf,
+    size_t error_buf_size);
+
+/*
+ * Materialize the backend-neutral canonical `pf-v1` term for an already
+ * completed result.  Ordinary parsing retains only a digest above its small
+ * hot-path threshold; evidence consumers may opt into a larger explicit
+ * bound.  Failure leaves `canonical_forest_materialized` false.
+ */
+bool ppnative_v1_materialize_canonical_forest(
+    PPNativeV1Result *result,
+    const PPABIV1Pack *pack,
+    const Atom *start_state,
+    uint32_t item_limit,
     char *error_buf,
     size_t error_buf_size);
 

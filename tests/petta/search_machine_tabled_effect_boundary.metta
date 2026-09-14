@@ -1,4 +1,4 @@
-!(bind! &effects (new-space))
+!(import! &self (library lib_tabling))
 
 !(tabled (changing $x))
 (= (changing one) pure)

@@ -100,7 +100,7 @@ def run_backend(
     command = [
         str(binary),
         "--profile",
-        "he-extended",
+        "extended",
         "--lang",
         "he",
         "--space-engine",

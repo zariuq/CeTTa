@@ -35,6 +35,33 @@ def digest(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
+def portable_output(text: str) -> str:
+    """Remove workstation-specific prefixes from recorded differential evidence."""
+    replacements = {
+        str(ROOT): "<repo>",
+        str(Path.home()): "<home>",
+    }
+    for prefix, replacement in sorted(
+        replacements.items(), key=lambda item: len(item[0]), reverse=True
+    ):
+        text = text.replace(prefix, replacement)
+    return text
+
+
+def portable_path(path: Path) -> str:
+    try:
+        return str(path.resolve().relative_to(ROOT))
+    except ValueError:
+        return path.name
+
+
+def executable_label(executable: str) -> str:
+    if executable == "conda-hyperon":
+        return executable
+    path = Path(executable)
+    return path.name if path.is_absolute() else executable
+
+
 def output_head(text: str, limit: int = 500) -> str:
     return text[:limit]
 
@@ -146,7 +173,7 @@ def run_case(cmd: list[str], timeout_seconds: int) -> dict[str, Any]:
             capture_output=True,
             timeout=timeout_seconds,
         )
-        output = proc.stdout + proc.stderr
+        output = portable_output(proc.stdout + proc.stderr)
         return {
             "returncode": proc.returncode,
             "sha256": digest(output),
@@ -156,7 +183,7 @@ def run_case(cmd: list[str], timeout_seconds: int) -> dict[str, Any]:
             "timed_out": False,
         }
     except subprocess.TimeoutExpired as exc:
-        output = (exc.stdout or "") + (exc.stderr or "")
+        output = portable_output((exc.stdout or "") + (exc.stderr or ""))
         return {
             "returncode": None,
             "sha256": digest(output),
@@ -290,9 +317,9 @@ def main() -> int:
         "schema_version": 1,
         "kind": "he-compat-runnable-corpus-probe",
         "subject": "CeTTa --profile he-compat --lang he",
-        "upstream": args.upstream,
+        "upstream": executable_label(args.upstream),
         "selection": {
-            "manifest": str(args.manifest),
+            "manifest": portable_path(args.manifest),
             "lanes": args.lanes,
             "builds": args.builds,
             "space_engines": args.space_engines,

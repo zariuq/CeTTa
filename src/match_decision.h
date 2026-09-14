@@ -39,6 +39,23 @@ typedef enum {
     CETTA_MATCH_DECISION_PATTERN_STRUCTURAL = 1,
 } CettaMatchDecisionPatternClass;
 
+/* Physical realization choices used only for differential qualification.
+ * The zero value is the optimized realization.  These fields cannot change
+ * candidate meaning: the ordinary matcher remains semantic authority over
+ * every survivor.  A compiled decision retains its realization, so selection
+ * never consults ambient process state. */
+typedef struct {
+    bool use_direct_prefix_observation;
+    bool use_eager_prefix_observation;
+    bool use_direct_equality_observation;
+} CettaMatchDecisionRealization;
+
+/* Read the process-level qualification controls once, at an explicit artifact
+ * construction boundary.  Tests and embedded clients should normally pass a
+ * literal realization instead. */
+CettaMatchDecisionRealization
+cetta_match_decision_realization_from_process(void);
+
 typedef struct {
     Atom *pattern;
     uint32_t source_ref;
@@ -82,11 +99,26 @@ typedef struct {
     uint64_t key_index_build_probes;
     uint64_t key_index_select_probes;
     uint64_t generic_key_policy_scans;
+    uint64_t equality_checks;
+    uint64_t equality_refutations;
+    uint64_t equality_observation_reads;
+    uint64_t equality_observation_fallbacks;
+    uint64_t equality_observation_direct_edges;
+    uint64_t equality_observation_graph_edges;
+    uint64_t prefix_observation_build_attempts;
+    uint64_t prefix_observation_build_commits;
+    uint64_t prefix_observation_build_declines;
+    uint64_t prefix_observation_runs;
+    uint64_t prefix_observation_node_visits;
+    uint64_t prefix_observation_absorbed_suffixes;
+    uint64_t prefix_observation_skipped_edges;
+    uint64_t prefix_observation_direct_edges;
+    uint64_t prefix_observation_trie_edges;
 } CettaMatchDecisionStats;
 
-/* Compile an ordered clause family.  `max_depth` counts expression edges;
- * zero requests the implementation default.  Pattern pointers remain owned
- * by the pinned Space revision. */
+/* Compile an ordered clause family against a complete Space read.  `max_depth`
+ * counts expression edges; zero requests the implementation default.  Pattern
+ * pointers remain owned by the pinned Space revision. */
 CettaMatchDecision *cetta_match_decision_compile(
     SpaceReadToken read,
     CettaMatchDecisionSemanticIdentity semantic_identity,
@@ -94,6 +126,24 @@ CettaMatchDecision *cetta_match_decision_compile(
     size_t clause_count,
     CettaMatchDecisionMode mode,
     uint32_t max_depth,
+    CettaMatchDecisionRealization realization,
+    CettaMatchDecisionClassifyPatternFn classify,
+    void *classify_context);
+
+/* Compile an ordered clause family whose complete construction depends only
+ * on the Space's ordered equation projection and the supplied semantic
+ * identity.  This is narrower than `cetta_match_decision_compile`: callers
+ * must not use it for a selector that reads ordinary data atoms.  It remains
+ * current across data-only mutations and is rejected by every equation or
+ * opaque mutation. */
+CettaMatchDecision *cetta_match_decision_compile_equation_projection(
+    SpaceEquationToken equations,
+    CettaMatchDecisionSemanticIdentity semantic_identity,
+    const CettaMatchDecisionClause *clauses,
+    size_t clause_count,
+    CettaMatchDecisionMode mode,
+    uint32_t max_depth,
+    CettaMatchDecisionRealization realization,
     CettaMatchDecisionClassifyPatternFn classify,
     void *classify_context);
 

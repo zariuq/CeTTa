@@ -1,0 +1,10 @@
+!(collapse (gslt:entry:IntegerLiteralPairV1:0))
+!(collapse (gslt:entry:IntegerLiteralUseV1:0))
+!(collapse (gslt:entry:IntegerLiteralGapV1:0))
+!(collapse (gslt:entry:IntegerLiteralAbsentV1:0))
+!(collapse (gslt:entry:IntegerLiteralDuplicateV1:0))
+!(collapse (gslt:entry:IntegerLiteralFloatV1:0))
+!(collapse (let $kept RetainedV1
+  (let $answer (gslt:entry:IntegerLiteralUseV1:0)
+    (BindingReceiptV1 $kept $answer))))
+!(collapse (gslt:entry:IntegerVariableCallV1:10 0))

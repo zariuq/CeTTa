@@ -1,0 +1,17 @@
+true
+(bnf-v1:text-nil)
+(bnf-v1:text-cons 115 (bnf-v1:text-nil))
+"λ雪😀"
+(bnf-v1:text-cons 34 (bnf-v1:text-cons 92 (bnf-v1:text-nil)))
+PlainBnfStringTypeRefusedV1
+PlainBnfPublicUnicodeParserAcceptedV1
+PlainBnfPublicUnknownStartRefusedV1
+PlainBnfPublicFileParserAcceptedV1
+PlainBnfPublicLexicalOverrideAcceptedV1
+PlainBnfPublicAmbiguityRetainedV1
+PlainBnfPublicSourceRejectionRetainedV1
+PlainBnfPublicStartTypeRefusedV1
+PlainBnfNulStringConversionRefusedV1
+PlainBnfSurrogateStringConversionRefusedV1
+PlainBnfPublicInputRejectionRetainedV1
+PlainBnfPublicForestLimitRetainedV1

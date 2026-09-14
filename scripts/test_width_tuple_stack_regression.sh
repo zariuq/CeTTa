@@ -37,7 +37,7 @@ trap cleanup EXIT
   printf '))]\n'
 } > "$expected"
 
-if ! "$cetta" --quiet --profile he-extended --lang he "$input" >"$stdout" 2>"$stderr"; then
+if ! "$cetta" --quiet --profile extended --lang he "$input" >"$stdout" 2>"$stderr"; then
   echo "FAIL: width-tuple stack regression exited non-zero" >&2
   cat "$stderr" >&2
   exit 1

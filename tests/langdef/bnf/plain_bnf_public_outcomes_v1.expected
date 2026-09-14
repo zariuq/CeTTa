@@ -1,0 +1,10 @@
+true
+(BNF:ReadAmbiguous binding source (first-cst second-cst first-cst))
+(BNF:ReadRejected source-syntax 7 ("::=" "<"))
+(BNF:ReadRejected grammar-input invalid-start "invalid start shape")
+(BNF:ReadIncomplete binding source descriptor-limit pending)
+(BNF:ReadFault source-parser "cannot read source")
+(BNF:ParserNotLoaded (BNF:DenotationFault (Error primitive "cannot construct result")))
+PlainBnfPublicSyntaxRejectionPreservedV1
+PlainBnfPublicSemanticRefusalPreservedV1
+PlainBnfPublicDenotationFaultPreservedV1

@@ -27,3 +27,13 @@
 !(test
     (once (hyperpose (same same same)))
     same)
+
+; Ordinary occurrence observation is not a collapse/once wrapper.  It is the
+; same hyperpose operation with a different observer and therefore exercises
+; the threaded occurrence-publication path directly.
+!(hyperpose ((+ 1 1) (+ 2 2) (+ 3 3)))
+
+; Naming the operation through an equation must not hide it from the semantic
+; scheduler authority.
+(= (named-hyperpose) (hyperpose ((+ 5 5) (+ 6 6))))
+!(named-hyperpose)

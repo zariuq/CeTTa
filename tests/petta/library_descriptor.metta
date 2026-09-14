@@ -1,2 +1,2 @@
-!(import! &self (library lib_descriptor_probe))
-!(descriptor-probe)
+!(import! &self (library lib_he))
+!(if-equal descriptor descriptor equal unequal)

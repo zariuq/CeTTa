@@ -39,6 +39,14 @@ typedef enum {
     CETTA_RELATIVE_MODULE_POLICY_WORKING_DIR_ONLY = 2,
 } CettaRelativeModulePolicy;
 
+/* A language may expose this evaluator contract without donating any of its
+ * builtins, effects, observations, or data representation to the common
+ * relational machine.  Admission still requires a per-root structural proof. */
+typedef enum {
+    CETTA_PORTABLE_RELATIONAL_NONE = 0,
+    CETTA_PORTABLE_RELATIONAL_EAGER_STRUCTURAL_EQUATIONS_V1,
+} CettaPortableRelationalContract;
+
 typedef struct {
     CettaLanguageId id;
     const char *name;
@@ -46,6 +54,7 @@ typedef struct {
     bool implemented;
     const char *note;
     CettaRelativeModulePolicy relative_module_policy;
+    CettaPortableRelationalContract portable_relational_contract;
 } CettaLanguageSpec;
 
 const CettaLanguageSpec *cetta_language_lookup(const char *name);
@@ -61,6 +70,8 @@ const char *cetta_relative_module_policy_name(CettaRelativeModulePolicy policy);
 bool cetta_relative_module_policy_from_name(const char *name,
                                             CettaRelativeModulePolicy *out_policy);
 CettaRelativeModulePolicy cetta_language_relative_module_policy(CettaLanguageId id);
+CettaPortableRelationalContract
+cetta_language_portable_relational_contract(CettaLanguageId id);
 void cetta_language_print_inventory(FILE *out);
 
 #endif /* CETTA_LANG_H */

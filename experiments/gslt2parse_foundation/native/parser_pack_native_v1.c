@@ -78,7 +78,8 @@ typedef enum {
     PPNATIVE_V1_REPLAY_OK = 0,
     PPNATIVE_V1_REPLAY_DEPTH_HIT = 1,
     PPNATIVE_V1_REPLAY_RESULT_HIT = 2,
-    PPNATIVE_V1_REPLAY_MALFORMED = 3
+    PPNATIVE_V1_REPLAY_MALFORMED = 3,
+    PPNATIVE_V1_REPLAY_CYCLE = 4
 } PPNativeV1ReplayStatus;
 
 typedef struct {
@@ -1316,6 +1317,7 @@ static bool ppnative_v1_forest_canonicalize(
     const PPABIV1Pack *pack,
     const Atom *start_state,
     const PPNativeV1ForestExtension *extension,
+    uint32_t materialize_limit,
     char *error_buf,
     size_t error_buf_size) {
     const CettaLpNativeUtf8Forest *forest = &result->forest;
@@ -1393,9 +1395,9 @@ static bool ppnative_v1_forest_canonicalize(
             result->forest_digest)) {
         goto done;
     }
-    if (forest->root_len <= PPNATIVE_V1_CANONICAL_LIST_MATERIALIZE_LIMIT &&
-        forest->node_len <= PPNATIVE_V1_CANONICAL_LIST_MATERIALIZE_LIMIT &&
-        forest->choice_len <= PPNATIVE_V1_CANONICAL_LIST_MATERIALIZE_LIMIT) {
+    if (forest->root_len <= materialize_limit &&
+        forest->node_len <= materialize_limit &&
+        forest->choice_len <= materialize_limit) {
         Atom *root_list = ppnative_v1_canonical_entries_list(
             &canonical_arena, root_entries, forest->root_len);
         Atom *node_list = ppnative_v1_canonical_entries_list(
@@ -2058,7 +2060,12 @@ static bool ppnative_v1_eval_sequence_ready(
             context, production->action, values, sequence->len, 0u);
         bool advanced = false;
         uint32_t position;
-        value = ppnative_v1_materialize_cst_span(context, parent, value);
+        /* A slot action is a transparent projection: its value already owns
+           the child production's source span.  Re-materializing that child as
+           though it were constructed by the parent would duplicate the span
+           fields of CstRuleV1 and SourceSpanNodeV1 values. */
+        if (!ppnative_v1_expr_head(production->action, "pa-slot", 1u))
+            value = ppnative_v1_materialize_cst_span(context, parent, value);
         if (!value || !ppnative_v1_canonical_atomvec_push_unique(
                 out, value, context->result_limit, &context->status)) {
             goto done;
@@ -2187,7 +2194,7 @@ static bool ppnative_v1_eval_symbol(PPNativeV1ReplayContext *context,
                 continue;
             }
             if (dependency_memo->visiting) {
-                context->status = PPNATIVE_V1_REPLAY_DEPTH_HIT;
+                context->status = PPNATIVE_V1_REPLAY_CYCLE;
                 goto done;
             }
             if (!ppnative_v1_replay_stack_push(
@@ -2331,6 +2338,13 @@ static bool ppnative_v1_replay(PPNativeV1Result *result,
     goto done;
 
 resource_or_malformed:
+    if (context.status == PPNATIVE_V1_REPLAY_CYCLE) {
+        result->outcome = PPNATIVE_V1_CYCLIC_FOREST;
+        (void)snprintf(result->detail, sizeof(result->detail),
+                       "root-reachable cyclic forest; finite semantic replay unavailable");
+        ok = true;
+        goto done;
+    }
     if (context.status == PPNATIVE_V1_REPLAY_DEPTH_HIT) {
         result->outcome = PPNATIVE_V1_REPLAY_DEPTH;
         (void)snprintf(result->detail, sizeof(result->detail),
@@ -2863,6 +2877,7 @@ bool ppnative_v1_finish_extended(
     }
     return ppnative_v1_forest_canonicalize(
                result, pack, start_state, extension,
+               PPNATIVE_V1_CANONICAL_LIST_MATERIALIZE_LIMIT,
                error_buf, error_buf_size) &&
         ppnative_v1_replay(
                result, pack, extension, replay_depth, result_limit,
@@ -2879,4 +2894,36 @@ bool ppnative_v1_finish(PPNativeV1Result *result,
     return ppnative_v1_finish_extended(
         result, pack, start_state, NULL, replay_depth, result_limit,
         error_buf, error_buf_size);
+}
+
+bool ppnative_v1_materialize_canonical_forest(
+    PPNativeV1Result *result,
+    const PPABIV1Pack *pack,
+    const Atom *start_state,
+    uint32_t item_limit,
+    char *error_buf,
+    size_t error_buf_size) {
+    if (error_buf && error_buf_size > 0u)
+        error_buf[0] = '\0';
+    if (!result || !pack || !start_state || item_limit == 0u) {
+        ppnative_v1_set_error(
+            error_buf, error_buf_size,
+            "bad canonical forest materialization arguments");
+        return false;
+    }
+    if (result->forest.root_len > item_limit ||
+        result->forest.node_len > item_limit ||
+        result->forest.choice_len > item_limit) {
+        ppnative_v1_set_error(
+            error_buf, error_buf_size,
+            "canonical forest exceeds the requested materialization bound");
+        return false;
+    }
+    if (result->canonical_forest_materialized)
+        return result->canonical_forest != NULL;
+    return ppnative_v1_forest_canonicalize(
+               result, pack, start_state, NULL, item_limit,
+               error_buf, error_buf_size) &&
+        result->canonical_forest_materialized &&
+        result->canonical_forest != NULL;
 }

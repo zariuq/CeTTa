@@ -2,10 +2,6 @@
 #include "nik_runtime_internal.h"
 
 #include "generated/prime_nik_authorities_v1.generated.h"
-#include "generated/prime_nik_runtime_v1.generated.h"
-#include "generated/prime_nik_side_condition_provider_catalog_v1.generated.h"
-#include "gslt_language_runtime.h"
-#include "inference_side_condition_provider.h"
 #include "native_sha256.h"
 #include "parser.h"
 #include "symbol.h"
@@ -30,22 +26,6 @@ struct CettaNikRuntimeV1 {
     size_t admission_count;
     uint64_t symbol_table_instance;
 };
-
-static const char *nik_horn_outcome_name(CettaGsltHornOutcome outcome) {
-    switch (outcome) {
-    case CETTA_GSLT_HORN_COMPLETED:
-        return "completed";
-    case CETTA_GSLT_HORN_RULE_LIMIT:
-        return "rule-limit";
-    case CETTA_GSLT_HORN_ANSWER_LIMIT:
-        return "answer-limit";
-    case CETTA_GSLT_HORN_DEPTH_LIMIT:
-        return "depth-limit";
-    case CETTA_GSLT_HORN_FAULT:
-        return "fault";
-    }
-    return "fault";
-}
 
 static bool nik_digest_is_sha256(const char *digest) {
     if (!digest || strlen(digest) != 64u)
@@ -326,87 +306,16 @@ done:
     return status;
 }
 
-static Atom *nik_authority_atom(
-    Arena *arena, const CettaNikAuthorityV1 *authority) {
-    Atom *items[5] = {
-        atom_symbol(arena, "NIKAuthorityV1"),
-        atom_symbol(arena, authority->alias),
-        atom_string(arena, authority->system_id),
-        atom_string(arena, authority->revision),
-        atom_string(arena, authority->digest),
-    };
-    return atom_expr(arena, items, 5u);
-}
-
-static Atom *nik_query_atom(
-    Arena *arena, const CettaNikAuthorityV1 *authority,
-    Atom *claim, Atom *proof) {
-    Atom *items[4] = {
-        atom_symbol(arena, "nik-check"),
-        nik_authority_atom(arena, authority),
-        claim,
-        proof,
-    };
-    return atom_expr(arena, items, 4u);
-}
-
 static bool nik_is_dag_article(Atom *proof) {
     return proof && proof->kind == ATOM_EXPR && proof->expr.len > 0u &&
         atom_is_symbol(proof->expr.elems[0], "GProofDAG");
-}
-
-static CettaGsltHornLimits nik_gslt_limits(CettaGsltHornLimits requested) {
-    if (requested.max_rule_attempts == 0u)
-        requested.max_rule_attempts = 5000000u;
-    if (requested.max_answers == 0u)
-        requested.max_answers = 1000u;
-    if (requested.max_depth == 0u)
-        requested.max_depth = 1000000u;
-    return requested;
-}
-
-static uint64_t nik_u64_add_sat(uint64_t left, uint64_t right) {
-    return UINT64_MAX - left < right ? UINT64_MAX : left + right;
 }
 
 static size_t nik_size_limit(uint64_t value) {
     return value > (uint64_t)SIZE_MAX ? SIZE_MAX : (size_t)value;
 }
 
-static void nik_cap_rule_attempts(
-    CettaGsltHornLimits *limits, uint64_t remaining) {
-    if (limits->max_rule_attempts > remaining)
-        limits->max_rule_attempts = remaining;
-}
-
-static bool nik_horn_accepts(
-    const CettaGsltHornResult *result, Atom *query) {
-    if (!result || result->outcome != CETTA_GSLT_HORN_COMPLETED ||
-        result->answer_count == 0u)
-        return false;
-    for (size_t index = 0u; index < result->answer_count; index++)
-        if (!atom_eq_fast(result->answers[index], query))
-            return false;
-    return true;
-}
-
-static bool nik_gslt_query_with_side_conditions_v1(
-    const CettaGsltLanguage *language,
-    CettaGsltRealization realization,
-    Arena *output_arena,
-    Atom *query,
-    CettaGsltHornLimits limits,
-    CettaGsltHornResult *result,
-    char *error,
-    size_t error_size) {
-    return cetta_gslt_language_query_with_providers_v1(
-        language, realization,
-        &cetta_prime_nik_side_condition_provider_catalog_v1,
-        cetta_inference_side_condition_provider_registry_v1(),
-        output_arena, query, limits, result, error, error_size);
-}
-
-static CettaNikOutcome nik_check_v1(
+CettaNikOutcome cetta_nik_runtime_v1_check_diagnostic(
     CettaNikRuntimeV1 *runtime,
     const char *authority_alias,
     Atom *claim,
@@ -416,29 +325,22 @@ static CettaNikOutcome nik_check_v1(
     CettaNikReceiptV1 *receipt,
     char *error_buf,
     size_t error_buf_size,
-    CettaNikGsltQueryV1 query_realization,
-    bool differential) {
+    char *native_error,
+    size_t native_error_size) {
     const CettaNikAuthorityV1 *authority;
     const CettaInferenceChecker *checker = NULL;
-    Atom *query;
-    CettaGsltLanguage *language = NULL;
-    CettaGsltHornResult reference = {0};
-    CettaGsltHornResult compiled = {0};
     CettaInferenceReplayStats replay_stats = {0};
     CettaInferenceReplayLimits replay_limits = limits.replay;
-    CettaGsltHornLimits base_gslt_limits;
-    CettaGsltHornLimits reference_limits;
-    CettaGsltHornLimits compiled_limits;
-    char native_error[512] = {0};
     bool total_limited = limits.max_total_work != 0u;
     uint64_t remaining = limits.max_total_work;
-    CettaNikOutcome outcome = CETTA_NIK_FAULT;
 
     if (error_buf && error_buf_size > 0u)
         error_buf[0] = '\0';
     nik_receipt_reset(receipt);
+    if (native_error && native_error_size)
+        native_error[0] = '\0';
     if (!runtime || !receipt || !arena || !claim || !proof ||
-        (differential && !query_realization))
+        !native_error || !native_error_size)
         return nik_error(receipt, CETTA_NIK_MALFORMED,
                          error_buf, error_buf_size,
                          "invalid NIK check request");
@@ -462,7 +364,7 @@ static CettaNikOutcome nik_check_v1(
                          error_buf, error_buf_size,
                          "NIK claims and proof articles must be closed");
     receipt->native_status = nik_runtime_admit_authority(
-        runtime, authority, &checker, native_error, sizeof(native_error));
+        runtime, authority, &checker, native_error, native_error_size);
     if (receipt->native_status != CETTA_INFERENCE_OK)
         return nik_error(receipt, CETTA_NIK_FAULT,
                          error_buf, error_buf_size,
@@ -477,19 +379,13 @@ static CettaNikOutcome nik_check_v1(
     receipt->native_status = nik_is_dag_article(proof)
         ? cetta_inference_checker_check_dag_article(
             checker, claim, proof, replay_limits, &replay_stats, arena,
-            native_error, sizeof(native_error))
+            native_error, native_error_size)
         : cetta_inference_checker_check_raw_proof(
             checker, claim, proof, replay_limits, &replay_stats, arena,
-            native_error, sizeof(native_error));
+            native_error, native_error_size);
     receipt->native_ran = true;
     receipt->native_nodes = replay_stats.nodes;
     receipt->total_work = replay_stats.nodes;
-    if (total_limited) {
-        if (receipt->native_nodes >= remaining)
-            remaining = 0u;
-        else
-            remaining -= receipt->native_nodes;
-    }
     if (receipt->native_status == CETTA_INFERENCE_MALFORMED_PROOF)
         return nik_error(receipt, CETTA_NIK_MALFORMED,
                          error_buf, error_buf_size, "%s",
@@ -512,181 +408,9 @@ static CettaNikOutcome nik_check_v1(
     receipt->native_accepted =
         receipt->native_status == CETTA_INFERENCE_OK;
 
-    if (!differential) {
-        outcome = receipt->native_accepted
-            ? CETTA_NIK_ACCEPTED : CETTA_NIK_REJECTED;
-        goto done;
-    }
-
-    if (total_limited && remaining == 0u)
-        return nik_error(
-            receipt, CETTA_NIK_INCOMPLETE, error_buf, error_buf_size,
-            "aggregate NIK work limit exhausted after native replay");
-
-    if (!cetta_gslt_language_load_embedded(
-            &cetta_prime_nik_runtime_v1, &language,
-            error_buf, error_buf_size))
-        goto done;
-    query = nik_query_atom(arena, authority, claim, proof);
-    base_gslt_limits = nik_gslt_limits(limits.gslt);
-    reference_limits = base_gslt_limits;
-    if (total_limited)
-        nik_cap_rule_attempts(&reference_limits, remaining);
-    if (!query_realization(
-        language, CETTA_GSLT_REALIZATION_HORN_REFERENCE,
-        arena, query, reference_limits, &reference,
-        error_buf, error_buf_size))
-        goto done;
-    receipt->reference_ran = true;
-    receipt->reference_outcome = reference.outcome;
-    receipt->reference_rule_attempts = reference.rule_attempts;
-    receipt->total_work = nik_u64_add_sat(
-        receipt->total_work, reference.rule_attempts);
-    if (total_limited) {
-        if (reference.rule_attempts >= remaining)
-            remaining = 0u;
-        else
-            remaining -= reference.rule_attempts;
-    }
-    receipt->reference_accepted = nik_horn_accepts(&reference, query);
-    if (reference.outcome != CETTA_GSLT_HORN_COMPLETED) {
-        if (error_buf && error_buf_size > 0u)
-            (void)snprintf(
-                error_buf, error_buf_size,
-                "reference NIK replay stopped at %s after %llu rule "
-                "attempts and depth %u",
-                nik_horn_outcome_name(reference.outcome),
-                (unsigned long long)reference.rule_attempts,
-                reference.max_depth_observed);
-        outcome = CETTA_NIK_INCOMPLETE;
-        goto done;
-    }
-    if (receipt->reference_rule_attempts == 0u) {
-        outcome = nik_error(
-            receipt, CETTA_NIK_FAULT, error_buf, error_buf_size,
-            "reference NIK replay reported no work");
-        goto done;
-    }
-    if (total_limited && remaining == 0u) {
-        outcome = nik_error(
-            receipt, CETTA_NIK_INCOMPLETE, error_buf, error_buf_size,
-            "aggregate NIK work limit exhausted after reference replay");
-        goto done;
-    }
-    compiled_limits = base_gslt_limits;
-    if (total_limited)
-        nik_cap_rule_attempts(&compiled_limits, remaining);
-    if (!query_realization(
-        language, CETTA_GSLT_REALIZATION_COMPILED_WORKLIST,
-        arena, query, compiled_limits, &compiled,
-        error_buf, error_buf_size))
-        goto done;
-    receipt->compiled_ran = true;
-    receipt->compiled_outcome = compiled.outcome;
-    receipt->compiled_rule_attempts = compiled.rule_attempts;
-    receipt->total_work = nik_u64_add_sat(
-        receipt->total_work, compiled.rule_attempts);
-    receipt->compiled_accepted = nik_horn_accepts(&compiled, query);
-    if (compiled.outcome != CETTA_GSLT_HORN_COMPLETED) {
-        if (error_buf && error_buf_size > 0u)
-            (void)snprintf(
-                error_buf, error_buf_size,
-                "compiled NIK replay stopped at %s after %llu rule "
-                "attempts and depth %u",
-                nik_horn_outcome_name(compiled.outcome),
-                (unsigned long long)compiled.rule_attempts,
-                compiled.max_depth_observed);
-        outcome = CETTA_NIK_INCOMPLETE;
-        goto done;
-    }
-    if (receipt->compiled_rule_attempts == 0u) {
-        outcome = nik_error(
-            receipt, CETTA_NIK_FAULT, error_buf, error_buf_size,
-            "compiled NIK replay reported no work");
-        goto done;
-    }
-    if (receipt->reference_accepted != receipt->compiled_accepted ||
-        receipt->native_accepted != receipt->reference_accepted) {
-        outcome = nik_error(
-            receipt, CETTA_NIK_FAULT, error_buf, error_buf_size,
-            "NIK realizations disagree for authority '%s' "
-            "(native=%u status=%s reference=%u compiled=%u%s%s)",
-            authority->alias,
-            receipt->native_accepted ? 1u : 0u,
-            cetta_inference_status_name(receipt->native_status),
-            receipt->reference_accepted ? 1u : 0u,
-            receipt->compiled_accepted ? 1u : 0u,
-            native_error[0] ? ": " : "",
-            native_error);
-        goto done;
-    }
-    outcome = receipt->native_accepted
+    receipt->outcome = receipt->native_accepted
         ? CETTA_NIK_ACCEPTED : CETTA_NIK_REJECTED;
-
-done:
-    cetta_gslt_horn_result_free(&compiled);
-    cetta_gslt_horn_result_free(&reference);
-    cetta_gslt_language_free(language);
-    receipt->outcome = outcome;
-    if (outcome == CETTA_NIK_FAULT &&
-        error_buf && error_buf_size > 0u && error_buf[0] == '\0')
-        (void)snprintf(error_buf, error_buf_size,
-                       "NIK runtime fault");
-    return outcome;
-}
-
-CettaNikOutcome cetta_nik_check_with_query_v1(
-    const char *authority_alias,
-    Atom *claim,
-    Atom *proof,
-    CettaNikLimits limits,
-    Arena *arena,
-    CettaNikReceiptV1 *receipt,
-    char *error_buf,
-    size_t error_buf_size,
-    CettaNikGsltQueryV1 query_realization) {
-    char runtime_error[512] = {0};
-    nik_receipt_reset(receipt);
-    CettaNikRuntimeV1 *runtime = cetta_nik_runtime_v1_new(
-        runtime_error, sizeof(runtime_error));
-    CettaNikOutcome outcome;
-    if (!runtime)
-        return nik_error(
-            receipt, CETTA_NIK_FAULT, error_buf, error_buf_size,
-            "%s", runtime_error[0] ? runtime_error :
-                "NIK runtime initialization failed");
-    outcome = nik_check_v1(
-        runtime, authority_alias, claim, proof, limits, arena, receipt,
-        error_buf, error_buf_size, query_realization, true);
-    cetta_nik_runtime_v1_free(runtime);
-    return outcome;
-}
-
-CettaNikOutcome cetta_nik_check_differential_v1(
-    const char *authority_alias,
-    Atom *claim,
-    Atom *proof,
-    CettaNikLimits limits,
-    Arena *arena,
-    CettaNikReceiptV1 *receipt,
-    char *error_buf,
-    size_t error_buf_size) {
-    char runtime_error[512] = {0};
-    nik_receipt_reset(receipt);
-    CettaNikRuntimeV1 *runtime = cetta_nik_runtime_v1_new(
-        runtime_error, sizeof(runtime_error));
-    CettaNikOutcome outcome;
-    if (!runtime)
-        return nik_error(
-            receipt, CETTA_NIK_FAULT, error_buf, error_buf_size,
-            "%s", runtime_error[0] ? runtime_error :
-                "NIK runtime initialization failed");
-    outcome = nik_check_v1(
-        runtime, authority_alias, claim, proof, limits, arena, receipt,
-        error_buf, error_buf_size,
-        nik_gslt_query_with_side_conditions_v1, true);
-    cetta_nik_runtime_v1_free(runtime);
-    return outcome;
+    return receipt->outcome;
 }
 
 CettaNikOutcome cetta_nik_runtime_v1_check(
@@ -699,9 +423,10 @@ CettaNikOutcome cetta_nik_runtime_v1_check(
     CettaNikReceiptV1 *receipt,
     char *error_buf,
     size_t error_buf_size) {
-    return nik_check_v1(
+    char native_error[512] = {0};
+    return cetta_nik_runtime_v1_check_diagnostic(
         runtime, authority_alias, claim, proof, limits, arena, receipt,
-        error_buf, error_buf_size, NULL, false);
+        error_buf, error_buf_size, native_error, sizeof(native_error));
 }
 
 CettaNikOutcome cetta_nik_check_v1(

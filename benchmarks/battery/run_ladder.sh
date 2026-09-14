@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Cross-engine battery ladder: finds the max passing size per (system, program)
-# under T seconds and 8 GB.  Systems: cetta he-extended / prime / petta, SWI-PeTTa.
+# under T seconds and 8 GB.  Systems: cetta extended / prime / petta, SWI-PeTTa.
 set -u
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 PETTA="${PETTA_ROOT:-$(cd "$ROOT/../PeTTa" 2>/dev/null && pwd)}"
@@ -29,7 +29,7 @@ run_one() { # sys prog n file
 }
 ladder() { # prog M list-of-N...
   local prog="$1" M="$2"; shift 2
-  for sys in "he --profile he-extended" prime petta swi; do
+  for sys in "he --profile extended" prime petta swi; do
     local name; case "$sys" in he*) name=cetta-he-ext;; prime) name=cetta-prime;; petta) name=cetta-petta;; swi) name=swi-petta;; esac
     for n in "$@"; do
       sed "s/@M@/$M/g; s/@N@/$n/g" "$prog.metta.in" > "$SCRATCH/x.metta"

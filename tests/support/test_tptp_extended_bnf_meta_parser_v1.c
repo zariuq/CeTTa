@@ -149,7 +149,7 @@ static bool runtime_prepare(
     }
     if (!cetta_language_def_parser_pack_v1_compile(
             &runtime->compiled, &runtime->language,
-            runtime->wire.source_sha256, &runtime->profile,
+            runtime->wire.authority_sha256, &runtime->profile,
             1000000u, &pack_status, error, error_size) ||
         pack_status != CETTA_LD_PARSER_PACK_V1_OK) {
         if (error[0] == '\0') {

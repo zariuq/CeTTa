@@ -62,7 +62,7 @@ ACT6  sequential nilbc-style oracle over the same KB agrees on plan count
 
 RUN
 ---
-  ./cetta --profile he-extended --lang he benchmarks/rho/rhometta-deployment-planner/example.metta
+  ./cetta --profile extended --lang he benchmarks/rho/rhometta-deployment-planner/example.metta
 
 EXPECTED HIGHLIGHT
 ------------------

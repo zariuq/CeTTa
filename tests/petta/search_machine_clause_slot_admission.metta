@@ -30,11 +30,6 @@
 (= (slot-duplicate $value) (duplicate $value))
 (= (slot-duplicate $value) (duplicate $value))
 
-; The first occurrence creates a cyclic substitution for a repeated caller
-; variable and must fail before the second occurrence is tried.
-(= (slot-cycle $value (wrap $value)) bad)
-(= (slot-cycle $left $right) good)
-
 !(add-atom &clause-slot-admission-space
    (stored-row 0 (shared-form $left $right)))
 
@@ -47,7 +42,7 @@
     ($_remove (remove-atom &clause-slot-admission-space
        (stored-row $score $form))))
    (clause-slot-rows-left
-      (size (collapse
+      (size-atom (collapse
          (match &clause-slot-admission-space $row $row)))))
 
 !(let* (((bound $left $right)
@@ -71,7 +66,4 @@
       (== $left $shared)))
 
 !(slot-duplicate-multiplicity
-   (size (collapse (slot-duplicate marker))))
-
-!(slot-cycle-fallback
-   (collapse (slot-cycle $shared $shared)))
+   (size-atom (collapse (slot-duplicate marker))))

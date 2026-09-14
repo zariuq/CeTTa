@@ -17,4 +17,4 @@ WHAT YOU SEE
   (have sandwich) -> one tree (a single rule):                {bread cheese}
 
 RUN
-  ./cetta --quiet --profile he-extended --lang he benchmarks/rho/rhometta-self-unfolding-prover/example.metta
+  ./cetta --quiet --profile extended --lang he benchmarks/rho/rhometta-self-unfolding-prover/example.metta

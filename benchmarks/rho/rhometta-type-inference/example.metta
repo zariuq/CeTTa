@@ -27,7 +27,7 @@
 ;  like (app pf pa pb) as inert data rather than a function call to type-check.
 ;
 ;  Runs on the core build:  make BUILD=core
-;     ./cetta --quiet --profile he-extended --lang he <this file>
+;     ./cetta --quiet --profile extended --lang he <this file>
 ; ===========================================================================
 
 !(import! &self rhometta)

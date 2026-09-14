@@ -4327,38 +4327,10 @@ static const uint8_t cetta_zero_emit_language_v1_compiled_plan_v1[] = {
 };
 
 static const CettaGsltEmbeddedSourceV1 cetta_zero_emit_language_v1_sources[] = {
-    {
-        .input = {
-            .bytes = cetta_zero_emit_language_v1_semantic_0,
-            .length = sizeof(cetta_zero_emit_language_v1_semantic_0),
-            .source = "../shared/finite_horn_quote_match_v1.metta",
-        },
-        .sha256 = "658ccb035e57ca0f38021b460fff198734f0ef739ed098229b0c14fd157bd797",
-    },
-    {
-        .input = {
-            .bytes = cetta_zero_emit_language_v1_semantic_1,
-            .length = sizeof(cetta_zero_emit_language_v1_semantic_1),
-            .source = "semantics/query_kernel_v1.metta",
-        },
-        .sha256 = "168a7538f2f29ff90cf73aeaf7ce09e712f41507796f1974b721c4d42ad7d463",
-    },
-    {
-        .input = {
-            .bytes = cetta_zero_emit_language_v1_semantic_2,
-            .length = sizeof(cetta_zero_emit_language_v1_semantic_2),
-            .source = "semantics/closed_bag_observation_v1.metta",
-        },
-        .sha256 = "a39875d112a2f66107e2c8bda4d02f8a8ae45bf20a16ce8671ebb32e5b8bfe91",
-    },
-    {
-        .input = {
-            .bytes = cetta_zero_emit_language_v1_semantic_3,
-            .length = sizeof(cetta_zero_emit_language_v1_semantic_3),
-            .source = "semantics/revisioned_emit_v1.metta",
-        },
-        .sha256 = "f027d1cc6647cc576c67dac546106b1a6982ae20750feaa11ad2bc9e21d61ec0",
-    },
+    {.input = {.bytes = cetta_zero_emit_language_v1_semantic_0, .length = sizeof(cetta_zero_emit_language_v1_semantic_0), .source = "../shared/finite_horn_quote_match_v1.metta"}, .sha256 = "658ccb035e57ca0f38021b460fff198734f0ef739ed098229b0c14fd157bd797"},
+    {.input = {.bytes = cetta_zero_emit_language_v1_semantic_1, .length = sizeof(cetta_zero_emit_language_v1_semantic_1), .source = "semantics/query_kernel_v1.metta"}, .sha256 = "168a7538f2f29ff90cf73aeaf7ce09e712f41507796f1974b721c4d42ad7d463"},
+    {.input = {.bytes = cetta_zero_emit_language_v1_semantic_2, .length = sizeof(cetta_zero_emit_language_v1_semantic_2), .source = "semantics/closed_bag_observation_v1.metta"}, .sha256 = "a39875d112a2f66107e2c8bda4d02f8a8ae45bf20a16ce8671ebb32e5b8bfe91"},
+    {.input = {.bytes = cetta_zero_emit_language_v1_semantic_3, .length = sizeof(cetta_zero_emit_language_v1_semantic_3), .source = "semantics/revisioned_emit_v1.metta"}, .sha256 = "f027d1cc6647cc576c67dac546106b1a6982ae20750feaa11ad2bc9e21d61ec0"},
 };
 
 const CettaGsltEmbeddedLanguageV1 cetta_zero_emit_language_v1 = {
@@ -4366,37 +4338,24 @@ const CettaGsltEmbeddedLanguageV1 cetta_zero_emit_language_v1 = {
     .profile_name = "emit",
     .syntax_backend = "he-reader-direct-v1",
     .term_abi = "finite-horn-quote-v1",
-    .manifest = {
-        .input = {
-            .bytes = cetta_zero_emit_language_v1_manifest_v1,
-            .length = sizeof(cetta_zero_emit_language_v1_manifest_v1),
-            .source = "zero/langdef.metta",
-        },
-        .sha256 = "f8871188c057602cd1942b1f51e9cc3b8bec7b18a6c38e80f6455fca6223a998",
-    },
+    .manifest = {.input = {.bytes = cetta_zero_emit_language_v1_manifest_v1, .length = sizeof(cetta_zero_emit_language_v1_manifest_v1), .source = "zero/langdef.metta"}, .sha256 = "f8871188c057602cd1942b1f51e9cc3b8bec7b18a6c38e80f6455fca6223a998"},
     .semantic_sources = cetta_zero_emit_language_v1_sources,
     .semantic_source_count = 4u,
-    .compiled_plan = {
-        .bytes = cetta_zero_emit_language_v1_compiled_plan_v1,
-        .length = sizeof(cetta_zero_emit_language_v1_compiled_plan_v1),
-        .sha256 = "29ad952b70cde83ea1450eec3596d45885bc9217b464dd5d7936ce7d578f3782",
-    },
+    .compiled_plan = {.bytes = cetta_zero_emit_language_v1_compiled_plan_v1, .length = sizeof(cetta_zero_emit_language_v1_compiled_plan_v1), .sha256 = "29ad952b70cde83ea1450eec3596d45885bc9217b464dd5d7936ce7d578f3782"},
     .program_nil = "zero-program-nil",
     .program_cons = "zero-program-cons",
     .entry_relation = NULL,
-    .entry_arity = 0u,
-    .program_position = 0u,
-    .result_position = 0u,
+    .entry_arity = 0u, .program_position = 0u, .result_position = 0u,
     .query_relation = NULL,
     .query_arity = 0u,
     .request_pipeline = &(const CettaGsltRequestPipelineV1){
-        .classify_relation = "zero-classify",
-        .produce_relation = "zero-produce",
-        .observe_relation = "zero-observe",
-        .produced_nil = "zero-produced-nil",
-        .produced_cons = "zero-produced-cons",
+    .classify_relation = "zero-classify",
+    .produce_relation = "zero-produce",
+    .observe_relation = "zero-observe",
+    .produced_nil = "zero-produced-nil",
+    .produced_cons = "zero-produced-cons",
     },
     .observation = "bag",
     .manifest_sha256 = "f8871188c057602cd1942b1f51e9cc3b8bec7b18a6c38e80f6455fca6223a998",
-    .compiler_sha256 = "9d33d0708d05ce00c09f33c72292ad20d2bda72e1b67491b9644990c0c7e86c5",
+    .compiler_sha256 = "c82486772be84b0aec1aaf90f3a754fca4e9c370a05f98040fbda3de16671e22",
 };

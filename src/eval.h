@@ -131,6 +131,9 @@ void eval_top_with_registry(Space *s, Arena *a, Arena *persistent, Registry *r, 
 void eval_top_with_registry_petta_plan(
     Space *s, Arena *a, Arena *persistent, Registry *r, Atom *expr,
     const struct PettaPlanNode *plan, ResultSet *rs);
+void eval_top_with_registry_petta_plan_outcome(
+    Space *s, Arena *a, Arena *persistent, Registry *r, Atom *expr,
+    const struct PettaPlanNode *plan, EvalOutcome *outcome);
 void eval_top_with_registry_outcome(
     Space *s, Arena *a, Arena *persistent, Registry *r, Atom *expr,
     EvalOutcome *outcome, CettaPrimeNeedAnswerObserver observer,

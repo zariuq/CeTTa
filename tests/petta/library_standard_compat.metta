@@ -1,0 +1,7 @@
+!(import! &self (library lib_he))
+!(import! &self (library lib_spaces))
+!(if-equal alpha alpha equal unequal)
+!(bind! &probe (new-space))
+!(add-atom &probe (row one))
+!(add-atom &probe (row two))
+!(match-count &probe (row $value))

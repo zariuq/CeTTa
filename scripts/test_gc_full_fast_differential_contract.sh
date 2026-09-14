@@ -22,7 +22,7 @@ chmod +x "$fake_bin"
 
 printf '%s\n' \
     $'path\tlang\tsyntax\tprofile\tbuild\tspace_engine\tlane\texpect\tnotes' \
-    $'tests/test_arithmetic.metta\the\tmetta\the-extended\tmain\tnative\ttest\tgolden\tcontract fixture' \
+    $'tests/test_arithmetic.metta\the\tmetta\textended\tmain\tnative\ttest\tgolden\tcontract fixture' \
     >"$manifest"
 
 common_env=(

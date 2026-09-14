@@ -24,6 +24,6 @@ WHAT YOU SEE
   but every reaction it performs is a core-rho COMM.
 
 RUN
-  ./cetta --quiet --profile he-extended --lang he benchmarks/rho/rho-reflective-server/example.metta
+  ./cetta --quiet --profile extended --lang he benchmarks/rho/rho-reflective-server/example.metta
 
 Expect: ACT1 PASS (3 served), no Error.

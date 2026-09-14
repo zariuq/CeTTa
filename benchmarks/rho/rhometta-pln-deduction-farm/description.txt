@@ -37,7 +37,7 @@ sequentially (parallel pair evaluation over the existing worker pool is the
 natural next step).
 
 Run the standalone example:
-  ./cetta --profile he-extended --lang he \
+  ./cetta --profile extended --lang he \
       benchmarks/rho/rhometta-pln-deduction-farm/example.metta
 
 Run the timing sweep (writes runtime/benchmarks/rho/rhometta-pln-deduction-farm/results.tsv):

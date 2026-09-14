@@ -28,5 +28,5 @@ naive double-counted one (~0.75/0.889), the ECAN attention round
 (AGI 36.0, Rhometta 26.4, Hyperon 15.6, ...), and the next-step plan.
 
 Run:
-  ./cetta --profile he-extended --lang he \
+  ./cetta --profile extended --lang he \
       benchmarks/rho/rhometta-agi-showcase/example.metta

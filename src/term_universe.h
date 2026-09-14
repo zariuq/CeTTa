@@ -166,6 +166,18 @@ typedef CettaAtomId AtomId;
 typedef uint64_t CettaCount;
 typedef uint64_t CettaIndex;
 
+/* A process-local capability for one stored root in one TermUniverse
+ * generation.  It does not extend the lifetime of the TermUniverse object;
+ * callers validate it against an independently live universe before use.
+ * Space revisions may change while this token remains valid because stored
+ * roots are append-only within a universe storage generation. */
+typedef struct {
+    const TermUniverse *universe;
+    uint64_t instance_id;
+    uint64_t storage_epoch;
+    AtomId root_id;
+} TermUniverseRootToken;
+
 #define CETTA_ATOM_ID_NONE UINT64_MAX
 #define CETTA_ATOM_ID_MAX ((AtomId)(UINT64_MAX - 1u))
 #define CETTA_TERM_ENTRY_BLOB_NONE UINT64_MAX
@@ -309,6 +321,13 @@ AtomId term_universe_store_atom_id_from_source_arena(
     Atom *src);
 bool term_universe_source_id_memo_enabled(void);
 AtomId term_universe_lookup_atom_id(const TermUniverse *universe, Atom *src);
+bool term_universe_root_token_capture(
+    const TermUniverse *universe, AtomId root_id,
+    TermUniverseRootToken *out);
+bool term_universe_root_token_matches_live_universe(
+    TermUniverseRootToken token, const TermUniverse *live_universe);
+Atom *term_universe_root_token_resolve(
+    TermUniverseRootToken token, const TermUniverse *live_universe);
 /* Return the write-once support summary for `id`.  A ground term succeeds
  * with `*out == NULL`.  Concurrent first demand is safe while TermUniverse
  * storage is otherwise stable; mutation of the universe remains externally

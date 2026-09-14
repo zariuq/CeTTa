@@ -2,4 +2,4 @@
 ; imported.  Once enabled, arity and argument-type failures are explicit.
 !(git-import! "not-run")
 !(import! &self (library lib_import))
-!(git-import!)
+!(git-import! "not-run" "" "./repos" "short")

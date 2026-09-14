@@ -84,6 +84,7 @@ typedef struct {
     Atom *schema;
     Atom *proof_symbol;
     Atom *code;
+    bool native_eligible;
 } RMRuleProgramRule;
 
 typedef enum {
@@ -109,7 +110,7 @@ typedef struct {
 
 typedef struct {
     int32_t depth;
-    int32_t hypotheses;
+    int64_t hypotheses;
     Atom *type;
     Atom *proof;
     uint32_t next_rule;
@@ -577,6 +578,77 @@ static bool rm_rule_program_generated_code_matches(
     return rm_is_symbol(cursor, "rule-program-nil") && *proof_symbol;
 }
 
+static Atom *rm_rule_program_take_op(Atom **cursor) {
+    if (!rm_is_expr_head(*cursor, "rule-program-cons", 3))
+        return NULL;
+    Atom *op = (*cursor)->expr.elems[1];
+    *cursor = (*cursor)->expr.elems[2];
+    return op;
+}
+
+static bool rm_rule_program_take_symbols(
+    Atom **cursor, const char *opcode, uint32_t count,
+    const char *first, const char *second, const char *third) {
+    Atom *op = rm_rule_program_take_op(cursor);
+    return rm_is_expr_head(op, opcode, count + 1) &&
+           (count < 1 || rm_is_symbol(op->expr.elems[1], first)) &&
+           (count < 2 || rm_is_symbol(op->expr.elems[2], second)) &&
+           (count < 3 || rm_is_symbol(op->expr.elems[3], third));
+}
+
+/* This is the precondition of the existing two-sequence shortcut, not an
+ * admission condition for generated programs.  Compare the actual instructions
+ * against what that shortcut implements, independently of generated arrays:
+ * a valid source change may change those arrays and must then use bytecode. */
+static bool rm_rule_program_native_eligible(const RMRuleProgramRule *rule) {
+    if (!rm_is_expr_head(rule->code, "rule-program-code", 2))
+        return false;
+    Atom *cursor = rule->code->expr.elems[1];
+    if (!rm_rule_program_take_symbols(&cursor, "rmbc-require-fun", 2,
+                                      "r0", "r1", NULL))
+        return false;
+    const char *proof_op;
+    int64_t hypotheses;
+    if (rule->kind == RM_RULE_PROGRAM_AXIOM) {
+        if (!rm_rule_program_take_symbols(&cursor, "rmbc-instantiate-template", 2,
+                                          "r2", "template0", NULL) ||
+            !rm_rule_program_take_symbols(&cursor, "rmbc-unify", 2,
+                                          "r0", "r2", NULL) ||
+            !rm_rule_program_take_symbols(&cursor, "rmbc-set-type", 1,
+                                          "r1", NULL, NULL))
+            return false;
+        proof_op = "rmbc-proof-apply";
+        hypotheses = 0;
+    } else if (rule->kind == RM_RULE_PROGRAM_INVERSE_MP) {
+        if (!rm_rule_program_take_symbols(&cursor, "rmbc-fresh", 1,
+                                          "r2", NULL, NULL) ||
+            !rm_rule_program_take_symbols(&cursor, "rmbc-make-imp", 3,
+                                          "r3", "r2", "r0") ||
+            !rm_rule_program_take_symbols(&cursor, "rmbc-make-fun", 3,
+                                          "r4", "r2", "r1") ||
+            !rm_rule_program_take_symbols(&cursor, "rmbc-make-fun", 3,
+                                          "r5", "r3", "r4") ||
+            !rm_rule_program_take_symbols(&cursor, "rmbc-set-type", 1,
+                                          "r5", NULL, NULL))
+            return false;
+        proof_op = "rmbc-proof-wrap";
+        hypotheses = 2;
+    } else {
+        return false;
+    }
+    Atom *proof = rm_rule_program_take_op(&cursor);
+    Atom *hyp = rm_rule_program_take_op(&cursor);
+    return rm_is_expr_head(proof, proof_op, 2) &&
+           rule->proof_symbol && rule->proof_symbol->kind == ATOM_SYMBOL &&
+           atom_eq(proof->expr.elems[1], rule->proof_symbol) &&
+           rm_is_expr_head(hyp, "rmbc-hyp-add", 2) &&
+           hyp->expr.elems[1]->kind == ATOM_GROUNDED &&
+           hyp->expr.elems[1]->ground.gkind == GV_INT &&
+           hyp->expr.elems[1]->ground.ival == hypotheses &&
+           rm_is_symbol(rm_rule_program_take_op(&cursor), "rmbc-emit") &&
+           rm_is_symbol(cursor, "rule-program-nil");
+}
+
 static bool rm_parse_rule_program_block(Atom *atom, RMRuleProgramRule *out) {
     if (!rm_is_expr_head(atom, "rule-program-block", 5) ||
         atom->expr.elems[1]->kind != ATOM_SYMBOL ||
@@ -598,6 +670,7 @@ static bool rm_parse_rule_program_block(Atom *atom, RMRuleProgramRule *out) {
             .proof_symbol = proof_symbol,
             .code = code,
         };
+        out->native_eligible = rm_rule_program_native_eligible(out);
         return true;
     }
     proof_symbol = NULL;
@@ -613,6 +686,7 @@ static bool rm_parse_rule_program_block(Atom *atom, RMRuleProgramRule *out) {
             .proof_symbol = proof_symbol,
             .code = code,
         };
+        out->native_eligible = rm_rule_program_native_eligible(out);
         return true;
     }
     return false;
@@ -1532,6 +1606,16 @@ fail:
     return false;
 }
 
+static bool rm_rule_program_apply_rule(
+    RMRuleProgramRun *run, RMRuleProgramRule *rule, Atom *type, Atom *proof,
+    Atom **next_type, Atom **next_proof, int32_t *hypothesis_add) {
+    return run->native_backend && rule->native_eligible
+        ? rm_rule_program_apply_rule_native(
+              run, rule, type, proof, next_type, next_proof, hypothesis_add)
+        : rm_rule_program_apply_rule_bytecode(
+              run, rule, type, proof, next_type, next_proof, hypothesis_add);
+}
+
 static bool rm_rule_program_accept(RMRuleProgramRun *run, Atom *type, Atom *proof) {
     ArenaMark mark = arena_mark(&run->scratch);
     bool accepted = rm_rule_program_unifies(&run->scratch, type, run->target);
@@ -1598,15 +1682,14 @@ static void rm_rule_program_search(RMRuleProgramRun *run) {
         Atom *next_type = NULL;
         Atom *next_proof = NULL;
         int32_t hypothesis_add = 0;
-        bool applied = run->native_backend
-            ? rm_rule_program_apply_rule_native(
-                  run, rule, frame->type, frame->proof,
-                  &next_type, &next_proof, &hypothesis_add)
-            : rm_rule_program_apply_rule_bytecode(
-                  run, rule, frame->type, frame->proof,
-                  &next_type, &next_proof, &hypothesis_add);
+        bool applied = rm_rule_program_apply_rule(
+            run, rule, frame->type, frame->proof,
+            &next_type, &next_proof, &hypothesis_add);
         if (applied) {
-            int32_t next_hypotheses =
+            /* The entered parent has 0 < hypotheses <= depth <= 1024;
+             * bytecode may add INT32_MAX. Keep the child representable and
+             * let ordinary frame entry account for it before depth pruning. */
+            int64_t next_hypotheses =
                 frame->hypotheses - 1 + hypothesis_add;
             if (next_hypotheses >= 0) {
                 ++run->rule_successes;

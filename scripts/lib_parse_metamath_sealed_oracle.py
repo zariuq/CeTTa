@@ -24,6 +24,10 @@ DIRECT_CASES = [
         "theorem-compressed",
         "tests/test_lib_parse_metamath_theorem_compressed_v0.metta",
     ),
+    # Grammar-only negative: this fixture deliberately redeclares active
+    # variables.  The parser must summarize it, while a Metamath verifier must
+    # reject it rather than treating it as a valid database oracle.
+    ("repeat-vars-grammar-only", "tests/test_lib_parse_metamath_repeat_vars_db_v0.metta"),
 ]
 
 ORACLE_CASES = [
@@ -68,12 +72,6 @@ ORACLE_CASES = [
         "mm-mmtest-min-found-path",
         "mm-mmtest-min-found-summary",
         "tests/test_lib_parse_metamath_mmtest_min_found_db_v0.metta",
-    ),
-    (
-        "repeat-vars",
-        "mm-repeat-vars-path",
-        "mm-repeat-vars-summary",
-        "tests/test_lib_parse_metamath_repeat_vars_db_v0.metta",
     ),
     (
         "core-anatomy",

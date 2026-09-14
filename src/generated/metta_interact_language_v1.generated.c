@@ -2457,30 +2457,9 @@ static const uint8_t cetta_metta_interact_language_v1_compiled_plan_v1[] = {
 };
 
 static const CettaGsltEmbeddedSourceV1 cetta_metta_interact_language_v1_sources[] = {
-    {
-        .input = {
-            .bytes = cetta_metta_interact_language_v1_semantic_0,
-            .length = sizeof(cetta_metta_interact_language_v1_semantic_0),
-            .source = "../shared/finite_horn_quote_match_v1.metta",
-        },
-        .sha256 = "658ccb035e57ca0f38021b460fff198734f0ef739ed098229b0c14fd157bd797",
-    },
-    {
-        .input = {
-            .bytes = cetta_metta_interact_language_v1_semantic_1,
-            .length = sizeof(cetta_metta_interact_language_v1_semantic_1),
-            .source = "semantics/interaction_core_v1.metta",
-        },
-        .sha256 = "62c07eeb0585427f145752e98cc20f4ee2a4a5e3fa97bb7da484486fe2fd9381",
-    },
-    {
-        .input = {
-            .bytes = cetta_metta_interact_language_v1_semantic_2,
-            .length = sizeof(cetta_metta_interact_language_v1_semantic_2),
-            .source = "semantics/sequence_handler_v1.metta",
-        },
-        .sha256 = "f24cc4c549eea456df93d7d7d171aea72bdbf8f86426432ccd3cadc6e37ef5b6",
-    },
+    {.input = {.bytes = cetta_metta_interact_language_v1_semantic_0, .length = sizeof(cetta_metta_interact_language_v1_semantic_0), .source = "../shared/finite_horn_quote_match_v1.metta"}, .sha256 = "658ccb035e57ca0f38021b460fff198734f0ef739ed098229b0c14fd157bd797"},
+    {.input = {.bytes = cetta_metta_interact_language_v1_semantic_1, .length = sizeof(cetta_metta_interact_language_v1_semantic_1), .source = "semantics/interaction_core_v1.metta"}, .sha256 = "62c07eeb0585427f145752e98cc20f4ee2a4a5e3fa97bb7da484486fe2fd9381"},
+    {.input = {.bytes = cetta_metta_interact_language_v1_semantic_2, .length = sizeof(cetta_metta_interact_language_v1_semantic_2), .source = "semantics/sequence_handler_v1.metta"}, .sha256 = "f24cc4c549eea456df93d7d7d171aea72bdbf8f86426432ccd3cadc6e37ef5b6"},
 };
 
 const CettaGsltEmbeddedLanguageV1 cetta_metta_interact_language_v1 = {
@@ -2488,37 +2467,24 @@ const CettaGsltEmbeddedLanguageV1 cetta_metta_interact_language_v1 = {
     .profile_name = NULL,
     .syntax_backend = "he-reader-direct-v1",
     .term_abi = "finite-horn-quote-v1",
-    .manifest = {
-        .input = {
-            .bytes = cetta_metta_interact_language_v1_manifest_v1,
-            .length = sizeof(cetta_metta_interact_language_v1_manifest_v1),
-            .source = "metta-interact/langdef.metta",
-        },
-        .sha256 = "74e3a7e4eff6e90a34c9a4c169ea6d4c82e3ea2db048a2fce101f1386ead0a6c",
-    },
+    .manifest = {.input = {.bytes = cetta_metta_interact_language_v1_manifest_v1, .length = sizeof(cetta_metta_interact_language_v1_manifest_v1), .source = "metta-interact/langdef.metta"}, .sha256 = "74e3a7e4eff6e90a34c9a4c169ea6d4c82e3ea2db048a2fce101f1386ead0a6c"},
     .semantic_sources = cetta_metta_interact_language_v1_sources,
     .semantic_source_count = 3u,
-    .compiled_plan = {
-        .bytes = cetta_metta_interact_language_v1_compiled_plan_v1,
-        .length = sizeof(cetta_metta_interact_language_v1_compiled_plan_v1),
-        .sha256 = "5c69371e4550b88775628d26191bfc27387e787f550820fc566f3c7f534dcfbd",
-    },
+    .compiled_plan = {.bytes = cetta_metta_interact_language_v1_compiled_plan_v1, .length = sizeof(cetta_metta_interact_language_v1_compiled_plan_v1), .sha256 = "5c69371e4550b88775628d26191bfc27387e787f550820fc566f3c7f534dcfbd"},
     .program_nil = "interact-program-nil",
     .program_cons = "interact-program-cons",
     .entry_relation = NULL,
-    .entry_arity = 0u,
-    .program_position = 0u,
-    .result_position = 0u,
+    .entry_arity = 0u, .program_position = 0u, .result_position = 0u,
     .query_relation = NULL,
     .query_arity = 0u,
     .request_pipeline = &(const CettaGsltRequestPipelineV1){
-        .classify_relation = "interact-classify",
-        .produce_relation = "interact-produce",
-        .observe_relation = "interact-observe",
-        .produced_nil = "interact-produced-nil",
-        .produced_cons = "interact-produced-cons",
+    .classify_relation = "interact-classify",
+    .produce_relation = "interact-produce",
+    .observe_relation = "interact-observe",
+    .produced_nil = "interact-produced-nil",
+    .produced_cons = "interact-produced-cons",
     },
     .observation = "bag",
     .manifest_sha256 = "74e3a7e4eff6e90a34c9a4c169ea6d4c82e3ea2db048a2fce101f1386ead0a6c",
-    .compiler_sha256 = "9d33d0708d05ce00c09f33c72292ad20d2bda72e1b67491b9644990c0c7e86c5",
+    .compiler_sha256 = "c82486772be84b0aec1aaf90f3a754fca4e9c370a05f98040fbda3de16671e22",
 };

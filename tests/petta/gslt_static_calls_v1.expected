@@ -1,0 +1,4 @@
+((gslt:result:CopyUseV1:0 (ListConsV1 FirstV1 (ListConsV1 SecondV1 ListNilV1))))
+((gslt:result:CopyListV1:10 ListNilV1))
+()
+((gslt:result:ChoiceUseV1:0 FirstV1) (gslt:result:ChoiceUseV1:0 SecondV1) (gslt:result:ChoiceUseV1:0 FirstV1))

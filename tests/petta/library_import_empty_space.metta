@@ -1,0 +1,5 @@
+!(register-module! ../support/import_pkg)
+!(import! &self (library import_pkg empty_space))
+!(is-space (imported-empty-space))
+!(add-atom (imported-empty-space) (item alpha))
+!(match (imported-empty-space) (item $value) $value)

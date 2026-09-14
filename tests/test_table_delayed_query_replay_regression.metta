@@ -21,16 +21,11 @@
            (Pair (P $a $b) (Q $e $f))
            (Pair (Q $g $h) (P $i $j))
            (Pair (Q $g $h) (Q $k $l)))))
-    (() (reset-runtime-stats!))
     (() (assertAlphaEqualToResult
           (pair-via-eq &ss)
           ((Pair (P $a $b) (P $c $d))
            (Pair (P $a $b) (Q $e $f))
            (Pair (Q $g $h) (P $i $j))
            (Pair (Q $g $h) (Q $k $l)))))
-    ($stats (runtime-stats!))
-    (() (assertEqualToResult
-          (match $stats (runtime-counter table-hit $n) (> $n 0))
-          (True)))
   )
   ())

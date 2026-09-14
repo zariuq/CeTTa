@@ -1,11 +1,11 @@
-!(import_prolog_function
-  (superpose (memoize get-memoize-stats)))
+!(import! &self (library lib_memo))
 
 !(memoize emit)
 (= (emit $x) (add-atom &self (seen $x)))
 
-; An effectful relation is never cached.  Both calls perform their write,
-; and the memo statistics remain empty because the table route declined.
+; Base PeTTa follows lib_memo's static-world cache: the second call replays
+; the first result and therefore does not repeat its write.  The extended
+; profile instead declines effectful memoization and performs both writes.
 !(emit 1)
 !(emit 1)
 !(collapse (match &self (seen 1) hit))

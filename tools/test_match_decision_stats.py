@@ -98,8 +98,8 @@ def check_lane(lane: str, linear: dict[str, int],
         require((calls == 0) == (fresh_bytes == 0),
                 f"{mode} freshen call/byte counters disagree")
     if lane == "petta":
-        require(deep["whole-equation-freshen"] > 0,
-                "PeTTa fixture did not exercise freshen-late")
+        require(deep["whole-equation-freshen"] == 0,
+                "PeTTa planned activation rebuilt a whole equation")
     else:
         require(deep["whole-equation-freshen"] == 0,
                 f"{lane} unexpectedly copied whole equations")
@@ -128,7 +128,7 @@ def main() -> int:
                    "nil_chaining/nil_hilbert_obfc_jarr_petta_v1.expected",
         ),
         "he": (
-            ("--lang", "he", "--profile", "he-extended",
+            ("--lang", "he", "--profile", "extended",
              "tests/test_disc_trie.metta"),
             ROOT / "tests/test_disc_trie.expected",
         ),

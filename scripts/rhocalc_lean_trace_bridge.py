@@ -14,7 +14,7 @@ from rhocalc_bounded_reachability import normalize_expr, split_successor_set
 RHOMETTA_HE_ARGS = (
     "--pretty-vars",
     "--profile",
-    "he-extended",
+    "extended",
     "--lang",
     "he",
 )

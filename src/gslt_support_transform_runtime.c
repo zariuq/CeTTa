@@ -88,19 +88,9 @@ static bool runtime_error(char *error, size_t error_size,
     return false;
 }
 
+
 static bool text_present(const char *text) {
     return text && text[0] != '\0';
-}
-
-static bool sha256_text(const char *text) {
-    if (!text || strlen(text) != 64u)
-        return false;
-    for (size_t index = 0u; index < 64u; index++) {
-        char ch = text[index];
-        if (!((ch >= '0' && ch <= '9') || (ch >= 'a' && ch <= 'f')))
-            return false;
-    }
-    return true;
 }
 
 static bool operator_id_is_source_v1(const char *operator_id) {
@@ -119,111 +109,6 @@ static bool operator_id_is_sink_v1(const char *operator_id) {
                "support.evaluate-project.mm2-pure-f64.v1") == 0;
 }
 
-static bool declarations_validate_v1(
-    const CettaGsltSupportOperatorDeclV1 *declarations,
-    size_t declaration_count, const char *kind,
-    char *error, size_t error_size) {
-    if (declaration_count > 0u && !declarations)
-        return runtime_error(error, error_size,
-                             "support-transform %s declarations are missing",
-                             kind);
-    for (size_t index = 0u; index < declaration_count; index++) {
-        const CettaGsltSupportOperatorDeclV1 *declaration =
-            &declarations[index];
-        if (!text_present(declaration->syntax_symbol) ||
-            !text_present(declaration->operator_id))
-            return runtime_error(error, error_size,
-                                 "support-transform %s declaration is empty",
-                                 kind);
-        if (declaration->argument_count > UINT8_MAX)
-            return runtime_error(error, error_size,
-                                 "support-transform %s arity is invalid", kind);
-        for (size_t prior = 0u; prior < index; prior++) {
-            if (strcmp(declarations[prior].syntax_symbol,
-                       declaration->syntax_symbol) == 0)
-                return runtime_error(
-                    error, error_size,
-                    "support-transform %s syntax is declared twice: %s",
-                    kind, declaration->syntax_symbol);
-        }
-    }
-    return true;
-}
-
-bool cetta_gslt_support_transform_profile_validate_v1(
-    const CettaGsltSupportTransformProfileV1 *profile,
-    char *error, size_t error_size) {
-    if (!profile)
-        return runtime_error(error, error_size, "missing support-transform profile");
-    if (profile->abi_version != 1u)
-        return runtime_error(error, error_size,
-                             "unsupported support-transform ABI version %u",
-                             profile->abi_version);
-    const char *const required[] = {
-        profile->language_name,
-        profile->profile_name,
-        profile->manifest_sha256,
-        profile->compiler_sha256,
-        profile->work_symbol,
-        profile->compat_input_symbol,
-        profile->compat_input_operator_id,
-        profile->explicit_input_symbol,
-        profile->compat_output_symbol,
-        profile->compat_output_operator_id,
-        profile->explicit_output_symbol,
-    };
-    for (size_t index = 0u;
-         index < sizeof(required) / sizeof(required[0]); index++) {
-        if (!text_present(required[index]))
-            return runtime_error(error, error_size,
-                                 "support-transform profile has an empty field");
-    }
-    if (!sha256_text(profile->manifest_sha256) ||
-        !sha256_text(profile->compiler_sha256))
-        return runtime_error(error, error_size,
-                             "support-transform profile digest is malformed");
-    if (profile->work_arity != 3u)
-        return runtime_error(error, error_size,
-                             "support-transform V1 requires work arity 3");
-    const uint32_t positions[] = {
-        profile->location_position,
-        profile->input_position,
-        profile->output_position,
-    };
-    bool seen[3] = {false, false, false};
-    for (size_t index = 0u; index < 3u; index++) {
-        if (positions[index] >= 3u || seen[positions[index]])
-            return runtime_error(error, error_size,
-                                 "support-transform work positions are invalid");
-        seen[positions[index]] = true;
-    }
-    if (profile->scheduler !=
-            CETTA_GSLT_SUPPORT_SCHEDULER_LEAST_MORK_COMPACT_EXPRESSION_KEY_V1)
-        return runtime_error(error, error_size,
-                             "unsupported support-transform scheduler");
-    if (profile->unsupported_policy !=
-            CETTA_GSLT_SUPPORT_UNSUPPORTED_LEAVE_INERT)
-        return runtime_error(error, error_size,
-                             "unsupported support-transform unknown-work policy");
-    if (strcmp(profile->compat_input_operator_id,
-               "support.snapshot-match.v1") != 0 ||
-        strcmp(profile->compat_output_operator_id,
-               "support.add.v1") != 0)
-        return runtime_error(error, error_size,
-                             "unsupported compatibility operator identity");
-    if (!declarations_validate_v1(
-            profile->source_declarations, profile->source_declaration_count,
-            "source", error, error_size) ||
-        !declarations_validate_v1(
-            profile->sink_declarations, profile->sink_declaration_count,
-            "sink", error, error_size))
-        return false;
-    if (!profile->physical_profile_packet ||
-        profile->physical_profile_packet_size == 0u)
-        return runtime_error(error, error_size,
-                             "support-transform physical profile is missing");
-    return true;
-}
 
 static void key_free(MorkCompactKeyV1 *key) {
     if (!key)

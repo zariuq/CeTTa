@@ -10,6 +10,12 @@
 typedef struct CettaDeterministicEquationPlanV1
     CettaDeterministicEquationPlanV1;
 
+typedef struct {
+    const uint8_t *bytes;
+    size_t length;
+    const char *source;
+} CettaDeterministicEquationInputV1;
+
 typedef enum {
     CETTA_DETERMINISTIC_EQUATION_V1_OK = 0,
     CETTA_DETERMINISTIC_EQUATION_V1_BAD_ARGUMENT,
@@ -46,6 +52,15 @@ bool cetta_deterministic_equation_plan_v1_load(
     CettaDeterministicEquationStatusV1 *status,
     char *error, size_t error_size);
 
+/* The same source validation and execution plan, loaded from length-aware
+ * source buffers.  The plan owns its parsed source; input buffers need only
+ * remain valid until this call returns. */
+bool cetta_deterministic_equation_plan_v1_load_inputs(
+    const CettaDeterministicEquationInputV1 *inputs, size_t input_count,
+    CettaDeterministicEquationPlanV1 **out,
+    CettaDeterministicEquationStatusV1 *status,
+    char *error, size_t error_size);
+
 void cetta_deterministic_equation_plan_v1_free(
     CettaDeterministicEquationPlanV1 *plan);
 
@@ -58,6 +73,17 @@ bool cetta_deterministic_equation_plan_v1_run(
     const CettaDeterministicEquationPlanV1 *plan, const Atom *call,
     CettaDeterministicPrimitiveFnV1 primitive, void *primitive_context,
     Arena *arena, uint32_t depth_limit, uint64_t work_limit,
+    Atom **out, CettaDeterministicEquationStatusV1 *status,
+    char *error, size_t error_size);
+
+/* The same execution with consumed evaluator/matcher work exposed on every
+ * return, including failure.  work_used may be NULL.  These are the existing
+ * budget units, not a measure of primitive running time or allocation. */
+bool cetta_deterministic_equation_plan_v1_run_counted(
+    const CettaDeterministicEquationPlanV1 *plan, const Atom *call,
+    CettaDeterministicPrimitiveFnV1 primitive, void *primitive_context,
+    Arena *arena, uint32_t depth_limit, uint64_t work_limit,
+    uint64_t *work_used,
     Atom **out, CettaDeterministicEquationStatusV1 *status,
     char *error, size_t error_size);
 

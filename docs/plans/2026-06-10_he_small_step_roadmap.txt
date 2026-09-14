@@ -139,7 +139,7 @@ PARKED (2026-06-11, Zar's ruling) — GENERATED RUNTIME FROM RULE SOURCE
   between the C runtime and the Lean model.
 
 THEN — PER-PROFILE RULE TABLES
-  What: he, he-compat, and he-extended each get their own explicit rule
+  What: he, he-compat, and extended each get their own explicit rule
   table (fail-closed: a profile with no table refuses, never silently
   borrows another's rules), and step-rules can then honestly report the
   active profile's table.  A separate, properly-named introspection

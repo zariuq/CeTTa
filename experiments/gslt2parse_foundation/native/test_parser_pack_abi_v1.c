@@ -328,8 +328,78 @@ static bool main_positive_gate(Arena *arena, size_t *passed) {
           error);
     CHECK(strcmp(pack.pack_digest, PACK_DIGEST) == 0,
           "canonical ParserPack digest changed");
-    ppabi_v1_pack_free(&pack);
     (*passed)++;
+
+    CHECK(ppabi_v1_pack_load_structural(
+              &pack, productions, 1u, classes, 1u,
+              DIGEST_A, DIGEST_B, DIGEST_C, error, sizeof(error)),
+          error);
+    CHECK(pack.derivations == NULL && pack.derivation_len == 0u &&
+          pack.productions[0].evidence_begin == 0u &&
+          pack.productions[0].evidence_len == 0u &&
+          pack.class_clauses[0].evidence_begin == 0u &&
+          pack.class_clauses[0].evidence_len == 0u,
+          "structural loading manufactured or retained proof evidence");
+    CHECK(strcmp(pack.pack_digest, PACK_DIGEST) == 0 &&
+          atom_eq(pack.productions[0].action, action),
+          "structural loading changed ParserPack syntax or actions");
+    CHECK(strcmp(pack.source_digest, DIGEST_A) == 0 &&
+          strcmp(pack.compiler_digest, DIGEST_B) == 0 &&
+          strcmp(pack.environment_digest, DIGEST_C) == 0,
+          "structural loading changed the supplied input digests");
+    (*passed)++;
+
+    {
+        PPABIV1ProvenanceInput no_roots = provenance(NULL, 0u);
+        CHECK(expect_rejected(
+                  productions, 1u, classes, 1u, &no_roots,
+                  "evidence-bearing load without derivation roots"),
+              "structural route weakened evidence-bearing loading");
+        CHECK(expect_rejected(
+                  productions, 1u, classes, 1u, NULL,
+                  "evidence-bearing load without provenance"),
+              "null provenance crossed the evidence-bearing route");
+        (*passed) += 2u;
+    }
+
+    CHECK(!ppabi_v1_pack_load_structural(
+              &pack, productions, 1u, classes, 1u,
+              "invalid", DIGEST_B, DIGEST_C, error, sizeof(error)) &&
+          error[0] != '\0',
+          "structural loading accepted an invalid source digest");
+    CHECK(pack.production_len == 1u && pack.derivation_len == 0u &&
+          strcmp(pack.pack_digest, PACK_DIGEST) == 0,
+          "failed structural loading replaced the previous pack");
+    (*passed)++;
+
+    CHECK(!ppabi_v1_pack_load_structural(
+              &pack, productions, 1u, NULL, 0u,
+              DIGEST_A, DIGEST_B, DIGEST_C, error, sizeof(error)) &&
+          error[0] != '\0',
+          "structural loading accepted an undefined terminal class");
+    (*passed)++;
+
+    {
+        Atom *bad_action = unary(
+            arena, "pa-slot", unary(arena, "q-succ",
+                unary(arena, "q-succ", atom_symbol(arena, "q-zero"))));
+        Atom *bad_production =
+            make_production(arena, label, state, items, bad_action);
+        Atom *bad_productions[1] = {bad_production};
+        Atom *duplicates[2] = {production, production};
+        CHECK(!ppabi_v1_pack_load_structural(
+                  &pack, bad_productions, 1u, classes, 1u,
+                  DIGEST_A, DIGEST_B, DIGEST_C, error, sizeof(error)) &&
+              error[0] != '\0',
+              "structural loading accepted an out-of-bounds action slot");
+        CHECK(!ppabi_v1_pack_load_structural(
+                  &pack, duplicates, 2u, classes, 1u,
+                  DIGEST_A, DIGEST_B, DIGEST_C, error, sizeof(error)) &&
+              error[0] != '\0',
+              "structural loading accepted duplicate canonical productions");
+        (*passed) += 2u;
+    }
+    ppabi_v1_pack_free(&pack);
     return true;
 }
 

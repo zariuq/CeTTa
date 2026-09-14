@@ -57,7 +57,7 @@ for language in $LANGUAGES; do
 
     language_args=(--lang "$language")
     if [[ "$language" == he ]]; then
-        language_args+=(--profile he-extended)
+        language_args+=(--profile extended)
     fi
 
     set +e

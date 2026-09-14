@@ -25,7 +25,7 @@ def main() -> int:
     theorem = sys.argv[5]
 
     proc = subprocess.run(
-        [bin_path, "--profile", "he-extended", "--lang", "he", str(fixture)],
+        [bin_path, "--profile", "extended", "--lang", "he", str(fixture)],
         check=False,
         text=True,
         capture_output=True,

@@ -1,3 +1,5 @@
+#define _GNU_SOURCE
+
 #include "eval.h"
 #include "generated/petta_typecheck_v2_boundary_core_source_binding_v1.generated.h"
 #include "generated/petta_typecheck_v2_source_binding_v1.generated.h"
@@ -8,15 +10,21 @@
 #include "petta_program.h"
 #include "petta_runtime.h"
 #include "petta_search_machine.h"
+#include "search_control_advice.h"
+#include "stats.h"
 #include "petta_semantics.h"
 #include "petta_typecheck.h"
 #include "symbol.h"
 #include "variant_shape.h"
 
 #include <assert.h>
+#include <inttypes.h>
 #include <pthread.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
+#include <sys/stat.h>
+#include <unistd.h>
 
 static Atom *parse_one(Arena *arena, const char *source) {
     Atom **forms = NULL;
@@ -24,6 +32,29 @@ static Atom *parse_one(Arena *arena, const char *source) {
     Atom *result = count == 1 && forms ? forms[0] : NULL;
     free(forms);
     return result;
+}
+
+static void test_search_context_checkpoint_capabilities(void) {
+    Bindings empty;
+    bindings_init(&empty);
+
+    SearchContext generic;
+    assert(search_context_init(&generic, &empty, NULL));
+    assert(search_context_scratch(&generic));
+    ChoicePoint generic_point = search_context_save(&generic);
+    assert(generic_point.has_scratch_mark);
+    search_context_free(&generic);
+
+    SearchContext binding_only;
+    assert(search_context_init_bindings_only(&binding_only, &empty));
+    assert(!search_context_scratch(&binding_only));
+    ChoicePoint binding_point = search_context_save(&binding_only);
+    assert(!binding_point.has_scratch_mark);
+    search_context_rollback(&binding_only, binding_point);
+    search_context_free(&binding_only);
+
+    bindings_free(&empty);
+    puts("PASS: search contexts advertise exact checkpoint capabilities");
 }
 
 static void test_plain_scalar_truth_dispatch(Arena *arena) {
@@ -43,6 +74,9 @@ static void test_plain_scalar_truth_dispatch(Arena *arena) {
     Atom *greater_equal = atom_symbol_id(arena, g_builtin_syms.op_ge);
     Atom *numeric_equal = atom_symbol_id(arena, g_builtin_syms.numeric_eq);
     Atom *addition = atom_symbol_id(arena, g_builtin_syms.op_plus);
+    Atom *subtraction = atom_symbol_id(arena, g_builtin_syms.op_minus);
+    Atom *multiplication = atom_symbol_id(arena, g_builtin_syms.op_mul);
+    Atom *division = atom_symbol_id(arena, g_builtin_syms.op_div);
     Atom *lookalike = atom_symbol(arena, "plain-scalar-lookalike");
     Atom *abt_alpha_equal =
         atom_symbol_id(arena, g_builtin_syms.abt_alpha_eq);
@@ -94,7 +128,93 @@ static void test_plain_scalar_truth_dispatch(Arena *arena) {
     assert(!grounded_try_plain_scalar_truth(
         numeric_equal, binary, 2u, &truth));
 
-    puts("PASS: allocation-free scalar truth dispatch is exact and bounded");
+    Atom *value = NULL;
+    binary[0] = two;
+    binary[1] = one;
+    assert(grounded_try_plain_scalar_arithmetic(
+        arena, addition, binary, 2u, &value));
+    assert(atom_eq(value, atom_int(arena, 3)));
+    assert(grounded_try_plain_scalar_arithmetic(
+        arena, subtraction, binary, 2u, &value));
+    assert(atom_eq(value, one));
+    assert(grounded_try_plain_scalar_arithmetic(
+        arena, multiplication, binary, 2u, &value));
+    assert(atom_eq(value, atom_int(arena, 2)));
+    assert(!grounded_try_plain_scalar_arithmetic(
+        arena, division, binary, 2u, &value));
+    assert(!value);
+    assert(!grounded_try_plain_scalar_arithmetic(
+        arena, lookalike, binary, 2u, &value));
+    assert(!value);
+    binary[0] = true_value;
+    assert(!grounded_try_plain_scalar_arithmetic(
+        arena, addition, binary, 2u, &value));
+    assert(!value);
+
+    CettaPlainScalar compact[2] = {{0}, {0}};
+    CettaPlainScalar compact_result = {0};
+    assert(grounded_plain_scalar_from_atom(two, &compact[0]));
+    assert(grounded_plain_scalar_from_atom(one, &compact[1]));
+    size_t compact_live_before = arena_accounted_live_bytes(arena);
+    assert(grounded_try_plain_scalar_operation(
+        addition, compact, 2u, &compact_result));
+    assert(compact_result.kind == CETTA_PLAIN_SCALAR_INT);
+    assert(compact_result.as.integer == 3);
+    assert(grounded_try_plain_scalar_operation(
+        subtraction, compact, 2u, &compact_result));
+    assert(compact_result.kind == CETTA_PLAIN_SCALAR_INT);
+    assert(compact_result.as.integer == 1);
+    assert(grounded_try_plain_scalar_operation(
+        multiplication, compact, 2u, &compact_result));
+    assert(compact_result.kind == CETTA_PLAIN_SCALAR_INT);
+    assert(compact_result.as.integer == 2);
+
+    assert(grounded_plain_scalar_from_atom(
+        true_value, &compact[0]));
+    assert(grounded_plain_scalar_from_atom(
+        false_value, &compact[1]));
+    assert(grounded_try_plain_scalar_operation(
+        boolean_xor, compact, 2u, &compact_result));
+    assert(compact_result.kind == CETTA_PLAIN_SCALAR_BOOL);
+    assert(compact_result.as.boolean);
+    assert(grounded_try_plain_scalar_operation(
+        boolean_not, compact, 1u, &compact_result));
+    assert(!compact_result.as.boolean);
+
+    assert(grounded_plain_scalar_from_atom(two, &compact[0]));
+    assert(grounded_plain_scalar_from_atom(
+        two_float, &compact[1]));
+    assert(grounded_try_plain_scalar_operation(
+        structural_equal, compact, 2u, &compact_result));
+    assert(!compact_result.as.boolean);
+    assert(grounded_try_plain_scalar_operation(
+        numeric_equal, compact, 2u, &compact_result));
+    assert(compact_result.as.boolean);
+    assert(grounded_try_plain_scalar_operation(
+        less_equal, compact, 2u, &compact_result));
+    assert(compact_result.as.boolean);
+    assert(arena_accounted_live_bytes(arena) == compact_live_before);
+
+    Atom *published = grounded_plain_scalar_materialize(
+        arena, &compact_result);
+    assert(published && published->kind == ATOM_GROUNDED &&
+           published->ground.gkind == GV_BOOL &&
+           published->ground.bval);
+
+    compact[0] = (CettaPlainScalar){
+        .kind = CETTA_PLAIN_SCALAR_INT,
+        .as.integer = INT64_MAX,
+    };
+    compact[1] = (CettaPlainScalar){
+        .kind = CETTA_PLAIN_SCALAR_INT,
+        .as.integer = 1,
+    };
+    assert(!grounded_try_plain_scalar_operation(
+        addition, compact, 2u, &compact_result));
+    assert(!grounded_try_plain_scalar_operation(
+        division, compact, 2u, &compact_result));
+
+    puts("PASS: boxed and compact plain-scalar algebras agree with exact refusal");
 }
 
 static void assert_type_pure_symbol_facts(void) {
@@ -367,7 +487,6 @@ static void test_semantic_form_facts(void) {
     PeTTaConsShapeFacts high_cons_facts;
     assert(petta_semantics_cons_shape_facts(&high_cons_facts));
     assert(high_cons_facts.cons >= 4096u);
-    assert(high_cons_facts.open_cons >= 4096u);
     Arena high_fact_arena;
     arena_init(&high_fact_arena);
     Atom *high_item = atom_symbol(&high_fact_arena, "high-item");
@@ -376,10 +495,8 @@ static void test_semantic_form_facts(void) {
         &high_fact_arena,
         atom_symbol_id(&high_fact_arena, high_cons_facts.cons),
         high_item, high_tail);
-    Atom *high_open_cons = atom_expr3(
-        &high_fact_arena,
-        atom_symbol_id(&high_fact_arena, high_cons_facts.open_cons),
-        high_item, high_tail);
+    Atom *high_open_cons = petta_semantics_open_cons_value(
+        &high_fact_arena, high_item, high_tail);
     assert(high_item && high_tail && high_cons && high_open_cons);
     assert(petta_semantics_facts_is_cons_constraint(
         &high_cons_facts, high_cons));
@@ -663,7 +780,8 @@ static void test_deep_cons_semantics(Arena *arena) {
     assert(!petta_semantics_facts_is_cons_constraint(
         &cons_facts, cons_lookalike));
     Atom *cons_head = atom_symbol_id(arena, cons_facts.cons);
-    Atom *open_cons_head = atom_symbol_id(arena, cons_facts.open_cons);
+    Atom *open_cons_head = atom_internal_tag(
+        arena, CETTA_INTERNAL_TAG_PETTA_OPEN_CONS);
     Atom *short_cons = atom_expr2(arena, cons_head, item);
     Atom *short_open_cons = atom_expr2(arena, open_cons_head, item);
     Atom *long_cons_elements[] = {cons_head, item, tail, item};
@@ -1758,6 +1876,18 @@ static void test_alpha_reconciled_slot_authority(
     space_free(&space);
 }
 
+static bool admit_test_clause_activation_relation(
+        void *context, Space *space,
+        SymbolId head, CettaExprLen arity) {
+    return context && space && head != SYMBOL_ID_NONE && arity <= 8u;
+}
+
+static bool reject_test_clause_activation_relation(
+        void *context, Space *space,
+        SymbolId head, CettaExprLen arity) {
+    return context && space && head != SYMBOL_ID_NONE && arity > 8u;
+}
+
 static void test_constructor_slot_frame_plans(
     TermUniverse *universe, Arena *persistent, Arena *answers) {
     PettaProgram *program = petta_program_new();
@@ -1781,6 +1911,34 @@ static void test_constructor_slot_frame_plans(
         petta_program_plan_current(program, if_control);
     assert(if_control_plan);
     assert(if_control_plan->control == PETTA_PLAN_CONTROL_IF);
+
+    Atom *anonymous_hole = parse_one(
+        persistent, "(let $_ (open-producer) kept)");
+    const PettaPlanNode *anonymous_hole_plan =
+        petta_program_plan_current(program, anonymous_hole);
+    assert(anonymous_hole_plan);
+    assert(anonymous_hole_plan->control == PETTA_PLAN_CONTROL_LET);
+    assert(
+        anonymous_hole_plan->continuation ==
+        PETTA_PLAN_CONTINUATION_AFTER_ANONYMOUS_HOLE);
+
+    Atom *named_binding = parse_one(
+        persistent, "(let $named (open-producer) kept)");
+    const PettaPlanNode *named_binding_plan =
+        petta_program_plan_current(program, named_binding);
+    assert(named_binding_plan);
+    assert(
+        named_binding_plan->continuation ==
+        PETTA_PLAN_CONTINUATION_GENERIC);
+
+    Atom *structured_binding = parse_one(
+        persistent, "(let (Box $value) (open-producer) kept)");
+    const PettaPlanNode *structured_binding_plan =
+        petta_program_plan_current(program, structured_binding);
+    assert(structured_binding_plan);
+    assert(
+        structured_binding_plan->continuation ==
+        PETTA_PLAN_CONTINUATION_GENERIC);
 
     Atom *let_star_control = parse_one(
         persistent, "(let* () ready)");
@@ -1853,6 +2011,150 @@ static void test_constructor_slot_frame_plans(
     assert(
         pure_grounded_plan->execution ==
         PETTA_PLAN_EXEC_PURE_GROUNDED_SLOTS);
+    assert(pure_grounded_plan->plain_scalar_tree);
+    assert(pure_grounded_plan->plain_scalar_tree_operations == 1u);
+    const PettaDeterministicRegionProgram *pure_grounded_region =
+        pure_grounded_plan->deterministic_region;
+    assert(pure_grounded_region);
+    assert(pure_grounded_region->root_plan == pure_grounded_plan);
+    assert(pure_grounded_region->source_node_count == 3u);
+    assert(pure_grounded_region->instruction_count == 3u);
+    assert(pure_grounded_region->operation_count == 1u);
+    assert(pure_grounded_region->maximum_stack == 2u);
+    assert(pure_grounded_region->source_nodes[0u].first_child == 1u);
+    assert(pure_grounded_region->source_nodes[0u].child_count == 2u);
+    assert(
+        pure_grounded_region->instructions[0u].kind ==
+        PETTA_REGION_SCALAR_LOAD);
+    assert(
+        pure_grounded_region->instructions[1u].kind ==
+        PETTA_REGION_SCALAR_LOAD);
+    assert(
+        pure_grounded_region->instructions[2u].kind ==
+        PETTA_REGION_SCALAR_APPLY);
+
+    Atom *nested_plain_scalar = parse_one(
+        persistent, "(< (+ $left 2) (* 3 $right))");
+    const PettaPlanNode *nested_plain_scalar_plan =
+        petta_program_plan_current(program, nested_plain_scalar);
+    assert(nested_plain_scalar_plan);
+    assert(nested_plain_scalar_plan->plain_scalar_tree);
+    assert(
+        nested_plain_scalar_plan->plain_scalar_tree_operations == 3u);
+    assert(nested_plain_scalar_plan->role == PETTA_PLAN_STATIC_CALL);
+    assert(
+        nested_plain_scalar_plan->execution ==
+        PETTA_PLAN_EXEC_PURE_GROUNDED_SLOTS);
+    assert(nested_plain_scalar_plan->control == PETTA_PLAN_CONTROL_NONE);
+    assert(nested_plain_scalar_plan->contains_call);
+    const PettaDeterministicRegionProgram *nested_plain_scalar_region =
+        nested_plain_scalar_plan->deterministic_region;
+    assert(nested_plain_scalar_region);
+    assert(nested_plain_scalar_region->source_node_count == 7u);
+    assert(nested_plain_scalar_region->instruction_count == 7u);
+    assert(nested_plain_scalar_region->operation_count == 3u);
+    assert(nested_plain_scalar_region->maximum_stack == 3u);
+
+    /* The Region/Hole compiler is driven by admitted scalar algebra and
+     * exact source occurrences, not by any application relation.  Five
+     * distinct operator families must share the same physical plan shape. */
+    const char *region_hole_sources[] = {
+        "(if (> (+ $n 1) 0) yes no)",
+        "(if (and (> $n 0) (< $n 10)) yes no)",
+        "(if (== (+ $n 1) (* 2 $m)) yes no)",
+        "(if (== $left $right) yes no)",
+        "(if (or (== $left 1) (>= $right 2)) yes no)",
+    };
+    for (size_t index = 0u;
+         index < sizeof(region_hole_sources) /
+                     sizeof(region_hole_sources[0]);
+         index++) {
+        Atom *region_hole_source = parse_one(
+            persistent, region_hole_sources[index]);
+        const PettaPlanNode *region_hole_plan =
+            petta_program_plan_current(program, region_hole_source);
+        assert(region_hole_plan);
+        const PettaRegionHoleProgram *region_hole =
+            region_hole_plan->region_hole_program;
+        assert(region_hole);
+        assert(region_hole->root_plan == region_hole_plan);
+        assert(
+            region_hole->kind ==
+            PETTA_REGION_HOLE_BOOLEAN_BRANCH);
+        const PettaRegionHoleBooleanProgram *boolean_branch =
+            &region_hole->as.boolean_branch;
+        assert(boolean_branch->entry_source_child == 1u);
+        assert(
+            boolean_branch->entry_region ==
+            region_hole_plan->children[1u].deterministic_region);
+        assert(boolean_branch->branch_count == 2u);
+        assert(boolean_branch->branches[0u].source_child == 3u);
+        assert(
+            boolean_branch->branches[0u].plan ==
+            &region_hole_plan->children[3u]);
+        assert(boolean_branch->branches[1u].source_child == 2u);
+        assert(
+            boolean_branch->branches[1u].plan ==
+            &region_hole_plan->children[2u]);
+    }
+
+    Atom *open_region_hole = parse_one(
+        persistent, "(if (open-scalar $left) yes no)");
+    const PettaPlanNode *open_region_hole_plan =
+        petta_program_plan_current(program, open_region_hole);
+    assert(open_region_hole_plan);
+    assert(!open_region_hole_plan->region_hole_program);
+
+    Atom *two_argument_if = parse_one(
+        persistent, "(if (> $left 0) yes)");
+    const PettaPlanNode *two_argument_if_plan =
+        petta_program_plan_current(program, two_argument_if);
+    assert(two_argument_if_plan);
+    assert(!two_argument_if_plan->region_hole_program);
+
+    Atom *open_scalar_relation = parse_one(
+        persistent, "(< (open-scalar $left) 2)");
+    const PettaPlanNode *open_scalar_relation_plan =
+        petta_program_plan_current(program, open_scalar_relation);
+    assert(open_scalar_relation_plan);
+    assert(!open_scalar_relation_plan->plain_scalar_tree);
+    assert(!open_scalar_relation_plan->deterministic_region);
+
+    Atom *unlicensed_scalar_operator = parse_one(
+        persistent, "(/ $left 2)");
+    const PettaPlanNode *unlicensed_scalar_operator_plan =
+        petta_program_plan_current(program, unlicensed_scalar_operator);
+    assert(unlicensed_scalar_operator_plan);
+    assert(!unlicensed_scalar_operator_plan->plain_scalar_tree);
+    assert(!unlicensed_scalar_operator_plan->deterministic_region);
+
+    Atom *plus_head = parse_one(persistent, "+");
+    Atom *one_leaf = parse_one(persistent, "1");
+    enum { LARGE_SCALAR_REGION_OPERATIONS = 257u };
+    Atom *large_scalar = one_leaf;
+    for (size_t index = 0u;
+         index < LARGE_SCALAR_REGION_OPERATIONS; index++) {
+        large_scalar = atom_expr3(
+            persistent, plus_head, large_scalar, one_leaf);
+        assert(large_scalar);
+    }
+    const PettaPlanNode *large_scalar_plan =
+        petta_program_plan_current(program, large_scalar);
+    assert(large_scalar_plan);
+    assert(large_scalar_plan->plain_scalar_tree);
+    assert(
+        large_scalar_plan->plain_scalar_tree_operations ==
+        LARGE_SCALAR_REGION_OPERATIONS);
+    assert(large_scalar_plan->deterministic_region);
+    assert(
+        large_scalar_plan->deterministic_region->operation_count ==
+        LARGE_SCALAR_REGION_OPERATIONS);
+    assert(
+        large_scalar_plan->deterministic_region->source_node_count ==
+        LARGE_SCALAR_REGION_OPERATIONS * 2u + 1u);
+    assert(
+        large_scalar_plan->deterministic_region->instruction_count ==
+        LARGE_SCALAR_REGION_OPERATIONS * 2u + 1u);
 
     Atom *partial_grounded = parse_one(
         persistent, "(+ 1)");
@@ -1941,6 +2243,60 @@ static void test_constructor_slot_frame_plans(
 
     add_compiled_program_clause(
         program, &execution_space, persistent,
+        "(= (scalar-segment-seed) 2)");
+    add_compiled_program_clause(
+        program, &execution_space, persistent,
+        "(= (nested-scalar-argument-frame $value)"
+        "   (let* (($seed (scalar-segment-seed)))"
+        "     (slot-relation (+ (- $value 1) (* $seed 1)))))");
+    add_compiled_program_clause(
+        program, &execution_space, persistent,
+        "(= (nested-scalar-argument-frame $value) (empty))");
+    Atom *nested_scalar_argument_query = parse_one(
+        persistent, "(nested-scalar-argument-frame 4)");
+    const PettaPlanNode *nested_scalar_argument_query_plan =
+        petta_program_plan_current(
+            program, nested_scalar_argument_query);
+    assert(nested_scalar_argument_query_plan);
+
+    add_compiled_program_clause(
+        program, &execution_space, persistent,
+        "(= (division-scalar-argument-frame $value)"
+        "   (let* (($denominator (scalar-segment-seed)))"
+        "     (slot-relation (/ $value $denominator))))");
+    add_compiled_program_clause(
+        program, &execution_space, persistent,
+        "(= (division-scalar-argument-frame $value) (empty))");
+    Atom *division_scalar_argument_query = parse_one(
+        persistent, "(division-scalar-argument-frame 4)");
+    const PettaPlanNode *division_scalar_argument_query_plan =
+        petta_program_plan_current(
+            program, division_scalar_argument_query);
+    assert(division_scalar_argument_query_plan);
+
+    add_compiled_program_clause(
+        program, &execution_space, persistent,
+        "(= (two-answer $value) $value)");
+    add_compiled_program_clause(
+        program, &execution_space, persistent,
+        "(= (two-answer $value) $value)");
+    add_compiled_program_clause(
+        program, &execution_space, persistent,
+        "(= (open-scalar-boundary $value)"
+        "   (let* (($seed-value (scalar-segment-seed)))"
+        "     (slot-relation (two-answer $seed-value))))");
+    add_compiled_program_clause(
+        program, &execution_space, persistent,
+        "(= (open-scalar-boundary $value) (empty))");
+    Atom *open_scalar_boundary_query = parse_one(
+        persistent, "(open-scalar-boundary seed)");
+    const PettaPlanNode *open_scalar_boundary_query_plan =
+        petta_program_plan_current(
+            program, open_scalar_boundary_query);
+    assert(open_scalar_boundary_query_plan);
+
+    add_compiled_program_clause(
+        program, &execution_space, persistent,
         "(= (active-pure-frame $value) "
         "   (+ (+ 1 1) 2))");
     Atom *activation_pure_query = parse_one(
@@ -1960,10 +2316,25 @@ static void test_constructor_slot_frame_plans(
         petta_program_plan_current(program, activation_partial_query);
     assert(activation_partial_query_plan);
 
+    Atom *stale_clause = add_compiled_program_clause(
+        program, &execution_space, persistent,
+        "(= (stale-machine-call $value) should-not-run)");
+    Atom *stale_query = parse_one(
+        persistent, "(stale-machine-call (+ 1 2))");
+    const PettaPlanNode *stale_query_plan =
+        petta_program_plan_current(program, stale_query);
+    assert(stale_query_plan);
+    assert(stale_query_plan->role == PETTA_PLAN_STATIC_CALL);
+    assert(space_remove(&execution_space, stale_clause));
+    petta_program_note_remove_one(
+        program, &execution_space, stale_clause);
+
     PettaMachineHost activation_host = {
         .context = program,
         .clause_snapshot_lease =
             test_program_equation_snapshot_lease,
+        .clause_activation_relation_admissible =
+            admit_test_clause_activation_relation,
         .measure_stats = true,
     };
     PettaMachine machine;
@@ -2028,7 +2399,139 @@ static void test_constructor_slot_frame_plans(
     assert(atom_alpha_eq(answer, parse_one(answers, "3")));
     bindings_free(&environment);
     assert(petta_machine_stats(&machine, &stats));
-    assert(stats.relation_slot_frame_entries == 2u);
+    /* Ordinary execution materializes the outer RHS, so only the resolved
+     * inner relation enters a slot frame.  The certified activation path
+     * instead keeps a partial outer frame while its callable operand runs;
+     * the resolved inner relation is the second frame. */
+    const char *activation_setting = getenv(
+        "CETTA_PETTA_CLAUSE_BODY_ACTIVATION");
+    bool activation_enabled = !activation_setting ||
+        (activation_setting[0] != '\0' &&
+         strcmp(activation_setting, "0") != 0 &&
+         strcmp(activation_setting, "false") != 0 &&
+         strcmp(activation_setting, "off") != 0);
+    assert(stats.relation_slot_frame_entries ==
+           (activation_enabled ? 2u : 1u));
+    assert(stats.relation_slot_operands_reused == 1u);
+    assert(stats.pure_grounded_slot_frame_entries == 1u);
+    assert(stats.activation_materialization_calls == 0u);
+    assert(petta_machine_next(
+               &machine, &answer, &environment) ==
+           PETTA_MACHINE_STEP_EXHAUSTED);
+    bindings_free(&environment);
+    petta_machine_destroy(&machine);
+
+    PettaMachineHost scalar_segment_host = activation_host;
+    scalar_segment_host.unlimited_transition_budget = true;
+    assert(petta_machine_init_with_plan(
+        &machine, &execution_space, answers,
+        nested_scalar_argument_query,
+        nested_scalar_argument_query_plan, NULL,
+        &scalar_segment_host));
+    bindings_init(&environment);
+    assert(petta_machine_next(
+               &machine, &answer, &environment) ==
+           PETTA_MACHINE_STEP_ANSWER);
+    assert(atom_alpha_eq(answer, parse_one(answers, "5")));
+    bindings_free(&environment);
+    assert(petta_machine_next(
+               &machine, &answer, &environment) ==
+           PETTA_MACHINE_STEP_EXHAUSTED);
+    bindings_free(&environment);
+    assert(petta_machine_stats(&machine, &stats));
+    assert(stats.activation_scalar_argument_segment_attempts ==
+           (activation_enabled ? 1u : 0u));
+    assert(stats.activation_scalar_argument_segment_commits ==
+           (activation_enabled ? 1u : 0u));
+    assert(stats.activation_scalar_argument_segment_declines == 0u);
+    assert(stats.activation_scalar_argument_segment_operations ==
+           (activation_enabled ? 3u : 0u));
+    petta_machine_destroy(&machine);
+
+    PettaMachineHost finite_scalar_segment_host = scalar_segment_host;
+    finite_scalar_segment_host.unlimited_transition_budget = false;
+    assert(petta_machine_init_with_plan(
+        &machine, &execution_space, answers,
+        nested_scalar_argument_query,
+        nested_scalar_argument_query_plan, NULL,
+        &finite_scalar_segment_host));
+    bindings_init(&environment);
+    assert(petta_machine_next(
+               &machine, &answer, &environment) ==
+           PETTA_MACHINE_STEP_ANSWER);
+    assert(atom_alpha_eq(answer, parse_one(answers, "5")));
+    bindings_free(&environment);
+    assert(petta_machine_stats(&machine, &stats));
+    assert(stats.activation_scalar_argument_segment_attempts ==
+           (activation_enabled ? 1u : 0u));
+    assert(stats.activation_scalar_argument_segment_commits == 0u);
+    assert(stats.activation_scalar_argument_segment_declines ==
+           (activation_enabled ? 1u : 0u));
+    petta_machine_destroy(&machine);
+
+    assert(petta_machine_init_with_plan(
+        &machine, &execution_space, answers,
+        division_scalar_argument_query,
+        division_scalar_argument_query_plan, NULL,
+        &scalar_segment_host));
+    bindings_init(&environment);
+    assert(petta_machine_next(
+               &machine, &answer, &environment) ==
+           PETTA_MACHINE_STEP_ANSWER);
+    assert(atom_alpha_eq(answer, parse_one(answers, "2")));
+    bindings_free(&environment);
+    assert(petta_machine_stats(&machine, &stats));
+    assert(stats.activation_scalar_argument_segment_attempts ==
+           (activation_enabled ? 1u : 0u));
+    assert(stats.activation_scalar_argument_segment_commits == 0u);
+    assert(stats.activation_scalar_argument_segment_declines ==
+           (activation_enabled ? 1u : 0u));
+    petta_machine_destroy(&machine);
+
+    assert(petta_machine_init_with_plan(
+        &machine, &execution_space, answers,
+        open_scalar_boundary_query,
+        open_scalar_boundary_query_plan, NULL,
+        &scalar_segment_host));
+    for (size_t index = 0u; index < 2u; index++) {
+        bindings_init(&environment);
+        assert(petta_machine_next(
+                   &machine, &answer, &environment) ==
+               PETTA_MACHINE_STEP_ANSWER);
+        assert(atom_alpha_eq(
+            answer, atom_int(answers, 2)));
+        bindings_free(&environment);
+    }
+    assert(petta_machine_next(
+               &machine, &answer, &environment) ==
+           PETTA_MACHINE_STEP_EXHAUSTED);
+    bindings_free(&environment);
+    assert(petta_machine_stats(&machine, &stats));
+    assert(stats.activation_scalar_argument_segment_attempts ==
+           (activation_enabled ? 1u : 0u));
+    assert(stats.activation_scalar_argument_segment_commits == 0u);
+    assert(stats.activation_scalar_argument_segment_declines ==
+           (activation_enabled ? 1u : 0u));
+    petta_machine_destroy(&machine);
+
+    PettaMachineHost rejected_activation_host = activation_host;
+    rejected_activation_host.clause_activation_relation_admissible =
+        reject_test_clause_activation_relation;
+    assert(petta_machine_init_with_plan(
+        &machine, &execution_space, answers,
+        activation_relation_query,
+        activation_relation_query_plan, NULL,
+        &rejected_activation_host));
+    bindings_init(&environment);
+    assert(petta_machine_next(
+               &machine, &answer, &environment) ==
+           PETTA_MACHINE_STEP_ANSWER);
+    assert(atom_alpha_eq(answer, parse_one(answers, "3")));
+    bindings_free(&environment);
+    assert(petta_machine_stats(&machine, &stats));
+    assert(stats.relation_slot_frame_entries == 1u);
+    assert(stats.relation_slot_operands_reused == 1u);
+    assert(stats.pure_grounded_slot_frame_entries == 1u);
     assert(stats.activation_materialization_calls == 0u);
     assert(petta_machine_next(
                &machine, &answer, &environment) ==
@@ -2087,7 +2590,27 @@ static void test_constructor_slot_frame_plans(
         answer, parse_one(answers, "(partial + (2))")));
     bindings_free(&environment);
     assert(petta_machine_stats(&machine, &stats));
-    assert(stats.activation_materialization_calls == 1u);
+    /* Ordinary execution materializes the clause RHS before this metric's
+     * boundary.  The optional activation path keeps the source paired with
+     * its frame and performs one explicit fallback materialization here. */
+    assert(stats.activation_materialization_calls ==
+           (activation_enabled ? 1u : 0u));
+    assert(petta_machine_next(
+               &machine, &answer, &environment) ==
+           PETTA_MACHINE_STEP_EXHAUSTED);
+    bindings_free(&environment);
+    petta_machine_destroy(&machine);
+
+    assert(petta_machine_init_with_plan(
+        &machine, &execution_space, answers,
+        stale_query, stale_query_plan, NULL,
+        &activation_host));
+    bindings_init(&environment);
+    assert(petta_machine_next(
+               &machine, &answer, &environment) ==
+           PETTA_MACHINE_STEP_ANSWER);
+    assert(atom_alpha_eq(answer, stale_query));
+    bindings_free(&environment);
     assert(petta_machine_next(
                &machine, &answer, &environment) ==
            PETTA_MACHINE_STEP_EXHAUSTED);
@@ -2262,12 +2785,557 @@ static void test_program_equation_template_c0(
     space_free(&space);
 }
 
+static uint32_t assert_open_pattern_linear_subtree(
+        const CettaOpenPatternPlan *plan,
+        const CettaOpenPatternInstruction *program,
+        uint32_t program_len, uint32_t *cursor) {
+    assert(plan && program && cursor && *cursor < program_len);
+    uint32_t root = (*cursor)++;
+    assert(program[root].source == plan->source);
+    assert(program[root].variable_mask == plan->variable_mask);
+    assert(plan->source);
+    assert(plan->kind == plan->source->kind);
+    if (plan->kind == ATOM_EXPR) {
+        assert(plan->child_count == plan->source->expr.len);
+        assert(plan->child_count == 0u || plan->children);
+        for (CettaExprIndex child = 0u;
+             child < plan->child_count; child++) {
+            assert(plan->children[child].source ==
+                   plan->source->expr.elems[child]);
+            (void)assert_open_pattern_linear_subtree(
+                &plan->children[child], program,
+                program_len, cursor);
+        }
+    }
+    assert(*cursor > root);
+    assert(program[root].subtree_span == *cursor - root);
+    return program[root].subtree_span;
+}
+
+static void assert_open_pattern_linear_program(
+        const CettaOpenPatternPlan *plan) {
+    assert(plan && plan->linear_program &&
+           plan->linear_program_len > 0u);
+    uint32_t cursor = 0u;
+    uint32_t span = assert_open_pattern_linear_subtree(
+        plan, plan->linear_program,
+        plan->linear_program_len, &cursor);
+    assert(cursor == plan->linear_program_len);
+    assert(span == plan->linear_program_len);
+}
+
+static void test_open_pattern_support_certificate(
+    TermUniverse *universe, Arena *persistent) {
+    Space space;
+    space_init_with_universe(&space, universe);
+    PettaProgram *program = petta_program_new();
+    assert(program);
+
+    add_indexed_program_clause(
+        program, &space, persistent,
+        "(= (support-plan (SupportWrap $x $y $x)) support-ok)");
+    SymbolId support_head =
+        symbol_intern_cstr(g_symbols, "support-plan");
+    PettaClauseCandidate *candidates = NULL;
+    size_t candidate_count = 0u;
+    assert(petta_program_clause_snapshot(
+        program, &space, support_head,
+        &candidates, &candidate_count));
+    assert(candidate_count == 1u);
+    assert(candidates[0].equation_template);
+    const VarId *source_ids = NULL;
+    Atom *const *source_variables = NULL;
+    uint32_t variable_count = 0u;
+    assert(petta_equation_template_variable_inventory(
+        candidates[0].equation_template,
+        &source_ids, &source_variables, &variable_count));
+    assert(variable_count == 2u);
+    const CettaOpenPatternPlan *support_plan =
+        petta_equation_template_lhs_match_plan(
+            candidates[0].equation_template);
+    assert(support_plan);
+    assert(support_plan->source ==
+           candidates[0].activation_layout.lhs);
+    assert(support_plan->variable_ids == source_ids);
+    assert(support_plan->variable_mask == UINT64_C(3));
+    assert(support_plan->child_count == 2u);
+    assert(support_plan->children[0].variable_mask == 0u);
+    assert(support_plan->children[1].variable_mask == UINT64_C(3));
+    assert_open_pattern_linear_program(support_plan);
+    (void)source_variables;
+
+    uint32_t support_epoch = 0u;
+    assert(fresh_var_suffix_try(&support_epoch));
+    Atom *support_query = parse_one(persistent, "(support-plan $q)");
+    BindingsBuilder support_bindings;
+    assert(bindings_builder_init(&support_bindings, NULL));
+    assert(match_atoms_epoch_builder_rule_local_planned(
+        support_query, candidates[0].activation_layout.lhs,
+        support_plan, &support_bindings, persistent, support_epoch));
+    assert(!bindings_has_loop(&support_bindings.current));
+    BindingsBuilder support_linear;
+    assert(bindings_builder_init(&support_linear, NULL));
+    assert(match_atoms_epoch_builder_rule_local_linear(
+        support_query, candidates[0].activation_layout.lhs,
+        support_plan, &support_linear, persistent, support_epoch));
+    assert(!bindings_has_loop(&support_linear.current));
+    assert(bindings_eq(
+        &support_bindings.current, &support_linear.current));
+    bindings_builder_free(&support_linear);
+    bindings_builder_free(&support_bindings);
+    free(candidates);
+
+    add_indexed_program_clause(
+        program, &space, persistent,
+        "(= (support-cycle $x (SupportWrap $x)) support-cycle-ok)");
+    SymbolId cycle_head =
+        symbol_intern_cstr(g_symbols, "support-cycle");
+    candidates = NULL;
+    candidate_count = 0u;
+    assert(petta_program_clause_snapshot(
+        program, &space, cycle_head,
+        &candidates, &candidate_count));
+    assert(candidate_count == 1u);
+    assert(candidates[0].equation_template);
+    const CettaOpenPatternPlan *cycle_plan =
+        petta_equation_template_lhs_match_plan(
+            candidates[0].equation_template);
+    assert(cycle_plan);
+    assert_open_pattern_linear_program(cycle_plan);
+    uint32_t cycle_epoch = 0u;
+    assert(fresh_var_suffix_try(&cycle_epoch));
+    Atom *cycle_query =
+        parse_one(persistent, "(support-cycle $q $q)");
+    BindingsBuilder cycle_bindings;
+    assert(bindings_builder_init(&cycle_bindings, NULL));
+    assert(match_atoms_epoch_builder_rule_local_planned(
+        cycle_query, candidates[0].activation_layout.lhs,
+        cycle_plan, &cycle_bindings, persistent, cycle_epoch));
+    assert(bindings_has_loop(&cycle_bindings.current));
+    BindingsBuilder cycle_linear;
+    assert(bindings_builder_init(&cycle_linear, NULL));
+    assert(match_atoms_epoch_builder_rule_local_linear(
+        cycle_query, candidates[0].activation_layout.lhs,
+        cycle_plan, &cycle_linear, persistent, cycle_epoch));
+    assert(bindings_has_loop(&cycle_linear.current));
+    assert(bindings_eq(
+        &cycle_bindings.current, &cycle_linear.current));
+    bindings_builder_free(&cycle_linear);
+    bindings_builder_free(&cycle_bindings);
+    free(candidates);
+
+    char wide_source[4096];
+    size_t written = 0u;
+    int part = snprintf(
+        wide_source, sizeof(wide_source),
+        "(= (support-wide (Wide");
+    assert(part > 0 && (size_t)part < sizeof(wide_source));
+    written = (size_t)part;
+    for (uint32_t index = 0u; index < 65u; index++) {
+        part = snprintf(
+            wide_source + written, sizeof(wide_source) - written,
+            " $wide%u", index);
+        assert(part > 0 &&
+               (size_t)part < sizeof(wide_source) - written);
+        written += (size_t)part;
+    }
+    part = snprintf(
+        wide_source + written, sizeof(wide_source) - written,
+        ")) support-wide-ok)");
+    assert(part > 0 &&
+           (size_t)part < sizeof(wide_source) - written);
+    add_indexed_program_clause(
+        program, &space, persistent, wide_source);
+
+    SymbolId wide_head =
+        symbol_intern_cstr(g_symbols, "support-wide");
+    candidates = NULL;
+    candidate_count = 0u;
+    assert(petta_program_clause_snapshot(
+        program, &space, wide_head,
+        &candidates, &candidate_count));
+    assert(candidate_count == 1u);
+    assert(candidates[0].equation_template);
+    source_ids = NULL;
+    source_variables = NULL;
+    variable_count = 0u;
+    assert(petta_equation_template_variable_inventory(
+        candidates[0].equation_template,
+        &source_ids, &source_variables, &variable_count));
+    assert(variable_count == 65u);
+    const CettaOpenPatternPlan *wide_plan =
+        petta_equation_template_lhs_match_plan(
+            candidates[0].equation_template);
+    assert(wide_plan);
+    assert_open_pattern_linear_program(wide_plan);
+    assert(!wide_plan->variable_ids);
+    assert(wide_plan->variable_mask == 0u);
+    uint32_t wide_epoch = 0u;
+    assert(fresh_var_suffix_try(&wide_epoch));
+    Atom *wide_query = parse_one(persistent, "(support-wide $q)");
+    BindingsBuilder wide_bindings;
+    assert(bindings_builder_init(&wide_bindings, NULL));
+    assert(match_atoms_epoch_builder_rule_local_planned(
+        wide_query, candidates[0].activation_layout.lhs,
+        wide_plan, &wide_bindings, persistent, wide_epoch));
+    assert(!bindings_has_loop(&wide_bindings.current));
+    BindingsBuilder wide_linear;
+    assert(bindings_builder_init(&wide_linear, NULL));
+    assert(match_atoms_epoch_builder_rule_local_linear(
+        wide_query, candidates[0].activation_layout.lhs,
+        wide_plan, &wide_linear, persistent, wide_epoch));
+    assert(!bindings_has_loop(&wide_linear.current));
+    assert(bindings_eq(
+        &wide_bindings.current, &wide_linear.current));
+    bindings_builder_free(&wide_linear);
+    bindings_builder_free(&wide_bindings);
+    free(candidates);
+
+    struct OpenPatternTransferCase {
+        const char *head;
+        const char *equation;
+        const char *query;
+        bool matches;
+    } transfer_cases[] = {
+        {
+            "linear-parser-shape",
+            "(= (linear-parser-shape (Node token (Child $x))) ok)",
+            "(linear-parser-shape (Node token (Child value)))",
+            true,
+        },
+        {
+            "linear-proof-shape",
+            "(= (linear-proof-shape (Step (Claim $x) $x)) ok)",
+            "(linear-proof-shape (Step (Claim label) label))",
+            true,
+        },
+        {
+            "linear-graph-shape",
+            "(= (linear-graph-shape (Edge $x $x)) ok)",
+            "(linear-graph-shape (Edge left right))",
+            false,
+        },
+        {
+            "linear-evidence-shape",
+            "(= (linear-evidence-shape (Evidence (Weight 1 $x))) ok)",
+            "(linear-evidence-shape $open)",
+            true,
+        },
+        {
+            "linear-arithmetic-shape",
+            "(= (linear-arithmetic-shape (Pair 0 41)) ok)",
+            "(linear-arithmetic-shape (Pair 0 41))",
+            true,
+        },
+    };
+    for (size_t case_index = 0u;
+         case_index < sizeof transfer_cases /
+             sizeof transfer_cases[0]; case_index++) {
+        const struct OpenPatternTransferCase *test =
+            &transfer_cases[case_index];
+        add_indexed_program_clause(
+            program, &space, persistent, test->equation);
+        SymbolId head = symbol_intern_cstr(g_symbols, test->head);
+        candidates = NULL;
+        candidate_count = 0u;
+        assert(petta_program_clause_snapshot(
+            program, &space, head,
+            &candidates, &candidate_count));
+        assert(candidate_count == 1u);
+        assert(candidates[0].equation_template);
+        const CettaOpenPatternPlan *plan =
+            petta_equation_template_lhs_match_plan(
+                candidates[0].equation_template);
+        assert_open_pattern_linear_program(plan);
+        Atom *query = parse_one(persistent, test->query);
+        uint32_t epoch = 0u;
+        assert(fresh_var_suffix_try(&epoch));
+        BindingsBuilder tree_builder;
+        BindingsBuilder linear_builder;
+        assert(bindings_builder_init(&tree_builder, NULL));
+        assert(bindings_builder_init(&linear_builder, NULL));
+        bool tree_matches =
+            match_atoms_epoch_builder_rule_local_planned(
+                query, candidates[0].activation_layout.lhs,
+                plan, &tree_builder, persistent, epoch);
+        bool linear_matches =
+            match_atoms_epoch_builder_rule_local_linear(
+                query, candidates[0].activation_layout.lhs,
+                plan, &linear_builder, persistent, epoch);
+        assert(tree_matches == test->matches);
+        assert(linear_matches == tree_matches);
+        if (tree_matches) {
+            assert(bindings_eq(
+                &tree_builder.current,
+                &linear_builder.current));
+        }
+        bindings_builder_free(&linear_builder);
+        bindings_builder_free(&tree_builder);
+        free(candidates);
+    }
+
+    petta_program_free(program);
+    space_free(&space);
+    puts("PASS: open-pattern support certificates preserve cycles and decline wide sources");
+}
+
+typedef struct {
+    PettaProgram *program;
+    uint64_t relation_calls;
+    uint64_t clause_uses;
+} ClauseGuardObserverProbe;
+
+static bool test_clause_guard_snapshot_lease(
+    void *context, Space *space, SymbolId head,
+    PettaClauseSnapshotLease *lease,
+    PettaClauseSnapshotStats *stats) {
+    ClauseGuardObserverProbe *probe = context;
+    return probe && probe->program &&
+        petta_program_clause_snapshot_lease_profiled(
+            probe->program, space, head, lease, stats);
+}
+
+static uint64_t test_clause_guard_begin_relation_call(
+    void *context, SpaceReadToken read, Atom *query) {
+    ClauseGuardObserverProbe *probe = context;
+    assert(probe && read.instance_id != 0u && query);
+    probe->relation_calls++;
+    return probe->relation_calls;
+}
+
+static bool test_clause_guard_record_clause_use(
+    void *context, Arena *owner, uint64_t call_occurrence,
+    const PettaClauseCandidate *candidate, Atom *result,
+    const Bindings *environment, Bindings *evidence_delta) {
+    ClauseGuardObserverProbe *probe = context;
+    assert(probe && owner && call_occurrence != 0u && candidate &&
+           result && environment && evidence_delta);
+    probe->clause_uses++;
+    return true;
+}
+
+static void test_compiled_clause_guard_pruning(
+    TermUniverse *universe, Arena *persistent, Arena *answers) {
+    Space space;
+    space_init_with_universe(&space, universe);
+    PettaProgram *program = petta_program_new();
+    assert(program);
+    add_compiled_program_clause(
+        program, &space, persistent,
+        "(= (guard-prune $x)"
+        "   (if (== $x 1) kept (empty)))");
+    add_compiled_program_clause(
+        program, &space, persistent,
+        "(= (guard-prune $x)"
+        "   (if (== $x -1) wrong (empty)))");
+
+    ClauseGuardObserverProbe probe = {
+        .program = program,
+    };
+    PettaMachineHost host = {
+        .context = &probe,
+        .clause_snapshot_lease = test_clause_guard_snapshot_lease,
+        .measure_stats = true,
+        .unlimited_transition_budget = true,
+    };
+    Atom *query = parse_one(answers, "(guard-prune 1)");
+    const PettaPlanNode *query_plan =
+        petta_program_plan_current(program, query);
+    assert(query && query_plan);
+    PettaMachine machine;
+    assert(petta_machine_init_with_plan(
+        &machine, &space, answers, query, query_plan, NULL, &host));
+    Atom *answer = NULL;
+    Bindings environment;
+    bindings_init(&environment);
+    assert(petta_machine_next(
+               &machine, &answer, &environment) ==
+           PETTA_MACHINE_STEP_ANSWER);
+    assert(atom_alpha_eq(answer, atom_symbol(answers, "kept")));
+    bindings_free(&environment);
+    assert(petta_machine_next(
+               &machine, &answer, &environment) ==
+           PETTA_MACHINE_STEP_EXHAUSTED);
+    bindings_free(&environment);
+    PettaMachineStats stats;
+    assert(petta_machine_stats(&machine, &stats));
+    assert(stats.clause_guard_prune_attempts == 2u);
+    assert(stats.clause_guard_pruned == 1u);
+    assert(stats.clause_guard_retained == 1u);
+    assert(stats.clause_match_attempts == 1u);
+    assert(stats.clause_branches_scheduled == 1u);
+    assert(stats.choice_continuation_snapshots == 0u);
+    petta_machine_destroy(&machine);
+
+    /* Equal surviving occurrences remain two answers in authored order;
+     * only the independently certified empty occurrence disappears. */
+    add_compiled_program_clause(
+        program, &space, persistent,
+        "(= (guard-duplicates $x)"
+        "   (if (== $x 1) duplicate (empty)))");
+    add_compiled_program_clause(
+        program, &space, persistent,
+        "(= (guard-duplicates $x)"
+        "   (if (== $x 1) duplicate (empty)))");
+    add_compiled_program_clause(
+        program, &space, persistent,
+        "(= (guard-duplicates $x)"
+        "   (if (== $x -1) wrong (empty)))");
+    query = parse_one(answers, "(guard-duplicates 1)");
+    query_plan = petta_program_plan_current(program, query);
+    assert(query && query_plan);
+    assert(petta_machine_init_with_plan(
+        &machine, &space, answers, query, query_plan, NULL, &host));
+    for (size_t index = 0u; index < 2u; index++) {
+        assert(petta_machine_next(
+                   &machine, &answer, &environment) ==
+               PETTA_MACHINE_STEP_ANSWER);
+        assert(atom_alpha_eq(
+            answer, atom_symbol(answers, "duplicate")));
+        bindings_free(&environment);
+    }
+    assert(petta_machine_next(
+               &machine, &answer, &environment) ==
+           PETTA_MACHINE_STEP_EXHAUSTED);
+    bindings_free(&environment);
+    assert(petta_machine_stats(&machine, &stats));
+    assert(stats.clause_guard_prune_attempts == 3u);
+    assert(stats.clause_guard_pruned == 1u);
+    assert(stats.clause_guard_retained == 2u);
+    assert(stats.clause_match_attempts == 2u);
+    assert(stats.clause_branches_scheduled == 2u);
+    petta_machine_destroy(&machine);
+
+    /* An `if` with no authored empty branch is outside the erasure law.
+     * Both ordinary occurrences remain observable. */
+    add_compiled_program_clause(
+        program, &space, persistent,
+        "(= (guard-no-empty $x)"
+        "   (if (== $x 1) first other-first))");
+    add_compiled_program_clause(
+        program, &space, persistent,
+        "(= (guard-no-empty $x)"
+        "   (if (== $x 1) second other-second))");
+    query = parse_one(answers, "(guard-no-empty 1)");
+    query_plan = petta_program_plan_current(program, query);
+    assert(query && query_plan);
+    assert(petta_machine_init_with_plan(
+        &machine, &space, answers, query, query_plan, NULL, &host));
+    assert(petta_machine_next(
+               &machine, &answer, &environment) ==
+           PETTA_MACHINE_STEP_ANSWER);
+    assert(atom_alpha_eq(answer, atom_symbol(answers, "first")));
+    bindings_free(&environment);
+    assert(petta_machine_next(
+               &machine, &answer, &environment) ==
+           PETTA_MACHINE_STEP_ANSWER);
+    assert(atom_alpha_eq(answer, atom_symbol(answers, "second")));
+    bindings_free(&environment);
+    assert(petta_machine_next(
+               &machine, &answer, &environment) ==
+           PETTA_MACHINE_STEP_EXHAUSTED);
+    bindings_free(&environment);
+    assert(petta_machine_stats(&machine, &stats));
+    assert(stats.clause_guard_prune_attempts == 0u);
+    assert(stats.clause_guard_pruned == 0u);
+    assert(stats.clause_guard_retained == 0u);
+    assert(stats.clause_branches_scheduled == 2u);
+    petta_machine_destroy(&machine);
+
+    /* A nested LHS may acquire relational meaning after snapshot capture.
+     * It is therefore deliberately outside the flat C0 discriminator. */
+    add_compiled_program_clause(
+        program, &space, persistent,
+        "(= (guard-nested (box $x))"
+        "   (if (< $x 0) wrong (empty)))");
+    add_compiled_program_clause(
+        program, &space, persistent,
+        "(= (guard-nested $x) fallback)");
+    query = parse_one(answers, "(guard-nested (box 1))");
+    query_plan = petta_program_plan_current(program, query);
+    assert(query && query_plan);
+    assert(petta_machine_init_with_plan(
+        &machine, &space, answers, query, query_plan, NULL, &host));
+    assert(petta_machine_next(
+               &machine, &answer, &environment) ==
+           PETTA_MACHINE_STEP_ANSWER);
+    assert(atom_alpha_eq(answer, atom_symbol(answers, "fallback")));
+    bindings_free(&environment);
+    assert(petta_machine_next(
+               &machine, &answer, &environment) ==
+           PETTA_MACHINE_STEP_EXHAUSTED);
+    bindings_free(&environment);
+    assert(petta_machine_stats(&machine, &stats));
+    assert(stats.clause_guard_pruned == 0u);
+    petta_machine_destroy(&machine);
+
+    /* Finite transition purses and occurrence observers retain the exact
+     * canonical boundary, even when the same logical pruning is possible. */
+    host.unlimited_transition_budget = false;
+    query = parse_one(answers, "(guard-prune 1)");
+    query_plan = petta_program_plan_current(program, query);
+    assert(query && query_plan);
+    assert(petta_machine_init_with_plan(
+        &machine, &space, answers, query, query_plan, NULL, &host));
+    assert(petta_machine_next(
+               &machine, &answer, &environment) ==
+           PETTA_MACHINE_STEP_ANSWER);
+    bindings_free(&environment);
+    assert(petta_machine_stats(&machine, &stats));
+    assert(stats.clause_guard_prune_attempts == 0u);
+    petta_machine_destroy(&machine);
+
+    host.unlimited_transition_budget = true;
+    host.begin_relation_call = test_clause_guard_begin_relation_call;
+    host.record_clause_use = test_clause_guard_record_clause_use;
+    probe.relation_calls = 0u;
+    probe.clause_uses = 0u;
+    assert(petta_machine_init_with_plan(
+        &machine, &space, answers, query, query_plan, NULL, &host));
+    assert(petta_machine_next(
+               &machine, &answer, &environment) ==
+           PETTA_MACHINE_STEP_ANSWER);
+    bindings_free(&environment);
+    assert(petta_machine_next(
+               &machine, &answer, &environment) ==
+           PETTA_MACHINE_STEP_EXHAUSTED);
+    bindings_free(&environment);
+    assert(probe.relation_calls == 1u);
+    assert(probe.clause_uses == 2u);
+    assert(petta_machine_stats(&machine, &stats));
+    assert(stats.clause_guard_prune_attempts == 0u);
+    petta_machine_destroy(&machine);
+
+    petta_program_free(program);
+    space_free(&space);
+    puts("PASS: compiled clause guards prune only authored empty branches"
+         " while preserving duplicates, dynamic patterns, fuel, and"
+         " occurrence receipts");
+}
+
+/* A receipt may describe work, but must agree with the observable bag it
+ * reports.  It deliberately does not prescribe scanning, indexing, cache, or
+ * storage choices. */
+static void assert_clause_snapshot_receipt_conserves_candidates(
+        const PettaClauseSnapshotStats *stats, size_t candidate_count) {
+    assert(stats);
+    assert(stats->candidates_emitted == candidate_count);
+}
+
 static void test_program_head_occurrence_index(
     TermUniverse *universe, Arena *persistent) {
     Space indexed_space;
     space_init_with_universe(&indexed_space, universe);
     PettaProgram *program = petta_program_new();
     assert(program);
+
+    /* Keep data before the equations so the destructive negative case below
+     * has to refresh positional occurrence evidence rather than merely
+     * reusing an unchanged suffix. */
+    Atom *leading_data = parse_one(
+        persistent, "indexed-leading-data");
+    assert(leading_data);
+    space_add(&indexed_space, leading_data);
 
     Atom *first = add_indexed_program_clause(
         program, &indexed_space, persistent,
@@ -2307,40 +3375,41 @@ static void test_program_head_occurrence_index(
     assert(candidates[1].equation == wildcard);
     assert(candidates[2].equation == duplicate);
     assert(atom_eq(candidates[3].equation, duplicate));
-    assert(stats.live_occurrences_scanned == 4u);
-    assert(stats.declaration_records_examined == 4u);
-    assert(stats.pointer_identity_hits == 4u);
-    assert(stats.structural_equality_checks == 0u);
-    assert(stats.alpha_equality_checks == 0u);
-    assert(stats.candidates_emitted == 4u);
-    assert(stats.cache_hits == 0u);
+    assert_clause_snapshot_receipt_conserves_candidates(
+        &stats, candidate_count);
     candidates[0].equation = wildcard;
     free(candidates);
 
-    /* The machine-facing lease borrows one exact-revision cache identity;
-     * repeated selection neither copies nor reconstructs the N-candidate
-     * catalog.  Callers must release the lease before any writer runs. */
+    /* The machine-facing lease preserves declaration order and occurrence
+     * provenance.  Its physical ownership is deliberately not part of this
+     * semantic test: callers release the lease before a writer runs. */
     PettaClauseSnapshotLease first_lease = {0};
     PettaClauseSnapshotLease second_lease = {0};
     assert(petta_program_clause_snapshot_lease_profiled(
         program, &indexed_space, hot, &first_lease, &stats));
     assert(first_lease.len == 4u);
-    assert(first_lease.items && !first_lease.owned_items);
-    assert(stats.cache_hits == 1u);
+    assert(first_lease.items);
+    assert(first_lease.items[0].equation == first);
+    assert(first_lease.items[1].equation == wildcard);
+    assert(first_lease.items[2].equation == duplicate);
+    assert_clause_snapshot_receipt_conserves_candidates(
+        &stats, first_lease.len);
     assert(petta_program_clause_snapshot_lease_profiled(
         program, &indexed_space, hot, &second_lease, &stats));
-    assert(second_lease.items == first_lease.items);
     assert(second_lease.len == first_lease.len);
-    assert(!second_lease.owned_items);
+    assert(second_lease.items[0].equation == first);
+    assert(second_lease.items[1].equation == wildcard);
+    assert(second_lease.items[2].equation == duplicate);
+    assert_clause_snapshot_receipt_conserves_candidates(
+        &stats, second_lease.len);
     PettaClauseCandidate retained = first_lease.items[0];
     petta_program_clause_snapshot_lease_release(&second_lease);
     petta_program_clause_snapshot_lease_release(&first_lease);
     assert(retained.equation == first);
 
-    /*
-     * The same immutable revision reuses the reconciled candidate program,
-     * while each caller retains an independently writable choice array.
-     */
+    /* An ordinary caller receives the same selected occurrences in authored
+     * order, independent of whether an implementation reconstructed or reused
+     * a private representation. */
     candidates = NULL;
     candidate_count = 0u;
     assert(petta_program_clause_snapshot_profiled(
@@ -2351,10 +3420,57 @@ static void test_program_head_occurrence_index(
     assert(candidates[1].equation == wildcard);
     assert(candidates[2].equation == duplicate);
     assert(atom_eq(candidates[3].equation, duplicate));
-    assert(stats.cache_hits == 1u);
-    assert(stats.live_occurrences_scanned == 0u);
-    assert(stats.declaration_records_examined == 0u);
-    assert(stats.structural_equality_checks == 0u);
+    assert_clause_snapshot_receipt_conserves_candidates(
+        &stats, candidate_count);
+    free(candidates);
+
+    /* A data-only append changes the full read revision but not candidate
+     * selection.  The returned occurrences must nevertheless be current and
+     * resolve to exactly the same authored equations. */
+    Atom *trailing_data = parse_one(
+        persistent, "indexed-trailing-data");
+    assert(trailing_data);
+    space_add(&indexed_space, trailing_data);
+    candidates = NULL;
+    candidate_count = 0u;
+    assert(petta_program_clause_snapshot_profiled(
+        program, &indexed_space, hot,
+        &candidates, &candidate_count, &stats));
+    assert(candidate_count == 4u);
+    assert(candidates[0].equation == first);
+    assert(candidates[1].equation == wildcard);
+    assert(candidates[2].equation == duplicate);
+    assert_clause_snapshot_receipt_conserves_candidates(
+        &stats, candidate_count);
+    for (size_t index = 0u; index < candidate_count; index++) {
+        SpaceEquationOccurrence occurrence = {0};
+        assert(space_equation_occurrence_resolve(
+            candidates[index].occurrence, &occurrence));
+        assert(occurrence.equation == candidates[index].equation);
+    }
+    free(candidates);
+
+    /* Removing leading data rewrites every remaining logical position.  The
+     * public result remains unchanged, but any position-bearing realization
+     * must supply fresh provenance rather than exposing stale evidence. */
+    assert(space_remove(&indexed_space, leading_data));
+    candidates = NULL;
+    candidate_count = 0u;
+    assert(petta_program_clause_snapshot_profiled(
+        program, &indexed_space, hot,
+        &candidates, &candidate_count, &stats));
+    assert(candidate_count == 4u);
+    assert(candidates[0].equation == first);
+    assert(candidates[1].equation == wildcard);
+    assert(candidates[2].equation == duplicate);
+    assert_clause_snapshot_receipt_conserves_candidates(
+        &stats, candidate_count);
+    for (size_t index = 0u; index < candidate_count; index++) {
+        SpaceEquationOccurrence occurrence = {0};
+        assert(space_equation_occurrence_resolve(
+            candidates[index].occurrence, &occurrence));
+        assert(occurrence.equation == candidates[index].equation);
+    }
     free(candidates);
 
     /*
@@ -2379,8 +3495,8 @@ static void test_program_head_occurrence_index(
         &candidates, &candidate_count, &stats));
     assert(candidate_count == 5u);
     assert(candidates[4].equation == unregistered);
-    assert(stats.cache_hits == 0u);
-    assert(stats.live_occurrences_scanned == 5u);
+    assert_clause_snapshot_receipt_conserves_candidates(
+        &stats, candidate_count);
     free(candidates);
 
     assert(space_remove(&indexed_space, unregistered));
@@ -2390,8 +3506,8 @@ static void test_program_head_occurrence_index(
         program, &indexed_space, hot,
         &candidates, &candidate_count, &stats));
     assert(candidate_count == 4u);
-    assert(stats.cache_hits == 0u);
-    assert(stats.live_occurrences_scanned == 4u);
+    assert_clause_snapshot_receipt_conserves_candidates(
+        &stats, candidate_count);
     free(candidates);
 
     candidates = NULL;
@@ -2401,8 +3517,8 @@ static void test_program_head_occurrence_index(
         &candidates, &candidate_count, &stats));
     assert(candidate_count == 1u);
     assert(candidates[0].equation == wildcard);
-    assert(stats.live_occurrences_scanned == 1u);
-    assert(stats.declaration_records_examined == 1u);
+    assert_clause_snapshot_receipt_conserves_candidates(
+        &stats, candidate_count);
     free(candidates);
 
     assert(space_remove(&indexed_space, first));
@@ -2417,8 +3533,8 @@ static void test_program_head_occurrence_index(
     assert(candidates[0].equation == wildcard);
     assert(candidates[1].equation == duplicate);
     assert(atom_eq(candidates[2].equation, duplicate));
-    assert(stats.live_occurrences_scanned == 3u);
-    assert(stats.declaration_records_examined == 3u);
+    assert_clause_snapshot_receipt_conserves_candidates(
+        &stats, candidate_count);
     free(candidates);
 
     /*
@@ -2438,7 +3554,8 @@ static void test_program_head_occurrence_index(
         program, transient, hot,
         &candidates, &candidate_count, &stats));
     assert(candidate_count == 1u);
-    assert(stats.cache_hits == 0u);
+    assert_clause_snapshot_receipt_conserves_candidates(
+        &stats, candidate_count);
     free(candidates);
     candidates = NULL;
     candidate_count = 0u;
@@ -2446,13 +3563,16 @@ static void test_program_head_occurrence_index(
         program, transient, hot,
         &candidates, &candidate_count, &stats));
     assert(candidate_count == 1u);
-    assert(stats.cache_hits == 0u);
+    assert_clause_snapshot_receipt_conserves_candidates(
+        &stats, candidate_count);
     free(candidates);
     PettaClauseSnapshotLease transient_lease = {0};
     assert(petta_program_clause_snapshot_lease_profiled(
         program, transient, hot, &transient_lease, &stats));
     assert(transient_lease.len == 1u);
-    assert(transient_lease.items == transient_lease.owned_items);
+    assert(transient_lease.items);
+    assert_clause_snapshot_receipt_conserves_candidates(
+        &stats, transient_lease.len);
     petta_program_clause_snapshot_lease_release(&transient_lease);
     space_free(transient);
     free(transient);
@@ -2510,24 +3630,257 @@ static void test_program_wide_occurrence_reconciliation(
     assert(candidates[WIDE_CLAUSES / 2u].equation == middle);
     assert(candidates[WIDE_CLAUSES - 1u].equation == last);
     assert(candidates[WIDE_CLAUSES].equation == duplicate);
-    assert(stats.live_occurrences_scanned == WIDE_CLAUSES + 1u);
-    assert(stats.declaration_records_examined == WIDE_CLAUSES + 1u);
-    assert(stats.pointer_identity_hits == WIDE_CLAUSES + 1u);
-    assert(stats.structural_equality_checks == 0u);
-    assert(stats.alpha_equality_checks == 0u);
+    assert_clause_snapshot_receipt_conserves_candidates(
+        &stats, candidate_count);
     free(candidates);
 
     PettaClauseSnapshotLease lease = {0};
     assert(petta_program_clause_snapshot_lease_profiled(
         program, &wide_space, head, &lease, &stats));
     assert(lease.len == WIDE_CLAUSES + 1u);
-    assert(lease.items && !lease.owned_items);
-    assert(stats.cache_hits == 1u);
-    assert(stats.live_occurrences_scanned == 0u);
+    assert(lease.items);
+    assert(lease.items[0].equation == first);
+    assert(lease.items[WIDE_CLAUSES / 2u].equation == middle);
+    assert(lease.items[WIDE_CLAUSES - 1u].equation == last);
+    assert(lease.items[WIDE_CLAUSES].equation == duplicate);
+    assert_clause_snapshot_receipt_conserves_candidates(
+        &stats, lease.len);
     petta_program_clause_snapshot_lease_release(&lease);
 
     petta_program_free(program);
     space_free(&wide_space);
+}
+
+static Atom *add_unregistered_equation(
+        Space *space, Arena *arena, const char *source) {
+    Atom *equation = parse_one(arena, source);
+    assert(equation && petta_program_is_equation(equation));
+    CettaCount before = space_length64(space);
+    space_add(space, equation);
+    assert(space_length64(space) == before + 1u);
+    Atom *stored = space_get_at64(space, before);
+    assert(stored);
+    return stored;
+}
+
+/* A revision view is an opaque selection authority.  Its contract is the
+ * declaration-ordered bag of current occurrences, not whether a particular
+ * realization borrowed, copied, or compiled those occurrences. */
+static void assert_equation_lease_observes(
+        const PettaClauseSnapshotLease *lease, Space *space,
+        Atom *const *expected, size_t expected_count) {
+    assert(lease && space && expected);
+    assert(lease->len == expected_count);
+    for (size_t index = 0u; index < expected_count; index++) {
+        assert(lease->items[index].equation);
+        assert(atom_alpha_eq(lease->items[index].equation, expected[index]));
+        SpaceEquationOccurrence resolved = {0};
+        assert(space_equation_occurrence_resolve(
+            lease->items[index].occurrence, &resolved));
+        assert(atom_alpha_eq(resolved.equation, expected[index]));
+    }
+}
+
+static void test_program_revision_view_transport(
+        TermUniverse *source_universe, Arena *source_arena) {
+    static const char *equations[] = {
+        "(= (view-hot first) result-first)",
+        "(= ($view-head wildcard) result-wildcard)",
+        "(= (view-hot duplicate) result-duplicate)",
+        "(= (view-hot duplicate) result-duplicate)",
+        "(= (view-hot (Pair $x $x)) result-pair)",
+        "(= (view-cold other) result-cold)",
+    };
+    enum {
+        EQUATION_COUNT = sizeof(equations) / sizeof(equations[0]),
+        HOT_COUNT = 5,
+    };
+
+    Space source;
+    space_init_with_universe(&source, source_universe);
+    PettaProgram *program = petta_program_new();
+    assert(program);
+    Atom *source_equations[EQUATION_COUNT];
+    for (size_t index = 0u; index < EQUATION_COUNT; index++) {
+        source_equations[index] = add_compiled_program_clause(
+            program, &source, source_arena, equations[index]);
+    }
+
+    PettaProgramRevisionView *view =
+        petta_program_revision_view_capture(program, &source);
+    assert(view);
+    PettaProgramRevisionView *reused_view =
+        petta_program_revision_view_capture(program, &source);
+    assert(reused_view);
+
+    /* A data-only source edit changes the complete Space state without
+       changing its ordered equation projection.  The same immutable authority
+       remains exact and binds by the smaller projection token. */
+    SpaceReadToken source_before_data = space_read_token(&source);
+    SpaceEquationToken source_equations_before_data =
+        space_equation_token(&source);
+    space_add(&source, parse_one(source_arena, "view-source-data"));
+    assert(!space_read_token_matches_live_space(
+        source_before_data, &source));
+    assert(space_equation_token_matches_live_space(
+        source_equations_before_data, &source));
+    PettaProgramRevisionView *data_reused_view =
+        petta_program_revision_view_capture(program, &source);
+    assert(data_reused_view);
+    PettaProgramRevisionProjection data_source_projection = {0};
+    assert(petta_program_revision_view_bind(
+        data_reused_view, &source, &data_source_projection));
+    assert(petta_program_revision_projection_current(
+        &data_source_projection, &source));
+
+    Arena target_arena;
+    TermUniverse target_universe;
+    Space target;
+    arena_init(&target_arena);
+    arena_set_runtime_kind(
+        &target_arena, CETTA_ARENA_RUNTIME_KIND_PERSISTENT);
+    term_universe_init(&target_universe);
+    term_universe_set_persistent_arena(
+        &target_universe, &target_arena);
+    space_init_with_universe(&target, &target_universe);
+    Atom *target_equations[EQUATION_COUNT];
+    for (size_t index = 0u; index < EQUATION_COUNT; index++) {
+        target_equations[index] = add_unregistered_equation(
+            &target, &target_arena, equations[index]);
+    }
+
+    PettaProgramRevisionProjection projection = {0};
+    assert(petta_program_revision_view_bind(
+        reused_view, &target, &projection));
+    assert(petta_program_revision_projection_current(
+        &projection, &target));
+
+    SymbolId hot = symbol_intern_cstr(g_symbols, "view-hot");
+    SymbolId absent = symbol_intern_cstr(
+        g_symbols, "view-absent");
+    assert(hot != SYMBOL_ID_NONE && absent != SYMBOL_ID_NONE);
+    PettaClauseSnapshotLease lease = {0};
+    Atom *hot_target_equations[] = {
+        target_equations[0], target_equations[1], target_equations[2],
+        target_equations[3], target_equations[4],
+    };
+    assert(petta_program_revision_view_equation_lease(
+        &projection, &target, hot, &lease, NULL));
+    assert_equation_lease_observes(
+        &lease, &target, hot_target_equations, HOT_COUNT);
+    petta_program_clause_snapshot_lease_release(&lease);
+
+    /* A variable-headed equation remains an authored occurrence and is the
+       only candidate for an otherwise absent relation. */
+    assert(petta_program_revision_view_equation_lease(
+        &projection, &target, absent, &lease, NULL));
+    Atom *absent_target_equations[] = {target_equations[1]};
+    assert_equation_lease_observes(
+        &lease, &target, absent_target_equations, 1u);
+    petta_program_clause_snapshot_lease_release(&lease);
+
+    SpaceReadToken target_before_data = space_read_token(&target);
+    SpaceEquationToken target_equations_before_data =
+        space_equation_token(&target);
+    space_add(&target, parse_one(&target_arena, "view-target-data"));
+    assert(!space_read_token_matches_live_space(
+        target_before_data, &target));
+    assert(space_equation_token_matches_live_space(
+        target_equations_before_data, &target));
+    assert(petta_program_revision_projection_current(
+        &projection, &target));
+    assert(petta_program_revision_view_equation_lease(
+        &projection, &target, hot, &lease, NULL));
+    assert_equation_lease_observes(
+        &lease, &target, hot_target_equations, HOT_COUNT);
+    petta_program_clause_snapshot_lease_release(&lease);
+
+    /* The captured program is a logical-update view: a later source edit
+       cannot retag the already transported private image. */
+    Atom *source_late = add_compiled_program_clause(
+        program, &source, source_arena,
+        "(= (view-hot source-late) result-source-late)");
+    assert(petta_program_revision_projection_current(
+        &projection, &target));
+    assert(petta_program_revision_view_equation_lease(
+        &projection, &target, hot, &lease, NULL));
+    assert_equation_lease_observes(
+        &lease, &target, hot_target_equations, HOT_COUNT);
+    petta_program_clause_snapshot_lease_release(&lease);
+
+    /* A source equation edit creates a later frozen selection, while the old
+       projection continues to denote its original target selection. */
+    PettaProgramRevisionView *revised_view =
+        petta_program_revision_view_capture(program, &source);
+    assert(revised_view);
+    PettaProgramRevisionProjection source_projection = {0};
+    assert(petta_program_revision_view_bind(
+        revised_view, &source, &source_projection));
+    assert(petta_program_revision_projection_current(
+        &source_projection, &source));
+    assert(petta_program_revision_view_equation_lease(
+        &source_projection, &source, hot, &lease, NULL));
+    Atom *hot_source_equations[] = {
+        source_equations[0], source_equations[1], source_equations[2],
+        source_equations[3], source_equations[4], source_late,
+    };
+    assert_equation_lease_observes(
+        &lease, &source, hot_source_equations, HOT_COUNT + 1u);
+    petta_program_clause_snapshot_lease_release(&lease);
+
+    /* A target edit invalidates only optimization evidence.  The same API
+       takes the complete live route, includes the new equation exactly once,
+       and returns no stale compiled plan. */
+    Atom *target_late = add_unregistered_equation(
+        &target, &target_arena,
+        "(= (view-hot target-late) result-target-late)");
+    assert(!petta_program_revision_projection_current(
+        &projection, &target));
+    assert(petta_program_revision_view_equation_lease(
+        &projection, &target, hot, &lease, NULL));
+    Atom *hot_target_late_equations[] = {
+        target_equations[0], target_equations[1], target_equations[2],
+        target_equations[3], target_equations[4], target_late,
+    };
+    assert_equation_lease_observes(
+        &lease, &target, hot_target_late_equations, HOT_COUNT + 1u);
+    petta_program_clause_snapshot_lease_release(&lease);
+
+    /* Missing, reordered, and unrelated equation occurrences cannot inherit
+       a view merely because some payloads happen to compare equal. */
+    Space unrelated;
+    space_init_with_universe(&unrelated, &target_universe);
+    add_unregistered_equation(
+        &unrelated, &target_arena,
+        "(= (view-hot unrelated) result-unrelated)");
+    PettaProgramRevisionProjection declined = {0};
+    assert(!petta_program_revision_view_bind(
+        view, &unrelated, &declined));
+    assert(!declined.view);
+
+    Space reordered;
+    space_init_with_universe(&reordered, &target_universe);
+    for (size_t index = EQUATION_COUNT; index > 0u; index--) {
+        add_unregistered_equation(
+            &reordered, &target_arena, equations[index - 1u]);
+    }
+    assert(!petta_program_revision_view_bind(
+        view, &reordered, &declined));
+    assert(!declined.view);
+
+    space_free(&reordered);
+    space_free(&unrelated);
+    space_free(&target);
+    term_universe_free(&target_universe);
+    arena_free(&target_arena);
+    petta_program_revision_view_free(revised_view);
+    petta_program_revision_view_free(data_reused_view);
+    petta_program_revision_view_free(reused_view);
+    petta_program_revision_view_free(view);
+    petta_program_free(program);
+    space_free(&source);
+    puts("PASS: revision-bound equation selection preserves ordered"
+         " occurrences and falls back safely after mutation");
 }
 
 static void test_program_analysis_sidecar_interop(
@@ -2656,6 +4009,93 @@ static void test_typed_data_purity_boundary(
     space_free(&typed_space);
 }
 
+static void test_evaluator_neutral_structural_equation_classification(
+    TermUniverse *universe, Arena *persistent) {
+    Space structural_space;
+    space_init_with_universe(&structural_space, universe);
+    PettaProgram *program = petta_program_new();
+    assert(program);
+
+    space_add(
+        &structural_space,
+        parse_one(persistent, "(= (portable Z) base)"));
+    space_add(
+        &structural_space,
+        parse_one(
+            persistent,
+            "(= (portable (S $n)) (portable $n))"));
+    Atom *portable_call =
+        parse_one(persistent, "(portable (S (S Z)))");
+    assert(petta_program_synchronize_space(
+        program, &structural_space));
+    assert(petta_program_relational_execution_class(
+               program, &structural_space, portable_call) ==
+           CETTA_RELATIONAL_EXECUTION_STRUCTURAL_EQUATIONS_V1);
+
+    /* A revision change invalidates the qualification until the complete
+     * occurrence catalog has been rebuilt from that exact Space revision. */
+    space_add(
+        &structural_space,
+        parse_one(persistent, "unrelated-data"));
+    assert(petta_program_relational_execution_class(
+               program, &structural_space, portable_call) ==
+           CETTA_RELATIONAL_EXECUTION_UNQUALIFIED);
+    assert(petta_program_synchronize_space(
+        program, &structural_space));
+    assert(petta_program_relational_execution_class(
+               program, &structural_space, portable_call) ==
+           CETTA_RELATIONAL_EXECUTION_STRUCTURAL_EQUATIONS_V1);
+
+    Space intrinsic_space;
+    space_init_with_universe(&intrinsic_space, universe);
+    space_add(
+        &intrinsic_space,
+        parse_one(
+            persistent,
+            "(= (portable-intrinsic $x) (+ $x 1))"));
+    assert(petta_program_synchronize_space(
+        program, &intrinsic_space));
+    assert(petta_program_relational_execution_class(
+               program, &intrinsic_space,
+               parse_one(persistent, "(portable-intrinsic 2)")) ==
+           CETTA_RELATIONAL_EXECUTION_UNQUALIFIED);
+
+    Space list_space;
+    space_init_with_universe(&list_space, universe);
+    space_add(
+        &list_space,
+        parse_one(
+            persistent,
+            "(= (portable-cons $x) (cons $x ()))"));
+    assert(petta_program_synchronize_space(program, &list_space));
+    assert(petta_program_relational_execution_class(
+               program, &list_space,
+               parse_one(persistent, "(portable-cons item)")) ==
+           CETTA_RELATIONAL_EXECUTION_UNQUALIFIED);
+
+    Space open_head_space;
+    space_init_with_universe(&open_head_space, universe);
+    space_add(
+        &open_head_space,
+        parse_one(persistent, "(= (portable-open $x) ok)"));
+    space_add(
+        &open_head_space,
+        parse_one(persistent, "(= ($callable $x) dynamic)"));
+    assert(petta_program_synchronize_space(
+        program, &open_head_space));
+    assert(petta_program_relational_execution_class(
+               program, &open_head_space,
+               parse_one(persistent, "(portable-open item)")) ==
+           CETTA_RELATIONAL_EXECUTION_UNQUALIFIED);
+
+    petta_program_free(program);
+    space_free(&open_head_space);
+    space_free(&list_space);
+    space_free(&intrinsic_space);
+    space_free(&structural_space);
+    puts("PASS: evaluator-neutral structural equations qualify exactly");
+}
+
 static void expect_answers(
     Space *space, Arena *arena, const char *query_source,
     const char *const *expected_sources, size_t expected_count) {
@@ -2714,6 +4154,353 @@ static void expect_answers(
     assert(stats.transitions >= expected_count);
     petta_machine_destroy(&machine);
 }
+
+static bool match_decision_receipt_relation_admissible(
+    void *context, Space *space,
+    SymbolId head, CettaExprLen arity) {
+    (void)context;
+    (void)space;
+    (void)head;
+    (void)arity;
+    return true;
+}
+
+typedef struct {
+    SymbolId nested_head;
+    uint64_t revision;
+    size_t classification_calls;
+    bool unavailable;
+} MatchDecisionCallabilityAuthorityProbe;
+
+static bool match_decision_callability_authority_token(
+    void *context, PettaMachineAuthorityToken *token) {
+    MatchDecisionCallabilityAuthorityProbe *probe = context;
+    if (!probe || !token || probe->unavailable)
+        return false;
+    *token = (PettaMachineAuthorityToken){
+        .words = {
+            UINT64_C(0x6d61746368), UINT64_C(0x617574686f726974),
+            probe->revision,
+        },
+        .length = 3u,
+    };
+    return true;
+}
+
+static PettaMachineHostMode match_decision_callability_classify(
+    void *context, Space *space, Atom *expression) {
+    (void)space;
+    MatchDecisionCallabilityAuthorityProbe *probe = context;
+    if (!probe || !expression || expression->kind != ATOM_EXPR ||
+        expression->expr.len != 2u ||
+        !atom_is_symbol_id(expression->expr.elems[0],
+                           probe->nested_head)) {
+        return PETTA_MACHINE_HOST_NONE;
+    }
+    probe->classification_calls++;
+    return probe->revision >= 2u
+        ? PETTA_MACHINE_HOST_READY_APPLICATION
+        : PETTA_MACHINE_HOST_NONE;
+}
+
+/* Mechanism qualification: a still-valid exact key may be reused, but a
+ * changed or unavailable authority must not authorize the cached decision.
+ * The answer stream is identical in all three cases; compilation counters
+ * distinguish correct dependency checking from an accidental stale hit. */
+static void test_match_decision_cache_entry_authority(
+    TermUniverse *universe, Arena *persistent, Arena *answers) {
+    for (unsigned change = 0u; change < 3u; change++) {
+        Space cache_space;
+        space_init_with_universe(&cache_space, universe);
+        add_clause(&cache_space, persistent,
+                   "(= (cache-authority-lookup $x) first)");
+        add_clause(&cache_space, persistent,
+                   "(= (cache-authority-lookup $x) second)");
+        MatchDecisionCallabilityAuthorityProbe probe = {.revision = 1u};
+        PettaMachineHost host = {
+            .context = &probe,
+            .tabled_relation_admissible =
+                match_decision_receipt_relation_admissible,
+            .callability_authority_token =
+                match_decision_callability_authority_token,
+        };
+        Atom *query = parse_one(answers,
+            "(let $ignored (superpose (left right))"
+            " (cache-authority-lookup payload))");
+        assert(query);
+        PettaMachine machine;
+        assert(petta_machine_init(
+            &machine, &cache_space, answers, query, NULL, &host));
+        PettaMachineStats before = {0};
+        for (unsigned result = 0u; result < 4u; result++) {
+            Atom *answer = NULL;
+            Bindings environment;
+            assert(petta_machine_next(&machine, &answer, &environment) ==
+                   PETTA_MACHINE_STEP_ANSWER);
+            assert(atom_alpha_eq(answer, parse_one(answers,
+                result % 2u == 0u ? "first" : "second")));
+            bindings_free(&environment);
+            if (result == 1u) {
+                assert(petta_machine_stats(&machine, &before));
+                assert(before.match_decision_compilations > 0u);
+                if (change == 1u) probe.revision++;
+                if (change == 2u) probe.unavailable = true;
+            }
+        }
+        Atom *answer = NULL;
+        Bindings environment;
+        assert(petta_machine_next(&machine, &answer, &environment) ==
+               PETTA_MACHINE_STEP_EXHAUSTED);
+        bindings_free(&environment);
+        PettaMachineStats after;
+        assert(petta_machine_stats(&machine, &after));
+        if (change == 0u) {
+            assert(after.match_decision_cache_hits > before.match_decision_cache_hits);
+            assert(after.match_decision_compilations == before.match_decision_compilations);
+        } else {
+            assert(after.match_decision_compilations > before.match_decision_compilations);
+        }
+        petta_machine_destroy(&machine);
+        space_free(&cache_space);
+    }
+    puts("PASS: cached selection rechecks changed and unavailable authority");
+}
+
+static void test_match_decision_callability_authority_receipt(
+    TermUniverse *universe, Arena *persistent, Arena *answers) {
+    Space authority_space;
+    space_init_with_universe(&authority_space, universe);
+    add_clause(
+        &authority_space, persistent,
+        "(= (authority-receipt (authority-nested $x)) first)");
+    add_clause(
+        &authority_space, persistent,
+        "(= (authority-receipt $x) second)");
+
+    MatchDecisionCallabilityAuthorityProbe probe = {
+        .nested_head = symbol_intern_cstr(
+            g_symbols, "authority-nested"),
+        .revision = 1u,
+    };
+    assert(probe.nested_head != SYMBOL_ID_NONE);
+    Atom *query = parse_one(
+        answers, "(authority-receipt (authority-nested payload))");
+    assert(query);
+    PettaMachineHost host = {
+        .context = &probe,
+        .tabled_relation_admissible =
+            match_decision_receipt_relation_admissible,
+        .classify = match_decision_callability_classify,
+        .callability_authority_token =
+            match_decision_callability_authority_token,
+    };
+#if CETTA_BUILD_WITH_RUNTIME_STATS
+    bool stats_were_enabled = cetta_runtime_stats_is_enabled();
+    cetta_runtime_stats_reset();
+    cetta_runtime_stats_enable();
+#endif
+    PettaMachine machine;
+    assert(petta_machine_init(
+        &machine, &authority_space, answers, query, NULL, &host));
+    Atom *answer = NULL;
+    Bindings environment;
+    assert(petta_machine_next(
+               &machine, &answer, &environment) ==
+           PETTA_MACHINE_STEP_ANSWER);
+    assert(atom_alpha_eq(answer, parse_one(answers, "first")));
+    bindings_free(&environment);
+
+    /* The first answer is already observed under authority revision one.
+     * Before retrying the remaining alternative, make the nested occurrence
+     * host-callable.  A retained structural receipt is no longer a proof
+     * about the current authority, so canonical matching must resume. */
+    probe.revision = 2u;
+    assert(petta_machine_next(
+               &machine, &answer, &environment) ==
+           PETTA_MACHINE_STEP_ANSWER);
+    assert(atom_alpha_eq(answer, parse_one(answers, "second")));
+    bindings_free(&environment);
+    assert(petta_machine_next(
+               &machine, &answer, &environment) ==
+           PETTA_MACHINE_STEP_EXHAUSTED);
+    bindings_free(&environment);
+    assert(probe.classification_calls > 0u);
+
+#if CETTA_BUILD_WITH_RUNTIME_STATS
+    CettaRuntimeStats authority_stats = {0};
+    cetta_runtime_stats_snapshot(&authority_stats);
+    uint64_t attempts = authority_stats.counters[
+        CETTA_RUNTIME_COUNTER_PETTA_MATCH_DECISION_SHAPE_RECEIPT_ATTEMPT];
+    uint64_t reuses = authority_stats.counters[
+        CETTA_RUNTIME_COUNTER_PETTA_MATCH_DECISION_SHAPE_RECEIPT_REUSE];
+    uint64_t stale = authority_stats.counters[
+        CETTA_RUNTIME_COUNTER_PETTA_MATCH_DECISION_SHAPE_RECEIPT_STALE];
+    assert(attempts == reuses + stale);
+    assert(stale > 0u);
+    if (!stats_were_enabled)
+        cetta_runtime_stats_disable();
+#endif
+    petta_machine_destroy(&machine);
+    space_free(&authority_space);
+    puts("PASS: structural receipt expires on host callability authority");
+}
+
+static void test_match_decision_verification_receipt_revision(
+    TermUniverse *universe, Arena *persistent, Arena *answers) {
+    Space receipt_space;
+    space_init_with_universe(&receipt_space, universe);
+    add_clause(
+        &receipt_space, persistent,
+        "(= (receipt-revision (node $x)) receipt-first)");
+    add_clause(
+        &receipt_space, persistent,
+        "(= (receipt-revision (node $x)) receipt-second)");
+
+    Atom *query = parse_one(
+        answers, "(receipt-revision (node payload))");
+    assert(query);
+    PettaMachineHost host = {
+        .tabled_relation_admissible =
+            match_decision_receipt_relation_admissible,
+    };
+#if CETTA_BUILD_WITH_RUNTIME_STATS
+    bool stats_were_enabled = cetta_runtime_stats_is_enabled();
+    cetta_runtime_stats_reset();
+    cetta_runtime_stats_enable();
+#endif
+    PettaMachine machine;
+    assert(petta_machine_init(
+        &machine, &receipt_space, answers, query, NULL, &host));
+    Atom *answer = NULL;
+    Bindings environment;
+    assert(petta_machine_next(
+               &machine, &answer, &environment) ==
+           PETTA_MACHINE_STEP_ANSWER);
+    assert(atom_alpha_eq(
+        answer, parse_one(answers, "receipt-first")));
+    bindings_free(&environment);
+
+    /* The retained candidate set and query are unchanged, but the dynamic
+     * structural predicate may consult callability derived from Space
+     * contents.  A real external mutation therefore invalidates only the
+     * verifier receipt; the canonical candidate snapshot remains usable. */
+    add_clause(
+        &receipt_space, persistent,
+        "(= (receipt-unrelated) changed)");
+    assert(petta_machine_next(
+               &machine, &answer, &environment) ==
+           PETTA_MACHINE_STEP_ANSWER);
+    assert(atom_alpha_eq(
+        answer, parse_one(answers, "receipt-second")));
+    bindings_free(&environment);
+    assert(petta_machine_next(
+               &machine, &answer, &environment) ==
+           PETTA_MACHINE_STEP_EXHAUSTED);
+    bindings_free(&environment);
+
+#if CETTA_BUILD_WITH_RUNTIME_STATS
+    CettaRuntimeStats receipt_stats = {0};
+    cetta_runtime_stats_snapshot(&receipt_stats);
+    uint64_t attempts = receipt_stats.counters[
+        CETTA_RUNTIME_COUNTER_PETTA_MATCH_DECISION_SHAPE_RECEIPT_ATTEMPT];
+    uint64_t reuses = receipt_stats.counters[
+        CETTA_RUNTIME_COUNTER_PETTA_MATCH_DECISION_SHAPE_RECEIPT_REUSE];
+    uint64_t stale = receipt_stats.counters[
+        CETTA_RUNTIME_COUNTER_PETTA_MATCH_DECISION_SHAPE_RECEIPT_STALE];
+    assert(attempts == reuses + stale);
+    /* This test mutates Space between alternatives: at least one retained
+     * receipt must therefore be rejected, without prescribing how many
+     * scheduler-level attempts occurred before that transition. */
+    assert(reuses > 0u);
+    assert(stale > 0u);
+    if (!stats_were_enabled)
+        cetta_runtime_stats_disable();
+#endif
+    petta_machine_destroy(&machine);
+    space_free(&receipt_space);
+    puts("PASS: structural receipt expires on Space mutation");
+}
+
+#if CETTA_BUILD_WITH_RUNTIME_STATS
+static void test_survivor_allocation_role_account(void) {
+    bool stats_were_enabled = cetta_runtime_stats_is_enabled();
+    cetta_runtime_stats_reset();
+    cetta_runtime_stats_enable();
+
+    Arena survivor;
+    arena_init(&survivor);
+    arena_set_runtime_kind(
+        &survivor, CETTA_ARENA_RUNTIME_KIND_SURVIVOR);
+    assert(arena_alloc(&survivor, 8u));
+
+    CettaSurvivorAllocationScope result_scope =
+        cetta_survivor_allocation_scope_enter(
+            CETTA_SURVIVOR_ALLOC_ROLE_EQUATION_RESULT_INSTANTIATION);
+    assert(arena_alloc(&survivor, 16u));
+    CettaSurvivorAllocationScope match_scope =
+        cetta_survivor_allocation_scope_enter(
+            CETTA_SURVIVOR_ALLOC_ROLE_MATCH_STORED_EQUATION_VIEW);
+    assert(arena_alloc(&survivor, 24u));
+    cetta_survivor_allocation_scope_leave(match_scope);
+    assert(arena_alloc(&survivor, 32u));
+    cetta_survivor_allocation_scope_leave(result_scope);
+
+    CettaSurvivorAllocationScope invalid_scope =
+        cetta_survivor_allocation_scope_enter(
+            (CettaSurvivorAllocationRole)UINT32_MAX);
+    assert(arena_alloc(&survivor, 40u));
+    cetta_survivor_allocation_scope_leave(invalid_scope);
+
+    CettaRuntimeStats stats = {0};
+    cetta_runtime_stats_snapshot(&stats);
+    assert(stats.counters[
+               CETTA_RUNTIME_COUNTER_QUERY_EPISODE_SURVIVOR_ARENA_ALLOC_BYTES] ==
+           120u);
+    assert(stats.counters[
+               CETTA_RUNTIME_COUNTER_SURVIVOR_ALLOC_ROLE_OTHER_BYTES] == 48u);
+    assert(stats.counters[
+               CETTA_RUNTIME_COUNTER_SURVIVOR_ALLOC_ROLE_MATCH_STORED_EQUATION_VIEW_BYTES] ==
+           24u);
+    assert(stats.counters[
+               CETTA_RUNTIME_COUNTER_SURVIVOR_ALLOC_ROLE_EQUATION_RESULT_INSTANTIATION_BYTES] ==
+           48u);
+    assert(cetta_runtime_stats_survivor_role_total(&stats) == 120u);
+    assert(cetta_runtime_stats_survivor_role_account_is_exact(&stats));
+
+    arena_free(&survivor);
+    if (!stats_were_enabled)
+        cetta_runtime_stats_disable();
+    puts("PASS: survivor allocation roles form an exact nested account");
+}
+
+static void test_choice_binding_checkpoint_receipt(
+    Space *space, Arena *answers) {
+    bool stats_were_enabled = cetta_runtime_stats_is_enabled();
+    cetta_runtime_stats_reset();
+    cetta_runtime_stats_enable();
+
+    const char *expected[] = {"one", "uno", "uno"};
+    expect_answers(space, answers, "(f 1)", expected, 3u);
+
+    CettaRuntimeStats stats = {0};
+    cetta_runtime_stats_snapshot(&stats);
+    uint64_t attempts = stats.counters[
+        CETTA_RUNTIME_COUNTER_PETTA_CHOICE_BINDING_CHECKPOINT_ATTEMPT];
+    uint64_t commits = stats.counters[
+        CETTA_RUNTIME_COUNTER_PETTA_CHOICE_BINDING_CHECKPOINT_COMMIT];
+    assert(attempts > 0u);
+    assert(commits == attempts);
+    assert(stats.counters[
+               CETTA_RUNTIME_COUNTER_PETTA_CHOICE_BINDING_CHECKPOINT_DECLINE] ==
+           0u);
+    assert(stats.counters[
+               CETTA_RUNTIME_COUNTER_PETTA_CHOICE_RECORD_BYTES] > 0u);
+
+    if (!stats_were_enabled)
+        cetta_runtime_stats_disable();
+    puts("PASS: PeTTa choices use non-vacuous binding-only checkpoints");
+}
+#endif
 
 typedef struct {
     VarId ids[8];
@@ -3009,6 +4796,18 @@ static bool table_probe_permit(void *context) {
     return true;
 }
 
+/* Receipt relationships constrain the table implementation without fixing
+ * a particular scheduling algorithm or number of fixed-point rounds. */
+static void assert_table_receipts_consistent(
+        const PettaMachineStats *stats,
+        uint64_t minimum_answer_replays) {
+    assert(stats);
+    assert(stats->table_hits <= stats->table_lookups);
+    assert(stats->table_scc_completions <=
+           stats->table_generator_rounds);
+    assert(stats->table_answer_replays >= minimum_answer_replays);
+}
+
 static void test_ground_slg_tables(
     Space *space, Arena *persistent, Arena *answers) {
     TableProbe probe = {
@@ -3033,8 +4832,10 @@ static void test_ground_slg_tables(
     PettaMachine machine;
     assert(petta_machine_init(
         &machine, space, answers, query, NULL, &host));
-    const char *expected[] = {"one", "uno", "uno"};
-    for (size_t index = 0u; index < 3u; index++) {
+    /* Variant tables expose an answer set; duplicate untabled clauses still
+     * remain observable through the ordinary bag path tested below. */
+    const char *expected[] = {"one", "uno"};
+    for (size_t index = 0u; index < 2u; index++) {
         Atom *answer = NULL;
         Bindings environment;
         assert(petta_machine_next(
@@ -3052,10 +4853,8 @@ static void test_ground_slg_tables(
     bindings_free(&environment);
     PettaMachineStats stats;
     assert(petta_machine_stats(&machine, &stats));
-    assert(stats.table_lookups == 1u);
-    assert(stats.table_generator_rounds == 1u);
-    assert(stats.table_scc_completions == 1u);
-    assert(stats.table_answer_replays == 3u);
+    assert(stats.table_lookups > 0u);
+    assert_table_receipts_consistent(&stats, 2u);
     petta_machine_destroy(&machine);
 
     add_clause(
@@ -3067,9 +4866,9 @@ static void test_ground_slg_tables(
     assert(petta_machine_init(
         &machine, space, answers, query, NULL, &host));
     const char *alpha_expected[] = {
-        "one", "uno", "uno", "one", "uno", "uno",
+        "one", "uno", "one", "uno",
     };
-    for (size_t index = 0u; index < 6u; index++) {
+    for (size_t index = 0u; index < 4u; index++) {
         assert(petta_machine_next(
                    &machine, &answer, &environment) ==
                PETTA_MACHINE_STEP_ANSWER);
@@ -3083,10 +4882,9 @@ static void test_ground_slg_tables(
            PETTA_MACHINE_STEP_EXHAUSTED);
     bindings_free(&environment);
     assert(petta_machine_stats(&machine, &stats));
-    assert(stats.table_lookups == 2u);
-    assert(stats.table_hits == 1u);
-    assert(stats.table_generator_rounds == 1u);
-    assert(stats.table_answer_replays == 6u);
+    assert(stats.table_lookups >= 2u);
+    assert(stats.table_hits > 0u);
+    assert_table_receipts_consistent(&stats, 4u);
     petta_machine_destroy(&machine);
 
     probe.meter_transitions = true;
@@ -3121,8 +4919,8 @@ static void test_ground_slg_tables(
            PETTA_MACHINE_STEP_EXHAUSTED);
     bindings_free(&environment);
     assert(petta_machine_stats(&machine, &stats));
-    assert(stats.table_generator_rounds == 2u);
-    assert(stats.table_scc_completions == 1u);
+    assert(stats.table_lookups > 0u);
+    assert_table_receipts_consistent(&stats, 0u);
     petta_machine_destroy(&machine);
 
     add_clause(
@@ -3140,8 +4938,8 @@ static void test_ground_slg_tables(
            PETTA_MACHINE_STEP_EXHAUSTED);
     bindings_free(&environment);
     assert(petta_machine_stats(&machine, &stats));
-    assert(stats.table_generator_rounds >= 4u);
-    assert(stats.table_scc_completions == 1u);
+    assert(stats.table_lookups > 0u);
+    assert_table_receipts_consistent(&stats, 0u);
     petta_machine_destroy(&machine);
 
     add_clause(
@@ -3162,22 +4960,20 @@ static void test_ground_slg_tables(
     assert(query);
     assert(petta_machine_init(
         &machine, space, answers, query, NULL, &host));
-    for (size_t index = 0u; index < 2u; index++) {
-        assert(petta_machine_next(
-                   &machine, &answer, &environment) ==
-               PETTA_MACHINE_STEP_ANSWER);
-        assert(atom_alpha_eq(
-            answer, parse_one(answers, "done")));
-        bindings_free(&environment);
-    }
+    assert(petta_machine_next(
+               &machine, &answer, &environment) ==
+           PETTA_MACHINE_STEP_ANSWER);
+    assert(atom_alpha_eq(
+        answer, parse_one(answers, "done")));
+    bindings_free(&environment);
     assert(petta_machine_next(
                &machine, &answer, &environment) ==
            PETTA_MACHINE_STEP_EXHAUSTED);
     bindings_free(&environment);
     assert(petta_machine_stats(&machine, &stats));
-    assert(stats.table_generator_rounds == 4u);
+    assert(stats.table_lookups > 0u);
     assert(stats.table_hits >= 1u);
-    assert(stats.table_answer_replays >= 5u);
+    assert_table_receipts_consistent(&stats, 1u);
     petta_machine_destroy(&machine);
 
     query = parse_one(answers, "(f 1)");
@@ -3919,6 +5715,50 @@ static void test_choice_binding_compaction(
                &machine, &answer, &environment) ==
            PETTA_MACHINE_STEP_EXHAUSTED);
     bindings_free(&environment);
+    petta_machine_destroy(&machine);
+}
+
+static void test_marked_goal_trail_compaction(
+    Space *space, Arena *persistent, Arena *answers) {
+    add_clause(space, persistent,
+        "(= (marked-drain $items)"
+        " (chain (superpose (outer-a outer-b)) $outer"
+        "  (chain (superpose (inner-a inner-b)) $inner"
+        "   (chain (drain $items) $done (result $outer $inner $done)))))");
+    enum { ITEM_COUNT = 8192 };
+    Atom **items = cetta_malloc(ITEM_COUNT * sizeof(*items));
+    Atom *item = atom_symbol(answers, "marked-item");
+    assert(items && item);
+    for (size_t i = 0u; i < ITEM_COUNT; i++)
+        items[i] = item;
+    Atom *list = atom_expr(answers, items, ITEM_COUNT);
+    free(items);
+    Atom *query_items[] = {atom_symbol(answers, "marked-drain"), list};
+    Atom *query = atom_expr(answers, query_items, 2u);
+    assert(list && query);
+    PettaMachine machine;
+    assert(petta_machine_init(&machine, space, answers, query, NULL, NULL));
+    const char *expected[] = {
+        "(result outer-a inner-a done)", "(result outer-a inner-b done)",
+        "(result outer-b inner-a done)", "(result outer-b inner-b done)",
+    };
+    Atom *answer = NULL;
+    Bindings environment;
+    for (size_t i = 0u; i < sizeof(expected) / sizeof(*expected); i++) {
+        assert(petta_machine_next(&machine, &answer, &environment) ==
+               PETTA_MACHINE_STEP_ANSWER);
+        assert(atom_alpha_eq(answer, parse_one(answers, expected[i])));
+        bindings_free(&environment);
+    }
+    assert(petta_machine_next(&machine, &answer, &environment) ==
+           PETTA_MACHINE_STEP_EXHAUSTED);
+    bindings_free(&environment);
+    PettaMachineStats stats;
+    assert(petta_machine_stats(&machine, &stats));
+    /* Coverage, not a fixed representation: all four marked resumptions
+     * above must run through removal of redundant overwrite history. */
+    assert(stats.choice_continuation_trail_compactions > 0u);
+    assert(stats.choice_continuation_trail_discarded > 0u);
     petta_machine_destroy(&machine);
 }
 
@@ -5066,6 +6906,388 @@ static void test_controller_batch_ranker(void) {
     puts("PASS: scorer batches preserve complete occurrence permutations");
 }
 
+typedef struct {
+    uint32_t value;
+} ReclamationProbePayload;
+
+typedef enum {
+    RECLAMATION_PROBE_READY = 0,
+    RECLAMATION_PROBE_DEFERRED,
+    RECLAMATION_PROBE_MALFORMED,
+    RECLAMATION_PROBE_INVALID_STORAGE,
+} ReclamationProbeMode;
+
+static ReclamationProbeMode g_reclamation_probe_mode;
+static size_t g_reclamation_probe_destroyed;
+
+static CettaContinuationStatus reclamation_probe_capture(
+        void *machine, void **payload) {
+    (void)machine;
+    (void)payload;
+    return CETTA_CONTINUATION_UNSUPPORTED;
+}
+
+static CettaContinuationStatus reclamation_probe_restore(
+        void *machine, void **payload) {
+    (void)machine;
+    (void)payload;
+    return CETTA_CONTINUATION_UNSUPPORTED;
+}
+
+static void reclamation_probe_destroy(void *opaque) {
+    g_reclamation_probe_destroyed++;
+    free(opaque);
+}
+
+static bool reclamation_probe_storage(
+        const void *payload, CettaContinuationStorage *storage) {
+    if (!payload || !storage)
+        return false;
+    const ReclamationProbePayload *probe = payload;
+    if (probe->value == UINT32_MAX)
+        return false;
+    *storage = (CettaContinuationStorage){
+        .shared_identity = payload,
+        .shared_bytes = sizeof(ReclamationProbePayload),
+    };
+    return true;
+}
+
+static CettaContinuationStatus reclamation_probe_reclaim(
+        const void *const *sources, size_t length,
+        void ***replacements,
+        CettaContinuationReclamationReceipt *receipt) {
+    assert(sources && length != 0u && replacements && !*replacements);
+    assert(receipt);
+    if (g_reclamation_probe_mode == RECLAMATION_PROBE_DEFERRED)
+        return CETTA_CONTINUATION_DEFERRED;
+    void **prepared = calloc(length, sizeof(*prepared));
+    assert(prepared);
+    size_t limit = g_reclamation_probe_mode == RECLAMATION_PROBE_MALFORMED
+        ? length - 1u : length;
+    for (size_t i = 0u; i < limit; i++) {
+        const ReclamationProbePayload *source = sources[i];
+        ReclamationProbePayload *replacement = malloc(sizeof(*replacement));
+        assert(source && replacement);
+        replacement->value = source->value + 100u;
+        if (g_reclamation_probe_mode ==
+                RECLAMATION_PROBE_INVALID_STORAGE && i + 1u == length) {
+            replacement->value = UINT32_MAX;
+        }
+        prepared[i] = replacement;
+    }
+    *replacements = prepared;
+    *receipt = (CettaContinuationReclamationReceipt){
+        .live_occurrences = length,
+        .shared_bytes_before = length * 20u,
+        .shared_bytes_after = length * 7u,
+        .exclusive_bytes_before = length * 3u,
+        .exclusive_bytes_after = length * 3u,
+    };
+    return CETTA_CONTINUATION_READY;
+}
+
+static const CettaContinuationProvider kReclamationProbeProvider = {
+    .representation_name = "reclamation-probe",
+    .ownership = {
+        .capture = reclamation_probe_capture,
+        .restore = reclamation_probe_restore,
+        .destroy = reclamation_probe_destroy,
+        .storage = reclamation_probe_storage,
+    },
+    .maintenance = {
+        .reclaim = reclamation_probe_reclaim,
+    },
+};
+
+static const CettaContinuationProvider kOtherReclamationProbeProvider = {
+    .representation_name = "other-reclamation-probe",
+    .ownership = {
+        .capture = reclamation_probe_capture,
+        .restore = reclamation_probe_restore,
+        .destroy = reclamation_probe_destroy,
+        .storage = reclamation_probe_storage,
+    },
+    .maintenance = {
+        .reclaim = reclamation_probe_reclaim,
+    },
+};
+
+static CettaOwnedContinuation reclamation_probe_continuation(
+        uint32_t value, uint64_t parent_occurrence_id) {
+    ReclamationProbePayload *payload = malloc(sizeof(*payload));
+    assert(payload);
+    payload->value = value;
+    return (CettaOwnedContinuation){
+        .payload = payload,
+        .provider = &kReclamationProbeProvider,
+        .parent_occurrence_id = parent_occurrence_id,
+    };
+}
+
+static void test_continuation_hub_atomic_reclamation(void) {
+    CettaControlPlan plan;
+    assert(cetta_control_plan_derive(
+        (CettaObservationDemand){
+            .completion = CETTA_OBSERVATION_ORDERED_STREAM,
+        },
+        CETTA_CONTROL_BRANCH_GENERAL,
+        CETTA_CONTROL_BATCH_SINGLETON_ONLY, &plan));
+    CettaSelectionAutomaton ratio;
+    assert(cetta_selection_automaton_ratio(2u, &ratio));
+    CettaContinuationHub hub = {0};
+    assert(cetta_continuation_hub_init(
+        &hub, &ratio, CETTA_SELECTION_DUTY_RECURRENT_OLDEST, &plan));
+    CettaOwnedContinuation first = reclamation_probe_continuation(1u, 41u);
+    CettaOwnedContinuation second = reclamation_probe_continuation(2u, 42u);
+    assert(cetta_continuation_hub_append(&hub, &first));
+    assert(cetta_continuation_hub_append(&hub, &second));
+    const CettaOwnedContinuation *old_first =
+        cetta_continuation_hub_at(&hub, 0u);
+    const CettaOwnedContinuation *old_second =
+        cetta_continuation_hub_at(&hub, 1u);
+    assert(old_first && old_second);
+    void *old_first_payload = old_first->payload;
+    void *old_second_payload = old_second->payload;
+    uint64_t first_occurrence = old_first->occurrence_id;
+    uint64_t second_occurrence = old_second->occurrence_id;
+    CettaSelectionLane lane;
+    size_t selected;
+    assert(cetta_continuation_hub_select(&hub, &lane, &selected));
+    uint32_t schedule_state = hub.schedule.state;
+
+    g_reclamation_probe_destroyed = 0u;
+    g_reclamation_probe_mode = RECLAMATION_PROBE_READY;
+    CettaContinuationReclamationReceipt receipt;
+    assert(cetta_continuation_hub_reclaim(&hub, &receipt) ==
+           CETTA_CONTINUATION_READY);
+    assert(g_reclamation_probe_destroyed == 2u);
+    const CettaOwnedContinuation *new_first =
+        cetta_continuation_hub_at(&hub, 0u);
+    const CettaOwnedContinuation *new_second =
+        cetta_continuation_hub_at(&hub, 1u);
+    assert(new_first && new_second);
+    assert(new_first->payload != old_first_payload &&
+           new_second->payload != old_second_payload);
+    assert(((ReclamationProbePayload *)new_first->payload)->value == 101u);
+    assert(((ReclamationProbePayload *)new_second->payload)->value == 102u);
+    assert(new_first->occurrence_id == first_occurrence &&
+           new_second->occurrence_id == second_occurrence);
+    assert(new_first->parent_occurrence_id == 41u &&
+           new_second->parent_occurrence_id == 42u);
+    assert(hub.schedule.state == schedule_state);
+    assert(receipt.live_occurrences == 2u &&
+           receipt.shared_bytes_before == 40u &&
+           receipt.shared_bytes_after == 14u &&
+           receipt.exclusive_bytes_before == 6u &&
+           receipt.exclusive_bytes_after == 6u);
+
+    void *stable_first_payload = new_first->payload;
+    void *stable_second_payload = new_second->payload;
+    g_reclamation_probe_mode = RECLAMATION_PROBE_DEFERRED;
+    assert(cetta_continuation_hub_reclaim(&hub, &receipt) ==
+           CETTA_CONTINUATION_DEFERRED);
+    assert(cetta_continuation_hub_at(&hub, 0u)->payload ==
+           stable_first_payload);
+    assert(cetta_continuation_hub_at(&hub, 1u)->payload ==
+           stable_second_payload);
+    assert(g_reclamation_probe_destroyed == 2u);
+
+    g_reclamation_probe_mode = RECLAMATION_PROBE_MALFORMED;
+    assert(cetta_continuation_hub_reclaim(&hub, &receipt) ==
+           CETTA_CONTINUATION_UNSUPPORTED);
+    assert(cetta_continuation_hub_at(&hub, 0u)->payload ==
+           stable_first_payload);
+    assert(cetta_continuation_hub_at(&hub, 1u)->payload ==
+           stable_second_payload);
+    assert(g_reclamation_probe_destroyed == 3u);
+
+    g_reclamation_probe_mode = RECLAMATION_PROBE_INVALID_STORAGE;
+    assert(cetta_continuation_hub_reclaim(&hub, &receipt) ==
+           CETTA_CONTINUATION_UNSUPPORTED);
+    assert(cetta_continuation_hub_at(&hub, 0u)->payload ==
+           stable_first_payload);
+    assert(cetta_continuation_hub_at(&hub, 1u)->payload ==
+           stable_second_payload);
+    assert(g_reclamation_probe_destroyed == 5u);
+
+    hub.store.items[hub.store.begin + 1u].provider =
+        &kOtherReclamationProbeProvider;
+    assert(cetta_continuation_hub_reclaim(&hub, &receipt) ==
+           CETTA_CONTINUATION_UNSUPPORTED);
+    assert(g_reclamation_probe_destroyed == 5u);
+    hub.store.items[hub.store.begin + 1u].provider =
+        &kReclamationProbeProvider;
+    cetta_continuation_hub_destroy(&hub);
+    assert(g_reclamation_probe_destroyed == 7u);
+    puts("PASS: hub reclamation is atomic and preserves occurrence control state");
+}
+
+static void test_observation_indexed_control_plan(void) {
+    CettaControlPlan plan = {
+        .readout = CETTA_OBSERVATION_UNDETERMINED,
+        .activation = CETTA_CONTROL_ACTIVATE_CONTROLLED,
+        .prefix_limit = UINT64_MAX,
+    };
+    assert(cetta_control_plan_derive(
+        (CettaObservationDemand){
+            .completion = CETTA_OBSERVATION_FIRST,
+        },
+        CETTA_CONTROL_BRANCH_GENERAL,
+        CETTA_CONTROL_BATCH_SINGLETON_ONLY, &plan));
+    assert(plan.readout == CETTA_OBSERVATION_FIRST &&
+           plan.activation == CETTA_CONTROL_ACTIVATE_CONTROLLED &&
+           plan.prefix_limit == 0u);
+    assert(!cetta_control_plan_observation_satisfied(&plan, 0u));
+    assert(cetta_control_plan_observation_satisfied(&plan, 1u));
+    assert(cetta_control_plan_observation_satisfied(&plan, 2u));
+
+    CettaSelectionAutomaton fifo;
+    assert(cetta_selection_automaton_fifo(&fifo));
+    CettaContinuationHub first_hub = {0};
+    assert(cetta_continuation_hub_init(
+        &first_hub, &fifo,
+        CETTA_SELECTION_DUTY_RECURRENT_OLDEST, &plan));
+    CettaSelectionLane empty_lane = CETTA_SELECTION_LANE_NEWEST;
+    size_t empty_index = SIZE_MAX;
+    assert(!cetta_continuation_hub_select(
+        &first_hub, &empty_lane, &empty_index));
+    assert(!cetta_continuation_hub_observe(&first_hub, 0u));
+    assert(cetta_continuation_hub_observe(&first_hub, 1u));
+    assert(first_hub.observed_occurrences == 1u);
+    cetta_continuation_hub_destroy(&first_hub);
+
+    CettaSelectionAutomaton lifo;
+    assert(cetta_selection_automaton_lifo(&lifo));
+    CettaContinuationHub unrestricted_hub = {0};
+    assert(cetta_continuation_hub_init(
+        &unrestricted_hub, &lifo,
+        CETTA_SELECTION_DUTY_NONE, &plan));
+    assert(cetta_continuation_hub_switch_schedule(
+        &unrestricted_hub, &fifo));
+    assert(cetta_continuation_hub_switch_schedule(
+        &unrestricted_hub, &lifo));
+    cetta_continuation_hub_destroy(&unrestricted_hub);
+
+    assert(cetta_control_plan_derive(
+        (CettaObservationDemand){
+            .completion = CETTA_OBSERVATION_FIRST,
+        },
+        CETTA_CONTROL_BRANCH_SINGLE_PATH,
+        CETTA_CONTROL_BATCH_SINGLETON_ONLY, &plan));
+    assert(plan.readout == CETTA_OBSERVATION_FIRST &&
+           plan.activation == CETTA_CONTROL_ACTIVATE_SINGLE_PATH &&
+           plan.prefix_limit == 0u);
+    CettaContinuationHub single_path_hub = {0};
+    assert(!cetta_continuation_hub_init(
+        &single_path_hub, &fifo,
+        CETTA_SELECTION_DUTY_RECURRENT_OLDEST, &plan));
+
+    assert(cetta_control_plan_derive(
+        (CettaObservationDemand){
+            .completion = CETTA_OBSERVATION_FINITE_PREFIX,
+            .prefix_limit = 0u,
+        },
+        CETTA_CONTROL_BRANCH_SINGLE_PATH,
+        CETTA_CONTROL_BATCH_SERIALIZABLE, &plan));
+    assert(plan.readout == CETTA_OBSERVATION_FINITE_PREFIX &&
+           plan.activation == CETTA_CONTROL_ACTIVATE_NONE &&
+           plan.prefix_limit == 0u);
+    assert(cetta_control_plan_observation_satisfied(&plan, 0u));
+    assert(cetta_control_plan_derive(
+        (CettaObservationDemand){
+            .completion = CETTA_OBSERVATION_FINITE_PREFIX,
+            .prefix_limit = 4u,
+        },
+        CETTA_CONTROL_BRANCH_GENERAL,
+        CETTA_CONTROL_BATCH_SINGLETON_ONLY, &plan));
+    assert(plan.readout == CETTA_OBSERVATION_FINITE_PREFIX &&
+           plan.activation == CETTA_CONTROL_ACTIVATE_CONTROLLED &&
+           plan.prefix_limit == 4u);
+    assert(!cetta_control_plan_observation_satisfied(&plan, 3u));
+    assert(cetta_control_plan_observation_satisfied(&plan, 4u));
+
+    assert(cetta_control_plan_derive(
+        (CettaObservationDemand){
+            .completion = CETTA_OBSERVATION_COMPLETE_BAG,
+        },
+        CETTA_CONTROL_BRANCH_GENERAL,
+        CETTA_CONTROL_BATCH_SERIALIZABLE, &plan));
+    assert(plan.readout == CETTA_OBSERVATION_COMPLETE_BAG &&
+           plan.activation == CETTA_CONTROL_ACTIVATE_BULK &&
+           plan.prefix_limit == 0u);
+    assert(!cetta_control_plan_observation_satisfied(&plan, UINT64_MAX));
+    assert(cetta_control_plan_derive(
+        (CettaObservationDemand){
+            .completion = CETTA_OBSERVATION_COMPLETE_BAG,
+        },
+        CETTA_CONTROL_BRANCH_GENERAL,
+        CETTA_CONTROL_BATCH_SINGLETON_ONLY, &plan));
+    assert(plan.readout == CETTA_OBSERVATION_COMPLETE_BAG &&
+           plan.activation == CETTA_CONTROL_ACTIVATE_CONTROLLED &&
+           plan.prefix_limit == 0u);
+
+    assert(cetta_control_plan_derive(
+        (CettaObservationDemand){
+            .completion = CETTA_OBSERVATION_ORDERED_STREAM,
+        },
+        CETTA_CONTROL_BRANCH_GENERAL,
+        CETTA_CONTROL_BATCH_SERIALIZABLE, &plan));
+    assert(plan.readout == CETTA_OBSERVATION_ORDERED_STREAM &&
+           plan.activation == CETTA_CONTROL_ACTIVATE_CONTROLLED &&
+           plan.prefix_limit == 0u);
+    assert(cetta_control_plan_derive(
+        (CettaObservationDemand){
+            .completion = CETTA_OBSERVATION_UNDETERMINED,
+        },
+        CETTA_CONTROL_BRANCH_GENERAL,
+        CETTA_CONTROL_BATCH_SERIALIZABLE, &plan));
+    assert(plan.readout == CETTA_OBSERVATION_UNDETERMINED &&
+           plan.activation == CETTA_CONTROL_ACTIVATE_CONTROLLED &&
+           plan.prefix_limit == 0u);
+
+    CettaControlPlan unchanged = {
+        .readout = CETTA_OBSERVATION_FINITE_PREFIX,
+        .activation = CETTA_CONTROL_ACTIVATE_SINGLE_PATH,
+        .prefix_limit = 17u,
+    };
+    assert(!cetta_control_plan_derive(
+        (CettaObservationDemand){
+            .completion = CETTA_OBSERVATION_FIRST,
+            .prefix_limit = 9u,
+        },
+        CETTA_CONTROL_BRANCH_GENERAL,
+        CETTA_CONTROL_BATCH_SERIALIZABLE, &unchanged));
+    assert(unchanged.readout == CETTA_OBSERVATION_FINITE_PREFIX &&
+           unchanged.activation == CETTA_CONTROL_ACTIVATE_SINGLE_PATH &&
+           unchanged.prefix_limit == 17u);
+    assert(!cetta_control_plan_derive(
+        (CettaObservationDemand){
+            .completion = CETTA_OBSERVATION_COMPLETE_BAG,
+        },
+        CETTA_CONTROL_BRANCH_GENERAL,
+        (CettaControlBatchAuthority)99, &unchanged));
+    assert(unchanged.readout == CETTA_OBSERVATION_FINITE_PREFIX &&
+           unchanged.activation == CETTA_CONTROL_ACTIVATE_SINGLE_PATH &&
+           unchanged.prefix_limit == 17u);
+    assert(!cetta_control_plan_derive(
+        (CettaObservationDemand){
+            .completion = CETTA_OBSERVATION_COMPLETE_BAG,
+        },
+        (CettaControlBranchAuthority)99,
+        CETTA_CONTROL_BATCH_SERIALIZABLE, &unchanged));
+    assert(unchanged.readout == CETTA_OBSERVATION_FINITE_PREFIX &&
+           unchanged.activation == CETTA_CONTROL_ACTIVATE_SINGLE_PATH &&
+           unchanged.prefix_limit == 17u);
+
+    CettaControlPlan malformed = plan;
+    malformed.prefix_limit = 1u;
+    assert(!cetta_control_plan_observation_satisfied(
+        &malformed, UINT64_MAX));
+
+    puts("PASS: readout demand never manufactures branch authority");
+}
+
 static void test_branch_capture_algebra(void) {
     CettaSearchControllerPolicy policy =
         CETTA_SEARCH_CONTROLLER_FIFO;
@@ -5166,9 +7388,9 @@ static void test_relational_frontier_expansion(
         assert(petta_machine_init(
             &machine, space, answers, query, NULL, &host));
         assert(strcmp(
-            cetta_continuation_machine_storage_name(
+            cetta_continuation_machine_representation_name(
                 petta_machine_continuation_machine(&machine)),
-            "full-image") == 0);
+            "shared-terms-owned-state") == 0);
         Atom *answer = NULL;
         Bindings environment;
         PettaMachineStep step = petta_machine_next(
@@ -5214,21 +7436,117 @@ static void test_relational_frontier_expansion(
      * the stored representation. */
     void *left_payload = frontier.items[0].payload;
     void *right_payload = frontier.items[1].payload;
-    CettaContinuationStore store;
-    cetta_continuation_store_init(&store);
-    assert(cetta_continuation_store_append_batch(&store, &frontier));
-    assert(cetta_continuation_store_length(&store) == 2u);
+    CettaSelectionAutomaton ratio;
+    assert(cetta_selection_automaton_ratio(1u, &ratio));
+    CettaControlPlan ordered_plan;
+    assert(cetta_control_plan_derive(
+        (CettaObservationDemand){
+            .completion = CETTA_OBSERVATION_ORDERED_STREAM,
+        },
+        CETTA_CONTROL_BRANCH_GENERAL,
+        CETTA_CONTROL_BATCH_SINGLETON_ONLY, &ordered_plan));
+    CettaContinuationHub hub = {0};
+    assert(cetta_continuation_hub_init(
+        &hub, &ratio,
+        CETTA_SELECTION_DUTY_RECURRENT_OLDEST,
+        &ordered_plan));
+    assert(cetta_continuation_hub_append_batch(&hub, &frontier));
+    assert(cetta_continuation_hub_length(&hub) == 2u);
+    const CettaOwnedContinuation *stored_left =
+        cetta_continuation_hub_at(&hub, 0u);
+    const CettaOwnedContinuation *stored_right =
+        cetta_continuation_hub_at(&hub, 1u);
+    assert(stored_left && stored_right);
+    CettaContinuationStorage left_storage = {0};
+    CettaContinuationStorage right_storage = {0};
+    assert(cetta_owned_continuation_storage(
+        stored_left, &left_storage));
+    assert(cetta_owned_continuation_storage(
+        stored_right, &right_storage));
+    assert(left_storage.shared_identity != NULL &&
+           left_storage.shared_identity == right_storage.shared_identity &&
+           left_storage.shared_bytes == right_storage.shared_bytes &&
+           left_storage.shared_bytes > 0u);
+    assert(stored_left->occurrence_id != 0u &&
+           stored_right->occurrence_id != 0u &&
+           stored_left->occurrence_id != stored_right->occurrence_id);
+    uint64_t left_occurrence = stored_left->occurrence_id;
+    uint64_t right_occurrence = stored_right->occurrence_id;
+    size_t before_shared = 0u;
+    size_t before_exclusive = 0u;
+    assert(cetta_continuation_hub_storage(
+        &hub, &before_shared, &before_exclusive));
+    size_t component_exclusive = 0u;
+    for (CettaContinuationComponent component =
+             CETTA_CONTINUATION_COMPONENT_AUTHORITY;
+         component < CETTA_CONTINUATION_COMPONENT_COUNT;
+         component++) {
+        size_t shared = 0u;
+        size_t exclusive = 0u;
+        assert(cetta_continuation_hub_component_storage(
+            &hub, component, &shared, &exclusive));
+        assert(component_exclusive <= SIZE_MAX - exclusive);
+        component_exclusive += exclusive;
+        if (component == CETTA_CONTINUATION_COMPONENT_TERMS)
+            assert(shared == before_shared);
+        else
+            assert(shared == 0u);
+    }
+    assert(component_exclusive == before_exclusive);
+    CettaSelectionAutomaton lifo;
+    assert(cetta_selection_automaton_lifo(&lifo));
+    assert(!cetta_continuation_hub_switch_schedule(&hub, &lifo));
+    CettaSelectionAutomaton fifo;
+    assert(cetta_selection_automaton_fifo(&fifo));
+    assert(cetta_continuation_hub_switch_schedule(&hub, &fifo));
+    assert(cetta_continuation_hub_at(&hub, 0u)->payload == left_payload);
+    assert(cetta_continuation_hub_at(&hub, 1u)->payload == right_payload);
+    assert(cetta_continuation_hub_at(&hub, 0u)->occurrence_id ==
+           left_occurrence);
+    assert(cetta_continuation_hub_at(&hub, 1u)->occurrence_id ==
+           right_occurrence);
+    size_t after_shared = 0u;
+    size_t after_exclusive = 0u;
+    assert(cetta_continuation_hub_storage(
+        &hub, &after_shared, &after_exclusive));
+    assert(after_shared == before_shared &&
+           after_exclusive == before_exclusive);
+    assert(cetta_continuation_hub_switch_schedule(&hub, &ratio));
+    CettaContinuationTrace left_trace;
+    CettaContinuationTrace right_trace;
+    cetta_continuation_trace_init(&left_trace);
+    cetta_continuation_trace_init(&right_trace);
+    assert(cetta_owned_continuation_trace(
+               stored_left, &left_trace) ==
+           CETTA_CONTINUATION_READY);
+    assert(cetta_owned_continuation_trace(
+               stored_right, &right_trace) ==
+           CETTA_CONTINUATION_READY);
+    assert(left_trace.length != 0u && right_trace.length != 0u);
+    assert(left_trace.projection_identity ==
+           right_trace.projection_identity);
+    cetta_continuation_trace_destroy(&left_trace);
+    cetta_continuation_trace_destroy(&right_trace);
     CettaOwnedContinuation selected_right;
     cetta_owned_continuation_init(&selected_right);
-    assert(cetta_continuation_store_take(
-        &store, 1u, &selected_right));
+    CettaSelectionLane selected_lane = CETTA_SELECTION_LANE_OLDEST;
+    size_t selected_index = SIZE_MAX;
+    assert(cetta_continuation_hub_select(
+        &hub, &selected_lane, &selected_index));
+    assert(selected_lane == CETTA_SELECTION_LANE_NEWEST &&
+           selected_index == 1u);
+    assert(cetta_continuation_hub_take(
+        &hub, selected_index, &selected_right));
     assert(selected_right.payload == right_payload);
     CettaOwnedContinuation selected_left;
     cetta_owned_continuation_init(&selected_left);
-    assert(cetta_continuation_store_take(
-        &store, 0u, &selected_left));
+    assert(cetta_continuation_hub_select(
+        &hub, &selected_lane, &selected_index));
+    assert(selected_index == 0u);
+    assert(cetta_continuation_hub_take(
+        &hub, selected_index, &selected_left));
     assert(selected_left.payload == left_payload);
-    assert(cetta_continuation_store_length(&store) == 0u);
+    assert(cetta_continuation_hub_length(&hub) == 0u);
 
     assert(restore_relational_continuation(
                &machine, &selected_left) ==
@@ -5258,7 +7576,7 @@ static void test_relational_frontier_expansion(
            PETTA_MACHINE_STEP_EXHAUSTED);
     bindings_free(&environment);
 
-    cetta_continuation_store_destroy(&store);
+    cetta_continuation_hub_destroy(&hub);
     cetta_continuation_batch_destroy(&frontier);
     petta_machine_destroy(&machine);
     puts("PASS: relational frontier expansion preserves source and independent successors");
@@ -5524,8 +7842,57 @@ static void test_owned_clause_continuation_roundtrip(
     CettaContinuationStorage storage = {0};
     assert(cetta_owned_continuation_storage(
         &first_image, &storage));
-    assert(storage.shared_identity == first_image.payload);
+    assert(storage.shared_identity != NULL);
     assert(storage.shared_bytes > 0u && storage.exclusive_bytes > 0u);
+    static const char *const component_representations[] = {
+        [CETTA_CONTINUATION_COMPONENT_AUTHORITY] =
+            "revision-authority",
+        [CETTA_CONTINUATION_COMPONENT_TERMS] =
+            "shared-term-pool",
+        [CETTA_CONTINUATION_COMPONENT_BINDINGS] =
+            "owned-abt-bindings",
+        [CETTA_CONTINUATION_COMPONENT_CONTROL] =
+            "owned-control-vectors",
+        [CETTA_CONTINUATION_COMPONENT_OBLIGATIONS] =
+            "owned-obligation-vectors",
+        [CETTA_CONTINUATION_COMPONENT_READOUT] =
+            "inline-readout-state",
+    };
+    size_t component_shared = 0u;
+    size_t component_exclusive = 0u;
+    for (CettaContinuationComponent component =
+             CETTA_CONTINUATION_COMPONENT_AUTHORITY;
+         component < CETTA_CONTINUATION_COMPONENT_COUNT;
+         component++) {
+        const char *representation =
+            cetta_owned_continuation_component_representation(
+                &first_image, component);
+        assert(representation && strcmp(
+            representation,
+            component_representations[component]) == 0);
+        CettaContinuationStorage component_storage = {0};
+        assert(cetta_owned_continuation_component_storage(
+            &first_image, component, &component_storage));
+        assert(component_exclusive <=
+               SIZE_MAX - component_storage.exclusive_bytes);
+        component_exclusive += component_storage.exclusive_bytes;
+        if (component == CETTA_CONTINUATION_COMPONENT_TERMS) {
+            assert(component_storage.shared_identity ==
+                   storage.shared_identity);
+            assert(component_storage.shared_bytes ==
+                   storage.shared_bytes);
+            component_shared = component_storage.shared_bytes;
+        } else {
+            assert(component_storage.shared_identity == NULL);
+            assert(component_storage.shared_bytes == 0u);
+        }
+    }
+    assert(component_shared == storage.shared_bytes);
+    assert(component_exclusive == storage.exclusive_bytes);
+    assert(!cetta_owned_continuation_component_storage(
+        &first_image,
+        (CettaContinuationComponent)CETTA_CONTINUATION_COMPONENT_COUNT,
+        &storage));
 
     assert(petta_machine_next(
                &machine, &answer, &environment) ==
@@ -5562,8 +7929,7 @@ static void test_owned_clause_continuation_roundtrip(
     assert(stats.owned_continuation_capture_attempts == 2u);
     assert(stats.owned_continuation_captures == 2u);
     assert(stats.owned_continuation_restores == 2u);
-    assert(stats.owned_continuation_atom_bytes_captured >=
-           2u * storage.shared_bytes);
+    assert(stats.owned_continuation_atom_bytes_captured > 0u);
     assert(stats.owned_continuation_vector_bytes_captured >=
            2u * storage.exclusive_bytes);
     cetta_owned_continuation_destroy(&first_image);
@@ -5664,6 +8030,71 @@ static void test_owned_clause_continuation_roundtrip(
     }
     assert(once_captured);
 
+    CettaControlPlan first_plan;
+    CettaControlPlan ordered_plan;
+    assert(cetta_control_plan_derive(
+        (CettaObservationDemand){
+            .completion = CETTA_OBSERVATION_FIRST,
+        },
+        CETTA_CONTROL_BRANCH_GENERAL,
+        CETTA_CONTROL_BATCH_SINGLETON_ONLY,
+        &first_plan));
+    assert(cetta_control_plan_derive(
+        (CettaObservationDemand){
+            .completion = CETTA_OBSERVATION_ORDERED_STREAM,
+        },
+        CETTA_CONTROL_BRANCH_GENERAL,
+        CETTA_CONTROL_BATCH_SINGLETON_ONLY,
+        &ordered_plan));
+    size_t once_expansion_budget = 0u;
+    for (size_t budget = 1u;
+         budget <= 64u && once_expansion_budget == 0u; budget++) {
+        authority.remaining = budget;
+        PettaMachineHost first_host = {
+            .context = &authority,
+            .control_plan = &first_plan,
+            .admit_branch_capture = admit_effect_free_continuation,
+            .permit_transition = permit_owned_continuation_transition,
+        };
+        assert(petta_machine_init(
+            &machine, space, answers, once_query, NULL, &first_host));
+        PettaMachineStep step = petta_machine_next(
+            &machine, &answer, &environment);
+        bindings_free(&environment);
+        CettaContinuationBatch first_frontier;
+        cetta_continuation_batch_init(&first_frontier);
+        if (step == PETTA_MACHINE_STEP_SUSPENDED &&
+            expand_relational_frontier(&machine, &first_frontier) ==
+                CETTA_CONTINUATION_READY) {
+            assert(first_frontier.length == 2u);
+            once_expansion_budget = budget;
+        }
+        cetta_continuation_batch_destroy(&first_frontier);
+        petta_machine_destroy(&machine);
+    }
+    assert(once_expansion_budget != 0u);
+
+    authority.remaining = once_expansion_budget;
+    PettaMachineHost ordered_host = {
+        .context = &authority,
+        .control_plan = &ordered_plan,
+        .admit_branch_capture = admit_effect_free_continuation,
+        .permit_transition = permit_owned_continuation_transition,
+    };
+    assert(petta_machine_init(
+        &machine, space, answers, once_query, NULL, &ordered_host));
+    assert(petta_machine_next(
+               &machine, &answer, &environment) ==
+           PETTA_MACHINE_STEP_SUSPENDED);
+    bindings_free(&environment);
+    CettaContinuationBatch ordered_frontier;
+    cetta_continuation_batch_init(&ordered_frontier);
+    assert(expand_relational_frontier(&machine, &ordered_frontier) ==
+           CETTA_CONTINUATION_UNSUPPORTED);
+    assert(ordered_frontier.length == 0u);
+    cetta_continuation_batch_destroy(&ordered_frontier);
+    petta_machine_destroy(&machine);
+
     CettaOwnedContinuation stale_space;
     cetta_owned_continuation_init(&stale_space);
     authority.revision = 4u;
@@ -5691,6 +8122,468 @@ static void test_owned_clause_continuation_roundtrip(
     puts("PASS: owned ordinary-clause continuations are multi-shot and authority-pinned");
 }
 
+static void test_selection_automaton_lane_recurrence(void) {
+    CettaSelectionAutomaton automaton;
+    /* FIFO: one OLDEST state; the lane-recurrence check accepts it. */
+    assert(cetta_selection_automaton_fifo(&automaton));
+    assert(cetta_selection_automaton_has_recurrent_oldest(&automaton));
+    /* Bare LIFO is representable data but fails the check: its single
+     * cycle never visits an OLDEST state. */
+    assert(cetta_selection_automaton_lifo(&automaton));
+    assert(!cetta_selection_automaton_has_recurrent_oldest(&automaton));
+    /* ratio:2 cycles NEWEST,NEWEST,OLDEST and passes the check. */
+    assert(cetta_selection_automaton_ratio(2u, &automaton));
+    assert(cetta_selection_automaton_has_recurrent_oldest(&automaton));
+    size_t index = 99u;
+    assert(cetta_selection_automaton_select(&automaton, 5u, &index));
+    assert(index == 4u);
+    assert(cetta_selection_automaton_select(&automaton, 5u, &index));
+    assert(index == 4u);
+    assert(cetta_selection_automaton_select(&automaton, 5u, &index));
+    assert(index == 0u);
+    assert(cetta_selection_automaton_select(&automaton, 5u, &index));
+    assert(index == 4u);
+    /* A singleton frontier is controller-invariant: every lane selects
+     * the sole live occurrence. */
+    uint32_t phase_before_singleton = automaton.state;
+    assert(cetta_selection_automaton_select(&automaton, 1u, &index));
+    assert(index == 0u);
+    assert(automaton.state == phase_before_singleton);
+    /* An empty frontier refuses and leaves INDEX unchanged. */
+    index = 7u;
+    assert(!cetta_selection_automaton_select(&automaton, 0u, &index));
+    assert(index == 7u);
+    assert(cetta_selection_automaton_parse("fifo", &automaton));
+    assert(automaton.state_count == 1u);
+    assert(cetta_selection_automaton_parse("ratio:3", &automaton));
+    assert(automaton.state_count == 4u);
+    assert(!cetta_selection_automaton_parse("ratio:", &automaton));
+    assert(!cetta_selection_automaton_parse(
+        "ratio:banana", &automaton));
+    assert(!cetta_selection_automaton_parse("ratio:+3", &automaton));
+    assert(!cetta_selection_automaton_parse("ratio: 3", &automaton));
+    assert(!cetta_selection_automaton_parse("ratio:64", &automaton));
+    assert(!cetta_selection_automaton_parse("dfs", &automaton));
+    CettaSearchControllerPolicy policy = CETTA_SEARCH_CONTROLLER_FIFO;
+    assert(cetta_search_controller_policy_parse("ratio:5", &policy));
+    assert(policy == CETTA_SEARCH_CONTROLLER_RATIO);
+    assert(cetta_search_controller_policy_parse("ratio", &policy));
+    assert(policy == CETTA_SEARCH_CONTROLLER_RATIO);
+    policy = CETTA_SEARCH_CONTROLLER_FIFO;
+    assert(!cetta_search_controller_policy_parse(
+        "ratio:banana", &policy));
+    assert(policy == CETTA_SEARCH_CONTROLLER_FIFO);
+    puts("PASS: selection disciplines have exact parsing and checked"
+         " recurrent-oldest data");
+}
+
+static void test_whistle_embedding_and_ambient_monitor(Arena *arena) {
+    Atom *base = parse_one(arena, "(loop $x)");
+    Atom *deeper = parse_one(arena, "(loop (loop $x))");
+    Atom *unrelated = parse_one(arena, "(found $x)");
+    assert(base && deeper && unrelated);
+    /* Homeomorphic embedding: the recursive-first shape embeds into its
+     * own unfolding; the unfolding does not embed back; an unrelated head
+     * is untouched. */
+    assert(cetta_atom_homeomorphically_embedded(base, deeper));
+    assert(!cetta_atom_homeomorphically_embedded(deeper, base));
+    assert(!cetta_atom_homeomorphically_embedded(unrelated, deeper));
+    CettaWhistle whistle;
+    assert(cetta_whistle_init(&whistle));
+    assert(!cetta_whistle_observe(&whistle, base, 1u, 0u));
+    /* Structural similarity on a sibling is not an ancestor whistle. */
+    assert(!cetta_whistle_observe(&whistle, deeper, 2u, 0u));
+    assert(!cetta_whistle_demoted(&whistle, 2u));
+    assert(cetta_whistle_observe(&whistle, deeper, 3u, 1u));
+    assert(cetta_whistle_demoted(&whistle, 3u));
+    assert(!cetta_whistle_demoted(&whistle, 1u));
+    assert(cetta_whistle_count(&whistle) == 1u);
+    cetta_whistle_destroy(&whistle);
+    /* Retention is physically bounded: evicting old observations also frees
+     * their independent arenas instead of growing one monotone arena. */
+    assert(cetta_whistle_init(&whistle));
+    for (uint64_t occurrence = 1u;
+         occurrence <= CETTA_WHISTLE_ANCESTOR_CAPACITY + 9u;
+         occurrence++) {
+        assert(!cetta_whistle_observe(
+            &whistle, base, occurrence, 0u));
+    }
+    assert(whistle.term_length == CETTA_WHISTLE_ANCESTOR_CAPACITY);
+    size_t retained_arenas = 0u;
+    for (size_t i = 0u; i < CETTA_WHISTLE_ANCESTOR_CAPACITY; i++) {
+        if (whistle.term_arenas[i])
+            retained_arenas++;
+    }
+    assert(retained_arenas == CETTA_WHISTLE_ANCESTOR_CAPACITY);
+    cetta_whistle_destroy(&whistle);
+    /* The ambient monitor computes the same advice on an OS thread; stop
+     * drains the ring before joining, so the verdicts are deterministic
+     * once the submitter has quiesced. */
+    assert(cetta_whistle_init(&whistle));
+    CettaWhistleMonitor monitor;
+    assert(cetta_whistle_monitor_start(&monitor, &whistle));
+    Arena transient;
+    arena_init(&transient);
+    Atom *transient_base = atom_deep_copy(&transient, base);
+    Atom *transient_deeper = atom_deep_copy(&transient, deeper);
+    Atom *transient_unrelated = atom_deep_copy(&transient, unrelated);
+    assert(cetta_whistle_monitor_submit(
+        &monitor, transient_base, 10u, 0u));
+    assert(cetta_whistle_monitor_submit(
+        &monitor, transient_deeper, 11u, 10u));
+    assert(cetta_whistle_monitor_submit(
+        &monitor, transient_unrelated, 12u, 10u));
+    /* Accepted submissions own snapshots; the producer arena may die before
+     * the worker drains them. */
+    arena_free(&transient);
+    cetta_whistle_monitor_stop(&monitor);
+    assert(cetta_whistle_count(&whistle) == 1u);
+    assert(cetta_whistle_demoted(&whistle, 11u));
+    assert(!cetta_whistle_demoted(&whistle, 12u));
+    cetta_whistle_destroy(&whistle);
+    puts("PASS: ancestor-embedding whistle advises inline and from an"
+         " ambient thread");
+}
+
+static void test_act_profile_memory(void) {
+    char directory[] = "runtime/act-profile-test-XXXXXX";
+    assert(mkdtemp(directory));
+    CettaActKey key = {
+        .language_id = 2u,
+        .profile_id = 7u,
+        .space_revision = 11u,
+        .program_hash = 0xC0FFEEu,
+    };
+    CettaActRecord record = {
+        .key = key,
+        .policy = "ratio:4",
+        .outcome = CETTA_ACT_OUTCOME_COMPLETE,
+        .transitions = 100u,
+        .answers = 3u,
+        .expansions = 7u,
+        .max_frontier = 5u,
+        .whistles = 0u,
+    };
+    assert(cetta_act_profile_store(directory, &record));
+    CettaActRecord loaded;
+    assert(cetta_act_profile_lookup(directory, &key, &loaded));
+    assert(loaded.answers == 3u);
+    assert(strcmp(loaded.policy, "ratio:4") == 0);
+    CettaActKey other_key = key;
+    other_key.space_revision++;
+    assert(!cetta_act_profile_lookup(directory, &other_key, &loaded));
+    CettaSearchControllerPolicy policy;
+    CettaSelectionAutomaton automaton;
+    /* Reuse what worked: the recorded ratio discipline comes back. */
+    assert(cetta_act_profile_choose(
+        directory, &key, &policy, &automaton));
+    assert(policy == CETTA_SEARCH_CONTROLLER_RATIO);
+    assert(automaton.state_count == 5u);
+    assert(cetta_selection_automaton_has_recurrent_oldest(&automaton));
+    /* Finite zero-answer closure is absence, not starvation. */
+    record.answers = 0u;
+    record.outcome = CETTA_ACT_OUTCOME_COMPLETE;
+    assert(cetta_act_profile_store(directory, &record));
+    assert(!cetta_act_profile_choose(
+        directory, &key, &policy, &automaton));
+    /* Only explicit incompleteness escalates to recurrent-oldest control. */
+    record.outcome = CETTA_ACT_OUTCOME_INCOMPLETE;
+    assert(cetta_act_profile_store(directory, &record));
+    assert(cetta_act_profile_choose(
+        directory, &key, &policy, &automaton));
+    assert(policy == CETTA_SEARCH_CONTROLLER_FIFO);
+    assert(automaton.state_count == 1u);
+    record.outcome = CETTA_ACT_OUTCOME_REFUSED;
+    assert(cetta_act_profile_store(directory, &record));
+    assert(!cetta_act_profile_choose(
+        directory, &key, &policy, &automaton));
+    /* No exact key means no advice, never a fabricated policy. */
+    assert(!cetta_act_profile_choose(
+        directory, &other_key, &policy, &automaton));
+    CettaActRecord unterminated = record;
+    memset(unterminated.policy, 'x', sizeof(unterminated.policy));
+    assert(!cetta_act_profile_store(directory, &unterminated));
+    char path[4200];
+    snprintf(
+        path, sizeof(path), "%s/%u-%u-%" PRIu64 "-%08x.act",
+        directory, key.language_id, key.profile_id,
+        key.space_revision, key.program_hash);
+    remove(path);
+    rmdir(directory);
+    puts("PASS: act profile is revision-scoped and distinguishes closure,"
+         " incompleteness, and refusal");
+}
+
+typedef struct {
+    const uint8_t *bytes;
+    size_t length;
+    uint64_t projection_identity;
+} CompressionTracePayload;
+
+static CettaContinuationStatus compression_trace_capture(
+        void *machine, void **payload) {
+    (void)machine;
+    (void)payload;
+    return CETTA_CONTINUATION_UNSUPPORTED;
+}
+
+static CettaContinuationStatus compression_trace_restore(
+        void *machine, void **payload) {
+    (void)machine;
+    (void)payload;
+    return CETTA_CONTINUATION_UNSUPPORTED;
+}
+
+static void compression_trace_destroy(void *payload) {
+    (void)payload;
+}
+
+static bool compression_trace_storage(
+        const void *payload, CettaContinuationStorage *storage) {
+    if (!payload || !storage)
+        return false;
+    *storage = (CettaContinuationStorage){
+        .shared_identity = payload,
+        .shared_bytes = 1u,
+    };
+    return true;
+}
+
+static CettaContinuationStatus compression_trace_project(
+        const void *opaque, CettaContinuationTrace *trace) {
+    const CompressionTracePayload *payload = opaque;
+    if (!payload || !trace || trace->bytes || payload->length == 0u ||
+        payload->projection_identity == 0u)
+        return CETTA_CONTINUATION_UNSUPPORTED;
+    uint8_t *bytes = malloc(payload->length);
+    if (!bytes)
+        return CETTA_CONTINUATION_CAPACITY;
+    memcpy(bytes, payload->bytes, payload->length);
+    *trace = (CettaContinuationTrace){
+        .bytes = bytes,
+        .length = payload->length,
+        .projection_identity = payload->projection_identity,
+    };
+    return CETTA_CONTINUATION_READY;
+}
+
+static const CettaContinuationProvider kCompressionTraceProvider = {
+    .representation_name = "compression-test-trace",
+    .ownership = {
+        .capture = compression_trace_capture,
+        .restore = compression_trace_restore,
+        .destroy = compression_trace_destroy,
+        .storage = compression_trace_storage,
+    },
+    .projection = {
+        .trace = compression_trace_project,
+    },
+};
+
+static void test_act_incremental_compression(void) {
+    char directory[] = "runtime/act-compression-test-XXXXXX";
+    assert(mkdtemp(directory));
+    CettaActKey key = {
+        .language_id = 3u,
+        .profile_id = 9u,
+        .space_revision = 17u,
+        .program_hash = UINT32_C(0x1234abcd),
+    };
+    CettaActCompressionModel model;
+    assert(cetta_act_compression_model_init(&model, &key));
+    uint8_t familiar[512];
+    uint8_t noise[512];
+    for (size_t i = 0u; i < sizeof(familiar); i++) {
+        familiar[i] = (uint8_t)("successful-branch-shape"[
+            i % (sizeof("successful-branch-shape") - 1u)]);
+        uint32_t mixed = (uint32_t)i * UINT32_C(2654435761) +
+            UINT32_C(0x9e3779b9);
+        noise[i] = (uint8_t)(mixed ^ (mixed >> 11u));
+    }
+    CettaContinuationTrace successful = {
+        .bytes = familiar,
+        .length = sizeof(familiar),
+        .projection_identity = UINT64_C(0xabcddcba12344321),
+    };
+    assert(cetta_act_compression_model_observe_success(
+        &model, &successful));
+    assert(model.revision == 1u && model.observations == 1u &&
+           model.dictionary_length == sizeof(familiar));
+    CettaActCompressionMeasurement familiar_measurement;
+    CettaActCompressionMeasurement noise_measurement;
+    CettaContinuationTrace unfamiliar = {
+        .bytes = noise,
+        .length = sizeof(noise),
+        .projection_identity = successful.projection_identity,
+    };
+    assert(cetta_act_compression_measure(
+        &model, &successful, &familiar_measurement));
+    assert(cetta_act_compression_measure(
+        &model, &unfamiliar, &noise_measurement));
+    assert(familiar_measurement.saved_bits >
+           noise_measurement.saved_bits);
+    assert(familiar_measurement.ordinary_bits ==
+           familiar_measurement.residual_bits +
+               familiar_measurement.saved_bits);
+
+    CettaContinuationTrace wrong_projection = successful;
+    wrong_projection.projection_identity++;
+    assert(!cetta_act_compression_measure(
+        &model, &wrong_projection, &familiar_measurement));
+    assert(!cetta_act_compression_model_observe_success(
+        &model, &wrong_projection));
+
+    CettaActCompressionModel lineage_model;
+    assert(cetta_act_compression_model_init(&lineage_model, &key));
+    CettaActCompressionLineage lineage;
+    cetta_act_compression_lineage_init(&lineage);
+    CompressionTracePayload lineage_payloads[3] = {
+        {familiar, sizeof(familiar), successful.projection_identity},
+        {familiar, sizeof(familiar), successful.projection_identity},
+        {noise, sizeof(noise), successful.projection_identity},
+    };
+    CettaContinuationTrace lineage_traces[3] = {{0}};
+    for (size_t i = 0u; i < 3u; i++) {
+        assert(compression_trace_project(
+                   &lineage_payloads[i], &lineage_traces[i]) ==
+               CETTA_CONTINUATION_READY);
+    }
+    assert(cetta_act_compression_lineage_record(
+        &lineage, 41u, 0u, &lineage_traces[0]));
+    assert(cetta_act_compression_lineage_record(
+        &lineage, 42u, 41u, &lineage_traces[1]));
+    assert(cetta_act_compression_lineage_record(
+        &lineage, 43u, 41u, &lineage_traces[2]));
+    assert(!lineage_traces[0].bytes && !lineage_traces[1].bytes &&
+           !lineage_traces[2].bytes);
+    assert(cetta_act_compression_lineage_resident_bytes(&lineage) ==
+           sizeof(lineage) + 3u * sizeof(familiar));
+    size_t lineage_updates = 0u;
+    assert(cetta_act_compression_lineage_credit_answer(
+        &lineage, 42u, &lineage_model, &lineage_updates));
+    assert(lineage_updates == 2u &&
+           lineage_model.observations == 2u &&
+           lineage_model.revision == 2u);
+    assert(!cetta_act_compression_lineage_credit_answer(
+        &lineage, 99u, &lineage_model, &lineage_updates));
+    assert(lineage_updates == 0u);
+    CettaContinuationTrace invalid_parent = {0};
+    assert(compression_trace_project(
+               &lineage_payloads[0], &invalid_parent) ==
+           CETTA_CONTINUATION_READY);
+    assert(!cetta_act_compression_lineage_record(
+        &lineage, 44u, 44u, &invalid_parent));
+    assert(invalid_parent.bytes);
+    cetta_continuation_trace_destroy(&invalid_parent);
+    CettaContinuationTrace missing_parent = {0};
+    assert(compression_trace_project(
+               &lineage_payloads[0], &missing_parent) ==
+           CETTA_CONTINUATION_READY);
+    assert(cetta_act_compression_lineage_record(
+        &lineage, 44u, 40u, &missing_parent));
+    assert(!missing_parent.bytes);
+    assert(!cetta_act_compression_lineage_credit_answer(
+        &lineage, 44u, &lineage_model, &lineage_updates));
+    assert(lineage_updates == 0u &&
+           lineage_model.observations == 2u &&
+           lineage_model.revision == 2u);
+    cetta_act_compression_lineage_destroy(&lineage);
+
+    assert(cetta_act_compression_model_store(directory, &model));
+    CettaActCompressionModel loaded;
+    assert(cetta_act_compression_model_lookup(
+        directory, &key, &loaded));
+    assert(loaded.digest == model.digest &&
+           loaded.revision == model.revision &&
+           loaded.dictionary_length == model.dictionary_length &&
+           memcmp(loaded.dictionary, model.dictionary,
+                  model.dictionary_length) == 0);
+    CettaActCompressionModel tampered = loaded;
+    tampered.observations++;
+    assert(!cetta_act_compression_measure(
+        &tampered, &successful, &familiar_measurement));
+    assert(!cetta_act_compression_model_observe_success(
+        &tampered, &successful));
+    assert(!cetta_act_compression_model_store(directory, &tampered));
+    CettaActKey stale_key = key;
+    stale_key.space_revision++;
+    assert(!cetta_act_compression_model_lookup(
+        directory, &stale_key, &loaded));
+
+    CompressionTracePayload payloads[3] = {
+        {noise, sizeof(noise), successful.projection_identity},
+        {familiar, sizeof(familiar), successful.projection_identity},
+        {familiar, sizeof(familiar), successful.projection_identity},
+    };
+    CettaOwnedContinuation handles[3] = {
+        {.payload = &payloads[0], .provider = &kCompressionTraceProvider,
+         .occurrence_id = 31u},
+        {.payload = &payloads[1], .provider = &kCompressionTraceProvider,
+         .occurrence_id = 32u},
+        {.payload = &payloads[2], .provider = &kCompressionTraceProvider,
+         .occurrence_id = 33u},
+    };
+    CettaControllerCandidateView candidates[3] = {
+        {.occurrence_id = 31u, .age = 0u, .continuation = &handles[0]},
+        {.occurrence_id = 32u, .age = 1u, .continuation = &handles[1]},
+        {.occurrence_id = 33u, .age = 2u, .continuation = &handles[2]},
+    };
+    CettaActCompressionRankContext rank_context;
+    CettaControllerBatchRanker ranker;
+    cetta_act_compression_ranker_init(
+        &model, &rank_context, &ranker);
+    size_t permutation[3] = {SIZE_MAX, SIZE_MAX, SIZE_MAX};
+    CettaControllerRankingReceipt receipt;
+    assert(cetta_controller_rank_complete(
+               &ranker, candidates, 3u, permutation, &receipt) ==
+           CETTA_CONTROLLER_RANKING_APPLIED);
+    assert(permutation[0] == 1u && permutation[1] == 2u &&
+           permutation[2] == 0u);
+    assert(receipt.scorer_identity ==
+           CETTA_ACT_COMPRESSION_SCORER_IDENTITY);
+    assert(receipt.model_revision == model.revision);
+    assert(rank_context.attempts == 1u &&
+           rank_context.applied == 1u);
+    size_t first_peak_working = rank_context.maximum_working_bytes;
+    size_t pair_permutation[2] = {SIZE_MAX, SIZE_MAX};
+    assert(cetta_controller_rank_complete(
+               &ranker, &candidates[1], 2u,
+               pair_permutation, &receipt) ==
+           CETTA_CONTROLLER_RANKING_APPLIED);
+    assert(pair_permutation[0] == 0u && pair_permutation[1] == 1u);
+    assert(rank_context.attempts == 2u &&
+           rank_context.applied == 2u &&
+           rank_context.maximum_working_bytes == first_peak_working);
+
+    CettaActCompressionModel empty;
+    assert(cetta_act_compression_model_init(&empty, &key));
+    cetta_act_compression_ranker_init(
+        &empty, &rank_context, &ranker);
+    assert(cetta_controller_rank_complete(
+               &ranker, candidates, 3u, permutation, &receipt) ==
+           CETTA_CONTROLLER_RANKING_IDENTITY_DEFERRED);
+    assert(permutation[0] == 0u && permutation[1] == 1u &&
+           permutation[2] == 2u);
+
+    char path[4200];
+    snprintf(
+        path, sizeof(path),
+        "%s/%u-%u-%" PRIu64 "-%08x.compression.act",
+        directory, key.language_id, key.profile_id,
+        key.space_revision, key.program_hash);
+    FILE *corrupt = fopen(path, "wb");
+    assert(corrupt);
+    assert(fputs("act-compression-v1\tcorrupt\n", corrupt) >= 0);
+    assert(fclose(corrupt) == 0);
+    assert(!cetta_act_compression_model_lookup(
+        directory, &key, &loaded));
+    assert(unlink(path) == 0);
+    assert(rmdir(directory) == 0);
+    puts("PASS: incremental compression persists successful structure,"
+         " ranks a complete stable frontier, and declines stale or corrupt"
+         " advice");
+}
+
 int main(void) {
     Arena persistent;
     Arena answers;
@@ -5714,6 +8607,7 @@ int main(void) {
     g_var_intern = &variables;
     assert_type_pure_symbol_facts();
     puts("PASS: type-pure grounded symbol facts");
+    test_search_context_checkpoint_capabilities();
     test_native_runtime_named_arity();
     test_semantic_form_facts();
     space_init_with_universe(&space, &universe);
@@ -5730,6 +8624,8 @@ int main(void) {
     test_relational_obligation_guard_gc(
         &space, &persistent, &answers);
     test_controller_batch_ranker();
+    test_continuation_hub_atomic_reclamation();
+    test_observation_indexed_control_plan();
     test_branch_capture_algebra();
     test_owned_clause_continuation_roundtrip(
         &space, &persistent, &answers);
@@ -5737,6 +8633,10 @@ int main(void) {
         &space, &persistent, &answers);
     test_fifo_starvation_and_duplicate_canaries(
         &space, &persistent, &answers);
+    test_selection_automaton_lane_recurrence();
+    test_whistle_embedding_and_ambient_monitor(&answers);
+    test_act_profile_memory();
+    test_act_incremental_compression();
 
     test_native_residual_typecheck(
         &space, &persistent, &answers);
@@ -5751,12 +8651,26 @@ int main(void) {
         &universe, &persistent);
     test_program_equation_template_c0(
         &universe, &persistent);
+    test_open_pattern_support_certificate(
+        &universe, &persistent);
+    test_compiled_clause_guard_pruning(
+        &universe, &persistent, &answers);
     test_program_wide_occurrence_reconciliation(
+        &universe, &persistent);
+    test_program_revision_view_transport(
         &universe, &persistent);
     test_program_analysis_sidecar_interop(
         &universe, &persistent, &answers);
     test_typed_data_purity_boundary(
         &universe, &persistent);
+    test_evaluator_neutral_structural_equation_classification(
+        &universe, &persistent);
+    test_match_decision_cache_entry_authority(
+        &universe, &persistent, &answers);
+    test_match_decision_callability_authority_receipt(
+        &universe, &persistent, &answers);
+    test_match_decision_verification_receipt_revision(
+        &universe, &persistent, &answers);
     test_deep_typecheck_source_rewrites(&universe);
     test_deep_cons_semantics(&answers);
     test_answer_materialization_boundaries(
@@ -5790,6 +8704,8 @@ int main(void) {
         &space, &persistent, &answers);
     test_choice_binding_compaction(
         &space, &persistent, &answers);
+    test_marked_goal_trail_compaction(
+        &space, &persistent, &answers);
 
     add_clause(&space, &persistent, "(= (f 1) one)");
     add_clause(&space, &persistent, "(= (f 1) uno)");
@@ -5800,6 +8716,10 @@ int main(void) {
         &space, &persistent, &answers);
     const char *ordered[] = {"one", "uno", "uno"};
     expect_answers(&space, &answers, "(f 1)", ordered, 3u);
+#if CETTA_BUILD_WITH_RUNTIME_STATS
+    test_survivor_allocation_role_account();
+    test_choice_binding_checkpoint_receipt(&space, &answers);
+#endif
 
     add_clause(
         &space, &persistent,

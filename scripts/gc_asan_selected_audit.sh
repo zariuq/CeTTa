@@ -34,7 +34,7 @@ run_one() {
     local test_path="$1"
     timeout "$TIMEOUT_SEC" \
         env CETTA_GC=1 CETTA_GC_BUDGET_MB="$BUDGET_MB" \
-        "$BIN" --profile he-extended --lang he "$ROOT/$test_path" 2>&1 | normalize
+        "$BIN" --profile extended --lang he "$ROOT/$test_path" 2>&1 | normalize
 }
 
 pass=0
