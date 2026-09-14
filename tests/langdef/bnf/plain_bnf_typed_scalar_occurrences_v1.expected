@@ -1,0 +1,6 @@
+(ScalarOccurrenceOracleAcceptedV1 increasing)
+(ScalarOccurrenceOracleAcceptedV1 repeated-equal-diagnostics)
+(ScalarOccurrenceOracleAcceptedV1 interleaved-diagnostics)
+(ScalarOccurrenceOracleAcceptedV1 signed-increasing)
+(ScalarOccurrenceOracleAcceptedV1 signed-descending)
+True

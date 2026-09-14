@@ -251,7 +251,7 @@ FILLERS = [
 
 
 LANG_COMMANDS = {
-    "he": ["--lang", "he", "--profile", "he-extended"],
+    "he": ["--lang", "he", "--profile", "extended"],
     "prime": ["--lang", "prime"],
     "petta": ["--lang", "petta", "--profile", "extended"],
 }

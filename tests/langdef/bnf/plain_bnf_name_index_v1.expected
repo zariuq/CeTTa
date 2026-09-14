@@ -1,0 +1,34 @@
+BNFIndexMissingV1
+(IndexPermutation0 (BNFIndexFoundV1 IndexValue0) (BNFIndexFoundV1 IndexValue1) (BNFIndexFoundV1 IndexValue2) (BNFIndexFoundV1 IndexValue3) (BNFIndexFoundV1 IndexValue4) (BNFIndexFoundV1 IndexValue5) (BNFIndexFoundV1 IndexValue6) BNFIndexMissingV1)
+(IndexPermutation1 (BNFIndexFoundV1 IndexValue0) (BNFIndexFoundV1 IndexValue1) (BNFIndexFoundV1 IndexValue2) (BNFIndexFoundV1 IndexValue3) (BNFIndexFoundV1 IndexValue4) (BNFIndexFoundV1 IndexValue5) (BNFIndexFoundV1 IndexValue6) BNFIndexMissingV1)
+(IndexPermutation2 (BNFIndexFoundV1 IndexValue0) (BNFIndexFoundV1 IndexValue1) (BNFIndexFoundV1 IndexValue2) (BNFIndexFoundV1 IndexValue3) (BNFIndexFoundV1 IndexValue4) (BNFIndexFoundV1 IndexValue5) (BNFIndexFoundV1 IndexValue6) BNFIndexMissingV1)
+(IndexFirstBinding (BNFIndexFoundV1 IndexValue1) (BNFIndexFoundV1 IndexValue4))
+IndexDuplicatePrefixAgrees
+(IndexCollected (BNFDefinitionsConsV1 (BNFDefinitionV1 (bnf-v1:text-cons 97 (bnf-v1:text-nil)) FirstA SpanOldA) (BNFDefinitionsConsV1 (BNFDefinitionV1 (bnf-v1:text-cons 97 (bnf-v1:text-nil)) SecondA SpanSecondA) (BNFDefinitionsConsV1 (BNFDefinitionV1 (bnf-v1:text-cons 955 (bnf-v1:text-nil)) FirstLambda SpanOldLambda) (BNFDefinitionsConsV1 (BNFDefinitionV1 (bnf-v1:text-cons 97 (bnf-v1:text-cons 97 (bnf-v1:text-nil))) FreshAA SpanFreshAA) (BNFDefinitionsConsV1 (BNFDefinitionV1 (bnf-v1:text-cons 38634 (bnf-v1:text-nil)) FreshSnow SpanFreshSnow) BNFDefinitionsNilV1))))) (BNFDiagnosticsConsV1 (BNFDuplicateDefinitionV1 (bnf-v1:text-cons 955 (bnf-v1:text-nil)) SpanOldLambda SpanDuplicateLambda) (BNFDiagnosticsConsV1 (BNFDuplicateDefinitionV1 (bnf-v1:text-cons 97 (bnf-v1:text-nil)) SpanOldA SpanDuplicateA) (BNFDiagnosticsConsV1 (BNFDuplicateDefinitionV1 (bnf-v1:text-cons 97 (bnf-v1:text-cons 97 (bnf-v1:text-nil))) SpanFreshAA SpanDuplicateAA) BNFDiagnosticsNilV1))))
+IndexEmptyEntriesAgrees
+IndexEmptyCollectorAgrees
+IndexPermutationCollector0
+IndexPermutationCollector1
+IndexPermutationCollector2
+IndexPermutationCollector3
+IndexPermutationCollector4
+IndexPermutationCollector5
+IndexPermutationCollector6
+IndexPermutationCollector7
+IndexPermutationCollector8
+IndexPermutationCollector9
+IndexPermutationCollector10
+IndexPermutationCollector11
+IndexPermutationCollector12
+IndexPermutationCollector13
+IndexPermutationCollector14
+IndexPermutationCollector15
+IndexPermutationCollector16
+IndexPermutationCollector17
+IndexPermutationCollector18
+IndexPermutationCollector19
+IndexPermutationCollector20
+IndexPermutationCollector21
+IndexPermutationCollector22
+IndexPermutationCollector23
+IndexSplitCollectorAgrees

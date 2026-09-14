@@ -1,0 +1,5 @@
+% Duplicate alternatives are deliberately retained as distinct occurrences.
+<digit> ::= "0" | "1"
+<empty> ::=
+<escaped> ::= "\"" | "\\" | "\n"
+<ambiguous> ::= "x" | "x"

@@ -296,6 +296,76 @@ BROAD_MODULE_RESOLUTION_NOTES: dict[str, dict[str, Any]] = {
         ],
         "rule_ids": ["syntax.module-import", "result.error-shape"],
     },
+    **{
+        path: {
+            "note": (
+                f"CeTTa resolves the {boundary} and exercises its parser "
+                "contracts; Rust HE stops at the module-resolution boundary "
+                "before any parser behavior is reached. This row is evidence "
+                "for CeTTa's parser/module extension policy, not an HE core "
+                "evaluator disagreement."
+            ),
+            "spec_refs": [
+                "he_metta_official_specs.md:94 module hierarchy is acknowledged, but CeTTa parser modules and repository-local parser paths are not pinned"
+            ],
+            "rule_ids": ["syntax.module-import", "profile.syntax-policy"],
+        }
+        for path, boundary in {
+            "tests/test_gparse_native_backend_report.metta": "CeTTa gparse module",
+            "tests/test_gparse_native_dispatch.metta": "CeTTa lib_parse module",
+            "tests/test_gparse_native_dual_forest_signature.metta": "CeTTa gparse module",
+            "tests/test_gparse_native_forest_digest.metta": "CeTTa gparse module",
+            "tests/test_gparse_native_generalized_corpus.metta": "CeTTa gparse module",
+            "tests/test_gparse_native_generalized_integration.metta": (
+                "CeTTa lib_parse module"
+            ),
+            "tests/test_gparse_native_generalized_toys.metta": "CeTTa lib_parse module",
+            "tests/test_gparse_native_gll_forest_data.metta": "CeTTa gparse module",
+            "tests/test_gparse_native_gll_forest_summary.metta": "CeTTa gparse module",
+            "tests/test_gparse_native_gll_parse_shared.metta": "CeTTa gparse module",
+            "tests/test_gparse_native_glr_class.metta": "CeTTa gparse module",
+            "tests/test_gparse_native_glr_forest_data.metta": "CeTTa gparse module",
+            "tests/test_gparse_native_glr_forest_summary.metta": "CeTTa gparse module",
+            "tests/test_gparse_native_glr_parse_shared.metta": "CeTTa gparse module",
+            "tests/test_gparse_native_grammar_data.metta": "CeTTa gparse module",
+            "tests/test_gparse_native_grammar_summary.metta": "CeTTa gparse module",
+            "tests/test_gparse_native_metamath_frontier.metta": (
+                "repository-local Metamath parser support module"
+            ),
+            "tests/test_gparse_native_metamath_corpus.metta": "CeTTa lib_parse module",
+            "tests/test_gparse_native_metamath_plus_weq_variant_matrix.metta": (
+                "repository-local Metamath parser support module"
+            ),
+            "tests/test_gparse_native_runtime_grammar_shared.metta": "CeTTa gparse module",
+            "tests/test_gparse_native_slr_parse_shared.metta": "CeTTa lib_parse module",
+            "tests/test_gparse_native_slr_summary.metta": "CeTTa gparse module",
+            "tests/test_lib_parse_abt_bridge.metta": "CeTTa lib_parse_abt module",
+            "tests/test_lib_parse_binding_regression.metta": "CeTTa lib_parse module",
+            "tests/test_lib_parse_metamath_a1_db_v0.metta": (
+                "repository-local Metamath parser support module"
+            ),
+            "tests/test_lib_parse_metamath_grammar_v0.metta": (
+                "repository-local Metamath parser support module"
+            ),
+            "tests/test_lib_parse_metamath_prefix_frontier_native.metta": (
+                "repository-local Metamath parser support module"
+            ),
+            "tests/test_lib_parse_metamath_stmt_prefix_frontier_native.metta": (
+                "repository-local Metamath parser support module"
+            ),
+            "tests/test_lib_parse_metamath_theorem_compressed_v0.metta": (
+                "repository-local Metamath parser support module"
+            ),
+            "tests/test_lib_parse_metamath_theorem_length_ladder_native.metta": (
+                "repository-local Metamath parser support module"
+            ),
+            "tests/test_lib_parse_metamath_theorem_normal_v0.metta": (
+                "repository-local Metamath parser support module"
+            ),
+            "tests/test_lib_parse_regression.metta": "CeTTa lib_parse module",
+            "tests/test_lib_parse_shared_cert_regression.metta": "CeTTa lib_parse module",
+        }.items()
+    },
 }
 
 BROAD_MODULE_INVENTORY_NOTES: dict[str, dict[str, Any]] = {
@@ -316,6 +386,84 @@ BROAD_MODULE_INVENTORY_NOTES: dict[str, dict[str, Any]] = {
             "profile.syntax-policy",
         ],
     },
+}
+
+BROAD_EXTENDED_PROFILE_NOTES: dict[str, dict[str, Any]] = {
+    path: {
+        "note": (
+            "This fixture is authored for the HE extended profile and differs "
+            f"from the Rust-compat probe at the {feature} boundary. Keep the "
+            "row as explicit profile-placement triage: it is not core HE "
+            "evaluator agreement, and promotion into he-compat requires a "
+            "separately pinned contract."
+        ),
+        "spec_refs": [
+            "he_metta_official_specs.md:profile/lang syntax forms do not pin CeTTa extended-profile placement"
+        ],
+        "rule_ids": rule_ids,
+    }
+    for path, (feature, rule_ids) in {
+        "tests/generated/semiring_query_laws.metta": (
+            "query/space semiring algebra",
+            ["profile.syntax-policy", "minimal.match", "nondet.visible-bag", "syntax.native-space"],
+        ),
+        "tests/test_he_return_contract_correlation.metta": (
+            "overloaded dependent return-contract policy",
+            ["profile.syntax-policy", "special.function-type", "result.error-shape"],
+        ),
+        "tests/test_hyperpose.metta": (
+            "hyperpose scheduling and result-bag policy",
+            ["profile.syntax-policy", "minimal.collapse-superpose", "nondet.visible-bag"],
+        ),
+        "tests/test_hyperpose_hidden_effect_fallback_regression.metta": (
+            "hyperpose hidden-effect fallback policy",
+            ["profile.syntax-policy", "minimal.collapse-superpose", "nondet.visible-bag"],
+        ),
+        "tests/test_hyperpose_recursive_prime_regression.metta": (
+            "hyperpose recursive-branch policy",
+            ["profile.syntax-policy", "minimal.collapse-superpose", "nondet.visible-bag"],
+        ),
+        "tests/test_hyperpose_threaded_error_regression.metta": (
+            "hyperpose all-error first-result policy",
+            ["profile.syntax-policy", "minimal.collapse-superpose", "result.error-shape"],
+        ),
+        "tests/test_match_query_disjunction.metta": (
+            "pattern-level disjunction and multiplicity algebra",
+            ["profile.syntax-policy", "minimal.match", "nondet.visible-bag"],
+        ),
+        "tests/test_minimal_foldl_llist_internal.metta": (
+            "internal stack-safe list fold",
+            ["profile.syntax-policy", "minimal.chain", "minimal.function-return"],
+        ),
+        "tests/test_minimal_space_revision.metta": (
+            "internal space-revision observer",
+            ["profile.syntax-policy", "syntax.native-space"],
+        ),
+        "tests/test_pragma_thread_count_error.metta": (
+            "thread-count validation policy",
+            ["profile.syntax-policy", "result.error-shape"],
+        ),
+        "tests/test_rhometta_demo_ecan.metta": (
+            "rho orchestration extension",
+            ["profile.syntax-policy", "syntax.module-import", "minimal.eval", "nondet.visible-bag"],
+        ),
+        "tests/test_rhometta_isolation_oracle.metta": (
+            "rho isolation and branch-local state policy",
+            ["profile.syntax-policy", "syntax.module-import", "minimal.eval", "nondet.visible-bag"],
+        ),
+        "tests/test_rhometta_lib_syntax.metta": (
+            "rho execution-library extension",
+            ["profile.syntax-policy", "syntax.module-import", "minimal.eval", "nondet.visible-bag"],
+        ),
+        "tests/test_sha256_syntax.metta": (
+            "SHA-256 grounded primitive",
+            ["profile.syntax-policy", "eval.grounded-dispatch", "result.error-shape"],
+        ),
+        "tests/test_space_join_meet.metta": (
+            "space join/meet algebra",
+            ["profile.syntax-policy", "syntax.native-space", "minimal.match", "nondet.visible-bag"],
+        ),
+    }.items()
 }
 
 BROAD_LOCAL_LIBRARY_IMPORT_PATHS = {
@@ -963,6 +1111,10 @@ def validate_broad_module_inventory_notes() -> None:
     validate_broad_note_table(BROAD_MODULE_INVENTORY_NOTES, "module-inventory")
 
 
+def validate_broad_extended_profile_notes() -> None:
+    validate_broad_note_table(BROAD_EXTENDED_PROFILE_NOTES, "extended-profile")
+
+
 def infer_spec_rule_ids(row: dict[str, Any]) -> list[str]:
     path = str(row.get("cetta_path", ""))
     case_id = str(row.get("id", ""))
@@ -1330,9 +1482,9 @@ BROAD_CATEGORY_DETAILS: dict[str, dict[str, str]] = {
         "recommended_action": "Promote as Tier 3 broad corpus evidence.",
     },
     "local-library-or-import-extension": {
-        "kind": "mostly-formal-or-he-extended-extension",
+        "kind": "mostly-formal-or-extended-extension",
         "recommended_action": (
-            "Keep as formal-he/he-extended/local-library evidence unless Rust HE "
+            "Keep as formal-he/extended/local-library evidence unless Rust HE "
             "gains the module/import syntax."
         ),
     },
@@ -1349,13 +1501,20 @@ BROAD_CATEGORY_DETAILS: dict[str, dict[str, str]] = {
         "kind": "environment-syntax-gap",
         "recommended_action": "Do not treat as core semantics until module inventory policy is pinned.",
     },
+    "extended-profile-diff": {
+        "kind": "explicit-profile-placement-triage",
+        "recommended_action": (
+            "Keep out of he-compat agreement counts; validate under extended "
+            "and pin a separate contract before changing profile placement."
+        ),
+    },
     "native-space-extension": {
-        "kind": "mostly-formal-or-he-extended-extension",
+        "kind": "mostly-formal-or-extended-extension",
         "recommended_action": "Classify by space kind; only portable Rust-compatible space behavior enters he-compat.",
     },
     "grounded-numeric-extension": {
-        "kind": "mostly-formal-or-he-extended-extension",
-        "recommended_action": "Keep exact numeric behavior in formal/he-extended unless Rust-compatible behavior is required.",
+        "kind": "mostly-formal-or-extended-extension",
+        "recommended_action": "Keep exact numeric behavior in formal/extended unless Rust-compatible behavior is required.",
     },
     "nondet-order-or-collapse-shape": {
         "kind": "core-semantics-needs-adjudication",
@@ -1371,7 +1530,7 @@ BROAD_CATEGORY_DETAILS: dict[str, dict[str, str]] = {
     },
     "upstream-not-runnable": {
         "kind": "not-rust-runnable",
-        "recommended_action": "Exclude from he-compat agreement counts; use as formal/he-extended pressure only.",
+        "recommended_action": "Exclude from he-compat agreement counts; use as formal/extended pressure only.",
     },
     "upstream-timeout": {
         "kind": "not-rust-runnable",
@@ -1473,6 +1632,8 @@ def triage_broad_result(row: dict[str, Any]) -> str:
         return "module-resolution-diff"
     if upstream_module_resolution_failure(upstream_head):
         return "module-resolution-diff"
+    if path in BROAD_EXTENDED_PROFILE_NOTES:
+        return "extended-profile-diff"
     if "rational" in path or "bigint" in path or "numeric" in path or "1/2" in text or "999/1000" in text:
         return "grounded-numeric-extension"
     if any(token in text for token in ["new-space", "space-len", "space-get", "space-pop", "space-peek", "count-atoms"]):
@@ -1500,6 +1661,9 @@ def broad_rule_ids(row: dict[str, Any], category: str) -> list[str]:
         ids.update(["syntax.module-import", "syntax.module-inventory", "profile.syntax-policy"])
         inventory_note = BROAD_MODULE_INVENTORY_NOTES.get(str(row.get("path", "")), {})
         ids.update(inventory_note.get("rule_ids", []))
+    elif category == "extended-profile-diff":
+        profile_note = BROAD_EXTENDED_PROFILE_NOTES.get(str(row.get("path", "")), {})
+        ids.update(profile_note.get("rule_ids", []))
     elif category == "native-space-extension":
         ids.add("syntax.native-space")
     elif category == "grounded-numeric-extension":
@@ -1575,10 +1739,14 @@ def promote_broad_agree_case(row: dict[str, Any]) -> dict[str, Any]:
 
 
 def build_broad_probe_summary(report_path: Path, cases: list[dict[str, Any]]) -> dict[str, Any]:
+    try:
+        portable_report_path = str(report_path.resolve().relative_to(ROOT))
+    except ValueError:
+        portable_report_path = report_path.name
     if not report_path.exists():
         return {
             "status": "missing",
-            "report_path": str(report_path),
+            "report_path": portable_report_path,
             "promoted_case_count": 0,
             "triage": [],
         }
@@ -1587,7 +1755,7 @@ def build_broad_probe_summary(report_path: Path, cases: list[dict[str, Any]]) ->
     if not isinstance(results, list):
         return {
             "status": "invalid",
-            "report_path": str(report_path),
+            "report_path": portable_report_path,
             "promoted_case_count": 0,
             "triage": [],
         }
@@ -1639,6 +1807,10 @@ def build_broad_probe_summary(report_path: Path, cases: list[dict[str, Any]]) ->
             inventory_note = BROAD_MODULE_INVENTORY_NOTES[path]
             entry["module_inventory_note"] = inventory_note.get("note", "")
             entry["module_inventory_spec_refs"] = inventory_note.get("spec_refs", [])
+        if path in BROAD_EXTENDED_PROFILE_NOTES:
+            profile_note = BROAD_EXTENDED_PROFILE_NOTES[path]
+            entry["extended_profile_note"] = profile_note.get("note", "")
+            entry["extended_profile_spec_refs"] = profile_note.get("spec_refs", [])
         triage.append(entry)
 
     local_library_rows = [
@@ -1693,19 +1865,25 @@ def build_broad_probe_summary(report_path: Path, cases: list[dict[str, Any]]) ->
     serious_categories = {
         "module-resolution-diff",
         "module-inventory-environment-diff",
+        "extended-profile-diff",
         "nondet-order-or-collapse-shape",
         "core-builtin-or-result-shape-gap",
         "cetta-timeout",
     }
     return {
         "status": "loaded",
-        "report_path": str(report_path),
+        "report_path": portable_report_path,
         "source_summary": data.get("summary", {}),
         "promoted_case_count": promoted,
         "triage_count": len(triage),
         "by_classification": dict(sorted(classification_counts.items())),
         "by_category": dict(sorted(category_counts.items())),
-        "serious_triage_count": sum(category_counts[cat] for cat in serious_categories),
+        "serious_triage_count": sum(
+            1
+            for row in triage
+            if row["category"] in serious_categories
+            or row["classification"] == "cetta-timeout"
+        ),
         "category_details": BROAD_CATEGORY_DETAILS,
         "triage": triage,
     }
@@ -1735,6 +1913,7 @@ def main() -> int:
     validate_broad_rust_drift_notes()
     validate_broad_module_resolution_notes()
     validate_broad_module_inventory_notes()
+    validate_broad_extended_profile_notes()
     validate_track_a_rule_lanes()
     cases = build_cases()
     broad_probe = build_broad_probe_summary(args.broad_probe_report, cases)

@@ -1,0 +1,9 @@
+true
+(EbnfGraphDiagnosticsV1 (LCons (definition unreachable "dead" (bnf-v1:source-span 12 30)) (LCons (expression unreachable "dead" group (bnf-v1:source-span 12 30) (bnf-v1:source-span 23 28)) (LCons (expression unreachable "dead" optional (bnf-v1:source-span 12 30) (bnf-v1:source-span 23 29)) LNil))) true)
+(EbnfGraphDiagnosticsV1 (LCons (definition unproductive "s" (bnf-v1:source-span 0 15)) (LCons (expression unproductive "s" group (bnf-v1:source-span 0 15) (bnf-v1:source-span 8 13)) (LCons (expression unproductive "s" one-or-more (bnf-v1:source-span 0 15) (bnf-v1:source-span 8 14)) LNil))) true)
+(EbnfDiagnosticOwnersV1 false true true true true true)
+(EBNF:Diagnostics (LCons (EBNF:UnmappedDiagnostic (FutureGraphDiagnosticV1 "detail")) LNil))
+(EBNF:Diagnostics LNil)
+EbnfDiagnosticBadReceiptV1
+EbnfDiagnosticMalformedV1
+(EbnfDeclarationStillAuthoredV1 "s" "missing" (bnf-v1:source-span 8 17))

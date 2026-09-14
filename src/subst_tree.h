@@ -126,6 +126,12 @@ void stree_free(SubstTree *t);
 void stree_insert(SubstTree *t, Atom *atom, CettaIndex atom_idx);
 bool stree_insert_id(SubstTree *t, const TermUniverse *universe,
                      AtomId atom_id, CettaIndex atom_idx);
+/* Transport retained leaf coordinates through one validated stable
+ * occurrence contraction and restore every bucket's exact leaf count.
+ * Returns the number of removed leaves. */
+CettaCount stree_transport_stable_coordinates(
+    SubstTree *t, const CettaIndex *source_to_target,
+    CettaCount source_len);
 void stree_bucket_init(SubstBucket *bucket);
 void stree_bucket_free(SubstBucket *bucket);
 void stree_bucket_insert(SubstBucket *bucket, Atom *atom, CettaIndex atom_idx);

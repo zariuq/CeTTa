@@ -63,7 +63,7 @@ def run_prefix(
         "",
     ])
     proc = subprocess.run(
-        [bin_path, "--profile", "he-extended", "--lang", "he", "/dev/stdin"],
+        [bin_path, "--profile", "extended", "--lang", "he", "/dev/stdin"],
         input=script,
         check=False,
         text=True,

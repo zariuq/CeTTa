@@ -19,7 +19,7 @@
 ; reducer plus a small projection, so the output is a readable count of clients
 ; served rather than a raw residual.
 ;
-; Run:  ./cetta --quiet --profile he-extended --lang he <this file>
+; Run:  ./cetta --quiet --profile extended --lang he <this file>
 ; ===========================================================================
 
 !(import! &self rhometta)

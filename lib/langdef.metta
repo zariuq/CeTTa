@@ -13,6 +13,15 @@
        (((return $handle) (return $handle))
         ($result (return $result))))))
 
+; Compile an already constructed LanguageDef and parser-profile value through
+; the same canonical ingress, typed decoders, ParserPack compiler, and native
+; GLL/GLR execution boundary as the file-based operation.
+(= (langdef:load-authored-parser-values $language $profile)
+   (function
+     (case (__cetta_lib_authored_parser_load_values $language $profile)
+       (((return $handle) (return $handle))
+        ($result (return $result))))))
+
 (= (langdef:close-authored-parser $handle)
    (function
      (case (__cetta_lib_authored_parser_close $handle)
@@ -34,6 +43,24 @@
 (= (langdef:parse-authored-file $handle $path)
    (function
      (case (__cetta_lib_authored_parser_parse_file $handle $path)
+       (((return $result) (return $result))
+        ($result (return $result))))))
+
+; Return the complete canonical packed forest as ordinary `pf-v1` MeTTa data
+; in addition to replayed semantic values.  The explicit item limit bounds
+; each of the root, node, and choice lists; exceeding it is a typed failure,
+; never a digest-only substitute.  GLL and GLR must materialize the same term.
+(= (langdef:parse-authored-text-evidence $handle $source $item-limit)
+   (function
+     (case (__cetta_lib_authored_parser_parse_text_evidence
+             $handle $source $item-limit)
+       (((return $result) (return $result))
+        ($result (return $result))))))
+
+(= (langdef:parse-authored-file-evidence $handle $path $item-limit)
+   (function
+     (case (__cetta_lib_authored_parser_parse_file_evidence
+             $handle $path $item-limit)
        (((return $result) (return $result))
         ($result (return $result))))))
 

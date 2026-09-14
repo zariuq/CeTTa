@@ -19,7 +19,7 @@ run_case() {
   tmp="$(mktemp)"
   echo "== $label =="
   /usr/bin/time -f "wall=%E rss_kb=%M" \
-    ./cetta --quiet --profile he-extended --space-engine "$space_engine" --lang he "$file" \
+    ./cetta --quiet --profile extended --space-engine "$space_engine" --lang he "$file" \
     >"$tmp" 2>&1
   cat "$tmp"
   if grep -Fq "(Error" "$tmp"; then

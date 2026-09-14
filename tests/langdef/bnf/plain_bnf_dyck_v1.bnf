@@ -1,0 +1,2 @@
+% Balanced parentheses with concatenation in the recursive production.
+<s> ::= "(" <s> ")" <s> |

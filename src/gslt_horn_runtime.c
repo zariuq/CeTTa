@@ -1,6 +1,7 @@
 #include "gslt_horn_runtime.h"
 
 #include "finite_horn_gslt_v1.h"
+#include "finite_horn_ground_term_v1.h"
 #include "match.h"
 #include "parser.h"
 
@@ -458,7 +459,8 @@ static bool horn_program_add_quoted_rule(
         clause_items[1]->expr.len == 0u ||
         clause_items[1]->expr.elems[0]->kind != ATOM_SYMBOL)
         return horn_error(error, error_size,
-                          "q-rule did not materialize a relational head");
+                          "q-rule %s did not materialize a relational head",
+                          rule_name);
 
     if (program->rule_count == program->rule_cap) {
         uint32_t next = program->rule_cap ? program->rule_cap * 2u : 32u;
@@ -521,27 +523,26 @@ static bool horn_program_from_package(
          index++) {
         uint8_t *quoted = NULL;
         size_t quoted_len = 0u;
-        Atom **forms = NULL;
+        Atom *quoted_rules = NULL;
         if (!fhgslt_package_quoted_rules(
                 package, index, &quoted, &quoted_len,
                 error, error_size))
             goto fail;
-        char *text = cetta_malloc(quoted_len + 1u);
-        memcpy(text, quoted, quoted_len);
-        text[quoted_len] = '\0';
+        /* These are quoted source terms, not a host-language program.
+         * The ground codec preserves symbol spellings such as True/true
+         * instead of interpreting them as host Boolean values. */
+        bool decoded = fh_ground_term_v1_parse(
+            &program->arena, quoted, quoted_len, &quoted_rules,
+            error, error_size);
         free(quoted);
-        int form_count = parse_metta_text(text, &program->arena, &forms);
-        free(text);
-        if (form_count != 1 || !forms ||
+        if (!decoded || !quoted_rules ||
             !horn_program_add_quoted_list(
-                program, forms[0], error, error_size)) {
+                program, quoted_rules, error, error_size)) {
             if (!error || error_size == 0u || error[0] == '\0')
                 horn_error(error, error_size,
                            "cannot read quoted GSLT rules");
-            free(forms);
             goto fail;
         }
-        free(forms);
     }
     *out = program;
     return true;

@@ -9,7 +9,7 @@
 ; Usage:
 ;   make bench-term-sharing
 ;
-; This benchmark requires a runtime-stats build and the he-extended profile.
+; This benchmark requires a runtime-stats build and the extended profile.
 ; Its shell runner enforces both conditions and checks the stable semantic
 ; oracle in bench_term_sharing_stress.expected.
 ;

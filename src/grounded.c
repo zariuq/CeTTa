@@ -1234,6 +1234,118 @@ static bool grounded_is_plain_number(const Atom *atom) {
             atom->ground.gkind == GV_FLOAT);
 }
 
+bool grounded_plain_scalar_from_atom(
+        const Atom *atom, CettaPlainScalar *value_out) {
+    if (!atom || !value_out || atom->kind != ATOM_GROUNDED)
+        return false;
+    switch (atom->ground.gkind) {
+    case GV_INT:
+        value_out->kind = CETTA_PLAIN_SCALAR_INT;
+        value_out->as.integer = atom->ground.ival;
+        return true;
+    case GV_FLOAT:
+        value_out->kind = CETTA_PLAIN_SCALAR_FLOAT;
+        value_out->as.floating = atom->ground.fval;
+        return true;
+    case GV_BOOL:
+        value_out->kind = CETTA_PLAIN_SCALAR_BOOL;
+        value_out->as.boolean = atom->ground.bval;
+        return true;
+    default:
+        return false;
+    }
+}
+
+Atom *grounded_plain_scalar_materialize(
+        Arena *arena, const CettaPlainScalar *value) {
+    if (!arena || !value)
+        return NULL;
+    switch (value->kind) {
+    case CETTA_PLAIN_SCALAR_INT:
+        return atom_int(arena, value->as.integer);
+    case CETTA_PLAIN_SCALAR_FLOAT:
+        return atom_float(arena, value->as.floating);
+    case CETTA_PLAIN_SCALAR_BOOL:
+        return atom_bool(arena, value->as.boolean);
+    }
+    return NULL;
+}
+
+static bool grounded_plain_scalar_is_number(
+        const CettaPlainScalar *value) {
+    return value &&
+        (value->kind == CETTA_PLAIN_SCALAR_INT ||
+         value->kind == CETTA_PLAIN_SCALAR_FLOAT);
+}
+
+static bool grounded_plain_scalar_strict_equal(
+        const CettaPlainScalar *left,
+        const CettaPlainScalar *right) {
+    if (!left || !right || left->kind != right->kind)
+        return false;
+    switch (left->kind) {
+    case CETTA_PLAIN_SCALAR_INT:
+        return left->as.integer == right->as.integer;
+    case CETTA_PLAIN_SCALAR_FLOAT:
+        return left->as.floating == right->as.floating;
+    case CETTA_PLAIN_SCALAR_BOOL:
+        return left->as.boolean == right->as.boolean;
+    }
+    return false;
+}
+
+static double grounded_plain_scalar_as_double(
+        const CettaPlainScalar *value) {
+    return value->kind == CETTA_PLAIN_SCALAR_FLOAT
+        ? value->as.floating
+        : (double)value->as.integer;
+}
+
+static bool grounded_spelling_has_guest_owner(SymbolId head_id) {
+    return abt_is_op(head_id) ||
+        (prime_semantics_is_op_id &&
+         prime_semantics_is_op_id(head_id)) ||
+        (he_typing_is_op_id && he_typing_is_op_id(head_id));
+}
+
+static bool grounded_is_plain_scalar_truth_operator(
+        SymbolId head_id, uint32_t nargs) {
+    if (head_id == g_builtin_syms.op_not)
+        return nargs == 1u;
+    return nargs == 2u &&
+        (head_id == g_builtin_syms.op_eq ||
+         head_id == g_builtin_syms.op_and ||
+         head_id == g_builtin_syms.op_or ||
+         head_id == g_builtin_syms.op_xor ||
+         head_id == g_builtin_syms.op_lt ||
+         head_id == g_builtin_syms.op_gt ||
+         head_id == g_builtin_syms.op_le ||
+         head_id == g_builtin_syms.op_ge ||
+         head_id == g_builtin_syms.numeric_eq);
+}
+
+static bool grounded_is_plain_scalar_arithmetic_operator(
+        SymbolId head_id, uint32_t nargs) {
+    return nargs == 2u &&
+        (head_id == g_builtin_syms.op_plus ||
+         head_id == g_builtin_syms.op_minus ||
+         head_id == g_builtin_syms.op_mul);
+}
+
+bool grounded_is_plain_scalar_tree_operator(
+        Atom *head, uint32_t nargs) {
+    if (!head || head->kind != ATOM_SYMBOL) {
+        return false;
+    }
+    /* Plans are compiled independently of the dynamic dialect owner.  This
+     * records only source spelling and arity; the exact evaluators below
+     * repeat guest-precedence admission at the execution boundary. */
+    return grounded_is_plain_scalar_truth_operator(
+               head->sym_id, nargs) ||
+        grounded_is_plain_scalar_arithmetic_operator(
+            head->sym_id, nargs);
+}
+
 static bool grounded_plain_scalar_truth_common(
         SymbolId head_id, Atom **args, uint32_t nargs,
         bool *truth_out) {
@@ -1332,14 +1444,149 @@ bool grounded_try_plain_scalar_truth(
     SymbolId head_id = head->sym_id;
     /* grounded_dispatch gives guest operators first refusal.  Mirror that
      * precedence and decline whenever a dialect owns this spelling. */
-    if (abt_is_op(head_id) ||
-        (prime_semantics_is_op_id &&
-         prime_semantics_is_op_id(head_id)) ||
-        (he_typing_is_op_id && he_typing_is_op_id(head_id))) {
+    if (grounded_spelling_has_guest_owner(head_id) ||
+        !grounded_is_plain_scalar_truth_operator(head_id, nargs)) {
         return false;
     }
     return grounded_plain_scalar_truth_common(
         head_id, args, nargs, truth_out);
+}
+
+bool grounded_try_plain_scalar_arithmetic(
+        Arena *arena, Atom *head, Atom **args, uint32_t nargs,
+        Atom **value_out) {
+    if (value_out)
+        *value_out = NULL;
+    if (!arena || !head || head->kind != ATOM_SYMBOL || !args ||
+        !value_out || nargs != 2u ||
+        grounded_spelling_has_guest_owner(head->sym_id)) {
+        return false;
+    }
+    SymbolId head_id = head->sym_id;
+    if (!grounded_is_plain_scalar_arithmetic_operator(
+            head_id, nargs) ||
+        !grounded_is_plain_number(args[0]) ||
+        !grounded_is_plain_number(args[1])) {
+        return false;
+    }
+    Atom *value = grounded_dispatch(arena, head, args, nargs);
+    if (!grounded_is_plain_number(value))
+        return false;
+    *value_out = value;
+    return true;
+}
+
+bool grounded_try_plain_scalar_operation(
+        Atom *head, const CettaPlainScalar *arguments, uint32_t nargs,
+        CettaPlainScalar *value_out) {
+    if (!head || head->kind != ATOM_SYMBOL || !arguments || !value_out ||
+        grounded_spelling_has_guest_owner(head->sym_id)) {
+        return false;
+    }
+    SymbolId head_id = head->sym_id;
+
+    if (grounded_is_plain_scalar_arithmetic_operator(head_id, nargs)) {
+        if (nargs != 2u ||
+            !grounded_plain_scalar_is_number(&arguments[0]) ||
+            !grounded_plain_scalar_is_number(&arguments[1])) {
+            return false;
+        }
+        if (arguments[0].kind == CETTA_PLAIN_SCALAR_INT &&
+            arguments[1].kind == CETTA_PLAIN_SCALAR_INT) {
+            __int128 result = head_id == g_builtin_syms.op_plus
+                ? (__int128)arguments[0].as.integer +
+                    (__int128)arguments[1].as.integer
+                : head_id == g_builtin_syms.op_minus
+                    ? (__int128)arguments[0].as.integer -
+                        (__int128)arguments[1].as.integer
+                    : (__int128)arguments[0].as.integer *
+                        (__int128)arguments[1].as.integer;
+            if (result < INT64_MIN || result > INT64_MAX)
+                return false;
+            value_out->kind = CETTA_PLAIN_SCALAR_INT;
+            value_out->as.integer = (int64_t)result;
+            return true;
+        }
+        double left = grounded_plain_scalar_as_double(&arguments[0]);
+        double right = grounded_plain_scalar_as_double(&arguments[1]);
+        value_out->kind = CETTA_PLAIN_SCALAR_FLOAT;
+        value_out->as.floating = head_id == g_builtin_syms.op_plus
+            ? left + right
+            : head_id == g_builtin_syms.op_minus
+                ? left - right
+                : left * right;
+        return true;
+    }
+
+    if (!grounded_is_plain_scalar_truth_operator(head_id, nargs))
+        return false;
+    value_out->kind = CETTA_PLAIN_SCALAR_BOOL;
+    if (head_id == g_builtin_syms.op_eq) {
+        if (nargs != 2u)
+            return false;
+        value_out->as.boolean = grounded_plain_scalar_strict_equal(
+            &arguments[0], &arguments[1]);
+        return true;
+    }
+    if (head_id == g_builtin_syms.op_not) {
+        if (nargs != 1u ||
+            arguments[0].kind != CETTA_PLAIN_SCALAR_BOOL) {
+            return false;
+        }
+        value_out->as.boolean = !arguments[0].as.boolean;
+        return true;
+    }
+    if (head_id == g_builtin_syms.op_and ||
+        head_id == g_builtin_syms.op_or ||
+        head_id == g_builtin_syms.op_xor) {
+        if (nargs != 2u ||
+            arguments[0].kind != CETTA_PLAIN_SCALAR_BOOL ||
+            arguments[1].kind != CETTA_PLAIN_SCALAR_BOOL) {
+            return false;
+        }
+        bool left = arguments[0].as.boolean;
+        bool right = arguments[1].as.boolean;
+        value_out->as.boolean = head_id == g_builtin_syms.op_and
+            ? left && right
+            : head_id == g_builtin_syms.op_or
+                ? left || right
+                : left != right;
+        return true;
+    }
+    if (nargs != 2u ||
+        !grounded_plain_scalar_is_number(&arguments[0]) ||
+        !grounded_plain_scalar_is_number(&arguments[1])) {
+        return false;
+    }
+    bool floating =
+        arguments[0].kind == CETTA_PLAIN_SCALAR_FLOAT ||
+        arguments[1].kind == CETTA_PLAIN_SCALAR_FLOAT;
+    if (!floating) {
+        int64_t left = arguments[0].as.integer;
+        int64_t right = arguments[1].as.integer;
+        value_out->as.boolean = head_id == g_builtin_syms.op_lt
+            ? left < right
+            : head_id == g_builtin_syms.op_gt
+                ? left > right
+                : head_id == g_builtin_syms.op_le
+                    ? left <= right
+                    : head_id == g_builtin_syms.op_ge
+                        ? left >= right
+                        : left == right;
+        return true;
+    }
+    double left = grounded_plain_scalar_as_double(&arguments[0]);
+    double right = grounded_plain_scalar_as_double(&arguments[1]);
+    value_out->as.boolean = head_id == g_builtin_syms.op_lt
+        ? left < right
+        : head_id == g_builtin_syms.op_gt
+            ? left > right
+            : head_id == g_builtin_syms.op_le
+                ? left <= right
+                : head_id == g_builtin_syms.op_ge
+                    ? left >= right
+                    : left == right;
+    return true;
 }
 
 static Atom *grounded_bool_bad_arg(Arena *a, Atom *head, Atom **args, uint32_t nargs,
@@ -1407,6 +1654,528 @@ static Atom *grounded_sort_strings(Arena *a, Atom *head, Atom **args, uint32_t n
     for (CettaExprIndex i = 0; i < list->expr.len; i++)
         sorted[i] = atom_string(a, strings[i]);
     return atom_expr(a, sorted, list->expr.len);
+}
+
+typedef struct {
+    Atom *atom;
+    const char *key;
+    size_t key_len;
+} GroundedAtomSortItem;
+
+static int grounded_atom_sort_item_compare(
+        const GroundedAtomSortItem *left,
+        const GroundedAtomSortItem *right) {
+    if (left->key_len < right->key_len)
+        return -1;
+    if (left->key_len > right->key_len)
+        return 1;
+    return strcmp(left->key, right->key);
+}
+
+/* Stable bottom-up merge sort.  Each atom's parseable key is materialized
+ * exactly once; comparison is shortlex over the common reader syntax. */
+static Atom *grounded_sort_atoms(
+        Arena *a, Atom *head, Atom **args, uint32_t nargs) {
+    if (nargs != 1)
+        return grounded_incorrect_arity(a, head, args, nargs);
+    if (args[0]->kind != ATOM_EXPR)
+        return grounded_string_error(
+            a, head, args, nargs,
+            "sort-atom expects an expression as its argument");
+
+    Atom *list = args[0];
+    if (list->expr.len < 2u)
+        return list;
+    if (list->expr.len > (CettaExprLen)(SIZE_MAX / sizeof(GroundedAtomSortItem)) ||
+        list->expr.len > (CettaExprLen)(SIZE_MAX / sizeof(Atom *))) {
+        return grounded_string_error(
+            a, head, args, nargs,
+            "sort-atom input is too large to index on this platform");
+    }
+
+    size_t length = (size_t)list->expr.len;
+    GroundedAtomSortItem *items =
+        arena_alloc(a, sizeof(*items) * length);
+    GroundedAtomSortItem *scratch =
+        arena_alloc(a, sizeof(*scratch) * length);
+    for (size_t index = 0u; index < length; index++) {
+        items[index].atom = list->expr.elems[index];
+        items[index].key = atom_to_parseable_string(a, items[index].atom);
+        items[index].key_len = strlen(items[index].key);
+    }
+
+    GroundedAtomSortItem *source = items;
+    GroundedAtomSortItem *destination = scratch;
+    for (size_t width = 1u; width < length;) {
+        size_t base = 0u;
+        while (base < length) {
+            size_t middle = base + (length - base < width
+                                      ? length - base : width);
+            size_t end = middle + (length - middle < width
+                                     ? length - middle : width);
+            size_t left = base;
+            size_t right = middle;
+            size_t output = base;
+            while (left < middle && right < end) {
+                /* Take equal keys from the left run: stability is semantic,
+                 * not an accident of the platform's qsort implementation. */
+                if (grounded_atom_sort_item_compare(
+                        &source[left], &source[right]) <= 0) {
+                    destination[output++] = source[left++];
+                } else {
+                    destination[output++] = source[right++];
+                }
+            }
+            while (left < middle)
+                destination[output++] = source[left++];
+            while (right < end)
+                destination[output++] = source[right++];
+            base = end;
+        }
+        GroundedAtomSortItem *swap = source;
+        source = destination;
+        destination = swap;
+        if (width > length / 2u)
+            width = length;
+        else
+            width *= 2u;
+    }
+
+    Atom **sorted = arena_alloc(a, sizeof(*sorted) * length);
+    for (size_t index = 0u; index < length; index++)
+        sorted[index] = source[index].atom;
+    return atom_expr(a, sorted, list->expr.len);
+}
+
+typedef struct {
+    Atom *value;
+    NumArg key;
+    size_t original_index;
+} GroundedKeyedItem;
+
+static bool grounded_keyed_number_compare(
+        const NumArg *left, const NumArg *right, int *ordering) {
+#if CETTA_BUILD_WITH_GMP
+    return num_arg_compare_value(left, right, ordering);
+#else
+    if (!left || !right || !ordering ||
+        left->is_bigint || right->is_bigint ||
+        left->is_rational || right->is_rational ||
+        isnan(left->val) || isnan(right->val)) {
+        return false;
+    }
+    *ordering = left->val < right->val
+        ? -1 : left->val > right->val ? 1 : 0;
+    return true;
+#endif
+}
+
+typedef enum {
+    GROUNDED_TOP_K_OK = 0,
+    GROUNDED_TOP_K_INVALID_ENTRY,
+    GROUNDED_TOP_K_INVALID_KEY,
+    GROUNDED_TOP_K_INCOMPARABLE,
+} GroundedTopKStatus;
+
+typedef bool (*GroundedTopKProjection)(
+    const void *context, size_t index, Atom **key_out,
+    Atom **value_out);
+
+/* Positive means left ranks above right.  Equal numeric keys retain the
+ * earlier occurrence, so the later occurrence is the worse heap item. */
+static bool grounded_top_k_rank_compare(
+        const GroundedKeyedItem *left,
+        const GroundedKeyedItem *right, int *ordering) {
+    if (!grounded_keyed_number_compare(
+            &left->key, &right->key, ordering)) {
+        return false;
+    }
+    if (*ordering == 0) {
+        *ordering = left->original_index < right->original_index
+            ? 1 : left->original_index > right->original_index ? -1 : 0;
+    }
+    return true;
+}
+
+static bool grounded_top_k_heap_sift_up(
+        GroundedKeyedItem *heap, size_t index) {
+    while (index > 0u) {
+        size_t parent = (index - 1u) / 2u;
+        int comparison = 0;
+        if (!grounded_top_k_rank_compare(
+                &heap[index], &heap[parent], &comparison)) {
+            return false;
+        }
+        if (comparison >= 0)
+            break;
+        GroundedKeyedItem swap = heap[parent];
+        heap[parent] = heap[index];
+        heap[index] = swap;
+        index = parent;
+    }
+    return true;
+}
+
+static bool grounded_top_k_heap_sift_down(
+        GroundedKeyedItem *heap, size_t length, size_t index) {
+    for (;;) {
+        size_t left = index * 2u + 1u;
+        if (left >= length)
+            return true;
+        size_t worse = left;
+        size_t right = left + 1u;
+        if (right < length) {
+            int comparison = 0;
+            if (!grounded_top_k_rank_compare(
+                    &heap[right], &heap[left], &comparison)) {
+                return false;
+            }
+            if (comparison < 0)
+                worse = right;
+        }
+        int comparison = 0;
+        if (!grounded_top_k_rank_compare(
+                &heap[worse], &heap[index], &comparison)) {
+            return false;
+        }
+        if (comparison >= 0)
+            return true;
+        GroundedKeyedItem swap = heap[index];
+        heap[index] = heap[worse];
+        heap[worse] = swap;
+        index = worse;
+    }
+}
+
+static int grounded_top_k_source_index_compare(
+        const void *left_raw, const void *right_raw) {
+    const GroundedKeyedItem *left = left_raw;
+    const GroundedKeyedItem *right = right_raw;
+    return left->original_index < right->original_index
+        ? -1 : left->original_index > right->original_index ? 1 : 0;
+}
+
+static GroundedTopKStatus grounded_retain_top_k_projected(
+        Arena *arena, size_t length, size_t retained,
+        GroundedTopKProjection projection, const void *context,
+        Atom **result_out) {
+    if (result_out)
+        *result_out = NULL;
+    if (!arena || !projection || !result_out || retained > length)
+        return GROUNDED_TOP_K_INVALID_ENTRY;
+    if (retained == 0u) {
+        *result_out = atom_expr(arena, NULL, 0u);
+        return *result_out ? GROUNDED_TOP_K_OK
+                           : GROUNDED_TOP_K_INVALID_ENTRY;
+    }
+
+    if (retained == length) {
+        Atom **result = arena_alloc(arena, sizeof(*result) * retained);
+        for (size_t index = 0u; index < length; index++) {
+            Atom *key = NULL;
+            if (!projection(context, index, &key, &result[index]))
+                return GROUNDED_TOP_K_INVALID_ENTRY;
+            NumArg parsed = {0};
+            if (!get_numeric_arg(key, &parsed) || isnan(parsed.val))
+                return GROUNDED_TOP_K_INVALID_KEY;
+            int comparison = 0;
+            if (!grounded_keyed_number_compare(
+                    &parsed, &parsed, &comparison)) {
+                return GROUNDED_TOP_K_INCOMPARABLE;
+            }
+        }
+        *result_out = atom_expr(
+            arena, result, (CettaExprLen)retained);
+        return *result_out ? GROUNDED_TOP_K_OK
+                           : GROUNDED_TOP_K_INVALID_ENTRY;
+    }
+
+    GroundedKeyedItem *heap =
+        arena_alloc(arena, sizeof(*heap) * retained);
+    size_t heap_len = 0u;
+    for (size_t index = 0u; index < length; index++) {
+        Atom *key = NULL;
+        Atom *value = NULL;
+        if (!projection(context, index, &key, &value))
+            return GROUNDED_TOP_K_INVALID_ENTRY;
+        NumArg parsed = {0};
+        if (!get_numeric_arg(key, &parsed) || isnan(parsed.val))
+            return GROUNDED_TOP_K_INVALID_KEY;
+        int comparison = 0;
+        if (!grounded_keyed_number_compare(
+                &parsed, &parsed, &comparison)) {
+            return GROUNDED_TOP_K_INCOMPARABLE;
+        }
+        GroundedKeyedItem candidate = {
+            .value = value,
+            .key = parsed,
+            .original_index = index,
+        };
+        if (heap_len < retained) {
+            heap[heap_len] = candidate;
+            if (!grounded_top_k_heap_sift_up(heap, heap_len))
+                return GROUNDED_TOP_K_INCOMPARABLE;
+            heap_len++;
+            continue;
+        }
+        if (!grounded_top_k_rank_compare(
+                &candidate, &heap[0], &comparison)) {
+            return GROUNDED_TOP_K_INCOMPARABLE;
+        }
+        if (comparison <= 0)
+            continue;
+        heap[0] = candidate;
+        if (!grounded_top_k_heap_sift_down(heap, heap_len, 0u))
+            return GROUNDED_TOP_K_INCOMPARABLE;
+    }
+
+    qsort(heap, heap_len, sizeof(*heap),
+          grounded_top_k_source_index_compare);
+    Atom **result = arena_alloc(arena, sizeof(*result) * heap_len);
+    for (size_t index = 0u; index < heap_len; index++)
+        result[index] = heap[index].value;
+    *result_out = atom_expr(arena, result, (CettaExprLen)heap_len);
+    return *result_out ? GROUNDED_TOP_K_OK
+                       : GROUNDED_TOP_K_INVALID_ENTRY;
+}
+
+typedef struct {
+    Atom *entries;
+} GroundedKeyedEntryProjection;
+
+static bool grounded_keyed_entry_projection(
+        const void *context_raw, size_t index,
+        Atom **key_out, Atom **value_out) {
+    const GroundedKeyedEntryProjection *context = context_raw;
+    Atom *entry = context && context->entries &&
+            index < (size_t)context->entries->expr.len
+        ? context->entries->expr.elems[index] : NULL;
+    if (!entry || entry->kind != ATOM_EXPR || entry->expr.len != 2u)
+        return false;
+    *key_out = entry->expr.elems[0];
+    *value_out = entry;
+    return true;
+}
+
+typedef struct {
+    Atom *keys;
+    Atom *values;
+} GroundedParallelProjection;
+
+static bool grounded_parallel_projection(
+        const void *context_raw, size_t index,
+        Atom **key_out, Atom **value_out) {
+    const GroundedParallelProjection *context = context_raw;
+    if (!context || !context->keys || !context->values ||
+        index >= (size_t)context->keys->expr.len ||
+        index >= (size_t)context->values->expr.len) {
+        return false;
+    }
+    *key_out = context->keys->expr.elems[index];
+    *value_out = context->values->expr.elems[index];
+    return true;
+}
+
+bool grounded_retain_top_k_numeric_projection(
+        Arena *arena, Atom *keys, Atom *values, int64_t requested,
+        Atom **result_out) {
+    if (result_out)
+        *result_out = NULL;
+    if (!arena || !keys || !values || !result_out ||
+        keys->kind != ATOM_EXPR || values->kind != ATOM_EXPR ||
+        keys->expr.len != values->expr.len) {
+        return false;
+    }
+    size_t length = (size_t)keys->expr.len;
+    size_t retained = requested <= 0
+        ? 0u
+        : (uint64_t)requested >= (uint64_t)length
+            ? length : (size_t)requested;
+    GroundedParallelProjection projection = {
+        .keys = keys,
+        .values = values,
+    };
+    return grounded_retain_top_k_projected(
+               arena, length, retained,
+               grounded_parallel_projection, &projection,
+               result_out) == GROUNDED_TOP_K_OK;
+}
+
+typedef struct {
+    Atom *atom;
+    NumArg key;
+} GroundedNumericSortItem;
+
+/* Stable ascending order over the shared Number domain.  This is the
+ * compiled realization of `sort-by (<=)` for numeric expression-backed
+ * lists; equal occurrences retain their source order. */
+static Atom *grounded_sort_numbers(
+        Arena *a, Atom *head, Atom **args, uint32_t nargs) {
+    if (nargs != 1u)
+        return grounded_incorrect_arity(a, head, args, nargs);
+    if (args[0]->kind != ATOM_EXPR) {
+        if (args[0]->kind == ATOM_GROUNDED) {
+            return grounded_bad_arg_type(
+                a, head, args, nargs, 1,
+                atom_expression_type(a), args[0]);
+        }
+        return NULL;
+    }
+    Atom *list = args[0];
+    if (list->expr.len < 2u)
+        return list;
+    if (list->expr.len >
+        (CettaExprLen)(SIZE_MAX / sizeof(GroundedNumericSortItem))) {
+        return atom_error(
+            a, grounded_call_expr(a, head, args, nargs),
+            atom_symbol(a, "ArityTooLarge"));
+    }
+
+    size_t length = (size_t)list->expr.len;
+    GroundedNumericSortItem *items =
+        arena_alloc(a, sizeof(*items) * length);
+    GroundedNumericSortItem *scratch =
+        arena_alloc(a, sizeof(*scratch) * length);
+    for (size_t index = 0u; index < length; index++) {
+        NumArg key = {0};
+        if (!get_numeric_arg(list->expr.elems[index], &key) ||
+            isnan(key.val)) {
+            return grounded_expr_message_error(
+                a, head, args, nargs,
+                "sort-numbers-atom expects ordered numbers: ", list);
+        }
+        items[index] = (GroundedNumericSortItem){
+            .atom = list->expr.elems[index],
+            .key = key,
+        };
+    }
+
+    GroundedNumericSortItem *source = items;
+    GroundedNumericSortItem *destination = scratch;
+    for (size_t width = 1u; width < length;) {
+        for (size_t base = 0u; base < length;) {
+            size_t middle = base +
+                (length - base < width ? length - base : width);
+            size_t end = middle +
+                (length - middle < width ? length - middle : width);
+            size_t left = base;
+            size_t right = middle;
+            size_t output = base;
+            while (left < middle && right < end) {
+                int comparison = 0;
+                if (!grounded_keyed_number_compare(
+                        &source[left].key, &source[right].key,
+                        &comparison)) {
+                    return grounded_expr_message_error(
+                        a, head, args, nargs,
+                        "sort-numbers-atom values are not comparable: ",
+                        list);
+                }
+                if (comparison <= 0)
+                    destination[output++] = source[left++];
+                else
+                    destination[output++] = source[right++];
+            }
+            while (left < middle)
+                destination[output++] = source[left++];
+            while (right < end)
+                destination[output++] = source[right++];
+            base = end;
+        }
+        GroundedNumericSortItem *swap = source;
+        source = destination;
+        destination = swap;
+        if (width > length / 2u)
+            width = length;
+        else
+            width *= 2u;
+    }
+
+    Atom **sorted = arena_alloc(a, sizeof(*sorted) * length);
+    for (size_t index = 0u; index < length; index++)
+        sorted[index] = source[index].atom;
+    return atom_expr(a, sorted, list->expr.len);
+}
+
+/* Retain the entries carrying the greatest numeric keys without changing
+ * their occurrence order.  Each entry is `(key payload)`.  Earlier equal-key
+ * occurrences win the boundary tie.  Returning keyed entries keeps the score
+ * available to later control stages and receipts. */
+static Atom *grounded_retain_top_k_keyed_atoms(
+        Arena *a, Atom *head, Atom **args, uint32_t nargs) {
+    if (nargs != 2u)
+        return grounded_incorrect_arity(a, head, args, nargs);
+    if (args[0]->kind != ATOM_EXPR)
+        return grounded_bad_arg_type(
+            a, head, args, nargs, 1, atom_expression_type(a), args[0]);
+    if (args[1]->kind != ATOM_GROUNDED ||
+        args[1]->ground.gkind != GV_INT)
+        return grounded_bad_arg_type(
+            a, head, args, nargs, 2, atom_symbol(a, "Number"), args[1]);
+
+    Atom *entries = args[0];
+    int64_t requested = args[1]->ground.ival;
+    size_t length = (size_t)entries->expr.len;
+    size_t retained = requested <= 0
+        ? 0u
+        : (uint64_t)requested >= (uint64_t)length
+            ? length : (size_t)requested;
+    GroundedKeyedEntryProjection projection = {.entries = entries};
+    Atom *result = NULL;
+    GroundedTopKStatus status = grounded_retain_top_k_projected(
+        a, length, retained, grounded_keyed_entry_projection,
+        &projection, &result);
+    if (status == GROUNDED_TOP_K_OK)
+        return result;
+    if (status == GROUNDED_TOP_K_INVALID_ENTRY) {
+        return grounded_expr_message_error(
+            a, head, args, nargs,
+            "retain-top-k-keyed-atom expects (number payload) entries: ",
+            entries);
+    }
+    if (status == GROUNDED_TOP_K_INVALID_KEY) {
+        return grounded_expr_message_error(
+            a, head, args, nargs,
+            "retain-top-k-keyed-atom expects ordered numeric keys: ",
+            entries);
+    }
+    return grounded_expr_message_error(
+        a, head, args, nargs,
+        "retain-top-k-keyed-atom keys are not comparable: ", entries);
+}
+
+/* Second projection over a finite sequence of exact `(key value)` pairs.
+ * Every occurrence is retained in source order; only the key coordinate is
+ * forgotten.  Malformed entries are faults rather than computation zero:
+ * HE treats Empty as a compatibility sentinel while Prime retains it as
+ * ordinary data, so Empty cannot express this shared domain boundary. */
+static Atom *grounded_unkey_atoms(
+        Arena *a, Atom *head, Atom **args, uint32_t nargs) {
+    if (nargs != 1u)
+        return grounded_incorrect_arity(a, head, args, nargs);
+    if (args[0]->kind != ATOM_EXPR)
+        return grounded_bad_arg_type(
+            a, head, args, nargs, 1, atom_expression_type(a), args[0]);
+    if (!cetta_expr_len_mul_fits_size(
+            args[0]->expr.len, sizeof(Atom *))) {
+        return atom_error(
+            a, grounded_call_expr(a, head, args, nargs),
+            atom_symbol(a, "ArityTooLarge"));
+    }
+    Atom **values = args[0]->expr.len
+        ? arena_alloc(
+              a, sizeof(*values) * (size_t)args[0]->expr.len)
+        : NULL;
+    for (CettaExprIndex index = 0u;
+         index < args[0]->expr.len; index++) {
+        Atom *entry = args[0]->expr.elems[index];
+        if (!entry || entry->kind != ATOM_EXPR || entry->expr.len != 2u)
+            return atom_error(
+                a, grounded_call_expr(a, head, args, nargs),
+                atom_symbol(a, "ExpectedKeyValuePair"));
+        values[index] = entry->expr.elems[1];
+    }
+    return atom_expr(a, values, args[0]->expr.len);
 }
 
 static Atom *grounded_repr(Arena *a, Atom *head, Atom **args, uint32_t nargs) {
@@ -1702,7 +2471,63 @@ static Atom *grounded_repeat_atom(Arena *a, Atom *head, Atom **args, uint32_t na
     return atom_expr(a, elems, len);
 }
 
+/* Stable structural selection over the free-monoid Expression
+ * representation.  This is the compiled form of
+ * `filter (candidate != removed)`: it preserves order and multiplicity of
+ * every survivor and compares each input occurrence exactly once. */
+static Atom *grounded_remove_all_atom(
+        Arena *a, Atom *head, Atom **args, uint32_t nargs) {
+    if (nargs != 2u)
+        return grounded_incorrect_arity(a, head, args, nargs);
+    if (args[1]->kind != ATOM_EXPR) {
+        if (args[1]->kind == ATOM_GROUNDED) {
+            return grounded_bad_arg_type(
+                a, head, args, nargs, 2,
+                atom_expression_type(a), args[1]);
+        }
+        return NULL;
+    }
+    if (!cetta_expr_len_mul_fits_size(
+            args[1]->expr.len, sizeof(Atom *))) {
+        return atom_error(
+            a, grounded_call_expr(a, head, args, nargs),
+            atom_symbol(a, "ArityTooLarge"));
+    }
+    Atom **survivors = arena_alloc(
+        a, sizeof(Atom *) * (size_t)args[1]->expr.len);
+    CettaExprLen survivor_count = 0u;
+    for (CettaExprIndex index = 0u;
+         index < args[1]->expr.len; index++) {
+        Atom *candidate = args[1]->expr.elems[index];
+        if (!atom_eq(args[0], candidate))
+            survivors[survivor_count++] = candidate;
+    }
+    return atom_expr(a, survivors, survivor_count);
+}
+
 /* ── Dispatch ──────────────────────────────────────────────────────────── */
+
+static bool grounded_is_binary_numeric_operator(SymbolId head_id) {
+    return head_id == g_builtin_syms.op_plus ||
+           head_id == g_builtin_syms.op_minus ||
+           head_id == g_builtin_syms.op_mul ||
+           head_id == g_builtin_syms.op_div ||
+           head_id == g_builtin_syms.op_floor_div ||
+           head_id == g_builtin_syms.op_mod ||
+           head_id == g_builtin_syms.op_lt ||
+           head_id == g_builtin_syms.op_gt ||
+           head_id == g_builtin_syms.op_le ||
+           head_id == g_builtin_syms.op_ge ||
+           head_id == g_builtin_syms.numeric_eq;
+}
+
+bool grounded_result_is_raised_numeric_error(
+        Atom *head, uint32_t nargs, Atom *result) {
+    return atom_is_error(result) && head && head->kind == ATOM_SYMBOL &&
+           nargs == 2u && grounded_is_binary_numeric_operator(head->sym_id) &&
+           eval_current_language_id &&
+           eval_current_language_id() == CETTA_LANGUAGE_PETTA;
+}
 
 Atom *grounded_dispatch(Arena *a, Atom *head, Atom **args, uint32_t nargs) {
     if (head->kind != ATOM_SYMBOL) return NULL;
@@ -1805,6 +2630,21 @@ Atom *grounded_dispatch(Arena *a, Atom *head, Atom **args, uint32_t nargs) {
 
     if (head_id == g_builtin_syms.format_args)
         return grounded_format_args(a, head, args, nargs);
+
+    if (head_id == g_builtin_syms.sort_atom)
+        return grounded_sort_atoms(a, head, args, nargs);
+
+    if (head_id == g_builtin_syms.retain_top_k_keyed_atom)
+        return grounded_retain_top_k_keyed_atoms(a, head, args, nargs);
+
+    if (head_id == g_builtin_syms.unkey_atom)
+        return grounded_unkey_atoms(a, head, args, nargs);
+
+    if (head_id == g_builtin_syms.sort_numbers_atom)
+        return grounded_sort_numbers(a, head, args, nargs);
+
+    if (head_id == g_builtin_syms.remove_all_atom)
+        return grounded_remove_all_atom(a, head, args, nargs);
 
     if (head_id == g_builtin_syms.sort_strings)
         return grounded_sort_strings(a, head, args, nargs);
@@ -2503,13 +3343,7 @@ Atom *grounded_dispatch(Arena *a, Atom *head, Atom **args, uint32_t nargs) {
     if (nargs != 2) return NULL;
 
     /* Check if this is an arithmetic op that expects numeric args */
-    bool is_arith = (head_id == g_builtin_syms.op_plus || head_id == g_builtin_syms.op_minus ||
-                     head_id == g_builtin_syms.op_mul || head_id == g_builtin_syms.op_div ||
-                     head_id == g_builtin_syms.op_floor_div ||
-                     head_id == g_builtin_syms.op_mod || head_id == g_builtin_syms.op_lt ||
-                     head_id == g_builtin_syms.op_gt || head_id == g_builtin_syms.op_le ||
-                     head_id == g_builtin_syms.op_ge ||
-                     head_id == g_builtin_syms.numeric_eq);
+    bool is_arith = grounded_is_binary_numeric_operator(head_id);
     bool rust_compat = eval_current_uses_rust_he_compat_semantics();
     if (rust_compat && head_id == g_builtin_syms.op_floor_div)
         return NULL;

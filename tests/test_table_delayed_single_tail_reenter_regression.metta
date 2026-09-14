@@ -17,13 +17,8 @@
     (() (assertAlphaEqualToResult
           (single-via-eq &ss)
           ((Pair (P $a $b)))))
-    (() (reset-runtime-stats!))
     (() (assertAlphaEqualToResult
           (single-via-eq &ss)
           ((Pair (P $a $b)))))
-    ($stats (runtime-stats!))
-    (() (assertEqualToResult
-          (match $stats (runtime-counter table-hit $n) (> $n 0))
-          (True)))
   )
   ())

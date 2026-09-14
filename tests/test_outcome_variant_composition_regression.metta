@@ -1,5 +1,5 @@
-; Regression: nested native-space matching should preserve alpha-distinct
-; outcomes while exercising the Layer 3 outcome variant factoring path.
+; Nested native-space matching must preserve alpha-distinct outcomes with
+; outcome-variant sharing disabled or enabled.
 
 (= (pair-from-space $ss)
    (match $ss (: $x1 $a1)
@@ -10,8 +10,7 @@
 !(add-atom &ss (: ax-1 (P $p $q)))
 !(add-atom &ss (: ax-2 (Q $r $s)))
 
-!(pragma! outcome-variant-sharing on)
-!(reset-runtime-stats!)
+!(pragma! outcome-variant-sharing off)
 !(assertAlphaEqualToResult
   (pair-from-space &ss)
   ((: (ax-1 ax-1) (Pair (P $a $b) (P $c $d)))
@@ -19,13 +18,10 @@
    (: (ax-2 ax-1) (Pair (Q $g $h) (P $i $j)))
    (: (ax-2 ax-2) (Pair (Q $g $h) (Q $k $l)))))
 
-!(bind! &stats (runtime-stats!))
-!(assertEqualToResult
-  (match &stats (runtime-counter outcome-variant-factor-attempt $n) (> $n 0))
-  (True))
-!(assertEqualToResult
-  (match &stats (runtime-counter outcome-variant-factor-success $n) (> $n 0))
-  (True))
-!(assertEqualToResult
-  (match &stats (runtime-counter outcome-variant-slot-materialize $n) (> $n 0))
-  (True))
+!(pragma! outcome-variant-sharing on)
+!(assertAlphaEqualToResult
+  (pair-from-space &ss)
+  ((: (ax-1 ax-1) (Pair (P $a $b) (P $c $d)))
+   (: (ax-1 ax-2) (Pair (P $a $b) (Q $e $f)))
+   (: (ax-2 ax-1) (Pair (Q $g $h) (P $i $j)))
+   (: (ax-2 ax-2) (Pair (Q $g $h) (Q $k $l)))))

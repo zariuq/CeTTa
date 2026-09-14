@@ -1,0 +1,4 @@
+((Accepted (bnf-v1:text-cons 115 (bnf-v1:text-nil)) (bnf-v1:source-span 0 10) (bnf-v1:text-cons 97 (bnf-v1:text-nil)) (bnf-v1:source-span 10 20)))
+((Refused (BNFDiagnosticsConsV1 (BNFDuplicateDefinitionV1 (bnf-v1:text-cons 115 (bnf-v1:text-nil)) (bnf-v1:source-span 0 10) (bnf-v1:source-span 10 20)) BNFDiagnosticsNilV1)))
+((Refused (BNFDiagnosticsConsV1 (BNFNoDefinitionsV1 (bnf-v1:source-span 0 20)) (BNFDiagnosticsConsV1 (BNFUnknownStartV1 (bnf-v1:text-cons 115 (bnf-v1:text-nil))) BNFDiagnosticsNilV1))))
+((Refused (BNFDiagnosticsConsV1 (BNFDuplicateDefinitionV1 (bnf-v1:text-cons 115 (bnf-v1:text-nil)) (bnf-v1:source-span 0 5) (bnf-v1:source-span 10 20)) (BNFDiagnosticsConsV1 (BNFDuplicateDefinitionV1 (bnf-v1:text-cons 115 (bnf-v1:text-nil)) (bnf-v1:source-span 0 5) (bnf-v1:source-span 10 20)) BNFDiagnosticsNilV1))))

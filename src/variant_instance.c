@@ -170,6 +170,17 @@ bool variant_instance_atoms_closed_for_arena(
     return true;
 }
 
+bool variant_instance_has_registry_refs(const VariantInstance *instance) {
+    VariantInstanceStorage *storage = variant_instance_storage(instance);
+    if (!storage)
+        return false;
+    for (uint32_t i = 0u; i < storage->slot_count; i++) {
+        if (atom_has_registry_refs(storage->slot_vals[i]))
+            return true;
+    }
+    return false;
+}
+
 bool variant_instance_from_shape(VariantInstance *out, const VariantShape *shape) {
     VariantInstanceStorage *storage;
     if (!out || !shape)

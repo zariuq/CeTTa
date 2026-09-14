@@ -37,20 +37,12 @@
 
 !(bind! &ss (new-space))
 !(match &ab (: $x $a) (add-atom &ss (: $x $a)))
-!(reset-runtime-stats!)
+!(assertEqualToResult (count-atoms &ss) (3))
 !(fs-add-to-ss &rb &ss)
 !(fs-add-to-ss &rb &ss)
 !(fs-add-to-ss &rb &ss)
 !(assertEqualToResult (count-atoms &ss) (3421))
 !(bind! &all-results (get-atoms &ss))
-!(bind! &stats (runtime-stats!))
-!(assertEqualToResult
-  (match &stats
-         (runtime-counter outcome-variant-slot-materialize $n)
-         (== $n 0))
-  (True))
-!(assertEqualToResult
-  (match &stats
-         (runtime-counter outcome-variant-materialize-top-level $n)
-         (== $n 0))
-  (True))
+!(assertEqualToResult (count-atoms &ss) (3421))
+!(assertEqualToResult (match &ss (: ax-1 $type) present) (present))
+!(assertEqualToResult (match &ss (: ax-2 $type) present) (present))

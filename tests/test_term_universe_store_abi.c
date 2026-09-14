@@ -133,6 +133,50 @@ static void test_store_format_contract(void) {
     term_universe_free(&universe);
 }
 
+static void test_root_token_generation_contract(void) {
+    Arena first_persistent;
+    Arena second_persistent;
+    Arena scratch;
+    TermUniverse universe;
+
+    arena_init(&first_persistent);
+    arena_init(&second_persistent);
+    arena_init(&scratch);
+    term_universe_init(&universe);
+    term_universe_set_persistent_arena(
+        &universe, &first_persistent);
+
+    AtomId root_id = term_universe_store_atom_id(
+        &universe, NULL, atom_symbol(&scratch, "root-token"));
+    TermUniverseRootToken token = {0};
+    assert(root_id != CETTA_ATOM_ID_NONE);
+    assert(term_universe_root_token_capture(
+        &universe, root_id, &token));
+    Atom *root = term_universe_root_token_resolve(
+        token, &universe);
+    assert(root && atom_is_symbol(root, "root-token"));
+
+    /* Store-format migration preserves logical roots and decoded pointers. */
+    assert(term_universe_migrate_store_format(
+        &universe, TERM_UNIVERSE_STORE_FORMAT_WIDE64_V1));
+    assert(term_universe_root_token_resolve(
+        token, &universe) == root);
+
+    /* Replacing storage starts a new generation.  The old capability must
+     * fail closed before its former root address can be consulted. */
+    term_universe_set_persistent_arena(
+        &universe, &second_persistent);
+    assert(!term_universe_root_token_matches_live_universe(
+        token, &universe));
+    assert(term_universe_root_token_resolve(
+        token, &universe) == NULL);
+
+    term_universe_free(&universe);
+    arena_free(&scratch);
+    arena_free(&second_persistent);
+    arena_free(&first_persistent);
+}
+
 static void test_structural_variable_name_store_contract(void) {
     Arena persistent;
     Arena scratch;
@@ -749,6 +793,14 @@ bool space_match_backend_materialize_native_storage(Space *s,
     return true;
 }
 
+SpaceBackendBatchResult
+space_match_backend_transport_stable_occurrence_coordinates(
+        Space *s, const SpaceStableOccurrenceTransport *transport) {
+    (void)s;
+    (void)transport;
+    return SPACE_BACKEND_BATCH_UNSUPPORTED;
+}
+
 bool space_match_backend_require_logical_order(Space *s,
                                                Arena *persistent_arena) {
     (void)persistent_arena;
@@ -948,9 +1000,14 @@ static void init_test_symbols(SymbolTable *symbols) {
 }
 
 static void test_query_results_capacity_failure_is_loud(void) {
+    int diagnostics[2];
+    assert(pipe(diagnostics) == 0);
     pid_t pid = fork();
     assert(pid >= 0);
     if (pid == 0) {
+        close(diagnostics[0]);
+        assert(dup2(diagnostics[1], STDERR_FILENO) >= 0);
+        close(diagnostics[1]);
         Arena child_arena;
         QueryResults results;
         Bindings bindings;
@@ -964,10 +1021,18 @@ static void test_query_results_capacity_failure_is_loud(void) {
                                  &bindings);
         _exit(0);
     }
+    close(diagnostics[1]);
+    char message[256];
+    FILE *stream = fdopen(diagnostics[0], "r");
+    assert(stream != NULL);
+    size_t length = fread(message, 1u, sizeof(message) - 1u, stream);
+    assert(fclose(stream) == 0);
+    message[length] = '\0';
     int status = 0;
     assert(waitpid(pid, &status, 0) == pid);
     assert((WIFSIGNALED(status) && WTERMSIG(status) == SIGABRT) ||
            (WIFEXITED(status) && WEXITSTATUS(status) != 0));
+    assert(strstr(message, "query result capacity exhausted") != NULL);
 }
 
 static void test_atom_deep_copy_preserves_pointer_dag(void) {
@@ -1454,6 +1519,45 @@ static void test_intrinsic_variable_support_contract(void) {
     arena_free(&persistent);
 }
 
+static void handle_id_test_retain(void *owner) {
+    ++*(unsigned *)owner;
+}
+
+static void handle_id_test_release(void *owner) {
+    assert(*(unsigned *)owner > 0);
+    --*(unsigned *)owner;
+}
+
+static void test_native_handle_id_retention(void) {
+    Arena source, persistent, result;
+    TermUniverse universe;
+    unsigned holders = 0;
+    arena_init_detached(&source);
+    arena_init_detached(&persistent);
+    arena_init_detached(&result);
+    term_universe_init(&universe);
+    term_universe_set_persistent_arena(&universe, &persistent);
+    Atom *identifier = atom_native_handle_identifier(
+        &source, 17, &holders, handle_id_test_retain, handle_id_test_release);
+    Atom *handle = atom_expr3(&source, atom_symbol(&source, "NativeHandle"),
+                             atom_string(&source, "test.resource"), identifier);
+    assert(holders == 1);
+    assert(!term_universe_atom_is_stable(identifier));
+    assert(!term_universe_atom_is_stable(handle));
+    assert(term_universe_atom_is_stable(atom_int(&source, 17)));
+    AtomId id = term_universe_store_atom_id(&universe, &persistent, handle);
+    assert(id != CETTA_ATOM_ID_NONE && holders > 1);
+    arena_free(&source);
+    Atom *copy = term_universe_copy_atom(&universe, &result, id);
+    assert(copy && copy->expr.elems[2]->ground.ival == 17);
+    term_universe_free(&universe);
+    arena_free(&persistent);
+    assert(holders == 1);
+    assert(atom_int_copy(&result, copy->expr.elems[2]));
+    arena_free(&result);
+    assert(holders == 0);
+}
+
 int main(void) {
     SymbolTable symbols;
     VarInternTable var_intern;
@@ -1464,8 +1568,10 @@ int main(void) {
     init_test_symbols(&symbols);
     var_intern_init(&var_intern);
     g_var_intern = &var_intern;
+    test_native_handle_id_retention();
     test_arena_accounting_saturation_contract();
     test_store_format_contract();
+    test_root_token_generation_contract();
     test_structural_variable_name_store_contract();
     test_store_format_migration_contract();
     test_compact_ceiling_migrate_then_continue_witness();
@@ -1914,6 +2020,87 @@ int main(void) {
     assert(disc_matches[0] == 77);
     free(disc_matches);
     disc_node_free(disc);
+
+    /* Integer discrimination promotes from a small linear branch set to an
+     * open-addressed table.  Exercise positive, negative, duplicate, extreme,
+     * and wildcard observations across several resize/collision regimes. */
+    DiscNode *integer_disc = disc_node_new();
+    for (int64_t value = 0; value < 256; value++) {
+        Atom *integer = atom_int(&scratch, value);
+        AtomId integer_id = term_universe_store_atom_id(
+            &universe, NULL, integer);
+        assert(integer_id != CETTA_ATOM_ID_NONE);
+        assert(disc_insert_id(
+            integer_disc, &universe, integer_id, (CettaIndex)value));
+    }
+    Atom *minimum_integer = atom_int(&scratch, INT64_MIN);
+    Atom *maximum_integer = atom_int(&scratch, INT64_MAX);
+    AtomId minimum_integer_id = term_universe_store_atom_id(
+        &universe, NULL, minimum_integer);
+    AtomId maximum_integer_id = term_universe_store_atom_id(
+        &universe, NULL, maximum_integer);
+    assert(disc_insert_id(
+        integer_disc, &universe, minimum_integer_id, 256u));
+    assert(disc_insert_id(
+        integer_disc, &universe, maximum_integer_id, 257u));
+    AtomId duplicate_integer_id = term_universe_store_atom_id(
+        &universe, NULL, atom_int(&scratch, 17));
+    assert(disc_insert_id(
+        integer_disc, &universe, duplicate_integer_id, 258u));
+
+    for (int64_t value = 0; value < 256; value++) {
+        CettaIndex *integer_matches = NULL;
+        CettaIndex integer_match_count = 0u;
+        CettaIndex integer_match_cap = 0u;
+        disc_lookup(integer_disc, atom_int(&scratch, value),
+                    &integer_matches, &integer_match_count,
+                    &integer_match_cap);
+        assert(integer_match_count == (value == 17 ? 2u : 1u));
+        bool saw_primary = false;
+        bool saw_duplicate = false;
+        for (CettaIndex i = 0u; i < integer_match_count; i++) {
+            saw_primary = saw_primary ||
+                integer_matches[i] == (CettaIndex)value;
+            saw_duplicate = saw_duplicate ||
+                integer_matches[i] == 258u;
+        }
+        assert(saw_primary);
+        assert(saw_duplicate == (value == 17));
+        free(integer_matches);
+    }
+    CettaIndex *integer_matches = NULL;
+    CettaIndex integer_match_count = 0u;
+    CettaIndex integer_match_cap = 0u;
+    disc_lookup(integer_disc, atom_int(&scratch, INT64_MIN),
+                &integer_matches, &integer_match_count,
+                &integer_match_cap);
+    assert(integer_match_count == 1u && integer_matches[0] == 256u);
+    free(integer_matches);
+    integer_matches = NULL;
+    integer_match_count = 0u;
+    integer_match_cap = 0u;
+    disc_lookup(integer_disc, atom_int(&scratch, INT64_MAX),
+                &integer_matches, &integer_match_count,
+                &integer_match_cap);
+    assert(integer_match_count == 1u && integer_matches[0] == 257u);
+    free(integer_matches);
+    integer_matches = NULL;
+    integer_match_count = 0u;
+    integer_match_cap = 0u;
+    disc_lookup(integer_disc, atom_int(&scratch, -1),
+                &integer_matches, &integer_match_count,
+                &integer_match_cap);
+    assert(integer_match_count == 0u);
+    free(integer_matches);
+    integer_matches = NULL;
+    integer_match_count = 0u;
+    integer_match_cap = 0u;
+    disc_lookup(integer_disc, atom_var(&scratch, "$integer"),
+                &integer_matches, &integer_match_count,
+                &integer_match_cap);
+    assert(integer_match_count == 259u);
+    free(integer_matches);
+    disc_node_free(integer_disc);
 
     SubstTree stree;
     stree_init(&stree);

@@ -11,6 +11,14 @@
 static uint64_t g_runtime_counters[CETTA_RUNTIME_COUNTER_COUNT];
 static bool g_runtime_stats_enabled = false;
 static pthread_mutex_t g_runtime_stats_mutex = PTHREAD_MUTEX_INITIALIZER;
+static _Thread_local CettaSurvivorAllocationRole
+    g_survivor_allocation_role = CETTA_SURVIVOR_ALLOC_ROLE_OTHER;
+
+_Static_assert(
+    CETTA_RUNTIME_COUNTER_SURVIVOR_ALLOC_ROLE_WHOLE_EQUATION_INSTANTIATION_BYTES -
+            CETTA_RUNTIME_COUNTER_SURVIVOR_ALLOC_ROLE_OTHER_BYTES + 1 ==
+        CETTA_SURVIVOR_ALLOC_ROLE_COUNT,
+    "survivor allocation roles and counters must remain isomorphic");
 
 static const char *const CETTA_RUNTIME_COUNTER_NAMES[CETTA_RUNTIME_COUNTER_COUNT] = {
     "bindings-lookup",
@@ -553,6 +561,269 @@ static const char *const CETTA_RUNTIME_COUNTER_NAMES[CETTA_RUNTIME_COUNTER_COUNT
     "petta-outcome-choice-singleton",
     "petta-outcome-choice-multiple",
     "petta-outcome-choice-item-peak",
+    "bindings-cycle-support-absence",
+    "eval-tail-collection-candidate",
+    "eval-tail-blocked-imprecise-root",
+    "eval-tail-blocked-external-owner",
+    "eval-tail-blocked-live-outcome",
+    "prepared-map-admission",
+    "prepared-map-step",
+    "prepared-map-commit",
+    "prepared-map-decline",
+    "prepared-pure-call-negative-cache-hit",
+    "prepared-pure-call-negative-cache-store",
+    "prime-eval-stack-frame-let",
+    "match-flat-count-admission",
+    "match-flat-count-rows-examined",
+    "prepared-sequence-erasure-admission",
+    "prepared-sequence-erasure-commit",
+    "prepared-sequence-erasure-decline",
+    "prime-eval-stack-support-projection-query",
+    "prime-eval-stack-support-projection-applied",
+    "prime-eval-stack-support-projection-fallback",
+    "prime-eval-stack-support-item-elided",
+    "prime-need-snapshot-frame-alloc",
+    "prime-need-snapshot-frame-bytes",
+    "prime-need-heap-index-node-alloc",
+    "prime-need-heap-index-node-bytes",
+    "prime-need-region-promoted-bytes",
+    "prime-need-origin-payload-copy",
+    "prime-need-origin-payload-bytes",
+    "prime-need-cached-payload-copy",
+    "prime-need-cached-payload-bytes",
+    "prime-need-force-cache-hit",
+    "prime-need-force-cache-miss",
+    "prime-need-region-support-query",
+    "prime-need-region-suffix-elision-eligible",
+    "prime-need-region-suffix-elision-commit",
+    "prime-need-region-suffix-retained",
+    "prime-need-owned-payload-reuse",
+    "prime-need-source-argument-ref",
+    "prime-need-source-argument-universal-demand",
+    "prime-need-source-argument-universal-force",
+    "prime-need-source-argument-universal-cache-copy",
+    "prime-need-source-argument-universal-cache-bytes",
+    "prepared-keyed-top-k-admission",
+    "prepared-keyed-top-k-commit",
+    "prepared-keyed-top-k-decline",
+    "prepared-keyed-top-k-retained-item",
+    "prepared-keyed-top-k-owner-publication",
+    "bindings-cycle-reach-query",
+    "bindings-cycle-reach-single-step",
+    "bindings-cycle-reach-single-absent",
+    "bindings-cycle-reach-single-present",
+    "bindings-cycle-reach-general-item",
+    "bindings-cycle-reach-single-depth-peak",
+    "bindings-single-reach-cache-query",
+    "bindings-single-reach-cache-absence",
+    "bindings-single-reach-cache-present",
+    "bindings-single-reach-cache-decline",
+    "bindings-single-reach-cache-step",
+    "bindings-single-reach-cache-compressed",
+    "petta-clause-activation-plan-admitted",
+    "petta-clause-activation-plan-declined-malformed",
+    "petta-clause-activation-plan-declined-chain",
+    "petta-clause-activation-plan-declined-translator",
+    "petta-clause-activation-plan-declined-depth",
+    "petta-clause-activation-plan-declined-active-data",
+    "petta-clause-activation-plan-declined-relation-effect",
+    "petta-clause-guard-prune-attempt",
+    "petta-clause-guard-pruned",
+    "petta-clause-guard-retained",
+    "prepared-pure-scalar-guard-admitted",
+    "prepared-pure-scalar-guard-evaluated",
+    "prepared-pure-scalar-guard-refuted",
+    "prepared-pure-scalar-guard-declined",
+    "petta-activation-scalar-if-attempt",
+    "petta-activation-scalar-if-commit",
+    "petta-activation-scalar-if-decline",
+    "bindings-single-reach-cache-invalidation",
+    "bindings-single-reach-cache-invalidated-slot",
+    "bindings-single-reach-cache-scan-avoided",
+    "petta-activation-admission-cache-attempt",
+    "petta-activation-admission-cache-hit",
+    "petta-activation-admission-cache-miss",
+    "petta-activation-admission-cache-authority-invalidation",
+    "match-decision-equality-check",
+    "match-decision-equality-refutation",
+    "petta-activation-pure-data-segment-attempt",
+    "petta-activation-pure-data-segment-commit",
+    "petta-activation-pure-data-segment-decline",
+    "petta-declared-type-negative-prefilter",
+    "petta-named-arity-source-cache-hit",
+    "petta-named-arity-source-cache-miss",
+    "declared-type-specializer-callable",
+    "declared-type-specializer-copy",
+    "declared-type-search-schema",
+    "declared-type-search-determinism",
+    "declared-type-search-counted-collection",
+    "declared-type-search-typed-dispatch",
+    "petta-specializer-callable-cache-hit",
+    "petta-specializer-callable-cache-miss",
+    "petta-specializer-arity-cache-hit",
+    "petta-specializer-arity-cache-miss",
+    "petta-activation-scalar-argument-segment-attempt",
+    "petta-activation-scalar-argument-segment-commit",
+    "petta-activation-scalar-argument-segment-decline",
+    "petta-activation-scalar-argument-segment-operation",
+    "petta-activation-anonymous-hole-attempt",
+    "petta-activation-anonymous-hole-commit",
+    "petta-activation-anonymous-hole-decline",
+    "petta-activation-tail-segment-attempt",
+    "petta-activation-tail-segment-commit",
+    "petta-activation-tail-segment-decline",
+    "bindings-rule-epoch-direct-key-attempt",
+    "bindings-rule-epoch-direct-key-commit",
+    "petta-match-decision-shape-receipt-attempt",
+    "petta-match-decision-shape-receipt-reuse",
+    "petta-match-decision-shape-receipt-stale",
+    "petta-if-resume-segment-attempt",
+    "petta-if-resume-segment-commit",
+    "petta-if-resume-segment-decline",
+    "petta-body-resume-segment-attempt",
+    "petta-body-resume-segment-commit",
+    "petta-body-resume-segment-decline",
+    "match-shared-ground-reflexivity-attempt",
+    "match-shared-ground-reflexivity-commit",
+    "match-shared-ground-reflexivity-open-decline",
+    "match-shared-ground-reflexivity-uncertified-decline",
+    "bindings-cycle-plan-support-attempt",
+    "bindings-cycle-plan-support-absent",
+    "bindings-cycle-plan-support-present",
+    "bindings-cycle-plan-support-decline",
+    "petta-activation-scalar-if-operation",
+    "bindings-unobserved-region-enter",
+    "bindings-unobserved-region-checkpoint",
+    "bindings-unobserved-region-elision",
+    "bindings-unobserved-region-save-barrier",
+    "petta-deterministic-region-program-attempt",
+    "petta-deterministic-region-program-commit",
+    "petta-deterministic-region-program-decline",
+    "petta-deterministic-region-program-stable-source",
+    "petta-match-decision-planned-verify-attempt",
+    "petta-match-decision-planned-verify-match",
+    "petta-match-decision-planned-verify-mismatch",
+    "match-closed-expression-decision-attempt",
+    "match-closed-expression-decision-equal",
+    "match-closed-expression-decision-unequal",
+    "match-decision-prefix-observation-build-attempt",
+    "match-decision-prefix-observation-build-commit",
+    "match-decision-prefix-observation-build-decline",
+    "match-decision-prefix-observation-run",
+    "match-decision-prefix-observation-node-visit",
+    "match-open-linear-attempt",
+    "match-open-linear-commit",
+    "match-open-linear-mismatch",
+    "match-open-linear-node-visit",
+    "match-open-linear-dynamic-fallback",
+    "petta-match-region-hole-attempt",
+    "petta-match-region-hole-commit",
+    "petta-match-region-hole-decline",
+    "match-rule-slot-view-attempt",
+    "match-rule-slot-view-hit",
+    "match-rule-slot-view-record",
+    "match-rule-slot-view-decline",
+    "match-decision-equality-observation-read",
+    "match-decision-equality-observation-fallback",
+    "match-decision-equality-observation-direct-edge",
+    "match-decision-equality-observation-graph-edge",
+    "petta-binding-region-hole-attempt",
+    "petta-binding-region-hole-commit",
+    "petta-binding-region-hole-decline",
+    "petta-binding-region-hole-stable-source",
+    "match-decision-prefix-observation-absorbed-suffix",
+    "match-decision-prefix-observation-skipped-edge",
+    "petta-choice-binding-checkpoint-attempt",
+    "petta-choice-binding-checkpoint-commit",
+    "petta-choice-binding-checkpoint-decline",
+    "petta-choice-record-bytes",
+    "match-bind-stored-equation-materialize-call",
+    "match-bind-activation-source-materialize-call",
+    "match-bind-stored-equation-materialize-node-visit",
+    "match-bind-stored-equation-materialize-allocated-bytes",
+    "match-bind-activation-source-materialize-node-visit",
+    "match-bind-activation-source-materialize-allocated-bytes",
+    "survivor-alloc-role-other-bytes",
+    "survivor-alloc-role-match-stored-equation-view-bytes",
+    "survivor-alloc-role-match-activation-source-view-bytes",
+    "survivor-alloc-role-equation-pattern-instantiation-bytes",
+    "survivor-alloc-role-equation-result-instantiation-bytes",
+    "survivor-alloc-role-equation-result-execution-bytes",
+    "survivor-alloc-role-whole-equation-instantiation-bytes",
+    "petta-algebra-homomorphic-region-attempt",
+    "petta-algebra-homomorphic-region-commit",
+    "petta-algebra-homomorphic-region-decline",
+    "petta-algebra-homomorphic-region-representation-elision",
+    "native-pattern-index-cold-build",
+    "native-pattern-index-dirty-rebuild",
+    "native-pattern-index-build-row",
+    "native-substitution-index-cold-build",
+    "native-substitution-index-dirty-rebuild",
+    "native-substitution-index-build-row",
+    "native-pattern-index-incremental-add",
+    "native-substitution-index-incremental-add",
+    "native-match-index-remove-note",
+    "native-match-index-remove-dirty-transition",
+    "space-shallow-clone-call",
+    "space-shallow-clone-row",
+    "petta-transaction-begin",
+    "petta-transaction-space-clone",
+    "petta-transaction-space-clone-row",
+    "petta-transaction-commit",
+    "petta-transaction-rollback",
+    "petta-transaction-dirty-space-commit",
+    "space-stable-mask-contraction",
+    "space-stable-mask-source-row",
+    "space-stable-mask-removed-occurrence",
+    "space-stable-mask-retained-row-copy",
+    "space-stable-coordinate-transport-attempt",
+    "space-stable-coordinate-transport-commit",
+    "space-stable-coordinate-transport-decline",
+    "space-stable-coordinate-transport-source-row",
+    "space-stable-coordinate-transport-removed-leaf",
+    "space-stable-coordinate-transport-retained-move",
+    "native-stale-index-amortized-rebuild",
+    "native-stale-index-small-space-release",
+    "space-stable-coordinate-transport-error",
+    "petta-equation-activation-effect-decline-call-free",
+    "petta-equation-activation-effect-decline-region-hole",
+    "petta-equation-activation-effect-decline-other",
+    "petta-program-revision-view-capture-attempt",
+    "petta-program-revision-view-capture-commit",
+    "petta-program-revision-view-capture-decline",
+    "petta-program-revision-view-bind-attempt",
+    "petta-program-revision-view-bind-commit",
+    "petta-program-revision-view-bind-decline",
+    "petta-program-revision-view-query-commit",
+    "petta-program-revision-view-query-stale-fallback",
+    "hyperpose-source-family-capture-attempt",
+    "hyperpose-source-family-capture-commit",
+    "hyperpose-source-family-capture-decline",
+    "hyperpose-source-family-capture-entry",
+    "hyperpose-source-family-capture-constraint",
+    "petta-program-revision-view-authority-build",
+    "petta-program-revision-view-authority-reuse",
+    "petta-program-revision-view-authority-invalidate",
+    "petta-program-revision-view-authority-clause-copy",
+    "petta-program-revision-view-bind-identity-commit",
+    "petta-program-revision-view-bind-alpha-compare",
+    "petta-program-revision-view-authority-destroy",
+    "parallel-persistent-episode-attempt",
+    "parallel-persistent-episode-commit",
+    "parallel-persistent-episode-reuse",
+    "parallel-persistent-thread-start",
+    "parallel-persistent-episode-complete",
+    "parallel-persistent-nested-decline",
+    "parallel-persistent-capacity-decline",
+    "parallel-one-shot-thread-start",
+    "parallel-persistent-busy-decline",
+    "petta-program-revision-view-authority-invalidate-catalog",
+    "petta-program-revision-view-authority-invalidate-source-key",
+    "petta-program-revision-view-authority-invalidate-dispose",
+    "space-mutation-publish-data-only",
+    "space-mutation-publish-equation",
+    "space-mutation-publish-opaque",
+    "space-equation-revision-bump",
 };
 
 static int64_t clamp_counter(uint64_t value) {
@@ -590,6 +861,44 @@ bool cetta_runtime_stats_is_enabled(void) {
     bool enabled = g_runtime_stats_enabled;
     pthread_mutex_unlock(&g_runtime_stats_mutex);
     return enabled;
+}
+
+static CettaSurvivorAllocationRole survivor_allocation_role_normalize(
+        CettaSurvivorAllocationRole role) {
+    return (uint32_t)role < CETTA_SURVIVOR_ALLOC_ROLE_COUNT
+        ? role : CETTA_SURVIVOR_ALLOC_ROLE_OTHER;
+}
+
+CettaSurvivorAllocationScope cetta_survivor_allocation_scope_enter(
+        CettaSurvivorAllocationRole role) {
+    CettaSurvivorAllocationScope scope = {
+        .previous = g_survivor_allocation_role,
+    };
+    g_survivor_allocation_role =
+        survivor_allocation_role_normalize(role);
+    return scope;
+}
+
+void cetta_survivor_allocation_scope_leave(
+        CettaSurvivorAllocationScope scope) {
+    g_survivor_allocation_role =
+        survivor_allocation_role_normalize(scope.previous);
+}
+
+void cetta_runtime_stats_note_survivor_allocation(uint64_t bytes) {
+    CettaSurvivorAllocationRole role =
+        survivor_allocation_role_normalize(g_survivor_allocation_role);
+    CettaRuntimeCounter role_counter = (CettaRuntimeCounter)(
+        CETTA_RUNTIME_COUNTER_SURVIVOR_ALLOC_ROLE_OTHER_BYTES +
+        (uint32_t)role);
+    pthread_mutex_lock(&g_runtime_stats_mutex);
+    if (g_runtime_stats_enabled) {
+        g_runtime_counters[
+            CETTA_RUNTIME_COUNTER_QUERY_EPISODE_SURVIVOR_ARENA_ALLOC_BYTES] +=
+            bytes;
+        g_runtime_counters[role_counter] += bytes;
+    }
+    pthread_mutex_unlock(&g_runtime_stats_mutex);
 }
 
 void cetta_runtime_stats_add(CettaRuntimeCounter counter, uint64_t delta) {
@@ -634,6 +943,27 @@ void cetta_runtime_stats_snapshot(CettaRuntimeStats *out) {
     pthread_mutex_lock(&g_runtime_stats_mutex);
     memcpy(out->counters, g_runtime_counters, sizeof(g_runtime_counters));
     pthread_mutex_unlock(&g_runtime_stats_mutex);
+}
+
+uint64_t cetta_runtime_stats_survivor_role_total(
+        const CettaRuntimeStats *stats) {
+    if (!stats)
+        return 0u;
+    uint64_t total = 0u;
+    for (uint32_t role = 0u;
+         role < CETTA_SURVIVOR_ALLOC_ROLE_COUNT; role++) {
+        total += stats->counters[
+            CETTA_RUNTIME_COUNTER_SURVIVOR_ALLOC_ROLE_OTHER_BYTES + role];
+    }
+    return total;
+}
+
+bool cetta_runtime_stats_survivor_role_account_is_exact(
+        const CettaRuntimeStats *stats) {
+    return stats &&
+        cetta_runtime_stats_survivor_role_total(stats) ==
+            stats->counters[
+                CETTA_RUNTIME_COUNTER_QUERY_EPISODE_SURVIVOR_ARENA_ALLOC_BYTES];
 }
 
 void cetta_runtime_stats_print(FILE *out, const CettaRuntimeStats *stats) {

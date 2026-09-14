@@ -252,6 +252,53 @@ int main(void) {
     CHECK(out && out != arity_call,
           "new under-application receives its specialized relation head");
 
+    /* Supplier presence is independent of application saturation. Cover
+     * each named-arity authority, and invalidate an inert type-only head
+     * when its declaration is added. Exact arity belongs to preparation,
+     * not this conservative presence observation. */
+    SymbolId consumer = bounded_call->expr.elems[0]->sym_id;
+    Atom *typed_head = atom_symbol(&persistent, "type-only-supplier");
+    Atom *typed_query = atom_expr(&result, &typed_head, 1u);
+    CHECK(petta_specializer_query_execution_admission(
+              &space, consumer, &typed_query, 1u) ==
+              PETTA_SPECIALIZER_RELATION_IRRELEVANT,
+          "undeclared supplier head is inert");
+    Atom *declaration = atom_expr3(
+        &persistent, atom_symbol(&persistent, ":"), typed_head,
+        atom_expr3(&persistent,
+            atom_symbol_id(&persistent, g_builtin_syms.arrow),
+            atom_symbol(&persistent, "Number"),
+            atom_symbol(&persistent, "Number")));
+    space_add(&space, declaration);
+    petta_specializer_note_mutation(&space, declaration);
+    Atom *supplier_heads[] = {
+        typed_head, atom_symbol(&result, "late-arity"),
+        atom_symbol_id(&result, g_builtin_syms.op_plus)};
+    for (size_t kind = 0u; kind < 3u; kind++) {
+        for (CettaExprLen supplied = 0u; supplied < 4u; supplied++) {
+            Atom *parts[4] = {supplier_heads[kind]};
+            for (CettaExprIndex i = 1u; i <= supplied; i++)
+                parts[i] = atom_int(&result, i);
+            Atom *argument = atom_expr(&result, parts, supplied + 1u);
+            CHECK(petta_specializer_query_execution_admission(
+                      &space, consumer, &argument, 1u) ==
+                      PETTA_SPECIALIZER_RELATION_DEFER,
+                  "callable head survives under, exact and over-application");
+        }
+    }
+    Atom *nested_supplier = atom_expr2(
+        &result, atom_symbol(&result, "inert-wrapper"), typed_head);
+    CHECK(petta_specializer_query_execution_admission(
+              &space, consumer, &nested_supplier, 1u) ==
+              PETTA_SPECIALIZER_RELATION_DEFER,
+          "inert head does not erase a callable child");
+    Atom *expression_head = atom_expr2(
+        &result, typed_query, atom_int(&result, 0));
+    CHECK(petta_specializer_query_execution_admission(
+              &space, consumer, &expression_head, 1u) ==
+              PETTA_SPECIALIZER_RELATION_DEFER,
+          "non-symbol head retains its recursive supplier observation");
+
     if (failures == 0u)
         printf("PASS: specializer prepare boundary (%u checks)\n", checks);
     else

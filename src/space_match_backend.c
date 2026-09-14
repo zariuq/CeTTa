@@ -5,6 +5,7 @@
 #include "mm2_lower.h"
 #include "mork_space_bridge_runtime.h"
 #include "parser.h"
+#include "shared_transition.h"
 #include "stats.h"
 #include "generated/cetta_execution_contracts.generated.h"
 #include <ctype.h>
@@ -610,20 +611,32 @@ void space_match_backend_diag_normalize_subst_matches(SubstMatchSet *matches) {
 
 static void native_rebuild_match_trie(Space *s) {
     SpaceMatchNativeState *st = &s->match_backend.native;
+    cetta_runtime_stats_inc(
+        CETTA_RUNTIME_COUNTER_NATIVE_PATTERN_INDEX_DIRTY_REBUILD);
+    cetta_runtime_stats_add(
+        CETTA_RUNTIME_COUNTER_NATIVE_PATTERN_INDEX_BUILD_ROW,
+        s->native.len);
     disc_node_free(st->match_trie);
     st->match_trie = disc_node_new();
     for (CettaIndex i = 0; i < s->native.len; i++)
         native_insert_match_trie_entry(s, i);
     st->match_trie_dirty = false;
+    st->match_trie_stale_occurrences = 0u;
 }
 
 static void native_ensure_match_trie(Space *s) {
     SpaceMatchNativeState *st = &s->match_backend.native;
     if (!st->match_trie) {
+        cetta_runtime_stats_inc(
+            CETTA_RUNTIME_COUNTER_NATIVE_PATTERN_INDEX_COLD_BUILD);
+        cetta_runtime_stats_add(
+            CETTA_RUNTIME_COUNTER_NATIVE_PATTERN_INDEX_BUILD_ROW,
+            s->native.len);
         st->match_trie = disc_node_new();
         for (CettaIndex i = 0; i < s->native.len; i++)
             native_insert_match_trie_entry(s, i);
         st->match_trie_dirty = false;
+        st->match_trie_stale_occurrences = 0u;
     } else if (st->match_trie_dirty) {
         native_rebuild_match_trie(s);
     }
@@ -632,17 +645,29 @@ static void native_ensure_match_trie(Space *s) {
 static void native_ensure_stree(Space *s) {
     SpaceMatchNativeState *st = &s->match_backend.native;
     if (!st->stree) {
+        cetta_runtime_stats_inc(
+            CETTA_RUNTIME_COUNTER_NATIVE_SUBSTITUTION_INDEX_COLD_BUILD);
+        cetta_runtime_stats_add(
+            CETTA_RUNTIME_COUNTER_NATIVE_SUBSTITUTION_INDEX_BUILD_ROW,
+            s->native.len);
         st->stree = cetta_malloc(sizeof(SubstTree));
         stree_init(st->stree);
         for (CettaIndex i = 0; i < s->native.len; i++)
             native_insert_stree_entry(s, i);
         st->stree_dirty = false;
+        st->stree_stale_occurrences = 0u;
     } else if (st->stree_dirty) {
+        cetta_runtime_stats_inc(
+            CETTA_RUNTIME_COUNTER_NATIVE_SUBSTITUTION_INDEX_DIRTY_REBUILD);
+        cetta_runtime_stats_add(
+            CETTA_RUNTIME_COUNTER_NATIVE_SUBSTITUTION_INDEX_BUILD_ROW,
+            s->native.len);
         stree_free(st->stree);
         stree_init(st->stree);
         for (CettaIndex i = 0; i < s->native.len; i++)
             native_insert_stree_entry(s, i);
         st->stree_dirty = false;
+        st->stree_stale_occurrences = 0u;
     }
 }
 
@@ -651,18 +676,22 @@ static void native_free(Space *s) {
     disc_node_free(st->match_trie);
     st->match_trie = NULL;
     st->match_trie_dirty = false;
+    st->match_trie_stale_occurrences = 0u;
     if (st->stree) {
         stree_free(st->stree);
         free(st->stree);
         st->stree = NULL;
     }
     st->stree_dirty = false;
+    st->stree_stale_occurrences = 0u;
 }
 
 static void native_note_add(Space *s, AtomId atom_id, Atom *atom,
                             CettaIndex atom_idx) {
     SpaceMatchNativeState *st = &s->match_backend.native;
-    if (st->match_trie) {
+    if (st->match_trie && !st->match_trie_dirty) {
+        cetta_runtime_stats_inc(
+            CETTA_RUNTIME_COUNTER_NATIVE_PATTERN_INDEX_INCREMENTAL_ADD);
         if (!(native_atom_id_insertable(s->native.universe, atom_id) &&
               disc_insert_id(st->match_trie, s->native.universe, atom_id,
                              atom_idx)) &&
@@ -670,7 +699,9 @@ static void native_note_add(Space *s, AtomId atom_id, Atom *atom,
             disc_insert(st->match_trie, atom, atom_idx);
         }
     }
-    if (st->stree) {
+    if (st->stree && !st->stree_dirty) {
+        cetta_runtime_stats_inc(
+            CETTA_RUNTIME_COUNTER_NATIVE_SUBSTITUTION_INDEX_INCREMENTAL_ADD);
         if (atom) {
             stree_insert(st->stree, atom, atom_idx);
         } else {
@@ -684,8 +715,119 @@ static void native_note_add(Space *s, AtomId atom_id, Atom *atom,
 static void native_note_remove(Space *s) {
     SpaceMatchNativeState *st = &s->match_backend.native;
     (void)s;
+    cetta_runtime_stats_inc(
+        CETTA_RUNTIME_COUNTER_NATIVE_MATCH_INDEX_REMOVE_NOTE);
+    if ((st->match_trie && !st->match_trie_dirty) ||
+        (st->stree && !st->stree_dirty)) {
+        cetta_runtime_stats_inc(
+            CETTA_RUNTIME_COUNTER_NATIVE_MATCH_INDEX_REMOVE_DIRTY_TRANSITION);
+    }
     st->match_trie_dirty = true;
     st->stree_dirty = true;
+    st->match_trie_stale_occurrences = 0u;
+    st->stree_stale_occurrences = 0u;
+}
+
+static bool stable_occurrence_transport_is_valid(
+        const SpaceStableOccurrenceTransport *transport) {
+    if (!transport ||
+        (!transport->source_to_target && transport->source_len != 0u) ||
+        transport->target_len > transport->source_len) {
+        return false;
+    }
+    CettaIndex next_target = 0u;
+    for (CettaIndex source = 0u;
+         source < transport->source_len; source++) {
+        CettaIndex target = transport->source_to_target[source];
+        if (target == SPACE_OCCURRENCE_COORDINATE_REMOVED)
+            continue;
+        if (target != next_target)
+            return false;
+        next_target++;
+    }
+    return next_target == transport->target_len;
+}
+
+static bool native_stale_index_requires_rebuild(
+        CettaCount stale, CettaCount removed, CettaCount target_len) {
+    if (removed > UINT64_MAX - stale)
+        return true;
+    return stale + removed >= target_len;
+}
+
+static SpaceBackendBatchResult
+native_transport_stable_occurrence_coordinates(
+        Space *s, const SpaceStableOccurrenceTransport *transport) {
+    if (!s || !stable_occurrence_transport_is_valid(transport) ||
+        transport->source_len != s->native.len) {
+        return SPACE_BACKEND_BATCH_ERROR;
+    }
+
+    SpaceMatchNativeState *st = &s->match_backend.native;
+    CettaCount removed = transport->source_len - transport->target_len;
+
+    /* Small spaces are queried linearly.  Releasing an old realized tree is
+     * both exact and better than retaining dead structural branches that no
+     * future small-space query would visit. */
+    if (transport->target_len <= MATCH_TRIE_THRESHOLD) {
+        if (st->match_trie) {
+            disc_node_free(st->match_trie);
+            st->match_trie = NULL;
+            cetta_runtime_stats_inc(
+                CETTA_RUNTIME_COUNTER_NATIVE_STALE_INDEX_SMALL_SPACE_RELEASE);
+        }
+        st->match_trie_dirty = false;
+        st->match_trie_stale_occurrences = 0u;
+        if (st->stree) {
+            stree_free(st->stree);
+            free(st->stree);
+            st->stree = NULL;
+            cetta_runtime_stats_inc(
+                CETTA_RUNTIME_COUNTER_NATIVE_STALE_INDEX_SMALL_SPACE_RELEASE);
+        }
+        st->stree_dirty = false;
+        st->stree_stale_occurrences = 0u;
+        return SPACE_BACKEND_BATCH_APPLIED;
+    }
+
+    if (st->match_trie && !st->match_trie_dirty) {
+        if (native_stale_index_requires_rebuild(
+                st->match_trie_stale_occurrences, removed,
+                transport->target_len)) {
+            st->match_trie_dirty = true;
+            st->match_trie_stale_occurrences = 0u;
+            cetta_runtime_stats_inc(
+                CETTA_RUNTIME_COUNTER_NATIVE_STALE_INDEX_AMORTIZED_REBUILD);
+        } else {
+            CettaCount removed_leaves = disc_transport_stable_coordinates(
+                st->match_trie, transport->source_to_target,
+                transport->source_len);
+            st->match_trie_stale_occurrences += removed_leaves;
+            cetta_runtime_stats_add(
+                CETTA_RUNTIME_COUNTER_SPACE_STABLE_COORDINATE_TRANSPORT_REMOVED_LEAF,
+                removed_leaves);
+        }
+    }
+
+    if (st->stree && !st->stree_dirty) {
+        if (native_stale_index_requires_rebuild(
+                st->stree_stale_occurrences, removed,
+                transport->target_len)) {
+            st->stree_dirty = true;
+            st->stree_stale_occurrences = 0u;
+            cetta_runtime_stats_inc(
+                CETTA_RUNTIME_COUNTER_NATIVE_STALE_INDEX_AMORTIZED_REBUILD);
+        } else {
+            CettaCount removed_leaves = stree_transport_stable_coordinates(
+                st->stree, transport->source_to_target,
+                transport->source_len);
+            st->stree_stale_occurrences += removed_leaves;
+            cetta_runtime_stats_add(
+                CETTA_RUNTIME_COUNTER_SPACE_STABLE_COORDINATE_TRANSPORT_REMOVED_LEAF,
+                removed_leaves);
+        }
+    }
+    return SPACE_BACKEND_BATCH_APPLIED;
 }
 
 static bool match_space_atom_epoch(Space *s, CettaIndex atom_idx, Atom *query,
@@ -1602,13 +1744,15 @@ static bool imported_projected_pack_space_atom_ids(const Space *space,
     return ok;
 }
 
-static AtomId shadow_storage_get_atom_id_at(const Space *s, uint64_t idx) {
+static inline AtomId shadow_storage_get_atom_id_at_direct(
+        const Space *s, uint64_t idx) {
     size_t physical_idx = 0;
     if (!s || idx >= s->native.len)
         return CETTA_ATOM_ID_NONE;
     if (idx > (uint64_t)SIZE_MAX)
         return CETTA_ATOM_ID_NONE;
-    physical_idx = (size_t)(space_is_queue(s) ? (s->native.start + idx) : idx);
+    physical_idx = (size_t)(
+        s->kind == SPACE_KIND_QUEUE ? (s->native.start + idx) : idx);
     return cetta_atom_id_storage_load_bits(
         s->native.atom_ids +
             (physical_idx *
@@ -1617,8 +1761,12 @@ static AtomId shadow_storage_get_atom_id_at(const Space *s, uint64_t idx) {
         s->native.atom_id_width_bits);
 }
 
+static AtomId shadow_storage_get_atom_id_at(const Space *s, uint64_t idx) {
+    return shadow_storage_get_atom_id_at_direct(s, idx);
+}
+
 static Atom *shadow_storage_get_at(const Space *s, uint64_t idx) {
-    AtomId atom_id = shadow_storage_get_atom_id_at(s, idx);
+    AtomId atom_id = shadow_storage_get_atom_id_at_direct(s, idx);
     return term_universe_get_atom(s ? s->native.universe : NULL, atom_id);
 }
 
@@ -4135,6 +4283,7 @@ bool space_match_backend_snapshot_clone(Space *dst, Space *src) {
     snapshot_state->built = true;
     snapshot_state->dirty = false;
     dst->revision = space_revision(src);
+    dst->equation_revision = space_equation_revision(src);
     return true;
 }
 
@@ -4284,6 +4433,10 @@ uint64_t space_match_backend_logical_len64(const Space *s) {
 AtomId space_match_backend_get_atom_id_at(const Space *s, uint32_t idx) {
     if (!s)
         return CETTA_ATOM_ID_NONE;
+    if (s->match_backend.kind == SPACE_ENGINE_NATIVE ||
+        s->match_backend.kind == SPACE_ENGINE_NATIVE_CANDIDATE_EXACT) {
+        return shadow_storage_get_atom_id_at_direct(s, idx);
+    }
     if (s->match_backend.ops && s->match_backend.ops->get_atom_id_at)
         return s->match_backend.ops->get_atom_id_at(s, idx);
     return shadow_storage_get_atom_id_at(s, idx);
@@ -4292,6 +4445,10 @@ AtomId space_match_backend_get_atom_id_at(const Space *s, uint32_t idx) {
 AtomId space_match_backend_get_atom_id_at64(const Space *s, uint64_t idx) {
     if (!s)
         return CETTA_ATOM_ID_NONE;
+    if (s->match_backend.kind == SPACE_ENGINE_NATIVE ||
+        s->match_backend.kind == SPACE_ENGINE_NATIVE_CANDIDATE_EXACT) {
+        return shadow_storage_get_atom_id_at_direct(s, idx);
+    }
     if (s->match_backend.ops && s->match_backend.ops->get_atom_id_at)
         return s->match_backend.ops->get_atom_id_at(s, idx);
     return shadow_storage_get_atom_id_at(s, idx);
@@ -4300,6 +4457,11 @@ AtomId space_match_backend_get_atom_id_at64(const Space *s, uint64_t idx) {
 Atom *space_match_backend_get_at(const Space *s, uint32_t idx) {
     if (!s)
         return NULL;
+    if (s->match_backend.kind == SPACE_ENGINE_NATIVE ||
+        s->match_backend.kind == SPACE_ENGINE_NATIVE_CANDIDATE_EXACT) {
+        AtomId atom_id = shadow_storage_get_atom_id_at_direct(s, idx);
+        return term_universe_get_atom(s->native.universe, atom_id);
+    }
     if (s->match_backend.ops && s->match_backend.ops->get_at)
         return s->match_backend.ops->get_at(s, idx);
     return shadow_storage_get_at(s, idx);
@@ -4308,6 +4470,11 @@ Atom *space_match_backend_get_at(const Space *s, uint32_t idx) {
 Atom *space_match_backend_get_at64(const Space *s, uint64_t idx) {
     if (!s)
         return NULL;
+    if (s->match_backend.kind == SPACE_ENGINE_NATIVE ||
+        s->match_backend.kind == SPACE_ENGINE_NATIVE_CANDIDATE_EXACT) {
+        AtomId atom_id = shadow_storage_get_atom_id_at_direct(s, idx);
+        return term_universe_get_atom(s->native.universe, atom_id);
+    }
     if (s->match_backend.ops && s->match_backend.ops->get_at)
         return s->match_backend.ops->get_at(s, idx);
     return shadow_storage_get_at(s, idx);
@@ -4947,6 +5114,7 @@ SpaceMatchPullVisitResult space_match_backend_try_visit_atoms_direct(
     Arena *scratch,
     CettaMorkAtomVisitor visitor,
     void *ctx) {
+    CETTA_SCOPED_SHARED_TRANSITION(shared_read);
     ImportedBridgeState *st;
 
     if (!scratch || !visitor ||
@@ -4974,6 +5142,7 @@ bool space_match_backend_visit_bindings_direct(
     Atom *query,
     CettaMorkBindingsVisitor visitor,
     void *ctx) {
+    CETTA_SCOPED_SHARED_TRANSITION(shared_read);
     ImportedBridgeState *st;
     CettaMorkSpaceHandle *bridge = NULL;
     SpaceMatchPullVisitResult indexed_result;
@@ -5038,6 +5207,7 @@ space_match_backend_try_visit_bindings_indexed(
     Atom *query,
     CettaMorkBindingsVisitor visitor,
     void *ctx) {
+    CETTA_SCOPED_SHARED_TRANSITION(shared_read);
     bool attempted = false;
     bool ok;
 
@@ -5065,6 +5235,7 @@ space_match_backend_try_visit_conjunction_indexed(
     const Bindings *seed,
     CettaMorkBindingsVisitor visitor,
     void *ctx) {
+    CETTA_SCOPED_SHARED_TRANSITION(shared_read);
     return pathmap_local_visit_conjunction_indexed(
         s, a, patterns, npatterns, seed, visitor, ctx);
 }
@@ -9795,6 +9966,8 @@ static const SpaceMatchBackendOps NATIVE_BACKEND_OPS = {
     .free = native_free,
     .note_add = native_note_add,
     .note_remove = native_note_remove,
+    .transport_stable_occurrence_coordinates =
+        native_transport_stable_occurrence_coordinates,
     .candidates = native_candidates,
     .count_flat_linear = native_count_flat_linear,
     .query = native_query,
@@ -9818,6 +9991,8 @@ static const SpaceMatchBackendOps NATIVE_CANDIDATE_EXACT_BACKEND_OPS = {
     .free = native_free,
     .note_add = native_note_add,
     .note_remove = native_note_remove,
+    .transport_stable_occurrence_coordinates =
+        native_transport_stable_occurrence_coordinates,
     .candidates = native_candidates,
     .count_flat_linear = native_count_flat_linear,
     .query = native_candidate_exact_query,
@@ -9876,8 +10051,10 @@ void space_match_backend_init(Space *s) {
     s->match_backend.ops = &NATIVE_BACKEND_OPS;
     s->match_backend.native.match_trie = NULL;
     s->match_backend.native.match_trie_dirty = false;
+    s->match_backend.native.match_trie_stale_occurrences = 0u;
     s->match_backend.native.stree = NULL;
     s->match_backend.native.stree_dirty = false;
+    s->match_backend.native.stree_stale_occurrences = 0u;
     memset(&s->match_backend.pathmap, 0, sizeof(s->match_backend.pathmap));
     memset(&s->match_backend.mork, 0, sizeof(s->match_backend.mork));
 }
@@ -9959,8 +10136,41 @@ void space_match_backend_note_remove(Space *s) {
         s->match_backend.ops->note_remove(s);
 }
 
+SpaceBackendBatchResult
+space_match_backend_transport_stable_occurrence_coordinates(
+        Space *s, const SpaceStableOccurrenceTransport *transport) {
+    cetta_runtime_stats_inc(
+        CETTA_RUNTIME_COUNTER_SPACE_STABLE_COORDINATE_TRANSPORT_ATTEMPT);
+    if (transport) {
+        cetta_runtime_stats_add(
+            CETTA_RUNTIME_COUNTER_SPACE_STABLE_COORDINATE_TRANSPORT_SOURCE_ROW,
+            transport->source_len);
+    }
+    if (!s || !s->match_backend.ops ||
+        !s->match_backend.ops->transport_stable_occurrence_coordinates) {
+        cetta_runtime_stats_inc(
+            CETTA_RUNTIME_COUNTER_SPACE_STABLE_COORDINATE_TRANSPORT_DECLINE);
+        return SPACE_BACKEND_BATCH_UNSUPPORTED;
+    }
+    SpaceBackendBatchResult result =
+        s->match_backend.ops->transport_stable_occurrence_coordinates(
+            s, transport);
+    if (result == SPACE_BACKEND_BATCH_APPLIED) {
+        cetta_runtime_stats_inc(
+            CETTA_RUNTIME_COUNTER_SPACE_STABLE_COORDINATE_TRANSPORT_COMMIT);
+    } else if (result == SPACE_BACKEND_BATCH_UNSUPPORTED) {
+        cetta_runtime_stats_inc(
+            CETTA_RUNTIME_COUNTER_SPACE_STABLE_COORDINATE_TRANSPORT_DECLINE);
+    } else {
+        cetta_runtime_stats_inc(
+            CETTA_RUNTIME_COUNTER_SPACE_STABLE_COORDINATE_TRANSPORT_ERROR);
+    }
+    return result;
+}
+
 CettaIndex space_match_backend_candidates64(Space *s, Atom *pattern,
                                             CettaIndex **out) {
+    CETTA_SCOPED_SHARED_TRANSITION(shared_read);
     if (!s->match_backend.ops || !s->match_backend.ops->candidates) {
         if (out)
             *out = NULL;
@@ -10105,6 +10315,7 @@ Atom *space_match_candidate_at64(const Space *s, CettaIndex idx) {
 bool space_match_count_flat_linear64(
     Space *s, Arena *scratch, Atom *pattern,
     uint64_t *count, CettaIndex *examined) {
+    CETTA_SCOPED_SHARED_TRANSITION(shared_read);
     if (count)
         *count = 0u;
     if (examined)
@@ -10115,14 +10326,23 @@ bool space_match_count_flat_linear64(
         return false;
     }
     space_linearize(s);
-    return s->match_backend.ops->count_flat_linear(
+    bool admitted = s->match_backend.ops->count_flat_linear(
         s, scratch, pattern, count, examined);
+    if (admitted) {
+        cetta_runtime_stats_inc(
+            CETTA_RUNTIME_COUNTER_MATCH_FLAT_COUNT_ADMISSION);
+        cetta_runtime_stats_add(
+            CETTA_RUNTIME_COUNTER_MATCH_FLAT_COUNT_ROWS_EXAMINED,
+            (uint64_t)*examined);
+    }
+    return admitted;
 }
 
 bool space_match_count_conjunction64(
     Space *s, Arena *scratch, Atom **patterns,
     CettaExprLen npatterns, const Bindings *seed,
     uint64_t *count) {
+    CETTA_SCOPED_SHARED_TRANSITION(shared_read);
     if (count)
         *count = 0u;
     if (!s || !scratch || !patterns || !count ||
@@ -10203,9 +10423,10 @@ static void overlay_subst_query(Space *s, Arena *a, Atom *query,
 }
 
 void space_subst_query(Space *s, Arena *a, Atom *query, SubstMatchSet *out) {
+    CETTA_SCOPED_SHARED_TRANSITION(shared_read);
     if (s && s->overlay_base) {
         overlay_subst_query(s, a, query, out);
-        return;
+        goto finalize_shared_snapshot;
     }
     bool use_exact_shortcut =
         !s || s->match_backend.kind != SPACE_ENGINE_PATHMAP;
@@ -10222,17 +10443,51 @@ void space_subst_query(Space *s, Arena *a, Atom *query, SubstMatchSet *out) {
                 bindings_free(&empty);
             }
             free(exact);
-            return;
+            goto finalize_shared_snapshot;
         }
         free(exact);
         /* If query is exact-indexable and space has only exact atoms, no need for full scan */
         if (query && space_atom_is_exact_indexable(query) &&
             space_contains_only_exact_atoms(s)) {
             smset_init(out);
-            return;
+            goto finalize_shared_snapshot;
         }
     }
     space_match_backend_query(s, a, query, out);
+
+finalize_shared_snapshot:
+    /* A substitution-tree row may still name a live Space coordinate that
+     * the caller normally verifies lazily.  Such a coordinate cannot cross a
+     * concurrent operation boundary: a later removal could retarget it.
+     * Resolve every row to an owned binding while the authority and its
+     * derived index are bracketed, then expose only exact rows.  Outside a
+     * concurrent scope the established deferred representation is retained. */
+    if (cetta_shared_transition_scope_active() && out) {
+        CettaIndex write = 0u;
+        for (CettaIndex read = 0u; read < out->len; read++) {
+            SubstMatch *item = &out->items[read];
+            bool keep = item->exact;
+            if (!keep) {
+                Bindings exact;
+                if (space_subst_match_with_seed(
+                        s, query, item, NULL, a, &exact)) {
+                    bindings_free(&item->bindings);
+                    bindings_move(&item->bindings, &exact);
+                    item->exact = true;
+                    keep = true;
+                }
+            }
+            if (!keep) {
+                bindings_free(&item->bindings);
+                bindings_init(&item->bindings);
+                continue;
+            }
+            if (write != read)
+                subst_match_move(&out->items[write], item);
+            write++;
+        }
+        out->len = write;
+    }
 }
 
 bool space_subst_match_with_seed(Space *space, Atom *pattern, const SubstMatch *sm,
@@ -10285,7 +10540,13 @@ bool space_subst_match_with_seed(Space *space, Atom *pattern, const SubstMatch *
 }
 
 bool space_match_backend_supports_seeded_candidates(Space *s) {
-    return s && !s->overlay_base &&
+    /* Candidate coordinates are a private deferred representation.  A
+       concurrent caller may use them only while it already owns the physical
+       transition bracket; otherwise choose the exact binding snapshot path. */
+    return s &&
+           (!cetta_shared_transition_scope_active() ||
+            cetta_shared_transition_guard_held_by_current_thread()) &&
+           !s->overlay_base &&
            (s->match_backend.kind == SPACE_ENGINE_NATIVE ||
             s->match_backend.kind == SPACE_ENGINE_NATIVE_CANDIDATE_EXACT) &&
            !space_match_backend_is_attached_compiled(s);
@@ -10294,6 +10555,7 @@ bool space_match_backend_supports_seeded_candidates(Space *s) {
 bool space_match_backend_match_atom_seeded(Space *s, CettaIndex atom_idx,
                                            Atom *pattern, Bindings *env,
                                            Arena *a) {
+    CETTA_SCOPED_SHARED_TRANSITION(shared_read);
     if (!s || atom_idx >= s->native.len)
         return false;
     uint32_t suffix = fresh_var_suffix();
@@ -10303,6 +10565,7 @@ bool space_match_backend_match_atom_seeded(Space *s, CettaIndex atom_idx,
 
 void space_query_conjunction(Space *s, Arena *a, Atom **patterns, CettaExprLen npatterns,
                              const Bindings *seed, BindingSet *out) {
+    CETTA_SCOPED_SHARED_TRANSITION(shared_read);
     space_linearize(s);
     if (s->match_backend.ops && s->match_backend.ops->query_conjunction) {
         s->match_backend.ops->query_conjunction(s, a, patterns, npatterns, seed, out);

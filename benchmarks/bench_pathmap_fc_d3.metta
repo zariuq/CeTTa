@@ -1,7 +1,7 @@
 ; PathMap-backed variant of the depth-3 propositional forward chainer.
 ;
 ; Recommended:
-;   ./cetta --quiet --profile he-extended --space-engine pathmap --lang he tests/bench_pathmap_fc_d3.metta
+;   ./cetta --quiet --profile extended --space-engine pathmap --lang he tests/bench_pathmap_fc_d3.metta
 
 (= (depth) 3)
 

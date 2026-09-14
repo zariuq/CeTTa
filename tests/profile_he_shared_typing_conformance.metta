@@ -1,5 +1,5 @@
 ; Shared HE typing canaries derived from the pinned upstream Rust behavior.
-; Run under he, he-compat, he-extended, and he-prime.
+; Run under he, he-compat, extended, and he-prime.
 (: SharedR Type)
 (: SharedA Type)
 (: SharedB Type)

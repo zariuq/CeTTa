@@ -1,4 +1,4 @@
-; Under he-extended, binder-shaped domains are still treated literally.
+; Under extended, binder-shaped domains are still treated literally.
 (: Fact Type)
 (: fact Fact)
 (: WitnessOf (-> $p Type))

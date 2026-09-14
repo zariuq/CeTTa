@@ -680,6 +680,13 @@ bool term_universe_atom_is_stable(Atom *atom) {
     uint32_t cap = 0;
     bool stable = false;
 
+    /* The scalar spelling of a managed native identifier is not its lifetime.
+     * Preserve its owner in the existing pointer-backed fallback, never in the
+     * pointer-free integer encoding. The fact composes through expressions. */
+    if (atom && (atom->structural_facts &
+                 ATOM_STRUCTURAL_HAS_NATIVE_HANDLE_ID) != 0u)
+        return false;
+
     /* The compositional leaf summary answers this for immutable atoms built
      * through the ordinary constructors.  The traversal remains authoritative
      * when that positive proof was not established. */
@@ -709,7 +716,9 @@ bool term_universe_atom_is_stable(Atom *atom) {
         case ATOM_VAR:
             break;
         case ATOM_GROUNDED:
-            if (!atom_grounded_kind_is_term_stable(cur->ground.gkind))
+            if ((cur->structural_facts &
+                 ATOM_STRUCTURAL_HAS_NATIVE_HANDLE_ID) != 0u ||
+                !atom_grounded_kind_is_term_stable(cur->ground.gkind))
                 goto done;
             break;
         case ATOM_EXPR:
@@ -3797,6 +3806,45 @@ AtomId term_universe_lookup_atom_id(const TermUniverse *universe, Atom *src) {
     if (!stable)
         return CETTA_ATOM_ID_NONE;
     return stable_id;
+}
+
+bool term_universe_root_token_capture(
+        const TermUniverse *universe, AtomId root_id,
+        TermUniverseRootToken *out) {
+    if (out)
+        *out = (TermUniverseRootToken){0};
+    if (!universe || !out || root_id == CETTA_ATOM_ID_NONE ||
+        !term_universe_get_atom(universe, root_id)) {
+        return false;
+    }
+    *out = (TermUniverseRootToken){
+        .universe = universe,
+        .instance_id = universe->instance_id,
+        .storage_epoch = universe->storage_epoch,
+        .root_id = root_id,
+    };
+    return true;
+}
+
+bool term_universe_root_token_matches_live_universe(
+        TermUniverseRootToken token,
+        const TermUniverse *live_universe) {
+    return live_universe && token.universe == live_universe &&
+        token.instance_id != 0u &&
+        token.instance_id == live_universe->instance_id &&
+        token.storage_epoch != 0u &&
+        token.storage_epoch == live_universe->storage_epoch &&
+        token.root_id != CETTA_ATOM_ID_NONE &&
+        term_universe_get_atom(live_universe, token.root_id) != NULL;
+}
+
+Atom *term_universe_root_token_resolve(
+        TermUniverseRootToken token,
+        const TermUniverse *live_universe) {
+    return term_universe_root_token_matches_live_universe(
+               token, live_universe)
+        ? term_universe_get_atom(live_universe, token.root_id)
+        : NULL;
 }
 
 bool term_universe_atom_id_eq(const TermUniverse *universe, AtomId id,

@@ -33,7 +33,7 @@
 ;  reduces cleanly to the empty process instead of leaving a dangling rendezvous.
 ;
 ;  Runs on the core build:  make BUILD=core
-;     ./cetta --quiet --profile he-extended --lang he <this file>
+;     ./cetta --quiet --profile extended --lang he <this file>
 ; ===========================================================================
 
 !(import! &self rhometta)

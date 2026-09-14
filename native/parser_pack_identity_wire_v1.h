@@ -9,9 +9,10 @@
 
 /*
  * Canonical opt-in semantic-identity snapshot for a LanguageDef-derived
- * ParserPack.  The PNI1 packet is separate from the neutral forest arrays and
+ * ParserPack.  The PNI2 packet is separate from the neutral forest arrays and
  * is never consulted by prepared parser hot paths.  Production rows carry
- * exact operational descriptors; the target-side checker assigns authored
+ * exact state and action variants, including the derived whole-source entry
+ * projection.  The target-side checker assigns authored
  * lexical/structural occurrences only after unique resolution against its
  * independently supplied ParserPack plan.
  */

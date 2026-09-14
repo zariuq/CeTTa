@@ -5,7 +5,7 @@ is 1, should 1. ✅
 is (x y a b), should (x y a b). ✅ 
 is 3, should 3. ✅ 
 is 2, should 2. ✅ 
-is 3, should 3. ✅ 
+is (), should (). ✅ 
 is 42, should 42. ✅ 
 is Error, should Error. ✅ 
 is caught, should caught. ✅ 

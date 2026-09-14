@@ -94,6 +94,59 @@ bool cetta_gslt_provider_registry_validate_v1(
     return true;
 }
 
+/* Decode exactly the metadata currently admitted by the runtime. Generator
+ * envelope restrictions, when required, are separate from this source view. */
+static bool provider_catalog_decode_value(
+    Arena *arena, const Atom *root, CettaGsltProviderCatalogV1 *catalog,
+    char *error, size_t error_size) {
+    if (!root || root->kind != ATOM_EXPR || root->expr.len < 3u ||
+        !root->expr.elems || !root->expr.elems[0] ||
+        !atom_is_symbol(root->expr.elems[0], "gslt-provider-catalog-v1"))
+        return provider_error(error, error_size,
+                              "cannot parse authored semantic-provider catalog");
+    if ((size_t)root->expr.len > SIZE_MAX / sizeof(CettaGsltProviderRequirementV1))
+        return provider_error(error, error_size, "provider catalog is too large");
+    CettaGsltProviderRequirementV1 *requirements =
+        arena_alloc(arena, (size_t)root->expr.len * sizeof(*requirements));
+    const char *name = NULL, *language = NULL, *profile = NULL;
+    size_t count = 0u;
+    for (CettaExprIndex index = 1u; index < root->expr.len; index++) {
+        const Atom *field = root->expr.elems[index];
+        if (provider_expr(field, "name", 2u) ||
+            provider_expr(field, "language", 2u) ||
+            provider_expr(field, "profile", 2u)) {
+            const char *value = provider_text(field->expr.elems[1]);
+            const char **target = provider_expr(field, "name", 2u) ? &name :
+                (provider_expr(field, "language", 2u) ? &language : &profile);
+            if (*target || !value)
+                return provider_error(error, error_size,
+                                      "provider catalog has an invalid metadata field");
+            *target = value;
+        } else if (provider_expr(field, "provider", 4u)) {
+            const char *relation = provider_text(field->expr.elems[1]);
+            const char *semantic_id = provider_text(field->expr.elems[3]);
+            uint32_t arity = 0u;
+            if (!relation || !semantic_id ||
+                !provider_u32(field->expr.elems[2], &arity))
+                return provider_error(error, error_size,
+                                      "provider catalog has an invalid declaration");
+            requirements[count++] = (CettaGsltProviderRequirementV1){
+                .relation = relation, .arity = arity, .semantic_id = semantic_id};
+        } else {
+            return provider_error(error, error_size,
+                                  "provider catalog contains an unknown field");
+        }
+    }
+    if (!name || !language)
+        return provider_error(error, error_size, "provider catalog omits its name or language");
+    catalog->name = name;
+    catalog->language_name = language;
+    catalog->profile_name = profile;
+    catalog->requirements = requirements;
+    catalog->requirement_count = count;
+    return true;
+}
+
 bool cetta_gslt_provider_catalog_validate_v1(
     const CettaGsltProviderCatalogV1 *catalog,
     char *error, size_t error_size) {
@@ -149,98 +202,85 @@ bool cetta_gslt_provider_catalog_validate_v1(
     Atom **forms = NULL;
     int form_count = parse_metta_text(source, &arena, &forms);
     bool valid = false;
-    if (form_count != 1 || !forms || !forms[0] ||
-        forms[0]->kind != ATOM_EXPR || forms[0]->expr.len < 3u ||
-        forms[0]->expr.elems[0]->kind != ATOM_SYMBOL ||
-        strcmp(atom_name_cstr(forms[0]->expr.elems[0]),
-               "gslt-provider-catalog-v1") != 0) {
+    CettaGsltProviderCatalogV1 decoded = {0};
+    if (form_count != 1 || !forms ||
+        !provider_catalog_decode_value(&arena, forms[0], &decoded, error, error_size))
+        goto done;
+    if (decoded.requirement_count != catalog->requirement_count ||
+        strcmp(decoded.name, catalog->name) != 0 ||
+        strcmp(decoded.language_name, catalog->language_name) != 0 ||
+        ((decoded.profile_name || catalog->profile_name) &&
+         (!decoded.profile_name || !catalog->profile_name ||
+          strcmp(decoded.profile_name, catalog->profile_name) != 0))) {
         provider_error(error, error_size,
-                       "cannot parse authored semantic-provider catalog");
+                       "provider catalog descriptor differs from authored catalog");
         goto done;
     }
-
-    const char *name = NULL;
-    const char *language = NULL;
-    const char *profile = NULL;
-    size_t requirement_index = 0u;
-    for (CettaExprIndex index = 1u;
-         index < forms[0]->expr.len; index++) {
-        Atom *field = forms[0]->expr.elems[index];
-        if (provider_expr(field, "name", 2u)) {
-            const char *value = provider_text(field->expr.elems[1]);
-            if (name || !value) {
-                provider_error(error, error_size,
-                               "provider catalog has an invalid name");
-                goto done;
-            }
-            name = value;
-        } else if (provider_expr(field, "language", 2u)) {
-            const char *value = provider_text(field->expr.elems[1]);
-            if (language || !value) {
-                provider_error(error, error_size,
-                               "provider catalog has an invalid language");
-                goto done;
-            }
-            language = value;
-        } else if (provider_expr(field, "profile", 2u)) {
-            const char *value = provider_text(field->expr.elems[1]);
-            if (profile || !value) {
-                provider_error(error, error_size,
-                               "provider catalog has an invalid profile");
-                goto done;
-            }
-            profile = value;
-        } else if (provider_expr(field, "provider", 4u)) {
-            if (requirement_index >= catalog->requirement_count) {
-                provider_error(error, error_size,
-                               "provider catalog descriptor omits a declaration");
-                goto done;
-            }
-            const char *relation = provider_text(field->expr.elems[1]);
-            uint32_t arity = 0u;
-            const char *semantic_id = provider_text(field->expr.elems[3]);
-            const CettaGsltProviderRequirementV1 *requirement =
-                &catalog->requirements[requirement_index++];
-            if (!relation ||
-                !provider_u32(field->expr.elems[2], &arity) ||
-                !semantic_id || arity != requirement->arity ||
-                strcmp(relation, requirement->relation) != 0 ||
-                strcmp(semantic_id, requirement->semantic_id) != 0) {
-                provider_error(
-                    error, error_size,
-                    "provider catalog descriptor differs at declaration %zu "
-                    "(%s/%u/%s versus %s/%u/%s)",
-                    requirement_index - 1u,
-                    relation ? relation : "<invalid>", arity,
-                    semantic_id ? semantic_id : "<invalid>",
-                    requirement->relation, requirement->arity,
-                    requirement->semantic_id);
-                goto done;
-            }
-        } else {
+    for (size_t index = 0u; index < decoded.requirement_count; index++) {
+        const CettaGsltProviderRequirementV1 *actual = &decoded.requirements[index];
+        const CettaGsltProviderRequirementV1 *expected = &catalog->requirements[index];
+        if (actual->arity != expected->arity ||
+            strcmp(actual->relation, expected->relation) != 0 ||
+            strcmp(actual->semantic_id, expected->semantic_id) != 0) {
             provider_error(error, error_size,
-                           "provider catalog contains an unknown field");
+                           "provider catalog descriptor differs at declaration %zu", index);
             goto done;
         }
     }
-    if (!name || !language || requirement_index != catalog->requirement_count ||
-        strcmp(name, catalog->name) != 0 ||
-        strcmp(language, catalog->language_name) != 0 ||
-        ((profile || catalog->profile_name) &&
-         (!profile || !catalog->profile_name ||
-          strcmp(profile, catalog->profile_name) != 0))) {
-        provider_error(
-            error, error_size,
-            "provider catalog descriptor differs from authored catalog");
-        goto done;
-    }
     valid = true;
-
 done:
     free(forms);
     arena_free(&arena);
     free(source);
     return valid;
+}
+
+bool cetta_gslt_provider_catalog_from_source_v1(
+    Arena *arena, const uint8_t *source, size_t source_length,
+    const char *source_name, const char *language_manifest_sha256,
+    const char *generator_sha256, CettaGsltProviderCatalogV1 *catalog,
+    char *error, size_t error_size) {
+    if (!arena || !catalog || !source || source_length == 0u ||
+        source_length == SIZE_MAX || memchr(source, 0, source_length) ||
+        !text_present(source_name) || !sha256_present(language_manifest_sha256) ||
+        !sha256_present(generator_sha256))
+        return provider_error(error, error_size, "catalog construction input is incomplete");
+    memset(catalog, 0, sizeof(*catalog));
+    char *bytes = arena_alloc(arena, source_length + 1u);
+    memcpy(bytes, source, source_length);
+    bytes[source_length] = '\0';
+    Atom **forms = NULL;
+    int count = parse_metta_text(bytes, arena, &forms);
+    CettaGsltProviderCatalogV1 decoded = {0};
+    bool ok = count == 1 && forms &&
+        provider_catalog_decode_value(arena, forms[0], &decoded, error, error_size);
+    free(forms);
+    if (!ok)
+        return provider_error(error, error_size, "cannot decode provider catalog source");
+    char digest[65];
+    cetta_native_sha256_hex(source, source_length, digest);
+    decoded.source_bytes = (const uint8_t *)bytes;
+    decoded.source_length = source_length;
+    decoded.source_name = arena_strdup(arena, source_name);
+    decoded.source_sha256 = arena_strdup(arena, digest);
+    decoded.language_manifest_sha256 = arena_strdup(arena, language_manifest_sha256);
+    decoded.generator_sha256 = arena_strdup(arena, generator_sha256);
+    /* Symbol atoms borrow intern-table storage. The constructed descriptor
+     * instead owns every exposed string in the caller's arena. */
+    decoded.name = arena_strdup(arena, decoded.name);
+    decoded.language_name = arena_strdup(arena, decoded.language_name);
+    if (decoded.profile_name)
+        decoded.profile_name = arena_strdup(arena, decoded.profile_name);
+    CettaGsltProviderRequirementV1 *requirements =
+        (CettaGsltProviderRequirementV1 *)decoded.requirements;
+    for (size_t index = 0; index < decoded.requirement_count; index++) {
+        requirements[index].relation = arena_strdup(arena, requirements[index].relation);
+        requirements[index].semantic_id = arena_strdup(arena, requirements[index].semantic_id);
+    }
+    if (!cetta_gslt_provider_catalog_validate_v1(&decoded, error, error_size))
+        return false;
+    *catalog = decoded;
+    return true;
 }
 
 bool cetta_gslt_provider_registry_authorize_v1(

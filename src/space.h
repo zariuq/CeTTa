@@ -28,6 +28,17 @@ typedef struct {
     uint32_t count;
 } DiscSymHashTable;
 
+typedef struct {
+    int64_t key;
+    struct DiscNode *child;
+} DiscIntBranch;
+
+typedef struct {
+    DiscIntBranch *entries;
+    uint32_t mask;
+    uint32_t count;
+} DiscIntHashTable;
+
 typedef struct DiscNode {
     /* Symbol branches: name → child */
     DiscSymBranch *sym;
@@ -40,8 +51,10 @@ typedef struct DiscNode {
     struct { CettaExprLen arity; struct DiscNode *child; } *expr;
     uint32_t nexpr, cexpr;
     /* Grounded int branches */
-    struct { int64_t val; struct DiscNode *child; } *ints;
+    DiscIntBranch *ints;
     uint32_t nints, cints;
+    DiscIntHashTable int_ht;
+    bool ints_hashed;
     /* Leaf data: indices of equations that match this path */
     CettaIndex *leaves;
     CettaIndex nleaves, cleaves;
@@ -52,6 +65,11 @@ void disc_node_free(DiscNode *n);
 void disc_insert(DiscNode *root, Atom *lhs, CettaIndex eq_idx);
 bool disc_insert_id(DiscNode *root, const TermUniverse *universe,
                     AtomId atom_id, CettaIndex eq_idx);
+/* Transport every retained leaf coordinate through one validated stable
+ * occurrence contraction.  Returns the number of removed leaves. */
+CettaCount disc_transport_stable_coordinates(
+    DiscNode *root, const CettaIndex *source_to_target,
+    CettaCount source_len);
 /* Collect all matching equation indices into result array */
 void disc_lookup(DiscNode *root, Atom *query, CettaIndex **out,
                  CettaIndex *nout, CettaIndex *cout);
@@ -176,6 +194,16 @@ typedef struct Space {
        reviving cached state from a freed Space at the same address. */
     uint64_t instance_id;
     uint64_t revision;
+    /* Revision of the ordered equation-occurrence projection only.  Data-only
+       mutations leave this coordinate unchanged; mutations whose projection
+       effect is opaque advance it conservatively. */
+    uint64_t equation_revision;
+    /* Process-wide unique prefix stamp, refreshed at initialization and when
+       a publication may rewrite an already visible prefix.  Append-only
+       publications preserve it.  An overlay folds the stamps of its actual
+       base chain into projection currency, so unrelated Spaces cannot
+       invalidate its equation view. */
+    uint64_t prefix_epoch;
     /* Space engine state is explicit so native, PathMap, and MORK lanes can
        share one runtime seam without confusing storage with execution. */
     SpaceMatchBackend match_backend;
@@ -192,6 +220,7 @@ void space_init_with_universe(Space *s, TermUniverse *universe);
 void space_init_overlay(Space *s, const Space *base);
 void space_init(Space *s);
 void space_free(Space *s);
+void space_execution_analysis_cache_free_for_current_thread(void);
 Atom *space_store_atom(Space *s, Arena *fallback, Atom *atom);
 void space_add(Space *s, Atom *atom);
 void space_add_atom_id(Space *s, AtomId atom_id);
@@ -235,6 +264,9 @@ bool space_length_u32_checked(const Space *s, uint32_t *out_len);
 static inline uint64_t space_revision(const Space *s) {
     return s ? s->revision : 0;
 }
+static inline uint64_t space_equation_revision(const Space *s) {
+    return s ? s->equation_revision : 0;
+}
 static inline uint64_t space_instance_id(const Space *s) {
     return s ? s->instance_id : 0;
 }
@@ -257,6 +289,19 @@ typedef struct {
     uint64_t revision;
 } SpaceReadToken;
 
+/* Lifetime-qualified identity of the ordered equation-occurrence projection.
+   This token deliberately ignores data-only Space mutations. */
+typedef struct {
+    const Space *space;
+    uint64_t instance_id;
+    uint64_t equation_revision;
+    /* Overlays read a live base whose mutations do not advance the overlay's
+       own revision.  Ordinary spaces leave this dependency empty; an overlay
+       records the newest state stamp in its actual base chain. */
+    const Space *projection_dependency;
+    uint64_t projection_dependency_epoch;
+} SpaceEquationToken;
+
 typedef struct {
     SpaceReadToken read;
     CettaIndex logical_index; /* captured ordering/occurrence key */
@@ -278,6 +323,10 @@ bool space_read_token_is_current(SpaceReadToken token);
  * pointer retained by a stale token. */
 bool space_read_token_matches_live_space(SpaceReadToken token,
                                          const Space *live_space);
+SpaceEquationToken space_equation_token(const Space *s);
+bool space_equation_token_is_current(SpaceEquationToken token);
+bool space_equation_token_matches_live_space(
+    SpaceEquationToken token, const Space *live_space);
 bool space_equation_occurrence_resolve(SpaceEquationOccurrenceId id,
                                        SpaceEquationOccurrence *out);
 
@@ -501,6 +550,13 @@ bool space_remove_atom_id(Space *s, AtomId atom_id);
 bool space_remove_atom_ids_batch(Space *s, const AtomId *atom_ids,
                                  CettaCount atom_count,
                                  CettaCount *out_removed);
+
+/* Apply one stable contraction to the current logical occurrence sequence.
+ * A nonzero mask entry removes that exact occurrence; every retained
+ * occurrence preserves its prior relative order and multiplicity. */
+bool space_remove_occurrence_mask_stable(
+    Space *s, const uint8_t *remove_mask, CettaCount mask_len,
+    CettaCount *out_removed);
 
 /* ── Match Indexing ─────────────────────────────────────────────────────── */
 

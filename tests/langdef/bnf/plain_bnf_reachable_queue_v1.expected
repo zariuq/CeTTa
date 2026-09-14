@@ -1,0 +1,4 @@
+FifoDiscoveryOrderPreservedV1
+(gslt:result:BNFReachableReverseV1:110 (BNFNamesConsV1 a (BNFNamesConsV1 a (BNFNamesConsV1 b BNFNamesNilV1))))
+(gslt:result:BNFReachableReverseV1:110 (BNFNamesConsV1 c (BNFNamesConsV1 a (BNFNamesConsV1 b BNFNamesNilV1))))
+(gslt:result:BNFReachableReverseV1:110 (BNFNamesConsV1 b BNFNamesNilV1))

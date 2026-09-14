@@ -1,6 +1,7 @@
 #include "language_def_parser_pack_v1.h"
 
 #include "finite_horn_ground_term_v1.h"
+#include "deterministic_equation_plan_v1.h"
 #include "lib_parse_native_grammar.h"
 #include "native_sha256.h"
 
@@ -23,9 +24,6 @@ typedef struct {
     Atom **classes;
     size_t class_len;
     size_t class_cap;
-    PPABIV1DerivationInput *evidence;
-    size_t evidence_len;
-    size_t evidence_cap;
 } LdppTermsV1;
 
 typedef struct {
@@ -280,9 +278,11 @@ static bool ldpp_decode_point_list(CettaLdLexicalClassV1 *klass,
     if (!ldpp_list_len(cursor, &len, work, status, error, error_size))
         return false;
     if (len == 0u) {
+        if (klass->kind == CETTA_LD_LEXICAL_EXCEPT_V1)
+            return true;
         if (status) *status = CETTA_LD_PARSER_PACK_V1_MALFORMED_PROFILE;
         return ldpp_error(error, error_size,
-                          "lexical scalar class must not be empty");
+                          "positive lexical scalar class must not be empty");
     }
     klass->points = (uint32_t *)calloc(len, sizeof(*klass->points));
     if (!klass->points) {
@@ -381,7 +381,7 @@ bool cetta_ld_parser_profile_v1_decode(
     if (error_buf && error_buf_size > 0u) error_buf[0] = '\0';
     if (status) *status = CETTA_LD_PARSER_PACK_V1_BAD_ARGUMENT;
     if (!out || !document || !document->root || work_limit == 0u ||
-        !ldpp_digest_valid(document->source_sha256)) {
+        !ldpp_digest_valid(document->authority_sha256)) {
         ldpp_error(error_buf, error_buf_size,
                    "bad parser-profile decode arguments");
         goto done;
@@ -411,17 +411,22 @@ bool cetta_ld_parser_profile_v1_decode(
                        error_buf, error_buf_size)) {
         goto done;
     }
-    if (candidate.class_len == 0u || candidate.state_len == 0u) {
+    if ((candidate.class_len == 0u) != (candidate.state_len == 0u)) {
         if (status) *status = CETTA_LD_PARSER_PACK_V1_MALFORMED_PROFILE;
         ldpp_error(error_buf, error_buf_size,
-                   "parser profile requires classes and lexical states");
+                   "parser profile lexical classes and states must either both be empty or both be present");
         goto done;
     }
-    candidate.classes = (CettaLdLexicalClassV1 *)calloc(
-        candidate.class_len, sizeof(*candidate.classes));
-    candidate.states = (CettaLdLexicalStateV1 *)calloc(
-        candidate.state_len, sizeof(*candidate.states));
-    if (!candidate.classes || !candidate.states) {
+    candidate.classes = candidate.class_len == 0u
+        ? NULL
+        : (CettaLdLexicalClassV1 *)calloc(
+            candidate.class_len, sizeof(*candidate.classes));
+    candidate.states = candidate.state_len == 0u
+        ? NULL
+        : (CettaLdLexicalStateV1 *)calloc(
+            candidate.state_len, sizeof(*candidate.states));
+    if ((candidate.class_len > 0u && !candidate.classes) ||
+        (candidate.state_len > 0u && !candidate.states)) {
         if (status) *status = CETTA_LD_PARSER_PACK_V1_ALLOCATION_FAILURE;
         ldpp_error(error_buf, error_buf_size,
                    "out of memory decoding parser profile");
@@ -472,7 +477,8 @@ bool cetta_ld_parser_profile_v1_decode(
                              error_buf, error_buf_size)) {
         goto done;
     }
-    (void)memcpy(candidate.source_sha256, document->source_sha256, 65u);
+    (void)memcpy(
+        candidate.authority_sha256, document->authority_sha256, 65u);
     cetta_ld_parser_profile_v1_free(out);
     *out = candidate;
     memset(&candidate, 0, sizeof(candidate));
@@ -505,7 +511,6 @@ static void ldpp_terms_free(LdppTermsV1 *terms) {
     if (!terms) return;
     free(terms->productions);
     free(terms->classes);
-    free(terms->evidence);
     arena_free(&terms->arena);
     memset(terms, 0, sizeof(*terms));
 }
@@ -555,115 +560,28 @@ static Atom *ldpp_binary(Arena *arena, const char *head,
     return ldpp_app(arena, head, 2u, arguments);
 }
 
-static Atom *ldpp_cp(Arena *arena, uint32_t scalar) {
-    return ldpp_unary(arena, "cp", atom_int(arena, (int64_t)scalar));
-}
+/* Exact source bytes are embedded data, not generated compiler machine code. */
+extern const uint8_t cetta_ldpp_compiler_v1_source[];
+extern const size_t cetta_ldpp_compiler_v1_source_len;
 
-static Atom *ldpp_state(Arena *arena, const CettaLdTextV1 *sort) {
-    char *text = ldpp_text_cstring(sort);
+static Atom *ldpp_name(Arena *arena, const CettaLdTextV1 *text,
+    CettaLdParserPackV1Status *status, char *error, size_t error_size) {
+    char *name;
     Atom *result;
-    if (!text) return NULL;
-    result = ldpp_unary(arena, "pp-def", atom_string(arena, text));
-    free(text);
-    return result;
-}
-
-static Atom *ldpp_class(Arena *arena, const CettaLdTextV1 *name) {
-    char *text = ldpp_text_cstring(name);
-    Atom *result;
-    if (!text) return NULL;
-    result = ldpp_unary(arena, "pp-class", atom_string(arena, text));
-    free(text);
-    return result;
-}
-
-static Atom *ldpp_label(Arena *arena, Atom *state,
-                        const CettaLdTextV1 *label) {
-    char *text = ldpp_text_cstring(label);
-    Atom *result;
-    if (!text) return NULL;
-    result = ldpp_binary(arena, "pp-label", state,
-                         atom_string(arena, text));
-    free(text);
-    return result;
-}
-
-static Atom *ldpp_action_node(Arena *arena,
-                              const CettaLdTextV1 *label,
-                              const uint32_t *slots,
-                              uint32_t slot_len) {
-    Atom *arguments = atom_symbol(arena, "pa-nil");
-    char *label_text = ldpp_text_cstring(label);
-    uint32_t cursor;
-    if (!arguments || !label_text) {
-        free(label_text);
+    if (!text || (text->len && (!text->bytes || memchr(text->bytes, 0, text->len)))) {
+        if (status) *status = CETTA_LD_PARSER_PACK_V1_OUTSIDE_FRAGMENT;
+        ldpp_error(error, error_size, "parser names must be representable without embedded NUL");
         return NULL;
     }
-    for (cursor = slot_len; cursor > 0u; cursor--) {
-        uint32_t slot = slots[cursor - 1u];
-        Atom *index = atom_symbol(arena, "q-zero");
-        uint32_t step;
-        for (step = 0u; step < slot; step++)
-            index = ldpp_unary(arena, "q-succ", index);
-        arguments = ldpp_binary(
-            arena, "pa-cons", ldpp_unary(arena, "pa-slot", index), arguments);
+    name = ldpp_text_cstring(text);
+    if (!name) {
+        if (status) *status = CETTA_LD_PARSER_PACK_V1_ALLOCATION_FAILURE;
+        ldpp_error(error, error_size, "cannot allocate compiler name");
+        return NULL;
     }
-    arguments = ldpp_binary(
-        arena, "pa-cons",
-        ldpp_unary(arena, "pa-const", atom_string(arena, label_text)),
-        arguments);
-    free(label_text);
-    return ldpp_binary(arena, "pa-apply",
-                       atom_symbol(arena, "CstRuleV1"), arguments);
-}
-
-static Atom *ldpp_action_lexical(Arena *arena,
-                                 const CettaLdTextV1 *label) {
-    uint32_t slot = 0u;
-    return ldpp_action_node(arena, label, &slot, 1u);
-}
-
-static Atom *ldpp_production(Arena *arena, Atom *label, Atom *state,
-                             Atom *items, Atom *action) {
-    Atom *arguments[4] = {label, state, items, action};
-    return ldpp_app(arena, "pp-production", 4u, arguments);
-}
-
-static bool ldpp_evidence_push(LdppTermsV1 *terms,
-                               PPABIV1EvidenceKind kind,
-                               Atom *artifact) {
-    PPABIV1DerivationInput *next;
-    size_t next_cap;
-    const char *relation = kind == PPABI_V1_EVIDENCE_PRODUCTION
-        ? "compile-pack-production" : "compile-pack-class-clause";
-    Atom *answer_arguments[2];
-    Atom *cert_arguments[2];
-    if (terms->evidence_len == terms->evidence_cap) {
-        next_cap = terms->evidence_cap ? terms->evidence_cap * 2u : 32u;
-        if (next_cap < terms->evidence_cap ||
-            next_cap > SIZE_MAX / sizeof(*terms->evidence)) {
-            return false;
-        }
-        next = (PPABIV1DerivationInput *)realloc(
-            terms->evidence, next_cap * sizeof(*terms->evidence));
-        if (!next) return false;
-        terms->evidence = next;
-        terms->evidence_cap = next_cap;
-    }
-    answer_arguments[0] = atom_symbol(&terms->arena,
-                                      "LanguageDefParserPackV1");
-    answer_arguments[1] = artifact;
-    cert_arguments[0] = atom_symbol(&terms->arena,
-                                    "language-def-parser-pack-v1");
-    cert_arguments[1] = atom_expr(&terms->arena, NULL, 0u);
-    terms->evidence[terms->evidence_len++] = (PPABIV1DerivationInput){
-        .kind = kind,
-        .artifact = artifact,
-        .answer = ldpp_app(&terms->arena, relation, 2u, answer_arguments),
-        .certificate = ldpp_app(&terms->arena, "cert", 2u, cert_arguments),
-    };
-    return terms->evidence[terms->evidence_len - 1u].answer &&
-        terms->evidence[terms->evidence_len - 1u].certificate;
+    result = atom_string(arena, name);
+    free(name);
+    return result;
 }
 
 static const CettaLdTypeDeclV1 *ldpp_type_find(
@@ -813,270 +731,188 @@ static bool ldpp_terminal_scalars(const CettaLdTextV1 *text,
     return true;
 }
 
-static bool ldpp_compile_rule(LdppTermsV1 *terms,
-                              const CettaLanguageDefCoreV1 *language,
-                              const CettaLdGrammarRuleV1 *rule,
-                              bool append_eof,
-                              LdppWorkV1 *work,
-                              CettaLdParserPackV1Status *status,
-                              char *error, size_t error_size) {
-    Atom **items = NULL;
-    uint32_t *child_slots = NULL;
-    uint32_t item_len = 0u;
-    uint32_t child_len = 0u;
-    uint32_t item_cap = 0u;
-    uint32_t syntax_index;
-    Atom *item_list;
-    Atom *lhs;
-    Atom *label;
-    Atom *action;
-    Atom *production;
-    bool ok = false;
+/* Scalar-text is a representation view of SyntaxTerminal, not another
+ * grammar IR: all scalar occurrences, including U+0000, remain explicit.
+ * The authored equations alone expand these values into parser items. */
+static Atom *ldpp_literal_view(
+    Arena *arena, const CettaLdTextV1 *text, LdppWorkV1 *work,
+    CettaLdParserPackV1Status *status, char *error, size_t error_size) {
+    uint32_t *scalars = NULL, count = 0u;
+    Atom *result;
+    if (!ldpp_terminal_scalars(text, &scalars, &count, status, error, error_size))
+        return NULL;
+    if (!ldpp_take_work(work, count, status, error, error_size)) {
+        free(scalars);
+        return NULL;
+    }
+    result = ldpp_app(arena, "bnf-v1:text-nil", 0u, NULL);
+    while (count > 0u)
+        result = ldpp_binary(arena, "bnf-v1:text-cons",
+            atom_int(arena, scalars[--count]), result);
+    free(scalars);
+    return result;
+}
 
-    if (!ldpp_rule_fragment_valid(language, rule, status,
-                                  error, error_size)) {
+static Atom *ldpp_rule_view(
+    Arena *arena, const CettaLdGrammarRuleV1 *rule, LdppWorkV1 *work,
+    CettaLdParserPackV1Status *status, char *error, size_t error_size) {
+    Atom *params = atom_symbol(arena, "LNil");
+    Atom *syntax = atom_symbol(arena, "LNil");
+    Atom *arguments[5];
+    uint32_t index;
+    for (index = rule->param_len; index > 0u; index--) {
+        const CettaLdTermParamV1 *parameter = &rule->params[index - 1u];
+        Atom *name = ldpp_name(arena, &parameter->body_name, status, error, error_size);
+        Atom *sort = ldpp_name(arena, &parameter->type.as.base, status, error, error_size);
+        if (!name || !sort ||
+            !ldpp_take_work(work, 1u, status, error, error_size)) return NULL;
+        params = ldpp_binary(arena, "LCons",
+            ldpp_binary(arena, "TermSimple", name,
+                ldpp_unary(arena, "TBase", sort)), params);
+    }
+    for (index = rule->syntax_pattern.len; index > 0u; index--) {
+        const CettaLdSyntaxItemV1 *item = &rule->syntax_pattern.items[index - 1u];
+        Atom *field;
+        if (!ldpp_take_work(work, 1u, status, error, error_size)) return NULL;
+        field = item->kind == CETTA_LD_SYNTAX_TERMINAL_V1
+            ? ldpp_literal_view(arena, &item->as.text, work, status, error, error_size)
+            : ldpp_name(arena, &item->as.text, status, error, error_size);
+        if (!field) return NULL;
+        syntax = ldpp_binary(arena, "LCons",
+            ldpp_unary(arena, item->kind == CETTA_LD_SYNTAX_TERMINAL_V1
+                ? "SyntaxTerminal" : "SyntaxNonTerminal", field), syntax);
+    }
+    arguments[0] = ldpp_name(arena, &rule->label, status, error, error_size);
+    arguments[1] = ldpp_name(arena, &rule->category, status, error, error_size);
+    arguments[2] = params;
+    arguments[3] = syntax;
+    arguments[4] = atom_symbol(arena, "EvalNone");
+    if (!arguments[0] || !arguments[1]) return NULL;
+    return ldpp_app(arena, "GrammarRule", 5u, arguments);
+}
+
+static Atom *ldpp_class_view(
+    Arena *arena, const CettaLdLexicalClassV1 *klass, LdppWorkV1 *work,
+    CettaLdParserPackV1Status *status, char *error, size_t error_size) {
+    Atom *name = ldpp_name(arena, &klass->name, status, error, error_size);
+    Atom *points = atom_symbol(arena, "LNil");
+    uint32_t index;
+    if (!name || !ldpp_take_work(work, klass->point_len, status, error, error_size))
+        return NULL;
+    for (index = klass->point_len; index > 0u; index--)
+        points = ldpp_binary(arena, "LCons",
+            atom_int(arena, klass->points[index - 1u]), points);
+    return ldpp_binary(arena, klass->kind == CETTA_LD_LEXICAL_POINTS_V1
+        ? "LexicalClassPoints" : "LexicalClassExcept", name, points);
+}
+
+static Atom *ldpp_lexical_view(Arena *arena, const CettaLdLexicalStateV1 *state,
+    CettaLdParserPackV1Status *status, char *error, size_t error_size) {
+    Atom *arguments[3] = {
+        ldpp_name(arena, &state->sort, status, error, error_size),
+        ldpp_name(arena, &state->class_name, status, error, error_size),
+        ldpp_name(arena, &state->label, status, error, error_size)
+    };
+    if (!arguments[0] || !arguments[1] || !arguments[2]) return NULL;
+    return ldpp_app(arena, "LexicalState", 3u, arguments);
+}
+
+static CettaDeterministicPrimitiveResultV1 ldpp_primitive(
+    void *context, const char *head, Atom *const *arguments,
+    uint32_t count, Arena *arena, Atom **out, char *error, size_t error_size) {
+    (void)context;
+    if (strcmp(head, "ldpp-v1:text-equal") != 0)
+        return CETTA_DETERMINISTIC_PRIMITIVE_V1_NOT_HANDLED;
+    if (count != 2u || arguments[0]->kind != ATOM_GROUNDED ||
+        arguments[1]->kind != ATOM_GROUNDED ||
+        arguments[0]->ground.gkind != GV_STRING ||
+        arguments[1]->ground.gkind != GV_STRING) {
+        ldpp_error(error, error_size, "compiler text equality requires two strings");
+        return CETTA_DETERMINISTIC_PRIMITIVE_V1_FAULT;
+    }
+    *out = atom_symbol(arena, atom_eq(arguments[0], arguments[1]) ? "True" : "False");
+    return CETTA_DETERMINISTIC_PRIMITIVE_V1_HANDLED;
+}
+
+static bool ldpp_source_run(
+    const CettaDeterministicEquationPlanV1 *plan, LdppTermsV1 *terms,
+    const char *head, Atom *argument, LdppWorkV1 *work, Atom **result,
+    CettaLdParserPackV1Status *status, char *error, size_t error_size) {
+    CettaDeterministicEquationStatusV1 execution_status;
+    Atom *call;
+    uint64_t consumed = 0u;
+    uint32_t remaining;
+    bool ran;
+    if (!argument) {
+        if (status && *status == CETTA_LD_PARSER_PACK_V1_BAD_ARGUMENT)
+            *status = CETTA_LD_PARSER_PACK_V1_ALLOCATION_FAILURE;
+        if (!error || !error_size || !error[0])
+            ldpp_error(error, error_size,
+                "cannot allocate compiler input view");
         return false;
     }
-    child_slots = (uint32_t *)calloc(
-        rule->param_len ? rule->param_len : 1u, sizeof(*child_slots));
-    if (!child_slots) {
+    if (!ldpp_take_work(work, 1u, status, error, error_size))
+        return false;
+    call = ldpp_unary(&terms->arena, head, argument);
+    if (!call) {
         if (status) *status = CETTA_LD_PARSER_PACK_V1_ALLOCATION_FAILURE;
-        return ldpp_error(error, error_size,
-                          "out of memory compiling grammar action");
+        return ldpp_error(error, error_size, "cannot allocate compiler call");
     }
-    for (syntax_index = 0u; syntax_index < rule->syntax_pattern.len;
-         syntax_index++) {
-        const CettaLdSyntaxItemV1 *syntax =
-            &rule->syntax_pattern.items[syntax_index];
-        if (syntax->kind == CETTA_LD_SYNTAX_TERMINAL_V1) {
-            uint32_t *scalars = NULL;
-            uint32_t scalar_len = 0u;
-            uint32_t scalar_index;
-            if (!ldpp_terminal_scalars(&syntax->as.text, &scalars,
-                                       &scalar_len, status,
-                                       error, error_size)) {
-                goto done;
-            }
-            for (scalar_index = 0u; scalar_index < scalar_len; scalar_index++) {
-                Atom **next;
-                if (!ldpp_take_work(work, 1u, status, error, error_size)) {
-                    free(scalars);
-                    goto done;
-                }
-                if (item_len == item_cap) {
-                    uint32_t next_cap = item_cap ? item_cap * 2u : 8u;
-                    if (next_cap < item_cap) {
-                        free(scalars);
-                        if (status) *status = CETTA_LD_PARSER_PACK_V1_RESOURCE_LIMIT;
-                        ldpp_error(error, error_size,
-                                   "grammar production is too wide");
-                        goto done;
-                    }
-                    next = (Atom **)realloc(items,
-                        (size_t)next_cap * sizeof(*items));
-                    if (!next) {
-                        free(scalars);
-                        if (status) *status = CETTA_LD_PARSER_PACK_V1_ALLOCATION_FAILURE;
-                        ldpp_error(error, error_size,
-                                   "out of memory compiling grammar items");
-                        goto done;
-                    }
-                    items = next;
-                    item_cap = next_cap;
-                }
-                items[item_len++] = ldpp_unary(
-                    &terms->arena, "pp-terminal",
-                    ldpp_unary(&terms->arena, "pp-terminal-char",
-                               ldpp_cp(&terms->arena, scalars[scalar_index])));
-            }
-            free(scalars);
-        } else {
-            uint32_t parameter_index;
-            const CettaLdTermParamV1 *parameter =
-                ldpp_param_find(rule, &syntax->as.text, &parameter_index);
-            Atom **next;
-            if (!parameter || !ldpp_take_work(
-                    work, 1u, status, error, error_size)) {
-                goto done;
-            }
-            if (item_len == item_cap) {
-                uint32_t next_cap = item_cap ? item_cap * 2u : 8u;
-                next = (Atom **)realloc(items,
-                    (size_t)next_cap * sizeof(*items));
-                if (!next) {
-                    if (status) *status = CETTA_LD_PARSER_PACK_V1_ALLOCATION_FAILURE;
-                    ldpp_error(error, error_size,
-                               "out of memory compiling nonterminal item");
-                    goto done;
-                }
-                items = next;
-                item_cap = next_cap;
-            }
-            child_slots[child_len++] = item_len;
-            items[item_len++] = ldpp_unary(
-                &terms->arena, "pp-nonterminal",
-                ldpp_state(&terms->arena, &parameter->type.as.base));
-        }
+    remaining = work->limit - work->used;
+    if (remaining == 0u)
+        return ldpp_take_work(work, 1u, status, error, error_size);
+    ran = cetta_deterministic_equation_plan_v1_run_counted(
+            plan, call, ldpp_primitive, NULL, &terms->arena,
+            work->limit, remaining, &consumed, result, &execution_status,
+            error, error_size);
+    if (consumed > remaining) {
+        if (status) *status = CETTA_LD_PARSER_PACK_V1_COMPILER_REJECTED;
+        return ldpp_error(error, error_size, "compiler returned an invalid work count");
     }
-    if (append_eof) {
-        Atom **next;
-        if (!ldpp_take_work(work, 1u, status, error, error_size))
-            goto done;
-        if (item_len == item_cap) {
-            uint32_t next_cap = item_cap ? item_cap * 2u : 8u;
-            next = (Atom **)realloc(items,
-                (size_t)next_cap * sizeof(*items));
-            if (!next) {
-                if (status) *status = CETTA_LD_PARSER_PACK_V1_ALLOCATION_FAILURE;
-                ldpp_error(error, error_size,
-                           "out of memory appending whole-source boundary");
-                goto done;
-            }
-            items = next;
-            item_cap = next_cap;
-        }
-        items[item_len++] = ldpp_unary(
-            &terms->arena, "pp-terminal",
-            atom_symbol(&terms->arena, "pp-terminal-eof"));
-    }
-    item_list = atom_symbol(&terms->arena, "pp-items-nil");
-    while (item_len > 0u) {
-        item_list = ldpp_binary(&terms->arena, "pp-items-cons",
-                                items[item_len - 1u], item_list);
-        item_len--;
-    }
-    lhs = ldpp_state(&terms->arena, &rule->category);
-    label = ldpp_label(&terms->arena, lhs, &rule->label);
-    action = ldpp_action_node(&terms->arena, &rule->label,
-                              child_slots, child_len);
-    production = ldpp_production(&terms->arena, label, lhs,
-                                 item_list, action);
-    if (!production || !ldpp_atom_vec_push(
-            &terms->productions, &terms->production_len,
-            &terms->production_cap, production) ||
-        !ldpp_evidence_push(terms, PPABI_V1_EVIDENCE_PRODUCTION,
-                            production)) {
-        if (status) *status = CETTA_LD_PARSER_PACK_V1_ALLOCATION_FAILURE;
-        ldpp_error(error, error_size,
-                   "out of memory retaining compiled grammar production");
-        goto done;
-    }
-    ok = true;
-
-done:
-    free(items);
-    free(child_slots);
-    return ok;
-}
-
-static const CettaLdLexicalClassV1 *ldpp_class_find(
-    const CettaLdParserProfileV1 *profile,
-    const CettaLdTextV1 *name) {
-    uint32_t index;
-    for (index = 0u; index < profile->class_len; index++) {
-        if (ldpp_text_equal(&profile->classes[index].name, name))
-            return &profile->classes[index];
-    }
-    return NULL;
-}
-
-static Atom *ldpp_points_list(Arena *arena,
-                              const uint32_t *points,
-                              uint32_t point_len) {
-    Atom *list = atom_symbol(arena, "pp-points-nil");
-    while (point_len > 0u) {
-        list = ldpp_binary(arena, "pp-points-cons",
-                           ldpp_cp(arena, points[point_len - 1u]), list);
-        point_len--;
-    }
-    return list;
-}
-
-static bool ldpp_compile_classes(LdppTermsV1 *terms,
-                                 const CettaLdParserProfileV1 *profile,
-                                 LdppWorkV1 *work,
-                                 CettaLdParserPackV1Status *status,
-                                 char *error, size_t error_size) {
-    uint32_t class_index;
-    uint32_t state_index;
-    for (class_index = 0u; class_index < profile->class_len; class_index++) {
-        const CettaLdLexicalClassV1 *klass = &profile->classes[class_index];
-        Atom *identity = ldpp_class(&terms->arena, &klass->name);
-        uint32_t point_index;
-        if (!identity) goto allocation_failure;
-        if (klass->kind == CETTA_LD_LEXICAL_POINTS_V1) {
-            for (point_index = 0u; point_index < klass->point_len;
-                 point_index++) {
-                Atom *clause;
-                if (!ldpp_take_work(work, 1u, status, error, error_size))
-                    return false;
-                clause = ldpp_binary(&terms->arena, "pp-class-point",
-                                     identity,
-                                     ldpp_cp(&terms->arena,
-                                             klass->points[point_index]));
-                if (!clause || !ldpp_atom_vec_push(
-                        &terms->classes, &terms->class_len,
-                        &terms->class_cap, clause) ||
-                    !ldpp_evidence_push(
-                        terms, PPABI_V1_EVIDENCE_CLASS, clause)) {
-                    goto allocation_failure;
-                }
-            }
-        } else {
-            Atom *clause;
-            if (!ldpp_take_work(work, 1u, status, error, error_size))
-                return false;
-            clause = ldpp_binary(
-                &terms->arena, "pp-class-except", identity,
-                ldpp_points_list(&terms->arena, klass->points,
-                                 klass->point_len));
-            if (!clause || !ldpp_atom_vec_push(
-                    &terms->classes, &terms->class_len,
-                    &terms->class_cap, clause) ||
-                !ldpp_evidence_push(
-                    terms, PPABI_V1_EVIDENCE_CLASS, clause)) {
-                goto allocation_failure;
-            }
-        }
-    }
-    for (state_index = 0u; state_index < profile->state_len; state_index++) {
-        const CettaLdLexicalStateV1 *state = &profile->states[state_index];
-        const CettaLdLexicalClassV1 *klass =
-            ldpp_class_find(profile, &state->class_name);
-        Atom *lhs;
-        Atom *label;
-        Atom *matcher;
-        Atom *item;
-        Atom *items;
-        Atom *production;
-        if (!klass || !ldpp_take_work(work, 1u, status,
-                                     error, error_size)) {
-            return false;
-        }
-        lhs = ldpp_state(&terms->arena, &state->sort);
-        label = ldpp_label(&terms->arena, lhs, &state->label);
-        matcher = ldpp_unary(&terms->arena, "pp-terminal-class",
-                             ldpp_class(&terms->arena, &klass->name));
-        item = ldpp_unary(&terms->arena, "pp-terminal", matcher);
-        items = ldpp_binary(&terms->arena, "pp-items-cons", item,
-                            atom_symbol(&terms->arena, "pp-items-nil"));
-        production = ldpp_production(
-            &terms->arena, label, lhs, items,
-            ldpp_action_lexical(&terms->arena, &state->label));
-        if (!production || !ldpp_atom_vec_push(
-                &terms->productions, &terms->production_len,
-                &terms->production_cap, production) ||
-            !ldpp_evidence_push(terms, PPABI_V1_EVIDENCE_PRODUCTION,
-                                production)) {
-            goto allocation_failure;
-        }
+    work->used += (uint32_t)consumed;
+    if (!ran) {
+        if (status) *status = execution_status == CETTA_DETERMINISTIC_EQUATION_V1_RESOURCE_LIMIT
+            ? CETTA_LD_PARSER_PACK_V1_RESOURCE_LIMIT
+            : CETTA_LD_PARSER_PACK_V1_COMPILER_REJECTED;
+        return false;
     }
     return true;
+}
 
-allocation_failure:
-    if (status) *status = CETTA_LD_PARSER_PACK_V1_ALLOCATION_FAILURE;
-    return ldpp_error(error, error_size,
-                      "out of memory compiling lexical ParserPack layer");
+static bool ldpp_retain_production(
+    LdppTermsV1 *terms, Atom *production, CettaLdParserPackV1Status *status,
+    char *error, size_t error_size) {
+    if (!ldpp_atom_vec_push(&terms->productions, &terms->production_len,
+            &terms->production_cap, production)) {
+        if (status) *status = CETTA_LD_PARSER_PACK_V1_ALLOCATION_FAILURE;
+        return ldpp_error(error, error_size, "cannot retain compiler production");
+    }
+    return true;
+}
+
+static bool ldpp_is_app(const Atom *atom, const char *head, uint32_t arity) {
+    return atom && atom->kind == ATOM_EXPR && atom->expr.len == arity + 1u &&
+        atom_is_symbol(atom->expr.elems[0], head);
+}
+
+/* Only decode the returned class stream; class selection is authored. */
+static bool ldpp_collect_classes(
+    LdppTermsV1 *terms, Atom *list, LdppWorkV1 *work,
+    CettaLdParserPackV1Status *status, char *error, size_t error_size) {
+    while (ldpp_is_app(list, "LCons", 2u)) {
+        if (!ldpp_take_work(work, 1u, status, error, error_size)) return false;
+        if (!ldpp_atom_vec_push(&terms->classes, &terms->class_len,
+                &terms->class_cap, list->expr.elems[1])) {
+            if (status) *status = CETTA_LD_PARSER_PACK_V1_ALLOCATION_FAILURE;
+            return ldpp_error(error, error_size, "cannot retain compiler class clause");
+        }
+        list = list->expr.elems[2];
+    }
+    if (!atom_is_symbol(list, "LNil")) {
+        if (status) *status = CETTA_LD_PARSER_PACK_V1_COMPILER_REJECTED;
+        return ldpp_error(error, error_size, "compiler returned a malformed class stream");
+    }
+    return true;
 }
 
 static bool ldpp_profile_sorts_valid(
@@ -1109,11 +945,12 @@ static Atom *ldpp_pack_state(const PPABIV1Pack *pack, Atom *needle) {
     return NULL;
 }
 
-bool cetta_language_def_parser_pack_v1_compile(
+bool cetta_language_def_parser_pack_v1_compile_source(
     CettaLdParserPackV1 *out,
     const CettaLanguageDefCoreV1 *language,
-    const char language_source_sha256[65],
+    const char language_authority_sha256[65],
     const CettaLdParserProfileV1 *profile,
+    const uint8_t *compiler_source, size_t compiler_source_len,
     uint32_t work_limit,
     CettaLdParserPackV1Status *status,
     char *error_buf,
@@ -1121,7 +958,12 @@ bool cetta_language_def_parser_pack_v1_compile(
     CettaLdParserPackV1 candidate;
     LdppTermsV1 terms;
     LdppWorkV1 work = {.used = 0u, .limit = work_limit};
-    PPABIV1ProvenanceInput provenance;
+    CettaDeterministicEquationPlanV1 *plan = NULL;
+    CettaDeterministicEquationStatusV1 plan_status;
+    CettaDeterministicEquationInputV1 source_input = {
+        .bytes = compiler_source, .length = compiler_source_len,
+        .source = "LanguageDefParserCompilerV1"
+    };
     char source_digest[65];
     char environment_digest[65];
     Atom *start_needle = NULL;
@@ -1132,10 +974,11 @@ bool cetta_language_def_parser_pack_v1_compile(
     ldpp_terms_init(&terms);
     if (error_buf && error_buf_size > 0u) error_buf[0] = '\0';
     if (status) *status = CETTA_LD_PARSER_PACK_V1_BAD_ARGUMENT;
-    if (!out || !language || !profile || work_limit == 0u ||
-        !ldpp_digest_valid(language_source_sha256) ||
-        !ldpp_digest_valid(profile->source_sha256) ||
-        language->term_len == 0u || profile->state_len == 0u) {
+    if (!out || !language || !profile || !compiler_source ||
+        compiler_source_len == 0u || work_limit == 0u ||
+        !ldpp_digest_valid(language_authority_sha256) ||
+        !ldpp_digest_valid(profile->authority_sha256) ||
+        language->term_len == 0u) {
         ldpp_error(error_buf, error_buf_size,
                    "bad LanguageDef-to-ParserPack compile arguments");
         goto done;
@@ -1152,23 +995,60 @@ bool cetta_language_def_parser_pack_v1_compile(
                             error_buf, error_buf_size)) {
         goto done;
     }
+    if (!cetta_deterministic_equation_plan_v1_load_inputs(
+            &source_input, 1u, &plan, &plan_status, error_buf, error_buf_size)) {
+        if (status) *status = plan_status == CETTA_DETERMINISTIC_EQUATION_V1_RESOURCE_LIMIT
+            ? CETTA_LD_PARSER_PACK_V1_RESOURCE_LIMIT
+            : CETTA_LD_PARSER_PACK_V1_COMPILER_REJECTED;
+        goto done;
+    }
     for (index = 0u; index < language->term_len; index++) {
-        if (!ldpp_compile_rule(&terms, language, &language->terms[index],
-                               ldpp_text_equal(
-                                   &language->terms[index].category,
-                                   &profile->start_sort),
-                               &work, status, error_buf, error_buf_size)) {
+        Atom *production = NULL;
+        const CettaLdGrammarRuleV1 *rule = &language->terms[index];
+        if (!ldpp_rule_fragment_valid(language, rule, status, error_buf, error_buf_size) ||
+            !ldpp_source_run(plan, &terms, "ldpp-v1:compile-rule",
+                ldpp_rule_view(&terms.arena, rule, &work, status, error_buf, error_buf_size),
+                &work, &production, status, error_buf, error_buf_size) ||
+            !ldpp_retain_production(&terms, production, status,
+                error_buf, error_buf_size)) goto done;
+    }
+    {
+        Atom *entry = NULL;
+        if (!ldpp_source_run(plan, &terms, "ldpp-v1:compile-entry",
+                ldpp_name(&terms.arena, &profile->start_sort,
+                    status, error_buf, error_buf_size), &work, &entry,
+                status, error_buf, error_buf_size)) goto done;
+        if (!ldpp_is_app(entry, "pp-production", 4u)) {
+            if (status) *status = CETTA_LD_PARSER_PACK_V1_COMPILER_REJECTED;
+            ldpp_error(error_buf, error_buf_size, "compiler returned a malformed entry production");
             goto done;
         }
+        if (!ldpp_retain_production(&terms, entry, status,
+                error_buf, error_buf_size)) goto done;
+        start_needle = entry->expr.elems[2];
     }
-    if (!ldpp_compile_classes(&terms, profile, &work, status,
-                              error_buf, error_buf_size)) {
-        goto done;
+    for (index = 0u; index < profile->class_len; index++) {
+        Atom *clauses = NULL;
+        if (!ldpp_source_run(plan, &terms, "ldpp-v1:compile-class",
+                ldpp_class_view(&terms.arena, &profile->classes[index],
+                    &work, status, error_buf, error_buf_size),
+                &work, &clauses, status, error_buf, error_buf_size) ||
+            !ldpp_collect_classes(&terms, clauses, &work, status, error_buf, error_buf_size))
+            goto done;
+    }
+    for (index = 0u; index < profile->state_len; index++) {
+        Atom *production = NULL;
+        if (!ldpp_source_run(plan, &terms, "ldpp-v1:compile-lexical",
+                ldpp_lexical_view(&terms.arena, &profile->states[index],
+                    status, error_buf, error_buf_size),
+                &work, &production, status, error_buf, error_buf_size) ||
+            !ldpp_retain_production(&terms, production, status,
+                error_buf, error_buf_size)) goto done;
     }
     /* ParserPack's ABI is intentionally order-independent and accepts only a
        strict canonical stream.  Authored order and multiplicity remain bound
-       by the LanguageDef source digest; this normalization is solely the
-       target ABI boundary. */
+       in the input structure and distinct production labels. A digest binds
+       source identity; it does not itself prove occurrence correspondence. */
     if (!ldpp_terms_canonicalize(
             terms.productions, terms.production_len,
             status, error_buf, error_buf_size) ||
@@ -1177,32 +1057,26 @@ bool cetta_language_def_parser_pack_v1_compile(
             status, error_buf, error_buf_size)) {
         goto done;
     }
-    ldpp_combine_digests("LanguageDefParserPackV1/source",
-                         language_source_sha256,
-                         profile->source_sha256, "", source_digest);
+    ldpp_combine_digests("LanguageDefParserPackV1/authority",
+                         language_authority_sha256,
+                         profile->authority_sha256, "", source_digest);
     cetta_native_sha256_hex(
-        (const uint8_t *)"LanguageDefParserPackV1/compiler/1",
-        sizeof("LanguageDefParserPackV1/compiler/1") - 1u,
+        compiler_source, compiler_source_len,
         candidate.compiler_sha256);
     cetta_native_sha256_hex(
         (const uint8_t *)"ParserPackABIV1/environment/1",
         sizeof("ParserPackABIV1/environment/1") - 1u,
         environment_digest);
-    provenance = (PPABIV1ProvenanceInput){
-        .source_digest = source_digest,
-        .compiler_digest = candidate.compiler_sha256,
-        .environment_digest = environment_digest,
-        .derivations = terms.evidence,
-        .derivation_len = terms.evidence_len,
-    };
-    if (!ppabi_v1_pack_load(
+    /* Structural admission and source provenance are not proof replay.
+     * This evaluator supplies no derivation certificate. */
+    if (!ppabi_v1_pack_load_structural(
             &candidate.pack, terms.productions, terms.production_len,
-            terms.classes, terms.class_len, &provenance,
+            terms.classes, terms.class_len, source_digest,
+            candidate.compiler_sha256, environment_digest,
             error_buf, error_buf_size)) {
         if (status) *status = CETTA_LD_PARSER_PACK_V1_ABI_REJECTED;
         goto done;
     }
-    start_needle = ldpp_state(&terms.arena, &profile->start_sort);
     candidate.start_state = ldpp_pack_state(&candidate.pack, start_needle);
     if (!candidate.start_state || !ppabi_v1_pack_start_is_closed(
             &candidate.pack, candidate.start_state,
@@ -1210,17 +1084,18 @@ bool cetta_language_def_parser_pack_v1_compile(
         if (status) *status = CETTA_LD_PARSER_PACK_V1_OPEN_GRAMMAR;
         goto done;
     }
-    (void)memcpy(candidate.language_source_sha256,
-                 language_source_sha256, 65u);
-    (void)memcpy(candidate.profile_source_sha256,
-                 profile->source_sha256, 65u);
+    (void)memcpy(candidate.language_authority_sha256,
+                 language_authority_sha256, 65u);
+    (void)memcpy(candidate.profile_authority_sha256,
+                 profile->authority_sha256, 65u);
     ldpp_combine_digests("LanguageDefParserPackV1/binding",
-                         language_source_sha256,
-                         profile->source_sha256,
+                         language_authority_sha256,
+                         profile->authority_sha256,
                          candidate.pack.pack_digest,
                          candidate.binding_sha256);
     candidate.authored_rule_len = language->term_len;
     candidate.lexical_rule_len = profile->state_len;
+    candidate.entry_rule_len = 1u;
     cetta_ld_parser_pack_v1_free(out);
     *out = candidate;
     memset(&candidate, 0, sizeof(candidate));
@@ -1228,9 +1103,23 @@ bool cetta_language_def_parser_pack_v1_compile(
     ok = true;
 
 done:
+    cetta_deterministic_equation_plan_v1_free(plan);
     cetta_ld_parser_pack_v1_free(&candidate);
     ldpp_terms_free(&terms);
     return ok;
+}
+
+bool cetta_language_def_parser_pack_v1_compile(
+    CettaLdParserPackV1 *out,
+    const CettaLanguageDefCoreV1 *language,
+    const char language_authority_sha256[65],
+    const CettaLdParserProfileV1 *profile,
+    uint32_t work_limit, CettaLdParserPackV1Status *status,
+    char *error_buf, size_t error_buf_size) {
+    return cetta_language_def_parser_pack_v1_compile_source(
+        out, language, language_authority_sha256, profile,
+        cetta_ldpp_compiler_v1_source, cetta_ldpp_compiler_v1_source_len,
+        work_limit, status, error_buf, error_buf_size);
 }
 
 const char *cetta_ld_parser_pack_v1_status_name(
@@ -1245,6 +1134,7 @@ const char *cetta_ld_parser_pack_v1_status_name(
     case CETTA_LD_PARSER_PACK_V1_INVALID_UTF8: return "invalid-utf8";
     case CETTA_LD_PARSER_PACK_V1_OPEN_GRAMMAR: return "open-grammar";
     case CETTA_LD_PARSER_PACK_V1_ABI_REJECTED: return "abi-rejected";
+    case CETTA_LD_PARSER_PACK_V1_COMPILER_REJECTED: return "compiler-rejected";
     }
     return "unknown";
 }

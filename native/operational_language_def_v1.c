@@ -102,31 +102,47 @@ static CettaOpLangV1SExpr *op_lang_node_alloc(CettaOpLangV1SExprKind kind,
 }
 
 static void op_lang_sexpr_free(CettaOpLangV1SExpr *expression) {
-    uint32_t index;
+    CettaOpLangV1SExpr *parent = NULL;
 
-    if (!expression)
-        return;
-    switch (expression->kind) {
-    case CETTA_OP_LANG_V1_SEXPR_SYMBOL:
-        free(expression->as.symbol);
-        break;
-    case CETTA_OP_LANG_V1_SEXPR_STRING:
-        free(expression->as.string.bytes);
-        break;
-    case CETTA_OP_LANG_V1_SEXPR_NATURAL:
-        free(expression->as.natural);
-        break;
-    case CETTA_OP_LANG_V1_SEXPR_APPLICATION:
-        free(expression->as.application.head);
-        for (index = 0u;
-             index < expression->as.application.argument_len;
-             index++) {
-            op_lang_sexpr_free(expression->as.application.arguments[index]);
+    /* These are uniquely owned trees. A consumed child slot can hold the
+     * previous parent until that child has been freed. This walks postorder
+     * without recursion or an allocation that could fail during cleanup.
+     * argument_len counts only the children still waiting to be released. */
+    while (expression || parent) {
+        if (expression &&
+            expression->kind == CETTA_OP_LANG_V1_SEXPR_APPLICATION &&
+            expression->as.application.argument_len > 0u) {
+            uint32_t index = --expression->as.application.argument_len;
+            CettaOpLangV1SExpr *child =
+                expression->as.application.arguments[index];
+            expression->as.application.arguments[index] = parent;
+            parent = expression;
+            expression = child;
+            continue;
         }
-        free(expression->as.application.arguments);
-        break;
+        if (expression) {
+            switch (expression->kind) {
+            case CETTA_OP_LANG_V1_SEXPR_SYMBOL:
+                free(expression->as.symbol);
+                break;
+            case CETTA_OP_LANG_V1_SEXPR_STRING:
+                free(expression->as.string.bytes);
+                break;
+            case CETTA_OP_LANG_V1_SEXPR_NATURAL:
+                free(expression->as.natural);
+                break;
+            case CETTA_OP_LANG_V1_SEXPR_APPLICATION:
+                free(expression->as.application.head);
+                free(expression->as.application.arguments);
+                break;
+            }
+            free(expression);
+        }
+        expression = parent;
+        if (parent)
+            parent = parent->as.application.arguments[
+                parent->as.application.argument_len];
     }
-    free(expression);
 }
 
 static void op_lang_node_vector_free(OpLangNodeVector *vector) {
@@ -578,6 +594,7 @@ static bool op_lang_string_token_right(
 static bool op_lang_token_lattice_build(
     OpLangTokenLattice *tokens,
     const CettaLpNativeUtf8ScalarView *view,
+    bool source_comments,
     char *error_buf,
     size_t error_buf_size) {
     static const uint32_t terminal_ids[] = {
@@ -643,6 +660,13 @@ static bool op_lang_token_lattice_build(
                 position++;
                 continue;
             }
+        } else if (source_comments && scalar == (uint32_t)';') {
+            terminal_id = OP_LANG_TM_SPACE;
+            while (right < view->scalar_len) {
+                uint32_t next = cetta_lp_native_utf8_scalar_view_scalar_at(view, right);
+                if (next == (uint32_t)'\n' || next == (uint32_t)'\r') break;
+                right++;
+            }
         } else if (op_lang_scalar_is_space(scalar)) {
             terminal_id = OP_LANG_TM_SPACE;
             while (right < view->scalar_len &&
@@ -654,6 +678,8 @@ static bool op_lang_token_lattice_build(
         } else if (op_lang_scalar_is_symbol(scalar)) {
             terminal_id = OP_LANG_TM_SYMBOL;
             while (right < view->scalar_len &&
+                   !(source_comments && cetta_lp_native_utf8_scalar_view_scalar_at(
+                       view, right) == (uint32_t)';') &&
                    op_lang_scalar_is_symbol(
                        cetta_lp_native_utf8_scalar_view_scalar_at(
                            view, right))) {
@@ -1391,12 +1417,13 @@ malformed:
     return false;
 }
 
-bool cetta_op_lang_v1_parse_document_bytes(
+static bool op_lang_parse_document_bytes(
     CettaOpLangV1Document *out,
     const uint8_t *bytes,
     size_t byte_len,
     uint32_t gll_work_limit,
     uint32_t glr_work_limit,
+    bool source_comments,
     CettaOpLangV1Status *status,
     char *error_buf,
     size_t error_buf_size) {
@@ -1455,7 +1482,7 @@ bool cetta_op_lang_v1_parse_document_bytes(
         goto done;
     }
     if (!op_lang_token_lattice_build(
-            &token_lattice, &scalar_buffer.view,
+            &token_lattice, &scalar_buffer.view, source_comments,
             parser_error, sizeof(parser_error))) {
         op_lang_set_status(status, CETTA_OP_LANG_V1_INTERNAL_FAILURE);
         op_lang_set_error(error_buf, error_buf_size, "%s",
@@ -1519,6 +1546,8 @@ bool cetta_op_lang_v1_parse_document_bytes(
     candidate.root = gll_root;
     gll_root = NULL;
     cetta_native_sha256_hex(bytes, byte_len, candidate.source_sha256);
+    memcpy(candidate.authority_sha256, candidate.source_sha256,
+           sizeof(candidate.authority_sha256));
     cetta_op_lang_v1_document_free(out);
     *out = candidate;
     memset(&candidate, 0, sizeof(candidate));
@@ -1537,6 +1566,22 @@ done:
     cetta_lp_native_gll_prepared_free(&gll);
     cetta_lp_native_grammar_free(&grammar);
     return ok;
+}
+
+bool cetta_op_lang_v1_parse_document_bytes(
+    CettaOpLangV1Document *out, const uint8_t *bytes, size_t byte_len,
+    uint32_t gll_work_limit, uint32_t glr_work_limit,
+    CettaOpLangV1Status *status, char *error_buf, size_t error_buf_size) {
+    return op_lang_parse_document_bytes(out, bytes, byte_len, gll_work_limit,
+        glr_work_limit, false, status, error_buf, error_buf_size);
+}
+
+bool cetta_op_lang_v1_parse_commented_document_bytes(
+    CettaOpLangV1Document *out, const uint8_t *bytes, size_t byte_len,
+    uint32_t gll_work_limit, uint32_t glr_work_limit,
+    CettaOpLangV1Status *status, char *error_buf, size_t error_buf_size) {
+    return op_lang_parse_document_bytes(out, bytes, byte_len, gll_work_limit,
+        glr_work_limit, true, status, error_buf, error_buf_size);
 }
 
 static bool op_lang_decode_document(
@@ -1558,6 +1603,8 @@ static bool op_lang_decode_document(
     document->root = NULL;
     memcpy(candidate.source_sha256, document->source_sha256,
            sizeof(candidate.source_sha256));
+    memcpy(candidate.authority_sha256, document->authority_sha256,
+           sizeof(candidate.authority_sha256));
     candidate.gll = document->gll;
     candidate.glr = document->glr;
     if (!op_lang_decode_envelope(
@@ -1600,6 +1647,36 @@ bool cetta_op_lang_v1_parse_bytes(
         ok = op_lang_decode_document(
             out, &document, status, error_buf, error_buf_size);
     }
+    cetta_op_lang_v1_document_free(&document);
+    return ok;
+}
+
+bool cetta_op_lang_v1_adopt_structured_root(
+    CettaOperationalLanguageDefV1 *out,
+    CettaOpLangV1SExpr *root,
+    const char authority_sha256[65],
+    CettaOpLangV1Status *status,
+    char *error_buf,
+    size_t error_buf_size) {
+    CettaOpLangV1Document document;
+    bool ok;
+
+    if (error_buf && error_buf_size > 0u)
+        error_buf[0] = '\0';
+    if (!out || !root || !authority_sha256 ||
+        strlen(authority_sha256) != 64u ||
+        strspn(authority_sha256, "0123456789abcdef") != 64u) {
+        op_lang_sexpr_free(root);
+        op_lang_set_status(status, CETTA_OP_LANG_V1_BAD_ARGUMENT);
+        op_lang_set_error(error_buf, error_buf_size,
+                          "bad structured LanguageDef root");
+        return false;
+    }
+    cetta_op_lang_v1_document_init(&document);
+    document.root = root;
+    memcpy(document.authority_sha256, authority_sha256, 65u);
+    ok = op_lang_decode_document(
+        out, &document, status, error_buf, error_buf_size);
     cetta_op_lang_v1_document_free(&document);
     return ok;
 }

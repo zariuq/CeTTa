@@ -1,0 +1,11 @@
+true
+(Box 5 (Keep tag))
+(Box 2 same)
+(Box 2 same)
+(Out 4 (mp ax1 ax2) T)
+(Exist 3 $V0 $V0)
+(Nested 3 (Inner 4))
+(Box left (Keep tag))
+(Box right (Keep tag))
+(Box true)
+1

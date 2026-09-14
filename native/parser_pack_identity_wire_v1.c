@@ -11,6 +11,16 @@ typedef struct {
     size_t capacity;
 } CettaPniV1Writer;
 
+typedef enum {
+    CETTA_PNI_V1_STATE_LANGUAGE = 0,
+    CETTA_PNI_V1_STATE_ENTRY = 1
+} CettaPniV1StateKind;
+
+typedef enum {
+    CETTA_PNI_V1_ACTION_CST_RULE = 0,
+    CETTA_PNI_V1_ACTION_PROJECT_SLOT = 1
+} CettaPniV1ActionKind;
+
 static bool pni_v1_error(char *error_buf, size_t error_buf_size,
                          const char *format, ...) {
     va_list args;
@@ -103,6 +113,30 @@ static const char *pni_v1_named_identity(const Atom *atom,
     return pni_v1_ground_string(atom->expr.elems[1]);
 }
 
+static bool pni_v1_state_shape(
+    const Atom *atom,
+    CettaPniV1StateKind *kind_out,
+    const char **sort_out) {
+    const char *sort;
+    if (!kind_out || !sort_out)
+        return false;
+    sort = pni_v1_named_identity(atom, "pp-def");
+    if (sort && sort[0] != '\0') {
+        *kind_out = CETTA_PNI_V1_STATE_LANGUAGE;
+        *sort_out = sort;
+        return true;
+    }
+    if (pni_v1_expr_head(atom, "pp-entry", 1u)) {
+        sort = pni_v1_named_identity(atom->expr.elems[1], "pp-def");
+        if (sort && sort[0] != '\0') {
+            *kind_out = CETTA_PNI_V1_STATE_ENTRY;
+            *sort_out = sort;
+            return true;
+        }
+    }
+    return false;
+}
+
 static bool pni_v1_qindex(const Atom *atom, uint32_t *out) {
     uint32_t value = 0u;
     if (!out)
@@ -156,9 +190,12 @@ static bool pni_v1_put_matcher(CettaPniV1Writer *writer,
         pni_v1_put_text(writer, class_name);
 }
 
-static bool pni_v1_action_slots(const Atom *action, const char *label,
-                                uint32_t arity, uint32_t **slots_out,
-                                uint32_t *slot_len_out) {
+static bool pni_v1_cst_action_slots(
+    const Atom *action,
+    const char *label,
+    uint32_t arity,
+    uint32_t **slots_out,
+    uint32_t *slot_len_out) {
     const Atom *list;
     const Atom *constant;
     uint32_t *slots = NULL;
@@ -218,9 +255,42 @@ fail:
     return false;
 }
 
+static bool pni_v1_action_shape(
+    const Atom *action,
+    const char *label,
+    uint32_t arity,
+    CettaPniV1ActionKind *kind_out,
+    uint32_t **slots_out,
+    uint32_t *slot_len_out) {
+    uint32_t slot;
+    uint32_t *slots;
+    if (!kind_out || !slots_out || !slot_len_out)
+        return false;
+    if (pni_v1_cst_action_slots(
+            action, label, arity, slots_out, slot_len_out)) {
+        *kind_out = CETTA_PNI_V1_ACTION_CST_RULE;
+        return true;
+    }
+    if (!pni_v1_expr_head(action, "pa-slot", 1u) ||
+        !pni_v1_qindex(action->expr.elems[1], &slot) || slot >= arity) {
+        return false;
+    }
+    slots = (uint32_t *)malloc(sizeof(*slots));
+    if (!slots)
+        return false;
+    slots[0] = slot;
+    *kind_out = CETTA_PNI_V1_ACTION_PROJECT_SLOT;
+    *slots_out = slots;
+    *slot_len_out = 1u;
+    return true;
+}
+
 static bool pni_v1_production_shape(
     const PPABIV1Pack *pack, uint32_t production_index,
-    const char **label_out, const char **sort_out,
+    const char **label_out,
+    CettaPniV1StateKind *state_kind_out,
+    const char **sort_out,
+    CettaPniV1ActionKind *action_kind_out,
     uint32_t **slots_out, uint32_t *slot_len_out) {
     const PPABIV1Production *production;
     const Atom *identity;
@@ -247,9 +317,9 @@ static bool pni_v1_production_shape(
         return false;
     }
     label_text = pni_v1_ground_string(label->expr.elems[2]);
-    sort_text = pni_v1_named_identity(lhs, "pp-def");
+    if (!pni_v1_state_shape(lhs, state_kind_out, &sort_text))
+        return false;
     if (!label_text || label_text[0] == '\0' ||
-        !sort_text || sort_text[0] == '\0' ||
         !atom_eq(identity->expr.elems[4], production->action)) {
         return false;
     }
@@ -282,9 +352,9 @@ static bool pni_v1_production_shape(
         items = items->expr.elems[2];
     }
     if (!atom_is_symbol((Atom *)items, "pp-items-nil") ||
-        !pni_v1_action_slots(production->action, label_text,
-                             production->item_len,
-                             slots_out, slot_len_out)) {
+        !pni_v1_action_shape(
+            production->action, label_text, production->item_len,
+            action_kind_out, slots_out, slot_len_out)) {
         return false;
     }
     *label_out = label_text;
@@ -307,12 +377,14 @@ static bool pni_v1_packet_size(const CettaLdParserPackV1 *compiled,
     if ((pack->state_len > 0u && !pack->states) ||
         (pack->terminal_len > 0u && !pack->terminals) ||
         (pack->production_len > 0u && !pack->productions) ||
-        strlen(compiled->language_source_sha256) != 64u ||
-        strlen(compiled->profile_source_sha256) != 64u ||
+        strlen(compiled->language_authority_sha256) != 64u ||
+        strlen(compiled->profile_authority_sha256) != 64u ||
         strlen(compiled->binding_sha256) != 64u ||
         strlen(pack->pack_digest) != 64u ||
-        !pni_v1_text_size(compiled->language_source_sha256, true, &size) ||
-        !pni_v1_text_size(compiled->profile_source_sha256, true, &size) ||
+        !pni_v1_text_size(
+            compiled->language_authority_sha256, true, &size) ||
+        !pni_v1_text_size(
+            compiled->profile_authority_sha256, true, &size) ||
         !pni_v1_text_size(compiled->binding_sha256, true, &size) ||
         !pni_v1_text_size(pack->pack_digest, true, &size)) {
         return pni_v1_error(error_buf, error_buf_size,
@@ -320,8 +392,11 @@ static bool pni_v1_packet_size(const CettaLdParserPackV1 *compiled,
     }
     for (index = 0u; index < pack->state_len; index++) {
         const PPABIV1State *state = &pack->states[index];
-        const char *sort = pni_v1_named_identity(state->identity, "pp-def");
-        if (state->dense_id != index || !sort || sort[0] == '\0' ||
+        CettaPniV1StateKind state_kind;
+        const char *sort = NULL;
+        if (state->dense_id != index ||
+            !pni_v1_state_shape(state->identity, &state_kind, &sort) ||
+            !pni_v1_add_size(&size, 4u) ||
             !pni_v1_add_size(&size, 4u) ||
             !pni_v1_text_size(sort, true, &size)) {
             return pni_v1_error(error_buf, error_buf_size,
@@ -341,14 +416,19 @@ static bool pni_v1_packet_size(const CettaLdParserPackV1 *compiled,
         const PPABIV1Production *production = &pack->productions[index];
         const char *label = NULL;
         const char *sort = NULL;
+        CettaPniV1StateKind state_kind;
+        CettaPniV1ActionKind action_kind;
         uint32_t *slots = NULL;
         uint32_t slot_len = 0u;
         uint32_t item_index;
         bool valid = pni_v1_production_shape(
-            pack, index, &label, &sort, &slots, &slot_len);
+            pack, index, &label, &state_kind, &sort,
+            &action_kind, &slots, &slot_len);
         if (!valid || !pni_v1_add_size(&size, 4u) ||
             !pni_v1_text_size(label, true, &size) ||
+            !pni_v1_add_size(&size, 4u) ||
             !pni_v1_text_size(sort, true, &size) ||
+            !pni_v1_add_size(&size, 4u) ||
             !pni_v1_add_size(&size, 4u) ||
             !pni_v1_add_size(&size, 4u) ||
             !pni_v1_add_u32_words(&size, slot_len)) {
@@ -367,11 +447,13 @@ static bool pni_v1_packet_size(const CettaLdParserPackV1 *compiled,
                     pni_v1_matcher_size(
                         &pack->terminals[item->dense_id], &size);
             } else if (item->kind == PPABI_V1_ITEM_NONTERMINAL) {
-                const char *item_sort = item->dense_id < pack->state_len
-                    ? pni_v1_named_identity(
-                        pack->states[item->dense_id].identity, "pp-def")
-                    : NULL;
-                valid = item_sort && item_sort[0] != '\0' &&
+                CettaPniV1StateKind item_kind;
+                const char *item_sort = NULL;
+                valid = item->dense_id < pack->state_len &&
+                    pni_v1_state_shape(
+                        pack->states[item->dense_id].identity,
+                        &item_kind, &item_sort) &&
+                    pni_v1_add_size(&size, 4u) &&
                     pni_v1_text_size(item_sort, true, &size);
             } else {
                 valid = false;
@@ -397,9 +479,11 @@ static bool pni_v1_packet_write(const CettaLdParserPackV1 *compiled,
     };
     uint32_t index;
 
-    if (!pni_v1_put(&writer, "PNI1", 4u) ||
-        !pni_v1_put_text(&writer, compiled->language_source_sha256) ||
-        !pni_v1_put_text(&writer, compiled->profile_source_sha256) ||
+    if (!pni_v1_put(&writer, "PNI2", 4u) ||
+        !pni_v1_put_text(
+            &writer, compiled->language_authority_sha256) ||
+        !pni_v1_put_text(
+            &writer, compiled->profile_authority_sha256) ||
         !pni_v1_put_text(&writer, compiled->binding_sha256) ||
         !pni_v1_put_text(&writer, pack->pack_digest) ||
         !pni_v1_put_u32(&writer, pack->state_len) ||
@@ -408,9 +492,12 @@ static bool pni_v1_packet_write(const CettaLdParserPackV1 *compiled,
         return false;
     }
     for (index = 0u; index < pack->state_len; index++) {
-        const char *sort = pni_v1_named_identity(
-            pack->states[index].identity, "pp-def");
-        if (!sort || !pni_v1_put_u32(&writer, index) ||
+        CettaPniV1StateKind state_kind;
+        const char *sort = NULL;
+        if (!pni_v1_state_shape(
+                pack->states[index].identity, &state_kind, &sort) ||
+            !pni_v1_put_u32(&writer, index) ||
+            !pni_v1_put_u32(&writer, (uint32_t)state_kind) ||
             !pni_v1_put_text(&writer, sort)) {
             return false;
         }
@@ -425,13 +512,17 @@ static bool pni_v1_packet_write(const CettaLdParserPackV1 *compiled,
         const PPABIV1Production *production = &pack->productions[index];
         const char *label = NULL;
         const char *sort = NULL;
+        CettaPniV1StateKind state_kind;
+        CettaPniV1ActionKind action_kind;
         uint32_t *slots = NULL;
         uint32_t slot_len = 0u;
         uint32_t item_index;
         if (!pni_v1_production_shape(
-                pack, index, &label, &sort, &slots, &slot_len) ||
+                pack, index, &label, &state_kind, &sort,
+                &action_kind, &slots, &slot_len) ||
             !pni_v1_put_u32(&writer, index) ||
             !pni_v1_put_text(&writer, label) ||
+            !pni_v1_put_u32(&writer, (uint32_t)state_kind) ||
             !pni_v1_put_text(&writer, sort) ||
             !pni_v1_put_u32(&writer, production->item_len)) {
             free(slots);
@@ -450,15 +541,20 @@ static bool pni_v1_packet_write(const CettaLdParserPackV1 *compiled,
                     return false;
                 }
             } else {
-                const char *item_sort = pni_v1_named_identity(
-                    pack->states[item->dense_id].identity, "pp-def");
-                if (!item_sort || !pni_v1_put_text(&writer, item_sort)) {
+                CettaPniV1StateKind item_kind;
+                const char *item_sort = NULL;
+                if (!pni_v1_state_shape(
+                        pack->states[item->dense_id].identity,
+                        &item_kind, &item_sort) ||
+                    !pni_v1_put_u32(&writer, (uint32_t)item_kind) ||
+                    !pni_v1_put_text(&writer, item_sort)) {
                     free(slots);
                     return false;
                 }
             }
         }
-        if (!pni_v1_put_u32(&writer, slot_len)) {
+        if (!pni_v1_put_u32(&writer, (uint32_t)action_kind) ||
+            !pni_v1_put_u32(&writer, slot_len)) {
             free(slots);
             return false;
         }

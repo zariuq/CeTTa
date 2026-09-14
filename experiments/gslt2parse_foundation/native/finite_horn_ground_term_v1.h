@@ -31,4 +31,11 @@ bool fh_ground_term_v1_parse(Arena *arena,
                              char *error,
                              size_t error_cap);
 
+/* Read one complete source form with this codec's literal semantics, allowing
+ * whitespace, comments and noncanonical escape spellings. This is for authored
+ * ground metadata, not canonical wire admission; parse above stays strict. */
+bool fh_ground_term_v1_read_source(Arena *arena, const uint8_t *bytes,
+                                  size_t len, Atom **out,
+                                  char *error, size_t error_cap);
+
 #endif

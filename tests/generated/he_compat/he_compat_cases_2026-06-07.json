@@ -26,12 +26,12 @@
         "recommended_action": "Inspect manually against the official spec and Rust HE output."
       },
       "grounded-numeric-extension": {
-        "kind": "mostly-formal-or-he-extended-extension",
-        "recommended_action": "Keep exact numeric behavior in formal/he-extended unless Rust-compatible behavior is required."
+        "kind": "mostly-formal-or-extended-extension",
+        "recommended_action": "Keep exact numeric behavior in formal/extended unless Rust-compatible behavior is required."
       },
       "local-library-or-import-extension": {
-        "kind": "mostly-formal-or-he-extended-extension",
-        "recommended_action": "Keep as formal-he/he-extended/local-library evidence unless Rust HE gains the module/import syntax."
+        "kind": "mostly-formal-or-extended-extension",
+        "recommended_action": "Keep as formal-he/extended/local-library evidence unless Rust HE gains the module/import syntax."
       },
       "module-inventory-environment-diff": {
         "kind": "environment-syntax-gap",
@@ -42,7 +42,7 @@
         "recommended_action": "Keep out of core evaluator conformance unless a module/import contract is pinned. Normalize presentation-only names/error wording in the harness; do not contort CeTTa runtime errors to match host-specific Rust strings."
       },
       "native-space-extension": {
-        "kind": "mostly-formal-or-he-extended-extension",
+        "kind": "mostly-formal-or-extended-extension",
         "recommended_action": "Classify by space kind; only portable Rust-compatible space behavior enters he-compat."
       },
       "nondet-order-or-collapse-shape": {
@@ -59,7 +59,7 @@
       },
       "upstream-not-runnable": {
         "kind": "not-rust-runnable",
-        "recommended_action": "Exclude from he-compat agreement counts; use as formal/he-extended pressure only."
+        "recommended_action": "Exclude from he-compat agreement counts; use as formal/extended pressure only."
       },
       "upstream-timeout": {
         "kind": "not-rust-runnable",
@@ -546,13 +546,13 @@
       },
       {
         "category": "local-library-or-import-extension",
-        "category_kind": "mostly-formal-or-he-extended-extension",
+        "category_kind": "mostly-formal-or-extended-extension",
         "cetta_head": "[()]\n[()]\n[()]\n",
         "classification": "diff",
         "manifest_lane": "test",
         "manifest_notes": "-",
         "path": "tests/spec_profile_fs_extension.metta",
-        "recommended_action": "Keep as formal-he/he-extended/local-library evidence unless Rust HE gains the module/import syntax.",
+        "recommended_action": "Keep as formal-he/extended/local-library evidence unless Rust HE gains the module/import syntax.",
         "spec_rule_ids": [
           "nondet.visible-bag",
           "profile.syntax-policy",
@@ -668,13 +668,13 @@
       },
       {
         "category": "local-library-or-import-extension",
-        "category_kind": "mostly-formal-or-he-extended-extension",
+        "category_kind": "mostly-formal-or-extended-extension",
         "cetta_head": "[()]\n[()]\n[()]\n[()]\n",
         "classification": "diff",
         "manifest_lane": "test",
         "manifest_notes": "-",
         "path": "tests/spec_profile_str_extension.metta",
-        "recommended_action": "Keep as formal-he/he-extended/local-library evidence unless Rust HE gains the module/import syntax.",
+        "recommended_action": "Keep as formal-he/extended/local-library evidence unless Rust HE gains the module/import syntax.",
         "spec_rule_ids": [
           "nondet.visible-bag",
           "profile.syntax-policy",
@@ -685,13 +685,13 @@
       },
       {
         "category": "local-library-or-import-extension",
-        "category_kind": "mostly-formal-or-he-extended-extension",
+        "category_kind": "mostly-formal-or-extended-extension",
         "cetta_head": "[()]\n[()]\n[()]\n[()]\n",
         "classification": "diff",
         "manifest_lane": "test",
         "manifest_notes": "-",
         "path": "tests/spec_profile_system_extension.metta",
-        "recommended_action": "Keep as formal-he/he-extended/local-library evidence unless Rust HE gains the module/import syntax.",
+        "recommended_action": "Keep as formal-he/extended/local-library evidence unless Rust HE gains the module/import syntax.",
         "spec_rule_ids": [
           "nondet.visible-bag",
           "profile.syntax-policy",
@@ -992,7 +992,7 @@
         "manifest_lane": "test",
         "manifest_notes": "-",
         "path": "tests/test_bigint_arithmetic_regression.metta",
-        "recommended_action": "Exclude from he-compat agreement counts; use as formal/he-extended pressure only.",
+        "recommended_action": "Exclude from he-compat agreement counts; use as formal/extended pressure only.",
         "spec_rule_ids": [
           "grounded.numeric-exact",
           "nondet.visible-bag",
@@ -1008,7 +1008,7 @@
         "manifest_lane": "test",
         "manifest_notes": "-",
         "path": "tests/test_bigint_fib100_regression.metta",
-        "recommended_action": "Exclude from he-compat agreement counts; use as formal/he-extended pressure only.",
+        "recommended_action": "Exclude from he-compat agreement counts; use as formal/extended pressure only.",
         "spec_rule_ids": [
           "grounded.numeric-exact",
           "nondet.visible-bag",
@@ -1024,7 +1024,7 @@
         "manifest_lane": "test",
         "manifest_notes": "-",
         "path": "tests/test_bigint_print_regression.metta",
-        "recommended_action": "Exclude from he-compat agreement counts; use as formal/he-extended pressure only.",
+        "recommended_action": "Exclude from he-compat agreement counts; use as formal/extended pressure only.",
         "spec_rule_ids": [
           "grounded.numeric-exact",
           "nondet.visible-bag",
@@ -1040,7 +1040,7 @@
         "manifest_lane": "test",
         "manifest_notes": "-",
         "path": "tests/test_bigint_storage_match_regression.metta",
-        "recommended_action": "Exclude from he-compat agreement counts; use as formal/he-extended pressure only.",
+        "recommended_action": "Exclude from he-compat agreement counts; use as formal/extended pressure only.",
         "spec_rule_ids": [
           "grounded.numeric-exact",
           "minimal.match",
@@ -1078,13 +1078,13 @@
       },
       {
         "category": "local-library-or-import-extension",
-        "category_kind": "mostly-formal-or-he-extended-extension",
+        "category_kind": "mostly-formal-or-extended-extension",
         "cetta_head": "[()]\n[(bio-bc-let-ok r7-pathway-transfer (same-pathway ensg00000145384 ensg00000090316 r_hsa_1430728) (: (r6-same-pathway (pathway-fact ensg00000145384 r_hsa_1430728) (pathway-fact ensg00000090316 r_hsa_1430728)) (same-pathway ensg00000145384 ensg00000090316 r_hsa_1430728)))]\n",
         "classification": "diff",
         "manifest_lane": "test-heavy",
         "manifest_notes": "heavy backend golden regression",
         "path": "tests/test_bio_bc_let_hidden_env_regression.metta",
-        "recommended_action": "Keep as formal-he/he-extended/local-library evidence unless Rust HE gains the module/import syntax.",
+        "recommended_action": "Keep as formal-he/extended/local-library evidence unless Rust HE gains the module/import syntax.",
         "spec_rule_ids": [
           "nondet.visible-bag",
           "syntax.eval-bang",
@@ -1107,13 +1107,13 @@
       },
       {
         "category": "local-library-or-import-extension",
-        "category_kind": "mostly-formal-or-he-extended-extension",
+        "category_kind": "mostly-formal-or-extended-extension",
         "cetta_head": "",
         "classification": "cetta-timeout",
         "manifest_lane": "test-heavy",
         "manifest_notes": "heavy backend golden regression",
         "path": "tests/test_bio_wmpln_checkpoint_regression.metta",
-        "recommended_action": "Keep as formal-he/he-extended/local-library evidence unless Rust HE gains the module/import syntax.",
+        "recommended_action": "Keep as formal-he/extended/local-library evidence unless Rust HE gains the module/import syntax.",
         "spec_rule_ids": [
           "eval.applicative-arguments",
           "nondet.visible-bag",
@@ -1124,13 +1124,13 @@
       },
       {
         "category": "local-library-or-import-extension",
-        "category_kind": "mostly-formal-or-he-extended-extension",
+        "category_kind": "mostly-formal-or-extended-extension",
         "cetta_head": "[()]\n[2048]\n[(Truth_Revision collect (stv 0.55 0.7)), (Truth_Revision collect (stv 0.55 0.7)), (Truth_Revision collect (stv 0.55 0.7)), (Truth_Revision collect (stv 0.55 0.7)), (Truth_Revision collect (stv 0.55 0.7)), (Truth_Revision collect (stv 0.55 0.7)), (Truth_Revision collect (stv 0.55 0.7)), (Truth_Revision collect (stv 0.55 0.7)), (Truth_Revision collect (stv 0.55 0.7)), (Truth_Revision collect (stv 0.55 0.7)), (Truth_Revision collect (stv 0.55 0.7)), (Truth_Revision collect (stv 0.55 0.",
         "classification": "diff",
         "manifest_lane": "test-heavy",
         "manifest_notes": "heavy backend golden regression",
         "path": "tests/test_bio_wmpln_revise_stv_tuple_stack_regression.metta",
-        "recommended_action": "Keep as formal-he/he-extended/local-library evidence unless Rust HE gains the module/import syntax.",
+        "recommended_action": "Keep as formal-he/extended/local-library evidence unless Rust HE gains the module/import syntax.",
         "spec_rule_ids": [
           "eval.applicative-arguments",
           "nondet.visible-bag",
@@ -1141,13 +1141,13 @@
       },
       {
         "category": "local-library-or-import-extension",
-        "category_kind": "mostly-formal-or-he-extended-extension",
+        "category_kind": "mostly-formal-or-extended-extension",
         "cetta_head": "",
         "classification": "cetta-timeout",
         "manifest_lane": "test-heavy",
         "manifest_notes": "heavy backend golden regression",
         "path": "tests/test_bio_wmpln_supported_key_unique_regression.metta",
-        "recommended_action": "Keep as formal-he/he-extended/local-library evidence unless Rust HE gains the module/import syntax.",
+        "recommended_action": "Keep as formal-he/extended/local-library evidence unless Rust HE gains the module/import syntax.",
         "spec_rule_ids": [
           "eval.applicative-arguments",
           "nondet.visible-bag",
@@ -1394,13 +1394,13 @@
       },
       {
         "category": "local-library-or-import-extension",
-        "category_kind": "mostly-formal-or-he-extended-extension",
+        "category_kind": "mostly-formal-or-extended-extension",
         "cetta_head": "",
         "classification": "cetta-timeout",
         "manifest_lane": "test-heavy",
         "manifest_notes": "heavy backend golden regression",
         "path": "tests/test_checkpoint_group_extract_cross_form_regression.metta",
-        "recommended_action": "Keep as formal-he/he-extended/local-library evidence unless Rust HE gains the module/import syntax.",
+        "recommended_action": "Keep as formal-he/extended/local-library evidence unless Rust HE gains the module/import syntax.",
         "spec_rule_ids": [
           "nondet.visible-bag",
           "syntax.eval-bang",
@@ -1410,13 +1410,13 @@
       },
       {
         "category": "local-library-or-import-extension",
-        "category_kind": "mostly-formal-or-he-extended-extension",
+        "category_kind": "mostly-formal-or-extended-extension",
         "cetta_head": "[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[(Error (assertEqual (clist:range 5) (clist:from-list (0 1 2 3 4))) \"\\nExpected: [(ClistCons 0 (ClistCons 1 (ClistCons 2 (ClistCons 3 (ClistCons 4 ClistNil)))))]\\nGot: [(ClistCons range-atom (ClistCons 5 ClistNil))]\\nMissed results: (ClistCons 0 (ClistCons 1 (ClistCons 2 (ClistCons 3 (ClistCons 4 ClistNil)))))\\nExcessive results: (ClistCons range-atom (ClistCons 5 ClistNil))\")]\n",
         "classification": "diff",
         "manifest_lane": "test",
         "manifest_notes": "-",
         "path": "tests/test_clist_syntax.metta",
-        "recommended_action": "Keep as formal-he/he-extended/local-library evidence unless Rust HE gains the module/import syntax.",
+        "recommended_action": "Keep as formal-he/extended/local-library evidence unless Rust HE gains the module/import syntax.",
         "spec_rule_ids": [
           "nondet.visible-bag",
           "profile.syntax-policy",
@@ -1427,13 +1427,13 @@
       },
       {
         "category": "local-library-or-import-extension",
-        "category_kind": "mostly-formal-or-he-extended-extension",
+        "category_kind": "mostly-formal-or-extended-extension",
         "cetta_head": "(done done)\n(range-atom 5)\n(6)\n(collect 1)\n(collect 2)\n(collect 3)\n(select 2 1)\n(select 2 2)\n(select 2 3)\n(once 1)\n(once 2)\n(once 3)\n(a b)\n(x y z)\n(ok done)\n(done done)\n(a b)\n((Error stream-probe fail))\n(p q p q)\n(deep)\n[()]\n[()]\n[()]\n[()]\n[(), (), ()]\n[(), (), ()]\n[(), (), ()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n",
         "classification": "diff",
         "manifest_lane": "test-backend-dedicated",
         "manifest_notes": "dedicated backend or bridge golden regression",
         "path": "tests/test_closed_stream_fastpath.metta",
-        "recommended_action": "Keep as formal-he/he-extended/local-library evidence unless Rust HE gains the module/import syntax.",
+        "recommended_action": "Keep as formal-he/extended/local-library evidence unless Rust HE gains the module/import syntax.",
         "spec_rule_ids": [
           "nondet.visible-bag",
           "syntax.eval-bang",
@@ -1654,13 +1654,13 @@
       },
       {
         "category": "local-library-or-import-extension",
-        "category_kind": "mostly-formal-or-he-extended-extension",
+        "category_kind": "mostly-formal-or-extended-extension",
         "cetta_head": "[()]\n[()]\n[()]\n",
         "classification": "diff",
         "manifest_lane": "test",
         "manifest_notes": "-",
         "path": "tests/test_cverify_compat_include_parse.metta",
-        "recommended_action": "Keep as formal-he/he-extended/local-library evidence unless Rust HE gains the module/import syntax.",
+        "recommended_action": "Keep as formal-he/extended/local-library evidence unless Rust HE gains the module/import syntax.",
         "spec_rule_ids": [
           "nondet.visible-bag",
           "profile.syntax-policy",
@@ -1671,13 +1671,13 @@
       },
       {
         "category": "local-library-or-import-extension",
-        "category_kind": "mostly-formal-or-he-extended-extension",
+        "category_kind": "mostly-formal-or-extended-extension",
         "cetta_head": "[()]\n[((c (\"wff\" \"|-\" \"mm.->\" \"(\" \")\")) (open_frame) (v (\"ph\" \"ps\")) (d (\"ph\" \"ps\")) (f \"wph\" \"wff\" \"ph\") (f \"wps\" \"wff\" \"ps\") (a \"ax-1\" \"|-\" (\"(\" \"ph\" \"mm.->\" \"(\" \"ps\" \"mm.->\" \"ph\" \")\" \")\")) (p \"th1\" \"|-\" (\"(\" \"ph\" \"mm.->\" \"(\" \"ps\" \"mm.->\" \"ph\" \")\" \")\") (\"wph\" \"wps\" \"ax-1\")) (close_frame))]\n",
         "classification": "diff",
         "manifest_lane": "test",
         "manifest_notes": "-",
         "path": "tests/test_cverify_compat_parse.metta",
-        "recommended_action": "Keep as formal-he/he-extended/local-library evidence unless Rust HE gains the module/import syntax.",
+        "recommended_action": "Keep as formal-he/extended/local-library evidence unless Rust HE gains the module/import syntax.",
         "spec_rule_ids": [
           "nondet.visible-bag",
           "profile.syntax-policy",
@@ -1688,13 +1688,13 @@
       },
       {
         "category": "local-library-or-import-extension",
-        "category_kind": "mostly-formal-or-he-extended-extension",
+        "category_kind": "mostly-formal-or-extended-extension",
         "cetta_head": "[()]\n[()]\n",
         "classification": "diff",
         "manifest_lane": "test",
         "manifest_notes": "-",
         "path": "tests/test_cverify_compat_parse_unsupported.metta",
-        "recommended_action": "Keep as formal-he/he-extended/local-library evidence unless Rust HE gains the module/import syntax.",
+        "recommended_action": "Keep as formal-he/extended/local-library evidence unless Rust HE gains the module/import syntax.",
         "spec_rule_ids": [
           "nondet.visible-bag",
           "profile.syntax-policy",
@@ -1705,13 +1705,13 @@
       },
       {
         "category": "local-library-or-import-extension",
-        "category_kind": "mostly-formal-or-he-extended-extension",
+        "category_kind": "mostly-formal-or-extended-extension",
         "cetta_head": "[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n",
         "classification": "diff",
         "manifest_lane": "test",
         "manifest_notes": "-",
         "path": "tests/test_cverify_nested_eval_semantics.metta",
-        "recommended_action": "Keep as formal-he/he-extended/local-library evidence unless Rust HE gains the module/import syntax.",
+        "recommended_action": "Keep as formal-he/extended/local-library evidence unless Rust HE gains the module/import syntax.",
         "spec_rule_ids": [
           "minimal.eval",
           "nondet.visible-bag",
@@ -1746,13 +1746,13 @@
       },
       {
         "category": "local-library-or-import-extension",
-        "category_kind": "mostly-formal-or-he-extended-extension",
+        "category_kind": "mostly-formal-or-extended-extension",
         "cetta_head": "[()]\n[()]\n",
         "classification": "diff",
         "manifest_lane": "test",
         "manifest_notes": "-",
         "path": "tests/test_cverify_textual_comment_reject.metta",
-        "recommended_action": "Keep as formal-he/he-extended/local-library evidence unless Rust HE gains the module/import syntax.",
+        "recommended_action": "Keep as formal-he/extended/local-library evidence unless Rust HE gains the module/import syntax.",
         "spec_rule_ids": [
           "nondet.visible-bag",
           "syntax.eval-bang",
@@ -1762,13 +1762,13 @@
       },
       {
         "category": "local-library-or-import-extension",
-        "category_kind": "mostly-formal-or-he-extended-extension",
+        "category_kind": "mostly-formal-or-extended-extension",
         "cetta_head": "[()]\n[()]\n[()]\n",
         "classification": "diff",
         "manifest_lane": "test",
         "manifest_notes": "-",
         "path": "tests/test_cverify_textual_include_smoke.metta",
-        "recommended_action": "Keep as formal-he/he-extended/local-library evidence unless Rust HE gains the module/import syntax.",
+        "recommended_action": "Keep as formal-he/extended/local-library evidence unless Rust HE gains the module/import syntax.",
         "spec_rule_ids": [
           "nondet.visible-bag",
           "syntax.eval-bang",
@@ -1778,13 +1778,13 @@
       },
       {
         "category": "local-library-or-import-extension",
-        "category_kind": "mostly-formal-or-he-extended-extension",
+        "category_kind": "mostly-formal-or-extended-extension",
         "cetta_head": "[()]\n[()]\n",
         "classification": "diff",
         "manifest_lane": "test",
         "manifest_notes": "-",
         "path": "tests/test_cverify_textual_module_import.metta",
-        "recommended_action": "Keep as formal-he/he-extended/local-library evidence unless Rust HE gains the module/import syntax.",
+        "recommended_action": "Keep as formal-he/extended/local-library evidence unless Rust HE gains the module/import syntax.",
         "spec_rule_ids": [
           "nondet.visible-bag",
           "syntax.eval-bang",
@@ -1794,13 +1794,13 @@
       },
       {
         "category": "local-library-or-import-extension",
-        "category_kind": "mostly-formal-or-he-extended-extension",
+        "category_kind": "mostly-formal-or-extended-extension",
         "cetta_head": "[()]\n[()]\n",
         "classification": "diff",
         "manifest_lane": "test",
         "manifest_notes": "-",
         "path": "tests/test_cverify_textual_parse.metta",
-        "recommended_action": "Keep as formal-he/he-extended/local-library evidence unless Rust HE gains the module/import syntax.",
+        "recommended_action": "Keep as formal-he/extended/local-library evidence unless Rust HE gains the module/import syntax.",
         "spec_rule_ids": [
           "nondet.visible-bag",
           "syntax.eval-bang",
@@ -1810,13 +1810,13 @@
       },
       {
         "category": "local-library-or-import-extension",
-        "category_kind": "mostly-formal-or-he-extended-extension",
+        "category_kind": "mostly-formal-or-extended-extension",
         "cetta_head": "[()]\n[()]\n[()]\n[()]\n",
         "classification": "diff",
         "manifest_lane": "test",
         "manifest_notes": "-",
         "path": "tests/test_cverify_textual_real_anatomy_shape.metta",
-        "recommended_action": "Keep as formal-he/he-extended/local-library evidence unless Rust HE gains the module/import syntax.",
+        "recommended_action": "Keep as formal-he/extended/local-library evidence unless Rust HE gains the module/import syntax.",
         "spec_rule_ids": [
           "nondet.visible-bag",
           "syntax.eval-bang",
@@ -1826,13 +1826,13 @@
       },
       {
         "category": "local-library-or-import-extension",
-        "category_kind": "mostly-formal-or-he-extended-extension",
+        "category_kind": "mostly-formal-or-extended-extension",
         "cetta_head": "[()]\n[()]\n[()]\n[()]\n",
         "classification": "diff",
         "manifest_lane": "test",
         "manifest_notes": "-",
         "path": "tests/test_cverify_textual_real_demo0_bad1_shape.metta",
-        "recommended_action": "Keep as formal-he/he-extended/local-library evidence unless Rust HE gains the module/import syntax.",
+        "recommended_action": "Keep as formal-he/extended/local-library evidence unless Rust HE gains the module/import syntax.",
         "spec_rule_ids": [
           "nondet.visible-bag",
           "syntax.eval-bang",
@@ -1842,13 +1842,13 @@
       },
       {
         "category": "local-library-or-import-extension",
-        "category_kind": "mostly-formal-or-he-extended-extension",
+        "category_kind": "mostly-formal-or-extended-extension",
         "cetta_head": "[()]\n[()]\n[()]\n[()]\n",
         "classification": "diff",
         "manifest_lane": "test",
         "manifest_notes": "-",
         "path": "tests/test_cverify_textual_real_demo0_shape.metta",
-        "recommended_action": "Keep as formal-he/he-extended/local-library evidence unless Rust HE gains the module/import syntax.",
+        "recommended_action": "Keep as formal-he/extended/local-library evidence unless Rust HE gains the module/import syntax.",
         "spec_rule_ids": [
           "nondet.visible-bag",
           "syntax.eval-bang",
@@ -2376,13 +2376,13 @@
       },
       {
         "category": "local-library-or-import-extension",
-        "category_kind": "mostly-formal-or-he-extended-extension",
+        "category_kind": "mostly-formal-or-extended-extension",
         "cetta_head": "[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n",
         "classification": "diff",
         "manifest_lane": "test",
         "manifest_notes": "-",
         "path": "tests/test_fs_syntax.metta",
-        "recommended_action": "Keep as formal-he/he-extended/local-library evidence unless Rust HE gains the module/import syntax.",
+        "recommended_action": "Keep as formal-he/extended/local-library evidence unless Rust HE gains the module/import syntax.",
         "spec_rule_ids": [
           "nondet.visible-bag",
           "profile.syntax-policy",
@@ -2624,13 +2624,13 @@
       },
       {
         "category": "local-library-or-import-extension",
-        "category_kind": "mostly-formal-or-he-extended-extension",
+        "category_kind": "mostly-formal-or-extended-extension",
         "cetta_head": "[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n",
         "classification": "diff",
         "manifest_lane": "test",
         "manifest_notes": "-",
         "path": "tests/test_he_frontier_algebra_regression.metta",
-        "recommended_action": "Keep as formal-he/he-extended/local-library evidence unless Rust HE gains the module/import syntax.",
+        "recommended_action": "Keep as formal-he/extended/local-library evidence unless Rust HE gains the module/import syntax.",
         "spec_rule_ids": [
           "minimal.collapse-superpose",
           "minimal.match",
@@ -3014,7 +3014,7 @@
         "manifest_lane": "test",
         "manifest_notes": "-",
         "path": "tests/test_integer_overflow_regression.metta",
-        "recommended_action": "Exclude from he-compat agreement counts; use as formal/he-extended pressure only.",
+        "recommended_action": "Exclude from he-compat agreement counts; use as formal/extended pressure only.",
         "spec_rule_ids": [
           "nondet.visible-bag",
           "syntax.eval-bang"
@@ -3095,13 +3095,13 @@
       },
       {
         "category": "local-library-or-import-extension",
-        "category_kind": "mostly-formal-or-he-extended-extension",
+        "category_kind": "mostly-formal-or-extended-extension",
         "cetta_head": "[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[(Error (assertEqual (list:range 5) (0 1 2 3 4)) \"\\nExpected: [(0 1 2 3 4)]\\nGot: [(range-atom 5)]\\nMissed results: (0 1 2 3 4)\\nExcessive results: (range-atom 5)\")]\n",
         "classification": "diff",
         "manifest_lane": "test",
         "manifest_notes": "-",
         "path": "tests/test_list_syntax.metta",
-        "recommended_action": "Keep as formal-he/he-extended/local-library evidence unless Rust HE gains the module/import syntax.",
+        "recommended_action": "Keep as formal-he/extended/local-library evidence unless Rust HE gains the module/import syntax.",
         "spec_rule_ids": [
           "nondet.visible-bag",
           "profile.syntax-policy",
@@ -3128,13 +3128,13 @@
       },
       {
         "category": "local-library-or-import-extension",
-        "category_kind": "mostly-formal-or-he-extended-extension",
+        "category_kind": "mostly-formal-or-extended-extension",
         "cetta_head": "[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n",
         "classification": "diff",
         "manifest_lane": "test",
         "manifest_notes": "-",
         "path": "tests/test_lts_he_syntax.metta",
-        "recommended_action": "Keep as formal-he/he-extended/local-library evidence unless Rust HE gains the module/import syntax.",
+        "recommended_action": "Keep as formal-he/extended/local-library evidence unless Rust HE gains the module/import syntax.",
         "spec_rule_ids": [
           "nondet.visible-bag",
           "profile.syntax-policy",
@@ -3145,13 +3145,13 @@
       },
       {
         "category": "local-library-or-import-extension",
-        "category_kind": "mostly-formal-or-he-extended-extension",
+        "category_kind": "mostly-formal-or-extended-extension",
         "cetta_head": "[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n",
         "classification": "diff",
         "manifest_lane": "test",
         "manifest_notes": "-",
         "path": "tests/test_lts_rho_cost_location.metta",
-        "recommended_action": "Keep as formal-he/he-extended/local-library evidence unless Rust HE gains the module/import syntax.",
+        "recommended_action": "Keep as formal-he/extended/local-library evidence unless Rust HE gains the module/import syntax.",
         "spec_rule_ids": [
           "nondet.visible-bag",
           "profile.syntax-policy",
@@ -3162,13 +3162,13 @@
       },
       {
         "category": "local-library-or-import-extension",
-        "category_kind": "mostly-formal-or-he-extended-extension",
+        "category_kind": "mostly-formal-or-extended-extension",
         "cetta_head": "[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n",
         "classification": "diff",
         "manifest_lane": "test",
         "manifest_notes": "-",
         "path": "tests/test_lts_rho_syntax.metta",
-        "recommended_action": "Keep as formal-he/he-extended/local-library evidence unless Rust HE gains the module/import syntax.",
+        "recommended_action": "Keep as formal-he/extended/local-library evidence unless Rust HE gains the module/import syntax.",
         "spec_rule_ids": [
           "nondet.visible-bag",
           "profile.syntax-policy",
@@ -3179,13 +3179,13 @@
       },
       {
         "category": "local-library-or-import-extension",
-        "category_kind": "mostly-formal-or-he-extended-extension",
+        "category_kind": "mostly-formal-or-extended-extension",
         "cetta_head": "[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n",
         "classification": "diff",
         "manifest_lane": "test",
         "manifest_notes": "-",
         "path": "tests/test_lts_syntax.metta",
-        "recommended_action": "Keep as formal-he/he-extended/local-library evidence unless Rust HE gains the module/import syntax.",
+        "recommended_action": "Keep as formal-he/extended/local-library evidence unless Rust HE gains the module/import syntax.",
         "spec_rule_ids": [
           "nondet.visible-bag",
           "profile.syntax-policy",
@@ -3418,13 +3418,13 @@
       },
       {
         "category": "local-library-or-import-extension",
-        "category_kind": "mostly-formal-or-he-extended-extension",
+        "category_kind": "mostly-formal-or-extended-extension",
         "cetta_head": "[()]\n[8.0]\n[2.0]\n[3.0]\n[3]\n[2.718281828459045]\n[1.0]\n[0.6]\n[0.7]\n[1.0]\n[3.0]\n[4.0]\n[3.0]\n[4.0]\n[(// 7 3)]\n[(// -7 3)]\n[(- -7 (* 3 (// -7 3)))]\n[(- 7 (* 3 (// 7 3)))]\n[(- 7/2 (* 3 (// 7/2 3)))]\n[False]\n[False]\n",
         "classification": "diff",
         "manifest_lane": "test",
         "manifest_notes": "-",
         "path": "tests/test_math_lib_syntax.metta",
-        "recommended_action": "Keep as formal-he/he-extended/local-library evidence unless Rust HE gains the module/import syntax.",
+        "recommended_action": "Keep as formal-he/extended/local-library evidence unless Rust HE gains the module/import syntax.",
         "spec_rule_ids": [
           "nondet.visible-bag",
           "profile.syntax-policy",
@@ -3435,13 +3435,13 @@
       },
       {
         "category": "local-library-or-import-extension",
-        "category_kind": "mostly-formal-or-he-extended-extension",
+        "category_kind": "mostly-formal-or-extended-extension",
         "cetta_head": "[()]\n[()]\n[(Error (assertEqualToResult (match &mods (loaded-module \"math\" $path stdlib-file) ok) (ok)) \"\\nExpected: [ok]\\nGot: [(Error (match (module-inventory!) (loaded-module \\\"math\\\" $path stdlib-file) ok) match expects a space as the first argument)]\\nMissed results: ok\\nExcessive results: (Error (match (module-inventory!) (loaded-module \\\"math\\\" $path stdlib-file) ok) match expects a space as the first argument)\")]\n",
         "classification": "diff",
         "manifest_lane": "test",
         "manifest_notes": "-",
         "path": "tests/test_math_namespace_docs.metta",
-        "recommended_action": "Keep as formal-he/he-extended/local-library evidence unless Rust HE gains the module/import syntax.",
+        "recommended_action": "Keep as formal-he/extended/local-library evidence unless Rust HE gains the module/import syntax.",
         "spec_rule_ids": [
           "minimal.evalc-context-space",
           "nondet.visible-bag",
@@ -3524,13 +3524,13 @@
       },
       {
         "category": "local-library-or-import-extension",
-        "category_kind": "mostly-formal-or-he-extended-extension",
+        "category_kind": "mostly-formal-or-extended-extension",
         "cetta_head": "[()]\n[()]\n[()]\n[()]\n",
         "classification": "diff",
         "manifest_lane": "test",
         "manifest_notes": "-",
         "path": "tests/test_metamath_stream_basic.metta",
-        "recommended_action": "Keep as formal-he/he-extended/local-library evidence unless Rust HE gains the module/import syntax.",
+        "recommended_action": "Keep as formal-he/extended/local-library evidence unless Rust HE gains the module/import syntax.",
         "spec_rule_ids": [
           "nondet.visible-bag",
           "syntax.eval-bang",
@@ -3670,13 +3670,13 @@
       },
       {
         "category": "local-library-or-import-extension",
-        "category_kind": "mostly-formal-or-he-extended-extension",
+        "category_kind": "mostly-formal-or-extended-extension",
         "cetta_head": "[()]\n[((c (\"a1\")) (c (\"a2\")) (c (\"a3\")) (c (\"a4\")) (c (\"a5\")) (c (\"a6\")) (c (\"a7\")) (c (\"a8\")) (c (\"a9\")) (c (\"a10\")) (c (\"a11\")) (c (\"a12\")) (c (\"a13\")) (c (\"a14\")) (c (\"a15\")) (c (\"a16\")) (c (\"a17\")) (c (\"a18\")) (c (\"a19\")) (c (\"a20\")) (c (\"a21\")) (c (\"a22\")) (c (\"a23\")) (c (\"a24\")) (c (\"a25\")) (c (\"a26\")) (c (\"a27\")) (c (\"a28\")) (c (\"a29\")) (c (\"a30\")) (c (\"a31\")) (c (\"a32\")) (c (\"a33\")) (c (\"a34\")) (c (\"a35\")) (c (\"a36\")) (c (\"a37\")) (c (\"a38\")) (c (\"a39\")) (c (\"a40\")) (c (\"a41\")) (c (\"a42\")",
         "classification": "diff",
         "manifest_lane": "test",
         "manifest_notes": "-",
         "path": "tests/test_nested_pipeline_tailrec.metta",
-        "recommended_action": "Keep as formal-he/he-extended/local-library evidence unless Rust HE gains the module/import syntax.",
+        "recommended_action": "Keep as formal-he/extended/local-library evidence unless Rust HE gains the module/import syntax.",
         "spec_rule_ids": [
           "nondet.visible-bag",
           "syntax.eval-bang",
@@ -3795,7 +3795,7 @@
         "manifest_lane": "test",
         "manifest_notes": "-",
         "path": "tests/test_numeric_edge_cases.metta",
-        "recommended_action": "Exclude from he-compat agreement counts; use as formal/he-extended pressure only.",
+        "recommended_action": "Exclude from he-compat agreement counts; use as formal/extended pressure only.",
         "spec_rule_ids": [
           "eval.applicative-arguments",
           "grounded.numeric-exact",
@@ -3846,13 +3846,13 @@
       },
       {
         "category": "local-library-or-import-extension",
-        "category_kind": "mostly-formal-or-he-extended-extension",
+        "category_kind": "mostly-formal-or-extended-extension",
         "cetta_head": "[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n",
         "classification": "diff",
         "manifest_lane": "test",
         "manifest_notes": "-",
         "path": "tests/test_path_syntax.metta",
-        "recommended_action": "Keep as formal-he/he-extended/local-library evidence unless Rust HE gains the module/import syntax.",
+        "recommended_action": "Keep as formal-he/extended/local-library evidence unless Rust HE gains the module/import syntax.",
         "spec_rule_ids": [
           "nondet.visible-bag",
           "profile.syntax-policy",
@@ -3863,13 +3863,13 @@
       },
       {
         "category": "local-library-or-import-extension",
-        "category_kind": "mostly-formal-or-he-extended-extension",
+        "category_kind": "mostly-formal-or-extended-extension",
         "cetta_head": "[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n",
         "classification": "diff",
         "manifest_lane": "test",
         "manifest_notes": "-",
         "path": "tests/test_pln_portable_minmax_regression.metta",
-        "recommended_action": "Keep as formal-he/he-extended/local-library evidence unless Rust HE gains the module/import syntax.",
+        "recommended_action": "Keep as formal-he/extended/local-library evidence unless Rust HE gains the module/import syntax.",
         "spec_rule_ids": [
           "eval.applicative-arguments",
           "grounded.numeric-exact",
@@ -4103,13 +4103,13 @@
       },
       {
         "category": "local-library-or-import-extension",
-        "category_kind": "mostly-formal-or-he-extended-extension",
+        "category_kind": "mostly-formal-or-extended-extension",
         "cetta_head": "[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[(Error (assertEqual (select ((DVars ((\"x\" \"y\"))) (FHyps (from-list (assign_f_hyps <space 0x647b0dc23ed8> (eval (Cons (\"formula\" \"x\") (Cons (\"formula\" \"y\") Nil)))))) (EHyps ()) (Statement (\"|-\" \"x\" \"y\")))) ((DVars ((\"x\" \"y\"))) (FHyps ((\"formula\" \"x\") (\"formula\" \"y\"))) (EHyps ()) (Statement (\"|-\" \"x\" \"y\")))) \"\\nExpected: [((DVars ((\\\"x\\\" \\\"y\\\"))) (FHyps ((\\\"formula\\\" \\\"x\\\") (\\\"formula\\\" \\\"y\\\"))) (EHyps ()) (Statement (\\\"|-\\\" \\\"x\\\" \\\"y\\\")",
         "classification": "diff",
         "manifest_lane": "test",
         "manifest_notes": "-",
         "path": "tests/test_pverify_dv_regression.metta",
-        "recommended_action": "Keep as formal-he/he-extended/local-library evidence unless Rust HE gains the module/import syntax.",
+        "recommended_action": "Keep as formal-he/extended/local-library evidence unless Rust HE gains the module/import syntax.",
         "spec_rule_ids": [
           "nondet.visible-bag",
           "syntax.eval-bang",
@@ -4120,13 +4120,13 @@
       },
       {
         "category": "local-library-or-import-extension",
-        "category_kind": "mostly-formal-or-he-extended-extension",
+        "category_kind": "mostly-formal-or-extended-extension",
         "cetta_head": "[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[(Error (assertEqual (select (make_assertion &kb (\"formula\" \"A.\" \"x\" \"ph\"))) ((DVars ()) (FHyps ((\"formula\" \"ph\"))) (EHyps ()) (Statement (\"formula\" \"A.\" \"x\" \"ph\")))) \"\\nExpected: [((DVars ()) (FHyps ((\\\"formula\\\" \\\"ph\\\"))) (EHyps ()) (Statement (\\\"formula\\\" \\\"A.\\\" \\\"x\\\" \\\"ph\\\")))]\\nGot: [(select ((DVars ()) (FHyps (from-list (assign_f_hyps <space 0x5b8eba2b8928> (eval (Cons (\\\"formula\\\" \\\"ph\\\") Nil))))) (EHyps ()) (Statement (\\\"formula\\\" \\\"A.\\\" \\\"x\\\" \\\"ph\\\")))",
         "classification": "diff",
         "manifest_lane": "test",
         "manifest_notes": "-",
         "path": "tests/test_pverify_make_assertion_missing_f.metta",
-        "recommended_action": "Keep as formal-he/he-extended/local-library evidence unless Rust HE gains the module/import syntax.",
+        "recommended_action": "Keep as formal-he/extended/local-library evidence unless Rust HE gains the module/import syntax.",
         "spec_rule_ids": [
           "nondet.visible-bag",
           "result.error-shape",
@@ -4238,7 +4238,7 @@
         "manifest_lane": "test",
         "manifest_notes": "-",
         "path": "tests/test_rational_default_division_regression.metta",
-        "recommended_action": "Exclude from he-compat agreement counts; use as formal/he-extended pressure only.",
+        "recommended_action": "Exclude from he-compat agreement counts; use as formal/extended pressure only.",
         "spec_rule_ids": [
           "grounded.numeric-exact",
           "nondet.visible-bag",
@@ -4296,7 +4296,7 @@
         "manifest_lane": "test",
         "manifest_notes": "-",
         "path": "tests/test_rational_prefer_regression.metta",
-        "recommended_action": "Exclude from he-compat agreement counts; use as formal/he-extended pressure only.",
+        "recommended_action": "Exclude from he-compat agreement counts; use as formal/extended pressure only.",
         "spec_rule_ids": [
           "grounded.numeric-exact",
           "nondet.visible-bag",
@@ -4477,13 +4477,13 @@
       },
       {
         "category": "local-library-or-import-extension",
-        "category_kind": "mostly-formal-or-he-extended-extension",
+        "category_kind": "mostly-formal-or-extended-extension",
         "cetta_head": "[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n",
         "classification": "diff",
         "manifest_lane": "test",
         "manifest_notes": "-",
         "path": "tests/test_rho_lib_hygiene_syntax.metta",
-        "recommended_action": "Keep as formal-he/he-extended/local-library evidence unless Rust HE gains the module/import syntax.",
+        "recommended_action": "Keep as formal-he/extended/local-library evidence unless Rust HE gains the module/import syntax.",
         "spec_rule_ids": [
           "nondet.visible-bag",
           "profile.syntax-policy",
@@ -4494,13 +4494,13 @@
       },
       {
         "category": "local-library-or-import-extension",
-        "category_kind": "mostly-formal-or-he-extended-extension",
+        "category_kind": "mostly-formal-or-extended-extension",
         "cetta_head": "[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n",
         "classification": "diff",
         "manifest_lane": "test",
         "manifest_notes": "-",
         "path": "tests/test_rho_lib_syntax.metta",
-        "recommended_action": "Keep as formal-he/he-extended/local-library evidence unless Rust HE gains the module/import syntax.",
+        "recommended_action": "Keep as formal-he/extended/local-library evidence unless Rust HE gains the module/import syntax.",
         "spec_rule_ids": [
           "nondet.visible-bag",
           "profile.syntax-policy",
@@ -4945,13 +4945,13 @@
       },
       {
         "category": "local-library-or-import-extension",
-        "category_kind": "mostly-formal-or-he-extended-extension",
+        "category_kind": "mostly-formal-or-extended-extension",
         "cetta_head": "[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n",
         "classification": "diff",
         "manifest_lane": "test",
         "manifest_notes": "-",
         "path": "tests/test_str_syntax.metta",
-        "recommended_action": "Keep as formal-he/he-extended/local-library evidence unless Rust HE gains the module/import syntax.",
+        "recommended_action": "Keep as formal-he/extended/local-library evidence unless Rust HE gains the module/import syntax.",
         "spec_rule_ids": [
           "nondet.visible-bag",
           "profile.syntax-policy",
@@ -4976,13 +4976,13 @@
       },
       {
         "category": "local-library-or-import-extension",
-        "category_kind": "mostly-formal-or-he-extended-extension",
+        "category_kind": "mostly-formal-or-extended-extension",
         "cetta_head": "[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n",
         "classification": "diff",
         "manifest_lane": "test",
         "manifest_notes": "-",
         "path": "tests/test_string_escapes.metta",
-        "recommended_action": "Keep as formal-he/he-extended/local-library evidence unless Rust HE gains the module/import syntax.",
+        "recommended_action": "Keep as formal-he/extended/local-library evidence unless Rust HE gains the module/import syntax.",
         "spec_rule_ids": [
           "eval.grounded-dispatch",
           "nondet.visible-bag",
@@ -5084,7 +5084,7 @@
         "manifest_lane": "test",
         "manifest_notes": "-",
         "path": "tests/test_superpose_bind_constraints.metta",
-        "recommended_action": "Exclude from he-compat agreement counts; use as formal/he-extended pressure only.",
+        "recommended_action": "Exclude from he-compat agreement counts; use as formal/extended pressure only.",
         "spec_rule_ids": [
           "minimal.collapse-superpose",
           "minimal.cons-decons",
@@ -5116,7 +5116,7 @@
         "manifest_lane": "test",
         "manifest_notes": "-",
         "path": "tests/test_superpose_bind_restore.metta",
-        "recommended_action": "Exclude from he-compat agreement counts; use as formal/he-extended pressure only.",
+        "recommended_action": "Exclude from he-compat agreement counts; use as formal/extended pressure only.",
         "spec_rule_ids": [
           "minimal.collapse-superpose",
           "nondet.visible-bag",
@@ -5228,13 +5228,13 @@
       },
       {
         "category": "local-library-or-import-extension",
-        "category_kind": "mostly-formal-or-he-extended-extension",
+        "category_kind": "mostly-formal-or-extended-extension",
         "cetta_head": "[()]\n[0]\n[False]\n[]\n[True]\n[False]\n[\"fallback\"]\n[String]\n[()]\n",
         "classification": "diff",
         "manifest_lane": "test",
         "manifest_notes": "-",
         "path": "tests/test_system_syntax.metta",
-        "recommended_action": "Keep as formal-he/he-extended/local-library evidence unless Rust HE gains the module/import syntax.",
+        "recommended_action": "Keep as formal-he/extended/local-library evidence unless Rust HE gains the module/import syntax.",
         "spec_rule_ids": [
           "nondet.visible-bag",
           "profile.syntax-policy",
@@ -5305,13 +5305,13 @@
       },
       {
         "category": "local-library-or-import-extension",
-        "category_kind": "mostly-formal-or-he-extended-extension",
+        "category_kind": "mostly-formal-or-extended-extension",
         "cetta_head": "[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n",
         "classification": "diff",
         "manifest_lane": "test",
         "manifest_notes": "-",
         "path": "tests/test_text_cursor.metta",
-        "recommended_action": "Keep as formal-he/he-extended/local-library evidence unless Rust HE gains the module/import syntax.",
+        "recommended_action": "Keep as formal-he/extended/local-library evidence unless Rust HE gains the module/import syntax.",
         "spec_rule_ids": [
           "nondet.visible-bag",
           "syntax.eval-bang",
@@ -5321,13 +5321,13 @@
       },
       {
         "category": "local-library-or-import-extension",
-        "category_kind": "mostly-formal-or-he-extended-extension",
+        "category_kind": "mostly-formal-or-extended-extension",
         "cetta_head": "[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n",
         "classification": "diff",
         "manifest_lane": "test",
         "manifest_notes": "-",
         "path": "tests/test_text_stream.metta",
-        "recommended_action": "Keep as formal-he/he-extended/local-library evidence unless Rust HE gains the module/import syntax.",
+        "recommended_action": "Keep as formal-he/extended/local-library evidence unless Rust HE gains the module/import syntax.",
         "spec_rule_ids": [
           "nondet.visible-bag",
           "syntax.eval-bang",
@@ -11310,7 +11310,7 @@
         "lang": "he",
         "notes": "-",
         "path": "tests/spec_include_unit.metta",
-        "profile": "he-extended",
+        "profile": "extended",
         "space_engine": "native",
         "syntax": "metta"
       },
@@ -11404,7 +11404,7 @@
         "lang": "he",
         "notes": "-",
         "path": "tests/spec_mod_space_missing.metta",
-        "profile": "he-extended",
+        "profile": "extended",
         "space_engine": "native",
         "syntax": "metta"
       },
@@ -11494,7 +11494,7 @@
         "lang": "he",
         "notes": "module inventory reports language profile and import mode",
         "path": "tests/spec_module_inventory.metta",
-        "profile": "he-extended",
+        "profile": "extended",
         "space_engine": "native",
         "syntax": "metta"
       },
@@ -11589,7 +11589,7 @@
         "lang": "he",
         "notes": "-",
         "path": "tests/spec_profile_collect_extension.metta",
-        "profile": "he-extended",
+        "profile": "extended",
         "space_engine": "native",
         "syntax": "metta"
       },
@@ -11682,7 +11682,7 @@
         "lang": "he",
         "notes": "-",
         "path": "tests/spec_profile_count_atoms.metta",
-        "profile": "he-extended",
+        "profile": "extended",
         "space_engine": "native",
         "syntax": "metta"
       },
@@ -11776,7 +11776,7 @@
         "lang": "he",
         "notes": "-",
         "path": "tests/spec_profile_fold_extension.metta",
-        "profile": "he-extended",
+        "profile": "extended",
         "space_engine": "native",
         "syntax": "metta"
       },
@@ -11867,7 +11867,7 @@
         "lang": "he",
         "notes": "-",
         "path": "tests/spec_profile_foldl_extension.metta",
-        "profile": "he-extended",
+        "profile": "extended",
         "space_engine": "native",
         "syntax": "metta"
       },
@@ -11958,7 +11958,7 @@
         "lang": "he",
         "notes": "-",
         "path": "tests/spec_profile_foldl_public.metta",
-        "profile": "he-extended",
+        "profile": "extended",
         "space_engine": "native",
         "syntax": "metta"
       },
@@ -12049,7 +12049,7 @@
         "lang": "he",
         "notes": "-",
         "path": "tests/spec_profile_reduce_extension.metta",
-        "profile": "he-extended",
+        "profile": "extended",
         "space_engine": "native",
         "syntax": "metta"
       },
@@ -12140,7 +12140,7 @@
         "lang": "he",
         "notes": "-",
         "path": "tests/spec_profile_search_policy_extension.metta",
-        "profile": "he-extended",
+        "profile": "extended",
         "space_engine": "native",
         "syntax": "metta"
       },
@@ -12231,7 +12231,7 @@
         "lang": "he",
         "notes": "-",
         "path": "tests/spec_profile_select_extension.metta",
-        "profile": "he-extended",
+        "profile": "extended",
         "space_engine": "native",
         "syntax": "metta"
       },
@@ -12324,7 +12324,7 @@
         "lang": "he",
         "notes": "-",
         "path": "tests/spec_profile_size_extension.metta",
-        "profile": "he-extended",
+        "profile": "extended",
         "space_engine": "native",
         "syntax": "metta"
       },
@@ -12420,7 +12420,7 @@
         "lang": "he",
         "notes": "-",
         "path": "tests/spec_profile_space_engine_extension.metta",
-        "profile": "he-extended",
+        "profile": "extended",
         "space_engine": "native",
         "syntax": "metta"
       },
@@ -12517,7 +12517,7 @@
         "lang": "he",
         "notes": "-",
         "path": "tests/spec_profile_space_match_backend_extension.metta",
-        "profile": "he-extended",
+        "profile": "extended",
         "space_engine": "native",
         "syntax": "metta"
       },
@@ -12619,7 +12619,7 @@
         "lang": "he",
         "notes": "-",
         "path": "tests/spec_profile_space_set_match_backend_extension.metta",
-        "profile": "he-extended",
+        "profile": "extended",
         "space_engine": "native",
         "syntax": "metta"
       },
@@ -12722,7 +12722,7 @@
         "lang": "he",
         "notes": "-",
         "path": "tests/spec_translation_delete_space_syntax.metta",
-        "profile": "he-extended",
+        "profile": "extended",
         "space_engine": "native",
         "syntax": "metta"
       },
@@ -12833,7 +12833,7 @@
         "lang": "he",
         "notes": "-",
         "path": "tests/spec_translation_empty_space_ignored_result_syntax.metta",
-        "profile": "he-extended",
+        "profile": "extended",
         "space_engine": "native",
         "syntax": "metta"
       },
@@ -12949,7 +12949,7 @@
         "lang": "he",
         "notes": "-",
         "path": "tests/spec_translation_empty_space_syntax.metta",
-        "profile": "he-extended",
+        "profile": "extended",
         "space_engine": "native",
         "syntax": "metta"
       },
@@ -13052,7 +13052,7 @@
         "lang": "he",
         "notes": "-",
         "path": "tests/spec_translation_named_space_syntax.metta",
-        "profile": "he-extended",
+        "profile": "extended",
         "space_engine": "native",
         "syntax": "metta"
       },
@@ -13151,7 +13151,7 @@
         "lang": "he",
         "notes": "-",
         "path": "tests/spec_translation_new_space_function_syntax.metta",
-        "profile": "he-extended",
+        "profile": "extended",
         "space_engine": "native",
         "syntax": "metta"
       },
@@ -13252,7 +13252,7 @@
         "lang": "he",
         "notes": "-",
         "path": "tests/spec_translation_self_space_syntax.metta",
-        "profile": "he-extended",
+        "profile": "extended",
         "space_engine": "native",
         "syntax": "metta"
       },
@@ -13346,7 +13346,7 @@
         "lang": "he",
         "notes": "-",
         "path": "tests/spec_translation_state_builtin_ignored_result.metta",
-        "profile": "he-extended",
+        "profile": "extended",
         "space_engine": "native",
         "syntax": "metta"
       },
@@ -13433,7 +13433,7 @@
         "lang": "he",
         "notes": "-",
         "path": "tests/spec_translation_state_builtin_syntax.metta",
-        "profile": "he-extended",
+        "profile": "extended",
         "space_engine": "native",
         "syntax": "metta"
       },
@@ -13526,7 +13526,7 @@
         "lang": "he",
         "notes": "-",
         "path": "tests/spec_translation_state_via_space_syntax.metta",
-        "profile": "he-extended",
+        "profile": "extended",
         "space_engine": "native",
         "syntax": "metta"
       },
@@ -13624,7 +13624,7 @@
         "lang": "he",
         "notes": "-",
         "path": "tests/spec_translation_unknown_space_syntax.metta",
-        "profile": "he-extended",
+        "profile": "extended",
         "space_engine": "native",
         "syntax": "metta"
       },
@@ -13718,7 +13718,7 @@
         "lang": "he",
         "notes": "ancestor-walk import mode finds a parent helper",
         "path": "tests/support/import_mode/nested/use_parent_helper.metta",
-        "profile": "he-extended",
+        "profile": "extended",
         "space_engine": "native",
         "syntax": "metta"
       },
@@ -13816,7 +13816,7 @@
         "lang": "he",
         "notes": "-",
         "path": "tests/test_add_atom_nodup_canonical_var_regression.metta",
-        "profile": "he-extended",
+        "profile": "extended",
         "space_engine": "native",
         "syntax": "metta"
       },
@@ -13909,7 +13909,7 @@
         "lang": "he",
         "notes": "-",
         "path": "tests/test_add_reduct.metta",
-        "profile": "he-extended",
+        "profile": "extended",
         "space_engine": "native",
         "syntax": "metta"
       },
@@ -14000,7 +14000,7 @@
         "lang": "he",
         "notes": "-",
         "path": "tests/test_alpha_equiv.metta",
-        "profile": "he-extended",
+        "profile": "extended",
         "space_engine": "native",
         "syntax": "metta"
       },
@@ -14087,7 +14087,7 @@
         "lang": "he",
         "notes": "-",
         "path": "tests/test_alpha_equiv_arity.metta",
-        "profile": "he-extended",
+        "profile": "extended",
         "space_engine": "native",
         "syntax": "metta"
       },
@@ -14174,7 +14174,7 @@
         "lang": "he",
         "notes": "-",
         "path": "tests/test_arithmetic.metta",
-        "profile": "he-extended",
+        "profile": "extended",
         "space_engine": "native",
         "syntax": "metta"
       },
@@ -14267,7 +14267,7 @@
         "lang": "he",
         "notes": "-",
         "path": "tests/test_assert.metta",
-        "profile": "he-extended",
+        "profile": "extended",
         "space_engine": "native",
         "syntax": "metta"
       },
@@ -14376,7 +14376,7 @@
         "lang": "he",
         "notes": "-",
         "path": "tests/test_basic_eval.metta",
-        "profile": "he-extended",
+        "profile": "extended",
         "space_engine": "native",
         "syntax": "metta"
       },
@@ -14471,7 +14471,7 @@
         "lang": "he",
         "notes": "-",
         "path": "tests/test_bind_arity.metta",
-        "profile": "he-extended",
+        "profile": "extended",
         "space_engine": "native",
         "syntax": "metta"
       },
@@ -14558,7 +14558,7 @@
         "lang": "he",
         "notes": "-",
         "path": "tests/test_bind_partial_arity.metta",
-        "profile": "he-extended",
+        "profile": "extended",
         "space_engine": "native",
         "syntax": "metta"
       },
@@ -14645,7 +14645,7 @@
         "lang": "he",
         "notes": "heavy backend golden regression",
         "path": "tests/test_bio_depth10_genuine_regression.metta",
-        "profile": "he-extended",
+        "profile": "extended",
         "space_engine": "native",
         "syntax": "metta"
       },
@@ -14732,7 +14732,7 @@
         "lang": "he",
         "notes": "-",
         "path": "tests/test_body_visible_projection_many_vars.metta",
-        "profile": "he-extended",
+        "profile": "extended",
         "space_engine": "native",
         "syntax": "metta"
       },
@@ -14824,7 +14824,7 @@
         "lang": "he",
         "notes": "-",
         "path": "tests/test_bool_grounded_errors.metta",
-        "profile": "he-extended",
+        "profile": "extended",
         "space_engine": "native",
         "syntax": "metta"
       },
@@ -14918,7 +14918,7 @@
         "lang": "he",
         "notes": "-",
         "path": "tests/test_call_native_syntax.metta",
-        "profile": "he-extended",
+        "profile": "extended",
         "space_engine": "native",
         "syntax": "metta"
       },
@@ -15009,7 +15009,7 @@
         "lang": "he",
         "notes": "-",
         "path": "tests/test_capture.metta",
-        "profile": "he-extended",
+        "profile": "extended",
         "space_engine": "native",
         "syntax": "metta"
       },
@@ -15096,7 +15096,7 @@
         "lang": "he",
         "notes": "-",
         "path": "tests/test_capture_arity.metta",
-        "profile": "he-extended",
+        "profile": "extended",
         "space_engine": "native",
         "syntax": "metta"
       },
@@ -15183,7 +15183,7 @@
         "lang": "he",
         "notes": "-",
         "path": "tests/test_capture_bound_arity.metta",
-        "profile": "he-extended",
+        "profile": "extended",
         "space_engine": "native",
         "syntax": "metta"
       },
@@ -15270,7 +15270,7 @@
         "lang": "he",
         "notes": "-",
         "path": "tests/test_capture_extra_args.metta",
-        "profile": "he-extended",
+        "profile": "extended",
         "space_engine": "native",
         "syntax": "metta"
       },
@@ -15362,7 +15362,7 @@
         "lang": "he",
         "notes": "-",
         "path": "tests/test_case_advanced.metta",
-        "profile": "he-extended",
+        "profile": "extended",
         "space_engine": "native",
         "syntax": "metta"
       },
@@ -15459,7 +15459,7 @@
         "lang": "he",
         "notes": "-",
         "path": "tests/test_case_arity.metta",
-        "profile": "he-extended",
+        "profile": "extended",
         "space_engine": "native",
         "syntax": "metta"
       },
@@ -15569,7 +15569,7 @@
         "lang": "he",
         "notes": "-",
         "path": "tests/test_case_empty_multilet_regression.metta",
-        "profile": "he-extended",
+        "profile": "extended",
         "space_engine": "native",
         "syntax": "metta"
       },
@@ -15671,7 +15671,7 @@
         "lang": "he",
         "notes": "-",
         "path": "tests/test_case_switch.metta",
-        "profile": "he-extended",
+        "profile": "extended",
         "space_engine": "native",
         "syntax": "metta"
       },
@@ -15764,7 +15764,7 @@
         "lang": "he",
         "notes": "-",
         "path": "tests/test_chain_advanced.metta",
-        "profile": "he-extended",
+        "profile": "extended",
         "space_engine": "native",
         "syntax": "metta"
       },
@@ -15857,7 +15857,7 @@
         "lang": "he",
         "notes": "-",
         "path": "tests/test_chain_arity.metta",
-        "profile": "he-extended",
+        "profile": "extended",
         "space_engine": "native",
         "syntax": "metta"
       },
@@ -15949,7 +15949,7 @@
         "lang": "he",
         "notes": "-",
         "path": "tests/test_change_state_arity.metta",
-        "profile": "he-extended",
+        "profile": "extended",
         "space_engine": "native",
         "syntax": "metta"
       },
@@ -16045,7 +16045,7 @@
         "lang": "he",
         "notes": "-",
         "path": "tests/test_change_state_first_arg_type_error.metta",
-        "profile": "he-extended",
+        "profile": "extended",
         "space_engine": "native",
         "syntax": "metta"
       },
@@ -16142,7 +16142,7 @@
         "lang": "he",
         "notes": "-",
         "path": "tests/test_change_state_partial_arity.metta",
-        "profile": "he-extended",
+        "profile": "extended",
         "space_engine": "native",
         "syntax": "metta"
       },
@@ -16231,7 +16231,7 @@
         "lang": "he",
         "notes": "-",
         "path": "tests/test_collapse_bind_arity.metta",
-        "profile": "he-extended",
+        "profile": "extended",
         "space_engine": "native",
         "syntax": "metta"
       },
@@ -16322,7 +16322,7 @@
         "lang": "he",
         "notes": "-",
         "path": "tests/test_collect.metta",
-        "profile": "he-extended",
+        "profile": "extended",
         "space_engine": "native",
         "syntax": "metta"
       },
@@ -16409,7 +16409,7 @@
         "lang": "he",
         "notes": "-",
         "path": "tests/test_collect_arity.metta",
-        "profile": "he-extended",
+        "profile": "extended",
         "space_engine": "native",
         "syntax": "metta"
       },
@@ -16496,7 +16496,7 @@
         "lang": "he",
         "notes": "-",
         "path": "tests/test_comparison.metta",
-        "profile": "he-extended",
+        "profile": "extended",
         "space_engine": "native",
         "syntax": "metta"
       },
@@ -16583,7 +16583,7 @@
         "lang": "he",
         "notes": "-",
         "path": "tests/test_compile_arity.metta",
-        "profile": "he-extended",
+        "profile": "extended",
         "space_engine": "native",
         "syntax": "metta"
       },
@@ -16670,7 +16670,7 @@
         "lang": "he",
         "notes": "-",
         "path": "tests/test_compile_hybrid_interop.metta",
-        "profile": "he-extended",
+        "profile": "extended",
         "space_engine": "native",
         "syntax": "metta"
       },
@@ -16768,7 +16768,7 @@
         "lang": "he",
         "notes": "-",
         "path": "tests/test_cons_atom_tail_type_error.metta",
-        "profile": "he-extended",
+        "profile": "extended",
         "space_engine": "native",
         "syntax": "metta"
       },
@@ -16870,7 +16870,7 @@
         "lang": "he",
         "notes": "-",
         "path": "tests/test_cons_decons.metta",
-        "profile": "he-extended",
+        "profile": "extended",
         "space_engine": "native",
         "syntax": "metta"
       },
@@ -16962,7 +16962,7 @@
         "lang": "he",
         "notes": "-",
         "path": "tests/test_context_space_arity.metta",
-        "profile": "he-extended",
+        "profile": "extended",
         "space_engine": "native",
         "syntax": "metta"
       },
@@ -17052,7 +17052,7 @@
         "lang": "he",
         "notes": "-",
         "path": "tests/test_current_env_live_merge_regression.metta",
-        "profile": "he-extended",
+        "profile": "extended",
         "space_engine": "native",
         "syntax": "metta"
       },
@@ -17139,7 +17139,7 @@
         "lang": "he",
         "notes": "-",
         "path": "tests/test_deb2var_inline.metta",
-        "profile": "he-extended",
+        "profile": "extended",
         "space_engine": "native",
         "syntax": "metta"
       },
@@ -17232,7 +17232,7 @@
         "lang": "he",
         "notes": "-",
         "path": "tests/test_decons_atom_errors.metta",
-        "profile": "he-extended",
+        "profile": "extended",
         "space_engine": "native",
         "syntax": "metta"
       },
@@ -17331,7 +17331,7 @@
         "lang": "he",
         "notes": "-",
         "path": "tests/test_decons_atom_extra_args_error.metta",
-        "profile": "he-extended",
+        "profile": "extended",
         "space_engine": "native",
         "syntax": "metta"
       },
@@ -17430,7 +17430,7 @@
         "lang": "he",
         "notes": "-",
         "path": "tests/test_decons_atom_nonexpr_error.metta",
-        "profile": "he-extended",
+        "profile": "extended",
         "space_engine": "native",
         "syntax": "metta"
       },
@@ -17529,7 +17529,7 @@
         "lang": "he",
         "notes": "-",
         "path": "tests/test_decons_atom_wrong_arity_error.metta",
-        "profile": "he-extended",
+        "profile": "extended",
         "space_engine": "native",
         "syntax": "metta"
       },
@@ -17622,7 +17622,7 @@
         "lang": "he",
         "notes": "-",
         "path": "tests/test_disc_trie.metta",
-        "profile": "he-extended",
+        "profile": "extended",
         "space_engine": "native",
         "syntax": "metta"
       },
@@ -17726,7 +17726,7 @@
         "lang": "he",
         "notes": "-",
         "path": "tests/test_empty_car_cdr_errors.metta",
-        "profile": "he-extended",
+        "profile": "extended",
         "space_engine": "native",
         "syntax": "metta"
       },
@@ -17823,7 +17823,7 @@
         "lang": "he",
         "notes": "-",
         "path": "tests/test_eq_constructor_normal_form_regression.metta",
-        "profile": "he-extended",
+        "profile": "extended",
         "space_engine": "native",
         "syntax": "metta"
       },
@@ -17916,7 +17916,7 @@
         "lang": "he",
         "notes": "-",
         "path": "tests/test_equation_query_visible_bindings_regression.metta",
-        "profile": "he-extended",
+        "profile": "extended",
         "space_engine": "native",
         "syntax": "metta"
       },
@@ -18010,7 +18010,7 @@
         "lang": "he",
         "notes": "-",
         "path": "tests/test_equation_rhs_binding_propagation_regression.metta",
-        "profile": "he-extended",
+        "profile": "extended",
         "space_engine": "native",
         "syntax": "metta"
       },
@@ -18106,7 +18106,7 @@
         "lang": "he",
         "notes": "-",
         "path": "tests/test_equation_var_hygiene.metta",
-        "profile": "he-extended",
+        "profile": "extended",
         "space_engine": "native",
         "syntax": "metta"
       },
@@ -18204,7 +18204,7 @@
         "lang": "he",
         "notes": "-",
         "path": "tests/test_equations.metta",
-        "profile": "he-extended",
+        "profile": "extended",
         "space_engine": "native",
         "syntax": "metta"
       },
@@ -18304,7 +18304,7 @@
         "lang": "he",
         "notes": "-",
         "path": "tests/test_error_types.metta",
-        "profile": "he-extended",
+        "profile": "extended",
         "space_engine": "native",
         "syntax": "metta"
       },
@@ -18417,7 +18417,7 @@
         "lang": "he",
         "notes": "-",
         "path": "tests/test_eval.metta",
-        "profile": "he-extended",
+        "profile": "extended",
         "space_engine": "native",
         "syntax": "metta"
       },
@@ -18528,7 +18528,7 @@
         "lang": "he",
         "notes": "-",
         "path": "tests/test_eval_arity.metta",
-        "profile": "he-extended",
+        "profile": "extended",
         "space_engine": "native",
         "syntax": "metta"
       },
@@ -18641,7 +18641,7 @@
         "lang": "he",
         "notes": "-",
         "path": "tests/test_evalc_unknown_space.metta",
-        "profile": "he-extended",
+        "profile": "extended",
         "space_engine": "native",
         "syntax": "metta"
       },
@@ -18741,7 +18741,7 @@
         "lang": "he",
         "notes": "-",
         "path": "tests/test_fc_selfjoin_regression.metta",
-        "profile": "he-extended",
+        "profile": "extended",
         "space_engine": "native",
         "syntax": "metta"
       },
@@ -18833,7 +18833,7 @@
         "lang": "he",
         "notes": "-",
         "path": "tests/test_filter_atom_function_syntax.metta",
-        "profile": "he-extended",
+        "profile": "extended",
         "space_engine": "native",
         "syntax": "metta"
       },
@@ -18927,7 +18927,7 @@
         "lang": "he",
         "notes": "-",
         "path": "tests/test_fold.metta",
-        "profile": "he-extended",
+        "profile": "extended",
         "space_engine": "native",
         "syntax": "metta"
       },
@@ -19014,7 +19014,7 @@
         "lang": "he",
         "notes": "-",
         "path": "tests/test_fold_by_key_docs.metta",
-        "profile": "he-extended",
+        "profile": "extended",
         "space_engine": "native",
         "syntax": "metta"
       },
@@ -19105,7 +19105,7 @@
         "lang": "he",
         "notes": "-",
         "path": "tests/test_fold_docs.metta",
-        "profile": "he-extended",
+        "profile": "extended",
         "space_engine": "native",
         "syntax": "metta"
       },
@@ -19196,7 +19196,7 @@
         "lang": "he",
         "notes": "-",
         "path": "tests/test_foldl_atom.metta",
-        "profile": "he-extended",
+        "profile": "extended",
         "space_engine": "native",
         "syntax": "metta"
       },
@@ -19285,7 +19285,7 @@
         "lang": "he",
         "notes": "-",
         "path": "tests/test_foldl_atom_in_space_extension.metta",
-        "profile": "he-extended",
+        "profile": "extended",
         "space_engine": "native",
         "syntax": "metta"
       },
@@ -19375,7 +19375,7 @@
         "lang": "he",
         "notes": "-",
         "path": "tests/test_format_args.metta",
-        "profile": "he-extended",
+        "profile": "extended",
         "space_engine": "native",
         "syntax": "metta"
       },
@@ -19462,7 +19462,7 @@
         "lang": "he",
         "notes": "-",
         "path": "tests/test_format_args_arity.metta",
-        "profile": "he-extended",
+        "profile": "extended",
         "space_engine": "native",
         "syntax": "metta"
       },
@@ -19549,7 +19549,7 @@
         "lang": "he",
         "notes": "-",
         "path": "tests/test_format_args_bad_args.metta",
-        "profile": "he-extended",
+        "profile": "extended",
         "space_engine": "native",
         "syntax": "metta"
       },
@@ -19636,7 +19636,7 @@
         "lang": "he",
         "notes": "-",
         "path": "tests/test_format_args_bad_format.metta",
-        "profile": "he-extended",
+        "profile": "extended",
         "space_engine": "native",
         "syntax": "metta"
       },
@@ -19725,7 +19725,7 @@
         "lang": "he",
         "notes": "-",
         "path": "tests/test_fs2_eq.metta",
-        "profile": "he-extended",
+        "profile": "extended",
         "space_engine": "native",
         "syntax": "metta"
       },
@@ -19817,7 +19817,7 @@
         "lang": "he",
         "notes": "-",
         "path": "tests/test_function_return.metta",
-        "profile": "he-extended",
+        "profile": "extended",
         "space_engine": "native",
         "syntax": "metta"
       },
@@ -19909,7 +19909,7 @@
         "lang": "he",
         "notes": "-",
         "path": "tests/test_get_atoms.metta",
-        "profile": "he-extended",
+        "profile": "extended",
         "space_engine": "native",
         "syntax": "metta"
       },
@@ -20006,7 +20006,7 @@
         "lang": "he",
         "notes": "-",
         "path": "tests/test_get_metatype.metta",
-        "profile": "he-extended",
+        "profile": "extended",
         "space_engine": "native",
         "syntax": "metta"
       },
@@ -20106,7 +20106,7 @@
         "lang": "he",
         "notes": "-",
         "path": "tests/test_get_metatype_arity.metta",
-        "profile": "he-extended",
+        "profile": "extended",
         "space_engine": "native",
         "syntax": "metta"
       },
@@ -20200,7 +20200,7 @@
         "lang": "he",
         "notes": "-",
         "path": "tests/test_get_state_arity.metta",
-        "profile": "he-extended",
+        "profile": "extended",
         "space_engine": "native",
         "syntax": "metta"
       },
@@ -20293,7 +20293,7 @@
         "lang": "he",
         "notes": "-",
         "path": "tests/test_get_state_badargtype.metta",
-        "profile": "he-extended",
+        "profile": "extended",
         "space_engine": "native",
         "syntax": "metta"
       },
@@ -20395,7 +20395,7 @@
         "lang": "he",
         "notes": "-",
         "path": "tests/test_get_type_space.metta",
-        "profile": "he-extended",
+        "profile": "extended",
         "space_engine": "native",
         "syntax": "metta"
       },
@@ -20503,7 +20503,7 @@
         "lang": "he",
         "notes": "-",
         "path": "tests/test_get_type_space_arity.metta",
-        "profile": "he-extended",
+        "profile": "extended",
         "space_engine": "native",
         "syntax": "metta"
       },
@@ -20611,7 +20611,7 @@
         "lang": "he",
         "notes": "-",
         "path": "tests/test_get_type_space_nonspace_error.metta",
-        "profile": "he-extended",
+        "profile": "extended",
         "space_engine": "native",
         "syntax": "metta"
       },
@@ -20711,7 +20711,7 @@
         "lang": "he",
         "notes": "-",
         "path": "tests/test_git_module_arity.metta",
-        "profile": "he-extended",
+        "profile": "extended",
         "space_engine": "native",
         "syntax": "metta"
       },
@@ -20803,7 +20803,7 @@
         "lang": "he",
         "notes": "-",
         "path": "tests/test_git_module_missing.metta",
-        "profile": "he-extended",
+        "profile": "extended",
         "space_engine": "native",
         "syntax": "metta"
       },
@@ -20897,7 +20897,7 @@
         "lang": "he",
         "notes": "-",
         "path": "tests/test_hash_space.metta",
-        "profile": "he-extended",
+        "profile": "extended",
         "space_engine": "native",
         "syntax": "metta"
       },
@@ -20990,7 +20990,7 @@
         "lang": "he",
         "notes": "-",
         "path": "tests/test_he_compat_syntax_regressions.metta",
-        "profile": "he-extended",
+        "profile": "extended",
         "space_engine": "native",
         "syntax": "metta"
       },
@@ -21082,7 +21082,7 @@
         "lang": "he",
         "notes": "-",
         "path": "tests/test_he_nested_binding_substitution_regression.metta",
-        "profile": "he-extended",
+        "profile": "extended",
         "space_engine": "native",
         "syntax": "metta"
       },
@@ -21174,7 +21174,7 @@
         "lang": "he",
         "notes": "-",
         "path": "tests/test_if.metta",
-        "profile": "he-extended",
+        "profile": "extended",
         "space_engine": "native",
         "syntax": "metta"
       },
@@ -21261,7 +21261,7 @@
         "lang": "he",
         "notes": "-",
         "path": "tests/test_if_equal.metta",
-        "profile": "he-extended",
+        "profile": "extended",
         "space_engine": "native",
         "syntax": "metta"
       },
@@ -21348,7 +21348,7 @@
         "lang": "he",
         "notes": "-",
         "path": "tests/test_if_equal_arity.metta",
-        "profile": "he-extended",
+        "profile": "extended",
         "space_engine": "native",
         "syntax": "metta"
       },
@@ -21435,7 +21435,7 @@
         "lang": "he",
         "notes": "-",
         "path": "tests/test_if_once_witness_syntax.metta",
-        "profile": "he-extended",
+        "profile": "extended",
         "space_engine": "native",
         "syntax": "metta"
       },
@@ -21526,7 +21526,7 @@
         "lang": "he",
         "notes": "-",
         "path": "tests/test_if_stdlib.metta",
-        "profile": "he-extended",
+        "profile": "extended",
         "space_engine": "native",
         "syntax": "metta"
       },
@@ -21613,7 +21613,7 @@
         "lang": "he",
         "notes": "-",
         "path": "tests/test_if_stdlib_lazy.metta",
-        "profile": "he-extended",
+        "profile": "extended",
         "space_engine": "native",
         "syntax": "metta"
       },
@@ -21700,7 +21700,7 @@
         "lang": "he",
         "notes": "-",
         "path": "tests/test_import_arity.metta",
-        "profile": "he-extended",
+        "profile": "extended",
         "space_engine": "native",
         "syntax": "metta"
       },
@@ -21792,7 +21792,7 @@
         "lang": "he",
         "notes": "-",
         "path": "tests/test_import_modules.metta",
-        "profile": "he-extended",
+        "profile": "extended",
         "space_engine": "native",
         "syntax": "metta"
       },
@@ -21884,7 +21884,7 @@
         "lang": "he",
         "notes": "-",
         "path": "tests/test_import_partial_arity.metta",
-        "profile": "he-extended",
+        "profile": "extended",
         "space_engine": "native",
         "syntax": "metta"
       },
@@ -21979,7 +21979,7 @@
         "lang": "he",
         "notes": "-",
         "path": "tests/test_imported_bridge_string_grounding_regression.metta",
-        "profile": "he-extended",
+        "profile": "extended",
         "space_engine": "native",
         "syntax": "metta"
       },
@@ -22080,7 +22080,7 @@
         "lang": "he",
         "notes": "-",
         "path": "tests/test_imported_fallback_late_add_regression.metta",
-        "profile": "he-extended",
+        "profile": "extended",
         "space_engine": "native",
         "syntax": "metta"
       },
@@ -22175,7 +22175,7 @@
         "lang": "he",
         "notes": "-",
         "path": "tests/test_include_arity.metta",
-        "profile": "he-extended",
+        "profile": "extended",
         "space_engine": "native",
         "syntax": "metta"
       },
@@ -22267,7 +22267,7 @@
         "lang": "he",
         "notes": "-",
         "path": "tests/test_include_missing.metta",
-        "profile": "he-extended",
+        "profile": "extended",
         "space_engine": "native",
         "syntax": "metta"
       },
@@ -22361,7 +22361,7 @@
         "lang": "he",
         "notes": "-",
         "path": "tests/test_include_space_target.metta",
-        "profile": "he-extended",
+        "profile": "extended",
         "space_engine": "native",
         "syntax": "metta"
       },
@@ -22464,7 +22464,7 @@
         "lang": "he",
         "notes": "-",
         "path": "tests/test_include_space_target_error.metta",
-        "profile": "he-extended",
+        "profile": "extended",
         "space_engine": "native",
         "syntax": "metta"
       },
@@ -22564,7 +22564,7 @@
         "lang": "he",
         "notes": "-",
         "path": "tests/test_index_too_large_regression.metta",
-        "profile": "he-extended",
+        "profile": "extended",
         "space_engine": "native",
         "syntax": "metta"
       },
@@ -22655,7 +22655,7 @@
         "lang": "he",
         "notes": "-",
         "path": "tests/test_intersection_atom.metta",
-        "profile": "he-extended",
+        "profile": "extended",
         "space_engine": "native",
         "syntax": "metta"
       },
@@ -22751,7 +22751,7 @@
         "lang": "he",
         "notes": "-",
         "path": "tests/test_isinf_math_bad_type.metta",
-        "profile": "he-extended",
+        "profile": "extended",
         "space_engine": "native",
         "syntax": "metta"
       },
@@ -22857,7 +22857,7 @@
         "lang": "he",
         "notes": "-",
         "path": "tests/test_isnan_math_bad_type.metta",
-        "profile": "he-extended",
+        "profile": "extended",
         "space_engine": "native",
         "syntax": "metta"
       },
@@ -22954,7 +22954,7 @@
         "lang": "he",
         "notes": "-",
         "path": "tests/test_let.metta",
-        "profile": "he-extended",
+        "profile": "extended",
         "space_engine": "native",
         "syntax": "metta"
       },
@@ -23045,7 +23045,7 @@
         "lang": "he",
         "notes": "-",
         "path": "tests/test_let_star_error_short_circuit.metta",
-        "profile": "he-extended",
+        "profile": "extended",
         "space_engine": "native",
         "syntax": "metta"
       },
@@ -23144,7 +23144,7 @@
         "lang": "he",
         "notes": "-",
         "path": "tests/test_log_math_bad_type.metta",
-        "profile": "he-extended",
+        "profile": "extended",
         "space_engine": "native",
         "syntax": "metta"
       },
@@ -23241,7 +23241,7 @@
         "lang": "he",
         "notes": "-",
         "path": "tests/test_map_filter_atom.metta",
-        "profile": "he-extended",
+        "profile": "extended",
         "space_engine": "native",
         "syntax": "metta"
       },
@@ -23329,7 +23329,7 @@
         "lang": "he",
         "notes": "-",
         "path": "tests/test_match.metta",
-        "profile": "he-extended",
+        "profile": "extended",
         "space_engine": "native",
         "syntax": "metta"
       },
@@ -23422,7 +23422,7 @@
         "lang": "he",
         "notes": "-",
         "path": "tests/test_match_advanced.metta",
-        "profile": "he-extended",
+        "profile": "extended",
         "space_engine": "native",
         "syntax": "metta"
       },
@@ -23518,7 +23518,7 @@
         "lang": "he",
         "notes": "-",
         "path": "tests/test_match_chain_imported_regression.metta",
-        "profile": "he-extended",
+        "profile": "extended",
         "space_engine": "native",
         "syntax": "metta"
       },
@@ -23625,7 +23625,7 @@
         "lang": "he",
         "notes": "-",
         "path": "tests/test_match_coref_fastpath.metta",
-        "profile": "he-extended",
+        "profile": "extended",
         "space_engine": "native",
         "syntax": "metta"
       },
@@ -23724,7 +23724,7 @@
         "lang": "he",
         "notes": "-",
         "path": "tests/test_match_eager_double_apply_regression.metta",
-        "profile": "he-extended",
+        "profile": "extended",
         "space_engine": "native",
         "syntax": "metta"
       },
@@ -23823,7 +23823,7 @@
         "lang": "he",
         "notes": "-",
         "path": "tests/test_match_exact_bound_space_regression.metta",
-        "profile": "he-extended",
+        "profile": "extended",
         "space_engine": "native",
         "syntax": "metta"
       },
@@ -23926,7 +23926,7 @@
         "lang": "he",
         "notes": "-",
         "path": "tests/test_match_rule_reunify.metta",
-        "profile": "he-extended",
+        "profile": "extended",
         "space_engine": "native",
         "syntax": "metta"
       },
@@ -24027,7 +24027,7 @@
         "lang": "he",
         "notes": "-",
         "path": "tests/test_match_self_mutation_snapshot_regression.metta",
-        "profile": "he-extended",
+        "profile": "extended",
         "space_engine": "native",
         "syntax": "metta"
       },
@@ -24122,7 +24122,7 @@
         "lang": "he",
         "notes": "-",
         "path": "tests/test_match_var_thread.metta",
-        "profile": "he-extended",
+        "profile": "extended",
         "space_engine": "native",
         "syntax": "metta"
       },
@@ -24227,7 +24227,7 @@
         "lang": "he",
         "notes": "-",
         "path": "tests/test_match_var_types.metta",
-        "profile": "he-extended",
+        "profile": "extended",
         "space_engine": "native",
         "syntax": "metta"
       },
@@ -24331,7 +24331,7 @@
         "lang": "he",
         "notes": "-",
         "path": "tests/test_math_constants.metta",
-        "profile": "he-extended",
+        "profile": "extended",
         "space_engine": "native",
         "syntax": "metta"
       },
@@ -24425,7 +24425,7 @@
         "lang": "he",
         "notes": "-",
         "path": "tests/test_math_domain_errors.metta",
-        "profile": "he-extended",
+        "profile": "extended",
         "space_engine": "native",
         "syntax": "metta"
       },
@@ -24519,7 +24519,7 @@
         "lang": "he",
         "notes": "-",
         "path": "tests/test_math_errors.metta",
-        "profile": "he-extended",
+        "profile": "extended",
         "space_engine": "native",
         "syntax": "metta"
       },
@@ -24609,7 +24609,7 @@
         "lang": "he",
         "notes": "-",
         "path": "tests/test_math_nan_inf.metta",
-        "profile": "he-extended",
+        "profile": "extended",
         "space_engine": "native",
         "syntax": "metta"
       },
@@ -24696,7 +24696,7 @@
         "lang": "he",
         "notes": "-",
         "path": "tests/test_math_ops.metta",
-        "profile": "he-extended",
+        "profile": "extended",
         "space_engine": "native",
         "syntax": "metta"
       },
@@ -24788,7 +24788,7 @@
         "lang": "he",
         "notes": "-",
         "path": "tests/test_max_atom_errors.metta",
-        "profile": "he-extended",
+        "profile": "extended",
         "space_engine": "native",
         "syntax": "metta"
       },
@@ -24887,7 +24887,7 @@
         "lang": "he",
         "notes": "-",
         "path": "tests/test_max_atom_nonnumeric_error.metta",
-        "profile": "he-extended",
+        "profile": "extended",
         "space_engine": "native",
         "syntax": "metta"
       },
@@ -24983,7 +24983,7 @@
         "lang": "he",
         "notes": "-",
         "path": "tests/test_metta_op.metta",
-        "profile": "he-extended",
+        "profile": "extended",
         "space_engine": "native",
         "syntax": "metta"
       },
@@ -25079,7 +25079,7 @@
         "lang": "he",
         "notes": "-",
         "path": "tests/test_min_atom_errors.metta",
-        "profile": "he-extended",
+        "profile": "extended",
         "space_engine": "native",
         "syntax": "metta"
       },
@@ -25178,7 +25178,7 @@
         "lang": "he",
         "notes": "-",
         "path": "tests/test_min_atom_nonnumeric_error.metta",
-        "profile": "he-extended",
+        "profile": "extended",
         "space_engine": "native",
         "syntax": "metta"
       },
@@ -25273,7 +25273,7 @@
         "lang": "he",
         "notes": "-",
         "path": "tests/test_min_max_atom.metta",
-        "profile": "he-extended",
+        "profile": "extended",
         "space_engine": "native",
         "syntax": "metta"
       },
@@ -25365,7 +25365,7 @@
         "lang": "he",
         "notes": "-",
         "path": "tests/test_min_max_rational_exact_regression.metta",
-        "profile": "he-extended",
+        "profile": "extended",
         "space_engine": "native",
         "syntax": "metta"
       },
@@ -25459,7 +25459,7 @@
         "lang": "he",
         "notes": "-",
         "path": "tests/test_minimal_foldl_atom_bad_space.metta",
-        "profile": "he-extended",
+        "profile": "extended",
         "space_engine": "native",
         "syntax": "metta"
       },
@@ -25558,7 +25558,7 @@
         "lang": "he",
         "notes": "-",
         "path": "tests/test_minimal_foldl_atom_errors.metta",
-        "profile": "he-extended",
+        "profile": "extended",
         "space_engine": "native",
         "syntax": "metta"
       },
@@ -25654,7 +25654,7 @@
         "lang": "he",
         "notes": "-",
         "path": "tests/test_mod_space.metta",
-        "profile": "he-extended",
+        "profile": "extended",
         "space_engine": "native",
         "syntax": "metta"
       },
@@ -25746,7 +25746,7 @@
         "lang": "he",
         "notes": "-",
         "path": "tests/test_mod_space_arity.metta",
-        "profile": "he-extended",
+        "profile": "extended",
         "space_engine": "native",
         "syntax": "metta"
       },
@@ -25838,7 +25838,7 @@
         "lang": "he",
         "notes": "-",
         "path": "tests/test_new_space_arity.metta",
-        "profile": "he-extended",
+        "profile": "extended",
         "space_engine": "native",
         "syntax": "metta"
       },
@@ -25931,7 +25931,7 @@
         "lang": "he",
         "notes": "-",
         "path": "tests/test_new_state_arity.metta",
-        "profile": "he-extended",
+        "profile": "extended",
         "space_engine": "native",
         "syntax": "metta"
       },
@@ -26034,7 +26034,7 @@
         "lang": "he",
         "notes": "-",
         "path": "tests/test_noeval_atom_subst.metta",
-        "profile": "he-extended",
+        "profile": "extended",
         "space_engine": "native",
         "syntax": "metta"
       },
@@ -26132,7 +26132,7 @@
         "lang": "he",
         "notes": "-",
         "path": "tests/test_nondeterminism.metta",
-        "profile": "he-extended",
+        "profile": "extended",
         "space_engine": "native",
         "syntax": "metta"
       },
@@ -26227,7 +26227,7 @@
         "lang": "he",
         "notes": "-",
         "path": "tests/test_not_reducible.metta",
-        "profile": "he-extended",
+        "profile": "extended",
         "space_engine": "native",
         "syntax": "metta"
       },
@@ -26315,7 +26315,7 @@
         "lang": "he",
         "notes": "-",
         "path": "tests/test_numeric_eq_rational_regression.metta",
-        "profile": "he-extended",
+        "profile": "extended",
         "space_engine": "native",
         "syntax": "metta"
       },
@@ -26406,7 +26406,7 @@
         "lang": "he",
         "notes": "-",
         "path": "tests/test_once.metta",
-        "profile": "he-extended",
+        "profile": "extended",
         "space_engine": "native",
         "syntax": "metta"
       },
@@ -26493,7 +26493,7 @@
         "lang": "he",
         "notes": "-",
         "path": "tests/test_once_arity.metta",
-        "profile": "he-extended",
+        "profile": "extended",
         "space_engine": "native",
         "syntax": "metta"
       },
@@ -26589,7 +26589,7 @@
         "lang": "he",
         "notes": "-",
         "path": "tests/test_pow_math_bad_type.metta",
-        "profile": "he-extended",
+        "profile": "extended",
         "space_engine": "native",
         "syntax": "metta"
       },
@@ -26686,7 +26686,7 @@
         "lang": "he",
         "notes": "-",
         "path": "tests/test_pow_math_big_exp.metta",
-        "profile": "he-extended",
+        "profile": "extended",
         "space_engine": "native",
         "syntax": "metta"
       },
@@ -26782,7 +26782,7 @@
         "lang": "he",
         "notes": "-",
         "path": "tests/test_pragma_key_type_error.metta",
-        "profile": "he-extended",
+        "profile": "extended",
         "space_engine": "native",
         "syntax": "metta"
       },
@@ -26880,7 +26880,7 @@
         "lang": "he",
         "notes": "-",
         "path": "tests/test_pragma_max_stack_depth.metta",
-        "profile": "he-extended",
+        "profile": "extended",
         "space_engine": "native",
         "syntax": "metta"
       },
@@ -26976,7 +26976,7 @@
         "lang": "he",
         "notes": "-",
         "path": "tests/test_pragma_max_stack_depth_error.metta",
-        "profile": "he-extended",
+        "profile": "extended",
         "space_engine": "native",
         "syntax": "metta"
       },
@@ -27070,7 +27070,7 @@
         "lang": "he",
         "notes": "-",
         "path": "tests/test_pragma_modes.metta",
-        "profile": "he-extended",
+        "profile": "extended",
         "space_engine": "native",
         "syntax": "metta"
       },
@@ -27157,7 +27157,7 @@
         "lang": "he",
         "notes": "-",
         "path": "tests/test_pragma_wrong_arity.metta",
-        "profile": "he-extended",
+        "profile": "extended",
         "space_engine": "native",
         "syntax": "metta"
       },
@@ -27246,7 +27246,7 @@
         "lang": "he",
         "notes": "-",
         "path": "tests/test_pretty_namespaces_syntax.metta",
-        "profile": "he-extended",
+        "profile": "extended",
         "space_engine": "native",
         "syntax": "metta"
       },
@@ -27340,7 +27340,7 @@
         "lang": "he",
         "notes": "dedicated backend or bridge golden regression",
         "path": "tests/test_pretty_vars_syntax.metta",
-        "profile": "he-extended",
+        "profile": "extended",
         "space_engine": "native",
         "syntax": "metta"
       },
@@ -27431,7 +27431,7 @@
         "lang": "he",
         "notes": "-",
         "path": "tests/test_print_alternatives.metta",
-        "profile": "he-extended",
+        "profile": "extended",
         "space_engine": "native",
         "syntax": "metta"
       },
@@ -27518,7 +27518,7 @@
         "lang": "he",
         "notes": "-",
         "path": "tests/test_print_alternatives_arity.metta",
-        "profile": "he-extended",
+        "profile": "extended",
         "space_engine": "native",
         "syntax": "metta"
       },
@@ -27605,7 +27605,7 @@
         "lang": "he",
         "notes": "-",
         "path": "tests/test_print_alternatives_bad_args.metta",
-        "profile": "he-extended",
+        "profile": "extended",
         "space_engine": "native",
         "syntax": "metta"
       },
@@ -27692,7 +27692,7 @@
         "lang": "he",
         "notes": "-",
         "path": "tests/test_print_mods_arity.metta",
-        "profile": "he-extended",
+        "profile": "extended",
         "space_engine": "native",
         "syntax": "metta"
       },
@@ -27784,7 +27784,7 @@
         "lang": "he",
         "notes": "-",
         "path": "tests/test_println_arity.metta",
-        "profile": "he-extended",
+        "profile": "extended",
         "space_engine": "native",
         "syntax": "metta"
       },
@@ -27871,7 +27871,7 @@
         "lang": "he",
         "notes": "-",
         "path": "tests/test_println_syntax.metta",
-        "profile": "he-extended",
+        "profile": "extended",
         "space_engine": "native",
         "syntax": "metta"
       },
@@ -27962,7 +27962,7 @@
         "lang": "he",
         "notes": "-",
         "path": "tests/test_println_unit_binding.metta",
-        "profile": "he-extended",
+        "profile": "extended",
         "space_engine": "native",
         "syntax": "metta"
       },
@@ -28051,7 +28051,7 @@
         "lang": "he",
         "notes": "-",
         "path": "tests/test_queue_space.metta",
-        "profile": "he-extended",
+        "profile": "extended",
         "space_engine": "native",
         "syntax": "metta"
       },
@@ -28150,7 +28150,7 @@
         "lang": "he",
         "notes": "-",
         "path": "tests/test_queue_space_errors.metta",
-        "profile": "he-extended",
+        "profile": "extended",
         "space_engine": "native",
         "syntax": "metta"
       },
@@ -28246,7 +28246,7 @@
         "lang": "he",
         "notes": "-",
         "path": "tests/test_quote.metta",
-        "profile": "he-extended",
+        "profile": "extended",
         "space_engine": "native",
         "syntax": "metta"
       },
@@ -28333,7 +28333,7 @@
         "lang": "he",
         "notes": "-",
         "path": "tests/test_quote_arity.metta",
-        "profile": "he-extended",
+        "profile": "extended",
         "space_engine": "native",
         "syntax": "metta"
       },
@@ -28420,7 +28420,7 @@
         "lang": "he",
         "notes": "-",
         "path": "tests/test_range_repeat_atom_syntax.metta",
-        "profile": "he-extended",
+        "profile": "extended",
         "space_engine": "native",
         "syntax": "metta"
       },
@@ -28512,7 +28512,7 @@
         "lang": "he",
         "notes": "-",
         "path": "tests/test_rational_exact_math_regression.metta",
-        "profile": "he-extended",
+        "profile": "extended",
         "space_engine": "native",
         "syntax": "metta"
       },
@@ -28604,7 +28604,7 @@
         "lang": "he",
         "notes": "-",
         "path": "tests/test_rational_ingestion_limit_regression.metta",
-        "profile": "he-extended",
+        "profile": "extended",
         "space_engine": "native",
         "syntax": "metta"
       },
@@ -28696,7 +28696,7 @@
         "lang": "he",
         "notes": "-",
         "path": "tests/test_rational_mod_rejection_regression.metta",
-        "profile": "he-extended",
+        "profile": "extended",
         "space_engine": "native",
         "syntax": "metta"
       },
@@ -28791,7 +28791,7 @@
         "lang": "he",
         "notes": "-",
         "path": "tests/test_rational_storage_match_regression.metta",
-        "profile": "he-extended",
+        "profile": "extended",
         "space_engine": "native",
         "syntax": "metta"
       },
@@ -28891,7 +28891,7 @@
         "lang": "he",
         "notes": "-",
         "path": "tests/test_rational_unbounded_arithmetic_regression.metta",
-        "profile": "he-extended",
+        "profile": "extended",
         "space_engine": "native",
         "syntax": "metta"
       },
@@ -28982,7 +28982,7 @@
         "lang": "he",
         "notes": "-",
         "path": "tests/test_reduce.metta",
-        "profile": "he-extended",
+        "profile": "extended",
         "space_engine": "native",
         "syntax": "metta"
       },
@@ -29069,7 +29069,7 @@
         "lang": "he",
         "notes": "-",
         "path": "tests/test_reduce_docs.metta",
-        "profile": "he-extended",
+        "profile": "extended",
         "space_engine": "native",
         "syntax": "metta"
       },
@@ -29160,7 +29160,7 @@
         "lang": "he",
         "notes": "-",
         "path": "tests/test_register_module_arity.metta",
-        "profile": "he-extended",
+        "profile": "extended",
         "space_engine": "native",
         "syntax": "metta"
       },
@@ -29252,7 +29252,7 @@
         "lang": "he",
         "notes": "-",
         "path": "tests/test_register_module_extra_arity.metta",
-        "profile": "he-extended",
+        "profile": "extended",
         "space_engine": "native",
         "syntax": "metta"
       },
@@ -29344,7 +29344,7 @@
         "lang": "he",
         "notes": "-",
         "path": "tests/test_register_module_rebind.metta",
-        "profile": "he-extended",
+        "profile": "extended",
         "space_engine": "native",
         "syntax": "metta"
       },
@@ -29438,7 +29438,7 @@
         "lang": "he",
         "notes": "-",
         "path": "tests/test_remove_atom_canonical_var_regression.metta",
-        "profile": "he-extended",
+        "profile": "extended",
         "space_engine": "native",
         "syntax": "metta"
       },
@@ -29532,7 +29532,7 @@
         "lang": "he",
         "notes": "-",
         "path": "tests/test_remove_atom_updates_match_index.metta",
-        "profile": "he-extended",
+        "profile": "extended",
         "space_engine": "native",
         "syntax": "metta"
       },
@@ -29631,7 +29631,7 @@
         "lang": "he",
         "notes": "-",
         "path": "tests/test_remove_equation_updates_index.metta",
-        "profile": "he-extended",
+        "profile": "extended",
         "space_engine": "native",
         "syntax": "metta"
       },
@@ -29728,7 +29728,7 @@
         "lang": "he",
         "notes": "-",
         "path": "tests/test_remove_type_annotation_updates_index.metta",
-        "profile": "he-extended",
+        "profile": "extended",
         "space_engine": "native",
         "syntax": "metta"
       },
@@ -29822,7 +29822,7 @@
         "lang": "he",
         "notes": "-",
         "path": "tests/test_repr_parse_syntax.metta",
-        "profile": "he-extended",
+        "profile": "extended",
         "space_engine": "native",
         "syntax": "metta"
       },
@@ -29922,7 +29922,7 @@
         "lang": "he",
         "notes": "-",
         "path": "tests/test_round_math_bad_type.metta",
-        "profile": "he-extended",
+        "profile": "extended",
         "space_engine": "native",
         "syntax": "metta"
       },
@@ -30019,7 +30019,7 @@
         "lang": "he",
         "notes": "-",
         "path": "tests/test_runtime_builtin_docs.metta",
-        "profile": "he-extended",
+        "profile": "extended",
         "space_engine": "native",
         "syntax": "metta"
       },
@@ -30113,7 +30113,7 @@
         "lang": "he",
         "notes": "-",
         "path": "tests/test_sealed.metta",
-        "profile": "he-extended",
+        "profile": "extended",
         "space_engine": "native",
         "syntax": "metta"
       },
@@ -30200,7 +30200,7 @@
         "lang": "he",
         "notes": "-",
         "path": "tests/test_sealed_arity.metta",
-        "profile": "he-extended",
+        "profile": "extended",
         "space_engine": "native",
         "syntax": "metta"
       },
@@ -30288,7 +30288,7 @@
         "lang": "he",
         "notes": "-",
         "path": "tests/test_search_machine_config_variant_backchain.metta",
-        "profile": "he-extended",
+        "profile": "extended",
         "space_engine": "native",
         "syntax": "metta"
       },
@@ -30380,7 +30380,7 @@
         "lang": "he",
         "notes": "-",
         "path": "tests/test_search_policy.metta",
-        "profile": "he-extended",
+        "profile": "extended",
         "space_engine": "native",
         "syntax": "metta"
       },
@@ -30467,7 +30467,7 @@
         "lang": "he",
         "notes": "-",
         "path": "tests/test_search_policy_bad_order.metta",
-        "profile": "he-extended",
+        "profile": "extended",
         "space_engine": "native",
         "syntax": "metta"
       },
@@ -30558,7 +30558,7 @@
         "lang": "he",
         "notes": "-",
         "path": "tests/test_search_policy_errors.metta",
-        "profile": "he-extended",
+        "profile": "extended",
         "space_engine": "native",
         "syntax": "metta"
       },
@@ -30648,7 +30648,7 @@
         "lang": "he",
         "notes": "-",
         "path": "tests/test_search_policy_lane_order.metta",
-        "profile": "he-extended",
+        "profile": "extended",
         "space_engine": "native",
         "syntax": "metta"
       },
@@ -30735,7 +30735,7 @@
         "lang": "he",
         "notes": "-",
         "path": "tests/test_search_policy_unknown.metta",
-        "profile": "he-extended",
+        "profile": "extended",
         "space_engine": "native",
         "syntax": "metta"
       },
@@ -30822,7 +30822,7 @@
         "lang": "he",
         "notes": "-",
         "path": "tests/test_select.metta",
-        "profile": "he-extended",
+        "profile": "extended",
         "space_engine": "native",
         "syntax": "metta"
       },
@@ -30909,7 +30909,7 @@
         "lang": "he",
         "notes": "-",
         "path": "tests/test_select_arity.metta",
-        "profile": "he-extended",
+        "profile": "extended",
         "space_engine": "native",
         "syntax": "metta"
       },
@@ -31005,7 +31005,7 @@
         "lang": "he",
         "notes": "-",
         "path": "tests/test_select_bad_type.metta",
-        "profile": "he-extended",
+        "profile": "extended",
         "space_engine": "native",
         "syntax": "metta"
       },
@@ -31102,7 +31102,7 @@
         "lang": "he",
         "notes": "-",
         "path": "tests/test_select_collect_docs.metta",
-        "profile": "he-extended",
+        "profile": "extended",
         "space_engine": "native",
         "syntax": "metta"
       },
@@ -31193,7 +31193,7 @@
         "lang": "he",
         "notes": "-",
         "path": "tests/test_select_once_alias.metta",
-        "profile": "he-extended",
+        "profile": "extended",
         "space_engine": "native",
         "syntax": "metta"
       },
@@ -31281,7 +31281,7 @@
         "lang": "he",
         "notes": "-",
         "path": "tests/test_simple_match_builder_regression.metta",
-        "profile": "he-extended",
+        "profile": "extended",
         "space_engine": "native",
         "syntax": "metta"
       },
@@ -31373,7 +31373,7 @@
         "lang": "he",
         "notes": "-",
         "path": "tests/test_singleton_visible_witness_overlap_regression.metta",
-        "profile": "he-extended",
+        "profile": "extended",
         "space_engine": "native",
         "syntax": "metta"
       },
@@ -31460,7 +31460,7 @@
         "lang": "he",
         "notes": "-",
         "path": "tests/test_singleton_visible_witness_regression.metta",
-        "profile": "he-extended",
+        "profile": "extended",
         "space_engine": "native",
         "syntax": "metta"
       },
@@ -31549,7 +31549,7 @@
         "lang": "he",
         "notes": "-",
         "path": "tests/test_size_syntax.metta",
-        "profile": "he-extended",
+        "profile": "extended",
         "space_engine": "native",
         "syntax": "metta"
       },
@@ -31644,7 +31644,7 @@
         "lang": "he",
         "notes": "-",
         "path": "tests/test_sort_strings.metta",
-        "profile": "he-extended",
+        "profile": "extended",
         "space_engine": "native",
         "syntax": "metta"
       },
@@ -31737,7 +31737,7 @@
         "lang": "he",
         "notes": "-",
         "path": "tests/test_space_ops.metta",
-        "profile": "he-extended",
+        "profile": "extended",
         "space_engine": "native",
         "syntax": "metta"
       },
@@ -31833,7 +31833,7 @@
         "lang": "he",
         "notes": "-",
         "path": "tests/test_space_rematch_epoch_hygiene_regression.metta",
-        "profile": "he-extended",
+        "profile": "extended",
         "space_engine": "native",
         "syntax": "metta"
       },
@@ -31940,7 +31940,7 @@
         "lang": "he",
         "notes": "-",
         "path": "tests/test_sqrt_math_bad_type.metta",
-        "profile": "he-extended",
+        "profile": "extended",
         "space_engine": "native",
         "syntax": "metta"
       },
@@ -32039,7 +32039,7 @@
         "lang": "he",
         "notes": "-",
         "path": "tests/test_stack_space.metta",
-        "profile": "he-extended",
+        "profile": "extended",
         "space_engine": "native",
         "syntax": "metta"
       },
@@ -32138,7 +32138,7 @@
         "lang": "he",
         "notes": "-",
         "path": "tests/test_stack_space_errors.metta",
-        "profile": "he-extended",
+        "profile": "extended",
         "space_engine": "native",
         "syntax": "metta"
       },
@@ -32234,7 +32234,7 @@
         "lang": "he",
         "notes": "-",
         "path": "tests/test_state_ops.metta",
-        "profile": "he-extended",
+        "profile": "extended",
         "space_engine": "native",
         "syntax": "metta"
       },
@@ -32330,7 +32330,7 @@
         "lang": "he",
         "notes": "-",
         "path": "tests/test_state_type_error.metta",
-        "profile": "he-extended",
+        "profile": "extended",
         "space_engine": "native",
         "syntax": "metta"
       },
@@ -32427,7 +32427,7 @@
         "lang": "he",
         "notes": "-",
         "path": "tests/test_stdlib_compat_wrappers.metta",
-        "profile": "he-extended",
+        "profile": "extended",
         "space_engine": "native",
         "syntax": "metta"
       },
@@ -32518,7 +32518,7 @@
         "lang": "he",
         "notes": "-",
         "path": "tests/test_stdlib_introspection.metta",
-        "profile": "he-extended",
+        "profile": "extended",
         "space_engine": "native",
         "syntax": "metta"
       },
@@ -32607,7 +32607,7 @@
         "lang": "he",
         "notes": "-",
         "path": "tests/test_stree_deep.metta",
-        "profile": "he-extended",
+        "profile": "extended",
         "space_engine": "native",
         "syntax": "metta"
       },
@@ -32698,7 +32698,7 @@
         "lang": "he",
         "notes": "-",
         "path": "tests/test_subtraction_atom.metta",
-        "profile": "he-extended",
+        "profile": "extended",
         "space_engine": "native",
         "syntax": "metta"
       },
@@ -32785,7 +32785,7 @@
         "lang": "he",
         "notes": "-",
         "path": "tests/test_success_priority.metta",
-        "profile": "he-extended",
+        "profile": "extended",
         "space_engine": "native",
         "syntax": "metta"
       },
@@ -32874,7 +32874,7 @@
         "lang": "he",
         "notes": "-",
         "path": "tests/test_superpose_arity.metta",
-        "profile": "he-extended",
+        "profile": "extended",
         "space_engine": "native",
         "syntax": "metta"
       },
@@ -32967,7 +32967,7 @@
         "lang": "he",
         "notes": "-",
         "path": "tests/test_superpose_bind_arity.metta",
-        "profile": "he-extended",
+        "profile": "extended",
         "space_engine": "native",
         "syntax": "metta"
       },
@@ -33069,7 +33069,7 @@
         "lang": "he",
         "notes": "-",
         "path": "tests/test_superpose_bind_bad_type.metta",
-        "profile": "he-extended",
+        "profile": "extended",
         "space_engine": "native",
         "syntax": "metta"
       },
@@ -33184,7 +33184,7 @@
         "lang": "he",
         "notes": "-",
         "path": "tests/test_superpose_bind_empty.metta",
-        "profile": "he-extended",
+        "profile": "extended",
         "space_engine": "native",
         "syntax": "metta"
       },
@@ -33282,7 +33282,7 @@
         "lang": "he",
         "notes": "-",
         "path": "tests/test_superpose_collapse.metta",
-        "profile": "he-extended",
+        "profile": "extended",
         "space_engine": "native",
         "syntax": "metta"
       },
@@ -33391,7 +33391,7 @@
         "lang": "he",
         "notes": "-",
         "path": "tests/test_superpose_eval_elements.metta",
-        "profile": "he-extended",
+        "profile": "extended",
         "space_engine": "native",
         "syntax": "metta"
       },
@@ -33511,7 +33511,7 @@
         "lang": "he",
         "notes": "-",
         "path": "tests/test_superpose_eval_match_space.metta",
-        "profile": "he-extended",
+        "profile": "extended",
         "space_engine": "native",
         "syntax": "metta"
       },
@@ -33625,7 +33625,7 @@
         "lang": "he",
         "notes": "-",
         "path": "tests/test_switch_arity.metta",
-        "profile": "he-extended",
+        "profile": "extended",
         "space_engine": "native",
         "syntax": "metta"
       },
@@ -33723,7 +33723,7 @@
         "lang": "he",
         "notes": "-",
         "path": "tests/test_switch_minimal_arity.metta",
-        "profile": "he-extended",
+        "profile": "extended",
         "space_engine": "native",
         "syntax": "metta"
       },
@@ -33818,7 +33818,7 @@
         "lang": "he",
         "notes": "-",
         "path": "tests/test_tail_recursion.metta",
-        "profile": "he-extended",
+        "profile": "extended",
         "space_engine": "native",
         "syntax": "metta"
       },
@@ -33905,7 +33905,7 @@
         "lang": "he",
         "notes": "-",
         "path": "tests/test_top_level_output_order.metta",
-        "profile": "he-extended",
+        "profile": "extended",
         "space_engine": "native",
         "syntax": "metta"
       },
@@ -33992,7 +33992,7 @@
         "lang": "he",
         "notes": "-",
         "path": "tests/test_trace_arity.metta",
-        "profile": "he-extended",
+        "profile": "extended",
         "space_engine": "native",
         "syntax": "metta"
       },
@@ -34079,7 +34079,7 @@
         "lang": "he",
         "notes": "-",
         "path": "tests/test_trace_syntax.metta",
-        "profile": "he-extended",
+        "profile": "extended",
         "space_engine": "native",
         "syntax": "metta"
       },
@@ -34172,7 +34172,7 @@
         "lang": "he",
         "notes": "-",
         "path": "tests/test_tuple_head_effect_probe_regression.metta",
-        "profile": "he-extended",
+        "profile": "extended",
         "space_engine": "native",
         "syntax": "metta"
       },
@@ -34270,7 +34270,7 @@
         "lang": "he",
         "notes": "-",
         "path": "tests/test_type_match_builder_rollback_regression.metta",
-        "profile": "he-extended",
+        "profile": "extended",
         "space_engine": "native",
         "syntax": "metta"
       },
@@ -34374,7 +34374,7 @@
         "lang": "he",
         "notes": "-",
         "path": "tests/test_types.metta",
-        "profile": "he-extended",
+        "profile": "extended",
         "space_engine": "native",
         "syntax": "metta"
       },
@@ -34470,7 +34470,7 @@
         "lang": "he",
         "notes": "-",
         "path": "tests/test_unify.metta",
-        "profile": "he-extended",
+        "profile": "extended",
         "space_engine": "native",
         "syntax": "metta"
       },
@@ -34564,7 +34564,7 @@
         "lang": "he",
         "notes": "-",
         "path": "tests/test_unify_advanced.metta",
-        "profile": "he-extended",
+        "profile": "extended",
         "space_engine": "native",
         "syntax": "metta"
       },
@@ -34658,7 +34658,7 @@
         "lang": "he",
         "notes": "-",
         "path": "tests/test_unify_arity.metta",
-        "profile": "he-extended",
+        "profile": "extended",
         "space_engine": "native",
         "syntax": "metta"
       },
@@ -34752,7 +34752,7 @@
         "lang": "he",
         "notes": "-",
         "path": "tests/test_unify_branches.metta",
-        "profile": "he-extended",
+        "profile": "extended",
         "space_engine": "native",
         "syntax": "metta"
       },
@@ -34846,7 +34846,7 @@
         "lang": "he",
         "notes": "-",
         "path": "tests/test_unify_deep.metta",
-        "profile": "he-extended",
+        "profile": "extended",
         "space_engine": "native",
         "syntax": "metta"
       },
@@ -34938,7 +34938,7 @@
         "lang": "he",
         "notes": "-",
         "path": "tests/test_union_atom.metta",
-        "profile": "he-extended",
+        "profile": "extended",
         "space_engine": "native",
         "syntax": "metta"
       },
@@ -35025,7 +35025,7 @@
         "lang": "he",
         "notes": "-",
         "path": "tests/test_unique_atom.metta",
-        "profile": "he-extended",
+        "profile": "extended",
         "space_engine": "native",
         "syntax": "metta"
       },
@@ -35114,7 +35114,7 @@
         "lang": "he",
         "notes": "-",
         "path": "tests/test_unknown_space_add.metta",
-        "profile": "he-extended",
+        "profile": "extended",
         "space_engine": "native",
         "syntax": "metta"
       },
@@ -35206,7 +35206,7 @@
         "lang": "he",
         "notes": "-",
         "path": "tests/test_unknown_space_count.metta",
-        "profile": "he-extended",
+        "profile": "extended",
         "space_engine": "native",
         "syntax": "metta"
       },
@@ -35298,7 +35298,7 @@
         "lang": "he",
         "notes": "-",
         "path": "tests/test_unknown_space_get.metta",
-        "profile": "he-extended",
+        "profile": "extended",
         "space_engine": "native",
         "syntax": "metta"
       },
@@ -35391,7 +35391,7 @@
         "lang": "he",
         "notes": "-",
         "path": "tests/test_unknown_space_match.metta",
-        "profile": "he-extended",
+        "profile": "extended",
         "space_engine": "native",
         "syntax": "metta"
       },
@@ -35488,7 +35488,7 @@
         "lang": "he",
         "notes": "-",
         "path": "tests/test_unknown_space_remove.metta",
-        "profile": "he-extended",
+        "profile": "extended",
         "space_engine": "native",
         "syntax": "metta"
       },
@@ -35578,7 +35578,7 @@
         "lang": "he",
         "notes": "-",
         "path": "tests/test_unquote.metta",
-        "profile": "he-extended",
+        "profile": "extended",
         "space_engine": "native",
         "syntax": "metta"
       },
@@ -35665,7 +35665,7 @@
         "lang": "he",
         "notes": "-",
         "path": "tests/test_variable_head_dispatch.metta",
-        "profile": "he-extended",
+        "profile": "extended",
         "space_engine": "native",
         "syntax": "metta"
       },
@@ -35754,7 +35754,7 @@
         "lang": "he",
         "notes": "-",
         "path": "tests/test_with_space_snapshot.metta",
-        "profile": "he-extended",
+        "profile": "extended",
         "space_engine": "native",
         "syntax": "metta"
       },
@@ -35852,7 +35852,7 @@
         "lang": "he",
         "notes": "-",
         "path": "tests/test_with_space_snapshot_equation_regression.metta",
-        "profile": "he-extended",
+        "profile": "extended",
         "space_engine": "native",
         "syntax": "metta"
       },
@@ -35951,7 +35951,7 @@
         "lang": "he",
         "notes": "-",
         "path": "tests/test_with_space_snapshot_non_exact_query_regression.metta",
-        "profile": "he-extended",
+        "profile": "extended",
         "space_engine": "native",
         "syntax": "metta"
       },
@@ -36046,7 +36046,7 @@
         "lang": "he",
         "notes": "-",
         "path": "tests/test_with_space_snapshot_passthrough.metta",
-        "profile": "he-extended",
+        "profile": "extended",
         "space_engine": "native",
         "syntax": "metta"
       },
@@ -36141,7 +36141,7 @@
         "lang": "he",
         "notes": "-",
         "path": "tests/test_with_space_snapshot_queue_regression.metta",
-        "profile": "he-extended",
+        "profile": "extended",
         "space_engine": "native",
         "syntax": "metta"
       },
@@ -36234,7 +36234,7 @@
         "lang": "he",
         "notes": "-",
         "path": "tests/test_xor.metta",
-        "profile": "he-extended",
+        "profile": "extended",
         "space_engine": "native",
         "syntax": "metta"
       },
@@ -36322,7 +36322,7 @@
         "lang": "he",
         "notes": "-",
         "path": "tests/test_zero_arity_function_overload.metta",
-        "profile": "he-extended",
+        "profile": "extended",
         "space_engine": "native",
         "syntax": "metta"
       },

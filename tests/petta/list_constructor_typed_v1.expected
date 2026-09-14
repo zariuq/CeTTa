@@ -1,0 +1,3 @@
+(typed-list 1 LNil)
+((typed-list 1 LNil) (typed-list 2 LNil))
+()

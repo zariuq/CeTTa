@@ -34,6 +34,6 @@ WHAT YOU SEE
   Regression-checked: a sequential chainer over the same KB derives the same proofs.
 
 RUN
-  ./cetta --quiet --profile he-extended --lang he benchmarks/rho/rhometta-typed-bc/example.metta
+  ./cetta --quiet --profile extended --lang he benchmarks/rho/rhometta-typed-bc/example.metta
 
 Expect: every line tagged PASS, no Error.

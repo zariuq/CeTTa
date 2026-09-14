@@ -1,0 +1,3 @@
+% Optional else deliberately preserves both attachments to nested conditionals.
+<s> ::= "if(" <condition> ")" <s> ("else" <s>)? | "x"
+<condition> ::= "a" | "b"

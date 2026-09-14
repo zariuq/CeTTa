@@ -1,6 +1,6 @@
-; Regression: this shallow composition witness should not force delayed
-; variant materialization through either tuple interpretation or call-term
-; observation for obviously data-like tuples.
+; This shallow composition must preserve its alpha-distinct outcomes with
+; outcome-variant sharing disabled or enabled.  Materialization choices are
+; measured separately rather than made part of the language contract.
 
 (= (pair-body $a1 $a2)
    (Pair $a1 $a2))
@@ -14,8 +14,7 @@
 !(add-atom &ss (: ax-1 (P $p $q)))
 !(add-atom &ss (: ax-2 (Q $r $s)))
 
-!(pragma! outcome-variant-sharing on)
-!(reset-runtime-stats!)
+!(pragma! outcome-variant-sharing off)
 !(assertAlphaEqualToResult
   (pair-from-ss &ss)
   ((: (ax-1 ax-1) (Pair (P $a $b) (P $c $d)))
@@ -23,24 +22,10 @@
    (: (ax-2 ax-1) (Pair (Q $g $h) (P $i $j)))
    (: (ax-2 ax-2) (Pair (Q $g $h) (Q $k $l)))))
 
-!(bind! &stats (runtime-stats!))
-!(assertEqualToResult
-  (match &stats
-         (runtime-counter outcome-variant-prefix-compact $n)
-         (== $n 0))
-  (True))
-!(assertEqualToResult
-  (match &stats
-         (runtime-counter outcome-variant-slot-sink $n)
-         (== $n 0))
-  (True))
-!(assertEqualToResult
-  (match &stats
-         (runtime-counter outcome-variant-materialize-interpret-tuple $n)
-         (== $n 0))
-  (True))
-!(assertEqualToResult
-  (match &stats
-         (runtime-counter outcome-variant-materialize-dispatch-call-term $n)
-         (== $n 0))
-  (True))
+!(pragma! outcome-variant-sharing on)
+!(assertAlphaEqualToResult
+  (pair-from-ss &ss)
+  ((: (ax-1 ax-1) (Pair (P $a $b) (P $c $d)))
+   (: (ax-1 ax-2) (Pair (P $a $b) (Q $e $f)))
+   (: (ax-2 ax-1) (Pair (Q $g $h) (P $i $j)))
+   (: (ax-2 ax-2) (Pair (Q $g $h) (Q $k $l)))))

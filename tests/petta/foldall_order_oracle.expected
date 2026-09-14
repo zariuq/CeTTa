@@ -1,0 +1,15 @@
+(relation-bag (a b c))
+(superpose-bag (sa sb sc))
+(space-bag (space-a space-b space-c))
+(alias-bag (a b c))
+(demanded-guard-bag (ga gb gc))
+(duplicate-bag (dup dup middle))
+true
+true
+true
+true
+true
+true
+true
+true
+true

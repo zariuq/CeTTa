@@ -4906,14 +4906,7 @@ static const uint8_t cetta_petta_typecheck_v3_core_v1_compiled_plan_v1[] = {
 };
 
 static const CettaGsltEmbeddedSourceV1 cetta_petta_typecheck_v3_core_v1_sources[] = {
-    {
-        .input = {
-            .bytes = cetta_petta_typecheck_v3_core_v1_semantic_0,
-            .length = sizeof(cetta_petta_typecheck_v3_core_v1_semantic_0),
-            .source = "typecheck_v3_core_v1.metta",
-        },
-        .sha256 = "a7fd1be6f379a1bd1c8ce5a248abbabd0f12ec0fe369ea5596b3b50b429229d7",
-    },
+    {.input = {.bytes = cetta_petta_typecheck_v3_core_v1_semantic_0, .length = sizeof(cetta_petta_typecheck_v3_core_v1_semantic_0), .source = "typecheck_v3_core_v1.metta"}, .sha256 = "a7fd1be6f379a1bd1c8ce5a248abbabd0f12ec0fe369ea5596b3b50b429229d7"},
 };
 
 const CettaGsltEmbeddedLanguageV1 cetta_petta_typecheck_v3_core_v1 = {
@@ -4921,31 +4914,18 @@ const CettaGsltEmbeddedLanguageV1 cetta_petta_typecheck_v3_core_v1 = {
     .profile_name = NULL,
     .syntax_backend = "he-reader-direct-v1",
     .term_abi = "finite-horn-quote-v1",
-    .manifest = {
-        .input = {
-            .bytes = cetta_petta_typecheck_v3_core_v1_manifest_v1,
-            .length = sizeof(cetta_petta_typecheck_v3_core_v1_manifest_v1),
-            .source = "petta/typecheck_v3_core_runtime_v1.metta",
-        },
-        .sha256 = "275b70382b18fe8c76764655c15824ac96b3d935b4a9725c855323047e3f4d27",
-    },
+    .manifest = {.input = {.bytes = cetta_petta_typecheck_v3_core_v1_manifest_v1, .length = sizeof(cetta_petta_typecheck_v3_core_v1_manifest_v1), .source = "petta/typecheck_v3_core_runtime_v1.metta"}, .sha256 = "275b70382b18fe8c76764655c15824ac96b3d935b4a9725c855323047e3f4d27"},
     .semantic_sources = cetta_petta_typecheck_v3_core_v1_sources,
     .semantic_source_count = 1u,
-    .compiled_plan = {
-        .bytes = cetta_petta_typecheck_v3_core_v1_compiled_plan_v1,
-        .length = sizeof(cetta_petta_typecheck_v3_core_v1_compiled_plan_v1),
-        .sha256 = "80851bc7a21ab8ab706edbd130b51983ceb51cac24a992915b4c8676a4319365",
-    },
+    .compiled_plan = {.bytes = cetta_petta_typecheck_v3_core_v1_compiled_plan_v1, .length = sizeof(cetta_petta_typecheck_v3_core_v1_compiled_plan_v1), .sha256 = "80851bc7a21ab8ab706edbd130b51983ceb51cac24a992915b4c8676a4319365"},
     .program_nil = NULL,
     .program_cons = NULL,
     .entry_relation = NULL,
-    .entry_arity = 0u,
-    .program_position = 0u,
-    .result_position = 0u,
+    .entry_arity = 0u, .program_position = 0u, .result_position = 0u,
     .query_relation = "V3CallAccept",
     .query_arity = 3u,
     .request_pipeline = NULL,
     .observation = "bag",
     .manifest_sha256 = "275b70382b18fe8c76764655c15824ac96b3d935b4a9725c855323047e3f4d27",
-    .compiler_sha256 = "9d33d0708d05ce00c09f33c72292ad20d2bda72e1b67491b9644990c0c7e86c5",
+    .compiler_sha256 = "c82486772be84b0aec1aaf90f3a754fca4e9c370a05f98040fbda3de16671e22",
 };

@@ -1,0 +1,21 @@
+% Postfix EBNF described using its own grouping and repetition.
+% Lexical leaves are provided by the explicit BNF self-authority.
+<document> ::= <lines>
+<lines> ::= <line>*
+<line> ::= <rule> | <comment> | <blank>
+<rule> ::= "<" <name> ">" <spaces> "::=" <spaces> <expression> <line-end>
+<comment> ::= "%" <comment-chars> <line-end>
+<blank> ::= <spaces> <line-end>
+<name> ::= <name-char>+
+<expression> ::= <sequence> (" |" <spaces> <sequence>)*
+<sequence> ::= (<element> (<spaces-one> <element>)*)?
+<element> ::= <atom> ("?" | "*" | "+")?
+<atom> ::= <reference> | <literal> | "(" <expression> ")"
+<reference> ::= "<" <name> ">"
+<literal> ::= "\"" <literal-char>* "\""
+<literal-char> ::= <literal-scalar> | <escape>
+<escape> ::= "\\" "\"" | "\\" "\\" | "\\" "n" | "\\" "r" | "\\" "t"
+<spaces> ::= <horizontal-space>*
+<spaces-one> ::= <horizontal-space>+
+<comment-chars> ::= <line-scalar>*
+<line-end> ::= "\n" | "\r" "\n"

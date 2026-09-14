@@ -7,6 +7,7 @@
 #include "native_handle.h"
 #include "lib_prolog.h"
 #include "petta_program.h"
+#include "petta_semantics.h"
 #include "petta_libpl.h"
 #include "session.h"
 #include "space.h"
@@ -35,6 +36,31 @@ typedef struct {
     SymbolId head;
     CettaExprLen arity;
 } CettaPettaRelationKey;
+
+typedef struct {
+    char path[PATH_MAX];
+} CettaPettaLibraryPathOccurrence;
+
+typedef struct {
+    CettaPettaLibraryPathOccurrence *items;
+    uint32_t len;
+    uint32_t cap;
+    uint64_t revision;
+} CettaPettaLibraryPathRelation;
+
+/* One observation of PeTTa's ordered library-reference relation.  Exhaustion
+ * is ordinary nondeterministic failure; refusal is a distinct policy or
+ * representation error and must not be silently reinterpreted as absence. */
+typedef enum {
+    CETTA_PETTA_LIBRARY_REFERENCE_YIELD = 0,
+    CETTA_PETTA_LIBRARY_REFERENCE_EXHAUSTED,
+    CETTA_PETTA_LIBRARY_REFERENCE_REFUSED,
+} CettaPettaLibraryReferenceObservationKind;
+
+typedef struct {
+    CettaPettaLibraryReferenceObservationKind kind;
+    const char *reason;
+} CettaPettaLibraryReferenceObservation;
 
 typedef enum {
     CETTA_PETTA_MEMO_STRATEGY_WTINYLFU = 0,
@@ -75,9 +101,15 @@ typedef struct {
     uint32_t float_precision;
     uint32_t answer_limit;
     CettaPettaMemoAggregate aggregate;
+    uint64_t stat_tick;
     uint64_t cache_hits;
+    uint64_t cache_hits_stamp;
     uint64_t cache_misses;
+    uint64_t cache_misses_stamp;
+    uint64_t cache_bypasses;
+    uint64_t cache_bypasses_stamp;
     uint64_t answer_limit_truncated;
+    uint64_t answer_limit_truncated_stamp;
     bool imported_controls[CETTA_PETTA_MEMO_CONTROL_COUNT];
 } CettaPettaMemoState;
 
@@ -106,6 +138,7 @@ typedef struct CettaLibraryContext {
     uint32_t import_dir_len;
     CettaModuleMount module_mounts[CETTA_MAX_MODULE_ROOTS];
     uint32_t module_mount_len;
+    CettaPettaLibraryPathRelation petta_library_paths;
     struct {
         Space *space;
         bool loading;
@@ -129,6 +162,7 @@ typedef struct CettaLibraryContext {
     uint32_t petta_translator_rule_len;
     uint32_t petta_translator_rule_cap;
     uint64_t petta_translator_symbol_table_instance;
+    uint64_t petta_translator_rule_revision;
     CettaPettaRelationKey *petta_tabled_relations;
     uint32_t petta_tabled_relation_len;
     uint32_t petta_tabled_relation_cap;
@@ -184,36 +218,56 @@ bool cetta_library_petta_git_import(CettaLibraryContext *ctx,
                                     const char *git_path,
                                     const char *build_command,
                                     const char *base_directory,
+                                    const char *commit_sha,
                                     Arena *eval_arena,
                                     Atom **error_out);
 bool cetta_library_petta_git_import_enabled(
     const CettaLibraryContext *ctx);
+bool cetta_library_petta_tabling_enabled(
+    const CettaLibraryContext *ctx);
+bool cetta_library_petta_library_path_apply(
+    CettaLibraryContext *ctx,
+    const PeTTaLibraryPathEffect *effect);
+uint32_t cetta_library_petta_library_path_count(
+    const CettaLibraryContext *ctx);
+const char *cetta_library_petta_library_path_at(
+    const CettaLibraryContext *ctx, uint32_t index);
+/* Return the Nth authored root occurrence whose path has the requested SWI
+ * suffix.  This is the relational authority behind `(library Root Member)`;
+ * module mounts are only a physical index over the same roots. */
+bool cetta_library_petta_root_path_at(
+    const CettaLibraryContext *ctx, const char *root,
+    uint32_t occurrence, char *path, size_t path_size);
+/* Enumerate the ordered path relation denoted by a library reference.
+ * Existence never decides whether an admitted descriptor yields: rooted
+ * references construct every matching occurrence, while a standard
+ * reference renders its language-owned overlay path even when absent.
+ * import! is the later partial observer that checks and loads candidates. */
+CettaPettaLibraryReferenceObservation
+cetta_library_petta_reference_observe(
+    CettaLibraryContext *ctx,
+    const PeTTaLibraryReference *reference,
+    uint32_t occurrence, char *path, size_t path_size);
 
 bool cetta_library_import_module(CettaLibraryContext *ctx, const char *spec,
                                  Space *space, bool target_is_fresh,
                                  Arena *eval_arena,
                                  Arena *persistent_arena, Registry *registry,
                                  int fuel, Atom **error_out);
-bool cetta_library_import_library_member(
-    CettaLibraryContext *ctx, const char *member,
+bool cetta_library_import_petta_reference_at(
+    CettaLibraryContext *ctx,
+    const PeTTaLibraryReference *reference,
+    uint32_t occurrence,
     Space *space, bool target_is_fresh,
     Arena *eval_arena, Arena *persistent_arena,
     Registry *registry, int fuel, Atom **error_out);
-bool cetta_library_import_rooted_library_member(
-    CettaLibraryContext *ctx, const char *root,
-    const char *member, Space *space, bool target_is_fresh,
-    Arena *eval_arena, Arena *persistent_arena,
-    Registry *registry, int fuel, Atom **error_out);
-/*
- * Resolve a PeTTa `(library Member)` value through the same package mounts
- * and ancestor search used by descriptor imports, without loading it.
- */
-bool cetta_library_petta_resolve_library_member(
-    CettaLibraryContext *ctx, const char *member,
-    char *canonical_path, size_t canonical_path_size);
-bool cetta_library_petta_resolve_library_file(
-    CettaLibraryContext *ctx, const char *root,
-    const char *member, char *canonical_path,
+/* Resolve PeTTa's two distinct library-reference constructors without
+ * loading them.  `(library Member)` addresses the language standard-library
+ * overlay; `(library Root Member)` addresses a registered package root. */
+bool cetta_library_petta_resolve_reference(
+    CettaLibraryContext *ctx,
+    const PeTTaLibraryReference *reference,
+    char *canonical_path,
     size_t canonical_path_size);
 bool cetta_library_include_module(CettaLibraryContext *ctx, const char *spec,
                                   Space *space, Arena *eval_arena,
@@ -239,6 +293,8 @@ bool cetta_library_petta_translator_rule_contains(
     CettaLibraryContext *ctx, SymbolId head);
 bool cetta_library_petta_translator_rule_set(
     CettaLibraryContext *ctx, SymbolId head, bool enabled);
+uint64_t cetta_library_petta_translator_rule_revision(
+    CettaLibraryContext *ctx);
 bool cetta_library_petta_tabled_relation_contains(
     CettaLibraryContext *ctx, SymbolId head, CettaExprLen arity);
 bool cetta_library_petta_tabled_relation_set(
@@ -260,6 +316,9 @@ void cetta_library_petta_memo_clear_stats(
 void cetta_library_petta_memo_observe(
     CettaLibraryContext *ctx, SymbolId head,
     CettaExprLen arity, bool cache_hit);
+void cetta_library_petta_memo_observe_bypass(
+    CettaLibraryContext *ctx, SymbolId head,
+    CettaExprLen arity);
 void cetta_library_petta_memo_observe_truncation(
     CettaLibraryContext *ctx, SymbolId head,
     CettaExprLen arity);

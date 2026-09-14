@@ -28,7 +28,7 @@ static const CettaProfile CETTA_PROFILE_HE_COMPAT_VALUE = {
 static const CettaProfile CETTA_PROFILE_HE_EXTENDED_VALUE = {
     .id = CETTA_PROFILE_HE_EXTENDED,
     .language_id = CETTA_LANGUAGE_HE,
-    .name = "he-extended",
+    .name = "extended",
     .note = "HE-compatible syntax plus labeled CeTTa extensions.",
     .he_compatible_builtin = true,
     .enable_cetta_extensions = true,
@@ -171,50 +171,50 @@ static const CettaProfile CETTA_PROFILE_MM2_GSLT_VALUE = {
 };
 
 static const CettaBuiltinPolicy CETTA_BUILTIN_POLICIES[] = {
-    {"_minimal-foldl-atom", CETTA_PROFILE_MASK_ALL, "compat_alias"},
-    {"foldl-atom-in-space", CETTA_PROFILE_MASK_HE_EXTENDED_PLUS, "clean_primary_extension"},
+    {"_minimal-foldl-atom", CETTA_PROFILE_MASK_HE_PUBLIC | CETTA_PROFILE_MASK_PETTA_EXTENDED, "compat_alias"},
+    {"foldl-atom-in-space", CETTA_PROFILE_MASK_HE_EXTENDED_PLUS | CETTA_PROFILE_MASK_PETTA_EXTENDED, "clean_primary_extension"},
     {"foldl-atom", CETTA_PROFILE_MASK_ALL, "compat_alias"},
     {"filter-atom", CETTA_PROFILE_MASK_ALL, "compat_alias"},
-    {"range-atom", CETTA_PROFILE_MASK_HE_NON_COMPAT, "clean_primary_extension"},
-    {"repeat-atom", CETTA_PROFILE_MASK_HE_NON_COMPAT, "clean_primary_extension"},
-    {"add-atom-nodup", CETTA_PROFILE_MASK_HE_NON_COMPAT, "clean_primary_extension"},
-    {"count-atoms", CETTA_PROFILE_MASK_HE_EXTENDED_PLUS, "extension_only"},
-    {"module-inventory!", CETTA_PROFILE_MASK_HE_EXTENDED_PLUS, "clean_primary_extension"},
-    {"runtime-stats!", CETTA_PROFILE_MASK_HE_EXTENDED_PLUS, "clean_primary_extension"},
-    {"reset-runtime-stats!", CETTA_PROFILE_MASK_HE_EXTENDED_PLUS, "clean_primary_extension"},
-    {"register-module!", CETTA_PROFILE_MASK_ALL, "keep_he_public_builtin"},
-    {"git-module!", CETTA_PROFILE_MASK_ALL, "keep_he_public_builtin"},
+    {"range-atom", CETTA_PROFILE_MASK_HE_NON_COMPAT | CETTA_PROFILE_MASK_PETTA_EXTENDED, "clean_primary_extension"},
+    {"repeat-atom", CETTA_PROFILE_MASK_HE_NON_COMPAT | CETTA_PROFILE_MASK_PETTA_EXTENDED, "clean_primary_extension"},
+    {"add-atom-nodup", CETTA_PROFILE_MASK_HE_NON_COMPAT | CETTA_PROFILE_MASK_PETTA_EXTENDED, "clean_primary_extension"},
+    {"count-atoms", CETTA_PROFILE_MASK_HE_EXTENDED_PLUS | CETTA_PROFILE_MASK_PETTA_EXTENDED, "extension_only"},
+    {"module-inventory!", CETTA_PROFILE_MASK_HE_EXTENDED_PLUS | CETTA_PROFILE_MASK_PETTA_EXTENDED, "clean_primary_extension"},
+    {"runtime-stats!", CETTA_PROFILE_MASK_HE_EXTENDED_PLUS | CETTA_PROFILE_MASK_PETTA_EXTENDED, "clean_primary_extension"},
+    {"reset-runtime-stats!", CETTA_PROFILE_MASK_HE_EXTENDED_PLUS | CETTA_PROFILE_MASK_PETTA_EXTENDED, "clean_primary_extension"},
+    {"register-module!", CETTA_PROFILE_MASK_HE_PUBLIC | CETTA_PROFILE_MASK_PETTA_EXTENDED, "keep_he_public_builtin"},
+    {"git-module!", CETTA_PROFILE_MASK_HE_PUBLIC | CETTA_PROFILE_MASK_PETTA_EXTENDED, "keep_he_public_builtin"},
     {"import!", CETTA_PROFILE_MASK_ALL, "keep_he_public_builtin"},
-    {"include", CETTA_PROFILE_MASK_ALL, "keep_he_public_builtin"},
-    {"include-space-target", CETTA_PROFILE_MASK_HE_NON_COMPAT, "clean_primary_extension"},
-    {"mod-space!", CETTA_PROFILE_MASK_ALL, "keep_he_public_builtin"},
-    {"print-mods!", CETTA_PROFILE_MASK_ALL, "keep_he_public_builtin"},
-    {"capture", CETTA_PROFILE_MASK_ALL, "keep_he_public_builtin"},
+    {"include", CETTA_PROFILE_MASK_HE_PUBLIC | CETTA_PROFILE_MASK_PETTA_EXTENDED, "keep_he_public_builtin"},
+    {"include-space-target", CETTA_PROFILE_MASK_HE_NON_COMPAT | CETTA_PROFILE_MASK_PETTA_EXTENDED, "clean_primary_extension"},
+    {"mod-space!", CETTA_PROFILE_MASK_HE_PUBLIC | CETTA_PROFILE_MASK_PETTA_EXTENDED, "keep_he_public_builtin"},
+    {"print-mods!", CETTA_PROFILE_MASK_HE_PUBLIC | CETTA_PROFILE_MASK_PETTA_EXTENDED, "keep_he_public_builtin"},
+    {"capture", CETTA_PROFILE_MASK_HE_PUBLIC | CETTA_PROFILE_MASK_PETTA_EXTENDED, "keep_he_public_builtin"},
     {"quote", CETTA_PROFILE_MASK_ALL, "keep_he_public_builtin"},
     {"unquote", CETTA_PROFILE_MASK_ALL, "keep_he_public_builtin"},
     {"sealed", CETTA_PROFILE_MASK_ALL, "keep_he_public_builtin"},
-    {"collect", CETTA_PROFILE_MASK_HE_EXTENDED_PLUS, "compat_alias"},
-    {"fold", CETTA_PROFILE_MASK_HE_EXTENDED_PLUS, "clean_primary_extension"},
-    {"fold-by-key", CETTA_PROFILE_MASK_HE_EXTENDED_PLUS, "clean_primary_extension"},
-    {"reduce", CETTA_PROFILE_MASK_HE_EXTENDED_PLUS, "compat_alias"},
-    {"select", CETTA_PROFILE_MASK_HE_EXTENDED_PLUS, "clean_primary_extension"},
-    {"hyperpose", CETTA_PROFILE_MASK_HE_EXTENDED_PLUS, "clean_primary_extension"},
-    {"once", CETTA_PROFILE_MASK_HE_EXTENDED_PLUS, "compat_alias"},
-    {"eval-in-space", CETTA_PROFILE_MASK_HE_NON_COMPAT, "clean_primary_extension"},
-    {"singleton-visible-witness", CETTA_PROFILE_MASK_ALL, "translator_compat_builtin"},
-    {"search-policy", CETTA_PROFILE_MASK_HE_EXTENDED_PLUS, "clean_primary_extension"},
-    {"new-space-kind", CETTA_PROFILE_MASK_HE_EXTENDED_PLUS, "clean_primary_extension"},
-    {"with-space-snapshot", CETTA_PROFILE_MASK_HE_NON_COMPAT, "clean_primary_extension"},
-    {"space-set-backend!", CETTA_PROFILE_MASK_HE_EXTENDED_PLUS, "clean_primary_extension"},
-    {"space-set-match-backend!", CETTA_PROFILE_MASK_HE_EXTENDED_PLUS, "compat_alias"},
-    {"size", CETTA_PROFILE_MASK_HE_EXTENDED_PLUS, "clean_primary_extension"},
-    {"space-len", CETTA_PROFILE_MASK_HE_EXTENDED_PLUS, "clean_primary_extension"},
-    {"space-push", CETTA_PROFILE_MASK_HE_EXTENDED_PLUS, "clean_primary_extension"},
-    {"space-peek", CETTA_PROFILE_MASK_HE_EXTENDED_PLUS, "clean_primary_extension"},
-    {"space-pop", CETTA_PROFILE_MASK_HE_EXTENDED_PLUS, "clean_primary_extension"},
-    {"space-get", CETTA_PROFILE_MASK_HE_EXTENDED_PLUS, "clean_primary_extension"},
-    {"space-truncate", CETTA_PROFILE_MASK_HE_EXTENDED_PLUS, "clean_primary_extension"},
-    {"step!", CETTA_PROFILE_MASK_HE_EXTENDED_PLUS, "clean_primary_extension"},
+    {"collect", CETTA_PROFILE_MASK_HE_EXTENDED_PLUS | CETTA_PROFILE_MASK_PETTA_EXTENDED, "compat_alias"},
+    {"fold", CETTA_PROFILE_MASK_HE_EXTENDED_PLUS | CETTA_PROFILE_MASK_PETTA_EXTENDED, "clean_primary_extension"},
+    {"fold-by-key", CETTA_PROFILE_MASK_HE_EXTENDED_PLUS | CETTA_PROFILE_MASK_PETTA_EXTENDED, "clean_primary_extension"},
+    {"reduce", CETTA_PROFILE_MASK_HE_EXTENDED_PLUS | CETTA_PROFILE_MASK_PETTA_BASE_FORMS, "compat_alias"},
+    {"select", CETTA_PROFILE_MASK_HE_EXTENDED_PLUS | CETTA_PROFILE_MASK_PETTA_EXTENDED, "clean_primary_extension"},
+    {"hyperpose", CETTA_PROFILE_MASK_HE_EXTENDED_PLUS | CETTA_PROFILE_MASK_PETTA_BASE_FORMS, "clean_primary_extension"},
+    {"once", CETTA_PROFILE_MASK_HE_EXTENDED_PLUS | CETTA_PROFILE_MASK_PETTA_BASE_FORMS, "compat_alias"},
+    {"eval-in-space", CETTA_PROFILE_MASK_HE_NON_COMPAT | CETTA_PROFILE_MASK_PETTA_EXTENDED, "clean_primary_extension"},
+    {"singleton-visible-witness", CETTA_PROFILE_MASK_HE_PUBLIC | CETTA_PROFILE_MASK_PETTA_EXTENDED, "translator_compat_builtin"},
+    {"search-policy", CETTA_PROFILE_MASK_HE_EXTENDED_PLUS | CETTA_PROFILE_MASK_PETTA_EXTENDED, "clean_primary_extension"},
+    {"new-space-kind", CETTA_PROFILE_MASK_HE_EXTENDED_PLUS | CETTA_PROFILE_MASK_PETTA_EXTENDED, "clean_primary_extension"},
+    {"with-space-snapshot", CETTA_PROFILE_MASK_HE_NON_COMPAT | CETTA_PROFILE_MASK_PETTA_EXTENDED, "clean_primary_extension"},
+    {"space-set-backend!", CETTA_PROFILE_MASK_HE_EXTENDED_PLUS | CETTA_PROFILE_MASK_PETTA_EXTENDED, "clean_primary_extension"},
+    {"space-set-match-backend!", CETTA_PROFILE_MASK_HE_EXTENDED_PLUS | CETTA_PROFILE_MASK_PETTA_EXTENDED, "compat_alias"},
+    {"size", CETTA_PROFILE_MASK_HE_EXTENDED_PLUS | CETTA_PROFILE_MASK_PETTA_EXTENDED, "clean_primary_extension"},
+    {"space-len", CETTA_PROFILE_MASK_HE_EXTENDED_PLUS | CETTA_PROFILE_MASK_PETTA_EXTENDED, "clean_primary_extension"},
+    {"space-push", CETTA_PROFILE_MASK_HE_EXTENDED_PLUS | CETTA_PROFILE_MASK_PETTA_EXTENDED, "clean_primary_extension"},
+    {"space-peek", CETTA_PROFILE_MASK_HE_EXTENDED_PLUS | CETTA_PROFILE_MASK_PETTA_EXTENDED, "clean_primary_extension"},
+    {"space-pop", CETTA_PROFILE_MASK_HE_EXTENDED_PLUS | CETTA_PROFILE_MASK_PETTA_EXTENDED, "clean_primary_extension"},
+    {"space-get", CETTA_PROFILE_MASK_HE_EXTENDED_PLUS | CETTA_PROFILE_MASK_PETTA_EXTENDED, "clean_primary_extension"},
+    {"space-truncate", CETTA_PROFILE_MASK_HE_EXTENDED_PLUS | CETTA_PROFILE_MASK_PETTA_EXTENDED, "clean_primary_extension"},
+    {"step!", CETTA_PROFILE_MASK_HE_EXTENDED_PLUS | CETTA_PROFILE_MASK_PETTA_EXTENDED, "clean_primary_extension"},
 };
 
 static const CettaModuleProviderDescriptor CETTA_MODULE_PROVIDER_DESCRIPTORS[] = {
@@ -280,8 +280,9 @@ static uint32_t cetta_language_base_builtin_mask(CettaLanguageId language_id) {
         return CETTA_PROFILE_MASK_HE_FORMAL;
     case CETTA_LANGUAGE_PRIME:
         return CETTA_PROFILE_MASK_HE_PRIME;
-    case CETTA_LANGUAGE_MM2:
     case CETTA_LANGUAGE_PETTA:
+        return CETTA_PROFILE_MASK_PETTA_BASE;
+    case CETTA_LANGUAGE_MM2:
     case CETTA_LANGUAGE_AMBIENT:
     case CETTA_LANGUAGE_CALCULATOR:
     case CETTA_LANGUAGE_IMP:
@@ -449,7 +450,6 @@ uint32_t cetta_profile_mask(const CettaProfile *profile) {
     case CETTA_PROFILE_RHOCALC_STRICT_CORE:
     case CETTA_PROFILE_RHOCALC_COST:
     case CETTA_PROFILE_RHOCALC_RHOMETTA:
-    case CETTA_PROFILE_PETTA_EXTENDED:
     case CETTA_PROFILE_ZERO_EXP:
     case CETTA_PROFILE_ZERO_EMIT:
     case CETTA_PROFILE_ZERO_INTERACT:
@@ -458,10 +458,12 @@ uint32_t cetta_profile_mask(const CettaProfile *profile) {
     case CETTA_PROFILE_PETTA_TYPECHECK_V2:
     case CETTA_PROFILE_PETTA_TYPECHECK_V3:
 #if CETTA_BUILD_WITH_PETTA_TYPECHECK_V2
-        return CETTA_PROFILE_MASK_ALL;
+        return CETTA_PROFILE_MASK_PETTA_EXTENDED;
 #else
         return 0u;
 #endif
+    case CETTA_PROFILE_PETTA_EXTENDED:
+        return CETTA_PROFILE_MASK_PETTA_EXTENDED;
     }
     return 0;
 }
@@ -627,8 +629,8 @@ const char *cetta_remote_revision_policy_name(CettaRemoteRevisionPolicy policy) 
         return "none";
     case CETTA_REMOTE_REVISION_DEFAULT_BRANCH_ONLY:
         return "default-branch-only";
-    case CETTA_REMOTE_REVISION_EXPLICIT_REF_FUTURE:
-        return "explicit-ref-future";
+    case CETTA_REMOTE_REVISION_EXPLICIT_COMMIT:
+        return "explicit-commit";
     case CETTA_REMOTE_REVISION_CATALOG_CONTROLLED:
         return "catalog-controlled";
     }

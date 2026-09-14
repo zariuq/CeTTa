@@ -417,7 +417,7 @@
           "profiles": [
             "he",
             "he-compat",
-            "he-extended",
+            "extended",
             "he-prime"
           ],
           "rationale": "compat_alias",
@@ -426,7 +426,7 @@
         {
           "profile_mask": "CETTA_PROFILE_MASK_HE_EXTENDED_PLUS",
           "profiles": [
-            "he-extended",
+            "extended",
             "he-prime"
           ],
           "rationale": "clean_primary_extension",
@@ -437,7 +437,7 @@
           "profiles": [
             "he",
             "he-compat",
-            "he-extended",
+            "extended",
             "he-prime"
           ],
           "rationale": "compat_alias",
@@ -448,7 +448,7 @@
           "profiles": [
             "he",
             "he-compat",
-            "he-extended",
+            "extended",
             "he-prime"
           ],
           "rationale": "compat_alias",
@@ -458,7 +458,7 @@
           "profile_mask": "CETTA_PROFILE_MASK_HE_NON_COMPAT",
           "profiles": [
             "he",
-            "he-extended",
+            "extended",
             "he-prime"
           ],
           "rationale": "clean_primary_extension",
@@ -468,7 +468,7 @@
           "profile_mask": "CETTA_PROFILE_MASK_HE_NON_COMPAT",
           "profiles": [
             "he",
-            "he-extended",
+            "extended",
             "he-prime"
           ],
           "rationale": "clean_primary_extension",
@@ -478,7 +478,7 @@
           "profile_mask": "CETTA_PROFILE_MASK_HE_NON_COMPAT",
           "profiles": [
             "he",
-            "he-extended",
+            "extended",
             "he-prime"
           ],
           "rationale": "clean_primary_extension",
@@ -487,7 +487,7 @@
         {
           "profile_mask": "CETTA_PROFILE_MASK_HE_EXTENDED_PLUS",
           "profiles": [
-            "he-extended",
+            "extended",
             "he-prime"
           ],
           "rationale": "extension_only",
@@ -496,7 +496,7 @@
         {
           "profile_mask": "CETTA_PROFILE_MASK_HE_EXTENDED_PLUS",
           "profiles": [
-            "he-extended",
+            "extended",
             "he-prime"
           ],
           "rationale": "clean_primary_extension",
@@ -505,7 +505,7 @@
         {
           "profile_mask": "CETTA_PROFILE_MASK_HE_EXTENDED_PLUS",
           "profiles": [
-            "he-extended",
+            "extended",
             "he-prime"
           ],
           "rationale": "clean_primary_extension",
@@ -514,7 +514,7 @@
         {
           "profile_mask": "CETTA_PROFILE_MASK_HE_EXTENDED_PLUS",
           "profiles": [
-            "he-extended",
+            "extended",
             "he-prime"
           ],
           "rationale": "clean_primary_extension",
@@ -525,7 +525,7 @@
           "profiles": [
             "he",
             "he-compat",
-            "he-extended",
+            "extended",
             "he-prime"
           ],
           "rationale": "keep_he_public_builtin",
@@ -536,7 +536,7 @@
           "profiles": [
             "he",
             "he-compat",
-            "he-extended",
+            "extended",
             "he-prime"
           ],
           "rationale": "keep_he_public_builtin",
@@ -547,7 +547,7 @@
           "profiles": [
             "he",
             "he-compat",
-            "he-extended",
+            "extended",
             "he-prime"
           ],
           "rationale": "keep_he_public_builtin",
@@ -558,7 +558,7 @@
           "profiles": [
             "he",
             "he-compat",
-            "he-extended",
+            "extended",
             "he-prime"
           ],
           "rationale": "keep_he_public_builtin",
@@ -568,7 +568,7 @@
           "profile_mask": "CETTA_PROFILE_MASK_HE_NON_COMPAT",
           "profiles": [
             "he",
-            "he-extended",
+            "extended",
             "he-prime"
           ],
           "rationale": "clean_primary_extension",
@@ -579,7 +579,7 @@
           "profiles": [
             "he",
             "he-compat",
-            "he-extended",
+            "extended",
             "he-prime"
           ],
           "rationale": "keep_he_public_builtin",
@@ -590,7 +590,7 @@
           "profiles": [
             "he",
             "he-compat",
-            "he-extended",
+            "extended",
             "he-prime"
           ],
           "rationale": "keep_he_public_builtin",
@@ -601,7 +601,7 @@
           "profiles": [
             "he",
             "he-compat",
-            "he-extended",
+            "extended",
             "he-prime"
           ],
           "rationale": "keep_he_public_builtin",
@@ -612,7 +612,7 @@
           "profiles": [
             "he",
             "he-compat",
-            "he-extended",
+            "extended",
             "he-prime"
           ],
           "rationale": "keep_he_public_builtin",
@@ -623,7 +623,7 @@
           "profiles": [
             "he",
             "he-compat",
-            "he-extended",
+            "extended",
             "he-prime"
           ],
           "rationale": "keep_he_public_builtin",
@@ -634,7 +634,7 @@
           "profiles": [
             "he",
             "he-compat",
-            "he-extended",
+            "extended",
             "he-prime"
           ],
           "rationale": "keep_he_public_builtin",
@@ -643,7 +643,7 @@
         {
           "profile_mask": "CETTA_PROFILE_MASK_HE_EXTENDED_PLUS",
           "profiles": [
-            "he-extended",
+            "extended",
             "he-prime"
           ],
           "rationale": "compat_alias",
@@ -652,7 +652,7 @@
         {
           "profile_mask": "CETTA_PROFILE_MASK_HE_EXTENDED_PLUS",
           "profiles": [
-            "he-extended",
+            "extended",
             "he-prime"
           ],
           "rationale": "clean_primary_extension",
@@ -661,7 +661,7 @@
         {
           "profile_mask": "CETTA_PROFILE_MASK_HE_EXTENDED_PLUS",
           "profiles": [
-            "he-extended",
+            "extended",
             "he-prime"
           ],
           "rationale": "clean_primary_extension",
@@ -670,7 +670,7 @@
         {
           "profile_mask": "CETTA_PROFILE_MASK_HE_EXTENDED_PLUS",
           "profiles": [
-            "he-extended",
+            "extended",
             "he-prime"
           ],
           "rationale": "compat_alias",
@@ -679,7 +679,7 @@
         {
           "profile_mask": "CETTA_PROFILE_MASK_HE_EXTENDED_PLUS",
           "profiles": [
-            "he-extended",
+            "extended",
             "he-prime"
           ],
           "rationale": "clean_primary_extension",
@@ -688,7 +688,7 @@
         {
           "profile_mask": "CETTA_PROFILE_MASK_HE_EXTENDED_PLUS",
           "profiles": [
-            "he-extended",
+            "extended",
             "he-prime"
           ],
           "rationale": "clean_primary_extension",
@@ -697,18 +697,28 @@
         {
           "profile_mask": "CETTA_PROFILE_MASK_HE_EXTENDED_PLUS",
           "profiles": [
-            "he-extended",
+            "extended",
             "he-prime"
           ],
           "rationale": "compat_alias",
           "syntax": "once"
         },
         {
+          "profile_mask": "CETTA_PROFILE_MASK_HE_NON_COMPAT",
+          "profiles": [
+            "he",
+            "extended",
+            "he-prime"
+          ],
+          "rationale": "clean_primary_extension",
+          "syntax": "eval-in-space"
+        },
+        {
           "profile_mask": "CETTA_PROFILE_MASK_ALL",
           "profiles": [
             "he",
             "he-compat",
-            "he-extended",
+            "extended",
             "he-prime"
           ],
           "rationale": "translator_compat_builtin",
@@ -717,7 +727,7 @@
         {
           "profile_mask": "CETTA_PROFILE_MASK_HE_EXTENDED_PLUS",
           "profiles": [
-            "he-extended",
+            "extended",
             "he-prime"
           ],
           "rationale": "clean_primary_extension",
@@ -726,7 +736,7 @@
         {
           "profile_mask": "CETTA_PROFILE_MASK_HE_EXTENDED_PLUS",
           "profiles": [
-            "he-extended",
+            "extended",
             "he-prime"
           ],
           "rationale": "clean_primary_extension",
@@ -736,7 +746,7 @@
           "profile_mask": "CETTA_PROFILE_MASK_HE_NON_COMPAT",
           "profiles": [
             "he",
-            "he-extended",
+            "extended",
             "he-prime"
           ],
           "rationale": "clean_primary_extension",
@@ -745,7 +755,7 @@
         {
           "profile_mask": "CETTA_PROFILE_MASK_HE_EXTENDED_PLUS",
           "profiles": [
-            "he-extended",
+            "extended",
             "he-prime"
           ],
           "rationale": "clean_primary_extension",
@@ -754,7 +764,7 @@
         {
           "profile_mask": "CETTA_PROFILE_MASK_HE_EXTENDED_PLUS",
           "profiles": [
-            "he-extended",
+            "extended",
             "he-prime"
           ],
           "rationale": "compat_alias",
@@ -763,7 +773,7 @@
         {
           "profile_mask": "CETTA_PROFILE_MASK_HE_EXTENDED_PLUS",
           "profiles": [
-            "he-extended",
+            "extended",
             "he-prime"
           ],
           "rationale": "clean_primary_extension",
@@ -772,7 +782,7 @@
         {
           "profile_mask": "CETTA_PROFILE_MASK_HE_EXTENDED_PLUS",
           "profiles": [
-            "he-extended",
+            "extended",
             "he-prime"
           ],
           "rationale": "clean_primary_extension",
@@ -781,7 +791,7 @@
         {
           "profile_mask": "CETTA_PROFILE_MASK_HE_EXTENDED_PLUS",
           "profiles": [
-            "he-extended",
+            "extended",
             "he-prime"
           ],
           "rationale": "clean_primary_extension",
@@ -790,7 +800,7 @@
         {
           "profile_mask": "CETTA_PROFILE_MASK_HE_EXTENDED_PLUS",
           "profiles": [
-            "he-extended",
+            "extended",
             "he-prime"
           ],
           "rationale": "clean_primary_extension",
@@ -799,7 +809,7 @@
         {
           "profile_mask": "CETTA_PROFILE_MASK_HE_EXTENDED_PLUS",
           "profiles": [
-            "he-extended",
+            "extended",
             "he-prime"
           ],
           "rationale": "clean_primary_extension",
@@ -808,7 +818,7 @@
         {
           "profile_mask": "CETTA_PROFILE_MASK_HE_EXTENDED_PLUS",
           "profiles": [
-            "he-extended",
+            "extended",
             "he-prime"
           ],
           "rationale": "clean_primary_extension",
@@ -817,7 +827,7 @@
         {
           "profile_mask": "CETTA_PROFILE_MASK_HE_EXTENDED_PLUS",
           "profiles": [
-            "he-extended",
+            "extended",
             "he-prime"
           ],
           "rationale": "clean_primary_extension",
@@ -826,7 +836,7 @@
         {
           "profile_mask": "CETTA_PROFILE_MASK_HE_EXTENDED_PLUS",
           "profiles": [
-            "he-extended",
+            "extended",
             "he-prime"
           ],
           "rationale": "clean_primary_extension",
@@ -854,7 +864,7 @@
           "enable_cetta_extensions": true,
           "enable_dependent_telescope": false,
           "he_compatible_builtin": true,
-          "name": "he-extended",
+          "name": "extended",
           "note": "HE-compatible syntax plus labeled CeTTa extensions.",
           "rust_he_compat_semantics": false
         },
@@ -891,6 +901,14 @@
           "rust_he_compat_semantics": false
         },
         {
+          "enable_cetta_extensions": true,
+          "enable_dependent_telescope": false,
+          "he_compatible_builtin": false,
+          "name": "typecheck-v3",
+          "note": "PeTTa with native v3 judgments and coherent typecheck-v2 delegation.",
+          "rust_he_compat_semantics": false
+        },
+        {
           "enable_cetta_extensions": false,
           "enable_dependent_telescope": false,
           "he_compatible_builtin": false,
@@ -904,6 +922,14 @@
           "he_compatible_builtin": false,
           "name": "cost",
           "note": "Meredith cost-accounted rho extension (ground-signature token-gated slice).",
+          "rust_he_compat_semantics": false
+        },
+        {
+          "enable_cetta_extensions": true,
+          "enable_dependent_telescope": false,
+          "he_compatible_builtin": false,
+          "name": "rhometta",
+          "note": "Rho-calculus with inert MeTTa values and transactional COMM-time payload evaluation.",
           "rust_he_compat_semantics": false
         },
         {
@@ -943,8 +969,8 @@
     "module_policy": [
       {
         "catalog_category": "module-resolution-diff",
-        "expected_policy_row_count": 6,
-        "formal_he_obligation": "Pin CeTTa's local-path import, nested import, cycle detection, parse-failure reporting, and transactional rollback semantics as formal he module/import behavior.",
+        "expected_policy_row_count": 39,
+        "formal_he_obligation": "Pin CeTTa's named parser modules, local-path import, nested import, cycle detection, parse-failure reporting, and transactional rollback semantics as formal he module/import behavior.",
         "he_compat_obligation": "Keep these rows out of core evaluator agreement counts unless Rust becomes runnable past the import/module-name boundary.",
         "id": "module-import-policy-evidence-shape",
         "implementation_anchors": [
@@ -954,10 +980,684 @@
           "lib/stdlib.metta:@doc import!",
           "lib/stdlib.metta:@doc include"
         ],
-        "policy_rows": [],
-        "regression_tests": [],
-        "spec_refs": [],
-        "statement": "Module-resolution rows are explicit policy evidence, not core he-compat evaluator obligations: Rust HE rejects these local-path or nested module names before shared semantics are reachable, while formal he owns the local-path, nested-import, cycle, parse-failure, and transactional rollback contract to pin next.",
+        "policy_rows": [
+          {
+            "category": "module-resolution-diff",
+            "classification": "diff",
+            "path": "tests/test_gparse_native_backend_report.metta",
+            "policy_note": "CeTTa resolves the CeTTa gparse module and exercises its parser contracts; Rust HE stops at the module-resolution boundary before any parser behavior is reached. This row is evidence for CeTTa's parser/module extension policy, not an HE core evaluator disagreement.",
+            "recommended_action": "Keep out of core evaluator conformance unless a module/import contract is pinned. Normalize presentation-only names/error wording in the harness; do not contort CeTTa runtime errors to match host-specific Rust strings.",
+            "spec_refs": [
+              "he_metta_official_specs.md:94 module hierarchy is acknowledged, but CeTTa parser modules and repository-local parser paths are not pinned"
+            ],
+            "spec_rule_ids": [
+              "nondet.visible-bag",
+              "profile.syntax-policy",
+              "syntax.eval-bang",
+              "syntax.module-import"
+            ]
+          },
+          {
+            "category": "module-resolution-diff",
+            "classification": "diff",
+            "path": "tests/test_gparse_native_dispatch.metta",
+            "policy_note": "CeTTa resolves the CeTTa lib_parse module and exercises its parser contracts; Rust HE stops at the module-resolution boundary before any parser behavior is reached. This row is evidence for CeTTa's parser/module extension policy, not an HE core evaluator disagreement.",
+            "recommended_action": "Keep out of core evaluator conformance unless a module/import contract is pinned. Normalize presentation-only names/error wording in the harness; do not contort CeTTa runtime errors to match host-specific Rust strings.",
+            "spec_refs": [
+              "he_metta_official_specs.md:94 module hierarchy is acknowledged, but CeTTa parser modules and repository-local parser paths are not pinned"
+            ],
+            "spec_rule_ids": [
+              "nondet.visible-bag",
+              "profile.syntax-policy",
+              "syntax.eval-bang",
+              "syntax.module-import"
+            ]
+          },
+          {
+            "category": "module-resolution-diff",
+            "classification": "diff",
+            "path": "tests/test_gparse_native_dual_forest_signature.metta",
+            "policy_note": "CeTTa resolves the CeTTa gparse module and exercises its parser contracts; Rust HE stops at the module-resolution boundary before any parser behavior is reached. This row is evidence for CeTTa's parser/module extension policy, not an HE core evaluator disagreement.",
+            "recommended_action": "Keep out of core evaluator conformance unless a module/import contract is pinned. Normalize presentation-only names/error wording in the harness; do not contort CeTTa runtime errors to match host-specific Rust strings.",
+            "spec_refs": [
+              "he_metta_official_specs.md:94 module hierarchy is acknowledged, but CeTTa parser modules and repository-local parser paths are not pinned"
+            ],
+            "spec_rule_ids": [
+              "nondet.visible-bag",
+              "profile.syntax-policy",
+              "syntax.eval-bang",
+              "syntax.module-import"
+            ]
+          },
+          {
+            "category": "module-resolution-diff",
+            "classification": "diff",
+            "path": "tests/test_gparse_native_forest_digest.metta",
+            "policy_note": "CeTTa resolves the CeTTa gparse module and exercises its parser contracts; Rust HE stops at the module-resolution boundary before any parser behavior is reached. This row is evidence for CeTTa's parser/module extension policy, not an HE core evaluator disagreement.",
+            "recommended_action": "Keep out of core evaluator conformance unless a module/import contract is pinned. Normalize presentation-only names/error wording in the harness; do not contort CeTTa runtime errors to match host-specific Rust strings.",
+            "spec_refs": [
+              "he_metta_official_specs.md:94 module hierarchy is acknowledged, but CeTTa parser modules and repository-local parser paths are not pinned"
+            ],
+            "spec_rule_ids": [
+              "nondet.visible-bag",
+              "profile.syntax-policy",
+              "syntax.eval-bang",
+              "syntax.module-import"
+            ]
+          },
+          {
+            "category": "module-resolution-diff",
+            "classification": "diff",
+            "path": "tests/test_gparse_native_generalized_corpus.metta",
+            "policy_note": "CeTTa resolves the CeTTa gparse module and exercises its parser contracts; Rust HE stops at the module-resolution boundary before any parser behavior is reached. This row is evidence for CeTTa's parser/module extension policy, not an HE core evaluator disagreement.",
+            "recommended_action": "Keep out of core evaluator conformance unless a module/import contract is pinned. Normalize presentation-only names/error wording in the harness; do not contort CeTTa runtime errors to match host-specific Rust strings.",
+            "spec_refs": [
+              "he_metta_official_specs.md:94 module hierarchy is acknowledged, but CeTTa parser modules and repository-local parser paths are not pinned"
+            ],
+            "spec_rule_ids": [
+              "nondet.visible-bag",
+              "profile.syntax-policy",
+              "syntax.eval-bang",
+              "syntax.module-import"
+            ]
+          },
+          {
+            "category": "module-resolution-diff",
+            "classification": "diff",
+            "path": "tests/test_gparse_native_generalized_integration.metta",
+            "policy_note": "CeTTa resolves the CeTTa lib_parse module and exercises its parser contracts; Rust HE stops at the module-resolution boundary before any parser behavior is reached. This row is evidence for CeTTa's parser/module extension policy, not an HE core evaluator disagreement.",
+            "recommended_action": "Keep out of core evaluator conformance unless a module/import contract is pinned. Normalize presentation-only names/error wording in the harness; do not contort CeTTa runtime errors to match host-specific Rust strings.",
+            "spec_refs": [
+              "he_metta_official_specs.md:94 module hierarchy is acknowledged, but CeTTa parser modules and repository-local parser paths are not pinned"
+            ],
+            "spec_rule_ids": [
+              "nondet.visible-bag",
+              "profile.syntax-policy",
+              "syntax.eval-bang",
+              "syntax.module-import"
+            ]
+          },
+          {
+            "category": "module-resolution-diff",
+            "classification": "diff",
+            "path": "tests/test_gparse_native_generalized_toys.metta",
+            "policy_note": "CeTTa resolves the CeTTa lib_parse module and exercises its parser contracts; Rust HE stops at the module-resolution boundary before any parser behavior is reached. This row is evidence for CeTTa's parser/module extension policy, not an HE core evaluator disagreement.",
+            "recommended_action": "Keep out of core evaluator conformance unless a module/import contract is pinned. Normalize presentation-only names/error wording in the harness; do not contort CeTTa runtime errors to match host-specific Rust strings.",
+            "spec_refs": [
+              "he_metta_official_specs.md:94 module hierarchy is acknowledged, but CeTTa parser modules and repository-local parser paths are not pinned"
+            ],
+            "spec_rule_ids": [
+              "nondet.visible-bag",
+              "profile.syntax-policy",
+              "syntax.eval-bang",
+              "syntax.module-import"
+            ]
+          },
+          {
+            "category": "module-resolution-diff",
+            "classification": "diff",
+            "path": "tests/test_gparse_native_gll_forest_data.metta",
+            "policy_note": "CeTTa resolves the CeTTa gparse module and exercises its parser contracts; Rust HE stops at the module-resolution boundary before any parser behavior is reached. This row is evidence for CeTTa's parser/module extension policy, not an HE core evaluator disagreement.",
+            "recommended_action": "Keep out of core evaluator conformance unless a module/import contract is pinned. Normalize presentation-only names/error wording in the harness; do not contort CeTTa runtime errors to match host-specific Rust strings.",
+            "spec_refs": [
+              "he_metta_official_specs.md:94 module hierarchy is acknowledged, but CeTTa parser modules and repository-local parser paths are not pinned"
+            ],
+            "spec_rule_ids": [
+              "nondet.visible-bag",
+              "profile.syntax-policy",
+              "syntax.eval-bang",
+              "syntax.module-import"
+            ]
+          },
+          {
+            "category": "module-resolution-diff",
+            "classification": "diff",
+            "path": "tests/test_gparse_native_gll_forest_summary.metta",
+            "policy_note": "CeTTa resolves the CeTTa gparse module and exercises its parser contracts; Rust HE stops at the module-resolution boundary before any parser behavior is reached. This row is evidence for CeTTa's parser/module extension policy, not an HE core evaluator disagreement.",
+            "recommended_action": "Keep out of core evaluator conformance unless a module/import contract is pinned. Normalize presentation-only names/error wording in the harness; do not contort CeTTa runtime errors to match host-specific Rust strings.",
+            "spec_refs": [
+              "he_metta_official_specs.md:94 module hierarchy is acknowledged, but CeTTa parser modules and repository-local parser paths are not pinned"
+            ],
+            "spec_rule_ids": [
+              "nondet.visible-bag",
+              "profile.syntax-policy",
+              "syntax.eval-bang",
+              "syntax.module-import"
+            ]
+          },
+          {
+            "category": "module-resolution-diff",
+            "classification": "diff",
+            "path": "tests/test_gparse_native_gll_parse_shared.metta",
+            "policy_note": "CeTTa resolves the CeTTa gparse module and exercises its parser contracts; Rust HE stops at the module-resolution boundary before any parser behavior is reached. This row is evidence for CeTTa's parser/module extension policy, not an HE core evaluator disagreement.",
+            "recommended_action": "Keep out of core evaluator conformance unless a module/import contract is pinned. Normalize presentation-only names/error wording in the harness; do not contort CeTTa runtime errors to match host-specific Rust strings.",
+            "spec_refs": [
+              "he_metta_official_specs.md:94 module hierarchy is acknowledged, but CeTTa parser modules and repository-local parser paths are not pinned"
+            ],
+            "spec_rule_ids": [
+              "nondet.visible-bag",
+              "profile.syntax-policy",
+              "syntax.eval-bang",
+              "syntax.module-import"
+            ]
+          },
+          {
+            "category": "module-resolution-diff",
+            "classification": "diff",
+            "path": "tests/test_gparse_native_glr_class.metta",
+            "policy_note": "CeTTa resolves the CeTTa gparse module and exercises its parser contracts; Rust HE stops at the module-resolution boundary before any parser behavior is reached. This row is evidence for CeTTa's parser/module extension policy, not an HE core evaluator disagreement.",
+            "recommended_action": "Keep out of core evaluator conformance unless a module/import contract is pinned. Normalize presentation-only names/error wording in the harness; do not contort CeTTa runtime errors to match host-specific Rust strings.",
+            "spec_refs": [
+              "he_metta_official_specs.md:94 module hierarchy is acknowledged, but CeTTa parser modules and repository-local parser paths are not pinned"
+            ],
+            "spec_rule_ids": [
+              "nondet.visible-bag",
+              "profile.syntax-policy",
+              "syntax.eval-bang",
+              "syntax.module-import"
+            ]
+          },
+          {
+            "category": "module-resolution-diff",
+            "classification": "diff",
+            "path": "tests/test_gparse_native_glr_forest_data.metta",
+            "policy_note": "CeTTa resolves the CeTTa gparse module and exercises its parser contracts; Rust HE stops at the module-resolution boundary before any parser behavior is reached. This row is evidence for CeTTa's parser/module extension policy, not an HE core evaluator disagreement.",
+            "recommended_action": "Keep out of core evaluator conformance unless a module/import contract is pinned. Normalize presentation-only names/error wording in the harness; do not contort CeTTa runtime errors to match host-specific Rust strings.",
+            "spec_refs": [
+              "he_metta_official_specs.md:94 module hierarchy is acknowledged, but CeTTa parser modules and repository-local parser paths are not pinned"
+            ],
+            "spec_rule_ids": [
+              "nondet.visible-bag",
+              "profile.syntax-policy",
+              "syntax.eval-bang",
+              "syntax.module-import"
+            ]
+          },
+          {
+            "category": "module-resolution-diff",
+            "classification": "diff",
+            "path": "tests/test_gparse_native_glr_forest_summary.metta",
+            "policy_note": "CeTTa resolves the CeTTa gparse module and exercises its parser contracts; Rust HE stops at the module-resolution boundary before any parser behavior is reached. This row is evidence for CeTTa's parser/module extension policy, not an HE core evaluator disagreement.",
+            "recommended_action": "Keep out of core evaluator conformance unless a module/import contract is pinned. Normalize presentation-only names/error wording in the harness; do not contort CeTTa runtime errors to match host-specific Rust strings.",
+            "spec_refs": [
+              "he_metta_official_specs.md:94 module hierarchy is acknowledged, but CeTTa parser modules and repository-local parser paths are not pinned"
+            ],
+            "spec_rule_ids": [
+              "nondet.visible-bag",
+              "profile.syntax-policy",
+              "syntax.eval-bang",
+              "syntax.module-import"
+            ]
+          },
+          {
+            "category": "module-resolution-diff",
+            "classification": "diff",
+            "path": "tests/test_gparse_native_glr_parse_shared.metta",
+            "policy_note": "CeTTa resolves the CeTTa gparse module and exercises its parser contracts; Rust HE stops at the module-resolution boundary before any parser behavior is reached. This row is evidence for CeTTa's parser/module extension policy, not an HE core evaluator disagreement.",
+            "recommended_action": "Keep out of core evaluator conformance unless a module/import contract is pinned. Normalize presentation-only names/error wording in the harness; do not contort CeTTa runtime errors to match host-specific Rust strings.",
+            "spec_refs": [
+              "he_metta_official_specs.md:94 module hierarchy is acknowledged, but CeTTa parser modules and repository-local parser paths are not pinned"
+            ],
+            "spec_rule_ids": [
+              "nondet.visible-bag",
+              "profile.syntax-policy",
+              "syntax.eval-bang",
+              "syntax.module-import"
+            ]
+          },
+          {
+            "category": "module-resolution-diff",
+            "classification": "diff",
+            "path": "tests/test_gparse_native_grammar_data.metta",
+            "policy_note": "CeTTa resolves the CeTTa gparse module and exercises its parser contracts; Rust HE stops at the module-resolution boundary before any parser behavior is reached. This row is evidence for CeTTa's parser/module extension policy, not an HE core evaluator disagreement.",
+            "recommended_action": "Keep out of core evaluator conformance unless a module/import contract is pinned. Normalize presentation-only names/error wording in the harness; do not contort CeTTa runtime errors to match host-specific Rust strings.",
+            "spec_refs": [
+              "he_metta_official_specs.md:94 module hierarchy is acknowledged, but CeTTa parser modules and repository-local parser paths are not pinned"
+            ],
+            "spec_rule_ids": [
+              "nondet.visible-bag",
+              "profile.syntax-policy",
+              "syntax.eval-bang",
+              "syntax.module-import"
+            ]
+          },
+          {
+            "category": "module-resolution-diff",
+            "classification": "diff",
+            "path": "tests/test_gparse_native_grammar_summary.metta",
+            "policy_note": "CeTTa resolves the CeTTa gparse module and exercises its parser contracts; Rust HE stops at the module-resolution boundary before any parser behavior is reached. This row is evidence for CeTTa's parser/module extension policy, not an HE core evaluator disagreement.",
+            "recommended_action": "Keep out of core evaluator conformance unless a module/import contract is pinned. Normalize presentation-only names/error wording in the harness; do not contort CeTTa runtime errors to match host-specific Rust strings.",
+            "spec_refs": [
+              "he_metta_official_specs.md:94 module hierarchy is acknowledged, but CeTTa parser modules and repository-local parser paths are not pinned"
+            ],
+            "spec_rule_ids": [
+              "nondet.visible-bag",
+              "profile.syntax-policy",
+              "syntax.eval-bang",
+              "syntax.module-import"
+            ]
+          },
+          {
+            "category": "module-resolution-diff",
+            "classification": "diff",
+            "path": "tests/test_gparse_native_metamath_corpus.metta",
+            "policy_note": "CeTTa resolves the CeTTa lib_parse module and exercises its parser contracts; Rust HE stops at the module-resolution boundary before any parser behavior is reached. This row is evidence for CeTTa's parser/module extension policy, not an HE core evaluator disagreement.",
+            "recommended_action": "Keep out of core evaluator conformance unless a module/import contract is pinned. Normalize presentation-only names/error wording in the harness; do not contort CeTTa runtime errors to match host-specific Rust strings.",
+            "spec_refs": [
+              "he_metta_official_specs.md:94 module hierarchy is acknowledged, but CeTTa parser modules and repository-local parser paths are not pinned"
+            ],
+            "spec_rule_ids": [
+              "nondet.visible-bag",
+              "profile.syntax-policy",
+              "syntax.eval-bang",
+              "syntax.module-import"
+            ]
+          },
+          {
+            "category": "module-resolution-diff",
+            "classification": "diff",
+            "path": "tests/test_gparse_native_metamath_frontier.metta",
+            "policy_note": "CeTTa resolves the repository-local Metamath parser support module and exercises its parser contracts; Rust HE stops at the module-resolution boundary before any parser behavior is reached. This row is evidence for CeTTa's parser/module extension policy, not an HE core evaluator disagreement.",
+            "recommended_action": "Keep out of core evaluator conformance unless a module/import contract is pinned. Normalize presentation-only names/error wording in the harness; do not contort CeTTa runtime errors to match host-specific Rust strings.",
+            "spec_refs": [
+              "he_metta_official_specs.md:94 module hierarchy is acknowledged, but CeTTa parser modules and repository-local parser paths are not pinned"
+            ],
+            "spec_rule_ids": [
+              "nondet.visible-bag",
+              "profile.syntax-policy",
+              "syntax.eval-bang",
+              "syntax.module-import"
+            ]
+          },
+          {
+            "category": "module-resolution-diff",
+            "classification": "diff",
+            "path": "tests/test_gparse_native_metamath_plus_weq_variant_matrix.metta",
+            "policy_note": "CeTTa resolves the repository-local Metamath parser support module and exercises its parser contracts; Rust HE stops at the module-resolution boundary before any parser behavior is reached. This row is evidence for CeTTa's parser/module extension policy, not an HE core evaluator disagreement.",
+            "recommended_action": "Keep out of core evaluator conformance unless a module/import contract is pinned. Normalize presentation-only names/error wording in the harness; do not contort CeTTa runtime errors to match host-specific Rust strings.",
+            "spec_refs": [
+              "he_metta_official_specs.md:94 module hierarchy is acknowledged, but CeTTa parser modules and repository-local parser paths are not pinned"
+            ],
+            "spec_rule_ids": [
+              "nondet.visible-bag",
+              "profile.syntax-policy",
+              "syntax.eval-bang",
+              "syntax.module-import"
+            ]
+          },
+          {
+            "category": "module-resolution-diff",
+            "classification": "diff",
+            "path": "tests/test_gparse_native_runtime_grammar_shared.metta",
+            "policy_note": "CeTTa resolves the CeTTa gparse module and exercises its parser contracts; Rust HE stops at the module-resolution boundary before any parser behavior is reached. This row is evidence for CeTTa's parser/module extension policy, not an HE core evaluator disagreement.",
+            "recommended_action": "Keep out of core evaluator conformance unless a module/import contract is pinned. Normalize presentation-only names/error wording in the harness; do not contort CeTTa runtime errors to match host-specific Rust strings.",
+            "spec_refs": [
+              "he_metta_official_specs.md:94 module hierarchy is acknowledged, but CeTTa parser modules and repository-local parser paths are not pinned"
+            ],
+            "spec_rule_ids": [
+              "nondet.visible-bag",
+              "profile.syntax-policy",
+              "syntax.eval-bang",
+              "syntax.module-import"
+            ]
+          },
+          {
+            "category": "module-resolution-diff",
+            "classification": "diff",
+            "path": "tests/test_gparse_native_slr_parse_shared.metta",
+            "policy_note": "CeTTa resolves the CeTTa lib_parse module and exercises its parser contracts; Rust HE stops at the module-resolution boundary before any parser behavior is reached. This row is evidence for CeTTa's parser/module extension policy, not an HE core evaluator disagreement.",
+            "recommended_action": "Keep out of core evaluator conformance unless a module/import contract is pinned. Normalize presentation-only names/error wording in the harness; do not contort CeTTa runtime errors to match host-specific Rust strings.",
+            "spec_refs": [
+              "he_metta_official_specs.md:94 module hierarchy is acknowledged, but CeTTa parser modules and repository-local parser paths are not pinned"
+            ],
+            "spec_rule_ids": [
+              "nondet.visible-bag",
+              "profile.syntax-policy",
+              "syntax.eval-bang",
+              "syntax.module-import"
+            ]
+          },
+          {
+            "category": "module-resolution-diff",
+            "classification": "diff",
+            "path": "tests/test_gparse_native_slr_summary.metta",
+            "policy_note": "CeTTa resolves the CeTTa gparse module and exercises its parser contracts; Rust HE stops at the module-resolution boundary before any parser behavior is reached. This row is evidence for CeTTa's parser/module extension policy, not an HE core evaluator disagreement.",
+            "recommended_action": "Keep out of core evaluator conformance unless a module/import contract is pinned. Normalize presentation-only names/error wording in the harness; do not contort CeTTa runtime errors to match host-specific Rust strings.",
+            "spec_refs": [
+              "he_metta_official_specs.md:94 module hierarchy is acknowledged, but CeTTa parser modules and repository-local parser paths are not pinned"
+            ],
+            "spec_rule_ids": [
+              "nondet.visible-bag",
+              "profile.syntax-policy",
+              "syntax.eval-bang",
+              "syntax.module-import"
+            ]
+          },
+          {
+            "category": "module-resolution-diff",
+            "classification": "diff",
+            "path": "tests/test_import_cycle.metta",
+            "policy_note": "CeTTa resolves the local-path import and exercises cycle detection; Rust HE rejects the local-path module name before cycle semantics are reached.",
+            "recommended_action": "Keep out of core evaluator conformance unless a module/import contract is pinned. Normalize presentation-only names/error wording in the harness; do not contort CeTTa runtime errors to match host-specific Rust strings.",
+            "spec_refs": [
+              "he_metta_official_specs.md:94 module hierarchy is acknowledged, but local-path import syntax and cycle semantics are not pinned"
+            ],
+            "spec_rule_ids": [
+              "nondet.visible-bag",
+              "syntax.eval-bang",
+              "syntax.module-import"
+            ]
+          },
+          {
+            "category": "module-resolution-diff",
+            "classification": "diff",
+            "path": "tests/test_import_fresh_name_conformance.metta",
+            "policy_note": "CeTTa resolves a local support module into an explicitly named space and checks that the top space is unchanged; Rust HE rejects the local-path module name before fresh-name import behavior is reached.",
+            "recommended_action": "Keep out of core evaluator conformance unless a module/import contract is pinned. Normalize presentation-only names/error wording in the harness; do not contort CeTTa runtime errors to match host-specific Rust strings.",
+            "spec_refs": [
+              "he_metta_official_specs.md:94 atom-by-atom effects are specified, but local-path import spaces are not pinned"
+            ],
+            "spec_rule_ids": [
+              "nondet.visible-bag",
+              "syntax.atomspace-assertions",
+              "syntax.eval-bang",
+              "syntax.module-import"
+            ]
+          },
+          {
+            "category": "module-resolution-diff",
+            "classification": "diff",
+            "path": "tests/test_import_nested_depth.metta",
+            "policy_note": "CeTTa resolves nested local-path imports; Rust HE rejects the local root path before nested-depth semantics are reached.",
+            "recommended_action": "Keep out of core evaluator conformance unless a module/import contract is pinned. Normalize presentation-only names/error wording in the harness; do not contort CeTTa runtime errors to match host-specific Rust strings.",
+            "spec_refs": [
+              "he_metta_official_specs.md:94 module hierarchy is acknowledged, but nested local-path import resolution is not pinned"
+            ],
+            "spec_rule_ids": [
+              "nondet.visible-bag",
+              "syntax.eval-bang",
+              "syntax.module-import"
+            ]
+          },
+          {
+            "category": "module-resolution-diff",
+            "classification": "diff",
+            "path": "tests/test_import_parse_failure.metta",
+            "policy_note": "CeTTa resolves the local path and reports the module parse failure; Rust HE rejects the local-path module name before parse-failure propagation is reached.",
+            "recommended_action": "Keep out of core evaluator conformance unless a module/import contract is pinned. Normalize presentation-only names/error wording in the harness; do not contort CeTTa runtime errors to match host-specific Rust strings.",
+            "spec_refs": [
+              "he_metta_official_specs.md:80-82 Error atoms are specified, but local-path import parse-failure shape is not pinned",
+              "he_metta_official_specs.md:94 module hierarchy is acknowledged, but local-path import syntax is not pinned"
+            ],
+            "spec_rule_ids": [
+              "nondet.visible-bag",
+              "result.error-shape",
+              "syntax.eval-bang",
+              "syntax.module-import"
+            ]
+          },
+          {
+            "category": "module-resolution-diff",
+            "classification": "diff",
+            "path": "tests/test_import_registered_nested_parent.metta",
+            "policy_note": "CeTTa resolves a registered parent module and its nested child; Rust HE accepts the registered parent but rejects the nested path before nested registered-import behavior is reached.",
+            "recommended_action": "Keep out of core evaluator conformance unless a module/import contract is pinned. Normalize presentation-only names/error wording in the harness; do not contort CeTTa runtime errors to match host-specific Rust strings.",
+            "spec_refs": [
+              "he_metta_official_specs.md:94 module hierarchy is acknowledged, but registered nested import resolution is not pinned"
+            ],
+            "spec_rule_ids": [
+              "nondet.visible-bag",
+              "syntax.eval-bang",
+              "syntax.module-import"
+            ]
+          },
+          {
+            "category": "module-resolution-diff",
+            "classification": "diff",
+            "path": "tests/test_import_transaction.metta",
+            "policy_note": "CeTTa resolves the local path and exercises import rollback after a body error; Rust HE rejects the local-path module name before transactional import behavior is reached.",
+            "recommended_action": "Keep out of core evaluator conformance unless a module/import contract is pinned. Normalize presentation-only names/error wording in the harness; do not contort CeTTa runtime errors to match host-specific Rust strings.",
+            "spec_refs": [
+              "he_metta_official_specs.md:80-82 Error atoms are specified, but import transaction failure shape is not pinned",
+              "he_metta_official_specs.md:94 atom-by-atom effects are specified, but local-path import transaction semantics are not pinned"
+            ],
+            "spec_rule_ids": [
+              "nondet.visible-bag",
+              "result.error-shape",
+              "syntax.eval-bang",
+              "syntax.module-import"
+            ]
+          },
+          {
+            "category": "module-resolution-diff",
+            "classification": "diff",
+            "path": "tests/test_lib_parse_abt_bridge.metta",
+            "policy_note": "CeTTa resolves the CeTTa lib_parse_abt module and exercises its parser contracts; Rust HE stops at the module-resolution boundary before any parser behavior is reached. This row is evidence for CeTTa's parser/module extension policy, not an HE core evaluator disagreement.",
+            "recommended_action": "Keep out of core evaluator conformance unless a module/import contract is pinned. Normalize presentation-only names/error wording in the harness; do not contort CeTTa runtime errors to match host-specific Rust strings.",
+            "spec_refs": [
+              "he_metta_official_specs.md:94 module hierarchy is acknowledged, but CeTTa parser modules and repository-local parser paths are not pinned"
+            ],
+            "spec_rule_ids": [
+              "nondet.visible-bag",
+              "profile.syntax-policy",
+              "syntax.eval-bang",
+              "syntax.module-import"
+            ]
+          },
+          {
+            "category": "module-resolution-diff",
+            "classification": "diff",
+            "path": "tests/test_lib_parse_binding_regression.metta",
+            "policy_note": "CeTTa resolves the CeTTa lib_parse module and exercises its parser contracts; Rust HE stops at the module-resolution boundary before any parser behavior is reached. This row is evidence for CeTTa's parser/module extension policy, not an HE core evaluator disagreement.",
+            "recommended_action": "Keep out of core evaluator conformance unless a module/import contract is pinned. Normalize presentation-only names/error wording in the harness; do not contort CeTTa runtime errors to match host-specific Rust strings.",
+            "spec_refs": [
+              "he_metta_official_specs.md:94 module hierarchy is acknowledged, but CeTTa parser modules and repository-local parser paths are not pinned"
+            ],
+            "spec_rule_ids": [
+              "nondet.visible-bag",
+              "profile.syntax-policy",
+              "syntax.eval-bang",
+              "syntax.module-import"
+            ]
+          },
+          {
+            "category": "module-resolution-diff",
+            "classification": "diff",
+            "path": "tests/test_lib_parse_metamath_a1_db_v0.metta",
+            "policy_note": "CeTTa resolves the repository-local Metamath parser support module and exercises its parser contracts; Rust HE stops at the module-resolution boundary before any parser behavior is reached. This row is evidence for CeTTa's parser/module extension policy, not an HE core evaluator disagreement.",
+            "recommended_action": "Keep out of core evaluator conformance unless a module/import contract is pinned. Normalize presentation-only names/error wording in the harness; do not contort CeTTa runtime errors to match host-specific Rust strings.",
+            "spec_refs": [
+              "he_metta_official_specs.md:94 module hierarchy is acknowledged, but CeTTa parser modules and repository-local parser paths are not pinned"
+            ],
+            "spec_rule_ids": [
+              "nondet.visible-bag",
+              "profile.syntax-policy",
+              "syntax.eval-bang",
+              "syntax.module-import"
+            ]
+          },
+          {
+            "category": "module-resolution-diff",
+            "classification": "diff",
+            "path": "tests/test_lib_parse_metamath_grammar_v0.metta",
+            "policy_note": "CeTTa resolves the repository-local Metamath parser support module and exercises its parser contracts; Rust HE stops at the module-resolution boundary before any parser behavior is reached. This row is evidence for CeTTa's parser/module extension policy, not an HE core evaluator disagreement.",
+            "recommended_action": "Keep out of core evaluator conformance unless a module/import contract is pinned. Normalize presentation-only names/error wording in the harness; do not contort CeTTa runtime errors to match host-specific Rust strings.",
+            "spec_refs": [
+              "he_metta_official_specs.md:94 module hierarchy is acknowledged, but CeTTa parser modules and repository-local parser paths are not pinned"
+            ],
+            "spec_rule_ids": [
+              "nondet.visible-bag",
+              "profile.syntax-policy",
+              "syntax.eval-bang",
+              "syntax.module-import"
+            ]
+          },
+          {
+            "category": "module-resolution-diff",
+            "classification": "diff",
+            "path": "tests/test_lib_parse_metamath_prefix_frontier_native.metta",
+            "policy_note": "CeTTa resolves the repository-local Metamath parser support module and exercises its parser contracts; Rust HE stops at the module-resolution boundary before any parser behavior is reached. This row is evidence for CeTTa's parser/module extension policy, not an HE core evaluator disagreement.",
+            "recommended_action": "Keep out of core evaluator conformance unless a module/import contract is pinned. Normalize presentation-only names/error wording in the harness; do not contort CeTTa runtime errors to match host-specific Rust strings.",
+            "spec_refs": [
+              "he_metta_official_specs.md:94 module hierarchy is acknowledged, but CeTTa parser modules and repository-local parser paths are not pinned"
+            ],
+            "spec_rule_ids": [
+              "nondet.visible-bag",
+              "profile.syntax-policy",
+              "syntax.eval-bang",
+              "syntax.module-import"
+            ]
+          },
+          {
+            "category": "module-resolution-diff",
+            "classification": "diff",
+            "path": "tests/test_lib_parse_metamath_stmt_prefix_frontier_native.metta",
+            "policy_note": "CeTTa resolves the repository-local Metamath parser support module and exercises its parser contracts; Rust HE stops at the module-resolution boundary before any parser behavior is reached. This row is evidence for CeTTa's parser/module extension policy, not an HE core evaluator disagreement.",
+            "recommended_action": "Keep out of core evaluator conformance unless a module/import contract is pinned. Normalize presentation-only names/error wording in the harness; do not contort CeTTa runtime errors to match host-specific Rust strings.",
+            "spec_refs": [
+              "he_metta_official_specs.md:94 module hierarchy is acknowledged, but CeTTa parser modules and repository-local parser paths are not pinned"
+            ],
+            "spec_rule_ids": [
+              "nondet.visible-bag",
+              "profile.syntax-policy",
+              "syntax.eval-bang",
+              "syntax.module-import"
+            ]
+          },
+          {
+            "category": "module-resolution-diff",
+            "classification": "diff",
+            "path": "tests/test_lib_parse_metamath_theorem_compressed_v0.metta",
+            "policy_note": "CeTTa resolves the repository-local Metamath parser support module and exercises its parser contracts; Rust HE stops at the module-resolution boundary before any parser behavior is reached. This row is evidence for CeTTa's parser/module extension policy, not an HE core evaluator disagreement.",
+            "recommended_action": "Keep out of core evaluator conformance unless a module/import contract is pinned. Normalize presentation-only names/error wording in the harness; do not contort CeTTa runtime errors to match host-specific Rust strings.",
+            "spec_refs": [
+              "he_metta_official_specs.md:94 module hierarchy is acknowledged, but CeTTa parser modules and repository-local parser paths are not pinned"
+            ],
+            "spec_rule_ids": [
+              "nondet.visible-bag",
+              "profile.syntax-policy",
+              "syntax.eval-bang",
+              "syntax.module-import"
+            ]
+          },
+          {
+            "category": "module-resolution-diff",
+            "classification": "diff",
+            "path": "tests/test_lib_parse_metamath_theorem_length_ladder_native.metta",
+            "policy_note": "CeTTa resolves the repository-local Metamath parser support module and exercises its parser contracts; Rust HE stops at the module-resolution boundary before any parser behavior is reached. This row is evidence for CeTTa's parser/module extension policy, not an HE core evaluator disagreement.",
+            "recommended_action": "Keep out of core evaluator conformance unless a module/import contract is pinned. Normalize presentation-only names/error wording in the harness; do not contort CeTTa runtime errors to match host-specific Rust strings.",
+            "spec_refs": [
+              "he_metta_official_specs.md:94 module hierarchy is acknowledged, but CeTTa parser modules and repository-local parser paths are not pinned"
+            ],
+            "spec_rule_ids": [
+              "nondet.visible-bag",
+              "profile.syntax-policy",
+              "syntax.eval-bang",
+              "syntax.module-import"
+            ]
+          },
+          {
+            "category": "module-resolution-diff",
+            "classification": "diff",
+            "path": "tests/test_lib_parse_metamath_theorem_normal_v0.metta",
+            "policy_note": "CeTTa resolves the repository-local Metamath parser support module and exercises its parser contracts; Rust HE stops at the module-resolution boundary before any parser behavior is reached. This row is evidence for CeTTa's parser/module extension policy, not an HE core evaluator disagreement.",
+            "recommended_action": "Keep out of core evaluator conformance unless a module/import contract is pinned. Normalize presentation-only names/error wording in the harness; do not contort CeTTa runtime errors to match host-specific Rust strings.",
+            "spec_refs": [
+              "he_metta_official_specs.md:94 module hierarchy is acknowledged, but CeTTa parser modules and repository-local parser paths are not pinned"
+            ],
+            "spec_rule_ids": [
+              "nondet.visible-bag",
+              "profile.syntax-policy",
+              "syntax.eval-bang",
+              "syntax.module-import"
+            ]
+          },
+          {
+            "category": "module-resolution-diff",
+            "classification": "diff",
+            "path": "tests/test_lib_parse_regression.metta",
+            "policy_note": "CeTTa resolves the CeTTa lib_parse module and exercises its parser contracts; Rust HE stops at the module-resolution boundary before any parser behavior is reached. This row is evidence for CeTTa's parser/module extension policy, not an HE core evaluator disagreement.",
+            "recommended_action": "Keep out of core evaluator conformance unless a module/import contract is pinned. Normalize presentation-only names/error wording in the harness; do not contort CeTTa runtime errors to match host-specific Rust strings.",
+            "spec_refs": [
+              "he_metta_official_specs.md:94 module hierarchy is acknowledged, but CeTTa parser modules and repository-local parser paths are not pinned"
+            ],
+            "spec_rule_ids": [
+              "nondet.visible-bag",
+              "profile.syntax-policy",
+              "syntax.eval-bang",
+              "syntax.module-import"
+            ]
+          },
+          {
+            "category": "module-resolution-diff",
+            "classification": "diff",
+            "path": "tests/test_lib_parse_shared_cert_regression.metta",
+            "policy_note": "CeTTa resolves the CeTTa lib_parse module and exercises its parser contracts; Rust HE stops at the module-resolution boundary before any parser behavior is reached. This row is evidence for CeTTa's parser/module extension policy, not an HE core evaluator disagreement.",
+            "recommended_action": "Keep out of core evaluator conformance unless a module/import contract is pinned. Normalize presentation-only names/error wording in the harness; do not contort CeTTa runtime errors to match host-specific Rust strings.",
+            "spec_refs": [
+              "he_metta_official_specs.md:94 module hierarchy is acknowledged, but CeTTa parser modules and repository-local parser paths are not pinned"
+            ],
+            "spec_rule_ids": [
+              "nondet.visible-bag",
+              "profile.syntax-policy",
+              "syntax.eval-bang",
+              "syntax.module-import"
+            ]
+          }
+        ],
+        "regression_tests": [
+          "tests/test_gparse_native_backend_report.metta",
+          "tests/test_gparse_native_dispatch.metta",
+          "tests/test_gparse_native_dual_forest_signature.metta",
+          "tests/test_gparse_native_forest_digest.metta",
+          "tests/test_gparse_native_generalized_corpus.metta",
+          "tests/test_gparse_native_generalized_integration.metta",
+          "tests/test_gparse_native_generalized_toys.metta",
+          "tests/test_gparse_native_gll_forest_data.metta",
+          "tests/test_gparse_native_gll_forest_summary.metta",
+          "tests/test_gparse_native_gll_parse_shared.metta",
+          "tests/test_gparse_native_glr_class.metta",
+          "tests/test_gparse_native_glr_forest_data.metta",
+          "tests/test_gparse_native_glr_forest_summary.metta",
+          "tests/test_gparse_native_glr_parse_shared.metta",
+          "tests/test_gparse_native_grammar_data.metta",
+          "tests/test_gparse_native_grammar_summary.metta",
+          "tests/test_gparse_native_metamath_corpus.metta",
+          "tests/test_gparse_native_metamath_frontier.metta",
+          "tests/test_gparse_native_metamath_plus_weq_variant_matrix.metta",
+          "tests/test_gparse_native_runtime_grammar_shared.metta",
+          "tests/test_gparse_native_slr_parse_shared.metta",
+          "tests/test_gparse_native_slr_summary.metta",
+          "tests/test_import_cycle.metta",
+          "tests/test_import_fresh_name_conformance.metta",
+          "tests/test_import_nested_depth.metta",
+          "tests/test_import_parse_failure.metta",
+          "tests/test_import_registered_nested_parent.metta",
+          "tests/test_import_transaction.metta",
+          "tests/test_lib_parse_abt_bridge.metta",
+          "tests/test_lib_parse_binding_regression.metta",
+          "tests/test_lib_parse_metamath_a1_db_v0.metta",
+          "tests/test_lib_parse_metamath_grammar_v0.metta",
+          "tests/test_lib_parse_metamath_prefix_frontier_native.metta",
+          "tests/test_lib_parse_metamath_stmt_prefix_frontier_native.metta",
+          "tests/test_lib_parse_metamath_theorem_compressed_v0.metta",
+          "tests/test_lib_parse_metamath_theorem_length_ladder_native.metta",
+          "tests/test_lib_parse_metamath_theorem_normal_v0.metta",
+          "tests/test_lib_parse_regression.metta",
+          "tests/test_lib_parse_shared_cert_regression.metta"
+        ],
+        "spec_refs": [
+          "he_metta_official_specs.md:80-82 Error atoms are specified, but import transaction failure shape is not pinned",
+          "he_metta_official_specs.md:80-82 Error atoms are specified, but local-path import parse-failure shape is not pinned",
+          "he_metta_official_specs.md:94 atom-by-atom effects are specified, but local-path import spaces are not pinned",
+          "he_metta_official_specs.md:94 atom-by-atom effects are specified, but local-path import transaction semantics are not pinned",
+          "he_metta_official_specs.md:94 module hierarchy is acknowledged, but CeTTa parser modules and repository-local parser paths are not pinned",
+          "he_metta_official_specs.md:94 module hierarchy is acknowledged, but local-path import syntax and cycle semantics are not pinned",
+          "he_metta_official_specs.md:94 module hierarchy is acknowledged, but local-path import syntax is not pinned",
+          "he_metta_official_specs.md:94 module hierarchy is acknowledged, but nested local-path import resolution is not pinned",
+          "he_metta_official_specs.md:94 module hierarchy is acknowledged, but registered nested import resolution is not pinned"
+        ],
+        "statement": "Module-resolution rows are explicit policy evidence, not core he-compat evaluator obligations: Rust HE rejects these CeTTa parser modules and local-path or nested module names before shared semantics are reachable, while formal he owns the named parser-module, local-path, nested-import, cycle, parse-failure, and transactional rollback contracts to pin next.",
         "status": "policy-pinned-generated-evidence"
       },
       {
@@ -971,9 +1671,31 @@
           "scripts/build_he_compat_catalog.py:module-inventory rows require explicit policy notes",
           "tests/spec_print_mods_inventory.metta"
         ],
-        "policy_rows": [],
-        "regression_tests": [],
-        "spec_refs": [],
+        "policy_rows": [
+          {
+            "category": "module-inventory-environment-diff",
+            "classification": "diff",
+            "path": "tests/spec_print_mods_inventory.metta",
+            "policy_note": "CeTTa prints the explicitly loaded module graph for the current session, while Rust HE includes host/builtin modules in its inventory. The official HE snapshot acknowledges module hierarchy but does not pin print-mods! inventory contents or builtin module visibility.",
+            "recommended_action": "Do not treat as core semantics until module inventory policy is pinned.",
+            "spec_refs": [
+              "he_metta_official_specs.md:94 module hierarchy is acknowledged, but module inventory/print-mods contents are not pinned"
+            ],
+            "spec_rule_ids": [
+              "nondet.visible-bag",
+              "profile.syntax-policy",
+              "syntax.eval-bang",
+              "syntax.module-import",
+              "syntax.module-inventory"
+            ]
+          }
+        ],
+        "regression_tests": [
+          "tests/spec_print_mods_inventory.metta"
+        ],
+        "spec_refs": [
+          "he_metta_official_specs.md:94 module hierarchy is acknowledged, but module inventory/print-mods contents are not pinned"
+        ],
         "statement": "Module-inventory rows are explicit policy evidence, not core he-compat evaluator obligations: Rust HE prints host/builtin module inventory while CeTTa prints the explicitly loaded session graph. Formal he should pin the CeTTa inventory contract before this becomes a core semantic obligation.",
         "status": "policy-pinned-generated-evidence"
       }
@@ -1231,70 +1953,70 @@
   },
   "provenance": {
     "cetta_cli": {
-      "bytes": 155686,
+      "bytes": 164250,
       "exists": true,
-      "path": "hyperon/cetta-prime-nik-20260811/src/main.c",
-      "sha256": "adf7e54e793a643c3521ded50c87e5243910ae9146dc4aada38b9ee3380af69d"
+      "path": "hyperon/cetta-shared-opt-audit-20260807/src/main.c",
+      "sha256": "faefc9153bf0b996c70157a1790ab30ecaadd7586ab26a329943ac82eb6411ec"
     },
     "cetta_eval": {
-      "bytes": 1506300,
+      "bytes": 1757504,
       "exists": true,
-      "path": "hyperon/cetta-prime-nik-20260811/src/eval.c",
-      "sha256": "6a5ce5f70cbf55f95fd284322ebf1830eee9025cd4c9b3d9011013a811b3ce0a"
+      "path": "hyperon/cetta-shared-opt-audit-20260807/src/eval.c",
+      "sha256": "3608a091a6b70ce88515ebe71784ddf375300648309c94ee2d0fcfca105dc4ef"
     },
     "cetta_library": {
-      "bytes": 354666,
+      "bytes": 360016,
       "exists": true,
-      "path": "hyperon/cetta-prime-nik-20260811/src/library.c",
-      "sha256": "0771a8f77a95e0ec763b53ff11425f681805b9b81100e7c808194531367eacd2"
+      "path": "hyperon/cetta-shared-opt-audit-20260807/src/library.c",
+      "sha256": "e8cd4e2f4bec135a56789744c86fbfaa37e19ae676be81e21f37a7b2c7a34f13"
     },
     "cetta_session": {
-      "bytes": 32690,
+      "bytes": 34806,
       "exists": true,
-      "path": "hyperon/cetta-prime-nik-20260811/src/session.c",
-      "sha256": "86b0359661f444ae1c18d6277f0a7b9d8dee01750a8afdfaaabe417f762b4fec"
+      "path": "hyperon/cetta-shared-opt-audit-20260807/src/session.c",
+      "sha256": "b72c921adf0d8827fe1af366306209c0b39032d58edbe766a36f3f0b7f2a9025"
     },
     "cetta_session_header": {
-      "bytes": 11907,
+      "bytes": 12125,
       "exists": true,
-      "path": "hyperon/cetta-prime-nik-20260811/src/session.h",
-      "sha256": "fe4ef261daa27dfd7812ab55cc74df37466c44fda455f50f5b4e9c991b4c2b2f"
+      "path": "hyperon/cetta-shared-opt-audit-20260807/src/session.h",
+      "sha256": "dad3c0493b6d46a9d0d676af9c5bc04bef00cf9fbbbf0033349e945295e4d02e"
     },
     "frontier_regression": {
       "bytes": 1418,
       "exists": true,
-      "path": "hyperon/cetta-prime-nik-20260811/tests/test_he_frontier_algebra_regression.metta",
+      "path": "hyperon/cetta-shared-opt-audit-20260807/tests/test_he_frontier_algebra_regression.metta",
       "sha256": "8a38eaf83d983d9d6ba98289e5f35010c72ec7580b6050c0f7aecab19903af84"
     },
     "he_c3_regression": {
       "bytes": 2708,
       "exists": true,
-      "path": "hyperon/cetta-prime-nik-20260811/tests/he_c3_pln_stv.metta",
+      "path": "hyperon/cetta-shared-opt-audit-20260807/tests/he_c3_pln_stv.metta",
       "sha256": "fb1d38e28591e53bb017e810f83ea27ad6df96d13fa711db7be3c1f80363614f"
     },
     "he_compat_catalog": {
-      "bytes": 253903,
+      "bytes": 1599461,
       "exists": true,
-      "path": "hyperon/cetta-prime-nik-20260811/tests/generated/he_compat/he_compat_cases_2026-06-25.json",
-      "sha256": "071047388b92cd2a396c986022f40bf4f649870f411a520f10953dd6c58888c9"
+      "path": "hyperon/cetta-shared-opt-audit-20260807/tests/generated/he_compat/he_compat_cases_2026-06-25.json",
+      "sha256": "b223fdba0a1323afc0891729b93e38a0b33ce109355ba801d20c4185827b2b8f"
     },
     "he_d4_regression": {
       "bytes": 5571,
       "exists": true,
-      "path": "hyperon/cetta-prime-nik-20260811/tests/he_d4_type_prop.metta",
+      "path": "hyperon/cetta-shared-opt-audit-20260807/tests/he_d4_type_prop.metta",
       "sha256": "142acb1deebd51a2e4917bd0cdab856380a63119f4c71bf43247350d82190b82"
     },
     "lts_generic_syntax": {
-      "bytes": 4899,
+      "bytes": 4903,
       "exists": true,
-      "path": "hyperon/cetta-prime-nik-20260811/lib/lts.metta",
-      "sha256": "77ad457c4647efbf8040639bd680239d1096e1ea127a71b02bb8e6c3a9840dbb"
+      "path": "hyperon/cetta-shared-opt-audit-20260807/lib/lts.metta",
+      "sha256": "9ac957641320fc750d1b6e1bf0403122e0d9c3b85ef7e3b92309b4b37c3c96c2"
     },
     "lts_he_syntax": {
-      "bytes": 5447,
+      "bytes": 5461,
       "exists": true,
-      "path": "hyperon/cetta-prime-nik-20260811/lib/lts/he.metta",
-      "sha256": "5f2369d57c05e0217f983b451bc5e9bbd9ebe8fd5324f1db69a38f8b24a1f9a1"
+      "path": "hyperon/cetta-shared-opt-audit-20260807/lib/lts/he.metta",
+      "sha256": "c7502fe4110e153ba82ce6dfe491e8e6958efc0060bef01830c96f04551111fb"
     },
     "official_he_spec_snapshot": {
       "bytes": 22826,
@@ -1305,44 +2027,44 @@
     "profile_get_doc_compat_regression": {
       "bytes": 19,
       "exists": true,
-      "path": "hyperon/cetta-prime-nik-20260811/tests/support/profile_get_doc_compat_syntax.metta",
+      "path": "hyperon/cetta-shared-opt-audit-20260807/tests/support/profile_get_doc_compat_syntax.metta",
       "sha256": "1167679e96616407e4718435bb5d0f2c22d6ada8930b5554576f2750b9e1222d"
     },
     "profile_get_doc_extended_regression": {
       "bytes": 97,
       "exists": true,
-      "path": "hyperon/cetta-prime-nik-20260811/tests/support/profile_get_doc_extended_syntax.metta",
+      "path": "hyperon/cetta-shared-opt-audit-20260807/tests/support/profile_get_doc_extended_syntax.metta",
       "sha256": "b6fdc759e4a8178d553c7e29e6916b7a3ba04d988136c7cffda40be6af5683c2"
     },
     "profile_get_doc_formal_regression": {
       "bytes": 86,
       "exists": true,
-      "path": "hyperon/cetta-prime-nik-20260811/tests/support/profile_get_doc_formal_syntax.metta",
+      "path": "hyperon/cetta-shared-opt-audit-20260807/tests/support/profile_get_doc_formal_syntax.metta",
       "sha256": "82f701363be5066f366ba0102d77abf64f88d4923a36e2e56fc0dd4fff7c2009"
     },
     "stdlib_syntax": {
-      "bytes": 37377,
+      "bytes": 39225,
       "exists": true,
-      "path": "hyperon/cetta-prime-nik-20260811/lib/stdlib.metta",
-      "sha256": "c916cc97888c1f7b2a6bb0184e036e4c49bfd80b057c6435eaf6eb54002b293c"
+      "path": "hyperon/cetta-shared-opt-audit-20260807/lib/stdlib.metta",
+      "sha256": "9f9da4f7b4b04705311113eba58fffcf4489030ebe6742af28b601f654b79b15"
     },
     "symbol_table": {
-      "bytes": 24933,
+      "bytes": 28578,
       "exists": true,
-      "path": "hyperon/cetta-prime-nik-20260811/src/symbol.h",
-      "sha256": "23aa2030218e9bee8ee849d1b16321fb20533992e2164a33f00501b4de3afc67"
+      "path": "hyperon/cetta-shared-opt-audit-20260807/src/symbol.h",
+      "sha256": "cf0f7ae1a806b63b9bfb5254fde7896551bf0691da801058b04f6a3fe400a279"
     }
   },
   "repositories": {
     "algorithms": {
       "dirty": true,
-      "head": "daf32e24230242a0144243555453fb8da2497053",
+      "head": "7348e39da03a0c06ccacd5d435e1b7522f78f0a5",
       "path": "Mettapedia/lean/algorithms"
     },
     "cetta": {
       "dirty": true,
-      "head": "7b41b65cc6a0ddb540b58e0416516e630e23f029",
-      "path": "hyperon/cetta-prime-nik-20260811"
+      "head": "b820176a8eaa36719e21dd0e53c1d20e96732944",
+      "path": "hyperon/cetta-shared-opt-audit-20260807"
     },
     "hyperon_experimental": {
       "dirty": false,
@@ -1351,39 +2073,41 @@
     },
     "mettapedia": {
       "dirty": true,
-      "head": "daf32e24230242a0144243555453fb8da2497053",
+      "head": "7348e39da03a0c06ccacd5d435e1b7522f78f0a5",
       "path": "Mettapedia/lean/mettapedia"
     }
   },
   "rule_coverage": {
     "by_spec_rule": {
-      "eval.applicative-arguments": 9,
-      "eval.grounded-dispatch": 4,
-      "grounded.numeric-exact": 12,
-      "minimal.chain": 4,
-      "minimal.collapse-superpose": 7,
-      "minimal.cons-decons": 1,
-      "minimal.eval": 7,
-      "minimal.evalc-context-space": 3,
-      "minimal.function-return": 4,
-      "minimal.match": 9,
-      "minimal.unify": 1,
-      "nondet.visible-bag": 67,
-      "profile.docs": 1,
-      "result.empty-zero": 5,
-      "result.error-shape": 12,
-      "special.eq-definition": 13,
-      "special.function-type": 12,
-      "special.type-assignment": 12,
-      "syntax.atomspace-assertions": 9,
-      "syntax.eval-bang": 67,
-      "syntax.module-import": 2,
-      "syntax.native-space": 2
+      "eval.applicative-arguments": 15,
+      "eval.grounded-dispatch": 7,
+      "grounded.numeric-exact": 30,
+      "minimal.chain": 8,
+      "minimal.collapse-superpose": 16,
+      "minimal.cons-decons": 9,
+      "minimal.eval": 15,
+      "minimal.evalc-context-space": 48,
+      "minimal.function-return": 8,
+      "minimal.match": 29,
+      "minimal.unify": 7,
+      "nondet.visible-bag": 346,
+      "profile.docs": 7,
+      "profile.syntax-policy": 35,
+      "result.empty-zero": 10,
+      "result.error-shape": 47,
+      "special.eq-definition": 31,
+      "special.function-type": 37,
+      "special.type-assignment": 37,
+      "syntax.atomspace-assertions": 11,
+      "syntax.eval-bang": 346,
+      "syntax.module-import": 20,
+      "syntax.module-inventory": 2,
+      "syntax.native-space": 52
     },
     "by_track_a_relation_lane": {
-      "reduction-span": 67,
-      "spatial-policy": 4,
-      "supporting-syntax": 67
+      "reduction-span": 346,
+      "spatial-policy": 94,
+      "supporting-syntax": 346
     },
     "capacity_rows": [
       {
@@ -1395,7 +2119,7 @@
           "HELanguageDef.mettaHE:Metta",
           "M_Expression"
         ],
-        "mapped_case_count": 67,
+        "mapped_case_count": 346,
         "native_contract_ids": [
           "profile-he-formal-vs-rust-compat-split"
         ],
@@ -1416,7 +2140,7 @@
           "HELanguageDef.mettaHE:Space",
           "MC_Equation"
         ],
-        "mapped_case_count": 9,
+        "mapped_case_count": 11,
         "native_contract_ids": [
           "profile-syntax-policy-table"
         ],
@@ -1437,7 +2161,7 @@
           "MC_Equation",
           "MC_NoMatch"
         ],
-        "mapped_case_count": 13,
+        "mapped_case_count": 31,
         "native_contract_ids": [
           "equation-query-successor-shape"
         ],
@@ -1461,7 +2185,7 @@
           "TC_Match",
           "TC_Mismatch"
         ],
-        "mapped_case_count": 12,
+        "mapped_case_count": 37,
         "native_contract_ids": [
           "function-type-applicability-premise-flow",
           "type-cast-successor-shape"
@@ -1483,7 +2207,7 @@
           "HELanguageDef.mettaHE:ArrowType",
           "IE_FuncType"
         ],
-        "mapped_case_count": 12,
+        "mapped_case_count": 37,
         "native_contract_ids": [
           "function-type-applicability-premise-flow"
         ],
@@ -1514,7 +2238,7 @@
           "MC_Superpose_Empty",
           "MC_Match_Empty"
         ],
-        "mapped_case_count": 5,
+        "mapped_case_count": 10,
         "native_contract_ids": [
           "empty-zero-visible-result-bag",
           "empty-not-lts-successor"
@@ -1539,7 +2263,7 @@
           "MC_Error",
           "TC_Mismatch"
         ],
-        "mapped_case_count": 12,
+        "mapped_case_count": 47,
         "native_contract_ids": [
           "error-successor-shape"
         ],
@@ -1570,7 +2294,7 @@
           "HELanguageDef.mettaHE:MC_Equation",
           "HELanguageDef.mettaHE:MC_NoMatch"
         ],
-        "mapped_case_count": 7,
+        "mapped_case_count": 15,
         "native_contract_ids": [
           "eval-successor-shape"
         ],
@@ -1592,7 +2316,7 @@
           "HELanguageDef.mettaHE:State",
           "HELanguageDef.mettaHE:Space"
         ],
-        "mapped_case_count": 3,
+        "mapped_case_count": 48,
         "native_contract_ids": [
           "context-space-successor-shape"
         ],
@@ -1612,7 +2336,7 @@
           "HELanguageDef.mettaHE:MettaCall",
           "R_Done"
         ],
-        "mapped_case_count": 4,
+        "mapped_case_count": 8,
         "native_contract_ids": [
           "chain-premise-flow",
           "chain-successor-shape"
@@ -1634,7 +2358,7 @@
           "MC_Match",
           "MC_Match_Empty"
         ],
-        "mapped_case_count": 9,
+        "mapped_case_count": 29,
         "native_contract_ids": [
           "match-premise-flow",
           "match-successor-shape"
@@ -1656,7 +2380,7 @@
           "MC_Unify_Match",
           "MC_Unify_NoMatch"
         ],
-        "mapped_case_count": 1,
+        "mapped_case_count": 7,
         "native_contract_ids": [
           "unify-premise-flow",
           "unify-successor-shape"
@@ -1679,7 +2403,7 @@
           "MC_Superpose",
           "MC_Superpose_Empty"
         ],
-        "mapped_case_count": 7,
+        "mapped_case_count": 16,
         "native_contract_ids": [
           "superpose-successor-shape",
           "collapse-successor-shape",
@@ -1701,7 +2425,7 @@
           "HELanguageDef.mettaHE:ExprCons",
           "HELanguageDef.mettaHE:ExprNil"
         ],
-        "mapped_case_count": 1,
+        "mapped_case_count": 9,
         "native_contract_ids": [
           "constructor-arity-syntax"
         ],
@@ -1721,7 +2445,7 @@
           "HELanguageDef.mettaHE:Return",
           "R_Done"
         ],
-        "mapped_case_count": 4,
+        "mapped_case_count": 8,
         "native_contract_ids": [
           "function-return-successor-shape"
         ],
@@ -1744,7 +2468,7 @@
           "IA_Start_Typed",
           "IA_Start_Undef"
         ],
-        "mapped_case_count": 9,
+        "mapped_case_count": 15,
         "native_contract_ids": [
           "argument-evaluation-premise-flow",
           "surviving-branch-reenters-evaluator"
@@ -1765,7 +2489,7 @@
         "lean_language_def_refs": [
           "MC_Grounded"
         ],
-        "mapped_case_count": 4,
+        "mapped_case_count": 7,
         "native_contract_ids": [
           "grounded-dispatch-successor-shape"
         ],
@@ -1786,7 +2510,7 @@
           "MC_Match",
           "R_Done"
         ],
-        "mapped_case_count": 67,
+        "mapped_case_count": 346,
         "native_contract_ids": [
           "empty-zero-visible-result-bag",
           "lts-diamond-frontier-shape"
@@ -1804,7 +2528,7 @@
         "id": "profile.docs",
         "lean_authority_refs": [],
         "lean_language_def_refs": [],
-        "mapped_case_count": 1,
+        "mapped_case_count": 7,
         "native_contract_ids": [
           "get-doc-respects-profile-syntax",
           "he-compat-reproduces-rust-get-doc-arity"
@@ -1820,7 +2544,7 @@
         "id": "profile.syntax-policy",
         "lean_authority_refs": [],
         "lean_language_def_refs": [],
-        "mapped_case_count": 0,
+        "mapped_case_count": 35,
         "native_contract_ids": [
           "profile-syntax-policy-table"
         ],
@@ -1837,7 +2561,7 @@
         "id": "syntax.module-import",
         "lean_authority_refs": [],
         "lean_language_def_refs": [],
-        "mapped_case_count": 2,
+        "mapped_case_count": 20,
         "native_contract_ids": [
           "profile-syntax-policy-table",
           "module-import-policy-evidence-shape"
@@ -1853,7 +2577,7 @@
         "id": "syntax.module-inventory",
         "lean_authority_refs": [],
         "lean_language_def_refs": [],
-        "mapped_case_count": 0,
+        "mapped_case_count": 2,
         "native_contract_ids": [
           "profile-syntax-policy-table",
           "module-inventory-policy-evidence-shape"
@@ -1872,7 +2596,7 @@
           "HELanguageDef.mettaHE:Space",
           "HELanguageDef.mettaHE:State"
         ],
-        "mapped_case_count": 2,
+        "mapped_case_count": 52,
         "native_contract_ids": [
           "context-space-successor-shape"
         ],
@@ -1892,7 +2616,7 @@
         "lean_language_def_refs": [
           "HELanguageDef.mettaHE:MC_Grounded"
         ],
-        "mapped_case_count": 12,
+        "mapped_case_count": 30,
         "native_contract_ids": [
           "grounded-dispatch-successor-shape"
         ],
@@ -1904,15 +2628,15 @@
         "track_a_relation_lane": "supporting-syntax"
       }
     ],
-    "case_count": 67,
+    "case_count": 346,
     "catalog_date": "2026-06-25",
-    "covered_spec_rule_capacity_count": 22,
+    "covered_spec_rule_capacity_count": 24,
     "exists": true,
-    "mapped_case_count": 67,
+    "mapped_case_count": 346,
     "mapped_case_count_by_lane": {
-      "reduction-span": 143,
-      "spatial-policy": 4,
-      "supporting-syntax": 116
+      "reduction-span": 555,
+      "spatial-policy": 109,
+      "supporting-syntax": 509
     },
     "rule_lane_counts": {
       "reduction-span": 10,
@@ -1925,10 +2649,7 @@
       "partial": 8
     },
     "total_spec_rule_capacity_count": 24,
-    "uncovered_spec_rule_capacities": [
-      "profile.syntax-policy",
-      "syntax.module-inventory"
-    ]
+    "uncovered_spec_rule_capacities": []
   },
   "schema_version": 1,
   "status": "generated-design-and-test-ledger-not-runtime-feature"

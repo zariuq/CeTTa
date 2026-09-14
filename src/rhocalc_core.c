@@ -5143,6 +5143,7 @@ static void rho_async_executor_init(RhoAsyncExecutor *executor,
 
     parallel_config = (CettaParallelExecutorConfig){
         .thread_count = profile->thread_count,
+        .prefer_persistent_workers = true,
         .user = executor,
         .task_fn = rho_async_process_task,
         .worker_enter = rho_async_worker_enter,
@@ -8542,6 +8543,7 @@ static bool rhocost_parallel_wave_start(
 
     config = (CettaParallelExecutorConfig){
         .thread_count = profile->thread_count,
+        .prefer_persistent_workers = true,
         .user = wave,
         .task_fn = rhocost_parallel_process_task,
         .worker_enter = rho_async_worker_enter,

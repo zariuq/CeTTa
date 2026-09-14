@@ -105,7 +105,7 @@ preflight_cetta_bridge() {
 !(add-atom &p (probe ok))
 !(assertEqualToResult (size &p) (1))
 EOF
-    if ! "$CETTA_BIN" --quiet --profile he-extended --lang he "$probe" >"$log" 2>&1 ||
+    if ! "$CETTA_BIN" --quiet --profile extended --lang he "$probe" >"$log" 2>&1 ||
        grep -q '(Error ' "$log"; then
         printf '%s\n' "CeTTa MORK/PathMap lanes require a working bridge build. Run 'make BUILD=mork' or provide a working CETTA_MORK_SPACE_BRIDGE_LIB." >&2
         sed -n '1,80p' "$log" >&2
@@ -508,32 +508,32 @@ run_lane() {
     case "$lane" in
         cetta-mork)
             render_cetta_case "$lane" "$program" mork
-            run_with_time "$lane" "$log" "$CETTA_BIN" --quiet --profile he-extended --lang he "$program" || status=$?
+            run_with_time "$lane" "$log" "$CETTA_BIN" --quiet --profile extended --lang he "$program" || status=$?
             print_result "$lane" "CeTTa" "explicit MorkSpace" "mork:* direct FFI" "$status" "$log"
             ;;
         cetta-mork-batch)
             render_cetta_case "$lane" "$program" mork-batch
-            run_with_time "$lane" "$log" "$CETTA_BIN" --quiet --profile he-extended --lang he "$program" || status=$?
+            run_with_time "$lane" "$log" "$CETTA_BIN" --quiet --profile extended --lang he "$program" || status=$?
             print_result "$lane" "CeTTa" "explicit MorkSpace" "mork:add-atoms batch FFI" "$status" "$log"
             ;;
         cetta-pathmap)
             render_cetta_case "$lane" "$program" pathmap
-            run_with_time "$lane" "$log" "$CETTA_BIN" --quiet --profile he-extended --lang he "$program" || status=$?
+            run_with_time "$lane" "$log" "$CETTA_BIN" --quiet --profile extended --lang he "$program" || status=$?
             print_result "$lane" "CeTTa" "PathMap ordinary space" "add-atom/match; bridge-backed backend" "$status" "$log"
             ;;
         cetta-native-to-mork)
             render_cetta_space_to_mork_case "$lane" "$program" native
-            run_with_time "$lane" "$log" "$CETTA_BIN" --quiet --profile he-extended --lang he "$program" || status=$?
+            run_with_time "$lane" "$log" "$CETTA_BIN" --quiet --profile extended --lang he "$program" || status=$?
             print_result "$lane" "CeTTa" "native space -> explicit MorkSpace" "native add + get-atoms transfer" "$status" "$log"
             ;;
         cetta-pathmap-to-mork)
             render_cetta_space_to_mork_case "$lane" "$program" pathmap
-            run_with_time "$lane" "$log" "$CETTA_BIN" --quiet --profile he-extended --lang he "$program" || status=$?
+            run_with_time "$lane" "$log" "$CETTA_BIN" --quiet --profile extended --lang he "$program" || status=$?
             print_result "$lane" "CeTTa" "PathMap space -> explicit MorkSpace" "pathmap add + bridge-row transfer" "$status" "$log"
             ;;
         cetta-native)
             render_cetta_case "$lane" "$program" native
-            run_with_time "$lane" "$log" "$CETTA_BIN" --quiet --profile he-extended --lang he "$program" || status=$?
+            run_with_time "$lane" "$log" "$CETTA_BIN" --quiet --profile extended --lang he "$program" || status=$?
             print_result "$lane" "CeTTa" "native ordinary space" "add-atom/match baseline" "$status" "$log"
             ;;
         petta-mork)

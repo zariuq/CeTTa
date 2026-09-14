@@ -1,0 +1,17 @@
+constructor-effect:raised
+constructor-effect:raised
+constructor-effect:raised
+constructor-effect:raised
+constructor-effect:raised
+constructor-effect:raised
+constructor-effect:raised
+(box (Error bad reason))
+(box (Error bad reason))
+(box (Error bad reason))
+(box (Error bad reason))
+(box constructor-effect:raised)
+(box (+ 1 not-a-number))
+((box first) (box second))
+(box 3)
+constructor-effect:raised
+constructor-effect:raised

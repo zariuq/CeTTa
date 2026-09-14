@@ -141,6 +141,13 @@ bool space_match_backend_materialize_native_storage(Space *s,
     (void)persistent_arena;
     return true;
 }
+SpaceBackendBatchResult
+space_match_backend_transport_stable_occurrence_coordinates(
+        Space *s, const SpaceStableOccurrenceTransport *transport) {
+    (void)s;
+    (void)transport;
+    return SPACE_BACKEND_BATCH_UNSUPPORTED;
+}
 bool space_match_backend_require_logical_order(Space *s,
                                                Arena *persistent_arena) {
     (void)persistent_arena;
@@ -156,6 +163,14 @@ bool space_match_backend_store_atom_id_direct(Space *s, AtomId atom_id,
 bool space_match_backend_store_atom_direct(Space *s, Atom *atom) {
     (void)s;
     (void)atom;
+    return false;
+}
+bool space_match_backend_contains_atom_structural_direct(
+    Space *s, Atom *atom, bool *out_found) {
+    (void)s;
+    (void)atom;
+    if (out_found)
+        *out_found = false;
     return false;
 }
 SpaceBackendBatchResult space_match_backend_store_atom_ids_batch_direct(

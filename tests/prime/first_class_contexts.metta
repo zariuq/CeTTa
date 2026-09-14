@@ -74,3 +74,15 @@
 !(bind! &ctx:reference-value (RefBox resolved))
 !(ctx:reference-classify &ctx:reference-value)
 !(ctx:reference-classify &ctx:unbound-reference)
+
+; `let` is also a value-observation boundary.  It resolves a bound registry
+; name before matching, including through an equation continuation, but it
+; neither guesses nor rejects an unbound registry name.
+(= (ctx:reference-let $candidate)
+   (let (RefBox $value) $candidate (LetResolvedReference $value)))
+!(let (RefBox $value) &ctx:reference-value
+   (DirectLetResolvedReference $value))
+!(ctx:reference-let &ctx:reference-value)
+!(ctx:reference-let &ctx:unbound-reference)
+!(let $value &ctx:unbound-reference
+   (UnresolvedLetReference $value))

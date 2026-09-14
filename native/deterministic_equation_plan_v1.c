@@ -1,8 +1,11 @@
 #include "deterministic_equation_plan_v1.h"
 
-#include "src/gslt_horn_runtime.h"
+#include "finite_horn_gslt_v1.h"
+#include "gslt_composition_v1.h"
 #include "src/symbol.h"
 
+#include <errno.h>
+#include <inttypes.h>
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -17,7 +20,7 @@ typedef struct {
 } DeterministicEquationRuleV1;
 
 struct CettaDeterministicEquationPlanV1 {
-    CettaGsltHornProgram *source;
+    Arena source_arena;
     DeterministicEquationRuleV1 *rules;
     uint32_t rule_count;
 };
@@ -278,25 +281,127 @@ static bool right_variables_bound(const Atom *left, const Atom *right) {
     return result;
 }
 
-bool cetta_deterministic_equation_plan_v1_load(
-    const char *const *presentation_paths, size_t presentation_count,
+/* Preserve the source reader's literal interpretation. In particular True,
+ * 1.0, and $x are source symbols, not host Booleans, floats, or variables.
+ * The reader's tree is projected directly; no text or rule quotation is
+ * rendered and reparsed. Variable binding is a later, per-rule operation. */
+static Atom *equation_source_atom(
+    Arena *arena, const FHGSLTSourceNodeV1 *node,
+    char *error, size_t error_size) {
+    FHGSLTSourceKindV1 kind = fhgslt_source_kind_v1(node);
+    if (kind == FHGSLT_SOURCE_V1_LIST) {
+        size_t count = fhgslt_source_child_count_v1(node);
+        Atom **children;
+        if (count > UINT32_MAX || count > SIZE_MAX / sizeof(*children)) {
+            (void)equation_error(error, error_size, "source list is too large");
+            return NULL;
+        }
+        children = arena_alloc(arena, count * sizeof(*children));
+        for (size_t index = 0u; index < count; index++) {
+            children[index] = equation_source_atom(
+                arena, fhgslt_source_child_v1(node, index), error, error_size);
+            if (!children[index]) return NULL;
+        }
+        return atom_expr(arena, children, (CettaExprLen)count);
+    }
+    size_t length = 0u;
+    const uint8_t *bytes = fhgslt_source_text_v1(node, &length);
+    bool variable = kind == FHGSLT_SOURCE_V1_VARIABLE;
+    if (kind == FHGSLT_SOURCE_V1_INVALID || (!bytes && length != 0u) ||
+        length > SIZE_MAX - 2u || (length && memchr(bytes, 0, length))) {
+        (void)equation_error(error, error_size,
+                             "unrepresentable deterministic source token");
+        return NULL;
+    }
+    char *text = arena_alloc(arena, length + (variable ? 2u : 1u));
+    if (variable) text[0] = '?';
+    if (length) memcpy(text + (variable ? 1u : 0u), bytes, length);
+    text[length + (variable ? 1u : 0u)] = '\0';
+    if (kind == FHGSLT_SOURCE_V1_STRING) return atom_string(arena, text);
+    if (kind == FHGSLT_SOURCE_V1_INTEGER) {
+        char *end = NULL;
+        errno = 0;
+        intmax_t value = strtoimax(text, &end, 10);
+        if (errno || end == text || *end || value < INT64_MIN || value > INT64_MAX)
+            return atom_bigint(arena, text);
+        return atom_int(arena, (int64_t)value);
+    }
+    return atom_symbol(arena, text);
+}
+
+/* Signatures use size_t arities, but executable source integers have the
+ * signed native carrier. Check every rewrite, including nonselected rules. */
+static bool equation_source_integers_fit(const Atom *term) {
+    if (term->kind == ATOM_GROUNDED && term->ground.gkind == GV_BIGINT)
+        return false;
+    if (term->kind == ATOM_EXPR)
+        for (CettaExprIndex index = 0u; index < term->expr.len; index++)
+            if (!equation_source_integers_fit(term->expr.elems[index]))
+                return false;
+    return true;
+}
+
+typedef struct {
+    const char *name;
+    Atom *value;
+} EquationSourceVariableV1;
+
+typedef struct {
+    EquationSourceVariableV1 *items;
+    size_t count;
+    size_t capacity;
+} EquationSourceVariablesV1;
+
+static Atom *equation_bind_source_variables(
+    Arena *arena, Atom *term, EquationSourceVariablesV1 *variables,
+    char *error, size_t error_size) {
+    if (cetta_gslt_source_variable_v1(term)) {
+        const char *name = cetta_gslt_source_variable_name_v1(term);
+        for (size_t index = 0u; index < variables->count; index++)
+            if (strcmp(name, variables->items[index].name) == 0)
+                return variables->items[index].value;
+        if (variables->count == variables->capacity) {
+            size_t next = variables->capacity ? variables->capacity * 2u : 8u;
+            if (next < variables->capacity || next > SIZE_MAX / sizeof(*variables->items))
+                return NULL;
+            EquationSourceVariableV1 *grown = realloc(
+                variables->items, next * sizeof(*grown));
+            if (!grown) return NULL;
+            variables->items = grown;
+            variables->capacity = next;
+        }
+        VarId id;
+        if (!fresh_var_id_try(&id)) {
+            (void)equation_error(error, error_size, "source variable identities exhausted");
+            return NULL;
+        }
+        Atom *value = atom_var_with_id(arena, name, id);
+        variables->items[variables->count++] = (EquationSourceVariableV1){name, value};
+        return value;
+    }
+    if (term->kind != ATOM_EXPR) return term;
+    Atom **children = arena_alloc(arena, term->expr.len * sizeof(*children));
+    for (CettaExprIndex index = 0u; index < term->expr.len; index++) {
+        children[index] = equation_bind_source_variables(
+            arena, term->expr.elems[index], variables, error, error_size);
+        if (!children[index]) return NULL;
+    }
+    return atom_expr(arena, children, term->expr.len);
+}
+
+/* The source package is only the existing syntax reader/validator. It is
+ * borrowed here and never turned into a Horn execution program. The plan
+ * owns the projected GSLT values and selected deterministic equations. */
+static bool equation_plan_from_source(
+    const FHGSLTPackage *source,
     CettaDeterministicEquationPlanV1 **out,
     CettaDeterministicEquationStatusV1 *status,
     char *error, size_t error_size) {
     CettaDeterministicEquationPlanV1 *plan = NULL;
     size_t source_count;
     uint32_t selected = 0u;
+    CettaGsltCompositionV1 composition = {0};
 
-    if (error && error_size)
-        error[0] = '\0';
-    if (status)
-        *status = CETTA_DETERMINISTIC_EQUATION_V1_BAD_ARGUMENT;
-    if (out)
-        *out = NULL;
-    if (!presentation_paths || presentation_count == 0u || !out)
-        return equation_error(
-            error, error_size,
-            "invalid deterministic equation plan request");
     plan = calloc(1u, sizeof(*plan));
     if (!plan) {
         if (status)
@@ -305,14 +410,26 @@ bool cetta_deterministic_equation_plan_v1_load(
             error, error_size,
             "cannot allocate deterministic equation plan");
     }
-    if (!cetta_gslt_horn_program_load_paths(
-            presentation_paths, presentation_count, &plan->source,
-            error, error_size)) {
-        if (status)
-            *status = CETTA_DETERMINISTIC_EQUATION_V1_INVALID_PRESENTATION;
+    arena_init(&plan->source_arena);
+    arena_set_runtime_kind(&plan->source_arena, CETTA_ARENA_RUNTIME_KIND_PERSISTENT);
+    size_t presentation_count = fhgslt_package_presentation_count(source);
+    if (presentation_count > SIZE_MAX / sizeof(Atom *)) {
+        if (status) *status = CETTA_DETERMINISTIC_EQUATION_V1_RESOURCE_LIMIT;
+        (void)equation_error(error, error_size, "too many source presentations");
         goto fail;
     }
-    source_count = cetta_gslt_horn_program_rule_count(plan->source);
+    Atom **presentations = arena_alloc(
+        &plan->source_arena, presentation_count * sizeof(*presentations));
+    for (size_t index = 0u; index < presentation_count; index++) {
+        presentations[index] = equation_source_atom(
+            &plan->source_arena, fhgslt_package_source_root_v1(source, index),
+            error, error_size);
+        if (!presentations[index]) goto source_fail;
+    }
+    if (!cetta_gslt_composition_build_v1(
+            presentations, presentation_count, &composition, error, error_size))
+        goto source_fail;
+    source_count = composition.rewrite_count;
     if (source_count > UINT32_MAX ||
         source_count > SIZE_MAX / sizeof(*plan->rules)) {
         if (status)
@@ -333,35 +450,43 @@ bool cetta_deterministic_equation_plan_v1_load(
         goto fail;
     }
     for (size_t index = 0u; index < source_count; index++) {
-        CettaGsltHornRuleViewV1 view;
+        const CettaGsltRewriteV1 *view = &composition.rewrites[index];
         const Atom *left;
         const Atom *right;
         SymbolId head;
         uint32_t arity;
 
-        if (!cetta_gslt_horn_program_rule_view_v1(
-                plan->source, index, &view)) {
-            if (status)
-                *status =
-                    CETTA_DETERMINISTIC_EQUATION_V1_INVALID_PRESENTATION;
-            (void)equation_error(
-                error, error_size,
-                "cannot inspect deterministic equation source rule");
-            goto fail;
+        if (!equation_source_integers_fit(view->head) ||
+            !equation_source_integers_fit(view->body)) {
+            (void)equation_error(error, error_size,
+                                "%s: source integer exceeds the native signed range",
+                                view->name);
+            goto source_fail;
         }
-        if (!expression_head(view.head, "metta-equation", 2u))
+        if (!expression_head(view->head, "metta-equation", 2u))
             continue;
-        if (view.body_count != 0u) {
+        if (view->body->expr.len != 1u) {
             if (status)
                 *status = CETTA_DETERMINISTIC_EQUATION_V1_UNSUPPORTED_RULE;
             (void)equation_error(
                 error, error_size,
                 "%s: deterministic equations cannot have premises",
-                view.name ? view.name : "equation rule");
+                view->name ? view->name : "equation rule");
             goto fail;
         }
-        left = view.head->expr.elems[1];
-        right = view.head->expr.elems[2];
+        EquationSourceVariablesV1 variables = {0};
+        left = equation_bind_source_variables(
+            &plan->source_arena, view->head->expr.elems[1], &variables,
+            error, error_size);
+        right = left ? equation_bind_source_variables(
+            &plan->source_arena, view->head->expr.elems[2], &variables,
+            error, error_size) : NULL;
+        free(variables.items);
+        if (!left || !right) {
+            if (status) *status = CETTA_DETERMINISTIC_EQUATION_V1_RESOURCE_LIMIT;
+            (void)equation_error(error, error_size, "cannot bind equation source variables");
+            goto fail;
+        }
         if (!rule_left_view(left, &head, &arity) ||
             !pattern_is_left_linear(left)) {
             if (status)
@@ -369,7 +494,7 @@ bool cetta_deterministic_equation_plan_v1_load(
             (void)equation_error(
                 error, error_size,
                 "%s: equation left side must be a left-linear symbol-headed call",
-                view.name ? view.name : "equation rule");
+                view->name ? view->name : "equation rule");
             goto fail;
         }
         if (!right_variables_bound(left, right)) {
@@ -378,7 +503,7 @@ bool cetta_deterministic_equation_plan_v1_load(
             (void)equation_error(
                 error, error_size,
                 "%s: equation right side contains an unbound variable",
-                view.name ? view.name : "equation rule");
+                view->name ? view->name : "equation rule");
             goto fail;
         }
         for (uint32_t prior = 0u; prior < selected; prior++) {
@@ -391,7 +516,7 @@ bool cetta_deterministic_equation_plan_v1_load(
                     "%s and %s have the same deterministic equation left side",
                     plan->rules[prior].name ?
                         plan->rules[prior].name : "prior equation rule",
-                    view.name ? view.name : "equation rule");
+                    view->name ? view->name : "equation rule");
                 goto fail;
             }
             if (patterns_overlap(plan->rules[prior].left, left)) {
@@ -403,12 +528,12 @@ bool cetta_deterministic_equation_plan_v1_load(
                     "%s and %s have overlapping deterministic equation left sides",
                     plan->rules[prior].name ?
                         plan->rules[prior].name : "prior equation rule",
-                    view.name ? view.name : "equation rule");
+                    view->name ? view->name : "equation rule");
                 goto fail;
             }
         }
         plan->rules[selected++] = (DeterministicEquationRuleV1){
-            .name = view.name,
+            .name = view->name,
             .left = left,
             .right = right,
             .head = head,
@@ -429,18 +554,90 @@ bool cetta_deterministic_equation_plan_v1_load(
     if (status)
         *status = CETTA_DETERMINISTIC_EQUATION_V1_OK;
     *out = plan;
+    cetta_gslt_composition_free_v1(&composition);
     return true;
 
+source_fail:
+    if (status) *status = CETTA_DETERMINISTIC_EQUATION_V1_INVALID_PRESENTATION;
 fail:
+    cetta_gslt_composition_free_v1(&composition);
     cetta_deterministic_equation_plan_v1_free(plan);
     return false;
+}
+
+bool cetta_deterministic_equation_plan_v1_load(
+    const char *const *presentation_paths, size_t presentation_count,
+    CettaDeterministicEquationPlanV1 **out,
+    CettaDeterministicEquationStatusV1 *status,
+    char *error, size_t error_size) {
+    FHGSLTPackage *source = NULL;
+
+    if (error && error_size)
+        error[0] = '\0';
+    if (status)
+        *status = CETTA_DETERMINISTIC_EQUATION_V1_BAD_ARGUMENT;
+    if (out)
+        *out = NULL;
+    if (!presentation_paths || presentation_count == 0u || !out)
+        return equation_error(
+            error, error_size,
+            "invalid deterministic equation plan request");
+    if (!fhgslt_package_from_paths(
+            presentation_paths, presentation_count, &source,
+            error, error_size)) {
+        if (status)
+            *status = CETTA_DETERMINISTIC_EQUATION_V1_INVALID_PRESENTATION;
+        return false;
+    }
+    bool ok = equation_plan_from_source(source, out, status, error, error_size);
+    fhgslt_package_free(source);
+    return ok;
+}
+
+bool cetta_deterministic_equation_plan_v1_load_inputs(
+    const CettaDeterministicEquationInputV1 *inputs, size_t input_count,
+    CettaDeterministicEquationPlanV1 **out,
+    CettaDeterministicEquationStatusV1 *status,
+    char *error, size_t error_size) {
+    FHGSLTPackage *source = NULL;
+
+    if (error && error_size)
+        error[0] = '\0';
+    if (status)
+        *status = CETTA_DETERMINISTIC_EQUATION_V1_BAD_ARGUMENT;
+    if (out)
+        *out = NULL;
+    if (!inputs || input_count == 0u || !out ||
+        input_count > SIZE_MAX / sizeof(FHGSLTInput))
+        return equation_error(
+            error, error_size,
+            "invalid deterministic equation input request");
+    FHGSLTInput *source_inputs = calloc(input_count, sizeof(*source_inputs));
+    if (!source_inputs) {
+        if (status) *status = CETTA_DETERMINISTIC_EQUATION_V1_RESOURCE_LIMIT;
+        return equation_error(error, error_size, "cannot allocate source input views");
+    }
+    for (size_t index = 0u; index < input_count; index++)
+        source_inputs[index] = (FHGSLTInput){
+            inputs[index].bytes, inputs[index].length, inputs[index].source};
+    bool loaded = fhgslt_package_from_inputs(
+        source_inputs, input_count, &source, error, error_size);
+    free(source_inputs);
+    if (!loaded) {
+        if (status)
+            *status = CETTA_DETERMINISTIC_EQUATION_V1_INVALID_PRESENTATION;
+        return false;
+    }
+    bool ok = equation_plan_from_source(source, out, status, error, error_size);
+    fhgslt_package_free(source);
+    return ok;
 }
 
 void cetta_deterministic_equation_plan_v1_free(
     CettaDeterministicEquationPlanV1 *plan) {
     if (!plan)
         return;
-    cetta_gslt_horn_program_free(plan->source);
+    arena_free(&plan->source_arena);
     free(plan->rules);
     free(plan);
 }
@@ -906,11 +1103,12 @@ static Atom *evaluate_term(
                 continue;
             }
             if (term->expr.len == 0u) {
-                (void)equation_fail(
-                    context,
-                    CETTA_DETERMINISTIC_EQUATION_V1_UNSUPPORTED_RULE,
-                    "deterministic equations do not admit empty expressions");
-                goto fail;
+                /* An empty tuple is data, not a call with a missing head. */
+                value = equation_copy_atom(context, term);
+                if (!value)
+                    goto fail;
+                have_value = true;
+                continue;
             }
             if (expression_head(term, "let", 3u)) {
                 DeterministicEquationFrameV1 frame;
@@ -1179,10 +1377,11 @@ fail:
     return NULL;
 }
 
-bool cetta_deterministic_equation_plan_v1_run(
+bool cetta_deterministic_equation_plan_v1_run_counted(
     const CettaDeterministicEquationPlanV1 *plan, const Atom *call,
     CettaDeterministicPrimitiveFnV1 primitive, void *primitive_context,
     Arena *arena, uint32_t depth_limit, uint64_t work_limit,
+    uint64_t *work_used,
     Atom **out, CettaDeterministicEquationStatusV1 *status,
     char *error, size_t error_size) {
     DeterministicEquationContextV1 context;
@@ -1195,6 +1394,8 @@ bool cetta_deterministic_equation_plan_v1_run(
         *status = CETTA_DETERMINISTIC_EQUATION_V1_BAD_ARGUMENT;
     if (out)
         *out = NULL;
+    if (work_used)
+        *work_used = 0u;
     if (!plan || !call || !arena || !out || depth_limit == 0u ||
         work_limit == 0u)
         return equation_error(
@@ -1221,6 +1422,8 @@ bool cetta_deterministic_equation_plan_v1_run(
             "cannot allocate deterministic equation copy session");
     }
     *out = evaluate_term(&context, call, &environment);
+    if (work_used)
+        *work_used = work_limit - context.work_remaining;
     free(environment.items);
     atom_deep_copy_session_free(context.copy_session);
     if (!*out) {
@@ -1241,6 +1444,18 @@ bool cetta_deterministic_equation_plan_v1_run(
     if (status)
         *status = CETTA_DETERMINISTIC_EQUATION_V1_OK;
     return true;
+}
+
+bool cetta_deterministic_equation_plan_v1_run(
+    const CettaDeterministicEquationPlanV1 *plan, const Atom *call,
+    CettaDeterministicPrimitiveFnV1 primitive, void *primitive_context,
+    Arena *arena, uint32_t depth_limit, uint64_t work_limit,
+    Atom **out, CettaDeterministicEquationStatusV1 *status,
+    char *error, size_t error_size) {
+    return cetta_deterministic_equation_plan_v1_run_counted(
+        plan, call, primitive, primitive_context,
+        arena, depth_limit, work_limit, NULL,
+        out, status, error, error_size);
 }
 
 const char *cetta_deterministic_equation_status_name_v1(

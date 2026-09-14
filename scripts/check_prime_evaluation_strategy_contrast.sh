@@ -30,7 +30,7 @@ run_case() {
     passed=$((passed + 1))
 }
 
-for lane in he he-compat he-extended he-prime prime; do
+for lane in he he-compat extended he-prime prime; do
     run_case "$lane" evaluation_strategy_contrast.metta 10000
     run_case "$lane" evaluation_strategy_divergence.metta 64
 done

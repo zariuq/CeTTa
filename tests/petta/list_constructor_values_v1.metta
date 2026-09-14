@@ -1,0 +1,16 @@
+; Reserved constructor spelling is not a call by itself. Its children,
+; user equations and callable type declarations still determine evaluation.
+(= (list-value:active) answer)
+(= (list-value:branch) first)
+(= (list-value:branch) second)
+!(LCons a (LCons b LNil))
+!(LCons (list-value:active) LNil)
+!(collapse (LCons (list-value:branch) LNil))
+!(collapse (LCons (superpose (same same)) LNil))
+!(LCons (quote (list-value:active)) LNil)
+!(LCons (let $_ (println! list-value:effect) value) LNil)
+!(let $x (superpose (left right)) (LCons $x (LCons $x LNil)))
+!(LCons True (LCons False LNil))
+!(LCons)
+!(LCons a)
+!(LCons a b c)

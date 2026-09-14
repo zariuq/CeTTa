@@ -37,7 +37,7 @@ def parse_controller_stats_line(line: str) -> dict[str, int | str]:
         if key in fields:
             raise ValueError(f"duplicate controller field: {key}")
         fields[key] = value if key in {
-            "requested", "active", "storage"
+            "requested", "selection", "active", "storage", "advisor"
         } else int(value)
     if not {"requested", "active", "storage"}.issubset(fields):
         raise ValueError(f"incomplete controller statistics: {fields!r}")
@@ -50,20 +50,28 @@ def aggregate_controller_stats(
     aggregate = {
         "records": len(invocations),
         "active_fifo": 0,
+        "active_ratio": 0,
         "active_inline_depth_first": 0,
         "active_refused": 0,
-        "storage_full_image": 0,
+        "storage_shared_terms_owned_state": 0,
         "storage_none": 0,
+        "advisor_incremental_compression": 0,
+        "advisor_none": 0,
     }
     for invocation in invocations:
         requested = invocation.get("requested")
         active = invocation.get("active")
-        if requested != "fifo":
+        if requested not in {"fifo", "ratio"}:
             raise ValueError(
                 f"unexpected requested controller: {requested!r}"
             )
+        aggregate[f"requested_{requested}"] = (
+            aggregate.get(f"requested_{requested}", 0) + 1
+        )
         if active == "fifo":
             aggregate["active_fifo"] += 1
+        elif active == "ratio":
+            aggregate["active_ratio"] += 1
         elif active == "inline-depth-first":
             aggregate["active_inline_depth_first"] += 1
         elif active == "refused":
@@ -71,14 +79,23 @@ def aggregate_controller_stats(
         else:
             raise ValueError(f"unexpected active controller: {active!r}")
         storage = invocation.get("storage")
-        if storage == "full-image":
-            aggregate["storage_full_image"] += 1
+        if storage == "shared-terms-owned-state":
+            aggregate["storage_shared_terms_owned_state"] += 1
         elif storage == "none":
             aggregate["storage_none"] += 1
         else:
             raise ValueError(f"unexpected controller storage: {storage!r}")
+        advisor = invocation.get("advisor", "none")
+        if advisor == "incremental-compression":
+            aggregate["advisor_incremental_compression"] += 1
+        elif advisor == "none":
+            aggregate["advisor_none"] += 1
+        else:
+            raise ValueError(f"unexpected controller advisor: {advisor!r}")
         for key, value in invocation.items():
-            if key in {"requested", "active", "storage"}:
+            if key in {
+                "requested", "selection", "active", "storage", "advisor"
+            }:
                 continue
             if not isinstance(value, int):
                 raise ValueError(f"non-integral controller field: {key}")

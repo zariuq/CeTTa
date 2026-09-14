@@ -43,7 +43,7 @@ typedef struct {
     uint32_t class_len;
     CettaLdLexicalStateV1 *states;
     uint32_t state_len;
-    char source_sha256[65];
+    char authority_sha256[65];
 } CettaLdParserProfileV1;
 
 typedef enum {
@@ -55,24 +55,32 @@ typedef enum {
     CETTA_LD_PARSER_PACK_V1_ALLOCATION_FAILURE,
     CETTA_LD_PARSER_PACK_V1_INVALID_UTF8,
     CETTA_LD_PARSER_PACK_V1_OPEN_GRAMMAR,
-    CETTA_LD_PARSER_PACK_V1_ABI_REJECTED
+    CETTA_LD_PARSER_PACK_V1_ABI_REJECTED,
+    CETTA_LD_PARSER_PACK_V1_COMPILER_REJECTED
 } CettaLdParserPackV1Status;
 
 typedef struct {
     PPABIV1Pack pack;
     Atom *start_state;
-    char language_source_sha256[65];
-    char profile_source_sha256[65];
+    char language_authority_sha256[65];
+    char profile_authority_sha256[65];
     char binding_sha256[65];
     char compiler_sha256[65];
     uint32_t authored_rule_len;
     uint32_t lexical_rule_len;
+    uint32_t entry_rule_len;
 } CettaLdParserPackV1;
 
 void cetta_ld_parser_profile_v1_init(CettaLdParserProfileV1 *profile);
 void cetta_ld_parser_profile_v1_free(CettaLdParserProfileV1 *profile);
 
-/* Decode one independently GLL/GLR-qualified ordinary MeTTa document. */
+/*
+ * Decode one canonical structured parser-profile document.
+ *
+ * Byte-sourced callers qualify the document through the paired GLL/GLR
+ * readers before decoding it.  Direct structured-value callers instead
+ * carry a digest of the structure they supplied as the authority identity.
+ */
 bool cetta_ld_parser_profile_v1_decode(
     CettaLdParserProfileV1 *out,
     const CettaOpLangV1Document *document,
@@ -90,19 +98,40 @@ void cetta_ld_parser_pack_v1_free(CettaLdParserPackV1 *compiled);
  * Supported rows follow the same discipline as the Lean grammar extraction:
  * every nonterminal names one simple base-typed parameter, parameters occur
  * once and in order, and the result sort is the ParserPack left-hand state.
+ * A separate compiler-derived entry production applies the whole-source EOF
+ * boundary exactly once and projects the authored start value unchanged;
+ * recursive occurrences of the authored start sort remain ordinary grammar
+ * occurrences.
  * Unsupported syntax operators, binders, relations, or evaluation policies
  * return OUTSIDE_FRAGMENT rather than falling back to Horn execution.
+ * The authored equations are executed at grammar-load time. Parser execution
+ * uses the existing native GLL/GLR engines. This is source-driven compilation,
+ * not specialized generated compiler machine code or a replay certificate.
  * Replacement is atomic.
  */
 bool cetta_language_def_parser_pack_v1_compile(
     CettaLdParserPackV1 *out,
     const CettaLanguageDefCoreV1 *language,
-    const char language_source_sha256[65],
+    const char language_authority_sha256[65],
     const CettaLdParserProfileV1 *profile,
     uint32_t work_limit,
     CettaLdParserPackV1Status *status,
     char *error_buf,
     size_t error_buf_size);
+
+/* Same compiler boundary with explicit immutable authored source. This is
+ * useful for alternative compiler families and source-mutation checks; it
+ * never falls back to a handwritten lowering. Compiler identity is the hash
+ * of these exact bytes. Scalar-text projection preserves literal U+0000. */
+bool cetta_language_def_parser_pack_v1_compile_source(
+    CettaLdParserPackV1 *out,
+    const CettaLanguageDefCoreV1 *language,
+    const char language_authority_sha256[65],
+    const CettaLdParserProfileV1 *profile,
+    const uint8_t *compiler_source, size_t compiler_source_len,
+    uint32_t work_limit,
+    CettaLdParserPackV1Status *status,
+    char *error_buf, size_t error_buf_size);
 
 const char *cetta_ld_parser_pack_v1_status_name(
     CettaLdParserPackV1Status status);

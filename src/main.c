@@ -690,7 +690,7 @@ static Atom *display_atom_copy(Arena *dst, Atom *src, const CettaDisplayVarMap *
     case ATOM_GROUNDED:
         switch (src->ground.gkind) {
         case GV_INT:
-            return atom_int(dst, src->ground.ival);
+            return atom_int_copy(dst, src);
         case GV_FLOAT:
             return atom_float(dst, src->ground.fval);
         case GV_BOOL:
@@ -1198,7 +1198,10 @@ static void write_results(FILE *out, ResultSet *rs,
     bool rust_compat =
         cetta_language_uses_rust_he_compat_semantics(language_id, profile);
     if (rs->len == 0) {
-        if (rust_compat) fprintf(out, "[]\n");
+        if (g_count_only)
+            fprintf(out, "0\n");
+        else if (rust_compat)
+            fprintf(out, "[]\n");
         return;
     }
 
@@ -1209,7 +1212,10 @@ static void write_results(FILE *out, ResultSet *rs,
             visible_len++;
     }
     if (visible_len == 0) {
-        if (rust_compat) fprintf(out, "[]\n");
+        if (g_count_only)
+            fprintf(out, "0\n");
+        else if (rust_compat)
+            fprintf(out, "[]\n");
         return;
     }
     if (visible_len != rs->len) {
@@ -1226,6 +1232,22 @@ static void write_results(FILE *out, ResultSet *rs,
         rs = &visible;
     }
 
+    if (g_count_only) {
+        /* Preserve the established aggregate protocol: an in-language
+         * reducer may return its computed integer count directly; otherwise
+         * this observer reports the cardinality of the visible occurrence
+         * bag.  Completion is checked by the caller before either result is
+         * published. */
+        if (rs->len == 1 &&
+            rs->items[0]->kind == ATOM_GROUNDED &&
+            rs->items[0]->ground.gkind == GV_INT) {
+            fprintf(out, "%lld\n", (long long)rs->items[0]->ground.ival);
+            goto done;
+        }
+        fprintf(out, "%" PRIu64 "\n", rs->len);
+        goto done;
+    }
+
     /*
      * PeTTa's runnable driver exposes the answer stream one result per line.
      * The surrounding result vector is CeTTa's host API container, not part
@@ -1236,17 +1258,6 @@ static void write_results(FILE *out, ResultSet *rs,
             atom_print_petta(rs->items[index], out);
             fputc('\n', out);
         }
-        goto done;
-    }
-
-    if (g_count_only) {
-        if (rs->len == 1 &&
-            rs->items[0]->kind == ATOM_GROUNDED &&
-            rs->items[0]->ground.gkind == GV_INT) {
-            fprintf(out, "%lld\n", (long long)rs->items[0]->ground.ival);
-            goto done;
-        }
-        fprintf(out, "%" PRIu64 "\n", rs->len);
         goto done;
     }
     if (g_quiet_results && !result_set_has_error(rs) &&
@@ -1697,7 +1708,7 @@ static void print_usage(FILE *out) {
     fputs("usage: cetta [--lang <name>] [--syntax <metta|mrho|rho>] <file>\n", out);
     fputs("       cetta -e '<expr>' [-e '<expr>' ...]  # inline expressions (multiple -e concatenate)\n", out);
     fputs("       cetta --translate --lang A [--syntax S] --lang B [--syntax T] <file>\n", out);
-    fputs("       cetta [--lang he --profile <he|he-compat|he-extended|he-prime>] <file.metta>\n", out);
+    fputs("       cetta [--lang he --profile <he|he-compat|extended|he-prime>] <file.metta>\n", out);
     fputs("       cetta --lang prime <file.metta>\n", out);
 #if CETTA_BUILD_WITH_PETTA_TYPECHECK_V2
     fputs("       cetta --lang petta --profile typecheck-v2 [--strict|--strict-det] <file.metta>\n", out);
@@ -1728,7 +1739,7 @@ static void print_usage(FILE *out) {
     fputs("       cetta --pretty-namespaces <file.metta> # pretty-print mork./runtime. namespace sugar\n", out);
     fputs("       cetta --raw-namespaces <file.metta>    # print canonical mork:/runtime: names\n", out);
     fputs("       cetta --prefer-rationals <file.metta>  # exact rational division for exact numbers\n", out);
-    fputs("       cetta --fuel <n> <file.metta>          # override evaluator fuel budget\n", out);
+    fputs("       cetta --fuel <-1|n> <file.metta>       # -1 unlimited, n positive\n", out);
     fputs("       cetta --num-threads <n> <file>             # set OS-thread budget for parallel-capable execution\n", out);
     fputs("       cetta --rho-reduction-limit <n> <file>            # run at most n strict-core rho COMM reductions (default 100000)\n", out);
     fputs("       cetta --rho-scheduler <canonical|rotating> <file> # select strict-core rho reduction policy\n", out);
@@ -2286,6 +2297,7 @@ static void cetta_main_cleanup(CettaMainCleanup *cleanup) {
     cetta_foreign_global_shutdown();
     eval_match_decision_cache_free_for_current_thread();
     eval_profiled_type_cache_free_for_current_thread();
+    space_execution_analysis_cache_free_for_current_thread();
 
     if (cleanup->space_initialized) {
         space_free(cleanup->space);
@@ -2644,6 +2656,7 @@ int main(int argc, char **argv) {
     uint32_t lang_occurrences = 0;
     bool prefer_rationals_cli = false;
     int fuel_override = -1;
+    bool fuel_override_requested = false;
     uint32_t num_threads = 1u;
     bool num_threads_requested = false;
     uint32_t rho_reduction_limit = CETTA_RHOCALC_DEFAULT_REDUCTION_LIMIT;
@@ -2797,11 +2810,14 @@ int main(int argc, char **argv) {
                 return 1;
             }
             parsed = strtol(argv[++i], &endp, 10);
-            if (!endp || *endp != '\0' || parsed <= 0 || parsed > 100000000L) {
+            if (!endp || *endp != '\0' ||
+                (parsed != -1 &&
+                 (parsed <= 0 || parsed > 100000000L))) {
                 fprintf(stderr, "error: invalid fuel '%s'\n", argv[i]);
                 return 2;
             }
             fuel_override = (int)parsed;
+            fuel_override_requested = true;
             continue;
         }
         if (strcmp(argv[i], "--num-threads") == 0) {
@@ -3003,7 +3019,8 @@ int main(int argc, char **argv) {
             list_profiles || source_endpoint.syntax != CETTA_SYNTAX_AUTO ||
             import_mode_overridden || petta_strict || petta_strict_det ||
             emit_prime_need_trace || prime_rewrite_frontier ||
-            prefer_rationals_cli || eval_hashcons || fuel_override > 0 ||
+            prefer_rationals_cli || eval_hashcons ||
+            fuel_override_requested ||
             num_threads_requested || rho_reduction_limit_requested ||
             rho_scheduler_requested ||
             mm2_step_limit != CETTA_MM2_DEFAULT_RUN_STEPS ||
@@ -3261,7 +3278,8 @@ int main(int argc, char **argv) {
     int n = 0;
 
     g_count_only = count_only;
-    if (fuel_override > 0) eval_set_default_fuel(fuel_override);
+    if (fuel_override_requested)
+        eval_set_default_fuel(fuel_override);
 
     cleanup.inline_buf = inline_buf;
     cleanup.arena = &arena;
@@ -3965,6 +3983,7 @@ process_petta_document:
             ResultSet rs;
             EvalOutcome detailed;
             ResultSet *results = &rs;
+            bool detailed_initialized = false;
             PrimeNeedTracePrinter trace = {0};
             if (!expr) {
                 fprintf(stderr, "error: could not decode top-level eval form\n");
@@ -3973,6 +3992,7 @@ process_petta_document:
             }
             if (emit_prime_need_trace) {
                 eval_outcome_init(&detailed);
+                detailed_initialized = true;
                 results = &detailed.results;
                 trace.out = stderr;
                 trace.form = ++g_prime_need_trace_form;
@@ -3989,6 +4009,19 @@ process_petta_document:
                         (size_t)eval_outcome_value_count(&detailed),
                         (size_t)eval_outcome_fault_count(&detailed),
                         detailed.steps_spent);
+            } else if (g_count_only) {
+                eval_outcome_init(&detailed);
+                detailed_initialized = true;
+                results = &detailed.results;
+                if (lang->id == CETTA_LANGUAGE_PETTA) {
+                    eval_top_with_registry_petta_plan_outcome(
+                        &space, &eval_arena, &arena, &registry,
+                        expr, source_plan, &detailed);
+                } else {
+                    eval_top_with_registry_outcome(
+                        &space, &eval_arena, &arena, &registry, expr,
+                        &detailed, NULL, NULL);
+                }
             } else {
                 result_set_init(&rs);
                 if (lang->id == CETTA_LANGUAGE_PETTA) {
@@ -4005,7 +4038,7 @@ process_petta_document:
                     &libraries.session)) {
                 rc = cetta_eval_session_process_exit_code(
                     &libraries.session);
-                if (emit_prime_need_trace)
+                if (detailed_initialized)
                     eval_outcome_free(&detailed);
                 else
                     result_set_free(&rs);
@@ -4027,17 +4060,28 @@ process_petta_document:
                         ? typecheck_diagnostic
                         : "runtime analysis judgment failed");
                 rc = typecheck_exit_code;
-                if (emit_prime_need_trace)
+                if (detailed_initialized)
                     eval_outcome_free(&detailed);
                 else
                     result_set_free(&rs);
                 prime_need_trace_printer_free(&trace);
                 goto cleanup;
             }
+            if (g_count_only && detailed_initialized &&
+                detailed.completion != CETTA_EVAL_COMPLETE) {
+                fprintf(
+                    stderr,
+                    "error: count observation incomplete: %s\n",
+                    eval_completion_reason(detailed.completion));
+                eval_outcome_free(&detailed);
+                prime_need_trace_printer_free(&trace);
+                rc = 1;
+                goto cleanup;
+            }
             write_results(output_spool, results, lang->id, profile);
             if (fflush(output_spool) != 0) {
                 fprintf(stderr, "error: could not write output spool\n");
-                if (emit_prime_need_trace)
+                if (detailed_initialized)
                     eval_outcome_free(&detailed);
                 else
                     result_set_free(&rs);
@@ -4052,7 +4096,7 @@ process_petta_document:
                 stop_after_error = true;
                 prime_need_trace_failed = true;
             }
-            if (emit_prime_need_trace)
+            if (detailed_initialized)
                 eval_outcome_free(&detailed);
             else
                 result_set_free(&rs);

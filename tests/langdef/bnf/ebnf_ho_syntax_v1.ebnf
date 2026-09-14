@@ -1,0 +1,14 @@
+% A small TPTP-shaped higher-order syntax specimen, not the official grammar.
+% It tests application, arrows, typed binders and lambdas as structured syntax.
+% No scope, type, semantic-profile or proof-checking claim is made here.
+<s> ::= <record>+
+<record> ::= "thf(" <name> "," <role> "," <formula> ")."
+<role> ::= "axiom" | "conjecture" | "type"
+<formula> ::= <atom> | "(" <formula> ")" | "(" <formula> <binary> <formula> ")" | <binder> "[" <declarations> "]:" <formula>
+<declarations> ::= <declaration> ("," <declaration>)*
+<declaration> ::= <variable> ":" <formula>
+<atom> ::= <name> | <variable> | "$i" | "$o"
+<name> ::= ("f" | "g" | "p" | "a" | "b") ("0" | "1")?
+<variable> ::= "X" | "Y" | "F"
+<binary> ::= "@" | ">" | "=" | "=>" | ":"
+<binder> ::= "!" | "?" | "^"

@@ -11,7 +11,7 @@
 ; And if the term has several results, the COMM forks -- one branch per result
 ; (this branching outcome set is what rhometta calls the "may-set").
 ;
-; Run:  ./cetta --quiet --profile he-extended --lang he <this file>
+; Run:  ./cetta --quiet --profile extended --lang he <this file>
 ; ===========================================================================
 
 !(import! &self rhometta)

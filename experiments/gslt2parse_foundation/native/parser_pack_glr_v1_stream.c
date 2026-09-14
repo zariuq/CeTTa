@@ -98,6 +98,8 @@ static const char *outcome_name(PPNativeV1Outcome outcome) {
         return "replay-depth";
     case PPNATIVE_V1_RESULT_LIMIT:
         return "result-limit";
+    case PPNATIVE_V1_CYCLIC_FOREST:
+        return "cyclic-forest";
     }
     return "unknown";
 }
@@ -184,7 +186,8 @@ static bool run(const char *abi_path,
         }
     } else if (result.outcome == PPNATIVE_V1_RECOGNIZER_LIMIT ||
                result.outcome == PPNATIVE_V1_REPLAY_DEPTH ||
-               result.outcome == PPNATIVE_V1_RESULT_LIMIT) {
+               result.outcome == PPNATIVE_V1_RESULT_LIMIT ||
+               result.outcome == PPNATIVE_V1_CYCLIC_FOREST) {
         if (result.forest_digest[0] != '\0') {
             printf("forest-digest\t%s\n", result.forest_digest);
             printf("forest-materialized\t%u\n",

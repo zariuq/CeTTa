@@ -1,0 +1,4 @@
+true
+(EbnfApplicationV1 records (true true true true true true true true true true true true))
+(EbnfApplicationV1 dangling-else (true true true true true true true true))
+(EbnfApplicationV1 ho-syntax (true true true true true true true true true true))

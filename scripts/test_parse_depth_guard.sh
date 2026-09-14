@@ -23,7 +23,7 @@ done
 for syntax in parse parse-first; do
     printf '!(%s "%s")\n' "$syntax" "$deep" > "$input"
 
-    if ! "$bin" --profile he-extended --lang he "$input" > "$stdout" 2> "$stderr"; then
+    if ! "$bin" --profile extended --lang he "$input" > "$stdout" 2> "$stderr"; then
         cat "$stderr" >&2
         echo "FAIL: $syntax depth guard process exited non-zero" >&2
         exit 1

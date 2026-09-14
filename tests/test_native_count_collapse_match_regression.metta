@@ -1,9 +1,9 @@
-; Regression: counting a collapsed native-space match should count bindings
-; directly instead of materializing and re-evaluating a large result tuple.
+; Regression: counting a collapsed native-space match preserves the semantic
+; distinction between strict `size` and non-strict `size-atom`.
 ;
 ; `size` is STRICT: it evaluates (collapse (match ...)) and counts the tuple.
-; The runtime streams the match rows and counts them in O(1) memory rather than
-; materializing the O(N) tuple, so `size` reports the row count (512).
+; `size` reports the row count (512) independent of whether an implementation
+; streams or materializes the tuple.
 ;
 ; `size-atom` is NON-STRICT: applied directly to (collapse (match ...)) it
 ; returns the ARITY of that unevaluated expression (2), matching HE.  To count a
@@ -20,11 +20,19 @@
         (add-atom &native-count (friend sam $x)))))
   ())
 
-!(reset-runtime-stats!)
-; Strict `size` over the collapsed match: streamed count = 512.
+; Strict `size` over the collapsed match = 512.
 !(assertEqualToResult
   (size (collapse (match &native-count (friend $y $x) hit)))
   (512))
+; A binding-dependent template is not a one-result-per-row homomorphism.
+; It must preserve ordinary filtering.
+!(assertEqualToResult
+  (size
+    (collapse
+      (match &native-count
+             (friend sam $x)
+             (if (== $x 0) (empty) hit))))
+  (511))
 ; Non-strict `size-atom` over the unevaluated (collapse ...) = its arity = 2.
 !(assertEqualToResult
   (size-atom (collapse (match &native-count (friend $y $x) hit)))
@@ -33,9 +41,3 @@
 !(assertEqualToResult
   (let $c (collapse (match &native-count (friend $y $x) hit)) (size-atom $c))
   (512))
-!(bind! &stats (runtime-stats!))
-!(assertEqualToResult
-  (match &stats
-         (runtime-counter eval-c-stack-guard-depth-peak $n)
-         (< $n 64))
-  (True))
