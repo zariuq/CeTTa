@@ -12,3 +12,6 @@ true
 alpha
 true
 true
+()
+(true)
+((empty 7))

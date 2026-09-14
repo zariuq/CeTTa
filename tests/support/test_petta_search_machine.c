@@ -2599,6 +2599,42 @@ static void test_constructor_slot_frame_plans(
 
     PettaMachineHost finite_scalar_segment_host = scalar_segment_host;
     finite_scalar_segment_host.unlimited_transition_budget = false;
+
+    /* A scalar result resumed after an open producer uses the same operation
+     * program as an argument region. Finite fuel retains intermediate goals. */
+    add_compiled_program_clause(
+        program, &execution_space, persistent,
+        "(= (whole-scalar-result $x)"
+        "   (let* (($y (scalar-segment-seed)))"
+        "     (+ (- $x 1) (* $y 2))))");
+    add_compiled_program_clause(
+        program, &execution_space, persistent,
+        "(= (whole-scalar-result $x) (empty))");
+    Atom *whole_scalar_query = parse_one(answers, "(whole-scalar-result 4)");
+    const PettaPlanNode *whole_scalar_plan =
+        petta_program_plan_current(program, whole_scalar_query);
+    uint64_t scalar_result_transitions[2];
+    for (size_t metered = 0u; metered < 2u; metered++) {
+        assert(petta_machine_init_with_plan(
+            &machine, &execution_space, answers,
+            whole_scalar_query, whole_scalar_plan, NULL,
+            metered ? &finite_scalar_segment_host : &scalar_segment_host));
+        bindings_init(&environment);
+        assert(petta_machine_next(&machine, &answer, &environment) ==
+               PETTA_MACHINE_STEP_ANSWER);
+        assert(atom_alpha_eq(answer, parse_one(answers, "7")));
+        bindings_free(&environment);
+        assert(petta_machine_next(&machine, &answer, &environment) ==
+               PETTA_MACHINE_STEP_EXHAUSTED);
+        bindings_free(&environment);
+        assert(petta_machine_stats(&machine, &stats));
+        scalar_result_transitions[metered] = stats.transitions;
+        petta_machine_destroy(&machine);
+    }
+    assert(activation_enabled
+        ? scalar_result_transitions[0] < scalar_result_transitions[1]
+        : scalar_result_transitions[0] == scalar_result_transitions[1]);
+
     assert(petta_machine_init_with_plan(
         &machine, &execution_space, answers,
         nested_scalar_argument_query,
@@ -3232,6 +3268,9 @@ typedef struct {
     PettaProgram *program;
     uint64_t relation_calls;
     uint64_t clause_uses;
+    bool override_empty;
+    size_t empty_classifications;
+    size_t empty_evaluations;
 } ClauseGuardObserverProbe;
 
 static bool test_clause_guard_snapshot_lease(
@@ -3261,6 +3300,108 @@ static bool test_clause_guard_record_clause_use(
            result && environment && evidence_delta);
     probe->clause_uses++;
     return true;
+}
+
+static PettaMachineHostMode terminal_empty_classify(
+    void *context, Space *space, Atom *expression) {
+    (void)space;
+    ClauseGuardObserverProbe *probe = context;
+    if (expression->kind != ATOM_EXPR || expression->expr.len != 1u ||
+        !atom_is_symbol_id(expression->expr.elems[0], g_builtin_syms.empty_form))
+        return PETTA_MACHINE_HOST_NONE;
+    probe->empty_classifications++;
+    return probe->override_empty ? PETTA_MACHINE_HOST_READY_OVERRIDE
+                                 : PETTA_MACHINE_HOST_NONE;
+}
+
+static bool terminal_empty_evaluate(
+    void *context, Space *space, Arena *arena, Atom *expression,
+    const Bindings *environment, OutcomeSet *outcomes) {
+    (void)space;
+    (void)environment;
+    ClauseGuardObserverProbe *probe = context;
+    assert(expression->kind == ATOM_EXPR && expression->expr.len == 1u);
+    assert(atom_is_symbol_id(expression->expr.elems[0], g_builtin_syms.empty_form));
+    probe->empty_evaluations++;
+    Bindings empty;
+    bindings_init(&empty);
+    outcome_set_add(outcomes, atom_symbol(arena, "host-zero-result"), &empty);
+    bindings_free(&empty);
+    return true;
+}
+
+static void test_activated_empty_authority(
+    TermUniverse *universe, Arena *persistent, Arena *answers) {
+    Space space;
+    space_init_with_universe(&space, universe);
+    PettaProgram *program = petta_program_new();
+    assert(program);
+    for (size_t i = 0u; i < 2u; i++)
+        add_compiled_program_clause(program, &space, persistent,
+            "(= (terminal-empty-test $x) (empty))");
+    add_compiled_program_clause(program, &space, persistent,
+        "(= (terminal-empty-test $x) $x)");
+    add_compiled_program_clause(program, &space, persistent,
+        "(= (quoted-empty-test $x) (quote (empty)))");
+    ClauseGuardObserverProbe probe = {.program = program};
+    PettaMachineHost host = {
+        .context = &probe,
+        .clause_snapshot_lease = test_clause_guard_snapshot_lease,
+        .classify = terminal_empty_classify,
+        .evaluate = terminal_empty_evaluate,
+        .measure_stats = true,
+        .source_output_constraints = true,
+    };
+    for (size_t override = 0u; override < 2u; override++) {
+        probe.override_empty = override != 0u;
+        probe.empty_classifications = probe.empty_evaluations = 0u;
+        Atom *query = parse_one(answers, "(terminal-empty-test 7)");
+        const PettaPlanNode *plan = petta_program_plan_current(program, query);
+        PettaMachine machine;
+        assert(petta_machine_init_with_plan(&machine, &space, answers,
+            query, plan, NULL, &host));
+        for (size_t i = 0u; i < (override ? 3u : 1u); i++) {
+            Atom *answer = NULL;
+            Bindings environment;
+            bindings_init(&environment);
+            assert(petta_machine_next(&machine, &answer, &environment) ==
+                   PETTA_MACHINE_STEP_ANSWER);
+            Atom *expected = override && i < 2u
+                ? atom_symbol(answers, "host-zero-result") : atom_int(answers, 7);
+            assert(atom_alpha_eq(answer, expected));
+            bindings_free(&environment);
+        }
+        Atom *answer = NULL;
+        Bindings environment;
+        bindings_init(&environment);
+        assert(petta_machine_next(&machine, &answer, &environment) ==
+               PETTA_MACHINE_STEP_EXHAUSTED);
+        bindings_free(&environment);
+        assert(probe.empty_classifications == (override ? 4u : 2u));
+        assert(probe.empty_evaluations == (override ? 2u : 0u));
+        petta_machine_destroy(&machine);
+    }
+    probe.empty_classifications = probe.empty_evaluations = 0u;
+    Atom *query = parse_one(answers, "(quoted-empty-test 9)");
+    const PettaPlanNode *plan = petta_program_plan_current(program, query);
+    PettaMachine machine;
+    assert(petta_machine_init_with_plan(&machine, &space, answers,
+        query, plan, NULL, &host));
+    Atom *answer = NULL;
+    Bindings environment;
+    bindings_init(&environment);
+    assert(petta_machine_next(&machine, &answer, &environment) ==
+           PETTA_MACHINE_STEP_ANSWER);
+    assert(atom_alpha_eq(answer, parse_one(answers, "(empty)")));
+    bindings_free(&environment);
+    assert(petta_machine_next(&machine, &answer, &environment) ==
+           PETTA_MACHINE_STEP_EXHAUSTED);
+    bindings_free(&environment);
+    assert(probe.empty_classifications == 0u && probe.empty_evaluations == 0u);
+    petta_machine_destroy(&machine);
+    petta_program_free(program);
+    space_free(&space);
+    puts("PASS: activated zero preserves host authority, quotation and duplicate alternatives");
 }
 
 static void test_compiled_clause_guard_pruning(
@@ -3471,6 +3612,25 @@ static void assert_clause_snapshot_receipt_conserves_candidates(
     assert(stats->candidates_emitted == candidate_count);
 }
 
+typedef struct {
+    PettaClauseProjection *projection;
+    Atom *equation;
+} ProjectionReader;
+
+static void *test_read_retained_projection(void *context) {
+    ProjectionReader *reader = context;
+    for (size_t i = 0u; i < 20000u; i++) {
+        assert(petta_program_clause_projection_retain(reader->projection));
+        for (size_t index = 0u; index < 2u; index++) {
+            PettaClauseCandidate candidate = petta_program_clause_projection_get(
+                reader->projection, index);
+            assert(atom_eq(candidate.equation, reader->equation));
+        }
+        petta_program_clause_projection_release(reader->projection);
+    }
+    return NULL;
+}
+
 static void test_program_head_occurrence_index(
     TermUniverse *universe, Arena *persistent) {
     Space indexed_space;
@@ -3529,9 +3689,8 @@ static void test_program_head_occurrence_index(
     candidates[0].equation = wildcard;
     free(candidates);
 
-    /* The machine-facing lease preserves declaration order and occurrence
-     * provenance.  Its physical ownership is deliberately not part of this
-     * semantic test: callers release the lease before a writer runs. */
+    /* Retained generations preserve declaration order and occurrence identity
+     * through cache replacement. Independent leases release independently. */
     PettaClauseSnapshotLease first_lease = {0};
     PettaClauseSnapshotLease second_lease = {0};
     assert(petta_program_clause_snapshot_lease_profiled(
@@ -3551,10 +3710,47 @@ static void test_program_head_occurrence_index(
     assert(second_lease.items[2].equation == duplicate);
     assert_clause_snapshot_receipt_conserves_candidates(
         &stats, second_lease.len);
-    PettaClauseCandidate retained = first_lease.items[0];
+    assert(first_lease.items == second_lease.items);
+    PettaClauseSnapshotLease cloned_lease = {0};
+    assert(petta_program_clause_snapshot_lease_clone(&first_lease, &cloned_lease));
+    assert(cloned_lease.items == first_lease.items);
+    PettaClauseSnapshotLease projected_lease = {0};
+    assert(petta_program_clause_snapshot_lease_clone(&first_lease, &projected_lease));
+    PettaClauseProjection *projection = petta_program_clause_projection_take(
+        &projected_lease, NULL, 2u, 2u);
+    assert(projection && projected_lease.items == NULL);
+    size_t retained_before = petta_program_clause_projection_retained_bytes(projection);
+    /* A borrowed host array has no cache retirement callback. Pinning and
+     * projecting it must preserve values without retaining unused records. */
+    PettaClauseSnapshotLease private_lease = {
+        .items = first_lease.items, .len = first_lease.len,
+    };
+    assert(petta_program_clause_snapshot_lease_pin(&private_lease));
+    PettaClauseProjection *private_projection = petta_program_clause_projection_take(
+        &private_lease, NULL, 2u, 2u);
+    assert(private_projection);
+    assert(petta_program_clause_projection_retained_bytes(private_projection) ==
+           retained_before - 2u * sizeof(PettaClauseCandidate));
+    assert(atom_eq(petta_program_clause_projection_get(private_projection, 0u).equation, duplicate));
+    assert(atom_eq(petta_program_clause_projection_get(private_projection, 1u).equation, duplicate));
+    petta_program_clause_projection_release(private_projection);
+    /* A second projection makes sharing initially cheaper than promotion.
+     * Releasing it after retirement must re-evaluate that storage decision. */
+    assert(petta_program_clause_snapshot_lease_clone(&first_lease, &projected_lease));
+    PettaClauseSelectionEntry *repeated = malloc(2u * sizeof(*repeated));
+    assert(repeated);
+    repeated[0] = (PettaClauseSelectionEntry){2u, first_lease.items[2].rhs_plan};
+    repeated[1] = repeated[0];
+    PettaClauseProjection *repeated_projection = petta_program_clause_projection_take(
+        &projected_lease, repeated, 0u, 2u);
+    assert(repeated_projection);
+    ProjectionReader reader = {projection, duplicate};
+    pthread_t readers[2];
+    assert(pthread_create(&readers[0], NULL, test_read_retained_projection, &reader) == 0);
+    assert(pthread_create(&readers[1], NULL, test_read_retained_projection, &reader) == 0);
     petta_program_clause_snapshot_lease_release(&second_lease);
     petta_program_clause_snapshot_lease_release(&first_lease);
-    assert(retained.equation == first);
+    assert(cloned_lease.items[0].equation == first);
 
     /* An ordinary caller receives the same selected occurrences in authored
      * order, independent of whether an implementation reconstructed or reused
@@ -3647,6 +3843,22 @@ static void test_program_head_occurrence_index(
     assert_clause_snapshot_receipt_conserves_candidates(
         &stats, candidate_count);
     free(candidates);
+
+    assert(cloned_lease.len == 4u);
+    assert(cloned_lease.items[0].equation == first);
+    assert(cloned_lease.items[1].equation == wildcard);
+    assert(cloned_lease.items[2].equation == duplicate);
+    assert(atom_eq(cloned_lease.items[3].equation, duplicate));
+    petta_program_clause_snapshot_lease_release(&cloned_lease);
+    assert(atom_eq(petta_program_clause_projection_get(repeated_projection, 0u).equation, duplicate));
+    assert(atom_eq(petta_program_clause_projection_get(repeated_projection, 1u).equation, duplicate));
+    petta_program_clause_projection_release(repeated_projection);
+    assert(petta_program_clause_projection_retained_bytes(projection) < retained_before);
+    assert(pthread_join(readers[0], NULL) == 0);
+    assert(pthread_join(readers[1], NULL) == 0);
+    assert(atom_eq(petta_program_clause_projection_get(projection, 0u).equation, duplicate));
+    assert(atom_eq(petta_program_clause_projection_get(projection, 1u).equation, duplicate));
+    petta_program_clause_projection_release(projection);
 
     assert(space_remove(&indexed_space, unregistered));
     candidates = NULL;
@@ -5265,15 +5477,38 @@ static void test_deterministic_clause_elision(
     assert(petta_machine_stats(&machine, &stats));
     assert(stats.deterministic_clause_choices_elided == 1u);
     assert(stats.clause_snapshot_candidates == 1u);
-    assert(stats.clause_snapshot_candidates_copied == 1u);
+    assert(stats.clause_snapshot_candidates_copied == 0u);
     assert(stats.clause_match_attempts == 1u);
     assert(stats.clause_branches_scheduled == 1u);
+    assert(stats.match_decision_compilations == 0u);
+    assert(stats.match_decision_runs == 0u);
     assert(stats.choice_continuation_snapshots == 0u);
     assert(stats.choice_continuation_items_copied == 0u);
     assert(petta_machine_next(
                &machine, &answer, &environment) ==
            PETTA_MACHINE_STEP_EXHAUSTED);
     bindings_free(&environment);
+    petta_machine_destroy(&machine);
+
+    /* Identity selection must still delegate nonlinear rejection to the
+     * authoritative matcher.  An alias mismatch is the negative witness for
+     * skipping the redundant one-occurrence decision tree. */
+    add_clause(
+        space, persistent,
+        "(= (only-alias (pair $x $x)) matched)");
+    Atom *mismatch = parse_one(
+        answers, "(only-alias (pair a b))");
+    assert(mismatch);
+    assert(petta_machine_init(
+        &machine, space, answers, mismatch, NULL, NULL));
+    assert(petta_machine_next(
+               &machine, &answer, &environment) ==
+           PETTA_MACHINE_STEP_EXHAUSTED);
+    bindings_free(&environment);
+    assert(petta_machine_stats(&machine, &stats));
+    assert(stats.match_decision_compilations == 0u);
+    assert(stats.match_decision_runs == 0u);
+    assert(stats.clause_match_attempts == 1u);
     petta_machine_destroy(&machine);
 }
 
@@ -5423,7 +5658,7 @@ static void test_cons_shape_clause_index(
     assert(petta_machine_stats(&empty_machine, &stats));
     assert(stats.clause_candidates_shape_pruned == 1u);
     assert(stats.clause_snapshot_candidates == 2u);
-    assert(stats.clause_snapshot_candidates_copied == 1u);
+    assert(stats.clause_snapshot_candidates_copied == 0u);
     assert(stats.clause_match_attempts == 1u);
     assert(stats.clause_branches_scheduled == 1u);
     assert(stats.choice_continuation_snapshots == 0u);
@@ -5455,7 +5690,7 @@ static void test_cons_shape_clause_index(
     assert(petta_machine_stats(&nonempty_machine, &stats));
     assert(stats.clause_candidates_shape_pruned == 1u);
     assert(stats.clause_snapshot_candidates == 2u);
-    assert(stats.clause_snapshot_candidates_copied == 1u);
+    assert(stats.clause_snapshot_candidates_copied == 0u);
     assert(stats.clause_match_attempts == 1u);
     assert(stats.clause_branches_scheduled == 1u);
     assert(stats.choice_continuation_snapshots == 0u);
@@ -5493,7 +5728,7 @@ static void test_cons_shape_clause_index(
     assert(petta_machine_stats(&open_machine, &stats));
     assert(stats.clause_candidates_shape_pruned == 0u);
     assert(stats.clause_snapshot_candidates == 2u);
-    assert(stats.clause_snapshot_candidates_copied == 2u);
+    assert(stats.clause_snapshot_candidates_copied == 0u);
     assert(stats.clause_match_attempts == 2u);
     assert(stats.clause_branches_scheduled == 2u);
     assert(petta_machine_next(
@@ -8824,6 +9059,7 @@ int main(void) {
         &universe, &persistent);
     test_compiled_clause_guard_pruning(
         &universe, &persistent, &answers);
+    test_activated_empty_authority(&universe, &persistent, &answers);
     test_program_wide_occurrence_reconciliation(
         &universe, &persistent);
     test_program_revision_view_transport(

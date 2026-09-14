@@ -45,3 +45,13 @@
                    $ordered $mutating $added)))))))))
 
 !(receipt-exercise)
+
+; A wildcard contributes no rigid shape test. Its binding and repeated-variable
+; constraints still belong to the authoritative match, including duplicates.
+(= (receipt-wildcard (pair $x $x) $unused) same)
+(= (receipt-wildcard (pair $x $y) $unused) any)
+(= (receipt-wildcard (pair $x $y) $unused) any)
+!(collapse (receipt-wildcard (pair a a) ignored))
+!(collapse (receipt-wildcard (pair a b) ignored))
+!(collapse (receipt-wildcard (pair $open a) $ignored))
+!(collapse (receipt-wildcard (other a a) ignored))

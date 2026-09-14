@@ -1330,15 +1330,16 @@ typedef enum {
 static PettaRelevanceResult
 petta_query_arguments_may_supply_specializable_value(
     PettaSpecializerContext *context,
-    Atom *const *arguments, CettaExprLen arity) {
+    Atom *const *arguments, const CettaGsltTermCursorV1 *views,
+    CettaExprLen arity, CettaGsltTermCursorObserverV1 observer) {
     enum {
         PETTA_RELEVANCE_STACK_CAPACITY = 128,
         PETTA_RELEVANCE_NODE_LIMIT = 64,
     };
-    Atom *stack[PETTA_RELEVANCE_STACK_CAPACITY];
+    CettaGsltTermCursorV1 stack[PETTA_RELEVANCE_STACK_CAPACITY];
     size_t length = 0u;
     size_t visited = 0u;
-    if (!context || (arity > 0u && !arguments)) {
+    if (!context || (arity > 0u && !arguments && !views)) {
         return PETTA_RELEVANCE_YES;
     }
     if ((size_t)arity >
@@ -1346,15 +1347,19 @@ petta_query_arguments_may_supply_specializable_value(
         return PETTA_RELEVANCE_YES;
     }
     for (CettaExprIndex index = 0u; index < arity; index++) {
-        stack[length++] = arguments[index];
+        stack[length++] = views ? views[index]
+            : (CettaGsltTermCursorV1){.source = arguments[index]};
     }
 
     while (length > 0u) {
         if (visited++ >= PETTA_RELEVANCE_NODE_LIMIT)
             return PETTA_RELEVANCE_NODE_BUDGET;
-        Atom *atom = stack[--length];
-        if (!atom)
+        CettaGsltTermCursorV1 cursor;
+        if (cetta_gslt_term_cursor_resolve_root_v1(
+                observer, stack[--length], &cursor) !=
+                CETTA_GSLT_TERM_VIEW_OK_V1)
             return PETTA_RELEVANCE_YES;
+        Atom *atom = cursor.source;
         if (atom->kind == ATOM_SYMBOL &&
             petta_symbol_is_callable(
                 context, atom->sym_id)) {
@@ -1362,23 +1367,42 @@ petta_query_arguments_may_supply_specializable_value(
         }
         if (atom->kind != ATOM_EXPR || atom->expr.len == 0u)
             continue;
-        if (petta_semantics_partial_view(atom, NULL, NULL))
+        CettaGsltTermCursorV1 head_cursor = {
+            .source = atom->expr.elems[0], .scope = cursor.scope};
+        if (cetta_gslt_term_cursor_resolve_root_v1(
+                observer, head_cursor, &head_cursor) != CETTA_GSLT_TERM_VIEW_OK_V1)
             return PETTA_RELEVANCE_YES;
-        Atom *head = atom->expr.elems[0];
-        if (head && head->kind == ATOM_SYMBOL) {
-            CettaExprLen supplied = atom->expr.len - 1u;
-            PeTTaNamedArity arity = petta_specializer_named_arity(
-                context, head, supplied);
-            if (arity.known && !arity.exact && arity.larger)
+        Atom *head = head_cursor.source;
+        /* Only a partial constructor demands the argument-tuple root. Its
+         * base need not be read to establish that it supplies a value. */
+        if (atom->expr.len == 3u && petta_semantics_partial_head(head)) {
+            CettaGsltTermCursorV1 tuple = {
+                .source = atom->expr.elems[2], .scope = cursor.scope};
+            if (cetta_gslt_term_cursor_resolve_root_v1(
+                    observer, tuple, &tuple) != CETTA_GSLT_TERM_VIEW_OK_V1 ||
+                tuple.source->kind == ATOM_EXPR)
                 return PETTA_RELEVANCE_YES;
         }
+        /* Every named-arity source (equations, intrinsic arities and arrow
+         * types) also establishes callability. This observation asks only
+         * whether the forest may supply a selector, so an arity query adds
+         * nothing to the head's callable judgment. Consume that judgment
+         * here and do not schedule the same symbol for a second visit. */
+        if (head->kind == ATOM_SYMBOL &&
+            petta_symbol_is_callable(context, head->sym_id))
+            return PETTA_RELEVANCE_YES;
         if ((size_t)atom->expr.len >
             PETTA_RELEVANCE_STACK_CAPACITY - length) {
             return PETTA_RELEVANCE_YES;
         }
-        for (CettaExprIndex index = 0u;
+        CettaExprIndex first = head->kind == ATOM_SYMBOL ? 1u : 0u;
+        visited += first;
+        for (CettaExprIndex index = first;
              index < atom->expr.len; index++) {
-            stack[length++] = atom->expr.elems[index];
+            stack[length++] = (CettaGsltTermCursorV1){
+                .source = atom->expr.elems[index], .scope = cursor.scope};
+            if (index == 0u)
+                stack[length - 1u] = head_cursor;
         }
     }
     return PETTA_RELEVANCE_NO;
@@ -1392,16 +1416,17 @@ petta_call_may_supply_specializable_value(
         return PETTA_RELEVANCE_YES;
     }
     return petta_query_arguments_may_supply_specializable_value(
-        context, call->expr.elems + 1u,
-        call->expr.len - 1u);
+        context, call->expr.elems + 1u, NULL,
+        call->expr.len - 1u, (CettaGsltTermCursorObserverV1){0});
 }
 
-PettaSpecializerRelationAdmission
-petta_specializer_query_execution_admission(
+static PettaSpecializerRelationAdmission
+petta_specializer_query_execution_admission_core(
         Space *space, SymbolId source,
-        Atom *const *arguments, CettaExprLen arity) {
+        Atom *const *arguments, const CettaGsltTermCursorV1 *views,
+        CettaExprLen arity, CettaGsltTermCursorObserverV1 observer) {
     if (!space || source == SYMBOL_ID_NONE ||
-        (arity > 0u && !arguments)) {
+        (arity > 0u && !arguments && !views)) {
         return PETTA_SPECIALIZER_RELATION_DEFER;
     }
     uint64_t instance = space_instance_id(space);
@@ -1436,7 +1461,7 @@ petta_specializer_query_execution_admission(
 
     PettaRelevanceResult query_relevance =
         petta_query_arguments_may_supply_specializable_value(
-            &context, arguments, arity);
+            &context, arguments, views, arity, observer);
     PettaRelationRelevance relation_relevance =
         relation_cached ? cached_relation
                         : PETTA_RELATION_RELEVANCE_UNKNOWN;
@@ -1457,6 +1482,24 @@ petta_specializer_query_execution_admission(
         return PETTA_SPECIALIZER_RELATION_IRRELEVANT;
     }
     return PETTA_SPECIALIZER_RELATION_DEFER;
+}
+
+PettaSpecializerRelationAdmission
+petta_specializer_query_execution_admission(
+        Space *space, SymbolId source,
+        Atom *const *arguments, CettaExprLen arity) {
+    return petta_specializer_query_execution_admission_core(
+        space, source, arguments, NULL, arity,
+        (CettaGsltTermCursorObserverV1){0});
+}
+
+PettaSpecializerRelationAdmission
+petta_specializer_query_view_execution_admission(
+        Space *space, SymbolId source,
+        const CettaGsltTermCursorV1 *arguments, CettaExprLen arity,
+        CettaGsltTermCursorObserverV1 observer) {
+    return petta_specializer_query_execution_admission_core(
+        space, source, NULL, arguments, arity, observer);
 }
 
 static bool petta_collect_source_equations(

@@ -69,12 +69,19 @@ gen_source_write_buffer_family.sh MODE ITERATIONS
             runtime admission.  Default and reference routes must both emit
             done; instrumented runs additionally require exact write-buffer
             accounting and a non-vacuous counters-alive sentinel.
-bench_match_decision_prefix_observation.c [DEPTH] [ITERATIONS]
+bench_match_decision_prefix_observation.c [DEPTH] [ITERATIONS] [MODE] [GEOMETRY] [WIDTH]
             standalone selector adversary: 64 ordered patterns expose 16 independently
             discriminating leaves beneath a configurable shared expression prefix.
-            Conjunctive
-            selection must return one exact source occurrence.  This isolates query-
+            MODE is conjunctive (default) or deep. Conjunctive selection returns
+            two distinct occurrences of the same pattern; deep selection returns
+            a conservative 32-occurrence superset. Each run checks every source
+            reference, including duplicate provenance. This isolates query-
             prefix observation from matching, body, bag, and evaluator-transition
-            costs when comparing proposed selector realizations.
+            costs when comparing proposed selector realizations. GEOMETRY is all
+            (default), closed, shallow-open, middle-open, deep-open, unready,
+            absent, or parts. WIDTH ranges from 6 to 256 (default 16). Measure
+            geometries separately: combined timing can conceal an adverse case.
+            These wildcard-free patterns also expose the overhead of an
+            observation-skipping check when its lower bound cannot skip anything.
 Run each on cetta --lang petta and SWI-PeTTa; report wall, RSS, per-iteration cost.
 Optimizations are steered here and validated on the OBC/set.mm rows.

@@ -42,3 +42,36 @@
 !(open-scalar-boundary seed)
 !(effect-scalar-boundary 4)
 !(get-state scalar-segment-state)
+
+; The same scalar interpretation applies at the result boundary. No outer
+; relation consumer is required, and the input may come through a binding.
+(= (scalar-result $x $y) (+ (- $x 1) (* $y 2)))
+(= (scalar-result $x $y) (empty))
+(= (scalar-result-frame $pair)
+   (let* ((($x $y) $pair)) (+ (* $x 2) (- $y 1))))
+(= (scalar-result-frame $pair) (empty))
+(= (scalar-result-truth $x) (== (+ $x 1) 5))
+(= (scalar-result-truth $x) (empty))
+(= (scalar-result-division $x) (+ (/ $x 2) (* $x 3)))
+(= (scalar-result-division $x) (empty))
+(= (scalar-result-choice) 2)
+(= (scalar-result-choice) 2)
+(= (scalar-result-open) (+ (scalar-result-choice) (* 3 4)))
+(= (scalar-result-open) (empty))
+(= (scalar-result-effects $x) (+ (effect-source $x) (effect-source $x)))
+(= (scalar-result-effects $x) (empty))
+
+!(scalar-result 9 3)
+!(scalar-result-frame (3 9))
+!(scalar-result-truth 4)
+!(scalar-result-truth 5)
+!(scalar-result-division 5)
+!(scalar-result-open)
+!(scalar-result-effects 4)
+!(get-state scalar-segment-state)
+
+; Overflow, unresolved variables and nonnumeric values retain the ordinary
+; numeric and error semantics. Effects and duplicate answers remain visible.
+!(scalar-result 9223372036854775807 2)
+!(scalar-result 9 9223372036854775807)
+!(scalar-result $free 3)

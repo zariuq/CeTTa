@@ -1,1 +1,5 @@
 (receipt-result (blue-result) ((blue-value payload)) (same same) ((left-value right) (right-value left)) (first second) (survived) (old added))
+(same any any)
+(any any)
+(same any any)
+()

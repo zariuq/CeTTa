@@ -118,7 +118,7 @@ struct CettaMatchDecision {
     size_t observation_node_count;
     size_t observation_selector_node_count;
     unsigned char *observation_states;
-    Atom **observation_values;
+    CettaGsltTermCursorV1 *observation_values;
     uint64_t *observation_stamps;
     uint64_t observation_epoch;
     bool observation_ready;
@@ -226,6 +226,10 @@ static bool match_decision_gather_node_paths(
     if (!decision || !node || path_len == 0u ||
         path_len > decision->max_depth)
         return false;
+    /* The observation budget bounds index precision, not valid programs.
+     * Every unsampled coordinate remains unknown to this candidate filter. */
+    if (decision->path_count >= CETTA_MATCH_DECISION_MAX_PATHS)
+        return true;
     if (match_decision_classify(
             classify, classify_context, source_ref,
             path, path_len, node) ==
@@ -236,7 +240,8 @@ static bool match_decision_gather_node_paths(
         return false;
     if (node->kind != ATOM_EXPR || path_len >= decision->max_depth)
         return true;
-    for (CettaExprIndex child = 0u; child < node->expr.len; child++) {
+    for (CettaExprIndex child = 0u; child < node->expr.len &&
+         decision->path_count < CETTA_MATCH_DECISION_MAX_PATHS; child++) {
         path[path_len] = child;
         if (!match_decision_gather_node_paths(
                 decision, classify, classify_context, source_ref,
@@ -254,7 +259,8 @@ static bool match_decision_gather_paths(
     if (!decision)
         return false;
     CettaExprIndex path[CETTA_MATCH_DECISION_HARD_MAX_DEPTH] = {0};
-    for (size_t clause = 0u; clause < decision->clause_count; clause++) {
+    for (size_t clause = 0u; clause < decision->clause_count &&
+         decision->path_count < CETTA_MATCH_DECISION_MAX_PATHS; clause++) {
         Atom *pattern = decision->clauses[clause].pattern;
         if (!pattern || pattern->kind != ATOM_EXPR)
             continue;
@@ -262,7 +268,8 @@ static bool match_decision_gather_paths(
          * Start at arguments so a callable root does not make every useful
          * descendant opaque. */
         for (CettaExprIndex child = 1u;
-             child < pattern->expr.len; child++) {
+             child < pattern->expr.len &&
+             decision->path_count < CETTA_MATCH_DECISION_MAX_PATHS; child++) {
             path[0] = child;
             if (!match_decision_gather_node_paths(
                     decision, classify, classify_context,
@@ -948,7 +955,7 @@ static bool match_decision_build_prefix_observation(
     }
 
     unsigned char *states = malloc(node_count * sizeof(*states));
-    Atom **values = malloc(node_count * sizeof(*values));
+    CettaGsltTermCursorV1 *values = malloc(node_count * sizeof(*values));
     uint64_t *stamps = calloc(node_count, sizeof(*stamps));
     if (!states || !values || !stamps) {
         free(stamps);
@@ -1079,11 +1086,25 @@ static CettaMatchDecision *cetta_match_decision_compile_with_dependency(
             }
         }
         match_decision_remove_empty_paths(decision);
-        if (!match_decision_build_prefix_observation(decision) ||
-            (mode == CETTA_MATCH_DECISION_CONJUNCTIVE &&
-             !match_decision_build_conjunctive_masks(decision))) {
+        if (!match_decision_build_prefix_observation(decision)) {
             cetta_match_decision_free(decision);
             return NULL;
+        }
+        if (mode == CETTA_MATCH_DECISION_CONJUNCTIVE &&
+            !match_decision_build_conjunctive_masks(decision)) {
+            /* Masks are an optional intersection plan. The completed deep
+             * index still supplies a conservative candidate set when their
+             * footprint or allocation cannot be supported. */
+            for (size_t path = 0u; path < decision->path_count; path++) {
+                free(decision->paths[path].wildcard_bits);
+                decision->paths[path].wildcard_bits = NULL;
+            }
+            free(decision->candidate_bits);
+            free(decision->path_bits);
+            decision->candidate_bits = NULL;
+            decision->path_bits = NULL;
+            decision->bit_word_count = 0u;
+            decision->mode = CETTA_MATCH_DECISION_DEEP;
         }
     }
     cetta_runtime_stats_inc(
@@ -1212,90 +1233,158 @@ typedef struct {
     Atom *head;
     Atom *const *arguments;
     size_t arity;
+    const CettaMatchDecisionQueryViewV1 *cursor_view;
+    CettaMatchDecisionVerifyViewCandidateFnV1 verify_view;
 } CettaMatchDecisionQuery;
 
-static unsigned char match_decision_policy(
+static CettaGsltTermCursorObserverV1 match_decision_observer(
+        const CettaMatchDecisionQuery *query) {
+    return query && query->cursor_view ? query->cursor_view->observer
+        : (CettaGsltTermCursorObserverV1){0};
+}
+
+static Atom *match_decision_observed_head(
+        const CettaMatchDecisionQuery *query, CettaGsltTermCursorV1 value) {
+    CettaGsltTermCursorV1 child = {0}, resolved = {0};
+    if (!cetta_gslt_term_cursor_child_v1(value, 0u, &child) ||
+        cetta_gslt_term_cursor_resolve_root_v1(
+            match_decision_observer(query), child, &resolved) !=
+                CETTA_GSLT_TERM_VIEW_OK_V1)
+        return NULL;
+    return resolved.source;
+}
+
+/* Shape and constructor identity are independent partial observations. */
+static bool match_decision_head_identity_known(
+        const CettaMatchDecisionQuery *query, CettaGsltTermCursorV1 value) {
+    if (!value.source || value.source->kind != ATOM_EXPR ||
+        value.source->expr.len == 0u)
+        return true;
+    Atom *head = match_decision_observed_head(query, value);
+    return head && head->kind != ATOM_VAR;
+}
+
+static unsigned char match_decision_policy(const CettaMatchDecisionQuery *query,
     CettaMatchDecisionQueryState query_state,
-    const CettaMatchDecisionKey *key, Atom *value) {
+    const CettaMatchDecisionKey *key, CettaGsltTermCursorV1 value) {
     unsigned int observation = 0u;
     if (query_state == CETTA_MATCH_DECISION_QUERY_ABSENT) {
         observation = 1u;
     } else if (query_state == CETTA_MATCH_DECISION_QUERY_VALUE) {
-        observation = value && value->kind == ATOM_EXPR ? 3u : 2u;
+        observation = value.source && value.source->kind == ATOM_EXPR ? 3u : 2u;
     }
     unsigned int key_kind = key ? (unsigned int)key->kind : 0u;
     bool arity_equal = false;
     bool identity_equal = false;
-    if (key && value) {
+    if (key && value.source) {
         if (key->kind == CETTA_MATCH_DECISION_KEY_LITERAL) {
-            identity_equal = value->kind != ATOM_EXPR && key->atom &&
-                (key->atom == value || atom_eq(key->atom, value));
-        } else if (value->kind == ATOM_EXPR) {
+            identity_equal = value.source->kind != ATOM_EXPR && key->atom &&
+                (key->atom == value.source || atom_eq(key->atom, value.source));
+        } else if (value.source->kind == ATOM_EXPR) {
             arity_equal =
-                value->expr.len == key->expression_length;
+                value.source->expr.len == key->expression_length;
             if (key->kind == CETTA_MATCH_DECISION_KEY_EXPR_HEAD &&
-                key->atom && value->expr.len > 0u) {
-                Atom *head = value->expr.elems[0];
+                key->atom && value.source->expr.len > 0u) {
+                Atom *head = match_decision_observed_head(query, value);
                 identity_equal = head &&
                     (head == key->atom || atom_eq(head, key->atom));
             }
         }
     }
-    return cetta_md_policy_v1[observation][key_kind]
-                             [arity_equal ? 1u : 0u]
-                             [identity_equal ? 1u : 0u];
+    const unsigned char *identity_cases =
+        cetta_md_policy_v1[observation][key_kind][arity_equal ? 1u : 0u];
+    if (key_kind == CETTA_MATCH_DECISION_KEY_EXPR_HEAD &&
+        !match_decision_head_identity_known(query, value)) {
+        /* Lift the concrete policy over both possible identity observations.
+         * Refutation requires every completion to refute. Other known paths
+         * and the expression's known arity remain available for pruning. */
+        if (identity_cases[0] == CETTA_MD_POLICY_FALLBACK ||
+            identity_cases[1] == CETTA_MD_POLICY_FALLBACK)
+            return CETTA_MD_POLICY_FALLBACK;
+        if (identity_cases[0] == CETTA_MD_POLICY_KEEP ||
+            identity_cases[1] == CETTA_MD_POLICY_KEEP)
+            return CETTA_MD_POLICY_KEEP;
+        return CETTA_MD_POLICY_REFUTE;
+    }
+    return identity_cases[identity_equal ? 1u : 0u];
+}
+
+static CettaMatchDecisionQueryState match_decision_resolve_observation(
+        const CettaMatchDecisionQuery *query, CettaGsltTermCursorV1 source,
+        CettaGsltTermCursorV1 *value) {
+    if (cetta_gslt_term_cursor_resolve_root_v1(
+            match_decision_observer(query), source, value) !=
+                CETTA_GSLT_TERM_VIEW_OK_V1 ||
+        !value->source || value->source->kind == ATOM_VAR) {
+        *value = (CettaGsltTermCursorV1){0};
+        return CETTA_MATCH_DECISION_QUERY_UNKNOWN;
+    }
+    return CETTA_MATCH_DECISION_QUERY_VALUE;
+}
+
+static CettaMatchDecisionQueryState match_decision_split_coordinate(
+        const CettaMatchDecisionQuery *query, CettaExprIndex child,
+        uint64_t ready_arguments, CettaGsltTermCursorV1 *value) {
+    CettaGsltTermCursorV1 source = {0};
+    if (child == 0u) {
+        source = query->cursor_view ? query->cursor_view->head
+            : (CettaGsltTermCursorV1){.source = query->head};
+    } else {
+        uint64_t argument = (uint64_t)child - 1u;
+        if (ready_arguments != UINT64_MAX &&
+            (argument >= 64u ||
+             (ready_arguments & (UINT64_C(1) << argument)) == 0u))
+            return CETTA_MATCH_DECISION_QUERY_UNKNOWN;
+        if (argument >= query->arity)
+            return CETTA_MATCH_DECISION_QUERY_ABSENT;
+        if (query->cursor_view) {
+            if (!query->cursor_view->arguments)
+                return CETTA_MATCH_DECISION_QUERY_UNKNOWN;
+            source = query->cursor_view->arguments[argument];
+        } else {
+            if (!query->arguments)
+                return CETTA_MATCH_DECISION_QUERY_UNKNOWN;
+            source.source = query->arguments[argument];
+        }
+    }
+    return match_decision_resolve_observation(query, source, value);
 }
 
 static CettaMatchDecisionQueryState match_decision_query_at_path(
     const CettaMatchDecisionQuery *query,
     const CettaExprIndex *path, uint32_t path_len,
-    uint64_t ready_arguments, Atom **value) {
+    uint64_t ready_arguments, CettaGsltTermCursorV1 *value) {
     if (value)
-        *value = NULL;
+        *value = (CettaGsltTermCursorV1){0};
     if (!query || !path || path_len == 0u || !value ||
         (!query->whole && !query->head))
         return CETTA_MATCH_DECISION_QUERY_UNKNOWN;
-    Atom *node = query->whole;
+    CettaGsltTermCursorV1 node = {.source = query->whole};
     uint32_t depth = 0u;
-    if (!node) {
-        CettaExprIndex child = path[0];
-        if (child == 0u) {
-            node = query->head;
-        } else {
-            uint64_t argument = (uint64_t)child - 1u;
-            if (ready_arguments != UINT64_MAX &&
-                (argument >= 64u ||
-                 (ready_arguments & (UINT64_C(1) << argument)) == 0u)) {
-                return CETTA_MATCH_DECISION_QUERY_UNKNOWN;
-            }
-            if (argument >= query->arity)
-                return CETTA_MATCH_DECISION_QUERY_ABSENT;
-            if (!query->arguments)
-                return CETTA_MATCH_DECISION_QUERY_UNKNOWN;
-            node = query->arguments[argument];
-        }
+    if (!query->whole) {
+        CettaMatchDecisionQueryState state = match_decision_split_coordinate(
+            query, path[0], ready_arguments, &node);
+        if (state != CETTA_MATCH_DECISION_QUERY_VALUE)
+            return state;
         depth = 1u;
     }
     for (; depth < path_len; depth++) {
         CettaExprIndex child = path[depth];
-        if (depth == 0u && child > 0u &&
-            ready_arguments != UINT64_MAX) {
+        if (depth == 0u && child > 0u && ready_arguments != UINT64_MAX) {
             uint64_t argument = (uint64_t)child - 1u;
             if (argument >= 64u ||
-                (ready_arguments & (UINT64_C(1) << argument)) == 0u) {
+                (ready_arguments & (UINT64_C(1) << argument)) == 0u)
                 return CETTA_MATCH_DECISION_QUERY_UNKNOWN;
-            }
         }
-        if (!node || node->kind == ATOM_VAR)
+        CettaGsltTermCursorV1 resolved = {0}, next = {0};
+        if (match_decision_resolve_observation(query, node, &resolved) !=
+                CETTA_MATCH_DECISION_QUERY_VALUE)
             return CETTA_MATCH_DECISION_QUERY_UNKNOWN;
-        if (node->kind != ATOM_EXPR || child >= node->expr.len)
+        if (!cetta_gslt_term_cursor_child_v1(resolved, child, &next))
             return CETTA_MATCH_DECISION_QUERY_ABSENT;
-        node = node->expr.elems[child];
+        node = next;
     }
-    if (!node || node->kind == ATOM_VAR)
-        return CETTA_MATCH_DECISION_QUERY_UNKNOWN;
-    *value = node;
-    return CETTA_MATCH_DECISION_QUERY_VALUE;
+    return match_decision_resolve_observation(query, node, value);
 }
 
 static bool match_decision_has_prefix_observation(
@@ -1310,8 +1399,8 @@ static bool match_decision_has_prefix_observation(
 static CettaMatchDecisionQueryState
 match_decision_prefix_observation_step(
     const CettaMatchDecisionQuery *query, uint32_t parent,
-    CettaMatchDecisionQueryState parent_state, Atom *parent_value,
-    CettaExprIndex edge, uint64_t ready_arguments, Atom **value);
+    CettaMatchDecisionQueryState parent_state, CettaGsltTermCursorV1 parent_value,
+    CettaExprIndex edge, uint64_t ready_arguments, CettaGsltTermCursorV1 *value);
 
 static bool match_decision_query_state_absorbs_suffix(
     CettaMatchDecisionQueryState state);
@@ -1338,7 +1427,7 @@ static void match_decision_prefix_observation_begin(
     }
     decision->observation_states[0] =
         CETTA_MATCH_DECISION_QUERY_VALUE;
-    decision->observation_values[0] = query->whole;
+    decision->observation_values[0] = (CettaGsltTermCursorV1){.source = query->whole};
     decision->observation_stamps[0] = decision->observation_epoch;
     bool eager_reference =
         decision->realization.use_eager_prefix_observation;
@@ -1364,7 +1453,7 @@ static void match_decision_prefix_observation_begin(
         CettaMatchDecisionQueryState parent_state =
             (CettaMatchDecisionQueryState)
                 decision->observation_states[parent];
-        Atom *observed = NULL;
+        CettaGsltTermCursorV1 observed = {0};
         CettaMatchDecisionQueryState state;
         if (!eager_reference &&
             match_decision_query_state_absorbs_suffix(parent_state)) {
@@ -1394,55 +1483,28 @@ static void match_decision_prefix_observation_begin(
 static CettaMatchDecisionQueryState
 match_decision_prefix_observation_step(
     const CettaMatchDecisionQuery *query, uint32_t parent,
-    CettaMatchDecisionQueryState parent_state, Atom *parent_value,
-    CettaExprIndex edge, uint64_t ready_arguments, Atom **value) {
+    CettaMatchDecisionQueryState parent_state, CettaGsltTermCursorV1 parent_value,
+    CettaExprIndex edge, uint64_t ready_arguments, CettaGsltTermCursorV1 *value) {
     if (value)
-        *value = NULL;
+        *value = (CettaGsltTermCursorV1){0};
     if (!query || !value)
         return CETTA_MATCH_DECISION_QUERY_UNKNOWN;
-    if (parent_state == CETTA_MATCH_DECISION_QUERY_UNKNOWN)
-        return CETTA_MATCH_DECISION_QUERY_UNKNOWN;
-    if (parent_state == CETTA_MATCH_DECISION_QUERY_ABSENT)
-        return CETTA_MATCH_DECISION_QUERY_ABSENT;
-
-    Atom *node = parent_value;
-    if (parent == 0u && !query->whole) {
-        if (edge == 0u) {
-            node = query->head;
-        } else {
-            uint64_t argument = (uint64_t)edge - 1u;
-            if (ready_arguments != UINT64_MAX &&
-                (argument >= 64u ||
-                 (ready_arguments &
-                  (UINT64_C(1) << argument)) == 0u)) {
-                return CETTA_MATCH_DECISION_QUERY_UNKNOWN;
-            }
-            if (argument >= query->arity)
-                return CETTA_MATCH_DECISION_QUERY_ABSENT;
-            if (!query->arguments)
-                return CETTA_MATCH_DECISION_QUERY_UNKNOWN;
-            node = query->arguments[argument];
-        }
-    } else {
-        if (parent == 0u && edge > 0u &&
-            ready_arguments != UINT64_MAX) {
-            uint64_t argument = (uint64_t)edge - 1u;
-            if (argument >= 64u ||
-                (ready_arguments &
-                 (UINT64_C(1) << argument)) == 0u) {
-                return CETTA_MATCH_DECISION_QUERY_UNKNOWN;
-            }
-        }
-        if (!node || node->kind == ATOM_VAR)
+    if (parent_state != CETTA_MATCH_DECISION_QUERY_VALUE)
+        return parent_state;
+    if (parent == 0u && !query->whole)
+        return match_decision_split_coordinate(query, edge, ready_arguments, value);
+    if (parent == 0u && edge > 0u && ready_arguments != UINT64_MAX) {
+        uint64_t argument = (uint64_t)edge - 1u;
+        if (argument >= 64u ||
+            (ready_arguments & (UINT64_C(1) << argument)) == 0u)
             return CETTA_MATCH_DECISION_QUERY_UNKNOWN;
-        if (node->kind != ATOM_EXPR || edge >= node->expr.len)
-            return CETTA_MATCH_DECISION_QUERY_ABSENT;
-        node = node->expr.elems[edge];
     }
-    if (!node || node->kind == ATOM_VAR)
+    CettaGsltTermCursorV1 child = {0};
+    if (!parent_value.source || parent_value.source->kind == ATOM_VAR)
         return CETTA_MATCH_DECISION_QUERY_UNKNOWN;
-    *value = node;
-    return CETTA_MATCH_DECISION_QUERY_VALUE;
+    if (!cetta_gslt_term_cursor_child_v1(parent_value, edge, &child))
+        return CETTA_MATCH_DECISION_QUERY_ABSENT;
+    return match_decision_resolve_observation(query, child, value);
 }
 
 static bool match_decision_query_state_absorbs_suffix(
@@ -1473,9 +1535,9 @@ match_decision_query_at_observation_node(
     const CettaMatchDecisionQuery *query,
     const CettaExprIndex *path, uint32_t path_len,
     uint32_t terminal, uint64_t ready_arguments,
-    Atom **value, bool *compiled, uint32_t *graph_edges) {
+    CettaGsltTermCursorV1 *value, bool *compiled, uint32_t *graph_edges) {
     if (value)
-        *value = NULL;
+        *value = (CettaGsltTermCursorV1){0};
     if (compiled)
         *compiled = false;
     if (graph_edges)
@@ -1527,7 +1589,7 @@ match_decision_query_at_observation_node(
                 uint32_t child = pending[--pending_count];
                 decision->observation_states[child] =
                     (unsigned char)parent_state;
-                decision->observation_values[child] = NULL;
+                decision->observation_values[child] = (CettaGsltTermCursorV1){0};
                 decision->observation_stamps[child] =
                     decision->observation_epoch;
             }
@@ -1545,7 +1607,7 @@ match_decision_query_at_observation_node(
             return match_decision_query_at_path(
                 query, path, path_len, ready_arguments, value);
         }
-        Atom *observed = NULL;
+        CettaGsltTermCursorV1 observed = {0};
         CettaMatchDecisionQueryState state =
             match_decision_prefix_observation_step(
                 query, parent,
@@ -1581,7 +1643,7 @@ match_decision_query_at_compiled_path(
     CettaMatchDecision *decision,
     const CettaMatchDecisionQuery *query,
     const CettaMatchDecisionPath *path,
-    uint64_t ready_arguments, Atom **value) {
+    uint64_t ready_arguments, CettaGsltTermCursorV1 *value) {
     if (!path) {
         return match_decision_query_at_path(
             query, NULL, 0u, ready_arguments, value);
@@ -1601,9 +1663,55 @@ match_decision_query_at_compiled_path(
         path->observation_node, ready_arguments, value, NULL, NULL);
 }
 
+typedef enum {
+    MATCH_DECISION_EQUALITY_UNKNOWN,
+    MATCH_DECISION_EQUALITY_AGREES,
+    MATCH_DECISION_EQUALITY_CONFLICTS,
+} MatchDecisionEqualityObservation;
+
+/* Compare only the demanded rigid prefix under one stable observation.
+ * A variable, stale environment or exhausted budget is not a disagreement.
+ * Children inherit the environment reached by resolving their parent. */
+static MatchDecisionEqualityObservation match_decision_observe_equality(
+    const CettaMatchDecisionQuery *query,
+    CettaGsltTermCursorV1 first, CettaGsltTermCursorV1 second,
+    uint32_t depth, size_t *remaining) {
+    if (*remaining == 0u)
+        return MATCH_DECISION_EQUALITY_UNKNOWN;
+    --*remaining;
+    CettaGsltTermCursorV1 left = {0}, right = {0};
+    if (match_decision_resolve_observation(query, first, &left) !=
+            CETTA_MATCH_DECISION_QUERY_VALUE ||
+        match_decision_resolve_observation(query, second, &right) !=
+            CETTA_MATCH_DECISION_QUERY_VALUE)
+        return MATCH_DECISION_EQUALITY_UNKNOWN;
+    if (left.source->kind != right.source->kind)
+        return MATCH_DECISION_EQUALITY_CONFLICTS;
+    if (left.source->kind != ATOM_EXPR)
+        return atom_eq(left.source, right.source)
+            ? MATCH_DECISION_EQUALITY_AGREES
+            : MATCH_DECISION_EQUALITY_CONFLICTS;
+    if (left.source->expr.len != right.source->expr.len)
+        return MATCH_DECISION_EQUALITY_CONFLICTS;
+    if (depth == 0u)
+        return MATCH_DECISION_EQUALITY_UNKNOWN;
+    for (CettaExprIndex index = 0u; index < left.source->expr.len; index++) {
+        MatchDecisionEqualityObservation observed =
+            match_decision_observe_equality(query,
+                (CettaGsltTermCursorV1){
+                    left.source->expr.elems[index], left.scope},
+                (CettaGsltTermCursorV1){
+                    right.source->expr.elems[index], right.scope},
+                depth - 1u, remaining);
+        if (observed != MATCH_DECISION_EQUALITY_AGREES)
+            return observed;
+    }
+    return MATCH_DECISION_EQUALITY_AGREES;
+}
+
 /* A repeated source variable is an equality constraint between two query
- * coordinates.  Refute only when both coordinates are observable and their
- * shaped ground observations disagree.  Unknown values retain the candidate;
+ * coordinates. Refute only when their demanded rigid observations conflict.
+ * Unknown values retain the candidate;
  * the canonical matcher remains authoritative for every survivor. */
 static bool match_decision_equality_refutes(
     CettaMatchDecision *decision,
@@ -1625,8 +1733,8 @@ static bool match_decision_equality_refutes(
         decision->stats.equality_checks++;
         cetta_runtime_stats_inc(
             CETTA_RUNTIME_COUNTER_MATCH_DECISION_EQUALITY_CHECK);
-        Atom *first = NULL;
-        Atom *second = NULL;
+        CettaGsltTermCursorV1 first = {0};
+        CettaGsltTermCursorV1 second = {0};
         bool first_compiled = false;
         bool second_compiled = false;
         uint32_t first_graph_edges = 0u;
@@ -1676,10 +1784,16 @@ static bool match_decision_equality_refutes(
         if (!refuted &&
             first_state == CETTA_MATCH_DECISION_QUERY_VALUE &&
             second_state == CETTA_MATCH_DECISION_QUERY_VALUE &&
-            first && second && !atom_has_vars(first) &&
-            !atom_has_vars(second) &&
-            first != second && !atom_eq(first, second)) {
-            refuted = true;
+            first.source && second.source) {
+            if (!atom_has_vars(first.source) && !atom_has_vars(second.source)) {
+                refuted = first.source != second.source &&
+                    !atom_eq(first.source, second.source);
+            } else if (match_decision_observer(query).resolve) {
+                size_t remaining = CETTA_MATCH_DECISION_MAX_PATHS;
+                refuted = match_decision_observe_equality(
+                    query, first, second, decision->max_depth, &remaining) ==
+                        MATCH_DECISION_EQUALITY_CONFLICTS;
+            }
         }
         if (refuted) {
             decision->stats.equality_refutations++;
@@ -1699,19 +1813,24 @@ static bool match_decision_exact_key_plan_enabled(void) {
 #endif
 }
 
-static uint32_t match_decision_path_exact_keys(
+static bool match_decision_exact_key_available(const CettaMatchDecisionQuery *query, const CettaGsltTermCursorV1 value) {
+    return match_decision_exact_key_plan_enabled() &&
+        match_decision_head_identity_known(query, value);
+}
+
+static uint32_t match_decision_path_exact_keys(const CettaMatchDecisionQuery *query,
     CettaMatchDecision *decision,
-    const CettaMatchDecisionPath *path, Atom *value,
+    const CettaMatchDecisionPath *path, CettaGsltTermCursorV1 value,
     bool value_absent,
     const CettaMatchDecisionKey *keys[2]) {
-    if (!decision || !path || !keys || value_absent || !value)
+    if (!decision || !path || !keys || value_absent || !value.source)
         return 0u;
     uint32_t count = 0u;
-    if (value->kind != ATOM_EXPR) {
+    if (value.source->kind != ATOM_EXPR) {
         const CettaMatchDecisionKey *literal =
             match_decision_path_find_key(
                 path, CETTA_MATCH_DECISION_KEY_LITERAL,
-                0u, value,
+                0u, value.source,
                 &decision->stats.key_index_select_probes);
         if (literal)
             keys[count++] = literal;
@@ -1721,17 +1840,16 @@ static uint32_t match_decision_path_exact_keys(
     const CettaMatchDecisionKey *arity =
         match_decision_path_find_key(
             path, CETTA_MATCH_DECISION_KEY_EXPR_ARITY,
-            value->expr.len, NULL,
+            value.source->expr.len, NULL,
             &decision->stats.key_index_select_probes);
     if (arity)
         keys[count++] = arity;
-    Atom *head = value->expr.len > 0u
-        ? value->expr.elems[0] : NULL;
+    Atom *head = match_decision_observed_head(query, value);
     if (head && head->kind != ATOM_VAR && head->kind != ATOM_EXPR) {
         const CettaMatchDecisionKey *headed =
             match_decision_path_find_key(
                 path, CETTA_MATCH_DECISION_KEY_EXPR_HEAD,
-                value->expr.len, head,
+                value.source->expr.len, head,
                 &decision->stats.key_index_select_probes);
         if (headed)
             keys[count++] = headed;
@@ -1759,9 +1877,9 @@ static bool match_decision_add_ref_list(
     return true;
 }
 
-static bool match_decision_path_exact_lists(
+static bool match_decision_path_exact_lists(const CettaMatchDecisionQuery *query,
     CettaMatchDecision *decision,
-    const CettaMatchDecisionPath *path, Atom *value,
+    const CettaMatchDecisionPath *path, CettaGsltTermCursorV1 value,
     bool value_absent,
     CettaMatchDecisionRefList *lists, uint32_t list_capacity,
     uint32_t *list_count, uint32_t *accepted_count) {
@@ -1775,7 +1893,7 @@ static bool match_decision_path_exact_lists(
         ? CETTA_MATCH_DECISION_QUERY_ABSENT
         : CETTA_MATCH_DECISION_QUERY_VALUE;
     if (path->wildcard_count > 0u &&
-        match_decision_policy(query_state, NULL, value) !=
+        match_decision_policy(query, query_state, NULL, value) !=
             CETTA_MD_POLICY_REFUTE) {
         if (!match_decision_add_ref_list(
                 lists, list_capacity, list_count, accepted_count,
@@ -1785,7 +1903,7 @@ static bool match_decision_path_exact_lists(
     }
 
     const CettaMatchDecisionKey *keys[2] = {NULL, NULL};
-    uint32_t key_count = match_decision_path_exact_keys(
+    uint32_t key_count = match_decision_path_exact_keys(query,
         decision, path, value, value_absent, keys);
     for (uint32_t index = 0u; index < key_count; index++) {
         if (!match_decision_add_ref_list(
@@ -1797,9 +1915,9 @@ static bool match_decision_path_exact_lists(
     return true;
 }
 
-static bool match_decision_path_generic_lists(
+static bool match_decision_path_generic_lists(const CettaMatchDecisionQuery *query,
     CettaMatchDecision *decision,
-    const CettaMatchDecisionPath *path, Atom *value,
+    const CettaMatchDecisionPath *path, CettaGsltTermCursorV1 value,
     bool value_absent,
     CettaMatchDecisionRefList *lists, uint32_t list_capacity,
     uint32_t *list_count, uint32_t *accepted_count) {
@@ -1813,7 +1931,7 @@ static bool match_decision_path_generic_lists(
         ? CETTA_MATCH_DECISION_QUERY_ABSENT
         : CETTA_MATCH_DECISION_QUERY_VALUE;
     if (path->wildcard_count > 0u &&
-        match_decision_policy(query_state, NULL, value) !=
+        match_decision_policy(query, query_state, NULL, value) !=
             CETTA_MD_POLICY_REFUTE &&
         !match_decision_add_ref_list(
             lists, list_capacity, list_count, accepted_count,
@@ -1822,7 +1940,7 @@ static bool match_decision_path_generic_lists(
     }
     for (uint32_t key = 0u; key < path->key_count; key++) {
         decision->stats.generic_key_policy_scans++;
-        if (match_decision_policy(
+        if (match_decision_policy(query,
                 query_state, &path->keys[key], value) ==
             CETTA_MD_POLICY_REFUTE)
             continue;
@@ -1836,24 +1954,24 @@ static bool match_decision_path_generic_lists(
     return true;
 }
 
-static bool match_decision_path_lists(
+static bool match_decision_path_lists(const CettaMatchDecisionQuery *query,
     CettaMatchDecision *decision,
-    const CettaMatchDecisionPath *path, Atom *value,
+    const CettaMatchDecisionPath *path, CettaGsltTermCursorV1 value,
     bool value_absent,
     CettaMatchDecisionRefList *lists, uint32_t list_capacity,
     uint32_t *list_count, uint32_t *accepted_count) {
-    return match_decision_exact_key_plan_enabled()
-        ? match_decision_path_exact_lists(
+    return match_decision_exact_key_available(query, value)
+        ? match_decision_path_exact_lists(query,
               decision, path, value, value_absent,
               lists, list_capacity, list_count, accepted_count)
-        : match_decision_path_generic_lists(
+        : match_decision_path_generic_lists(query,
               decision, path, value, value_absent,
               lists, list_capacity, list_count, accepted_count);
 }
 
-static bool match_decision_path_exact_candidate_count(
+static bool match_decision_path_exact_candidate_count(const CettaMatchDecisionQuery *query,
     CettaMatchDecision *decision,
-    const CettaMatchDecisionPath *path, Atom *value,
+    const CettaMatchDecisionPath *path, CettaGsltTermCursorV1 value,
     bool value_absent, uint32_t *accepted_count) {
     if (!decision || !path || !accepted_count)
         return false;
@@ -1861,12 +1979,12 @@ static bool match_decision_path_exact_candidate_count(
         ? CETTA_MATCH_DECISION_QUERY_ABSENT
         : CETTA_MATCH_DECISION_QUERY_VALUE;
     uint64_t accepted =
-        match_decision_policy(query_state, NULL, value) !=
+        match_decision_policy(query, query_state, NULL, value) !=
             CETTA_MD_POLICY_REFUTE
         ? path->wildcard_count : 0u;
 
     const CettaMatchDecisionKey *keys[2] = {NULL, NULL};
-    uint32_t key_count = match_decision_path_exact_keys(
+    uint32_t key_count = match_decision_path_exact_keys(query,
         decision, path, value, value_absent, keys);
     for (uint32_t index = 0u; index < key_count; index++)
         accepted += keys[index]->clause_count;
@@ -1876,9 +1994,9 @@ static bool match_decision_path_exact_candidate_count(
     return true;
 }
 
-static bool match_decision_path_generic_candidate_count(
+static bool match_decision_path_generic_candidate_count(const CettaMatchDecisionQuery *query,
     CettaMatchDecision *decision,
-    const CettaMatchDecisionPath *path, Atom *value,
+    const CettaMatchDecisionPath *path, CettaGsltTermCursorV1 value,
     bool value_absent, uint32_t *accepted_count) {
     if (!decision || !path || !accepted_count)
         return false;
@@ -1886,12 +2004,12 @@ static bool match_decision_path_generic_candidate_count(
         ? CETTA_MATCH_DECISION_QUERY_ABSENT
         : CETTA_MATCH_DECISION_QUERY_VALUE;
     uint32_t accepted =
-        match_decision_policy(query_state, NULL, value) !=
+        match_decision_policy(query, query_state, NULL, value) !=
             CETTA_MD_POLICY_REFUTE
         ? path->wildcard_count : 0u;
     for (uint32_t key = 0u; key < path->key_count; key++) {
         decision->stats.generic_key_policy_scans++;
-        if (match_decision_policy(
+        if (match_decision_policy(query,
                 query_state, &path->keys[key], value) ==
             CETTA_MD_POLICY_REFUTE)
             continue;
@@ -1903,14 +2021,14 @@ static bool match_decision_path_generic_candidate_count(
     return true;
 }
 
-static bool match_decision_path_candidate_count(
+static bool match_decision_path_candidate_count(const CettaMatchDecisionQuery *query,
     CettaMatchDecision *decision,
-    const CettaMatchDecisionPath *path, Atom *value,
+    const CettaMatchDecisionPath *path, CettaGsltTermCursorV1 value,
     bool value_absent, uint32_t *accepted_count) {
-    return match_decision_exact_key_plan_enabled()
-        ? match_decision_path_exact_candidate_count(
+    return match_decision_exact_key_available(query, value)
+        ? match_decision_path_exact_candidate_count(query,
               decision, path, value, value_absent, accepted_count)
-        : match_decision_path_generic_candidate_count(
+        : match_decision_path_generic_candidate_count(query,
               decision, path, value, value_absent, accepted_count);
 }
 
@@ -1950,7 +2068,7 @@ static bool match_decision_conjunctive_candidates(
     for (size_t path_index = 0u;
          path_index < decision->path_count; path_index++) {
         CettaMatchDecisionPath *path = &decision->paths[path_index];
-        Atom *value = NULL;
+        CettaGsltTermCursorV1 value = {0};
         CettaMatchDecisionQueryState query_state =
             match_decision_query_at_compiled_path(
                 decision, query, path, ready_arguments, &value);
@@ -1965,14 +2083,14 @@ static bool match_decision_conjunctive_candidates(
             query_state == CETTA_MATCH_DECISION_QUERY_ABSENT;
         memset(decision->path_bits, 0,
                decision->bit_word_count * sizeof(uint64_t));
-        if (match_decision_policy(query_state, NULL, value) !=
+        if (match_decision_policy(query, query_state, NULL, value) !=
             CETTA_MD_POLICY_REFUTE) {
             memcpy(decision->path_bits, path->wildcard_bits,
                    decision->bit_word_count * sizeof(uint64_t));
         }
-        if (match_decision_exact_key_plan_enabled()) {
+        if (match_decision_exact_key_available(query, value)) {
             const CettaMatchDecisionKey *keys[2] = {NULL, NULL};
-            uint32_t key_count = match_decision_path_exact_keys(
+            uint32_t key_count = match_decision_path_exact_keys(query,
                 decision, path, value, value_absent, keys);
             for (uint32_t key = 0u; key < key_count; key++) {
                 if (!match_decision_bits_add_refs(
@@ -1985,7 +2103,7 @@ static bool match_decision_conjunctive_candidates(
         } else {
             for (uint32_t key = 0u; key < path->key_count; key++) {
                 decision->stats.generic_key_policy_scans++;
-                if (match_decision_policy(
+                if (match_decision_policy(query,
                         query_state, &path->keys[key], value) ==
                     CETTA_MD_POLICY_REFUTE) {
                     continue;
@@ -2131,13 +2249,18 @@ static CettaMatchDecisionSelectState match_decision_select_query(
         for (size_t path_index = 0u;
              path_index < decision->path_count; path_index++) {
             CettaMatchDecisionPath *path = &decision->paths[path_index];
-            Atom *value = NULL;
+            /* Every observation retains this path's wildcard occurrences.
+             * A path whose lower bound cannot beat the current pivot cannot
+             * change the selected first minimum, so it need not be read. */
+            if (selected_pivot && path->wildcard_count >= best_count)
+                continue;
+            CettaGsltTermCursorV1 value = {0};
             CettaMatchDecisionQueryState query_state =
                 match_decision_query_at_compiled_path(
                     decision, query, path, ready_arguments, &value);
             if (query_state == CETTA_MATCH_DECISION_QUERY_UNKNOWN) {
-                if (match_decision_policy(
-                        query_state, NULL, NULL) !=
+                if (match_decision_policy(query,
+                        query_state, NULL, (CettaGsltTermCursorV1){0}) !=
                     CETTA_MD_POLICY_FALLBACK) {
                     return CETTA_MATCH_DECISION_SELECT_ERROR;
                 }
@@ -2147,7 +2270,7 @@ static CettaMatchDecisionSelectState match_decision_select_query(
                 continue;
             }
             uint32_t accepted = 0u;
-            if (!match_decision_path_candidate_count(
+            if (!match_decision_path_candidate_count(query,
                     decision, path, value,
                     query_state == CETTA_MATCH_DECISION_QUERY_ABSENT,
                     &accepted)) {
@@ -2191,7 +2314,13 @@ static CettaMatchDecisionSelectState match_decision_select_query(
         if (best_path >= decision->path_count)
             return CETTA_MATCH_DECISION_SELECT_ERROR;
         CettaMatchDecisionPath *path = &decision->paths[best_path];
-        uint32_t list_capacity = match_decision_exact_key_plan_enabled()
+        CettaGsltTermCursorV1 value = {0};
+        CettaMatchDecisionQueryState query_state =
+            match_decision_query_at_compiled_path(
+                decision, query, path, ready_arguments, &value);
+        if (query_state == CETTA_MATCH_DECISION_QUERY_UNKNOWN)
+            return CETTA_MATCH_DECISION_SELECT_ERROR;
+        uint32_t list_capacity = match_decision_exact_key_available(query, value)
             ? 3u : path->key_count + 1u;
         if (!match_decision_reserve(
                 (void **)&decision->working_lists,
@@ -2201,15 +2330,9 @@ static CettaMatchDecisionSelectState match_decision_select_query(
         }
         memset(decision->working_lists, 0,
                sizeof(*decision->working_lists) * list_capacity);
-        Atom *value = NULL;
-        CettaMatchDecisionQueryState query_state =
-            match_decision_query_at_compiled_path(
-                decision, query, path, ready_arguments, &value);
-        if (query_state == CETTA_MATCH_DECISION_QUERY_UNKNOWN)
-            return CETTA_MATCH_DECISION_SELECT_ERROR;
         uint32_t accepted = 0u;
         uint32_t list_count = 0u;
-        bool listed = match_decision_path_lists(
+        bool listed = match_decision_path_lists(query,
             decision, path, value,
             query_state == CETTA_MATCH_DECISION_QUERY_ABSENT,
             decision->working_lists, list_capacity,
@@ -2240,6 +2363,11 @@ static CettaMatchDecisionSelectState match_decision_select_query(
         if (verify && !verify(
                 verify_context, clause->source_ref,
                 clause->pattern, query->whole)) {
+            continue;
+        }
+        if (query->verify_view && !query->verify_view(
+                verify_context, clause->source_ref,
+                clause->pattern, query->cursor_view)) {
             continue;
         }
         decision->candidate_sources[write++] = clause->source_ref;
@@ -2283,6 +2411,23 @@ CettaMatchDecisionSelectState cetta_match_decision_select_parts(
         decision, live_space, semantic_identity,
         &view, ready_arguments, NULL, NULL,
         source_refs, source_ref_count);
+}
+
+CettaMatchDecisionSelectState cetta_match_decision_select_view_v1(
+    CettaMatchDecision *decision, const Space *live_space,
+    CettaMatchDecisionSemanticIdentity semantic_identity,
+    const CettaMatchDecisionQueryViewV1 *query, uint64_t ready_arguments,
+    CettaMatchDecisionVerifyViewCandidateFnV1 verify, void *verify_context,
+    const uint32_t **source_refs, size_t *source_ref_count) {
+    CettaMatchDecisionQuery view = {
+        .head = query ? query->head.source : NULL,
+        .arity = query ? query->arity : 0u,
+        .cursor_view = query,
+        .verify_view = verify,
+    };
+    return match_decision_select_query(
+        decision, live_space, semantic_identity, &view, ready_arguments,
+        NULL, verify_context, source_refs, source_ref_count);
 }
 
 void cetta_match_decision_stats(

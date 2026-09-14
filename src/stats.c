@@ -840,6 +840,16 @@ static const char *const CETTA_RUNTIME_COUNTER_NAMES[CETTA_RUNTIME_COUNTER_COUNT
     "prepared-pure-answer-producer-resource-decline",
     "he-unary-marker-index-lookup",
     "he-unary-marker-fallback-row",
+    "match-worklist-frame-elided",
+    "prepared-pure-precheck-shape",
+    "prepared-pure-precheck-open",
+    "prepared-pure-precheck-resource",
+    "prepared-pure-precheck-observer",
+    "prepared-pure-precheck-dispatch",
+    "prepared-pure-precheck-effect",
+    "prepared-pure-precheck-admitted",
+    "petta-clause-projection-promoted-records",
+    "petta-clause-projection-promoted-bytes",
 };
 
 static int64_t clamp_counter(uint64_t value) {

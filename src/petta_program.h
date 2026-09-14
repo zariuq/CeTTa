@@ -260,19 +260,40 @@ PettaEquationTemplateC0Status petta_equation_template_c0_apply(
     CettaGsltGroundDenseWorkspaceV1 *workspace,
     Atom *closed_query, Arena *arena, Atom **result_out);
 
-/*
- * A revision-pinned view of one head's declaration-ordered candidates.
- * `items` may borrow a PettaProgram cache; `owned_items` is non-NULL exactly
- * when the lease owns the same array.  A borrowed view is valid only until
- * the program or its Space catalog is mutated.  Executors must materialize
- * every candidate they retain before running a clause, because the clause may
- * itself change the Space and invalidate the cache.
- */
+/* A retained declaration-ordered candidate generation. Catalog mutation may
+ * retire its cache entry but cannot change or release the retained records.
+ * Plans and source terms retain their existing program/Space-owner lifetime:
+ * those owners must outlive execution and any captured continuation.
+ * Host-produced leases may instead own an independent array, or borrow an
+ * array until pin() establishes ownership. Release exactly once per lease. */
+typedef struct PettaClauseSnapshotStorage PettaClauseSnapshotStorage;
 typedef struct {
     const PettaClauseCandidate *items;
     size_t len;
     PettaClauseCandidate *owned_items;
+    PettaClauseSnapshotStorage *storage;
 } PettaClauseSnapshotLease;
+
+/* Index selections may complete a plan locally without altering the catalog. */
+typedef struct {
+    uint32_t index;
+    const PettaPlanNode *rhs_plan;
+} PettaClauseSelectionEntry;
+typedef struct PettaClauseProjection PettaClauseProjection;
+
+/* Transfer a pinned lease and optional index vector into an immutable selected
+ * observation. NULL entries denote the contiguous range [first, first+len).
+ * On catalog retirement, sparse observations promote only their live records
+ * when that retains less storage than sharing the retired generation. */
+PettaClauseProjection *petta_program_clause_projection_take(
+    PettaClauseSnapshotLease *catalog, PettaClauseSelectionEntry *entries,
+    size_t first, size_t len);
+bool petta_program_clause_projection_retain(PettaClauseProjection *projection);
+void petta_program_clause_projection_release(PettaClauseProjection *projection);
+PettaClauseCandidate petta_program_clause_projection_get(
+    const PettaClauseProjection *projection, size_t index);
+size_t petta_program_clause_projection_retained_bytes(
+    const PettaClauseProjection *projection);
 
 /*
  * Physical work performed while reconciling the declaration-ordered PeTTa
@@ -437,8 +458,8 @@ bool petta_program_clause_snapshot(
     PettaProgram *program, Space *space, SymbolId head,
     PettaClauseCandidate **candidates, size_t *candidate_count);
 
-/* Return a candidate lease selected from the live Space.  A cache entry may
- * be borrowed when its complete read revision is current; a data-only append
+/* Return a candidate lease selected from the live Space. A cache generation is
+ * retained when its complete read revision is current; a data-only append
  * can instead return an owned lease with refreshed occurrence provenance.
  * Ordinary callers should continue to use `petta_program_clause_snapshot`
  * when they need an independent array.
@@ -449,6 +470,12 @@ bool petta_program_clause_snapshot_lease_profiled(
     PettaClauseSnapshotStats *stats);
 void petta_program_clause_snapshot_lease_release(
     PettaClauseSnapshotLease *lease);
+/* Pin a host lease before retaining it across a callback or suspension.
+ * Existing retained/owned records are not copied. Borrowed host records are
+ * copied once. Clone creates an independent release obligation. */
+bool petta_program_clause_snapshot_lease_pin(PettaClauseSnapshotLease *lease);
+bool petta_program_clause_snapshot_lease_clone(
+    const PettaClauseSnapshotLease *source, PettaClauseSnapshotLease *out);
 
 /*
  * An immutable, revision-bound selection view of the authored equation

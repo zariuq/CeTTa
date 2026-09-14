@@ -252,6 +252,89 @@ int main(void) {
     CHECK(out && out != arity_call,
           "new under-application receives its specialized relation head");
 
+    /* Query observations follow the live environment, including a variable
+     * used as an expression head. An unknown/stale scope cannot certify
+     * absence of higher-order suppliers. Rollback restores the inert case. */
+    BindingsBuilder observation_bindings;
+    CHECK(bindings_builder_init(&observation_bindings, NULL), "view builder");
+    Atom *view_variable = atom_var(&result, "view-head");
+    Atom *view_term = atom_expr2(&result, view_variable,
+                               atom_symbol(&result, "inert-leaf"));
+    CettaGsltTermCursorV1 view_argument = {.source = view_term};
+    BindingsTermCursorContextV1 observation_context = {
+        .bindings = bindings_builder_bindings(&observation_bindings)};
+    CettaGsltTermCursorObserverV1 observer = {
+        bindings_resolve_term_cursor_v1, &observation_context};
+    SymbolId consumer = arity_call->expr.elems[0]->sym_id;
+    CHECK(petta_specializer_query_view_execution_admission(
+              &space, consumer, &view_argument, 1u, observer) ==
+              PETTA_SPECIALIZER_RELATION_IRRELEVANT,
+          "unbound nested head has no specializable supplier");
+    uint32_t observation_mark = bindings_builder_save(&observation_bindings);
+    CHECK(bindings_builder_add_var_fresh(&observation_bindings, view_variable,
+              atom_symbol(&result, "late-arity")), "bind observed head");
+    Atom *forced = bindings_apply(
+        &observation_bindings.current, &result, view_term);
+    CHECK(petta_specializer_query_view_execution_admission(
+              &space, consumer, &view_argument, 1u, observer) ==
+              petta_specializer_query_execution_admission(
+                  &space, consumer, &forced, 1u),
+          "borrowed and forced admission agree on a bound nested head");
+    CHECK(petta_specializer_query_view_execution_admission(
+              &space, consumer, &view_argument, 1u, observer) ==
+              PETTA_SPECIALIZER_RELATION_DEFER,
+          "nested callable binding cannot be admitted as inert");
+    bindings_builder_rollback(&observation_bindings, observation_mark);
+    CHECK(petta_specializer_query_view_execution_admission(
+              &space, consumer, &view_argument, 1u, observer) ==
+              PETTA_SPECIALIZER_RELATION_IRRELEVANT,
+          "rollback changes the observed supplier");
+    view_argument.scope = &observation_bindings;
+    CHECK(petta_specializer_query_view_execution_admission(
+              &space, consumer, &view_argument, 1u, observer) ==
+              PETTA_SPECIALIZER_RELATION_DEFER,
+          "unknown scope cannot certify absence of suppliers");
+    bindings_builder_free(&observation_bindings);
+
+    /* The supplier observation is independent of application saturation.
+     * Exercise all named-arity authorities, including a type-only symbol
+     * which becomes callable after a negative query has been cached. */
+    Atom *typed_head = atom_symbol(&persistent, "type-only-supplier");
+    Atom *typed_query = atom_expr(&result, &typed_head, 1u);
+    CHECK(petta_specializer_query_execution_admission(
+              &space, consumer, &typed_query, 1u) ==
+              PETTA_SPECIALIZER_RELATION_IRRELEVANT,
+          "undeclared supplier head is inert");
+    Atom *declaration = atom_expr3(
+        &persistent, atom_symbol(&persistent, ":"), typed_head,
+        atom_expr3(&persistent,
+            atom_symbol_id(&persistent, g_builtin_syms.arrow),
+            atom_symbol(&persistent, "Number"),
+            atom_symbol(&persistent, "Number")));
+    space_add(&space, declaration);
+    petta_specializer_note_mutation(&space, declaration);
+    Atom *supplier_heads[] = {
+        typed_head, atom_symbol(&result, "late-arity"),
+        atom_symbol_id(&result, g_builtin_syms.op_plus)};
+    for (size_t kind = 0u; kind < 3u; kind++) {
+        for (CettaExprLen supplied = 0u; supplied < 4u; supplied++) {
+            Atom *parts[4] = {supplier_heads[kind]};
+            for (CettaExprIndex i = 1u; i <= supplied; i++)
+                parts[i] = atom_int(&result, i);
+            Atom *argument = atom_expr(&result, parts, supplied + 1u);
+            CHECK(petta_specializer_query_execution_admission(
+                      &space, consumer, &argument, 1u) ==
+                      PETTA_SPECIALIZER_RELATION_DEFER,
+                  "callable head survives under, exact and over-application");
+        }
+    }
+    Atom *nested_supplier = atom_expr2(
+        &result, atom_symbol(&result, "inert-wrapper"), typed_head);
+    CHECK(petta_specializer_query_execution_admission(
+              &space, consumer, &nested_supplier, 1u) ==
+              PETTA_SPECIALIZER_RELATION_DEFER,
+          "inert head does not erase a callable child");
+
     if (failures == 0u)
         printf("PASS: specializer prepare boundary (%u checks)\n", checks);
     else

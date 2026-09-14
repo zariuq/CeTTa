@@ -244,6 +244,74 @@ static void test_constructor_cost_adapters(void) {
     arena_free(&arena);
 }
 
+static CettaPreparedPureExpressionViewState entry_interpretation;
+static SymbolId entry_view_head;
+
+static CettaPreparedPureExpressionViewState entry_view(
+    const Atom *expression, CettaPreparedPureExpressionView *view) {
+    if (expression->kind != ATOM_EXPR || expression->expr.len != 2u ||
+        !atom_is_symbol_id(expression->expr.elems[0], entry_view_head))
+        return CETTA_PREPARED_PURE_EXPRESSION_DEFAULT;
+    view->projected = expression->expr.elems[1];
+    return entry_interpretation;
+}
+
+static void test_entry_interpretation_precedes_equations(void) {
+    const char *equations[] = {
+        "(= (entry $x) wrong)", "(= (payload $x) evaluated)",
+    };
+    Fixture fixture;
+    init(&fixture, equations, 2u, "(entry seed)");
+    Atom *call = parse(&fixture.source, "(entry (payload seed))");
+    entry_view_head = call->expr.elems[0]->sym_id;
+    const CettaPreparedPureExpressionViewState refusals[] = {
+        CETTA_PREPARED_PURE_EXPRESSION_DECLINE,
+        CETTA_PREPARED_PURE_EXPRESSION_CANONICAL_ONLY,
+        CETTA_PREPARED_PURE_EXPRESSION_ZERO,
+    };
+    for (size_t i = 0u; i < sizeof(refusals) / sizeof(refusals[0]); i++) {
+        entry_interpretation = refusals[i];
+        CettaPreparedPureProgram *program =
+            cetta_prepared_pure_program_compile_closed_answers(
+                &fixture.space, call, CETTA_GSLT_PURE_CALL_EAGER,
+                atom_bool, atom_expr, NULL, NULL, entry_view,
+                NULL, NULL, true, true,
+                (CettaMatchDecisionSemanticIdentity){0});
+        assert(!program);
+    }
+    entry_interpretation = CETTA_PREPARED_PURE_EXPRESSION_PROJECT;
+    const CettaGsltPureCallMode modes[] = {
+        CETTA_GSLT_PURE_CALL_EAGER, CETTA_GSLT_PURE_CALL_CALL_BY_NEED,
+    };
+    for (size_t mode = 0u; mode < 2u; mode++) {
+        for (unsigned ready = 0u; ready < 2u; ready++) {
+            CettaPreparedPureProgram *program =
+                cetta_prepared_pure_program_compile_closed(
+                    &fixture.space, call, modes[mode],
+                    atom_bool, atom_expr, NULL, NULL, entry_view,
+                    NULL, NULL, ready != 0u, true,
+                    (CettaMatchDecisionSemanticIdentity){0});
+            assert(program);
+            Atom *answer = NULL;
+            assert(cetta_prepared_pure_program_execute_closed(
+                program, &fixture.scratch, 0u, &answer));
+            Atom *expected = ready
+                ? call->expr.elems[1] : parse(&fixture.source, "evaluated");
+            assert(answer && atom_eq(answer, expected));
+            if (ready) {
+                Atom *next = parse(&fixture.source, "(entry (payload next))");
+                assert(cetta_prepared_pure_program_rebind_closed_entry_call(
+                    program, next));
+                assert(cetta_prepared_pure_program_execute_closed(
+                    program, &fixture.scratch, 0u, &answer));
+                assert(answer && atom_eq(answer, next->expr.elems[1]));
+            }
+            cetta_prepared_pure_program_free(program);
+        }
+    }
+    destroy(&fixture);
+}
+
 int main(void) {
     SymbolTable symbols;
     VarInternTable variables;
@@ -262,10 +330,11 @@ int main(void) {
     test_transition_limit_without_answers();
     test_allocation_limit_before_construction();
     test_constructor_cost_adapters();
+    test_entry_interpretation_precedes_equations();
     symbol_table_free(&symbols);
     var_intern_free(&variables);
     g_symbols = NULL;
     g_var_intern = NULL;
-    puts("prepared pure answer producer: eight boundary cases passed");
+    puts("prepared pure answer producer: nine boundary cases passed");
     return 0;
 }

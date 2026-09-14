@@ -2510,16 +2510,21 @@ Atom *petta_semantics_partial_value(
         arena, atom_symbol_id(arena, ids->partial), base, bound);
 }
 
+bool petta_semantics_partial_head(const Atom *head) {
+    const PeTTaSymbolIds *ids = petta_symbol_ids();
+    return ids->table && head && head->kind == ATOM_SYMBOL &&
+        head->sym_id == ids->partial;
+}
+
 bool petta_semantics_partial_view(
     const Atom *atom, Atom **base, Atom **arguments) {
-    const PeTTaSymbolIds *ids = petta_symbol_ids();
     if (base)
         *base = NULL;
     if (arguments)
         *arguments = NULL;
-    if (!atom || !ids->table || atom->kind != ATOM_EXPR ||
+    if (!atom || atom->kind != ATOM_EXPR ||
         atom->expr.len != 3u ||
-        !atom_is_symbol_id(atom->expr.elems[0], ids->partial) ||
+        !petta_semantics_partial_head(atom->expr.elems[0]) ||
         !atom->expr.elems[2] ||
         atom->expr.elems[2]->kind != ATOM_EXPR) {
         return false;

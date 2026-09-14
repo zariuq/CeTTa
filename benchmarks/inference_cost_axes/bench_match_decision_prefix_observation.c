@@ -5,10 +5,12 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
 enum {
     PREFIX_BENCH_CLAUSES = 64u,
     PREFIX_BENCH_LEAVES = 16u,
+    PREFIX_BENCH_MAX_LEAVES = 256u,
     PREFIX_BENCH_QUERY = 42u,
     PREFIX_BENCH_MAX_DEPTH = 24u,
 };
@@ -26,15 +28,16 @@ static uint32_t parse_u32(
 
 static Atom *make_pattern(
         Arena *arena, Atom *select_head,
-        Atom *row_head, Atom *zero, Atom *one, uint32_t code) {
-    Atom *row_elements[PREFIX_BENCH_LEAVES + 1u] = {row_head};
-    for (uint32_t leaf = 0u; leaf < PREFIX_BENCH_LEAVES; leaf++) {
+        Atom *row_head, Atom *zero, Atom *one, uint32_t code,
+        uint32_t leaves) {
+    Atom *row_elements[PREFIX_BENCH_MAX_LEAVES + 1u] = {row_head};
+    for (uint32_t leaf = 0u; leaf < leaves; leaf++) {
         row_elements[leaf + 1u] =
             (code & (UINT32_C(1) << (leaf % 6u))) != 0u
                 ? one : zero;
     }
     Atom *row = atom_expr(
-        arena, row_elements, PREFIX_BENCH_LEAVES + 1u);
+        arena, row_elements, leaves + 1u);
     return atom_expr2(arena, select_head, row);
 }
 
@@ -54,6 +57,26 @@ int main(int argc, char **argv) {
         argc > 1 ? argv[1] : NULL, 12u, PREFIX_BENCH_MAX_DEPTH);
     const uint32_t iterations = parse_u32(
         argc > 2 ? argv[2] : NULL, 1000000u, UINT32_MAX);
+    const char *mode_name = argc > 3 ? argv[3] : "conjunctive";
+    CettaMatchDecisionMode mode;
+    if (strcmp(mode_name, "conjunctive") == 0)
+        mode = CETTA_MATCH_DECISION_CONJUNCTIVE;
+    else if (strcmp(mode_name, "deep") == 0)
+        mode = CETTA_MATCH_DECISION_DEEP;
+    else
+        return 2;
+    const char *geometry = argc > 4 ? argv[4] : "all";
+    const char *names[] = {"closed", "shallow-open", "middle-open",
+        "deep-open", "unready", "absent", "parts"};
+    unsigned geometry_mask = 0u;
+    for (unsigned g = 0u; g < 7u; g++)
+        if (strcmp(geometry, "all") == 0 || strcmp(geometry, names[g]) == 0)
+            geometry_mask |= 1u << g;
+    const uint32_t leaves = parse_u32(
+        argc > 5 ? argv[5] : NULL, PREFIX_BENCH_LEAVES,
+        PREFIX_BENCH_MAX_LEAVES);
+    if (!geometry_mask || leaves < 6u)
+        return 2;
     Arena persistent;
     TermUniverse universe;
     Space space;
@@ -85,7 +108,7 @@ int main(int argc, char **argv) {
             &persistent, select_head,
             row_head, zero, one,
             clause == PREFIX_BENCH_CLAUSES - 1u
-                ? PREFIX_BENCH_QUERY : clause);
+                ? PREFIX_BENCH_QUERY : clause, leaves);
         for (uint32_t level = 0u; body && level < depth; level++)
             body = atom_expr2(&persistent, nest_head, body);
         clauses[clause] = (CettaMatchDecisionClause){body, clause};
@@ -104,7 +127,7 @@ int main(int argc, char **argv) {
         ? cetta_match_decision_compile(
               space_read_token(&space), semantic_identity,
               clauses, PREFIX_BENCH_CLAUSES,
-              CETTA_MATCH_DECISION_CONJUNCTIVE,
+              mode,
               depth + 3u,
               cetta_match_decision_realization_from_process(),
               NULL, NULL)
@@ -112,7 +135,7 @@ int main(int argc, char **argv) {
     Atom *query = clauses[PREFIX_BENCH_QUERY].pattern;
     Atom *open_query = make_open_query(
         &persistent, nest_head, "open-prefix", 1u);
-    uint32_t middle_depth = depth > 2u ? depth / 2u : 2u;
+    uint32_t middle_depth = depth > 1u ? depth / 2u : 1u;
     Atom *open_middle_query = make_open_query(
         &persistent, nest_head, "open-middle", middle_depth);
     Atom *open_deep_query = make_open_query(
@@ -123,66 +146,53 @@ int main(int argc, char **argv) {
     valid = valid && decision && query && open_query &&
         open_middle_query && open_deep_query && absent_query;
 
+    Atom *queries[] = {query, open_query, open_middle_query,
+        open_deep_query, query, absent_query, query};
+    uint64_t expected[7] = {0};
+    for (unsigned g = 0u; g < 7u; g++) {
+        for (unsigned c = 0u; c < PREFIX_BENCH_CLAUSES; c++) {
+            const unsigned code = c == PREFIX_BENCH_CLAUSES - 1u
+                ? PREFIX_BENCH_QUERY : c;
+            /* The closed conjunctive intersection is {42, 63}. In deep
+             * mode, the first minimum is bit 1: 32 occurrences. Bit 0
+             * keeps 33, because the final odd code was replaced by 42.
+             * Open or unavailable paths cannot discard any occurrence. */
+            bool keep = g == 5u ? false : g != 0u && g != 6u ? true
+                : mode == CETTA_MATCH_DECISION_CONJUNCTIVE
+                    ? code == PREFIX_BENCH_QUERY : (code & 2u) != 0u;
+            if (keep) expected[g] |= UINT64_C(1) << c;
+        }
+    }
     for (uint32_t iteration = 0u; valid && iteration < iterations;
          iteration++) {
-        const uint32_t *selected = NULL;
-        size_t selected_count = 0u;
-        CettaMatchDecisionSelectState state =
-            cetta_match_decision_select(
-                decision, &space, semantic_identity, query,
-                UINT64_MAX, NULL, NULL,
-                &selected, &selected_count);
-        valid = state == CETTA_MATCH_DECISION_SELECT_READY &&
-            selected_count == 2u && selected &&
-            selected[0] == PREFIX_BENCH_QUERY &&
-            selected[1] == PREFIX_BENCH_CLAUSES - 1u;
-        state = cetta_match_decision_select(
-            decision, &space, semantic_identity, open_query,
-            UINT64_MAX, NULL, NULL,
-            &selected, &selected_count);
-        valid = valid && state == CETTA_MATCH_DECISION_SELECT_READY &&
-            selected_count == PREFIX_BENCH_CLAUSES && selected &&
-            selected[0] == 0u &&
-            selected[PREFIX_BENCH_CLAUSES - 1u] ==
-                PREFIX_BENCH_CLAUSES - 1u;
-        state = cetta_match_decision_select(
-            decision, &space, semantic_identity, open_middle_query,
-            UINT64_MAX, NULL, NULL,
-            &selected, &selected_count);
-        valid = valid && state == CETTA_MATCH_DECISION_SELECT_READY &&
-            selected_count == PREFIX_BENCH_CLAUSES && selected &&
-            selected[0] == 0u &&
-            selected[PREFIX_BENCH_CLAUSES - 1u] ==
-                PREFIX_BENCH_CLAUSES - 1u;
-        state = cetta_match_decision_select(
-            decision, &space, semantic_identity, open_deep_query,
-            UINT64_MAX, NULL, NULL,
-            &selected, &selected_count);
-        valid = valid && state == CETTA_MATCH_DECISION_SELECT_READY &&
-            selected_count == PREFIX_BENCH_CLAUSES && selected &&
-            selected[0] == 0u &&
-            selected[PREFIX_BENCH_CLAUSES - 1u] ==
-                PREFIX_BENCH_CLAUSES - 1u;
-        state = cetta_match_decision_select(
-            decision, &space, semantic_identity, query,
-            0u, NULL, NULL, &selected, &selected_count);
-        valid = valid && state == CETTA_MATCH_DECISION_SELECT_READY &&
-            selected_count == PREFIX_BENCH_CLAUSES;
-        state = cetta_match_decision_select(
-            decision, &space, semantic_identity, absent_query,
-            UINT64_MAX, NULL, NULL,
-            &selected, &selected_count);
-        valid = valid && state == CETTA_MATCH_DECISION_SELECT_READY &&
-            selected_count == 0u;
-        state = cetta_match_decision_select_parts(
-            decision, &space, semantic_identity,
-            query->expr.elems[0], &query->expr.elems[1],
-            query->expr.len - 1u, UINT64_MAX,
-            &selected, &selected_count);
-        valid = valid && state == CETTA_MATCH_DECISION_SELECT_READY &&
-            selected_count == 2u && selected &&
-            selected[0] == PREFIX_BENCH_QUERY &&
-            selected[1] == PREFIX_BENCH_CLAUSES - 1u;
+        for (unsigned g = 0u; valid && g < 7u; g++) {
+            if (!(geometry_mask & (1u << g))) continue;
+            const uint32_t *selected = NULL;
+            size_t selected_count = 0u;
+            CettaMatchDecisionSelectState state = g == 6u
+                ? cetta_match_decision_select_parts(
+                    decision, &space, semantic_identity,
+                    query->expr.elems[0], &query->expr.elems[1],
+                    query->expr.len - 1u, UINT64_MAX,
+                    &selected, &selected_count)
+                : cetta_match_decision_select(
+                    decision, &space, semantic_identity, queries[g],
+                    g == 4u ? 0u : UINT64_MAX, NULL, NULL,
+                    &selected, &selected_count);
+            valid = state == CETTA_MATCH_DECISION_SELECT_READY &&
+                selected_count <= PREFIX_BENCH_CLAUSES;
+            uint64_t actual = 0u;
+            for (size_t c = 0u; valid && c < selected_count; c++) {
+                valid = selected && selected[c] < PREFIX_BENCH_CLAUSES &&
+                    (c == 0u || selected[c - 1u] < selected[c]);
+                if (valid) actual |= UINT64_C(1) << selected[c];
+            }
+            valid = valid && actual == expected[g];
+            if (!valid)
+                fprintf(stderr, "%s/%s: got %016" PRIx64
+                        " expected %016" PRIx64 "\n",
+                        mode_name, names[g], actual, expected[g]);
+        }
     }
 
     CettaMatchDecisionStats stats = {0};
@@ -197,14 +207,14 @@ int main(int argc, char **argv) {
 
     printf("(MatchDecisionPrefixObservationBench %u %u %u %u %s "
            "%" PRIu64 " %" PRIu64 " %" PRIu64 " %" PRIu64
-           " %" PRIu64 ")\n",
-           PREFIX_BENCH_CLAUSES, PREFIX_BENCH_LEAVES, depth, iterations,
+           " %" PRIu64 " %s %s)\n",
+           PREFIX_BENCH_CLAUSES, leaves, depth, iterations,
            valid ? "pass" : "fail",
            stats.prefix_observation_direct_edges,
            stats.prefix_observation_trie_edges,
            stats.prefix_observation_node_visits,
            stats.prefix_observation_absorbed_suffixes,
-           stats.prefix_observation_skipped_edges);
+           stats.prefix_observation_skipped_edges, mode_name, geometry);
     if (decision)
         cetta_match_decision_free(decision);
     space_free(&space);

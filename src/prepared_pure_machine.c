@@ -4473,6 +4473,44 @@ static bool prepared_pure_compile_closed_entry_call(
         source_role == CETTA_PREPARED_PURE_SOURCE_DECLINE)
         return false;
 
+    /* Entry arguments being values does not make the operator an equation
+     * call.  Apply the same dialect interpretation as compile_eval before
+     * installing the reusable entry-call instruction.  A projection retains
+     * the entry's value/demand discipline; recompiling an already evaluated
+     * child as source could execute callable-looking data a second time. */
+    if (program->expression_view) {
+        CettaPreparedPureExpressionView view = {0};
+        CettaPreparedPureExpressionViewState state =
+            program->expression_view(expression, &view);
+        if (state == CETTA_PREPARED_PURE_EXPRESSION_PROJECT) {
+            for (CettaExprIndex index = 1u;
+                 index < expression->expr.len; index++) {
+                if (expression->expr.elems[index] != view.projected)
+                    continue;
+                uint32_t *children = NULL;
+                *admitted = true;
+                if (!prepared_pure_compile_entry_arguments(
+                        program, expression,
+                        entry_arguments_are_values
+                            ? PREPARED_PURE_ENTRY_ARGUMENT
+                            : PREPARED_PURE_EVAL_ENTRY_ARGUMENT,
+                        &children))
+                    return false;
+                *root_out = children[index - 1u];
+                free(children);
+                program->entry_head = expression->expr.elems[0]->sym_id;
+                return true;
+            }
+            return prepared_pure_reject(
+                program, "dialect projection is not an entry argument",
+                expression);
+        }
+        if (state != CETTA_PREPARED_PURE_EXPRESSION_DEFAULT)
+            return prepared_pure_reject(
+                program, "dialect-owned entry requires canonical evaluation",
+                expression);
+    }
+
     SymbolId head = expression->expr.elems[0]->sym_id;
     CettaExprLen arity = expression->expr.len - 1u;
     CettaGsltFoldControl control;
