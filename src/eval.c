@@ -39535,6 +39535,27 @@ static bool petta_eval_machine_try(
 
 /* ── metta_call: dispatch expressions ───────────────────────────────────── */
 
+static bool prepared_pure_program_cache_entry_matches(
+        const PreparedPureCacheEntry *entry,
+        Space *space, SymbolId head, CettaExprLen arity,
+        const void *source_identity,
+        CettaLanguageId language_id,
+        CettaGsltPureCallMode call_mode,
+        bool answer_producer,
+        bool entry_arguments_are_values,
+        bool total_structural_equality) {
+    return entry && entry->space == space &&
+        entry->head == head && entry->arity == arity &&
+        entry->source_identity == source_identity &&
+        entry->language_id == language_id &&
+        entry->call_mode == call_mode &&
+        entry->answer_producer == answer_producer &&
+        entry->entry_arguments_are_values ==
+            entry_arguments_are_values &&
+        entry->total_structural_equality ==
+            total_structural_equality;
+}
+
 static CettaPreparedPureProgram *prepared_pure_program_cache_lookup(
     PreparedPureProgramCache *cache,
     Space *space, Atom *call,
@@ -39565,16 +39586,11 @@ static CettaPreparedPureProgram *prepared_pure_program_cache_lookup(
     PreparedPureCacheEntry **link = &cache->entries;
     while (*link) {
         PreparedPureCacheEntry *entry = *link;
-        if (entry->space != space || entry->head != head ||
-            entry->arity != arity ||
-            entry->source_identity != source_identity ||
-            entry->language_id != language_id ||
-            entry->call_mode != call_mode ||
-            entry->answer_producer != answer_producer ||
-            entry->entry_arguments_are_values !=
-                entry_arguments_are_values ||
-            entry->total_structural_equality !=
-                total_structural_equality) {
+        if (!prepared_pure_program_cache_entry_matches(
+                entry, space, head, arity, source_identity,
+                language_id, call_mode, answer_producer,
+                entry_arguments_are_values,
+                total_structural_equality)) {
             link = &entry->next;
             continue;
         }
@@ -39597,6 +39613,49 @@ static CettaPreparedPureProgram *prepared_pure_program_cache_lookup(
         free(entry);
     }
     return NULL;
+}
+
+/* A structural compilation decline is safe to consult before dynamic
+ * admission checks: every observer/effect state reaches the same canonical
+ * fallback. Positive programs still pass the complete admission boundary
+ * before execution. */
+static bool prepared_pure_program_cache_has_decline(
+        PreparedPureProgramCache *cache,
+        Space *space, Atom *call,
+        const void *source_identity,
+        CettaLanguageId language_id,
+        CettaGsltPureCallMode call_mode,
+        bool answer_producer,
+        bool entry_arguments_are_values,
+        bool total_structural_equality) {
+    uint64_t capability_revision =
+        language_id == CETTA_LANGUAGE_PETTA && g_library_context
+            ? petta_libpl_capability_revision(
+                  g_library_context->lib_prolog)
+            : 0u;
+    if (!prepared_pure_program_cache_prepare_revision(
+            cache, space, capability_revision) ||
+        !call || call->kind != ATOM_EXPR ||
+        call->expr.len == 0u || !call->expr.elems[0] ||
+        call->expr.elems[0]->kind != ATOM_SYMBOL) {
+        return false;
+    }
+    SymbolId head = call->expr.elems[0]->sym_id;
+    CettaExprLen arity = call->expr.len - 1u;
+    for (PreparedPureCacheEntry *entry = cache->entries;
+         entry; entry = entry->next) {
+        if (entry->compilation_declined &&
+            prepared_pure_program_cache_entry_matches(
+                entry, space, head, arity, source_identity,
+                language_id, call_mode, answer_producer,
+                entry_arguments_are_values,
+                total_structural_equality)) {
+            cetta_runtime_stats_inc(
+                CETTA_RUNTIME_COUNTER_PREPARED_PURE_CALL_NEGATIVE_CACHE_HIT);
+            return true;
+        }
+    }
+    return false;
 }
 
 static bool prepared_pure_program_cache_insert(
@@ -40058,6 +40117,28 @@ static Atom *prepared_pure_closed_call_try(
     bool preserve_internal_values,
     PreparedPureProgramCache *program_cache) {
     CETTA_SCOPED_SHARED_TRANSITION(prepared_pure_observation);
+    if (program_cache && program_cache->entries) {
+        CettaLanguageId early_language_id =
+            eval_current_language_id();
+        CettaGsltPureCallMode early_call_mode =
+            early_language_id == CETTA_LANGUAGE_PRIME
+                ? CETTA_GSLT_PURE_CALL_CALL_BY_NEED
+                : CETTA_GSLT_PURE_CALL_EAGER;
+        CettaPreparedPureSourceView early_source_view =
+            prepared_pure_source_view_for_language(
+                early_language_id, call);
+        bool early_total_structural_equality =
+            active_composition_uses_total_structural_eq();
+        if (prepared_pure_program_cache_has_decline(
+                program_cache, space, call, early_source_view.root,
+                early_language_id, early_call_mode, false,
+                entry_arguments_are_values,
+                early_total_structural_equality)) {
+            cetta_runtime_stats_inc(
+                CETTA_RUNTIME_COUNTER_PREPARED_PURE_CALL_DECLINE);
+            return NULL;
+        }
+    }
     PreparedPureClosedCallPlan plan;
     if (!prepared_pure_closed_call_plan(
             space, destination, call, fuel,

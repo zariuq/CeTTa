@@ -1663,19 +1663,21 @@ GSLT_SUPPORT_TRANSFORM_RUNTIME_TEST_BIN = runtime/test_gslt_support_transform_ru
 METTAZERO_COMPILATION_CERTIFICATE_CHECKER_V1_BIN = runtime/check_mettazero_compilation_certificate_v1-$(BUILD_OBJ_TAG)
 SUBZERO_LANGDEF_V1 = langdef/subzero/langdef.metta
 GSLT_LANGUAGE_GENERATOR_V1 = tools/generate_gslt_language_v1.py
-GSLT_LANGUAGE_NATIVE_V1_BIN = runtime/gslt-language-embed-v1-$(BUILD_OBJ_TAG)
+GSLT_METADATA_V1_OBJ_TAG = $(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,)
+GSLT_METADATA_V1_BIN_TAG = $(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),-runtime-stats,)
+GSLT_LANGUAGE_NATIVE_V1_BIN = runtime/gslt-language-embed-v1-$(GSLT_METADATA_V1_BIN_TAG)
 GSLT_LANGUAGE_NATIVE_V1_SRC = tools/gslt_language_embed_v1.c \
 	src/gslt_language_manifest_v1.c src/atom.c src/symbol.c src/name_key.c src/native_sha256.c \
 	experiments/gslt2parse_foundation/native/finite_horn_gslt_v1.c \
 	experiments/gslt2parse_foundation/native/finite_horn_ground_term_v1.c
-GSLT_LANGUAGE_NATIVE_V1_OBJ = $(patsubst %.c,runtime/bootstrap/gslt_metadata_v1/%.$(BUILD_OBJ_TAG).o,$(GSLT_LANGUAGE_NATIVE_V1_SRC))
-GSLT_LANGUAGE_SOURCE_CODEC_TEST_V1_OBJ = runtime/bootstrap/gslt_metadata_v1/tests/support/test_gslt_language_source_codec_v1.$(BUILD_OBJ_TAG).o
-GSLT_LANGUAGE_SOURCE_CODEC_TEST_V1_BIN = runtime/test-gslt-language-source-codec-v1-$(BUILD_OBJ_TAG)
-GSLT_LANGUAGE_EMBED_LOAD_TEST_V1_BIN = runtime/test-gslt-language-embed-load-v1-$(BUILD_OBJ_TAG)
+GSLT_LANGUAGE_NATIVE_V1_OBJ = $(patsubst %.c,runtime/bootstrap/gslt_metadata_v1/%.$(GSLT_METADATA_V1_OBJ_TAG).o,$(GSLT_LANGUAGE_NATIVE_V1_SRC))
+GSLT_LANGUAGE_SOURCE_CODEC_TEST_V1_OBJ = runtime/bootstrap/gslt_metadata_v1/tests/support/test_gslt_language_source_codec_v1.$(GSLT_METADATA_V1_OBJ_TAG).o
+GSLT_LANGUAGE_SOURCE_CODEC_TEST_V1_BIN = runtime/test-gslt-language-source-codec-v1-$(GSLT_METADATA_V1_BIN_TAG)
+GSLT_LANGUAGE_EMBED_LOAD_TEST_V1_BIN = runtime/test-gslt-language-embed-load-v1-$(GSLT_METADATA_V1_BIN_TAG)
 PRIME_NIK_AUTHORITY_EXPORTER_V1 = tests/support/export_prime_nik_authority_catalog_v1.lean
 PRIME_NIK_AUTHORITY_GENERATOR_V1 = tools/generate_nik_authority_runtime_v1.py
 PRIME_NIK_AUTHORITY_GENERATION_TEST_V1 = tools/test_nik_authority_generation_v1.py
-NIK_AUTHORITY_CATALOG_NATIVE_V1_BIN = runtime/nik-authority-catalog-v1-$(BUILD_OBJ_TAG)
+NIK_AUTHORITY_CATALOG_NATIVE_V1_BIN = runtime/nik-authority-catalog-v1-$(GSLT_METADATA_V1_BIN_TAG)
 NIK_AUTHORITY_CATALOG_NATIVE_V1_SRC = tools/nik_authority_catalog_v1.c \
 	native/operational_language_def_v1.c src/lib_parse_native_grammar.c \
 	src/gslt_dense_bitset_v1.c src/atom.c src/symbol.c src/name_key.c \
@@ -1683,8 +1685,8 @@ NIK_AUTHORITY_CATALOG_NATIVE_V1_SRC = tools/nik_authority_catalog_v1.c \
 	src/inference_side_condition_provider.c src/abt.c src/gslt_provider_runtime.c
 # Catalog admission constructs its own ABT signature. The default runtime blob
 # is deliberately absent from this bootstrap-only object to avoid stage0.
-NIK_AUTHORITY_CATALOG_ABT_V1_OBJ = runtime/bootstrap/gslt_metadata_v1/src/abt.no-stdlib.$(BUILD_OBJ_TAG).o
-NIK_AUTHORITY_CATALOG_NATIVE_V1_OBJ = $(patsubst %.c,runtime/bootstrap/gslt_metadata_v1/%.$(BUILD_OBJ_TAG).o,$(filter-out src/abt.c,$(NIK_AUTHORITY_CATALOG_NATIVE_V1_SRC))) $(NIK_AUTHORITY_CATALOG_ABT_V1_OBJ)
+NIK_AUTHORITY_CATALOG_ABT_V1_OBJ = runtime/bootstrap/gslt_metadata_v1/src/abt.no-stdlib.$(GSLT_METADATA_V1_OBJ_TAG).o
+NIK_AUTHORITY_CATALOG_NATIVE_V1_OBJ = $(patsubst %.c,runtime/bootstrap/gslt_metadata_v1/%.$(GSLT_METADATA_V1_OBJ_TAG).o,$(filter-out src/abt.c,$(NIK_AUTHORITY_CATALOG_NATIVE_V1_SRC))) $(NIK_AUTHORITY_CATALOG_ABT_V1_OBJ)
 NIK_AUTHORITY_CATALOG_TEST_EVIDENCE ?=
 # Legacy output is a test-only reference for the unreplaced replay generator.
 # It is neither linked into the public runtime nor produced by the native tool.
@@ -1748,14 +1750,14 @@ METTA_INTERACT_GENERATED_LANGUAGE_V1_C = src/generated/metta_interact_language_v
 METTA_INTERACT_CLI_TEST_V1 = tools/test_metta_interact_cli_v1.py
 METTA_INTERACT_SEMANTICS_TEST_V1 = tools/test_metta_interact_semantics_v1.py
 METTA_INTERACT_RULE_MUTATIONS_TEST_V1 = tools/test_metta_interact_rule_mutations_v1.py
-GSLT_SUPPORT_PROFILE_NATIVE_V1_BIN = runtime/gslt-support-profile-v1-$(BUILD_OBJ_TAG)
+GSLT_SUPPORT_PROFILE_NATIVE_V1_BIN = runtime/gslt-support-profile-v1-$(GSLT_METADATA_V1_BIN_TAG)
 GSLT_SUPPORT_PROFILE_NATIVE_V1_SRC = src/gslt_support_profile_v1.c \
 	native/operational_language_def_v1.c src/lib_parse_native_grammar.c \
 	src/gslt_dense_bitset_v1.c src/atom.c src/symbol.c src/name_key.c src/native_sha256.c
-GSLT_SUPPORT_PROFILE_NATIVE_V1_OBJ = $(patsubst %.c,runtime/bootstrap/gslt_metadata_v1/%.$(BUILD_OBJ_TAG).o,$(GSLT_SUPPORT_PROFILE_NATIVE_V1_SRC))
-GSLT_SUPPORT_PROFILE_TOOL_V1_OBJ = runtime/bootstrap/gslt_metadata_v1/tools/gslt_support_profile_v1.$(BUILD_OBJ_TAG).o
-GSLT_SUPPORT_PROFILE_TEST_V1_OBJ = runtime/bootstrap/gslt_metadata_v1/tests/support/test_gslt_support_profile_v1.$(BUILD_OBJ_TAG).o
-GSLT_SUPPORT_PROFILE_TEST_V1_BIN = runtime/test-gslt-support-profile-v1-$(BUILD_OBJ_TAG)
+GSLT_SUPPORT_PROFILE_NATIVE_V1_OBJ = $(patsubst %.c,runtime/bootstrap/gslt_metadata_v1/%.$(GSLT_METADATA_V1_OBJ_TAG).o,$(GSLT_SUPPORT_PROFILE_NATIVE_V1_SRC))
+GSLT_SUPPORT_PROFILE_TOOL_V1_OBJ = runtime/bootstrap/gslt_metadata_v1/tools/gslt_support_profile_v1.$(GSLT_METADATA_V1_OBJ_TAG).o
+GSLT_SUPPORT_PROFILE_TEST_V1_OBJ = runtime/bootstrap/gslt_metadata_v1/tests/support/test_gslt_support_profile_v1.$(GSLT_METADATA_V1_OBJ_TAG).o
+GSLT_SUPPORT_PROFILE_TEST_V1_BIN = runtime/test-gslt-support-profile-v1-$(GSLT_METADATA_V1_BIN_TAG)
 GSLT_SUPPORT_PROFILE_TEST_REFERENCE ?= $(MM2_GSLT_PROFILE_GENERATED_C)
 MM2_GSLT_PROFILE_V1 = langdef/mm2/gslt_profile_v1.metta
 MM2_GSLT_PROFILE_GENERATED_H = src/generated/mm2_gslt_profile_v1.generated.h
@@ -1826,16 +1828,16 @@ METAMATH_PROOF_MACHINE_PROVIDER_CATALOG_V1 = langdef/metamath/proof_machine_prov
 METAMATH_PROOF_MACHINE_PROVIDER_CATALOG_V1_GENERATED_H = langdef/metamath/generated/proof_machine_provider_catalog_v1.generated.h
 METAMATH_PROOF_MACHINE_PROVIDER_CATALOG_V1_GENERATED_C = langdef/metamath/generated/proof_machine_provider_catalog_v1.generated.c
 GSLT_PROVIDER_CATALOG_GENERATOR_V1 = tools/generate_gslt_provider_catalog_v1.py
-GSLT_PROVIDER_CATALOG_NATIVE_V1_BIN = runtime/gslt-provider-catalog-v1-$(BUILD_OBJ_TAG)
+GSLT_PROVIDER_CATALOG_NATIVE_V1_BIN = runtime/gslt-provider-catalog-v1-$(GSLT_METADATA_V1_BIN_TAG)
 GSLT_PROVIDER_CATALOG_TEST_CLIENT ?= all
-GSLT_METADATA_DECODERS_V1_TEST_BIN = runtime/test-gslt-metadata-decoders-v1-$(BUILD_OBJ_TAG)
+GSLT_METADATA_DECODERS_V1_TEST_BIN = runtime/test-gslt-metadata-decoders-v1-$(GSLT_METADATA_V1_BIN_TAG)
 GSLT_METADATA_NATIVE_V1_SRC = src/gslt_language_manifest_v1.c \
 	src/gslt_provider_runtime.c src/parser.c src/atom.c src/symbol.c \
 	src/name_key.c src/native_sha256.c native/gslt_composition_v1.c
-GSLT_METADATA_NATIVE_V1_OBJ = $(patsubst %.c,runtime/bootstrap/gslt_metadata_v1/%.$(BUILD_OBJ_TAG).o,$(GSLT_METADATA_NATIVE_V1_SRC))
-GSLT_METADATA_STATS_V1_OBJ = runtime/bootstrap/gslt_metadata_v1/src/stats.$(BUILD_OBJ_TAG).o
-GSLT_PROVIDER_CATALOG_NATIVE_V1_OBJ = runtime/bootstrap/gslt_metadata_v1/tools/gslt_provider_catalog_v1.$(BUILD_OBJ_TAG).o
-GSLT_METADATA_DECODERS_V1_TEST_OBJ = runtime/bootstrap/gslt_metadata_v1/tests/support/test_gslt_metadata_decoders_v1.$(BUILD_OBJ_TAG).o
+GSLT_METADATA_NATIVE_V1_OBJ = $(patsubst %.c,runtime/bootstrap/gslt_metadata_v1/%.$(GSLT_METADATA_V1_OBJ_TAG).o,$(GSLT_METADATA_NATIVE_V1_SRC))
+GSLT_METADATA_STATS_V1_OBJ = runtime/bootstrap/gslt_metadata_v1/src/stats.$(GSLT_METADATA_V1_OBJ_TAG).o
+GSLT_PROVIDER_CATALOG_NATIVE_V1_OBJ = runtime/bootstrap/gslt_metadata_v1/tools/gslt_provider_catalog_v1.$(GSLT_METADATA_V1_OBJ_TAG).o
+GSLT_METADATA_DECODERS_V1_TEST_OBJ = runtime/bootstrap/gslt_metadata_v1/tests/support/test_gslt_metadata_decoders_v1.$(GSLT_METADATA_V1_OBJ_TAG).o
 GSLT_PROVIDER_CATALOG_GENERATION_TEST_V1 = tools/test_gslt_provider_catalog_generation_v1.py
 GSLT_PROVIDER_CANARY_CATALOG_V1 = tests/fixtures/gslt_provider_canary_v1/provider_catalog_v1.metta
 GSLT_PROVIDER_CANARY_CATALOG_GENERATED_H = tests/generated/gslt_provider_canary_catalog_v1.generated.h
@@ -1847,12 +1849,12 @@ PARSER_OCCURRENCE_SPAN_MASK_COMPILER_V1 = experiments/gslt2parse_foundation/pres
 CERTIFICATE_GSLT_FIRST_ORDER_DENOTATION_V1 = experiments/gslt2parse_foundation/presentations/compiler/certificate_gslt_first_order_denotation_v1.metta
 RULE_MACHINE_CORE_GSLT_V1 = experiments/gslt2parse_foundation/presentations/core/rule_machine_core_v1.metta
 RULE_MACHINE_PROGRAM_GSLT_V1 = experiments/gslt2parse_foundation/presentations/specializations/rule_machine_hilbert_bfc_program_v1.metta
-RULE_MACHINE_PROGRAM_GENERATOR_V1 = runtime/rule-machine-program-v1-$(BUILD_OBJ_TAG)
+RULE_MACHINE_PROGRAM_GENERATOR_V1 = runtime/rule-machine-program-v1-$(GSLT_METADATA_V1_BIN_TAG)
 RULE_MACHINE_PROGRAM_NATIVE_V1_SRC = tools/rule_machine_program_v1.c \
 	native/operational_language_def_v1.c native/gslt_composition_v1.c \
 	src/lib_parse_native_grammar.c src/gslt_dense_bitset_v1.c \
 	src/atom.c src/symbol.c src/name_key.c src/native_sha256.c
-RULE_MACHINE_PROGRAM_NATIVE_V1_OBJ = $(patsubst %.c,runtime/bootstrap/gslt_metadata_v1/%.$(BUILD_OBJ_TAG).o,$(RULE_MACHINE_PROGRAM_NATIVE_V1_SRC))
+RULE_MACHINE_PROGRAM_NATIVE_V1_OBJ = $(patsubst %.c,runtime/bootstrap/gslt_metadata_v1/%.$(GSLT_METADATA_V1_OBJ_TAG).o,$(RULE_MACHINE_PROGRAM_NATIVE_V1_SRC))
 RULE_MACHINE_PROGRAM_GENERATED_V1 = src/generated/rule_machine_program_v1.generated.h
 SUBZERO_FREE_BAG_CORE_V1 = langdef/subzero/semantics/free_bag_rewrite_core_v1.metta
 SUBZERO_ONE_STEP_OBSERVATION_V1 = langdef/subzero/semantics/one_step_observation_v1.metta
@@ -6555,7 +6557,7 @@ $(LANGDEF_COMPILER_V1_BIN): $(LANGDEF_COMPILER_V1_OBJ) \
 		$(filter-out %.metta,$^) $(LDFLAGS); \
 	mv "$$tmp_out" $@
 
-runtime/bootstrap/gslt_metadata_v1/%.$(BUILD_OBJ_TAG).o: %.c $(BUILD_CONFIG_HEADER)
+runtime/bootstrap/gslt_metadata_v1/%.$(GSLT_METADATA_V1_OBJ_TAG).o: %.c $(BUILD_CONFIG_HEADER)
 	@mkdir -p $(dir $@)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -ffunction-sections -fdata-sections \
 		$(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
@@ -6621,7 +6623,8 @@ $(GSLT_SUPPORT_PROFILE_NATIVE_V1_BIN): $(GSLT_SUPPORT_PROFILE_TOOL_V1_OBJ) $(GSL
 	$(CC) $(CFLAGS) -Wl,--gc-sections -o $@ $^ $(LDFLAGS)
 
 $(GSLT_SUPPORT_PROFILE_TEST_V1_BIN): $(GSLT_SUPPORT_PROFILE_TEST_V1_OBJ) \
-		$(GSLT_SUPPORT_PROFILE_NATIVE_V1_OBJ) $(GSLT_SUPPORT_PROFILE_TEST_REFERENCE)
+		$(GSLT_SUPPORT_PROFILE_NATIVE_V1_OBJ) $(GSLT_METADATA_STATS_V1_OBJ) \
+		$(GSLT_SUPPORT_PROFILE_TEST_REFERENCE)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -Isrc -Wl,--gc-sections -o $@ $^ $(LDFLAGS)
 
 .PHONY: test-gslt-support-profile-native-v1
@@ -17490,7 +17493,7 @@ bench-list: $(BIN) test-list-lanes
 
 # Configuration probes recursively build shared generated sources and objects.
 # Serialize the aggregate gate; each individual build may still use its jobserver.
-.NOTPARALLEL: test
+.NOTPARALLEL: test test-mettazero
 
 .PHONY: test-builtin-policy-lookup
 test-builtin-policy-lookup:
@@ -27277,7 +27280,15 @@ test-prepared-pure-dispatch-authority: $(BIN)
 		fi; \
 	done
 
-test-prepared-pure-call-machine: $(BIN) test-prepared-pure-answer-producer test-prepared-pure-answer-resource-fallback test-prepared-pure-dispatch-authority
+.PHONY: test-prepared-pure-numeric-realizations
+test-prepared-pure-numeric-realizations: $(BIN)
+ifeq ($(ENABLE_RUNTIME_STATS),1)
+	@$(CETTA_SCRIPT_RUN_ENV) python3 tests/test_prepared_pure_numeric_realizations.py ./$(BIN)
+else
+	@$(MAKE) -s ENABLE_RUNTIME_STATS=1 $@
+endif
+
+test-prepared-pure-call-machine: $(BIN) test-prepared-pure-answer-producer test-prepared-pure-answer-resource-fallback test-prepared-pure-dispatch-authority test-prepared-pure-numeric-realizations
 	@set -e; \
 	he_out=$$(mktemp runtime/prepared-pure-call-he.XXXXXX); \
 	he_no_gc_out=$$(mktemp runtime/prepared-pure-call-he-no-gc.XXXXXX); \
@@ -31367,6 +31378,14 @@ test-mettazero-rule-mutations-v1: \
 		--runner $(METTAZERO_SEMANTIC_RUNNER_V1) \
 		--ground-capability tests/fixtures/metta_zero_ground_capability_v1.metta
 
+.PHONY: prepare-mettazero-build-artifacts-v1
+prepare-mettazero-build-artifacts-v1:
+	@$(MAKE) --no-print-directory -B \
+		$(METTAZERO_COMPILATION_CERTIFICATE_V1) \
+		$(METTAZERO_EXP_COMPILATION_CERTIFICATE_V1) \
+		$(METTAZERO_EMIT_COMPILATION_CERTIFICATE_V1) \
+		$(METTAZERO_INTERACT_COMPILATION_CERTIFICATE_V1)
+
 .PHONY: test-mettazero-interact-v1
 test-mettazero-interact-v1: \
 		test-mettazero-interact-generation-v1 \
@@ -31378,6 +31397,7 @@ test-mettazero-interact-v1: \
 	@echo '(MettaZeroInteractV1Summary generated=1 provider-catalog=1 authored-rules=55 mutation-kills=55 physical-providers=2 abt-support-indexed=1 differential=1 fail-closed=1)'
 
 test-mettazero: \
+		prepare-mettazero-build-artifacts-v1 \
 		test-mettazero-generation-v1 \
 		test-mettazero-compilation-certificate-v1 \
 		test-mettazero-cli-v1 \
@@ -37237,20 +37257,20 @@ test-json-gslt-sanitizers:
 		test-json-gslt-library-body
 
 .PHONY: test-json-gslt
+.NOTPARALLEL: test-json-gslt
 test-json-gslt: \
 		test-language-def-parser-pack-v1 \
 		test-json-nik-v1 \
 		test-json-gslt-mutation \
 		test-json-gslt-c-only-closure \
 		test-json-gslt-library \
-		test-io-json-bridge \
-		test-json-gslt-disabled-link
+		test-json-gslt-disabled-link \
+		test-io-json-bridge
 
 .PHONY: test-io
-test-io:
+test-io: test-io-json-bridge
 	@$(MAKE) -s BUILD=core ENABLE_HTTP=1 test-io-syntax test-io-runtime
 	@$(MAKE) -s BUILD=core ENABLE_HTTP=0 test-io-no-http test-io-rho-bridge
-	@$(MAKE) -s BUILD=core ENABLE_HTTP=0 test-io-json-bridge
 	@$(MAKE) -s BUILD=core ENABLE_HTTP=0 test-io-browser
 
 .PHONY: test-petta-imported-host-bridges
