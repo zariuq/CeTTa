@@ -50,5 +50,5 @@ const CettaGsltProviderCatalogV1 cetta_zero_interact_provider_catalog_v1 = {
     .source_sha256 = "8751750ba72298455154a367eeac1e7e06f498963d8058abe292a2dc0f453479",
     .requirements = cetta_zero_interact_provider_catalog_v1_requirements_v1,
     .requirement_count = 5u,
-    .generator_sha256 = "686d053564abf237e113e30daf8cbe77754eed1e1159140d1cb5becf1f37df40",
+    .generator_sha256 = "6dd8e5d67a83b2224aa420d03f74a4e6b210fa57932344626c4a257cd78cebd2",
 };

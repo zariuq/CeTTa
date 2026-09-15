@@ -379,3 +379,7 @@
    (let (gslt:result:SourceCompletedPolicyV1:0 $completedPolicy) (superpose (collapse (gslt:mode:SourceCompletedPolicyV1:0)))
    (let (gslt:result:SourceActivePolicyV1:0 $activePolicy) (superpose (collapse (gslt:mode:SourceActivePolicyV1:0)))
    (quote (gslt:result:SourceResolveDecisionV1:11001 $completedPolicy $activePolicy)))))
+
+
+; gslt-lowered-entry-v1 gslt:entry:SourceResolutionControlRecordV1:0000
+(= (gslt:entry:SourceResolutionControlRecordV1:0000) (gslt:mode:SourceResolutionControlRecordV1:0000))

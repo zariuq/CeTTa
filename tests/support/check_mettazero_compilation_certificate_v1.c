@@ -268,12 +268,21 @@ static void artifact_sha(const FileBytes *header, const FileBytes *source,
     cetta_native_sha256_finish_hex(&sha, output);
 }
 
-static bool compiler_sha(const char *generator_path, const char *schema_path,
+static bool compiler_sha(const char *name, const char *generator_path, const char *schema_path,
                          char output[65], char *error, size_t error_size) {
     FileBytes generator;
     FileBytes schema;
     if (!read_file(generator_path, &generator, error, error_size))
         return false;
+    if (name && !strcmp(name, "CettaGsltLanguageNativeCompilerV1")) {
+        cetta_native_sha256_hex(generator.bytes, generator.length, output);
+        file_bytes_free(&generator);
+        return true;
+    }
+    if (!name || strcmp(name, "CettaGsltLanguageCompilerV1")) {
+        file_bytes_free(&generator);
+        return fail(error, error_size, "unknown compiler identity scheme");
+    }
     if (!read_file(schema_path, &schema, error, error_size)) {
         file_bytes_free(&generator);
         return false;
@@ -370,10 +379,8 @@ static bool check_certificate(
         compiler, "compiler", 3u)
         ? atom_string_value(compiler->expr.elems[2]) : NULL;
     char actual_compiler_sha[65];
-    if (!compiler_sha(generator_path, schema_path, actual_compiler_sha,
+    if (!compiler_sha(compiler_name, generator_path, schema_path, actual_compiler_sha,
                       error, error_size) ||
-        !string_equal(compiler_name, "CettaGsltLanguageCompilerV1",
-                      "compiler name", error, error_size) ||
         !string_equal(submitted_compiler_sha, actual_compiler_sha,
                       "compiler identity", error, error_size) ||
         !string_equal(descriptor->compiler_sha256, actual_compiler_sha,

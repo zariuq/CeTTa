@@ -46,7 +46,7 @@ int main(int argc, char **argv) {
                  decoded.physical_profile_packet_size);
     if (ok && argc == 4) {
         /* The fixture supplies a declared but unavailable provider. Its work
-         * must remain data, not execute using the familiar surface spelling. */
+         * must remain data, not execute using the familiar source spelling. */
         Atom **forms = NULL;
         int count = parse_metta_text(argv[3], &arena, &forms);
         CettaGsltSupportTransformResultV1 result = {0};

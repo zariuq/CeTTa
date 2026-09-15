@@ -700,13 +700,13 @@
 
 ; gslt-lowered-equation-v1 source-rewrite=9 source-presentation=RelationalStateTransitionCompilerV1 source-rule=lower-state-row-nil-v1 target=mode relation=LowerStateRowV1 input=110 functional=semidet
 (= (gslt:fn:LowerStateRowV1:110 $package state-row-nil-v1)
-   (let gslt:result:StateTransitionPackageV1:1 (eval (quote (gslt:fn:StateTransitionPackageV1:1 $package)))
+   (let gslt:result:StateTransitionPackageV1:1 (gslt:fn:StateTransitionPackageV1:1 $package)
    (quote (gslt:result:LowerStateRowV1:110 StateRowNilV1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=10 source-presentation=RelationalStateTransitionCompilerV1 source-rule=lower-state-row-cons-v1 target=mode relation=LowerStateRowV1 input=110 functional=semidet
 (= (gslt:fn:LowerStateRowV1:110 $package (state-row-cons-v1 $head $tail))
-   (let (gslt:result:LowerStateRowValueV1:110 $lowerHead) (eval (quote (gslt:fn:LowerStateRowValueV1:110 $package $head)))
-   (let (gslt:result:LowerStateRowV1:110 $lowerTail) (eval (quote (gslt:fn:LowerStateRowV1:110 $package $tail)))
+   (let (gslt:result:LowerStateRowValueV1:110 $lowerHead) (gslt:fn:LowerStateRowValueV1:110 $package $head)
+   (let (gslt:result:LowerStateRowV1:110 $lowerTail) (gslt:fn:LowerStateRowV1:110 $package $tail)
    (quote (gslt:result:LowerStateRowV1:110 (StateRowConsV1 $lowerHead $lowerTail))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=11 source-presentation=RelationalStateTransitionCompilerV1 source-rule=lower-state-row-input-v1 target=mode relation=LowerStateRowValueV1 input=000 functional=relational
@@ -746,37 +746,37 @@
 
 ; gslt-lowered-equation-v1 source-rewrite=11 source-presentation=RelationalStateTransitionCompilerV1 source-rule=lower-state-row-input-v1 target=mode relation=LowerStateRowValueV1 input=110 functional=semidet
 (= (gslt:fn:LowerStateRowValueV1:110 $package state-input-v1)
-   (let gslt:result:StateTransitionPackageV1:1 (eval (quote (gslt:fn:StateTransitionPackageV1:1 $package)))
+   (let gslt:result:StateTransitionPackageV1:1 (gslt:fn:StateTransitionPackageV1:1 $package)
    (quote (gslt:result:LowerStateRowValueV1:110 StateInputV1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=12 source-presentation=RelationalStateTransitionCompilerV1 source-rule=lower-state-row-literal-v1 target=mode relation=LowerStateRowValueV1 input=110 functional=semidet
 (= (gslt:fn:LowerStateRowValueV1:110 $package (state-literal-v1 $literal))
-   (let gslt:result:StateTransitionPackageV1:1 (eval (quote (gslt:fn:StateTransitionPackageV1:1 $package)))
+   (let gslt:result:StateTransitionPackageV1:1 (gslt:fn:StateTransitionPackageV1:1 $package)
    (quote (gslt:result:LowerStateRowValueV1:110 (StateLiteralSymbolV1 $literal)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=13 source-presentation=RelationalStateTransitionCompilerV1 source-rule=lower-state-row-role-at-v1 target=mode relation=LowerStateRowValueV1 input=110 functional=semidet
 (= (gslt:fn:LowerStateRowValueV1:110 $package (state-role-at-v1 $role $rawIndex))
-   (let (gslt:result:StateNatBindingV1:110 $index) (eval (quote (gslt:fn:StateNatBindingV1:110 $package $rawIndex)))
+   (let (gslt:result:StateNatBindingV1:110 $index) (gslt:fn:StateNatBindingV1:110 $package $rawIndex)
    (quote (gslt:result:LowerStateRowValueV1:110 (StateRoleAtV1 $role $index)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=14 source-presentation=RelationalStateTransitionCompilerV1 source-rule=lower-state-row-role-list-v1 target=mode relation=LowerStateRowValueV1 input=110 functional=semidet
 (= (gslt:fn:LowerStateRowValueV1:110 $package (state-role-list-v1 $role $rawIndex))
-   (let (gslt:result:StateNatBindingV1:110 $index) (eval (quote (gslt:fn:StateNatBindingV1:110 $package $rawIndex)))
+   (let (gslt:result:StateNatBindingV1:110 $index) (gslt:fn:StateNatBindingV1:110 $package $rawIndex)
    (quote (gslt:result:LowerStateRowValueV1:110 (StateRoleListV1 $role $index)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=15 source-presentation=RelationalStateTransitionCompilerV1 source-rule=lower-state-row-source-column-v1 target=mode relation=LowerStateRowValueV1 input=110 functional=semidet
 (= (gslt:fn:LowerStateRowValueV1:110 $package (state-source-column-v1 $rawIndex))
-   (let (gslt:result:StateNatBindingV1:110 $index) (eval (quote (gslt:fn:StateNatBindingV1:110 $package $rawIndex)))
+   (let (gslt:result:StateNatBindingV1:110 $index) (gslt:fn:StateNatBindingV1:110 $package $rawIndex)
    (quote (gslt:result:LowerStateRowValueV1:110 (StateSourceColumnV1 $index)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=16 source-presentation=RelationalStateTransitionCompilerV1 source-rule=lower-state-row-source-index-v1 target=mode relation=LowerStateRowValueV1 input=110 functional=semidet
 (= (gslt:fn:LowerStateRowValueV1:110 $package state-source-row-index-v1)
-   (let gslt:result:StateTransitionPackageV1:1 (eval (quote (gslt:fn:StateTransitionPackageV1:1 $package)))
+   (let gslt:result:StateTransitionPackageV1:1 (gslt:fn:StateTransitionPackageV1:1 $package)
    (quote (gslt:result:LowerStateRowValueV1:110 StateSourceRowIndexV1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=17 source-presentation=RelationalStateTransitionCompilerV1 source-rule=lower-state-row-match-index-v1 target=mode relation=LowerStateRowValueV1 input=110 functional=semidet
 (= (gslt:fn:LowerStateRowValueV1:110 $package state-source-match-index-v1)
-   (let gslt:result:StateTransitionPackageV1:1 (eval (quote (gslt:fn:StateTransitionPackageV1:1 $package)))
+   (let gslt:result:StateTransitionPackageV1:1 (gslt:fn:StateTransitionPackageV1:1 $package)
    (quote (gslt:result:LowerStateRowValueV1:110 StateSourceMatchIndexV1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=18 source-presentation=RelationalStateTransitionCompilerV1 source-rule=lower-state-write-require-absent-v1 target=mode relation=LowerStateWritePolicyV1 input=00 functional=relational
@@ -804,14 +804,14 @@
 
 ; gslt-lowered-equation-v1 source-rewrite=20 source-presentation=RelationalStateTransitionCompilerV1 source-rule=lower-state-action-record-v1 target=mode relation=StateLoweredActionV1 input=1110 functional=semidet
 (= (gslt:fn:StateLoweredActionV1:1110 $package $operation $index)
-   (let gslt:result:StateTransitionPackageV1:1 (eval (quote (gslt:fn:StateTransitionPackageV1:1 $package)))
-   (let (gslt:result:state-action-v1:110 $action) (eval (quote (gslt:fn:state-action-v1:110 $operation $index)))
-   (let (gslt:result:LowerStateActionV1:110 $actions) (eval (quote (gslt:fn:LowerStateActionV1:110 $package $action)))
+   (let gslt:result:StateTransitionPackageV1:1 (gslt:fn:StateTransitionPackageV1:1 $package)
+   (let (gslt:result:state-action-v1:110 $action) (gslt:fn:state-action-v1:110 $operation $index)
+   (let (gslt:result:LowerStateActionV1:110 $actions) (gslt:fn:LowerStateActionV1:110 $package $action)
    (quote (gslt:result:StateLoweredActionV1:1110 $actions))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=21 source-presentation=RelationalStateTransitionCompilerV1 source-rule=lower-state-final-action-record-v1 target=mode relation=StateLoweredFinalActionV1 input=000 functional=semidet
 (= (gslt:fn:StateLoweredFinalActionV1:000)
-   (let (gslt:result:StateTransitionPackageV1:0 $package) (eval (quote (gslt:fn:StateTransitionPackageV1:0)))
+   (let (gslt:result:StateTransitionPackageV1:0 $package) (gslt:fn:StateTransitionPackageV1:0)
    (let $_ (gslt:state-final-action-v1 (state-final-action-v1 $index $action))
    (let (gslt:result:LowerStateActionV1:100 $action $actions) (superpose (collapse (gslt:mode:LowerStateActionV1:100 $package)))
    (quote (gslt:result:StateLoweredFinalActionV1:000 $package $index $actions))))))
@@ -822,7 +822,7 @@
 
 ; gslt-lowered-equation-v1 source-rewrite=23 source-presentation=RelationalStateTransitionCompilerV1 source-rule=actions-append-cons-v1 target=mode relation=ActionsAppendV1 input=110 functional=semidet
 (= (gslt:fn:ActionsAppendV1:110 (ActionsConsV1 $head $tail) $right)
-   (let (gslt:result:ActionsAppendV1:110 $result) (eval (quote (gslt:fn:ActionsAppendV1:110 $tail $right)))
+   (let (gslt:result:ActionsAppendV1:110 $result) (gslt:fn:ActionsAppendV1:110 $tail $right)
    (quote (gslt:result:ActionsAppendV1:110 (ActionsConsV1 $head $result)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=24 source-presentation=RelationalStateTransitionCompilerV1 source-rule=assemble-state-actions-last-v1 target=mode relation=AssembleStateActionsV1 input=1110 functional=relational
@@ -855,103 +855,103 @@
 
 ; gslt-lowered-equation-v1 source-rewrite=30 source-presentation=RelationalStateTransitionCompilerV1 source-rule=lower-state-require-depth-v1 target=mode relation=LowerStateActionV1 input=110 functional=semidet
 (= (gslt:fn:LowerStateActionV1:110 $package (state-require-depth-v1 $rawDepth))
-   (let (gslt:result:StateNatBindingV1:110 $depth) (eval (quote (gslt:fn:StateNatBindingV1:110 $package $rawDepth)))
+   (let (gslt:result:StateNatBindingV1:110 $depth) (gslt:fn:StateNatBindingV1:110 $package $rawDepth)
    (quote (gslt:result:LowerStateActionV1:110 (ActionsConsV1 (StateRequireDepthV1 $depth) ActionsNilV1)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=31 source-presentation=RelationalStateTransitionCompilerV1 source-rule=lower-state-push-scope-v1 target=mode relation=LowerStateActionV1 input=110 functional=semidet
 (= (gslt:fn:LowerStateActionV1:110 $package state-push-scope-v1)
-   (let gslt:result:StateTransitionPackageV1:1 (eval (quote (gslt:fn:StateTransitionPackageV1:1 $package)))
+   (let gslt:result:StateTransitionPackageV1:1 (gslt:fn:StateTransitionPackageV1:1 $package)
    (quote (gslt:result:LowerStateActionV1:110 (ActionsConsV1 StatePushScopeV1 ActionsNilV1)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=32 source-presentation=RelationalStateTransitionCompilerV1 source-rule=lower-state-pop-scope-v1 target=mode relation=LowerStateActionV1 input=110 functional=semidet
 (= (gslt:fn:LowerStateActionV1:110 $package state-pop-scope-v1)
-   (let gslt:result:StateTransitionPackageV1:1 (eval (quote (gslt:fn:StateTransitionPackageV1:1 $package)))
+   (let gslt:result:StateTransitionPackageV1:1 (gslt:fn:StateTransitionPackageV1:1 $package)
    (quote (gslt:result:LowerStateActionV1:110 (ActionsConsV1 StatePopScopeV1 ActionsNilV1)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=33 source-presentation=RelationalStateTransitionCompilerV1 source-rule=lower-state-noop-v1 target=mode relation=LowerStateActionV1 input=110 functional=semidet
 (= (gslt:fn:LowerStateActionV1:110 $package state-noop-v1)
-   (let gslt:result:StateTransitionPackageV1:1 (eval (quote (gslt:fn:StateTransitionPackageV1:1 $package)))
+   (let gslt:result:StateTransitionPackageV1:1 (gslt:fn:StateTransitionPackageV1:1 $package)
    (quote (gslt:result:LowerStateActionV1:110 (ActionsConsV1 StateNoopV1 ActionsNilV1)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=34 source-presentation=RelationalStateTransitionCompilerV1 source-rule=lower-state-require-each-v1 target=mode relation=LowerStateActionV1 input=110 functional=semidet
 (= (gslt:fn:LowerStateActionV1:110 $package (state-require-each-v1 $role $table $row))
-   (let (gslt:result:StateTableLoweringV1:110000 $tableId $arity $keyArity $lifetime) (eval (quote (gslt:fn:StateTableLoweringV1:110000 $package $table)))
-   (let (gslt:result:LowerStateRowV1:110 $lowerRow) (eval (quote (gslt:fn:LowerStateRowV1:110 $package $row)))
+   (let (gslt:result:StateTableLoweringV1:110000 $tableId $arity $keyArity $lifetime) (gslt:fn:StateTableLoweringV1:110000 $package $table)
+   (let (gslt:result:LowerStateRowV1:110 $lowerRow) (gslt:fn:LowerStateRowV1:110 $package $row)
    (quote (gslt:result:LowerStateActionV1:110 (ActionsConsV1 (StateRequireEachV1 $role $tableId $lowerRow) ActionsNilV1))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=35 source-presentation=RelationalStateTransitionCompilerV1 source-rule=lower-state-require-each-key-absent-v1 target=mode relation=LowerStateActionV1 input=110 functional=semidet
 (= (gslt:fn:LowerStateActionV1:110 $package (state-require-each-key-absent-v1 $role $table $row))
-   (let (gslt:result:StateTableLoweringV1:110000 $tableId $arity $keyArity $lifetime) (eval (quote (gslt:fn:StateTableLoweringV1:110000 $package $table)))
-   (let (gslt:result:LowerStateRowV1:110 $lowerRow) (eval (quote (gslt:fn:LowerStateRowV1:110 $package $row)))
+   (let (gslt:result:StateTableLoweringV1:110000 $tableId $arity $keyArity $lifetime) (gslt:fn:StateTableLoweringV1:110000 $package $table)
+   (let (gslt:result:LowerStateRowV1:110 $lowerRow) (gslt:fn:LowerStateRowV1:110 $package $row)
    (quote (gslt:result:LowerStateActionV1:110 (ActionsConsV1 (StateRequireEachKeyAbsentV1 $role $tableId $keyArity $lowerRow) ActionsNilV1))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=36 source-presentation=RelationalStateTransitionCompilerV1 source-rule=lower-state-insert-unordered-pairs-v1 target=mode relation=LowerStateActionV1 input=110 functional=semidet
 (= (gslt:fn:LowerStateActionV1:110 $package (state-insert-unordered-pairs-v1 $role $table $policy))
-   (let (gslt:result:StateTableLoweringV1:110000 $tableId $arity $keyArity $lifetime) (eval (quote (gslt:fn:StateTableLoweringV1:110000 $package $table)))
-   (let (gslt:result:LowerStateWritePolicyV1:10 $lowerPolicy) (eval (quote (gslt:fn:LowerStateWritePolicyV1:10 $policy)))
+   (let (gslt:result:StateTableLoweringV1:110000 $tableId $arity $keyArity $lifetime) (gslt:fn:StateTableLoweringV1:110000 $package $table)
+   (let (gslt:result:LowerStateWritePolicyV1:10 $lowerPolicy) (gslt:fn:LowerStateWritePolicyV1:10 $policy)
    (quote (gslt:result:LowerStateActionV1:110 (ActionsConsV1 (StateRequirePairwiseDistinctV1 $role) (ActionsConsV1 (StateInsertAllPairsV1 $role $tableId $lowerPolicy) ActionsNilV1)))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=37 source-presentation=RelationalStateTransitionCompilerV1 source-rule=lower-state-require-row-v1 target=mode relation=LowerStateActionV1 input=110 functional=semidet
 (= (gslt:fn:LowerStateActionV1:110 $package (state-require-row-v1 $table $row))
-   (let (gslt:result:StateTableLoweringV1:110000 $tableId $arity $keyArity $lifetime) (eval (quote (gslt:fn:StateTableLoweringV1:110000 $package $table)))
-   (let (gslt:result:LowerStateRowV1:110 $lowerRow) (eval (quote (gslt:fn:LowerStateRowV1:110 $package $row)))
+   (let (gslt:result:StateTableLoweringV1:110000 $tableId $arity $keyArity $lifetime) (gslt:fn:StateTableLoweringV1:110000 $package $table)
+   (let (gslt:result:LowerStateRowV1:110 $lowerRow) (gslt:fn:LowerStateRowV1:110 $package $row)
    (quote (gslt:result:LowerStateActionV1:110 (ActionsConsV1 (StateRequireRowV1 $tableId $lowerRow) ActionsNilV1))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=38 source-presentation=RelationalStateTransitionCompilerV1 source-rule=lower-state-require-row-key-absent-v1 target=mode relation=LowerStateActionV1 input=110 functional=semidet
 (= (gslt:fn:LowerStateActionV1:110 $package (state-require-row-key-absent-v1 $table $row))
-   (let (gslt:result:StateTableLoweringV1:110000 $tableId $arity $keyArity $lifetime) (eval (quote (gslt:fn:StateTableLoweringV1:110000 $package $table)))
-   (let (gslt:result:LowerStateRowV1:110 $lowerRow) (eval (quote (gslt:fn:LowerStateRowV1:110 $package $row)))
+   (let (gslt:result:StateTableLoweringV1:110000 $tableId $arity $keyArity $lifetime) (gslt:fn:StateTableLoweringV1:110000 $package $table)
+   (let (gslt:result:LowerStateRowV1:110 $lowerRow) (gslt:fn:LowerStateRowV1:110 $package $row)
    (quote (gslt:result:LowerStateActionV1:110 (ActionsConsV1 (StateRequireRowKeyAbsentV1 $tableId $keyArity $lowerRow) ActionsNilV1))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=39 source-presentation=RelationalStateTransitionCompilerV1 source-rule=lower-state-insert-row-v1 target=mode relation=LowerStateActionV1 input=110 functional=semidet
 (= (gslt:fn:LowerStateActionV1:110 $package (state-insert-row-v1 $table $policy $row))
-   (let (gslt:result:StateTableLoweringV1:110000 $tableId $arity $keyArity $lifetime) (eval (quote (gslt:fn:StateTableLoweringV1:110000 $package $table)))
-   (let (gslt:result:LowerStateWritePolicyV1:10 $lowerPolicy) (eval (quote (gslt:fn:LowerStateWritePolicyV1:10 $policy)))
-   (let (gslt:result:LowerStateRowV1:110 $lowerRow) (eval (quote (gslt:fn:LowerStateRowV1:110 $package $row)))
+   (let (gslt:result:StateTableLoweringV1:110000 $tableId $arity $keyArity $lifetime) (gslt:fn:StateTableLoweringV1:110000 $package $table)
+   (let (gslt:result:LowerStateWritePolicyV1:10 $lowerPolicy) (gslt:fn:LowerStateWritePolicyV1:10 $policy)
+   (let (gslt:result:LowerStateRowV1:110 $lowerRow) (gslt:fn:LowerStateRowV1:110 $package $row)
    (quote (gslt:result:LowerStateActionV1:110 (ActionsConsV1 (StateInsertRowV1 $tableId $keyArity $lowerPolicy $lowerRow) ActionsNilV1)))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=40 source-presentation=RelationalStateTransitionCompilerV1 source-rule=lower-state-insert-each-v1 target=mode relation=LowerStateActionV1 input=110 functional=semidet
 (= (gslt:fn:LowerStateActionV1:110 $package (state-insert-each-v1 $role $table $policy $row))
-   (let (gslt:result:StateTableLoweringV1:110000 $tableId $arity $keyArity $lifetime) (eval (quote (gslt:fn:StateTableLoweringV1:110000 $package $table)))
-   (let (gslt:result:LowerStateWritePolicyV1:10 $lowerPolicy) (eval (quote (gslt:fn:LowerStateWritePolicyV1:10 $policy)))
-   (let (gslt:result:LowerStateRowV1:110 $lowerRow) (eval (quote (gslt:fn:LowerStateRowV1:110 $package $row)))
+   (let (gslt:result:StateTableLoweringV1:110000 $tableId $arity $keyArity $lifetime) (gslt:fn:StateTableLoweringV1:110000 $package $table)
+   (let (gslt:result:LowerStateWritePolicyV1:10 $lowerPolicy) (gslt:fn:LowerStateWritePolicyV1:10 $policy)
+   (let (gslt:result:LowerStateRowV1:110 $lowerRow) (gslt:fn:LowerStateRowV1:110 $package $row)
    (quote (gslt:result:LowerStateActionV1:110 (ActionsConsV1 (StateInsertEachV1 $role $tableId $keyArity $lowerPolicy $lowerRow) ActionsNilV1)))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=41 source-presentation=RelationalStateTransitionCompilerV1 source-rule=lower-state-insert-each-matching-v1 target=mode relation=LowerStateActionV1 input=110 functional=semidet
 (= (gslt:fn:LowerStateActionV1:110 $package (state-insert-each-matching-v1 $role $conditionTable $conditionRow $targetTable $policy $targetRow))
-   (let (gslt:result:StateTableLoweringV1:110000 $conditionTableId $conditionArity $conditionKeyArity $conditionLifetime) (eval (quote (gslt:fn:StateTableLoweringV1:110000 $package $conditionTable)))
-   (let (gslt:result:StateTableLoweringV1:110000 $targetTableId $targetArity $targetKeyArity $targetLifetime) (eval (quote (gslt:fn:StateTableLoweringV1:110000 $package $targetTable)))
-   (let (gslt:result:LowerStateWritePolicyV1:10 $lowerPolicy) (eval (quote (gslt:fn:LowerStateWritePolicyV1:10 $policy)))
-   (let (gslt:result:LowerStateRowV1:110 $lowerConditionRow) (eval (quote (gslt:fn:LowerStateRowV1:110 $package $conditionRow)))
-   (let (gslt:result:LowerStateRowV1:110 $lowerTargetRow) (eval (quote (gslt:fn:LowerStateRowV1:110 $package $targetRow)))
+   (let (gslt:result:StateTableLoweringV1:110000 $conditionTableId $conditionArity $conditionKeyArity $conditionLifetime) (gslt:fn:StateTableLoweringV1:110000 $package $conditionTable)
+   (let (gslt:result:StateTableLoweringV1:110000 $targetTableId $targetArity $targetKeyArity $targetLifetime) (gslt:fn:StateTableLoweringV1:110000 $package $targetTable)
+   (let (gslt:result:LowerStateWritePolicyV1:10 $lowerPolicy) (gslt:fn:LowerStateWritePolicyV1:10 $policy)
+   (let (gslt:result:LowerStateRowV1:110 $lowerConditionRow) (gslt:fn:LowerStateRowV1:110 $package $conditionRow)
+   (let (gslt:result:LowerStateRowV1:110 $lowerTargetRow) (gslt:fn:LowerStateRowV1:110 $package $targetRow)
    (quote (gslt:result:LowerStateActionV1:110 (ActionsConsV1 (StateInsertEachMatchingV1 $role $conditionTableId $lowerConditionRow $targetTableId $targetKeyArity $lowerPolicy $lowerTargetRow) ActionsNilV1)))))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=42 source-presentation=RelationalStateTransitionCompilerV1 source-rule=lower-state-copy-each-row-v1 target=mode relation=LowerStateActionV1 input=110 functional=semidet
 (= (gslt:fn:LowerStateActionV1:110 $package (state-copy-each-row-v1 $sourceTable $targetTable $policy $targetRow))
-   (let (gslt:result:StateTableLoweringV1:110000 $sourceTableId $sourceArity $sourceKeyArity $sourceLifetime) (eval (quote (gslt:fn:StateTableLoweringV1:110000 $package $sourceTable)))
-   (let (gslt:result:StateTableLoweringV1:110000 $targetTableId $targetArity $targetKeyArity $targetLifetime) (eval (quote (gslt:fn:StateTableLoweringV1:110000 $package $targetTable)))
-   (let (gslt:result:LowerStateWritePolicyV1:10 $lowerPolicy) (eval (quote (gslt:fn:LowerStateWritePolicyV1:10 $policy)))
-   (let (gslt:result:LowerStateRowV1:110 $lowerTargetRow) (eval (quote (gslt:fn:LowerStateRowV1:110 $package $targetRow)))
+   (let (gslt:result:StateTableLoweringV1:110000 $sourceTableId $sourceArity $sourceKeyArity $sourceLifetime) (gslt:fn:StateTableLoweringV1:110000 $package $sourceTable)
+   (let (gslt:result:StateTableLoweringV1:110000 $targetTableId $targetArity $targetKeyArity $targetLifetime) (gslt:fn:StateTableLoweringV1:110000 $package $targetTable)
+   (let (gslt:result:LowerStateWritePolicyV1:10 $lowerPolicy) (gslt:fn:LowerStateWritePolicyV1:10 $policy)
+   (let (gslt:result:LowerStateRowV1:110 $lowerTargetRow) (gslt:fn:LowerStateRowV1:110 $package $targetRow)
    (quote (gslt:result:LowerStateActionV1:110 (ActionsConsV1 (StateCopyEachRowV1 $sourceTableId $targetTableId $targetKeyArity $lowerPolicy $lowerTargetRow) ActionsNilV1))))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=43 source-presentation=RelationalStateTransitionCompilerV1 source-rule=lower-state-copy-each-row-matching-v1 target=mode relation=LowerStateActionV1 input=110 functional=semidet
 (= (gslt:fn:LowerStateActionV1:110 $package (state-copy-each-row-matching-v1 $sourceTable $conditionTable $conditionRow $targetTable $policy $targetRow))
-   (let (gslt:result:StateTableLoweringV1:110000 $sourceTableId $sourceArity $sourceKeyArity $sourceLifetime) (eval (quote (gslt:fn:StateTableLoweringV1:110000 $package $sourceTable)))
-   (let (gslt:result:StateTableLoweringV1:110000 $conditionTableId $conditionArity $conditionKeyArity $conditionLifetime) (eval (quote (gslt:fn:StateTableLoweringV1:110000 $package $conditionTable)))
-   (let (gslt:result:StateTableLoweringV1:110000 $targetTableId $targetArity $targetKeyArity $targetLifetime) (eval (quote (gslt:fn:StateTableLoweringV1:110000 $package $targetTable)))
-   (let (gslt:result:LowerStateWritePolicyV1:10 $lowerPolicy) (eval (quote (gslt:fn:LowerStateWritePolicyV1:10 $policy)))
-   (let (gslt:result:LowerStateRowV1:110 $lowerConditionRow) (eval (quote (gslt:fn:LowerStateRowV1:110 $package $conditionRow)))
-   (let (gslt:result:LowerStateRowV1:110 $lowerTargetRow) (eval (quote (gslt:fn:LowerStateRowV1:110 $package $targetRow)))
+   (let (gslt:result:StateTableLoweringV1:110000 $sourceTableId $sourceArity $sourceKeyArity $sourceLifetime) (gslt:fn:StateTableLoweringV1:110000 $package $sourceTable)
+   (let (gslt:result:StateTableLoweringV1:110000 $conditionTableId $conditionArity $conditionKeyArity $conditionLifetime) (gslt:fn:StateTableLoweringV1:110000 $package $conditionTable)
+   (let (gslt:result:StateTableLoweringV1:110000 $targetTableId $targetArity $targetKeyArity $targetLifetime) (gslt:fn:StateTableLoweringV1:110000 $package $targetTable)
+   (let (gslt:result:LowerStateWritePolicyV1:10 $lowerPolicy) (gslt:fn:LowerStateWritePolicyV1:10 $policy)
+   (let (gslt:result:LowerStateRowV1:110 $lowerConditionRow) (gslt:fn:LowerStateRowV1:110 $package $conditionRow)
+   (let (gslt:result:LowerStateRowV1:110 $lowerTargetRow) (gslt:fn:LowerStateRowV1:110 $package $targetRow)
    (quote (gslt:result:LowerStateActionV1:110 (ActionsConsV1 (StateCopyEachRowMatchingV1 $sourceTableId $conditionTableId $lowerConditionRow $targetTableId $targetKeyArity $lowerPolicy $lowerTargetRow) ActionsNilV1))))))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=44 source-presentation=RelationalStateTransitionCompilerV1 source-rule=lower-state-check-proof-normal-v1 target=mode relation=LowerStateActionV1 input=110 functional=semidet
 (= (gslt:fn:LowerStateActionV1:110 $package (state-check-proof-normal-v1 $machine $labelRole $formulaRole $stepRole))
-   (let gslt:result:StateTransitionPackageV1:1 (eval (quote (gslt:fn:StateTransitionPackageV1:1 $package)))
+   (let gslt:result:StateTransitionPackageV1:1 (gslt:fn:StateTransitionPackageV1:1 $package)
    (quote (gslt:result:LowerStateActionV1:110 (ActionsConsV1 (StateCheckProofNormalV1 $machine $labelRole $formulaRole $stepRole) ActionsNilV1)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=45 source-presentation=RelationalStateTransitionCompilerV1 source-rule=lower-state-check-proof-compressed-v1 target=mode relation=LowerStateActionV1 input=110 functional=semidet
 (= (gslt:fn:LowerStateActionV1:110 $package (state-check-proof-compressed-v1 $machine $labelRole $formulaRole $stepRole $codeRole))
-   (let gslt:result:StateTransitionPackageV1:1 (eval (quote (gslt:fn:StateTransitionPackageV1:1 $package)))
+   (let gslt:result:StateTransitionPackageV1:1 (gslt:fn:StateTransitionPackageV1:1 $package)
    (quote (gslt:result:LowerStateActionV1:110 (ActionsConsV1 (StateCheckProofCompressedV1 $machine $labelRole $formulaRole $stepRole $codeRole) ActionsNilV1)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=61 source-presentation=GeneratedAnswerFactsV1_43359b73f5920b7172d974e5aa8c1caad3678e57e7248880dd3f95c74f835c76 source-rule=answer-fact-b8754bff4d4e22c6241bd27b4854915f6ffc72a8f607de7a26ff7f65d95deb95 target=mode relation=state-action-v1 input=000 functional=relational
@@ -2446,7 +2446,7 @@
 
 ; gslt-lowered-equation-v1 source-rewrite=21 source-presentation=RelationalStateTransitionCompilerV1 source-rule=lower-state-final-action-record-v1 target=mode relation=StateLoweredFinalActionV1 input=100 functional=semidet
 (= (gslt:fn:StateLoweredFinalActionV1:100 $package)
-   (let gslt:result:StateTransitionPackageV1:1 (eval (quote (gslt:fn:StateTransitionPackageV1:1 $package)))
+   (let gslt:result:StateTransitionPackageV1:1 (gslt:fn:StateTransitionPackageV1:1 $package)
    (let $_ (gslt:state-final-action-v1 (state-final-action-v1 $index $action))
    (let (gslt:result:LowerStateActionV1:100 $action $actions) (superpose (collapse (gslt:mode:LowerStateActionV1:100 $package)))
    (quote (gslt:result:StateLoweredFinalActionV1:100 $index $actions))))))
@@ -2473,12 +2473,12 @@
 
 ; gslt-lowered-equation-v1 source-rewrite=0 source-presentation=RelationalStateTransitionCompilerV1 source-rule=lower-state-table-v1 target=mode relation=StateTableLoweringV1 input=110000 functional=semidet
 (= (gslt:fn:StateTableLoweringV1:110000 $package $table)
-   (let gslt:result:StateTransitionPackageV1:1 (eval (quote (gslt:fn:StateTransitionPackageV1:1 $package)))
-   (let (gslt:result:state-table-v1:1000 $rawArity $rawKeyArity $rawLifetime) (eval (quote (gslt:fn:state-table-v1:1000 $table)))
-   (let (gslt:result:StateDenseIdentityV1:1110 $tableId) (eval (quote (gslt:fn:StateDenseIdentityV1:1110 $package StateTableKindV1 $table)))
-   (let (gslt:result:StateNatBindingV1:110 $arity) (eval (quote (gslt:fn:StateNatBindingV1:110 $package $rawArity)))
-   (let (gslt:result:StateNatBindingV1:110 $keyArity) (eval (quote (gslt:fn:StateNatBindingV1:110 $package $rawKeyArity)))
-   (let (gslt:result:LowerStateLifetimeV1:10 $lifetime) (eval (quote (gslt:fn:LowerStateLifetimeV1:10 $rawLifetime)))
+   (let gslt:result:StateTransitionPackageV1:1 (gslt:fn:StateTransitionPackageV1:1 $package)
+   (let (gslt:result:state-table-v1:1000 $rawArity $rawKeyArity $rawLifetime) (gslt:fn:state-table-v1:1000 $table)
+   (let (gslt:result:StateDenseIdentityV1:1110 $tableId) (gslt:fn:StateDenseIdentityV1:1110 $package StateTableKindV1 $table)
+   (let (gslt:result:StateNatBindingV1:110 $arity) (gslt:fn:StateNatBindingV1:110 $package $rawArity)
+   (let (gslt:result:StateNatBindingV1:110 $keyArity) (gslt:fn:StateNatBindingV1:110 $package $rawKeyArity)
+   (let (gslt:result:LowerStateLifetimeV1:10 $lifetime) (gslt:fn:LowerStateLifetimeV1:10 $rawLifetime)
    (quote (gslt:result:StateTableLoweringV1:110000 $tableId $arity $keyArity $lifetime)))))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=11 source-presentation=RelationalStateTransitionCompilerV1 source-rule=lower-state-row-input-v1 target=mode relation=LowerStateRowValueV1 input=100 functional=relational

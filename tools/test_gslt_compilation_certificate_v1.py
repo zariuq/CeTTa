@@ -48,6 +48,8 @@ def producer_command(arguments: argparse.Namespace, output: Path) -> list[str]:
         arguments.symbol,
         "--generator",
         str(arguments.generator),
+        "--compiler-kind",
+        arguments.compiler_kind,
         "--schema",
         str(arguments.schema),
         "--certificate",
@@ -65,6 +67,7 @@ def checker_command(
     source_root: Path | None = None,
     source: Path | None = None,
     schema: Path | None = None,
+    generator: Path | None = None,
 ) -> list[str]:
     return [
         str(arguments.checker),
@@ -73,7 +76,7 @@ def checker_command(
         str(source_root or arguments.source_root),
         str(arguments.header),
         str(source or arguments.source),
-        str(arguments.generator),
+        str(generator or arguments.generator),
         str(schema or arguments.schema),
     ]
 
@@ -111,6 +114,7 @@ def main() -> int:
     parser.add_argument("--checker", type=Path, required=True)
     parser.add_argument("--producer", type=Path, required=True)
     parser.add_argument("--generator", type=Path, required=True)
+    parser.add_argument("--compiler-kind", choices=("python", "native"), default="python")
     parser.add_argument("--schema", type=Path, required=True)
     parser.add_argument("--manifest", type=Path, required=True)
     parser.add_argument("--source-root", type=Path, required=True)
@@ -210,12 +214,15 @@ def main() -> int:
             expect_success=False,
         )
 
-        corrupt_schema = temporary / "gslt2parse_schema_v1.py"
-        corrupt_schema.write_bytes(
-            arguments.schema.read_bytes() + b"\n# compiler tamper\n"
-        )
+        corrupt_compiler = temporary / "compiler-tamper"
+        compiler_input = (arguments.generator if arguments.compiler_kind == "native"
+                          else arguments.schema)
+        corrupt_compiler.write_bytes(compiler_input.read_bytes() + b"\n# compiler tamper\n")
+        substitution = ({"generator": corrupt_compiler}
+                        if arguments.compiler_kind == "native"
+                        else {"schema": corrupt_compiler})
         run(
-            checker_command(arguments, first, schema=corrupt_schema),
+            checker_command(arguments, first, **substitution),
             expect_success=False,
         )
 
