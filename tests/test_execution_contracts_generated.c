@@ -430,6 +430,7 @@ static void test_generated_prepared_intrinsic_program(void) {
     bool saw_division = false, saw_sort_numbers = false;
     bool saw_remove_all = false, saw_unkey = false;
     bool saw_retain_top_k = false, saw_cons = false, saw_union = false;
+    unsigned dual_numeric_heads = 0u;
 #define COUNT_PREPARED_INTRINSIC_HEAD(                                  \
     field, arity, discipline, instruction) do {                         \
     assert((discipline) ==                                              \
@@ -446,6 +447,19 @@ static void test_generated_prepared_intrinsic_program(void) {
         assert((arity) == 2u);                                          \
         assert((instruction) ==                                         \
                CETTA_GSLT_PREPARED_PURE_INTRINSIC_GROUNDED_DISPATCH);   \
+    }                                                                   \
+    if (strcmp(#field, "op_plus") == 0 ||                             \
+        strcmp(#field, "op_minus") == 0 ||                            \
+        strcmp(#field, "op_mul") == 0 ||                              \
+        strcmp(#field, "op_lt") == 0 ||                               \
+        strcmp(#field, "op_gt") == 0 ||                               \
+        strcmp(#field, "op_le") == 0 ||                               \
+        strcmp(#field, "op_ge") == 0 ||                               \
+        strcmp(#field, "numeric_eq") == 0) {                          \
+        assert((arity) == 2u);                                          \
+        assert((instruction) ==                                         \
+               CETTA_GSLT_PREPARED_PURE_INTRINSIC_GROUNDED_DISPATCH);   \
+        dual_numeric_heads++;                                           \
     }                                                                   \
     if (strcmp(#field, "remove_all_atom") == 0) saw_remove_all = true; \
     if (strcmp(#field, "retain_top_k_keyed_atom") == 0)                \
@@ -471,6 +485,7 @@ static void test_generated_prepared_intrinsic_program(void) {
     assert(saw_division && saw_sort_numbers && saw_remove_all);
     assert(saw_retain_top_k && saw_unkey);
     assert(saw_cons && saw_union);
+    assert(dual_numeric_heads == 8u);
 }
 
 static void test_generated_pure_call_modes(void) {

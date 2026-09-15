@@ -2347,10 +2347,16 @@ static bool petta_specializer_analyze_call(
         return true;
     }
     if (petta_specializer_relevance_filter_enabled()) {
+        uint64_t instance = space_instance_id(context->space);
+        uint64_t revision = space_revision(context->space);
         PettaRelationRelevance relation_relevance =
-            petta_relation_specialization_relevance(
-                context, source);
-        if (relation_relevance ==
+            PETTA_RELATION_RELEVANCE_UNKNOWN;
+        bool relation_cached =
+            petta_relation_relevance_cache_lookup(
+                context->space, instance, revision, source,
+                &relation_relevance);
+        if (relation_cached &&
+            relation_relevance ==
                 PETTA_RELATION_RELEVANCE_IRRELEVANT) {
             analysis->relation_filtered = true;
             return true;
@@ -2360,6 +2366,16 @@ static bool petta_specializer_analyze_call(
                 context, call);
         if (relevance == PETTA_RELEVANCE_NO) {
             analysis->filtered = true;
+            return true;
+        }
+        if (!relation_cached) {
+            relation_relevance =
+                petta_relation_specialization_relevance(
+                    context, source);
+        }
+        if (relation_relevance ==
+            PETTA_RELATION_RELEVANCE_IRRELEVANT) {
+            analysis->relation_filtered = true;
             return true;
         }
         if (relevance == PETTA_RELEVANCE_NODE_BUDGET) {

@@ -7532,8 +7532,8 @@ bool space_head_has_arrow_signature(Space *s, SymbolId head,
     return shadowed;
 }
 
-bool space_prepare_single_equation(Space *s, SymbolId head,
-                                   SpacePreparedEquation *out) {
+static bool space_prepare_single_equation_uncached(
+        Space *s, SymbolId head, SpacePreparedEquation *out) {
     SpacePreparedEquation plan;
     CettaIndex logical_index = 0u;
     Atom *equation;
@@ -7593,6 +7593,53 @@ bool space_prepare_single_equation(Space *s, SymbolId head,
     }
     *out = plan;
     return true;
+}
+
+bool space_prepare_single_equation(Space *s, SymbolId head,
+                                   SpacePreparedEquation *out) {
+    enum { PREPARED_EQUATION_CACHE_SLOTS = 64 };
+    typedef struct {
+        SpaceReadToken read;
+        SymbolId head;
+        SpacePreparedEquation plan;
+        bool applicable;
+        bool valid;
+    } PreparedEquationCacheEntry;
+    static _Thread_local PreparedEquationCacheEntry
+        cache[PREPARED_EQUATION_CACHE_SLOTS];
+
+    if (out)
+        memset(out, 0, sizeof(*out));
+    if (!s || !out || head == SYMBOL_ID_NONE)
+        return false;
+
+    SpaceReadToken read = space_read_token(s);
+    size_t slot = ((size_t)head * 31u +
+                   (size_t)read.revision) &
+                  (PREPARED_EQUATION_CACHE_SLOTS - 1u);
+    PreparedEquationCacheEntry *entry = &cache[slot];
+    if (entry->valid && entry->read.space == read.space &&
+        entry->read.instance_id == read.instance_id &&
+        entry->read.revision == read.revision &&
+        entry->head == head) {
+        if (entry->applicable)
+            *out = entry->plan;
+        return entry->applicable;
+    }
+
+    SpacePreparedEquation plan;
+    bool applicable = space_prepare_single_equation_uncached(
+        s, head, &plan);
+    *entry = (PreparedEquationCacheEntry){
+        .read = read,
+        .head = head,
+        .plan = plan,
+        .applicable = applicable,
+        .valid = true,
+    };
+    if (applicable)
+        *out = plan;
+    return applicable;
 }
 
 static Atom *prepared_equation_instantiate_rec(

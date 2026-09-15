@@ -4042,6 +4042,37 @@ static Atom *prepared_pure_execute_intrinsic(
     return NULL;
 }
 
+/* A head can have two authored realizations: a representation-specific
+ * register arm and a general pure intrinsic. Compose them at the ready-value
+ * boundary, without replaying operand computations. The register result kind
+ * describes only that arm; the intrinsic retains its own value contract. */
+static Atom *prepared_pure_execute_register_intrinsic(
+    const CettaPreparedPureProgram *program, Arena *arena,
+    CettaGsltRegisterResultKind expected_kind,
+    Atom *head, Atom *const *arguments, uint32_t arity) {
+    CettaGsltPreparedPureIntrinsicInstruction intrinsic_instruction;
+    if (!head || head->kind != ATOM_SYMBOL ||
+        !prepared_pure_intrinsic_program(
+            head->sym_id, arity, &intrinsic_instruction) ||
+        intrinsic_instruction !=
+            CETTA_GSLT_PREPARED_PURE_INTRINSIC_GROUNDED_DISPATCH)
+        return NULL;
+    Atom *result = prepared_pure_execute_intrinsic(
+        program, arena, intrinsic_instruction, head, arguments, arity);
+    if (result && expected_kind == CETTA_GSLT_REGISTER_RESULT_BOOLEAN) {
+        /* Grounded comparison truth is shared; its public representation is
+         * owned by the calling dialect, just as for the exact register arm. */
+        if (!program->boolean_value)
+            return NULL;
+        if (prepared_pure_is_true(result))
+            return program->boolean_value(arena, true);
+        if (prepared_pure_is_false(result))
+            return program->boolean_value(arena, false);
+        return NULL;
+    }
+    return result;
+}
+
 static bool prepared_pure_push_dynamic_frame(
     CettaPreparedPureProgram *program, Atom *atom) {
     if (!program || !atom || program->dynamic_value_len > UINT32_MAX ||
@@ -4133,6 +4164,10 @@ static bool prepared_pure_eval_dynamic_register_value(
             : prepared_pure_execute_intrinsic(
                   program, arena, intrinsic_instruction, head,
                   &program->dynamic_values[frame->value_base], arity);
+        if (!result && is_register)
+            result = prepared_pure_execute_register_intrinsic(
+                program, arena, result_kind, head,
+                &program->dynamic_values[frame->value_base], arity);
         program->dynamic_value_len = frame->value_base;
         if (!result || atom_is_error(result) ||
             !prepared_pure_push_dynamic_value(program, result))
@@ -5415,6 +5450,10 @@ static bool PREPARED_PURE_HOT prepared_pure_program_execute_internal(
                     : prepared_pure_execute_intrinsic(
                           program, arena, intrinsic_instruction, head,
                           &program->values[frame->value_base], arity);
+                if (!result && is_register)
+                    result = prepared_pure_execute_register_intrinsic(
+                        program, arena, result_kind, head,
+                        &program->values[frame->value_base], arity);
                 program->value_len = frame->value_base;
                 if (!result || atom_is_error(result) ||
                     !prepared_pure_push_value(program, result))
@@ -5703,8 +5742,13 @@ static bool PREPARED_PURE_HOT prepared_pure_program_execute_internal(
             Atom *result = prepared_pure_execute_register(
                 program, arena, node->instruction, node->result_kind,
                 &program->values[frame->value_base], node->child_count);
+            if (!result)
+                result = prepared_pure_execute_register_intrinsic(
+                    program, arena, node->result_kind, node->atom,
+                    &program->values[frame->value_base], node->child_count);
             program->value_len = frame->value_base;
-            if (!result || atom_is_error(result) ||
+            if (!result ||
+                (result->kind == ATOM_EXPR && atom_is_error(result)) ||
                 !prepared_pure_push_value(program, result))
                 return prepared_pure_runtime_decline(
                     program, "generated register arm declined", node);

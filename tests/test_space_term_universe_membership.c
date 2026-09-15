@@ -1109,14 +1109,25 @@ int main(void) {
                 atom_symbol_id(&equation_scratch, g_builtin_syms.equals),
                 atom_expr(&equation_scratch, lhs_elems, 3u),
                 atom_expr(&equation_scratch, rhs_elems, 4u));
+            SpacePreparedEquation plan;
+            assert(!space_prepare_single_equation(
+                &prepared_space, prepared_head, &plan));
             space_add(&prepared_space, prepared_equation);
 
-            SpacePreparedEquation plan;
             assert(space_prepare_single_equation(
                 &prepared_space, prepared_head, &plan));
             assert(plan.arity == 2u);
             assert(cetta_gslt_prepared_equation_plan_admitted(
                 plan.evidence));
+            SpacePreparedEquation repeated_plan;
+            assert(space_prepare_single_equation(
+                &prepared_space, prepared_head, &repeated_plan));
+            assert(repeated_plan.equation == plan.equation);
+            assert(repeated_plan.occurrence.read.instance_id ==
+                   plan.occurrence.read.instance_id);
+            assert(repeated_plan.occurrence.read.revision ==
+                   plan.occurrence.read.revision);
+            assert(repeated_plan.evidence == plan.evidence);
 
             /* Aliased arguments and a register used twice on the RHS retain
              * one immutable value identity; no ownership is duplicated. */
@@ -1159,6 +1170,11 @@ int main(void) {
                 &plan,
                 atom_expr(&equation_scratch, call_elems, 3u),
                 &equation_scratch));
+            assert(!space_prepare_single_equation(
+                &prepared_space, prepared_head, &plan));
+            space_free(&prepared_space);
+            space_init_with_universe(
+                &prepared_space, &equation_universe);
             assert(!space_prepare_single_equation(
                 &prepared_space, prepared_head, &plan));
             space_free(&prepared_space);

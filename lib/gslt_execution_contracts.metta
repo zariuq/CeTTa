@@ -635,6 +635,26 @@
   (register-head <= 2 boolean integer-less-equal)
   (register-head >= 2 boolean integer-greater-equal)
   (register-head numeric-eq 2 boolean integer-equal)
+  ; These heads have both an exact register interpretation and a general
+  ; pure value interpretation. A register refusal may use the intrinsic on
+  ; the already evaluated operands. Its result is not an exact-integer claim;
+  ; errors and nonvalues still leave the enclosing speculative execution.
+  (prepared-pure-intrinsic-head
+    + 2 strict-all grounded-dispatch)
+  (prepared-pure-intrinsic-head
+    - 2 strict-all grounded-dispatch)
+  (prepared-pure-intrinsic-head
+    * 2 strict-all grounded-dispatch)
+  (prepared-pure-intrinsic-head
+    < 2 strict-all grounded-dispatch)
+  (prepared-pure-intrinsic-head
+    > 2 strict-all grounded-dispatch)
+  (prepared-pure-intrinsic-head
+    <= 2 strict-all grounded-dispatch)
+  (prepared-pure-intrinsic-head
+    >= 2 strict-all grounded-dispatch)
+  (prepared-pure-intrinsic-head
+    numeric-eq 2 strict-all grounded-dispatch)
   (prepared-pure-intrinsic-head
     / 2 strict-all grounded-dispatch)
   (prepared-pure-intrinsic-head
