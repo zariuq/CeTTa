@@ -1,0 +1,21 @@
+true
+(EbnfOptionalEmptyV1 true true true true true)
+(EbnfChoiceMultiplicityV1 1 1 1 1)
+(EbnfRecursiveLeavesV1 (LCons (literal "(" (EBNF:InputSpan 0 1)) (LCons (literal "(" (EBNF:InputSpan 1 2)) (LCons (literal ")" (EBNF:InputSpan 2 3)) (LCons (literal "(" (EBNF:InputSpan 3 4)) (LCons (literal ")" (EBNF:InputSpan 4 5)) (LCons (literal ")" (EBNF:InputSpan 5 6)) LNil)))))))
+(EbnfUnicodeLeavesV1 (LCons (literal "λ" (EBNF:InputSpan 0 1)) (LCons (literal "雪" (EBNF:InputSpan 1 2)) (LCons (literal "!" (EBNF:InputSpan 2 3)) LNil))))
+(EbnfLexicalLeavesV1 (LCons (lexical "name-char" "bnf-source-v1:lex-name-char" (EBNF:InputSpan 0 1) 120) (LCons (lexical "name-char" "bnf-source-v1:lex-name-char" (EBNF:InputSpan 1 2) 121) LNil)))
+(EbnfProjectedSelfReadV1 true)
+EbnfProjectionRefusedV1
+EbnfProjectionRefusedV1
+EbnfProjectionRefusedV1
+EbnfProjectionRefusedV1
+(EbnfDuplicateCstOccurrencesV1 true)
+(EbnfExpressionItemsV1 (LCons tag (LCons 7 (LCons (nested "雪") (LCons 7 LNil)))))
+(EbnfEmptyExpressionV1 LNil)
+(EbnfGroundEqualityV1 LangDef:SameValue LangDef:DifferentValue LangDef:DifferentValue)
+EbnfProjectionRefusedV1
+EbnfProjectionRefusedV1
+EbnfEmptyCstTupleV1
+(EbnfEditedOccurrenceProjectionV1 (distinct-occurrences false true) (distinct-occurrences false true))
+EbnfBadReceiptNotAcceptedV1
+EbnfBadTreeNotAcceptedV1

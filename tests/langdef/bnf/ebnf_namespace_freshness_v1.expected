@@ -1,0 +1,4 @@
+true
+(EbnfNamespaceFreshV1 declaration true)
+(EbnfNamespaceFreshV1 nested-reference true)
+(EbnfNamespaceFreshV1 lexical true)

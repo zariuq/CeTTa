@@ -3252,8 +3252,13 @@ static bool atom_has_constructor_head(Space *s, Arena *a, Atom *atom) {
     if (head->kind == ATOM_GROUNDED)
         return head->ground.gkind != GV_CAPTURE &&
                head->ground.gkind != GV_FOREIGN;
+    /* LCons is interned for the native list consumers, not an evaluator
+     * operation. Let it pass the same equation, callable and type checks as
+     * any other constructor. Its fields must still pass the normal-form
+     * walk; neither this spelling nor its children are unconditionally data. */
     if (head->kind != ATOM_SYMBOL ||
-        symbol_id_is_builtin(head->sym_id) ||
+        (symbol_id_is_builtin(head->sym_id) &&
+         head->sym_id != g_builtin_syms.llist_cons) ||
         is_grounded_op(head->sym_id) ||
         (g_library_context && g_library_context->foreign_runtime &&
          cetta_foreign_is_callable_atom(head)) ||
@@ -3307,8 +3312,17 @@ static bool atom_is_constructor_normal_form(Space *s, Arena *a, Atom *atom,
     PUSH_ATOM(atom);
     while (len > 0) {
         Atom *cur = stack[--len];
-        if (!cur || atom_is_legacy_empty_sentinel(cur) || atom_is_error(cur) ||
-            atom_eval_is_immediate_value(cur, fuel)) {
+        /* Tuple evaluation propagates errors and Empty rather than keeping
+         * them as fields. PeTTa also normalizes symbolic truth values when
+         * evaluating a field. None is an already-normal constructor payload. */
+        if (!cur || atom_is_legacy_empty_sentinel(cur) || atom_is_error(cur))
+            goto done;
+        bool truth = false;
+        if (eval_current_language_id() == CETTA_LANGUAGE_PETTA &&
+            cur->kind == ATOM_SYMBOL &&
+            petta_semantics_truth_value(cur, &truth))
+            goto done;
+        if (atom_eval_is_immediate_value(cur, fuel)) {
             continue;
         }
         if (cur->kind != ATOM_EXPR || cur->expr.len == 0)
@@ -11144,7 +11158,7 @@ static bool hyperpose_external_unsafe_head(Atom *head) {
     return symbol_name_has_prefix(head, "mork:") ||
            symbol_name_has_prefix(head, "mm2:") ||
            symbol_name_has_prefix(head, "prolog:") ||
-           symbol_name_equals(head, "fs:write-text") ||
+           symbol_name_equals(head, "fs:write") ||
            symbol_name_equals(head, "fs:append-text") ||
            symbol_name_equals(head, "io:submit") ||
            symbol_name_equals(head, "io:poll") ||
@@ -11157,7 +11171,7 @@ static bool hyperpose_external_unsafe_head(Atom *head) {
 
 static bool hyperpose_internal_unsafe_head(SymbolId head_id, Atom *head) {
     if (head_id == g_builtin_syms.lib_system_exit_with_code ||
-        head_id == g_builtin_syms.lib_fs_write_text ||
+        head_id == g_builtin_syms.lib_fs_write ||
         head_id == g_builtin_syms.lib_fs_append_text ||
         head_id == g_builtin_syms.lib_io_submit ||
         head_id == g_builtin_syms.lib_io_poll ||
@@ -11642,7 +11656,7 @@ static Atom *hyperpose_clone_atom_materialized(
     case ATOM_GROUNDED:
         switch (src->ground.gkind) {
         case GV_INT:
-            return atom_int(owner, src->ground.ival);
+            return atom_int_copy(owner, src);
         case GV_FLOAT:
             return atom_float(owner, src->ground.fval);
         case GV_BOOL:
@@ -12212,7 +12226,7 @@ static Atom *hyperpose_transfer_atom(HyperposeResourceTransfer *transfer,
     case ATOM_GROUNDED:
         switch (source->ground.gkind) {
         case GV_INT:
-            return atom_int(owner, source->ground.ival);
+            return atom_int_copy(owner, source);
         case GV_FLOAT:
             return atom_float(owner, source->ground.fval);
         case GV_BOOL:
@@ -19977,7 +19991,12 @@ static bool prime_need_atom_has_observable_ref(Atom *root) {
     items[0] = root;
     while (len > 0u) {
         Atom *atom = items[--len];
-        if (!atom || !outcome_preview_seen_add(&seen, atom))
+        /* Registry-reference summaries are compositional on every subtree,
+         * not only at the root.  A large ordinary payload may sit beside one
+         * private reference in an outer call; do not traverse that payload
+         * while locating the reference. */
+        if (!atom || !atom_has_registry_refs(atom) ||
+            !outcome_preview_seen_add(&seen, atom))
             continue;
         if (prime_need_ref_belongs_to(atom, &g_prime_need_active, NULL)) {
             if (items != inline_items)
@@ -36768,7 +36787,8 @@ static PettaMachineHostMode petta_eval_machine_classify_host(
      * Unknown post-registry symbols still remain inert.
      */
     if (head->kind == ATOM_SYMBOL &&
-        symbol_id_is_builtin(head->sym_id)) {
+        symbol_id_is_builtin(head->sym_id) &&
+        petta_program_head_is_intrinsic(head->sym_id)) {
         /*
          * A shared builtin symbol is only a PeTTa host operation when PeTTa
          * has not defined an exact relation with the same head and arity.
@@ -36847,30 +36867,6 @@ petta_eval_machine_admit_space_query(
                PETTA_SPECIALIZER_RELATION_IRRELEVANT
         ? PETTA_MACHINE_SPACE_QUERY_ADMITTED
         : PETTA_MACHINE_SPACE_QUERY_DEFER;
-}
-
-static PettaMachineQuerySpecializationAdmission
-petta_eval_machine_admit_query_without_specialization(
-        void *context, Space *space,
-        SymbolId head, Atom *const *arguments,
-        CettaExprLen arity) {
-    PettaEvalMachineContext *eval_context = context;
-    if (!eval_context || !space || head == SYMBOL_ID_NONE ||
-        eval_context->transaction ||
-        !eval_context->library_context ||
-        !eval_context->library_context->petta_program ||
-        petta_program_head_is_intrinsic(head)) {
-        return PETTA_MACHINE_QUERY_SPECIALIZATION_DEFER;
-    }
-    PettaSpecializerRelationAdmission admission =
-        petta_specializer_query_execution_admission(
-            space, head, arguments, arity);
-    if (admission == PETTA_SPECIALIZER_RELATION_INVALIDATED) {
-        return PETTA_MACHINE_QUERY_SPECIALIZATION_INVALIDATED;
-    }
-    return admission == PETTA_SPECIALIZER_RELATION_IRRELEVANT
-        ? PETTA_MACHINE_QUERY_SPECIALIZATION_BYPASS
-        : PETTA_MACHINE_QUERY_SPECIALIZATION_DEFER;
 }
 
 static bool petta_eval_machine_resolve_value_reference(
@@ -37557,16 +37553,17 @@ static bool petta_eval_machine_admits_root(
     }
 
     SymbolId head = atom_head_symbol_id(expression);
-    /* Deferred authored occurrences need the plan-aware owner so their
-       positional roles survive until the later evaluation stage.  Ordinary
-       plans remain classification evidence and do not seize execution
-       authority merely by being present. */
+    /* Authored data roots assemble fields under their PeTTa occurrence
+       plans: a failed call gives no answer, while literal Error/Empty fields
+       are data. The shared tuple evaluator has a different contract.
+       Deferred occurrences likewise retain their plan-aware owner. */
     if (!prime_plan &&
         eval_current_language_id() == CETTA_LANGUAGE_PETTA &&
         expression == g_petta_source_plan_atom &&
         g_petta_source_plan &&
-        g_petta_source_plan
-            ->contains_deferred_occurrence_transport) {
+        (g_petta_source_plan->role == PETTA_PLAN_DATA ||
+         g_petta_source_plan
+             ->contains_deferred_occurrence_transport)) {
         return true;
     }
 
@@ -38303,8 +38300,6 @@ static bool petta_eval_machine_try(
         .builtin_allowed = petta_eval_machine_builtin_allowed,
         .callability_authority_token =
             petta_eval_machine_semantic_authority_token,
-        .admit_query_without_specialization =
-            petta_eval_machine_admit_query_without_specialization,
         .admit_space_query =
             petta_eval_machine_admit_space_query,
         .resolve_space = petta_eval_machine_resolve_space,
@@ -39080,6 +39075,8 @@ static bool petta_eval_machine_try(
                 " choice_continuation_snapshots=%" PRIu64
                 " choice_continuation_items_copied=%" PRIu64
                 " choice_continuation_items_trailed=%" PRIu64
+                " choice_continuation_trail_compactions=%" PRIu64
+                " choice_continuation_trail_discarded=%" PRIu64
                 " deterministic_clause_choices_elided=%" PRIu64
                 " singleton_outcome_choices_elided=%" PRIu64
                 " rollbacks=%" PRIu64
@@ -39271,6 +39268,8 @@ static bool petta_eval_machine_try(
                 stats.choice_continuation_snapshots,
                 stats.choice_continuation_items_copied,
                 stats.choice_continuation_items_trailed,
+                stats.choice_continuation_trail_compactions,
+                stats.choice_continuation_trail_discarded,
                 stats.deterministic_clause_choices_elided,
                 stats.singleton_outcome_choices_elided,
                 stats.rollbacks,

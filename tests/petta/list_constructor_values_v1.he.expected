@@ -1,0 +1,12 @@
+list-value:effect
+[(LCons a (LCons b LNil))]
+[(LCons answer LNil)]
+[((LCons first LNil) (LCons second LNil))]
+[((LCons same LNil) (LCons same LNil))]
+[(LCons (quote (list-value:active)) LNil)]
+[(LCons value LNil)]
+[(LCons left (LCons left LNil)), (LCons right (LCons right LNil))]
+[(LCons True (LCons False LNil))]
+[(LCons)]
+[(LCons a)]
+[(LCons a b c)]

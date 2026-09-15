@@ -93,6 +93,8 @@ static const char *outcome_name(PPNativeV1Outcome outcome) {
         return "replay-depth";
     case PPNATIVE_V1_RESULT_LIMIT:
         return "result-limit";
+    case PPNATIVE_V1_CYCLIC_FOREST:
+        return "cyclic-forest";
     }
     return "unknown";
 }

@@ -2507,6 +2507,27 @@ static Atom *grounded_remove_all_atom(
 
 /* ── Dispatch ──────────────────────────────────────────────────────────── */
 
+static bool grounded_is_binary_numeric_operator(SymbolId head_id) {
+    return head_id == g_builtin_syms.op_plus ||
+           head_id == g_builtin_syms.op_minus ||
+           head_id == g_builtin_syms.op_mul ||
+           head_id == g_builtin_syms.op_div ||
+           head_id == g_builtin_syms.op_floor_div ||
+           head_id == g_builtin_syms.op_mod ||
+           head_id == g_builtin_syms.op_lt ||
+           head_id == g_builtin_syms.op_gt ||
+           head_id == g_builtin_syms.op_le ||
+           head_id == g_builtin_syms.op_ge ||
+           head_id == g_builtin_syms.numeric_eq;
+}
+
+bool grounded_numeric_error_is_raised(Atom *head, uint32_t nargs) {
+    return head && head->kind == ATOM_SYMBOL &&
+           nargs == 2u && grounded_is_binary_numeric_operator(head->sym_id) &&
+           eval_current_language_id &&
+           eval_current_language_id() == CETTA_LANGUAGE_PETTA;
+}
+
 Atom *grounded_dispatch(Arena *a, Atom *head, Atom **args, uint32_t nargs) {
     if (head->kind != ATOM_SYMBOL) return NULL;
     {
@@ -3326,13 +3347,7 @@ Atom *grounded_dispatch(Arena *a, Atom *head, Atom **args, uint32_t nargs) {
     if (nargs != 2) return NULL;
 
     /* Check if this is an arithmetic op that expects numeric args */
-    bool is_arith = (head_id == g_builtin_syms.op_plus || head_id == g_builtin_syms.op_minus ||
-                     head_id == g_builtin_syms.op_mul || head_id == g_builtin_syms.op_div ||
-                     head_id == g_builtin_syms.op_floor_div ||
-                     head_id == g_builtin_syms.op_mod || head_id == g_builtin_syms.op_lt ||
-                     head_id == g_builtin_syms.op_gt || head_id == g_builtin_syms.op_le ||
-                     head_id == g_builtin_syms.op_ge ||
-                     head_id == g_builtin_syms.numeric_eq);
+    bool is_arith = grounded_is_binary_numeric_operator(head_id);
     bool rust_compat = eval_current_uses_rust_he_compat_semantics();
     if (rust_compat && head_id == g_builtin_syms.op_floor_div)
         return NULL;

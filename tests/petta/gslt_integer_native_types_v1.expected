@@ -1,0 +1,8 @@
+((gslt:result:IntegerLiteralPairV1:0 LowerV1))
+((gslt:result:IntegerLiteralUseV1:0 LowerV1))
+((gslt:result:IntegerLiteralGapV1:0 NoGapV1))
+()
+((gslt:result:IntegerLiteralDuplicateV1:0 SameV1) (gslt:result:IntegerLiteralDuplicateV1:0 SameV1))
+((gslt:result:IntegerLiteralFloatV1:0 FloatV1))
+((BindingReceiptV1 RetainedV1 (gslt:result:IntegerLiteralUseV1:0 LowerV1)))
+((gslt:result:IntegerVariableCallV1:10 VariableV1))

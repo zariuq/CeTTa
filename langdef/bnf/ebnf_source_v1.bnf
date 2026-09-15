@@ -1,0 +1,28 @@
+% Postfix EBNF V1, defined in plain BNF.
+% The four lexical categories use the plain-BNF self-authority.
+% Concatenation uses horizontal whitespace; alternatives use the literal " |".
+% A postfix operator applies to one atom. Parentheses allow nested operators.
+<document> ::= <lines>
+<lines> ::= | <line> <lines>
+<line> ::= <rule> | <comment> | <blank>
+<rule> ::= "<" <name> ">" <spaces> "::=" <spaces> <expression> <line-end>
+<comment> ::= "%" <comment-chars> <line-end>
+<blank> ::= <spaces> <line-end>
+<name> ::= <name-char> <name-tail>
+<name-tail> ::= | <name-char> <name-tail>
+<expression> ::= <sequence> <alternative-tail>
+<alternative-tail> ::= | " |" <spaces> <sequence> <alternative-tail>
+<sequence> ::= | <element> <sequence-tail>
+<sequence-tail> ::= | <spaces-one> <element> <sequence-tail>
+<element> ::= <atom> <postfix>
+<atom> ::= <reference> | <literal> | "(" <expression> ")"
+<postfix> ::= | "?" | "*" | "+"
+<reference> ::= "<" <name> ">"
+<literal> ::= "\"" <literal-chars> "\""
+<literal-chars> ::= | <literal-char> <literal-chars>
+<literal-char> ::= <literal-scalar> | <escape>
+<escape> ::= "\\" "\"" | "\\" "\\" | "\\" "n" | "\\" "r" | "\\" "t"
+<spaces> ::= | <horizontal-space> <spaces>
+<spaces-one> ::= <horizontal-space> <spaces>
+<comment-chars> ::= | <line-scalar> <comment-chars>
+<line-end> ::= "\n" | "\r" "\n"

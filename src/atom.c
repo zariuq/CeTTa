@@ -50,6 +50,13 @@ struct ArenaFinalizer {
     struct ArenaFinalizer *next;
 };
 
+typedef struct {
+    Atom atom;
+    void *owner;
+    void (*retain)(void *);
+    void (*release)(void *);
+} NativeHandleIdentifier;
+
 static CettaBigInt *cetta_bigint_clone_owned(const CettaBigInt *src);
 static void cetta_bigint_free_owned(CettaBigInt *big);
 static CettaRational *cetta_rational_clone_owned(const CettaRational *src);
@@ -2329,6 +2336,55 @@ Atom *atom_int(Arena *a, int64_t val) {
     return at;
 }
 
+Atom *atom_native_handle_identifier(Arena *a, int64_t id, void *owner,
+                                    void (*retain)(void *),
+                                    void (*release)(void *)) {
+    if (!a || !owner || !retain || !release)
+        return NULL;
+    NativeHandleIdentifier *value = arena_alloc(a, sizeof(*value));
+    *value = (NativeHandleIdentifier){
+        .atom = {
+            .kind = ATOM_GROUNDED,
+            /* Context-local ownership cannot enter a global hash-cons table
+             * or a pointer-free term encoding as an ordinary integer. */
+            .flags = ATOM_FLAG_HAS_REGISTRY_REFS |
+                     ATOM_FLAG_HAS_IDENTITY_GROUNDED |
+                     ATOM_FLAG_HAS_THREAD_LOCAL_RESOURCE,
+            .arena_id = a->identity,
+            .structural_facts = ATOM_STRUCTURAL_FACTS_VALID |
+                                ATOM_STRUCTURAL_HAS_NATIVE_HANDLE_ID,
+            .ground = {.gkind = GV_INT, .ival = id},
+        },
+        .owner = owner,
+        .retain = retain,
+        .release = release,
+    };
+    retain(owner);
+    arena_register_finalizer(a, release, owner);
+    return &value->atom;
+}
+
+Atom *atom_int_copy(Arena *a, const Atom *source) {
+    if (!a || !source || source->kind != ATOM_GROUNDED ||
+        source->ground.gkind != GV_INT)
+        return NULL;
+#ifndef CETTA_NATIVE_HANDLE_COPY_DROP_OWNER_MUTATION
+    if (source->structural_facts & ATOM_STRUCTURAL_HAS_NATIVE_HANDLE_ID) {
+        /* Within one arena the source precedes this copy: a reset that
+         * invalidates the source also invalidates the later use. Reuse its
+         * holder; only an escape to another arena acquires a new holder. */
+        if (source->arena_id == a->identity)
+            return (Atom *)source;
+        const NativeHandleIdentifier *value =
+            (const NativeHandleIdentifier *)source;
+        return atom_native_handle_identifier(a, source->ground.ival,
+                                              value->owner, value->retain,
+                                              value->release);
+    }
+#endif
+    return atom_int(a, source->ground.ival);
+}
+
 Atom *atom_bigint(Arena *a, const char *val) {
     char *canonical = cetta_bigint_canonicalize_owned(val);
     if (!canonical)
@@ -3434,8 +3490,9 @@ static Atom *atom_deep_copy_leaf(Arena *dst, Atom *src, bool share) {
     case ATOM_GROUNDED:
         switch (src->ground.gkind) {
         case GV_INT:
-            out = share && g_hashcons ? hashcons_get(g_hashcons, atom_int(dst, src->ground.ival))
-                                      : atom_int(dst, src->ground.ival);
+            out = atom_int_copy(dst, src);
+            if (share && g_hashcons)
+                out = hashcons_get(g_hashcons, out);
             break;
         case GV_FLOAT:
             out = share && g_hashcons ? hashcons_get(g_hashcons, atom_float(dst, src->ground.fval))

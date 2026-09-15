@@ -5,6 +5,7 @@
 #include "native/json_cst_value_v1.h"
 #include "native/json_runtime_v1.h"
 #include "native/json_value_v1.h"
+#include "native_sha256.h"
 
 #include "finite_horn_ground_term_v1.h"
 #include "parser_pack_gll_v1.h"
@@ -371,7 +372,7 @@ static void compile_and_provenance_gate(TestCounts *counts,
 
     cetta_ld_parser_pack_v1_init(&duplicate);
     compiled_ok = cetta_language_def_parser_pack_v1_compile(
-        compiled, language, wire->source_sha256, profile,
+        compiled, language, wire->authority_sha256, profile,
         1000000u, &status, error, sizeof(error));
     if (!compiled_ok && error[0] == '\0') {
         (void)snprintf(error, sizeof(error), "compile status: %s",
@@ -387,18 +388,20 @@ static void compile_and_provenance_gate(TestCounts *counts,
             compiled->start_state &&
             compiled->authored_rule_len == language->term_len &&
             compiled->lexical_rule_len == profile->state_len &&
+            compiled->entry_rule_len == 1u &&
             compiled->pack.production_len ==
-                compiled->authored_rule_len + compiled->lexical_rule_len &&
+                compiled->authored_rule_len + compiled->lexical_rule_len +
+                    compiled->entry_rule_len &&
             compiled->pack.class_clause_len >= profile->class_len &&
             strlen(compiled->pack.pack_digest) == 64u &&
             strlen(compiled->binding_sha256) == 64u,
-        "compiled pack retains every authored and lexical rule");
+        "compiled pack retains every authored and lexical rule plus one entry boundary");
 
     error[0] = '\0';
     (void)expect(
         counts,
         cetta_language_def_parser_pack_v1_compile(
-            &duplicate, language, wire->source_sha256, profile,
+            &duplicate, language, wire->authority_sha256, profile,
             1000000u, &status, error, sizeof(error)) &&
             strcmp(compiled->pack.pack_digest,
                    duplicate.pack.pack_digest) == 0 &&
@@ -441,7 +444,7 @@ static void identity_wire_gate(
         cetta_ld_parser_pack_identity_wire_v1_write(
             compiled, first, wire_size, &first_written,
             error, sizeof(error)) &&
-            first_written == wire_size && memcmp(first, "PNI1", 4u) == 0,
+            first_written == wire_size && memcmp(first, "PNI2", 4u) == 0,
         error[0] ? error : "write ParserPack semantic identity wire");
     error[0] = '\0';
     (void)expect(
@@ -505,6 +508,347 @@ static bool parse_pair(const PPNativeV1Prepared *prepared,
     return ppglr_v1_prepared_parse(
         prepared, bytes, len, recognizer_limit,
         512u, 4096u, glr, error, error_size);
+}
+
+static void embedded_nul_terminal_gate(TestCounts *counts) {
+    static const uint8_t source[] =
+        "(GSLTLanguageDefWireV1 \"EmbeddedNulTerminal\" "
+        "(LCons (TypeDecl \"Start\" CarrierAst) LNil) "
+        "(LCons (GrammarRule \"nul:literal\" \"Start\" LNil "
+        "(LCons (SyntaxTerminal \"A\\x00B\") LNil) EvalNone) LNil) "
+        "LNil LNil)";
+    static const uint8_t profile_source[] =
+        "(GSLTParserProfileLayerV1 \"EmbeddedNulProfile\" "
+        "\"Start\" LNil LNil)";
+    static const uint8_t literal[] = {'A', 0u, 'B'};
+    static const uint8_t altered[] = {'A', 0u, 'C'};
+    static const uint8_t trailing[] = {'A', 0u, 'B', 'X'};
+    static const struct {
+        const uint8_t *bytes;
+        size_t len;
+        bool accepted;
+        const char *name;
+    } cases[] = {
+        {literal, sizeof(literal), true, "literal with embedded U+0000"},
+        {literal, 1u, false, "prefix before U+0000"},
+        {literal, 2u, false, "prefix ending at U+0000"},
+        {(const uint8_t *)"AB", 2u, false, "omitted U+0000"},
+        {altered, sizeof(altered), false, "altered suffix after U+0000"},
+        {trailing, sizeof(trailing), false, "trailing input after U+0000"},
+        {literal, 0u, false, "empty input for nonempty literal"}
+    };
+    CettaOperationalLanguageDefV1 wire;
+    CettaLanguageDefCoreV1 language;
+    CettaOpLangV1Document document;
+    CettaLdParserProfileV1 profile;
+    CettaLdParserPackV1 compiled;
+    PPNativeV1Prepared prepared;
+    CettaOpLangV1Status wire_status = CETTA_OP_LANG_V1_INTERNAL_FAILURE;
+    CettaLdCoreV1Status core_status = CETTA_LD_CORE_V1_BAD_ARGUMENT;
+    CettaLdParserPackV1Status status = CETTA_LD_PARSER_PACK_V1_BAD_ARGUMENT;
+    char error[512] = {0};
+    size_t index;
+    bool loaded;
+
+    cetta_op_lang_v1_init(&wire);
+    cetta_language_def_core_v1_init(&language);
+    cetta_op_lang_v1_document_init(&document);
+    cetta_ld_parser_profile_v1_init(&profile);
+    cetta_ld_parser_pack_v1_init(&compiled);
+    ppnative_v1_prepared_init(&prepared);
+
+    loaded = cetta_op_lang_v1_parse_bytes(
+        &wire, source, sizeof(source) - 1u, 2000000u, 4000000u,
+        &wire_status, error, sizeof(error)) &&
+        cetta_language_def_core_v1_decode(
+            &language, &wire, 10000u, &core_status, error, sizeof(error));
+    if (!expect(counts, loaded,
+                error[0] ? error : "decode an authored U+0000 terminal"))
+        goto cleanup;
+    if (!expect(
+            counts,
+            language.term_len == 1u &&
+                language.terms[0].syntax_pattern.len == 1u &&
+                language.terms[0].syntax_pattern.items[0].kind ==
+                    CETTA_LD_SYNTAX_TERMINAL_V1 &&
+                language.terms[0].syntax_pattern.items[0].as.text.len ==
+                    sizeof(literal) &&
+                memcmp(language.terms[0].syntax_pattern.items[0].as.text.bytes,
+                       literal, sizeof(literal)) == 0,
+            "typed LanguageDef retains the entire literal, including U+0000"))
+        goto cleanup;
+    error[0] = '\0';
+    loaded = cetta_op_lang_v1_parse_document_bytes(
+        &document, profile_source, sizeof(profile_source) - 1u,
+        2000000u, 4000000u, &wire_status, error, sizeof(error)) &&
+        cetta_ld_parser_profile_v1_decode(
+            &profile, &document, 10000u, &status, error, sizeof(error)) &&
+        cetta_language_def_parser_pack_v1_compile(
+            &compiled, &language, wire.authority_sha256, &profile,
+            1000000u, &status, error, sizeof(error)) &&
+        ppnative_v1_prepare(
+            &prepared, &compiled.pack, compiled.start_state,
+            error, sizeof(error));
+    if (!expect(counts, loaded,
+                error[0] ? error : "compile and prepare the U+0000 grammar"))
+        goto cleanup;
+
+    for (index = 0u; index < sizeof(cases) / sizeof(cases[0]); index++) {
+        PPNativeV1Result gll;
+        PPNativeV1Result glr;
+        bool ran;
+        ppnative_v1_result_init(&gll);
+        ppnative_v1_result_init(&glr);
+        error[0] = '\0';
+        ran = parse_pair(
+            &prepared, cases[index].bytes, cases[index].len,
+            2000000u, &gll, &glr, error, sizeof(error));
+        (void)expect(
+            counts,
+            ran && semantic_results_equal(&gll, &glr) &&
+                gll.outcome == PPNATIVE_V1_COMPLETED &&
+                gll.accepted == cases[index].accepted &&
+                gll.semantic_result_len == (cases[index].accepted ? 1u : 0u),
+            error[0] ? error : cases[index].name);
+        ppnative_v1_result_free(&gll);
+        ppnative_v1_result_free(&glr);
+    }
+
+cleanup:
+    ppnative_v1_prepared_free(&prepared);
+    cetta_ld_parser_pack_v1_free(&compiled);
+    cetta_ld_parser_profile_v1_free(&profile);
+    cetta_op_lang_v1_document_free(&document);
+    cetta_language_def_core_v1_free(&language);
+    cetta_op_lang_v1_free(&wire);
+}
+
+/* Mutate the actual compiler source, not a precomputed parser artifact. */
+static uint8_t *compiler_source_replace(
+    const uint8_t *source, size_t len, const char *before, const char *after,
+    size_t *out_len) {
+    char *copy = malloc(len + 1u);
+    char *hit;
+    uint8_t *result;
+    size_t prefix, old_len = strlen(before), new_len = strlen(after);
+    if (!copy) return NULL;
+    memcpy(copy, source, len);
+    copy[len] = '\0';
+    hit = strstr(copy, before);
+    if (!hit || strstr(hit + old_len, before)) { free(copy); return NULL; }
+    prefix = (size_t)(hit - copy);
+    *out_len = len - old_len + new_len;
+    result = malloc(*out_len);
+    if (result) {
+        memcpy(result, source, prefix);
+        memcpy(result + prefix, after, new_len);
+        memcpy(result + prefix + new_len, source + prefix + old_len,
+               len - prefix - old_len);
+    }
+    free(copy);
+    return result;
+}
+
+static void authored_compiler_gate(
+    TestCounts *counts, const CettaOperationalLanguageDefV1 *wire,
+    const CettaLanguageDefCoreV1 *language,
+    const CettaLdParserProfileV1 *profile,
+    const CettaLdParserPackV1 *reference) {
+    static const char source_path[] =
+        "langdef/bnf/language_def_parser_compiler_v1.metta";
+    static const char empty_rule[] =
+        "    (rule compile-syntax-empty\n"
+        "      (head (metta-equation\n"
+        "        (ldpp-v1:compile-syntax LNil LNil ?slot)\n"
+        "        (ldpp-v1:parts pp-items-nil pa-nil)))\n"
+        "      (body))\n";
+    CettaLdParserPackV1 compiled;
+    CettaLdParserPackV1Status status;
+    PPNativeV1Prepared prepared;
+    PPNativeV1Result gll, glr;
+    char error[512] = {0}, source_digest[65], retained_digest[65];
+    size_t source_len = 0u, mutant_len = 0u;
+    uint8_t *source = read_source(source_path, &source_len);
+    uint8_t *mutant = NULL;
+    bool ok;
+
+    cetta_ld_parser_pack_v1_init(&compiled);
+    ppnative_v1_prepared_init(&prepared);
+    ppnative_v1_result_init(&gll);
+    ppnative_v1_result_init(&glr);
+    if (!expect(counts, source != NULL, "read actual authored parser compiler"))
+        goto done;
+    cetta_native_sha256_hex(source, source_len, source_digest);
+    (void)expect(counts,
+        strcmp(reference->compiler_sha256, source_digest) == 0 &&
+        reference->pack.derivation_len == 0u &&
+        reference->pack.derivations == NULL,
+        "default parser uses exact compiler bytes without fabricated proof roots");
+    ok = cetta_language_def_parser_pack_v1_compile_source(
+        &compiled, language, wire->authority_sha256, profile, source, source_len,
+        1000000u, &status, error, sizeof(error));
+    if (!expect(counts, ok &&
+        strcmp(compiled.pack.pack_digest, reference->pack.pack_digest) == 0,
+        error[0] ? error : "embedded and explicit compiler source agree")) goto done;
+
+    mutant = compiler_source_replace(source, source_len,
+        "(pp-terminal-char (cp ?scalar))", "(pp-terminal-char (cp 90))",
+        &mutant_len);
+    error[0] = '\0';
+    ok = mutant && cetta_language_def_parser_pack_v1_compile_source(
+        &compiled, language, wire->authority_sha256, profile, mutant, mutant_len,
+        1000000u, &status, error, sizeof(error));
+    if (expect(counts, ok &&
+        strcmp(compiled.pack.pack_digest, reference->pack.pack_digest) != 0 &&
+        strcmp(compiled.compiler_sha256, reference->compiler_sha256) != 0,
+        error[0] ? error : "authored terminal mutation changes actual parser pack")) {
+        error[0] = '\0';
+        ok = ppnative_v1_prepare(&prepared, &compiled.pack, compiled.start_state,
+                error, sizeof(error)) &&
+            parse_pair(&prepared, (const uint8_t *)"[]", 2u, 2000000u,
+                &gll, &glr, error, sizeof(error));
+        (void)expect(counts, ok && semantic_results_equal(&gll, &glr) &&
+            gll.outcome == PPNATIVE_V1_COMPLETED && !gll.accepted,
+            error[0] ? error : "compiler source mutation reaches both parser engines");
+    }
+    free(mutant);
+    mutant = compiler_source_replace(source, source_len,
+        "(pa-slot ?slot)", "(pa-slot q-zero)", &mutant_len);
+    error[0] = '\0';
+    ok = mutant && cetta_language_def_parser_pack_v1_compile_source(
+        &compiled, language, wire->authority_sha256, profile, mutant, mutant_len,
+        1000000u, &status, error, sizeof(error));
+    (void)expect(counts, ok &&
+        strcmp(compiled.pack.pack_digest, reference->pack.pack_digest) != 0,
+        error[0] ? error : "authored slot mutation changes compiled CST actions");
+    memcpy(retained_digest, compiled.pack.pack_digest, sizeof(retained_digest));
+    free(mutant);
+    mutant = compiler_source_replace(source, source_len, empty_rule, "", &mutant_len);
+    error[0] = '\0';
+    ok = mutant && !cetta_language_def_parser_pack_v1_compile_source(
+        &compiled, language, wire->authority_sha256, profile, mutant, mutant_len,
+        1000000u, &status, error, sizeof(error));
+    (void)expect(counts, ok && status == CETTA_LD_PARSER_PACK_V1_COMPILER_REJECTED &&
+        strcmp(retained_digest, compiled.pack.pack_digest) == 0,
+        "missing authored compiler rule fails atomically, without handwritten fallback");
+    free(mutant);
+    mutant = compiler_source_replace(source, source_len,
+        "(ldpp-v1:compile-syntax LNil LNil ?slot)",
+        "(ldpp-v1:compile-syntax ?any-params ?any-syntax ?slot)", &mutant_len);
+    error[0] = '\0';
+    ok = mutant && !cetta_language_def_parser_pack_v1_compile_source(
+        &compiled, language, wire->authority_sha256, profile, mutant, mutant_len,
+        1000000u, &status, error, sizeof(error));
+    (void)expect(counts, ok && status == CETTA_LD_PARSER_PACK_V1_COMPILER_REJECTED &&
+        strcmp(retained_digest, compiled.pack.pack_digest) == 0,
+        "overlapping compiler rules are refused, never first-match executed");
+done:
+    free(mutant);
+    free(source);
+    ppnative_v1_result_free(&glr);
+    ppnative_v1_result_free(&gll);
+    ppnative_v1_prepared_free(&prepared);
+    cetta_ld_parser_pack_v1_free(&compiled);
+}
+
+static void empty_exclusion_gate(TestCounts *counts) {
+    static const uint8_t source[] =
+        "(GSLTLanguageDefWireV1 \"ScalarOnly\" "
+        "(LCons (TypeDecl \"Start\" CarrierAst) "
+        "(LCons (TypeDecl \"Scalar\" CarrierAst) LNil)) "
+        "(LCons (GrammarRule \"scalar:root\" \"Start\" "
+        "(LCons (TermSimple \"value\" (TBase \"Scalar\")) LNil) "
+        "(LCons (SyntaxNonTerminal \"value\") LNil) EvalNone) LNil) LNil LNil)";
+    static const uint8_t profile_source[] =
+        "(GSLTParserProfileLayerV1 \"EveryScalar\" \"Start\" "
+        "(LCons (LexicalClassExcept \"All\" LNil) LNil) "
+        "(LCons (LexicalState \"Scalar\" \"All\" \"scalar\") LNil))";
+    static const uint8_t negative_profile[] =
+        "(GSLTParserProfileLayerV1 \"NoPoints\" \"Start\" "
+        "(LCons (LexicalClassPoints \"None\" LNil) LNil) "
+        "(LCons (LexicalState \"Scalar\" \"None\" \"scalar\") LNil))";
+    static const uint8_t nul[] = {0u};
+    static const uint8_t lambda[] = {0xceu, 0xbbu};
+    static const uint8_t maximum[] = {0xf4u, 0x8fu, 0xbfu, 0xbfu};
+    static const struct {
+        const uint8_t *bytes;
+        size_t len;
+        bool accepted;
+    } cases[] = {
+        {(const uint8_t *)"x", 1u, true},
+        {nul, sizeof(nul), true},
+        {lambda, sizeof(lambda), true},
+        {maximum, sizeof(maximum), true},
+        {(const uint8_t *)"", 0u, false},
+        {(const uint8_t *)"xx", 2u, false}
+    };
+    CettaOperationalLanguageDefV1 wire;
+    CettaLanguageDefCoreV1 language;
+    CettaOpLangV1Document document;
+    CettaLdParserProfileV1 profile;
+    CettaLdParserPackV1 compiled;
+    PPNativeV1Prepared prepared;
+    CettaOpLangV1Status wire_status = CETTA_OP_LANG_V1_INTERNAL_FAILURE;
+    CettaLdCoreV1Status core_status = CETTA_LD_CORE_V1_BAD_ARGUMENT;
+    CettaLdParserPackV1Status status = CETTA_LD_PARSER_PACK_V1_BAD_ARGUMENT;
+    char error[512] = {0};
+    cetta_op_lang_v1_init(&wire);
+    cetta_language_def_core_v1_init(&language);
+    cetta_op_lang_v1_document_init(&document);
+    cetta_ld_parser_profile_v1_init(&profile);
+    cetta_ld_parser_pack_v1_init(&compiled);
+    ppnative_v1_prepared_init(&prepared);
+    bool loaded = cetta_op_lang_v1_parse_bytes(
+        &wire, source, sizeof(source) - 1u, 2000000u, 4000000u,
+        &wire_status, error, sizeof(error)) &&
+        cetta_language_def_core_v1_decode(
+            &language, &wire, 10000u, &core_status, error, sizeof(error)) &&
+        cetta_op_lang_v1_parse_document_bytes(
+            &document, profile_source, sizeof(profile_source) - 1u,
+            2000000u, 4000000u, &wire_status, error, sizeof(error)) &&
+        cetta_ld_parser_profile_v1_decode(
+            &profile, &document, 10000u, &status, error, sizeof(error)) &&
+        cetta_language_def_parser_pack_v1_compile(
+            &compiled, &language, wire.authority_sha256, &profile,
+            1000000u, &status, error, sizeof(error)) &&
+        ppnative_v1_prepare(
+            &prepared, &compiled.pack, compiled.start_state, error, sizeof(error));
+    if (!expect(counts, loaded,
+                error[0] ? error : "empty exclusions compile to a scalar parser"))
+        goto cleanup;
+    for (size_t i = 0u; i < sizeof(cases) / sizeof(cases[0]); i++) {
+        PPNativeV1Result gll, glr;
+        ppnative_v1_result_init(&gll);
+        ppnative_v1_result_init(&glr);
+        error[0] = '\0';
+        bool ran = parse_pair(&prepared, cases[i].bytes, cases[i].len,
+            2000000u, &gll, &glr, error, sizeof(error));
+        (void)expect(counts,
+            ran && semantic_results_equal(&gll, &glr) &&
+                gll.outcome == PPNATIVE_V1_COMPLETED &&
+                gll.accepted == cases[i].accepted &&
+                gll.semantic_result_len == (cases[i].accepted ? 1u : 0u),
+            error[0] ? error : "empty exclusions accept exactly one Unicode scalar");
+        ppnative_v1_result_free(&glr);
+        ppnative_v1_result_free(&gll);
+    }
+    error[0] = '\0';
+    (void)expect(counts,
+        cetta_op_lang_v1_parse_document_bytes(
+            &document, negative_profile, sizeof(negative_profile) - 1u,
+            2000000u, 4000000u, &wire_status, error, sizeof(error)) &&
+        !cetta_ld_parser_profile_v1_decode(
+            &profile, &document, 10000u, &status, error, sizeof(error)) &&
+        status == CETTA_LD_PARSER_PACK_V1_MALFORMED_PROFILE &&
+        text_is(&profile.name, "EveryScalar"),
+        "empty points still reject without replacing the admitted profile");
+cleanup:
+    ppnative_v1_prepared_free(&prepared);
+    cetta_ld_parser_pack_v1_free(&compiled);
+    cetta_ld_parser_profile_v1_free(&profile);
+    cetta_op_lang_v1_document_free(&document);
+    cetta_language_def_core_v1_free(&language);
+    cetta_op_lang_v1_free(&wire);
 }
 
 static void json_corpus_gate(TestCounts *counts,
@@ -853,7 +1197,7 @@ static void fail_closed_gate(TestCounts *counts,
     (void)expect(
         counts,
         !cetta_language_def_parser_pack_v1_compile(
-            compiled, language, wire->source_sha256, profile,
+            compiled, language, wire->authority_sha256, profile,
             1000000u, &status, error, sizeof(error)) &&
             status == CETTA_LD_PARSER_PACK_V1_OUTSIDE_FRAGMENT &&
             strcmp(compiled->binding_sha256, original_binding) == 0,
@@ -864,7 +1208,7 @@ static void fail_closed_gate(TestCounts *counts,
     (void)expect(
         counts,
         !cetta_language_def_parser_pack_v1_compile(
-            compiled, language, wire->source_sha256, profile,
+            compiled, language, wire->authority_sha256, profile,
             1u, &status, error, sizeof(error)) &&
             status == CETTA_LD_PARSER_PACK_V1_RESOURCE_LIMIT &&
             strcmp(compiled->binding_sha256, original_binding) == 0,
@@ -880,6 +1224,127 @@ static CettaLdGrammarRuleV1 *json_test_term(
             return &language->terms[index];
     }
     return NULL;
+}
+
+static void recursive_start_gate(
+    TestCounts *counts,
+    const CettaOperationalLanguageDefV1 *wire,
+    CettaLanguageDefCoreV1 *language,
+    const CettaLdParserProfileV1 *profile) {
+    static const char authority[] =
+        "LanguageDefParserPackV1/test/recursive-start/JsonValue";
+    static const uint8_t nested[] = "{\"x\":1}";
+    static const uint8_t trailing[] = "{\"x\":1} false";
+    CettaLdGrammarRuleV1 *value_rule =
+        json_test_term(language, "json:value-object");
+    CettaLdParserProfileV1 recursive_profile;
+    CettaLdParserPackV1 recursive_pack;
+    CettaLdParserPackV1Status status =
+        CETTA_LD_PARSER_PACK_V1_BAD_ARGUMENT;
+    PPNativeV1Prepared prepared;
+    PPNativeV1Result gll;
+    PPNativeV1Result glr;
+    char error[512] = {0};
+    int32_t entry_state_id;
+    uint32_t production_index;
+    uint32_t entry_eof_items = 0u;
+    uint32_t nonentry_eof_items = 0u;
+    bool ran;
+
+    if (!value_rule) {
+        (void)expect(counts, false,
+                     "locate recursive JSON-value start canary");
+        return;
+    }
+    recursive_profile = *profile;
+    recursive_profile.start_sort = value_rule->category;
+    cetta_native_sha256_hex(
+        (const uint8_t *)authority, sizeof(authority) - 1u,
+        recursive_profile.authority_sha256);
+    cetta_ld_parser_pack_v1_init(&recursive_pack);
+    ppnative_v1_prepared_init(&prepared);
+    ppnative_v1_result_init(&gll);
+    ppnative_v1_result_init(&glr);
+
+    (void)expect(
+        counts,
+        cetta_language_def_parser_pack_v1_compile(
+            &recursive_pack, language, wire->authority_sha256,
+            &recursive_profile, 1000000u, &status,
+            error, sizeof(error)) &&
+            status == CETTA_LD_PARSER_PACK_V1_OK,
+        error[0] ? error : "compile a recursively nested start sort");
+    entry_state_id = recursive_pack.start_state
+        ? ppnative_v1_state_find(
+            &recursive_pack.pack, recursive_pack.start_state)
+        : -1;
+    for (production_index = 0u;
+         production_index < recursive_pack.pack.production_len;
+         production_index++) {
+        const PPABIV1Production *production =
+            &recursive_pack.pack.productions[production_index];
+        uint32_t item_index;
+        for (item_index = 0u; item_index < production->item_len;
+             item_index++) {
+            const PPABIV1Item *item = &production->items[item_index];
+            if (item->kind == PPABI_V1_ITEM_TERMINAL &&
+                item->dense_id < recursive_pack.pack.terminal_len &&
+                recursive_pack.pack.terminals[item->dense_id].kind ==
+                    PPABI_V1_TERMINAL_EOF) {
+                if (entry_state_id >= 0 &&
+                    production->lhs_state_id ==
+                        (uint32_t)entry_state_id) {
+                    entry_eof_items++;
+                } else {
+                    nonentry_eof_items++;
+                }
+            }
+        }
+    }
+    (void)expect(
+        counts,
+        entry_state_id >= 0 && entry_eof_items == 1u &&
+            nonentry_eof_items == 0u,
+        "one derived entry boundary owns EOF outside authored productions");
+    error[0] = '\0';
+    (void)expect(
+        counts,
+        recursive_pack.start_state &&
+            ppnative_v1_prepare(
+                &prepared, &recursive_pack.pack,
+                recursive_pack.start_state, error, sizeof(error)),
+        error[0] ? error : "prepare a recursively nested start sort");
+
+    error[0] = '\0';
+    ran = parse_pair(
+        &prepared, nested, sizeof(nested) - 1u, 2000000u,
+        &gll, &glr, error, sizeof(error));
+    (void)expect(
+        counts,
+        ran && semantic_results_equal(&gll, &glr) &&
+            gll.outcome == PPNATIVE_V1_COMPLETED && gll.accepted,
+        error[0] ? error :
+            "recursive start occurrences remain usable before closing syntax");
+    ppnative_v1_result_free(&gll);
+    ppnative_v1_result_free(&glr);
+    ppnative_v1_result_init(&gll);
+    ppnative_v1_result_init(&glr);
+
+    error[0] = '\0';
+    ran = parse_pair(
+        &prepared, trailing, sizeof(trailing) - 1u, 2000000u,
+        &gll, &glr, error, sizeof(error));
+    (void)expect(
+        counts,
+        ran && semantic_results_equal(&gll, &glr) &&
+            gll.outcome == PPNATIVE_V1_COMPLETED && !gll.accepted,
+        error[0] ? error :
+            "whole-input root observation rejects trailing syntax without EOF injection");
+
+    ppnative_v1_result_free(&gll);
+    ppnative_v1_result_free(&glr);
+    ppnative_v1_prepared_free(&prepared);
+    cetta_ld_parser_pack_v1_free(&recursive_pack);
 }
 
 static void json_elaboration_plan_mutation_gate(
@@ -1234,6 +1699,9 @@ int main(void) {
     compile_and_provenance_gate(
         &counts, &wire, &language, &profile, &compiled);
     if (compiled.start_state)
+        authored_compiler_gate(&counts, &wire, &language, &profile, &compiled);
+    recursive_start_gate(&counts, &wire, &language, &profile);
+    if (compiled.start_state)
         identity_wire_gate(&counts, &compiled);
     if (compiled.start_state)
         json_corpus_gate(&counts, &compiled);
@@ -1246,6 +1714,8 @@ int main(void) {
             &counts, &compiled, &elaboration_plan);
     fail_closed_gate(
         &counts, &wire, &language, &profile, &compiled);
+    embedded_nul_terminal_gate(&counts);
+    empty_exclusion_gate(&counts);
     reusable_runtime_gate(&counts);
 
     printf("(LanguageDefParserPackV1Summary %u %u)\n",

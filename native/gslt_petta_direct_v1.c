@@ -82,6 +82,7 @@ typedef struct {
     uint8_t functional;
     uint8_t input_heads_disjoint;
     uint8_t selected;
+    uint8_t admitted;
 } DirectBindingModeV1;
 
 typedef struct {
@@ -89,6 +90,40 @@ typedef struct {
     size_t len;
     size_t cap;
 } DirectBindingModesV1;
+
+/* Compile-time completion types inferred from the ordered authored sources.
+ * These describe one provider occurrence, not an entire mutable MeTTa space. */
+typedef struct {
+    size_t occurrence;
+    const char *relation;
+    const Atom *left;
+    bool not_less;
+    bool successor;
+    bool unique;
+} DirectIntegerNativeTypeV1;
+
+typedef struct {
+    const Atom *term;
+    uint32_t type; /* one plus an actual LanguageDef type occurrence */
+} DirectDomainFactV1;
+
+typedef struct {
+    DirectDomainFactV1 *items;
+    size_t len;
+    bool inconsistent;
+} DirectDomainEnvironmentV1;
+
+typedef struct {
+    const CettaLanguageDefCoreV1 *language;
+    const DirectRulesV1 *rules;
+    DirectDomainEnvironmentV1 *environments;
+} DirectAdmissionDomainsV1;
+
+typedef struct {
+    DirectIntegerNativeTypeV1 *items;
+    size_t len;
+    const DirectAdmissionDomainsV1 *domains;
+} DirectIntegerNativeTypesV1;
 
 static bool direct_target_equations_define_capability_v1(
     const DirectRulesV1 *target_equations,
@@ -1153,6 +1188,514 @@ static bool direct_terms_equal_v1(const Atom *left, const Atom *right,
     return true;
 }
 
+/* Source authentication uses source identity, not numeric equivalence.
+ * This compares the parsed constructors, including the grounded value tag.
+ * It does not claim identity of original whitespace or comments. */
+static bool direct_source_equal_v1(
+    const Atom *left, const Atom *right, Arena *scratch, size_t depth) {
+    if (left == NULL || right == NULL || left->kind != right->kind ||
+        depth > GSLT_PETTA_DIRECT_DEPTH_LIMIT_V1)
+        return false;
+    if (left->kind == ATOM_EXPR) {
+        if (left->expr.len != right->expr.len)
+            return false;
+        for (CettaExprIndex i = 0u; i < left->expr.len; i++) {
+            if (!direct_source_equal_v1(left->expr.elems[i],
+                                        right->expr.elems[i], scratch,
+                                        depth + 1u))
+                return false;
+        }
+        return true;
+    }
+    if (left->kind == ATOM_GROUNDED &&
+        left->ground.gkind != right->ground.gkind)
+        return false;
+    const char *a = atom_to_parseable_string(scratch, (Atom *)left);
+    const char *b = atom_to_parseable_string(scratch, (Atom *)right);
+    return a != NULL && b != NULL && strcmp(a, b) == 0;
+}
+
+static bool direct_literal_integer_v1(const Atom *term, int64_t *value) {
+    if (term == NULL || term->kind != ATOM_GROUNDED ||
+        term->ground.gkind != GV_INT)
+        return false;
+    *value = term->ground.ival;
+    return true;
+}
+
+/* A conservative overlap test: repeated pattern variables can only make
+ * this test reject more optimizations, never establish false uniqueness. */
+static bool direct_patterns_overlap_v1(
+    const Atom *left, const Atom *right, size_t depth) {
+    if (left == NULL || right == NULL ||
+        depth > GSLT_PETTA_DIRECT_DEPTH_LIMIT_V1)
+        return true;
+    if (direct_is_source_variable_v1(left) ||
+        direct_is_source_variable_v1(right))
+        return true;
+    if (left->kind != right->kind)
+        return false;
+    if (left->kind == ATOM_SYMBOL)
+        return strcmp(atom_name_cstr((Atom *)left),
+                      atom_name_cstr((Atom *)right)) == 0;
+    if (left->kind == ATOM_GROUNDED)
+        return atom_eq((Atom *)left, (Atom *)right);
+    if (left->kind != ATOM_EXPR)
+        return true;
+    if (left->expr.len != right->expr.len)
+        return false;
+    for (CettaExprIndex i = 0u; i < left->expr.len; i++) {
+        if (!direct_patterns_overlap_v1(left->expr.elems[i],
+                                        right->expr.elems[i], depth + 1u))
+            return false;
+    }
+    return true;
+}
+
+/* The finite decoder is the selected binary completion-type inference's
+ * source shape. Names are extracted, never supplied by a provider registry. */
+static bool direct_infer_integer_native_type_v1(
+    const DirectRuleV1 *rule, DirectIntegerNativeTypeV1 *result) {
+    const Atom *equation = rule->head;
+    if (!direct_head_v1(equation, "metta-equation", 2u))
+        return false;
+    const Atom *left = equation->expr.elems[1];
+    const Atom *right = equation->expr.elems[2];
+    if (left->kind != ATOM_EXPR || left->expr.len != 2u ||
+        left->expr.elems[0]->kind != ATOM_SYMBOL)
+        return false;
+    const Atom *query = left->expr.elems[1];
+    if (query->kind != ATOM_EXPR || query->expr.len != 3u ||
+        query->expr.elems[0]->kind != ATOM_SYMBOL)
+        return false;
+    const char *relation = atom_name_cstr(query->expr.elems[0]);
+    const char *wrapper = atom_name_cstr(left->expr.elems[0]);
+    if (strncmp(wrapper, "gslt:", 5u) != 0 ||
+        strcmp(wrapper + 5u, relation) != 0 ||
+        !direct_is_source_variable_v1(query->expr.elems[1]) ||
+        !direct_is_source_variable_v1(query->expr.elems[2]) ||
+        direct_same_variable_v1(query->expr.elems[1], query->expr.elems[2]) ||
+        !direct_head_v1(right, "if", 3u))
+        return false;
+    const Atom *condition = right->expr.elems[1];
+    const Atom *success = right->expr.elems[2];
+    const Atom *failure = right->expr.elems[3];
+    bool not_less = direct_head_v1(condition, ">=", 2u);
+    if ((!not_less && !direct_head_v1(condition, "<", 2u)) ||
+        !direct_head_v1(success, "quote", 1u) ||
+        !direct_terms_equal_v1(success->expr.elems[1], query, 0u) ||
+        !direct_head_v1(failure, "metta-nullary", 1u) ||
+        !direct_symbol_v1(failure->expr.elems[1], "empty") ||
+        !direct_same_variable_v1(condition->expr.elems[2],
+                                 query->expr.elems[2]))
+        return false;
+    const Atom *operand = condition->expr.elems[1];
+    bool successor = direct_head_v1(operand, "+", 2u);
+    int64_t one;
+    if (successor) {
+        if (!direct_same_variable_v1(operand->expr.elems[1],
+                                     query->expr.elems[1]) ||
+            !direct_literal_integer_v1(operand->expr.elems[2], &one) ||
+            one != 1)
+            return false;
+    } else if (!direct_same_variable_v1(operand, query->expr.elems[1])) {
+        return false;
+    }
+    *result = (DirectIntegerNativeTypeV1){
+        .occurrence = rule->source_index, .relation = relation,
+        .left = left, .not_less = not_less, .successor = successor,
+    };
+    return true;
+}
+
+static bool direct_authenticate_integer_native_types_v1(
+    const Atom *packet, Atom *const *presentations, size_t presentation_count,
+    const DirectRulesV1 *target_equations, const DirectOperatorsV1 *relations,
+    DirectIntegerNativeTypesV1 *types,
+    Arena *scratch, char *error, size_t error_size) {
+    if (packet == NULL)
+        return true;
+    if (!direct_head_v1(packet, "integer-provider-native-types-v1", 2u))
+        return direct_error_v1(error, error_size,
+                               "malformed integer native-type packet");
+    const Atom *sources = packet->expr.elems[1];
+    const Atom *rows = packet->expr.elems[2];
+    if (!direct_head_v1(sources, "source-composition", presentation_count) ||
+        rows->kind != ATOM_EXPR || rows->expr.len == 0u ||
+        !direct_symbol_v1(rows->expr.elems[0], "types"))
+        return direct_error_v1(error, error_size,
+                               "malformed integer native-type source binding");
+    for (size_t i = 0u; i < presentation_count; i++) {
+        if (!direct_source_equal_v1(presentations[i],
+                                    sources->expr.elems[i + 1u], scratch, 0u))
+            return direct_error_v1(error, error_size,
+                                   "integer native-type source composition differs");
+    }
+    if (target_equations->len > SIZE_MAX / sizeof(*types->items))
+        return direct_error_v1(error, error_size,
+                               "integer native-type inventory is too large");
+    if (target_equations->len > 0u) {
+        types->items = calloc(target_equations->len, sizeof(*types->items));
+        if (types->items == NULL)
+            return direct_error_v1(error, error_size,
+                                   "out of memory decoding integer native types");
+    }
+    for (size_t i = 0u; i < target_equations->len; i++) {
+        DirectIntegerNativeTypeV1 inferred;
+        if (!direct_infer_integer_native_type_v1(
+                &target_equations->items[i], &inferred))
+            continue;
+        if (types->len + 1u >= (size_t)rows->expr.len)
+            return direct_error_v1(error, error_size,
+                                   "integer native-type inventory is incomplete");
+        const Atom *row = rows->expr.elems[types->len + 1u];
+        int64_t occurrence;
+        if (!direct_head_v1(row, "binary-integer-completion-v1", 4u) ||
+            !direct_literal_integer_v1(row->expr.elems[1], &occurrence) ||
+            occurrence < 0 || (uint64_t)occurrence != inferred.occurrence ||
+            !direct_symbol_v1(row->expr.elems[2], inferred.relation) ||
+            !direct_symbol_v1(row->expr.elems[3],
+                             inferred.not_less ? "not-less" : "less") ||
+            !direct_symbol_v1(row->expr.elems[4],
+                             inferred.successor ? "successor" : "direct"))
+            return direct_error_v1(error, error_size,
+                                   "integer native type disagrees with its source occurrence");
+        size_t matching = 0u;
+        bool primitive_override = false;
+        for (size_t j = 0u; j < target_equations->len; j++) {
+            const Atom *lhs = target_equations->items[j].head->expr.elems[1];
+            if (direct_patterns_overlap_v1(lhs, inferred.left, 0u))
+                matching++;
+            if (direct_is_source_variable_v1(lhs))
+                primitive_override = true;
+            /* Rendering decodes this constructor to a nullary target call.
+             * Do not inspect its source tag as if that were the target head. */
+            if (direct_head_v1(lhs, "metta-nullary", 1u))
+                primitive_override = true;
+            if (lhs->kind == ATOM_EXPR && lhs->expr.len > 0u) {
+                const Atom *head = lhs->expr.elems[0];
+                if (direct_is_source_variable_v1(head) ||
+                    direct_symbol_v1(head, "if") ||
+                    direct_symbol_v1(head, "quote") ||
+                    direct_symbol_v1(head, "empty") ||
+                    direct_symbol_v1(head, "<") ||
+                    direct_symbol_v1(head, ">=") ||
+                    direct_symbol_v1(head, "+"))
+                    primitive_override = true;
+                if (head->kind == ATOM_SYMBOL) {
+                    const char *name = atom_name_cstr((Atom *)head);
+                    if (strncmp(name, "gslt:fn:", 8u) == 0 ||
+                        strncmp(name, "gslt:fnix:", 10u) == 0 ||
+                        strncmp(name, "gslt:mode:", 10u) == 0 ||
+                        strncmp(name, "gslt:entry:", 11u) == 0)
+                        primitive_override = true;
+                }
+            }
+        }
+        for (size_t j = 0u; j < relations->len; j++) {
+            const char *name = relations->items[j].name;
+            if (strncmp(name, "fn:", 3u) == 0 ||
+                strncmp(name, "fnix:", 5u) == 0 ||
+                strncmp(name, "mode:", 5u) == 0 ||
+                strncmp(name, "entry:", 6u) == 0)
+                primitive_override = true;
+        }
+        /* Ordinary relation rules take precedence in body-mode selection and
+         * emit their own wrappers. A target-equation NTT says nothing about
+         * their answer stream, even if the names happen to coincide. */
+        inferred.unique = matching == 1u && !primitive_override &&
+            !direct_has_operator_v1(relations, inferred.relation, 2u);
+        types->items[types->len++] = inferred;
+    }
+    if (types->len != (size_t)rows->expr.len - 1u)
+        return direct_error_v1(error, error_size,
+                               "integer native-type inventory contains extra occurrences");
+    return true;
+}
+
+static bool direct_domain_text_v1(const CettaLdTextV1 *text, const char *name) {
+    return strlen(name) == text->len &&
+        memcmp(text->bytes, name, text->len) == 0;
+}
+
+static uint32_t direct_domain_type_v1(
+    const CettaLanguageDefCoreV1 *language, const CettaLdTextV1 *name) {
+    uint32_t found = 0u;
+    for (uint32_t i = 0u; i < language->type_len; i++) {
+        const CettaLdTextV1 *candidate = &language->types[i].name;
+        if (candidate->len == name->len &&
+            memcmp(candidate->bytes, name->bytes, name->len) == 0) {
+            if (found != 0u) return 0u;
+            found = i + 1u;
+        }
+    }
+    return found;
+}
+
+static bool direct_domain_bind_v1(
+    DirectDomainEnvironmentV1 *env, const Atom *term, uint32_t type) {
+    if (type == 0u) return true;
+    for (size_t i = 0u; i < env->len; i++) {
+        if (direct_terms_equal_v1(env->items[i].term, term, 0u)) {
+            if (env->items[i].type != type) env->inconsistent = true;
+            return true;
+        }
+    }
+    if (env->len == SIZE_MAX / sizeof(*env->items)) return false;
+    DirectDomainFactV1 *grown = realloc(
+        env->items, (env->len + 1u) * sizeof(*env->items));
+    if (grown == NULL) return false;
+    env->items = grown;
+    env->items[env->len++] = (DirectDomainFactV1){term, type};
+    return true;
+}
+
+/* The source nullary marker is syntax, not a second guest constructor. */
+static const char *direct_domain_constructor_v1(
+    const Atom *term, size_t *arity) {
+    if (direct_head_v1(term, "metta-nullary", 1u) &&
+        term->expr.elems[1]->kind == ATOM_SYMBOL) {
+        *arity = 0u;
+        return atom_name_cstr(term->expr.elems[1]);
+    }
+    if (term->kind != ATOM_EXPR || term->expr.len == 0u ||
+        term->expr.elems[0]->kind != ATOM_SYMBOL) return NULL;
+    *arity = (size_t)term->expr.len - 1u;
+    return atom_name_cstr(term->expr.elems[0]);
+}
+
+static const CettaLdGrammarRuleV1 *direct_domain_rule_v1(
+    const CettaLanguageDefCoreV1 *language, const Atom *term,
+    uint32_t expected) {
+    size_t arity;
+    const char *name = direct_domain_constructor_v1(term, &arity);
+    const CettaLdGrammarRuleV1 *found = NULL;
+    if (name == NULL) return NULL;
+    for (uint32_t i = 0u; i < language->term_len; i++) {
+        const CettaLdGrammarRuleV1 *rule = &language->terms[i];
+        if (!direct_domain_text_v1(&rule->label, name) ||
+            rule->param_len != arity) continue;
+        uint32_t category = direct_domain_type_v1(language, &rule->category);
+        if (category == 0u || (expected != 0u && category != expected)) continue;
+        if (found != NULL) return NULL;
+        found = rule;
+    }
+    return found;
+}
+
+static bool direct_domain_pattern_v1(
+    const CettaLanguageDefCoreV1 *language, const Atom *pattern,
+    uint32_t type, DirectDomainEnvironmentV1 *env, size_t depth) {
+    if (type == 0u || type > language->type_len ||
+        depth > GSLT_PETTA_DIRECT_DEPTH_LIMIT_V1) return true;
+    if (direct_is_source_variable_v1(pattern))
+        return direct_domain_bind_v1(env, pattern, type);
+    if (language->types[type - 1u].carrier != CETTA_LD_CARRIER_AST_V1)
+        return true;
+    const CettaLdGrammarRuleV1 *rule =
+        direct_domain_rule_v1(language, pattern, type);
+    if (rule == NULL) return true;
+    /* Reusing this exact matched pattern reconstructs an admitted subterm.
+     * This is not a license to build arbitrary new constructor expressions. */
+    if (!direct_domain_bind_v1(env, pattern, type)) return false;
+    for (uint32_t i = 0u; i < rule->param_len; i++) {
+        const CettaLdTermParamV1 *param = &rule->params[i];
+        if (param->kind != CETTA_LD_PARAM_SIMPLE_V1 ||
+            param->type.kind != CETTA_LD_TYPE_BASE_V1) continue;
+        if (!direct_domain_pattern_v1(language, pattern->expr.elems[i + 1u],
+                direct_domain_type_v1(language, &param->type.as.base),
+                env, depth + 1u)) return false;
+    }
+    return true;
+}
+
+static uint32_t direct_domain_term_v1(
+    const CettaLanguageDefCoreV1 *language,
+    const DirectDomainEnvironmentV1 *env, const Atom *term, size_t depth) {
+    if (env->inconsistent || depth > GSLT_PETTA_DIRECT_DEPTH_LIMIT_V1) return 0u;
+    for (size_t i = 0u; i < env->len; i++)
+        if (direct_terms_equal_v1(env->items[i].term, term, 0u))
+            return env->items[i].type;
+    if (term->kind == ATOM_GROUNDED) {
+        CettaLdCarrierKindV1 carrier;
+        if (term->ground.gkind == GV_INT) carrier = CETTA_LD_CARRIER_BUILTIN_INT_V1;
+        else if (term->ground.gkind == GV_STRING) carrier = CETTA_LD_CARRIER_BUILTIN_STRING_V1;
+        else return 0u;
+        uint32_t found = 0u;
+        for (uint32_t i = 0u; i < language->type_len; i++) {
+            if (language->types[i].carrier != carrier) continue;
+            if (found != 0u) return 0u;
+            found = i + 1u;
+        }
+        return found;
+    }
+    /* Reconstructed expressions may be evaluated at the guest call boundary.
+     * Their constructor shape alone does not establish the returned carrier.
+     * Only exact matched-subterm reuse and literals acquire a carrier here. */
+    return 0u;
+}
+
+static size_t direct_domain_relation_v1(
+    const DirectOperatorsV1 *relations, const char *name, size_t arity) {
+    for (size_t i = 0u; i < relations->len; i++)
+        if (relations->items[i].arity == arity &&
+            strcmp(relations->items[i].name, name) == 0) return i;
+    return relations->len;
+}
+
+static void direct_domains_free_v1(DirectAdmissionDomainsV1 *domains) {
+    if (domains->environments != NULL)
+        for (size_t i = 0u; i < domains->rules->len; i++)
+            free(domains->environments[i].items);
+    free(domains->environments);
+    *domains = (DirectAdmissionDomainsV1){0};
+}
+
+/* A finite, conservative join over calls from ONE admitted entry. Facts
+ * describe input values, never values returned by an unknown provider.
+ * Conflicting call domains join to unknown. The output is compile-time
+ * information only; no schema interpreter is emitted into the workers. */
+static bool direct_domains_build_v1(
+    DirectAdmissionDomainsV1 *domains, const CettaLanguageDefCoreV1 *language,
+    const DirectRulesV1 *rules, const DirectOperatorsV1 *relations,
+    const char *entry_relation, size_t entry_arity, size_t entry_input,
+    uint32_t entry_type, char *error, size_t error_size) {
+    uint32_t **inputs = calloc(relations->len, sizeof(*inputs));
+    bool *reached = calloc(relations->len, sizeof(*reached));
+    bool ok = false;
+    domains->language = language;
+    domains->rules = rules;
+    domains->environments = calloc(rules->len, sizeof(*domains->environments));
+    if (inputs == NULL || reached == NULL || domains->environments == NULL) goto done;
+    for (size_t i = 0u; i < relations->len; i++) {
+        size_t arity = relations->items[i].arity;
+        if (arity > SIZE_MAX / sizeof(**inputs)) goto done;
+        inputs[i] = malloc((arity == 0u ? 1u : arity) * sizeof(**inputs));
+        if (inputs[i] == NULL) goto done;
+        for (size_t j = 0u; j < arity; j++) inputs[i][j] = UINT32_MAX;
+    }
+    size_t entry = direct_domain_relation_v1(relations, entry_relation, entry_arity);
+    if (entry == relations->len) goto done;
+    reached[entry] = true;
+    for (size_t j = 0u; j < entry_arity; j++) inputs[entry][j] = 0u;
+    inputs[entry][entry_input] = entry_type;
+    bool changed;
+    do {
+        changed = false;
+        for (size_t i = 0u; i < rules->len; i++) {
+            const DirectRuleV1 *rule = &rules->items[i];
+            size_t arity = (size_t)rule->head->expr.len - 1u;
+            size_t relation = direct_domain_relation_v1(relations,
+                atom_name_cstr(rule->head->expr.elems[0]), arity);
+            if (relation == relations->len || !reached[relation])
+                continue;
+            DirectDomainEnvironmentV1 *env = &domains->environments[i];
+            free(env->items);
+            *env = (DirectDomainEnvironmentV1){0};
+            for (size_t j = 0u; j < arity; j++)
+                if (!direct_domain_pattern_v1(language, rule->head->expr.elems[j + 1u],
+                        inputs[relation][j], env, 0u)) goto done;
+            for (CettaExprIndex b = 1u; b < rule->body->expr.len; b++) {
+                const Atom *call = rule->body->expr.elems[b];
+                size_t width = (size_t)call->expr.len - 1u;
+                size_t callee = direct_domain_relation_v1(relations,
+                    atom_name_cstr(call->expr.elems[0]), width);
+                if (callee == relations->len) continue;
+                if (!reached[callee]) { reached[callee] = true; changed = true; }
+                for (size_t j = 0u; j < width; j++) {
+                    uint32_t type = direct_domain_term_v1(language, env,
+                        call->expr.elems[j + 1u], 0u);
+                    uint32_t before = inputs[callee][j];
+                    uint32_t after = before == UINT32_MAX ? type :
+                        before == type ? before : 0u;
+                    if (after != before) { inputs[callee][j] = after; changed = true; }
+                }
+            }
+        }
+    } while (changed);
+    ok = true;
+done:
+    if (inputs != NULL)
+        for (size_t i = 0u; i < relations->len; i++) free(inputs[i]);
+    free(inputs);
+    free(reached);
+    if (!ok) {
+        direct_domains_free_v1(domains);
+        return direct_error_v1(error, error_size, "cannot derive admitted entry domains");
+    }
+    return true;
+}
+
+static bool direct_domain_integer_v1(
+    const DirectAdmissionDomainsV1 *domains, const DirectRuleV1 *rule,
+    const Atom *term) {
+    if (domains == NULL || rule == NULL) return false;
+    for (size_t i = 0u; i < domains->rules->len; i++) {
+        if (&domains->rules->items[i] != rule) continue;
+        uint32_t type = direct_domain_term_v1(domains->language,
+            &domains->environments[i], term, 0u);
+        return type != 0u && domains->language->types[type - 1u].carrier ==
+            CETTA_LD_CARRIER_BUILTIN_INT_V1;
+    }
+    return false;
+}
+
+/* Literals are independent of caller typing. A separate admitted family
+ * additionally uses transported Integer carriers. Groundness alone never
+ * suffices; a variable successor still has no overflow license. */
+static const DirectIntegerNativeTypeV1 *direct_integer_call_native_type_v1(
+    const DirectIntegerNativeTypesV1 *types, const Atom *goal,
+    const DirectRuleV1 *caller) {
+    if (types->len == 0u || goal->kind != ATOM_EXPR || goal->expr.len != 3u ||
+        goal->expr.elems[0]->kind != ATOM_SYMBOL ||
+        direct_is_source_variable_v1(goal->expr.elems[0]))
+        return NULL;
+    int64_t left = 0;
+    int64_t right = 0;
+    bool left_literal = direct_literal_integer_v1(goal->expr.elems[1], &left);
+    if ((!left_literal && !direct_domain_integer_v1(types->domains, caller,
+                                                   goal->expr.elems[1])) ||
+        (!direct_literal_integer_v1(goal->expr.elems[2], &right) &&
+         !direct_domain_integer_v1(types->domains, caller, goal->expr.elems[2])))
+        return NULL;
+    (void)right;
+    for (size_t i = 0u; i < types->len; i++) {
+        const DirectIntegerNativeTypeV1 *type = &types->items[i];
+        if (type->unique &&
+            (!type->successor || (left_literal && left < INT64_MAX)) &&
+            direct_symbol_v1(goal->expr.elems[0], type->relation))
+            return type;
+    }
+    return NULL;
+}
+
+static bool direct_integer_guards_exclusive_v1(
+    const DirectRuleV1 *left, const DirectRuleV1 *right,
+    const DirectIntegerNativeTypesV1 *types,
+    const DirectVariablePairsV1 *pairs, bool aligned) {
+    if (types->len == 0u)
+        return false;
+    for (CettaExprIndex i = 1u; i < left->body->expr.len; i++) {
+        const Atom *a = left->body->expr.elems[i];
+        const DirectIntegerNativeTypeV1 *ta =
+            direct_integer_call_native_type_v1(types, a, left);
+        if (ta == NULL)
+            continue;
+        for (CettaExprIndex j = 1u; j < right->body->expr.len; j++) {
+            const Atom *b = right->body->expr.elems[j];
+            const DirectIntegerNativeTypeV1 *tb =
+                direct_integer_call_native_type_v1(types, b, right);
+            if (tb != NULL && ta->not_less != tb->not_less &&
+                ta->successor == tb->successor &&
+                aligned &&
+                direct_terms_correspond_v1(a->expr.elems[1], b->expr.elems[1], pairs, 0u) &&
+                direct_terms_correspond_v1(a->expr.elems[2], b->expr.elems[2], pairs, 0u))
+                return true;
+        }
+    }
+    return false;
+}
+
 static bool direct_target_ground_disequality_capability_v1(
     const DirectRulesV1 *target_equations, const char *capability,
     size_t arity, DirectGroundDisequalityCapabilityV1 *result) {
@@ -1244,7 +1787,9 @@ static bool direct_target_ground_disequality_capability_v1(
 static bool direct_capability_call_is_ground_semidet_v1(
     const DirectRulesV1 *target_equations,
     const DirectOperatorsV1 *capabilities, const Atom *goal,
-    const uint8_t *input_ground) {
+    const uint8_t *input_ground,
+    const DirectIntegerNativeTypesV1 *native_types,
+    const DirectRuleV1 *caller) {
     const char *relation = atom_name_cstr(goal->expr.elems[0]);
     size_t arity = (size_t)goal->expr.len - 1u;
     DirectOperatorV1 capability = {
@@ -1261,8 +1806,9 @@ static bool direct_capability_call_is_ground_semidet_v1(
         if (!input_ground[argument])
             return false;
     }
-    return direct_target_ground_disequality_capability_v1(
-        target_equations, relation, arity, &ignored);
+    return direct_integer_call_native_type_v1(native_types, goal, caller) != NULL ||
+           direct_target_ground_disequality_capability_v1(
+               target_equations, relation, arity, &ignored);
 }
 
 static bool direct_variable_pairs_push_v1(
@@ -2014,6 +2560,7 @@ static bool direct_mode_rules_are_guard_exclusive_v1(
     const DirectBindingModesV1 *modes,
     const DirectRulesV1 *target_equations,
     const DirectOperatorsV1 *capabilities,
+    const DirectIntegerNativeTypesV1 *native_types,
     char *error, size_t error_size) {
     size_t begin;
     size_t end;
@@ -2032,7 +2579,18 @@ static bool direct_mode_rules_are_guard_exclusive_v1(
             if (!direct_rule_inputs_may_overlap_v1(
                     left, right, mode->input_ground, mode->arity))
                 continue;
+            for (size_t argument = 0u; argument < mode->arity; argument++) {
+                if (mode->input_ground[argument] &&
+                    !direct_align_overlapping_input_patterns_v1(
+                        left->head->expr.elems[argument + 1u],
+                        right->head->expr.elems[argument + 1u],
+                        &pairs, 0u, error, error_size)) {
+                    aligned = false;
+                    break;
+                }
+            }
             exclusive =
+                direct_integer_guards_exclusive_v1(left, right, native_types, &pairs, aligned) ||
                 direct_rules_have_nonlinear_guard_complement_v1(
                     left, right, mode, target_equations, capabilities,
                     error, error_size) ||
@@ -2052,17 +2610,6 @@ static bool direct_mode_rules_are_guard_exclusive_v1(
                     right, left, mode, rules, rule_index, modes,
                     error, error_size);
             if (!exclusive) {
-                for (size_t argument = 0u;
-                     argument < mode->arity; argument++) {
-                    if (mode->input_ground[argument] &&
-                        !direct_align_overlapping_input_patterns_v1(
-                            left->head->expr.elems[argument + 1u],
-                            right->head->expr.elems[argument + 1u],
-                            &pairs, 0u, error, error_size)) {
-                        aligned = false;
-                        break;
-                    }
-                }
                 exclusive = aligned &&
                     (direct_rules_have_exclusive_functional_guards_v1(
                          left, right, mode, modes, &pairs,
@@ -2105,6 +2652,7 @@ static bool direct_rule_has_functional_body_v1(
     const DirectOperatorsV1 *capabilities,
     const DirectRulesV1 *target_equations,
     const DirectBindingModesV1 *modes,
+    const DirectIntegerNativeTypesV1 *native_types,
     char *error, size_t error_size) {
     DirectVariablesV1 known = {0};
     bool functional = true;
@@ -2151,7 +2699,8 @@ static bool direct_rule_has_functional_body_v1(
                     target_equations, &capability);
             bool semidet = declared &&
                 direct_capability_call_is_ground_semidet_v1(
-                    target_equations, capabilities, goal, input_ground);
+                    target_equations, capabilities, goal, input_ground,
+                    native_types, rule);
             if (trace) {
                 fprintf(stderr, "[gslt-direct-mode] %s/%zu mode=",
                         mode->relation, mode->arity);
@@ -2223,7 +2772,9 @@ static bool direct_analyze_functional_modes_v1(
     const DirectOperatorsV1 *relations,
     const DirectOperatorsV1 *capabilities,
     const DirectRulesV1 *target_equations,
-    DirectBindingModesV1 *modes, char *error, size_t error_size) {
+    DirectBindingModesV1 *modes,
+    const DirectIntegerNativeTypesV1 *native_types,
+    char *error, size_t error_size) {
     const char *trace_relation = getenv("CETTA_GSLT_DIRECT_MODE_TRACE");
     size_t functional_count = 0u;
     bool advanced;
@@ -2268,7 +2819,7 @@ static bool direct_analyze_functional_modes_v1(
                 mode->input_heads_disjoint ||
                 direct_mode_rules_are_guard_exclusive_v1(
                     rules, rule_index, mode, modes, target_equations,
-                    capabilities, error, error_size));
+                    capabilities, native_types, error, error_size));
             if (error != NULL && error[0] != '\0') {
                 free(candidates);
                 return false;
@@ -2298,7 +2849,7 @@ static bool direct_analyze_functional_modes_v1(
                         rule_index->items[offset].source_index];
                     if (!direct_rule_has_functional_body_v1(
                             rule, mode, relations, capabilities,
-                            target_equations, modes,
+                            target_equations, modes, native_types,
                             error, error_size)) {
                         if (error != NULL && error[0] != '\0')
                             return false;
@@ -2594,6 +3145,8 @@ static bool direct_render_call_v1(DirectBufferV1 *program,
 static bool direct_render_mode_name_v1(
     DirectBufferV1 *program, const char *prefix,
     const DirectBindingModeV1 *mode) {
+    if (mode->admitted && strcmp(prefix, "gslt:result:") != 0 &&
+        !direct_literal_v1(program, "admitted:")) return false;
     if (!direct_literal_v1(program, prefix) ||
         !direct_literal_v1(program, mode->relation) ||
         !direct_byte_v1(program, (uint8_t)':'))
@@ -2614,6 +3167,59 @@ static bool direct_render_input_slot_v1(
         name, sizeof(name), "$__gslt_input_v1_%zu", argument);
     return length > 0 && (size_t)length < sizeof(name) &&
            direct_literal_v1(program, name);
+}
+
+/* Public entry names do not expose the functional-mode optimization. The
+ * wrapper forwards the complete answer stream, including zero/many answers. */
+static bool direct_render_entries_v1(
+    DirectBufferV1 *program, const DirectBindingModesV1 *modes,
+    const char *const *entries, size_t entry_count) {
+    for (size_t index = 0u; index < modes->len; index++) {
+        const DirectBindingModeV1 *mode = &modes->items[index];
+        bool requested = false;
+        size_t name_len = strlen(mode->relation);
+        for (size_t entry = 0u; entry < entry_count; entry++) {
+            const char *separator = strrchr(entries[entry], ':');
+            if (separator == NULL ||
+                (size_t)(separator - entries[entry]) != name_len ||
+                strncmp(entries[entry], mode->relation, name_len) != 0 ||
+                strlen(separator + 1u) != mode->arity)
+                continue;
+            bool equal = true;
+            for (size_t arg = 0u; arg < mode->arity; arg++) {
+                if (separator[arg + 1u] !=
+                    (mode->input_ground[arg] ? '1' : '0'))
+                    equal = false;
+            }
+            requested = requested || equal;
+        }
+        if (!requested || !mode->selected)
+            continue;
+        if (!direct_literal_v1(program, "; gslt-lowered-entry-v1 ") ||
+            !direct_render_mode_name_v1(program, "gslt:entry:", mode) ||
+            !direct_literal_v1(program, "\n(= (") ||
+            !direct_render_mode_name_v1(program, "gslt:entry:", mode))
+            return false;
+        for (size_t arg = 0u; arg < mode->arity; arg++) {
+            if (mode->input_ground[arg] &&
+                (!direct_byte_v1(program, (uint8_t)' ') ||
+                 !direct_render_input_slot_v1(program, arg)))
+                return false;
+        }
+        if (!direct_literal_v1(program, ") (") ||
+            !direct_render_mode_name_v1(program,
+                mode->functional ? "gslt:fn:" : "gslt:mode:", mode))
+            return false;
+        for (size_t arg = 0u; arg < mode->arity; arg++) {
+            if (mode->input_ground[arg] &&
+                (!direct_byte_v1(program, (uint8_t)' ') ||
+                 !direct_render_input_slot_v1(program, arg)))
+                return false;
+        }
+        if (!direct_literal_v1(program, "))\n"))
+            return false;
+    }
+    return true;
 }
 
 static bool direct_petta_pattern_requires_body_match_v1(
@@ -2727,10 +3333,12 @@ static bool direct_render_selected_mode_call_v1(
                direct_render_function_call_v1(
                    program, application, mode, scratch) &&
                direct_byte_v1(program, (uint8_t)')');
-    return direct_literal_v1(program, "(eval (quote ") &&
-           direct_render_function_call_v1(
-               program, application, mode, scratch) &&
-           direct_literal_v1(program, "))");
+    /* The projected callee is a statically named equation in this program.
+     * Emit an ordinary call. PeTTa's eval translates its raw argument, so
+     * eval(quote(call)) returns call data rather than executing the callee.
+     * This is not a general eval/quote fusion law for dynamic source terms. */
+    return direct_render_function_call_v1(
+        program, application, mode, scratch);
 }
 
 static bool direct_render_function_result_v1(
@@ -3739,6 +4347,9 @@ static bool direct_compile_petta_v1(
     const char *const *entry_modes,
     size_t entry_mode_count,
     bool closed_entry_residual,
+    const Atom *native_type_packet,
+    const CettaLanguageDefCoreV1 *admitted_language,
+    const char *admitted_relation, size_t admitted_input, uint32_t admitted_type,
     uint8_t **program_out,
     size_t *program_len_out,
     size_t *rule_count_out,
@@ -3753,6 +4364,8 @@ static bool direct_compile_petta_v1(
     DirectRulesV1 target_equations = {0};
     DirectRuleIndexV1 rule_index = {0};
     DirectBindingModesV1 binding_modes = {0};
+    DirectIntegerNativeTypesV1 native_types = {0};
+    DirectAdmissionDomainsV1 domains = {0};
     DirectBufferV1 program = {0};
     Arena scratch;
     bool ok = false;
@@ -3815,15 +4428,57 @@ static bool direct_compile_petta_v1(
         !direct_validate_rules_v1(
             &rules, &operators, &relations, &capabilities,
             error, error_size) ||
+        !direct_authenticate_integer_native_types_v1(
+            native_type_packet, presentations, presentation_count,
+            &target_equations, &relations, &native_types, &scratch,
+            error, error_size) ||
         !direct_rule_index_build_v1(
             &rules, &rule_index, error, error_size) ||
         !direct_analyze_binding_modes_v1(
             &rules, &rule_index, &relations, &capabilities,
             &target_equations, entry_modes, entry_mode_count, &binding_modes,
-            error, error_size) ||
-        !direct_analyze_functional_modes_v1(
+            error, error_size))
+        goto done;
+    if (admitted_language != NULL) {
+        for (size_t i = 0u; i < target_equations.len; i++) {
+            const Atom *lhs = target_equations.items[i].head->expr.elems[1];
+            const Atom *head = lhs->kind == ATOM_EXPR && lhs->expr.len > 0u
+                ? lhs->expr.elems[0] : lhs;
+            if (direct_head_v1(lhs, "metta-nullary", 1u)) head = lhs->expr.elems[1];
+            bool collision = direct_is_source_variable_v1(head);
+            if (head->kind == ATOM_SYMBOL) {
+                const char *name = atom_name_cstr((Atom *)head);
+                collision = collision || strncmp(name, "admitted:gslt:", 14u) == 0 ||
+                    strncmp(name, "gslt:admitted-entry:", 20u) == 0 ||
+                    strcmp(name, "langdef:admit-term") == 0 ||
+                    strcmp(name, "langdef:language-wire-sha256") == 0 ||
+                    strncmp(name, "__cetta_lib_language_def_term_", 30u) == 0 ||
+                    strcmp(name, "LangDef:LanguageWireSHA256") == 0 ||
+                    strcmp(name, "LangDef:TermAdmitted") == 0 ||
+                    strcmp(name, "import!") == 0 || strcmp(name, "empty") == 0 ||
+                    strcmp(name, "let") == 0 ||
+                    strcmp(name, "case") == 0 || strcmp(name, "==") == 0 ||
+                    strcmp(name, "if") == 0;
+                for (uint32_t j = 0u; j < admitted_language->term_len; j++)
+                    collision = collision || direct_domain_text_v1(
+                        &admitted_language->terms[j].label, name);
+            }
+            if (collision) {
+                (void)direct_error_v1(error, error_size,
+                    "authored target equation overlaps the admitted entry boundary");
+                goto done;
+            }
+        }
+        const char *bits = strrchr(entry_modes[0], ':');
+        if (bits == NULL || !direct_domains_build_v1(&domains, admitted_language,
+                &rules, &relations, admitted_relation, strlen(bits + 1u),
+                admitted_input, admitted_type, error, error_size)) goto done;
+        native_types.domains = &domains;
+        for (size_t i = 0u; i < binding_modes.len; i++) binding_modes.items[i].admitted = 1u;
+    }
+    if (!direct_analyze_functional_modes_v1(
             &rules, &rule_index, &relations, &capabilities,
-            &target_equations, &binding_modes,
+            &target_equations, &binding_modes, &native_types,
             error, error_size) ||
         !direct_select_reachable_modes_v1(
             &rules, &relations, &binding_modes, closed_entry_residual,
@@ -3842,15 +4497,18 @@ static bool direct_compile_petta_v1(
         (closed_entry_residual &&
          !direct_literal_v1(&program, "; closed-entry-residual yes\n")) ||
         !direct_literal_v1(&program, "\n") ||
-        !direct_render_source_inventory_v1(&program, &composition) ||
+        (admitted_language == NULL &&
+         !direct_render_source_inventory_v1(&program, &composition)) ||
         !direct_render_binding_modes_v1(
             &program, &binding_modes, closed_entry_residual))
         goto allocation_failure;
     for (size_t index = 0u; index < relations.len; index++) {
+        if (admitted_language != NULL) break;
         if (!direct_render_type_v1(&program, &relations.items[index]))
             goto allocation_failure;
     }
     for (size_t index = 0u; index < capabilities.len; index++) {
+        if (admitted_language != NULL) break;
         if (!direct_has_operator_v1(
                 &relations, capabilities.items[index].name,
                 capabilities.items[index].arity) &&
@@ -3860,6 +4518,7 @@ static bool direct_compile_petta_v1(
     if (!direct_byte_v1(&program, (uint8_t)'\n'))
         goto allocation_failure;
     for (size_t index = 0u; index < capabilities.len; index++) {
+        if (admitted_language != NULL) break;
         const DirectOperatorV1 *capability = &capabilities.items[index];
         if (!direct_has_operator_v1(
                 &relations, capability->name, capability->arity) &&
@@ -3882,12 +4541,15 @@ static bool direct_compile_petta_v1(
     if (capabilities.len > 0u &&
         !direct_byte_v1(&program, (uint8_t)'\n'))
         goto allocation_failure;
-    if (!direct_render_target_equations_v1(
+    if (admitted_language == NULL && !direct_render_target_equations_v1(
             &program, &target_equations, &scratch))
         goto allocation_failure;
     if (!direct_render_function_modes_v1(
             &program, &rules, &target_equations,
             &binding_modes, &scratch))
+        goto allocation_failure;
+    if (!direct_render_entries_v1(
+            &program, &binding_modes, entry_modes, entry_mode_count))
         goto allocation_failure;
     if (!closed_entry_residual) {
         for (size_t index = 0u; index < rules.len; index++) {
@@ -3918,6 +4580,8 @@ allocation_failure:
 
 done:
     free(program.bytes);
+    direct_domains_free_v1(&domains);
+    free(native_types.items);
     direct_free_binding_modes_v1(&binding_modes);
     free(rule_index.items);
     free(target_equations.items);
@@ -3943,7 +4607,7 @@ bool cetta_gslt_petta_direct_selected_v1(
     size_t error_size) {
     return direct_compile_petta_v1(
         presentations, presentation_count, entry_modes, entry_mode_count,
-        false, program_out, program_len_out, rule_count_out,
+        false, NULL, NULL, NULL, 0u, 0u, program_out, program_len_out, rule_count_out,
         source_digest_out, error, error_size);
 }
 
@@ -3960,7 +4624,7 @@ bool cetta_gslt_petta_direct_closed_v1(
     size_t error_size) {
     return direct_compile_petta_v1(
         presentations, presentation_count, entry_modes, entry_mode_count,
-        true, program_out, program_len_out, rule_count_out,
+        true, NULL, NULL, NULL, 0u, 0u, program_out, program_len_out, rule_count_out,
         source_digest_out, error, error_size);
 }
 
@@ -3977,4 +4641,132 @@ bool cetta_gslt_petta_direct_v1(
         presentations, presentation_count, NULL, 0u,
         program_out, program_len_out, rule_count_out,
         source_digest_out, error, error_size);
+}
+
+bool cetta_gslt_petta_direct_native_types_v1(
+    Atom *const *presentations, size_t presentation_count,
+    const Atom *native_type_packet,
+    const char *const *entry_modes, size_t entry_mode_count,
+    bool closed_entry_residual,
+    uint8_t **program_out, size_t *program_len_out, size_t *rule_count_out,
+    char source_digest_out[65], char *error, size_t error_size) {
+    if (native_type_packet == NULL)
+        return direct_error_v1(error, error_size,
+                               "missing integer native-type packet");
+    return direct_compile_petta_v1(
+        presentations, presentation_count, entry_modes, entry_mode_count,
+        closed_entry_residual, native_type_packet,
+        NULL, NULL, 0u, 0u,
+        program_out, program_len_out, rule_count_out,
+        source_digest_out, error, error_size);
+}
+
+bool cetta_gslt_petta_direct_admitted_v1(
+    Atom *const *presentations, size_t presentation_count,
+    const Atom *native_type_packet,
+    const char *const *entry_modes, size_t entry_mode_count,
+    const CettaLanguageDefCoreV1 *admission_language,
+    const char admission_wire_digest[65], const char *admission_entry,
+    uint8_t **program_out, size_t *program_len_out, size_t *rule_count_out,
+    char source_digest_out[65], char *error, size_t error_size) {
+    const char *separator = admission_entry == NULL ? NULL : strrchr(admission_entry, ':');
+    if (separator == NULL || separator == admission_entry || separator[1] == '\0' ||
+        admission_language == NULL || native_type_packet == NULL ||
+        admission_wire_digest == NULL || strlen(admission_wire_digest) != 64u ||
+        admission_language->type_len == UINT32_MAX || entry_modes == NULL ||
+        program_out == NULL || program_len_out == NULL || rule_count_out == NULL ||
+        source_digest_out == NULL)
+        return direct_error_v1(error, error_size, "invalid admitted PeTTa compilation request");
+    for (size_t i = 0u; i < 64u; i++)
+        if (!((admission_wire_digest[i] >= '0' && admission_wire_digest[i] <= '9') ||
+              (admission_wire_digest[i] >= 'a' && admission_wire_digest[i] <= 'f')))
+            return direct_error_v1(error, error_size, "invalid admission wire digest");
+    *program_out = NULL;
+    *program_len_out = 0u;
+    size_t relation_len = (size_t)(separator - admission_entry);
+    const char *selected = NULL;
+    size_t input = 0u;
+    for (size_t i = 0u; i < entry_mode_count; i++) {
+        const char *bits = strrchr(entry_modes[i], ':');
+        if (bits == NULL || (size_t)(bits - entry_modes[i]) != relation_len ||
+            strncmp(entry_modes[i], admission_entry, relation_len) != 0) continue;
+        size_t count = 0u;
+        for (size_t j = 0u; bits[j + 1u] != '\0'; j++) {
+            if (bits[j + 1u] == '1') { count++; input = j; }
+            else if (bits[j + 1u] != '0') count = 2u;
+        }
+        if (count != 1u || selected != NULL)
+            return direct_error_v1(error, error_size, "admitted entry needs exactly one declared single-input mode");
+        selected = entry_modes[i];
+    }
+    if (selected == NULL)
+        return direct_error_v1(error, error_size, "admitted entry is not a declared closed entry");
+    uint32_t type = 0u;
+    for (uint32_t i = 0u; i < admission_language->type_len; i++) {
+        if (!direct_domain_text_v1(&admission_language->types[i].name, separator + 1u)) continue;
+        if (type != 0u)
+            return direct_error_v1(error, error_size, "ambiguous admission type");
+        type = i + 1u;
+    }
+    if (type == 0u)
+        return direct_error_v1(error, error_size, "unknown admission type");
+    char *relation = malloc(relation_len + 1u);
+    uint8_t *raw = NULL;
+    uint8_t *typed = NULL;
+    size_t raw_len = 0u, typed_len = 0u, typed_count = 0u;
+    char typed_digest[65];
+    DirectBufferV1 combined = {0};
+    Arena scratch;
+    arena_init(&scratch);
+    bool ok = false;
+    if (relation == NULL) goto done;
+    memcpy(relation, admission_entry, relation_len);
+    relation[relation_len] = '\0';
+    if (!direct_compile_petta_v1(presentations, presentation_count,
+            entry_modes, entry_mode_count, true, native_type_packet,
+            NULL, NULL, 0u, 0u, &raw, &raw_len, rule_count_out,
+            source_digest_out, error, error_size) ||
+        !direct_compile_petta_v1(presentations, presentation_count,
+            &selected, 1u, true, native_type_packet,
+            admission_language, relation, input, type,
+            &typed, &typed_len, &typed_count, typed_digest, error, error_size)) goto done;
+    if (raw_len > SIZE_MAX - 2u || typed_len > SIZE_MAX - 2u - raw_len ||
+        !direct_reserve_v1(&combined, raw_len + typed_len + 2u)) goto done;
+    memcpy(combined.bytes, raw, raw_len);
+    combined.len = raw_len;
+    combined.bytes[combined.len++] = '\n';
+    memcpy(combined.bytes + combined.len, typed, typed_len);
+    combined.len += typed_len;
+    /* The checked wrapper is the only public entry into the typed family.
+     * It checks the live authority, not an input's claimed admission tag.
+     * Failed admission/identity checks preserve the ordinary entry route. */
+    if (!direct_literal_v1(&combined,
+            "\n; Load the checked boundary before PeTTa translates its literal calls.\n"
+            "!(let $_ (import! &self langdef) (empty))\n"
+            "; checked LanguageDef admission boundary\n(= (gslt:admitted-entry:") ||
+        !direct_literal_v1(&combined, selected) ||
+        !direct_literal_v1(&combined, " $authority $input)\n  (if (== (langdef:language-wire-sha256 $authority) (LangDef:LanguageWireSHA256 ") ||
+        !direct_render_term_v1(&combined, atom_string(&scratch, admission_wire_digest), &scratch, 0u) ||
+        !direct_literal_v1(&combined, "))\n    (case (langdef:admit-term $authority ") ||
+        !direct_render_term_v1(&combined, atom_string(&scratch, separator + 1u), &scratch, 0u) ||
+        !direct_literal_v1(&combined, " $input)\n      (((LangDef:TermAdmitted) (admitted:gslt:entry:") ||
+        !direct_literal_v1(&combined, selected) ||
+        !direct_literal_v1(&combined, " $input))\n       ($_ (gslt:entry:") ||
+        !direct_literal_v1(&combined, selected) ||
+        !direct_literal_v1(&combined, " $input))))\n    (gslt:entry:") ||
+        !direct_literal_v1(&combined, selected) ||
+        !direct_literal_v1(&combined, " $input)))\n")) goto done;
+    *program_out = combined.bytes;
+    *program_len_out = combined.len;
+    combined.bytes = NULL;
+    ok = true;
+done:
+    free(combined.bytes);
+    free(raw);
+    free(typed);
+    free(relation);
+    arena_free(&scratch);
+    if (!ok && error != NULL && error_size > 0u && error[0] == '\0')
+        (void)direct_error_v1(error, error_size, "cannot render admitted PeTTa program");
+    return ok;
 }

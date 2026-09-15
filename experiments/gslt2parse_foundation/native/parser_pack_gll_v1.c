@@ -13,6 +13,7 @@ static bool ppgll_v1_parse_input(
     uint32_t descriptor_limit,
     uint32_t replay_depth,
     uint32_t result_limit,
+    bool materialize_semantics,
     PPNativeV1Result *out,
     char *error_buf,
     size_t error_buf_size) {
@@ -31,7 +32,8 @@ static bool ppgll_v1_parse_input(
         error_buf[0] = '\0';
     if ((!prepared && (!pack || !start_state)) ||
         !out || descriptor_limit == 0u ||
-        replay_depth == 0u || result_limit == 0u ||
+        (materialize_semantics &&
+         (replay_depth == 0u || result_limit == 0u)) ||
         (view && (input_bytes || input_byte_len != 0u)) ||
         (!view && input_byte_len > 0u && !input_bytes)) {
         if (error_buf && error_buf_size > 0u) {
@@ -119,7 +121,8 @@ static bool ppgll_v1_parse_input(
             break;
         }
     }
-    if (!ppnative_v1_finish(
+    if (materialize_semantics &&
+        !ppnative_v1_finish(
             &result, pack, start_state, replay_depth, result_limit,
             error_buf, error_buf_size)) {
         goto done;
@@ -150,7 +153,7 @@ bool ppgll_v1_parse(const PPABIV1Pack *pack,
     size_t error_buf_size) {
     return ppgll_v1_parse_input(
         NULL, pack, start_state, input_bytes, input_byte_len, NULL,
-        descriptor_limit, replay_depth, result_limit,
+        descriptor_limit, replay_depth, result_limit, true,
         out, error_buf, error_buf_size);
 }
 
@@ -166,7 +169,36 @@ bool ppgll_v1_parse_scalar_view(
     size_t error_buf_size) {
     return ppgll_v1_parse_input(
         NULL, pack, start_state, NULL, 0u, view,
-        descriptor_limit, replay_depth, result_limit,
+        descriptor_limit, replay_depth, result_limit, true,
+        out, error_buf, error_buf_size);
+}
+
+bool ppgll_v1_recognize(
+    const PPABIV1Pack *pack,
+    const Atom *start_state,
+    const uint8_t *input_bytes,
+    size_t input_byte_len,
+    uint32_t descriptor_limit,
+    PPNativeV1Result *out,
+    char *error_buf,
+    size_t error_buf_size) {
+    return ppgll_v1_parse_input(
+        NULL, pack, start_state, input_bytes, input_byte_len, NULL,
+        descriptor_limit, 0u, 0u, false,
+        out, error_buf, error_buf_size);
+}
+
+bool ppgll_v1_recognize_scalar_view(
+    const PPABIV1Pack *pack,
+    const Atom *start_state,
+    const CettaLpNativeUtf8ScalarView *view,
+    uint32_t descriptor_limit,
+    PPNativeV1Result *out,
+    char *error_buf,
+    size_t error_buf_size) {
+    return ppgll_v1_parse_input(
+        NULL, pack, start_state, NULL, 0u, view,
+        descriptor_limit, 0u, 0u, false,
         out, error_buf, error_buf_size);
 }
 
@@ -182,7 +214,7 @@ bool ppgll_v1_prepared_parse(
     size_t error_buf_size) {
     return ppgll_v1_parse_input(
         prepared, NULL, NULL, input_bytes, input_byte_len, NULL,
-        descriptor_limit, replay_depth, result_limit,
+        descriptor_limit, replay_depth, result_limit, true,
         out, error_buf, error_buf_size);
 }
 
@@ -197,6 +229,33 @@ bool ppgll_v1_prepared_parse_scalar_view(
     size_t error_buf_size) {
     return ppgll_v1_parse_input(
         prepared, NULL, NULL, NULL, 0u, view,
-        descriptor_limit, replay_depth, result_limit,
+        descriptor_limit, replay_depth, result_limit, true,
+        out, error_buf, error_buf_size);
+}
+
+bool ppgll_v1_prepared_recognize(
+    const PPNativeV1Prepared *prepared,
+    const uint8_t *input_bytes,
+    size_t input_byte_len,
+    uint32_t descriptor_limit,
+    PPNativeV1Result *out,
+    char *error_buf,
+    size_t error_buf_size) {
+    return ppgll_v1_parse_input(
+        prepared, NULL, NULL, input_bytes, input_byte_len, NULL,
+        descriptor_limit, 0u, 0u, false,
+        out, error_buf, error_buf_size);
+}
+
+bool ppgll_v1_prepared_recognize_scalar_view(
+    const PPNativeV1Prepared *prepared,
+    const CettaLpNativeUtf8ScalarView *view,
+    uint32_t descriptor_limit,
+    PPNativeV1Result *out,
+    char *error_buf,
+    size_t error_buf_size) {
+    return ppgll_v1_parse_input(
+        prepared, NULL, NULL, NULL, 0u, view,
+        descriptor_limit, 0u, 0u, false,
         out, error_buf, error_buf_size);
 }

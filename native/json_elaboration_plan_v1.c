@@ -361,7 +361,7 @@ bool cetta_json_elaboration_plan_v1_compile(
         return false;
     }
     memcpy(candidate.source_sha256, source_sha256, 65u);
-    memcpy(candidate.profile_sha256, profile->source_sha256, 65u);
+    memcpy(candidate.profile_sha256, profile->authority_sha256, 65u);
     memcpy(candidate.target_sha256, target_sha256, 65u);
     cetta_json_elaboration_plan_v1_free(out);
     *out = candidate;

@@ -96,3 +96,21 @@
 !(println! cut-conflict)
 !(collapse (let false (output-cut) reached))
 !(output-cut)
+
+; A completed output match remains true under later bindings. Backtracking
+; must restore the continuation together with the bindings that justify it.
+(= (output-deferred $x)
+   (let $y (progn (println! deferred-body) (superpose (a b a)))
+     (let* (($z $y)) (quote (pair $x $z)))))
+!(println! deferred-partial)
+!(collapse (let (quote (pair shared $y)) (output-deferred shared) $y))
+!(println! deferred-duplicates)
+!(collapse (let (quote (pair shared a)) (output-deferred shared) reached))
+!(println! deferred-conflict)
+!(collapse (let (quote (other shared a)) (output-deferred shared) reached))
+
+(= (output-deferred-cons $x)
+   (progn (println! deferred-cons-body) (quote (box $x))))
+!(println! deferred-cons)
+!(collapse (let (quote (box (a b)))
+   (output-deferred-cons (cons a (cons b ()))) reached))

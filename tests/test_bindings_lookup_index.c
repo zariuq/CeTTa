@@ -106,6 +106,110 @@ static void test_borrowed_root_identity(Arena *arena) {
     bindings_builder_free(&builder);
 }
 
+static bool dense_frame_matches_suffix_scan(
+        const BindingsDenseEpochFrame *frame, const Bindings *bindings) {
+    for (uint32_t slot = 0u; slot < frame->len; slot++) {
+        Atom *expected = NULL;
+        VarId id = var_epoch_id(frame->source_ids[slot], frame->epoch);
+        for (uint32_t entry = frame->first_entry; entry < bindings->len; entry++)
+            if (bindings->entries[entry].var_id == id)
+                expected = bindings->entries[entry].val;
+        bool present = frame->slot_stamps[slot] == frame->slot_generation;
+        if (present != (expected != NULL) ||
+            (present && frame->values[slot] != expected))
+            return false;
+    }
+    return frame->scanned_len == bindings->len;
+}
+
+static void test_dense_frame_indexed_suffix(Arena *arena) {
+    VarId ids[] = {UINT64_C(80001), UINT64_C(80003), UINT64_C(80008)};
+    Atom *variables[] = {
+        atom_var_with_id(arena, "frame-prefix", ids[0]),
+        atom_var_with_id(arena, "frame-present", ids[1]),
+        atom_var_with_id(arena, "frame-missing", ids[2])
+    };
+    const uint32_t epoch = 113u;
+    Bindings base;
+    bool ready = build_bindings(arena, 256u, &base);
+    BindingsBuilder builder;
+    ready = ready && bindings_builder_init(&builder, &base);
+    if (!ready) { CHECK(false, "indexed frame fixture allocation"); return; }
+    bindings_free(&base);
+    ready = bindings_builder_add_id_fresh(&builder, var_epoch_id(ids[0], epoch),
+        SYMBOL_ID_NONE, atom_int(arena, 11));
+    uint32_t begin = builder.current.len;
+    ready = ready && bindings_builder_add_id_fresh(&builder, var_epoch_id(ids[1], epoch),
+        SYMBOL_ID_NONE, atom_int(arena, 22));
+    for (uint32_t i = 0u; i < 256u && ready; i++)
+        ready = bindings_builder_add_id_fresh(&builder, test_id(300u + i),
+            SYMBOL_ID_NONE, atom_int(arena, i));
+    ready = ready && bindings_builder_add_id_fresh(&builder, var_epoch_id(ids[1], epoch + 1u),
+        SYMBOL_ID_NONE, atom_int(arena, 99));
+
+    BindingsDenseEpochFrame frame;
+    bindings_dense_epoch_frame_init(&frame);
+    bool prepared = ready && bindings_dense_epoch_frame_prepare(
+        &frame, &builder, ids, variables, 3u, epoch, begin);
+    CHECK(prepared && dense_frame_matches_suffix_scan(&frame, &builder.current) &&
+          frame.slot_stamps[0] != frame.slot_generation &&
+          frame.slot_stamps[1] == frame.slot_generation &&
+          frame.slot_stamps[2] != frame.slot_generation,
+          "indexed frame excludes prefix and other epochs, retaining missing slots");
+
+    bindings_lookup_index_test_clear(&builder.current);
+    prepared = bindings_dense_epoch_frame_prepare(
+        &frame, &builder, ids, variables, 3u, epoch, begin);
+    CHECK(prepared && dense_frame_matches_suffix_scan(&frame, &builder.current),
+          "frame construction without a retained index equals the suffix scan");
+
+    uint32_t mark = bindings_builder_save(&builder);
+    for (uint32_t i = 0u; i < 128u && ready; i++)
+        ready = bindings_builder_add_id_fresh(&builder, test_id(700u + i),
+            SYMBOL_ID_NONE, atom_int(arena, i));
+    ready = ready && bindings_builder_add_id_fresh(&builder, var_epoch_id(ids[2], epoch),
+        SYMBOL_ID_NONE, atom_int(arena, 33));
+    CHECK(ready && bindings_dense_epoch_frame_refresh(&frame, &builder) &&
+          dense_frame_matches_suffix_scan(&frame, &builder.current) &&
+          frame.slot_stamps[2] == frame.slot_generation,
+          "frame refresh observes the pending index suffix without losing prior slots");
+    bindings_builder_rollback(&builder, mark);
+    CHECK(!bindings_dense_epoch_frame_refresh(&frame, &builder) &&
+          bindings_dense_epoch_frame_prepare(&frame, &builder, ids, variables, 3u, epoch, begin) &&
+          dense_frame_matches_suffix_scan(&frame, &builder.current) &&
+          frame.slot_stamps[2] != frame.slot_generation,
+          "rollback rejects stale frames and rebuilding removes rolled-back values");
+
+    frame.slot_generation = UINT32_MAX;
+    CHECK(bindings_dense_epoch_frame_prepare(&frame, &builder, ids, variables, 3u, epoch, begin) &&
+          dense_frame_matches_suffix_scan(&frame, &builder.current) &&
+          frame.slot_stamps[2] != frame.slot_generation,
+          "generation wrap preserves absence instead of reviving stale slots");
+    CHECK(bindings_dense_epoch_frame_prepare(&frame, &builder, NULL, NULL, 0u, epoch, 0u) &&
+          frame.len == 0u && frame.scanned_len == builder.current.len,
+          "empty variable inventory observes no bindings");
+    bindings_dense_epoch_frame_free(&frame);
+    bindings_builder_free(&builder);
+
+    /* The raw binding ABI permits duplicate keys. Its derived index and the
+     * forward frame scan must both retain the newest occurrence. */
+    ready = build_bindings(arena, 256u, &base);
+    if (!ready) { CHECK(false, "duplicate frame fixture allocation"); return; }
+    base.entries[0].var_id = var_epoch_id(ids[1], epoch);
+    base.entries[255].var_id = var_epoch_id(ids[1], epoch);
+    bindings_lookup_index_test_clear(&base);
+    ready = bindings_builder_init(&builder, &base);
+    bindings_free(&base);
+    bindings_dense_epoch_frame_init(&frame);
+    prepared = ready && bindings_dense_epoch_frame_prepare(
+        &frame, &builder, ids, variables, 3u, epoch, 128u);
+    CHECK(prepared && dense_frame_matches_suffix_scan(&frame, &builder.current) &&
+          frame.values[1] == builder.current.entries[255].val,
+          "indexed frame retains the last duplicate occurrence within the suffix");
+    bindings_dense_epoch_frame_free(&frame);
+    bindings_builder_free(&builder);
+}
+
 static void test_term_stability_summary(Arena *arena) {
     static const bool expected[GV_INTERNAL_TAG + 1u] = {
         [GV_INT] = true,
@@ -686,6 +790,122 @@ static void test_logical_binding_transport(void) {
     arena_free(&source_arena);
 }
 
+static bool ground_test_loop_oracle(Bindings *bindings) {
+    uint8_t saved = bindings->cycle_state;
+    bindings->cycle_state = 0u; /* Unknown: force the full-graph oracle. */
+    bool result = bindings_has_loop(bindings);
+    bindings->cycle_state = saved;
+    return result;
+}
+
+static void test_closed_component_cache(void) {
+    HashConsTable hc;
+    hashcons_init(&hc);
+    Arena arena;
+    arena_init(&arena);
+    arena_set_hashcons(&arena, &hc);
+    Atom *node = atom_symbol(&arena, "ClosedComponent");
+    Atom *leaf = atom_symbol(&arena, "closed-leaf");
+    Atom *x = atom_var_with_id(&arena, "closed-x", test_id(9100));
+    Atom *y = atom_var_with_id(&arena, "closed-y", test_id(9101));
+    Atom *p = atom_var_with_id(&arena, "closed-p", test_id(9102));
+    Atom *q = atom_var_with_id(&arena, "closed-q", test_id(9103));
+    Atom *z = atom_var_with_id(&arena, "closed-z", test_id(9104));
+    Atom *open = atom_expr3(&arena, node, x, y);
+    BindingsBuilder parent;
+    bool ready = bindings_builder_init(&parent, NULL);
+    for (uint32_t i=0; ready && i<128; i++)
+        ready = bindings_builder_add_id_fresh(&parent, test_id(9200+i), SYMBOL_ID_NONE,
+            atom_var_with_id(&arena, "unbound-pad", test_id(9600+i)));
+    ready = ready && bindings_builder_add_var_fresh(&parent, p, open);
+    ready = ready && bindings_builder_add_var_fresh(&parent, z, leaf) &&
+        bindings_builder_add_id_fresh(&parent, test_id(9105), SYMBOL_ID_NONE,
+            atom_expr3(&arena, node, p, z));
+    CHECK(ready && (open->flags & ATOM_FLAG_HASH_STABLE) &&
+          !bindings_has_loop(&parent.current) && !ground_test_loop_oracle(&parent.current),
+          "open multi-support component remains acyclic without assuming it is closed");
+    if (!ready) { bindings_builder_free(&parent); arena_free(&arena); hashcons_free(&hc); return; }
+    uint32_t mark = bindings_builder_save(&parent);
+    BindingsBuilder sibling;
+    bool sibling_ready = bindings_builder_init(&sibling, &parent.current);
+    ready = bindings_builder_add_var_fresh(&parent, x, leaf) &&
+            bindings_builder_add_var_fresh(&parent, y, leaf) &&
+            bindings_builder_add_var_fresh(&parent, q, atom_expr3(&arena, node, p, x));
+    CHECK(ready && !bindings_has_loop(&parent.current) && !ground_test_loop_oracle(&parent.current),
+          "closed branching component agrees with the independent full graph traversal");
+    uint32_t closed_mark = bindings_builder_save(&parent);
+    bool repeated = ready;
+    for (uint32_t i=0; repeated && i<64; i++)
+        repeated = bindings_builder_add_id_fresh(&parent, test_id(9900+i), SYMBOL_ID_NONE,
+            atom_expr3(&arena, node, p, y));
+    CHECK(repeated && !bindings_has_loop(&parent.current) && !ground_test_loop_oracle(&parent.current),
+          "repeated references to a closed component preserve acyclicity");
+    bindings_builder_rollback(&parent, closed_mark);
+    CHECK(!bindings_has_loop(&parent.current) &&
+          !ground_test_loop_oracle(&parent.current) &&
+          bindings_lookup_id(&parent.current, x->var_id) == leaf &&
+          bindings_lookup_id(&parent.current, y->var_id) == leaf,
+          "rollback of unrelated suffix preserves the closed component and its bindings");
+    bool reused_suffix = true;
+    for (uint32_t round = 0u; reused_suffix && round < 64u; round++) {
+        uint32_t suffix_mark = bindings_builder_save(&parent);
+        for (uint32_t i = 0u; reused_suffix && i < 17u; i++)
+            reused_suffix = bindings_builder_add_id_fresh(
+                &parent, test_id(12000u + round * 17u + i), SYMBOL_ID_NONE,
+                atom_expr3(&arena, node, p, y));
+        reused_suffix = reused_suffix && !bindings_has_loop(&parent.current) &&
+            !ground_test_loop_oracle(&parent.current);
+        bindings_builder_rollback(&parent, suffix_mark);
+    }
+    CHECK(reused_suffix && !ground_test_loop_oracle(&parent.current),
+          "repeated distinct suffixes preserve closedness through index-cluster relocation");
+    bool sibling_cycle = sibling_ready && bindings_builder_add_var_fresh(&sibling, x, p);
+    CHECK(sibling_cycle && bindings_has_loop(&sibling.current) && ground_test_loop_oracle(&sibling.current) &&
+          !bindings_has_loop(&parent.current),
+          "closedness established in one branch cannot erase a sibling's open cycle");
+    bindings_builder_rollback(&parent, mark);
+    CHECK(!bindings_has_loop(&parent.current) && !ground_test_loop_oracle(&parent.current),
+          "rollback restores the original open acyclic component");
+    bool after_rollback = bindings_builder_add_var_fresh(&parent, x, p);
+    CHECK(after_rollback && bindings_has_loop(&parent.current) && ground_test_loop_oracle(&parent.current),
+          "rollback invalidates closedness before the old open frontier closes a cycle");
+    if (sibling_ready) bindings_builder_free(&sibling);
+    bindings_builder_free(&parent);
+
+    Arena scratch;
+    arena_init(&scratch);
+    Atom *mutable = atom_expr_builder_begin(&scratch, 3u);
+    mutable->expr.elems[0] = node;
+    mutable->expr.elems[1] = x;
+    mutable->expr.elems[2] = y;
+    mutable = atom_expr_builder_finish(&scratch, mutable);
+    /* This raw ABI specimen deliberately withholds the immutability fact. */
+    mutable->flags &= ~ATOM_FLAG_HASH_STABLE;
+    ready = bindings_builder_init(&parent, NULL);
+    for (uint32_t i=0; ready && i<128; i++)
+        ready = bindings_builder_add_id_fresh(&parent, test_id(9200+i), SYMBOL_ID_NONE,
+            atom_var_with_id(&arena, "unbound-pad", test_id(9600+i)));
+    ready = ready && bindings_builder_add_var_fresh(&parent, x, leaf) &&
+        bindings_builder_add_var_fresh(&parent, y, leaf) &&
+        bindings_builder_add_var_fresh(&parent, p, mutable) &&
+        bindings_builder_add_id_fresh(&parent, test_id(9106), SYMBOL_ID_NONE,
+            atom_expr3(&arena, node, p, x));
+    CHECK(ready && !(mutable->flags & ATOM_FLAG_HASH_STABLE) &&
+          !bindings_has_loop(&parent.current) && !ground_test_loop_oracle(&parent.current),
+          "multi-support data without a stability fact retains exact traversal");
+    mutable->expr.elems[2] = q;
+    mutable = atom_expr_builder_finish(&scratch, mutable);
+    mutable->flags &= ~ATOM_FLAG_HASH_STABLE;
+    bool changed_cycle = ready && mutable &&
+        bindings_builder_add_var_fresh(&parent, q, atom_expr3(&arena, node, p, x));
+    CHECK(changed_cycle && bindings_has_loop(&parent.current) && ground_test_loop_oracle(&parent.current),
+          "changed uncertified component is traversed before accepting a new edge");
+    bindings_builder_free(&parent);
+    arena_free(&scratch);
+    arena_free(&arena);
+    hashcons_free(&hc);
+}
+
 int main(void) {
     SymbolTable symbols;
     symbol_table_init(&symbols);
@@ -701,6 +921,8 @@ int main(void) {
 
     test_borrowed_root_identity(&arena);
     test_term_stability_summary(&arena);
+    test_dense_frame_indexed_suffix(&arena);
+    test_closed_component_cache();
     test_internal_tag_structural_summary(&arena);
     test_epoch_identity_and_publication(&arena);
     test_single_variable_support_summary(&arena);
@@ -1488,6 +1710,25 @@ int main(void) {
           "hash-stable projection visits a shared variable DAG linearly");
     bindings_free(&projected);
 
+    /* Many roots share a non-singleton support DAG. Reusing a traversal
+     * must retain the union contributed by earlier roots and both variables. */
+    Atom *multi_support = atom_expr3(
+        &arena, stable_dag_head, projection_root,
+        atom_var_with_id(&arena, "other-live", test_id(0u)));
+    Atom *overlapping_roots[64];
+    for (size_t index = 0u; index < 64u; index++) {
+        multi_support = atom_expr3(
+            &arena, stable_dag_head, multi_support, multi_support);
+        overlapping_roots[index] = multi_support;
+    }
+    CHECK(bindings_project_reachable(
+              &base, overlapping_roots, 64u, &projected) &&
+              projected.len == 2u &&
+              binding_is_int(&projected, late_id, 1000) &&
+              binding_is_int(&projected, test_id(0u), 0),
+          "overlapping projection roots retain their complete support union");
+    bindings_free(&projected);
+
     Bindings unmarked_projection_source;
     bindings_init(&unmarked_projection_source);
     bool unmarked_projection_fixture = build_bindings(
@@ -1534,6 +1775,72 @@ int main(void) {
               binding_is_int(&projected, test_id(63u), 63),
           "nonempty entry marks retain exact dense selection-map semantics");
     bindings_free(&projected);
+    Atom *prefix_roots[3] = {
+        atom_var_with_id(&arena, "prefix-first", test_id(0u)),
+        atom_var_with_id(&arena, "prefix-middle", test_id(16u)),
+        unmarked_projection_root,
+    };
+    uint32_t prefix_marks[6] = {64u, 0u, 16u, 64u, 17u, 1u};
+    CHECK(bindings_project_reachable_with_entry_marks(
+              &marked_projection_source, prefix_roots, 3u,
+              prefix_marks, 6u, &projected) && projected.len == 3u &&
+              prefix_marks[0] == 3u && prefix_marks[1] == 0u &&
+              prefix_marks[2] == 1u && prefix_marks[3] == 3u &&
+              prefix_marks[4] == 2u && prefix_marks[5] == 1u,
+          "projection translates unordered duplicate and empty prefix marks");
+    bindings_free(&projected);
+    bool indexed_projection_ready = binding_is_int(
+        &marked_projection_source, test_id(63u), 63);
+    BindingsLookupIndex *borrowed_projection_index =
+        marked_projection_source.lookup_index;
+    uint32_t indexed_projection_mark = 64u;
+    CHECK(indexed_projection_ready &&
+              bindings_project_reachable_with_entry_marks(
+                  &marked_projection_source, unmarked_projection_roots, 1u,
+                  &indexed_projection_mark, 1u, &projected) &&
+              projected.len == 1u && indexed_projection_mark == 1u &&
+              binding_is_int(&projected, test_id(63u), 63) &&
+              marked_projection_source.lookup_index == borrowed_projection_index,
+          "marked projection borrows the synchronized source index unchanged");
+    bindings_free(&projected);
+
+    BindingsBuilder projection_tail;
+    bool projection_tail_ready = bindings_builder_init(
+        &projection_tail, &marked_projection_source);
+    bool projection_tail_added = projection_tail_ready &&
+        bindings_builder_add_id_fresh(
+            &projection_tail, test_id(64u), SYMBOL_ID_NONE, atom_int(&arena, 64));
+    Atom *projection_tail_root = atom_var_with_id(
+        &arena, "projection-tail", test_id(64u));
+    uint32_t projection_tail_mark = 65u;
+    bool projection_tail_partial = true;
+#ifdef CETTA_TEST_HOOKS
+    uint32_t projection_synced_before = 0u;
+    uint32_t projection_synced_after = 0u;
+    if (lookup_index_expected)
+        projection_tail_partial = projection_tail_added &&
+            bindings_lookup_index_test_synced_len(
+                &projection_tail.current, &projection_synced_before) &&
+            projection_synced_before < projection_tail.current.len;
+#endif
+    bool projection_tail_ok = projection_tail_added && projection_tail_partial &&
+        bindings_project_reachable_with_entry_marks(
+            &projection_tail.current, &projection_tail_root, 1u,
+            &projection_tail_mark, 1u, &projected);
+#ifdef CETTA_TEST_HOOKS
+    if (lookup_index_expected && projection_tail_ok)
+        projection_tail_ok = bindings_lookup_index_test_synced_len(
+            &projection_tail.current, &projection_synced_after) &&
+            projection_synced_after == projection_synced_before;
+#endif
+    CHECK(projection_tail_ok && projected.len == 1u &&
+              projection_tail_mark == 1u &&
+              binding_is_int(&projected, test_id(64u), 64) &&
+              marked_projection_source.len == 64u,
+          "partial shared indexes fall back without losing an appended root");
+    bindings_free(&projected);
+    if (projection_tail_ready)
+        bindings_builder_free(&projection_tail);
     bindings_free(&marked_projection_source);
 
     Atom *cyclic_projection_root = atom_expr_builder_begin(&arena, 2u);
@@ -1547,6 +1854,10 @@ int main(void) {
               !bindings_project_reachable(
                   &base, cyclic_projection_roots, 1u, &projected),
           "non-stable cyclic projection retains the guarded collector");
+    Atom *mixed_cycle_roots[2] = {multi_support, cyclic_projection_root};
+    CHECK(!bindings_project_reachable(
+              &base, mixed_cycle_roots, 2u, &projected),
+          "completed shared roots do not hide a later structural cycle");
     uint32_t invalid_projection_mark = 66u;
     CHECK(!bindings_project_reachable_with_entry_marks(
               &base, projection_roots, 1u,

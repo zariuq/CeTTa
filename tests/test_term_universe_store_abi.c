@@ -1528,6 +1528,45 @@ static void test_intrinsic_variable_support_contract(void) {
     arena_free(&persistent);
 }
 
+static void handle_id_test_retain(void *owner) {
+    ++*(unsigned *)owner;
+}
+
+static void handle_id_test_release(void *owner) {
+    assert(*(unsigned *)owner > 0);
+    --*(unsigned *)owner;
+}
+
+static void test_native_handle_id_retention(void) {
+    Arena source, persistent, result;
+    TermUniverse universe;
+    unsigned holders = 0;
+    arena_init_detached(&source);
+    arena_init_detached(&persistent);
+    arena_init_detached(&result);
+    term_universe_init(&universe);
+    term_universe_set_persistent_arena(&universe, &persistent);
+    Atom *identifier = atom_native_handle_identifier(
+        &source, 17, &holders, handle_id_test_retain, handle_id_test_release);
+    Atom *handle = atom_expr3(&source, atom_symbol(&source, "NativeHandle"),
+                             atom_string(&source, "test.resource"), identifier);
+    assert(holders == 1);
+    assert(!term_universe_atom_is_stable(identifier));
+    assert(!term_universe_atom_is_stable(handle));
+    assert(term_universe_atom_is_stable(atom_int(&source, 17)));
+    AtomId id = term_universe_store_atom_id(&universe, &persistent, handle);
+    assert(id != CETTA_ATOM_ID_NONE && holders > 1);
+    arena_free(&source);
+    Atom *copy = term_universe_copy_atom(&universe, &result, id);
+    assert(copy && copy->expr.elems[2]->ground.ival == 17);
+    term_universe_free(&universe);
+    arena_free(&persistent);
+    assert(holders == 1);
+    assert(atom_int_copy(&result, copy->expr.elems[2]));
+    arena_free(&result);
+    assert(holders == 0);
+}
+
 int main(void) {
     SymbolTable symbols;
     VarInternTable var_intern;
@@ -1538,6 +1577,7 @@ int main(void) {
     init_test_symbols(&symbols);
     var_intern_init(&var_intern);
     g_var_intern = &var_intern;
+    test_native_handle_id_retention();
     test_arena_accounting_saturation_contract();
     test_store_format_contract();
     test_root_token_generation_contract();

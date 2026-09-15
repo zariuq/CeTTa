@@ -3466,14 +3466,10 @@ static bool rho_eval_payload_results(Arena *arena,
                                      &alias_fault);
         if (!out->items[r]) {
             if (alias_fault) {
-                result_set_free(out);
-                result_set_init(out);
-                result_set_add(out,
-                               atom_error(arena,
-                                          atom_symbol(arena, "rhometta:eval"),
-                                          atom_symbol(arena,
-                                                      "PayloadOwnedExportAliased")));
-                break;
+                if (eval_context->payload_failure)
+                    *eval_context->payload_failure =
+                        RHOCALC_PAYLOAD_FAILURE_OWNED_EXPORT_ALIASED;
+                rho_validation_set("PayloadOwnedExportAliased");
             }
             goto fail;
         }

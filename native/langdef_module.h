@@ -22,6 +22,8 @@ typedef struct {
     const char *program_source_relative;
     const char *program_relative;
     const char *import_entry;
+    const char *source_category;
+    const char *result_category;
     const char *compiled_cursor_relative;
     const char *sources[CETTA_LANGDEF_MAX_SOURCES];
     uint32_t source_len;

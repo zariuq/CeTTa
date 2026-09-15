@@ -27,11 +27,19 @@ typedef struct {
     bool threaded;
 } RhoRuntimeProfile;
 
+typedef enum {
+    RHOCALC_PAYLOAD_FAILURE_NONE = 0,
+    RHOCALC_PAYLOAD_FAILURE_OWNED_EXPORT_ALIASED
+} RhocalcPayloadFailure;
+
 typedef struct {
     Space *space;
     Registry *registry;
     Arena *persistent_arena;
     CettaLibraryContext *library_context;
+    /* Optional invocation-owned diagnostic, separate from language results.
+     * Workers may report a failure; the caller reads it after they join. */
+    _Atomic(RhocalcPayloadFailure) *payload_failure;
 } RhocalcEvalContext;
 
 typedef enum {

@@ -8441,6 +8441,11 @@ static bool ppguarded_lex_exec_v1_witness_build(
                 limits->result_limit, token_index);
             goto finish;
         }
+        if (replay_outcome == PPNATIVE_V1_CYCLIC_FOREST) {
+            ppguarded_lex_exec_v1_set_error(error_buf, error_buf_size,
+                "cyclic guarded witness has no finite replay; functionality is undetermined");
+            goto done;
+        }
         if (replay_outcome != PPNATIVE_V1_COMPLETED ||
             value_len != 1u || !value) {
             result.outcome = PPLEX_V1_WITNESS_NONFUNCTIONAL;

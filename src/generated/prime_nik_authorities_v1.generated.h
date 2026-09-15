@@ -1,5 +1,5 @@
-#ifndef CETTA_PRIME_NIK_AUTHORITIES_V1_GENERATED_H
-#define CETTA_PRIME_NIK_AUTHORITIES_V1_GENERATED_H
+#ifndef CETTA_GENERATED_cetta_prime_nik_authorities_v1_H
+#define CETTA_GENERATED_cetta_prime_nik_authorities_v1_H
 
 #include <stddef.h>
 
@@ -17,4 +17,4 @@ extern const CettaNikAuthorityV1 cetta_prime_nik_authorities_v1[];
 extern const size_t cetta_prime_nik_authorities_v1_count;
 extern const char cetta_prime_nik_authorities_v1_catalog_sha256[];
 
-#endif /* CETTA_PRIME_NIK_AUTHORITIES_V1_GENERATED_H */
+#endif

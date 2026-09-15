@@ -61,16 +61,6 @@ typedef enum {
     PETTA_MACHINE_SPACE_QUERY_INVALIDATED,
 } PettaMachineSpaceQueryAdmission;
 
-/* A narrower judgment than Space-query execution admission: this licenses
- * bypassing only higher-order call specialization.  Table, translator,
- * foreign, and ordinary equation dispatch remain independently authoritative
- * later in the ready-call transition. */
-typedef enum {
-    PETTA_MACHINE_QUERY_SPECIALIZATION_DEFER = 0,
-    PETTA_MACHINE_QUERY_SPECIALIZATION_BYPASS,
-    PETTA_MACHINE_QUERY_SPECIALIZATION_INVALIDATED,
-} PettaMachineQuerySpecializationAdmission;
-
 /* Language-owned analyses are installed explicitly on a machine instance.
  * The machine must not consult ambient profile state to decide whether a
  * semantic analysis participates in evaluation. */
@@ -229,11 +219,6 @@ typedef struct {
      * judgments; it never makes an unknown host registry look immutable. */
     bool (*callability_authority_token)(
         void *context, PettaMachineAuthorityToken *token);
-    PettaMachineQuerySpecializationAdmission
-        (*admit_query_without_specialization)(
-            void *context, Space *space,
-            SymbolId head, Atom *const *arguments,
-            CettaExprLen arity);
     /* The observer and fields are borrowed for this read-only callback. */
     PettaMachineSpaceQueryAdmission (*admit_space_query)(
         void *context, Space *space,
@@ -614,6 +599,8 @@ typedef struct {
     uint64_t choice_continuation_snapshots;
     uint64_t choice_continuation_items_copied;
     uint64_t choice_continuation_items_trailed;
+    uint64_t choice_continuation_trail_compactions;
+    uint64_t choice_continuation_trail_discarded;
     uint64_t deterministic_clause_choices_elided;
     uint64_t singleton_outcome_choices_elided;
     uint64_t rollbacks;

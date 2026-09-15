@@ -4727,30 +4727,9 @@ static const uint8_t cetta_zerouv_language_v1_compiled_plan_v1[] = {
 };
 
 static const CettaGsltEmbeddedSourceV1 cetta_zerouv_language_v1_sources[] = {
-    {
-        .input = {
-            .bytes = cetta_zerouv_language_v1_semantic_0,
-            .length = sizeof(cetta_zerouv_language_v1_semantic_0),
-            .source = "../shared/finite_horn_quote_match_v1.metta",
-        },
-        .sha256 = "658ccb035e57ca0f38021b460fff198734f0ef739ed098229b0c14fd157bd797",
-    },
-    {
-        .input = {
-            .bytes = cetta_zerouv_language_v1_semantic_1,
-            .length = sizeof(cetta_zerouv_language_v1_semantic_1),
-            .source = "../zero/semantics/query_kernel_v1.metta",
-        },
-        .sha256 = "168a7538f2f29ff90cf73aeaf7ce09e712f41507796f1974b721c4d42ad7d463",
-    },
-    {
-        .input = {
-            .bytes = cetta_zerouv_language_v1_semantic_2,
-            .length = sizeof(cetta_zerouv_language_v1_semantic_2),
-            .source = "semantics/control_v1.metta",
-        },
-        .sha256 = "e2345b968b5007af92fa5a7df4602c6729a96e62c28ecf11a5bf5da3c7ad3398",
-    },
+    {.input = {.bytes = cetta_zerouv_language_v1_semantic_0, .length = sizeof(cetta_zerouv_language_v1_semantic_0), .source = "../shared/finite_horn_quote_match_v1.metta"}, .sha256 = "658ccb035e57ca0f38021b460fff198734f0ef739ed098229b0c14fd157bd797"},
+    {.input = {.bytes = cetta_zerouv_language_v1_semantic_1, .length = sizeof(cetta_zerouv_language_v1_semantic_1), .source = "../zero/semantics/query_kernel_v1.metta"}, .sha256 = "168a7538f2f29ff90cf73aeaf7ce09e712f41507796f1974b721c4d42ad7d463"},
+    {.input = {.bytes = cetta_zerouv_language_v1_semantic_2, .length = sizeof(cetta_zerouv_language_v1_semantic_2), .source = "semantics/control_v1.metta"}, .sha256 = "e2345b968b5007af92fa5a7df4602c6729a96e62c28ecf11a5bf5da3c7ad3398"},
 };
 
 const CettaGsltEmbeddedLanguageV1 cetta_zerouv_language_v1 = {
@@ -4758,37 +4737,24 @@ const CettaGsltEmbeddedLanguageV1 cetta_zerouv_language_v1 = {
     .profile_name = NULL,
     .syntax_backend = "he-reader-direct-v1",
     .term_abi = "finite-horn-quote-v1",
-    .manifest = {
-        .input = {
-            .bytes = cetta_zerouv_language_v1_manifest_v1,
-            .length = sizeof(cetta_zerouv_language_v1_manifest_v1),
-            .source = "zerouv/langdef.metta",
-        },
-        .sha256 = "e4cf314bb042b1660be6f569bd45f500690c902533698b7816364dd8dd9a2ab6",
-    },
+    .manifest = {.input = {.bytes = cetta_zerouv_language_v1_manifest_v1, .length = sizeof(cetta_zerouv_language_v1_manifest_v1), .source = "zerouv/langdef.metta"}, .sha256 = "e4cf314bb042b1660be6f569bd45f500690c902533698b7816364dd8dd9a2ab6"},
     .semantic_sources = cetta_zerouv_language_v1_sources,
     .semantic_source_count = 3u,
-    .compiled_plan = {
-        .bytes = cetta_zerouv_language_v1_compiled_plan_v1,
-        .length = sizeof(cetta_zerouv_language_v1_compiled_plan_v1),
-        .sha256 = "3880f0d7cbfdf8822c8ae0777fb5f858cea330f07b8505c16b1fe287708c4fd9",
-    },
+    .compiled_plan = {.bytes = cetta_zerouv_language_v1_compiled_plan_v1, .length = sizeof(cetta_zerouv_language_v1_compiled_plan_v1), .sha256 = "3880f0d7cbfdf8822c8ae0777fb5f858cea330f07b8505c16b1fe287708c4fd9"},
     .program_nil = "zero-program-nil",
     .program_cons = "zero-program-cons",
     .entry_relation = NULL,
-    .entry_arity = 0u,
-    .program_position = 0u,
-    .result_position = 0u,
+    .entry_arity = 0u, .program_position = 0u, .result_position = 0u,
     .query_relation = NULL,
     .query_arity = 0u,
     .request_pipeline = &(const CettaGsltRequestPipelineV1){
-        .classify_relation = "zerouv-classify",
-        .produce_relation = "zerouv-produce",
-        .observe_relation = "zerouv-observe",
-        .produced_nil = "zerouv-produced-nil",
-        .produced_cons = "zerouv-produced-cons",
+    .classify_relation = "zerouv-classify",
+    .produce_relation = "zerouv-produce",
+    .observe_relation = "zerouv-observe",
+    .produced_nil = "zerouv-produced-nil",
+    .produced_cons = "zerouv-produced-cons",
     },
     .observation = "bag",
     .manifest_sha256 = "e4cf314bb042b1660be6f569bd45f500690c902533698b7816364dd8dd9a2ab6",
-    .compiler_sha256 = "31100b0aede263267ae133a061bd15c64707095a4224fbde210328fb5a7d0f33",
+    .compiler_sha256 = "c82486772be84b0aec1aaf90f3a754fca4e9c370a05f98040fbda3de16671e22",
 };

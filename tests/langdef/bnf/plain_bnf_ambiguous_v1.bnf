@@ -1,0 +1,4 @@
+% Two distinct derivations of the same word must remain distinguishable.
+<s> ::= <left> | <right>
+<left> ::= "x"
+<right> ::= "x"

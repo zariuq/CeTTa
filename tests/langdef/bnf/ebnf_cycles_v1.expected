@@ -1,0 +1,13 @@
+true
+(EbnfCyclicForestV1 True True true true true true true)
+(EbnfCyclicForestV1 True True true true true true true)
+(EbnfCyclicForestV1 True True true true true true true)
+(EbnfCyclicForestV1 True True true true true true true)
+(EbnfIndependentCycleCheckV1 True true true)
+(EbnfCyclicForestV1 True True true true true true true)
+(EbnfCyclicForestV1 True True true true true true true)
+EbnfFiniteForestV1
+EbnfFiniteForestV1
+EbnfFiniteForestV1
+EbnfCyclicGrammarRejectsV1
+EbnfUnproductiveNotCycleV1

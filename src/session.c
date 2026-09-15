@@ -170,51 +170,52 @@ static const CettaProfile CETTA_PROFILE_MM2_GSLT_VALUE = {
     .rust_he_compat_semantics = false,
 };
 
+/* Sorted by name for policy lookup; presentation order is not observable. */
 static const CettaBuiltinPolicy CETTA_BUILTIN_POLICIES[] = {
     {"_minimal-foldl-atom", CETTA_PROFILE_MASK_HE_PUBLIC | CETTA_PROFILE_MASK_PETTA_EXTENDED, "compat_alias"},
-    {"foldl-atom-in-space", CETTA_PROFILE_MASK_HE_EXTENDED_PLUS | CETTA_PROFILE_MASK_PETTA_EXTENDED, "clean_primary_extension"},
-    {"foldl-atom", CETTA_PROFILE_MASK_ALL, "compat_alias"},
-    {"filter-atom", CETTA_PROFILE_MASK_ALL, "compat_alias"},
-    {"range-atom", CETTA_PROFILE_MASK_HE_NON_COMPAT | CETTA_PROFILE_MASK_PETTA_EXTENDED, "clean_primary_extension"},
-    {"repeat-atom", CETTA_PROFILE_MASK_HE_NON_COMPAT | CETTA_PROFILE_MASK_PETTA_EXTENDED, "clean_primary_extension"},
     {"add-atom-nodup", CETTA_PROFILE_MASK_HE_NON_COMPAT | CETTA_PROFILE_MASK_PETTA_EXTENDED, "clean_primary_extension"},
+    {"capture", CETTA_PROFILE_MASK_HE_PUBLIC | CETTA_PROFILE_MASK_PETTA_EXTENDED, "keep_he_public_builtin"},
+    {"collect", CETTA_PROFILE_MASK_HE_EXTENDED_PLUS | CETTA_PROFILE_MASK_PETTA_EXTENDED, "compat_alias"},
     {"count-atoms", CETTA_PROFILE_MASK_HE_EXTENDED_PLUS | CETTA_PROFILE_MASK_PETTA_EXTENDED, "extension_only"},
-    {"module-inventory!", CETTA_PROFILE_MASK_HE_EXTENDED_PLUS | CETTA_PROFILE_MASK_PETTA_EXTENDED, "clean_primary_extension"},
-    {"runtime-stats!", CETTA_PROFILE_MASK_HE_EXTENDED_PLUS | CETTA_PROFILE_MASK_PETTA_EXTENDED, "clean_primary_extension"},
-    {"reset-runtime-stats!", CETTA_PROFILE_MASK_HE_EXTENDED_PLUS | CETTA_PROFILE_MASK_PETTA_EXTENDED, "clean_primary_extension"},
-    {"register-module!", CETTA_PROFILE_MASK_HE_PUBLIC | CETTA_PROFILE_MASK_PETTA_EXTENDED, "keep_he_public_builtin"},
+    {"eval-in-space", CETTA_PROFILE_MASK_HE_NON_COMPAT | CETTA_PROFILE_MASK_PETTA_EXTENDED, "clean_primary_extension"},
+    {"filter-atom", CETTA_PROFILE_MASK_ALL, "compat_alias"},
+    {"fold", CETTA_PROFILE_MASK_HE_EXTENDED_PLUS | CETTA_PROFILE_MASK_PETTA_EXTENDED, "clean_primary_extension"},
+    {"fold-by-key", CETTA_PROFILE_MASK_HE_EXTENDED_PLUS | CETTA_PROFILE_MASK_PETTA_EXTENDED, "clean_primary_extension"},
+    {"foldl-atom", CETTA_PROFILE_MASK_ALL, "compat_alias"},
+    {"foldl-atom-in-space", CETTA_PROFILE_MASK_HE_EXTENDED_PLUS | CETTA_PROFILE_MASK_PETTA_EXTENDED, "clean_primary_extension"},
     {"git-module!", CETTA_PROFILE_MASK_HE_PUBLIC | CETTA_PROFILE_MASK_PETTA_EXTENDED, "keep_he_public_builtin"},
+    {"hyperpose", CETTA_PROFILE_MASK_HE_EXTENDED_PLUS | CETTA_PROFILE_MASK_PETTA_BASE_FORMS, "clean_primary_extension"},
     {"import!", CETTA_PROFILE_MASK_ALL, "keep_he_public_builtin"},
     {"include", CETTA_PROFILE_MASK_HE_PUBLIC | CETTA_PROFILE_MASK_PETTA_EXTENDED, "keep_he_public_builtin"},
     {"include-space-target", CETTA_PROFILE_MASK_HE_NON_COMPAT | CETTA_PROFILE_MASK_PETTA_EXTENDED, "clean_primary_extension"},
     {"mod-space!", CETTA_PROFILE_MASK_HE_PUBLIC | CETTA_PROFILE_MASK_PETTA_EXTENDED, "keep_he_public_builtin"},
-    {"print-mods!", CETTA_PROFILE_MASK_HE_PUBLIC | CETTA_PROFILE_MASK_PETTA_EXTENDED, "keep_he_public_builtin"},
-    {"capture", CETTA_PROFILE_MASK_HE_PUBLIC | CETTA_PROFILE_MASK_PETTA_EXTENDED, "keep_he_public_builtin"},
-    {"quote", CETTA_PROFILE_MASK_ALL, "keep_he_public_builtin"},
-    {"unquote", CETTA_PROFILE_MASK_ALL, "keep_he_public_builtin"},
-    {"sealed", CETTA_PROFILE_MASK_ALL, "keep_he_public_builtin"},
-    {"collect", CETTA_PROFILE_MASK_HE_EXTENDED_PLUS | CETTA_PROFILE_MASK_PETTA_EXTENDED, "compat_alias"},
-    {"fold", CETTA_PROFILE_MASK_HE_EXTENDED_PLUS | CETTA_PROFILE_MASK_PETTA_EXTENDED, "clean_primary_extension"},
-    {"fold-by-key", CETTA_PROFILE_MASK_HE_EXTENDED_PLUS | CETTA_PROFILE_MASK_PETTA_EXTENDED, "clean_primary_extension"},
-    {"reduce", CETTA_PROFILE_MASK_HE_EXTENDED_PLUS | CETTA_PROFILE_MASK_PETTA_BASE_FORMS, "compat_alias"},
-    {"select", CETTA_PROFILE_MASK_HE_EXTENDED_PLUS | CETTA_PROFILE_MASK_PETTA_EXTENDED, "clean_primary_extension"},
-    {"hyperpose", CETTA_PROFILE_MASK_HE_EXTENDED_PLUS | CETTA_PROFILE_MASK_PETTA_BASE_FORMS, "clean_primary_extension"},
-    {"once", CETTA_PROFILE_MASK_HE_EXTENDED_PLUS | CETTA_PROFILE_MASK_PETTA_BASE_FORMS, "compat_alias"},
-    {"eval-in-space", CETTA_PROFILE_MASK_HE_NON_COMPAT | CETTA_PROFILE_MASK_PETTA_EXTENDED, "clean_primary_extension"},
-    {"singleton-visible-witness", CETTA_PROFILE_MASK_HE_PUBLIC | CETTA_PROFILE_MASK_PETTA_EXTENDED, "translator_compat_builtin"},
-    {"search-policy", CETTA_PROFILE_MASK_HE_EXTENDED_PLUS | CETTA_PROFILE_MASK_PETTA_EXTENDED, "clean_primary_extension"},
+    {"module-inventory!", CETTA_PROFILE_MASK_HE_EXTENDED_PLUS | CETTA_PROFILE_MASK_PETTA_EXTENDED, "clean_primary_extension"},
     {"new-space-kind", CETTA_PROFILE_MASK_HE_EXTENDED_PLUS | CETTA_PROFILE_MASK_PETTA_EXTENDED, "clean_primary_extension"},
-    {"with-space-snapshot", CETTA_PROFILE_MASK_HE_NON_COMPAT | CETTA_PROFILE_MASK_PETTA_EXTENDED, "clean_primary_extension"},
-    {"space-set-backend!", CETTA_PROFILE_MASK_HE_EXTENDED_PLUS | CETTA_PROFILE_MASK_PETTA_EXTENDED, "clean_primary_extension"},
-    {"space-set-match-backend!", CETTA_PROFILE_MASK_HE_EXTENDED_PLUS | CETTA_PROFILE_MASK_PETTA_EXTENDED, "compat_alias"},
+    {"once", CETTA_PROFILE_MASK_HE_EXTENDED_PLUS | CETTA_PROFILE_MASK_PETTA_BASE_FORMS, "compat_alias"},
+    {"print-mods!", CETTA_PROFILE_MASK_HE_PUBLIC | CETTA_PROFILE_MASK_PETTA_EXTENDED, "keep_he_public_builtin"},
+    {"quote", CETTA_PROFILE_MASK_ALL, "keep_he_public_builtin"},
+    {"range-atom", CETTA_PROFILE_MASK_HE_NON_COMPAT | CETTA_PROFILE_MASK_PETTA_EXTENDED, "clean_primary_extension"},
+    {"reduce", CETTA_PROFILE_MASK_HE_EXTENDED_PLUS | CETTA_PROFILE_MASK_PETTA_BASE_FORMS, "compat_alias"},
+    {"register-module!", CETTA_PROFILE_MASK_HE_PUBLIC | CETTA_PROFILE_MASK_PETTA_EXTENDED, "keep_he_public_builtin"},
+    {"repeat-atom", CETTA_PROFILE_MASK_HE_NON_COMPAT | CETTA_PROFILE_MASK_PETTA_EXTENDED, "clean_primary_extension"},
+    {"reset-runtime-stats!", CETTA_PROFILE_MASK_HE_EXTENDED_PLUS | CETTA_PROFILE_MASK_PETTA_EXTENDED, "clean_primary_extension"},
+    {"runtime-stats!", CETTA_PROFILE_MASK_HE_EXTENDED_PLUS | CETTA_PROFILE_MASK_PETTA_EXTENDED, "clean_primary_extension"},
+    {"sealed", CETTA_PROFILE_MASK_ALL, "keep_he_public_builtin"},
+    {"search-policy", CETTA_PROFILE_MASK_HE_EXTENDED_PLUS | CETTA_PROFILE_MASK_PETTA_EXTENDED, "clean_primary_extension"},
+    {"select", CETTA_PROFILE_MASK_HE_EXTENDED_PLUS | CETTA_PROFILE_MASK_PETTA_EXTENDED, "clean_primary_extension"},
+    {"singleton-visible-witness", CETTA_PROFILE_MASK_HE_PUBLIC | CETTA_PROFILE_MASK_PETTA_EXTENDED, "translator_compat_builtin"},
     {"size", CETTA_PROFILE_MASK_HE_EXTENDED_PLUS | CETTA_PROFILE_MASK_PETTA_EXTENDED, "clean_primary_extension"},
+    {"space-get", CETTA_PROFILE_MASK_HE_EXTENDED_PLUS | CETTA_PROFILE_MASK_PETTA_EXTENDED, "clean_primary_extension"},
     {"space-len", CETTA_PROFILE_MASK_HE_EXTENDED_PLUS | CETTA_PROFILE_MASK_PETTA_EXTENDED, "clean_primary_extension"},
-    {"space-push", CETTA_PROFILE_MASK_HE_EXTENDED_PLUS | CETTA_PROFILE_MASK_PETTA_EXTENDED, "clean_primary_extension"},
     {"space-peek", CETTA_PROFILE_MASK_HE_EXTENDED_PLUS | CETTA_PROFILE_MASK_PETTA_EXTENDED, "clean_primary_extension"},
     {"space-pop", CETTA_PROFILE_MASK_HE_EXTENDED_PLUS | CETTA_PROFILE_MASK_PETTA_EXTENDED, "clean_primary_extension"},
-    {"space-get", CETTA_PROFILE_MASK_HE_EXTENDED_PLUS | CETTA_PROFILE_MASK_PETTA_EXTENDED, "clean_primary_extension"},
+    {"space-push", CETTA_PROFILE_MASK_HE_EXTENDED_PLUS | CETTA_PROFILE_MASK_PETTA_EXTENDED, "clean_primary_extension"},
+    {"space-set-backend!", CETTA_PROFILE_MASK_HE_EXTENDED_PLUS | CETTA_PROFILE_MASK_PETTA_EXTENDED, "clean_primary_extension"},
+    {"space-set-match-backend!", CETTA_PROFILE_MASK_HE_EXTENDED_PLUS | CETTA_PROFILE_MASK_PETTA_EXTENDED, "compat_alias"},
     {"space-truncate", CETTA_PROFILE_MASK_HE_EXTENDED_PLUS | CETTA_PROFILE_MASK_PETTA_EXTENDED, "clean_primary_extension"},
     {"step!", CETTA_PROFILE_MASK_HE_EXTENDED_PLUS | CETTA_PROFILE_MASK_PETTA_EXTENDED, "clean_primary_extension"},
+    {"unquote", CETTA_PROFILE_MASK_ALL, "keep_he_public_builtin"},
+    {"with-space-snapshot", CETTA_PROFILE_MASK_HE_NON_COMPAT | CETTA_PROFILE_MASK_PETTA_EXTENDED, "clean_primary_extension"},
 };
 
 static const CettaModuleProviderDescriptor CETTA_MODULE_PROVIDER_DESCRIPTORS[] = {
@@ -548,11 +549,17 @@ void cetta_profile_print_inventory_for_language(FILE *out,
 
 const CettaBuiltinPolicy *cetta_builtin_policy_lookup(const char *name) {
     if (!name) return NULL;
-    size_t count = sizeof(CETTA_BUILTIN_POLICIES) / sizeof(CETTA_BUILTIN_POLICIES[0]);
-    for (size_t i = 0; i < count; i++) {
-        if (strcmp(CETTA_BUILTIN_POLICIES[i].name, name) == 0) {
-            return &CETTA_BUILTIN_POLICIES[i];
-        }
+    size_t lo = 0u;
+    size_t hi = sizeof(CETTA_BUILTIN_POLICIES) / sizeof(CETTA_BUILTIN_POLICIES[0]);
+    while (lo < hi) {
+        size_t mid = lo + (hi - lo) / 2u;
+        int order = strcmp(name, CETTA_BUILTIN_POLICIES[mid].name);
+        if (order == 0)
+            return &CETTA_BUILTIN_POLICIES[mid];
+        if (order < 0)
+            hi = mid;
+        else
+            lo = mid + 1u;
     }
     return NULL;
 }

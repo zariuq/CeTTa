@@ -27,6 +27,21 @@ typedef struct {
    Otherwise returns NULL (not a grounded op). */
 Atom *grounded_dispatch(Arena *a, Atom *head, Atom **args, uint32_t nargs);
 
+/* Interpret a binary numeric dispatch result at the PeTTa effect boundary.
+ * These operators produce numbers/booleans or raise; they never return an
+ * arbitrary argument as data. False makes no claim about other operators.
+ * In particular, an Error-shaped value returned by list access is not a
+ * raised error. HE/Prime keep their existing result interpretation. */
+bool grounded_numeric_error_is_raised(Atom *head, uint32_t nargs);
+
+static inline bool grounded_result_is_raised_numeric_error(
+        Atom *head, uint32_t nargs, Atom *result) {
+    /* Scalar results cannot carry an Error constructor. Keep their common
+     * path local while sharing the operator/dialect policy for errors. */
+    return result && result->kind == ATOM_EXPR && atom_is_error(result) &&
+           grounded_numeric_error_is_raised(head, nargs);
+}
+
 /* Evaluate the allocation-free scalar subset of truth-valued grounded
  * operations.  True means `truth_out` is the exact result; false means the
  * caller must use grounded_dispatch, which remains authoritative for every
