@@ -113,6 +113,7 @@ def render_certificate(
     source_path: Path,
     generator_path: Path,
     schema_path: Path,
+    compiler_kind: str = "python",
 ) -> str:
     manifest = language_compiler.parse_manifest(manifest_path, profile_name)
     try:
@@ -146,7 +147,11 @@ def render_certificate(
     ):
         raise CertificateError("generated artifact omits its descriptor symbol")
 
-    compiler_sha = compiler_digest(generator_path, schema_path)
+    compiler_sha = (sha256(generator_path.read_bytes()).hexdigest()
+                    if compiler_kind == "native"
+                    else compiler_digest(generator_path, schema_path))
+    compiler_name = ("CettaGsltLanguageNativeCompilerV1" if compiler_kind == "native"
+                     else "CettaGsltLanguageCompilerV1")
     if _embedded_compiler_digest(source_text) != compiler_sha:
         raise CertificateError(
             "generated artifact was produced by a different compiler identity"
@@ -168,7 +173,7 @@ def render_certificate(
 
     rows = [
         "(gslt-compilation-certificate-v1",
-        f"  (compiler {_quoted('CettaGsltLanguageCompilerV1')} {_quoted(compiler_sha)})",
+        f"  (compiler {_quoted(compiler_name)} {_quoted(compiler_sha)})",
         f"  (descriptor {_quoted(descriptor_symbol)})",
         f"  (language {_quoted(manifest.name)})",
         f"  (profile {_quoted(profile)})",
@@ -228,6 +233,7 @@ def main() -> int:
     parser.add_argument("--source", type=Path, required=True)
     parser.add_argument("--symbol", required=True)
     parser.add_argument("--generator", type=Path, required=True)
+    parser.add_argument("--compiler-kind", choices=("python", "native"), default="python")
     parser.add_argument("--schema", type=Path, required=True)
     parser.add_argument("--certificate", type=Path, required=True)
     arguments = parser.parse_args()
@@ -247,6 +253,7 @@ def main() -> int:
         source_path=arguments.source.resolve(),
         generator_path=arguments.generator.resolve(),
         schema_path=arguments.schema.resolve(),
+        compiler_kind=arguments.compiler_kind,
     )
     write_if_changed(arguments.certificate, content)
     return 0

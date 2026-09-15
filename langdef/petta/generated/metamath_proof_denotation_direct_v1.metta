@@ -408,7 +408,7 @@
 
 ; gslt-lowered-equation-v1 source-rewrite=59 source-presentation=CertificateGSLTFirstOrderDenotationV1 source-rule=proof-semantic-nat-succ-v1 target=mode relation=proof-semantic-nat-v1 input=10 functional=semidet
 (= (gslt:fn:proof-semantic-nat-v1:10 (proof-succ-v1 $value))
-   (let (gslt:result:proof-semantic-nat-v1:10 $quoted) (eval (quote (gslt:fn:proof-semantic-nat-v1:10 $value)))
+   (let (gslt:result:proof-semantic-nat-v1:10 $quoted) (gslt:fn:proof-semantic-nat-v1:10 $value)
    (quote (gslt:result:proof-semantic-nat-v1:10 (q-succ $quoted)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=60 source-presentation=CertificateGSLTFirstOrderDenotationV1 source-rule=proof-semantic-formal-index-head-v1 target=mode relation=proof-semantic-formal-index-v1 input=0000 functional=relational

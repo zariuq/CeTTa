@@ -748,7 +748,7 @@
 
 ; gslt-lowered-equation-v1 source-rewrite=1 source-presentation=CertificateGSLTArticleCoreV1 source-rule=proof-nat-succ target=mode relation=proof-nat input=1 functional=semidet
 (= (gslt:fn:proof-nat:1 (proof-succ-v1 $value))
-   (let gslt:result:proof-nat:1 (eval (quote (gslt:fn:proof-nat:1 $value)))
+   (let gslt:result:proof-nat:1 (gslt:fn:proof-nat:1 $value)
    (quote gslt:result:proof-nat:1)))
 
 ; gslt-lowered-equation-v1 source-rewrite=2 source-presentation=CertificateGSLTArticleCoreV1 source-rule=proof-nat-add-zero target=mode relation=proof-nat-add input=000 functional=relational
@@ -763,12 +763,12 @@
 
 ; gslt-lowered-equation-v1 source-rewrite=2 source-presentation=CertificateGSLTArticleCoreV1 source-rule=proof-nat-add-zero target=mode relation=proof-nat-add input=110 functional=semidet
 (= (gslt:fn:proof-nat-add:110 $left proof-zero-v1)
-   (let gslt:result:proof-nat:1 (eval (quote (gslt:fn:proof-nat:1 $left)))
+   (let gslt:result:proof-nat:1 (gslt:fn:proof-nat:1 $left)
    (quote (gslt:result:proof-nat-add:110 $left))))
 
 ; gslt-lowered-equation-v1 source-rewrite=3 source-presentation=CertificateGSLTArticleCoreV1 source-rule=proof-nat-add-succ target=mode relation=proof-nat-add input=110 functional=semidet
 (= (gslt:fn:proof-nat-add:110 $left (proof-succ-v1 $right))
-   (let (gslt:result:proof-nat-add:110 $sum) (eval (quote (gslt:fn:proof-nat-add:110 $left $right)))
+   (let (gslt:result:proof-nat-add:110 $sum) (gslt:fn:proof-nat-add:110 $left $right)
    (quote (gslt:result:proof-nat-add:110 (proof-succ-v1 $sum)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=4 source-presentation=CertificateGSLTArticleCoreV1 source-rule=proof-nat-less-zero target=mode relation=proof-nat-less input=00 functional=relational
@@ -783,12 +783,12 @@
 
 ; gslt-lowered-equation-v1 source-rewrite=4 source-presentation=CertificateGSLTArticleCoreV1 source-rule=proof-nat-less-zero target=mode relation=proof-nat-less input=11 functional=semidet
 (= (gslt:fn:proof-nat-less:11 proof-zero-v1 (proof-succ-v1 $right))
-   (let gslt:result:proof-nat:1 (eval (quote (gslt:fn:proof-nat:1 $right)))
+   (let gslt:result:proof-nat:1 (gslt:fn:proof-nat:1 $right)
    (quote gslt:result:proof-nat-less:11)))
 
 ; gslt-lowered-equation-v1 source-rewrite=5 source-presentation=CertificateGSLTArticleCoreV1 source-rule=proof-nat-less-succ target=mode relation=proof-nat-less input=11 functional=semidet
 (= (gslt:fn:proof-nat-less:11 (proof-succ-v1 $left) (proof-succ-v1 $right))
-   (let gslt:result:proof-nat-less:11 (eval (quote (gslt:fn:proof-nat-less:11 $left $right)))
+   (let gslt:result:proof-nat-less:11 (gslt:fn:proof-nat-less:11 $left $right)
    (quote gslt:result:proof-nat-less:11)))
 
 ; gslt-lowered-equation-v1 source-rewrite=4 source-presentation=CertificateGSLTArticleCoreV1 source-rule=proof-nat-less-zero target=mode relation=proof-nat-less input=01 functional=relational
@@ -816,7 +816,7 @@
 
 ; gslt-lowered-equation-v1 source-rewrite=7 source-presentation=CertificateGSLTArticleCoreV1 source-rule=proof-list-length-cons target=mode relation=proof-list-length input=11 functional=semidet
 (= (gslt:fn:proof-list-length:11 (proof-list-cons-v1 $item $rest) (proof-succ-v1 $length))
-   (let gslt:result:proof-list-length:11 (eval (quote (gslt:fn:proof-list-length:11 $rest $length)))
+   (let gslt:result:proof-list-length:11 (gslt:fn:proof-list-length:11 $rest $length)
    (quote gslt:result:proof-list-length:11)))
 
 ; gslt-lowered-equation-v1 source-rewrite=6 source-presentation=CertificateGSLTArticleCoreV1 source-rule=proof-list-length-nil target=mode relation=proof-list-length input=01 functional=relational
@@ -834,7 +834,7 @@
 
 ; gslt-lowered-equation-v1 source-rewrite=7 source-presentation=CertificateGSLTArticleCoreV1 source-rule=proof-list-length-cons target=mode relation=proof-list-length input=10 functional=semidet
 (= (gslt:fn:proof-list-length:10 (proof-list-cons-v1 $item $rest))
-   (let (gslt:result:proof-list-length:10 $length) (eval (quote (gslt:fn:proof-list-length:10 $rest)))
+   (let (gslt:result:proof-list-length:10 $length) (gslt:fn:proof-list-length:10 $rest)
    (quote (gslt:result:proof-list-length:10 (proof-succ-v1 $length)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=8 source-presentation=CertificateGSLTArticleCoreV1 source-rule=proof-capability-binders target=mode relation=proof-capability-kind input=0 functional=relational
@@ -887,23 +887,23 @@
 
 ; gslt-lowered-equation-v1 source-rewrite=14 source-presentation=CertificateGSLTArticleCoreV1 source-rule=proof-capability-is-declared target=mode relation=proof-capability-declared input=00 functional=semidet
 (= (gslt:fn:proof-capability-declared:00)
-   (let (gslt:result:source-proof-extension:00 $owner $base) (eval (quote (gslt:fn:source-proof-extension:00)))
+   (let (gslt:result:source-proof-extension:00 $owner $base) (gslt:fn:source-proof-extension:00)
    (let $_ (gslt:source-proof-capability (source-proof-capability $owner $capability))
    (let (gslt:result:proof-capability-kind:0 $capability) (superpose (collapse (gslt:mode:proof-capability-kind:0)))
    (quote (gslt:result:proof-capability-declared:00 $owner $capability))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=14 source-presentation=CertificateGSLTArticleCoreV1 source-rule=proof-capability-is-declared target=mode relation=proof-capability-declared input=11 functional=semidet
 (= (gslt:fn:proof-capability-declared:11 $owner $capability)
-   (let (gslt:result:source-proof-extension:10 $base) (eval (quote (gslt:fn:source-proof-extension:10 $owner)))
+   (let (gslt:result:source-proof-extension:10 $base) (gslt:fn:source-proof-extension:10 $owner)
    (let $_ (gslt:source-proof-capability (source-proof-capability $owner $capability))
-   (let gslt:result:proof-capability-kind:1 (eval (quote (gslt:fn:proof-capability-kind:1 $capability)))
+   (let gslt:result:proof-capability-kind:1 (gslt:fn:proof-capability-kind:1 $capability)
    (quote gslt:result:proof-capability-declared:11)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=14 source-presentation=CertificateGSLTArticleCoreV1 source-rule=proof-capability-is-declared target=mode relation=proof-capability-declared input=01 functional=semidet
 (= (gslt:fn:proof-capability-declared:01 $capability)
-   (let (gslt:result:source-proof-extension:00 $owner $base) (eval (quote (gslt:fn:source-proof-extension:00)))
+   (let (gslt:result:source-proof-extension:00 $owner $base) (gslt:fn:source-proof-extension:00)
    (let $_ (gslt:source-proof-capability (source-proof-capability $owner $capability))
-   (let gslt:result:proof-capability-kind:1 (eval (quote (gslt:fn:proof-capability-kind:1 $capability)))
+   (let gslt:result:proof-capability-kind:1 (gslt:fn:proof-capability-kind:1 $capability)
    (quote (gslt:result:proof-capability-declared:01 $owner))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=15 source-presentation=CertificateGSLTArticleCoreV1 source-rule=proof-constructor-from-base target=mode relation=proof-constructor input=000 functional=relational
@@ -996,8 +996,8 @@
 
 ; gslt-lowered-equation-v1 source-rewrite=25 source-presentation=CertificateGSLTArticleCoreV1 source-rule=proof-formals-valid-cons target=mode relation=proof-formals-valid input=1 functional=semidet
 (= (gslt:fn:proof-formals-valid:1 (proof-list-cons-v1 (proof-formal-v1 $name $depth) $rest))
-   (let gslt:result:proof-nat:1 (eval (quote (gslt:fn:proof-nat:1 $depth)))
-   (let gslt:result:proof-formals-valid:1 (eval (quote (gslt:fn:proof-formals-valid:1 $rest)))
+   (let gslt:result:proof-nat:1 (gslt:fn:proof-nat:1 $depth)
+   (let gslt:result:proof-formals-valid:1 (gslt:fn:proof-formals-valid:1 $rest)
    (quote gslt:result:proof-formals-valid:1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=26 source-presentation=CertificateGSLTArticleCoreV1 source-rule=proof-data-pattern-bvar target=mode relation=proof-data-pattern input=1111 functional=relational
@@ -1283,12 +1283,12 @@
 
 ; gslt-lowered-equation-v1 source-rewrite=57 source-presentation=CertificateGSLTArticleCoreV1 source-rule=proof-reference-premise target=mode relation=proof-reference-valid input=1 functional=semidet
 (= (gslt:fn:proof-reference-valid:1 (proof-premise-ref-v1 $index))
-   (let gslt:result:proof-nat:1 (eval (quote (gslt:fn:proof-nat:1 $index)))
+   (let gslt:result:proof-nat:1 (gslt:fn:proof-nat:1 $index)
    (quote gslt:result:proof-reference-valid:1)))
 
 ; gslt-lowered-equation-v1 source-rewrite=58 source-presentation=CertificateGSLTArticleCoreV1 source-rule=proof-reference-node target=mode relation=proof-reference-valid input=1 functional=semidet
 (= (gslt:fn:proof-reference-valid:1 (proof-node-ref-v1 $index))
-   (let gslt:result:proof-nat:1 (eval (quote (gslt:fn:proof-nat:1 $index)))
+   (let gslt:result:proof-nat:1 (gslt:fn:proof-nat:1 $index)
    (quote gslt:result:proof-reference-valid:1)))
 
 ; gslt-lowered-equation-v1 source-rewrite=59 source-presentation=CertificateGSLTArticleCoreV1 source-rule=proof-reference-list-valid-nil target=mode relation=proof-reference-list-valid input=0 functional=relational
@@ -1307,8 +1307,8 @@
 
 ; gslt-lowered-equation-v1 source-rewrite=60 source-presentation=CertificateGSLTArticleCoreV1 source-rule=proof-reference-list-valid-cons target=mode relation=proof-reference-list-valid input=1 functional=semidet
 (= (gslt:fn:proof-reference-list-valid:1 (proof-list-cons-v1 $reference $rest))
-   (let gslt:result:proof-reference-valid:1 (eval (quote (gslt:fn:proof-reference-valid:1 $reference)))
-   (let gslt:result:proof-reference-list-valid:1 (eval (quote (gslt:fn:proof-reference-list-valid:1 $rest)))
+   (let gslt:result:proof-reference-valid:1 (gslt:fn:proof-reference-valid:1 $reference)
+   (let gslt:result:proof-reference-list-valid:1 (gslt:fn:proof-reference-list-valid:1 $rest)
    (quote gslt:result:proof-reference-list-valid:1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=61 source-presentation=CertificateGSLTArticleCoreV1 source-rule=proof-node-valid target=mode relation=proof-node-valid input=00 functional=relational
@@ -1503,82 +1503,82 @@
 
 ; gslt-lowered-equation-v1 source-rewrite=115 source-presentation=CertificateGSLTSequenceRelationsV1 source-rule=proof-sequence-calculus-sequence-nil target=mode relation=source-proof-calculus-constructor input=110 functional=semidet
 (= (gslt:fn:source-proof-calculus-constructor:110 $owner ProofSequenceNilV1)
-   (let (gslt:result:source-proof-sequence-layer:10 $base) (eval (quote (gslt:fn:source-proof-sequence-layer:10 $owner)))
-   (let gslt:result:source-proof-extension:11 (eval (quote (gslt:fn:source-proof-extension:11 $owner $base)))
+   (let (gslt:result:source-proof-sequence-layer:10 $base) (gslt:fn:source-proof-sequence-layer:10 $owner)
+   (let gslt:result:source-proof-extension:11 (gslt:fn:source-proof-extension:11 $owner $base)
    (quote (gslt:result:source-proof-calculus-constructor:110 proof-zero-v1)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=116 source-presentation=CertificateGSLTSequenceRelationsV1 source-rule=proof-sequence-calculus-sequence-cons target=mode relation=source-proof-calculus-constructor input=110 functional=semidet
 (= (gslt:fn:source-proof-calculus-constructor:110 $owner ProofSequenceConsV1)
-   (let (gslt:result:source-proof-sequence-layer:10 $base) (eval (quote (gslt:fn:source-proof-sequence-layer:10 $owner)))
-   (let gslt:result:source-proof-extension:11 (eval (quote (gslt:fn:source-proof-extension:11 $owner $base)))
+   (let (gslt:result:source-proof-sequence-layer:10 $base) (gslt:fn:source-proof-sequence-layer:10 $owner)
+   (let gslt:result:source-proof-extension:11 (gslt:fn:source-proof-extension:11 $owner $base)
    (quote (gslt:result:source-proof-calculus-constructor:110 (proof-succ-v1 (proof-succ-v1 proof-zero-v1)))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=117 source-presentation=CertificateGSLTSequenceRelationsV1 source-rule=proof-sequence-calculus-environment-nil target=mode relation=source-proof-calculus-constructor input=110 functional=semidet
 (= (gslt:fn:source-proof-calculus-constructor:110 $owner ProofEnvironmentNilV1)
-   (let (gslt:result:source-proof-sequence-layer:10 $base) (eval (quote (gslt:fn:source-proof-sequence-layer:10 $owner)))
-   (let gslt:result:source-proof-extension:11 (eval (quote (gslt:fn:source-proof-extension:11 $owner $base)))
+   (let (gslt:result:source-proof-sequence-layer:10 $base) (gslt:fn:source-proof-sequence-layer:10 $owner)
+   (let gslt:result:source-proof-extension:11 (gslt:fn:source-proof-extension:11 $owner $base)
    (quote (gslt:result:source-proof-calculus-constructor:110 proof-zero-v1)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=118 source-presentation=CertificateGSLTSequenceRelationsV1 source-rule=proof-sequence-calculus-environment-cons target=mode relation=source-proof-calculus-constructor input=110 functional=semidet
 (= (gslt:fn:source-proof-calculus-constructor:110 $owner ProofEnvironmentConsV1)
-   (let (gslt:result:source-proof-sequence-layer:10 $base) (eval (quote (gslt:fn:source-proof-sequence-layer:10 $owner)))
-   (let gslt:result:source-proof-extension:11 (eval (quote (gslt:fn:source-proof-extension:11 $owner $base)))
+   (let (gslt:result:source-proof-sequence-layer:10 $base) (gslt:fn:source-proof-sequence-layer:10 $owner)
+   (let gslt:result:source-proof-extension:11 (gslt:fn:source-proof-extension:11 $owner $base)
    (quote (gslt:result:source-proof-calculus-constructor:110 (proof-succ-v1 (proof-succ-v1 (proof-succ-v1 proof-zero-v1))))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=119 source-presentation=CertificateGSLTSequenceRelationsV1 source-rule=proof-sequence-calculus-token-literal-class target=mode relation=source-proof-calculus-constructor input=110 functional=semidet
 (= (gslt:fn:source-proof-calculus-constructor:110 $owner ProofTokenLiteralClassV1)
-   (let (gslt:result:source-proof-sequence-functional-layer:10 $base) (eval (quote (gslt:fn:source-proof-sequence-functional-layer:10 $owner)))
+   (let (gslt:result:source-proof-sequence-functional-layer:10 $base) (gslt:fn:source-proof-sequence-functional-layer:10 $owner)
    (quote (gslt:result:source-proof-calculus-constructor:110 proof-zero-v1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=120 source-presentation=CertificateGSLTSequenceRelationsV1 source-rule=proof-sequence-calculus-token-variable-class target=mode relation=source-proof-calculus-constructor input=110 functional=semidet
 (= (gslt:fn:source-proof-calculus-constructor:110 $owner ProofTokenVariableClassV1)
-   (let (gslt:result:source-proof-sequence-functional-layer:10 $base) (eval (quote (gslt:fn:source-proof-sequence-functional-layer:10 $owner)))
+   (let (gslt:result:source-proof-sequence-functional-layer:10 $base) (gslt:fn:source-proof-sequence-functional-layer:10 $owner)
    (quote (gslt:result:source-proof-calculus-constructor:110 proof-zero-v1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=121 source-presentation=CertificateGSLTSequenceRelationsV1 source-rule=proof-sequence-calculus-token-equal target=mode relation=source-proof-calculus-constructor input=110 functional=semidet
 (= (gslt:fn:source-proof-calculus-constructor:110 $owner ProofTokenEqualV1)
-   (let (gslt:result:source-proof-sequence-functional-layer:10 $base) (eval (quote (gslt:fn:source-proof-sequence-functional-layer:10 $owner)))
+   (let (gslt:result:source-proof-sequence-functional-layer:10 $base) (gslt:fn:source-proof-sequence-functional-layer:10 $owner)
    (quote (gslt:result:source-proof-calculus-constructor:110 proof-zero-v1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=122 source-presentation=CertificateGSLTSequenceRelationsV1 source-rule=proof-sequence-calculus-token-unequal target=mode relation=source-proof-calculus-constructor input=110 functional=semidet
 (= (gslt:fn:source-proof-calculus-constructor:110 $owner ProofTokenUnequalV1)
-   (let (gslt:result:source-proof-sequence-functional-layer:10 $base) (eval (quote (gslt:fn:source-proof-sequence-functional-layer:10 $owner)))
+   (let (gslt:result:source-proof-sequence-functional-layer:10 $base) (gslt:fn:source-proof-sequence-functional-layer:10 $owner)
    (quote (gslt:result:source-proof-calculus-constructor:110 proof-zero-v1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=199 source-presentation=CertificateGSLTSequenceAssertionV1 source-rule=proof-sequence-assertion-constructor-assertion target=mode relation=source-proof-calculus-constructor input=110 functional=semidet
 (= (gslt:fn:source-proof-calculus-constructor:110 $owner ProofAssertionV1)
-   (let (gslt:result:source-proof-sequence-assertion-layer:100 $base $provable) (eval (quote (gslt:fn:source-proof-sequence-assertion-layer:100 $owner)))
-   (let gslt:result:source-proof-extension:11 (eval (quote (gslt:fn:source-proof-extension:11 $owner $base)))
+   (let (gslt:result:source-proof-sequence-assertion-layer:100 $base $provable) (gslt:fn:source-proof-sequence-assertion-layer:100 $owner)
+   (let gslt:result:source-proof-extension:11 (gslt:fn:source-proof-extension:11 $owner $base)
    (quote (gslt:result:source-proof-calculus-constructor:110 (proof-succ-v1 (proof-succ-v1 (proof-succ-v1 (proof-succ-v1 (proof-succ-v1 proof-zero-v1))))))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=200 source-presentation=CertificateGSLTSequenceAssertionV1 source-rule=proof-sequence-assertion-constructor-variable target=mode relation=source-proof-calculus-constructor input=110 functional=semidet
 (= (gslt:fn:source-proof-calculus-constructor:110 $owner ProofAssertionVariableV1)
-   (let (gslt:result:source-proof-sequence-assertion-layer:100 $base $provable) (eval (quote (gslt:fn:source-proof-sequence-assertion-layer:100 $owner)))
-   (let gslt:result:source-proof-extension:11 (eval (quote (gslt:fn:source-proof-extension:11 $owner $base)))
+   (let (gslt:result:source-proof-sequence-assertion-layer:100 $base $provable) (gslt:fn:source-proof-sequence-assertion-layer:100 $owner)
+   (let gslt:result:source-proof-extension:11 (gslt:fn:source-proof-extension:11 $owner $base)
    (quote (gslt:result:source-proof-calculus-constructor:110 (proof-succ-v1 (proof-succ-v1 proof-zero-v1)))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=201 source-presentation=CertificateGSLTSequenceAssertionV1 source-rule=proof-sequence-assertion-constructor-essential target=mode relation=source-proof-calculus-constructor input=110 functional=semidet
 (= (gslt:fn:source-proof-calculus-constructor:110 $owner ProofAssertionEssentialV1)
-   (let (gslt:result:source-proof-sequence-assertion-layer:100 $base $provable) (eval (quote (gslt:fn:source-proof-sequence-assertion-layer:100 $owner)))
-   (let gslt:result:source-proof-extension:11 (eval (quote (gslt:fn:source-proof-extension:11 $owner $base)))
+   (let (gslt:result:source-proof-sequence-assertion-layer:100 $base $provable) (gslt:fn:source-proof-sequence-assertion-layer:100 $owner)
+   (let gslt:result:source-proof-extension:11 (gslt:fn:source-proof-extension:11 $owner $base)
    (quote (gslt:result:source-proof-calculus-constructor:110 (proof-succ-v1 proof-zero-v1))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=202 source-presentation=CertificateGSLTSequenceAssertionV1 source-rule=proof-sequence-assertion-constructor-disjoint target=mode relation=source-proof-calculus-constructor input=110 functional=semidet
 (= (gslt:fn:source-proof-calculus-constructor:110 $owner ProofAssertionDisjointV1)
-   (let (gslt:result:source-proof-sequence-assertion-layer:100 $base $provable) (eval (quote (gslt:fn:source-proof-sequence-assertion-layer:100 $owner)))
-   (let gslt:result:source-proof-extension:11 (eval (quote (gslt:fn:source-proof-extension:11 $owner $base)))
+   (let (gslt:result:source-proof-sequence-assertion-layer:100 $base $provable) (gslt:fn:source-proof-sequence-assertion-layer:100 $owner)
+   (let gslt:result:source-proof-extension:11 (gslt:fn:source-proof-extension:11 $owner $base)
    (quote (gslt:result:source-proof-calculus-constructor:110 (proof-succ-v1 (proof-succ-v1 proof-zero-v1)))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=203 source-presentation=CertificateGSLTSequenceAssertionV1 source-rule=proof-sequence-assertion-constructor-list-nil target=mode relation=source-proof-calculus-constructor input=110 functional=semidet
 (= (gslt:fn:source-proof-calculus-constructor:110 $owner ProofAssertionListNilV1)
-   (let (gslt:result:source-proof-sequence-assertion-layer:100 $base $provable) (eval (quote (gslt:fn:source-proof-sequence-assertion-layer:100 $owner)))
-   (let gslt:result:source-proof-extension:11 (eval (quote (gslt:fn:source-proof-extension:11 $owner $base)))
+   (let (gslt:result:source-proof-sequence-assertion-layer:100 $base $provable) (gslt:fn:source-proof-sequence-assertion-layer:100 $owner)
+   (let gslt:result:source-proof-extension:11 (gslt:fn:source-proof-extension:11 $owner $base)
    (quote (gslt:result:source-proof-calculus-constructor:110 proof-zero-v1)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=204 source-presentation=CertificateGSLTSequenceAssertionV1 source-rule=proof-sequence-assertion-constructor-list-cons target=mode relation=source-proof-calculus-constructor input=110 functional=semidet
 (= (gslt:fn:source-proof-calculus-constructor:110 $owner ProofAssertionListConsV1)
-   (let (gslt:result:source-proof-sequence-assertion-layer:100 $base $provable) (eval (quote (gslt:fn:source-proof-sequence-assertion-layer:100 $owner)))
-   (let gslt:result:source-proof-extension:11 (eval (quote (gslt:fn:source-proof-extension:11 $owner $base)))
+   (let (gslt:result:source-proof-sequence-assertion-layer:100 $base $provable) (gslt:fn:source-proof-sequence-assertion-layer:100 $owner)
+   (let gslt:result:source-proof-extension:11 (gslt:fn:source-proof-extension:11 $owner $base)
    (quote (gslt:result:source-proof-calculus-constructor:110 (proof-succ-v1 (proof-succ-v1 proof-zero-v1)))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=123 source-presentation=CertificateGSLTSequenceRelationsV1 source-rule=proof-sequence-judgment-append target=mode relation=source-proof-judgment input=000 functional=relational
@@ -1677,92 +1677,92 @@
 
 ; gslt-lowered-equation-v1 source-rewrite=123 source-presentation=CertificateGSLTSequenceRelationsV1 source-rule=proof-sequence-judgment-append target=mode relation=source-proof-judgment input=111 functional=semidet
 (= (gslt:fn:source-proof-judgment:111 $owner ProofSequenceAppendV1 (proof-succ-v1 (proof-succ-v1 (proof-succ-v1 proof-zero-v1))))
-   (let (gslt:result:source-proof-sequence-layer:10 $base) (eval (quote (gslt:fn:source-proof-sequence-layer:10 $owner)))
+   (let (gslt:result:source-proof-sequence-layer:10 $base) (gslt:fn:source-proof-sequence-layer:10 $owner)
    (quote gslt:result:source-proof-judgment:111)))
 
 ; gslt-lowered-equation-v1 source-rewrite=124 source-presentation=CertificateGSLTSequenceRelationsV1 source-rule=proof-sequence-judgment-lookup target=mode relation=source-proof-judgment input=111 functional=semidet
 (= (gslt:fn:source-proof-judgment:111 $owner ProofEnvironmentLookupV1 (proof-succ-v1 (proof-succ-v1 (proof-succ-v1 proof-zero-v1))))
-   (let (gslt:result:source-proof-sequence-layer:10 $base) (eval (quote (gslt:fn:source-proof-sequence-layer:10 $owner)))
+   (let (gslt:result:source-proof-sequence-layer:10 $base) (gslt:fn:source-proof-sequence-layer:10 $owner)
    (quote gslt:result:source-proof-judgment:111)))
 
 ; gslt-lowered-equation-v1 source-rewrite=125 source-presentation=CertificateGSLTSequenceRelationsV1 source-rule=proof-sequence-judgment-instantiate target=mode relation=source-proof-judgment input=111 functional=semidet
 (= (gslt:fn:source-proof-judgment:111 $owner ProofSequenceInstantiateV1 (proof-succ-v1 (proof-succ-v1 (proof-succ-v1 proof-zero-v1))))
-   (let (gslt:result:source-proof-sequence-layer:10 $base) (eval (quote (gslt:fn:source-proof-sequence-layer:10 $owner)))
+   (let (gslt:result:source-proof-sequence-layer:10 $base) (gslt:fn:source-proof-sequence-layer:10 $owner)
    (quote gslt:result:source-proof-judgment:111)))
 
 ; gslt-lowered-equation-v1 source-rewrite=126 source-presentation=CertificateGSLTSequenceRelationsV1 source-rule=proof-sequence-judgment-lookup-compared target=mode relation=source-proof-judgment input=111 functional=semidet
 (= (gslt:fn:source-proof-judgment:111 $owner ProofEnvironmentLookupComparedV1 (proof-succ-v1 (proof-succ-v1 (proof-succ-v1 (proof-succ-v1 (proof-succ-v1 proof-zero-v1))))))
-   (let (gslt:result:source-proof-sequence-functional-layer:10 $base) (eval (quote (gslt:fn:source-proof-sequence-functional-layer:10 $owner)))
+   (let (gslt:result:source-proof-sequence-functional-layer:10 $base) (gslt:fn:source-proof-sequence-functional-layer:10 $owner)
    (quote gslt:result:source-proof-judgment:111)))
 
 ; gslt-lowered-equation-v1 source-rewrite=127 source-presentation=CertificateGSLTSequenceRelationsV1 source-rule=proof-sequence-judgment-instantiate-class target=mode relation=source-proof-judgment input=111 functional=semidet
 (= (gslt:fn:source-proof-judgment:111 $owner ProofSequenceInstantiateClassV1 (proof-succ-v1 (proof-succ-v1 (proof-succ-v1 (proof-succ-v1 (proof-succ-v1 proof-zero-v1))))))
-   (let (gslt:result:source-proof-sequence-functional-layer:10 $base) (eval (quote (gslt:fn:source-proof-sequence-functional-layer:10 $owner)))
+   (let (gslt:result:source-proof-sequence-functional-layer:10 $base) (gslt:fn:source-proof-sequence-functional-layer:10 $owner)
    (quote gslt:result:source-proof-judgment:111)))
 
 ; gslt-lowered-equation-v1 source-rewrite=128 source-presentation=CertificateGSLTSequenceRelationsV1 source-rule=proof-sequence-judgment-token-class target=mode relation=source-proof-judgment input=111 functional=semidet
 (= (gslt:fn:source-proof-judgment:111 $owner ProofTokenClassV1 (proof-succ-v1 (proof-succ-v1 proof-zero-v1)))
-   (let (gslt:result:source-proof-sequence-functional-layer:10 $base) (eval (quote (gslt:fn:source-proof-sequence-functional-layer:10 $owner)))
+   (let (gslt:result:source-proof-sequence-functional-layer:10 $base) (gslt:fn:source-proof-sequence-functional-layer:10 $owner)
    (quote gslt:result:source-proof-judgment:111)))
 
 ; gslt-lowered-equation-v1 source-rewrite=129 source-presentation=CertificateGSLTSequenceRelationsV1 source-rule=proof-sequence-judgment-token-compare target=mode relation=source-proof-judgment input=111 functional=semidet
 (= (gslt:fn:source-proof-judgment:111 $owner ProofTokenCompareV1 (proof-succ-v1 (proof-succ-v1 (proof-succ-v1 proof-zero-v1))))
-   (let (gslt:result:source-proof-sequence-functional-layer:10 $base) (eval (quote (gslt:fn:source-proof-sequence-functional-layer:10 $owner)))
+   (let (gslt:result:source-proof-sequence-functional-layer:10 $base) (gslt:fn:source-proof-sequence-functional-layer:10 $owner)
    (quote gslt:result:source-proof-judgment:111)))
 
 ; gslt-lowered-equation-v1 source-rewrite=130 source-presentation=CertificateGSLTSequenceRelationsV1 source-rule=proof-sequence-judgment-token-literal target=mode relation=source-proof-judgment input=111 functional=semidet
 (= (gslt:fn:source-proof-judgment:111 $owner ProofTokenLiteralV1 (proof-succ-v1 proof-zero-v1))
-   (let (gslt:result:source-proof-sequence-layer:10 $base) (eval (quote (gslt:fn:source-proof-sequence-layer:10 $owner)))
+   (let (gslt:result:source-proof-sequence-layer:10 $base) (gslt:fn:source-proof-sequence-layer:10 $owner)
    (quote gslt:result:source-proof-judgment:111)))
 
 ; gslt-lowered-equation-v1 source-rewrite=131 source-presentation=CertificateGSLTSequenceRelationsV1 source-rule=proof-sequence-judgment-token-variable target=mode relation=source-proof-judgment input=111 functional=semidet
 (= (gslt:fn:source-proof-judgment:111 $owner ProofTokenVariableV1 (proof-succ-v1 proof-zero-v1))
-   (let (gslt:result:source-proof-sequence-layer:10 $base) (eval (quote (gslt:fn:source-proof-sequence-layer:10 $owner)))
+   (let (gslt:result:source-proof-sequence-layer:10 $base) (gslt:fn:source-proof-sequence-layer:10 $owner)
    (quote gslt:result:source-proof-judgment:111)))
 
 ; gslt-lowered-equation-v1 source-rewrite=132 source-presentation=CertificateGSLTSequenceRelationsV1 source-rule=proof-sequence-judgment-token-different target=mode relation=source-proof-judgment input=111 functional=semidet
 (= (gslt:fn:source-proof-judgment:111 $owner ProofTokenDifferentV1 (proof-succ-v1 (proof-succ-v1 proof-zero-v1)))
-   (let (gslt:result:source-proof-sequence-layer:10 $base) (eval (quote (gslt:fn:source-proof-sequence-layer:10 $owner)))
+   (let (gslt:result:source-proof-sequence-layer:10 $base) (gslt:fn:source-proof-sequence-layer:10 $owner)
    (quote gslt:result:source-proof-judgment:111)))
 
 ; gslt-lowered-equation-v1 source-rewrite=133 source-presentation=CertificateGSLTSequenceRelationsV1 source-rule=proof-sequence-judgment-token-apart target=mode relation=source-proof-judgment input=111 functional=semidet
 (= (gslt:fn:source-proof-judgment:111 $owner ProofTokenApartV1 (proof-succ-v1 (proof-succ-v1 proof-zero-v1)))
-   (let (gslt:result:source-proof-sequence-layer:10 $base) (eval (quote (gslt:fn:source-proof-sequence-layer:10 $owner)))
+   (let (gslt:result:source-proof-sequence-layer:10 $base) (gslt:fn:source-proof-sequence-layer:10 $owner)
    (quote gslt:result:source-proof-judgment:111)))
 
 ; gslt-lowered-equation-v1 source-rewrite=134 source-presentation=CertificateGSLTSequenceRelationsV1 source-rule=proof-sequence-judgment-token-pair-allowed target=mode relation=source-proof-judgment input=111 functional=semidet
 (= (gslt:fn:source-proof-judgment:111 $owner ProofTokenPairAllowedV1 (proof-succ-v1 (proof-succ-v1 proof-zero-v1)))
-   (let (gslt:result:source-proof-sequence-layer:10 $base) (eval (quote (gslt:fn:source-proof-sequence-layer:10 $owner)))
+   (let (gslt:result:source-proof-sequence-layer:10 $base) (gslt:fn:source-proof-sequence-layer:10 $owner)
    (quote gslt:result:source-proof-judgment:111)))
 
 ; gslt-lowered-equation-v1 source-rewrite=135 source-presentation=CertificateGSLTSequenceRelationsV1 source-rule=proof-sequence-judgment-token-against-sequence target=mode relation=source-proof-judgment input=111 functional=semidet
 (= (gslt:fn:source-proof-judgment:111 $owner ProofTokenAgainstSequenceV1 (proof-succ-v1 (proof-succ-v1 proof-zero-v1)))
-   (let (gslt:result:source-proof-sequence-layer:10 $base) (eval (quote (gslt:fn:source-proof-sequence-layer:10 $owner)))
+   (let (gslt:result:source-proof-sequence-layer:10 $base) (gslt:fn:source-proof-sequence-layer:10 $owner)
    (quote gslt:result:source-proof-judgment:111)))
 
 ; gslt-lowered-equation-v1 source-rewrite=136 source-presentation=CertificateGSLTSequenceRelationsV1 source-rule=proof-sequence-judgment-support-apart target=mode relation=source-proof-judgment input=111 functional=semidet
 (= (gslt:fn:source-proof-judgment:111 $owner ProofSequenceSupportApartV1 (proof-succ-v1 (proof-succ-v1 proof-zero-v1)))
-   (let (gslt:result:source-proof-sequence-layer:10 $base) (eval (quote (gslt:fn:source-proof-sequence-layer:10 $owner)))
+   (let (gslt:result:source-proof-sequence-layer:10 $base) (gslt:fn:source-proof-sequence-layer:10 $owner)
    (quote gslt:result:source-proof-judgment:111)))
 
 ; gslt-lowered-equation-v1 source-rewrite=205 source-presentation=CertificateGSLTSequenceAssertionV1 source-rule=proof-sequence-assertion-judgment-declared target=mode relation=source-proof-judgment input=111 functional=semidet
 (= (gslt:fn:source-proof-judgment:111 $owner ProofAssertionDeclaredV1 (proof-succ-v1 proof-zero-v1))
-   (let (gslt:result:source-proof-sequence-assertion-layer:100 $base $provable) (eval (quote (gslt:fn:source-proof-sequence-assertion-layer:100 $owner)))
+   (let (gslt:result:source-proof-sequence-assertion-layer:100 $base $provable) (gslt:fn:source-proof-sequence-assertion-layer:100 $owner)
    (quote gslt:result:source-proof-judgment:111)))
 
 ; gslt-lowered-equation-v1 source-rewrite=206 source-presentation=CertificateGSLTSequenceAssertionV1 source-rule=proof-sequence-assertion-judgment-build-environment target=mode relation=source-proof-judgment input=111 functional=semidet
 (= (gslt:fn:source-proof-judgment:111 $owner ProofAssertionBuildEnvironmentV1 (proof-succ-v1 (proof-succ-v1 (proof-succ-v1 proof-zero-v1))))
-   (let (gslt:result:source-proof-sequence-assertion-layer:100 $base $provable) (eval (quote (gslt:fn:source-proof-sequence-assertion-layer:100 $owner)))
+   (let (gslt:result:source-proof-sequence-assertion-layer:100 $base $provable) (gslt:fn:source-proof-sequence-assertion-layer:100 $owner)
    (quote gslt:result:source-proof-judgment:111)))
 
 ; gslt-lowered-equation-v1 source-rewrite=207 source-presentation=CertificateGSLTSequenceAssertionV1 source-rule=proof-sequence-assertion-judgment-check-essentials target=mode relation=source-proof-judgment input=111 functional=semidet
 (= (gslt:fn:source-proof-judgment:111 $owner ProofAssertionCheckEssentialsV1 (proof-succ-v1 (proof-succ-v1 (proof-succ-v1 proof-zero-v1))))
-   (let (gslt:result:source-proof-sequence-assertion-layer:100 $base $provable) (eval (quote (gslt:fn:source-proof-sequence-assertion-layer:100 $owner)))
+   (let (gslt:result:source-proof-sequence-assertion-layer:100 $base $provable) (gslt:fn:source-proof-sequence-assertion-layer:100 $owner)
    (quote gslt:result:source-proof-judgment:111)))
 
 ; gslt-lowered-equation-v1 source-rewrite=208 source-presentation=CertificateGSLTSequenceAssertionV1 source-rule=proof-sequence-assertion-judgment-check-disjoints target=mode relation=source-proof-judgment input=111 functional=semidet
 (= (gslt:fn:source-proof-judgment:111 $owner ProofAssertionCheckDisjointsV1 (proof-succ-v1 (proof-succ-v1 proof-zero-v1)))
-   (let (gslt:result:source-proof-sequence-assertion-layer:100 $base $provable) (eval (quote (gslt:fn:source-proof-sequence-assertion-layer:100 $owner)))
+   (let (gslt:result:source-proof-sequence-assertion-layer:100 $base $provable) (gslt:fn:source-proof-sequence-assertion-layer:100 $owner)
    (quote gslt:result:source-proof-judgment:111)))
 
 ; gslt-lowered-equation-v1 source-rewrite=240 source-presentation=MetamathProofFunctionalCalculusV1 source-rule=mm-proof-functional-calculus-provable-judgment target=mode relation=source-proof-judgment input=111 functional=semidet
@@ -1865,92 +1865,92 @@
 
 ; gslt-lowered-equation-v1 source-rewrite=123 source-presentation=CertificateGSLTSequenceRelationsV1 source-rule=proof-sequence-judgment-append target=mode relation=source-proof-judgment input=110 functional=semidet
 (= (gslt:fn:source-proof-judgment:110 $owner ProofSequenceAppendV1)
-   (let (gslt:result:source-proof-sequence-layer:10 $base) (eval (quote (gslt:fn:source-proof-sequence-layer:10 $owner)))
+   (let (gslt:result:source-proof-sequence-layer:10 $base) (gslt:fn:source-proof-sequence-layer:10 $owner)
    (quote (gslt:result:source-proof-judgment:110 (proof-succ-v1 (proof-succ-v1 (proof-succ-v1 proof-zero-v1)))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=124 source-presentation=CertificateGSLTSequenceRelationsV1 source-rule=proof-sequence-judgment-lookup target=mode relation=source-proof-judgment input=110 functional=semidet
 (= (gslt:fn:source-proof-judgment:110 $owner ProofEnvironmentLookupV1)
-   (let (gslt:result:source-proof-sequence-layer:10 $base) (eval (quote (gslt:fn:source-proof-sequence-layer:10 $owner)))
+   (let (gslt:result:source-proof-sequence-layer:10 $base) (gslt:fn:source-proof-sequence-layer:10 $owner)
    (quote (gslt:result:source-proof-judgment:110 (proof-succ-v1 (proof-succ-v1 (proof-succ-v1 proof-zero-v1)))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=125 source-presentation=CertificateGSLTSequenceRelationsV1 source-rule=proof-sequence-judgment-instantiate target=mode relation=source-proof-judgment input=110 functional=semidet
 (= (gslt:fn:source-proof-judgment:110 $owner ProofSequenceInstantiateV1)
-   (let (gslt:result:source-proof-sequence-layer:10 $base) (eval (quote (gslt:fn:source-proof-sequence-layer:10 $owner)))
+   (let (gslt:result:source-proof-sequence-layer:10 $base) (gslt:fn:source-proof-sequence-layer:10 $owner)
    (quote (gslt:result:source-proof-judgment:110 (proof-succ-v1 (proof-succ-v1 (proof-succ-v1 proof-zero-v1)))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=126 source-presentation=CertificateGSLTSequenceRelationsV1 source-rule=proof-sequence-judgment-lookup-compared target=mode relation=source-proof-judgment input=110 functional=semidet
 (= (gslt:fn:source-proof-judgment:110 $owner ProofEnvironmentLookupComparedV1)
-   (let (gslt:result:source-proof-sequence-functional-layer:10 $base) (eval (quote (gslt:fn:source-proof-sequence-functional-layer:10 $owner)))
+   (let (gslt:result:source-proof-sequence-functional-layer:10 $base) (gslt:fn:source-proof-sequence-functional-layer:10 $owner)
    (quote (gslt:result:source-proof-judgment:110 (proof-succ-v1 (proof-succ-v1 (proof-succ-v1 (proof-succ-v1 (proof-succ-v1 proof-zero-v1)))))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=127 source-presentation=CertificateGSLTSequenceRelationsV1 source-rule=proof-sequence-judgment-instantiate-class target=mode relation=source-proof-judgment input=110 functional=semidet
 (= (gslt:fn:source-proof-judgment:110 $owner ProofSequenceInstantiateClassV1)
-   (let (gslt:result:source-proof-sequence-functional-layer:10 $base) (eval (quote (gslt:fn:source-proof-sequence-functional-layer:10 $owner)))
+   (let (gslt:result:source-proof-sequence-functional-layer:10 $base) (gslt:fn:source-proof-sequence-functional-layer:10 $owner)
    (quote (gslt:result:source-proof-judgment:110 (proof-succ-v1 (proof-succ-v1 (proof-succ-v1 (proof-succ-v1 (proof-succ-v1 proof-zero-v1)))))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=128 source-presentation=CertificateGSLTSequenceRelationsV1 source-rule=proof-sequence-judgment-token-class target=mode relation=source-proof-judgment input=110 functional=semidet
 (= (gslt:fn:source-proof-judgment:110 $owner ProofTokenClassV1)
-   (let (gslt:result:source-proof-sequence-functional-layer:10 $base) (eval (quote (gslt:fn:source-proof-sequence-functional-layer:10 $owner)))
+   (let (gslt:result:source-proof-sequence-functional-layer:10 $base) (gslt:fn:source-proof-sequence-functional-layer:10 $owner)
    (quote (gslt:result:source-proof-judgment:110 (proof-succ-v1 (proof-succ-v1 proof-zero-v1))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=129 source-presentation=CertificateGSLTSequenceRelationsV1 source-rule=proof-sequence-judgment-token-compare target=mode relation=source-proof-judgment input=110 functional=semidet
 (= (gslt:fn:source-proof-judgment:110 $owner ProofTokenCompareV1)
-   (let (gslt:result:source-proof-sequence-functional-layer:10 $base) (eval (quote (gslt:fn:source-proof-sequence-functional-layer:10 $owner)))
+   (let (gslt:result:source-proof-sequence-functional-layer:10 $base) (gslt:fn:source-proof-sequence-functional-layer:10 $owner)
    (quote (gslt:result:source-proof-judgment:110 (proof-succ-v1 (proof-succ-v1 (proof-succ-v1 proof-zero-v1)))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=130 source-presentation=CertificateGSLTSequenceRelationsV1 source-rule=proof-sequence-judgment-token-literal target=mode relation=source-proof-judgment input=110 functional=semidet
 (= (gslt:fn:source-proof-judgment:110 $owner ProofTokenLiteralV1)
-   (let (gslt:result:source-proof-sequence-layer:10 $base) (eval (quote (gslt:fn:source-proof-sequence-layer:10 $owner)))
+   (let (gslt:result:source-proof-sequence-layer:10 $base) (gslt:fn:source-proof-sequence-layer:10 $owner)
    (quote (gslt:result:source-proof-judgment:110 (proof-succ-v1 proof-zero-v1)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=131 source-presentation=CertificateGSLTSequenceRelationsV1 source-rule=proof-sequence-judgment-token-variable target=mode relation=source-proof-judgment input=110 functional=semidet
 (= (gslt:fn:source-proof-judgment:110 $owner ProofTokenVariableV1)
-   (let (gslt:result:source-proof-sequence-layer:10 $base) (eval (quote (gslt:fn:source-proof-sequence-layer:10 $owner)))
+   (let (gslt:result:source-proof-sequence-layer:10 $base) (gslt:fn:source-proof-sequence-layer:10 $owner)
    (quote (gslt:result:source-proof-judgment:110 (proof-succ-v1 proof-zero-v1)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=132 source-presentation=CertificateGSLTSequenceRelationsV1 source-rule=proof-sequence-judgment-token-different target=mode relation=source-proof-judgment input=110 functional=semidet
 (= (gslt:fn:source-proof-judgment:110 $owner ProofTokenDifferentV1)
-   (let (gslt:result:source-proof-sequence-layer:10 $base) (eval (quote (gslt:fn:source-proof-sequence-layer:10 $owner)))
+   (let (gslt:result:source-proof-sequence-layer:10 $base) (gslt:fn:source-proof-sequence-layer:10 $owner)
    (quote (gslt:result:source-proof-judgment:110 (proof-succ-v1 (proof-succ-v1 proof-zero-v1))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=133 source-presentation=CertificateGSLTSequenceRelationsV1 source-rule=proof-sequence-judgment-token-apart target=mode relation=source-proof-judgment input=110 functional=semidet
 (= (gslt:fn:source-proof-judgment:110 $owner ProofTokenApartV1)
-   (let (gslt:result:source-proof-sequence-layer:10 $base) (eval (quote (gslt:fn:source-proof-sequence-layer:10 $owner)))
+   (let (gslt:result:source-proof-sequence-layer:10 $base) (gslt:fn:source-proof-sequence-layer:10 $owner)
    (quote (gslt:result:source-proof-judgment:110 (proof-succ-v1 (proof-succ-v1 proof-zero-v1))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=134 source-presentation=CertificateGSLTSequenceRelationsV1 source-rule=proof-sequence-judgment-token-pair-allowed target=mode relation=source-proof-judgment input=110 functional=semidet
 (= (gslt:fn:source-proof-judgment:110 $owner ProofTokenPairAllowedV1)
-   (let (gslt:result:source-proof-sequence-layer:10 $base) (eval (quote (gslt:fn:source-proof-sequence-layer:10 $owner)))
+   (let (gslt:result:source-proof-sequence-layer:10 $base) (gslt:fn:source-proof-sequence-layer:10 $owner)
    (quote (gslt:result:source-proof-judgment:110 (proof-succ-v1 (proof-succ-v1 proof-zero-v1))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=135 source-presentation=CertificateGSLTSequenceRelationsV1 source-rule=proof-sequence-judgment-token-against-sequence target=mode relation=source-proof-judgment input=110 functional=semidet
 (= (gslt:fn:source-proof-judgment:110 $owner ProofTokenAgainstSequenceV1)
-   (let (gslt:result:source-proof-sequence-layer:10 $base) (eval (quote (gslt:fn:source-proof-sequence-layer:10 $owner)))
+   (let (gslt:result:source-proof-sequence-layer:10 $base) (gslt:fn:source-proof-sequence-layer:10 $owner)
    (quote (gslt:result:source-proof-judgment:110 (proof-succ-v1 (proof-succ-v1 proof-zero-v1))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=136 source-presentation=CertificateGSLTSequenceRelationsV1 source-rule=proof-sequence-judgment-support-apart target=mode relation=source-proof-judgment input=110 functional=semidet
 (= (gslt:fn:source-proof-judgment:110 $owner ProofSequenceSupportApartV1)
-   (let (gslt:result:source-proof-sequence-layer:10 $base) (eval (quote (gslt:fn:source-proof-sequence-layer:10 $owner)))
+   (let (gslt:result:source-proof-sequence-layer:10 $base) (gslt:fn:source-proof-sequence-layer:10 $owner)
    (quote (gslt:result:source-proof-judgment:110 (proof-succ-v1 (proof-succ-v1 proof-zero-v1))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=205 source-presentation=CertificateGSLTSequenceAssertionV1 source-rule=proof-sequence-assertion-judgment-declared target=mode relation=source-proof-judgment input=110 functional=semidet
 (= (gslt:fn:source-proof-judgment:110 $owner ProofAssertionDeclaredV1)
-   (let (gslt:result:source-proof-sequence-assertion-layer:100 $base $provable) (eval (quote (gslt:fn:source-proof-sequence-assertion-layer:100 $owner)))
+   (let (gslt:result:source-proof-sequence-assertion-layer:100 $base $provable) (gslt:fn:source-proof-sequence-assertion-layer:100 $owner)
    (quote (gslt:result:source-proof-judgment:110 (proof-succ-v1 proof-zero-v1)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=206 source-presentation=CertificateGSLTSequenceAssertionV1 source-rule=proof-sequence-assertion-judgment-build-environment target=mode relation=source-proof-judgment input=110 functional=semidet
 (= (gslt:fn:source-proof-judgment:110 $owner ProofAssertionBuildEnvironmentV1)
-   (let (gslt:result:source-proof-sequence-assertion-layer:100 $base $provable) (eval (quote (gslt:fn:source-proof-sequence-assertion-layer:100 $owner)))
+   (let (gslt:result:source-proof-sequence-assertion-layer:100 $base $provable) (gslt:fn:source-proof-sequence-assertion-layer:100 $owner)
    (quote (gslt:result:source-proof-judgment:110 (proof-succ-v1 (proof-succ-v1 (proof-succ-v1 proof-zero-v1)))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=207 source-presentation=CertificateGSLTSequenceAssertionV1 source-rule=proof-sequence-assertion-judgment-check-essentials target=mode relation=source-proof-judgment input=110 functional=semidet
 (= (gslt:fn:source-proof-judgment:110 $owner ProofAssertionCheckEssentialsV1)
-   (let (gslt:result:source-proof-sequence-assertion-layer:100 $base $provable) (eval (quote (gslt:fn:source-proof-sequence-assertion-layer:100 $owner)))
+   (let (gslt:result:source-proof-sequence-assertion-layer:100 $base $provable) (gslt:fn:source-proof-sequence-assertion-layer:100 $owner)
    (quote (gslt:result:source-proof-judgment:110 (proof-succ-v1 (proof-succ-v1 (proof-succ-v1 proof-zero-v1)))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=208 source-presentation=CertificateGSLTSequenceAssertionV1 source-rule=proof-sequence-assertion-judgment-check-disjoints target=mode relation=source-proof-judgment input=110 functional=semidet
 (= (gslt:fn:source-proof-judgment:110 $owner ProofAssertionCheckDisjointsV1)
-   (let (gslt:result:source-proof-sequence-assertion-layer:100 $base $provable) (eval (quote (gslt:fn:source-proof-sequence-assertion-layer:100 $owner)))
+   (let (gslt:result:source-proof-sequence-assertion-layer:100 $base $provable) (gslt:fn:source-proof-sequence-assertion-layer:100 $owner)
    (quote (gslt:result:source-proof-judgment:110 (proof-succ-v1 (proof-succ-v1 proof-zero-v1))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=240 source-presentation=MetamathProofFunctionalCalculusV1 source-rule=mm-proof-functional-calculus-provable-judgment target=mode relation=source-proof-judgment input=110 functional=semidet
@@ -2114,112 +2114,112 @@
 
 ; gslt-lowered-equation-v1 source-rewrite=157 source-presentation=CertificateGSLTSequenceRelationsV1 source-rule=proof-sequence-role-constructor-sequence-nil target=mode relation=source-proof-sequence-constructor-role input=1110 functional=semidet
 (= (gslt:fn:source-proof-sequence-constructor-role:1110 $owner $base sequence-nil-v1)
-   (let gslt:result:source-proof-sequence-layer:11 (eval (quote (gslt:fn:source-proof-sequence-layer:11 $owner $base)))
+   (let gslt:result:source-proof-sequence-layer:11 (gslt:fn:source-proof-sequence-layer:11 $owner $base)
    (quote (gslt:result:source-proof-sequence-constructor-role:1110 ProofSequenceNilV1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=158 source-presentation=CertificateGSLTSequenceRelationsV1 source-rule=proof-sequence-role-constructor-sequence-cons target=mode relation=source-proof-sequence-constructor-role input=1110 functional=semidet
 (= (gslt:fn:source-proof-sequence-constructor-role:1110 $owner $base sequence-cons-v1)
-   (let gslt:result:source-proof-sequence-layer:11 (eval (quote (gslt:fn:source-proof-sequence-layer:11 $owner $base)))
+   (let gslt:result:source-proof-sequence-layer:11 (gslt:fn:source-proof-sequence-layer:11 $owner $base)
    (quote (gslt:result:source-proof-sequence-constructor-role:1110 ProofSequenceConsV1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=159 source-presentation=CertificateGSLTSequenceRelationsV1 source-rule=proof-sequence-role-constructor-environment-nil target=mode relation=source-proof-sequence-constructor-role input=1110 functional=semidet
 (= (gslt:fn:source-proof-sequence-constructor-role:1110 $owner $base environment-nil-v1)
-   (let gslt:result:source-proof-sequence-layer:11 (eval (quote (gslt:fn:source-proof-sequence-layer:11 $owner $base)))
+   (let gslt:result:source-proof-sequence-layer:11 (gslt:fn:source-proof-sequence-layer:11 $owner $base)
    (quote (gslt:result:source-proof-sequence-constructor-role:1110 ProofEnvironmentNilV1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=160 source-presentation=CertificateGSLTSequenceRelationsV1 source-rule=proof-sequence-role-constructor-environment-cons target=mode relation=source-proof-sequence-constructor-role input=1110 functional=semidet
 (= (gslt:fn:source-proof-sequence-constructor-role:1110 $owner $base environment-cons-v1)
-   (let gslt:result:source-proof-sequence-layer:11 (eval (quote (gslt:fn:source-proof-sequence-layer:11 $owner $base)))
+   (let gslt:result:source-proof-sequence-layer:11 (gslt:fn:source-proof-sequence-layer:11 $owner $base)
    (quote (gslt:result:source-proof-sequence-constructor-role:1110 ProofEnvironmentConsV1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=161 source-presentation=CertificateGSLTSequenceRelationsV1 source-rule=proof-sequence-role-constructor-token-literal-class target=mode relation=source-proof-sequence-constructor-role input=1110 functional=semidet
 (= (gslt:fn:source-proof-sequence-constructor-role:1110 $owner $base token-literal-class-v1)
-   (let gslt:result:source-proof-sequence-functional-layer:11 (eval (quote (gslt:fn:source-proof-sequence-functional-layer:11 $owner $base)))
+   (let gslt:result:source-proof-sequence-functional-layer:11 (gslt:fn:source-proof-sequence-functional-layer:11 $owner $base)
    (quote (gslt:result:source-proof-sequence-constructor-role:1110 ProofTokenLiteralClassV1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=162 source-presentation=CertificateGSLTSequenceRelationsV1 source-rule=proof-sequence-role-constructor-token-variable-class target=mode relation=source-proof-sequence-constructor-role input=1110 functional=semidet
 (= (gslt:fn:source-proof-sequence-constructor-role:1110 $owner $base token-variable-class-v1)
-   (let gslt:result:source-proof-sequence-functional-layer:11 (eval (quote (gslt:fn:source-proof-sequence-functional-layer:11 $owner $base)))
+   (let gslt:result:source-proof-sequence-functional-layer:11 (gslt:fn:source-proof-sequence-functional-layer:11 $owner $base)
    (quote (gslt:result:source-proof-sequence-constructor-role:1110 ProofTokenVariableClassV1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=163 source-presentation=CertificateGSLTSequenceRelationsV1 source-rule=proof-sequence-role-constructor-token-equal target=mode relation=source-proof-sequence-constructor-role input=1110 functional=semidet
 (= (gslt:fn:source-proof-sequence-constructor-role:1110 $owner $base token-equal-v1)
-   (let gslt:result:source-proof-sequence-functional-layer:11 (eval (quote (gslt:fn:source-proof-sequence-functional-layer:11 $owner $base)))
+   (let gslt:result:source-proof-sequence-functional-layer:11 (gslt:fn:source-proof-sequence-functional-layer:11 $owner $base)
    (quote (gslt:result:source-proof-sequence-constructor-role:1110 ProofTokenEqualV1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=164 source-presentation=CertificateGSLTSequenceRelationsV1 source-rule=proof-sequence-role-constructor-token-unequal target=mode relation=source-proof-sequence-constructor-role input=1110 functional=semidet
 (= (gslt:fn:source-proof-sequence-constructor-role:1110 $owner $base token-unequal-v1)
-   (let gslt:result:source-proof-sequence-functional-layer:11 (eval (quote (gslt:fn:source-proof-sequence-functional-layer:11 $owner $base)))
+   (let gslt:result:source-proof-sequence-functional-layer:11 (gslt:fn:source-proof-sequence-functional-layer:11 $owner $base)
    (quote (gslt:result:source-proof-sequence-constructor-role:1110 ProofTokenUnequalV1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=165 source-presentation=CertificateGSLTSequenceRelationsV1 source-rule=proof-sequence-role-judgment-append target=mode relation=source-proof-sequence-judgment-role input=110 functional=semidet
 (= (gslt:fn:source-proof-sequence-judgment-role:110 $owner append-v1)
-   (let (gslt:result:source-proof-sequence-layer:10 $base) (eval (quote (gslt:fn:source-proof-sequence-layer:10 $owner)))
+   (let (gslt:result:source-proof-sequence-layer:10 $base) (gslt:fn:source-proof-sequence-layer:10 $owner)
    (quote (gslt:result:source-proof-sequence-judgment-role:110 ProofSequenceAppendV1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=166 source-presentation=CertificateGSLTSequenceRelationsV1 source-rule=proof-sequence-role-judgment-lookup target=mode relation=source-proof-sequence-judgment-role input=110 functional=semidet
 (= (gslt:fn:source-proof-sequence-judgment-role:110 $owner lookup-v1)
-   (let (gslt:result:source-proof-sequence-layer:10 $base) (eval (quote (gslt:fn:source-proof-sequence-layer:10 $owner)))
+   (let (gslt:result:source-proof-sequence-layer:10 $base) (gslt:fn:source-proof-sequence-layer:10 $owner)
    (quote (gslt:result:source-proof-sequence-judgment-role:110 ProofEnvironmentLookupV1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=167 source-presentation=CertificateGSLTSequenceRelationsV1 source-rule=proof-sequence-role-judgment-instantiate target=mode relation=source-proof-sequence-judgment-role input=110 functional=semidet
 (= (gslt:fn:source-proof-sequence-judgment-role:110 $owner instantiate-v1)
-   (let (gslt:result:source-proof-sequence-layer:10 $base) (eval (quote (gslt:fn:source-proof-sequence-layer:10 $owner)))
+   (let (gslt:result:source-proof-sequence-layer:10 $base) (gslt:fn:source-proof-sequence-layer:10 $owner)
    (quote (gslt:result:source-proof-sequence-judgment-role:110 ProofSequenceInstantiateV1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=168 source-presentation=CertificateGSLTSequenceRelationsV1 source-rule=proof-sequence-role-judgment-lookup-compared target=mode relation=source-proof-sequence-judgment-role input=110 functional=semidet
 (= (gslt:fn:source-proof-sequence-judgment-role:110 $owner lookup-compared-v1)
-   (let (gslt:result:source-proof-sequence-functional-layer:10 $base) (eval (quote (gslt:fn:source-proof-sequence-functional-layer:10 $owner)))
+   (let (gslt:result:source-proof-sequence-functional-layer:10 $base) (gslt:fn:source-proof-sequence-functional-layer:10 $owner)
    (quote (gslt:result:source-proof-sequence-judgment-role:110 ProofEnvironmentLookupComparedV1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=169 source-presentation=CertificateGSLTSequenceRelationsV1 source-rule=proof-sequence-role-judgment-instantiate-class target=mode relation=source-proof-sequence-judgment-role input=110 functional=semidet
 (= (gslt:fn:source-proof-sequence-judgment-role:110 $owner instantiate-class-v1)
-   (let (gslt:result:source-proof-sequence-functional-layer:10 $base) (eval (quote (gslt:fn:source-proof-sequence-functional-layer:10 $owner)))
+   (let (gslt:result:source-proof-sequence-functional-layer:10 $base) (gslt:fn:source-proof-sequence-functional-layer:10 $owner)
    (quote (gslt:result:source-proof-sequence-judgment-role:110 ProofSequenceInstantiateClassV1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=170 source-presentation=CertificateGSLTSequenceRelationsV1 source-rule=proof-sequence-role-judgment-token-class target=mode relation=source-proof-sequence-judgment-role input=110 functional=semidet
 (= (gslt:fn:source-proof-sequence-judgment-role:110 $owner token-class-v1)
-   (let (gslt:result:source-proof-sequence-functional-layer:10 $base) (eval (quote (gslt:fn:source-proof-sequence-functional-layer:10 $owner)))
+   (let (gslt:result:source-proof-sequence-functional-layer:10 $base) (gslt:fn:source-proof-sequence-functional-layer:10 $owner)
    (quote (gslt:result:source-proof-sequence-judgment-role:110 ProofTokenClassV1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=171 source-presentation=CertificateGSLTSequenceRelationsV1 source-rule=proof-sequence-role-judgment-token-compare target=mode relation=source-proof-sequence-judgment-role input=110 functional=semidet
 (= (gslt:fn:source-proof-sequence-judgment-role:110 $owner token-compare-v1)
-   (let (gslt:result:source-proof-sequence-functional-layer:10 $base) (eval (quote (gslt:fn:source-proof-sequence-functional-layer:10 $owner)))
+   (let (gslt:result:source-proof-sequence-functional-layer:10 $base) (gslt:fn:source-proof-sequence-functional-layer:10 $owner)
    (quote (gslt:result:source-proof-sequence-judgment-role:110 ProofTokenCompareV1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=172 source-presentation=CertificateGSLTSequenceRelationsV1 source-rule=proof-sequence-role-judgment-literal target=mode relation=source-proof-sequence-judgment-role input=110 functional=semidet
 (= (gslt:fn:source-proof-sequence-judgment-role:110 $owner literal-v1)
-   (let (gslt:result:source-proof-sequence-layer:10 $base) (eval (quote (gslt:fn:source-proof-sequence-layer:10 $owner)))
+   (let (gslt:result:source-proof-sequence-layer:10 $base) (gslt:fn:source-proof-sequence-layer:10 $owner)
    (quote (gslt:result:source-proof-sequence-judgment-role:110 ProofTokenLiteralV1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=173 source-presentation=CertificateGSLTSequenceRelationsV1 source-rule=proof-sequence-role-judgment-variable target=mode relation=source-proof-sequence-judgment-role input=110 functional=semidet
 (= (gslt:fn:source-proof-sequence-judgment-role:110 $owner variable-v1)
-   (let (gslt:result:source-proof-sequence-layer:10 $base) (eval (quote (gslt:fn:source-proof-sequence-layer:10 $owner)))
+   (let (gslt:result:source-proof-sequence-layer:10 $base) (gslt:fn:source-proof-sequence-layer:10 $owner)
    (quote (gslt:result:source-proof-sequence-judgment-role:110 ProofTokenVariableV1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=174 source-presentation=CertificateGSLTSequenceRelationsV1 source-rule=proof-sequence-role-judgment-different target=mode relation=source-proof-sequence-judgment-role input=110 functional=semidet
 (= (gslt:fn:source-proof-sequence-judgment-role:110 $owner different-v1)
-   (let (gslt:result:source-proof-sequence-layer:10 $base) (eval (quote (gslt:fn:source-proof-sequence-layer:10 $owner)))
+   (let (gslt:result:source-proof-sequence-layer:10 $base) (gslt:fn:source-proof-sequence-layer:10 $owner)
    (quote (gslt:result:source-proof-sequence-judgment-role:110 ProofTokenDifferentV1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=175 source-presentation=CertificateGSLTSequenceRelationsV1 source-rule=proof-sequence-role-judgment-apart target=mode relation=source-proof-sequence-judgment-role input=110 functional=semidet
 (= (gslt:fn:source-proof-sequence-judgment-role:110 $owner apart-v1)
-   (let (gslt:result:source-proof-sequence-layer:10 $base) (eval (quote (gslt:fn:source-proof-sequence-layer:10 $owner)))
+   (let (gslt:result:source-proof-sequence-layer:10 $base) (gslt:fn:source-proof-sequence-layer:10 $owner)
    (quote (gslt:result:source-proof-sequence-judgment-role:110 ProofTokenApartV1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=176 source-presentation=CertificateGSLTSequenceRelationsV1 source-rule=proof-sequence-role-judgment-pair-allowed target=mode relation=source-proof-sequence-judgment-role input=110 functional=semidet
 (= (gslt:fn:source-proof-sequence-judgment-role:110 $owner pair-allowed-v1)
-   (let (gslt:result:source-proof-sequence-layer:10 $base) (eval (quote (gslt:fn:source-proof-sequence-layer:10 $owner)))
+   (let (gslt:result:source-proof-sequence-layer:10 $base) (gslt:fn:source-proof-sequence-layer:10 $owner)
    (quote (gslt:result:source-proof-sequence-judgment-role:110 ProofTokenPairAllowedV1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=177 source-presentation=CertificateGSLTSequenceRelationsV1 source-rule=proof-sequence-role-judgment-token-against-sequence target=mode relation=source-proof-sequence-judgment-role input=110 functional=semidet
 (= (gslt:fn:source-proof-sequence-judgment-role:110 $owner token-against-sequence-v1)
-   (let (gslt:result:source-proof-sequence-layer:10 $base) (eval (quote (gslt:fn:source-proof-sequence-layer:10 $owner)))
+   (let (gslt:result:source-proof-sequence-layer:10 $base) (gslt:fn:source-proof-sequence-layer:10 $owner)
    (quote (gslt:result:source-proof-sequence-judgment-role:110 ProofTokenAgainstSequenceV1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=178 source-presentation=CertificateGSLTSequenceRelationsV1 source-rule=proof-sequence-role-judgment-support-apart target=mode relation=source-proof-sequence-judgment-role input=110 functional=semidet
 (= (gslt:fn:source-proof-sequence-judgment-role:110 $owner support-apart-v1)
-   (let (gslt:result:source-proof-sequence-layer:10 $base) (eval (quote (gslt:fn:source-proof-sequence-layer:10 $owner)))
+   (let (gslt:result:source-proof-sequence-layer:10 $base) (gslt:fn:source-proof-sequence-layer:10 $owner)
    (quote (gslt:result:source-proof-sequence-judgment-role:110 ProofSequenceSupportApartV1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=236 source-presentation=MetamathProofFunctionalCalculusV1 source-rule=mm-proof-functional-calculus-extension target=mode relation=source-proof-extension input=00 functional=semidet
@@ -2846,12 +2846,12 @@
 
 ; gslt-lowered-equation-v1 source-rewrite=137 source-presentation=CertificateGSLTSequenceRelationsV1 source-rule=proof-sequence-rule-append-nil target=mode relation=source-proof-rule input=110000 functional=semidet
 (= (gslt:fn:source-proof-rule:110000 $owner proof-sequence-append-nil-v1)
-   (let (gslt:result:source-proof-sequence-layer:10 $base) (eval (quote (gslt:fn:source-proof-sequence-layer:10 $owner)))
+   (let (gslt:result:source-proof-sequence-layer:10 $base) (gslt:fn:source-proof-sequence-layer:10 $owner)
    (quote (gslt:result:source-proof-rule:110000 (proof-list-cons-v1 (proof-formal-v1 Right proof-zero-v1) proof-list-nil-v1) proof-list-nil-v1 (proof-apply-v1 ProofSequenceAppendV1 (proof-list-cons-v1 (proof-apply-v1 ProofSequenceNilV1 proof-list-nil-v1) (proof-list-cons-v1 (proof-fvar-v1 Right) (proof-list-cons-v1 (proof-fvar-v1 Right) proof-list-nil-v1)))) proof-list-nil-v1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=138 source-presentation=CertificateGSLTSequenceRelationsV1 source-rule=proof-sequence-rule-append-cons target=mode relation=source-proof-rule input=110000 functional=semidet
 (= (gslt:fn:source-proof-rule:110000 $owner proof-sequence-append-cons-v1)
-   (let (gslt:result:source-proof-sequence-layer:10 $base) (eval (quote (gslt:fn:source-proof-sequence-layer:10 $owner)))
+   (let (gslt:result:source-proof-sequence-layer:10 $base) (gslt:fn:source-proof-sequence-layer:10 $owner)
    (quote (gslt:result:source-proof-rule:110000 (proof-list-cons-v1 (proof-formal-v1 Head proof-zero-v1) (proof-list-cons-v1 (proof-formal-v1 Tail proof-zero-v1) (proof-list-cons-v1 (proof-formal-v1 Right proof-zero-v1) (proof-list-cons-v1 (proof-formal-v1 OutTail proof-zero-v1) proof-list-nil-v1)))) (proof-list-cons-v1 (proof-apply-v1 ProofSequenceAppendV1 (proof-list-cons-v1 (proof-fvar-v1 Tail) (proof-list-cons-v1 (proof-fvar-v1 Right) (proof-list-cons-v1 (proof-fvar-v1 OutTail) proof-list-nil-v1)))) proof-list-nil-v1) (proof-apply-v1 ProofSequenceAppendV1 (proof-list-cons-v1 (proof-apply-v1 ProofSequenceConsV1 (proof-list-cons-v1 (proof-fvar-v1 Head) (proof-list-cons-v1 (proof-fvar-v1 Tail) proof-list-nil-v1))) (proof-list-cons-v1 (proof-fvar-v1 Right) (proof-list-cons-v1 (proof-apply-v1 ProofSequenceConsV1 (proof-list-cons-v1 (proof-fvar-v1 Head) (proof-list-cons-v1 (proof-fvar-v1 OutTail) proof-list-nil-v1))) proof-list-nil-v1)))) proof-list-nil-v1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=139 source-presentation=CertificateGSLTSequenceRelationsV1 source-rule=proof-sequence-rule-lookup-head target=mode relation=source-proof-rule input=110000 functional=semidet
@@ -2866,22 +2866,22 @@
 
 ; gslt-lowered-equation-v1 source-rewrite=141 source-presentation=CertificateGSLTSequenceRelationsV1 source-rule=proof-sequence-rule-lookup-cons-functional target=mode relation=source-proof-rule input=110000 functional=semidet
 (= (gslt:fn:source-proof-rule:110000 $owner proof-environment-lookup-cons-v1)
-   (let (gslt:result:source-proof-sequence-functional-layer:10 $base) (eval (quote (gslt:fn:source-proof-sequence-functional-layer:10 $owner)))
+   (let (gslt:result:source-proof-sequence-functional-layer:10 $base) (gslt:fn:source-proof-sequence-functional-layer:10 $owner)
    (quote (gslt:result:source-proof-rule:110000 (proof-list-cons-v1 (proof-formal-v1 HeadKey proof-zero-v1) (proof-list-cons-v1 (proof-formal-v1 HeadValue proof-zero-v1) (proof-list-cons-v1 (proof-formal-v1 Tail proof-zero-v1) (proof-list-cons-v1 (proof-formal-v1 Key proof-zero-v1) (proof-list-cons-v1 (proof-formal-v1 Comparison proof-zero-v1) (proof-list-cons-v1 (proof-formal-v1 Value proof-zero-v1) proof-list-nil-v1)))))) (proof-list-cons-v1 (proof-apply-v1 ProofTokenCompareV1 (proof-list-cons-v1 (proof-fvar-v1 HeadKey) (proof-list-cons-v1 (proof-fvar-v1 Key) (proof-list-cons-v1 (proof-fvar-v1 Comparison) proof-list-nil-v1)))) (proof-list-cons-v1 (proof-apply-v1 ProofEnvironmentLookupComparedV1 (proof-list-cons-v1 (proof-fvar-v1 Comparison) (proof-list-cons-v1 (proof-fvar-v1 HeadValue) (proof-list-cons-v1 (proof-fvar-v1 Tail) (proof-list-cons-v1 (proof-fvar-v1 Key) (proof-list-cons-v1 (proof-fvar-v1 Value) proof-list-nil-v1)))))) proof-list-nil-v1)) (proof-apply-v1 ProofEnvironmentLookupV1 (proof-list-cons-v1 (proof-apply-v1 ProofEnvironmentConsV1 (proof-list-cons-v1 (proof-fvar-v1 HeadKey) (proof-list-cons-v1 (proof-fvar-v1 HeadValue) (proof-list-cons-v1 (proof-fvar-v1 Tail) proof-list-nil-v1)))) (proof-list-cons-v1 (proof-fvar-v1 Key) (proof-list-cons-v1 (proof-fvar-v1 Value) proof-list-nil-v1)))) proof-list-nil-v1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=142 source-presentation=CertificateGSLTSequenceRelationsV1 source-rule=proof-sequence-rule-lookup-compared-equal-functional target=mode relation=source-proof-rule input=110000 functional=semidet
 (= (gslt:fn:source-proof-rule:110000 $owner proof-environment-lookup-compared-equal-v1)
-   (let (gslt:result:source-proof-sequence-functional-layer:10 $base) (eval (quote (gslt:fn:source-proof-sequence-functional-layer:10 $owner)))
+   (let (gslt:result:source-proof-sequence-functional-layer:10 $base) (gslt:fn:source-proof-sequence-functional-layer:10 $owner)
    (quote (gslt:result:source-proof-rule:110000 (proof-list-cons-v1 (proof-formal-v1 HeadValue proof-zero-v1) (proof-list-cons-v1 (proof-formal-v1 Tail proof-zero-v1) (proof-list-cons-v1 (proof-formal-v1 Key proof-zero-v1) proof-list-nil-v1))) proof-list-nil-v1 (proof-apply-v1 ProofEnvironmentLookupComparedV1 (proof-list-cons-v1 (proof-apply-v1 ProofTokenEqualV1 proof-list-nil-v1) (proof-list-cons-v1 (proof-fvar-v1 HeadValue) (proof-list-cons-v1 (proof-fvar-v1 Tail) (proof-list-cons-v1 (proof-fvar-v1 Key) (proof-list-cons-v1 (proof-fvar-v1 HeadValue) proof-list-nil-v1)))))) proof-list-nil-v1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=143 source-presentation=CertificateGSLTSequenceRelationsV1 source-rule=proof-sequence-rule-lookup-compared-unequal-functional target=mode relation=source-proof-rule input=110000 functional=semidet
 (= (gslt:fn:source-proof-rule:110000 $owner proof-environment-lookup-compared-unequal-v1)
-   (let (gslt:result:source-proof-sequence-functional-layer:10 $base) (eval (quote (gslt:fn:source-proof-sequence-functional-layer:10 $owner)))
+   (let (gslt:result:source-proof-sequence-functional-layer:10 $base) (gslt:fn:source-proof-sequence-functional-layer:10 $owner)
    (quote (gslt:result:source-proof-rule:110000 (proof-list-cons-v1 (proof-formal-v1 HeadValue proof-zero-v1) (proof-list-cons-v1 (proof-formal-v1 Tail proof-zero-v1) (proof-list-cons-v1 (proof-formal-v1 Key proof-zero-v1) (proof-list-cons-v1 (proof-formal-v1 Value proof-zero-v1) proof-list-nil-v1)))) (proof-list-cons-v1 (proof-apply-v1 ProofEnvironmentLookupV1 (proof-list-cons-v1 (proof-fvar-v1 Tail) (proof-list-cons-v1 (proof-fvar-v1 Key) (proof-list-cons-v1 (proof-fvar-v1 Value) proof-list-nil-v1)))) proof-list-nil-v1) (proof-apply-v1 ProofEnvironmentLookupComparedV1 (proof-list-cons-v1 (proof-apply-v1 ProofTokenUnequalV1 proof-list-nil-v1) (proof-list-cons-v1 (proof-fvar-v1 HeadValue) (proof-list-cons-v1 (proof-fvar-v1 Tail) (proof-list-cons-v1 (proof-fvar-v1 Key) (proof-list-cons-v1 (proof-fvar-v1 Value) proof-list-nil-v1)))))) proof-list-nil-v1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=144 source-presentation=CertificateGSLTSequenceRelationsV1 source-rule=proof-sequence-rule-instantiate-nil target=mode relation=source-proof-rule input=110000 functional=semidet
 (= (gslt:fn:source-proof-rule:110000 $owner proof-sequence-instantiate-nil-v1)
-   (let (gslt:result:source-proof-sequence-layer:10 $base) (eval (quote (gslt:fn:source-proof-sequence-layer:10 $owner)))
+   (let (gslt:result:source-proof-sequence-layer:10 $base) (gslt:fn:source-proof-sequence-layer:10 $owner)
    (quote (gslt:result:source-proof-rule:110000 (proof-list-cons-v1 (proof-formal-v1 Environment proof-zero-v1) proof-list-nil-v1) proof-list-nil-v1 (proof-apply-v1 ProofSequenceInstantiateV1 (proof-list-cons-v1 (proof-apply-v1 ProofSequenceNilV1 proof-list-nil-v1) (proof-list-cons-v1 (proof-fvar-v1 Environment) (proof-list-cons-v1 (proof-apply-v1 ProofSequenceNilV1 proof-list-nil-v1) proof-list-nil-v1)))) proof-list-nil-v1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=145 source-presentation=CertificateGSLTSequenceRelationsV1 source-rule=proof-sequence-rule-instantiate-literal target=mode relation=source-proof-rule input=110000 functional=semidet
@@ -2896,107 +2896,107 @@
 
 ; gslt-lowered-equation-v1 source-rewrite=147 source-presentation=CertificateGSLTSequenceRelationsV1 source-rule=proof-sequence-rule-instantiate-cons-functional target=mode relation=source-proof-rule input=110000 functional=semidet
 (= (gslt:fn:source-proof-rule:110000 $owner proof-sequence-instantiate-cons-v1)
-   (let (gslt:result:source-proof-sequence-functional-layer:10 $base) (eval (quote (gslt:fn:source-proof-sequence-functional-layer:10 $owner)))
+   (let (gslt:result:source-proof-sequence-functional-layer:10 $base) (gslt:fn:source-proof-sequence-functional-layer:10 $owner)
    (quote (gslt:result:source-proof-rule:110000 (proof-list-cons-v1 (proof-formal-v1 Head proof-zero-v1) (proof-list-cons-v1 (proof-formal-v1 Tail proof-zero-v1) (proof-list-cons-v1 (proof-formal-v1 Environment proof-zero-v1) (proof-list-cons-v1 (proof-formal-v1 Class proof-zero-v1) (proof-list-cons-v1 (proof-formal-v1 Out proof-zero-v1) proof-list-nil-v1))))) (proof-list-cons-v1 (proof-apply-v1 ProofTokenClassV1 (proof-list-cons-v1 (proof-fvar-v1 Head) (proof-list-cons-v1 (proof-fvar-v1 Class) proof-list-nil-v1))) (proof-list-cons-v1 (proof-apply-v1 ProofSequenceInstantiateClassV1 (proof-list-cons-v1 (proof-fvar-v1 Class) (proof-list-cons-v1 (proof-fvar-v1 Head) (proof-list-cons-v1 (proof-fvar-v1 Tail) (proof-list-cons-v1 (proof-fvar-v1 Environment) (proof-list-cons-v1 (proof-fvar-v1 Out) proof-list-nil-v1)))))) proof-list-nil-v1)) (proof-apply-v1 ProofSequenceInstantiateV1 (proof-list-cons-v1 (proof-apply-v1 ProofSequenceConsV1 (proof-list-cons-v1 (proof-fvar-v1 Head) (proof-list-cons-v1 (proof-fvar-v1 Tail) proof-list-nil-v1))) (proof-list-cons-v1 (proof-fvar-v1 Environment) (proof-list-cons-v1 (proof-fvar-v1 Out) proof-list-nil-v1)))) proof-list-nil-v1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=148 source-presentation=CertificateGSLTSequenceRelationsV1 source-rule=proof-sequence-rule-instantiate-class-literal-functional target=mode relation=source-proof-rule input=110000 functional=semidet
 (= (gslt:fn:source-proof-rule:110000 $owner proof-sequence-instantiate-class-literal-v1)
-   (let (gslt:result:source-proof-sequence-functional-layer:10 $base) (eval (quote (gslt:fn:source-proof-sequence-functional-layer:10 $owner)))
+   (let (gslt:result:source-proof-sequence-functional-layer:10 $base) (gslt:fn:source-proof-sequence-functional-layer:10 $owner)
    (quote (gslt:result:source-proof-rule:110000 (proof-list-cons-v1 (proof-formal-v1 Head proof-zero-v1) (proof-list-cons-v1 (proof-formal-v1 Tail proof-zero-v1) (proof-list-cons-v1 (proof-formal-v1 Environment proof-zero-v1) (proof-list-cons-v1 (proof-formal-v1 OutTail proof-zero-v1) proof-list-nil-v1)))) (proof-list-cons-v1 (proof-apply-v1 ProofSequenceInstantiateV1 (proof-list-cons-v1 (proof-fvar-v1 Tail) (proof-list-cons-v1 (proof-fvar-v1 Environment) (proof-list-cons-v1 (proof-fvar-v1 OutTail) proof-list-nil-v1)))) proof-list-nil-v1) (proof-apply-v1 ProofSequenceInstantiateClassV1 (proof-list-cons-v1 (proof-apply-v1 ProofTokenLiteralClassV1 proof-list-nil-v1) (proof-list-cons-v1 (proof-fvar-v1 Head) (proof-list-cons-v1 (proof-fvar-v1 Tail) (proof-list-cons-v1 (proof-fvar-v1 Environment) (proof-list-cons-v1 (proof-apply-v1 ProofSequenceConsV1 (proof-list-cons-v1 (proof-fvar-v1 Head) (proof-list-cons-v1 (proof-fvar-v1 OutTail) proof-list-nil-v1))) proof-list-nil-v1)))))) proof-list-nil-v1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=149 source-presentation=CertificateGSLTSequenceRelationsV1 source-rule=proof-sequence-rule-instantiate-class-variable-functional target=mode relation=source-proof-rule input=110000 functional=semidet
 (= (gslt:fn:source-proof-rule:110000 $owner proof-sequence-instantiate-class-variable-v1)
-   (let (gslt:result:source-proof-sequence-functional-layer:10 $base) (eval (quote (gslt:fn:source-proof-sequence-functional-layer:10 $owner)))
+   (let (gslt:result:source-proof-sequence-functional-layer:10 $base) (gslt:fn:source-proof-sequence-functional-layer:10 $owner)
    (quote (gslt:result:source-proof-rule:110000 (proof-list-cons-v1 (proof-formal-v1 Hole proof-zero-v1) (proof-list-cons-v1 (proof-formal-v1 Tail proof-zero-v1) (proof-list-cons-v1 (proof-formal-v1 Environment proof-zero-v1) (proof-list-cons-v1 (proof-formal-v1 Image proof-zero-v1) (proof-list-cons-v1 (proof-formal-v1 OutTail proof-zero-v1) (proof-list-cons-v1 (proof-formal-v1 Out proof-zero-v1) proof-list-nil-v1)))))) (proof-list-cons-v1 (proof-apply-v1 ProofEnvironmentLookupV1 (proof-list-cons-v1 (proof-fvar-v1 Environment) (proof-list-cons-v1 (proof-fvar-v1 Hole) (proof-list-cons-v1 (proof-fvar-v1 Image) proof-list-nil-v1)))) (proof-list-cons-v1 (proof-apply-v1 ProofSequenceInstantiateV1 (proof-list-cons-v1 (proof-fvar-v1 Tail) (proof-list-cons-v1 (proof-fvar-v1 Environment) (proof-list-cons-v1 (proof-fvar-v1 OutTail) proof-list-nil-v1)))) (proof-list-cons-v1 (proof-apply-v1 ProofSequenceAppendV1 (proof-list-cons-v1 (proof-fvar-v1 Image) (proof-list-cons-v1 (proof-fvar-v1 OutTail) (proof-list-cons-v1 (proof-fvar-v1 Out) proof-list-nil-v1)))) proof-list-nil-v1))) (proof-apply-v1 ProofSequenceInstantiateClassV1 (proof-list-cons-v1 (proof-apply-v1 ProofTokenVariableClassV1 proof-list-nil-v1) (proof-list-cons-v1 (proof-fvar-v1 Hole) (proof-list-cons-v1 (proof-fvar-v1 Tail) (proof-list-cons-v1 (proof-fvar-v1 Environment) (proof-list-cons-v1 (proof-fvar-v1 Out) proof-list-nil-v1)))))) proof-list-nil-v1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=150 source-presentation=CertificateGSLTSequenceRelationsV1 source-rule=proof-sequence-rule-pair-left-literal target=mode relation=source-proof-rule input=110000 functional=semidet
 (= (gslt:fn:source-proof-rule:110000 $owner proof-token-pair-left-literal-v1)
-   (let (gslt:result:source-proof-sequence-layer:10 $base) (eval (quote (gslt:fn:source-proof-sequence-layer:10 $owner)))
+   (let (gslt:result:source-proof-sequence-layer:10 $base) (gslt:fn:source-proof-sequence-layer:10 $owner)
    (quote (gslt:result:source-proof-rule:110000 (proof-list-cons-v1 (proof-formal-v1 Left proof-zero-v1) (proof-list-cons-v1 (proof-formal-v1 Right proof-zero-v1) proof-list-nil-v1)) (proof-list-cons-v1 (proof-apply-v1 ProofTokenLiteralV1 (proof-list-cons-v1 (proof-fvar-v1 Left) proof-list-nil-v1)) proof-list-nil-v1) (proof-apply-v1 ProofTokenPairAllowedV1 (proof-list-cons-v1 (proof-fvar-v1 Left) (proof-list-cons-v1 (proof-fvar-v1 Right) proof-list-nil-v1))) proof-list-nil-v1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=151 source-presentation=CertificateGSLTSequenceRelationsV1 source-rule=proof-sequence-rule-pair-right-literal target=mode relation=source-proof-rule input=110000 functional=semidet
 (= (gslt:fn:source-proof-rule:110000 $owner proof-token-pair-right-literal-v1)
-   (let (gslt:result:source-proof-sequence-layer:10 $base) (eval (quote (gslt:fn:source-proof-sequence-layer:10 $owner)))
+   (let (gslt:result:source-proof-sequence-layer:10 $base) (gslt:fn:source-proof-sequence-layer:10 $owner)
    (quote (gslt:result:source-proof-rule:110000 (proof-list-cons-v1 (proof-formal-v1 Left proof-zero-v1) (proof-list-cons-v1 (proof-formal-v1 Right proof-zero-v1) proof-list-nil-v1)) (proof-list-cons-v1 (proof-apply-v1 ProofTokenLiteralV1 (proof-list-cons-v1 (proof-fvar-v1 Right) proof-list-nil-v1)) proof-list-nil-v1) (proof-apply-v1 ProofTokenPairAllowedV1 (proof-list-cons-v1 (proof-fvar-v1 Left) (proof-list-cons-v1 (proof-fvar-v1 Right) proof-list-nil-v1))) proof-list-nil-v1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=152 source-presentation=CertificateGSLTSequenceRelationsV1 source-rule=proof-sequence-rule-pair-apart target=mode relation=source-proof-rule input=110000 functional=semidet
 (= (gslt:fn:source-proof-rule:110000 $owner proof-token-pair-apart-v1)
-   (let (gslt:result:source-proof-sequence-layer:10 $base) (eval (quote (gslt:fn:source-proof-sequence-layer:10 $owner)))
+   (let (gslt:result:source-proof-sequence-layer:10 $base) (gslt:fn:source-proof-sequence-layer:10 $owner)
    (quote (gslt:result:source-proof-rule:110000 (proof-list-cons-v1 (proof-formal-v1 Left proof-zero-v1) (proof-list-cons-v1 (proof-formal-v1 Right proof-zero-v1) proof-list-nil-v1)) (proof-list-cons-v1 (proof-apply-v1 ProofTokenVariableV1 (proof-list-cons-v1 (proof-fvar-v1 Left) proof-list-nil-v1)) (proof-list-cons-v1 (proof-apply-v1 ProofTokenVariableV1 (proof-list-cons-v1 (proof-fvar-v1 Right) proof-list-nil-v1)) (proof-list-cons-v1 (proof-apply-v1 ProofTokenApartV1 (proof-list-cons-v1 (proof-fvar-v1 Left) (proof-list-cons-v1 (proof-fvar-v1 Right) proof-list-nil-v1))) proof-list-nil-v1))) (proof-apply-v1 ProofTokenPairAllowedV1 (proof-list-cons-v1 (proof-fvar-v1 Left) (proof-list-cons-v1 (proof-fvar-v1 Right) proof-list-nil-v1))) proof-list-nil-v1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=153 source-presentation=CertificateGSLTSequenceRelationsV1 source-rule=proof-sequence-rule-token-against-nil target=mode relation=source-proof-rule input=110000 functional=semidet
 (= (gslt:fn:source-proof-rule:110000 $owner proof-token-against-sequence-nil-v1)
-   (let (gslt:result:source-proof-sequence-layer:10 $base) (eval (quote (gslt:fn:source-proof-sequence-layer:10 $owner)))
+   (let (gslt:result:source-proof-sequence-layer:10 $base) (gslt:fn:source-proof-sequence-layer:10 $owner)
    (quote (gslt:result:source-proof-rule:110000 (proof-list-cons-v1 (proof-formal-v1 Token proof-zero-v1) proof-list-nil-v1) proof-list-nil-v1 (proof-apply-v1 ProofTokenAgainstSequenceV1 (proof-list-cons-v1 (proof-fvar-v1 Token) (proof-list-cons-v1 (proof-apply-v1 ProofSequenceNilV1 proof-list-nil-v1) proof-list-nil-v1))) proof-list-nil-v1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=154 source-presentation=CertificateGSLTSequenceRelationsV1 source-rule=proof-sequence-rule-token-against-cons target=mode relation=source-proof-rule input=110000 functional=semidet
 (= (gslt:fn:source-proof-rule:110000 $owner proof-token-against-sequence-cons-v1)
-   (let (gslt:result:source-proof-sequence-layer:10 $base) (eval (quote (gslt:fn:source-proof-sequence-layer:10 $owner)))
+   (let (gslt:result:source-proof-sequence-layer:10 $base) (gslt:fn:source-proof-sequence-layer:10 $owner)
    (quote (gslt:result:source-proof-rule:110000 (proof-list-cons-v1 (proof-formal-v1 Token proof-zero-v1) (proof-list-cons-v1 (proof-formal-v1 Head proof-zero-v1) (proof-list-cons-v1 (proof-formal-v1 Tail proof-zero-v1) proof-list-nil-v1))) (proof-list-cons-v1 (proof-apply-v1 ProofTokenPairAllowedV1 (proof-list-cons-v1 (proof-fvar-v1 Token) (proof-list-cons-v1 (proof-fvar-v1 Head) proof-list-nil-v1))) (proof-list-cons-v1 (proof-apply-v1 ProofTokenAgainstSequenceV1 (proof-list-cons-v1 (proof-fvar-v1 Token) (proof-list-cons-v1 (proof-fvar-v1 Tail) proof-list-nil-v1))) proof-list-nil-v1)) (proof-apply-v1 ProofTokenAgainstSequenceV1 (proof-list-cons-v1 (proof-fvar-v1 Token) (proof-list-cons-v1 (proof-apply-v1 ProofSequenceConsV1 (proof-list-cons-v1 (proof-fvar-v1 Head) (proof-list-cons-v1 (proof-fvar-v1 Tail) proof-list-nil-v1))) proof-list-nil-v1))) proof-list-nil-v1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=155 source-presentation=CertificateGSLTSequenceRelationsV1 source-rule=proof-sequence-rule-support-apart-nil target=mode relation=source-proof-rule input=110000 functional=semidet
 (= (gslt:fn:source-proof-rule:110000 $owner proof-sequence-support-apart-nil-v1)
-   (let (gslt:result:source-proof-sequence-layer:10 $base) (eval (quote (gslt:fn:source-proof-sequence-layer:10 $owner)))
+   (let (gslt:result:source-proof-sequence-layer:10 $base) (gslt:fn:source-proof-sequence-layer:10 $owner)
    (quote (gslt:result:source-proof-rule:110000 (proof-list-cons-v1 (proof-formal-v1 Right proof-zero-v1) proof-list-nil-v1) proof-list-nil-v1 (proof-apply-v1 ProofSequenceSupportApartV1 (proof-list-cons-v1 (proof-apply-v1 ProofSequenceNilV1 proof-list-nil-v1) (proof-list-cons-v1 (proof-fvar-v1 Right) proof-list-nil-v1))) proof-list-nil-v1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=156 source-presentation=CertificateGSLTSequenceRelationsV1 source-rule=proof-sequence-rule-support-apart-cons target=mode relation=source-proof-rule input=110000 functional=semidet
 (= (gslt:fn:source-proof-rule:110000 $owner proof-sequence-support-apart-cons-v1)
-   (let (gslt:result:source-proof-sequence-layer:10 $base) (eval (quote (gslt:fn:source-proof-sequence-layer:10 $owner)))
+   (let (gslt:result:source-proof-sequence-layer:10 $base) (gslt:fn:source-proof-sequence-layer:10 $owner)
    (quote (gslt:result:source-proof-rule:110000 (proof-list-cons-v1 (proof-formal-v1 Head proof-zero-v1) (proof-list-cons-v1 (proof-formal-v1 Tail proof-zero-v1) (proof-list-cons-v1 (proof-formal-v1 Right proof-zero-v1) proof-list-nil-v1))) (proof-list-cons-v1 (proof-apply-v1 ProofTokenAgainstSequenceV1 (proof-list-cons-v1 (proof-fvar-v1 Head) (proof-list-cons-v1 (proof-fvar-v1 Right) proof-list-nil-v1))) (proof-list-cons-v1 (proof-apply-v1 ProofSequenceSupportApartV1 (proof-list-cons-v1 (proof-fvar-v1 Tail) (proof-list-cons-v1 (proof-fvar-v1 Right) proof-list-nil-v1))) proof-list-nil-v1)) (proof-apply-v1 ProofSequenceSupportApartV1 (proof-list-cons-v1 (proof-apply-v1 ProofSequenceConsV1 (proof-list-cons-v1 (proof-fvar-v1 Head) (proof-list-cons-v1 (proof-fvar-v1 Tail) proof-list-nil-v1))) (proof-list-cons-v1 (proof-fvar-v1 Right) proof-list-nil-v1))) proof-list-nil-v1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=209 source-presentation=CertificateGSLTSequenceAssertionV1 source-rule=proof-sequence-assertion-rule-use-premise target=mode relation=source-proof-rule input=110000 functional=semidet
 (= (gslt:fn:source-proof-rule:110000 $owner proof-assertion-use-premise-v1)
-   (let (gslt:result:source-proof-sequence-assertion-layer:100 $base $provable) (eval (quote (gslt:fn:source-proof-sequence-assertion-layer:100 $owner)))
-   (let gslt:result:source-proof-judgment:111 (eval (quote (gslt:fn:source-proof-judgment:111 $owner $provable (proof-succ-v1 proof-zero-v1))))
+   (let (gslt:result:source-proof-sequence-assertion-layer:100 $base $provable) (gslt:fn:source-proof-sequence-assertion-layer:100 $owner)
+   (let gslt:result:source-proof-judgment:111 (gslt:fn:source-proof-judgment:111 $owner $provable (proof-succ-v1 proof-zero-v1))
    (quote (gslt:result:source-proof-rule:110000 (proof-list-cons-v1 (proof-formal-v1 Formula proof-zero-v1) proof-list-nil-v1) (proof-list-cons-v1 (proof-apply-v1 $provable (proof-list-cons-v1 (proof-fvar-v1 Formula) proof-list-nil-v1)) proof-list-nil-v1) (proof-apply-v1 $provable (proof-list-cons-v1 (proof-fvar-v1 Formula) proof-list-nil-v1)) proof-list-nil-v1)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=210 source-presentation=CertificateGSLTSequenceAssertionV1 source-rule=proof-sequence-assertion-rule-build-environment-nil target=mode relation=source-proof-rule input=110000 functional=semidet
 (= (gslt:fn:source-proof-rule:110000 $owner proof-assertion-build-environment-nil-v1)
-   (let (gslt:result:source-proof-sequence-assertion-layer:100 $base $provable) (eval (quote (gslt:fn:source-proof-sequence-assertion-layer:100 $owner)))
-   (let gslt:result:source-proof-sequence-layer:11 (eval (quote (gslt:fn:source-proof-sequence-layer:11 $owner $base)))
-   (let (gslt:result:source-proof-sequence-constructor-role:1110 $environment-nil) (eval (quote (gslt:fn:source-proof-sequence-constructor-role:1110 $owner $base environment-nil-v1)))
+   (let (gslt:result:source-proof-sequence-assertion-layer:100 $base $provable) (gslt:fn:source-proof-sequence-assertion-layer:100 $owner)
+   (let gslt:result:source-proof-sequence-layer:11 (gslt:fn:source-proof-sequence-layer:11 $owner $base)
+   (let (gslt:result:source-proof-sequence-constructor-role:1110 $environment-nil) (gslt:fn:source-proof-sequence-constructor-role:1110 $owner $base environment-nil-v1)
    (quote (gslt:result:source-proof-rule:110000 proof-list-nil-v1 proof-list-nil-v1 (proof-apply-v1 ProofAssertionBuildEnvironmentV1 (proof-list-cons-v1 (proof-apply-v1 ProofAssertionListNilV1 proof-list-nil-v1) (proof-list-cons-v1 (proof-apply-v1 ProofAssertionListNilV1 proof-list-nil-v1) (proof-list-cons-v1 (proof-apply-v1 $environment-nil proof-list-nil-v1) proof-list-nil-v1)))) proof-list-nil-v1))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=211 source-presentation=CertificateGSLTSequenceAssertionV1 source-rule=proof-sequence-assertion-rule-build-environment-cons target=mode relation=source-proof-rule input=110000 functional=semidet
 (= (gslt:fn:source-proof-rule:110000 $owner proof-assertion-build-environment-cons-v1)
-   (let (gslt:result:source-proof-sequence-assertion-layer:100 $base $provable) (eval (quote (gslt:fn:source-proof-sequence-assertion-layer:100 $owner)))
-   (let gslt:result:source-proof-sequence-layer:11 (eval (quote (gslt:fn:source-proof-sequence-layer:11 $owner $base)))
-   (let (gslt:result:source-proof-sequence-constructor-role:1110 $sequence-cons) (eval (quote (gslt:fn:source-proof-sequence-constructor-role:1110 $owner $base sequence-cons-v1)))
-   (let (gslt:result:source-proof-sequence-constructor-role:1110 $environment-cons) (eval (quote (gslt:fn:source-proof-sequence-constructor-role:1110 $owner $base environment-cons-v1)))
-   (let (gslt:result:source-proof-sequence-judgment-role:110 $variable-judgment) (eval (quote (gslt:fn:source-proof-sequence-judgment-role:110 $owner variable-v1)))
+   (let (gslt:result:source-proof-sequence-assertion-layer:100 $base $provable) (gslt:fn:source-proof-sequence-assertion-layer:100 $owner)
+   (let gslt:result:source-proof-sequence-layer:11 (gslt:fn:source-proof-sequence-layer:11 $owner $base)
+   (let (gslt:result:source-proof-sequence-constructor-role:1110 $sequence-cons) (gslt:fn:source-proof-sequence-constructor-role:1110 $owner $base sequence-cons-v1)
+   (let (gslt:result:source-proof-sequence-constructor-role:1110 $environment-cons) (gslt:fn:source-proof-sequence-constructor-role:1110 $owner $base environment-cons-v1)
+   (let (gslt:result:source-proof-sequence-judgment-role:110 $variable-judgment) (gslt:fn:source-proof-sequence-judgment-role:110 $owner variable-v1)
    (quote (gslt:result:source-proof-rule:110000 (proof-list-cons-v1 (proof-formal-v1 Variable proof-zero-v1) (proof-list-cons-v1 (proof-formal-v1 Typecode proof-zero-v1) (proof-list-cons-v1 (proof-formal-v1 Image proof-zero-v1) (proof-list-cons-v1 (proof-formal-v1 VariablesRest proof-zero-v1) (proof-list-cons-v1 (proof-formal-v1 ImagesRest proof-zero-v1) (proof-list-cons-v1 (proof-formal-v1 EnvironmentRest proof-zero-v1) proof-list-nil-v1)))))) (proof-list-cons-v1 (proof-apply-v1 $variable-judgment (proof-list-cons-v1 (proof-fvar-v1 Variable) proof-list-nil-v1)) (proof-list-cons-v1 (proof-apply-v1 $provable (proof-list-cons-v1 (proof-apply-v1 $sequence-cons (proof-list-cons-v1 (proof-fvar-v1 Typecode) (proof-list-cons-v1 (proof-fvar-v1 Image) proof-list-nil-v1))) proof-list-nil-v1)) (proof-list-cons-v1 (proof-apply-v1 ProofAssertionBuildEnvironmentV1 (proof-list-cons-v1 (proof-fvar-v1 VariablesRest) (proof-list-cons-v1 (proof-fvar-v1 ImagesRest) (proof-list-cons-v1 (proof-fvar-v1 EnvironmentRest) proof-list-nil-v1)))) proof-list-nil-v1))) (proof-apply-v1 ProofAssertionBuildEnvironmentV1 (proof-list-cons-v1 (proof-apply-v1 ProofAssertionListConsV1 (proof-list-cons-v1 (proof-apply-v1 ProofAssertionVariableV1 (proof-list-cons-v1 (proof-fvar-v1 Variable) (proof-list-cons-v1 (proof-fvar-v1 Typecode) proof-list-nil-v1))) (proof-list-cons-v1 (proof-fvar-v1 VariablesRest) proof-list-nil-v1))) (proof-list-cons-v1 (proof-apply-v1 ProofAssertionListConsV1 (proof-list-cons-v1 (proof-fvar-v1 Image) (proof-list-cons-v1 (proof-fvar-v1 ImagesRest) proof-list-nil-v1))) (proof-list-cons-v1 (proof-apply-v1 $environment-cons (proof-list-cons-v1 (proof-fvar-v1 Variable) (proof-list-cons-v1 (proof-fvar-v1 Image) (proof-list-cons-v1 (proof-fvar-v1 EnvironmentRest) proof-list-nil-v1)))) proof-list-nil-v1)))) proof-list-nil-v1))))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=212 source-presentation=CertificateGSLTSequenceAssertionV1 source-rule=proof-sequence-assertion-rule-check-essentials-nil target=mode relation=source-proof-rule input=110000 functional=semidet
 (= (gslt:fn:source-proof-rule:110000 $owner proof-assertion-check-essentials-nil-v1)
-   (let (gslt:result:source-proof-sequence-assertion-layer:100 $base $provable) (eval (quote (gslt:fn:source-proof-sequence-assertion-layer:100 $owner)))
+   (let (gslt:result:source-proof-sequence-assertion-layer:100 $base $provable) (gslt:fn:source-proof-sequence-assertion-layer:100 $owner)
    (quote (gslt:result:source-proof-rule:110000 (proof-list-cons-v1 (proof-formal-v1 Environment proof-zero-v1) proof-list-nil-v1) proof-list-nil-v1 (proof-apply-v1 ProofAssertionCheckEssentialsV1 (proof-list-cons-v1 (proof-apply-v1 ProofAssertionListNilV1 proof-list-nil-v1) (proof-list-cons-v1 (proof-apply-v1 ProofAssertionListNilV1 proof-list-nil-v1) (proof-list-cons-v1 (proof-fvar-v1 Environment) proof-list-nil-v1)))) proof-list-nil-v1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=213 source-presentation=CertificateGSLTSequenceAssertionV1 source-rule=proof-sequence-assertion-rule-check-essentials-cons target=mode relation=source-proof-rule input=110000 functional=semidet
 (= (gslt:fn:source-proof-rule:110000 $owner proof-assertion-check-essentials-cons-v1)
-   (let (gslt:result:source-proof-sequence-assertion-layer:100 $base $provable) (eval (quote (gslt:fn:source-proof-sequence-assertion-layer:100 $owner)))
-   (let (gslt:result:source-proof-sequence-judgment-role:110 $instantiate) (eval (quote (gslt:fn:source-proof-sequence-judgment-role:110 $owner instantiate-v1)))
+   (let (gslt:result:source-proof-sequence-assertion-layer:100 $base $provable) (gslt:fn:source-proof-sequence-assertion-layer:100 $owner)
+   (let (gslt:result:source-proof-sequence-judgment-role:110 $instantiate) (gslt:fn:source-proof-sequence-judgment-role:110 $owner instantiate-v1)
    (quote (gslt:result:source-proof-rule:110000 (proof-list-cons-v1 (proof-formal-v1 Template proof-zero-v1) (proof-list-cons-v1 (proof-formal-v1 Actual proof-zero-v1) (proof-list-cons-v1 (proof-formal-v1 EssentialsRest proof-zero-v1) (proof-list-cons-v1 (proof-formal-v1 ActualsRest proof-zero-v1) (proof-list-cons-v1 (proof-formal-v1 Environment proof-zero-v1) proof-list-nil-v1))))) (proof-list-cons-v1 (proof-apply-v1 $provable (proof-list-cons-v1 (proof-fvar-v1 Actual) proof-list-nil-v1)) (proof-list-cons-v1 (proof-apply-v1 $instantiate (proof-list-cons-v1 (proof-fvar-v1 Template) (proof-list-cons-v1 (proof-fvar-v1 Environment) (proof-list-cons-v1 (proof-fvar-v1 Actual) proof-list-nil-v1)))) (proof-list-cons-v1 (proof-apply-v1 ProofAssertionCheckEssentialsV1 (proof-list-cons-v1 (proof-fvar-v1 EssentialsRest) (proof-list-cons-v1 (proof-fvar-v1 ActualsRest) (proof-list-cons-v1 (proof-fvar-v1 Environment) proof-list-nil-v1)))) proof-list-nil-v1))) (proof-apply-v1 ProofAssertionCheckEssentialsV1 (proof-list-cons-v1 (proof-apply-v1 ProofAssertionListConsV1 (proof-list-cons-v1 (proof-apply-v1 ProofAssertionEssentialV1 (proof-list-cons-v1 (proof-fvar-v1 Template) proof-list-nil-v1)) (proof-list-cons-v1 (proof-fvar-v1 EssentialsRest) proof-list-nil-v1))) (proof-list-cons-v1 (proof-apply-v1 ProofAssertionListConsV1 (proof-list-cons-v1 (proof-fvar-v1 Actual) (proof-list-cons-v1 (proof-fvar-v1 ActualsRest) proof-list-nil-v1))) (proof-list-cons-v1 (proof-fvar-v1 Environment) proof-list-nil-v1)))) proof-list-nil-v1)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=214 source-presentation=CertificateGSLTSequenceAssertionV1 source-rule=proof-sequence-assertion-rule-check-disjoints-nil target=mode relation=source-proof-rule input=110000 functional=semidet
 (= (gslt:fn:source-proof-rule:110000 $owner proof-assertion-check-disjoints-nil-v1)
-   (let (gslt:result:source-proof-sequence-assertion-layer:100 $base $provable) (eval (quote (gslt:fn:source-proof-sequence-assertion-layer:100 $owner)))
+   (let (gslt:result:source-proof-sequence-assertion-layer:100 $base $provable) (gslt:fn:source-proof-sequence-assertion-layer:100 $owner)
    (quote (gslt:result:source-proof-rule:110000 (proof-list-cons-v1 (proof-formal-v1 Environment proof-zero-v1) proof-list-nil-v1) proof-list-nil-v1 (proof-apply-v1 ProofAssertionCheckDisjointsV1 (proof-list-cons-v1 (proof-apply-v1 ProofAssertionListNilV1 proof-list-nil-v1) (proof-list-cons-v1 (proof-fvar-v1 Environment) proof-list-nil-v1))) proof-list-nil-v1))))
 
 ; gslt-lowered-equation-v1 source-rewrite=215 source-presentation=CertificateGSLTSequenceAssertionV1 source-rule=proof-sequence-assertion-rule-check-disjoints-cons target=mode relation=source-proof-rule input=110000 functional=semidet
 (= (gslt:fn:source-proof-rule:110000 $owner proof-assertion-check-disjoints-cons-v1)
-   (let (gslt:result:source-proof-sequence-assertion-layer:100 $base $provable) (eval (quote (gslt:fn:source-proof-sequence-assertion-layer:100 $owner)))
-   (let (gslt:result:source-proof-sequence-judgment-role:110 $different) (eval (quote (gslt:fn:source-proof-sequence-judgment-role:110 $owner different-v1)))
-   (let (gslt:result:source-proof-sequence-judgment-role:110 $lookup) (eval (quote (gslt:fn:source-proof-sequence-judgment-role:110 $owner lookup-v1)))
-   (let (gslt:result:source-proof-sequence-judgment-role:110 $support-apart) (eval (quote (gslt:fn:source-proof-sequence-judgment-role:110 $owner support-apart-v1)))
+   (let (gslt:result:source-proof-sequence-assertion-layer:100 $base $provable) (gslt:fn:source-proof-sequence-assertion-layer:100 $owner)
+   (let (gslt:result:source-proof-sequence-judgment-role:110 $different) (gslt:fn:source-proof-sequence-judgment-role:110 $owner different-v1)
+   (let (gslt:result:source-proof-sequence-judgment-role:110 $lookup) (gslt:fn:source-proof-sequence-judgment-role:110 $owner lookup-v1)
+   (let (gslt:result:source-proof-sequence-judgment-role:110 $support-apart) (gslt:fn:source-proof-sequence-judgment-role:110 $owner support-apart-v1)
    (quote (gslt:result:source-proof-rule:110000 (proof-list-cons-v1 (proof-formal-v1 Left proof-zero-v1) (proof-list-cons-v1 (proof-formal-v1 Right proof-zero-v1) (proof-list-cons-v1 (proof-formal-v1 DisjointsRest proof-zero-v1) (proof-list-cons-v1 (proof-formal-v1 Environment proof-zero-v1) (proof-list-cons-v1 (proof-formal-v1 LeftImage proof-zero-v1) (proof-list-cons-v1 (proof-formal-v1 RightImage proof-zero-v1) proof-list-nil-v1)))))) (proof-list-cons-v1 (proof-apply-v1 $different (proof-list-cons-v1 (proof-fvar-v1 Left) (proof-list-cons-v1 (proof-fvar-v1 Right) proof-list-nil-v1))) (proof-list-cons-v1 (proof-apply-v1 $lookup (proof-list-cons-v1 (proof-fvar-v1 Environment) (proof-list-cons-v1 (proof-fvar-v1 Left) (proof-list-cons-v1 (proof-fvar-v1 LeftImage) proof-list-nil-v1)))) (proof-list-cons-v1 (proof-apply-v1 $lookup (proof-list-cons-v1 (proof-fvar-v1 Environment) (proof-list-cons-v1 (proof-fvar-v1 Right) (proof-list-cons-v1 (proof-fvar-v1 RightImage) proof-list-nil-v1)))) (proof-list-cons-v1 (proof-apply-v1 $support-apart (proof-list-cons-v1 (proof-fvar-v1 LeftImage) (proof-list-cons-v1 (proof-fvar-v1 RightImage) proof-list-nil-v1))) (proof-list-cons-v1 (proof-apply-v1 ProofAssertionCheckDisjointsV1 (proof-list-cons-v1 (proof-fvar-v1 DisjointsRest) (proof-list-cons-v1 (proof-fvar-v1 Environment) proof-list-nil-v1))) proof-list-nil-v1))))) (proof-apply-v1 ProofAssertionCheckDisjointsV1 (proof-list-cons-v1 (proof-apply-v1 ProofAssertionListConsV1 (proof-list-cons-v1 (proof-apply-v1 ProofAssertionDisjointV1 (proof-list-cons-v1 (proof-fvar-v1 Left) (proof-list-cons-v1 (proof-fvar-v1 Right) proof-list-nil-v1))) (proof-list-cons-v1 (proof-fvar-v1 DisjointsRest) proof-list-nil-v1))) (proof-list-cons-v1 (proof-fvar-v1 Environment) proof-list-nil-v1))) proof-list-nil-v1)))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=216 source-presentation=CertificateGSLTSequenceAssertionV1 source-rule=proof-sequence-assertion-rule-apply target=mode relation=source-proof-rule input=110000 functional=semidet
 (= (gslt:fn:source-proof-rule:110000 $owner proof-assertion-apply-v1)
-   (let (gslt:result:source-proof-sequence-assertion-layer:100 $base $provable) (eval (quote (gslt:fn:source-proof-sequence-assertion-layer:100 $owner)))
-   (let gslt:result:source-proof-sequence-layer:11 (eval (quote (gslt:fn:source-proof-sequence-layer:11 $owner $base)))
-   (let gslt:result:source-proof-judgment:111 (eval (quote (gslt:fn:source-proof-judgment:111 $owner $provable (proof-succ-v1 proof-zero-v1))))
-   (let (gslt:result:source-proof-sequence-constructor-role:1110 $sequence-cons) (eval (quote (gslt:fn:source-proof-sequence-constructor-role:1110 $owner $base sequence-cons-v1)))
-   (let (gslt:result:source-proof-sequence-judgment-role:110 $instantiate) (eval (quote (gslt:fn:source-proof-sequence-judgment-role:110 $owner instantiate-v1)))
+   (let (gslt:result:source-proof-sequence-assertion-layer:100 $base $provable) (gslt:fn:source-proof-sequence-assertion-layer:100 $owner)
+   (let gslt:result:source-proof-sequence-layer:11 (gslt:fn:source-proof-sequence-layer:11 $owner $base)
+   (let gslt:result:source-proof-judgment:111 (gslt:fn:source-proof-judgment:111 $owner $provable (proof-succ-v1 proof-zero-v1))
+   (let (gslt:result:source-proof-sequence-constructor-role:1110 $sequence-cons) (gslt:fn:source-proof-sequence-constructor-role:1110 $owner $base sequence-cons-v1)
+   (let (gslt:result:source-proof-sequence-judgment-role:110 $instantiate) (gslt:fn:source-proof-sequence-judgment-role:110 $owner instantiate-v1)
    (quote (gslt:result:source-proof-rule:110000 (proof-list-cons-v1 (proof-formal-v1 Variables proof-zero-v1) (proof-list-cons-v1 (proof-formal-v1 Essentials proof-zero-v1) (proof-list-cons-v1 (proof-formal-v1 ConclusionType proof-zero-v1) (proof-list-cons-v1 (proof-formal-v1 ConclusionTemplate proof-zero-v1) (proof-list-cons-v1 (proof-formal-v1 Disjoints proof-zero-v1) (proof-list-cons-v1 (proof-formal-v1 Images proof-zero-v1) (proof-list-cons-v1 (proof-formal-v1 Actuals proof-zero-v1) (proof-list-cons-v1 (proof-formal-v1 Environment proof-zero-v1) (proof-list-cons-v1 (proof-formal-v1 Result proof-zero-v1) proof-list-nil-v1))))))))) (proof-list-cons-v1 (proof-apply-v1 ProofAssertionDeclaredV1 (proof-list-cons-v1 (proof-apply-v1 ProofAssertionV1 (proof-list-cons-v1 (proof-fvar-v1 Variables) (proof-list-cons-v1 (proof-fvar-v1 Essentials) (proof-list-cons-v1 (proof-fvar-v1 ConclusionType) (proof-list-cons-v1 (proof-fvar-v1 ConclusionTemplate) (proof-list-cons-v1 (proof-fvar-v1 Disjoints) proof-list-nil-v1)))))) proof-list-nil-v1)) (proof-list-cons-v1 (proof-apply-v1 ProofAssertionBuildEnvironmentV1 (proof-list-cons-v1 (proof-fvar-v1 Variables) (proof-list-cons-v1 (proof-fvar-v1 Images) (proof-list-cons-v1 (proof-fvar-v1 Environment) proof-list-nil-v1)))) (proof-list-cons-v1 (proof-apply-v1 ProofAssertionCheckEssentialsV1 (proof-list-cons-v1 (proof-fvar-v1 Essentials) (proof-list-cons-v1 (proof-fvar-v1 Actuals) (proof-list-cons-v1 (proof-fvar-v1 Environment) proof-list-nil-v1)))) (proof-list-cons-v1 (proof-apply-v1 ProofAssertionCheckDisjointsV1 (proof-list-cons-v1 (proof-fvar-v1 Disjoints) (proof-list-cons-v1 (proof-fvar-v1 Environment) proof-list-nil-v1))) (proof-list-cons-v1 (proof-apply-v1 $instantiate (proof-list-cons-v1 (proof-fvar-v1 ConclusionTemplate) (proof-list-cons-v1 (proof-fvar-v1 Environment) (proof-list-cons-v1 (proof-fvar-v1 Result) proof-list-nil-v1)))) proof-list-nil-v1))))) (proof-apply-v1 $provable (proof-list-cons-v1 (proof-apply-v1 $sequence-cons (proof-list-cons-v1 (proof-fvar-v1 ConclusionType) (proof-list-cons-v1 (proof-fvar-v1 Result) proof-list-nil-v1))) proof-list-nil-v1)) proof-list-nil-v1))))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=97 source-presentation=CertificateGSLTArticleDocumentV1 source-rule=proof-article-document-elaborate-v1 target=mode relation=source-proof-article input=1000000 functional=semidet

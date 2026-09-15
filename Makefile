@@ -5300,7 +5300,7 @@ $(PETTA_TYPECHECK_V3_FILE_RUNNER_OBJ): \
 	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
 
 $(PETTA_TYPECHECK_V3_CORE_RUNTIME_V1_GENERATED_H) \
-$(PETTA_TYPECHECK_V3_CORE_RUNTIME_V1_GENERATED_C) &: \
+$(PETTA_TYPECHECK_V3_CORE_RUNTIME_V1_GENERATED_C) &: FORCE \
 		$(GSLT_LANGUAGE_NATIVE_V1_BIN) \
 		$(PETTA_TYPECHECK_V3_CORE_RUNTIME_V1_MANIFEST) \
 		$(PETTA_TYPECHECK_V3_CORE_LANGDEF_V1)
@@ -23286,8 +23286,12 @@ test-match-decision-policy-no-python-build-dependency-v1:
 	$(MAKE) --no-print-directory -B -n \
 		$(MATCH_DECISION_POLICY_GENERATED_V1) $(MATCH_DECISION_POLICY_RESULT_V1) \
 		> "$$commands"; \
-	if rg -q \
-		'(^|[[:space:]/])python([0-9.]+)?([[:space:]]|$$)|[[:alnum:]_/.-]+\.py([[:space:]]|$$)' "$$commands"; then \
+	python_command='(^|[[:space:]])([[:alnum:]_./][^[:space:]]*/)?python([0-9.]+)?([[:space:]]|$$)|[[:alnum:]_/.-]+\.py([[:space:]]|$$)'; \
+	printf '%s\n' '/toolchain/bin/python3 generator.py' | rg -q "$$python_command"; \
+	if printf '%s\n' 'cc -I/toolchain/include/python3.13 -c generator.c' | rg -q "$$python_command"; then \
+		echo 'Python dependency detector confused an include flag with a command'; exit 1; \
+	else status=$$?; test "$$status" -eq 1; fi; \
+	if rg -q "$$python_command" "$$commands"; then \
 		echo 'the matching-policy generator has a Python build dependency'; \
 		exit 1; \
 	else \
@@ -25871,6 +25875,7 @@ test-petta-typecheck-v3-core-generation-v1: \
 		$(PETTA_TYPECHECK_V3_CORE_PROVIDER_CATALOG_V1_GENERATED_C)
 	@python3 tools/test_gslt_language_generation_v1.py \
 		--generator $(GSLT_LANGUAGE_GENERATOR_V1) \
+		--native-generator $(GSLT_LANGUAGE_NATIVE_V1_BIN) \
 		--manifest $(PETTA_TYPECHECK_V3_CORE_RUNTIME_V1_MANIFEST) \
 		--source-root langdef \
 		--header $(PETTA_TYPECHECK_V3_CORE_RUNTIME_V1_GENERATED_H) \
@@ -31209,6 +31214,7 @@ test-mettazero-generation-v1: \
 		$(METTAZERO_GROUND_LIBRARY_CANARY_V1_GENERATED_C)
 	@python3 tools/test_gslt_language_generation_v1.py \
 		--generator $(GSLT_LANGUAGE_GENERATOR_V1) \
+		--native-generator $(GSLT_LANGUAGE_NATIVE_V1_BIN) \
 		--manifest $(METTAZERO_LANGDEF_V1) \
 		--source-root langdef \
 		--header $(METTAZERO_GENERATED_LANGUAGE_V1_H) \
@@ -31217,6 +31223,7 @@ test-mettazero-generation-v1: \
 		--header-include generated/zero_language_v1.generated.h
 	@python3 tools/test_gslt_language_generation_v1.py \
 		--generator $(GSLT_LANGUAGE_GENERATOR_V1) \
+		--native-generator $(GSLT_LANGUAGE_NATIVE_V1_BIN) \
 		--manifest $(METTAZERO_LANGDEF_V1) \
 		--source-root langdef \
 		--profile exp \
@@ -31226,6 +31233,7 @@ test-mettazero-generation-v1: \
 		--header-include generated/zero_exp_language_v1.generated.h
 	@python3 tools/test_gslt_language_generation_v1.py \
 		--generator $(GSLT_LANGUAGE_GENERATOR_V1) \
+		--native-generator $(GSLT_LANGUAGE_NATIVE_V1_BIN) \
 		--manifest $(METTAZERO_LANGDEF_V1) \
 		--source-root langdef \
 		--profile emit \
@@ -31250,6 +31258,7 @@ test-mettazero-interact-generation-v1: \
 		$(METTAZERO_INTERACT_PROVIDER_CATALOG_GENERATED_C)
 	@python3 tools/test_gslt_language_generation_v1.py \
 		--generator $(GSLT_LANGUAGE_GENERATOR_V1) \
+		--native-generator $(GSLT_LANGUAGE_NATIVE_V1_BIN) \
 		--manifest $(METTAZERO_LANGDEF_V1) \
 		--source-root langdef \
 		--profile interact \
@@ -31270,7 +31279,8 @@ test-mettazero-compilation-certificate-v1: \
 	@python3 $(GSLT_COMPILATION_CERTIFICATE_TEST_V1) \
 		--checker $(METTAZERO_COMPILATION_CERTIFICATE_CHECKER_V1_BIN) \
 		--producer $(GSLT_COMPILATION_CERTIFICATE_GENERATOR_V1) \
-		--generator $(GSLT_LANGUAGE_GENERATOR_V1) \
+		--generator $(GSLT_LANGUAGE_NATIVE_V1_BIN) \
+		--compiler-kind native \
 		--schema tools/gslt2parse_schema_v1.py \
 		--manifest $(METTAZERO_LANGDEF_V1) \
 		--source-root langdef \
@@ -31282,7 +31292,8 @@ test-mettazero-compilation-certificate-v1: \
 	@python3 $(GSLT_COMPILATION_CERTIFICATE_TEST_V1) \
 		--checker $(METTAZERO_COMPILATION_CERTIFICATE_CHECKER_V1_BIN) \
 		--producer $(GSLT_COMPILATION_CERTIFICATE_GENERATOR_V1) \
-		--generator $(GSLT_LANGUAGE_GENERATOR_V1) \
+		--generator $(GSLT_LANGUAGE_NATIVE_V1_BIN) \
+		--compiler-kind native \
 		--schema tools/gslt2parse_schema_v1.py \
 		--manifest $(METTAZERO_LANGDEF_V1) \
 		--source-root langdef \
@@ -31294,7 +31305,8 @@ test-mettazero-compilation-certificate-v1: \
 	@python3 $(GSLT_COMPILATION_CERTIFICATE_TEST_V1) \
 		--checker $(METTAZERO_COMPILATION_CERTIFICATE_CHECKER_V1_BIN) \
 		--producer $(GSLT_COMPILATION_CERTIFICATE_GENERATOR_V1) \
-		--generator $(GSLT_LANGUAGE_GENERATOR_V1) \
+		--generator $(GSLT_LANGUAGE_NATIVE_V1_BIN) \
+		--compiler-kind native \
 		--schema tools/gslt2parse_schema_v1.py \
 		--manifest $(METTAZERO_LANGDEF_V1) \
 		--source-root langdef \
@@ -31306,7 +31318,8 @@ test-mettazero-compilation-certificate-v1: \
 	@python3 $(GSLT_COMPILATION_CERTIFICATE_TEST_V1) \
 		--checker $(METTAZERO_COMPILATION_CERTIFICATE_CHECKER_V1_BIN) \
 		--producer $(GSLT_COMPILATION_CERTIFICATE_GENERATOR_V1) \
-		--generator $(GSLT_LANGUAGE_GENERATOR_V1) \
+		--generator $(GSLT_LANGUAGE_NATIVE_V1_BIN) \
+		--compiler-kind native \
 		--schema tools/gslt2parse_schema_v1.py \
 		--manifest $(METTAZERO_LANGDEF_V1) \
 		--source-root langdef \
@@ -31382,6 +31395,7 @@ test-gslt-il-generation-v1: \
 		$(GSLT_IL_GENERATED_LANGUAGE_V1_C)
 	@python3 tools/test_gslt_language_generation_v1.py \
 		--generator $(GSLT_LANGUAGE_GENERATOR_V1) \
+		--native-generator $(GSLT_LANGUAGE_NATIVE_V1_BIN) \
 		--manifest $(GSLT_IL_LANGDEF_V1) \
 		--source-root langdef \
 		--header $(GSLT_IL_GENERATED_LANGUAGE_V1_H) \
@@ -31426,6 +31440,7 @@ test-zerouv-generation-v1: \
 		$(ZEROUV_GENERATED_LANGUAGE_V1_C)
 	@python3 tools/test_gslt_language_generation_v1.py \
 		--generator $(GSLT_LANGUAGE_GENERATOR_V1) \
+		--native-generator $(GSLT_LANGUAGE_NATIVE_V1_BIN) \
 		--manifest $(ZEROUV_LANGDEF_V1) \
 		--source-root langdef \
 		--header $(ZEROUV_GENERATED_LANGUAGE_V1_H) \
@@ -31474,6 +31489,7 @@ test-metta-interact-generation-v1: \
 		$(METTA_INTERACT_GENERATED_LANGUAGE_V1_C)
 	@python3 tools/test_gslt_language_generation_v1.py \
 		--generator $(GSLT_LANGUAGE_GENERATOR_V1) \
+		--native-generator $(GSLT_LANGUAGE_NATIVE_V1_BIN) \
 		--manifest $(METTA_INTERACT_LANGDEF_V1) \
 		--source-root langdef \
 		--header $(METTA_INTERACT_GENERATED_LANGUAGE_V1_H) \
@@ -31522,6 +31538,7 @@ test-gslt-language-generation-v1: \
 		$(SUBZERO_GENERATED_LANGUAGE_V1_C)
 	@python3 tools/test_gslt_language_generation_v1.py \
 		--generator $(GSLT_LANGUAGE_GENERATOR_V1) \
+		--native-generator $(GSLT_LANGUAGE_NATIVE_V1_BIN) \
 		--manifest $(SUBZERO_LANGDEF_V1) \
 		--header $(SUBZERO_GENERATED_LANGUAGE_V1_H) \
 		--source $(SUBZERO_GENERATED_LANGUAGE_V1_C) \
@@ -31929,7 +31946,10 @@ $(MM2_GSLT_PROFILE_GENERATED_H) $(MM2_GSLT_PROFILE_GENERATED_C) &: \
 	mv "$$profile_stage/profile.c" $(MM2_GSLT_PROFILE_GENERATED_C); \
 	rmdir "$$profile_stage"
 
-$(GSLT_IL_GENERATED_LANGUAGE_V1_H) $(GSLT_IL_GENERATED_LANGUAGE_V1_C) &: \
+# Shared descriptors record their producer executable. Recheck after a build
+# configuration switch even when that compiler is older than the last output.
+# The producer preserves timestamps when the bytes are unchanged.
+$(GSLT_IL_GENERATED_LANGUAGE_V1_H) $(GSLT_IL_GENERATED_LANGUAGE_V1_C) &: FORCE \
 		$(GSLT_LANGUAGE_NATIVE_V1_BIN) \
 		$(GSLT_IL_LANGDEF_V1) \
 		$(GSLT_IL_FINITE_COMMAND_V1)
@@ -31941,7 +31961,7 @@ $(GSLT_IL_GENERATED_LANGUAGE_V1_H) $(GSLT_IL_GENERATED_LANGUAGE_V1_C) &: \
 		--symbol cetta_gslt_il_language_v1 \
 		--header-include generated/gslt_il_language_v1.generated.h
 
-$(ZEROUV_GENERATED_LANGUAGE_V1_H) $(ZEROUV_GENERATED_LANGUAGE_V1_C) &: \
+$(ZEROUV_GENERATED_LANGUAGE_V1_H) $(ZEROUV_GENERATED_LANGUAGE_V1_C) &: FORCE \
 		$(GSLT_LANGUAGE_NATIVE_V1_BIN) \
 		$(ZEROUV_LANGDEF_V1) \
 		$(METTAZERO_QUOTE_MATCH_V1) \
@@ -31955,7 +31975,7 @@ $(ZEROUV_GENERATED_LANGUAGE_V1_H) $(ZEROUV_GENERATED_LANGUAGE_V1_C) &: \
 		--symbol cetta_zerouv_language_v1 \
 		--header-include generated/zerouv_language_v1.generated.h
 
-$(METTA_INTERACT_GENERATED_LANGUAGE_V1_H) $(METTA_INTERACT_GENERATED_LANGUAGE_V1_C) &: \
+$(METTA_INTERACT_GENERATED_LANGUAGE_V1_H) $(METTA_INTERACT_GENERATED_LANGUAGE_V1_C) &: FORCE \
 		$(GSLT_LANGUAGE_NATIVE_V1_BIN) \
 		$(METTA_INTERACT_LANGDEF_V1) \
 		$(METTAZERO_QUOTE_MATCH_V1) \
@@ -31969,7 +31989,7 @@ $(METTA_INTERACT_GENERATED_LANGUAGE_V1_H) $(METTA_INTERACT_GENERATED_LANGUAGE_V1
 		--symbol cetta_metta_interact_language_v1 \
 		--header-include generated/metta_interact_language_v1.generated.h
 
-$(SUBZERO_GENERATED_LANGUAGE_V1_H) $(SUBZERO_GENERATED_LANGUAGE_V1_C) &: \
+$(SUBZERO_GENERATED_LANGUAGE_V1_H) $(SUBZERO_GENERATED_LANGUAGE_V1_C) &: FORCE \
 		$(GSLT_LANGUAGE_NATIVE_V1_BIN) \
 		$(SUBZERO_LANGDEF_V1) \
 		$(SUBZERO_FREE_BAG_CORE_V1) \
@@ -31981,7 +32001,7 @@ $(SUBZERO_GENERATED_LANGUAGE_V1_H) $(SUBZERO_GENERATED_LANGUAGE_V1_C) &: \
 		--symbol cetta_subzero_language_v1 \
 		--header-include generated/subzero_language_v1.generated.h
 
-$(METTAZERO_GENERATED_LANGUAGE_V1_H) $(METTAZERO_GENERATED_LANGUAGE_V1_C) &: \
+$(METTAZERO_GENERATED_LANGUAGE_V1_H) $(METTAZERO_GENERATED_LANGUAGE_V1_C) &: FORCE \
 		$(GSLT_LANGUAGE_NATIVE_V1_BIN) \
 		$(METTAZERO_LANGDEF_V1) \
 		$(METTAZERO_QUOTE_MATCH_V1) \
@@ -31995,7 +32015,7 @@ $(METTAZERO_GENERATED_LANGUAGE_V1_H) $(METTAZERO_GENERATED_LANGUAGE_V1_C) &: \
 		--symbol cetta_zero_language_v1 \
 		--header-include generated/zero_language_v1.generated.h
 
-$(METTAZERO_EXP_GENERATED_LANGUAGE_V1_H) $(METTAZERO_EXP_GENERATED_LANGUAGE_V1_C) &: \
+$(METTAZERO_EXP_GENERATED_LANGUAGE_V1_H) $(METTAZERO_EXP_GENERATED_LANGUAGE_V1_C) &: FORCE \
 		$(GSLT_LANGUAGE_NATIVE_V1_BIN) \
 		$(METTAZERO_LANGDEF_V1) \
 		$(METTAZERO_QUOTE_MATCH_V1) \
@@ -32011,7 +32031,7 @@ $(METTAZERO_EXP_GENERATED_LANGUAGE_V1_H) $(METTAZERO_EXP_GENERATED_LANGUAGE_V1_C
 		--symbol cetta_zero_exp_language_v1 \
 		--header-include generated/zero_exp_language_v1.generated.h
 
-$(METTAZERO_EMIT_GENERATED_LANGUAGE_V1_H) $(METTAZERO_EMIT_GENERATED_LANGUAGE_V1_C) &: \
+$(METTAZERO_EMIT_GENERATED_LANGUAGE_V1_H) $(METTAZERO_EMIT_GENERATED_LANGUAGE_V1_C) &: FORCE \
 		$(GSLT_LANGUAGE_NATIVE_V1_BIN) \
 		$(METTAZERO_LANGDEF_V1) \
 		$(METTAZERO_QUOTE_MATCH_V1) \
@@ -32027,7 +32047,7 @@ $(METTAZERO_EMIT_GENERATED_LANGUAGE_V1_H) $(METTAZERO_EMIT_GENERATED_LANGUAGE_V1
 		--symbol cetta_zero_emit_language_v1 \
 		--header-include generated/zero_emit_language_v1.generated.h
 
-$(METTAZERO_INTERACT_GENERATED_LANGUAGE_V1_H) $(METTAZERO_INTERACT_GENERATED_LANGUAGE_V1_C) &: \
+$(METTAZERO_INTERACT_GENERATED_LANGUAGE_V1_H) $(METTAZERO_INTERACT_GENERATED_LANGUAGE_V1_C) &: FORCE \
 		$(GSLT_LANGUAGE_NATIVE_V1_BIN) \
 		$(METTAZERO_LANGDEF_V1) \
 		$(METTAZERO_QUOTE_MATCH_V1) \
@@ -32072,7 +32092,7 @@ $(METTAZERO_INTERACT_PROVIDER_CATALOG_GENERATED_H) $(METTAZERO_INTERACT_PROVIDER
 
 $(METTAZERO_COMPILATION_CERTIFICATE_V1): \
 		$(GSLT_COMPILATION_CERTIFICATE_GENERATOR_V1) \
-		$(GSLT_LANGUAGE_GENERATOR_V1) \
+		$(GSLT_LANGUAGE_NATIVE_V1_BIN) \
 		tools/gslt2parse_schema_v1.py \
 		$(METTAZERO_LANGDEF_V1) \
 		$(METTAZERO_QUOTE_MATCH_V1) \
@@ -32086,13 +32106,14 @@ $(METTAZERO_COMPILATION_CERTIFICATE_V1): \
 		--header $(METTAZERO_GENERATED_LANGUAGE_V1_H) \
 		--source $(METTAZERO_GENERATED_LANGUAGE_V1_C) \
 		--symbol cetta_zero_language_v1 \
-		--generator $(GSLT_LANGUAGE_GENERATOR_V1) \
+		--generator $(GSLT_LANGUAGE_NATIVE_V1_BIN) \
+		--compiler-kind native \
 		--schema tools/gslt2parse_schema_v1.py \
 		--certificate $@
 
 $(METTAZERO_EXP_COMPILATION_CERTIFICATE_V1): \
 		$(GSLT_COMPILATION_CERTIFICATE_GENERATOR_V1) \
-		$(GSLT_LANGUAGE_GENERATOR_V1) \
+		$(GSLT_LANGUAGE_NATIVE_V1_BIN) \
 		tools/gslt2parse_schema_v1.py \
 		$(METTAZERO_LANGDEF_V1) \
 		$(METTAZERO_QUOTE_MATCH_V1) \
@@ -32108,13 +32129,14 @@ $(METTAZERO_EXP_COMPILATION_CERTIFICATE_V1): \
 		--header $(METTAZERO_EXP_GENERATED_LANGUAGE_V1_H) \
 		--source $(METTAZERO_EXP_GENERATED_LANGUAGE_V1_C) \
 		--symbol cetta_zero_exp_language_v1 \
-		--generator $(GSLT_LANGUAGE_GENERATOR_V1) \
+		--generator $(GSLT_LANGUAGE_NATIVE_V1_BIN) \
+		--compiler-kind native \
 		--schema tools/gslt2parse_schema_v1.py \
 		--certificate $@
 
 $(METTAZERO_EMIT_COMPILATION_CERTIFICATE_V1): \
 		$(GSLT_COMPILATION_CERTIFICATE_GENERATOR_V1) \
-		$(GSLT_LANGUAGE_GENERATOR_V1) \
+		$(GSLT_LANGUAGE_NATIVE_V1_BIN) \
 		tools/gslt2parse_schema_v1.py \
 		$(METTAZERO_LANGDEF_V1) \
 		$(METTAZERO_QUOTE_MATCH_V1) \
@@ -32130,13 +32152,14 @@ $(METTAZERO_EMIT_COMPILATION_CERTIFICATE_V1): \
 		--header $(METTAZERO_EMIT_GENERATED_LANGUAGE_V1_H) \
 		--source $(METTAZERO_EMIT_GENERATED_LANGUAGE_V1_C) \
 		--symbol cetta_zero_emit_language_v1 \
-		--generator $(GSLT_LANGUAGE_GENERATOR_V1) \
+		--generator $(GSLT_LANGUAGE_NATIVE_V1_BIN) \
+		--compiler-kind native \
 		--schema tools/gslt2parse_schema_v1.py \
 		--certificate $@
 
 $(METTAZERO_INTERACT_COMPILATION_CERTIFICATE_V1): \
 		$(GSLT_COMPILATION_CERTIFICATE_GENERATOR_V1) \
-		$(GSLT_LANGUAGE_GENERATOR_V1) \
+		$(GSLT_LANGUAGE_NATIVE_V1_BIN) \
 		tools/gslt2parse_schema_v1.py \
 		$(METTAZERO_LANGDEF_V1) \
 		$(METTAZERO_QUOTE_MATCH_V1) \
@@ -32153,7 +32176,8 @@ $(METTAZERO_INTERACT_COMPILATION_CERTIFICATE_V1): \
 		--header $(METTAZERO_INTERACT_GENERATED_LANGUAGE_V1_H) \
 		--source $(METTAZERO_INTERACT_GENERATED_LANGUAGE_V1_C) \
 		--symbol cetta_zero_interact_language_v1 \
-		--generator $(GSLT_LANGUAGE_GENERATOR_V1) \
+		--generator $(GSLT_LANGUAGE_NATIVE_V1_BIN) \
+		--compiler-kind native \
 		--schema tools/gslt2parse_schema_v1.py \
 		--certificate $@
 

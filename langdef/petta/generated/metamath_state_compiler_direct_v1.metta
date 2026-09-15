@@ -1054,13 +1054,13 @@
 
 ; gslt-lowered-equation-v1 source-rewrite=65 source-presentation=RelationalStateProgramCoreV1 source-rule=state-operand-valid-input target=mode relation=state-operand-valid input=11 functional=semidet
 (= (gslt:fn:state-operand-valid:11 $role state-input-v1)
-   (let gslt:result:source-fold-role:1 (eval (quote (gslt:fn:source-fold-role:1 $role)))
+   (let gslt:result:source-fold-role:1 (gslt:fn:source-fold-role:1 $role)
    (quote gslt:result:state-operand-valid:11)))
 
 ; gslt-lowered-equation-v1 source-rewrite=66 source-presentation=RelationalStateProgramCoreV1 source-rule=state-operand-valid-literal target=mode relation=state-operand-valid input=11 functional=semidet
 (= (gslt:fn:state-operand-valid:11 $role (state-literal-v1 $literal))
-   (let gslt:result:source-fold-role:1 (eval (quote (gslt:fn:source-fold-role:1 $role)))
-   (let gslt:result:source-state-literal:1 (eval (quote (gslt:fn:source-state-literal:1 $literal)))
+   (let gslt:result:source-fold-role:1 (gslt:fn:source-fold-role:1 $role)
+   (let gslt:result:source-state-literal:1 (gslt:fn:source-state-literal:1 $literal)
    (quote gslt:result:state-operand-valid:11))))
 
 ; gslt-lowered-equation-v1 source-rewrite=65 source-presentation=RelationalStateProgramCoreV1 source-rule=state-operand-valid-input target=mode relation=state-operand-valid input=10 functional=relational
@@ -1076,14 +1076,14 @@
 
 ; gslt-lowered-equation-v1 source-rewrite=67 source-presentation=RelationalStateProgramCoreV1 source-rule=state-row-valid-empty target=mode relation=state-row-valid input=111 functional=semidet
 (= (gslt:fn:state-row-valid:111 $role state-row-nil-v1 0)
-   (let gslt:result:source-fold-role:1 (eval (quote (gslt:fn:source-fold-role:1 $role)))
+   (let gslt:result:source-fold-role:1 (gslt:fn:source-fold-role:1 $role)
    (quote gslt:result:state-row-valid:111)))
 
 ; gslt-lowered-equation-v1 source-rewrite=68 source-presentation=RelationalStateProgramCoreV1 source-rule=state-row-valid-cons target=mode relation=state-row-valid input=111 functional=semidet
 (= (gslt:fn:state-row-valid:111 $role (state-row-cons-v1 $operand $rest) $next-length)
-   (let gslt:result:state-operand-valid:11 (eval (quote (gslt:fn:state-operand-valid:11 $role $operand)))
-   (let (gslt:result:state-row-valid:110 $length) (eval (quote (gslt:fn:state-row-valid:110 $role $rest)))
-   (let gslt:result:state-row-length-step:11 (eval (quote (gslt:fn:state-row-length-step:11 $length $next-length)))
+   (let gslt:result:state-operand-valid:11 (gslt:fn:state-operand-valid:11 $role $operand)
+   (let (gslt:result:state-row-valid:110 $length) (gslt:fn:state-row-valid:110 $role $rest)
+   (let gslt:result:state-row-length-step:11 (gslt:fn:state-row-length-step:11 $length $next-length)
    (quote gslt:result:state-row-valid:111)))))
 
 ; gslt-lowered-equation-v1 source-rewrite=67 source-presentation=RelationalStateProgramCoreV1 source-rule=state-row-valid-empty target=mode relation=state-row-valid input=101 functional=relational
@@ -1100,14 +1100,14 @@
 
 ; gslt-lowered-equation-v1 source-rewrite=67 source-presentation=RelationalStateProgramCoreV1 source-rule=state-row-valid-empty target=mode relation=state-row-valid input=110 functional=semidet
 (= (gslt:fn:state-row-valid:110 $role state-row-nil-v1)
-   (let gslt:result:source-fold-role:1 (eval (quote (gslt:fn:source-fold-role:1 $role)))
+   (let gslt:result:source-fold-role:1 (gslt:fn:source-fold-role:1 $role)
    (quote (gslt:result:state-row-valid:110 0))))
 
 ; gslt-lowered-equation-v1 source-rewrite=68 source-presentation=RelationalStateProgramCoreV1 source-rule=state-row-valid-cons target=mode relation=state-row-valid input=110 functional=semidet
 (= (gslt:fn:state-row-valid:110 $role (state-row-cons-v1 $operand $rest))
-   (let gslt:result:state-operand-valid:11 (eval (quote (gslt:fn:state-operand-valid:11 $role $operand)))
-   (let (gslt:result:state-row-valid:110 $length) (eval (quote (gslt:fn:state-row-valid:110 $role $rest)))
-   (let (gslt:result:state-row-length-step:10 $next-length) (eval (quote (gslt:fn:state-row-length-step:10 $length)))
+   (let gslt:result:state-operand-valid:11 (gslt:fn:state-operand-valid:11 $role $operand)
+   (let (gslt:result:state-row-valid:110 $length) (gslt:fn:state-row-valid:110 $role $rest)
+   (let (gslt:result:state-row-length-step:10 $next-length) (gslt:fn:state-row-length-step:10 $length)
    (quote (gslt:result:state-row-valid:110 $next-length))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=69 source-presentation=RelationalStateProgramCoreV1 source-rule=state-operation-operand-valid-role-at target=mode relation=state-operation-operand-valid input=00 functional=relational
@@ -1603,43 +1603,43 @@
 
 ; gslt-lowered-equation-v1 source-rewrite=106 source-presentation=RelationalStateProgramCoreV1 source-rule=state-proof-machine-valid-stack target=mode relation=state-proof-machine-valid input=1 functional=semidet
 (= (gslt:fn:state-proof-machine-valid:1 (state-stack-proof-machine-v1 (state-proof-tables-v1 $label-kind-table $formula-table $binder-variable-table $mandatory-variable-table $assertion-hypothesis-table $assertion-disjoint-table $active-hypothesis-table $active-disjoint-table $symbol-kind-table) (state-proof-kinds-v1 (state-literal-v1 $binder-kind) (state-literal-v1 $matching-kind) (state-literal-v1 $rule-kind-first) (state-literal-v1 $rule-kind-second) (state-literal-v1 $variable-kind) (state-byte-literal-v1 $unknown-token-byte)) (state-proof-decoder-v1 $terminal-low $terminal-high $continuation-low $continuation-high $save-byte $unknown-byte $terminal-radix $terminal-bias $continuation-radix $continuation-bias $unknown-policy $save-placement $header-policy)))
-   (let (gslt:result:source-state-table:1110 $label-kind-life) (eval (quote (gslt:fn:source-state-table:1110 $label-kind-table 2 1)))
-   (let gslt:result:source-state-lifetime:1 (eval (quote (gslt:fn:source-state-lifetime:1 $label-kind-life)))
-   (let (gslt:result:source-state-table:1110 $formula-life) (eval (quote (gslt:fn:source-state-table:1110 $formula-table 2 1)))
-   (let gslt:result:source-state-lifetime:1 (eval (quote (gslt:fn:source-state-lifetime:1 $formula-life)))
-   (let (gslt:result:source-state-table:1110 $binder-life) (eval (quote (gslt:fn:source-state-table:1110 $binder-variable-table 2 1)))
-   (let gslt:result:source-state-lifetime:1 (eval (quote (gslt:fn:source-state-lifetime:1 $binder-life)))
-   (let (gslt:result:source-state-table:1110 $mandatory-life) (eval (quote (gslt:fn:source-state-table:1110 $mandatory-variable-table 2 2)))
-   (let gslt:result:source-state-lifetime:1 (eval (quote (gslt:fn:source-state-lifetime:1 $mandatory-life)))
-   (let (gslt:result:source-state-table:1110 $hyp-life) (eval (quote (gslt:fn:source-state-table:1110 $assertion-hypothesis-table 3 2)))
-   (let gslt:result:source-state-lifetime:1 (eval (quote (gslt:fn:source-state-lifetime:1 $hyp-life)))
-   (let (gslt:result:source-state-table:1110 $assertion-dv-life) (eval (quote (gslt:fn:source-state-table:1110 $assertion-disjoint-table 3 3)))
-   (let gslt:result:source-state-lifetime:1 (eval (quote (gslt:fn:source-state-lifetime:1 $assertion-dv-life)))
-   (let (gslt:result:source-state-table:1110 $active-hyp-life) (eval (quote (gslt:fn:source-state-table:1110 $active-hypothesis-table 4 1)))
-   (let gslt:result:source-state-lifetime:1 (eval (quote (gslt:fn:source-state-lifetime:1 $active-hyp-life)))
-   (let (gslt:result:source-state-table:1110 $active-dv-life) (eval (quote (gslt:fn:source-state-table:1110 $active-disjoint-table 2 2)))
-   (let gslt:result:source-state-lifetime:1 (eval (quote (gslt:fn:source-state-lifetime:1 $active-dv-life)))
-   (let (gslt:result:source-state-table:1110 $symbol-life) (eval (quote (gslt:fn:source-state-table:1110 $symbol-kind-table 2 1)))
-   (let gslt:result:source-state-lifetime:1 (eval (quote (gslt:fn:source-state-lifetime:1 $symbol-life)))
-   (let gslt:result:source-state-literal:1 (eval (quote (gslt:fn:source-state-literal:1 $binder-kind)))
-   (let gslt:result:source-state-literal:1 (eval (quote (gslt:fn:source-state-literal:1 $matching-kind)))
-   (let gslt:result:source-state-literal:1 (eval (quote (gslt:fn:source-state-literal:1 $rule-kind-first)))
-   (let gslt:result:source-state-literal:1 (eval (quote (gslt:fn:source-state-literal:1 $rule-kind-second)))
-   (let gslt:result:source-state-literal:1 (eval (quote (gslt:fn:source-state-literal:1 $variable-kind)))
-   (let gslt:result:source-state-proof-decoder-number:1 (eval (quote (gslt:fn:source-state-proof-decoder-number:1 $unknown-token-byte)))
-   (let gslt:result:source-state-proof-decoder-number:1 (eval (quote (gslt:fn:source-state-proof-decoder-number:1 $terminal-low)))
-   (let gslt:result:source-state-proof-decoder-number:1 (eval (quote (gslt:fn:source-state-proof-decoder-number:1 $terminal-high)))
-   (let gslt:result:source-state-proof-decoder-number:1 (eval (quote (gslt:fn:source-state-proof-decoder-number:1 $continuation-low)))
-   (let gslt:result:source-state-proof-decoder-number:1 (eval (quote (gslt:fn:source-state-proof-decoder-number:1 $continuation-high)))
-   (let gslt:result:source-state-proof-decoder-number:1 (eval (quote (gslt:fn:source-state-proof-decoder-number:1 $save-byte)))
-   (let gslt:result:source-state-proof-decoder-number:1 (eval (quote (gslt:fn:source-state-proof-decoder-number:1 $unknown-byte)))
-   (let gslt:result:source-state-proof-decoder-number:1 (eval (quote (gslt:fn:source-state-proof-decoder-number:1 $terminal-radix)))
-   (let gslt:result:source-state-proof-decoder-number:1 (eval (quote (gslt:fn:source-state-proof-decoder-number:1 $terminal-bias)))
-   (let gslt:result:source-state-proof-decoder-number:1 (eval (quote (gslt:fn:source-state-proof-decoder-number:1 $continuation-radix)))
-   (let gslt:result:source-state-proof-decoder-number:1 (eval (quote (gslt:fn:source-state-proof-decoder-number:1 $continuation-bias)))
-   (let gslt:result:source-state-proof-unknown-policy:1 (eval (quote (gslt:fn:source-state-proof-unknown-policy:1 $unknown-policy)))
-   (let gslt:result:source-state-literal:1 (eval (quote (gslt:fn:source-state-literal:1 $save-placement)))
-   (let gslt:result:source-state-proof-header-hypothesis-policy:1 (eval (quote (gslt:fn:source-state-proof-header-hypothesis-policy:1 $header-policy)))
+   (let (gslt:result:source-state-table:1110 $label-kind-life) (gslt:fn:source-state-table:1110 $label-kind-table 2 1)
+   (let gslt:result:source-state-lifetime:1 (gslt:fn:source-state-lifetime:1 $label-kind-life)
+   (let (gslt:result:source-state-table:1110 $formula-life) (gslt:fn:source-state-table:1110 $formula-table 2 1)
+   (let gslt:result:source-state-lifetime:1 (gslt:fn:source-state-lifetime:1 $formula-life)
+   (let (gslt:result:source-state-table:1110 $binder-life) (gslt:fn:source-state-table:1110 $binder-variable-table 2 1)
+   (let gslt:result:source-state-lifetime:1 (gslt:fn:source-state-lifetime:1 $binder-life)
+   (let (gslt:result:source-state-table:1110 $mandatory-life) (gslt:fn:source-state-table:1110 $mandatory-variable-table 2 2)
+   (let gslt:result:source-state-lifetime:1 (gslt:fn:source-state-lifetime:1 $mandatory-life)
+   (let (gslt:result:source-state-table:1110 $hyp-life) (gslt:fn:source-state-table:1110 $assertion-hypothesis-table 3 2)
+   (let gslt:result:source-state-lifetime:1 (gslt:fn:source-state-lifetime:1 $hyp-life)
+   (let (gslt:result:source-state-table:1110 $assertion-dv-life) (gslt:fn:source-state-table:1110 $assertion-disjoint-table 3 3)
+   (let gslt:result:source-state-lifetime:1 (gslt:fn:source-state-lifetime:1 $assertion-dv-life)
+   (let (gslt:result:source-state-table:1110 $active-hyp-life) (gslt:fn:source-state-table:1110 $active-hypothesis-table 4 1)
+   (let gslt:result:source-state-lifetime:1 (gslt:fn:source-state-lifetime:1 $active-hyp-life)
+   (let (gslt:result:source-state-table:1110 $active-dv-life) (gslt:fn:source-state-table:1110 $active-disjoint-table 2 2)
+   (let gslt:result:source-state-lifetime:1 (gslt:fn:source-state-lifetime:1 $active-dv-life)
+   (let (gslt:result:source-state-table:1110 $symbol-life) (gslt:fn:source-state-table:1110 $symbol-kind-table 2 1)
+   (let gslt:result:source-state-lifetime:1 (gslt:fn:source-state-lifetime:1 $symbol-life)
+   (let gslt:result:source-state-literal:1 (gslt:fn:source-state-literal:1 $binder-kind)
+   (let gslt:result:source-state-literal:1 (gslt:fn:source-state-literal:1 $matching-kind)
+   (let gslt:result:source-state-literal:1 (gslt:fn:source-state-literal:1 $rule-kind-first)
+   (let gslt:result:source-state-literal:1 (gslt:fn:source-state-literal:1 $rule-kind-second)
+   (let gslt:result:source-state-literal:1 (gslt:fn:source-state-literal:1 $variable-kind)
+   (let gslt:result:source-state-proof-decoder-number:1 (gslt:fn:source-state-proof-decoder-number:1 $unknown-token-byte)
+   (let gslt:result:source-state-proof-decoder-number:1 (gslt:fn:source-state-proof-decoder-number:1 $terminal-low)
+   (let gslt:result:source-state-proof-decoder-number:1 (gslt:fn:source-state-proof-decoder-number:1 $terminal-high)
+   (let gslt:result:source-state-proof-decoder-number:1 (gslt:fn:source-state-proof-decoder-number:1 $continuation-low)
+   (let gslt:result:source-state-proof-decoder-number:1 (gslt:fn:source-state-proof-decoder-number:1 $continuation-high)
+   (let gslt:result:source-state-proof-decoder-number:1 (gslt:fn:source-state-proof-decoder-number:1 $save-byte)
+   (let gslt:result:source-state-proof-decoder-number:1 (gslt:fn:source-state-proof-decoder-number:1 $unknown-byte)
+   (let gslt:result:source-state-proof-decoder-number:1 (gslt:fn:source-state-proof-decoder-number:1 $terminal-radix)
+   (let gslt:result:source-state-proof-decoder-number:1 (gslt:fn:source-state-proof-decoder-number:1 $terminal-bias)
+   (let gslt:result:source-state-proof-decoder-number:1 (gslt:fn:source-state-proof-decoder-number:1 $continuation-radix)
+   (let gslt:result:source-state-proof-decoder-number:1 (gslt:fn:source-state-proof-decoder-number:1 $continuation-bias)
+   (let gslt:result:source-state-proof-unknown-policy:1 (gslt:fn:source-state-proof-unknown-policy:1 $unknown-policy)
+   (let gslt:result:source-state-literal:1 (gslt:fn:source-state-literal:1 $save-placement)
+   (let gslt:result:source-state-proof-header-hypothesis-policy:1 (gslt:fn:source-state-proof-header-hypothesis-policy:1 $header-policy)
    (quote gslt:result:state-proof-machine-valid:1)))))))))))))))))))))))))))))))))))))))
 
 ; gslt-lowered-equation-v1 source-rewrite=109 source-presentation=RelationalStateProgramCoreV1 source-rule=state-final-action-valid-require-depth target=mode relation=state-final-action-valid input=0 functional=relational
@@ -1766,7 +1766,7 @@
 
 ; gslt-lowered-equation-v1 source-rewrite=206 source-presentation=MetamathSourceProofV1 source-rule=mm-proof-save-immediately-after-use target=mode relation=source-state-literal input=1 functional=semidet
 (= (gslt:fn:source-state-literal:1 $save-placement)
-   (let gslt:result:source-proof-trace-save-placement-v1:1 (eval (quote (gslt:fn:source-proof-trace-save-placement-v1:1 $save-placement)))
+   (let gslt:result:source-proof-trace-save-placement-v1:1 (gslt:fn:source-proof-trace-save-placement-v1:1 $save-placement)
    (quote gslt:result:source-state-literal:1)))
 
 ; gslt-lowered-equation-v1 source-rewrite=125 source-presentation=MetamathSourceStateV1 source-rule=mm-state-table-symbol-kind target=mode relation=source-state-table input=0000 functional=relational
