@@ -103,6 +103,12 @@ main :-
     catch(main_, Error, (print_message(error, Error), halt(1))),
     halt.
 
+% SWI-Prolog 10 passes the script argument vector to `main`; older supported
+% releases enter the zero-argument form.  Keep both entry conventions on the
+% same implementation so the checked compiler invocation is version-stable.
+main(_Arguments) :-
+    main.
+
 main_ :-
     current_prolog_flag(argv, Arguments),
     Arguments = [PresentationRoot, StartValue, ClosureValue|RelativePaths],

@@ -94,6 +94,16 @@ bool cetta_gslt_provider_catalog_validate_v1(
     const CettaGsltProviderCatalogV1 *catalog,
     char *error, size_t error_size);
 
+/* Decode the existing authored catalog into its existing descriptor type.
+ * All returned strings, source bytes and requirements live in arena. This
+ * constructs metadata only; it neither installs nor executes providers.
+ * Manifest compatibility and provider/head admission remain caller checks. */
+bool cetta_gslt_provider_catalog_from_source_v1(
+    Arena *arena, const uint8_t *source, size_t source_length,
+    const char *source_name, const char *language_manifest_sha256,
+    const char *generator_sha256, CettaGsltProviderCatalogV1 *catalog,
+    char *error, size_t error_size);
+
 /* Select the physical providers authorized by a catalog.  Missing physical
  * providers remain ordinary empty relations; a provider with the right
  * dispatch key but the wrong semantic identity fails closed. */

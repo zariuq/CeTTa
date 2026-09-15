@@ -165,10 +165,15 @@ enum {
     PETTA_RELATION_RELEVANCE_CACHE_SLOTS = 256,
 };
 
+enum {
+    PETTA_SYMBOL_CALLABLE = 1u,
+    PETTA_SYMBOL_PARTIAL_CONSTRUCTOR = 2u,
+};
+
 typedef struct {
     uint64_t generation;
     SymbolId symbol;
-    bool callable;
+    uint8_t classification;
     bool used;
 } PettaCallableCacheSlot;
 
@@ -885,21 +890,23 @@ petta_semantic_cache_prepare(
     return &g_petta_semantic_cache;
 }
 
-static bool petta_symbol_is_callable_uncached(
+static uint8_t petta_symbol_classification_uncached(
     Space *space, Arena *scratch, SymbolId symbol) {
     if (!space || !scratch || symbol == SYMBOL_ID_NONE)
-        return false;
+        return 0u;
+    Atom *subject = atom_symbol_id(scratch, symbol);
+    uint8_t classification = petta_semantics_partial_head(subject)
+        ? PETTA_SYMBOL_PARTIAL_CONSTRUCTOR : 0u;
     if (space_equations_may_match_known_head(space, symbol) ||
         is_grounded_op(symbol) ||
         petta_semantics_form(symbol) != PETTA_FORM_NONE) {
-        return true;
+        return classification | PETTA_SYMBOL_CALLABLE;
     }
     CettaExprLen intrinsic = 0u;
     if (petta_semantics_intrinsic_partial_arity(
             symbol, &intrinsic)) {
-        return true;
+        return classification | PETTA_SYMBOL_CALLABLE;
     }
-    Atom *subject = atom_symbol_id(scratch, symbol);
     Atom **types = NULL;
     cetta_runtime_stats_inc(
         CETTA_RUNTIME_COUNTER_DECLARED_TYPE_SPECIALIZER_CALLABLE);
@@ -918,7 +925,7 @@ static bool petta_symbol_is_callable_uncached(
         }
     }
     free(types);
-    return callable;
+    return classification | (callable ? PETTA_SYMBOL_CALLABLE : 0u);
 }
 
 /* Callability is a property of one admitted space state and symbol table,
@@ -926,16 +933,16 @@ static bool petta_symbol_is_callable_uncached(
  * memoize only this exact classification.  The process-wide mutation epoch
  * also covers an overlay whose base changes without changing the overlay's
  * own revision. */
-static bool petta_symbol_is_callable(
+static uint8_t petta_symbol_classification(
     PettaSpecializerContext *context, SymbolId symbol) {
     if (!context || !context->space ||
         symbol == SYMBOL_ID_NONE) {
-        return false;
+        return 0u;
     }
     PettaSpecializerSemanticCache *cache =
         context->semantic_cache;
     if (!cache) {
-        return petta_symbol_is_callable_uncached(
+        return petta_symbol_classification_uncached(
             context->space, &context->scratch, symbol);
     }
     uint32_t mixed = symbol * UINT32_C(2654435761);
@@ -949,18 +956,24 @@ static bool petta_symbol_is_callable(
         slot->symbol == symbol) {
         cetta_runtime_stats_inc(
             CETTA_RUNTIME_COUNTER_PETTA_SPECIALIZER_CALLABLE_CACHE_HIT);
-        return slot->callable;
+        return slot->classification;
     }
     cetta_runtime_stats_inc(
         CETTA_RUNTIME_COUNTER_PETTA_SPECIALIZER_CALLABLE_CACHE_MISS);
     *slot = (PettaCallableCacheSlot){
         .generation = cache->generation,
         .symbol = symbol,
-        .callable = petta_symbol_is_callable_uncached(
+        .classification = petta_symbol_classification_uncached(
             context->space, &context->scratch, symbol),
         .used = true,
     };
-    return slot->callable;
+    return slot->classification;
+}
+
+static bool petta_symbol_is_callable(
+    PettaSpecializerContext *context, SymbolId symbol) {
+    return (petta_symbol_classification(context, symbol) &
+        PETTA_SYMBOL_CALLABLE) != 0u;
 }
 
 static PeTTaNamedArity petta_specializer_named_arity(
@@ -1373,9 +1386,16 @@ petta_query_arguments_may_supply_specializable_value(
                 observer, head_cursor, &head_cursor) != CETTA_GSLT_TERM_VIEW_OK_V1)
             return PETTA_RELEVANCE_YES;
         Atom *head = head_cursor.source;
-        /* Only a partial constructor demands the argument-tuple root. Its
-         * base need not be read to establish that it supplies a value. */
-        if (atom->expr.len == 3u && petta_semantics_partial_head(head)) {
+        if (!head)
+            return PETTA_RELEVANCE_YES;
+        /* Both head facts belong to the same revision and symbol table.
+         * Read their prepared classification once per head observation. */
+        uint8_t classification = head->kind == ATOM_SYMBOL
+            ? petta_symbol_classification(context, head->sym_id) : 0u;
+        if (classification & PETTA_SYMBOL_CALLABLE)
+            return PETTA_RELEVANCE_YES;
+        if (atom->expr.len == 3u &&
+            (classification & PETTA_SYMBOL_PARTIAL_CONSTRUCTOR)) {
             CettaGsltTermCursorV1 tuple = {
                 .source = atom->expr.elems[2], .scope = cursor.scope};
             if (cetta_gslt_term_cursor_resolve_root_v1(
@@ -1383,14 +1403,6 @@ petta_query_arguments_may_supply_specializable_value(
                 tuple.source->kind == ATOM_EXPR)
                 return PETTA_RELEVANCE_YES;
         }
-        /* Every named-arity source (equations, intrinsic arities and arrow
-         * types) also establishes callability. This observation asks only
-         * whether the forest may supply a selector, so an arity query adds
-         * nothing to the head's callable judgment. Consume that judgment
-         * here and do not schedule the same symbol for a second visit. */
-        if (head->kind == ATOM_SYMBOL &&
-            petta_symbol_is_callable(context, head->sym_id))
-            return PETTA_RELEVANCE_YES;
         if ((size_t)atom->expr.len >
             PETTA_RELEVANCE_STACK_CAPACITY - length) {
             return PETTA_RELEVANCE_YES;
@@ -2335,19 +2347,19 @@ static bool petta_specializer_analyze_call(
         return true;
     }
     if (petta_specializer_relevance_filter_enabled()) {
-        PettaRelevanceResult relevance =
-            petta_call_may_supply_specializable_value(
-                context, call);
-        if (relevance == PETTA_RELEVANCE_NO) {
-            analysis->filtered = true;
-            return true;
-        }
         PettaRelationRelevance relation_relevance =
             petta_relation_specialization_relevance(
                 context, source);
         if (relation_relevance ==
                 PETTA_RELATION_RELEVANCE_IRRELEVANT) {
             analysis->relation_filtered = true;
+            return true;
+        }
+        PettaRelevanceResult relevance =
+            petta_call_may_supply_specializable_value(
+                context, call);
+        if (relevance == PETTA_RELEVANCE_NO) {
+            analysis->filtered = true;
             return true;
         }
         if (relevance == PETTA_RELEVANCE_NODE_BUDGET) {

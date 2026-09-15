@@ -1011,7 +1011,7 @@ done:
     return complete ? root : NULL;
 }
 
-bool fh_ground_term_v1_parse(Arena *arena,
+bool fh_ground_term_v1_read_source(Arena *arena,
                              const uint8_t *bytes,
                              size_t len,
                              Atom **out,
@@ -1026,14 +1026,12 @@ bool fh_ground_term_v1_parse(Arena *arena,
         .error_cap = error_cap,
     };
     Atom *term;
-    uint8_t *canonical = NULL;
-    size_t canonical_len = 0u;
 
     if (out)
         *out = NULL;
     if (error && error_cap > 0u)
         error[0] = '\0';
-    if (!arena || !bytes || !out) {
+    if (!arena || !bytes || !out || memchr(bytes, 0, len)) {
         return fhgt_v1_error(error, error_cap,
                              "invalid finite-Horn parse request");
     }
@@ -1046,6 +1044,22 @@ bool fh_ground_term_v1_parse(Arena *arena,
             "trailing bytes after finite-Horn term at byte offset %zu",
             parser.pos);
     }
+    *out = term;
+    return true;
+}
+
+bool fh_ground_term_v1_parse(Arena *arena, const uint8_t *bytes,
+                             size_t len, Atom **out,
+                             char *error, size_t error_cap) {
+    Atom *term = NULL;
+    uint8_t *canonical = NULL;
+    size_t canonical_len = 0u;
+    if (!out)
+        return fhgt_v1_error(error, error_cap, "invalid finite-Horn parse request");
+    *out = NULL;
+    if (!fh_ground_term_v1_read_source(
+            arena, bytes, len, &term, error, error_cap))
+        return false;
     if (!fh_ground_term_v1_render(term, &canonical, &canonical_len,
                                   error, error_cap)) {
         return false;

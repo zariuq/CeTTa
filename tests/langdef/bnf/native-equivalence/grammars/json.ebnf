@@ -1,0 +1,19 @@
+% JSON text per RFC 8259, scannerless. <strchar> is any scalar other than
+% quotation mark, reverse solidus and the control characters; it is declared
+% by the grammar authority in json_reader_v1.metta.
+<json> ::= <ws> <value> <ws>
+<value> ::= <object> | <array> | <string> | <number> | "true" | "false" | "null"
+<object> ::= "{" <ws> "}" | "{" <ws> <member> (<ws> "," <ws> <member>)* <ws> "}"
+<member> ::= <string> <ws> ":" <ws> <value>
+<array> ::= "[" <ws> "]" | "[" <ws> <value> (<ws> "," <ws> <value>)* <ws> "]"
+<string> ::= "\"" <char>* "\""
+<char> ::= <strchar> | "\\" <escape>
+<escape> ::= "\"" | "\\" | "/" | "b" | "f" | "n" | "r" | "t" | "u" <hex> <hex> <hex> <hex>
+<hex> ::= <digit> | "a" | "b" | "c" | "d" | "e" | "f" | "A" | "B" | "C" | "D" | "E" | "F"
+<number> ::= "-"? <int> <frac>? <exp>?
+<int> ::= "0" | <onenine> <digit>*
+<digit> ::= "0" | <onenine>
+<onenine> ::= "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9"
+<frac> ::= "." <digit>+
+<exp> ::= ("e" | "E") ("+" | "-")? <digit>+
+<ws> ::= (" " | "\t" | "\n" | "\r")*

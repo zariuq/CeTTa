@@ -1,0 +1,12 @@
+true
+GraphIndexLiteralV1
+GraphIndexDyckV1
+GraphIndexForwardChainV1
+GraphIndexReverseChainV1
+GraphIndexSeededCycleV1
+GraphIndexUnseededCycleV1
+GraphIndexUnreachableV1
+GraphIndexDuplicateReferencesV1
+GraphIndexAmbiguousV1
+GraphIndexUnicodeV1
+GraphIndexSelfV1

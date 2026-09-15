@@ -17,9 +17,9 @@ typedef enum {
     NODE_LIST
 } NodeKind;
 
-typedef struct Node Node;
+typedef struct FHGSLTSourceNodeV1 Node;
 
-struct Node {
+struct FHGSLTSourceNodeV1 {
     NodeKind kind;
     uint8_t *text;
     size_t text_len;
@@ -744,10 +744,9 @@ static bool require_symbol(const Node *node,
     return true;
 }
 
-static bool positive_size(const Node *node, size_t *out) {
+static bool nonnegative_size(const Node *node, size_t *out) {
     if (node == NULL || node->kind != NODE_INTEGER || node->text_len == 0u ||
-        node->text[0] == (uint8_t)'-' ||
-        (node->text_len == 1u && node->text[0] == (uint8_t)'0'))
+        node->text[0] == (uint8_t)'-')
         return false;
     size_t value = 0u;
     for (size_t index = 0u; index < node->text_len; index++) {
@@ -897,12 +896,12 @@ static bool parse_presentation(const FHGSLTInput *input,
                             "operator name",
                             error,
                             error_cap) ||
-            !positive_size(raw->items[2], &arity)) {
+            !nonnegative_size(raw->items[2], &arity)) {
             presentation_destroy(presentation);
             return set_error(
                 error,
                 error_cap,
-                "%s: operator declaration must be (operator NAME POSITIVE-ARITY)",
+                "%s: operator declaration must be (operator NAME NONNEGATIVE-ARITY)",
                 input->source);
         }
         for (size_t prior = 0u; prior < presentation->operator_count; prior++) {
@@ -1351,6 +1350,40 @@ void fhgslt_package_free(FHGSLTPackage *package) {
 
 size_t fhgslt_package_presentation_count(const FHGSLTPackage *package) {
     return package != NULL ? package->presentation_count : 0u;
+}
+
+const FHGSLTSourceNodeV1 *fhgslt_package_source_root_v1(
+    const FHGSLTPackage *package, size_t index) {
+    return package && index < package->presentation_count
+        ? package->presentations[index].root : NULL;
+}
+
+FHGSLTSourceKindV1 fhgslt_source_kind_v1(const FHGSLTSourceNodeV1 *node) {
+    if (!node) return FHGSLT_SOURCE_V1_INVALID;
+    switch (node->kind) {
+    case NODE_SYMBOL: return FHGSLT_SOURCE_V1_SYMBOL;
+    case NODE_VARIABLE: return FHGSLT_SOURCE_V1_VARIABLE;
+    case NODE_STRING: return FHGSLT_SOURCE_V1_STRING;
+    case NODE_INTEGER: return FHGSLT_SOURCE_V1_INTEGER;
+    case NODE_LIST: return FHGSLT_SOURCE_V1_LIST;
+    }
+    return FHGSLT_SOURCE_V1_INVALID;
+}
+
+const uint8_t *fhgslt_source_text_v1(
+    const FHGSLTSourceNodeV1 *node, size_t *length) {
+    if (length) *length = node && node->kind != NODE_LIST ? node->text_len : 0u;
+    return node && node->kind != NODE_LIST ? node->text : NULL;
+}
+
+size_t fhgslt_source_child_count_v1(const FHGSLTSourceNodeV1 *node) {
+    return node && node->kind == NODE_LIST ? node->item_count : 0u;
+}
+
+const FHGSLTSourceNodeV1 *fhgslt_source_child_v1(
+    const FHGSLTSourceNodeV1 *node, size_t index) {
+    return node && node->kind == NODE_LIST && index < node->item_count
+        ? node->items[index] : NULL;
 }
 
 size_t fhgslt_package_operator_count(const FHGSLTPackage *package) {

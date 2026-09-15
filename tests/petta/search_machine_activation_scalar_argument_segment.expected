@@ -16,4 +16,4 @@ false
 3
 9223372036854775810
 18446744073709551622
-(Error (+ (Error (- $V0 1) (BadArgType 1 Number Variable)) 6) (BadArgType 1 Number Expression))
+(Error (- $V0 1) (BadArgType 1 Number Variable))

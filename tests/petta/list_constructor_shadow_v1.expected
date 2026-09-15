@@ -1,0 +1,3 @@
+(replaced LNil)
+((list-value:shadow-first LNil) (list-value:shadow-second LNil))
+()

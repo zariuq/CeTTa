@@ -650,8 +650,8 @@ def render_semantics(authorities: tuple[Authority, ...]) -> str:
         "  (signature",
     ]
     for name, arity in sorted(operators):
-        if arity <= 0:
-            raise GenerationError(f"operator {name} has nonpositive arity")
+        if arity < 0:
+            raise GenerationError(f"operator {name} has negative arity")
         lines.append(f"    (operator {name} {arity})")
     lines.extend(["  )", "  (equations)", "  (rewrites"])
     for rule in rules:

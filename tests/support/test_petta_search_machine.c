@@ -4,6 +4,7 @@
 #include "generated/petta_typecheck_v2_boundary_core_source_binding_v1.generated.h"
 #include "generated/petta_typecheck_v2_source_binding_v1.generated.h"
 #include "grounded.h"
+#include "he_typing.h"
 #include "library.h"
 #include "parser.h"
 #include "match.h"
@@ -55,6 +56,41 @@ static void test_search_context_checkpoint_capabilities(void) {
 
     bindings_free(&empty);
     puts("PASS: search contexts advertise exact checkpoint capabilities");
+}
+
+static void test_typing_operator_identity(void) {
+    static const char *const names[] = {
+        "normalize-type", "check-type-refinements", "is-consistent", "check-type",
+        "search-inhabitants", "search-first-inhabitant", "type-forward-step",
+        "type-forward-closure",
+    };
+    SymbolTable *saved = g_symbols;
+    assert(he_typing_is_op_id && he_typing_is_op);
+    for (unsigned shift = 0u; shift < 32u; shift++) {
+        SymbolTable table;
+        symbol_table_init(&table);
+        g_symbols = &table;
+        char padding[64];
+        SymbolId last = SYMBOL_ID_NONE;
+        for (unsigned i = 0u; i <= shift; i++) {
+            snprintf(padding, sizeof padding, "typing-padding-%u", i);
+            last = symbol_intern_cstr(&table, padding);
+        }
+        for (unsigned i = 0u; i < 8u; i++) {
+            (void)symbol_intern_cstr(&table, names[(i + shift) % 8u]);
+            snprintf(padding, sizeof padding, "typing-hole-%u", i);
+            last = symbol_intern_cstr(&table, padding);
+        }
+        for (SymbolId id = 0u; id <= last; id++)
+            assert(he_typing_is_op_id(id) ==
+                   he_typing_is_op(symbol_bytes(&table, id)));
+        assert(!he_typing_is_op_id(UINT32_MAX));
+        symbol_table_free(&table);
+    }
+    g_symbols = saved;
+    for (unsigned i = 0u; i < 8u; i++)
+        assert(he_typing_is_op_id(symbol_intern_cstr(saved, names[i])));
+    puts("PASS: typing operator identities preserve sparse ranges and table replacement");
 }
 
 static void test_plain_scalar_truth_dispatch(Arena *arena) {
@@ -913,6 +949,80 @@ static void test_logical_cons_binding_views(Arena *arena) {
     bindings_builder_free(&builder);
     puts("PASS: logical cons views preserve tag boundaries, aliases,"
          " correlation, occurs checks and rollback");
+}
+
+static void test_lowered_head_epoch_views(Arena *arena) {
+    uint32_t epoch = fresh_var_suffix();
+    Atom *a = atom_symbol(arena, "epoch-a");
+    Atom *b = atom_symbol(arena, "epoch-b");
+    Atom *f = atom_symbol(arena, "epoch-f");
+    Atom *x = atom_var_with_id(arena, "epoch-x", fresh_var_id());
+    Atom *y = atom_var_with_id(arena, "epoch-y", fresh_var_id());
+    Atom *v = atom_var_with_id(arena, "epoch-v", fresh_var_id());
+    Atom *head = atom_var_with_id(arena, "epoch-head", fresh_var_id());
+    Atom *tail = atom_var_with_id(arena, "epoch-tail", fresh_var_id());
+    Atom *destination = atom_var_with_id(arena, "epoch-dest", fresh_var_id());
+    Atom *nil = atom_unit(arena);
+    Atom *flat = atom_expr(arena, &a, 1u);
+    Atom *cell = petta_semantics_open_cons_value(arena, a, nil);
+    Atom *fresh_x = atom_freshen_epoch(arena, x, epoch);
+    Atom *shared_child = atom_expr3(arena, f, x, x);
+    Atom *shared_root = atom_expr3(arena, f, shared_child, shared_child);
+    Atom *destination2 = atom_var_with_id(arena, "epoch-dest2", fresh_var_id());
+    struct {
+        Atom *source;
+        Atom *value;
+        bool matches;
+    } cases[] = {
+        {atom_expr3(arena, f, x, x), atom_expr3(arena, f, a, a), true},
+        {atom_expr3(arena, f, x, x), atom_expr3(arena, f, a, b), false},
+        {atom_expr3(arena, f, x, x), destination, true},
+        {atom_expr3(arena, f, x, x), atom_expr3(arena, f, y, a), true},
+        {atom_expr3(arena, f, x, v), atom_expr3(arena, f, a, flat), true},
+        {atom_expr3(arena, f, x, v),
+         atom_expr3(arena, f, a, atom_expr3(arena, destination, a, nil)), false},
+        {atom_expr3(arena, head, a, nil), flat, true},
+        {atom_expr3(arena, atom_symbol(arena, "cons"), a, nil), flat, false},
+        {petta_semantics_open_cons_value(arena, x, tail), atom_expr2(arena, a, b), true},
+        {atom_expr2(arena, x, tail),
+         petta_semantics_open_cons_value(arena, a,
+             petta_semantics_open_cons_value(arena, b, nil)), true},
+        {x, atom_expr2(arena, f, fresh_x), false},
+        {v, flat, true},
+        {shared_root, atom_expr3(arena, f, destination, destination2), true},
+        {atom_expr3(arena, f, x, x),
+         atom_expr3(arena, f, destination, destination), true},
+        {x, destination, true},
+        {x, fresh_x, true},
+    };
+    for (size_t i = 0u; i < sizeof(cases) / sizeof(*cases); i++) {
+        BindingsBuilder reference, viewed;
+        assert(bindings_builder_init(&reference, NULL));
+        assert(bindings_builder_add_var_fresh(&reference, y, a));
+        assert(bindings_builder_add_var_fresh(&reference,
+            atom_freshen_epoch(arena, v, epoch), cell));
+        assert(bindings_builder_add_var_fresh(&reference,
+            atom_freshen_epoch(arena, head, epoch), cell->expr.elems[0]));
+        assert(bindings_builder_init(&viewed, &reference.current));
+        uint32_t mark = reference.current.len;
+        bool expected = petta_semantics_match_lowered_head(arena,
+            atom_freshen_epoch(arena, cases[i].source, epoch),
+            cases[i].value, &reference);
+        bool actual = petta_semantics_match_lowered_head_epoch(arena,
+            cases[i].source, cases[i].value, &viewed, epoch);
+        assert(expected == cases[i].matches && actual == expected);
+        assert(atom_eq(bindings_to_atom(arena, &reference.current),
+                       bindings_to_atom(arena, &viewed.current)));
+        if (!actual)
+            assert(viewed.current.len == mark);
+        if (cases[i].source == shared_root)
+            assert(bindings_lookup_var(&viewed.current, destination) ==
+                   bindings_lookup_var(&viewed.current, destination2));
+        bindings_builder_free(&viewed);
+        bindings_builder_free(&reference);
+    }
+    puts("PASS: lowered epoch views equal freshened matching across aliases,"
+         " list carriers, escaping terms, occurs checks and rollback");
 }
 
 typedef struct {
@@ -1802,6 +1912,38 @@ static Atom *add_compiled_program_clause(
     assert(petta_program_note_add(
         program, space, stored, plan));
     return stored;
+}
+
+static void test_program_case_safety_projection(
+        TermUniverse *universe, Arena *arena) {
+    PettaProgram *program = petta_program_new();
+    assert(program);
+    Space space;
+    space_init_with_universe(&space, universe);
+    add_compiled_program_clause(
+        program, &space, arena,
+        "(= (case-pattern-data $value)"
+        "   (case $value ((($head $tail) accepted)"
+        "                  ($unexpected rejected))))");
+    SymbolId pure_head =
+        symbol_intern_cstr(g_symbols, "case-pattern-data");
+    assert(petta_program_relation_safety(
+               program, &space, pure_head, 1u) ==
+           PETTA_RELATION_SAFETY_STATIC);
+
+    add_compiled_program_clause(
+        program, &space, arena,
+        "(= (case-effectful-result $value)"
+        "   (case $value ((accepted"
+        "                    (progn (println! visible) accepted))"
+        "                  ($unexpected rejected))))");
+    SymbolId effectful_head =
+        symbol_intern_cstr(g_symbols, "case-effectful-result");
+    assert(petta_program_relation_safety(
+               program, &space, effectful_head, 1u) ==
+           PETTA_RELATION_SAFETY_UNSAFE);
+    petta_program_free(program);
+    space_free(&space);
 }
 
 static bool test_program_equation_snapshot_lease(
@@ -4530,12 +4672,13 @@ typedef struct {
     SymbolId nested_head;
     uint64_t revision;
     size_t classification_calls;
+    bool unavailable;
 } MatchDecisionCallabilityAuthorityProbe;
 
 static bool match_decision_callability_authority_token(
     void *context, PettaMachineAuthorityToken *token) {
     MatchDecisionCallabilityAuthorityProbe *probe = context;
-    if (!probe || !token)
+    if (!probe || !token || probe->unavailable)
         return false;
     *token = (PettaMachineAuthorityToken){
         .words = {
@@ -4561,6 +4704,69 @@ static PettaMachineHostMode match_decision_callability_classify(
     return probe->revision >= 2u
         ? PETTA_MACHINE_HOST_READY_APPLICATION
         : PETTA_MACHINE_HOST_NONE;
+}
+
+/* Mechanism qualification: a still-valid exact key may be reused, but a
+ * changed or unavailable authority must not authorize the cached decision.
+ * The answer stream is identical in all three cases; compilation counters
+ * distinguish correct dependency checking from an accidental stale hit. */
+static void test_match_decision_cache_entry_authority(
+    TermUniverse *universe, Arena *persistent, Arena *answers) {
+    for (unsigned change = 0u; change < 3u; change++) {
+        Space cache_space;
+        space_init_with_universe(&cache_space, universe);
+        add_clause(&cache_space, persistent,
+                   "(= (cache-authority-lookup $x) first)");
+        add_clause(&cache_space, persistent,
+                   "(= (cache-authority-lookup $x) second)");
+        MatchDecisionCallabilityAuthorityProbe probe = {.revision = 1u};
+        PettaMachineHost host = {
+            .context = &probe,
+            .tabled_relation_admissible =
+                match_decision_receipt_relation_admissible,
+            .callability_authority_token =
+                match_decision_callability_authority_token,
+        };
+        Atom *query = parse_one(answers,
+            "(let $ignored (superpose (left right))"
+            " (cache-authority-lookup payload))");
+        assert(query);
+        PettaMachine machine;
+        assert(petta_machine_init(
+            &machine, &cache_space, answers, query, NULL, &host));
+        PettaMachineStats before = {0};
+        for (unsigned result = 0u; result < 4u; result++) {
+            Atom *answer = NULL;
+            Bindings environment;
+            assert(petta_machine_next(&machine, &answer, &environment) ==
+                   PETTA_MACHINE_STEP_ANSWER);
+            assert(atom_alpha_eq(answer, parse_one(answers,
+                result % 2u == 0u ? "first" : "second")));
+            bindings_free(&environment);
+            if (result == 1u) {
+                assert(petta_machine_stats(&machine, &before));
+                assert(before.match_decision_compilations > 0u);
+                if (change == 1u) probe.revision++;
+                if (change == 2u) probe.unavailable = true;
+            }
+        }
+        Atom *answer = NULL;
+        Bindings environment;
+        assert(petta_machine_next(&machine, &answer, &environment) ==
+               PETTA_MACHINE_STEP_EXHAUSTED);
+        bindings_free(&environment);
+        PettaMachineStats after;
+        assert(petta_machine_stats(&machine, &after));
+        if (change == 0u) {
+            assert(after.match_decision_cache_hits > before.match_decision_cache_hits);
+            assert(after.match_decision_compilations == before.match_decision_compilations);
+        } else {
+            assert(after.match_decision_compilations > before.match_decision_compilations);
+        }
+        petta_machine_destroy(&machine);
+        space_free(&cache_space);
+    }
+    puts("PASS: cached selection rechecks changed and unavailable authority");
 }
 
 static void test_match_decision_callability_authority_receipt(
@@ -5050,6 +5256,54 @@ static void test_host_environment_projection(
     bindings_free(&environment);
     petta_machine_destroy(&machine);
     bindings_free(&base);
+}
+
+static PettaMachineHostMode quoted_result_override_classify(
+    void *context, Space *space, Atom *expression) {
+    return host_projection_classify(context, space, expression) ==
+        PETTA_MACHINE_HOST_READY_APPLICATION
+        ? PETTA_MACHINE_HOST_READY_OVERRIDE : PETTA_MACHINE_HOST_NONE;
+}
+
+static void test_quoted_result_override(Space *space, Arena *arena) {
+    HostProjectionProbe probe = {.head = g_builtin_syms.quote};
+    PettaMachineHost host = {
+        .context = &probe,
+        .classify = quoted_result_override_classify,
+        .evaluate = host_projection_evaluate,
+        .source_output_constraints = true,
+    };
+    PettaProgram *program = petta_program_new();
+    assert(program);
+    const char *queries[] = {
+        "(let (kept) (quote (different)) True)",
+        "(let (kept) (quote (kept)) True)",
+        "(let (kept) (let $x (quote (kept)) (quote $x)) True)",
+    };
+    for (size_t i = 0u; i < sizeof(queries) / sizeof(*queries); i++) {
+        probe.calls = 0u;
+        Atom *query = parse_one(arena, queries[i]);
+        const PettaPlanNode *plan = petta_program_plan_current(program, query);
+        assert(plan);
+        PettaMachine machine;
+        assert(petta_machine_init_with_plan(&machine, space, arena,
+            query, plan, NULL, &host));
+        Atom *answer = NULL;
+        Bindings environment;
+        bindings_init(&environment);
+        assert(petta_machine_next(&machine, &answer, &environment) ==
+            (i ? PETTA_MACHINE_STEP_ANSWER : PETTA_MACHINE_STEP_EXHAUSTED));
+        bindings_free(&environment);
+        assert(probe.calls == i);
+        if (i) {
+            assert(petta_machine_next(&machine, &answer, &environment) ==
+                PETTA_MACHINE_STEP_EXHAUSTED);
+            bindings_free(&environment);
+        }
+        petta_machine_destroy(&machine);
+    }
+    petta_program_free(program);
+    puts("PASS: quoted output matches retain host override effects and rejection order");
 }
 
 static bool permit_transition(void *context) {
@@ -5771,6 +6025,36 @@ static void test_nested_clause_shape_index(
     bindings_free(&environment);
     petta_machine_destroy(&machine);
 
+    /* A shallow query and its binding environment are one observation.
+     * Aliases reveal the rigid discriminator; an unbound discriminator must
+     * retain both ordered alternatives. */
+    query = parse_one(answers, "(nested-shape (tuple $marker value))");
+    Atom *marker = query->expr.elems[1]->expr.elems[1];
+    Atom *alias = atom_var(answers, "nested-shape-alias");
+    Bindings initial;
+    bindings_init(&initial);
+    assert(bindings_add_var(&initial, marker, alias));
+    assert(bindings_add_var(&initial, alias, atom_symbol(answers, "marker-b")));
+    assert(petta_machine_init(&machine, space, answers, query, &initial, NULL));
+    assert(petta_machine_next(&machine, &answer, &environment) == PETTA_MACHINE_STEP_ANSWER);
+    assert(atom_alpha_eq(answer, atom_symbol(answers, "right")));
+    bindings_free(&environment);
+    assert(petta_machine_next(&machine, &answer, &environment) == PETTA_MACHINE_STEP_EXHAUSTED);
+    bindings_free(&environment);
+    petta_machine_destroy(&machine);
+    bindings_free(&initial);
+
+    assert(petta_machine_init(&machine, space, answers, query, NULL, NULL));
+    const char *ordered[] = {"wrong", "right"};
+    for (size_t i = 0u; i < 2u; i++) {
+        assert(petta_machine_next(&machine, &answer, &environment) == PETTA_MACHINE_STEP_ANSWER);
+        assert(atom_alpha_eq(answer, atom_symbol(answers, ordered[i])));
+        bindings_free(&environment);
+    }
+    assert(petta_machine_next(&machine, &answer, &environment) == PETTA_MACHINE_STEP_EXHAUSTED);
+    bindings_free(&environment);
+    petta_machine_destroy(&machine);
+
     /*
      * A nested relational pattern may compute a scalar.  Its expression
      * shape is therefore not comparable to the scalar before the relation
@@ -6035,6 +6319,50 @@ static void test_choice_binding_compaction(
                &machine, &answer, &environment) ==
            PETTA_MACHINE_STEP_EXHAUSTED);
     bindings_free(&environment);
+    petta_machine_destroy(&machine);
+}
+
+static void test_marked_goal_trail_compaction(
+    Space *space, Arena *persistent, Arena *answers) {
+    add_clause(space, persistent,
+        "(= (marked-drain $items)"
+        " (chain (superpose (outer-a outer-b)) $outer"
+        "  (chain (superpose (inner-a inner-b)) $inner"
+        "   (chain (drain $items) $done (result $outer $inner $done)))))");
+    enum { ITEM_COUNT = 8192 };
+    Atom **items = cetta_malloc(ITEM_COUNT * sizeof(*items));
+    Atom *item = atom_symbol(answers, "marked-item");
+    assert(items && item);
+    for (size_t i = 0u; i < ITEM_COUNT; i++)
+        items[i] = item;
+    Atom *list = atom_expr(answers, items, ITEM_COUNT);
+    free(items);
+    Atom *query_items[] = {atom_symbol(answers, "marked-drain"), list};
+    Atom *query = atom_expr(answers, query_items, 2u);
+    assert(list && query);
+    PettaMachine machine;
+    assert(petta_machine_init(&machine, space, answers, query, NULL, NULL));
+    const char *expected[] = {
+        "(result outer-a inner-a done)", "(result outer-a inner-b done)",
+        "(result outer-b inner-a done)", "(result outer-b inner-b done)",
+    };
+    Atom *answer = NULL;
+    Bindings environment;
+    for (size_t i = 0u; i < sizeof(expected) / sizeof(*expected); i++) {
+        assert(petta_machine_next(&machine, &answer, &environment) ==
+               PETTA_MACHINE_STEP_ANSWER);
+        assert(atom_alpha_eq(answer, parse_one(answers, expected[i])));
+        bindings_free(&environment);
+    }
+    assert(petta_machine_next(&machine, &answer, &environment) ==
+           PETTA_MACHINE_STEP_EXHAUSTED);
+    bindings_free(&environment);
+    PettaMachineStats stats;
+    assert(petta_machine_stats(&machine, &stats));
+    /* Coverage, not a fixed representation: all four marked resumptions
+     * above must run through removal of redundant overwrite history. */
+    assert(stats.choice_continuation_trail_compactions > 0u);
+    assert(stats.choice_continuation_trail_discarded > 0u);
     petta_machine_destroy(&machine);
 }
 
@@ -9014,9 +9342,11 @@ int main(void) {
     test_semantic_form_facts();
     test_program_metadata_projection(&answers);
     test_program_callability_head_kinds(&answers);
+    test_program_case_safety_projection(&universe, &persistent);
     space_init_with_universe(&space, &universe);
 
     test_plain_scalar_truth_dispatch(&answers);
+    test_typing_operator_identity();
     test_analysis_capability_contract(&space, &answers);
     test_direct_authority_identity_contract();
     test_direct_source_binding_contract();
@@ -9070,6 +9400,8 @@ int main(void) {
         &universe, &persistent);
     test_evaluator_neutral_structural_equation_classification(
         &universe, &persistent);
+    test_match_decision_cache_entry_authority(
+        &universe, &persistent, &answers);
     test_match_decision_callability_authority_receipt(
         &universe, &persistent, &answers);
     test_match_decision_verification_receipt_revision(
@@ -9077,6 +9409,7 @@ int main(void) {
     test_deep_typecheck_source_rewrites(&universe);
     test_deep_cons_semantics(&answers);
     test_logical_cons_binding_views(&answers);
+    test_lowered_head_epoch_views(&answers);
     test_answer_materialization_boundaries(
         &space, &persistent, &answers);
     test_logical_list_cursor_boundaries(&answers);
@@ -9086,6 +9419,7 @@ int main(void) {
     test_lexical_free_variable_projection(&answers);
     test_reachable_binding_projection(&answers);
     test_host_environment_projection(&space, &answers);
+    test_quoted_result_override(&space, &answers);
     test_deep_callable_detection(
         &space, &persistent, &answers);
     test_specializer_capacity_fallback(
@@ -9107,6 +9441,8 @@ int main(void) {
     test_deterministic_heap_collection(
         &space, &persistent, &answers);
     test_choice_binding_compaction(
+        &space, &persistent, &answers);
+    test_marked_goal_trail_compaction(
         &space, &persistent, &answers);
 
     add_clause(&space, &persistent, "(= (f 1) one)");

@@ -1,4 +1,4 @@
-!(import! &self lib_atp)
+!(import! &self ../../../examples/atp/prime/search_modules.metta)
 
 ; Explicit, highest-to-lowest precedence.  Strictly positive unit weights make
 ; this an admissible KBO configuration without zero-weight special cases.

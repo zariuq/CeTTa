@@ -1,0 +1,25 @@
+% Plain BNF grammar of the accepted plain BNF metalanguage.
+% name-char, literal-scalar, horizontal-space, and line-scalar are supplied
+% by the separately authenticated lexical profile.
+<document> ::= <lines>
+<lines> ::= | <line> <lines>
+<line> ::= <rule> | <comment> | <blank>
+<rule> ::= "<" <name> ">" <spaces> "::=" <spaces> <expression> <line-end>
+<comment> ::= "%" <comment-chars> <line-end>
+<blank> ::= <spaces> <line-end>
+<name> ::= <name-char> <name-tail>
+<name-tail> ::= | <name-char> <name-tail>
+<expression> ::= <sequence> <alternative-tail>
+<alternative-tail> ::= | " |" <spaces> <sequence> <alternative-tail>
+<sequence> ::= | <element> <sequence-tail>
+<sequence-tail> ::= | <spaces-one> <element> <sequence-tail>
+<element> ::= <reference> | <literal>
+<reference> ::= "<" <name> ">"
+<literal> ::= "\"" <literal-chars> "\""
+<literal-chars> ::= | <literal-char> <literal-chars>
+<literal-char> ::= <literal-scalar> | <escape>
+<escape> ::= "\\" "\"" | "\\" "\\" | "\\" "n" | "\\" "r" | "\\" "t"
+<spaces> ::= | <horizontal-space> <spaces>
+<spaces-one> ::= <horizontal-space> <spaces>
+<comment-chars> ::= | <line-scalar> <comment-chars>
+<line-end> ::= "\n" | "\r" "\n"

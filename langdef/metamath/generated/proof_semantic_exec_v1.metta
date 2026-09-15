@@ -10,13 +10,16 @@
     (operator ProofAssertionDisjointV1 2)
     (operator ProofAssertionEssentialV1 1)
     (operator ProofAssertionListConsV1 2)
+    (operator ProofAssertionListNilV1 0)
     (operator ProofAssertionV1 5)
     (operator ProofAssertionVariableV1 2)
     (operator ProofEnvironmentConsV1 3)
     (operator ProofEnvironmentLookupV1 3)
+    (operator ProofEnvironmentNilV1 0)
     (operator ProofSequenceAppendV1 3)
     (operator ProofSequenceConsV1 2)
     (operator ProofSequenceInstantiateV1 3)
+    (operator ProofSequenceNilV1 0)
     (operator ProofSequenceSupportApartV1 2)
     (operator ProofTokenAgainstSequenceV1 2)
     (operator ProofTokenApartV1 2)
@@ -42,7 +45,7 @@
         (MetamathProvableV1 (ProofSequenceConsV1 ?v1 ?v2))
         (ProofAssertionBuildEnvironmentV1 ?v3 ?v4 ?v5)))
     (rule proof-assertion-build-environment-nil-v1
-      (head (ProofAssertionBuildEnvironmentV1 ProofAssertionListNilV1 ProofAssertionListNilV1 ProofEnvironmentNilV1))
+      (head (ProofAssertionBuildEnvironmentV1 (ProofAssertionListNilV1) (ProofAssertionListNilV1) (ProofEnvironmentNilV1)))
       (body))
     (rule proof-assertion-check-disjoints-cons-v1
       (head (ProofAssertionCheckDisjointsV1 (ProofAssertionListConsV1 (ProofAssertionDisjointV1 ?v0 ?v1) ?v2) ?v3))
@@ -53,7 +56,7 @@
         (ProofSequenceSupportApartV1 ?v4 ?v5)
         (ProofAssertionCheckDisjointsV1 ?v2 ?v3)))
     (rule proof-assertion-check-disjoints-nil-v1
-      (head (ProofAssertionCheckDisjointsV1 ProofAssertionListNilV1 ?v0))
+      (head (ProofAssertionCheckDisjointsV1 (ProofAssertionListNilV1) ?v0))
       (body))
     (rule proof-assertion-check-essentials-cons-v1
       (head (ProofAssertionCheckEssentialsV1 (ProofAssertionListConsV1 (ProofAssertionEssentialV1 ?v0) ?v2) (ProofAssertionListConsV1 ?v1 ?v3) ?v4))
@@ -62,7 +65,7 @@
         (ProofSequenceInstantiateV1 ?v0 ?v4 ?v1)
         (ProofAssertionCheckEssentialsV1 ?v2 ?v3 ?v4)))
     (rule proof-assertion-check-essentials-nil-v1
-      (head (ProofAssertionCheckEssentialsV1 ProofAssertionListNilV1 ProofAssertionListNilV1 ?v0))
+      (head (ProofAssertionCheckEssentialsV1 (ProofAssertionListNilV1) (ProofAssertionListNilV1) ?v0))
       (body))
     (rule proof-assertion-use-premise-v1
       (head (MetamathProvableV1 ?v0))
@@ -81,7 +84,7 @@
       (body
         (ProofSequenceAppendV1 ?v1 ?v2 ?v3)))
     (rule proof-sequence-append-nil-v1
-      (head (ProofSequenceAppendV1 ProofSequenceNilV1 ?v0 ?v0))
+      (head (ProofSequenceAppendV1 (ProofSequenceNilV1) ?v0 ?v0))
       (body))
     (rule proof-sequence-instantiate-literal-v1
       (head (ProofSequenceInstantiateV1 (ProofSequenceConsV1 ?v0 ?v1) ?v2 (ProofSequenceConsV1 ?v0 ?v3)))
@@ -89,7 +92,7 @@
         (ProofTokenLiteralV1 ?v0)
         (ProofSequenceInstantiateV1 ?v1 ?v2 ?v3)))
     (rule proof-sequence-instantiate-nil-v1
-      (head (ProofSequenceInstantiateV1 ProofSequenceNilV1 ?v0 ProofSequenceNilV1))
+      (head (ProofSequenceInstantiateV1 (ProofSequenceNilV1) ?v0 (ProofSequenceNilV1)))
       (body))
     (rule proof-sequence-instantiate-variable-v1
       (head (ProofSequenceInstantiateV1 (ProofSequenceConsV1 ?v0 ?v1) ?v2 ?v5))
@@ -104,7 +107,7 @@
         (ProofTokenAgainstSequenceV1 ?v0 ?v2)
         (ProofSequenceSupportApartV1 ?v1 ?v2)))
     (rule proof-sequence-support-apart-nil-v1
-      (head (ProofSequenceSupportApartV1 ProofSequenceNilV1 ?v0))
+      (head (ProofSequenceSupportApartV1 (ProofSequenceNilV1) ?v0))
       (body))
     (rule proof-token-against-sequence-cons-v1
       (head (ProofTokenAgainstSequenceV1 ?v0 (ProofSequenceConsV1 ?v1 ?v2)))
@@ -112,7 +115,7 @@
         (ProofTokenPairAllowedV1 ?v0 ?v1)
         (ProofTokenAgainstSequenceV1 ?v0 ?v2)))
     (rule proof-token-against-sequence-nil-v1
-      (head (ProofTokenAgainstSequenceV1 ?v0 ProofSequenceNilV1))
+      (head (ProofTokenAgainstSequenceV1 ?v0 (ProofSequenceNilV1)))
       (body))
     (rule proof-token-pair-apart-v1
       (head (ProofTokenPairAllowedV1 ?v0 ?v1))

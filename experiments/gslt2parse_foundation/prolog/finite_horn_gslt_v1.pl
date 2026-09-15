@@ -121,11 +121,11 @@ parse_operators(Forms, Source, Operators) :-
 parse_operator(_Source, list([sym(operator), sym(Name), int(Arity)]),
                operator(Name, Arity)) :-
     atom(Name),
-    Arity > 0,
+    Arity >= 0,
     !.
 parse_operator(Source, _, _) :-
     schema_error(
-        '~w: operator declaration must be (operator NAME POSITIVE-ARITY)',
+        '~w: operator declaration must be (operator NAME NONNEGATIVE-ARITY)',
         [Source]).
 
 operator_key(operator(Name, Arity), Name-Arity).

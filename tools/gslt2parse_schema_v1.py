@@ -253,10 +253,10 @@ def parse_presentation(path: Path) -> Presentation:
             len(declaration) != 3
             or _symbol(declaration[0], f"{path}: operator tag") != "operator"
             or not isinstance(declaration[2], int)
-            or declaration[2] <= 0
+            or declaration[2] < 0
         ):
             raise SchemaError(
-                f"{path}: operator declaration must be (operator NAME POSITIVE-ARITY)"
+                f"{path}: operator declaration must be (operator NAME NONNEGATIVE-ARITY)"
             )
         operator = OperatorDecl(
             _symbol(declaration[1], f"{path}: operator name"), declaration[2]

@@ -1,4 +1,4 @@
-!(import! &self lib_atp)
+!(import! &self ../../../examples/atp/prime/search_modules.metta)
 
 ; This is the four-step binary-resolution spine emitted by E for the full
 ; prior-theory encoding of set.mm theorem ja.  E's preprocessing names are

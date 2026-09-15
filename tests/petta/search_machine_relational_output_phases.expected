@@ -49,6 +49,13 @@ atom-compatible
 atom-prefix
 cut-compatible
 cut-conflict
+deferred-partial
+deferred-body
+deferred-duplicates
+deferred-body
+deferred-conflict
+deferred-cons
+deferred-cons-body
 true
 true
 ()
@@ -102,3 +109,11 @@ true
 true
 ()
 true
+true
+(a b a)
+true
+(reached reached)
+true
+()
+true
+(reached)

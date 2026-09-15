@@ -1,0 +1,9 @@
+cnf(not_p, axiom, (~p), file('examples/tptp/external_ground_refutation.p', not_p)).
+cnf(not_q, axiom, (~q), file('examples/tptp/external_ground_refutation.p', not_q)).
+cnf(p_or_q, axiom, (p|q), file('examples/tptp/external_ground_refutation.p', p_or_q)).
+cnf(c_0_3, plain, (~p), inference(fof_simplification,[status(thm)],[not_p])).
+cnf(c_0_4, plain, (~q), inference(fof_simplification,[status(thm)],[not_q])).
+cnf(c_0_5, axiom, (p|q), p_or_q).
+cnf(c_0_6, plain, (~p), c_0_3).
+cnf(c_0_7, plain, (~q), c_0_4).
+cnf(c_0_8, plain, ($false), inference(sr,[status(thm)],[inference(sr,[status(thm)],[c_0_5, c_0_6]), c_0_7]), ['proof']).

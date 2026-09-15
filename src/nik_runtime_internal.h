@@ -23,6 +23,21 @@ bool cetta_nik_authority_catalog_valid_v1(
     size_t authority_count,
     const char *expected_digest);
 
+/* The ordinary checker, with its existing replay diagnostic retained for the
+ * differential test service. No comparison realization runs here. */
+CettaNikOutcome cetta_nik_runtime_v1_check_diagnostic(
+    CettaNikRuntimeV1 *runtime,
+    const char *authority_alias,
+    Atom *claim,
+    Atom *proof,
+    CettaNikLimits limits,
+    Arena *arena,
+    CettaNikReceiptV1 *receipt,
+    char *error_buf,
+    size_t error_buf_size,
+    char *native_error,
+    size_t native_error_size);
+
 CettaNikOutcome cetta_nik_check_with_query_v1(
     const char *authority_alias,
     Atom *claim,

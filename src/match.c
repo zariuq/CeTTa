@@ -56,7 +56,10 @@ typedef enum {
 
 typedef struct {
     VarId id;
-    VarId single_terminal;
+    union {
+        VarId single_terminal;
+        uint64_t closed_prefix;
+    };
     uint32_t index_plus_one;
     uint32_t single_cache_kind;
 } BindingsLookupIndexSlot;
@@ -77,7 +80,7 @@ struct BindingsLookupIndex {
     uint32_t count;
     uint32_t synced_len;
     bool has_duplicates;
-    size_t *single_cached_slots;
+    VarId *single_cached_ids;
     size_t single_cached_len;
     size_t single_cached_cap;
 };
@@ -587,7 +590,7 @@ static BindingsLookupIndex *bindings_lookup_index_alloc(size_t capacity) {
     index->count = 0u;
     index->synced_len = 0u;
     index->has_duplicates = false;
-    index->single_cached_slots = NULL;
+    index->single_cached_ids = NULL;
     index->single_cached_len = 0u;
     index->single_cached_cap = 0u;
     return index;
@@ -608,7 +611,7 @@ static void bindings_lookup_index_release(BindingsLookupIndex *index) {
         &index->references, 1u, memory_order_acq_rel);
     assert(previous > 0u);
     if (previous == 1u) {
-        free(index->single_cached_slots);
+        free(index->single_cached_ids);
         free(index->slots);
         free(index);
     }
@@ -627,11 +630,11 @@ static bool bindings_lookup_index_single_cached_reserve(
             return false;
         capacity *= 2u;
     }
-    if (capacity > SIZE_MAX / sizeof(*index->single_cached_slots))
+    if (capacity > SIZE_MAX / sizeof(*index->single_cached_ids))
         return false;
-    index->single_cached_slots = cetta_realloc(
-        index->single_cached_slots,
-        capacity * sizeof(*index->single_cached_slots));
+    index->single_cached_ids = cetta_realloc(
+        index->single_cached_ids,
+        capacity * sizeof(*index->single_cached_ids));
     index->single_cached_cap = capacity;
     return true;
 }
@@ -657,8 +660,8 @@ static bool bindings_lookup_index_record_single_cached_slot(
             index, index->single_cached_len + 1u)) {
         return false;
     }
-    index->single_cached_slots[index->single_cached_len++] =
-        slot_index;
+    index->single_cached_ids[index->single_cached_len++] =
+        slot->id;
     slot->single_cache_kind |=
         BINDINGS_SINGLE_REACH_CACHE_LISTED;
     return true;
@@ -675,21 +678,28 @@ static void bindings_lookup_index_unrecord_single_cached_slot(
     }
     size_t cursor = 0u;
     while (cursor < index->single_cached_len &&
-           index->single_cached_slots[cursor] != slot_index) {
+           index->single_cached_ids[cursor] != slot->id) {
         cursor++;
     }
     assert(cursor < index->single_cached_len);
     index->single_cached_len--;
     if (cursor < index->single_cached_len) {
-        index->single_cached_slots[cursor] =
-            index->single_cached_slots[index->single_cached_len];
+        index->single_cached_ids[cursor] =
+            index->single_cached_ids[index->single_cached_len];
     }
     slot->single_cache_kind &=
         ~BINDINGS_SINGLE_REACH_CACHE_LISTED;
 }
 
+static bool bindings_lookup_index_find_slot(
+    const BindingsLookupIndex *index, VarId id, size_t *slot_out);
+
+/* Closed components depend on a prefix of authoritative binding entries.
+ * A rollback past that prefix invalidates the fact; removing a later suffix
+ * does not. The sparse list uses logical keys so hash-cluster relocation
+ * cannot disconnect retained facts from their invalidation records. */
 static void bindings_lookup_index_clear_single_reach_cache(
-        BindingsLookupIndex *index) {
+        BindingsLookupIndex *index, uint32_t surviving_prefix) {
 #if !defined(CETTA_MUTATION_BINDINGS_SINGLE_REACH_KEEP_ROLLBACK_CACHE)
     if (!index)
         return;
@@ -697,11 +707,9 @@ static void bindings_lookup_index_clear_single_reach_cache(
     bool support_invalidation =
         g_bindings_single_reach_support_invalidation_enabled != 0;
     size_t cached_len = index->single_cached_len;
+    size_t kept = 0u;
     cetta_runtime_stats_inc(
         CETTA_RUNTIME_COUNTER_BINDINGS_SINGLE_REACH_CACHE_INVALIDATION);
-    cetta_runtime_stats_add(
-        CETTA_RUNTIME_COUNTER_BINDINGS_SINGLE_REACH_CACHE_INVALIDATED_SLOT,
-        support_invalidation ? cached_len : index->capacity);
     if (support_invalidation) {
         if (index->capacity > cached_len) {
             cetta_runtime_stats_add(
@@ -709,12 +717,23 @@ static void bindings_lookup_index_clear_single_reach_cache(
                 index->capacity - cached_len);
         }
         for (size_t cursor = 0u; cursor < cached_len; cursor++) {
-            size_t slot_index = index->single_cached_slots[cursor];
-            if (slot_index >= index->capacity)
+            size_t slot_index;
+            VarId id = index->single_cached_ids[cursor];
+            if (!bindings_lookup_index_find_slot(index, id, &slot_index))
                 continue;
-            index->slots[slot_index].single_terminal = VAR_ID_NONE;
-            index->slots[slot_index].single_cache_kind =
-                BINDINGS_SINGLE_REACH_CACHE_NONE;
+            BindingsLookupIndexSlot *slot = &index->slots[slot_index];
+            /* Zero means that no rollback-stable evidence was recorded. */
+            if (surviving_prefix != 0u && !index->has_duplicates &&
+                bindings_lookup_index_single_cache_kind(slot) ==
+                    BINDINGS_SINGLE_REACH_CACHE_GROUND &&
+                slot->closed_prefix != 0u &&
+                slot->closed_prefix <= surviving_prefix &&
+                slot->index_plus_one <= surviving_prefix) {
+                index->single_cached_ids[kept++] = id;
+                continue;
+            }
+            slot->single_terminal = VAR_ID_NONE;
+            slot->single_cache_kind = BINDINGS_SINGLE_REACH_CACHE_NONE;
         }
     } else {
         for (size_t slot = 0u; slot < index->capacity; slot++) {
@@ -723,9 +742,13 @@ static void bindings_lookup_index_clear_single_reach_cache(
                 BINDINGS_SINGLE_REACH_CACHE_NONE;
         }
     }
-    index->single_cached_len = 0u;
+    cetta_runtime_stats_add(
+        CETTA_RUNTIME_COUNTER_BINDINGS_SINGLE_REACH_CACHE_INVALIDATED_SLOT,
+        support_invalidation ? cached_len - kept : index->capacity);
+    index->single_cached_len = kept;
 #else
     (void)index;
+    (void)surviving_prefix;
 #endif
 }
 
@@ -775,7 +798,7 @@ static bool bindings_lookup_index_rehash(BindingsLookupIndex *index,
         capacity > SIZE_MAX / sizeof(*index->slots)) {
         return false;
     }
-    bindings_lookup_index_clear_single_reach_cache(index);
+    bindings_lookup_index_clear_single_reach_cache(index, 0u);
     BindingsLookupIndexSlot *old_slots = index->slots;
     size_t old_capacity = index->capacity;
     BindingsLookupIndexSlot *slots =
@@ -831,13 +854,13 @@ static bool bindings_lookup_index_detach(Bindings *bindings) {
     copy->synced_len = index->synced_len;
     copy->has_duplicates = index->has_duplicates;
     if (index->single_cached_len > 0u) {
-        copy->single_cached_slots = cetta_malloc(
+        copy->single_cached_ids = cetta_malloc(
             index->single_cached_len *
-            sizeof(*copy->single_cached_slots));
-        memcpy(copy->single_cached_slots,
-               index->single_cached_slots,
+            sizeof(*copy->single_cached_ids));
+        memcpy(copy->single_cached_ids,
+               index->single_cached_ids,
                index->single_cached_len *
-               sizeof(*copy->single_cached_slots));
+               sizeof(*copy->single_cached_ids));
         copy->single_cached_len = index->single_cached_len;
         copy->single_cached_cap = index->single_cached_len;
     }
@@ -912,7 +935,7 @@ static void bindings_lookup_index_truncate(Bindings *bindings,
     /* A later append may reuse the same logical length with a different
      * suffix.  Derived terminal roots from the discarded suffix must not
      * revive merely because the length matches again. */
-    bindings_lookup_index_clear_single_reach_cache(index);
+    bindings_lookup_index_clear_single_reach_cache(index, new_len);
 
     if (index->has_duplicates) {
         BindingsLookupIndex *replacement =
@@ -1268,6 +1291,8 @@ static BindingsReachability bindings_single_reach_cache_query(
     uint32_t result_kind = BINDINGS_SINGLE_REACH_CACHE_NONE;
     VarId terminal = VAR_ID_NONE;
     size_t path_len = 0u;
+    uint32_t dependency_prefix = 0u;
+    bool immutable_path = true;
     VarId current = start;
 
     cetta_runtime_stats_inc(
@@ -1306,6 +1331,8 @@ static BindingsReachability bindings_single_reach_cache_query(
             break;
         }
         slot = &index->slots[slot_index];
+        if (dependency_prefix < slot->index_plus_one)
+            dependency_prefix = slot->index_plus_one;
         if (path_len >= g_bindings_single_reach_path_cap)
             goto decline;
         g_bindings_single_reach_path[path_len++] = slot_index;
@@ -1315,12 +1342,17 @@ static BindingsReachability bindings_single_reach_cache_query(
                 BINDINGS_SINGLE_REACH_CACHE_TERMINAL) {
             if (slot->single_terminal == VAR_ID_NONE)
                 goto decline;
+            immutable_path = false;
             current = slot->single_terminal;
             continue;
         }
         if (cache_kind ==
                 BINDINGS_SINGLE_REACH_CACHE_GROUND) {
             result_kind = BINDINGS_SINGLE_REACH_CACHE_GROUND;
+            if (slot->closed_prefix == 0u)
+                immutable_path = false;
+            else if (dependency_prefix < slot->closed_prefix)
+                dependency_prefix = (uint32_t)slot->closed_prefix;
             break;
         }
         if (cache_kind ==
@@ -1335,6 +1367,8 @@ static BindingsReachability bindings_single_reach_cache_query(
         value = bindings->entries[slot->index_plus_one - 1u].val;
         if (!value)
             goto decline;
+        if ((value->flags & ATOM_FLAG_HASH_STABLE) == 0u)
+            immutable_path = false;
         if (!atom_has_vars(value)) {
             result_kind = BINDINGS_SINGLE_REACH_CACHE_GROUND;
             break;
@@ -1363,9 +1397,12 @@ static BindingsReachability bindings_single_reach_cache_query(
         BindingsLookupIndexSlot *slot = &index->slots[slot_index];
         slot->single_cache_kind =
             BINDINGS_SINGLE_REACH_CACHE_LISTED | result_kind;
-        slot->single_terminal =
-            result_kind == BINDINGS_SINGLE_REACH_CACHE_TERMINAL
-                ? terminal : VAR_ID_NONE;
+        if (result_kind == BINDINGS_SINGLE_REACH_CACHE_TERMINAL)
+            slot->single_terminal = terminal;
+        else
+            slot->closed_prefix =
+                result_kind == BINDINGS_SINGLE_REACH_CACHE_GROUND && immutable_path
+                    ? dependency_prefix : 0u;
     }
     cetta_runtime_stats_add(
         CETTA_RUNTIME_COUNTER_BINDINGS_SINGLE_REACH_CACHE_COMPRESSED,
@@ -2872,6 +2909,32 @@ static bool bindings_dense_epoch_frame_lookup(
 static void bindings_dense_epoch_frame_scan(
         BindingsDenseEpochFrame *frame, const Bindings *bindings,
         uint32_t begin) {
+    if (frame->len == 0u) {
+        frame->scanned_len = bindings->len;
+        return;
+    }
+    /* A current derived index names the same last occurrence that the
+     * forward scan below retains. Read just this frame's epoch variables
+     * when they are a small fraction of the suffix. Synchronization uses
+     * the existing authoritative suffix/index protocol; if unavailable,
+     * retain the scan. A hit before begin is outside the suffix and must
+     * leave the frame's prior generation state untouched. */
+    const BindingsLookupIndex *index = NULL;
+    if (frame->len <= (bindings->len - begin) / 8u)
+        index = bindings_lookup_index_current((Bindings *)bindings);
+    if (index && index->synced_len == bindings->len) {
+        for (uint32_t slot = 0u; slot < frame->len; slot++) {
+            VarId id = var_epoch_id(frame->source_ids[slot], frame->epoch);
+            uint32_t entry_plus_one = bindings_lookup_index_find(index, id);
+            if (entry_plus_one == 0u || entry_plus_one <= begin)
+                continue;
+            const Binding *entry = &bindings->entries[entry_plus_one - 1u];
+            frame->values[slot] = entry->val;
+            frame->slot_stamps[slot] = frame->slot_generation;
+        }
+        frame->scanned_len = bindings->len;
+        return;
+    }
     if (frame->source_ids_contiguous) {
         for (uint32_t entry_index = begin;
              entry_index < bindings->len; entry_index++) {
@@ -4938,6 +5001,15 @@ static bool collect_var_ids_hash_stable(Atom *root, VarIdSet *set) {
             goto fail;
         if (!atom_has_vars(atom))
             continue;
+        /* A singleton support summary gives this subtree's complete ordered
+         * set contribution. Published hash-stable graphs are acyclic, so no
+         * cycle check is lost by skipping their internal occurrences. */
+        VarId single = atom_single_variable_id(atom);
+        if (single != VAR_ID_NONE) {
+            if (!var_id_set_add(set, single))
+                goto fail;
+            continue;
+        }
         if (freshen_epoch_memo_lookup(&visited, atom))
             continue;
         if (!freshen_epoch_memo_store(
@@ -4992,6 +5064,14 @@ static bool collect_var_ids(Atom *root, VarIdSet *set) {
                     &states, atom, &g_rename_walk_complete))
                 goto fail;
             continue;
+        }
+        if ((atom->flags & ATOM_FLAG_HASH_STABLE) != 0u) {
+            VarId single = atom_single_variable_id(atom);
+            if (single != VAR_ID_NONE) {
+                if (!var_id_set_add(set, single))
+                    goto fail;
+                continue;
+            }
         }
         Atom *state = freshen_epoch_memo_lookup(&states, atom);
         if (state == &g_rename_walk_active)
@@ -5095,6 +5175,23 @@ static BindingsReachability bindings_value_reaches_var(
     if (!atom_has_vars(value))
         return BINDINGS_REACHABILITY_ABSENT;
 
+    /* A closed immutable dependency component cannot reach an unbound target.
+     * Cache only that target-independent fact, never merely "not this target".
+     * The existing index clears derived facts on rollback/rehash and detaches
+     * shared branches before writes. Duplicate/legacy graphs retain traversal. */
+    BindingsLookupIndex *ground_index = NULL;
+    if (bindings->cycle_state == BINDINGS_CYCLE_ACYCLIC &&
+        bindings->legacy_fallback_count == 0u &&
+        bindings->len >= BINDINGS_LOOKUP_INDEX_THRESHOLD) {
+        BindingsLookupIndex *candidate = bindings_lookup_index_current(bindings);
+        if (candidate && !candidate->has_duplicates &&
+            candidate->synced_len == bindings->len &&
+            bindings_lookup_index_find(candidate, target) == 0u &&
+            bindings_lookup_index_detach(bindings))
+            ground_index = bindings->lookup_index;
+    }
+    bool closed_immutable = ground_index != NULL;
+    uint32_t dependency_prefix = 0u;
     VarIdSet reachable;
     var_id_set_init(&reachable);
     if (!collect_var_ids(value, &reachable)) {
@@ -5110,12 +5207,36 @@ static BindingsReachability bindings_value_reaches_var(
             var_id_set_free(&reachable);
             return BINDINGS_REACHABILITY_PRESENT;
         }
+        if (ground_index) {
+            size_t slot;
+            if (bindings_lookup_index_find_slot(ground_index, current, &slot) &&
+                bindings_lookup_index_single_cache_kind(&ground_index->slots[slot]) ==
+                    BINDINGS_SINGLE_REACH_CACHE_GROUND) {
+                const BindingsLookupIndexSlot *cached = &ground_index->slots[slot];
+                if (cached->closed_prefix == 0u)
+                    closed_immutable = false;
+                uint32_t prefix = cached->closed_prefix != 0u
+                    ? (uint32_t)cached->closed_prefix : bindings->len;
+                if (prefix < cached->index_plus_one)
+                    prefix = cached->index_plus_one;
+                if (dependency_prefix < prefix)
+                    dependency_prefix = prefix;
+                continue;
+            }
+        }
         int32_t index = bindings_lookup_index(bindings, current);
-        if (index < 0)
+        if (index < 0) {
+            closed_immutable = false;
             continue;
+        }
+        if (dependency_prefix < (uint32_t)index + 1u)
+            dependency_prefix = (uint32_t)index + 1u;
         Atom *next = bindings->entries[(uint32_t)index].val;
+        if (!next || (next->flags & ATOM_FLAG_HASH_STABLE) == 0u)
+            closed_immutable = false;
         if (next && next->kind == ATOM_VAR &&
             binding_var_eq(next->var_id, current)) {
+            closed_immutable = false;
             continue;
         }
         if (next && atom_has_vars(next) &&
@@ -5125,6 +5246,17 @@ static BindingsReachability bindings_value_reaches_var(
         }
     }
 
+    if (closed_immutable) {
+        for (uint32_t cursor = 0u; cursor < reachable.len; cursor++) {
+            size_t slot;
+            if (!bindings_lookup_index_find_slot(ground_index, reachable.items[cursor], &slot) ||
+                !bindings_lookup_index_record_single_cached_slot(ground_index, slot))
+                break;
+            ground_index->slots[slot].single_cache_kind =
+                BINDINGS_SINGLE_REACH_CACHE_LISTED | BINDINGS_SINGLE_REACH_CACHE_GROUND;
+            ground_index->slots[slot].closed_prefix = dependency_prefix;
+        }
+    }
     var_id_set_free(&reachable);
     return BINDINGS_REACHABILITY_ABSENT;
 }
@@ -5311,6 +5443,10 @@ static bool bindings_reachable_vars_add_atom(
     BindingsReachableVars *vars, Atom *atom) {
     if (!atom || !atom_has_vars(atom))
         return true;
+    VarId single = atom_single_variable_id(atom);
+    if (atom->kind == ATOM_VAR ||
+        (single != VAR_ID_NONE && (atom->flags & ATOM_FLAG_HASH_STABLE)))
+        return bindings_reachable_vars_add(vars, single);
     VarIdSet found;
     var_id_set_init(&found);
     if (!collect_var_ids(atom, &found)) {
@@ -5613,7 +5749,13 @@ static bool bindings_project_reachable_selected(
     bool has_legacy = false;
     bindings_reachable_vars_init(&live);
 
-    if (!bindings_reachable_index_build(
+    /* A synchronized lookup index already names each variable's newest
+     * binding. Borrow it for this read-only projection; a missing or partial
+     * index retains the independent collector below. */
+    const BindingsLookupIndex *lookup = src->lookup_index;
+    if (lookup && lookup->synced_len != src->len)
+        lookup = NULL;
+    if (!lookup && !bindings_reachable_index_build(
             src, &index_slots, &index_cap)) {
         goto fail;
     }
@@ -5663,9 +5805,10 @@ static bool bindings_project_reachable_selected(
     for (;;) {
         while (live.work_next < live.work_len) {
             VarId id = live.work[live.work_next++];
-            uint32_t index_plus_one =
-                bindings_reachable_index_lookup(
-                    index_slots, index_cap, id);
+            uint32_t index_plus_one = lookup
+                ? bindings_lookup_index_find(lookup, id)
+                : bindings_reachable_index_lookup(
+                      index_slots, index_cap, id);
             if (index_plus_one == 0u)
                 continue;
             uint32_t index = index_plus_one - 1u;
@@ -5812,31 +5955,37 @@ bool bindings_project_reachable_with_epoch_roots_and_entry_marks(
         return false;
     }
 
-    uint32_t *next_marks = entry_mark_count
-        ? malloc(entry_mark_count * sizeof(*next_marks)) : NULL;
-    if (entry_mark_count > 0u && !next_marks) {
-        bindings_free(&projected);
-        free(keep_entries);
-        free(keep_constraints);
-        return false;
-    }
-    for (size_t mark_index = 0u;
-         mark_index < entry_mark_count; mark_index++) {
+    if (entry_mark_count == 1u) {
         uint32_t retained = 0u;
-        for (uint32_t entry = 0u;
-             entry < entry_marks[mark_index]; entry++) {
-            if (keep_entries[entry])
-                retained++;
+        for (uint32_t entry = 0u; entry < entry_marks[0]; entry++)
+            retained += keep_entries[entry] ? 1u : 0u;
+        entry_marks[0] = retained;
+    } else {
+        uint32_t last = 0u;
+        for (size_t index = 0u; index < entry_mark_count; index++) {
+            if (entry_marks[index] > last)
+                last = entry_marks[index];
         }
-        next_marks[mark_index] = retained;
+        uint64_t prefix_count = (uint64_t)last + 1u;
+        uint32_t *prefix = prefix_count <= SIZE_MAX / sizeof(*prefix)
+            ? malloc((size_t)prefix_count * sizeof(*prefix)) : NULL;
+        if (!prefix) {
+            bindings_free(&projected);
+            free(keep_entries);
+            free(keep_constraints);
+            return false;
+        }
+        /* Every mark observes the same retained-entry prefix. Build that
+         * prefix once; rescanning it per activation costs marks times entries.
+         * Indexed readout preserves arbitrary mark order and duplicates. */
+        prefix[0] = 0u;
+        for (uint32_t entry = 0u; entry < last; entry++)
+            prefix[entry + 1u] = prefix[entry] + (keep_entries[entry] ? 1u : 0u);
+        for (size_t index = 0u; index < entry_mark_count; index++)
+            entry_marks[index] = prefix[entry_marks[index]];
+        free(prefix);
     }
-
     *dst = projected;
-    if (entry_mark_count > 0u) {
-        memcpy(entry_marks, next_marks,
-               entry_mark_count * sizeof(*entry_marks));
-    }
-    free(next_marks);
     free(keep_entries);
     free(keep_constraints);
     return true;

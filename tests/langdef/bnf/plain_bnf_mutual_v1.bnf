@@ -1,0 +1,3 @@
+% Productive, reachable mutual recursion.
+<s> ::= "x" <tail> | "z"
+<tail> ::= "y" <s> | "w"

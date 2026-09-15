@@ -1,0 +1,7 @@
+true
+(EbnfArithmeticForestV1 (rejected 2))
+(EbnfSelfReadV1 one)
+(EbnfEditedV1 one (rejected 0))
+(EbnfFreshOccurrencesV1 false true)
+EbnfMalformedAuthorityRefusedV1
+(EbnfUnresolvedNotCapturedV1 "s" "##0")

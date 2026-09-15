@@ -1681,7 +1681,11 @@ bool petta_program_head_is_intrinsic(SymbolId head) {
         form != PETTA_FORM_TABLED;
     return head != SYMBOL_ID_NONE &&
            (intrinsic_form ||
-            head <= g_builtin_syms.native_handle ||
+            /* Shared data tags are not PeTTa operations. User definitions
+             * still establish callability through ordinary resolution. */
+            (head <= g_builtin_syms.native_handle &&
+             head != g_builtin_syms.llist_cons &&
+             head != g_builtin_syms.error) ||
             is_grounded_op(head) ||
             machine_named ||
             typecheck_named);
@@ -4913,6 +4917,48 @@ static bool petta_table_safety_push_let_star(
     return true;
 }
 
+/* A case pattern is match data.  Only the scrutinee and each branch result
+ * execute, so following the generic plan through a pattern would invent a
+ * dynamic call whenever a pattern has a variable in function position. */
+static bool petta_table_safety_push_case(
+    PettaTableSafetyNode **nodes,
+    size_t *length, size_t *capacity,
+    Atom *atom, const PettaPlanNode *plan) {
+    if (!nodes || !length || !capacity || !atom || !plan ||
+        atom->kind != ATOM_EXPR || atom->expr.len != 3u ||
+        plan->child_count != atom->expr.len ||
+        !petta_table_safety_push_node(
+            nodes, length, capacity,
+            atom->expr.elems[1], petta_plan_child(plan, 1u))) {
+        return false;
+    }
+
+    Atom *branches = atom->expr.elems[2];
+    const PettaPlanNode *branches_plan =
+        petta_plan_child(plan, 2u);
+    if (!branches || branches->kind != ATOM_EXPR ||
+        !branches_plan ||
+        branches_plan->child_count != branches->expr.len) {
+        return false;
+    }
+    for (CettaExprIndex index = 0u;
+         index < branches->expr.len; index++) {
+        Atom *branch = branches->expr.elems[index];
+        const PettaPlanNode *branch_plan =
+            petta_plan_child(branches_plan, index);
+        if (!branch || branch->kind != ATOM_EXPR ||
+            branch->expr.len != 2u || !branch_plan ||
+            branch_plan->child_count != branch->expr.len ||
+            !petta_table_safety_push_node(
+                nodes, length, capacity,
+                branch->expr.elems[1],
+                petta_plan_child(branch_plan, 1u))) {
+            return false;
+        }
+    }
+    return true;
+}
+
 /*
  * These forms are pure provided every executable child is pure.  Forms
  * which invoke an argument as a callable (map/fold/forall), perform I/O or
@@ -5176,6 +5222,20 @@ static PettaRelationSafety petta_table_safety_scan_relation(
 
         SymbolId call_head =
             atom->expr.elems[0]->sym_id;
+        if (call_head == g_builtin_syms.case_text) {
+            safe = petta_table_safety_push_case(
+                &nodes, &node_len, &node_cap,
+                atom, plan);
+            if (!safe && trace) {
+                fprintf(
+                    stderr,
+                    "[petta-table-safety] head=%s arity=%u "
+                    "malformed-case\n",
+                    symbol_bytes(g_symbols, relation.head),
+                    (unsigned)relation.arity);
+            }
+            continue;
+        }
         if (call_head == g_builtin_syms.let_star) {
             safe = petta_table_safety_push_let_star(
                 &nodes, &node_len, &node_cap,

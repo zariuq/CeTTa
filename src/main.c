@@ -690,7 +690,7 @@ static Atom *display_atom_copy(Arena *dst, Atom *src, const CettaDisplayVarMap *
     case ATOM_GROUNDED:
         switch (src->ground.gkind) {
         case GV_INT:
-            return atom_int(dst, src->ground.ival);
+            return atom_int_copy(dst, src);
         case GV_FLOAT:
             return atom_float(dst, src->ground.fval);
         case GV_BOOL:

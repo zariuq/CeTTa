@@ -6079,54 +6079,12 @@ static const uint8_t cetta_zero_interact_language_v1_compiled_plan_v1[] = {
 };
 
 static const CettaGsltEmbeddedSourceV1 cetta_zero_interact_language_v1_sources[] = {
-    {
-        .input = {
-            .bytes = cetta_zero_interact_language_v1_semantic_0,
-            .length = sizeof(cetta_zero_interact_language_v1_semantic_0),
-            .source = "../shared/finite_horn_quote_match_v1.metta",
-        },
-        .sha256 = "658ccb035e57ca0f38021b460fff198734f0ef739ed098229b0c14fd157bd797",
-    },
-    {
-        .input = {
-            .bytes = cetta_zero_interact_language_v1_semantic_1,
-            .length = sizeof(cetta_zero_interact_language_v1_semantic_1),
-            .source = "semantics/query_kernel_v1.metta",
-        },
-        .sha256 = "168a7538f2f29ff90cf73aeaf7ce09e712f41507796f1974b721c4d42ad7d463",
-    },
-    {
-        .input = {
-            .bytes = cetta_zero_interact_language_v1_semantic_2,
-            .length = sizeof(cetta_zero_interact_language_v1_semantic_2),
-            .source = "semantics/closed_bag_observation_v1.metta",
-        },
-        .sha256 = "a39875d112a2f66107e2c8bda4d02f8a8ae45bf20a16ce8671ebb32e5b8bfe91",
-    },
-    {
-        .input = {
-            .bytes = cetta_zero_interact_language_v1_semantic_3,
-            .length = sizeof(cetta_zero_interact_language_v1_semantic_3),
-            .source = "semantics/open_substitution_v1.metta",
-        },
-        .sha256 = "bca247bd07b8cff013223f72b6600273b512784887d102ac5e9f50dfb135f1c8",
-    },
-    {
-        .input = {
-            .bytes = cetta_zero_interact_language_v1_semantic_4,
-            .length = sizeof(cetta_zero_interact_language_v1_semantic_4),
-            .source = "semantics/support_indexed_abt_match_v1.metta",
-        },
-        .sha256 = "823de4fc6b30fbe4638fcf284c8c5635c08b2fab64cab041149a7b0774c07340",
-    },
-    {
-        .input = {
-            .bytes = cetta_zero_interact_language_v1_semantic_5,
-            .length = sizeof(cetta_zero_interact_language_v1_semantic_5),
-            .source = "semantics/revisioned_interact_v1.metta",
-        },
-        .sha256 = "388ce87bad117283015ffcda7038174eb3f94026b520a1ab27a015c3a20b0a3b",
-    },
+    {.input = {.bytes = cetta_zero_interact_language_v1_semantic_0, .length = sizeof(cetta_zero_interact_language_v1_semantic_0), .source = "../shared/finite_horn_quote_match_v1.metta"}, .sha256 = "658ccb035e57ca0f38021b460fff198734f0ef739ed098229b0c14fd157bd797"},
+    {.input = {.bytes = cetta_zero_interact_language_v1_semantic_1, .length = sizeof(cetta_zero_interact_language_v1_semantic_1), .source = "semantics/query_kernel_v1.metta"}, .sha256 = "168a7538f2f29ff90cf73aeaf7ce09e712f41507796f1974b721c4d42ad7d463"},
+    {.input = {.bytes = cetta_zero_interact_language_v1_semantic_2, .length = sizeof(cetta_zero_interact_language_v1_semantic_2), .source = "semantics/closed_bag_observation_v1.metta"}, .sha256 = "a39875d112a2f66107e2c8bda4d02f8a8ae45bf20a16ce8671ebb32e5b8bfe91"},
+    {.input = {.bytes = cetta_zero_interact_language_v1_semantic_3, .length = sizeof(cetta_zero_interact_language_v1_semantic_3), .source = "semantics/open_substitution_v1.metta"}, .sha256 = "bca247bd07b8cff013223f72b6600273b512784887d102ac5e9f50dfb135f1c8"},
+    {.input = {.bytes = cetta_zero_interact_language_v1_semantic_4, .length = sizeof(cetta_zero_interact_language_v1_semantic_4), .source = "semantics/support_indexed_abt_match_v1.metta"}, .sha256 = "823de4fc6b30fbe4638fcf284c8c5635c08b2fab64cab041149a7b0774c07340"},
+    {.input = {.bytes = cetta_zero_interact_language_v1_semantic_5, .length = sizeof(cetta_zero_interact_language_v1_semantic_5), .source = "semantics/revisioned_interact_v1.metta"}, .sha256 = "388ce87bad117283015ffcda7038174eb3f94026b520a1ab27a015c3a20b0a3b"},
 };
 
 const CettaGsltEmbeddedLanguageV1 cetta_zero_interact_language_v1 = {
@@ -6134,37 +6092,24 @@ const CettaGsltEmbeddedLanguageV1 cetta_zero_interact_language_v1 = {
     .profile_name = "interact",
     .syntax_backend = "he-reader-direct-v1",
     .term_abi = "finite-horn-quote-v1",
-    .manifest = {
-        .input = {
-            .bytes = cetta_zero_interact_language_v1_manifest_v1,
-            .length = sizeof(cetta_zero_interact_language_v1_manifest_v1),
-            .source = "zero/langdef.metta",
-        },
-        .sha256 = "f8871188c057602cd1942b1f51e9cc3b8bec7b18a6c38e80f6455fca6223a998",
-    },
+    .manifest = {.input = {.bytes = cetta_zero_interact_language_v1_manifest_v1, .length = sizeof(cetta_zero_interact_language_v1_manifest_v1), .source = "zero/langdef.metta"}, .sha256 = "f8871188c057602cd1942b1f51e9cc3b8bec7b18a6c38e80f6455fca6223a998"},
     .semantic_sources = cetta_zero_interact_language_v1_sources,
     .semantic_source_count = 6u,
-    .compiled_plan = {
-        .bytes = cetta_zero_interact_language_v1_compiled_plan_v1,
-        .length = sizeof(cetta_zero_interact_language_v1_compiled_plan_v1),
-        .sha256 = "a6437cc42a166aa4ece622729bfd8c5fb84790b778bed7c4145eac04b5eb313a",
-    },
+    .compiled_plan = {.bytes = cetta_zero_interact_language_v1_compiled_plan_v1, .length = sizeof(cetta_zero_interact_language_v1_compiled_plan_v1), .sha256 = "a6437cc42a166aa4ece622729bfd8c5fb84790b778bed7c4145eac04b5eb313a"},
     .program_nil = "zero-program-nil",
     .program_cons = "zero-program-cons",
     .entry_relation = NULL,
-    .entry_arity = 0u,
-    .program_position = 0u,
-    .result_position = 0u,
+    .entry_arity = 0u, .program_position = 0u, .result_position = 0u,
     .query_relation = NULL,
     .query_arity = 0u,
     .request_pipeline = &(const CettaGsltRequestPipelineV1){
-        .classify_relation = "zero-classify",
-        .produce_relation = "zero-produce",
-        .observe_relation = "zero-observe",
-        .produced_nil = "zero-produced-nil",
-        .produced_cons = "zero-produced-cons",
+    .classify_relation = "zero-classify",
+    .produce_relation = "zero-produce",
+    .observe_relation = "zero-observe",
+    .produced_nil = "zero-produced-nil",
+    .produced_cons = "zero-produced-cons",
     },
     .observation = "bag",
     .manifest_sha256 = "f8871188c057602cd1942b1f51e9cc3b8bec7b18a6c38e80f6455fca6223a998",
-    .compiler_sha256 = "31100b0aede263267ae133a061bd15c64707095a4224fbde210328fb5a7d0f33",
+    .compiler_sha256 = "c82486772be84b0aec1aaf90f3a754fca4e9c370a05f98040fbda3de16671e22",
 };

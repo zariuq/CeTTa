@@ -1,0 +1,446 @@
+BNF and postfix-EBNF grammar workbench
+=====================================
+
+lib_bnf reads plain BNF into structured MeTTa values, validates declarations
+and grammar dependencies, and constructs a parser through the existing
+LanguageDef/ParserPack route. The supported notation and lexical rules are
+authored in langdef/bnf/plain_bnf_source_v1.metta and
+langdef/bnf/plain_bnf_parser_profile_v1.metta. The plain-BNF API keeps this
+profile unchanged. The EBNF API described below is a separate syntax profile
+in the same library, constructed using the BNF workbench itself.
+
+Running the public examples
+--------------------------
+
+Run from the repository root. Build the core runtime and regenerate the
+admission program from its authored sources and computed NativeTypes:
+
+  make BUILD=core ENABLE_GMP=0 ENABLE_LIB_PROLOG=0 ENABLE_HTTP=0 \
+    CETTA_TEST_ISOLATED=1 ENABLE_PRIME_NEED_HEAP_INDEX=0 \
+    ENABLE_PRIME_EVAL_STACK=0 \
+    runtime/cetta-core.nogmp.json-gslt \
+    langdef/petta/generated/plain_bnf_semantic_admission_v1.metta
+
+This is the selected configuration, not a claim about every runtime build
+profile. It requires a C toolchain and the Mettapedia Lean project described
+below; neither the generation command nor this runtime requires Python.
+Use the freshly built executable, not an older ./cetta from another profile.
+The generated admission program supplies the PeTTa target:
+
+  runtime/cetta-core.nogmp.json-gslt --lang petta \
+    langdef/petta/generated/plain_bnf_semantic_admission_v1.metta \
+    tests/langdef/bnf/plain_bnf_public_entry_v1.metta
+
+The structured editing example is:
+
+  runtime/cetta-core.nogmp.json-gslt --lang petta \
+    langdef/petta/generated/plain_bnf_semantic_admission_v1.metta \
+    tests/langdef/bnf/plain_bnf_edit_document_v1.metta
+
+The EBNF integration example loads an arithmetic grammar from a file, checks
+GLL/GLR evidence, edits a structured grammar, and exercises self-reading:
+
+  runtime/cetta-core.nogmp.json-gslt --lang petta \
+    langdef/petta/generated/plain_bnf_semantic_admission_v1.metta \
+    tests/langdef/bnf/ebnf_integration_v1.metta
+
+The examples import lib_bnf and close each parser after consuming its result.
+Other MeTTa dialects do not automatically acquire the generated PeTTa
+admission implementation merely by importing the neutral library.
+
+The standalone grammar test targets select core mode before optional runtime
+configuration. Run make test-bnf-native-entry-v1 to exercise the BNF reader
+and EBNF workbench with Python configuration deliberately unavailable.
+
+tests/langdef/bnf/ebnf_applications_v1.metta adds nested Unicode records,
+ambiguous dangling-else attachment, and a small higher-order formula syntax.
+It checks thirty positive/negative observations, including exact ambiguity
+multiplicity, with GLL/GLR evidence. The record and formula grammars are named
+test specimens, not implementations of the JSON or TPTP standards.
+
+The public validation route uses source-authored indexed declaration
+discovery and the dependency-local graph worklist. Its PeTTa compiler consumes
+integer completion NativeTypes inferred from the actual ordered sources;
+these select cheaper scalar-order calls, not a different grammar meaning.
+Public structural rejection is checked before the generated admitted entry.
+
+Regeneration requires the native langdef compiler and the Mettapedia Lean
+project. The Make target for the generated artifact rebuilds the NativeType
+exporter, computes its structured packet, and supplies it to the native
+compiler. Set METTAPEDIA_LEAN_ROOT when the Lean project is not in the sibling
+Mettapedia checkout. The NativeType packet is a compiler input, not a runtime
+rule table. No generated equations should be edited directly.
+
+Run qualify-plain-bnf-selected-native-type-lean-v1 to check the installed
+provider/scalar/caller clauses against the selected Lean refinements. It reads
+today's authored sources and generated commands even with cached imports;
+altered provider polarity or an extra initialization command must fail.
+The whole generated program is not identified with the smaller proof
+specimen. Only the selected ordered clause families are compared, and the
+initialization command is accounted for separately. This is not a proof of
+the initializer's effects, every imported equation, or the C evaluator.
+
+In CeTTa, these parser and checker handles have arena-backed holders: a
+stored or returned copy retains the resource. Scope cleanup releases abandoned
+temporary handles, including interrupted evaluation. Explicit close still
+invalidates all aliases early. Manufacturing an equal identifier by arithmetic
+or printing/reparsing does not create an owning reference. This lifetime
+behavior is not a promise about another host merely loading the MeTTa files.
+
+Text or file to parser
+----------------------
+
+  (bnf:parser-from-text "<s> ::= \"x\"\n" "s")
+  (bnf:parser-from-file "tests/langdef/bnf/plain_bnf_dyck_v1.bnf" "s")
+
+The caller always chooses the start name. The default authority supplies an
+empty lexical environment; it never chooses the first declaration as start.
+For external lexical categories use bnf:grammar-authority-from-string with
+a structured lexical environment, then parser-from-text-with-authority or
+parser-from-file-with-authority. The public entry fixture includes a complete
+lexical override.
+
+The library also supplies bnf:self-authority-v1 as ordinary structured data
+for the BNF self-description and the EBNF reader grammar. It needs no separate
+authority-module import in HE, PeTTa or Prime.
+
+On a successfully loaded parser:
+
+  (langdef:parse-authored-text parser "x")
+  (langdef:parse-authored-file parser filename)
+  (langdef:close-authored-parser parser)
+
+Branch on the returned outcome before treating it as a parser handle.
+Plain parsing returns structured CSTs. Equal-looking alternatives are not
+silently coalesced. The evidence variant also returns a packed forest and
+checks GLL/GLR agreement:
+
+  (langdef:parse-authored-text-evidence parser "x" item-limit)
+
+The last argument bounds forest materialization. Exceeding it currently
+returns an Error describing the bound; it is not grammatical rejection.
+The fixture checks that the same parser subsequently accepts with a larger
+bound. Parser incompleteness, syntax rejection and execution faults remain
+distinct outcomes; none means a proof of rejection of an unfinished search.
+
+Inspecting and editing
+----------------------
+
+  (bnf:read-text source)
+  (bnf:document successful-read)
+  (bnf:document-entries document)
+  (bnf:entry entries)
+  (bnf:rule-name rule)
+  (bnf:rule-expression rule)
+  (bnf:alternative expression)
+  (bnf:element alternative)
+
+The entry/alternative/element relations enumerate occurrences, including
+duplicates. Use bnf:text to construct a structured text value from a host
+string, and bnf:text->string to inspect one. UTF-8 decoding uses the native
+decoder; the conversion to the BNF carrier is an executed authored GSLT.
+The host string representation cannot contain an embedded NUL; conversion
+of a structured scalar-zero text to a host string is refused. Scalar zero
+is not thereby excluded from BNF lexical-class data or byte-file parsing.
+
+Grammar data consists of the constructors in plain_bnf_grammar_v1.metta.
+A MeTTa program may pattern-match it and reconstruct an edited document.
+The editing fixture replaces one literal while retaining the input spans
+as origins. It then calls:
+
+  (bnf:parser-from-document edited-document authority)
+
+This runs structural admission, semantic validation, authored denotation,
+and the structured-value parser loader afresh. It does not render/reparse
+the document or stamp the original source digest onto changed data.
+To inspect intermediate results instead, use bnf:validate-document,
+bnf:denote and bnf:load-parser separately. StructuredGrammarAdmitted and
+StructuredDenotation describe this data route; source-derived ReadValue
+and SemanticGrammarAdmitted additionally carry the reader's provenance.
+
+Malformed edited data and unknown starts are refused. A raw denotation
+candidate is not the public installation entry. Result constructors are
+ordinary data, not unforgeable security capabilities.
+
+Postfix EBNF V1
+---------------
+
+The EBNF reader's syntax is authored in langdef/bnf/ebnf_source_v1.bnf.
+The existing BNF reader, typed declaration/graph admission, and denotation
+compute its syntax LanguageDef and lexical profile; the existing C parser
+then reads EBNF. No second EBNF parser is handwritten in C.
+
+This named profile extends the BNF spelling with:
+
+  (<expression>)     grouping
+  <atom>?            optional, absent or present
+  <atom>*            zero or more iterations
+  <atom>+            one or more iterations
+
+An atom is a reference, quoted literal, or parenthesized expression. A
+postfix operator is adjacent to its atom; nesting operators requires a
+group, as in ("x"?)*. Concatenation uses horizontal whitespace, and the
+alternative delimiter retains plain BNF's literal " |" convention. Rules
+end in LF or CRLF. This is not a claim to implement every EBNF dialect or
+ISO EBNF, and TPTP's Extended BNF remains a distinct source notation.
+
+  (bnf:read-ebnf-text "<s> ::= (\"a\" | \"b\")+\n")
+  (bnf:read-ebnf-file path)
+  (bnf:document successful-read)
+
+These return the existing source-spanned grammar document vocabulary,
+extended by ebnf-v1:group, ebnf-v1:optional, ebnf-v1:zero-or-more, and
+ebnf-v1:one-or-more. Each has a structured body and source span. The
+constructor authority is langdef/bnf/ebnf_grammar_v1.metta; projection is
+the executed langdef/bnf/ebnf_cst_projection_v1.metta. Grammar spans retain
+the CST's Unicode-scalar coordinates; they are not UTF-8 byte indices.
+Parser rejection offsets, by contrast, are byte offsets into the input.
+
+  (bnf:parser-from-ebnf-text source "s")
+  (bnf:parser-from-ebnf-file path "s")
+  (bnf:parser-from-ebnf-document edited-document authority)
+
+The text/file forms also have -with-authority variants for lexical inputs.
+Declaration checking visits original references once before expansion,
+using ebnf_declaration_view_v1.metta and the existing typed declaration
+entry. That view is only for declaration checking: it is never denoted as
+a grammar or passed to graph analysis. It preserves original owners,
+reference spans, order and multiplicity in declaration diagnostics.
+
+ebnf_lowering_v1.metta then computes ordinary BNF and a helper-origin map.
+Grouping and repetition introduce fresh helper definitions. Their prefix
+is longer than every input rule name, reference, start name and lexical
+field; a binary counter distinguishes occurrences, including identical
+edited spans. Comments and original rule names remain unchanged. The
+lowered BNF enters the existing structural admission, graph analysis,
+denotation and C parser loader.
+
+Each helper origin records its operator kind, the owning authored rule's
+name and span, and its own expression span. Owners are recorded during
+lowering, not reconstructed from span containment.
+
+  (bnf:lower-ebnf-document document authority)
+  (bnf:validate-ebnf-declarations document authority)
+
+The first operation exposes (EBNF:LoweredGrammar original authority plain
+origins); it does not itself claim semantic admission or source identity
+for an edited document. The second exposes source declaration diagnostics.
+
+Successful parser construction returns EBNF:SourceParser for a read source
+or EBNF:Parser for edited data:
+
+  (EBNF:Parser handle lowering-receipt)
+  (EBNF:SourceParser handle grammar-binding grammar-source lowering-receipt)
+
+The receipt is (EBNF:LoweredGrammar original authority plain origins).
+It retains the original EBNF, the actual lexical authority, lowered BNF
+and helper origins. Use:
+
+  (bnf:parse-ebnf-text parser text)
+  (bnf:parse-ebnf-file parser path)
+  (bnf:parse-ebnf-text-evidence parser text item-limit)
+  (bnf:close-ebnf-parser parser)
+
+The wrappers EBNF:SourceParse and EBNF:Parse retain that receipt. Their
+outcome is EBNF:Accepted, EBNF:Rejected, EBNF:Cyclic,
+EBNF:Incomplete, or a fault;
+the evidence variant returns EBNF:EvidenceAccepted/EBNF:EvidenceRejected
+with the unchanged native packed forest and its digest as well.
+
+Accepted results contain an explicit EBNF:DerivationsCons/Nil list.
+The executed ebnf_derivation_projection_v1.metta replaces helper productions
+with source-level derivations:
+
+  EBNF:Rule / EBNF:Group       selected alternative and ordered elements
+  EBNF:OptionalAbsent          no operand derivation
+  EBNF:OptionalPresent         one operand derivation, possibly empty
+  EBNF:Repetition              star/plus and an explicit iteration list
+  EBNF:Reference               original reference occurrence and child
+  EBNF:Literal / EBNF:Lexical  separate terminal observations
+
+Rule/alternative spans and literal/reference spans come from the grammar;
+EBNF:InputSpan coordinates count Unicode scalars, whereas rejected input
+offsets count bytes. Group/optional/repetition occurrence identifiers are
+local to the lowering receipt; compare their identity, not a prescribed
+numbering across transformations. Duplicate alternatives, equal-span edited
+occurrences, empty literals and repeated equal CSTs are not deduplicated.
+Generated helper names remain inspectable in the receipt and native forest,
+but do not replace authored syntax in the projected derivations.
+
+The low-level (bnf:project-ebnf-trees lowering-receipt cst-tuple) also exposes
+this transformation. It checks the selected production labels, child shape
+and span continuity but is not an independent parser, byte-level validator
+or proof-replay checker: it relies on the supplied receipt/CST provenance.
+
+Post-lowering graph refusals return:
+
+  (EBNF:GraphRefused (EBNF:Diagnostics items) raw-diagnostics lowering-receipt)
+
+The executed ebnf_diagnostic_projection_v1.metta maps original definitions
+to EBNF:DefinitionDiagnostic and generated helpers to
+EBNF:ExpressionDiagnostic, with the original owner, operator and spans.
+Order and multiplicity are preserved. Unknown diagnostic heads remain
+EBNF:UnmappedDiagnostic; malformed data produces an explicit fault.
+The raw diagnostics and receipt remain available for inspection. The
+low-level entry is:
+
+  (bnf:project-ebnf-graph-diagnostics lowering-receipt raw-diagnostics)
+
+This preserves the existing unreachable/unproductive refusal policy;
+pre-lowering declaration diagnostics remain unchanged. Neither diagnostic
+projection nor the general derivation refinement has a Lean proof yet.
+
+Repetition does not discard empty iterations. For example, ""? has two
+empty derivations, while ""* has infinitely many finite derivations. A
+detected root-reachable cycle now returns:
+
+  (EBNF:Cyclic binding input-digest accepted forest-digest)
+  (EBNF:EvidenceCyclic binding input-digest accepted forest-digest forest)
+
+The acceptance flag is recognition's result, not a count. Neither outcome
+claims a finite tuple of derivations. The evidence form retains the native
+packed forest and requires completed GLL/GLR agreement; the surrounding
+receipt maps helper nodes to source operators. The finite tree projection
+does not unfold that cyclic forest. Generic ParserPack actions may erase
+derivation distinctions, so a detected cycle does not itself establish
+infinitely many distinct semantic values for every ParserPack client.
+
+Replay depth, result limits and recognizer work limits remain incomplete
+outcomes, not cycles or rejections. If the independent GLR check exhausts
+its allowance, evidence returns EBNF:Incomplete identifying that unfinished
+check, even when an ordinary GLL call returns EBNF:Cyclic. Completed forests
+are still compared exactly. Left-recursive repetition helpers now let the
+nullable ("x"?)* and ("x"?)+ specimens finish both engines with exact forest
+agreement. This does not establish a complete cyclic-grammar GLR engine:
+arbitrary authored BNF nullable recursion may still exhaust its stack work.
+
+Finite repetition projection accumulates a reversed list internally and
+restores source order once per root traversal, recursively through nested
+operators. It preserves each iteration's source choice and input span.
+The internal accumulator is not a public derivation constructor.
+
+Run test-ebnf-workbench-v1 for the current EBNF observation, editing,
+self-reading, GLL/GLR evidence, independent-BNF comparison, derivation
+projection, graph diagnostics, cycle/resource distinctions, structural
+primitive, malformed-CST and source-mutation
+gates. Self-reading is a smoke test, not the whole fixed-point theorem.
+EbnfRepetitionSource proves the selected authored helper shapes and an
+all-input execution path for the source-order accumulator, with injective
+ordered-spine interpretation. This leaves body projections as explicit
+calls; it is not the full lowering/projector preservation-reflection proof.
+EbnfHelperNameSource proves that the binary counter advances numerically,
+different allocation counts produce different structured names, and a prefix
+longer than a supplied name-width bound prevents capture. It also checks
+selected live counter, prefix, group-allocation and helper-installation
+clauses. EbnfWidthSource now proves that completed paths of the selected
+authored width scan bound every rule name, nested reference, start name and
+lexical name. This supplies the bound to the helper-name theorem. It also
+proves source executions for all text lengths, maxima and nested optional
+references, and checks that lower-document installs this scan. Its explicit
+string-provider boundary requires returned structured text; this freshness
+result does not claim correctness of string decoding. Total scan termination,
+the complete allocation traversal and native execution correspondence are
+not proved by these selected results.
+
+Run qualify-ebnf-authored-source-lean-v1 for these selected Lean results and
+fresh-file authentication of their authored lowering/projector inputs. The
+client reads those inputs even when imported theorem modules are cached;
+an evidence-local carry mutation must fail authentication. Runtime helper-
+name fixtures separately exercise repeated equal-span occurrences, long
+existing names and lexical names, and reject that mutation through public
+declaration validation. Neither check is a whole-runtime correctness proof.
+Separate namespace fixtures check non-capture without prescribing generated
+helper names. Omitting declarations, nested references or lexical names from
+the source width scan must cause the corresponding fixture to detect capture,
+while the two other namespace controls remain unchanged.
+The new EBNF transformations do not yet have their own NativeType-guided lowering.
+The already-installed BNF NativeTypes are consumed in the reused BNF
+bootstrap and declaration pipeline.
+
+Implementation boundaries
+-------------------------
+
+The wrapper composes executed authored projection, admission and denotation
+transformations. It is not itself a generated phase controller. The native
+parser is the existing C GLL implementation, with GLR as an evidence sibling.
+The selected NativeType-guided scalar lowering is installed and exercised by
+test-plain-bnf-typed-admission-v1. This does not imply a whole-backend
+correctness theorem or linear time for arbitrary grammars. The selected core
+runtime build now uses native packaging for all nine shared language
+descriptors that previously required Python. This preserves their existing
+CGP1/source payloads; BNF does not acquire a CGP1 execution stage. The native
+packaging gate tests exact descriptor payloads, deterministic regeneration,
+and malformed-source/path controls. Legacy qualification targets and other
+build profiles still need separate migration and qualification; this is not
+a claim that every repository target is Python-free.
+
+The benchmark grids cover 25, 50, 100, 200 and 1,000 branches through the
+public EBNF projection path. Branch counts are not lowered rule counts:
+1,000 branches have 1,001 authored rules and 4,001 lowered rules. The
+evaluator recognizes inert LCons values without recursively evaluating each
+list cell; callable fields, equations and function types still block that
+shortcut. Structured-value ingress uses an explicit traversal stack, emits
+the existing digest stream during decoding, and releases owned trees without
+recursion or allocating cleanup memory. Its node-work budgets remain in force.
+The 1,000-branch workload remains expensive, principally during lowered-
+grammar validation. Benchmark receipts separate the authored native lowering
+operation from its surrounding MeTTa evaluation and result handling; a slow
+public lowering stage does not by itself locate the cost inside the authored
+transformation. These workloads do not establish linear scaling or a bound
+for arbitrary input grammars.
+Reachability now uses a two-list FIFO: newly discovered references are
+enqueued without copying all pending work. It preserves the prior visitation
+order and duplicate reference occurrences. PlainBnfReachableQueue proves
+the exact bounded-prefix queue refinement and checks the corresponding
+authored enqueue/rotation clauses; this is not a full PeTTa execution theorem.
+The runtime also uses its existing constructor-derived absence of internal
+tags to skip closed-list normalization on tag-free subtrees. An open private
+list requires such a tag. Unknown metadata and tagged subtrees retain the
+exact traversal; neither grammar semantics nor generated equations change.
+Variable collection similarly reuses the exact singleton-variable summary
+on published hash-stable subtrees. It preserves variable identity and the
+ordered set contribution; non-stable graphs keep cycle detection, and
+multi-variable support keeps exact traversal. These runtime structural facts
+are separate from the source NativeTypes consumed by the PeTTa compiler.
+Match-decision cache hits validate the selected head/arity/mode entry's
+revision and host authority before comparing its borrowed candidate identity.
+Unrelated cached decisions are swept for staleness on misses, before cache
+growth, rather than on every hit. Machine-tree teardown still releases all
+entries. The selection and invalidation predicates are unchanged; this does
+not weaken the checks when source or host callability changes.
+Activation-frame lookup reuses the existing binding index when scanning the
+entire retained binding prefix would be disproportionate. Reachability checks
+also reuse its closed-component facts only for immutable, fully bound
+dependencies and an unbound target. Open frontiers and unavailable structural
+facts keep exact traversal; branch separation and rollback invalidation remain
+required. These are runtime representation optimizations, not new grammar
+algorithms or additional source NativeTypes.
+
+benchmarks/bnf/run_ebnf_workbench.sh retains cumulative public-API probes.
+benchmarks/bnf/run_ebnf_stages.sh instead runs one composition, retaining
+structured intermediate values and observing flushed begin/end markers for
+reading, source declarations, lowering, validation, denotation, loading,
+parsing and projection. It requires a new evidence directory and records
+incomplete stages and failed processes, not just successful trials. Timings
+include public-call orchestration, result matching and observation overhead;
+they are not exclusive CPU attribution or a general linear-time claim.
+The generator's validation-stages mode further separates structural
+admission, the installed NativeType-guided declaration entry, and graph
+analysis without substituting a different validator.
+For finer attribution, analysis-stages works with
+benchmarks/bnf/graph_components.metta loaded before the generated workload.
+It calls the actual installed rank/index/reachability/closure/observation
+workers with their existing result and answer-stream boundaries. This is
+diagnostic orchestration, not an alternate graph algorithm or public API.
+
+The standalone observer controls can be run with:
+
+    bash benchmarks/bnf/test_observe_ebnf_stages.sh NEW_EVIDENCE_DIRECTORY
+
+The constructor gate includes the formerly pending PeTTa data/control
+witnesses: zero-answer fields, literal Error/Empty data, user-defined Error,
+and binary numeric exceptions under catch. Equality retains source operand
+plans so a caught or quoted payload is not re-executed as code. The numeric
+exception boundary uses the producing operation's contract, not a global
+Error-shape test. These selected observations do not establish complete
+SWI exception semantics or equality of implementation-specific error payloads.

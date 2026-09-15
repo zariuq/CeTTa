@@ -294,6 +294,30 @@ int main(void) {
               &space, consumer, &view_argument, 1u, observer) ==
               PETTA_SPECIALIZER_RELATION_DEFER,
           "unknown scope cannot certify absence of suppliers");
+    /* The partial-constructor fact is cached with callability, while its
+     * tuple remains a live observation that can change after rollback. */
+    Atom *partial_tuple = atom_var(&result, "partial-tuple");
+    Atom *partial_term = atom_expr3(
+        &result, atom_symbol(&result, "partial"),
+        atom_symbol(&result, "inert-base"), partial_tuple);
+    CettaGsltTermCursorV1 partial_view = {.source = partial_term};
+    CHECK(petta_specializer_query_view_execution_admission(
+              &space, consumer, &partial_view, 1u, observer) ==
+              PETTA_SPECIALIZER_RELATION_IRRELEVANT,
+          "partial with an unbound tuple has no supplied application");
+    observation_mark = bindings_builder_save(&observation_bindings);
+    CHECK(bindings_builder_add_var_fresh(
+              &observation_bindings, partial_tuple, atom_expr(&result, NULL, 0u)),
+          "bind a partial argument tuple");
+    CHECK(petta_specializer_query_view_execution_admission(
+              &space, consumer, &partial_view, 1u, observer) ==
+              PETTA_SPECIALIZER_RELATION_DEFER,
+          "cached partial head still observes its bound tuple");
+    bindings_builder_rollback(&observation_bindings, observation_mark);
+    CHECK(petta_specializer_query_view_execution_admission(
+              &space, consumer, &partial_view, 1u, observer) ==
+              PETTA_SPECIALIZER_RELATION_IRRELEVANT,
+          "rollback removes the partial tuple observation");
     bindings_builder_free(&observation_bindings);
 
     /* The supplier observation is independent of application saturation.
@@ -334,6 +358,12 @@ int main(void) {
               &space, consumer, &nested_supplier, 1u) ==
               PETTA_SPECIALIZER_RELATION_DEFER,
           "inert head does not erase a callable child");
+    Atom *expression_head = atom_expr2(
+        &result, typed_query, atom_int(&result, 0));
+    CHECK(petta_specializer_query_execution_admission(
+              &space, consumer, &expression_head, 1u) ==
+              PETTA_SPECIALIZER_RELATION_DEFER,
+          "non-symbol head retains its recursive supplier observation");
 
     if (failures == 0u)
         printf("PASS: specializer prepare boundary (%u checks)\n", checks);

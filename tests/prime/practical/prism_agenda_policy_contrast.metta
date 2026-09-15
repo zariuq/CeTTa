@@ -3,7 +3,7 @@
 ; only through the ordinary Prime checker.  This is a scheduler pre-experiment,
 ; not yet a stochastic MAM implementation.
 
-!(import! &self atp:weighted_agenda)
+!(import! &self ../../../examples/atp/prime/weighted_agenda_search.metta)
 
 !(bind! &prism-agenda-kb (new-space))
 !(bind! &prism-agenda-index (new-space))

@@ -227,6 +227,11 @@ static bool emit_statement(EmitContext *context,
                            uint32_t depth) {
     if (!emit_indent(context, depth))
         return false;
+    if (pattern_is(statement, context->profile->assign, 2u))
+        return emit_identifier(context, argument(statement, 0u)) &&
+            emitf(context->output, " = ") &&
+            emit_expression(context, argument(statement, 1u)) &&
+            emitf(context->output, ";\n");
     if (pattern_is(statement, context->profile->declare, 3u))
         return emit_type(context, argument(statement, 1u)) &&
             emitf(context->output, " ") &&
@@ -249,6 +254,12 @@ static bool emit_statement(EmitContext *context,
             emit_indent(context, depth) && emitf(context->output, "} else {\n") &&
             emit_statements(context, argument(statement, 2u), depth + 1u) &&
             emit_indent(context, depth) && emitf(context->output, "}\n");
+    if (pattern_is(statement, context->profile->while_statement, 2u))
+        return emitf(context->output, "while (") &&
+            emit_expression(context, argument(statement, 0u)) &&
+            emitf(context->output, ") {\n") &&
+            emit_statements(context, argument(statement, 1u), depth + 1u) &&
+            emit_indent(context, depth) && emitf(context->output, "}\n");
     if (pattern_is(statement, context->profile->switch_statement, 3u)) {
         const CettaLdPatternV1 *cases = argument(statement, 1u);
         if (!emitf(context->output, "switch (") ||
@@ -263,7 +274,9 @@ static bool emit_statement(EmitContext *context,
                 !emit_value(context, argument(case_pattern, 0u)) ||
                 !emitf(context->output, ":\n") ||
                 !emit_statements(context, argument(case_pattern, 1u),
-                                 depth + 1u))
+                                 depth + 1u) ||
+                !emit_indent(context, depth + 1u) ||
+                !emitf(context->output, "break;\n"))
                 return false;
             cases = argument(cases, 1u);
         }
@@ -271,6 +284,8 @@ static bool emit_statement(EmitContext *context,
             !emit_indent(context, depth) ||
             !emitf(context->output, "default:\n") ||
             !emit_statements(context, argument(statement, 2u), depth + 1u) ||
+            !emit_indent(context, depth + 1u) ||
+            !emitf(context->output, "break;\n") ||
             !emit_indent(context, depth) || !emitf(context->output, "}\n"))
             return false;
         return true;

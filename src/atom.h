@@ -111,6 +111,7 @@ typedef enum {
  * or unfinished atoms conservative unknowns rather than false negatives. */
 #define ATOM_STRUCTURAL_FACTS_VALID UINT32_C(0x80000000)
 #define ATOM_STRUCTURAL_HAS_INTERNAL_TAG UINT32_C(0x00000001)
+#define ATOM_STRUCTURAL_HAS_NATIVE_HANDLE_ID UINT32_C(0x00000002)
 
 /*
  * VariantShape reserves this VarId prefix for its runtime-private slots.
@@ -318,6 +319,13 @@ inline size_t arena_mark_accounted_live_bytes(ArenaMark mark) {
 }
 
 void  arena_account_external_bytes(Arena *a, size_t size);
+/* Native handle identifiers retain an external owner without changing their
+ * integer equality, hash, or printed representation. Only these identifiers
+ * have the extended allocation; ordinary Atom layout is unchanged. */
+Atom *atom_native_handle_identifier(Arena *a, int64_t id, void *owner,
+                                    void (*retain)(void *),
+                                    void (*release)(void *));
+Atom *atom_int_copy(Arena *a, const Atom *source);
 ArenaMark arena_mark(const Arena *a);
 void  arena_reset(Arena *a, ArenaMark mark);
 void *arena_alloc(Arena *a, size_t size);

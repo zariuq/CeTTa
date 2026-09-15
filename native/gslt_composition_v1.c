@@ -208,14 +208,29 @@ static bool gslt_reserve_v1(
     return true;
 }
 
-static bool gslt_positive_arity_v1(const Atom *atom, size_t *out) {
-    if (atom == NULL || out == NULL || atom->kind != ATOM_GROUNDED ||
-        atom->ground.gkind != GV_INT || atom->ground.ival <= 0)
+static bool gslt_arity_v1(const Atom *atom, size_t *out) {
+    if (atom == NULL || out == NULL || atom->kind != ATOM_GROUNDED)
         return false;
-    if ((uint64_t)atom->ground.ival > SIZE_MAX)
-        return false;
-    *out = (size_t)atom->ground.ival;
-    return true;
+    if (atom->ground.gkind == GV_INT) {
+        if (atom->ground.ival < 0 || (uint64_t)atom->ground.ival > SIZE_MAX)
+            return false;
+        *out = (size_t)atom->ground.ival;
+        return true;
+    }
+    if (atom->ground.gkind == GV_BIGINT) {
+        const char *text = atom_bigint_cstr(atom);
+        size_t value = 0u;
+        if (!text || !*text) return false;
+        for (; *text; text++) {
+            if (*text < '0' || *text > '9') return false;
+            size_t digit = (size_t)(*text - '0');
+            if (value > (SIZE_MAX - digit) / 10u) return false;
+            value = value * 10u + digit;
+        }
+        *out = value;
+        return true;
+    }
+    return false;
 }
 
 static bool gslt_push_operator_v1(
@@ -553,10 +568,10 @@ static bool gslt_collect_presentation_v1(
         size_t arity;
         if (!gslt_head_v1(declaration, "operator", 2u) ||
             declaration->expr.elems[1]->kind != ATOM_SYMBOL ||
-            !gslt_positive_arity_v1(declaration->expr.elems[2], &arity))
+            !gslt_arity_v1(declaration->expr.elems[2], &arity))
             return gslt_composition_error_v1(
                 error, error_size,
-                "GSLT signatures require (operator NAME POSITIVE-ARITY)");
+                "GSLT signatures require (operator NAME NONNEGATIVE-ARITY)");
         if (!gslt_push_operator_v1(
                 builder, presentation_name,
                 atom_name_cstr(declaration->expr.elems[1]), arity,

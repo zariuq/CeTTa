@@ -1,0 +1,3 @@
+[(typed-list 1 LNil)]
+[((typed-list (superpose (1 2)) LNil))]
+[((Error (LCons "bad" LNil) (BadArgType 1 Number String)))]

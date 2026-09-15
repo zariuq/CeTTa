@@ -680,6 +680,13 @@ bool term_universe_atom_is_stable(Atom *atom) {
     uint32_t cap = 0;
     bool stable = false;
 
+    /* The scalar spelling of a managed native identifier is not its lifetime.
+     * Preserve its owner in the existing pointer-backed fallback, never in the
+     * pointer-free integer encoding. The fact composes through expressions. */
+    if (atom && (atom->structural_facts &
+                 ATOM_STRUCTURAL_HAS_NATIVE_HANDLE_ID) != 0u)
+        return false;
+
     /* The compositional leaf summary answers this for immutable atoms built
      * through the ordinary constructors.  The traversal remains authoritative
      * when that positive proof was not established. */
@@ -709,7 +716,9 @@ bool term_universe_atom_is_stable(Atom *atom) {
         case ATOM_VAR:
             break;
         case ATOM_GROUNDED:
-            if (!atom_grounded_kind_is_term_stable(cur->ground.gkind))
+            if ((cur->structural_facts &
+                 ATOM_STRUCTURAL_HAS_NATIVE_HANDLE_ID) != 0u ||
+                !atom_grounded_kind_is_term_stable(cur->ground.gkind))
                 goto done;
             break;
         case ATOM_EXPR:

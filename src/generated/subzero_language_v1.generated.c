@@ -1611,22 +1611,8 @@ static const uint8_t cetta_subzero_language_v1_compiled_plan_v1[] = {
 };
 
 static const CettaGsltEmbeddedSourceV1 cetta_subzero_language_v1_sources[] = {
-    {
-        .input = {
-            .bytes = cetta_subzero_language_v1_semantic_0,
-            .length = sizeof(cetta_subzero_language_v1_semantic_0),
-            .source = "semantics/free_bag_rewrite_core_v1.metta",
-        },
-        .sha256 = "69843804e66eaadebdd1b04e24e424bdab0989f92b43a27d12c889be6d8a4ba6",
-    },
-    {
-        .input = {
-            .bytes = cetta_subzero_language_v1_semantic_1,
-            .length = sizeof(cetta_subzero_language_v1_semantic_1),
-            .source = "semantics/public_result_bag_v1.metta",
-        },
-        .sha256 = "3877ee9508d7bc573a793527794df658ae53e60cf8b9462c004a0137f384af24",
-    },
+    {.input = {.bytes = cetta_subzero_language_v1_semantic_0, .length = sizeof(cetta_subzero_language_v1_semantic_0), .source = "semantics/free_bag_rewrite_core_v1.metta"}, .sha256 = "69843804e66eaadebdd1b04e24e424bdab0989f92b43a27d12c889be6d8a4ba6"},
+    {.input = {.bytes = cetta_subzero_language_v1_semantic_1, .length = sizeof(cetta_subzero_language_v1_semantic_1), .source = "semantics/public_result_bag_v1.metta"}, .sha256 = "3877ee9508d7bc573a793527794df658ae53e60cf8b9462c004a0137f384af24"},
 };
 
 const CettaGsltEmbeddedLanguageV1 cetta_subzero_language_v1 = {
@@ -1634,31 +1620,18 @@ const CettaGsltEmbeddedLanguageV1 cetta_subzero_language_v1 = {
     .profile_name = NULL,
     .syntax_backend = "he-reader-direct-v1",
     .term_abi = "finite-horn-quote-v1",
-    .manifest = {
-        .input = {
-            .bytes = cetta_subzero_language_v1_manifest_v1,
-            .length = sizeof(cetta_subzero_language_v1_manifest_v1),
-            .source = "langdef.metta",
-        },
-        .sha256 = "97d5a92485d3641be5dab531c1945df6a3f59686702e32b894a9cc7b0dec9172",
-    },
+    .manifest = {.input = {.bytes = cetta_subzero_language_v1_manifest_v1, .length = sizeof(cetta_subzero_language_v1_manifest_v1), .source = "langdef.metta"}, .sha256 = "97d5a92485d3641be5dab531c1945df6a3f59686702e32b894a9cc7b0dec9172"},
     .semantic_sources = cetta_subzero_language_v1_sources,
     .semantic_source_count = 2u,
-    .compiled_plan = {
-        .bytes = cetta_subzero_language_v1_compiled_plan_v1,
-        .length = sizeof(cetta_subzero_language_v1_compiled_plan_v1),
-        .sha256 = "4dba0901c22c66ec3133d9c53745e8fa86dc93cba73f712827b27015238be003",
-    },
+    .compiled_plan = {.bytes = cetta_subzero_language_v1_compiled_plan_v1, .length = sizeof(cetta_subzero_language_v1_compiled_plan_v1), .sha256 = "4dba0901c22c66ec3133d9c53745e8fa86dc93cba73f712827b27015238be003"},
     .program_nil = "subzero-program-nil",
     .program_cons = "subzero-program-cons",
     .entry_relation = "subzero-evaluate",
-    .entry_arity = 3u,
-    .program_position = 0u,
-    .result_position = 2u,
+    .entry_arity = 3u, .program_position = 0u, .result_position = 2u,
     .query_relation = NULL,
     .query_arity = 0u,
     .request_pipeline = NULL,
     .observation = "bag",
     .manifest_sha256 = "97d5a92485d3641be5dab531c1945df6a3f59686702e32b894a9cc7b0dec9172",
-    .compiler_sha256 = "31100b0aede263267ae133a061bd15c64707095a4224fbde210328fb5a7d0f33",
+    .compiler_sha256 = "c82486772be84b0aec1aaf90f3a754fca4e9c370a05f98040fbda3de16671e22",
 };

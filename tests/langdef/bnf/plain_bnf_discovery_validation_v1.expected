@@ -1,0 +1,8 @@
+true
+DiscoveryValidationLiteralV1
+DiscoveryValidationRecursiveV1
+DiscoveryValidationDuplicateOrderV1
+DiscoveryValidationEmptyV1
+DiscoveryValidationUnicodeV1
+DiscoveryValidationAmbiguousV1
+DiscoveryValidationSelfV1

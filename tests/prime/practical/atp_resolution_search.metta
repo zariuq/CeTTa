@@ -1,4 +1,4 @@
-!(import! &self lib_atp)
+!(import! &self ../../../examples/atp/prime/search_modules.metta)
 
 (= (test:refutation-replays $result)
    (case $result

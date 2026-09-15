@@ -252,6 +252,11 @@ bool petta_semantics_match_cons_constraint(
  * not acquire list-pattern meaning during matching. */
 bool petta_semantics_match_lowered_head(
     Arena *arena, Atom *head, Atom *value, BindingsBuilder *builder);
+/* Same match as freshening the head with this epoch first. Observed
+ * structure stays borrowed; retaining source syntax uses the eager match. */
+bool petta_semantics_match_lowered_head_epoch(
+    Arena *arena, Atom *head, Atom *value,
+    BindingsBuilder *builder, uint32_t epoch);
 
 /*
  * HE stdlib equations reused by PeTTa are lowered to private value-binding

@@ -24,6 +24,7 @@ WITHOUT_DEFINITION = (
 CHAR_CORE = PRESENTATIONS / "shared" / "char_core_v1.metta"
 METAMATH = ROOT / "langdef" / "metamath" / "syntax_v1.metta"
 TPTP = ROOT / "langdef" / "tptp" / "syntax_fof_cnf_v1.metta"
+TPTP_UNICODE_SCALARS = ROOT / "langdef" / "tptp" / "unicode_scalar_classes_v1.metta"
 LOOKAHEAD = PRESENTATIONS / "shared" / "lookahead_core_v1.metta"
 MEGALODON = PRESENTATIONS / "languages" / "megalodon_dynamic_v1.metta"
 GROUND_RELATIONS = PRESENTATIONS / "shared" / "ground_relations_v1.metta"
@@ -64,7 +65,7 @@ EXPECTED_METAMATH_DIGEST = (
     "8c1b50b54686eed8b6e11ff61160cf17db79d814b933896aca78f76638043b82"
 )
 EXPECTED_TPTP_DIGEST = (
-    "4bb4743974e886104667e91cac389784b6e62a267815bb0745272db2a353f104"
+    "9fb1551ab2bba0ccce30839d82ebba58ae0421deeec49cd4a5f3e5a91ffbd00e"
 )
 EXPECTED_MEGALODON_DIGEST = (
     "2eba88d8bb4681540cb84bf6dd15e183cf83ad2821ae682cb94a754b4f2eb36a"
@@ -196,6 +197,19 @@ def main() -> int:
         raise GateFailure("rule deletion did not change the package digest")
     passed += 1
 
+    with tempfile.TemporaryDirectory(prefix="gslt2parse-nullary-v1-") as raw_temp:
+        nullary = Path(raw_temp) / "nullary.metta"
+        nullary.write_text(
+            "(gslt-presentation-v1 NullaryV1 "
+            "(signature (operator z 0)) (equations) "
+            "(rewrites (rule z-rule (head (z)) (body))))",
+            encoding="utf-8",
+        )
+        canonical_nullary = schema.canonical_text(schema.admit([nullary])[0])
+        if "(operator z 0)" not in canonical_nullary or "(head (z))" not in canonical_nullary:
+            raise GateFailure("nullary operator was not preserved canonically")
+    passed += 1
+
     mutations = {
         "unknown-field": (
             "(gslt-presentation-v1 Bad "
@@ -212,6 +226,11 @@ def main() -> int:
             "(signature (operator p 1) (operator p 1)) "
             "(equations) (rewrites))",
             "duplicate operator p/1",
+        ),
+        "negative-operator-arity": (
+            "(gslt-presentation-v1 Bad "
+            "(signature (operator p -1)) (equations) (rewrites))",
+            "NONNEGATIVE-ARITY",
         ),
         "duplicate-rule": (
             "(gslt-presentation-v1 Bad "
@@ -362,7 +381,9 @@ def main() -> int:
         raise GateFailure("Metamath v1 package digest changed")
     passed += 1
 
-    tptp = schema.admit([CORE, CHAR_CORE, TPTP])
+    tptp = schema.admit(
+        [CORE, LOOKAHEAD, CHAR_CORE, GROUND_RELATIONS, TPTP_UNICODE_SCALARS, TPTP]
+    )
     if schema.package_digest(tptp) != EXPECTED_TPTP_DIGEST:
         raise GateFailure("TPTP v1 package digest changed")
     passed += 1
@@ -505,7 +526,7 @@ def main() -> int:
             raise GateFailure(f"guest-language name in generic tool {path.name}")
     passed += 1
 
-    total = 35
+    total = 37
     if passed != total:
         raise GateFailure(f"gate accounting mismatch: {passed}/{total}")
     print(f"(FiniteHornGSLTV1CanarySummary {total} {passed} 0)")

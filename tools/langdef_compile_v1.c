@@ -5,6 +5,8 @@
 #include "native/langdef_metta_equation_compiler_v1.h"
 #include "native/gslt_petta_direct_v1.h"
 #include "native/gslt_rhometta_direct_v1.h"
+#include "native/language_def_core_v1.h"
+#include "native/operational_language_def_v1.h"
 
 #include "finite_horn_gslt_v1.h"
 #include "finite_horn_answer_stream_v1.h"
@@ -13,6 +15,7 @@
 #include "parser_pack_abi_stream_v1.h"
 #include "parser_pack_transparent_inline_native_v1.h"
 #include "symbol.h"
+#include "parser.h"
 
 #include <errno.h>
 #include <fcntl.h>
@@ -1249,8 +1252,8 @@ static bool langdef_semantic_render_q_term_v1(
     arguments = term->expr.elems[2];
     if (!langdef_semantic_q_list_next_v1(
             &arguments, &argument, &done, error, error_size) ||
-        (!done && !langdef_byte_buffer_v1_literal(
-                      buffer, "(", error, error_size)))
+        !langdef_byte_buffer_v1_literal(
+            buffer, "(", error, error_size))
         return false;
     {
         char *head = NULL;
@@ -1264,7 +1267,8 @@ static bool langdef_semantic_render_q_term_v1(
             return false;
     }
     if (done)
-        return true;
+        return langdef_byte_buffer_v1_literal(
+            buffer, ")", error, error_size);
     for (;;) {
         if (!langdef_byte_buffer_v1_literal(
                 buffer, " ", error, error_size) ||
@@ -2404,8 +2408,6 @@ static bool compile_semantic_gslt_presentation_v1(
         goto done;
     for (size_t index = 0u; index < operators_len; index++) {
         char arity[32];
-        if (operators[index].arity == 0u)
-            continue;
         int arity_len = snprintf(
             arity, sizeof(arity), "%" PRIu32, operators[index].arity);
         if (arity_len <= 0 || (size_t)arity_len >= sizeof(arity) ||
@@ -2680,39 +2682,61 @@ done:
     return ok;
 }
 
-static bool compile_equations(const char *source, const char *output,
+static bool compile_equations(
+                              const char *const *sources,
+                              size_t source_count,
+                              const char *output,
                               char *error, size_t error_size) {
-    const char *paths[1] = {source};
     FHGSLTPackage *package = NULL;
     uint8_t *equations = NULL;
     size_t equation_len = 0u;
-    uint8_t *canonical = NULL;
-    size_t canonical_len = 0u;
+    uint8_t **canonical = NULL;
+    size_t *canonical_lens = NULL;
+    size_t presentation_count = 0u;
     char package_digest[65];
     char header[256];
     int header_len;
     uint8_t *program = NULL;
     bool ok = false;
 
-    if (!fhgslt_package_from_paths(paths, 1u, &package,
+    if (sources == NULL || source_count == 0u || output == NULL)
+        return set_error(error, error_size,
+                         "invalid equation composition request");
+    if (!fhgslt_package_from_paths(sources, source_count, &package,
                                    error, error_size) ||
-        fhgslt_package_presentation_count(package) != 1u ||
         !fhgslt_package_digest(package, package_digest,
-                               error, error_size) ||
-        !fhgslt_package_canonical_presentation(
-            package, 0u, &canonical, &canonical_len,
-            error, error_size) ||
-        !cetta_langdef_metta_equations_v1(
-            canonical, canonical_len, &equations, &equation_len,
-            error, error_size)) {
-        if (error[0] == '\0')
-            set_error(error, error_size,
-                      "equation source must contain one presentation");
+                               error, error_size))
+        goto done;
+    presentation_count = fhgslt_package_presentation_count(package);
+    if (presentation_count == 0u ||
+        presentation_count > SIZE_MAX / sizeof(*canonical) ||
+        presentation_count > SIZE_MAX / sizeof(*canonical_lens)) {
+        set_error(error, error_size,
+                  "equation composition has no presentations or is too large");
         goto done;
     }
+    canonical = calloc(presentation_count, sizeof(*canonical));
+    canonical_lens = calloc(
+        presentation_count, sizeof(*canonical_lens));
+    if (canonical == NULL || canonical_lens == NULL) {
+        set_error(error, error_size,
+                  "out of memory canonicalizing equation composition");
+        goto done;
+    }
+    for (size_t index = 0u; index < presentation_count; index++) {
+        if (!fhgslt_package_canonical_presentation(
+                package, index, &canonical[index],
+                &canonical_lens[index], error, error_size))
+            goto done;
+    }
+    if (!cetta_langdef_metta_equation_composition_v1(
+            (const uint8_t *const *)canonical, canonical_lens,
+            presentation_count, &equations, &equation_len,
+            error, error_size))
+        goto done;
     header_len = snprintf(
         header, sizeof(header),
-        "; generated from a compositional GSLT equation presentation\n"
+        "; generated from an ordered GSLT equation composition\n"
         "; source-package-sha256 %s\n"
         "; compiler c-finite-horn-metta-equation-v1\n\n",
         package_digest);
@@ -2734,6 +2758,11 @@ static bool compile_equations(const char *source, const char *output,
                       error, error_size);
 
 done:
+    if (canonical != NULL) {
+        for (size_t index = 0u; index < presentation_count; index++)
+            free(canonical[index]);
+    }
+    free(canonical_lens);
     free(canonical);
     free(program);
     free(equations);
@@ -2793,6 +2822,63 @@ static bool direct_sources_from_composition_v1(
     return true;
 }
 
+static bool compile_equations_command_v1(
+    int argc, char **argv, char *error, size_t error_size) {
+    const char *sources[CETTA_LANGDEF_MAX_SOURCES];
+    size_t source_count = 0u;
+    const char *composition = NULL;
+    const char *output = NULL;
+    char resolved_sources[CETTA_LANGDEF_MAX_SOURCES][PATH_MAX];
+    Arena arena;
+    bool ok = false;
+
+    arena_init(&arena);
+    for (int index = 2; index < argc; index++) {
+        const char *option = argv[index];
+        const char *value;
+        if (index + 1 >= argc) {
+            set_error(error, error_size,
+                      "equations option lacks a value");
+            goto done;
+        }
+        value = argv[++index];
+        if (strcmp(option, "--source") == 0) {
+            if (source_count >= CETTA_LANGDEF_MAX_SOURCES) {
+                set_error(error, error_size,
+                          "equations has too many sources");
+                goto done;
+            }
+            sources[source_count++] = value;
+        } else if (strcmp(option, "--composition") == 0 &&
+                   composition == NULL) {
+            composition = value;
+        } else if (strcmp(option, "--out") == 0 && output == NULL) {
+            output = value;
+        } else {
+            set_error(error, error_size,
+                      "equations has an unknown or repeated option");
+            goto done;
+        }
+    }
+    if ((source_count == 0u) == (composition == NULL) || output == NULL) {
+        set_error(
+            error, error_size,
+            "equations requires exactly one source list or composition and an output");
+        goto done;
+    }
+    if (composition != NULL &&
+        !direct_sources_from_composition_v1(
+            composition, &arena, resolved_sources, sources, &source_count,
+            "equations", error, error_size))
+        goto done;
+    ok = compile_equations(
+        sources, source_count, output, error, error_size);
+
+done:
+    arena_free(&arena);
+    return ok;
+}
+
 static bool compile_petta_direct_command_v1(
     int argc, char **argv, size_t *rule_count,
     char source_digest[65], char artifact_digest[65],
@@ -2801,6 +2887,10 @@ static bool compile_petta_direct_command_v1(
     size_t source_count = 0u;
     const char *composition = NULL;
     const char *epilogue = NULL;
+    const char *native_types_path = NULL;
+    const char *admission_language_path = NULL;
+    const char *admission_entry = NULL;
+    Atom *native_type_packet = NULL;
     const char *output = NULL;
     const char *entry_modes[CETTA_LANGDEF_MAX_SOURCES];
     size_t entry_mode_count = 0u;
@@ -2808,6 +2898,10 @@ static bool compile_petta_direct_command_v1(
     char resolved_sources[CETTA_LANGDEF_MAX_SOURCES][PATH_MAX];
     Atom *presentations[CETTA_LANGDEF_MAX_SOURCES];
     Arena arena;
+    CettaOperationalLanguageDefV1 admission_wire;
+    CettaLanguageDefCoreV1 admission_language;
+    CettaOpLangV1Status admission_wire_status = CETTA_OP_LANG_V1_OK;
+    CettaLdCoreV1Status admission_language_status = CETTA_LD_CORE_V1_OK;
     uint8_t *program = NULL;
     size_t program_len = 0u;
     uint8_t *epilogue_bytes = NULL;
@@ -2815,6 +2909,8 @@ static bool compile_petta_direct_command_v1(
     bool ok = false;
 
     arena_init(&arena);
+    cetta_op_lang_v1_init(&admission_wire);
+    cetta_language_def_core_v1_init(&admission_language);
     for (int index = 2; index < argc; index++) {
         const char *option = argv[index];
         const char *value;
@@ -2837,6 +2933,15 @@ static bool compile_petta_direct_command_v1(
         } else if (strcmp(option, "--epilogue") == 0 &&
                    epilogue == NULL) {
             epilogue = value;
+        } else if (strcmp(option, "--native-types") == 0 &&
+                   native_types_path == NULL) {
+            native_types_path = value;
+        } else if (strcmp(option, "--admission-language") == 0 &&
+                   admission_language_path == NULL) {
+            admission_language_path = value;
+        } else if (strcmp(option, "--admission-entry") == 0 &&
+                   admission_entry == NULL) {
+            admission_entry = value;
         } else if (strcmp(option, "--entry-mode") == 0) {
             if (closed_entry_residual) {
                 set_error(error, error_size,
@@ -2875,6 +2980,23 @@ static bool compile_petta_direct_command_v1(
                   "petta-direct requires exactly one source list or composition and an output");
         goto done;
     }
+    if (native_types_path != NULL && epilogue != NULL) {
+        set_error(error, error_size,
+                  "native-type specialization requires the fixed source composition, without an unchecked epilogue");
+        goto done;
+    }
+    if ((admission_language_path == NULL) != (admission_entry == NULL)) {
+        set_error(error, error_size,
+                  "petta-direct requires --admission-language and --admission-entry together");
+        goto done;
+    }
+    if (admission_language_path != NULL &&
+        (native_types_path == NULL || !closed_entry_residual ||
+         entry_mode_count == 0u || epilogue != NULL)) {
+        set_error(error, error_size,
+                  "admitted specialization requires native types and closed entry modes, without an epilogue");
+        goto done;
+    }
     if (composition != NULL &&
         !direct_sources_from_composition_v1(
             composition, &arena, resolved_sources, sources, &source_count,
@@ -2886,7 +3008,34 @@ static bool compile_petta_direct_command_v1(
         if (presentations[index] == NULL)
             goto done;
     }
-    if (!(closed_entry_residual
+    if (native_types_path != NULL) {
+        native_type_packet = cetta_langdef_read_single_form(
+            native_types_path, &arena, error, error_size);
+        if (native_type_packet == NULL)
+            goto done;
+    }
+    if (admission_language_path != NULL &&
+        (!cetta_op_lang_v1_parse_file(
+             &admission_wire, admission_language_path, 4000000u, 8000000u,
+             &admission_wire_status, error, error_size) ||
+         !cetta_language_def_core_v1_decode(
+             &admission_language, &admission_wire, 200000u,
+             &admission_language_status, error, error_size)))
+        goto done;
+    if (!(admission_language_path != NULL
+              ? cetta_gslt_petta_direct_admitted_v1(
+                    presentations, source_count, native_type_packet,
+                    entry_modes, entry_mode_count, &admission_language,
+                    admission_wire.source_sha256, admission_entry,
+                    &program, &program_len, rule_count, source_digest,
+                    error, error_size)
+              : native_type_packet != NULL
+              ? cetta_gslt_petta_direct_native_types_v1(
+                    presentations, source_count, native_type_packet,
+                    entry_modes, entry_mode_count, closed_entry_residual,
+                    &program, &program_len, rule_count, source_digest,
+                    error, error_size)
+              : closed_entry_residual
               ? cetta_gslt_petta_direct_closed_v1(
                     presentations, source_count,
                     entry_modes, entry_mode_count, &program, &program_len,
@@ -2927,6 +3076,8 @@ static bool compile_petta_direct_command_v1(
 done:
     free(epilogue_bytes);
     free(program);
+    cetta_language_def_core_v1_free(&admission_language);
+    cetta_op_lang_v1_free(&admission_wire);
     arena_free(&arena);
     return ok;
 }
@@ -3560,6 +3711,228 @@ static const char *option_value(int argc, char **argv, const char *name) {
             return argv[index + 1];
     }
     return NULL;
+}
+
+/* Physical emission of the occurrence-tagged md-compile result.  This is not
+ * an evaluator for candidate-policy: the authored transformation and quotation
+ * matcher produce the cells.  Source coverage, totality and disjointness are
+ * checked before any header is published.  The input must come from that
+ * transformation: occurrence metadata is not an independent semantic replay
+ * proof for an arbitrary supplied answer stream. */
+static int md_policy_domain_index_v1(Atom *term,
+                                     const char *const *domain, size_t len) {
+    for (size_t i = 0u; i < len; i++)
+        if (atom_is_symbol(term, domain[i]))
+            return (int)i;
+    return -1;
+}
+
+static const char *const md_observations_v1[] = {
+    "unknown", "absent", "literal", "expression"
+};
+static const char *const md_keys_v1[] = {
+    "wildcard", "literal", "expression-arity", "expression-head"
+};
+static const char *const md_relations_v1[] = {"different", "equal"};
+static const char *const md_outcomes_v1[] = {"fallback", "keep", "refute"};
+
+/* Shape required by the existing direct-key optimization.  Only compares the
+ * generated table; it never fills missing cells or changes policy answers. */
+static unsigned md_exact_key_shape_v1(unsigned observation, unsigned key,
+                                       unsigned arity, unsigned identity) {
+    if (observation == 0u) return 0u;
+    if (key == 0u) return 1u;
+    if (observation == 1u) return 2u;
+    if (observation == 2u) return key == 1u && identity == 1u ? 1u : 2u;
+    return (key == 2u && arity == 1u) ||
+           (key == 3u && arity == 1u && identity == 1u) ? 1u : 2u;
+}
+
+static bool compile_match_policy_header_v1(int argc, char **argv,
+                                           char *error, size_t error_size) {
+    const char *policy = NULL, *answers = NULL, *output = NULL;
+    FHGSLTPackage *package = NULL;
+    FHAnswerStreamV1 stream;
+    Arena arena;
+    uint8_t *quotation = NULL;
+    size_t quotation_len = 0u;
+    char digest[65];
+    struct MDOccurrence { const Atom *rule; bool source; bool admitted; };
+    struct MDOccurrence *occurrences = NULL;
+    unsigned char table[4][4][2][2] = {{{{0}}}};
+    bool seen[4][4][2][2] = {{{{false}}}};
+    char *rendered = NULL;
+    size_t rendered_len = 0u;
+    FILE *file = NULL;
+    bool ok = false;
+    fh_answer_stream_v1_init(&stream);
+    arena_init(&arena);
+
+    for (int i = 2; i < argc; i++) {
+        const char *option = argv[i];
+        if (++i >= argc) {
+            set_error(error, error_size, "match-policy-header option lacks a value");
+            goto done;
+        }
+        if (!strcmp(option, "--policy") && !policy) policy = argv[i];
+        else if (!strcmp(option, "--answers") && !answers) answers = argv[i];
+        else if (!strcmp(option, "--out") && !output) output = argv[i];
+        else {
+            set_error(error, error_size, "invalid or repeated match-policy-header option");
+            goto done;
+        }
+    }
+    if (!policy || !answers || !output) {
+        set_error(error, error_size, "match-policy-header requires policy, answers and out");
+        goto done;
+    }
+    if (!fhgslt_package_from_paths(&policy, 1u, &package, error, error_size))
+        goto done;
+    Atom *root = cetta_langdef_read_single_form(policy, &arena, error, error_size);
+    if (!root || root->kind != ATOM_EXPR || root->expr.len < 2u ||
+        !atom_is_symbol(root->expr.elems[1], "MatchDecisionPolicyV1") ||
+        fhgslt_package_presentation_count(package) != 1u ||
+        fhgslt_package_rule_count(package) == 0u) {
+        set_error(error, error_size, "expected one nonempty MatchDecisionPolicyV1");
+        goto done;
+    }
+    if (!fhgslt_package_digest(package, digest, error, error_size) ||
+        !fhgslt_package_quoted_rules(package, 0u, &quotation, &quotation_len,
+                                     error, error_size) ||
+        !fh_answer_stream_v1_read(&stream, answers, error, error_size))
+        goto done;
+    size_t position = 0u;
+    const Atom *cursor = parse_sexpr(&arena, (const char *)quotation, &position);
+    size_t rule_count = fhgslt_package_rule_count(package);
+    occurrences = calloc(rule_count, sizeof(*occurrences));
+    if (!cursor || position != quotation_len || !occurrences) {
+        set_error(error, error_size, "cannot decode policy source quotation");
+        goto done;
+    }
+    for (size_t i = 0u; i < rule_count; i++) {
+        bool end;
+        if (!langdef_semantic_q_list_next_v1(&cursor, &occurrences[i].rule,
+                                             &end, error, error_size) || end)
+            goto done;
+    }
+    if (!atom_is_symbol((Atom *)cursor, "q-nil")) {
+        set_error(error, error_size, "policy source quotation count differs");
+        goto done;
+    }
+    for (size_t i = 0u; i < stream.len; i++) {
+        Atom *record = stream.terms[i];
+        if (!cetta_langdef_expr_head(record, "md-compile", 1u)) {
+            set_error(error, error_size, "expected md-compile result");
+            goto done;
+        }
+        Atom *fact = record->expr.elems[1];
+        bool is_source = cetta_langdef_expr_head(fact, "md-source", 1u);
+        bool is_admitted = cetta_langdef_expr_head(fact, "md-admitted", 1u);
+        bool is_cell = cetta_langdef_expr_head(fact, "md-cell", 6u);
+        if (!is_source && !is_admitted && !is_cell) {
+            set_error(error, error_size, "unknown policy compilation result");
+            goto done;
+        }
+        size_t r = 0u;
+        while (r < rule_count &&
+               !atom_eq((Atom *)occurrences[r].rule, fact->expr.elems[1])) r++;
+        if (r == rule_count) {
+            set_error(error, error_size, "policy result names a foreign source occurrence");
+            goto done;
+        }
+        if (is_source || is_admitted) {
+            bool *flag = is_source ? &occurrences[r].source : &occurrences[r].admitted;
+            if (*flag) {
+                set_error(error, error_size, "repeated policy occurrence record");
+                goto done;
+            }
+            *flag = true;
+            continue;
+        }
+        int o = md_policy_domain_index_v1(fact->expr.elems[2], md_observations_v1, 4u);
+        int k = md_policy_domain_index_v1(fact->expr.elems[3], md_keys_v1, 4u);
+        int a = md_policy_domain_index_v1(fact->expr.elems[4], md_relations_v1, 2u);
+        int n = md_policy_domain_index_v1(fact->expr.elems[5], md_relations_v1, 2u);
+        int v = md_policy_domain_index_v1(fact->expr.elems[6], md_outcomes_v1, 3u);
+        if (o < 0 || k < 0 || a < 0 || n < 0 || v < 0) {
+            set_error(error, error_size, "policy cell is outside the finite ABI domain");
+            goto done;
+        }
+        if (seen[o][k][a][n]) {
+            set_error(error, error_size, "policy occurrences overlap at (%s, %s, %s, %s)",
+                      md_observations_v1[o], md_keys_v1[k],
+                      md_relations_v1[a], md_relations_v1[n]);
+            goto done;
+        }
+        seen[o][k][a][n] = true;
+        table[o][k][a][n] = (unsigned char)v;
+    }
+    for (size_t r = 0u; r < rule_count; r++) {
+        if (!occurrences[r].source || !occurrences[r].admitted) {
+            set_error(error, error_size, "policy contains an omitted or unadmitted source occurrence");
+            goto done;
+        }
+    }
+    bool exact_key = true;
+    for (unsigned o = 0u; o < 4u; o++)
+        for (unsigned k = 0u; k < 4u; k++)
+            for (unsigned a = 0u; a < 2u; a++)
+                for (unsigned n = 0u; n < 2u; n++) {
+                    if (!seen[o][k][a][n]) {
+                        set_error(error, error_size, "policy has no occurrence at (%s, %s, %s, %s)",
+                                  md_observations_v1[o], md_keys_v1[k],
+                                  md_relations_v1[a], md_relations_v1[n]);
+                        goto done;
+                    }
+                    exact_key &= table[o][k][a][n] == md_exact_key_shape_v1(o, k, a, n);
+                }
+
+    file = open_memstream(&rendered, &rendered_len);
+    if (!file) {
+        set_error(error, error_size, "cannot allocate policy header stream");
+        goto done;
+    }
+    fprintf(file, "/* Generated from MatchDecisionPolicyV1; do not edit. */\n"
+                  "#ifndef CETTA_MATCH_DECISION_POLICY_V1_GENERATED_H\n"
+                  "#define CETTA_MATCH_DECISION_POLICY_V1_GENERATED_H\n\n"
+                  "#define CETTA_MATCH_DECISION_POLICY_GSLT_DIGEST \"%s\"\n"
+                  "#define CETTA_MATCH_DECISION_POLICY_GSLT_IDENTITY \"MatchDecisionPolicyV1-%s\"\n"
+                  "#define CETTA_MATCH_DECISION_POLICY_ID UINT64_C(0x%.16s)\n"
+                  "#define CETTA_MATCH_DECISION_POLICY_EXACT_KEY_PLAN_V1 %u\n\n"
+                  "enum {\n    CETTA_MD_POLICY_FALLBACK = 0,\n"
+                  "    CETTA_MD_POLICY_KEEP = 1,\n    CETTA_MD_POLICY_REFUTE = 2,\n};\n\n"
+                  "static const unsigned char cetta_md_policy_v1[4][4][2][2] = {\n",
+            digest, digest, digest, exact_key ? 1u : 0u);
+    for (unsigned o = 0u; o < 4u; o++) {
+        fprintf(file, "    /* %s */ {\n", md_observations_v1[o]);
+        for (unsigned k = 0u; k < 4u; k++) {
+            fprintf(file, "        /* %s */ {\n", md_keys_v1[k]);
+            for (unsigned a = 0u; a < 2u; a++)
+                fprintf(file, "            {%u, %u}, /* arity %s */\n",
+                        (unsigned)table[o][k][a][0], (unsigned)table[o][k][a][1],
+                        md_relations_v1[a]);
+            fprintf(file, "        },\n");
+        }
+        fprintf(file, "    },\n");
+    }
+    fprintf(file, "};\n\n#endif\n");
+    bool io_ok = !ferror(file);
+    if (fclose(file) != 0) io_ok = false;
+    file = NULL;
+    if (!io_ok) {
+        set_error(error, error_size, "cannot finish policy header stream");
+        goto done;
+    }
+    ok = write_atomic(output, (const uint8_t *)rendered, rendered_len, error, error_size);
+done:
+    if (file) fclose(file);
+    free(rendered);
+    free(occurrences);
+    free(quotation);
+    arena_free(&arena);
+    fh_answer_stream_v1_free(&stream);
+    fhgslt_package_free(package);
+    return ok;
 }
 
 static bool compile_answers_command(int argc, char **argv,
@@ -6298,10 +6671,13 @@ done:
 static void usage(const char *program) {
     fprintf(stderr,
             "usage:\n"
-            "  %s equations --source FILE --out FILE\n"
+            "  %s equations (--source FILE... | --composition FILE) "
+            "--out FILE\n"
             "  %s petta-direct (--source FILE... | --composition FILE) "
             "[--entry-mode RELATION:BITS... | "
             "--closed-entry-mode RELATION:BITS...] "
+            "[--native-types FILE] "
+            "[--admission-language FILE --admission-entry RELATION:TYPE] "
             "[--epilogue FILE] --out FILE\n"
             "  %s rhometta-direct (--source FILE... | --composition FILE) "
             "--target PRESENTATION... "
@@ -6336,11 +6712,12 @@ static void usage(const char *program) {
             "--presentation-root DIR [--pack-out FILE --lock-out FILE]\n"
             "  %s seal --manifest FILE [--pack FILE] "
             "[--compiled-cursor FILE] [--lock-out FILE]\n"
-            "  %s validate --manifest FILE\n",
+            "  %s validate --manifest FILE\n"
+            "  %s match-policy-header --policy FILE --answers FILE --out FILE\n",
             program, program, program, program, program, program, program,
             program, program, program, program, program, program, program,
             program, program, program, program, program, program, program,
-            program, program);
+            program, program, program);
 }
 
 int main(int argc, char **argv) {
@@ -6393,10 +6770,8 @@ int main(int argc, char **argv) {
     g_var_intern = NULL;
 
     if (strcmp(argv[1], "equations") == 0) {
-        const char *source = option_value(argc, argv, "--source");
-        const char *output = option_value(argc, argv, "--out");
-        if (source != NULL && output != NULL)
-            ok = compile_equations(source, output, error, sizeof(error));
+        ok = compile_equations_command_v1(
+            argc, argv, error, sizeof(error));
     } else if (strcmp(argv[1], "petta-direct") == 0) {
         petta_direct_command = true;
         ok = compile_petta_direct_command_v1(
@@ -6411,6 +6786,8 @@ int main(int argc, char **argv) {
             rhometta_direct_source_digest,
             rhometta_direct_artifact_digest,
             error, sizeof(error));
+    } else if (strcmp(argv[1], "match-policy-header") == 0) {
+        ok = compile_match_policy_header_v1(argc, argv, error, sizeof(error));
     } else if (strcmp(argv[1], "answers") == 0) {
         finite_horn_answers_command = true;
         ok = compile_answers_command(

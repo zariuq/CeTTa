@@ -3346,12 +3346,20 @@ static const char *const HE_OP_NAMES[] = {
 typedef struct {
     const SymbolTable *table;
     uint64_t table_instance_id;
+    SymbolId minimum;
+    SymbolId maximum;
     SymbolId slots[HE_OP_ID_CACHE_CAP];
 } HeOpIdCache;
 
 static _Thread_local HeOpIdCache g_he_op_id_cache;
 
 static void he_op_id_cache_insert(HeOpIdCache *cache, SymbolId id) {
+    if (id == SYMBOL_ID_NONE)
+        return;
+    if (id < cache->minimum)
+        cache->minimum = id;
+    if (id > cache->maximum)
+        cache->maximum = id;
     size_t slot = ((size_t)id * UINT32_C(2654435761)) &
         (HE_OP_ID_CACHE_CAP - 1u);
     while (cache->slots[slot] != SYMBOL_ID_NONE &&
@@ -3365,6 +3373,7 @@ static void he_op_id_cache_refresh(void) {
     HeOpIdCache cache = {
         .table = g_symbols,
         .table_instance_id = symbol_table_instance_id(g_symbols),
+        .minimum = UINT32_MAX,
     };
     if (g_symbols) {
         for (size_t i = 0u;
@@ -3382,7 +3391,10 @@ bool he_typing_is_op_id(SymbolId id) {
         g_he_op_id_cache.table_instance_id != table_instance_id) {
         he_op_id_cache_refresh();
     }
-    if (id == SYMBOL_ID_NONE || !g_he_op_id_cache.table)
+    /* Reject unrelated symbol ranges before probing. The table remains
+     * authoritative for holes and interleaved names inside these bounds. */
+    if (!g_he_op_id_cache.table || id < g_he_op_id_cache.minimum ||
+        id > g_he_op_id_cache.maximum)
         return false;
     size_t slot = ((size_t)id * UINT32_C(2654435761)) &
         (HE_OP_ID_CACHE_CAP - 1u);

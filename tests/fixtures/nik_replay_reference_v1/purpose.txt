@@ -1,0 +1,16 @@
+Legacy NIK replay-generator registry reference
+
+These two files retain the exact registry output used by the existing replay
+generation qualification before public registry generation moved to the native
+nik-authority-catalog-v1 projector. They are data fixtures, not public runtime
+sources and not authorities for native registry formatting.
+
+tools/test_nik_authority_generation_v1.py still checks all three legacy outputs
+byte-for-byte, plus its support checks and source mutations. Its header/source
+arguments now identify these fixtures; its semantic argument remains the replay
+artifact. The native registry has a separate complete-field/identity/consumer
+gate. Neither comparison is silently skipped.
+
+The retained files were copied exactly from the prior checked-in generated
+registry, without invoking the Python generator. Updating this legacy baseline
+requires reviewing the corresponding replay-generator/catalog change.

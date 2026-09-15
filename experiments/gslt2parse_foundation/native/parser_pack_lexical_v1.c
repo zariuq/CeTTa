@@ -713,6 +713,11 @@ static bool pplex_v1_witness_table_build(
                            result_limit, token_index);
             goto finish;
         }
+        if (replay_outcome == PPNATIVE_V1_CYCLIC_FOREST) {
+            pplex_v1_set_error(error_buf, error_buf_size,
+                "cyclic lexical witness has no finite replay; functionality is undetermined");
+            goto done;
+        }
         if (replay_outcome != PPNATIVE_V1_COMPLETED || value_len != 1u ||
             !value) {
             result.outcome = PPLEX_V1_WITNESS_NONFUNCTIONAL;

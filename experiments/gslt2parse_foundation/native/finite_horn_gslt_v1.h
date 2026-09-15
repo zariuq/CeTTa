@@ -7,6 +7,29 @@
 
 typedef struct FHGSLTPackage FHGSLTPackage;
 
+/* Borrowed views of the existing parsed source, before quotation or backend
+ * selection. No clause program or second syntax tree is constructed. All
+ * pointers remain valid only while the package is alive. Variable text omits
+ * its leading '?'; integer text is canonical signed decimal. */
+typedef struct FHGSLTSourceNodeV1 FHGSLTSourceNodeV1;
+typedef enum {
+    FHGSLT_SOURCE_V1_INVALID = 0,
+    FHGSLT_SOURCE_V1_SYMBOL,
+    FHGSLT_SOURCE_V1_VARIABLE,
+    FHGSLT_SOURCE_V1_STRING,
+    FHGSLT_SOURCE_V1_INTEGER,
+    FHGSLT_SOURCE_V1_LIST
+} FHGSLTSourceKindV1;
+
+const FHGSLTSourceNodeV1 *fhgslt_package_source_root_v1(
+    const FHGSLTPackage *package, size_t index);
+FHGSLTSourceKindV1 fhgslt_source_kind_v1(const FHGSLTSourceNodeV1 *node);
+const uint8_t *fhgslt_source_text_v1(
+    const FHGSLTSourceNodeV1 *node, size_t *length);
+size_t fhgslt_source_child_count_v1(const FHGSLTSourceNodeV1 *node);
+const FHGSLTSourceNodeV1 *fhgslt_source_child_v1(
+    const FHGSLTSourceNodeV1 *node, size_t index);
+
 typedef struct {
     const uint8_t *bytes;
     size_t len;

@@ -25,6 +25,32 @@ bool ppgll_v1_parse_scalar_view(
     char *error_buf,
     size_t error_buf_size);
 
+/*
+ * Exact recognition uses the same complete GLL forest construction and root
+ * acceptance test as parsing, but deliberately omits canonical-forest Atom
+ * construction and action replay.  The returned result therefore carries
+ * recognition outcome, forest diagnostics, and `accepted`, with no semantic
+ * results.
+ */
+bool ppgll_v1_recognize(
+    const PPABIV1Pack *pack,
+    const Atom *start_state,
+    const uint8_t *input_bytes,
+    size_t input_byte_len,
+    uint32_t descriptor_limit,
+    PPNativeV1Result *out,
+    char *error_buf,
+    size_t error_buf_size);
+
+bool ppgll_v1_recognize_scalar_view(
+    const PPABIV1Pack *pack,
+    const Atom *start_state,
+    const CettaLpNativeUtf8ScalarView *view,
+    uint32_t descriptor_limit,
+    PPNativeV1Result *out,
+    char *error_buf,
+    size_t error_buf_size);
+
 bool ppgll_v1_prepared_parse(
     const PPNativeV1Prepared *prepared,
     const uint8_t *input_bytes,
@@ -42,6 +68,23 @@ bool ppgll_v1_prepared_parse_scalar_view(
     uint32_t descriptor_limit,
     uint32_t replay_depth,
     uint32_t result_limit,
+    PPNativeV1Result *out,
+    char *error_buf,
+    size_t error_buf_size);
+
+bool ppgll_v1_prepared_recognize(
+    const PPNativeV1Prepared *prepared,
+    const uint8_t *input_bytes,
+    size_t input_byte_len,
+    uint32_t descriptor_limit,
+    PPNativeV1Result *out,
+    char *error_buf,
+    size_t error_buf_size);
+
+bool ppgll_v1_prepared_recognize_scalar_view(
+    const PPNativeV1Prepared *prepared,
+    const CettaLpNativeUtf8ScalarView *view,
+    uint32_t descriptor_limit,
     PPNativeV1Result *out,
     char *error_buf,
     size_t error_buf_size);
