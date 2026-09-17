@@ -238,7 +238,8 @@ static void test_epoch_binding_keys(void) {
              * even though the source variable is no longer available. */
             arena_free(&source);
             Atom *actual_key = matched && builder.current.len == 1u
-                ? binding_variable_atom(&target, &builder.current.entries[0])
+                ? binding_variable_atom(
+                      &target, bindings_entry_at(&builder.current, 0))
                 : NULL;
             CHECK(actual_key && atom_eq(actual_key, expected_key),
                   "binding key presentation survives source arena release");

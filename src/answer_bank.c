@@ -51,6 +51,8 @@ static bool answer_bank_reserve(AnswerBank *bank, CettaCount needed) {
 static bool answer_bank_promote_bindings(Arena *dst, Bindings *bindings) {
     if (!dst || !bindings)
         return true;
+    if (!bindings_prepare_logical_write(bindings))
+        return false;
     for (uint32_t i = 0; i < bindings->len; i++) {
         Atom *promoted = atom_deep_copy(dst, bindings->entries[i].val);
         if (bindings->entries[i].val && !promoted)
@@ -76,8 +78,8 @@ static void answer_bank_assert_bindings_owned(const AnswerBank *bank,
     if (!bank || !bindings)
         return;
     for (uint32_t i = 0; i < bindings->len; i++) {
-        cetta_provenance_assert_not_transient_except(bindings->entries[i].val,
-                                                     site, &bank->arena);
+        cetta_provenance_assert_not_transient_except(
+            bindings_entry_at(bindings, i)->val, site, &bank->arena);
     }
     for (uint32_t i = 0; i < bindings->eq_len; i++) {
         cetta_provenance_assert_not_transient_except(

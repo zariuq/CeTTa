@@ -1,10 +1,10 @@
 (ProofTraceExecStateV1
   (ProofTraceContextConsV1
-    (ProofSequenceConsV1 trace-turnstile ProofSequenceNilV1)
+    (ProofSequenceConsV1 trace-turnstile (ProofSequenceNilV1))
     ProofTraceContextNilV1)
   (ProofTraceConsV1
     (ProofTracePushV1
-      (ProofSequenceConsV1 trace-turnstile ProofSequenceNilV1))
+      (ProofSequenceConsV1 trace-turnstile (ProofSequenceNilV1)))
     (ProofTraceConsV1
       ProofTraceSaveV1
       (ProofTraceConsV1
@@ -13,10 +13,10 @@
   ProofTraceStackNilV1
   ProofTraceSavedNilV1
   (ProofTraceStackConsV1
-    (ProofSequenceConsV1 trace-turnstile ProofSequenceNilV1)
+    (ProofSequenceConsV1 trace-turnstile (ProofSequenceNilV1))
     (ProofTraceStackConsV1
-      (ProofSequenceConsV1 trace-turnstile ProofSequenceNilV1)
+      (ProofSequenceConsV1 trace-turnstile (ProofSequenceNilV1))
       ProofTraceStackNilV1))
   (ProofTraceSavedConsV1
-    (ProofSequenceConsV1 trace-turnstile ProofSequenceNilV1)
+    (ProofSequenceConsV1 trace-turnstile (ProofSequenceNilV1))
     ProofTraceSavedNilV1))

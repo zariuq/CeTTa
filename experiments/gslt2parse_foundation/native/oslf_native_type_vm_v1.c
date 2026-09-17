@@ -3749,13 +3749,14 @@ static bool pposlf_native_type_vm_v1_stage_builder_atoms(
         return false;
     bindings = &builder->current;
     for (uint32_t index = 0u; index < bindings->len; index++) {
+        const Binding *entry = bindings_entry_at(bindings, index);
         Atom *name_key = pposlf_native_type_vm_v1_evacuate_atom(
-            source, session, bindings->entries[index].name_key);
+            source, session, entry->name_key);
         Atom *value = pposlf_native_type_vm_v1_evacuate_atom(
-            source, session, bindings->entries[index].val);
+            source, session, entry->val);
 
-        if ((bindings->entries[index].name_key && !name_key) ||
-            (bindings->entries[index].val && !value))
+        if ((entry->name_key && !name_key) ||
+            (entry->val && !value))
             return false;
     }
     for (uint32_t index = 0u; index < bindings->eq_len; index++) {
@@ -3781,14 +3782,15 @@ static bool pposlf_native_type_vm_v1_builder_atoms_forwarded(
         return false;
     bindings = &builder->current;
     for (uint32_t index = 0u; index < bindings->len; index++) {
-        if ((bindings->entries[index].name_key &&
-             arena_owns_atom(source, bindings->entries[index].name_key) &&
+        const Binding *entry = bindings_entry_at(bindings, index);
+        if ((entry->name_key &&
+             arena_owns_atom(source, entry->name_key) &&
              !atom_deep_copy_session_forwarded(
-                 session, bindings->entries[index].name_key)) ||
-            (bindings->entries[index].val &&
-             arena_owns_atom(source, bindings->entries[index].val) &&
+                 session, entry->name_key)) ||
+            (entry->val &&
+             arena_owns_atom(source, entry->val) &&
              !atom_deep_copy_session_forwarded(
-                 session, bindings->entries[index].val)))
+                 session, entry->val)))
             return false;
     }
     for (uint32_t index = 0u; index < bindings->eq_len; index++) {
@@ -3810,6 +3812,8 @@ static void pposlf_native_type_vm_v1_commit_builder_atoms(
     const Arena *source,
     const AtomDeepCopySession *session) {
     Bindings *bindings = &builder->current;
+    if (!bindings_prepare_logical_write(bindings))
+        return;
 
     for (uint32_t index = 0u; index < bindings->len; index++) {
         if (bindings->entries[index].name_key &&

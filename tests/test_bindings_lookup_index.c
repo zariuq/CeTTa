@@ -92,6 +92,8 @@ static void test_borrowed_root_identity(Arena *arena) {
           "a borrowed root observes the current branch after rollback");
     /* Simulate an invalid externally rewritten store. Normal binding
      * insertion may already reject or normalize this alias cycle. */
+    CHECK(bindings_prepare_logical_write(&builder.current),
+          "cycle canary flattens before rewriting the store");
     for (uint32_t index = 0u; index < builder.current.len; index++) {
         if (builder.current.entries[index].var_id == second->var_id)
             builder.current.entries[index].val = first;
@@ -112,8 +114,8 @@ static bool dense_frame_matches_suffix_scan(
         Atom *expected = NULL;
         VarId id = var_epoch_id(frame->source_ids[slot], frame->epoch);
         for (uint32_t entry = frame->first_entry; entry < bindings->len; entry++)
-            if (bindings->entries[entry].var_id == id)
-                expected = bindings->entries[entry].val;
+            if (bindings_entry_at(bindings, entry)->var_id == id)
+                expected = bindings_entry_at(bindings, entry)->val;
         bool present = frame->slot_stamps[slot] == frame->slot_generation;
         if (present != (expected != NULL) ||
             (present && frame->values[slot] != expected))
@@ -195,6 +197,8 @@ static void test_dense_frame_indexed_suffix(Arena *arena) {
      * forward frame scan must both retain the newest occurrence. */
     ready = build_bindings(arena, 256u, &base);
     if (!ready) { CHECK(false, "duplicate frame fixture allocation"); return; }
+    ready = ready && bindings_prepare_logical_write(&base);
+    if (!ready) { CHECK(false, "duplicate frame fixture is writable"); return; }
     base.entries[0].var_id = var_epoch_id(ids[1], epoch);
     base.entries[255].var_id = var_epoch_id(ids[1], epoch);
     bindings_lookup_index_test_clear(&base);
@@ -204,7 +208,7 @@ static void test_dense_frame_indexed_suffix(Arena *arena) {
     prepared = ready && bindings_dense_epoch_frame_prepare(
         &frame, &builder, ids, variables, 3u, epoch, 128u);
     CHECK(prepared && dense_frame_matches_suffix_scan(&frame, &builder.current) &&
-          frame.values[1] == builder.current.entries[255].val,
+          frame.values[1] == bindings_entry_at(&builder.current, 255)->val,
           "indexed frame retains the last duplicate occurrence within the suffix");
     bindings_dense_epoch_frame_free(&frame);
     bindings_builder_free(&builder);
@@ -753,16 +757,18 @@ static void test_logical_binding_transport(void) {
             &transported, &source, logical_transport_test_atom, &context);
     CHECK(transported_ready && transported.len == source.len &&
               transported.eq_len == source.eq_len &&
-              transported.entries[0].var_id == first_id &&
-              transported.entries[0].val != source.entries[0].val &&
+              bindings_entry_at(&transported, 0)->var_id == first_id &&
+              bindings_entry_at(&transported, 0)->val !=
+                  bindings_entry_at(&source, 0)->val &&
               arena_owns_ptr(
-                  &destination_arena, transported.entries[0].val) &&
+                  &destination_arena,
+                  bindings_entry_at(&transported, 0)->val) &&
               arena_owns_ptr(
                   &destination_arena, transported.constraints[0].lhs) &&
               arena_owns_ptr(
                   &destination_arena, transported.constraints[0].rhs) &&
-              atom_eq(transported.entries[0].val,
-                      source.entries[0].val) &&
+              atom_eq(bindings_entry_at(&transported, 0)->val,
+                      bindings_entry_at(&source, 0)->val) &&
               atom_eq(transported.constraints[0].lhs,
                       source.constraints[0].lhs) &&
               atom_eq(transported.constraints[0].rhs,
@@ -1202,13 +1208,42 @@ int main(void) {
     BindingsBuilder coalesced_clone;
     bool coalesced_clone_ready =
         bindings_builder_clone(&coalesced_clone, &coalesced);
+    Binding *coalesced_shared_entries = coalesced.current.entries;
     CHECK(coalesced_clone_ready &&
+              coalesced_clone.current.entries ==
+                  coalesced_shared_entries &&
               !coalesced_clone.unobserved_write_region_active &&
               !coalesced_clone.unobserved_write_region_has_checkpoint &&
               coalesced_clone.unobserved_write_region_entry_mark == 0u &&
               binding_is_int(
                   &coalesced_clone.current, coalesced_f, 2105),
           "a fork publishes the current meaning outside the private region");
+    BindingsBuilder coalesced_clone2;
+    bool coalesced_clone2_ready =
+        bindings_builder_clone(&coalesced_clone2, &coalesced);
+    CHECK(coalesced_clone2_ready &&
+              coalesced_clone2.current.entries == coalesced_shared_entries &&
+              coalesced_clone.current.entries == coalesced_shared_entries,
+          "a later capture retains the same frozen image");
+    bool coalesced_clone_detached = coalesced_clone_ready &&
+        bindings_builder_add_id_fresh(
+            &coalesced_clone, test_id(2199u), SYMBOL_ID_NONE,
+            atom_int(&arena, 2199)) &&
+        coalesced_clone.current.entries != coalesced_shared_entries &&
+        coalesced_clone.current.shared_entries == coalesced_shared_entries &&
+        coalesced.current.entries == coalesced_shared_entries &&
+        coalesced_clone2_ready &&
+        coalesced_clone2.current.entries == coalesced_shared_entries &&
+        binding_is_int(
+            &coalesced_clone.current, test_id(2199u), 2199) &&
+        bindings_lookup_id(
+            &coalesced.current, test_id(2199u)) == NULL &&
+        bindings_lookup_id(
+            &coalesced_clone2.current, test_id(2199u)) == NULL;
+    CHECK(coalesced_clone_detached,
+          "a write detaches one fork and preserves every shared sibling");
+    if (coalesced_clone2_ready)
+        bindings_builder_free(&coalesced_clone2);
     if (coalesced_clone_ready)
         bindings_builder_free(&coalesced_clone);
 
@@ -2194,10 +2229,12 @@ int main(void) {
      * external-key-rewrite invalidation boundary.  Ordinary add APIs unify an
      * existing key and therefore cannot construct this representation. */
     bool activation_duplicate =
+        bindings_prepare_logical_write(&activation_environment) &&
         activation_environment.len < activation_environment.cap;
     if (activation_duplicate) {
         Binding duplicate =
-            activation_environment.entries[activation_first_entry];
+            *bindings_entry_at(&activation_environment,
+                               activation_first_entry);
         duplicate.val = activation_newest;
         activation_environment.entries[activation_environment.len++] =
             duplicate;
@@ -3453,12 +3490,15 @@ int main(void) {
     bindings_free(&cycle);
 
     Bindings rewritten;
-    bool rewrite_ok = bindings_clone(&rewritten, &base);
-    VarId rewritten_old = rewritten.entries[12u].var_id;
+    bool rewrite_ok = bindings_clone(&rewritten, &base) &&
+                      bindings_prepare_logical_write(&rewritten);
+    VarId rewritten_old = rewrite_ok
+        ? rewritten.entries[12u].var_id : VAR_ID_NONE;
     VarId rewritten_new = test_id(4000u);
     rewrite_ok = rewrite_ok &&
                  bindings_lookup_id(&rewritten, rewritten_old) != NULL;
-    rewritten.entries[12u].var_id = rewritten_new;
+    if (rewrite_ok)
+        rewritten.entries[12u].var_id = rewritten_new;
     bindings_invalidate_after_key_rewrite(&rewritten);
     rewrite_ok = rewrite_ok &&
                  bindings_lookup_id(&rewritten, rewritten_old) == NULL &&
@@ -3534,6 +3574,32 @@ int main(void) {
               bindings_contains_private_variant_slots(
                   &private_constraint_branch.current),
           "rollback rebuilds nonzero private-constraint metadata exactly");
+    BindingsBuilder private_constraint_clone;
+    BindingConstraint *shared_constraints =
+        private_constraint_branch.current.constraints;
+    Atom *source_constraint_lhs =
+        private_constraint_branch.current.constraints[0].lhs;
+    Arena constraint_clone_owner;
+    arena_init(&constraint_clone_owner);
+    bool private_constraint_clone_ready = bindings_builder_clone(
+        &private_constraint_clone, &private_constraint_branch);
+    bool private_constraint_detached =
+        private_constraint_clone_ready &&
+        private_constraint_clone.current.constraints == shared_constraints &&
+        bindings_builder_promote_atoms_to_arena(
+            &private_constraint_clone, &constraint_clone_owner) &&
+        private_constraint_clone.current.constraints != shared_constraints &&
+        private_constraint_branch.current.constraints == shared_constraints &&
+        private_constraint_branch.current.constraints[0].lhs ==
+            source_constraint_lhs &&
+        arena_owns_ptr(
+            &constraint_clone_owner,
+            private_constraint_clone.current.constraints[0].lhs);
+    CHECK(private_constraint_detached,
+          "constraint promotion detaches one fork and preserves its sibling");
+    if (private_constraint_clone_ready)
+        bindings_builder_free(&private_constraint_clone);
+    arena_free(&constraint_clone_owner);
     bindings_builder_free(&private_constraint_branch);
     bindings_free(&private_constraint);
 
@@ -3554,14 +3620,16 @@ int main(void) {
     CHECK(shared_built &&
               bindings_promote_logical_atoms_to_arena(
                   &shared, &promoted_arena) &&
-              shared.entries[0].val == shared.entries[1].val &&
-              arena_owns_ptr(&promoted_arena, shared.entries[0].val),
+              bindings_entry_at(&shared, 0)->val ==
+                  bindings_entry_at(&shared, 1)->val &&
+              arena_owns_ptr(&promoted_arena,
+                             bindings_entry_at(&shared, 0)->val),
           "one promotion session preserves shared DAG identity");
-    Atom *promoted_once = shared.entries[0].val;
+    Atom *promoted_once = bindings_entry_at(&shared, 0)->val;
     CHECK(bindings_promote_logical_atoms_to_arena(
               &shared, &promoted_arena) &&
-              shared.entries[0].val == promoted_once &&
-              shared.entries[1].val == promoted_once,
+              bindings_entry_at(&shared, 0)->val == promoted_once &&
+              bindings_entry_at(&shared, 1)->val == promoted_once,
           "promotion reuses a destination-owned graph");
 
     Bindings occurrence_left;

@@ -113,8 +113,8 @@
       (head
         (ProofTraceFrameProjectV1
           ProofTraceFrameNilV1
-          ProofAssertionListNilV1
-          ProofAssertionListNilV1))
+          (ProofAssertionListNilV1)
+          (ProofAssertionListNilV1)))
       (body))
     (rule proof-trace-frame-project-variable-v1
       (head
@@ -141,7 +141,7 @@
       (head
         (ProofTraceFrameApplyV1
           ProofTraceFrameNilV1 ?stack
-          ProofAssertionListNilV1 ProofAssertionListNilV1 ?stack))
+          (ProofAssertionListNilV1) (ProofAssertionListNilV1) ?stack))
       (body))
     (rule proof-trace-frame-apply-variable-v1
       (head
@@ -178,7 +178,7 @@
         (ProofTraceFrameApplyResultV1
           ProofTraceFrameNilV1 ?stack
           (ProofTraceFrameAppliedV1
-            ProofAssertionListNilV1 ProofAssertionListNilV1 ?stack)))
+            (ProofAssertionListNilV1) (ProofAssertionListNilV1) ?stack)))
       (body))
     (rule proof-trace-frame-apply-result-variable-v1
       (head
@@ -238,7 +238,7 @@
           ?expected-typecode
           (ProofTraceFrameAppliedV1
             ?images ?actuals
-            (ProofTraceStackConsV1 ProofSequenceNilV1 ?output))
+            (ProofTraceStackConsV1 (ProofSequenceNilV1) ?output))
           (ProofTraceRealizeRefusedV1
             (ProofTraceRefusedTypecodeMismatchV1
               ?expected-typecode ProofTraceMissingTypecodeV1))))
@@ -272,8 +272,8 @@
     (rule proof-trace-build-environment-nil-v1
       (head
         (ProofTraceBuildEnvironmentV1
-          ProofAssertionListNilV1 ProofAssertionListNilV1
-          ProofEnvironmentNilV1))
+          (ProofAssertionListNilV1) (ProofAssertionListNilV1)
+          (ProofEnvironmentNilV1)))
       (body))
     (rule proof-trace-build-environment-cons-v1
       (head
@@ -290,7 +290,7 @@
     (rule proof-trace-check-essentials-nil-v1
       (head
         (ProofTraceCheckEssentialsV1
-          ProofAssertionListNilV1 ProofAssertionListNilV1 ?environment))
+          (ProofAssertionListNilV1) (ProofAssertionListNilV1) ?environment))
       (body))
     (rule proof-trace-check-essentials-cons-v1
       (head
@@ -310,7 +310,7 @@
     (rule proof-trace-check-essentials-result-nil-v1
       (head
         (ProofTraceCheckEssentialsResultV1
-          ProofAssertionListNilV1 ProofAssertionListNilV1 ?environment
+          (ProofAssertionListNilV1) (ProofAssertionListNilV1) ?environment
           ProofTraceEssentialsSucceededV1))
       (body))
     (rule proof-trace-check-essentials-result-cons-equal-v1
@@ -462,7 +462,7 @@
     (rule proof-trace-token-against-sequence-nil-v1
       (head
         (ProofTraceTokenAgainstSequenceResultV1
-          ?left ProofSequenceNilV1 ProofTracePairAllowedV1))
+          ?left (ProofSequenceNilV1) ProofTracePairAllowedV1))
       (body))
     (rule proof-trace-token-against-sequence-cons-v1
       (head
@@ -489,7 +489,7 @@
     (rule proof-trace-sequence-support-apart-nil-v1
       (head
         (ProofTraceSequenceSupportApartResultV1
-          ProofSequenceNilV1 ?right ProofTracePairAllowedV1))
+          (ProofSequenceNilV1) ?right ProofTracePairAllowedV1))
       (body))
     (rule proof-trace-sequence-support-apart-cons-v1
       (head
@@ -517,7 +517,7 @@
     (rule proof-trace-check-disjoints-nil-result-v1
       (head
         (ProofTraceCheckDisjointsResultV1
-          ProofAssertionListNilV1 ?environment
+          (ProofAssertionListNilV1) ?environment
           ProofTraceDisjointSucceededV1))
       (body))
     (rule proof-trace-check-disjoints-cons-result-v1
@@ -875,12 +875,12 @@
     (rule proof-sequence-compare-nil-nil-v1
       (head
         (ProofSequenceCompareV1
-          ProofSequenceNilV1 ProofSequenceNilV1 ProofSequenceEqualV1))
+          (ProofSequenceNilV1) (ProofSequenceNilV1) ProofSequenceEqualV1))
       (body))
     (rule proof-sequence-compare-nil-cons-v1
       (head
         (ProofSequenceCompareV1
-          ProofSequenceNilV1
+          (ProofSequenceNilV1)
           (ProofSequenceConsV1 ?right ?right-rest)
           ProofSequenceDifferentV1))
       (body))
@@ -888,7 +888,7 @@
       (head
         (ProofSequenceCompareV1
           (ProofSequenceConsV1 ?left ?left-rest)
-          ProofSequenceNilV1 ProofSequenceDifferentV1))
+          (ProofSequenceNilV1) ProofSequenceDifferentV1))
       (body))
     (rule proof-sequence-compare-cons-v1
       (head

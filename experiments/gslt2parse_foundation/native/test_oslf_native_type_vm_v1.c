@@ -84,6 +84,12 @@ static Atom *unary(Arena *arena, const char *head, Atom *argument) {
     return atom_expr(arena, elements, 2u);
 }
 
+static Atom *nullary(Arena *arena, const char *head) {
+    Atom *elements[1] = {atom_symbol(arena, head)};
+
+    return atom_expr(arena, elements, 1u);
+}
+
 static Atom *binary(
     Arena *arena, const char *head, Atom *left, Atom *right) {
     Atom *elements[3] = {
@@ -1710,7 +1716,7 @@ static bool exercise_full_proof_machine(
     trace_two = unary(
         &query_arena, "ProofTraceNatSuccV1",
         unary(&query_arena, "ProofTraceNatSuccV1", trace_zero));
-    sequence_nil = atom_symbol(&query_arena, "ProofSequenceNilV1");
+    sequence_nil = nullary(&query_arena, "ProofSequenceNilV1");
     formula_a = binary(
         &query_arena, "ProofSequenceConsV1", token_wff,
         binary(&query_arena, "ProofSequenceConsV1", token_a,
@@ -1726,7 +1732,7 @@ static bool exercise_full_proof_machine(
         binary(
             &query_arena, "ProofTraceContextConsV1", formula_dummy,
             atom_symbol(&query_arena, "ProofTraceContextNilV1")));
-    assertion_list_nil = atom_symbol(
+    assertion_list_nil = nullary(
         &query_arena, "ProofAssertionListNilV1");
     identity_variable = binary(
         &query_arena, "ProofAssertionVariableV1", token_x, token_wff);

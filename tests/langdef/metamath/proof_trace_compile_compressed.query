@@ -7,7 +7,7 @@
       (ProofTraceCodeConsV1 68 ProofTraceCodeNilV1)))
   (ProofTraceConsV1
     (ProofTracePushV1
-      (ProofSequenceConsV1 codec-token-m-v1 ProofSequenceNilV1))
+      (ProofSequenceConsV1 codec-token-m-v1 (ProofSequenceNilV1)))
     (ProofTraceConsV1 ProofTraceSaveV1
       (ProofTraceConsV1
         (ProofTraceRestoreV1 ProofTraceNatZeroV1)

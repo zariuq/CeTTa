@@ -4342,8 +4342,6 @@ bool space_admit_atom(Space *s, Arena *fallback, Atom *atom) {
 
 bool space_admit_atom_from_source_arena(
     Space *s, Arena *fallback, const Arena *source_arena, Atom *atom) {
-    if (!term_universe_source_id_memo_enabled())
-        return space_admit_atom_impl(s, fallback, NULL, atom);
     return space_admit_atom_impl(s, fallback, source_arena, atom);
 }
 
@@ -4703,7 +4701,7 @@ static Atom *bindings_apply_without_self_id(Bindings *full, Arena *a,
         return bindings_apply_if_vars(full, a, value);
     bool removed = false;
     for (uint32_t i = 0; i < reduced.len; i++) {
-        if (reduced.entries[i].var_id != skip_id)
+        if (bindings_entry_at(&reduced, i)->var_id != skip_id)
             continue;
         removed = bindings_remove_entry_at(&reduced, i);
         break;
@@ -5954,6 +5952,36 @@ bool space_contains_canonical(Space *s, Atom *atom, bool *out_applicable) {
         *out_applicable = true;
     AtomId cid = space_canonical_id_for_query(s, atom);
     return cid != CETTA_ATOM_ID_NONE && id_present_contains(&s->native, cid);
+}
+
+bool space_contains_for_add_nodup(Space *s, Atom *atom) {
+    if (!s || !atom)
+        return false;
+    bool found = false;
+    bool backend_checked =
+        space_match_backend_contains_atom_structural_direct(s, atom, &found);
+    if (!backend_checked)
+        found = space_contains_exact(s, atom);
+    if (found || backend_checked || space_atom_is_exact_indexable(atom))
+        return found;
+
+    bool canonical_applicable = false;
+    found = space_contains_canonical(s, atom, &canonical_applicable);
+    if (canonical_applicable)
+        return found;
+
+    bool alpha_fallback = atom_has_vars(atom);
+    CettaCount logical_len = space_length64(s);
+    for (CettaIndex index = 0u; index < logical_len; index++) {
+        Atom *candidate = space_get_at64(s, index);
+        if (!candidate)
+            continue;
+        if (alpha_fallback ? atom_alpha_eq(candidate, atom)
+                           : atom_eq(candidate, atom)) {
+            return true;
+        }
+    }
+    return false;
 }
 
 bool space_contains_only_exact_atoms(Space *s) {

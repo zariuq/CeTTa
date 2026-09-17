@@ -5807,6 +5807,130 @@ static Atom *petta_flatten_closed_open_cons(Arena *a, Atom *atom) {
     return petta_semantics_flatten_closed_open_cons(a, atom);
 }
 
+typedef struct {
+    Atom *error;
+    bool emit_result;
+} EvalSpaceMutationEffect;
+
+static Atom *space_term_universe_or_symbol_error(
+    Arena *a, Atom *call, Space *space, const char *fallback_symbol);
+
+static inline __attribute__((always_inline))
+EvalSpaceMutationEffect eval_apply_space_addition(
+        Space *target, Arena *arena, Atom *call, Atom *payload,
+        bool suppress_duplicate) {
+    EvalSpaceMutationEffect effect = {
+        .error = NULL,
+        .emit_result = true,
+    };
+    if (!target || !arena || !call || !payload) {
+        effect.emit_result = false;
+        return effect;
+    }
+
+    if (suppress_duplicate) {
+        Atom *comparison = space_compare_atom(target, arena, payload);
+        if (!comparison) {
+            effect.error = atom_error(
+                arena, call, atom_symbol(arena, "AddAtomFailed"));
+            return effect;
+        }
+        if (space_contains_for_add_nodup(target, comparison))
+            return effect;
+    }
+
+    Atom *type_error = eval_petta_program_mutation_error(
+        arena, call, target, payload, PETTA_TYPECHECK_MUTATION_ADD);
+    if (type_error) {
+        effect.error = type_error;
+        return effect;
+    }
+
+    Arena *storage = eval_storage_arena(arena);
+    CettaLanguageId language_id = eval_current_language_id();
+    PettaProgram *program =
+        language_id == CETTA_LANGUAGE_PETTA &&
+                g_library_context &&
+                !cetta_shared_transition_scope_active()
+            ? g_library_context->petta_program
+            : NULL;
+    const PettaPlanNode *add_plan = NULL;
+    if (program && petta_program_is_equation(payload)) {
+        add_plan = petta_program_plan_dynamic_add(program, payload);
+        if (!add_plan) {
+            effect.error = atom_error(
+                arena, call, atom_symbol(arena, "PeTTaCompilePlanFailed"));
+            return effect;
+        }
+    }
+    if (!eval_admit_atom(target, arena, storage, payload)) {
+        effect.error = space_term_universe_or_symbol_error(
+            arena, call, target, "AddAtomFailed");
+        return effect;
+    }
+    if (language_id == CETTA_LANGUAGE_PETTA)
+        petta_specializer_note_mutation(target, payload);
+    if (program &&
+        !petta_program_observe_addition(
+            program, target, storage, payload, add_plan)) {
+        effect.error = atom_error(
+            arena, call, atom_symbol(arena, "PeTTaCompilePlanFailed"));
+        return effect;
+    }
+    CettaEvalSession *session = active_eval_session();
+    if (program && cetta_profile_uses_petta_typing(session->profile))
+        eval_petta_typecheck_inferred_signatures_rebase(program, target);
+    return effect;
+}
+
+static EvalSpaceMutationEffect eval_apply_space_removal(
+        Space *target, Arena *arena, Atom *call, Atom *payload) {
+    EvalSpaceMutationEffect effect = {
+        .error = NULL,
+        .emit_result = true,
+    };
+    Atom *comparison = space_remove_compare_atom(target, arena, payload);
+    CettaLanguageId language_id = eval_current_language_id();
+    if (language_id == CETTA_LANGUAGE_PETTA) {
+        if (comparison && comparison->kind == ATOM_VAR)
+            return effect;
+        comparison = petta_space_remove_request_pattern(arena, comparison);
+        if (!comparison) {
+            effect.emit_result = false;
+            return effect;
+        }
+    }
+
+    Atom *type_error = eval_petta_program_mutation_error(
+        arena, call, target, comparison, PETTA_TYPECHECK_MUTATION_REMOVE);
+    if (type_error) {
+        effect.error = type_error;
+        return effect;
+    }
+    if (language_id == CETTA_LANGUAGE_PETTA) {
+        PettaProgram *program = g_library_context
+            ? g_library_context->petta_program : NULL;
+        CettaCount removed = 0u;
+        if (!petta_space_remove_pattern_all(
+                target, comparison, program, &removed)) {
+            effect.error = atom_error(
+                arena, call,
+                atom_symbol(arena, "PeTTaSpacePatternRemovalFailed"));
+            return effect;
+        }
+        return effect;
+    }
+
+    AtomId remove_id = target && target->native.universe
+        ? term_universe_lookup_atom_id(target->native.universe, comparison)
+        : CETTA_ATOM_ID_NONE;
+    bool changed = remove_id != CETTA_ATOM_ID_NONE &&
+        space_remove_atom_id(target, remove_id);
+    if (!changed)
+        (void)space_remove(target, comparison);
+    return effect;
+}
+
 static Atom *dispatch_native_space_mutation(Space *s, Arena *a, Atom *head,
                                             Atom **args, uint32_t nargs) {
     if (!head || head->kind != ATOM_SYMBOL || nargs != 2 || !g_registry)
@@ -5868,50 +5992,14 @@ static Atom *dispatch_native_space_mutation(Space *s, Arena *a, Atom *head,
             a, call, "AttachedCompiledSpaceMaterializeFailed");
     }
 
-    if (is_add) {
-        Arena *dst = eval_storage_arena(a);
-        payload = petta_flatten_closed_open_cons(a, payload);
-        Atom *type_error = eval_petta_program_mutation_error(
-            a, call, target, payload, PETTA_TYPECHECK_MUTATION_ADD);
-        if (type_error)
-            return type_error;
-        bool admitted = eval_admit_atom(target, a, dst, payload);
-        if (admitted && eval_current_language_id() == CETTA_LANGUAGE_PETTA)
-            petta_specializer_note_mutation(target, payload);
-        return atom_unit(a);
-    }
-
     payload = petta_flatten_closed_open_cons(a, payload);
-    Atom *compare_atom = space_remove_compare_atom(target, a, payload);
-    if (eval_current_language_id() == CETTA_LANGUAGE_PETTA) {
-        if (compare_atom && compare_atom->kind == ATOM_VAR)
-            return atom_unit(a);
-        compare_atom = petta_space_remove_request_pattern(
-            a, compare_atom);
-        if (!compare_atom)
-            return NULL;
-    }
-    Atom *type_error = eval_petta_program_mutation_error(
-        a, call, target, compare_atom, PETTA_TYPECHECK_MUTATION_REMOVE);
-    if (type_error)
-        return type_error;
-    if (eval_current_language_id() == CETTA_LANGUAGE_PETTA) {
-        PettaProgram *program = g_library_context
-            ? g_library_context->petta_program : NULL;
-        if (!petta_space_remove_pattern_all(
-                target, compare_atom, program, NULL)) {
-            return atom_error(
-                a, call,
-                atom_symbol(a, "PeTTaSpacePatternRemovalFailed"));
-        }
-        return atom_unit(a);
-    }
-    if (!(target && target->universe &&
-          space_remove_atom_id(target,
-                               term_universe_lookup_atom_id(target->universe,
-                                                            compare_atom)))) {
-        space_remove(target, compare_atom);
-    }
+    EvalSpaceMutationEffect effect = is_add
+        ? eval_apply_space_addition(target, a, call, payload, false)
+        : eval_apply_space_removal(target, a, call, payload);
+    if (effect.error)
+        return effect.error;
+    if (!effect.emit_result)
+        return NULL;
     return atom_unit(a);
 }
 
@@ -7254,7 +7342,7 @@ bindings_apply_without_self(Bindings *full, Arena *a,
         return value;
     bool removed = false;
     for (uint32_t i = 0; i < reduced.len; i++) {
-        if (reduced.entries[i].var_id != skip_id)
+        if (bindings_entry_at(&reduced, i)->var_id != skip_id)
             continue;
         removed = bindings_remove_entry_at(&reduced, i);
         break;
@@ -16931,50 +17019,6 @@ typedef struct {
 } BatchAppendLetCtx;
 
 
-/* Sole owner of the add-atom-nodup membership contract.  Every add-atom-nodup
-   dispatch site (the inline grounded handler, the let-stream batch path, and the
-   forward chainer's match-result apply via the inline handler) routes here, so
-   dedup lives at one seam instead of being duplicated per path.  Tiers: backend
-   structural contains for pathmap/mork spaces -> exact-index for ground atoms ->
-   the O(1)-amortized alpha-aware canonical presence bitset for native spaces
-   (including native overlays; non-native backends fall back to the O(N)
-   alpha-aware scan).  The
-   exact-indexable guard skips the redundant canonical check that
-   space_contains_exact already settled for ground atoms. */
-static bool add_atom_nodup_is_present(Space *target, Atom *compare_atom) {
-    bool found = false;
-    bool backend_checked =
-        space_match_backend_contains_atom_structural_direct(
-            target, compare_atom, &found);
-    if (!backend_checked)
-        found = space_contains_exact(target, compare_atom);
-    if (!found && !backend_checked &&
-        !space_atom_is_exact_indexable(compare_atom)) {
-        /* Non-ground dedup must be alpha-aware: local pathmap projection uses
-           synthetic stable variable spellings while the evaluator may still hold
-           the same theorem under source spellings. Native spaces, including
-           overlays, answer this via the canonical presence bitset (dropping
-           forward chaining from O(N^2) to O(N)); non-native backends fall back
-           to the O(N) alpha-aware scan. */
-        bool canon_applicable = false;
-        found = space_contains_canonical(target, compare_atom, &canon_applicable);
-        if (!canon_applicable) {
-            bool alpha_fallback = atom_has_vars(compare_atom);
-            CettaCount logical_len = space_length64(target);
-            for (CettaIndex i = 0; i < logical_len && !found; i++) {
-                Atom *candidate = space_get_at64(target, i);
-                if (!candidate)
-                    continue;
-                if (alpha_fallback ? atom_alpha_eq(candidate, compare_atom)
-                                   : atom_eq(candidate, compare_atom)) {
-                    found = true;
-                }
-            }
-        }
-    }
-    return found;
-}
-
 static void batch_append_emit_unit(BatchAppendLetCtx *ctx) {
     Bindings empty;
     bindings_init(&empty);
@@ -17025,36 +17069,14 @@ static bool batch_append_let_visit(Arena *a, Atom *atom,
         instantiated =
             bindings_apply_if_vars(effective, ctx->a, ctx->effect.template_atom);
     }
-    Atom *type_error = eval_petta_program_mutation_error(
-        ctx->a, ctx->call_atom, ctx->generic_target, instantiated,
-        PETTA_TYPECHECK_MUTATION_ADD);
-    if (type_error) {
-        if (ctx->os)
-            outcome_set_add(ctx->os, type_error, &empty);
-        else
-            result_set_add(&ctx->errors, type_error);
-        ctx->failed = true;
-        goto cleanup_fail;
-    }
-    bool ok = false;
-    if (ctx->effect.op_id == g_builtin_syms.add_atom) {
-        ok = eval_admit_atom(ctx->generic_target, ctx->a,
-                             eval_storage_arena(ctx->a), instantiated);
-    } else {
-        Atom *compare_atom =
-            space_compare_atom(ctx->generic_target, ctx->a, instantiated);
-        ok = compare_atom &&
-             (add_atom_nodup_is_present(ctx->generic_target, compare_atom) ||
-              eval_admit_atom(ctx->generic_target, ctx->a,
-                              eval_storage_arena(ctx->a), instantiated));
-    }
-    if (!ok) {
-        Atom *error = atom_error(ctx->a, ctx->call_atom,
-                                 atom_symbol(ctx->a, "BatchAppendFailed"));
+    EvalSpaceMutationEffect effect = eval_apply_space_addition(
+        ctx->generic_target, ctx->a, ctx->call_atom, instantiated,
+        ctx->effect.op_id == g_builtin_syms.add_atom_nodup);
+    if (effect.error) {
         if (ctx->os) {
-            outcome_set_add(ctx->os, error, &empty);
+            outcome_set_add(ctx->os, effect.error, &empty);
         } else {
-            result_set_add(&ctx->errors, error);
+            result_set_add(&ctx->errors, effect.error);
         }
         ctx->failed = true;
         goto cleanup_fail;
@@ -20846,6 +20868,145 @@ static Atom *prime_need_observe_data(Arena *arena, Atom *root,
 static Atom *prime_need_persist_data(Arena *arena, Atom *root,
                                      const Bindings *env) {
     return prime_need_transform_data(arena, root, env, true);
+}
+
+typedef enum {
+    EVAL_SPACE_MUTATION_ADD,
+    EVAL_SPACE_MUTATION_ADD_NODUP,
+    EVAL_SPACE_MUTATION_REMOVE,
+} EvalSpaceMutationKind;
+
+/* Execute one already-classified space mutation.  Keeping classification at
+ * the caller lets ready machine goals specialize the common authority without
+ * routing a known add through the three-operation dispatcher. */
+static inline __attribute__((always_inline))
+bool eval_space_mutation_contract_kind(
+        Space *root, Arena *arena, Atom *call, int fuel,
+        const Bindings *environment, OutcomeSet *outcomes,
+        EvalSpaceMutationKind kind) {
+    if (!root || !arena || !call || !outcomes || !g_registry ||
+        call->kind != ATOM_EXPR || call->expr.len != 3u) {
+        return false;
+    }
+    bool is_add = kind == EVAL_SPACE_MUTATION_ADD;
+    bool is_add_nodup = kind == EVAL_SPACE_MUTATION_ADD_NODUP;
+    bool is_remove = kind == EVAL_SPACE_MUTATION_REMOVE;
+    if (is_add_nodup && !active_builtin_allowed("add-atom-nodup"))
+        return false;
+
+    Bindings empty;
+    bindings_init(&empty);
+    Atom *space_ref = call->expr.elems[1];
+    Atom *payload = prime_need_persist_data(
+        arena, call->expr.elems[2], environment);
+    payload = payload
+        ? petta_flatten_closed_open_cons(arena, payload)
+        : NULL;
+    if (!payload) {
+        outcome_set_add(
+            outcomes,
+            atom_error(
+                arena, call,
+                atom_symbol(arena, "PrimeNeedReificationCycle")),
+            &empty);
+        return true;
+    }
+    SymbolId explicit_head = is_remove
+        ? g_builtin_syms.mork_remove_atom : g_builtin_syms.mork_add_atom;
+    if (!is_add_nodup && emit_generic_mork_handle_native_syntax(
+            root, arena, call, call->expr.elems + 1u, 2u, fuel,
+            explicit_head, outcomes)) {
+        return true;
+    }
+    const char *syntax = is_add
+        ? "add-atom" : is_add_nodup ? "add-atom-nodup" : "remove-atom";
+    const char *explicit_syntax = is_remove
+        ? "mork:remove-atom" : "mork:add-atom";
+    Atom *mork_handle_error = guard_mork_handle_syntax(
+        root, arena, call, space_ref, fuel,
+        syntax, explicit_syntax);
+    if (mork_handle_error) {
+        outcome_set_add(outcomes, mork_handle_error, &empty);
+        return true;
+    }
+    Space *target = resolve_single_space_arg_write(
+        root, arena, space_ref, fuel);
+    if (!target && is_add)
+        target = petta_create_named_space_on_add(root, arena, space_ref);
+    if (!target) {
+        const char *message = is_add
+            ? "add-atom expects a space as the first argument"
+            : is_add_nodup
+                ? "add-atom-nodup expects a space as the first argument"
+                : "remove-atom expects a space as the first argument";
+        outcome_set_add(
+            outcomes,
+            space_arg_error(arena, call, message),
+            &empty);
+        return true;
+    }
+    Atom *mork_error = guard_mork_space_syntax(
+        arena, call, target, syntax, explicit_syntax);
+    if (mork_error) {
+        outcome_set_add(outcomes, mork_error, &empty);
+        return true;
+    }
+    bool materialized = is_remove
+        ? (!space_match_backend_is_attached_compiled(target) ||
+           space_match_backend_materialize_attached(
+               target, eval_storage_arena(arena)))
+        : space_match_backend_materialize_attached(
+              target, eval_storage_arena(arena));
+    if (!materialized) {
+        outcome_set_add(
+            outcomes,
+            space_backend_or_symbol_error(
+                arena, call, "AttachedCompiledSpaceMaterializeFailed"),
+            &empty);
+        return true;
+    }
+
+    EvalSpaceMutationEffect effect = is_remove
+        ? eval_apply_space_removal(target, arena, call, payload)
+        : eval_apply_space_addition(
+              target, arena, call, payload, is_add_nodup);
+    if (effect.error) {
+        outcome_set_add(outcomes, effect.error, &empty);
+        return true;
+    }
+    if (!effect.emit_result)
+        return true;
+    CettaLanguageId language_id = eval_current_language_id();
+    outcome_set_add(
+        outcomes,
+        language_id == CETTA_LANGUAGE_PETTA && !is_add_nodup
+            ? petta_semantics_success_value(arena)
+            : atom_unit(arena),
+        &empty);
+    return true;
+}
+
+/* Execute the shared space-mutation contract.  The relational machine invokes
+ * it only after the call has reached a ready host boundary; ordinary and
+ * native dispatch use the same physical effect authority. */
+static bool eval_space_mutation_contract(
+        Space *root, Arena *arena, Atom *call, int fuel,
+        const Bindings *environment, OutcomeSet *outcomes) {
+    if (!call || call->kind != ATOM_EXPR || call->expr.len != 3u)
+        return false;
+    SymbolId head = atom_head_symbol_id(call);
+    EvalSpaceMutationKind kind;
+    if (head == g_builtin_syms.add_atom) {
+        kind = EVAL_SPACE_MUTATION_ADD;
+    } else if (head == g_builtin_syms.add_atom_nodup) {
+        kind = EVAL_SPACE_MUTATION_ADD_NODUP;
+    } else if (head == g_builtin_syms.remove_atom) {
+        kind = EVAL_SPACE_MUTATION_REMOVE;
+    } else {
+        return false;
+    }
+    return eval_space_mutation_contract_kind(
+        root, arena, call, fuel, environment, outcomes, kind);
 }
 
 static bool prime_need_allocate_ref_with_storage_key(
@@ -36979,6 +37140,22 @@ static bool petta_eval_machine_evaluate_host(
         host_head == SYMBOL_ID_NONE
             ? PETTA_FORM_NONE
             : petta_semantics_form(host_head);
+    bool handled_space_mutation = host_head == g_builtin_syms.add_atom
+        ? eval_space_mutation_contract_kind(
+              space, arena, host_expression,
+              eval_context ? eval_context->fuel : -1,
+              environment, outcomes, EVAL_SPACE_MUTATION_ADD)
+        : eval_space_mutation_contract(
+              space, arena, host_expression,
+              eval_context ? eval_context->fuel : -1,
+              environment, outcomes);
+    if (handled_space_mutation) {
+        if (transaction) {
+            g_registry = previous_registry;
+            g_eval_root_space = previous_root_space;
+        }
+        return true;
+    }
     if (host_form == PETTA_FORM_PROCESS_METTA_STRING) {
         Atom *result = NULL;
         Atom *reason = NULL;
@@ -44929,332 +45106,8 @@ petta_lowered_to_shared_form:
     }
 
     /* ── add-atom ──────────────────────────────────────────────────────── */
-    if (head_id == g_builtin_syms.add_atom && nargs == 2 && g_registry) {
-        Atom *space_ref = expr_arg(atom, 0);
-        Atom *atom_to_add = prime_need_persist_data(
-            a, expr_arg(atom, 1), CURRENT_ENV);
-        atom_to_add = atom_to_add
-            ? petta_flatten_closed_open_cons(a, atom_to_add)
-            : NULL;
-        if (!atom_to_add) {
-            outcome_set_add(
-                os,
-                atom_error(a, atom,
-                           atom_symbol(a, "PrimeNeedReificationCycle")),
-                &_empty);
-            return;
-        }
-        if (emit_generic_mork_handle_native_syntax(
-                s, a, atom, atom->expr.elems + 1, nargs, fuel,
-                g_builtin_syms.mork_add_atom, os)) {
-            return;
-        }
-        Atom *mork_handle_error = guard_mork_handle_syntax(
-            s, a, atom, space_ref, fuel, "add-atom", "mork:add-atom");
-        if (mork_handle_error) {
-            outcome_set_add(os, mork_handle_error, &_empty);
-            return;
-        }
-        Space *target = resolve_single_space_arg_write(s, a, space_ref, fuel);
-        if (!target) {
-            target = petta_create_named_space_on_add(
-                s, a, space_ref);
-        }
-        if (!target) {
-            outcome_set_add(os, space_arg_error(a, atom,
-                "add-atom expects a space as the first argument"), &_empty);
-            return;
-        }
-        Atom *mork_error = guard_mork_space_syntax(
-            a, atom, target, "add-atom", "mork:add-atom");
-        if (mork_error) {
-            outcome_set_add(os, mork_error, &_empty);
-            return;
-        }
-        if (!space_match_backend_materialize_attached(
-                target, eval_storage_arena(a))) {
-            outcome_set_add(os,
-                space_backend_or_symbol_error(
-                    a, atom, "AttachedCompiledSpaceMaterializeFailed"),
-                &_empty);
-            return;
-        }
-        /* Deep-copy to persistent arena so atom survives eval_arena reset */
-        Arena *dst = eval_storage_arena(a);
-        PettaProgram *petta_program =
-            language_id == CETTA_LANGUAGE_PETTA &&
-                    g_library_context &&
-                    !cetta_shared_transition_scope_active()
-                ? g_library_context->petta_program
-                : NULL;
-        Atom *type_error = eval_petta_program_mutation_error(
-            a, atom, target, atom_to_add,
-            PETTA_TYPECHECK_MUTATION_ADD);
-        if (type_error) {
-            outcome_set_add(os, type_error, &_empty);
-            return;
-        }
-        const PettaPlanNode *add_plan = NULL;
-        if (petta_program &&
-            petta_program_is_equation(atom_to_add)) {
-            add_plan = petta_program_plan_dynamic_add(
-                petta_program, atom_to_add);
-            if (!add_plan) {
-                outcome_set_add(
-                    os,
-                    atom_error(
-                        a, atom,
-                        atom_symbol(
-                            a, "PeTTaCompilePlanFailed")),
-                    &_empty);
-                return;
-            }
-        }
-        if (!eval_admit_atom(target, a, dst, atom_to_add)) {
-            outcome_set_add(os,
-                space_term_universe_or_symbol_error(a, atom, target,
-                                                    "AddAtomFailed"),
-                &_empty);
-            return;
-        }
-        if (language_id == CETTA_LANGUAGE_PETTA)
-            petta_specializer_note_mutation(target, atom_to_add);
-        if (petta_program &&
-            !petta_program_observe_addition(
-                petta_program, target, dst,
-                atom_to_add, add_plan)) {
-            outcome_set_add(
-                os,
-                atom_error(
-                    a, atom,
-                    atom_symbol(
-                        a, "PeTTaCompilePlanFailed")),
-                &_empty);
-            return;
-        }
-        CettaEvalSession *add_session = active_eval_session();
-        if (petta_program &&
-            cetta_profile_uses_petta_typing(add_session->profile)) {
-            eval_petta_typecheck_inferred_signatures_rebase(
-                petta_program, target);
-        }
-        outcome_set_add(
-            os,
-            language_id == CETTA_LANGUAGE_PETTA
-                ? petta_semantics_success_value(a)
-                : atom_unit(a),
-            &_empty);
-        return;
-    }
-
-    /* ── add-atom-nodup (dedup variant for forward chaining) ────────────── */
-    if (head_id == g_builtin_syms.add_atom_nodup && nargs == 2 && g_registry) {
-        if (!active_builtin_allowed("add-atom-nodup")) {
-            goto generic_dispatch;
-        }
-        Atom *space_ref = expr_arg(atom, 0);
-        Atom *atom_to_add = prime_need_persist_data(
-            a, expr_arg(atom, 1), CURRENT_ENV);
-        if (!atom_to_add) {
-            outcome_set_add(
-                os,
-                atom_error(a, atom,
-                           atom_symbol(a, "PrimeNeedReificationCycle")),
-                &_empty);
-            return;
-        }
-        Atom *mork_handle_error = guard_mork_handle_syntax(
-            s, a, atom, space_ref, fuel, "add-atom-nodup", "mork:add-atom");
-        if (mork_handle_error) {
-            outcome_set_add(os, mork_handle_error, &_empty);
-            return;
-        }
-        Space *target = resolve_single_space_arg_write(s, a, space_ref, fuel);
-        if (!target) {
-            outcome_set_add(os, space_arg_error(a, atom,
-                "add-atom-nodup expects a space as the first argument"), &_empty);
-            return;
-        }
-        Atom *mork_error = guard_mork_space_syntax(
-            a, atom, target, "add-atom-nodup", "mork:add-atom");
-        if (mork_error) {
-            outcome_set_add(os, mork_error, &_empty);
-            return;
-        }
-        if (!space_match_backend_materialize_attached(
-                target, eval_storage_arena(a))) {
-            outcome_set_add(os,
-                space_backend_or_symbol_error(
-                    a, atom, "AttachedCompiledSpaceMaterializeFailed"),
-                &_empty);
-            return;
-        }
-        Atom *compare_atom = space_compare_atom(target, a, atom_to_add);
-        bool found = add_atom_nodup_is_present(target, compare_atom);
-        if (!found) {
-            Arena *dst = eval_storage_arena(a);
-            PettaProgram *petta_program =
-                language_id == CETTA_LANGUAGE_PETTA &&
-                        g_library_context &&
-                        !cetta_shared_transition_scope_active()
-                    ? g_library_context->petta_program
-                    : NULL;
-            Atom *type_error = eval_petta_program_mutation_error(
-                a, atom, target, atom_to_add,
-                PETTA_TYPECHECK_MUTATION_ADD);
-            if (type_error) {
-                outcome_set_add(os, type_error, &_empty);
-                return;
-            }
-            const PettaPlanNode *add_plan = NULL;
-            if (petta_program &&
-                petta_program_is_equation(atom_to_add)) {
-                add_plan = petta_program_plan_dynamic_add(
-                    petta_program, atom_to_add);
-                if (!add_plan) {
-                    outcome_set_add(
-                        os,
-                        atom_error(
-                            a, atom,
-                            atom_symbol(
-                                a, "PeTTaCompilePlanFailed")),
-                        &_empty);
-                    return;
-                }
-            }
-            if (!eval_admit_atom(target, a, dst, atom_to_add)) {
-                outcome_set_add(os,
-                    space_term_universe_or_symbol_error(a, atom, target,
-                                                        "AddAtomFailed"),
-                    &_empty);
-                return;
-            }
-            if (language_id == CETTA_LANGUAGE_PETTA)
-                petta_specializer_note_mutation(target, atom_to_add);
-            if (petta_program &&
-                !petta_program_observe_addition(
-                    petta_program, target, dst,
-                    atom_to_add, add_plan)) {
-                outcome_set_add(
-                    os,
-                    atom_error(
-                        a, atom,
-                        atom_symbol(
-                            a, "PeTTaCompilePlanFailed")),
-                    &_empty);
-                return;
-            }
-            CettaEvalSession *add_session = active_eval_session();
-            if (petta_program &&
-                cetta_profile_uses_petta_typing(add_session->profile)) {
-                eval_petta_typecheck_inferred_signatures_rebase(
-                    petta_program, target);
-            }
-        }
-        outcome_set_add(os, atom_unit(a), &_empty);
-        return;
-    }
-
-    /* ── remove-atom ───────────────────────────────────────────────────── */
-    if (head_id == g_builtin_syms.remove_atom && nargs == 2 && g_registry) {
-        Atom *space_ref = expr_arg(atom, 0);
-        Atom *atom_to_rm = prime_need_persist_data(
-            a, expr_arg(atom, 1), CURRENT_ENV);
-        atom_to_rm = atom_to_rm
-            ? petta_flatten_closed_open_cons(a, atom_to_rm)
-            : NULL;
-        if (!atom_to_rm) {
-            outcome_set_add(
-                os,
-                atom_error(a, atom,
-                           atom_symbol(a, "PrimeNeedReificationCycle")),
-                &_empty);
-            return;
-        }
-        if (emit_generic_mork_handle_native_syntax(
-                s, a, atom, atom->expr.elems + 1, nargs, fuel,
-                g_builtin_syms.mork_remove_atom, os)) {
-            return;
-        }
-        Atom *mork_handle_error = guard_mork_handle_syntax(
-            s, a, atom, space_ref, fuel, "remove-atom", "mork:remove-atom");
-        if (mork_handle_error) {
-            outcome_set_add(os, mork_handle_error, &_empty);
-            return;
-        }
-        Space *target = resolve_single_space_arg_write(s, a, space_ref, fuel);
-        if (!target) {
-            outcome_set_add(os, space_arg_error(a, atom,
-                "remove-atom expects a space as the first argument"), &_empty);
-            return;
-        }
-        Atom *mork_error = guard_mork_space_syntax(
-            a, atom, target, "remove-atom", "mork:remove-atom");
-        if (mork_error) {
-            outcome_set_add(os, mork_error, &_empty);
-            return;
-        }
-        if (space_match_backend_is_attached_compiled(target) &&
-            !space_match_backend_materialize_attached(
-                target, eval_storage_arena(a))) {
-            outcome_set_add(os,
-                space_backend_or_symbol_error(
-                    a, atom, "AttachedCompiledSpaceMaterializeFailed"),
-                &_empty);
-            return;
-        }
-        Atom *compare_atom = space_remove_compare_atom(target, a, atom_to_rm);
-        if (language_id == CETTA_LANGUAGE_PETTA) {
-            if (compare_atom && compare_atom->kind == ATOM_VAR) {
-                outcome_set_add(
-                    os, petta_semantics_success_value(a), &_empty);
-                return;
-            }
-            compare_atom = petta_space_remove_request_pattern(
-                a, compare_atom);
-            if (!compare_atom)
-                return;
-        }
-        Atom *type_error = eval_petta_program_mutation_error(
-            a, atom, target, compare_atom,
-            PETTA_TYPECHECK_MUTATION_REMOVE);
-        if (type_error) {
-            outcome_set_add(os, type_error, &_empty);
-            return;
-        }
-        PettaProgram *petta_program =
-            language_id == CETTA_LANGUAGE_PETTA &&
-                    g_library_context
-                ? g_library_context->petta_program
-                : NULL;
-        if (language_id == CETTA_LANGUAGE_PETTA) {
-            if (!petta_space_remove_pattern_all(
-                    target, compare_atom, petta_program, NULL)) {
-                outcome_set_add(
-                    os,
-                    atom_error(
-                        a, atom,
-                        atom_symbol(
-                            a, "PeTTaSpacePatternRemovalFailed")),
-                    &_empty);
-                return;
-            }
-        } else {
-            AtomId remove_id = target && target->native.universe
-                ? term_universe_lookup_atom_id(
-                      target->native.universe, compare_atom)
-                : CETTA_ATOM_ID_NONE;
-            if (!(remove_id != CETTA_ATOM_ID_NONE &&
-                  space_remove_atom_id(target, remove_id))) {
-                (void)space_remove(target, compare_atom);
-            }
-        }
-        outcome_set_add(
-            os,
-            language_id == CETTA_LANGUAGE_PETTA
-                ? petta_semantics_success_value(a)
-                : atom_unit(a),
-            &_empty);
+    if (eval_space_mutation_contract(
+            s, a, atom, fuel, CURRENT_ENV, os)) {
         return;
     }
 
